@@ -14,6 +14,69 @@ static int sys_refcount_exit;
 static DECLARE_BITMAP(enabled_enter_syscalls, NR_syscalls);
 static DECLARE_BITMAP(enabled_exit_syscalls, NR_syscalls);
 
+extern unsigned long __start_syscalls_metadata[];
+extern unsigned long __stop_syscalls_metadata[];
+
+static struct syscall_metadata **syscalls_metadata;
+
+static struct syscall_metadata *find_syscall_meta(unsigned long syscall)
+{
+	struct syscall_metadata *start;
+	struct syscall_metadata *stop;
+	char str[KSYM_SYMBOL_LEN];
+
+
+	start = (struct syscall_metadata *)__start_syscalls_metadata;
+	stop = (struct syscall_metadata *)__stop_syscalls_metadata;
+	kallsyms_lookup(syscall, NULL, NULL, NULL, str);
+
+	for ( ; start < stop; start++) {
+		/*
+		 * Only compare after the "sys" prefix. Archs that use
+		 * syscall wrappers may have syscalls symbols aliases prefixed
+		 * with "SyS" instead of "sys", leading to an unwanted
+		 * mismatch.
+		 */
+		if (start->name && !strcmp(start->name + 3, str + 3))
+			return start;
+	}
+	return NULL;
+}
+
+static struct syscall_metadata *syscall_nr_to_meta(int nr)
+{
+	if (!syscalls_metadata || nr >= NR_syscalls || nr < 0)
+		return NULL;
+
+	return syscalls_metadata[nr];
+}
+
+int syscall_name_to_nr(char *name)
+{
+	int i;
+
+	if (!syscalls_metadata)
+		return -1;
+
+	for (i = 0; i < NR_syscalls; i++) {
+		if (syscalls_metadata[i]) {
+			if (!strcmp(syscalls_metadata[i]->name, name))
+				return i;
+		}
+	}
+	return -1;
+}
+
+void set_syscall_enter_id(int num, int id)
+{
+	syscalls_metadata[num]->enter_id = id;
+}
+
+void set_syscall_exit_id(int num, int id)
+{
+	syscalls_metadata[num]->exit_id = id;
+}
+
 enum print_line_t
 print_syscall_enter(struct trace_iterator *iter, int flags)
 {
@@ -103,7 +166,8 @@ extern char *__bad_type_size(void);
 #define SYSCALL_FIELD(type, name)					\
 	sizeof(type) != sizeof(trace.name) ?				\
 		__bad_type_size() :					\
-		#type, #name, offsetof(typeof(trace), name), sizeof(trace.name)
+		#type, #name, offsetof(typeof(trace), name),		\
+		sizeof(trace.name), is_signed_type(type)
 
 int syscall_enter_format(struct ftrace_event_call *call, struct trace_seq *s)
 {
@@ -120,7 +184,8 @@ int syscall_enter_format(struct ftrace_event_call *call, struct trace_seq *s)
 	if (!entry)
 		return 0;
 
-	ret = trace_seq_printf(s, "\tfield:%s %s;\toffset:%zu;\tsize:%zu;\n",
+	ret = trace_seq_printf(s, "\tfield:%s %s;\toffset:%zu;\tsize:%zu;"
+			       "\tsigned:%u;\n",
 			       SYSCALL_FIELD(int, nr));
 	if (!ret)
 		return 0;
@@ -130,8 +195,10 @@ int syscall_enter_format(struct ftrace_event_call *call, struct trace_seq *s)
 				        entry->args[i]);
 		if (!ret)
 			return 0;
-		ret = trace_seq_printf(s, "\toffset:%d;\tsize:%zu;\n", offset,
-				       sizeof(unsigned long));
+		ret = trace_seq_printf(s, "\toffset:%d;\tsize:%zu;"
+				       "\tsigned:%u;\n", offset,
+				       sizeof(unsigned long),
+				       is_signed_type(unsigned long));
 		if (!ret)
 			return 0;
 		offset += sizeof(unsigned long);
@@ -163,8 +230,10 @@ int syscall_exit_format(struct ftrace_event_call *call, struct trace_seq *s)
 	struct syscall_trace_exit trace;
 
 	ret = trace_seq_printf(s,
-			       "\tfield:%s %s;\toffset:%zu;\tsize:%zu;\n"
-			       "\tfield:%s %s;\toffset:%zu;\tsize:%zu;\n",
+			       "\tfield:%s %s;\toffset:%zu;\tsize:%zu;"
+			       "\tsigned:%u;\n"
+			       "\tfield:%s %s;\toffset:%zu;\tsize:%zu;"
+			       "\tsigned:%u;\n",
 			       SYSCALL_FIELD(int, nr),
 			       SYSCALL_FIELD(long, ret));
 	if (!ret)
@@ -192,6 +261,10 @@ int syscall_enter_define_fields(struct ftrace_event_call *call)
 	if (ret)
 		return ret;
 
+	ret = trace_define_field(call, SYSCALL_FIELD(int, nr), FILTER_OTHER);
+	if (ret)
+		return ret;
+
 	for (i = 0; i < meta->nb_args; i++) {
 		ret = trace_define_field(call, meta->types[i],
 					 meta->args[i], offset,
@@ -212,7 +285,11 @@ int syscall_exit_define_fields(struct ftrace_event_call *call)
 	if (ret)
 		return ret;
 
-	ret = trace_define_field(call, SYSCALL_FIELD(long, ret), 0,
+	ret = trace_define_field(call, SYSCALL_FIELD(int, nr), FILTER_OTHER);
+	if (ret)
+		return ret;
+
+	ret = trace_define_field(call, SYSCALL_FIELD(long, ret),
 				 FILTER_OTHER);
 
 	return ret;
@@ -285,13 +362,13 @@ void ftrace_syscall_exit(struct pt_regs *regs, long ret)
 		trace_current_buffer_unlock_commit(buffer, event, 0, 0);
 }
 
-int reg_event_syscall_enter(void *ptr)
+int reg_event_syscall_enter(struct ftrace_event_call *call)
 {
 	int ret = 0;
 	int num;
 	char *name;
 
-	name = (char *)ptr;
+	name = (char *)call->data;
 	num = syscall_name_to_nr(name);
 	if (num < 0 || num >= NR_syscalls)
 		return -ENOSYS;
@@ -309,12 +386,12 @@ int reg_event_syscall_enter(void *ptr)
 	return ret;
 }
 
-void unreg_event_syscall_enter(void *ptr)
+void unreg_event_syscall_enter(struct ftrace_event_call *call)
 {
 	int num;
 	char *name;
 
-	name = (char *)ptr;
+	name = (char *)call->data;
 	num = syscall_name_to_nr(name);
 	if (num < 0 || num >= NR_syscalls)
 		return;
@@ -326,13 +403,13 @@ void unreg_event_syscall_enter(void *ptr)
 	mutex_unlock(&syscall_trace_lock);
 }
 
-int reg_event_syscall_exit(void *ptr)
+int reg_event_syscall_exit(struct ftrace_event_call *call)
 {
 	int ret = 0;
 	int num;
 	char *name;
 
-	name = (char *)ptr;
+	name = call->data;
 	num = syscall_name_to_nr(name);
 	if (num < 0 || num >= NR_syscalls)
 		return -ENOSYS;
@@ -350,12 +427,12 @@ int reg_event_syscall_exit(void *ptr)
 	return ret;
 }
 
-void unreg_event_syscall_exit(void *ptr)
+void unreg_event_syscall_exit(struct ftrace_event_call *call)
 {
 	int num;
 	char *name;
 
-	name = (char *)ptr;
+	name = call->data;
 	num = syscall_name_to_nr(name);
 	if (num < 0 || num >= NR_syscalls)
 		return;
@@ -375,6 +452,29 @@ struct trace_event event_syscall_exit = {
 	.trace			= print_syscall_exit,
 };
 
+int __init init_ftrace_syscalls(void)
+{
+	struct syscall_metadata *meta;
+	unsigned long addr;
+	int i;
+
+	syscalls_metadata = kzalloc(sizeof(*syscalls_metadata) *
+					NR_syscalls, GFP_KERNEL);
+	if (!syscalls_metadata) {
+		WARN_ON(1);
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < NR_syscalls; i++) {
+		addr = arch_syscall_addr(i);
+		meta = find_syscall_meta(addr);
+		syscalls_metadata[i] = meta;
+	}
+
+	return 0;
+}
+core_initcall(init_ftrace_syscalls);
+
 #ifdef CONFIG_EVENT_PROFILE
 
 static DECLARE_BITMAP(enabled_prof_enter_syscalls, NR_syscalls);
@@ -387,8 +487,10 @@ static void prof_syscall_enter(struct pt_regs *regs, long id)
 	struct syscall_metadata *sys_data;
 	struct syscall_trace_enter *rec;
 	unsigned long flags;
+	char *trace_buf;
 	char *raw_data;
 	int syscall_nr;
+	int rctx;
 	int size;
 	int cpu;
 
@@ -412,17 +514,18 @@ static void prof_syscall_enter(struct pt_regs *regs, long id)
 	/* Protect the per cpu buffer, begin the rcu read side */
 	local_irq_save(flags);
 
+	rctx = perf_swevent_get_recursion_context();
+	if (rctx < 0)
+		goto end_recursion;
+
 	cpu = smp_processor_id();
 
-	if (in_nmi())
-		raw_data = rcu_dereference(trace_profile_buf_nmi);
-	else
-		raw_data = rcu_dereference(trace_profile_buf);
+	trace_buf = rcu_dereference(perf_trace_buf);
 
-	if (!raw_data)
+	if (!trace_buf)
 		goto end;
 
-	raw_data = per_cpu_ptr(raw_data, cpu);
+	raw_data = per_cpu_ptr(trace_buf, cpu);
 
 	/* zero the dead bytes from align to not leak stack to user */
 	*(u64 *)(&raw_data[size - sizeof(u64)]) = 0ULL;
@@ -436,6 +539,8 @@ static void prof_syscall_enter(struct pt_regs *regs, long id)
 	perf_tp_event(sys_data->enter_id, 0, 1, rec, size);
 
 end:
+	perf_swevent_put_recursion_context(rctx);
+end_recursion:
 	local_irq_restore(flags);
 }
 
@@ -484,7 +589,9 @@ static void prof_syscall_exit(struct pt_regs *regs, long ret)
 	struct syscall_trace_exit *rec;
 	unsigned long flags;
 	int syscall_nr;
+	char *trace_buf;
 	char *raw_data;
+	int rctx;
 	int size;
 	int cpu;
 
@@ -510,17 +617,19 @@ static void prof_syscall_exit(struct pt_regs *regs, long ret)
 
 	/* Protect the per cpu buffer, begin the rcu read side */
 	local_irq_save(flags);
+
+	rctx = perf_swevent_get_recursion_context();
+	if (rctx < 0)
+		goto end_recursion;
+
 	cpu = smp_processor_id();
 
-	if (in_nmi())
-		raw_data = rcu_dereference(trace_profile_buf_nmi);
-	else
-		raw_data = rcu_dereference(trace_profile_buf);
+	trace_buf = rcu_dereference(perf_trace_buf);
 
-	if (!raw_data)
+	if (!trace_buf)
 		goto end;
 
-	raw_data = per_cpu_ptr(raw_data, cpu);
+	raw_data = per_cpu_ptr(trace_buf, cpu);
 
 	/* zero the dead bytes from align to not leak stack to user */
 	*(u64 *)(&raw_data[size - sizeof(u64)]) = 0ULL;
@@ -535,6 +644,8 @@ static void prof_syscall_exit(struct pt_regs *regs, long ret)
 	perf_tp_event(sys_data->exit_id, 0, 1, rec, size);
 
 end:
+	perf_swevent_put_recursion_context(rctx);
+end_recursion:
 	local_irq_restore(flags);
 }
 
