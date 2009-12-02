@@ -464,6 +464,7 @@ static unsigned tcp_syn_options(struct sock *sk, struct sk_buff *skb,
 				struct tcp_md5sig_key **md5) {
 	struct tcp_sock *tp = tcp_sk(sk);
 	unsigned size = 0;
+	struct dst_entry *dst = __sk_dst_get(sk);
 
 #ifdef CONFIG_TCP_MD5SIG
 	*md5 = tp->af_specific->md5_lookup(sk, sk);
@@ -487,18 +488,22 @@ static unsigned tcp_syn_options(struct sock *sk, struct sk_buff *skb,
 	opts->mss = tcp_advertise_mss(sk);
 	size += TCPOLEN_MSS_ALIGNED;
 
-	if (likely(sysctl_tcp_timestamps && *md5 == NULL)) {
+	if (likely(sysctl_tcp_timestamps &&
+		   !dst_feature(dst, RTAX_FEATURE_NO_TSTAMP) &&
+		   *md5 == NULL)) {
 		opts->options |= OPTION_TS;
 		opts->tsval = TCP_SKB_CB(skb)->when;
 		opts->tsecr = tp->rx_opt.ts_recent;
 		size += TCPOLEN_TSTAMP_ALIGNED;
 	}
-	if (likely(sysctl_tcp_window_scaling)) {
+	if (likely(sysctl_tcp_window_scaling &&
+		   !dst_feature(dst, RTAX_FEATURE_NO_WSCALE))) {
 		opts->ws = tp->rx_opt.rcv_wscale;
 		opts->options |= OPTION_WSCALE;
 		size += TCPOLEN_WSCALE_ALIGNED;
 	}
-	if (likely(sysctl_tcp_sack)) {
+	if (likely(sysctl_tcp_sack &&
+		   !dst_feature(dst, RTAX_FEATURE_NO_SACK))) {
 		opts->options |= OPTION_SACK_ADVERTISE;
 		if (unlikely(!(OPTION_TS & opts->options)))
 			size += TCPOLEN_SACKPERM_ALIGNED;
@@ -661,8 +666,8 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 
 	/* Build TCP header and checksum it. */
 	th = tcp_hdr(skb);
-	th->source		= inet->sport;
-	th->dest		= inet->dport;
+	th->source		= inet->inet_sport;
+	th->dest		= inet->inet_dport;
 	th->seq			= htonl(tcb->seq);
 	th->ack_seq		= htonl(tp->rcv_nxt);
 	*(((__be16 *)th) + 6)	= htons(((tcp_header_size >> 2) << 12) |
@@ -1918,8 +1923,8 @@ int tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb)
 	 * case, when window is shrunk to zero. In this case
 	 * our retransmit serves as a zero window probe.
 	 */
-	if (!before(TCP_SKB_CB(skb)->seq, tcp_wnd_end(tp))
-	    && TCP_SKB_CB(skb)->seq != tp->snd_una)
+	if (!before(TCP_SKB_CB(skb)->seq, tcp_wnd_end(tp)) &&
+	    TCP_SKB_CB(skb)->seq != tp->snd_una)
 		return -EAGAIN;
 
 	if (skb->len > cur_mss) {
@@ -2315,7 +2320,9 @@ static void tcp_connect_init(struct sock *sk)
 	 * See tcp_input.c:tcp_rcv_state_process case TCP_SYN_SENT.
 	 */
 	tp->tcp_header_len = sizeof(struct tcphdr) +
-		(sysctl_tcp_timestamps ? TCPOLEN_TSTAMP_ALIGNED : 0);
+		(sysctl_tcp_timestamps &&
+		(!dst_feature(dst, RTAX_FEATURE_NO_TSTAMP) ?
+		  TCPOLEN_TSTAMP_ALIGNED : 0));
 
 #ifdef CONFIG_TCP_MD5SIG
 	if (tp->af_specific->md5_lookup(sk, sk) != NULL)
@@ -2341,7 +2348,8 @@ static void tcp_connect_init(struct sock *sk)
 				  tp->advmss - (tp->rx_opt.ts_recent_stamp ? tp->tcp_header_len - sizeof(struct tcphdr) : 0),
 				  &tp->rcv_wnd,
 				  &tp->window_clamp,
-				  sysctl_tcp_window_scaling,
+				  (sysctl_tcp_window_scaling &&
+				   !dst_feature(dst, RTAX_FEATURE_NO_WSCALE)),
 				  &rcv_wscale);
 
 	tp->rx_opt.rcv_wscale = rcv_wscale;

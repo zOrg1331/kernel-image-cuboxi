@@ -159,6 +159,7 @@ struct ixgbe_ring {
 	struct ixgbe_queue_stats stats;
 	unsigned long reinit_state;
 	u64 rsc_count;			/* stat for coalesced packets */
+	u64 rsc_flush;			/* stats for flushed packets */
 
 	unsigned int size;		/* length in bytes */
 	dma_addr_t dma;			/* phys. address of descriptor ring */
@@ -340,7 +341,6 @@ struct ixgbe_adapter {
 	/* OS defined structs */
 	struct net_device *netdev;
 	struct pci_dev *pdev;
-	struct net_device_stats net_stats;
 
 	u32 test_icr;
 	struct ixgbe_ring test_tx_ring;
@@ -376,7 +376,8 @@ struct ixgbe_adapter {
 #ifdef IXGBE_FCOE
 	struct ixgbe_fcoe fcoe;
 #endif /* IXGBE_FCOE */
-	u64 rsc_count;
+	u64 rsc_total_count;
+	u64 rsc_total_flush;
 	u32 wol;
 	u16 eeprom_version;
 };
@@ -397,7 +398,7 @@ enum ixgbe_boards {
 extern struct ixgbe_info ixgbe_82598_info;
 extern struct ixgbe_info ixgbe_82599_info;
 #ifdef CONFIG_IXGBE_DCB
-extern struct dcbnl_rtnl_ops dcbnl_ops;
+extern const struct dcbnl_rtnl_ops dcbnl_ops;
 extern int ixgbe_copy_dcb_cfg(struct ixgbe_dcb_config *src_dcb_cfg,
                               struct ixgbe_dcb_config *dst_dcb_cfg,
                               int tc_max);
@@ -458,6 +459,7 @@ extern int ixgbe_fcoe_disable(struct net_device *netdev);
 extern u8 ixgbe_fcoe_getapp(struct ixgbe_adapter *adapter);
 extern u8 ixgbe_fcoe_setapp(struct ixgbe_adapter *adapter, u8 up);
 #endif /* CONFIG_IXGBE_DCB */
+extern int ixgbe_fcoe_get_wwn(struct net_device *netdev, u64 *wwn, int type);
 #endif /* IXGBE_FCOE */
 
 #endif /* _IXGBE_H_ */
