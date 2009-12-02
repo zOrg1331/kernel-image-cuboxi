@@ -627,6 +627,15 @@ void __init mem_init(void)
 		 */
 		sysctl_overcommit_memory = OVERCOMMIT_ALWAYS;
 	}
+
+	/*
+	 * Allocate the zero page, trying to get it from highmem if
+	 * available.  Note that this must always succeed and returns
+	 * a zeroed page.
+	 */
+	empty_zero_page = alloc_pages(GFP_KERNEL | __GFP_HIGHMEM | __GFP_ZERO, 0);
+	BUG_ON(!empty_zero_page);
+	__flush_dcache_page(NULL, empty_zero_page);
 }
 
 void free_initmem(void)
