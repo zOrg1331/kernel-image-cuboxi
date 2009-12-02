@@ -276,8 +276,9 @@ drivers/base/power/runtime.c and include/linux/pm_runtime.h:
     - increment the device's usage counter
 
   int pm_runtime_get(struct device *dev);
-    - increment the device's usage counter, run pm_request_resume(dev) and
-      return its result
+    - increment the device's usage counter; if the device is currently
+      suspending or suspended then run pm_request_resume(dev) and return its
+      result
 
   int pm_runtime_get_sync(struct device *dev);
     - increment the device's usage counter, run pm_runtime_resume(dev) and
