@@ -914,6 +914,101 @@ static int intel_lid_present(void)
 #endif
 
 /**
+ * intel_find_lvds_downclock - find the reduced downclock for LVDS in EDID
+ * @dev: drm device
+ * @connector: LVDS connector
+ *
+ * Find the reduced downclock for LVDS in EDID.
+ */
+static void intel_find_lvds_downclock(struct drm_device *dev,
+				struct drm_connector *connector)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct drm_display_mode *scan, *panel_fixed_mode;
+	int temp_downclock;
+
+	panel_fixed_mode = dev_priv->panel_fixed_mode;
+	temp_downclock = panel_fixed_mode->clock;
+
+	mutex_lock(&dev->mode_config.mutex);
+	list_for_each_entry(scan, &connector->probed_modes, head) {
+		/*
+		 * If one mode has the same resolution with the fixed_panel
+		 * mode while they have the different refresh rate, it means
+		 * that the reduced downclock is found for the LVDS. In such
+		 * case we can set the different FPx0/1 to dynamically select
+		 * between low and high frequency.
+		 */
+		if (scan->hdisplay == panel_fixed_mode->hdisplay &&
+			scan->hsync_start == panel_fixed_mode->hsync_start &&
+			scan->hsync_end == panel_fixed_mode->hsync_end &&
+			scan->htotal == panel_fixed_mode->htotal &&
+			scan->vdisplay == panel_fixed_mode->vdisplay &&
+			scan->vsync_start == panel_fixed_mode->vsync_start &&
+			scan->vsync_end == panel_fixed_mode->vsync_end &&
+			scan->vtotal == panel_fixed_mode->vtotal) {
+			if (scan->clock < temp_downclock) {
+				/*
+				 * The downclock is already found. But we
+				 * expect to find the lower downclock.
+				 */
+				temp_downclock = scan->clock;
+			}
+		}
+	}
+	mutex_unlock(&dev->mode_config.mutex);
+	if (temp_downclock < panel_fixed_mode->clock) {
+		/* We found the downclock for LVDS. */
+		dev_priv->lvds_downclock_avail = 1;
+		dev_priv->lvds_downclock = temp_downclock;
+		DRM_DEBUG_KMS("LVDS downclock is found in EDID. "
+				"Normal clock %dKhz, downclock %dKhz\n",
+				panel_fixed_mode->clock, temp_downclock);
+	}
+	return;
+}
+
+/*
+ * Enumerate the child dev array parsed from VBT to check whether
+ * the LVDS is present.
+ * If it is present, return 1.
+ * If it is not present, return false.
+ * If no child dev is parsed from VBT, it assumes that the LVDS is present.
+ * Note: The addin_offset should also be checked for LVDS panel.
+ * Only when it is non-zero, it is assumed that it is present.
+ */
+int lvds_is_present_in_vbt(struct drm_device *dev)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct child_device_config *p_child;
+	int i, ret;
+
+	if (!dev_priv->child_dev_num)
+		return 1;
+
+	ret = 0;
+	for (i = 0; i < dev_priv->child_dev_num; i++) {
+		p_child = dev_priv->child_dev + i;
+		/*
+		 * If the device type is not LFP, continue.
+		 * If the device type is 0x22, it is also regarded as LFP.
+		 */
+		if (p_child->device_type != DEVICE_TYPE_INT_LFP &&
+			p_child->device_type != DEVICE_TYPE_LFP)
+			continue;
+
+		/* The addin_offset should be checked. Only when it is
+		 * non-zero, it is regarded as present.
+		 */
+		if (p_child->addin_offset) {
+			ret = 1;
+			break;
+		}
+	}
+	return ret;
+}
+
+/**
  * intel_lvds_init - setup LVDS connectors on this device
  * @dev: drm device
  *
@@ -936,21 +1031,20 @@ void intel_lvds_init(struct drm_device *dev)
 	if (dmi_check_system(intel_no_lvds))
 		return;
 
-	/* Assume that any device without an ACPI LID device also doesn't
-	 * have an integrated LVDS.  We would be better off parsing the BIOS
-	 * to get a reliable indicator, but that code isn't written yet.
-	 *
-	 * In the case of all-in-one desktops using LVDS that we've seen,
-	 * they're using SDVO LVDS.
+	/*
+	 * Assume LVDS is present if there's an ACPI lid device or if the
+	 * device is present in the VBT.
 	 */
-	if (!intel_lid_present())
+	if (!lvds_is_present_in_vbt(dev) && !intel_lid_present()) {
+		DRM_DEBUG_KMS("LVDS is not present in VBT and no lid detected\n");
 		return;
+	}
 
 	if (IS_IGDNG(dev)) {
 		if ((I915_READ(PCH_LVDS) & LVDS_DETECTED) == 0)
 			return;
 		if (dev_priv->edp_support) {
-			DRM_DEBUG("disable LVDS for eDP support\n");
+			DRM_DEBUG_KMS("disable LVDS for eDP support\n");
 			return;
 		}
 		gpio = PCH_GPIOC;
@@ -1023,6 +1117,7 @@ void intel_lvds_init(struct drm_device *dev)
 			dev_priv->panel_fixed_mode =
 				drm_mode_duplicate(dev, scan);
 			mutex_unlock(&dev->mode_config.mutex);
+			intel_find_lvds_downclock(dev, connector);
 			goto out;
 		}
 		mutex_unlock(&dev->mode_config.mutex);
@@ -1082,7 +1177,7 @@ out:
 	}
 	dev_priv->lid_notifier.notifier_call = intel_lid_notify;
 	if (acpi_lid_notifier_register(&dev_priv->lid_notifier)) {
-		DRM_DEBUG("lid notifier registration failed\n");
+		DRM_DEBUG_KMS("lid notifier registration failed\n");
 		dev_priv->lid_notifier.notifier_call = NULL;
 	}
 	drm_sysfs_connector_add(connector);
@@ -1093,5 +1188,6 @@ failed:
 	if (intel_output->ddc_bus)
 		intel_i2c_destroy(intel_output->ddc_bus);
 	drm_connector_cleanup(connector);
+	drm_encoder_cleanup(encoder);
 	kfree(intel_output);
 }

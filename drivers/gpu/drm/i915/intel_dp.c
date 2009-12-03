@@ -35,6 +35,7 @@
 #include "i915_drv.h"
 #include "intel_dp.h"
 
+
 #define DP_LINK_STATUS_SIZE	6
 #define DP_LINK_CHECK_TIMEOUT	(10 * 1000)
 
@@ -282,7 +283,7 @@ intel_dp_aux_ch(struct intel_output *intel_output,
 	/* Timeouts occur when the device isn't connected, so they're
 	 * "normal" -- don't fill the kernel log with these */
 	if (status & DP_AUX_CH_CTL_TIME_OUT_ERROR) {
-		DRM_DEBUG("dp_aux_ch timeout status 0x%08x\n", status);
+		DRM_DEBUG_KMS("dp_aux_ch timeout status 0x%08x\n", status);
 		return -ETIMEDOUT;
 	}
 
@@ -435,7 +436,8 @@ intel_dp_mode_fixup(struct drm_encoder *encoder, struct drm_display_mode *mode,
 				dp_priv->link_bw = bws[clock];
 				dp_priv->lane_count = lane_count;
 				adjusted_mode->clock = intel_dp_link_clock(dp_priv->link_bw);
-				DRM_DEBUG("Display port link bw %02x lane count %d clock %d\n",
+				DRM_DEBUG_KMS("Display port link bw %02x lane "
+						"count %d clock %d\n",
 				       dp_priv->link_bw, dp_priv->lane_count,
 				       adjusted_mode->clock);
 				return true;
@@ -611,7 +613,7 @@ static void igdng_edp_backlight_on (struct drm_device *dev)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 pp;
 
-	DRM_DEBUG("\n");
+	DRM_DEBUG_KMS("\n");
 	pp = I915_READ(PCH_PP_CONTROL);
 	pp |= EDP_BLC_ENABLE;
 	I915_WRITE(PCH_PP_CONTROL, pp);
@@ -622,7 +624,7 @@ static void igdng_edp_backlight_off (struct drm_device *dev)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	u32 pp;
 
-	DRM_DEBUG("\n");
+	DRM_DEBUG_KMS("\n");
 	pp = I915_READ(PCH_PP_CONTROL);
 	pp &= ~EDP_BLC_ENABLE;
 	I915_WRITE(PCH_PP_CONTROL, pp);
@@ -1010,7 +1012,7 @@ intel_dp_link_down(struct intel_output *intel_output, uint32_t DP)
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	struct intel_dp_priv *dp_priv = intel_output->dev_priv;
 
-	DRM_DEBUG("\n");
+	DRM_DEBUG_KMS("\n");
 
 	if (IS_eDP(intel_output)) {
 		DP &= ~DP_PLL_ENABLE;
@@ -1227,7 +1229,53 @@ intel_dp_hot_plug(struct intel_output *intel_output)
 	if (dp_priv->dpms_mode == DRM_MODE_DPMS_ON)
 		intel_dp_check_link_status(intel_output);
 }
+/*
+ * Enumerate the child dev array parsed from VBT to check whether
+ * the given DP is present.
+ * If it is present, return 1.
+ * If it is not present, return false.
+ * If no child dev is parsed from VBT, it is assumed that the given
+ * DP is present.
+ */
+int dp_is_present_in_vbt(struct drm_device *dev, int dp_reg)
+{
+	struct drm_i915_private *dev_priv = dev->dev_private;
+	struct child_device_config *p_child;
+	int i, dp_port, ret;
 
+	if (!dev_priv->child_dev_num)
+		return 1;
+
+	dp_port = 0;
+	if (dp_reg == DP_B || PCH_DP_B)
+		dp_port = PORT_IDPB;
+	else if (dp_reg == DP_C || PCH_DP_C)
+		dp_port = PORT_IDPC;
+	else if (dp_reg == DP_D || PCH_DP_D)
+		dp_port = PORT_IDPD;
+
+	ret = 0;
+	for (i = 0; i < dev_priv->child_dev_num; i++) {
+		p_child = dev_priv->child_dev + i;
+		/*
+		 * If the device type is not DP, continue.
+		 */
+		if (p_child->device_type != DEVICE_TYPE_DP &&
+			p_child->device_type != DEVICE_TYPE_eDP)
+			continue;
+		/* Find the eDP port */
+		if (dp_reg == DP_A && p_child->device_type == DEVICE_TYPE_eDP) {
+			ret = 1;
+			break;
+		}
+		/* Find the DP port */
+		if (p_child->dvo_port == dp_port) {
+			ret = 1;
+			break;
+		}
+	}
+	return ret;
+}
 void
 intel_dp_init(struct drm_device *dev, int output_reg)
 {
@@ -1237,6 +1285,10 @@ intel_dp_init(struct drm_device *dev, int output_reg)
 	struct intel_dp_priv *dp_priv;
 	const char *name = NULL;
 
+	if (!dp_is_present_in_vbt(dev, output_reg)) {
+		DRM_DEBUG_KMS("DP is not present. Ignore it\n");
+		return;
+	}
 	intel_output = kcalloc(sizeof(struct intel_output) + 
 			       sizeof(struct intel_dp_priv), 1, GFP_KERNEL);
 	if (!intel_output)
