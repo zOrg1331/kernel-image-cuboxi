@@ -37,7 +37,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt12
+%define krelease alt13
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -6719,6 +6719,7 @@ if [ -f arch/%_arch/*lds ]; then
 fi
 rm -f %buildroot%modules_dir/build/scripts/*.o
 rm -f %buildroot%modules_dir/build/scripts/*/*.o
+rm -rf %buildroot%modules_dir/build/scripts/rt-tester
 mkdir -p %buildroot%modules_dir/build/include
 pushd include
 cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound video asm asm-generic ub %buildroot%modules_dir/build/include
@@ -6940,6 +6941,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Thu Dec 03 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13
+- remove rt-tester
+
 * Sun Nov 08 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt12
 - Release of 2.6.18-128.2.1.el5 028stab064.8 (SA)
 - remove make-sock_sendpage-use-kernel_sendpage.patch
