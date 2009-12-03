@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.32
-Release: alt0.rc8
+Release: alt1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -8,7 +8,7 @@ Release: alt0.rc8
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 0.8.0
+%define kernel_extra_version_numeric 1.0.0
 
 %define krelease	%release
 
@@ -270,6 +270,7 @@ KbuildFiles="
 	scripts/checkconfig.pl
 	scripts/bin2c
 	scripts/gcc-version.sh
+	scripts/module-common.lds
 
 	.config
 	.kernelrelease
@@ -340,11 +341,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
-* Mon Nov 23 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt0.rc8
-- 2.6.32-rc8
-
-* Wed Nov 03 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt0.rc6
-- 2.6.32-rc6
+* Thu Dec 03 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt1
+- 2.6.32
 
 * Fri Oct 23 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.31-alt4
 - 2.6.31.5
