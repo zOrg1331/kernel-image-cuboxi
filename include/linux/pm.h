@@ -26,6 +26,7 @@
 #include <linux/spinlock.h>
 #include <linux/wait.h>
 #include <linux/timer.h>
+#include <linux/completion.h>
 
 /*
  * Callbacks for platform drivers to implement.
@@ -408,19 +409,24 @@ enum rpm_request {
 };
 
 struct dev_pm_info {
+	spinlock_t		lock;
+	wait_queue_head_t	wait_queue;
+	struct list_head	master_links;
+	struct list_head	slave_links;
 	pm_message_t		power_state;
 	unsigned int		can_wakeup:1;
 	unsigned int		should_wakeup:1;
+	unsigned int		async_suspend:1;
 	enum dpm_state		status;		/* Owned by the PM core */
 #ifdef CONFIG_PM_SLEEP
 	struct list_head	entry;
+	unsigned int		op_started:1;
+	unsigned int		op_complete:1;
 #endif
 #ifdef CONFIG_PM_RUNTIME
 	struct timer_list	suspend_timer;
 	unsigned long		timer_expires;
 	struct work_struct	work;
-	wait_queue_head_t	wait_queue;
-	spinlock_t		lock;
 	atomic_t		usage_count;
 	atomic_t		child_count;
 	unsigned int		disable_depth:3;
@@ -498,6 +504,9 @@ extern void device_pm_unlock(void);
 extern int sysdev_suspend(pm_message_t state);
 extern int dpm_suspend_noirq(pm_message_t state);
 extern int dpm_suspend_start(pm_message_t state);
+
+struct timeval;
+extern int pm_time_elapsed(struct timeval *start, struct timeval *stop);
 
 extern void __suspend_report_result(const char *function, void *fn, int ret);
 
