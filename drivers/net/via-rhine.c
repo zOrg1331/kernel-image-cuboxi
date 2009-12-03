@@ -1150,7 +1150,7 @@ static int rhine_open(struct net_device *dev)
 	void __iomem *ioaddr = rp->base;
 	int rc;
 
-	rc = request_irq(rp->pdev->irq, &rhine_interrupt, IRQF_SHARED, dev->name,
+	rc = request_irq(rp->pdev->irq, rhine_interrupt, IRQF_SHARED, dev->name,
 			dev);
 	if (rc)
 		return rc;
@@ -1484,15 +1484,15 @@ static int rhine_rx(struct net_device *dev, int limit)
 				}
 			}
 		} else {
-			struct sk_buff *skb;
+			struct sk_buff *skb = NULL;
 			/* Length should omit the CRC */
 			int pkt_len = data_size - 4;
 
 			/* Check if the packet is long enough to accept without
 			   copying to a minimally-sized skbuff. */
-			if (pkt_len < rx_copybreak &&
-				(skb = netdev_alloc_skb(dev, pkt_len + NET_IP_ALIGN)) != NULL) {
-				skb_reserve(skb, NET_IP_ALIGN);	/* 16 byte align the IP header */
+			if (pkt_len < rx_copybreak)
+				skb = netdev_alloc_skb_ip_align(dev, pkt_len);
+			if (skb) {
 				pci_dma_sync_single_for_cpu(rp->pdev,
 							    rp->rx_skbuff_dma[entry],
 							    rp->rx_buf_sz,
