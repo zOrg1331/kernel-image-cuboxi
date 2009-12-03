@@ -1,0 +1,105 @@
+Importing driver-core.current based on 2.6.32-rc8
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.32-rc8-git4
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 2127816366e0ffbc1426fa69e7b9b2bebd2e2288
+HEAD is now at 2127816 Merge git://git.kernel.org/pub/scm/linux/kernel/git/gregkh/staging-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-chips-move-ds1682-to-drivers-misc.patch
+i2c-powermac-01-multiple-msg-not-supported.patch
+i2c-powermac-02-refactor-xfer.patch
+i2c-powermac-03-report-errors.patch
+i2c-powermac-04-include-adapter-in-bus.patch
+i2c-powermac-06-no-temp-buffer-for-name.patch
+i2c-voodoo3-delete.patch
+i2c-prevent-priority-inversion-on-top-of-bus-lock.patch
+i2c-no-I2C_M_REV_DIR_ADDR.patch
+i2c-add-missing-devinit.patch
+i2c-core-01-drop-obsolete-force-module-parameters.patch
+i2c-core-02-detect-drop-kind-parameter.patch
+misc-ics932s401-cleanup-detect.patch
+i2c-remove-big-kernel-lock-from-i2cdev_open.patch
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+i2c-i801-retry-on-lost-arbitration.patch
+i2c-core-refactor-for_each-callbacks.patch
+i2c-stub-01-implement-i2c-block-access.patch
+i2c-stub-02-allow-functionality-override.patch
+i2c-stub-03-update-documentation.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 20c8432...1fcdf0d master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-rc8-git4
+$ cd ../quilt-tmp
+$ git reset --hard 2127816366e0ffbc1426fa69e7b9b2bebd2e2288
+HEAD is now at 2127816 Merge git://git.kernel.org/pub/scm/linux/kernel/git/gregkh/staging-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-documentation-clarify-autopwm-interface.patch
+hwmon-more-files-in-maintainers.patch
+hwmon-s3c-hwmon-fix-build-error.patch
+hwmon-it87-02-check-VID-pins-availability.patch
+hwmon-it87-03-fan2-fan3-may-be-missing.patch
+hwmon-w83627hf-drop-force_addr.patch
+hwmon-w83627hf-no-sio-globals.patch
+hwmon-lm73-new-driver.patch
+hwmon-adm1021-cleanup-detect.patch
+hwmon-adm1025-cleanup-detect.patch
+hwmon-lm77-cleanup-detect.patch
+hwmon-lm83-cleanup-detect.patch
+hwmon-lm85-cleanup-detect.patch
+hwmon-lm90-cleanup-detect.patch
+hwmon-tmp401-tmp421-cleanup-detect.patch
+hwmon-w83781d-cleanup-detect.patch
+hwmon-w83791d-cleanup-detect.patch
+hwmon-w83792d-cleanup-detect.patch
+hwmon-w83l785ts-cleanup-detect.patch
+hwmon-cleanup-detect-functions.patch
+hwmon-w83791d-remove-experimental-dependency.patch
+hwmon-add-freescale-mc13783-adc-driver.patch
+hwmon-thmc50-stop-using-I2C_CLIENT_MODULE_PARM.patch
+hwmon-f71882fg-01-sysfs-create-cleanup1.patch
+hwmon-f71882fg-02-sysfs-create-cleanup2.patch
+hwmon-f71882fg-03-fix-sysfs-file-removal.patch
+hwmon-f71882fg-04-add-f71889fg-support.patch
+hwmon-adt7475-04-add-adt7473-support.patch
+hwmon-adt7475-05-new-documentation.patch
+hwmon-adt7475-06-add-pwm_use_point2_pwm_at_crit.patch
+hwmon-adt7475-07-rework-voltage-inputs-handling.patch
+hwmon-adt7475-08-missing-static.patch
+hwmon-adt7475-09-improve-detection.patch
+hwmon-adt7475-10-add-ADT7490-support.patch
+hwmon-adt7475-11-function-for-file-removal.patch
+hwmon-adt7475-12-handle-alternative-pin-functions.patch
+hwmon-adt7475-13-print-device-info.patch
+hwmon-adt7475-14-support-attn-bypassing.patch
+hwmon-adt7475-15-add-ADT7476-support.patch
+hwmon-adt7475-16-be-the-maintainer.patch
+hwmon-adt7475-17-add-VID-support.patch
+hwmon-smsc47m1-split-io-port-requests.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 8df5d42...8c70b13 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.32-rc6
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc7-193-g66b00a7
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.32-rc8-11-ga8a8a66
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
