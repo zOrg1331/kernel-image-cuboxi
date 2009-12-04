@@ -1,0 +1,150 @@
+Importing driver-core.current based on 2.6.32-rc8
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.32-rc8-git4
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.32
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 22763c5cf3690a681551162c15d34d935308c8d7
+HEAD is now at 22763c5 Linux 2.6.32
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-documentation-clarify-autopwm-interface.patch
+hwmon-more-files-in-maintainers.patch
+hwmon-s3c-hwmon-fix-build-error.patch
+hwmon-it87-02-check-VID-pins-availability.patch
+hwmon-it87-03-fan2-fan3-may-be-missing.patch
+hwmon-w83627hf-drop-force_addr.patch
+hwmon-w83627hf-no-sio-globals.patch
+hwmon-lm73-new-driver.patch
+hwmon-adm1021-cleanup-detect.patch
+hwmon-adm1025-cleanup-detect.patch
+hwmon-lm77-cleanup-detect.patch
+hwmon-lm83-cleanup-detect.patch
+hwmon-lm85-cleanup-detect.patch
+hwmon-lm90-cleanup-detect.patch
+hwmon-tmp401-tmp421-cleanup-detect.patch
+hwmon-w83781d-cleanup-detect.patch
+hwmon-w83791d-cleanup-detect.patch
+hwmon-w83792d-cleanup-detect.patch
+hwmon-w83l785ts-cleanup-detect.patch
+hwmon-cleanup-detect-functions.patch
+hwmon-w83791d-remove-experimental-dependency.patch
+hwmon-add-freescale-mc13783-adc-driver.patch
+hwmon-thmc50-stop-using-I2C_CLIENT_MODULE_PARM.patch
+hwmon-f71882fg-01-sysfs-create-cleanup1.patch
+hwmon-f71882fg-02-sysfs-create-cleanup2.patch
+hwmon-f71882fg-03-fix-sysfs-file-removal.patch
+hwmon-f71882fg-04-add-f71889fg-support.patch
+hwmon-adt7475-04-add-adt7473-support.patch
+hwmon-adt7475-05-new-documentation.patch
+hwmon-adt7475-06-add-pwm_use_point2_pwm_at_crit.patch
+hwmon-adt7475-07-rework-voltage-inputs-handling.patch
+hwmon-adt7475-08-missing-static.patch
+hwmon-adt7475-09-improve-detection.patch
+hwmon-adt7475-10-add-ADT7490-support.patch
+hwmon-adt7475-11-function-for-file-removal.patch
+hwmon-adt7475-12-handle-alternative-pin-functions.patch
+hwmon-adt7475-13-print-device-info.patch
+hwmon-adt7475-14-support-attn-bypassing.patch
+hwmon-adt7475-15-add-ADT7476-support.patch
+hwmon-adt7475-16-be-the-maintainer.patch
+hwmon-adt7475-17-add-VID-support.patch
+hwmon-smsc47m1-split-io-port-requests.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 8c70b13...05c27c6 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.32-rc6
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-rc7-193-g66b00a7
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.32
+$ cd ../quilt-tmp
+$ git reset --hard 22763c5cf3690a681551162c15d34d935308c8d7
+HEAD is now at 22763c5 Linux 2.6.32
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-avoid-_hash_lock-deadlock.patch
+dm-exception-store-free-tmp_store-on-persistent-flag-error.patch
+dm-sysfs-add-empty-release-function-to-avoid-debug-warning.patch
+dm-snapshot-only-take-lock-for-statustype-info-not-table.patch
+dm-snapshot-cope-with-chunk-size-larger-than-origin.patch
+dm-crypt-make-wipe-message-also-wipe-tfm-key.patch
+dm-crypt-move-private-iv-fields-to-structs.patch
+dm-crypt-restructure-essiv-error-path.patch
+dm-crypt-separate-essiv-allocation-from-initialisation.patch
+dm-crypt-make-wipe-message-also-wipe-essiv-key.patch
+dm-io-use-slab-for-struct-io.patch
+dm-io-remove-extra-bi_io_vec-region-hack.patch
+dm-raid1-support-flush.patch
+dm-raid1-split-touched-state-into-two.patch
+dm-log-add-flush_header-function.patch
+dm-log-introduce-flush_failed-variable.patch
+dm-log-add-flush-callback-fn.patch
+dm-log-use-flush-callback-fn.patch
+dm-raid1-implement-mirror_flush.patch
+dm-raid1-report-flush-errors-separately-in-status.patch
+dm-raid1-add-framework-to-hold-bios-during-suspend.patch
+dm-raid1-use-hold-framework-in-do_failures.patch
+dm-raid1-abstract-get_valid_mirror-function.patch
+dm-raid1-remove-bio_endio-from-dm_rh_mark_nosync.patch
+dm-raid1-hold-write-bios-when-errors-are-handled.patch
+dm-raid1-hold-all-write-bios-when-leg-fails.patch
+dm-raid1-explicitly-initialise-bio_lists.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+dm-snapshot-consolidate-insert-exception-functions.patch
+dm-snapshot-rename-dm_snap_exception-to-dm_exception.patch
+dm-snapshot-rename-exception_table-to-dm_exception_table.patch
+dm-snapshot-rename-exception-functions.patch
+dm-snapshot-add-allocated-metadata-to-snapshot-status.patch
+dm-snapshot-move-cow-ref-from-exception-store-to-snap-core.patch
+dm-snapshot-track-suspended-state-in-target.patch
+dm-kcopyd-accept-zero-size-jobs.patch
+dm-abstract-dm_in_flight-function.patch
+dm-use-clone-in-map_request-function.patch
+dm-pass-gfp_mask-to-alloc_rq_tio.patch
+dm-abstract-clone_rq.patch
+dm-simplify-request-based-suspend.patch
+dm-use-md-pending-for-in-flight-IO-counting.patch
+dm-refactor-request-based-completion-functions.patch
+dm-move-dm_end_request.patch
+dm-add-request-based-barrier-support.patch
+dm-rename-dm_get_table-to-dm_get_live_table.patch
+dm-mpath-flush-workqueues-before-suspend-completes.patch
+dm-add-dm_deleting_md-function.patch
+dm-ioctl-forbid-messages-to-devices-being-deleted.patch
+dm-mpath-add-mutex-to-synchronize-adding-and-flushing-work.patch
+dm-mpath-prevent-io-from-work-queue-while-suspended.patch
+dm-io-handle-empty-barriers.patch
+dm-ioctl-retrieve-status-from-inactive-table.patch
+dm-bind-new-table-before-destroying-old.patch
+dm-keep-old-table-until-after-resume-succeeded.patch
+dm-snapshot-allow-live-exception-store-handover-between-tables.patch
+dm-trace-request-based-remapping.patch
+dm-crypt-add-plain64-iv.patch
+dm-swap-target-postsuspend-call-and-setting-suspended-flag.patch
+dm-rename-dm_suspended-to-dm_suspended_md.patch
+dm-export-suspended-state-to-targets.patch
+dm-mpath-reject-messages-when-device-is-suspended.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + 5964463...92fa626 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
