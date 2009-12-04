@@ -35,11 +35,14 @@ int pci_enable_pcie_error_reporting(struct pci_dev *dev)
 	u16 reg16 = 0;
 	int pos;
 
+	if (dev->aer_firmware_first)
+		return -EIO;
+
 	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR);
 	if (!pos)
 		return -EIO;
 
-	pos = pci_find_capability(dev, PCI_CAP_ID_EXP);
+	pos = pci_pcie_cap(dev);
 	if (!pos)
 		return -EIO;
 
@@ -60,7 +63,10 @@ int pci_disable_pcie_error_reporting(struct pci_dev *dev)
 	u16 reg16 = 0;
 	int pos;
 
-	pos = pci_find_capability(dev, PCI_CAP_ID_EXP);
+	if (dev->aer_firmware_first)
+		return -EIO;
+
+	pos = pci_pcie_cap(dev);
 	if (!pos)
 		return -EIO;
 
@@ -218,7 +224,7 @@ static int find_device_iter(struct pci_dev *dev, void *data)
 	 */
 	if (atomic_read(&dev->enable_cnt) == 0)
 		return 0;
-	pos = pci_find_capability(dev, PCI_CAP_ID_EXP);
+	pos = pci_pcie_cap(dev);
 	if (!pos)
 		return 0;
 	/* Check if AER is enabled */
@@ -612,7 +618,7 @@ void aer_enable_rootport(struct aer_rpc *rpc)
 	u16 reg16;
 	u32 reg32;
 
-	pos = pci_find_capability(pdev, PCI_CAP_ID_EXP);
+	pos = pci_pcie_cap(pdev);
 	/* Clear PCIE Capability's Device Status */
 	pci_read_config_word(pdev, pos+PCI_EXP_DEVSTA, &reg16);
 	pci_write_config_word(pdev, pos+PCI_EXP_DEVSTA, reg16);
@@ -874,8 +880,22 @@ void aer_delete_rootport(struct aer_rpc *rpc)
  */
 int aer_init(struct pcie_device *dev)
 {
-	if (aer_osc_setup(dev) && !forceload)
-		return -ENXIO;
+	if (dev->port->aer_firmware_first) {
+		dev_printk(KERN_DEBUG, &dev->device,
+			   "PCIe errors handled by platform firmware.\n");
+		goto out;
+	}
+
+	if (aer_osc_setup(dev))
+		goto out;
 
 	return 0;
+out:
+	if (forceload) {
+		dev_printk(KERN_DEBUG, &dev->device,
+			   "aerdrv forceload requested.\n");
+		dev->port->aer_firmware_first = 0;
+		return 0;
+	}
+	return -ENXIO;
 }
