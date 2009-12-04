@@ -4314,7 +4314,7 @@ static int deny_bitmap_write_access(struct file * file)
 	return 0;
 }
 
-static void restore_bitmap_write_access(struct file *file)
+void restore_bitmap_write_access(struct file *file)
 {
 	struct inode *inode = file->f_mapping->host;
 
@@ -6629,7 +6629,7 @@ void md_check_recovery(mddev_t *mddev)
 
 
 	if (mddev->bitmap)
-		bitmap_daemon_work(mddev->bitmap);
+		bitmap_daemon_work(mddev);
 
 	if (mddev->ro)
 		return;
