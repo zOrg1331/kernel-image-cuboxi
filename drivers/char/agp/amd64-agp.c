@@ -764,12 +764,14 @@ int __init agp_amd64_init(void)
 	return err;
 }
 
+#ifndef CONFIG_GART_IOMMU
 static void __exit agp_amd64_cleanup(void)
 {
 	if (aperture_resource)
 		release_resource(aperture_resource);
 	pci_unregister_driver(&agp_amd64_pci_driver);
 }
+#endif
 
 /* On AMD64 the PCI driver needs to initialize this driver early
    for the IOMMU, so it has to be called via a backdoor. */
