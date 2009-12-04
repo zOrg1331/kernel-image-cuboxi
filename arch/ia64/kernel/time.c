@@ -210,8 +210,8 @@ timer_interrupt (int irq, void *dev_id)
 		/*
 		 * Allow IPIs to interrupt the timer loop.
 		 */
-		local_irq_enable();
-		local_irq_disable();
+		raw_local_irq_enable();
+		raw_local_irq_disable();
 	}
 
 skip_process_time_accounting:

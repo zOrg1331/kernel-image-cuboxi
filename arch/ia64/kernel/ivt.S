@@ -855,6 +855,11 @@ ENTRY(break_fault)
 	mov rp=r3				// I0   set the real return addr
 (p10)	br.cond.spnt.many ia64_ret_from_syscall	// B    return if bad call-frame or r15 is a NaT
 
+#ifdef TRACE_IRQFLAGS_SUPPORT
+	;;
+(p15)	br.call.sptk.many rp=trace_hardirqs_on
+	;;
+#endif
 	SSM_PSR_I(p15, p15, r16)		// M2   restore psr.i
 (p14)	br.call.sptk.many b6=b6			// B    invoke syscall-handker (ignore return addr)
 	br.cond.spnt.many ia64_trace_syscall	// B	do syscall-tracing thingamagic
@@ -1555,6 +1560,11 @@ ENTRY(page_fault)
 	MOV_FROM_ISR(out1)
 	SSM_PSR_IC_AND_DEFAULT_BITS_AND_SRLZ_I(r14, r3)
 	adds r3=8,r2				// set up second base pointer
+#ifdef TRACE_IRQFLAGS_SUPPORT
+	;;
+(p15)	br.call.sptk.many rp=trace_hardirqs_on
+	;;
+#endif
 	SSM_PSR_I(p15, p15, r14)		// restore psr.i
 	movl r14=ia64_leave_kernel
 	;;
@@ -1582,6 +1592,11 @@ ENTRY(non_syscall)
 
 	SSM_PSR_IC_AND_DEFAULT_BITS_AND_SRLZ_I(r15, r24)
 					// guarantee that interruption collection is on
+#ifdef TRACE_IRQFLAGS_SUPPORT
+	;;
+(p15)	br.call.sptk.many rp=trace_hardirqs_on
+	;;
+#endif
 	SSM_PSR_I(p15, p15, r15)	// restore psr.i
 	movl r15=ia64_leave_kernel
 	;;
@@ -1630,6 +1645,11 @@ ENTRY(dispatch_unaligned_handler)
 
 	SSM_PSR_IC_AND_DEFAULT_BITS_AND_SRLZ_I(r3, r24)
 						// guarantee that interruption collection is on
+#ifdef TRACE_IRQFLAGS_SUPPORT
+	;;
+(p15)	br.call.sptk.many rp=trace_hardirqs_on
+	;;
+#endif
 	SSM_PSR_I(p15, p15, r3)			// restore psr.i
 	adds r3=8,r2				// set up second base pointer
 	;;
@@ -1665,6 +1685,11 @@ ENTRY(dispatch_to_fault_handler)
 						// guarantee that interruption collection is on
 	mov out0=r15
 	;;
+#ifdef TRACE_IRQFLAGS_SUPPORT
+	;;
+(p15)	br.call.sptk.many rp=trace_hardirqs_on
+	;;
+#endif
 	SSM_PSR_I(p15, p15, r3)			// restore psr.i
 	adds r3=8,r2				// set up second base pointer for SAVE_REST
 	;;
@@ -1733,7 +1758,11 @@ ENTRY(dispatch_to_ia32_handler)
 	MOV_FROM_ISR(r14)
 	SSM_PSR_IC_AND_DEFAULT_BITS_AND_SRLZ_I(r3, r24)
 				// guarantee that interruption collection is on
+#ifdef TRACE_IRQFLAGS_SUPPORT
 	;;
+(p15)	br.call.sptk.many rp=trace_hardirqs_on
+	;;
+#endif
 	SSM_PSR_I(p15, p15, r3)
 	adds r3=8,r2		// Base pointer for SAVE_REST
 	;;

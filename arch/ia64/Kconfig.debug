@@ -2,6 +2,9 @@ menu "Kernel hacking"
 
 source "lib/Kconfig.debug"
 
+config TRACE_IRQFLAGS_SUPPORT
+	def_bool y
+
 choice
 	prompt "Physical memory granularity"
 	default IA64_GRANULE_64MB
