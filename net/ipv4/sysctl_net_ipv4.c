@@ -714,6 +714,14 @@ static struct ctl_table ipv4_table[] = {
 	},
 	{
 		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "tcp_cookie_size",
+		.data		= &sysctl_tcp_cookie_size,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "udp_mem",
 		.data		= &sysctl_udp_mem,
 		.maxlen		= sizeof(sysctl_udp_mem),
@@ -818,7 +826,7 @@ static __net_init int ipv4_sysctl_init_net(struct net *net)
 	struct ctl_table *table;
 
 	table = ipv4_net_table;
-	if (net != &init_net) {
+	if (!net_eq(net, &init_net)) {
 		table = kmemdup(table, sizeof(ipv4_net_table), GFP_KERNEL);
 		if (table == NULL)
 			goto err_alloc;
@@ -849,7 +857,7 @@ static __net_init int ipv4_sysctl_init_net(struct net *net)
 	return 0;
 
 err_reg:
-	if (net != &init_net)
+	if (!net_eq(net, &init_net))
 		kfree(table);
 err_alloc:
 	return -ENOMEM;
