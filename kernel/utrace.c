@@ -1381,11 +1381,24 @@ static inline void finish_callback_report(struct task_struct *task,
 					  struct utrace_engine *engine,
 					  enum utrace_resume_action action)
 {
+	if (action == UTRACE_DETACH) {
+		/*
+		 * By holding the lock here, we make sure that
+		 * utrace_barrier() (really get_utrace_lock()) sees the
+		 * effect of this detach.  Otherwise utrace_barrier() could
+		 * return 0 after this callback had returned UTRACE_DETACH.
+		 * This way, a 0 return is an unambiguous indicator that any
+		 * callback returning UTRACE_DETACH has indeed caused detach.
+		 */
+		spin_lock(&utrace->lock);
+		engine->ops = &utrace_detached_ops;
+		spin_unlock(&utrace->lock);
+	}
+
 	/*
 	 * If utrace_control() was used, treat that like UTRACE_DETACH here.
 	 */
-	if (action == UTRACE_DETACH || engine->ops == &utrace_detached_ops) {
-		engine->ops = &utrace_detached_ops;
+	if (engine->ops == &utrace_detached_ops) {
 		report->detaches = true;
 		return;
 	}
