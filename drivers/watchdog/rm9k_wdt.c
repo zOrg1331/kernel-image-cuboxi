@@ -360,7 +360,7 @@ static int __devinit wdt_gpi_probe(struct platform_device *pdv)
 	if (unlikely(!rr || !ri || !rc))
 		return -ENXIO;
 
-	wd_regs = ioremap_nocache(rr->start, rr->end + 1 - rr->start);
+	wd_regs = ioremap_nocache(rr->start, resource_size(rr));
 	if (unlikely(!wd_regs))
 		return -ENOMEM;
 	wd_irq = ri->start;
