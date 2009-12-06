@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.30
-Release: alt14
+Release: alt15
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -340,6 +340,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Sun Dec 06 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt15
+- 2.6.30.10
+
 * Thu Nov 05 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.30-alt14
 - fixed pipe.c null pointer dereference
 
