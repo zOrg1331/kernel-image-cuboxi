@@ -1228,7 +1228,6 @@ int nfs_writeback_done(struct rpc_task *task, struct nfs_write_data *data)
 		/* Can't do anything about it except throw an error. */
 		task->tk_status = -EIO;
 	}
-	nfs4_sequence_free_slot(server->nfs_client, &data->res.seq_res);
 	return 0;
 }
 
