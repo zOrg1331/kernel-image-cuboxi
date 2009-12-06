@@ -14,7 +14,6 @@
 #include <linux/ioprio.h>
 #include <linux/blktrace_api.h>
 #include "blk-cgroup.h"
-#include "cfq-iosched.h"
 
 /*
  * tunables
@@ -288,6 +287,7 @@ struct cfq_data {
 
 	/* List of cfq groups being managed on this device*/
 	struct hlist_head cfqg_list;
+	struct rcu_head rcu;
 };
 
 static struct cfq_group *cfq_get_next_cfqg(struct cfq_data *cfqd);
@@ -961,7 +961,7 @@ cfq_find_alloc_cfqg(struct cfq_data *cfqd, struct cgroup *cgroup, int create)
 	unsigned int major, minor;
 
 	/* Do we need to take this reference */
-	if (!css_tryget(&blkcg->css))
+	if (!blkiocg_css_tryget(blkcg))
 		return NULL;;
 
 	cfqg = cfqg_of_blkg(blkiocg_lookup_group(blkcg, key));
@@ -994,7 +994,7 @@ cfq_find_alloc_cfqg(struct cfq_data *cfqd, struct cgroup *cgroup, int create)
 	hlist_add_head(&cfqg->cfqd_node, &cfqd->cfqg_list);
 
 done:
-	css_put(&blkcg->css);
+	blkiocg_css_put(blkcg);
 	return cfqg;
 }
 
@@ -3602,6 +3602,11 @@ static void cfq_put_async_queues(struct cfq_data *cfqd)
 		cfq_put_queue(cfqd->async_idle_cfqq);
 }
 
+static void cfq_cfqd_free(struct rcu_head *head)
+{
+	kfree(container_of(head, struct cfq_data, rcu));
+}
+
 static void cfq_exit_queue(struct elevator_queue *e)
 {
 	struct cfq_data *cfqd = e->elevator_data;
@@ -3631,8 +3636,7 @@ static void cfq_exit_queue(struct elevator_queue *e)
 	cfq_shutdown_timer_wq(cfqd);
 
 	/* Wait for cfqg->blkg->key accessors to exit their grace periods. */
-	synchronize_rcu();
-	kfree(cfqd);
+	call_rcu(&cfqd->rcu, cfq_cfqd_free);
 }
 
 static void *cfq_init_queue(struct request_queue *q)
@@ -3707,6 +3711,7 @@ static void *cfq_init_queue(struct request_queue *q)
 	cfqd->cfq_group_isolation = 0;
 	cfqd->hw_tag = -1;
 	cfqd->last_end_sync_rq = jiffies;
+	INIT_RCU_HEAD(&cfqd->rcu);
 	return cfqd;
 }
 
@@ -3855,6 +3860,17 @@ static struct elevator_type iosched_cfq = {
 	.elevator_owner =	THIS_MODULE,
 };
 
+#ifdef CONFIG_CFQ_GROUP_IOSCHED
+static struct blkio_policy_type blkio_policy_cfq = {
+	.ops = {
+		.blkio_unlink_group_fn =	cfq_unlink_blkio_group,
+		.blkio_update_group_weight_fn =	cfq_update_blkio_group_weight,
+	},
+};
+#else
+static struct blkio_policy_type blkio_policy_cfq;
+#endif
+
 static int __init cfq_init(void)
 {
 	/*
@@ -3869,6 +3885,7 @@ static int __init cfq_init(void)
 		return -ENOMEM;
 
 	elv_register(&iosched_cfq);
+	blkio_policy_register(&blkio_policy_cfq);
 
 	return 0;
 }
@@ -3876,6 +3893,7 @@ static int __init cfq_init(void)
 static void __exit cfq_exit(void)
 {
 	DECLARE_COMPLETION_ONSTACK(all_gone);
+	blkio_policy_unregister(&blkio_policy_cfq);
 	elv_unregister(&iosched_cfq);
 	ioc_gone = &all_gone;
 	/* ioc_gone's update must be visible before reading ioc_count */
