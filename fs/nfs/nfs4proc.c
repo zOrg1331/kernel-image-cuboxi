@@ -318,25 +318,25 @@ static void renew_lease(const struct nfs_server *server, unsigned long timestamp
  * so we need to scan down from highest_used_slotid to 0 looking for the now
  * highest slotid in use.
  * If none found, highest_used_slotid is set to -1.
+ *
+ * Must be called while holding tbl->slot_tbl_lock
  */
 static void
 nfs4_free_slot(struct nfs4_slot_table *tbl, u8 free_slotid)
 {
 	int slotid = free_slotid;
 
-	spin_lock(&tbl->slot_tbl_lock);
 	/* clear used bit in bitmap */
 	__clear_bit(slotid, tbl->used_slots);
 
 	/* update highest_used_slotid when it is freed */
 	if (slotid == tbl->highest_used_slotid) {
 		slotid = find_last_bit(tbl->used_slots, tbl->max_slots);
-		if (slotid >= 0 && slotid < tbl->max_slots)
+		if (slotid < tbl->max_slots)
 			tbl->highest_used_slotid = slotid;
 		else
 			tbl->highest_used_slotid = -1;
 	}
-	spin_unlock(&tbl->slot_tbl_lock);
 	dprintk("%s: free_slotid %u highest_used_slotid %d\n", __func__,
 		free_slotid, tbl->highest_used_slotid);
 }
@@ -351,22 +351,22 @@ static void nfs41_sequence_free_slot(const struct nfs_client *clp,
 		/* just wake up the next guy waiting since
 		 * we may have not consumed a slot after all */
 		dprintk("%s: No slot\n", __func__);
-	} else {
-		nfs4_free_slot(tbl, res->sr_slotid);
-		res->sr_slotid = NFS4_MAX_SLOT_TABLE;
+		return;
 	}
+
+	spin_lock(&tbl->slot_tbl_lock);
+	nfs4_free_slot(tbl, res->sr_slotid);
 
 	/* Signal state manager thread if session is drained */
 	if (test_bit(NFS4CLNT_SESSION_DRAINING, &clp->cl_state)) {
-		spin_lock(&tbl->slot_tbl_lock);
 		if (tbl->highest_used_slotid == -1) {
 			dprintk("%s COMPLETE: Session Drained\n", __func__);
 			complete(&clp->cl_session->complete);
 		}
-		spin_unlock(&tbl->slot_tbl_lock);
-	} else {
+	} else
 		rpc_wake_up_next(&tbl->slot_tbl_waitq);
-	}
+	spin_unlock(&tbl->slot_tbl_lock);
+	res->sr_slotid = NFS4_MAX_SLOT_TABLE;
 }
 
 static void nfs41_sequence_done(struct nfs_client *clp,
@@ -468,10 +468,9 @@ static int nfs41_setup_sequence(struct nfs4_session *session,
 		 * The state manager will wait until the slot table is empty.
 		 * Schedule the reset thread
 		 */
-		dprintk("%s Schedule Session Reset\n", __func__);
 		rpc_sleep_on(&tbl->slot_tbl_waitq, task, NULL);
-		nfs4_schedule_state_manager(session->clp);
 		spin_unlock(&tbl->slot_tbl_lock);
+		dprintk("%s Schedule Session Reset\n", __func__);
 		return -EAGAIN;
 	}
 
@@ -4468,7 +4467,6 @@ static int nfs4_reset_slot_table(struct nfs4_slot_table *tbl, int max_slots,
 	spin_lock(&tbl->slot_tbl_lock);
 	for (i = 0; i < max_slots; ++i)
 		tbl->slots[i].seq_nr = ivalue;
-	tbl->highest_used_slotid = -1;
 	spin_unlock(&tbl->slot_tbl_lock);
 	dprintk("%s: tbl=%p slots=%p max_slots=%d\n", __func__,
 		tbl, tbl->slots, tbl->max_slots);
@@ -4490,7 +4488,6 @@ static int nfs4_reset_slot_tables(struct nfs4_session *session)
 			1);
 	if (status)
 		return status;
-	init_completion(&session->complete);
 
 	status = nfs4_reset_slot_table(&session->bc_slot_table,
 			session->bc_attrs.max_reqs,
@@ -4519,7 +4516,6 @@ static void nfs4_destroy_slot_tables(struct nfs4_session *session)
 static int nfs4_init_slot_table(struct nfs4_slot_table *tbl,
 		int max_slots, int ivalue)
 {
-	int i;
 	struct nfs4_slot *slot;
 	int ret = -ENOMEM;
 
@@ -4530,18 +4526,9 @@ static int nfs4_init_slot_table(struct nfs4_slot_table *tbl,
 	slot = kcalloc(max_slots, sizeof(struct nfs4_slot), GFP_KERNEL);
 	if (!slot)
 		goto out;
-	for (i = 0; i < max_slots; ++i)
-		slot[i].seq_nr = ivalue;
 	ret = 0;
 
 	spin_lock(&tbl->slot_tbl_lock);
-	if (tbl->slots != NULL) {
-		spin_unlock(&tbl->slot_tbl_lock);
-		dprintk("%s: slot table already initialized. tbl=%p slots=%p\n",
-			__func__, tbl, tbl->slots);
-		WARN_ON(1);
-		goto out_free;
-	}
 	tbl->max_slots = max_slots;
 	tbl->slots = slot;
 	tbl->highest_used_slotid = -1;  /* no slot is currently used */
@@ -4551,10 +4538,6 @@ static int nfs4_init_slot_table(struct nfs4_slot_table *tbl,
 out:
 	dprintk("<-- %s: return %d\n", __func__, ret);
 	return ret;
-
-out_free:
-	kfree(slot);
-	goto out;
 }
 
 /*
@@ -4562,17 +4545,24 @@ out_free:
  */
 static int nfs4_init_slot_tables(struct nfs4_session *session)
 {
-	int status;
+	struct nfs4_slot_table *tbl;
+	int status = 0;
 
-	status = nfs4_init_slot_table(&session->fc_slot_table,
-			session->fc_attrs.max_reqs, 1);
-	if (status)
-		return status;
+	tbl = &session->fc_slot_table;
+	if (tbl->slots == NULL) {
+		status = nfs4_init_slot_table(tbl,
+				session->fc_attrs.max_reqs, 1);
+		if (status)
+			return status;
+	}
 
-	status = nfs4_init_slot_table(&session->bc_slot_table,
-			session->bc_attrs.max_reqs, 0);
-	if (status)
-		nfs4_destroy_slot_tables(session);
+	tbl = &session->bc_slot_table;
+	if (tbl->slots == NULL) {
+		status = nfs4_init_slot_table(tbl,
+				session->bc_attrs.max_reqs, 0);
+		if (status)
+			nfs4_destroy_slot_tables(session);
+	}
 
 	return status;
 }
@@ -4751,7 +4741,7 @@ static int _nfs4_proc_create_session(struct nfs_client *clp)
  * It is the responsibility of the caller to verify the session is
  * expired before calling this routine.
  */
-int nfs4_proc_create_session(struct nfs_client *clp, int reset)
+int nfs4_proc_create_session(struct nfs_client *clp)
 {
 	int status;
 	unsigned *ptr;
@@ -4764,22 +4754,19 @@ int nfs4_proc_create_session(struct nfs_client *clp, int reset)
 	if (status)
 		goto out;
 
-	/* Init or reset the fore channel */
-	if (reset)
-		status = nfs4_reset_slot_tables(session);
-	else
-		status = nfs4_init_slot_tables(session);
-	dprintk("fore channel slot table initialization returned %d\n", status);
+	/* Init and reset the fore channel */
+	status = nfs4_init_slot_tables(session);
+	dprintk("slot table initialization returned %d\n", status);
+	if (status)
+		goto out;
+	status = nfs4_reset_slot_tables(session);
+	dprintk("slot table reset returned %d\n", status);
 	if (status)
 		goto out;
 
 	ptr = (unsigned *)&session->sess_id.data[0];
 	dprintk("%s client>seqid %d sessionid %u:%u:%u:%u\n", __func__,
 		clp->cl_seqid, ptr[0], ptr[1], ptr[2], ptr[3]);
-
-	if (reset)
-		/* Lease time is aleady set */
-		goto out;
 
 	/* Get the lease time */
 	status = nfs4_proc_get_lease_time(clp, &fsinfo);
@@ -4788,7 +4775,6 @@ int nfs4_proc_create_session(struct nfs_client *clp, int reset)
 		spin_lock(&clp->cl_lock);
 		clp->cl_lease_time = fsinfo.lease_time * HZ;
 		clp->cl_last_renewal = jiffies;
-		clear_bit(NFS4CLNT_LEASE_EXPIRED, &clp->cl_state);
 		spin_unlock(&clp->cl_lock);
 
 		nfs4_schedule_state_renewal(clp);
