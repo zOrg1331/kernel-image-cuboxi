@@ -197,9 +197,15 @@ extern const u32 nfs41_maxwrite_overhead;
 #endif
 
 /* nfs4proc.c */
-extern void nfs4_restart_rpc(struct rpc_task *, const struct nfs_client *);
 #ifdef CONFIG_NFS_V4
+extern void nfs4_restart_rpc(struct rpc_task *, const struct nfs_client *);
 extern struct rpc_procinfo nfs4_procedures[];
+#else
+static inline void nfs4_restart_rpc(struct rpc_task *task,
+		const struct nfs_client *client)
+{
+	rpc_restart_call(task);
+}
 #endif
 
 /* proc.c */
