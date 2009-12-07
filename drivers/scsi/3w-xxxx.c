@@ -521,8 +521,12 @@ static ssize_t tw_show_stats(struct device *dev, struct device_attribute *attr,
 } /* End tw_show_stats() */
 
 /* This function will set a devices queue depth */
-static int tw_change_queue_depth(struct scsi_device *sdev, int queue_depth)
+static int tw_change_queue_depth(struct scsi_device *sdev, int queue_depth,
+				 int reason)
 {
+	if (reason != SCSI_QDEPTH_DEFAULT)
+		return -EOPNOTSUPP;
+
 	if (queue_depth > TW_Q_LENGTH-2)
 		queue_depth = TW_Q_LENGTH-2;
 	scsi_adjust_queue_depth(sdev, MSG_ORDERED_TAG, queue_depth);
@@ -2321,7 +2325,7 @@ static int __devinit tw_probe(struct pci_dev *pdev, const struct pci_device_id *
 	host->max_cmd_len = TW_MAX_CDB_LEN;
 
 	/* Luns and channels aren't supported by adapter */
-	host->max_lun = 0;
+	host->max_lun = 1;
 	host->max_channel = 0;
 
 	/* Register the card with the kernel SCSI layer */
