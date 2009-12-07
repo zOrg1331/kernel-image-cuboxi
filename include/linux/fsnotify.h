@@ -20,35 +20,38 @@
  * fsnotify_d_instantiate - instantiate a dentry for inode
  * Called with dcache_lock held.
  */
-static inline void fsnotify_d_instantiate(struct dentry *entry,
+static inline void fsnotify_d_instantiate(struct dentry *dentry,
 						struct inode *inode)
 {
-	__fsnotify_d_instantiate(entry, inode);
+	__fsnotify_d_instantiate(dentry, inode);
 
-	inotify_d_instantiate(entry, inode);
+	inotify_d_instantiate(dentry, inode);
 }
 
 /* Notify this dentry's parent about a child's events. */
-static inline void fsnotify_parent(struct dentry *dentry, __u32 mask)
+static inline void fsnotify_parent(struct path *path, struct dentry *dentry, __u32 mask)
 {
-	__fsnotify_parent(dentry, mask);
+	if (!dentry)
+		dentry = path->dentry;
+
+	__fsnotify_parent(path, dentry, mask);
 
 	inotify_dentry_parent_queue_event(dentry, mask, 0, dentry->d_name.name);
 }
 
 /*
- * fsnotify_d_move - entry has been moved
- * Called with dcache_lock and entry->d_lock held.
+ * fsnotify_d_move - dentry has been moved
+ * Called with dcache_lock and dentry->d_lock held.
  */
-static inline void fsnotify_d_move(struct dentry *entry)
+static inline void fsnotify_d_move(struct dentry *dentry)
 {
 	/*
-	 * On move we need to update entry->d_flags to indicate if the new parent
-	 * cares about events from this entry.
+	 * On move we need to update dentry->d_flags to indicate if the new parent
+	 * cares about events from this dentry.
 	 */
-	__fsnotify_update_dcache_flags(entry);
+	__fsnotify_update_dcache_flags(dentry);
 
-	inotify_d_move(entry);
+	inotify_d_move(dentry);
 }
 
 /*
@@ -115,6 +118,14 @@ static inline void fsnotify_inode_delete(struct inode *inode)
 }
 
 /*
+ * fsnotify_vfsmount_delete - a vfsmount is being destroyed, clean up is needed
+ */
+static inline void fsnotify_vfsmount_delete(struct vfsmount *mnt)
+{
+	__fsnotify_vfsmount_delete(mnt);
+}
+
+/*
  * fsnotify_nameremove - a filename was removed from a directory
  */
 static inline void fsnotify_nameremove(struct dentry *dentry, int isdir)
@@ -124,7 +135,7 @@ static inline void fsnotify_nameremove(struct dentry *dentry, int isdir)
 	if (isdir)
 		mask |= FS_IN_ISDIR;
 
-	fsnotify_parent(dentry, mask);
+	fsnotify_parent(NULL, dentry, mask);
 }
 
 /*
@@ -183,9 +194,10 @@ static inline void fsnotify_mkdir(struct inode *inode, struct dentry *dentry)
 /*
  * fsnotify_access - file was read
  */
-static inline void fsnotify_access(struct dentry *dentry)
+static inline void fsnotify_access(struct file *file)
 {
-	struct inode *inode = dentry->d_inode;
+	struct path *path = &file->f_path;
+	struct inode *inode = path->dentry->d_inode;
 	__u32 mask = FS_ACCESS;
 
 	if (S_ISDIR(inode->i_mode))
@@ -193,16 +205,19 @@ static inline void fsnotify_access(struct dentry *dentry)
 
 	inotify_inode_queue_event(inode, mask, 0, NULL, NULL);
 
-	fsnotify_parent(dentry, mask);
-	fsnotify(inode, mask, inode, FSNOTIFY_EVENT_INODE, NULL, 0);
+	if (!(file->f_mode & FMODE_NONOTIFY)) {
+		fsnotify_parent(path, NULL, mask);
+		fsnotify(inode, mask, path, FSNOTIFY_EVENT_PATH, NULL, 0);
+	}
 }
 
 /*
  * fsnotify_modify - file was modified
  */
-static inline void fsnotify_modify(struct dentry *dentry)
+static inline void fsnotify_modify(struct file *file)
 {
-	struct inode *inode = dentry->d_inode;
+	struct path *path = &file->f_path;
+	struct inode *inode = path->dentry->d_inode;
 	__u32 mask = FS_MODIFY;
 
 	if (S_ISDIR(inode->i_mode))
@@ -210,16 +225,19 @@ static inline void fsnotify_modify(struct dentry *dentry)
 
 	inotify_inode_queue_event(inode, mask, 0, NULL, NULL);
 
-	fsnotify_parent(dentry, mask);
-	fsnotify(inode, mask, inode, FSNOTIFY_EVENT_INODE, NULL, 0);
+	if (!(file->f_mode & FMODE_NONOTIFY)) {
+		fsnotify_parent(path, NULL, mask);
+		fsnotify(inode, mask, path, FSNOTIFY_EVENT_PATH, NULL, 0);
+	}
 }
 
 /*
  * fsnotify_open - file was opened
  */
-static inline void fsnotify_open(struct dentry *dentry)
+static inline void fsnotify_open(struct file *file)
 {
-	struct inode *inode = dentry->d_inode;
+	struct path *path = &file->f_path;
+	struct inode *inode = path->dentry->d_inode;
 	__u32 mask = FS_OPEN;
 
 	if (S_ISDIR(inode->i_mode))
@@ -227,8 +245,10 @@ static inline void fsnotify_open(struct dentry *dentry)
 
 	inotify_inode_queue_event(inode, mask, 0, NULL, NULL);
 
-	fsnotify_parent(dentry, mask);
-	fsnotify(inode, mask, inode, FSNOTIFY_EVENT_INODE, NULL, 0);
+	if (!(file->f_mode & FMODE_NONOTIFY)) {
+		fsnotify_parent(path, NULL, mask);
+		fsnotify(inode, mask, path, FSNOTIFY_EVENT_PATH, NULL, 0);
+	}
 }
 
 /*
@@ -236,8 +256,8 @@ static inline void fsnotify_open(struct dentry *dentry)
  */
 static inline void fsnotify_close(struct file *file)
 {
-	struct dentry *dentry = file->f_path.dentry;
-	struct inode *inode = dentry->d_inode;
+	struct path *path = &file->f_path;
+	struct inode *inode = file->f_path.dentry->d_inode;
 	fmode_t mode = file->f_mode;
 	__u32 mask = (mode & FMODE_WRITE) ? FS_CLOSE_WRITE : FS_CLOSE_NOWRITE;
 
@@ -246,8 +266,10 @@ static inline void fsnotify_close(struct file *file)
 
 	inotify_inode_queue_event(inode, mask, 0, NULL, NULL);
 
-	fsnotify_parent(dentry, mask);
-	fsnotify(inode, mask, file, FSNOTIFY_EVENT_FILE, NULL, 0);
+	if (!(file->f_mode & FMODE_NONOTIFY)) {
+		fsnotify_parent(path, NULL, mask);
+		fsnotify(inode, mask, path, FSNOTIFY_EVENT_PATH, NULL, 0);
+	}
 }
 
 /*
@@ -263,7 +285,7 @@ static inline void fsnotify_xattr(struct dentry *dentry)
 
 	inotify_inode_queue_event(inode, mask, 0, NULL, NULL);
 
-	fsnotify_parent(dentry, mask);
+	fsnotify_parent(NULL, dentry, mask);
 	fsnotify(inode, mask, inode, FSNOTIFY_EVENT_INODE, NULL, 0);
 }
 
@@ -299,7 +321,7 @@ static inline void fsnotify_change(struct dentry *dentry, unsigned int ia_valid)
 			mask |= FS_IN_ISDIR;
 		inotify_inode_queue_event(inode, mask, 0, NULL, NULL);
 
-		fsnotify_parent(dentry, mask);
+		fsnotify_parent(NULL, dentry, mask);
 		fsnotify(inode, mask, inode, FSNOTIFY_EVENT_INODE, NULL, 0);
 	}
 }
