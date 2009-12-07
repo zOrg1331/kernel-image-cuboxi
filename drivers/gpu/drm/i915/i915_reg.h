@@ -140,6 +140,7 @@
 #define MI_NOOP			MI_INSTR(0, 0)
 #define MI_USER_INTERRUPT	MI_INSTR(0x02, 0)
 #define MI_WAIT_FOR_EVENT       MI_INSTR(0x03, 0)
+#define   MI_WAIT_FOR_OVERLAY_FLIP	(1<<16)
 #define   MI_WAIT_FOR_PLANE_B_FLIP      (1<<6)
 #define   MI_WAIT_FOR_PLANE_A_FLIP      (1<<2)
 #define   MI_WAIT_FOR_PLANE_A_SCANLINES (1<<1)
@@ -151,7 +152,13 @@
 #define   MI_END_SCENE		(1 << 4) /* flush binner and incr scene count */
 #define MI_BATCH_BUFFER_END	MI_INSTR(0x0a, 0)
 #define MI_REPORT_HEAD		MI_INSTR(0x07, 0)
+#define MI_OVERLAY_FLIP		MI_INSTR(0x11,0)
+#define   MI_OVERLAY_CONTINUE	(0x0<<21)
+#define   MI_OVERLAY_ON		(0x1<<21)
+#define   MI_OVERLAY_OFF	(0x2<<21)
 #define MI_LOAD_SCAN_LINES_INCL MI_INSTR(0x12, 0)
+#define MI_DISPLAY_FLIP		MI_INSTR(0x14, 2)
+#define   MI_DISPLAY_FLIP_PLANE(n) ((n) << 20)
 #define MI_STORE_DWORD_IMM	MI_INSTR(0x20, 1)
 #define   MI_MEM_VIRTUAL	(1 << 22) /* 965+ only */
 #define MI_STORE_DWORD_INDEX	MI_INSTR(0x21, 1)
@@ -260,6 +267,8 @@
 #define HWS_PGA		0x02080
 #define HWS_ADDRESS_MASK	0xfffff000
 #define HWS_START_ADDRESS_SHIFT	4
+#define PWRCTXA		0x2088 /* 965GM+ only */
+#define   PWRCTX_EN	(1<<0)
 #define IPEIR		0x02088
 #define IPEHR		0x0208c
 #define INSTDONE	0x02090
@@ -769,7 +778,8 @@
 
 /** GM965 GM45 render standby register */
 #define MCHBAR_RENDER_STANDBY	0x111B8
-
+#define   RCX_SW_EXIT		(1<<23)
+#define   RSX_STATUS_MASK	0x00700000
 #define PEG_BAND_GAP_DATA	0x14d68
 
 /*
@@ -844,7 +854,6 @@
 #define   SDVOB_HOTPLUG_INT_EN			(1 << 26)
 #define   SDVOC_HOTPLUG_INT_EN			(1 << 25)
 #define   TV_HOTPLUG_INT_EN			(1 << 18)
-#define   CRT_EOS_INT_EN			(1 << 10)
 #define   CRT_HOTPLUG_INT_EN			(1 << 9)
 #define   CRT_HOTPLUG_FORCE_DETECT		(1 << 3)
 #define CRT_HOTPLUG_ACTIVATION_PERIOD_32	(0 << 8)
@@ -868,7 +877,6 @@
 			 HDMID_HOTPLUG_INT_EN |	  \
 			 SDVOB_HOTPLUG_INT_EN |	  \
 			 SDVOC_HOTPLUG_INT_EN |	  \
-			 TV_HOTPLUG_INT_EN |	  \
 			 CRT_HOTPLUG_INT_EN)
 
 
@@ -879,7 +887,6 @@
 #define   DPC_HOTPLUG_INT_STATUS		(1 << 28)
 #define   HDMID_HOTPLUG_INT_STATUS		(1 << 27)
 #define   DPD_HOTPLUG_INT_STATUS		(1 << 27)
-#define   CRT_EOS_INT_STATUS			(1 << 12)
 #define   CRT_HOTPLUG_INT_STATUS		(1 << 11)
 #define   TV_HOTPLUG_INT_STATUS			(1 << 10)
 #define   CRT_HOTPLUG_MONITOR_MASK		(3 << 8)
@@ -1907,6 +1914,7 @@
 #define   DISPPLANE_16BPP			(0x5<<26)
 #define   DISPPLANE_32BPP_NO_ALPHA		(0x6<<26)
 #define   DISPPLANE_32BPP			(0x7<<26)
+#define   DISPPLANE_32BPP_30BIT_NO_ALPHA	(0xa<<26)
 #define   DISPPLANE_STEREO_ENABLE		(1<<25)
 #define   DISPPLANE_STEREO_DISABLE		0
 #define   DISPPLANE_SEL_PIPE_MASK		(1<<24)
@@ -2117,6 +2125,7 @@
 #define SDE_PORTC_HOTPLUG       (1 << 9)
 #define SDE_PORTB_HOTPLUG       (1 << 8)
 #define SDE_SDVOB_HOTPLUG       (1 << 6)
+#define SDE_HOTPLUG_MASK	(0xf << 8)
 
 #define SDEISR  0xc4000
 #define SDEIMR  0xc4004

@@ -256,7 +256,7 @@ struct drm_framebuffer {
 	unsigned int depth;
 	int bits_per_pixel;
 	int flags;
-	void *fbdev;
+	struct fb_info *fbdev;
 	u32 pseudo_palette[17];
 	struct list_head filp_head;
 	/* if you are using the helper */
@@ -290,6 +290,7 @@ struct drm_property {
 struct drm_crtc;
 struct drm_connector;
 struct drm_encoder;
+struct drm_pending_vblank_event;
 
 /**
  * drm_crtc_funcs - control CRTCs for a given device
@@ -333,6 +334,19 @@ struct drm_crtc_funcs {
 	void (*destroy)(struct drm_crtc *crtc);
 
 	int (*set_config)(struct drm_mode_set *set);
+
+	/*
+	 * Flip to the given framebuffer.  This implements the page
+	 * flip ioctl descibed in drm_mode.h, specifically, the
+	 * implementation must return immediately and block all
+	 * rendering to the current fb until the flip has completed.
+	 * If userspace set the event flag in the ioctl, the event
+	 * argument will point to an event to send back when the flip
+	 * completes, otherwise it will be NULL.
+	 */
+	int (*page_flip)(struct drm_crtc *crtc,
+			 struct drm_framebuffer *fb,
+			 struct drm_pending_vblank_event *event);
 };
 
 /**
@@ -711,7 +725,8 @@ extern void drm_mode_connector_detach_encoder(struct drm_connector *connector,
 					   struct drm_encoder *encoder);
 extern bool drm_mode_crtc_set_gamma_size(struct drm_crtc *crtc,
 					 int gamma_size);
-extern void *drm_mode_object_find(struct drm_device *dev, uint32_t id, uint32_t type);
+extern struct drm_mode_object *drm_mode_object_find(struct drm_device *dev,
+		uint32_t id, uint32_t type);
 /* IOCTLs */
 extern int drm_mode_getresources(struct drm_device *dev,
 				 void *data, struct drm_file *file_priv);
@@ -756,6 +771,8 @@ extern int drm_mode_gamma_get_ioctl(struct drm_device *dev,
 extern int drm_mode_gamma_set_ioctl(struct drm_device *dev,
 				    void *data, struct drm_file *file_priv);
 extern bool drm_detect_hdmi_monitor(struct edid *edid);
+extern int drm_mode_page_flip_ioctl(struct drm_device *dev,
+				    void *data, struct drm_file *file_priv);
 extern struct drm_display_mode *drm_cvt_mode(struct drm_device *dev,
 				int hdisplay, int vdisplay, int vrefresh,
 				bool reduced, bool interlaced, bool margins);
