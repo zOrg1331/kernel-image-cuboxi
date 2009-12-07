@@ -29,7 +29,7 @@ index 7d28f56..0f6117c 100644
  /**
   * lookup_one_len - filesystem helper to lookup single pathname component
 diff --git a/fs/namespace.c b/fs/namespace.c
-index bdc3cb4..a2cadcf 100644
+index 7d70d63..310aa98 100644
 --- a/fs/namespace.c
 +++ b/fs/namespace.c
 @@ -39,6 +39,7 @@
@@ -41,7 +41,7 @@ index bdc3cb4..a2cadcf 100644
  static int event;
  static DEFINE_IDA(mnt_id_ida);
 diff --git a/fs/open.c b/fs/open.c
-index 4f01e06..ef09031 100644
+index b4b31d2..a820c71 100644
 --- a/fs/open.c
 +++ b/fs/open.c
 @@ -223,6 +223,7 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
@@ -97,10 +97,10 @@ index b85e61b..a23fad4 100644
  /**
   * ima_bprm_check - based on policy, collect/store measurement.
 diff --git a/security/security.c b/security/security.c
-index c4c6732..854d15c 100644
+index 24e060b..148564f 100644
 --- a/security/security.c
 +++ b/security/security.c
-@@ -386,6 +386,7 @@ int security_path_mkdir(struct path *path, struct dentry *dentry, int mode)
+@@ -404,6 +404,7 @@ int security_path_mkdir(struct path *path, struct dentry *dentry, int mode)
  		return 0;
  	return security_ops->path_mkdir(path, dentry, mode);
  }
@@ -108,7 +108,7 @@ index c4c6732..854d15c 100644
  
  int security_path_rmdir(struct path *path, struct dentry *dentry)
  {
-@@ -393,6 +394,7 @@ int security_path_rmdir(struct path *path, struct dentry *dentry)
+@@ -411,6 +412,7 @@ int security_path_rmdir(struct path *path, struct dentry *dentry)
  		return 0;
  	return security_ops->path_rmdir(path, dentry);
  }
@@ -116,7 +116,7 @@ index c4c6732..854d15c 100644
  
  int security_path_unlink(struct path *path, struct dentry *dentry)
  {
-@@ -400,6 +402,7 @@ int security_path_unlink(struct path *path, struct dentry *dentry)
+@@ -418,6 +420,7 @@ int security_path_unlink(struct path *path, struct dentry *dentry)
  		return 0;
  	return security_ops->path_unlink(path, dentry);
  }
@@ -124,7 +124,7 @@ index c4c6732..854d15c 100644
  
  int security_path_symlink(struct path *path, struct dentry *dentry,
  			  const char *old_name)
-@@ -408,6 +411,7 @@ int security_path_symlink(struct path *path, struct dentry *dentry,
+@@ -426,6 +429,7 @@ int security_path_symlink(struct path *path, struct dentry *dentry,
  		return 0;
  	return security_ops->path_symlink(path, dentry, old_name);
  }
@@ -132,7 +132,7 @@ index c4c6732..854d15c 100644
  
  int security_path_link(struct dentry *old_dentry, struct path *new_dir,
  		       struct dentry *new_dentry)
-@@ -416,6 +420,7 @@ int security_path_link(struct dentry *old_dentry, struct path *new_dir,
+@@ -434,6 +438,7 @@ int security_path_link(struct dentry *old_dentry, struct path *new_dir,
  		return 0;
  	return security_ops->path_link(old_dentry, new_dir, new_dentry);
  }
@@ -140,7 +140,7 @@ index c4c6732..854d15c 100644
  
  int security_path_rename(struct path *old_dir, struct dentry *old_dentry,
  			 struct path *new_dir, struct dentry *new_dentry)
-@@ -426,6 +431,7 @@ int security_path_rename(struct path *old_dir, struct dentry *old_dentry,
+@@ -444,6 +449,7 @@ int security_path_rename(struct path *old_dir, struct dentry *old_dentry,
  	return security_ops->path_rename(old_dir, old_dentry, new_dir,
  					 new_dentry);
  }
@@ -148,15 +148,15 @@ index c4c6732..854d15c 100644
  
  int security_path_truncate(struct path *path, loff_t length,
  			   unsigned int time_attrs)
-@@ -434,6 +440,7 @@ int security_path_truncate(struct path *path, loff_t length,
+@@ -452,6 +458,7 @@ int security_path_truncate(struct path *path, loff_t length,
  		return 0;
  	return security_ops->path_truncate(path, length, time_attrs);
  }
 +EXPORT_SYMBOL(security_path_truncate);
- #endif
  
- int security_inode_create(struct inode *dir, struct dentry *dentry, int mode)
-@@ -505,6 +512,7 @@ int security_inode_readlink(struct dentry *dentry)
+ int security_path_chmod(struct dentry *dentry, struct vfsmount *mnt,
+ 			mode_t mode)
+@@ -543,6 +550,7 @@ int security_inode_readlink(struct dentry *dentry)
  		return 0;
  	return security_ops->inode_readlink(dentry);
  }
@@ -164,7 +164,7 @@ index c4c6732..854d15c 100644
  
  int security_inode_follow_link(struct dentry *dentry, struct nameidata *nd)
  {
-@@ -519,6 +527,7 @@ int security_inode_permission(struct inode *inode, int mask)
+@@ -557,6 +565,7 @@ int security_inode_permission(struct inode *inode, int mask)
  		return 0;
  	return security_ops->inode_permission(inode, mask);
  }
@@ -172,7 +172,7 @@ index c4c6732..854d15c 100644
  
  int security_inode_setattr(struct dentry *dentry, struct iattr *attr)
  {
-@@ -619,6 +628,7 @@ int security_file_permission(struct file *file, int mask)
+@@ -657,6 +666,7 @@ int security_file_permission(struct file *file, int mask)
  {
  	return security_ops->file_permission(file, mask);
  }
