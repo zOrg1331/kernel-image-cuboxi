@@ -537,8 +537,8 @@ void __init s3c6400_register_clocks(unsigned armclk_divlimit)
 		}
 	}
 
-	s3c_register_clksrc(clksrcs, ARRAY_SIZE(clksrcs));
-
 	clk_mpll.parent = &clk_mout_mpll.clk;
 	clk_epll.parent = &clk_mout_epll.clk;
+
+	s3c_register_clksrc(clksrcs, ARRAY_SIZE(clksrcs));
 }
