@@ -362,8 +362,10 @@ static inline void amd_decode_err_code(unsigned int ec)
 		pr_warning("Huh? Unknown MCE error 0x%x\n", ec);
 }
 
-void decode_mce(struct mce *m)
+static int amd_decode_mce(struct notifier_block *nb, unsigned long val,
+			   void *data)
 {
+	struct mce *m = (struct mce *)data;
 	struct err_regs regs;
 	int node, ecc;
 
@@ -419,4 +421,35 @@ void decode_mce(struct mce *m)
 	}
 
 	amd_decode_err_code(m->status & 0xffff);
+
+	return NOTIFY_STOP;
 }
+
+static struct notifier_block amd_mce_dec_nb = {
+	.notifier_call	= amd_decode_mce,
+};
+
+static int __init mce_amd_init(void)
+{
+	/*
+	 * We can decode MCEs for Opteron and later CPUs:
+	 */
+	if ((boot_cpu_data.x86_vendor == X86_VENDOR_AMD) &&
+	    (boot_cpu_data.x86 >= 0xf))
+		atomic_notifier_chain_register(&x86_mce_decoder_chain, &amd_mce_dec_nb);
+
+	return 0;
+}
+early_initcall(mce_amd_init);
+
+#ifdef MODULE
+static void __exit mce_amd_exit(void)
+{
+	atomic_notifier_chain_unregister(&x86_mce_decoder_chain, &amd_mce_dec_nb);
+}
+
+MODULE_DESCRIPTION("AMD MCE decoder");
+MODULE_ALIAS("edac-mce-amd");
+MODULE_LICENSE("GPL");
+module_exit(mce_amd_exit);
+#endif

@@ -49,7 +49,7 @@
 #include "lockdep_internals.h"
 
 #define CREATE_TRACE_POINTS
-#include <trace/events/lockdep.h>
+#include <trace/events/lock.h>
 
 #ifdef CONFIG_PROVE_LOCKING
 int prove_locking = 1;
@@ -143,6 +143,11 @@ static inline struct lock_class *hlock_class(struct held_lock *hlock)
 static DEFINE_PER_CPU(struct lock_class_stats[MAX_LOCKDEP_KEYS],
 		      cpu_lock_stats);
 
+static inline u64 lockstat_clock(void)
+{
+	return cpu_clock(smp_processor_id());
+}
+
 static int lock_point(unsigned long points[], unsigned long ip)
 {
 	int i;
@@ -159,7 +164,7 @@ static int lock_point(unsigned long points[], unsigned long ip)
 	return i;
 }
 
-static void lock_time_inc(struct lock_time *lt, s64 time)
+static void lock_time_inc(struct lock_time *lt, u64 time)
 {
 	if (time > lt->max)
 		lt->max = time;
@@ -235,12 +240,12 @@ static void put_lock_stats(struct lock_class_stats *stats)
 static void lock_release_holdtime(struct held_lock *hlock)
 {
 	struct lock_class_stats *stats;
-	s64 holdtime;
+	u64 holdtime;
 
 	if (!lock_stat)
 		return;
 
-	holdtime = sched_clock() - hlock->holdtime_stamp;
+	holdtime = lockstat_clock() - hlock->holdtime_stamp;
 
 	stats = get_lock_stats(hlock_class(hlock));
 	if (hlock->read)
@@ -2793,7 +2798,7 @@ static int __lock_acquire(struct lockdep_map *lock, unsigned int subclass,
 	hlock->references = references;
 #ifdef CONFIG_LOCK_STAT
 	hlock->waittime_stamp = 0;
-	hlock->holdtime_stamp = sched_clock();
+	hlock->holdtime_stamp = lockstat_clock();
 #endif
 
 	if (check == 2 && !mark_irqflags(curr, hlock))
@@ -3323,7 +3328,7 @@ found_it:
 	if (hlock->instance != lock)
 		return;
 
-	hlock->waittime_stamp = sched_clock();
+	hlock->waittime_stamp = lockstat_clock();
 
 	contention_point = lock_point(hlock_class(hlock)->contention_point, ip);
 	contending_point = lock_point(hlock_class(hlock)->contending_point,
@@ -3346,8 +3351,7 @@ __lock_acquired(struct lockdep_map *lock, unsigned long ip)
 	struct held_lock *hlock, *prev_hlock;
 	struct lock_class_stats *stats;
 	unsigned int depth;
-	u64 now;
-	s64 waittime = 0;
+	u64 now, waittime = 0;
 	int i, cpu;
 
 	depth = curr->lockdep_depth;
@@ -3375,7 +3379,7 @@ found_it:
 
 	cpu = smp_processor_id();
 	if (hlock->waittime_stamp) {
-		now = sched_clock();
+		now = lockstat_clock();
 		waittime = now - hlock->waittime_stamp;
 		hlock->holdtime_stamp = now;
 	}
