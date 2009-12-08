@@ -496,6 +496,9 @@ struct kvm_ioeventfd {
 #define KVM_CAP_VCPU_EVENTS 41
 #endif
 #define KVM_CAP_S390_PSW 42
+/* KVM upstream has more features, but we synched this number.
+   Linux, please remove this comment on rebase. */
+#define KVM_CAP_PPC_SEGSTATE 43
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
