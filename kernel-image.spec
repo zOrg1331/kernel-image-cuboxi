@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-smp
 Version: 2.6.27
-Release: alt10
+Release: alt10.1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -468,6 +468,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Tue Dec 08 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt10.1
+- trying to fix #21955
+
 * Wed Nov 25 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt10
 - Remove gfs from modules.build: kernel-source-gfs removed
 
