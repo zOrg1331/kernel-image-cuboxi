@@ -516,6 +516,8 @@ static void mct_u232_close(struct usb_serial_port *port)
 {
 	dbg("%s port %d", __func__, port->number);
 
+	port->port.drain_delay = 2;
+
 	if (port->serial->dev) {
 		/* shutdown our urbs */
 		usb_kill_urb(port->write_urb);
