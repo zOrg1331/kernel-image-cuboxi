@@ -912,6 +912,12 @@ static int ext4_show_options(struct seq_file *seq, struct vfsmount *vfs)
 	if (test_opt(sb, NO_AUTO_DA_ALLOC))
 		seq_puts(seq, ",noauto_da_alloc");
 
+	if (test_opt(sb, DISCARD))
+		seq_puts(seq, ",discard");
+
+	if (test_opt(sb, NOLOAD))
+		seq_puts(seq, ",norecovery");
+
 	ext4_show_quota_options(seq, sb);
 
 	return 0;
@@ -1092,7 +1098,8 @@ enum {
 	Opt_resize, Opt_usrquota, Opt_grpquota, Opt_i_version,
 	Opt_stripe, Opt_delalloc, Opt_nodelalloc,
 	Opt_block_validity, Opt_noblock_validity,
-	Opt_inode_readahead_blks, Opt_journal_ioprio
+	Opt_inode_readahead_blks, Opt_journal_ioprio,
+	Opt_discard, Opt_nodiscard,
 };
 
 static const match_table_t tokens = {
@@ -1117,6 +1124,7 @@ static const match_table_t tokens = {
 	{Opt_acl, "acl"},
 	{Opt_noacl, "noacl"},
 	{Opt_noload, "noload"},
+	{Opt_noload, "norecovery"},
 	{Opt_nobh, "nobh"},
 	{Opt_bh, "bh"},
 	{Opt_commit, "commit=%u"},
@@ -1158,6 +1166,8 @@ static const match_table_t tokens = {
 	{Opt_auto_da_alloc, "auto_da_alloc=%u"},
 	{Opt_auto_da_alloc, "auto_da_alloc"},
 	{Opt_noauto_da_alloc, "noauto_da_alloc"},
+	{Opt_discard, "discard"},
+	{Opt_nodiscard, "nodiscard"},
 	{Opt_err, NULL},
 };
 
@@ -1583,6 +1593,12 @@ set_qf_format:
 			else
 				set_opt(sbi->s_mount_opt,NO_AUTO_DA_ALLOC);
 			break;
+		case Opt_discard:
+			set_opt(sbi->s_mount_opt, DISCARD);
+			break;
+		case Opt_nodiscard:
+			clear_opt(sbi->s_mount_opt, DISCARD);
+			break;
 		default:
 			ext4_msg(sb, KERN_ERR,
 			       "Unrecognized mount option \"%s\" "
@@ -1691,13 +1707,13 @@ static int ext4_fill_flex_info(struct super_block *sb)
 	size_t size;
 	int i;
 
-	if (!sbi->s_es->s_log_groups_per_flex) {
+	sbi->s_log_groups_per_flex = sbi->s_es->s_log_groups_per_flex;
+	groups_per_flex = 1 << sbi->s_log_groups_per_flex;
+
+	if (groups_per_flex < 2) {
 		sbi->s_log_groups_per_flex = 0;
 		return 1;
 	}
-
-	sbi->s_log_groups_per_flex = sbi->s_es->s_log_groups_per_flex;
-	groups_per_flex = 1 << sbi->s_log_groups_per_flex;
 
 	/* We allocate both existing and potentially added groups */
 	flex_group_count = ((sbi->s_groups_count + groups_per_flex - 1) +
@@ -2739,26 +2755,6 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	    EXT4_HAS_COMPAT_FEATURE(sb, EXT4_FEATURE_COMPAT_HAS_JOURNAL)) {
 		if (ext4_load_journal(sb, es, journal_devnum))
 			goto failed_mount3;
-		if (!(sb->s_flags & MS_RDONLY) &&
-		    EXT4_SB(sb)->s_journal->j_failed_commit) {
-			ext4_msg(sb, KERN_CRIT, "error: "
-			       "ext4_fill_super: Journal transaction "
-			       "%u is corrupt",
-			       EXT4_SB(sb)->s_journal->j_failed_commit);
-			if (test_opt(sb, ERRORS_RO)) {
-				ext4_msg(sb, KERN_CRIT,
-				       "Mounting filesystem read-only");
-				sb->s_flags |= MS_RDONLY;
-				EXT4_SB(sb)->s_mount_state |= EXT4_ERROR_FS;
-				es->s_state |= cpu_to_le16(EXT4_ERROR_FS);
-			}
-			if (test_opt(sb, ERRORS_PANIC)) {
-				EXT4_SB(sb)->s_mount_state |= EXT4_ERROR_FS;
-				es->s_state |= cpu_to_le16(EXT4_ERROR_FS);
-				ext4_commit_super(sb, 1);
-				goto failed_mount4;
-			}
-		}
 	} else if (test_opt(sb, NOLOAD) && !(sb->s_flags & MS_RDONLY) &&
 	      EXT4_HAS_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_RECOVER)) {
 		ext4_msg(sb, KERN_ERR, "required journal recovery "
@@ -3686,13 +3682,11 @@ static int ext4_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_blocks = ext4_blocks_count(es) - sbi->s_overhead_last;
 	buf->f_bfree = percpu_counter_sum_positive(&sbi->s_freeblocks_counter) -
 		       percpu_counter_sum_positive(&sbi->s_dirtyblocks_counter);
-	ext4_free_blocks_count_set(es, buf->f_bfree);
 	buf->f_bavail = buf->f_bfree - ext4_r_blocks_count(es);
 	if (buf->f_bfree < ext4_r_blocks_count(es))
 		buf->f_bavail = 0;
 	buf->f_files = le32_to_cpu(es->s_inodes_count);
 	buf->f_ffree = percpu_counter_sum_positive(&sbi->s_freeinodes_counter);
-	es->s_free_inodes_count = cpu_to_le32(buf->f_ffree);
 	buf->f_namelen = EXT4_NAME_LEN;
 	fsid = le64_to_cpup((void *)es->s_uuid) ^
 	       le64_to_cpup((void *)es->s_uuid + sizeof(u64));
