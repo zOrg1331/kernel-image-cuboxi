@@ -1,7 +1,5 @@
 #define MSNFS	/* HACK HACK */
 /*
- * linux/fs/nfsd/vfs.c
- *
  * File operations used by nfsd. Some of these have been ripped from
  * other parts of the kernel because they weren't exported, others
  * are partial duplicates with added or changed functionality.
@@ -16,49 +14,31 @@
  * Zerocpy NFS support (C) 2002 Hirokazu Takahashi <taka@valinux.co.jp>
  */
 
-#include <linux/string.h>
-#include <linux/time.h>
-#include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/file.h>
-#include <linux/mount.h>
-#include <linux/major.h>
 #include <linux/splice.h>
-#include <linux/proc_fs.h>
-#include <linux/stat.h>
 #include <linux/fcntl.h>
-#include <linux/net.h>
-#include <linux/unistd.h>
-#include <linux/slab.h>
-#include <linux/pagemap.h>
-#include <linux/in.h>
-#include <linux/module.h>
 #include <linux/namei.h>
-#include <linux/vfs.h>
 #include <linux/delay.h>
-#include <linux/sunrpc/svc.h>
-#include <linux/nfsd/nfsd.h>
-#ifdef CONFIG_NFSD_V3
-#include <linux/nfs3.h>
-#include <linux/nfsd/xdr3.h>
-#endif /* CONFIG_NFSD_V3 */
-#include <linux/nfsd/nfsfh.h>
 #include <linux/quotaops.h>
 #include <linux/fsnotify.h>
-#include <linux/posix_acl.h>
 #include <linux/posix_acl_xattr.h>
 #include <linux/xattr.h>
-#ifdef CONFIG_NFSD_V4
-#include <linux/nfs4.h>
-#include <linux/nfs4_acl.h>
-#include <linux/nfsd_idmap.h>
-#include <linux/security.h>
-#endif /* CONFIG_NFSD_V4 */
 #include <linux/jhash.h>
 #include <linux/ima.h>
-#include "vfs.h"
-
 #include <asm/uaccess.h>
+
+#ifdef CONFIG_NFSD_V3
+#include "xdr3.h"
+#endif /* CONFIG_NFSD_V3 */
+
+#ifdef CONFIG_NFSD_V4
+#include <linux/nfs4_acl.h>
+#include <linux/nfsd_idmap.h>
+#endif /* CONFIG_NFSD_V4 */
+
+#include "nfsd.h"
+#include "vfs.h"
 
 #define NFSDDBG_FACILITY		NFSDDBG_FILEOP
 
@@ -90,12 +70,6 @@ struct raparm_hbucket {
 #define RAPARM_HASH_MASK	(RAPARM_HASH_SIZE-1)
 static struct raparm_hbucket	raparm_hash[RAPARM_HASH_SIZE];
 
-static inline int
-nfsd_v4client(struct svc_rqst *rq)
-{
-    return rq->rq_prog == NFS_PROGRAM && rq->rq_vers == 4;
-}
-
 /* 
  * Called from nfsd_lookup and encode_dirent. Check if we have crossed 
  * a mount point.
@@ -117,8 +91,16 @@ nfsd_cross_mnt(struct svc_rqst *rqstp, struct dentry **dpp,
 
 	exp2 = rqst_exp_get_by_name(rqstp, &path);
 	if (IS_ERR(exp2)) {
-		if (PTR_ERR(exp2) != -ENOENT)
-			err = PTR_ERR(exp2);
+		err = PTR_ERR(exp2);
+		/*
+		 * We normally allow NFS clients to continue
+		 * "underneath" a mountpoint that is not exported.
+		 * The exception is V4ROOT, where no traversal is ever
+		 * allowed without an explicit export of the new
+		 * directory.
+		 */
+		if (err == -ENOENT && !(exp->ex_flags & NFSEXP_V4ROOT))
+			err = 0;
 		path_put(&path);
 		goto out;
 	}
@@ -176,6 +158,19 @@ static int nfsd_lookup_parent(struct svc_rqst *rqstp, struct dentry *dparent, st
 	return 0;
 }
 
+/*
+ * For nfsd purposes, we treat V4ROOT exports as though there was an
+ * export at *every* directory.
+ */
+int nfsd_mountpoint(struct dentry *dentry, struct svc_export *exp)
+{
+	if (d_mountpoint(dentry))
+		return 1;
+	if (!(exp->ex_flags & NFSEXP_V4ROOT))
+		return 0;
+	return dentry->d_inode != NULL;
+}
+
 __be32
 nfsd_lookup_dentry(struct svc_rqst *rqstp, struct svc_fh *fhp,
 		   const char *name, unsigned int len,
@@ -221,7 +216,7 @@ nfsd_lookup_dentry(struct svc_rqst *rqstp, struct svc_fh *fhp,
 		/*
 		 * check if we have crossed a mount point ...
 		 */
-		if (d_mountpoint(dentry)) {
+		if (nfsd_mountpoint(dentry, exp)) {
 			if ((host_err = nfsd_cross_mnt(rqstp, &dentry, &exp))) {
 				dput(dentry);
 				goto out_nfserr;

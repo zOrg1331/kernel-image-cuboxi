@@ -1,6 +1,4 @@
 /*
- * linux/include/linux/nfsd/nfsd.h
- *
  * Hodge-podge collection of knfsd-related stuff.
  * I will sort this out later.
  *
@@ -11,13 +9,9 @@
 #define LINUX_NFSD_NFSD_H
 
 #include <linux/types.h>
-#include <linux/unistd.h>
-#include <linux/fs.h>
-#include <linux/posix_acl.h>
 #include <linux/mount.h>
 
 #include <linux/nfsd/debug.h>
-#include <linux/nfsd/nfsfh.h>
 #include <linux/nfsd/export.h>
 #include <linux/nfsd/stats.h>
 /*
@@ -73,6 +67,11 @@ void nfsd_reset_versions(void);
 int nfsd_create_serv(void);
 
 extern int nfsd_max_blksize;
+
+static inline int nfsd_v4client(struct svc_rqst *rq)
+{
+	return rq->rq_prog == NFS_PROGRAM && rq->rq_vers == 4;
+}
 
 /* 
  * NFSv4 State
