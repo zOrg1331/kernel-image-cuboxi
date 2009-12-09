@@ -95,6 +95,9 @@ static void n_tty_set_room(struct tty_struct *tty)
 	/* tty->read_cnt is not read locked ? */
 	int	left = N_TTY_BUF_SIZE - tty->read_cnt - 1;
 
+	if (tty->real_raw)
+	        left = min(left, N_TTY_BUF_SIZE - tty->read_head - 1);
+
 	/*
 	 * If we are doing input canonicalization, and there are no
 	 * pending newlines, let characters through without limit, so
