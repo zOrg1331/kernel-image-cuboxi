@@ -131,8 +131,8 @@ struct x86_platform_ops {
 	unsigned long (*calibrate_tsc)(void);
 	unsigned long (*get_wallclock)(void);
 	int (*set_wallclock)(unsigned long nowtime);
-	bool (*is_untracked_pat_range)(u64 start, u64 end);
 	void (*iommu_shutdown)(void);
+	bool (*is_untracked_pat_range)(u64 start, u64 end);
 };
 
 extern struct x86_init_ops x86_init;
