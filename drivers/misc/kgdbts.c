@@ -891,16 +891,16 @@ static void kgdbts_run_tests(void)
 	int nmi_sleep = 0;
 	int i;
 
-	ptr = strstr(config, "F");
+	ptr = strchr(config, 'F');
 	if (ptr)
 		fork_test = simple_strtol(ptr + 1, NULL, 10);
-	ptr = strstr(config, "S");
+	ptr = strchr(config, 'S');
 	if (ptr)
 		do_sys_open_test = simple_strtol(ptr + 1, NULL, 10);
-	ptr = strstr(config, "N");
+	ptr = strchr(config, 'N');
 	if (ptr)
 		nmi_sleep = simple_strtol(ptr+1, NULL, 10);
-	ptr = strstr(config, "I");
+	ptr = strchr(config, 'I');
 	if (ptr)
 		sstep_test = simple_strtol(ptr+1, NULL, 10);
 
@@ -922,7 +922,7 @@ static void kgdbts_run_tests(void)
 	/* ===Optional tests=== */
 
 	/* All HW break point tests */
-	if (arch_kgdb_ops.flags & KGDB_HW_BREAKPOINT) {
+	if (0 && arch_kgdb_ops.flags & KGDB_HW_BREAKPOINT) {
 		hwbreaks_ok = 1;
 		v1printk("kgdbts:RUN hw breakpoint test\n");
 		run_breakpoint_test(1);
