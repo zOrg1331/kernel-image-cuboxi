@@ -1309,24 +1309,25 @@ static int vidioc_s_frequency (struct file *file, void *priv,
 
 static int tm6000_open(struct file *file)
 {
-	int minor = video_devdata(file)->minor;
+	struct video_device *vdev = video_devdata(file);
 	struct tm6000_core *dev = video_drvdata(file);
 	struct tm6000_fh *fh;
 	enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	int i,rc;
 
-	printk(KERN_INFO "tm6000: open called (minor=%d)\n",minor);
+	printk(KERN_INFO "tm6000: open called (dev=%s)\n",
+		video_device_node_name(vdev));
 
-
-	dprintk(dev, V4L2_DEBUG_OPEN, "tm6000: open called "
-						"(minor=%d)\n",minor);
+	dprintk(dev, V4L2_DEBUG_OPEN, "tm6000: open called (dev=%s)\n",
+		video_device_node_name(vdev));
 
 
 	/* If more than one user, mutex should be added */
 	dev->users++;
 
-	dprintk(dev, V4L2_DEBUG_OPEN, "open minor=%d type=%s users=%d\n",
-				minor,v4l2_type_names[type],dev->users);
+	dprintk(dev, V4L2_DEBUG_OPEN, "open dev=%s type=%s users=%d\n",
+		video_device_node_name(vdev), v4l2_type_names[type],
+		dev->users);
 
 	/* allocate + initialize per filehandle data */
 	fh = kzalloc(sizeof(*fh),GFP_KERNEL);
@@ -1423,9 +1424,10 @@ static int tm6000_release(struct file *file)
 {
 	struct tm6000_fh         *fh = file->private_data;
 	struct tm6000_core      *dev = fh->dev;
-	int minor = video_devdata(file)->minor;
+	struct video_device    *vdev = video_devdata(file);
 
-	dprintk(dev, V4L2_DEBUG_OPEN, "tm6000: close called (minor=%d, users=%d)\n",minor,dev->users);
+	dprintk(dev, V4L2_DEBUG_OPEN, "tm6000: close called (dev=%s, users=%d)\n",
+		video_device_node_name(vdev), dev->users);
 
 	dev->users--;
 
