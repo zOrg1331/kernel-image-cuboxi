@@ -1,7 +1,5 @@
 #define MSNFS	/* HACK HACK */
 /*
- * linux/fs/nfsd/export.c
- *
  * NFS exporting and validation.
  *
  * We maintain a list of clients, each of which has a list of
@@ -14,28 +12,15 @@
  * Copyright (C) 1995, 1996 Olaf Kirch, <okir@monad.swb.de>
  */
 
-#include <linux/unistd.h>
-#include <linux/slab.h>
-#include <linux/stat.h>
-#include <linux/in.h>
-#include <linux/seq_file.h>
-#include <linux/syscalls.h>
-#include <linux/rwsem.h>
-#include <linux/dcache.h>
 #include <linux/namei.h>
-#include <linux/mount.h>
-#include <linux/hash.h>
 #include <linux/module.h>
 #include <linux/exportfs.h>
 
-#include <linux/sunrpc/svc.h>
-#include <linux/nfsd/nfsd.h>
-#include <linux/nfsd/nfsfh.h>
 #include <linux/nfsd/syscall.h>
-#include <linux/lockd/bind.h>
-#include <linux/sunrpc/msg_prot.h>
-#include <linux/sunrpc/gss_api.h>
 #include <net/ipv6.h>
+
+#include "nfsd.h"
+#include "nfsfh.h"
 
 #define NFSDDBG_FACILITY	NFSDDBG_EXPORT
 
@@ -372,10 +357,12 @@ static struct svc_export *svc_export_lookup(struct svc_export *);
 static int check_export(struct inode *inode, int flags, unsigned char *uuid)
 {
 
-	/* We currently export only dirs and regular files.
-	 * This is what umountd does.
+	/*
+	 * We currently export only dirs, regular files, and (for v4
+	 * pseudoroot) symlinks.
 	 */
 	if (!S_ISDIR(inode->i_mode) &&
+	    !S_ISLNK(inode->i_mode) &&
 	    !S_ISREG(inode->i_mode))
 		return -ENOTDIR;
 
@@ -1320,6 +1307,23 @@ rqst_exp_parent(struct svc_rqst *rqstp, struct path *path)
 	return exp;
 }
 
+static struct svc_export *find_fsidzero_export(struct svc_rqst *rqstp)
+{
+	struct svc_export *exp;
+	u32 fsidv[2];
+
+	mk_fsid(FSID_NUM, fsidv, 0, 0, 0, NULL);
+
+	exp = rqst_exp_find(rqstp, FSID_NUM, fsidv);
+	/*
+	 * We shouldn't have accepting an nfsv4 request at all if we
+	 * don't have a pseudoexport!:
+	 */
+	if (IS_ERR(exp) && PTR_ERR(exp) == -ENOENT)
+		exp = ERR_PTR(-ESERVERFAULT);
+	return exp;
+}
+
 /*
  * Called when we need the filehandle for the root of the pseudofs,
  * for a given NFSv4 client.   The root is defined to be the
@@ -1330,11 +1334,8 @@ exp_pseudoroot(struct svc_rqst *rqstp, struct svc_fh *fhp)
 {
 	struct svc_export *exp;
 	__be32 rv;
-	u32 fsidv[2];
 
-	mk_fsid(FSID_NUM, fsidv, 0, 0, 0, NULL);
-
-	exp = rqst_exp_find(rqstp, FSID_NUM, fsidv);
+	exp = find_fsidzero_export(rqstp);
 	if (IS_ERR(exp))
 		return nfserrno(PTR_ERR(exp));
 	rv = fh_compose(fhp, exp, exp->ex_path.dentry, NULL);
@@ -1425,6 +1426,7 @@ static struct flags {
 	{ NFSEXP_CROSSMOUNT, {"crossmnt", ""}},
 	{ NFSEXP_NOSUBTREECHECK, {"no_subtree_check", ""}},
 	{ NFSEXP_NOAUTHNLM, {"insecure_locks", ""}},
+	{ NFSEXP_V4ROOT, {"v4root", ""}},
 #ifdef MSNFS
 	{ NFSEXP_MSNFS, {"msnfs", ""}},
 #endif
@@ -1505,7 +1507,7 @@ static int e_show(struct seq_file *m, void *p)
 	struct svc_export *exp = container_of(cp, struct svc_export, h);
 
 	if (p == SEQ_START_TOKEN) {
-		seq_puts(m, "# Version 1.1\n");
+		seq_puts(m, "# Version 1.2\n");
 		seq_puts(m, "# Path Client(Flags) # IPs\n");
 		return 0;
 	}
