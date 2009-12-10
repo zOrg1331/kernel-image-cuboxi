@@ -131,24 +131,25 @@ void rs690_pm_info(struct radeon_device *rdev)
 
 void rs690_vram_info(struct radeon_device *rdev)
 {
-	uint32_t tmp;
 	fixed20_12 a;
 
 	rs400_gart_adjust_size(rdev);
-	/* DDR for all card after R300 & IGP */
+
 	rdev->mc.vram_is_ddr = true;
-	/* FIXME: is this correct for RS690/RS740 ? */
-	tmp = RREG32(RADEON_MEM_CNTL);
-	if (tmp & R300_MEM_NUM_CHANNELS_MASK) {
-		rdev->mc.vram_width = 128;
-	} else {
-		rdev->mc.vram_width = 64;
-	}
+	rdev->mc.vram_width = 128;
+
 	rdev->mc.real_vram_size = RREG32(RADEON_CONFIG_MEMSIZE);
 	rdev->mc.mc_vram_size = rdev->mc.real_vram_size;
 
 	rdev->mc.aper_base = drm_get_resource_start(rdev->ddev, 0);
 	rdev->mc.aper_size = drm_get_resource_len(rdev->ddev, 0);
+
+	if (rdev->mc.mc_vram_size > rdev->mc.aper_size)
+		rdev->mc.mc_vram_size = rdev->mc.aper_size;
+
+	if (rdev->mc.real_vram_size > rdev->mc.aper_size)
+		rdev->mc.real_vram_size = rdev->mc.aper_size;
+
 	rs690_pm_info(rdev);
 	/* FIXME: we should enforce default clock in case GPU is not in
 	 * default setup
@@ -605,7 +606,6 @@ static int rs690_startup(struct radeon_device *rdev)
 	if (r)
 		return r;
 	/* Enable IRQ */
-	rdev->irq.sw_int = true;
 	rs600_irq_set(rdev);
 	/* 1M ring buffer */
 	r = r100_cp_init(rdev, 1024 * 1024);
@@ -662,7 +662,7 @@ void rs690_fini(struct radeon_device *rdev)
 	rs400_gart_fini(rdev);
 	radeon_irq_kms_fini(rdev);
 	radeon_fence_driver_fini(rdev);
-	radeon_object_fini(rdev);
+	radeon_bo_fini(rdev);
 	radeon_atombios_fini(rdev);
 	kfree(rdev->bios);
 	rdev->bios = NULL;
@@ -700,10 +700,9 @@ int rs690_init(struct radeon_device *rdev)
 			RREG32(R_0007C0_CP_STAT));
 	}
 	/* check if cards are posted or not */
-	if (!radeon_card_posted(rdev) && rdev->bios) {
-		DRM_INFO("GPU not posted. posting now...\n");
-		atom_asic_init(rdev->mode_info.atom_context);
-	}
+	if (radeon_boot_test_post_card(rdev) == false)
+		return -EINVAL;
+
 	/* Initialize clocks */
 	radeon_get_clock_info(rdev->ddev);
 	/* Initialize power management */
@@ -723,7 +722,7 @@ int rs690_init(struct radeon_device *rdev)
 	if (r)
 		return r;
 	/* Memory manager */
-	r = radeon_object_init(rdev);
+	r = radeon_bo_init(rdev);
 	if (r)
 		return r;
 	r = rs400_gart_init(rdev);
