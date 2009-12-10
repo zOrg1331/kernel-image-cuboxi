@@ -482,7 +482,6 @@ static int tm6000_usb_probe(struct usb_interface *interface,
 		dev->model=card[nr];
 	}
 
-	INIT_LIST_HEAD(&dev->tm6000_corelist);
 	dev->udev= usbdev;
 	dev->devno=nr;
 

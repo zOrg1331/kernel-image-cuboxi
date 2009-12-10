@@ -116,8 +116,6 @@ static struct tm6000_fmt format[] = {
 	}
 };
 
-static LIST_HEAD(tm6000_corelist);
-
 /* ------------------------------------------------------------------
 	DMA and thread functions
    ------------------------------------------------------------------*/
@@ -1312,10 +1310,9 @@ static int vidioc_s_frequency (struct file *file, void *priv,
 static int tm6000_open(struct file *file)
 {
 	int minor = video_devdata(file)->minor;
-	struct tm6000_core *h,*dev = NULL;
+	struct tm6000_core *dev = video_drvdata(file);
 	struct tm6000_fh *fh;
-	struct list_head *list;
-	enum v4l2_buf_type type = 0;
+	enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	int i,rc;
 
 	printk(KERN_INFO "tm6000: open called (minor=%d)\n",minor);
@@ -1323,16 +1320,6 @@ static int tm6000_open(struct file *file)
 
 	dprintk(dev, V4L2_DEBUG_OPEN, "tm6000: open called "
 						"(minor=%d)\n",minor);
-
-	list_for_each(list,&tm6000_corelist) {
-		h = list_entry(list, struct tm6000_core, tm6000_corelist);
-		if (h->vfd->minor == minor) {
-			dev  = h;
-			type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-		}
-	}
-	if (NULL == dev)
-		return -ENODEV;
 
 
 	/* If more than one user, mutex should be added */
@@ -1525,8 +1512,6 @@ int tm6000_v4l2_register(struct tm6000_core *dev)
 	}
 	dev->vfd = vfd;
 
-	list_add_tail(&dev->tm6000_corelist,&tm6000_corelist);
-
 	/* init video dma queues */
 	INIT_LIST_HEAD(&dev->vidq.active);
 	INIT_LIST_HEAD(&dev->vidq.queued);
@@ -1534,6 +1519,7 @@ int tm6000_v4l2_register(struct tm6000_core *dev)
 	memcpy (dev->vfd, &tm6000_template, sizeof(*(dev->vfd)));
 	dev->vfd->debug=tm6000_debug;
 	vfd->v4l2_dev = &dev->v4l2_dev;
+	video_set_drvdata(vfd, dev);
 
 	ret = video_register_device(dev->vfd, VFL_TYPE_GRABBER, video_nr);
 	printk(KERN_INFO "Trident TVMaster TM5600/TM6000 USB2 board (Load status: %d)\n", ret);
@@ -1542,17 +1528,7 @@ int tm6000_v4l2_register(struct tm6000_core *dev)
 
 int tm6000_v4l2_unregister(struct tm6000_core *dev)
 {
-	struct tm6000_core *h;
-	struct list_head *pos, *tmp;
-
 	video_unregister_device(dev->vfd);
-
-	list_for_each_safe(pos, tmp, &tm6000_corelist) {
-		h = list_entry(pos, struct tm6000_core, tm6000_corelist);
-		if (h == dev) {
-			list_del(pos);
-		}
-	}
 
 	return 0;
 }
