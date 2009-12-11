@@ -432,6 +432,7 @@ struct usb_tt;
  * @do_remote_wakeup:  remote wakeup should be enabled
  * @reset_resume: needs reset instead of resume
  * @autosuspend_disabled: autosuspend disabled by the user
+ * @autoresume_disabled: autoresume disabled by the user
  * @skip_sys_resume: skip the next system resume
  * @wusb_dev: if this is a Wireless USB device, link to the WUSB
  *	specific data for the device.
@@ -515,6 +516,7 @@ struct usb_device {
 	unsigned do_remote_wakeup:1;
 	unsigned reset_resume:1;
 	unsigned autosuspend_disabled:1;
+	unsigned autoresume_disabled:1;
 	unsigned skip_sys_resume:1;
 #endif
 	struct wusb_dev *wusb_dev;
@@ -540,20 +542,22 @@ extern struct usb_device *usb_find_device(u16 vendor_id, u16 product_id);
 
 /* USB autosuspend and autoresume */
 #ifdef CONFIG_USB_SUSPEND
+extern int usb_autopm_set_interface(struct usb_interface *intf);
 extern int usb_autopm_get_interface(struct usb_interface *intf);
 extern void usb_autopm_put_interface(struct usb_interface *intf);
 extern int usb_autopm_get_interface_async(struct usb_interface *intf);
 extern void usb_autopm_put_interface_async(struct usb_interface *intf);
 
-static inline void usb_autopm_get_interface_no_resume(
-		struct usb_interface *intf)
+static inline void usb_autopm_enable(struct usb_interface *intf)
 {
-	atomic_inc(&intf->pm_usage_cnt);
+	atomic_set(&intf->pm_usage_cnt, 0);
+	usb_autopm_set_interface(intf);
 }
-static inline void usb_autopm_put_interface_no_suspend(
-		struct usb_interface *intf)
+
+static inline void usb_autopm_disable(struct usb_interface *intf)
 {
-	atomic_dec(&intf->pm_usage_cnt);
+	atomic_set(&intf->pm_usage_cnt, 1);
+	usb_autopm_set_interface(intf);
 }
 
 static inline void usb_mark_last_busy(struct usb_device *udev)
@@ -563,8 +567,12 @@ static inline void usb_mark_last_busy(struct usb_device *udev)
 
 #else
 
+static inline int usb_autopm_set_interface(struct usb_interface *intf)
+{ return 0; }
+
 static inline int usb_autopm_get_interface(struct usb_interface *intf)
 { return 0; }
+
 static inline int usb_autopm_get_interface_async(struct usb_interface *intf)
 { return 0; }
 
@@ -572,11 +580,9 @@ static inline void usb_autopm_put_interface(struct usb_interface *intf)
 { }
 static inline void usb_autopm_put_interface_async(struct usb_interface *intf)
 { }
-static inline void usb_autopm_get_interface_no_resume(
-		struct usb_interface *intf)
+static inline void usb_autopm_enable(struct usb_interface *intf)
 { }
-static inline void usb_autopm_put_interface_no_suspend(
-		struct usb_interface *intf)
+static inline void usb_autopm_disable(struct usb_interface *intf)
 { }
 static inline void usb_mark_last_busy(struct usb_device *udev)
 { }
