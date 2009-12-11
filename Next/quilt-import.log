@@ -1,0 +1,176 @@
+Importing driver-core.current based on 2.6.32
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.32-git5
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 3067e02f8f3ae2f3f02ba76400d03b8bcb4942b0
+HEAD is now at 3067e02 Merge branch 'acpica' of git://git.kernel.org/pub/scm/linux/kernel/git/lenb/linux-acpi-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-core-03-detect-drop-kind-parameter-in-drivers.patch
+i2c-core-04-drop-struct-i2c_client_address_data.patch
+i2c-core-05-drop-I2C_CLIENT_INSMOD-0-to-1.patch
+i2c-core-06-drop-I2C_CLIENT_INSMOD-2-to-8.patch
+i2c-core-07-drop-I2C_CLIENT_MODULE_PARM.patch
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 82efc46...efab4ba master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-git5
+$ cd ../quilt-tmp
+$ git reset --hard 3067e02f8f3ae2f3f02ba76400d03b8bcb4942b0
+HEAD is now at 3067e02 Merge branch 'acpica' of git://git.kernel.org/pub/scm/linux/kernel/git/lenb/linux-acpi-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k10temp-new-driver.patch
+hwmon-smsc47m1-01-split-io-port-requests.patch
+hwmon-smsc47m1-02-fail-loading-on-error.patch
+hwmon-smsc47m1-03-enable-as-needed.patch
+hwmon-via_cputemp-new-driver.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 4ee578e...205a114 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.32-rc6
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc b419148e567728f6af0c3b01965c1cc141e3e13a
+Importing rr based on v2.6.32-5254-g3067e02
+$ cd ../quilt-tmp
+$ git reset --hard 3067e02f8f3ae2f3f02ba76400d03b8bcb4942b0
+HEAD is now at 3067e02 Merge branch 'acpica' of git://git.kernel.org/pub/scm/linux/kernel/git/lenb/linux-acpi-2.6
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+net:tun_export_underlying_socket.patch
+mm:export_use_mm_unuse_mm.patch
+virtio:vhost_net_a_kernel_level_server.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:60: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+virtio:add_memory_statistics_reporting_to_the_balloon_driver_v4.patch
+lguest:remove-unneeded-zlib-include.patch
+misc:enhance-BUILD_BUG_ON.patch
+misc:remove-MAYBE_BUILD_BUG_ON.patch
+sparc:no-inline-export.patch
+ppc:no-inline-export.patch
+arm:use_unified_discard_definition_in_linker_script.patch
+Context reduced to (1/1) to apply fragment at 67
+Context reduced to (1/1) to apply fragment at 240
+arm:unexport_symbols_used_to_implement_floating_point_emulation.patch
+x86:dont-export-inline.patch
+module:make_symbol_prefix_into_a_config_option.patch
+modpost:remove-markers.patch
+module:handle-relocated-kcrctabs.patch
+cpumask:kernel_perf_event-deprecated-function.patch
+cpumask:mm_slab-deprecated-function.patch
+cpumask:scsi-scoe-modernize.patch
+cpumask:i7300_idle-to-cpumask_var_t.patch
+cpumask:avoid-deref-in-timer_list.patch
+cpumask:documentation-fixes.patch
+cpumask:tsk_cpus_allowed-not-tsk_cpumask.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 6541101...9dd4c5a master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.32-5254-g3067e02
+$ cd ../quilt-tmp
+$ git reset --hard 3067e02f8f3ae2f3f02ba76400d03b8bcb4942b0
+HEAD is now at 3067e02 Merge branch 'acpica' of git://git.kernel.org/pub/scm/linux/kernel/git/lenb/linux-acpi-2.6
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-avoid-_hash_lock-deadlock.patch
+dm-exception-store-free-tmp_store-on-persistent-flag-error.patch
+dm-sysfs-add-empty-release-function-to-avoid-debug-warning.patch
+dm-snapshot-only-take-lock-for-statustype-info-not-table.patch
+dm-snapshot-cope-with-chunk-size-larger-than-origin.patch
+dm-crypt-make-wipe-message-also-wipe-tfm-key.patch
+dm-crypt-move-private-iv-fields-to-structs.patch
+dm-crypt-restructure-essiv-error-path.patch
+dm-crypt-separate-essiv-allocation-from-initialisation.patch
+dm-crypt-make-wipe-message-also-wipe-essiv-key.patch
+dm-io-use-slab-for-struct-io.patch
+dm-io-remove-extra-bi_io_vec-region-hack.patch
+dm-raid1-support-flush.patch
+dm-raid1-split-touched-state-into-two.patch
+dm-log-add-flush_header-function.patch
+dm-log-introduce-flush_failed-variable.patch
+dm-log-add-flush-callback-fn.patch
+dm-log-use-flush-callback-fn.patch
+dm-raid1-implement-mirror_flush.patch
+dm-raid1-report-flush-errors-separately-in-status.patch
+dm-raid1-add-framework-to-hold-bios-during-suspend.patch
+dm-raid1-use-hold-framework-in-do_failures.patch
+dm-raid1-abstract-get_valid_mirror-function.patch
+dm-raid1-remove-bio_endio-from-dm_rh_mark_nosync.patch
+dm-raid1-hold-write-bios-when-errors-are-handled.patch
+dm-raid1-hold-all-write-bios-when-leg-fails.patch
+dm-raid1-explicitly-initialise-bio_lists.patch
+dm-ioctl-prefer-strlcpy-over-strncpy.patch
+dm-snapshot-avoid-else-clause-in-persistent_read_metadata.patch
+dm-snapshot-simplify-sector_to_chunk-expression.patch
+dm-snapshot-abstract-minimum_chunk_size-fn.patch
+dm-snapshot-consolidate-insert-exception-functions.patch
+dm-snapshot-rename-dm_snap_exception-to-dm_exception.patch
+dm-snapshot-rename-exception_table-to-dm_exception_table.patch
+dm-snapshot-rename-exception-functions.patch
+dm-snapshot-add-allocated-metadata-to-snapshot-status.patch
+dm-snapshot-move-cow-ref-from-exception-store-to-snap-core.patch
+dm-snapshot-track-suspended-state-in-target.patch
+dm-kcopyd-accept-zero-size-jobs.patch
+dm-abstract-dm_in_flight-function.patch
+dm-use-clone-in-map_request-function.patch
+dm-pass-gfp_mask-to-alloc_rq_tio.patch
+dm-abstract-clone_rq.patch
+dm-simplify-request-based-suspend.patch
+dm-use-md-pending-for-in-flight-IO-counting.patch
+dm-refactor-request-based-completion-functions.patch
+dm-move-dm_end_request.patch
+dm-add-request-based-barrier-support.patch
+dm-rename-dm_get_table-to-dm_get_live_table.patch
+dm-mpath-flush-workqueues-before-suspend-completes.patch
+dm-add-dm_deleting_md-function.patch
+dm-ioctl-forbid-messages-to-devices-being-deleted.patch
+dm-mpath-add-mutex-to-synchronize-adding-and-flushing-work.patch
+dm-mpath-prevent-io-from-work-queue-while-suspended.patch
+dm-io-handle-empty-barriers.patch
+dm-ioctl-retrieve-status-from-inactive-table.patch
+dm-bind-new-table-before-destroying-old.patch
+dm-keep-old-table-until-after-resume-succeeded.patch
+dm-snapshot-allow-live-exception-store-handover-between-tables.patch
+dm-trace-request-based-remapping.patch
+dm-crypt-add-plain64-iv.patch
+dm-swap-target-postsuspend-call-and-setting-suspended-flag.patch
+dm-rename-dm_suspended-to-dm_suspended_md.patch
+dm-export-suspended-state-to-targets.patch
+dm-mpath-reject-messages-when-device-is-suspended.patch
+dm-snapshot-make-bio-optional-in-__origin_write.patch
+dm-snapshot-create-function-for-chunk_is_tracked-wait.patch
+dm-exception-store-add-merge-specific-methods.patch
+dm-snapshot-add-merge-target.patch
+dm-snapshot-rework-writing-to-origin.patch
+dm-snapshot-avoid-allocating-exceptions-in-merge.patch
+dm-snapshot-support-barriers-in-snapshot-merge-target.patch
+dm-snapshot-permit-only-one-merge-at-once.patch
+dm-snapshot-add-merging.patch
+dm-snapshot-queue-writes-to-chunks-being-merged.patch
+dm-snapshot-delay-merging-a-chunk-until-writes-to-it-complete.patch
+dm-snapshot-trigger-exceptions-in-remaining-snapshots-during-merge.patch
+dm-snapshot-merge-consecutive-chunks-together.patch
+dm-snapshot-report-merge-failure-in-status.patch
+dm-snapshot-use-merge-origin-if-snapshot-invalid.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + dc29917...727ba58 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
