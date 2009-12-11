@@ -281,24 +281,6 @@ void __init early_init_devtree_arch(void)
 	/* No Microblaze specific code here */
 }
 
-/**
- * Indicates whether the root node has a given value in its
- * compatible property.
- */
-int machine_is_compatible(const char *compat)
-{
-	struct device_node *root;
-	int rc = 0;
-
-	root = of_find_node_by_path("/");
-	if (root) {
-		rc = of_device_is_compatible(root, compat);
-		of_node_put(root);
-	}
-	return rc;
-}
-EXPORT_SYMBOL(machine_is_compatible);
-
 /*******
  *
  * New implementation of the OF "find" APIs, return a refcounted
