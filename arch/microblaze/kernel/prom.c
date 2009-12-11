@@ -50,60 +50,6 @@ struct device_node *of_chosen;
 int __init early_init_dt_scan_cpus(unsigned long node, const char *uname,
 				   int depth, void *data)
 {
-	static int logical_cpuid;
-	char *type = of_get_flat_dt_prop(node, "device_type", NULL);
-	const u32 *intserv;
-	int i, nthreads;
-	int found = 0;
-
-	/* We are scanning "cpu" nodes only */
-	if (type == NULL || strcmp(type, "cpu") != 0)
-		return 0;
-
-	/* Get physical cpuid */
-	intserv = of_get_flat_dt_prop(node, "reg", NULL);
-	nthreads = 1;
-
-	/*
-	 * Now see if any of these threads match our boot cpu.
-	 * NOTE: This must match the parsing done in smp_setup_cpu_maps.
-	 */
-	for (i = 0; i < nthreads; i++) {
-		/*
-		 * version 2 of the kexec param format adds the phys cpuid of
-		 * booted proc.
-		 */
-		if (initial_boot_params && initial_boot_params->version >= 2) {
-			if (intserv[i] ==
-					initial_boot_params->boot_cpuid_phys) {
-				found = 1;
-				break;
-			}
-		} else {
-			/*
-			 * Check if it's the boot-cpu, set it's hw index now,
-			 * unfortunately this format did not support booting
-			 * off secondary threads.
-			 */
-			if (of_get_flat_dt_prop(node,
-					"linux,boot-cpu", NULL) != NULL) {
-				found = 1;
-				break;
-			}
-		}
-
-#ifdef CONFIG_SMP
-		/* logical cpu id is always 0 on UP kernels */
-		logical_cpuid++;
-#endif
-	}
-
-	if (found) {
-		pr_debug("boot cpu: logical %d physical %d\n", logical_cpuid,
-			intserv[i]);
-		boot_cpuid = logical_cpuid;
-	}
-
 	return 0;
 }
 
