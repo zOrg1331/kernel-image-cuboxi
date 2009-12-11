@@ -130,6 +130,10 @@ static inline unsigned long of_read_ulong(const u32 *cell, int size)
 
 #define OF_BAD_ADDR	((u64)-1)
 
+/* For updating the device tree at runtime */
+extern void of_attach_node(struct device_node *);
+extern void of_detach_node(struct device_node *);
+
 extern struct device_node *of_find_node_by_name(struct device_node *from,
 	const char *name);
 #define for_each_node_by_name(dn, name) \
