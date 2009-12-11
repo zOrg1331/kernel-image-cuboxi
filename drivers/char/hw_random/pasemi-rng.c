@@ -143,7 +143,7 @@ static struct of_platform_driver rng_driver = {
 	.name		= "pasemi-rng",
 	.match_table	= rng_match,
 	.probe		= rng_probe,
-	.remove		= rng_remove,
+	.remove		= __devexit_p(rng_remove),
 };
 
 static int __init rng_init(void)
