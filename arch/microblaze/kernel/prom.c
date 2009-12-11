@@ -47,9 +47,8 @@ struct device_node *of_chosen;
 
 #define early_init_dt_scan_drconf_memory(node) 0
 
-static int __init early_init_dt_scan_cpus(unsigned long node,
-					  const char *uname, int depth,
-					  void *data)
+int __init early_init_dt_scan_cpus(unsigned long node, const char *uname,
+				   int depth, void *data)
 {
 	static int logical_cpuid;
 	char *type = of_get_flat_dt_prop(node, "device_type", NULL);
@@ -113,8 +112,8 @@ void __init early_init_dt_scan_chosen_arch(unsigned long node)
 	/* No Microblaze specific code here */
 }
 
-static int __init early_init_dt_scan_memory(unsigned long node,
-				const char *uname, int depth, void *data)
+int __init early_init_dt_scan_memory(unsigned long node, const char *uname,
+				     int depth, void *data)
 {
 	char *type = of_get_flat_dt_prop(node, "device_type", NULL);
 	__be32 *reg, *endp;
@@ -201,7 +200,7 @@ static inline unsigned long phyp_dump_calculate_reserve_size(void)
  * without reserving anything. The memory in case of dump being
  * active is freed when the dump is collected (by userland tools).
  */
-static void __init phyp_dump_reserve_mem(void)
+void __init phyp_dump_reserve_mem(void)
 {
 	unsigned long base, size;
 	unsigned long variable_reserve_size;
@@ -240,7 +239,7 @@ static void __init phyp_dump_reserve_mem(void)
 	}
 }
 #else
-static inline void __init phyp_dump_reserve_mem(void) {}
+inline void __init phyp_dump_reserve_mem(void) {}
 #endif /* CONFIG_PHYP_DUMP  && CONFIG_PPC_RTAS */
 
 #ifdef CONFIG_EARLY_PRINTK
@@ -277,45 +276,9 @@ int __init early_uartlite_console(void)
 }
 #endif
 
-void __init early_init_devtree(void *params)
+void __init early_init_devtree_arch(void)
 {
-	pr_debug(" -> early_init_devtree(%p)\n", params);
-
-	/* Setup flat device-tree pointer */
-	initial_boot_params = params;
-
-#ifdef CONFIG_PHYP_DUMP
-	/* scan tree to see if dump occured during last boot */
-	of_scan_flat_dt(early_init_dt_scan_phyp_dump, NULL);
-#endif
-
-	/* Retrieve various informations from the /chosen node of the
-	 * device-tree, including the platform type, initrd location and
-	 * size, TCE reserve, and more ...
-	 */
-	of_scan_flat_dt(early_init_dt_scan_chosen, NULL);
-
-	/* Scan memory nodes and rebuild LMBs */
-	lmb_init();
-	of_scan_flat_dt(early_init_dt_scan_root, NULL);
-	of_scan_flat_dt(early_init_dt_scan_memory, NULL);
-
-	/* Save command line for /proc/cmdline and then parse parameters */
-	strlcpy(boot_command_line, cmd_line, COMMAND_LINE_SIZE);
-	parse_early_param();
-
-	lmb_analyze();
-
-	pr_debug("Phys. mem: %lx\n", (unsigned long) lmb_phys_mem_size());
-
-	pr_debug("Scanning CPUs ...\n");
-
-	/* Retreive CPU related informations from the flat tree
-	 * (altivec support, boot CPU ID, ...)
-	 */
-	of_scan_flat_dt(early_init_dt_scan_cpus, NULL);
-
-	pr_debug(" <- early_init_devtree()\n");
+	/* No Microblaze specific code here */
 }
 
 /**

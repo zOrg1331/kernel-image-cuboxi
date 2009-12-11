@@ -84,33 +84,6 @@ static int __init early_parse_mem(char *p)
 }
 early_param("mem", early_parse_mem);
 
-/**
- * move_device_tree - move tree to an unused area, if needed.
- *
- * The device tree may be allocated beyond our memory limit, or inside the
- * crash kernel region for kdump. If so, move it out of the way.
- */
-static void __init move_device_tree(void)
-{
-	unsigned long start, size;
-	void *p;
-
-	DBG("-> move_device_tree\n");
-
-	start = __pa(initial_boot_params);
-	size = initial_boot_params->totalsize;
-
-	if ((memory_limit && (start + size) > memory_limit) ||
-			overlaps_crashkernel(start, size)) {
-		p = __va(lmb_alloc_base(size, PAGE_SIZE, lmb.rmo_size));
-		memcpy(p, initial_boot_params, size);
-		initial_boot_params = (struct boot_param_header *)p;
-		DBG("Moved device tree to 0x%p\n", p);
-	}
-
-	DBG("<- move_device_tree\n");
-}
-
 /*
  * ibm,pa-features is a per-cpu property that contains a string of
  * attribute descriptors, each of which has a 2 byte header plus up
@@ -267,9 +240,8 @@ static void __init check_cpu_feature_properties(unsigned long node)
 	}
 }
 
-static int __init early_init_dt_scan_cpus(unsigned long node,
-					  const char *uname, int depth,
-					  void *data)
+int __init early_init_dt_scan_cpus(unsigned long node, const char *uname,
+				   int depth, void *data)
 {
 	static int logical_cpuid = 0;
 	char *type = of_get_flat_dt_prop(node, "device_type", NULL);
@@ -483,8 +455,8 @@ static int __init early_init_dt_scan_drconf_memory(unsigned long node)
 #define early_init_dt_scan_drconf_memory(node)	0
 #endif /* CONFIG_PPC_PSERIES */
 
-static int __init early_init_dt_scan_memory(unsigned long node,
-					    const char *uname, int depth, void *data)
+int __init early_init_dt_scan_memory(unsigned long node, const char *uname,
+				     int depth, void *data)
 {
 	char *type = of_get_flat_dt_prop(node, "device_type", NULL);
 	__be32 *reg, *endp;
@@ -543,7 +515,7 @@ static int __init early_init_dt_scan_memory(unsigned long node,
 	return 0;
 }
 
-static void __init early_reserve_mem(void)
+void __init early_reserve_mem(void)
 {
 	u64 base, size;
 	u64 *reserve_map;
@@ -635,7 +607,7 @@ static inline unsigned long phyp_dump_calculate_reserve_size(void)
  * without reserving anything. The memory in case of dump being
  * active is freed when the dump is collected (by userland tools).
  */
-static void __init phyp_dump_reserve_mem(void)
+void __init phyp_dump_reserve_mem(void)
 {
 	unsigned long base, size;
 	unsigned long variable_reserve_size;
@@ -674,43 +646,12 @@ static void __init phyp_dump_reserve_mem(void)
 	}
 }
 #else
-static inline void __init phyp_dump_reserve_mem(void) {}
+inline void __init phyp_dump_reserve_mem(void) {}
 #endif /* CONFIG_PHYP_DUMP  && CONFIG_PPC_RTAS */
 
-
-void __init early_init_devtree(void *params)
+void __init early_init_devtree_arch(void)
 {
 	phys_addr_t limit;
-
-	DBG(" -> early_init_devtree(%p)\n", params);
-
-	/* Setup flat device-tree pointer */
-	initial_boot_params = params;
-
-#ifdef CONFIG_PPC_RTAS
-	/* Some machines might need RTAS info for debugging, grab it now. */
-	of_scan_flat_dt(early_init_dt_scan_rtas, NULL);
-#endif
-
-#ifdef CONFIG_PHYP_DUMP
-	/* scan tree to see if dump occured during last boot */
-	of_scan_flat_dt(early_init_dt_scan_phyp_dump, NULL);
-#endif
-
-	/* Retrieve various informations from the /chosen node of the
-	 * device-tree, including the platform type, initrd location and
-	 * size, TCE reserve, and more ...
-	 */
-	of_scan_flat_dt(early_init_dt_scan_chosen, NULL);
-
-	/* Scan memory nodes and rebuild LMBs */
-	lmb_init();
-	of_scan_flat_dt(early_init_dt_scan_root, NULL);
-	of_scan_flat_dt(early_init_dt_scan_memory, NULL);
-
-	/* Save command line for /proc/cmdline and then parse parameters */
-	strlcpy(boot_command_line, cmd_line, COMMAND_LINE_SIZE);
-	parse_early_param();
 
 	/* Reserve LMB regions used by kernel, initrd, dt, etc... */
 	lmb_reserve(PHYSICAL_START, __pa(klimit) - PHYSICAL_START);
@@ -734,26 +675,7 @@ void __init early_init_devtree(void *params)
 			limit = memsize & PAGE_MASK;
 	}
 	lmb_enforce_memory_limit(limit);
-
-	lmb_analyze();
-	lmb_dump_all();
-
-	DBG("Phys. mem: %llx\n", lmb_phys_mem_size());
-
-	/* We may need to relocate the flat tree, do it now.
-	 * FIXME .. and the initrd too? */
-	move_device_tree();
-
-	DBG("Scanning CPUs ...\n");
-
-	/* Retreive CPU related informations from the flat tree
-	 * (altivec support, boot CPU ID, ...)
-	 */
-	of_scan_flat_dt(early_init_dt_scan_cpus, NULL);
-
-	DBG(" <- early_init_devtree()\n");
 }
-
 
 /**
  * Indicates whether the root node has a given value in its

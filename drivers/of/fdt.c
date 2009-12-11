@@ -16,7 +16,12 @@
 #include <linux/of_fdt.h>
 
 #ifdef CONFIG_PPC
+#include <asm/kexec.h>
 #include <asm/machdep.h>
+
+#ifdef CONFIG_PPC_RTAS
+#include <asm/rtas.h>
+#endif
 #endif /* CONFIG_PPC */
 
 int __initdata dt_root_addr_cells;
@@ -476,6 +481,93 @@ int __init early_init_dt_scan_chosen(unsigned long node, const char *uname,
 
 	/* break now */
 	return 1;
+}
+
+/**
+ * early_init_move_devtree - move tree to an unused area, if needed.
+ *
+ * The device tree may be allocated beyond our memory limit, or inside the
+ * crash kernel region for kdump. If so, move it out of the way.
+ */
+#if defined(CONFIG_PPC)
+static void __init early_init_move_devtree(void)
+{
+	unsigned long start, size;
+	void *p;
+
+	pr_debug("-> %s()\n", __func__);
+
+	start = __pa(initial_boot_params);
+	size = initial_boot_params->totalsize;
+
+	if ((memory_limit && (start + size) > memory_limit) ||
+			overlaps_crashkernel(start, size)) {
+		p = __va(lmb_alloc_base(size, PAGE_SIZE, lmb.rmo_size));
+		memcpy(p, initial_boot_params, size);
+		initial_boot_params = (struct boot_param_header *)p;
+		pr_debug("Moved device tree to 0x%p\n", p);
+	}
+
+	pr_debug("<- %s()\n", __func__);
+}
+#else
+static void __init early_init_move_devtree(void) {}
+#endif
+
+void __init early_init_devtree(void *params)
+{
+	pr_debug(" -> early_init_devtree(%p)\n", params);
+
+	/* Setup flat device-tree pointer */
+	initial_boot_params = params;
+
+#ifdef CONFIG_PPC_RTAS
+	/* Some machines might need RTAS info for debugging, grab it now. */
+	of_scan_flat_dt(early_init_dt_scan_rtas, NULL);
+#endif
+
+#ifdef CONFIG_PHYP_DUMP
+	/* scan tree to see if dump occured during last boot */
+	of_scan_flat_dt(early_init_dt_scan_phyp_dump, NULL);
+#endif
+
+	/* Retrieve various informations from the /chosen node of the
+	 * device-tree, including the platform type, initrd location and
+	 * size, TCE reserve, and more ...
+	 */
+	of_scan_flat_dt(early_init_dt_scan_chosen, NULL);
+
+	/* Scan memory nodes and rebuild LMBs */
+	lmb_init();
+	of_scan_flat_dt(early_init_dt_scan_root, NULL);
+	of_scan_flat_dt(early_init_dt_scan_memory, NULL);
+
+	/* Save command line for /proc/cmdline and then parse parameters */
+	strlcpy(boot_command_line, cmd_line, COMMAND_LINE_SIZE);
+	parse_early_param();
+
+	/* This is in an arbitrary spot, but it is temporary.  After all
+	 * the common code is merged, the structure of the early init
+	 * code will be reevaluated and refactored */
+	early_init_devtree_arch();
+
+	lmb_analyze();
+	lmb_dump_all();
+
+	pr_debug("Phys. mem: %llx\n", lmb_phys_mem_size());
+
+	/* We may need to relocate the flat tree, do it now.
+	 * FIXME .. and the initrd too? */
+	early_init_move_devtree();
+
+	pr_debug("Scanning CPUs ...\n");
+
+	/* Retreive CPU related informations from the flat tree
+	 * (altivec support, boot CPU ID, ...)
+	 */
+	of_scan_flat_dt(early_init_dt_scan_cpus, NULL);
+
+	pr_debug(" <- early_init_devtree()\n");
 }
 
 /**
