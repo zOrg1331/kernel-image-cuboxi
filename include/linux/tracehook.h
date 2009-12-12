@@ -626,17 +626,12 @@ static inline void tracehook_report_death(struct task_struct *task,
 					  int group_dead)
 {
 	/*
-	 * This barrier ensures that our caller's setting of
-	 * @task->exit_state precedes checking @task->utrace_flags here.
 	 * If utrace_set_events() was just called to enable
 	 * UTRACE_EVENT(DEATH), then we are obliged to call
 	 * utrace_report_death() and not miss it.  utrace_set_events()
-	 * uses tasklist_lock to synchronize enabling the bit with the
-	 * actual change to @task->exit_state, but we need this barrier
-	 * to be sure we see a flags change made just before our caller
-	 * took the tasklist_lock.
+	 * checks @task->exit_state under tasklist_lock to synchronize
+	 * with exit_notify(), the caller.
 	 */
-	smp_mb();
 	if (task_utrace_flags(task) & _UTRACE_DEATH_EVENTS)
 		utrace_report_death(task, death_cookie, group_dead, signal);
 }
