@@ -1,0 +1,38 @@
+diff --git a/include/linux/cfq-iosched.h b/include/linux/cfq-iosched.h
+index 8ee047b..677e3df 100644
+--- a/include/linux/cfq-iosched.h
++++ b/include/linux/cfq-iosched.h
+@@ -167,7 +167,7 @@ struct cfq_queue {
+ 	struct hlist_node cfq_hash;
+ 	/* hash key */
+ 	unsigned int key;
+-	/* on either rr or empty list of cfqd */
++	/* on either rr or empty list of cfq_bc_data, or empty for dead bc */
+ 	struct list_head cfq_list;
+ 	/* sorted list of pending requests */
+ 	struct rb_root sort_list;
+diff --git a/kernel/ub/io_prio.c b/kernel/ub/io_prio.c
+index 4452755..18ce6bd 100644
+--- a/kernel/ub/io_prio.c
++++ b/kernel/ub/io_prio.c
+@@ -94,7 +94,7 @@ static void inline bc_cfq_bc_check_empty(struct cfq_bc_data *cfq_bc)
+ static void bc_release_cfq_bc(struct cfq_bc_data *cfq_bc)
+ {
+ 	struct cfq_data *cfqd;
+-	struct cfq_queue *cfqq;
++	struct cfq_queue *cfqq, *tmp;
+ 	elevator_t *eq;
+ 	int i;
+ 
+@@ -107,8 +107,10 @@ static void bc_release_cfq_bc(struct cfq_bc_data *cfq_bc)
+ 			cfq_bc->async_cfqq[i] = NULL;
+ 		}
+ 
+-	list_for_each_entry(cfqq, &cfq_bc->empty_list, cfq_list)
++	list_for_each_entry_safe(cfqq, tmp, &cfq_bc->empty_list, cfq_list) {
++		list_del_init(&cfqq->cfq_list);
+ 		cfqq->cfq_bc = NULL;
++	}
+ 
+ 	/* 
+ 	 * Note: this cfq_bc is already not in active list,

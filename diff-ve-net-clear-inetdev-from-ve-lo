@@ -1,0 +1,49 @@
+diff --git a/net/ipv4/devinet.c b/net/ipv4/devinet.c
+index b84a84f..de5a54c 100644
+--- a/net/ipv4/devinet.c
++++ b/net/ipv4/devinet.c
+@@ -189,7 +189,7 @@ static void in_dev_rcu_put(struct rcu_head *head)
+ 	in_dev_put(idev);
+ }
+ 
+-static void inetdev_destroy(struct in_device *in_dev)
++static void inetdev_destroy(struct in_device *in_dev, int force)
+ {
+ 	struct in_ifaddr *ifa;
+ 	struct net_device *dev;
+@@ -197,7 +197,7 @@ static void inetdev_destroy(struct in_device *in_dev)
+ 	ASSERT_RTNL();
+ 
+ 	dev = in_dev->dev;
+-	if (dev == &ve0_loopback)
++	if (!force && dev == &loopback_dev)
+ 		return;
+ 
+ 	in_dev->dead = 1;
+@@ -325,7 +325,7 @@ void inet_del_ifa(struct in_device *in_dev, struct in_ifaddr **ifap,
+ 		inet_free_ifa(ifa1);
+ 
+ 		if (!in_dev->ifa_list)
+-			inetdev_destroy(in_dev);
++			inetdev_destroy(in_dev, 0);
+ 	}
+ }
+ 
+@@ -1033,11 +1033,12 @@ static int inetdev_event(struct notifier_block *this, unsigned long event,
+ 		ip_mc_down(in_dev);
+ 		break;
+ 	case NETDEV_CHANGEMTU:
+-		if (dev->mtu >= 68)
+-			break;
+-		/* MTU falled under 68, disable IP */
++		if (dev->mtu < 68)
++			/* MTU falled under 68, disable IP */
++			inetdev_destroy(in_dev, 0);
++		break;
+ 	case NETDEV_UNREGISTER:
+-		inetdev_destroy(in_dev);
++		inetdev_destroy(in_dev, 1);
+ 		break;
+ 	case NETDEV_CHANGENAME:
+ 		/* Do not notify about label change, this event is
+

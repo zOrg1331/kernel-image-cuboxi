@@ -1,0 +1,98 @@
+X-Account-Key: account4
+X-UIDL: 1305d6ed87ce4977
+X-Mozilla-Status: 0001
+X-Mozilla-Status2: 00000000
+X-Mozilla-Keys:                                                                                 
+Received: from relay.parallels.com (relay.parallels.com [195.214.232.42])
+	by relay.sw.ru (8.13.4/8.13.4) with ESMTP id nB3A6jpb030998
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <xemul@sw.ru>; Thu, 3 Dec 2009 13:06:46 +0300 (MSK)
+Received: from msk-exch1.sw.swsoft.com ([10.30.1.231] helo=mail.sw.ru)
+	by relay.parallels.com with esmtps (TLSv1:RC4-MD5:128)
+	(Exim 4.69)
+	(envelope-from <vgusev@parallels.com>)
+	id 1NG8aC-0008GE-9A
+	for xemul@sw.ru; Thu, 03 Dec 2009 13:06:44 +0300
+Received: from dhcp-10-30-18-218.localnet (10.30.18.218) by msk-exch1
+ (10.30.1.231) with Microsoft SMTP Server (TLS) id 8.2.176.0; Thu, 3 Dec 2009
+ 13:06:44 +0300
+From: Vitaily Gusev <vgusev@parallels.com>
+Organization: Parallels
+To: Pavel Emelianov <xemul@parallels.com>
+Subject: nfs: Fix oops in nfs_dq_check_space
+Date: Thu, 3 Dec 2009 13:10:02 +0300
+User-Agent: KMail/1.10.3 (Linux/2.6.27.37-0.1-default; KDE/4.1.3; x86_64; ; )
+CC: List <vz@lists.sw.ru>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="us-ascii"
+Content-Transfer-Encoding: 7bit
+Content-Disposition: inline
+Message-ID: <200912031310.03205.vgusev@parallels.com>
+
+nfs: Fix oops in nfs_dq_check_space
+
+Sometimes page can't be defined, so use page's index.
+
+Bug https://bugzilla.sw.ru/show_bug.cgi?id=459429
+
+Signed-off-by: Vitaliy Gusev <vgusev@openvz.org>
+
+---
+diff --git a/fs/nfs/file.c b/fs/nfs/file.c
+index a3d560d..75cb137 100644
+--- a/fs/nfs/file.c
++++ b/fs/nfs/file.c
+@@ -350,7 +350,7 @@ static int nfs_write_begin(struct file *file, struct address_space *mapping,
+ 	int once_thru = 0;
+ 	struct inode * inode = mapping->host;
+ 
+-	if (nfs_dq_check_space(inode, page))
++	if (nfs_dq_check_space(inode, index))
+ 		return -EDQUOT;
+ 
+ start:
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index ea0d355..0bcd8d4 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -196,11 +196,11 @@ nfs_dq_empty(struct inode * dir, struct dentry * de, struct nfs_dq_info *dqi)
+ /* If end of page beyond current end of file or file is sparse,
+  * we check quota. Not good, but the best we can do under curcumstances.
+  */
+-int nfs_dq_check_space(struct inode *inode, struct page *page)
++int nfs_dq_check_space(struct inode *inode, pgoff_t index)
+ {
+ 	loff_t i_size = i_size_read(inode);
+ 
+-	if (page->index >= (i_size + PAGE_SIZE - 1)/PAGE_SIZE ||
++	if (index >= (i_size + PAGE_SIZE - 1)/PAGE_SIZE ||
+ 	    inode->i_blocks < (i_size + 511)/512) {
+ 		if (DQUOT_CHECK_SPACE(inode))
+ 			return -EDQUOT;
+diff --git a/fs/nfs/internal.h b/fs/nfs/internal.h
+index ea5427c..e3b33f5 100644
+--- a/fs/nfs/internal.h
++++ b/fs/nfs/internal.h
+@@ -165,7 +165,7 @@ struct nfs_dq_info
+ 
+ int nfs_dq_init(struct inode * dir, struct nfs_dq_info *, int check_space);
+ void nfs_dq_destroy(struct nfs_dq_info * dqi);
+-int nfs_dq_check_space(struct inode *inode, struct page *page);
++int nfs_dq_check_space(struct inode *inode, pgoff_t index);
+ void nfs_dq_empty(struct inode * dir, struct dentry * de, struct nfs_dq_info *dqi);
+ 
+ 
+diff --git a/fs/nfs/write.c b/fs/nfs/write.c
+index e78010a..0033460 100644
+--- a/fs/nfs/write.c
++++ b/fs/nfs/write.c
+@@ -347,7 +347,7 @@ int nfs_writepage(struct page *page, struct writeback_control *wbc)
+ 	if (page->index >= end_index+1 || !offset)
+ 		goto out;
+ do_it:
+-	err = nfs_dq_check_space(inode, page);
++	err = nfs_dq_check_space(inode, page->index);
+ 	if (err)
+ 		goto out;
+ 
+

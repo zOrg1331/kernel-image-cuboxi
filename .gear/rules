@@ -20,6 +20,7 @@ copy: *.pl
 copy: *.sh
 copy: check-kabi
 copy: diff-backport-dm-delay-20070716
+copy: diff-cfq-unlink-dead-cfqq-from-list-20091202
 copy: diff-cpt-ignore-deleted-linked-chr-blk-fifo-nodes-20091105
 copy: diff-cpt-inotify-dump-fake-links
 copy: diff-cpt-ptrace-state-init-atomics-20091112
@@ -69,6 +70,7 @@ copy: diff-nbd-remove-truncate-at-disconnect-20090529
 copy: diff-nbd-spinlock-usage-fix
 copy: diff-nbd-umount-after-connection-lost
 copy: diff-nbd-xmit-timeout
+copy: diff-nfs-check-space-oops-fix
 copy: diff-nfs-rpcsaddr
 copy: diff-ocfs2-drop-duplicate-functions-20090306
 copy: diff-openafs-configure-no-mod-check
@@ -77,6 +79,7 @@ copy: diff-openafs-find_task_by_pid
 copy: diff-openafs-for_each_process
 copy: diff-revert-fairsched-fancy-vcpu-skipping-20091112
 copy: diff-revert-fairsched-vcpu-timeslice-change-20091112
+copy: diff-rh-call-vfs_check_frozen-out-of-spinlock
 copy: diff-rh-cifs-disable-posix-extensons-by-default-20090304
 copy: diff-scsi-add-modalias-mainstream
 copy: diff-snd-hda-intel
@@ -84,6 +87,7 @@ copy: diff-tossing-headers-around
 copy: diff-ve-binfmt-misc-mem-leak-20091014
 copy: diff-ve-compat-ustat-missed-devperms
 copy: diff-ve-moreleaks-20090829
+copy: diff-ve-net-clear-inetdev-from-ve-lo
 copy: diff-ve-ptys-idr-mem-leak-20091109
 copy: diff-xen-smpboot-ifdef-hotplug-20090306
 copy: find-provides
