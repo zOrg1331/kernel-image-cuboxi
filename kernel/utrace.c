@@ -184,14 +184,18 @@ static struct utrace_engine *matching_engine(
  */
 static inline int utrace_attach_delay(struct task_struct *target)
 {
-	if ((target->flags & PF_STARTING) &&
-	    task_utrace_struct(current) &&
-	    task_utrace_struct(current)->cloning != target)
-		do {
-			schedule_timeout_interruptible(1);
-			if (signal_pending(current))
-				return -ERESTARTNOINTR;
-		} while (target->flags & PF_STARTING);
+	if (!unlikely(target->flags & PF_STARTING))
+		return 0;
+
+	if (task_utrace_struct(current) &&
+	    task_utrace_struct(current)->cloning == target)
+		return 0;
+
+	do {
+		schedule_timeout_interruptible(1);
+		if (signal_pending(current))
+			return -ERESTARTNOINTR;
+	} while (target->flags & PF_STARTING);
 
 	return 0;
 }
