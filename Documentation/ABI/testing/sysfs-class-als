@@ -7,3 +7,12 @@ Description:	Current Ambient Light Illuminance reported by
 		Unit: lux (lumens per square meter)
 		RO
 
+What:		/sys/class/als/.../exposure_time[n]
+Date:		Dec. 2009
+KernelVersion:	2.6.32
+Contact:	Jonathan Cameron <jic23@cam.ac.uk>
+Description:	Sensor exposure time.  In some devices this
+		corresponds to the combined time needed to
+		to internally read several different sensors.
+		Unit: microseconds
+		RW
