@@ -107,11 +107,7 @@ static bool utrace_task_alloc(struct task_struct *task)
 		task->utrace = utrace;
 	}
 	task_unlock(task);
-	/*
-	 * That unlock after storing task->utrace acts as a memory barrier
-	 * ordering any subsequent task->utrace_flags store afterwards.
-	 * This pairs with smp_rmb() in task_utrace_struct().
-	 */
+
 	if (unlikely(task->utrace != utrace))
 		kmem_cache_free(utrace_cachep, utrace);
 	return true;
@@ -221,7 +217,10 @@ static int utrace_add_engine(struct task_struct *target,
 
 	/*
 	 * In case we had no engines before, make sure that
-	 * utrace_flags is not zero.
+	 * utrace_flags is not zero. Since we did unlock+lock
+	 * at least once after utrace_task_alloc() installed
+	 * ->utrace, we have the necessary barrier which pairs
+	 * with rmb() in task_utrace_struct().
 	 */
 	ret = -ESRCH;
 	if (!target->utrace_flags) {

@@ -164,8 +164,8 @@ static inline struct utrace *task_utrace_struct(struct task_struct *task)
 	 * is ordered before this load of task->utrace.  We use those
 	 * utrace_flags checks in the hot path to decide to call into
 	 * the utrace code.  The first attach installs task->utrace before
-	 * setting task->utrace_flags nonzero, with a barrier between.
-	 * See utrace_task_alloc().
+	 * setting task->utrace_flags nonzero with implicit barrier in
+	 * between, see utrace_add_engine().
 	 */
 	smp_rmb();
 	utrace = task->utrace;
