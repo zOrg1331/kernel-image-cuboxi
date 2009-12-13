@@ -59,7 +59,7 @@ struct utrace {
 
 	struct utrace_engine *reporting;
 
-	enum utrace_resume_action resume:3;
+	enum utrace_resume_action resume:UTRACE_RESUME_BITS;
 	unsigned int signal_handler:1;
 	unsigned int vfork_stop:1; /* need utrace_stop() before vfork wait */
 	unsigned int death:1;	/* in utrace_report_death() now */
@@ -123,13 +123,13 @@ void utrace_free_task(struct task_struct *task)
 }
 
 /*
- * This is called with @utrace->lock held when the task is safely
- * quiescent, i.e. it won't consult utrace->attached without the lock.
- * Move any engines attached asynchronously from @utrace->attaching
- * onto the @utrace->attached list.
+ * This is calledwhen the task is safely quiescent, i.e. it won't consult
+ * utrace->attached without the lock.  Move any engines attached
+ * asynchronously from @utrace->attaching onto the @utrace->attached list.
  */
 static void splice_attaching(struct utrace *utrace)
 {
+	lockdep_assert_held(&utrace->lock);
 	list_splice_tail_init(&utrace->attaching, &utrace->attached);
 	utrace->pending_attach = 0;
 }
@@ -733,11 +733,10 @@ static bool utrace_do_stop(struct task_struct *target, struct utrace *utrace)
 /*
  * If the target is not dead it should not be in tracing
  * stop any more.  Wake it unless it's in job control stop.
- *
- * Called with @utrace->lock held and @target in either TASK_TRACED or dead.
  */
 static void utrace_wakeup(struct task_struct *target, struct utrace *utrace)
 {
+	lockdep_assert_held(&utrace->lock);
 	spin_lock_irq(&target->sighand->siglock);
 	if (target->signal->flags & SIGNAL_STOP_STOPPED ||
 	    target->signal->group_stop_count)
@@ -802,10 +801,10 @@ static bool utrace_reset(struct task_struct *task, struct utrace *utrace)
 		utrace->signal_handler = 0;
 	}
 
+	/*
+	 * If no more engines want it stopped, wake it up.
+	 */
 	if (task_is_traced(task) && !(flags & ENGINE_STOP))
-		/*
-		 * No more engines want it stopped.  Wake it up.
-		 */
 		utrace_wakeup(task, utrace);
 
 	/*
@@ -930,12 +929,14 @@ relock:
  * the death report will come soon, so disallow detach until it's
  * done.  This prevents us from racing with it detaching itself.
  *
- * Called with utrace->lock held, when @target->exit_state is nonzero.
+ * Called only when @target->exit_state is nonzero.
  */
 static inline int utrace_control_dead(struct task_struct *target,
 				      struct utrace *utrace,
 				      enum utrace_resume_action action)
 {
+	lockdep_assert_held(&utrace->lock);
+
 	if (action != UTRACE_DETACH || unlikely(utrace->reap))
 		return -ESRCH;
 
@@ -1079,7 +1080,7 @@ int utrace_control(struct task_struct *target,
 	bool reset;
 	int ret;
 
-	if (unlikely(action > UTRACE_DETACH))
+	if (unlikely(action >= UTRACE_RESUME_MAX))
 		return -EINVAL;
 
 	/*
@@ -1224,6 +1225,9 @@ int utrace_control(struct task_struct *target,
 			}
 		}
 		break;
+
+	default:
+		BUG();		/* We checked it on entry.  */
 	}
 
 	/*

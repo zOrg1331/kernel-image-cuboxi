@@ -217,9 +217,11 @@ enum utrace_resume_action {
 	UTRACE_SINGLESTEP,
 	UTRACE_BLOCKSTEP,
 	UTRACE_RESUME,
-	UTRACE_DETACH
+	UTRACE_DETACH,
+	UTRACE_RESUME_MAX
 };
-#define	UTRACE_RESUME_MASK	0x07
+#define UTRACE_RESUME_BITS	(ilog2(UTRACE_RESUME_MAX) + 1)
+#define UTRACE_RESUME_MASK	((1 << UTRACE_RESUME_BITS) - 1)
 
 /**
  * utrace_resume_action - &enum utrace_resume_action from callback action
