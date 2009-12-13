@@ -313,11 +313,11 @@ static inline enum utrace_syscall_action utrace_syscall_action(u32 action)
 /*
  * Flags for utrace_attach_task() and utrace_attach_pid().
  */
-#define UTRACE_ATTACH_CREATE		0x0010 /* Attach a new engine.  */
-#define UTRACE_ATTACH_EXCLUSIVE		0x0020 /* Refuse if existing match.  */
 #define UTRACE_ATTACH_MATCH_OPS		0x0001 /* Match engines on ops.  */
 #define UTRACE_ATTACH_MATCH_DATA	0x0002 /* Match engines on data.  */
 #define UTRACE_ATTACH_MATCH_MASK	0x000f
+#define UTRACE_ATTACH_CREATE		0x0010 /* Attach a new engine.  */
+#define UTRACE_ATTACH_EXCLUSIVE		0x0020 /* Refuse if existing match.  */
 
 /**
  * struct utrace_engine - per-engine structure

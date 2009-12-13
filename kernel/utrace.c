@@ -158,7 +158,7 @@ static bool engine_matches(struct utrace_engine *engine, int flags,
 	return engine->ops && engine->ops != &utrace_detached_ops;
 }
 
-static struct utrace_engine *matching_engine(
+static struct utrace_engine *find_matching_engine(
 	struct utrace *utrace, int flags,
 	const struct utrace_engine_ops *ops, void *data)
 {
@@ -212,7 +212,7 @@ static int utrace_add_engine(struct task_struct *target,
 
 	ret = -EEXIST;
 	if ((flags & UTRACE_ATTACH_EXCLUSIVE) &&
-	     unlikely(matching_engine(utrace, flags, ops, data)))
+	     unlikely(find_matching_engine(utrace, flags, ops, data)))
 		goto unlock;
 
 	/*
@@ -298,7 +298,7 @@ struct utrace_engine *utrace_attach_task(
 		if (unlikely(!utrace))
 			return ERR_PTR(-ENOENT);
 		spin_lock(&utrace->lock);
-		engine = matching_engine(utrace, flags, ops, data);
+		engine = find_matching_engine(utrace, flags, ops, data);
 		if (engine)
 			utrace_engine_get(engine);
 		spin_unlock(&utrace->lock);
@@ -1542,14 +1542,6 @@ static const struct utrace_engine_ops *start_callback(
  * @callback is the name of the member in the ops vector, and remaining
  * args are the extras it takes after the standard three args.
  */
-#define REPORT(task, utrace, report, event, callback, ...)		      \
-	do {								      \
-		start_report(utrace);					      \
-		REPORT_CALLBACKS(, task, utrace, report, event, callback,     \
-				 (report)->action, engine, current,	      \
-				 ## __VA_ARGS__);  	   		      \
-		finish_report(task, utrace, report, true);		      \
-	} while (0)
 #define REPORT_CALLBACKS(rev, task, utrace, report, event, callback, ...)     \
 	do {								      \
 		struct utrace_engine *engine;				      \
@@ -1562,6 +1554,14 @@ static const struct utrace_engine_ops *start_callback(
 			finish_callback(task, utrace, report, engine,	      \
 					(*ops->callback)(__VA_ARGS__));	      \
 		}							      \
+	} while (0)
+#define REPORT(task, utrace, report, event, callback, ...)		      \
+	do {								      \
+		start_report(utrace);					      \
+		REPORT_CALLBACKS(, task, utrace, report, event, callback,     \
+				 (report)->action, engine, current,	      \
+				 ## __VA_ARGS__);  	   		      \
+		finish_report(task, utrace, report, true);		      \
 	} while (0)
 
 /*
