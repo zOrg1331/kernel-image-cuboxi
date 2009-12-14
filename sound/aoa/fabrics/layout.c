@@ -768,7 +768,7 @@ static int check_codec(struct aoa_codec *codec,
 				"required property %s not present\n", propname);
 			return -ENODEV;
 		}
-		if (*ref != codec->node->phandle) {
+		if (*ref != codec->node->linux_phandle) {
 			printk(KERN_INFO "snd-aoa-fabric-layout: "
 				"%s doesn't match!\n", propname);
 			return -ENODEV;

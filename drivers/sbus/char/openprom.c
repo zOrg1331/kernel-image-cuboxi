@@ -233,7 +233,7 @@ static int opromnext(void __user *argp, unsigned int cmd, struct device_node *dp
 
 	ph = 0;
 	if (dp)
-		ph = dp->phandle;
+		ph = dp->node;
 
 	data->current_node = dp;
 	*((int *) op->oprom_array) = ph;
@@ -256,7 +256,7 @@ static int oprompci2node(void __user *argp, struct device_node *dp, struct openp
 
 		dp = pci_device_to_OF_node(pdev);
 		data->current_node = dp;
-		*((int *)op->oprom_array) = dp->phandle;
+		*((int *)op->oprom_array) = dp->node;
 		op->oprom_size = sizeof(int);
 		err = copyout(argp, op, bufsize + sizeof(int));
 
@@ -273,7 +273,7 @@ static int oprompath2node(void __user *argp, struct device_node *dp, struct open
 
 	dp = of_find_node_by_path(op->oprom_array);
 	if (dp)
-		ph = dp->phandle;
+		ph = dp->node;
 	data->current_node = dp;
 	*((int *)op->oprom_array) = ph;
 	op->oprom_size = sizeof(int);
@@ -540,7 +540,7 @@ static int opiocgetnext(unsigned int cmd, void __user *argp)
 		}
 	}
 	if (dp)
-		nd = dp->phandle;
+		nd = dp->node;
 	if (copy_to_user(argp, &nd, sizeof(phandle)))
 		return -EFAULT;
 
@@ -570,7 +570,7 @@ static int openprom_bsd_ioctl(struct inode * inode, struct file * file,
 	case OPIOCGETOPTNODE:
 		BUILD_BUG_ON(sizeof(phandle) != sizeof(int));
 
-		if (copy_to_user(argp, &options_node->phandle, sizeof(phandle)))
+		if (copy_to_user(argp, &options_node->node, sizeof(phandle)))
 			return -EFAULT;
 
 		return 0;
