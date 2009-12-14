@@ -158,6 +158,10 @@
 #define TWL4030_BASEADD_PWMB		0x00F1
 #define TWL4030_BASEADD_KEYPAD		0x00D2
 
+#define TWL5031_BASEADD_ACCESSORY	0x0074 /* Replaces Main Charge */
+#define TWL5031_BASEADD_INTERRUPTS	0x00B9 /* Different than TWL4030's
+						  one */
+
 /* subchip/slave 3 - POWER ID */
 #define TWL4030_BASEADD_BACKUP		0x0014
 #define TWL4030_BASEADD_INT		0x002E
@@ -183,11 +187,13 @@
 #define HFCLK_FREQ_26_MHZ		(2 << 0)
 #define HFCLK_FREQ_38p4_MHZ		(3 << 0)
 #define HIGH_PERF_SQ			(1 << 3)
+#define CK32K_LOWPWR_EN			(1 << 7)
 
 
 /* chip-specific feature flags, for i2c_device_id.driver_data */
 #define TWL4030_VAUX2		BIT(0)	/* pre-5030 voltage ranges */
 #define TPS_SUBSET		BIT(1)	/* tps659[23]0 have fewer LDOs */
+#define TWL5031			BIT(2)  /* twl5031 has different registers */
 
 /*----------------------------------------------------------------------*/
 
@@ -240,6 +246,8 @@ static struct twl4030mapping twl4030_map[TWL4030_MODULE_LAST + 1] = {
 	{ 2, TWL4030_BASEADD_PWM1 },
 	{ 2, TWL4030_BASEADD_PWMA },
 	{ 2, TWL4030_BASEADD_PWMB },
+	{ 2, TWL5031_BASEADD_ACCESSORY },
+	{ 2, TWL5031_BASEADD_INTERRUPTS },
 
 	{ 3, TWL4030_BASEADD_BACKUP },
 	{ 3, TWL4030_BASEADD_INT },
@@ -298,10 +306,17 @@ int twl4030_i2c_write(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes)
 	ret = i2c_transfer(twl->client->adapter, twl->xfer_msg, 1);
 	mutex_unlock(&twl->xfer_lock);
 
-	/* i2cTransfer returns num messages.translate it pls.. */
-	if (ret >= 0)
-		ret = 0;
-	return ret;
+	/* i2c_transfer returns number of messages transferred */
+	if (ret != 1) {
+		pr_err("%s: i2c_write failed to transfer all messages\n",
+			DRIVER_NAME);
+		if (ret < 0)
+			return ret;
+		else
+			return -EIO;
+	} else {
+		return 0;
+	}
 }
 EXPORT_SYMBOL(twl4030_i2c_write);
 
@@ -350,10 +365,17 @@ int twl4030_i2c_read(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes)
 	ret = i2c_transfer(twl->client->adapter, twl->xfer_msg, 2);
 	mutex_unlock(&twl->xfer_lock);
 
-	/* i2cTransfer returns num messages.translate it pls.. */
-	if (ret >= 0)
-		ret = 0;
-	return ret;
+	/* i2c_transfer returns number of messages transferred */
+	if (ret != 2) {
+		pr_err("%s: i2c_read failed to transfer all messages\n",
+			DRIVER_NAME);
+		if (ret < 0)
+			return ret;
+		else
+			return -EIO;
+	} else {
+		return 0;
+	}
 }
 EXPORT_SYMBOL(twl4030_i2c_read);
 
@@ -487,7 +509,8 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 {
 	struct device	*child;
 
-	if (twl_has_bci() && pdata->bci && !(features & TPS_SUBSET)) {
+	if (twl_has_bci() && pdata->bci &&
+	    !(features & (TPS_SUBSET | TWL5031))) {
 		child = add_child(3, "twl4030_bci",
 				pdata->bci, sizeof(*pdata->bci),
 				false,
@@ -616,11 +639,21 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 	}
 
 	if (twl_has_regulator()) {
-		/*
 		child = add_regulator(TWL4030_REG_VPLL1, pdata->vpll1);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
-		*/
+
+		child = add_regulator(TWL4030_REG_VIO, pdata->vio);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL4030_REG_VDD1, pdata->vdd1);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL4030_REG_VDD2, pdata->vdd2);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
 
 		child = add_regulator(TWL4030_REG_VMMC1, pdata->vmmc1);
 		if (IS_ERR(child))
@@ -634,6 +667,18 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 					? TWL4030_REG_VAUX2_4030
 					: TWL4030_REG_VAUX2,
 				pdata->vaux2);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL4030_REG_VINTANA1, pdata->vintana1);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL4030_REG_VINTANA2, pdata->vintana2);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL4030_REG_VINTDIG, pdata->vintdig);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 	}
@@ -695,7 +740,8 @@ static inline int __init unprotect_pm_master(void)
 	return e;
 }
 
-static void clocks_init(struct device *dev)
+static void clocks_init(struct device *dev,
+			struct twl4030_clock_init_data *clock)
 {
 	int e = 0;
 	struct clk *osc;
@@ -742,6 +788,9 @@ static void clocks_init(struct device *dev)
 	}
 
 	ctrl |= HIGH_PERF_SQ;
+	if (clock && clock->ck32k_lowpwr_enable)
+		ctrl |= CK32K_LOWPWR_EN;
+
 	e |= unprotect_pm_master();
 	/* effect->MADC+USB ck en */
 	e |= twl4030_i2c_write_u8(TWL4030_MODULE_PM_MASTER, ctrl, R_CFG_BOOT);
@@ -755,6 +804,7 @@ static void clocks_init(struct device *dev)
 
 int twl_init_irq(int irq_num, unsigned irq_base, unsigned irq_end);
 int twl_exit_irq(void);
+int twl_init_chip_irq(const char *chip);
 
 static int twl4030_remove(struct i2c_client *client)
 {
@@ -814,15 +864,13 @@ twl4030_probe(struct i2c_client *client, const struct i2c_device_id *id)
 				status = -ENOMEM;
 				goto fail;
 			}
-			strlcpy(twl->client->name, id->name,
-					sizeof(twl->client->name));
 		}
 		mutex_init(&twl->xfer_lock);
 	}
 	inuse = true;
 
 	/* setup clock framework */
-	clocks_init(&client->dev);
+	clocks_init(&client->dev, pdata->clock);
 
 	/* load power event scripts */
 	if (twl_has_power() && pdata->power)
@@ -832,6 +880,7 @@ twl4030_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	if (client->irq
 			&& pdata->irq_base
 			&& pdata->irq_end > pdata->irq_base) {
+		twl_init_chip_irq(id->name);
 		status = twl_init_irq(client->irq, pdata->irq_base, pdata->irq_end);
 		if (status < 0)
 			goto fail;
@@ -847,6 +896,7 @@ fail:
 static const struct i2c_device_id twl4030_ids[] = {
 	{ "twl4030", TWL4030_VAUX2 },	/* "Triton 2" */
 	{ "twl5030", 0 },		/* T2 updated */
+	{ "twl5031", TWL5031 },		/* TWL5030 updated */
 	{ "tps65950", 0 },		/* catalog version of twl5030 */
 	{ "tps65930", TPS_SUBSET },	/* fewer LDOs and DACs; no charger */
 	{ "tps65920", TPS_SUBSET },	/* fewer LDOs; no codec or charger */
