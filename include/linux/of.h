@@ -39,10 +39,7 @@ struct of_irq_controller;
 struct device_node {
 	const char *name;
 	const char *type;
-	phandle	node;
-#if !defined(CONFIG_SPARC)
-	phandle linux_phandle;
-#endif
+	phandle phandle;
 	char	*full_name;
 
 	struct	property *properties;
@@ -62,6 +59,9 @@ struct device_node {
 	struct of_irq_controller *irq_trans;
 #endif
 };
+
+/* Pointer for first entry in chain of all nodes. */
+extern struct device_node *allnodes;
 
 static inline int of_node_check_flag(struct device_node *n, unsigned long flag)
 {
@@ -110,14 +110,11 @@ static inline u64 of_read_number(const u32 *cell, int size)
 }
 
 /* Like of_read_number, but we want an unsigned long result */
-#ifdef CONFIG_PPC32
 static inline unsigned long of_read_ulong(const u32 *cell, int size)
 {
-	return cell[size-1];
+	/* toss away upper bits if unsigned long is smaller than u64 */
+	return of_read_number(cell, size);
 }
-#else
-#define of_read_ulong(cell, size)	of_read_number(cell, size)
-#endif
 
 #include <asm/prom.h>
 
@@ -129,6 +126,10 @@ static inline unsigned long of_read_ulong(const u32 *cell, int size)
 #define OF_MARK_DYNAMIC(x) set_bit(OF_DYNAMIC, &x->_flags)
 
 #define OF_BAD_ADDR	((u64)-1)
+
+/* For updating the device tree at runtime */
+extern void of_attach_node(struct device_node *);
+extern void of_detach_node(struct device_node *);
 
 extern struct device_node *of_find_node_by_name(struct device_node *from,
 	const char *name);
