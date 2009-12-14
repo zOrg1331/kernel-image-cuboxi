@@ -256,6 +256,7 @@ static int acpi_fan_add(struct acpi_device *device)
 		goto end;
 	}
 
+	device->power.flags.explicit_get = 0;
 	device->flags.force_power_state = 1;
 	acpi_bus_set_power(device->handle, state);
 	device->flags.force_power_state = 0;
