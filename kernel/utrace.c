@@ -1467,11 +1467,13 @@ static bool finish_callback(struct task_struct *task, struct utrace *utrace,
 	utrace->reporting = NULL;
 
 	/*
-	 * This is a good place to make sure tracing engines don't
-	 * introduce too much latency under voluntary preemption.
+	 * We've just done an engine callback.  These are allowed to sleep,
+	 * though all well-behaved ones restrict that to blocking kalloc()
+	 * or quickly-acquired mutex_lock() and the like.  This is a good
+	 * place to make sure tracing engines don't introduce too much
+	 * latency under voluntary preemption.
 	 */
-	if (need_resched())
-		cond_resched();
+	might_sleep();
 
 	return engine->ops == &utrace_detached_ops;
 }
@@ -1839,15 +1841,16 @@ static void finish_resume_report(struct task_struct *task,
 		WARN_ON(1);
 
 	case UTRACE_SINGLESTEP:
-		if (likely(arch_has_single_step()))
+		if (likely(arch_has_single_step())) {
 			user_enable_single_step(task);
-		else
+		} else {
 			/*
 			 * This means some callback is to blame for failing
 			 * to check arch_has_single_step() itself.  Spew
 			 * about it so the loser will fix his module.
 			 */
 			WARN_ON(1);
+		}
 		break;
 
 	case UTRACE_REPORT:
