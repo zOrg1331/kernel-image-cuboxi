@@ -57,15 +57,11 @@ static int cleanup_scripting(void)
 #include "util/debug.h"
 
 #include "util/trace-event.h"
-#include "util/data_map.h"
 #include "util/exec_cmd.h"
 
 static char const		*input_name = "perf.data";
 
-static struct perf_session 	*session;
-static u64			sample_type;
-
-static int process_sample_event(event_t *event)
+static int process_sample_event(event_t *event, struct perf_session *session)
 {
 	struct sample_data data;
 	struct thread *thread;
@@ -75,7 +71,7 @@ static int process_sample_event(event_t *event)
 	data.cpu = -1;
 	data.period = 1;
 
-	event__parse_sample(event, sample_type, &data);
+	event__parse_sample(event, session->sample_type, &data);
 
 	dump_printf("(IP, %d): %d/%d: %p period: %Ld\n",
 		event->header.misc,
@@ -83,14 +79,14 @@ static int process_sample_event(event_t *event)
 		(void *)(long)data.ip,
 		(long long)data.period);
 
-	thread = threads__findnew(event->ip.pid);
+	thread = perf_session__findnew(session, event->ip.pid);
 	if (thread == NULL) {
 		pr_debug("problem processing %d event, skipping it.\n",
 			 event->header.type);
 		return -1;
 	}
 
-	if (sample_type & PERF_SAMPLE_RAW) {
+	if (session->sample_type & PERF_SAMPLE_RAW) {
 		/*
 		 * FIXME: better resolve from pid from the struct trace_entry
 		 * field, although it should be the same than this perf
@@ -100,16 +96,14 @@ static int process_sample_event(event_t *event)
 					     data.raw_size,
 					     data.time, thread->comm);
 	}
-	event__stats.total += data.period;
 
+	session->events_stats.total += data.period;
 	return 0;
 }
 
-static int sample_type_check(u64 type)
+static int sample_type_check(struct perf_session *session)
 {
-	sample_type = type;
-
-	if (!(sample_type & PERF_SAMPLE_RAW)) {
+	if (!(session->sample_type & PERF_SAMPLE_RAW)) {
 		fprintf(stderr,
 			"No trace sample to read. Did you call perf record "
 			"without -R?");
@@ -119,26 +113,15 @@ static int sample_type_check(u64 type)
 	return 0;
 }
 
-static struct perf_file_handler file_handler = {
+static struct perf_event_ops event_ops = {
 	.process_sample_event	= process_sample_event,
 	.process_comm_event	= event__process_comm,
 	.sample_type_check	= sample_type_check,
 };
 
-static int __cmd_trace(void)
+static int __cmd_trace(struct perf_session *session)
 {
-	int err;
-
-	session = perf_session__new(input_name, O_RDONLY, 0);
-	if (session == NULL)
-		return -ENOMEM;
-
-	register_idle_thread();
-	register_perf_file_handler(&file_handler);
-
-	err = perf_session__process_events(session, 0, &event__cwdlen, &event__cwd);
-	perf_session__delete(session);
-	return err;
+	return perf_session__process_events(session, &event_ops);
 }
 
 struct script_spec {
@@ -313,6 +296,7 @@ static const struct option options[] = {
 int cmd_trace(int argc, const char **argv, const char *prefix __used)
 {
 	int err;
+	struct perf_session *session;
 
 	symbol__init(0);
 
@@ -329,6 +313,10 @@ int cmd_trace(int argc, const char **argv, const char *prefix __used)
 	}
 
 	setup_pager();
+
+	session = perf_session__new(input_name, O_RDONLY, 0, NULL);
+	if (session == NULL)
+		return -ENOMEM;
 
 	if (generate_script_lang) {
 		struct stat perf_stat;
@@ -367,8 +355,9 @@ int cmd_trace(int argc, const char **argv, const char *prefix __used)
 			goto out;
 	}
 
-	err = __cmd_trace();
+	err = __cmd_trace(session);
 
+	perf_session__delete(session);
 	cleanup_scripting();
 out:
 	return err;

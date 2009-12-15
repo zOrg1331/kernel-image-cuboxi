@@ -123,7 +123,8 @@ static void write_event(event_t *buf, size_t size)
 	write_output(buf, size);
 }
 
-static int process_synthesized_event(event_t *event)
+static int process_synthesized_event(event_t *event,
+				     struct perf_session *self __used)
 {
 	write_event(event, event->header.size);
 	return 0;
@@ -420,10 +421,19 @@ static int __cmd_record(int argc, const char **argv)
 	signal(SIGINT, sig_handler);
 
 	if (!stat(output_name, &st) && st.st_size) {
-		if (!force && !append_file) {
-			fprintf(stderr, "Error, output file %s exists, use -A to append or -f to overwrite.\n",
-					output_name);
-			exit(-1);
+		if (!force) {
+			if (!append_file) {
+				pr_err("Error, output file %s exists, use -A "
+				       "to append or -f to overwrite.\n",
+				       output_name);
+				exit(-1);
+			}
+		} else {
+			char oldname[PATH_MAX];
+			snprintf(oldname, sizeof(oldname), "%s.old",
+				 output_name);
+			unlink(oldname);
+			rename(output_name, oldname);
 		}
 	} else {
 		append_file = 0;
@@ -441,7 +451,7 @@ static int __cmd_record(int argc, const char **argv)
 		exit(-1);
 	}
 
-	session = perf_session__new(output_name, O_WRONLY, force);
+	session = perf_session__new(output_name, O_WRONLY, force, NULL);
 	if (session == NULL) {
 		pr_err("Not enough memory for reading perf file header\n");
 		return -1;
@@ -488,9 +498,10 @@ static int __cmd_record(int argc, const char **argv)
 	}
 
 	if (!system_wide)
-		event__synthesize_thread(pid, process_synthesized_event);
+		event__synthesize_thread(pid, process_synthesized_event,
+					 session);
 	else
-		event__synthesize_threads(process_synthesized_event);
+		event__synthesize_threads(process_synthesized_event, session);
 
 	if (target_pid == -1 && argc) {
 		pid = fork();
@@ -510,7 +521,8 @@ static int __cmd_record(int argc, const char **argv)
 			 */
 			usleep(1000);
 			event__synthesize_thread(pid,
-						 process_synthesized_event);
+						 process_synthesized_event,
+						 session);
 		}
 
 		child_pid = pid;
