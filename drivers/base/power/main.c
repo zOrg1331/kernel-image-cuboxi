@@ -514,6 +514,7 @@ static void async_resume(void *data, async_cookie_t cookie)
 	struct device *dev = (struct device *)data;
 	int error;
 
+	pm_dev_dbg(dev, pm_transition, "async ");
 	error = __device_resume(dev, pm_transition, true);
 	if (error)
 		pm_dev_err(dev, pm_transition, " async", error);
@@ -795,6 +796,7 @@ static void async_suspend(void *data, async_cookie_t cookie)
 	struct device *dev = (struct device *)data;
 	int error;
 
+	pm_dev_dbg(dev, pm_transition, "async ");
 	error = __device_suspend(dev, pm_transition, true);
 	if (error) {
 		pm_dev_err(dev, pm_transition, " async", error);
