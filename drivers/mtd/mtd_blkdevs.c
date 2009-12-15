@@ -32,14 +32,6 @@ struct mtd_blkcore_priv {
 	spinlock_t queue_lock;
 };
 
-static int blktrans_discard_request(struct request_queue *q,
-				    struct request *req)
-{
-	req->cmd_type = REQ_TYPE_LINUX_BLOCK;
-	req->cmd[0] = REQ_LB_OP_DISCARD;
-	return 0;
-}
-
 static int do_blktrans_request(struct mtd_blktrans_ops *tr,
 			       struct mtd_blktrans_dev *dev,
 			       struct request *req)
@@ -52,10 +44,6 @@ static int do_blktrans_request(struct mtd_blktrans_ops *tr,
 
 	buf = req->buffer;
 
-	if (req->cmd_type == REQ_TYPE_LINUX_BLOCK &&
-	    req->cmd[0] == REQ_LB_OP_DISCARD)
-		return tr->discard(dev, block, nsect);
-
 	if (!blk_fs_request(req))
 		return -EIO;
 
@@ -63,17 +51,22 @@ static int do_blktrans_request(struct mtd_blktrans_ops *tr,
 	    get_capacity(req->rq_disk))
 		return -EIO;
 
+	if (blk_discard_rq(req))
+		return tr->discard(dev, block, nsect);
+
 	switch(rq_data_dir(req)) {
 	case READ:
 		for (; nsect > 0; nsect--, block++, buf += tr->blksize)
 			if (tr->readsect(dev, block, buf))
 				return -EIO;
+		rq_flush_dcache_pages(req);
 		return 0;
 
 	case WRITE:
 		if (!tr->writesect)
 			return -EIO;
 
+		rq_flush_dcache_pages(req);
 		for (; nsect > 0; nsect--, block++, buf += tr->blksize)
 			if (tr->writesect(dev, block, buf))
 				return -EIO;
@@ -380,8 +373,8 @@ int register_mtd_blktrans(struct mtd_blktrans_ops *tr)
 	tr->blkcore_priv->rq->queuedata = tr;
 	blk_queue_logical_block_size(tr->blkcore_priv->rq, tr->blksize);
 	if (tr->discard)
-		blk_queue_set_discard(tr->blkcore_priv->rq,
-				      blktrans_discard_request);
+		queue_flag_set_unlocked(QUEUE_FLAG_DISCARD,
+					tr->blkcore_priv->rq);
 
 	tr->blkshift = ffs(tr->blksize) - 1;
 
