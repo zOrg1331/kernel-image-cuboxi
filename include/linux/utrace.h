@@ -123,8 +123,6 @@ static inline struct utrace *task_utrace_struct(struct task_struct *task)
 static inline void utrace_init_task(struct task_struct *child)
 {
 }
-{
-}
 
 static inline void task_utrace_proc_status(struct seq_file *m,
 					   struct task_struct *p)
