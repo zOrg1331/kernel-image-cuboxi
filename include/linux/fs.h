@@ -129,7 +129,7 @@ struct inodes_stat_t {
  * WRITE_SYNC		Like WRITE_SYNC_PLUG, but also unplugs the device
  *			immediately after submission. The write equivalent
  *			of READ_SYNC.
- * WRITE_ODIRECT	Special case write for O_DIRECT only.
+ * WRITE_ODIRECT_PLUG	Special case write for O_DIRECT only.
  * SWRITE_SYNC
  * SWRITE_SYNC_PLUG	Like WRITE_SYNC/WRITE_SYNC_PLUG, but locks the buffer.
  *			See SWRITE.
@@ -151,7 +151,7 @@ struct inodes_stat_t {
 #define READ_META	(READ | (1 << BIO_RW_META))
 #define WRITE_SYNC_PLUG	(WRITE | (1 << BIO_RW_SYNCIO) | (1 << BIO_RW_NOIDLE))
 #define WRITE_SYNC	(WRITE_SYNC_PLUG | (1 << BIO_RW_UNPLUG))
-#define WRITE_ODIRECT	(WRITE | (1 << BIO_RW_SYNCIO) | (1 << BIO_RW_UNPLUG))
+#define WRITE_ODIRECT_PLUG	(WRITE | (1 << BIO_RW_SYNCIO))
 #define SWRITE_SYNC_PLUG	\
 			(SWRITE | (1 << BIO_RW_SYNCIO) | (1 << BIO_RW_NOIDLE))
 #define SWRITE_SYNC	(SWRITE_SYNC_PLUG | (1 << BIO_RW_UNPLUG))
@@ -304,6 +304,7 @@ struct inodes_stat_t {
 #define BLKIOOPT _IO(0x12,121)
 #define BLKALIGNOFF _IO(0x12,122)
 #define BLKPBSZGET _IO(0x12,123)
+#define BLKDISCARDZEROES _IO(0x12,124)
 
 #define BMAP_IOCTL 1		/* obsolete - kept for compatibility */
 #define FIBMAP	   _IO(0x00,1)	/* bmap access */
@@ -2090,8 +2091,6 @@ extern int filemap_fdatawait_range(struct address_space *, loff_t lstart,
 extern int filemap_write_and_wait(struct address_space *mapping);
 extern int filemap_write_and_wait_range(struct address_space *mapping,
 				        loff_t lstart, loff_t lend);
-extern int wait_on_page_writeback_range(struct address_space *mapping,
-				pgoff_t start, pgoff_t end);
 extern int __filemap_fdatawrite_range(struct address_space *mapping,
 				loff_t start, loff_t end, int sync_mode);
 extern int filemap_fdatawrite_range(struct address_space *mapping,
@@ -2265,9 +2264,11 @@ ssize_t __blockdev_direct_IO(int rw, struct kiocb *iocb, struct inode *inode,
 	int lock_type);
 
 enum {
-	DIO_LOCKING = 1, /* need locking between buffered and direct access */
-	DIO_NO_LOCKING,  /* bdev; no locking at all between buffered/direct */
-	DIO_OWN_LOCKING, /* filesystem locks buffered and direct internally */
+	/* need locking between buffered and direct access */
+	DIO_LOCKING	= 0x01,
+
+	/* filesystem does not support filling holes */
+	DIO_SKIP_HOLES	= 0x02,
 };
 
 static inline ssize_t blockdev_direct_IO(int rw, struct kiocb *iocb,
@@ -2276,7 +2277,8 @@ static inline ssize_t blockdev_direct_IO(int rw, struct kiocb *iocb,
 	dio_iodone_t end_io)
 {
 	return __blockdev_direct_IO(rw, iocb, inode, bdev, iov, offset,
-				nr_segs, get_block, end_io, DIO_LOCKING);
+				    nr_segs, get_block, end_io,
+				    DIO_LOCKING | DIO_SKIP_HOLES);
 }
 
 static inline ssize_t blockdev_direct_IO_no_locking(int rw, struct kiocb *iocb,
@@ -2285,16 +2287,7 @@ static inline ssize_t blockdev_direct_IO_no_locking(int rw, struct kiocb *iocb,
 	dio_iodone_t end_io)
 {
 	return __blockdev_direct_IO(rw, iocb, inode, bdev, iov, offset,
-				nr_segs, get_block, end_io, DIO_NO_LOCKING);
-}
-
-static inline ssize_t blockdev_direct_IO_own_locking(int rw, struct kiocb *iocb,
-	struct inode *inode, struct block_device *bdev, const struct iovec *iov,
-	loff_t offset, unsigned long nr_segs, get_block_t get_block,
-	dio_iodone_t end_io)
-{
-	return __blockdev_direct_IO(rw, iocb, inode, bdev, iov, offset,
-				nr_segs, get_block, end_io, DIO_OWN_LOCKING);
+				nr_segs, get_block, end_io, 0);
 }
 #endif
 
