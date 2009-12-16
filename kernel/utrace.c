@@ -173,30 +173,6 @@ static struct utrace_engine *find_matching_engine(
 }
 
 /*
- * Called without locks, when we might be the first utrace engine to attach.
- * If this is a newborn thread and we are not the creator, we have to wait
- * for it.  The creator gets the first chance to attach.  The PF_STARTING
- * flag is cleared after its report_clone hook has had a chance to run.
- */
-static inline int utrace_attach_delay(struct task_struct *target)
-{
-	if (!unlikely(target->flags & PF_STARTING))
-		return 0;
-
-	if (task_utrace_struct(current) &&
-	    task_utrace_struct(current)->cloning == target)
-		return 0;
-
-	do {
-		schedule_timeout_interruptible(1);
-		if (signal_pending(current))
-			return -ERESTARTNOINTR;
-	} while (target->flags & PF_STARTING);
-
-	return 0;
-}
-
-/*
  * Enqueue @engine, or maybe don't if UTRACE_ATTACH_EXCLUSIVE.
  */
 static int utrace_add_engine(struct task_struct *target,
@@ -334,10 +310,7 @@ struct utrace_engine *utrace_attach_task(
 	engine->data = data;
 	engine->release = ops->release;
 
-	ret = utrace_attach_delay(target);
-	if (likely(!ret))
-		ret = utrace_add_engine(target, utrace, engine,
-					flags, ops, data);
+	ret = utrace_add_engine(target, utrace, engine, flags, ops, data);
 
 	if (unlikely(ret)) {
 		kmem_cache_free(utrace_engine_cachep, engine);

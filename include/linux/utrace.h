@@ -485,17 +485,13 @@ static inline void utrace_engine_put(struct utrace_engine *engine)
  * @report_clone:
  *	Requested by %UTRACE_EVENT(%CLONE).
  *	Event reported for parent, before the new task @child might run.
- *	@clone_flags gives the flags used in the clone system call,
- *	or equivalent flags for a fork() or vfork() system call.
- *	This function can use utrace_attach_task() on @child.  It's guaranteed
- *	that asynchronous utrace_attach_task() calls will be ordered after
- *	any calls in @report_clone callbacks for the parent.  Thus
- *	when using %UTRACE_ATTACH_EXCLUSIVE in the asynchronous calls,
- *	you can be sure that the parent's @report_clone callback has
- *	already attached to @child or chosen not to.  Passing %UTRACE_STOP
- *	to utrace_control() on @child here keeps the child stopped before
- *	it ever runs in user mode, %UTRACE_REPORT or %UTRACE_INTERRUPT
- *	ensures a callback from @child before it starts in user mode.
+ *	@clone_flags gives the flags used in the clone system call, or
+ *	equivalent flags for a fork() or vfork() system call.  This
+ *	function can use utrace_attach_task() on @child.  Then passing
+ *	%UTRACE_STOP to utrace_control() on @child here keeps the child
+ *	stopped before it ever runs in user mode, %UTRACE_REPORT or
+ *	%UTRACE_INTERRUPT ensures a callback from @child before it
+ *	starts in user mode.
  *
  * @report_jctl:
  *	Requested by %UTRACE_EVENT(%JCTL).
