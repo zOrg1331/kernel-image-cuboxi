@@ -479,13 +479,6 @@ static struct twlreg_info twl_regs[] = {
 	TWL6030_FIXED_LDO(VUSB, 0x70, 3300, 18)
 };
 
-static const u8 REG_REMAP_table[] = {
-	0x08, 0x08, 0x08, 0x08, 0x00, 0x08, 0x08,
-	0x08, 0x00, 0x08, 0x08, 0x08, 0x08, 0x08,
-	0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
-	0x08,
-};
-
 static int twlreg_probe(struct platform_device *pdev)
 {
 	int				i;
@@ -536,8 +529,6 @@ static int twlreg_probe(struct platform_device *pdev)
 		return PTR_ERR(rdev);
 	}
 	platform_set_drvdata(pdev, rdev);
-
-       twl4030reg_write(info, VREG_REMAP, REG_REMAP_table[pdev->id]);
 
 	/* NOTE:  many regulators support short-circuit IRQs (presentable
 	 * as REGULATOR_OVER_CURRENT notifications?) configured via:
