@@ -1353,11 +1353,11 @@ static void finish_report(struct task_struct *task, struct utrace *utrace,
 	finish_report_reset(task, utrace, report);
 }
 
-static inline void finish_callback_report(struct task_struct *task,
-					  struct utrace *utrace,
-					  struct utrace_report *report,
-					  struct utrace_engine *engine,
-					  enum utrace_resume_action action)
+static void finish_callback_report(struct task_struct *task,
+				   struct utrace *utrace,
+				   struct utrace_report *report,
+				   struct utrace_engine *engine,
+				   enum utrace_resume_action action)
 {
 	if (action == UTRACE_DETACH) {
 		/*
@@ -1553,11 +1553,11 @@ void utrace_report_exec(struct linux_binfmt *fmt, struct linux_binprm *bprm,
 	       report_exec, fmt, bprm, regs);
 }
 
-static inline u32 do_report_syscall_entry(struct pt_regs *regs,
-					  struct task_struct *task,
-					  struct utrace *utrace,
-					  struct utrace_report *report,
-					  u32 resume_report)
+static u32 do_report_syscall_entry(struct pt_regs *regs,
+				   struct task_struct *task,
+				   struct utrace *utrace,
+				   struct utrace_report *report,
+				   u32 resume_report)
 {
 	start_report(utrace);
 	REPORT_CALLBACKS(_reverse, task, utrace, report,
