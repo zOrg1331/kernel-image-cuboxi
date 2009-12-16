@@ -295,20 +295,31 @@ static const u16 VSIM_VSEL_table[] = {
 static const u16 VDAC_VSEL_table[] = {
 	1200, 1300, 1800, 1800,
 };
-static const u16 VDD1_VSEL_table[] = {
-	800, 1450,
+static const u16 VAUX1_6030_VSEL_table[] = {
+	1000, 1300, 1800, 2500,
+	2800, 2900, 3000, 3000,
 };
-static const u16 VDD2_VSEL_table[] = {
-	800, 1450, 1500,
+static const u16 VAUX2_6030_VSEL_table[] = {
+	1200, 1800, 2500, 2750,
+	2800, 2800, 2800, 2800,
 };
-static const u16 VIO_VSEL_table[] = {
-	1800, 1850,
+static const u16 VAUX3_6030_VSEL_table[] = {
+	1000, 1200, 1300, 1800,
+	2500, 2800, 3000, 3000,
 };
-static const u16 VINTANA2_VSEL_table[] = {
-	2500, 2750,
+static const u16 VMMC_VSEL_table[] = {
+	1200, 1800, 2800, 2900,
+	3000, 3000, 3000, 3000,
+};
+static const u16 VPP_VSEL_table[] = {
+	1800, 1900, 2000, 2100,
+	2200, 2300, 2400, 2500,
+};
+static const u16 VUSIM_VSEL_table[] = {
+	1200, 1800, 2500, 2900,
 };
 
-static int twl4030ldo_list_voltage(struct regulator_dev *rdev, unsigned index)
+static int twlldo_list_voltage(struct regulator_dev *rdev, unsigned index)
 {
 	struct twlreg_info	*info = rdev_get_drvdata(rdev);
 	int			mV = info->table[index];
@@ -447,23 +458,30 @@ static struct regulator_ops twlfixed_ops = {
  * software control over them after boot.
  */
 static struct twlreg_info twl_regs[] = {
-	TWL_ADJUSTABLE_LDO(VAUX4, 0x23, 4),
-	TWL_ADJUSTABLE_LDO(VMMC1, 0x27, 5),
-	TWL_ADJUSTABLE_LDO(VMMC2, 0x2b, 6),
-	TWL_ADJUSTABLE_LDO(VPLL1, 0x2f, 7),
-	TWL_ADJUSTABLE_LDO(VPLL2, 0x33, 8),
-	TWL_ADJUSTABLE_LDO(VSIM, 0x37, 9),
-	TWL_ADJUSTABLE_LDO(VDAC, 0x3b, 10),
-	TWL_FIXED_LDO(VINTANA1, 0x3f, 1500, 11),
-	TWL_ADJUSTABLE_LDO(VINTANA2, 0x43, 12),
-	TWL_FIXED_LDO(VINTDIG, 0x47, 1500, 13),
-	TWL_ADJUSTABLE_LDO(VIO, 0x4b, 14),
-	TWL_ADJUSTABLE_LDO(VDD1, 0x55, 15),
-	TWL_ADJUSTABLE_LDO(VDD2, 0x63, 16),
-	TWL_FIXED_LDO(VUSB1V5, 0x71, 1500, 17),
-	TWL_FIXED_LDO(VUSB1V8, 0x74, 1800, 18),
-	TWL_FIXED_LDO(VUSB3V1, 0x77, 3100, 19),
-
+	TWL4030_ADJUSTABLE_LDO(VAUX1, 0x17, 1),
+	TWL4030_ADJUSTABLE_LDO(VAUX2_4030, 0x1b, 2),
+	TWL4030_ADJUSTABLE_LDO(VAUX2, 0x1b, 2),
+	TWL4030_ADJUSTABLE_LDO(VAUX3, 0x1f, 3),
+	TWL4030_ADJUSTABLE_LDO(VAUX4, 0x23, 4),
+	TWL4030_ADJUSTABLE_LDO(VMMC1, 0x27, 5),
+	TWL4030_ADJUSTABLE_LDO(VMMC2, 0x2b, 6),
+	/*
+	TWL4030_ADJUSTABLE_LDO(VPLL1, 0x2f, 7),
+	*/
+	TWL4030_ADJUSTABLE_LDO(VPLL2, 0x33, 8),
+	TWL4030_ADJUSTABLE_LDO(VSIM, 0x37, 9),
+	TWL4030_ADJUSTABLE_LDO(VDAC, 0x3b, 10),
+	/*
+	TWL4030_ADJUSTABLE_LDO(VINTANA1, 0x3f, 11),
+	TWL4030_ADJUSTABLE_LDO(VINTANA2, 0x43, 12),
+	TWL4030_ADJUSTABLE_LDO(VINTDIG, 0x47, 13),
+	TWL4030_SMPS(VIO, 0x4b, 14),
+	TWL4030_SMPS(VDD1, 0x55, 15),
+	TWL4030_SMPS(VDD2, 0x63, 16),
+	 */
+	TWL4030_FIXED_LDO(VUSB1V5, 0x71, 1500, 17),
+	TWL4030_FIXED_LDO(VUSB1V8, 0x74, 1800, 18),
+	TWL4030_FIXED_LDO(VUSB3V1, 0x77, 3100, 19),
 	/* VUSBCP is managed *only* by the USB subchip */
 
 	/* 6030 REG with base as PMC Slave Misc : 0x0030 */
