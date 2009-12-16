@@ -452,65 +452,6 @@ static void put_detached_list(struct list_head *list)
 }
 
 /*
- * Called with utrace->lock held and utrace->reap set.
- * Notify and clean up all engines, then free utrace.
- */
-static void utrace_reap(struct task_struct *target, struct utrace *utrace)
-	__releases(utrace->lock)
-{
-	struct utrace_engine *engine, *next;
-
-	/* utrace_add_engine() checks ->utrace_flags != 0 */
-	target->utrace_flags = 0;
-	splice_attaching(utrace);
-
-	/*
-	 * Since we were called with @utrace->reap set, nobody can
-	 * set/clear UTRACE_EVENT(REAP) in @engine->flags or change
-	 * @engine->ops, and nobody can change @utrace->attached.
-	 */
-	spin_unlock(&utrace->lock);
-
-	list_for_each_entry_safe(engine, next, &utrace->attached, entry) {
-		if (engine->flags & UTRACE_EVENT(REAP))
-			engine->ops->report_reap(engine, target);
-
-		engine->ops = NULL;
-		engine->flags = 0;
-		list_del_init(&engine->entry);
-
-		utrace_engine_put(engine);
-	}
-}
-
-
-/*
- * Called by release_task.
- */
-void utrace_release_task(struct task_struct *target)
-{
-	struct utrace *utrace = task_utrace_struct(target);
-
-	spin_lock(&utrace->lock);
-
-	utrace->reap = 1;
-
-	/*
-	 * If the target will do some final callbacks but hasn't
-	 * finished them yet, we know because it clears these event
-	 * bits after it's done.  Instead of cleaning up here and
-	 * requiring utrace_report_death() to cope with it, we delay
-	 * the REAP report and the teardown until after the target
-	 * finishes its death reports.
-	 */
-
-	if (target->utrace_flags & _UTRACE_DEATH_EVENTS)
-		spin_unlock(&utrace->lock);
-	else
-		utrace_reap(target, utrace); /* Unlocks.  */
-}
-
-/*
  * We use an extra bit in utrace_engine.flags past the event bits,
  * to record whether the engine is keeping the target thread stopped.
  *
@@ -889,6 +830,73 @@ relock:
 	spin_lock_irq(&task->sighand->siglock);
 	recalc_sigpending();
 	spin_unlock_irq(&task->sighand->siglock);
+}
+
+/*
+ * Called by release_task() with @reap set to true.
+ * Called by utrace_report_death() with @reap set to false.
+ * On reap, make report_reap callbacks and clean out @utrace
+ * unless still making callbacks.  On death, update bookkeeping
+ * and handle the reap work if release_task() came in first.
+ */
+void utrace_maybe_reap(struct task_struct *target, struct utrace *utrace,
+		       bool reap)
+{
+	struct utrace_engine *engine, *next;
+
+	spin_lock(&utrace->lock);
+
+	/*
+	 * If the target will do some final callbacks but hasn't
+	 * finished them yet, we know because it clears these event
+	 * bits after it's done.  Instead of cleaning up here and
+	 * requiring utrace_report_death() to cope with it, we delay
+	 * the REAP report and the teardown until after the target
+	 * finishes its death reports.
+	 */
+	if (reap && (target->utrace_flags & _UTRACE_DEATH_EVENTS)) {
+		utrace->reap = 1;
+		spin_unlock(&utrace->lock);
+		return;
+	}
+
+	/*
+	 * After we unlock with this flag clear, any competing
+	 * utrace_control/utrace_set_events calls know that we've
+	 * finished our callbacks and any detach bookkeeping.
+	 */
+	utrace->death = 0;
+
+	if (!reap && !utrace->reap) {
+		/*
+		 * We're just dead, not reaped yet.
+		 * This will reset @target->utrace_flags so the later
+		 * call with @reap set won't hit the check above.
+		 */
+		utrace_reset(target, utrace);
+		return;
+	}
+
+	/*
+	 * utrace_add_engine() checks ->utrace_flags != 0.
+	 * Since @utrace->reap is set, nobody can set or clear
+	 * UTRACE_EVENT(REAP) in @engine->flags or change
+	 * @engine->ops, and nobody can change @utrace->attached.
+	 */
+	target->utrace_flags = 0;
+	splice_attaching(utrace);
+	spin_unlock(&utrace->lock);
+
+	list_for_each_entry_safe(engine, next, &utrace->attached, entry) {
+		if (engine->flags & UTRACE_EVENT(REAP))
+			engine->ops->report_reap(engine, target);
+
+		engine->ops = NULL;
+		engine->flags = 0;
+		list_del_init(&engine->entry);
+
+		utrace_engine_put(engine);
+	}
 }
 
 /*
@@ -1758,23 +1766,7 @@ void utrace_report_death(struct task_struct *task, struct utrace *utrace,
 	REPORT_CALLBACKS(, task, utrace, &report, UTRACE_EVENT(DEATH),
 			 report_death, engine, group_dead, signal);
 
-	spin_lock(&utrace->lock);
-
-	/*
-	 * After we unlock (possibly inside utrace_reap for callbacks) with
-	 * this flag clear, competing utrace_control/utrace_set_events calls
-	 * know that we've finished our callbacks and any detach bookkeeping.
-	 */
-	utrace->death = 0;
-
-	if (utrace->reap)
-		/*
-		 * utrace_release_task() was already called in parallel.
-		 * We must complete its work now.
-		 */
-		utrace_reap(task, utrace);
-	else
-		utrace_reset(task, utrace);
+	utrace_maybe_reap(task, utrace, false);
 }
 
 /*

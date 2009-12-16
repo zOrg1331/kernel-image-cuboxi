@@ -397,7 +397,7 @@ static inline void tracehook_prepare_release_task(struct task_struct *task)
 	/* see utrace_add_engine() about this barrier */
 	smp_mb();
 	if (task_utrace_flags(task))
-		utrace_release_task(task);
+		utrace_maybe_reap(task, task_utrace_struct(task), true);
 }
 
 /**

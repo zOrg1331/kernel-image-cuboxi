@@ -87,41 +87,25 @@ enum utrace_events {
 #define _UTRACE_DEATH_EVENTS (UTRACE_EVENT(DEATH) | UTRACE_EVENT(QUIESCE))
 
 /*
- * Hooks in <linux/tracehook.h> call these entry points to the
- * utrace dispatch.  They are weak references here only so
- * tracehook.h doesn't need to #ifndef CONFIG_UTRACE them to
- * avoid external references in case of unoptimized compilation.
+ * Hooks in <linux/tracehook.h> call these entry points to the utrace dispatch.
  */
-void utrace_free_task(struct task_struct *)
-	__attribute__((weak));
-bool utrace_interrupt_pending(void)
-	__attribute__((weak));
-void utrace_resume(struct task_struct *, struct pt_regs *)
-	__attribute__((weak));
-void utrace_finish_stop(void)
-	__attribute__((weak));
+void utrace_free_task(struct task_struct *);
+bool utrace_interrupt_pending(void);
+void utrace_resume(struct task_struct *, struct pt_regs *);
+void utrace_finish_stop(void);
+void utrace_maybe_reap(struct task_struct *, struct utrace *, bool);
 int utrace_get_signal(struct task_struct *, struct pt_regs *,
-		      siginfo_t *, struct k_sigaction *)
-	__attribute__((weak));
-void utrace_report_clone(unsigned long, struct task_struct *)
-	__attribute__((weak));
-void utrace_finish_vfork(struct task_struct *)
-	__attribute__((weak));
-void utrace_report_exit(long *exit_code)
-	__attribute__((weak));
-void utrace_report_death(struct task_struct *, struct utrace *, bool, int)
-	__attribute__((weak));
-void utrace_report_jctl(int notify, int type)
-	__attribute__((weak));
+		      siginfo_t *, struct k_sigaction *);
+void utrace_report_clone(unsigned long, struct task_struct *);
+void utrace_finish_vfork(struct task_struct *);
+void utrace_report_exit(long *exit_code);
+void utrace_report_death(struct task_struct *, struct utrace *, bool, int);
+void utrace_report_jctl(int notify, int type);
 void utrace_report_exec(struct linux_binfmt *, struct linux_binprm *,
-			struct pt_regs *regs)
-	__attribute__((weak));
-bool utrace_report_syscall_entry(struct pt_regs *)
-	__attribute__((weak));
-void utrace_report_syscall_exit(struct pt_regs *)
-	__attribute__((weak));
-void utrace_signal_handler(struct task_struct *, int)
-	__attribute__((weak));
+			struct pt_regs *regs);
+bool utrace_report_syscall_entry(struct pt_regs *);
+void utrace_report_syscall_exit(struct pt_regs *);
+void utrace_signal_handler(struct task_struct *, int);
 
 #ifndef CONFIG_UTRACE
 
@@ -139,7 +123,6 @@ static inline struct utrace *task_utrace_struct(struct task_struct *task)
 static inline void utrace_init_task(struct task_struct *child)
 {
 }
-static inline void utrace_release_task(struct task_struct *task)
 {
 }
 
@@ -180,7 +163,6 @@ static inline void utrace_init_task(struct task_struct *task)
 	task->utrace = NULL;
 }
 
-void utrace_release_task(struct task_struct *);
 void task_utrace_proc_status(struct seq_file *m, struct task_struct *p);
 
 
