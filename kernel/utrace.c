@@ -1059,8 +1059,10 @@ int utrace_control(struct task_struct *target,
 	bool reset;
 	int ret;
 
-	if (unlikely(action >= UTRACE_RESUME_MAX))
+	if (unlikely(action >= UTRACE_RESUME_MAX)) {
+		WARN(1, "invalid action argument to utrace_control()!");
 		return -EINVAL;
+	}
 
 	/*
 	 * This is a sanity check for a programming error in the caller.
@@ -1071,8 +1073,10 @@ int utrace_control(struct task_struct *target,
 	 * interface properly.
 	 */
 	if (action >= UTRACE_REPORT && action < UTRACE_RESUME &&
-	    unlikely(!(engine->flags & UTRACE_EVENT(QUIESCE))))
+	    unlikely(!(engine->flags & UTRACE_EVENT(QUIESCE)))) {
+		WARN(1, "utrace_control() with no QUIESCE callback in place!");
 		return -EINVAL;
+	}
 
 	utrace = get_utrace_lock(target, engine, true);
 	if (unlikely(IS_ERR(utrace)))
@@ -1141,7 +1145,7 @@ int utrace_control(struct task_struct *target,
 		 * We fall through to treat it like UTRACE_SINGLESTEP.
 		 */
 		if (unlikely(!arch_has_block_step())) {
-			WARN_ON(1);
+			WARN(1, "UTRACE_BLOCKSTEP when !arch_has_block_step()");
 			action = UTRACE_SINGLESTEP;
 		}
 
@@ -1151,7 +1155,8 @@ int utrace_control(struct task_struct *target,
 		 * We fall through to the UTRACE_REPORT case.
 		 */
 		if (unlikely(!arch_has_single_step())) {
-			WARN_ON(1);
+			WARN(1,
+			     "UTRACE_SINGLESTEP when !arch_has_single_step()");
 			reset = false;
 			ret = -EOPNOTSUPP;
 			break;
@@ -1799,7 +1804,7 @@ static void finish_resume_report(struct task_struct *task,
 		 * to check arch_has_block_step() itself.  Warn and
 		 * then fall through to treat it as SINGLESTEP.
 		 */
-		WARN_ON(1);
+		WARN(1, "UTRACE_BLOCKSTEP when !arch_has_block_step()");
 
 	case UTRACE_SINGLESTEP:
 		if (likely(arch_has_single_step())) {
@@ -1810,7 +1815,8 @@ static void finish_resume_report(struct task_struct *task,
 			 * to check arch_has_single_step() itself.  Spew
 			 * about it so the loser will fix his module.
 			 */
-			WARN_ON(1);
+			WARN(1,
+			     "UTRACE_SINGLESTEP when !arch_has_single_step()");
 		}
 		break;
 
@@ -2252,7 +2258,7 @@ int utrace_get_signal(struct task_struct *task, struct pt_regs *regs,
 	 * That's nicer for debugging your utrace engine.
 	 */
 	if (unlikely(info->si_signo & 0x80)) {
-		WARN_ON(1);
+		WARN(1, "utrace engine left bogus si_signo value!");
 		info->si_signo = SIGTRAP;
 	}
 
