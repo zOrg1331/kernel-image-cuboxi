@@ -1,7 +1,7 @@
 aufs2 standalone patch for linux-2.6.
 
 diff --git a/fs/namei.c b/fs/namei.c
-index 7d28f56..0f6117c 100644
+index 9eadba8..58bfa93 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -350,6 +350,7 @@ int deny_write_access(struct file * file)
@@ -53,10 +53,10 @@ index b4b31d2..a820c71 100644
  static long do_sys_truncate(const char __user *pathname, loff_t length)
  {
 diff --git a/fs/splice.c b/fs/splice.c
-index 77184f0..8479d95 100644
+index b13a9a2..3931ee0 100644
 --- a/fs/splice.c
 +++ b/fs/splice.c
-@@ -1074,6 +1074,7 @@ long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
+@@ -1077,6 +1077,7 @@ long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
  
  	return splice_write(pipe, out, ppos, len, flags);
  }
@@ -64,7 +64,7 @@ index 77184f0..8479d95 100644
  
  /*
   * Attempt to initiate a splice from a file to a pipe.
-@@ -1099,6 +1100,7 @@ long do_splice_to(struct file *in, loff_t *ppos,
+@@ -1103,6 +1104,7 @@ long do_splice_to(struct file *in, loff_t *ppos,
  
  	return splice_read(in, ppos, pipe, len, flags);
  }
