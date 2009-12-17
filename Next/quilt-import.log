@@ -1,0 +1,52 @@
+Importing driver-core.current based on 2.6.32-git10
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.32-git12
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 8bea8672edfca7ec5f661cafb218f1205863b343
+HEAD is now at 8bea867 mfd: compile fix for twl4030 renaming
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 1326a1d...512f279 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.32-git12
+$ cd ../quilt-tmp
+$ git reset --hard 8bea8672edfca7ec5f661cafb218f1205863b343
+HEAD is now at 8bea867 mfd: compile fix for twl4030 renaming
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k10temp-new-driver.patch
+hwmon-smsc47m1-01-split-io-port-requests.patch
+hwmon-smsc47m1-02-fail-loading-on-error.patch
+hwmon-smsc47m1-03-enable-as-needed.patch
+hwmon-via_cputemp-new-driver.patch
+hwmon-sht15-off-by-one-error-in-array-index-incorrect-constants-v2.patch
+hwmon-w83627hf-fix-for-no-such-device.patch
+hwmon-asus_atk0110-01-refactor-interface-probe-code.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + e316b81...b4b9272 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.32-git5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-5254-g3067e02
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.32-7500-g8bea867
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
