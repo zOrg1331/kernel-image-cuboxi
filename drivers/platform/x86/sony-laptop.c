@@ -131,6 +131,7 @@ enum sony_nc_rfkill {
 	N_SONY_RFKILL,
 };
 
+static int sony_rfkill_handle;
 static struct rfkill *sony_rfkill_devices[N_SONY_RFKILL];
 static int sony_rfkill_address[N_SONY_RFKILL] = {0x300, 0x500, 0x700, 0x900};
 static void sony_nc_rfkill_update(void);
@@ -144,7 +145,6 @@ struct sony_laptop_input_s {
 	struct input_dev	*key_dev;
 	struct kfifo		*fifo;
 	spinlock_t		fifo_lock;
-	struct workqueue_struct	*wq;
 };
 
 static struct sony_laptop_input_s sony_laptop_input = {
@@ -232,6 +232,7 @@ static int sony_laptop_input_index[] = {
 	56,	/* 69 SONYPI_EVENT_VOLUME_INC_PRESSED */
 	57,	/* 70 SONYPI_EVENT_VOLUME_DEC_PRESSED */
 	-1,	/* 71 SONYPI_EVENT_BRIGHTNESS_PRESSED */
+	58,	/* 72 SONYPI_EVENT_MEDIA_PRESSED */
 };
 
 static int sony_laptop_input_keycode_map[] = {
@@ -293,22 +294,34 @@ static int sony_laptop_input_keycode_map[] = {
 	KEY_F15,	/* 55 SONYPI_EVENT_SETTINGKEY_PRESSED */
 	KEY_VOLUMEUP,	/* 56 SONYPI_EVENT_VOLUME_INC_PRESSED */
 	KEY_VOLUMEDOWN,	/* 57 SONYPI_EVENT_VOLUME_DEC_PRESSED */
+	KEY_MEDIA,	/* 58 SONYPI_EVENT_MEDIA_PRESSED */
 };
 
 /* release buttons after a short delay if pressed */
 static void do_sony_laptop_release_key(struct work_struct *work)
 {
+	struct delayed_work *dwork =
+			container_of(work, struct delayed_work, work);
 	struct sony_laptop_keypress kp;
 
-	while (kfifo_get(sony_laptop_input.fifo, (unsigned char *)&kp,
-			 sizeof(kp)) == sizeof(kp)) {
-		msleep(10);
+	if (kfifo_get(sony_laptop_input.fifo,
+		      (unsigned char *)&kp, sizeof(kp)) == sizeof(kp)) {
 		input_report_key(kp.dev, kp.key, 0);
 		input_sync(kp.dev);
 	}
+
+	/*
+	 * If there is something in the fifo scnhedule nect release.
+	 * We don't care about locking, at worst we may schedule an
+	 * extra "empty" wakeup. This may be improved with the new
+	 * kfifo API.
+	 */
+	if (__kfifo_len(sony_laptop_input.fifo) != 0)
+		schedule_delayed_work(dwork, msecs_to_jiffies(10));
 }
-static DECLARE_WORK(sony_laptop_release_key_work,
-		do_sony_laptop_release_key);
+
+static DECLARE_DELAYED_WORK(sony_laptop_release_key_work,
+			    do_sony_laptop_release_key);
 
 /* forward event to the input subsystem */
 static void sony_laptop_report_input_event(u8 event)
@@ -362,12 +375,12 @@ static void sony_laptop_report_input_event(u8 event)
 		/* we emit the scancode so we can always remap the key */
 		input_event(kp.dev, EV_MSC, MSC_SCAN, event);
 		input_sync(kp.dev);
+
+		/* schedule key release */
 		kfifo_put(sony_laptop_input.fifo,
 			  (unsigned char *)&kp, sizeof(kp));
-
-		if (!work_pending(&sony_laptop_release_key_work))
-			queue_work(sony_laptop_input.wq,
-					&sony_laptop_release_key_work);
+		schedule_delayed_work(&sony_laptop_release_key_work,
+				      msecs_to_jiffies(10));
 	} else
 		dprintk("unknown input event %.2x\n", event);
 }
@@ -394,20 +407,11 @@ static int sony_laptop_setup_input(struct acpi_device *acpi_device)
 		goto err_dec_users;
 	}
 
-	/* init workqueue */
-	sony_laptop_input.wq = create_singlethread_workqueue("sony-laptop");
-	if (!sony_laptop_input.wq) {
-		printk(KERN_ERR DRV_PFX
-				"Unable to create workqueue.\n");
-		error = -ENXIO;
-		goto err_free_kfifo;
-	}
-
 	/* input keys */
 	key_dev = input_allocate_device();
 	if (!key_dev) {
 		error = -ENOMEM;
-		goto err_destroy_wq;
+		goto err_free_kfifo;
 	}
 
 	key_dev->name = "Sony Vaio Keys";
@@ -470,9 +474,6 @@ err_unregister_keydev:
 err_free_keydev:
 	input_free_device(key_dev);
 
-err_destroy_wq:
-	destroy_workqueue(sony_laptop_input.wq);
-
 err_free_kfifo:
 	kfifo_free(sony_laptop_input.fifo);
 
@@ -483,12 +484,20 @@ err_dec_users:
 
 static void sony_laptop_remove_input(void)
 {
+	struct sony_laptop_keypress kp = { NULL };
+
 	/* cleanup only after the last user has gone */
 	if (!atomic_dec_and_test(&sony_laptop_input.users))
 		return;
 
-	/* flush workqueue first */
-	flush_workqueue(sony_laptop_input.wq);
+	cancel_delayed_work_sync(&sony_laptop_release_key_work);
+
+	/* Generate key-up events for remaining keys */
+	while (kfifo_get(sony_laptop_input.fifo,
+			 (unsigned char *)&kp, sizeof(kp)) == sizeof(kp)) {
+		input_report_key(kp.dev, kp.key, 0);
+		input_sync(kp.dev);
+	}
 
 	/* destroy input devs */
 	input_unregister_device(sony_laptop_input.key_dev);
@@ -499,7 +508,6 @@ static void sony_laptop_remove_input(void)
 		sony_laptop_input.jog_dev = NULL;
 	}
 
-	destroy_workqueue(sony_laptop_input.wq);
 	kfifo_free(sony_laptop_input.fifo);
 }
 
@@ -890,6 +898,8 @@ static struct sony_nc_event sony_100_events[] = {
 	{ 0x0C, SONYPI_EVENT_FNKEY_RELEASED },
 	{ 0x9f, SONYPI_EVENT_CD_EJECT_PRESSED },
 	{ 0x1f, SONYPI_EVENT_ANYBUTTON_RELEASED },
+	{ 0xa1, SONYPI_EVENT_MEDIA_PRESSED },
+	{ 0x21, SONYPI_EVENT_ANYBUTTON_RELEASED },
 	{ 0, 0 },
 };
 
@@ -961,7 +971,7 @@ static void sony_nc_notify(struct acpi_device *device, u32 event)
 				else
 					sony_laptop_report_input_event(ev);
 			}
-		} else if (sony_find_snc_handle(0x124) == ev) {
+		} else if (sony_find_snc_handle(sony_rfkill_handle) == ev) {
 			sony_nc_rfkill_update();
 			return;
 		}
@@ -1067,7 +1077,7 @@ static int sony_nc_rfkill_set(void *data, bool blocked)
 	if (!blocked)
 		argument |= 0xff0000;
 
-	return sony_call_snc_handle(0x124, argument, &result);
+	return sony_call_snc_handle(sony_rfkill_handle, argument, &result);
 }
 
 static const struct rfkill_ops sony_rfkill_ops = {
@@ -1110,7 +1120,7 @@ static int sony_nc_setup_rfkill(struct acpi_device *device,
 	if (!rfk)
 		return -ENOMEM;
 
-	sony_call_snc_handle(0x124, 0x200, &result);
+	sony_call_snc_handle(sony_rfkill_handle, 0x200, &result);
 	hwblock = !(result & 0x1);
 	rfkill_set_hw_state(rfk, hwblock);
 
@@ -1129,7 +1139,7 @@ static void sony_nc_rfkill_update()
 	int result;
 	bool hwblock;
 
-	sony_call_snc_handle(0x124, 0x200, &result);
+	sony_call_snc_handle(sony_rfkill_handle, 0x200, &result);
 	hwblock = !(result & 0x1);
 
 	for (i = 0; i < N_SONY_RFKILL; i++) {
@@ -1145,7 +1155,7 @@ static void sony_nc_rfkill_update()
 			continue;
 		}
 
-		sony_call_snc_handle(0x124, argument, &result);
+		sony_call_snc_handle(sony_rfkill_handle, argument, &result);
 		rfkill_set_states(sony_rfkill_devices[i],
 				  !(result & 0xf), false);
 	}
@@ -1155,10 +1165,15 @@ static int sony_nc_rfkill_setup(struct acpi_device *device)
 {
 	int result, ret;
 
-	if (sony_find_snc_handle(0x124) == -1)
-		return -1;
+	if (sony_find_snc_handle(0x124) == -1) {
+		if (sony_find_snc_handle(0x135) == -1)
+			return -1;
+		else
+			sony_rfkill_handle = 0x135;
+	} else
+		sony_rfkill_handle = 0x124;
 
-	ret = sony_call_snc_handle(0x124, 0xb00, &result);
+	ret = sony_call_snc_handle(sony_rfkill_handle, 0xb00, &result);
 	if (ret) {
 		printk(KERN_INFO DRV_PFX
 		       "Unable to enumerate rfkill devices: %x\n", ret);
