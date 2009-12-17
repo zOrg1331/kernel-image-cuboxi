@@ -295,15 +295,6 @@ config AUDIT
 	  logging of avc messages output).  Does not do system-call
 	  auditing without CONFIG_AUDITSYSCALL.
 
-config UTRACE
-	bool "Infrastructure for tracing and debugging user processes"
-	depends on EXPERIMENTAL
-	depends on HAVE_ARCH_TRACEHOOK
-	help
-	  Enable the utrace process tracing interface.  This is an internal
-	  kernel interface exported to kernel modules, to track events in
-	  user threads, extract and change user thread state.
-
 config AUDITSYSCALL
 	bool "Enable system-call auditing support"
 	depends on AUDIT && (X86 || PPC || S390 || IA64 || UML || SPARC64 || SUPERH)
@@ -318,6 +309,15 @@ config AUDIT_TREE
 	def_bool y
 	depends on AUDITSYSCALL
 	select INOTIFY
+
+config UTRACE
+	bool "Infrastructure for tracing and debugging user processes"
+	depends on EXPERIMENTAL
+	depends on HAVE_ARCH_TRACEHOOK
+	help
+	  Enable the utrace process tracing interface.  This is an internal
+	  kernel interface exported to kernel modules, to track events in
+	  user threads, extract and change user thread state.
 
 menu "RCU Subsystem"
 
