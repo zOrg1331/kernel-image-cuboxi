@@ -54,9 +54,12 @@
 #define MCFSIM_SDCS0        0x000a8110	/* SDRAM Chip Select 0 Configuration */
 #define MCFSIM_SDCS1        0x000a8114	/* SDRAM Chip Select 1 Configuration */
 
+#define MCFEPORT_EPPAR			0xFC088000
 #define MCFEPORT_EPDDR			0xFC088002
+#define MCFEPORT_EPIER			0xFC088003
 #define MCFEPORT_EPDR			0xFC088004
 #define MCFEPORT_EPPDR			0xFC088005
+#define MCFEPORT_EPFR			0xFC088006
 
 #define MCFGPIO_PODR_BUSCTL		0xFC0A4000
 #define MCFGPIO_PODR_BE			0xFC0A4001

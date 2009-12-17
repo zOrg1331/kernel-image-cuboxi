@@ -126,8 +126,8 @@
  * Generic GPIO support
  */
 #define MCFGPIO_PIN_MAX		64
-#define MCFGPIO_IRQ_MAX		-1
-#define MCFGPIO_IRQ_VECBASE	-1
+#define MCFGPIO_IRQ_MAX		MCFINTC2_GPIOIRQ7
+#define MCFGPIO_IRQ_VECBASE	MCFINTC2_GPIOIRQ0
 
 /****************************************************************************/
 
