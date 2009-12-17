@@ -670,12 +670,12 @@ static inline void tracehook_notify_resume(struct pt_regs *regs)
 {
 	struct task_struct *task = current;
 	/*
-	 * If we race with attach which sets nonzero ->utrace_flags,
-	 * make sure we do not read ->utrace_flags before the caller
-	 * clears TIF_NOTIFY_RESUME. This pairs with the implicit mb()
-	 * before setting TIF_NOTIFY_RESUME in set_notify_resume().
+	 * Prevent the following store/load from getting ahead of the
+	 * caller which clears TIF_NOTIFY_RESUME. This pairs with the
+	 * implicit mb() before setting TIF_NOTIFY_RESUME in
+	 * set_notify_resume().
 	 */
-	smp_rmb();
+	smp_mb();
 	if (task_utrace_flags(task))
 		utrace_resume(task, regs);
 }
