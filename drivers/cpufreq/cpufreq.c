@@ -1811,18 +1811,20 @@ error_out:
  */
 int cpufreq_update_policy(unsigned int cpu)
 {
-	struct cpufreq_policy *data = cpufreq_cpu_get(cpu);
+	struct cpufreq_policy *data;
 	struct cpufreq_policy policy;
 	int ret;
-
-	if (!data) {
-		ret = -ENODEV;
-		goto no_policy;
-	}
 
 	if (unlikely(lock_policy_rwsem_write(cpu))) {
 		ret = -EINVAL;
 		goto fail;
+	}
+	data = cpufreq_cpu_get(cpu);
+
+	if (!data) {
+		dprintk("Update: No policy on cpu: %u\n", cpu);
+		ret = -ENODEV;
+		goto no_policy;
 	}
 
 	dprintk("updating policy for CPU %u\n", cpu);
@@ -1848,11 +1850,10 @@ int cpufreq_update_policy(unsigned int cpu)
 
 	ret = __cpufreq_set_policy(data, &policy);
 
-	unlock_policy_rwsem_write(cpu);
-
-fail:
 	cpufreq_cpu_put(data);
 no_policy:
+	unlock_policy_rwsem_write(cpu);
+fail:
 	return ret;
 }
 EXPORT_SYMBOL(cpufreq_update_policy);
