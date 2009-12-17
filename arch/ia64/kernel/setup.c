@@ -1014,7 +1014,11 @@ cpu_init (void)
 	BUG_ON(current->mm);
 
 	ia64_mmu_init(ia64_imva(cpu_data));
+
+	/* Temporarily suppress lockdep WARN_ON irqs disabled*/ 
+	lockdep_off();
 	ia64_mca_cpu_init(ia64_imva(cpu_data));
+	lockdep_on();
 
 #ifdef CONFIG_IA32_SUPPORT
 	ia32_cpu_init();
