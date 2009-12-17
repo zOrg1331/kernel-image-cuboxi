@@ -846,35 +846,38 @@ void utrace_maybe_reap(struct task_struct *target, struct utrace *utrace,
 
 	spin_lock(&utrace->lock);
 
-	/*
-	 * If the target will do some final callbacks but hasn't
-	 * finished them yet, we know because it clears these event
-	 * bits after it's done.  Instead of cleaning up here and
-	 * requiring utrace_report_death() to cope with it, we delay
-	 * the REAP report and the teardown until after the target
-	 * finishes its death reports.
-	 */
-	if (reap && (target->utrace_flags & _UTRACE_DEATH_EVENTS)) {
-		utrace->reap = 1;
-		spin_unlock(&utrace->lock);
-		return;
-	}
-
-	/*
-	 * After we unlock with this flag clear, any competing
-	 * utrace_control/utrace_set_events calls know that we've
-	 * finished our callbacks and any detach bookkeeping.
-	 */
-	utrace->death = 0;
-
-	if (!reap && !utrace->reap) {
+	if (reap) {
 		/*
-		 * We're just dead, not reaped yet.
-		 * This will reset @target->utrace_flags so the later
-		 * call with @reap set won't hit the check above.
+		 * If the target will do some final callbacks but hasn't
+		 * finished them yet, we know because it clears these event
+		 * bits after it's done.  Instead of cleaning up here and
+		 * requiring utrace_report_death() to cope with it, we
+		 * delay the REAP report and the teardown until after the
+		 * target finishes its death reports.
 		 */
-		utrace_reset(target, utrace);
-		return;
+		utrace->reap = 1;
+
+		if (target->utrace_flags & _UTRACE_DEATH_EVENTS) {
+			spin_unlock(&utrace->lock);
+			return;
+		}
+	} else {
+		/*
+		 * After we unlock with this flag clear, any competing
+		 * utrace_control/utrace_set_events calls know that we've
+		 * finished our callbacks and any detach bookkeeping.
+		 */
+		utrace->death = 0;
+
+		if (!utrace->reap) {
+			/*
+			 * We're just dead, not reaped yet.  This will
+			 * reset @target->utrace_flags so the later call
+			 * with @reap set won't hit the check above.
+			 */
+			utrace_reset(target, utrace);
+			return;
+		}
 	}
 
 	/*
