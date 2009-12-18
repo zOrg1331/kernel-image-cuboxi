@@ -21,9 +21,9 @@
 
 #include "main.h"
 #include "proc.h"
-#include "log.h"
 #include "routing.h"
 #include "send.h"
+#include "originator.h"
 #include "soft-interface.h"
 #include "device.h"
 #include "translation-table.h"
@@ -56,6 +56,17 @@ unsigned char broadcastAddr[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 atomic_t module_state;
 
 struct workqueue_struct *bat_event_workqueue;
+
+#ifdef CONFIG_BATMAN_ADV_DEBUG
+int debug;
+
+module_param(debug, int, 0644);
+
+int bat_debug_type(int type)
+{
+	return debug & type;
+}
+#endif
 
 int init_module(void)
 {
@@ -90,21 +101,21 @@ int init_module(void)
 				   interface_setup);
 
 	if (!soft_device) {
-		debug_log(LOG_TYPE_CRIT, "Unable to allocate the batman interface\n");
+		printk(KERN_ERR "batman-adv:Unable to allocate the batman interface\n");
 		goto end;
 	}
 
 	retval = register_netdev(soft_device);
 
 	if (retval < 0) {
-		debug_log(LOG_TYPE_CRIT, "Unable to register the batman interface: %i\n", retval);
+		printk(KERN_ERR "batman-adv:Unable to register the batman interface: %i\n", retval);
 		goto free_soft_device;
 	}
 
 	register_netdevice_notifier(&hard_if_notifier);
 
-	debug_log(LOG_TYPE_CRIT, "B.A.T.M.A.N. advanced %s%s (compatibility version %i) loaded \n",
-	          SOURCE_VERSION, REVISION_VERSION_STR, COMPAT_VERSION);
+	printk(KERN_INFO "batman-adv:B.A.T.M.A.N. advanced %s%s (compatibility version %i) loaded \n",
+		  SOURCE_VERSION, REVISION_VERSION_STR, COMPAT_VERSION);
 
 	return 0;
 
@@ -156,7 +167,7 @@ void activate_module(void)
 		kthread_task = kthread_run(packet_recv_thread, NULL, "batman-adv");
 
 		if (IS_ERR(kthread_task)) {
-			debug_log(LOG_TYPE_CRIT, "Unable to start packet receive thread\n");
+			printk(KERN_ERR "batman-adv:Unable to start packet receive thread\n");
 			kthread_task = NULL;
 		}
 	}
@@ -166,7 +177,7 @@ void activate_module(void)
 	goto end;
 
 err:
-	debug_log(LOG_TYPE_CRIT, "Unable to allocate memory for mesh information structures: out of mem ?\n");
+	printk(KERN_ERR "batman-adv:Unable to allocate memory for mesh information structures: out of mem ?\n");
 	shutdown_module();
 end:
 	return;

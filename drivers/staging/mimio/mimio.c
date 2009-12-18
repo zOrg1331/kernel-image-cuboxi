@@ -1,47 +1,46 @@
 /*
  * Hardware event => input event mapping:
  *
+ * BTN_TOOL_PEN            0x140 black
+ * BTN_TOOL_RUBBER         0x141 blue
+ * BTN_TOOL_BRUSH          0x142 green
+ * BTN_TOOL_PENCIL         0x143 red
+ * BTN_TOOL_AIRBRUSH       0x144 eraser
+ * BTN_TOOL_FINGER         0x145 small eraser
+ * BTN_TOOL_MOUSE          0x146 mimio interactive
+ * BTN_TOOL_LENS           0x147 mimio interactive but1
+ * LOCALBTN_TOOL_EXTRA1    0x14a mimio interactive but2 == BTN_TOUCH
+ * LOCALBTN_TOOL_EXTRA2    0x14b mimio extra pens (orange, brown, yellow,
+ *				 purple) == BTN_STYLUS
+ * LOCALBTN_TOOL_EXTRA3    0x14c unused == BTN_STYLUS2
+ * BTN_TOOL_DOUBLETAP      0x14d unused
+ * BTN_TOOL_TRIPLETAP      0x14e unused
  *
- *
- input.h:#define BTN_TOOL_PEN            0x140 black
- input.h:#define BTN_TOOL_RUBBER         0x141 blue
- input.h:#define BTN_TOOL_BRUSH          0x142 green
- input.h:#define BTN_TOOL_PENCIL         0x143 red
- input.h:#define BTN_TOOL_AIRBRUSH       0x144 eraser
- input.h:#define BTN_TOOL_FINGER         0x145 small eraser
- input.h:#define BTN_TOOL_MOUSE          0x146 mimio interactive
- input.h:#define BTN_TOOL_LENS           0x147 mimio interactive but1
- input.h:#define LOCALBTN_TOOL_EXTRA1    0x14a mimio interactive but2 == BTN_TOUCH
- input.h:#define LOCALBTN_TOOL_EXTRA2    0x14b mimio extra pens (orange, brown, yellow, purple) == BTN_STYLUS
- input.h:#define LOCALBTN_TOOL_EXTRA3    0x14c unused == BTN_STYLUS2
- input.h:#define BTN_TOOL_DOUBLETAP      0x14d unused
- input.h:#define BTN_TOOL_TRIPLETAP      0x14e unused
- *
- * MIMIO_EV_PENDOWN(MIMIO_PEN_K)     => EV_KEY BIT(BTN_TOOL_PEN)
- * MIMIO_EV_PENDOWN(MIMIO_PEN_B)     => EV_KEY BIT(BTN_TOOL_RUBBER)
- * MIMIO_EV_PENDOWN(MIMIO_PEN_G)     => EV_KEY BIT(BTN_TOOL_BRUSH)
- * MIMIO_EV_PENDOWN(MIMIO_PEN_R)     => EV_KEY BIT(BTN_TOOL_PENCIL)
- * MIMIO_EV_PENDOWN(MIMIO_PEN_E)     => EV_KEY BIT(BTN_TOOL_AIRBRUSH)
- * MIMIO_EV_PENDOWN(MIMIO_PEN_ES)    => EV_KEY BIT(BTN_TOOL_FINGER)
- * MIMIO_EV_PENDOWN(MIMIO_PEN_I)     => EV_KEY BIT(BTN_TOOL_MOUSE)
- * MIMIO_EV_PENDOWN(MIMIO_PEN_IL)    => EV_KEY BIT(BTN_TOOL_LENS)
- * MIMIO_EV_PENDOWN(MIMIO_PEN_IR)    => EV_KEY BIT(BTN_TOOL_DOUBLETAP)
- * MIMIO_EV_PENDOWN(MIMIO_PEN_EX)    => EV_KEY BIT(BTN_TOOL_TRIPLETAP)
- * MIMIO_EV_PENDATA                 => EV_ABS BIT(ABS_X), BIT(ABS_Y)
- * MIMIO_EV_MEMRESET              => EV_KEY BIT(BTN_0)
- * MIMIO_EV_ACC(ACC_NEWPAGE)       => EV_KEY BIT(BTN_1)
- * MIMIO_EV_ACC(ACC_TAGPAGE)      => EV_KEY BIT(BTN_2)
- * MIMIO_EV_ACC(ACC_PRINTPAGE)      => EV_KEY BIT(BTN_3)
- * MIMIO_EV_ACC(ACC_MAXIMIZE)      => EV_KEY BIT(BTN_4)
- * MIMIO_EV_ACC(ACC_FINDCTLPNL)      => EV_KEY BIT(BTN_5)
- *
+ * MIMIO_EV_PENDOWN(MIMIO_PEN_K)	=> EV_KEY BIT(BTN_TOOL_PEN)
+ * MIMIO_EV_PENDOWN(MIMIO_PEN_B)	=> EV_KEY BIT(BTN_TOOL_RUBBER)
+ * MIMIO_EV_PENDOWN(MIMIO_PEN_G)	=> EV_KEY BIT(BTN_TOOL_BRUSH)
+ * MIMIO_EV_PENDOWN(MIMIO_PEN_R)	=> EV_KEY BIT(BTN_TOOL_PENCIL)
+ * MIMIO_EV_PENDOWN(MIMIO_PEN_E)	=> EV_KEY BIT(BTN_TOOL_AIRBRUSH)
+ * MIMIO_EV_PENDOWN(MIMIO_PEN_ES)	=> EV_KEY BIT(BTN_TOOL_FINGER)
+ * MIMIO_EV_PENDOWN(MIMIO_PEN_I)	=> EV_KEY BIT(BTN_TOOL_MOUSE)
+ * MIMIO_EV_PENDOWN(MIMIO_PEN_IL)	=> EV_KEY BIT(BTN_TOOL_LENS)
+ * MIMIO_EV_PENDOWN(MIMIO_PEN_IR)	=> EV_KEY BIT(BTN_TOOL_DOUBLETAP)
+ * MIMIO_EV_PENDOWN(MIMIO_PEN_EX)	=> EV_KEY BIT(BTN_TOOL_TRIPLETAP)
+ * MIMIO_EV_PENDATA		=> EV_ABS BIT(ABS_X), BIT(ABS_Y)
+ * MIMIO_EV_MEMRESET		=> EV_KEY BIT(BTN_0)
+ * MIMIO_EV_ACC(ACC_NEWPAGE)	=> EV_KEY BIT(BTN_1)
+ * MIMIO_EV_ACC(ACC_TAGPAGE)	=> EV_KEY BIT(BTN_2)
+ * MIMIO_EV_ACC(ACC_PRINTPAGE)	=> EV_KEY BIT(BTN_3)
+ * MIMIO_EV_ACC(ACC_MAXIMIZE)	=> EV_KEY BIT(BTN_4)
+ * MIMIO_EV_ACC(ACC_FINDCTLPNL)	=> EV_KEY BIT(BTN_5)
  *
  * open issues:
- *      - cold-load of data captured when mimio in standalone mode not yet
- *         supported; need to snoop Win32 box to see datastream for this.
- *       - mimio mouse not yet supported; need to snoop Win32 box to see the
- *         datastream for this.
+ * - cold-load of data captured when mimio in standalone mode not yet
+ *   supported; need to snoop Win32 box to see datastream for this.
+ * - mimio mouse not yet supported; need to snoop Win32 box to see the
+ *   datastream for this.
  */
+
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -145,7 +144,7 @@ static void mimio_rx_handler(struct mimio *, unsigned char *, unsigned int);
 static int mimio_tx(struct mimio *, const char *, int);
 
 static char mimio_name[] = "VirtualInk mimio-Xi";
-static struct usb_device_id mimio_table [] = {
+static struct usb_device_id mimio_table[] = {
 	{ USB_DEVICE(MIMIO_VENDOR_ID, MIMIO_PRODUCT_ID) },
 	{ USB_DEVICE(0x0525, 0xa4a0) }, /* gadget zero firmware */
 	{ }
@@ -357,14 +356,21 @@ static int mimio_open(struct input_dev *idev)
 		rslt = usb_submit_urb(mimio->in.urb, GFP_KERNEL);
 		if (rslt) {
 			dev_err(&idev->dev, "usb_submit_urb failure "
-				"(res = %d: %s). Not greeting.\n",
-				rslt,
-				(!urb ? "urb is NULL" :
-				 (urb->hcpriv ? "urb->hcpriv is non-NULL" :
-				  (!urb->complete ? "urb is not complete" :
-				   (urb->number_of_packets <= 0 ? "urb has no packets" :
-				    (urb->interval <= 0 ? "urb interval too small" :
-				     "urb interval too large or some other error"))))));
+					"(res = %d: ", rslt);
+			if (!urb)
+				dev_err(&idev->dev, "urb is NULL");
+			else if (urb->hcpriv)
+				dev_err(&idev->dev, "urb->hcpriv is non-NULL");
+			else if (!urb->complete)
+				dev_err(&idev->dev, "urb is not complete");
+			else if (urb->number_of_packets <= 0)
+				dev_err(&idev->dev, "urb has no packets");
+			else if (urb->interval <= 0)
+				dev_err(&idev->dev, "urb interval too small");
+			else
+				dev_err(&idev->dev, "urb interval too large " \
+						"or some other error");
+			dev_err(&idev->dev, "). Not greeting.\n");
 			rslt = -EIO;
 			goto exit;
 		}
@@ -505,23 +511,6 @@ static int mimio_probe(struct usb_interface *ifc,
 	input_set_abs_params(input_dev, ABS_Y, 0, MIMIO_YRANGE_MAX, 0, 0);
 	input_dev->absbit[BIT_WORD(ABS_MISC)] |= BIT_MASK(ABS_MISC);
 
-#if 0
-	input_dev->absmin[ABS_X] = 0;
-	input_dev->absmin[ABS_Y] = 0;
-	input_dev->absmax[ABS_X] = 9600;
-	input_dev->absmax[ABS_Y] = 4800;
-	input_dev->absfuzz[ABS_X] = 0;
-	input_dev->absfuzz[ABS_Y] = 0;
-	input_dev->absflat[ABS_X] = 0;
-	input_dev->absflat[ABS_Y] = 0;
-#endif
-
-#if 0
-	/* this will just reduce the precision */
-	input_dev->absfuzz[ABS_X] = 8; /* experimental; may need to change */
-	input_dev->absfuzz[ABS_Y] = 8; /* experimental; may need to change */
-#endif
-
 	/*
 	 * Register the input device.
 	 */
@@ -588,7 +577,7 @@ static int handle_mimio_rx_penupdown(struct mimio *mimio,
 			*(mimio->pktbuf.p + 2);
 		if (x != *(mimio->pktbuf.p + 3)) {
 			dev_dbg(&mimio->idev->dev, "EV_PEN%s: bad xsum.\n",
-				down ? "DOWN":"UP");
+				down ? "DOWN" : "UP");
 			/* skip this event data */
 			mimio->pktbuf.p += 4;
 			/* decode any remaining events */
@@ -720,13 +709,6 @@ static void mimio_rx_handler(struct mimio *mimio,
 			if (instr_ofst[mimio->pktbuf.instr] >= 0) {
 				int code = BTN_TOOL_PEN +
 					   instr_ofst[mimio->last_pen_down];
-#if 0
-				/* Utter hack to ensure we get forwarded _AND_
-				 * so we can identify when a complete signal is
-				 * received */
-				mimio->idev->abs[ABS_Y] = -1;
-				mimio->idev->abs[ABS_X] = -1;
-#endif
 				/* input_regs(mimio->idev, regs); */
 				input_report_abs(mimio->idev, ABS_X, x);
 				input_report_abs(mimio->idev, ABS_Y, y);
