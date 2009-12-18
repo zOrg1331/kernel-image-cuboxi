@@ -1,0 +1,221 @@
+Importing driver-core.current based on 2.6.33-rc1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 55639353a0035052d9ea6cfe4dde0ac7fcbb2c9f
+HEAD is now at 5563935 Linux 2.6.33-rc1
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core.current
+devtmpfs-convert-dirlock-to-a-mutex.patch
+vfs-get_sb_single-do-not-pass-options-twice.patch
+doc-stable-rules-add-new-cherry-pick-logic.patch
+driver-core-device_attribute-parameters-can-often-be-const.patch
+driver-core-bin_attribute-parameters-can-often-be-const.patch
+driver-core-driver_attribute-parameters-can-often-be-const.patch
+drivers-base-fix-error-path.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core.current
+From ../quilt-tmp
+   f405425..29d84f9  master     -> quilt/driver-core.current
+Importing tty.current based on quilt/driver-core.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty.current 29d84f9bdcfb46a12948d42255cea7bfaf2dbe34
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard 29d84f9bdcfb46a12948d42255cea7bfaf2dbe34
+HEAD is now at 29d84f9 Driver-core: Fix bogus 0 error return in device_add()
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-power-management-documentation-update.patch
+usb-rename-usb_configure_device.patch
+usb-fix-bugs-in-usb_-de-authorize_device.patch
+usb-gadget-use-err_ptr-is_err.patch
+usb-fix-double-linking-of-drivers-usb-otg-when-ulpi-is-selected.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+   f405425..e05cf59  master     -> quilt/usb.current
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard e05cf59cd06a6966d4f1cd8ae8d2c84d8eee7f42
+HEAD is now at e05cf59 USB: Fix double-linking of drivers/usb/otg when ULPI is selected
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-sm7xx-add-a-new-framebuffer-driver.patch
+staging-dst-remove-from-the-tree.patch
+staging-comedi-usbdux.c-fix-locking-up-of-the-driver-when-the-comedi-ringbuffer-runs-empty.patch
+staging-comedi-removed-depricated-from-comedi_cb_block.patch
+staging-comedi-jr3_pci-don-t-ioremap-too-much-space.-check-result.patch
+staging-rtl8192su-fix-test-for-negative-error-in-rtl8192_rx_isr.patch
+staging-fix-rtl8187se-compilation-errors-with-mac80211.patch
+staging-fix-rtl8192e-compilation-errors-with-mac80211.patch
+staging-fix-rtl8192su-compilation-errors-with-mac80211.patch
+staging-rtl8192su-add-usb-vid-pid-for-hwnum-300.patch
+staging-pohmelfs-fix-build-error.patch
+staging-wlan-ng-fix-correct-size-given-to-memset.patch
+staging-rtl8192x-fix-printk-formats.patch
+staging-ramzswap-remove-arm-specific-d-cache-hack.patch
+staging-panel-fix-compilation-error-with-custom-lcd-charset.patch
+staging-panel-adjust-range-for-panel_keypad-in-kconfig.patch
+staging-batman-adv-add-kconfig-dependancies-on-proc_fs-and-packet.patch
+staging-batman-adv-introduce-missing-kfree.patch
+staging-vt66-kconfig-depends-on-wlan.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+   f405425..1259a44  master     -> quilt/staging.current
+Importing i2c based on 2.6.33-rc1
+$ cd ../quilt-tmp
+$ git reset --hard 55639353a0035052d9ea6cfe4dde0ac7fcbb2c9f
+HEAD is now at 5563935 Linux 2.6.33-rc1
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 3f62cce...7aff07c master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.33-rc1
+$ cd ../quilt-tmp
+$ git reset --hard 55639353a0035052d9ea6cfe4dde0ac7fcbb2c9f
+HEAD is now at 5563935 Linux 2.6.33-rc1
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-adt7462-fix-pin-28-monitoring.patch
+hwmon-asus_atk0110-01-refactor-interface-probe-code.patch
+hwmon-asus_atk0110-02-debugfs-interface.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 77d72d7...2a60ee49 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.32-git5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.32-8665-gb8a7f3c
+$ cd ../quilt-tmp
+$ git reset --hard b8a7f3cd7e8212e5c572178ff3b5a514861036a5
+HEAD is now at b8a7f3c Merge branch 'master' of git://git.kernel.org/pub/scm/linux/kernel/git/viro/vfs-2.6
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+misc:enhance-BUILD_BUG_ON.patch
+misc:remove-MAYBE_BUILD_BUG_ON.patch
+misc:move-BUILD_BUG-et-al-inside-__KERNEL__.patch
+cpumask:kernel_perf_event-deprecated-function.patch
+cpumask:mm_slab-deprecated-function.patch
+cpumask:scsi-scoe-modernize.patch
+cpumask:i7300_idle-to-cpumask_var_t.patch
+cpumask:avoid-deref-in-timer_list.patch
+cpumask:documentation-fixes.patch
+cpumask:tsk_cpus_allowed-not-tsk_cpumask.patch
+net:tun_export_underlying_socket.patch
+mm:export_use_mm_unuse_mm.patch
+virtio:vhost_net_a_kernel_level_server.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:60: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+virtio:vhost_add_missing_architectures.patch
+virtio:add_memory_statistics_reporting_to_the_balloon_driver_v4.patch
+virtio:fix_scheduling_while_atomic_in_balloon_stats.patch
+lguest:remove-unneeded-zlib-include.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 9dd4c5a...4543201 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.32-7500-g8bea867
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+$ cd ../quilt-tmp
+$ git reset --hard 1259a443bd5d460d85ada8e115ed599041f37b0f
+HEAD is now at 1259a44 Staging/vt66*: kconfig, depends on WLAN
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core
+kobject-example-spelling-fixes.patch
+kset-example-spelling-fixes.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core
+From ../quilt-tmp
+   f405425..d8a5fcf  master     -> quilt/driver-core
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard d8a5fcf4dbdd21a6295bded4911fca3cd14ba6bc
+HEAD is now at d8a5fcf kset-example: Spelling fixes.
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+tty-sdio_uart-use-kfifo-instead-of-the-messy-circ-stuff.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + c0a4970...f91645a master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb f91645a39ef28b84a9cd26d06d09835251508a09
+Importing staging based on quilt/usb
+$ cd ../quilt-tmp
+$ git reset --hard f91645a39ef28b84a9cd26d06d09835251508a09
+HEAD is now at f91645a tty: sdio_uart: Use kfifo instead of the messy circ stuff
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging
+staging-comedi-pcmad-cleanup-code-indent-warning-messages.patch
+staging-comedi-pcmad-cleanup-remove-unneeded-braces.patch
+staging-comedi-pcmad-cleanup-printk-warnings.patch
+staging-dream-add-missing-include-files.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:56: new blank line at EOF.
++
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:551: new blank line at EOF.
++
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:1504: new blank line at EOF.
++
+warning: 3 lines add whitespace errors.
+staging-dream-fix-memory-leak-in-camera-error-path.patch
+staging-dream-remove-duplicated-include.patch
+staging-otus-fix-some-sparse-warnings.patch
+staging-otus-fix-branch-in-zfprotrspsim.patch
+staging-vme-correct-vme_user-error-message-typo.patch
+staging-vme-allow-override-of-geographical-address-on-tsi148.patch
+staging-vme-allow-override-of-geographical-address-on-ca91c142.patch
+staging-vme-fix-checkpatch-errors-on-vme-core.patch
+staging-vme-remove-old-structures-for-implemented-features.patch
+staging-vme-allow-drivers-to-co-exist.patch
+staging-slicoss-convert-to-netdev_tx_t.patch
+staging-slicoss-check-for-valid-hw-address.patch
+staging-slicoss-no-need-type-casting-when-using-netdev_priv.patch
+staging-slicoss-no-need-to-check-pointer-in-debugfs_remove.patch
+staging-slicoss-use-dev-stats-rather-than-adapter-stats.patch
+staging-slicoss-use-pci_device_table.patch
+staging-slicoss-use-compare_ether_addr.patch
+staging-slicoss-use-pci_set_consistent_dma_mask.patch
+staging-rtl8187x-use-pm-for-mac-address-output.patch
+staging-mimio-fix-checkpatch.pl-spacing-errors.patch
+staging-mimio-remove-dead-code.patch
+staging-mimio-checkpatch.pl-line-80-chars-fixes.patch
+staging-asus_oled-add-defines-for-asus-vendor_id-and-device_id-to-be-consistent-with-hid-ids.h.patch
+staging-batman-adv-replace-internal-logging-mechanism.patch
+staging-batman-adv-refactor-routing.c.patch
+staging-batman-adv-stop-persistent-warnings-if-a-device-is-deactivated.patch
+staging-batman-adv-always-receive-when-discarding.patch
+staging-batman-adv-split-originator-handling-parts-out-of-routing.c.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:30: new blank line at EOF.
++
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:276: new blank line at EOF.
++
+warning: 2 lines add whitespace errors.
+staging-batman-adv-fix-the-naming-of-the-debug-option.patch
+staging-iio-checkinclude.pl-fix.patch
+staging-wlags49_h2-remove-duplicated-include.patch
+staging-remove-unused-include-linux-version.h.patch
+staging-rtl8192e-fix-some-codingstyle-issues.patch
+staging-rtl8192e-fix-more-coding-style-issues.patch
+staging-rtl8192e-code-style-fix-for-r819xe_phyreg.h.patch
+staging-rtl8192e-code-style-fixes-for-r819xe_phy.h.patch
+staging-rtl8192e-small-code-fixes-for-r819xe_firmware.c.patch
+staging-add-dt3155-driver.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:20: new blank line at EOF.
++
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:350: new blank line at EOF.
++
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:451: new blank line at EOF.
++
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:3158: new blank line at EOF.
++
+warning: 4 lines add whitespace errors.
+staging-dt3155-add-needed-include.patch
+staging-dt3155-add-todo-file.patch
+staging-dt3155-add-it-to-the-build.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:10: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging
+From ../quilt-tmp
+ + c0a4970...2537c7b master     -> quilt/staging  (forced update)
