@@ -31,6 +31,7 @@
 #include <linux/falloc.h>
 #include <linux/fs_struct.h>
 #include <linux/ima.h>
+#include <linux/dnotify.h>
 
 #include "internal.h"
 
@@ -828,9 +829,10 @@ static struct file *__dentry_open(struct dentry *dentry, struct vfsmount *mnt,
 	struct inode *inode;
 	int error;
 
-	f->f_flags = flags;
-	f->f_mode = (__force fmode_t)((flags+1) & O_ACCMODE) | FMODE_LSEEK |
-				FMODE_PREAD | FMODE_PWRITE;
+	f->f_flags = (flags & ~(FMODE_EXEC | FMODE_NONOTIFY));
+	f->f_mode = (__force fmode_t)((flags+1) & O_ACCMODE) | (flags & FMODE_NONOTIFY) |
+				FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE;
+
 	inode = dentry->d_inode;
 	if (f->f_mode & FMODE_WRITE) {
 		error = __get_file_write_access(inode, mnt);
@@ -1058,7 +1060,7 @@ long do_sys_open(int dfd, const char __user *filename, int flags, int mode)
 				put_unused_fd(fd);
 				fd = PTR_ERR(f);
 			} else {
-				fsnotify_open(f->f_path.dentry);
+				fsnotify_open(f);
 				fd_install(fd, f);
 			}
 		}
