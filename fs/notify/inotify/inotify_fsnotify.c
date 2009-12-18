@@ -87,7 +87,7 @@ static int inotify_merge(struct list_head *list, struct fsnotify_event *event)
 
 static int inotify_handle_event(struct fsnotify_group *group, struct fsnotify_event *event)
 {
-	struct fsnotify_mark_entry *entry;
+	struct fsnotify_mark *entry;
 	struct inotify_inode_mark_entry *ientry;
 	struct inode *to_tell;
 	struct inotify_event_private_data *event_priv;
@@ -134,7 +134,7 @@ static int inotify_handle_event(struct fsnotify_group *group, struct fsnotify_ev
 	return ret;
 }
 
-static void inotify_freeing_mark(struct fsnotify_mark_entry *entry, struct fsnotify_group *group)
+static void inotify_freeing_mark(struct fsnotify_mark *entry, struct fsnotify_group *group)
 {
 	inotify_ignored_and_remove_idr(entry, group);
 }
@@ -143,7 +143,7 @@ static bool inotify_should_send_event(struct fsnotify_group *group, struct inode
 				      struct vfsmount *mnt, __u32 mask, void *data,
 				      int data_type)
 {
-	struct fsnotify_mark_entry *entry;
+	struct fsnotify_mark *entry;
 	bool send;
 
 	spin_lock(&inode->i_lock);
@@ -170,7 +170,7 @@ static bool inotify_should_send_event(struct fsnotify_group *group, struct inode
  */
 static int idr_callback(int id, void *p, void *data)
 {
-	struct fsnotify_mark_entry *entry;
+	struct fsnotify_mark *entry;
 	struct inotify_inode_mark_entry *ientry;
 	static bool warned = false;
 
