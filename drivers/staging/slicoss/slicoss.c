@@ -1249,13 +1249,11 @@ static struct net_device_stats *slic_get_stats(struct net_device *dev)
 static int slic_mcast_add_list(struct adapter *adapter, char *address)
 {
 	struct mcast_address *mcaddr, *mlist;
-	bool equaladdr;
 
 	/* Check to see if it already exists */
 	mlist = adapter->mcastaddrs;
 	while (mlist) {
-		ETHER_EQ_ADDR(mlist->address, address, equaladdr);
-		if (equaladdr)
+		if (!compare_ether_addr(mlist->address, address))
 			return STATUS_SUCCESS;
 		mlist = mlist->next;
 	}
@@ -2461,7 +2459,6 @@ static bool slic_mac_filter(struct adapter *adapter,
 	u32 opts = adapter->macopts;
 	u32 *dhost4 = (u32 *)&ether_frame->ether_dhost[0];
 	u16 *dhost2 = (u16 *)&ether_frame->ether_dhost[4];
-	bool equaladdr;
 
 	if (opts & MAC_PROMISC)
 		return true;
@@ -2485,10 +2482,8 @@ static bool slic_mac_filter(struct adapter *adapter,
 			struct mcast_address *mcaddr = adapter->mcastaddrs;
 
 			while (mcaddr) {
-				ETHER_EQ_ADDR(mcaddr->address,
-					      ether_frame->ether_dhost,
-					      equaladdr);
-				if (equaladdr) {
+				if (!compare_ether_addr(mcaddr->address,
+							ether_frame->ether_dhost)) {
 					adapter->rcv_multicasts++;
 					adapter->stats.multicast++;
 					return true;
