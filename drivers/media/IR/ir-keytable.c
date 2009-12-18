@@ -65,7 +65,7 @@ exit:
  * In order to reduce the quantity of table resizes, it has a minimum
  * table size of IR_TAB_MIN_SIZE.
  */
-int ir_roundup_tablesize(int n_elems)
+static int ir_roundup_tablesize(int n_elems)
 {
 	size_t size;
 
@@ -81,7 +81,6 @@ int ir_roundup_tablesize(int n_elems)
 
 	return n_elems;
 }
-EXPORT_SYMBOL_GPL(ir_roundup_tablesize);
 
 /**
  * ir_copy_table() - copies a keytable, discarding the unused entries
@@ -89,9 +88,11 @@ EXPORT_SYMBOL_GPL(ir_roundup_tablesize);
  * @origin:	origin table
  *
  * Copies all entries where the keycode is not KEY_UNKNOWN/KEY_RESERVED
+ * Also copies table size and table protocol.
+ * NOTE: It shouldn't copy the lock field
  */
 
-int ir_copy_table(struct ir_scancode_table *destin,
+static int ir_copy_table(struct ir_scancode_table *destin,
 		 const struct ir_scancode_table *origin)
 {
 	int i, j = 0;
@@ -105,12 +106,12 @@ int ir_copy_table(struct ir_scancode_table *destin,
 		j++;
 	}
 	destin->size = j;
+	destin->ir_type = origin->ir_type;
 
 	IR_dprintk(1, "Copied %d scancodes to the new keycode table\n", destin->size);
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(ir_copy_table);
 
 /**
  * ir_getkeycode() - get a keycode at the evdev scancode ->keycode table
@@ -399,12 +400,14 @@ EXPORT_SYMBOL_GPL(ir_g_keycode_from_table);
  * @input_dev:	the struct input_dev descriptor of the device
  * @rc_tab:	the struct ir_scancode_table table of scancode/keymap
  *
- * This routine is used to initialize the input infrastructure to work with
- * an IR.
- * It should be called before registering the IR device.
+ * This routine is used to initialize the input infrastructure
+ * to work with an IR.
+ * It will register the input/evdev interface for the device and
+ * register the syfs code for IR class
  */
 int ir_input_register(struct input_dev *input_dev,
-		      struct ir_scancode_table *rc_tab)
+		      const struct ir_scancode_table *rc_tab,
+		      const struct ir_dev_props *props)
 {
 	struct ir_input_dev *ir_dev;
 	struct ir_scancode  *keymap    = rc_tab->scan;
@@ -417,7 +420,7 @@ int ir_input_register(struct input_dev *input_dev,
 	if (!ir_dev)
 		return -ENOMEM;
 
-	spin_lock_init(&rc_tab->lock);
+	spin_lock_init(&ir_dev->rc_tab.lock);
 
 	ir_dev->rc_tab.size = ir_roundup_tablesize(rc_tab->size);
 	ir_dev->rc_tab.scan = kzalloc(ir_dev->rc_tab.size *
@@ -430,6 +433,7 @@ int ir_input_register(struct input_dev *input_dev,
 		ir_dev->rc_tab.size * sizeof(ir_dev->rc_tab.scan));
 
 	ir_copy_table(&ir_dev->rc_tab, rc_tab);
+	ir_dev->props = props;
 
 	/* set the bits for the keys */
 	IR_dprintk(1, "key map size: %d\n", rc_tab->size);
@@ -447,16 +451,31 @@ int ir_input_register(struct input_dev *input_dev,
 	input_set_drvdata(input_dev, ir_dev);
 
 	rc = input_register_device(input_dev);
+	if (rc < 0)
+		goto err;
+
+	rc = ir_register_class(input_dev);
 	if (rc < 0) {
-		kfree(rc_tab->scan);
-		kfree(ir_dev);
-		input_set_drvdata(input_dev, NULL);
+		input_unregister_device(input_dev);
+		goto err;
 	}
 
+	return 0;
+
+err:
+	kfree(rc_tab->scan);
+	kfree(ir_dev);
+	input_set_drvdata(input_dev, NULL);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(ir_input_register);
 
+/**
+ * ir_input_unregister() - unregisters IR and frees resources
+ * @input_dev:	the struct input_dev descriptor of the device
+
+ * This routine is used to free memory and de-register interfaces.
+ */
 void ir_input_unregister(struct input_dev *dev)
 {
 	struct ir_input_dev *ir_dev = input_get_drvdata(dev);
@@ -471,6 +490,8 @@ void ir_input_unregister(struct input_dev *dev)
 	rc_tab->size = 0;
 	kfree(rc_tab->scan);
 	rc_tab->scan = NULL;
+
+	ir_unregister_class(dev);
 
 	kfree(ir_dev);
 	input_unregister_device(dev);

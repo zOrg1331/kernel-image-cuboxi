@@ -113,6 +113,9 @@ struct uvc_xu_control {
 #define UVC_GUID_FORMAT_YUY2 \
 	{ 'Y',  'U',  'Y',  '2', 0x00, 0x00, 0x10, 0x00, \
 	 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
+#define UVC_GUID_FORMAT_YUY2_ISIGHT \
+	{ 'Y',  'U',  'Y',  '2', 0x00, 0x00, 0x10, 0x00, \
+	 0x80, 0x00, 0x00, 0x00, 0x00, 0x38, 0x9b, 0x71}
 #define UVC_GUID_FORMAT_NV12 \
 	{ 'N',  'V',  '1',  '2', 0x00, 0x00, 0x10, 0x00, \
 	 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
@@ -365,8 +368,9 @@ enum uvc_buffer_state {
 	UVC_BUF_STATE_IDLE	= 0,
 	UVC_BUF_STATE_QUEUED	= 1,
 	UVC_BUF_STATE_ACTIVE	= 2,
-	UVC_BUF_STATE_DONE	= 3,
-	UVC_BUF_STATE_ERROR	= 4,
+	UVC_BUF_STATE_READY	= 3,
+	UVC_BUF_STATE_DONE	= 4,
+	UVC_BUF_STATE_ERROR	= 5,
 };
 
 struct uvc_buffer {
@@ -532,6 +536,7 @@ struct uvc_driver {
 #define UVC_WARN_MINMAX		0
 #define UVC_WARN_PROBE_DEF	1
 
+extern unsigned int uvc_clock_param;
 extern unsigned int uvc_no_drop_param;
 extern unsigned int uvc_trace_param;
 extern unsigned int uvc_timeout_param;
