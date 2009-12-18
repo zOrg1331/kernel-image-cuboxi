@@ -1887,7 +1887,7 @@ static void sun4c_check_pgt_cache(int low, int high)
 /* An experiment, turn off by default for now... -DaveM */
 #define SUN4C_PRELOAD_PSEG
 
-void sun4c_update_mmu_cache(struct vm_area_struct *vma, unsigned long address, pte_t pte)
+void sun4c_update_mmu_cache(struct vm_area_struct *vma, unsigned long address, pte_t *ptep)
 {
 	unsigned long flags;
 	int pseg;
