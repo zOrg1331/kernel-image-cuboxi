@@ -353,7 +353,7 @@ static int acpi_processor_info_open_fs(struct inode *inode, struct file *file)
 			   PDE(inode)->data);
 }
 
-static int acpi_processor_add_fs(struct acpi_device *device)
+static int __cpuinit acpi_processor_add_fs(struct acpi_device *device)
 {
 	struct proc_dir_entry *entry = NULL;
 
@@ -722,7 +722,7 @@ static void acpi_processor_notify(struct acpi_device *device, u32 event)
 	switch (event) {
 	case ACPI_PROCESSOR_NOTIFY_PERFORMANCE:
 		saved = pr->performance_platform_limit;
-		acpi_processor_ppc_has_changed(pr);
+		acpi_processor_ppc_has_changed(pr, 1);
 		if (saved == pr->performance_platform_limit)
 			break;
 		acpi_bus_generate_proc_event(device, event,
@@ -758,7 +758,7 @@ static int acpi_cpu_soft_notify(struct notifier_block *nfb,
 	struct acpi_processor *pr = per_cpu(processors, cpu);
 
 	if (action == CPU_ONLINE && pr) {
-		acpi_processor_ppc_has_changed(pr);
+		acpi_processor_ppc_has_changed(pr, 0);
 		acpi_processor_cst_has_changed(pr);
 		acpi_processor_tstate_has_changed(pr);
 	}
@@ -770,7 +770,7 @@ static struct notifier_block acpi_cpu_notifier =
 	    .notifier_call = acpi_cpu_soft_notify,
 };
 
-static int acpi_processor_add(struct acpi_device *device)
+static int __cpuinit acpi_processor_add(struct acpi_device *device)
 {
 	struct acpi_processor *pr = NULL;
 	int result = 0;
@@ -830,7 +830,7 @@ static int acpi_processor_add(struct acpi_device *device)
 	arch_acpi_processor_cleanup_pdc(pr);
 
 #ifdef CONFIG_CPU_FREQ
-	acpi_processor_ppc_has_changed(pr);
+	acpi_processor_ppc_has_changed(pr, 0);
 #endif
 	acpi_processor_get_throttling_info(pr);
 	acpi_processor_get_limit_info(pr);
@@ -845,7 +845,7 @@ static int acpi_processor_add(struct acpi_device *device)
 		goto err_power_exit;
 	}
 
-	dev_info(&device->dev, "registered as cooling_device%d\n",
+	dev_dbg(&device->dev, "registered as cooling_device%d\n",
 		 pr->cdev->id);
 
 	result = sysfs_create_link(&device->dev.kobj,
@@ -861,13 +861,6 @@ static int acpi_processor_add(struct acpi_device *device)
 	if (result) {
 		printk(KERN_ERR PREFIX "Create sysfs link\n");
 		goto err_remove_sysfs;
-	}
-
-	if (pr->flags.throttling) {
-		printk(KERN_INFO PREFIX "%s [%s] (supports",
-		       acpi_device_name(device), acpi_device_bid(device));
-		printk(" %d throttling states", pr->throttling.state_count);
-		printk(")\n");
 	}
 
 	return 0;
@@ -1109,7 +1102,7 @@ void acpi_processor_install_hotplug_notify(void)
 	acpi_walk_namespace(ACPI_TYPE_PROCESSOR,
 			    ACPI_ROOT_OBJECT,
 			    ACPI_UINT32_MAX,
-			    processor_walk_namespace_cb, &action, NULL);
+			    processor_walk_namespace_cb, NULL, &action, NULL);
 #endif
 	register_hotcpu_notifier(&acpi_cpu_notifier);
 }
@@ -1122,7 +1115,7 @@ void acpi_processor_uninstall_hotplug_notify(void)
 	acpi_walk_namespace(ACPI_TYPE_PROCESSOR,
 			    ACPI_ROOT_OBJECT,
 			    ACPI_UINT32_MAX,
-			    processor_walk_namespace_cb, &action, NULL);
+			    processor_walk_namespace_cb, NULL, &action, NULL);
 #endif
 	unregister_hotcpu_notifier(&acpi_cpu_notifier);
 }

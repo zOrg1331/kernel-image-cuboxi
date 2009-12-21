@@ -19,6 +19,7 @@ obj-y				+= acpi.o \
 
 # All the builtin files are in the "acpi." module_param namespace.
 acpi-y				+= osl.o utils.o reboot.o
+acpi-y				+= hest.o
 
 # sleep related files
 acpi-y				+= wakeup.o
@@ -62,3 +63,5 @@ obj-$(CONFIG_ACPI_POWER_METER)	+= power_meter.o
 processor-y			:= processor_core.o processor_throttling.o
 processor-y			+= processor_idle.o processor_thermal.o
 processor-$(CONFIG_CPU_FREQ)	+= processor_perflib.o
+
+obj-$(CONFIG_ACPI_PROCESSOR_AGGREGATOR) += acpi_pad.o
