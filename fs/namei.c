@@ -775,6 +775,7 @@ need_lookup:
 	if (!dentry) {
 		struct dentry *new;
 
+do_lookup_locked:
 		/* Don't create child dentry for a dead directory. */
 		dentry = ERR_PTR(-ENOENT);
 		if (IS_DEADDIR(dir))
@@ -800,12 +801,12 @@ out_unlock:
 	 * Uhhuh! Nasty case: the cache was re-populated while
 	 * we waited on the semaphore. Need to revalidate.
 	 */
-	mutex_unlock(&dir->i_mutex);
 	if (dentry->d_op && dentry->d_op->d_revalidate) {
 		dentry = do_revalidate(dentry, nd);
 		if (!dentry)
-			dentry = ERR_PTR(-ENOENT);
+			goto do_lookup_locked;
 	}
+	mutex_unlock(&dir->i_mutex);
 	if (IS_ERR(dentry))
 		goto fail;
 	goto done;
