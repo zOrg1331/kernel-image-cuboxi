@@ -38,7 +38,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt13
+%define krelease alt14
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -8805,6 +8805,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Tue Dec 22 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt14
+- Release of 2.6.18-164.2.1.el5.028stab066.10
+
 * Mon Dec 21 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13
 - Release of 2.6.18-164.2.1.el5 028stab066.7 (SA)
 
