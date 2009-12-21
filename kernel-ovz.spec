@@ -38,7 +38,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt12
+%define krelease alt13
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -8795,6 +8795,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Mon Dec 21 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13
+- Release of 2.6.18-164.2.1.el5 028stab066.7 (SA)
+
 * Sun Nov 08 2009 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt12
 - Release of 2.6.18-128.2.1.el5 028stab064.8 (SA)
 - remove make-sock_sendpage-use-kernel_sendpage.patch
