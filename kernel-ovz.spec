@@ -4,7 +4,7 @@
 %define with_doc       0
 %define with_headers   1
 %define with_openafs   0
-%define ovzver 028stab064
+%define ovzver 028stab066
 %define ovzrel 7
 
 # Whether to apply the Xen patches -- leave this enabled.
@@ -105,9 +105,6 @@ BuildPreReq: bzip2, findutils, gzip, m4, perl, make >= 3.78, diffutils
 BuildRequires: binutils >= 2.12
 %if %with_headers
 BuildRequires: unifdef
-%endif
-%if %{with_fips}
-BuildRequires: hmaccalc
 %endif
 BuildConflicts: rhbuildsys(DiskFree) < 500Mb
 BuildPreReq: python-modules
@@ -3232,7 +3229,7 @@ Patch23584: linux-2.6-net-fix-icmp_send-and-icmpv6_send-host-re-lookup-code.patc
 Patch23585: linux-2.6-net-ehea-improve-behaviour-in-low-mem-conditions.patch
 Patch23586: linux-2.6-xen-fbfront-dirty-race.patch
 Patch23587: linux-2.6-net-don-t-add-nat-extension-for-confirmed-conntracks.patch
-Patch23588: linux-2.6-x86-64-fix-int-0x80-enosys-return.patch
+Patch23588: linux-2.6-alt-x86-64-fix-int-0x80-enosys-return.patch
 Patch23589: linux-2.6-misc-ia64-s390-add-kernel-version-to-panic-output.patch
 Patch23590: linux-2.6-net-improve-udp-port-randomization.patch
 Patch23591: linux-2.6-pci-fix-msi-descriptor-leak-during-hot-unplug.patch
@@ -4189,18 +4186,17 @@ Patch99999: linux-kernel-test.patch
 
 # ALT-specific patches
 Patch200000: our_kernel.patch
-Patch200001: fix_getcpu_call.patch
 
 # Patches from Solar Designer
-Patch210000: linux-2.6.18-128.2.1.el5.028stab064.4-128.4.1-qnd1.diff
-Patch210001: build-fixes.diff
-Patch210002: build-hostname.diff
-Patch210003: clear_child_tid-128.4.1.diff
-Patch210004: md-boot-degraded-2.6.18.diff
-Patch210005: md-null-deref-128.4.1.diff
-Patch210006: parisc-eisa_eeprom.diff
-Patch210007: sigaltstack.diff
-Patch210008: tmpfs-size.diff
+# Patch210000: linux-2.6.18-128.2.1.el5.028stab064.4-128.4.1-qnd1.diff
+# Patch210001: build-fixes.diff
+# Patch210002: build-hostname.diff
+# Patch210003: clear_child_tid-128.4.1.diff
+# Patch210004: md-boot-degraded-2.6.18.diff
+# Patch210005: md-null-deref-128.4.1.diff
+# Patch210006: parisc-eisa_eeprom.diff
+# Patch210007: sigaltstack.diff
+# Patch210008: tmpfs-size.diff
 
 # END OF PATCH DEFINITIONS
 
@@ -8267,17 +8263,16 @@ perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 
 # ALT-specific patch
 %patch200000 -p1
-%patch200001 -p1
 
-%patch210000 -p1
-%patch210001 -p1
-%patch210002 -p1
-%patch210003 -p1
-%patch210004 -p1
-%patch210005 -p1
-%patch210006 -p1
-%patch210007 -p1
-%patch210008 -p1
+# %patch210000 -p1
+# %patch210001 -p1
+# %patch210002 -p1
+# %patch210003 -p1
+# %patch210004 -p1
+# %patch210005 -p1
+# %patch210006 -p1
+# %patch210007 -p1
+# %patch210008 -p1
 
 # END OF PATCH APPLICATIONS
 
@@ -8578,6 +8573,7 @@ if [ -f arch/%_arch/*lds ]; then
 fi
 rm -f %buildroot%modules_dir/build/scripts/*.o
 rm -f %buildroot%modules_dir/build/scripts/*/*.o
+rm -rf %buildroot%modules_dir/build/scripts/rt-tester/
 mkdir -p %buildroot%modules_dir/build/include
 pushd include
 cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound video asm asm-generic ub %buildroot%modules_dir/build/include
@@ -8766,22 +8762,6 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 
 %preun
 %preun_kernel_image %KVERREL
-
-%postun kdump
-%ifarch s390x
-    # Create softlink to latest remaining kdump kernel.
-    # If no more kdump kernel is available, remove softlink.
-    if [ "$(readlink /boot/zfcpdump)" == "/boot/vmlinuz-%{KVERREL}kdump" ]
-    then
-        vmlinuz_next=$(ls /boot/vmlinuz-*kdump 2> /dev/null | sort | tail -n1)
-        if [ $vmlinuz_next ]
-        then
-            ln -sf $vmlinuz_next /boot/zfcpdump
-        else
-            rm -f /boot/zfcpdump
-        fi
-    fi
-%endif
 
 ###
 ### file lists
