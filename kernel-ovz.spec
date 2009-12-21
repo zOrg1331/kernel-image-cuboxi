@@ -5,7 +5,7 @@
 %define with_headers   1
 %define with_openafs   0
 %define ovzver 028stab066
-%define ovzrel 7
+%define ovzrel 10
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -4162,6 +4162,10 @@ Patch100208: diff-ve-binfmt-misc-mem-leak-20091014
 Patch100209: diff-ve-ptys-idr-mem-leak-20091109
 Patch100210: diff-cpt-ptrace-state-init-atomics-20091112
 Patch100212: diff-ms-ext4-nodelalloc-by-default
+Patch100213: diff-rh-call-vfs_check_frozen-out-of-spinlock
+Patch100214: diff-cfq-unlink-dead-cfqq-from-list-20091202
+Patch100215: diff-nfs-check-space-oops-fix
+Patch100216: diff-ve-net-clear-inetdev-from-ve-lo
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -8231,6 +8235,10 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100209 -p1
 %patch100210 -p1
 %patch100212 -p1
+%patch100213 -p1
+%patch100214 -p1
+%patch100215 -p1
+%patch100216 -p1
 
 %patch101000 -p1
 %patch101001 -p1
