@@ -729,7 +729,7 @@ static int do_lookup(struct nameidata *nd, struct qstr *name,
 		     struct path *path)
 {
 	struct vfsmount *mnt = nd->path.mnt;
-	struct dentry *dentry, *parent;
+	struct dentry *dentry, *parent, *new;
 	struct inode *dir;
 	/*
 	 * See if the low-level filesystem might want
@@ -772,40 +772,40 @@ need_lookup:
 	 * so doing d_lookup() (with seqlock), instead of lockfree __d_lookup
 	 */
 	dentry = d_lookup(parent, name);
-	if (!dentry) {
-		struct dentry *new;
-
-do_lookup_locked:
-		/* Don't create child dentry for a dead directory. */
-		dentry = ERR_PTR(-ENOENT);
-		if (IS_DEADDIR(dir))
+	if (dentry) {
+		/*
+		 * The cache was re-populated while we waited on the
+		 * mutex.  We need to revalidate, this time while
+		 * holding i_mutex (to avoid another race).
+		 */
+		if (dentry->d_op && dentry->d_op->d_revalidate) {
+			dentry = do_revalidate(dentry, nd);
+                        if (dentry)
+				goto out_unlock;
+			/*
+			 * The dentry was left behind invalid.  Just
+			 * do the lookup.
+			 */
+		} else {
 			goto out_unlock;
+                }
+	}
 
-		new = d_alloc(parent, name);
-		dentry = ERR_PTR(-ENOMEM);
-		if (new) {
-			dentry = dir->i_op->lookup(dir, new, nd);
-			if (dentry)
-				dput(new);
-			else
-				dentry = new;
-		}
+	/* Don't create child dentry for a dead directory. */
+	dentry = ERR_PTR(-ENOENT);
+	if (IS_DEADDIR(dir))
+		goto out_unlock;
+
+	new = d_alloc(parent, name);
+	dentry = ERR_PTR(-ENOMEM);
+	if (new) {
+		dentry = dir->i_op->lookup(dir, new, nd);
+		if (dentry)
+			dput(new);
+		else
+			dentry = new;
+	}
 out_unlock:
-		mutex_unlock(&dir->i_mutex);
-		if (IS_ERR(dentry))
-			goto fail;
-		goto done;
-	}
-
-	/*
-	 * Uhhuh! Nasty case: the cache was re-populated while
-	 * we waited on the semaphore. Need to revalidate.
-	 */
-	if (dentry->d_op && dentry->d_op->d_revalidate) {
-		dentry = do_revalidate(dentry, nd);
-		if (!dentry)
-			goto do_lookup_locked;
-	}
 	mutex_unlock(&dir->i_mutex);
 	if (IS_ERR(dentry))
 		goto fail;
