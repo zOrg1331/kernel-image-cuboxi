@@ -8574,6 +8574,8 @@ fi
 rm -f %buildroot%modules_dir/build/scripts/*.o
 rm -f %buildroot%modules_dir/build/scripts/*/*.o
 rm -rf %buildroot%modules_dir/build/scripts/rt-tester/
+rm -rf %buildroot%modules_dir/build/scripts/bloat-o-meter
+rm -rf %buildroot%modules_dir/build/scripts/show_delta
 mkdir -p %buildroot%modules_dir/build/include
 pushd include
 cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound video asm asm-generic ub %buildroot%modules_dir/build/include
