@@ -1,3 +1,14 @@
+commit 3a4bbfd5b06f65def492a1c97b57dbce517bbf95
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Wed Dec 23 00:49:56 2009 +0900
+
+    aufs: follow the changes around O_TRUNC
+    
+    Now linux/fs/namei.c:do_filp_open() was changed and O_TRUNC is handled
+    after open.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 2cfbc5e89e5e41d7696e27e0246a0e6844179b7d
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Tue Dec 22 16:04:48 2009 +0900
