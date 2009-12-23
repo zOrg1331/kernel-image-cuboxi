@@ -571,7 +571,7 @@ int64_t msm_timer_enter_idle(void)
 	}
 	if (delta <= 0)
 		return 0;
-	return cyc2ns(&clock->clocksource, (alarm - count) >> clock->shift);
+	return clocksource_cyc2ns((alarm - count) >> clock->shift , clock->clocksource.mult, clock->clocksource.shift);
 }
 
 void msm_timer_exit_idle(int low_power)
@@ -716,13 +716,13 @@ unsigned long long sched_clock(void)
 		if (!saved_ticks_valid) {
 			saved_ticks_valid = 1;
 			last_ticks = ticks;
-			base -= cyc2ns(cs, ticks);
+			base -= clocksource_cyc2ns(ticks, cs->mult, cs->shift);
 		}
 		if (ticks < last_ticks) {
-			base += cyc2ns(cs, cs->mask);
-			base += cyc2ns(cs, 1);
+			base += clocksource_cyc2ns(cs->mask, cs->mult, cs->shift);
+			base += clocksource_cyc2ns(1, cs->mult, cs->shift);
 		}
-		last_result = result = cyc2ns(cs, ticks) + base;
+		last_result = result = clocksource_cyc2ns(ticks, cs->mult, cs->shift) + base;
 	} else {
 		base = result = last_result;
 		saved_ticks_valid = 0;
