@@ -958,8 +958,7 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 	 */
 	if (tsk->exit_signal != SIGCHLD && !task_detached(tsk) &&
 	    (tsk->parent_exec_id != tsk->real_parent->self_exec_id ||
-	     tsk->self_exec_id != tsk->parent_exec_id) &&
-	    !capable(CAP_KILL))
+	     tsk->self_exec_id != tsk->parent_exec_id))
 		tsk->exit_signal = SIGCHLD;
 
 	if (tsk->exit_signal != -1 && tsk == init_pid_ns.child_reaper)

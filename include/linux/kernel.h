@@ -206,6 +206,8 @@ asmlinkage int ve_printk(int, const char * fmt, ...)
 	__attribute__ ((format (printf, 2, 3)));
 void prepare_printk(void);
 
+extern void printk_tick(void);
+extern int printk_needs_cpu(int);
 #else
 static inline int vprintk(const char *s, va_list args)
 	__attribute__ ((format (printf, 1, 0)));
@@ -226,6 +228,9 @@ static inline int ve_printk(int d, const char *s, ...)
 static inline void prepare_printk(void)
 {
 }
+
+static inline void printk_tick(void) { }
+static inline int printk_needs_cpu(int) { return 0; }
 #endif
 
 extern void asmlinkage __attribute__((format(printf, 1, 2)))
