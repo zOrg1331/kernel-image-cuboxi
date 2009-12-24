@@ -2067,32 +2067,22 @@ cfq_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 	struct cfq_queue *cfqq;
 	unsigned long flags;
 	struct ub_iopriv *iopriv;
-	struct cfq_bc_data *cfq_bc = NULL;
 
 	might_sleep_if(gfp_mask & __GFP_WAIT);
 
 	cic = cfq_get_io_context(cfqd, gfp_mask);
 	iopriv = cfqq_ub_iopriv(cfqd, is_sync);
-	if (!is_sync)
-		cfq_bc = bc_findcreate_cfq_bc(iopriv, cfqd, gfp_mask);
 
 	spin_lock_irqsave(q->queue_lock, flags);
 
-	if (!cic || (!is_sync && cfq_bc == NULL))
+	if (!cic)
 		goto queue_fail;
 
 	cfqq = cic_to_cfqq(cic, is_sync);
-	if (!cfqq) {
-		cfqq = cfq_get_queue(cfqd, is_sync, cic->ioc, gfp_mask);
-
-		if (!cfqq)
-			goto queue_fail;
-
-		cic_set_cfqq(cic, cfqq, is_sync);
-	}
-
-	if (!is_sync && cfqq->cfq_bc != cfq_bc) {
-		cfq_put_queue(cfqq);
+	if (!cfqq || cfqq->cfq_bc->ub_iopriv != iopriv) {
+		if (cfqq)
+			cfq_put_queue(cfqq);
+		cic_set_cfqq(cic, NULL, is_sync);
 		cfqq = cfq_get_queue(cfqd, is_sync, cic->ioc, gfp_mask);
 		cic_set_cfqq(cic, cfqq, is_sync);
 		if (!cfqq)
