@@ -145,6 +145,12 @@ source "arch/ia64/xen/Kconfig"
 
 endif
 
+config LOCKDEP_SUPPORT
+	def_bool y
+
+config STACKTRACE_SUPPORT
+	def_bool y
+
 choice
 	prompt "System type"
 	default IA64_GENERIC
