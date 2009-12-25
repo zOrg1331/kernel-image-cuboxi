@@ -268,8 +268,7 @@ static irqreturn_t msm_datamover_irq_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int msm_dmov_suspend_late(struct platform_device *pdev,
-			    pm_message_t state)
+static int msm_dmov_suspend_noirq(struct device *dev)
 {
 	unsigned long irq_flags;
 
@@ -284,11 +283,15 @@ static int msm_dmov_suspend_late(struct platform_device *pdev,
 	return 0;
 }
 
+static struct dev_pm_ops dmov_pm = {
+	.suspend_noirq	= msm_dmov_suspend_noirq,
+};
+
 static struct platform_driver msm_dmov_driver = {
-	.suspend_late = msm_dmov_suspend_late,
 	.driver = {
-		.name = MODULE_NAME,
-		.owner = THIS_MODULE,
+		.name =		MODULE_NAME,
+		.owner =	THIS_MODULE,
+		.pm =		&dmov_pm,
 	},
 };
 
