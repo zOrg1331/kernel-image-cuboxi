@@ -2476,9 +2476,28 @@ static int ext4_ext_zeroout(struct inode *inode, struct ext4_extent *ex)
 		submit_bio(WRITE, bio);
 		wait_for_completion(&event);
 
-		if (test_bit(BIO_UPTODATE, &bio->bi_flags))
+		if (test_bit(BIO_UPTODATE, &bio->bi_flags)) {
+
 			ret = 0;
-		else {
+
+			/* On success, if there is no journal through which
+			 * metadata is committed, we need to insure all
+			 * metadata associated with each of these blocks is
+			 * unmapped. */
+			if (EXT4_SB(inode->i_sb)->s_journal == NULL) {
+				sector_t block = ee_pblock;
+
+				done = 0;
+				while (done < len) {
+					unmap_underlying_metadata(inode->i_sb->
+									s_bdev,
+								  block);
+
+					done++;
+					block++;
+				}
+			}
+		} else {
 			ret = -EIO;
 			break;
 		}
