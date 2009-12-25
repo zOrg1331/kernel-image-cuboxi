@@ -1,3 +1,23 @@
+commit 931db95060f0747549be405b6ec49475f71bbb0e
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Dec 25 17:22:47 2009 +0900
+
+    aufs stdalone: follow the changes for IMA
+    
+    Most of IMA code where hidden by generic security routines.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
+commit a528172878764dba217b3ddb310f98b5da6b732f
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Dec 25 17:22:01 2009 +0900
+
+    aufs: follow the changes for IMA
+    
+    Most of IMA code where hidden by generic security routines.
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit e5843a8384a3d064b57bccb1d32a3cd7327121a9
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Thu Dec 24 23:52:24 2009 +0900

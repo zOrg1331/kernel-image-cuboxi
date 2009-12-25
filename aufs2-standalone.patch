@@ -84,18 +84,6 @@ index 6cf8fd2..008e0d8 100644
  
  int devcgroup_inode_mknod(int mode, dev_t dev)
  {
-diff --git a/security/integrity/ima/ima_main.c b/security/integrity/ima/ima_main.c
-index a89f44d..ceb8a60 100644
---- a/security/integrity/ima/ima_main.c
-+++ b/security/integrity/ima/ima_main.c
-@@ -346,6 +346,7 @@ int ima_file_mmap(struct file *file, unsigned long prot)
- 					 MAY_EXEC, FILE_MMAP);
- 	return 0;
- }
-+EXPORT_SYMBOL(ima_file_mmap);
- 
- /**
-  * ima_bprm_check - based on policy, collect/store measurement.
 diff --git a/security/security.c b/security/security.c
 index 24e060b..900b320 100644
 --- a/security/security.c
