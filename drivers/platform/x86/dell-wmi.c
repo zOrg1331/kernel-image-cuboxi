@@ -238,7 +238,6 @@ static void dell_wmi_notify(u32 value, void *context)
 			input_sync(dell_wmi_input_dev);
 		}
 	}
-	kfree(obj);
 }
 
 
