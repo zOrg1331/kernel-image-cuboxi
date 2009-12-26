@@ -238,7 +238,6 @@ static void dell_wmi_notify(u32 value, void *context)
 			input_sync(dell_wmi_input_dev);
 		}
 	}
-	kfree(obj);
 }
 
 
@@ -324,7 +323,7 @@ static int __init dell_wmi_init(void)
 {
 	int err;
 
-	if (wmi_has_guid(DELL_EVENT_GUID)) {
+	if (!wmi_has_guid(DELL_EVENT_GUID)) {
 		printk(KERN_WARNING "dell-wmi: No known WMI GUID found\n");
 		return -ENODEV;
 	}
