@@ -1200,14 +1200,6 @@ static int i915_load_modeset_init(struct drm_device *dev,
 	dev->mode_config.fb_base = drm_get_resource_start(dev, fb_bar) &
 		0xff000000;
 
-	if (IS_MOBILE(dev) || IS_I9XX(dev))
-		dev_priv->cursor_needs_physical = true;
-	else
-		dev_priv->cursor_needs_physical = false;
-
-	if (IS_I965G(dev) || IS_G33(dev))
-		dev_priv->cursor_needs_physical = false;
-
 	/* Basic memrange allocator for stolen space (aka vram) */
 	drm_mm_init(&dev_priv->vram, 0, prealloc_size);
 	DRM_INFO("set up %ldM of stolen space\n", prealloc_size / (1024*1024));
@@ -1257,6 +1249,8 @@ static int i915_load_modeset_init(struct drm_device *dev,
 	if (ret)
 		goto destroy_ringbuffer;
 
+	intel_modeset_init(dev);
+
 	ret = drm_irq_install(dev);
 	if (ret)
 		goto destroy_ringbuffer;
@@ -1270,8 +1264,6 @@ static int i915_load_modeset_init(struct drm_device *dev,
 	 */
 
 	I915_WRITE(INSTPM, (1 << 5) | (1 << 21));
-
-	intel_modeset_init(dev);
 
 	drm_helper_initial_config(dev);
 
@@ -1360,7 +1352,7 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 {
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	resource_size_t base, size;
-	int ret = 0, mmio_bar = IS_I9XX(dev) ? 0 : 1;
+	int ret = 0, mmio_bar;
 	uint32_t agp_size, prealloc_size, prealloc_start;
 
 	/* i915 has 4 more counters */
@@ -1376,8 +1368,10 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
 
 	dev->dev_private = (void *)dev_priv;
 	dev_priv->dev = dev;
+	dev_priv->info = (struct intel_device_info *) flags;
 
 	/* Add register map (needed for suspend/resume) */
+	mmio_bar = IS_I9XX(dev) ? 0 : 1;
 	base = drm_get_resource_start(dev, mmio_bar);
 	size = drm_get_resource_len(dev, mmio_bar);
 
