@@ -6,6 +6,8 @@
 #ifndef APEI_INTERNAL_H
 #define APEI_INTERNAL_H
 
+int hest_init(void);
+
 struct apei_exec_context;
 
 typedef int (*apei_exec_ins_func_t)(struct apei_exec_context *ctx,

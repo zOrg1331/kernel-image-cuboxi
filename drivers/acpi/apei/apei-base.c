@@ -48,6 +48,9 @@
 struct dentry *apei_debug_dir;
 EXPORT_SYMBOL_GPL(apei_debug_dir);
 
+int hest_disable;
+EXPORT_SYMBOL(hest_disable);
+
 /*
  * APEI ERST (Error Record Serialization Table) and EINJ (Error
  * INJection) interpreter framework.
@@ -552,9 +555,21 @@ EXPORT_SYMBOL_GPL(apei_exec_collect_resources);
 
 static int __init apei_init(void)
 {
+	int rc;
+
 	apei_debug_dir = debugfs_create_dir("apei", NULL);
 	if (!apei_debug_dir)
 		return -ENOMEM;
+	if (!hest_disable) {
+		rc = hest_init();
+		if (rc) {
+			hest_disable = 1;
+			if (rc != -ENODEV)
+				pr_err(
+				"ACPI: APEI: Failed to initialize Hardware "
+				"Error Source Table (HEST) subsystem\n");
+		}
+	}
 
 	return 0;
 }
@@ -566,6 +581,8 @@ static void __exit apei_exit(void)
 
 module_init(apei_init);
 module_exit(apei_exit);
+
+module_param(hest_disable, int, 0444);
 
 MODULE_AUTHOR("Huang Ying");
 MODULE_DESCRIPTION("ACPI Platform Error Interface support");
