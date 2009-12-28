@@ -185,6 +185,36 @@ show_quirks(struct device *dev, struct device_attribute *attr, char *buf)
 static DEVICE_ATTR(quirks, S_IRUGO, show_quirks, NULL);
 
 static ssize_t
+show_reset_quirk(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct usb_device *udev;
+
+	udev = to_usb_device(dev);
+	return sprintf(buf, "%d\n", !!(udev->quirks & USB_QUIRK_RESET_MORPHS));
+}
+
+static ssize_t
+set_reset_quirk(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct usb_device	*udev = to_usb_device(dev);
+	int			config, value;
+
+	if (sscanf(buf, "%d", &config) != 1 || config < 0 || config > 1)
+		return -EINVAL;
+	usb_lock_device(udev);
+	if (config)
+		udev->quirks |= USB_QUIRK_RESET_MORPHS;
+	else
+		udev->quirks &= ~USB_QUIRK_RESET_MORPHS;
+	usb_unlock_device(udev);
+	return count;
+}
+
+static DEVICE_ATTR(reset_quirk, S_IRUGO | S_IWUSR,
+		show_reset_quirk, set_reset_quirk);
+
+static ssize_t
 show_urbnum(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct usb_device *udev;
@@ -552,6 +582,7 @@ static struct attribute *dev_attrs[] = {
 	&dev_attr_version.attr,
 	&dev_attr_maxchild.attr,
 	&dev_attr_quirks.attr,
+	&dev_attr_reset_quirk.attr,
 	&dev_attr_authorized.attr,
 	&dev_attr_remove.attr,
 	NULL,
