@@ -128,7 +128,7 @@
 #define __NR_wait4		114 /* obsolete -> waitid */
 #define __NR_swapoff		115 /* ok */
 #define __NR_sysinfo		116 /* ok */
-#define __NR_ipc		117 /* remove - direct call */
+/*#define __NR_ipc		117 *//* remove - direct call */
 #define __NR_fsync		118 /* ok */
 #define __NR_sigreturn		119 /* obsolete -> sys_rt_sigreturn */
 #define __NR_clone		120 /* ok */
