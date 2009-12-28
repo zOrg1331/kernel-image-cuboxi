@@ -14,6 +14,7 @@
 #include <linux/mnt_namespace.h>
 #include <linux/fs_struct.h>
 #include <linux/hash.h>
+#include <linux/magic.h>
 
 #include "common.h"
 #include "realpath.h"
@@ -112,7 +113,7 @@ int tomoyo_realpath_from_path2(struct path *path, char *newname,
 		path_put(&ns_root);
 		/* Prepend "/proc" prefix if using internal proc vfs mount. */
 		if (!IS_ERR(sp) && (path->mnt->mnt_parent == path->mnt) &&
-		    (strcmp(path->mnt->mnt_sb->s_type->name, "proc") == 0)) {
+		    (path->mnt->mnt_sb->s_magic == PROC_SUPER_MAGIC)) {
 			sp -= 5;
 			if (sp >= newname)
 				memcpy(sp, "/proc", 5);
@@ -401,11 +402,13 @@ void __init tomoyo_realpath_init(void)
 		INIT_LIST_HEAD(&tomoyo_name_list[i]);
 	INIT_LIST_HEAD(&tomoyo_kernel_domain.acl_info_list);
 	tomoyo_kernel_domain.domainname = tomoyo_save_name(TOMOYO_ROOT_NAME);
-	list_add_tail(&tomoyo_kernel_domain.list, &tomoyo_domain_list);
-	down_read(&tomoyo_domain_list_lock);
+	/*
+	 * tomoyo_read_lock() is not needed because this function is
+	 * called before the first "delete" request.
+	 */
+	list_add_tail_rcu(&tomoyo_kernel_domain.list, &tomoyo_domain_list);
 	if (tomoyo_find_domain(TOMOYO_ROOT_NAME) != &tomoyo_kernel_domain)
 		panic("Can't register tomoyo_kernel_domain");
-	up_read(&tomoyo_domain_list_lock);
 }
 
 /* Memory allocated for temporary purpose. */
