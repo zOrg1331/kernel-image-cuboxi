@@ -12,10 +12,10 @@ obj-y += socinfo.o
 obj-y += cpufreq.o
 obj-y += nohlt.o
 
-obj-$(CONFIG_ARCH_MSM) += acpuclock.o
 obj-$(CONFIG_ARCH_MSM) += pmic.o
-obj-$(CONFIG_ARCH_QSD) += acpuclock-8x50.o sirc.o
 obj-$(CONFIG_ARCH_QSD) += pmic.o
+obj-$(CONFIG_ARCH_MSM_ARM11) += acpuclock.o
+obj-$(CONFIG_ARCH_MSM_SCORPION) += acpuclock-8x50.o sirc.o
 obj-$(CONFIG_CPU_V6) += idle-v6.o
 obj-$(CONFIG_CPU_V7) += idle-v7.o
 
@@ -41,8 +41,9 @@ obj-$(CONFIG_MSM_DMA_TEST) += dma_test.o
 obj-$(CONFIG_SURF_FFA_GPIO_KEYPAD) += keypad-surf-ffa.o
 
 obj-$(CONFIG_MACH_TROUT) += board-dream.o
-obj-$(CONFIG_MACH_HALIBUT) += board-halibut.o
-obj-$(CONFIG_MACH_MSM7201A_FFA) += board-halibut.o
+obj-$(CONFIG_ARCH_MSM7X01A) += board-halibut.o
+obj-$(CONFIG_MACH_TROUT) += board-trout.o board-trout-gpio.o
+obj-$(CONFIG_MACH_TROUT) += board-trout-keypad.o board-trout-panel.o
 obj-$(CONFIG_MACH_TROUT) += htc_akm_cal.o htc_wifi_nvs.o htc_acoustic.o
 obj-$(CONFIG_MACH_TROUT) += board-trout-mmc.o board-trout-wifi.o
 obj-$(CONFIG_MACH_QSD8X50_SURF) += board-qsd8x50.o
@@ -51,8 +52,7 @@ obj-$(CONFIG_MACH_QSD8X50_COMET) += board-comet.o
 obj-$(CONFIG_TROUT_H2W) += board-trout-h2w.o
 obj-$(CONFIG_TROUT_BATTCHG) += htc_battery.o
 obj-$(CONFIG_TROUT_PWRSINK) += htc_pwrsink.o
-obj-$(CONFIG_MACH_MSM7X27_SURF) += board-msm7x27.o
-obj-$(CONFIG_MACH_MSM7X27_FFA) += board-msm7x27.o
+obj-$(CONFIG_ARCH_MSM7X27) += board-msm7x27.o
 
 obj-$(CONFIG_QSD_AUDIO) += qdsp6/
 
