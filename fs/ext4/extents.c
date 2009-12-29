@@ -2476,9 +2476,28 @@ static int ext4_ext_zeroout(struct inode *inode, struct ext4_extent *ex)
 		submit_bio(WRITE, bio);
 		wait_for_completion(&event);
 
-		if (test_bit(BIO_UPTODATE, &bio->bi_flags))
+		if (test_bit(BIO_UPTODATE, &bio->bi_flags)) {
+
 			ret = 0;
-		else {
+
+			/* On success, if there is no journal through which
+			 * metadata is committed, we need to insure all
+			 * metadata associated with each of these blocks is
+			 * unmapped. */
+			if (EXT4_SB(inode->i_sb)->s_journal == NULL) {
+				sector_t block = ee_pblock;
+
+				done = 0;
+				while (done < len) {
+					unmap_underlying_metadata(inode->i_sb->
+									s_bdev,
+								  block);
+
+					done++;
+					block++;
+				}
+			}
+		} else {
 			ret = -EIO;
 			break;
 		}
@@ -3190,7 +3209,13 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	 * this situation is possible, though, _during_ tree modification;
 	 * this is why assert can't be put in ext4_ext_find_extent()
 	 */
-	BUG_ON(path[depth].p_ext == NULL && depth != 0);
+	if (path[depth].p_ext == NULL && depth != 0) {
+		ext4_error(inode->i_sb, __func__, "bad extent address "
+			   "inode: %lu, iblock: %d, depth: %d",
+			   inode->i_ino, iblock, depth);
+		err = -EIO;
+		goto out2;
+	}
 	eh = path[depth].p_hdr;
 
 	ex = path[depth].p_ext;
