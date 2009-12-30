@@ -9,6 +9,10 @@ config ARCH_MSM7X01A
 	select ARCH_MSM_ARM11
 	select CPU_V6
 
+config ARCH_MSM7X27
+	bool "MSM7x27"
+	select ARCH_MSM_ARM11
+	select CPU_V6
 
 
 
@@ -55,7 +59,7 @@ config MACH_TROUT
 	  Support for the HTC Dream, T-Mobile G1, Android ADP1 devices.
 
 config MACH_MSM7X27_SURF
-	depends on ARCH_MSM
+	depends on ARCH_MSM7X27
 	depends on !MSM_STACKED_MEMORY
 	default y
 	bool "MSM7x27 SURF"
@@ -63,7 +67,7 @@ config MACH_MSM7X27_SURF
 	  Support for the Qualcomm MSM7x27 SURF eval board.
 
 config MACH_MSM7X27_FFA
-	depends on ARCH_MSM
+	depends on ARCH_MSM7X27
 	depends on !MSM_STACKED_MEMORY
 	default y
 	bool "MSM7x27 FFA"
