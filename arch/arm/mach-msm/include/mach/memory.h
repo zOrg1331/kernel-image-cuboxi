@@ -34,7 +34,7 @@
 #ifndef __ASSEMBLY__
 void *alloc_bootmem_aligned(unsigned long size, unsigned long alignment);
 
-#ifdef CONFIG_ARCH_MSM
+#ifdef CONFIG_ARCH_MSM_ARM11
 void write_to_strongly_ordered_memory(void);
 
 #include <asm/mach-types.h>
