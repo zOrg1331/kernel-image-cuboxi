@@ -279,6 +279,38 @@ void unlock_super(struct super_block * sb)
 EXPORT_SYMBOL(lock_super);
 EXPORT_SYMBOL(unlock_super);
 
+/*
+ * Write out and wait upon all dirty data associated with this
+ * superblock.  Filesystem data as well as the underlying block
+ * device.  Takes the superblock lock.  Requires a second blkdev
+ * flush by the caller to complete the operation.
+ */
+void __fsync_super(struct super_block *sb)
+{
+	sync_inodes_sb(sb, 0);
+	DQUOT_SYNC(sb);
+	lock_super(sb);
+	if (sb->s_dirt && sb->s_op->write_super)
+		sb->s_op->write_super(sb);
+	unlock_super(sb);
+	if (sb->s_op->sync_fs)
+		sb->s_op->sync_fs(sb, 1);
+	sync_blockdev(sb->s_bdev);
+	sync_inodes_sb(sb, 1);
+}
+
+/*
+ * Write out and wait upon all dirty data associated with this
+ * superblock.  Filesystem data as well as the underlying block
+ * device.  Takes the superblock lock.
+ */
+int fsync_super(struct super_block *sb)
+{
+	__fsync_super(sb);
+	return sync_blockdev(sb->s_bdev);
+}
+EXPORT_SYMBOL(fsync_super);
+
 /**
  *	generic_shutdown_super	-	common helper for ->kill_sb()
  *	@sb: superblock to kill
