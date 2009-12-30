@@ -509,7 +509,7 @@ config AUDIO_ENHANCED_AAC_PLUS
 
 config SURF_FFA_GPIO_KEYPAD
 	bool "MSM SURF/FFA GPIO keypad"
-	depends on (ARCH_QSD || ARCH_MSM) && INPUT_GPIO = "y"
+	depends on INPUT_GPIO = "y"
 	default y
 	help
 	  Select if the GPIO keypad is attached.
