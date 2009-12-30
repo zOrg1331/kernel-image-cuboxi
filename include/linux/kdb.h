@@ -80,8 +80,12 @@ typedef enum {
 	KDB_REASON_SSTEP,	/* Single Step trap. - regs valid */
 } kdb_reason_t;
 
+extern int kdb_trap_printk;
+extern void vkdb_printf(const char *fmt, va_list args)
+	    __attribute__ ((format (printf, 1, 0)));
 extern void kdb_printf(const char *, ...)
 	    __attribute__ ((format (printf, 1, 2)));
+
 typedef void (*kdb_printf_t)(const char *, ...)
 	     __attribute__ ((format (printf, 1, 2)));
 extern void kdb_init(void);

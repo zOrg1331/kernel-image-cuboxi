@@ -29,6 +29,7 @@
 #define CMD_BUFLEN 256
 char kdb_prompt_str[CMD_BUFLEN];
 
+int kdb_trap_printk;
 
 static void kgdb_transition_check(char *buffer)
 {
@@ -533,12 +534,12 @@ static int kdb_search_string(char *searched, char *searchfor)
 	return 0;
 }
 
-void kdb_printf(const char *fmt, ...)
+void vkdb_printf(const char *fmt, va_list ap)
 {
-	va_list ap;
 	int diag;
 	int linecount;
 	int logging, saved_loglevel = 0;
+	int saved_trap_printk;
 	int got_printf_lock = 0;
 	int fnd, len;
 	char *cp, *cp2, *cphold = NULL, replaced_byte = ' ';
@@ -548,6 +549,9 @@ void kdb_printf(const char *fmt, ...)
 	unsigned long uninitialized_var(flags);
 
 	preempt_disable();
+	saved_trap_printk = kdb_trap_printk;
+	kdb_trap_printk = 0;
+
 	/* Serialize kdb_printf if multiple cpus try to write at once.
 	 * But if any cpu goes recursive in kdb, just print the output,
 	 * even if it is interleaved with any other text.
@@ -574,9 +578,7 @@ void kdb_printf(const char *fmt, ...)
 		next_avail = kdb_buffer;
 		size_avail = sizeof(kdb_buffer);
 	}
-	va_start(ap, fmt);
 	vsnprintf(next_avail, size_avail, fmt, ap);
-	va_end(ap);
 
 	/*
 	 * If kdb_parse() found that the command was cmd xxx | grep yyy
@@ -803,5 +805,16 @@ kdb_print_out:
 	} else {
 		__release(kdb_printf_lock);
 	}
+	kdb_trap_printk = saved_trap_printk;
 	preempt_enable();
 }
+
+void kdb_printf(const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	vkdb_printf(fmt, ap);
+	va_end(ap);
+}
+
