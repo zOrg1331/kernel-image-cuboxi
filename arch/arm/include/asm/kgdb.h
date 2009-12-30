@@ -95,6 +95,8 @@ extern int kgdb_fault_expected;
 #define _PC			15
 #define _CPSR			(GDB_MAX_REGS - 1)
 
+int kgdb_die_hook(int cmd, const char *str, struct pt_regs *regs, int err);
+
 /*
  * So that we can denote the end of a frame for tracing,
  * in the simple case:
