@@ -1,20 +1,28 @@
-if ARCH_MSM || ARCH_QSD
+if ARCH_MSM
 
 choice
+	prompt "MSM SoC Type"
+	default ARCH_MSM7X00A
+
+config ARCH_MSM7X01A
+	bool "MSM7x00A / MSM7x01A"
+	select ARCH_MSM_ARM11
+	select CPU_V6
 
 
 
 
+endchoice
+
+config  ARCH_MSM_ARM11
+	bool
 
 
-
-
-comment "MSM Board Type"
-	depends on ARCH_MSM
+menu "MSM Board Selection"
 
 config MACH_HALIBUT
-	depends on ARCH_MSM
 	select CPU_V6
+	depends on ARCH_MSM7X01A
 	depends on MSM_STACKED_MEMORY
 	default y
 	bool "Halibut Board (QCT SURF7201A)"
@@ -22,7 +30,7 @@ config MACH_HALIBUT
 	  Support for the Qualcomm SURF7201A eval board.
 
 config MACH_MSM7201A_SURF
-	depends on ARCH_MSM
+	depends on ARCH_MSM7X01A
 	depends on MSM_STACKED_MEMORY
 	default y
 	bool "MSM7201A SURF"
@@ -30,7 +38,7 @@ config MACH_MSM7201A_SURF
 	  Support for the Qualcomm MSM7201A SURF eval board.
 
 config MACH_MSM7201A_FFA
-	depends on ARCH_MSM
+	depends on ARCH_MSM7X01A
 	depends on MSM_STACKED_MEMORY
 	default y
 	bool "MSM7201A FFA"
@@ -39,6 +47,7 @@ config MACH_MSM7201A_FFA
 
 config MACH_TROUT
 	select CPU_V6
+	depends on ARCH_MSM7X01A
 	depends on MSM_STACKED_MEMORY
 	default y
 	bool "HTC Dream (aka trout)"
@@ -64,7 +73,7 @@ config MACH_MSM7X27_FFA
 # config TROUT_H2W
 
 config MACH_SAPPHIRE
-	depends on ARCH_MSM
+	depends on ARCH_MSM7X01A
 	default n
 	bool "Sapphire"
 
