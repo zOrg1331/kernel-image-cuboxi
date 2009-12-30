@@ -343,8 +343,8 @@ config MSM_SMD
 choice
 	prompt "MSM Shared memory interface version"
 	depends on MSM_SMD
-	default MSM_SMD_PKG3 if ARCH_MSM
-	default MSM_SMD_PKG4 if ARCH_QSD
+	default MSM_SMD_PKG3 if ARCH_MSM_ARM11
+	default MSM_SMD_PKG4 if ARCH_MSM_SCORPION
 
 	config MSM_SMD_PKG3
 	  bool "Package 3"
