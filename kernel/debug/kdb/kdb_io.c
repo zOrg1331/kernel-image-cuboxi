@@ -21,6 +21,7 @@
 #include <linux/smp.h>
 #include <linux/nmi.h>
 #include <linux/delay.h>
+#include <linux/kgdb.h>
 #include <linux/kdb.h>
 #include <linux/kallsyms.h>
 #include "kdb_private.h"
@@ -667,10 +668,14 @@ kdb_printit:
 	/*
 	 * Write to all consoles.
 	 */
-	while (c) {
-		c->write(c, kdb_buffer, strlen(kdb_buffer));
-		touch_nmi_watchdog();
-		c = c->next;
+	if (!dbg_kdb_mode && kgdb_connected) {
+		gdbstub_msg_write(kdb_buffer, strlen(kdb_buffer));
+	} else {
+		while (c) {
+			c->write(c, kdb_buffer, strlen(kdb_buffer));
+			touch_nmi_watchdog();
+			c = c->next;
+		}
 	}
 	if (logging) {
 		saved_loglevel = console_loglevel;
