@@ -309,10 +309,12 @@ extern atomic_t			kgdb_active;
 extern void kgdb_schedule_breakpoint(void);
 
 struct dbg_kms_console_ops {
-	int (*activate_console) (void);
-	int (*restore_console) (void);
+	int (*activate_console) (struct dbg_kms_console_ops *ops);
+	int (*restore_console) (struct dbg_kms_console_ops *ops);
 };
 extern struct dbg_kms_console_ops *dbg_kms_console_core;
+extern int dbg_kms_console_ops_register(struct dbg_kms_console_ops *ops);
+extern int dbg_kms_console_ops_unregister(struct dbg_kms_console_ops *ops);
 
 #ifdef CONFIG_KGDB_SERIAL_CONSOLE
 extern void __init early_kgdboc_init(void);
