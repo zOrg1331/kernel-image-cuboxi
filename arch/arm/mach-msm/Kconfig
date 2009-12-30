@@ -14,6 +14,10 @@ config ARCH_MSM7X27
 	select ARCH_MSM_ARM11
 	select CPU_V6
 
+config ARCH_MSM7X30
+	bool "MSM7x30"
+	select ARCH_MSM_SCORPION
+	select CPU_V7
 
 config ARCH_QSD8X50
 	bool "QSD8X50"
