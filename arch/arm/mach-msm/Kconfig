@@ -1,25 +1,7 @@
 if ARCH_MSM || ARCH_QSD
 
-config MSM_AMSS_VERSION
-	int
-	default 6210 if MSM_AMSS_VERSION_6210
-	default 6220 if MSM_AMSS_VERSION_6220
-	default 6225 if MSM_AMSS_VERSION_6225
-
 choice
-	prompt "AMSS modem firmware version"
 
-	default MSM_AMSS_VERSION_6225
-
-	config MSM_AMSS_VERSION_6210
-		bool "6.2.10"
-
-	config MSM_AMSS_VERSION_6220
-		bool "6.2.20"
-
-	config MSM_AMSS_VERSION_6225
-		bool "6.2.20 + New ADSP"
-endchoice
 
 comment "MSM Board Type"
 	depends on ARCH_MSM
@@ -157,6 +139,27 @@ config MSM_STACKED_MEMORY
 	  This option is used to indicate the presence of on-die stacked
 	  memory.  When present this memory bank is used for a high speed
 	  shared memory interface.  When not present regular RAM is used.
+
+config MSM_AMSS_VERSION
+	int
+	default 6210 if MSM_AMSS_VERSION_6210
+	default 6220 if MSM_AMSS_VERSION_6220
+	default 6225 if MSM_AMSS_VERSION_6225
+
+choice
+	prompt "AMSS modem firmware version"
+
+	default MSM_AMSS_VERSION_6225
+
+	config MSM_AMSS_VERSION_6210
+		bool "6.2.10"
+
+	config MSM_AMSS_VERSION_6220
+		bool "6.2.20"
+
+	config MSM_AMSS_VERSION_6225
+		bool "6.2.20 + New ADSP"
+endchoice
 choice
 	prompt "Default Timer"
 	default MSM7X00A_USE_GP_TIMER
