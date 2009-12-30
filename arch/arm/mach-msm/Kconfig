@@ -68,11 +68,6 @@ config MACH_SAPPHIRE
 	default n
 	bool "Sapphire"
 
-config HTC_PWRSINK
-	depends on MSM_SMD
-	default n
-	bool "HTC Power Sink Driver"
-
 comment "QSD Board Type"
 	depends on ARCH_QSD
 
@@ -295,6 +290,11 @@ config TROUT_BATTCHG
 	depends on MACH_TROUT && POWER_SUPPLY
 	default y
 	bool "Trout battery / charger driver"
+
+config HTC_PWRSINK
+	depends on MSM_SMD
+	default n
+	bool "HTC Power Sink Driver"
 
 config QSD_SVS
 	bool "QSD Static Voltage Scaling"
