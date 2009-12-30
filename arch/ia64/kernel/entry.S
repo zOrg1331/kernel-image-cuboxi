@@ -48,6 +48,7 @@
 #include <asm/thread_info.h>
 #include <asm/unistd.h>
 #include <asm/ftrace.h>
+#include <asm/irqflags.h>
 
 #include "minstate.h"
 
@@ -897,6 +898,11 @@ GLOBAL_ENTRY(__paravirt_leave_kernel)
 	cmp.eq p6,p0=r21,r0		// p6 <- pUStk || (preempt_count == 0)
 #else
 	RSM_PSR_I(pUStk, r17, r31)
+#if 0 //Todo: fix lock held when returning to user space
+	;;
+	LOCKDEP_SYS_EXIT
+	;;
+#endif
 	cmp.eq p0,pLvSys=r0,r0		// pLvSys=0: leave from kernel
 (pUStk)	cmp.eq.unc p6,p0=r0,r0		// p6 <- pUStk
 #endif
