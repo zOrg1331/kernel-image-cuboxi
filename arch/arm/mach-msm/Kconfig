@@ -85,8 +85,6 @@ config MACH_MSM7X27_FFA
 	help
 	  Support for the Qualcomm MSM7x27 FFA eval board.
 
-# config TROUT_H2W
-
 config MACH_SAPPHIRE
 	depends on ARCH_MSM7X01A
 	default n
