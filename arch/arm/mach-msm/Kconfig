@@ -470,7 +470,6 @@ config MSM_VREG_SWITCH_INVERTED
 
 config MSM_DMA_TEST
 	tristate "MSM DMA test module"
-	depends on (ARCH_MSM || ARCH_QSD)
 	default m
 	help
 	  Intended to be compiled as a module.  Provides a device node
