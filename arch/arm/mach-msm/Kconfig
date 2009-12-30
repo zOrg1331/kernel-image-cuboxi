@@ -362,7 +362,7 @@ config MSM_N_WAY_SMD
 	  normal APPS-MODEM SMD communication.
 
 config MSM_N_WAY_SMSM
-	depends on (MSM_SMD && (ARCH_QSD || MACH_MSM7X27_SURF || MACH_MSM7X27_FFA))
+	depends on (MSM_SMD && (ARCH_MSM_SCORPION || ARCH_MSM7X27))
 	default y
 	bool "MSM N-WAY SMSM support"
 	help
