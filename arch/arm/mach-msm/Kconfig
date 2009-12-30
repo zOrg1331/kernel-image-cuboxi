@@ -410,7 +410,7 @@ config MSM_RPCSERVER_HANDSET
 
 config MSM_DALRPC
 	bool "DAL RPC support"
-	depends on ARCH_QSD
+	depends on ARCH_MSM_SCORPION
 	default y
 	help
 	  Supports RPC calls to DAL devices on remote processor cores.
