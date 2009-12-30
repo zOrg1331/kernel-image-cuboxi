@@ -68,11 +68,6 @@ config MACH_SAPPHIRE
 	default n
 	bool "Sapphire"
 
-config TROUT_BATTCHG
-	depends on MACH_TROUT && POWER_SUPPLY
-	default y
-	bool "Trout battery / charger driver"
-
 config HTC_PWRSINK
 	depends on MSM_SMD
 	default n
@@ -295,6 +290,11 @@ config HTC_HEADSET
 	 Provides support for detecting HTC 2 wire devices, such as wired
 	 headset, on the trout platform. Can be used with the msm serial
 	 debugger, but not with serial console.
+
+config TROUT_BATTCHG
+	depends on MACH_TROUT && POWER_SUPPLY
+	default y
+	bool "Trout battery / charger driver"
 
 config QSD_SVS
 	bool "QSD Static Voltage Scaling"
