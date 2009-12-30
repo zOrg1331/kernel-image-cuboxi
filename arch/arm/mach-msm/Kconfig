@@ -488,7 +488,7 @@ config WIFI_MEM_PREALLOC
 
 config QSD_AUDIO
 	bool "QSD audio"
-	depends on (ARCH_QSD && MSM_DALRPC)
+	depends on (ARCH_MSM_SCORPION && MSM_DALRPC)
 	default y
 	help
 	  Provides PCM, MP3, and AAC audio playback.
