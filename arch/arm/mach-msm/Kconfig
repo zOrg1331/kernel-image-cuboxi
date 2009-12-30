@@ -15,10 +15,16 @@ config ARCH_MSM7X27
 	select CPU_V6
 
 
+config ARCH_QSD8X50
+	bool "QSD8X50"
+	select ARCH_MSM_SCORPION
+	select CPU_V7
 
 endchoice
 
 config  ARCH_MSM_ARM11
+	bool
+config  ARCH_MSM_SCORPION
 	bool
 
 
@@ -81,11 +87,8 @@ config MACH_SAPPHIRE
 	default n
 	bool "Sapphire"
 
-comment "QSD Board Type"
-	depends on ARCH_QSD
-
 config MACH_QSD8X50_SURF
-	depends on ARCH_QSD
+	depends on ARCH_QSD8X50
 	depends on MSM_STACKED_MEMORY
 	default y
 	bool "QSD8x50 SURF"
@@ -93,7 +96,7 @@ config MACH_QSD8X50_SURF
 	  Support for the Qualcomm QSD8x50 SURF eval board.
 
 config MACH_QSD8X50_FFA
-	depends on ARCH_QSD
+	depends on ARCH_QSD8X50
 	depends on MSM_STACKED_MEMORY
 	default y
 	bool "QSD8x50 FFA"
@@ -101,13 +104,14 @@ config MACH_QSD8X50_FFA
 	  Support for the Qualcomm QSD8x50 FFA eval board.
 
 config MACH_QSD8X50_COMET
-	depends on ARCH_QSD
+	depends on ARCH_QSD8X50
 	depends on MSM_STACKED_MEMORY
 	default n
 	bool "QSD8x50 Comet"
 	help
 	  Support for the Qualcomm Comet eval board.
 
+endmenu
 
 config MSM_STACKED_MEMORY
 	bool "Stacked Memory"
