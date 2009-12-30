@@ -25,7 +25,7 @@
 #define PHYS_OFFSET		UL(0x10000000)
 #endif
 
-#else
+#else /* !CONFIG_MSM_STACKED_MEMORY */
 
 #define PHYS_OFFSET		UL(0x00200000)
 
