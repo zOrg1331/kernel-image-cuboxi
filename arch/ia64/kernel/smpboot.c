@@ -504,7 +504,7 @@ do_boot_cpu (int sapicid, int cpu)
 	struct create_idle c_idle = {
 		.work = __WORK_INITIALIZER(c_idle.work, do_fork_idle),
 		.cpu	= cpu,
-		.done	= COMPLETION_INITIALIZER(c_idle.done),
+		.done	= COMPLETION_INITIALIZER_ONSTACK(c_idle.done),
 	};
 
  	c_idle.idle = get_idle_for_cpu(cpu);
