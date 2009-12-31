@@ -769,12 +769,14 @@ int __init agp_amd64_init(void)
 	return err;
 }
 
+#ifndef CONFIG_GART_IOMMU
 static void __exit agp_amd64_cleanup(void)
 {
 	if (aperture_resource)
 		release_resource(aperture_resource);
 	pci_unregister_driver(&agp_amd64_pci_driver);
 }
+#endif
 
 module_init(agp_amd64_init);
 module_exit(agp_amd64_cleanup);
