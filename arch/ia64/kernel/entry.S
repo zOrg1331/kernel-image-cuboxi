@@ -51,6 +51,15 @@
 
 #include "minstate.h"
 
+#ifdef CONFIG_KGDB
+#include <asm/break.h>
+
+GLOBAL_ENTRY(arch_kgdb_breakpoint)
+	break __IA64_BREAK_KGDB
+	br.ret.sptk.many rp
+END(arch_kgdb_breakpoint)
+#endif
+
 #ifdef __IA64_ASM_PARAVIRTUALIZED_NATIVE
 	/*
 	 * execve() is special because in case of success, we need to
