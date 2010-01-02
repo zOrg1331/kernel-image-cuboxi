@@ -22,7 +22,6 @@
 #include <linux/list.h>
 #include <linux/cdev.h>
 #include <linux/platform_device.h>
-#include <linux/msm_rpcrouter.h>
 
 #include <mach/msm_smd.h>
 #include <mach/msm_rpcrouter.h>
