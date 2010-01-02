@@ -34,6 +34,13 @@ config IOSCHED_CFQ
 
 	  This is the default I/O scheduler.
 
+config CFQ_GROUP_IOSCHED
+	bool "CFQ Group Scheduling support"
+	depends on IOSCHED_CFQ && BLK_CGROUP
+	default n
+	---help---
+	  Enable group IO scheduling in CFQ.
+
 config IOSCHED_SIO
 	tristate "Simple I/O scheduler"
 	default y
@@ -43,13 +50,6 @@ config IOSCHED_SIO
 	  ensure fairness. The algorithm does not do any sorting but
 	  basic merging, trying to keep a minimum overhead. It is aimed
 	  mainly for aleatory access devices (eg: flash devices).
-
-config CFQ_GROUP_IOSCHED
-	bool "CFQ Group Scheduling support"
-	depends on IOSCHED_CFQ && BLK_CGROUP
-	default n
-	---help---
-	  Enable group IO scheduling in CFQ.
 
 choice
 	prompt "Default I/O scheduler"
