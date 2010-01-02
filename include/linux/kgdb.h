@@ -16,7 +16,7 @@
 #include <linux/serial_8250.h>
 #include <linux/linkage.h>
 #include <linux/init.h>
-
+#ifdef CONFIG_KGDB
 #include <asm/atomic.h>
 #include <asm/kgdb.h>
 
@@ -262,6 +262,7 @@ extern struct kgdb_arch		arch_kgdb_ops;
 
 extern unsigned long __weak kgdb_arch_pc(int exception, struct pt_regs *regs);
 
+extern void kgdb_arch_set_pc(struct pt_regs *regs, unsigned long pc);
 extern int kgdb_register_io_module(struct kgdb_io *local_kgdb_io_ops);
 extern void kgdb_unregister_io_module(struct kgdb_io *local_kgdb_io_ops);
 
@@ -315,5 +316,5 @@ extern int kgdb_nmicallback(int cpu, void *regs);
 
 extern int			kgdb_single_step;
 extern atomic_t			kgdb_active;
-
+#endif /* CONFIG_KGDB */
 #endif /* _KGDB_H_ */
