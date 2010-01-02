@@ -208,7 +208,7 @@ void gdbstub_msg_write(const char *s, int len)
  * buf.  Return a pointer to the last char put in buf (null). May
  * return an error.
  */
-int kgdb_mem2hex(char *mem, char *buf, int count)
+int __weak kgdb_mem2hex(char *mem, char *buf, int count)
 {
 	char *tmp;
 	int err;
@@ -238,7 +238,7 @@ int kgdb_mem2hex(char *mem, char *buf, int count)
  * mem.  Return a pointer to the character AFTER the last byte
  * written.  May return an error.
  */
-int kgdb_hex2mem(char *buf, char *mem, int count)
+int __weak kgdb_hex2mem(char *buf, char *mem, int count)
 {
 	char *tmp_raw;
 	char *tmp_hex;
@@ -296,7 +296,7 @@ int kgdb_hex2long(char **ptr, unsigned long *long_val)
  * 0x7d escaped with 0x7d.  Return a pointer to the character after
  * the last byte written.
  */
-static int kgdb_ebin2mem(char *buf, char *mem, int count)
+int __weak kgdb_ebin2mem(char *buf, char *mem, int count)
 {
 	int err = 0;
 	char c;
