@@ -1,3 +1,13 @@
+commit ef650e8c834585f7c95c54c7120f1309701dec0f
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sat Jan 2 13:20:55 2010 +0900
+
+    aufs: remove vfsub_dentry_open(), follow the changes for IMA
+    
+    See the commit, a528172 "aufs: follow the changes for IMA"
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 3d6203a320b5d212836f05124a96a165e7490426
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sat Jan 2 13:09:21 2010 +0900

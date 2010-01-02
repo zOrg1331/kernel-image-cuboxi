@@ -74,13 +74,13 @@ struct file *au_h_open(struct dentry *dentry, aufs_bindex_t bindex, int flags,
 	h_path.mnt = br->br_mnt;
 	path_get(&h_path);
 	if (!au_special_file(h_inode->i_mode))
-		h_file = vfsub_dentry_open(&h_path, flags, current_cred());
+		h_file = dentry_open(&h_path, flags, current_cred());
 	else {
 		/* this block depends upon the configuration */
 		di_read_unlock(dentry, AuLock_IR);
 		fi_write_unlock(file);
 		si_read_unlock(sb);
-		h_file = vfsub_dentry_open(&h_path, flags, current_cred());
+		h_file = dentry_open(&h_path, flags, current_cred());
 		si_noflush_read_lock(sb);
 		fi_write_lock(file);
 		di_read_lock_child(dentry, AuLock_IR);
