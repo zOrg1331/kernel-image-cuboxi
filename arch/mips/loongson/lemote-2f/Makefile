@@ -3,6 +3,7 @@
 #
 
 obj-y += irq.o reset.o ec_kb3310b.o
+obj-y += machtype.o irq.o reset.o ec_kb3310b.o
 
 #
 # Suspend Support
