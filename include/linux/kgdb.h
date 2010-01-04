@@ -16,10 +16,12 @@
 #include <linux/serial_8250.h>
 #include <linux/linkage.h>
 #include <linux/init.h>
-
 #include <asm/atomic.h>
+#ifdef CONFIG_HAVE_ARCH_KGDB
 #include <asm/kgdb.h>
+#endif
 
+#ifdef CONFIG_KGDB
 struct pt_regs;
 
 /**
@@ -29,24 +31,9 @@ struct pt_regs;
  *
  *	On some architectures it is required to skip a breakpoint
  *	exception when it occurs after a breakpoint has been removed.
- *	This can be implemented in the architecture specific portion of
- *	for kgdb.
+ *	This can be implemented in the architecture specific portion of kgdb.
  */
 extern int kgdb_skipexception(int exception, struct pt_regs *regs);
-
-/**
- *	kgdb_post_primary_code - (optional) Save error vector/code numbers.
- *	@regs: Original pt_regs.
- *	@e_vector: Original error vector.
- *	@err_code: Original error code.
- *
- *	This is usually needed on architectures which support SMP and
- *	KGDB.  This function is called after all the secondary cpus have
- *	been put to a know spin state and the primary CPU has control over
- *	KGDB.
- */
-extern void kgdb_post_primary_code(struct pt_regs *regs, int e_vector,
-				  int err_code);
 
 /**
  *	kgdb_disable_hw_debug - (optional) Disable hardware debugging hook
@@ -65,7 +52,7 @@ struct uart_port;
 /**
  *	kgdb_breakpoint - compiled in breakpoint
  *
- *	This will be impelmented a static inline per architecture.  This
+ *	This will be implemented as a static inline per architecture.  This
  *	function is called by the kgdb core to execute an architecture
  *	specific trap to cause kgdb to enter the exception processing.
  *
@@ -73,6 +60,7 @@ struct uart_port;
 void kgdb_breakpoint(void);
 
 extern int kgdb_connected;
+extern int kgdb_io_module_registered;
 
 extern atomic_t			kgdb_setting_breakpoint;
 extern atomic_t			kgdb_cpu_doing_single_step;
@@ -190,7 +178,7 @@ kgdb_arch_handle_exception(int vector, int signo, int err_code,
  *	@flags: Current IRQ state
  *
  *	On SMP systems, we need to get the attention of the other CPUs
- *	and get them be in a known state.  This should do what is needed
+ *	and get them into a known state.  This should do what is needed
  *	to get the other CPUs to call kgdb_wait(). Note that on some arches,
  *	the NMI approach is not used for rounding up all the CPUs. For example,
  *	in case of MIPS, smp_call_function() is used to roundup CPUs. In
@@ -248,6 +236,8 @@ struct kgdb_arch {
  * the I/O driver.
  * @post_exception: Pointer to a function that will do any cleanup work
  * for the I/O driver.
+ * @is_console: 1 if the end device is a console 0 if the I/O device is
+ * not a console
  */
 struct kgdb_io {
 	const char		*name;
@@ -257,20 +247,60 @@ struct kgdb_io {
 	int			(*init) (void);
 	void			(*pre_exception) (void);
 	void			(*post_exception) (void);
+	int			is_console;
 };
 
 extern struct kgdb_arch		arch_kgdb_ops;
 
 extern unsigned long __weak kgdb_arch_pc(int exception, struct pt_regs *regs);
 
+extern void kgdb_arch_set_pc(struct pt_regs *regs, unsigned long pc);
 extern int kgdb_register_io_module(struct kgdb_io *local_kgdb_io_ops);
 extern void kgdb_unregister_io_module(struct kgdb_io *local_kgdb_io_ops);
 
 extern int kgdb_hex2long(char **ptr, unsigned long *long_val);
-extern int kgdb_mem2hex(char *mem, char *buf, int count);
-extern int kgdb_hex2mem(char *buf, char *mem, int count);
+
+/**
+ *      kgdb_mem2hex - (optional arch override) translate bin to hex chars
+ *      @mem: source buffer
+ *      @buf: target buffer
+ *      @count: number of bytes in mem
+ *
+ *      Architectures which do not support probe_kernel_(read|write),
+ *      can make an alternate implementation of this function.
+ *      This function safely reads memory into hex
+ *      characters for use with the kgdb protocol.
+ */
+extern int __weak kgdb_mem2hex(char *mem, char *buf, int count);
+
+/**
+ *      kgdb_hex2mem - (optional arch override) translate hex chars to bin
+ *      @buf: source buffer
+ *      @mem: target buffer
+ *      @count: number of bytes in mem
+ *
+ *      Architectures which do not support probe_kernel_(read|write),
+ *      can make an alternate implementation of this function.
+ *      This function safely writes hex characters into memory
+ *      for use with the kgdb protocol.
+ */
+extern int __weak kgdb_hex2mem(char *buf, char *mem, int count);
+
+/**
+ *      kgdb_ebin2mem - (optional arch override) Copy binary array from @buf into @mem
+ *      @buf: source buffer
+ *      @mem: target buffer
+ *      @count: number of bytes in mem
+ *
+ *      Architectures which do not support probe_kernel_(read|write),
+ *      can make an alternate implementation of this function.
+ *      This function safely copies binary array into memory
+ *      for use with the kgdb protocol.
+ */
+extern int __weak kgdb_ebin2mem(char *buf, char *mem, int count);
 
 extern int kgdb_isremovedbreak(unsigned long addr);
+extern void kgdb_schedule_breakpoint(void);
 
 extern int
 kgdb_handle_exception(int ex_vector, int signo, int err_code,
@@ -279,5 +309,48 @@ extern int kgdb_nmicallback(int cpu, void *regs);
 
 extern int			kgdb_single_step;
 extern atomic_t			kgdb_active;
+#ifdef CONFIG_KGDB_SERIAL_CONSOLE
+extern void __init early_kgdboc_init(void);
+#endif /* CONFIG_KGDB_SERIAL_CONSOLE */
+#endif /* CONFIG_KGDB */
 
+/* Common to all that include kgdb.h */
+#ifdef CONFIG_VT
+extern void dbg_pre_vt_hook(void);
+extern void dbg_post_vt_hook(void);
+#else /* ! CONFIG_VT */
+#define dbg_pre_vt_hook()
+#define dbg_post_vt_hook()
+#endif /* CONFIG_VT */
+
+struct dbg_kms_console_ops {
+	int (*activate_console) (struct dbg_kms_console_ops *ops);
+	int (*restore_console) (struct dbg_kms_console_ops *ops);
+};
+
+#ifdef CONFIG_KGDB
+extern struct dbg_kms_console_ops *dbg_kms_console_core;
+extern int dbg_kms_console_ops_register(struct dbg_kms_console_ops *ops);
+extern int dbg_kms_console_ops_unregister(struct dbg_kms_console_ops *ops);
+#define in_dbg_master() \
+	(raw_smp_processor_id() == atomic_read(&kgdb_active))
+#define dbg_safe_mutex_lock(x) \
+	if (!in_dbg_master()) \
+		mutex_lock(x)
+#define dbg_safe_mutex_unlock(x) \
+	if (!in_dbg_master()) \
+		mutex_unlock(x)
+#else /* ! CONFIG_KGDB */
+static inline int dbg_kms_console_ops_register(struct dbg_kms_console_ops *ops)
+{
+       return 0;
+}
+static inline int dbg_kms_console_ops_unregister(struct dbg_kms_console_ops *ops)
+{
+       return 0;
+}
+#define in_dbg_master() (0)
+#define dbg_safe_mutex_lock(x) mutex_lock(x)
+#define dbg_safe_mutex_unlock(x) mutex_unlock(x)
+#endif /* ! CONFIG_KGDB */
 #endif /* _KGDB_H_ */
