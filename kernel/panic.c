@@ -131,7 +131,7 @@ NORET_TYPE void panic(const char * fmt, ...)
 	{
 		unsigned long caller;
 
-		caller = (unsigned long)__builtin_return_address(0);
+		caller = CALLER_ADDR0;
 		disabled_wait(caller);
 	}
 #endif
