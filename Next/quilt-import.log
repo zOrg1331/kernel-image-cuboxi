@@ -1,0 +1,46 @@
+Importing driver-core.current based on 2.6.33-rc1-git4
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.33-rc1-git1
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.33-rc1-git1
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.32-git5
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc 3067e02f8f3ae2f3f02ba76400d03b8bcb4942b0
+Importing rr based on v2.6.33-rc1-96-gdd59f6c
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard dd59f6c76b265ed2ff18b497d6105a9511b1feb1
+HEAD is now at dd59f6c Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/mattst88/alpha-2.6
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+misc:enhance-BUILD_BUG_ON.patch
+misc:remove-MAYBE_BUILD_BUG_ON.patch
+misc:move-BUILD_BUG-et-al-inside-__KERNEL__.patch
+module:skip_empty_sections_when_exporting_section_notes.patch
+virtio:add_memory_statistics_reporting_to_the_balloon_driver_v4.patch
+virtio:fix_scheduling_while_atomic_in_balloon_stats.patch
+lguest:remove-unneeded-zlib-include.patch
+lguest:fix-gdt-array-check.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + b9f26e1...505dc4c master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.33-rc2-268-g45d28b0
+	quilt series is empty
+$ git update-ref refs/heads/quilt/device-mapper 45d28b097280a78893ce25a5d0db41e6a2717853
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
