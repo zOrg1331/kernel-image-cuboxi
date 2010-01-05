@@ -1,10 +1,10 @@
 aufs2 base patch for linux-2.6.
 
 diff --git a/fs/namei.c b/fs/namei.c
-index dad4b80..209ddf1 100644
+index b55440b..ab4ba7a 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
-@@ -1197,7 +1197,7 @@ out:
+@@ -1196,7 +1196,7 @@ out:
   * needs parent already locked. Doesn't follow mounts.
   * SMP-safe.
   */
@@ -13,7 +13,7 @@ index dad4b80..209ddf1 100644
  {
  	int err;
  
-@@ -1207,7 +1207,7 @@ static struct dentry *lookup_hash(struct nameidata *nd)
+@@ -1206,7 +1206,7 @@ static struct dentry *lookup_hash(struct nameidata *nd)
  	return __lookup_hash(&nd->last, nd->path.dentry, nd);
  }
  
@@ -51,12 +51,12 @@ index 3920866..b13a9a2 100644
  	ssize_t (*splice_read)(struct file *, loff_t *,
  			       struct pipe_inode_info *, size_t, unsigned int);
 diff --git a/include/linux/namei.h b/include/linux/namei.h
-index 0289467..35f3fa9 100644
+index 05b441d..91bc74e 100644
 --- a/include/linux/namei.h
 +++ b/include/linux/namei.h
-@@ -75,6 +75,9 @@ extern struct file *lookup_instantiate_filp(struct nameidata *nd, struct dentry
- extern struct file *nameidata_to_filp(struct nameidata *nd, int flags);
- extern void release_open_intent(struct nameidata *);
+@@ -73,6 +73,9 @@ extern int vfs_path_lookup(struct dentry *, struct vfsmount *,
+ extern struct file *lookup_instantiate_filp(struct nameidata *nd, struct dentry *dentry,
+ 		int (*open)(struct inode *, struct file *));
  
 +extern struct dentry *lookup_hash(struct nameidata *nd);
 +extern int __lookup_one_len(const char *name, struct qstr *this,
