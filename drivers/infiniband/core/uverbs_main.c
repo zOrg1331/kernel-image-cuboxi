@@ -729,13 +729,8 @@ static ssize_t show_dev_abi_version(struct device *device,
 }
 static DEVICE_ATTR(abi_version, S_IRUGO, show_dev_abi_version, NULL);
 
-static ssize_t show_abi_version(struct class *class,
-				struct class_attribute *attr,
-				char *buf)
-{
-	return sprintf(buf, "%d\n", IB_USER_VERBS_ABI_VERSION);
-}
-static CLASS_ATTR(abi_version, S_IRUGO, show_abi_version, NULL);
+static CLASS_ATTR_STRING(abi_version, S_IRUGO,
+			 __stringify(IB_USER_VERBS_ABI_VERSION));
 
 static void ib_uverbs_add_one(struct ib_device *device)
 {
@@ -860,7 +855,7 @@ static int __init ib_uverbs_init(void)
 		goto out_chrdev;
 	}
 
-	ret = class_create_file(uverbs_class, &class_attr_abi_version);
+	ret = class_create_file(uverbs_class, &class_attr_abi_version.attr);
 	if (ret) {
 		printk(KERN_ERR "user_verbs: couldn't create abi_version attribute\n");
 		goto out_class;
