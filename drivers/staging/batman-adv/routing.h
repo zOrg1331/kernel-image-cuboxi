@@ -24,11 +24,13 @@
 extern wait_queue_head_t thread_wait;
 extern atomic_t exit_cond;
 
-int originator_init(void);
-void free_orig_node(void *data);
-void originator_free(void);
 void slide_own_bcast_window(struct batman_if *batman_if);
 void batman_data_ready(struct sock *sk, int len);
-void purge_orig(struct work_struct *work);
 int packet_recv_thread(void *data);
-void receive_bat_packet(struct ethhdr *ethhdr, struct batman_packet *batman_packet, unsigned char *hna_buff, int hna_buff_len, struct batman_if *if_incoming);
+void receive_bat_packet(struct ethhdr *ethhdr,
+				struct batman_packet *batman_packet,
+				unsigned char *hna_buff, int hna_buff_len,
+				struct batman_if *if_incoming);
+void update_routes(struct orig_node *orig_node,
+				struct neigh_node *neigh_node,
+				unsigned char *hna_buff, int hna_buff_len);
