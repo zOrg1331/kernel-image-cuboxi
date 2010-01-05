@@ -369,8 +369,11 @@ int usb_serial_generic_write_room(struct tty_struct *tty)
 			room = port->bulk_out_size *
 				(serial->type->max_in_flight_urbs -
 				 port->urbs_in_flight);
-	} else if (serial->num_bulk_out)
+	} else if (serial->num_bulk_out) {
+		/* This overcounts badly, but is good enough for drain wait. */
 		room = kfifo_avail(&port->write_fifo);
+		room += port->write_urb_busy * port->bulk_out_size;
+	}
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	dbg("%s - returns %d", __func__, room);
