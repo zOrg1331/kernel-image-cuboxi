@@ -66,7 +66,7 @@
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 
-#include <asm/mach/mmc.h>
+#include <mach/mmc.h>
 #include <mach/vreg.h>
 #include <mach/board.h>
 #include <mach/sirc.h>

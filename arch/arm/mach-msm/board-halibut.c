@@ -34,7 +34,7 @@
 #include <asm/mach/flash.h>
 #include <asm/setup.h>
 
-#include <asm/mach/mmc.h>
+#include <mach/mmc.h>
 #include <mach/vreg.h>
 #include <mach/mpp.h>
 #include <mach/gpio.h>
