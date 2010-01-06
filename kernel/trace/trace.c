@@ -100,13 +100,10 @@ static inline void ftrace_enable_cpu(void)
 	preempt_enable();
 }
 
-static cpumask_var_t __read_mostly	tracing_buffer_mask;
+cpumask_var_t __read_mostly	tracing_buffer_mask;
 
 /* Define which cpu buffers are currently read in trace_pipe */
 static cpumask_var_t			tracing_reader_cpumask;
-
-#define for_each_tracing_cpu(cpu)	\
-	for_each_cpu(cpu, tracing_buffer_mask)
 
 /*
  * ftrace_dump_on_oops - variable to dump ftrace buffer on oops
@@ -165,7 +162,7 @@ unsigned long long ns2usecs(cycle_t nsec)
  * pages for the buffer for that CPU. Each CPU has the same number
  * of pages allocated for its buffer.
  */
-static struct trace_array	global_trace;
+struct trace_array	global_trace;
 
 static DEFINE_PER_CPU(struct trace_array_cpu, global_trace_cpu);
 
@@ -239,7 +236,7 @@ static unsigned long		trace_buf_size = TRACE_BUF_SIZE_DEFAULT;
 static struct tracer		*trace_types __read_mostly;
 
 /* current_trace points to the tracer that is currently active */
-static struct tracer		*current_trace __read_mostly;
+struct tracer		*current_trace __read_mostly;
 
 /*
  * trace_types_lock is used to protect the trace_types list.
@@ -1409,11 +1406,6 @@ int trace_vprintk(unsigned long ip, const char *fmt, va_list args)
 }
 EXPORT_SYMBOL_GPL(trace_vprintk);
 
-enum trace_file_type {
-	TRACE_FILE_LAT_FMT	= 1,
-	TRACE_FILE_ANNOTATE	= 2,
-};
-
 static void trace_iterator_increment(struct trace_iterator *iter)
 {
 	/* Don't allow ftrace to trace into the ring buffers */
@@ -1503,7 +1495,7 @@ struct trace_entry *trace_find_next_entry(struct trace_iterator *iter,
 }
 
 /* Find the next real entry, and increment the iterator to the next entry */
-static void *find_next_entry_inc(struct trace_iterator *iter)
+void *trace_find_next_entry_inc(struct trace_iterator *iter)
 {
 	iter->ent = __find_next_entry(iter, &iter->cpu, &iter->ts);
 
@@ -1536,12 +1528,12 @@ static void *s_next(struct seq_file *m, void *v, loff_t *pos)
 		return NULL;
 
 	if (iter->idx < 0)
-		ent = find_next_entry_inc(iter);
+		ent = trace_find_next_entry_inc(iter);
 	else
 		ent = iter;
 
 	while (ent && iter->idx < i)
-		ent = find_next_entry_inc(iter);
+		ent = trace_find_next_entry_inc(iter);
 
 	iter->pos = *pos;
 
@@ -1878,7 +1870,7 @@ static enum print_line_t print_bin_fmt(struct trace_iterator *iter)
 	return event ? event->binary(iter, 0) : TRACE_TYPE_HANDLED;
 }
 
-static int trace_empty(struct trace_iterator *iter)
+int trace_empty(struct trace_iterator *iter)
 {
 	int cpu;
 
@@ -1909,7 +1901,7 @@ static int trace_empty(struct trace_iterator *iter)
 }
 
 /*  Called with trace_event_read_lock() held. */
-static enum print_line_t print_trace_line(struct trace_iterator *iter)
+enum print_line_t print_trace_line(struct trace_iterator *iter)
 {
 	enum print_line_t ret;
 
@@ -3074,7 +3066,7 @@ waitagain:
 	iter->pos = -1;
 
 	trace_event_read_lock();
-	while (find_next_entry_inc(iter) != NULL) {
+	while (trace_find_next_entry_inc(iter) != NULL) {
 		enum print_line_t ret;
 		int len = iter->seq.len;
 
@@ -3156,7 +3148,7 @@ tracing_fill_pipe_page(size_t rem, struct trace_iterator *iter)
 		if (ret != TRACE_TYPE_NO_CONSUME)
 			trace_consume(iter);
 		rem -= count;
-		if (!find_next_entry_inc(iter))	{
+		if (!trace_find_next_entry_inc(iter))	{
 			rem = 0;
 			iter->ent = NULL;
 			break;
@@ -3209,7 +3201,7 @@ static ssize_t tracing_splice_read_pipe(struct file *filp,
 	if (ret <= 0)
 		goto out_err;
 
-	if (!iter->ent && !find_next_entry_inc(iter)) {
+	if (!iter->ent && !trace_find_next_entry_inc(iter)) {
 		ret = -EFAULT;
 		goto out_err;
 	}
@@ -4262,7 +4254,7 @@ static struct notifier_block trace_die_notifier = {
  */
 #define KERN_TRACE		KERN_EMERG
 
-static void
+void
 trace_printk_seq(struct trace_seq *s)
 {
 	/* Probably should print a warning here. */
@@ -4338,7 +4330,7 @@ static void __ftrace_dump(bool disable_tracing)
 		iter.iter_flags |= TRACE_FILE_LAT_FMT;
 		iter.pos = -1;
 
-		if (find_next_entry_inc(&iter) != NULL) {
+		if (trace_find_next_entry_inc(&iter) != NULL) {
 			int ret;
 
 			ret = print_trace_line(&iter);
