@@ -279,10 +279,6 @@ asmlinkage long compat_sys_setrlimit(unsigned int resource,
 {
 	struct rlimit r;
 	int ret;
-	mm_segment_t old_fs = get_fs ();
-
-	if (resource >= RLIM_NLIMITS)
-		return -EINVAL;
 
 	if (!access_ok(VERIFY_READ, rlim, sizeof(*rlim)) ||
 	    __get_user(r.rlim_cur, &rlim->rlim_cur) ||
@@ -293,10 +289,8 @@ asmlinkage long compat_sys_setrlimit(unsigned int resource,
 		r.rlim_cur = RLIM_INFINITY;
 	if (r.rlim_max == COMPAT_RLIM_INFINITY)
 		r.rlim_max = RLIM_INFINITY;
-	set_fs(KERNEL_DS);
-	ret = sys_setrlimit(resource, (struct rlimit __user *) &r);
-	set_fs(old_fs);
-	return ret;
+
+	return do_setrlimit(current, resource, &r);
 }
 
 #ifdef COMPAT_RLIM_OLD_INFINITY
