@@ -50,7 +50,7 @@
 #include <linux/mtd/nand.h>
 #include <linux/mtd/partitions.h>
 
-#include <asm/mach/mmc.h>
+#include <mach/mmc.h>
 #include <linux/mmc/sdio_ids.h>
 #include <linux/msm_audio.h>
 

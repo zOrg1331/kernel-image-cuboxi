@@ -17,7 +17,7 @@
 #include <mach/vreg.h>
 #include <mach/htc_pwrsink.h>
 
-#include <asm/mach/mmc.h>
+#include <mach/mmc.h>
 
 #include "devices.h"
 
