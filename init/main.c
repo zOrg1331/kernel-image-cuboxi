@@ -63,6 +63,7 @@
 #include <linux/sched.h>
 #include <linux/signal.h>
 #include <linux/idr.h>
+#include <linux/kdb.h>
 #include <linux/ftrace.h>
 #include <linux/async.h>
 #include <linux/kmemcheck.h>
@@ -647,6 +648,11 @@ asmlinkage void __init start_kernel(void)
 	calibrate_delay();
 	pidmap_init();
 	anon_vma_init();
+
+#ifdef	CONFIG_KGDB_KDB
+	kdb_init();
+#endif	/* CONFIG_KGDB_KDB */
+
 #ifdef CONFIG_X86
 	if (efi_enabled)
 		efi_enter_virtual_mode();

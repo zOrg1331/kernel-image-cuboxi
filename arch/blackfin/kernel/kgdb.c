@@ -644,6 +644,11 @@ int kgdb_arch_remove_breakpoint(unsigned long addr, char *bundle)
 	return bfin_probe_kernel_write((char *)addr, bundle, BREAK_INSTR_SIZE);
 }
 
+void kgdb_arch_set_pc(struct pt_regs *regs, unsigned long ip)
+{
+	regs->retx = ip;
+}
+
 int kgdb_arch_init(void)
 {
 	kgdb_single_step = 0;

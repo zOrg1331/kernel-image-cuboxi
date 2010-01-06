@@ -11,6 +11,7 @@
 #define __ARM_KGDB_H__
 
 #include <linux/ptrace.h>
+#include <linux/notifier.h>
 
 /*
  * GDB assumes that we're a user process being debugged, so
@@ -94,6 +95,16 @@ extern int kgdb_fault_expected;
 #define _LR			14
 #define _PC			15
 #define _CPSR			(GDB_MAX_REGS - 1)
+
+#ifdef CONFIG_KGDB
+int kgdb_die_hook(int cmd, const char *str, struct pt_regs *regs, int err);
+#else
+static int inline kgdb_die_hook(int cmd, const char *str,
+				struct pt_regs *regs, int err)
+{
+	return NOTIFY_DONE;
+}
+#endif
 
 /*
  * So that we can denote the end of a frame for tracing,
