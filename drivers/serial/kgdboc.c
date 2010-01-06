@@ -26,6 +26,7 @@ static struct kgdb_io		kgdboc_io_ops;
 /* -1 = init not run yet, 0 = unconfigured, 1 = configured. */
 static int configured		= -1;
 static int kgdboc_use_kbd;  /* 1 if we use a keyboard */
+static int kgdboc_use_kms;  /* 1 if we use kernel mode switching */
 
 static char config[MAX_CONFIG_LEN];
 static struct kparam_string kps = {
@@ -85,6 +86,11 @@ static int configure_kgdboc(void)
 	kgdboc_io_ops.is_console = 0;
 	kgdboc_use_kbd = 0;
 
+	kgdboc_use_kms = 0;
+	if (strncmp(cptr, "kms,", 4) == 0) {
+		cptr += 4;
+		kgdboc_use_kms = 1;
+	}
 #ifdef CONFIG_KDB_KEYBOARD
 	kgdb_tty_driver = NULL;
 
@@ -200,6 +206,11 @@ static int param_set_kgdboc_var(const char *kmessage, struct kernel_param *kp)
 
 static void kgdboc_pre_exp_handler(void)
 {
+	if (kgdboc_use_kms && dbg_kms_console_core &&
+	    dbg_kms_console_core->activate_console)
+		if (dbg_kms_console_core->activate_console())
+			printk(KERN_ERR "kgdboc: kernel mode switch error\n");
+
 	/* Increment the module count when the debugger is active */
 	if (!kgdb_connected)
 		try_module_get(THIS_MODULE);
@@ -210,6 +221,10 @@ static void kgdboc_post_exp_handler(void)
 	/* decrement the module count when the debugger detaches */
 	if (!kgdb_connected)
 		module_put(THIS_MODULE);
+	if (kgdboc_use_kms && dbg_kms_console_core &&
+	    dbg_kms_console_core->restore_console)
+		if (dbg_kms_console_core->restore_console())
+			printk(KERN_ERR "kgdboc: graphics restore failed\n");
 #ifdef CONFIG_KDB_KEYBOARD
 	/* If using the kdb keyboard driver release all the keys. */
 	if (kgdboc_use_kbd)
