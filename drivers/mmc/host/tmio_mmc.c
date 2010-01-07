@@ -55,8 +55,8 @@ static void tmio_mmc_set_clock(struct tmio_mmc_host *host, int new_clock)
 		clk |= 0x100;
 	}
 
-	if (host->set_no_clk_div)
-		host->set_no_clk_div(host->pdev, (clk>>22) & 1);
+	if (host->set_clk_div)
+		host->set_clk_div(host->pdev, (clk>>22) & 1);
 
 	sd_ctrl_write16(host, CTL_SD_CARD_CLK_CTL, clk & 0x1ff);
 }
@@ -548,7 +548,7 @@ static int __devinit tmio_mmc_probe(struct platform_device *dev)
 	platform_set_drvdata(dev, mmc);
 
 	host->set_pwr = pdata->set_pwr;
-	host->set_no_clk_div = pdata->set_no_clk_div;
+	host->set_clk_div = pdata->set_clk_div;
 
 	/* SD control register space size is 0x200, 0x400 for bus_shift=1 */
 	host->bus_shift = resource_size(res_ctl) >> 10;
