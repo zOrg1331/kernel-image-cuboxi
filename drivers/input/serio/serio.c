@@ -556,6 +556,8 @@ static void serio_add_port(struct serio *serio)
 		dev_err(&serio->dev,
 			"device_add() failed for %s (%s), error: %d\n",
 			serio->phys, serio->name, error);
+	else
+		device_enable_async_suspend(&serio->dev, true);
 }
 
 /*
