@@ -1423,7 +1423,7 @@ int nfs_commit_unstable_pages(struct address_space *mapping,
 		mark_inode_unstable_pages(inode);
 		return 0;
 	}
-	if (wbc->nonblocking)
+	if (wbc->nonblocking || wbc->for_background)
 		flags = 0;
 	ret = nfs_commit_inode(inode, flags);
 	if (ret > 0)
