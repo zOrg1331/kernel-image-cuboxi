@@ -441,7 +441,7 @@ nfs_mark_request_commit(struct nfs_page *req)
 	spin_unlock(&inode->i_lock);
 	inc_zone_page_state(req->wb_page, NR_UNSTABLE_NFS);
 	inc_bdi_stat(req->wb_page->mapping->backing_dev_info, BDI_RECLAIMABLE);
-	__mark_inode_dirty(inode, I_DIRTY_DATASYNC);
+	mark_inode_unstable_pages(inode);
 }
 
 static int
@@ -1406,8 +1406,39 @@ int nfs_commit_inode(struct inode *inode, int how)
 	}
 	return res;
 }
+
+int nfs_commit_unstable_pages(struct address_space *mapping,
+		struct writeback_control *wbc)
+{
+	struct inode *inode = mapping->host;
+	int flags = FLUSH_SYNC;
+	int ret;
+
+	/* Don't commit yet if this is a non-blocking flush and there are
+	 * outstanding writes for this mapping.
+	 */
+	if (wbc->sync_mode != WB_SYNC_ALL &&
+	    radix_tree_tagged(&NFS_I(inode)->nfs_page_tree,
+		    NFS_PAGE_TAG_LOCKED)) {
+		mark_inode_unstable_pages(inode);
+		return 0;
+	}
+	if (wbc->nonblocking)
+		flags = 0;
+	ret = nfs_commit_inode(inode, flags);
+	if (ret > 0)
+		ret = 0;
+	return ret;
+}
+
 #else
 static inline int nfs_commit_list(struct inode *inode, struct list_head *head, int how)
+{
+	return 0;
+}
+
+int nfs_commit_unstable_pages(struct address_space *mapping,
+		struct writeback_control *wbc)
 {
 	return 0;
 }
