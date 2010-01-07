@@ -4,7 +4,7 @@
  * Contact: support@caviumnetworks.com
  * This file is part of the OCTEON SDK
  *
- * Copyright (c) 2003-2007 Cavium Networks
+ * Copyright (c) 2003-2010 Cavium Networks
  *
  * This file is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License, Version 2, as
@@ -45,7 +45,7 @@ static int cvm_oct_fill_hw_skbuff(int pool, int size, int elements)
 	int freed = elements;
 	while (freed) {
 
-		struct sk_buff *skb = dev_alloc_skb(size + 128);
+		struct sk_buff *skb = dev_alloc_skb(size + 256);
 		if (unlikely(skb == NULL)) {
 			pr_warning
 			    ("Failed to allocate skb for hardware pool %d\n",
@@ -53,7 +53,7 @@ static int cvm_oct_fill_hw_skbuff(int pool, int size, int elements)
 			break;
 		}
 
-		skb_reserve(skb, 128 - (((unsigned long)skb->data) & 0x7f));
+		skb_reserve(skb, 256 - (((unsigned long)skb->data) & 0x7f));
 		*(struct sk_buff **)(skb->data - sizeof(void *)) = skb;
 		cvmx_fpa_free(skb->data, pool, DONT_WRITEBACK(size / 128));
 		freed--;
@@ -106,14 +106,12 @@ static int cvm_oct_fill_hw_memory(int pool, int size, int elements)
 	int freed = elements;
 
 	while (freed) {
-		/* We need to force alignment to 128 bytes here */
-		memory = kmalloc(size + 127, GFP_ATOMIC);
+		memory = kmalloc(size, GFP_ATOMIC);
 		if (unlikely(memory == NULL)) {
 			pr_warning("Unable to allocate %u bytes for FPA pool %d\n",
 				   elements * size, pool);
 			break;
 		}
-		memory = (char *)(((unsigned long)memory + 127) & -128);
 		cvmx_fpa_free(memory, pool, 0);
 		freed--;
 	}
@@ -149,7 +147,7 @@ static void cvm_oct_free_hw_memory(int pool, int size, int elements)
 int cvm_oct_mem_fill_fpa(int pool, int size, int elements)
 {
 	int freed;
-	if (USE_SKBUFFS_IN_HW)
+	if (USE_SKBUFFS_IN_HW && pool == CVMX_FPA_PACKET_POOL)
 		freed = cvm_oct_fill_hw_skbuff(pool, size, elements);
 	else
 		freed = cvm_oct_fill_hw_memory(pool, size, elements);
@@ -158,7 +156,7 @@ int cvm_oct_mem_fill_fpa(int pool, int size, int elements)
 
 void cvm_oct_mem_empty_fpa(int pool, int size, int elements)
 {
-	if (USE_SKBUFFS_IN_HW)
+	if (USE_SKBUFFS_IN_HW && pool == CVMX_FPA_PACKET_POOL)
 		cvm_oct_free_hw_skbuff(pool, size, elements);
 	else
 		cvm_oct_free_hw_memory(pool, size, elements);
