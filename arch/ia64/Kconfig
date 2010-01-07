@@ -27,6 +27,7 @@ config IA64
 	select HAVE_FUNCTION_TRACER
 	select HAVE_DMA_ATTRS
 	select HAVE_KVM
+	select HAVE_ARCH_KGDB
 	select HAVE_ARCH_TRACEHOOK
 	select HAVE_DMA_API_DEBUG
 	default y
@@ -144,6 +145,12 @@ config PARAVIRT
 source "arch/ia64/xen/Kconfig"
 
 endif
+
+config LOCKDEP_SUPPORT
+	def_bool y
+
+config STACKTRACE_SUPPORT
+	def_bool y
 
 choice
 	prompt "System type"
