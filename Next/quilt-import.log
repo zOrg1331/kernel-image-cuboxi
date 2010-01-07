@@ -1,0 +1,51 @@
+Importing driver-core.current based on 2.6.33-rc2
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.33-rc3
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 74d2e4f8d79ae0c4b6ec027958d5b18058662eea
+HEAD is now at 74d2e4f Linux 2.6.33-rc3
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+i2c-core-storage-class-should-be-before-const-qualifier.patch
+i2c-test-off-by-one-in-piix4-vt596-transaction.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + c23bd80...17228dc master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.33-rc3
+$ cd ../quilt-tmp
+$ git reset --hard 74d2e4f8d79ae0c4b6ec027958d5b18058662eea
+HEAD is now at 74d2e4f Linux 2.6.33-rc3
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-adt7462-fix-pin-28-monitoring.patch
+hwmon-asus_atk0110-01-refactor-interface-probe-code.patch
+hwmon-asus_atk0110-02-debugfs-interface.patch
+hwmon-k10temp-blacklist-more-family-10h-processors.patch
+hwmon-coretemp-fix-tjmax-for-atom-n450-d410-d510-cpus.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + bef086a...d7d6240 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.32-git5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.33-rc1-96-gdd59f6c
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.33-rc2-268-g45d28b0
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
