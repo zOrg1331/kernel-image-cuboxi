@@ -2398,7 +2398,7 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
 }
 
 /* caller has locked udev */
-static int remote_wakeup(struct usb_device *udev)
+int usb_remote_wakeup(struct usb_device *udev)
 {
 	int	status = 0;
 
@@ -2442,7 +2442,7 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
 	return status;
 }
 
-static inline int remote_wakeup(struct usb_device *udev)
+int usb_remote_wakeup(struct usb_device *udev)
 {
 	return 0;
 }
@@ -2512,11 +2512,6 @@ void usb_root_hub_lost_power(struct usb_device *rhdev)
 EXPORT_SYMBOL_GPL(usb_root_hub_lost_power);
 
 #else	/* CONFIG_PM */
-
-static inline int remote_wakeup(struct usb_device *udev)
-{
-	return 0;
-}
 
 #define hub_suspend		NULL
 #define hub_resume		NULL
@@ -3016,7 +3011,7 @@ static void hub_port_connect_change(struct usb_hub *hub, int port1,
 			/* For a suspended device, treat this as a
 			 * remote wakeup event.
 			 */
-			status = remote_wakeup(udev);
+			status = usb_remote_wakeup(udev);
 #endif
 
 		} else {
@@ -3362,7 +3357,7 @@ static void hub_events(void)
 					msleep(10);
 
 					usb_lock_device(udev);
-					ret = remote_wakeup(hdev->
+					ret = usb_remote_wakeup(hdev->
 							children[i-1]);
 					usb_unlock_device(udev);
 					if (ret < 0)
