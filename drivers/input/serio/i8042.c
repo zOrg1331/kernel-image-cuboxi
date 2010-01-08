@@ -1407,6 +1407,8 @@ static int __init i8042_probe(struct platform_device *dev)
  */
 	i8042_register_ports();
 
+	device_enable_async_suspend(&dev->dev, true);
+
 	return 0;
 
  out_fail:
