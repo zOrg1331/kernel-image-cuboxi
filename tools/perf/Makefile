@@ -357,6 +357,7 @@ LIB_H += util/event.h
 LIB_H += util/exec_cmd.h
 LIB_H += util/types.h
 LIB_H += util/levenshtein.h
+LIB_H += util/map.h
 LIB_H += util/parse-options.h
 LIB_H += util/parse-events.h
 LIB_H += util/quote.h
@@ -423,8 +424,8 @@ LIB_OBJS += util/trace-event-perl.o
 LIB_OBJS += util/svghelper.o
 LIB_OBJS += util/sort.o
 LIB_OBJS += util/hist.o
-LIB_OBJS += util/data_map.o
 LIB_OBJS += util/probe-event.o
+LIB_OBJS += util/util.o
 
 BUILTIN_OBJS += builtin-annotate.o
 
