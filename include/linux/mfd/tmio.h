@@ -46,15 +46,14 @@
 	tmio_iowrite16((val), (base) + ((reg) << (shift)))
 #define sd_config_write32(base, shift, reg, val) \
 	do { \
-	tmio_iowrite16((val), (base) + ((reg) << (shift))); \
-	tmio_iowrite16((val) >> 16, (base) + ((reg + 2) << (shift))); \
+		tmio_iowrite16((val), (base) + ((reg) << (shift)));   \
+		tmio_iowrite16((val) >> 16, (base) + ((reg + 2) << (shift))); \
 	} while (0)
 
-int tmio_core_mmc_enable(void __iomem *cnf, unsigned long base);
-int tmio_core_mmc_resume(void __iomem *cnf, unsigned long base);
-void tmio_core_mmc_pwr(void __iomem *cnf, int state);
-void tmio_core_mmc_clk_div(void __iomem *cnf, int state);
-void tmio_core_set_bus_shift(int bus_shift);
+int tmio_core_mmc_enable(void __iomem *cnf, int shift, unsigned long base);
+int tmio_core_mmc_resume(void __iomem *cnf, int shift, unsigned long base);
+void tmio_core_mmc_pwr(void __iomem *cnf, int shift, int state);
+void tmio_core_mmc_clk_div(void __iomem *cnf, int shift, int state);
 
 /*
  * data for the MMC controller
@@ -62,7 +61,7 @@ void tmio_core_set_bus_shift(int bus_shift);
 struct tmio_mmc_data {
 	const unsigned int		hclk;
 	void (*set_pwr)(struct platform_device *host, int state);
-	void (*set_no_clk_div)(struct platform_device *host, int state);
+	void (*set_clk_div)(struct platform_device *host, int state);
 };
 
 /*
