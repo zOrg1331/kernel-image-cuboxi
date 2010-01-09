@@ -45,7 +45,7 @@ ExclusiveArch: i586
 ExclusiveOS: Linux
 
 BuildRequires(pre): rpm-build-kernel
-BuildRequires: dev86 flex lzma-utils
+BuildRequires: dev86 flex xz
 BuildRequires: libdb4-devel
 BuildRequires: gcc%kgcc_version
 BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeric
@@ -341,7 +341,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
-* Wed Jan 06 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt3
+* Sat Jan 09 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt3
+- 2.6.32.3
 - intel KMS: backported video overlay support
 
 * Sat Dec 19 2009 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt2
