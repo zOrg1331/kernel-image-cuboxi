@@ -555,6 +555,7 @@ static void async_resume(void *data, async_cookie_t cookie)
 	struct device *dev = (struct device *)data;
 	int error;
 
+	pm_dev_dbg(dev, pm_transition, "async ");
 	error = device_resume(dev, pm_transition, true);
 	if (error)
 		pm_dev_err(dev, pm_transition, " async", error);
@@ -603,6 +604,7 @@ static void dpm_resume(pm_message_t state)
 
 			mutex_unlock(&dpm_list_mtx);
 
+			pm_dev_dbg(dev, state, "sync ");
 			error = device_resume(dev, state, false);
 
 			mutex_lock(&dpm_list_mtx);
@@ -859,6 +861,7 @@ static void async_suspend(void *data, async_cookie_t cookie)
 	struct device *dev = (struct device *)data;
 	int error;
 
+	pm_dev_dbg(dev, pm_transition, "async ");
 	error = __device_suspend(dev, pm_transition, true);
 	if (error) {
 		pm_dev_err(dev, pm_transition, " async", error);
@@ -878,6 +881,7 @@ static int device_suspend(struct device *dev)
 		return 0;
 	}
 
+	pm_dev_dbg(dev, pm_transition, "sync ");
 	return __device_suspend(dev, pm_transition, false);
 }
 
