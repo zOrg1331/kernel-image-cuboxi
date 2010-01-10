@@ -369,7 +369,7 @@ int __init fdtv_fw_init(void)
 	return driver_register(&fdtv_driver.driver);
 }
 
-void __exit fdtv_fw_exit(void)
+void fdtv_fw_exit(void)
 {
 	driver_unregister(&fdtv_driver.driver);
 	fw_core_remove_address_handler(&fcp_handler);
