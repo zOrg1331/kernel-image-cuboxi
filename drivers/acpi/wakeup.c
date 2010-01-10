@@ -62,25 +62,12 @@ void acpi_enable_wakeup_device(u8 sleep_state)
 		struct acpi_device *dev =
 			container_of(node, struct acpi_device, wakeup_list);
 
-		if (!dev->wakeup.flags.valid)
+		if (!dev->wakeup.flags.valid ||
+		    !dev->wakeup.prepare_count ||
+		    !dev->wakeup.state.enabled ||
+		    (sleep_state > (u32) dev->wakeup.sleep_state))
 			continue;
 
-		/* If users want to disable run-wake GPE,
-		 * we only disable it for wake and leave it for runtime
-		 */
-		if ((!dev->wakeup.state.enabled && !dev->wakeup.prepare_count)
-		    || sleep_state > (u32) dev->wakeup.sleep_state) {
-			if (dev->wakeup.flags.run_wake) {
-				/* set_gpe_type will disable GPE, leave it like that */
-				acpi_set_gpe_type(dev->wakeup.gpe_device,
-						  dev->wakeup.gpe_number,
-						  ACPI_GPE_TYPE_RUNTIME);
-			}
-			continue;
-		}
-		if (!dev->wakeup.flags.run_wake)
-			acpi_enable_gpe(dev->wakeup.gpe_device,
-					dev->wakeup.gpe_number);
 		acpi_ref_wakeup_gpe(dev->wakeup.gpe_device,
 				    dev->wakeup.gpe_number);
 	}
@@ -99,32 +86,13 @@ void acpi_disable_wakeup_device(u8 sleep_state)
 		struct acpi_device *dev =
 			container_of(node, struct acpi_device, wakeup_list);
 
-		if (!dev->wakeup.flags.valid)
-			continue;
-
-		if ((!dev->wakeup.state.enabled && !dev->wakeup.prepare_count)
-		    || sleep_state > (u32) dev->wakeup.sleep_state) {
-			if (dev->wakeup.flags.run_wake) {
-				acpi_set_gpe_type(dev->wakeup.gpe_device,
-						  dev->wakeup.gpe_number,
-						  ACPI_GPE_TYPE_WAKE_RUN);
-				/* Re-enable it, since set_gpe_type will disable it */
-				acpi_enable_gpe(dev->wakeup.gpe_device,
-						dev->wakeup.gpe_number);
-			}
-			continue;
-		}
+		if (dev->wakeup.state.enabled &&
+		    dev->wakeup.prepare_count &&
+		    sleep_state <= (u32) dev->wakeup.sleep_state)
+			acpi_unref_wakeup_gpe(dev->wakeup.gpe_device,
+					    dev->wakeup.gpe_number);
 
 		acpi_disable_wakeup_device_power(dev);
-		/* Never disable run-wake GPE */
-		if (!dev->wakeup.flags.run_wake) {
-			acpi_disable_gpe(dev->wakeup.gpe_device,
-					 dev->wakeup.gpe_number);
-			acpi_clear_gpe(dev->wakeup.gpe_device,
-				       dev->wakeup.gpe_number, ACPI_NOT_ISR);
-		}
-		acpi_unref_wakeup_gpe(dev->wakeup.gpe_device,
-				    dev->wakeup.gpe_number);
 	}
 }
 
@@ -140,11 +108,6 @@ int __init acpi_wakeup_device_init(void)
 		/* In case user doesn't load button driver */
 		if (!dev->wakeup.flags.run_wake || dev->wakeup.state.enabled)
 			continue;
-		acpi_set_gpe_type(dev->wakeup.gpe_device,
-				  dev->wakeup.gpe_number,
-				  ACPI_GPE_TYPE_WAKE_RUN);
-		acpi_enable_gpe(dev->wakeup.gpe_device,
-				dev->wakeup.gpe_number);
 		acpi_ref_wakeup_gpe(dev->wakeup.gpe_device,
 				    dev->wakeup.gpe_number);
 		dev->wakeup.state.enabled = 1;

@@ -422,11 +422,6 @@ static int acpi_button_add(struct acpi_device *device)
 
 	if (device->wakeup.flags.valid) {
 		/* Button's GPE is run-wake GPE */
-		acpi_set_gpe_type(device->wakeup.gpe_device,
-				  device->wakeup.gpe_number,
-				  ACPI_GPE_TYPE_WAKE_RUN);
-		acpi_enable_gpe(device->wakeup.gpe_device,
-				device->wakeup.gpe_number);
 		acpi_ref_runtime_gpe(device->wakeup.gpe_device,
 				     device->wakeup.gpe_number);
 		acpi_ref_wakeup_gpe(device->wakeup.gpe_device,
