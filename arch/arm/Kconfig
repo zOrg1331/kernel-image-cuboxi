@@ -50,6 +50,9 @@ config HAVE_TCM
 	bool
 	select GENERIC_ALLOCATOR
 
+config HAVE_PROC_CPU
+	bool
+
 config NO_IOPORT
 	bool
 
@@ -603,6 +606,7 @@ config ARCH_SA1100
 	select ARCH_SPARSEMEM_ENABLE
 	select ARCH_MTD_XIP
 	select ARCH_HAS_CPUFREQ
+	select CPU_FREQ
 	select GENERIC_GPIO
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
@@ -1225,6 +1229,7 @@ config ALIGNMENT_TRAP
 	bool
 	depends on CPU_CP15_MMU
 	default y if !ARCH_EBSA110
+	select HAVE_PROC_CPU if PROC_FS
 	help
 	  ARM processors cannot fetch/store information which is not
 	  naturally aligned on the bus, i.e., a 4 byte fetch must start at an
@@ -1359,13 +1364,9 @@ source "drivers/cpufreq/Kconfig"
 
 config CPU_FREQ_SA1100
 	bool
-	depends on CPU_FREQ && (SA1100_H3100 || SA1100_H3600 || SA1100_LART || SA1100_PLEB || SA1100_BADGE4 || SA1100_HACKKIT)
-	default y
 
 config CPU_FREQ_SA1110
 	bool
-	depends on CPU_FREQ && (SA1100_ASSABET || SA1100_CERF || SA1100_PT_SYSTEM3)
-	default y
 
 config CPU_FREQ_INTEGRATOR
 	tristate "CPUfreq driver for ARM Integrator CPUs"
