@@ -311,8 +311,7 @@ acpi_status acpi_ref_wakeup_gpe(acpi_handle gpe_device, u32 gpe_number)
 	}
 
 	if (++gpe_event_info->wakeup_count == 1)
-		acpi_ev_update_gpe_enable_masks(gpe_event_info,
-						ACPI_GPE_ENABLE);
+		acpi_ev_update_gpe_enable_masks(gpe_event_info);
 
 unlock_and_exit:
 	acpi_os_release_lock(acpi_gbl_gpe_lock, flags);
@@ -351,56 +350,13 @@ acpi_status acpi_unref_wakeup_gpe(acpi_handle gpe_device, u32 gpe_number)
 	}
 
 	if (--gpe_event_info->wakeup_count == 0)
-		acpi_ev_update_gpe_enable_masks(gpe_event_info,
-			ACPI_GPE_DISABLE);
+		acpi_ev_update_gpe_enable_masks(gpe_event_info);
 
 unlock_and_exit:
 	acpi_os_release_lock(acpi_gbl_gpe_lock, flags);
 	return_ACPI_STATUS(status);
 }
 ACPI_EXPORT_SYMBOL(acpi_unref_wakeup_gpe)
-
-/*******************************************************************************
- *
- * FUNCTION:    acpi_set_gpe_type
- *
- * PARAMETERS:  gpe_device      - Parent GPE Device
- *              gpe_number      - GPE level within the GPE block
- *              Type            - New GPE type
- *
- * RETURN:      Status
- *
- * DESCRIPTION: Set the type of an individual GPE
- *
- ******************************************************************************/
-acpi_status acpi_set_gpe_type(acpi_handle gpe_device, u32 gpe_number, u8 type)
-{
-	acpi_status status = AE_OK;
-	struct acpi_gpe_event_info *gpe_event_info;
-
-	ACPI_FUNCTION_TRACE(acpi_set_gpe_type);
-
-	/* Ensure that we have a valid GPE number */
-
-	gpe_event_info = acpi_ev_get_gpe_event_info(gpe_device, gpe_number);
-	if (!gpe_event_info) {
-		status = AE_BAD_PARAMETER;
-		goto unlock_and_exit;
-	}
-
-	if ((gpe_event_info->flags & ACPI_GPE_TYPE_MASK) == type) {
-		return_ACPI_STATUS(AE_OK);
-	}
-
-	/* Set the new type (will disable GPE if currently enabled) */
-
-	status = acpi_ev_set_gpe_type(gpe_event_info, type);
-
-      unlock_and_exit:
-	return_ACPI_STATUS(status);
-}
-
-ACPI_EXPORT_SYMBOL(acpi_set_gpe_type)
 
 /*******************************************************************************
  *
