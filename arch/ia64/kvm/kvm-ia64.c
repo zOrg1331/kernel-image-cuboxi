@@ -241,10 +241,10 @@ static int handle_mmio(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 	return 0;
 mmio:
 	if (p->dir)
-		r = kvm_io_bus_read(&vcpu->kvm->mmio_bus, p->addr,
+		r = kvm_io_bus_read(vcpu->kvm, KVM_MMIO_BUS, p->addr,
 				    p->size, &p->data);
 	else
-		r = kvm_io_bus_write(&vcpu->kvm->mmio_bus, p->addr,
+		r = kvm_io_bus_write(vcpu->kvm, KVM_MMIO_BUS, p->addr,
 				     p->size, &p->data);
 	if (r)
 		printk(KERN_ERR"kvm: No iodevice found! addr:%lx\n", p->addr);
@@ -636,12 +636,9 @@ static void kvm_vcpu_post_transition(struct kvm_vcpu *vcpu)
 static int __vcpu_run(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 {
 	union context *host_ctx, *guest_ctx;
-	int r;
+	int r, idx;
 
-	/*
-	 * down_read() may sleep and return with interrupts enabled
-	 */
-	down_read(&vcpu->kvm->slots_lock);
+	idx = srcu_read_lock(&vcpu->kvm->srcu);
 
 again:
 	if (signal_pending(current)) {
@@ -663,7 +660,7 @@ again:
 	if (r < 0)
 		goto vcpu_run_fail;
 
-	up_read(&vcpu->kvm->slots_lock);
+	srcu_read_unlock(&vcpu->kvm->srcu, idx);
 	kvm_guest_enter();
 
 	/*
@@ -687,7 +684,7 @@ again:
 	kvm_guest_exit();
 	preempt_enable();
 
-	down_read(&vcpu->kvm->slots_lock);
+	idx = srcu_read_lock(&vcpu->kvm->srcu);
 
 	r = kvm_handle_exit(kvm_run, vcpu);
 
@@ -697,10 +694,10 @@ again:
 	}
 
 out:
-	up_read(&vcpu->kvm->slots_lock);
+	srcu_read_unlock(&vcpu->kvm->srcu, idx);
 	if (r > 0) {
 		kvm_resched(vcpu);
-		down_read(&vcpu->kvm->slots_lock);
+		idx = srcu_read_lock(&vcpu->kvm->srcu);
 		goto again;
 	}
 
@@ -1576,15 +1573,14 @@ out:
 	return r;
 }
 
-int kvm_arch_set_memory_region(struct kvm *kvm,
-		struct kvm_userspace_memory_region *mem,
+int kvm_arch_prepare_memory_region(struct kvm *kvm,
+		struct kvm_memory_slot *memslot,
 		struct kvm_memory_slot old,
 		int user_alloc)
 {
 	unsigned long i;
 	unsigned long pfn;
-	int npages = mem->memory_size >> PAGE_SHIFT;
-	struct kvm_memory_slot *memslot = &kvm->memslots[mem->slot];
+	int npages = memslot->npages;
 	unsigned long base_gfn = memslot->base_gfn;
 
 	if (base_gfn + npages > (KVM_MAX_MEM_SIZE >> PAGE_SHIFT))
@@ -1606,6 +1602,14 @@ int kvm_arch_set_memory_region(struct kvm *kvm,
 	}
 
 	return 0;
+}
+
+void kvm_arch_commit_memory_region(struct kvm *kvm,
+		struct kvm_userspace_memory_region *mem,
+		struct kvm_memory_slot old,
+		int user_alloc)
+{
+	return;
 }
 
 void kvm_arch_flush_shadow(struct kvm *kvm)
@@ -1827,6 +1831,7 @@ int kvm_vm_ioctl_get_dirty_log(struct kvm *kvm,
 	struct kvm_memory_slot *memslot;
 	int is_dirty = 0;
 
+	mutex_lock(&kvm->slots_lock);
 	spin_lock(&kvm->arch.dirty_log_lock);
 
 	r = kvm_ia64_sync_dirty_log(kvm, log);
@@ -1846,6 +1851,7 @@ int kvm_vm_ioctl_get_dirty_log(struct kvm *kvm,
 	}
 	r = 0;
 out:
+	mutex_unlock(&kvm->slots_lock);
 	spin_unlock(&kvm->arch.dirty_log_lock);
 	return r;
 }
