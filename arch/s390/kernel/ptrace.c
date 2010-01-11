@@ -98,6 +98,9 @@ FixPerRegisters(struct task_struct *task)
 		per_info->control_regs.bits.storage_alt_space_ctl = 1;
 	else
 		per_info->control_regs.bits.storage_alt_space_ctl = 0;
+
+	if (task == current)
+		__ctl_load(per_info->control_regs.words, 9, 11);
 }
 
 void user_enable_single_step(struct task_struct *task)
