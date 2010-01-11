@@ -63,6 +63,7 @@
 #define	MCFSIM_SWDICR		MCFSIM_ICR0	/* Watchdog timer ICR */
 #define	MCFSIM_TIMER1ICR	MCFSIM_ICR1	/* Timer 1 ICR */
 #define	MCFSIM_TIMER2ICR	MCFSIM_ICR2	/* Timer 2 ICR */
+#define	MCFSIM_I2CICR		MCFSIM_ICR3	/* I2C ICR */
 #define	MCFSIM_UART1ICR		MCFSIM_ICR4	/* UART 1 ICR */
 #define	MCFSIM_UART2ICR		MCFSIM_ICR5	/* UART 2 ICR */
 #define	MCFSIM_DMA0ICR		MCFSIM_ICR6	/* DMA 0 ICR */
@@ -73,6 +74,7 @@
 /*
  *	Define system peripheral IRQ usage.
  */
+#define	MCF_IRQ_I2C		29		/* I2C, Level 5 */
 #define	MCF_IRQ_TIMER		30		/* Timer0, Level 6 */
 #define	MCF_IRQ_PROFILER	31		/* Timer1, Level 7 */
 
@@ -106,6 +108,8 @@
 #define	MCFSIM2_IDECONFIG1	0x18c		/* IDEconfig1 */
 #define	MCFSIM2_IDECONFIG2	0x190		/* IDEconfig2 */
 
+#define	MCFSIM2_INTPRI_62	0x0f000000	/* INT62 in MCFSIM2_LEVEL8 */
+#define	MCFSIM2_INTPRI_I2C	0x05000000	/* INT62 (I2C) priority 5 */
 /*
  * Define the base interrupt for the second interrupt controller.
  * We set it to 128, out of the way of the base interrupts, and plenty
@@ -122,6 +126,7 @@
 #define	MCFINTC2_GPIOIRQ6	(MCFINTC2_VECBASE + 38)
 #define	MCFINTC2_GPIOIRQ7	(MCFINTC2_VECBASE + 39)
 
+#define	MCFINTC2_I2C		(MCFINTC2_VECBASE + 62)
 /*
  * Generic GPIO support
  */

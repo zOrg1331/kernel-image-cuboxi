@@ -41,6 +41,7 @@
 #define MCFINT_UART0        26          /* Interrupt number for UART0 */
 #define MCFINT_UART1        27          /* Interrupt number for UART1 */
 #define MCFINT_UART2        28          /* Interrupt number for UART2 */
+#define MCFINT_I2C          30          /* Interrupt number for I2C */
 #define MCFINT_QSPI         31          /* Interrupt number for QSPI */
 #define MCFINT_PIT1         4           /* Interrupt number for PIT1 (PIT0 in processor) */
 

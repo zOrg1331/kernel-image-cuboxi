@@ -30,6 +30,7 @@
 #define	MCFINT_VECBASE		64		/* Vector base number */
 #define	MCFINT_UART0		13		/* Interrupt number for UART0 */
 #define	MCFINT_PIT1		36		/* Interrupt number for PIT1 */
+#define	MCFINT_I2C		17		/* Interrupt number for I2C */
 #define MCFINT_QSPI		18		/* Interrupt number for QSPI */
 
 /*
@@ -127,5 +128,9 @@
 #define MCFGPIO_IRQ_MAX			8
 #define MCFGPIO_IRQ_VECBASE		MCFINT_VECBASE
 
+/*
+ * Pinmux
+ */
+#define	MCFGPIO_PAR_FECI2C	0x100047
 /****************************************************************************/
 #endif	/* m523xsim_h */
