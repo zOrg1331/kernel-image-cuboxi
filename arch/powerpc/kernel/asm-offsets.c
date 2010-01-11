@@ -437,11 +437,11 @@ int main(void)
 	DEFINE(VCPU_HIGHMEM_HANDLER, offsetof(struct kvm_vcpu, arch.highmem_handler));
 	DEFINE(VCPU_RMCALL, offsetof(struct kvm_vcpu, arch.rmcall));
 	DEFINE(VCPU_HFLAGS, offsetof(struct kvm_vcpu, arch.hflags));
-	DEFINE(VCPU_GPRS, offsetof(struct kvm_vcpu, arch.gpr));
 #else
 	DEFINE(VCPU_CR, offsetof(struct kvm_vcpu, arch.cr));
 	DEFINE(VCPU_XER, offsetof(struct kvm_vcpu, arch.xer));
 #endif /* CONFIG_PPC64 */
+	DEFINE(VCPU_GPRS, offsetof(struct kvm_vcpu, arch.gpr));
 #endif
 #ifdef CONFIG_44x
 	DEFINE(PGD_T_LOG2, PGD_T_LOG2);
