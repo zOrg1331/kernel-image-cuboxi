@@ -636,7 +636,7 @@ static void handle_quit(int key, struct tty_struct *tty)
 static struct sysrq_key_op debug_quit = {
 	.handler	= handle_quit,
 	.help_msg	= "Quit",
-	.action_msg	= "Tnahk you for using debugger",
+	.action_msg	= "Thank you for using debugger",
 };
 
 static struct sysrq_key_op *sysrq_debug_key_table[SYSRQ_KEY_TABLE_LENGTH] = {
