@@ -750,21 +750,21 @@ static int sysrq_key_table_key2index(int key)
  */
 struct sysrq_key_op *__sysrq_get_key_op(int key)
 {
-        struct sysrq_key_op *op_p = NULL;
-        int i;
+	struct sysrq_key_op *op_p = NULL;
+	int i;
 
 	i = sysrq_key_table_key2index(key);
 	if (i != -1)
-	        op_p = sysrq_key_table[i];
-        return op_p;
+		op_p = sysrq_key_table[i];
+	return op_p;
 }
 
 static void __sysrq_put_key_op(int key, struct sysrq_key_op *op_p)
 {
-        int i = sysrq_key_table_key2index(key);
+	int i = sysrq_key_table_key2index(key);
 
-        if (i != -1)
-                sysrq_key_table[i] = op_p;
+	if (i != -1)
+		sysrq_key_table[i] = op_p;
 }
 
 /*
@@ -788,8 +788,8 @@ void __handle_sysrq(int key, struct tty_struct *tty, int check_mask)
 	orig_log_level = console_loglevel;
 	console_loglevel = 7;
 
-        op_p = __sysrq_get_key_op(key);
-        if (op_p) {
+	op_p = __sysrq_get_key_op(key);
+	if (op_p) {
 		/*
 		 * Should we check for enabled operations (/proc/sysrq-trigger
 		 * should not) and is the invoked operation enabled?
@@ -835,7 +835,7 @@ void handle_sysrq(int key, struct tty_struct *tty)
 EXPORT_SYMBOL(handle_sysrq);
 
 static int __sysrq_swap_key_ops(int key, struct sysrq_key_op *insert_op_p,
-                                struct sysrq_key_op *remove_op_p)
+				struct sysrq_key_op *remove_op_p)
 {
 
 	int retval;
