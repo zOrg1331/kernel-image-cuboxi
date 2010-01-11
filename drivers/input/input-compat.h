@@ -75,6 +75,8 @@ static inline size_t input_event_size(void)
 
 #else
 
+#define INPUT_COMPAT_TEST (0)
+
 static inline size_t input_event_size(void)
 {
 	return sizeof(struct input_event);
