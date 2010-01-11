@@ -34,6 +34,7 @@
 #include "lzo/lzo1x_decompress.c"
 #else
 #include <linux/slab.h>
+#include <linux/decompress/unlzo_mm.h>
 #include <linux/decompress/unlzo.h>
 #endif
 
