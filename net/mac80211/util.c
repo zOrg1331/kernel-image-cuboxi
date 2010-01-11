@@ -18,7 +18,6 @@
 #include <linux/skbuff.h>
 #include <linux/etherdevice.h>
 #include <linux/if_arp.h>
-#include <linux/wireless.h>
 #include <linux/bitmap.h>
 #include <linux/crc32.h>
 #include <net/net_namespace.h>
@@ -1106,7 +1105,7 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 		if (res) {
 			WARN(local->suspended, "Harware became unavailable "
 			     "upon resume. This is could be a software issue"
-			     "prior to suspend or a harware issue\n");
+			     "prior to suspend or a hardware issue\n");
 			return res;
 		}
 
