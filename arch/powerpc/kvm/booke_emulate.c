@@ -198,17 +198,17 @@ int kvmppc_booke_emulate_mfspr(struct kvm_vcpu *vcpu, int sprn, int rt)
 
 	switch (sprn) {
 	case SPRN_IVPR:
-		kvmppc_set_gpr(vcpu, rt, vcpu->arch.ivpr; break);
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.ivpr); break;
 	case SPRN_DEAR:
-		kvmppc_set_gpr(vcpu, rt, vcpu->arch.dear; break);
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.dear); break;
 	case SPRN_ESR:
-		kvmppc_set_gpr(vcpu, rt, vcpu->arch.esr; break);
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.esr); break;
 	case SPRN_DBCR0:
-		kvmppc_set_gpr(vcpu, rt, vcpu->arch.dbcr0; break);
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.dbcr0); break;
 	case SPRN_DBCR1:
-		kvmppc_set_gpr(vcpu, rt, vcpu->arch.dbcr1; break);
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.dbcr1); break;
 	case SPRN_DBSR:
-		kvmppc_set_gpr(vcpu, rt, vcpu->arch.dbsr; break);
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.dbsr); break;
 
 	case SPRN_IVOR0:
 		kvmppc_set_gpr(vcpu, rt, vcpu->arch.ivor[BOOKE_IRQPRIO_CRITICAL]);

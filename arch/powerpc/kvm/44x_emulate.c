@@ -168,13 +168,13 @@ int kvmppc_core_emulate_mfspr(struct kvm_vcpu *vcpu, int sprn, int rt)
 
 	switch (sprn) {
 	case SPRN_PID:
-		kvmppc_get_gpr(vcpu, rt) = vcpu->arch.pid; break;
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.pid); break;
 	case SPRN_MMUCR:
-		kvmppc_get_gpr(vcpu, rt) = vcpu->arch.mmucr; break;
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.mmucr); break;
 	case SPRN_CCR0:
-		kvmppc_get_gpr(vcpu, rt) = vcpu->arch.ccr0; break;
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.ccr0); break;
 	case SPRN_CCR1:
-		kvmppc_get_gpr(vcpu, rt) = vcpu->arch.ccr1; break;
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.ccr1); break;
 	default:
 		emulated = kvmppc_booke_emulate_mfspr(vcpu, sprn, rt);
 	}
