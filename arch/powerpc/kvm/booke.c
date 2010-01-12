@@ -69,10 +69,10 @@ void kvmppc_dump_vcpu(struct kvm_vcpu *vcpu)
 
 	for (i = 0; i < 32; i += 4) {
 		printk("gpr%02d: %08lx %08lx %08lx %08lx\n", i,
-		       vcpu->arch.gpr[i],
-		       vcpu->arch.gpr[i+1],
-		       vcpu->arch.gpr[i+2],
-		       vcpu->arch.gpr[i+3]);
+		       kvmppc_get_gpr(vcpu, i),
+		       kvmppc_get_gpr(vcpu, i+1),
+		       kvmppc_get_gpr(vcpu, i+2),
+		       kvmppc_get_gpr(vcpu, i+3));
 	}
 }
 
@@ -82,8 +82,9 @@ static void kvmppc_booke_queue_irqprio(struct kvm_vcpu *vcpu,
 	set_bit(priority, &vcpu->arch.pending_exceptions);
 }
 
-void kvmppc_core_queue_program(struct kvm_vcpu *vcpu)
+void kvmppc_core_queue_program(struct kvm_vcpu *vcpu, ulong flags)
 {
+	/* BookE does flags in ESR, so ignore those we get here */
 	kvmppc_booke_queue_irqprio(vcpu, BOOKE_IRQPRIO_PROGRAM);
 }
 
@@ -95,6 +96,11 @@ void kvmppc_core_queue_dec(struct kvm_vcpu *vcpu)
 int kvmppc_core_pending_dec(struct kvm_vcpu *vcpu)
 {
 	return test_bit(BOOKE_IRQPRIO_DECREMENTER, &vcpu->arch.pending_exceptions);
+}
+
+void kvmppc_core_dequeue_dec(struct kvm_vcpu *vcpu)
+{
+	clear_bit(BOOKE_IRQPRIO_DECREMENTER, &vcpu->arch.pending_exceptions);
 }
 
 void kvmppc_core_queue_external(struct kvm_vcpu *vcpu,
@@ -426,7 +432,7 @@ int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
 {
 	vcpu->arch.pc = 0;
 	vcpu->arch.msr = 0;
-	vcpu->arch.gpr[1] = (16<<20) - 8; /* -8 for the callee-save LR slot */
+	kvmppc_set_gpr(vcpu, 1, (16<<20) - 8); /* -8 for the callee-save LR slot */
 
 	vcpu->arch.shadow_pid = 1;
 
@@ -444,10 +450,10 @@ int kvm_arch_vcpu_ioctl_get_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	int i;
 
 	regs->pc = vcpu->arch.pc;
-	regs->cr = vcpu->arch.cr;
+	regs->cr = kvmppc_get_cr(vcpu);
 	regs->ctr = vcpu->arch.ctr;
 	regs->lr = vcpu->arch.lr;
-	regs->xer = vcpu->arch.xer;
+	regs->xer = kvmppc_get_xer(vcpu);
 	regs->msr = vcpu->arch.msr;
 	regs->srr0 = vcpu->arch.srr0;
 	regs->srr1 = vcpu->arch.srr1;
@@ -461,7 +467,7 @@ int kvm_arch_vcpu_ioctl_get_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	regs->sprg7 = vcpu->arch.sprg6;
 
 	for (i = 0; i < ARRAY_SIZE(regs->gpr); i++)
-		regs->gpr[i] = vcpu->arch.gpr[i];
+		regs->gpr[i] = kvmppc_get_gpr(vcpu, i);
 
 	return 0;
 }
@@ -471,10 +477,10 @@ int kvm_arch_vcpu_ioctl_set_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	int i;
 
 	vcpu->arch.pc = regs->pc;
-	vcpu->arch.cr = regs->cr;
+	kvmppc_set_cr(vcpu, regs->cr);
 	vcpu->arch.ctr = regs->ctr;
 	vcpu->arch.lr = regs->lr;
-	vcpu->arch.xer = regs->xer;
+	kvmppc_set_xer(vcpu, regs->xer);
 	kvmppc_set_msr(vcpu, regs->msr);
 	vcpu->arch.srr0 = regs->srr0;
 	vcpu->arch.srr1 = regs->srr1;
@@ -486,8 +492,8 @@ int kvm_arch_vcpu_ioctl_set_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	vcpu->arch.sprg6 = regs->sprg5;
 	vcpu->arch.sprg7 = regs->sprg6;
 
-	for (i = 0; i < ARRAY_SIZE(vcpu->arch.gpr); i++)
-		vcpu->arch.gpr[i] = regs->gpr[i];
+	for (i = 0; i < ARRAY_SIZE(regs->gpr); i++)
+		kvmppc_set_gpr(vcpu, i, regs->gpr[i]);
 
 	return 0;
 }

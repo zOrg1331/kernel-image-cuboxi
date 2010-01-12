@@ -25,7 +25,7 @@
 #include <asm/mtrr.h>
 #include <asm/msr-index.h>
 
-#define KVM_MAX_VCPUS 16
+#define KVM_MAX_VCPUS 64
 #define KVM_MEMORY_SLOTS 32
 /* memory slots that does not exposed to userspace */
 #define KVM_PRIVATE_MEM_SLOTS 4
@@ -37,19 +37,6 @@
 #define CR3_NONPAE_RESERVED_BITS ((PAGE_SIZE-1) & ~(X86_CR3_PWT | X86_CR3_PCD))
 #define CR3_L_MODE_RESERVED_BITS (CR3_NONPAE_RESERVED_BITS |	\
 				  0xFFFFFF0000000000ULL)
-
-#define KVM_GUEST_CR0_MASK_UNRESTRICTED_GUEST				\
-	(X86_CR0_WP | X86_CR0_NE | X86_CR0_NW | X86_CR0_CD)
-#define KVM_GUEST_CR0_MASK						\
-	(KVM_GUEST_CR0_MASK_UNRESTRICTED_GUEST | X86_CR0_PG | X86_CR0_PE)
-#define KVM_VM_CR0_ALWAYS_ON_UNRESTRICTED_GUEST				\
-	(X86_CR0_WP | X86_CR0_NE | X86_CR0_TS | X86_CR0_MP)
-#define KVM_VM_CR0_ALWAYS_ON						\
-	(KVM_VM_CR0_ALWAYS_ON_UNRESTRICTED_GUEST | X86_CR0_PG | X86_CR0_PE)
-#define KVM_GUEST_CR4_MASK						\
-	(X86_CR4_VME | X86_CR4_PSE | X86_CR4_PAE | X86_CR4_PGE | X86_CR4_VMXE)
-#define KVM_PMODE_VM_CR4_ALWAYS_ON (X86_CR4_PAE | X86_CR4_VMXE)
-#define KVM_RMODE_VM_CR4_ALWAYS_ON (X86_CR4_VME | X86_CR4_PAE | X86_CR4_VMXE)
 
 #define INVALID_PAGE (~(hpa_t)0)
 #define UNMAPPED_GVA (~(gpa_t)0)
@@ -285,6 +272,7 @@ struct kvm_vcpu_arch {
 	unsigned long cr2;
 	unsigned long cr3;
 	unsigned long cr4;
+	unsigned long cr4_guest_owned_bits;
 	unsigned long cr8;
 	u32 hflags;
 	u64 pdptrs[4]; /* pae */
@@ -380,11 +368,19 @@ struct kvm_mem_alias {
 	gfn_t base_gfn;
 	unsigned long npages;
 	gfn_t target_gfn;
+#define KVM_ALIAS_INVALID     1UL
+	unsigned long flags;
 };
 
-struct kvm_arch{
-	int naliases;
+#define KVM_ARCH_HAS_UNALIAS_INSTANTIATION
+
+struct kvm_mem_aliases {
 	struct kvm_mem_alias aliases[KVM_ALIAS_SLOTS];
+	int naliases;
+};
+
+struct kvm_arch {
+	struct kvm_mem_aliases *aliases;
 
 	unsigned int n_free_mmu_pages;
 	unsigned int n_requested_mmu_pages;
@@ -471,6 +467,7 @@ struct kvm_x86_ops {
 	int (*hardware_setup)(void);               /* __init */
 	void (*hardware_unsetup)(void);            /* __exit */
 	bool (*cpu_has_accelerated_tpr)(void);
+	void (*cpuid_update)(struct kvm_vcpu *vcpu);
 
 	/* Create, but do not attach this VCPU */
 	struct kvm_vcpu *(*vcpu_create)(struct kvm *kvm, unsigned id);
@@ -531,7 +528,8 @@ struct kvm_x86_ops {
 	int (*set_tss_addr)(struct kvm *kvm, unsigned int addr);
 	int (*get_tdp_level)(void);
 	u64 (*get_mt_mask)(struct kvm_vcpu *vcpu, gfn_t gfn, bool is_mmio);
-	bool (*gb_page_enable)(void);
+	int (*get_lpage_level)(void);
+	bool (*rdtscp_supported)(void);
 
 	const struct trace_print_flags *exit_reasons_str;
 };

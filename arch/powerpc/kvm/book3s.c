@@ -34,12 +34,6 @@
 /* #define EXIT_DEBUG */
 /* #define EXIT_DEBUG_SIMPLE */
 
-/* Without AGGRESSIVE_DEC we only fire off a DEC interrupt when DEC turns 0.
- * When set, we retrigger a DEC interrupt after that if DEC <= 0.
- * PPC32 Linux runs faster without AGGRESSIVE_DEC, PPC64 Linux requires it. */
-
-/* #define AGGRESSIVE_DEC */
-
 struct kvm_stats_debugfs_item debugfs_entries[] = {
 	{ "exits",       VCPU_STAT(sum_exits) },
 	{ "mmio",        VCPU_STAT(mmio_exits) },
@@ -72,16 +66,20 @@ void kvmppc_core_load_guest_debugstate(struct kvm_vcpu *vcpu)
 void kvmppc_core_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 {
 	memcpy(get_paca()->kvm_slb, to_book3s(vcpu)->slb_shadow, sizeof(get_paca()->kvm_slb));
+	memcpy(&get_paca()->shadow_vcpu, &to_book3s(vcpu)->shadow_vcpu,
+	       sizeof(get_paca()->shadow_vcpu));
 	get_paca()->kvm_slb_max = to_book3s(vcpu)->slb_shadow_max;
 }
 
 void kvmppc_core_vcpu_put(struct kvm_vcpu *vcpu)
 {
 	memcpy(to_book3s(vcpu)->slb_shadow, get_paca()->kvm_slb, sizeof(get_paca()->kvm_slb));
+	memcpy(&to_book3s(vcpu)->shadow_vcpu, &get_paca()->shadow_vcpu,
+	       sizeof(get_paca()->shadow_vcpu));
 	to_book3s(vcpu)->slb_shadow_max = get_paca()->kvm_slb_max;
 }
 
-#if defined(AGGRESSIVE_DEC) || defined(EXIT_DEBUG)
+#if defined(EXIT_DEBUG)
 static u32 kvmppc_get_dec(struct kvm_vcpu *vcpu)
 {
 	u64 jd = mftb() - vcpu->arch.dec_jiffies;
@@ -125,11 +123,10 @@ void kvmppc_inject_interrupt(struct kvm_vcpu *vcpu, int vec, u64 flags)
 	vcpu->arch.mmu.reset_msr(vcpu);
 }
 
-void kvmppc_book3s_queue_irqprio(struct kvm_vcpu *vcpu, unsigned int vec)
+static int kvmppc_book3s_vec2irqprio(unsigned int vec)
 {
 	unsigned int prio;
 
-	vcpu->stat.queue_intr++;
 	switch (vec) {
 	case 0x100: prio = BOOK3S_IRQPRIO_SYSTEM_RESET;		break;
 	case 0x200: prio = BOOK3S_IRQPRIO_MACHINE_CHECK;	break;
@@ -149,15 +146,31 @@ void kvmppc_book3s_queue_irqprio(struct kvm_vcpu *vcpu, unsigned int vec)
 	default:    prio = BOOK3S_IRQPRIO_MAX;			break;
 	}
 
-	set_bit(prio, &vcpu->arch.pending_exceptions);
+	return prio;
+}
+
+static void kvmppc_book3s_dequeue_irqprio(struct kvm_vcpu *vcpu,
+					  unsigned int vec)
+{
+	clear_bit(kvmppc_book3s_vec2irqprio(vec),
+		  &vcpu->arch.pending_exceptions);
+}
+
+void kvmppc_book3s_queue_irqprio(struct kvm_vcpu *vcpu, unsigned int vec)
+{
+	vcpu->stat.queue_intr++;
+
+	set_bit(kvmppc_book3s_vec2irqprio(vec),
+		&vcpu->arch.pending_exceptions);
 #ifdef EXIT_DEBUG
 	printk(KERN_INFO "Queueing interrupt %x\n", vec);
 #endif
 }
 
 
-void kvmppc_core_queue_program(struct kvm_vcpu *vcpu)
+void kvmppc_core_queue_program(struct kvm_vcpu *vcpu, ulong flags)
 {
+	to_book3s(vcpu)->prog_flags = flags;
 	kvmppc_book3s_queue_irqprio(vcpu, BOOK3S_INTERRUPT_PROGRAM);
 }
 
@@ -171,6 +184,11 @@ int kvmppc_core_pending_dec(struct kvm_vcpu *vcpu)
 	return test_bit(BOOK3S_INTERRUPT_DECREMENTER >> 7, &vcpu->arch.pending_exceptions);
 }
 
+void kvmppc_core_dequeue_dec(struct kvm_vcpu *vcpu)
+{
+	kvmppc_book3s_dequeue_irqprio(vcpu, BOOK3S_INTERRUPT_DECREMENTER);
+}
+
 void kvmppc_core_queue_external(struct kvm_vcpu *vcpu,
                                 struct kvm_interrupt *irq)
 {
@@ -181,6 +199,7 @@ int kvmppc_book3s_irqprio_deliver(struct kvm_vcpu *vcpu, unsigned int priority)
 {
 	int deliver = 1;
 	int vec = 0;
+	ulong flags = 0ULL;
 
 	switch (priority) {
 	case BOOK3S_IRQPRIO_DECREMENTER:
@@ -214,6 +233,7 @@ int kvmppc_book3s_irqprio_deliver(struct kvm_vcpu *vcpu, unsigned int priority)
 		break;
 	case BOOK3S_IRQPRIO_PROGRAM:
 		vec = BOOK3S_INTERRUPT_PROGRAM;
+		flags = to_book3s(vcpu)->prog_flags;
 		break;
 	case BOOK3S_IRQPRIO_VSX:
 		vec = BOOK3S_INTERRUPT_VSX;
@@ -244,7 +264,7 @@ int kvmppc_book3s_irqprio_deliver(struct kvm_vcpu *vcpu, unsigned int priority)
 #endif
 
 	if (deliver)
-		kvmppc_inject_interrupt(vcpu, vec, 0ULL);
+		kvmppc_inject_interrupt(vcpu, vec, flags);
 
 	return deliver;
 }
@@ -254,21 +274,15 @@ void kvmppc_core_deliver_interrupts(struct kvm_vcpu *vcpu)
 	unsigned long *pending = &vcpu->arch.pending_exceptions;
 	unsigned int priority;
 
-	/* XXX be more clever here - no need to mftb() on every entry */
-	/* Issue DEC again if it's still active */
-#ifdef AGGRESSIVE_DEC
-	if (vcpu->arch.msr & MSR_EE)
-		if (kvmppc_get_dec(vcpu) & 0x80000000)
-			kvmppc_core_queue_dec(vcpu);
-#endif
-
 #ifdef EXIT_DEBUG
 	if (vcpu->arch.pending_exceptions)
 		printk(KERN_EMERG "KVM: Check pending: %lx\n", vcpu->arch.pending_exceptions);
 #endif
 	priority = __ffs(*pending);
 	while (priority <= (sizeof(unsigned int) * 8)) {
-		if (kvmppc_book3s_irqprio_deliver(vcpu, priority)) {
+		if (kvmppc_book3s_irqprio_deliver(vcpu, priority) &&
+		    (priority != BOOK3S_IRQPRIO_DECREMENTER)) {
+			/* DEC interrupts get cleared by mtdec */
 			clear_bit(priority, &vcpu->arch.pending_exceptions);
 			break;
 		}
@@ -532,8 +546,6 @@ int kvmppc_handle_pagefault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 		r = kvmppc_emulate_mmio(run, vcpu);
 		if ( r == RESUME_HOST_NV )
 			r = RESUME_HOST;
-		if ( r == RESUME_GUEST_NV )
-			r = RESUME_GUEST;
 	}
 
 	return r;
@@ -621,6 +633,9 @@ int kvmppc_handle_exit(struct kvm_run *run, struct kvm_vcpu *vcpu,
 	case BOOK3S_INTERRUPT_PROGRAM:
 	{
 		enum emulation_result er;
+		ulong flags;
+
+		flags = (vcpu->arch.shadow_msr & 0x1f0000ull);
 
 		if (vcpu->arch.msr & MSR_PR) {
 #ifdef EXIT_DEBUG
@@ -628,7 +643,7 @@ int kvmppc_handle_exit(struct kvm_run *run, struct kvm_vcpu *vcpu,
 #endif
 			if ((vcpu->arch.last_inst & 0xff0007ff) !=
 			    (INS_DCBZ & 0xfffffff7)) {
-				kvmppc_book3s_queue_irqprio(vcpu, exit_nr);
+				kvmppc_core_queue_program(vcpu, flags);
 				r = RESUME_GUEST;
 				break;
 			}
@@ -638,12 +653,12 @@ int kvmppc_handle_exit(struct kvm_run *run, struct kvm_vcpu *vcpu,
 		er = kvmppc_emulate_instruction(run, vcpu);
 		switch (er) {
 		case EMULATE_DONE:
-			r = RESUME_GUEST;
+			r = RESUME_GUEST_NV;
 			break;
 		case EMULATE_FAIL:
 			printk(KERN_CRIT "%s: emulation at %lx failed (%08x)\n",
 			       __func__, vcpu->arch.pc, vcpu->arch.last_inst);
-			kvmppc_book3s_queue_irqprio(vcpu, exit_nr);
+			kvmppc_core_queue_program(vcpu, flags);
 			r = RESUME_GUEST;
 			break;
 		default:
@@ -653,7 +668,7 @@ int kvmppc_handle_exit(struct kvm_run *run, struct kvm_vcpu *vcpu,
 	}
 	case BOOK3S_INTERRUPT_SYSCALL:
 #ifdef EXIT_DEBUG
-		printk(KERN_INFO "Syscall Nr %d\n", (int)vcpu->arch.gpr[0]);
+		printk(KERN_INFO "Syscall Nr %d\n", (int)kvmppc_get_gpr(vcpu, 0));
 #endif
 		vcpu->stat.syscall_exits++;
 		kvmppc_book3s_queue_irqprio(vcpu, exit_nr);
@@ -712,10 +727,10 @@ int kvm_arch_vcpu_ioctl_get_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	int i;
 
 	regs->pc = vcpu->arch.pc;
-	regs->cr = vcpu->arch.cr;
+	regs->cr = kvmppc_get_cr(vcpu);
 	regs->ctr = vcpu->arch.ctr;
 	regs->lr = vcpu->arch.lr;
-	regs->xer = vcpu->arch.xer;
+	regs->xer = kvmppc_get_xer(vcpu);
 	regs->msr = vcpu->arch.msr;
 	regs->srr0 = vcpu->arch.srr0;
 	regs->srr1 = vcpu->arch.srr1;
@@ -729,7 +744,7 @@ int kvm_arch_vcpu_ioctl_get_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	regs->sprg7 = vcpu->arch.sprg6;
 
 	for (i = 0; i < ARRAY_SIZE(regs->gpr); i++)
-		regs->gpr[i] = vcpu->arch.gpr[i];
+		regs->gpr[i] = kvmppc_get_gpr(vcpu, i);
 
 	return 0;
 }
@@ -739,10 +754,10 @@ int kvm_arch_vcpu_ioctl_set_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	int i;
 
 	vcpu->arch.pc = regs->pc;
-	vcpu->arch.cr = regs->cr;
+	kvmppc_set_cr(vcpu, regs->cr);
 	vcpu->arch.ctr = regs->ctr;
 	vcpu->arch.lr = regs->lr;
-	vcpu->arch.xer = regs->xer;
+	kvmppc_set_xer(vcpu, regs->xer);
 	kvmppc_set_msr(vcpu, regs->msr);
 	vcpu->arch.srr0 = regs->srr0;
 	vcpu->arch.srr1 = regs->srr1;
@@ -754,8 +769,8 @@ int kvm_arch_vcpu_ioctl_set_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	vcpu->arch.sprg6 = regs->sprg5;
 	vcpu->arch.sprg7 = regs->sprg6;
 
-	for (i = 0; i < ARRAY_SIZE(vcpu->arch.gpr); i++)
-		vcpu->arch.gpr[i] = regs->gpr[i];
+	for (i = 0; i < ARRAY_SIZE(regs->gpr); i++)
+		kvmppc_set_gpr(vcpu, i, regs->gpr[i]);
 
 	return 0;
 }
@@ -850,7 +865,7 @@ int kvm_vm_ioctl_get_dirty_log(struct kvm *kvm,
 	int is_dirty = 0;
 	int r, n;
 
-	down_write(&kvm->slots_lock);
+	mutex_lock(&kvm->slots_lock);
 
 	r = kvm_get_dirty_log(kvm, log, &is_dirty);
 	if (r)
@@ -858,7 +873,7 @@ int kvm_vm_ioctl_get_dirty_log(struct kvm *kvm,
 
 	/* If nothing is dirty, don't bother messing with page tables. */
 	if (is_dirty) {
-		memslot = &kvm->memslots[log->slot];
+		memslot = &kvm->memslots->memslots[log->slot];
 
 		ga = memslot->base_gfn << PAGE_SHIFT;
 		ga_end = ga + (memslot->npages << PAGE_SHIFT);
@@ -872,7 +887,7 @@ int kvm_vm_ioctl_get_dirty_log(struct kvm *kvm,
 
 	r = 0;
 out:
-	up_write(&kvm->slots_lock);
+	mutex_unlock(&kvm->slots_lock);
 	return r;
 }
 
@@ -910,6 +925,7 @@ struct kvm_vcpu *kvmppc_core_vcpu_create(struct kvm *kvm, unsigned int id)
 	vcpu->arch.trampoline_lowmem = kvmppc_trampoline_lowmem;
 	vcpu->arch.trampoline_enter = kvmppc_trampoline_enter;
 	vcpu->arch.highmem_handler = (ulong)kvmppc_handler_highmem;
+	vcpu->arch.rmcall = *(ulong*)kvmppc_rmcall;
 
 	vcpu->arch.shadow_msr = MSR_USER64;
 
