@@ -602,6 +602,8 @@ struct address_space_operations {
 	int (*is_partially_uptodate) (struct page *, read_descriptor_t *,
 					unsigned long);
 	int (*error_remove_page)(struct address_space *, struct page *);
+	int (*commit_unstable_pages)(struct address_space *,
+			struct writeback_control *);
 };
 
 /*
@@ -1635,6 +1637,8 @@ struct super_operations {
 #define I_CLEAR			64
 #define __I_SYNC		7
 #define I_SYNC			(1 << __I_SYNC)
+#define __I_UNSTABLE_PAGES	8
+#define I_UNSTABLE_PAGES	(1 << __I_UNSTABLE_PAGES)
 
 #define I_DIRTY (I_DIRTY_SYNC | I_DIRTY_DATASYNC | I_DIRTY_PAGES)
 
@@ -1647,6 +1651,11 @@ static inline void mark_inode_dirty(struct inode *inode)
 static inline void mark_inode_dirty_sync(struct inode *inode)
 {
 	__mark_inode_dirty(inode, I_DIRTY_SYNC);
+}
+
+static inline void mark_inode_unstable_pages(struct inode *inode)
+{
+	__mark_inode_dirty(inode, I_UNSTABLE_PAGES);
 }
 
 /**
