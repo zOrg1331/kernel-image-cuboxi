@@ -89,6 +89,7 @@
 #define	MCFSIM_SWDICR		MCFSIM_ICR0	/* Watchdog timer ICR */
 #define	MCFSIM_TIMER1ICR	MCFSIM_ICR1	/* Timer 1 ICR */
 #define	MCFSIM_TIMER2ICR	MCFSIM_ICR2	/* Timer 2 ICR */
+#define	MCFSIM_I2CICR		MCFSIM_ICR3	/* I2C ICR */
 #define	MCFSIM_UART1ICR		MCFSIM_ICR4	/* UART 1 ICR */
 #define	MCFSIM_UART2ICR		MCFSIM_ICR5	/* UART 2 ICR */
 #define	MCFSIM_DMA0ICR		MCFSIM_ICR6	/* DMA 0 ICR */
@@ -114,6 +115,7 @@
 /*
  *	Define system peripheral IRQ usage.
  */
+#define	MCF_IRQ_I2C		29		/* I2C, Level 5 */
 #define	MCF_IRQ_TIMER		30		/* Timer0, Level 6 */
 #define	MCF_IRQ_PROFILER	31		/* Timer1, Level 7 */
 
