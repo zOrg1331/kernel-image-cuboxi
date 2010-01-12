@@ -115,16 +115,69 @@ static void intc_irq_mask(unsigned int irq)
 {
 	if (mcf_irq2imr[irq])
 		mcf_setimr(mcf_irq2imr[irq]);
+
+#if defined MCFINTC2_GPIOIRQ0
+	if (irq >= MCFINTC2_GPIOIRQ0 && irq <= MCFINTC2_GPIOIRQ7) {
+		u32 gpiointenable = __raw_readl(MCFSIM2_GPIOINTENABLE);
+
+		gpiointenable &= ~(0x101 << (irq - MCFINTC2_GPIOIRQ0));
+		__raw_writel(gpiointenable, MCFSIM2_GPIOINTENABLE);
+	}
+#endif
 }
 
 static void intc_irq_unmask(unsigned int irq)
 {
 	if (mcf_irq2imr[irq])
 		mcf_clrimr(mcf_irq2imr[irq]);
+
+#if defined MCFINTC2_GPIOIRQ0
+	if (irq >= MCFINTC2_GPIOIRQ0 && irq <= MCFINTC2_GPIOIRQ7) {
+		struct irq_desc *desc = irq_to_desc(irq);
+		u32 gpiointenable = __raw_readl(MCFSIM2_GPIOINTENABLE);
+
+		if (desc->status & IRQF_TRIGGER_RISING)
+			gpiointenable |= 0x0001 << (irq - MCFINTC2_GPIOIRQ0);
+		if (desc->status & IRQF_TRIGGER_FALLING)
+			gpiointenable |= 0x0100 << (irq - MCFINTC2_GPIOIRQ0);
+		__raw_writel(gpiointenable, MCFSIM2_GPIOINTENABLE);
+	}
+#endif
+}
+
+static void intc_irq_ack(unsigned int irq)
+{
+#if defined MCFINTC2_GPIOIRQ0
+	if (irq >= MCFINTC2_GPIOIRQ0 && irq <= MCFINTC2_GPIOIRQ7) {
+		u32 gpiointclear = __raw_readl(MCFSIM2_GPIOINTCLEAR);
+
+		gpiointclear |= 0x0101 << (irq - MCFINTC2_GPIOIRQ0);
+		__raw_writel(gpiointclear, MCFSIM2_GPIOINTCLEAR);
+	}
+#endif
 }
 
 static int intc_irq_set_type(unsigned int irq, unsigned int type)
 {
+#if defined MCFINTC2_GPIOIRQ0
+	u32 gpiointenable;
+
+	if (type & ~(IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING))
+		return -EINVAL;
+
+	if ((irq < MCFINTC2_GPIOIRQ0) || (irq > MCFINTC2_GPIOIRQ7))
+		return -EINVAL;
+
+	/* enable rising or falling or both */
+	gpiointenable = __raw_readl(MCFSIM2_GPIOINTENABLE);
+	gpiointenable &= ~(0x101 << (irq - MCFINTC2_GPIOIRQ0));
+	if (type & IRQF_TRIGGER_RISING)
+		gpiointenable |= 0x0001 << (irq - MCFINTC2_GPIOIRQ0);
+	if (type & IRQF_TRIGGER_FALLING)
+		gpiointenable |= 0x0100 << (irq - MCFINTC2_GPIOIRQ0);
+	__raw_writel(gpiointenable, MCFSIM2_GPIOINTENABLE);
+#endif
+
 	return 0;
 }
 
@@ -132,6 +185,7 @@ static struct irq_chip intc_irq_chip = {
 	.name		= "CF-INTC",
 	.mask		= intc_irq_mask,
 	.unmask		= intc_irq_unmask,
+	.ack		= intc_irq_ack,
 	.set_type	= intc_irq_set_type,
 };
 
@@ -143,10 +197,7 @@ void __init init_IRQ(void)
 	mcf_maskimr(0xffffffff);
 
 	for (irq = 0; (irq < NR_IRQS); irq++) {
-		irq_desc[irq].status = IRQ_DISABLED;
-		irq_desc[irq].action = NULL;
-		irq_desc[irq].depth = 1;
-		irq_desc[irq].chip = &intc_irq_chip;
+		set_irq_chip_and_handler(irq, &intc_irq_chip, handle_level_irq);
 		intc_irq_set_type(irq, 0);
 	}
 }
