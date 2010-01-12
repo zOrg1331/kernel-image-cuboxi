@@ -1,6 +1,6 @@
 Name: kernel-image-un-def-live
 Version: 2.6.32
-Release: alt0.1
+Release: alt0.2
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -479,8 +479,14 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Tue Jan 12 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.32-alt0.2
+- 2.6.32.3 merged
+
 * Tue Jan 12 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.32-alt0.1
 - "live" - aufs2 and squashfs-lzma included
+
+* Tue Jan 12 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt2
+2.6.32.3
 
 * Fri Dec 25 2009 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt1
 - try to run before of locomotive
