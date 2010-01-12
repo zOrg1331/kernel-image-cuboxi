@@ -21,7 +21,7 @@ epoch:1
 %define kgcc_version	4.3
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
 %def_enable oss
@@ -479,6 +479,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Tue Jan 12 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.32-alt0.1
+- "live" - aufs2 and squashfs-lzma included
+
 * Fri Dec 25 2009 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt1
 - try to run before of locomotive
 
