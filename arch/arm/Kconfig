@@ -52,6 +52,9 @@ config HAVE_TCM
 	bool
 	select GENERIC_ALLOCATOR
 
+config HAVE_PROC_CPU
+	bool
+
 config NO_IOPORT
 	bool
 
@@ -554,6 +557,7 @@ config ARCH_PNX4008
 	bool "Philips Nexperia PNX4008 Mobile"
 	select CPU_ARM926T
 	select HAVE_CLK
+	select COMMON_CLKDEV
 	help
 	  This enables support for Philips PNX4008 mobile platform.
 
@@ -1229,6 +1233,7 @@ config ALIGNMENT_TRAP
 	bool
 	depends on CPU_CP15_MMU
 	default y if !ARCH_EBSA110
+	select HAVE_PROC_CPU if PROC_FS
 	help
 	  ARM processors cannot fetch/store information which is not
 	  naturally aligned on the bus, i.e., a 4 byte fetch must start at an
