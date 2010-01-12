@@ -1201,10 +1201,11 @@ static int receive_Barrier(struct drbd_conf *mdev, struct p_header *h)
 
 	case WO_bdev_flush:
 	case WO_drain_io:
-		D_ASSERT(rv == FE_STILL_LIVE);
-		set_bit(DE_BARRIER_IN_NEXT_EPOCH_ISSUED, &mdev->current_epoch->flags);
-		drbd_wait_ee_list_empty(mdev, &mdev->active_ee);
-		rv = drbd_flush_after_epoch(mdev, mdev->current_epoch);
+		if (rv == FE_STILL_LIVE) {
+			set_bit(DE_BARRIER_IN_NEXT_EPOCH_ISSUED, &mdev->current_epoch->flags);
+			drbd_wait_ee_list_empty(mdev, &mdev->active_ee);
+			rv = drbd_flush_after_epoch(mdev, mdev->current_epoch);
+		}
 		if (rv == FE_RECYCLED)
 			return TRUE;
 
@@ -3944,7 +3945,7 @@ static int drbd_do_auth(struct drbd_conf *mdev)
 	}
 
 	right_response = kmalloc(resp_size, GFP_NOIO);
-	if (response == NULL) {
+	if (right_response == NULL) {
 		dev_err(DEV, "kmalloc of right_response failed\n");
 		rv = 0;
 		goto fail;
