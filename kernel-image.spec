@@ -1,6 +1,6 @@
-Name: kernel-image-un-def
+Name: kernel-image-un-def-live
 Version: 2.6.32
-Release: alt1
+Release: alt0.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
