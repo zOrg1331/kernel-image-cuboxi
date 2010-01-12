@@ -961,7 +961,6 @@ EXPORT_SYMBOL(clk_set_parent);
 
 static int __init clk_init(void)
 {
-	struct clk_lookup *cl;
 	struct clk **clkp;
 
 	/* Disable autoclocking, as it doesn't seem to work */
@@ -995,9 +994,7 @@ static int __init clk_init(void)
 	/* Disable autoclocking */
 	__raw_writeb(0xff, AUTOCLK_CTRL);
 
-	for (cl = onchip_clkreg;
-	     cl < onchip_clkreg + ARRAY_SIZE(onchip_clkreg); cl++)
-		clkdev_add(cl);
+	clkdev_add_table(onchip_clkreg, ARRAY_SIZE(onchip_clkreg));
 
 	return 0;
 }
