@@ -2,7 +2,7 @@
 # Makefile for the Linux SuperH-specific parts of the memory manager.
 #
 
-obj-y			:= cache.o init.o consistent.o mmap.o
+obj-y			:= alignment.o cache.o init.o consistent.o mmap.o
 
 cacheops-$(CONFIG_CPU_SH2)		:= cache-sh2.o
 cacheops-$(CONFIG_CPU_SH2A)		:= cache-sh2a.o
@@ -15,7 +15,7 @@ obj-y			+= $(cacheops-y)
 
 mmu-y			:= nommu.o extable_32.o
 mmu-$(CONFIG_MMU)	:= extable_$(BITS).o fault_$(BITS).o \
-			   ioremap_$(BITS).o kmap.o tlbflush_$(BITS).o
+			   ioremap_$(BITS).o kmap.o pgtable.o tlbflush_$(BITS).o
 
 obj-y			+= $(mmu-y)
 obj-$(CONFIG_DEBUG_FS)	+= asids-debugfs.o
