@@ -120,10 +120,6 @@ config DECOMPRESS_LZMA
 config DECOMPRESS_LZMA_NEEDED
 	 boolean
 
-config DECOMPRESS_LZO
-	select LZO_DECOMPRESS
-	tristate
-
 #
 # Generic allocator support is selected if needed
 #
