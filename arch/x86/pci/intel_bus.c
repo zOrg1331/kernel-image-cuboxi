@@ -39,13 +39,16 @@ static inline void print_ioh_resources(struct pci_root_info *info)
 #define IOH_LMMIOH_LIMITU	0x118
 #define IOH_LCFGBUS		0x11c
 
+#define IOH_VTBAR		0x180
+#define IOH_VTSIZE		0x2000	/* Fixed HW size (not programmable) */
+
 static void __devinit pci_root_bus_res(struct pci_dev *dev)
 {
 	u16 word;
 	u32 dword;
 	struct pci_root_info *info;
 	u16 io_base, io_end;
-	u32 mmiol_base, mmiol_end;
+	u32 mmiol_base, mmiol_end, vtbar;
 	u64 mmioh_base, mmioh_end;
 	int bus_base, bus_end;
 
@@ -76,6 +79,21 @@ static void __devinit pci_root_bus_res(struct pci_dev *dev)
 	pci_read_config_dword(dev, IOH_LMMIOL, &dword);
 	mmiol_base = (dword & 0xff00) << (24 - 8);
 	mmiol_end = (dword & 0xff000000) | 0xffffff;
+	pci_read_config_dword(dev, IOH_VTBAR, &dword);
+	vtbar = dword & 0xfffffffe;
+	if (dword & 0x1 &&
+		(mmiol_base < vtbar + IOH_VTSIZE - 1 && vtbar < mmiol_end)) {
+		/* remove VT-d DRDH from Local MMIOL window */
+		if (vtbar <= mmiol_base)
+			mmiol_base = vtbar + IOH_VTSIZE;
+		else if (mmiol_end <= vtbar + IOH_VTSIZE - 1)
+			mmiol_end = vtbar;
+		else {
+			update_res(info, mmiol_base, vtbar - 1,
+				   IORESOURCE_MEM, 0);
+			mmiol_base = vtbar + IOH_VTSIZE;
+		}
+	}
 	update_res(info, mmiol_base, mmiol_end, IORESOURCE_MEM, 0);
 
 	pci_read_config_dword(dev, IOH_LMMIOH, &dword);
