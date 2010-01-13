@@ -675,7 +675,8 @@ Task Addr       Pid   Parent [*] cpu State Thread     Command
       <itemizedlist>
         <listitem><para>A simple shell</para></listitem>
         <listitem><para>The kdb core command set</para></listitem>
-        <listitem><para>A registration API to register additional kdb shell commands.</para></listitem>
+        <listitem><para>A registration API to register additional kdb shell commands.</para>
+        <para>A good example of a self contained kdb module is the "ftdump" command for dumping the ftrace buffer.  See: kernel/trace/trace_kdb.c</para></listitem>
         <listitem><para>The implementation for kdb_printf() which emit messages directly to I/O drivers, bypassing the kernel log.</para></listitem>
         <listitem><para>SW / HW breakpoint management for the kdb shell</para></listitem>
       </itemizedlist>
