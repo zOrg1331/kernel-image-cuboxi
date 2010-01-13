@@ -1,0 +1,52 @@
+Importing driver-core.current based on 2.6.33-rc3
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.33-rc3-git4
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 1b4d40a517e0657a081d5d63518c4badd31c60ea
+HEAD is now at 1b4d40a Merge branch 'for-linus' of git://oss.sgi.com/xfs/xfs
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+i2c-core-storage-class-should-be-before-const-qualifier.patch
+i2c-test-off-by-one-in-piix4-vt596-transaction.patch
+i2c-make-pci-device-ids-constant.patch
+i2c-ali1563-remove-sparse-warnings.patch
+i2c-pca-dont-use-interruptible.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 6df402f...0809115 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.33-rc3-git4
+	quilt series is empty
+$ git update-ref refs/heads/quilt/jdelvare-hwmon 1b4d40a517e0657a081d5d63518c4badd31c60ea
+Importing kernel-doc based on 2.6.33-rc3-git5
+$ cd ../quilt-tmp
+$ git reset --hard 066000dd856709b6980123eb39b957fe26993f7b
+HEAD is now at 066000d Revert "x86, apic: Use logical flat on intel with <= 8 logical cpus"
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+kerndoc-track-linenum.patch
+kerndoc-remove-filelist.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+   3067e02..20ffd11  master     -> quilt/kernel-doc
+Importing rr based on v2.6.33-rc1-96-gdd59f6c
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.33-rc2-268-g45d28b0
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
