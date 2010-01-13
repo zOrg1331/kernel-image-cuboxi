@@ -28,7 +28,7 @@
 #include <linux/mutex.h>
 #include <linux/io.h>
 #include <linux/sort.h>
-#include <linux/remote_spinlock.h>
+#include <mach/remote_spinlock.h>
 #include <mach/board.h>
 #include <mach/msm_iomap.h>
 #include <asm/mach-types.h>
