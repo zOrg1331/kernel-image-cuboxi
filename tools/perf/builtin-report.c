@@ -34,6 +34,8 @@
 static char		const *input_name = "perf.data";
 
 static int		force;
+static bool		hide_unresolved;
+static bool		dont_use_callchains;
 
 static int		show_threads;
 static struct perf_read_values	show_threads_values;
@@ -121,7 +123,7 @@ static int process_sample_event(event_t *event, struct perf_session *session)
 		return -1;
 	}
 
-	if (al.filtered)
+	if (al.filtered || (hide_unresolved && al.sym == NULL))
 		return 0;
 
 	if (perf_session__add_hist_entry(session, &al, data.callchain, data.period)) {
@@ -171,7 +173,8 @@ static int perf_session__setup_sample_type(struct perf_session *self)
 					" -g?\n");
 			return -1;
 		}
-	} else if (callchain_param.mode != CHAIN_NONE && !symbol_conf.use_callchain) {
+	} else if (!dont_use_callchains && callchain_param.mode != CHAIN_NONE &&
+		   !symbol_conf.use_callchain) {
 			symbol_conf.use_callchain = true;
 			if (register_callchain_param(&callchain_param) < 0) {
 				fprintf(stderr, "Can't register callchain"
@@ -245,10 +248,18 @@ out_delete:
 
 static int
 parse_callchain_opt(const struct option *opt __used, const char *arg,
-		    int unset __used)
+		    int unset)
 {
 	char *tok;
 	char *endptr;
+
+	/*
+	 * --no-call-graph
+	 */
+	if (unset) {
+		dont_use_callchains = true;
+		return 0;
+	}
 
 	symbol_conf.use_callchain = true;
 
@@ -342,6 +353,8 @@ static const struct option options[] = {
 	OPT_STRING('t', "field-separator", &symbol_conf.field_sep, "separator",
 		   "separator for columns, no spaces will be added between "
 		   "columns '.' is reserved."),
+	OPT_BOOLEAN('U', "hide-unresolved", &hide_unresolved,
+		    "Only display entries resolved to a symbol"),
 	OPT_END()
 };
 
