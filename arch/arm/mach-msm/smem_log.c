@@ -65,11 +65,11 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/jiffies.h>
-#include <linux/remote_spinlock.h>
 #include <linux/debugfs.h>
 #include <linux/io.h>
 #include <linux/string.h>
 
+#include <mach/remote_spinlock.h>
 #include <mach/msm_iomap.h>
 #include <mach/smem_log.h>
 
