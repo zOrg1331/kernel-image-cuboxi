@@ -526,6 +526,7 @@ const struct address_space_operations nfs_file_aops = {
 	.migratepage = nfs_migrate_page,
 	.launder_page = nfs_launder_page,
 	.error_remove_page = generic_error_remove_page,
+	.commit_unstable_pages = nfs_commit_unstable_pages,
 };
 
 /*

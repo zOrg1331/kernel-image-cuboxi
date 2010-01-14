@@ -389,6 +389,17 @@ static int write_inode(struct inode *inode, int sync)
 }
 
 /*
+ * Commit the NFS unstable pages.
+ */
+static int commit_unstable_pages(struct address_space *mapping,
+		struct writeback_control *wbc)
+{
+	if (mapping->a_ops && mapping->a_ops->commit_unstable_pages)
+		return mapping->a_ops->commit_unstable_pages(mapping, wbc);
+	return 0;
+}
+
+/*
  * Wait for writeback on an inode to complete.
  */
 static void inode_wait_for_writeback(struct inode *inode)
@@ -475,6 +486,18 @@ writeback_single_inode(struct inode *inode, struct writeback_control *wbc)
 	}
 
 	spin_lock(&inode_lock);
+	/*
+	 * Special state for cleaning NFS unstable pages
+	 */
+	if (inode->i_state & I_UNSTABLE_PAGES) {
+		int err;
+		inode->i_state &= ~I_UNSTABLE_PAGES;
+		spin_unlock(&inode_lock);
+		err = commit_unstable_pages(mapping, wbc);
+		if (ret == 0)
+			ret = err;
+		spin_lock(&inode_lock);
+	}
 	inode->i_state &= ~I_SYNC;
 	if (!(inode->i_state & (I_FREEING | I_CLEAR))) {
 		if ((inode->i_state & I_DIRTY_PAGES) && wbc->for_kupdate) {
@@ -533,6 +556,12 @@ select_queue:
 				inode->i_state |= I_DIRTY_PAGES;
 				redirty_tail(inode);
 			}
+		} else if (inode->i_state & I_UNSTABLE_PAGES) {
+			/*
+			 * The inode has got yet more unstable pages to
+			 * commit. Requeue...
+			 */
+			redirty_tail(inode);
 		} else if (atomic_read(&inode->i_count)) {
 			/*
 			 * The inode is clean, inuse
@@ -1051,7 +1080,7 @@ void __mark_inode_dirty(struct inode *inode, int flags)
 
 	spin_lock(&inode_lock);
 	if ((inode->i_state & flags) != flags) {
-		const int was_dirty = inode->i_state & I_DIRTY;
+		const int was_dirty = inode->i_state & (I_DIRTY|I_UNSTABLE_PAGES);
 
 		inode->i_state |= flags;
 
