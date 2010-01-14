@@ -70,6 +70,10 @@ static int clk_default_setrate(struct clk *clk, unsigned long rate)
 	return 0;
 }
 
+static struct clk_ops clk_ops_default_setrate = {
+	.set_rate	= clk_default_setrate,
+};
+
 static int clk_dummy_enable(struct clk *clk, int enable)
 {
 	return 0;
@@ -81,8 +85,8 @@ struct clk clk_hd0 = {
 	.rate		= 0,
 	.parent		= NULL,
 	.ctrlbit	= 0,
-	.set_rate	= clk_default_setrate,
 	.enable		= clk_dummy_enable,
+	.ops		= &clk_ops_default_setrate,
 };
 
 struct clk clk_pd0 = {
@@ -91,7 +95,7 @@ struct clk clk_pd0 = {
 	.rate		= 0,
 	.parent		= NULL,
 	.ctrlbit	= 0,
-	.set_rate	= clk_default_setrate,
+	.ops		= &clk_ops_default_setrate,
 	.enable		= clk_dummy_enable,
 };
 
@@ -700,16 +704,8 @@ void __init s5pc1xx_register_clocks(void)
 
 	s3c24xx_register_clocks(clks, ARRAY_SIZE(clks));
 
-	clkp = s5pc100_init_clocks;
-	size = ARRAY_SIZE(s5pc100_init_clocks);
-
-	for (ptr = 0; ptr < size; ptr++, clkp++) {
-		ret = s3c24xx_register_clock(clkp);
-		if (ret < 0) {
-			printk(KERN_ERR "Failed to register clock %s (%d)\n",
-			       clkp->name, ret);
-		}
-	}
+	s3c_register_clocks(s5pc100_init_clocks,
+			    ARRAY_SIZE(s5pc100_init_clocks);
 
 	clkp = s5pc100_init_clocks_disable;
 	size = ARRAY_SIZE(s5pc100_init_clocks_disable);
