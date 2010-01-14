@@ -1605,6 +1605,11 @@ int ceph_mdsc_do_request(struct ceph_mds_client *mdsc,
 	if (!req->r_reply) {
 		mutex_unlock(&mdsc->mutex);
 		if (req->r_timeout) {
+			/*
+			 * we are interruptible here only because we only
+			 * time out during mount, and tear down when we
+			 * abort
+			 */
 			err = (long)wait_for_completion_interruptible_timeout(
 				&req->r_completion, req->r_timeout);
 			if (err == 0)
@@ -1612,10 +1617,13 @@ int ceph_mdsc_do_request(struct ceph_mds_client *mdsc,
 			else if (err < 0)
 				req->r_reply = ERR_PTR(err);
 		} else {
-                        err = wait_for_completion_interruptible(
-                                &req->r_completion);
-                        if (err)
-                                req->r_reply = ERR_PTR(err);
+			/*
+			 * in general, we can't be interruptible here or else
+			 * we either ignore the reply, or can't process it
+			 * correctly because the caller isn't still holding
+			 * the appropriate locks (e.g. dir i_mutex).
+			 */
+                        wait_for_completion(&req->r_completion);
 		}
 		mutex_lock(&mdsc->mutex);
 	}
