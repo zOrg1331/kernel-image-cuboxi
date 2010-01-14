@@ -32,7 +32,12 @@
 #include "led.h"
 #include "cfg.h"
 #include "debugfs.h"
-#include "debugfs_netdev.h"
+
+
+bool ieee80211_disable_40mhz_24ghz;
+module_param(ieee80211_disable_40mhz_24ghz, bool, 0644);
+MODULE_PARM_DESC(ieee80211_disable_40mhz_24ghz,
+		 "Disable 40MHz support in the 2.4GHz band");
 
 void ieee80211_configure_filter(struct ieee80211_local *local)
 {
@@ -102,6 +107,9 @@ int ieee80211_hw_config(struct ieee80211_local *local, u32 changed)
 	if (scan_chan) {
 		chan = scan_chan;
 		channel_type = NL80211_CHAN_NO_HT;
+	} else if (local->tmp_channel) {
+		chan = scan_chan = local->tmp_channel;
+		channel_type = local->tmp_channel_type;
 	} else {
 		chan = local->oper_channel;
 		channel_type = local->oper_channel_type;
@@ -112,6 +120,18 @@ int ieee80211_hw_config(struct ieee80211_local *local, u32 changed)
 		local->hw.conf.channel = chan;
 		local->hw.conf.channel_type = channel_type;
 		changed |= IEEE80211_CONF_CHANGE_CHANNEL;
+	}
+
+	if (!conf_is_ht(&local->hw.conf)) {
+		/*
+		 * mac80211.h documents that this is only valid
+		 * when the channel is set to an HT type, and
+		 * that otherwise STATIC is used.
+		 */
+		local->hw.conf.smps_mode = IEEE80211_SMPS_STATIC;
+	} else if (local->hw.conf.smps_mode != local->smps_mode) {
+		local->hw.conf.smps_mode = local->smps_mode;
+		changed |= IEEE80211_CONF_CHANGE_SMPS;
 	}
 
 	if (scan_chan)
@@ -173,7 +193,7 @@ void ieee80211_bss_info_change_notify(struct ieee80211_sub_if_data *sdata,
 	} else if (sdata->vif.type == NL80211_IFTYPE_ADHOC)
 		sdata->vif.bss_conf.bssid = sdata->u.ibss.bssid;
 	else if (sdata->vif.type == NL80211_IFTYPE_AP)
-		sdata->vif.bss_conf.bssid = sdata->dev->dev_addr;
+		sdata->vif.bss_conf.bssid = sdata->vif.addr;
 	else if (ieee80211_vif_is_mesh(&sdata->vif)) {
 		sdata->vif.bss_conf.bssid = zero;
 	} else {
@@ -195,7 +215,7 @@ void ieee80211_bss_info_change_notify(struct ieee80211_sub_if_data *sdata,
 	}
 
 	if (changed & BSS_CHANGED_BEACON_ENABLED) {
-		if (local->quiescing || !netif_running(sdata->dev) ||
+		if (local->quiescing || !ieee80211_sdata_running(sdata) ||
 		    test_bit(SCAN_SW_SCANNING, &local->scanning)) {
 			sdata->vif.bss_conf.enable_beacon = false;
 		} else {
@@ -223,8 +243,7 @@ void ieee80211_bss_info_change_notify(struct ieee80211_sub_if_data *sdata,
 		}
 	}
 
-	drv_bss_info_changed(local, &sdata->vif,
-			     &sdata->vif.bss_conf, changed);
+	drv_bss_info_changed(local, sdata, &sdata->vif.bss_conf, changed);
 }
 
 u32 ieee80211_reset_erp_info(struct ieee80211_sub_if_data *sdata)
@@ -299,6 +318,16 @@ void ieee80211_restart_hw(struct ieee80211_hw *hw)
 }
 EXPORT_SYMBOL(ieee80211_restart_hw);
 
+static void ieee80211_recalc_smps_work(struct work_struct *work)
+{
+	struct ieee80211_local *local =
+		container_of(work, struct ieee80211_local, recalc_smps);
+
+	mutex_lock(&local->iflist_mtx);
+	ieee80211_recalc_smps(local, NULL);
+	mutex_unlock(&local->iflist_mtx);
+}
+
 struct ieee80211_hw *ieee80211_alloc_hw(size_t priv_data_len,
 					const struct ieee80211_ops *ops)
 {
@@ -333,9 +362,7 @@ struct ieee80211_hw *ieee80211_alloc_hw(size_t priv_data_len,
 			WIPHY_FLAG_4ADDR_STATION;
 	wiphy->privid = mac80211_wiphy_privid;
 
-	/* Yes, putting cfg80211_bss into ieee80211_bss is a hack */
-	wiphy->bss_priv_size = sizeof(struct ieee80211_bss) -
-			       sizeof(struct cfg80211_bss);
+	wiphy->bss_priv_size = sizeof(struct ieee80211_bss);
 
 	local = wiphy_priv(wiphy);
 
@@ -369,9 +396,13 @@ struct ieee80211_hw *ieee80211_alloc_hw(size_t priv_data_len,
 
 	INIT_DELAYED_WORK(&local->scan_work, ieee80211_scan_work);
 
+	ieee80211_work_init(local);
+
 	INIT_WORK(&local->restart_work, ieee80211_restart_work);
 
 	INIT_WORK(&local->reconfig_filter, ieee80211_reconfig_filter);
+	INIT_WORK(&local->recalc_smps, ieee80211_recalc_smps_work);
+	local->smps_mode = IEEE80211_SMPS_OFF;
 
 	INIT_WORK(&local->dynamic_ps_enable_work,
 		  ieee80211_dynamic_ps_enable_work);
@@ -674,11 +705,19 @@ static int __init ieee80211_init(void)
 
 	ret = rc80211_pid_init();
 	if (ret)
-		return ret;
+		goto err_pid;
 
-	ieee80211_debugfs_netdev_init();
+	ret = ieee80211_iface_init();
+	if (ret)
+		goto err_netdev;
 
 	return 0;
+ err_netdev:
+	rc80211_pid_exit();
+ err_pid:
+	rc80211_minstrel_exit();
+
+	return ret;
 }
 
 static void __exit ieee80211_exit(void)
@@ -695,7 +734,7 @@ static void __exit ieee80211_exit(void)
 	if (mesh_allocated)
 		ieee80211s_stop();
 
-	ieee80211_debugfs_netdev_exit();
+	ieee80211_iface_exit();
 }
 
 
