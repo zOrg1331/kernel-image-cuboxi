@@ -690,20 +690,20 @@ static void asic3_mmc_pwr(struct platform_device *pdev, int state)
 {
 	struct asic3 *asic = dev_get_drvdata(pdev->dev.parent);
 
-	tmio_core_mmc_pwr(asic->tmio_cnf, state);
+	tmio_core_mmc_pwr(asic->tmio_cnf, 1 - asic->bus_shift, state);
 }
 
 static void asic3_mmc_clk_div(struct platform_device *pdev, int state)
 {
 	struct asic3 *asic = dev_get_drvdata(pdev->dev.parent);
 
-	tmio_core_mmc_clk_div(asic->tmio_cnf, state);
+	tmio_core_mmc_clk_div(asic->tmio_cnf, 1 - asic->bus_shift, state);
 }
 
 static struct tmio_mmc_data asic3_mmc_data = {
 	.hclk           = 24576000,
 	.set_pwr        = asic3_mmc_pwr,
-	.set_no_clk_div = asic3_mmc_clk_div,
+	.set_clk_div    = asic3_mmc_clk_div,
 };
 
 static struct resource asic3_mmc_resources[] = {
@@ -756,7 +756,8 @@ static int asic3_mmc_enable(struct platform_device *pdev)
 			   ASIC3_SDHWCTRL_SDPWR, 1);
 
 	/* ASIC3_SD_CTRL_BASE assumes 32-bit addressing, TMIO is 16-bit */
-	tmio_core_mmc_enable(asic->tmio_cnf, ASIC3_SD_CTRL_BASE >> 1);
+	tmio_core_mmc_enable(asic->tmio_cnf, 1 - asic->bus_shift,
+			     ASIC3_SD_CTRL_BASE >> 1);
 
 	return 0;
 }

@@ -342,7 +342,7 @@ static int tc6393xb_mmc_enable(struct platform_device *mmc)
 	struct platform_device *dev = to_platform_device(mmc->dev.parent);
 	struct tc6393xb *tc6393xb = platform_get_drvdata(dev);
 
-	tmio_core_mmc_enable(tc6393xb->scr + 0x200,
+	tmio_core_mmc_enable(tc6393xb->scr + 0x200, 0,
 		tc6393xb_mmc_resources[0].start & 0xfffe);
 
 	return 0;
@@ -353,7 +353,7 @@ static int tc6393xb_mmc_resume(struct platform_device *mmc)
 	struct platform_device *dev = to_platform_device(mmc->dev.parent);
 	struct tc6393xb *tc6393xb = platform_get_drvdata(dev);
 
-	tmio_core_mmc_resume(tc6393xb->scr + 0x200,
+	tmio_core_mmc_resume(tc6393xb->scr + 0x200, 0,
 		tc6393xb_mmc_resources[0].start & 0xfffe);
 
 	return 0;
@@ -364,7 +364,7 @@ static void tc6393xb_mmc_pwr(struct platform_device *mmc, int state)
 	struct platform_device *dev = to_platform_device(mmc->dev.parent);
 	struct tc6393xb *tc6393xb = platform_get_drvdata(dev);
 
-	tmio_core_mmc_pwr(tc6393xb->scr + 0x200, state);
+	tmio_core_mmc_pwr(tc6393xb->scr + 0x200, 0, state);
 }
 
 static void tc6393xb_mmc_clk_div(struct platform_device *mmc, int state)
@@ -372,13 +372,13 @@ static void tc6393xb_mmc_clk_div(struct platform_device *mmc, int state)
 	struct platform_device *dev = to_platform_device(mmc->dev.parent);
 	struct tc6393xb *tc6393xb = platform_get_drvdata(dev);
 
-	tmio_core_mmc_clk_div(tc6393xb->scr + 0x200, state);
+	tmio_core_mmc_clk_div(tc6393xb->scr + 0x200, 0, state);
 }
 
 static struct tmio_mmc_data tc6393xb_mmc_data = {
-	.hclk = 33000000,
+	.hclk = 24000000,
 	.set_pwr = tc6393xb_mmc_pwr,
-	.set_no_clk_div = tc6393xb_mmc_clk_div,
+	.set_clk_div = tc6393xb_mmc_clk_div,
 };
 
 static struct mfd_cell __devinitdata tc6393xb_cells[] = {
@@ -647,7 +647,7 @@ static int __devinit tc6393xb_probe(struct platform_device *dev)
 	if (ret)
 		goto err_request_scr;
 
-	tc6393xb->scr = ioremap(rscr->start, rscr->end - rscr->start + 1);
+	tc6393xb->scr = ioremap(rscr->start, resource_size(rscr));
 	if (!tc6393xb->scr) {
 		ret = -ENOMEM;
 		goto err_ioremap;
