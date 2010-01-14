@@ -1314,9 +1314,6 @@ enum { MUSB_CONTROLLER_MHDRC, MUSB_CONTROLLER_HDRC, };
  */
 static int __init musb_core_init(u16 musb_type, struct musb *musb)
 {
-#ifdef MUSB_AHB_ID
-	u32 data;
-#endif
 	u8 reg;
 	char *type;
 	char aInfo[90], aRevision[32], aDate[12];
@@ -1332,19 +1329,11 @@ static int __init musb_core_init(u16 musb_type, struct musb *musb)
 		strcat(aInfo, ", dyn FIFOs");
 	if (reg & MUSB_CONFIGDATA_MPRXE) {
 		strcat(aInfo, ", bulk combine");
-#ifdef C_MP_RX
 		musb->bulk_combine = true;
-#else
-		strcat(aInfo, " (X)");		/* no driver support */
-#endif
 	}
 	if (reg & MUSB_CONFIGDATA_MPTXE) {
 		strcat(aInfo, ", bulk split");
-#ifdef C_MP_TX
 		musb->bulk_split = true;
-#else
-		strcat(aInfo, " (X)");		/* no driver support */
-#endif
 	}
 	if (reg & MUSB_CONFIGDATA_HBRXE) {
 		strcat(aInfo, ", HB-ISO Rx");
@@ -1360,20 +1349,7 @@ static int __init musb_core_init(u16 musb_type, struct musb *musb)
 	printk(KERN_DEBUG "%s: ConfigData=0x%02x (%s)\n",
 			musb_driver_name, reg, aInfo);
 
-#ifdef MUSB_AHB_ID
-	data = musb_readl(mbase, 0x404);
-	sprintf(aDate, "%04d-%02x-%02x", (data & 0xffff),
-		(data >> 16) & 0xff, (data >> 24) & 0xff);
-	/* FIXME ID2 and ID3 are unused */
-	data = musb_readl(mbase, 0x408);
-	printk(KERN_DEBUG "ID2=%lx\n", (long unsigned)data);
-	data = musb_readl(mbase, 0x40c);
-	printk(KERN_DEBUG "ID3=%lx\n", (long unsigned)data);
-	reg = musb_readb(mbase, 0x400);
-	musb_type = ('M' == reg) ? MUSB_CONTROLLER_MHDRC : MUSB_CONTROLLER_HDRC;
-#else
 	aDate[0] = 0;
-#endif
 	if (MUSB_CONTROLLER_MHDRC == musb_type) {
 		musb->is_multipoint = 1;
 		type = "M";
@@ -1696,7 +1672,7 @@ musb_vbus_store(struct device *dev, struct device_attribute *attr,
 	unsigned long	val;
 
 	if (sscanf(buf, "%lu", &val) < 1) {
-		printk(KERN_ERR "Invalid VBUS timeout ms value\n");
+		dev_err(dev, "Invalid VBUS timeout ms value\n");
 		return -EINVAL;
 	}
 
@@ -1746,7 +1722,7 @@ musb_srp_store(struct device *dev, struct device_attribute *attr,
 
 	if (sscanf(buf, "%hu", &srp) != 1
 			|| (srp != 1)) {
-		printk(KERN_ERR "SRP: Value must be 1\n");
+		dev_err(dev, "SRP: Value must be 1\n");
 		return -EINVAL;
 	}
 
@@ -1758,6 +1734,19 @@ musb_srp_store(struct device *dev, struct device_attribute *attr,
 static DEVICE_ATTR(srp, 0644, NULL, musb_srp_store);
 
 #endif /* CONFIG_USB_GADGET_MUSB_HDRC */
+
+static struct attribute *musb_attributes[] = {
+	&dev_attr_mode.attr,
+	&dev_attr_vbus.attr,
+#ifdef CONFIG_USB_GADGET_MUSB_HDRC
+	&dev_attr_srp.attr,
+#endif
+	NULL
+};
+
+static const struct attribute_group musb_attr_group = {
+	.attrs = musb_attributes,
+};
 
 #endif	/* sysfs */
 
@@ -1833,11 +1822,7 @@ static void musb_free(struct musb *musb)
 	 */
 
 #ifdef CONFIG_SYSFS
-	device_remove_file(musb->controller, &dev_attr_mode);
-	device_remove_file(musb->controller, &dev_attr_vbus);
-#ifdef CONFIG_USB_GADGET_MUSB_HDRC
-	device_remove_file(musb->controller, &dev_attr_srp);
-#endif
+	sysfs_remove_group(&musb->controller->kobj, &musb_attr_group);
 #endif
 
 #ifdef CONFIG_USB_GADGET_MUSB_HDRC
@@ -2079,12 +2064,7 @@ bad_config:
 	}
 
 #ifdef CONFIG_SYSFS
-	status = device_create_file(dev, &dev_attr_mode);
-	status = device_create_file(dev, &dev_attr_vbus);
-#ifdef CONFIG_USB_GADGET_MUSB_HDRC
-	status = device_create_file(dev, &dev_attr_srp);
-#endif /* CONFIG_USB_GADGET_MUSB_HDRC */
-	status = 0;
+	status = sysfs_create_group(&musb->controller->kobj, &musb_attr_group);
 #endif
 	if (status)
 		goto fail2;
@@ -2092,13 +2072,6 @@ bad_config:
 	return 0;
 
 fail2:
-#ifdef CONFIG_SYSFS
-	device_remove_file(musb->controller, &dev_attr_mode);
-	device_remove_file(musb->controller, &dev_attr_vbus);
-#ifdef CONFIG_USB_GADGET_MUSB_HDRC
-	device_remove_file(musb->controller, &dev_attr_srp);
-#endif
-#endif
 	musb_platform_exit(musb);
 fail:
 	dev_err(musb->controller,
@@ -2134,7 +2107,7 @@ static int __init musb_probe(struct platform_device *pdev)
 	if (!iomem || irq == 0)
 		return -ENODEV;
 
-	base = ioremap(iomem->start, iomem->end - iomem->start + 1);
+	base = ioremap(iomem->start, resource_size(iomem));
 	if (!base) {
 		dev_err(dev, "ioremap failed\n");
 		return -ENOMEM;
