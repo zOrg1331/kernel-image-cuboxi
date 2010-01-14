@@ -765,14 +765,16 @@ static void svm_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 	if (unlikely(cpu != vcpu->cpu)) {
 		u64 delta;
 
-		/*
-		 * Make sure that the guest sees a monotonically
-		 * increasing TSC.
-		 */
-		delta = vcpu->arch.host_tsc - native_read_tsc();
-		svm->vmcb->control.tsc_offset += delta;
-		if (is_nested(svm))
-			svm->nested.hsave->control.tsc_offset += delta;
+		if (check_tsc_unstable()) {
+			/*
+			 * Make sure that the guest sees a monotonically
+			 * increasing TSC.
+			 */
+			delta = vcpu->arch.host_tsc - native_read_tsc();
+			svm->vmcb->control.tsc_offset += delta;
+			if (is_nested(svm))
+				svm->nested.hsave->control.tsc_offset += delta;
+		}
 		vcpu->cpu = cpu;
 		kvm_migrate_timers(vcpu);
 		svm->asid_generation = 0;
@@ -2852,6 +2854,10 @@ static u64 svm_get_mt_mask(struct kvm_vcpu *vcpu, gfn_t gfn, bool is_mmio)
 	return 0;
 }
 
+static void svm_cpuid_update(struct kvm_vcpu *vcpu)
+{
+}
+
 static const struct trace_print_flags svm_exit_reasons_str[] = {
 	{ SVM_EXIT_READ_CR0,           		"read_cr0" },
 	{ SVM_EXIT_READ_CR3,	      		"read_cr3" },
@@ -2905,9 +2911,14 @@ static const struct trace_print_flags svm_exit_reasons_str[] = {
 	{ -1, NULL }
 };
 
-static bool svm_gb_page_enable(void)
+static int svm_get_lpage_level(void)
 {
-	return true;
+	return PT_PDPE_LEVEL;
+}
+
+static bool svm_rdtscp_supported(void)
+{
+	return false;
 }
 
 static struct kvm_x86_ops svm_x86_ops = {
@@ -2975,7 +2986,11 @@ static struct kvm_x86_ops svm_x86_ops = {
 	.get_mt_mask = svm_get_mt_mask,
 
 	.exit_reasons_str = svm_exit_reasons_str,
-	.gb_page_enable = svm_gb_page_enable,
+	.get_lpage_level = svm_get_lpage_level,
+
+	.cpuid_update = svm_cpuid_update,
+
+	.rdtscp_supported = svm_rdtscp_supported,
 };
 
 static int __init svm_init(void)
