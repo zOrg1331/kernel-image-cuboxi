@@ -970,13 +970,14 @@ static int runtime_suspend(struct device *dev)
 	return rc;
 }
 
-static void runtime_resume(struct device *dev)
+static int runtime_resume(struct device *dev)
 {
 	int rc;
 
 	down(&dev->sem);
 	rc = pcmcia_dev_resume(dev);
 	up(&dev->sem);
+	return rc;
 }
 
 /************************ per-device sysfs output ***************************/
@@ -1027,7 +1028,7 @@ static ssize_t pcmcia_store_pm_state(struct device *dev, struct device_attribute
 	if ((!p_dev->suspended) && !strncmp(buf, "off", 3))
 		ret = runtime_suspend(dev);
 	else if (p_dev->suspended && !strncmp(buf, "on", 2))
-		runtime_resume(dev);
+		ret = runtime_resume(dev);
 
 	return ret ? ret : count;
 }
@@ -1240,10 +1241,12 @@ static int ds_event(struct pcmcia_socket *skt, event_t event, int priority)
 		s->pcmcia_state.present = 0;
 		pcmcia_card_remove(skt, NULL);
 		handle_event(skt, event);
+		destroy_cis_cache(s);
 		break;
 
 	case CS_EVENT_CARD_INSERTION:
 		s->pcmcia_state.present = 1;
+		destroy_cis_cache(s); /* to be on the safe side... */
 		pcmcia_card_add(skt);
 		handle_event(skt, event);
 		break;
@@ -1251,8 +1254,22 @@ static int ds_event(struct pcmcia_socket *skt, event_t event, int priority)
 	case CS_EVENT_EJECTION_REQUEST:
 		break;
 
-	case CS_EVENT_PM_SUSPEND:
 	case CS_EVENT_PM_RESUME:
+		if (verify_cis_cache(skt) != 0) {
+			dev_dbg(&skt->dev, "cis mismatch - different card\n");
+			/* first, remove the card */
+			ds_event(skt, CS_EVENT_CARD_REMOVAL, CS_EVENT_PRI_HIGH);
+			destroy_cis_cache(skt);
+			kfree(skt->fake_cis);
+			skt->fake_cis = NULL;
+			/* now, add the new card */
+			ds_event(skt, CS_EVENT_CARD_INSERTION,
+				 CS_EVENT_PRI_LOW);
+		}
+		handle_event(skt, event);
+		break;
+
+	case CS_EVENT_PM_SUSPEND:
 	case CS_EVENT_RESET_PHYSICAL:
 	case CS_EVENT_CARD_RESET:
 	default:
@@ -1296,6 +1313,7 @@ static struct pcmcia_callback pcmcia_bus_callback = {
 	.owner = THIS_MODULE,
 	.event = ds_event,
 	.requery = pcmcia_bus_rescan,
+	.validate = pccard_validate_cis,
 	.suspend = pcmcia_bus_suspend,
 	.resume = pcmcia_bus_resume,
 };
@@ -1318,6 +1336,13 @@ static int __devinit pcmcia_bus_add_socket(struct device *dev,
 	 * We really should let the drivers themselves drive some of this..
 	 */
 	msleep(250);
+
+	ret = sysfs_create_bin_file(&dev->kobj, &pccard_cis_attr);
+	if (ret) {
+		dev_printk(KERN_ERR, dev, "PCMCIA registration failed\n");
+		pcmcia_put_socket(socket);
+		return ret;
+	}
 
 #ifdef CONFIG_PCMCIA_IOCTL
 	init_waitqueue_head(&socket->queue);
@@ -1352,6 +1377,10 @@ static void pcmcia_bus_remove_socket(struct device *dev,
 	mutex_lock(&socket->skt_mutex);
 	pcmcia_card_remove(socket, NULL);
 	mutex_unlock(&socket->skt_mutex);
+
+	release_cis_mem(socket);
+
+	sysfs_remove_bin_file(&dev->kobj, &pccard_cis_attr);
 
 	pcmcia_put_socket(socket);
 
