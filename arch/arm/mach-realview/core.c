@@ -271,19 +271,13 @@ static const struct icst_params realview_oscvco_params = {
 static void realview_oscvco_set(struct clk *clk, struct icst_vco vco)
 {
 	void __iomem *sys_lock = __io_address(REALVIEW_SYS_BASE) + REALVIEW_SYS_LOCK_OFFSET;
-	void __iomem *sys_osc;
 	u32 val;
 
-	if (machine_is_realview_pb1176())
-		sys_osc = __io_address(REALVIEW_SYS_BASE) + REALVIEW_SYS_OSC0_OFFSET;
-	else
-		sys_osc = __io_address(REALVIEW_SYS_BASE) + REALVIEW_SYS_OSC4_OFFSET;
-
-	val = readl(sys_osc) & ~0x7ffff;
+	val = readl(clk->vcoreg) & ~0x7ffff;
 	val |= vco.v | (vco.r << 9) | (vco.s << 16);
 
 	writel(0xa05f, sys_lock);
-	writel(val, sys_osc);
+	writel(val, clk->vcoreg);
 	writel(0, sys_lock);
 }
 
@@ -333,6 +327,11 @@ static struct clk_lookup lookups[] = {
 static int __init clk_init(void)
 {
 	int i;
+
+	if (machine_is_realview_pb1176())
+		oscvco_clk.vcoreg = __io_address(REALVIEW_SYS_BASE) + REALVIEW_SYS_OSC0_OFFSET;
+	else
+		oscvco_clk.vcoreg = __io_address(REALVIEW_SYS_BASE) + REALVIEW_SYS_OSC4_OFFSET;
 
 	for (i = 0; i < ARRAY_SIZE(lookups); i++)
 		clkdev_add(&lookups[i]);
