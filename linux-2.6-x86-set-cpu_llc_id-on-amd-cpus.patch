@@ -1,0 +1,47 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Mon, 28 Sep 2009 18:13:00 -0400
+Subject: [x86] set cpu_llc_id on AMD CPUs
+Message-id: <20090928181501.7424.80951.sendpatchset@localhost.localdomain>
+Patchwork-id: 20973
+O-Subject: [RHEL5.5 PATCH 4/3] Set cpu_llc_id on AMD CPUs
+Bugzilla: 513684
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Resolves BZ 513684
+
+This patch sets cpu_llc_id for AMD CPUs, as M-C topology fixes use cpu_llc_id
+store the node information.
+
+Previously mentioned testing includes this patch.
+
+I've checked with DonZ that his scripts can handle 4/3 patch.
+
+diff --git a/arch/i386/kernel/cpu/amd.c b/arch/i386/kernel/cpu/amd.c
+index b287e49..5564d53 100644
+--- a/arch/i386/kernel/cpu/amd.c
++++ b/arch/i386/kernel/cpu/amd.c
+@@ -299,6 +299,8 @@ static void __init init_amd(struct cpuinfo_x86 *c)
+ 		}
+ 		c->cpu_core_id = c->phys_proc_id & ((1<<bits)-1);
+ 		c->phys_proc_id >>= bits;
++		/* use socket ID also for last level cache */
++		cpu_llc_id[cpu] = c->phys_proc_id;
+ 		/* fixup topology information on multi-node processors */
+ 		if ((c->x86 == 0x10) && (c->x86_model == 9))
+ 			amd_fixup_dcm(c);
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index 308a6fa..94421cd 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -876,6 +876,9 @@ static void __init amd_detect_cmp(struct cpuinfo_x86 *c)
+ 			bits++;
+ 	}
+ 
++	/* use socket ID also for last level cache */
++	cpu_llc_id[cpu] = c->phys_proc_id;
++
+ 	/* fixup topology information on multi-node processors */
+ 	if ((c->x86 == 0x10) && (c->x86_model == 9))
+ 		amd_fixup_dcm(c);
