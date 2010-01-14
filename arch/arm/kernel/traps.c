@@ -21,6 +21,9 @@
 #include <linux/hardirq.h>
 #include <linux/init.h>
 #include <linux/uaccess.h>
+#include <linux/kgdb.h>
+#include <linux/kdebug.h>
+#include <linux/notifier.h>
 
 #include <asm/atomic.h>
 #include <asm/cacheflush.h>
@@ -253,6 +256,8 @@ DEFINE_SPINLOCK(die_lock);
 NORET_TYPE void die(const char *str, struct pt_regs *regs, int err)
 {
 	struct thread_info *thread = current_thread_info();
+
+	kgdb_die_hook(DIE_OOPS, str, regs, err);
 
 	oops_enter();
 
