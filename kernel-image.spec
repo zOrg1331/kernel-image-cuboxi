@@ -1,14 +1,14 @@
 Name: kernel-image-un-def-live
-Version: 2.6.32
-Release: alt0.2
+Version: 2.6.33
+Release: alt0.1
 epoch:1 
 %define kernel_base_version	%version
-%define kernel_extra_version	%nil
+%define kernel_extra_version	0.3.0
 # Numeric extra version scheme developed by Alexander Bokovoy:
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 1.0.0
+%define kernel_extra_version_numeric 0.3.0
 
 %define krelease	%release
 
@@ -479,6 +479,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Thu Jan 14 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.33-alt0.1
+- 
+
 * Tue Jan 12 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.32-alt0.2
 - 2.6.32.3 merged
 
