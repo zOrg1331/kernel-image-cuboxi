@@ -1624,7 +1624,10 @@ static int proc_ioctl(struct dev_state *ps, struct usbdevfs_ioctl *ctl)
 		if (driver == NULL || driver->ioctl == NULL) {
 			retval = -ENOTTY;
 		} else {
+			/* keep API that guarantees BKL */
+			lock_kernel();
 			retval = driver->ioctl(intf, ctl->ioctl_code, buf);
+			unlock_kernel();
 			if (retval == -ENOIOCTLCMD)
 				retval = -ENOTTY;
 		}
@@ -1708,11 +1711,9 @@ static long usbdev_do_ioctl(struct file *file, unsigned int cmd,
 	if (!(file->f_mode & FMODE_WRITE))
 		return -EPERM;
 
-	lock_kernel();
 	usb_lock_device(dev);
 	if (!connected(ps)) {
 		usb_unlock_device(dev);
-		unlock_kernel();
 		return -ENODEV;
 	}
 
@@ -1771,12 +1772,10 @@ static long usbdev_do_ioctl(struct file *file, unsigned int cmd,
 		break;
 
 	case USBDEVFS_SUBMITURB:
-		unlock_kernel();
 		snoop(&dev->dev, "%s: SUBMITURB\n", __func__);
 		ret = proc_submiturb(ps, p);
 		if (ret >= 0)
 			inode->i_mtime = CURRENT_TIME;
-		lock_kernel();
 		break;
 
 #ifdef CONFIG_COMPAT
@@ -1828,17 +1827,13 @@ static long usbdev_do_ioctl(struct file *file, unsigned int cmd,
 		break;
 
 	case USBDEVFS_REAPURB:
-		unlock_kernel();
 		snoop(&dev->dev, "%s: REAPURB\n", __func__);
 		ret = proc_reapurb(ps, p);
-		lock_kernel();
 		break;
 
 	case USBDEVFS_REAPURBNDELAY:
-		unlock_kernel();
 		snoop(&dev->dev, "%s: REAPURBNDELAY\n", __func__);
 		ret = proc_reapurbnonblock(ps, p);
-		lock_kernel();
 		break;
 
 	case USBDEVFS_DISCSIGNAL:
@@ -1872,7 +1867,6 @@ static long usbdev_do_ioctl(struct file *file, unsigned int cmd,
 		break;
 	}
 	usb_unlock_device(dev);
-	unlock_kernel();
 	if (ret >= 0)
 		inode->i_atime = CURRENT_TIME;
 	return ret;
