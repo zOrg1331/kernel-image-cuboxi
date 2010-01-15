@@ -46,40 +46,37 @@ static void __devinit pci_root_bus_res(struct pci_dev *dev)
 {
 	u16 word;
 	u32 dword;
-	struct pci_root_info *info;
+	struct pci_root_info tmp, *info = &tmp;
 	u16 io_base, io_end;
 	u32 mmiol_base, mmiol_end, vtbar;
 	u64 mmioh_base, mmioh_end;
 	int bus_base, bus_end;
-
-	/* some sys doesn't get mmconf enabled */
-	if (dev->cfg_size < 0x120)
-		return;
 
 	if (pci_root_num >= PCI_ROOT_NR) {
 		printk(KERN_DEBUG "intel_bus.c: PCI_ROOT_NR is too small\n");
 		return;
 	}
 
-	info = &pci_root_info[pci_root_num];
-	pci_root_num++;
-
-	pci_read_config_word(dev, IOH_LCFGBUS, &word);
+	if (pci_read_config_word(dev, IOH_LCFGBUS, &word))
+		return;
 	bus_base = (word & 0xff);
 	bus_end = (word & 0xff00) >> 8;
 	sprintf(info->name, "PCI Bus #%02x", bus_base);
 	info->bus_min = bus_base;
 	info->bus_max = bus_end;
 
-	pci_read_config_word(dev, IOH_LIO, &word);
+	if (pci_read_config_word(dev, IOH_LIO, &word))
+		return;
 	io_base = (word & 0xf0) << (12 - 4);
 	io_end = (word & 0xf000) | 0xfff;
 	update_res(info, io_base, io_end, IORESOURCE_IO, 0);
 
-	pci_read_config_dword(dev, IOH_LMMIOL, &dword);
+	if (pci_read_config_dword(dev, IOH_LMMIOL, &dword))
+		return;
 	mmiol_base = (dword & 0xff00) << (24 - 8);
 	mmiol_end = (dword & 0xff000000) | 0xffffff;
-	pci_read_config_dword(dev, IOH_VTBAR, &dword);
+	if (pci_read_config_dword(dev, IOH_VTBAR, &dword))
+		return;
 	vtbar = dword & 0xfffffffe;
 	if (dword & 0x1 &&
 		(mmiol_base < vtbar + IOH_VTSIZE - 1 && vtbar < mmiol_end)) {
@@ -96,15 +93,19 @@ static void __devinit pci_root_bus_res(struct pci_dev *dev)
 	}
 	update_res(info, mmiol_base, mmiol_end, IORESOURCE_MEM, 0);
 
-	pci_read_config_dword(dev, IOH_LMMIOH, &dword);
+	if (pci_read_config_dword(dev, IOH_LMMIOH, &dword))
+		return;
 	mmioh_base = ((u64)(dword & 0xfc00)) << (26 - 10);
 	mmioh_end = ((u64)(dword & 0xfc000000) | 0x3ffffff);
-	pci_read_config_dword(dev, IOH_LMMIOH_BASEU, &dword);
+	if (pci_read_config_dword(dev, IOH_LMMIOH_BASEU, &dword))
+		return;
 	mmioh_base |= ((u64)(dword & 0x7ffff)) << 32;
-	pci_read_config_dword(dev, IOH_LMMIOH_LIMITU, &dword);
+	if (pci_read_config_dword(dev, IOH_LMMIOH_LIMITU, &dword))
+		return;
 	mmioh_end |= ((u64)(dword & 0x7ffff)) << 32;
 	update_res(info, mmioh_base, mmioh_end, IORESOURCE_MEM, 0);
 
+	pci_root_info[pci_root_num++] = *info;
 	print_ioh_resources(info);
 }
 
