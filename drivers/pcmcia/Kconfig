@@ -51,7 +51,7 @@ config PCMCIA_LOAD_CIS
 
 config PCMCIA_IOCTL
 	bool "PCMCIA control ioctl (obsolete)"
-	depends on PCMCIA
+	depends on PCMCIA && ARM && !SMP && !PREEMPT
 	default y
 	help
 	  If you say Y here, the deprecated ioctl interface to the PCMCIA
