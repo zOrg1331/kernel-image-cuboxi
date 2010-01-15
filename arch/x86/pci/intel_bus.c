@@ -87,7 +87,7 @@ static void __devinit pci_root_bus_res(struct pci_dev *dev)
 		if (vtbar <= mmiol_base)
 			mmiol_base = vtbar + IOH_VTSIZE;
 		else if (mmiol_end <= vtbar + IOH_VTSIZE - 1)
-			mmiol_end = vtbar;
+			mmiol_end = vtbar - 1;
 		else {
 			update_res(info, mmiol_base, vtbar - 1,
 				   IORESOURCE_MEM, 0);
