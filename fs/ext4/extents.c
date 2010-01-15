@@ -3038,14 +3038,6 @@ out:
 	return err;
 }
 
-static void unmap_underlying_metadata_blocks(struct block_device *bdev,
-			sector_t block, int count)
-{
-	int i;
-	for (i = 0; i < count; i++)
-                unmap_underlying_metadata(bdev, block + i);
-}
-
 static int
 ext4_ext_handle_uninitialized_extents(handle_t *handle, struct inode *inode,
 			ext4_lblk_t iblock, unsigned int max_blocks,
@@ -3120,21 +3112,9 @@ out:
 		goto out2;
 	} else
 		allocated = ret;
-	set_buffer_new(bh_result);
-	/*
-	 * if we allocated more blocks than requested
-	 * we need to make sure we unmap the extra block
-	 * allocated. The actual needed block will get
-	 * unmapped later when we find the buffer_head marked
-	 * new.
-	 */
-	if (allocated > max_blocks) {
-		unmap_underlying_metadata_blocks(inode->i_sb->s_bdev,
-					newblock + max_blocks,
-					allocated - max_blocks);
-		allocated = max_blocks;
-	}
 
+	if (allocated > max_blocks)
+		allocated = max_blocks;
 	/*
 	 * If we have done fallocate with the offset that is already
 	 * delayed allocated, we would have block reservation
@@ -3570,6 +3550,8 @@ retry:
 			ret2 = ext4_journal_stop(handle);
 			break;
 		}
+		if (buffer_new(&map_bh))
+			__unmap_underlying_bh_blocks(inode, &map_bh);
 		if ((block + ret) >= (EXT4_BLOCK_ALIGN(offset + len,
 						blkbits) >> blkbits))
 			new_size = offset + len;

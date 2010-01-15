@@ -1774,6 +1774,20 @@ static inline void set_bitmap_uptodate(struct buffer_head *bh)
 	set_bit(BH_BITMAP_UPTODATE, &(bh)->b_state);
 }
 
+/*
+ * __unmap_underlying_bh_blocks - just a helper function to unmap
+ * set of blocks described by @bh
+ */
+static inline void __unmap_underlying_bh_blocks(struct inode *inode,
+					     struct buffer_head *bh)
+{
+	struct block_device *bdev = inode->i_sb->s_bdev;
+	int blocks, i;
+
+	blocks = bh->b_size >> inode->i_blkbits;
+	for (i = 0; i < blocks; i++)
+		unmap_underlying_metadata(bdev, bh->b_blocknr + i);
+}
 #endif	/* __KERNEL__ */
 
 #endif	/* _EXT4_H */

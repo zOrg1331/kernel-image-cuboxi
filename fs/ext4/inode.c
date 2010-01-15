@@ -2099,22 +2099,6 @@ static void mpage_put_bnr_to_bhs(struct mpage_da_data *mpd, sector_t logical,
 	}
 }
 
-
-/*
- * __unmap_underlying_blocks - just a helper function to unmap
- * set of blocks described by @bh
- */
-static inline void __unmap_underlying_blocks(struct inode *inode,
-					     struct buffer_head *bh)
-{
-	struct block_device *bdev = inode->i_sb->s_bdev;
-	int blocks, i;
-
-	blocks = bh->b_size >> inode->i_blkbits;
-	for (i = 0; i < blocks; i++)
-		unmap_underlying_metadata(bdev, bh->b_blocknr + i);
-}
-
 static void ext4_da_block_invalidatepages(struct mpage_da_data *mpd,
 					sector_t logical, long blk_cnt)
 {
@@ -2269,7 +2253,7 @@ static int mpage_da_map_blocks(struct mpage_da_data *mpd)
 	new.b_size = (blks << mpd->inode->i_blkbits);
 
 	if (buffer_new(&new))
-		__unmap_underlying_blocks(mpd->inode, &new);
+		__unmap_underlying_bh_blocks(mpd->inode, &new);
 
 	/*
 	 * If blocks are delayed marked, we need to
