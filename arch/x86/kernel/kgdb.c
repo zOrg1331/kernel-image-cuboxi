@@ -42,6 +42,7 @@
 #include <linux/init.h>
 #include <linux/smp.h>
 #include <linux/nmi.h>
+#include <linux/hw_breakpoint.h>
 
 #include <asm/debugreg.h>
 #include <asm/apicdef.h>
@@ -204,40 +205,27 @@ void gdb_regs_to_pt_regs(unsigned long *gdb_regs, struct pt_regs *regs)
 
 static struct hw_breakpoint {
 	unsigned		enabled;
-	unsigned		type;
-	unsigned		len;
 	unsigned long		addr;
+	struct perf_event	**pev;
 } breakinfo[4];
 
 static void kgdb_correct_hw_break(void)
 {
-	unsigned long dr7;
-	int correctit = 0;
-	int breakbit;
 	int breakno;
 
-	get_debugreg(dr7, 7);
 	for (breakno = 0; breakno < 4; breakno++) {
-		breakbit = 2 << (breakno << 1);
-		if (!(dr7 & breakbit) && breakinfo[breakno].enabled) {
-			correctit = 1;
-			dr7 |= breakbit;
-			dr7 &= ~(0xf0000 << (breakno << 2));
-			dr7 |= ((breakinfo[breakno].len << 2) |
-				 breakinfo[breakno].type) <<
-			       ((breakno << 2) + 16);
-			set_debugreg(breakinfo[breakno].addr, breakno);
-
-		} else {
-			if ((dr7 & breakbit) && !breakinfo[breakno].enabled) {
-				correctit = 1;
-				dr7 &= ~breakbit;
-				dr7 &= ~(0xf0000 << (breakno << 2));
-			}
-		}
+		struct perf_event *bp;
+		int val;
+		int cpu = raw_smp_processor_id();
+		if (!breakinfo[breakno].enabled)
+			continue;
+		bp = *per_cpu_ptr(breakinfo[breakno].pev, cpu);
+		if (bp->attr.disabled != 1)
+			continue;
+		val = arch_install_hw_breakpoint(bp);
+		if (!val)
+			bp->attr.disabled = 0;
 	}
-	if (correctit)
-		set_debugreg(dr7, 7);
 }
 
 static int
@@ -259,46 +247,74 @@ kgdb_remove_hw_break(unsigned long addr, int len, enum kgdb_bptype bptype)
 static void kgdb_remove_all_hw_break(void)
 {
 	int i;
+	int cpu = raw_smp_processor_id();
+	struct perf_event *bp;
 
-	for (i = 0; i < 4; i++)
-		memset(&breakinfo[i], 0, sizeof(struct hw_breakpoint));
+	for (i = 0; i < 4; i++) {
+		if (!breakinfo[i].enabled)
+			continue;
+		bp = *per_cpu_ptr(breakinfo[i].pev, cpu);
+		if (bp->attr.disabled == 1)
+			continue;
+		arch_uninstall_hw_breakpoint(bp);
+		bp->attr.disabled = 1;
+	}
 }
 
 static int
 kgdb_set_hw_break(unsigned long addr, int len, enum kgdb_bptype bptype)
 {
-	unsigned type;
 	int i;
+	struct perf_event *bp;
+	struct arch_hw_breakpoint *info;
 
 	for (i = 0; i < 4; i++)
 		if (!breakinfo[i].enabled)
 			break;
 	if (i == 4)
 		return -1;
-
+	bp = *per_cpu_ptr(breakinfo[i].pev, raw_smp_processor_id());
+	info = counter_arch_bp(bp);
 	switch (bptype) {
 	case BP_HARDWARE_BREAKPOINT:
-		type = 0;
-		len  = 1;
+		len = 1;
+		info->type = X86_BREAKPOINT_EXECUTE;
 		break;
 	case BP_WRITE_WATCHPOINT:
-		type = 1;
+		info->type = X86_BREAKPOINT_WRITE;
 		break;
 	case BP_ACCESS_WATCHPOINT:
-		type = 3;
+		info->type = X86_BREAKPOINT_RW;
 		break;
 	default:
 		return -1;
 	}
 
-	if (len == 1 || len == 2 || len == 4)
-		breakinfo[i].len  = len - 1;
-	else
+	switch (len) {
+	case 1:
+		info->len = X86_BREAKPOINT_LEN_1;
+		break;
+	case 2:
+		info->len = X86_BREAKPOINT_LEN_2;
+		break;
+	case 4:
+		info->len = X86_BREAKPOINT_LEN_4;
+		break;
+#ifdef CONFIG_X86_64
+	case 8:
+		info->len = X86_BREAKPOINT_LEN_8;
+		break;
+#endif
+	default:
 		return -1;
+	}
 
-	breakinfo[i].enabled = 1;
 	breakinfo[i].addr = addr;
-	breakinfo[i].type = type;
+	info->address = addr;
+	bp->attr.bp_addr = info->address;
+	bp->attr.bp_len = info->len;
+	bp->attr.bp_type = info->type;
+	breakinfo[i].enabled = 1;
 
 	return 0;
 }
@@ -313,8 +329,21 @@ kgdb_set_hw_break(unsigned long addr, int len, enum kgdb_bptype bptype)
  */
 void kgdb_disable_hw_debug(struct pt_regs *regs)
 {
+	int i;
+	int cpu = raw_smp_processor_id();
+	struct perf_event *bp;
+
 	/* Disable hardware debugging while we are in kgdb: */
 	set_debugreg(0UL, 7);
+	for (i = 0; i < 4; i++) {
+		if (!breakinfo[i].enabled)
+			continue;
+		bp = *per_cpu_ptr(breakinfo[i].pev, cpu);
+		if (bp->attr.disabled == 1)
+			continue;
+		arch_uninstall_hw_breakpoint(bp);
+		bp->attr.disabled = 1;
+	}
 }
 
 /**
@@ -378,7 +407,6 @@ int kgdb_arch_handle_exception(int e_vector, int signo, int err_code,
 			       struct pt_regs *linux_regs)
 {
 	unsigned long addr;
-	unsigned long dr6;
 	char *ptr;
 	int newPC;
 
@@ -404,20 +432,6 @@ int kgdb_arch_handle_exception(int e_vector, int signo, int err_code,
 				   raw_smp_processor_id());
 		}
 
-		get_debugreg(dr6, 6);
-		if (!(dr6 & 0x4000)) {
-			int breakno;
-
-			for (breakno = 0; breakno < 4; breakno++) {
-				if (dr6 & (1 << breakno) &&
-				    breakinfo[breakno].type == 0) {
-					/* Set restore flag: */
-					linux_regs->flags |= X86_EFLAGS_RF;
-					break;
-				}
-			}
-		}
-		set_debugreg(0UL, 6);
 		kgdb_correct_hw_break();
 
 		return 0;
@@ -448,6 +462,7 @@ single_step_cont(struct pt_regs *regs, struct die_args *args)
 }
 
 static int was_in_debug_nmi[NR_CPUS];
+static int recieved_hw_brk[NR_CPUS];
 
 static int __kgdb_notify(struct die_args *args, unsigned long cmd)
 {
@@ -485,16 +500,19 @@ static int __kgdb_notify(struct die_args *args, unsigned long cmd)
 		break;
 
 	case DIE_DEBUG:
-		if (atomic_read(&kgdb_cpu_doing_single_step) ==
-		    raw_smp_processor_id()) {
+		if (atomic_read(&kgdb_cpu_doing_single_step) != -1) {
 			if (user_mode(regs))
 				return single_step_cont(regs, args);
 			break;
-		} else if (test_thread_flag(TIF_SINGLESTEP))
+		} else if (test_thread_flag(TIF_SINGLESTEP)) {
 			/* This means a user thread is single stepping
 			 * a system call which should be ignored
 			 */
 			return NOTIFY_DONE;
+		} else if (recieved_hw_brk[raw_smp_processor_id()] == 1) {
+			recieved_hw_brk[raw_smp_processor_id()] = 0;
+			return NOTIFY_STOP;
+		}
 		/* fall through */
 	default:
 		if (user_mode(regs))
@@ -531,6 +549,23 @@ static struct notifier_block kgdb_notifier = {
 	.priority	= -INT_MAX,
 };
 
+static void kgdb_hw_bp(struct perf_event *bp, int nmi,
+		       struct perf_sample_data *data,
+		       struct pt_regs *regs)
+{
+	struct die_args args;
+
+	args.trapnr = 0;
+	args.signr = 5;
+	args.err = 0;
+	args.regs = regs;
+	args.str = "debug";
+	if (__kgdb_notify(&args, DIE_DEBUG) == NOTIFY_STOP)
+		recieved_hw_brk[raw_smp_processor_id()] = 1;
+	else
+		recieved_hw_brk[raw_smp_processor_id()] = 0;
+}
+
 /**
  *	kgdb_arch_init - Perform any architecture specific initalization.
  *
@@ -539,7 +574,42 @@ static struct notifier_block kgdb_notifier = {
  */
 int kgdb_arch_init(void)
 {
-	return register_die_notifier(&kgdb_notifier);
+	int i, cpu;
+	int ret;
+	struct perf_event_attr attr;
+	struct perf_event **pevent;
+
+	ret = register_die_notifier(&kgdb_notifier);
+	if (ret != 0)
+		return ret;
+	/*
+	 * Pre-allocate the hw breakpoint structions in the non-atomic
+	 * portion of kgdb because this operation requires mutexs to
+	 * complete.
+	 */
+	attr.bp_addr = (unsigned long)kgdb_arch_init;
+	attr.type = PERF_TYPE_BREAKPOINT;
+	attr.bp_len = HW_BREAKPOINT_LEN_1;
+	attr.bp_type = HW_BREAKPOINT_X;
+	attr.disabled = 1;
+	for (i = 0; i < 4; i++) {
+		breakinfo[i].pev = register_wide_hw_breakpoint(&attr,
+							       kgdb_hw_bp);
+		if (IS_ERR(breakinfo[i].pev)) {
+			printk(KERN_ERR "kgdb: Could not allocate hw breakpoints\n");
+			breakinfo[i].pev = NULL;
+			kgdb_arch_exit();
+			return -1;
+		}
+		for_each_online_cpu(cpu) {
+			pevent = per_cpu_ptr(breakinfo[i].pev, cpu);
+			if (pevent[0]->destroy != NULL) {
+				pevent[0]->destroy = NULL;
+				release_bp_slot(*pevent);
+			}
+		}
+	}
+	return ret;
 }
 
 /**
@@ -550,6 +620,13 @@ int kgdb_arch_init(void)
  */
 void kgdb_arch_exit(void)
 {
+	int i;
+	for (i = 0; i < 4; i++) {
+		if (breakinfo[i].pev) {
+			unregister_wide_hw_breakpoint(breakinfo[i].pev);
+			breakinfo[i].pev = NULL;
+		}
+	}
 	unregister_die_notifier(&kgdb_notifier);
 }
 
