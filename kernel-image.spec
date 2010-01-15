@@ -1,9 +1,9 @@
 Name: kernel-image-un-def-live
 Version: 2.6.33
-Release: alt0.1
+Release: alt0.4
 epoch:1 
 %define kernel_base_version	%version
-%define kernel_extra_version	0.3.0
+%define kernel_extra_version	rc3
 # Numeric extra version scheme developed by Alexander Bokovoy:
 # 0.0.X -- preX
 # 0.X.0 -- rcX
@@ -293,10 +293,10 @@ for dir in asm-*; do
 	rm -rf -- "$dir"
 done
 %ifarch x86_64
-ln -s asm-x86 asm-x86_64
+#ln -s asm-x86 asm-x86_64
 %else
 %ifarch i586
-ln -s asm-x86 asm-i386
+#ln -s asm-x86 asm-i386
 %endif
 %endif
 popd
@@ -479,11 +479,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
-* Thu Jan 14 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.33-alt0.1
-- 
+* Thu Jan 14 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.33-alt0.4
+- extraversion updated to be -rc3
 
 * Tue Jan 12 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.32-alt0.2
-- 2.6.32.3 merged
+- 2.6.32-rc3 merged
 
 * Tue Jan 12 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.32-alt0.1
 - "live" - aufs2 and squashfs-lzma included
