@@ -1794,9 +1794,11 @@ sys_call_table:
 	data8 sys_pipe2
 	data8 sys_inotify_init1
 
-.rept 1499-1313
+/* the open set (1318 ... 1499) */
+.rept 1499-1318-1
 	data8 sys_ni_syscall
 .endr
+
 	data8 sys_fairsched_vcpus
 	data8 sys_fairsched_mknod		// 1500
 	data8 sys_fairsched_rmnod

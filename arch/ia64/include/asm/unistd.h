@@ -322,7 +322,7 @@
 #ifdef __KERNEL__
 
 
-#define NR_syscalls			295 /* length of syscall table */
+#define NR_syscalls			485 /* length of syscall table */
 
 /*
  * The following defines stop scripts/checksyscalls.sh from complaining about
@@ -378,6 +378,8 @@ asmlinkage long sys_rt_sigaction(int sig,
 				 const struct sigaction __user *act,
 				 struct sigaction __user *oact,
 				 size_t sigsetsize);
+
+int kernel_execve(const char *filename, char *const argv[], char *const envp[]);
 
 /*
  * "Conditional" syscalls

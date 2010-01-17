@@ -160,10 +160,14 @@ static int get_fs_path(struct task_struct *task, struct path *path, bool root)
 	fs = task->fs;
 	if (fs) {
 		read_lock(&fs->lock);
-		*path = root ? fs->root : fs->pwd;
-		path_get(path);
-		read_unlock(&fs->lock);
 		result = 0;
+		if (!root)
+			result = d_root_check(&fs->pwd);
+		if (result == 0) {
+			*path = root ? fs->root : fs->pwd;
+			path_get(path);
+		}
+		read_unlock(&fs->lock);
 	}
 	task_unlock(task);
 	return result;
@@ -240,22 +244,19 @@ static int check_mem_permission(struct task_struct *task)
 struct mm_struct *mm_for_maps(struct task_struct *task)
 {
 	struct mm_struct *mm = get_task_mm(task);
-	if (!mm)
-		return NULL;
-	down_read(&mm->mmap_sem);
-	task_lock(task);
-	if (task->mm != mm)
-		goto out;
-	if (task->mm != current->mm &&
-	    __ptrace_may_access(task, PTRACE_MODE_READ) < 0)
-		goto out;
-	task_unlock(task);
+
+	if (mm && mm != current->mm) {
+		/*
+		 * task->mm can be changed before security check,
+		 * in that case we must notice the change after.
+		 */
+		if (!ptrace_may_access(task, PTRACE_MODE_READ) ||
+		    mm != task->mm) {
+			mmput(mm);
+			mm = NULL;
+		}
+	}
 	return mm;
-out:
-	task_unlock(task);
-	up_read(&mm->mmap_sem);
-	mmput(mm);
-	return NULL;
 }
 
 static int proc_pid_cmdline(struct task_struct *task, char * buffer)

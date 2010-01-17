@@ -75,8 +75,6 @@ EXPORT_SYMBOL(xor_ia64_4);
 EXPORT_SYMBOL(xor_ia64_5);
 #endif
 
-EXPORT_SYMBOL(empty_zero_page);
-
 #include <asm/pal.h>
 EXPORT_SYMBOL(ia64_pal_call_phys_stacked);
 EXPORT_SYMBOL(ia64_pal_call_phys_static);
@@ -114,3 +112,6 @@ EXPORT_SYMBOL_GPL(esi_call_phys);
 #endif
 extern char ia64_ivt[];
 EXPORT_SYMBOL(ia64_ivt);
+
+#include <asm/unistd.h>
+EXPORT_SYMBOL(kernel_execve);

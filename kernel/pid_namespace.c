@@ -184,8 +184,8 @@ static int __pid_ns_attach_task(struct pid_namespace *ns,
 	for (type = 0; type < PIDTYPE_MAX; ++type)
 		INIT_HLIST_HEAD(&pid->tasks[type]);
 
-	old_size = pid->numbers[pid->level - 1].ns->pid_cachep->objuse;
-	new_size = pid->numbers[pid->level].ns->pid_cachep->objuse;
+	old_size = kmem_cache_objuse(pid->numbers[pid->level - 1].ns->pid_cachep);
+	new_size = kmem_cache_objuse(pid->numbers[pid->level].ns->pid_cachep);
 	local_irq_disable();
 	/*
 	 * Depending on sizeof(struct foo), cache flags (redzoning, etc)

@@ -36,7 +36,9 @@
 #include <asm/desc.h>
 #endif
 #include <asm/mmu_context.h>
+#ifdef CONFIG_X86
 #include <asm/vsyscall.h>
+#endif
 #include <linux/swapops.h>
 #include <linux/cpt_image.h>
 

@@ -19,6 +19,7 @@
 #include <linux/mm.h>
 #include <linux/nmi.h>
 #include <linux/swap.h>
+#include <linux/module.h>
 
 #include <asm/meminit.h>
 #include <asm/pgalloc.h>
@@ -92,7 +93,7 @@ void show_mem(void)
 	       quicklist_total_size());
 	printk(KERN_INFO "%d free buffer pages\n", nr_free_buffer_pages());
 }
-
+EXPORT_SYMBOL(show_mem);
 
 /* physical address where the bootmem map is located */
 unsigned long bootmap_start;

@@ -142,9 +142,20 @@ int copy_namespaces(unsigned long flags, struct task_struct *tsk,
 				CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET)))
 		return 0;
 
-	if (!capable(CAP_SYS_ADMIN) && !force_admin) {
-		err = -EPERM;
-		goto out;
+	if (!force_admin) {
+		if (!capable(CAP_SYS_ADMIN)) {
+			err = -EPERM;
+			goto out;
+		}
+
+		/*
+		 * netns-vs-sysfs is deadly broken, thus new namespace
+		 * (even in ve0) can bring the node down
+		 */
+		if (flags & CLONE_NEWNET) {
+			err = -EINVAL;
+			goto out;
+		}
 	}
 
 	/*
@@ -220,6 +231,9 @@ int unshare_nsproxy_namespaces(unsigned long unshare_flags,
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
+
+	if (unshare_flags & CLONE_NEWNET)
+		return -EINVAL;
 
 	*new_nsp = create_new_namespaces(unshare_flags, current,
 				new_fs ? new_fs : current->fs);

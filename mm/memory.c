@@ -2509,7 +2509,8 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		goto oom_free_page;
 
 	entry = mk_pte(page, vma->vm_page_prot);
-	entry = maybe_mkwrite(pte_mkdirty(entry), vma);
+	if (vma->vm_flags & VM_WRITE)
+		entry = pte_mkwrite(pte_mkdirty(entry));
 
 	page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
 	if (!pte_none(*page_table))
@@ -2929,9 +2930,8 @@ int __pud_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address)
 	spin_unlock(&mm->page_table_lock);
 	return 0;
 }
-#endif /* __PAGETABLE_PUD_FOLDED */
-
 EXPORT_SYMBOL_GPL(__pud_alloc);
+#endif /* __PAGETABLE_PUD_FOLDED */
 
 #ifndef __PAGETABLE_PMD_FOLDED
 /*
@@ -2961,9 +2961,8 @@ int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
 	spin_unlock(&mm->page_table_lock);
 	return 0;
 }
-#endif /* __PAGETABLE_PMD_FOLDED */
-
 EXPORT_SYMBOL_GPL(__pmd_alloc);
+#endif /* __PAGETABLE_PMD_FOLDED */
 
 int make_pages_present(unsigned long addr, unsigned long end)
 {

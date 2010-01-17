@@ -2588,7 +2588,7 @@ static __net_exit void pppol2tp_exit_net(struct net *net)
 	kfree(pn);
 }
 
-static __net_initdata struct pernet_operations pppol2tp_net_ops = {
+static struct pernet_operations pppol2tp_net_ops = {
 	.init = pppol2tp_init_net,
 	.exit = pppol2tp_exit_net,
 };
@@ -2623,6 +2623,7 @@ out_unregister_pppol2tp_proto:
 static void __exit pppol2tp_exit(void)
 {
 	unregister_pppox_proto(PX_PROTO_OL2TP);
+	unregister_pernet_gen_device(pppol2tp_net_id, &pppol2tp_net_ops);
 	proto_unregister(&pppol2tp_sk_proto);
 }
 

@@ -3612,7 +3612,7 @@ static int rtl8169_poll(struct napi_struct *napi, int budget)
 	rtl8169_tx_interrupt(dev, tp, ioaddr);
 
 	if (work_done < budget) {
-		napi_complete(napi);
+		netif_rx_complete(dev, napi);
 
 		/* We need for force the visibility of tp->intr_mask
 		 * for other CPUs, as we can loose an MSI interrupt

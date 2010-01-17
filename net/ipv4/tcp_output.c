@@ -2411,6 +2411,8 @@ static void tcp_connect_init(struct sock *sk)
 	if (!tp->window_clamp)
 		tp->window_clamp = dst_metric(dst, RTAX_WINDOW);
 	tp->advmss = dst_metric(dst, RTAX_ADVMSS);
+	if (tp->advmss == 0)
+		tp->advmss = 1460;
 	if (tp->rx_opt.user_mss && tp->rx_opt.user_mss < tp->advmss)
 		tp->advmss = tp->rx_opt.user_mss;
 

@@ -88,6 +88,7 @@ static void inline bc_cfq_bc_check_empty(struct cfq_bc_data *cfq_bc)
 
 static void bc_release_cfq_bc(struct cfq_bc_data *cfq_bc)
 {
+	struct cfq_io_context *cic;
 	struct cfq_data *cfqd;
 	elevator_t *eq;
 	int i;
@@ -108,6 +109,16 @@ static void bc_release_cfq_bc(struct cfq_bc_data *cfq_bc)
 	if (cfq_bc->async_idle_cfqq) {
 		eq->ops->put_queue(cfq_bc->async_idle_cfqq);
 		cfq_bc->async_idle_cfqq = NULL;
+	}
+	list_for_each_entry(cic, &cfqd->cic_list, queue_list) {
+		if (cic->cfqq[0] && cic->cfqq[0]->cfq_bc == cfq_bc) {
+			eq->ops->put_queue(cic->cfqq[0]);
+			cic->cfqq[0] = NULL;
+		}
+		if (cic->cfqq[1] && cic->cfqq[1]->cfq_bc == cfq_bc) {
+			eq->ops->put_queue(cic->cfqq[1]);
+			cic->cfqq[1] = NULL;
+		}
 	}
 	/* 
 	 * Note: this cfq_bc is already not in active list,

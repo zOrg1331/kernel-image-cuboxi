@@ -27,6 +27,8 @@
 #include <asm/meminit.h>
 #include <asm/numa.h>
 #include <asm/sections.h>
+#include <linux/module.h>
+
 
 /*
  * Track per-node information needed to setup the boot memory allocator, the
@@ -566,6 +568,7 @@ void show_mem(void)
 	       quicklist_total_size());
 	printk(KERN_INFO "%d free buffer pages\n", nr_free_buffer_pages());
 }
+EXPORT_SYMBOL(show_mem);
 
 /**
  * call_pernode_memory - use SRAT to call callback functions with node info

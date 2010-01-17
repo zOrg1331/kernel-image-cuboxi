@@ -1986,7 +1986,7 @@ adjudge_to_death:
 		if (ub_too_many_orphans(sk, orphans)) {
 			if (net_ratelimit()) {
 				int ubid = 0;
-#ifdef CONFIG_USER_RESOURCE
+#ifdef CONFIG_BEANCOUNTERS
 				ubid = sock_has_ubc(sk) ?
 				   top_beancounter(sock_bc(sk)->ub)->ub_uid : 0;
 #endif
