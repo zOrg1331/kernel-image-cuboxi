@@ -23,9 +23,6 @@
  *
  *   Integrator address map
  *
- * 	NOTE: This is a multi-hosted header file for use with uHAL and
- * 	      supported debuggers.
- *
  * ***********************************************************************/
 
 #ifndef __address_h
@@ -328,20 +325,6 @@
  */
 #define PHYS_PCI_V3_BASE                0x62000000
 
-#define PCI_DRAMSIZE                    INTEGRATOR_SSRAM_SIZE
-
-/* 'export' these to UHAL */
-#define UHAL_PCI_IO                     PCI_IO_BASE
-#define UHAL_PCI_MEM                    PCI_MEM_BASE
-#define UHAL_PCI_ALLOC_IO_BASE          0x00004000
-#define UHAL_PCI_ALLOC_MEM_BASE         PCI_MEM_BASE
-#define UHAL_PCI_MAX_SLOT               20
-
-/* ========================================================================
- *  Start of uHAL definitions
- * ========================================================================
- */
-
 /* ------------------------------------------------------------------------
  *  Integrator Interrupt Controllers
  * ------------------------------------------------------------------------
@@ -389,7 +372,7 @@
  */
 
 /* ------------------------------------------------------------------------
- *  LED's - The header LED is not accessible via the uHAL API
+ *  LED's
  * ------------------------------------------------------------------------
  *
  */
@@ -402,34 +385,18 @@
 #define LED_BANK                        INTEGRATOR_DBG_LEDS
 
 /*
- *  Memory definitions - run uHAL out of SSRAM.
- *
- */
-#define uHAL_MEMORY_SIZE                INTEGRATOR_SSRAM_SIZE
-
-/*
- *  Clean base - dummy
- *
- */
-#define CLEAN_BASE                      INTEGRATOR_BOOT_ROM_HI
-
-/*
  *  Timer definitions
  *
  *  Only use timer 1 & 2
  *  (both run at 24MHz and will need the clock divider set to 16).
  *
- *  Timer 0 runs at bus frequency and therefore could vary and currently
- *  uHAL can't handle that.
- *
+ *  Timer 0 runs at bus frequency
  */
 
 #define INTEGRATOR_TIMER0_BASE          INTEGRATOR_CT_BASE
 #define INTEGRATOR_TIMER1_BASE          (INTEGRATOR_CT_BASE + 0x100)
 #define INTEGRATOR_TIMER2_BASE          (INTEGRATOR_CT_BASE + 0x200)
 
-#define MAX_TIMER                       2
-#define MAX_PERIOD                      699050
 #define TICKS_PER_uSEC                  24
 
 /*
@@ -437,14 +404,9 @@
  *
  */
 #define mSEC_1                          1000
-#define mSEC_5                          (mSEC_1 * 5)
 #define mSEC_10                         (mSEC_1 * 10)
-#define mSEC_25                         (mSEC_1 * 25)
-#define SEC_1                           (mSEC_1 * 1000)
 
 #define INTEGRATOR_CSR_BASE             0x10000000
 #define INTEGRATOR_CSR_SIZE             0x10000000
 
 #endif
-
-/* 	END */
