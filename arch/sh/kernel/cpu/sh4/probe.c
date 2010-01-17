@@ -124,6 +124,7 @@ int __init detect_cpu_and_cache_system(void)
 		boot_cpu_data.type = CPU_SH7785;
 		break;
 	case 0x4004:
+	case 0x4005:
 		boot_cpu_data.type = CPU_SH7786;
 		boot_cpu_data.flags |= CPU_HAS_PTEAEX | CPU_HAS_L2_CACHE;
 		break;
@@ -227,7 +228,7 @@ int __init detect_cpu_and_cache_system(void)
 			 * Size calculation is much more sensible
 			 * than it is for the L1.
 			 *
-			 * Sizes are 128KB, 258KB, 512KB, and 1MB.
+			 * Sizes are 128KB, 256KB, 512KB, and 1MB.
 			 */
 			size = (cvr & 0xf) << 17;
 
