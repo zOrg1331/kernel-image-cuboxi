@@ -2097,12 +2097,7 @@ cfq_set_request(struct request_queue *q, struct request *rq, gfp_t gfp_mask)
 
 	rq->elevator_private = cic;
 	rq->elevator_private2 = cfqq;
-	bc=ub_by_iopriv(cfqq->cfq_bc->ub_iopriv);
-	if((((int)bc>>16)&0xff)==0x6b)
-	{
-		printk("ERROR: bc is 0x%x(alloced=%i)\n",bc,alloced);
-	}
-	get_beancounter(bc);
+	get_beancounter(ub_by_iopriv(cfqq->cfq_bc->ub_iopriv));
 	return 0;
 
 queue_fail:
