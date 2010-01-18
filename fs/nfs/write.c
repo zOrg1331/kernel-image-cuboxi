@@ -1420,7 +1420,7 @@ static int nfs_commit_unstable_pages(struct inode *inode, struct writeback_contr
 		    NFS_PAGE_TAG_LOCKED))
 		goto out_mark_dirty;
 
-	if (wbc->nonblocking)
+	if (wbc->nonblocking || wbc->for_background)
 		flags = 0;
 	ret = nfs_commit_inode(inode, flags);
 	if (ret >= 0)
