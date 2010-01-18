@@ -129,7 +129,7 @@ static int sd_getexposure(struct gspca_dev *gspca_dev, s32 *val);
 static int sd_setautoexposure(struct gspca_dev *gspca_dev, s32 val);
 static int sd_getautoexposure(struct gspca_dev *gspca_dev, s32 *val);
 
-static struct ctrl sd_ctrls[] = {
+static const struct ctrl sd_ctrls[] = {
 	{
 #define BRIGHTNESS_IDX 0
 	    {
@@ -2319,7 +2319,7 @@ static void do_autogain(struct gspca_dev *gspca_dev, u16 avg_lum)
 		}
 	}
 	if (avg_lum > MAX_AVG_LUM) {
-		if (sd->gain - 1 >= 0) {
+		if (sd->gain >= 1) {
 			sd->gain--;
 			set_gain(gspca_dev);
 		}
