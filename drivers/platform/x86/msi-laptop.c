@@ -66,6 +66,12 @@
 #define MSI_EC_COMMAND_WIRELESS 0x10
 #define MSI_EC_COMMAND_LCD_LEVEL 0x11
 
+#define MSI_STANDARD_EC_COMMAND_ADDRESS	0x2e
+#define MSI_STANDARD_EC_BLUETOOTH_MASK	(1 << 0)
+#define MSI_STANDARD_EC_WEBCAM_MASK	(1 << 1)
+#define MSI_STANDARD_EC_WLAN_MASK	(1 << 3)
+#define MSI_STANDARD_EC_3G_MASK		(1 << 4)
+
 static int force;
 module_param(force, bool, 0);
 MODULE_PARM_DESC(force, "Force driver load, ignore DMI data");
@@ -73,6 +79,9 @@ MODULE_PARM_DESC(force, "Force driver load, ignore DMI data");
 static int auto_brightness;
 module_param(auto_brightness, int, 0);
 MODULE_PARM_DESC(auto_brightness, "Enable automatic brightness control (0: disabled; 1: enabled; 2: don't touch)");
+
+static bool old_ec_model;
+static int wlan_s, bluetooth_s, threeg_s;
 
 /* Hardware access */
 
@@ -148,6 +157,24 @@ static int get_wireless_state(int *wlan, int *bluetooth)
 	return 0;
 }
 
+static int get_wireless_state_ec_standard(void)
+{
+	u8 rdata;
+	int result;
+
+	result = ec_read(MSI_STANDARD_EC_COMMAND_ADDRESS, &rdata);
+	if (result < 0)
+		return -1;
+
+	wlan_s = !!(rdata & MSI_STANDARD_EC_WLAN_MASK);
+
+	bluetooth_s = !!(rdata & MSI_STANDARD_EC_BLUETOOTH_MASK);
+
+	threeg_s = !!(rdata & MSI_STANDARD_EC_3G_MASK);
+
+	return 0;
+}
+
 /* Backlight device stuff */
 
 static int bl_get_brightness(struct backlight_device *b)
@@ -176,7 +203,12 @@ static ssize_t show_wlan(struct device *dev,
 
 	int ret, enabled;
 
-	ret = get_wireless_state(&enabled, NULL);
+	if (old_ec_model) {
+		ret = get_wireless_state(&enabled, NULL);
+	} else {
+		ret = get_wireless_state_ec_standard();
+		enabled = wlan_s;
+	}
 	if (ret < 0)
 		return ret;
 
@@ -189,11 +221,33 @@ static ssize_t show_bluetooth(struct device *dev,
 
 	int ret, enabled;
 
-	ret = get_wireless_state(NULL, &enabled);
+	if (old_ec_model) {
+		ret = get_wireless_state(NULL, &enabled);
+	} else {
+		ret = get_wireless_state_ec_standard();
+		enabled = bluetooth_s;
+	}
 	if (ret < 0)
 		return ret;
 
 	return sprintf(buf, "%i\n", enabled);
+}
+
+static ssize_t show_threeg(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+
+	int ret;
+
+	/* old msi ec not support 3G */
+	if (old_ec_model)
+		return -1;
+
+	ret = get_wireless_state_ec_standard();
+	if (ret < 0)
+		return ret;
+
+	return sprintf(buf, "%i\n", threeg_s);
 }
 
 static ssize_t show_lcd_level(struct device *dev,
@@ -258,6 +312,7 @@ static DEVICE_ATTR(lcd_level, 0644, show_lcd_level, store_lcd_level);
 static DEVICE_ATTR(auto_brightness, 0644, show_auto_brightness, store_auto_brightness);
 static DEVICE_ATTR(bluetooth, 0444, show_bluetooth, NULL);
 static DEVICE_ATTR(wlan, 0444, show_wlan, NULL);
+static DEVICE_ATTR(threeg, 0444, show_threeg, NULL);
 
 static struct attribute *msipf_attributes[] = {
 	&dev_attr_lcd_level.attr,
@@ -339,8 +394,8 @@ static int __init msi_init(void)
 	if (acpi_disabled)
 		return -ENODEV;
 
-	if (!force && !dmi_check_system(msi_dmi_table))
-		return -ENODEV;
+	if (force || dmi_check_system(msi_dmi_table))
+		old_ec_model = 1;
 
 	if (auto_brightness < 0 || auto_brightness > 2)
 		return -EINVAL;
@@ -378,6 +433,12 @@ static int __init msi_init(void)
 	if (ret)
 		goto fail_platform_device2;
 
+	if (!old_ec_model) {
+		ret = device_create_file(&msipf_device->dev, &dev_attr_threeg);
+		if (ret)
+			goto fail_platform_device2;
+	}
+
 	/* Disable automatic brightness control by default because
 	 * this module was probably loaded to do brightness control in
 	 * software. */
@@ -412,6 +473,8 @@ static void __exit msi_cleanup(void)
 {
 
 	sysfs_remove_group(&msipf_device->dev.kobj, &msipf_attribute_group);
+	if (!old_ec_model)
+		device_remove_file(&msipf_device->dev, &dev_attr_threeg);
 	platform_device_unregister(msipf_device);
 	platform_driver_unregister(&msipf_driver);
 	backlight_device_unregister(msibl_device);
@@ -435,3 +498,4 @@ MODULE_ALIAS("dmi:*:svnMICRO-STARINT'LCO.,LTD:pnMS-1013:pvr0131*:cvnMICRO-STARIN
 MODULE_ALIAS("dmi:*:svnMicro-StarInternational:pnMS-1058:pvr0581:rvnMSI:rnMS-1058:*:ct10:*");
 MODULE_ALIAS("dmi:*:svnMicro-StarInternational:pnMS-1412:*:rvnMSI:rnMS-1412:*:cvnMICRO-STARINT'LCO.,LTD:ct10:*");
 MODULE_ALIAS("dmi:*:svnNOTEBOOK:pnSAM2000:pvr0131*:cvnMICRO-STARINT'LCO.,LTD:ct10:*");
+MODULE_ALIAS("dmi:*:svnMICRO-STARINTERNATIONAL*:pnMS-N034:*");
