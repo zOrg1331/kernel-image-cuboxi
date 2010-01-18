@@ -1946,8 +1946,9 @@ xfs_ifree_cluster(
 	xfs_inode_t		*ip, **ip_found;
 	xfs_inode_log_item_t	*iip;
 	xfs_log_item_t		*lip;
-	xfs_perag_t		*pag = xfs_get_perag(mp, inum);
+	struct xfs_perag	*pag;
 
+	pag = xfs_perag_get(mp, XFS_INO_TO_AGNO(mp, inum));
 	if (mp->m_sb.sb_blocksize >= XFS_INODE_CLUSTER_SIZE(mp)) {
 		blks_per_cluster = 1;
 		ninodes = mp->m_sb.sb_inopblock;
@@ -2088,7 +2089,7 @@ xfs_ifree_cluster(
 	}
 
 	kmem_free(ip_found);
-	xfs_put_perag(mp, pag);
+	xfs_perag_put(pag);
 }
 
 /*
@@ -2675,7 +2676,7 @@ xfs_iflush_cluster(
 	xfs_buf_t	*bp)
 {
 	xfs_mount_t		*mp = ip->i_mount;
-	xfs_perag_t		*pag = xfs_get_perag(mp, ip->i_ino);
+	struct xfs_perag	*pag;
 	unsigned long		first_index, mask;
 	unsigned long		inodes_per_cluster;
 	int			ilist_size;
@@ -2686,6 +2687,7 @@ xfs_iflush_cluster(
 	int			bufwasdelwri;
 	int			i;
 
+	pag = xfs_perag_get(mp, XFS_INO_TO_AGNO(mp, ip->i_ino));
 	ASSERT(pag->pagi_inodeok);
 	ASSERT(pag->pag_ici_init);
 
@@ -2693,7 +2695,7 @@ xfs_iflush_cluster(
 	ilist_size = inodes_per_cluster * sizeof(xfs_inode_t *);
 	ilist = kmem_alloc(ilist_size, KM_MAYFAIL|KM_NOFS);
 	if (!ilist)
-		return 0;
+		goto out_put;
 
 	mask = ~(((XFS_INODE_CLUSTER_SIZE(mp) >> mp->m_sb.sb_inodelog)) - 1);
 	first_index = XFS_INO_TO_AGINO(mp, ip->i_ino) & mask;
@@ -2762,6 +2764,8 @@ xfs_iflush_cluster(
 out_free:
 	read_unlock(&pag->pag_ici_lock);
 	kmem_free(ilist);
+out_put:
+	xfs_perag_put(pag);
 	return 0;
 
 
@@ -2805,6 +2809,7 @@ cluster_corrupt_out:
 	 */
 	xfs_iflush_abort(iq);
 	kmem_free(ilist);
+	xfs_perag_put(pag);
 	return XFS_ERROR(EFSCORRUPTED);
 }
 
@@ -2842,13 +2847,9 @@ xfs_iflush(
 
 	/*
 	 * If the inode isn't dirty, then just release the inode flush lock and
-	 * do nothing. Treat stale inodes the same; we cannot rely on the
-	 * backing buffer remaining stale in cache for the remaining life of
-	 * the stale inode and so xfs_itobp() below may give us a buffer that
-	 * no longer contains inodes below. Doing this stale check here also
-	 * avoids forcing the log on pinned, stale inodes.
+	 * do nothing.
 	 */
-	if (xfs_inode_clean(ip) || xfs_iflags_test(ip, XFS_ISTALE)) {
+	if (xfs_inode_clean(ip)) {
 		xfs_ifunlock(ip);
 		return 0;
 	}
@@ -2870,6 +2871,19 @@ xfs_iflush(
 		return EAGAIN;
 	}
 	xfs_iunpin_wait(ip);
+
+	/*
+	 * For stale inodes we cannot rely on the backing buffer remaining
+	 * stale in cache for the remaining life of the stale inode and so
+	 * xfs_itobp() below may give us a buffer that no longer contains
+	 * inodes below. We have to check this after ensuring the inode is
+	 * unpinned so that it is safe to reclaim the stale inode after the
+	 * flush call.
+	 */
+	if (xfs_iflags_test(ip, XFS_ISTALE)) {
+		xfs_ifunlock(ip);
+		return 0;
+	}
 
 	/*
 	 * This may have been unpinned because the filesystem is shutting

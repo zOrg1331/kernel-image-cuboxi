@@ -877,12 +877,11 @@ xfsaild(
 {
 	struct xfs_ail	*ailp = data;
 	xfs_lsn_t	last_pushed_lsn = 0;
-	long		tout = 0;
+	long		tout = 0; /* milliseconds */
 
 	while (!kthread_should_stop()) {
-		if (tout)
-			schedule_timeout_interruptible(msecs_to_jiffies(tout));
-		tout = 1000;
+		schedule_timeout_interruptible(tout ?
+				msecs_to_jiffies(tout) : MAX_SCHEDULE_TIMEOUT);
 
 		/* swsusp */
 		try_to_freeze();
@@ -954,16 +953,14 @@ xfs_fs_destroy_inode(
 	ASSERT_ALWAYS(!xfs_iflags_test(ip, XFS_IRECLAIM));
 
 	/*
-	 * If we have nothing to flush with this inode then complete the
-	 * teardown now, otherwise delay the flush operation.
+	 * We always use background reclaim here because even if the
+	 * inode is clean, it still may be under IO and hence we have
+	 * to take the flush lock. The background reclaim path handles
+	 * this more efficiently than we can here, so simply let background
+	 * reclaim tear down all inodes.
 	 */
-	if (!xfs_inode_clean(ip)) {
-		xfs_inode_set_reclaim_tag(ip);
-		return;
-	}
-
 out_reclaim:
-	xfs_ireclaim(ip);
+	xfs_inode_set_reclaim_tag(ip);
 }
 
 /*
