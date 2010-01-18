@@ -1,5 +1,5 @@
-%define original_kernel_version	2.6.32
-%define kernel_version		2.6.32
+%define original_kernel_version	2.6.33
+%define kernel_version		2.6.33
 %define patch_level		%nil
 
 %define testing			0
@@ -14,7 +14,7 @@
 # 0.0.X -- preX
 # 0.X.0 -- rcX, testX
 # 1.0.0 -- release
-%define patch_level_numeric     1.0.0
+%define patch_level_numeric     0.4.0
 
 Name: kernel-source-%kernel_version
 Version: %patch_level_numeric
@@ -51,6 +51,9 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 %kernel_src/kernel-source-%kernel_version.tar.bz2
 
 %changelog
+* Mon Jan 18 2010 Valery Inozemtsev <shrek@altlinux.ru> 0.4.0-alt1
+- 2.6.33-rc4
+
 * Thu Dec 03 2009 Valery Inozemtsev <shrek@altlinux.ru> 1.0.0-alt1
 - 2.6.32
 
@@ -94,7 +97,7 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 - 2.6.26
 
 * Sun Apr 20 2008 Michail Yakushin <silicium@altlinux.ru> 1.0.0-alt1
-- 2.6.25 
+- 2.6.25
 
 * Fri Jan 25 2008 Sergey Vlasov <vsu@altlinux.ru> 1.0.0-alt1
 - 2.6.24
