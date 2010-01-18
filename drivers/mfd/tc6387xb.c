@@ -28,7 +28,18 @@ struct tc6387xb {
 	struct resource rscr;
 };
 
-static struct resource tc6387xb_mmc_resources[];
+static struct resource tc6387xb_mmc_resources[] = {
+	{
+		.start = 0x800,
+		.end   = 0x9ff,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.start = 0,
+		.end   = 0,
+		.flags = IORESOURCE_IRQ,
+	},
+};
 
 /*--------------------------------------------------------------------------*/
 
@@ -54,7 +65,7 @@ static int tc6387xb_resume(struct platform_device *dev)
 	if (pdata && pdata->resume)
 		pdata->resume(dev);
 
-	tmio_core_mmc_resume(tc6387xb->scr + 0x200,
+	tmio_core_mmc_resume(tc6387xb->scr + 0x200, 0,
 		tc6387xb_mmc_resources[0].start & 0xfffe);
 
 	return 0;
@@ -71,7 +82,7 @@ static void tc6387xb_mmc_pwr(struct platform_device *mmc, int state)
 	struct platform_device *dev = to_platform_device(mmc->dev.parent);
 	struct tc6387xb *tc6387xb = platform_get_drvdata(dev);
 
-	tmio_core_mmc_pwr(tc6387xb->scr + 0x200, state);
+	tmio_core_mmc_pwr(tc6387xb->scr + 0x200, 0, state);
 }
 
 static void tc6387xb_mmc_clk_div(struct platform_device *mmc, int state)
@@ -79,7 +90,7 @@ static void tc6387xb_mmc_clk_div(struct platform_device *mmc, int state)
 	struct platform_device *dev = to_platform_device(mmc->dev.parent);
 	struct tc6387xb *tc6387xb = platform_get_drvdata(dev);
 
-	tmio_core_mmc_clk_div(tc6387xb->scr + 0x200, state);
+	tmio_core_mmc_clk_div(tc6387xb->scr + 0x200, 0, state);
 }
 
 
@@ -90,7 +101,7 @@ static int tc6387xb_mmc_enable(struct platform_device *mmc)
 
 	clk_enable(tc6387xb->clk32k);
 
-	tmio_core_mmc_enable(tc6387xb->scr + 0x200,
+	tmio_core_mmc_enable(tc6387xb->scr + 0x200, 0,
 		tc6387xb_mmc_resources[0].start & 0xfffe);
 
 	return 0;
@@ -109,23 +120,10 @@ static int tc6387xb_mmc_disable(struct platform_device *mmc)
 static struct tmio_mmc_data tc6387xb_mmc_data = {
 	.hclk = 24000000,
 	.set_pwr = tc6387xb_mmc_pwr,
-	.set_no_clk_div = tc6387xb_mmc_clk_div,
+	.set_clk_div = tc6387xb_mmc_clk_div,
 };
 
 /*--------------------------------------------------------------------------*/
-
-static struct resource tc6387xb_mmc_resources[] = {
-	{
-		.start = 0x800,
-		.end   = 0x9ff,
-		.flags = IORESOURCE_MEM,
-	},
-	{
-		.start = 0,
-		.end   = 0,
-		.flags = IORESOURCE_IRQ,
-	},
-};
 
 static struct mfd_cell tc6387xb_cells[] = {
 	[TC6387XB_CELL_MMC] = {

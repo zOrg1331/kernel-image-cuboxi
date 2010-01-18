@@ -1,6 +1,4 @@
 /*
- * Toshiba TC6393XB SoC support
- *
  * Copyright(c) 2009 Ian Molton <spyro@f2s.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -10,9 +8,7 @@
 
 #include <linux/mfd/tmio.h>
 
-static int shift;
-
-int tmio_core_mmc_enable(void __iomem *cnf, unsigned long base)
+int tmio_core_mmc_enable(void __iomem *cnf, int shift, unsigned long base)
 {
 	/* Enable the MMC/SD Control registers */
 	sd_config_write16(cnf, shift, CNF_CMD, SDCREN);
@@ -24,14 +20,14 @@ int tmio_core_mmc_enable(void __iomem *cnf, unsigned long base)
 	/* The below is required but why? FIXME */
 	sd_config_write8(cnf, shift, CNF_STOP_CLK_CTL, 0x1f);
 
-	/* Power down SD bus*/
+	/* Power down SD bus */
 	sd_config_write8(cnf, shift, CNF_PWR_CTL_2, 0x00);
 
 	return 0;
 }
 EXPORT_SYMBOL(tmio_core_mmc_enable);
 
-int tmio_core_mmc_resume(void __iomem *cnf, unsigned long base)
+int tmio_core_mmc_resume(void __iomem *cnf, int shift, unsigned long base)
 {
 
 	/* Enable the MMC/SD Control registers */
@@ -42,21 +38,15 @@ int tmio_core_mmc_resume(void __iomem *cnf, unsigned long base)
 }
 EXPORT_SYMBOL(tmio_core_mmc_resume);
 
-void tmio_core_mmc_pwr(void __iomem *cnf, int state)
+void tmio_core_mmc_pwr(void __iomem *cnf, int shift, int state)
 {
 	sd_config_write8(cnf, shift, CNF_PWR_CTL_2, state ? 0x02 : 0x00);
 }
 EXPORT_SYMBOL(tmio_core_mmc_pwr);
 
-void tmio_core_mmc_clk_div(void __iomem *cnf, int state)
+void tmio_core_mmc_clk_div(void __iomem *cnf, int shift, int state)
 {
 	sd_config_write8(cnf, shift, CNF_SD_CLK_MODE, state ? 1 : 0);
 }
 EXPORT_SYMBOL(tmio_core_mmc_clk_div);
-
-void tmio_core_set_bus_shift(int bus_shift)
-{
-	shift = bus_shift;
-}
-EXPORT_SYMBOL(tmio_core_set_bus_shift);
 
