@@ -187,6 +187,9 @@ struct port {
 
 	/* We should allow only one process to open a port */
 	bool guest_connected;
+
+	/* Does the Host not want to accept more data currently?  */
+	bool host_throttled;
 };
 
 /* This is the very early arch-specified put chars function. */
@@ -517,6 +520,9 @@ static ssize_t port_fops_write(struct file *filp, const char __user *ubuf,
 
 	port = filp->private_data;
 
+	if (port->host_throttled)
+		return -ENOSPC;
+
 	return send_buf(port, ubuf, count, true);
 }
 
@@ -531,7 +537,7 @@ static unsigned int port_fops_poll(struct file *filp, poll_table *wait)
 	ret = 0;
 	if (port->inbuf)
 		ret |= POLLIN | POLLRDNORM;
-	if (port->host_connected)
+	if (port->host_connected && !port->host_throttled)
 		ret |= POLLOUT;
 	if (!port->host_connected)
 		ret |= POLLHUP;
@@ -842,6 +848,18 @@ static void handle_control_message(struct ports_device *portdev,
 				err);
 
 		break;
+	case VIRTIO_CONSOLE_THROTTLE_PORT:
+		/*
+		 * Hosts can govern some policy to disallow rogue
+		 * guest processes writing indefinitely to ports
+		 * leading to OOM situations.  If we receive this
+		 * message here, it means the Host side of the port
+		 * either reached its max. limit to cache data or
+		 * signal to us that the host is ready to accept more
+		 * data.
+		 */
+		port->host_throttled = cpkt->value;
+		break;
 	}
 }
 
@@ -944,6 +962,7 @@ static int add_port(struct ports_device *portdev, u32 id)
 	port->cons.hvc = NULL;
 
 	port->host_connected = port->guest_connected = false;
+	port->host_throttled = false;
 
 	port->in_vq = portdev->in_vqs[port->id];
 	port->out_vq = portdev->out_vqs[port->id];
