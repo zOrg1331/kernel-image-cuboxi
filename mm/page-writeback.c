@@ -273,8 +273,9 @@ static void clip_bdi_dirty_limit(struct backing_dev_info *bdi,
 		avail_dirty = 0;
 
 	avail_dirty += bdi_stat(bdi, BDI_DIRTY) +
-		bdi_stat(bdi, BDI_UNSTABLE) +
 		bdi_stat(bdi, BDI_WRITEBACK);
+	if (bdi_cap_account_unstable(bdi))
+		avail_dirty += bdi_stat(bdi, BDI_UNSTABLE);
 
 	*pbdi_dirty = min(*pbdi_dirty, avail_dirty);
 }
@@ -510,8 +511,9 @@ static void balance_dirty_pages(struct address_space *mapping,
 					global_page_state(NR_UNSTABLE_NFS);
 		nr_writeback = global_page_state(NR_WRITEBACK);
 
-		bdi_nr_reclaimable = bdi_stat(bdi, BDI_DIRTY) +
-				     bdi_stat(bdi, BDI_UNSTABLE);
+		bdi_nr_reclaimable = bdi_stat(bdi, BDI_DIRTY);
+		if (bdi_cap_account_unstable(bdi))
+			bdi_nr_reclaimable += bdi_stat(bdi, BDI_UNSTABLE);
 		bdi_nr_writeback = bdi_stat(bdi, BDI_WRITEBACK);
 
 		if (bdi_nr_reclaimable + bdi_nr_writeback <= bdi_thresh)
@@ -556,11 +558,15 @@ static void balance_dirty_pages(struct address_space *mapping,
 		 * deltas.
 		 */
 		if (bdi_thresh < 2*bdi_stat_error(bdi)) {
-			bdi_nr_reclaimable = bdi_stat_sum(bdi, BDI_DIRTY) +
+			bdi_nr_reclaimable = bdi_stat_sum(bdi, BDI_DIRTY);
+			if (bdi_cap_account_unstable(bdi))
+				bdi_nr_reclaimable +=
 					     bdi_stat_sum(bdi, BDI_UNSTABLE);
 			bdi_nr_writeback = bdi_stat_sum(bdi, BDI_WRITEBACK);
 		} else if (bdi_nr_reclaimable) {
-			bdi_nr_reclaimable = bdi_stat(bdi, BDI_DIRTY) +
+			bdi_nr_reclaimable = bdi_stat(bdi, BDI_DIRTY);
+			if (bdi_cap_account_unstable(bdi))
+				bdi_nr_reclaimable +=
 					     bdi_stat(bdi, BDI_UNSTABLE);
 			bdi_nr_writeback = bdi_stat(bdi, BDI_WRITEBACK);
 		}
