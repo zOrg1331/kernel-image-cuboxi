@@ -1555,7 +1555,7 @@ struct super_operations {
 	void (*destroy_inode)(struct inode *);
 
    	void (*dirty_inode) (struct inode *);
-	int (*write_inode) (struct inode *, int);
+	int (*write_inode) (struct inode *, struct writeback_control *wbc);
 	void (*drop_inode) (struct inode *);
 	void (*delete_inode) (struct inode *);
 	void (*put_super) (struct super_block *);
@@ -2340,8 +2340,6 @@ extern int simple_rename(struct inode *, struct dentry *, struct inode *, struct
 extern int simple_sync_file(struct file *, struct dentry *, int);
 extern int simple_empty(struct dentry *);
 extern int simple_readpage(struct file *file, struct page *page);
-extern int simple_prepare_write(struct file *file, struct page *page,
-			unsigned offset, unsigned to);
 extern int simple_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata);
@@ -2463,7 +2461,7 @@ int proc_nr_files(struct ctl_table *table, int write,
 
 int __init get_filesystem_list(char *buf);
 
-#define ACC_MODE(x) ("\000\004\002\006"[(x)&O_ACCMODE])
+#define ACC_MODE(x) ("\004\002\006\006"[(x)&O_ACCMODE])
 #define OPEN_FMODE(flag) ((__force fmode_t)((flag + 1) & O_ACCMODE))
 
 #endif /* __KERNEL__ */

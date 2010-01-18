@@ -561,6 +561,7 @@ static __always_inline int __do_follow_link(struct path *path, struct nameidata 
 		dget(dentry);
 	}
 	mntget(path->mnt);
+	nd->last_type = LAST_BIND;
 	cookie = dentry->d_inode->i_op->follow_link(dentry, nd);
 	error = PTR_ERR(cookie);
 	if (!IS_ERR(cookie)) {
@@ -728,7 +729,7 @@ static int do_lookup(struct nameidata *nd, struct qstr *name,
 		     struct path *path)
 {
 	struct vfsmount *mnt = nd->path.mnt;
-	struct dentry *dentry, *parent;
+	struct dentry *dentry, *parent, *new;
 	struct inode *dir;
 	/*
 	 * See if the low-level filesystem might want
@@ -771,40 +772,41 @@ need_lookup:
 	 * so doing d_lookup() (with seqlock), instead of lockfree __d_lookup
 	 */
 	dentry = d_lookup(parent, name);
-	if (!dentry) {
-		struct dentry *new;
-
-		/* Don't create child dentry for a dead directory. */
-		dentry = ERR_PTR(-ENOENT);
-		if (IS_DEADDIR(dir))
+	if (dentry) {
+		/*
+		 * The cache was re-populated while we waited on the
+		 * mutex.  We need to revalidate, this time while
+		 * holding i_mutex (to avoid another race).
+		 */
+		if (dentry->d_op && dentry->d_op->d_revalidate) {
+			dentry = do_revalidate(dentry, nd);
+                        if (dentry)
+				goto out_unlock;
+			/*
+			 * The dentry was left behind invalid.  Just
+			 * do the lookup.
+			 */
+		} else {
 			goto out_unlock;
+                }
+	}
 
-		new = d_alloc(parent, name);
-		dentry = ERR_PTR(-ENOMEM);
-		if (new) {
-			dentry = dir->i_op->lookup(dir, new, nd);
-			if (dentry)
-				dput(new);
-			else
-				dentry = new;
-		}
+	/* Don't create child dentry for a dead directory. */
+	dentry = ERR_PTR(-ENOENT);
+	if (IS_DEADDIR(dir))
+		goto out_unlock;
+
+	new = d_alloc(parent, name);
+	dentry = ERR_PTR(-ENOMEM);
+	if (new) {
+		dentry = dir->i_op->lookup(dir, new, nd);
+		if (dentry)
+			dput(new);
+		else
+			dentry = new;
+	}
 out_unlock:
-		mutex_unlock(&dir->i_mutex);
-		if (IS_ERR(dentry))
-			goto fail;
-		goto done;
-	}
-
-	/*
-	 * Uhhuh! Nasty case: the cache was re-populated while
-	 * we waited on the semaphore. Need to revalidate.
-	 */
 	mutex_unlock(&dir->i_mutex);
-	if (dentry->d_op && dentry->d_op->d_revalidate) {
-		dentry = do_revalidate(dentry, nd);
-		if (!dentry)
-			dentry = ERR_PTR(-ENOENT);
-	}
 	if (IS_ERR(dentry))
 		goto fail;
 	goto done;
@@ -1336,7 +1338,7 @@ static int may_delete(struct inode *dir,struct dentry *victim,int isdir)
 		return -ENOENT;
 
 	BUG_ON(victim->d_parent->d_inode != dir);
-	audit_inode_child(victim->d_name.name, victim, dir);
+	audit_inode_child(victim, dir);
 
 	error = inode_permission(dir, MAY_WRITE | MAY_EXEC);
 	if (error)
@@ -1492,7 +1494,7 @@ int may_open(struct path *path, int acc_mode, int flag)
 	 * An append-only file must be opened in append mode for writing.
 	 */
 	if (IS_APPEND(inode)) {
-		if  ((flag & FMODE_WRITE) && !(flag & O_APPEND))
+		if  ((flag & O_ACCMODE) != O_RDONLY && !(flag & O_APPEND))
 			return -EPERM;
 		if (flag & O_TRUNC)
 			return -EPERM;
@@ -1536,7 +1538,7 @@ static int handle_truncate(struct path *path)
  * what get passed to sys_open().
  */
 static int __open_namei_create(struct nameidata *nd, struct path *path,
-				int flag, int mode)
+				int open_flag, int mode)
 {
 	int error;
 	struct dentry *dir = nd->path.dentry;
@@ -1554,7 +1556,7 @@ out_unlock:
 	if (error)
 		return error;
 	/* Don't check for write permission, don't truncate */
-	return may_open(&nd->path, 0, flag & ~O_TRUNC);
+	return may_open(&nd->path, 0, open_flag & ~O_TRUNC);
 }
 
 /*
@@ -1603,11 +1605,12 @@ struct file *do_filp_open(int dfd, const char *pathname,
 	struct file *filp;
 	struct nameidata nd;
 	int error;
-	struct path path, save;
+	struct path path;
 	struct dentry *dir;
 	int count = 0;
 	int will_truncate;
 	int flag = open_to_namei_flags(open_flag);
+	int force_reval = 0;
 
 	/*
 	 * O_SYNC is implemented as __O_SYNC|O_DSYNC.  As many places only
@@ -1619,7 +1622,7 @@ struct file *do_filp_open(int dfd, const char *pathname,
 		open_flag |= O_DSYNC;
 
 	if (!acc_mode)
-		acc_mode = MAY_OPEN | ACC_MODE(flag);
+		acc_mode = MAY_OPEN | ACC_MODE(open_flag);
 
 	/* O_TRUNC implies we need access checks for write permissions */
 	if (flag & O_TRUNC)
@@ -1659,9 +1662,12 @@ struct file *do_filp_open(int dfd, const char *pathname,
 	/*
 	 * Create - we need to know the parent.
 	 */
+reval:
 	error = path_init(dfd, pathname, LOOKUP_PARENT, &nd);
 	if (error)
 		return ERR_PTR(error);
+	if (force_reval)
+		nd.flags |= LOOKUP_REVAL;
 	error = path_walk(pathname, &nd);
 	if (error) {
 		if (nd.root.mnt)
@@ -1721,7 +1727,7 @@ do_last:
 		error = mnt_want_write(nd.path.mnt);
 		if (error)
 			goto exit_mutex_unlock;
-		error = __open_namei_create(&nd, &path, flag, mode);
+		error = __open_namei_create(&nd, &path, open_flag, mode);
 		if (error) {
 			mnt_drop_write(nd.path.mnt);
 			goto exit;
@@ -1784,7 +1790,7 @@ ok:
 		if (error)
 			goto exit;
 	}
-	error = may_open(&nd.path, acc_mode, flag);
+	error = may_open(&nd.path, acc_mode, open_flag);
 	if (error) {
 		if (will_truncate)
 			mnt_drop_write(nd.path.mnt);
@@ -1853,17 +1859,7 @@ do_link:
 	error = security_inode_follow_link(path.dentry, &nd);
 	if (error)
 		goto exit_dput;
-	save = nd.path;
-	path_get(&save);
 	error = __do_follow_link(&path, &nd);
-	if (error == -ESTALE) {
-		/* nd.path had been dropped */
-		nd.path = save;
-		path_get(&nd.path);
-		nd.flags |= LOOKUP_REVAL;
-		error = __do_follow_link(&path, &nd);
-	}
-	path_put(&save);
 	path_put(&path);
 	if (error) {
 		/* Does someone understand code flow here? Or it is only
@@ -1873,6 +1869,10 @@ do_link:
 		release_open_intent(&nd);
 		if (nd.root.mnt)
 			path_put(&nd.root);
+		if (error == -ESTALE && !force_reval) {
+			force_reval = 1;
+			goto reval;
+		}
 		return ERR_PTR(error);
 	}
 	nd.flags &= ~LOOKUP_PARENT;
@@ -2664,11 +2664,9 @@ int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		error = vfs_rename_dir(old_dir,old_dentry,new_dir,new_dentry);
 	else
 		error = vfs_rename_other(old_dir,old_dentry,new_dir,new_dentry);
-	if (!error) {
-		const char *new_name = old_dentry->d_name.name;
-		fsnotify_move(old_dir, new_dir, old_name, new_name, is_dir,
+	if (!error)
+		fsnotify_move(old_dir, new_dir, old_name, is_dir,
 			      new_dentry->d_inode, old_dentry);
-	}
 	fsnotify_oldname_free(old_name);
 
 	return error;
