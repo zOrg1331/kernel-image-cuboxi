@@ -21,7 +21,7 @@ epoch:1
 %define kgcc_version	4.3
 
 # Enable/disable SGML docs formatting
-%def_enable docs
+%def_disable docs
 
 #Remove oss
 %def_enable oss
@@ -504,7 +504,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
-* Tue Jan 19 2010 Mykola S. Grechukh 1:2.6.32-alt4
+* Tue Jan 19 2010 Mykola S. Grechukh <gns@altlinux.ru> 1:2.6.32-alt4
 - name changed to kernel-image-un-def-eeepc
 - enabled lzma squashfs, deadline as default io scheduler, BFS included
 
