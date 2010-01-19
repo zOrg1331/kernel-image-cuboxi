@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.32
-Release: alt3
+Release: alt4
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -341,6 +341,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Tue Jan 19 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt4
+- 2.6.32.4
+
 * Sat Jan 09 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt3
 - 2.6.32.3
 - intel KMS: backported video overlay support
