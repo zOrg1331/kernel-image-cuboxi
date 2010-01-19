@@ -31,10 +31,66 @@
 
 #include "inotify.h"
 
+/*
+ * Check if 2 events contain the same information.  We do not compare private data
+ * but at this moment that isn't a problem for any know fsnotify listeners.
+ */
+static bool event_compare(struct fsnotify_event *old, struct fsnotify_event *new)
+{
+	if ((old->mask == new->mask) &&
+	    (old->to_tell == new->to_tell) &&
+	    (old->data_type == new->data_type) &&
+	    (old->name_len == new->name_len)) {
+		switch (old->data_type) {
+		case (FSNOTIFY_EVENT_INODE):
+			/* remember, after old was put on the wait_q we aren't
+			 * allowed to look at the inode any more, only thing
+			 * left to check was if the file_name is the same */
+			if (!old->name_len ||
+			    !strcmp(old->file_name, new->file_name))
+				return true;
+			break;
+		case (FSNOTIFY_EVENT_PATH):
+			if ((old->path.mnt == new->path.mnt) &&
+			    (old->path.dentry == new->path.dentry))
+				return true;
+			break;
+		case (FSNOTIFY_EVENT_NONE):
+			if (old->mask & FS_Q_OVERFLOW)
+				return true;
+			else if (old->mask & FS_IN_IGNORED)
+				return false;
+			return true;
+		};
+	}
+	return false;
+}
+
+static int inotify_merge(struct list_head *list,
+			 struct fsnotify_event *event,
+			 void **arg)
+{
+	struct fsnotify_event_holder *last_holder;
+	struct fsnotify_event *last_event;
+	int ret = 0;
+
+	/* and the list better be locked by something too */
+	spin_lock(&event->lock);
+
+	last_holder = list_entry(list->prev, struct fsnotify_event_holder, event_list);
+	last_event = last_holder->event;
+	if (event_compare(last_event, event))
+		ret = -EEXIST;
+
+	spin_unlock(&event->lock);
+
+	return ret;
+}
+
 static int inotify_handle_event(struct fsnotify_group *group, struct fsnotify_event *event)
 {
-	struct fsnotify_mark_entry *entry;
-	struct inotify_inode_mark_entry *ientry;
+	struct fsnotify_mark *fsn_mark;
+	struct inotify_inode_mark *i_mark;
 	struct inode *to_tell;
 	struct inotify_event_private_data *event_priv;
 	struct fsnotify_event_private_data *fsn_event_priv;
@@ -42,15 +98,13 @@ static int inotify_handle_event(struct fsnotify_group *group, struct fsnotify_ev
 
 	to_tell = event->to_tell;
 
-	spin_lock(&to_tell->i_lock);
-	entry = fsnotify_find_mark_entry(group, to_tell);
-	spin_unlock(&to_tell->i_lock);
+	fsn_mark = fsnotify_find_inode_mark(group, to_tell);
 	/* race with watch removal?  We already passes should_send */
-	if (unlikely(!entry))
+	if (unlikely(!fsn_mark))
 		return 0;
-	ientry = container_of(entry, struct inotify_inode_mark_entry,
-			      fsn_entry);
-	wd = ientry->wd;
+	i_mark = container_of(fsn_mark, struct inotify_inode_mark,
+			      fsn_mark);
+	wd = i_mark->wd;
 
 	event_priv = kmem_cache_alloc(event_priv_cachep, GFP_KERNEL);
 	if (unlikely(!event_priv))
@@ -61,7 +115,7 @@ static int inotify_handle_event(struct fsnotify_group *group, struct fsnotify_ev
 	fsn_event_priv->group = group;
 	event_priv->wd = wd;
 
-	ret = fsnotify_add_notify_event(group, event, fsn_event_priv);
+	ret = fsnotify_add_notify_event(group, event, fsn_event_priv, inotify_merge, NULL);
 	if (ret) {
 		inotify_free_event_priv(fsn_event_priv);
 		/* EEXIST says we tail matched, EOVERFLOW isn't something
@@ -72,35 +126,35 @@ static int inotify_handle_event(struct fsnotify_group *group, struct fsnotify_ev
 	}
 
 	/*
-	 * If we hold the entry until after the event is on the queue
+	 * If we hold the fsn_mark until after the event is on the queue
 	 * IN_IGNORED won't be able to pass this event in the queue
 	 */
-	fsnotify_put_mark(entry);
+	fsnotify_put_mark(fsn_mark);
 
 	return ret;
 }
 
-static void inotify_freeing_mark(struct fsnotify_mark_entry *entry, struct fsnotify_group *group)
+static void inotify_freeing_mark(struct fsnotify_mark *fsn_mark, struct fsnotify_group *group)
 {
-	inotify_ignored_and_remove_idr(entry, group);
+	inotify_ignored_and_remove_idr(fsn_mark, group);
 }
 
-static bool inotify_should_send_event(struct fsnotify_group *group, struct inode *inode, __u32 mask)
+static bool inotify_should_send_event(struct fsnotify_group *group, struct inode *inode,
+				      struct vfsmount *mnt, __u32 mask, void *data,
+				      int data_type)
 {
-	struct fsnotify_mark_entry *entry;
+	struct fsnotify_mark *fsn_mark;
 	bool send;
 
-	spin_lock(&inode->i_lock);
-	entry = fsnotify_find_mark_entry(group, inode);
-	spin_unlock(&inode->i_lock);
-	if (!entry)
+	fsn_mark = fsnotify_find_inode_mark(group, inode);
+	if (!fsn_mark)
 		return false;
 
 	mask = (mask & ~FS_EVENT_ON_CHILD);
-	send = (entry->mask & mask);
+	send = (fsn_mark->mask & mask);
 
 	/* find took a reference */
-	fsnotify_put_mark(entry);
+	fsnotify_put_mark(fsn_mark);
 
 	return send;
 }
@@ -114,18 +168,18 @@ static bool inotify_should_send_event(struct fsnotify_group *group, struct inode
  */
 static int idr_callback(int id, void *p, void *data)
 {
-	struct fsnotify_mark_entry *entry;
-	struct inotify_inode_mark_entry *ientry;
+	struct fsnotify_mark *fsn_mark;
+	struct inotify_inode_mark *i_mark;
 	static bool warned = false;
 
 	if (warned)
 		return 0;
 
 	warned = true;
-	entry = p;
-	ientry = container_of(entry, struct inotify_inode_mark_entry, fsn_entry);
+	fsn_mark = p;
+	i_mark = container_of(fsn_mark, struct inotify_inode_mark, fsn_mark);
 
-	WARN(1, "inotify closing but id=%d for entry=%p in group=%p still in "
+	WARN(1, "inotify closing but id=%d for fsn_mark=%p in group=%p still in "
 		"idr.  Probably leaking memory\n", id, p, data);
 
 	/*
@@ -134,9 +188,9 @@ static int idr_callback(int id, void *p, void *data)
 	 * out why we got here and the panic is no worse than the original
 	 * BUG() that was here.
 	 */
-	if (entry)
-		printk(KERN_WARNING "entry->group=%p inode=%p wd=%d\n",
-			entry->group, entry->inode, ientry->wd);
+	if (fsn_mark)
+		printk(KERN_WARNING "fsn_mark->group=%p inode=%p wd=%d\n",
+			fsn_mark->group, fsn_mark->i.inode, i_mark->wd);
 	return 0;
 }
 
