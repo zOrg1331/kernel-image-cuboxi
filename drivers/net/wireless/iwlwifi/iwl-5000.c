@@ -1466,6 +1466,7 @@ struct iwl_lib_ops iwl5000_lib = {
 	.is_valid_rtc_data_addr = iwl5000_hw_valid_rtc_data_addr,
 	.dump_nic_event_log = iwl_dump_nic_event_log,
 	.dump_nic_error_log = iwl_dump_nic_error_log,
+	.dump_csr = iwl_dump_csr,
 	.load_ucode = iwl5000_load_ucode,
 	.init_alive_start = iwl5000_init_alive_start,
 	.alive_notify = iwl5000_alive_notify,
@@ -1518,6 +1519,7 @@ static struct iwl_lib_ops iwl5150_lib = {
 	.is_valid_rtc_data_addr = iwl5000_hw_valid_rtc_data_addr,
 	.dump_nic_event_log = iwl_dump_nic_event_log,
 	.dump_nic_error_log = iwl_dump_nic_error_log,
+	.dump_csr = iwl_dump_csr,
 	.load_ucode = iwl5000_load_ucode,
 	.init_alive_start = iwl5000_init_alive_start,
 	.alive_notify = iwl5000_alive_notify,
@@ -1555,7 +1557,7 @@ static struct iwl_lib_ops iwl5150_lib = {
 	 },
 };
 
-static struct iwl_ops iwl5000_ops = {
+static const struct iwl_ops iwl5000_ops = {
 	.ucode = &iwl5000_ucode,
 	.lib = &iwl5000_lib,
 	.hcmd = &iwl5000_hcmd,
@@ -1563,7 +1565,7 @@ static struct iwl_ops iwl5000_ops = {
 	.led = &iwlagn_led_ops,
 };
 
-static struct iwl_ops iwl5150_ops = {
+static const struct iwl_ops iwl5150_ops = {
 	.ucode = &iwl5000_ucode,
 	.lib = &iwl5150_lib,
 	.hcmd = &iwl5000_hcmd,
@@ -1600,7 +1602,6 @@ struct iwl_cfg iwl5300_agn_cfg = {
 	.led_compensation = 51,
 	.use_rts_for_ht = true, /* use rts/cts protection */
 	.chain_noise_num_beacons = IWL_CAL_NUM_BEACONS,
-	.sm_ps_mode = WLAN_HT_CAP_SM_PS_DISABLED,
 };
 
 struct iwl_cfg iwl5100_bgn_cfg = {
@@ -1671,7 +1672,6 @@ struct iwl_cfg iwl5100_agn_cfg = {
 	.led_compensation = 51,
 	.use_rts_for_ht = true, /* use rts/cts protection */
 	.chain_noise_num_beacons = IWL_CAL_NUM_BEACONS,
-	.sm_ps_mode = WLAN_HT_CAP_SM_PS_DISABLED,
 };
 
 struct iwl_cfg iwl5350_agn_cfg = {
@@ -1696,7 +1696,6 @@ struct iwl_cfg iwl5350_agn_cfg = {
 	.led_compensation = 51,
 	.use_rts_for_ht = true, /* use rts/cts protection */
 	.chain_noise_num_beacons = IWL_CAL_NUM_BEACONS,
-	.sm_ps_mode = WLAN_HT_CAP_SM_PS_DISABLED,
 };
 
 struct iwl_cfg iwl5150_agn_cfg = {
@@ -1721,7 +1720,6 @@ struct iwl_cfg iwl5150_agn_cfg = {
 	.led_compensation = 51,
 	.use_rts_for_ht = true, /* use rts/cts protection */
 	.chain_noise_num_beacons = IWL_CAL_NUM_BEACONS,
-	.sm_ps_mode = WLAN_HT_CAP_SM_PS_DISABLED,
 };
 
 struct iwl_cfg iwl5150_abg_cfg = {
