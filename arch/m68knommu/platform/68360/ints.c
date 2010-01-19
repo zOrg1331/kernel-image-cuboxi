@@ -132,11 +132,7 @@ void init_IRQ(void)
 	/* turn off all CPM interrupts */
 	pquicc->intr_cimr = 0x00000000;
 
-	for (i = 0; (i < NR_IRQS); i++) {
-		irq_desc[i].status = IRQ_DISABLED;
-		irq_desc[i].action = NULL;
-		irq_desc[i].depth = 1;
-		irq_desc[i].chip = &intc_irq_chip;
-	}
+	for (i = 0; (i < NR_IRQS); i++)
+		set_irq_chip_and_handler(i, &intc_irq_chip, handle_level_irq);
 }
 
