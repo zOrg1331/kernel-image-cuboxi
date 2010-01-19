@@ -39,7 +39,7 @@ unsigned long cached_to_uncached = P2SEG - P1SEG;
 #endif
 
 #ifdef CONFIG_MMU
-static void set_pte_phys(unsigned long addr, unsigned long phys, pgprot_t prot)
+static pte_t *__get_pte_phys(unsigned long addr)
 {
 	pgd_t *pgd;
 	pud_t *pud;
@@ -49,28 +49,52 @@ static void set_pte_phys(unsigned long addr, unsigned long phys, pgprot_t prot)
 	pgd = pgd_offset_k(addr);
 	if (pgd_none(*pgd)) {
 		pgd_ERROR(*pgd);
-		return;
+		return NULL;
 	}
 
 	pud = pud_alloc(NULL, pgd, addr);
 	if (unlikely(!pud)) {
 		pud_ERROR(*pud);
-		return;
+		return NULL;
 	}
 
 	pmd = pmd_alloc(NULL, pud, addr);
 	if (unlikely(!pmd)) {
 		pmd_ERROR(*pmd);
-		return;
+		return NULL;
 	}
 
 	pte = pte_offset_kernel(pmd, addr);
+	return pte;
+}
+
+static void set_pte_phys(unsigned long addr, unsigned long phys, pgprot_t prot)
+{
+	pte_t *pte;
+
+	pte = __get_pte_phys(addr);
 	if (!pte_none(*pte)) {
 		pte_ERROR(*pte);
 		return;
 	}
 
 	set_pte(pte, pfn_pte(phys >> PAGE_SHIFT, prot));
+	local_flush_tlb_one(get_asid(), addr);
+
+	if (pgprot_val(prot) & _PAGE_WIRED)
+		tlb_wire_entry(NULL, addr, *pte);
+}
+
+static void clear_pte_phys(unsigned long addr, pgprot_t prot)
+{
+	pte_t *pte;
+
+	pte = __get_pte_phys(addr);
+
+	if (pgprot_val(prot) & _PAGE_WIRED)
+		tlb_unwire_entry();
+
+	set_pte(pte, pfn_pte(0, __pgprot(0)));
 	local_flush_tlb_one(get_asid(), addr);
 }
 
@@ -101,6 +125,18 @@ void __set_fixmap(enum fixed_addresses idx, unsigned long phys, pgprot_t prot)
 	set_pte_phys(address, phys, prot);
 }
 
+void __clear_fixmap(enum fixed_addresses idx, pgprot_t prot)
+{
+	unsigned long address = __fix_to_virt(idx);
+
+	if (idx >= __end_of_fixed_addresses) {
+		BUG();
+		return;
+	}
+
+	clear_pte_phys(address, prot);
+}
+
 void __init page_table_range_init(unsigned long start, unsigned long end,
 					 pgd_t *pgd_base)
 {
@@ -120,7 +156,13 @@ void __init page_table_range_init(unsigned long start, unsigned long end,
 	for ( ; (i < PTRS_PER_PGD) && (vaddr != end); pgd++, i++) {
 		pud = (pud_t *)pgd;
 		for ( ; (j < PTRS_PER_PUD) && (vaddr != end); pud++, j++) {
+#ifdef __PAGETABLE_PMD_FOLDED
 			pmd = (pmd_t *)pud;
+#else
+			pmd = (pmd_t *)alloc_bootmem_low_pages(PAGE_SIZE);
+			pud_populate(&init_mm, pud, pmd);
+			pmd += k;
+#endif
 			for (; (k < PTRS_PER_PMD) && (vaddr != end); pmd++, k++) {
 				if (pmd_none(*pmd)) {
 					pte = (pte_t *) alloc_bootmem_low_pages(PAGE_SIZE);
@@ -195,6 +237,8 @@ static void __init iommu_init(void)
 	no_iommu_init();
 }
 
+unsigned int mem_init_done = 0;
+
 void __init mem_init(void)
 {
 	int codesize, datasize, initsize;
@@ -245,6 +289,8 @@ void __init mem_init(void)
 
 	/* Initialize the vDSO */
 	vsyscall_init();
+
+	mem_init_done = 1;
 }
 
 void free_initmem(void)
@@ -276,35 +322,6 @@ void free_initrd_mem(unsigned long start, unsigned long end)
 	printk("Freeing initrd memory: %ldk freed\n", (end - start) >> 10);
 }
 #endif
-
-#if THREAD_SHIFT < PAGE_SHIFT
-static struct kmem_cache *thread_info_cache;
-
-struct thread_info *alloc_thread_info(struct task_struct *tsk)
-{
-	struct thread_info *ti;
-
-	ti = kmem_cache_alloc(thread_info_cache, GFP_KERNEL);
-	if (unlikely(ti == NULL))
-		return NULL;
-#ifdef CONFIG_DEBUG_STACK_USAGE
-	memset(ti, 0, THREAD_SIZE);
-#endif
-	return ti;
-}
-
-void free_thread_info(struct thread_info *ti)
-{
-	kmem_cache_free(thread_info_cache, ti);
-}
-
-void thread_info_cache_init(void)
-{
-	thread_info_cache = kmem_cache_create("thread_info", THREAD_SIZE,
-					      THREAD_SIZE, 0, NULL);
-	BUG_ON(thread_info_cache == NULL);
-}
-#endif /* THREAD_SHIFT < PAGE_SHIFT */
 
 #ifdef CONFIG_MEMORY_HOTPLUG
 int arch_add_memory(int nid, u64 start, u64 size)

@@ -22,6 +22,7 @@
  * for old compat code for I/O offseting to SuperIOs, all of which are
  * better handled through the machvec ioport mapping routines these days.
  */
+#include <linux/errno.h>
 #include <asm/cache.h>
 #include <asm/system.h>
 #include <asm/addrspace.h>
@@ -237,6 +238,21 @@ void __iomem *__ioremap_caller(unsigned long offset, unsigned long size,
 			       unsigned long flags, void *caller);
 void __iounmap(void __iomem *addr);
 
+#ifdef CONFIG_IOREMAP_FIXED
+extern void __iomem *ioremap_fixed(resource_size_t, unsigned long, pgprot_t);
+extern int iounmap_fixed(void __iomem *);
+extern void ioremap_fixed_init(void);
+#else
+static inline void __iomem *
+ioremap_fixed(resource_size t phys_addr, unsigned long size, pgprot_t prot)
+{
+	BUG();
+}
+
+static inline void ioremap_fixed_init(void) { }
+static inline int iounmap_fixed(void __iomem *addr) { return -EINVAL; }
+#endif
+
 static inline void __iomem *
 __ioremap(unsigned long offset, unsigned long size, unsigned long flags)
 {
@@ -244,18 +260,11 @@ __ioremap(unsigned long offset, unsigned long size, unsigned long flags)
 }
 
 static inline void __iomem *
-__ioremap_mode(unsigned long offset, unsigned long size, unsigned long flags)
+__ioremap_29bit(unsigned long offset, unsigned long size, unsigned long flags)
 {
-#if defined(CONFIG_SUPERH32) && !defined(CONFIG_PMB_FIXED) && !defined(CONFIG_PMB)
+#ifdef CONFIG_29BIT
 	unsigned long last_addr = offset + size - 1;
-#endif
-	void __iomem *ret;
 
-	ret = __ioremap_trapped(offset, size);
-	if (ret)
-		return ret;
-
-#if defined(CONFIG_SUPERH32) && !defined(CONFIG_PMB_FIXED) && !defined(CONFIG_PMB)
 	/*
 	 * For P1 and P2 space this is trivial, as everything is already
 	 * mapped. Uncached access for P1 addresses are done through P2.
@@ -273,6 +282,22 @@ __ioremap_mode(unsigned long offset, unsigned long size, unsigned long flags)
 	if (unlikely(offset >= P3_ADDR_MAX))
 		return (void __iomem *)P4SEGADDR(offset);
 #endif
+
+	return NULL;
+}
+
+static inline void __iomem *
+__ioremap_mode(unsigned long offset, unsigned long size, unsigned long flags)
+{
+	void __iomem *ret;
+
+	ret = __ioremap_trapped(offset, size);
+	if (ret)
+		return ret;
+
+	ret = __ioremap_29bit(offset, size, flags);
+	if (ret)
+		return ret;
 
 	return __ioremap(offset, size, flags);
 }
