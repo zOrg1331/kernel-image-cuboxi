@@ -1,4 +1,4 @@
-Name: kernel-image-un-def
+Name: kernel-image-un-def-eeepc
 Version: 2.6.32
 Release: alt4
 epoch:1 
@@ -504,6 +504,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Tue Jan 19 2010 Mykola S. Grechukh 1:2.6.32-alt4
+- name changed to kernel-image-un-def-eeepc
+- enabled lzma squashfs, deadline as default io scheduler, BFS included
+
 * Fri Jan 15 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt4
 - bootsplash patch added
 
