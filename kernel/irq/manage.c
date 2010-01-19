@@ -200,7 +200,8 @@ static inline int setup_affinity(unsigned int irq, struct irq_desc *desc)
 void __disable_irq(struct irq_desc *desc, unsigned int irq, bool suspend)
 {
 	if (suspend) {
-		if (!desc->action || (desc->action->flags & IRQF_TIMER))
+		if (!desc->action ||
+		    (desc->action->flags & (IRQF_TIMER | IRQF_NO_SUSPEND)))
 			return;
 		desc->status |= IRQ_SUSPENDED;
 	}
@@ -269,7 +270,9 @@ void __enable_irq(struct irq_desc *desc, unsigned int irq, bool resume)
 	switch (desc->depth) {
 	case 0:
  err_out:
+ 		#ifndef CONFIG_XEN_UNPRIVILEGED_GUEST 
 		WARN(1, KERN_WARNING "Unbalanced enable for IRQ %d\n", irq);
+		#endif
 		break;
 	case 1: {
 		unsigned int status = desc->status & ~IRQ_DISABLED;
