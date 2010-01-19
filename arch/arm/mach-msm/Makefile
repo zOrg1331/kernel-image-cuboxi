@@ -23,7 +23,6 @@ obj-$(CONFIG_MSM_JTAG_V7) += jtag-v7.o
 
 obj-$(CONFIG_ARCH_QSD8X50) += sirc.o
 obj-$(CONFIG_MSM_FIQ_SUPPORT) += fiq_glue.o
-obj-$(CONFIG_MACH_TROUT) += board-trout-rfkill.o
 obj-$(CONFIG_MSM_SMD) += smd.o
 obj-$(CONFIG_MSM_SMD_LOGGING) += smem_log.o
 obj-$(CONFIG_MSM_SMD_TTY) += smd_tty.o
@@ -52,11 +51,6 @@ obj-$(CONFIG_MSM_DMA_TEST) += dma_test.o
 obj-$(CONFIG_SURF_FFA_GPIO_KEYPAD) += keypad-surf-ffa.o
 
 obj-$(CONFIG_MACH_TROUT) += board-dream.o
-obj-$(CONFIG_ARCH_MSM7X01A) += board-halibut.o
-obj-$(CONFIG_MACH_TROUT) += board-trout.o board-trout-gpio.o
-obj-$(CONFIG_MACH_TROUT) += board-trout-keypad.o board-trout-panel.o
-obj-$(CONFIG_MACH_TROUT) += htc_akm_cal.o htc_wifi_nvs.o htc_acoustic.o
-obj-$(CONFIG_MACH_TROUT) += board-trout-mmc.o board-trout-wifi.o
 obj-$(CONFIG_MACH_QSD8X50_SURF) += board-qsd8x50.o
 obj-$(CONFIG_MACH_QSD8X50_FFA) += board-qsd8x50.o
 obj-$(CONFIG_MACH_QSD8X50_COMET) += board-comet.o
