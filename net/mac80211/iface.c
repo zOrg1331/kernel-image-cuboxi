@@ -65,15 +65,16 @@ static int ieee80211_change_mtu(struct net_device *dev, int new_mtu)
 static int ieee80211_change_mac(struct net_device *dev, void *addr)
 {
 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
+	struct sockaddr *sa = addr;
 	int ret;
 
 	if (ieee80211_sdata_running(sdata))
 		return -EBUSY;
 
-	ret = eth_mac_addr(dev, addr);
+	ret = eth_mac_addr(dev, sa);
 
 	if (ret == 0)
-		memcpy(sdata->vif.addr, addr, ETH_ALEN);
+		memcpy(sdata->vif.addr, sa->sa_data, ETH_ALEN);
 
 	return ret;
 }
@@ -859,8 +860,12 @@ int ieee80211_if_add(struct ieee80211_local *local, const char *name,
 
 	INIT_LIST_HEAD(&sdata->key_list);
 
-	sdata->force_unicast_rateidx = -1;
-	sdata->max_ratectrl_rateidx = -1;
+	for (i = 0; i < IEEE80211_NUM_BANDS; i++) {
+		struct ieee80211_supported_band *sband;
+		sband = local->hw.wiphy->bands[i];
+		sdata->rc_rateidx_mask[i] =
+			sband ? (1 << sband->n_bitrates) - 1 : 0;
+	}
 
 	/* setup type-dependent data */
 	ieee80211_setup_sdata(sdata, type);
