@@ -730,6 +730,7 @@ static struct ctl_table kern_table[] = {
 		.mode           = 0644,
 		.proc_handler   = &proc_dointvec,
 	},
+#ifdef ARCH_HAS_NMI_WATCHDOG
 	{
 		.procname       = "nmi_watchdog",
 		.data           = &nmi_watchdog_enabled,
@@ -737,6 +738,7 @@ static struct ctl_table kern_table[] = {
 		.mode           = 0644,
 		.proc_handler   = &proc_nmi_enabled,
 	},
+#endif
 #endif
 #if defined(CONFIG_X86)
 	{
@@ -808,7 +810,7 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 #endif
-#if	defined(CONFIG_ACPI_SLEEP) && defined(CONFIG_X86)
+#if defined(CONFIG_ACPI_SLEEP) && defined(CONFIG_X86) && !defined(CONFIG_ACPI_PV_SLEEP)
 	{
 		.procname	= "acpi_video_flags",
 		.data		= &acpi_realmode_flags,
