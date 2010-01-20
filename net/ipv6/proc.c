@@ -259,7 +259,7 @@ int snmp6_unregister_dev(struct inet6_dev *idev)
 	struct net *net = dev_net(idev->dev);
 	if (!net->mib.proc_net_devsnmp6)
 		return -ENOENT;
-	if (!idev || !idev->stats.proc_dir_entry)
+	if (!idev->stats.proc_dir_entry)
 		return -EINVAL;
 	remove_proc_entry(idev->stats.proc_dir_entry->name,
 			  net->mib.proc_net_devsnmp6);
@@ -267,7 +267,7 @@ int snmp6_unregister_dev(struct inet6_dev *idev)
 	return 0;
 }
 
-static int ipv6_proc_init_net(struct net *net)
+static int __net_init ipv6_proc_init_net(struct net *net)
 {
 	if (!proc_net_fops_create(net, "sockstat6", S_IRUGO,
 			&sockstat6_seq_fops))
@@ -288,7 +288,7 @@ proc_dev_snmp6_fail:
 	return -ENOMEM;
 }
 
-static void ipv6_proc_exit_net(struct net *net)
+static void __net_exit ipv6_proc_exit_net(struct net *net)
 {
 	proc_net_remove(net, "sockstat6");
 	proc_net_remove(net, "dev_snmp6");
