@@ -159,22 +159,6 @@ OpenGL implementations.
 
 These are modules for your ALT Linux system
 
-%package -n kernel-modules-kvm-%flavour
-Summary: Linux KVM (Kernel Virtual Machine) modules
-Group: System/Kernel and hardware
-Provides:  kernel-modules-kvm-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-kvm-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-kvm-%kversion-%flavour-%krelease > %version-%release
-Prereq: coreutils
-Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
-
-%description -n kernel-modules-kvm-%flavour
-Linux kernel module for Kernel Virtual Machine virtualization
-environment.
-
-
 %package -n kernel-modules-v4l-%flavour
 Summary: Video4Linux driver modules (obsolete)
 Group: System/Kernel and hardware
@@ -272,8 +256,7 @@ cp -vf config-%_target_cpu .config
 
 %make_build oldconfig
 %make_build include/linux/version.h
-%make_build bzImage
-%make_build modules
+%make_build all
 
 echo "Kernel built $KernelVer"
 
@@ -287,7 +270,7 @@ export ARCH=%base_arch
 KernelVer=%kversion-%flavour-%krelease
 
 install -Dp -m644 System.map %buildroot/boot/System.map-$KernelVer
-install -Dp -m644 arch/%base_arch/boot/bzImage \
+install -Dp -m644 arch/%base_arch/boot/vmlinuz \
 	%buildroot/boot/vmlinuz-$KernelVer
 install -Dp -m644 .config %buildroot/boot/config-$KernelVer
 
@@ -435,12 +418,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-drm-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
-%post -n kernel-modules-kvm-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-kvm-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
 %post -n kernel-modules-v4l-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
@@ -467,7 +444,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/sound
 %exclude %modules_dir/kernel/drivers/media/
 %exclude %modules_dir/kernel/drivers/gpu/drm
-%exclude %modules_dir/kernel/arch/x86/kvm
 %if_enabled oss
 # OSS drivers
 %exclude %modules_dir/kernel/sound/oss
@@ -495,9 +471,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
-
-%files -n kernel-modules-kvm-%flavour
-%modules_dir/kernel/arch/x86/kvm
 
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
