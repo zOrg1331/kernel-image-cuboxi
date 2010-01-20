@@ -42,6 +42,7 @@
 #include <net/sock.h>
 #include <linux/if_ether.h>	/* For the statistics structure. */
 #include <linux/if_arp.h>	/* For ARPHRD_ETHER */
+#include <linux/if_bridge.h>
 #include <linux/ethtool.h>
 #include <linux/ve_proto.h>
 #include <linux/veth.h>
@@ -288,15 +289,15 @@ static int veth_xmit(struct sk_buff *skb, struct net_device *dev)
 		if (is_multicast_ether_addr(
 					((struct ethhdr *)skb->data)->h_dest))
 			goto out;
-		if (compare_ether_addr(((struct ethhdr *)skb->data)->h_dest,
-					rcv->dev_addr))
-			goto outf;
+		if (!rcv->br_port &&
+			compare_ether_addr(((struct ethhdr *)skb->data)->h_dest, rcv->dev_addr))
+				goto outf;
 	} else if (!ve_is_super(dev->owner_env) &&
 			!entry->allow_mac_change) {
-		/* from VE to VE0 */
-		if (compare_ether_addr(((struct ethhdr *)skb->data)->h_source,
-					dev->dev_addr))
-			goto outf;
+		/* from VEX to VE0 */
+		if (!skb->dev->br_port &&
+			compare_ether_addr(((struct ethhdr *)skb->data)->h_source, dev->dev_addr))
+				goto outf;
 	}
 
 out:
