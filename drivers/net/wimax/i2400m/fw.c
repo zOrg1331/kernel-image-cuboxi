@@ -1588,7 +1588,7 @@ int i2400m_dev_bootstrap(struct i2400m *i2400m, enum i2400m_bri flags)
 		i2400m->fw_name = fw_name;
 		ret = i2400m_fw_bootstrap(i2400m, fw, flags);
 		release_firmware(fw);
-		if (ret >= 0)	/* firmware loaded succesfully */
+		if (ret >= 0)	/* firmware loaded successfully */
 			break;
 		i2400m->fw_name = NULL;
 	}
