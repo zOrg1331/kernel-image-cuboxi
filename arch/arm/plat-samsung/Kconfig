@@ -33,6 +33,13 @@ config SAMSUNG_IRQ_UART
 
 # options for gpio configuration support
 
+config SAMSUNG_GPIOLIB_4BIT
+	bool
+	help
+	  GPIOlib file contains the 4 bit modification functions for gpio
+	  configuration. GPIOlib shall be compiled only for S3C64XX and S5P
+	  series of processors.
+
 config S3C_GPIO_CFG_S3C24XX
 	bool
 	help
@@ -73,6 +80,15 @@ config SAMSUNG_GPIO_EXTRA
 	  Use additional GPIO space in addition to the GPIO's the SOC
 	  provides. This allows expanding the GPIO space for use with
 	  GPIO expanders.
+
+# ADC driver
+
+config S3C_ADC
+	bool "ADC common driver support"
+	help
+	  Core support for the ADC block found in the Samsung SoC systems
+	  for drivers such as the touchscreen and hwmon to use to share
+	  this resource.
 
 # device definitions to compile in
 
