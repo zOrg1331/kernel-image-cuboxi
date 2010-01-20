@@ -52,6 +52,9 @@ config HAVE_TCM
 	bool
 	select GENERIC_ALLOCATOR
 
+config HAVE_PROC_CPU
+	bool
+
 config NO_IOPORT
 	bool
 
@@ -554,6 +557,7 @@ config ARCH_PNX4008
 	bool "Philips Nexperia PNX4008 Mobile"
 	select CPU_ARM926T
 	select HAVE_CLK
+	select COMMON_CLKDEV
 	help
 	  This enables support for Philips PNX4008 mobile platform.
 
@@ -632,6 +636,14 @@ config ARCH_S3C64XX
 	select ARCH_HAS_CPUFREQ
 	help
 	  Samsung S3C64XX series based systems
+
+config ARCH_S5P6440
+	bool "Samsung S5P6440"
+	select CPU_V6
+	select GENERIC_GPIO
+	select HAVE_CLK
+	help
+	  Samsung S5P6440 CPU based systems
 
 config ARCH_S5PC1XX
 	bool "Samsung S5PC1XX"
@@ -805,6 +817,7 @@ source "arch/arm/plat-samsung/Kconfig"
 source "arch/arm/plat-s3c24xx/Kconfig"
 source "arch/arm/plat-s3c64xx/Kconfig"
 source "arch/arm/plat-s3c/Kconfig"
+source "arch/arm/plat-s5p/Kconfig"
 source "arch/arm/plat-s5pc1xx/Kconfig"
 
 if ARCH_S3C2410
@@ -820,6 +833,8 @@ if ARCH_S3C64XX
 source "arch/arm/mach-s3c6400/Kconfig"
 source "arch/arm/mach-s3c6410/Kconfig"
 endif
+
+source "arch/arm/mach-s5p6440/Kconfig"
 
 source "arch/arm/plat-stmp3xxx/Kconfig"
 
@@ -1074,7 +1089,7 @@ source kernel/Kconfig.preempt
 config HZ
 	int
 	default 128 if ARCH_L7200
-	default 200 if ARCH_EBSA110 || ARCH_S3C2410
+	default 200 if ARCH_EBSA110 || ARCH_S3C2410 || ARCH_S5P6440
 	default OMAP_32K_TIMER_HZ if ARCH_OMAP && OMAP_32K_TIMER
 	default AT91_TIMER_HZ if ARCH_AT91
 	default 100
@@ -1229,6 +1244,7 @@ config ALIGNMENT_TRAP
 	bool
 	depends on CPU_CP15_MMU
 	default y if !ARCH_EBSA110
+	select HAVE_PROC_CPU if PROC_FS
 	help
 	  ARM processors cannot fetch/store information which is not
 	  naturally aligned on the bus, i.e., a 4 byte fetch must start at an
