@@ -62,6 +62,8 @@ static int __init br_init(void)
 	if (err)
 		goto err_out4;
 
+	get_ve0()->features |= VE_FEATURE_BRIDGE;
+
 	brioctl_set(br_ioctl_deviceless_stub);
 	br_handle_frame_hook = br_handle_frame;
 	br_hard_xmit_hook = br_xmit;
