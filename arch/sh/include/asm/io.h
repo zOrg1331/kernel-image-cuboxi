@@ -22,6 +22,7 @@
  * for old compat code for I/O offseting to SuperIOs, all of which are
  * better handled through the machvec ioport mapping routines these days.
  */
+#include <linux/errno.h>
 #include <asm/cache.h>
 #include <asm/system.h>
 #include <asm/addrspace.h>
@@ -234,28 +235,39 @@ unsigned long long poke_real_address_q(unsigned long long addr,
  */
 #ifdef CONFIG_MMU
 void __iomem *__ioremap_caller(unsigned long offset, unsigned long size,
-			       unsigned long flags, void *caller);
+			       pgprot_t prot, void *caller);
 void __iounmap(void __iomem *addr);
 
+#ifdef CONFIG_IOREMAP_FIXED
+extern void __iomem *ioremap_fixed(resource_size_t, unsigned long,
+				   unsigned long, pgprot_t);
+extern int iounmap_fixed(void __iomem *);
+extern void ioremap_fixed_init(void);
+#else
 static inline void __iomem *
-__ioremap(unsigned long offset, unsigned long size, unsigned long flags)
+ioremap_fixed(resource_size_t phys_addr, unsigned long offset,
+	      unsigned long size, pgprot_t prot)
 {
-	return __ioremap_caller(offset, size, flags, __builtin_return_address(0));
+	BUG();
+	return NULL;
+}
+
+static inline void ioremap_fixed_init(void) { }
+static inline int iounmap_fixed(void __iomem *addr) { return -EINVAL; }
+#endif
+
+static inline void __iomem *
+__ioremap(unsigned long offset, unsigned long size, pgprot_t prot)
+{
+	return __ioremap_caller(offset, size, prot, __builtin_return_address(0));
 }
 
 static inline void __iomem *
-__ioremap_mode(unsigned long offset, unsigned long size, unsigned long flags)
+__ioremap_29bit(unsigned long offset, unsigned long size, pgprot_t prot)
 {
-#if defined(CONFIG_SUPERH32) && !defined(CONFIG_PMB_FIXED) && !defined(CONFIG_PMB)
+#ifdef CONFIG_29BIT
 	unsigned long last_addr = offset + size - 1;
-#endif
-	void __iomem *ret;
 
-	ret = __ioremap_trapped(offset, size);
-	if (ret)
-		return ret;
-
-#if defined(CONFIG_SUPERH32) && !defined(CONFIG_PMB_FIXED) && !defined(CONFIG_PMB)
 	/*
 	 * For P1 and P2 space this is trivial, as everything is already
 	 * mapped. Uncached access for P1 addresses are done through P2.
@@ -263,7 +275,7 @@ __ioremap_mode(unsigned long offset, unsigned long size, unsigned long flags)
 	 * mapping must be done by the PMB or by using page tables.
 	 */
 	if (likely(PXSEG(offset) < P3SEG && PXSEG(last_addr) < P3SEG)) {
-		if (unlikely(flags & _PAGE_CACHABLE))
+		if (unlikely(pgprot_val(prot) & _PAGE_CACHABLE))
 			return (void __iomem *)P1SEGADDR(offset);
 
 		return (void __iomem *)P2SEGADDR(offset);
@@ -274,26 +286,52 @@ __ioremap_mode(unsigned long offset, unsigned long size, unsigned long flags)
 		return (void __iomem *)P4SEGADDR(offset);
 #endif
 
-	return __ioremap(offset, size, flags);
+	return NULL;
+}
+
+static inline void __iomem *
+__ioremap_mode(unsigned long offset, unsigned long size, pgprot_t prot)
+{
+	void __iomem *ret;
+
+	ret = __ioremap_trapped(offset, size);
+	if (ret)
+		return ret;
+
+	ret = __ioremap_29bit(offset, size, prot);
+	if (ret)
+		return ret;
+
+	return __ioremap(offset, size, prot);
 }
 #else
-#define __ioremap(offset, size, flags)		((void __iomem *)(offset))
-#define __ioremap_mode(offset, size, flags)	((void __iomem *)(offset))
+#define __ioremap(offset, size, prot)		((void __iomem *)(offset))
+#define __ioremap_mode(offset, size, prot)	((void __iomem *)(offset))
 #define __iounmap(addr)				do { } while (0)
 #endif /* CONFIG_MMU */
 
-#define ioremap(offset, size)				\
-	__ioremap_mode((offset), (size), 0)
-#define ioremap_nocache(offset, size)			\
-	__ioremap_mode((offset), (size), 0)
-#define ioremap_cache(offset, size)			\
-	__ioremap_mode((offset), (size), _PAGE_CACHABLE)
-#define p3_ioremap(offset, size, flags)			\
-	__ioremap((offset), (size), (flags))
-#define ioremap_prot(offset, size, flags)		\
-	__ioremap_mode((offset), (size), (flags))
-#define iounmap(addr)					\
-	__iounmap((addr))
+static inline void __iomem *
+ioremap(unsigned long offset, unsigned long size)
+{
+	return __ioremap_mode(offset, size, PAGE_KERNEL_NOCACHE);
+}
+
+static inline void __iomem *
+ioremap_cache(unsigned long offset, unsigned long size)
+{
+	return __ioremap_mode(offset, size, PAGE_KERNEL);
+}
+
+#ifdef CONFIG_HAVE_IOREMAP_PROT
+static inline void __iomem *
+ioremap_prot(resource_size_t offset, unsigned long size, unsigned long flags)
+{
+	return __ioremap_mode(offset, size, __pgprot(flags));
+}
+#endif
+
+#define ioremap_nocache	ioremap
+#define iounmap		__iounmap
 
 #define maybebadio(port) \
 	printk(KERN_ERR "bad PC-like io %s:%u for port 0x%lx at 0x%08x\n", \

@@ -98,8 +98,17 @@ extern struct sh_cpuinfo cpu_data[];
 
 /* Forward decl */
 struct seq_operations;
+struct task_struct;
 
 extern struct pt_regs fake_swapper_regs;
+
+/* arch/sh/kernel/process.c */
+extern unsigned int xstate_size;
+extern void free_thread_xstate(struct task_struct *);
+extern struct kmem_cache *task_xstate_cachep;
+
+/* arch/sh/mm/init.c */
+extern unsigned int mem_init_done;
 
 /* arch/sh/kernel/setup.c */
 const char *get_cpu_subtype(struct sh_cpuinfo *c);
