@@ -132,8 +132,8 @@ static int process_sample_event(event_t *event, struct perf_session *session)
 {
 	struct addr_location al;
 
-	dump_printf("(IP, %d): %d: %p\n", event->header.misc,
-		    event->ip.pid, (void *)(long)event->ip.ip);
+	dump_printf("(IP, %d): %d: %#Lx\n", event->header.misc,
+		    event->ip.pid, event->ip.ip);
 
 	if (event__preprocess_sample(event, session, &al, symbol_filter) < 0) {
 		fprintf(stderr, "problem processing %d event, skipping it.\n",
@@ -451,10 +451,10 @@ static void perf_session__find_annotations(struct perf_session *self)
 }
 
 static struct perf_event_ops event_ops = {
-	.process_sample_event	= process_sample_event,
-	.process_mmap_event	= event__process_mmap,
-	.process_comm_event	= event__process_comm,
-	.process_fork_event	= event__process_task,
+	.sample	= process_sample_event,
+	.mmap	= event__process_mmap,
+	.comm	= event__process_comm,
+	.fork	= event__process_task,
 };
 
 static int __cmd_annotate(void)
