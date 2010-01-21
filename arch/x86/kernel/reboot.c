@@ -453,10 +453,33 @@ static struct dmi_system_id __initdata reboot_dmi_table_all[] = {
 	{ }
 };
 
+/* See if the Hardware is new enough to support ACPI reboots. */
+static int __init reboot_acpi_likey_supported(void)
+{
+	int year;
+
+	/* No BIOS date? We can safely say "Yes" here, because ACPI-reboot
+	 * will only work when acpi=force was specified, else it falls back
+	 * to KBD-reboots anyway. */
+	if (!dmi_get_date(DMI_BIOS_DATE, &year, NULL, NULL)) {
+		return 1;
+	}
+	if (year == 0) {
+		return 1;
+	}
+
+	/* 2003 was decided as the cut-off year. */
+	if (year < 2003) {
+		return 0;
+	}
+	return 1;
+}
+
 /* Decide how we will reboot:
  * - Check the X86_32-only quirks table.
  * - Check the generic quirks table.
- * - Default to old-style Keyboard Controller reboot.
+ * - Check if we could use ACPI-based reboot.
+ * - Fall back to old-style Keyboard Controller reboot.
  */
 static int __init reboot_init(void)
 {
@@ -472,7 +495,12 @@ static int __init reboot_init(void)
 	if (reboot_type != BOOT_UNDECIDED)
 		return 0;
 
-	reboot_type = BOOT_KBD;
+	if (reboot_acpi_likey_supported()) {
+		reboot_type = BOOT_ACPI;
+	} else {
+		printk(KERN_INFO "Selecting old-style reboot for older hardware\n");
+		reboot_type = BOOT_KBD;
+	}
 
 	return 0;
 }
