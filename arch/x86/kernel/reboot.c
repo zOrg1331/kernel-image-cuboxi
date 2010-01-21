@@ -34,7 +34,7 @@ EXPORT_SYMBOL(pm_power_off);
 
 static const struct desc_ptr no_idt = {};
 static int reboot_mode;
-enum reboot_type reboot_type = BOOT_KBD;
+enum reboot_type reboot_type = BOOT_UNDECIDED;
 int reboot_force;
 
 #if defined(CONFIG_X86_32) && defined(CONFIG_SMP)
@@ -134,7 +134,11 @@ static int __init set_bios_reboot(const struct dmi_system_id *d)
 	return 0;
 }
 
-static struct dmi_system_id __initdata reboot_dmi_table[] = {
+/*
+ * This table only gets used on x86_32, so only use with
+ * set_bios_reboot.
+ */
+static struct dmi_system_id __initdata reboot_dmi_table_x86_32[] = {
 	{	/* Handle problems with rebooting on Dell E520's */
 		.callback = set_bios_reboot,
 		.ident = "Dell E520",
@@ -269,13 +273,6 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
 	},
 	{ }
 };
-
-static int __init reboot_init(void)
-{
-	dmi_check_system(reboot_dmi_table);
-	return 0;
-}
-core_initcall(reboot_init);
 
 /* The following code and data reboots the machine by switching to real
    mode and jumping to the BIOS reset entry point, as if the CPU has
@@ -427,7 +424,8 @@ static int __init set_pci_reboot(const struct dmi_system_id *d)
 	return 0;
 }
 
-static struct dmi_system_id __initdata pci_reboot_dmi_table[] = {
+/* This table gets used on x86_32 AND x86_64. */
+static struct dmi_system_id __initdata reboot_dmi_table_all[] = {
 	{	/* Handle problems with rebooting on Apple MacBook5 */
 		.callback = set_pci_reboot,
 		.ident = "Apple MacBook5",
@@ -455,12 +453,30 @@ static struct dmi_system_id __initdata pci_reboot_dmi_table[] = {
 	{ }
 };
 
-static int __init pci_reboot_init(void)
+/* Decide how we will reboot:
+ * - Check the X86_32-only quirks table.
+ * - Check the generic quirks table.
+ * - Default to old-style Keyboard Controller reboot.
+ */
+static int __init reboot_init(void)
 {
-	dmi_check_system(pci_reboot_dmi_table);
+	/* don't override user decisions (reboot=...) */
+	if (reboot_type != BOOT_UNDECIDED)
+		return 0;
+
+#ifdef CONFIG_X86_32
+	dmi_check_system(reboot_dmi_table_x86_32);
+#endif /* CONFIG_X86_32 */
+	dmi_check_system(reboot_dmi_table_all);
+
+	if (reboot_type != BOOT_UNDECIDED)
+		return 0;
+
+	reboot_type = BOOT_KBD;
+
 	return 0;
 }
-core_initcall(pci_reboot_init);
+core_initcall(reboot_init);
 
 static inline void kb_wait(void)
 {
@@ -534,6 +550,7 @@ static void native_machine_emergency_restart(void)
 	for (;;) {
 		/* Could also try the reset bit in the Hammer NB */
 		switch (reboot_type) {
+		case BOOT_UNDECIDED:
 		case BOOT_KBD:
 			mach_reboot_fixups(); /* for board specific fixups */
 
