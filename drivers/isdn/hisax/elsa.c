@@ -1025,7 +1025,6 @@ setup_elsa_pcmcia(struct IsdnCard *card)
 	       cs->irq);
 }
 
-#ifdef CONFIG_PCI_LEGACY
 static 	struct pci_dev *dev_qs1000 __devinitdata = NULL;
 static 	struct pci_dev *dev_qs3000 __devinitdata = NULL;
 
@@ -1035,7 +1034,7 @@ setup_elsa_pci(struct IsdnCard *card)
 	struct IsdnCardState *cs = card->cs;
 
 	cs->subtyp = 0;
-	if ((dev_qs1000 = pci_find_device(PCI_VENDOR_ID_ELSA,
+	if ((dev_qs1000 = hisax_find_pci_device(PCI_VENDOR_ID_ELSA,
 		PCI_DEVICE_ID_ELSA_MICROLINK, dev_qs1000))) {
 		if (pci_enable_device(dev_qs1000))
 			return(0);
@@ -1043,7 +1042,7 @@ setup_elsa_pci(struct IsdnCard *card)
 		cs->irq = dev_qs1000->irq;
 		cs->hw.elsa.cfg = pci_resource_start(dev_qs1000, 1);
 		cs->hw.elsa.base = pci_resource_start(dev_qs1000, 3);
-	} else if ((dev_qs3000 = pci_find_device(PCI_VENDOR_ID_ELSA,
+	} else if ((dev_qs3000 = hisax_find_pci_device(PCI_VENDOR_ID_ELSA,
 		PCI_DEVICE_ID_ELSA_QS3000, dev_qs3000))) {
 		if (pci_enable_device(dev_qs3000))
 			return(0);
@@ -1085,15 +1084,6 @@ setup_elsa_pci(struct IsdnCard *card)
 
 	return (1);
 }
-
-#else
-
-static int __devinit
-setup_elsa_pci(struct IsdnCard *card)
-{
-	return (1);
-}
-#endif /* CONFIG_PCI_LEGACY */
 
 static int __devinit
 setup_elsa_common(struct IsdnCard *card)
