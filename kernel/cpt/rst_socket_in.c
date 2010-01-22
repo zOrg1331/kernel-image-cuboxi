@@ -288,6 +288,11 @@ static int rst_socket_tcp(struct cpt_sock_image *si, loff_t pos, struct sock *sk
 		}
 	}
 
+	if (sk->sk_family == AF_INET6)
+		sk->sk_gso_type = SKB_GSO_TCPV6;
+	else
+		sk->sk_gso_type = SKB_GSO_TCPV4;
+
 	return 0;
 }
 
