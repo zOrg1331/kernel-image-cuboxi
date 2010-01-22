@@ -17,6 +17,7 @@
 #include <asm/coldfire.h>
 #include <asm/mcfsim.h>
 #include <asm/mcfuart.h>
+#include <asm/mcfi2c.h>
 
 /***************************************************************************/
 
@@ -38,8 +39,45 @@ static struct platform_device m5206_uart = {
 	.dev.platform_data	= m5206_uart_platform,
 };
 
+#if defined(CONFIG_I2C_MCF) || defined(CONFIG_I2C_MCF_MODULE)
+static struct resource m5206_i2c_resources[] = {
+	{
+		.start		= MCFI2C_IOBASE,
+		.end		= MCFI2C_IOBASE + MCFI2C_IOSIZE - 1,
+		.flags		= IORESOURCE_MEM,
+	},
+	{
+		.start		= MCF_IRQ_I2C,
+		.end		= MCF_IRQ_I2C,
+		.flags		= IORESOURCE_IRQ,
+	},
+};
+
+static struct mcfi2c_platform_data m5206_i2c_platform_data = {
+	.bitrate		= 100000,
+};
+
+static struct platform_device m5206_i2c = {
+	.name			= "i2c-mcf",
+	.id			= 0,
+	.num_resources		= ARRAY_SIZE(m5206_i2c_resources),
+	.resource		= m5206_i2c_resources,
+	.dev.platform_data	= &m5206_i2c_platform_data,
+};
+
+static void __init m5206_i2c_init(void)
+{
+	writeb(MCFSIM_ICR_AUTOVEC | MCFSIM_ICR_LEVEL5 | MCFSIM_ICR_PRI0,
+			MCF_MBAR + MCFSIM_I2CICR);
+	mcf_mapirq2imr(MCF_IRQ_I2C, MCFINTC_I2C);
+}
+#endif
+
 static struct platform_device *m5206_devices[] __initdata = {
 	&m5206_uart,
+#if defined(CONFIG_I2C_MCF) || defined(CONFIG_I2C_MCF_MODULE)
+	&m5206_i2c,
+#endif
 };
 
 /***************************************************************************/
@@ -101,6 +139,9 @@ void __init config_BSP(char *commandp, int size)
 	mach_reset = m5206_cpu_reset;
 	m5206_timers_init();
 	m5206_uarts_init();
+#if defined(CONFIG_I2C_MCF) || defined(CONFIG_I2C_MCF_MODULE)
+	m5206_i2c_init();
+#endif
 
 	/* Only support the external interrupts on their primary level */
 	mcf_mapirq2imr(25, MCFINTC_EINT1);
