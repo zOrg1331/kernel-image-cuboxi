@@ -2238,7 +2238,7 @@ int tcp_send_synack(struct sock *sk)
 			struct sk_buff *nskb = skb_copy(skb, GFP_ATOMIC);
 			if (nskb == NULL)
 				return -ENOMEM;
-			if (ub_tcpsndbuf_charge(sk, skb) < 0) {
+			if (ub_tcpsndbuf_charge(sk, nskb) < 0) {
 				kfree_skb(nskb);
 				return -ENOMEM;
 			}
