@@ -253,6 +253,9 @@ void snd_soc_jack_free_gpios(struct snd_soc_jack *jack, int count,
 /* codec register bit access */
 int snd_soc_update_bits(struct snd_soc_codec *codec, unsigned short reg,
 				unsigned int mask, unsigned int value);
+int snd_soc_update_bits_locked(struct snd_soc_codec *codec,
+			       unsigned short reg, unsigned int mask,
+			       unsigned int value);
 int snd_soc_test_bits(struct snd_soc_codec *codec, unsigned short reg,
 				unsigned int mask, unsigned int value);
 
@@ -401,6 +404,8 @@ struct snd_soc_codec {
 	void *reg_cache;
 	short reg_cache_size;
 	short reg_cache_step;
+
+	unsigned int idle_bias_off:1; /* Use BIAS_OFF instead of STANDBY */
 
 	/* dapm */
 	u32 pop_time;
