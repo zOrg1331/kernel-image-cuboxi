@@ -134,7 +134,6 @@ struct mpage_da_data {
 	int retval;
 };
 #define	EXT4_IO_UNWRITTEN	0x1
-#define	EXT4_IO_WRITTEN		0x2
 typedef struct ext4_io_end {
 	struct list_head	list;		/* per-file finished AIO list */
 	struct inode		*inode;		/* file being written to */
@@ -712,6 +711,7 @@ struct ext4_inode_info {
 
 	/* completed IOs that might need unwritten extents handling */
 	struct list_head i_completed_io_list;
+	spinlock_t i_completed_io_lock;
 	/* current io_end structure for async DIO write*/
 	ext4_io_end_t *cur_aio_dio;
 
