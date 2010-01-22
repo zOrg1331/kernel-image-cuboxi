@@ -111,6 +111,32 @@ static void cpt_dump_netstats(struct net_device *dev, struct cpt_context * ctx)
 	return;
 }
 
+static void cpt_dump_tap_filter(struct tap_filter *flt, struct cpt_context *ctx)
+{
+	struct cpt_tap_filter_image v;
+	loff_t saved_obj;
+
+	cpt_push_object(&saved_obj, ctx);
+	cpt_open_object(NULL, ctx);
+
+	v.cpt_next = CPT_NULL;
+	v.cpt_object = CPT_OBJ_NET_TAP_FILTER;
+	v.cpt_hdrlen = sizeof(v);
+	v.cpt_content = CPT_CONTENT_VOID;
+
+	v.cpt_count = flt->count;
+
+	BUILD_BUG_ON(sizeof(flt->mask) != sizeof(v.cpt_mask));
+	memcpy(v.cpt_mask, flt->mask, sizeof(v.cpt_mask));
+
+	BUILD_BUG_ON(sizeof(flt->addr) != sizeof(v.cpt_addr));
+	memcpy(v.cpt_addr, flt->addr, sizeof(v.cpt_addr));
+
+	ctx->write(&v, sizeof(v), ctx);
+	cpt_close_object(ctx);
+	cpt_pop_object(&saved_obj, ctx);
+}
+
 static void cpt_dump_tuntap(struct net_device *dev, struct cpt_context * ctx)
 {
 #if defined(CONFIG_TUN) || defined(CONFIG_TUN_MODULE)
@@ -139,14 +165,13 @@ static void cpt_dump_tuntap(struct net_device *dev, struct cpt_context * ctx)
 		v.cpt_bindfile = obj->o_pos;
 	}
 
-	BUG_ON(tun->txflt.count != 0); /* FIXME (f271b2cc) */
-
 	v.cpt_if_flags = 0;
 	memset(v.cpt_dev_addr, 0, sizeof(v.cpt_dev_addr));
 	memset(v.cpt_chr_filter, 0, sizeof(v.cpt_chr_filter));
 	memset(v.cpt_net_filter, 0, sizeof(v.cpt_net_filter));
 
 	ctx->write(&v, sizeof(v), ctx);
+	cpt_dump_tap_filter(&tun->txflt, ctx);
 	cpt_close_object(ctx);
 #endif
 	return;

@@ -99,6 +99,9 @@ enum _cpt_object_type
 	CPT_OBJ_NET_HWADDR,
 	CPT_OBJ_NET_VETH,
 	CPT_OBJ_NET_STATS,
+
+	/* 2.6.27-specific */
+	CPT_OBJ_NET_TAP_FILTER = 0x01000000,
 };
 
 #define CPT_ALIGN(n) (((n)+7)&~7)
@@ -1507,6 +1510,17 @@ struct cpt_tuntap_image {
 	__u16	cpt_pad;
 	__u32	cpt_chr_filter[2];
 	__u32	cpt_net_filter[2];
+} __attribute__ ((aligned (8)));
+
+struct cpt_tap_filter_image {
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	__u32	cpt_count;
+	__u32	cpt_mask[2];
+	__u8	cpt_addr[8][6];
 } __attribute__ ((aligned (8)));
 
 struct cpt_veth_image {
