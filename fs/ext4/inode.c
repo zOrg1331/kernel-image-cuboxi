@@ -38,6 +38,7 @@
 #include <linux/uio.h>
 #include <linux/bio.h>
 #include <linux/workqueue.h>
+#include <linux/kernel.h>
 
 #include "ext4_jbd2.h"
 #include "xattr.h"
@@ -3681,11 +3682,11 @@ int flush_completed_IO(struct inode *inode)
 	return (ret2 < 0) ? ret2 : 0;
 }
 
-static ext4_io_end_t *ext4_init_io_end (struct inode *inode)
+static ext4_io_end_t *ext4_init_io_end (struct inode *inode, gfp_t flags)
 {
 	ext4_io_end_t *io = NULL;
 
-	io = kmalloc(sizeof(*io), GFP_NOFS);
+	io = kmalloc(sizeof(*io), flags);
 
 	if (io) {
 		igrab(inode);
@@ -3775,9 +3776,14 @@ static int ext4_set_bh_endio(struct buffer_head *bh, struct inode *inode)
 	loff_t offset = (sector_t)page->index << PAGE_CACHE_SHIFT;
 	size_t size = bh->b_size;
 
-	io_end = ext4_init_io_end(inode);
-	if (!io_end)
-		return -ENOMEM;
+retry:
+	io_end = ext4_init_io_end(inode, GFP_ATOMIC);
+	if (!io_end) {
+		if (printk_ratelimit())
+			printk(KERN_WARNING "%s: allocation fail\n", __func__);
+		schedule();
+		goto retry;
+	}
 	io_end->offset = offset;
 	io_end->size = size;
 
@@ -3839,7 +3845,7 @@ static ssize_t ext4_ext_direct_IO(int rw, struct kiocb *iocb,
 		iocb->private = NULL;
 		EXT4_I(inode)->cur_aio_dio = NULL;
 		if (!is_sync_kiocb(iocb)) {
-			iocb->private = ext4_init_io_end(inode);
+			iocb->private = ext4_init_io_end(inode, GFP_NOFS);
 			if (!iocb->private)
 				return -ENOMEM;
 			/*
