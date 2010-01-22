@@ -565,6 +565,10 @@ typedef void (*perf_overflow_handler_t)(struct perf_event *, int,
 					struct perf_sample_data *,
 					struct pt_regs *regs);
 
+enum perf_group_flag {
+	PERF_GROUP_SOFTWARE = 0x1,
+};
+
 /**
  * struct perf_event - performance event kernel representation:
  */
@@ -574,6 +578,7 @@ struct perf_event {
 	struct list_head		event_entry;
 	struct list_head		sibling_list;
 	int				nr_siblings;
+	int				group_flags;
 	struct perf_event		*group_leader;
 	struct perf_event		*output;
 	const struct pmu		*pmu;
@@ -658,7 +663,7 @@ struct perf_event {
 
 	perf_overflow_handler_t		overflow_handler;
 
-#ifdef CONFIG_EVENT_PROFILE
+#ifdef CONFIG_EVENT_TRACING
 	struct event_filter		*filter;
 #endif
 
@@ -683,7 +688,8 @@ struct perf_event_context {
 	 */
 	struct mutex			mutex;
 
-	struct list_head		group_list;
+	struct list_head		pinned_groups;
+	struct list_head		flexible_groups;
 	struct list_head		event_list;
 	int				nr_events;
 	int				nr_active;
@@ -746,10 +752,10 @@ extern int perf_max_events;
 
 extern const struct pmu *hw_perf_event_init(struct perf_event *event);
 
-extern void perf_event_task_sched_in(struct task_struct *task, int cpu);
+extern void perf_event_task_sched_in(struct task_struct *task);
 extern void perf_event_task_sched_out(struct task_struct *task,
-					struct task_struct *next, int cpu);
-extern void perf_event_task_tick(struct task_struct *task, int cpu);
+					struct task_struct *next);
+extern void perf_event_task_tick(struct task_struct *task);
 extern int perf_event_init_task(struct task_struct *child);
 extern void perf_event_exit_task(struct task_struct *child);
 extern void perf_event_free_task(struct task_struct *task);
@@ -875,12 +881,12 @@ extern void perf_event_enable(struct perf_event *event);
 extern void perf_event_disable(struct perf_event *event);
 #else
 static inline void
-perf_event_task_sched_in(struct task_struct *task, int cpu)		{ }
+perf_event_task_sched_in(struct task_struct *task)			{ }
 static inline void
 perf_event_task_sched_out(struct task_struct *task,
-			    struct task_struct *next, int cpu)		{ }
+			    struct task_struct *next)			{ }
 static inline void
-perf_event_task_tick(struct task_struct *task, int cpu)			{ }
+perf_event_task_tick(struct task_struct *task)				{ }
 static inline int perf_event_init_task(struct task_struct *child)	{ return 0; }
 static inline void perf_event_exit_task(struct task_struct *child)	{ }
 static inline void perf_event_free_task(struct task_struct *task)	{ }
