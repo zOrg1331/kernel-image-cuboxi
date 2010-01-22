@@ -307,6 +307,73 @@ int rst_resume_network(struct cpt_context *ctx)
 	return 0;
 }
 
+static int rst_restore_tap_filter(loff_t start, struct cpt_tuntap_image *ti,
+			struct tap_filter *flt, struct cpt_context *ctx)
+{
+	int err;
+	struct cpt_tap_filter_image fi;
+	loff_t pos;
+
+	/* disable filtering */
+	flt->count = 0;
+
+	pos = start + ti->cpt_hdrlen;
+
+	/* no tap filter image? */
+	if (pos >= start + ti->cpt_next)
+		goto convert;
+
+	err  = rst_get_object(CPT_OBJ_NET_TAP_FILTER, pos, &fi, ctx);
+	if (err)
+		return err;
+
+	BUILD_BUG_ON(sizeof(flt->mask) != sizeof(fi.cpt_mask));
+	memcpy(flt->mask, fi.cpt_mask, sizeof(fi.cpt_mask));
+
+	BUILD_BUG_ON(sizeof(flt->addr) != sizeof(fi.cpt_addr));
+	memcpy(flt->addr, fi.cpt_addr, sizeof(fi.cpt_addr));
+
+	flt->count = fi.cpt_count;
+
+	return 0;
+
+convert:
+	/** From OLD filtering code:
+	 * Decide whether to accept this packet. This code is designed to
+	 * behave identically to an Ethernet interface. Accept the packet if
+	 * - we are promiscuous.
+	 * - the packet is addressed to us.
+	 * - the packet is broadcast.
+	 * - the packet is multicast and
+	 *   - we are multicast promiscous.
+	 *   - we belong to the multicast group.
+	 */
+
+	/* accept all, this is default if filter is untouched */
+	if (ti->cpt_if_flags & IFF_PROMISC)
+		return 0;
+
+	/* accept packets addressed to character device's hardware address */
+	BUILD_BUG_ON(sizeof(flt->addr[0]) != sizeof(ti->cpt_dev_addr));
+	memcpy(flt->addr[0], ti->cpt_dev_addr, sizeof(ti->cpt_dev_addr));
+
+	/* accept broadcast */
+	memset(flt->addr[1], ~0, sizeof(flt->addr[1]));
+
+	/* accept hashed multicast: hash function the same as in old code */
+	BUILD_BUG_ON(sizeof(flt->mask) != sizeof(ti->cpt_chr_filter));
+	memcpy(flt->mask, ti->cpt_chr_filter, sizeof(ti->cpt_chr_filter));
+
+	/* accept all multicast */
+	if (ti->cpt_if_flags & IFF_ALLMULTI)
+		memset(flt->mask, ~0, sizeof(flt->mask));
+
+	/* two exact filters: hw addr and broadcast */
+	flt->count = 2;
+
+	return 0;
+}
+
 #if defined(CONFIG_TUN) || defined(CONFIG_TUN_MODULE)
 extern unsigned int tun_net_id;
 #endif
@@ -330,7 +397,6 @@ static int rst_restore_tuntap(loff_t start, struct cpt_netdev_image *di,
 	if (err)
 		return err;
 
-	pos += ti.cpt_next;
 	if (ti.cpt_bindfile) {
 		bind_file = rst_file(ti.cpt_bindfile, -1, ctx);
 		if (IS_ERR(bind_file)) {
@@ -355,7 +421,11 @@ static int rst_restore_tuntap(loff_t start, struct cpt_netdev_image *di,
 	tun->attached = ti.cpt_attached;
 	tun_net_init(dev);
 
-	tun->txflt.count = 0;
+	err = rst_restore_tap_filter(pos, &ti, &tun->txflt, ctx);
+	if (err < 0) {
+		free_netdev(dev);
+		goto out;
+	}
 
 	err = register_netdevice(dev);
 	if (err < 0) {
@@ -363,6 +433,8 @@ static int rst_restore_tuntap(loff_t start, struct cpt_netdev_image *di,
 		eprintk_ctx("failed to register tun/tap net device\n");
 		goto out;
 	}
+
+	pos += ti.cpt_next;
 	if (pos < start + di->cpt_next) {
 		struct cpt_hwaddr_image hw;
 		/* Restore hardware address */
