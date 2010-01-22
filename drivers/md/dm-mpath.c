@@ -461,6 +461,9 @@ static void process_queued_ios(struct work_struct *work)
 		m->pg_init_count++;
 		m->pg_init_required = 0;
 		list_for_each_entry(tmp, &pgpath->pg->pgpaths, list) {
+			/* Skip failed paths */
+			if (!tmp->is_active)
+				continue;
 			if (queue_work(kmpath_handlerd, &tmp->activate_path))
 				m->pg_init_in_progress++;
 		}
@@ -1128,8 +1131,7 @@ static int pg_init_limit_reached(struct multipath *m, struct pgpath *pgpath)
 
 static void pg_init_done(void *data, int errors)
 {
-	struct dm_path *path = data;
-	struct pgpath *pgpath = path_to_pgpath(path);
+	struct pgpath *pgpath = data;
 	struct priority_group *pg = pgpath->pg;
 	struct multipath *m = pg->m;
 	unsigned long flags;
@@ -1143,8 +1145,8 @@ static void pg_init_done(void *data, int errors)
 			errors = 0;
 			break;
 		}
-		DMERR("Cannot failover device because scsi_dh_%s was not "
-		      "loaded.", m->hw_handler_name);
+		DMERR("Could not failover the device: Handler scsi_dh_%s "
+		      "Error %d.", m->hw_handler_name, errors);
 		/*
 		 * Fail path for now, so we do not ping pong
 		 */
@@ -1198,7 +1200,7 @@ static void activate_path(struct work_struct *work)
 		container_of(work, struct pgpath, activate_path);
 
 	scsi_dh_activate(bdev_get_queue(pgpath->path.dev->bdev),
-				pg_init_done, &pgpath->path);
+				pg_init_done, pgpath);
 }
 
 /*
