@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.32
-Release: alt4
+Release: alt5
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -204,7 +204,7 @@ done
 %ifarch x86_64
 ln -s asm-x86 asm-x86_64
 %else
-%ifarch i686
+%ifarch i586
 ln -s asm-x86 asm-i386
 %endif
 %endif
@@ -271,6 +271,13 @@ KbuildFiles="
 	scripts/bin2c
 	scripts/gcc-version.sh
 	scripts/module-common.lds
+%ifarch i586
+	scripts/gcc-x86_32-has-stack-protector.sh
+%else
+%ifarch x86_64
+	scripts/gcc-x86_64-has-stack-protector.sh
+%endif
+%endif
 
 	.config
 	.kernelrelease
@@ -341,6 +348,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Sat Jan 23 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt5
+- 2.6.32.5
+
 * Tue Jan 19 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt4
 - 2.6.32.4
 
