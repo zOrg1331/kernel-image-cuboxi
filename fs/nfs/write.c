@@ -573,11 +573,15 @@ static int
 nfs_scan_commit(struct inode *inode, struct list_head *dst, pgoff_t idx_start, unsigned int npages)
 {
 	struct nfs_inode *nfsi = NFS_I(inode);
+	int ret;
 
 	if (!nfs_need_commit(nfsi))
 		return 0;
 
-	return nfs_scan_list(nfsi, dst, idx_start, npages, NFS_PAGE_TAG_COMMIT);
+	ret = nfs_scan_list(nfsi, dst, idx_start, npages, NFS_PAGE_TAG_COMMIT);
+	if (nfs_need_commit(NFS_I(inode)))
+		__mark_inode_dirty(inode, I_DIRTY_DATASYNC);
+	return ret;
 }
 #else
 static inline int nfs_need_commit(struct nfs_inode *nfsi)
