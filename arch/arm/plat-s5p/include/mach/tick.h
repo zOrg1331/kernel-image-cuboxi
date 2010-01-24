@@ -1,9 +1,11 @@
-/* linux/arch/arm/mach-s5p6440/include/mach/tick.h
+/* linux/arch/arm/plat-s5pv210/include/mach/tick.h
  *
  * Copyright (c) 2009 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com/
  *
- * S5P6440 - Timer tick support definitions
+ * Based on arch/arm/mach-s3c6400/include/mach/tick.h
+ *
+ * S5P Timer tick support definitions
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
