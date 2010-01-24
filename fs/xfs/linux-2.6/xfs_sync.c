@@ -90,14 +90,13 @@ xfs_inode_ag_lookup(
 STATIC int
 xfs_inode_ag_walk(
 	struct xfs_mount	*mp,
-	xfs_agnumber_t		ag,
+	struct xfs_perag	*pag,
 	int			(*execute)(struct xfs_inode *ip,
 					   struct xfs_perag *pag, int flags),
 	int			flags,
 	int			tag,
 	int			exclusive)
 {
-	struct xfs_perag	*pag = &mp->m_perag[ag];
 	uint32_t		first_index;
 	int			last_error = 0;
 	int			skipped;
@@ -141,8 +140,6 @@ restart:
 		delay(1);
 		goto restart;
 	}
-
-	xfs_put_perag(mp, pag);
 	return last_error;
 }
 
@@ -160,10 +157,16 @@ xfs_inode_ag_iterator(
 	xfs_agnumber_t		ag;
 
 	for (ag = 0; ag < mp->m_sb.sb_agcount; ag++) {
-		if (!mp->m_perag[ag].pag_ici_init)
+		struct xfs_perag	*pag;
+
+		pag = xfs_perag_get(mp, ag);
+		if (!pag->pag_ici_init) {
+			xfs_perag_put(pag);
 			continue;
-		error = xfs_inode_ag_walk(mp, ag, execute, flags, tag,
+		}
+		error = xfs_inode_ag_walk(mp, pag, execute, flags, tag,
 						exclusive);
+		xfs_perag_put(pag);
 		if (error) {
 			last_error = error;
 			if (error == EFSCORRUPTED)
@@ -231,7 +234,7 @@ xfs_sync_inode_data(
 	}
 
 	error = xfs_flush_pages(ip, 0, -1, (flags & SYNC_WAIT) ?
-				0 : XFS_B_ASYNC, FI_NONE);
+				0 : XBF_ASYNC, FI_NONE);
 	xfs_iunlock(ip, XFS_IOLOCK_SHARED);
 
  out_wait:
@@ -293,10 +296,7 @@ xfs_sync_data(
 	if (error)
 		return XFS_ERROR(error);
 
-	xfs_log_force(mp, 0,
-		      (flags & SYNC_WAIT) ?
-		       XFS_LOG_FORCE | XFS_LOG_SYNC :
-		       XFS_LOG_FORCE);
+	xfs_log_force(mp, (flags & SYNC_WAIT) ? XFS_LOG_SYNC : 0);
 	return 0;
 }
 
@@ -322,10 +322,6 @@ xfs_commit_dummy_trans(
 	struct xfs_inode	*ip = mp->m_rootip;
 	struct xfs_trans	*tp;
 	int			error;
-	int			log_flags = XFS_LOG_FORCE;
-
-	if (flags & SYNC_WAIT)
-		log_flags |= XFS_LOG_SYNC;
 
 	/*
 	 * Put a dummy transaction in the log to tell recovery
@@ -347,11 +343,11 @@ xfs_commit_dummy_trans(
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 
 	/* the log force ensures this transaction is pushed to disk */
-	xfs_log_force(mp, 0, log_flags);
+	xfs_log_force(mp, (flags & SYNC_WAIT) ? XFS_LOG_SYNC : 0);
 	return error;
 }
 
-int
+STATIC int
 xfs_sync_fsdata(
 	struct xfs_mount	*mp,
 	int			flags)
@@ -367,7 +363,7 @@ xfs_sync_fsdata(
 	if (flags & SYNC_TRYLOCK) {
 		ASSERT(!(flags & SYNC_WAIT));
 
-		bp = xfs_getsb(mp, XFS_BUF_TRYLOCK);
+		bp = xfs_getsb(mp, XBF_TRYLOCK);
 		if (!bp)
 			goto out;
 
@@ -387,7 +383,7 @@ xfs_sync_fsdata(
 		 * become pinned in between there and here.
 		 */
 		if (XFS_BUF_ISPINNED(bp))
-			xfs_log_force(mp, 0, XFS_LOG_FORCE);
+			xfs_log_force(mp, 0);
 	}
 
 
@@ -447,9 +443,6 @@ xfs_quiesce_data(
 	/* push and block till complete */
 	xfs_sync_data(mp, SYNC_WAIT);
 	xfs_qm_sync(mp, SYNC_WAIT);
-
-	/* drop inode references pinned by filestreams */
-	xfs_filestream_flush(mp);
 
 	/* write superblock and hoover up shutdown errors */
 	error = xfs_sync_fsdata(mp, SYNC_WAIT);
@@ -575,7 +568,7 @@ xfs_flush_inodes(
 	igrab(inode);
 	xfs_syncd_queue_work(ip->i_mount, inode, xfs_flush_inodes_work, &completion);
 	wait_for_completion(&completion);
-	xfs_log_force(ip->i_mount, (xfs_lsn_t)0, XFS_LOG_FORCE|XFS_LOG_SYNC);
+	xfs_log_force(ip->i_mount, XFS_LOG_SYNC);
 }
 
 /*
@@ -591,7 +584,7 @@ xfs_sync_worker(
 	int		error;
 
 	if (!(mp->m_flags & XFS_MOUNT_RDONLY)) {
-		xfs_log_force(mp, (xfs_lsn_t)0, XFS_LOG_FORCE);
+		xfs_log_force(mp, 0);
 		xfs_reclaim_inodes(mp, XFS_IFLUSH_DELWRI_ELSE_ASYNC);
 		/* dgc: errors ignored here */
 		error = xfs_qm_sync(mp, SYNC_TRYLOCK);
@@ -690,16 +683,17 @@ void
 xfs_inode_set_reclaim_tag(
 	xfs_inode_t	*ip)
 {
-	xfs_mount_t	*mp = ip->i_mount;
-	xfs_perag_t	*pag = xfs_get_perag(mp, ip->i_ino);
+	struct xfs_mount *mp = ip->i_mount;
+	struct xfs_perag *pag;
 
+	pag = xfs_perag_get(mp, XFS_INO_TO_AGNO(mp, ip->i_ino));
 	read_lock(&pag->pag_ici_lock);
 	spin_lock(&ip->i_flags_lock);
 	__xfs_inode_set_reclaim_tag(pag, ip);
 	__xfs_iflags_set(ip, XFS_IRECLAIMABLE);
 	spin_unlock(&ip->i_flags_lock);
 	read_unlock(&pag->pag_ici_lock);
-	xfs_put_perag(mp, pag);
+	xfs_perag_put(pag);
 }
 
 void
