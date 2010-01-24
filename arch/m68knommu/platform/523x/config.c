@@ -20,6 +20,7 @@
 #include <asm/coldfire.h>
 #include <asm/mcfsim.h>
 #include <asm/mcfuart.h>
+#include <asm/mcfi2c.h>
 
 /***************************************************************************/
 
@@ -75,9 +76,51 @@ static struct platform_device m523x_fec = {
 	.resource		= m523x_fec_resources,
 };
 
+#if defined(CONFIG_I2C_MCF) || defined(CONFIG_I2C_MCF_MODULE)
+static struct resource m523x_i2c_resources[] = {
+	{
+		.start		= MCFI2C_IOBASE,
+		.end		= MCFI2C_IOBASE + MCFI2C_IOSIZE - 1,
+		.flags		= IORESOURCE_MEM,
+	},
+	{
+		.start		= MCFINT_VECBASE + MCFINT_I2C,
+		.end		= MCFINT_VECBASE + MCFINT_I2C,
+		.flags		= IORESOURCE_IRQ,
+	},
+};
+
+static struct mcfi2c_platform_data m523x_i2c_platform_data = {
+	.bitrate		= 100000,
+};
+
+static struct platform_device m523x_i2c = {
+	.name			= "i2c-mcf",
+	.id			= 0,
+	.num_resources		= ARRAY_SIZE(m523x_i2c_resources),
+	.resource		= m523x_i2c_resources,
+	.dev.platform_data	= &m523x_i2c_platform_data,
+};
+
+static void __init m523x_i2c_init(void)
+{
+	u8 par;
+
+	/* setup Port AS Pin Assignment Register for I2C */
+	/*  set PASPA0 to SCL and PASPA1 to SDA */
+	par = readb(MCF_IPSBAR + MCFGPIO_PAR_FECI2C);
+	par |= 0x0f;
+	writeb(par, MCF_IPSBAR + MCFGPIO_PAR_FECI2C);
+}
+
+#endif
+
 static struct platform_device *m523x_devices[] __initdata = {
 	&m523x_uart,
 	&m523x_fec,
+#if defined(CONFIG_I2C_MCF) || defined(CONFIG_I2C_MCF_MODULE)
+	&m523x_i2c,
+#endif
 };
 
 /***************************************************************************/
@@ -114,6 +157,9 @@ void __init config_BSP(char *commandp, int size)
 static int __init init_BSP(void)
 {
 	m523x_fec_init();
+#if defined(CONFIG_I2C_MCF) || defined(CONFIG_I2C_MCF_MODULE)
+	m523x_i2c_init();
+#endif
 	platform_add_devices(m523x_devices, ARRAY_SIZE(m523x_devices));
 	return 0;
 }

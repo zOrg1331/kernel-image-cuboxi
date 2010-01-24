@@ -31,6 +31,7 @@
 #define	MCFINT_UART0		13		/* Interrupt number for UART0 */
 #define	MCFINT_UART1		14		/* Interrupt number for UART1 */
 #define	MCFINT_UART2		15		/* Interrupt number for UART2 */
+#define	MCFINT_I2C		17		/* Interrupt number for I2C */
 #define	MCFINT_PIT1		36		/* Interrupt number for PIT1 */
 
 /*
@@ -218,9 +219,12 @@
  * EPort
  */
 
+#define MCFEPORT_EPPAR		(MCF_IPSBAR + 0x130000)
 #define MCFEPORT_EPDDR		(MCF_IPSBAR + 0x130002)
+#define MCFEPORT_EPIER		(MCF_IPSBAR + 0x130003)
 #define MCFEPORT_EPDR		(MCF_IPSBAR + 0x130004)
 #define MCFEPORT_EPPDR		(MCF_IPSBAR + 0x130005)
+#define MCFEPORT_EPFR		(MCF_IPSBAR + 0x130006)
 
 
 /*
@@ -239,6 +243,12 @@
 #define UART2_ENABLE_MASK	0x3f00 
 #endif
 
+#ifdef CONFIG_M5271
+#define MCF_GPIO_PAR_FECI2C	0x100047
+#endif
+#ifdef CONFIG_M5275
+#define MCF_GPIO_PAR_FECI2C	0x100082
+#endif
 /*
  *  Reset Controll Unit (relative to IPSBAR).
  */

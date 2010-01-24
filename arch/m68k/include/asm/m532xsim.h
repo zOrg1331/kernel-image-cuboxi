@@ -17,6 +17,7 @@
 #define MCFINT_UART0        26          /* Interrupt number for UART0 */
 #define MCFINT_UART1        27          /* Interrupt number for UART1 */
 #define MCFINT_UART2        28          /* Interrupt number for UART2 */
+#define MCFINT_I2C          30		/* Interrupt number for I2C */
 
 #define MCF_WTM_WCR	MCF_REG16(0xFC098000)
 
@@ -110,42 +111,6 @@
 
 #define	MCF_RCR_SWRESET		0x80		/* Software reset bit */
 #define	MCF_RCR_FRCSTOUT	0x40		/* Force external reset */
-
-/*********************************************************************
- *
- * Inter-IC (I2C) Module
- *
- *********************************************************************/
-
-/* Read/Write access macros for general use */
-#define MCF532x_I2C_I2ADR       (volatile u8 *) (0xFC058000) // Address 
-#define MCF532x_I2C_I2FDR       (volatile u8 *) (0xFC058004) // Freq Divider
-#define MCF532x_I2C_I2CR        (volatile u8 *) (0xFC058008) // Control
-#define MCF532x_I2C_I2SR        (volatile u8 *) (0xFC05800C) // Status
-#define MCF532x_I2C_I2DR        (volatile u8 *) (0xFC058010) // Data I/O
-
-/* Bit level definitions and macros */
-#define MCF532x_I2C_I2ADR_ADDR(x)                       (((x)&0x7F)<<0x01)
-
-#define MCF532x_I2C_I2FDR_IC(x)                         (((x)&0x3F))
-
-#define MCF532x_I2C_I2CR_IEN    (0x80)	// I2C enable
-#define MCF532x_I2C_I2CR_IIEN   (0x40)  // interrupt enable
-#define MCF532x_I2C_I2CR_MSTA   (0x20)  // master/slave mode
-#define MCF532x_I2C_I2CR_MTX    (0x10)  // transmit/receive mode
-#define MCF532x_I2C_I2CR_TXAK   (0x08)  // transmit acknowledge enable
-#define MCF532x_I2C_I2CR_RSTA   (0x04)  // repeat start
-
-#define MCF532x_I2C_I2SR_ICF    (0x80)  // data transfer bit
-#define MCF532x_I2C_I2SR_IAAS   (0x40)  // I2C addressed as a slave
-#define MCF532x_I2C_I2SR_IBB    (0x20)  // I2C bus busy
-#define MCF532x_I2C_I2SR_IAL    (0x10)  // aribitration lost
-#define MCF532x_I2C_I2SR_SRW    (0x04)  // slave read/write
-#define MCF532x_I2C_I2SR_IIF    (0x02)  // I2C interrupt
-#define MCF532x_I2C_I2SR_RXAK   (0x01)  // received acknowledge
-
-#define MCF532x_PAR_FECI2C	(volatile u8 *) (0xFC0A4053)
-
 
 /*
  *	The M5329EVB board needs a help getting its devices initialized 
