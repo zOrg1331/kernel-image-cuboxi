@@ -1618,7 +1618,7 @@ int ext4_ext_insert_extent(handle_t *handle, struct inode *inode,
 	BUG_ON(path[depth].p_hdr == NULL);
 
 	/* try to insert block into found extent and return */
-	if (ex && (flag != EXT4_GET_BLOCKS_DIO_CREATE_EXT)
+	if (ex && !(flag & EXT4_GET_BLOCKS_PRE_IO)
 		&& ext4_can_extents_be_merged(inode, ex, newext)) {
 		ext_debug("append [%d]%d block to %d:[%d]%d (from %llu)\n",
 				ext4_ext_is_uninitialized(newext),
@@ -1739,7 +1739,7 @@ has_space:
 
 merge:
 	/* try to merge extents to the right */
-	if (flag != EXT4_GET_BLOCKS_DIO_CREATE_EXT)
+	if (!(flag & EXT4_GET_BLOCKS_PRE_IO))
 		ext4_ext_try_to_merge(inode, path, nearex);
 
 	/* try to merge extents to the left */
@@ -2983,7 +2983,7 @@ fix_extent_len:
 	ext4_ext_dirty(handle, inode, path + depth);
 	return err;
 }
-static int ext4_convert_unwritten_extents_dio(handle_t *handle,
+static int ext4_convert_unwritten_extents_endio(handle_t *handle,
 					      struct inode *inode,
 					      struct ext4_ext_path *path)
 {
@@ -3038,14 +3038,6 @@ out:
 	return err;
 }
 
-static void unmap_underlying_metadata_blocks(struct block_device *bdev,
-			sector_t block, int count)
-{
-	int i;
-	for (i = 0; i < count; i++)
-                unmap_underlying_metadata(bdev, block + i);
-}
-
 static int
 ext4_ext_handle_uninitialized_extents(handle_t *handle, struct inode *inode,
 			ext4_lblk_t iblock, unsigned int max_blocks,
@@ -3063,8 +3055,8 @@ ext4_ext_handle_uninitialized_extents(handle_t *handle, struct inode *inode,
 		  flags, allocated);
 	ext4_ext_show_leaf(inode, path);
 
-	/* DIO get_block() before submit the IO, split the extent */
-	if (flags == EXT4_GET_BLOCKS_DIO_CREATE_EXT) {
+	/* get_block() before submit the IO, split the extent */
+	if ((flags & EXT4_GET_BLOCKS_PRE_IO)) {
 		ret = ext4_split_unwritten_extents(handle,
 						inode, path, iblock,
 						max_blocks, flags);
@@ -3074,14 +3066,16 @@ ext4_ext_handle_uninitialized_extents(handle_t *handle, struct inode *inode,
 		 * completed
 		 */
 		if (io)
-			io->flag = DIO_AIO_UNWRITTEN;
+			io->flag = EXT4_IO_UNWRITTEN;
 		else
 			EXT4_I(inode)->i_state |= EXT4_STATE_DIO_UNWRITTEN;
+		if (ext4_should_dioread_nolock(inode))
+			set_buffer_uninit(bh_result);
 		goto out;
 	}
-	/* async DIO end_io complete, convert the filled extent to written */
-	if (flags == EXT4_GET_BLOCKS_DIO_CONVERT_EXT) {
-		ret = ext4_convert_unwritten_extents_dio(handle, inode,
+	/* IO end_io complete, convert the filled extent to written */
+	if ((flags & EXT4_GET_BLOCKS_CONVERT)) {
+		ret = ext4_convert_unwritten_extents_endio(handle, inode,
 							path);
 		if (ret >= 0)
 			ext4_update_inode_fsync_trans(handle, inode, 1);
@@ -3120,19 +3114,19 @@ out:
 		goto out2;
 	} else
 		allocated = ret;
-	set_buffer_new(bh_result);
+
+	if (allocated > max_blocks)
+		allocated = max_blocks;
 	/*
-	 * if we allocated more blocks than requested
-	 * we need to make sure we unmap the extra block
-	 * allocated. The actual needed block will get
-	 * unmapped later when we find the buffer_head marked
-	 * new.
+	 * If we have done fallocate with the offset that is already
+	 * delayed allocated, we would have block reservation
+	 * and quota reservation done in the delayed write path.
+	 * But fallocate would have already updated quota and block
+	 * count for this offset. So cancel these reservation
 	 */
-	if (allocated > max_blocks) {
-		unmap_underlying_metadata_blocks(inode->i_sb->s_bdev,
-					newblock + max_blocks,
-					allocated - max_blocks);
-	}
+	if (flags & EXT4_GET_BLOCKS_DELALLOC_RESERVE)
+		ext4_da_update_reserve_space(inode, allocated, 0);
+
 map_out:
 	set_buffer_mapped(bh_result);
 out1:
@@ -3338,21 +3332,21 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	if (flags & EXT4_GET_BLOCKS_UNINIT_EXT){
 		ext4_ext_mark_uninitialized(&newex);
 		/*
-		 * io_end structure was created for every async
-		 * direct IO write to the middle of the file.
-		 * To avoid unecessary convertion for every aio dio rewrite
-		 * to the mid of file, here we flag the IO that is really
-		 * need the convertion.
+		 * io_end structure was created for every IO write to an
+		 * uninitialized extent. To avoid unecessary conversion,
+		 * here we flag the IO that really needs the conversion.
 		 * For non asycn direct IO case, flag the inode state
 		 * that we need to perform convertion when IO is done.
 		 */
-		if (flags == EXT4_GET_BLOCKS_DIO_CREATE_EXT) {
+		if ((flags & EXT4_GET_BLOCKS_PRE_IO)) {
 			if (io)
-				io->flag = DIO_AIO_UNWRITTEN;
+				io->flag = EXT4_IO_UNWRITTEN;
 			else
 				EXT4_I(inode)->i_state |=
 					EXT4_STATE_DIO_UNWRITTEN;;
 		}
+		if (ext4_should_dioread_nolock(inode))
+			set_buffer_uninit(bh_result);
 	}
 	err = ext4_ext_insert_extent(handle, inode, path, &newex, flags);
 	if (err) {
@@ -3368,7 +3362,16 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	/* previous routine could use block we allocated */
 	newblock = ext_pblock(&newex);
 	allocated = ext4_ext_get_actual_len(&newex);
+	if (allocated > max_blocks)
+		allocated = max_blocks;
 	set_buffer_new(bh_result);
+
+	/*
+	 * Update reserved blocks/metadata blocks after successful
+	 * block allocation which had been deferred till now.
+	 */
+	if (flags & EXT4_GET_BLOCKS_DELALLOC_RESERVE)
+		ext4_da_update_reserve_space(inode, allocated, 1);
 
 	/*
 	 * Cache the extent and update transaction to commit on fdatasync only
@@ -3549,6 +3552,8 @@ retry:
 			ret2 = ext4_journal_stop(handle);
 			break;
 		}
+		if (buffer_new(&map_bh))
+			__unmap_underlying_bh_blocks(inode, &map_bh);
 		if ((block + ret) >= (EXT4_BLOCK_ALIGN(offset + len,
 						blkbits) >> blkbits))
 			new_size = offset + len;
@@ -3614,7 +3619,7 @@ int ext4_convert_unwritten_extents(struct inode *inode, loff_t offset,
 		map_bh.b_state = 0;
 		ret = ext4_get_blocks(handle, inode, block,
 				      max_blocks, &map_bh,
-				      EXT4_GET_BLOCKS_DIO_CONVERT_EXT);
+				      EXT4_GET_BLOCKS_IO_CONVERT_EXT);
 		if (ret <= 0) {
 			WARN_ON(ret <= 0);
 			printk(KERN_ERR "%s: ext4_ext_get_blocks "
