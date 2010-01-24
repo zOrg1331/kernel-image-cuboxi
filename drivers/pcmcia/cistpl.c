@@ -220,8 +220,10 @@ void pcmcia_write_cis_mem(struct pcmcia_socket *s, int attr, u_int addr,
 	}
 
 	sys = set_cis_map(s, 0, MAP_ACTIVE | ((cis_width) ? MAP_16BIT : 0));
-	if (!sys)
+	if (!sys) {
+		dev_warn(&s->dev, "could not map memory\n");
 		return; /* FIXME: Error */
+	}
 
 	writeb(flags, sys+CISREG_ICTRL0);
 	writeb(addr & 0xff, sys+CISREG_IADDR0);
@@ -243,8 +245,10 @@ void pcmcia_write_cis_mem(struct pcmcia_socket *s, int attr, u_int addr,
 	card_offset = addr & ~(s->map_size-1);
 	while (len) {
 	    sys = set_cis_map(s, card_offset, flags);
-	    if (!sys)
+	    if (!sys) {
+		dev_warn(&s->dev, "could not map memory\n");
 		return; /* FIXME: error */
+	    }
 
 	    end = sys + s->map_size;
 	    sys = sys + (addr & (s->map_size-1));
