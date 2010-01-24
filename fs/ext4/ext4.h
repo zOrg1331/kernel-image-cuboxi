@@ -134,6 +134,7 @@ struct mpage_da_data {
 	int retval;
 };
 #define	EXT4_IO_UNWRITTEN	0x1
+#define	EXT4_IO_WRITTEN		0x2
 typedef struct ext4_io_end {
 	struct list_head	list;		/* per-file finished AIO list */
 	struct inode		*inode;		/* file being written to */
@@ -360,7 +361,7 @@ struct ext4_new_group_data {
 					 EXT4_GET_BLOCKS_CREATE_UNINIT_EXT)
 	/* Convert extent to initialized after IO complete */
 #define EXT4_GET_BLOCKS_IO_CONVERT_EXT		(EXT4_GET_BLOCKS_CONVERT|\
-					 EXT4_GET_BLOCKS_IO_CREATE_EXT)
+					 EXT4_GET_BLOCKS_CREATE_UNINIT_EXT)
 
 /*
  * Flags used by ext4_free_blocks
@@ -751,6 +752,7 @@ struct ext4_inode_info {
 #define EXT4_MOUNT_QUOTA		0x80000 /* Some quota option set */
 #define EXT4_MOUNT_USRQUOTA		0x100000 /* "old" user quota */
 #define EXT4_MOUNT_GRPQUOTA		0x200000 /* "old" group quota */
+#define EXT4_MOUNT_DIOREAD_NOLOCK	0x400000 /* Enable support for dio read nolocking */
 #define EXT4_MOUNT_JOURNAL_CHECKSUM	0x800000 /* Journal checksums */
 #define EXT4_MOUNT_JOURNAL_ASYNC_COMMIT	0x1000000 /* Journal Async Commit */
 #define EXT4_MOUNT_I_VERSION            0x2000000 /* i_version support */
@@ -1776,6 +1778,14 @@ extern int ext4_move_extents(struct file *o_filp, struct file *d_filp,
 			     __u64 start_orig, __u64 start_donor,
 			     __u64 len, __u64 *moved_len);
 
+
+/* BH_Uninit flag: blocks are allocated but uninitialized on disk */
+enum ext4_state_bits {
+	BH_Uninit	/* blocks are allocated but uninitialized on disk */
+	  = BH_JBDPrivateStart,
+};
+
+BUFFER_FNS(Uninit, uninit)
 
 /*
  * Add new method to test wether block and inode bitmaps are properly
