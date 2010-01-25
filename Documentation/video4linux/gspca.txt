@@ -109,6 +109,7 @@ sunplus		04a5:3003	Benq DC 1300
 sunplus		04a5:3008	Benq DC 1500
 sunplus		04a5:300a	Benq DC 3410
 spca500		04a5:300c	Benq DC 1016
+benq		04a5:3035	Benq DC E300
 finepix		04cb:0104	Fujifilm FinePix 4800
 finepix		04cb:0109	Fujifilm FinePix A202
 finepix		04cb:010b	Fujifilm FinePix A203
@@ -142,6 +143,7 @@ sunplus		04fc:5360	Sunplus Generic
 spca500		04fc:7333	PalmPixDC85
 sunplus		04fc:ffff	Pure DigitalDakota
 spca501		0506:00df	3Com HomeConnect Lite
+sunplus		052b:1507	Megapixel 5 Pretec DC-1007
 sunplus		052b:1513	Megapix V4
 sunplus		052b:1803	MegaImage VI
 tv8532		0545:808b	Veo Stingray
@@ -302,6 +304,7 @@ sonixj		0c45:613b	Surfer SN-206
 sonixj		0c45:613c	Sonix Pccam168
 sonixj		0c45:6143	Sonix Pccam168
 sonixj		0c45:6148	Digitus DA-70811/ZSMC USB PC Camera ZS211/Microdia
+sonixj		0c45:614a	Frontech E-Ccam (JIL-2225)
 sn9c20x		0c45:6240	PC Camera (SN9C201 + MT9M001)
 sn9c20x		0c45:6242	PC Camera (SN9C201 + MT9M111)
 sn9c20x		0c45:6248	PC Camera (SN9C201 + OV9655)
