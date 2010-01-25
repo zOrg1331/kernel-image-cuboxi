@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,6 +37,7 @@ enum {
 	AuLsc_I_Begin = I_MUTEX_QUOTA, /* 4 */
 	AuLsc_I_PARENT,		/* lower inode, parent first */
 	AuLsc_I_PARENT2,	/* copyup dirs */
+	AuLsc_I_PARENT3,	/* copyup wh */
 	AuLsc_I_CHILD,
 	AuLsc_I_CHILD2,
 	AuLsc_I_End
@@ -58,6 +59,7 @@ static inline void vfsub_copy_inode_size(struct inode *inode,
 
 int vfsub_update_h_iattr(struct path *h_path, int *did);
 struct file *vfsub_filp_open(const char *path, int oflags, int mode);
+struct file *vfsub_dentry_open(struct path *path, int flags);
 int vfsub_kern_path(const char *name, unsigned int flags, struct path *path);
 struct dentry *vfsub_lookup_one_len(const char *name, struct dentry *parent,
 				    int len);
@@ -94,6 +96,17 @@ ssize_t vfsub_write_k(struct file *file, void *kbuf, size_t count,
 		      loff_t *ppos);
 int vfsub_readdir(struct file *file, filldir_t filldir, void *arg);
 
+static inline unsigned int vfsub_file_flags(struct file *file)
+{
+	unsigned int flags;
+
+	spin_lock(&file->f_lock);
+	flags = file->f_flags;
+	spin_unlock(&file->f_lock);
+
+	return flags;
+}
+
 static inline void vfsub_file_accessed(struct file *h_file)
 {
 	file_accessed(h_file);
@@ -125,9 +138,9 @@ static inline loff_t vfsub_llseek(struct file *file, loff_t offset, int origin)
 {
 	loff_t err;
 
-	lockdep_off();
+	/* lockdep_off(); */
 	err = vfs_llseek(file, offset, origin);
-	lockdep_on();
+	/* lockdep_on(); */
 	return err;
 }
 

@@ -90,21 +90,18 @@ NORET_TYPE void panic(const char * fmt, ...)
 
 	atomic_notifier_call_chain(&panic_notifier_list, 0, buf);
 
+	bust_spinlocks(0);
+
 	if (!panic_blink)
 		panic_blink = no_blink;
 
 	if (panic_timeout > 0) {
 		/*
-	 	 * Delay timeout seconds before rebooting the machine. 
-		 * We can't use the "normal" timers since we just panicked..
-	 	 */
-		printk(KERN_EMERG "Rebooting in %d seconds..",panic_timeout);
-#ifdef CONFIG_BOOTSPLASH
-		{
-			extern int splash_verbose(void);
-			(void)splash_verbose();
-		}
-#endif
+		 * Delay timeout seconds before rebooting the machine.
+		 * We can't use the "normal" timers since we just panicked.
+		 */
+		printk(KERN_EMERG "Rebooting in %d seconds..", panic_timeout);
+
 		for (i = 0; i < panic_timeout*1000; ) {
 			touch_nmi_watchdog();
 			i += panic_blink(i);
@@ -135,19 +132,12 @@ NORET_TYPE void panic(const char * fmt, ...)
 	}
 #endif
 	local_irq_enable();
-#ifdef CONFIG_BOOTSPLASH
-	{
-		extern int splash_verbose(void);
-		(void)splash_verbose();
-	}
-#endif
-	for (i = 0;;) {
+	for (i = 0; ; ) {
 		touch_softlockup_watchdog();
 		i += panic_blink(i);
 		mdelay(1);
 		i++;
 	}
-	bust_spinlocks(0);
 }
 
 EXPORT_SYMBOL(panic);
@@ -188,7 +178,7 @@ static const struct tnt tnts[] = {
  *  'W' - Taint on warning.
  *  'C' - modules from drivers/staging are loaded.
  *
- *	The string is overwritten by the next call to print_taint().
+ *	The string is overwritten by the next call to print_tainted().
  */
 const char *print_tainted(void)
 {
@@ -312,6 +302,7 @@ int oops_may_print(void)
  */
 void oops_enter(void)
 {
+	tracing_off();
 	/* can't trust the integrity of the kernel anymore: */
 	debug_locks_off();
 	do_oops_enter_exit();

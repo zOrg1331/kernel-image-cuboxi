@@ -68,6 +68,7 @@
  *      v1.48 (pc) - Added support for Bamboo1, BambooFun, and Cintiq 12WX
  *      v1.49 (pc) - Added support for USB Tablet PC (0x90, 0x93, and 0x9A)
  *      v1.50 (pc) - Fixed a TabletPC touch bug in 2.6.28
+ *      v1.51 (pc) - Added support for Intuos4
  */
 
 /*
@@ -88,7 +89,7 @@
 /*
  * Version Information
  */
-#define DRIVER_VERSION "v1.50"
+#define DRIVER_VERSION "v1.51"
 #define DRIVER_AUTHOR "Vojtech Pavlik <vojtech@ucw.cz>"
 #define DRIVER_DESC "USB Wacom Graphire and Wacom Intuos tablet driver"
 #define DRIVER_LICENSE "GPL"

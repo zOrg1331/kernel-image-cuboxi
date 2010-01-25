@@ -284,16 +284,17 @@ static int read_header(struct pstore *ps, int *new_snapshot)
 {
 	int r;
 	struct disk_header *dh;
-	chunk_t chunk_size;
+	unsigned chunk_size;
 	int chunk_size_supplied = 1;
 	char *chunk_err;
 
 	/*
-	 * Use default chunk size (or hardsect_size, if larger) if none supplied
+	 * Use default chunk size (or logical_block_size, if larger)
+	 * if none supplied
 	 */
 	if (!ps->store->chunk_size) {
 		ps->store->chunk_size = max(DM_CHUNK_SIZE_DEFAULT_SECTORS,
-		    bdev_hardsect_size(ps->store->cow->bdev) >> 9);
+		    bdev_logical_block_size(ps->store->cow->bdev) >> 9);
 		ps->store->chunk_mask = ps->store->chunk_size - 1;
 		ps->store->chunk_shift = ffs(ps->store->chunk_size) - 1;
 		chunk_size_supplied = 0;
@@ -334,10 +335,9 @@ static int read_header(struct pstore *ps, int *new_snapshot)
 		return 0;
 
 	if (chunk_size_supplied)
-		DMWARN("chunk size %llu in device metadata overrides "
-		       "table chunk size of %llu.",
-		       (unsigned long long)chunk_size,
-		       (unsigned long long)ps->store->chunk_size);
+		DMWARN("chunk size %u in device metadata overrides "
+		       "table chunk size of %u.",
+		       chunk_size, ps->store->chunk_size);
 
 	/* We had a bogus chunk_size. Fix stuff up. */
 	free_area(ps);
@@ -345,8 +345,8 @@ static int read_header(struct pstore *ps, int *new_snapshot)
 	r = dm_exception_store_set_chunk_size(ps->store, chunk_size,
 					      &chunk_err);
 	if (r) {
-		DMERR("invalid on-disk chunk size %llu: %s.",
-		      (unsigned long long)chunk_size, chunk_err);
+		DMERR("invalid on-disk chunk size %u: %s.",
+		      chunk_size, chunk_err);
 		return r;
 	}
 
@@ -652,7 +652,7 @@ static void persistent_commit_exception(struct dm_exception_store *store,
 	/*
 	 * Commit exceptions to disk.
 	 */
-	if (ps->valid && area_io(ps, WRITE))
+	if (ps->valid && area_io(ps, WRITE_BARRIER))
 		ps->valid = 0;
 
 	/*

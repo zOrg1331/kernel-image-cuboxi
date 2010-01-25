@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -95,9 +95,9 @@ struct au_ren_args {
  * harmless.
  */
 
-#define RevertFailure(fmt, args...) do { \
+#define RevertFailure(fmt, ...) do { \
 	AuIOErr("revert failure: " fmt " (%d, %d)\n", \
-		##args, err, rerr); \
+		##__VA_ARGS__, err, rerr); \
 	err = -EIO; \
 } while (0)
 
@@ -238,11 +238,15 @@ static int au_ren_or_cpup(struct au_ren_args *a)
 		au_set_h_dptr(d, a->btgt, dget(a->dst_h_dentry));
 		err = au_sio_cpup_single(d, a->btgt, a->src_bstart, -1,
 					 !AuCpup_DTIME, a->dst_parent);
-		if (unlikely(err)) {
+		mutex_unlock(h_mtx);
+		if (!err) {
+			d = a->dst_dentry;
+			au_set_h_dptr(d, a->btgt, NULL);
+			au_update_dbstart(d);
+		} else {
 			au_set_h_dptr(d, a->btgt, NULL);
 			au_set_dbstart(d, a->src_bstart);
 		}
-		mutex_unlock(h_mtx);
 	}
 
 	return err;
@@ -255,13 +259,14 @@ static int au_ren_del_whtmp(struct au_ren_args *a)
 	struct inode *dir;
 
 	dir = a->dst_dir;
+	SiMustAnyLock(dir->i_sb);
 	if (!au_nhash_test_longer_wh(&a->whlist, a->btgt,
 				     au_sbi(dir->i_sb)->si_dirwh)
 	    || au_test_fs_remote(a->h_dst->d_sb)) {
 		err = au_whtmp_rmdir(dir, a->btgt, a->h_dst, &a->whlist);
 		if (unlikely(err))
-			AuWarn("failed removing whtmp dir %.*s (%d), "
-			       "ignored.\n", AuDLNPair(a->h_dst), err);
+			pr_warning("failed removing whtmp dir %.*s (%d), "
+				   "ignored.\n", AuDLNPair(a->h_dst), err);
 	} else {
 		au_nhash_wh_free(&a->thargs->whlist);
 		a->thargs->whlist = a->whlist;
@@ -451,14 +456,19 @@ static int may_rename_dstdir(struct dentry *dentry, struct au_nhash *whlist)
 static int may_rename_srcdir(struct dentry *dentry, aufs_bindex_t btgt)
 {
 	int err;
+	unsigned int rdhash;
 	aufs_bindex_t bstart;
 
 	bstart = au_dbstart(dentry);
 	if (bstart != btgt) {
 		struct au_nhash whlist;
 
-		err = au_nhash_alloc(&whlist, au_sbi(dentry->d_sb)->si_rdhash,
-				     GFP_NOFS);
+		SiMustAnyLock(dentry->d_sb);
+		rdhash = au_sbi(dentry->d_sb)->si_rdhash;
+		if (!rdhash)
+			rdhash = au_rdhash_est(au_dir_size(/*file*/NULL,
+							   dentry));
+		err = au_nhash_alloc(&whlist, rdhash, GFP_NOFS);
 		if (unlikely(err))
 			goto out;
 		err = au_test_empty(dentry, &whlist);
@@ -484,15 +494,21 @@ static int may_rename_srcdir(struct dentry *dentry, aufs_bindex_t btgt)
 static int au_ren_may_dir(struct au_ren_args *a)
 {
 	int err;
+	unsigned int rdhash;
 	struct dentry *d;
 
 	d = a->dst_dentry;
-	err = au_nhash_alloc(&a->whlist, au_sbi(d->d_sb)->si_rdhash, GFP_NOFS);
-	if (unlikely(err))
-		goto out;
+	SiMustAnyLock(d->d_sb);
 
 	err = 0;
 	if (au_ftest_ren(a->flags, ISDIR) && a->dst_inode) {
+		rdhash = au_sbi(d->d_sb)->si_rdhash;
+		if (!rdhash)
+			rdhash = au_rdhash_est(au_dir_size(/*file*/NULL, d));
+		err = au_nhash_alloc(&a->whlist, rdhash, GFP_NOFS);
+		if (unlikely(err))
+			goto out;
+
 		au_set_dbstart(d, a->dst_bstart);
 		err = may_rename_dstdir(d, &a->whlist);
 		au_set_dbstart(d, a->btgt);
@@ -563,6 +579,7 @@ static int au_may_ren(struct au_ren_args *a)
  out:
 	if (unlikely(err == -ENOENT || err == -EEXIST))
 		err = -EIO;
+	AuTraceErr(err);
 	return err;
 }
 
@@ -615,7 +632,10 @@ static int au_ren_lock(struct au_ren_args *a)
 	a->h_trap = vfsub_lock_rename(a->src_h_parent, a->src_hdir,
 				      a->dst_h_parent, a->dst_hdir);
 	udba = au_opt_udba(a->src_dentry->d_sb);
-	if (au_dbstart(a->src_dentry) == a->btgt)
+	if (unlikely(a->src_hdir->hi_inode != a->src_h_parent->d_inode
+		     || a->dst_hdir->hi_inode != a->dst_h_parent->d_inode))
+		err = au_busy_or_stale();
+	if (!err && au_dbstart(a->src_dentry) == a->btgt)
 		err = au_h_verify(a->src_h_dentry, udba,
 				  a->src_h_parent->d_inode, a->src_h_parent,
 				  a->br);
@@ -696,7 +716,7 @@ static void au_ren_refresh(struct au_ren_args *a)
 	for (bindex = a->btgt + 1; bindex <= bend; bindex++) {
 		h_i = au_h_iptr(i, bindex);
 		if (h_i) {
-			au_xino_write0(sb, bindex, h_i->i_ino, 0);
+			au_xino_write(sb, bindex, h_i->i_ino, /*ino*/0);
 			/* ignore this error */
 			au_set_h_iptr(i, bindex, NULL, 0);
 		}
@@ -808,6 +828,7 @@ int aufs_rename(struct inode *_src_dir, struct dentry *_src_dentry,
 	/* reduce stack space */
 	struct au_ren_args *a;
 
+	AuDbg("%.*s, %.*s\n", AuDLNPair(_src_dentry), AuDLNPair(_dst_dentry));
 	IMustLock(_src_dir);
 	IMustLock(_dst_dir);
 
@@ -854,7 +875,7 @@ int aufs_rename(struct inode *_src_dir, struct dentry *_src_dentry,
 	/* are they available to be renamed */
 	err = au_ren_may_dir(a);
 	if (unlikely(err))
-		goto out_unlock;
+		goto out_children;
 
 	/* prepare the writable parent dir on the same branch */
 	if (a->dst_bstart == a->btgt) {
@@ -892,11 +913,12 @@ int aufs_rename(struct inode *_src_dir, struct dentry *_src_dentry,
 	if (unlikely(err))
 		goto out_children;
 
-	if (!au_opt_test(au_mntflags(a->dst_dir->i_sb), UDBA_NONE)) {
+	if (!au_opt_test(au_mntflags(a->dst_dir->i_sb), UDBA_NONE))
 		err = au_may_ren(a);
-		if (unlikely(err))
-			goto out_hdir;
-	}
+	else if (unlikely(a->dst_dentry->d_name.len > AUFS_MAX_NAMELEN))
+		err = -ENAMETOOLONG;
+	if (unlikely(err))
+		goto out_hdir;
 
 	/* store timestamps to be revertible */
 	au_ren_dt(a);
@@ -938,5 +960,6 @@ int aufs_rename(struct inode *_src_dir, struct dentry *_src_dentry,
 		au_whtmp_rmdir_free(a->thargs);
 	kfree(a);
  out:
+	AuTraceErr(err);
 	return err;
 }

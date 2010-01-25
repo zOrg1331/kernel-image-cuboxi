@@ -17,10 +17,6 @@ ifdef CONFIG_OCFS2_FS_O2CB
 ccflags-y += -DDLMFS_MAGIC=0x76a9f425
 endif
 
-# defined in ${srctree}/fs/ramfs/inode.c
-# always true
-ccflags-y += -DRAMFS_MAGIC=0x858458f6
-
 # defined in ${srctree}/fs/cifs/cifsfs.c
 # tristate
 ifdef CONFIG_CIFS_FS
@@ -49,10 +45,4 @@ endif
 # tristate
 ifdef CONFIG_UBIFS_FS
 ccflags-y += -DUBIFS_SUPER_MAGIC=0x24051905
-endif
-
-# defined in ${srctree}/fs/debugfs/inode.c
-# boolean
-ifdef CONFIG_DEBUG_FS
-ccflags-y += -DDEBUGFS_MAGIC=0x64626720
 endif

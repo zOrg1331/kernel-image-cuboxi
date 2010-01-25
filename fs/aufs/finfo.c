@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,11 +25,12 @@
 
 void au_hfput(struct au_hfile *hf, struct file *file)
 {
-	if (file->f_mode & FMODE_EXEC)
+	/* todo: direct access f_flags */
+	if (vfsub_file_flags(file) & vfsub_fmode_to_uint(FMODE_EXEC))
 		allow_write_access(hf->hf_file);
 	fput(hf->hf_file);
 	hf->hf_file = NULL;
-	atomic_dec(&hf->hf_br->br_count);
+	atomic_dec_return(&hf->hf_br->br_count);
 	hf->hf_br = NULL;
 }
 
@@ -60,22 +61,21 @@ void au_finfo_fin(struct file *file)
 	struct au_finfo *finfo;
 	aufs_bindex_t bindex, bend;
 
-	fi_write_lock(file);
-	bend = au_fbend(file);
-	bindex = au_fbstart(file);
-	if (bindex >= 0)
+	finfo = au_fi(file);
+	bindex = finfo->fi_bstart;
+	if (bindex >= 0) {
 		/*
 		 * calls fput() instead of filp_close(),
 		 * since no dnotify or lock for the lower file.
 		 */
+		bend = finfo->fi_bend;
 		for (; bindex <= bend; bindex++)
 			au_set_h_fptr(file, bindex, NULL);
+	}
 
-	finfo = au_fi(file);
 	au_dbg_verify_hf(finfo);
 	kfree(finfo->fi_hfile);
-	fi_write_unlock(file);
-	au_rwsem_destroy(&finfo->fi_rwsem);
+	AuRwDestroy(&finfo->fi_rwsem);
 	au_cache_free_finfo(finfo);
 }
 
@@ -83,7 +83,6 @@ int au_finfo_init(struct file *file)
 {
 	struct au_finfo *finfo;
 	struct dentry *dentry;
-	unsigned long ul;
 
 	dentry = file->f_dentry;
 	finfo = au_cache_alloc_finfo();
@@ -95,17 +94,12 @@ int au_finfo_init(struct file *file)
 	if (unlikely(!finfo->fi_hfile))
 		goto out_finfo;
 
-	init_rwsem(&finfo->fi_rwsem);
-	down_write(&finfo->fi_rwsem);
+	au_rw_init_wlock(&finfo->fi_rwsem);
 	finfo->fi_bstart = -1;
 	finfo->fi_bend = -1;
 	atomic_set(&finfo->fi_generation, au_digen(dentry));
 	/* smp_mb(); */ /* atomic_set */
 
-	/* cf. au_store_oflag() */
-	/* suppress a warning in lp64 */
-	ul = (unsigned long)file->private_data;
-	file->f_mode |= (vfsub_uint_to_fmode(ul) & FMODE_EXEC);
 	file->private_data = finfo;
 	return 0; /* success */
 

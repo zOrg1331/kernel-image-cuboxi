@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -92,6 +92,8 @@ void au_cpup_igen(struct inode *inode, struct inode *h_inode)
 {
 	struct au_iinfo *iinfo = au_ii(inode);
 
+	IiMustWriteLock(inode);
+
 	iinfo->ii_higen = h_inode->i_generation;
 	iinfo->ii_hsb1 = h_inode->i_sb;
 }
@@ -139,7 +141,7 @@ void au_dtime_revert(struct au_dtime *dt)
 
 	err = vfsub_notify_change(&dt->dt_h_path, &attr);
 	if (unlikely(err))
-		AuWarn("restoring timestamps failed(%d). ignored\n", err);
+		pr_warning("restoring timestamps failed(%d). ignored\n", err);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -150,21 +152,26 @@ int cpup_iattr(struct dentry *dst, aufs_bindex_t bindex, struct dentry *h_src)
 	int err, sbits;
 	struct iattr ia;
 	struct path h_path;
-	struct inode *h_isrc;
+	struct inode *h_isrc, *h_idst;
 
 	h_path.dentry = au_h_dptr(dst, bindex);
+	h_idst = h_path.dentry->d_inode;
 	h_path.mnt = au_sbr_mnt(dst->d_sb, bindex);
 	h_isrc = h_src->d_inode;
-	ia.ia_valid = ATTR_FORCE | ATTR_MODE | ATTR_UID | ATTR_GID
+	ia.ia_valid = ATTR_FORCE | ATTR_UID | ATTR_GID
 		| ATTR_ATIME | ATTR_MTIME
 		| ATTR_ATIME_SET | ATTR_MTIME_SET;
-	ia.ia_mode = h_isrc->i_mode;
 	ia.ia_uid = h_isrc->i_uid;
 	ia.ia_gid = h_isrc->i_gid;
 	ia.ia_atime = h_isrc->i_atime;
 	ia.ia_mtime = h_isrc->i_mtime;
-	sbits = !!(ia.ia_mode & (S_ISUID | S_ISGID));
-	au_cpup_attr_flags(h_path.dentry->d_inode, h_isrc);
+	if (h_idst->i_mode != h_isrc->i_mode
+	    && !S_ISLNK(h_idst->i_mode)) {
+		ia.ia_valid |= ATTR_MODE;
+		ia.ia_mode = h_isrc->i_mode;
+	}
+	sbits = !!(h_isrc->i_mode & (S_ISUID | S_ISGID));
+	au_cpup_attr_flags(h_idst, h_isrc);
 	err = vfsub_notify_change(&h_path, &ia);
 
 	/* is this nfs only? */
@@ -518,7 +525,7 @@ int cpup_entry(struct dentry *dentry, aufs_bindex_t bdst,
 	    /* && dentry->d_inode->i_nlink == 1 */
 	    && bdst < bsrc
 	    && !au_ftest_cpup(flags, KEEPLINO))
-		au_xino_write0(sb, bsrc, h_inode->i_ino, /*ino*/0);
+		au_xino_write(sb, bsrc, h_inode->i_ino, /*ino*/0);
 		/* ignore this error */
 
 	if (do_dt)
@@ -792,6 +799,8 @@ static int au_do_cpup_wh(struct dentry *dentry, aufs_bindex_t bdst,
 	struct dentry *h_d_dst, *h_d_start;
 
 	dinfo = au_di(dentry);
+	AuRwMustWriteLock(&dinfo->di_rwsem);
+
 	bstart = dinfo->di_bstart;
 	h_d_dst = dinfo->di_hdentry[0 + bdst].hd_dentry;
 	dinfo->di_bstart = bdst;
@@ -901,7 +910,7 @@ int au_sio_cpup_wh(struct dentry *dentry, aufs_bindex_t bdst, loff_t len,
 		h_inode = h_dentry->d_inode;
 		IMustLock(h_inode);
 		mutex_unlock(&h_inode->i_mutex);
-		mutex_lock_nested(&h_tmpdir->i_mutex, AuLsc_I_PARENT2);
+		mutex_lock_nested(&h_tmpdir->i_mutex, AuLsc_I_PARENT3);
 		mutex_lock_nested(&h_inode->i_mutex, AuLsc_I_CHILD);
 	}
 

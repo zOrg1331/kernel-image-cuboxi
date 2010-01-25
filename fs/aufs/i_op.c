@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -66,6 +66,19 @@ static int h_permission(struct inode *h_inode, int mask,
 			(h_inode, mask & (MAY_READ | MAY_WRITE | MAY_EXEC
 					  | MAY_APPEND));
 
+#if 0
+	if (!err) {
+		/* todo: do we need to call ima_path_check()? */
+		struct path h_path = {
+			.dentry	=
+			.mnt	= h_mnt
+		};
+		err = ima_path_check(&h_path,
+				     mask & (MAY_READ | MAY_WRITE | MAY_EXEC),
+				     IMA_COUNT_LEAVE);
+	}
+#endif
+
  out:
 	return err;
 }
@@ -85,16 +98,18 @@ static int aufs_permission(struct inode *inode, int mask)
 	ii_read_lock_child(inode);
 
 	if (!isdir || write_mask) {
+		err = au_busy_or_stale();
 		h_inode = au_h_iptr(inode, au_ibstart(inode));
-		AuDebugOn(!h_inode
-			  || ((h_inode->i_mode & S_IFMT)
-			      != (inode->i_mode & S_IFMT)));
+		if (unlikely(!h_inode
+			     || (h_inode->i_mode & S_IFMT)
+			     != (inode->i_mode & S_IFMT)))
+			goto out;
+
 		err = 0;
 		bindex = au_ibstart(inode);
 		br = au_sbr(sb, bindex);
 		err = h_permission(h_inode, mask, br->br_mnt, br->br_perm);
-
-		if (write_mask && !err) {
+		if (write_mask && !err && !special_file(h_inode->i_mode)) {
 			/* test whether the upper writable branch exists */
 			err = -EROFS;
 			for (; bindex >= 0; bindex--)
@@ -112,7 +127,10 @@ static int aufs_permission(struct inode *inode, int mask)
 	for (bindex = au_ibstart(inode); !err && bindex <= bend; bindex++) {
 		h_inode = au_h_iptr(inode, bindex);
 		if (h_inode) {
-			AuDebugOn(!S_ISDIR(h_inode->i_mode));
+			err = au_busy_or_stale();
+			if (unlikely(!S_ISDIR(h_inode->i_mode)))
+				break;
+
 			br = au_sbr(sb, bindex);
 			err = h_permission(h_inode, mask, br->br_mnt,
 					   br->br_perm);
@@ -137,15 +155,13 @@ static struct dentry *aufs_lookup(struct inode *dir, struct dentry *dentry,
 	int err, npositive;
 	aufs_bindex_t bstart;
 
-	/* temporary workaround for a bug in NFSD readdir */
-	if (!au_test_nfsd(current))
-		IMustLock(dir);
-	else
-		WARN_ONCE(!mutex_is_locked(&dir->i_mutex),
-			  "a known problem of NFSD readdir since 2.6.28\n");
+	IMustLock(dir);
 
 	sb = dir->i_sb;
 	si_read_lock(sb, AuLock_FLUSH);
+	ret = ERR_PTR(-ENAMETOOLONG);
+	if (unlikely(dentry->d_name.len > AUFS_MAX_NAMELEN))
+		goto out;
 	err = au_alloc_dinfo(dentry);
 	ret = ERR_PTR(err);
 	if (unlikely(err))
@@ -183,7 +199,6 @@ static struct dentry *aufs_lookup(struct inode *dir, struct dentry *dentry,
 	ret = d_splice_alias(inode, dentry);
 	if (unlikely(IS_ERR(ret) && inode))
 		ii_write_unlock(inode);
-	au_store_oflag(nd, inode);
 
  out_unlock:
 	di_write_unlock(dentry);
@@ -368,7 +383,6 @@ int au_do_pin(struct au_pin *p)
 
 	/* udba case */
 	if (unlikely(!p->hdir || !h_dir)) {
-		err = au_busy_or_stale();
 		if (!au_ftest_pin(p->flags, DI_LOCKED))
 			di_read_unlock(p->parent, AuLock_IR);
 		dput(p->parent);
@@ -379,6 +393,10 @@ int au_do_pin(struct au_pin *p)
 	au_igrab(h_dir);
 	au_hin_imtx_lock_nested(p->hdir, p->lsc_hi);
 
+	if (unlikely(p->hdir->hi_inode != h_parent->d_inode)) {
+		err = -EBUSY;
+		goto out_unpin;
+	}
 	if (h_dentry) {
 		err = au_h_verify(h_dentry, p->udba, h_dir, h_parent, br);
 		if (unlikely(err)) {
@@ -400,7 +418,7 @@ int au_do_pin(struct au_pin *p)
  out_unpin:
 	au_unpin(p);
  out_err:
-	AuErr("err %d\n", err);
+	pr_err("err %d\n", err);
 	err = au_busy_or_stale();
  out:
 	return err;
@@ -636,15 +654,16 @@ static int au_getattr_lock_reval(struct dentry *dentry, unsigned int sigen)
 		di_read_lock_parent(parent, AuLock_IR);
 		/* returns a number of positive dentries */
 		err = au_refresh_hdentry(dentry, inode->i_mode & S_IFMT);
-		if (err > 0)
+		if (err >= 0)
 			err = au_refresh_hinode(inode, dentry);
 		di_read_unlock(parent, AuLock_IR);
 		dput(parent);
-		if (unlikely(!err))
-			err = -EIO;
 	}
 	di_downgrade_lock(dentry, AuLock_IR);
+	if (unlikely(err))
+		di_read_unlock(dentry, AuLock_IR);
 
+	AuTraceErr(err);
 	return err;
 }
 
@@ -676,25 +695,16 @@ static int aufs_getattr(struct vfsmount *mnt __maybe_unused,
 	int err;
 	unsigned int mnt_flags;
 	aufs_bindex_t bindex;
-	unsigned char udba_none, positive, did_lock;
+	unsigned char udba_none, positive;
 	struct super_block *sb, *h_sb;
 	struct inode *inode;
 	struct vfsmount *h_mnt;
 	struct dentry *h_dentry;
 
 	err = 0;
-	did_lock = 0;
 	sb = dentry->d_sb;
 	inode = dentry->d_inode;
 	si_read_lock(sb, AuLock_FLUSH);
-	if (IS_ROOT(dentry)) {
-		/* lock free root dinfo */
-		h_dentry = dget(au_di(dentry)->di_hdentry->hd_dentry);
-		h_mnt = au_sbr_mnt(sb, 0);
-		goto getattr;
-	}
-
-	did_lock = 1;
 	mnt_flags = au_mntflags(sb);
 	udba_none = !!au_opt_test(mnt_flags, UDBA_NONE);
 
@@ -704,6 +714,7 @@ static int aufs_getattr(struct vfsmount *mnt __maybe_unused,
 		if (au_digen(dentry) == sigen && au_iigen(inode) == sigen)
 			di_read_lock_child(dentry, AuLock_IR);
 		else {
+			AuDebugOn(IS_ROOT(dentry));
 			err = au_getattr_lock_reval(dentry, sigen);
 			if (unlikely(err))
 				goto out;
@@ -717,17 +728,18 @@ static int aufs_getattr(struct vfsmount *mnt __maybe_unused,
 	if (!au_test_fs_bad_iattr(h_sb) && udba_none)
 		goto out_fill; /* success */
 
+	h_dentry = NULL;
 	if (au_dbstart(dentry) == bindex)
 		h_dentry = dget(au_h_dptr(dentry, bindex));
 	else if (au_opt_test(mnt_flags, PLINK) && au_plink_test(inode)) {
 		h_dentry = au_plink_lkup(inode, bindex);
 		if (IS_ERR(h_dentry))
 			goto out_fill; /* pretending success */
-	} else
-		/* illegally overlapped or something */
+	}
+	/* illegally overlapped or something */
+	if (unlikely(!h_dentry))
 		goto out_fill; /* pretending success */
 
- getattr:
 	positive = !!h_dentry->d_inode;
 	if (positive)
 		err = vfs_getattr(h_mnt, h_dentry, st);
@@ -737,13 +749,13 @@ static int aufs_getattr(struct vfsmount *mnt __maybe_unused,
 			au_refresh_iattr(inode, st, h_dentry->d_inode->i_nlink);
 		goto out_fill; /* success */
 	}
-	goto out;
+	goto out_unlock;
 
  out_fill:
 	generic_fillattr(inode, st);
+ out_unlock:
+	di_read_unlock(dentry, AuLock_IR);
  out:
-	if (did_lock)
-		di_read_unlock(dentry, AuLock_IR);
 	si_read_unlock(sb);
 	return err;
 }

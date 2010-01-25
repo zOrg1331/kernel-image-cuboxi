@@ -1,6 +1,6 @@
 Name: kernel-image-std-pae
-Version: 2.6.30
-Release: alt15
+Version: 2.6.32
+Release: alt1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -116,6 +116,29 @@ not work well.
 
 Install this package only if you really need it.
 
+%package -n kernel-modules-ide-%flavour
+Summary: IDE  driver modules (obsolete by PATA)
+Group: System/Kernel and hardware
+Provides:  kernel-modules-ide-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-ide-%flavour
+This package contains  IDE driver modules for the Linux kernel
+package %name-%version-%release.
+
+These drivers are declared obsolete by the kernel maintainers; PATA
+drivers should be used instead.  However, the older IDE drivers may be
+still useful for some hardware, if the corresponding PATA drivers do
+not work well.
+
+Install this package only if you really need it.
+
+
 %package -n kernel-modules-alsa-%flavour
 Summary: The Advanced Linux Sound Architecture modules
 Group: System/Kernel and hardware
@@ -162,6 +185,21 @@ and to the kernel.  The first major use for the DRI is to create fast
 OpenGL implementations.
 
 These are modules for your ALT Linux system
+
+%package -n kernel-modules-kvm-%flavour
+Summary: Linux KVM (Kernel Virtual Machine) modules
+Group: System/Kernel and hardware
+Provides:  kernel-modules-kvm-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-kvm-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-kvm-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-kvm-%flavour
+Linux kernel module for Kernel Virtual Machine virtualization
+environment.
 
 
 %package -n kernel-modules-v4l-%flavour
@@ -367,6 +405,7 @@ KbuildFiles="
 	scripts/gcc-version.sh
 	scripts/recordmcount.pl
 	scripts/gcc-x86_64-has-stack-protector.sh
+	scripts/module-common.lds
 
 
 	.config
@@ -417,10 +456,23 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-oss-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
+%post -n kernel-modules-ide-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-ide-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+
 %post -n kernel-modules-drm-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
 %postun -n kernel-modules-drm-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-kvm-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-kvm-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
 %post -n kernel-modules-v4l-%flavour
@@ -449,6 +501,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/sound
 %exclude %modules_dir/kernel/drivers/media/
 %exclude %modules_dir/kernel/drivers/gpu/drm
+%exclude %modules_dir/kernel/arch/x86/kvm
+%exclude %modules_dir/kernel/drivers/ide/
 %if_enabled oss
 # OSS drivers
 %exclude %modules_dir/kernel/sound/oss
@@ -457,6 +511,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-modules-oss-%flavour
 %modules_dir/kernel/sound/oss
 %endif #oss
+
+%files -n kernel-modules-ide-%flavour
+%modules_dir/kernel/drivers/ide/
+
 %files -n kernel-headers-%flavour
 %kheaders_dir
 
@@ -477,17 +535,37 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
 
+%files -n kernel-modules-kvm-%flavour
+%modules_dir/kernel/arch/x86/kvm
+
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
 
 %changelog
-* Mon Dec 07 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt15
-- [SECURITY] Fix CVE-2009-1298 
-- fixes in Samsung U200 driver. thx to mikhail@linux-rb.ru
-- Add support  Samsung YP-CP3. Thx to vitty@altlinux.org
+* Mon Jan 25 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt1
+- Build std-def based on un-def 
+- 2.6.32
+- on x86_64 turn on paravirt guest support
+- move IDE modules to separated subpackage(use PATA instead).
+
+* Thu Jan 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt5
+- aufs updated
+
+* Fri Jan 15 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt4
+- bootsplash patch added
+
+* Wed Jan 13 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt3
+- kvm enabled
+- aufs enabled
+
+* Tue Jan 12 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt2
+- 2.6.32.3
+
+* Fri Dec 25 2009 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt1
+- try to run before of locomotive
 
 * Tue Oct 06 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt14
-- 2.6.30.9 
+- 2.6.30.9
 
 * Mon Sep 28 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt13
 - 2.6.30.8

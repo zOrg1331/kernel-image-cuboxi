@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,8 +20,10 @@
 #define __AUFS_TYPE_H__
 
 #include <linux/ioctl.h>
+#include <linux/limits.h>
+#include <linux/types.h>
 
-#define AUFS_VERSION	"2-standalone.tree-29-20090601"
+#define AUFS_VERSION	"2-32"
 
 /* todo? move this to linux-2.6.19/include/magic.h */
 #define AUFS_SUPER_MAGIC	('a' << 24 | 'u' << 16 | 'f' << 8 | 's')
@@ -29,11 +31,10 @@
 /* ---------------------------------------------------------------------- */
 
 #ifdef CONFIG_AUFS_BRANCH_MAX_127
-/* some environments treat 'char' as 'unsigned char' by default */
-typedef signed char aufs_bindex_t;
+typedef __s8 aufs_bindex_t;
 #define AUFS_BRANCH_MAX 127
 #else
-typedef short aufs_bindex_t;
+typedef __s16 aufs_bindex_t;
 #ifdef CONFIG_AUFS_BRANCH_MAX_511
 #define AUFS_BRANCH_MAX 511
 #elif defined(CONFIG_AUFS_BRANCH_MAX_1023)
@@ -59,6 +60,12 @@ typedef short aufs_bindex_t;
 
 #define AUFS_WH_PFX		".wh."
 #define AUFS_WH_PFX_LEN		((int)sizeof(AUFS_WH_PFX) - 1)
+#define AUFS_WH_TMP_LEN		4
+/* a limit for rmdir/rename a dir */
+#define AUFS_MAX_NAMELEN	(NAME_MAX \
+				- AUFS_WH_PFX_LEN * 2	/* doubly whiteouted */\
+				- 1			/* dot */\
+				- AUFS_WH_TMP_LEN)	/* hex */
 #define AUFS_XINO_FNAME		"." AUFS_NAME ".xino"
 #define AUFS_XINO_DEFPATH	"/tmp/" AUFS_XINO_FNAME
 #define AUFS_XINO_TRUNC_INIT	64 /* blocks */
@@ -99,11 +106,90 @@ typedef short aufs_bindex_t;
 /* ioctl */
 enum {
 	AuCtl_PLINK_MAINT,
-	AuCtl_PLINK_CLEAN
+	AuCtl_PLINK_CLEAN,
+
+	/* readdir in userspace */
+	AuCtl_RDU,
+	AuCtl_RDU_INO,
+
+	/* pathconf wrapper */
+	AuCtl_WBR_FD
 };
+
+/* borrowed from linux/include/linux/kernel.h */
+#ifndef ALIGN
+#define ALIGN(x, a)		__ALIGN_MASK(x, (typeof(x))(a)-1)
+#define __ALIGN_MASK(x, mask)	(((x)+(mask))&~(mask))
+#endif
+
+/* borrowed from linux/include/linux/compiler-gcc3.h */
+#ifndef __aligned
+#define __aligned(x)			__attribute__((aligned(x)))
+#define __packed			__attribute__((packed))
+#endif
+
+struct au_rdu_cookie {
+	__u64		h_pos;
+	__s16		bindex;
+	__u8		flags;
+	__u8		pad;
+	__u32		generation;
+} __aligned(8);
+
+struct au_rdu_ent {
+	__u64		ino;
+	__s16		bindex;
+	__u8		type;
+	__u8		nlen;
+	__u8		wh;
+	char		name[0];
+} __aligned(8);
+
+static inline int au_rdu_len(int nlen)
+{
+	/* include the terminating NULL */
+	return ALIGN(sizeof(struct au_rdu_ent) + nlen + 1,
+		     sizeof(__u64));
+}
+
+union au_rdu_ent_ul {
+	struct au_rdu_ent __user	*e;
+	unsigned long			ul;
+};
+
+enum {
+	AufsCtlRduV_SZ,
+	AufsCtlRduV_SZ_PTR,
+	AufsCtlRduV_End
+};
+
+struct aufs_rdu {
+	/* input */
+	union {
+		__u64		sz;	/* AuCtl_RDU */
+		__u64		nent;	/* AuCtl_RDU_INO */
+	};
+	union au_rdu_ent_ul	ent;
+	__u16			verify[AufsCtlRduV_End];
+
+	/* input/output */
+	__u32			blk;
+
+	/* output */
+	union au_rdu_ent_ul	tail;
+	/* number of entries which were added in a single call */
+	__u64			rent;
+	__u8			full;
+	__u8			shwh;
+
+	struct au_rdu_cookie	cookie;
+} __aligned(8);
 
 #define AuCtlType		'A'
 #define AUFS_CTL_PLINK_MAINT	_IO(AuCtlType, AuCtl_PLINK_MAINT)
 #define AUFS_CTL_PLINK_CLEAN	_IO(AuCtlType, AuCtl_PLINK_CLEAN)
+#define AUFS_CTL_RDU		_IOWR(AuCtlType, AuCtl_RDU, struct aufs_rdu)
+#define AUFS_CTL_RDU_INO	_IOWR(AuCtlType, AuCtl_RDU_INO, struct aufs_rdu)
+#define AUFS_CTL_WBR_FD		_IO(AuCtlType, AuCtl_WBR_FD)
 
 #endif /* __AUFS_TYPE_H__ */

@@ -102,7 +102,7 @@ struct edgeport_port {
 	__u8 shadow_mcr;
 	__u8 shadow_lsr;
 	__u8 lsr_mask;
-	__u32 ump_read_timeout;		/* Number of miliseconds the UMP will
+	__u32 ump_read_timeout;		/* Number of milliseconds the UMP will
 					   wait without data before completing
 					   a read short */
 	int baud_rate;
@@ -1831,8 +1831,7 @@ static void edge_bulk_out_callback(struct urb *urb)
 	tty_kref_put(tty);
 }
 
-static int edge_open(struct tty_struct *tty,
-			struct usb_serial_port *port, struct file *filp)
+static int edge_open(struct tty_struct *tty, struct usb_serial_port *port)
 {
 	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
 	struct edgeport_serial *edge_serial;
@@ -2009,8 +2008,7 @@ release_es_lock:
 	return status;
 }
 
-static void edge_close(struct tty_struct *tty,
-			struct usb_serial_port *port, struct file *filp)
+static void edge_close(struct usb_serial_port *port)
 {
 	struct edgeport_serial *edge_serial;
 	struct edgeport_port *edge_port;

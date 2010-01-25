@@ -197,9 +197,6 @@ struct thread_struct {
 	unsigned long	spefscr;	/* SPE & eFP status */
 	int		used_spe;	/* set if process has used spe */
 #endif /* CONFIG_SPE */
-#ifdef CONFIG_PERFCTR_VIRTUAL
-	struct vperfctr *perfctr;	/* performance counters */
-#endif
 };
 
 #define ARCH_MIN_TASKALIGN 16
