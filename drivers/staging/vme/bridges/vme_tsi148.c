@@ -62,25 +62,26 @@ int tsi148_generate_irq(int, int);
 int tsi148_slot_get(void);
 
 /* Modue parameter */
-int err_chk = 0;
+static int err_chk;
+static int geoid;
 
 /* XXX These should all be in a per device structure */
-struct vme_bridge *tsi148_bridge;
-wait_queue_head_t dma_queue[2];
-wait_queue_head_t iack_queue;
-void (*lm_callback[4])(int);	/* Called in interrupt handler, be careful! */
-void *crcsr_kernel;
-dma_addr_t crcsr_bus;
-struct vme_master_resource *flush_image;
-struct mutex vme_rmw;	/* Only one RMW cycle at a time */
-struct mutex vme_int;	/*
+static struct vme_bridge *tsi148_bridge;
+static wait_queue_head_t dma_queue[2];
+static wait_queue_head_t iack_queue;
+static void (*lm_callback[4])(int);	/* Called in interrupt handler */
+static void *crcsr_kernel;
+static dma_addr_t crcsr_bus;
+static struct vme_master_resource *flush_image;
+static struct mutex vme_rmw;	/* Only one RMW cycle at a time */
+static struct mutex vme_int;	/*
 				 * Only one VME interrupt can be
 				 * generated at a time, provide locking
 				 */
 
 static char driver_name[] = "vme_tsi148";
 
-static struct pci_device_id tsi148_ids[] = {
+static const struct pci_device_id tsi148_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_TUNDRA, PCI_DEVICE_ID_TUNDRA_TSI148) },
 	{ },
 };
@@ -2145,8 +2146,12 @@ int tsi148_slot_get(void)
 {
         u32 slot = 0;
 
-	slot = ioread32be(tsi148_bridge->base + TSI148_LCSR_VSTAT);
-	slot = slot & TSI148_LCSR_VSTAT_GA_M;
+	if (!geoid) {
+		slot = ioread32be(tsi148_bridge->base + TSI148_LCSR_VSTAT);
+		slot = slot & TSI148_LCSR_VSTAT_GA_M;
+	} else
+		slot = geoid;
+
 	return (int)slot;
 }
 
@@ -2196,6 +2201,7 @@ static int tsi148_crcsr_init(struct pci_dev *pdev)
 	vstat = tsi148_slot_get();
 
 	if (cbar != vstat) {
+		cbar = vstat;
 		dev_info(&pdev->dev, "Setting CR/CSR offset\n");
 		iowrite32be(cbar<<3, tsi148_bridge->base + TSI148_CBAR);
 	}
@@ -2458,8 +2464,13 @@ static int tsi148_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	data = ioread32be(tsi148_bridge->base + TSI148_LCSR_VSTAT);
 	dev_info(&pdev->dev, "Board is%s the VME system controller\n",
 		(data & TSI148_LCSR_VSTAT_SCONS)? "" : " not");
-	dev_info(&pdev->dev, "VME geographical address is %d\n",
-		data & TSI148_LCSR_VSTAT_GA_M);
+	if (!geoid) {
+		dev_info(&pdev->dev, "VME geographical address is %d\n",
+			data & TSI148_LCSR_VSTAT_GA_M);
+	} else {
+		dev_info(&pdev->dev, "VME geographical address is set to %d\n",
+			geoid);
+	}
 	dev_info(&pdev->dev, "VME Write and flush and error check is %s\n",
 		err_chk ? "enabled" : "disabled");
 
@@ -2608,7 +2619,8 @@ static void tsi148_remove(struct pci_dev *pdev)
 
 	/* resources are stored in link list */
 	list_for_each(pos, &(tsi148_bridge->master_resources)) {
-		master_image = list_entry(pos, struct vme_master_resource,				list);
+		master_image = list_entry(pos, struct vme_master_resource,
+			list);
 		list_del(pos);
 		kfree(master_image);
 	}
@@ -2633,6 +2645,9 @@ static void __exit tsi148_exit(void)
 
 MODULE_PARM_DESC(err_chk, "Check for VME errors on reads and writes");
 module_param(err_chk, bool, 0);
+
+MODULE_PARM_DESC(geoid, "Override geographical addressing");
+module_param(geoid, int, 0);
 
 MODULE_DESCRIPTION("VME driver for the Tundra Tempe VME bridge");
 MODULE_LICENSE("GPL");
