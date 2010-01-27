@@ -113,12 +113,24 @@ static void write_output(void *buf, size_t size)
 
 static void write_event(event_t *buf, size_t size)
 {
-	/*
-	* Add it to the list of DSOs, so that when we finish this
-	 * record session we can pick the available build-ids.
-	 */
-	if (buf->header.type == PERF_RECORD_MMAP)
-		dsos__findnew(buf->mmap.filename);
+	size_t processed_size = buf->header.size;
+	event_t *ev = buf;
+
+	do {
+		/*
+		* Add it to the list of DSOs, so that when we finish this
+		 * record session we can pick the available build-ids.
+		 */
+		if (ev->header.type == PERF_RECORD_MMAP) {
+			struct list_head *head = &dsos__user;
+			if (ev->header.misc == 1)
+				head = &dsos__kernel;
+			__dsos__findnew(head, ev->mmap.filename);
+		}
+
+		ev = ((void *)ev) + ev->header.size;
+		processed_size += ev->header.size;
+	} while (processed_size < size);
 
 	write_output(buf, size);
 }
@@ -465,6 +477,11 @@ static int __cmd_record(int argc, const char **argv)
 		return -1;
 	}
 
+	if (perf_session__create_kernel_maps(session) < 0) {
+		pr_err("Problems creating kernel maps\n");
+		return -1;
+	}
+
 	if (!file_new) {
 		err = perf_header__read(&session->header, output);
 		if (err < 0)
@@ -549,6 +566,19 @@ static int __cmd_record(int argc, const char **argv)
 		err = perf_header__write(&session->header, output, false);
 		if (err < 0)
 			return err;
+	}
+
+	err = event__synthesize_kernel_mmap(process_synthesized_event,
+					    session, "_text");
+	if (err < 0) {
+		pr_err("Couldn't record kernel reference relocation symbol.\n");
+		return err;
+	}
+
+	err = event__synthesize_modules(process_synthesized_event, session);
+	if (err < 0) {
+		pr_err("Couldn't record kernel reference relocation symbol.\n");
+		return err;
 	}
 
 	if (!system_wide && profile_cpu == -1)
