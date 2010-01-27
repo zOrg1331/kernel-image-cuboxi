@@ -116,8 +116,6 @@ static int tsl2550_get_adc_value(struct i2c_client *client, u8 cmd)
  * of infrared level and visible light levels.
  */
 
-#define	TSL2550_MAX_LUX		1846
-
 static const u8 ratio_lut[] = {
 	100, 100, 100, 100, 100, 100, 100, 100,
 	100, 100, 100, 100, 100, 100, 99, 99,
@@ -187,8 +185,7 @@ static int tsl2550_calculate_lux(u8 ch0, u8 ch1)
 	else
 		return -EAGAIN;
 
-	/* LUX range check */
-	return lux > TSL2550_MAX_LUX ? TSL2550_MAX_LUX : lux;
+	return lux;
 }
 
 /*
