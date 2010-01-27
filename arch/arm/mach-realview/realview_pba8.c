@@ -31,7 +31,6 @@
 #include <asm/leds.h>
 #include <asm/mach-types.h>
 #include <asm/hardware/gic.h>
-#include <asm/hardware/icst307.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
@@ -42,7 +41,6 @@
 #include <mach/irqs.h>
 
 #include "core.h"
-#include "clock.h"
 
 static struct map_desc realview_pba8_io_desc[] __initdata = {
 	{
@@ -272,6 +270,20 @@ static struct sys_timer realview_pba8_timer = {
 	.init		= realview_pba8_timer_init,
 };
 
+static void realview_pba8_reset(char mode)
+{
+	void __iomem *reset_ctrl = __io_address(REALVIEW_SYS_RESETCTL);
+	void __iomem *lock_ctrl = __io_address(REALVIEW_SYS_LOCK);
+
+	/*
+	 * To reset, we hit the on-board reset register
+	 * in the system FPGA
+	 */
+	__raw_writel(REALVIEW_SYS_LOCK_VAL, lock_ctrl);
+	__raw_writel(0x0000, reset_ctrl);
+	__raw_writel(0x0004, reset_ctrl);
+}
+
 static void __init realview_pba8_init(void)
 {
 	int i;
@@ -291,6 +303,7 @@ static void __init realview_pba8_init(void)
 #ifdef CONFIG_LEDS
 	leds_event = realview_leds_event;
 #endif
+	realview_reset = realview_pba8_reset;
 }
 
 MACHINE_START(REALVIEW_PBA8, "ARM-RealView PB-A8")

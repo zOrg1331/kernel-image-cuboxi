@@ -32,7 +32,6 @@
 #include <asm/leds.h>
 #include <asm/mach-types.h>
 #include <asm/hardware/gic.h>
-#include <asm/hardware/icst307.h>
 #include <asm/hardware/cache-l2x0.h>
 
 #include <asm/mach/arch.h>
@@ -44,7 +43,6 @@
 #include <mach/irqs.h>
 
 #include "core.h"
-#include "clock.h"
 
 static struct map_desc realview_pb1176_io_desc[] __initdata = {
 	{
@@ -292,12 +290,10 @@ static struct sys_timer realview_pb1176_timer = {
 
 static void realview_pb1176_reset(char mode)
 {
-	void __iomem *hdr_ctrl = __io_address(REALVIEW_SYS_BASE) +
-		REALVIEW_SYS_RESETCTL_OFFSET;
-	void __iomem *rst_hdr_ctrl = __io_address(REALVIEW_SYS_BASE) +
-		REALVIEW_SYS_LOCK_OFFSET;
-	__raw_writel(REALVIEW_SYS_LOCKVAL_MASK, rst_hdr_ctrl);
-	__raw_writel(REALVIEW_PB1176_SYS_LOCKVAL_RSTCTL, hdr_ctrl);
+	void __iomem *reset_ctrl = __io_address(REALVIEW_SYS_RESETCTL);
+	void __iomem *lock_ctrl = __io_address(REALVIEW_SYS_LOCK);
+	__raw_writel(REALVIEW_SYS_LOCK_VAL, lock_ctrl);
+	__raw_writel(REALVIEW_PB1176_SYS_SOFT_RESET, reset_ctrl);
 }
 
 static void realview_pb1176_fixup(struct machine_desc *mdesc,

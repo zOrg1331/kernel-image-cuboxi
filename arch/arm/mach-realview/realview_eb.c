@@ -32,7 +32,6 @@
 #include <asm/leds.h>
 #include <asm/mach-types.h>
 #include <asm/hardware/gic.h>
-#include <asm/hardware/icst307.h>
 #include <asm/hardware/cache-l2x0.h>
 #include <asm/localtimer.h>
 
@@ -44,7 +43,6 @@
 #include <mach/irqs.h>
 
 #include "core.h"
-#include "clock.h"
 
 static struct map_desc realview_eb_io_desc[] __initdata = {
 	{
@@ -381,6 +379,20 @@ static struct sys_timer realview_eb_timer = {
 	.init		= realview_eb_timer_init,
 };
 
+static void realview_eb_reset(char mode)
+{
+	void __iomem *reset_ctrl = __io_address(REALVIEW_SYS_RESETCTL);
+	void __iomem *lock_ctrl = __io_address(REALVIEW_SYS_LOCK);
+
+	/*
+	 * To reset, we hit the on-board reset register
+	 * in the system FPGA
+	 */
+	__raw_writel(REALVIEW_SYS_LOCK_VAL, lock_ctrl);
+	if (core_tile_eb11mp())
+		__raw_writel(0x0008, reset_ctrl);
+}
+
 static void __init realview_eb_init(void)
 {
 	int i;
@@ -408,6 +420,7 @@ static void __init realview_eb_init(void)
 #ifdef CONFIG_LEDS
 	leds_event = realview_leds_event;
 #endif
+	realview_reset = realview_eb_reset;
 }
 
 MACHINE_START(REALVIEW_EB, "ARM-RealView EB")
