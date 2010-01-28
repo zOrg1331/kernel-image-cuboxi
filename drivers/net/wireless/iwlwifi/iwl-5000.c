@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2007 - 2009 Intel Corporation. All rights reserved.
+ * Copyright(c) 2007 - 2010 Intel Corporation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of version 2 of the GNU General Public License as
@@ -1467,6 +1467,7 @@ struct iwl_lib_ops iwl5000_lib = {
 	.dump_nic_event_log = iwl_dump_nic_event_log,
 	.dump_nic_error_log = iwl_dump_nic_error_log,
 	.dump_csr = iwl_dump_csr,
+	.dump_fh = iwl_dump_fh,
 	.load_ucode = iwl5000_load_ucode,
 	.init_alive_start = iwl5000_init_alive_start,
 	.alive_notify = iwl5000_alive_notify,
@@ -1502,6 +1503,7 @@ struct iwl_lib_ops iwl5000_lib = {
 		.temperature = iwl5000_temperature,
 		.set_ct_kill = iwl5000_set_ct_threshold,
 	 },
+	.add_bcast_station = iwl_add_bcast_station,
 };
 
 static struct iwl_lib_ops iwl5150_lib = {
@@ -1555,6 +1557,7 @@ static struct iwl_lib_ops iwl5150_lib = {
 		.temperature = iwl5150_temperature,
 		.set_ct_kill = iwl5150_set_ct_threshold,
 	 },
+	.add_bcast_station = iwl_add_bcast_station,
 };
 
 static const struct iwl_ops iwl5000_ops = {
@@ -1602,6 +1605,7 @@ struct iwl_cfg iwl5300_agn_cfg = {
 	.led_compensation = 51,
 	.use_rts_for_ht = true, /* use rts/cts protection */
 	.chain_noise_num_beacons = IWL_CAL_NUM_BEACONS,
+	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_LONG_THRESHOLD_DEF,
 };
 
 struct iwl_cfg iwl5100_bgn_cfg = {
@@ -1626,6 +1630,7 @@ struct iwl_cfg iwl5100_bgn_cfg = {
 	.led_compensation = 51,
 	.use_rts_for_ht = true, /* use rts/cts protection */
 	.chain_noise_num_beacons = IWL_CAL_NUM_BEACONS,
+	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_LONG_THRESHOLD_DEF,
 };
 
 struct iwl_cfg iwl5100_abg_cfg = {
@@ -1648,6 +1653,7 @@ struct iwl_cfg iwl5100_abg_cfg = {
 	.use_bsm = false,
 	.led_compensation = 51,
 	.chain_noise_num_beacons = IWL_CAL_NUM_BEACONS,
+	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_LONG_THRESHOLD_DEF,
 };
 
 struct iwl_cfg iwl5100_agn_cfg = {
@@ -1672,6 +1678,7 @@ struct iwl_cfg iwl5100_agn_cfg = {
 	.led_compensation = 51,
 	.use_rts_for_ht = true, /* use rts/cts protection */
 	.chain_noise_num_beacons = IWL_CAL_NUM_BEACONS,
+	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_LONG_THRESHOLD_DEF,
 };
 
 struct iwl_cfg iwl5350_agn_cfg = {
@@ -1696,6 +1703,7 @@ struct iwl_cfg iwl5350_agn_cfg = {
 	.led_compensation = 51,
 	.use_rts_for_ht = true, /* use rts/cts protection */
 	.chain_noise_num_beacons = IWL_CAL_NUM_BEACONS,
+	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_LONG_THRESHOLD_DEF,
 };
 
 struct iwl_cfg iwl5150_agn_cfg = {
@@ -1720,6 +1728,7 @@ struct iwl_cfg iwl5150_agn_cfg = {
 	.led_compensation = 51,
 	.use_rts_for_ht = true, /* use rts/cts protection */
 	.chain_noise_num_beacons = IWL_CAL_NUM_BEACONS,
+	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_LONG_THRESHOLD_DEF,
 };
 
 struct iwl_cfg iwl5150_abg_cfg = {
@@ -1742,6 +1751,7 @@ struct iwl_cfg iwl5150_abg_cfg = {
 	.use_bsm = false,
 	.led_compensation = 51,
 	.chain_noise_num_beacons = IWL_CAL_NUM_BEACONS,
+	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_LONG_THRESHOLD_DEF,
 };
 
 MODULE_FIRMWARE(IWL5000_MODULE_FIRMWARE(IWL5000_UCODE_API_MAX));
