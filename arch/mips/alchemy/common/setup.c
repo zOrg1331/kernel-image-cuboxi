@@ -29,18 +29,13 @@
 #include <linux/ioport.h>
 #include <linux/jiffies.h>
 #include <linux/module.h>
-#include <linux/pm.h>
 
 #include <asm/mipsregs.h>
-#include <asm/reboot.h>
 #include <asm/time.h>
 
 #include <au1000.h>
 
 extern void __init board_setup(void);
-extern void au1000_restart(char *);
-extern void au1000_halt(void);
-extern void au1000_power_off(void);
 extern void set_cpuspec(void);
 
 void __init plat_mem_setup(void)
@@ -56,10 +51,6 @@ void __init plat_mem_setup(void)
 
 	/* this is faster than wasting cycles trying to approximate it */
 	preset_lpj = (est_freq >> 1) / HZ;
-
-	_machine_restart = au1000_restart;
-	_machine_halt = au1000_halt;
-	pm_power_off = au1000_power_off;
 
 	board_setup();  /* board specific setup */
 
@@ -107,7 +98,8 @@ phys_t __fixup_bigphys_addr(phys_t phys_addr, phys_t size)
 	 * The pseudo address we use is 0xF400 0000. Any address over
 	 * 0xF400 0000 is a PCMCIA pseudo address.
 	 */
-	if ((phys_addr >= 0xF4000000) && (phys_addr < 0xFFFFFFFF))
+	if ((phys_addr >= PCMCIA_ATTR_PSEUDO_PHYS) &&
+	    (phys_addr < PCMCIA_PSEUDO_END))
 		return (phys_t)(phys_addr << 4);
 
 	/* default nop */
