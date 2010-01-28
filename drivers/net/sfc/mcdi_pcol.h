@@ -853,7 +853,7 @@
  * Poll for BIST completion
  *
  * Returns a single status code, and a binary blob of phy-specific
- * bist output. If the driver can't succesfully parse the BIST output,
+ * bist output. If the driver can't successfully parse the BIST output,
  * it should still respect the Pass/Fail in OUT.RESULT.
  *
  * Locks required: PHY_LOCK  if doing a  PHY BIST
