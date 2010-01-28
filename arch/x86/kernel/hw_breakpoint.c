@@ -466,7 +466,7 @@ static int __kprobes hw_breakpoint_handler(struct die_args *args)
 {
 	int i, cpu, rc = NOTIFY_STOP;
 	struct perf_event *bp;
-	unsigned long dr7, dr6;
+	unsigned long dr6;
 	unsigned long *dr6_p;
 
 	/* The DR6 value is pointed by args->err */
@@ -477,7 +477,6 @@ static int __kprobes hw_breakpoint_handler(struct die_args *args)
 	if ((dr6 & DR_TRAP_BITS) == 0)
 		return NOTIFY_DONE;
 
-	get_debugreg(dr7, 7);
 	/* Disable breakpoints during exception handling */
 	set_debugreg(0UL, 7);
 	/*
@@ -525,7 +524,7 @@ static int __kprobes hw_breakpoint_handler(struct die_args *args)
 	if (dr6 & (~DR_TRAP_BITS))
 		rc = NOTIFY_DONE;
 
-	set_debugreg(dr7, 7);
+	set_debugreg(__get_cpu_var(cpu_dr7), 7);
 	put_cpu();
 
 	return rc;
