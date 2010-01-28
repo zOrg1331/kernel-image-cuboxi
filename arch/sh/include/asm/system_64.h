@@ -33,8 +33,6 @@ do {								\
 			      &next->thread);			\
 } while (0)
 
-#define __uses_jump_to_uncached
-
 #define jump_to_uncached()	do { } while (0)
 #define back_to_cached()	do { } while (0)
 
@@ -46,6 +44,13 @@ do {								\
 static inline reg_size_t register_align(void *val)
 {
 	return (unsigned long long)(signed long long)(signed long)val;
+}
+
+extern void phys_stext(void);
+
+static inline void trigger_address_error(void)
+{
+	phys_stext();
 }
 
 #define SR_BL_LL	0x0000000010000000LL
