@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2007 - 2009 Intel Corporation. All rights reserved.
+ * Copyright(c) 2007 - 2010 Intel Corporation. All rights reserved.
  *
  * Portions of this file are derived from the ipw3945 project, as well
  * as portions of the ieee80211 subsystem header files.
@@ -319,7 +319,7 @@ int iwl_power_update_mode(struct iwl_priv *priv, bool force)
 			priv->chain_noise_data.state == IWL_CHAIN_NOISE_ALIVE;
 
 	if (priv->vif)
-		dtimper = priv->vif->bss_conf.dtim_period;
+		dtimper = priv->hw->conf.ps_dtim_period;
 	else
 		dtimper = 1;
 
