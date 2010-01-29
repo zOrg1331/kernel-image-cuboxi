@@ -861,8 +861,6 @@ restart:
 	/*  Take apart glock structures and buffer lists  */
 	invalidate_inodes(sdp->sd_vfs);
 	gfs2_gl_hash_clear(sdp);
-	/* Wait for dlm to reply to all our unlock requests */
-	wait_event(sdp->sd_glock_wait, atomic_read(&sdp->sd_glock_disposal) == 0);
 	/*  Unmount the locking protocol  */
 	gfs2_lm_unmount(sdp);
 
