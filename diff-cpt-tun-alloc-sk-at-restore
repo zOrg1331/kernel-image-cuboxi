@@ -1,0 +1,29 @@
+diff --git a/drivers/net/tun.c b/drivers/net/tun.c
+index bbf5fe5..a0a1512 100644
+--- a/drivers/net/tun.c
++++ b/drivers/net/tun.c
+@@ -619,6 +619,8 @@ static ssize_t tun_chr_read(struct file * file, char __user * buf,
+ 	return tun_chr_readv(file, &iv, 1, pos);
+ }
+ 
++static int tun_sk_alloc_init(struct tun_struct *tun, struct net_device *dev);
++
+ static void cpt_dump_tuntap(struct net_device *dev,
+ 		struct cpt_ops *ops, struct cpt_context *ctx)
+ {
+@@ -711,6 +713,11 @@ static int rst_restore_tuntap(loff_t start, struct cpt_netdev_image *di,
+ 		memcpy(dev->dev_addr, hw.cpt_dev_addr,
+ 				sizeof(hw.cpt_dev_addr));
+ 	}
++
++	err = tun_sk_alloc_init(tun, dev);
++	if (err)
++		goto out;
++
+ 	list_add(&tun->list, &tun_dev_list);
+ 
+ 	bind_file->private_data = tun;
+-- 
+1.6.0.2
+
+

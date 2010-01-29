@@ -4,8 +4,8 @@
 %define with_doc       0
 %define with_headers   1
 %define with_openafs   0
-%define ovzver 028stab066
-%define ovzrel 10
+%define ovzver 028stab067
+%define ovzrel 4
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -690,6 +690,14 @@ Patch20168: xen-allow-msi-reconfigure-for-pt_bind_irq.patch
 Patch20169: xen-ia64-add-get-set_address_size-support.patch
 Patch20170: xen-hv-remove-high-latency-spin_lock.patch
 Patch20171: xen-amd-iommu-crash-with-pass-through-on-large-memory.patch
+Patch20172: xen-allow-booting-with-broken-serial-hardware.patch
+Patch20173: xen-fix-crash-with-memory-imbalance.patch
+Patch20174: xen-fix-numa-on-magny-cours-systems.patch
+Patch20175: xen-iommu-move-iommu_setup-to-setup-ioapic-correctly.patch
+Patch20176: xen-support-interrupt-remapping-on-m-c.patch
+Patch20177: xen-iommu-enable-amd-iommu-debug-at-run-time.patch
+Patch20178: xen-iommu-add-passthrough-and-no-intremap-parameters.patch
+Patch20179: xen-iommu-amd-extend-loop-ctr-for-polling-completion-wait.patch
 # end of Xen patches
 
 Patch21007: linux-2.6-netlabel-error-checking-cleanups.patch
@@ -3410,7 +3418,8 @@ Patch23766: linux-2.6-gfs2-tar-off-gfs2-broken-truncated-symbolic-links.patch
 Patch23767: linux-2.6-net-iptables-nat-port-randomisation.patch
 Patch23768: linux-2.6-gfs2-fix-uninterruptible-quotad-sleeping.patch
 Patch23769: linux-2.6-nfs-remove-bogus-lock-if-signalled-case.patch
-Patch23770: linux-2.6-net-allow-for-on-demand-emergency-route-cache-flushing.patch
+# that patch introduces node freeze, see bug# 460026
+# Patch23770: linux-2.6-net-allow-for-on-demand-emergency-route-cache-flushing.patch
 Patch23771: linux-2.6-nfs-nfsd-ensure-nfsv4-calls-the-fs-on-lockt.patch
 Patch23772: linux-2.6-dlm-init-file_lock-before-copying-conflicting-lock.patch
 Patch23773: linux-2.6-nfs-only-set-file_lock-fl_lmops-if-stateowner-is-found.patch
@@ -4058,6 +4067,66 @@ Patch24418: linux-2.6-x86-kvm-mark-kvmclock_init-as-cpuinit.patch
 Patch24419: linux-2.6-misc-fix-rng-to-not-use-first-generated-random-block.patch
 Patch24420: linux-2.6-x86-kvm-fix-vsyscall-going-backwards.patch
 Patch24421: linux-2.6-x86_64-kvm-bound-last_kvm-to-prevent-backwards-time.patch
+Patch24422: linux-2.6-nfs-knfsd-fix-nfsv4-o_excl-creates.patch
+Patch24423: linux-2.6-net-tc-fix-unitialized-kernel-memory-leak.patch
+Patch24424: linux-2.6-nfs-fix-cache-invalidation-problems-in-nfs_readdir.patch
+Patch24425: linux-2.6-net-ipv4-ip_append_data-handle-null-routing-table.patch
+Patch24426: linux-2.6-net-ipt_recent-sanity-check-hit-count.patch
+Patch24427: linux-2.6-scsi-fusion-re-enable-mpt_msi_enable-option.patch
+Patch24428: linux-2.6-net-bonding-set-primary-param-via-sysfs.patch
+Patch24429: linux-2.6-net-r8169-balance-pci_map-unmap-pair-use-hw-padding.patch
+Patch24430: linux-2.6-scsi-st-c-memory-use-after-free-after-mtsetblk-ioctl.patch
+Patch24431: linux-2.6-net-r8169-avoid-losing-msi-interrupts.patch
+Patch24432: linux-2.6-nfs-v4-reclaimer-thread-stuck-in-an-infinite-loop.patch
+Patch24433: linux-2.6-fs-ecryptfs-prevent-lower-dentry-from-going-negative.patch
+Patch24434: linux-2.6-net-lvs-adjust-sync-protocol-handling-for-ipvsadm-2.patch
+Patch24435: linux-2.6-security-require-root-for-mmap_min_addr.patch
+Patch24436: linux-2.6-fs-fix-pipe-null-pointer-dereference.patch
+Patch24437: linux-2.6-x86-suspend-resume-work-on-large-logical-cpu-systems.patch
+Patch24438: linux-2.6-misc-support-intel-multi-apic-cluster-systems.patch
+Patch24439: linux-2.6-pci-avoid-disabling-acpi-to-use-non-core-pci-devices.patch
+Patch24440: linux-2.6-x86-oprofile-utilize-perf-counter-reservation.patch
+Patch24441: linux-2.6-x86-oprofile-fix-k8-core2-on-multiple-cpus.patch
+Patch24442: linux-2.6-x86-oprofile-support-arch-perfmon.patch
+Patch24443: linux-2.6-pci-pciehp-fix-pcie-hotplug-slot-detection.patch
+Patch24444: linux-2.6-x86-finish-sysdata-conversion.patch
+Patch24445: linux-2.6-mm-fix-spinlock-performance-issue-on-large-systems.patch
+Patch24446: linux-2.6-audit-dereferencing-krule-as-if-it-were-an-audit_watch.patch
+Patch24447: linux-2.6-fs-inotify-fix-race.patch
+Patch24448: linux-2.6-fs-inotify-remove-debug-code.patch
+Patch24449: linux-2.6-net-af_unix-deadlock-on-connecting-to-shutdown-socket.patch
+Patch24450: linux-2.6-x86-add-ability-to-access-nehalem-uncore-config-space.patch
+Patch24451: linux-2.6-scsi-mpt-errata-28-fix-on-lsi53c1030.patch
+Patch24452: linux-2.6-drm-r128-check-for-init-on-all-ioctls-that-require-it.patch
+Patch24453: linux-2.6-dlm-use-gfp_nofs-on-all-lockspaces.patch
+Patch24454: linux-2.6-misc-futex-priority-based-wakeup.patch
+Patch24455: linux-2.6-nfs-v4-fix-setting-lock-on-open-file-with-no-state.patch
+Patch24456: linux-2.6-x86-amd-fix-cpu-llc_shared_map-information.patch
+Patch24457: linux-2.6-x86-fix-up-l3-cache-information-for-amd-magny-cours.patch
+Patch24458: linux-2.6-x86-fix-up-threshold_bank4-support-on-amd-magny-cours.patch
+Patch24459: linux-2.6-x86-set-cpu_llc_id-on-amd-cpus.patch
+Patch24460: linux-2.6-net-netlink-fix-typo-in-initialization.patch
+Patch24461: linux-2.6-apic-fix-server-c1e-spurious-lapic-timer-events.patch
+Patch24462: linux-2.6-scsi-qla2xxx-enable-msi-x-correctly-on-qlogic-2xxx-series.patch
+Patch24463: linux-2.6-fs-private-dentry-list-to-avoid-dcache_lock-contention.patch
+Patch24464: linux-2.6-acpi-disable-arb_disable-on-platforms-where-not-needed.patch
+Patch24465: linux-2.6-x86-amd-fix-hot-plug-cpu-issue-on-32-bit-magny-cours.patch
+Patch24466: linux-2.6-x86-fix-l1-cache-by-adding-missing-break.patch
+Patch24467: linux-2.6-net-bnx2i-cnic-update-driver-version-for-rhel5-5.patch
+Patch24468: linux-2.6-x86_64-amd-iommu-system-management-erratum-63-fix.patch
+Patch24469: linux-2.6-acpi-bm_check-and-bm_control-update.patch
+Patch24470: linux-2.6-x86-disable-nmi-watchdog-on-cpu-remove.patch
+Patch24471: linux-2.6-x86-support-amd-magny-cours-power-aware-scheduler-fix.patch
+Patch24472: linux-2.6-x86-fix-boot-crash-with-8-core-amd-magny-cours-system.patch
+Patch24473: linux-2.6-acpi-prevent-duplicate-dirs-in-proc-acpi-processor.patch
+Patch24475: linux-2.6-x86-mce_amd-fix-up-threshold_bank4-creation.patch
+Patch24476: linux-2.6-x86_64-set-proc-id-and-core-id-before-calling-fixup_dcm.patch
+Patch24477: linux-2.6-x86-cpu-upstream-cache-fixes-needed-for-amd-m-c.patch
+Patch24478: linux-2.6-net-bnx2x-add-support-for-bcm8727-phy.patch
+Patch24479: linux-2.6-x86-fix-stale-data-in-shared_cpu_map-cpumasks.patch
+Patch24480: linux-2.6-net-ipv6-fix-ipv6_hop_jumbo-remote-system-crash.patch
+Patch24481: linux-2.6-net-e1000e-fix-rx-length-check-errors.patch
+Patch24482: linux-2.6-net-e1000-r9169-fix-rx-length-check-errors.patch
 
 Patch25000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch25001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -4082,6 +4151,7 @@ Patch70003: diff-scsi-add-modalias-mainstream
 # DRBD
 Patch90000: patch-linux-2.6.18-rhel5-drbd-8.3.4
 Patch90001: diff-drbd-compilation
+Patch90002: diff-drbd-dont-use-connector
 
 # Areca
 # replaced with linux-2.6-scsi-add-kernel-support-for-areca-raid-controller.patch
@@ -4149,23 +4219,12 @@ Patch100017: diff-ms-32bitHW-kernel-panic-string
 Patch100018: diff-ms-mmap-min-addr
 Patch100020: linux-2.6.18-128.1.1.el5.028stab062.3-build-fixes.diff
 Patch100024: diff-make-sysrq-mask-affect-proc-sysrq-trigger-20090826
-
-Patch100200: diff-cpt-inotify-dump-fake-links
-Patch100201: diff-ms-alow-ve0-exceed-threads-max
-Patch100202: diff-ve-compat-ustat-missed-devperms
-Patch100203: diff-ms-ext4-use-get-host
-Patch100204: diff-ms-pipe-open-check-20091104
-Patch100205: diff-revert-fairsched-fancy-vcpu-skipping-20091112
-Patch100206: diff-revert-fairsched-vcpu-timeslice-change-20091112
-Patch100207: diff-cpt-ignore-deleted-linked-chr-blk-fifo-nodes-20091105
-Patch100208: diff-ve-binfmt-misc-mem-leak-20091014
-Patch100209: diff-ve-ptys-idr-mem-leak-20091109
-Patch100210: diff-cpt-ptrace-state-init-atomics-20091112
-Patch100212: diff-ms-ext4-nodelalloc-by-default
-Patch100213: diff-rh-call-vfs_check_frozen-out-of-spinlock
-Patch100214: diff-cfq-unlink-dead-cfqq-from-list-20091202
-Patch100215: diff-nfs-check-space-oops-fix
-Patch100216: diff-ve-net-clear-inetdev-from-ve-lo
+Patch100025: diff-ms-alow-ve0-exceed-threads-max
+Patch100026: diff-ms-ext4-nodelalloc-by-default
+Patch100027: diff-rh-call-vfs_check_frozen-out-of-spinlock
+Patch100028: diff-sched-timeout-last-pcpu-for-idle-vcpu-20091222
+Patch100029: diff-ms-tun-split-tun_sk_alloc_init
+Patch100030: diff-cpt-tun-alloc-sk-at-restore
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -4180,6 +4239,7 @@ Patch110005: diff-nbd-spinlock-usage-fix
 Patch110006: diff-nbd-xmit-timeout
 Patch110007: diff-nbd-remove-truncate-at-disconnect-20090529
 Patch110008: diff-nbd-forbid-socket-clear-without-disconnect-20090529
+Patch110009: diff-nbd-pid_show-args-number-20090916
 
 # End VZ patches
 
@@ -7505,7 +7565,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch23767 -p1
 %patch23768 -p1
 %patch23769 -p1
-%patch23770 -p1
+# %patch23770 -p1
 %patch23771 -p1
 %patch23772 -p1
 %patch23773 -p1
@@ -8153,6 +8213,66 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch24419 -p1
 %patch24420 -p1
 %patch24421 -p1
+%patch24422 -p1
+%patch24423 -p1
+%patch24424 -p1
+%patch24425 -p1
+%patch24426 -p1
+%patch24427 -p1
+%patch24428 -p1
+%patch24429 -p1
+%patch24430 -p1
+%patch24431 -p1
+%patch24432 -p1
+%patch24433 -p1
+%patch24434 -p1
+%patch24435 -p1
+%patch24436 -p1
+%patch24437 -p1
+%patch24438 -p1
+%patch24439 -p1
+%patch24440 -p1
+%patch24441 -p1
+%patch24442 -p1
+%patch24443 -p1
+%patch24444 -p1
+%patch24445 -p1
+%patch24446 -p1
+%patch24447 -p1
+%patch24448 -p1
+%patch24449 -p1
+%patch24450 -p1
+%patch24451 -p1
+%patch24452 -p1
+%patch24453 -p1
+%patch24454 -p1
+%patch24455 -p1
+%patch24456 -p1
+%patch24457 -p1
+%patch24458 -p1
+%patch24459 -p1
+%patch24460 -p1
+%patch24461 -p1
+%patch24462 -p1
+%patch24463 -p1
+%patch24464 -p1
+%patch24465 -p1
+%patch24466 -p1
+%patch24467 -p1
+%patch24468 -p1
+%patch24469 -p1
+%patch24470 -p1
+%patch24471 -p1
+%patch24472 -p1
+%patch24473 -p1
+%patch24475 -p1
+%patch24476 -p1
+%patch24477 -p1
+%patch24478 -p1
+%patch24479 -p1
+%patch24480 -p1
+%patch24481 -p1
+%patch24482 -p1
 
 %patch25000 -p1
 %patch25001 -p1
@@ -8174,6 +8294,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 
 %patch90000 -p1
 %patch90001 -p1
+%patch90002 -p1
 
 %patch90210 -p1
 %patch90211 -p1
@@ -8223,22 +8344,12 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100018 -p1
 %patch100020 -p1
 %patch100024 -p1
-%patch100200 -p1
-%patch100201 -p1
-%patch100202 -p1
-%patch100203 -p1
-%patch100204 -p1
-%patch100205 -p1
-%patch100206 -p1
-%patch100207 -p1
-%patch100208 -p1
-%patch100209 -p1
-%patch100210 -p1
-%patch100212 -p1
-%patch100213 -p1
-%patch100214 -p1
-%patch100215 -p1
-%patch100216 -p1
+%patch100025 -p1
+%patch100026 -p1
+%patch100027 -p1
+%patch100028 -p1
+%patch100029 -p1
+%patch100030 -p1
 
 %patch101000 -p1
 %patch101001 -p1
@@ -8252,6 +8363,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 
 %patch110007 -p1
 %patch110008 -p1
+%patch110009 -p1
 
 %endif
 
@@ -8468,6 +8580,14 @@ cd xen
 %patch20169 -p1
 %patch20170 -p1
 %patch20171 -p1
+%patch20172 -p1
+%patch20173 -p1
+%patch20174 -p1
+%patch20175 -p1
+%patch20176 -p1
+%patch20177 -p1
+%patch20178 -p1
+%patch20179 -p1
 
 # end of necessary hypervisor patches
 %endif

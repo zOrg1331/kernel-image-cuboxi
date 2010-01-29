@@ -1,0 +1,1235 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Thu, 22 Oct 2009 20:00:17 -0400
+Subject: [xen] support interrupt remapping on M-C
+Message-id: <20091022200237.3419.52246.sendpatchset@localhost.localdomain>
+Patchwork-id: 21201
+O-Subject: [RHEL5.5 PATCH 2/5] Support interrupt remapping on M-C
+Bugzilla: 518474 526766
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+
+Resolves BZ 526766 and 518474
+
+diff --git a/drivers/passthrough/amd/iommu_acpi.c b/drivers/passthrough/amd/iommu_acpi.c
+index 06f3b9f..a54227c 100644
+--- a/drivers/passthrough/amd/iommu_acpi.c
++++ b/drivers/passthrough/amd/iommu_acpi.c
+@@ -28,6 +28,53 @@ extern unsigned long amd_iommu_page_entries;
+ extern unsigned short ivrs_bdf_entries;
+ extern struct ivrs_mappings *ivrs_mappings;
+ extern unsigned short last_bdf;
++extern int ioapic_bdf[MAX_IO_APICS];
++unsigned int parse_ivrs_table_error;
++
++static void add_ivrs_mapping_entry(
++            u16 bdf, u16 alias_id, u8 flags, struct amd_iommu *iommu)
++{
++    u8 sys_mgt, lint1_pass, lint0_pass, nmi_pass, ext_int_pass, init_pass;
++    ASSERT( ivrs_mappings != NULL );
++    
++    /* setup requestor id */
++    ivrs_mappings[bdf].dte_requestor_id = alias_id;
++
++    /* override flags for range of devices */
++    sys_mgt = get_field_from_byte(flags,
++                                  AMD_IOMMU_ACPI_SYS_MGT_MASK,
++                                  AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
++    lint1_pass = get_field_from_byte(flags,
++                                     AMD_IOMMU_ACPI_LINT1_PASS_MASK,
++                                     AMD_IOMMU_ACPI_LINT1_PASS_SHIFT);
++    lint0_pass = get_field_from_byte(flags,
++                                     AMD_IOMMU_ACPI_LINT0_PASS_MASK,
++                                     AMD_IOMMU_ACPI_LINT0_PASS_SHIFT);
++    nmi_pass = get_field_from_byte(flags,
++                                   AMD_IOMMU_ACPI_NMI_PASS_MASK,
++                                   AMD_IOMMU_ACPI_NMI_PASS_SHIFT);
++    ext_int_pass = get_field_from_byte(flags,
++                                       AMD_IOMMU_ACPI_EINT_PASS_MASK,
++                                       AMD_IOMMU_ACPI_EINT_PASS_SHIFT);
++    init_pass = get_field_from_byte(flags,
++                                    AMD_IOMMU_ACPI_INIT_PASS_MASK,
++                                    AMD_IOMMU_ACPI_INIT_PASS_SHIFT);
++    
++    ivrs_mappings[bdf].dte_sys_mgt_enable = sys_mgt;
++    ivrs_mappings[bdf].dte_lint1_pass = lint1_pass;
++    ivrs_mappings[bdf].dte_lint0_pass = lint0_pass;
++    ivrs_mappings[bdf].dte_nmi_pass = nmi_pass;
++    ivrs_mappings[bdf].dte_ext_int_pass = ext_int_pass;
++    ivrs_mappings[bdf].dte_init_pass = init_pass;
++    
++    /* allocate per-device interrupt remapping table */
++    if ( ivrs_mappings[alias_id].intremap_table == NULL )
++        ivrs_mappings[alias_id].intremap_table =
++            amd_iommu_alloc_intremap_table();
++    /* assgin iommu hardware */
++    ivrs_mappings[bdf].iommu = iommu;
++}
++
+ 
+ static struct amd_iommu * __init find_iommu_from_bdf_cap(
+     u16 bdf, u8 cap_offset)
+@@ -368,11 +415,7 @@ static u16 __init parse_ivhd_device_select(
+     }
+ 
+     /* override flags for device */
+-    ivrs_mappings[bdf].dte_sys_mgt_enable =
+-        get_field_from_byte(ivhd_device->header.flags,
+-                            AMD_IOMMU_ACPI_SYS_MGT_MASK,
+-                            AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
+-    ivrs_mappings[bdf].iommu = iommu;
++    add_ivrs_mapping_entry(bdf, bdf, ivhd_device->header.flags, iommu);
+ 
+     return sizeof(struct acpi_ivhd_device_header);
+ }
+@@ -382,7 +425,6 @@ static u16 __init parse_ivhd_device_range(
+     u16 header_length, u16 block_length, struct amd_iommu *iommu)
+ {
+     u16 dev_length, first_bdf, last_bdf, bdf;
+-    u8 sys_mgt;
+ 
+     dev_length = sizeof(struct acpi_ivhd_device_range);
+     if ( header_length < (block_length + dev_length) )
+@@ -418,15 +460,8 @@ static u16 __init parse_ivhd_device_range(
+ 
+     amd_iov_info(" Dev_Id Range: 0x%x -> 0x%x\n", first_bdf, last_bdf);
+ 
+-    /* override flags for range of devices */
+-    sys_mgt = get_field_from_byte(ivhd_device->header.flags,
+-                                  AMD_IOMMU_ACPI_SYS_MGT_MASK,
+-                                  AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
+     for ( bdf = first_bdf; bdf <= last_bdf; bdf++ )
+-    {
+-        ivrs_mappings[bdf].dte_sys_mgt_enable = sys_mgt;
+-        ivrs_mappings[bdf].iommu = iommu;
+-    }
++        add_ivrs_mapping_entry(bdf, bdf, ivhd_device->header.flags, iommu);
+ 
+     return dev_length;
+ }
+@@ -461,16 +496,7 @@ static u16 __init parse_ivhd_device_alias(
+     amd_iov_info(" Dev_Id Alias: 0x%x\n", alias_id);
+ 
+     /* override requestor_id and flags for device */
+-    ivrs_mappings[bdf].dte_requestor_id = alias_id;
+-    ivrs_mappings[bdf].dte_sys_mgt_enable =
+-        get_field_from_byte(ivhd_device->header.flags,
+-                            AMD_IOMMU_ACPI_SYS_MGT_MASK,
+-                            AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
+-    ivrs_mappings[bdf].iommu = iommu;
+-
+-    ivrs_mappings[alias_id].dte_sys_mgt_enable =
+-        ivrs_mappings[bdf].dte_sys_mgt_enable;
+-    ivrs_mappings[alias_id].iommu = iommu;
++    add_ivrs_mapping_entry(bdf, alias_id, ivhd_device->header.flags, iommu);
+ 
+     return dev_length;
+ }
+@@ -481,7 +507,6 @@ static u16 __init parse_ivhd_device_alias_range(
+ {
+ 
+     u16 dev_length, first_bdf, last_bdf, alias_id, bdf;
+-    u8 sys_mgt;
+ 
+     dev_length = sizeof(struct acpi_ivhd_device_alias_range);
+     if ( header_length < (block_length + dev_length) )
+@@ -526,17 +551,9 @@ static u16 __init parse_ivhd_device_alias_range(
+     amd_iov_info(" Dev_Id Alias: 0x%x\n", alias_id);
+ 
+     /* override requestor_id and flags for range of devices */
+-    sys_mgt = get_field_from_byte(ivhd_device->header.flags,
+-                                  AMD_IOMMU_ACPI_SYS_MGT_MASK,
+-                                  AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
+     for ( bdf = first_bdf; bdf <= last_bdf; bdf++ )
+-    {
+-        ivrs_mappings[bdf].dte_requestor_id = alias_id;
+-        ivrs_mappings[bdf].dte_sys_mgt_enable = sys_mgt;
+-        ivrs_mappings[bdf].iommu = iommu;
+-    }
+-    ivrs_mappings[alias_id].dte_sys_mgt_enable = sys_mgt;
+-    ivrs_mappings[alias_id].iommu = iommu;
++        add_ivrs_mapping_entry(bdf, alias_id, ivhd_device->header.flags, 
++                               iommu);
+ 
+     return dev_length;
+ }
+@@ -562,11 +579,7 @@ static u16 __init parse_ivhd_device_extended(
+     }
+ 
+     /* override flags for device */
+-    ivrs_mappings[bdf].dte_sys_mgt_enable =
+-        get_field_from_byte(ivhd_device->header.flags,
+-                            AMD_IOMMU_ACPI_SYS_MGT_MASK,
+-                            AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
+-    ivrs_mappings[bdf].iommu = iommu;
++    add_ivrs_mapping_entry(bdf, bdf, ivhd_device->header.flags, iommu);
+ 
+     return dev_length;
+ }
+@@ -576,7 +589,6 @@ static u16 __init parse_ivhd_device_extended_range(
+     u16 header_length, u16 block_length, struct amd_iommu *iommu)
+ {
+     u16 dev_length, first_bdf, last_bdf, bdf;
+-    u8 sys_mgt;
+ 
+     dev_length = sizeof(struct acpi_ivhd_device_extended_range);
+     if ( header_length < (block_length + dev_length) )
+@@ -614,18 +626,39 @@ static u16 __init parse_ivhd_device_extended_range(
+             first_bdf, last_bdf);
+ 
+     /* override flags for range of devices */
+-    sys_mgt = get_field_from_byte(ivhd_device->header.flags,
+-                                  AMD_IOMMU_ACPI_SYS_MGT_MASK,
+-                                  AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
+     for ( bdf = first_bdf; bdf <= last_bdf; bdf++ )
+-    {
+-        ivrs_mappings[bdf].dte_sys_mgt_enable = sys_mgt;
+-        ivrs_mappings[bdf].iommu = iommu;
+-    }
++        add_ivrs_mapping_entry(bdf, bdf, ivhd_device->header.flags, iommu);
+ 
+     return dev_length;
+ }
+ 
++static u16 __init parse_ivhd_device_special(
++                  union acpi_ivhd_device *ivhd_device,
++                  u16 header_length, u16 block_length, struct amd_iommu *iommu)
++{
++    u16 dev_length, bdf;
++    
++    dev_length = sizeof(struct acpi_ivhd_device_special);
++    if ( header_length < (block_length + dev_length) )
++    {
++        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        return 0;
++    }
++    
++    bdf = ivhd_device->special.dev_id;
++    if ( bdf >= ivrs_bdf_entries )
++    {
++        amd_iov_error("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
++        return 0;
++    }
++    
++    add_ivrs_mapping_entry(bdf, bdf, ivhd_device->header.flags, iommu);
++    /* set device id of ioapic */
++    ioapic_bdf[ivhd_device->special.handle] = bdf;
++    return dev_length;
++ }
++ 
++
+ static int __init parse_ivhd_block(struct acpi_ivhd_block_header *ivhd_block)
+ {
+     union acpi_ivhd_device *ivhd_device;
+@@ -701,6 +734,11 @@ static int __init parse_ivhd_block(struct acpi_ivhd_block_header *ivhd_block)
+                 ivhd_device,
+                 ivhd_block->header.length, block_length, iommu);
+             break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_SPECIAL:
++            dev_length = parse_ivhd_device_special(
++                ivhd_device,
++                ivhd_block->header.length, block_length, iommu);
++            break;
+         default:
+             amd_iov_error("IVHD Error: Invalid Device Type!\n");
+             dev_length = 0;
+@@ -822,6 +860,8 @@ static int __init parse_ivrs_table(unsigned long phys_addr,
+         length += ivrs_block->length;
+     }
+ 
++    /* this will be used in amd_iommu_update_ivrs_mapping_acpi() */
++    parse_ivrs_table_error = error;    
+     return error;
+ }
+ 
+@@ -925,6 +965,10 @@ static int __init get_last_bdf_ivhd(void *ivhd)
+             UPDATE_LAST_BDF(ivhd_device->extended_range.trailer.dev_id)
+             dev_length = sizeof(struct acpi_ivhd_device_extended_range);
+             break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_SPECIAL:
++            UPDATE_LAST_BDF(ivhd_device->special.dev_id)
++            dev_length = sizeof(struct acpi_ivhd_device_special);
++            break;
+         default:
+             amd_iov_error("IVHD Error: Invalid Device Type!\n");
+             dev_length = 0;
+@@ -979,5 +1023,11 @@ int __init amd_iommu_get_ivrs_dev_entries(void)
+ 
+ int __init amd_iommu_update_ivrs_mapping_acpi(void)
+ {
+-    return acpi_table_parse(ACPI_IVRS, parse_ivrs_table);
++    /* note that acpi_table_parse() function doesn't return value from
++     * parse_ivrs_table(). So we have to get the value from a global variable
++     * parse_ivrs_table_error. 
++     */
++    acpi_table_parse(ACPI_IVRS, parse_ivrs_table);
++
++    return parse_ivrs_table_error;
+ }
+diff --git a/drivers/passthrough/amd/iommu_init.c b/drivers/passthrough/amd/iommu_init.c
+index 1754418..2e29af7 100644
+--- a/drivers/passthrough/amd/iommu_init.c
++++ b/drivers/passthrough/amd/iommu_init.c
+@@ -589,12 +589,6 @@ static void __init deallocate_iommu_table_struct(
+     }
+ }
+ 
+-static void __init deallocate_iommu_tables(struct amd_iommu *iommu)
+-{
+-    deallocate_iommu_table_struct(&iommu->cmd_buffer);
+-    deallocate_iommu_table_struct(&iommu->event_log);
+-}
+-
+ static int __init allocate_iommu_table_struct(struct table_struct *table,
+                                               const char *name)
+ {
+@@ -614,39 +608,42 @@ static int __init allocate_iommu_table_struct(struct table_struct *table,
+     return 0;
+ }
+ 
+-static int __init allocate_iommu_tables(struct amd_iommu *iommu)
++static int __init allocate_cmd_buffer(struct amd_iommu *iommu)
+ {
+     /* allocate 'command buffer' in power of 2 increments of 4K */
+     iommu->cmd_buffer_tail = 0;
+-    iommu->cmd_buffer.alloc_size = PAGE_SIZE << get_order_from_bytes(
+-        PAGE_ALIGN(amd_iommu_cmd_buffer_entries * IOMMU_CMD_BUFFER_ENTRY_SIZE));
+-    iommu->cmd_buffer.entries =
+-        iommu->cmd_buffer.alloc_size / IOMMU_CMD_BUFFER_ENTRY_SIZE;
+-
+-    if ( allocate_iommu_table_struct(&iommu->cmd_buffer, "Command Buffer") != 0 )
+-        goto error_out;
++    iommu->cmd_buffer.alloc_size = PAGE_SIZE <<
++        get_order_from_bytes(
++            PAGE_ALIGN(amd_iommu_cmd_buffer_entries *
++                       IOMMU_CMD_BUFFER_ENTRY_SIZE));
++    iommu->cmd_buffer.entries = iommu->cmd_buffer.alloc_size /
++        IOMMU_CMD_BUFFER_ENTRY_SIZE;
++
++    return (allocate_iommu_table_struct(&iommu->cmd_buffer, "Command Buffer"));
++}
+ 
++static int __init allocate_event_log(struct amd_iommu *iommu)
++{
+     /* allocate 'event log' in power of 2 increments of 4K */
+     iommu->event_log_head = 0;
+-    iommu->event_log.alloc_size = PAGE_SIZE << get_order_from_bytes(
+-        PAGE_ALIGN(amd_iommu_event_log_entries * IOMMU_EVENT_LOG_ENTRY_SIZE));
+-    iommu->event_log.entries =
+-        iommu->event_log.alloc_size / IOMMU_EVENT_LOG_ENTRY_SIZE;
+-
+-    if ( allocate_iommu_table_struct(&iommu->event_log, "Event Log") != 0 )
+-        goto error_out;
+-
+-    return 0;
+-
+- error_out:
+-    deallocate_iommu_tables(iommu);
+-    return -ENOMEM;
++    iommu->event_log.alloc_size = PAGE_SIZE <<
++        get_order_from_bytes(
++            PAGE_ALIGN(amd_iommu_event_log_entries *
++                       IOMMU_EVENT_LOG_ENTRY_SIZE));
++    iommu->event_log.entries = iommu->event_log.alloc_size /
++        IOMMU_EVENT_LOG_ENTRY_SIZE;
++
++    return (allocate_iommu_table_struct(&iommu->event_log, "Event Log"));
+ }
+ 
++
+ int __init amd_iommu_init_one(struct amd_iommu *iommu)
+ {
+ 
+-    if ( allocate_iommu_tables(iommu) != 0 )
++    if ( allocate_cmd_buffer(iommu) != 0 )
++        goto error_out;
++
++    if ( allocate_event_log(iommu) != 0 )
+         goto error_out;
+ 
+     if ( map_iommu_mmio_region(iommu) != 0 )
+@@ -665,17 +662,36 @@ error_out:
+ void __init amd_iommu_init_cleanup(void)
+ {
+     struct amd_iommu *iommu, *next;
++    int bdf;
+ 
+     list_for_each_entry_safe ( iommu, next, &amd_iommu_head, list )
+     {
+         list_del(&iommu->list);
+         if ( iommu->enabled )
+         {
+-            deallocate_iommu_tables(iommu);
++            deallocate_iommu_table_struct(&iommu->cmd_buffer);
++            deallocate_iommu_table_struct(&iommu->event_log);
+             unmap_iommu_mmio_region(iommu);
+         }
+         xfree(iommu);
+     }
++
++    /* free interrupt remapping table */
++    for ( bdf = 0; bdf < ivrs_bdf_entries; bdf++ )
++    {
++        if ( ivrs_mappings[bdf].intremap_table )
++            amd_iommu_free_intremap_table(bdf);
++    }
++
++    /* free device table */
++    deallocate_iommu_table_struct(&device_table);
++
++    /* free IVRS_mappings */
++    if ( ivrs_mappings )
++    {
++        xfree(ivrs_mappings);
++        ivrs_mappings = NULL;
++    }
+ }
+ 
+ static int __init init_ivrs_mapping(void)
+@@ -701,43 +717,109 @@ static int __init init_ivrs_mapping(void)
+         ivrs_mappings[bdf].dte_allow_exclusion = IOMMU_CONTROL_DISABLED;
+         ivrs_mappings[bdf].unity_map_enable = IOMMU_CONTROL_DISABLED;
+         ivrs_mappings[bdf].iommu = NULL;
++
++        ivrs_mappings[bdf].intremap_table = NULL;
++        ivrs_mappings[bdf].dte_lint1_pass = IOMMU_CONTROL_DISABLED;
++        ivrs_mappings[bdf].dte_lint0_pass = IOMMU_CONTROL_DISABLED;
++        ivrs_mappings[bdf].dte_nmi_pass = IOMMU_CONTROL_DISABLED;
++        ivrs_mappings[bdf].dte_ext_int_pass = IOMMU_CONTROL_DISABLED;
++        ivrs_mappings[bdf].dte_init_pass = IOMMU_CONTROL_DISABLED;
++
++        spin_lock_init(&ivrs_mappings[bdf].intremap_lock);
+     }
+     return 0;
+ }
+ 
+ static int __init amd_iommu_setup_device_table(void)
+ {
++    int bdf;
++    void *intr_tb, *dte;
++    int sys_mgt, dev_ex, lint1_pass, lint0_pass, nmi_pass, ext_int_pass,
++        init_pass;
++    int iommu_intremap = 1;
++    
++    BUG_ON(ivrs_bdf_entries == 0);
++    
+     /* allocate 'device table' on a 4K boundary */
+     device_table.alloc_size = PAGE_SIZE << get_order_from_bytes(
+         PAGE_ALIGN(ivrs_bdf_entries * IOMMU_DEV_TABLE_ENTRY_SIZE));
+     device_table.entries = device_table.alloc_size / IOMMU_DEV_TABLE_ENTRY_SIZE;
+ 
+-    return ( allocate_iommu_table_struct(&device_table, "Device Table") );
++    if ( allocate_iommu_table_struct(&device_table, "Device Table") != 0 )
++        return -ENOMEM;
++
++    /* add device table entries */
++    for ( bdf = 0; bdf < ivrs_bdf_entries; bdf++ ) 
++    {
++        intr_tb = ivrs_mappings[bdf].intremap_table;
++        
++        if ( intr_tb )
++        {
++            sys_mgt = ivrs_mappings[bdf].dte_sys_mgt_enable;
++            dev_ex = ivrs_mappings[bdf].dte_allow_exclusion;
++            
++            /* get interrupt remapping settings */
++            lint1_pass = ivrs_mappings[bdf].dte_lint1_pass;
++            lint0_pass = ivrs_mappings[bdf].dte_lint0_pass;
++            nmi_pass = ivrs_mappings[bdf].dte_nmi_pass;
++            ext_int_pass = ivrs_mappings[bdf].dte_ext_int_pass;
++            init_pass = ivrs_mappings[bdf].dte_init_pass;
++
++            /* add device table entry */
++            dte = device_table.buffer + (bdf * IOMMU_DEV_TABLE_ENTRY_SIZE);
++            amd_iommu_add_dev_table_entry(
++                dte, sys_mgt, dev_ex, lint1_pass, lint0_pass,
++                nmi_pass, ext_int_pass, init_pass);
++            
++            iommu_intremap = 1;
++
++            amd_iommu_set_intremap_table(
++                dte, (u64)virt_to_maddr(intr_tb), iommu_intremap);
++
++            amd_iov_info("Add device table entry at DTE:0x%x, "
++                          "intremap_table:%"PRIx64"\n", bdf,
++                          (u64)virt_to_maddr(intr_tb));
++        }
++    }
++    
++    return 0;
+ }
+ 
+-int __init amd_iommu_setup_shared_tables(void)
++int __init amd_iommu_init(void)
+ {
+-    BUG_ON( !ivrs_bdf_entries );
++    struct amd_iommu *iommu;
+ 
+-    if (init_ivrs_mapping() != 0 )
++    BUG_ON( !iommu_found() );
++
++    /* find the max BDF in IRVS table. It will be used in init_ivrs_mapping */
++    ivrs_bdf_entries = amd_iommu_get_ivrs_dev_entries();
++
++    if ( !ivrs_bdf_entries )
+         goto error_out;
+ 
+-    if ( amd_iommu_setup_device_table() != 0 )
++    if ( init_ivrs_mapping() != 0 )
+         goto error_out;
+ 
+-    if ( amd_iommu_setup_intremap_table() != 0 )
++    /* start to read and store IVRS info into ivrs_mapping structure */
++    if ( amd_iommu_update_ivrs_mapping_acpi() != 0 )
+         goto error_out;
+ 
++    /* initialize io-apic interrupt remapping entries */
++    if ( amd_iommu_setup_ioapic_remapping() != 0 )
++        goto error_out;
++    
++    /* allocate and initiliaze a global device table shared by all iommus */
++    if ( amd_iommu_setup_device_table() != 0 )
++        goto error_out;
++
++    for_each_amd_iommu ( iommu )
++        if ( amd_iommu_init_one(iommu) != 0 )
++            goto error_out;
+     return 0;
+ 
+ error_out:
+-    deallocate_intremap_table();
+-    deallocate_iommu_table_struct(&device_table);
+-
+-    if ( ivrs_mappings )
+-    {
+-        xfree(ivrs_mappings);
+-        ivrs_mappings = NULL;
+-    }
+-    return -ENOMEM;
++    amd_iommu_init_cleanup();
++    return -ENODEV;
+ }
++
++
+diff --git a/drivers/passthrough/amd/iommu_intr.c b/drivers/passthrough/amd/iommu_intr.c
+index 4774431..3700737 100644
+--- a/drivers/passthrough/amd/iommu_intr.c
++++ b/drivers/passthrough/amd/iommu_intr.c
+@@ -22,17 +22,26 @@
+ #include <asm/amd-iommu.h>
+ #include <asm/hvm/svm/amd-iommu-proto.h>
+ 
++int ioapic_bdf[MAX_IO_APICS];
+ #define INTREMAP_TABLE_ORDER    1
+-static DEFINE_SPINLOCK(int_remap_table_lock);
+-void *int_remap_table = NULL;
++extern struct ivrs_mappings *ivrs_mappings;
++extern unsigned short ivrs_bdf_entries;
+ 
+-static u8 *get_intremap_entry(u8 vector, u8 dm)
++static int get_intremap_requestor_id(int bdf)
++{
++    ASSERT( bdf < ivrs_bdf_entries );
++    return ivrs_mappings[bdf].dte_requestor_id;
++}
++
++static u8 *get_intremap_entry(int bdf, u8 vector, u8 dm)
+ {
+     u8 *table;
+     int offset = 0;
+-    table = (u8*)int_remap_table;
+ 
+-    BUG_ON( !table );
++
++    table = (u8*)ivrs_mappings[bdf].intremap_table;
++    ASSERT( table != NULL );
++
+     offset = (dm << INT_REMAP_INDEX_DM_SHIFT) & INT_REMAP_INDEX_DM_MASK;
+     offset |= (vector << INT_REMAP_INDEX_VECTOR_SHIFT ) & 
+         INT_REMAP_INDEX_VECTOR_MASK;
+@@ -83,6 +92,8 @@ void invalidate_interrupt_table(struct amd_iommu *iommu, u16 device_id)
+ }
+ 
+ static void update_intremap_entry_from_ioapic(
++    int bdf,
++    struct amd_iommu *iommu,
+     struct IO_APIC_route_entry *ioapic_rte,
+     unsigned int rte_upper, unsigned int value)
+ {
+@@ -90,42 +101,47 @@ static void update_intremap_entry_from_ioapic(
+     u32* entry;
+     u8 delivery_mode, dest, vector, dest_mode;
+     struct IO_APIC_route_entry *rte = ioapic_rte;
++    int req_id;
++
+ 
+-    spin_lock_irqsave(&int_remap_table_lock, flags);
++    req_id = get_intremap_requestor_id(bdf);
+ 
++    /* only remap interrupt vector when lower 32 bits in ioapic ire changed */
+     if ( rte_upper )
+     {
+-        dest = (value >> 24) & 0xFF;
+         delivery_mode = rte->delivery_mode;
+         vector = rte->vector;
+         dest_mode = rte->dest_mode;
+-        entry = (u32*)get_intremap_entry((u8)rte->vector,
+-                                        (u8)rte->delivery_mode);
++        dest = rte->dest.logical.logical_dest;
++        
++        spin_lock_irqsave(&ivrs_mappings[req_id].intremap_lock, flags);
++        entry = (u32*)get_intremap_entry(req_id, vector, delivery_mode);
+         update_intremap_entry(entry, vector, delivery_mode, dest_mode, dest);
++        spin_unlock_irqrestore(&ivrs_mappings[req_id].intremap_lock, flags);
++        
++        if ( iommu->enabled )
++        {
++            spin_lock_irqsave(&iommu->lock, flags);
++            invalidate_interrupt_table(iommu, req_id);
++            flush_command_buffer(iommu);
++            spin_unlock_irqrestore(&iommu->lock, flags);
++        }
+     }
+-
+-    spin_unlock_irqrestore(&int_remap_table_lock, flags);
+-    return;
+ }
+ 
++
+ extern int nr_ioapic_registers[MAX_IO_APICS];
+ extern int nr_ioapics;
+ 
+-int __init amd_iommu_setup_intremap_table(void)
++int __init amd_iommu_setup_ioapic_remapping(void)
+ {
+     struct IO_APIC_route_entry rte = {0};
+     unsigned long flags;
+     u32* entry;
+     int apic, pin;
+     u8 delivery_mode, dest, vector, dest_mode;
+-
+-    if ( int_remap_table == NULL )
+-    {
+-        int_remap_table = __alloc_amd_iommu_tables(INTREMAP_TABLE_ORDER);
+-        if ( int_remap_table == NULL )
+-            return -ENOMEM;
+-        memset(int_remap_table, 0, PAGE_SIZE * (1UL << INTREMAP_TABLE_ORDER));
+-    }
++    u16 bdf, req_id, bus, devfn;
++    struct amd_iommu *iommu;
+ 
+     /* Read ioapic entries and update interrupt remapping table accordingly */
+     for ( apic = 0; apic < nr_ioapics; apic++ )
+@@ -138,6 +154,19 @@ int __init amd_iommu_setup_intremap_table(void)
+             if ( rte.mask == 1 )
+                 continue;
+ 
++            bdf = ioapic_bdf[IO_APIC_ID(apic)];
++            bus = bdf >> 8;
++            devfn = bdf & 0xFF;
++            iommu = find_iommu_for_device(bus, devfn);
++            
++            if ( !iommu )
++            {
++                amd_iov_info("failed to find iommu for ioapic device "
++                             "id = 0x%x\n", bdf);
++                continue;
++            }
++            
++            req_id = get_intremap_requestor_id(bdf);
+             delivery_mode = rte.delivery_mode;
+             vector = rte.vector;
+             dest_mode = rte.dest_mode;
+@@ -146,12 +175,23 @@ int __init amd_iommu_setup_intremap_table(void)
+             else
+                 dest = rte.dest.logical.logical_dest & 0xff;
+ 
+-            spin_lock_irqsave(&int_remap_table_lock, flags);
+-            entry = (u32*)get_intremap_entry(vector, delivery_mode);
+-            update_intremap_entry(entry, vector, delivery_mode, dest_mode, dest);
+-            spin_unlock_irqrestore(&int_remap_table_lock, flags);
++            spin_lock_irqsave(&ivrs_mappings[req_id].intremap_lock, flags);
++            entry = (u32*)get_intremap_entry(req_id, vector, delivery_mode);
++            update_intremap_entry(entry, vector, delivery_mode, dest_mode, 
++                                  dest);
++            spin_unlock_irqrestore(&ivrs_mappings[req_id].intremap_lock,
++                                   flags);
++
++            if ( iommu->enabled )
++              {
++                  spin_lock_irqsave(&iommu->lock, flags);
++                  invalidate_interrupt_table(iommu, req_id);
++                  flush_command_buffer(iommu);
++                  spin_unlock_irqrestore(&iommu->lock, flags);
++              }
+         }
+     }
++
+     return 0;
+ }
+ 
+@@ -161,12 +201,24 @@ void amd_iommu_ioapic_update_ire(
+     struct IO_APIC_route_entry ioapic_rte = { 0 };
+     unsigned int rte_upper = (reg & 1) ? 1 : 0;
+     int saved_mask;
++    u16 bus, devfn, bdf;
++    struct amd_iommu *iommu;
+ 
+     *IO_APIC_BASE(apic) = reg;
+     *(IO_APIC_BASE(apic)+4) = value;
+ 
+-    if ( int_remap_table == NULL )
++    /* get device id of ioapic devices */
++    bdf = ioapic_bdf[IO_APIC_ID(apic)];
++    bus = bdf >> 8;
++    devfn = bdf & 0xFF;
++    iommu = find_iommu_for_device(bus, devfn);
++    if ( !iommu )
++    {
++        amd_iov_error(
++            "Fail to find iommu for ioapic device id = 0x%x\n", bdf);
+         return;
++    }
++
+     if ( !rte_upper )
+         return;
+ 
+@@ -184,7 +236,9 @@ void amd_iommu_ioapic_update_ire(
+     *(IO_APIC_BASE(apic)+4) = *(((int *)&ioapic_rte)+0);
+     ioapic_rte.mask = saved_mask;
+ 
+-    update_intremap_entry_from_ioapic(&ioapic_rte, rte_upper, value);
++    
++    update_intremap_entry_from_ioapic(bdf, iommu, 
++                                      &ioapic_rte, rte_upper, value);
+ 
+     /* unmask the interrupt after we have updated the intremap table */
+     *IO_APIC_BASE(apic) = reg;
+@@ -196,26 +250,51 @@ static void update_intremap_entry_from_msi_msg(
+ {
+     unsigned long flags;
+     u32* entry;
+-    u16 dev_id;
++    u16 dev_id, alias_id, bus, devfn, req_id;
+ 
+     u8 delivery_mode, dest, vector, dest_mode;
+ 
+     dev_id = (pdev->bus << 8) | pdev->devfn;
++    bus = pdev->bus;
++    devfn = pdev->devfn;
++    req_id = get_dma_requestor_id(dev_id);
+ 
+-    spin_lock_irqsave(&int_remap_table_lock, flags);
++    spin_lock_irqsave(&ivrs_mappings[req_id].intremap_lock, flags);
+     dest_mode = (msg->address_lo >> MSI_ADDR_DESTMODE_SHIFT) & 0x1;
+     delivery_mode = (msg->data >> MSI_DATA_DELIVERY_MODE_SHIFT) & 0x1;
+     vector = (msg->data >> MSI_DATA_VECTOR_SHIFT) & MSI_DATA_VECTOR_MASK;
+     dest = (msg->address_lo >> MSI_ADDR_DEST_ID_SHIFT) & 0xff;
+ 
+-    entry = (u32*)get_intremap_entry((u8)vector, (u8)delivery_mode);
++    entry = (u32*)get_intremap_entry(req_id, (u8)vector, (u8)delivery_mode);
+     update_intremap_entry(entry, vector, delivery_mode, dest_mode, dest);
+-    spin_unlock_irqrestore(&int_remap_table_lock, flags);
++    spin_unlock_irqrestore(&ivrs_mappings[req_id].intremap_lock, flags);
++    
++    /*
++     * In some special cases, a pci-e device(e.g SATA controller in IDE mode)
++     * will use alias id to index interrupt remapping table.
++     * We have to setup a secondary interrupt remapping entry to satisfy those
++     * devices.
++     */
++    alias_id = get_intremap_requestor_id(dev_id);
++    if ( ( dev_id != alias_id ) &&
++         ivrs_mappings[alias_id].intremap_table != NULL )
++    {
++        spin_lock_irqsave(&ivrs_mappings[alias_id].intremap_lock, flags);
++        entry = (u32*)get_intremap_entry(alias_id, vector, delivery_mode);
++        update_intremap_entry(entry, vector, delivery_mode, dest_mode, dest);
++        invalidate_interrupt_table(iommu, alias_id);
++        spin_unlock_irqrestore(&ivrs_mappings[alias_id].intremap_lock, flags);
++    }
+ 
+-    spin_lock_irqsave(&iommu->lock, flags);
+-    invalidate_interrupt_table(iommu, dev_id);
+-    flush_command_buffer(iommu);
+-    spin_unlock_irqrestore(&iommu->lock, flags);
++    if ( iommu->enabled )
++    {
++        spin_lock_irqsave(&iommu->lock, flags);
++        invalidate_interrupt_table(iommu, dev_id);
++        if ( alias_id != req_id )
++            invalidate_interrupt_table(iommu, alias_id);
++        flush_command_buffer(iommu);
++        spin_unlock_irqrestore(&iommu->lock, flags);
++    }
+ 
+     return;
+ }
+@@ -228,19 +307,29 @@ void amd_iommu_msi_msg_update_ire(
+ 
+     iommu = find_iommu_for_device(pdev->bus, pdev->devfn);
+ 
+-    if ( !iommu || !int_remap_table )
++    if ( !iommu )
+         return;
+ 
+     update_intremap_entry_from_msi_msg(iommu, pdev, msg);
+ }
+ 
+-int __init deallocate_intremap_table(void)
++void __init amd_iommu_free_intremap_table(int bdf)
+ {
+-    if ( int_remap_table )
++    void *tb = ivrs_mappings[bdf].intremap_table;
++
++    if ( tb )
+     {
+-        __free_amd_iommu_tables(int_remap_table, INTREMAP_TABLE_ORDER);
+-        int_remap_table = NULL;
++        __free_amd_iommu_tables(tb, INTREMAP_TABLE_ORDER);
++        ivrs_mappings[bdf].intremap_table = NULL;
+     }
++}
+ 
+-    return 0;
++void* __init amd_iommu_alloc_intremap_table(void)
++{
++    void *tb;
++    tb = __alloc_amd_iommu_tables(INTREMAP_TABLE_ORDER);
++    BUG_ON(tb == NULL);
++    memset(tb, 0, PAGE_SIZE * (1UL << INTREMAP_TABLE_ORDER));
++    return tb;
+ }
++
+diff --git a/drivers/passthrough/amd/iommu_map.c b/drivers/passthrough/amd/iommu_map.c
+index d5ecf65..44d43e4 100644
+--- a/drivers/passthrough/amd/iommu_map.c
++++ b/drivers/passthrough/amd/iommu_map.c
+@@ -254,72 +254,19 @@ static void amd_iommu_set_page_directory_entry(u32 *pde,
+     pde[0] = entry;
+ }
+ 
+-void amd_iommu_set_dev_table_entry(u32 *dte, u64 root_ptr, u64 intremap_ptr,
+-                                   u16 domain_id, u8 sys_mgt, u8 dev_ex,
+-                                   u8 paging_mode)
++void amd_iommu_set_root_page_table(
++    u32 *dte, u64 root_ptr, u16 domain_id, u8 paging_mode, u8 valid)
+ {
+     u64 addr_hi, addr_lo;
+     u32 entry;
+-
+-    dte[7] = dte[6] = 0;
+-
+-    addr_lo = intremap_ptr & DMA_32BIT_MASK;
+-    addr_hi = intremap_ptr >> 32;
+-
+-    set_field_in_reg_u32((u32)addr_hi, 0,
+-                        IOMMU_DEV_TABLE_INT_TABLE_PTR_HIGH_MASK,
+-                        IOMMU_DEV_TABLE_INT_TABLE_PTR_HIGH_SHIFT, &entry);
+-    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
+-                        IOMMU_DEV_TABLE_INIT_PASSTHRU_MASK,
+-                        IOMMU_DEV_TABLE_INIT_PASSTHRU_SHIFT, &entry);
+-    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
+-                        IOMMU_DEV_TABLE_EINT_PASSTHRU_MASK,
+-                        IOMMU_DEV_TABLE_EINT_PASSTHRU_SHIFT, &entry);
+-    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
+-                        IOMMU_DEV_TABLE_NMI_PASSTHRU_MASK,
+-                        IOMMU_DEV_TABLE_NMI_PASSTHRU_SHIFT, &entry);
+-    /* Fixed and arbitrated interrupts remapepd */
+-    set_field_in_reg_u32(2, entry,
+-                        IOMMU_DEV_TABLE_INT_CONTROL_MASK,
+-                        IOMMU_DEV_TABLE_INT_CONTROL_SHIFT, &entry);
+-    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
+-                        IOMMU_DEV_TABLE_LINT0_ENABLE_MASK,
+-                        IOMMU_DEV_TABLE_LINT0_ENABLE_SHIFT, &entry);
+-    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
+-                        IOMMU_DEV_TABLE_LINT1_ENABLE_MASK,
+-                        IOMMU_DEV_TABLE_LINT1_ENABLE_SHIFT, &entry);
+-    dte[5] = entry;
+-
+-    set_field_in_reg_u32((u32)addr_lo >> 6, 0,
+-                        IOMMU_DEV_TABLE_INT_TABLE_PTR_LOW_MASK,
+-                        IOMMU_DEV_TABLE_INT_TABLE_PTR_LOW_SHIFT, &entry);
+-    /* 2048 entries */
+-    set_field_in_reg_u32(0xB, entry,
+-                         IOMMU_DEV_TABLE_INT_TABLE_LENGTH_MASK,
+-                         IOMMU_DEV_TABLE_INT_TABLE_LENGTH_SHIFT, &entry);
+-    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
+-                         IOMMU_DEV_TABLE_INT_VALID_MASK,
+-                         IOMMU_DEV_TABLE_INT_VALID_SHIFT, &entry);
+-    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
+-                         IOMMU_DEV_TABLE_INT_TABLE_IGN_UNMAPPED_MASK,
+-                         IOMMU_DEV_TABLE_INT_TABLE_IGN_UNMAPPED_SHIFT, &entry);
+-    dte[4] = entry;
+-
+-    set_field_in_reg_u32(sys_mgt, 0,
+-                         IOMMU_DEV_TABLE_SYS_MGT_MSG_ENABLE_MASK,
+-                         IOMMU_DEV_TABLE_SYS_MGT_MSG_ENABLE_SHIFT, &entry);
+-    set_field_in_reg_u32(dev_ex, entry,
+-                         IOMMU_DEV_TABLE_ALLOW_EXCLUSION_MASK,
+-                         IOMMU_DEV_TABLE_ALLOW_EXCLUSION_SHIFT, &entry);
+-    dte[3] = entry;
+-
+     set_field_in_reg_u32(domain_id, 0,
+                          IOMMU_DEV_TABLE_DOMAIN_ID_MASK,
+                          IOMMU_DEV_TABLE_DOMAIN_ID_SHIFT, &entry);
+     dte[2] = entry;
+-
++    
+     addr_lo = root_ptr & DMA_32BIT_MASK;
+     addr_hi = root_ptr >> 32;
++    
+     set_field_in_reg_u32((u32)addr_hi, 0,
+                          IOMMU_DEV_TABLE_PAGE_TABLE_PTR_HIGH_MASK,
+                          IOMMU_DEV_TABLE_PAGE_TABLE_PTR_HIGH_SHIFT, &entry);
+@@ -330,7 +277,7 @@ void amd_iommu_set_dev_table_entry(u32 *dte, u64 root_ptr, u64 intremap_ptr,
+                          IOMMU_DEV_TABLE_IO_READ_PERMISSION_MASK,
+                          IOMMU_DEV_TABLE_IO_READ_PERMISSION_SHIFT, &entry);
+     dte[1] = entry;
+-
++    
+     set_field_in_reg_u32((u32)addr_lo >> PAGE_SHIFT, 0,
+                          IOMMU_DEV_TABLE_PAGE_TABLE_PTR_LOW_MASK,
+                          IOMMU_DEV_TABLE_PAGE_TABLE_PTR_LOW_SHIFT, &entry);
+@@ -340,12 +287,91 @@ void amd_iommu_set_dev_table_entry(u32 *dte, u64 root_ptr, u64 intremap_ptr,
+     set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
+                          IOMMU_DEV_TABLE_TRANSLATION_VALID_MASK,
+                          IOMMU_DEV_TABLE_TRANSLATION_VALID_SHIFT, &entry);
+-    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++    set_field_in_reg_u32(valid ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
+                          IOMMU_DEV_TABLE_VALID_MASK,
+                          IOMMU_DEV_TABLE_VALID_SHIFT, &entry);
+     dte[0] = entry;
+ }
+ 
++void amd_iommu_set_intremap_table(u32 *dte, u64 intremap_ptr, u8 int_valid)
++{
++    u64 addr_hi, addr_lo;
++    u32 entry;
++    
++    addr_lo = intremap_ptr & DMA_32BIT_MASK;
++    addr_hi = intremap_ptr >> 32;
++    
++    entry = dte[5];
++    set_field_in_reg_u32((u32)addr_hi, entry,
++                         IOMMU_DEV_TABLE_INT_TABLE_PTR_HIGH_MASK,
++                         IOMMU_DEV_TABLE_INT_TABLE_PTR_HIGH_SHIFT, &entry);
++    /* Fixed and arbitrated interrupts remapepd */
++    set_field_in_reg_u32(2, entry,
++                         IOMMU_DEV_TABLE_INT_CONTROL_MASK,
++                         IOMMU_DEV_TABLE_INT_CONTROL_SHIFT, &entry);
++    dte[5] = entry;
++    
++    set_field_in_reg_u32((u32)addr_lo >> 6, 0,
++                         IOMMU_DEV_TABLE_INT_TABLE_PTR_LOW_MASK,
++                         IOMMU_DEV_TABLE_INT_TABLE_PTR_LOW_SHIFT, &entry);
++    /* 2048 entries */
++    set_field_in_reg_u32(0xB, entry,
++                         IOMMU_DEV_TABLE_INT_TABLE_LENGTH_MASK,
++                         IOMMU_DEV_TABLE_INT_TABLE_LENGTH_SHIFT, &entry);
++    /* ignore unmapped interrupts */
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_DEV_TABLE_INT_TABLE_IGN_UNMAPPED_MASK,
++                         IOMMU_DEV_TABLE_INT_TABLE_IGN_UNMAPPED_SHIFT, &entry);
++    set_field_in_reg_u32(int_valid ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_DEV_TABLE_INT_VALID_MASK,
++                         IOMMU_DEV_TABLE_INT_VALID_SHIFT, &entry);
++    dte[4] = entry;
++}
++
++void amd_iommu_add_dev_table_entry(
++     u32 *dte, u8 sys_mgt, u8 dev_ex, u8 lint1_pass, u8 lint0_pass,
++     u8 nmi_pass, u8 ext_int_pass, u8 init_pass)
++{
++  u32 entry;
++
++  dte[7] = dte[6] = dte[4] = dte[2] = dte[1] = dte[0] = 0;
++
++
++  set_field_in_reg_u32(init_pass ? IOMMU_CONTROL_ENABLED :
++                       IOMMU_CONTROL_DISABLED, 0,
++                       IOMMU_DEV_TABLE_INIT_PASSTHRU_MASK,
++                       IOMMU_DEV_TABLE_INIT_PASSTHRU_SHIFT, &entry);
++  set_field_in_reg_u32(ext_int_pass ? IOMMU_CONTROL_ENABLED :
++                       IOMMU_CONTROL_DISABLED, entry,
++                       IOMMU_DEV_TABLE_EINT_PASSTHRU_MASK,
++                       IOMMU_DEV_TABLE_EINT_PASSTHRU_SHIFT, &entry);
++  set_field_in_reg_u32(nmi_pass ? IOMMU_CONTROL_ENABLED :
++                       IOMMU_CONTROL_DISABLED, entry,
++                       IOMMU_DEV_TABLE_NMI_PASSTHRU_MASK,
++                       IOMMU_DEV_TABLE_NMI_PASSTHRU_SHIFT, &entry);
++  set_field_in_reg_u32(lint0_pass ? IOMMU_CONTROL_ENABLED :
++                       IOMMU_CONTROL_DISABLED, entry,
++                       IOMMU_DEV_TABLE_LINT0_ENABLE_MASK,
++                       IOMMU_DEV_TABLE_LINT0_ENABLE_SHIFT, &entry);
++  set_field_in_reg_u32(lint1_pass ? IOMMU_CONTROL_ENABLED :
++                       IOMMU_CONTROL_DISABLED, entry,
++                       IOMMU_DEV_TABLE_LINT1_ENABLE_MASK,
++                       IOMMU_DEV_TABLE_LINT1_ENABLE_SHIFT, &entry);
++  dte[5] = entry;
++
++  set_field_in_reg_u32(sys_mgt, 0,
++                       IOMMU_DEV_TABLE_SYS_MGT_MSG_ENABLE_MASK,
++                       IOMMU_DEV_TABLE_SYS_MGT_MSG_ENABLE_SHIFT, &entry);
++  set_field_in_reg_u32(dev_ex, entry,
++                       IOMMU_DEV_TABLE_ALLOW_EXCLUSION_MASK,
++                       IOMMU_DEV_TABLE_ALLOW_EXCLUSION_SHIFT, &entry);
++  dte[3] = entry;
++}
++
++
++
+ u64 amd_iommu_get_next_table_from_pte(u32 *entry)
+ {
+     u64 addr_lo, addr_hi, ptr;
+diff --git a/drivers/passthrough/amd/pci_amd_iommu.c b/drivers/passthrough/amd/pci_amd_iommu.c
+index 1d842aa..7556963 100644
+--- a/drivers/passthrough/amd/pci_amd_iommu.c
++++ b/drivers/passthrough/amd/pci_amd_iommu.c
+@@ -28,32 +28,6 @@ extern unsigned short ivrs_bdf_entries;
+ extern struct ivrs_mappings *ivrs_mappings;
+ extern void *int_remap_table;
+ 
+-int __init amd_iommu_init(void)
+-{
+-    struct amd_iommu *iommu;
+-
+-    BUG_ON( !iommu_found() );
+-
+-    ivrs_bdf_entries = amd_iommu_get_ivrs_dev_entries();
+-
+-    if ( !ivrs_bdf_entries )
+-        goto error_out;
+-
+-    if ( amd_iommu_setup_shared_tables() != 0 )
+-        goto error_out;
+-
+-    amd_iommu_update_ivrs_mapping_acpi();
+-
+-    for_each_amd_iommu ( iommu )
+-        if ( amd_iommu_init_one(iommu) != 0 )
+-            goto error_out;
+-    return 0;
+-
+-error_out:
+-    amd_iommu_init_cleanup();
+-    return -ENODEV;
+-}
+-
+ struct amd_iommu *find_iommu_for_device(int bus, int devfn)
+ {
+     u16 bdf = (bus << 8) | devfn;
+@@ -61,46 +35,59 @@ struct amd_iommu *find_iommu_for_device(int bus, int devfn)
+     return ivrs_mappings[bdf].iommu;
+ }
+ 
++/*
++ * Some devices will use alias id and original device id to index interrupt
++ * table and I/O page table respectively. Such devices will have
++ * both alias entry and select entry in IVRS structure.                       
++
++ * Return original device id, if device has valid interrupt remapping
++ * table setup for both select entry and alias entry.
++*/
++int get_dma_requestor_id(u16 bdf)
++{
++    int req_id;
++
++    BUG_ON ( bdf >= ivrs_bdf_entries );
++    req_id = ivrs_mappings[bdf].dte_requestor_id;
++    if ( (ivrs_mappings[bdf].intremap_table != NULL) &&
++         (ivrs_mappings[req_id].intremap_table != NULL) )
++        req_id = bdf;
++
++    return req_id;
++}
++
+ static void amd_iommu_setup_domain_device(
+     struct domain *domain, struct amd_iommu *iommu, int bdf)
+ {
+     void *dte;
+     unsigned long flags;
+-    int req_id;
+-    u8 sys_mgt, dev_ex;
++    int req_id, valid;
+     struct hvm_iommu *hd = domain_hvm_iommu(domain);
+ 
+-    BUG_ON( !hd->root_table || !hd->paging_mode || !int_remap_table );
++    BUG_ON( !hd->root_table || !hd->paging_mode || !iommu->dev_table.buffer );
+ 
++    valid = 1;
+     /* get device-table entry */
+-    req_id = ivrs_mappings[bdf].dte_requestor_id;
++    req_id = get_dma_requestor_id(bdf);
+     dte = iommu->dev_table.buffer + (req_id * IOMMU_DEV_TABLE_ENTRY_SIZE);
+ 
+     spin_lock_irqsave(&iommu->lock, flags);
+     if ( !amd_iommu_is_dte_page_translation_valid((u32 *)dte) )
+     {
+         /* bind DTE to domain page-tables */
+-        sys_mgt = ivrs_mappings[req_id].dte_sys_mgt_enable;
+-        dev_ex = ivrs_mappings[req_id].dte_allow_exclusion;
+-
+-        amd_iommu_set_dev_table_entry((u32 *)dte,
+-                                      (u64)page_to_maddr(hd->root_table),
+-                                      (u64)virt_to_maddr(int_remap_table),
+-                                      hd->domain_id, sys_mgt, dev_ex,
+-                                      hd->paging_mode);
++        amd_iommu_set_root_page_table(
++            (u32 *)dte, page_to_maddr(hd->root_table), hd->domain_id,
++            hd->paging_mode, valid);
+ 
+         invalidate_dev_table_entry(iommu, req_id);
+-        invalidate_interrupt_table(iommu, req_id);
+         flush_command_buffer(iommu);
+-        amd_iov_info("Enable DTE:0x%x, "
+-                "root_table:%"PRIx64", interrupt_table:%"PRIx64", "
+-                "domain_id:%d, paging_mode:%d\n",
+-                req_id, (u64)page_to_maddr(hd->root_table),
+-                (u64)virt_to_maddr(int_remap_table), hd->domain_id,
+-                hd->paging_mode);
++        
++        amd_iov_info("Setup I/O page table at DTE:0x%x, root_table:%"PRIx64","
++                     "domain_id:%d, paging_mode:%d\n", req_id,
++                     page_to_maddr(hd->root_table), hd->domain_id, 
++                     hd->paging_mode);
+     }
+     spin_unlock_irqrestore(&iommu->lock, flags);
+-
+ }
+ 
+ static void amd_iommu_setup_dom0_devices(struct domain *d)
+@@ -158,6 +145,7 @@ int amd_iov_detect(void)
+         printk ("AMD-Vi: Error initialization!\n");
+         return -ENODEV;
+     }
++
+     return 0;
+ }
+ 
+@@ -234,7 +222,7 @@ static void amd_iommu_disable_domain_device(
+     unsigned long flags;
+     int req_id;
+ 
+-    req_id = ivrs_mappings[bdf].dte_requestor_id;
++    req_id = get_dma_requestor_id(bdf);
+     dte = iommu->dev_table.buffer + (req_id * IOMMU_DEV_TABLE_ENTRY_SIZE);
+ 
+     spin_lock_irqsave(&iommu->lock, flags); 
+@@ -292,7 +280,7 @@ static int reassign_device( struct domain *source, struct domain *target,
+ static int amd_iommu_assign_device(struct domain *d, u8 bus, u8 devfn)
+ {
+     int bdf = (bus << 8) | devfn;
+-    int req_id = ivrs_mappings[bdf].dte_requestor_id;
++    int req_id = get_dma_requestor_id(bdf);
+ 
+     amd_iommu_sync_p2m(d);
+ 
+@@ -414,8 +402,8 @@ static int amd_iommu_group_id(u8 bus, u8 devfn)
+     int rt;
+     int bdf = (bus << 8) | devfn;
+     rt = ( bdf < ivrs_bdf_entries ) ?
+-        ivrs_mappings[bdf].dte_requestor_id :
+-        bdf;
++      get_dma_requestor_id(bdf) :
++      bdf;
+     return rt;
+ }
+ 
+diff --git a/include/asm-x86/amd-iommu.h b/include/asm-x86/amd-iommu.h
+index cdc99dd..767ca2d 100644
+--- a/include/asm-x86/amd-iommu.h
++++ b/include/asm-x86/amd-iommu.h
+@@ -92,5 +92,16 @@ struct ivrs_mappings {
+     unsigned long addr_range_start;
+     unsigned long addr_range_length;
+     struct amd_iommu *iommu;
++
++    /* per device interrupt remapping table */
++    void *intremap_table;
++    spinlock_t intremap_lock;
++
++    /* interrupt remapping settings */
++    u8 dte_lint1_pass;
++    u8 dte_lint0_pass;
++    u8 dte_nmi_pass;
++    u8 dte_ext_int_pass;
++    u8 dte_init_pass;
+ };
+ #endif /* _ASM_X86_64_AMD_IOMMU_H */
+diff --git a/include/asm-x86/hvm/svm/amd-iommu-acpi.h b/include/asm-x86/hvm/svm/amd-iommu-acpi.h
+index 440d520..dc614cc 100644
+--- a/include/asm-x86/hvm/svm/amd-iommu-acpi.h
++++ b/include/asm-x86/hvm/svm/amd-iommu-acpi.h
+@@ -43,6 +43,7 @@
+ #define AMD_IOMMU_ACPI_IVHD_DEV_ALIAS_RANGE    67
+ #define AMD_IOMMU_ACPI_IVHD_DEV_EXT_SELECT 70
+ #define AMD_IOMMU_ACPI_IVHD_DEV_EXT_RANGE  71
++#define AMD_IOMMU_ACPI_IVHD_DEV_SPECIAL    72
+ 
+ /* IVHD IOMMU Flags */
+ #define AMD_IOMMU_ACPI_COHERENT_MASK       0x20
+@@ -151,6 +152,13 @@ struct acpi_ivhd_device_extended_range {
+    struct acpi_ivhd_device_trailer trailer;
+ };
+ 
++struct acpi_ivhd_device_special {
++   struct acpi_ivhd_device_header header;
++   u8  handle;
++   u16 dev_id;
++   u8  variety;
++};
++
+ union acpi_ivhd_device {
+    struct acpi_ivhd_device_header header;
+    struct acpi_ivhd_device_range range;
+@@ -158,6 +166,7 @@ union acpi_ivhd_device {
+    struct acpi_ivhd_device_alias_range alias_range;
+    struct acpi_ivhd_device_extended extended;
+    struct acpi_ivhd_device_extended_range extended_range;
++   struct acpi_ivhd_device_special special;
+ };
+ 
+ struct acpi_ivmd_block_header {
+diff --git a/include/asm-x86/hvm/svm/amd-iommu-proto.h b/include/asm-x86/hvm/svm/amd-iommu-proto.h
+index cf2d60f..77d4baa 100644
+--- a/include/asm-x86/hvm/svm/amd-iommu-proto.h
++++ b/include/asm-x86/hvm/svm/amd-iommu-proto.h
+@@ -67,10 +67,17 @@ int amd_iommu_sync_p2m(struct domain *d);
+ void invalidate_all_iommu_pages(struct domain *d);
+ 
+ /* device table functions */
+-void amd_iommu_set_dev_table_entry(u32 *dte, u64 root_ptr, u64 intremap_ptr,
+-        u16 domain_id, u8 sys_mgt, u8 dev_ex, u8 paging_mode);
++void amd_iommu_add_dev_table_entry(
++     u32 *dte, u8 sys_mgt, u8 dev_ex, u8 lint1_pass, u8 lint0_pass,
++     u8 nmi_pass, u8 ext_int_pass, u8 init_pass);
+ int amd_iommu_is_dte_page_translation_valid(u32 *entry);
++int get_dma_requestor_id(u16 bdf);
+ void invalidate_dev_table_entry(struct amd_iommu *iommu, u16 devic_id);
++void amd_iommu_set_intremap_table(
++     u32 *dte, u64 intremap_ptr, u8 int_valid);
++void amd_iommu_set_root_page_table(
++     u32 *dte, u64 root_ptr, u16 domain_id, u8 paging_mode, u8 valid);
++
+ 
+ /* send cmd to iommu */
+ int send_iommu_command(struct amd_iommu *iommu, u32 cmd[]);
+@@ -81,11 +88,16 @@ struct amd_iommu *find_iommu_for_device(int bus, int devfn);
+ 
+ /*interrupt remapping */
+ int __init amd_iommu_setup_intremap_table(void);
+-int __init deallocate_intremap_table(void);
++void __init amd_iommu_free_intremap_table(int bdf);
+ void invalidate_interrupt_table(struct amd_iommu *iommu, u16 device_id);
+ void amd_iommu_ioapic_update_ire(unsigned int apic, unsigned int reg, unsigned
+                                 int value);
+ void amd_iommu_msi_msg_update_ire(struct msi_desc *msi_desc, struct msi_msg *msg);
++void * __init amd_iommu_alloc_intremap_table(void);
++int __init amd_iommu_setup_ioapic_remapping(void);
++void*__init amd_iommu_alloc_intremap_table(void);
++void __init amd_iommu_free_intremap_table(int bdf);
++
+ 
+ static inline u32 get_field_from_reg_u32(u32 reg_value, u32 mask, u32 shift)
+ {

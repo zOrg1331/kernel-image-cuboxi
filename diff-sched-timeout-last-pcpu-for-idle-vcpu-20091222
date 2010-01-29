@@ -1,0 +1,44 @@
+diff --git a/kernel/sched.c b/kernel/sched.c
+index 3476ef5..e092afb 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -657,7 +657,9 @@ static vcpu_t find_idle_vcpu(struct vcpu_scheduler *vsched, cpumask_t *cpus)
+ 	vcpu_t vcpu;
+ 	vcpu_t best_vcpu;
+ 	int this_pcpu = smp_processor_id();
++	unsigned long time;
+ 
++	time = jiffies - msecs_to_jiffies(vcpu_hot_timeslice);
+ 	best_vcpu = NULL;
+ 
+ 	spin_lock(&fairsched_lock);
+@@ -665,7 +667,8 @@ static vcpu_t find_idle_vcpu(struct vcpu_scheduler *vsched, cpumask_t *cpus)
+ 		list_for_each_entry(vcpu, &vsched->idle_list, list) {
+ 			if (unlikely(vcpu_is_offline(vcpu)))
+ 				continue;
+-			if (!cpu_isset(vcpu_last_pcpu(vcpu), *cpus))
++			if (time_after_eq(vcpu->stop_time, time) &&
++					!cpu_isset(vcpu_last_pcpu(vcpu), *cpus))
+ 				continue;
+ 			best_vcpu = vcpu;
+ 			if (vcpu_last_pcpu(vcpu) == this_pcpu)
+@@ -2272,7 +2275,9 @@ find_idlest_cpu(struct sched_group *group, struct task_struct *p, vcpu_t this_cp
+ 	vcpu_t idlest = (vcpu_t)-1;
+ 	vcpu_t vcpu;
+ 	int i;
++	unsigned long time;
+ 
++	time = jiffies - msecs_to_jiffies(vcpu_hot_timeslice);
+ 	vsched = vcpu_vsched(this_cpu);
+ 	BUG_ON(vsched != task_vsched(p));
+ 
+@@ -2280,7 +2285,8 @@ find_idlest_cpu(struct sched_group *group, struct task_struct *p, vcpu_t this_cp
+ 	for_each_cpu_mask(i, vmask) {
+ 		vcpu = vsched_vcpu(vsched, i);
+ 
+-		if (!cpu_isset(vcpu_last_pcpu(vcpu), group->cpumask))
++		if (time_after_eq(vcpu->stop_time, time) &&
++				!cpu_isset(vcpu_last_pcpu(vcpu), group->cpumask))
+ 			continue;
+ 		if (vcpu_is_offline(vcpu))
+ 			continue;

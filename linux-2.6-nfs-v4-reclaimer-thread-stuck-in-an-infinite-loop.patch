@@ -1,0 +1,47 @@
+From: Sachin S. Prabhu <sprabhu@redhat.com>
+Date: Mon, 5 Oct 2009 16:39:20 +0100
+Subject: [nfs] v4: reclaimer thread stuck in an infinite loop
+Message-id: 4ACA1328.8080208@redhat.com
+O-Subject: [RHEL 5.5] bz 526888- NFSv4 reclaimer thread stuck in an infinite loop
+Bugzilla: 526888
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+A bug in nfs4_do_open_expired() can lead to the reclaimer thread going into an
+infinite loop.
+
+The bug in nfs4_do_open_expired() is triggered if the client receives
+NFS4ERR_DELAY from the server. The exception.retry is set and a timeout
+enforced. However when the server recovers and returns the desired value, the
+exception.retry is never reset to 0 leading to an loop in the do..while loop.
+This was confirmed with an instrumented kernel.
+
+This issue has been reported upstream and fixed in the commit
+027b6ca02192f381a5a91237ba8a8cf625dc6f6a
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=027b6ca02192f381a5a91237ba8a8cf625dc6f6a
+
+The customer has earlier seen reclaimer threads consuming 100 % CPU within 45
+minutes of the start of the tests. Test packages containing the patch were
+provided to the customer. These have been running for the past 3 days. No
+reclaimer threads consuming 100% CPU were seen since the test packages were
+installed.
+
+Sachin Prabhu
+
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index 95ce5cb..7f2e0b9 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -844,8 +844,9 @@ static inline int nfs4_do_open_expired(struct nfs_open_context *ctx, struct nfs4
+ 
+ 	do {
+ 		err = _nfs4_open_expired(ctx, state);
+-		if (err == -NFS4ERR_DELAY)
+-			nfs4_handle_exception(server, err, &exception);
++		if (err != -NFS4ERR_DELAY)
++			break;
++		nfs4_handle_exception(server, err, &exception);
+ 	} while (exception.retry);
+ 	return err;
+ }

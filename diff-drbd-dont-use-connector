@@ -1,0 +1,67 @@
+DRBD: API fix for 066.7
+
+- Get rid of old NETLINK_ROUTE6 preprocessor directives
+
+- Fixup "connector" API (we're not switched to use netlink_skb_parms
+  yet) in DRBD code
+
+[ bug http://bugzilla.openvz.org/show_bug.cgi?id=1371 ]
+
+Signed-off-by: Cyrill Gorcunov <gorcunov@openvz.org>
+---
+---
+ drivers/block/drbd/drbd_nl.c |   16 ----------------
+ include/linux/drbd_config.h  |    2 +-
+ 2 files changed, 1 insertion(+), 17 deletions(-)
+
+Index: linux-2.6.18-ovz/drivers/block/drbd/drbd_nl.c
+=====================================================================
+--- linux-2.6.18-ovz.orig/drivers/block/drbd/drbd_nl.c
++++ linux-2.6.18-ovz/drivers/block/drbd/drbd_nl.c
+@@ -2358,22 +2358,11 @@ void drbd_bcast_sync_progress(struct drb
+ 	cn_netlink_send(cn_reply, CN_IDX_DRBD, GFP_NOIO);
+ }
+ 
+-#ifdef NETLINK_ROUTE6
+-int __init cn_init(void);
+-void __exit cn_fini(void);
+-#endif
+-
+ int __init drbd_nl_init(void)
+ {
+ 	static struct cb_id cn_id_drbd;
+ 	int err, try=10;
+ 
+-#ifdef NETLINK_ROUTE6
+-	/* pre 2.6.16 */
+-	err = cn_init();
+-	if (err)
+-		return err;
+-#endif
+ 	cn_id_drbd.val = CN_VAL_DRBD;
+ 	do {
+ 		cn_id_drbd.idx = cn_idx;
+@@ -2399,11 +2388,6 @@ void drbd_nl_cleanup(void)
+ 	cn_id_drbd.val = CN_VAL_DRBD;
+ 
+ 	cn_del_callback(&cn_id_drbd);
+-
+-#ifdef NETLINK_ROUTE6
+-	/* pre 2.6.16 */
+-	cn_fini();
+-#endif
+ }
+ 
+ void drbd_nl_send_reply(struct cn_msg *req, int ret_code)
+Index: linux-2.6.18-ovz/include/linux/drbd_config.h
+=====================================================================
+--- linux-2.6.18-ovz.orig/include/linux/drbd_config.h
++++ linux-2.6.18-ovz/include/linux/drbd_config.h
+@@ -99,6 +99,6 @@ extern const char *drbd_buildtag(void);
+ 
+ /* In 2.6.32 we finally fixed connector to pass netlink_skb_parms to the callback
+  */
+-#define KERNEL_HAS_CN_SKB_PARMS
++//#define KERNEL_HAS_CN_SKB_PARMS
+ 
+ #endif

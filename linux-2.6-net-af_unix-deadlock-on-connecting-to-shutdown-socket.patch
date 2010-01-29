@@ -1,0 +1,46 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Tue, 20 Oct 2009 17:10:00 +0200
+Subject: [net] AF_UNIX: deadlock on connecting to shutdown socket
+Message-id: 20091020151000.GF2901@psychotron.lab.eng.brq.redhat.com
+O-Subject: [RHEL5.5 patch] BZ529631 net: AF_UNIX: Fix deadlock on connecting to shutdown socket
+Bugzilla: 529631
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+CVE: CVE-2009-3621
+
+CVE-2009-3621
+BZ529631
+https://bugzilla.redhat.com/show_bug.cgi?id=529631
+
+Description:
+This patch fixes a deadlock bug in UNIX domain socket, which makes
+able to DoS attack against the local machine by non-root users.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.git;a=commitdiff;h=77238f2b942b38ab4e7f3aced44084493e4a8675
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2036990
+
+Test:
+Booted on x86_64, tested by the reproducer.
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/net/unix/af_unix.c b/net/unix/af_unix.c
+index be0a838..3e2c5c9 100644
+--- a/net/unix/af_unix.c
++++ b/net/unix/af_unix.c
+@@ -1007,6 +1007,8 @@ restart:
+ 	err = -ECONNREFUSED;
+ 	if (other->sk_state != TCP_LISTEN)
+ 		goto out_unlock;
++	if (other->sk_shutdown & RCV_SHUTDOWN)
++		goto out_unlock;
+ 
+ 	if (skb_queue_len(&other->sk_receive_queue) >
+ 	    other->sk_max_ack_backlog) {

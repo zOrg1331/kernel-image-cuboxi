@@ -1,0 +1,23 @@
+diff -up ./drivers/block/nbd.c~fix ./drivers/block/nbd.c
+--- ./drivers/block/nbd.c~fix	2009-09-16 17:39:06.000000000 +0400
++++ ./drivers/block/nbd.c	2009-09-16 18:24:15.000000000 +0400
+@@ -418,16 +418,13 @@ harderror:
+ 	return NULL;
+ }
+ 
+-static ssize_t pid_show(struct device *dev,
+-			struct device_attribute *attr, char *buf)
++static ssize_t pid_show(struct gendisk * disk, char *buf)
+ {
+-	struct gendisk *disk = (struct gendisk *)dev;
+-
+ 	return sprintf(buf, "%ld\n",
+ 		(long) ((struct nbd_device *)disk->private_data)->pid);
+ }
+ 
+-static struct device_attribute pid_attr = {
++static struct disk_attribute pid_attr = {
+ 	.attr = { .name = "pid", .mode = S_IRUGO},
+ 	.show = pid_show,
+ };
+

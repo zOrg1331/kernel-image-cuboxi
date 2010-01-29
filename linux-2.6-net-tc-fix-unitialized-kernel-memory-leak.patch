@@ -1,0 +1,43 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 3 Sep 2009 10:15:11 +0200
+Subject: [net] tc: fix unitialized kernel memory leak
+Message-id: 20090903081510.GA2885@psychotron.lab.eng.brq.redhat.com
+O-Subject: [RHEL5.5 patch] BZ520863 net: tc: Fix unitialized kernel memory leak
+Bugzilla: 520863
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+BZ520863
+https://bugzilla.redhat.com/show_bug.cgi?id=520863
+
+Description:
+
+Three bytes of uninitialized kernel memory are currently leaked to user.
+
+Upstream:
+http://patchwork.ozlabs.org/patch/32830/ - it's about to be applied to net-2.6
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1963237
+
+will send a patch for 4.9 later today
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/net/sched/sch_api.c b/net/sched/sch_api.c
+index 0b64892..5d4c4ab 100644
+--- a/net/sched/sch_api.c
++++ b/net/sched/sch_api.c
+@@ -997,6 +997,8 @@ static int tc_fill_tclass(struct sk_buff *skb, struct Qdisc *q,
+ 	nlh = NLMSG_NEW(skb, pid, seq, event, sizeof(*tcm), flags);
+ 	tcm = NLMSG_DATA(nlh);
+ 	tcm->tcm_family = AF_UNSPEC;
++	tcm->tcm__pad1 = 0;
++	tcm->tcm__pad2 = 0;
+ 	tcm->tcm_ifindex = q->dev->ifindex;
+ 	tcm->tcm_parent = q->handle;
+ 	tcm->tcm_handle = q->handle;

@@ -1,0 +1,211 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Tue, 13 Oct 2009 09:50:06 +0200
+Subject: [xen] allow booting with broken serial hardware
+Message-id: 4AD4312E.8060508@redhat.com
+O-Subject: [RHEL5.5 PATCH v2]: Allow Xen to boot with broken serial hardware
+Bugzilla: 518338
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+All,
+     We've found that the serial console on a new piece of vendor hardware is
+broken.  In particular, it isn't draining the TX queue as promptly as it should
+be.  While this is a hardware problem, it causes undesirable behavior in the Xen
+kernel; namely, the Xen kernel takes ages to boot.
+     The problem comes down to a broken piece of code in the
+guest_console_write() function.  It was checking for the case where the serial
+TX buffer was half-full; if it was half-full (or greater), it would just
+continually relax the processor until the TX buffer cleared out.  With normal
+serial hardware, this is no problem, but with the broken serial hardware this
+would cause lots of delays.
+     The fix is two-fold.  First, upstream has recently added some tx_quench
+stuff, which effectively drops characters if the tx buffer is full.  Second, we
+need to remove the check that does the checking of the TX buffer half full.
+     With these fixes in place, I was able to successfully reboot the problem
+machine many times without problems.  The customer also reports that the patch
+fixes the problem on their hardware.
+     This is a backport of xen-unstable.hg c/s 17851 and 20217.  Version 2 of
+this patch deviates slightly from upstream in that we make sure that guests
+can't flood the serial console (thanks to Markus for the thoughts/review here).
+
+This should resolve BZ 518338.  Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/common/keyhandler.c b/common/keyhandler.c
+index 0861f85..c8e05bc 100644
+--- a/common/keyhandler.c
++++ b/common/keyhandler.c
+@@ -36,10 +36,10 @@ static void keypress_softirq(void)
+ {
+     keyhandler_t *h;
+     unsigned char key = keypress_key;
+-    console_start_log_everything();
++    console_start_sync();
+     if ( (h = key_table[key].u.handler) != NULL )
+         (*h)(key);
+-    console_end_log_everything();
++    console_end_sync();
+ }
+ 
+ void handle_keypress(unsigned char key, struct cpu_user_regs *regs)
+@@ -48,10 +48,10 @@ void handle_keypress(unsigned char key, struct cpu_user_regs *regs)
+ 
+     if ( !in_irq() || (key_table[key].flags & KEYHANDLER_IRQ_CALLBACK) )
+     {
+-        console_start_log_everything();
++        console_start_sync();
+         if ( (h = key_table[key].u.irq_handler) != NULL )
+             (*h)(key, regs);
+-        console_end_log_everything();
++        console_end_sync();
+     }
+     else
+     {
+diff --git a/drivers/char/console.c b/drivers/char/console.c
+index de35126..22b2e6a 100644
+--- a/drivers/char/console.c
++++ b/drivers/char/console.c
+@@ -313,18 +313,16 @@ static long guest_console_write(XEN_GUEST_HANDLE(char) buffer, int count)
+ 
+     while ( count > 0 )
+     {
+-        while ( serial_tx_space(sercon_handle) < (SERIAL_TXBUFSZ / 2) )
+-        {
+-            if ( hypercall_preempt_check() )
+-                break;
+-            cpu_relax();
+-        }
+-
+         if ( hypercall_preempt_check() )
+             return hypercall_create_continuation(
+                 __HYPERVISOR_console_io, "iih",
+                 CONSOLEIO_write, count, buffer);
+ 
++	if ( serial_tx_space(sercon_handle) < (SERIAL_TXBUFSZ / 2) )
++	{
++	    return 0;
++	}
++
+         kcount = min_t(int, count, sizeof(kbuf)-1);
+         if ( copy_from_guest(kbuf, buffer, kcount) )
+             return -EFAULT;
+@@ -587,16 +585,6 @@ void __init console_endboot(void)
+     switch_serial_input();
+ }
+ 
+-void console_start_log_everything(void)
+-{
+-    atomic_inc(&print_everything);
+-}
+-
+-void console_end_log_everything(void)
+-{
+-    atomic_dec(&print_everything);
+-}
+-
+ void console_force_unlock(void)
+ {
+     spin_lock_init(&console_lock);
+@@ -611,14 +599,14 @@ void console_force_lock(void)
+ 
+ void console_start_sync(void)
+ {
+-    console_start_log_everything();
++    atomic_inc(&print_everything);
+     serial_start_sync(sercon_handle);
+ }
+ 
+ void console_end_sync(void)
+ {
+     serial_end_sync(sercon_handle);
+-    console_end_log_everything();
++    atomic_dec(&print_everything);
+ }
+ 
+ void console_putc(char c)
+diff --git a/drivers/char/serial.c b/drivers/char/serial.c
+index bb196ac..6c75932 100644
+--- a/drivers/char/serial.c
++++ b/drivers/char/serial.c
+@@ -3,7 +3,7 @@
+  * 
+  * Framework for serial device drivers.
+  * 
+- * Copyright (c) 2003-2005, K A Fraser
++ * Copyright (c) 2003-2008, K A Fraser
+  */
+ 
+ #include <xen/config.h>
+@@ -81,13 +81,21 @@ void serial_tx_interrupt(struct serial_port *port, struct cpu_user_regs *regs)
+ 
+ static void __serial_putc(struct serial_port *port, char c)
+ {
+-    int i;
+-
+     if ( (port->txbuf != NULL) && !port->sync )
+     {
+         /* Interrupt-driven (asynchronous) transmitter. */
++        if ( port->tx_quench )
++        {
++            /* Buffer filled and we are dropping characters. */
++            if ( (port->txbufp - port->txbufc) > (SERIAL_TXBUFSZ / 2) )
++                return;
++            port->tx_quench = 0;
++        }
++
+         if ( (port->txbufp - port->txbufc) == SERIAL_TXBUFSZ )
+         {
++#ifdef SERIAL_NEVER_DROP_CHARS
++            int i;
+             /* Buffer is full: we spin, but could alternatively drop chars. */
+             while ( !port->driver->tx_empty(port) )
+                 cpu_relax();
+@@ -95,6 +103,10 @@ static void __serial_putc(struct serial_port *port, char c)
+                 port->driver->putc(
+                     port, port->txbuf[MASK_SERIAL_TXBUF_IDX(port->txbufc++)]);
+             port->txbuf[MASK_SERIAL_TXBUF_IDX(port->txbufp++)] = c;
++#else
++            /* Buffer is full: drop characters until buffer is half empty. */
++            port->tx_quench = 1;
++#endif
+         }
+         else if ( ((port->txbufp - port->txbufc) == 0) &&
+                   port->driver->tx_empty(port) )
+diff --git a/include/xen/console.h b/include/xen/console.h
+index d6c0510..629612a 100644
+--- a/include/xen/console.h
++++ b/include/xen/console.h
+@@ -26,9 +26,6 @@ void console_force_lock(void);
+ void console_start_sync(void);
+ void console_end_sync(void);
+ 
+-void console_start_log_everything(void);
+-void console_end_log_everything(void);
+-
+ /*
+  * Steal output from the console. Returns +ve identifier, else -ve error.
+  * Takes the handle of the serial line to steal, and steal callback function.
+diff --git a/include/xen/serial.h b/include/xen/serial.h
+index 75a07c9..926d48f 100644
+--- a/include/xen/serial.h
++++ b/include/xen/serial.h
+@@ -3,7 +3,7 @@
+  * 
+  * Framework for serial device drivers.
+  * 
+- * Copyright (c) 2003-2005, K A Fraser
++ * Copyright (c) 2003-2008, K A Fraser
+  */
+ 
+ #ifndef __XEN_SERIAL_H__
+@@ -34,6 +34,7 @@ struct serial_port {
+     /* Transmit data buffer (interrupt-driven uart). */
+     char               *txbuf;
+     unsigned int        txbufp, txbufc;
++    bool_t              tx_quench;
+     /* Force synchronous transmit. */
+     int                 sync;
+     /* Receiver callback functions (asynchronous receivers). */

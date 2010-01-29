@@ -1,0 +1,78 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 8 Oct 2009 10:49:16 -0500
+Subject: [fs] eCryptfs: prevent lower dentry from going negative
+Message-id: 4ACE09FC.3030005@redhat.com
+O-Subject: [PATCH RHEL5.5 V2] eCryptfs: Prevent lower dentry from going negative during unlink
+Bugzilla: 527835
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+CVE: CVE-2009-2908
+
+(sorry - shoulda specified RHEL5.5, and get the right bug not the top-level
+tracking bug)
+
+This is for:
+
+[Bug 527835] CVE-2009-2908 kernel ecryptfs NULL pointer dereference [rhel-5.5]
+
+Simple backport of upstream commit, tested w/ Josh's reproducer which
+is in the BZ.
+
+Thanks,
+-Eric
+
+From: Tyler Hicks <tyhicks@linux.vnet.ibm.com>
+Date: Tue, 22 Sep 2009 17:52:17 +0000 (-0500)
+Subject: eCryptfs: Prevent lower dentry from going negative during unlink
+X-Git-Tag: v2.6.31.2~114
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Fstable%2Flinux-2.6.31.y.git;a=commitdiff_plain;h=afc2b6932f48f200736d3e36ad66fee0ec733136
+
+eCryptfs: Prevent lower dentry from going negative during unlink
+
+commit 9c2d2056647790c5034d722bd24e9d913ebca73c upstream.
+
+When calling vfs_unlink() on the lower dentry, d_delete() turns the
+dentry into a negative dentry when the d_count is 1.  This eventually
+caused a NULL pointer deref when a read() or write() was done and the
+negative dentry's d_inode was dereferenced in
+ecryptfs_read_update_atime() or ecryptfs_getxattr().
+
+Placing mutt's tmpdir in an eCryptfs mount is what initially triggered
+the oops and I was able to reproduce it with the following sequence:
+
+open("/tmp/upper/foo", O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW, 0600) = 3
+link("/tmp/upper/foo", "/tmp/upper/bar") = 0
+unlink("/tmp/upper/foo")                = 0
+open("/tmp/upper/bar", O_RDWR|O_CREAT|O_NOFOLLOW, 0600) = 4
+unlink("/tmp/upper/bar")                = 0
+write(4, "eCryptfs test\n"..., 14 <unfinished ...>
++++ killed by SIGKILL +++
+
+https://bugs.launchpad.net/ecryptfs/+bug/387073
+
+Reported-by: Loïc Minier <loic.minier@canonical.com>
+Cc: Serge Hallyn <serue@us.ibm.com>
+Cc: Dave Kleikamp <shaggy@linux.vnet.ibm.com>
+Cc: ecryptfs-devel@lists.launchpad.net
+Signed-off-by: Tyler Hicks <tyhicks@linux.vnet.ibm.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+diff --git a/fs/ecryptfs/inode.c b/fs/ecryptfs/inode.c
+index cf600a1..b7d0015 100644
+--- a/fs/ecryptfs/inode.c
++++ b/fs/ecryptfs/inode.c
+@@ -443,6 +443,7 @@ static int ecryptfs_unlink(struct inode *dir, struct dentry *dentry)
+ 	struct inode *lower_dir_inode = ecryptfs_inode_to_lower(dir);
+ 	struct dentry *lower_dir_dentry;
+ 
++	dget(lower_dentry);
+ 	lower_dir_dentry = lock_parent(lower_dentry);
+ 	rc = vfs_unlink(lower_dir_inode, lower_dentry);
+ 	if (rc) {
+@@ -456,6 +457,7 @@ static int ecryptfs_unlink(struct inode *dir, struct dentry *dentry)
+ 	d_drop(dentry);
+ out_unlock:
+ 	unlock_dir(lower_dir_dentry);
++	dput(lower_dentry);
+ 	return rc;
+ }
+ 
