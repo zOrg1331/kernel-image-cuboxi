@@ -31,9 +31,9 @@ svgalib_helper
 etercifs
 
 #telephony drivers
-dahdi
-wanpipe 
-cronyx
+# dahdi
+# wanpipe
+# cronyx
 
 #network block devices and cluster filesystems
 dst
