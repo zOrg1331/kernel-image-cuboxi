@@ -73,7 +73,7 @@ struct dccp_ackvec {
  * @avr_ack_ackno - sequence number being acknowledged
  * @avr_ack_ptr - pointer into av_buf where this record starts
  * @avr_ack_nonce - av_ack_nonce at the time this record was sent
- * @avr_sent_len - lenght of the record in av_buf
+ * @avr_sent_len - length of the record in av_buf
  */
 struct dccp_ackvec_record {
 	struct list_head avr_node;

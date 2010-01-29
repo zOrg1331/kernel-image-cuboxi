@@ -105,7 +105,7 @@ static inline void edc_init(struct edc *edc)
  *
  * @edc: pointer to error density counter.
  * @max_err: maximum number of errors we can accept over the timeframe
- * @timeframe: lenght of the timeframe (in jiffies).
+ * @timeframe: length of the timeframe (in jiffies).
  *
  * Returns: !0 1 if maximum acceptable errors per timeframe has been
  *     exceeded. 0 otherwise.
