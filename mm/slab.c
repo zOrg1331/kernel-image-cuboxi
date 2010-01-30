@@ -654,7 +654,7 @@ static void init_node_lock_keys(int q)
 
 		l3 = s->cs_cachep->nodelists[q];
 		if (!l3 || OFF_SLAB(s->cs_cachep))
-			return;
+			continue;
 		lockdep_set_class(&l3->list_lock, &on_slab_l3_key);
 		alc = l3->alien;
 		/*
@@ -665,7 +665,7 @@ static void init_node_lock_keys(int q)
 		 * for alloc_alien_cache,
 		 */
 		if (!alc || (unsigned long)alc == BAD_ALIEN_MAGIC)
-			return;
+			continue;
 		for_each_node(r) {
 			if (alc[r])
 				lockdep_set_class(&alc[r]->lock,
@@ -935,7 +935,6 @@ static int transfer_objects(struct array_cache *to,
 
 	from->avail -= nr;
 	to->avail += nr;
-	to->touched = 1;
 	return nr;
 }
 
@@ -2961,8 +2960,10 @@ retry:
 	spin_lock(&l3->list_lock);
 
 	/* See if we can refill from the shared array */
-	if (l3->shared && transfer_objects(ac, l3->shared, batchcount))
+	if (l3->shared && transfer_objects(ac, l3->shared, batchcount)) {
+		l3->shared->touched = 1;
 		goto alloc_done;
+	}
 
 	while (batchcount > 0) {
 		struct list_head *entry;
