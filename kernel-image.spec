@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.33
-Release: alt0.rc5
+Release: alt0.rc6
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -8,7 +8,7 @@ Release: alt0.rc5
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 0.5.0
+%define kernel_extra_version_numeric 0.6.0
 
 %define krelease	%release
 
@@ -196,16 +196,12 @@ cp -a arch/x86/include %buildroot%kbuild_dir/arch/x86
 
 # remove asm-* include files for other architectures
 pushd %buildroot%kbuild_dir/include
-for dir in asm-*; do
-	[ "$dir" = "asm-generic" ] && continue
-	[ "$dir" = "asm-x86" ] && continue
-	rm -rf -- "$dir"
-done
+ln -s generated asm-x86
 %ifarch x86_64
-ln -s asm-x86 asm-x86_64
+ln -s generated asm-x86_64
 %else
-%ifarch i686
-ln -s asm-x86 asm-i386
+%ifarch i586
+ln -s generated asm-i386
 %endif
 %endif
 popd
@@ -271,6 +267,13 @@ KbuildFiles="
 	scripts/bin2c
 	scripts/gcc-version.sh
 	scripts/module-common.lds
+%ifarch i586
+	scripts/gcc-x86_32-has-stack-protector.sh
+%else
+%ifarch x86_64
+	scripts/gcc-x86_64-has-stack-protector.sh
+%endif
+%endif
 
 	.config
 	.kernelrelease
@@ -341,8 +344,20 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
-* Fri Jan 22 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.33-alt0.rc5
-- 2.6.33-rc5
+* Sat Jan 30 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.33-alt0.rc6
+- 2.6.33-rc6
+
+* Fri Jan 29 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt7
+- 2.6.32.7
+
+* Tue Jan 26 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt6
+- 2.6.32.6
+
+* Sat Jan 23 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt5
+- 2.6.32.5
+
+* Tue Jan 19 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt4
+- 2.6.32.4
 
 * Sat Jan 09 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt3
 - 2.6.32.3
