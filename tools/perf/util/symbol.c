@@ -345,10 +345,10 @@ void dso__sort_by_name(struct dso *self, enum map_type type)
 				     &self->symbols[type]);
 }
 
-int build_id__sprintf(u8 *self, int len, char *bf)
+int build_id__sprintf(const u8 *self, int len, char *bf)
 {
 	char *bid = bf;
-	u8 *raw = self;
+	const u8 *raw = self;
 	int i;
 
 	for (i = 0; i < len; ++i) {
@@ -1572,8 +1572,29 @@ static int dso__load_vmlinux(struct dso *self, struct map *map,
 		return -1;
 
 	dso__set_loaded(self, map->type);
-	err = dso__load_sym(self, map, session, self->long_name, fd, filter, 1, 0);
+	err = dso__load_sym(self, map, session, vmlinux, fd, filter, 1, 0);
 	close(fd);
+
+	return err;
+}
+
+int dso__load_vmlinux_path(struct dso *self, struct map *map,
+			   struct perf_session *session, symbol_filter_t filter)
+{
+	int i, err = 0;
+
+	pr_debug("Looking at the vmlinux_path (%d entries long)\n",
+		 vmlinux_path__nr_entries);
+
+	for (i = 0; i < vmlinux_path__nr_entries; ++i) {
+		err = dso__load_vmlinux(self, map, session, vmlinux_path[i],
+					filter);
+		if (err > 0) {
+			pr_debug("Using %s for symbols\n", vmlinux_path[i]);
+			dso__set_long_name(self, strdup(vmlinux_path[i]));
+			break;
+		}
+	}
 
 	return err;
 }
@@ -1584,22 +1605,31 @@ static int dso__load_kernel_sym(struct dso *self, struct map *map,
 	int err;
 	const char *kallsyms_filename = NULL;
 	char *kallsyms_allocated_filename = NULL;
+	/*
+	 * Step 1: if the user specified a vmlinux filename, use it and only
+	 * it, reporting errors to the user if it cannot be used.
+	 *
+	 * For instance, try to analyse an ARM perf.data file _without_ a
+	 * build-id, or if the user specifies the wrong path to the right
+	 * vmlinux file, obviously we can't fallback to another vmlinux (a
+	 * x86_86 one, on the machine where analysis is being performed, say),
+	 * or worse, /proc/kallsyms.
+	 *
+	 * If the specified file _has_ a build-id and there is a build-id
+	 * section in the perf.data file, we will still do the expected
+	 * validation in dso__load_vmlinux and will bail out if they don't
+	 * match.
+	 */
+	if (symbol_conf.vmlinux_name != NULL) {
+		err = dso__load_vmlinux(self, map, session,
+					symbol_conf.vmlinux_name, filter);
+		goto out_try_fixup;
+	}
 
 	if (vmlinux_path != NULL) {
-		int i;
-		pr_debug("Looking at the vmlinux_path (%d entries long)\n",
-			 vmlinux_path__nr_entries);
-		for (i = 0; i < vmlinux_path__nr_entries; ++i) {
-			err = dso__load_vmlinux(self, map, session,
-						vmlinux_path[i], filter);
-			if (err > 0) {
-				pr_debug("Using %s for symbols\n",
-					 vmlinux_path[i]);
-				dso__set_long_name(self,
-						   strdup(vmlinux_path[i]));
-				goto out_fixup;
-			}
-		}
+		err = dso__load_vmlinux_path(self, map, session, filter);
+		if (err > 0)
+			goto out_fixup;
 	}
 
 	/*
@@ -1618,46 +1648,41 @@ static int dso__load_kernel_sym(struct dso *self, struct map *map,
 				goto do_kallsyms;
 			}
 		}
-
+		/*
+		 * Now look if we have it on the build-id cache in
+		 * $HOME/.debug/[kernel.kallsyms].
+		 */
 		build_id__sprintf(self->build_id, sizeof(self->build_id),
 				  sbuild_id);
 
 		if (asprintf(&kallsyms_allocated_filename,
 			     "%s/.debug/[kernel.kallsyms]/%s",
-			     getenv("HOME"), sbuild_id) != -1) {
-			if (access(kallsyms_filename, F_OK)) {
-				kallsyms_filename = kallsyms_allocated_filename;
-				goto do_kallsyms;
-			}
-			free(kallsyms_allocated_filename);
-			kallsyms_allocated_filename = NULL;
-		}
-
-		goto do_vmlinux;
-	}
-
-	if (self->long_name[0] == '[') {
-		kallsyms_filename = "/proc/kallsyms";
-		goto do_kallsyms;
-	}
-
-do_vmlinux:
-	err = dso__load_vmlinux(self, map, session, self->long_name, filter);
-	if (err <= 0) {
-		if (self->has_build_id)
+			     getenv("HOME"), sbuild_id) == -1)
 			return -1;
 
-		pr_info("The file %s cannot be used, "
-			"trying to use /proc/kallsyms...", self->long_name);
-do_kallsyms:
-		err = dso__load_kallsyms(self, kallsyms_filename, map, session, filter);
-		if (err > 0 && kallsyms_filename == NULL)
-                        dso__set_long_name(self, strdup("[kernel.kallsyms]"));
-		free(kallsyms_allocated_filename);
+		kallsyms_filename = kallsyms_allocated_filename;
+
+		if (access(kallsyms_filename, F_OK)) {
+			free(kallsyms_allocated_filename);
+			return -1;
+		}
+	} else {
+		/*
+		 * Last resort, if we don't have a build-id and couldn't find
+		 * any vmlinux file, try the running kernel kallsyms table.
+		 */
+		kallsyms_filename = "/proc/kallsyms";
 	}
 
+do_kallsyms:
+	err = dso__load_kallsyms(self, kallsyms_filename, map, session, filter);
+	free(kallsyms_allocated_filename);
+
+out_try_fixup:
 	if (err > 0) {
 out_fixup:
+		if (kallsyms_filename != NULL)
+			dso__set_long_name(self, strdup("[kernel.kallsyms]"));
 		map__fixup_start(map);
 		map__fixup_end(map);
 	}
@@ -1737,24 +1762,38 @@ size_t dsos__fprintf_buildid(FILE *fp, bool with_hits)
 		__dsos__fprintf_buildid(&dsos__user, fp, with_hits));
 }
 
+struct dso *dso__new_kernel(const char *name)
+{
+	struct dso *self = dso__new(name ?: "[kernel.kallsyms]");
+
+	if (self != NULL) {
+		self->short_name = "[kernel]";
+		self->kernel	 = 1;
+	}
+
+	return self;
+}
+
+void dso__read_running_kernel_build_id(struct dso *self)
+{
+	if (sysfs__read_build_id("/sys/kernel/notes", self->build_id,
+				 sizeof(self->build_id)) == 0)
+		self->has_build_id = true;
+}
+
 static struct dso *dsos__create_kernel(const char *vmlinux)
 {
-	struct dso *kernel = dso__new(vmlinux ?: "[kernel.kallsyms]");
+	struct dso *kernel = dso__new_kernel(vmlinux);
 
 	if (kernel == NULL)
 		return NULL;
-
-	kernel->short_name = "[kernel]";
-	kernel->kernel	   = 1;
 
 	vdso = dso__new("[vdso]");
 	if (vdso == NULL)
 		goto out_delete_kernel_dso;
 	dso__set_loaded(vdso, MAP__FUNCTION);
 
-	if (sysfs__read_build_id("/sys/kernel/notes", kernel->build_id,
-				 sizeof(kernel->build_id)) == 0)
-		kernel->has_build_id = true;
+	dso__read_running_kernel_build_id(kernel);
 
 	dsos__add(&dsos__kernel, kernel);
 	dsos__add(&dsos__user, vdso);

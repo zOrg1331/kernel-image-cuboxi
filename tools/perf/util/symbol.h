@@ -109,6 +109,7 @@ struct dso {
 };
 
 struct dso *dso__new(const char *name);
+struct dso *dso__new_kernel(const char *name);
 void dso__delete(struct dso *self);
 
 bool dso__loaded(const struct dso *self, enum map_type type);
@@ -129,6 +130,8 @@ struct perf_session;
 
 int dso__load(struct dso *self, struct map *map, struct perf_session *session,
 	      symbol_filter_t filter);
+int dso__load_vmlinux_path(struct dso *self, struct map *map,
+			   struct perf_session *session, symbol_filter_t filter);
 void dsos__fprintf(FILE *fp);
 size_t dsos__fprintf_buildid(FILE *fp, bool with_hits);
 
@@ -137,6 +140,7 @@ size_t dso__fprintf(struct dso *self, enum map_type type, FILE *fp);
 char dso__symtab_origin(const struct dso *self);
 void dso__set_long_name(struct dso *self, char *name);
 void dso__set_build_id(struct dso *self, void *build_id);
+void dso__read_running_kernel_build_id(struct dso *self);
 struct symbol *dso__find_symbol(struct dso *self, enum map_type type, u64 addr);
 struct symbol *dso__find_symbol_by_name(struct dso *self, enum map_type type,
 					const char *name);
@@ -144,7 +148,7 @@ struct symbol *dso__find_symbol_by_name(struct dso *self, enum map_type type,
 int filename__read_build_id(const char *filename, void *bf, size_t size);
 int sysfs__read_build_id(const char *filename, void *bf, size_t size);
 bool dsos__read_build_ids(void);
-int build_id__sprintf(u8 *self, int len, char *bf);
+int build_id__sprintf(const u8 *self, int len, char *bf);
 int kallsyms__parse(const char *filename, void *arg,
 		    int (*process_symbol)(void *arg, const char *name,
 					  char type, u64 start));
