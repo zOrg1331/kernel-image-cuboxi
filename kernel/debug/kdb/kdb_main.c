@@ -2824,4 +2824,7 @@ void __init kdb_init(void)
 	kdb_initbptab();	/* Initialize Breakpoint Table */
 	kdb_cmd_init();		/* Preset commands from kdb_cmds */
 	kdb_initial_cpu = -1;	/* Avoid recursion problems */
+#if defined(CONFIG_KDB_KEYBOARD) && defined(CONFIG_KGDB_SERIAL_CONSOLE)
+	early_kgdboc_init();
+#endif /* CONFIG_KDB_KEYBOARD && CONFIG_KGDB_SERIAL_CONSOLE */
 }
