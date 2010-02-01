@@ -24,7 +24,7 @@ epoch:1
 %def_enable docs
 
 #Remove oss
-%def_enable oss
+%def_disable oss
 ## Don't edit below this line ##################################
 
 %define kversion	%kernel_base_version%kernel_extra_version
@@ -542,9 +542,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Mon Jan 25 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt1
 - Build std-def based on un-def 
-- 2.6.32
+- 2.6.32.7
 - on x86_64 turn on paravirt guest support
 - move IDE modules to separated subpackage(use PATA instead).
+- turn off OSS support and oss emulation 
 
 * Thu Jan 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt5
 - aufs updated
