@@ -530,7 +530,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 %files -n kernel-modules-alsa-%flavour
 %modules_dir/kernel/sound/
+%if_enabled oss
 %exclude %modules_dir/kernel/sound/oss
+%endif
 
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
