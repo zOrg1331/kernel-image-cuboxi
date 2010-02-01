@@ -116,5 +116,6 @@ extern void kdb_si_swapinfo(struct sysinfo *);
 
 #else /* ! CONFIG_KGDB_KDB */
 #define KDB_IS_RUNNING() (0)
+#define kdb_printf(...)
 #endif	/* CONFIG_KGDB_KDB */
 #endif	/* !_KDB_H */
