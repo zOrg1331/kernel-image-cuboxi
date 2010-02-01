@@ -14,7 +14,6 @@ bcmwl
 
 #vendor specific  hardware features drives
 tp_smapi
-heci
 omnibook
 
 #virtualization drivers
