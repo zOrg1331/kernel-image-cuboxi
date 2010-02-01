@@ -104,13 +104,15 @@ MODULE_PARM_DESC(pow_send_list, "\n"
 	"\t\"eth2,spi3,spi7\" would cause these three devices to transmit\n"
 	"\tusing the pow_send_group.");
 
-static int disable_core_queueing = 1;
-module_param(disable_core_queueing, int, 0444);
-MODULE_PARM_DESC(disable_core_queueing, "\n"
-	"\tWhen set the networking core's tx_queue_len is set to zero.  This\n"
-	"\tallows packets to be sent without lock contention in the packet\n"
-	"\tscheduler resulting in some cases in improved throughput.\n");
+int max_rx_cpus = -1;
+module_param(max_rx_cpus, int, 0444);
+MODULE_PARM_DESC(max_rx_cpus, "\n"
+	"\t\tThe maximum number of CPUs to use for packet reception.\n"
+	"\t\tUse -1 to use all available CPUs.");
 
+int rx_napi_weight = 32;
+module_param(rx_napi_weight, int, 0444);
+MODULE_PARM_DESC(rx_napi_weight, "The NAPI WEIGHT parameter.");
 
 /*
  * The offset from mac_addr_base that should be used for the next port
@@ -139,50 +141,38 @@ struct net_device *cvm_oct_device[TOTAL_NUMBER_OF_PORTS];
  */
 static void cvm_do_timer(unsigned long arg)
 {
-	int32_t skb_to_free, undo;
-	int queues_per_port;
-	int qos;
-	struct octeon_ethernet *priv;
 	static int port;
-
-	if (port >= CVMX_PIP_NUM_INPUT_PORTS) {
+	if (port < CVMX_PIP_NUM_INPUT_PORTS) {
+		if (cvm_oct_device[port]) {
+			struct octeon_ethernet *priv = netdev_priv(cvm_oct_device[port]);
+			if (priv->poll)
+				priv->poll(cvm_oct_device[port]);
+			cvm_oct_free_tx_skbs(priv);
+			cvm_oct_device[port]->netdev_ops->ndo_get_stats(cvm_oct_device[port]);
+		}
+		port++;
 		/*
-		 * All ports have been polled. Start the next
-		 * iteration through the ports in one second.
+		 * Poll the next port in a 50th of a second.  This
+		 * spreads the polling of ports out a little bit.
 		 */
+		mod_timer(&cvm_oct_poll_timer, jiffies + HZ/50);
+	} else {
 		port = 0;
+		/*
+		 * FPA 0 may have been drained, try to refill it if we
+		 * need more than num_packet_buffers / 2, otherwise
+		 * normal receive processing will refill it.  If it
+		 * were drained, no packets could be received so
+		 * cvm_oct_napi_poll would never be invoked to do the
+		 * refill.
+		 */
+		cvm_oct_rx_refill_pool(num_packet_buffers / 2);
+		/*
+		 * All ports have been polled. Start the next iteration through
+		 * the ports in one second.
+		 */
 		mod_timer(&cvm_oct_poll_timer, jiffies + HZ);
-		return;
 	}
-	if (!cvm_oct_device[port])
-		goto out;
-
-	priv = netdev_priv(cvm_oct_device[port]);
-	if (priv->poll)
-		priv->poll(cvm_oct_device[port]);
-
-	queues_per_port = cvmx_pko_get_num_queues(port);
-	/* Drain any pending packets in the free list */
-	for (qos = 0; qos < queues_per_port; qos++) {
-		if (skb_queue_len(&priv->tx_free_list[qos]) == 0)
-			continue;
-		skb_to_free = cvmx_fau_fetch_and_add32(priv->fau + qos * 4,
-						       MAX_SKB_TO_FREE);
-		undo = skb_to_free > 0 ?
-			MAX_SKB_TO_FREE : skb_to_free + MAX_SKB_TO_FREE;
-		if (undo > 0)
-			cvmx_fau_atomic_add32(priv->fau+qos*4, -undo);
-		skb_to_free = -skb_to_free > MAX_SKB_TO_FREE ?
-			MAX_SKB_TO_FREE : -skb_to_free;
-		cvm_oct_free_tx_skbs(priv, skb_to_free, qos, 1);
-	}
-	cvm_oct_device[port]->netdev_ops->ndo_get_stats(cvm_oct_device[port]);
-
-out:
-	port++;
-	/* Poll the next port in a 50th of a second.
-	   This spreads the polling of ports out a little bit */
-	mod_timer(&cvm_oct_poll_timer, jiffies + HZ / 50);
 }
 
 /**
@@ -190,7 +180,6 @@ out:
  */
 static __init void cvm_oct_configure_common_hw(void)
 {
-	int r;
 	/* Setup the FPA */
 	cvmx_fpa_enable();
 	cvm_oct_mem_fill_fpa(CVMX_FPA_PACKET_POOL, CVMX_FPA_PACKET_POOL_SIZE,
@@ -205,21 +194,6 @@ static __init void cvm_oct_configure_common_hw(void)
 		cvmx_helper_setup_red(num_packet_buffers / 4,
 				      num_packet_buffers / 8);
 
-	/* Enable the MII interface */
-	if (!octeon_is_simulation())
-		cvmx_write_csr(CVMX_SMIX_EN(0), 1);
-
-	/* Register an IRQ hander for to receive POW interrupts */
-	r = request_irq(OCTEON_IRQ_WORKQ0 + pow_receive_group,
-			cvm_oct_do_interrupt, IRQF_SHARED, "Ethernet",
-			cvm_oct_device);
-
-#if defined(CONFIG_SMP) && 0
-	if (USE_MULTICORE_RECEIVE) {
-		irq_set_affinity(OCTEON_IRQ_WORKQ0 + pow_receive_group,
-				 cpu_online_mask);
-	}
-#endif
 }
 
 /**
@@ -510,8 +484,11 @@ int cvm_oct_common_init(struct net_device *dev)
 	    && (always_use_pow || strstr(pow_send_list, dev->name)))
 		priv->queue = -1;
 
-	if (priv->queue != -1 && USE_HW_TCPUDP_CHECKSUM)
-		dev->features |= NETIF_F_IP_CSUM;
+	if (priv->queue != -1) {
+		dev->features |= NETIF_F_SG;
+		if (USE_HW_TCPUDP_CHECKSUM)
+			dev->features |= NETIF_F_IP_CSUM;
+	}
 
 	/* We do our own locking, Linux doesn't need to */
 	dev->features |= NETIF_F_LLTX;
@@ -649,7 +626,6 @@ static int __init cvm_oct_init_module(void)
 		cvm_oct_mac_addr_offset = 0;
 
 	cvm_oct_proc_initialize();
-	cvm_oct_rx_initialize();
 	cvm_oct_configure_common_hw();
 
 	cvmx_helper_initialize_packet_io_global();
@@ -689,7 +665,18 @@ static int __init cvm_oct_init_module(void)
 		if (dev) {
 			/* Initialize the device private structure. */
 			struct octeon_ethernet *priv = netdev_priv(dev);
-			memset(priv, 0, sizeof(struct octeon_ethernet));
+
+			hrtimer_init(&priv->tx_restart_timer,
+				     CLOCK_MONOTONIC,
+				     HRTIMER_MODE_REL);
+			priv->tx_restart_timer.function = cvm_oct_restart_tx;
+
+			/*
+			 * Default for 10GE 5000nS enough time to
+			 * transmit about 100 64byte packtes.  1GE
+			 * interfaces will get 50000nS below.
+			 */
+			priv->tx_restart_interval = ktime_set(0, 5000);
 
 			dev->netdev_ops = &cvm_oct_pow_netdev_ops;
 			priv->imode = CVMX_HELPER_INTERFACE_MODE_DISABLED;
@@ -700,19 +687,16 @@ static int __init cvm_oct_init_module(void)
 				skb_queue_head_init(&priv->tx_free_list[qos]);
 
 			if (register_netdev(dev) < 0) {
-				pr_err("Failed to register ethernet "
-					 "device for POW\n");
+				pr_err("Failed to register ethernet device for POW\n");
 				kfree(dev);
 			} else {
 				cvm_oct_device[CVMX_PIP_NUM_INPUT_PORTS] = dev;
-				pr_info("%s: POW send group %d, receive "
-					"group %d\n",
-				     dev->name, pow_send_group,
-				     pow_receive_group);
+				pr_info("%s: POW send group %d, receive group %d\n",
+					dev->name, pow_send_group,
+					pow_receive_group);
 			}
 		} else {
-			pr_err("Failed to allocate ethernet device "
-				 "for POW\n");
+			pr_err("Failed to allocate ethernet device for POW\n");
 		}
 	}
 
@@ -730,12 +714,9 @@ static int __init cvm_oct_init_module(void)
 			struct net_device *dev =
 			    alloc_etherdev(sizeof(struct octeon_ethernet));
 			if (!dev) {
-				pr_err("Failed to allocate ethernet device "
-					 "for port %d\n", port);
+				pr_err("Failed to allocate ethernet device for port %d\n", port);
 				continue;
 			}
-			if (disable_core_queueing)
-				dev->tx_queue_len = 0;
 
 			/* Initialize the device private structure. */
 			priv = netdev_priv(dev);
@@ -776,6 +757,7 @@ static int __init cvm_oct_init_module(void)
 
 			case CVMX_HELPER_INTERFACE_MODE_SGMII:
 				dev->netdev_ops = &cvm_oct_sgmii_netdev_ops;
+				priv->tx_restart_interval = ktime_set(0, 50000);
 				strcpy(dev->name, "eth%d");
 				break;
 
@@ -787,6 +769,7 @@ static int __init cvm_oct_init_module(void)
 			case CVMX_HELPER_INTERFACE_MODE_RGMII:
 			case CVMX_HELPER_INTERFACE_MODE_GMII:
 				dev->netdev_ops = &cvm_oct_rgmii_netdev_ops;
+				priv->tx_restart_interval = ktime_set(0, 50000);
 				strcpy(dev->name, "eth%d");
 				break;
 			}
@@ -807,25 +790,7 @@ static int __init cvm_oct_init_module(void)
 		}
 	}
 
-	if (INTERRUPT_LIMIT) {
-		/*
-		 * Set the POW timer rate to give an interrupt at most
-		 * INTERRUPT_LIMIT times per second.
-		 */
-		cvmx_write_csr(CVMX_POW_WQ_INT_PC,
-			       octeon_bootinfo->eclock_hz / (INTERRUPT_LIMIT *
-							     16 * 256) << 8);
-
-		/*
-		 * Enable POW timer interrupt. It will count when
-		 * there are packets available.
-		 */
-		cvmx_write_csr(CVMX_POW_WQ_INT_THRX(pow_receive_group),
-			       0x1ful << 24);
-	} else {
-		/* Enable POW interrupt when our port has at least one packet */
-		cvmx_write_csr(CVMX_POW_WQ_INT_THRX(pow_receive_group), 0x1001);
-	}
+	cvm_oct_rx_initialize();
 
 	/* Enable the poll timer for checking RGMII status */
 	init_timer(&cvm_oct_poll_timer);
