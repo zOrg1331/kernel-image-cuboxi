@@ -17,6 +17,7 @@
 #include <linux/kdb.h>
 #include <linux/tty.h>
 #include <linux/console.h>
+#include <linux/input.h>
 
 #define MAX_CONFIG_LEN		40
 
@@ -24,6 +25,7 @@ static struct kgdb_io		kgdboc_io_ops;
 
 /* -1 = init not run yet, 0 = unconfigured, 1 = configured. */
 static int configured		= -1;
+static int kgdboc_use_kbd;  /* 1 if we use a keyboard */
 
 static char config[MAX_CONFIG_LEN];
 static struct kparam_string kps = {
@@ -81,6 +83,7 @@ static int configure_kgdboc(void)
 
 	err = -ENODEV;
 	kgdboc_io_ops.is_console = 0;
+	kgdboc_use_kbd = 0;
 
 #ifdef CONFIG_KDB_KEYBOARD
 	kgdb_tty_driver = NULL;
@@ -89,6 +92,7 @@ static int configure_kgdboc(void)
 		if (kdb_poll_idx < KDB_POLL_FUNC_MAX) {
 			kdb_poll_funcs[kdb_poll_idx] = kdb_get_kbd_char;
 			kdb_poll_idx++;
+			kgdboc_use_kbd = 1;
 			if (cptr[3] == ',')
 				cptr += 4;
 			else
@@ -206,6 +210,11 @@ static void kgdboc_post_exp_handler(void)
 	/* decrement the module count when the debugger detaches */
 	if (!kgdb_connected)
 		module_put(THIS_MODULE);
+#ifdef CONFIG_KDB_KEYBOARD
+	/* If using the kdb keyboard driver release all the keys. */
+	if (kgdboc_use_kbd)
+		input_dbg_clear_keys();
+#endif /* CONFIG_KDB_KEYBOARD */
 }
 
 static struct kgdb_io kgdboc_io_ops = {
