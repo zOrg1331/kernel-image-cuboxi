@@ -100,6 +100,9 @@ int kdb_process_cpu(const struct task_struct *p)
 	return cpu;
 }
 
+/* kdb access to register set for stack dumping */
+extern struct pt_regs *kdb_current_regs;
+
 /* kdb access functions for non-kdb files*/
 #ifdef CONFIG_SWAP
 extern void kdb_si_swapinfo(struct sysinfo *);
