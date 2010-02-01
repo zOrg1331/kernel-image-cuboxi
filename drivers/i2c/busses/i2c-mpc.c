@@ -31,6 +31,9 @@
 
 #define DRV_NAME "mpc-i2c"
 
+#define MPC_I2C_CLOCK_SAFE     0
+#define MPC_I2C_CLOCK_PRESERVE (~0U)
+
 #define MPC_I2C_FDR   0x04
 #define MPC_I2C_CR    0x08
 #define MPC_I2C_SR    0x0c
@@ -67,9 +70,8 @@ struct mpc_i2c_divider {
 };
 
 struct mpc_i2c_data {
-	void (*setclock)(struct device_node *node,
-			 struct mpc_i2c *i2c,
-			 u32 clock, u32 prescaler);
+	void (*setup)(struct device_node *node, struct mpc_i2c *i2c,
+		      u32 clock, u32 prescaler);
 	u32 prescaler;
 };
 
@@ -164,7 +166,7 @@ static int i2c_wait(struct mpc_i2c *i2c, unsigned timeout, int writing)
 	return 0;
 }
 
-#ifdef CONFIG_PPC_MPC52xx
+#if defined(CONFIG_PPC_MPC52xx) || defined(CONFIG_PPC_MPC512x)
 static const struct __devinitdata mpc_i2c_divider mpc_i2c_dividers_52xx[] = {
 	{20, 0x20}, {22, 0x21}, {24, 0x22}, {26, 0x23},
 	{28, 0x24}, {30, 0x01}, {32, 0x25}, {34, 0x02},
@@ -194,7 +196,7 @@ static int __devinit mpc_i2c_get_fdr_52xx(struct device_node *node, u32 clock,
 	u32 divider;
 	int i;
 
-	if (!clock)
+	if (clock == MPC_I2C_CLOCK_SAFE)
 		return -EINVAL;
 
 	/* Determine divider value */
@@ -216,11 +218,17 @@ static int __devinit mpc_i2c_get_fdr_52xx(struct device_node *node, u32 clock,
 	return div ? (int)div->fdr : -EINVAL;
 }
 
-static void __devinit mpc_i2c_setclock_52xx(struct device_node *node,
-					    struct mpc_i2c *i2c,
-					    u32 clock, u32 prescaler)
+static void __devinit mpc_i2c_setup_52xx(struct device_node *node,
+					 struct mpc_i2c *i2c,
+					 u32 clock, u32 prescaler)
 {
 	int ret, fdr;
+
+	if (clock == MPC_I2C_CLOCK_PRESERVE) {
+		dev_dbg(i2c->dev, "using fdr %d\n",
+			readb(i2c->base + MPC_I2C_FDR));
+		return;
+	}
 
 	ret = mpc_i2c_get_fdr_52xx(node, clock, prescaler);
 	fdr = (ret >= 0) ? ret : 0x3f; /* backward compatibility */
@@ -230,13 +238,49 @@ static void __devinit mpc_i2c_setclock_52xx(struct device_node *node,
 	if (ret >= 0)
 		dev_info(i2c->dev, "clock %d Hz (fdr=%d)\n", clock, fdr);
 }
-#else /* !CONFIG_PPC_MPC52xx */
-static void __devinit mpc_i2c_setclock_52xx(struct device_node *node,
-					    struct mpc_i2c *i2c,
-					    u32 clock, u32 prescaler)
+#else /* !(CONFIG_PPC_MPC52xx || CONFIG_PPC_MPC512x) */
+static void __devinit mpc_i2c_setup_52xx(struct device_node *node,
+					 struct mpc_i2c *i2c,
+					 u32 clock, u32 prescaler)
 {
 }
-#endif /* CONFIG_PPC_MPC52xx*/
+#endif /* CONFIG_PPC_MPC52xx || CONFIG_PPC_MPC512x */
+
+#ifdef CONFIG_PPC_MPC512x
+static void __devinit mpc_i2c_setup_512x(struct device_node *node,
+					 struct mpc_i2c *i2c,
+					 u32 clock, u32 prescaler)
+{
+	struct device_node *node_ctrl;
+	void __iomem *ctrl;
+	const u32 *pval;
+	u32 idx;
+
+	/* Enable I2C interrupts for mpc5121 */
+	node_ctrl = of_find_compatible_node(NULL, NULL,
+					    "fsl,mpc5121-i2c-ctrl");
+	if (node_ctrl) {
+		ctrl = of_iomap(node_ctrl, 0);
+		if (ctrl) {
+			/* Interrupt enable bits for i2c-0/1/2: bit 24/26/28 */
+			pval = of_get_property(node, "reg", NULL);
+			idx = (*pval & 0xff) / 0x20;
+			setbits32(ctrl, 1 << (24 + idx * 2));
+			iounmap(ctrl);
+		}
+		of_node_put(node_ctrl);
+	}
+
+	/* The clock setup for the 52xx works also fine for the 512x */
+	mpc_i2c_setup_52xx(node, i2c, clock, prescaler);
+}
+#else /* CONFIG_PPC_MPC512x */
+static void __devinit mpc_i2c_setup_512x(struct device_node *node,
+					 struct mpc_i2c *i2c,
+					 u32 clock, u32 prescaler)
+{
+}
+#endif /* CONFIG_PPC_MPC512x */
 
 #ifdef CONFIG_FSL_SOC
 static const struct __devinitdata mpc_i2c_divider mpc_i2c_dividers_8xxx[] = {
@@ -295,7 +339,7 @@ static int __devinit mpc_i2c_get_fdr_8xxx(struct device_node *node, u32 clock,
 	u32 divider;
 	int i;
 
-	if (!clock)
+	if (clock == MPC_I2C_CLOCK_SAFE)
 		return -EINVAL;
 
 	/* Determine proper divider value */
@@ -322,11 +366,18 @@ static int __devinit mpc_i2c_get_fdr_8xxx(struct device_node *node, u32 clock,
 	return div ? (int)div->fdr : -EINVAL;
 }
 
-static void __devinit mpc_i2c_setclock_8xxx(struct device_node *node,
-					    struct mpc_i2c *i2c,
-					    u32 clock, u32 prescaler)
+static void __devinit mpc_i2c_setup_8xxx(struct device_node *node,
+					 struct mpc_i2c *i2c,
+					 u32 clock, u32 prescaler)
 {
 	int ret, fdr;
+
+	if (clock == MPC_I2C_CLOCK_PRESERVE) {
+		dev_dbg(i2c->dev, "using dfsrr %d, fdr %d\n",
+			readb(i2c->base + MPC_I2C_DFSRR),
+			readb(i2c->base + MPC_I2C_FDR));
+		return;
+	}
 
 	ret = mpc_i2c_get_fdr_8xxx(node, clock, prescaler);
 	fdr = (ret >= 0) ? ret : 0x1031; /* backward compatibility */
@@ -340,9 +391,9 @@ static void __devinit mpc_i2c_setclock_8xxx(struct device_node *node,
 }
 
 #else /* !CONFIG_FSL_SOC */
-static void __devinit mpc_i2c_setclock_8xxx(struct device_node *node,
-					    struct mpc_i2c *i2c,
-					    u32 clock, u32 prescaler)
+static void __devinit mpc_i2c_setup_8xxx(struct device_node *node,
+					 struct mpc_i2c *i2c,
+					 u32 clock, u32 prescaler)
 {
 }
 #endif /* CONFIG_FSL_SOC */
@@ -496,7 +547,7 @@ static int __devinit fsl_i2c_probe(struct of_device *op,
 {
 	struct mpc_i2c *i2c;
 	const u32 *prop;
-	u32 clock = 0;
+	u32 clock = MPC_I2C_CLOCK_SAFE;
 	int result = 0;
 	int plen;
 
@@ -525,21 +576,21 @@ static int __devinit fsl_i2c_probe(struct of_device *op,
 		}
 	}
 
-	if (!of_get_property(op->node, "fsl,preserve-clocking", NULL)) {
+	if (of_get_property(op->node, "fsl,preserve-clocking", NULL)) {
+		clock = MPC_I2C_CLOCK_PRESERVE;
+	} else {
 		prop = of_get_property(op->node, "clock-frequency", &plen);
 		if (prop && plen == sizeof(u32))
 			clock = *prop;
+	}
 
-		if (match->data) {
-			struct mpc_i2c_data *data =
-				(struct mpc_i2c_data *)match->data;
-			data->setclock(op->node, i2c, clock, data->prescaler);
-		} else {
-			/* Backwards compatibility */
-			if (of_get_property(op->node, "dfsrr", NULL))
-				mpc_i2c_setclock_8xxx(op->node, i2c,
-						      clock, 0);
-		}
+	if (match->data) {
+		struct mpc_i2c_data *data = match->data;
+		data->setup(op->node, i2c, clock, data->prescaler);
+	} else {
+		/* Backwards compatibility */
+		if (of_get_property(op->node, "dfsrr", NULL))
+			mpc_i2c_setup_8xxx(op->node, i2c, clock, 0);
 	}
 
 	dev_set_drvdata(&op->dev, i2c);
@@ -584,21 +635,25 @@ static int __devexit fsl_i2c_remove(struct of_device *op)
 	return 0;
 };
 
+static struct mpc_i2c_data __devinitdata mpc_i2c_data_512x = {
+	.setup = mpc_i2c_setup_512x,
+};
+
 static struct mpc_i2c_data __devinitdata mpc_i2c_data_52xx = {
-	.setclock = mpc_i2c_setclock_52xx,
+	.setup = mpc_i2c_setup_52xx,
 };
 
 static struct mpc_i2c_data __devinitdata mpc_i2c_data_8313 = {
-	.setclock = mpc_i2c_setclock_8xxx,
+	.setup = mpc_i2c_setup_8xxx,
 };
 
 static struct mpc_i2c_data __devinitdata mpc_i2c_data_8543 = {
-	.setclock = mpc_i2c_setclock_8xxx,
+	.setup = mpc_i2c_setup_8xxx,
 	.prescaler = 2,
 };
 
 static struct mpc_i2c_data __devinitdata mpc_i2c_data_8544 = {
-	.setclock = mpc_i2c_setclock_8xxx,
+	.setup = mpc_i2c_setup_8xxx,
 	.prescaler = 3,
 };
 
@@ -606,6 +661,7 @@ static const struct of_device_id mpc_i2c_of_match[] = {
 	{.compatible = "mpc5200-i2c", .data = &mpc_i2c_data_52xx, },
 	{.compatible = "fsl,mpc5200b-i2c", .data = &mpc_i2c_data_52xx, },
 	{.compatible = "fsl,mpc5200-i2c", .data = &mpc_i2c_data_52xx, },
+	{.compatible = "fsl,mpc5121-i2c", .data = &mpc_i2c_data_512x, },
 	{.compatible = "fsl,mpc8313-i2c", .data = &mpc_i2c_data_8313, },
 	{.compatible = "fsl,mpc8543-i2c", .data = &mpc_i2c_data_8543, },
 	{.compatible = "fsl,mpc8544-i2c", .data = &mpc_i2c_data_8544, },
@@ -614,7 +670,6 @@ static const struct of_device_id mpc_i2c_of_match[] = {
 	{},
 };
 MODULE_DEVICE_TABLE(of, mpc_i2c_of_match);
-
 
 /* Structure for a device driver */
 static struct of_platform_driver mpc_i2c_driver = {
@@ -648,5 +703,5 @@ module_exit(fsl_i2c_exit);
 
 MODULE_AUTHOR("Adrian Cox <adrian@humboldt.co.uk>");
 MODULE_DESCRIPTION("I2C-Bus adapter for MPC107 bridge and "
-		   "MPC824x/85xx/52xx processors");
+		   "MPC824x/83xx/85xx/86xx/512x/52xx processors");
 MODULE_LICENSE("GPL");
