@@ -48,26 +48,27 @@ extern int gspca_debug;
 
 /* used to list framerates supported by a camera mode (resolution) */
 struct framerates {
-	int *rates;
+	const u8 *rates;
 	int nrates;
 };
 
 /* device information - set at probe time */
 struct cam {
-	int bulk_size;		/* buffer size when image transfer by bulk */
 	const struct v4l2_pix_format *cam_mode;	/* size nmodes */
-	char nmodes;
 	const struct framerates *mode_framerates; /* must have size nmode,
 						   * just like cam_mode */
-	__u8 bulk_nurbs;	/* number of URBs in bulk mode
+	u32 bulk_size;		/* buffer size when image transfer by bulk */
+	u32 input_flags;	/* value for ENUM_INPUT status flags */
+	u8 nmodes;		/* size of cam_mode */
+	u8 no_urb_create;	/* don't create transfer URBs */
+	u8 bulk_nurbs;		/* number of URBs in bulk mode
 				 * - cannot be > MAX_NURBS
 				 * - when 0 and bulk_size != 0 means
 				 *   1 URB and submit done by subdriver */
 	u8 bulk;		/* image transfer by 0:isoc / 1:bulk */
 	u8 npkt;		/* number of packets in an ISOC message
 				 * 0 is the default value: 32 packets */
-	u32 input_flags;	/* value for ENUM_INPUT status flags */
-	char reverse_alts;	/* Alt settings are in high to low order */
+	u8 reverse_alts;	/* Alt settings are in high to low order */
 };
 
 struct gspca_dev;
@@ -187,7 +188,6 @@ struct gspca_dev {
 	char users;			/* number of opens */
 	char present;			/* device connected */
 	char nbufread;			/* number of buffers for read() */
-	char nurbs;			/* number of allocated URBs */
 	char memory;			/* memory type (V4L2_MEMORY_xxx) */
 	__u8 iface;			/* USB interface number */
 	__u8 alt;			/* USB alternate setting */
