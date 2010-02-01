@@ -88,7 +88,7 @@ typedef struct { unsigned long pgd; } pgd_t;
 #define __pte(x)	((pte_t) { (x) } )
 #else
 typedef struct { unsigned long long pte_low; } pte_t;
-typedef struct { unsigned long pgprot; } pgprot_t;
+typedef struct { unsigned long long pgprot; } pgprot_t;
 typedef struct { unsigned long pgd; } pgd_t;
 #define pte_val(x)	((x).pte_low)
 #define __pte(x)	((pte_t) { (x) } )
@@ -127,7 +127,7 @@ typedef struct page *pgtable_t;
  * is not visible (it is part of the PMB mapping) and so needs to be
  * added or subtracted as required.
  */
-#if defined(CONFIG_PMB_FIXED)
+#if defined(CONFIG_PMB_LEGACY)
 /* phys = virt - PAGE_OFFSET - (__MEMORY_START & 0xe0000000) */
 #define PMB_OFFSET	(PAGE_OFFSET - PXSEG(__MEMORY_START))
 #define __pa(x)	((unsigned long)(x) - PMB_OFFSET)

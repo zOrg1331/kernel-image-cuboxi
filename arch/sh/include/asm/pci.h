@@ -15,6 +15,7 @@
  */
 struct pci_channel {
 	struct pci_channel	*next;
+	struct pci_bus		*bus;
 
 	struct pci_ops		*pci_ops;
 	struct resource		*io_resource;
@@ -24,8 +25,10 @@ struct pci_channel {
 	unsigned long		mem_offset;
 
 	unsigned long		reg_base;
-
 	unsigned long		io_map_base;
+
+	unsigned int		index;
+	unsigned int		need_domain_info;
 };
 
 extern void register_pci_controller(struct pci_channel *hose);
@@ -99,20 +102,6 @@ static inline void pci_dma_burst_advice(struct pci_dev *pdev,
 }
 #endif
 
-#ifdef CONFIG_SUPERH32
-/*
- * If we're on an SH7751 or SH7780 PCI controller, PCI memory is mapped
- * at the end of the address space in a special non-translatable area.
- */
-#define PCI_MEM_FIXED_START	0xfd000000
-#define PCI_MEM_FIXED_END	(PCI_MEM_FIXED_START + 0x01000000)
-
-#define is_pci_memory_fixed_range(s, e)	\
-	((s) >= PCI_MEM_FIXED_START && (e) < PCI_MEM_FIXED_END)
-#else
-#define is_pci_memory_fixed_range(s, e)	(0)
-#endif
-
 /* Board-specific fixup routines. */
 int pcibios_map_platform_irq(struct pci_dev *dev, u8 slot, u8 pin);
 
@@ -121,6 +110,14 @@ extern void pcibios_resource_to_bus(struct pci_dev *dev,
 
 extern void pcibios_bus_to_resource(struct pci_dev *dev, struct resource *res,
 				    struct pci_bus_region *region);
+
+#define pci_domain_nr(bus) ((struct pci_channel *)(bus)->sysdata)->index
+
+static inline int pci_proc_domain(struct pci_bus *bus)
+{
+	struct pci_channel *hose = bus->sysdata;
+	return hose->need_domain_info;
+}
 
 /* Chances are this interrupt is wired PC-style ...  */
 static inline int pci_get_legacy_ide_irq(struct pci_dev *dev, int channel)
