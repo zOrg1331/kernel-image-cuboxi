@@ -9,11 +9,11 @@
 #include "trace.h"
 
 
-char *perf_trace_buf;
-EXPORT_SYMBOL_GPL(perf_trace_buf);
+char __percpu *perf_trace_buf;
+EXPORT_PER_CPU_SYMBOL_GPL(perf_trace_buf);
 
-char *perf_trace_buf_nmi;
-EXPORT_SYMBOL_GPL(perf_trace_buf_nmi);
+char __percpu *perf_trace_buf_nmi;
+EXPORT_PER_CPU_SYMBOL_GPL(perf_trace_buf_nmi);
 
 typedef typeof(char [FTRACE_MAX_PROFILE_SIZE]) perf_trace_t ;
 
@@ -22,20 +22,20 @@ static int	total_profile_count;
 
 static int ftrace_profile_enable_event(struct ftrace_event_call *event)
 {
-	char *buf;
+	char __percpu *buf;
 	int ret = -ENOMEM;
 
 	if (event->profile_count++ > 0)
 		return 0;
 
 	if (!total_profile_count) {
-		buf = (char *)alloc_percpu(perf_trace_t);
+		buf = (char __percpu *)alloc_percpu(perf_trace_t);
 		if (!buf)
 			goto fail_buf;
 
 		rcu_assign_pointer(perf_trace_buf, buf);
 
-		buf = (char *)alloc_percpu(perf_trace_t);
+		buf = (char __percpu *)alloc_percpu(perf_trace_t);
 		if (!buf)
 			goto fail_buf_nmi;
 
@@ -81,7 +81,7 @@ int ftrace_profile_enable(int event_id)
 
 static void ftrace_profile_disable_event(struct ftrace_event_call *event)
 {
-	char *buf, *nmi_buf;
+	char __percpu *buf, *nmi_buf;
 
 	if (--event->profile_count > 0)
 		return;

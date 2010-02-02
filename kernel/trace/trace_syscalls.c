@@ -433,7 +433,7 @@ static void prof_syscall_enter(struct pt_regs *regs, long id)
 	struct syscall_metadata *sys_data;
 	struct syscall_trace_enter *rec;
 	unsigned long flags;
-	char *trace_buf;
+	char __percpu *trace_buf;
 	char *raw_data;
 	int syscall_nr;
 	int rctx;
@@ -531,7 +531,7 @@ static void prof_syscall_exit(struct pt_regs *regs, long ret)
 	struct syscall_trace_exit *rec;
 	unsigned long flags;
 	int syscall_nr;
-	char *trace_buf;
+	char __percpu *trace_buf;
 	char *raw_data;
 	int rctx;
 	int size;

@@ -1262,7 +1262,7 @@ static __kprobes int kprobe_profile_func(struct kprobe *kp,
 	struct trace_entry *ent;
 	int size, __size, i, pc, __cpu;
 	unsigned long irq_flags;
-	char *trace_buf;
+	char __percpu *trace_buf;
 	char *raw_data;
 	int rctx;
 
@@ -1327,7 +1327,7 @@ static __kprobes int kretprobe_profile_func(struct kretprobe_instance *ri,
 	struct trace_entry *ent;
 	int size, __size, i, pc, __cpu;
 	unsigned long irq_flags;
-	char *trace_buf;
+	char __percpu *trace_buf;
 	char *raw_data;
 	int rctx;
 
