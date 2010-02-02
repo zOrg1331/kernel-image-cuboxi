@@ -21,6 +21,8 @@ config ARM
 	select HAVE_KERNEL_GZIP
 	select HAVE_KERNEL_LZO
 	select GENERIC_ATOMIC64 if (!CPU_32v6K)
+	select HAVE_PERF_EVENTS
+	select PERF_USE_VMALLOC
 	help
 	  The ARM series is a line of low-power-consumption RISC chip designs
 	  licensed by ARM Ltd and targeted at embedded applications and
@@ -906,6 +908,11 @@ config XSCALE_PMU
 	depends on CPU_XSCALE && !XSCALE_PMU_TIMER
 	default y
 
+config CPU_HAS_PMU
+	depends on CPU_V6 || CPU_V7 || XSCALE_PMU
+	default y
+	bool
+
 if !MMU
 source "arch/arm/Kconfig-nommu"
 endif
@@ -1209,6 +1216,14 @@ config HIGHPTE
 	bool "Allocate 2nd-level pagetables from highmem"
 	depends on HIGHMEM
 	depends on !OUTER_CACHE
+
+config HW_PERF_EVENTS
+	bool "Enable hardware performance counter support for perf events"
+	depends on PERF_EVENTS && CPU_HAS_PMU && (CPU_V6 || CPU_V7)
+	default y
+	help
+	  Enable hardware performance counter support for perf events. If
+	  disabled, perf events will use software events only.
 
 source "mm/Kconfig"
 
