@@ -8,6 +8,8 @@
 #include <linux/rbtree.h>
 #include "event.h"
 
+#define DEBUG_CACHE_DIR ".debug"
+
 #ifdef HAVE_CPLUS_DEMANGLE
 extern char *cplus_demangle(const char *, int);
 
@@ -58,7 +60,8 @@ struct symbol_conf {
 			sort_by_name,
 			show_nr_samples,
 			use_callchain,
-			exclude_other;
+			exclude_other,
+			full_paths;
 	const char	*vmlinux_name,
 			*field_sep;
 	char            *dso_list_str,
@@ -94,6 +97,7 @@ struct dso {
 	u8		 slen_calculated:1;
 	u8		 has_build_id:1;
 	u8		 kernel:1;
+	u8		 hit:1;
 	unsigned char	 origin;
 	u8		 sorted_by_name;
 	u8		 loaded;
@@ -105,6 +109,7 @@ struct dso {
 };
 
 struct dso *dso__new(const char *name);
+struct dso *dso__new_kernel(const char *name);
 void dso__delete(struct dso *self);
 
 bool dso__loaded(const struct dso *self, enum map_type type);
@@ -112,18 +117,30 @@ bool dso__sorted_by_name(const struct dso *self, enum map_type type);
 
 void dso__sort_by_name(struct dso *self, enum map_type type);
 
+extern struct list_head dsos__user, dsos__kernel;
+
+struct dso *__dsos__findnew(struct list_head *head, const char *name);
+
+static inline struct dso *dsos__findnew(const char *name)
+{
+	return __dsos__findnew(&dsos__user, name);
+}
+
 struct perf_session;
 
-struct dso *dsos__findnew(const char *name);
 int dso__load(struct dso *self, struct map *map, struct perf_session *session,
 	      symbol_filter_t filter);
+int dso__load_vmlinux_path(struct dso *self, struct map *map,
+			   struct perf_session *session, symbol_filter_t filter);
 void dsos__fprintf(FILE *fp);
-size_t dsos__fprintf_buildid(FILE *fp);
+size_t dsos__fprintf_buildid(FILE *fp, bool with_hits);
 
 size_t dso__fprintf_buildid(struct dso *self, FILE *fp);
 size_t dso__fprintf(struct dso *self, enum map_type type, FILE *fp);
 char dso__symtab_origin(const struct dso *self);
+void dso__set_long_name(struct dso *self, char *name);
 void dso__set_build_id(struct dso *self, void *build_id);
+void dso__read_running_kernel_build_id(struct dso *self);
 struct symbol *dso__find_symbol(struct dso *self, enum map_type type, u64 addr);
 struct symbol *dso__find_symbol_by_name(struct dso *self, enum map_type type,
 					const char *name);
@@ -131,11 +148,17 @@ struct symbol *dso__find_symbol_by_name(struct dso *self, enum map_type type,
 int filename__read_build_id(const char *filename, void *bf, size_t size);
 int sysfs__read_build_id(const char *filename, void *bf, size_t size);
 bool dsos__read_build_ids(void);
-int build_id__sprintf(u8 *self, int len, char *bf);
+int build_id__sprintf(const u8 *self, int len, char *bf);
+int kallsyms__parse(const char *filename, void *arg,
+		    int (*process_symbol)(void *arg, const char *name,
+					  char type, u64 start));
 
 int symbol__init(void);
+bool symbol_type__is_a(char symbol_type, enum map_type map_type);
+
 int perf_session__create_kernel_maps(struct perf_session *self);
 
-extern struct list_head dsos__user, dsos__kernel;
+struct map *perf_session__new_module_map(struct perf_session *self, u64 start,
+					 const char *filename);
 extern struct dso *vdso;
 #endif /* __PERF_SYMBOL */
