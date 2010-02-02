@@ -2560,6 +2560,16 @@ int nilfs_clean_segments(struct super_block *sb, struct nilfs_argv *argv,
 		set_current_state(TASK_INTERRUPTIBLE);
 		schedule_timeout(sci->sc_interval);
 	}
+	if (nilfs_test_opt(sbi, DISCARD)) {
+		int ret = nilfs_discard_segments(nilfs, sci->sc_freesegs,
+						 sci->sc_nfreesegs);
+		if (ret) {
+			printk(KERN_WARNING
+			       "NILFS warning: error %d on discard request, "
+			       "turning discards off for the device\n", ret);
+			nilfs_clear_opt(sbi, DISCARD);
+		}
+	}
 
  out_unlock:
 	sci->sc_freesegs = NULL;
@@ -2829,7 +2839,7 @@ static void nilfs_segctor_destroy(struct nilfs_sc_info *sci)
 		|| sci->sc_seq_request != sci->sc_seq_done);
 	spin_unlock(&sci->sc_state_lock);
 
-	if (flag || nilfs_segctor_confirm(sci))
+	if (flag || !nilfs_segctor_confirm(sci))
 		nilfs_segctor_write_out(sci);
 
 	WARN_ON(!list_empty(&sci->sc_copied_buffers));
@@ -2865,8 +2875,15 @@ int nilfs_attach_segment_constructor(struct nilfs_sb_info *sbi)
 	struct the_nilfs *nilfs = sbi->s_nilfs;
 	int err;
 
-	/* Each field of nilfs_segctor is cleared through the initialization
-	   of super-block info */
+	if (NILFS_SC(sbi)) {
+		/*
+		 * This happens if the filesystem was remounted
+		 * read/write after nilfs_error degenerated it into a
+		 * read-only mount.
+		 */
+		nilfs_detach_segment_constructor(sbi);
+	}
+
 	sbi->s_sc_info = nilfs_segctor_new(sbi);
 	if (!sbi->s_sc_info)
 		return -ENOMEM;
