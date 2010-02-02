@@ -668,11 +668,11 @@ static inline int module_get_iter_tracepoints(struct tracepoint_iter *iter)
 	return 0;
 }
 
-static inline void set_all_modules_text_rw()
+static inline void set_all_modules_text_rw(void)
 {
 }
 
-static inline void set_all_modules_text_ro()
+static inline void set_all_modules_text_ro(void)
 {
 }
 #endif /* CONFIG_MODULES */
