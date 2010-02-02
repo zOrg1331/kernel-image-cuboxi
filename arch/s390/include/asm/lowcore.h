@@ -36,6 +36,8 @@
 #define __LC_DUMP_REIPL			0x0e00
 
 #ifndef __s390x__
+#define __LC_RST_NEW_PSW		0x0000
+#define __LC_RST_OLD_PSW		0x0008
 #define __LC_EXT_OLD_PSW		0x0018
 #define __LC_SVC_OLD_PSW		0x0020
 #define __LC_PGM_OLD_PSW		0x0028
@@ -81,12 +83,13 @@
 #define __LC_CREGS_SAVE_AREA		0x01c0
 #else /* __s390x__ */
 #define __LC_LAST_BREAK			0x0110
+#define __LC_RST_OLD_PSW		0x0120
 #define __LC_EXT_OLD_PSW		0x0130
 #define __LC_SVC_OLD_PSW		0x0140
 #define __LC_PGM_OLD_PSW		0x0150
 #define __LC_MCK_OLD_PSW		0x0160
 #define __LC_IO_OLD_PSW			0x0170
-#define __LC_RESTART_PSW		0x01a0
+#define __LC_RST_NEW_PSW		0x01a0
 #define __LC_EXT_NEW_PSW		0x01b0
 #define __LC_SVC_NEW_PSW		0x01c0
 #define __LC_PGM_NEW_PSW		0x01d0
@@ -144,7 +147,9 @@ void pgm_check_handler(void);
 void mcck_int_handler(void);
 void io_int_handler(void);
 
-struct save_area_s390 {
+#ifdef CONFIG_32BIT
+
+struct save_area {
 	u32	ext_save;
 	u64	timer;
 	u64	clk_cmp;
@@ -158,7 +163,11 @@ struct save_area_s390 {
 	u32	ctrl_regs[16];
 }  __attribute__((packed));
 
-struct save_area_s390x {
+#define SAVE_AREA_BASE offsetof(struct _lowcore, extended_save_area_addr)
+
+#else /* CONFIG_32BIT */
+
+struct save_area {
 	u64	fp_regs[16];
 	u64	gp_regs[16];
 	u8	psw[16];
@@ -174,21 +183,9 @@ struct save_area_s390x {
 	u64	ctrl_regs[16];
 }  __attribute__((packed));
 
-union save_area {
-	struct save_area_s390	s390;
-	struct save_area_s390x	s390x;
-};
+#define SAVE_AREA_BASE offsetof(struct _lowcore, floating_pt_save_area)
 
-#define SAVE_AREA_BASE_S390	0xd4
-#define SAVE_AREA_BASE_S390X	0x1200
-
-#ifndef __s390x__
-#define SAVE_AREA_SIZE sizeof(struct save_area_s390)
-#define SAVE_AREA_BASE SAVE_AREA_BASE_S390
-#else
-#define SAVE_AREA_SIZE sizeof(struct save_area_s390x)
-#define SAVE_AREA_BASE SAVE_AREA_BASE_S390X
-#endif
+#endif /* CONFIG_32BIT */
 
 #ifndef __s390x__
 #define LC_ORDER 0
