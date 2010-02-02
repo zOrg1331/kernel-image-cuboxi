@@ -224,6 +224,85 @@ int xfpregs_set(struct task_struct *target, const struct user_regset *regset,
 	return ret;
 }
 
+int xstateregs_active(struct task_struct *target,
+		      const struct user_regset *regset)
+{
+	return (cpu_has_xsave && tsk_used_math(target)) ? xstate_size : 0;
+}
+
+int xstateregs_get(struct task_struct *target, const struct user_regset *regset,
+		unsigned int pos, unsigned int count,
+		void *kbuf, void __user *ubuf)
+{
+	int ret;
+
+	if (!cpu_has_xsave)
+		return -ENODEV;
+
+	ret = init_fpu(target);
+	if (ret)
+		return ret;
+
+	/*
+	 * First copy the fxsave bytes 0..463
+	 */
+	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+				  &target->thread.xstate->xsave, 0,
+				  (sizeof(struct i387_fxsave_struct) -
+				   sizeof(xstate_fx_sw_bytes)));
+	/*
+	 * Copy the 48bytes defined by software
+	 */
+	ret |= user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+				   xstate_fx_sw_bytes,
+				   (sizeof(struct i387_fxsave_struct) -
+				    sizeof(xstate_fx_sw_bytes)),
+				   sizeof(struct i387_fxsave_struct));
+	/*
+	 * Copy the rest of xstate memory layout
+	 */
+	ret |= user_regset_copyout(&pos, &count, &kbuf, &ubuf,
+				   &target->thread.xstate->xsave.xsave_hdr,
+				   sizeof(struct i387_fxsave_struct), -1);
+	return ret;
+}
+
+int xstateregs_set(struct task_struct *target, const struct user_regset *regset,
+		  unsigned int pos, unsigned int count,
+		  const void *kbuf, const void __user *ubuf)
+{
+	int ret;
+	struct xsave_hdr_struct *xsave_hdr =
+				&current->thread.xstate->xsave.xsave_hdr;
+
+
+	if (!cpu_has_xsave)
+		return -ENODEV;
+
+	ret = init_fpu(target);
+	if (ret)
+		return ret;
+
+	set_stopped_child_used_math(target);
+
+	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
+				 &target->thread.xstate->xsave, 0, -1);
+
+	/*
+	 * mxcsr reserved bits must be masked to zero for security reasons.
+	 */
+	target->thread.xstate->fxsave.mxcsr &= mxcsr_feature_mask;
+
+	xsave_hdr->xstate_bv &= pcntxt_mask;
+	/*
+	 * These bits must be zero.
+	 */
+	xsave_hdr->reserved1[0] = xsave_hdr->reserved1[1] = 0;
+
+
+	return ret;
+}
+
 #if defined CONFIG_X86_32 || defined CONFIG_IA32_EMULATION
 
 /*
