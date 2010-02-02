@@ -19,7 +19,6 @@
 #include <linux/kthread.h>
 #include <linux/highmem.h>
 #include <linux/firmware.h>
-#include "base.h"
 
 #define to_dev(obj) container_of(obj, struct device, kobj)
 
@@ -69,7 +68,9 @@ fw_load_abort(struct firmware_priv *fw_priv)
 }
 
 static ssize_t
-firmware_timeout_show(struct class *class, char *buf)
+firmware_timeout_show(struct class *class,
+		      struct class_attribute *attr,
+		      char *buf)
 {
 	return sprintf(buf, "%d\n", loading_timeout);
 }
@@ -87,7 +88,9 @@ firmware_timeout_show(struct class *class, char *buf)
  *	Note: zero means 'wait forever'.
  **/
 static ssize_t
-firmware_timeout_store(struct class *class, const char *buf, size_t count)
+firmware_timeout_store(struct class *class,
+			struct class_attribute *attr,
+			const char *buf, size_t count)
 {
 	loading_timeout = simple_strtol(buf, NULL, 10);
 	if (loading_timeout < 0)
