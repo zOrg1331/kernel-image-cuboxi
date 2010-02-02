@@ -49,29 +49,14 @@ char *prom_getenv(const char *name)
 }
 EXPORT_SYMBOL(prom_getenv);
 
-char * __init prom_getcmdline(void)
-{
-	return &(arcs_cmdline[0]);
-}
-
 static void  __init ar7_init_cmdline(int argc, char *argv[])
 {
-	char *cp;
-	int actr;
+	int i;
 
-	actr = 1; /* Always ignore argv[0] */
-
-	cp = &(arcs_cmdline[0]);
-	while (actr < argc) {
-		strcpy(cp, argv[actr]);
-		cp += strlen(argv[actr]);
-		*cp++ = ' ';
-		actr++;
-	}
-	if (cp != &(arcs_cmdline[0])) {
-		/* get rid of trailing space */
-		--cp;
-		*cp = '\0';
+	for (i = 1; i < argc; i++) {
+		strlcat(arcs_cmdline, argv[i], COMMAND_LINE_SIZE);
+		if (i < (argc - 1))
+			strlcat(arcs_cmdline, " ", COMMAND_LINE_SIZE);
 	}
 }
 
@@ -216,7 +201,7 @@ static void __init console_config(void)
 	char parity = '\0', bits = '\0', flow = '\0';
 	char *s, *p;
 
-	if (strstr(prom_getcmdline(), "console="))
+	if (strstr(arcs_cmdline, "console="))
 		return;
 
 	s = prom_getenv("modetty0");
@@ -250,7 +235,7 @@ static void __init console_config(void)
 	else
 		sprintf(console_string, " console=ttyS0,%d%c%c", baud, parity,
 			bits);
-	strcat(prom_getcmdline(), console_string);
+	strlcat(arcs_cmdline, console_string, COMMAND_LINE_SIZE);
 #endif
 }
 
@@ -279,4 +264,3 @@ int prom_putchar(char c)
 	serial_out(UART_TX, c);
 	return 1;
 }
-
