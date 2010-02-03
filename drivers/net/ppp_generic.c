@@ -1436,17 +1436,16 @@ static int ppp_mp_explode(struct ppp *ppp, struct sk_buff *skb)
 		}
 
 		/*
-		 *check if we are on the last channel or
-		 *we exceded the lenght of the data to
-		 *fragment
+		 * check if we are on the last channel or we exceeded the length
+		 * of the data to fragment
 		 */
 		if ((nfree <= 0) || (flen > len))
 			flen = len;
 		/*
-		 *it is not worth to tx on slow channels:
-		 *in that case from the resulting flen according to the
-		 *above formula will be equal or less than zero.
-		 *Skip the channel in this case
+		 * it is not worth to tx on slow channels:
+		 * in that case from the resulting flen according to the above
+		 * formula will be equal or less than zero.
+		 * skip the channel in this case.
 		 */
 		if (flen <= 0) {
 			pch->avail = 2;

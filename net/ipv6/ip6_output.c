@@ -1206,7 +1206,7 @@ int ip6_append_data(struct sock *sk, int getfrag(void *from, char *to,
 	 * Let's try using as much space as possible.
 	 * Use MTU if total length of the message fits into the MTU.
 	 * Otherwise, we need to reserve fragment header and
-	 * fragment alignment (= 8-15 octects, in total).
+	 * fragment alignment (= 8-15 octets, in total).
 	 *
 	 * Note that we may need to "move" the data from the tail of
 	 * of the buffer to the new fragment when we split

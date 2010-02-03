@@ -65,7 +65,7 @@ static const int sb1000_debug = 1;
 
 static const int SB1000_IO_EXTENT = 8;
 /* SB1000 Maximum Receive Unit */
-static const int SB1000_MRU = 1500; /* octects */
+static const int SB1000_MRU = 1500; /* octets */
 
 #define NPIDS 4
 struct sb1000_private {
