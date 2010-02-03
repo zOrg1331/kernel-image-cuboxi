@@ -80,6 +80,44 @@
 
 #define PTRACE_SINGLEBLOCK	33	/* resume execution until next branch */
 
+/*
+ * Structure layout used in PTRACE_GETXSTATEREGS/PTRACE_SETXSTATEREGS is same
+ * as the memory layout of xsave used by the processor (except for the bytes
+ * 464..511 which can be used by the software). Size of the structure that users
+ * need to use for these two interfaces can be obtained by doing:
+ *	cpuid_count(0xd, 0, &eax, &ptrace_xstateregs_struct_size, &ecx, &edx);
+ * i.e., cpuid.(eax=0xd,ecx=0).ebx will be the size that user (debuggers etc)
+ * need to use.
+ *
+ * And format of this structure will be like:
+ *	struct {
+ *		fxsave_bytes[0..463]
+ *		sw_usable_bytes[464..511]
+ *		xsave_hdr_bytes[512..575]
+ *		avx_bytes[576..831]
+ *		future_state etc
+ *	}
+ *
+ * Same memory layout will be used for the coredump NT_X86_XSTATE representing
+ * the xstate registers.
+ *
+ * For now, only first 8 bytes of the sw_usable_bytes[464..467] will be used and
+ * will be set to OS enabled xstate mask(which is same as the 64bit mask
+ * returned by the xgetbv's xCR0). Users (analyzing core dump remotely etc)
+ * can use this mask aswell as the mask saved in the xstate_hdr bytes and
+ * interpret what states the processor/OS supports and what states are in
+ * modified/initialized conditions for the particular process/thread.
+ *
+ * Also when the user modifies certain state FP/SSE/etc through this
+ * PTRACE_SETXSTATEREGS, they must ensure that the xsave_hdr.xstate_bv
+ * bytes[512..519] of the above memory layout are updated correspondingly.
+ * i.e., for example when FP state is modified to a non-init state,
+ * xsave_hdr.xstate_bv's bit 0 must be set to '1', when SSE is modified to
+ * non-init state, xsave_hdr.xstate_bv's bit 1 must to be set to '1' etc..
+ */
+#define PTRACE_GETXSTATEREGS      34
+#define PTRACE_SETXSTATEREGS      35
+
 #ifndef __ASSEMBLY__
 #include <linux/types.h>
 
