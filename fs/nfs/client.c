@@ -890,6 +890,7 @@ static void nfs_server_set_fsinfo(struct nfs_server *server, struct nfs_fsinfo *
 
 	server->backing_dev_info.name = "nfs";
 	server->backing_dev_info.ra_pages = server->rpages * NFS_MAX_READAHEAD;
+	server->backing_dev_info.capabilities |= BDI_CAP_ACCT_UNSTABLE;
 
 	if (server->wsize > max_rpc_payload)
 		server->wsize = max_rpc_payload;
