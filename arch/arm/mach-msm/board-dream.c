@@ -34,8 +34,6 @@ static struct platform_device *devices[] __initdata = {
 	&msm_device_uart3,
 	&msm_device_smd,
 	&msm_device_nand,
-	&msm_device_hsusb,
-	&msm_device_i2c,
 };
 
 extern struct sys_timer msm_timer;
@@ -78,7 +76,7 @@ static void __init trout_map_io(void)
 	writeb(0x80, TROUT_CPLD_BASE + 0x00);
 #endif
 
-	msm_clock_init();
+	msm_clock_init(msm_clocks_7x01a, msm_num_clocks_7x01a);
 }
 
 MACHINE_START(TROUT, "HTC Dream")
