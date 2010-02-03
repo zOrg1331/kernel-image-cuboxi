@@ -134,7 +134,7 @@ static inline unsigned int s3c_irq_uart_bit(unsigned int irq)
 	return irq & 3;
 }
 
-/* UART interrupt registers, not worth adding to seperate include header */
+/* UART interrupt registers, not worth adding to separate include header */
 #define S3C64XX_UINTP	0x30
 #define S3C64XX_UINTSP	0x34
 #define S3C64XX_UINTM	0x38

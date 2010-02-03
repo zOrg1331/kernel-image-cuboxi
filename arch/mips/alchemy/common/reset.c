@@ -147,7 +147,7 @@ void au1000_restart(char *command)
 	/* Give board a chance to do a hardware reset */
 	board_reset();
 
-	/* Jump to the beggining in case board_reset() is empty */
+	/* Jump to the beginning in case board_reset() is empty */
 	__asm__ __volatile__("jr\t%0"::"r"(0xbfc00000));
 }
 
