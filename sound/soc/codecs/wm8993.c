@@ -1,7 +1,7 @@
 /*
  * wm8993.c -- WM8993 ALSA SoC audio driver
  *
- * Copyright 2009 Wolfson Microelectronics plc
+ * Copyright 2009, 2010 Wolfson Microelectronics plc
  *
  * Author: Mark Brown <broonie@opensource.wolfsonmicro.com>
  *
@@ -213,6 +213,7 @@ static struct {
 };
 
 struct wm8993_priv {
+	struct wm_hubs_data hubs_data;
 	u16 reg_cache[WM8993_REGISTER_COUNT];
 	struct wm8993_platform_data pdata;
 	struct snd_soc_codec codec;
@@ -227,6 +228,7 @@ struct wm8993_priv {
 	int class_w_users;
 	unsigned int fll_fref;
 	unsigned int fll_fout;
+	int fll_src;
 };
 
 static unsigned int wm8993_read_hw(struct snd_soc_codec *codec, u8 reg)
@@ -506,6 +508,7 @@ static int wm8993_set_fll(struct snd_soc_dai *dai, int fll_id, int source,
 
 	wm8993->fll_fref = Fref;
 	wm8993->fll_fout = Fout;
+	wm8993->fll_src = source;
 
 	return 0;
 }
@@ -995,6 +998,11 @@ static int wm8993_set_bias_level(struct snd_soc_codec *codec,
 
 	case SND_SOC_BIAS_STANDBY:
 		if (codec->bias_level == SND_SOC_BIAS_OFF) {
+			/* Tune DC servo configuration */
+			snd_soc_write(codec, 0x44, 3);
+			snd_soc_write(codec, 0x56, 3);
+			snd_soc_write(codec, 0x44, 0);
+
 			/* Bring up VMID with fast soft start */
 			snd_soc_update_bits(codec, WM8993_ANTIPOP2,
 					    WM8993_STARTUP_BIAS_ENA |
@@ -1480,9 +1488,74 @@ static int wm8993_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM
+static int wm8993_suspend(struct platform_device *pdev, pm_message_t state)
+{
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+	struct wm8993_priv *wm8993 = codec->private_data;
+	int fll_fout = wm8993->fll_fout;
+	int fll_fref  = wm8993->fll_fref;
+	int ret;
+
+	/* Stop the FLL in an orderly fashion */
+	ret = wm8993_set_fll(codec->dai, 0, 0, 0, 0);
+	if (ret != 0) {
+		dev_err(&pdev->dev, "Failed to stop FLL\n");
+		return ret;
+	}
+
+	wm8993->fll_fout = fll_fout;
+	wm8993->fll_fref = fll_fref;
+
+	wm8993_set_bias_level(codec, SND_SOC_BIAS_OFF);
+
+	return 0;
+}
+
+static int wm8993_resume(struct platform_device *pdev)
+{
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+	struct wm8993_priv *wm8993 = codec->private_data;
+	u16 *cache = wm8993->reg_cache;
+	int i, ret;
+
+	/* Restore the register settings */
+	for (i = 1; i < WM8993_MAX_REGISTER; i++) {
+		if (cache[i] == wm8993_reg_defaults[i])
+			continue;
+		snd_soc_write(codec, i, cache[i]);
+	}
+
+	wm8993_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+
+	/* Restart the FLL? */
+	if (wm8993->fll_fout) {
+		int fll_fout = wm8993->fll_fout;
+		int fll_fref  = wm8993->fll_fref;
+
+		wm8993->fll_fref = 0;
+		wm8993->fll_fout = 0;
+
+		ret = wm8993_set_fll(codec->dai, 0, wm8993->fll_src,
+				     fll_fref, fll_fout);
+		if (ret != 0)
+			dev_err(codec->dev, "Failed to restart FLL\n");
+	}
+
+	return 0;
+}
+#else
+#define wm8993_suspend NULL
+#define wm8993_resume NULL
+#endif
+
 struct snd_soc_codec_device soc_codec_dev_wm8993 = {
 	.probe = 	wm8993_probe,
 	.remove = 	wm8993_remove,
+	.suspend =	wm8993_suspend,
+	.resume =	wm8993_resume,
 };
 EXPORT_SYMBOL_GPL(soc_codec_dev_wm8993);
 
@@ -1523,6 +1596,9 @@ static int wm8993_i2c_probe(struct i2c_client *i2c,
 	codec->dai = &wm8993_dai;
 	codec->num_dai = 1;
 	codec->private_data = wm8993;
+
+	wm8993->hubs_data.hp_startup_mode = 1;
+	wm8993->hubs_data.dcs_codes = -2;
 
 	memcpy(wm8993->reg_cache, wm8993_reg_defaults,
 	       sizeof(wm8993->reg_cache));
