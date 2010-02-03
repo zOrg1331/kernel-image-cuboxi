@@ -39,8 +39,8 @@
  * @IEEE80211_BAND_5GHZ: around 5GHz band (4.9-5.7)
  */
 enum ieee80211_band {
-	IEEE80211_BAND_2GHZ,
-	IEEE80211_BAND_5GHZ,
+	IEEE80211_BAND_2GHZ = NL80211_BAND_2GHZ,
+	IEEE80211_BAND_5GHZ = NL80211_BAND_5GHZ,
 
 	/* keep last */
 	IEEE80211_NUM_BANDS
@@ -626,8 +626,14 @@ enum cfg80211_signal_type {
  * @beacon_interval: the beacon interval as from the frame
  * @capability: the capability field in host byte order
  * @information_elements: the information elements (Note that there
- *	is no guarantee that these are well-formed!)
+ *	is no guarantee that these are well-formed!); this is a pointer to
+ *	either the beacon_ies or proberesp_ies depending on whether Probe
+ *	Response frame has been received
  * @len_information_elements: total length of the information elements
+ * @beacon_ies: the information elements from the last Beacon frame
+ * @len_beacon_ies: total length of the beacon_ies
+ * @proberesp_ies: the information elements from the last Probe Response frame
+ * @len_proberesp_ies: total length of the proberesp_ies
  * @signal: signal strength value (type depends on the wiphy's signal_type)
  * @free_priv: function pointer to free private data
  * @priv: private area for driver use, has at least wiphy->bss_priv_size bytes
@@ -641,6 +647,10 @@ struct cfg80211_bss {
 	u16 capability;
 	u8 *information_elements;
 	size_t len_information_elements;
+	u8 *beacon_ies;
+	size_t len_beacon_ies;
+	u8 *proberesp_ies;
+	size_t len_proberesp_ies;
 
 	s32 signal;
 
@@ -837,6 +847,7 @@ enum wiphy_params_flags {
 	WIPHY_PARAM_RETRY_LONG		= 1 << 1,
 	WIPHY_PARAM_FRAG_THRESHOLD	= 1 << 2,
 	WIPHY_PARAM_RTS_THRESHOLD	= 1 << 3,
+	WIPHY_PARAM_COVERAGE_CLASS	= 1 << 4,
 };
 
 /**
@@ -856,20 +867,11 @@ enum tx_power_setting {
  * cfg80211_bitrate_mask - masks for bitrate control
  */
 struct cfg80211_bitrate_mask {
-/*
- * As discussed in Berlin, this struct really
- * should look like this:
-
 	struct {
 		u32 legacy;
-		u8 mcs[IEEE80211_HT_MCS_MASK_LEN];
+		/* TODO: add support for masking MCS rates; e.g.: */
+		/* u8 mcs[IEEE80211_HT_MCS_MASK_LEN]; */
 	} control[IEEE80211_NUM_BANDS];
-
- * Since we can always fix in-kernel users, let's keep
- * it simpler for now:
- */
-	u32 fixed;   /* fixed bitrate, 0 == not fixed */
-	u32 maxrate; /* in kbps, 0 == no limit */
 };
 /**
  * struct cfg80211_pmksa - PMK Security Association
@@ -987,6 +989,15 @@ struct cfg80211_pmksa {
  *	functions to adjust rfkill hw state
  *
  * @dump_survey: get site survey information.
+ *
+ * @remain_on_channel: Request the driver to remain awake on the specified
+ *	channel for the specified duration to complete an off-channel
+ *	operation (e.g., public action frame exchange). When the driver is
+ *	ready on the requested channel, it must indicate this with an event
+ *	notification by calling cfg80211_ready_on_channel().
+ * @cancel_remain_on_channel: Cancel an on-going remain-on-channel operation.
+ *	This allows the operation to be terminated prior to timeout based on
+ *	the duration value.
  *
  * @testmode_cmd: run a test mode command
  *
@@ -1123,6 +1134,16 @@ struct cfg80211_ops {
 			     struct cfg80211_pmksa *pmksa);
 	int	(*flush_pmksa)(struct wiphy *wiphy, struct net_device *netdev);
 
+	int	(*remain_on_channel)(struct wiphy *wiphy,
+				     struct net_device *dev,
+				     struct ieee80211_channel *chan,
+				     enum nl80211_channel_type channel_type,
+				     unsigned int duration,
+				     u64 *cookie);
+	int	(*cancel_remain_on_channel)(struct wiphy *wiphy,
+					    struct net_device *dev,
+					    u64 cookie);
+
 	/* some temporary stuff to finish wext */
 	int	(*set_power_mgmt)(struct wiphy *wiphy, struct net_device *dev,
 				  bool enabled, int timeout);
@@ -1217,6 +1238,7 @@ struct wiphy {
 	u8 retry_long;
 	u32 frag_threshold;
 	u32 rts_threshold;
+	u8 coverage_class;
 
 	char fw_version[ETHTOOL_BUSINFO_LEN];
 	u32 hw_version;
@@ -1578,7 +1600,7 @@ unsigned int ieee80211_hdrlen(__le16 fc);
  * @addr: the device MAC address
  * @iftype: the virtual interface type
  */
-int ieee80211_data_to_8023(struct sk_buff *skb, u8 *addr,
+int ieee80211_data_to_8023(struct sk_buff *skb, const u8 *addr,
 			   enum nl80211_iftype iftype);
 
 /**
@@ -1589,8 +1611,26 @@ int ieee80211_data_to_8023(struct sk_buff *skb, u8 *addr,
  * @bssid: the network bssid (used only for iftype STATION and ADHOC)
  * @qos: build 802.11 QoS data frame
  */
-int ieee80211_data_from_8023(struct sk_buff *skb, u8 *addr,
+int ieee80211_data_from_8023(struct sk_buff *skb, const u8 *addr,
 			     enum nl80211_iftype iftype, u8 *bssid, bool qos);
+
+/**
+ * ieee80211_amsdu_to_8023s - decode an IEEE 802.11n A-MSDU frame
+ *
+ * Decode an IEEE 802.11n A-MSDU frame and convert it to a list of
+ * 802.3 frames. The @list will be empty if the decode fails. The
+ * @skb is consumed after the function returns.
+ *
+ * @skb: The input IEEE 802.11n A-MSDU frame.
+ * @list: The output list of 802.3 frames. It must be allocated and
+ *	initialized by by the caller.
+ * @addr: The device MAC address.
+ * @iftype: The device interface type.
+ * @extra_headroom: The hardware extra headroom for SKBs in the @list.
+ */
+void ieee80211_amsdu_to_8023s(struct sk_buff *skb, struct sk_buff_head *list,
+			      const u8 *addr, enum nl80211_iftype iftype,
+			      const unsigned int extra_headroom);
 
 /**
  * cfg80211_classify8021d - determine the 802.1p/1d tag for a data frame
@@ -2129,5 +2169,45 @@ void cfg80211_roamed(struct net_device *dev, const u8 *bssid,
 void cfg80211_disconnected(struct net_device *dev, u16 reason,
 			   u8 *ie, size_t ie_len, gfp_t gfp);
 
+/**
+ * cfg80211_ready_on_channel - notification of remain_on_channel start
+ * @dev: network device
+ * @cookie: the request cookie
+ * @chan: The current channel (from remain_on_channel request)
+ * @channel_type: Channel type
+ * @duration: Duration in milliseconds that the driver intents to remain on the
+ *	channel
+ * @gfp: allocation flags
+ */
+void cfg80211_ready_on_channel(struct net_device *dev, u64 cookie,
+			       struct ieee80211_channel *chan,
+			       enum nl80211_channel_type channel_type,
+			       unsigned int duration, gfp_t gfp);
+
+/**
+ * cfg80211_remain_on_channel_expired - remain_on_channel duration expired
+ * @dev: network device
+ * @cookie: the request cookie
+ * @chan: The current channel (from remain_on_channel request)
+ * @channel_type: Channel type
+ * @gfp: allocation flags
+ */
+void cfg80211_remain_on_channel_expired(struct net_device *dev,
+					u64 cookie,
+					struct ieee80211_channel *chan,
+					enum nl80211_channel_type channel_type,
+					gfp_t gfp);
+
+
+/**
+ * cfg80211_new_sta - notify userspace about station
+ *
+ * @dev: the netdev
+ * @mac_addr: the station's address
+ * @sinfo: the station information
+ * @gfp: allocation flags
+ */
+void cfg80211_new_sta(struct net_device *dev, const u8 *mac_addr,
+		      struct station_info *sinfo, gfp_t gfp);
 
 #endif /* __NET_CFG80211_H */
