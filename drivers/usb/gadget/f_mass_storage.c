@@ -368,7 +368,7 @@ struct fsg_common {
 	struct task_struct	*thread_task;
 
 	/* Callback function to call when thread exits. */
-	void			(*thread_exits)(struct fsg_common *common);
+	int			(*thread_exits)(struct fsg_common *common);
 	/* Gadget's private data. */
 	void			*private_data;
 
@@ -392,8 +392,12 @@ struct fsg_config {
 	const char		*lun_name_format;
 	const char		*thread_name;
 
-	/* Callback function to call when thread exits. */
-	void			(*thread_exits)(struct fsg_common *common);
+	/* Callback function to call when thread exits.  If no
+	 * callback is set or it returns value lower then zero MSF
+	 * will force eject all LUNs it operates on (including those
+	 * marked as non-removable or with prevent_medium_removal flag
+	 * set). */
+	int			(*thread_exits)(struct fsg_common *common);
 	/* Gadget's private data. */
 	void			*private_data;
 
@@ -614,7 +618,12 @@ static int fsg_setup(struct usb_function *f,
 			return -EDOM;
 		VDBG(fsg, "get max LUN\n");
 		*(u8 *) req->buf = fsg->common->nluns - 1;
-		return 1;
+
+		/* Respond with data/status */
+		req->length = min(1, w_length);
+		fsg->common->ep0req_name =
+			ctrl->bRequestType & USB_DIR_IN ? "ep0-in" : "ep0-out";
+		return ep0_queue(fsg->common);
 	}
 
 	VDBG(fsg,
@@ -2524,14 +2533,6 @@ static void handle_exception(struct fsg_common *common)
 
 	case FSG_STATE_CONFIG_CHANGE:
 		rc = do_set_config(common, new_config);
-		if (common->ep0_req_tag != exception_req_tag)
-			break;
-		if (rc != 0) {			/* STALL on errors */
-			DBG(common, "ep0 set halt\n");
-			usb_ep_set_halt(common->ep0);
-		} else {			/* Complete the status stage */
-			ep0_queue(common);
-		}
 		break;
 
 	case FSG_STATE_EXIT:
@@ -2615,8 +2616,20 @@ static int fsg_main_thread(void *common_)
 	common->thread_task = NULL;
 	spin_unlock_irq(&common->lock);
 
-	if (common->thread_exits)
-		common->thread_exits(common);
+	if (!common->thread_exits || common->thread_exits(common) < 0) {
+		struct fsg_lun *curlun = common->luns;
+		unsigned i = common->nluns;
+
+		down_write(&common->filesem);
+		for (; i--; ++curlun) {
+			if (!fsg_lun_is_open(curlun))
+				continue;
+
+			fsg_lun_close(curlun);
+			curlun->unit_attention_data = SS_MEDIUM_NOT_PRESENT;
+		}
+		up_write(&common->filesem);
+	}
 
 	/* Let the unbind and cleanup routines know the thread has exited */
 	complete_and_exit(&common->thread_notifier, 0);
