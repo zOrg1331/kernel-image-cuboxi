@@ -827,6 +827,8 @@ static void versatile_leds_event(led_event_t ledevt)
 
 void __init versatile_init(void)
 {
+	int i;
+
 	osc4_clk.vcoreg	= __io_address(VERSATILE_SYS_BASE) + VERSATILE_SYS_OSCCLCD_OFFSET;
 
 	clkdev_add_table(lookups, ARRAY_SIZE(lookups));
