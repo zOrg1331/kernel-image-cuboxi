@@ -228,7 +228,10 @@ config ARCH_INTEGRATOR
 	select ARCH_HAS_CPUFREQ
 	select HAVE_CLK
 	select COMMON_CLKDEV
-	select ICST525
+	select ICST
+	select GENERIC_TIME
+	select GENERIC_CLOCKEVENTS
+	select PLAT_VERSATILE
 	help
 	  Support for ARM's Integrator platform.
 
@@ -237,10 +240,12 @@ config ARCH_REALVIEW
 	select ARM_AMBA
 	select HAVE_CLK
 	select COMMON_CLKDEV
-	select ICST307
+	select ICST
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
 	select ARCH_WANT_OPTIONAL_GPIOLIB
+	select PLAT_VERSATILE
+	select ARM_TIMER_SP804
 	help
 	  This enables support for ARM Ltd RealView boards.
 
@@ -250,10 +255,12 @@ config ARCH_VERSATILE
 	select ARM_VIC
 	select HAVE_CLK
 	select COMMON_CLKDEV
-	select ICST307
+	select ICST
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
 	select ARCH_WANT_OPTIONAL_GPIOLIB
+	select PLAT_VERSATILE
+	select ARM_TIMER_SP804
 	help
 	  This enables support for ARM Ltd Versatile board.
 
@@ -866,6 +873,12 @@ config PLAT_ORION
 	bool
 
 config PLAT_PXA
+	bool
+
+config PLAT_VERSATILE
+	bool
+
+config ARM_TIMER_SP804
 	bool
 
 source arch/arm/mm/Kconfig
