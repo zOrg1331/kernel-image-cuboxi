@@ -5,7 +5,7 @@
  *  Copyright (c) 2000-2005 Vojtech Pavlik <vojtech@suse.cz>
  *  Copyright (c) 2005 Michael Haboustak <mike-@cinci.rr.com> for Concept2, Inc
  *  Copyright (c) 2007-2008 Oliver Neukum
- *  Copyright (c) 2006-2009 Jiri Kosina
+ *  Copyright (c) 2006-2010 Jiri Kosina
  */
 
 /*
@@ -1343,7 +1343,7 @@ static int hid_reset_resume(struct usb_interface *intf)
 
 #endif /* CONFIG_PM */
 
-static struct usb_device_id hid_usb_ids [] = {
+static const struct usb_device_id hid_usb_ids[] = {
 	{ .match_flags = USB_DEVICE_ID_MATCH_INT_CLASS,
 		.bInterfaceClass = USB_INTERFACE_CLASS_HID },
 	{ }						/* Terminating entry */
