@@ -667,7 +667,7 @@ static void prompt_symbol(struct sym_entry **target, const char *msg)
 	}
 
 	if (!found) {
-		fprintf(stderr, "Sorry, %s is not active.\n", sym_filter);
+		fprintf(stderr, "Sorry, %s is not active.\n", buf);
 		sleep(1);
 		return;
 	} else
@@ -934,8 +934,11 @@ static void event__process_sample(const event_t *self,
 	struct addr_location al;
 	u8 origin = self->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
 
+	++samples;
+
 	switch (origin) {
 	case PERF_RECORD_MISC_USER:
+		++userspace_samples;
 		if (hide_user_symbols)
 			return;
 		break;
@@ -948,8 +951,30 @@ static void event__process_sample(const event_t *self,
 	}
 
 	if (event__preprocess_sample(self, session, &al, symbol_filter) < 0 ||
-	    al.sym == NULL || al.filtered)
+	    al.filtered)
 		return;
+
+	if (al.sym == NULL) {
+		/*
+		 * As we do lazy loading of symtabs we only will know if the
+		 * specified vmlinux file is invalid when we actually have a
+		 * hit in kernel space and then try to load it. So if we get
+		 * here and there are _no_ symbols in the DSO backing the
+		 * kernel map, bail out.
+		 *
+		 * We may never get here, for instance, if we use -K/
+		 * --hide-kernel-symbols, even if the user specifies an
+		 * invalid --vmlinux ;-)
+		 */
+		if (al.map == session->vmlinux_maps[MAP__FUNCTION] &&
+		    RB_EMPTY_ROOT(&al.map->dso->symbols[MAP__FUNCTION])) {
+			pr_err("The %s file can't be used\n",
+			       symbol_conf.vmlinux_name);
+			exit(1);
+		}
+
+		return;
+	}
 
 	syme = symbol__priv(al.sym);
 	if (!syme->skip) {
@@ -960,9 +985,6 @@ static void event__process_sample(const event_t *self,
 		if (list_empty(&syme->node) || !syme->node.next)
 			__list_insert_active_sym(syme);
 		pthread_mutex_unlock(&active_symbols_lock);
-		if (origin == PERF_RECORD_MISC_USER)
-			++userspace_samples;
-		++samples;
 	}
 }
 
@@ -974,6 +996,10 @@ static int event__process(event_t *event, struct perf_session *session)
 		break;
 	case PERF_RECORD_MMAP:
 		event__process_mmap(event, session);
+		break;
+	case PERF_RECORD_FORK:
+	case PERF_RECORD_EXIT:
+		event__process_task(event, session);
 		break;
 	default:
 		break;
