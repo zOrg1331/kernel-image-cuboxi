@@ -10,8 +10,8 @@
 #include "trace.h"
 
 
-static char *perf_trace_buf;
-static char *perf_trace_buf_nmi;
+static char __percpu *perf_trace_buf;
+static char __percpu *perf_trace_buf_nmi;
 
 typedef typeof(char [FTRACE_MAX_PROFILE_SIZE]) perf_trace_t ;
 
@@ -20,20 +20,20 @@ static int	total_profile_count;
 
 static int ftrace_profile_enable_event(struct ftrace_event_call *event)
 {
-	char *buf;
+	char __percpu *buf;
 	int ret = -ENOMEM;
 
 	if (event->profile_count++ > 0)
 		return 0;
 
 	if (!total_profile_count) {
-		buf = (char *)alloc_percpu(perf_trace_t);
+		buf = (char __percpu *)alloc_percpu(perf_trace_t);
 		if (!buf)
 			goto fail_buf;
 
 		rcu_assign_pointer(perf_trace_buf, buf);
 
-		buf = (char *)alloc_percpu(perf_trace_t);
+		buf = (char __percpu *)alloc_percpu(perf_trace_t);
 		if (!buf)
 			goto fail_buf_nmi;
 
@@ -79,7 +79,7 @@ int ftrace_profile_enable(int event_id)
 
 static void ftrace_profile_disable_event(struct ftrace_event_call *event)
 {
-	char *buf, *nmi_buf;
+	char __percpu *buf, *nmi_buf;
 
 	if (--event->profile_count > 0)
 		return;
@@ -123,7 +123,8 @@ __kprobes void *ftrace_perf_buf_prepare(int size, unsigned short type,
 					int *rctxp, unsigned long *irq_flags)
 {
 	struct trace_entry *entry;
-	char *trace_buf, *raw_data;
+	char __percpu *trace_buf;
+	char *raw_data;
 	int pc, cpu;
 
 	pc = preempt_count();
