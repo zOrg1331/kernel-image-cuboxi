@@ -863,7 +863,7 @@
  * bist output. The driver should only consume the BIST output
  * after validating OUTLEN and PHY_CFG.PHY_TYPE.
  *
- * If a driver can't succesfully parse the BIST output, it should
+ * If a driver can't successfully parse the BIST output, it should
  * still respect the pass/Fail in OUT.RESULT
  *
  * Locks required: PHY_LOCK if doing a  PHY BIST
