@@ -208,7 +208,7 @@ static void kgdboc_pre_exp_handler(void)
 {
 	if (kgdboc_use_kms && dbg_kms_console_core &&
 	    dbg_kms_console_core->activate_console)
-		if (dbg_kms_console_core->activate_console())
+		if (dbg_kms_console_core->activate_console(dbg_kms_console_core))
 			printk(KERN_ERR "kgdboc: kernel mode switch error\n");
 
 	/* Increment the module count when the debugger is active */
@@ -223,7 +223,7 @@ static void kgdboc_post_exp_handler(void)
 		module_put(THIS_MODULE);
 	if (kgdboc_use_kms && dbg_kms_console_core &&
 	    dbg_kms_console_core->restore_console)
-		if (dbg_kms_console_core->restore_console())
+		if (dbg_kms_console_core->restore_console(dbg_kms_console_core))
 			printk(KERN_ERR "kgdboc: graphics restore failed\n");
 #ifdef CONFIG_KDB_KEYBOARD
 	/* If using the kdb keyboard driver release all the keys. */
