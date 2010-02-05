@@ -14,6 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/ctype.h>
 #include <linux/kgdb.h>
+#include <linux/kdb.h>
 #include <linux/tty.h>
 
 #define MAX_CONFIG_LEN		40
@@ -45,11 +46,32 @@ static int kgdboc_option_setup(char *opt)
 
 __setup("kgdboc=", kgdboc_option_setup);
 
+static void cleanup_kgdboc(void)
+{
+#ifdef CONFIG_KDB_KEYBOARD
+	int i;
+
+	/* Unregister the keyboard poll hook, if registered */
+	for (i = 0; i < kdb_poll_idx; i++) {
+		if (kdb_poll_funcs[i] == kdb_get_kbd_char) {
+			kdb_poll_idx--;
+			kdb_poll_funcs[i] = kdb_poll_funcs[kdb_poll_idx];
+			kdb_poll_funcs[kdb_poll_idx] = NULL;
+			i--;
+		}
+	}
+#endif /* CONFIG_KDB_KEYBOARD */
+
+	if (configured == 1)
+		kgdb_unregister_io_module(&kgdboc_io_ops);
+}
+
 static int configure_kgdboc(void)
 {
 	struct tty_driver *p;
 	int tty_line = 0;
 	int err;
+	char *cptr = config;
 
 	err = kgdboc_option_setup(config);
 	if (err || !strlen(config) || isspace(config[0]))
@@ -57,12 +79,31 @@ static int configure_kgdboc(void)
 
 	err = -ENODEV;
 
-	p = tty_find_polling_driver(config, &tty_line);
+#ifdef CONFIG_KDB_KEYBOARD
+	kgdb_tty_driver = NULL;
+
+	if (strncmp(cptr, "kbd", 3) == 0) {
+		if (kdb_poll_idx < KDB_POLL_FUNC_MAX) {
+			kdb_poll_funcs[kdb_poll_idx] = kdb_get_kbd_char;
+			kdb_poll_idx++;
+			if (cptr[3] == ',')
+				cptr += 4;
+			else
+				goto do_register;
+		}
+	}
+#endif /* CONFIG_KDB_KEYBOARD */
+
+	p = tty_find_polling_driver(cptr, &tty_line);
 	if (!p)
 		goto noconfig;
 
 	kgdb_tty_driver = p;
 	kgdb_tty_line = tty_line;
+
+#ifdef CONFIG_KDB_KEYBOARD
+do_register:
+#endif /* CONFIG_KDB_KEYBOARD */
 
 	err = kgdb_register_io_module(&kgdboc_io_ops);
 	if (err)
@@ -75,6 +116,7 @@ static int configure_kgdboc(void)
 noconfig:
 	config[0] = 0;
 	configured = 0;
+	cleanup_kgdboc();
 
 	return err;
 }
@@ -88,20 +130,18 @@ static int __init init_kgdboc(void)
 	return configure_kgdboc();
 }
 
-static void cleanup_kgdboc(void)
-{
-	if (configured == 1)
-		kgdb_unregister_io_module(&kgdboc_io_ops);
-}
-
 static int kgdboc_get_char(void)
 {
+	if (!kgdb_tty_driver)
+		return -1;
 	return kgdb_tty_driver->ops->poll_get_char(kgdb_tty_driver,
 						kgdb_tty_line);
 }
 
 static void kgdboc_put_char(u8 chr)
 {
+	if (!kgdb_tty_driver)
+		return;
 	kgdb_tty_driver->ops->poll_put_char(kgdb_tty_driver,
 					kgdb_tty_line, chr);
 }
@@ -161,6 +201,19 @@ static struct kgdb_io kgdboc_io_ops = {
 	.pre_exception		= kgdboc_pre_exp_handler,
 	.post_exception		= kgdboc_post_exp_handler,
 };
+
+#ifdef CONFIG_KGDB_SERIAL_CONSOLE
+/* This is only available if kgdboc is a built in for early debugging */
+void __init early_kgdboc_init(void)
+{
+	/* save the first character of the config string because the
+	 * init routine can destroy it.
+	 */
+	char save_ch = config[0];
+	init_kgdboc();
+	config[0] = save_ch;
+}
+#endif /* CONFIG_KGDB_SERIAL_CONSOLE */
 
 module_init(init_kgdboc);
 module_exit(cleanup_kgdboc);
