@@ -88,7 +88,8 @@ static int bdi_debug_stats_show(struct seq_file *m, void *v)
 #define K(x) ((x) << (PAGE_SHIFT - 10))
 	seq_printf(m,
 		   "BdiWriteback:     %8lu kB\n"
-		   "BdiReclaimable:   %8lu kB\n"
+		   "BdiDirty:         %8lu kB\n"
+		   "BdiUnstable:      %8lu kB\n"
 		   "BdiDirtyThresh:   %8lu kB\n"
 		   "DirtyThresh:      %8lu kB\n"
 		   "BackgroundThresh: %8lu kB\n"
@@ -102,7 +103,8 @@ static int bdi_debug_stats_show(struct seq_file *m, void *v)
 		   "wb_list:          %8u\n"
 		   "wb_cnt:           %8u\n",
 		   (unsigned long) K(bdi_stat(bdi, BDI_WRITEBACK)),
-		   (unsigned long) K(bdi_stat(bdi, BDI_RECLAIMABLE)),
+		   (unsigned long) K(bdi_stat(bdi, BDI_DIRTY)),
+		   (unsigned long) K(bdi_stat(bdi, BDI_UNSTABLE)),
 		   K(bdi_thresh), K(dirty_thresh),
 		   K(background_thresh), nr_wb, nr_dirty, nr_io, nr_more_io,
 		   !list_empty(&bdi->bdi_list), bdi->state, bdi->wb_mask,
