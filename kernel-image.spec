@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.33
-Release: alt0.rc6
+Release: alt0.rc7
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -8,7 +8,7 @@ Release: alt0.rc6
 # 0.0.X -- preX
 # 0.X.0 -- rcX
 # 1.0.0 -- release
-%define kernel_extra_version_numeric 0.6.0
+%define kernel_extra_version_numeric 0.7.0
 
 %define krelease	%release
 
@@ -194,18 +194,6 @@ mkdir -p %buildroot%kbuild_dir/arch/x86
 cp -a include %buildroot%kbuild_dir/include
 cp -a arch/x86/include %buildroot%kbuild_dir/arch/x86
 
-# remove asm-* include files for other architectures
-pushd %buildroot%kbuild_dir/include
-ln -s generated asm-x86
-%ifarch x86_64
-ln -s generated asm-x86_64
-%else
-%ifarch i586
-ln -s generated asm-i386
-%endif
-%endif
-popd
-
 # drivers-headers install
 install -d %buildroot%kbuild_dir/drivers/scsi
 install -d %buildroot%kbuild_dir/drivers/md
@@ -344,8 +332,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
-* Sat Jan 30 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.33-alt0.rc6
-- 2.6.33-rc6
+* Sun Feb 07 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.33-alt0.rc7
+- 2.6.33-rc7
 
 * Fri Jan 29 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt7
 - 2.6.32.7
