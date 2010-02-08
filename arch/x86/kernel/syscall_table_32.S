@@ -339,3 +339,5 @@ ENTRY(sys_call_table)
 	.long sys_recvmmsg
 	.long sys_fanotify_init
 	.long sys_fanotify_mark
+	.long sys_getprlimit		/* 340 */
+	.long sys_setprlimit
