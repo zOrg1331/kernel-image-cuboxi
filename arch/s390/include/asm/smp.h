@@ -42,9 +42,9 @@ extern void smp_restart_cpu(void);
  */
 static inline int smp_vcpu_scheduled(int cpu)
 {
-	__u32 status = 0;
+	u32 status;
 
-	switch (signal_processor_ps(&status, 0, cpu, sigp_sense_running)) {
+	switch (sigp_ps(&status, 0, cpu, sigp_sense_running)) {
 	case sigp_status_stored:
 		/* Check for running status */
 		if (status & 0x400)
