@@ -107,7 +107,7 @@ static struct pci_device_id rtl8192_pci_id_tbl[] __devinitdata = {
 #else
 	/* Realtek */
 	{ PCI_DEVICE(0x10ec, 0x8192) },
-
+	{ PCI_DEVICE(0x10ec, 0x8172) }, /* Toshiba Satellite 500D */
 	/* Corega */
 	{ PCI_DEVICE(0x07aa, 0x0044) },
 	{ PCI_DEVICE(0x07aa, 0x0047) },
