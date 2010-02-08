@@ -42,7 +42,7 @@
 #define KSYM_TRACER_OP_LEN 3 /* rw- */
 
 struct trace_ksym {
-	struct perf_event	**ksym_hbp;
+	struct perf_event	* __percpu *ksym_hbp;
 	struct perf_event_attr	attr;
 #ifdef CONFIG_PROFILE_KSYM_TRACER
 	atomic64_t		counter;
@@ -200,8 +200,8 @@ int process_new_ksym_entry(char *ksymname, int op, unsigned long addr)
 	entry->ksym_hbp = register_wide_hw_breakpoint(&entry->attr,
 					ksym_hbp_handler);
 
-	if (IS_ERR(entry->ksym_hbp)) {
-		ret = PTR_ERR(entry->ksym_hbp);
+	if (IS_ERR((void __force *)entry->ksym_hbp)) {
+		ret = PTR_ERR((void __force *)entry->ksym_hbp);
 		printk(KERN_INFO "ksym_tracer request failed. Try again"
 					" later!!\n");
 		goto err;
@@ -331,8 +331,8 @@ static ssize_t ksym_trace_filter_write(struct file *file,
 			entry->ksym_hbp =
 				register_wide_hw_breakpoint(&entry->attr,
 					ksym_hbp_handler);
-			if (IS_ERR(entry->ksym_hbp))
-				ret = PTR_ERR(entry->ksym_hbp);
+			if (IS_ERR((void __force *)entry->ksym_hbp))
+				ret = PTR_ERR((void __force *)entry->ksym_hbp);
 			else
 				goto out_unlock;
 		}

@@ -668,7 +668,7 @@ __attribute__((section("_ftrace_events"))) event_##call = {		\
  *	struct ftrace_event_call *event_call = &event_<call>;
  *	extern void perf_tp_event(int, u64, u64, void *, int);
  *	struct ftrace_raw_##call *entry;
- *	struct perf_trace_buf *trace_buf;
+ *	struct perf_trace_buf __percpu *trace_buf;
  *	u64 __addr = 0, __count = 1;
  *	unsigned long irq_flags;
  *	struct trace_entry *ent;
