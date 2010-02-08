@@ -71,8 +71,6 @@ source "drivers/staging/asus_oled/Kconfig"
 
 source "drivers/staging/panel/Kconfig"
 
-source "drivers/staging/altpciechdma/Kconfig"
-
 source "drivers/staging/rtl8187se/Kconfig"
 
 source "drivers/staging/rtl8192su/Kconfig"
@@ -89,11 +87,7 @@ source "drivers/staging/dream/Kconfig"
 
 source "drivers/staging/pohmelfs/Kconfig"
 
-source "drivers/staging/b3dfg/Kconfig"
-
 source "drivers/staging/phison/Kconfig"
-
-source "drivers/staging/p9auth/Kconfig"
 
 source "drivers/staging/line6/Kconfig"
 
@@ -142,6 +136,10 @@ source "drivers/staging/wavelan/Kconfig"
 source "drivers/staging/netwave/Kconfig"
 
 source "drivers/staging/sm7xx/Kconfig"
+
+source "drivers/staging/dt3155/Kconfig"
+
+source "drivers/staging/crystalhd/Kconfig"
 
 endif # !STAGING_EXCLUDE_BUILD
 endif # STAGING
