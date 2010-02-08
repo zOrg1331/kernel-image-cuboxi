@@ -1998,7 +1998,8 @@ void __audit_inode(const char *name, const struct dentry *dentry)
  * must be hooked prior, in order to capture the target inode during
  * unsuccessful attempts.
  */
-void __audit_inode_child(const char *dname, const struct dentry *dentry,
+void __audit_inode_child(const unsigned char *dname,
+			 const struct dentry *dentry,
 			 const struct inode *parent)
 {
 	int idx;

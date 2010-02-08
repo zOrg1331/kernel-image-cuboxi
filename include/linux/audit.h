@@ -424,7 +424,8 @@ extern void audit_syscall_exit(int failed, long return_code);
 extern void __audit_getname(const char *name);
 extern void audit_putname(const char *name);
 extern void __audit_inode(const char *name, const struct dentry *dentry);
-extern void __audit_inode_child(const char *dname, const struct dentry *dentry,
+extern void __audit_inode_child(const unsigned char *dname,
+				const struct dentry *dentry,
 				const struct inode *parent);
 extern void __audit_ptrace(struct task_struct *t);
 
@@ -442,7 +443,7 @@ static inline void audit_inode(const char *name, const struct dentry *dentry) {
 	if (unlikely(!audit_dummy_context()))
 		__audit_inode(name, dentry);
 }
-static inline void audit_inode_child(const char *dname, 
+static inline void audit_inode_child(const unsigned char *dname, 
 				     const struct dentry *dentry,
 				     const struct inode *parent) {
 	if (unlikely(!audit_dummy_context()))
