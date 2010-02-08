@@ -473,7 +473,7 @@ static int omap_dss_probe(struct platform_device *pdev)
 	}
 #endif
 
-	r = dpi_init();
+	r = dpi_init(pdev);
 	if (r) {
 		DSSERR("Failed to initialize dpi\n");
 		goto fail0;

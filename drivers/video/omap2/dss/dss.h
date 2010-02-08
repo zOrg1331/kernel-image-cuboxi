@@ -261,7 +261,7 @@ void dsi_get_overlay_fifo_thresholds(enum omap_plane plane,
 		u32 *fifo_low, u32 *fifo_high);
 
 /* DPI */
-int dpi_init(void);
+int dpi_init(struct platform_device *pdev);
 void dpi_exit(void);
 int dpi_init_display(struct omap_dss_device *dssdev);
 
