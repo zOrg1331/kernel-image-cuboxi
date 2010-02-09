@@ -181,7 +181,7 @@ static void ext3_handle_error(struct super_block *sb)
 	if (!test_opt (sb, ERRORS_CONT)) {
 		journal_t *journal = EXT3_SB(sb)->s_journal;
 
-		EXT3_SB(sb)->s_mount_opt |= EXT3_MOUNT_ABORT;
+		set_opt(EXT3_SB(sb)->s_mount_opt, ABORT);
 		if (journal)
 			journal_abort(journal, -EIO);
 	}
@@ -296,7 +296,7 @@ void ext3_abort (struct super_block * sb, const char * function,
 		"error: remounting filesystem read-only");
 	EXT3_SB(sb)->s_mount_state |= EXT3_ERROR_FS;
 	sb->s_flags |= MS_RDONLY;
-	EXT3_SB(sb)->s_mount_opt |= EXT3_MOUNT_ABORT;
+	set_opt(EXT3_SB(sb)->s_mount_opt, ABORT);
 	if (EXT3_SB(sb)->s_journal)
 		journal_abort(EXT3_SB(sb)->s_journal, -EIO);
 }
@@ -562,10 +562,10 @@ static inline void ext3_show_quota_options(struct seq_file *seq, struct super_bl
 	if (sbi->s_qf_names[GRPQUOTA])
 		seq_printf(seq, ",grpjquota=%s", sbi->s_qf_names[GRPQUOTA]);
 
-	if (sbi->s_mount_opt & EXT3_MOUNT_USRQUOTA)
+	if (test_opt(sb, USRQUOTA))
 		seq_puts(seq, ",usrquota");
 
-	if (sbi->s_mount_opt & EXT3_MOUNT_GRPQUOTA)
+	if (test_opt(sb, GRPQUOTA))
 		seq_puts(seq, ",grpquota");
 #endif
 }
@@ -656,8 +656,7 @@ static int ext3_show_options(struct seq_file *seq, struct vfsmount *vfs)
 	if (test_opt(sb, NOBH))
 		seq_puts(seq, ",nobh");
 
-	seq_printf(seq, ",data=%s", data_mode_string(sbi->s_mount_opt &
-						     EXT3_MOUNT_DATA_FLAGS));
+	seq_printf(seq, ",data=%s", data_mode_string(test_opt(sb, DATA_FLAGS)));
 	if (test_opt(sb, DATA_ERR_ABORT))
 		seq_puts(seq, ",data_err=abort");
 
@@ -896,6 +895,63 @@ static ext3_fsblk_t get_sb_block(void **data, struct super_block *sb)
 	return sb_block;
 }
 
+#ifdef CONFIG_QUOTA
+static int set_qf_name(struct super_block *sb, int qtype, substring_t *args)
+{
+	struct ext3_sb_info *sbi = EXT3_SB(sb);
+	char *qname;
+
+	if (sb_any_quota_loaded(sb) &&
+		!sbi->s_qf_names[qtype]) {
+		ext3_msg(sb, KERN_ERR,
+			"Cannot change journaled "
+			"quota options when quota turned on");
+		return 0;
+	}
+	qname = match_strdup(args);
+	if (!qname) {
+		ext3_msg(sb, KERN_ERR,
+			"Not enough memory for storing quotafile name");
+		return 0;
+	}
+	if (sbi->s_qf_names[qtype] &&
+		strcmp(sbi->s_qf_names[qtype], qname)) {
+		ext3_msg(sb, KERN_ERR,
+			"%s quota file already specified", QTYPE2NAME(qtype));
+		kfree(qname);
+		return 0;
+	}
+	sbi->s_qf_names[qtype] = qname;
+	if (strchr(sbi->s_qf_names[qtype], '/')) {
+		ext3_msg(sb, KERN_ERR,
+			"quotafile must be on filesystem root");
+		kfree(sbi->s_qf_names[qtype]);
+		sbi->s_qf_names[qtype] = NULL;
+		return 0;
+	}
+	set_opt(sbi->s_mount_opt, QUOTA);
+	return 1;
+}
+
+static int clear_qf_name(struct super_block *sb, int qtype) {
+
+	struct ext3_sb_info *sbi = EXT3_SB(sb);
+
+	if (sb_any_quota_loaded(sb) &&
+		sbi->s_qf_names[qtype]) {
+		ext3_msg(sb, KERN_ERR, "Cannot change journaled quota options"
+			" when quota turned on");
+		return 0;
+	}
+	/*
+	 * The space will be released later when all options are confirmed
+	 * to be correct
+	 */
+	sbi->s_qf_names[qtype] = NULL;
+	return 1;
+}
+#endif
+
 static int parse_options (char *options, struct super_block *sb,
 			  unsigned int *inum, unsigned long *journal_devnum,
 			  ext3_fsblk_t *n_blocks_count, int is_remount)
@@ -906,8 +962,7 @@ static int parse_options (char *options, struct super_block *sb,
 	int data_opt = 0;
 	int option;
 #ifdef CONFIG_QUOTA
-	int qtype, qfmt;
-	char *qname;
+	int qfmt;
 #endif
 
 	if (!options)
@@ -1065,20 +1120,19 @@ static int parse_options (char *options, struct super_block *sb,
 			data_opt = EXT3_MOUNT_WRITEBACK_DATA;
 		datacheck:
 			if (is_remount) {
-				if ((sbi->s_mount_opt & EXT3_MOUNT_DATA_FLAGS)
-						== data_opt)
+				if (test_opt(sb, DATA_FLAGS) == data_opt)
 					break;
 				ext3_msg(sb, KERN_ERR,
 					"error: cannot change "
 					"data mode on remount. The filesystem "
 					"is mounted in data=%s mode and you "
 					"try to remount it in data=%s mode.",
-					data_mode_string(sbi->s_mount_opt &
-							EXT3_MOUNT_DATA_FLAGS),
+					data_mode_string(test_opt(sb,
+							DATA_FLAGS)),
 					data_mode_string(data_opt));
 				return 0;
 			} else {
-				sbi->s_mount_opt &= ~EXT3_MOUNT_DATA_FLAGS;
+				clear_opt(sbi->s_mount_opt, DATA_FLAGS);
 				sbi->s_mount_opt |= data_opt;
 			}
 			break;
@@ -1090,62 +1144,20 @@ static int parse_options (char *options, struct super_block *sb,
 			break;
 #ifdef CONFIG_QUOTA
 		case Opt_usrjquota:
-			qtype = USRQUOTA;
-			goto set_qf_name;
+			if (!set_qf_name(sb, USRQUOTA, &args[0]))
+				return 0;
+			break;
 		case Opt_grpjquota:
-			qtype = GRPQUOTA;
-set_qf_name:
-			if (sb_any_quota_loaded(sb) &&
-			    !sbi->s_qf_names[qtype]) {
-				ext3_msg(sb, KERN_ERR,
-					"error: cannot change journaled "
-					"quota options when quota turned on.");
+			if (!set_qf_name(sb, GRPQUOTA, &args[0]))
 				return 0;
-			}
-			qname = match_strdup(&args[0]);
-			if (!qname) {
-				ext3_msg(sb, KERN_ERR,
-					"error: not enough memory for "
-					"storing quotafile name.");
-				return 0;
-			}
-			if (sbi->s_qf_names[qtype] &&
-			    strcmp(sbi->s_qf_names[qtype], qname)) {
-				ext3_msg(sb, KERN_ERR,
-					"error: %s quota file already "
-					"specified.", QTYPE2NAME(qtype));
-				kfree(qname);
-				return 0;
-			}
-			sbi->s_qf_names[qtype] = qname;
-			if (strchr(sbi->s_qf_names[qtype], '/')) {
-				ext3_msg(sb, KERN_ERR,
-					"error: quotafile must be on "
-					"filesystem root.");
-				kfree(sbi->s_qf_names[qtype]);
-				sbi->s_qf_names[qtype] = NULL;
-				return 0;
-			}
-			set_opt(sbi->s_mount_opt, QUOTA);
 			break;
 		case Opt_offusrjquota:
-			qtype = USRQUOTA;
-			goto clear_qf_name;
-		case Opt_offgrpjquota:
-			qtype = GRPQUOTA;
-clear_qf_name:
-			if (sb_any_quota_loaded(sb) &&
-			    sbi->s_qf_names[qtype]) {
-				ext3_msg(sb, KERN_ERR, "error: cannot change "
-					"journaled quota options when "
-					"quota turned on.");
+			if (!clear_qf_name(sb, USRQUOTA))
 				return 0;
-			}
-			/*
-			 * The space will be released later when all options
-			 * are confirmed to be correct
-			 */
-			sbi->s_qf_names[qtype] = NULL;
+			break;
+		case Opt_offgrpjquota:
+			if (!clear_qf_name(sb, GRPQUOTA))
+				return 0;
 			break;
 		case Opt_jqfmt_vfsold:
 			qfmt = QFMT_VFS_OLD;
@@ -1244,18 +1256,12 @@ set_qf_format:
 	}
 #ifdef CONFIG_QUOTA
 	if (sbi->s_qf_names[USRQUOTA] || sbi->s_qf_names[GRPQUOTA]) {
-		if ((sbi->s_mount_opt & EXT3_MOUNT_USRQUOTA) &&
-		     sbi->s_qf_names[USRQUOTA])
+		if (test_opt(sb, USRQUOTA) && sbi->s_qf_names[USRQUOTA])
 			clear_opt(sbi->s_mount_opt, USRQUOTA);
-
-		if ((sbi->s_mount_opt & EXT3_MOUNT_GRPQUOTA) &&
-		     sbi->s_qf_names[GRPQUOTA])
+		if (test_opt(sb, GRPQUOTA) && sbi->s_qf_names[GRPQUOTA])
 			clear_opt(sbi->s_mount_opt, GRPQUOTA);
 
-		if ((sbi->s_qf_names[USRQUOTA] &&
-				(sbi->s_mount_opt & EXT3_MOUNT_GRPQUOTA)) ||
-		    (sbi->s_qf_names[GRPQUOTA] &&
-				(sbi->s_mount_opt & EXT3_MOUNT_USRQUOTA))) {
+		if (test_opt(sb, GRPQUOTA) || test_opt(sb, USRQUOTA)) {
 			ext3_msg(sb, KERN_ERR, "error: old and new quota "
 					"format mixing.");
 			return 0;
@@ -1671,11 +1677,11 @@ static int ext3_fill_super (struct super_block *sb, void *data, int silent)
 		set_opt(sbi->s_mount_opt, POSIX_ACL);
 #endif
 	if ((def_mount_opts & EXT3_DEFM_JMODE) == EXT3_DEFM_JMODE_DATA)
-		sbi->s_mount_opt |= EXT3_MOUNT_JOURNAL_DATA;
+		set_opt(sbi->s_mount_opt, JOURNAL_DATA);
 	else if ((def_mount_opts & EXT3_DEFM_JMODE) == EXT3_DEFM_JMODE_ORDERED)
-		sbi->s_mount_opt |= EXT3_MOUNT_ORDERED_DATA;
+		set_opt(sbi->s_mount_opt, ORDERED_DATA);
 	else if ((def_mount_opts & EXT3_DEFM_JMODE) == EXT3_DEFM_JMODE_WBACK)
-		sbi->s_mount_opt |= EXT3_MOUNT_WRITEBACK_DATA;
+		set_opt(sbi->s_mount_opt, WRITEBACK_DATA);
 
 	if (le16_to_cpu(sbi->s_es->s_errors) == EXT3_ERRORS_PANIC)
 		set_opt(sbi->s_mount_opt, ERRORS_PANIC);
@@ -1694,7 +1700,7 @@ static int ext3_fill_super (struct super_block *sb, void *data, int silent)
 		goto failed_mount;
 
 	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
-		((sbi->s_mount_opt & EXT3_MOUNT_POSIX_ACL) ? MS_POSIXACL : 0);
+		(test_opt(sb, POSIX_ACL) ? MS_POSIXACL : 0);
 
 	if (le32_to_cpu(es->s_rev_level) == EXT3_GOOD_OLD_REV &&
 	    (EXT3_HAS_COMPAT_FEATURE(sb, ~0U) ||
@@ -2561,11 +2567,11 @@ static int ext3_remount (struct super_block * sb, int * flags, char * data)
 		goto restore_opts;
 	}
 
-	if (sbi->s_mount_opt & EXT3_MOUNT_ABORT)
+	if (test_opt(sb, ABORT))
 		ext3_abort(sb, __func__, "Abort forced by user");
 
 	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
-		((sbi->s_mount_opt & EXT3_MOUNT_POSIX_ACL) ? MS_POSIXACL : 0);
+		(test_opt(sb, POSIX_ACL) ? MS_POSIXACL : 0);
 
 	es = sbi->s_es;
 
@@ -2573,7 +2579,7 @@ static int ext3_remount (struct super_block * sb, int * flags, char * data)
 
 	if ((*flags & MS_RDONLY) != (sb->s_flags & MS_RDONLY) ||
 		n_blocks_count > le32_to_cpu(es->s_blocks_count)) {
-		if (sbi->s_mount_opt & EXT3_MOUNT_ABORT) {
+		if (test_opt(sb, ABORT)) {
 			err = -EROFS;
 			goto restore_opts;
 		}
