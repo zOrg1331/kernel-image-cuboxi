@@ -287,4 +287,14 @@ extern atomic_t			kgdb_active;
 extern void __init early_kgdboc_init(void);
 #endif /* CONFIG_KGDB_SERIAL_CONSOLE */
 #endif /* CONFIG_KGDB */
+
+/* Common to all that include kgdb.h */
+struct dbg_kms_console_ops {
+	int (*activate_console) (void);
+	int (*restore_console) (void);
+};
+
+#ifdef CONFIG_KGDB
+extern struct dbg_kms_console_ops *dbg_kms_console_core;
+#endif
 #endif /* _KGDB_H_ */
