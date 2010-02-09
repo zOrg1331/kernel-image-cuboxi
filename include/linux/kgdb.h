@@ -282,5 +282,8 @@ extern int kgdb_nmicallback(int cpu, void *regs);
 
 extern int			kgdb_single_step;
 extern atomic_t			kgdb_active;
+#ifdef CONFIG_KGDB_SERIAL_CONSOLE
+extern void __init early_kgdboc_init(void);
+#endif /* CONFIG_KGDB_SERIAL_CONSOLE */
 #endif /* CONFIG_KGDB */
 #endif /* _KGDB_H_ */
