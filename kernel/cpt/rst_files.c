@@ -34,6 +34,7 @@
 #include <linux/mnt_namespace.h>
 #include <linux/fdtable.h>
 #include <linux/shm.h>
+#include <linux/signalfd.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -778,6 +779,35 @@ change_dir:
 	goto try_again;
 }
 
+#ifdef CONFIG_SIGNALFD
+static struct file *open_signalfd(struct cpt_file_image *fi, int flags, struct cpt_context *ctx)
+{
+	sigset_t mask;
+	mm_segment_t old_fs;
+	int fd;
+	struct file *file;
+
+	cpt_sigset_import(&mask, fi->cpt_priv);
+
+	old_fs = get_fs(); set_fs(KERNEL_DS);
+	fd = do_signalfd(-1, &mask, flags & (O_CLOEXEC | O_NONBLOCK));
+	set_fs(old_fs);
+
+	if (fd < 0)
+		return ERR_PTR(fd);
+
+	file = fget(fd);
+	sys_close(fd);
+
+	return file;
+}
+#else
+static struct file *open_signalfd(struct cpt_file_image *fi, int flags, struct cpt_context *ctx)
+{
+	return ERR_PTR(-EINVAL);
+}
+#endif
+
 struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 {
 	int err;
@@ -914,6 +944,9 @@ open_file:
 			goto err_out;
 		}
 #endif
+		if ((fi.cpt_lflags & CPT_DENTRY_SIGNALFD) &&
+			(file = open_signalfd(&fi, flags, ctx)) != NULL)
+			goto map_file;
 		if (S_ISFIFO(fi.cpt_i_mode) &&
 		    (file = open_pipe(name, &fi, flags, ctx)) != NULL)
 			goto map_file;

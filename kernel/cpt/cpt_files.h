@@ -39,6 +39,8 @@ void rst_flush_filejobs(struct cpt_context *);
 int rst_do_filejobs(struct cpt_context *);
 
 extern struct file_operations eventpoll_fops;
+extern struct file_operations signalfd_fops;
+
 int rst_eventpoll(struct cpt_context *);
 struct file *cpt_open_epolldev(struct cpt_file_image *fi,
 			       unsigned flags,
