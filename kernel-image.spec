@@ -1,6 +1,6 @@
 Name: kernel-image-un-def-eeepc
 Version: 2.6.32
-Release: alt4.2
+Release: alt7
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -504,6 +504,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Tue Feb 09 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.32-alt7
+- 2.6.32.7
+
 * Thu Jan 21 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.32-alt4.2
 - CONFIG_PREEMPT, HZ_1000
 
