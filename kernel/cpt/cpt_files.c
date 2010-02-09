@@ -34,6 +34,7 @@
 #include <linux/if_tun.h>
 #include <linux/fdtable.h>
 #include <linux/shm.h>
+#include <linux/signalfd.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -43,6 +44,12 @@
 #include "cpt_kernel.h"
 #include "cpt_fsmagic.h"
 #include "cpt_syscalls.h"
+
+static inline int is_signalfd_file(struct file *file)
+{
+	/* no other users of it yet */
+	return file->f_op == &signalfd_fops;
+}
 
 void cpt_printk_dentry(struct dentry *d, struct vfsmount *mnt)
 {
@@ -537,6 +544,12 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 	v->cpt_fown_euid = file->f_owner.euid;
 	v->cpt_fown_signo = file->f_owner.signum;
 
+	if (is_signalfd_file(file)) {
+		struct signalfd_ctx *ctx = file->private_data;
+		v->cpt_lflags |= CPT_DENTRY_SIGNALFD;
+		v->cpt_priv = cpt_sigset_export(&ctx->sigmask);
+	}
+
 	ctx->write(v, sizeof(*v), ctx);
 	cpt_release_buf(ctx);
 
@@ -964,7 +977,8 @@ static int dump_one_inode(struct file *file, struct dentry *d,
 	    !cpt_replaced(d, mnt, ctx))
 		dump_it = 1;
 	if (!S_ISREG(ino->i_mode) && !S_ISDIR(ino->i_mode)) {
-		if (file->f_op == &eventpoll_fops)
+		if (file->f_op == &eventpoll_fops ||
+		    is_signalfd_file(file))
 			return 0;
 		dump_it = 1;
 	}
