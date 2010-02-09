@@ -1986,7 +1986,6 @@ void __audit_inode(const char *name, const struct dentry *dentry)
 
 /**
  * audit_inode_child - collect inode info for created/removed objects
- * @dname: inode's dentry name
  * @dentry: dentry being audited
  * @parent: inode of dentry parent
  *
@@ -1998,14 +1997,14 @@ void __audit_inode(const char *name, const struct dentry *dentry)
  * must be hooked prior, in order to capture the target inode during
  * unsuccessful attempts.
  */
-void __audit_inode_child(const unsigned char *dname,
-			 const struct dentry *dentry,
+void __audit_inode_child(const struct dentry *dentry,
 			 const struct inode *parent)
 {
 	int idx;
 	struct audit_context *context = current->audit_context;
 	const char *found_parent = NULL, *found_child = NULL;
 	const struct inode *inode = dentry->d_inode;
+	const char *dname = dentry->d_name.name;
 	int dirlen = 0;
 
 	if (!context->in_syscall)
@@ -2013,9 +2012,6 @@ void __audit_inode_child(const unsigned char *dname,
 
 	if (inode)
 		handle_one(inode);
-	/* determine matching parent */
-	if (!dname)
-		goto add_names;
 
 	/* parent is more likely, look for it first */
 	for (idx = 0; idx < context->name_count; idx++) {

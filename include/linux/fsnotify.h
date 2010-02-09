@@ -78,7 +78,6 @@ static inline void fsnotify_link_count(struct inode *inode)
  */
 static inline void fsnotify_move(struct inode *old_dir, struct inode *new_dir,
 				 const unsigned char *old_name,
-				 const unsigned char *new_name,
 				 int isdir, struct inode *target,
 				 struct dentry *moved)
 {
@@ -86,6 +85,7 @@ static inline void fsnotify_move(struct inode *old_dir, struct inode *new_dir,
 	u32 fs_cookie = fsnotify_get_cookie();
 	__u32 old_dir_mask = (FS_EVENT_ON_CHILD | FS_MOVED_FROM);
 	__u32 new_dir_mask = (FS_EVENT_ON_CHILD | FS_MOVED_TO);
+	const char *new_name = moved->d_name.name;
 
 	if (old_dir == new_dir)
 		old_dir_mask |= FS_DN_RENAME;
@@ -104,7 +104,7 @@ static inline void fsnotify_move(struct inode *old_dir, struct inode *new_dir,
 	if (source)
 		fsnotify(source, FS_MOVE_SELF, moved->d_inode, FSNOTIFY_EVENT_INODE, NULL, 0);
 
-	audit_inode_child(new_name, moved, new_dir);
+	audit_inode_child(moved, new_dir);
 }
 
 /*
@@ -150,7 +150,7 @@ static inline void fsnotify_inoderemove(struct inode *inode)
  */
 static inline void fsnotify_create(struct inode *inode, struct dentry *dentry)
 {
-	audit_inode_child(dentry->d_name.name, dentry, inode);
+	audit_inode_child(dentry, inode);
 
 	fsnotify(inode, FS_CREATE, dentry->d_inode, FSNOTIFY_EVENT_INODE, dentry->d_name.name, 0);
 }
@@ -163,7 +163,7 @@ static inline void fsnotify_create(struct inode *inode, struct dentry *dentry)
 static inline void fsnotify_link(struct inode *dir, struct inode *inode, struct dentry *new_dentry)
 {
 	fsnotify_link_count(inode);
-	audit_inode_child(new_dentry->d_name.name, new_dentry, dir);
+	audit_inode_child(new_dentry, dir);
 
 	fsnotify(dir, FS_CREATE, inode, FSNOTIFY_EVENT_INODE, new_dentry->d_name.name, 0);
 }
@@ -176,7 +176,7 @@ static inline void fsnotify_mkdir(struct inode *inode, struct dentry *dentry)
 	__u32 mask = (FS_CREATE | FS_IN_ISDIR);
 	struct inode *d_inode = dentry->d_inode;
 
-	audit_inode_child(dentry->d_name.name, dentry, inode);
+	audit_inode_child(dentry, inode);
 
 	fsnotify(inode, mask, d_inode, FSNOTIFY_EVENT_INODE, dentry->d_name.name, 0);
 }
