@@ -23,6 +23,7 @@
 #include <linux/time.h>
 #include <linux/writeback.h>
 #include <linux/wait.h>
+#include <linux/writeback.h>
 
 #include "gfs2.h"
 #include "incore.h"
