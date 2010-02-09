@@ -1,0 +1,107 @@
+Importing driver-core.current based on 2.6.33-rc6
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.33-rc7
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 29275254caedfedce960cfe6df24b90cb04fe431
+HEAD is now at 2927525 Linux 2.6.33-rc7
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-tiny-usb-fix-on-big-endian.patch
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+i2c-make-pci-device-ids-constant.patch
+i2c-i801-smbus-patch-for-intel-cougar-point-deviceids.patch
+i2c-tiny-usb-fix-comment.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + a5dc8fc...056eed6 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.33-rc7
+$ cd ../quilt-tmp
+$ git reset --hard 29275254caedfedce960cfe6df24b90cb04fe431
+HEAD is now at 2927525 Linux 2.6.33-rc7
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-lm90-add-w83l771-support.patch
+hwmon-it87-01-expose-auto-mode.patch
+hwmon-it87-02-expose-pwm-temp-mappings.patch
+hwmon-it87-03-fan-attributes-in-arrays.patch
+hwmon-it87-04-create-vid-attr-by-group.patch
+hwmon-it87-05-add-beep-support.patch
+hwmon-it87-06-checkpatch-cleanup.patch
+hwmon-it87-07-use-strict_strtol.patch
+hwmon-it87-08-new-maintainer.patch
+hwmon-w83793-add-watchdog-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + d52e7d6...c8ba726 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.33-rc3-git5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.33-rc7-10-g6339204
+$ cd ../quilt-tmp
+$ git reset --hard 6339204ecc2aa2067a99595522de0403f0854bb8
+HEAD is now at 6339204 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/viro/vfs-2.6
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+misc:fix-email.patch
+virtio:add_devexit_p_around_reference_to_pci_remove.patch
+misc:enhance-BUILD_BUG_ON.patch
+misc:remove-MAYBE_BUILD_BUG_ON.patch
+misc:move-BUILD_BUG-et-al-inside-__KERNEL__.patch
+virtio:add_memory_statistics_reporting_to_the_balloon_driver_v4.patch
+Context reduced to (1/1) to apply fragment at 341
+virtio:fix_scheduling_while_atomic_in_balloon_stats.patch
+virtio:balloon-fix.patch
+lguest:remove-unneeded-zlib-include.patch
+virtio:debug-barrier-removal.patch
+virtio:use_smp_xx_barriers_on_smp.patch
+virtio:blk_add_block_topology_support.patch
+virtio:console_comment_cleanup.patch
+virtio:console_statically_initialize_cons.patch
+misc:hvc_console_make_the_ops_pointer_const.patch
+virtio:console_we_support_only_one_device_at_a_time.patch
+virtio:console_port_encapsulation.patch
+virtio:console_encapsulate_buffer_information_in_a_struct.patch
+virtio:console_ensure_add_inbuf_can_work_for_multiple_ports_as_well.patch
+virtio:console_introduce_a_get_inbuf_helper_to_fetch_bufs_from_in_vq.patch
+virtio:console_use_vdev_priv_to_avoid_accessing_global_var.patch
+virtio:console_don_t_assume_a_single_console_port.patch
+virtio:console_remove_global_var.patch
+virtio:console_struct_ports_for_multiple_ports_per_device.patch
+virtio:console_ensure_console_size_is_updated_on_hvc_open.patch
+virtio:console_separate_out_console_specific_data_into_a_separate_struct.patch
+virtio:console_separate_out_console_init_into_a_new_function.patch
+virtio:console_separate_out_find_vqs_operation_into_a_different_function.patch
+virtio:console_introduce_function_to_hand_off_data_from_host_to_readers.patch
+virtio:console_introduce_a_send_buf_function_for_a_common_path_for_sending_data_to_host.patch
+virtio:console_add_a_new_multiport_feature_support_for_generic_ports.patch
+virtio:console_prepare_for_writing_to_userspace_buffers.patch
+virtio:console_associate_each_port_with_a_char_device.patch
+virtio:console_add_file_operations_to_ports_for_open_read_write_poll.patch
+virtio:console_ensure_only_one_process_can_have_a_port_open_at_a_time.patch
+virtio:console_register_with_sysfs_and_create_a_name_attribute_for_ports.patch
+virtio:console_remove_cached_data_on_port_close.patch
+virtio:console_handle_port_hot_plug.patch
+virtio:console_add_ability_to_hot_unplug_ports.patch
+virtio:console_add_debugfs_files_for_each_port_to_expose_debug_info.patch
+virtio:console_show_error_message_if_hvc_alloc_fails_for_console_ports.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + e12c606...8f83743 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.33-rc5-306-g64a028a6de08545a2c94f302bc7694bf48aee5b5
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
