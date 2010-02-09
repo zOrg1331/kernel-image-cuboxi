@@ -985,7 +985,7 @@ static inline void dquot_resv_space(struct dquot *dquot, qsize_t number)
 static void dquot_claim_reserved_space(struct dquot *dquot,
 						qsize_t number)
 {
-	WARN_ON(dquot->dq_dqb.dqb_rsvspace < number);
+	number = min_t(qsize_t, dquot->dq_dqb.dqb_rsvspace, number);
 	dquot->dq_dqb.dqb_curspace += number;
 	dquot->dq_dqb.dqb_rsvspace -= number;
 }
@@ -993,7 +993,10 @@ static void dquot_claim_reserved_space(struct dquot *dquot,
 static inline
 void dquot_free_reserved_space(struct dquot *dquot, qsize_t number)
 {
-	dquot->dq_dqb.dqb_rsvspace -= number;
+	if (dquot->dq_dqb.dqb_rsvspace >= number)
+		dquot->dq_dqb.dqb_rsvspace -= number;
+	else
+		dquot->dq_dqb.dqb_rsvspace = 0;
 }
 
 static void dquot_decr_inodes(struct dquot *dquot, qsize_t number)
