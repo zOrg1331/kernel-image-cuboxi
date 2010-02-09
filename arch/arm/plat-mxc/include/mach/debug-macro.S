@@ -10,6 +10,7 @@
  * published by the Free Software Foundation.
  *
  */
+#define IMX_NEEDS_DEPRECATED_SYMBOLS
 
 #ifdef CONFIG_ARCH_MX1
 #include <mach/mx1.h>
@@ -50,7 +51,7 @@
 #endif
 #include <mach/mxc91231.h>
 #define UART_PADDR	MXC91231_UART2_BASE_ADDR
-#define UART_VADDR	MXC91231_AIPS1_IO_ADDRESS(MXC91231_UART2_BASE_ADDR)
+#define UART_VADDR	MXC91231_IO_ADDRESS(MXC91231_UART2_BASE_ADDR)
 #endif
 		.macro	addruart, rx, tmp
 		mrc	p15, 0, \rx, c1, c0

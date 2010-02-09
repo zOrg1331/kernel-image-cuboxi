@@ -40,6 +40,8 @@
 #include <mach/imx-uart.h>
 #include <mach/mxc_nand.h>
 #include <mach/spi.h>
+#include <mach/mxc_ehci.h>
+#include <mach/ulpi.h>
 
 #include "devices.h"
 
@@ -96,6 +98,19 @@ static int pcm038_pins[] = {
 	PC17_PF_SSI4_RXD,
 	PC18_PF_SSI4_TXD,
 	PC19_PF_SSI4_CLK,
+	/* USB host */
+	PA0_PF_USBH2_CLK,
+	PA1_PF_USBH2_DIR,
+	PA2_PF_USBH2_DATA7,
+	PA3_PF_USBH2_NXT,
+	PA4_PF_USBH2_STP,
+	PD19_AF_USBH2_DATA4,
+	PD20_AF_USBH2_DATA3,
+	PD21_AF_USBH2_DATA6,
+	PD22_AF_USBH2_DATA0,
+	PD23_AF_USBH2_DATA2,
+	PD24_AF_USBH2_DATA1,
+	PD26_AF_USBH2_DATA5,
 };
 
 /*
@@ -108,8 +123,8 @@ static struct platdata_mtd_ram pcm038_sram_data = {
 };
 
 static struct resource pcm038_sram_resource = {
-	.start = CS1_BASE_ADDR,
-	.end   = CS1_BASE_ADDR + 512 * 1024 - 1,
+	.start = MX27_CS1_BASE_ADDR,
+	.end   = MX27_CS1_BASE_ADDR + 512 * 1024 - 1,
 	.flags = IORESOURCE_MEM,
 };
 
@@ -173,9 +188,7 @@ static struct platform_device *platform_devices[] __initdata = {
  * setup other stuffs to access the sram. */
 static void __init pcm038_init_sram(void)
 {
-	__raw_writel(0x0000d843, CSCR_U(1));
-	__raw_writel(0x22252521, CSCR_L(1));
-	__raw_writel(0x22220a00, CSCR_A(1));
+	mx27_setup_weimcs(1, 0x0000d843, 0x22252521, 0x22220a00);
 }
 
 static struct imxi2c_platform_data pcm038_i2c_1_data = {
@@ -279,6 +292,11 @@ static struct spi_board_info pcm038_spi_board_info[] __initdata = {
 	}
 };
 
+static struct mxc_usbh_platform_data usbh2_pdata = {
+	.portsc	= MXC_EHCI_MODE_ULPI,
+	.flags	= MXC_EHCI_POWER_PINS_ENABLED | MXC_EHCI_INTERFACE_DIFF_UNI,
+};
+
 static void __init pcm038_init(void)
 {
 	mxc_gpio_setup_multiple_pins(pcm038_pins, ARRAY_SIZE(pcm038_pins),
@@ -311,6 +329,8 @@ static void __init pcm038_init(void)
 	spi_register_board_info(pcm038_spi_board_info,
 				ARRAY_SIZE(pcm038_spi_board_info));
 
+	mxc_register_device(&mxc_usbh2, &usbh2_pdata);
+
 	platform_add_devices(platform_devices, ARRAY_SIZE(platform_devices));
 
 #ifdef CONFIG_MACH_PCM970_BASEBOARD
@@ -328,9 +348,9 @@ static struct sys_timer pcm038_timer = {
 };
 
 MACHINE_START(PCM038, "phyCORE-i.MX27")
-	.phys_io        = AIPI_BASE_ADDR,
-	.io_pg_offst    = ((AIPI_BASE_ADDR_VIRT) >> 18) & 0xfffc,
-	.boot_params    = PHYS_OFFSET + 0x100,
+	.phys_io        = MX27_AIPI_BASE_ADDR,
+	.io_pg_offst    = ((MX27_AIPI_BASE_ADDR_VIRT) >> 18) & 0xfffc,
+	.boot_params    = MX27_PHYS_OFFSET + 0x100,
 	.map_io         = mx27_map_io,
 	.init_irq       = mx27_init_irq,
 	.init_machine   = pcm038_init,

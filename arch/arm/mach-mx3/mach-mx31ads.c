@@ -60,7 +60,7 @@
 static struct plat_serial8250_port serial_platform_data[] = {
 	{
 		.membase  = (void *)(PBC_BASE_ADDRESS + PBC_SC16C652_UARTA),
-		.mapbase  = (unsigned long)(CS4_BASE_ADDR + PBC_SC16C652_UARTA),
+		.mapbase  = (unsigned long)(MX31_CS4_BASE_ADDR + PBC_SC16C652_UARTA),
 		.irq      = EXPIO_INT_XUART_INTA,
 		.uartclk  = 14745600,
 		.regshift = 0,
@@ -68,7 +68,7 @@ static struct plat_serial8250_port serial_platform_data[] = {
 		.flags    = UPF_BOOT_AUTOCONF | UPF_SKIP_TEST | UPF_AUTO_IRQ,
 	}, {
 		.membase  = (void *)(PBC_BASE_ADDRESS + PBC_SC16C652_UARTB),
-		.mapbase  = (unsigned long)(CS4_BASE_ADDR + PBC_SC16C652_UARTB),
+		.mapbase  = (unsigned long)(MX31_CS4_BASE_ADDR + PBC_SC16C652_UARTB),
 		.irq      = EXPIO_INT_XUART_INTB,
 		.uartclk  = 14745600,
 		.regshift = 0,
@@ -309,12 +309,8 @@ static struct regulator_init_data ldo1_data = {
 };
 
 static struct regulator_consumer_supply ldo2_consumers[] = {
-	{
-		.supply = "AVDD",
-	},
-	{
-		.supply = "HPVDD",
-	},
+	{ .supply = "AVDD", .dev_name = "1-001a" },
+	{ .supply = "HPVDD", .dev_name = "1-001a" },
 };
 
 /* CODEC and SIM */
@@ -385,8 +381,6 @@ static struct wm8350_audio_platform_data imx32ads_wm8350_setup = {
 
 static int mx31_wm8350_init(struct wm8350 *wm8350)
 {
-	int i;
-
 	wm8350_gpio_config(wm8350, 0, WM8350_GPIO_DIR_IN,
 			   WM8350_GPIO0_PWR_ON_IN, WM8350_GPIO_ACTIVE_LOW,
 			   WM8350_GPIO_PULL_UP, WM8350_GPIO_INVERT_OFF,
@@ -421,10 +415,6 @@ static int mx31_wm8350_init(struct wm8350 *wm8350)
 			   WM8350_GPIO9_BATT_FAULT_OUT, WM8350_GPIO_ACTIVE_LOW,
 			   WM8350_GPIO_PULL_NONE, WM8350_GPIO_INVERT_OFF,
 			   WM8350_GPIO_DEBOUNCE_OFF);
-
-	/* Fix up for our own supplies. */
-	for (i = 0; i < ARRAY_SIZE(ldo2_consumers); i++)
-		ldo2_consumers[i].dev = wm8350->dev;
 
 	wm8350_register_regulator(wm8350, WM8350_DCDC_1, &sw1a_data);
 	wm8350_register_regulator(wm8350, WM8350_DCDC_3, &viohi_data);
@@ -498,9 +488,9 @@ static void mxc_init_i2c(void)
  */
 static struct map_desc mx31ads_io_desc[] __initdata = {
 	{
-		.virtual	= CS4_BASE_ADDR_VIRT,
-		.pfn		= __phys_to_pfn(CS4_BASE_ADDR),
-		.length		= CS4_SIZE / 2,
+		.virtual	= MX31_CS4_BASE_ADDR_VIRT,
+		.pfn		= __phys_to_pfn(MX31_CS4_BASE_ADDR),
+		.length		= MX31_CS4_SIZE / 2,
 		.type		= MT_DEVICE
 	},
 };
@@ -545,9 +535,9 @@ static struct sys_timer mx31ads_timer = {
  */
 MACHINE_START(MX31ADS, "Freescale MX31ADS")
 	/* Maintainer: Freescale Semiconductor, Inc. */
-	.phys_io	= AIPS1_BASE_ADDR,
-	.io_pg_offst	= ((AIPS1_BASE_ADDR_VIRT) >> 18) & 0xfffc,
-	.boot_params    = PHYS_OFFSET + 0x100,
+	.phys_io	= MX31_AIPS1_BASE_ADDR,
+	.io_pg_offst	= (MX31_AIPS1_BASE_ADDR_VIRT >> 18) & 0xfffc,
+	.boot_params    = MX3x_PHYS_OFFSET + 0x100,
 	.map_io         = mx31ads_map_io,
 	.init_irq       = mx31ads_init_irq,
 	.init_machine   = mxc_board_init,

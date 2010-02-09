@@ -77,6 +77,12 @@ static void __init mx25pdk_fec_reset(void)
 	gpio_set_value(FEC_RESET_B_GPIO, 1);
 }
 
+static struct mxc_nand_platform_data mx25pdk_nand_board_info = {
+	.width		= 1,
+	.hw_ecc		= 1,
+	.flash_bbt	= 1,
+};
+
 static void __init mx25pdk_init(void)
 {
 	mxc_iomux_v3_setup_multiple_pads(mx25pdk_pads,
@@ -84,6 +90,8 @@ static void __init mx25pdk_init(void)
 
 	mxc_register_device(&mxc_uart_device0, &uart_pdata);
 	mxc_register_device(&mxc_usbh2, NULL);
+	mxc_register_device(&mxc_nand_device, &mx25pdk_nand_board_info);
+	mxc_register_device(&mx25_rtc_device, NULL);
 
 	mx25pdk_fec_reset();
 	mxc_register_device(&mx25_fec_device, &mx25_fec_pdata);
@@ -102,7 +110,7 @@ MACHINE_START(MX25_3DS, "Freescale MX25PDK (3DS)")
 	/* Maintainer: Freescale Semiconductor, Inc. */
 	.phys_io	= MX25_AIPS1_BASE_ADDR,
 	.io_pg_offst	= ((MX25_AIPS1_BASE_ADDR_VIRT) >> 18) & 0xfffc,
-	.boot_params    = PHYS_OFFSET + 0x100,
+	.boot_params    = MX25_PHYS_OFFSET + 0x100,
 	.map_io         = mx25_map_io,
 	.init_irq       = mx25_init_irq,
 	.init_machine   = mx25pdk_init,

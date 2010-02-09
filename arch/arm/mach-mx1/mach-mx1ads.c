@@ -1,5 +1,5 @@
 /*
- * arch/arm/mach-imx/mx1ads.c
+ * arch/arm/mach-imx/mach-mx1ads.c
  *
  * Initially based on:
  *	linux-2.6.7-imx/arch/arm/mach-imx/scb9328.c
@@ -147,7 +147,7 @@ MACHINE_START(MX1ADS, "Freescale MX1ADS")
 	/* Maintainer: Sascha Hauer, Pengutronix */
 	.phys_io	= IMX_IO_PHYS,
 	.io_pg_offst	= (IMX_IO_BASE >> 18) & 0xfffc,
-	.boot_params	= PHYS_OFFSET + 0x100,
+	.boot_params	= MX1_PHYS_OFFSET + 0x100,
 	.map_io		= mx1_map_io,
 	.init_irq	= mx1_init_irq,
 	.timer		= &mx1ads_timer,
@@ -157,7 +157,7 @@ MACHINE_END
 MACHINE_START(MXLADS, "Freescale MXLADS")
 	.phys_io	= IMX_IO_PHYS,
 	.io_pg_offst	= (IMX_IO_BASE >> 18) & 0xfffc,
-	.boot_params	= PHYS_OFFSET + 0x100,
+	.boot_params	= MX1_PHYS_OFFSET + 0x100,
 	.map_io		= mx1_map_io,
 	.init_irq	= mx1_init_irq,
 	.timer		= &mx1ads_timer,
