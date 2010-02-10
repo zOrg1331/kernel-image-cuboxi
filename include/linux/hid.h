@@ -501,7 +501,7 @@ struct hid_device {							/* device report descriptor */
 	void (*hiddev_report_event) (struct hid_device *, struct hid_report *);
 
 	/* handler for raw output data, used by hidraw */
-	int (*hid_output_raw_report) (struct hid_device *, __u8 *, size_t);
+	int (*hid_output_raw_report) (struct hid_device *, __u8 *, size_t, unsigned char);
 
 	/* debugging support via debugfs */
 	unsigned short debug;
@@ -663,7 +663,7 @@ struct hid_ll_driver {
 
 /* Applications from HID Usage Tables 4/8/99 Version 1.1 */
 /* We ignore a few input applications that are not widely used */
-#define IS_INPUT_APPLICATION(a) (((a >= 0x00010000) && (a <= 0x00010008)) || (a == 0x00010080) || (a == 0x000c0001) || (a == 0x000d0002))
+#define IS_INPUT_APPLICATION(a) (((a >= 0x00010000) && (a <= 0x00010008)) || (a == 0x00010080) || (a == 0x000c0001) || ((a >= 0x000d0002) && (a <= 0x000d0006)))
 
 /* HID core API */
 
