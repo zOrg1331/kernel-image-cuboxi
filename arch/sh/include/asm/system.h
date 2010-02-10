@@ -32,7 +32,7 @@
 #define mb()		__asm__ __volatile__ ("synco": : :"memory")
 #define rmb()		mb()
 #define wmb()		__asm__ __volatile__ ("synco": : :"memory")
-#define ctrl_barrier()	__icbi(0xa8000000)
+#define ctrl_barrier()	__icbi(PAGE_OFFSET)
 #define read_barrier_depends()	do { } while(0)
 #else
 #define mb()		__asm__ __volatile__ ("": : :"memory")
@@ -137,14 +137,14 @@ extern unsigned int instruction_size(unsigned int insn);
 #endif
 
 extern unsigned long cached_to_uncached;
+extern unsigned long uncached_size;
 
 extern struct dentry *sh_debugfs_root;
 
 void per_cpu_trap_init(void);
 void default_idle(void);
 void cpu_idle_wait(void);
-
-asmlinkage void break_point_trap(void);
+void stop_this_cpu(void *);
 
 #ifdef CONFIG_SUPERH32
 #define BUILD_TRAP_HANDLER(name)					\

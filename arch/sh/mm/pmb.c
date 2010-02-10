@@ -3,11 +3,8 @@
  *
  * Privileged Space Mapping Buffer (PMB) Support.
  *
- * Copyright (C) 2005, 2006, 2007 Paul Mundt
- *
- * P1/P2 Section mapping definitions from map32.h, which was:
- *
- *	Copyright 2003 (c) Lineo Solutions,Inc.
+ * Copyright (C) 2005 - 2010  Paul Mundt
+ * Copyright (C) 2010  Matt Fleming
  *
  * This file is subject to the terms and conditions of the GNU General Public
  * License.  See the file "COPYING" in the main directory of this archive
@@ -115,7 +112,7 @@ static void pmb_free(struct pmb_entry *pmbe)
 static void __set_pmb_entry(unsigned long vpn, unsigned long ppn,
 			    unsigned long flags, int pos)
 {
-	ctrl_outl(vpn | PMB_V, mk_pmb_addr(pos));
+	__raw_writel(vpn | PMB_V, mk_pmb_addr(pos));
 
 #ifdef CONFIG_CACHE_WRITETHROUGH
 	/*
@@ -127,17 +124,17 @@ static void __set_pmb_entry(unsigned long vpn, unsigned long ppn,
 		flags |= PMB_WT;
 #endif
 
-	ctrl_outl(ppn | flags | PMB_V, mk_pmb_data(pos));
+	__raw_writel(ppn | flags | PMB_V, mk_pmb_data(pos));
 }
 
-static void __uses_jump_to_uncached set_pmb_entry(struct pmb_entry *pmbe)
+static void set_pmb_entry(struct pmb_entry *pmbe)
 {
 	jump_to_uncached();
 	__set_pmb_entry(pmbe->vpn, pmbe->ppn, pmbe->flags, pmbe->entry);
 	back_to_cached();
 }
 
-static void __uses_jump_to_uncached clear_pmb_entry(struct pmb_entry *pmbe)
+static void clear_pmb_entry(struct pmb_entry *pmbe)
 {
 	unsigned int entry = pmbe->entry;
 	unsigned long addr;
@@ -149,10 +146,10 @@ static void __uses_jump_to_uncached clear_pmb_entry(struct pmb_entry *pmbe)
 
 	/* Clear V-bit */
 	addr = mk_pmb_addr(entry);
-	ctrl_outl(ctrl_inl(addr) & ~PMB_V, addr);
+	__raw_writel(__raw_readl(addr) & ~PMB_V, addr);
 
 	addr = mk_pmb_data(entry);
-	ctrl_outl(ctrl_inl(addr) & ~PMB_V, addr);
+	__raw_writel(__raw_readl(addr) & ~PMB_V, addr);
 
 	back_to_cached();
 }
@@ -279,58 +276,126 @@ static void __pmb_unmap(struct pmb_entry *pmbe)
 	} while (pmbe);
 }
 
-#ifdef CONFIG_PMB
-int __uses_jump_to_uncached pmb_init(void)
+#ifdef CONFIG_PMB_LEGACY
+static inline unsigned int pmb_ppn_in_range(unsigned long ppn)
 {
-	unsigned int i;
-	long size, ret;
+	return ppn >= __MEMORY_START && ppn < __MEMORY_START + __MEMORY_SIZE;
+}
+
+static int pmb_apply_legacy_mappings(void)
+{
+	unsigned int applied = 0;
+	int i;
+
+	pr_info("PMB: Preserving legacy mappings:\n");
+
+	/*
+	 * The following entries are setup by the bootloader.
+	 *
+	 * Entry       VPN	   PPN	    V	SZ	C	UB
+	 * --------------------------------------------------------
+	 *   0      0xA0000000 0x00000000   1   64MB    0       0
+	 *   1      0xA4000000 0x04000000   1   16MB    0       0
+	 *   2      0xA6000000 0x08000000   1   16MB    0       0
+	 *   9      0x88000000 0x48000000   1  128MB    1       1
+	 *  10      0x90000000 0x50000000   1  128MB    1       1
+	 *  11      0x98000000 0x58000000   1  128MB    1       1
+	 *  13      0xA8000000 0x48000000   1  128MB    0       0
+	 *  14      0xB0000000 0x50000000   1  128MB    0       0
+	 *  15      0xB8000000 0x58000000   1  128MB    0       0
+	 *
+	 * The only entries the we need are the ones that map the kernel
+	 * at the cached and uncached addresses.
+	 */
+	for (i = 0; i < PMB_ENTRY_MAX; i++) {
+		unsigned long addr, data;
+		unsigned long addr_val, data_val;
+		unsigned long ppn, vpn;
+
+		addr = mk_pmb_addr(i);
+		data = mk_pmb_data(i);
+
+		addr_val = __raw_readl(addr);
+		data_val = __raw_readl(data);
+
+		/*
+		 * Skip over any bogus entries
+		 */
+		if (!(data_val & PMB_V) || !(addr_val & PMB_V))
+			continue;
+
+		ppn = data_val & PMB_PFN_MASK;
+		vpn = addr_val & PMB_PFN_MASK;
+
+		/*
+		 * Only preserve in-range mappings.
+		 */
+		if (pmb_ppn_in_range(ppn)) {
+			unsigned int size;
+			char *sz_str = NULL;
+
+			size = data_val & PMB_SZ_MASK;
+
+			sz_str = (size == PMB_SZ_16M)  ? " 16MB":
+				 (size == PMB_SZ_64M)  ? " 64MB":
+				 (size == PMB_SZ_128M) ? "128MB":
+							 "512MB";
+
+			pr_info("\t0x%08lx -> 0x%08lx [ %s %scached ]\n",
+				vpn >> PAGE_SHIFT, ppn >> PAGE_SHIFT, sz_str,
+				(data_val & PMB_C) ? "" : "un");
+
+			applied++;
+		} else {
+			/*
+			 * Invalidate anything out of bounds.
+			 */
+			__raw_writel(addr_val & ~PMB_V, addr);
+			__raw_writel(data_val & ~PMB_V, data);
+		}
+	}
+
+	return (applied == 0);
+}
+#else
+static inline int pmb_apply_legacy_mappings(void)
+{
+	return 1;
+}
+#endif
+
+int pmb_init(void)
+{
+	int i;
+	unsigned long addr, data;
+	unsigned long ret;
 
 	jump_to_uncached();
 
 	/*
-	 * Insert PMB entries for the P1 and P2 areas so that, after
-	 * we've switched the MMU to 32-bit mode, the semantics of P1
-	 * and P2 are the same as in 29-bit mode, e.g.
-	 *
-	 *	P1 - provides a cached window onto physical memory
-	 *	P2 - provides an uncached window onto physical memory
+	 * Attempt to apply the legacy boot mappings if configured. If
+	 * this is successful then we simply carry on with those and
+	 * don't bother establishing additional memory mappings. Dynamic
+	 * device mappings through pmb_remap() can still be bolted on
+	 * after this.
 	 */
-	size = __MEMORY_START + __MEMORY_SIZE;
+	ret = pmb_apply_legacy_mappings();
+	if (ret == 0) {
+		back_to_cached();
+		return 0;
+	}
 
-	ret = pmb_remap(P1SEG, 0x00000000, size, PMB_C);
-	BUG_ON(ret != size);
-
-	ret = pmb_remap(P2SEG, 0x00000000, size, PMB_WT | PMB_UB);
-	BUG_ON(ret != size);
-
-	ctrl_outl(0, PMB_IRMCR);
-
-	/* PMB.SE and UB[7] */
-	ctrl_outl(PASCR_SE | (1 << 7), PMB_PASCR);
-
-	/* Flush out the TLB */
-	i =  ctrl_inl(MMUCR);
-	i |= MMUCR_TI;
-	ctrl_outl(i, MMUCR);
-
-	back_to_cached();
-
-	return 0;
-}
-#else
-int __uses_jump_to_uncached pmb_init(void)
-{
-	int i;
-	unsigned long addr, data;
-
-	jump_to_uncached();
-
+	/*
+	 * Sync our software copy of the PMB mappings with those in
+	 * hardware. The mappings in the hardware PMB were either set up
+	 * by the bootloader or very early on by the kernel.
+	 */
 	for (i = 0; i < PMB_ENTRY_MAX; i++) {
 		struct pmb_entry *pmbe;
 		unsigned long vpn, ppn, flags;
 
 		addr = PMB_DATA + (i << PMB_E_SHIFT);
-		data = ctrl_inl(addr);
+		data = __raw_readl(addr);
 		if (!(data & PMB_V))
 			continue;
 
@@ -343,7 +408,7 @@ int __uses_jump_to_uncached pmb_init(void)
 			data &= ~(PMB_C | PMB_WT);
 #endif
 		}
-		ctrl_outl(data, addr);
+		__raw_writel(data, addr);
 
 		ppn = data & PMB_PFN_MASK;
 
@@ -351,7 +416,7 @@ int __uses_jump_to_uncached pmb_init(void)
 		flags |= data & PMB_SZ_MASK;
 
 		addr = PMB_ADDR + (i << PMB_E_SHIFT);
-		data = ctrl_inl(addr);
+		data = __raw_readl(addr);
 
 		vpn = data & PMB_PFN_MASK;
 
@@ -359,11 +424,22 @@ int __uses_jump_to_uncached pmb_init(void)
 		WARN_ON(IS_ERR(pmbe));
 	}
 
+	__raw_writel(0, PMB_IRMCR);
+
+	/* Flush out the TLB */
+	i =  __raw_readl(MMUCR);
+	i |= MMUCR_TI;
+	__raw_writel(i, MMUCR);
+
 	back_to_cached();
 
 	return 0;
 }
-#endif /* CONFIG_PMB */
+
+bool __in_29bit_mode(void)
+{
+        return (__raw_readl(PMB_PASCR) & PASCR_SE) == 0;
+}
 
 static int pmb_seq_show(struct seq_file *file, void *iter)
 {
@@ -378,8 +454,8 @@ static int pmb_seq_show(struct seq_file *file, void *iter)
 		unsigned int size;
 		char *sz_str = NULL;
 
-		addr = ctrl_inl(mk_pmb_addr(i));
-		data = ctrl_inl(mk_pmb_data(i));
+		addr = __raw_readl(mk_pmb_addr(i));
+		data = __raw_readl(mk_pmb_data(i));
 
 		size = data & PMB_SZ_MASK;
 		sz_str = (size == PMB_SZ_16M)  ? " 16MB":
@@ -462,6 +538,5 @@ static int __init pmb_sysdev_init(void)
 {
 	return sysdev_driver_register(&cpu_sysdev_class, &pmb_sysdev_driver);
 }
-
 subsys_initcall(pmb_sysdev_init);
 #endif
