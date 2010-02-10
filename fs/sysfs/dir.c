@@ -354,7 +354,10 @@ struct sysfs_dirent *sysfs_new_dirent(const char *name, umode_t mode, int type)
 
 	atomic_set(&sd->s_count, 1);
 	atomic_set(&sd->s_active, 0);
-	sysfs_dirent_init_lockdep(sd);
+	if (type & SYSFS_KOBJ_LINK)
+		sysfs_dirent_init_lockdep(sd, "link");
+	else
+		sysfs_dirent_init_lockdep(sd, "non_link");
 
 	sd->s_name = name;
 	sd->s_mode = mode;
