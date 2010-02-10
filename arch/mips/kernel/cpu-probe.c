@@ -162,6 +162,7 @@ void __init check_wait(void)
 	case CPU_BCM6348:
 	case CPU_BCM6358:
 	case CPU_CAVIUM_OCTEON:
+	case CPU_CAVIUM_OCTEON_PLUS:
 		cpu_wait = r4k_wait;
 		break;
 
@@ -911,11 +912,14 @@ static inline void cpu_probe_cavium(struct cpuinfo_mips *c, unsigned int cpu)
 	case PRID_IMP_CAVIUM_CN38XX:
 	case PRID_IMP_CAVIUM_CN31XX:
 	case PRID_IMP_CAVIUM_CN30XX:
+		c->cputype = CPU_CAVIUM_OCTEON;
+		goto name_and_platform;
 	case PRID_IMP_CAVIUM_CN58XX:
 	case PRID_IMP_CAVIUM_CN56XX:
 	case PRID_IMP_CAVIUM_CN50XX:
 	case PRID_IMP_CAVIUM_CN52XX:
-		c->cputype = CPU_CAVIUM_OCTEON;
+		c->cputype = CPU_CAVIUM_OCTEON_PLUS;
+name_and_platform:
 		__cpu_name[cpu] = "Cavium Octeon";
 		if (cpu == 0)
 			__elf_platform = "octeon";
