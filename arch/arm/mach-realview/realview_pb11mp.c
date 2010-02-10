@@ -32,7 +32,6 @@
 #include <asm/leds.h>
 #include <asm/mach-types.h>
 #include <asm/hardware/gic.h>
-#include <asm/hardware/icst307.h>
 #include <asm/hardware/cache-l2x0.h>
 #include <asm/localtimer.h>
 
@@ -45,7 +44,6 @@
 #include <mach/irqs.h>
 
 #include "core.h"
-#include "clock.h"
 
 static struct map_desc realview_pb11mp_io_desc[] __initdata = {
 	{
