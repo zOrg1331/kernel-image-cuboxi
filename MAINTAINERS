@@ -4480,6 +4480,13 @@ S:	Supported
 F:	Documentation/networking/LICENSE.qla3xxx
 F:	drivers/net/qla3xxx.*
 
+QLOGIC QLCNIC (1/10)Gb ETHERNET DRIVER
+M:	Amit Kumar Salecha <amit.salecha@qlogic.com>
+M:	linux-driver@qlogic.com
+L:	netdev@vger.kernel.org
+S:	Supported
+F:	drivers/net/qlcnic/
+
 QLOGIC QLGE 10Gb ETHERNET DRIVER
 M:	Ron Mercer <ron.mercer@qlogic.com>
 M:	linux-driver@qlogic.com
@@ -5830,6 +5837,15 @@ M:	OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
 S:	Maintained
 F:	Documentation/filesystems/vfat.txt
 F:	fs/fat/
+
+VIRTIO HOST (VHOST)
+M:	"Michael S. Tsirkin" <mst@redhat.com>
+L:	kvm@vger.kernel.org
+L:	virtualization@lists.osdl.org
+L:	netdev@vger.kernel.org
+S:	Maintained
+F:	drivers/vhost/
+F:	include/linux/vhost.h
 
 VIA RHINE NETWORK DRIVER
 M:	Roger Luethi <rl@hellgate.ch>
