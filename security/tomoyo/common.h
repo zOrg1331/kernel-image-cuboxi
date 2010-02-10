@@ -89,7 +89,7 @@ struct tomoyo_path_info {
  * "struct tomoyo_path_info_with_data".
  */
 struct tomoyo_path_info_with_data {
-	/* Keep "head" first, for this pointer is passed to tomoyo_free(). */
+	/* Keep "head" first, for this pointer is passed to kfree(). */
 	struct tomoyo_path_info head;
 	char barrier1[16]; /* Safeguard for overrun. */
 	char body[TOMOYO_MAX_PATHNAME_LEN];
@@ -101,29 +101,19 @@ struct tomoyo_path_info_with_data {
  *
  *  (1) "list" which is linked to the ->acl_info_list of
  *      "struct tomoyo_domain_info"
- *  (2) "type" which tells
- *      (a) type & 0x7F : type of the entry (either
- *          "struct tomoyo_single_path_acl_record" or
- *          "struct tomoyo_double_path_acl_record")
- *      (b) type & 0x80 : whether the entry is marked as "deleted".
+ *  (2) "type" which tells type of the entry (either
+ *      "struct tomoyo_single_path_acl_record" or
+ *      "struct tomoyo_double_path_acl_record").
  *
  * Packing "struct tomoyo_acl_info" allows
- * "struct tomoyo_single_path_acl_record" to embed "u16" and
+ * "struct tomoyo_single_path_acl_record" to embed "u8" + "u16" and
  * "struct tomoyo_double_path_acl_record" to embed "u8"
  * without enlarging their structure size.
  */
 struct tomoyo_acl_info {
 	struct list_head list;
-	/*
-	 * Type of this ACL entry.
-	 *
-	 * MSB is is_deleted flag.
-	 */
 	u8 type;
 } __packed;
-
-/* This ACL entry is deleted.           */
-#define TOMOYO_ACL_DELETED        0x80
 
 /*
  * tomoyo_domain_info is a structure which is used for holding permissions
@@ -138,7 +128,13 @@ struct tomoyo_acl_info {
  *      "deleted", false otherwise.
  *  (6) "quota_warned" is a bool which is used for suppressing warning message
  *      when learning mode learned too much entries.
- *  (7) "flags" which remembers this domain's attributes.
+ *  (7) "ignore_global_allow_read" is a bool which is true if this domain
+ *      should ignore "allow_read" directive in exception policy.
+ *  (8) "transition_failed" is a bool which is set to true when this domain was
+ *      unable to create a new domain at tomoyo_find_next_domain() because the
+ *      name of the domain to be created was too long or it could not allocate
+ *      memory. If set to true, more than one process continued execve()
+ *      without domain transition.
  *
  * A domain's lifecycle is an analogy of files on / directory.
  * Multiple domains with the same domainname cannot be created (as with
@@ -155,22 +151,12 @@ struct tomoyo_domain_info {
 	u8 profile;        /* Profile number to use. */
 	bool is_deleted;   /* Delete flag.           */
 	bool quota_warned; /* Quota warnning flag.   */
-	/* DOMAIN_FLAGS_*. Use tomoyo_set_domain_flag() to modify. */
-	u8 flags;
+	bool ignore_global_allow_read; /* Ignore "allow_read" flag. */
+	bool transition_failed; /* Domain transition failed flag. */
 };
 
 /* Profile number is an integer between 0 and 255. */
 #define TOMOYO_MAX_PROFILES 256
-
-/* Ignore "allow_read" directive in exception policy. */
-#define TOMOYO_DOMAIN_FLAGS_IGNORE_GLOBAL_ALLOW_READ 1
-/*
- * This domain was unable to create a new domain at tomoyo_find_next_domain()
- * because the name of the domain to be created was too long or
- * it could not allocate memory.
- * More than one process continued execve() without domain transition.
- */
-#define TOMOYO_DOMAIN_FLAGS_TRANSITION_FAILED        2
 
 /*
  * tomoyo_single_path_acl_record is a structure which is used for holding an
@@ -184,10 +170,13 @@ struct tomoyo_domain_info {
  * Directives held by this structure are "allow_read/write", "allow_execute",
  * "allow_read", "allow_write", "allow_create", "allow_unlink", "allow_mkdir",
  * "allow_rmdir", "allow_mkfifo", "allow_mksock", "allow_mkblock",
- * "allow_mkchar", "allow_truncate", "allow_symlink" and "allow_rewrite".
+ * "allow_mkchar", "allow_truncate", "allow_symlink", "allow_rewrite",
+ * "allow_chmod", "allow_chown", "allow_chgrp", "allow_chroot", "allow_mount"
+ * and "allow_unmount".
  */
 struct tomoyo_single_path_acl_record {
 	struct tomoyo_acl_info head; /* type = TOMOYO_TYPE_SINGLE_PATH_ACL */
+	u8 perm_high;
 	u16 perm;
 	/* Pointer to single pathname. */
 	const struct tomoyo_path_info *filename;
@@ -195,7 +184,7 @@ struct tomoyo_single_path_acl_record {
 
 /*
  * tomoyo_double_path_acl_record is a structure which is used for holding an
- * entry with two pathnames operation (i.e. link() and rename()).
+ * entry with two pathnames operation (i.e. link(), rename() and pivot_root()).
  * It has following fields.
  *
  *  (1) "head" which is a "struct tomoyo_acl_info".
@@ -203,7 +192,8 @@ struct tomoyo_single_path_acl_record {
  *  (3) "filename1" is the source/old pathname.
  *  (4) "filename2" is the destination/new pathname.
  *
- * Directives held by this structure are "allow_rename" and "allow_link".
+ * Directives held by this structure are "allow_rename", "allow_link" and
+ * "allow_pivot_root".
  */
 struct tomoyo_double_path_acl_record {
 	struct tomoyo_acl_info head; /* type = TOMOYO_TYPE_DOUBLE_PATH_ACL */
@@ -265,6 +255,8 @@ struct tomoyo_io_buffer {
 	int (*write) (struct tomoyo_io_buffer *);
 	/* Exclusive lock for this structure.   */
 	struct mutex io_sem;
+	/* Index returned by tomoyo_read_lock(). */
+	int reader_idx;
 	/* The position currently reading from. */
 	struct list_head *read_var1;
 	/* Extra variables for reading.         */
@@ -370,33 +362,16 @@ struct tomoyo_domain_info *tomoyo_find_or_assign_new_domain(const char *
 /* Check mode for specified functionality. */
 unsigned int tomoyo_check_flags(const struct tomoyo_domain_info *domain,
 				const u8 index);
-/* Allocate memory for structures. */
-void *tomoyo_alloc_acl_element(const u8 acl_type);
 /* Fill in "struct tomoyo_path_info" members. */
 void tomoyo_fill_path_info(struct tomoyo_path_info *ptr);
 /* Run policy loader when /sbin/init starts. */
 void tomoyo_load_policy(const char *filename);
-/* Change "struct tomoyo_domain_info"->flags. */
-void tomoyo_set_domain_flag(struct tomoyo_domain_info *domain,
-			    const bool is_delete, const u8 flags);
 
 /* strcmp() for "struct tomoyo_path_info" structure. */
 static inline bool tomoyo_pathcmp(const struct tomoyo_path_info *a,
 				  const struct tomoyo_path_info *b)
 {
 	return a->hash != b->hash || strcmp(a->name, b->name);
-}
-
-/* Get type of an ACL entry. */
-static inline u8 tomoyo_acl_type1(struct tomoyo_acl_info *ptr)
-{
-	return ptr->type & ~TOMOYO_ACL_DELETED;
-}
-
-/* Get type of an ACL entry. */
-static inline u8 tomoyo_acl_type2(struct tomoyo_acl_info *ptr)
-{
-	return ptr->type;
 }
 
 /**
@@ -425,10 +400,9 @@ static inline bool tomoyo_is_invalid(const unsigned char c)
 
 /* The list for "struct tomoyo_domain_info". */
 extern struct list_head tomoyo_domain_list;
-extern struct rw_semaphore tomoyo_domain_list_lock;
 
-/* Lock for domain->acl_info_list. */
-extern struct rw_semaphore tomoyo_domain_acl_info_list_lock;
+/* Lock for protecting policy. */
+extern struct mutex tomoyo_policy_lock;
 
 /* Has /sbin/init started? */
 extern bool tomoyo_policy_loaded;
@@ -442,16 +416,28 @@ extern struct tomoyo_domain_info tomoyo_kernel_domain;
  * @cookie:     the &struct list_head to use as a cookie.
  * @head:       the head for your list.
  *
- * Same with list_for_each() except that this primitive uses @cookie
+ * Same with list_for_each_rcu() except that this primitive uses @cookie
  * so that we can continue iteration.
  * @cookie must be NULL when iteration starts, and @cookie will become
  * NULL when iteration finishes.
  */
-#define list_for_each_cookie(pos, cookie, head)                       \
-	for (({ if (!cookie)                                          \
-				     cookie = head; }),               \
-	     pos = (cookie)->next;                                    \
-	     prefetch(pos->next), pos != (head) || ((cookie) = NULL); \
-	     (cookie) = pos, pos = pos->next)
+#define list_for_each_cookie(pos, cookie, head)				\
+	for (({ if (!cookie)						\
+				     cookie = head; }),			\
+		     pos = rcu_dereference((cookie)->next);		\
+	     prefetch(pos->next), pos != (head) || ((cookie) = NULL);	\
+	     (cookie) = pos, pos = rcu_dereference(pos->next))
+
+extern struct srcu_struct tomoyo_ss;
+
+static inline int tomoyo_read_lock(void)
+{
+	return srcu_read_lock(&tomoyo_ss);
+}
+
+static inline void tomoyo_read_unlock(int idx)
+{
+	srcu_read_unlock(&tomoyo_ss, idx);
+}
 
 #endif /* !defined(_SECURITY_TOMOYO_COMMON_H) */
