@@ -45,6 +45,8 @@ $(obj)/r420.o: $(obj)/r420_reg_safe.h
 
 $(obj)/rs600.o: $(obj)/rs600_reg_safe.h
 
+$(obj)/r600_cs.o: $(obj)/r600_reg_safe.h
+
 radeon-y := radeon_drv.o radeon_cp.o radeon_state.o radeon_mem.o \
 	radeon_irq.o r300_cmdbuf.o r600_cp.o
 # add KMS driver
