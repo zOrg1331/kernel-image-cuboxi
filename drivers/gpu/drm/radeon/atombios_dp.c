@@ -360,7 +360,6 @@ retry:
 			goto retry;
 		DRM_DEBUG("failed to get auxch %02x%02x %02x %02x 0x%02x %02x after %d retries\n",
 			  req_bytes[1], req_bytes[0], req_bytes[2], req_bytes[3],
-			  chan->rec.i2c_id, args.v1.ucReplyStatus);
 			  chan->rec.i2c_id, args.v1.ucReplyStatus, retry_count);
 		return false;
 	}
