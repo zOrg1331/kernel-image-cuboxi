@@ -353,30 +353,15 @@ void r600_hpd_fini(struct radeon_device *rdev)
 /*
  * R600 PCIE GART
  */
-#define R600_PTE_VALID     (1 << 0)
-#define R600_PTE_SYSTEM    (1 << 1)
-#define R600_PTE_SNOOPED   (1 << 2)
-#define R600_PTE_READABLE  (1 << 5)
-#define R600_PTE_WRITEABLE (1 << 6)
-
-int r600_gart_set_page(struct radeon_device *rdev, int i, uint64_t addr)
+int r600_gart_clear_page(struct radeon_device *rdev, int i)
 {
 	void __iomem *ptr = (void *)rdev->gart.table.vram.ptr;
+	u64 pte;
 
 	if (i < 0 || i > rdev->gart.num_gpu_pages)
 		return -EINVAL;
-
-	/* Flush VM TLBs, L2 */
-	WREG32(VM_L2_CNTL2, INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE);
-
-	addr = addr & 0xFFFFFFFFFFFFF000ULL;
-	addr |= R600_PTE_VALID | R600_PTE_SYSTEM | R600_PTE_SNOOPED;
-	addr |= R600_PTE_READABLE | R600_PTE_WRITEABLE;
-	writeq(addr, ((void __iomem *)ptr) + (i * 8));
-
-	/* flush hdp cache so updates hit vram */
-	WREG32(R_005480_HDP_MEM_COHERENCY_FLUSH_CNTL, 0x1);
-
+	pte = 0;
+	writeq(pte, ((void __iomem *)ptr) + (i * 8));
 	return 0;
 }
 
@@ -431,7 +416,6 @@ int r600_pcie_gart_enable(struct radeon_device *rdev)
 	r = radeon_gart_table_vram_pin(rdev);
 	if (r)
 		return r;
-	radeon_gart_restore(rdev);
 
 	/* Setup L2 cache */
 	WREG32(VM_L2_CNTL, ENABLE_L2_CACHE | ENABLE_L2_FRAGMENT_PROCESSING |

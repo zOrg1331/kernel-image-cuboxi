@@ -494,7 +494,6 @@ int r600_wb_init(struct radeon_device *rdev);
 void r600_wb_fini(struct radeon_device *rdev);
 void r600_cp_commit(struct radeon_device *rdev);
 void r600_pcie_gart_tlb_flush(struct radeon_device *rdev);
-int r600_gart_set_page(struct radeon_device *rdev, int i, uint64_t addr);
 uint32_t r600_pciep_rreg(struct radeon_device *rdev, uint32_t reg);
 void r600_pciep_wreg(struct radeon_device *rdev, uint32_t reg, uint32_t v);
 int r600_cs_parse(struct radeon_cs_parser *p);
@@ -533,7 +532,7 @@ static struct radeon_asic r600_asic = {
 	.vga_set_state = &r600_vga_set_state,
 	.gpu_reset = &r600_gpu_reset,
 	.gart_tlb_flush = &r600_pcie_gart_tlb_flush,
-	.gart_set_page = &r600_gart_set_page,
+	.gart_set_page = &rs600_gart_set_page,
 	.ring_test = &r600_ring_test,
 	.ring_ib_execute = &r600_ring_ib_execute,
 	.irq_set = &r600_irq_set,
@@ -579,7 +578,7 @@ static struct radeon_asic rv770_asic = {
 	.gpu_reset = &rv770_gpu_reset,
 	.vga_set_state = &r600_vga_set_state,
 	.gart_tlb_flush = &r600_pcie_gart_tlb_flush,
-	.gart_set_page = &r600_gart_set_page,
+	.gart_set_page = &rs600_gart_set_page,
 	.ring_test = &r600_ring_test,
 	.ring_ib_execute = &r600_ring_ib_execute,
 	.irq_set = &r600_irq_set,
