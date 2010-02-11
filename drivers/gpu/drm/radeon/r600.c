@@ -353,15 +353,30 @@ void r600_hpd_fini(struct radeon_device *rdev)
 /*
  * R600 PCIE GART
  */
-int r600_gart_clear_page(struct radeon_device *rdev, int i)
+#define R600_PTE_VALID     (1 << 0)
+#define R600_PTE_SYSTEM    (1 << 1)
+#define R600_PTE_SNOOPED   (1 << 2)
+#define R600_PTE_READABLE  (1 << 5)
+#define R600_PTE_WRITEABLE (1 << 6)
+
+int r600_gart_set_page(struct radeon_device *rdev, int i, uint64_t addr)
 {
 	void __iomem *ptr = (void *)rdev->gart.table.vram.ptr;
-	u64 pte;
 
 	if (i < 0 || i > rdev->gart.num_gpu_pages)
 		return -EINVAL;
-	pte = 0;
-	writeq(pte, ((void __iomem *)ptr) + (i * 8));
+
+	/* Flush VM TLBs, L2 */
+	WREG32(VM_L2_CNTL2, INVALIDATE_ALL_L1_TLBS | INVALIDATE_L2_CACHE);
+
+	addr = addr & 0xFFFFFFFFFFFFF000ULL;
+	addr |= R600_PTE_VALID | R600_PTE_SYSTEM | R600_PTE_SNOOPED;
+	addr |= R600_PTE_READABLE | R600_PTE_WRITEABLE;
+	writeq(addr, ((void __iomem *)ptr) + (i * 8));
+
+	/* flush hdp cache so updates hit vram */
+	WREG32(R_005480_HDP_MEM_COHERENCY_FLUSH_CNTL, 0x1);
+
 	return 0;
 }
 
@@ -416,6 +431,7 @@ int r600_pcie_gart_enable(struct radeon_device *rdev)
 	r = radeon_gart_table_vram_pin(rdev);
 	if (r)
 		return r;
+	radeon_gart_restore(rdev);
 
 	/* Setup L2 cache */
 	WREG32(VM_L2_CNTL, ENABLE_L2_CACHE | ENABLE_L2_FRAGMENT_PROCESSING |
@@ -1077,21 +1093,27 @@ void r600_gpu_init(struct radeon_device *rdev)
 	switch (rdev->config.r600.max_tile_pipes) {
 	case 1:
 		tiling_config |= PIPE_TILING(0);
+		rdev->config.r600.tiling_npipes = 1;
 		break;
 	case 2:
 		tiling_config |= PIPE_TILING(1);
+		rdev->config.r600.tiling_npipes = 2;
 		break;
 	case 4:
 		tiling_config |= PIPE_TILING(2);
+		rdev->config.r600.tiling_npipes = 4;
 		break;
 	case 8:
 		tiling_config |= PIPE_TILING(3);
+		rdev->config.r600.tiling_npipes = 8;
 		break;
 	default:
 		break;
 	}
+	rdev->config.r600.tiling_nbanks = 4 << ((ramcfg & NOOFBANK_MASK) >> NOOFBANK_SHIFT);
 	tiling_config |= BANK_TILING((ramcfg & NOOFBANK_MASK) >> NOOFBANK_SHIFT);
 	tiling_config |= GROUP_SIZE(0);
+	rdev->config.r600.tiling_group_size = 256;
 	tmp = (ramcfg & NOOFROWS_MASK) >> NOOFROWS_SHIFT;
 	if (tmp > 3) {
 		tiling_config |= ROW_TILING(3);
@@ -1783,6 +1805,13 @@ void r600_fence_ring_emit(struct radeon_device *rdev,
 			  struct radeon_fence *fence)
 {
 	/* Also consider EVENT_WRITE_EOP.  it handles the interrupts + timestamps + events */
+
+	radeon_ring_write(rdev, PACKET3(PACKET3_EVENT_WRITE, 0));
+	radeon_ring_write(rdev, CACHE_FLUSH_AND_INV_EVENT);
+	/* wait for 3D idle clean */
+	radeon_ring_write(rdev, PACKET3(PACKET3_SET_CONFIG_REG, 1));
+	radeon_ring_write(rdev, (WAIT_UNTIL - PACKET3_SET_CONFIG_REG_OFFSET) >> 2);
+	radeon_ring_write(rdev, WAIT_3D_IDLE_bit | WAIT_3D_IDLECLEAN_bit);
 	/* Emit fence sequence & fire IRQ */
 	radeon_ring_write(rdev, PACKET3(PACKET3_SET_CONFIG_REG, 1));
 	radeon_ring_write(rdev, ((rdev->fence_drv.scratch_reg - PACKET3_SET_CONFIG_REG_OFFSET) >> 2));
@@ -2745,6 +2774,7 @@ restart_ih:
 			case 0: /* D1 vblank */
 				if (disp_int & LB_D1_VBLANK_INTERRUPT) {
 					drm_handle_vblank(rdev->ddev, 0);
+					wake_up(&rdev->irq.vblank_queue);
 					disp_int &= ~LB_D1_VBLANK_INTERRUPT;
 					DRM_DEBUG("IH: D1 vblank\n");
 				}
@@ -2765,6 +2795,7 @@ restart_ih:
 			case 0: /* D2 vblank */
 				if (disp_int & LB_D2_VBLANK_INTERRUPT) {
 					drm_handle_vblank(rdev->ddev, 1);
+					wake_up(&rdev->irq.vblank_queue);
 					disp_int &= ~LB_D2_VBLANK_INTERRUPT;
 					DRM_DEBUG("IH: D2 vblank\n");
 				}
