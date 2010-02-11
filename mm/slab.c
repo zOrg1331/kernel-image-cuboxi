@@ -115,6 +115,7 @@
 #include	<linux/reciprocal_div.h>
 #include	<linux/debugobjects.h>
 #include	<linux/kmemcheck.h>
+#include	<linux/memory.h>
 
 #include	<asm/cacheflush.h>
 #include	<asm/tlbflush.h>
@@ -1569,6 +1570,25 @@ void __init kmem_cache_init(void)
 	g_cpucache_up = EARLY;
 }
 
+#ifdef CONFIG_MEMORY_HOTPLUG
+static int slab_memory_callback(struct notifier_block *self,
+				unsigned long action, void *arg)
+{
+	struct memory_notify *mn = (struct memory_notify *)arg;
+
+	/*
+	 * When a node goes online allocate l3s early.	 This way
+	 * kmalloc_node() works for it.
+	 */
+	if (action == MEM_ONLINE && mn->status_change_nid >= 0) {
+		mutex_lock(&cache_chain_mutex);
+		slab_node_prepare(mn->status_change_nid);
+		mutex_unlock(&cache_chain_mutex);
+	}
+	return NOTIFY_OK;
+}
+#endif
+
 void __init kmem_cache_init_late(void)
 {
 	struct kmem_cache *cachep;
@@ -1591,6 +1611,8 @@ void __init kmem_cache_init_late(void)
 	 * cpu_cache_get for all new cpus
 	 */
 	register_cpu_notifier(&cpucache_notifier);
+
+	hotplug_memory_notifier(slab_memory_callback, SLAB_CALLBACK_PRI);
 
 	/*
 	 * The reap timers are started later, with a module init call: That part
