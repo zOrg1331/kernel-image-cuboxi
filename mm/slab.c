@@ -4118,6 +4118,9 @@ static void cache_reap(struct work_struct *w)
 		 * we can do some work if the lock was obtained.
 		 */
 		l3 = searchp->nodelists[node];
+		/* Note node yet set up */
+		if (!l3)
+			break;
 
 		reap_alien(searchp, l3);
 
