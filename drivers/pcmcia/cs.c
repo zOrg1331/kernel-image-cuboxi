@@ -140,19 +140,13 @@ struct pcmcia_socket *pcmcia_get_socket(struct pcmcia_socket *skt)
 	struct device *dev = get_device(&skt->dev);
 	if (!dev)
 		return NULL;
-	skt = dev_get_drvdata(dev);
-	if (!try_module_get(skt->owner)) {
-		put_device(&skt->dev);
-		return NULL;
-	}
-	return skt;
+	return dev_get_drvdata(dev);
 }
 EXPORT_SYMBOL(pcmcia_get_socket);
 
 
 void pcmcia_put_socket(struct pcmcia_socket *skt)
 {
-	module_put(skt->owner);
 	put_device(&skt->dev);
 }
 EXPORT_SYMBOL(pcmcia_put_socket);
@@ -180,8 +174,6 @@ int pcmcia_register_socket(struct pcmcia_socket *socket)
 		return -EINVAL;
 
 	dev_dbg(&socket->dev, "pcmcia_register_socket(0x%p)\n", socket->ops);
-
-	spin_lock_init(&socket->lock);
 
 	/* try to obtain a socket number [yes, it gets ugly if we
 	 * register more than 2^sizeof(unsigned int) pcmcia
@@ -228,10 +220,13 @@ int pcmcia_register_socket(struct pcmcia_socket *socket)
 	init_completion(&socket->socket_released);
 	init_completion(&socket->thread_done);
 	mutex_init(&socket->skt_mutex);
+	mutex_init(&socket->ops_mutex);
 	spin_lock_init(&socket->thread_lock);
 
 	if (socket->resource_ops->init) {
+		mutex_lock(&socket->ops_mutex);
 		ret = socket->resource_ops->init(socket);
+		mutex_unlock(&socket->ops_mutex);
 		if (ret)
 			goto err;
 	}
@@ -283,15 +278,17 @@ void pcmcia_unregister_socket(struct pcmcia_socket *socket)
 	if (socket->thread)
 		kthread_stop(socket->thread);
 
-	release_cis_mem(socket);
-
 	/* remove from our own list */
 	down_write(&pcmcia_socket_list_rwsem);
 	list_del(&socket->socket_list);
 	up_write(&pcmcia_socket_list_rwsem);
 
 	/* wait for sysfs to drop all references */
-	release_resource_db(socket);
+	if (socket->resource_ops->exit) {
+		mutex_lock(&socket->ops_mutex);
+		socket->resource_ops->exit(socket);
+		mutex_unlock(&socket->ops_mutex);
+	}
 	wait_for_completion(&socket->socket_released);
 } /* pcmcia_unregister_socket */
 EXPORT_SYMBOL(pcmcia_unregister_socket);
@@ -328,7 +325,7 @@ static int send_event(struct pcmcia_socket *s, event_t event, int priority)
 {
 	int ret;
 
-	if (s->state & SOCKET_CARDBUS)
+	if ((s->state & SOCKET_CARDBUS) && (event != CS_EVENT_CARD_REMOVAL))
 		return 0;
 
 	dev_dbg(&s->dev, "send_event(event %d, pri %d, callback 0x%p)\n",
@@ -344,13 +341,6 @@ static int send_event(struct pcmcia_socket *s, event_t event, int priority)
 	module_put(s->callback->owner);
 
 	return ret;
-}
-
-static void socket_remove_drivers(struct pcmcia_socket *skt)
-{
-	dev_dbg(&skt->dev, "remove_drivers\n");
-
-	send_event(skt, CS_EVENT_CARD_REMOVAL, CS_EVENT_PRI_HIGH);
 }
 
 static int socket_reset(struct pcmcia_socket *skt)
@@ -395,7 +385,9 @@ static void socket_shutdown(struct pcmcia_socket *s)
 
 	dev_dbg(&s->dev, "shutdown\n");
 
-	socket_remove_drivers(s);
+	send_event(s, CS_EVENT_CARD_REMOVAL, CS_EVENT_PRI_HIGH);
+
+	mutex_lock(&s->ops_mutex);
 	s->state &= SOCKET_INUSE | SOCKET_PRESENT;
 	msleep(shutdown_delay * 10);
 	s->state &= SOCKET_INUSE;
@@ -406,7 +398,8 @@ static void socket_shutdown(struct pcmcia_socket *s)
 	s->ops->set_socket(s, &s->socket);
 	s->irq.AssignedIRQ = s->irq.Config = 0;
 	s->lock_count = 0;
-	destroy_cis_cache(s);
+	kfree(s->fake_cis);
+	s->fake_cis = NULL;
 #ifdef CONFIG_CARDBUS
 	cb_free(s);
 #endif
@@ -421,7 +414,8 @@ static void socket_shutdown(struct pcmcia_socket *s)
 			   "*** DANGER *** unable to remove socket power\n");
 	}
 
-	cs_socket_put(s);
+	s->state &= ~SOCKET_INUSE;
+	mutex_unlock(&s->ops_mutex);
 }
 
 static int socket_setup(struct pcmcia_socket *skt, int initial_delay)
@@ -460,7 +454,8 @@ static int socket_setup(struct pcmcia_socket *skt, int initial_delay)
 			return -EINVAL;
 		}
 		skt->state |= SOCKET_CARDBUS;
-	}
+	} else
+		skt->state &= ~SOCKET_CARDBUS;
 
 	/*
 	 * Decode the card voltage requirements, and apply power to the card.
@@ -509,8 +504,9 @@ static int socket_insert(struct pcmcia_socket *skt)
 
 	dev_dbg(&skt->dev, "insert\n");
 
-	if (!cs_socket_get(skt))
-		return -ENODEV;
+	mutex_lock(&skt->ops_mutex);
+	WARN_ON(skt->state & SOCKET_INUSE);
+	skt->state |= SOCKET_INUSE;
 
 	ret = socket_setup(skt, setup_delay);
 	if (ret == 0) {
@@ -528,9 +524,11 @@ static int socket_insert(struct pcmcia_socket *skt)
 		}
 #endif
 		dev_dbg(&skt->dev, "insert done\n");
+		mutex_unlock(&skt->ops_mutex);
 
 		send_event(skt, CS_EVENT_CARD_INSERTION, CS_EVENT_PRI_LOW);
 	} else {
+		mutex_unlock(&skt->ops_mutex);
 		socket_shutdown(skt);
 	}
 
@@ -542,58 +540,66 @@ static int socket_suspend(struct pcmcia_socket *skt)
 	if (skt->state & SOCKET_SUSPEND)
 		return -EBUSY;
 
+	mutex_lock(&skt->ops_mutex);
+	skt->suspended_state = skt->state;
+
 	send_event(skt, CS_EVENT_PM_SUSPEND, CS_EVENT_PRI_LOW);
 	skt->socket = dead_socket;
 	skt->ops->set_socket(skt, &skt->socket);
 	if (skt->ops->suspend)
 		skt->ops->suspend(skt);
 	skt->state |= SOCKET_SUSPEND;
-
+	mutex_unlock(&skt->ops_mutex);
 	return 0;
 }
 
 static int socket_early_resume(struct pcmcia_socket *skt)
 {
+	mutex_lock(&skt->ops_mutex);
 	skt->socket = dead_socket;
 	skt->ops->init(skt);
 	skt->ops->set_socket(skt, &skt->socket);
 	if (skt->state & SOCKET_PRESENT)
 		skt->resume_status = socket_setup(skt, resume_delay);
+	mutex_unlock(&skt->ops_mutex);
 	return 0;
 }
 
 static int socket_late_resume(struct pcmcia_socket *skt)
 {
-	if (!(skt->state & SOCKET_PRESENT)) {
-		skt->state &= ~SOCKET_SUSPEND;
+	mutex_lock(&skt->ops_mutex);
+	skt->state &= ~SOCKET_SUSPEND;
+	mutex_unlock(&skt->ops_mutex);
+
+	if (!(skt->state & SOCKET_PRESENT))
+		return socket_insert(skt);
+
+	if (skt->resume_status) {
+		socket_shutdown(skt);
+		return 0;
+	}
+
+	if (skt->suspended_state != skt->state) {
+		dev_dbg(&skt->dev,
+			"suspend state 0x%x != resume state 0x%x\n",
+			skt->suspended_state, skt->state);
+
+		socket_shutdown(skt);
 		return socket_insert(skt);
 	}
 
-	if (skt->resume_status == 0) {
-		/*
-		 * FIXME: need a better check here for cardbus cards.
-		 */
-		if (verify_cis_cache(skt) != 0) {
-			dev_dbg(&skt->dev, "cis mismatch - different card\n");
-			socket_remove_drivers(skt);
-			destroy_cis_cache(skt);
-			/*
-			 * Workaround: give DS time to schedule removal.
-			 * Remove me once the 100ms delay is eliminated
-			 * in ds.c
-			 */
-			msleep(200);
-			send_event(skt, CS_EVENT_CARD_INSERTION, CS_EVENT_PRI_LOW);
-		} else {
-			dev_dbg(&skt->dev, "cis matches cache\n");
-			send_event(skt, CS_EVENT_PM_RESUME, CS_EVENT_PRI_LOW);
-		}
-	} else {
-		socket_shutdown(skt);
+#ifdef CONFIG_CARDBUS
+	if (skt->state & SOCKET_CARDBUS) {
+		/* We can't be sure the CardBus card is the same
+		 * as the one previously inserted. Therefore, remove
+		 * and re-add... */
+		cb_free(skt);
+		cb_alloc(skt);
+		return 0;
 	}
+#endif
 
-	skt->state &= ~SOCKET_SUSPEND;
-
+	send_event(skt, CS_EVENT_PM_RESUME, CS_EVENT_PRI_LOW);
 	return 0;
 }
 
@@ -707,6 +713,13 @@ static int pccardd(void *__skt)
 	/* make sure we are running before we exit */
 	set_current_state(TASK_RUNNING);
 
+	/* shut down socket, if a device is still present */
+	if (skt->state & SOCKET_PRESENT) {
+		mutex_lock(&skt->skt_mutex);
+		socket_remove(skt);
+		mutex_unlock(&skt->skt_mutex);
+	}
+
 	/* remove from the device core */
 	pccard_sysfs_remove_socket(&skt->dev);
 	device_unregister(&skt->dev);
@@ -796,7 +809,10 @@ int pcmcia_reset_card(struct pcmcia_socket *skt)
 			send_event(skt, CS_EVENT_RESET_PHYSICAL, CS_EVENT_PRI_LOW);
 			if (skt->callback)
 				skt->callback->suspend(skt);
-			if (socket_reset(skt) == 0) {
+			mutex_lock(&skt->ops_mutex);
+			ret = socket_reset(skt);
+			mutex_unlock(&skt->ops_mutex);
+			if (ret == 0) {
 				send_event(skt, CS_EVENT_CARD_RESET, CS_EVENT_PRI_LOW);
 				if (skt->callback)
 					skt->callback->resume(skt);

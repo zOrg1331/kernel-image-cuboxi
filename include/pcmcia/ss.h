@@ -134,9 +134,9 @@ struct pccard_operations {
 
 struct pcmcia_socket {
 	struct module			*owner;
-	spinlock_t			lock;
 	socket_state_t			socket;
 	u_int				state;
+	u_int				suspended_state;	/* state before suspend */
 	u_short				functions;
 	u_short				lock_count;
 	pccard_mem_map			cis_mem;
@@ -200,8 +200,12 @@ struct pcmcia_socket {
 	struct task_struct		*thread;
 	struct completion		thread_done;
 	unsigned int			thread_events;
-	/* protects socket h/w state */
+
+	/* For the non-trivial interaction between these locks,
+	 * see Documentation/pcmcia/locking.txt */
 	struct mutex			skt_mutex;
+	struct mutex			ops_mutex;
+
 	/* protects thread_events */
 	spinlock_t			thread_lock;
 
@@ -243,12 +247,6 @@ struct pcmcia_socket {
 #endif /* CONFIG_PCMCIA_IOCTL */
 #endif /* CONFIG_PCMCIA */
 
-	/* cardbus (32-bit) */
-#ifdef CONFIG_CARDBUS
-	struct resource			*cb_cis_res;
-	void __iomem			*cb_cis_virt;
-#endif /* CONFIG_CARDBUS */
-
 	/* socket device */
 	struct device			dev;
 	/* data internal to the socket driver */
@@ -263,13 +261,25 @@ struct pcmcia_socket {
  * - pccard_static_ops		iomem and ioport areas are assigned statically
  * - pccard_iodyn_ops		iomem areas is assigned statically, ioport
  *				areas dynamically
+ *				If this option is selected, use
+ *				"select PCCARD_IODYN" in Kconfig.
  * - pccard_nonstatic_ops	iomem and ioport areas are assigned dynamically.
  *				If this option is selected, use
  *				"select PCCARD_NONSTATIC" in Kconfig.
+ *
  */
 extern struct pccard_resource_ops pccard_static_ops;
+#if defined(CONFIG_PCMCIA) || defined(CONFIG_PCMCIA_MODULE)
 extern struct pccard_resource_ops pccard_iodyn_ops;
 extern struct pccard_resource_ops pccard_nonstatic_ops;
+#else
+/* If PCMCIA is not used, but only CARDBUS, these functions are not used
+ * at all. Therefore, do not use the large (240K!) rsrc_nonstatic module
+ */
+#define pccard_iodyn_ops pccard_static_ops
+#define pccard_nonstatic_ops pccard_static_ops
+#endif
+
 
 /* socket drivers are expected to use these callbacks in their .drv struct */
 extern int pcmcia_socket_dev_suspend(struct device *dev);
