@@ -135,6 +135,7 @@ struct exofs_io_state {
 	struct page		**pages;
 	unsigned		nr_pages;
 	unsigned		pgbase;
+	unsigned		pages_consumed;
 
 	/* Attributes */
 	unsigned		in_attr_len;
