@@ -5,7 +5,7 @@
  *  Copyright (c) 2000-2005 Vojtech Pavlik <vojtech@suse.cz>
  *  Copyright (c) 2005 Michael Haboustak <mike-@cinci.rr.com> for Concept2, Inc
  *  Copyright (c) 2007-2008 Oliver Neukum
- *  Copyright (c) 2006-2009 Jiri Kosina
+ *  Copyright (c) 2006-2010 Jiri Kosina
  */
 
 /*
@@ -774,7 +774,8 @@ static int hid_alloc_buffers(struct usb_device *dev, struct hid_device *hid)
 	return 0;
 }
 
-static int usbhid_output_raw_report(struct hid_device *hid, __u8 *buf, size_t count)
+static int usbhid_output_raw_report(struct hid_device *hid, __u8 *buf, size_t count,
+		unsigned char report_type)
 {
 	struct usbhid_device *usbhid = hid->driver_data;
 	struct usb_device *dev = hid_to_usb_dev(hid);
@@ -785,7 +786,7 @@ static int usbhid_output_raw_report(struct hid_device *hid, __u8 *buf, size_t co
 	ret = usb_control_msg(dev, usb_sndctrlpipe(dev, 0),
 		HID_REQ_SET_REPORT,
 		USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
-		((HID_OUTPUT_REPORT + 1) << 8) | *buf,
+		((report_type + 1) << 8) | *buf,
 		interface->desc.bInterfaceNumber, buf + 1, count - 1,
 		USB_CTRL_SET_TIMEOUT);
 
@@ -1342,7 +1343,7 @@ static int hid_reset_resume(struct usb_interface *intf)
 
 #endif /* CONFIG_PM */
 
-static struct usb_device_id hid_usb_ids [] = {
+static const struct usb_device_id hid_usb_ids[] = {
 	{ .match_flags = USB_DEVICE_ID_MATCH_INT_CLASS,
 		.bInterfaceClass = USB_INTERFACE_CLASS_HID },
 	{ }						/* Terminating entry */
