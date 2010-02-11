@@ -345,11 +345,8 @@ static int __ieee80211_start_scan(struct ieee80211_sub_if_data *sdata,
 	if (local->scan_req)
 		return -EBUSY;
 
-	if (req != local->int_scan_req &&
-	    sdata->vif.type == NL80211_IFTYPE_STATION &&
-	    !list_empty(&ifmgd->work_list)) {
-		/* actually wait for the work it's doing to finish/time out */
-		set_bit(IEEE80211_STA_REQ_SCAN, &ifmgd->request);
+	if (!list_empty(&local->work_list)) {
+		/* wait for the work to finish/time out */
 		local->scan_req = req;
 		local->scan_sdata = sdata;
 		return 0;
@@ -374,6 +371,14 @@ static int __ieee80211_start_scan(struct ieee80211_sub_if_data *sdata,
 		local->hw_scan_req->ie = ies;
 
 		local->hw_scan_band = 0;
+
+		/*
+		 * After allocating local->hw_scan_req, we must
+		 * go through until ieee80211_prep_hw_scan(), so
+		 * anything that might be changed here and leave
+		 * this function early must not go after this
+		 * allocation.
+		 */
 	}
 
 	local->scan_req = req;
@@ -383,15 +388,16 @@ static int __ieee80211_start_scan(struct ieee80211_sub_if_data *sdata,
 		__set_bit(SCAN_HW_SCANNING, &local->scanning);
 	else
 		__set_bit(SCAN_SW_SCANNING, &local->scanning);
+
 	/*
 	 * Kicking off the scan need not be protected,
 	 * only the scan variable stuff, since now
 	 * local->scan_req is assigned and other callers
 	 * will abort their scan attempts.
 	 *
-	 * This avoids getting a scan_mtx -> iflist_mtx
-	 * dependency, so that the scan completed calls
-	 * have more locking freedom.
+	 * This avoids too many locking dependencies
+	 * so that the scan completed calls have more
+	 * locking freedom.
 	 */
 
 	ieee80211_recalc_idle(local);
