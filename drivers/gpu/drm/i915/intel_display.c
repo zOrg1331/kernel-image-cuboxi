@@ -1638,6 +1638,7 @@ static void ironlake_crtc_dpms(struct drm_crtc *crtc, int mode)
 	case DRM_MODE_DPMS_OFF:
 		DRM_DEBUG_KMS("crtc %d dpms off\n", pipe);
 
+		drm_vblank_off(dev, pipe);
 		/* Disable display plane */
 		temp = I915_READ(dspcntr_reg);
 		if ((temp & DISPLAY_PLANE_ENABLE) != 0) {
@@ -2519,6 +2520,10 @@ static void g4x_update_wm(struct drm_device *dev,  int planea_clock,
 		sr_entries = roundup(sr_entries / cacheline_size, 1);
 		DRM_DEBUG("self-refresh entries: %d\n", sr_entries);
 		I915_WRITE(FW_BLC_SELF, FW_BLC_SELF_EN);
+	} else {
+		/* Turn off self refresh if both pipes are enabled */
+		I915_WRITE(FW_BLC_SELF, I915_READ(FW_BLC_SELF)
+					& ~FW_BLC_SELF_EN);
 	}
 
 	DRM_DEBUG("Setting FIFO watermarks - A: %d, B: %d, SR %d\n",
@@ -2562,6 +2567,10 @@ static void i965_update_wm(struct drm_device *dev, int planea_clock,
 			srwm = 1;
 		srwm &= 0x3f;
 		I915_WRITE(FW_BLC_SELF, FW_BLC_SELF_EN);
+	} else {
+		/* Turn off self refresh if both pipes are enabled */
+		I915_WRITE(FW_BLC_SELF, I915_READ(FW_BLC_SELF)
+					& ~FW_BLC_SELF_EN);
 	}
 
 	DRM_DEBUG_KMS("Setting FIFO watermarks - A: 8, B: 8, C: 8, SR %d\n",
@@ -2630,6 +2639,10 @@ static void i9xx_update_wm(struct drm_device *dev, int planea_clock,
 		if (srwm < 0)
 			srwm = 1;
 		I915_WRITE(FW_BLC_SELF, FW_BLC_SELF_EN | (srwm & 0x3f));
+	} else {
+		/* Turn off self refresh if both pipes are enabled */
+		I915_WRITE(FW_BLC_SELF, I915_READ(FW_BLC_SELF)
+					& ~FW_BLC_SELF_EN);
 	}
 
 	DRM_DEBUG_KMS("Setting FIFO watermarks - A: %d, B: %d, C: %d, SR %d\n",
@@ -3421,11 +3434,10 @@ static int intel_crtc_cursor_set(struct drm_crtc *crtc,
 	intel_crtc->cursor_bo = bo;
 
 	return 0;
-fail:
-	mutex_lock(&dev->struct_mutex);
 fail_locked:
-	drm_gem_object_unreference(bo);
 	mutex_unlock(&dev->struct_mutex);
+fail:
+	drm_gem_object_unreference_unlocked(bo);
 	return ret;
 }
 
@@ -3984,6 +3996,12 @@ void intel_finish_page_flip(struct drm_device *dev, int pipe)
 	spin_lock_irqsave(&dev->event_lock, flags);
 	work = intel_crtc->unpin_work;
 	if (work == NULL || !work->pending) {
+		if (work && !work->pending) {
+			obj_priv = work->obj->driver_private;
+			DRM_DEBUG_DRIVER("flip finish: %p (%d) not pending?\n",
+					 obj_priv,
+					 atomic_read(&obj_priv->pending_flip));
+		}
 		spin_unlock_irqrestore(&dev->event_lock, flags);
 		return;
 	}
@@ -4005,7 +4023,10 @@ void intel_finish_page_flip(struct drm_device *dev, int pipe)
 	spin_unlock_irqrestore(&dev->event_lock, flags);
 
 	obj_priv = work->obj->driver_private;
-	if (atomic_dec_and_test(&obj_priv->pending_flip))
+
+	/* Initial scanout buffer will have a 0 pending flip count */
+	if ((atomic_read(&obj_priv->pending_flip) == 0) ||
+	    atomic_dec_and_test(&obj_priv->pending_flip))
 		DRM_WAKEUP(&dev_priv->pending_flip_queue);
 	schedule_work(&work->work);
 }
@@ -4018,8 +4039,11 @@ void intel_prepare_page_flip(struct drm_device *dev, int plane)
 	unsigned long flags;
 
 	spin_lock_irqsave(&dev->event_lock, flags);
-	if (intel_crtc->unpin_work)
+	if (intel_crtc->unpin_work) {
 		intel_crtc->unpin_work->pending = 1;
+	} else {
+		DRM_DEBUG_DRIVER("preparing flip with no unpin work?\n");
+	}
 	spin_unlock_irqrestore(&dev->event_lock, flags);
 }
 
@@ -4053,6 +4077,7 @@ static int intel_crtc_page_flip(struct drm_crtc *crtc,
 	/* We borrow the event spin lock for protecting unpin_work */
 	spin_lock_irqsave(&dev->event_lock, flags);
 	if (intel_crtc->unpin_work) {
+		DRM_DEBUG_DRIVER("flip queue: crtc already busy\n");
 		spin_unlock_irqrestore(&dev->event_lock, flags);
 		kfree(work);
 		mutex_unlock(&dev->struct_mutex);
@@ -4066,7 +4091,10 @@ static int intel_crtc_page_flip(struct drm_crtc *crtc,
 
 	ret = intel_pin_and_fence_fb_obj(dev, obj);
 	if (ret != 0) {
+		DRM_DEBUG_DRIVER("flip queue: %p pin & fence failed\n",
+			  obj->driver_private);
 		kfree(work);
+		intel_crtc->unpin_work = NULL;
 		mutex_unlock(&dev->struct_mutex);
 		return ret;
 	}
@@ -4322,9 +4350,7 @@ static void intel_user_framebuffer_destroy(struct drm_framebuffer *fb)
 		intelfb_remove(dev, fb);
 
 	drm_framebuffer_cleanup(fb);
-	mutex_lock(&dev->struct_mutex);
-	drm_gem_object_unreference(intel_fb->obj);
-	mutex_unlock(&dev->struct_mutex);
+	drm_gem_object_unreference_unlocked(intel_fb->obj);
 
 	kfree(intel_fb);
 }
@@ -4387,9 +4413,7 @@ intel_user_framebuffer_create(struct drm_device *dev,
 
 	ret = intel_framebuffer_create(dev, mode_cmd, &fb, obj);
 	if (ret) {
-		mutex_lock(&dev->struct_mutex);
-		drm_gem_object_unreference(obj);
-		mutex_unlock(&dev->struct_mutex);
+		drm_gem_object_unreference_unlocked(obj);
 		return NULL;
 	}
 

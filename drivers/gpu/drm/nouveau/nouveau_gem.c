@@ -167,12 +167,10 @@ nouveau_gem_ioctl_new(struct drm_device *dev, void *data,
 
 	ret = drm_gem_handle_create(file_priv, nvbo->gem, &req->info.handle);
 out:
-	mutex_lock(&dev->struct_mutex);
-	drm_gem_object_handle_unreference(nvbo->gem);
-	mutex_unlock(&dev->struct_mutex);
+	drm_gem_object_handle_unreference_unlocked(nvbo->gem);
 
 	if (ret)
-		drm_gem_object_unreference(nvbo->gem);
+		drm_gem_object_unreference_unlocked(nvbo->gem);
 	return ret;
 }
 
@@ -865,9 +863,7 @@ nouveau_gem_ioctl_pin(struct drm_device *dev, void *data,
 		req->domain = NOUVEAU_GEM_DOMAIN_VRAM;
 
 out:
-	mutex_lock(&dev->struct_mutex);
-	drm_gem_object_unreference(gem);
-	mutex_unlock(&dev->struct_mutex);
+	drm_gem_object_unreference_unlocked(gem);
 
 	return ret;
 }
@@ -891,9 +887,7 @@ nouveau_gem_ioctl_unpin(struct drm_device *dev, void *data,
 
 	ret = nouveau_bo_unpin(nouveau_gem_object(gem));
 
-	mutex_lock(&dev->struct_mutex);
-	drm_gem_object_unreference(gem);
-	mutex_unlock(&dev->struct_mutex);
+	drm_gem_object_unreference_unlocked(gem);
 
 	return ret;
 }
@@ -925,7 +919,9 @@ nouveau_gem_ioctl_cpu_prep(struct drm_device *dev, void *data,
 	}
 
 	if (req->flags & NOUVEAU_GEM_CPU_PREP_NOBLOCK) {
+		spin_lock(&nvbo->bo.lock);
 		ret = ttm_bo_wait(&nvbo->bo, false, false, no_wait);
+		spin_unlock(&nvbo->bo.lock);
 	} else {
 		ret = ttm_bo_synccpu_write_grab(&nvbo->bo, no_wait);
 		if (ret == 0)
@@ -933,9 +929,7 @@ nouveau_gem_ioctl_cpu_prep(struct drm_device *dev, void *data,
 	}
 
 out:
-	mutex_lock(&dev->struct_mutex);
-	drm_gem_object_unreference(gem);
-	mutex_unlock(&dev->struct_mutex);
+	drm_gem_object_unreference_unlocked(gem);
 	return ret;
 }
 
@@ -963,9 +957,7 @@ nouveau_gem_ioctl_cpu_fini(struct drm_device *dev, void *data,
 	ret = 0;
 
 out:
-	mutex_lock(&dev->struct_mutex);
-	drm_gem_object_unreference(gem);
-	mutex_unlock(&dev->struct_mutex);
+	drm_gem_object_unreference_unlocked(gem);
 	return ret;
 }
 
@@ -984,9 +976,7 @@ nouveau_gem_ioctl_info(struct drm_device *dev, void *data,
 		return -EINVAL;
 
 	ret = nouveau_gem_info(gem, req);
-	mutex_lock(&dev->struct_mutex);
-	drm_gem_object_unreference(gem);
-	mutex_unlock(&dev->struct_mutex);
+	drm_gem_object_unreference_unlocked(gem);
 	return ret;
 }
 
