@@ -3210,7 +3210,24 @@ retry:
 		if (local_flags & __GFP_WAIT)
 			local_irq_enable();
 		kmem_flagcheck(cache, flags);
-		obj = kmem_getpages(cache, local_flags, numa_node_id());
+
+		/*
+		 * Node not set up yet? Try one that the cache has been set up
+		 * for.
+		 */
+		nid = numa_node_id();
+		if (cache->nodelists[nid] == NULL) {
+			for_each_zone_zonelist(zone, z, zonelist, high_zoneidx) {
+				nid = zone_to_nid(zone);
+				if (cache->nodelists[nid]) {
+					obj = kmem_getpages(cache, local_flags, nid);
+					if (obj)
+						break;
+				}
+			}
+		} else
+			obj = kmem_getpages(cache, local_flags, nid);
+
 		if (local_flags & __GFP_WAIT)
 			local_irq_disable();
 		if (obj) {
