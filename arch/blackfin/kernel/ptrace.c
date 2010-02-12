@@ -13,6 +13,7 @@
 #include <linux/ptrace.h>
 #include <linux/user.h>
 #include <linux/signal.h>
+#include <linux/tracehook.h>
 #include <linux/uaccess.h>
 
 #include <asm/page.h>
@@ -37,32 +38,13 @@
 /* sets the trace bits. */
 #define TRACE_BITS 0x0001
 
-/* Find the stack offset for a register, relative to thread.esp0. */
-#define PT_REG(reg)	((long)&((struct pt_regs *)0)->reg)
-
-/*
- * Get the address of the live pt_regs for the specified task.
- * These are saved onto the top kernel stack when the process
- * is not running.
- *
- * Note: if a user thread is execve'd from kernel space, the
- * kernel stack will not be empty on entry to the kernel, so
- * ptracing these tasks will fail.
- */
-static inline struct pt_regs *get_user_regs(struct task_struct *task)
-{
-	return (struct pt_regs *)
-	    ((unsigned long)task_stack_page(task) +
-	     (THREAD_SIZE - sizeof(struct pt_regs)));
-}
-
 /*
  * Get all user integer registers.
  */
 static inline int ptrace_getregs(struct task_struct *tsk, void __user *uregs)
 {
 	struct pt_regs regs;
-	memcpy(&regs, get_user_regs(tsk), sizeof(regs));
+	memcpy(&regs, task_pt_regs(tsk), sizeof(regs));
 	regs.usp = tsk->thread.usp;
 	return copy_to_user(uregs, &regs, sizeof(struct pt_regs)) ? -EFAULT : 0;
 }
@@ -78,10 +60,8 @@ static inline int ptrace_getregs(struct task_struct *tsk, void __user *uregs)
 static inline long get_reg(struct task_struct *task, int regno)
 {
 	unsigned char *reg_ptr;
+	struct pt_regs *regs = task_pt_regs(task);
 
-	struct pt_regs *regs =
-	    (struct pt_regs *)((unsigned long)task_stack_page(task) +
-			       (THREAD_SIZE - sizeof(struct pt_regs)));
 	reg_ptr = (char *)regs;
 
 	switch (regno) {
@@ -104,10 +84,8 @@ static inline int
 put_reg(struct task_struct *task, int regno, unsigned long data)
 {
 	char *reg_ptr;
+	struct pt_regs *regs = task_pt_regs(task);
 
-	struct pt_regs *regs =
-	    (struct pt_regs *)((unsigned long)task_stack_page(task) +
-			       (THREAD_SIZE - sizeof(struct pt_regs)));
 	reg_ptr = (char *)regs;
 
 	switch (regno) {
@@ -160,7 +138,7 @@ static inline int is_user_addr_valid(struct task_struct *child,
 	return -EIO;
 }
 
-void ptrace_enable(struct task_struct *child)
+void user_enable_single_step(struct task_struct *child)
 {
 	unsigned long tmp;
 	tmp = get_reg(child, PT_SYSCFG) | (TRACE_BITS);
@@ -169,10 +147,8 @@ void ptrace_enable(struct task_struct *child)
 
 /*
  * Called by kernel/ptrace.c when detaching..
- *
- * Make sure the single step bit is not set.
  */
-void ptrace_disable(struct task_struct *child)
+void user_disable_single_step(struct task_struct *child)
 {
 	unsigned long tmp;
 	/* make sure the single step bit is not set. */
@@ -261,11 +237,15 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 			} else if (addr == (sizeof(struct pt_regs) + 8)) {
 				/* PT_DATA_ADDR */
 				tmp = child->mm->start_data;
-#ifdef CONFIG_BINFMT_ELF_FDPIC
+#ifdef CONFIG_BINFMT_ELF_FDPIC	/* backwards compat */
 			} else if (addr == (sizeof(struct pt_regs) + 12)) {
-				goto case_PTRACE_GETFDPIC_EXEC;
+				request = PTRACE_GETFDPIC;
+				addr = PTRACE_GETFDPIC_EXEC;
+				goto case_default;
 			} else if (addr == (sizeof(struct pt_regs) + 16)) {
-				goto case_PTRACE_GETFDPIC_INTERP;
+				request = PTRACE_GETFDPIC;
+				addr = PTRACE_GETFDPIC_INTERP;
+				goto case_default;
 #endif
 			} else {
 				tmp = get_reg(child, addr);
@@ -273,28 +253,6 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 			ret = put_user(tmp, datap);
 			break;
 		}
-
-#ifdef CONFIG_BINFMT_ELF_FDPIC
-	case PTRACE_GETFDPIC: {
-		unsigned long tmp = 0;
-
-		switch (addr) {
-		case_PTRACE_GETFDPIC_EXEC:
-		case PTRACE_GETFDPIC_EXEC:
-			tmp = child->mm->context.exec_fdpic_loadmap;
-			break;
-		case_PTRACE_GETFDPIC_INTERP:
-		case PTRACE_GETFDPIC_INTERP:
-			tmp = child->mm->context.interp_fdpic_loadmap;
-			break;
-		default:
-			break;
-		}
-
-		ret = put_user(tmp, datap);
-		break;
-	}
-#endif
 
 		/* when I and D space are separate, this will have to be fixed. */
 	case PTRACE_POKEDATA:
@@ -354,50 +312,6 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 		ret = put_reg(child, addr, data);
 		break;
 
-	case PTRACE_SYSCALL:	/* continue and stop at next (return from) syscall */
-	case PTRACE_CONT:	/* restart after signal. */
-		pr_debug("ptrace: syscall/cont\n");
-
-		ret = -EIO;
-		if (!valid_signal(data))
-			break;
-		if (request == PTRACE_SYSCALL)
-			set_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
-		else
-			clear_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
-		child->exit_code = data;
-		ptrace_disable(child);
-		pr_debug("ptrace: before wake_up_process\n");
-		wake_up_process(child);
-		ret = 0;
-		break;
-
-	/*
-	 * make the child exit.  Best I can do is send it a sigkill.
-	 * perhaps it should be put in the status that it wants to
-	 * exit.
-	 */
-	case PTRACE_KILL:
-		ret = 0;
-		if (child->exit_state == EXIT_ZOMBIE)	/* already dead */
-			break;
-		child->exit_code = SIGKILL;
-		ptrace_disable(child);
-		wake_up_process(child);
-		break;
-
-	case PTRACE_SINGLESTEP:	/* set the trap flag. */
-		pr_debug("ptrace: single step\n");
-		ret = -EIO;
-		if (!valid_signal(data))
-			break;
-		clear_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
-		ptrace_enable(child);
-		child->exit_code = data;
-		wake_up_process(child);
-		ret = 0;
-		break;
-
 	case PTRACE_GETREGS:
 		/* Get all gp regs from the child. */
 		ret = ptrace_getregs(child, datap);
@@ -409,6 +323,7 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 		ret = 0;
 		break;
 
+	case_default:
 	default:
 		ret = ptrace_request(child, request, addr, data);
 		break;
@@ -417,27 +332,18 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 	return ret;
 }
 
-asmlinkage void syscall_trace(void)
+asmlinkage int syscall_trace_enter(struct pt_regs *regs)
 {
-	if (!test_thread_flag(TIF_SYSCALL_TRACE))
-		return;
+	int ret = 0;
 
-	if (!(current->ptrace & PT_PTRACED))
-		return;
+	if (test_thread_flag(TIF_SYSCALL_TRACE))
+		ret = tracehook_report_syscall_entry(regs);
 
-	/* the 0x80 provides a way for the tracing parent to distinguish
-	 * between a syscall stop and SIGTRAP delivery
-	 */
-	ptrace_notify(SIGTRAP | ((current->ptrace & PT_TRACESYSGOOD)
-				 ? 0x80 : 0));
+	return ret;
+}
 
-	/*
-	 * this isn't the same as continuing with a signal, but it will do
-	 * for normal use.  strace only continues with a signal if the
-	 * stopping signal is not SIGTRAP.  -brl
-	 */
-	if (current->exit_code) {
-		send_sig(current->exit_code, current, 1);
-		current->exit_code = 0;
-	}
+asmlinkage void syscall_trace_leave(struct pt_regs *regs)
+{
+	if (test_thread_flag(TIF_SYSCALL_TRACE))
+		tracehook_report_syscall_exit(regs, 0);
 }
