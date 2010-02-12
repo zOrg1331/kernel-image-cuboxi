@@ -289,7 +289,7 @@ static void __devinit pci_read_bridge_io(struct pci_bus *child)
 	unsigned long base, limit;
 	struct resource *res;
 
-	res = &dev->resource[PCI_BRIDGE_RESOURCES + 0];
+	res = &dev->resource[PCI_BRIDGE_IO_WINDOW];
 
 	pci_read_config_byte(dev, PCI_IO_BASE, &io_base_lo);
 	pci_read_config_byte(dev, PCI_IO_LIMIT, &io_limit_lo);
@@ -325,7 +325,7 @@ static void __devinit pci_read_bridge_mmio(struct pci_bus *child)
 	unsigned long base, limit;
 	struct resource *res;
 
-	res = &dev->resource[PCI_BRIDGE_RESOURCES + 1];
+	res = &dev->resource[PCI_BRIDGE_MEM_WINDOW];
 
 	pci_read_config_word(dev, PCI_MEMORY_BASE, &mem_base_lo);
 	pci_read_config_word(dev, PCI_MEMORY_LIMIT, &mem_limit_lo);
@@ -350,7 +350,7 @@ static void __devinit pci_read_bridge_mmio_pref(struct pci_bus *child)
 	unsigned long base, limit;
 	struct resource *res;
 
-	res = &dev->resource[PCI_BRIDGE_RESOURCES + 2];
+	res = &dev->resource[PCI_BRIDGE_PREF_MEM_WINDOW];
 
 	pci_read_config_word(dev, PCI_PREF_MEMORY_BASE, &mem_base_lo);
 	pci_read_config_word(dev, PCI_PREF_MEMORY_LIMIT, &mem_limit_lo);

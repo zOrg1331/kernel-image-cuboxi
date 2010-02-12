@@ -1907,7 +1907,7 @@ static void __devinit quirk_p64h2_1k_io(struct pci_dev *dev)
 	u16 en1k;
 	u8 io_base_lo, io_limit_lo;
 	unsigned long base, limit;
-	struct resource *res = dev->resource + PCI_BRIDGE_RESOURCES;
+	struct resource *res = &dev->resource[PCI_BRIDGE_IO_WINDOW];
 
 	pci_read_config_word(dev, 0x40, &en1k);
 
@@ -1934,7 +1934,7 @@ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	0x1460,		quirk_p64h2_1k_io);
 static void __devinit quirk_p64h2_1k_io_fix_iobl(struct pci_dev *dev)
 {
 	u16 en1k, iobl_adr, iobl_adr_1k;
-	struct resource *res = dev->resource + PCI_BRIDGE_RESOURCES;
+	struct resource *res = &dev->resource[PCI_BRIDGE_IO_WINDOW];
 
 	pci_read_config_word(dev, 0x40, &en1k);
 

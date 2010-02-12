@@ -324,8 +324,7 @@ static void pci_bridge_check_ranges(struct pci_bus *bus)
 	struct pci_dev *bridge = bus->self;
 	struct resource *b_res;
 
-	b_res = &bridge->resource[PCI_BRIDGE_RESOURCES];
-	b_res[1].flags |= IORESOURCE_MEM;
+	bridge->resource[PCI_BRIDGE_MEM_WINDOW].flags |= IORESOURCE_MEM;
 
 	pci_read_config_word(bridge, PCI_IO_BASE, &io);
 	if (!io) {
@@ -334,12 +333,15 @@ static void pci_bridge_check_ranges(struct pci_bus *bus)
  		pci_write_config_word(bridge, PCI_IO_BASE, 0x0);
  	}
  	if (io)
-		b_res[0].flags |= IORESOURCE_IO;
+		bridge->resource[PCI_BRIDGE_IO_WINDOW].flags |= IORESOURCE_IO;
+
 	/*  DECchip 21050 pass 2 errata: the bridge may miss an address
 	    disconnect boundary by one PCI data phase.
 	    Workaround: do not use prefetching on this device. */
 	if (bridge->vendor == PCI_VENDOR_ID_DEC && bridge->device == 0x0001)
 		return;
+
+	b_res = &bridge->resource[PCI_BRIDGE_PREF_MEM_WINDOW];
 	pci_read_config_dword(bridge, PCI_PREF_MEMORY_BASE, &pmem);
 	if (!pmem) {
 		pci_write_config_dword(bridge, PCI_PREF_MEMORY_BASE,
@@ -348,16 +350,16 @@ static void pci_bridge_check_ranges(struct pci_bus *bus)
 		pci_write_config_dword(bridge, PCI_PREF_MEMORY_BASE, 0x0);
 	}
 	if (pmem) {
-		b_res[2].flags |= IORESOURCE_MEM | IORESOURCE_PREFETCH;
+		b_res->flags |= IORESOURCE_MEM | IORESOURCE_PREFETCH;
 		if ((pmem & PCI_PREF_RANGE_TYPE_MASK) ==
 		    PCI_PREF_RANGE_TYPE_64) {
-			b_res[2].flags |= IORESOURCE_MEM_64;
-			b_res[2].flags |= PCI_PREF_RANGE_TYPE_64;
+			b_res->flags |= IORESOURCE_MEM_64;
+			b_res->flags |= PCI_PREF_RANGE_TYPE_64;
 		}
 	}
 
 	/* double check if bridge does support 64 bit pref */
-	if (b_res[2].flags & IORESOURCE_MEM_64) {
+	if (b_res->flags & IORESOURCE_MEM_64) {
 		u32 mem_base_hi, tmp;
 		pci_read_config_dword(bridge, PCI_PREF_BASE_UPPER32,
 					 &mem_base_hi);
@@ -365,7 +367,7 @@ static void pci_bridge_check_ranges(struct pci_bus *bus)
 					       0xffffffff);
 		pci_read_config_dword(bridge, PCI_PREF_BASE_UPPER32, &tmp);
 		if (!tmp)
-			b_res[2].flags &= ~IORESOURCE_MEM_64;
+			b_res->flags &= ~IORESOURCE_MEM_64;
 		pci_write_config_dword(bridge, PCI_PREF_BASE_UPPER32,
 				       mem_base_hi);
 	}
@@ -544,20 +546,22 @@ static int pbus_size_mem(struct pci_bus *bus, unsigned long mask,
 static void pci_bus_size_cardbus(struct pci_bus *bus)
 {
 	struct pci_dev *bridge = bus->self;
-	struct resource *b_res = &bridge->resource[PCI_BRIDGE_RESOURCES];
+	struct resource *b_res;
 	u16 ctrl;
 
 	/*
 	 * Reserve some resources for CardBus.  We reserve
 	 * a fixed amount of bus space for CardBus bridges.
 	 */
-	b_res[0].start = 0;
-	b_res[0].end = pci_cardbus_io_size - 1;
-	b_res[0].flags |= IORESOURCE_IO | IORESOURCE_SIZEALIGN;
+	b_res = &bridge->resource[PCI_CB_BRIDGE_IO_0_WINDOW];
+	b_res->start = 0;
+	b_res->end = pci_cardbus_io_size - 1;
+	b_res->flags |= IORESOURCE_IO | IORESOURCE_SIZEALIGN;
 
-	b_res[1].start = 0;
-	b_res[1].end = pci_cardbus_io_size - 1;
-	b_res[1].flags |= IORESOURCE_IO | IORESOURCE_SIZEALIGN;
+	b_res = &bridge->resource[PCI_CB_BRIDGE_IO_1_WINDOW];
+	b_res->start = 0;
+	b_res->end = pci_cardbus_io_size - 1;
+	b_res->flags |= IORESOURCE_IO | IORESOURCE_SIZEALIGN;
 
 	/*
 	 * Check whether prefetchable memory is supported
@@ -576,17 +580,20 @@ static void pci_bus_size_cardbus(struct pci_bus *bus)
 	 * twice the size.
 	 */
 	if (ctrl & PCI_CB_BRIDGE_CTL_PREFETCH_MEM0) {
-		b_res[2].start = 0;
-		b_res[2].end = pci_cardbus_mem_size - 1;
-		b_res[2].flags |= IORESOURCE_MEM | IORESOURCE_PREFETCH | IORESOURCE_SIZEALIGN;
+		b_res = &bridge->resource[PCI_CB_BRIDGE_MEM_0_WINDOW];
+		b_res->start = 0;
+		b_res->end = pci_cardbus_mem_size - 1;
+		b_res->flags |= IORESOURCE_MEM | IORESOURCE_PREFETCH | IORESOURCE_SIZEALIGN;
 
-		b_res[3].start = 0;
-		b_res[3].end = pci_cardbus_mem_size - 1;
-		b_res[3].flags |= IORESOURCE_MEM | IORESOURCE_SIZEALIGN;
+		b_res = &bridge->resource[PCI_CB_BRIDGE_MEM_1_WINDOW];
+		b_res->start = 0;
+		b_res->end = pci_cardbus_mem_size - 1;
+		b_res->flags |= IORESOURCE_MEM | IORESOURCE_SIZEALIGN;
 	} else {
-		b_res[3].start = 0;
-		b_res[3].end = pci_cardbus_mem_size * 2 - 1;
-		b_res[3].flags |= IORESOURCE_MEM | IORESOURCE_SIZEALIGN;
+		b_res = &bridge->resource[PCI_CB_BRIDGE_MEM_1_WINDOW];
+		b_res->start = 0;
+		b_res->end = pci_cardbus_mem_size * 2 - 1;
+		b_res->flags |= IORESOURCE_MEM | IORESOURCE_SIZEALIGN;
 	}
 }
 

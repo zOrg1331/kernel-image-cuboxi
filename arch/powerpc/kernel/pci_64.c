@@ -99,7 +99,7 @@ int pcibios_unmap_io_space(struct pci_bus *bus)
 	 */
 	if (bridge) {
 #ifdef CONFIG_PPC_STD_MMU_64
-		struct resource *res = &bridge->resource[PCI_BRIDGE_RESOURCES + 0];
+		struct resource *res = &bridge->resource[PCI_BRIDGE_IO_WINDOW];
 #endif
 
 		pr_debug("IO unmapping for PCI-PCI bridge %s\n",
@@ -146,7 +146,7 @@ int __devinit pcibios_map_io_space(struct pci_bus *bus)
 	 * thus HPTEs will be faulted in when needed
 	 */
 	if (bridge) {
-		struct resource *res = &bridge->resource[PCI_BRIDGE_RESOURCES + 0];
+		struct resource *res = &bridge->resource[PCI_BRIDGE_IO_WINDOW];
 
 		pr_debug("IO mapping for PCI-PCI bridge %s\n",
 			 pci_name(bridge));
