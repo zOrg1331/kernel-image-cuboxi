@@ -770,40 +770,25 @@ nfsd_close(struct file *filp)
 }
 
 /*
- * Sync a file
- * As this calls fsync (not fdatasync) there is no need for a write_inode
- * after it.
+ * Sync a directory to disk.
+ *
+ * We can't just call vfs_fsync because our requirements are slightly odd:
+ *
+ *  a) we do not have a file struct available
+ *  b) we expect to have i_mutex already held by the caller
  */
-static inline int nfsd_dosync(struct file *filp, struct dentry *dp,
-			      const struct file_operations *fop)
-{
-	struct inode *inode = dp->d_inode;
-	int (*fsync) (struct file *, struct dentry *, int);
-	int err;
-
-	err = filemap_write_and_wait(inode->i_mapping);
-	if (err == 0 && fop && (fsync = fop->fsync))
-		err = fsync(filp, dp, 0);
-	return err;
-}
-
-static int
-nfsd_sync(struct file *filp)
-{
-        int err;
-	struct inode *inode = filp->f_path.dentry->d_inode;
-	dprintk("nfsd: sync file %s\n", filp->f_path.dentry->d_name.name);
-	mutex_lock(&inode->i_mutex);
-	err=nfsd_dosync(filp, filp->f_path.dentry, filp->f_op);
-	mutex_unlock(&inode->i_mutex);
-
-	return err;
-}
-
 int
-nfsd_sync_dir(struct dentry *dp)
+nfsd_sync_dir(struct dentry *dentry)
 {
-	return nfsd_dosync(NULL, dp, dp->d_inode->i_fop);
+	struct inode *inode = dentry->d_inode;
+	int error;
+
+	WARN_ON(!mutex_is_locked(&inode->i_mutex));
+
+	error = filemap_write_and_wait(inode->i_mapping);
+	if (!error && inode->i_fop->fsync)
+		error = inode->i_fop->fsync(NULL, dentry, 0);
+	return error;
 }
 
 /*
@@ -1009,7 +994,7 @@ static int wait_for_concurrent_writes(struct file *file)
 
 	if (inode->i_state & I_DIRTY) {
 		dprintk("nfsd: write sync %d\n", task_pid_nr(current));
-		err = nfsd_sync(file);
+		err = vfs_fsync(file, file->f_path.dentry, 0);
 	}
 	last_ino = inode->i_ino;
 	last_dev = inode->i_sb->s_dev;
@@ -1157,8 +1142,9 @@ out:
 #ifdef CONFIG_NFSD_V3
 /*
  * Commit all pending writes to stable storage.
- * Strictly speaking, we could sync just the indicated file region here,
- * but there's currently no way we can ask the VFS to do so.
+ *
+ * Note: we only guarantee that data that lies within the range specified
+ * by the 'offset' and 'count' parameters will be synced.
  *
  * Unfortunately we cannot lock the file to make sure we return full WCC
  * data to the client, as locking happens lower down in the filesystem.
@@ -1168,23 +1154,32 @@ nfsd_commit(struct svc_rqst *rqstp, struct svc_fh *fhp,
                loff_t offset, unsigned long count)
 {
 	struct file	*file;
-	__be32		err;
+	loff_t		end = LLONG_MAX;
+	__be32		err = nfserr_inval;
 
-	if ((u64)count > ~(u64)offset)
-		return nfserr_inval;
+	if (offset < 0)
+		goto out;
+	if (count != 0) {
+		end = offset + (loff_t)count - 1;
+		if (end < offset)
+			goto out;
+	}
 
 	err = nfsd_open(rqstp, fhp, S_IFREG, NFSD_MAY_WRITE, &file);
 	if (err)
-		return err;
+		goto out;
 	if (EX_ISSYNC(fhp->fh_export)) {
-		if (file->f_op && file->f_op->fsync) {
-			err = nfserrno(nfsd_sync(file));
-		} else {
+		int err2 = vfs_fsync_range(file, file->f_path.dentry,
+				offset, end, 0);
+
+		if (err2 != -EINVAL)
+			err = nfserrno(err2);
+		else
 			err = nfserr_notsupp;
-		}
 	}
 
 	nfsd_close(file);
+out:
 	return err;
 }
 #endif /* CONFIG_NFSD_V3 */
