@@ -17,6 +17,49 @@
 
 #include "pci.h"
 
+void pci_bus_add_resource(struct pci_bus *bus, struct resource *res,
+			  unsigned int flags)
+{
+	struct pci_bus_resource *bus_res;
+
+	bus_res = kzalloc(sizeof(struct pci_bus_resource), GFP_KERNEL);
+	if (!bus_res) {
+		dev_err(&bus->dev, "can't add %pR resource\n", res);
+		return;
+	}
+
+	bus_res->res = res;
+	bus_res->flags = flags;
+	list_add_tail(&bus_res->list, &bus->resources);
+}
+
+struct resource *pci_bus_get_resource(struct pci_bus *bus, unsigned long flags,
+		int num)
+{
+	struct pci_bus_resource *bus_res;
+	struct resource *res;
+
+	list_for_each_entry(bus_res, &bus->resources, list) {
+		if (!(bus_res->flags & PCI_POSITIVE_DECODE))
+			continue;
+
+		res = bus_res->res;
+		if (((res->flags & flags) == flags) && num-- == 0)
+			return res;
+	}
+	return NULL;
+}
+
+void pci_bus_remove_resources(struct pci_bus *bus)
+{
+	struct pci_bus_resource *bus_res, *tmp;
+
+	list_for_each_entry_safe(bus_res, tmp, &bus->resources, list) {
+		list_del(&bus_res->list);
+		kfree(bus_res);
+	}
+}
+
 /**
  * pci_bus_alloc_resource - allocate a resource from a parent bus
  * @bus: PCI bus
@@ -42,7 +85,8 @@ pci_bus_alloc_resource(struct pci_bus *bus, struct resource *res,
 					  resource_size_t),
 		void *alignf_data)
 {
-	int i, ret = -ENOMEM;
+	int ret = -ENOMEM;
+	struct pci_bus_resource *bus_res;
 	resource_size_t max = -1;
 
 	type_mask |= IORESOURCE_IO | IORESOURCE_MEM;
@@ -51,8 +95,8 @@ pci_bus_alloc_resource(struct pci_bus *bus, struct resource *res,
 	if (!(res->flags & IORESOURCE_MEM_64))
 		max = PCIBIOS_MAX_MEM_32;
 
-	for (i = 0; i < PCI_BUS_NUM_RESOURCES; i++) {
-		struct resource *r = bus->resource[i];
+	list_for_each_entry(bus_res, &bus->resources, list) {
+		struct resource *r = bus_res->res;
 		if (!r)
 			continue;
 

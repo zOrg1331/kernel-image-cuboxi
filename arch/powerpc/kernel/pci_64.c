@@ -82,6 +82,7 @@ subsys_initcall(pcibios_init);
 
 int pcibios_unmap_io_space(struct pci_bus *bus)
 {
+	struct pci_dev *bridge = bus->self;
 	struct pci_controller *hose;
 
 	WARN_ON(bus == NULL);
@@ -96,13 +97,13 @@ int pcibios_unmap_io_space(struct pci_bus *bus)
 	 * Note: If we ever support P2P hotplug on Book3E, we'll have
 	 * to do an appropriate TLB flush here too
 	 */
-	if (bus->self) {
+	if (bridge) {
 #ifdef CONFIG_PPC_STD_MMU_64
-		struct resource *res = bus->resource[0];
+		struct resource *res = &bridge->resource[PCI_BRIDGE_RESOURCES + 0];
 #endif
 
 		pr_debug("IO unmapping for PCI-PCI bridge %s\n",
-			 pci_name(bus->self));
+			 pci_name(bridge));
 
 #ifdef CONFIG_PPC_STD_MMU_64
 		__flush_hash_table_range(&init_mm, res->start + _IO_BASE,
@@ -132,6 +133,7 @@ EXPORT_SYMBOL_GPL(pcibios_unmap_io_space);
 
 int __devinit pcibios_map_io_space(struct pci_bus *bus)
 {
+	struct pci_dev *bridge = bus->self;
 	struct vm_struct *area;
 	unsigned long phys_page;
 	unsigned long size_page;
@@ -143,12 +145,14 @@ int __devinit pcibios_map_io_space(struct pci_bus *bus)
 	/* If this not a PHB, nothing to do, page tables still exist and
 	 * thus HPTEs will be faulted in when needed
 	 */
-	if (bus->self) {
+	if (bridge) {
+		struct resource *res = &bridge->resource[PCI_BRIDGE_RESOURCES + 0];
+
 		pr_debug("IO mapping for PCI-PCI bridge %s\n",
-			 pci_name(bus->self));
+			 pci_name(bridge));
 		pr_debug("  virt=0x%016llx...0x%016llx\n",
-			 bus->resource[0]->start + _IO_BASE,
-			 bus->resource[0]->end + _IO_BASE);
+			 res->start + _IO_BASE,
+			 res->end + _IO_BASE);
 		return 0;
 	}
 

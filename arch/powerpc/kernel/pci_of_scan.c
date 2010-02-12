@@ -242,10 +242,11 @@ void __devinit of_scan_pci_bridge(struct device_node *node,
 
 	/* parse ranges property */
 	/* PCI #address-cells == 3 and #size-cells == 2 always */
+	pci_bus_remove_resources(bus);
 	res = &dev->resource[PCI_BRIDGE_RESOURCES];
 	for (i = 0; i < PCI_NUM_RESOURCES - PCI_BRIDGE_RESOURCES; ++i) {
 		res->flags = 0;
-		bus->resource[i] = res;
+		pci_bus_add_resource(bus, res, PCI_POSITIVE_DECODE);
 		++res;
 	}
 	i = 1;
@@ -255,7 +256,7 @@ void __devinit of_scan_pci_bridge(struct device_node *node,
 		if (flags == 0 || size == 0)
 			continue;
 		if (flags & IORESOURCE_IO) {
-			res = bus->resource[0];
+			res = &dev->resource[PCI_BRIDGE_RESOURCES + 0];
 			if (res->flags) {
 				printk(KERN_ERR "PCI: ignoring extra I/O range"
 				       " for bridge %s\n", node->full_name);
@@ -267,7 +268,7 @@ void __devinit of_scan_pci_bridge(struct device_node *node,
 				       " for bridge %s\n", node->full_name);
 				continue;
 			}
-			res = bus->resource[i];
+			res = &dev->resource[PCI_BRIDGE_RESOURCES + i];
 			++i;
 		}
 		res->start = of_read_number(&ranges[1], 2);

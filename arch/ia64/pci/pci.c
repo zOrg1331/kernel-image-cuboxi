@@ -320,9 +320,9 @@ static __devinit acpi_status add_window(struct acpi_resource *res, void *data)
 static void __devinit
 pcibios_setup_root_windows(struct pci_bus *bus, struct pci_controller *ctrl)
 {
-	int i, j;
+	int i;
 
-	j = 0;
+	pci_bus_remove_resources(bus);
 	for (i = 0; i < ctrl->windows; i++) {
 		struct resource *res = &ctrl->window[i].resource;
 		/* HP's firmware has a hack to work around a Windows bug.
@@ -330,13 +330,7 @@ pcibios_setup_root_windows(struct pci_bus *bus, struct pci_controller *ctrl)
 		if ((res->flags & IORESOURCE_MEM) &&
 		    (res->end - res->start < 16))
 			continue;
-		if (j >= PCI_BUS_NUM_RESOURCES) {
-			dev_warn(&bus->dev,
-				 "ignoring host bridge window %pR (no space)\n",
-				 res);
-			continue;
-		}
-		bus->resource[j++] = res;
+		pci_bus_add_resource(bus, res, 0);
 	}
 }
 
@@ -451,13 +445,15 @@ EXPORT_SYMBOL(pcibios_bus_to_resource);
 
 static int __devinit is_valid_resource(struct pci_dev *dev, int idx)
 {
-	unsigned int i, type_mask = IORESOURCE_IO | IORESOURCE_MEM;
+	unsigned int type_mask = IORESOURCE_IO | IORESOURCE_MEM;
 	struct resource *devr = &dev->resource[idx];
+	struct pci_bus_resource *bus_res;
 
 	if (!dev->bus)
 		return 0;
-	for (i=0; i<PCI_BUS_NUM_RESOURCES; i++) {
-		struct resource *busr = dev->bus->resource[i];
+
+	list_for_each_entry(bus_res, &dev->bus->resources, list) {
+		struct resource *busr = bus_res->res;
 
 		if (!busr || ((busr->flags ^ devr->flags) & type_mask))
 			continue;

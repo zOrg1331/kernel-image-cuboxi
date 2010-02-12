@@ -292,8 +292,9 @@ pcibios_fixup_bus(struct pci_bus *bus)
 		u32 sg_base = hose->sg_pci ? hose->sg_pci->dma_base : ~0;
 		unsigned long end;
 
-		bus->resource[0] = hose->io_space;
-		bus->resource[1] = hose->mem_space;
+		pci_bus_remove_resources(bus);
+		pci_bus_add_resource(bus, hose->io_space, 0);
+		pci_bus_add_resource(bus, hose->mem_space, 0);
 
 		/* Adjust hose mem_space limit to prevent PCI allocations
 		   in the iommu windows. */

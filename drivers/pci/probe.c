@@ -89,6 +89,7 @@ static void release_pcibus_dev(struct device *dev)
 
 	if (pci_bus->bridge)
 		put_device(pci_bus->bridge);
+	pci_bus_remove_resources(pci_bus);
 	kfree(pci_bus);
 }
 
@@ -288,7 +289,8 @@ static void __devinit pci_read_bridge_io(struct pci_bus *child)
 	unsigned long base, limit;
 	struct resource *res;
 
-	res = child->resource[0];
+	res = &dev->resource[PCI_BRIDGE_RESOURCES + 0];
+
 	pci_read_config_byte(dev, PCI_IO_BASE, &io_base_lo);
 	pci_read_config_byte(dev, PCI_IO_LIMIT, &io_limit_lo);
 	base = (io_base_lo & PCI_IO_RANGE_MASK) << 8;
@@ -323,7 +325,8 @@ static void __devinit pci_read_bridge_mmio(struct pci_bus *child)
 	unsigned long base, limit;
 	struct resource *res;
 
-	res = child->resource[1];
+	res = &dev->resource[PCI_BRIDGE_RESOURCES + 1];
+
 	pci_read_config_word(dev, PCI_MEMORY_BASE, &mem_base_lo);
 	pci_read_config_word(dev, PCI_MEMORY_LIMIT, &mem_limit_lo);
 	base = (mem_base_lo & PCI_MEMORY_RANGE_MASK) << 16;
@@ -347,7 +350,8 @@ static void __devinit pci_read_bridge_mmio_pref(struct pci_bus *child)
 	unsigned long base, limit;
 	struct resource *res;
 
-	res = child->resource[2];
+	res = &dev->resource[PCI_BRIDGE_RESOURCES + 2];
+
 	pci_read_config_word(dev, PCI_PREF_MEMORY_BASE, &mem_base_lo);
 	pci_read_config_word(dev, PCI_PREF_MEMORY_LIMIT, &mem_limit_lo);
 	base = (mem_base_lo & PCI_PREF_RANGE_MASK) << 16;
@@ -394,7 +398,7 @@ static void __devinit pci_read_bridge_mmio_pref(struct pci_bus *child)
 void __devinit pci_read_bridge_bases(struct pci_bus *child)
 {
 	struct pci_dev *dev = child->self;
-	int i;
+	struct pci_bus_resource *bus_res;
 
 	if (pci_is_root_bus(child))	/* It's a host bus, nothing to read */
 		return;
@@ -408,12 +412,11 @@ void __devinit pci_read_bridge_bases(struct pci_bus *child)
 	pci_read_bridge_mmio_pref(child);
 
 	if (dev->transparent) {
-		for (i = 3; i < PCI_BUS_NUM_RESOURCES; i++) {
-			child->resource[i] = child->parent->resource[i - 3];
-			if (child->resource[i])
-				dev_printk(KERN_DEBUG, &dev->dev,
-					   "  bridge window %pR (subtractive decode)\n",
-					   child->resource[i]);
+		list_for_each_entry(bus_res, &child->parent->resources, list) {
+			pci_bus_add_resource(child, bus_res->res, 0);
+			dev_printk(KERN_DEBUG, &dev->dev,
+				   "  bridge window %pR (subtractive decode)\n",
+				   bus_res->res);
 		}
 	}
 }
@@ -428,6 +431,7 @@ static struct pci_bus * pci_alloc_bus(void)
 		INIT_LIST_HEAD(&b->children);
 		INIT_LIST_HEAD(&b->devices);
 		INIT_LIST_HEAD(&b->slots);
+		INIT_LIST_HEAD(&b->resources);
 		b->max_bus_speed = PCI_SPEED_UNKNOWN;
 		b->cur_bus_speed = PCI_SPEED_UNKNOWN;
 	}
@@ -573,6 +577,7 @@ static struct pci_bus *pci_alloc_child_bus(struct pci_bus *parent,
 {
 	struct pci_bus *child;
 	int i;
+	struct resource *res;
 
 	/*
 	 * Allocate a new bus, and inherit stuff from the parent..
@@ -611,9 +616,11 @@ static struct pci_bus *pci_alloc_child_bus(struct pci_bus *parent,
 
 	/* Set up default resource pointers and names.. */
 	for (i = 0; i < PCI_BRIDGE_RESOURCE_NUM; i++) {
-		child->resource[i] = &bridge->resource[PCI_BRIDGE_RESOURCES+i];
-		child->resource[i]->name = child->name;
+		res = &bridge->resource[PCI_BRIDGE_RESOURCES + i];
+		res->name = child->name;
+		pci_bus_add_resource(child, res, PCI_POSITIVE_DECODE);
 	}
+
 	bridge->subordinate = child;
 
 	return child;
@@ -1445,8 +1452,8 @@ struct pci_bus * pci_create_bus(struct device *parent,
 	pci_create_legacy_files(b);
 
 	b->number = b->secondary = bus;
-	b->resource[0] = &ioport_resource;
-	b->resource[1] = &iomem_resource;
+	pci_bus_add_resource(b, &ioport_resource, 0);
+	pci_bus_add_resource(b, &iomem_resource, 0);
 
 	return b;
 
