@@ -482,7 +482,8 @@ static int flush_cpu_workqueue(struct cpu_workqueue_struct *cwq)
 	int active = 0;
 	struct wq_barrier barr;
 
-	WARN_ON(cwq->thread == current);
+	if (WARN_ON(cwq->thread == current))
+		return 1;
 
 	spin_lock_irq(&cwq->lock);
 	if (!list_empty(&cwq->worklist) || cwq->current_work != NULL) {
