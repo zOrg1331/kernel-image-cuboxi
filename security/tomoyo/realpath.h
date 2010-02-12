@@ -25,7 +25,7 @@ int tomoyo_realpath_from_path2(struct path *path, char *newname,
 
 /*
  * Returns realpath(3) of the given pathname but ignores chroot'ed root.
- * These functions use tomoyo_alloc(), so the caller must call tomoyo_free()
+ * These functions use kzalloc(), so the caller must call kfree()
  * if these functions didn't return NULL.
  */
 char *tomoyo_realpath(const char *pathname);
@@ -36,23 +36,14 @@ char *tomoyo_realpath_nofollow(const char *pathname);
 /* Same with tomoyo_realpath() except that the pathname is already solved. */
 char *tomoyo_realpath_from_path(struct path *path);
 
-/*
- * Allocate memory for ACL entry.
- * The RAM is chunked, so NEVER try to kfree() the returned pointer.
- */
-void *tomoyo_alloc_element(const unsigned int size);
+/* Check memory quota. */
+bool tomoyo_memory_ok(void *ptr);
 
 /*
  * Keep the given name on the RAM.
  * The RAM is shared, so NEVER try to modify or kfree() the returned name.
  */
 const struct tomoyo_path_info *tomoyo_save_name(const char *name);
-
-/* Allocate memory for temporary use (e.g. permission checks). */
-void *tomoyo_alloc(const size_t size);
-
-/* Free memory allocated by tomoyo_alloc(). */
-void tomoyo_free(const void *p);
 
 /* Check for memory usage. */
 int tomoyo_read_memory_counter(struct tomoyo_io_buffer *head);

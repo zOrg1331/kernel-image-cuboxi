@@ -58,7 +58,6 @@ struct tomoyo_domain_info tomoyo_kernel_domain;
  * exceptions.
  */
 LIST_HEAD(tomoyo_domain_list);
-DECLARE_RWSEM(tomoyo_domain_list_lock);
 
 /*
  * tomoyo_domain_initializer_entry is a structure which is used for holding
@@ -131,28 +130,6 @@ struct tomoyo_alias_entry {
 };
 
 /**
- * tomoyo_set_domain_flag - Set or clear domain's attribute flags.
- *
- * @domain:    Pointer to "struct tomoyo_domain_info".
- * @is_delete: True if it is a delete request.
- * @flags:     Flags to set or clear.
- *
- * Returns nothing.
- */
-void tomoyo_set_domain_flag(struct tomoyo_domain_info *domain,
-			    const bool is_delete, const u8 flags)
-{
-	/* We need to serialize because this is bitfield operation. */
-	static DEFINE_SPINLOCK(lock);
-	spin_lock(&lock);
-	if (!is_delete)
-		domain->flags |= flags;
-	else
-		domain->flags &= ~flags;
-	spin_unlock(&lock);
-}
-
-/**
  * tomoyo_get_last_name - Get last component of a domainname.
  *
  * @domain: Pointer to "struct tomoyo_domain_info".
@@ -206,7 +183,6 @@ const char *tomoyo_get_last_name(const struct tomoyo_domain_info *domain)
  * unless executed from "<kernel> /etc/rc.d/init.d/httpd" domain.
  */
 static LIST_HEAD(tomoyo_domain_initializer_list);
-static DECLARE_RWSEM(tomoyo_domain_initializer_list_lock);
 
 /**
  * tomoyo_update_domain_initializer_entry - Update "struct tomoyo_domain_initializer_entry" list.
@@ -217,17 +193,19 @@ static DECLARE_RWSEM(tomoyo_domain_initializer_list_lock);
  * @is_delete:  True if it is a delete request.
  *
  * Returns 0 on success, negative value otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 static int tomoyo_update_domain_initializer_entry(const char *domainname,
 						  const char *program,
 						  const bool is_not,
 						  const bool is_delete)
 {
-	struct tomoyo_domain_initializer_entry *new_entry;
+	struct tomoyo_domain_initializer_entry *entry = NULL;
 	struct tomoyo_domain_initializer_entry *ptr;
 	const struct tomoyo_path_info *saved_program;
 	const struct tomoyo_path_info *saved_domainname = NULL;
-	int error = -ENOMEM;
+	int error = is_delete ? -ENOENT : -ENOMEM;
 	bool is_last_name = false;
 
 	if (!tomoyo_is_correct_path(program, 1, -1, -1, __func__))
@@ -240,36 +218,36 @@ static int tomoyo_update_domain_initializer_entry(const char *domainname,
 			return -EINVAL;
 		saved_domainname = tomoyo_save_name(domainname);
 		if (!saved_domainname)
-			return -ENOMEM;
+			goto out;
 	}
 	saved_program = tomoyo_save_name(program);
 	if (!saved_program)
-		return -ENOMEM;
-	down_write(&tomoyo_domain_initializer_list_lock);
-	list_for_each_entry(ptr, &tomoyo_domain_initializer_list, list) {
+		goto out;
+	if (!is_delete)
+		entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+	mutex_lock(&tomoyo_policy_lock);
+	list_for_each_entry_rcu(ptr, &tomoyo_domain_initializer_list, list) {
 		if (ptr->is_not != is_not ||
 		    ptr->domainname != saved_domainname ||
 		    ptr->program != saved_program)
 			continue;
 		ptr->is_deleted = is_delete;
 		error = 0;
-		goto out;
+		break;
 	}
-	if (is_delete) {
-		error = -ENOENT;
-		goto out;
+	if (!is_delete && error && tomoyo_memory_ok(entry)) {
+		entry->domainname = saved_domainname;
+		entry->program = saved_program;
+		entry->is_not = is_not;
+		entry->is_last_name = is_last_name;
+		list_add_tail_rcu(&entry->list,
+				  &tomoyo_domain_initializer_list);
+		entry = NULL;
+		error = 0;
 	}
-	new_entry = tomoyo_alloc_element(sizeof(*new_entry));
-	if (!new_entry)
-		goto out;
-	new_entry->domainname = saved_domainname;
-	new_entry->program = saved_program;
-	new_entry->is_not = is_not;
-	new_entry->is_last_name = is_last_name;
-	list_add_tail(&new_entry->list, &tomoyo_domain_initializer_list);
-	error = 0;
+	mutex_unlock(&tomoyo_policy_lock);
  out:
-	up_write(&tomoyo_domain_initializer_list_lock);
+	kfree(entry);
 	return error;
 }
 
@@ -279,13 +257,14 @@ static int tomoyo_update_domain_initializer_entry(const char *domainname,
  * @head: Pointer to "struct tomoyo_io_buffer".
  *
  * Returns true on success, false otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 bool tomoyo_read_domain_initializer_policy(struct tomoyo_io_buffer *head)
 {
 	struct list_head *pos;
 	bool done = true;
 
-	down_read(&tomoyo_domain_initializer_list_lock);
 	list_for_each_cookie(pos, head->read_var2,
 			     &tomoyo_domain_initializer_list) {
 		const char *no;
@@ -308,7 +287,6 @@ bool tomoyo_read_domain_initializer_policy(struct tomoyo_io_buffer *head)
 		if (!done)
 			break;
 	}
-	up_read(&tomoyo_domain_initializer_list_lock);
 	return done;
 }
 
@@ -320,6 +298,8 @@ bool tomoyo_read_domain_initializer_policy(struct tomoyo_io_buffer *head)
  * @is_delete: True if it is a delete request.
  *
  * Returns 0 on success, negative value otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 int tomoyo_write_domain_initializer_policy(char *data, const bool is_not,
 					   const bool is_delete)
@@ -345,6 +325,8 @@ int tomoyo_write_domain_initializer_policy(char *data, const bool is_not,
  *
  * Returns true if executing @program reinitializes domain transition,
  * false otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 static bool tomoyo_is_domain_initializer(const struct tomoyo_path_info *
 					 domainname,
@@ -355,8 +337,7 @@ static bool tomoyo_is_domain_initializer(const struct tomoyo_path_info *
 	struct tomoyo_domain_initializer_entry *ptr;
 	bool flag = false;
 
-	down_read(&tomoyo_domain_initializer_list_lock);
-	list_for_each_entry(ptr,  &tomoyo_domain_initializer_list, list) {
+	list_for_each_entry_rcu(ptr, &tomoyo_domain_initializer_list, list) {
 		if (ptr->is_deleted)
 			continue;
 		if (ptr->domainname) {
@@ -376,7 +357,6 @@ static bool tomoyo_is_domain_initializer(const struct tomoyo_path_info *
 		}
 		flag = true;
 	}
-	up_read(&tomoyo_domain_initializer_list_lock);
 	return flag;
 }
 
@@ -419,7 +399,6 @@ static bool tomoyo_is_domain_initializer(const struct tomoyo_path_info *
  * explicitly specified by "initialize_domain".
  */
 static LIST_HEAD(tomoyo_domain_keeper_list);
-static DECLARE_RWSEM(tomoyo_domain_keeper_list_lock);
 
 /**
  * tomoyo_update_domain_keeper_entry - Update "struct tomoyo_domain_keeper_entry" list.
@@ -430,17 +409,19 @@ static DECLARE_RWSEM(tomoyo_domain_keeper_list_lock);
  * @is_delete:  True if it is a delete request.
  *
  * Returns 0 on success, negative value otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 static int tomoyo_update_domain_keeper_entry(const char *domainname,
 					     const char *program,
 					     const bool is_not,
 					     const bool is_delete)
 {
-	struct tomoyo_domain_keeper_entry *new_entry;
+	struct tomoyo_domain_keeper_entry *entry = NULL;
 	struct tomoyo_domain_keeper_entry *ptr;
 	const struct tomoyo_path_info *saved_domainname;
 	const struct tomoyo_path_info *saved_program = NULL;
-	int error = -ENOMEM;
+	int error = is_delete ? -ENOENT : -ENOMEM;
 	bool is_last_name = false;
 
 	if (!tomoyo_is_domain_def(domainname) &&
@@ -453,36 +434,35 @@ static int tomoyo_update_domain_keeper_entry(const char *domainname,
 			return -EINVAL;
 		saved_program = tomoyo_save_name(program);
 		if (!saved_program)
-			return -ENOMEM;
+			goto out;
 	}
 	saved_domainname = tomoyo_save_name(domainname);
 	if (!saved_domainname)
-		return -ENOMEM;
-	down_write(&tomoyo_domain_keeper_list_lock);
-	list_for_each_entry(ptr, &tomoyo_domain_keeper_list, list) {
+		goto out;
+	if (!is_delete)
+		entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+	mutex_lock(&tomoyo_policy_lock);
+	list_for_each_entry_rcu(ptr, &tomoyo_domain_keeper_list, list) {
 		if (ptr->is_not != is_not ||
 		    ptr->domainname != saved_domainname ||
 		    ptr->program != saved_program)
 			continue;
 		ptr->is_deleted = is_delete;
 		error = 0;
-		goto out;
+		break;
 	}
-	if (is_delete) {
-		error = -ENOENT;
-		goto out;
+	if (!is_delete && error && tomoyo_memory_ok(entry)) {
+		entry->domainname = saved_domainname;
+		entry->program = saved_program;
+		entry->is_not = is_not;
+		entry->is_last_name = is_last_name;
+		list_add_tail_rcu(&entry->list, &tomoyo_domain_keeper_list);
+		entry = NULL;
+		error = 0;
 	}
-	new_entry = tomoyo_alloc_element(sizeof(*new_entry));
-	if (!new_entry)
-		goto out;
-	new_entry->domainname = saved_domainname;
-	new_entry->program = saved_program;
-	new_entry->is_not = is_not;
-	new_entry->is_last_name = is_last_name;
-	list_add_tail(&new_entry->list, &tomoyo_domain_keeper_list);
-	error = 0;
+	mutex_unlock(&tomoyo_policy_lock);
  out:
-	up_write(&tomoyo_domain_keeper_list_lock);
+	kfree(entry);
 	return error;
 }
 
@@ -493,6 +473,7 @@ static int tomoyo_update_domain_keeper_entry(const char *domainname,
  * @is_not:    True if it is "no_keep_domain" entry.
  * @is_delete: True if it is a delete request.
  *
+ * Caller holds tomoyo_read_lock().
  */
 int tomoyo_write_domain_keeper_policy(char *data, const bool is_not,
 				      const bool is_delete)
@@ -513,13 +494,14 @@ int tomoyo_write_domain_keeper_policy(char *data, const bool is_not,
  * @head: Pointer to "struct tomoyo_io_buffer".
  *
  * Returns true on success, false otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 bool tomoyo_read_domain_keeper_policy(struct tomoyo_io_buffer *head)
 {
 	struct list_head *pos;
 	bool done = true;
 
-	down_read(&tomoyo_domain_keeper_list_lock);
 	list_for_each_cookie(pos, head->read_var2,
 			     &tomoyo_domain_keeper_list) {
 		struct tomoyo_domain_keeper_entry *ptr;
@@ -542,7 +524,6 @@ bool tomoyo_read_domain_keeper_policy(struct tomoyo_io_buffer *head)
 		if (!done)
 			break;
 	}
-	up_read(&tomoyo_domain_keeper_list_lock);
 	return done;
 }
 
@@ -555,6 +536,8 @@ bool tomoyo_read_domain_keeper_policy(struct tomoyo_io_buffer *head)
  *
  * Returns true if executing @program supresses domain transition,
  * false otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 static bool tomoyo_is_domain_keeper(const struct tomoyo_path_info *domainname,
 				    const struct tomoyo_path_info *program,
@@ -563,8 +546,7 @@ static bool tomoyo_is_domain_keeper(const struct tomoyo_path_info *domainname,
 	struct tomoyo_domain_keeper_entry *ptr;
 	bool flag = false;
 
-	down_read(&tomoyo_domain_keeper_list_lock);
-	list_for_each_entry(ptr, &tomoyo_domain_keeper_list, list) {
+	list_for_each_entry_rcu(ptr, &tomoyo_domain_keeper_list, list) {
 		if (ptr->is_deleted)
 			continue;
 		if (!ptr->is_last_name) {
@@ -582,7 +564,6 @@ static bool tomoyo_is_domain_keeper(const struct tomoyo_path_info *domainname,
 		}
 		flag = true;
 	}
-	up_read(&tomoyo_domain_keeper_list_lock);
 	return flag;
 }
 
@@ -617,7 +598,6 @@ static bool tomoyo_is_domain_keeper(const struct tomoyo_path_info *domainname,
  * execve() succeeds is calculated using /bin/cat rather than /bin/busybox .
  */
 static LIST_HEAD(tomoyo_alias_list);
-static DECLARE_RWSEM(tomoyo_alias_list_lock);
 
 /**
  * tomoyo_update_alias_entry - Update "struct tomoyo_alias_entry" list.
@@ -627,16 +607,18 @@ static DECLARE_RWSEM(tomoyo_alias_list_lock);
  * @is_delete:     True if it is a delete request.
  *
  * Returns 0 on success, negative value otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 static int tomoyo_update_alias_entry(const char *original_name,
 				     const char *aliased_name,
 				     const bool is_delete)
 {
-	struct tomoyo_alias_entry *new_entry;
+	struct tomoyo_alias_entry *entry = NULL;
 	struct tomoyo_alias_entry *ptr;
 	const struct tomoyo_path_info *saved_original_name;
 	const struct tomoyo_path_info *saved_aliased_name;
-	int error = -ENOMEM;
+	int error = is_delete ? -ENOENT : -ENOMEM;
 
 	if (!tomoyo_is_correct_path(original_name, 1, -1, -1, __func__) ||
 	    !tomoyo_is_correct_path(aliased_name, 1, -1, -1, __func__))
@@ -644,29 +626,28 @@ static int tomoyo_update_alias_entry(const char *original_name,
 	saved_original_name = tomoyo_save_name(original_name);
 	saved_aliased_name = tomoyo_save_name(aliased_name);
 	if (!saved_original_name || !saved_aliased_name)
-		return -ENOMEM;
-	down_write(&tomoyo_alias_list_lock);
-	list_for_each_entry(ptr, &tomoyo_alias_list, list) {
+		goto out;
+	if (!is_delete)
+		entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+	mutex_lock(&tomoyo_policy_lock);
+	list_for_each_entry_rcu(ptr, &tomoyo_alias_list, list) {
 		if (ptr->original_name != saved_original_name ||
 		    ptr->aliased_name != saved_aliased_name)
 			continue;
 		ptr->is_deleted = is_delete;
 		error = 0;
-		goto out;
+		break;
 	}
-	if (is_delete) {
-		error = -ENOENT;
-		goto out;
+	if (!is_delete && error && tomoyo_memory_ok(entry)) {
+		entry->original_name = saved_original_name;
+		entry->aliased_name = saved_aliased_name;
+		list_add_tail_rcu(&entry->list, &tomoyo_alias_list);
+		entry = NULL;
+		error = 0;
 	}
-	new_entry = tomoyo_alloc_element(sizeof(*new_entry));
-	if (!new_entry)
-		goto out;
-	new_entry->original_name = saved_original_name;
-	new_entry->aliased_name = saved_aliased_name;
-	list_add_tail(&new_entry->list, &tomoyo_alias_list);
-	error = 0;
+	mutex_unlock(&tomoyo_policy_lock);
  out:
-	up_write(&tomoyo_alias_list_lock);
+	kfree(entry);
 	return error;
 }
 
@@ -676,13 +657,14 @@ static int tomoyo_update_alias_entry(const char *original_name,
  * @head: Pointer to "struct tomoyo_io_buffer".
  *
  * Returns true on success, false otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 bool tomoyo_read_alias_policy(struct tomoyo_io_buffer *head)
 {
 	struct list_head *pos;
 	bool done = true;
 
-	down_read(&tomoyo_alias_list_lock);
 	list_for_each_cookie(pos, head->read_var2, &tomoyo_alias_list) {
 		struct tomoyo_alias_entry *ptr;
 
@@ -695,7 +677,6 @@ bool tomoyo_read_alias_policy(struct tomoyo_io_buffer *head)
 		if (!done)
 			break;
 	}
-	up_read(&tomoyo_alias_list_lock);
 	return done;
 }
 
@@ -706,6 +687,8 @@ bool tomoyo_read_alias_policy(struct tomoyo_io_buffer *head)
  * @is_delete: True if it is a delete request.
  *
  * Returns 0 on success, negative value otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 int tomoyo_write_alias_policy(char *data, const bool is_delete)
 {
@@ -724,63 +707,44 @@ int tomoyo_write_alias_policy(char *data, const bool is_delete)
  * @profile:    Profile number to assign if the domain was newly created.
  *
  * Returns pointer to "struct tomoyo_domain_info" on success, NULL otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 struct tomoyo_domain_info *tomoyo_find_or_assign_new_domain(const char *
 							    domainname,
 							    const u8 profile)
 {
-	struct tomoyo_domain_info *domain = NULL;
+	struct tomoyo_domain_info *entry;
+	struct tomoyo_domain_info *domain;
 	const struct tomoyo_path_info *saved_domainname;
+	bool found = false;
 
-	down_write(&tomoyo_domain_list_lock);
-	domain = tomoyo_find_domain(domainname);
-	if (domain)
-		goto out;
 	if (!tomoyo_is_correct_domain(domainname, __func__))
-		goto out;
+		return NULL;
 	saved_domainname = tomoyo_save_name(domainname);
 	if (!saved_domainname)
-		goto out;
-	/* Can I reuse memory of deleted domain? */
-	list_for_each_entry(domain, &tomoyo_domain_list, list) {
-		struct task_struct *p;
-		struct tomoyo_acl_info *ptr;
-		bool flag;
-		if (!domain->is_deleted ||
-		    domain->domainname != saved_domainname)
+		return NULL;
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	mutex_lock(&tomoyo_policy_lock);
+	list_for_each_entry_rcu(domain, &tomoyo_domain_list, list) {
+		if (domain->is_deleted ||
+		    tomoyo_pathcmp(saved_domainname, domain->domainname))
 			continue;
-		flag = false;
-		read_lock(&tasklist_lock);
-		for_each_process(p) {
-			if (tomoyo_real_domain(p) != domain)
-				continue;
-			flag = true;
-			break;
-		}
-		read_unlock(&tasklist_lock);
-		if (flag)
-			continue;
-		list_for_each_entry(ptr, &domain->acl_info_list, list) {
-			ptr->type |= TOMOYO_ACL_DELETED;
-		}
-		tomoyo_set_domain_flag(domain, true, domain->flags);
-		domain->profile = profile;
-		domain->quota_warned = false;
-		mb(); /* Avoid out-of-order execution. */
-		domain->is_deleted = false;
-		goto out;
+		found = true;
+		break;
 	}
-	/* No memory reusable. Create using new memory. */
-	domain = tomoyo_alloc_element(sizeof(*domain));
-	if (domain) {
-		INIT_LIST_HEAD(&domain->acl_info_list);
-		domain->domainname = saved_domainname;
-		domain->profile = profile;
-		list_add_tail(&domain->list, &tomoyo_domain_list);
+	if (!found && tomoyo_memory_ok(entry)) {
+		INIT_LIST_HEAD(&entry->acl_info_list);
+		entry->domainname = saved_domainname;
+		entry->profile = profile;
+		list_add_tail_rcu(&entry->list, &tomoyo_domain_list);
+		domain = entry;
+		entry = NULL;
+		found = true;
 	}
- out:
-	up_write(&tomoyo_domain_list_lock);
-	return domain;
+	mutex_unlock(&tomoyo_policy_lock);
+	kfree(entry);
+	return found ? domain : NULL;
 }
 
 /**
@@ -789,6 +753,8 @@ struct tomoyo_domain_info *tomoyo_find_or_assign_new_domain(const char *
  * @bprm: Pointer to "struct linux_binprm".
  *
  * Returns 0 on success, negative value otherwise.
+ *
+ * Caller holds tomoyo_read_lock().
  */
 int tomoyo_find_next_domain(struct linux_binprm *bprm)
 {
@@ -796,7 +762,7 @@ int tomoyo_find_next_domain(struct linux_binprm *bprm)
 	 * This function assumes that the size of buffer returned by
 	 * tomoyo_realpath() = TOMOYO_MAX_PATHNAME_LEN.
 	 */
-	struct tomoyo_page_buffer *tmp = tomoyo_alloc(sizeof(*tmp));
+	struct tomoyo_page_buffer *tmp = kzalloc(sizeof(*tmp), GFP_KERNEL);
 	struct tomoyo_domain_info *old_domain = tomoyo_domain();
 	struct tomoyo_domain_info *domain = NULL;
 	const char *old_domain_name = old_domain->domainname->name;
@@ -849,8 +815,7 @@ int tomoyo_find_next_domain(struct linux_binprm *bprm)
 	if (tomoyo_pathcmp(&r, &s)) {
 		struct tomoyo_alias_entry *ptr;
 		/* Is this program allowed to be called via symbolic links? */
-		down_read(&tomoyo_alias_list_lock);
-		list_for_each_entry(ptr, &tomoyo_alias_list, list) {
+		list_for_each_entry_rcu(ptr, &tomoyo_alias_list, list) {
 			if (ptr->is_deleted ||
 			    tomoyo_pathcmp(&r, ptr->original_name) ||
 			    tomoyo_pathcmp(&s, ptr->aliased_name))
@@ -861,7 +826,6 @@ int tomoyo_find_next_domain(struct linux_binprm *bprm)
 			tomoyo_fill_path_info(&r);
 			break;
 		}
-		up_read(&tomoyo_alias_list_lock);
 	}
 
 	/* Check execute permission. */
@@ -892,9 +856,7 @@ int tomoyo_find_next_domain(struct linux_binprm *bprm)
 	}
 	if (domain || strlen(new_domain_name) >= TOMOYO_MAX_PATHNAME_LEN)
 		goto done;
-	down_read(&tomoyo_domain_list_lock);
 	domain = tomoyo_find_domain(new_domain_name);
-	up_read(&tomoyo_domain_list_lock);
 	if (domain)
 		goto done;
 	if (is_enforce)
@@ -909,14 +871,13 @@ int tomoyo_find_next_domain(struct linux_binprm *bprm)
 	if (is_enforce)
 		retval = -EPERM;
 	else
-		tomoyo_set_domain_flag(old_domain, false,
-				       TOMOYO_DOMAIN_FLAGS_TRANSITION_FAILED);
+		old_domain->transition_failed = true;
  out:
 	if (!domain)
 		domain = old_domain;
 	bprm->cred->security = domain;
-	tomoyo_free(real_program_name);
-	tomoyo_free(symlink_program_name);
-	tomoyo_free(tmp);
+	kfree(real_program_name);
+	kfree(symlink_program_name);
+	kfree(tmp);
 	return retval;
 }
