@@ -306,6 +306,12 @@ struct dbg_kms_ops {
 extern struct dbg_kms_ops *dbg_kms_ops;
 extern int dbg_kms_ops_register(struct dbg_kms_ops *ops);
 extern int dbg_kms_ops_unregister(struct dbg_kms_ops *ops);
+#define dbg_safe_mutex_lock(x) \
+	if (!in_dbg_master()) \
+		mutex_lock(x)
+#define dbg_safe_mutex_unlock(x) \
+	if (!in_dbg_master()) \
+		mutex_unlock(x)
 #else /* ! CONFIG_KGDB */
 #define in_dbg_master() (0)
 
@@ -317,5 +323,7 @@ static inline int dbg_kms_ops_unregister(struct dbg_kms_ops *ops)
 {
 	return 0;
 }
+#define dbg_safe_mutex_lock(x) mutex_lock(x)
+#define dbg_safe_mutex_unlock(x) mutex_unlock(x)
 #endif /* ! CONFIG_KGDB */
 #endif /* _KGDB_H_ */
