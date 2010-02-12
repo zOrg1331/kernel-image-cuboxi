@@ -182,7 +182,16 @@ bool radeon_card_posted(struct radeon_device *rdev)
 	uint32_t reg;
 
 	/* first check CRTCs */
-	if (ASIC_IS_AVIVO(rdev)) {
+	if (ASIC_IS_DCE4(rdev)) {
+		reg = RREG32(EVERGREEN_CRTC_CONTROL + EVERGREEN_CRTC0_REGISTER_OFFSET) |
+			RREG32(EVERGREEN_CRTC_CONTROL + EVERGREEN_CRTC1_REGISTER_OFFSET) |
+			RREG32(EVERGREEN_CRTC_CONTROL + EVERGREEN_CRTC2_REGISTER_OFFSET) |
+			RREG32(EVERGREEN_CRTC_CONTROL + EVERGREEN_CRTC3_REGISTER_OFFSET) |
+			RREG32(EVERGREEN_CRTC_CONTROL + EVERGREEN_CRTC4_REGISTER_OFFSET) |
+			RREG32(EVERGREEN_CRTC_CONTROL + EVERGREEN_CRTC5_REGISTER_OFFSET);
+		if (reg & EVERGREEN_CRTC_MASTER_EN)
+			return true;
+	} else if (ASIC_IS_AVIVO(rdev)) {
 		reg = RREG32(AVIVO_D1CRTC_CONTROL) |
 		      RREG32(AVIVO_D2CRTC_CONTROL);
 		if (reg & AVIVO_CRTC_EN) {
@@ -229,6 +238,8 @@ bool radeon_boot_test_post_card(struct radeon_device *rdev)
 
 int radeon_dummy_page_init(struct radeon_device *rdev)
 {
+	if (rdev->dummy_page.page)
+		return 0;
 	rdev->dummy_page.page = alloc_page(GFP_DMA32 | GFP_KERNEL | __GFP_ZERO);
 	if (rdev->dummy_page.page == NULL)
 		return -ENOMEM;
@@ -310,7 +321,7 @@ void radeon_register_accessor_init(struct radeon_device *rdev)
 		rdev->mc_rreg = &rs600_mc_rreg;
 		rdev->mc_wreg = &rs600_mc_wreg;
 	}
-	if (rdev->family >= CHIP_R600) {
+	if ((rdev->family >= CHIP_R600) && (rdev->family <= CHIP_RV740)) {
 		rdev->pciep_rreg = &r600_pciep_rreg;
 		rdev->pciep_wreg = &r600_pciep_wreg;
 	}
@@ -386,6 +397,13 @@ int radeon_asic_init(struct radeon_device *rdev)
 	case CHIP_RV710:
 	case CHIP_RV740:
 		rdev->asic = &rv770_asic;
+		break;
+	case CHIP_CEDAR:
+	case CHIP_REDWOOD:
+	case CHIP_JUNIPER:
+	case CHIP_CYPRESS:
+	case CHIP_HEMLOCK:
+		rdev->asic = &evergreen_asic;
 		break;
 	default:
 		/* FIXME: not supported yet */
@@ -638,11 +656,14 @@ int radeon_device_init(struct radeon_device *rdev,
 	mutex_init(&rdev->cs_mutex);
 	mutex_init(&rdev->ib_pool.mutex);
 	mutex_init(&rdev->cp.mutex);
+	mutex_init(&rdev->dc_hw_i2c_mutex);
 	if (rdev->family >= CHIP_R600)
 		spin_lock_init(&rdev->ih.lock);
 	mutex_init(&rdev->gem.mutex);
+	mutex_init(&rdev->pm.mutex);
 	rwlock_init(&rdev->fence_drv.lock);
 	INIT_LIST_HEAD(&rdev->gem.objects);
+	init_waitqueue_head(&rdev->irq.vblank_queue);
 
 	/* setup workqueue */
 	rdev->wq = create_workqueue("radeon");

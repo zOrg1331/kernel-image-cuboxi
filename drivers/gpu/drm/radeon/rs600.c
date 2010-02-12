@@ -213,6 +213,7 @@ int rs600_gart_enable(struct radeon_device *rdev)
 	r = radeon_gart_table_vram_pin(rdev);
 	if (r)
 		return r;
+	radeon_gart_restore(rdev);
 	/* Enable bus master */
 	tmp = RREG32(R_00004C_BUS_CNTL) & C_00004C_BUS_MASTER_DIS;
 	WREG32(R_00004C_BUS_CNTL, tmp);
@@ -406,10 +407,14 @@ int rs600_irq_process(struct radeon_device *rdev)
 		if (G_000044_SW_INT(status))
 			radeon_fence_process(rdev);
 		/* Vertical blank interrupts */
-		if (G_007EDC_LB_D1_VBLANK_INTERRUPT(r500_disp_int))
+		if (G_007EDC_LB_D1_VBLANK_INTERRUPT(r500_disp_int)) {
 			drm_handle_vblank(rdev->ddev, 0);
-		if (G_007EDC_LB_D2_VBLANK_INTERRUPT(r500_disp_int))
+			wake_up(&rdev->irq.vblank_queue);
+		}
+		if (G_007EDC_LB_D2_VBLANK_INTERRUPT(r500_disp_int)) {
 			drm_handle_vblank(rdev->ddev, 1);
+			wake_up(&rdev->irq.vblank_queue);
+		}
 		if (G_007EDC_DC_HOT_PLUG_DETECT1_INTERRUPT(r500_disp_int)) {
 			queue_hotplug = true;
 			DRM_DEBUG("HPD1\n");
