@@ -107,7 +107,6 @@ struct file *au_h_open(struct dentry *dentry, aufs_bindex_t bindex, int flags,
 int au_do_open(struct file *file, int (*open)(struct file *file, int flags))
 {
 	int err;
-	unsigned int flags;
 	struct dentry *dentry;
 	struct super_block *sb;
 
@@ -119,10 +118,7 @@ int au_do_open(struct file *file, int (*open)(struct file *file, int flags))
 		goto out;
 
 	di_read_lock_child(dentry, AuLock_IR);
-	spin_lock(&file->f_lock);
-	flags = file->f_flags;
-	spin_unlock(&file->f_lock);
-	err = open(file, flags);
+	err = open(file, vfsub_file_flags(file));
 	di_read_unlock(dentry, AuLock_IR);
 
 	fi_write_unlock(file);
@@ -136,7 +132,6 @@ int au_do_open(struct file *file, int (*open)(struct file *file, int flags))
 int au_reopen_nondir(struct file *file)
 {
 	int err;
-	unsigned int flags;
 	aufs_bindex_t bstart, bindex, bend;
 	struct dentry *dentry;
 	struct file *h_file, *h_file_tmp;
@@ -156,10 +151,8 @@ int au_reopen_nondir(struct file *file)
 	AuDebugOn(au_fbstart(file) < bstart
 		  || au_fi(file)->fi_hfile[0 + bstart].hf_file);
 
-	spin_lock(&file->f_lock);
-	flags = file->f_flags & ~O_TRUNC;
-	spin_unlock(&file->f_lock);
-	h_file = au_h_open(dentry, bstart, flags, file);
+	h_file = au_h_open(dentry, bstart, vfsub_file_flags(file) & ~O_TRUNC,
+			   file);
 	err = PTR_ERR(h_file);
 	if (IS_ERR(h_file))
 		goto out; /* todo: close all? */
@@ -213,7 +206,6 @@ static int au_ready_to_write_wh(struct file *file, loff_t len,
 	int err;
 	struct inode *inode;
 	struct dentry *dentry, *hi_wh;
-	struct super_block *sb;
 
 	dentry = file->f_dentry;
 	au_update_dbstart(dentry);
@@ -225,8 +217,9 @@ static int au_ready_to_write_wh(struct file *file, loff_t len,
 		/* already copied-up after unlink */
 		err = au_reopen_wh(file, bcpup, hi_wh);
 
-	sb = dentry->d_sb;
-	if (!err && inode->i_nlink > 1 && au_opt_test(au_mntflags(sb), PLINK))
+	if (!err
+	    && inode->i_nlink > 1
+	    && au_opt_test(au_mntflags(dentry->d_sb), PLINK))
 		au_plink_append(inode, bcpup, au_h_dptr(dentry, bcpup));
 
 	return err;
@@ -245,9 +238,9 @@ int au_ready_to_write(struct file *file, loff_t len, struct au_pin *pin)
 
 	dentry = file->f_dentry;
 	sb = dentry->d_sb;
-	bstart = au_fbstart(file);
 	inode = dentry->d_inode;
 	AuDebugOn(au_special_file(inode->i_mode));
+	bstart = au_fbstart(file);
 	err = au_test_ro(sb, bstart, inode);
 	if (!err && (au_h_fptr(file, bstart)->f_mode & FMODE_WRITE)) {
 		err = au_pin(pin, dentry, bstart, AuOpt_UDBA_NONE, /*flags*/0);

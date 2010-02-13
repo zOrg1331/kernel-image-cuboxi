@@ -61,6 +61,8 @@ static int __init au_cache_init(void)
 static void au_cache_fin(void)
 {
 	int i;
+
+	/* including AuCache_HINOTIFY */
 	for (i = 0; i < AuCache_Last; i++)
 		if (au_cachep[i]) {
 			kmem_cache_destroy(au_cachep[i]);
@@ -81,11 +83,6 @@ MODULE_AUTHOR("Junjiro R. Okajima <aufs-users@lists.sourceforge.net>");
 MODULE_DESCRIPTION(AUFS_NAME
 	" -- Advanced multi layered unification filesystem");
 MODULE_VERSION(AUFS_VERSION);
-
-/* it should be 'byte', but param_set_byte() prints it by "%c" */
-short aufs_nwkq = AUFS_NWKQ_DEF;
-MODULE_PARM_DESC(nwkq, "the number of workqueue thread, " AUFS_WKQ_NAME);
-module_param_named(nwkq, aufs_nwkq, short, S_IRUGO);
 
 /* this module parameter has no meaning when SYSFS is disabled */
 int sysaufs_brs = 1;
@@ -119,11 +116,6 @@ static int __init aufs_init(void)
 
 	sysaufs_brs_init();
 	au_debug_init();
-
-	err = -EINVAL;
-	if (unlikely(aufs_nwkq <= 0))
-		goto out;
-
 	err = sysaufs_init();
 	if (unlikely(err))
 		goto out;
