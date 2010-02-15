@@ -1103,18 +1103,39 @@ static int sky2_rx_map_skb(struct pci_dev *pdev, struct rx_ring_info *re,
 	int i;
 
 	re->data_addr = pci_map_single(pdev, skb->data, size, PCI_DMA_FROMDEVICE);
-	if (unlikely(pci_dma_mapping_error(pdev, re->data_addr)))
-		return -EIO;
+	if (pci_dma_mapping_error(pdev, re->data_addr))
+		goto mapping_error;
 
 	pci_unmap_len_set(re, data_size, size);
 
-	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++)
-		re->frag_addr[i] = pci_map_page(pdev,
-						skb_shinfo(skb)->frags[i].page,
-						skb_shinfo(skb)->frags[i].page_offset,
-						skb_shinfo(skb)->frags[i].size,
+	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
+		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+
+		re->frag_addr[i] = pci_map_page(pdev, frag->page,
+						frag->page_offset,
+						frag->size,
 						PCI_DMA_FROMDEVICE);
+
+		if (pci_dma_mapping_error(pdev, re->frag_addr[i]))
+			goto map_page_error;
+	}
 	return 0;
+
+map_page_error:
+	while (--i >= 0) {
+		pci_unmap_page(pdev, re->frag_addr[i],
+			       skb_shinfo(skb)->frags[i].size,
+			       PCI_DMA_FROMDEVICE);
+	}
+
+	pci_unmap_single(pdev, re->data_addr, pci_unmap_len(re, data_size),
+			 PCI_DMA_FROMDEVICE);
+
+mapping_error:
+	if (net_ratelimit())
+		dev_warn(&pdev->dev, "%s: rx mapping error\n",
+			 skb->dev->name);
+	return -EIO;
 }
 
 static void sky2_rx_unmap_skb(struct pci_dev *pdev, struct rx_ring_info *re)
@@ -2306,30 +2327,32 @@ static struct sk_buff *receive_new(struct sky2_port *sky2,
 				   struct rx_ring_info *re,
 				   unsigned int length)
 {
-	struct sk_buff *skb, *nskb;
+	struct sk_buff *skb;
+	struct rx_ring_info nre;
 	unsigned hdr_space = sky2->rx_data_size;
 
-	/* Don't be tricky about reusing pages (yet) */
-	nskb = sky2_rx_alloc(sky2);
-	if (unlikely(!nskb))
-		return NULL;
+	nre.skb = sky2_rx_alloc(sky2);
+	if (unlikely(!nre.skb))
+		goto nobuf;
+
+	if (sky2_rx_map_skb(sky2->hw->pdev, &nre, hdr_space))
+		goto nomap;
 
 	skb = re->skb;
 	sky2_rx_unmap_skb(sky2->hw->pdev, re);
-
 	prefetch(skb->data);
-	re->skb = nskb;
-	if (sky2_rx_map_skb(sky2->hw->pdev, re, hdr_space)) {
-		dev_kfree_skb(nskb);
-		re->skb = skb;
-		return NULL;
-	}
+	*re = nre;
 
 	if (skb_shinfo(skb)->nr_frags)
 		skb_put_frags(skb, hdr_space, length);
 	else
 		skb_put(skb, length);
 	return skb;
+
+nomap:
+	dev_kfree_skb(nre.skb);
+nobuf:
+	return NULL;
 }
 
 /*
@@ -2381,6 +2404,9 @@ okay:
 		skb = receive_copy(sky2, re, length);
 	else
 		skb = receive_new(sky2, re, length);
+
+	dev->stats.rx_dropped += (skb == NULL);
+
 resubmit:
 	sky2_rx_submit(sky2, re);
 
@@ -2458,6 +2484,32 @@ static inline void sky2_rx_done(struct sky2_hw *hw, unsigned port,
 	}
 }
 
+static void sky2_rx_checksum(struct sky2_port *sky2, u32 status)
+{
+	/* If this happens then driver assuming wrong format for chip type */
+	BUG_ON(sky2->hw->flags & SKY2_HW_NEW_LE);
+
+	/* Both checksum counters are programmed to start at
+	 * the same offset, so unless there is a problem they
+	 * should match. This failure is an early indication that
+	 * hardware receive checksumming won't work.
+	 */
+	if (likely((u16)(status >> 16) == (u16)status)) {
+		struct sk_buff *skb = sky2->rx_ring[sky2->rx_next].skb;
+		skb->ip_summed = CHECKSUM_COMPLETE;
+		skb->csum = le16_to_cpu(status);
+	} else {
+		dev_notice(&sky2->hw->pdev->dev,
+			   "%s: receive checksum problem (status = %#x)\n",
+			   sky2->netdev->name, status);
+
+		/* Disable checksum offload */
+		sky2->flags &= ~SKY2_FLAG_RX_CHECKSUM;
+		sky2_write32(sky2->hw, Q_ADDR(rxqaddr[sky2->port], Q_CSR),
+			     BMU_DIS_RX_CHKSUM);
+	}
+}
+
 /* Process status response ring */
 static int sky2_status_intr(struct sky2_hw *hw, int to_do, u16 idx)
 {
@@ -2492,11 +2544,10 @@ static int sky2_status_intr(struct sky2_hw *hw, int to_do, u16 idx)
 		case OP_RXSTAT:
 			total_packets[port]++;
 			total_bytes[port] += length;
+
 			skb = sky2_receive(dev, length, status);
-			if (unlikely(!skb)) {
-				dev->stats.rx_dropped++;
+			if (!skb)
 				break;
-			}
 
 			/* This chip reports checksum status differently */
 			if (hw->flags & SKY2_HW_NEW_LE) {
@@ -2527,37 +2578,8 @@ static int sky2_status_intr(struct sky2_hw *hw, int to_do, u16 idx)
 			/* fall through */
 #endif
 		case OP_RXCHKS:
-			if (!(sky2->flags & SKY2_FLAG_RX_CHECKSUM))
-				break;
-
-			/* If this happens then driver assuming wrong format */
-			if (unlikely(hw->flags & SKY2_HW_NEW_LE)) {
-				if (net_ratelimit())
-					printk(KERN_NOTICE "%s: unexpected"
-					       " checksum status\n",
-					       dev->name);
-				break;
-			}
-
-			/* Both checksum counters are programmed to start at
-			 * the same offset, so unless there is a problem they
-			 * should match. This failure is an early indication that
-			 * hardware receive checksumming won't work.
-			 */
-			if (likely(status >> 16 == (status & 0xffff))) {
-				skb = sky2->rx_ring[sky2->rx_next].skb;
-				skb->ip_summed = CHECKSUM_COMPLETE;
-				skb->csum = le16_to_cpu(status);
-			} else {
-				printk(KERN_NOTICE PFX "%s: hardware receive "
-				       "checksum problem (status = %#x)\n",
-				       dev->name, status);
-				sky2->flags &= ~SKY2_FLAG_RX_CHECKSUM;
-
-				sky2_write32(sky2->hw,
-					     Q_ADDR(rxqaddr[port], Q_CSR),
-					     BMU_DIS_RX_CHKSUM);
-			}
+			if (likely(sky2->flags & SKY2_FLAG_RX_CHECKSUM))
+				sky2_rx_checksum(sky2, status);
 			break;
 
 		case OP_TXINDEXLE:
@@ -3010,11 +3032,20 @@ static void sky2_reset(struct sky2_hw *hw)
 	u32 hwe_mask = Y2_HWE_ALL_MASK;
 
 	/* disable ASF */
-	if (hw->chip_id == CHIP_ID_YUKON_EX) {
+	if (hw->chip_id == CHIP_ID_YUKON_EX
+	    || hw->chip_id == CHIP_ID_YUKON_SUPR) {
+		sky2_write32(hw, CPU_WDOG, 0);
 		status = sky2_read16(hw, HCU_CCSR);
 		status &= ~(HCU_CCSR_AHB_RST | HCU_CCSR_CPU_RST_MODE |
 			    HCU_CCSR_UC_STATE_MSK);
+		/*
+		 * CPU clock divider shouldn't be used because
+		 * - ASF firmware may malfunction
+		 * - Yukon-Supreme: Parallel FLASH doesn't support divided clocks
+		 */
+		status &= ~HCU_CCSR_CPU_CLK_DIVIDE_MSK;
 		sky2_write16(hw, HCU_CCSR, status);
+		sky2_write32(hw, CPU_WDOG, 0);
 	} else
 		sky2_write8(hw, B28_Y2_ASF_STAT_CMD, Y2_ASF_RESET);
 	sky2_write16(hw, B0_CTST, Y2_ASF_DISABLE);
@@ -3188,7 +3219,9 @@ static void sky2_reset(struct sky2_hw *hw)
 static void sky2_detach(struct net_device *dev)
 {
 	if (netif_running(dev)) {
+		netif_tx_lock(dev);
 		netif_device_detach(dev);	/* stop txq */
+		netif_tx_unlock(dev);
 		sky2_down(dev);
 	}
 }
@@ -3864,6 +3897,50 @@ static int sky2_get_regs_len(struct net_device *dev)
 	return 0x4000;
 }
 
+static int sky2_reg_access_ok(struct sky2_hw *hw, unsigned int b)
+{
+	/* This complicated switch statement is to make sure and
+	 * only access regions that are unreserved.
+	 * Some blocks are only valid on dual port cards.
+	 */
+	switch (b) {
+	/* second port */
+	case 5:		/* Tx Arbiter 2 */
+	case 9:		/* RX2 */
+	case 14 ... 15:	/* TX2 */
+	case 17: case 19: /* Ram Buffer 2 */
+	case 22 ... 23: /* Tx Ram Buffer 2 */
+	case 25:	/* Rx MAC Fifo 1 */
+	case 27:	/* Tx MAC Fifo 2 */
+	case 31:	/* GPHY 2 */
+	case 40 ... 47: /* Pattern Ram 2 */
+	case 52: case 54: /* TCP Segmentation 2 */
+	case 112 ... 116: /* GMAC 2 */
+		return hw->ports > 1;
+
+	case 0:		/* Control */
+	case 2:		/* Mac address */
+	case 4:		/* Tx Arbiter 1 */
+	case 7:		/* PCI express reg */
+	case 8:		/* RX1 */
+	case 12 ... 13: /* TX1 */
+	case 16: case 18:/* Rx Ram Buffer 1 */
+	case 20 ... 21: /* Tx Ram Buffer 1 */
+	case 24:	/* Rx MAC Fifo 1 */
+	case 26:	/* Tx MAC Fifo 1 */
+	case 28 ... 29: /* Descriptor and status unit */
+	case 30:	/* GPHY 1*/
+	case 32 ... 39: /* Pattern Ram 1 */
+	case 48: case 50: /* TCP Segmentation 1 */
+	case 56 ... 60:	/* PCI space */
+	case 80 ... 84:	/* GMAC 1 */
+		return 1;
+
+	default:
+		return 0;
+	}
+}
+
 /*
  * Returns copy of control register region
  * Note: ethtool_get_regs always provides full size (16k) buffer
@@ -3878,55 +3955,13 @@ static void sky2_get_regs(struct net_device *dev, struct ethtool_regs *regs,
 	regs->version = 1;
 
 	for (b = 0; b < 128; b++) {
-		/* This complicated switch statement is to make sure and
-		 * only access regions that are unreserved.
-		 * Some blocks are only valid on dual port cards.
-		 * and block 3 has some special diagnostic registers that
-		 * are poison.
-		 */
-		switch (b) {
-		case 3:
-			/* skip diagnostic ram region */
+		/* skip poisonous diagnostic ram region in block 3 */
+		if (b == 3)
 			memcpy_fromio(p + 0x10, io + 0x10, 128 - 0x10);
-			break;
-
-		/* dual port cards only */
-		case 5:		/* Tx Arbiter 2 */
-		case 9: 	/* RX2 */
-		case 14 ... 15:	/* TX2 */
-		case 17: case 19: /* Ram Buffer 2 */
-		case 22 ... 23: /* Tx Ram Buffer 2 */
-		case 25: 	/* Rx MAC Fifo 1 */
-		case 27: 	/* Tx MAC Fifo 2 */
-		case 31:	/* GPHY 2 */
-		case 40 ... 47: /* Pattern Ram 2 */
-		case 52: case 54: /* TCP Segmentation 2 */
-		case 112 ... 116: /* GMAC 2 */
-			if (sky2->hw->ports == 1)
-				goto reserved;
-			/* fall through */
-		case 0:		/* Control */
-		case 2:		/* Mac address */
-		case 4:		/* Tx Arbiter 1 */
-		case 7:		/* PCI express reg */
-		case 8:		/* RX1 */
-		case 12 ... 13: /* TX1 */
-		case 16: case 18:/* Rx Ram Buffer 1 */
-		case 20 ... 21: /* Tx Ram Buffer 1 */
-		case 24: 	/* Rx MAC Fifo 1 */
-		case 26: 	/* Tx MAC Fifo 1 */
-		case 28 ... 29: /* Descriptor and status unit */
-		case 30:	/* GPHY 1*/
-		case 32 ... 39: /* Pattern Ram 1 */
-		case 48: case 50: /* TCP Segmentation 1 */
-		case 56 ... 60:	/* PCI space */
-		case 80 ... 84:	/* GMAC 1 */
+		else if (sky2_reg_access_ok(sky2->hw, b))
 			memcpy_fromio(p, io, 128);
-			break;
-		default:
-reserved:
+		else
 			memset(p, 0, 128);
-		}
 
 		p += 128;
 		io += 128;
@@ -4830,10 +4865,11 @@ static int sky2_resume(struct pci_dev *pdev)
 	pci_enable_wake(pdev, PCI_D0, 0);
 
 	/* Re-enable all clocks */
-	if (hw->chip_id == CHIP_ID_YUKON_EX ||
-	    hw->chip_id == CHIP_ID_YUKON_EC_U ||
-	    hw->chip_id == CHIP_ID_YUKON_FE_P)
-		sky2_pci_write32(hw, PCI_DEV_REG3, 0);
+	err = pci_write_config_dword(pdev, PCI_DEV_REG3, 0);
+	if (err) {
+		dev_err(&pdev->dev, "PCI write config failed\n");
+		goto out;
+	}
 
 	sky2_reset(hw);
 	sky2_write32(hw, B0_IMSK, Y2_IS_BASE);

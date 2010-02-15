@@ -281,6 +281,8 @@ struct mac80211_hwsim_data {
 	struct ieee80211_channel channels_5ghz[ARRAY_SIZE(hwsim_channels_5ghz)];
 	struct ieee80211_rate rates[ARRAY_SIZE(hwsim_rates)];
 
+	struct mac_address addresses[2];
+
 	struct ieee80211_channel *channel;
 	unsigned long beacon_int; /* in jiffies unit */
 	unsigned int rx_filter;
@@ -436,6 +438,38 @@ static bool hwsim_ps_rx_ok(struct mac80211_hwsim_data *data,
 }
 
 
+struct mac80211_hwsim_addr_match_data {
+	bool ret;
+	const u8 *addr;
+};
+
+static void mac80211_hwsim_addr_iter(void *data, u8 *mac,
+				     struct ieee80211_vif *vif)
+{
+	struct mac80211_hwsim_addr_match_data *md = data;
+	if (memcmp(mac, md->addr, ETH_ALEN) == 0)
+		md->ret = true;
+}
+
+
+static bool mac80211_hwsim_addr_match(struct mac80211_hwsim_data *data,
+				      const u8 *addr)
+{
+	struct mac80211_hwsim_addr_match_data md;
+
+	if (memcmp(addr, data->hw->wiphy->perm_addr, ETH_ALEN) == 0)
+		return true;
+
+	md.ret = false;
+	md.addr = addr;
+	ieee80211_iterate_active_interfaces_atomic(data->hw,
+						   mac80211_hwsim_addr_iter,
+						   &md);
+
+	return md.ret;
+}
+
+
 static bool mac80211_hwsim_tx_frame(struct ieee80211_hw *hw,
 				    struct sk_buff *skb)
 {
@@ -488,8 +522,7 @@ static bool mac80211_hwsim_tx_frame(struct ieee80211_hw *hw,
 		if (nskb == NULL)
 			continue;
 
-		if (memcmp(hdr->addr1, data2->hw->wiphy->perm_addr,
-			   ETH_ALEN) == 0)
+		if (mac80211_hwsim_addr_match(data2, hdr->addr1))
 			ack = true;
 		memcpy(IEEE80211_SKB_RXCB(nskb), &rx_status, sizeof(rx_status));
 		ieee80211_rx_irqsafe(data2->hw, nskb);
@@ -553,24 +586,24 @@ static void mac80211_hwsim_stop(struct ieee80211_hw *hw)
 
 
 static int mac80211_hwsim_add_interface(struct ieee80211_hw *hw,
-					struct ieee80211_if_init_conf *conf)
+					struct ieee80211_vif *vif)
 {
 	printk(KERN_DEBUG "%s:%s (type=%d mac_addr=%pM)\n",
-	       wiphy_name(hw->wiphy), __func__, conf->type,
-	       conf->mac_addr);
-	hwsim_set_magic(conf->vif);
+	       wiphy_name(hw->wiphy), __func__, vif->type,
+	       vif->addr);
+	hwsim_set_magic(vif);
 	return 0;
 }
 
 
 static void mac80211_hwsim_remove_interface(
-	struct ieee80211_hw *hw, struct ieee80211_if_init_conf *conf)
+	struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 {
 	printk(KERN_DEBUG "%s:%s (type=%d mac_addr=%pM)\n",
-	       wiphy_name(hw->wiphy), __func__, conf->type,
-	       conf->mac_addr);
-	hwsim_check_magic(conf->vif);
-	hwsim_clear_magic(conf->vif);
+	       wiphy_name(hw->wiphy), __func__, vif->type,
+	       vif->addr);
+	hwsim_check_magic(vif);
+	hwsim_clear_magic(vif);
 }
 
 
@@ -618,12 +651,26 @@ static int mac80211_hwsim_config(struct ieee80211_hw *hw, u32 changed)
 {
 	struct mac80211_hwsim_data *data = hw->priv;
 	struct ieee80211_conf *conf = &hw->conf;
+	static const char *chantypes[4] = {
+		[NL80211_CHAN_NO_HT] = "noht",
+		[NL80211_CHAN_HT20] = "ht20",
+		[NL80211_CHAN_HT40MINUS] = "ht40-",
+		[NL80211_CHAN_HT40PLUS] = "ht40+",
+	};
+	static const char *smps_modes[IEEE80211_SMPS_NUM_MODES] = {
+		[IEEE80211_SMPS_AUTOMATIC] = "auto",
+		[IEEE80211_SMPS_OFF] = "off",
+		[IEEE80211_SMPS_STATIC] = "static",
+		[IEEE80211_SMPS_DYNAMIC] = "dynamic",
+	};
 
-	printk(KERN_DEBUG "%s:%s (freq=%d idle=%d ps=%d)\n",
+	printk(KERN_DEBUG "%s:%s (freq=%d/%s idle=%d ps=%d smps=%s)\n",
 	       wiphy_name(hw->wiphy), __func__,
 	       conf->channel->center_freq,
+	       chantypes[conf->channel_type],
 	       !!(conf->flags & IEEE80211_CONF_IDLE),
-	       !!(conf->flags & IEEE80211_CONF_PS));
+	       !!(conf->flags & IEEE80211_CONF_PS),
+	       smps_modes[conf->smps_mode]);
 
 	data->idle = !!(conf->flags & IEEE80211_CONF_IDLE);
 
@@ -827,6 +874,41 @@ static int mac80211_hwsim_testmode_cmd(struct ieee80211_hw *hw,
 }
 #endif
 
+static int mac80211_hwsim_ampdu_action(struct ieee80211_hw *hw,
+				       struct ieee80211_vif *vif,
+				       enum ieee80211_ampdu_mlme_action action,
+				       struct ieee80211_sta *sta, u16 tid, u16 *ssn)
+{
+	switch (action) {
+	case IEEE80211_AMPDU_TX_START:
+		ieee80211_start_tx_ba_cb_irqsafe(vif, sta->addr, tid);
+		break;
+	case IEEE80211_AMPDU_TX_STOP:
+		ieee80211_stop_tx_ba_cb_irqsafe(vif, sta->addr, tid);
+		break;
+	case IEEE80211_AMPDU_TX_OPERATIONAL:
+		break;
+	case IEEE80211_AMPDU_RX_START:
+	case IEEE80211_AMPDU_RX_STOP:
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+
+static void mac80211_hwsim_flush(struct ieee80211_hw *hw, bool drop)
+{
+	/*
+	 * In this special case, there's nothing we need to
+	 * do because hwsim does transmission synchronously.
+	 * In the future, when it does transmissions via
+	 * userspace, we may need to do something.
+	 */
+}
+
+
 static const struct ieee80211_ops mac80211_hwsim_ops =
 {
 	.tx = mac80211_hwsim_tx,
@@ -841,6 +923,8 @@ static const struct ieee80211_ops mac80211_hwsim_ops =
 	.set_tim = mac80211_hwsim_set_tim,
 	.conf_tx = mac80211_hwsim_conf_tx,
 	CFG80211_TESTMODE_CMD(mac80211_hwsim_testmode_cmd)
+	.ampdu_action = mac80211_hwsim_ampdu_action,
+	.flush = mac80211_hwsim_flush,
 };
 
 
@@ -1072,7 +1156,11 @@ static int __init init_mac80211_hwsim(void)
 		SET_IEEE80211_DEV(hw, data->dev);
 		addr[3] = i >> 8;
 		addr[4] = i;
-		SET_IEEE80211_PERM_ADDR(hw, addr);
+		memcpy(data->addresses[0].addr, addr, ETH_ALEN);
+		memcpy(data->addresses[1].addr, addr, ETH_ALEN);
+		data->addresses[1].addr[0] |= 0x40;
+		hw->wiphy->n_addresses = 2;
+		hw->wiphy->addresses = data->addresses;
 
 		hw->channel_change_time = 1;
 		hw->queues = 4;
@@ -1082,7 +1170,9 @@ static int __init init_mac80211_hwsim(void)
 			BIT(NL80211_IFTYPE_MESH_POINT);
 
 		hw->flags = IEEE80211_HW_MFP_CAPABLE |
-			    IEEE80211_HW_SIGNAL_DBM;
+			    IEEE80211_HW_SIGNAL_DBM |
+			    IEEE80211_HW_SUPPORTS_STATIC_SMPS |
+			    IEEE80211_HW_SUPPORTS_DYNAMIC_SMPS;
 
 		/* ask mac80211 to reserve space for magic */
 		hw->vif_data_size = sizeof(struct hwsim_vif_priv);
