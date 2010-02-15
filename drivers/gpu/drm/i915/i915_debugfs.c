@@ -386,6 +386,165 @@ out:
 	return 0;
 }
 
+static int i915_rstdby_delays(struct seq_file *m, void *unused)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	drm_i915_private_t *dev_priv = dev->dev_private;
+	u16 crstanddelay = I915_READ16(CRSTANDVID);
+
+	seq_printf(m, "w/ctx: %d, w/o ctx: %d\n", (crstanddelay >> 8) & 0x3f, (crstanddelay & 0x3f));
+
+	return 0;
+}
+
+static int i915_cur_delayinfo(struct seq_file *m, void *unused)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	drm_i915_private_t *dev_priv = dev->dev_private;
+	u16 rgvswctl = I915_READ16(MEMSWCTL);
+
+	seq_printf(m, "Last command: 0x%01x\n", (rgvswctl >> 13) & 0x3);
+	seq_printf(m, "Command status: %d\n", (rgvswctl >> 12) & 1);
+	seq_printf(m, "P%d DELAY 0x%02x\n", (rgvswctl >> 8) & 0xf,
+		   rgvswctl & 0x3f);
+
+	return 0;
+}
+
+static int i915_delayfreq_table(struct seq_file *m, void *unused)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	drm_i915_private_t *dev_priv = dev->dev_private;
+	u32 delayfreq;
+	int i;
+
+	for (i = 0; i < 16; i++) {
+		delayfreq = I915_READ(PXVFREQ_BASE + i * 4);
+		seq_printf(m, "P%02dVIDFREQ: 0x%08x\n", i, delayfreq);
+	}
+
+	return 0;
+}
+
+static inline int MAP_TO_MV(int map)
+{
+	return 1250 - (map * 25);
+}
+
+static int i915_inttoext_table(struct seq_file *m, void *unused)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	drm_i915_private_t *dev_priv = dev->dev_private;
+	u32 inttoext;
+	int i;
+
+	for (i = 1; i <= 32; i++) {
+		inttoext = I915_READ(INTTOEXT_BASE_ILK + i * 4);
+		seq_printf(m, "INTTOEXT%02d: 0x%08x\n", i, inttoext);
+	}
+
+	return 0;
+}
+
+static int i915_drpc_info(struct seq_file *m, void *unused)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	drm_i915_private_t *dev_priv = dev->dev_private;
+	u32 rgvmodectl = I915_READ(MEMMODECTL);
+
+	seq_printf(m, "HD boost: %s\n", (rgvmodectl & MEMMODE_BOOST_EN) ?
+		   "yes" : "no");
+	seq_printf(m, "Boost freq: %d\n",
+		   (rgvmodectl & MEMMODE_BOOST_FREQ_MASK) >>
+		   MEMMODE_BOOST_FREQ_SHIFT);
+	seq_printf(m, "HW control enabled: %s\n",
+		   rgvmodectl & MEMMODE_HWIDLE_EN ? "yes" : "no");
+	seq_printf(m, "SW control enabled: %s\n",
+		   rgvmodectl & MEMMODE_SWMODE_EN ? "yes" : "no");
+	seq_printf(m, "Gated voltage change: %s\n",
+		   rgvmodectl & MEMMODE_RCLK_GATE ? "yes" : "no");
+	seq_printf(m, "Starting frequency: P%d\n",
+		   (rgvmodectl & MEMMODE_FSTART_MASK) >> MEMMODE_FSTART_SHIFT);
+	seq_printf(m, "Max frequency: P%d\n",
+		   (rgvmodectl & MEMMODE_FMAX_MASK) >> MEMMODE_FMAX_SHIFT);
+	seq_printf(m, "Min frequency: P%d\n", (rgvmodectl & MEMMODE_FMIN_MASK));
+
+	return 0;
+}
+
+static int i915_fbc_status(struct seq_file *m, void *unused)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	struct drm_crtc *crtc;
+	drm_i915_private_t *dev_priv = dev->dev_private;
+	bool fbc_enabled = false;
+
+	if (!dev_priv->display.fbc_enabled) {
+		seq_printf(m, "FBC unsupported on this chipset\n");
+		return 0;
+	}
+
+	list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
+		if (!crtc->enabled)
+			continue;
+		if (dev_priv->display.fbc_enabled(crtc))
+			fbc_enabled = true;
+	}
+
+	if (fbc_enabled) {
+		seq_printf(m, "FBC enabled\n");
+	} else {
+		seq_printf(m, "FBC disabled: ");
+		switch (dev_priv->no_fbc_reason) {
+		case FBC_STOLEN_TOO_SMALL:
+			seq_printf(m, "not enough stolen memory");
+			break;
+		case FBC_UNSUPPORTED_MODE:
+			seq_printf(m, "mode not supported");
+			break;
+		case FBC_MODE_TOO_LARGE:
+			seq_printf(m, "mode too large");
+			break;
+		case FBC_BAD_PLANE:
+			seq_printf(m, "FBC unsupported on plane");
+			break;
+		case FBC_NOT_TILED:
+			seq_printf(m, "scanout buffer not tiled");
+			break;
+		default:
+			seq_printf(m, "unknown reason");
+		}
+		seq_printf(m, "\n");
+	}
+	return 0;
+}
+
+static int i915_sr_status(struct seq_file *m, void *unused)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	drm_i915_private_t *dev_priv = dev->dev_private;
+	bool sr_enabled = false;
+
+	if (IS_I965G(dev) || IS_I945G(dev) || IS_I945GM(dev))
+		sr_enabled = I915_READ(FW_BLC_SELF) & FW_BLC_SELF_EN;
+	else if (IS_I915GM(dev))
+		sr_enabled = I915_READ(INSTPM) & INSTPM_SELF_EN;
+	else if (IS_PINEVIEW(dev))
+		sr_enabled = I915_READ(DSPFW3) & PINEVIEW_SELF_REFRESH_EN;
+
+	seq_printf(m, "self-refresh: %s\n", sr_enabled ? "enabled" :
+		   "disabled");
+
+	return 0;
+}
+
 static int
 i915_wedged_open(struct inode *inode,
 		 struct file *filp)
@@ -503,6 +662,13 @@ static struct drm_info_list i915_debugfs_list[] = {
 	{"i915_ringbuffer_info", i915_ringbuffer_info, 0},
 	{"i915_batchbuffers", i915_batchbuffer_info, 0},
 	{"i915_error_state", i915_error_state, 0},
+	{"i915_rstdby_delays", i915_rstdby_delays, 0},
+	{"i915_cur_delayinfo", i915_cur_delayinfo, 0},
+	{"i915_delayfreq_table", i915_delayfreq_table, 0},
+	{"i915_inttoext_table", i915_inttoext_table, 0},
+	{"i915_drpc_info", i915_drpc_info, 0},
+	{"i915_fbc_status", i915_fbc_status, 0},
+	{"i915_sr_status", i915_sr_status, 0},
 };
 #define I915_DEBUGFS_ENTRIES ARRAY_SIZE(i915_debugfs_list)
 
