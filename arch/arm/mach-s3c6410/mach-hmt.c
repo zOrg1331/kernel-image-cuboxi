@@ -82,7 +82,7 @@ static int hmt_bl_init(struct device *dev)
 	return ret;
 }
 
-static int hmt_bl_notify(int brightness)
+static int hmt_bl_notify(struct device *dev, int brightness)
 {
 	/*
 	 * translate from CIELUV/CIELAB L*->brightness, E.G. from
@@ -233,7 +233,7 @@ static struct platform_device *hmt_devices[] __initdata = {
 	&s3c_device_i2c0,
 	&s3c_device_nand,
 	&s3c_device_fb,
-	&s3c_device_usb,
+	&s3c_device_ohci,
 	&s3c_device_timer[1],
 	&hmt_backlight_device,
 	&hmt_leds_device,
