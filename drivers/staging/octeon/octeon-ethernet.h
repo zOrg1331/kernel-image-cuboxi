@@ -31,6 +31,8 @@
 #ifndef OCTEON_ETHERNET_H
 #define OCTEON_ETHERNET_H
 
+#include <linux/hrtimer.h>
+
 /**
  * This is the definition of the Ethernet driver's private
  * driver state stored in netdev_priv(dev).
@@ -57,6 +59,8 @@ struct octeon_ethernet {
 	uint64_t link_info;
 	/* Called periodically to check link status */
 	void (*poll) (struct net_device *dev);
+	struct hrtimer		tx_restart_timer;
+	ktime_t			tx_restart_interval;
 };
 
 /**
@@ -67,47 +71,6 @@ struct octeon_ethernet {
  * Returns Zero on success, Negative on failure.
  */
 int cvm_oct_free_work(void *work_queue_entry);
-
-/**
- * Transmit a work queue entry out of the ethernet port. Both
- * the work queue entry and the packet data can optionally be
- * freed. The work will be freed on error as well.
- *
- * @dev:     Device to transmit out.
- * @work_queue_entry:
- *                Work queue entry to send
- * @do_free: True if the work queue entry and packet data should be
- *                freed. If false, neither will be freed.
- * @qos:     Index into the queues for this port to transmit on. This
- *                is used to implement QoS if their are multiple queues per
- *                port. This parameter must be between 0 and the number of
- *                queues per port minus 1. Values outside of this range will
- *                be change to zero.
- *
- * Returns Zero on success, negative on failure.
- */
-int cvm_oct_transmit_qos(struct net_device *dev, void *work_queue_entry,
-			 int do_free, int qos);
-
-/**
- * Transmit a work queue entry out of the ethernet port. Both
- * the work queue entry and the packet data can optionally be
- * freed. The work will be freed on error as well. This simply
- * wraps cvmx_oct_transmit_qos() for backwards compatability.
- *
- * @dev:     Device to transmit out.
- * @work_queue_entry:
- *                Work queue entry to send
- * @do_free: True if the work queue entry and packet data should be
- *                freed. If false, neither will be freed.
- *
- * Returns Zero on success, negative on failure.
- */
-static inline int cvm_oct_transmit(struct net_device *dev,
-				   void *work_queue_entry, int do_free)
-{
-	return cvm_oct_transmit_qos(dev, work_queue_entry, do_free, 0);
-}
 
 extern int cvm_oct_rgmii_init(struct net_device *dev);
 extern void cvm_oct_rgmii_uninit(struct net_device *dev);
@@ -134,5 +97,8 @@ extern int pow_send_group;
 extern int pow_receive_group;
 extern char pow_send_list[];
 extern struct net_device *cvm_oct_device[];
+
+extern int max_rx_cpus;
+extern int rx_napi_weight;
 
 #endif
