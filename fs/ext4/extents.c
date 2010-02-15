@@ -1618,7 +1618,7 @@ int ext4_ext_insert_extent(handle_t *handle, struct inode *inode,
 	BUG_ON(path[depth].p_hdr == NULL);
 
 	/* try to insert block into found extent and return */
-	if (ex && (flag != EXT4_GET_BLOCKS_DIO_CREATE_EXT)
+	if (ex && !(flag & EXT4_GET_BLOCKS_PRE_IO)
 		&& ext4_can_extents_be_merged(inode, ex, newext)) {
 		ext_debug("append [%d]%d block to %d:[%d]%d (from %llu)\n",
 				ext4_ext_is_uninitialized(newext),
@@ -1739,7 +1739,7 @@ has_space:
 
 merge:
 	/* try to merge extents to the right */
-	if (flag != EXT4_GET_BLOCKS_DIO_CREATE_EXT)
+	if (!(flag & EXT4_GET_BLOCKS_PRE_IO))
 		ext4_ext_try_to_merge(inode, path, nearex);
 
 	/* try to merge extents to the left */
@@ -2983,7 +2983,7 @@ fix_extent_len:
 	ext4_ext_dirty(handle, inode, path + depth);
 	return err;
 }
-static int ext4_convert_unwritten_extents_dio(handle_t *handle,
+static int ext4_convert_unwritten_extents_endio(handle_t *handle,
 					      struct inode *inode,
 					      struct ext4_ext_path *path)
 {
@@ -3063,8 +3063,8 @@ ext4_ext_handle_uninitialized_extents(handle_t *handle, struct inode *inode,
 		  flags, allocated);
 	ext4_ext_show_leaf(inode, path);
 
-	/* DIO get_block() before submit the IO, split the extent */
-	if (flags == EXT4_GET_BLOCKS_DIO_CREATE_EXT) {
+	/* get_block() before submit the IO, split the extent */
+	if ((flags & EXT4_GET_BLOCKS_PRE_IO)) {
 		ret = ext4_split_unwritten_extents(handle,
 						inode, path, iblock,
 						max_blocks, flags);
@@ -3074,14 +3074,16 @@ ext4_ext_handle_uninitialized_extents(handle_t *handle, struct inode *inode,
 		 * completed
 		 */
 		if (io)
-			io->flag = DIO_AIO_UNWRITTEN;
+			io->flag = EXT4_IO_UNWRITTEN;
 		else
-			EXT4_I(inode)->i_state |= EXT4_STATE_DIO_UNWRITTEN;
+			ext4_set_inode_state(inode, EXT4_STATE_DIO_UNWRITTEN);
+		if (ext4_should_dioread_nolock(inode))
+			set_buffer_uninit(bh_result);
 		goto out;
 	}
-	/* async DIO end_io complete, convert the filled extent to written */
-	if (flags == EXT4_GET_BLOCKS_DIO_CONVERT_EXT) {
-		ret = ext4_convert_unwritten_extents_dio(handle, inode,
+	/* IO end_io complete, convert the filled extent to written */
+	if ((flags & EXT4_GET_BLOCKS_CONVERT)) {
+		ret = ext4_convert_unwritten_extents_endio(handle, inode,
 							path);
 		if (ret >= 0)
 			ext4_update_inode_fsync_trans(handle, inode, 1);
@@ -3350,21 +3352,21 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	if (flags & EXT4_GET_BLOCKS_UNINIT_EXT){
 		ext4_ext_mark_uninitialized(&newex);
 		/*
-		 * io_end structure was created for every async
-		 * direct IO write to the middle of the file.
-		 * To avoid unecessary convertion for every aio dio rewrite
-		 * to the mid of file, here we flag the IO that is really
-		 * need the convertion.
+		 * io_end structure was created for every IO write to an
+		 * uninitialized extent. To avoid unecessary conversion,
+		 * here we flag the IO that really needs the conversion.
 		 * For non asycn direct IO case, flag the inode state
 		 * that we need to perform convertion when IO is done.
 		 */
-		if (flags == EXT4_GET_BLOCKS_DIO_CREATE_EXT) {
+		if ((flags & EXT4_GET_BLOCKS_PRE_IO)) {
 			if (io)
-				io->flag = DIO_AIO_UNWRITTEN;
+				io->flag = EXT4_IO_UNWRITTEN;
 			else
-				EXT4_I(inode)->i_state |=
-					EXT4_STATE_DIO_UNWRITTEN;;
+				ext4_set_inode_state(inode,
+						     EXT4_STATE_DIO_UNWRITTEN);
 		}
+		if (ext4_should_dioread_nolock(inode))
+			set_buffer_uninit(bh_result);
 	}
 	err = ext4_ext_insert_extent(handle, inode, path, &newex, flags);
 	if (err) {
@@ -3635,7 +3637,7 @@ int ext4_convert_unwritten_extents(struct inode *inode, loff_t offset,
 		map_bh.b_state = 0;
 		ret = ext4_get_blocks(handle, inode, block,
 				      max_blocks, &map_bh,
-				      EXT4_GET_BLOCKS_DIO_CONVERT_EXT);
+				      EXT4_GET_BLOCKS_IO_CONVERT_EXT);
 		if (ret <= 0) {
 			WARN_ON(ret <= 0);
 			printk(KERN_ERR "%s: ext4_ext_get_blocks "
@@ -3739,7 +3741,7 @@ static int ext4_xattr_fiemap(struct inode *inode,
 	int error = 0;
 
 	/* in-inode? */
-	if (EXT4_I(inode)->i_state & EXT4_STATE_XATTR) {
+	if (ext4_test_inode_state(inode, EXT4_STATE_XATTR)) {
 		struct ext4_iloc iloc;
 		int offset;	/* offset of xattr in inode */
 
