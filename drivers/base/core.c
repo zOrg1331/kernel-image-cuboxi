@@ -23,15 +23,22 @@
 #include <linux/semaphore.h>
 #include <linux/mutex.h>
 #include <linux/async.h>
+#include <linux/sched.h>
+#include <linux/ve.h>
 
 #include "base.h"
 #include "power/power.h"
 
 int (*platform_notify)(struct device *dev) = NULL;
 int (*platform_notify_remove)(struct device *dev) = NULL;
+#ifndef CONFIG_VE
 static struct kobject *dev_kobj;
+#define ve_dev_kobj	dev_kobj
 struct kobject *sysfs_dev_char_kobj;
 struct kobject *sysfs_dev_block_kobj;
+#else
+#define ve_dev_kobj	(get_exec_env()->dev_kobj)
+#endif
 
 #ifdef CONFIG_BLOCK
 static inline int device_is_not_partition(struct device *dev)
@@ -431,8 +438,9 @@ static ssize_t show_dev(struct device *dev, struct device_attribute *attr,
 static struct device_attribute devt_attr =
 	__ATTR(dev, S_IRUGO, show_dev, NULL);
 
-/* kset to create /sys/devices/  */
+#ifndef CONFIG_VE
 struct kset *devices_kset;
+#endif
 
 /**
  * device_create_file - create sysfs attribute file for device.
@@ -550,7 +558,7 @@ static void klist_children_put(struct klist_node *n)
  */
 void device_initialize(struct device *dev)
 {
-	dev->kobj.kset = devices_kset;
+	dev->kobj.kset = ve_devices_kset;
 	kobject_init(&dev->kobj, &device_ktype);
 	INIT_LIST_HEAD(&dev->dma_pools);
 	init_MUTEX(&dev->sem);
@@ -585,7 +593,7 @@ static struct kobject *virtual_device_parent(struct device *dev)
 
 	if (!virtual_dir)
 		virtual_dir = kobject_create_and_add("virtual",
-						     &devices_kset->kobj);
+						     &ve_devices_kset->kobj);
 
 	return virtual_dir;
 }
@@ -816,7 +824,7 @@ static struct kobject *device_to_dev_kobj(struct device *dev)
 	if (dev->class)
 		kobj = dev->class->dev_kobj;
 	else
-		kobj = sysfs_dev_char_kobj;
+		kobj = ve_sysfs_dev_char_kobj;
 
 	return kobj;
 }
@@ -1254,31 +1262,43 @@ struct device *device_find_child(struct device *parent, void *data,
 	return child;
 }
 
-int __init devices_init(void)
+int devices_init(void)
 {
-	devices_kset = kset_create_and_add("devices", &device_uevent_ops, NULL);
-	if (!devices_kset)
-		return -ENOMEM;
-	dev_kobj = kobject_create_and_add("dev", NULL);
-	if (!dev_kobj)
+	ve_devices_kset = kset_create_and_add("devices", &device_uevent_ops, NULL);
+	if (!ve_devices_kset)
+		goto dev_kset_err;
+	ve_dev_kobj = kobject_create_and_add("dev", NULL);
+	if (!ve_dev_kobj)
 		goto dev_kobj_err;
-	sysfs_dev_block_kobj = kobject_create_and_add("block", dev_kobj);
-	if (!sysfs_dev_block_kobj)
+	ve_sysfs_dev_block_kobj = kobject_create_and_add("block", ve_dev_kobj);
+	if (!ve_sysfs_dev_block_kobj)
 		goto block_kobj_err;
-	sysfs_dev_char_kobj = kobject_create_and_add("char", dev_kobj);
-	if (!sysfs_dev_char_kobj)
+	ve_sysfs_dev_char_kobj = kobject_create_and_add("char", ve_dev_kobj);
+	if (!ve_sysfs_dev_char_kobj)
 		goto char_kobj_err;
 
 	return 0;
 
  char_kobj_err:
-	kobject_put(sysfs_dev_block_kobj);
+	kobject_put(ve_sysfs_dev_block_kobj);
  block_kobj_err:
-	kobject_put(dev_kobj);
+	kobject_put(ve_dev_kobj);
  dev_kobj_err:
-	kset_unregister(devices_kset);
+	kset_unregister(ve_devices_kset);
+dev_kset_err:
 	return -ENOMEM;
 }
+EXPORT_SYMBOL_GPL(devices_init);
+
+void devices_fini(void)
+{
+	kobject_put(ve_sysfs_dev_char_kobj);
+	kobject_put(ve_sysfs_dev_block_kobj);
+	kobject_put(ve_dev_kobj);
+	kset_unregister(ve_devices_kset);
+}
+EXPORT_SYMBOL_GPL(devices_fini);
+
 
 EXPORT_SYMBOL_GPL(device_for_each_child);
 EXPORT_SYMBOL_GPL(device_find_child);
@@ -1718,7 +1738,12 @@ void device_shutdown(void)
 {
 	struct device *dev, *devn;
 
-	list_for_each_entry_safe_reverse(dev, devn, &devices_kset->list,
+	if (!ve_is_super(get_exec_env())) {
+		printk("BUG: device_shutdown call from inside VE\n");
+		return;
+	}
+
+	list_for_each_entry_safe_reverse(dev, devn, &ve_devices_kset->list,
 				kobj.entry) {
 		if (dev->bus && dev->bus->shutdown) {
 			dev_dbg(dev, "shutdown\n");
@@ -1728,8 +1753,9 @@ void device_shutdown(void)
 			dev->driver->shutdown(dev);
 		}
 	}
-	kobject_put(sysfs_dev_char_kobj);
-	kobject_put(sysfs_dev_block_kobj);
-	kobject_put(dev_kobj);
+
+	kobject_put(ve_sysfs_dev_char_kobj);
+	kobject_put(ve_sysfs_dev_block_kobj);
+	kobject_put(ve_dev_kobj);
 	async_synchronize_full();
 }
