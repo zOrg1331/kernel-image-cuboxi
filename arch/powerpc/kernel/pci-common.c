@@ -1042,14 +1042,15 @@ static int __devinit pcibios_uninitialized_bridge_resource(struct pci_bus *bus,
 /* Fixup resources of a PCI<->PCI bridge */
 static void __devinit pcibios_fixup_bridge(struct pci_bus *bus)
 {
+	struct pci_bus_resource *bus_res;
 	struct resource *res;
-	int i;
+	int i = -1;
 
 	struct pci_dev *dev = bus->self;
 
-	for (i = 0; i < PCI_BUS_NUM_RESOURCES; ++i) {
-		if ((res = bus->resource[i]) == NULL)
-			continue;
+	list_for_each_entry(bus_res, &bus->resources, list) {
+		i++;
+		res = bus_res->res;
 		if (!res->flags)
 			continue;
 		if (i >= 3 && bus->self->transparent)
@@ -1181,21 +1182,20 @@ static int skip_isa_ioresource_align(struct pci_dev *dev)
  * but we want to try to avoid allocating at 0x2900-0x2bff
  * which might have be mirrored at 0x0100-0x03ff..
  */
-void pcibios_align_resource(void *data, struct resource *res,
+resource_size_t pcibios_align_resource(void *data, const struct resource *res,
 				resource_size_t size, resource_size_t align)
 {
 	struct pci_dev *dev = data;
+	resource_size_t start = res->start;
 
 	if (res->flags & IORESOURCE_IO) {
-		resource_size_t start = res->start;
-
 		if (skip_isa_ioresource_align(dev))
-			return;
-		if (start & 0x300) {
+			return start;
+		if (start & 0x300)
 			start = (start + 0x3ff) & ~0x3ff;
-			res->start = start;
-		}
 	}
+
+	return start;
 }
 EXPORT_SYMBOL(pcibios_align_resource);
 
@@ -1272,15 +1272,17 @@ static int reparent_resources(struct resource *parent,
 void pcibios_allocate_bus_resources(struct pci_bus *bus)
 {
 	struct pci_bus *b;
-	int i;
+	int i = -1;
+	struct pci_bus_resource *bus_res;
 	struct resource *res, *pr;
 
 	pr_debug("PCI: Allocating bus resources for %04x:%02x...\n",
 		 pci_domain_nr(bus), bus->number);
 
-	for (i = 0; i < PCI_BUS_NUM_RESOURCES; ++i) {
-		if ((res = bus->resource[i]) == NULL || !res->flags
-		    || res->start > res->end || res->parent)
+	list_for_each_entry(bus_res, &bus->resources, list) {
+		i++;
+		res = bus_res->res;
+		if (!res->flags || res->start > res->end || res->parent)
 			continue;
 		if (bus->parent == NULL)
 			pr = (res->flags & IORESOURCE_IO) ?
@@ -1580,8 +1582,11 @@ void __devinit pcibios_setup_phb_resources(struct pci_controller *hose)
 	struct resource *res;
 	int i;
 
+	pci_bus_remove_resources(bus);
+
 	/* Hookup PHB IO resource */
-	bus->resource[0] = res = &hose->io_resource;
+	res = &hose->io_resource;
+	pci_bus_add_resource(bus, res, 0);
 
 	if (!res->flags) {
 		printk(KERN_WARNING "PCI: I/O resource not set for host"
@@ -1616,7 +1621,7 @@ void __devinit pcibios_setup_phb_resources(struct pci_controller *hose)
 			res->flags = IORESOURCE_MEM;
 #endif /* CONFIG_PPC32 */
 		}
-		bus->resource[i+1] = res;
+		pci_bus_add_resource(bus, res, 0);
 
 		pr_debug("PCI: PHB MEM resource %d = %016llx-%016llx [%lx]\n", i,
 			 (unsigned long long)res->start,

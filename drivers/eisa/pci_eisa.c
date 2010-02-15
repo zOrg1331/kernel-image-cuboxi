@@ -31,8 +31,8 @@ static int __init pci_eisa_init(struct pci_dev *pdev,
 	}
 
 	pci_eisa_root.dev              = &pdev->dev;
-	pci_eisa_root.res	       = pdev->bus->resource[0];
-	pci_eisa_root.bus_base_addr    = pdev->bus->resource[0]->start;
+	pci_eisa_root.res	       = &pdev->resource[PCI_BRIDGE_RESOURCES + 0];
+	pci_eisa_root.bus_base_addr    = pdev->resource[PCI_BRIDGE_RESOURCES + 0].start;
 	pci_eisa_root.slots	       = EISA_MAX_SLOTS;
 	pci_eisa_root.dma_mask         = pdev->dma_mask;
 	dev_set_drvdata(pci_eisa_root.dev, &pci_eisa_root);

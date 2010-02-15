@@ -236,8 +236,7 @@ register_slot(acpi_handle handle, u32 lvl, void *context, void **rv)
 
 	/* install notify handler */
 	if (!(newfunc->flags & FUNC_HAS_DCK)) {
-		status = acpi_install_notify_handler(handle,
-					     ACPI_SYSTEM_NOTIFY,
+		status = pci_acpi_add_hp_notifier(handle,
 					     handle_hotplug_event_func,
 					     newfunc);
 
@@ -288,14 +287,12 @@ static void init_bridge_misc(struct acpiphp_bridge *bridge)
 	/* install notify handler */
 	if (bridge->type != BRIDGE_TYPE_HOST) {
 		if ((bridge->flags & BRIDGE_HAS_EJ0) && bridge->func) {
-			status = acpi_remove_notify_handler(bridge->func->handle,
-						ACPI_SYSTEM_NOTIFY,
+			status = pci_acpi_remove_hp_notifier(bridge->func->handle,
 						handle_hotplug_event_func);
 			if (ACPI_FAILURE(status))
 				err("failed to remove notify handler\n");
 		}
-		status = acpi_install_notify_handler(bridge->handle,
-					     ACPI_SYSTEM_NOTIFY,
+		status = pci_acpi_add_hp_notifier(bridge->handle,
 					     handle_hotplug_event_bridge,
 					     bridge);
 
@@ -505,15 +502,14 @@ static void cleanup_bridge(struct acpiphp_bridge *bridge)
 	acpi_status status;
 	acpi_handle handle = bridge->handle;
 
-	status = acpi_remove_notify_handler(handle, ACPI_SYSTEM_NOTIFY,
+	status = pci_acpi_remove_hp_notifier(handle,
 					    handle_hotplug_event_bridge);
 	if (ACPI_FAILURE(status))
 		err("failed to remove notify handler\n");
 
 	if ((bridge->type != BRIDGE_TYPE_HOST) &&
 	    ((bridge->flags & BRIDGE_HAS_EJ0) && bridge->func)) {
-		status = acpi_install_notify_handler(bridge->func->handle,
-						ACPI_SYSTEM_NOTIFY,
+		status = pci_acpi_add_hp_notifier(bridge->func->handle,
 						handle_hotplug_event_func,
 						bridge->func);
 		if (ACPI_FAILURE(status))
@@ -529,8 +525,7 @@ static void cleanup_bridge(struct acpiphp_bridge *bridge)
 				unregister_dock_notifier(&func->nb);
 			}
 			if (!(func->flags & FUNC_HAS_DCK)) {
-				status = acpi_remove_notify_handler(func->handle,
-						ACPI_SYSTEM_NOTIFY,
+				status = pci_acpi_remove_hp_notifier(func->handle,
 						handle_hotplug_event_func);
 				if (ACPI_FAILURE(status))
 					err("failed to remove notify handler\n");
@@ -592,7 +587,7 @@ static void remove_bridge(acpi_handle handle)
 	if (bridge)
 		cleanup_bridge(bridge);
 	else
-		acpi_remove_notify_handler(handle, ACPI_SYSTEM_NOTIFY,
+		pci_acpi_remove_hp_notifier(handle,
 					   handle_hotplug_event_bridge);
 }
 
@@ -1278,8 +1273,8 @@ find_root_bridges(acpi_handle handle, u32 lvl, void *context, void **rv)
 	int *count = (int *)context;
 
 	if (acpi_is_root_bridge(handle)) {
-		acpi_install_notify_handler(handle, ACPI_SYSTEM_NOTIFY,
-				handle_hotplug_event_bridge, NULL);
+		pci_acpi_add_hp_notifier(handle,
+					handle_hotplug_event_bridge, NULL);
 			(*count)++;
 	}
 	return AE_OK ;

@@ -126,8 +126,8 @@ DECLARE_PCI_FIXUP_FINAL(PCI_ANY_ID, PCI_ANY_ID, pcibios_fixup_final);
 #define MB			(1024*KB)
 #define GB			(1024*MB)
 
-void
-pcibios_align_resource(void *data, struct resource *res,
+resource_size_t
+pcibios_align_resource(void *data, const struct resource *res,
 		       resource_size_t size, resource_size_t align)
 {
 	struct pci_dev *dev = data;
@@ -184,7 +184,7 @@ pcibios_align_resource(void *data, struct resource *res,
 		}
 	}
 
-	res->start = start;
+	return start;
 }
 #undef KB
 #undef MB
@@ -292,8 +292,9 @@ pcibios_fixup_bus(struct pci_bus *bus)
 		u32 sg_base = hose->sg_pci ? hose->sg_pci->dma_base : ~0;
 		unsigned long end;
 
-		bus->resource[0] = hose->io_space;
-		bus->resource[1] = hose->mem_space;
+		pci_bus_remove_resources(bus);
+		pci_bus_add_resource(bus, hose->io_space, 0);
+		pci_bus_add_resource(bus, hose->mem_space, 0);
 
 		/* Adjust hose mem_space limit to prevent PCI allocations
 		   in the iommu windows. */
