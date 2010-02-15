@@ -700,6 +700,19 @@ static inline unsigned int decode_config3(struct cpuinfo_mips *c)
 	return config3 & MIPS_CONF_M;
 }
 
+static inline unsigned int decode_config4(struct cpuinfo_mips *c)
+{
+	unsigned int config4;
+
+	config4 = read_c0_config4();
+
+	if ((config4 & MIPS_CONF4_MMUEXTDEF) == MIPS_CONF4_MMUEXTDEF_MMUSIZEEXT
+	    && cpu_has_tlb)
+		c->tlbsize += (config4 & MIPS_CONF4_MMUSIZEEXT) * 0x40;
+
+	return config4 & MIPS_CONF_M;
+}
+
 static void __cpuinit decode_configs(struct cpuinfo_mips *c)
 {
 	int ok;
@@ -718,6 +731,8 @@ static void __cpuinit decode_configs(struct cpuinfo_mips *c)
 		ok = decode_config2(c);
 	if (ok)
 		ok = decode_config3(c);
+	if (ok)
+		ok = decode_config4(c);
 
 	mips_probe_watch_registers(c);
 }
@@ -731,9 +746,6 @@ static inline void cpu_probe_mips(struct cpuinfo_mips *c, unsigned int cpu)
 		__cpu_name[cpu] = "MIPS 4Kc";
 		break;
 	case PRID_IMP_4KEC:
-		c->cputype = CPU_4KEC;
-		__cpu_name[cpu] = "MIPS 4KEc";
-		break;
 	case PRID_IMP_4KECR2:
 		c->cputype = CPU_4KEC;
 		__cpu_name[cpu] = "MIPS 4KEc";
@@ -905,6 +917,8 @@ static inline void cpu_probe_cavium(struct cpuinfo_mips *c, unsigned int cpu)
 	case PRID_IMP_CAVIUM_CN52XX:
 		c->cputype = CPU_CAVIUM_OCTEON;
 		__cpu_name[cpu] = "Cavium Octeon";
+		if (cpu == 0)
+			__elf_platform = "octeon";
 		break;
 	default:
 		printk(KERN_INFO "Unknown Octeon chip!\n");
@@ -914,6 +928,7 @@ static inline void cpu_probe_cavium(struct cpuinfo_mips *c, unsigned int cpu)
 }
 
 const char *__cpu_name[NR_CPUS];
+const char *__elf_platform;
 
 __cpuinit void cpu_probe(void)
 {
