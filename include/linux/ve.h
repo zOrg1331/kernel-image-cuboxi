@@ -277,6 +277,9 @@ struct ve_struct {
 	struct css_set		*ve_css_set;
 };
 
+#define VE_MEMINFO_DEFAULT      1       /* default behaviour */
+#define VE_MEMINFO_SYSTEM       0       /* disable meminfo virtualization */
+
 int init_ve_cgroups(struct ve_struct *ve);
 void fini_ve_cgroups(struct ve_struct *ve);
 

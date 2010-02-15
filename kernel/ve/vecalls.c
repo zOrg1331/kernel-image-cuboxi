@@ -799,6 +799,11 @@ static int ve_set_meminfo(envid_t veid, unsigned long val)
 	if (!ve)
 		return -EINVAL;
 
+	if (val == 0)
+		val = VE_MEMINFO_SYSTEM;
+	else if (val == 1)
+		val = VE_MEMINFO_DEFAULT;
+
 	ve->meminfo_val = val;
 	real_put_ve(ve);
 	return 0;
@@ -809,7 +814,7 @@ static int ve_set_meminfo(envid_t veid, unsigned long val)
 
 static int init_ve_meminfo(struct ve_struct *ve)
 {
-	ve->meminfo_val = 0;
+	ve->meminfo_val = VE_MEMINFO_DEFAULT;
 	return 0;
 }
 
@@ -2034,7 +2039,7 @@ static inline unsigned long ve_used_mem(struct user_beancounter *ub)
 				 ub->ub_parms[UB_PRIVVMPAGES].held ;
 }
 
-static inline void ve_mi_replace(struct meminfo *mi)
+static inline int ve_mi_replace(struct meminfo *mi, int old_ret)
 {
 #ifdef CONFIG_BEANCOUNTERS
 	struct user_beancounter *ub;
@@ -2043,9 +2048,11 @@ static inline void ve_mi_replace(struct meminfo *mi)
 	unsigned long usedmem;
 
 	meminfo_val = get_exec_env()->meminfo_val;
+	if (meminfo_val == VE_MEMINFO_DEFAULT)
+		return old_ret; /* Default behaviour */
 
-	if(!meminfo_val)
-		return; /* No virtualization */
+	if (meminfo_val == VE_MEMINFO_SYSTEM)
+		return NOTIFY_DONE | NOTIFY_STOP_MASK; /* No virtualization */
 
 	nodettram = mi->si.totalram;
 	ub = current->mm->mm_ub;
@@ -2057,8 +2064,10 @@ static inline void ve_mi_replace(struct meminfo *mi)
 			nodettram : meminfo_val;
 	mi->si.freeram = (mi->si.totalram > usedmem) ?
 			(mi->si.totalram - usedmem) : 0;
+
+	return NOTIFY_OK | NOTIFY_STOP_MASK;
 #else
-	return;
+	return NOTIFY_DONE;
 #endif
 }
 
@@ -2068,9 +2077,7 @@ static int meminfo_call(struct vnotifier_block *self,
 	if (event != VIRTINFO_MEMINFO)
 		return old_ret;
 
-	ve_mi_replace((struct meminfo *)arg);
-
-	return NOTIFY_OK;
+	return ve_mi_replace((struct meminfo *)arg, old_ret);
 }
 
 

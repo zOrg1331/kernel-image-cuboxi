@@ -19,15 +19,38 @@ void __attribute__((weak)) arch_report_meminfo(struct seq_file *m)
 {
 }
 
+static int meminfo_proc_show(struct seq_file *m, struct meminfo *mi)
+{
+	seq_printf(m,
+		"MemTotal:       %8lu kB\n"
+		"MemFree:        %8lu kB\n"
+		"SwapTotal:      %8lu kB\n"
+		"SwapFree:       %8lu kB\n",
+		K(mi.si.totalram),
+		K(mi.si.freeram),
+		K(mi.si.totalswap),
+		K(mi.si.freeswap));
+
+	return 0;
+}
+
 static int meminfo_proc_show(struct seq_file *m, void *v)
 {
+	int ret;
 	struct sysinfo i;
+	struct meminfo mi;
 	unsigned long committed;
 	unsigned long allowed;
 	struct vmalloc_info vmi;
 	long cached;
 	unsigned long pages[NR_LRU_LISTS];
 	int lru;
+
+	ret = virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_MEMINFO, &mi);
+	if (ret & NOTIFY_FAIL)
+		return 0;
+	if (ret & NOTIFY_OK)
+		return meminfo_proc_show_mi(m, &mi);
 
 /*
  * display in kilobytes.
@@ -175,7 +198,7 @@ static const struct file_operations meminfo_proc_fops = {
 
 static int __init proc_meminfo_init(void)
 {
-	proc_create("meminfo", 0, NULL, &meminfo_proc_fops);
+	proc_create("meminfo", 0, &glob_proc_root, &meminfo_proc_fops);
 	return 0;
 }
 module_init(proc_meminfo_init);
