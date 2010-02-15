@@ -63,7 +63,6 @@ config I2C_HELPER_AUTO
 
 source drivers/i2c/algos/Kconfig
 source drivers/i2c/busses/Kconfig
-source drivers/i2c/chips/Kconfig
 
 config I2C_DEBUG_CORE
 	bool "I2C Core debugging messages"
