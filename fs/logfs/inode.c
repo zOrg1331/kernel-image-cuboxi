@@ -8,6 +8,7 @@
 #include "logfs.h"
 #include <linux/writeback.h>
 #include <linux/backing-dev.h>
+#include <linux/writeback.h>
 
 /*
  * How soon to reuse old inode numbers?  LogFS doesn't store deleted inodes
@@ -282,7 +283,7 @@ struct inode *logfs_read_meta_inode(struct super_block *sb, u64 ino)
 	return inode;
 }
 
-static int logfs_write_inode(struct inode *inode, int do_sync)
+static int logfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 {
 	int ret;
 	long flags = WF_LOCK;
