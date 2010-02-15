@@ -649,9 +649,10 @@ static int yenta_search_one_res(struct resource *root, struct resource *res,
 static int yenta_search_res(struct yenta_socket *socket, struct resource *res,
 			    u32 min)
 {
-	int i;
-	for (i = 0; i < PCI_BUS_NUM_RESOURCES; i++) {
-		struct resource *root = socket->dev->bus->resource[i];
+	struct pci_bus_resource *bus_res;
+
+	list_for_each_entry(bus_res, &socket->dev->bus->resources, list) {
+		struct resource *root = bus_res->res;
 		if (!root)
 			continue;
 
@@ -672,7 +673,7 @@ static int yenta_allocate_res(struct yenta_socket *socket, int nr, unsigned type
 	struct pci_bus_region region;
 	unsigned mask;
 
-	res = dev->resource + PCI_BRIDGE_RESOURCES + nr;
+	res = &dev->resource[nr];
 	/* Already allocated? */
 	if (res->parent)
 		return 0;
@@ -689,7 +690,7 @@ static int yenta_allocate_res(struct yenta_socket *socket, int nr, unsigned type
 	region.end = config_readl(socket, addr_end) | ~mask;
 	if (region.start && region.end > region.start && !override_bios) {
 		pcibios_bus_to_resource(dev, res, &region);
-		if (pci_claim_resource(dev, PCI_BRIDGE_RESOURCES + nr) == 0)
+		if (pci_claim_resource(dev, nr) == 0)
 			return 0;
 		dev_printk(KERN_INFO, &dev->dev,
 			   "Preassigned resource %d busy or not available, "
@@ -730,32 +731,39 @@ static int yenta_allocate_res(struct yenta_socket *socket, int nr, unsigned type
 static void yenta_allocate_resources(struct yenta_socket *socket)
 {
 	int program = 0;
-	program += yenta_allocate_res(socket, 0, IORESOURCE_IO,
-			   PCI_CB_IO_BASE_0, PCI_CB_IO_LIMIT_0);
-	program += yenta_allocate_res(socket, 1, IORESOURCE_IO,
-			   PCI_CB_IO_BASE_1, PCI_CB_IO_LIMIT_1);
-	program += yenta_allocate_res(socket, 2, IORESOURCE_MEM|IORESOURCE_PREFETCH,
+	program += yenta_allocate_res(socket, PCI_CB_BRIDGE_IO_0_WINDOW,
+			   IORESOURCE_IO, PCI_CB_IO_BASE_0, PCI_CB_IO_LIMIT_0);
+	program += yenta_allocate_res(socket, PCI_CB_BRIDGE_IO_1_WINDOW,
+			   IORESOURCE_IO, PCI_CB_IO_BASE_1, PCI_CB_IO_LIMIT_1);
+	program += yenta_allocate_res(socket, PCI_CB_BRIDGE_MEM_0_WINDOW,
+			   IORESOURCE_MEM|IORESOURCE_PREFETCH,
 			   PCI_CB_MEMORY_BASE_0, PCI_CB_MEMORY_LIMIT_0);
-	program += yenta_allocate_res(socket, 3, IORESOURCE_MEM,
+	program += yenta_allocate_res(socket, PCI_CB_BRIDGE_MEM_1_WINDOW,
+			   IORESOURCE_MEM,
 			   PCI_CB_MEMORY_BASE_1, PCI_CB_MEMORY_LIMIT_1);
 	if (program)
 		pci_setup_cardbus(socket->dev->subordinate);
 }
 
+static void yenta_free_resource(struct yenta_socket *socket, int nr)
+{
+	struct resource *res;
+
+	res = &socket->dev->resource[nr];
+	if (res->start != 0 && res->end != 0)
+		release_resource(res);
+	res->start = res->end = res->flags = 0;
+}
 
 /*
  * Free the bridge mappings for the device..
  */
 static void yenta_free_resources(struct yenta_socket *socket)
 {
-	int i;
-	for (i = 0; i < 4; i++) {
-		struct resource *res;
-		res = socket->dev->resource + PCI_BRIDGE_RESOURCES + i;
-		if (res->start != 0 && res->end != 0)
-			release_resource(res);
-		res->start = res->end = res->flags = 0;
-	}
+	yenta_free_resource(socket, PCI_CB_BRIDGE_IO_0_WINDOW);
+	yenta_free_resource(socket, PCI_CB_BRIDGE_IO_1_WINDOW);
+	yenta_free_resource(socket, PCI_CB_BRIDGE_MEM_0_WINDOW);
+	yenta_free_resource(socket, PCI_CB_BRIDGE_MEM_1_WINDOW);
 }
 
 
