@@ -5,7 +5,8 @@
 
 static int cmdline_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "%s\n", saved_command_line);
+	seq_printf(m, "%s\n",
+		ve_is_super(get_exec_env()) ? saved_command_line : "quiet");
 	return 0;
 }
 
@@ -23,7 +24,7 @@ static const struct file_operations cmdline_proc_fops = {
 
 static int __init proc_cmdline_init(void)
 {
-	proc_create("cmdline", 0, NULL, &cmdline_proc_fops);
+	proc_create("cmdline", 0, &glob_proc_root, &cmdline_proc_fops);
 	return 0;
 }
 module_init(proc_cmdline_init);

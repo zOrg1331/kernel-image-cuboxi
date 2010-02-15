@@ -2970,6 +2970,13 @@ void get_avenrun(unsigned long *loads, unsigned long offset, int shift)
 	loads[2] = (avenrun[2] + offset) << shift;
 }
 
+void get_avenrun_ve(ve, unsigned long *loads, unsigned long offset, int shift)
+{
+	loads[0] = (ve->avenrun[0] + offset) << shift;
+	loads[1] = (ve->avenrun[1] + offset) << shift;
+	loads[2] = (ve->avenrun[2] + offset) << shift;
+}
+
 static unsigned long
 calc_load(unsigned long load, unsigned long exp, unsigned long active)
 {

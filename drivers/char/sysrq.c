@@ -592,11 +592,16 @@ static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 				   size_t count, loff_t *ppos)
 {
 	if (count) {
-		char c;
+		int i, cnt;
+		char c[32];
 
-		if (get_user(c, buf))
+		cnt = min(count, sizeof(c));
+		if (copy_from_user(c, buf, cnt))
 			return -EFAULT;
-		__handle_sysrq(c, NULL, 0);
+
+
+		for (i = 0; i < cnt && c[i] != '\n'; i++)
+			__handle_sysrq(c[i], NULL, 0);
 	}
 	return count;
 }

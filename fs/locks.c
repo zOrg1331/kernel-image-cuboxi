@@ -2207,7 +2207,7 @@ static const struct file_operations proc_locks_operations = {
 
 static int __init proc_locks_init(void)
 {
-	proc_create("locks", 0, NULL, &proc_locks_operations);
+	proc_create("locks", 0, &glob_proc_root, &proc_locks_operations);
 	return 0;
 }
 module_init(proc_locks_init);
