@@ -31,6 +31,9 @@
 #include <asm/tlbflush.h>
 #include <asm/shmparam.h>
 
+#include <bc/kmem.h>
+#include <bc/debug.h>
+
 
 /*** Page table manipulation functions ***/
 
@@ -1290,7 +1293,7 @@ struct vm_struct *remove_vm_area(const void *addr)
 	return NULL;
 }
 
-static void __vunmap(const void *addr, int deallocate_pages)
+static void __vunmap(const void *addr, int deallocate_pages, int uncharge)
 {
 	struct vm_struct *area;
 
@@ -1315,6 +1318,8 @@ static void __vunmap(const void *addr, int deallocate_pages)
 	if (deallocate_pages) {
 		int i;
 
+		if (uncharge)
+			dec_vmalloc_charged(area);
 		for (i = 0; i < area->nr_pages; i++) {
 			struct page *page = area->pages[i];
 
@@ -1348,7 +1353,7 @@ void vfree(const void *addr)
 
 	kmemleak_free(addr);
 
-	__vunmap(addr, 1);
+	__vunmap(addr, 1, 1);
 }
 EXPORT_SYMBOL(vfree);
 
@@ -1365,7 +1370,7 @@ void vunmap(const void *addr)
 {
 	BUG_ON(in_interrupt());
 	might_sleep();
-	__vunmap(addr, 0);
+	__vunmap(addr, 0, 0);
 }
 EXPORT_SYMBOL(vunmap);
 
@@ -1452,10 +1457,12 @@ static void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
 
 	if (map_vm_area(area, prot, &pages))
 		goto fail;
+
+	inc_vmalloc_charged(area, gfp_mask);
 	return area->addr;
 
 fail:
-	vfree(area->addr);
+	__vunmap(area->addr, 1, 0);
 	return NULL;
 }
 
@@ -1540,6 +1547,26 @@ void *vmalloc(unsigned long size)
 }
 EXPORT_SYMBOL(vmalloc);
 
+void *ub_vmalloc(unsigned long size)
+{
+	return __vmalloc(size, GFP_KERNEL_UBC | __GFP_HIGHMEM, PAGE_KERNEL);
+}
+EXPORT_SYMBOL(ub_vmalloc);
+
+void *vmalloc_best(unsigned long size)
+{
+	return vmalloc(size);
+}
+
+EXPORT_SYMBOL(vmalloc_best);
+
+void *ub_vmalloc_best(unsigned long size)
+{
+	return ub_vmalloc(size);
+}
+
+EXPORT_SYMBOL(ub_vmalloc_best);
+
 /**
  * vmalloc_user - allocate zeroed virtually contiguous memory for userspace
  * @size: allocation size
@@ -1580,6 +1607,13 @@ void *vmalloc_node(unsigned long size, int node)
 					node, __builtin_return_address(0));
 }
 EXPORT_SYMBOL(vmalloc_node);
+
+void *ub_vmalloc_node(unsigned long size, int node)
+{
+	return __vmalloc_node(size, GFP_KERNEL_UBC | __GFP_HIGHMEM, PAGE_KERNEL,
+					node, __builtin_return_address(0));
+}
+EXPORT_SYMBOL(ub_vmalloc_node);
 
 #ifndef PAGE_KERNEL_EXEC
 # define PAGE_KERNEL_EXEC PAGE_KERNEL
@@ -2272,6 +2306,40 @@ void pcpu_free_vm_areas(struct vm_struct **vms, int nr_vms)
 	for (i = 0; i < nr_vms; i++)
 		free_vm_area(vms[i]);
 	kfree(vms);
+}
+
+void vprintstat(void)
+{
+	struct vm_struct *p, *last_p = NULL;
+	unsigned long addr, size, free_size, max_free_size;
+	int num;
+
+	addr = VMALLOC_START;
+	size = max_free_size = 0;
+	num = 0;
+
+	read_lock(&vmlist_lock);
+	for (p = vmlist; p; p = p->next) {
+		free_size = (unsigned long)p->addr - addr;
+		if (free_size > max_free_size)
+			max_free_size = free_size;
+		addr = (unsigned long)p->addr + p->size;
+		size += p->size;
+		++num;
+		last_p = p;
+	}
+	if (last_p) {
+		free_size = VMALLOC_END -
+			((unsigned long)last_p->addr + last_p->size);
+		if (free_size > max_free_size)
+			max_free_size = free_size;
+	}
+	read_unlock(&vmlist_lock);
+
+	printk("VMALLOC Used: %luKB Total: %luKB Entries: %d\n"
+		"    Max_Free: %luKB Start: %lx End: %lx\n",
+		size/1024, (VMALLOC_END - VMALLOC_START)/1024, num,
+		max_free_size/1024, VMALLOC_START, VMALLOC_END);
 }
 
 #ifdef CONFIG_PROC_FS
