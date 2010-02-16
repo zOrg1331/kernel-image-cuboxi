@@ -2101,11 +2101,6 @@ static int ohci_queue_iso_transmit(struct fw_iso_context *base,
 	u32 payload_index, payload_end_index, next_page_index;
 	int page, end_page, i, length, offset;
 
-	/*
-	 * FIXME: Cycle lost behavior should be configurable: lose
-	 * packet, retransmit or terminate..
-	 */
-
 	p = packet;
 	payload_index = payload;
 
@@ -2135,6 +2130,14 @@ static int ohci_queue_iso_transmit(struct fw_iso_context *base,
 	if (!p->skip) {
 		d[0].control   = cpu_to_le16(DESCRIPTOR_KEY_IMMEDIATE);
 		d[0].req_count = cpu_to_le16(8);
+		/*
+		 * Link the skip address to this descriptor itself.  This causes
+		 * a context to skip a cycle whenever lost cycles or FIFO
+		 * overruns occur, without dropping the data.  The application
+		 * should then decide whether this is an error condition or not.
+		 * FIXME:  Make the context's cycle-lost behaviour configurable?
+		 */
+		d[0].branch_address = cpu_to_le32(d_bus | z);
 
 		header = (__le32 *) &d[1];
 		header[0] = cpu_to_le32(IT_HEADER_SY(p->sy) |
@@ -2659,7 +2662,7 @@ static int pci_resume(struct pci_dev *dev)
 }
 #endif
 
-static struct pci_device_id pci_table[] = {
+static const struct pci_device_id pci_table[] = {
 	{ PCI_DEVICE_CLASS(PCI_CLASS_SERIAL_FIREWIRE_OHCI, ~0) },
 	{ }
 };
