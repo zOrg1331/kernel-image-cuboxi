@@ -256,22 +256,19 @@ void __devinit of_scan_pci_bridge(struct device_node *node,
 		if (flags == 0 || size == 0)
 			continue;
 		if (flags & IORESOURCE_IO) {
-			res = &dev->resource[PCI_BRIDGE_IO_WINDOW];
+			res = &dev->resource[PCI_BRIDGE_RESOURCES + 0];
 			if (res->flags) {
 				printk(KERN_ERR "PCI: ignoring extra I/O range"
 				       " for bridge %s\n", node->full_name);
 				continue;
 			}
 		} else {
-			if (i == 1)
-				res = &dev->resource[PCI_BRIDGE_MEM_WINDOW];
-			else if (i == 2)
-				res = &dev->resource[PCI_BRIDGE_PREF_MEM_WINDOW];
-			else {
+			if (i >= PCI_NUM_RESOURCES - PCI_BRIDGE_RESOURCES) {
 				printk(KERN_ERR "PCI: too many memory ranges"
 				       " for bridge %s\n", node->full_name);
 				continue;
 			}
+			res = &dev->resource[PCI_BRIDGE_RESOURCES + i];
 			++i;
 		}
 		res->start = of_read_number(&ranges[1], 2);
