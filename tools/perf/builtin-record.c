@@ -5,6 +5,9 @@
  * (or a CPU, or a PID) into the perf.data output file - for
  * later analysis via perf report.
  */
+#define _LARGEFILE64_SOURCE
+#define _FILE_OFFSET_BITS 64
+
 #include "builtin.h"
 
 #include "perf.h"
@@ -117,8 +120,12 @@ static void write_event(event_t *buf, size_t size)
 	* Add it to the list of DSOs, so that when we finish this
 	 * record session we can pick the available build-ids.
 	 */
-	if (buf->header.type == PERF_RECORD_MMAP)
-		dsos__findnew(buf->mmap.filename);
+	if (buf->header.type == PERF_RECORD_MMAP) {
+		struct list_head *head = &dsos__user;
+		if (buf->mmap.header.misc == 1)
+			head = &dsos__kernel;
+		__dsos__findnew(head, buf->mmap.filename);
+	}
 
 	write_output(buf, size);
 }
@@ -447,7 +454,7 @@ static int __cmd_record(int argc, const char **argv)
 		append_file = 0;
 	}
 
-	flags = O_CREAT|O_RDWR;
+	flags = O_CREAT|O_RDWR|O_LARGEFILE;
 	if (append_file)
 		file_new = 0;
 	else
@@ -549,6 +556,19 @@ static int __cmd_record(int argc, const char **argv)
 		err = perf_header__write(&session->header, output, false);
 		if (err < 0)
 			return err;
+	}
+
+	err = event__synthesize_kernel_mmap(process_synthesized_event,
+					    session, "_text");
+	if (err < 0) {
+		pr_err("Couldn't record kernel reference relocation symbol.\n");
+		return err;
+	}
+
+	err = event__synthesize_modules(process_synthesized_event, session);
+	if (err < 0) {
+		pr_err("Couldn't record kernel reference relocation symbol.\n");
+		return err;
 	}
 
 	if (!system_wide && profile_cpu == -1)
