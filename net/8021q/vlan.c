@@ -105,7 +105,7 @@ static struct vlan_group *vlan_group_alloc(struct net_device *real_dev)
 {
 	struct vlan_group *grp;
 
-	grp = kzalloc(sizeof(struct vlan_group), GFP_KERNEL);
+	grp = kzalloc(sizeof(struct vlan_group), GFP_KERNEL_UBC);
 	if (!grp)
 		return NULL;
 
@@ -127,7 +127,7 @@ static int vlan_group_prealloc_vid(struct vlan_group *vg, u16 vlan_id)
 		return 0;
 
 	size = sizeof(struct net_device *) * VLAN_GROUP_ARRAY_PART_LEN;
-	array = kzalloc(size, GFP_KERNEL);
+	array = kzalloc(size, GFP_KERNEL_UBC);
 	if (array == NULL)
 		return -ENOBUFS;
 
@@ -147,6 +147,7 @@ void unregister_vlan_dev(struct net_device *dev)
 	const struct net_device_ops *ops = real_dev->netdev_ops;
 	struct vlan_group *grp;
 	u16 vlan_id = vlan->vlan_id;
+	struct ve_struct *env;
 
 	ASSERT_RTNL();
 
@@ -164,7 +165,9 @@ void unregister_vlan_dev(struct net_device *dev)
 
 	synchronize_net();
 
+	env = set_exec_env(dev->owner_env);
 	unregister_netdevice(dev);
+	set_exec_env(env);
 
 	/* If the group is now empty, kill off the group. */
 	if (grp->nr_vlans == 0) {
@@ -551,6 +554,17 @@ static struct notifier_block vlan_notifier_block __read_mostly = {
 	.notifier_call = vlan_device_event,
 };
 
+static inline int vlan_check_caps(void)
+{
+	if (capable(CAP_NET_ADMIN))
+		return 1;
+#ifdef CONFIG_VE
+	if (capable(CAP_VE_NET_ADMIN))
+		return 1;
+#endif
+	return 0;
+}
+
 /*
  *	VLAN IOCTL handler.
  *	o execute requested action or pass command to the device driver
@@ -592,7 +606,7 @@ static int vlan_ioctl_handler(struct net *net, void __user *arg)
 	switch (args.cmd) {
 	case SET_VLAN_INGRESS_PRIORITY_CMD:
 		err = -EPERM;
-		if (!capable(CAP_NET_ADMIN))
+		if (!vlan_check_caps())
 			break;
 		vlan_dev_set_ingress_priority(dev,
 					      args.u.skb_priority,
@@ -602,7 +616,7 @@ static int vlan_ioctl_handler(struct net *net, void __user *arg)
 
 	case SET_VLAN_EGRESS_PRIORITY_CMD:
 		err = -EPERM;
-		if (!capable(CAP_NET_ADMIN))
+		if (!vlan_check_caps())
 			break;
 		err = vlan_dev_set_egress_priority(dev,
 						   args.u.skb_priority,
@@ -611,7 +625,7 @@ static int vlan_ioctl_handler(struct net *net, void __user *arg)
 
 	case SET_VLAN_FLAG_CMD:
 		err = -EPERM;
-		if (!capable(CAP_NET_ADMIN))
+		if (!vlan_check_caps())
 			break;
 		err = vlan_dev_change_flags(dev,
 					    args.vlan_qos ? args.u.flag : 0,
@@ -620,7 +634,7 @@ static int vlan_ioctl_handler(struct net *net, void __user *arg)
 
 	case SET_VLAN_NAME_TYPE_CMD:
 		err = -EPERM;
-		if (!capable(CAP_NET_ADMIN))
+		if (!vlan_check_caps())
 			break;
 		if ((args.u.name_type >= 0) &&
 		    (args.u.name_type < VLAN_NAME_TYPE_HIGHEST)) {
@@ -636,14 +650,14 @@ static int vlan_ioctl_handler(struct net *net, void __user *arg)
 
 	case ADD_VLAN_CMD:
 		err = -EPERM;
-		if (!capable(CAP_NET_ADMIN))
+		if (!vlan_check_caps())
 			break;
 		err = register_vlan_device(dev, args.u.VID);
 		break;
 
 	case DEL_VLAN_CMD:
 		err = -EPERM;
-		if (!capable(CAP_NET_ADMIN))
+		if (!vlan_check_caps())
 			break;
 		unregister_vlan_dev(dev);
 		err = 0;

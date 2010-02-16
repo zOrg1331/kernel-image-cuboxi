@@ -93,6 +93,7 @@ struct tun_file {
 	atomic_t count;
 	struct tun_struct *tun;
 	struct net *net;
+	struct file *file;
 };
 
 struct tun_sock;
@@ -334,11 +335,12 @@ static void tun_free_netdev(struct net_device *dev)
 }
 
 /* Net device open. */
-static int tun_net_open(struct net_device *dev)
+int tun_net_open(struct net_device *dev)
 {
 	netif_start_queue(dev);
 	return 0;
 }
+EXPORT_SYMBOL(tun_net_open);
 
 /* Net device close. */
 static int tun_net_close(struct net_device *dev)
@@ -438,7 +440,7 @@ static const struct net_device_ops tap_netdev_ops = {
 };
 
 /* Initialize net device. */
-static void tun_net_init(struct net_device *dev)
+void tun_net_init(struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
 
@@ -468,6 +470,7 @@ static void tun_net_init(struct net_device *dev)
 		break;
 	}
 }
+EXPORT_SYMBOL(tun_net_init);
 
 /* Character device part */
 
@@ -810,7 +813,7 @@ out:
 	return ret;
 }
 
-static void tun_setup(struct net_device *dev)
+void tun_setup(struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
 
@@ -820,6 +823,7 @@ static void tun_setup(struct net_device *dev)
 	dev->ethtool_ops = &tun_ethtool_ops;
 	dev->destructor = tun_free_netdev;
 }
+EXPORT_SYMBOL(tun_setup);
 
 /* Trivial set of netlink ops to allow deleting tun or tap
  * device with netlink.
@@ -932,7 +936,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 
 		if (((tun->owner != -1 && cred->euid != tun->owner) ||
 		     (tun->group != -1 && !in_egroup_p(tun->group))) &&
-		    !capable(CAP_NET_ADMIN))
+		    !capable(CAP_NET_ADMIN) && !capable(CAP_VE_NET_ADMIN))
 			return -EPERM;
 		err = security_tun_dev_attach(tun->socket.sk);
 		if (err < 0)
@@ -946,7 +950,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 		char *name;
 		unsigned long flags = 0;
 
-		if (!capable(CAP_NET_ADMIN))
+		if (!capable(CAP_NET_ADMIN) && !capable(CAP_VE_NET_ADMIN))
 			return -EPERM;
 		err = security_tun_dev_create();
 		if (err < 0)
@@ -1303,7 +1307,7 @@ out:
 	return ret;
 }
 
-static int tun_chr_open(struct inode *inode, struct file * file)
+int tun_chr_open(struct inode *inode, struct file * file)
 {
 	struct tun_file *tfile;
 	cycle_kernel_lock();
@@ -1316,8 +1320,10 @@ static int tun_chr_open(struct inode *inode, struct file * file)
 	tfile->tun = NULL;
 	tfile->net = get_net(current->nsproxy->net_ns);
 	file->private_data = tfile;
+	tfile->file = file;
 	return 0;
 }
+EXPORT_SYMBOL(tun_chr_open);
 
 static int tun_chr_close(struct inode *inode, struct file *file)
 {

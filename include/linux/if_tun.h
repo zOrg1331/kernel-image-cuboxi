@@ -86,4 +86,9 @@ struct tun_filter {
 	__u8   addr[0][ETH_ALEN];
 };
 
+extern int tun_net_open(struct net_device *dev);
+extern int tun_chr_open(struct inode *inode, struct file * file);
+extern void tun_net_init(struct net_device *dev);
+extern void tun_setup(struct net_device *dev);
+
 #endif /* __IF_TUN_H */
