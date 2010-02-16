@@ -821,9 +821,8 @@ static int adjust_io(struct pcmcia_socket *s, unsigned int action, unsigned long
 #ifdef CONFIG_PCI
 static int nonstatic_autoadd_resources(struct pcmcia_socket *s)
 {
-	struct pci_bus_resource *bus_res;
 	struct resource *res;
-	int done = 0;
+	int i, done = 0;
 
 	if (!s->cb_dev || !s->cb_dev->bus)
 		return -ENODEV;
@@ -839,8 +838,8 @@ static int nonstatic_autoadd_resources(struct pcmcia_socket *s)
 		return -EINVAL;
 #endif
 
-	list_for_each_entry(bus_res, &s->cb_dev->bus->resources, list) {
-		res = bus_res->res;
+	for (i = 0; i < PCI_BUS_NUM_RESOURCES; i++) {
+		res = s->cb_dev->bus->resource[i];
 		if (!res)
 			continue;
 

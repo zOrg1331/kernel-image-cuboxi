@@ -1042,15 +1042,14 @@ static int __devinit pcibios_uninitialized_bridge_resource(struct pci_bus *bus,
 /* Fixup resources of a PCI<->PCI bridge */
 static void __devinit pcibios_fixup_bridge(struct pci_bus *bus)
 {
-	struct pci_bus_resource *bus_res;
 	struct resource *res;
-	int i = -1;
+	int i;
 
 	struct pci_dev *dev = bus->self;
 
-	list_for_each_entry(bus_res, &bus->resources, list) {
-		i++;
-		res = bus_res->res;
+	for (i = 0; i < PCI_BUS_NUM_RESOURCES; ++i) {
+		if ((res = bus->resource[i]) == NULL)
+			continue;
 		if (!res->flags)
 			continue;
 		if (i >= 3 && bus->self->transparent)
@@ -1272,17 +1271,15 @@ static int reparent_resources(struct resource *parent,
 void pcibios_allocate_bus_resources(struct pci_bus *bus)
 {
 	struct pci_bus *b;
-	int i = -1;
-	struct pci_bus_resource *bus_res;
+	int i;
 	struct resource *res, *pr;
 
 	pr_debug("PCI: Allocating bus resources for %04x:%02x...\n",
 		 pci_domain_nr(bus), bus->number);
 
-	list_for_each_entry(bus_res, &bus->resources, list) {
-		i++;
-		res = bus_res->res;
-		if (!res->flags || res->start > res->end || res->parent)
+	for (i = 0; i < PCI_BUS_NUM_RESOURCES; ++i) {
+		if ((res = bus->resource[i]) == NULL || !res->flags
+		    || res->start > res->end || res->parent)
 			continue;
 		if (bus->parent == NULL)
 			pr = (res->flags & IORESOURCE_IO) ?
@@ -1582,11 +1579,8 @@ void __devinit pcibios_setup_phb_resources(struct pci_controller *hose)
 	struct resource *res;
 	int i;
 
-	pci_bus_remove_resources(bus);
-
 	/* Hookup PHB IO resource */
-	res = &hose->io_resource;
-	pci_bus_add_resource(bus, res, 0);
+	bus->resource[0] = res = &hose->io_resource;
 
 	if (!res->flags) {
 		printk(KERN_WARNING "PCI: I/O resource not set for host"
@@ -1621,7 +1615,7 @@ void __devinit pcibios_setup_phb_resources(struct pci_controller *hose)
 			res->flags = IORESOURCE_MEM;
 #endif /* CONFIG_PPC32 */
 		}
-		pci_bus_add_resource(bus, res, 0);
+		bus->resource[i+1] = res;
 
 		pr_debug("PCI: PHB MEM resource %d = %016llx-%016llx [%lx]\n", i,
 			 (unsigned long long)res->start,

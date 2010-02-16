@@ -385,11 +385,11 @@ struct resource *
 pci_find_parent_resource(const struct pci_dev *dev, struct resource *res)
 {
 	const struct pci_bus *bus = dev->bus;
-	struct pci_bus_resource *bus_res;
+	int i;
 	struct resource *best = NULL;
 
-	list_for_each_entry(bus_res, &bus->resources, list) {
-		struct resource *r = bus_res->res;
+	for(i = 0; i < PCI_BUS_NUM_RESOURCES; i++) {
+		struct resource *r = bus->resource[i];
 		if (!r)
 			continue;
 		if (res->start && !(res->start >= r->start && res->end <= r->end))

@@ -12,12 +12,10 @@ void x86_pci_root_bus_res_quirks(struct pci_bus *b)
 	int i;
 	int j;
 	struct pci_root_info *info;
-	struct pci_bus_resource *bus_res;
 
 	/* don't go for it if _CRS is used already */
-	bus_res = list_first_entry(&b->resources, struct pci_bus_resource,
-				   list);
-	if (bus_res->res != &ioport_resource)
+	if (b->resource[0] != &ioport_resource ||
+	    b->resource[1] != &iomem_resource)
 		return;
 
 	if (!pci_root_num)
@@ -38,14 +36,13 @@ void x86_pci_root_bus_res_quirks(struct pci_bus *b)
 	printk(KERN_DEBUG "PCI: peer root bus %02x res updated from pci conf\n",
 			b->number);
 
-	pci_bus_remove_resources(b);
 	info = &pci_root_info[i];
 	for (j = 0; j < info->res_num; j++) {
 		struct resource *res;
 		struct resource *root;
 
 		res = &info->res[j];
-		pci_bus_add_resource(b, res, 0);
+		b->resource[j] = res;
 		if (res->flags & IORESOURCE_IO)
 			root = &ioport_resource;
 		else

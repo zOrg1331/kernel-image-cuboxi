@@ -39,17 +39,16 @@ static ssize_t show_ctrl (struct device *dev, struct device_attribute *attr, cha
 {
 	struct pci_dev *pdev;
 	char * out = buf;
-	int busnr;
+	int index, busnr;
 	struct resource *res;
 	struct pci_bus *bus;
-	struct pci_bus_resource *bus_res;
 
 	pdev = container_of (dev, struct pci_dev, dev);
 	bus = pdev->subordinate;
 
 	out += sprintf(buf, "Free resources: memory\n");
-	list_for_each_entry(bus_res, &bus->resources, list) {
-		res = bus_res->res;
+	for (index = 0; index < PCI_BUS_NUM_RESOURCES; index++) {
+		res = bus->resource[index];
 		if (res && (res->flags & IORESOURCE_MEM) &&
 				!(res->flags & IORESOURCE_PREFETCH)) {
 			out += sprintf(out, "start = %8.8llx, "
@@ -59,8 +58,8 @@ static ssize_t show_ctrl (struct device *dev, struct device_attribute *attr, cha
 		}
 	}
 	out += sprintf(out, "Free resources: prefetchable memory\n");
-	list_for_each_entry(bus_res, &bus->resources, list) {
-		res = bus_res->res;
+	for (index = 0; index < PCI_BUS_NUM_RESOURCES; index++) {
+		res = bus->resource[index];
 		if (res && (res->flags & IORESOURCE_MEM) &&
 			       (res->flags & IORESOURCE_PREFETCH)) {
 			out += sprintf(out, "start = %8.8llx, "
@@ -70,8 +69,8 @@ static ssize_t show_ctrl (struct device *dev, struct device_attribute *attr, cha
 		}
 	}
 	out += sprintf(out, "Free resources: IO\n");
-	list_for_each_entry(bus_res, &bus->resources, list) {
-		res = bus_res->res;
+	for (index = 0; index < PCI_BUS_NUM_RESOURCES; index++) {
+		res = bus->resource[index];
 		if (res && (res->flags & IORESOURCE_IO)) {
 			out += sprintf(out, "start = %8.8llx, "
 					"length = %8.8llx\n",
