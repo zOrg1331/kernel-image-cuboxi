@@ -18,6 +18,7 @@
 #include <linux/rmap.h>
 #include <linux/mmzone.h>
 #include <linux/hugetlb.h>
+#include <bc/vmpages.h>
 
 #include "internal.h"
 
@@ -374,6 +375,14 @@ static int mlock_fixup(struct vm_area_struct *vma, struct vm_area_struct **prev,
 		goto out;	/* don't set VM_LOCKED,  don't count */
 	}
 
+	if (newflags & VM_LOCKED) {
+		ret = ub_locked_charge(mm, end - start);
+		if (ret < 0) {
+			*prev = vma;
+			goto out;
+		}
+	}
+
 	pgoff = vma->vm_pgoff + ((start - vma->vm_start) >> PAGE_SHIFT);
 	*prev = vma_merge(mm, *prev, start, end, newflags, vma->anon_vma,
 			  vma->vm_file, pgoff, vma_policy(vma));
@@ -385,13 +394,13 @@ static int mlock_fixup(struct vm_area_struct *vma, struct vm_area_struct **prev,
 	if (start != vma->vm_start) {
 		ret = split_vma(mm, vma, start, 1);
 		if (ret)
-			goto out;
+			goto out_uncharge;
 	}
 
 	if (end != vma->vm_end) {
 		ret = split_vma(mm, vma, end, 0);
 		if (ret)
-			goto out;
+			goto out_uncharge;
 	}
 
 success:
@@ -416,11 +425,17 @@ success:
 			ret = __mlock_posix_error_return(ret);
 	} else {
 		munlock_vma_pages_range(vma, start, end);
+		ub_locked_uncharge(mm, end - start);
 	}
 
 out:
 	*prev = vma;
 	return ret;
+
+out_uncharge:
+	if (newflags & VM_LOCKED)
+		ub_locked_uncharge(mm, end - start);
+	goto out;
 }
 
 static int do_mlock(unsigned long start, size_t len, int on)
@@ -499,6 +514,7 @@ SYSCALL_DEFINE2(mlock, unsigned long, start, size_t, len)
 	up_write(&current->mm->mmap_sem);
 	return error;
 }
+EXPORT_SYMBOL_GPL(sys_mlock);
 
 SYSCALL_DEFINE2(munlock, unsigned long, start, size_t, len)
 {
@@ -511,6 +527,7 @@ SYSCALL_DEFINE2(munlock, unsigned long, start, size_t, len)
 	up_write(&current->mm->mmap_sem);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(sys_munlock);
 
 static int do_mlockall(int flags)
 {
