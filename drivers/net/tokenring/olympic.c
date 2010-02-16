@@ -172,7 +172,7 @@ module_param_array(message_level, int, NULL, 0) ;
 static int network_monitor[OLYMPIC_MAX_ADAPTERS] = {0,};
 module_param_array(network_monitor, int, NULL, 0);
 
-static struct pci_device_id olympic_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(olympic_pci_tbl) = {
 	{PCI_VENDOR_ID_IBM,PCI_DEVICE_ID_IBM_TR_WAKE,PCI_ANY_ID,PCI_ANY_ID,},
 	{ } 	/* Terminating Entry */
 };
@@ -1178,7 +1178,7 @@ static void olympic_set_rx_mode(struct net_device *dev)
 
 	dev_mc_address[0] = dev_mc_address[1] = dev_mc_address[2] = dev_mc_address[3] = 0 ; 
 
-	for (i=0,dmi=dev->mc_list;i < dev->mc_count; i++,dmi = dmi->next) { 
+	for (i=0,dmi=dev->mc_list;i < netdev_mc_count(dev); i++,dmi = dmi->next) {
 		dev_mc_address[0] |= dmi->dmi_addr[2] ; 
 		dev_mc_address[1] |= dmi->dmi_addr[3] ; 
 		dev_mc_address[2] |= dmi->dmi_addr[4] ; 

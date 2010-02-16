@@ -1492,10 +1492,10 @@ static void set_multicast_list(struct usbnet *usbdev)
 		filter |= RNDIS_PACKET_TYPE_PROMISCUOUS |
 			RNDIS_PACKET_TYPE_ALL_LOCAL;
 	} else if (usbdev->net->flags & IFF_ALLMULTI ||
-		   usbdev->net->mc_count > priv->multicast_size) {
+		   netdev_mc_count(usbdev->net) > priv->multicast_size) {
 		filter |= RNDIS_PACKET_TYPE_ALL_MULTICAST;
-	} else if (usbdev->net->mc_count > 0) {
-		size = min(priv->multicast_size, usbdev->net->mc_count);
+	} else if (!netdev_mc_empty(usbdev->net)) {
+		size = min(priv->multicast_size, netdev_mc_count(usbdev->net));
 		buf = kmalloc(size * ETH_ALEN, GFP_KERNEL);
 		if (!buf) {
 			devwarn(usbdev,
@@ -2594,23 +2594,9 @@ end:
 /*
  * driver/device initialization
  */
-static int bcm4320a_early_init(struct usbnet *usbdev)
-{
-	/* bcm4320a doesn't handle configuration parameters well. Try
-	 * set any and you get partially zeroed mac and broken device.
-	 */
-
-	return 0;
-}
-
-static int bcm4320b_early_init(struct usbnet *usbdev)
+static void rndis_copy_module_params(struct usbnet *usbdev)
 {
 	struct rndis_wlan_private *priv = get_rndis_wlan_priv(usbdev);
-	char buf[8];
-
-	/* Early initialization settings, setting these won't have effect
-	 * if called after generic_rndis_bind().
-	 */
 
 	priv->param_country[0] = modparam_country[0];
 	priv->param_country[1] = modparam_country[1];
@@ -2652,6 +2638,32 @@ static int bcm4320b_early_init(struct usbnet *usbdev)
 		priv->param_workaround_interval = 500;
 	else
 		priv->param_workaround_interval = modparam_workaround_interval;
+}
+
+static int bcm4320a_early_init(struct usbnet *usbdev)
+{
+	/* copy module parameters for bcm4320a so that iwconfig reports txpower
+	 * and workaround parameter is copied to private structure correctly.
+	 */
+	rndis_copy_module_params(usbdev);
+
+	/* bcm4320a doesn't handle configuration parameters well. Try
+	 * set any and you get partially zeroed mac and broken device.
+	 */
+
+	return 0;
+}
+
+static int bcm4320b_early_init(struct usbnet *usbdev)
+{
+	struct rndis_wlan_private *priv = get_rndis_wlan_priv(usbdev);
+	char buf[8];
+
+	rndis_copy_module_params(usbdev);
+
+	/* Early initialization settings, setting these won't have effect
+	 * if called after generic_rndis_bind().
+	 */
 
 	rndis_set_config_parameter_str(usbdev, "Country", priv->param_country);
 	rndis_set_config_parameter_str(usbdev, "FrameBursting",

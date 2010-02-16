@@ -140,7 +140,7 @@ static struct {
 };
 
 
-static const struct pci_device_id bnx2x_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(bnx2x_pci_tbl) = {
 	{ PCI_VDEVICE(BROADCOM, PCI_DEVICE_ID_NX2_57710), BCM57710 },
 	{ PCI_VDEVICE(BROADCOM, PCI_DEVICE_ID_NX2_57711), BCM57711 },
 	{ PCI_VDEVICE(BROADCOM, PCI_DEVICE_ID_NX2_57711E), BCM57711E },
@@ -11471,7 +11471,8 @@ static void bnx2x_set_rx_mode(struct net_device *dev)
 		rx_mode = BNX2X_RX_MODE_PROMISC;
 
 	else if ((dev->flags & IFF_ALLMULTI) ||
-		 ((dev->mc_count > BNX2X_MAX_MULTICAST) && CHIP_IS_E1(bp)))
+		 ((netdev_mc_count(dev) > BNX2X_MAX_MULTICAST) &&
+		  CHIP_IS_E1(bp)))
 		rx_mode = BNX2X_RX_MODE_ALLMULTI;
 
 	else { /* some multicasts */
@@ -11482,7 +11483,7 @@ static void bnx2x_set_rx_mode(struct net_device *dev)
 						bnx2x_sp(bp, mcast_config);
 
 			for (i = 0, mclist = dev->mc_list;
-			     mclist && (i < dev->mc_count);
+			     mclist && (i < netdev_mc_count(dev));
 			     i++, mclist = mclist->next) {
 
 				config->config_table[i].
@@ -11554,7 +11555,7 @@ static void bnx2x_set_rx_mode(struct net_device *dev)
 			memset(mc_filter, 0, 4 * MC_HASH_SIZE);
 
 			for (i = 0, mclist = dev->mc_list;
-			     mclist && (i < dev->mc_count);
+			     mclist && (i < netdev_mc_count(dev));
 			     i++, mclist = mclist->next) {
 
 				DP(NETIF_MSG_IFUP, "Adding mcast MAC: %pM\n",
@@ -11731,7 +11732,7 @@ static void bnx2x_vlan_rx_register(struct net_device *dev,
 
 #endif
 
-#if defined(HAVE_POLL_CONTROLLER) || defined(CONFIG_NET_POLL_CONTROLLER)
+#ifdef CONFIG_NET_POLL_CONTROLLER
 static void poll_bnx2x(struct net_device *dev)
 {
 	struct bnx2x *bp = netdev_priv(dev);
@@ -11755,7 +11756,7 @@ static const struct net_device_ops bnx2x_netdev_ops = {
 #ifdef BCM_VLAN
 	.ndo_vlan_rx_register	= bnx2x_vlan_rx_register,
 #endif
-#if defined(HAVE_POLL_CONTROLLER) || defined(CONFIG_NET_POLL_CONTROLLER)
+#ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= poll_bnx2x,
 #endif
 };
