@@ -704,6 +704,24 @@ int try_to_free_swap(struct page *page)
 	return 1;
 }
 
+int swap_readonly(struct page *page)
+{
+	swp_entry_t entry;
+	struct swap_info_struct *p;
+
+	entry.val = page_private(page);
+	p = swap_info_get(entry);
+	if (p == NULL)
+		return 0;
+
+	spin_unlock(&swap_lock);
+	if ((p->flags & (SWP_ACTIVE|SWP_READONLY)) == SWP_ACTIVE)
+		return 0;
+
+	return 1;
+}
+
+
 /*
  * Free the swap entry like above, but also try to
  * free the page cache entry if it is the last user.
