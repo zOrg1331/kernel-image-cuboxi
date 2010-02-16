@@ -62,7 +62,7 @@ static int nouveau_dsm(struct drm_device *dev, int func, int arg, int *result)
 
 	err = acpi_evaluate_object(handle, "_DSM", &input, &output);
 	if (err) {
-		NV_ERROR(dev, "failed to evaluate _DSM: %d\n", err);
+		NV_INFO(dev, "failed to evaluate _DSM: %d\n", err);
 		return err;
 	}
 
@@ -90,20 +90,20 @@ int nouveau_hybrid_setup(struct drm_device *dev)
 {
 	int result;
 
-	if (nouveau_dsm(dev, NOUVEAU_DSM_ACTIVE, NOUVEAU_DSM_ACTIVE_QUERY,
+	if (nouveau_dsm(dev, NOUVEAU_DSM_POWER, NOUVEAU_DSM_POWER_STATE,
 								&result))
 		return -ENODEV;
 
 	NV_INFO(dev, "_DSM hardware status gave 0x%x\n", result);
 
-	if (result & 0x1) {	/* Stamina mode - disable the external GPU */
+	if (result) { /* Ensure that the external GPU is enabled */
+		nouveau_dsm(dev, NOUVEAU_DSM_LED, NOUVEAU_DSM_LED_SPEED, NULL);
+		nouveau_dsm(dev, NOUVEAU_DSM_POWER, NOUVEAU_DSM_POWER_SPEED,
+									NULL);
+	} else { /* Stamina mode - disable the external GPU */
 		nouveau_dsm(dev, NOUVEAU_DSM_LED, NOUVEAU_DSM_LED_STAMINA,
 									NULL);
 		nouveau_dsm(dev, NOUVEAU_DSM_POWER, NOUVEAU_DSM_POWER_STAMINA,
-									NULL);
-	} else {		/* Ensure that the external GPU is enabled */
-		nouveau_dsm(dev, NOUVEAU_DSM_LED, NOUVEAU_DSM_LED_SPEED, NULL);
-		nouveau_dsm(dev, NOUVEAU_DSM_POWER, NOUVEAU_DSM_POWER_SPEED,
 									NULL);
 	}
 
