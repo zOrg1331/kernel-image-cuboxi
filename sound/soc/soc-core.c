@@ -1276,8 +1276,8 @@ static int soc_new_pcm(struct snd_soc_device *socdev,
 	codec_dai->codec = card->codec;
 
 	/* check client and interface hw capabilities */
-	sprintf(new_name, "%s %s-%d", dai_link->stream_name, codec_dai->name,
-		num);
+	snprintf(new_name, sizeof(new_name), "%s %s-%d",
+		 dai_link->stream_name, codec_dai->name, num);
 
 	if (codec_dai->playback.channels_min)
 		playback = 1;
@@ -1368,6 +1368,7 @@ int snd_soc_new_ac97_codec(struct snd_soc_codec *codec,
 
 	codec->ac97->bus->ops = ops;
 	codec->ac97->num = num;
+	codec->dev = &codec->ac97->dev;
 	mutex_unlock(&codec->mutex);
 	return 0;
 }
@@ -1427,9 +1428,9 @@ EXPORT_SYMBOL_GPL(snd_soc_update_bits);
  *
  * Returns 1 for change else 0.
  */
-static int snd_soc_update_bits_locked(struct snd_soc_codec *codec,
-				unsigned short reg, unsigned int mask,
-				unsigned int value)
+int snd_soc_update_bits_locked(struct snd_soc_codec *codec,
+			       unsigned short reg, unsigned int mask,
+			       unsigned int value)
 {
 	int change;
 
@@ -1439,6 +1440,7 @@ static int snd_soc_update_bits_locked(struct snd_soc_codec *codec,
 
 	return change;
 }
+EXPORT_SYMBOL_GPL(snd_soc_update_bits_locked);
 
 /**
  * snd_soc_test_bits - test register for change
