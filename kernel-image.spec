@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.32
-Release: alt8
+Release: alt8.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -586,6 +586,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Tue Feb 16 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt8.1
+- kms enabled by default
+- radeon and nouveau drm separated to subpackages
+
 * Tue Feb 09 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt8
 - 2.6.32.8
 - ide separated to subpackage
