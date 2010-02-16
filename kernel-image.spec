@@ -150,6 +150,46 @@ OpenGL implementations.
 
 These are modules for your ALT Linux system
 
+%package -n kernel-modules-drm-nouveau-%flavour
+Summary: The Direct Rendering Infrastructure modules for NVIDIA cards
+Group: System/Kernel and hardware
+Provides:  kernel-modules-drm-nouveau-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-drm-nouveau-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-drm-nouveau-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-drm-nouveau-%flavour
+The Direct Rendering Infrastructure, also known as the DRI, is a framework
+for allowing direct access to graphics hardware in a safe and efficient
+manner.  It includes changes to the X server, to several client libraries,
+and to the kernel.  The first major use for the DRI is to create fast
+OpenGL implementations.
+
+These are modules for your ALT Linux system
+
+%package -n kernel-modules-drm-radeon-%flavour
+Summary: The Direct Rendering Infrastructure modules for ATI cards
+Group: System/Kernel and hardware
+Provides:  kernel-modules-drm-radeon-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-drm-radeon-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-drm-radeon-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-drm-radeon-%flavour
+The Direct Rendering Infrastructure, also known as the DRI, is a framework
+for allowing direct access to graphics hardware in a safe and efficient
+manner.  It includes changes to the X server, to several client libraries,
+and to the kernel.  The first major use for the DRI is to create fast
+OpenGL implementations.
+
+These are modules for your ALT Linux system
+
 %package -n kernel-modules-ide-%flavour
 Summary: IDE  driver modules (obsolete by PATA)
 Group: System/Kernel and hardware
@@ -524,6 +564,14 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
+%exclude %modules_dir/kernel/drivers/gpu/drm/nouveau
+%exclude %modules_dir/kernel/drivers/gpu/drm/radeon
+
+%files -n kernel-modules-drm-nouveau-%flavour
+%modules_dir/kernel/drivers/gpu/drm/nouveau
+
+%files -n kernel-modules-drm-radeon-%flavour
+%modules_dir/kernel/drivers/gpu/drm/radeon
 
 %files -n kernel-modules-ide-%flavour
 %modules_dir/kernel/drivers/ide/
