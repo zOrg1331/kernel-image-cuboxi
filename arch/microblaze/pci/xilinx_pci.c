@@ -17,15 +17,14 @@
 #include <linux/ioport.h>
 #include <linux/of.h>
 #include <linux/pci.h>
-#include <mm/mmu_decl.h>
 #include <asm/io.h>
-#include <asm/xilinx_pci.h>
 
 #define XPLB_PCI_ADDR 0x10c
 #define XPLB_PCI_DATA 0x110
 #define XPLB_PCI_BUS  0x114
 
-#define PCI_HOST_ENABLE_CMD PCI_COMMAND_SERR | PCI_COMMAND_PARITY | PCI_COMMAND_MASTER | PCI_COMMAND_MEMORY
+#define PCI_HOST_ENABLE_CMD (PCI_COMMAND_SERR | PCI_COMMAND_PARITY | \
+				PCI_COMMAND_MASTER | PCI_COMMAND_MEMORY)
 
 static struct of_device_id xilinx_pci_match[] = {
 	{ .compatible = "xlnx,plbv46-pci-1.03.a", },
@@ -64,6 +63,7 @@ static void xilinx_pci_fixup_bridge(struct pci_dev *dev)
 }
 DECLARE_PCI_FIXUP_HEADER(PCI_ANY_ID, PCI_ANY_ID, xilinx_pci_fixup_bridge);
 
+#ifdef DEBUG
 /**
  * xilinx_pci_exclude_device - Don't do config access for non-root bus
  *
@@ -77,6 +77,45 @@ xilinx_pci_exclude_device(struct pci_controller *hose, u_char bus, u8 devfn)
 }
 
 /**
+ * xilinx_early_pci_scan - List pci config space for available devices
+ *
+ * List pci devices in very early phase.
+ */
+void __init xilinx_early_pci_scan(struct pci_controller *hose)
+{
+	u32 bus = 0;
+	u32 val, dev, func, offset;
+
+	/* Currently we have only 2 device connected - up-to 32 devices */
+	for (dev = 0; dev < 2; dev++) {
+		/* List only first function number - up-to 8 functions */
+		for (func = 0; func < 1; func++) {
+			printk(KERN_INFO "%02x:%02x:%02x", bus, dev, func);
+			/* read the first 64 standardized bytes */
+			/* Up-to 192 bytes can be list of capabilities */
+			for (offset = 0; offset < 64; offset += 4) {
+				early_read_config_dword(hose, bus,
+					PCI_DEVFN(dev, func), offset, &val);
+				if (offset == 0 && val == 0xFFFFFFFF) {
+					printk(KERN_CONT "\nABSENT");
+					break;
+				}
+				if(!(offset % 0x10)) {
+					printk(KERN_CONT "\n%04x:    ", offset);
+				}
+				printk(KERN_CONT "%08x  ", val);
+			}
+			printk(KERN_INFO "\n");
+		}
+	}
+}
+#else
+void __init xilinx_early_pci_scan(struct pci_controller *hose)
+{
+}
+#endif
+
+/**
  * xilinx_pci_init - Find and register a Xilinx PCI host bridge
  */
 void __init xilinx_pci_init(void)
@@ -87,7 +126,7 @@ void __init xilinx_pci_init(void)
 	struct device_node *pci_node;
 
 	pci_node = of_find_matching_node(NULL, xilinx_pci_match);
-	if(!pci_node)
+	if (!pci_node)
 		return;
 
 	if (of_address_to_resource(pci_node, 0, &r)) {
@@ -104,7 +143,7 @@ void __init xilinx_pci_init(void)
 	/* Setup config space */
 	setup_indirect_pci(hose, r.start + XPLB_PCI_ADDR,
 			   r.start + XPLB_PCI_DATA,
-			   PPC_INDIRECT_TYPE_SET_CFG_TYPE);
+			   INDIRECT_TYPE_SET_CFG_TYPE);
 
 	/* According to the xilinx plbv46_pci documentation the soft-core starts
 	 * a self-init when the bus master enable bit is set. Without this bit
@@ -120,13 +159,10 @@ void __init xilinx_pci_init(void)
 	out_be32(pci_reg + XPLB_PCI_BUS, 0x000000ff);
 	iounmap(pci_reg);
 
-	/* Nothing past the root bridge is working right now.  By default
-	 * exclude config access to anything except bus 0 */
-	if (!ppc_md.pci_exclude_device)
-		ppc_md.pci_exclude_device = xilinx_pci_exclude_device;
-
 	/* Register the host bridge with the linux kernel! */
-	pci_process_bridge_OF_ranges(hose, pci_node, 1);
+	pci_process_bridge_OF_ranges(hose, pci_node,
+					INDIRECT_TYPE_SET_CFG_TYPE);
 
 	pr_info("xilinx-pci: Registered PCI host bridge\n");
+	xilinx_early_pci_scan(hose);
 }
