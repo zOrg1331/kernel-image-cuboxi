@@ -36,7 +36,8 @@ enum bdi_state {
 typedef int (congested_fn)(void *, int);
 
 enum bdi_stat_item {
-	BDI_RECLAIMABLE,
+	BDI_DIRTY,
+	BDI_UNSTABLE,
 	BDI_WRITEBACK,
 	NR_BDI_STAT_ITEMS
 };
@@ -231,6 +232,7 @@ int bdi_set_max_ratio(struct backing_dev_info *bdi, unsigned int max_ratio);
 #define BDI_CAP_EXEC_MAP	0x00000040
 #define BDI_CAP_NO_ACCT_WB	0x00000080
 #define BDI_CAP_SWAP_BACKED	0x00000100
+#define BDI_CAP_ACCT_UNSTABLE	0x00000200
 
 #define BDI_CAP_VMFLAGS \
 	(BDI_CAP_READ_MAP | BDI_CAP_WRITE_MAP | BDI_CAP_EXEC_MAP)
@@ -308,6 +310,11 @@ static inline bool bdi_cap_swap_backed(struct backing_dev_info *bdi)
 static inline bool bdi_cap_flush_forker(struct backing_dev_info *bdi)
 {
 	return bdi == &default_backing_dev_info;
+}
+
+static inline bool bdi_cap_account_unstable(struct backing_dev_info *bdi)
+{
+	return bdi->capabilities & BDI_CAP_ACCT_UNSTABLE;
 }
 
 static inline bool mapping_cap_writeback_dirty(struct address_space *mapping)
