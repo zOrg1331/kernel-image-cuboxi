@@ -1,0 +1,74 @@
+Importing driver-core.current based on 2.6.33-rc7
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.33-rc8
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 724e6d3fe8003c3f60bf404bf22e4e331327c596
+HEAD is now at 724e6d3 Linux 2.6.33-rc8
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+i2c-scmi-provide-module-aliases-for-automatic-loading.patch
+i2c-make-pci-device-ids-constant.patch
+i2c-i801-smbus-patch-for-intel-cougar-point-deviceids.patch
+i2c-tiny-usb-fix-comment.patch
+i2c-parport-give-powered-devices-some-time-to-settle.patch
+i2c-add-smbus-alert-support.patch
+i2c-smbus-separate-option.patch
+i2c-parport-add-smbus-alert-support.patch
+i2c-parport-light-add-smbus-alert-support.patch
+i2c-hook-up-runtime-pm-support.patch
+i2c-algo-pca-drop-duplicate-variable.patch
+i2c-build-core-with-Wshadow.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 4b08e59...fa4f62e master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.33-rc8
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.33-rc3-git5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.33-rc7-10-g6339204
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.33-rc8-26-g0813e22
+$ cd ../quilt-tmp
+$ git reset --hard 0813e22d4e0d618eac9b47bec942bf856adca4c5
+HEAD is now at 0813e22 Merge git://git.kernel.org/pub/scm/linux/kernel/git/mason/btrfs-unstable
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-raid1-fail-writes-if-errors-are-not-handled-and-log-fails.patch
+dm-raid1-fix-null-pointer-dereference-in-suspend.patch
+dm-stripe-avoid-divide-by-zero-with-invalid-stripe-count.patch
+dm-snapshot-persistent-annotate-work_queue-as-on-stack.patch
+dm-log-userspace-fix-overhead_size-calcuations.patch
+dm-mpath-fix-stall-when-requeueing-io.patch
+dm-sysfs-revert-add-empty-release-function-to-avoid-debug-warning.patch
+dm-mpath-pass-struct-pgpath-to-pg-init-done.patch
+dm-mpath-skip-activate_path-for-failed-paths.patch
+dm-table-remove-dm_get-from-dm_table_get_md.patch
+dm-document-when-snapshot-has-finished-merging.patch
+dm-mpath-avoid-storing-private-suspended-state.patch
+dm-mpath-hold-io-until-all-pg_inits-completed.patch
+dm-mpath-wait-for-pg_init-completion-when-suspending.patch
+dm-mpath-refactor-pg_init.patch
+dm-raid1-always-return-error-if-all-legs-fail.patch
+dm-ioctl-only-issue-uevent-on-resume-if-state-changed.patch
+dm-table-remove-unused-dm_get_device-range-parameters.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + 374e530...3da8eef master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
