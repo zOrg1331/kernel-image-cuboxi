@@ -603,6 +603,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Tue Feb 16 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt8.1
 - kms enabled by default
 - radeon and nouveau drm separated to subpackages
+- netfilter: add NETFLOW target
 
 * Tue Feb 09 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt8
 - 2.6.32.8
