@@ -25,8 +25,6 @@
  *
  */
 
-#include <linux/acpi.h>
-#include <linux/pnp.h>
 #include "linux/string.h"
 #include "linux/bitops.h"
 #include "drmP.h"
@@ -83,120 +81,6 @@
  * to match what the GPU expects.
  */
 
-#define MCHBAR_I915 0x44
-#define MCHBAR_I965 0x48
-#define MCHBAR_SIZE (4*4096)
-
-#define DEVEN_REG 0x54
-#define   DEVEN_MCHBAR_EN (1 << 28)
-
-/* Allocate space for the MCH regs if needed, return nonzero on error */
-static int
-intel_alloc_mchbar_resource(struct drm_device *dev)
-{
-	drm_i915_private_t *dev_priv = dev->dev_private;
-	int reg = IS_I965G(dev) ? MCHBAR_I965 : MCHBAR_I915;
-	u32 temp_lo, temp_hi = 0;
-	u64 mchbar_addr;
-	int ret = 0;
-
-	if (IS_I965G(dev))
-		pci_read_config_dword(dev_priv->bridge_dev, reg + 4, &temp_hi);
-	pci_read_config_dword(dev_priv->bridge_dev, reg, &temp_lo);
-	mchbar_addr = ((u64)temp_hi << 32) | temp_lo;
-
-	/* If ACPI doesn't have it, assume we need to allocate it ourselves */
-#ifdef CONFIG_PNP
-	if (mchbar_addr &&
-	    pnp_range_reserved(mchbar_addr, mchbar_addr + MCHBAR_SIZE)) {
-		ret = 0;
-		goto out;
-	}
-#endif
-
-	/* Get some space for it */
-	ret = pci_bus_alloc_resource(dev_priv->bridge_dev->bus, &dev_priv->mch_res,
-				     MCHBAR_SIZE, MCHBAR_SIZE,
-				     PCIBIOS_MIN_MEM,
-				     0,   pcibios_align_resource,
-				     dev_priv->bridge_dev);
-	if (ret) {
-		DRM_DEBUG("failed bus alloc: %d\n", ret);
-		dev_priv->mch_res.start = 0;
-		goto out;
-	}
-
-	if (IS_I965G(dev))
-		pci_write_config_dword(dev_priv->bridge_dev, reg + 4,
-				       upper_32_bits(dev_priv->mch_res.start));
-
-	pci_write_config_dword(dev_priv->bridge_dev, reg,
-			       lower_32_bits(dev_priv->mch_res.start));
-out:
-	return ret;
-}
-
-/* Setup MCHBAR if possible, return true if we should disable it again */
-static bool
-intel_setup_mchbar(struct drm_device *dev)
-{
-	drm_i915_private_t *dev_priv = dev->dev_private;
-	int mchbar_reg = IS_I965G(dev) ? MCHBAR_I965 : MCHBAR_I915;
-	u32 temp;
-	bool need_disable = false, enabled;
-
-	if (IS_I915G(dev) || IS_I915GM(dev)) {
-		pci_read_config_dword(dev_priv->bridge_dev, DEVEN_REG, &temp);
-		enabled = !!(temp & DEVEN_MCHBAR_EN);
-	} else {
-		pci_read_config_dword(dev_priv->bridge_dev, mchbar_reg, &temp);
-		enabled = temp & 1;
-	}
-
-	/* If it's already enabled, don't have to do anything */
-	if (enabled)
-		goto out;
-
-	if (intel_alloc_mchbar_resource(dev))
-		goto out;
-
-	need_disable = true;
-
-	/* Space is allocated or reserved, so enable it. */
-	if (IS_I915G(dev) || IS_I915GM(dev)) {
-		pci_write_config_dword(dev_priv->bridge_dev, DEVEN_REG,
-				       temp | DEVEN_MCHBAR_EN);
-	} else {
-		pci_read_config_dword(dev_priv->bridge_dev, mchbar_reg, &temp);
-		pci_write_config_dword(dev_priv->bridge_dev, mchbar_reg, temp | 1);
-	}
-out:
-	return need_disable;
-}
-
-static void
-intel_teardown_mchbar(struct drm_device *dev, bool disable)
-{
-	drm_i915_private_t *dev_priv = dev->dev_private;
-	int mchbar_reg = IS_I965G(dev) ? MCHBAR_I965 : MCHBAR_I915;
-	u32 temp;
-
-	if (disable) {
-		if (IS_I915G(dev) || IS_I915GM(dev)) {
-			pci_read_config_dword(dev_priv->bridge_dev, DEVEN_REG, &temp);
-			temp &= ~DEVEN_MCHBAR_EN;
-			pci_write_config_dword(dev_priv->bridge_dev, DEVEN_REG, temp);
-		} else {
-			pci_read_config_dword(dev_priv->bridge_dev, mchbar_reg, &temp);
-			temp &= ~1;
-			pci_write_config_dword(dev_priv->bridge_dev, mchbar_reg, temp);
-		}
-	}
-
-	if (dev_priv->mch_res.start)
-		release_resource(&dev_priv->mch_res);
-}
-
 /**
  * Detects bit 6 swizzling of address lookup between IGD access and CPU
  * access through main memory.
@@ -207,10 +91,9 @@ i915_gem_detect_bit_6_swizzle(struct drm_device *dev)
 	drm_i915_private_t *dev_priv = dev->dev_private;
 	uint32_t swizzle_x = I915_BIT_6_SWIZZLE_UNKNOWN;
 	uint32_t swizzle_y = I915_BIT_6_SWIZZLE_UNKNOWN;
-	bool need_disable;
 
-	if (IS_IGDNG(dev)) {
-		/* On IGDNG whatever DRAM config, GPU always do
+	if (IS_IRONLAKE(dev)) {
+		/* On Ironlake whatever DRAM config, GPU always do
 		 * same swizzling setup.
 		 */
 		swizzle_x = I915_BIT_6_SWIZZLE_9_10;
@@ -223,9 +106,6 @@ i915_gem_detect_bit_6_swizzle(struct drm_device *dev)
 		swizzle_y = I915_BIT_6_SWIZZLE_NONE;
 	} else if (IS_MOBILE(dev)) {
 		uint32_t dcc;
-
-		/* Try to make sure MCHBAR is enabled before poking at it */
-		need_disable = intel_setup_mchbar(dev);
 
 		/* On mobile 9xx chipsets, channel interleave by the CPU is
 		 * determined by DCC.  For single-channel, neither the CPU
@@ -266,8 +146,6 @@ i915_gem_detect_bit_6_swizzle(struct drm_device *dev)
 			swizzle_x = I915_BIT_6_SWIZZLE_UNKNOWN;
 			swizzle_y = I915_BIT_6_SWIZZLE_UNKNOWN;
 		}
-
-		intel_teardown_mchbar(dev, need_disable);
 	} else {
 		/* The 965, G33, and newer, have a very flexible memory
 		 * configuration.  It will enable dual-channel mode
@@ -304,35 +182,39 @@ i915_gem_detect_bit_6_swizzle(struct drm_device *dev)
 
 
 /**
- * Returns the size of the fence for a tiled object of the given size.
+ * Returns whether an object is currently fenceable.  If not, it may need
+ * to be unbound and have its pitch adjusted.
  */
-static int
-i915_get_fence_size(struct drm_device *dev, int size)
+bool
+i915_obj_fenceable(struct drm_device *dev, struct drm_gem_object *obj)
 {
-	int i;
-	int start;
+	struct drm_i915_gem_object *obj_priv = obj->driver_private;
 
 	if (IS_I965G(dev)) {
 		/* The 965 can have fences at any page boundary. */
-		return ALIGN(size, 4096);
+		if (obj->size & 4095)
+			return false;
+		return true;
+	} else if (IS_I9XX(dev)) {
+		if (obj_priv->gtt_offset & ~I915_FENCE_START_MASK)
+			return false;
 	} else {
-		/* Align the size to a power of two greater than the smallest
-		 * fence size.
-		 */
-		if (IS_I9XX(dev))
-			start = 1024 * 1024;
-		else
-			start = 512 * 1024;
-
-		for (i = start; i < size; i <<= 1)
-			;
-
-		return i;
+		if (obj_priv->gtt_offset & ~I830_FENCE_START_MASK)
+			return false;
 	}
+
+	/* Power of two sized... */
+	if (obj->size & (obj->size - 1))
+		return false;
+
+	/* Objects must be size aligned as well */
+	if (obj_priv->gtt_offset & (obj->size - 1))
+		return false;
+	return true;
 }
 
 /* Check pitch constriants for all chips & tiling formats */
-static bool
+bool
 i915_tiling_ok(struct drm_device *dev, int stride, int size, int tiling_mode)
 {
 	int tile_width;
@@ -382,12 +264,6 @@ i915_tiling_ok(struct drm_device *dev, int stride, int size, int tiling_mode)
 		return false;
 
 	if (stride & (stride - 1))
-		return false;
-
-	/* We don't 0handle the aperture area covered by the fence being bigger
-	 * than the object size.
-	 */
-	if (i915_get_fence_size(dev, size) != size)
 		return false;
 
 	return true;
