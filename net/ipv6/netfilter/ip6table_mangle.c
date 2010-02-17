@@ -26,7 +26,6 @@ static const struct xt_table packet_mangler = {
 	.valid_hooks	= MANGLE_VALID_HOOKS,
 	.me		= THIS_MODULE,
 	.af		= NFPROTO_IPV6,
-	.priority	= NF_IP6_PRI_MANGLE,
 };
 
 static unsigned int
@@ -85,7 +84,44 @@ ip6table_mangle_hook(unsigned int hook, struct sk_buff *skb,
 			     dev_net(in)->ipv6.ip6table_mangle);
 }
 
-static struct nf_hook_ops *mangle_ops __read_mostly;
+static struct nf_hook_ops ip6t_ops[] __read_mostly = {
+	{
+		.hook		= ip6table_mangle_hook,
+		.owner		= THIS_MODULE,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_PRE_ROUTING,
+		.priority	= NF_IP6_PRI_MANGLE,
+	},
+	{
+		.hook		= ip6table_mangle_hook,
+		.owner		= THIS_MODULE,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_LOCAL_IN,
+		.priority	= NF_IP6_PRI_MANGLE,
+	},
+	{
+		.hook		= ip6table_mangle_hook,
+		.owner		= THIS_MODULE,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_FORWARD,
+		.priority	= NF_IP6_PRI_MANGLE,
+	},
+	{
+		.hook		= ip6table_mangle_hook,
+		.owner		= THIS_MODULE,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_LOCAL_OUT,
+		.priority	= NF_IP6_PRI_MANGLE,
+	},
+	{
+		.hook		= ip6table_mangle_hook,
+		.owner		= THIS_MODULE,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_POST_ROUTING,
+		.priority	= NF_IP6_PRI_MANGLE,
+	},
+};
+
 static int __net_init ip6table_mangle_net_init(struct net *net)
 {
 	struct ip6t_replace *repl;
@@ -120,11 +156,9 @@ static int __init ip6table_mangle_init(void)
 		return ret;
 
 	/* Register hooks */
-	mangle_ops = xt_hook_link(&packet_mangler, ip6table_mangle_hook);
-	if (IS_ERR(mangle_ops)) {
-		ret = PTR_ERR(mangle_ops);
+	ret = nf_register_hooks(ip6t_ops, ARRAY_SIZE(ip6t_ops));
+	if (ret < 0)
 		goto cleanup_table;
-	}
 
 	return ret;
 
@@ -135,7 +169,7 @@ static int __init ip6table_mangle_init(void)
 
 static void __exit ip6table_mangle_fini(void)
 {
-	xt_hook_unlink(&packet_mangler, mangle_ops);
+	nf_unregister_hooks(ip6t_ops, ARRAY_SIZE(ip6t_ops));
 	unregister_pernet_subsys(&ip6table_mangle_net_ops);
 }
 

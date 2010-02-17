@@ -31,7 +31,6 @@ static const struct xt_table security_table = {
 	.valid_hooks	= SECURITY_VALID_HOOKS,
 	.me		= THIS_MODULE,
 	.af		= NFPROTO_IPV6,
-	.priority	= NF_IP6_PRI_SECURITY,
 };
 
 static unsigned int
@@ -45,7 +44,29 @@ ip6table_security_hook(unsigned int hook, struct sk_buff *skb,
 	return ip6t_do_table(skb, hook, in, out, net->ipv6.ip6table_security);
 }
 
-static struct nf_hook_ops *sectbl_ops __read_mostly;
+static struct nf_hook_ops ip6t_ops[] __read_mostly = {
+	{
+		.hook		= ip6table_security_hook,
+		.owner		= THIS_MODULE,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_LOCAL_IN,
+		.priority	= NF_IP6_PRI_SECURITY,
+	},
+	{
+		.hook		= ip6table_security_hook,
+		.owner		= THIS_MODULE,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_FORWARD,
+		.priority	= NF_IP6_PRI_SECURITY,
+	},
+	{
+		.hook		= ip6table_security_hook,
+		.owner		= THIS_MODULE,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_LOCAL_OUT,
+		.priority	= NF_IP6_PRI_SECURITY,
+	},
+};
 
 static int __net_init ip6table_security_net_init(struct net *net)
 {
@@ -81,11 +102,9 @@ static int __init ip6table_security_init(void)
 	if (ret < 0)
 		return ret;
 
-	sectbl_ops = xt_hook_link(&security_table, ip6table_security_hook);
-	if (IS_ERR(sectbl_ops)) {
-		ret = PTR_ERR(sectbl_ops);
+	ret = nf_register_hooks(ip6t_ops, ARRAY_SIZE(ip6t_ops));
+	if (ret < 0)
 		goto cleanup_table;
-	}
 
 	return ret;
 
@@ -96,7 +115,7 @@ cleanup_table:
 
 static void __exit ip6table_security_fini(void)
 {
-	xt_hook_unlink(&security_table, sectbl_ops);
+	nf_unregister_hooks(ip6t_ops, ARRAY_SIZE(ip6t_ops));
 	unregister_pernet_subsys(&ip6table_security_net_ops);
 }
 
