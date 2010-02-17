@@ -496,6 +496,18 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-drm-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
+%post -n kernel-modules-drm-nouveau-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-drm-nouveau-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-drm-radeon-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-drm-radeon-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
 %post -n kernel-modules-ide-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
