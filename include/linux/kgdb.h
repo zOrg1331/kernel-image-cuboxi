@@ -208,6 +208,17 @@ extern int kgdb_arch_set_breakpoint(unsigned long addr, char *saved_instr);
 extern int kgdb_arch_remove_breakpoint(unsigned long addr, char *bundle);
 
 /**
+ *	kgdb_arch_late - Perform any architecture specific initalization.
+ *
+ *	This function will handle the late initalization of any
+ *	architecture specific callbacks.  This is an optional function for
+ *	handling things like late initialization of hw breakpoints.  The
+ *	default implementation does nothing.
+ */
+extern void kgdb_arch_late(void);
+
+
+/**
  * struct kgdb_arch - Describe architecture specific values.
  * @gdb_bpt_instr: The instruction to trigger a breakpoint.
  * @flags: Flags for the breakpoint, currently just %KGDB_HW_BREAKPOINT.
@@ -303,6 +314,8 @@ struct dbg_kms_ops {
 #define in_dbg_master() \
 	(raw_smp_processor_id() == atomic_read(&kgdb_active))
 
+extern bool dbg_is_early;
+extern void __init dbg_late_init(void);
 extern struct dbg_kms_ops *dbg_kms_ops;
 extern int dbg_kms_ops_register(struct dbg_kms_ops *ops);
 extern int dbg_kms_ops_unregister(struct dbg_kms_ops *ops);
@@ -313,6 +326,7 @@ extern int dbg_kms_ops_unregister(struct dbg_kms_ops *ops);
 	if (!in_dbg_master()) \
 		mutex_unlock(x)
 #else /* ! CONFIG_KGDB */
+#define dbg_late_init()
 #define in_dbg_master() (0)
 
 static inline int dbg_kms_ops_register(struct dbg_kms_ops *ops)
