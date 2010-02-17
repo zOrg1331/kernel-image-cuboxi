@@ -964,9 +964,9 @@ static int runtime_suspend(struct device *dev)
 {
 	int rc;
 
-	down(&dev->sem);
+	device_lock(dev);
 	rc = pcmcia_dev_suspend(dev, PMSG_SUSPEND);
-	up(&dev->sem);
+	device_unlock(dev);
 	return rc;
 }
 
@@ -974,9 +974,9 @@ static void runtime_resume(struct device *dev)
 {
 	int rc;
 
-	down(&dev->sem);
+	device_lock(dev);
 	rc = pcmcia_dev_resume(dev);
-	up(&dev->sem);
+	device_unlock(dev);
 }
 
 /************************ per-device sysfs output ***************************/
