@@ -606,7 +606,9 @@ static void __rpc_execute(struct rpc_task *task)
 	struct rpc_wait_queue *queue;
 	int task_is_async = RPC_IS_ASYNC(task);
 	int status = 0;
+	struct ve_struct *env;
 
+	env = set_exec_env(get_ve0());
 	dprintk("RPC: %5u __rpc_execute flags=0x%x\n",
 			task->tk_pid, task->tk_flags);
 
@@ -690,6 +692,7 @@ static void __rpc_execute(struct rpc_task *task)
 			task->tk_status);
 	/* Release all resources associated with the task */
 	rpc_release_task(task);
+	(void)set_exec_env(env);
 }
 
 /*

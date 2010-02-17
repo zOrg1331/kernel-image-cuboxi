@@ -130,6 +130,9 @@
 
 #include "net-sysfs.h"
 
+#include <bc/beancounter.h>
+#include <bc/kmem.h>
+
 /* Instead of increasing this, you should create a hash table. */
 #define MAX_GRO_SKBS 8
 
@@ -192,20 +195,6 @@ static struct list_head ptype_all __read_mostly;	/* Taps */
  */
 DEFINE_RWLOCK(dev_base_lock);
 EXPORT_SYMBOL(dev_base_lock);
-
-#define NETDEV_HASHBITS	8
-#define NETDEV_HASHENTRIES (1 << NETDEV_HASHBITS)
-
-static inline struct hlist_head *dev_name_hash(struct net *net, const char *name)
-{
-	unsigned hash = full_name_hash(name, strnlen(name, IFNAMSIZ));
-	return &net->dev_name_head[hash & ((1 << NETDEV_HASHBITS) - 1)];
-}
-
-static inline struct hlist_head *dev_index_hash(struct net *net, int ifindex)
-{
-	return &net->dev_index_head[ifindex & ((1 << NETDEV_HASHBITS) - 1)];
-}
 
 /* Device list insertion */
 static int list_netdevice(struct net_device *dev)
@@ -1697,6 +1686,24 @@ static int dev_gso_segment(struct sk_buff *skb)
 	return 0;
 }
 
+#if defined(CONFIG_BRIDGE) || defined (CONFIG_BRIDGE_MODULE)
+int (*br_hard_xmit_hook)(struct sk_buff *skb, struct net_bridge_port *port);
+EXPORT_SYMBOL(br_hard_xmit_hook);
+static __inline__ int bridge_hard_start_xmit(struct sk_buff *skb,
+						struct net_device *dev)
+{
+	struct net_bridge_port *port;
+
+	if (((port = rcu_dereference(dev->br_port)) == NULL) ||
+		(skb->brmark == BR_ALREADY_SEEN))
+		return 0;
+
+	return br_hard_xmit_hook(skb, port);
+}
+#else
+#define bridge_hard_start_xmit(skb, dev)	(0)
+#endif
+
 int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 			struct netdev_queue *txq)
 {
@@ -1720,6 +1727,8 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 		 */
 		if (dev->priv_flags & IFF_XMIT_DST_RELEASE)
 			skb_dst_drop(skb);
+
+		bridge_hard_start_xmit(skb, dev);
 
 		rc = ops->ndo_start_xmit(skb, dev);
 		if (rc == NETDEV_TX_OK)
@@ -1747,6 +1756,9 @@ gso:
 
 		skb->next = nskb->next;
 		nskb->next = NULL;
+
+		bridge_hard_start_xmit(skb, dev);
+
 		rc = ops->ndo_start_xmit(nskb, dev);
 		if (unlikely(rc != NETDEV_TX_OK)) {
 			nskb->next = skb->next;
@@ -2288,6 +2300,7 @@ int netif_receive_skb(struct sk_buff *skb)
 	struct net_device *null_or_orig;
 	int ret = NET_RX_DROP;
 	__be16 type;
+	struct ve_struct *old_ve;
 
 	if (!skb->tstamp.tv64)
 		net_timestamp(skb);
@@ -2316,6 +2329,16 @@ int netif_receive_skb(struct sk_buff *skb)
 	skb_reset_network_header(skb);
 	skb_reset_transport_header(skb);
 	skb->mac_len = skb->network_header - skb->mac_header;
+
+#ifdef CONFIG_VE
+	/*
+	 * Skb might be alloced in another VE context, than its device works.
+	 * So, set the correct owner_env.
+	 */
+	skb->owner_env = skb->dev->owner_env;
+	BUG_ON(skb->owner_env == NULL);
+#endif
+	old_ve = set_exec_env(skb->owner_env);
 
 	pt_prev = NULL;
 
@@ -2375,6 +2398,7 @@ ncls:
 
 out:
 	rcu_read_unlock();
+	(void)set_exec_env(old_ve);
 	return ret;
 }
 EXPORT_SYMBOL(netif_receive_skb);
@@ -3394,8 +3418,13 @@ static int __dev_set_promiscuity(struct net_device *dev, int inc)
 			return -EOVERFLOW;
 		}
 	}
-	if (dev->flags != old_flags) {
-		printk(KERN_INFO "device %s %s promiscuous mode\n",
+	/*
+	 * Promiscous mode on LOOPBACK/POINTTOPOINT devices does
+	 * not mean anything
+	 */
+	if ((dev->flags != old_flags) &&
+			!(dev->flags & (IFF_LOOPBACK | IFF_POINTOPOINT))) {
+		ve_printk(VE_LOG, KERN_INFO "device %s %s promiscuous mode\n",
 		       dev->name, (dev->flags & IFF_PROMISC) ? "entered" :
 							       "left");
 		if (audit_enabled) {
@@ -4547,11 +4576,20 @@ int dev_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 	 *	- require strict serialization.
 	 *	- do not return a value
 	 */
-	case SIOCSIFFLAGS:
-	case SIOCSIFMETRIC:
 	case SIOCSIFMTU:
-	case SIOCSIFMAP:
 	case SIOCSIFHWADDR:
+	case SIOCSIFFLAGS:
+		if (!capable(CAP_NET_ADMIN) &&
+		    !capable(CAP_VE_NET_ADMIN))
+			return -EPERM;
+		dev_load(net, ifr.ifr_name);
+		rtnl_lock();
+		ret = dev_ifsioc(net, &ifr, cmd);
+		rtnl_unlock();
+		return ret;
+
+	case SIOCSIFMETRIC:
+	case SIOCSIFMAP:
 	case SIOCSIFSLAVE:
 	case SIOCADDMULTI:
 	case SIOCDELMULTI:
@@ -4619,12 +4657,11 @@ int dev_ioctl(struct net *net, unsigned int cmd, void __user *arg)
  */
 static int dev_new_index(struct net *net)
 {
-	static int ifindex;
 	for (;;) {
-		if (++ifindex <= 0)
-			ifindex = 1;
-		if (!__dev_get_by_index(net, ifindex))
-			return ifindex;
+		if (++net->ifindex <= 0)
+			net->ifindex = 1;
+		if (!__dev_get_by_index(net, net->ifindex))
+			return net->ifindex;
 	}
 }
 
@@ -4779,6 +4816,10 @@ int register_netdevice(struct net_device *dev)
 	BUG_ON(dev->reg_state != NETREG_UNINITIALIZED);
 	BUG_ON(!net);
 
+	ret = -EPERM;
+	if (!ve_is_super(get_exec_env()) && ve_is_dev_movable(dev))
+		goto out;
+
 	spin_lock_init(&dev->addr_list_lock);
 	netdev_set_addr_lockdep_class(dev);
 	netdev_init_queue_locks(dev);
@@ -4848,6 +4889,10 @@ int register_netdevice(struct net_device *dev)
 	 */
 
 	set_bit(__LINK_STATE_PRESENT, &dev->state);
+
+	dev->owner_env = get_exec_env();
+	netdev_bc(dev)->owner_ub = get_beancounter(get_exec_ub());
+	netdev_bc(dev)->exec_ub = get_beancounter(get_exec_ub());
 
 	dev_init_scheduler(dev);
 	dev_hold(dev);
@@ -5024,12 +5069,14 @@ static void netdev_wait_allrefs(struct net_device *dev)
 void netdev_run_todo(void)
 {
 	struct list_head list;
+	struct ve_struct *old_ve;
 
 	/* Snapshot list, allow later requests */
 	list_replace_init(&net_todo_list, &list);
 
 	__rtnl_unlock();
 
+	old_ve = get_exec_env();
 	while (!list_empty(&list)) {
 		struct net_device *dev
 			= list_entry(list.next, struct net_device, todo_list);
@@ -5042,6 +5089,7 @@ void netdev_run_todo(void)
 			continue;
 		}
 
+		(void)set_exec_env(dev->owner_env);
 		dev->reg_state = NETREG_UNREGISTERED;
 
 		on_each_cpu(flush_backlog, dev, 1);
@@ -5054,12 +5102,21 @@ void netdev_run_todo(void)
 		WARN_ON(dev->ip6_ptr);
 		WARN_ON(dev->dn_ptr);
 
+		put_beancounter(netdev_bc(dev)->exec_ub);
+		put_beancounter(netdev_bc(dev)->owner_ub);
+		netdev_bc(dev)->exec_ub = NULL;
+		netdev_bc(dev)->owner_ub = NULL;
+
+		/* It must be the very last action,
+		 * after this 'dev' may point to freed up memory.
+		 */
 		if (dev->destructor)
 			dev->destructor(dev);
 
 		/* Free network device */
 		kobject_put(&dev->dev.kobj);
 	}
+	(void)set_exec_env(old_ve);
 }
 
 /**
@@ -5142,13 +5199,13 @@ struct net_device *alloc_netdev_mq(int sizeof_priv, const char *name,
 	/* ensure 32-byte alignment of whole construct */
 	alloc_size += NETDEV_ALIGN - 1;
 
-	p = kzalloc(alloc_size, GFP_KERNEL);
+	p = kzalloc(alloc_size, GFP_KERNEL_UBC);
 	if (!p) {
 		printk(KERN_ERR "alloc_netdev: Unable to allocate device.\n");
 		return NULL;
 	}
 
-	tx = kcalloc(queue_count, sizeof(struct netdev_queue), GFP_KERNEL);
+	tx = kcalloc(queue_count, sizeof(struct netdev_queue), GFP_KERNEL_UBC);
 	if (!tx) {
 		printk(KERN_ERR "alloc_netdev: Unable to allocate "
 		       "tx qdiscs.\n");
@@ -5291,11 +5348,15 @@ EXPORT_SYMBOL(unregister_netdev);
  *	Callers must hold the rtnl semaphore.
  */
 
-int dev_change_net_namespace(struct net_device *dev, struct net *net, const char *pat)
+int __dev_change_net_namespace(struct net_device *dev, struct net *net, const char *pat,
+		struct ve_struct *src_ve, struct ve_struct *dst_ve,
+		struct user_beancounter *exec_ub)
 {
 	char buf[IFNAMSIZ];
 	const char *destname;
 	int err;
+	struct ve_struct *cur_ve;
+	struct user_beancounter *tmp_ub;
 
 	ASSERT_RTNL();
 
@@ -5355,6 +5416,11 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
 	err = -ENODEV;
 	unlist_netdevice(dev);
 
+	dev->owner_env = dst_ve;
+	tmp_ub = netdev_bc(dev)->exec_ub;
+	netdev_bc(dev)->exec_ub = get_beancounter(exec_ub);
+	put_beancounter(tmp_ub);
+
 	synchronize_net();
 
 	/* Shutdown queueing discipline. */
@@ -5363,7 +5429,9 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
 	/* Notify protocols, that we are about to destroy
 	   this device. They should clean all the things.
 	*/
+	cur_ve = set_exec_env(src_ve);
 	call_netdevice_notifiers(NETDEV_UNREGISTER, dev);
+	(void)set_exec_env(cur_ve);
 
 	/*
 	 *	Flush the unicast and multicast chains
@@ -5396,7 +5464,9 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
 	list_netdevice(dev);
 
 	/* Notify protocols, that a new device appeared. */
+	cur_ve = set_exec_env(dst_ve);
 	call_netdevice_notifiers(NETDEV_REGISTER, dev);
+	(void)set_exec_env(cur_ve);
 
 	synchronize_net();
 	err = 0;
@@ -5404,6 +5474,15 @@ out:
 	return err;
 }
 EXPORT_SYMBOL_GPL(dev_change_net_namespace);
+
+int dev_change_net_namespace(struct net_device *dev, struct net *net, const char *pat)
+{
+	struct ve_struct *ve = get_exec_env();
+	struct user_beancounter *ub = get_exec_ub();
+
+	return __dev_change_net_namespace(dev, net, pat, ve, ve, ub);
+}
+EXPORT_SYMBOL(__dev_change_net_namespace);
 
 static int dev_cpu_callback(struct notifier_block *nfb,
 			    unsigned long action,
@@ -5496,7 +5575,7 @@ static struct hlist_head *netdev_create_hash(void)
 	int i;
 	struct hlist_head *hash;
 
-	hash = kmalloc(sizeof(*hash) * NETDEV_HASHENTRIES, GFP_KERNEL);
+	hash = kmalloc(sizeof(*hash) * NETDEV_HASHENTRIES, GFP_KERNEL_UBC);
 	if (hash != NULL)
 		for (i = 0; i < NETDEV_HASHENTRIES; i++)
 			INIT_HLIST_HEAD(&hash[i]);
