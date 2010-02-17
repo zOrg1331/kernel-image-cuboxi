@@ -1,0 +1,42 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Wed, 2 Dec 2009 11:42:37 -0500
+Subject: [scsi] gdth: prevent negative offsets in ioctl
+Message-id: <20091202114536.10802.2943.sendpatchset@localhost.localdomain>
+Patchwork-id: 21646
+O-Subject: [PATCH RHEL5.x][CVE-2009-3080] gdth: prevent negative offsets in ioctl
+Bugzilla: 539421
+CVE: CVE-2009-3080
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+CVE-2009-3080
+
+BZ:
+https://bugzilla.redhat.com/show_bug.cgi?id=539421
+
+Description:
+A negative offset could be used to index before the event buffer and
+lead to a security breach.
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2114786
+
+Upstream:
+Commit 690e744869f.
+
+Signed-off-by: WANG Cong <amwang@redhat.com>
+
+
+diff --git a/drivers/scsi/gdth.c b/drivers/scsi/gdth.c
+index 0a2cc96..e0d487b 100644
+--- a/drivers/scsi/gdth.c
++++ b/drivers/scsi/gdth.c
+@@ -3348,7 +3348,7 @@ static int gdth_read_event(gdth_ha_str *ha, int handle, gdth_evt_str *estr)
+         eindex = handle;
+     estr->event_source = 0;
+ 
+-    if (eindex >= MAX_EVENTS) {
++    if (eindex < 0 || eindex >= MAX_EVENTS) {
+         spin_unlock_irqrestore(&ha->smp_lock, flags);
+         return eindex;
+     }

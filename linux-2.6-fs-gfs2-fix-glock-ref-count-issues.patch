@@ -1,0 +1,125 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Fri, 27 Nov 2009 10:49:17 -0500
+Subject: [fs] gfs2: fix glock ref count issues
+Message-id: <1259318957.2708.7.camel@localhost.localdomain>
+Patchwork-id: 21521
+O-Subject: [RHEL 5.5] GFS2: Fix glock ref count issues (bz #539240)
+Bugzilla: 539240
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+RH-Acked-by: Abhijith Das <adas@redhat.com>
+
+This patch fixes some problems relating to glock ref counting
+where there were a couple of (very small) windows in which
+the reference count could hit zero and then be incorrectly
+elevated again.
+
+In addition, a GLOCK_BUG_ON() has been added to gfs2_glock_hold
+so that if ever a similar issue should appear in the future
+we'll see it right away and be able to fix it much faster.
+
+The patch is identical to the upstream one aside from the
+GLOCK_BUG_ON() which was already in upstream.
+
+This has been tested by the customer and resolves bz #539240
+
+Steve.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index 282d593..5370112 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -206,6 +206,7 @@ static void glock_free(struct gfs2_glock *gl)
+ 
+ void gfs2_glock_hold(struct gfs2_glock *gl)
+ {
++	GLOCK_BUG_ON(gl, atomic_read(&gl->gl_ref) == 0);
+ 	atomic_inc(&gl->gl_ref);
+ }
+ 
+@@ -281,15 +282,14 @@ int gfs2_glock_put(struct gfs2_glock *gl)
+ 	int rv = 0;
+ 
+ 	write_lock(gl_lock_addr(gl->gl_hash));
+-	if (atomic_dec_and_test(&gl->gl_ref)) {
++	if (atomic_dec_and_lock(&gl->gl_ref,&lru_lock)) {
+ 		hlist_del(&gl->gl_list);
+-		write_unlock(gl_lock_addr(gl->gl_hash));
+-		spin_lock(&lru_lock);
+ 		if (!list_empty(&gl->gl_lru)) {
+ 			list_del_init(&gl->gl_lru);
+ 			atomic_dec(&lru_count);
+ 		}
+ 		spin_unlock(&lru_lock);
++		write_unlock(gl_lock_addr(gl->gl_hash));
+ 		GLOCK_BUG_ON(gl, gl->gl_state != LM_ST_UNLOCKED);
+ 		GLOCK_BUG_ON(gl, !list_empty(&gl->gl_lru));
+ 		GLOCK_BUG_ON(gl, !list_empty(&gl->gl_holders));
+@@ -569,7 +569,6 @@ retry:
+ 			GLOCK_BUG_ON(gl, 1);
+ 		}
+ 		spin_unlock(&gl->gl_spin);
+-		gfs2_glock_put(gl);
+ 		return;
+ 	}
+ 
+@@ -580,8 +579,6 @@ retry:
+ 		if (glops->go_xmote_bh) {
+ 			spin_unlock(&gl->gl_spin);
+ 			rv = glops->go_xmote_bh(gl, gh);
+-			if (rv == -EAGAIN)
+-				return;
+ 			spin_lock(&gl->gl_spin);
+ 			if (rv) {
+ 				do_error(gl, rv);
+@@ -596,7 +593,6 @@ out:
+ 	clear_bit(GLF_LOCK, &gl->gl_flags);
+ out_locked:
+ 	spin_unlock(&gl->gl_spin);
+-	gfs2_glock_put(gl);
+ }
+ 
+ static unsigned int gfs2_lm_lock(struct gfs2_sbd *sdp, void *lock,
+@@ -654,7 +650,6 @@ __acquires(&gl->gl_spin)
+ 
+ 	if (!(ret & LM_OUT_ASYNC)) {
+ 		finish_xmote(gl, ret);
+-		gfs2_glock_hold(gl);
+ 		if (queue_delayed_work(glock_workqueue, &gl->gl_work, 0) == 0)
+ 			gfs2_glock_put(gl);
+ 	} else {
+@@ -763,9 +758,12 @@ static void glock_work_func(void *data)
+ {
+ 	unsigned long delay = 0;
+ 	struct gfs2_glock *gl = (struct gfs2_glock *)data;
++	int drop_ref = 0;
+ 
+-	if (test_and_clear_bit(GLF_REPLY_PENDING, &gl->gl_flags))
++	if (test_and_clear_bit(GLF_REPLY_PENDING, &gl->gl_flags)) {
+ 		finish_xmote(gl, gl->gl_reply);
++		drop_ref = 1;
++	}
+ 	down_read(&gfs2_umount_flush_sem);
+ 	spin_lock(&gl->gl_spin);
+ 	if (test_and_clear_bit(GLF_PENDING_DEMOTE, &gl->gl_flags) &&
+@@ -783,6 +781,8 @@ static void glock_work_func(void *data)
+ 	if (!delay ||
+ 	    queue_delayed_work(glock_workqueue, &gl->gl_work, delay) == 0)
+ 		gfs2_glock_put(gl);
++	if (drop_ref)
++		gfs2_glock_put(gl);
+ }
+ 
+ /**
+@@ -1488,10 +1488,6 @@ static int gfs2_shrink_glock_memory(int nr, gfp_t gfp_mask)
+ 		list_del_init(&gl->gl_lru);
+ 		atomic_dec(&lru_count);
+ 
+-		/* Check if glock is about to be freed */
+-		if (atomic_read(&gl->gl_ref) == 0)
+-			continue;
+-
+ 		/* Test for being demotable */
+ 		if (!test_and_set_bit(GLF_LOCK, &gl->gl_flags)) {
+ 			gfs2_glock_hold(gl);

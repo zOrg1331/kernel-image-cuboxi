@@ -12,8 +12,8 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab067
-%define ovzrel 4
+%define ovzver 028stab068
+%define ovzrel 3
 
 %if !%{buildup}
 %define _without_up 1
@@ -138,7 +138,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define sublevel 18
 %define kversion 2.6.%{sublevel}
 %define rpmversion 2.6.%{sublevel}
-%define release 164.10.1%{?dist}%{?buildid}
+%define release 164.11.1%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -3753,8 +3753,7 @@ Patch23766: linux-2.6-gfs2-tar-off-gfs2-broken-truncated-symbolic-links.patch
 Patch23767: linux-2.6-net-iptables-nat-port-randomisation.patch
 Patch23768: linux-2.6-gfs2-fix-uninterruptible-quotad-sleeping.patch
 Patch23769: linux-2.6-nfs-remove-bogus-lock-if-signalled-case.patch
-# that patch introduces node freeze, see bug# 460026
-# Patch23770: linux-2.6-net-allow-for-on-demand-emergency-route-cache-flushing.patch
+Patch23770: linux-2.6-net-allow-for-on-demand-emergency-route-cache-flushing.patch
 Patch23771: linux-2.6-nfs-nfsd-ensure-nfsv4-calls-the-fs-on-lockt.patch
 Patch23772: linux-2.6-dlm-init-file_lock-before-copying-conflicting-lock.patch
 Patch23773: linux-2.6-nfs-only-set-file_lock-fl_lmops-if-stateowner-is-found.patch
@@ -4462,6 +4461,32 @@ Patch24479: linux-2.6-x86-fix-stale-data-in-shared_cpu_map-cpumasks.patch
 Patch24480: linux-2.6-net-ipv6-fix-ipv6_hop_jumbo-remote-system-crash.patch
 Patch24481: linux-2.6-net-e1000e-fix-rx-length-check-errors.patch
 Patch24482: linux-2.6-net-e1000-r9169-fix-rx-length-check-errors.patch
+Patch24483: linux-2.6-scsi-qla2xxx-npiv-vport-management-pseudofiles-are-world-writable.patch
+Patch24484: linux-2.6-fs-fasync-split-fasync_helper-into-separate-add-remove-functions.patch
+Patch24485: linux-2.6-net-emergency-route-cache-flushing-fixes.patch
+Patch24486: linux-2.6-scsi-lpfc-fix-fc-ports-offlined-during-target-controller-faults.patch
+Patch24487: linux-2.6-net-r8169-imporved-rx-length-check-errors.patch
+Patch24488: linux-2.6-net-fix-unbalance-rtnl-locking-in-rt_secret_reschedule.patch
+Patch24489: linux-2.6-kvm-use-upstream-kvm_get_tsc_khz.patch
+Patch24490: linux-2.6-cpufreq-add-option-to-avoid-smi-while-calibrating.patch
+Patch24491: linux-2.6-x86_64-fix-32-bit-process-register-leak.patch
+Patch24492: linux-2.6-net-sched-fix-panic-in-bnx2_poll_work.patch
+Patch24493: linux-2.6-x86-kvm-don-t-ask-hv-for-tsc-khz-if-not-using-kvmclock.patch
+Patch24494: linux-2.6-ia64-kdump-restore-registers-in-the-stack-on-init.patch
+Patch24495: linux-2.6-scsi-megaraid-fix-sas-permissions-in-sysfs.patch
+Patch24496: linux-2.6-net-call-cond_resched-in-rt_run_flush.patch
+Patch24497: linux-2.6-fs-gfs2-fix-glock-ref-count-issues.patch
+Patch24498: linux-2.6-scsi-gdth-prevent-negative-offsets-in-ioctl.patch
+Patch24499: linux-2.6-infiniband-init-neigh-dgid-raw-on-bonding-events.patch
+Patch24500: linux-2.6-mm-call-vfs_check_frozen-after-unlocking-the-spinlock.patch
+Patch24501: linux-2.6-fuse-prevent-fuse_put_request-on-invalid-pointer.patch
+Patch24502: linux-2.6-fs-hfs-fix-a-potential-buffer-overflow.patch
+Patch24503: linux-2.6-gfs2-make-o_append-behave-as-expected.patch
+Patch24504: linux-2.6-fs-respect-flag-in-do_coredump.patch
+Patch24505: linux-2.6-fs-ext3-replace-lock_super-with-explicit-resize-lock.patch
+Patch24506: linux-2.6-x86_64-disable-vsyscall-in-kvm-guests.patch
+Patch24507: linux-2.6-x86-sanity-check-for-amd-northbridges.patch
+Patch24508: linux-2.6-firewire-ohci-handle-receive-packets-with-zero-data.patch
 
 Patch25000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch25001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -4556,10 +4581,8 @@ Patch100020: linux-2.6.18-128.1.1.el5.028stab062.3-build-fixes.diff
 Patch100024: diff-make-sysrq-mask-affect-proc-sysrq-trigger-20090826
 Patch100025: diff-ms-alow-ve0-exceed-threads-max
 Patch100026: diff-ms-ext4-nodelalloc-by-default
-Patch100027: diff-rh-call-vfs_check_frozen-out-of-spinlock
-Patch100028: diff-sched-timeout-last-pcpu-for-idle-vcpu-20091222
-Patch100029: diff-ms-tun-split-tun_sk_alloc_init
-Patch100030: diff-cpt-tun-alloc-sk-at-restore
+Patch100027: diff-ve-uidhash-oops-fix
+Patch100028: diff-rh-dont-add-timer-twise
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -8176,7 +8199,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch23767 -p1
 %patch23768 -p1
 %patch23769 -p1
-# %patch23770 -p1
+%patch23770 -p1
 %patch23771 -p1
 %patch23772 -p1
 %patch23773 -p1
@@ -8884,6 +8907,32 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch24480 -p1
 %patch24481 -p1
 %patch24482 -p1
+%patch24483 -p1
+%patch24484 -p1
+%patch24485 -p1
+%patch24486 -p1
+%patch24487 -p1
+%patch24488 -p1
+%patch24489 -p1
+%patch24490 -p1
+%patch24491 -p1
+%patch24492 -p1
+%patch24493 -p1
+%patch24494 -p1
+%patch24495 -p1
+%patch24496 -p1
+%patch24497 -p1
+%patch24498 -p1
+%patch24499 -p1
+%patch24500 -p1
+%patch24501 -p1
+%patch24502 -p1
+%patch24503 -p1
+%patch24504 -p1
+%patch24505 -p1
+%patch24506 -p1
+%patch24507 -p1
+%patch24508 -p1
 
 %patch25000 -p1
 %patch25001 -p1
@@ -8959,8 +9008,6 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100026 -p1
 %patch100027 -p1
 %patch100028 -p1
-%patch100029 -p1
-%patch100030 -p1
 
 %patch101000 -p1
 %patch101001 -p1
