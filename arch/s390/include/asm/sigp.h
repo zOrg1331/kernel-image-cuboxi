@@ -46,7 +46,13 @@ typedef enum
 	sigp_cpu_reset,
 	sigp_set_prefix,
 	sigp_store_status_at_address,
-	sigp_store_extended_status_at_address
+	sigp_store_extended_status_at_address,
+	sigp_unassigned4,
+	sigp_unassigned5,
+	sigp_set_architecture,
+	sigp_conditional_emergency_signal,
+	sigp_unassigned6,
+	sigp_sense_running
 } sigp_order_code;
 
 typedef __u32 sigp_status_word;
