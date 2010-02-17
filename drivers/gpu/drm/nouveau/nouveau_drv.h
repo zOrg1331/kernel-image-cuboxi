@@ -34,7 +34,7 @@
 
 #define DRIVER_MAJOR		0
 #define DRIVER_MINOR		0
-#define DRIVER_PATCHLEVEL	15
+#define DRIVER_PATCHLEVEL	16
 
 #define NOUVEAU_FAMILY   0x0000FFFF
 #define NOUVEAU_FLAGS    0xFFFF0000
@@ -239,6 +239,11 @@ struct nouveau_channel {
 		int cur;
 		int put;
 		/* access via pushbuf_bo */
+
+		int ib_base;
+		int ib_max;
+		int ib_free;
+		int ib_put;
 	} dma;
 
 	uint32_t sw_subchannel[8];
@@ -533,6 +538,9 @@ struct drm_nouveau_private {
 	struct nouveau_engine engine;
 	struct nouveau_channel *channel;
 
+	/* For PFIFO and PGRAPH. */
+	spinlock_t context_switch_lock;
+
 	/* RAMIN configuration, RAMFC, RAMHT and RAMRO offsets */
 	struct nouveau_gpuobj *ramht;
 	uint32_t ramin_rsvd_vram;
@@ -695,12 +703,6 @@ extern bool nouveau_wait_until(struct drm_device *, uint64_t timeout,
 			       uint32_t reg, uint32_t mask, uint32_t val);
 extern bool nouveau_wait_for_idle(struct drm_device *);
 extern int  nouveau_card_init(struct drm_device *);
-extern int  nouveau_ioctl_card_init(struct drm_device *, void *data,
-				    struct drm_file *);
-extern int  nouveau_ioctl_suspend(struct drm_device *, void *data,
-				  struct drm_file *);
-extern int  nouveau_ioctl_resume(struct drm_device *, void *data,
-				 struct drm_file *);
 
 /* nouveau_mem.c */
 extern int  nouveau_mem_init_heap(struct mem_block **, uint64_t start,
@@ -844,7 +846,7 @@ nouveau_debugfs_channel_fini(struct nouveau_channel *chan)
 /* nouveau_dma.c */
 extern void nouveau_dma_pre_init(struct nouveau_channel *);
 extern int  nouveau_dma_init(struct nouveau_channel *);
-extern int  nouveau_dma_wait(struct nouveau_channel *, int size);
+extern int  nouveau_dma_wait(struct nouveau_channel *, int slots, int size);
 
 /* nouveau_acpi.c */
 #ifdef CONFIG_ACPI
@@ -1151,16 +1153,6 @@ extern int nouveau_gem_ioctl_new(struct drm_device *, void *,
 				 struct drm_file *);
 extern int nouveau_gem_ioctl_pushbuf(struct drm_device *, void *,
 				     struct drm_file *);
-extern int nouveau_gem_ioctl_pushbuf_call(struct drm_device *, void *,
-					  struct drm_file *);
-extern int nouveau_gem_ioctl_pushbuf_call2(struct drm_device *, void *,
-					   struct drm_file *);
-extern int nouveau_gem_ioctl_pin(struct drm_device *, void *,
-				 struct drm_file *);
-extern int nouveau_gem_ioctl_unpin(struct drm_device *, void *,
-				   struct drm_file *);
-extern int nouveau_gem_ioctl_tile(struct drm_device *, void *,
-				  struct drm_file *);
 extern int nouveau_gem_ioctl_cpu_prep(struct drm_device *, void *,
 				      struct drm_file *);
 extern int nouveau_gem_ioctl_cpu_fini(struct drm_device *, void *,
