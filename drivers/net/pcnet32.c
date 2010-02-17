@@ -59,7 +59,7 @@ static const char *const version =
 /*
  * PCI device identifiers for "new style" Linux PCI Device Drivers
  */
-static struct pci_device_id pcnet32_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(pcnet32_pci_tbl) = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_LANCE_HOME), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_LANCE), },
 
@@ -2698,7 +2698,7 @@ static void pcnet32_load_multicast(struct net_device *dev)
 	ib->filter[1] = 0;
 
 	/* Add addresses */
-	for (i = 0; i < dev->mc_count; i++) {
+	for (i = 0; i < netdev_mc_count(dev); i++) {
 		addrs = dmi->dmi_addr;
 		dmi = dmi->next;
 

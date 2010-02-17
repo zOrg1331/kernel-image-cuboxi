@@ -237,7 +237,7 @@ static const struct pci_id_info pci_id_tbl[] = {
 	{ }
 };
 
-static const struct pci_device_id yellowfin_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(yellowfin_pci_tbl) = {
 	{ 0x1000, 0x0702, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0 },
 	{ 0x1000, 0x0701, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 1 },
 	{ }
@@ -1301,15 +1301,16 @@ static void set_rx_mode(struct net_device *dev)
 	iowrite16(cfg_value & ~0x1000, ioaddr + Cnfg);
 	if (dev->flags & IFF_PROMISC) {			/* Set promiscuous. */
 		iowrite16(0x000F, ioaddr + AddrMode);
-	} else if ((dev->mc_count > 64)  ||  (dev->flags & IFF_ALLMULTI)) {
+	} else if ((netdev_mc_count(dev) > 64) ||
+		   (dev->flags & IFF_ALLMULTI)) {
 		/* Too many to filter well, or accept all multicasts. */
 		iowrite16(0x000B, ioaddr + AddrMode);
-	} else if (dev->mc_count > 0) { /* Must use the multicast hash table. */
+	} else if (!netdev_mc_empty(dev)) { /* Must use the multicast hash table. */
 		struct dev_mc_list *mclist;
 		u16 hash_table[4];
 		int i;
 		memset(hash_table, 0, sizeof(hash_table));
-		for (i = 0, mclist = dev->mc_list; mclist && i < dev->mc_count;
+		for (i = 0, mclist = dev->mc_list; mclist && i < netdev_mc_count(dev);
 			 i++, mclist = mclist->next) {
 			unsigned int bit;
 

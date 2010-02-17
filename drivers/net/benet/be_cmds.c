@@ -167,7 +167,14 @@ static int be_mbox_db_ready_wait(struct be_adapter *adapter, void __iomem *db)
 	u32 ready;
 
 	do {
-		ready = ioread32(db) & MPU_MAILBOX_DB_RDY_MASK;
+		ready = ioread32(db);
+		if (ready == 0xffffffff) {
+			dev_err(&adapter->pdev->dev,
+				"pci slot disconnected\n");
+			return -1;
+		}
+
+		ready &= MPU_MAILBOX_DB_RDY_MASK;
 		if (ready)
 			break;
 
@@ -197,6 +204,11 @@ static int be_mbox_notify_wait(struct be_adapter *adapter)
 	struct be_dma_mem *mbox_mem = &adapter->mbox_mem;
 	struct be_mcc_mailbox *mbox = mbox_mem->va;
 	struct be_mcc_compl *compl = &mbox->compl;
+
+	/* wait for ready to be set */
+	status = be_mbox_db_ready_wait(adapter, db);
+	if (status != 0)
+		return status;
 
 	val |= MPU_MAILBOX_DB_HI_MASK;
 	/* at bits 2 - 31 place mbox dma addr msb bits 34 - 63 */
@@ -395,6 +407,9 @@ int be_cmd_fw_clean(struct be_adapter *adapter)
 {
 	u8 *wrb;
 	int status;
+
+	if (adapter->eeh_err)
+		return -EIO;
 
 	spin_lock(&adapter->mbox_lock);
 
@@ -768,6 +783,9 @@ int be_cmd_q_destroy(struct be_adapter *adapter, struct be_queue_info *q,
 	u8 subsys = 0, opcode = 0;
 	int status;
 
+	if (adapter->eeh_err)
+		return -EIO;
+
 	spin_lock(&adapter->mbox_lock);
 
 	wrb = wrb_from_mbox(adapter);
@@ -855,6 +873,9 @@ int be_cmd_if_destroy(struct be_adapter *adapter, u32 interface_id)
 	struct be_mcc_wrb *wrb;
 	struct be_cmd_req_if_destroy *req;
 	int status;
+
+	if (adapter->eeh_err)
+		return -EIO;
 
 	spin_lock(&adapter->mbox_lock);
 
@@ -1374,7 +1395,7 @@ int be_cmd_write_flashrom(struct be_adapter *adapter, struct be_dma_mem *cmd,
 			u32 flash_type, u32 flash_opcode, u32 buf_size)
 {
 	struct be_mcc_wrb *wrb;
-	struct be_cmd_write_flashrom *req = cmd->va;
+	struct be_cmd_write_flashrom *req;
 	struct be_sge *sge;
 	int status;
 
@@ -1408,7 +1429,8 @@ err:
 	return status;
 }
 
-int be_cmd_get_flash_crc(struct be_adapter *adapter, u8 *flashed_crc)
+int be_cmd_get_flash_crc(struct be_adapter *adapter, u8 *flashed_crc,
+			 int offset)
 {
 	struct be_mcc_wrb *wrb;
 	struct be_cmd_write_flashrom *req;
@@ -1429,9 +1451,9 @@ int be_cmd_get_flash_crc(struct be_adapter *adapter, u8 *flashed_crc)
 	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
 		OPCODE_COMMON_READ_FLASHROM, sizeof(*req)+4);
 
-	req->params.op_type = cpu_to_le32(FLASHROM_TYPE_REDBOOT);
+	req->params.op_type = cpu_to_le32(IMG_TYPE_REDBOOT);
 	req->params.op_code = cpu_to_le32(FLASHROM_OPER_REPORT);
-	req->params.offset = 0x3FFFC;
+	req->params.offset = offset;
 	req->params.data_buf_size = 0x4;
 
 	status = be_mcc_notify_wait(adapter);
@@ -1604,6 +1626,36 @@ int be_cmd_ddr_dma_test(struct be_adapter *adapter, u64 pattern,
 	}
 
 err:
+	spin_unlock_bh(&adapter->mcc_lock);
+	return status;
+}
+
+extern int be_cmd_get_seeprom_data(struct be_adapter *adapter,
+				struct be_dma_mem *nonemb_cmd)
+{
+	struct be_mcc_wrb *wrb;
+	struct be_cmd_req_seeprom_read *req;
+	struct be_sge *sge;
+	int status;
+
+	spin_lock_bh(&adapter->mcc_lock);
+
+	wrb = wrb_from_mccq(adapter);
+	req = nonemb_cmd->va;
+	sge = nonembedded_sgl(wrb);
+
+	be_wrb_hdr_prepare(wrb, sizeof(*req), false, 1,
+			OPCODE_COMMON_SEEPROM_READ);
+
+	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
+			OPCODE_COMMON_SEEPROM_READ, sizeof(*req));
+
+	sge->pa_hi = cpu_to_le32(upper_32_bits(nonemb_cmd->dma));
+	sge->pa_lo = cpu_to_le32(nonemb_cmd->dma & 0xFFFFFFFF);
+	sge->len = cpu_to_le32(nonemb_cmd->size);
+
+	status = be_mcc_notify_wait(adapter);
+
 	spin_unlock_bh(&adapter->mcc_lock);
 	return status;
 }

@@ -97,13 +97,13 @@ struct t1_rx_mode {
 
 #define t1_rx_mode_promisc(rm)	(rm->dev->flags & IFF_PROMISC)
 #define t1_rx_mode_allmulti(rm)	(rm->dev->flags & IFF_ALLMULTI)
-#define t1_rx_mode_mc_cnt(rm)	(rm->dev->mc_count)
+#define t1_rx_mode_mc_cnt(rm)	(netdev_mc_count(rm->dev))
 
 static inline u8 *t1_get_next_mcaddr(struct t1_rx_mode *rm)
 {
 	u8 *addr = NULL;
 
-	if (rm->idx++ < rm->dev->mc_count) {
+	if (rm->idx++ < t1_rx_mode_mc_cnt(rm)) {
 		addr = rm->list->dmi_addr;
 		rm->list = rm->list->next;
 	}
@@ -334,7 +334,7 @@ static inline int t1_is_asic(const adapter_t *adapter)
 	return adapter->params.is_asic;
 }
 
-extern struct pci_device_id t1_pci_tbl[];
+extern const struct pci_device_id t1_pci_tbl[];
 
 static inline int adapter_matches_type(const adapter_t *adapter,
 				       int version, int revision)

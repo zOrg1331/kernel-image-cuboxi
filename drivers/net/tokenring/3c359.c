@@ -117,7 +117,7 @@ MODULE_PARM_DESC(message_level, "3c359: Level of reported messages") ;
  *	will be stuck with 1555 lines of hex #'s in the code.
  */
 
-static struct pci_device_id xl_pci_tbl[] =
+static DEFINE_PCI_DEVICE_TABLE(xl_pci_tbl) =
 {
 	{PCI_VENDOR_ID_3COM,PCI_DEVICE_ID_3COM_3C359, PCI_ANY_ID, PCI_ANY_ID, },
 	{ }			/* terminate list */
@@ -1408,7 +1408,7 @@ static void xl_set_rx_mode(struct net_device *dev)
 
 	dev_mc_address[0] = dev_mc_address[1] = dev_mc_address[2] = dev_mc_address[3] = 0 ;
 
-        for (i=0,dmi=dev->mc_list;i < dev->mc_count; i++,dmi = dmi->next) {
+        for (i=0,dmi=dev->mc_list;i < netdev_mc_count(dev); i++,dmi = dmi->next) {
                 dev_mc_address[0] |= dmi->dmi_addr[2] ;
                 dev_mc_address[1] |= dmi->dmi_addr[3] ;
                 dev_mc_address[2] |= dmi->dmi_addr[4] ;
