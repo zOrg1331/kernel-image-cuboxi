@@ -1070,9 +1070,9 @@ void wl_multicast( struct net_device *dev )
             ( dev->flags & IFF_MULTICAST ) ? "Multicast " : "",
             ( dev->flags & IFF_ALLMULTI ) ? "All-Multicast" : "" );
 
-        DBG_PRINT( "  mc_count: %d\n", dev->mc_count );
+        DBG_PRINT( "  mc_count: %d\n", netdev_mc_count(dev));
 
-        for( x = 0, mclist = dev->mc_list; mclist && x < dev->mc_count;
+        for( x = 0, mclist = dev->mc_list; mclist && x < netdev_mc_count(dev);
              x++, mclist = mclist->next ) {
             DBG_PRINT( "    %s (%d)\n", DbgHwAddr(mclist->dmi_addr),
                        mclist->dmi_addrlen );
@@ -1103,7 +1103,7 @@ void wl_multicast( struct net_device *dev )
                 DBG_PRINT( "Enabling Promiscuous mode (IFF_PROMISC)\n" );
                 hcf_put_info( &( lp->hcfCtx ), (LTVP)&( lp->ltvRecord ));
             }
-            else if(( dev->mc_count > HCF_MAX_MULTICAST ) ||
+            else if ((netdev_mc_count(dev) > HCF_MAX_MULTICAST) ||
                     ( dev->flags & IFF_ALLMULTI )) {
                 /* Shutting off this filter will enable all multicast frames to
                    be sent up from the device; however, this is a static RID, so
@@ -1115,13 +1115,13 @@ void wl_multicast( struct net_device *dev )
                 hcf_put_info( &( lp->hcfCtx ), (LTVP)&( lp->ltvRecord ));
                 wl_apply( lp );
             }
-            else if( dev->mc_count != 0 ) {
+            else if (!netdev_mc_empty(dev)) {
                 /* Set the multicast addresses */
-                lp->ltvRecord.len = ( dev->mc_count * 3 ) + 1;
+                lp->ltvRecord.len = ( netdev_mc_count(dev) * 3 ) + 1;
                 lp->ltvRecord.typ = CFG_GROUP_ADDR;
 
                 for( x = 0, mclist = dev->mc_list;
-                ( x < dev->mc_count ) && ( mclist != NULL );
+                ( x < netdev_mc_count(dev)) && ( mclist != NULL );
                     x++, mclist = mclist->next ) {
                     memcpy( &( lp->ltvRecord.u.u8[x * ETH_ALEN] ),
                             mclist->dmi_addr, ETH_ALEN );
@@ -1194,9 +1194,7 @@ static const struct net_device_ops wl_netdev_ops =
     .ndo_stop               = &wl_adapter_close,
     .ndo_do_ioctl           = &wl_ioctl,
 
-#ifdef HAVE_TX_TIMEOUT
     .ndo_tx_timeout         = &wl_tx_timeout,
-#endif
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
     .ndo_poll_controller    = wl_poll,
@@ -1270,9 +1268,7 @@ struct net_device * wl_device_alloc( void )
     dev->stop               = &wl_adapter_close;
     dev->do_ioctl           = &wl_ioctl;
 
-#ifdef HAVE_TX_TIMEOUT
     dev->tx_timeout         = &wl_tx_timeout;
-#endif
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
     dev->poll_controller = wl_poll;
@@ -1280,9 +1276,7 @@ struct net_device * wl_device_alloc( void )
 
 #endif // (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,30))
 
-#ifdef HAVE_TX_TIMEOUT
     dev->watchdog_timeo     = TX_TIMEOUT;
-#endif
 
     dev->ethtool_ops	    = &wl_ethtool_ops;
 

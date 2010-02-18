@@ -146,7 +146,7 @@
 static char version[] = "LanStreamer.c v0.4.0 03/08/01 - Mike Sullivan\n"
                         "              v0.5.3 11/13/02 - Kent Yoder";
 
-static struct pci_device_id streamer_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(streamer_pci_tbl) = {
 	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_TR, PCI_ANY_ID, PCI_ANY_ID,},
 	{}	/* terminating entry */
 };
@@ -1303,7 +1303,7 @@ static void streamer_set_rx_mode(struct net_device *dev)
 	writel(streamer_priv->srb,streamer_mmio+LAPA);
 	dev_mc_address[0] = dev_mc_address[1] = dev_mc_address[2] = dev_mc_address[3] = 0 ; 
   
-	for (i=0,dmi=dev->mc_list;i < dev->mc_count; i++,dmi = dmi->next) 
+	for (i=0,dmi=dev->mc_list;i < netdev_mc_count(dev); i++,dmi = dmi->next)
 	{ 
    	        dev_mc_address[0] |= dmi->dmi_addr[2] ; 
 		dev_mc_address[1] |= dmi->dmi_addr[3] ; 

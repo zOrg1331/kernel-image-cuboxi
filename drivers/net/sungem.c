@@ -107,7 +107,7 @@ MODULE_LICENSE("GPL");
 #define GEM_MODULE_NAME	"gem"
 #define PFX GEM_MODULE_NAME ": "
 
-static struct pci_device_id gem_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(gem_pci_tbl) = {
 	{ PCI_VENDOR_ID_SUN, PCI_DEVICE_ID_SUN_GEM,
 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
 
@@ -1837,7 +1837,7 @@ static u32 gem_setup_multicast(struct gem *gp)
 	int i;
 
 	if ((gp->dev->flags & IFF_ALLMULTI) ||
-	    (gp->dev->mc_count > 256)) {
+	    (netdev_mc_count(gp->dev) > 256)) {
 	    	for (i=0; i<16; i++)
 			writel(0xffff, gp->regs + MAC_HASH0 + (i << 2));
 		rxcfg |= MAC_RXCFG_HFE;
@@ -1852,7 +1852,7 @@ static u32 gem_setup_multicast(struct gem *gp)
 		for (i = 0; i < 16; i++)
 			hash_table[i] = 0;
 
-		for (i = 0; i < gp->dev->mc_count; i++) {
+		for (i = 0; i < netdev_mc_count(gp->dev); i++) {
 			char *addrs = dmi->dmi_addr;
 
 			dmi = dmi->next;

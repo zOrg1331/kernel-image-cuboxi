@@ -47,7 +47,7 @@
 #define PHY_ID_ANY		0x1f
 #define MII_REG_ANY		0x1f
 
-#define DRV_VERSION		"1.3"
+#define DRV_VERSION		"1.4"
 #define DRV_NAME		"sis190"
 #define SIS190_DRIVER_NAME	DRV_NAME " Gigabit Ethernet driver " DRV_VERSION
 #define PFX DRV_NAME ": "
@@ -294,6 +294,7 @@ struct sis190_private {
 	struct mii_if_info mii_if;
 	struct list_head first_phy;
 	u32 features;
+	u32 negotiated_lpa;
 };
 
 struct sis190_phy {
@@ -334,7 +335,7 @@ static const struct {
 	{ "SiS 191 PCI Gigabit Ethernet adapter" },
 };
 
-static struct pci_device_id sis190_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(sis190_pci_tbl) = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_SI, 0x0190), 0, 0, 0 },
 	{ PCI_DEVICE(PCI_VENDOR_ID_SI, 0x0191), 0, 0, 1 },
 	{ 0, },
@@ -841,7 +842,7 @@ static void sis190_set_rx_mode(struct net_device *dev)
 			AcceptBroadcast | AcceptMulticast | AcceptMyPhys |
 			AcceptAllPhys;
 		mc_filter[1] = mc_filter[0] = 0xffffffff;
-	} else if ((dev->mc_count > multicast_filter_limit) ||
+	} else if ((netdev_mc_count(dev) > multicast_filter_limit) ||
 		   (dev->flags & IFF_ALLMULTI)) {
 		/* Too many to filter perfectly -- accept all multicasts. */
 		rx_mode = AcceptBroadcast | AcceptMulticast | AcceptMyPhys;
@@ -852,7 +853,7 @@ static void sis190_set_rx_mode(struct net_device *dev)
 
 		rx_mode = AcceptBroadcast | AcceptMyPhys;
 		mc_filter[1] = mc_filter[0] = 0;
-		for (i = 0, mclist = dev->mc_list; mclist && i < dev->mc_count;
+		for (i = 0, mclist = dev->mc_list; mclist && i < netdev_mc_count(dev);
 		     i++, mclist = mclist->next) {
 			int bit_nr =
 				ether_crc(ETH_ALEN, mclist->dmi_addr) & 0x3f;
@@ -1003,6 +1004,8 @@ static void sis190_phy_task(struct work_struct *work)
 			SIS_W32(RGDelay, 0x0441);
 			SIS_W32(RGDelay, 0x0440);
 		}
+
+		tp->negotiated_lpa = p->val;
 
 		net_link(tp, KERN_INFO "%s: link on %s mode.\n", dev->name,
 			 p->msg);
@@ -1211,6 +1214,12 @@ static netdev_tx_t sis190_start_xmit(struct sk_buff *skb,
 	wmb();
 
 	desc->status = cpu_to_le32(OWNbit | INTbit | DEFbit | CRCbit | PADbit);
+	if (tp->negotiated_lpa & (LPA_1000HALF | LPA_100HALF | LPA_10HALF)) {
+		/* Half Duplex */
+		desc->status |= cpu_to_le32(COLEN | CRSEN | BKFEN);
+		if (tp->negotiated_lpa & (LPA_1000HALF | LPA_1000FULL))
+			desc->status |= cpu_to_le32(EXTEN | BSTEN); /* gigabit HD */
+	}
 
 	tp->cur_tx++;
 

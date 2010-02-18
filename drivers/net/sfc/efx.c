@@ -1615,7 +1615,7 @@ static void efx_set_multicast_list(struct net_device *net_dev)
 		memset(mc_hash, 0xff, sizeof(*mc_hash));
 	} else {
 		memset(mc_hash, 0x00, sizeof(*mc_hash));
-		for (i = 0; i < net_dev->mc_count; i++) {
+		for (i = 0; i < netdev_mc_count(net_dev); i++) {
 			crc = ether_crc_le(ETH_ALEN, mc_list->dmi_addr);
 			bit = crc & (EFX_MCAST_HASH_ENTRIES - 1);
 			set_bit_le(bit, mc_hash->byte);
@@ -1940,7 +1940,7 @@ void efx_schedule_reset(struct efx_nic *efx, enum reset_type type)
  **************************************************************************/
 
 /* PCI device ID table */
-static struct pci_device_id efx_pci_table[] __devinitdata = {
+static DEFINE_PCI_DEVICE_TABLE(efx_pci_table) = {
 	{PCI_DEVICE(EFX_VENDID_SFC, FALCON_A_P_DEVID),
 	 .driver_data = (unsigned long) &falcon_a1_nic_type},
 	{PCI_DEVICE(EFX_VENDID_SFC, FALCON_B_P_DEVID),
