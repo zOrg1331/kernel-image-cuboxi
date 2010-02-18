@@ -37,6 +37,7 @@
 #include <linux/kobject.h>
 #include <linux/mutex.h>
 #include <linux/file.h>
+#include <linux/ve_proto.h>
 #include <asm/uaccess.h>
 #include "internal.h"
 
@@ -69,13 +70,15 @@ static struct super_block *alloc_super(struct file_system_type *type)
 		INIT_LIST_HEAD(&s->s_dentry_lru);
 		init_rwsem(&s->s_umount);
 		mutex_init(&s->s_lock);
-		lockdep_set_class(&s->s_umount, &type->s_umount_key);
+		lockdep_set_class(&s->s_umount,
+				&type->proto->s_umount_key);
 		/*
 		 * The locking rules for s_lock are up to the
 		 * filesystem. For example ext3fs has different
 		 * lock ordering than usbfs:
 		 */
-		lockdep_set_class(&s->s_lock, &type->s_lock_key);
+		lockdep_set_class(&s->s_lock,
+				&type->proto->s_lock_key);
 		/*
 		 * sget() can have s_umount recursion.
 		 *
@@ -311,7 +314,7 @@ void generic_shutdown_super(struct super_block *sb)
 			sop->put_super(sb);
 
 		/* Forget any remaining inodes */
-		if (invalidate_inodes(sb)) {
+		if (invalidate_inodes_check(sb, 1)) {
 			printk("VFS: Busy inodes after unmount of %s. "
 			   "Self-destruct in 5 seconds.  Have a nice day...\n",
 			   sb->s_id);
@@ -531,17 +534,26 @@ rescan:
 	spin_unlock(&sb_lock);
 	return NULL;
 }
+EXPORT_SYMBOL(user_get_super);
 
 SYSCALL_DEFINE2(ustat, unsigned, dev, struct ustat __user *, ubuf)
 {
+	dev_t kdev;
         struct super_block *s;
         struct ustat tmp;
         struct kstatfs sbuf;
-	int err = -EINVAL;
+	int err;
 
-        s = user_get_super(new_decode_dev(dev));
-        if (s == NULL)
-                goto out;
+	kdev = new_decode_dev(dev);
+	err = get_device_perms_ve(S_IFBLK, kdev, FMODE_READ);
+	if (err)
+		goto out;
+
+	err = -EINVAL;
+	s = user_get_super(kdev);
+	if (s == NULL)
+		goto out;
+
 	err = vfs_statfs(s->s_root, &sbuf);
 	drop_super(s);
 	if (err)
@@ -653,6 +665,13 @@ static DEFINE_IDA(unnamed_dev_ida);
 static DEFINE_SPINLOCK(unnamed_dev_lock);/* protects the above */
 static int unnamed_dev_start = 0; /* don't bother trying below it */
 
+/* for compatibility with coreutils still unaware of new minor sizes */
+int unnamed_dev_majors[] = {
+	0, 144, 145, 146, 242, 243, 244, 245,
+	246, 247, 248, 249, 250, 251, 252, 253
+};
+EXPORT_SYMBOL(unnamed_dev_majors);
+
 int set_anon_super(struct super_block *s, void *data)
 {
 	int dev;
@@ -672,7 +691,7 @@ int set_anon_super(struct super_block *s, void *data)
 	else if (error)
 		return -EAGAIN;
 
-	if ((dev & MAX_ID_MASK) == (1 << MINORBITS)) {
+	if ((dev & MAX_ID_MASK) >= (1 << MINORBITS)) {
 		spin_lock(&unnamed_dev_lock);
 		ida_remove(&unnamed_dev_ida, dev);
 		if (unnamed_dev_start > dev)
@@ -680,7 +699,7 @@ int set_anon_super(struct super_block *s, void *data)
 		spin_unlock(&unnamed_dev_lock);
 		return -EMFILE;
 	}
-	s->s_dev = MKDEV(0, dev & MINORMASK);
+	s->s_dev = make_unnamed_dev(dev);
 	return 0;
 }
 
@@ -688,8 +707,9 @@ EXPORT_SYMBOL(set_anon_super);
 
 void kill_anon_super(struct super_block *sb)
 {
-	int slot = MINOR(sb->s_dev);
+	int slot;
 
+	slot = unnamed_dev_idx(sb->s_dev);
 	generic_shutdown_super(sb);
 	spin_lock(&unnamed_dev_lock);
 	ida_remove(&unnamed_dev_ida, slot);

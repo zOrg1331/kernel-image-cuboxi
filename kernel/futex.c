@@ -1574,8 +1574,6 @@ handle_fault:
 #define FLAGS_CLOCKRT		0x02
 #define FLAGS_HAS_TIMEOUT	0x04
 
-static long futex_wait_restart(struct restart_block *restart);
-
 /**
  * fixup_owner() - Post lock pi_state and corner case management
  * @uaddr:	user address of the futex
@@ -1849,7 +1847,7 @@ out:
 }
 
 
-static long futex_wait_restart(struct restart_block *restart)
+long futex_wait_restart(struct restart_block *restart)
 {
 	u32 __user *uaddr = (u32 __user *)restart->futex.uaddr;
 	int fshared = 0;
@@ -1866,6 +1864,7 @@ static long futex_wait_restart(struct restart_block *restart)
 				restart->futex.bitset,
 				restart->futex.flags & FLAGS_CLOCKRT);
 }
+EXPORT_SYMBOL_GPL(futex_wait_restart);
 
 
 /*

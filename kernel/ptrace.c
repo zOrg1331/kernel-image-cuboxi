@@ -130,6 +130,8 @@ int __ptrace_may_access(struct task_struct *task, unsigned int mode)
 	 * or halting the specified task is impossible.
 	 */
 	int dumpable = 0;
+	int vps_dumpable = 0;
+
 	/* Don't let security modules deny introspection */
 	if (task == current)
 		return 0;
@@ -147,11 +149,17 @@ int __ptrace_may_access(struct task_struct *task, unsigned int mode)
 	}
 	rcu_read_unlock();
 	smp_rmb();
-	if (task->mm)
+	if (task->mm) {
 		dumpable = get_dumpable(task->mm);
+		vps_dumpable = (task->mm->vps_dumpable == 1);
+	}
+
 	if (!dumpable && !capable(CAP_SYS_PTRACE))
 		return -EPERM;
-
+	if (!vps_dumpable && !ve_is_super(get_exec_env()))
+		return -EPERM;
+	if (!ve_accessible(VE_TASK_INFO(task)->owner_env, get_exec_env()))
+		return -EPERM;
 	return security_ptrace_access_check(task, mode);
 }
 
@@ -190,6 +198,8 @@ int ptrace_attach(struct task_struct *task)
 	task_unlock(task);
 	if (retval)
 		goto unlock_creds;
+	if (task->mm->vps_dumpable == 2)
+		goto bad;
 
 	write_lock_irq(&tasklist_lock);
 	retval = -EPERM;
@@ -396,6 +406,7 @@ int ptrace_writedata(struct task_struct *tsk, char __user *src, unsigned long ds
 	}
 	return copied;
 }
+EXPORT_SYMBOL_GPL(access_process_vm);
 
 static int ptrace_setoptions(struct task_struct *child, long data)
 {

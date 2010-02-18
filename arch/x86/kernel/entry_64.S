@@ -1198,7 +1198,7 @@ ENTRY(kernel_thread)
 	xorl %r9d,%r9d
 
 	# clone now
-	call do_fork
+	call do_fork_kthread
 	movq %rax,RAX(%rsp)
 	xorl %edi,%edi
 
