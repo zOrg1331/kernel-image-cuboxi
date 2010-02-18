@@ -40,8 +40,6 @@
 static unsigned int au1x00_clock; /*  Hz */
 static unsigned long uart_baud_base;
 
-static DEFINE_SPINLOCK(time_lock);
-
 /*
  * Set the au1000_clock
  */
@@ -86,8 +84,6 @@ unsigned long au1xxx_calc_clock(void)
 	unsigned long cpu_speed;
 	unsigned long flags;
 
-	spin_lock_irqsave(&time_lock, flags);
-
 	/*
 	 * On early Au1000, sys_cpupll was write-only. Since these
 	 * silicon versions of Au1000 are not sold by AMD, we don't bend
@@ -107,8 +103,6 @@ unsigned long au1xxx_calc_clock(void)
 	/* Equation: Baudrate = CPU / (SD * 2 * CLKDIV * 16) */
 	set_au1x00_uart_baud_base(cpu_speed / (2 * ((int)(au_readl(SYS_POWERCTRL)
 							  & 0x03) + 2) * 16));
-
-	spin_unlock_irqrestore(&time_lock, flags);
 
 	set_au1x00_speed(cpu_speed);
 
