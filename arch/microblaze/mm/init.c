@@ -193,12 +193,6 @@ void free_initmem(void)
 			(unsigned long)(&__init_end));
 }
 
-/* FIXME from arch/powerpc/mm/mem.c*/
-void show_mem(void)
-{
-	printk(KERN_NOTICE "%s\n", __func__);
-}
-
 void __init mem_init(void)
 {
 	high_memory = (void *)__va(memory_end);
@@ -349,4 +343,27 @@ void __init *early_get_page(void)
 	}
 	return p;
 }
+
+void * __init_refok alloc_maybe_bootmem(size_t size, gfp_t mask)
+{
+	if (mem_init_done)
+		return kmalloc(size, mask);
+	else
+		return alloc_bootmem(size);
+}
+
+void * __init_refok zalloc_maybe_bootmem(size_t size, gfp_t mask)
+{
+	void *p;
+
+	if (mem_init_done)
+		p = kzalloc(size, mask);
+	else {
+		p = alloc_bootmem(size);
+		if (p)
+			memset(p, 0, size);
+	}
+	return p;
+}
+
 #endif /* CONFIG_MMU */
