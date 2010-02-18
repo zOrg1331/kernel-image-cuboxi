@@ -1,5 +1,5 @@
 /*
- *  linux/arch/arm/mach-integrator/clock.c
+ *  linux/arch/arm/plat-versatile/clock.c
  *
  *  Copyright (C) 2004 ARM Limited.
  *  Written by Deep Blue Solutions Limited.
@@ -14,7 +14,8 @@
 #include <linux/clk.h>
 #include <linux/mutex.h>
 
-#include <asm/clkdev.h>
+#include <asm/hardware/icst.h>
+
 #include <mach/clkdev.h>
 
 int clk_enable(struct clk *clk)
@@ -36,9 +37,9 @@ EXPORT_SYMBOL(clk_get_rate);
 
 long clk_round_rate(struct clk *clk, unsigned long rate)
 {
-	struct icst525_vco vco;
-	vco = icst525_khz_to_vco(clk->params, rate / 1000);
-	return icst525_khz(clk->params, vco) * 1000;
+	struct icst_vco vco;
+	vco = icst_hz_to_vco(clk->params, rate);
+	return icst_hz(clk->params, vco);
 }
 EXPORT_SYMBOL(clk_round_rate);
 
@@ -47,10 +48,10 @@ int clk_set_rate(struct clk *clk, unsigned long rate)
 	int ret = -EIO;
 
 	if (clk->setvco) {
-		struct icst525_vco vco;
+		struct icst_vco vco;
 
-		vco = icst525_khz_to_vco(clk->params, rate / 1000);
-		clk->rate = icst525_khz(clk->params, vco) * 1000;
+		vco = icst_hz_to_vco(clk->params, rate);
+		clk->rate = icst_hz(clk->params, vco);
 		clk->setvco(clk, vco);
 		ret = 0;
 	}
