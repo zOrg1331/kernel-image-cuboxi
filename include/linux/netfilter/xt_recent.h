@@ -25,4 +25,12 @@ struct xt_recent_mtinfo {
 	__u8 side;
 };
 
+#ifdef __KERNEL__
+struct ve_ipt_recent {
+	struct list_head	tables;
+#ifdef CONFIG_PROC_FS
+	struct proc_dir_entry	*proc_dir;
+#endif
+};
+#endif
 #endif /* _LINUX_NETFILTER_XT_RECENT_H */
