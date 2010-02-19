@@ -16,6 +16,7 @@
 
 static char const *input_name = "perf.data";
 static int force;
+static bool with_hits;
 
 static const char * const buildid_list_usage[] = {
 	"perf buildid-list [<options>]",
@@ -23,6 +24,7 @@ static const char * const buildid_list_usage[] = {
 };
 
 static const struct option options[] = {
+	OPT_BOOLEAN('H', "with-hits", &with_hits, "Show only DSOs with hits"),
 	OPT_STRING('i', "input", &input_name, "file",
 		    "input file name"),
 	OPT_BOOLEAN('f', "force", &force, "don't complain, do it"),
@@ -31,25 +33,33 @@ static const struct option options[] = {
 	OPT_END()
 };
 
-static int perf_file_section__process_buildids(struct perf_file_section *self,
-					       int feat, int fd)
+static int build_id_list__process_event(event_t *event,
+					struct perf_session *session)
 {
-	if (feat != HEADER_BUILD_ID)
-		return 0;
+	struct addr_location al;
+	u8 cpumode = event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
+	struct thread *thread = perf_session__findnew(session, event->ip.pid);
 
-	if (lseek(fd, self->offset, SEEK_SET) < 0) {
-		pr_warning("Failed to lseek to %Ld offset for buildids!\n",
-			   self->offset);
+	if (thread == NULL) {
+		pr_err("problem processing %d event, skipping it.\n",
+			event->header.type);
 		return -1;
 	}
 
-	if (perf_header__read_build_ids(fd, self->offset, self->size)) {
-		pr_warning("Failed to read buildids!\n");
-		return -1;
-	}
+	thread__find_addr_map(thread, session, cpumode, MAP__FUNCTION,
+			      event->ip.ip, &al);
+
+	if (al.map != NULL)
+		al.map->dso->hit = 1;
 
 	return 0;
 }
+
+static struct perf_event_ops build_id_list__event_ops = {
+	.sample	= build_id_list__process_event,
+	.mmap	= event__process_mmap,
+	.fork	= event__process_task,
+};
 
 static int __cmd_buildid_list(void)
 {
@@ -60,10 +70,10 @@ static int __cmd_buildid_list(void)
 	if (session == NULL)
 		return -1;
 
-	err = perf_header__process_sections(&session->header, session->fd,
-				         perf_file_section__process_buildids);
-	if (err >= 0)
-		dsos__fprintf_buildid(stdout);
+	if (with_hits)
+		perf_session__process_events(session, &build_id_list__event_ops);
+
+	dsos__fprintf_buildid(stdout, with_hits);
 
 	perf_session__delete(session);
 	return err;
