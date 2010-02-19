@@ -110,7 +110,7 @@ u32 rt_global_debug_component = \
 #define TOTAL_CAM_ENTRY 32
 #define CAM_CONTENT_COUNT 8
 
-static struct usb_device_id rtl8192_usb_id_tbl[] = {
+static const struct usb_device_id rtl8192_usb_id_tbl[] = {
 	/* Realtek */
 	{USB_DEVICE(0x0bda, 0x8192)},
 	{USB_DEVICE(0x0bda, 0x8709)},
@@ -2952,7 +2952,7 @@ void rtl8192_SetWirelessMode(struct net_device* dev, u8 wireless_mode)
 			wireless_mode = WIRELESS_MODE_B;
 		}
 	}
-#ifdef TO_DO_LIST //// TODO: this function doesn't work well at this time, we shoud wait for FPGA
+#ifdef TO_DO_LIST //// TODO: this function doesn't work well at this time, we should wait for FPGA
 	ActUpdateChannelAccessSetting( pAdapter, pHalData->CurrentWirelessMode, &pAdapter->MgntInfo.Info8185.ChannelAccessSetting );
 #endif
 	//LZM 090306 usb crash here, mark it temp
@@ -3359,6 +3359,46 @@ u8 rtl8192SU_BoardTypeToRFtype(struct net_device* dev,  u8 Boardtype)
 	return RFtype;
 }
 
+void update_hal_variables(struct r8192_priv *priv)
+{
+	int rf_path;
+	int i;
+	u8 index;
+
+	for (rf_path = 0; rf_path < 2; rf_path++) {
+		for (i = 0; i < 3; i++)	{
+			RT_TRACE((COMP_INIT), "CCK RF-%d CHan_Area-%d = 0x%x\n", rf_path, i, priv->RfCckChnlAreaTxPwr[rf_path][i]);
+			RT_TRACE((COMP_INIT), "OFDM-1T RF-%d CHan_Area-%d = 0x%x\n", rf_path, i, priv->RfOfdmChnlAreaTxPwr1T[rf_path][i]);
+			RT_TRACE((COMP_INIT), "OFDM-2T RF-%d CHan_Area-%d = 0x%x\n", rf_path, i, priv->RfOfdmChnlAreaTxPwr2T[rf_path][i]);
+		}
+		/* Assign dedicated channel tx power */
+		for(i = 0; i < 14; i++) {
+			/* channel 1-3 use the same Tx Power Level. */
+			if (i < 3)			/* Channel 1-3 */
+				index = 0;
+			else if (i < 9)			/* Channel 4-9 */
+				index = 1;
+			else				/* Channel 10-14 */
+				index = 2;
+			/* Record A & B CCK /OFDM - 1T/2T Channel area tx power */
+			priv->RfTxPwrLevelCck[rf_path][i] = priv->RfCckChnlAreaTxPwr[rf_path][index];
+			priv->RfTxPwrLevelOfdm1T[rf_path][i]  = priv->RfOfdmChnlAreaTxPwr1T[rf_path][index];
+			priv->RfTxPwrLevelOfdm2T[rf_path][i]  = priv->RfOfdmChnlAreaTxPwr2T[rf_path][index];
+			if (rf_path == 0) {
+				priv->TxPowerLevelOFDM24G[i] = priv->RfTxPwrLevelOfdm1T[rf_path][i] ;
+				priv->TxPowerLevelCCK[i] = priv->RfTxPwrLevelCck[rf_path][i];
+			}
+		}
+		for(i = 0; i < 14; i++) {
+			RT_TRACE((COMP_INIT),
+			"Rf-%d TxPwr CH-%d CCK OFDM_1T OFDM_2T= 0x%x/0x%x/0x%x\n",
+				rf_path, i, priv->RfTxPwrLevelCck[rf_path][i],
+				priv->RfTxPwrLevelOfdm1T[rf_path][i] ,
+				priv->RfTxPwrLevelOfdm2T[rf_path][i] );
+		}
+	}
+}
+
 //
 //	Description:
 //		Config HW adapter information into initial value.
@@ -3374,7 +3414,7 @@ rtl8192SU_ConfigAdapterInfo8192SForAutoLoadFail(struct net_device* dev)
 	struct r8192_priv 	*priv = ieee80211_priv(dev);
 	//u16			i,usValue;
 	//u8 sMacAddr[6] = {0x00, 0xE0, 0x4C, 0x81, 0x92, 0x00};
-	u8		rf_path, index;	// For EEPROM/EFUSE After V0.6_1117
+	u8		rf_path;	// For EEPROM/EFUSE After V0.6_1117
 	int	i;
 
 	RT_TRACE(COMP_INIT, "====> ConfigAdapterInfo8192SForAutoLoadFail\n");
@@ -3426,10 +3466,9 @@ rtl8192SU_ConfigAdapterInfo8192SForAutoLoadFail(struct net_device* dev)
 	write_nic_dword(dev, IDR0, ((u32*)dev->dev_addr)[0]);
 	write_nic_word(dev, IDR4, ((u16*)(dev->dev_addr + 4))[0]);
 
-	RT_TRACE(COMP_INIT, "ReadAdapterInfo8192SEFuse(), Permanent Address = %02x-%02x-%02x-%02x-%02x-%02x\n",
-			dev->dev_addr[0], dev->dev_addr[1],
-			dev->dev_addr[2], dev->dev_addr[3],
-			dev->dev_addr[4], dev->dev_addr[5]);
+	RT_TRACE(COMP_INIT,
+		"ReadAdapterInfo8192SEFuse(), Permanent Address = %pM\n",
+		dev->dev_addr);
 
 	priv->EEPROMBoardType = EEPROM_Default_BoardType;
 	priv->rf_type = RF_1T2R; //RF_2T2R
@@ -3455,42 +3494,7 @@ rtl8192SU_ConfigAdapterInfo8192SForAutoLoadFail(struct net_device* dev)
 		}
 	}
 
-	for (i = 0; i < 3; i++)
-	{
-		//RT_TRACE((COMP_EFUSE), "CCK RF-%d CHan_Area-%d = 0x%x\n",  rf_path, i,
-		//priv->RfCckChnlAreaTxPwr[rf_path][i]);
-		//RT_TRACE((COMP_EFUSE), "OFDM-1T RF-%d CHan_Area-%d = 0x%x\n",  rf_path, i,
-		//priv->RfOfdmChnlAreaTxPwr1T[rf_path][i]);
-		//RT_TRACE((COMP_EFUSE), "OFDM-2T RF-%d CHan_Area-%d = 0x%x\n",  rf_path, i,
-		//priv->RfOfdmChnlAreaTxPwr2T[rf_path][i]);
-	}
-
-	// Assign dedicated channel tx power
-	for(i=0; i<14; i++)	// channel 1~3 use the same Tx Power Level.
-		{
-		if (i < 3)			// Cjanel 1-3
-			index = 0;
-		else if (i < 9)		// Channel 4-9
-			index = 1;
-		else				// Channel 10-14
-			index = 2;
-
-		// Record A & B CCK /OFDM - 1T/2T Channel area tx power
-		priv->RfTxPwrLevelCck[rf_path][i]  =
-		priv->RfCckChnlAreaTxPwr[rf_path][index];
-		priv->RfTxPwrLevelOfdm1T[rf_path][i]  =
-		priv->RfOfdmChnlAreaTxPwr1T[rf_path][index];
-		priv->RfTxPwrLevelOfdm2T[rf_path][i]  =
-		priv->RfOfdmChnlAreaTxPwr2T[rf_path][index];
-		}
-
-		for(i=0; i<14; i++)
-		{
-		//RT_TRACE((COMP_EFUSE), "Rf-%d TxPwr CH-%d CCK OFDM_1T OFDM_2T= 0x%x/0x%x/0x%x\n",
-		//rf_path, i, priv->RfTxPwrLevelCck[0][i],
-		//priv->RfTxPwrLevelOfdm1T[0][i] ,
-		//priv->RfTxPwrLevelOfdm2T[0][i] );
-		}
+	update_hal_variables(priv);
 
 	//
 	// Update remained HAL variables.
@@ -3767,10 +3771,9 @@ rtl8192SU_ReadAdapterInfo8192SUsb(struct net_device* dev)
 	write_nic_dword(dev, IDR0, ((u32*)dev->dev_addr)[0]);
 	write_nic_word(dev, IDR4, ((u16*)(dev->dev_addr + 4))[0]);
 
-	RT_TRACE(COMP_INIT, "ReadAdapterInfo8192SEFuse(), Permanent Address = %02x-%02x-%02x-%02x-%02x-%02x\n",
-			dev->dev_addr[0], dev->dev_addr[1],
-			dev->dev_addr[2], dev->dev_addr[3],
-			dev->dev_addr[4], dev->dev_addr[5]);
+	RT_TRACE(COMP_INIT,
+		"ReadAdapterInfo8192SEFuse(), Permanent Address = %pM\n",
+		dev->dev_addr);
 
 	//
 	// Get CustomerID(Boad Type)
@@ -3901,53 +3904,7 @@ rtl8192SU_ReadAdapterInfo8192SUsb(struct net_device* dev)
 			}
 
 		}
-//
-		// Update Tx Power HAL variables.
-//
-		for (rf_path = 0; rf_path < 2; rf_path++)
-		{
-			for (i = 0; i < 3; i++)
-			{
-				RT_TRACE((COMP_INIT),  "CCK RF-%d CHan_Area-%d = 0x%x\n",  rf_path, i,
-				priv->RfCckChnlAreaTxPwr[rf_path][i]);
-				RT_TRACE((COMP_INIT), "OFDM-1T RF-%d CHan_Area-%d = 0x%x\n",  rf_path, i,
-				priv->RfOfdmChnlAreaTxPwr1T[rf_path][i]);
-				RT_TRACE((COMP_INIT), "OFDM-2T RF-%d CHan_Area-%d = 0x%x\n",  rf_path, i, priv->RfOfdmChnlAreaTxPwr2T[rf_path][i]);
-			}
-
-			// Assign dedicated channel tx power
-			for(i=0; i<14; i++)	// channel 1~3 use the same Tx Power Level.
-			{
-				if (i < 3)			// Cjanel 1-3
-					index = 0;
-				else if (i < 9)		// Channel 4-9
-					index = 1;
-				else				// Channel 10-14
-					index = 2;
-
-				// Record A & B CCK /OFDM - 1T/2T Channel area tx power
-				priv->RfTxPwrLevelCck[rf_path][i]  =
-				priv->RfCckChnlAreaTxPwr[rf_path][index];
-				priv->RfTxPwrLevelOfdm1T[rf_path][i]  =
-				priv->RfOfdmChnlAreaTxPwr1T[rf_path][index];
-				priv->RfTxPwrLevelOfdm2T[rf_path][i]  =
-				priv->RfOfdmChnlAreaTxPwr2T[rf_path][index];
-				if (rf_path == 0)
-				{
-					priv->TxPowerLevelOFDM24G[i] = priv->RfTxPwrLevelOfdm1T[rf_path][i] ;
-					priv->TxPowerLevelCCK[i] = priv->RfTxPwrLevelCck[rf_path][i];
-				}
-			}
-
-			for(i=0; i<14; i++)
-			{
-				RT_TRACE((COMP_INIT),
-				"Rf-%d TxPwr CH-%d CCK OFDM_1T OFDM_2T= 0x%x/0x%x/0x%x\n",
-				rf_path, i, priv->RfTxPwrLevelCck[rf_path][i],
-				priv->RfTxPwrLevelOfdm1T[rf_path][i] ,
-				priv->RfTxPwrLevelOfdm2T[rf_path][i] );
-			}
-		}
+		update_hal_variables(priv);
 	}
 
 	//
@@ -7677,7 +7634,7 @@ void setKey(	struct net_device *dev,
 	if (EntryNo >= TOTAL_CAM_ENTRY)
 		RT_TRACE(COMP_ERR, "cam entry exceeds in setKey()\n");
 
-	RT_TRACE(COMP_SEC, "====>to setKey(), dev:%p, EntryNo:%d, KeyIndex:%d, KeyType:%d, MacAddr"MAC_FMT"\n", dev,EntryNo, KeyIndex, KeyType, MAC_ARG(MacAddr));
+	RT_TRACE(COMP_SEC, "====>to setKey(), dev:%p, EntryNo:%d, KeyIndex:%d, KeyType:%d, MacAddr%pM\n", dev,EntryNo, KeyIndex, KeyType, MacAddr);
 
 	if (DefaultKey)
 		usConfig |= BIT15 | (KeyType<<2);
