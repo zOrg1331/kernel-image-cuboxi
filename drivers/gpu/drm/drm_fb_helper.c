@@ -29,6 +29,7 @@
  */
 #include <linux/sysrq.h>
 #include <linux/fb.h>
+#include <linux/kgdb.h>
 #include "drmP.h"
 #include "drm_crtc.h"
 #include "drm_fb_helper.h"
@@ -233,6 +234,80 @@ int drm_fb_helper_parse_command_line(struct drm_device *dev)
 	return 0;
 }
 
+#define to_fb_helper(ops) (container_of((ops), struct drm_fb_helper, kdb_ops))
+
+static int drm_fb_kdb_enter(struct dbg_kms_ops *ops)
+{
+	struct drm_fb_helper *helper = to_fb_helper(ops);
+	struct drm_crtc_helper_funcs *funcs;
+	int i;
+
+	if (list_empty(&kernel_fb_helper_list))
+		return false;
+
+	list_for_each_entry(helper, &kernel_fb_helper_list, kernel_fb_list) {
+		for (i = 0; i < helper->crtc_count; i++) {
+			struct drm_mode_set *mode_set =
+				&helper->crtc_info[i].mode_set;
+
+			if (!mode_set->crtc->enabled)
+				continue;
+
+			funcs =	mode_set->crtc->helper_private;
+			funcs->mode_set_base_atomic(mode_set->crtc,
+						    mode_set->fb,
+						    mode_set->x,
+						    mode_set->y);
+
+		}
+	}
+
+	return 0;
+}
+
+/* Find the real fb for a given fb helper CRTC */
+static struct drm_framebuffer *drm_mode_config_fb(struct drm_crtc *crtc)
+{
+	struct drm_device *dev = crtc->dev;
+	struct drm_crtc *c;
+
+	list_for_each_entry(c, &dev->mode_config.crtc_list, head) {
+		if (crtc->base.id == c->base.id)
+			return c->fb;
+	}
+
+	return NULL;
+}
+
+static int drm_fb_kdb_exit(struct dbg_kms_ops *ops)
+{
+	struct drm_fb_helper *helper = to_fb_helper(ops);
+	struct drm_crtc *crtc;
+	struct drm_crtc_helper_funcs *funcs;
+	struct drm_framebuffer *fb;
+	int i;
+
+	for (i = 0; i < helper->crtc_count; i++) {
+		struct drm_mode_set *mode_set = &helper->crtc_info[i].mode_set;
+		crtc = mode_set->crtc;
+		funcs = crtc->helper_private;
+		fb = drm_mode_config_fb(crtc);
+
+		if (!crtc->enabled)
+			continue;
+
+		if (!fb) {
+			DRM_ERROR("no fb to restore??\n");
+			continue;
+		}
+
+		funcs->mode_set_base_atomic(mode_set->crtc, fb, crtc->x,
+					    crtc->y);
+	}
+
+	return 0;
+}
+
 bool drm_fb_helper_force_kernel_mode(void)
 {
 	int i = 0;
@@ -321,9 +396,9 @@ static void drm_fb_helper_on(struct fb_info *info)
 			    !crtc->enabled)
 				continue;
 
-			mutex_lock(&dev->mode_config.mutex);
+			dbg_safe_mutex_lock(&dev->mode_config.mutex);
 			crtc_funcs->dpms(crtc, DRM_MODE_DPMS_ON);
-			mutex_unlock(&dev->mode_config.mutex);
+			dbg_safe_mutex_unlock(&dev->mode_config.mutex);
 
 			/* Found a CRTC on this fb, now find encoders */
 			list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
@@ -331,9 +406,9 @@ static void drm_fb_helper_on(struct fb_info *info)
 					struct drm_encoder_helper_funcs *encoder_funcs;
 
 					encoder_funcs = encoder->helper_private;
-					mutex_lock(&dev->mode_config.mutex);
+					dbg_safe_mutex_lock(&dev->mode_config.mutex);
 					encoder_funcs->dpms(encoder, DRM_MODE_DPMS_ON);
-					mutex_unlock(&dev->mode_config.mutex);
+					dbg_safe_mutex_unlock(&dev->mode_config.mutex);
 				}
 			}
 		}
@@ -602,7 +677,7 @@ int drm_fb_helper_check_var(struct fb_var_screeninfo *var,
 	struct drm_framebuffer *fb = fb_helper->fb;
 	int depth;
 
-	if (var->pixclock != 0)
+	if (var->pixclock != 0 || in_dbg_master())
 		return -EINVAL;
 
 	/* Need to resize the fb object !!! */
@@ -744,9 +819,9 @@ int drm_fb_helper_pan_display(struct fb_var_screeninfo *var,
 		modeset->y = var->yoffset;
 
 		if (modeset->num_connectors) {
-			mutex_lock(&dev->mode_config.mutex);
+			dbg_safe_mutex_lock(&dev->mode_config.mutex);
 			ret = crtc->funcs->set_config(modeset);
-			mutex_unlock(&dev->mode_config.mutex);
+			dbg_safe_mutex_unlock(&dev->mode_config.mutex);
 			if (!ret) {
 				info->var.xoffset = var->xoffset;
 				info->var.yoffset = var->yoffset;
@@ -923,6 +998,9 @@ int drm_fb_helper_single_fb_probe(struct drm_device *dev,
 	/* Switch back to kernel console on panic */
 	/* multi card linked list maybe */
 	if (list_empty(&kernel_fb_helper_list)) {
+		fb_helper->kdb_ops.activate_console = drm_fb_kdb_enter;
+		fb_helper->kdb_ops.restore_console = drm_fb_kdb_exit;
+		dbg_kms_ops_register(&fb_helper->kdb_ops);
 		printk(KERN_INFO "registered panic notifier\n");
 		atomic_notifier_chain_register(&panic_notifier_list,
 					       &paniced);
@@ -937,6 +1015,7 @@ void drm_fb_helper_free(struct drm_fb_helper *helper)
 {
 	list_del(&helper->kernel_fb_list);
 	if (list_empty(&kernel_fb_helper_list)) {
+		dbg_kms_ops_unregister(&helper->kdb_ops);
 		printk(KERN_INFO "unregistered panic notifier\n");
 		atomic_notifier_chain_unregister(&panic_notifier_list,
 						 &paniced);
