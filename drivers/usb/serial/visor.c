@@ -368,7 +368,7 @@ static int visor_write(struct tty_struct *tty, struct usb_serial_port *port,
 	spin_lock_irqsave(&priv->lock, flags);
 	if (priv->outstanding_urbs > URB_UPPER_LIMIT) {
 		spin_unlock_irqrestore(&priv->lock, flags);
-		dbg("%s - write limit hit\n", __func__);
+		dbg("%s - write limit hit", __func__);
 		return 0;
 	}
 	priv->outstanding_urbs++;
@@ -446,7 +446,7 @@ static int visor_write_room(struct tty_struct *tty)
 	spin_lock_irqsave(&priv->lock, flags);
 	if (priv->outstanding_urbs > URB_UPPER_LIMIT * 2 / 3) {
 		spin_unlock_irqrestore(&priv->lock, flags);
-		dbg("%s - write limit hit\n", __func__);
+		dbg("%s - write limit hit", __func__);
 		return 0;
 	}
 	spin_unlock_irqrestore(&priv->lock, flags);
@@ -807,9 +807,13 @@ static int clie_3_5_startup(struct usb_serial *serial)
 {
 	struct device *dev = &serial->dev->dev;
 	int result;
-	u8 data;
+	u8 *data;
 
 	dbg("%s", __func__);
+
+	data = kmalloc(1, GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
 
 	/*
 	 * Note that PEG-300 series devices expect the following two calls.
@@ -818,36 +822,42 @@ static int clie_3_5_startup(struct usb_serial *serial)
 	/* get the config number */
 	result = usb_control_msg(serial->dev, usb_rcvctrlpipe(serial->dev, 0),
 				  USB_REQ_GET_CONFIGURATION, USB_DIR_IN,
-				  0, 0, &data, 1, 3000);
+				  0, 0, data, 1, 3000);
 	if (result < 0) {
 		dev_err(dev, "%s: get config number failed: %d\n",
 							__func__, result);
-		return result;
+		goto out;
 	}
 	if (result != 1) {
 		dev_err(dev, "%s: get config number bad return length: %d\n",
 							__func__, result);
-		return -EIO;
+		result = -EIO;
+		goto out;
 	}
 
 	/* get the interface number */
 	result = usb_control_msg(serial->dev, usb_rcvctrlpipe(serial->dev, 0),
 				  USB_REQ_GET_INTERFACE,
 				  USB_DIR_IN | USB_RECIP_INTERFACE,
-				  0, 0, &data, 1, 3000);
+				  0, 0, data, 1, 3000);
 	if (result < 0) {
 		dev_err(dev, "%s: get interface number failed: %d\n",
 							__func__, result);
-		return result;
+		goto out;
 	}
 	if (result != 1) {
 		dev_err(dev,
 			"%s: get interface number bad return length: %d\n",
 							__func__, result);
-		return -EIO;
+		result = -EIO;
+		goto out;
 	}
 
-	return generic_startup(serial);
+	result = generic_startup(serial);
+out:
+	kfree(data);
+
+	return result;
 }
 
 static int treo_attach(struct usb_serial *serial)
