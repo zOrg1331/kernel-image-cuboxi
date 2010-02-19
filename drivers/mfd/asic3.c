@@ -782,6 +782,8 @@ static struct mfd_cell asic3_cell_mmc = {
 	.name          = "tmio-mmc",
 	.enable        = asic3_mmc_enable,
 	.disable       = asic3_mmc_disable,
+	.suspend       = asic3_mmc_disable,
+	.resume        = asic3_mmc_enable,
 	.driver_data   = &asic3_mmc_data,
 	.num_resources = ARRAY_SIZE(asic3_mmc_resources),
 	.resources     = asic3_mmc_resources,
@@ -825,6 +827,8 @@ static int __init asic3_mfd_probe(struct platform_device *pdev,
 
 	asic3_cell_mmc.platform_data = &asic3_cell_mmc;
 	asic3_cell_mmc.data_size = sizeof(asic3_cell_mmc);
+
+	tmio_core_set_bus_shift(1 - asic->bus_shift);
 
 	ret = mfd_add_devices(&pdev->dev, pdev->id,
 			&asic3_cell_ds1wm, 1, mem, asic->irq_base);
