@@ -243,6 +243,8 @@ validate_fini_list(struct list_head *list, struct nouveau_fence *fence)
 			nouveau_fence_unref((void *)&prev_fence);
 		}
 
+		ttm_bo_kunmap(&nvbo->kmap);
+
 		list_del(&nvbo->entry);
 		nvbo->reserved_by = NULL;
 		ttm_bo_unreserve(&nvbo->bo);
@@ -576,7 +578,7 @@ nouveau_gem_ioctl_pushbuf(struct drm_device *dev, void *data,
 	struct nouveau_channel *chan;
 	struct validate_op op;
 	struct nouveau_fence *fence = 0;
-	int i, ret = 0, do_reloc = 0;
+	int i, j, ret = 0, do_reloc = 0;
 
 	NOUVEAU_CHECK_INITIALISED_WITH_RETURN;
 	NOUVEAU_GET_USER_CHANNEL_WITH_RETURN(req->channel, file_priv, chan);
@@ -698,7 +700,7 @@ nouveau_gem_ioctl_pushbuf(struct drm_device *dev, void *data,
 			OUT_RING(chan, ((mem->start << PAGE_SHIFT) +
 					push[i].offset) | 0x20000000);
 			OUT_RING(chan, 0);
-			for (i = 0; i < NOUVEAU_DMA_SKIPS; i++)
+			for (j = 0; j < NOUVEAU_DMA_SKIPS; j++)
 				OUT_RING(chan, 0);
 		}
 	}
