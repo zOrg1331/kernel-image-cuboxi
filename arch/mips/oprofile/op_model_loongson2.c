@@ -47,8 +47,6 @@ static struct loongson2_register_config {
 	int cnt1_enabled, cnt2_enabled;
 } reg;
 
-static DEFINE_SPINLOCK(sample_lock);
-
 static char *oprofid = "LoongsonPerf";
 static irqreturn_t loongson2_perfcount_handler(int irq, void *dev_id);
 /* Compute all of the registers in preparation for enabling profiling.  */
@@ -136,8 +134,6 @@ static irqreturn_t loongson2_perfcount_handler(int irq, void *dev_id)
 	counter1 = counter & 0xffffffff;
 	counter2 = counter >> 32;
 
-	spin_lock_irqsave(&sample_lock, flags);
-
 	if (counter1 & LOONGSON2_PERFCNT_OVERFLOW) {
 		if (reg.cnt1_enabled)
 			oprofile_add_sample(regs, 0);
@@ -148,8 +144,6 @@ static irqreturn_t loongson2_perfcount_handler(int irq, void *dev_id)
 			oprofile_add_sample(regs, 1);
 		counter2 = reg.reset_counter2;
 	}
-
-	spin_unlock_irqrestore(&sample_lock, flags);
 
 	write_c0_perfcnt((counter2 << 32) | counter1);
 
