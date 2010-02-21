@@ -1,7 +1,7 @@
 aufs2 standalone patch for linux-2.6.
 
 diff --git a/fs/namei.c b/fs/namei.c
-index bc7d5ed..4c17b27 100644
+index ca3c04b..90cb1d1 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -349,6 +349,7 @@ int deny_write_access(struct file * file)
@@ -94,7 +94,7 @@ index 6cf8fd2..008e0d8 100644
  int devcgroup_inode_mknod(int mode, dev_t dev)
  {
 diff --git a/security/security.c b/security/security.c
-index 24e060b..900b320 100644
+index 122b748..a4a3d99 100644
 --- a/security/security.c
 +++ b/security/security.c
 @@ -404,6 +404,7 @@ int security_path_mkdir(struct path *path, struct dentry *dentry, int mode)
@@ -193,7 +193,7 @@ index 24e060b..900b320 100644
  
  int security_file_alloc(struct file *file)
  {
-@@ -686,6 +698,7 @@ int security_file_mmap(struct file *file, unsigned long reqprot,
+@@ -684,6 +696,7 @@ int security_file_mmap(struct file *file, unsigned long reqprot,
  		return ret;
  	return ima_file_mmap(file, prot);
  }
