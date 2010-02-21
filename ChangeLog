@@ -1,3 +1,15 @@
+commit 1e89b3d30002ede54006d389b31ad4515c9a981a
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Sun Feb 21 22:06:09 2010 +0900
+
+    aufs: follow the upstream changes for IMA
+    
+    IMA is modified again and again.
+    Here I have to restore the ugly flag conversion code just to call
+    ima_file_check().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 8a25f7e7f34ca81f2696e1a57f8b6de6bee2c9ad
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Thu Feb 11 02:19:10 2010 +0900
