@@ -20,3 +20,7 @@ obj-$(CONFIG_ARCH_MXC_AUDMUX_V1) += audmux-v1.o
 CFLAGS_audmux-v1.o = -DIMX_NEEDS_DEPRECATED_SYMBOLS
 obj-$(CONFIG_ARCH_MXC_AUDMUX_V2) += audmux-v2.o
 CFLAGS_audmux-v2.o = -DIMX_NEEDS_DEPRECATED_SYMBOLS
+ifdef CONFIG_SND_IMX_SOC
+obj-y += ssi-fiq.o
+obj-y += ssi-fiq-ksym.o
+endif
