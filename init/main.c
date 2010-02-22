@@ -63,6 +63,7 @@
 #include <linux/sched.h>
 #include <linux/signal.h>
 #include <linux/idr.h>
+#include <linux/kgdb.h>
 #include <linux/ftrace.h>
 #include <linux/async.h>
 #include <linux/kmemcheck.h>
@@ -659,6 +660,7 @@ asmlinkage void __init start_kernel(void)
 	key_init();
 	radix_tree_init();
 	security_init();
+	dbg_late_init();
 	vfs_caches_init(totalram_pages);
 	signals_init();
 	/* rootfs populating might need page-writeback */
