@@ -15,7 +15,6 @@
 
 #ifndef __ASM_ARCH_MSM_UNCOMPRESS_H
 
-#include "hardware.h"
 #include "linux/io.h"
 #include "mach/msm_iomap.h"
 
