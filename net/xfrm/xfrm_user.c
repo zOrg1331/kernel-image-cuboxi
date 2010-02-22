@@ -1524,8 +1524,11 @@ static int xfrm_flush_sa(struct sk_buff *skb, struct nlmsghdr *nlh,
 	audit_info.sessionid = NETLINK_CB(skb).sessionid;
 	audit_info.secid = NETLINK_CB(skb).sid;
 	err = xfrm_state_flush(net, p->proto, &audit_info);
-	if (err)
+	if (err) {
+		if (err == -ESRCH) /* empty table */
+			return 0;
 		return err;
+	}
 	c.data.proto = p->proto;
 	c.event = nlh->nlmsg_type;
 	c.seq = nlh->nlmsg_seq;
@@ -1676,8 +1679,12 @@ static int xfrm_flush_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 	audit_info.sessionid = NETLINK_CB(skb).sessionid;
 	audit_info.secid = NETLINK_CB(skb).sid;
 	err = xfrm_policy_flush(net, type, &audit_info);
-	if (err)
+	if (err) {
+		if (err == -ESRCH) /* empty table */
+			return 0;
 		return err;
+	}
+
 	c.data.type = type;
 	c.event = nlh->nlmsg_type;
 	c.seq = nlh->nlmsg_seq;
@@ -2054,6 +2061,10 @@ static const int xfrm_msg_min[XFRM_NR_MSGTYPES] = {
 #undef XMSGSIZE
 
 static const struct nla_policy xfrma_policy[XFRMA_MAX+1] = {
+	[XFRMA_SA]		= { .len = sizeof(struct xfrm_usersa_info)},
+	[XFRMA_POLICY]		= { .len = sizeof(struct xfrm_userpolicy_info)},
+	[XFRMA_LASTUSED]	= { .type = NLA_U64},
+	[XFRMA_ALG_AUTH_TRUNC]	= { .len = sizeof(struct xfrm_algo_auth)},
 	[XFRMA_ALG_AEAD]	= { .len = sizeof(struct xfrm_algo_aead) },
 	[XFRMA_ALG_AUTH]	= { .len = sizeof(struct xfrm_algo) },
 	[XFRMA_ALG_CRYPT]	= { .len = sizeof(struct xfrm_algo) },
