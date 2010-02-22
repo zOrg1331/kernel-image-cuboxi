@@ -1,3 +1,11 @@
+commit 82a2906ff8d0ce227d56ec5cf3f615247124aa9b
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Mon Feb 22 12:50:14 2010 +0900
+
+    aufs: tiny, just tabify
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit 96565321bb0f67d7106c3089f7bc24f98bbdc998
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Sun Feb 21 23:47:54 2010 +0900
