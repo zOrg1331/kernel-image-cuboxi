@@ -19,6 +19,7 @@
 #include <linux/sched.h>
 #include <linux/init.h>
 #include <linux/list.h>
+#include <linux/module.h>
 
 #include <trace/syscall.h>
 
@@ -29,16 +30,17 @@
 
 
 #ifdef CONFIG_DYNAMIC_FTRACE
-
 int ftrace_arch_code_modify_prepare(void)
 {
 	set_kernel_text_rw();
+	set_all_modules_text_rw();
 	return 0;
 }
 
 int ftrace_arch_code_modify_post_process(void)
 {
 	set_kernel_text_ro();
+	set_all_modules_text_ro();
 	return 0;
 }
 

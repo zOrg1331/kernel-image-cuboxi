@@ -300,6 +300,9 @@ struct module
 	/* The size of the executable code in each section.  */
 	unsigned int init_text_size, core_text_size;
 
+	/* Size of RO sections of the module (text+rodata) */
+	unsigned int init_ro_size, core_ro_size;
+
 	/* Arch-specific module values */
 	struct mod_arch_specific arch;
 
@@ -542,6 +545,9 @@ extern void print_modules(void);
 extern void module_update_tracepoints(void);
 extern int module_get_iter_tracepoints(struct tracepoint_iter *iter);
 
+void set_all_modules_text_rw(void);
+void set_all_modules_text_ro(void);
+
 #else /* !CONFIG_MODULES... */
 #define EXPORT_SYMBOL(sym)
 #define EXPORT_SYMBOL_GPL(sym)
@@ -662,6 +668,13 @@ static inline int module_get_iter_tracepoints(struct tracepoint_iter *iter)
 	return 0;
 }
 
+static inline void set_all_modules_text_rw(void)
+{
+}
+
+static inline void set_all_modules_text_ro(void)
+{
+}
 #endif /* CONFIG_MODULES */
 
 struct device_driver;
