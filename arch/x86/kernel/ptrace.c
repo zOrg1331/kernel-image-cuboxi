@@ -48,6 +48,7 @@ enum x86_regset {
 	REGSET_FP,
 	REGSET_XFP,
 	REGSET_IOPERM64 = REGSET_XFP,
+	REGSET_XSTATE,
 	REGSET_TLS,
 	REGSET_IOPERM32,
 };
@@ -139,30 +140,6 @@ static const int arg_offs_table[] = {
 	[5] = offsetof(struct pt_regs, r9)
 #endif
 };
-
-/**
- * regs_get_argument_nth() - get Nth argument at function call
- * @regs:	pt_regs which contains registers at function entry.
- * @n:		argument number.
- *
- * regs_get_argument_nth() returns @n th argument of a function call.
- * Since usually the kernel stack will be changed right after function entry,
- * you must use this at function entry. If the @n th entry is NOT in the
- * kernel stack or pt_regs, this returns 0.
- */
-unsigned long regs_get_argument_nth(struct pt_regs *regs, unsigned int n)
-{
-	if (n < ARRAY_SIZE(arg_offs_table))
-		return *(unsigned long *)((char *)regs + arg_offs_table[n]);
-	else {
-		/*
-		 * The typical case: arg n is on the stack.
-		 * (Note: stack[0] = return address, so skip it)
-		 */
-		n -= ARRAY_SIZE(arg_offs_table);
-		return regs_get_kernel_stack_nth(regs, 1 + n);
-	}
-}
 
 /*
  * does not yet catch signals sent when the child dies.
@@ -1232,6 +1209,20 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 					     0, sizeof(struct user_i387_struct),
 					     datap);
 
+	case PTRACE_GETXSTATEREGS:	/* Get the child extended state. */
+		return copy_regset_to_user(child,
+					   task_user_regset_view(current),
+					   REGSET_XSTATE,
+					   0, xstate_size,
+					   datap);
+
+	case PTRACE_SETXSTATEREGS:	/* Set the child extended state. */
+		return copy_regset_from_user(child,
+					     task_user_regset_view(current),
+					     REGSET_XSTATE,
+					     0, xstate_size,
+					     datap);
+
 #ifdef CONFIG_X86_32
 	case PTRACE_GETFPXREGS:	/* Get the child extended FPU state. */
 		return copy_regset_to_user(child, &user_x86_32_view,
@@ -1561,6 +1552,16 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 					     sizeof(struct user32_fxsr_struct),
 					     datap);
 
+	case PTRACE_GETXSTATEREGS:	/* Get the child extended state. */
+		return copy_regset_to_user(child, &user_x86_32_view,
+					   REGSET_XSTATE, 0, xstate_size,
+					   datap);
+
+	case PTRACE_SETXSTATEREGS:	/* Set the child extended state. */
+		return copy_regset_from_user(child, &user_x86_32_view,
+					     REGSET_XSTATE, 0, xstate_size,
+					     datap);
+
 	case PTRACE_GET_THREAD_AREA:
 	case PTRACE_SET_THREAD_AREA:
 #ifdef CONFIG_X86_PTRACE_BTS
@@ -1584,7 +1585,7 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 
 #ifdef CONFIG_X86_64
 
-static const struct user_regset x86_64_regsets[] = {
+static struct user_regset x86_64_regsets[] __read_mostly = {
 	[REGSET_GENERAL] = {
 		.core_note_type = NT_PRSTATUS,
 		.n = sizeof(struct user_regs_struct) / sizeof(long),
@@ -1596,6 +1597,12 @@ static const struct user_regset x86_64_regsets[] = {
 		.n = sizeof(struct user_i387_struct) / sizeof(long),
 		.size = sizeof(long), .align = sizeof(long),
 		.active = xfpregs_active, .get = xfpregs_get, .set = xfpregs_set
+	},
+	[REGSET_XSTATE] = {
+		.core_note_type = NT_X86_XSTATE,
+		.size = sizeof(long), .align = sizeof(long),
+		.active = xstateregs_active, .get = xstateregs_get,
+		.set = xstateregs_set
 	},
 	[REGSET_IOPERM64] = {
 		.core_note_type = NT_386_IOPERM,
@@ -1622,7 +1629,7 @@ static const struct user_regset_view user_x86_64_view = {
 #endif	/* CONFIG_X86_64 */
 
 #if defined CONFIG_X86_32 || defined CONFIG_IA32_EMULATION
-static const struct user_regset x86_32_regsets[] = {
+static struct user_regset x86_32_regsets[] __read_mostly = {
 	[REGSET_GENERAL] = {
 		.core_note_type = NT_PRSTATUS,
 		.n = sizeof(struct user_regs_struct32) / sizeof(u32),
@@ -1640,6 +1647,12 @@ static const struct user_regset x86_32_regsets[] = {
 		.n = sizeof(struct user32_fxsr_struct) / sizeof(u32),
 		.size = sizeof(u32), .align = sizeof(u32),
 		.active = xfpregs_active, .get = xfpregs_get, .set = xfpregs_set
+	},
+	[REGSET_XSTATE] = {
+		.core_note_type = NT_X86_XSTATE,
+		.size = sizeof(u32), .align = sizeof(u32),
+		.active = xstateregs_active, .get = xstateregs_get,
+		.set = xstateregs_set
 	},
 	[REGSET_TLS] = {
 		.core_note_type = NT_386_TLS,
@@ -1662,6 +1675,18 @@ static const struct user_regset_view user_x86_32_view = {
 	.regsets = x86_32_regsets, .n = ARRAY_SIZE(x86_32_regsets)
 };
 #endif
+
+u64 xstate_fx_sw_bytes[6];
+void update_regset_xstate_info(unsigned int size, u64 xstate_mask)
+{
+#ifdef CONFIG_X86_64
+	x86_64_regsets[REGSET_XSTATE].n = size / sizeof(long);
+#endif
+#if defined CONFIG_X86_32 || defined CONFIG_IA32_EMULATION
+	x86_32_regsets[REGSET_XSTATE].n = size / sizeof(u32);
+#endif
+	xstate_fx_sw_bytes[0] = xstate_mask;
+}
 
 const struct user_regset_view *task_user_regset_view(struct task_struct *task)
 {
