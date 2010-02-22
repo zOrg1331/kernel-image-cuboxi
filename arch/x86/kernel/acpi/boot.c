@@ -481,6 +481,7 @@ int acpi_register_gsi(struct device *dev, u32 gsi, int trigger, int polarity)
  *  ACPI based hotplug support for CPU
  */
 #ifdef CONFIG_ACPI_HOTPLUG_CPU
+#include <acpi/processor.h>
 
 static int __cpuinit _acpi_map_lsapic(acpi_handle handle, int *pcpu)
 {
@@ -538,6 +539,8 @@ static int __cpuinit _acpi_map_lsapic(acpi_handle handle, int *pcpu)
 		retval = -EINVAL;
 		goto free_new_map;
 	}
+
+	acpi_processor_set_pdc(handle);
 
 	cpu = cpumask_first(new_map);
 
