@@ -39,6 +39,7 @@ Table of Contents
   3.4	/proc/<pid>/coredump_filter - Core dump filtering settings
   3.5	/proc/<pid>/mountinfo - Information about mounts
   3.6	/proc/<pid>/comm  & /proc/<pid>/task/<tid>/comm
+  3.7	/proc/<pid>/limits & /proc/<pid>/task/<tid>/limits
 
 
 ------------------------------------------------------------------------------
@@ -1416,3 +1417,13 @@ a task to set its own or one of its thread siblings comm value. The comm value
 is limited in size compared to the cmdline value, so writing anything longer
 then the kernel's TASK_COMM_LEN (currently 16 chars) will result in a truncated
 comm value.
+
+3.7	/proc/<pid>/limits & /proc/<pid>/task/<tid>/limits
+----------------------------------------------------------
+They serve as resource limits information providers. Each limit is printed out
+on a single line with its soft and hard quota. Additionally the limits may be
+changed (with sufficient privileges) by writing a string of format:
+<limit name>=<soft_limit>:<hard_limit>
+into that file. Both soft and hard limits there may be "undefined" keyword.
+Note that the value cannot be arbitraty. The same rules as for setlimit
+syscall hold.
