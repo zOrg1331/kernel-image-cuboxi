@@ -41,7 +41,7 @@ static struct usb_device_id generic_device_ids[2]; /* Initially all zeroes. */
 
 /* we want to look at all devices, as the vendor/product id can change
  * depending on the command line argument */
-static struct usb_device_id generic_serial_ids[] = {
+static const struct usb_device_id generic_serial_ids[] = {
 	{.driver_info = 42},
 	{}
 };
@@ -194,7 +194,7 @@ static int usb_serial_multi_urb_write(struct tty_struct *tty,
 		if (port->urbs_in_flight >
 		    port->serial->type->max_in_flight_urbs) {
 			spin_unlock_irqrestore(&port->lock, flags);
-			dbg("%s - write limit hit\n", __func__);
+			dbg("%s - write limit hit", __func__);
 			return bwrite;
 		}
 		port->tx_bytes_flight += towrite;
