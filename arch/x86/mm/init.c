@@ -356,10 +356,9 @@ void free_init_pages(char *what, unsigned long begin, unsigned long end)
 	/*
 	 * We just marked the kernel text read only above, now that
 	 * we are going to free part of that, we need to make that
-	 * writeable and non-executable first.
+	 * writeable first.
 	 */
 	set_memory_rw(begin, (end - begin) >> PAGE_SHIFT);
-	set_memory_nx(begin, (end - begin) >> PAGE_SHIFT);
 
 	printk(KERN_INFO "Freeing %s: %luk freed\n", what, (end - begin) >> 10);
 
@@ -374,29 +373,11 @@ void free_init_pages(char *what, unsigned long begin, unsigned long end)
 #endif
 }
 
-void mark_nxdata_nx(void)
-{
-#ifdef CONFIG_DEBUG_RODATA
-	/*
-	 * When this called, init has already been executed and released,
-	 * so everything past _etext sould be NX.
-	 */
-	unsigned long start = PAGE_ALIGN((unsigned long)(&_etext));
-	unsigned long size = PAGE_ALIGN((unsigned long)(&_end)) - start;
-
-	printk(KERN_INFO "NX-protecting the kernel data: %lx, %lu pages\n",
-		start, size >> PAGE_SHIFT);
-	set_memory_nx(start, size >> PAGE_SHIFT);
-#endif
-}
-
 void free_initmem(void)
 {
 	free_init_pages("unused kernel memory",
 			(unsigned long)(&__init_begin),
 			(unsigned long)(&__init_end));
-	/* Set kernel's data as NX */
-	mark_nxdata_nx();
 }
 
 #ifdef CONFIG_BLK_DEV_INITRD
