@@ -2,6 +2,7 @@
 #define _ASM_X86_EMERGENCY_RESTART_H
 
 enum reboot_type {
+	BOOT_UNDECIDED = '?',
 	BOOT_TRIPLE = 't',
 	BOOT_KBD = 'k',
 #ifdef CONFIG_X86_32

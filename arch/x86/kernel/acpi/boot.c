@@ -60,7 +60,6 @@ EXPORT_SYMBOL(acpi_disabled);
 int acpi_noirq;				/* skip ACPI IRQ initialization */
 int acpi_pci_disabled;		/* skip ACPI PCI scan and IRQ initialization */
 EXPORT_SYMBOL(acpi_pci_disabled);
-int acpi_ht __initdata = 1;	/* enable HT */
 
 int acpi_lapic;
 int acpi_ioapic;
@@ -1264,23 +1263,6 @@ static int __init dmi_disable_acpi(const struct dmi_system_id *d)
 }
 
 /*
- * Limit ACPI to CPU enumeration for HT
- */
-static int __init force_acpi_ht(const struct dmi_system_id *d)
-{
-	if (!acpi_force) {
-		printk(KERN_NOTICE "%s detected: force use of acpi=ht\n",
-		       d->ident);
-		disable_acpi();
-		acpi_ht = 1;
-	} else {
-		printk(KERN_NOTICE
-		       "Warning: acpi=force overrules DMI blacklist: acpi=ht\n");
-	}
-	return 0;
-}
-
-/*
  * Force ignoring BIOS IRQ0 pin2 override
  */
 static int __init dmi_ignore_irq0_timer_override(const struct dmi_system_id *d)
@@ -1312,82 +1294,6 @@ static struct dmi_system_id __initdata acpi_dmi_table[] = {
 	 .matches = {
 		     DMI_MATCH(DMI_BOARD_VENDOR, "IBM"),
 		     DMI_MATCH(DMI_BOARD_NAME, "2629H1G"),
-		     },
-	 },
-
-	/*
-	 * Boxes that need acpi=ht
-	 */
-	{
-	 .callback = force_acpi_ht,
-	 .ident = "FSC Primergy T850",
-	 .matches = {
-		     DMI_MATCH(DMI_SYS_VENDOR, "FUJITSU SIEMENS"),
-		     DMI_MATCH(DMI_PRODUCT_NAME, "PRIMERGY T850"),
-		     },
-	 },
-	{
-	 .callback = force_acpi_ht,
-	 .ident = "HP VISUALIZE NT Workstation",
-	 .matches = {
-		     DMI_MATCH(DMI_BOARD_VENDOR, "Hewlett-Packard"),
-		     DMI_MATCH(DMI_PRODUCT_NAME, "HP VISUALIZE NT Workstation"),
-		     },
-	 },
-	{
-	 .callback = force_acpi_ht,
-	 .ident = "Compaq Workstation W8000",
-	 .matches = {
-		     DMI_MATCH(DMI_SYS_VENDOR, "Compaq"),
-		     DMI_MATCH(DMI_PRODUCT_NAME, "Workstation W8000"),
-		     },
-	 },
-	{
-	 .callback = force_acpi_ht,
-	 .ident = "ASUS CUR-DLS",
-	 .matches = {
-		     DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTeK Computer INC."),
-		     DMI_MATCH(DMI_BOARD_NAME, "CUR-DLS"),
-		     },
-	 },
-	{
-	 .callback = force_acpi_ht,
-	 .ident = "ABIT i440BX-W83977",
-	 .matches = {
-		     DMI_MATCH(DMI_BOARD_VENDOR, "ABIT <http://www.abit.com>"),
-		     DMI_MATCH(DMI_BOARD_NAME, "i440BX-W83977 (BP6)"),
-		     },
-	 },
-	{
-	 .callback = force_acpi_ht,
-	 .ident = "IBM Bladecenter",
-	 .matches = {
-		     DMI_MATCH(DMI_BOARD_VENDOR, "IBM"),
-		     DMI_MATCH(DMI_BOARD_NAME, "IBM eServer BladeCenter HS20"),
-		     },
-	 },
-	{
-	 .callback = force_acpi_ht,
-	 .ident = "IBM eServer xSeries 360",
-	 .matches = {
-		     DMI_MATCH(DMI_BOARD_VENDOR, "IBM"),
-		     DMI_MATCH(DMI_BOARD_NAME, "eServer xSeries 360"),
-		     },
-	 },
-	{
-	 .callback = force_acpi_ht,
-	 .ident = "IBM eserver xSeries 330",
-	 .matches = {
-		     DMI_MATCH(DMI_BOARD_VENDOR, "IBM"),
-		     DMI_MATCH(DMI_BOARD_NAME, "eserver xSeries 330"),
-		     },
-	 },
-	{
-	 .callback = force_acpi_ht,
-	 .ident = "IBM eserver xSeries 440",
-	 .matches = {
-		     DMI_MATCH(DMI_BOARD_VENDOR, "IBM"),
-		     DMI_MATCH(DMI_PRODUCT_NAME, "eserver xSeries 440"),
 		     },
 	 },
 
@@ -1524,9 +1430,8 @@ void __init acpi_boot_table_init(void)
 
 	/*
 	 * If acpi_disabled, bail out
-	 * One exception: acpi=ht continues far enough to enumerate LAPICs
 	 */
-	if (acpi_disabled && !acpi_ht)
+	if (acpi_disabled)
 		return; 
 
 	/*
@@ -1557,9 +1462,8 @@ int __init early_acpi_boot_init(void)
 {
 	/*
 	 * If acpi_disabled, bail out
-	 * One exception: acpi=ht continues far enough to enumerate LAPICs
 	 */
-	if (acpi_disabled && !acpi_ht)
+	if (acpi_disabled)
 		return 1;
 
 	/*
@@ -1577,9 +1481,8 @@ int __init acpi_boot_init(void)
 
 	/*
 	 * If acpi_disabled, bail out
-	 * One exception: acpi=ht continues far enough to enumerate LAPICs
 	 */
-	if (acpi_disabled && !acpi_ht)
+	if (acpi_disabled)
 		return 1;
 
 	acpi_table_parse(ACPI_SIG_BOOT, acpi_parse_sbf);
@@ -1611,18 +1514,11 @@ static int __init parse_acpi(char *arg)
 	/* acpi=force to over-ride black-list */
 	else if (strcmp(arg, "force") == 0) {
 		acpi_force = 1;
-		acpi_ht = 1;
 		acpi_disabled = 0;
 	}
 	/* acpi=strict disables out-of-spec workarounds */
 	else if (strcmp(arg, "strict") == 0) {
 		acpi_strict = 1;
-	}
-	/* Limit ACPI just to boot-time to enable HT */
-	else if (strcmp(arg, "ht") == 0) {
-		if (!acpi_force)
-			disable_acpi();
-		acpi_ht = 1;
 	}
 	/* acpi=rsdt use RSDT instead of XSDT */
 	else if (strcmp(arg, "rsdt") == 0) {
