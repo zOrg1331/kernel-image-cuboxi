@@ -771,7 +771,8 @@ xfrm_policy_flush_secctx_check(struct net *net, u8 type, struct xfrm_audit *audi
 
 int xfrm_policy_flush(struct net *net, u8 type, struct xfrm_audit *audit_info)
 {
-	int dir, err = 0;
+	int dir, err = 0, cnt = 0;
+	struct xfrm_policy *dp;
 
 	write_lock_bh(&xfrm_policy_lock);
 
@@ -789,8 +790,10 @@ int xfrm_policy_flush(struct net *net, u8 type, struct xfrm_audit *audit_info)
 				     &net->xfrm.policy_inexact[dir], bydst) {
 			if (pol->type != type)
 				continue;
-			__xfrm_policy_unlink(pol, dir);
+			dp = __xfrm_policy_unlink(pol, dir);
 			write_unlock_bh(&xfrm_policy_lock);
+			if (dp)
+				cnt++;
 
 			xfrm_audit_policy_delete(pol, 1, audit_info->loginuid,
 						 audit_info->sessionid,
@@ -809,8 +812,10 @@ int xfrm_policy_flush(struct net *net, u8 type, struct xfrm_audit *audit_info)
 					     bydst) {
 				if (pol->type != type)
 					continue;
-				__xfrm_policy_unlink(pol, dir);
+				dp = __xfrm_policy_unlink(pol, dir);
 				write_unlock_bh(&xfrm_policy_lock);
+				if (dp)
+					cnt++;
 
 				xfrm_audit_policy_delete(pol, 1,
 							 audit_info->loginuid,
@@ -824,6 +829,8 @@ int xfrm_policy_flush(struct net *net, u8 type, struct xfrm_audit *audit_info)
 		}
 
 	}
+	if (!cnt)
+		err = -ESRCH;
 	atomic_inc(&flow_cache_genid);
 out:
 	write_unlock_bh(&xfrm_policy_lock);
@@ -2045,8 +2052,7 @@ int __xfrm_route_forward(struct sk_buff *skb, unsigned short family)
 	int res;
 
 	if (xfrm_decode_session(skb, &fl, family) < 0) {
-		/* XXX: we should have something like FWDHDRERROR here. */
-		XFRM_INC_STATS(net, LINUX_MIB_XFRMINHDRERROR);
+		XFRM_INC_STATS(net, LINUX_MIB_XFRMFWDHDRERROR);
 		return 0;
 	}
 
@@ -2421,19 +2427,19 @@ static int __net_init xfrm_statistics_init(struct net *net)
 {
 	int rv;
 
-	if (snmp_mib_init((void **)net->mib.xfrm_statistics,
+	if (snmp_mib_init((void __percpu **)net->mib.xfrm_statistics,
 			  sizeof(struct linux_xfrm_mib)) < 0)
 		return -ENOMEM;
 	rv = xfrm_proc_init(net);
 	if (rv < 0)
-		snmp_mib_free((void **)net->mib.xfrm_statistics);
+		snmp_mib_free((void __percpu **)net->mib.xfrm_statistics);
 	return rv;
 }
 
 static void xfrm_statistics_fini(struct net *net)
 {
 	xfrm_proc_fini(net);
-	snmp_mib_free((void **)net->mib.xfrm_statistics);
+	snmp_mib_free((void __percpu **)net->mib.xfrm_statistics);
 }
 #else
 static int __net_init xfrm_statistics_init(struct net *net)
