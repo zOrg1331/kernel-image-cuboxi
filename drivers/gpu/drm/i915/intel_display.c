@@ -2671,7 +2671,7 @@ static void i965_update_wm(struct drm_device *dev, int planea_clock,
 	/* Calc sr entries for one plane configs */
 	if (sr_hdisplay && (!planea_clock || !planeb_clock)) {
 		/* self-refresh has much higher latency */
-		static const int sr_latency_ns = 12000;
+		const static int sr_latency_ns = 12000;
 
 		sr_clock = planea_clock ? planea_clock : planeb_clock;
 		line_time_us = ((sr_hdisplay * 1000) / sr_clock);
