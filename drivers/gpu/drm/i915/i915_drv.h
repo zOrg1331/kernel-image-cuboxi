@@ -150,7 +150,27 @@ struct drm_i915_error_state {
 	u32 instps;
 	u32 instdone1;
 	u32 seqno;
+	u64 bbaddr;
 	struct timeval time;
+	struct drm_i915_error_object {
+		int page_count;
+		u32 gtt_offset;
+		u32 *pages[0];
+	} *ringbuffer, *batchbuffer[2];
+	struct drm_i915_error_buffer {
+		size_t size;
+		u32 name;
+		u32 seqno;
+		u32 gtt_offset;
+		u32 read_domains;
+		u32 write_domain;
+		u32 fence_reg;
+		s32 pinned:2;
+		u32 tiling:2;
+		u32 dirty:1;
+		u32 purgeable:1;
+	} *active_bo;
+	u32 active_bo_count;
 };
 
 struct drm_i915_display_funcs {
@@ -778,6 +798,7 @@ extern int i965_reset(struct drm_device *dev, u8 flags);
 
 /* i915_irq.c */
 void i915_hangcheck_elapsed(unsigned long data);
+void i915_destroy_error_state(struct drm_device *dev);
 extern int i915_irq_emit(struct drm_device *dev, void *data,
 			 struct drm_file *file_priv);
 extern int i915_irq_wait(struct drm_device *dev, void *data,
@@ -914,7 +935,8 @@ void i915_gem_object_do_bit_17_swizzle(struct drm_gem_object *obj);
 void i915_gem_object_save_bit_17_swizzle(struct drm_gem_object *obj);
 bool i915_tiling_ok(struct drm_device *dev, int stride, int size,
 		    int tiling_mode);
-bool i915_obj_fenceable(struct drm_device *dev, struct drm_gem_object *obj);
+bool i915_gem_object_fence_offset_ok(struct drm_gem_object *obj,
+				     int tiling_mode);
 
 /* i915_gem_debug.c */
 void i915_gem_dump_object(struct drm_gem_object *obj, int len,
