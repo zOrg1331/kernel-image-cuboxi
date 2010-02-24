@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- * Copyright(c) 2003 - 2009 Intel Corporation. All rights reserved.
+ * Copyright(c) 2003 - 2010 Intel Corporation. All rights reserved.
  *
  * Portions of this file are derived from the ipw3945 project, as well
  * as portions of the ieee80211 subsystem header files.
@@ -56,6 +56,7 @@
 #include "iwl-helpers.h"
 #include "iwl-core.h"
 #include "iwl-dev.h"
+#include "iwl-spectrum.h"
 
 /*
  * module name, copyright, version, etc.
@@ -70,14 +71,13 @@
 #define VD
 #endif
 
-#ifdef CONFIG_IWL3945_SPECTRUM_MEASUREMENT
-#define VS "s"
-#else
-#define VS
-#endif
-
-#define DRV_VERSION  IWLWIFI_VERSION VD VS
-#define DRV_COPYRIGHT	"Copyright(c) 2003-2009 Intel Corporation"
+/*
+ * add "s" to indicate spectrum measurement included.
+ * we add it here to be consistent with previous releases in which
+ * this was configurable.
+ */
+#define DRV_VERSION  IWLWIFI_VERSION VD "s"
+#define DRV_COPYRIGHT	"Copyright(c) 2003-2010 Intel Corporation"
 #define DRV_AUTHOR     "<ilw@linux.intel.com>"
 
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
@@ -689,10 +689,6 @@ drop:
 	return -1;
 }
 
-#ifdef CONFIG_IWL3945_SPECTRUM_MEASUREMENT
-
-#include "iwl-spectrum.h"
-
 #define BEACON_TIME_MASK_LOW	0x00FFFFFF
 #define BEACON_TIME_MASK_HIGH	0xFF000000
 #define TIME_UNIT		1024
@@ -819,7 +815,6 @@ static int iwl3945_get_measurement(struct iwl_priv *priv,
 
 	return rc;
 }
-#endif
 
 static void iwl3945_rx_reply_alive(struct iwl_priv *priv,
 			       struct iwl_rx_mem_buffer *rxb)
@@ -962,6 +957,8 @@ static void iwl3945_setup_rx_handlers(struct iwl_priv *priv)
 	priv->rx_handlers[REPLY_ADD_STA] = iwl3945_rx_reply_add_sta;
 	priv->rx_handlers[REPLY_ERROR] = iwl_rx_reply_error;
 	priv->rx_handlers[CHANNEL_SWITCH_NOTIFICATION] = iwl_rx_csa;
+	priv->rx_handlers[SPECTRUM_MEASURE_NOTIFICATION] =
+			iwl_rx_spectrum_measure_notif;
 	priv->rx_handlers[PM_SLEEP_NOTIFICATION] = iwl_rx_pm_sleep_notif;
 	priv->rx_handlers[PM_DEBUG_STATISTIC_NOTIFIC] =
 	    iwl_rx_pm_debug_statistics_notif;
@@ -975,7 +972,6 @@ static void iwl3945_setup_rx_handlers(struct iwl_priv *priv)
 	priv->rx_handlers[REPLY_STATISTICS_CMD] = iwl3945_hw_rx_statistics;
 	priv->rx_handlers[STATISTICS_NOTIFICATION] = iwl3945_hw_rx_statistics;
 
-	iwl_setup_spectrum_handlers(priv);
 	iwl_setup_rx_scan_handlers(priv);
 	priv->rx_handlers[CARD_STATE_NOTIFICATION] = iwl3945_rx_card_state_notif;
 
@@ -1518,8 +1514,9 @@ void iwl3945_dump_nic_error_log(struct iwl_priv *priv)
  * iwl3945_print_event_log - Dump error event log to syslog
  *
  */
-static void iwl3945_print_event_log(struct iwl_priv *priv, u32 start_idx,
-				u32 num_events, u32 mode)
+static int iwl3945_print_event_log(struct iwl_priv *priv, u32 start_idx,
+				  u32 num_events, u32 mode,
+				  int pos, char **buf, size_t bufsz)
 {
 	u32 i;
 	u32 base;       /* SRAM byte address of event log header */
@@ -1529,7 +1526,7 @@ static void iwl3945_print_event_log(struct iwl_priv *priv, u32 start_idx,
 	unsigned long reg_flags;
 
 	if (num_events == 0)
-		return;
+		return pos;
 
 	base = le32_to_cpu(priv->card_alive.log_event_table_ptr);
 
@@ -1555,26 +1552,43 @@ static void iwl3945_print_event_log(struct iwl_priv *priv, u32 start_idx,
 		time = _iwl_read_direct32(priv, HBUS_TARG_MEM_RDAT);
 		if (mode == 0) {
 			/* data, ev */
-			IWL_ERR(priv, "0x%08x\t%04u\n", time, ev);
-			trace_iwlwifi_dev_ucode_event(priv, 0, time, ev);
+			if (bufsz) {
+				pos += scnprintf(*buf + pos, bufsz - pos,
+						"0x%08x:%04u\n",
+						time, ev);
+			} else {
+				IWL_ERR(priv, "0x%08x\t%04u\n", time, ev);
+				trace_iwlwifi_dev_ucode_event(priv, 0,
+							      time, ev);
+			}
 		} else {
 			data = _iwl_read_direct32(priv, HBUS_TARG_MEM_RDAT);
-			IWL_ERR(priv, "%010u\t0x%08x\t%04u\n", time, data, ev);
-			trace_iwlwifi_dev_ucode_event(priv, time, data, ev);
+			if (bufsz) {
+				pos += scnprintf(*buf + pos, bufsz - pos,
+						"%010u:0x%08x:%04u\n",
+						 time, data, ev);
+			} else {
+				IWL_ERR(priv, "%010u\t0x%08x\t%04u\n",
+					time, data, ev);
+				trace_iwlwifi_dev_ucode_event(priv, time,
+							      data, ev);
+			}
 		}
 	}
 
 	/* Allow device to power down */
 	iwl_release_nic_access(priv);
 	spin_unlock_irqrestore(&priv->reg_lock, reg_flags);
+	return pos;
 }
 
 /**
  * iwl3945_print_last_event_logs - Dump the newest # of event log to syslog
  */
-static void iwl3945_print_last_event_logs(struct iwl_priv *priv, u32 capacity,
+static int iwl3945_print_last_event_logs(struct iwl_priv *priv, u32 capacity,
 				      u32 num_wraps, u32 next_entry,
-				      u32 size, u32 mode)
+				      u32 size, u32 mode,
+				      int pos, char **buf, size_t bufsz)
 {
 	/*
 	 * display the newest DEFAULT_LOG_ENTRIES entries
@@ -1582,21 +1596,28 @@ static void iwl3945_print_last_event_logs(struct iwl_priv *priv, u32 capacity,
 	 */
 	if (num_wraps) {
 		if (next_entry < size) {
-			iwl3945_print_event_log(priv,
-					capacity - (size - next_entry),
-					size - next_entry, mode);
-			iwl3945_print_event_log(priv, 0,
-				    next_entry, mode);
+			pos = iwl3945_print_event_log(priv,
+					     capacity - (size - next_entry),
+					     size - next_entry, mode,
+					     pos, buf, bufsz);
+			pos = iwl3945_print_event_log(priv, 0,
+						      next_entry, mode,
+						      pos, buf, bufsz);
 		} else
-			iwl3945_print_event_log(priv, next_entry - size,
-				    size, mode);
+			pos = iwl3945_print_event_log(priv, next_entry - size,
+						      size, mode,
+						      pos, buf, bufsz);
 	} else {
 		if (next_entry < size)
-			iwl3945_print_event_log(priv, 0, next_entry, mode);
+			pos = iwl3945_print_event_log(priv, 0,
+						      next_entry, mode,
+						      pos, buf, bufsz);
 		else
-			iwl3945_print_event_log(priv, next_entry - size,
-					    size, mode);
+			pos = iwl3945_print_event_log(priv, next_entry - size,
+						      size, mode,
+						      pos, buf, bufsz);
 	}
+	return pos;
 }
 
 /* For sanity check only.  Actual size is determined by uCode, typ. 512 */
@@ -1604,7 +1625,8 @@ static void iwl3945_print_last_event_logs(struct iwl_priv *priv, u32 capacity,
 
 #define DEFAULT_IWL3945_DUMP_EVENT_LOG_ENTRIES (20)
 
-void iwl3945_dump_nic_event_log(struct iwl_priv *priv, bool full_log)
+int iwl3945_dump_nic_event_log(struct iwl_priv *priv, bool full_log,
+			    char **buf, bool display)
 {
 	u32 base;       /* SRAM byte address of event log header */
 	u32 capacity;   /* event log capacity in # entries */
@@ -1612,11 +1634,13 @@ void iwl3945_dump_nic_event_log(struct iwl_priv *priv, bool full_log)
 	u32 num_wraps;  /* # times uCode wrapped to top of log */
 	u32 next_entry; /* index of next entry to be written by uCode */
 	u32 size;       /* # entries that we'll print */
+	int pos = 0;
+	size_t bufsz = 0;
 
 	base = le32_to_cpu(priv->card_alive.log_event_table_ptr);
 	if (!iwl3945_hw_valid_rtc_data_addr(base)) {
 		IWL_ERR(priv, "Invalid event log pointer 0x%08X\n", base);
-		return;
+		return  -EINVAL;
 	}
 
 	/* event log header */
@@ -1642,7 +1666,7 @@ void iwl3945_dump_nic_event_log(struct iwl_priv *priv, bool full_log)
 	/* bail out if nothing in log */
 	if (size == 0) {
 		IWL_ERR(priv, "Start IWL Event Log Dump: nothing in log\n");
-		return;
+		return pos;
 	}
 
 #ifdef CONFIG_IWLWIFI_DEBUG
@@ -1658,25 +1682,38 @@ void iwl3945_dump_nic_event_log(struct iwl_priv *priv, bool full_log)
 		  size);
 
 #ifdef CONFIG_IWLWIFI_DEBUG
+	if (display) {
+		if (full_log)
+			bufsz = capacity * 48;
+		else
+			bufsz = size * 48;
+		*buf = kmalloc(bufsz, GFP_KERNEL);
+		if (!*buf)
+			return -ENOMEM;
+	}
 	if ((iwl_get_debug_level(priv) & IWL_DL_FW_ERRORS) || full_log) {
 		/* if uCode has wrapped back to top of log,
 		 * start at the oldest entry,
 		 * i.e the next one that uCode would fill.
 		 */
 		if (num_wraps)
-			iwl3945_print_event_log(priv, next_entry,
-				    capacity - next_entry, mode);
+			pos = iwl3945_print_event_log(priv, next_entry,
+						capacity - next_entry, mode,
+						pos, buf, bufsz);
 
 		/* (then/else) start at top of log */
-		iwl3945_print_event_log(priv, 0, next_entry, mode);
+		pos = iwl3945_print_event_log(priv, 0, next_entry, mode,
+					      pos, buf, bufsz);
 	} else
-		iwl3945_print_last_event_logs(priv, capacity, num_wraps,
-					next_entry, size, mode);
+		pos = iwl3945_print_last_event_logs(priv, capacity, num_wraps,
+						    next_entry, size, mode,
+						    pos, buf, bufsz);
 #else
-	iwl3945_print_last_event_logs(priv, capacity, num_wraps,
-				next_entry, size, mode);
+	pos = iwl3945_print_last_event_logs(priv, capacity, num_wraps,
+					    next_entry, size, mode,
+					    pos, buf, bufsz);
 #endif
-
+	return pos;
 }
 
 static void iwl3945_irq_tasklet(struct iwl_priv *priv)
@@ -2996,18 +3033,6 @@ static void iwl3945_bg_request_scan(struct work_struct *data)
 	mutex_unlock(&priv->mutex);
 }
 
-static void iwl3945_bg_up(struct work_struct *data)
-{
-	struct iwl_priv *priv = container_of(data, struct iwl_priv, up);
-
-	if (test_bit(STATUS_EXIT_PENDING, &priv->status))
-		return;
-
-	mutex_lock(&priv->mutex);
-	__iwl3945_up(priv);
-	mutex_unlock(&priv->mutex);
-}
-
 static void iwl3945_bg_restart(struct work_struct *data)
 {
 	struct iwl_priv *priv = container_of(data, struct iwl_priv, restart);
@@ -3024,7 +3049,13 @@ static void iwl3945_bg_restart(struct work_struct *data)
 		ieee80211_restart_hw(priv->hw);
 	} else {
 		iwl3945_down(priv);
-		queue_work(priv->workqueue, &priv->up);
+
+		if (test_bit(STATUS_EXIT_PENDING, &priv->status))
+			return;
+
+		mutex_lock(&priv->mutex);
+		__iwl3945_up(priv);
+		mutex_unlock(&priv->mutex);
 	}
 }
 
@@ -3528,8 +3559,6 @@ static ssize_t store_filter_flags(struct device *d,
 static DEVICE_ATTR(filter_flags, S_IWUSR | S_IRUGO, show_filter_flags,
 		   store_filter_flags);
 
-#ifdef CONFIG_IWL3945_SPECTRUM_MEASUREMENT
-
 static ssize_t show_measurement(struct device *d,
 				struct device_attribute *attr, char *buf)
 {
@@ -3599,7 +3628,6 @@ static ssize_t store_measurement(struct device *d,
 
 static DEVICE_ATTR(measurement, S_IRUSR | S_IWUSR,
 		   show_measurement, store_measurement);
-#endif /* CONFIG_IWL3945_SPECTRUM_MEASUREMENT */
 
 static ssize_t store_retry_rate(struct device *d,
 				struct device_attribute *attr,
@@ -3748,7 +3776,6 @@ static void iwl3945_setup_deferred_work(struct iwl_priv *priv)
 
 	init_waitqueue_head(&priv->wait_command_queue);
 
-	INIT_WORK(&priv->up, iwl3945_bg_up);
 	INIT_WORK(&priv->restart, iwl3945_bg_restart);
 	INIT_WORK(&priv->rx_replenish, iwl3945_bg_rx_replenish);
 	INIT_WORK(&priv->beacon_update, iwl3945_bg_beacon_update);
@@ -3782,9 +3809,7 @@ static struct attribute *iwl3945_sysfs_entries[] = {
 	&dev_attr_dump_errors.attr,
 	&dev_attr_flags.attr,
 	&dev_attr_filter_flags.attr,
-#ifdef CONFIG_IWL3945_SPECTRUM_MEASUREMENT
 	&dev_attr_measurement.attr,
-#endif
 	&dev_attr_retry_rate.attr,
 	&dev_attr_statistics.attr,
 	&dev_attr_status.attr,
@@ -3810,7 +3835,6 @@ static struct ieee80211_ops iwl3945_hw_ops = {
 	.config = iwl_mac_config,
 	.configure_filter = iwl_configure_filter,
 	.set_key = iwl3945_mac_set_key,
-	.get_tx_stats = iwl_mac_get_tx_stats,
 	.conf_tx = iwl_mac_conf_tx,
 	.reset_tsf = iwl_mac_reset_tsf,
 	.bss_info_changed = iwl_bss_info_changed,
@@ -3840,6 +3864,7 @@ static int iwl3945_init_drv(struct iwl_priv *priv)
 	priv->band = IEEE80211_BAND_2GHZ;
 
 	priv->iw_mode = NL80211_IFTYPE_STATION;
+	priv->missed_beacon_threshold = IWL_MISSED_BEACON_THRESHOLD_DEF;
 
 	iwl_reset_qos(priv);
 

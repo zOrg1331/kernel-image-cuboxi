@@ -480,7 +480,8 @@ void ath_beacon_tasklet(unsigned long data)
 		sc->beacon.updateslot = COMMIT; /* commit next beacon */
 		sc->beacon.slotupdate = slot;
 	} else if (sc->beacon.updateslot == COMMIT && sc->beacon.slotupdate == slot) {
-		ath9k_hw_setslottime(sc->sc_ah, sc->beacon.slottime);
+		ah->slottime = sc->beacon.slottime;
+		ath9k_hw_init_global_settings(ah);
 		sc->beacon.updateslot = OK;
 	}
 	if (bfaddr != 0) {
@@ -575,6 +576,13 @@ static void ath_beacon_config_sta(struct ath_softc *sc,
 	u32 nexttbtt = 0, intval, tsftu;
 	u64 tsf;
 	int num_beacons, offset, dtim_dec_count, cfp_dec_count;
+
+	/* No need to configure beacon if we are not associated */
+	if (!common->curaid) {
+		ath_print(common, ATH_DBG_BEACON,
+			 "STA is not yet associated..skipping beacon config\n");
+		return;
+	}
 
 	memset(&bs, 0, sizeof(bs));
 	intval = conf->beacon_interval & ATH9K_BEACON_PERIOD;
@@ -738,7 +746,6 @@ void ath_beacon_config(struct ath_softc *sc, struct ieee80211_vif *vif)
 	enum nl80211_iftype iftype;
 
 	/* Setup the beacon configuration parameters */
-
 	if (vif) {
 		struct ieee80211_bss_conf *bss_conf = &vif->bss_conf;
 

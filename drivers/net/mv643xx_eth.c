@@ -55,7 +55,6 @@
 #include <linux/types.h>
 #include <linux/inet_lro.h>
 #include <asm/system.h>
-#include <linux/list.h>
 
 static char mv643xx_eth_driver_name[] = "mv643xx_eth";
 static char mv643xx_eth_driver_version[] = "1.4";
@@ -1697,7 +1696,7 @@ static u32 uc_addr_filter_mask(struct net_device *dev)
 		return 0;
 
 	nibbles = 1 << (dev->dev_addr[5] & 0x0f);
-	list_for_each_entry(ha, &dev->uc.list, list) {
+	netdev_for_each_uc_addr(ha, dev) {
 		if (memcmp(dev->dev_addr, ha->addr, 5))
 			return 0;
 		if ((dev->dev_addr[5] ^ ha->addr[5]) & 0xf0)
@@ -2847,6 +2846,7 @@ static const struct net_device_ops mv643xx_eth_netdev_ops = {
 	.ndo_start_xmit		= mv643xx_eth_xmit,
 	.ndo_set_rx_mode	= mv643xx_eth_set_rx_mode,
 	.ndo_set_mac_address	= mv643xx_eth_set_mac_address,
+	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_do_ioctl		= mv643xx_eth_ioctl,
 	.ndo_change_mtu		= mv643xx_eth_change_mtu,
 	.ndo_tx_timeout		= mv643xx_eth_tx_timeout,
