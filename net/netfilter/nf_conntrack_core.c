@@ -179,6 +179,11 @@ destroy_conntrack(struct nf_conntrack *nfct)
 	struct nf_conn *ct = (struct nf_conn *)nfct;
 	struct net *net = nf_ct_net(ct);
 	struct nf_conntrack_l4proto *l4proto;
+#ifdef CONFIG_VE_IPTABLES
+	struct ve_struct *old_ve;
+
+	old_ve = set_exec_env(ct->ct_owner_env);
+#endif
 
 	pr_debug("destroy_conntrack(%p)\n", ct);
 	NF_CT_ASSERT(atomic_read(&nfct->use) == 0);
@@ -215,6 +220,9 @@ destroy_conntrack(struct nf_conntrack *nfct)
 
 	pr_debug("destroy_conntrack: returning ct=%p to slab\n", ct);
 	nf_conntrack_free(ct);
+#ifdef CONFIG_VE_IPTABLES
+	(void)set_exec_env(old);
+#endif
 }
 
 void nf_ct_delete_from_lists(struct nf_conn *ct)
@@ -536,9 +544,11 @@ static noinline int early_drop(struct net *net, unsigned int hash)
 struct nf_conn *nf_conntrack_alloc(struct net *net,
 				   const struct nf_conntrack_tuple *orig,
 				   const struct nf_conntrack_tuple *repl,
+				   struct user_beancounter *ub,
 				   gfp_t gfp)
 {
 	struct nf_conn *ct;
+	struct user_beancounter *old_ub;
 
 	if (unlikely(!nf_conntrack_hash_rnd_initted)) {
 		get_random_bytes(&nf_conntrack_hash_rnd,
@@ -566,7 +576,9 @@ struct nf_conn *nf_conntrack_alloc(struct net *net,
 	 * Do not use kmem_cache_zalloc(), as this cache uses
 	 * SLAB_DESTROY_BY_RCU.
 	 */
+	old_ub = set_exec_ub(ub);
 	ct = kmem_cache_alloc(nf_conntrack_cachep, gfp);
+	(void)set_exec_ub(old_ub);
 	if (ct == NULL) {
 		pr_debug("nf_conntrack_alloc: Can't alloc conntrack.\n");
 		atomic_dec(&net->ct.count);
@@ -587,6 +599,9 @@ struct nf_conn *nf_conntrack_alloc(struct net *net,
 	setup_timer(&ct->timeout, death_by_timeout, (unsigned long)ct);
 #ifdef CONFIG_NET_NS
 	ct->ct_net = net;
+#endif
+#ifdef CONFIG_VE_IPTABLES
+	ct->ct_owner_env = get_exec_env();
 #endif
 
 	/*
@@ -623,13 +638,20 @@ init_conntrack(struct net *net,
 	struct nf_conn_help *help;
 	struct nf_conntrack_tuple repl_tuple;
 	struct nf_conntrack_expect *exp;
+	struct user_beancounter *ub = NULL;
 
 	if (!nf_ct_invert_tuple(&repl_tuple, tuple, l3proto, l4proto)) {
 		pr_debug("Can't invert tuple.\n");
 		return NULL;
 	}
 
-	ct = nf_conntrack_alloc(net, tuple, &repl_tuple, GFP_ATOMIC);
+#ifdef CONFIG_BEANCOUNTERS
+	if (skb->dev != NULL)  /* received skb */
+		ub = netdev_bc(skb->dev)->exec_ub;
+	else if (skb->sk != NULL) /* sent skb */
+		ub = sock_bc(skb->sk)->ub;
+#endif
+	ct = nf_conntrack_alloc(net, tuple, &repl_tuple, ub, GFP_ATOMIC);
 	if (IS_ERR(ct)) {
 		pr_debug("Can't allocate conntrack.\n");
 		return (struct nf_conntrack_tuple_hash *)ct;
@@ -1164,12 +1186,12 @@ void *nf_ct_alloc_hashtable(unsigned int *sizep, int *vmalloced, int nulls)
 	BUILD_BUG_ON(sizeof(struct hlist_nulls_head) != sizeof(struct hlist_head));
 	nr_slots = *sizep = roundup(*sizep, PAGE_SIZE / sizeof(struct hlist_nulls_head));
 	sz = nr_slots * sizeof(struct hlist_nulls_head);
-	hash = (void *)__get_free_pages(GFP_KERNEL | __GFP_NOWARN | __GFP_ZERO,
+	hash = (void *)__get_free_pages(GFP_KERNEL_UBC | __GFP_NOWARN | __GFP_ZERO,
 					get_order(sz));
 	if (!hash) {
 		*vmalloced = 1;
 		printk(KERN_WARNING "nf_conntrack: falling back to vmalloc.\n");
-		hash = __vmalloc(sz, GFP_KERNEL | __GFP_ZERO, PAGE_KERNEL);
+		hash = __vmalloc(sz, GFP_KERNEL_UBC | __GFP_ZERO, PAGE_KERNEL);
 	}
 
 	if (hash && nulls)
