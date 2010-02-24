@@ -99,10 +99,12 @@ struct sd {
 #define SEN_OV66308AF 5
 #define SEN_OV7610 6
 #define SEN_OV7620 7
-#define SEN_OV7640 8
-#define SEN_OV7670 9
-#define SEN_OV76BE 10
-#define SEN_OV8610 11
+#define SEN_OV7620AE 8
+#define SEN_OV7640 9
+#define SEN_OV7648 10
+#define SEN_OV7670 11
+#define SEN_OV76BE 12
+#define SEN_OV8610 13
 
 	u8 sensor_addr;
 	int sensor_width;
@@ -139,6 +141,7 @@ static void setautobrightness(struct sd *sd);
 static void setfreq(struct sd *sd);
 
 static const struct ctrl sd_ctrls[] = {
+#define BRIGHTNESS_IDX 0
 	{
 	    {
 		.id      = V4L2_CID_BRIGHTNESS,
@@ -153,6 +156,7 @@ static const struct ctrl sd_ctrls[] = {
 	    .set = sd_setbrightness,
 	    .get = sd_getbrightness,
 	},
+#define CONTRAST_IDX 1
 	{
 	    {
 		.id      = V4L2_CID_CONTRAST,
@@ -167,6 +171,7 @@ static const struct ctrl sd_ctrls[] = {
 	    .set = sd_setcontrast,
 	    .get = sd_getcontrast,
 	},
+#define COLOR_IDX 2
 	{
 	    {
 		.id      = V4L2_CID_SATURATION,
@@ -2554,7 +2559,7 @@ static int ov7xx0_configure(struct sd *sd)
 		/* I don't know what's different about the 76BE yet. */
 		if (i2c_r(sd, 0x15) & 1) {
 			PDEBUG(D_PROBE, "Sensor is an OV7620AE");
-			sd->sensor = SEN_OV7620;
+			sd->sensor = SEN_OV7620AE;
 		} else {
 			PDEBUG(D_PROBE, "Sensor is an OV76BE");
 			sd->sensor = SEN_OV76BE;
@@ -2588,7 +2593,7 @@ static int ov7xx0_configure(struct sd *sd)
 				break;
 			case 0x48:
 				PDEBUG(D_PROBE, "Sensor is an OV7648");
-				sd->sensor = SEN_OV7640; /* FIXME */
+				sd->sensor = SEN_OV7648;
 				break;
 			default:
 				PDEBUG(D_PROBE, "Unknown sensor: 0x76%x", low);
@@ -3115,7 +3120,11 @@ static int sd_config(struct gspca_dev *gspca_dev,
 				      (1 << OV7670_FREQ_IDX);
 	}
 	sd->quality = QUALITY_DEF;
-	if (sd->sensor == SEN_OV7640 || sd->sensor == SEN_OV7670)
+	if (sd->sensor == SEN_OV7640 ||
+	    sd->sensor == SEN_OV7648)
+		gspca_dev->ctrl_dis |= (1 << AUTOBRIGHT_IDX) |
+				       (1 << CONTRAST_IDX);
+	if (sd->sensor == SEN_OV7670)
 		gspca_dev->ctrl_dis |= 1 << AUTOBRIGHT_IDX;
 	/* OV8610 Frequency filter control should work but needs testing */
 	if (sd->sensor == SEN_OV8610)
@@ -3169,10 +3178,12 @@ static int sd_init(struct gspca_dev *gspca_dev)
 			return -EIO;
 		break;
 	case SEN_OV7620:
+	case SEN_OV7620AE:
 		if (write_i2c_regvals(sd, norm_7620, ARRAY_SIZE(norm_7620)))
 			return -EIO;
 		break;
 	case SEN_OV7640:
+	case SEN_OV7648:
 		if (write_i2c_regvals(sd, norm_7640, ARRAY_SIZE(norm_7640)))
 			return -EIO;
 		break;
@@ -3246,7 +3257,9 @@ static int ov511_mode_init_regs(struct sd *sd)
 	/* Note once the FIXME's in mode_init_ov_sensor_regs() are fixed
 	   for more sensors we need to do this for them too */
 	case SEN_OV7620:
+	case SEN_OV7620AE:
 	case SEN_OV7640:
+	case SEN_OV7648:
 	case SEN_OV76BE:
 		if (sd->gspca_dev.width == 320)
 			interlaced = 1;
@@ -3377,7 +3390,7 @@ static int ov518_mode_init_regs(struct sd *sd)
 
 	if (sd->bridge == BRIDGE_OV518PLUS) {
 		switch (sd->sensor) {
-		case SEN_OV7620:
+		case SEN_OV7620AE:
 			if (sd->gspca_dev.width == 320) {
 				reg_w(sd, 0x20, 0x00);
 				reg_w(sd, 0x21, 0x19);
@@ -3385,6 +3398,10 @@ static int ov518_mode_init_regs(struct sd *sd)
 				reg_w(sd, 0x20, 0x60);
 				reg_w(sd, 0x21, 0x1f);
 			}
+			break;
+		case SEN_OV7620:
+			reg_w(sd, 0x20, 0x00);
+			reg_w(sd, 0x21, 0x19);
 			break;
 		default:
 			reg_w(sd, 0x21, 0x19);
@@ -3488,7 +3505,8 @@ static int ov519_mode_init_regs(struct sd *sd)
 		if (write_regvals(sd, mode_init_519,
 				  ARRAY_SIZE(mode_init_519)))
 			return -EIO;
-		if (sd->sensor == SEN_OV7640) {
+		if (sd->sensor == SEN_OV7640 ||
+		    sd->sensor == SEN_OV7648) {
 			/* Select 8-bit input mode */
 			reg_w_mask(sd, OV519_R20_DFR, 0x10, 0x10);
 		}
@@ -3503,6 +3521,9 @@ static int ov519_mode_init_regs(struct sd *sd)
 	if (sd->sensor == SEN_OV7670 &&
 	    sd->gspca_dev.cam.cam_mode[sd->gspca_dev.curr_mode].priv)
 		reg_w(sd, OV519_R12_X_OFFSETL, 0x04);
+	else if (sd->sensor == SEN_OV7648 &&
+	    sd->gspca_dev.cam.cam_mode[sd->gspca_dev.curr_mode].priv)
+		reg_w(sd, OV519_R12_X_OFFSETL, 0x01);
 	else
 		reg_w(sd, OV519_R12_X_OFFSETL, 0x00);
 	reg_w(sd, OV519_R13_X_OFFSETH,	0x00);
@@ -3520,6 +3541,7 @@ static int ov519_mode_init_regs(struct sd *sd)
 	sd->clockdiv = 0;
 	switch (sd->sensor) {
 	case SEN_OV7640:
+	case SEN_OV7648:
 		switch (sd->frame_rate) {
 		default:
 /*		case 30: */
@@ -3649,6 +3671,7 @@ static int mode_init_ov_sensor_regs(struct sd *sd)
 		i2c_w_mask(sd, 0x12, 0x04, 0x06); /* AWB: 1 Test pattern: 0 */
 		break;
 	case SEN_OV7620:
+	case SEN_OV7620AE:
 	case SEN_OV76BE:
 		i2c_w_mask(sd, 0x14, qvga ? 0x20 : 0x00, 0x20);
 		i2c_w_mask(sd, 0x28, qvga ? 0x00 : 0x20, 0x20);
@@ -3663,13 +3686,16 @@ static int mode_init_ov_sensor_regs(struct sd *sd)
 			i2c_w(sd, 0x35, qvga ? 0x1e : 0x9e);
 		break;
 	case SEN_OV7640:
+	case SEN_OV7648:
 		i2c_w_mask(sd, 0x14, qvga ? 0x20 : 0x00, 0x20);
 		i2c_w_mask(sd, 0x28, qvga ? 0x00 : 0x20, 0x20);
-/*		i2c_w(sd, 0x24, qvga ? 0x20 : 0x3a); */
-/*		i2c_w(sd, 0x25, qvga ? 0x30 : 0x60); */
-/*		i2c_w_mask(sd, 0x2d, qvga ? 0x40 : 0x00, 0x40); */
-/*		i2c_w_mask(sd, 0x67, qvga ? 0xf0 : 0x90, 0xf0); */
-/*		i2c_w_mask(sd, 0x74, qvga ? 0x20 : 0x00, 0x20); */
+		/* Setting this undocumented bit in qvga mode removes a very
+		   annoying vertical shaking of the image */
+		i2c_w_mask(sd, 0x2d, qvga ? 0x40 : 0x00, 0x40);
+		/* Unknown */
+		i2c_w_mask(sd, 0x67, qvga ? 0xf0 : 0x90, 0xf0);
+		/* Allow higher automatic gain (to allow higher framerates) */
+		i2c_w_mask(sd, 0x74, qvga ? 0x20 : 0x00, 0x20);
 		i2c_w_mask(sd, 0x12, 0x04, 0x04); /* AWB: 1 */
 		break;
 	case SEN_OV7670:
@@ -3795,11 +3821,13 @@ static int set_ov_sensor_window(struct sd *sd)
 		}
 		break;
 	case SEN_OV7620:
+	case SEN_OV7620AE:
 		hwsbase = 0x2f;		/* From 7620.SET (spec is wrong) */
 		hwebase = 0x2f;
 		vwsbase = vwebase = 0x05;
 		break;
 	case SEN_OV7640:
+	case SEN_OV7648:
 		hwsbase = 0x1a;
 		hwebase = 0x1a;
 		vwsbase = vwebase = 0x03;
@@ -4103,9 +4131,11 @@ static void setbrightness(struct gspca_dev *gspca_dev)
 	case SEN_OV6630:
 	case SEN_OV66308AF:
 	case SEN_OV7640:
+	case SEN_OV7648:
 		i2c_w(sd, OV7610_REG_BRT, val);
 		break;
 	case SEN_OV7620:
+	case SEN_OV7620AE:
 		/* 7620 doesn't like manual changes when in auto mode */
 		if (!sd->autobrightness)
 			i2c_w(sd, OV7610_REG_BRT, val);
@@ -4142,7 +4172,8 @@ static void setcontrast(struct gspca_dev *gspca_dev)
 		i2c_w(sd, 0x64, ctab[val >> 5]);
 		break;
 	    }
-	case SEN_OV7620: {
+	case SEN_OV7620:
+	case SEN_OV7620AE: {
 		static const __u8 ctab[] = {
 			0x01, 0x05, 0x09, 0x11, 0x15, 0x35, 0x37, 0x57,
 			0x5b, 0xa5, 0xa7, 0xc7, 0xc9, 0xcf, 0xef, 0xff
@@ -4152,10 +4183,6 @@ static void setcontrast(struct gspca_dev *gspca_dev)
 		i2c_w(sd, 0x64, ctab[val >> 4]);
 		break;
 	    }
-	case SEN_OV7640:
-		/* Use gain control instead. */
-		i2c_w(sd, OV7610_REG_GAIN, val >> 2);
-		break;
 	case SEN_OV7670:
 		/* check that this isn't just the same as ov7610 */
 		i2c_w(sd, OV7670_REG_CONTRAS, val >> 1);
@@ -4179,6 +4206,7 @@ static void setcolors(struct gspca_dev *gspca_dev)
 		i2c_w(sd, OV7610_REG_SAT, val);
 		break;
 	case SEN_OV7620:
+	case SEN_OV7620AE:
 		/* Use UV gamma control instead. Bits 0 & 7 are reserved. */
 /*		rc = ov_i2c_write(sd->dev, 0x62, (val >> 9) & 0x7e);
 		if (rc < 0)
@@ -4186,6 +4214,7 @@ static void setcolors(struct gspca_dev *gspca_dev)
 		i2c_w(sd, OV7610_REG_SAT, val);
 		break;
 	case SEN_OV7640:
+	case SEN_OV7648:
 		i2c_w(sd, OV7610_REG_SAT, val & 0xf0);
 		break;
 	case SEN_OV7670:
@@ -4198,7 +4227,8 @@ static void setcolors(struct gspca_dev *gspca_dev)
 
 static void setautobrightness(struct sd *sd)
 {
-	if (sd->sensor == SEN_OV7640 || sd->sensor == SEN_OV7670 ||
+	if (sd->sensor == SEN_OV7640 || sd->sensor == SEN_OV7648 ||
+	    sd->sensor == SEN_OV7670 ||
 	    sd->sensor == SEN_OV2610 || sd->sensor == SEN_OV3610)
 		return;
 
@@ -4494,7 +4524,8 @@ static const __devinitdata struct usb_device_id device_table[] = {
 	 .driver_info = BRIDGE_OV519 | BRIDGE_INVERT_LED },
 	{USB_DEVICE(0x045e, 0x028c), .driver_info = BRIDGE_OV519 },
 	{USB_DEVICE(0x054c, 0x0154), .driver_info = BRIDGE_OV519 },
-	{USB_DEVICE(0x054c, 0x0155), .driver_info = BRIDGE_OV519 },
+	{USB_DEVICE(0x054c, 0x0155),
+	 .driver_info = BRIDGE_OV519 | BRIDGE_INVERT_LED },
 	{USB_DEVICE(0x05a9, 0x0511), .driver_info = BRIDGE_OV511 },
 	{USB_DEVICE(0x05a9, 0x0518), .driver_info = BRIDGE_OV518 },
 	{USB_DEVICE(0x05a9, 0x0519), .driver_info = BRIDGE_OV519 },
