@@ -18,10 +18,12 @@
 #include <mach/regs-clock.h>
 #include <plat/cpu.h>
 #include <plat/s5p6440.h>
+#include <plat/s5p6442.h>
 
 /* table of supported CPUs */
 
 static const char name_s5p6440[] = "S5P6440";
+static const char name_s5p6442[] = "S5P6442";
 
 static struct cpu_table cpu_ids[] __initdata = {
 	{
@@ -32,36 +34,47 @@ static struct cpu_table cpu_ids[] __initdata = {
 		.init_uarts	= s5p6440_init_uarts,
 		.init		= s5p6440_init,
 		.name		= name_s5p6440,
+	}, {
+		.idcode		= 0x36442000,
+		.idmask		= 0xffffff00,
+		.map_io		= s5p6442_map_io,
+		.init_clocks	= s5p6442_init_clocks,
+		.init_uarts	= s5p6442_init_uarts,
+		.init		= s5p6442_init,
+		.name		= name_s5p6442,
 	},
 };
 
 /* minimal IO mapping */
 
-#define UART_OFFS (S5P_PA_UART & 0xfffff)
-
 static struct map_desc s5p_iodesc[] __initdata = {
 	{
-		.virtual	= (unsigned long)S5P_VA_SYSCON,
+		.virtual	= (unsigned long)S5P_VA_CHIPID,
+		.pfn		= __phys_to_pfn(S5P_PA_CHIPID),
+		.length		= SZ_4K,
+		.type		= MT_DEVICE,
+	}, {
+		.virtual	= (unsigned long)S3C_VA_SYS,
 		.pfn		= __phys_to_pfn(S5P_PA_SYSCON),
 		.length		= SZ_64K,
 		.type		= MT_DEVICE,
 	}, {
-		.virtual	= (unsigned long)(S5P_VA_UART + UART_OFFS),
-		.pfn		= __phys_to_pfn(S5P_PA_UART),
+		.virtual	= (unsigned long)S3C_VA_UART,
+		.pfn		= __phys_to_pfn(S3C_PA_UART),
 		.length		= SZ_4K,
 		.type		= MT_DEVICE,
 	}, {
-		.virtual	= (unsigned long)S5P_VA_VIC0,
+		.virtual	= (unsigned long)VA_VIC0,
 		.pfn		= __phys_to_pfn(S5P_PA_VIC0),
 		.length		= SZ_16K,
 		.type		= MT_DEVICE,
 	}, {
-		.virtual	= (unsigned long)S5P_VA_VIC1,
+		.virtual	= (unsigned long)VA_VIC1,
 		.pfn		= __phys_to_pfn(S5P_PA_VIC1),
 		.length		= SZ_16K,
 		.type		= MT_DEVICE,
 	}, {
-		.virtual	= (unsigned long)S5P_VA_TIMER,
+		.virtual	= (unsigned long)S3C_VA_TIMER,
 		.pfn		= __phys_to_pfn(S5P_PA_TIMER),
 		.length		= SZ_16K,
 		.type		= MT_DEVICE,
