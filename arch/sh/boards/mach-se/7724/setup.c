@@ -53,26 +53,17 @@
  */
 
 /* Heartbeat */
-static struct heartbeat_data heartbeat_data = {
-	.regsize = 16,
-};
-
-static struct resource heartbeat_resources[] = {
-	[0] = {
-		.start  = PA_LED,
-		.end    = PA_LED,
-		.flags  = IORESOURCE_MEM,
-	},
+static struct resource heartbeat_resource = {
+	.start  = PA_LED,
+	.end    = PA_LED,
+	.flags  = IORESOURCE_MEM | IORESOURCE_MEM_16BIT,
 };
 
 static struct platform_device heartbeat_device = {
 	.name           = "heartbeat",
 	.id             = -1,
-	.dev = {
-		.platform_data = &heartbeat_data,
-	},
-	.num_resources  = ARRAY_SIZE(heartbeat_resources),
-	.resource       = heartbeat_resources,
+	.num_resources  = 1,
+	.resource       = &heartbeat_resource,
 };
 
 /* LAN91C111 */
@@ -265,12 +256,12 @@ static struct platform_device ceu1_device = {
 #define FCLKACR		0xa4150008
 static void fsimck_init(struct clk *clk)
 {
-	u32 status = ctrl_inl(clk->enable_reg);
+	u32 status = __raw_readl(clk->enable_reg);
 
 	/* use external clock */
 	status &= ~0x000000ff;
 	status |= 0x00000080;
-	ctrl_outl(status, clk->enable_reg);
+	__raw_writel(status, clk->enable_reg);
 }
 
 static struct clk_ops fsimck_clk_ops = {
@@ -460,7 +451,7 @@ static struct resource sdhi0_cn7_resources[] = {
 		.flags  = IORESOURCE_MEM,
 	},
 	[1] = {
-		.start  = 101,
+		.start  = 100,
 		.flags  = IORESOURCE_IRQ,
 	},
 };
@@ -483,7 +474,7 @@ static struct resource sdhi1_cn8_resources[] = {
 		.flags  = IORESOURCE_MEM,
 	},
 	[1] = {
-		.start  = 24,
+		.start  = 23,
 		.flags  = IORESOURCE_IRQ,
 	},
 };
@@ -531,7 +522,7 @@ static int __init sh_eth_is_eeprom_ready(void)
 	int t = 10000;
 
 	while (t--) {
-		if (!ctrl_inw(EEPROM_STAT))
+		if (!__raw_readw(EEPROM_STAT))
 			return 1;
 		udelay(1);
 	}
@@ -551,13 +542,13 @@ static void __init sh_eth_init(void)
 
 	/* read MAC addr from EEPROM */
 	for (i = 0 ; i < 3 ; i++) {
-		ctrl_outw(0x0, EEPROM_OP); /* read */
-		ctrl_outw(i*2, EEPROM_ADR);
-		ctrl_outw(0x1, EEPROM_STRT);
+		__raw_writew(0x0, EEPROM_OP); /* read */
+		__raw_writew(i*2, EEPROM_ADR);
+		__raw_writew(0x1, EEPROM_STRT);
 		if (!sh_eth_is_eeprom_ready())
 			return;
 
-		mac = ctrl_inw(EEPROM_DATA);
+		mac = __raw_readw(EEPROM_DATA);
 		sh_eth_plat.mac_addr[i << 1] = mac & 0xff;
 		sh_eth_plat.mac_addr[(i << 1) + 1] = mac >> 8;
 	}
@@ -594,8 +585,8 @@ arch_initcall(arch_setup);
 
 static int __init devices_setup(void)
 {
-	u16 sw = ctrl_inw(SW4140); /* select camera, monitor */
-	struct clk *fsia_clk;
+	u16 sw = __raw_readw(SW4140); /* select camera, monitor */
+	struct clk *clk;
 
 	/* register board specific self-refresh code */
 	sh_mobile_register_self_refresh(SUSP_SH_STANDBY | SUSP_SH_SF,
@@ -604,7 +595,7 @@ static int __init devices_setup(void)
 					&ms7724se_sdram_leave_start,
 					&ms7724se_sdram_leave_end);
 	/* Reset Release */
-	ctrl_outw(ctrl_inw(FPGA_OUT) &
+	__raw_writew(__raw_readw(FPGA_OUT) &
 		  ~((1 << 1)  | /* LAN */
 		    (1 << 6)  | /* VIDEO DAC */
 		    (1 << 7)  | /* AK4643 */
@@ -613,7 +604,7 @@ static int __init devices_setup(void)
 		  FPGA_OUT);
 
 	/* turn on USB clocks, use external clock */
-	ctrl_outw((ctrl_inw(PORT_MSELCRB) & ~0xc000) | 0x8000, PORT_MSELCRB);
+	__raw_writew((__raw_readw(PORT_MSELCRB) & ~0xc000) | 0x8000, PORT_MSELCRB);
 
 #ifdef CONFIG_PM
 	/* Let LED9 show STATUS2 */
@@ -642,10 +633,10 @@ static int __init devices_setup(void)
 #endif
 
 	/* enable USB0 port */
-	ctrl_outw(0x0600, 0xa40501d4);
+	__raw_writew(0x0600, 0xa40501d4);
 
 	/* enable USB1 port */
-	ctrl_outw(0x0600, 0xa4050192);
+	__raw_writew(0x0600, 0xa4050192);
 
 	/* enable IRQ 0,1,2 */
 	gpio_request(GPIO_FN_INTC_IRQ0, NULL);
@@ -693,7 +684,7 @@ static int __init devices_setup(void)
 	gpio_request(GPIO_FN_LCDVCPWC, NULL);
 	gpio_request(GPIO_FN_LCDRD,    NULL);
 	gpio_request(GPIO_FN_LCDLCLK,  NULL);
-	ctrl_outw((ctrl_inw(PORT_HIZA) & ~0x0001), PORT_HIZA);
+	__raw_writew((__raw_readw(PORT_HIZA) & ~0x0001), PORT_HIZA);
 
 	/* enable CEU0 */
 	gpio_request(GPIO_FN_VIO0_D15, NULL);
@@ -764,13 +755,18 @@ static int __init devices_setup(void)
 	gpio_request(GPIO_FN_CLKAUDIOBO, NULL);
 	gpio_request(GPIO_FN_FSIIASD,    NULL);
 
+	/* set SPU2 clock to 83.4 MHz */
+	clk = clk_get(NULL, "spu_clk");
+	clk_set_rate(clk, clk_round_rate(clk, 83333333));
+	clk_put(clk);
+
 	/* change parent of FSI A */
-	fsia_clk = clk_get(NULL, "fsia_clk");
+	clk = clk_get(NULL, "fsia_clk");
 	clk_register(&fsimcka_clk);
-	clk_set_parent(fsia_clk, &fsimcka_clk);
-	clk_set_rate(fsia_clk, 11000);
+	clk_set_parent(clk, &fsimcka_clk);
+	clk_set_rate(clk, 11000);
 	clk_set_rate(&fsimcka_clk, 11000);
-	clk_put(fsia_clk);
+	clk_put(clk);
 
 	/* SDHI0 connected to cn7 */
 	gpio_request(GPIO_FN_SDHI0CD, NULL);
