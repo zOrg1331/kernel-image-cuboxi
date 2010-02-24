@@ -1,7 +1,7 @@
 aufs2 standalone patch for linux-2.6.
 
 diff --git a/fs/namei.c b/fs/namei.c
-index ca3c04b..90cb1d1 100644
+index 1d12d37..7cb8e5d 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
 @@ -349,6 +349,7 @@ int deny_write_access(struct file * file)
@@ -12,7 +12,7 @@ index ca3c04b..90cb1d1 100644
  
  /**
   * path_get - get a reference to a path
-@@ -1206,6 +1207,7 @@ struct dentry *lookup_hash(struct nameidata *nd)
+@@ -1216,6 +1217,7 @@ struct dentry *lookup_hash(struct nameidata *nd)
  		return ERR_PTR(err);
  	return __lookup_hash(&nd->last, nd->path.dentry, nd);
  }
@@ -20,7 +20,7 @@ index ca3c04b..90cb1d1 100644
  
  int __lookup_one_len(const char *name, struct qstr *this,
  		struct dentry *base, int len)
-@@ -1228,6 +1230,7 @@ int __lookup_one_len(const char *name, struct qstr *this,
+@@ -1238,6 +1240,7 @@ int __lookup_one_len(const char *name, struct qstr *this,
  	this->hash = end_name_hash(hash);
  	return 0;
  }
