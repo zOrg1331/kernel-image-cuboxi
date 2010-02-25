@@ -198,6 +198,7 @@ repeat:
 	retval = __ptrace_may_access(task, PTRACE_MODE_ATTACH);
 	if (retval)
 		goto bad;
+	retval = -EACCES;
 	if (task->mm->vps_dumpable == 2)
 		goto bad;
 
