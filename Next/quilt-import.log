@@ -1,0 +1,54 @@
+Importing driver-core.current based on 2.6.33-rc8
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.33-rc8-git6
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.33-rc8-git6
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard aea187c46f7d03ce985e55eb1398d0776a15b928
+HEAD is now at aea187c Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/viro/vfs-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-lm90-01-add-w83l771-support.patch
+hwmon-lm90-02-restore-config-on-exit.patch
+hwmon-lm90-03-add-smbus-alert-support.patch
+hwmon-it87-01-expose-auto-mode.patch
+hwmon-it87-02-expose-pwm-temp-mappings.patch
+hwmon-it87-03-fan-attributes-in-arrays.patch
+hwmon-it87-04-create-vid-attr-by-group.patch
+hwmon-it87-05-add-beep-support.patch
+hwmon-it87-06-checkpatch-cleanup.patch
+hwmon-it87-07-use-strict_strtol.patch
+hwmon-it87-08-new-maintainer.patch
+hwmon-it87-09-drop-datasheet-links.patch
+hwmon-it87-10-old-automatic-fan-speed-control.patch
+hwmon-it87-11-validate-auto-pwm-settings.patch
+hwmon-g760a-make-rpm_from_cnt-static.patch
+hwmon-w83793-add-watchdog-support.patch
+hwmon-add-driver-for-adt7411-voltage-temperature-sensor.patch
+hwmon-adt7411-improve-locking.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 634acd4...3c4820b master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.33-rc3-git5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.33-rc7-10-g6339204
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.33-rc8-38-g8862627
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
