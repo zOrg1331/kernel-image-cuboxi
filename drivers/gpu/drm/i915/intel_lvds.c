@@ -636,6 +636,13 @@ static const struct dmi_system_id bad_lid_status[] = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "PC-81005"),
 		},
 	},
+	{
+		.ident = "Clevo M5x0N",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "CLEVO Co."),
+			DMI_MATCH(DMI_BOARD_NAME, "M5x0N"),
+		},
+	},
 	{ }
 };
 
@@ -648,14 +655,7 @@ static const struct dmi_system_id bad_lid_status[] = {
  */
 static enum drm_connector_status intel_lvds_detect(struct drm_connector *connector)
 {
-	struct drm_device *dev = connector->dev;
 	enum drm_connector_status status = connector_status_connected;
-
-	/* ACPI lid methods were generally unreliable in this generation, so
-	 * don't even bother.
-	 */
-	if (IS_I8XX(dev))
-		return connector_status_connected;
 
 	if (!dmi_check_system(bad_lid_status) && !acpi_lid_open())
 		status = connector_status_disconnected;
