@@ -1,7 +1,7 @@
 /*
  * Wireless configuration interface internals.
  *
- * Copyright 2006-2009	Johannes Berg <johannes@sipsolutions.net>
+ * Copyright 2006-2010	Johannes Berg <johannes@sipsolutions.net>
  */
 #ifndef __NET_WIRELESS_CORE_H
 #define __NET_WIRELESS_CORE_H
@@ -48,6 +48,7 @@ struct cfg80211_registered_device {
 
 	/* associate netdev list */
 	struct mutex devlist_mtx;
+	/* protected by devlist_mtx or RCU */
 	struct list_head netdev_list;
 	int devlist_generation;
 	int opencount; /* also protected by devlist_mtx */
@@ -111,7 +112,8 @@ struct cfg80211_internal_bss {
 	unsigned long ts;
 	struct kref ref;
 	atomic_t hold;
-	bool ies_allocated;
+	bool beacon_ies_allocated;
+	bool proberesp_ies_allocated;
 
 	/* must be last because of priv member */
 	struct cfg80211_bss pub;
@@ -374,9 +376,14 @@ void cfg80211_process_rdev_events(struct cfg80211_registered_device *rdev);
 struct ieee80211_channel *
 rdev_fixed_channel(struct cfg80211_registered_device *rdev,
 		   struct wireless_dev *for_wdev);
+struct ieee80211_channel *
+rdev_freq_to_chan(struct cfg80211_registered_device *rdev,
+		  int freq, enum nl80211_channel_type channel_type);
 int rdev_set_freq(struct cfg80211_registered_device *rdev,
 		  struct wireless_dev *for_wdev,
 		  int freq, enum nl80211_channel_type channel_type);
+
+u16 cfg80211_calculate_bitrate(struct rate_info *rate);
 
 #ifdef CONFIG_CFG80211_DEVELOPER_WARNINGS
 #define CFG80211_DEV_WARN_ON(cond)	WARN_ON(cond)
