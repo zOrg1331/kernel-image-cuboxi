@@ -2416,21 +2416,28 @@ sisusb_open(struct inode *inode, struct file *file)
 	struct usb_interface *interface;
 	int subminor = iminor(inode);
 
-	if (!(interface = usb_find_interface(&sisusb_driver, subminor)))
+	lock_kernel();
+	if (!(interface = usb_find_interface(&sisusb_driver, subminor))) {
+		unlock_kernel();
 		return -ENODEV;
+	}
 
-	if (!(sisusb = usb_get_intfdata(interface)))
+	if (!(sisusb = usb_get_intfdata(interface))) {
+		unlock_kernel();
 		return -ENODEV;
+	}
 
 	mutex_lock(&sisusb->lock);
 
 	if (!sisusb->present || !sisusb->ready) {
 		mutex_unlock(&sisusb->lock);
+		unlock_kernel();
 		return -ENODEV;
 	}
 
 	if (sisusb->isopen) {
 		mutex_unlock(&sisusb->lock);
+		unlock_kernel();
 		return -EBUSY;
 	}
 
@@ -2439,11 +2446,13 @@ sisusb_open(struct inode *inode, struct file *file)
 			if (sisusb_init_gfxdevice(sisusb, 0)) {
 				mutex_unlock(&sisusb->lock);
 				dev_err(&sisusb->sisusb_dev->dev, "Failed to initialize device\n");
+				unlock_kernel();
 				return -EIO;
 			}
 		} else {
 			mutex_unlock(&sisusb->lock);
 			dev_err(&sisusb->sisusb_dev->dev, "Device not attached to USB 2.0 hub\n");
+			unlock_kernel();
 			return -EIO;
 		}
 	}
@@ -2456,6 +2465,7 @@ sisusb_open(struct inode *inode, struct file *file)
 	file->private_data = sisusb;
 
 	mutex_unlock(&sisusb->lock);
+	unlock_kernel();
 
 	return 0;
 }
@@ -3238,7 +3248,7 @@ static void sisusb_disconnect(struct usb_interface *intf)
 	kref_put(&sisusb->kref, sisusb_delete);
 }
 
-static struct usb_device_id sisusb_table [] = {
+static const struct usb_device_id sisusb_table[] = {
 	{ USB_DEVICE(0x0711, 0x0550) },
 	{ USB_DEVICE(0x0711, 0x0900) },
 	{ USB_DEVICE(0x0711, 0x0901) },
