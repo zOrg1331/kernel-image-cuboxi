@@ -15,6 +15,7 @@
 #include <linux/proc_fs.h>
 #include <linux/virtinfo.h>
 #include <linux/pagemap.h>
+#include <linux/sched.h>
 
 #include <bc/beancounter.h>
 #include <bc/io_acct.h>
