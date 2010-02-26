@@ -389,8 +389,6 @@ static inline int init_ve_netclass(void) { return 0; }
 static inline void fini_ve_netclass(void) { ; }
 #endif
 
-extern struct kset devices_subsys;
-
 static const struct {
 	unsigned	minor;
 	char		*name;
@@ -779,7 +777,7 @@ static void set_ve_root(struct ve_struct *ve, struct task_struct *tsk)
 static void set_ve_caps(struct ve_struct *ve, struct task_struct *tsk)
 {
 	/* required for real_setdevperms from register_ve_<fs> above */
-	memcpy(&ve->ve_cap_bset, &tsk->cap_effective, sizeof(kernel_cap_t));
+	memcpy(&ve->ve_cap_bset, &tsk->cred->cap_effective, sizeof(kernel_cap_t));
 	cap_lower(ve->ve_cap_bset, CAP_SETVEID);
 }
 
@@ -1049,7 +1047,7 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 
 		read_lock(&tasklist_lock);
 		may_setsid = !tsk->signal->leader &&
-			!find_task_by_pid_type_ns(PIDTYPE_PGID, task_pid_nr(tsk), &init_pid_ns);
+			!pid_task(find_pid_ns(task_pid_nr(tsk), &init_pid_ns), PIDTYPE_PGID);
 		read_unlock(&tasklist_lock);
 
 		if (!may_setsid) {
@@ -1553,7 +1551,7 @@ static struct tty_driver *alloc_ve_tty_driver(struct tty_driver *base,
 
 	driver->owner_env = ve;
 	driver->flags |= TTY_DRIVER_INSTALLED;
-	driver->refcount = 0;
+	kref_init(&driver->kref);
 
 	return driver;
 

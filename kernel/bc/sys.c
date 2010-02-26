@@ -17,7 +17,7 @@
 /*
  *	The (rather boring) getluid syscall
  */
-asmlinkage long sys_getluid(void)
+SYSCALL_DEFINE0(getluid)
 {
 	struct user_beancounter *ub;
 
@@ -31,7 +31,7 @@ asmlinkage long sys_getluid(void)
 /*
  *	The setluid syscall
  */
-asmlinkage long sys_setluid(uid_t uid)
+SYSCALL_DEFINE1(setluid, uid_t, uid)
 {
 	struct user_beancounter *ub;
 	struct task_beancounter *task_bc;
@@ -127,8 +127,8 @@ out:
 /*
  *	The setbeanlimit syscall
  */
-asmlinkage long sys_setublimit(uid_t uid, unsigned long resource,
-		unsigned long __user *limits)
+SYSCALL_DEFINE3(setublimit, uid_t, uid, unsigned long, resource,
+		unsigned long __user, *limits)
 {
 	unsigned long new_limits[2];
 
@@ -140,8 +140,9 @@ asmlinkage long sys_setublimit(uid_t uid, unsigned long resource,
 
 extern long do_ubstat(int func, unsigned long arg1, unsigned long arg2, 
 		void __user *buf, long size);
-asmlinkage long sys_ubstat(int func, unsigned long arg1, unsigned long arg2, 
-		void __user *buf, long size)
+
+SYSCALL_DEFINE5(ubstat, int, func, unsigned long, arg1, unsigned long, arg2,
+		void __user, *buf, long, size)
 {
 	if (!ve_is_super(get_exec_env()))
 		return -EPERM;

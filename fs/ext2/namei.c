@@ -263,7 +263,7 @@ static int ext2_unlink(struct inode * dir, struct dentry *dentry)
 	struct page * page;
 	int err = -ENOENT;
 
-	DQUOT_INIT(inode);
+	vfs_dq_init(inode);
 
 	de = ext2_find_entry (dir, &dentry->d_name, &page);
 	if (!de)
@@ -308,7 +308,7 @@ static int ext2_rename (struct inode * old_dir, struct dentry * old_dentry,
 	int err = -ENOENT;
 
 	if (new_inode)
-		DQUOT_INIT(new_inode);
+		vfs_dq_init(new_inode);
 
 	old_de = ext2_find_entry (old_dir, &old_dentry->d_name, &old_page);
 	if (!old_de)

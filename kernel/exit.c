@@ -1660,7 +1660,7 @@ repeat:
 
 		if (wo->wo_flags & __WNOTHREAD)
 			break;
-	} while_each_thread(current, tsk);
+	} while_each_thread_ve(current, tsk);
 	read_unlock(&tasklist_lock);
 
 notask:

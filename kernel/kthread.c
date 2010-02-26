@@ -65,19 +65,19 @@ static int kthread(void *_create)
 	struct kthread self;
 	int ret;
 
+	self.should_stop = 0;
+	init_completion(&self.exited);
+	current->vfork_done = &self.exited;
+
 	if (do_ve_enter_hook && create->ve != get_ve0()) {
 		ret = do_ve_enter_hook(create->ve, 0);
 		if (ret < 0) {
 			create->result = ERR_PTR(ret);
-			complete(&create->started);
-			return ret;
+			complete(&create->done);
+			goto out;
 		}
 	} else if (create->ve != get_ve0())
 		BUG();
-
-	self.should_stop = 0;
-	init_completion(&self.exited);
-	current->vfork_done = &self.exited;
 
 	/* OK, tell user we're spawned, wait for stop or wakeup */
 	__set_current_state(TASK_UNINTERRUPTIBLE);
@@ -88,7 +88,7 @@ static int kthread(void *_create)
 	ret = -EINTR;
 	if (!self.should_stop)
 		ret = threadfn(data);
-
+out:
 	/* we can't just return, we must preserve "self" on stack */
 	do_exit(ret);
 }

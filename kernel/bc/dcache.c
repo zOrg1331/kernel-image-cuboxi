@@ -346,12 +346,12 @@ static void ub_dentry_set_limits(unsigned long pages, unsigned long cap)
 	up_write(&ub_dentry_alloc_sem);
 }
 
-static int ub_dentry_proc_handler(ctl_table *ctl, int write, struct file *filp,
+static int ub_dentry_proc_handler(ctl_table *ctl, int write,
 			  void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	int r;
 
-	r = proc_dointvec(ctl, write, filp, buffer, lenp, ppos);
+	r = proc_dointvec(ctl, write, buffer, lenp, ppos);
 	if (!r && write)
 		ub_dentry_set_limits(totalram_pages - totalhigh_pages,
 				ULONG_MAX);

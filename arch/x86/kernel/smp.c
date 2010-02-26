@@ -217,7 +217,7 @@ int smp_nmi_call_function(smp_nmi_function func, void *info, int wait)
 	mb();
 
 	/* Send a message to all other CPUs and wait for them to respond */
-	send_IPI_allbutself(APIC_DM_NMI);
+	apic->send_IPI_allbutself(APIC_DM_NMI);
 	while (atomic_read(&data.started) != cpus)
 		barrier();
 

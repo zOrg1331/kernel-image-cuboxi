@@ -273,7 +273,8 @@ static int sim_get_sb(struct file_system_type *type, int flags,
 	sim_quota_init(sb);
 
 	path_put(&nd.path);
-	return simple_set_mnt(mnt, sb);
+	simple_set_mnt(mnt, sb);
+	return 0;
 
 out_killsb:
 	up_write(&sb->s_umount);

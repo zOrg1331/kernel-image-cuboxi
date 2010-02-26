@@ -715,7 +715,8 @@ int swap_readonly(struct page *page)
 		return 0;
 
 	spin_unlock(&swap_lock);
-	if ((p->flags & (SWP_ACTIVE|SWP_READONLY)) == SWP_ACTIVE)
+	if ((p->flags & (SWP_USED|SWP_WRITEOK|SWP_READONLY)) ==
+			(SWP_USED|SWP_WRITEOK))
 		return 0;
 
 	return 1;

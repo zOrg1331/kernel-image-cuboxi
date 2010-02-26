@@ -158,7 +158,7 @@ static int cgroup_open(struct inode *inode, struct file *file)
 	return single_open(file, proc_cgroup_show, PROC_I(inode)->pid);
 }
 
-struct file_operations proc_cgroup_operations = {
+const struct file_operations proc_cgroup_operations = {
 	.open		= cgroup_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,

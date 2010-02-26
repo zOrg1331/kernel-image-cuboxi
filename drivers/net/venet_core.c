@@ -208,12 +208,12 @@ static int venet_close(struct net_device *master)
 
 static void venet_destructor(struct net_device *dev)
 {
-	struct venet_stats *stats = (struct venet_stats *)dev->priv;
+	struct venet_stats *stats = (struct venet_stats *)dev->ml_priv;
 	if (stats == NULL)
 		return;
 	free_percpu(stats->real_stats);
 	kfree(stats);
-	dev->priv = NULL;
+	dev->ml_priv = NULL;
 }
 
 /*
@@ -299,7 +299,7 @@ static struct net_device_stats *get_stats(struct net_device *dev)
 	int i;
 	struct venet_stats *stats;
 
-	stats = (struct venet_stats *)dev->priv;
+	stats = (struct venet_stats *)dev->ml_priv;
 	memset(&stats->stats, 0, sizeof(struct net_device_stats));
 	for (i=0; i < NR_CPUS; i++) {
 		struct net_device_stats *dev_stats;

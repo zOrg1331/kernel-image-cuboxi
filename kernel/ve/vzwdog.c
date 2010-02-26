@@ -175,7 +175,49 @@ static void show_pgdatinfo(void)
 	printk("\n");
 }
 
-static int show_partition_io(struct device *dev, void *x)
+static int show_partitions_io(struct gendisk *gp)
+{
+	struct disk_part_iter piter;
+	struct hd_struct *hd;
+	char buf[BDEVNAME_SIZE];
+	int cpu;
+
+	/*
+	if (&disk_to_dev(gp)->kobj.entry == block_class.devices.next)
+		seq_puts(seqf,	"major minor name"
+				"     rio rmerge rsect ruse wio wmerge "
+				"wsect wuse running use aveq"
+				"\n\n");
+	*/
+ 
+	disk_part_iter_init(&piter, gp, DISK_PITER_INCL_EMPTY_PART0);
+	while ((hd = disk_part_iter_next(&piter))) {
+		cpu = part_stat_lock();
+		part_round_stats(cpu, hd);
+		part_stat_unlock();
+		printk("%4d %7d %s %lu %lu %llu "
+			   "%u %lu %lu %llu %u %u %u %u\n",
+			   MAJOR(part_devt(hd)), MINOR(part_devt(hd)),
+			   disk_name(gp, hd->partno, buf),
+			   part_stat_read(hd, ios[0]),
+			   part_stat_read(hd, merges[0]),
+			   (unsigned long long)part_stat_read(hd, sectors[0]),
+			   jiffies_to_msecs(part_stat_read(hd, ticks[0])),
+			   part_stat_read(hd, ios[1]),
+			   part_stat_read(hd, merges[1]),
+			   (unsigned long long)part_stat_read(hd, sectors[1]),
+			   jiffies_to_msecs(part_stat_read(hd, ticks[1])),
+			   part_in_flight(hd),
+			   jiffies_to_msecs(part_stat_read(hd, io_ticks)),
+			   jiffies_to_msecs(part_stat_read(hd, time_in_queue))
+			);
+	}
+	disk_part_iter_exit(&piter);
+ 
+	return 0;
+}
+
+static int show_one_disk_io(struct device *dev, void *x)
 {
 	char *name;
 	char buf[BDEVNAME_SIZE];
@@ -192,15 +234,7 @@ static int show_partition_io(struct device *dev, void *x)
 			isdigit(name[3]))
 		return 0;
 
-	printk("(%u,%u) %s r(%lu %lu %lu) w(%lu %lu %lu)\n",
-			gd->major, gd->first_minor,
-			name,
-			disk_stat_read(gd, ios[READ]),
-			disk_stat_read(gd, sectors[READ]),
-			disk_stat_read(gd, merges[READ]),
-			disk_stat_read(gd, ios[WRITE]),
-			disk_stat_read(gd, sectors[WRITE]),
-			disk_stat_read(gd, merges[WRITE]));
+	show_partitions_io(gd);
 
 	return 0;
 }
@@ -208,7 +242,7 @@ static int show_partition_io(struct device *dev, void *x)
 static void show_diskio(void)
 {
 	printk("disk_io: ");
-	class_for_each_device(&block_class, NULL, NULL, show_partition_io);
+	class_for_each_device(&block_class, NULL, NULL, show_one_disk_io);
 	printk("\n");
 }
 

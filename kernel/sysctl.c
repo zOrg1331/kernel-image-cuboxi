@@ -3365,14 +3365,13 @@ static int deprecated_sysctl_warning(struct __sysctl_args *args)
 #include <linux/pid_namespace.h>
 
 static int proc_pid_ns_hide_child(struct ctl_table *table, int write,
-		struct file *filp, void __user *buffer,
-		size_t *lenp, loff_t *ppos)
+		void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	int tmp, res;
 
 	tmp = (current->nsproxy->pid_ns->flags & PID_NS_HIDE_CHILD) ? 1 : 0;
 
-	res = __do_proc_dointvec(&tmp, table, write, filp, buffer,
+	res = __do_proc_dointvec(&tmp, table, write, buffer,
 			       lenp, ppos, NULL, NULL);
 	if (res || !write)
 		return res;

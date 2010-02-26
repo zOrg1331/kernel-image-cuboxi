@@ -190,9 +190,7 @@ static int __pid_ns_attach_task(struct pid_namespace *ns,
 
 	spin_lock(&pidmap_lock);
 	reattach_pid(tsk, PIDTYPE_SID, pid);
-	set_task_session(tsk, pid_nr(pid));
 	reattach_pid(tsk, PIDTYPE_PGID, pid);
-	tsk->signal->__pgrp = pid_nr(pid);
 	tsk->signal->leader_pid = pid;
 	current->signal->tty_old_pgrp = NULL;
 

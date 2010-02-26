@@ -49,7 +49,7 @@ static inline struct net_device_stats *
 venet_stats(struct net_device *dev, int cpu)
 {
 	struct venet_stats *stats;
-	stats = (struct venet_stats*)dev->priv;
+	stats = (struct venet_stats*)dev->ml_priv;
 	return per_cpu_ptr(stats->real_stats, cpu);
 }
 

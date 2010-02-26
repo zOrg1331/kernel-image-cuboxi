@@ -220,7 +220,7 @@ static int vzquota_alloc_space2(struct inode *inode,
 	return QUOTA_OK;
 }
 
-static int vzquota_alloc_inode2(const struct inode *inode, unsigned long number)
+static int vzquota_alloc_inode2(const struct inode *inode, qsize_t number)
 {
 	return QUOTA_OK;
 }
@@ -231,7 +231,7 @@ static int vzquota_free_space2(struct inode *inode, qsize_t number)
 	return QUOTA_OK;
 }
 
-static int vzquota_free_inode2(const struct inode *inode, unsigned long number)
+static int vzquota_free_inode2(const struct inode *inode, qsize_t number)
 {
 	return QUOTA_OK;
 }

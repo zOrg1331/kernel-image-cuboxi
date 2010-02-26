@@ -19,17 +19,19 @@ void __attribute__((weak)) arch_report_meminfo(struct seq_file *m)
 {
 }
 
-static int meminfo_proc_show(struct seq_file *m, struct meminfo *mi)
+#define K(x) ((x) << (PAGE_SHIFT - 10))
+
+static int meminfo_proc_show_mi(struct seq_file *m, struct meminfo *mi)
 {
 	seq_printf(m,
 		"MemTotal:       %8lu kB\n"
 		"MemFree:        %8lu kB\n"
 		"SwapTotal:      %8lu kB\n"
 		"SwapFree:       %8lu kB\n",
-		K(mi.si.totalram),
-		K(mi.si.freeram),
-		K(mi.si.totalswap),
-		K(mi.si.freeswap));
+		K(mi->si.totalram),
+		K(mi->si.freeram),
+		K(mi->si.totalswap),
+		K(mi->si.freeswap));
 
 	return 0;
 }
@@ -55,7 +57,6 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 /*
  * display in kilobytes.
  */
-#define K(x) ((x) << (PAGE_SHIFT - 10))
 	si_meminfo(&i);
 	si_swapinfo(&i);
 	committed = percpu_counter_read_positive(&vm_committed_as);

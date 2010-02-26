@@ -182,7 +182,7 @@ destroy_conntrack(struct nf_conntrack *nfct)
 #ifdef CONFIG_VE_IPTABLES
 	struct ve_struct *old_ve;
 
-	old_ve = set_exec_env(ct->ct_owner_env);
+	old_ve = set_exec_env(ct->ct_net->owner_ve);
 #endif
 
 	pr_debug("destroy_conntrack(%p)\n", ct);
@@ -599,9 +599,6 @@ struct nf_conn *nf_conntrack_alloc(struct net *net,
 	setup_timer(&ct->timeout, death_by_timeout, (unsigned long)ct);
 #ifdef CONFIG_NET_NS
 	ct->ct_net = net;
-#endif
-#ifdef CONFIG_VE_IPTABLES
-	ct->ct_owner_env = get_exec_env();
 #endif
 
 	/*

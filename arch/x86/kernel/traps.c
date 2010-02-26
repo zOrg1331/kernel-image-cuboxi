@@ -447,7 +447,7 @@ do_nmi(struct pt_regs *regs, long error_code)
 	inc_irq_stat(__nmi_count);
 
 	if (!ignore_nmis) {
-		if (!nmi_ipi_callback(regs, cpu))
+		if (!nmi_ipi_callback(regs, smp_processor_id()))
 			default_do_nmi(regs);
 	}
 

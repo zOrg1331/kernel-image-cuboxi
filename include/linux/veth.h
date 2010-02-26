@@ -22,6 +22,7 @@ enum {
 struct veth_struct
 {
 	struct net_device_stats stats;
+	struct net_device	*me;
 	struct net_device	*pair;
 	struct list_head	hwaddr_list;
 	struct net_device_stats	*real_stats;
@@ -32,7 +33,7 @@ struct veth_struct
 	((struct veth_struct *)(netdev_priv(dev)))
 static inline struct net_device * veth_to_netdev(struct veth_struct *veth)
 {
-	return (struct net_device *)((char *)veth - ((sizeof(struct net_device) + NETDEV_ALIGN_CONST) & ~NETDEV_ALIGN_CONST));
+	return veth->me;
 }
 #endif
 

@@ -26,6 +26,9 @@
 #include <linux/vzdq_tree.h>
 #include <linux/vzquota.h>
 
+#define QUOTABLOCK_BITS 10
+#define QUOTABLOCK_SIZE (1 << QUOTABLOCK_BITS)
+
 /* ----------------------------------------------------------------------
  *
  * File read operation
@@ -236,9 +239,9 @@ static inline void convert_quot_format(struct v2_disk_dqblk *dq,
 static int read_dquot(loff_t num, void *buf, struct quotatree_tree *tree)
 {
 	int res, i, entries = 0;
-	struct v2_disk_dqdbheader *dq_header;
+	struct qt_disk_dqdbheader *dq_header;
 	struct quotatree_node *p;
-	struct v2_disk_dqblk *blk = buf + sizeof(struct v2_disk_dqdbheader);
+	struct v2_disk_dqblk *blk = buf + sizeof(struct qt_disk_dqdbheader);
 
 	res = BLOCK_NOT_FOUND;
 	dq_header = buf;

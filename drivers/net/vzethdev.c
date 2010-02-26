@@ -109,7 +109,9 @@ int veth_entry_add(struct ve_struct *ve, char *dev_addr, char *name,
 	}
 	set_exec_env(old_env);
 	veth_from_netdev(dev_ve)->pair = dev_ve0;
+	veth_from_netdev(dev_ve)->me = dev_ve;
 	veth_from_netdev(dev_ve0)->pair = dev_ve;
+	veth_from_netdev(dev_ve0)->me = dev_ve0;
 
 	write_lock(&ve_hwaddr_lock);
 	list_add(&(veth_from_netdev(dev_ve)->hwaddr_list), &veth_hwaddr_list);

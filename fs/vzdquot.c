@@ -790,9 +790,9 @@ static int vzquota_qlnk_fill_attr(struct vz_quota_ilink *qlnk,
  */
 static void __vzquota_inode_init(struct inode *inode, unsigned char origin)
 {
-	if (inode->i_dquot[USRQUOTA] == NODQUOT) {
+	if (inode->i_dquot[USRQUOTA] == NULL) {
 		vzquota_qlnk_init(INODE_QLNK(inode));
-		inode->i_dquot[USRQUOTA] = (void *)~(unsigned long)NODQUOT;
+		inode->i_dquot[USRQUOTA] = (void *)~(unsigned long)NULL;
 	}
 	set_qlnk_origin(INODE_QLNK(inode), origin);
 }
@@ -810,7 +810,7 @@ static void vzquota_inode_drop(struct inode *inode)
 	inode_qmblk_lock(inode->i_sb);
 	vzquota_qlnk_swap(&qlnk, INODE_QLNK(inode));
 	set_qlnk_origin(INODE_QLNK(inode), VZ_QUOTAO_DRCAL);
-	inode->i_dquot[USRQUOTA] = NODQUOT;
+	inode->i_dquot[USRQUOTA] = NULL;
 	inode_qmblk_unlock(inode->i_sb);
 	vzquota_qlnk_destroy(&qlnk);
 }
