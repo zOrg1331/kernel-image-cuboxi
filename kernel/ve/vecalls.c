@@ -205,44 +205,6 @@ static int real_setdevperms(envid_t veid, unsigned type,
  **********************************************************************
  **********************************************************************/
 
-#ifdef CONFIG_INET
-#include <net/ip.h>
-#include <net/tcp.h>
-#include <net/udp.h>
-#include <net/icmp.h>
-
-static int init_fini_ve_mibs(struct ve_struct *ve, int fini)
-{
-	if (fini)
-		goto fini;
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-	if (init_ipv6_mibs())
-		goto err_ipv6;
-#endif
-	return 0;
-
-fini:
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-	cleanup_ipv6_mibs();
-err_ipv6:
-#endif
-	return -ENOMEM;
-}
-
-static inline int init_ve_mibs(struct ve_struct *ve)
-{
-	return init_fini_ve_mibs(ve, 0);
-}
-
-static inline void fini_ve_mibs(struct ve_struct *ve)
-{
-	(void)init_fini_ve_mibs(ve, 1);
-}
-#else
-#define init_ve_mibs(ve)	(0)
-#define fini_ve_mibs(ve)	do { } while (0)
-#endif
-
 static int prepare_proc_root(struct ve_struct *ve)
 {
 	struct proc_dir_entry *de;
@@ -1142,9 +1104,6 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	if ((err = init_ve_sysfs(ve)))
 		goto err_sysfs;
 
-	if ((err = init_ve_mibs(ve)))
-		goto err_mibs;
-
 	if ((err = init_ve_namespaces(ve, &old_ns)))
 		goto err_ns;
 
@@ -1255,8 +1214,6 @@ err_proc:
 	 */
 	put_nsproxy(ve->ve_ns);
 err_ns:
-	fini_ve_mibs(ve);
-err_mibs:
 	fini_ve_sysfs(ve);
 err_sysfs:
 	/* It is safe to restore current->envid here because
@@ -1446,7 +1403,6 @@ static void env_cleanup(struct ve_struct *ve)
 	ve->ve_netns->sysfs_completion = &sysfs_completion;
 	put_net(ve->ve_netns);
 	wait_for_completion(&sysfs_completion);
-	fini_ve_mibs(ve);
 	fini_ve_proc(ve);
 	fini_ve_sysfs(ve);
 
