@@ -311,7 +311,6 @@ again:
 
 	bc_verify_held(ub);
 	ub_free_counters(ub);
- 	bc_fini_ioprio(&ub->iopriv);
 	parent = ub->parent;
 
 	call_rcu(&ub->rcu, bc_free_rcu);
@@ -568,7 +567,6 @@ static void init_beancounter_struct(struct user_beancounter *ub)
 #ifdef CONFIG_BC_DEBUG_KMEM
 	INIT_LIST_HEAD(&ub->ub_cclist);
 #endif
-	bc_init_ioprio(&ub->iopriv);
 }
 
 static void init_beancounter_store(struct user_beancounter *ub)

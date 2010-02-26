@@ -27,7 +27,6 @@
 #include <linux/security.h>
 #include <linux/pid_namespace.h>
 #include <linux/nsproxy.h>
-#include <bc/io_prio.h>
 
 int set_task_ioprio(struct task_struct *task, int ioprio)
 {
@@ -157,7 +156,7 @@ free_uid:
 			if (class != IOPRIO_CLASS_BE)
 				return -ERANGE;
 
-			ret = bc_set_ioprio(who, data);
+			ret = 0; /* bc_set_ioprio(who, data); */
 			break;
 		default:
 			ret = -EINVAL;
