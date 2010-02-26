@@ -862,20 +862,24 @@ static void ve_list_del(struct ve_struct *ve)
 	write_unlock_irq(&ve_list_lock);
 }
 
-static void set_task_ve_caps(struct task_struct *tsk, struct ve_struct *ve)
+static void set_task_ve_caps(struct ve_struct *ve, struct cred *new)
 {
+	const struct cred *cur;
 	kernel_cap_t bset;
 
-	spin_lock(&task_capability_lock);
 	bset = ve->ve_cap_bset;
-	tsk->cap_effective = cap_intersect(tsk->cap_effective, bset);
-	tsk->cap_inheritable = cap_intersect(tsk->cap_inheritable, bset);
-	tsk->cap_permitted = cap_intersect(tsk->cap_permitted, bset);
-	tsk->cap_bset = cap_intersect(tsk->cap_bset, bset);
-	spin_unlock(&task_capability_lock);
+	cur = current_cred();
+	new->cap_effective = cap_intersect(cur->cap_effective, bset);
+	new->cap_inheritable = cap_intersect(cur->cap_inheritable, bset);
+	new->cap_permitted = cap_intersect(cur->cap_permitted, bset);
+	new->cap_bset = cap_intersect(cur->cap_bset, bset);
+
+	if (commit_creds(new))
+		/* too late to rollback, but commit currently just works */
+		BUG();
 }
 
-void ve_move_task(struct task_struct *tsk, struct ve_struct *new)
+void ve_move_task(struct task_struct *tsk, struct ve_struct *new, struct cred *new_creds)
 {
 	struct ve_struct *old;
 
@@ -887,7 +891,7 @@ void ve_move_task(struct task_struct *tsk, struct ve_struct *new)
 	if (tsk->mm)
 		tsk->mm->vps_dumpable = 0;
 	/* setup capabilities before enter */
-	set_task_ve_caps(tsk, new);
+	set_task_ve_caps(new, new_creds);
 
 	old = tsk->ve_task_info.owner_env;
 	tsk->ve_task_info.owner_env = new;
@@ -1075,6 +1079,7 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 			 env_create_param_t *data, int datalen)
 {
 	struct task_struct *tsk;
+	struct cred *new_creds;
 	struct ve_struct *old;
 	struct ve_struct *old_exec;
 	struct ve_struct *ve;
@@ -1206,6 +1211,10 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	if ((err = pid_ns_attach_init(ve->ve_ns->pid_ns, tsk)) < 0)
 		goto err_vpid;
 
+	new_creds = prepare_creds();
+	if (new_creds == NULL)
+		goto err_creds;
+
 	if ((err = ve_hook_iterate_init(VE_SS_CHAIN, ve)) < 0)
 		goto err_ve_hook;
 
@@ -1213,7 +1222,7 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	put_nsproxy(old_ns_net);
 
 	/* finally: set vpids and move inside */
-	ve_move_task(tsk, ve);
+	ve_move_task(tsk, ve, new_creds);
 
 	ve->is_running = 1;
 	up_write(&ve->op_sem);
@@ -1222,6 +1231,8 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	return veid;
 
 err_ve_hook:
+	abort_creds(new_creds);
+err_creds:
 	mntget(ve->proc_mnt);
 err_vpid:
 	fini_venet(ve);
@@ -1368,6 +1379,7 @@ EXPORT_SYMBOL(real_env_create);
 static int do_env_enter(struct ve_struct *ve, unsigned int flags)
 {
 	struct task_struct *tsk = current;
+	struct cred *new_creds;
 	int err;
 
 	VZTRACE("%s: veid=%d\n", __FUNCTION__, ve->veid);
@@ -1382,14 +1394,20 @@ static int do_env_enter(struct ve_struct *ve, unsigned int flags)
 	if (!thread_group_leader(tsk) || !thread_group_empty(tsk))
 		goto out_up;
 
+	new_creds = prepare_creds();
+	if (new_creds == NULL)
+		goto out_up;
+
 #ifdef CONFIG_VZ_FAIRSCHED
 	err = sys_fairsched_mvpr(task_pid_vnr(current), ve->veid);
-	if (err)
+	if (err) {
+		abort_creds(new_creds);
 		goto out_up;
+	}
 #endif
 	ve_sched_attach(ve);
 	switch_ve_namespaces(ve, tsk);
-	ve_move_task(current, ve);
+	ve_move_task(current, ve, new_creds);
 
 	/* Check that the process is not a leader of non-empty group/session.
 	 * If it is, we cannot virtualize its PID. Do not fail, just leave
