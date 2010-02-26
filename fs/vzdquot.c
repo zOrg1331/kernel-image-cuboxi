@@ -445,8 +445,7 @@ int vzquota_get_super(struct super_block *sb)
 
 	mutex_lock(&sb->s_dquot.dqonoff_mutex);
 	err = -EEXIST;
-	if ((sb->s_dquot.flags & (DQUOT_USR_ENABLED|DQUOT_GRP_ENABLED)) &&
-	    sb->dq_op != &vz_quota_operations)
+	if (sb_any_quota_loaded(sb) && sb->dq_op != &vz_quota_operations)
 		goto out_up;
 
 	/*
@@ -499,7 +498,13 @@ int vzquota_get_super(struct super_block *sb)
 		 * between s_dquot.flags and dq_op accesses.
 		 */
 		wmb(); synchronize_sched();
-		sb->s_dquot.flags = DQUOT_USR_ENABLED|DQUOT_GRP_ENABLED;
+		sb->s_dquot.flags =
+			dquot_state_flag(DQUOT_USAGE_ENABLED |
+					DQUOT_LIMITS_ENABLED,
+					USRQUOTA) |
+			dquot_state_flag(DQUOT_USAGE_ENABLED |
+					DQUOT_LIMITS_ENABLED,
+					GRPQUOTA);
 	}
 	err = 0;
 

@@ -319,7 +319,7 @@ static int vz_quota_on(struct super_block *sb, int type,
 		int format_id, char *path, int remount)
 {
 	struct vz_quota_master *qmblk;
-	int mask, mask2;
+	int mask2;
 	int err;
 
 	qmblk = vzquota_find_qmblk(sb);
@@ -335,25 +335,22 @@ static int vz_quota_on(struct super_block *sb, int type,
 		goto out_put;
 
 	down(&vz_quota_sem);
-	mask = 0;
 	mask2 = 0;
 	sb->dq_op = &vz_quota_operations2;
 	sb->s_qcop = &vz_quotactl_operations;
-	if (type == USRQUOTA) {
-		mask = DQUOT_USR_ENABLED;
+	if (type == USRQUOTA)
 		mask2 = VZDQ_USRQUOTA;
-	}
-	if (type == GRPQUOTA) {
-		mask = DQUOT_GRP_ENABLED;
+	if (type == GRPQUOTA)
 		mask2 = VZDQ_GRPQUOTA;
-	}
+
 	err = -EBUSY;
 	if (qmblk->dq_flags & mask2)
 		goto out_sem;
 
 	err = 0;
 	qmblk->dq_flags |= mask2;
-	sb->s_dquot.flags |= mask;
+	sb->s_dquot.flags |= dquot_state_flag(
+			DQUOT_USAGE_ENABLED | DQUOT_LIMITS_ENABLED, type);
 
 out_sem:
 	up(&vz_quota_sem);
@@ -1143,9 +1140,11 @@ static void ugid_quota_on_sb(struct super_block *sb)
 		return;
 	down(&vz_quota_sem);
 	if (qmblk->dq_flags & VZDQ_USRQUOTA)
-		sb->s_dquot.flags |= DQUOT_USR_ENABLED;
+		sb->s_dquot.flags |= dquot_state_flag(DQUOT_USAGE_ENABLED |
+				DQUOT_LIMITS_ENABLED, USRQUOTA);
 	if (qmblk->dq_flags & VZDQ_GRPQUOTA)
-		sb->s_dquot.flags |= DQUOT_GRP_ENABLED;
+		sb->s_dquot.flags |= dquot_state_flag(DQUOT_USAGE_ENABLED |
+				DQUOT_LIMITS_ENABLED, GRPQUOTA);
 	up(&vz_quota_sem);
 	qmblk_put(qmblk);
 }
