@@ -115,8 +115,6 @@ struct ve_struct ve0 = {
 
 EXPORT_SYMBOL(ve0);
 
-DEFINE_PER_CPU_STATIC(struct ve_cpu_stats, ve0_cpu_stats);
-
 LIST_HEAD(ve_list_head);
 rwlock_t ve_list_lock = RW_LOCK_UNLOCKED;
 
@@ -135,7 +133,7 @@ void init_ve0(void)
 	struct ve_struct *ve;
 
 	ve = get_ve0();
-	ve->cpu_stats = percpu_static_init(ve0_cpu_stats);
+	ve->cpu_stats = alloc_percpu(struct ve_cpu_stats);
 	list_add(&ve->ve_list, &ve_list_head);
 }
 

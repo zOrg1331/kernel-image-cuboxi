@@ -159,22 +159,6 @@ extern void free_percpu(void *__pdata);
 extern void __init setup_per_cpu_areas(void);
 #endif
 
-struct percpu_data_static {
-	void *ptrs[NR_CPUS];
-};
-
-#define DEFINE_PER_CPU_STATIC(type, name) \
-	static struct percpu_data_static per_cpu_data__##name; \
-	static __typeof__(type) per_cpu__##name[NR_CPUS]
-
-#define percpu_static_init(name) ({			\
-		int i;					\
-		for (i = 0; i < NR_CPUS; i++)		\
-			(per_cpu_data__##name).ptrs[i] = &(per_cpu__##name)[i];\
-		(__typeof__(&(per_cpu__##name)[0]))	\
-			__percpu_disguise(&(per_cpu_data__##name));\
-	})
-
 #else /* CONFIG_SMP */
 
 #define per_cpu_ptr(ptr, cpu) ({ (void)(cpu); (ptr); })
@@ -201,11 +185,6 @@ static inline void *pcpu_lpage_remapped(void *kaddr)
 {
 	return NULL;
 }
-
-#define DEFINE_PER_CPU_STATIC(type, name) \
-	static __typeof__(type) per_cpu__##name[NR_CPUS]
-
-#define percpu_static_init(name)	(&(per_cpu__##name)[0])
 
 #endif /* CONFIG_SMP */
 

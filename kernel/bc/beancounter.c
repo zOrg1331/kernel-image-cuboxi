@@ -627,8 +627,6 @@ static void init_beancounter_syslimits(struct user_beancounter *ub)
 	ub->ub_limit_rl.interval = 300*HZ;
 }
 
-DEFINE_PER_CPU_STATIC(struct ub_percpu_struct, ub0_percpu);
-
 void __init ub_init_early(void)
 {
 	struct user_beancounter *ub;
@@ -640,7 +638,7 @@ void __init ub_init_early(void)
 	init_beancounter_nolimits(ub);
 	init_beancounter_store(ub);
 	init_beancounter_struct(ub);
-	ub->ub_percpu = percpu_static_init(ub0_percpu);
+	ub->ub_percpu = alloc_percpu(struct ub_percpu_struct);
 
 	memset(&current->task_bc, 0, sizeof(struct task_beancounter));
 	(void)set_exec_ub(ub);
