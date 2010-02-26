@@ -1459,8 +1459,6 @@ static void env_cleanup(struct ve_struct *ve)
 }
 
 static DECLARE_COMPLETION(vzmond_complete);
-static volatile int stop_vzmond;
-
 static int vzmond_helper(void *arg)
 {
 	char name[18];
@@ -1507,10 +1505,9 @@ static inline int have_pending_cleanups(void)
 
 static int vzmond(void *arg)
 {
-	daemonize("vzmond");
 	set_current_state(TASK_INTERRUPTIBLE);
 
-	while (!stop_vzmond || have_pending_cleanups()) {
+	while (!kthread_should_stop() || have_pending_cleanups()) {
 		schedule();
 		try_to_freeze();
 		if (signal_pending(current))
@@ -1528,24 +1525,16 @@ static int vzmond(void *arg)
 
 static int __init init_vzmond(void)
 {
-	int pid;
-	struct task_struct *tsk;
-
-	pid = kernel_thread(vzmond, NULL, 0);
-	if (pid > 0) {
-		tsk = find_task_by_vpid(pid);
-		BUG_ON(tsk == NULL);
-		ve_cleanup_thread = tsk;
-	}
-	return pid;
+	ve_cleanup_thread = kthread_run(vzmond, NULL, "vzmond");
+	if (IS_ERR(ve_cleanup_thread))
+		return PTR_ERR(ve_cleanup_thread);
+	else
+		return 0;
 }
 
 static void fini_vzmond(void)
 {
-	stop_vzmond = 1;
-	wake_up_process(ve_cleanup_thread);
-	wait_for_completion(&vzmond_complete);
-	ve_cleanup_thread = NULL;
+	kthread_stop(ve_cleanup_thread);
 	WARN_ON(!list_empty(&ve_cleanup_list));
 }
 
