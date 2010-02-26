@@ -270,8 +270,6 @@ static int venet_xmit(struct sk_buff *skb, struct net_device *dev)
 	skb_reset_mac_header(skb);
 	memset(skb->data - dev->hard_header_len, 0, dev->hard_header_len);
 
-	dst_release(skb->dst);
-	skb->dst = NULL;
 	nf_reset(skb);
 	length = skb->len;
 

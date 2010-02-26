@@ -309,8 +309,6 @@ out:
 	if (skb->protocol != __constant_htons(ETH_P_IP))
 		skb_orphan(skb);
 
-	dst_release(skb->dst);
-	skb->dst = NULL;
 	nf_reset(skb);
 	length = skb->len;
 	skb_init_brmark(skb);
