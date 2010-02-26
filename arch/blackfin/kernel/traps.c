@@ -712,7 +712,7 @@ static void decode_instruction(unsigned short *address)
 			verbose_printk("RTE");
 		else if (opcode == 0x0025)
 			verbose_printk("EMUEXCPT");
-		else if (opcode == 0x0040 && opcode <= 0x0047)
+		else if (opcode >= 0x0040 && opcode <= 0x0047)
 			verbose_printk("STI R%i", opcode & 7);
 		else if (opcode >= 0x0050 && opcode <= 0x0057)
 			verbose_printk("JUMP (P%i)", opcode & 7);
@@ -1096,7 +1096,7 @@ void dump_bfin_mem(struct pt_regs *fp)
 			/* And the last RETI points to the current userspace context */
 			if ((fp + 1)->pc >= current->mm->start_code &&
 			    (fp + 1)->pc <= current->mm->end_code) {
-				verbose_printk(KERN_NOTICE "It might be better to look around here : \n");
+				verbose_printk(KERN_NOTICE "It might be better to look around here :\n");
 				verbose_printk(KERN_NOTICE "-------------------------------------------\n");
 				show_regs(fp + 1);
 				verbose_printk(KERN_NOTICE "-------------------------------------------\n");
