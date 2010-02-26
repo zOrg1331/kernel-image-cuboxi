@@ -1605,20 +1605,27 @@ int shmem_lock(struct file *file, int lock, struct user_struct *user)
 
 	spin_lock(&info->lock);
 	if (lock && !(info->flags & VM_LOCKED)) {
+		if (ub_lockedshm_charge(info, inode->i_size) < 0)
+			goto out_ch;
+
 		if (!user_shm_lock(inode->i_size, user))
 			goto out_nomem;
 		info->flags |= VM_LOCKED;
 		mapping_set_unevictable(file->f_mapping);
 	}
 	if (!lock && (info->flags & VM_LOCKED) && user) {
+		ub_lockedshm_uncharge(info, inode->i_size);
 		user_shm_unlock(inode->i_size, user);
 		info->flags &= ~VM_LOCKED;
 		mapping_clear_unevictable(file->f_mapping);
 		scan_mapping_unevictable_pages(file->f_mapping);
 	}
-	retval = 0;
+	spin_unlock(&info->lock);
+	return 0;
 
 out_nomem:
+	ub_lockedshm_uncharge(info, inode->i_size);
+out_ch:
 	spin_unlock(&info->lock);
 	return retval;
 }

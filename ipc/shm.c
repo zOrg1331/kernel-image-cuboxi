@@ -134,48 +134,6 @@ static void shm_open(struct vm_area_struct *vma)
 	shm_unlock(shp);
 }
 
-static int shmem_lock(struct shmid_kernel *shp, int lock,
-		struct user_struct *user)
-{
-	struct file *file = shp->shm_file;
-	struct inode *inode = file->f_path.dentry->d_inode;
-	struct shmem_inode_info *info = SHMEM_I(inode);
-	unsigned long size;
-
-	size = shp->shm_segsz + PAGE_SIZE - 1;
-
-#ifdef CONFIG_SHMEM
-	spin_lock(&info->lock);
-	if (lock && !(info->flags & VM_LOCKED)) {
-		if (ub_lockedshm_charge(info, size) < 0)
-			goto out_ch;
-
-		if (!user_shm_lock(inode->i_size, user))
-			goto out_user;
-		info->flags |= VM_LOCKED;
-	}
-	if (!lock && (info->flags & VM_LOCKED) && user) {
-		ub_lockedshm_uncharge(info, size);
-		user_shm_unlock(inode->i_size, user);
-		info->flags &= ~VM_LOCKED;
-	}
-	spin_unlock(&info->lock);
-	return 0;
-
-out_user:
-	ub_lockedshm_uncharge(info, size);
-out_ch:
-	spin_unlock(&info->lock);
-	return -ENOMEM;
-#else
-	if (lock && ub_lockedshm_charge(info, size))
-		return -ENOMEM;
-	if (!lock)
-		ub_lockedshm_uncharge(info, size);
-	return 0;
-#endif
-}
-
 /*
  * shm_destroy - free the struct shmid_kernel
  *
@@ -191,7 +149,7 @@ static void shm_destroy(struct ipc_namespace *ns, struct shmid_kernel *shp)
 	shm_rmid(ns, shp);
 	shm_unlock(shp);
 	if (!is_file_hugepages(shp->shm_file))
-		shmem_lock(shp, 0, shp->mlock_user);
+		shmem_lock(shp->shm_file, 0, shp->mlock_user);
 	else if (shp->mlock_user)
 		user_shm_unlock(shp->shm_file->f_path.dentry->d_inode->i_size,
 						shp->mlock_user);
@@ -794,14 +752,14 @@ SYSCALL_DEFINE3(shmctl, int, shmid, int, cmd, struct shmid_ds __user *, buf)
 		if(cmd==SHM_LOCK) {
 			struct user_struct *user = current_user();
 			if (!is_file_hugepages(shp->shm_file)) {
-				err = shmem_lock(shp, 1, user);
+				err = shmem_lock(shp->shm_file, 1, user);
 				if (!err && !(shp->shm_perm.mode & SHM_LOCKED)){
 					shp->shm_perm.mode |= SHM_LOCKED;
 					shp->mlock_user = user;
 				}
 			}
 		} else if (!is_file_hugepages(shp->shm_file)) {
-			shmem_lock(shp, 0, shp->mlock_user);
+			shmem_lock(shp->shm_file, 0, shp->mlock_user);
 			shp->shm_perm.mode &= ~SHM_LOCKED;
 			shp->mlock_user = NULL;
 		}
