@@ -3,6 +3,7 @@
  *
  *  Copyright (C) 2007 Rodolfo Giometti <giometti@linux.it>
  *  Copyright (C) 2007 Eurotech S.p.A. <info@eurotech.it>
+ *  Copyright (C) 2009 Jonathan Cameron <jic23@cam.ac.uk>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -24,9 +25,11 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/mutex.h>
+#include <linux/err.h>
+#include <linux/als_sys.h>
 
 #define TSL2550_DRV_NAME	"tsl2550"
-#define DRIVER_VERSION		"1.2"
+#define DRIVER_VERSION		"2.0"
 
 /*
  * Defines
@@ -44,6 +47,7 @@
  */
 
 struct tsl2550_data {
+	struct device *classdev;
 	struct i2c_client *client;
 	struct mutex update_lock;
 
@@ -102,14 +106,15 @@ static int tsl2550_get_adc_value(struct i2c_client *client, u8 cmd)
 		return ret;
 	if (!(ret & 0x80))
 		return -EAGAIN;
+	if (ret == 0x7f)
+		return -ERANGE;
 	return ret & 0x7f;	/* remove the "valid" bit */
 }
 
 /*
- * LUX calculation
+ * LUX calculation - note the range is dependent on combination
+ * of infrared level and visible light levels.
  */
-
-#define	TSL2550_MAX_LUX		1846
 
 static const u8 ratio_lut[] = {
 	100, 100, 100, 100, 100, 100, 100, 100,
@@ -180,8 +185,7 @@ static int tsl2550_calculate_lux(u8 ch0, u8 ch1)
 	else
 		return -EAGAIN;
 
-	/* LUX range check */
-	return lux > TSL2550_MAX_LUX ? TSL2550_MAX_LUX : lux;
+	return lux;
 }
 
 /*
@@ -191,7 +195,8 @@ static int tsl2550_calculate_lux(u8 ch0, u8 ch1)
 static ssize_t tsl2550_show_power_state(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct tsl2550_data *data = i2c_get_clientdata(to_i2c_client(dev));
+	struct i2c_client *client = to_i2c_client(dev->parent);
+	struct tsl2550_data *data = i2c_get_clientdata(client);
 
 	return sprintf(buf, "%u\n", data->power_state);
 }
@@ -199,12 +204,13 @@ static ssize_t tsl2550_show_power_state(struct device *dev,
 static ssize_t tsl2550_store_power_state(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
-	struct i2c_client *client = to_i2c_client(dev);
+	struct i2c_client *client = to_i2c_client(dev->parent);
 	struct tsl2550_data *data = i2c_get_clientdata(client);
-	unsigned long val = simple_strtoul(buf, NULL, 10);
+	unsigned long val;
 	int ret;
 
-	if (val < 0 || val > 1)
+	ret = strict_strtoul(buf, 10, &val);
+	if (ret || val < 0 || val > 1)
 		return -EINVAL;
 
 	mutex_lock(&data->update_lock);
@@ -220,40 +226,45 @@ static ssize_t tsl2550_store_power_state(struct device *dev,
 static DEVICE_ATTR(power_state, S_IWUSR | S_IRUGO,
 		   tsl2550_show_power_state, tsl2550_store_power_state);
 
-static ssize_t tsl2550_show_operating_mode(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t tsl2550_show_exposure(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buf)
 {
-	struct tsl2550_data *data = i2c_get_clientdata(to_i2c_client(dev));
-
-	return sprintf(buf, "%u\n", data->operating_mode);
+	struct i2c_client *client = to_i2c_client(dev->parent);
+	struct tsl2550_data *data = i2c_get_clientdata(client);
+	if (data->operating_mode)
+		return sprintf(buf, "160000\n");
+	else
+		return sprintf(buf, "800000\n");
 }
 
-static ssize_t tsl2550_store_operating_mode(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t tsl2550_store_exposure(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf,
+				      size_t count)
 {
-	struct i2c_client *client = to_i2c_client(dev);
+	struct i2c_client *client = to_i2c_client(dev->parent);
 	struct tsl2550_data *data = i2c_get_clientdata(client);
-	unsigned long val = simple_strtoul(buf, NULL, 10);
-	int ret;
+	unsigned long val;
 
-	if (val < 0 || val > 1)
+	int ret = strict_strtoul(buf, 10, &val);
+
+	if (ret)
 		return -EINVAL;
-
-	if (data->power_state == 0)
-		return -EBUSY;
-
 	mutex_lock(&data->update_lock);
-	ret = tsl2550_set_operating_mode(client, val);
+	if (val >= 800000)
+		ret = tsl2550_set_operating_mode(client, 0);
+	else
+		ret = tsl2550_set_operating_mode(client, 1);
 	mutex_unlock(&data->update_lock);
-
 	if (ret < 0)
 		return ret;
 
 	return count;
 }
 
-static DEVICE_ATTR(operating_mode, S_IWUSR | S_IRUGO,
-		   tsl2550_show_operating_mode, tsl2550_store_operating_mode);
+static DEVICE_ATTR(exposure_time0, S_IWUSR | S_IRUGO,
+		   tsl2550_show_exposure, tsl2550_store_exposure);
 
 static ssize_t __tsl2550_show_lux(struct i2c_client *client, char *buf)
 {
@@ -284,7 +295,7 @@ static ssize_t __tsl2550_show_lux(struct i2c_client *client, char *buf)
 static ssize_t tsl2550_show_lux1_input(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
-	struct i2c_client *client = to_i2c_client(dev);
+	struct i2c_client *client = to_i2c_client(dev->parent);
 	struct tsl2550_data *data = i2c_get_clientdata(client);
 	int ret;
 
@@ -299,13 +310,13 @@ static ssize_t tsl2550_show_lux1_input(struct device *dev,
 	return ret;
 }
 
-static DEVICE_ATTR(lux1_input, S_IRUGO,
+static DEVICE_ATTR(illuminance0, S_IRUGO,
 		   tsl2550_show_lux1_input, NULL);
 
 static struct attribute *tsl2550_attributes[] = {
 	&dev_attr_power_state.attr,
-	&dev_attr_operating_mode.attr,
-	&dev_attr_lux1_input.attr,
+	&dev_attr_exposure_time0.attr,
+	&dev_attr_illuminance0.attr,
 	NULL
 };
 
@@ -391,14 +402,22 @@ static int __devinit tsl2550_probe(struct i2c_client *client,
 		goto exit_kfree;
 
 	/* Register sysfs hooks */
-	err = sysfs_create_group(&client->dev.kobj, &tsl2550_attr_group);
-	if (err)
+	data->classdev = als_device_register(&client->dev);
+	if (IS_ERR(data->classdev)) {
+		err = PTR_ERR(data->classdev);
 		goto exit_kfree;
+	}
+
+	err = sysfs_create_group(&data->classdev->kobj, &tsl2550_attr_group);
+	if (err)
+		goto exit_unreg;
 
 	dev_info(&client->dev, "support ver. %s enabled\n", DRIVER_VERSION);
 
 	return 0;
 
+exit_unreg:
+	als_device_unregister(data->classdev);
 exit_kfree:
 	kfree(data);
 exit:
@@ -407,12 +426,15 @@ exit:
 
 static int __devexit tsl2550_remove(struct i2c_client *client)
 {
-	sysfs_remove_group(&client->dev.kobj, &tsl2550_attr_group);
+	struct tsl2550_data *data = i2c_get_clientdata(client);
+
+	sysfs_remove_group(&data->classdev->kobj, &tsl2550_attr_group);
+	als_device_unregister(data->classdev);
 
 	/* Power down the device */
 	tsl2550_set_power_state(client, 0);
 
-	kfree(i2c_get_clientdata(client));
+	kfree(data);
 
 	return 0;
 }
