@@ -2116,7 +2116,6 @@ static inline struct user_struct *get_uid(struct user_struct *u)
 }
 extern void free_uid(struct user_struct *);
 extern void release_uids(struct user_namespace *ns);
-extern int set_user(uid_t uid, int dumpclear);
 
 #include <asm/current.h>
 

@@ -15,7 +15,7 @@
 #include <linux/syscalls.h>
 #include <linux/freezer.h>
 
-static atomic_t global_suspend = ATOMIC_INIT(0);
+atomic_t global_suspend = ATOMIC_INIT(0);
 
 /* 
  * Timeout for stopping processes

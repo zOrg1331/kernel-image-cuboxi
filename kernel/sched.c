@@ -3302,7 +3302,8 @@ void get_avenrun(unsigned long *loads, unsigned long offset, int shift)
 	loads[2] = (avenrun[2] + offset) << shift;
 }
 
-void get_avenrun_ve(ve, unsigned long *loads, unsigned long offset, int shift)
+void get_avenrun_ve(struct ve_struct *ve,
+		unsigned long *loads, unsigned long offset, int shift)
 {
 	loads[0] = (ve->avenrun[0] + offset) << shift;
 	loads[1] = (ve->avenrun[1] + offset) << shift;

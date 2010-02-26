@@ -545,7 +545,6 @@ void clear_zonelist_oom(struct zonelist *zonelist, gfp_t gfp_mask)
 static void __out_of_memory(gfp_t gfp_mask, int order)
 {
 	struct task_struct *p;
-	unsigned long points;
 	struct user_beancounter *ub = NULL;
 
 	if (sysctl_oom_kill_allocating_task)
@@ -608,14 +607,12 @@ void pagefault_out_of_memory(void)
 			& (NOTIFY_OK | NOTIFY_FAIL))
 		return;
 
-	ub = NULL;
 	if (ub_oom_lock())
 		goto rest_and_return;
 
 	if (printk_ratelimit()) {
-		printk(KERN_WARNING "%s invoked oom-killer: "
-			"gfp_mask=0x%x, order=%d, oomkilladj=%d\n",
-			current->comm, gfp_mask, order, current->oomkilladj);
+		printk(KERN_WARNING "%s invoked PF oom-killer: oomkilladj=%d\n",
+				current->comm, current->signal->oom_adj);
 		dump_stack();
 		show_mem();
 		show_slab_info();
@@ -664,14 +661,14 @@ void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order)
 			& (NOTIFY_OK | NOTIFY_FAIL))
 		return;
 
-	ub = NULL;
 	if (ub_oom_lock())
 		goto out_oom_lock;
 
 	if (printk_ratelimit()) {
 		printk(KERN_WARNING "%s invoked oom-killer: "
 			"gfp_mask=0x%x, order=%d, oomkilladj=%d\n",
-			current->comm, gfp_mask, order, current->oomkilladj);
+			current->comm, gfp_mask, order,
+			current->signal->oom_adj);
 		dump_stack();
 		show_mem();
 		show_slab_info();

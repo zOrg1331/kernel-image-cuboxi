@@ -198,8 +198,9 @@ int ptrace_attach(struct task_struct *task)
 	task_unlock(task);
 	if (retval)
 		goto unlock_creds;
+	retval = -EACCES;
 	if (task->mm->vps_dumpable == 2)
-		goto bad;
+		goto unlock_creds;
 
 	write_lock_irq(&tasklist_lock);
 	retval = -EPERM;

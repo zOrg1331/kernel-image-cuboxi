@@ -31,7 +31,7 @@ extern struct ve_struct *__find_ve_by_id(envid_t);
 struct env_create_param3;
 extern int real_env_create(envid_t veid, unsigned flags, u32 class_id,
 			   struct env_create_param3 *data, int datalen);
-extern void ve_move_task(struct task_struct *, struct ve_struct *);
+extern void ve_move_task(struct task_struct *, struct ve_struct *, struct cred *);
 
 int set_device_perms_ve(struct ve_struct *, unsigned, dev_t, unsigned);
 int get_device_perms_ve(int dev_type, dev_t dev, int access_mode);

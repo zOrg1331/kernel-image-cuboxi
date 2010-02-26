@@ -425,7 +425,7 @@ static void tcp_write_timer(unsigned long data)
 	int event;
 	struct ve_struct *ve;
 
-	ve = set_exec_env(ve);
+	ve = set_exec_env(sk->owner_env);
 
 	bh_lock_sock(sk);
 	if (sock_owned_by_user(sk)) {

@@ -146,7 +146,7 @@ struct kmem_cache {
 extern struct kmem_cache kmalloc_caches[SLUB_PAGE_SHIFT];
 
 #ifdef CONFIG_BEANCOUNTERS
-extern struct kmem_cache ub_kmalloc_caches[KMALLOC_SHIFT_HIGH + 1];
+extern struct kmem_cache ub_kmalloc_caches[SLUB_PAGE_SHIFT];
 static inline struct kmem_cache *__kmalloc_cache(gfp_t f, int idx)
 {
 	return (f & __GFP_UBC) ? &ub_kmalloc_caches[idx] : &kmalloc_caches[idx];

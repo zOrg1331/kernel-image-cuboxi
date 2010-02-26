@@ -1645,7 +1645,7 @@ static void shrink_zone(int priority, struct zone *zone,
 							    zone, sc, priority);
 			}
 			if (unlikely(test_tsk_thread_flag(current, TIF_MEMDIE)))
-				goto done;
+				return;
 		}
 		/*
 		 * On large memory systems, scan >> priority can become
@@ -1670,7 +1670,6 @@ static void shrink_zone(int priority, struct zone *zone,
 		shrink_active_list(SWAP_CLUSTER_MAX, zone, sc, priority, 0);
 
 	throttle_vm_writeout(sc->gfp_mask);
-done:
 }
 
 /*

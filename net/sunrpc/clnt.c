@@ -1156,7 +1156,7 @@ call_connect_status(struct rpc_task *task)
 
 	task->tk_status = 0;
 	if (status >= 0 ||
-			(status == -EAGAIN && !rpc_abort_hard(task)) {
+			(status == -EAGAIN && !rpc_abort_hard(task))) {
 		clnt->cl_stats->netreconn++;
 		task->tk_action = call_transmit;
 		return;

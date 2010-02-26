@@ -103,6 +103,8 @@ struct vmcore {
 #ifdef CONFIG_PROC_FS
 
 extern void proc_root_init(void);
+extern struct file_system_type proc_fs_type;
+extern const struct file_operations proc_kmsg_operations;
 
 void proc_flush_task(struct task_struct *task);
 

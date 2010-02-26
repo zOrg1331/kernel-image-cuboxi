@@ -39,7 +39,8 @@ struct files_stat_struct files_stat = {
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(files_lock);
 
 /* SLAB cache for file structures */
-static struct kmem_cache *filp_cachep __read_mostly;
+struct kmem_cache *filp_cachep __read_mostly;
+EXPORT_SYMBOL_GPL(filp_cachep);
 
 static struct percpu_counter nr_files __cacheline_aligned_in_smp;
 

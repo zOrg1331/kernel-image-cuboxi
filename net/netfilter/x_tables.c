@@ -763,7 +763,7 @@ xt_replace_table(struct xt_table *table,
 		return NULL;
 	}
 
-	if (recharge_xtables(num_counters != 0, newinfo, oldinfo)) {
+	if (recharge_xtables(num_counters != 0, newinfo, private)) {
 		local_bh_enable();
 		*error = -ENOMEM;
 		return NULL;

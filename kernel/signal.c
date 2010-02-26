@@ -2327,7 +2327,7 @@ do_send_specific(pid_t tgid, pid_t pid, int sig, struct siginfo *info)
 		 * probe.  No signal is actually delivered.
 		 */
 		if (!error && sig) {
-			if (!sig_ve_ignored(sig, &info, p))
+			if (!sig_ve_ignored(sig, info, p))
 				error = do_send_sig_info(sig, info, p, false);
 			/*
 			 * If lock_task_sighand() failed we pretend the task

@@ -35,7 +35,6 @@
 #include <linux/buffer_head.h>
 #include <linux/pagevec.h>
 
-#include <bc/io_prio.h>
 #include <bc/io_acct.h>
 
 /*
@@ -871,7 +870,6 @@ retry:
 
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
-			struct user_beancounter *old_ub;
 
 			/*
 			 * At this point, the page may be truncated or
@@ -923,9 +921,7 @@ continue_unlock:
 			if (!clear_page_dirty_for_io(page))
 				goto continue_unlock;
 
-			old_ub = bc_io_switch_context(page);
 			ret = (*writepage)(page, wbc, data);
-			bc_io_restore_context(old_ub);
 			if (unlikely(ret)) {
 				if (ret == AOP_WRITEPAGE_ACTIVATE) {
 					unlock_page(page);
@@ -1057,14 +1053,11 @@ int write_one_page(struct page *page, int wait)
 		.sync_mode = WB_SYNC_ALL,
 		.nr_to_write = 1,
 	};
-	struct user_beancounter *old_ub;
 
 	BUG_ON(!PageLocked(page));
 
 	if (wait)
 		wait_on_page_writeback(page);
-
-	old_ub = bc_io_switch_context(page);
 
 	if (clear_page_dirty_for_io(page)) {
 		page_cache_get(page);
@@ -1079,8 +1072,6 @@ int write_one_page(struct page *page, int wait)
 		unlock_page(page);
 	}
 
-	bc_io_restore_context(old_ub);
-	
 	return ret;
 }
 EXPORT_SYMBOL(write_one_page);

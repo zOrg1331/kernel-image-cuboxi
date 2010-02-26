@@ -1650,7 +1650,7 @@ static int do_move_mount(struct path *path, char *old_name)
 		return err;
 
 	err = -EPERM;
-	if (!ve_accessible_veid(old_path->mnt->owner, get_exec_env()->veid))
+	if (!ve_accessible_veid(old_path.mnt->owner, get_exec_env()->veid))
 		goto out_nosem;
 
 	down_write(&namespace_sem);

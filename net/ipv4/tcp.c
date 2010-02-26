@@ -1235,7 +1235,7 @@ void tcp_cleanup_rbuf(struct sock *sk, int copied)
 
 	WARN(skb && !before(tp->copied_seq, TCP_SKB_CB(skb)->end_seq),
 	     KERN_INFO "cleanup rbuf bug (%d/%s): copied %X seq %X/%X rcvnxt %X\n",
-	     VEID(get_exec_env()), current_timeo->comm,
+	     VEID(get_exec_env()), current->comm,
 	     tp->copied_seq, TCP_SKB_CB(skb)->end_seq,
 	     TCP_SKB_CB(skb)->seq, tp->rcv_nxt);
 #endif
@@ -1499,8 +1499,8 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 			if (tcp_hdr(skb)->fin)
 				goto found_fin_ok;
 			WARN(!(flags & MSG_PEEK), KERN_INFO "recvmsg bug 2 (%d/%s): "
-					VEID(get_exec_env()), current->comm,
 					"copied %X seq %X rcvnxt %X fl %X\n",
+					VEID(get_exec_env()), current->comm,
 					*seq, TCP_SKB_CB(skb)->seq,
 					tp->rcv_nxt, flags);
 		}

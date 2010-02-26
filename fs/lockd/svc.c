@@ -70,6 +70,7 @@ static unsigned int		nlm_max_connections = 1024;
 /*
  * Constants needed for the sysctl interface.
  */
+static unsigned long		nlm_grace_period;
 static const unsigned long	nlm_grace_period_min = 0;
 static const unsigned long	nlm_grace_period_max = 240;
 static const unsigned long	nlm_timeout_min = 3;

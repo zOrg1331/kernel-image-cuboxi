@@ -748,7 +748,7 @@ static void xs_restore_old_callbacks(struct sock_xprt *transport, struct sock *s
 
 static void xs_reset_transport(struct sock_xprt *transport)
 {
-	struct rpc_xprt *xprt = transport->xprt;
+	struct rpc_xprt *xprt = &transport->xprt;
 	struct socket *sock;
 	struct sock *sk;
 

@@ -260,7 +260,7 @@ static inline void vfs_dq_free_inode(struct inode *inode)
 static __inline__ int vfs_dq_rename(struct inode *inode,
 		struct inode *old_dir, struct inode *new_dir)
 {
-	struct dquot_operations *q_op;
+	const struct dquot_operations *q_op;
 
 	q_op = inode->i_sb->dq_op;
 	if (q_op && q_op->rename) {

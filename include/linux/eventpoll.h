@@ -104,6 +104,9 @@ struct eventpoll {
 	 * holding ->lock.
 	 */
 	struct epitem *ovflist;
+
+	/* The user that created the eventpoll descriptor */
+	struct user_struct *user;
 };
 
 /*

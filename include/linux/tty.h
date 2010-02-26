@@ -440,7 +440,7 @@ extern void free_tty_struct(struct tty_struct *tty);
 extern void initialize_tty_struct(struct tty_struct *tty,
 		struct tty_driver *driver, int idx);
 extern struct tty_struct *tty_init_dev(struct tty_driver *driver, int idx,
-								int first_ok);
+		struct tty_struct *i_tty, int first_ok);
 extern void tty_release_dev(struct file *filp);
 extern int tty_init_termios(struct tty_struct *tty);
 

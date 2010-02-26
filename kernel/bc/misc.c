@@ -27,8 +27,6 @@
 static unsigned long ub_file_precharge(struct task_beancounter *task_bc,
 		struct user_beancounter *ub, unsigned long *kmemsize);
 
-extern struct kmem_cache *filp_cachep;
-
 static inline unsigned long ub_file_kmemsize(unsigned long nr)
 {
 	return CHARGE_SIZE(kmem_cache_objuse(filp_cachep)) * nr;

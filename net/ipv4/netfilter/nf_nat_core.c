@@ -281,6 +281,7 @@ out:
 void nf_nat_hash_conntrack(struct net *net, struct nf_conn *ct)
 {
 	unsigned int srchash;
+	struct nf_conn_nat *nat;
 
 	srchash = hash_by_src(&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple);
 	spin_lock_bh(&nf_nat_lock);
