@@ -124,6 +124,9 @@ static int ngroups_max = NGROUPS_MAX;
 extern char modprobe_path[];
 extern int modules_disabled;
 #endif
+#ifdef CONFIG_INOTIFY_USER
+#include <linux/inotify.h>
+#endif
 #ifdef CONFIG_CHR_DEV_SG
 extern int sg_big_buff;
 #endif
@@ -191,9 +194,6 @@ static struct ctl_table fs_table[];
 static struct ctl_table debug_table[];
 static struct ctl_table dev_table[];
 extern struct ctl_table random_table[];
-#ifdef CONFIG_INOTIFY_USER
-extern struct ctl_table inotify_table[];
-#endif
 #ifdef CONFIG_EPOLL
 extern struct ctl_table epoll_table[];
 #endif
