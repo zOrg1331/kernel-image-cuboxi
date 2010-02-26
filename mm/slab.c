@@ -115,6 +115,7 @@
 #include	<linux/reciprocal_div.h>
 #include	<linux/debugobjects.h>
 #include	<linux/kmemcheck.h>
+#include	<linux/memory.h>
 
 #include	<asm/cacheflush.h>
 #include	<asm/tlbflush.h>
@@ -935,7 +936,6 @@ static int transfer_objects(struct array_cache *to,
 
 	from->avail -= nr;
 	to->avail += nr;
-	to->touched = 1;
 	return nr;
 }
 
@@ -983,13 +983,11 @@ static struct array_cache **alloc_alien_cache(int node, int limit, gfp_t gfp)
 
 	if (limit > 1)
 		limit = 12;
-	ac_ptr = kmalloc_node(memsize, gfp, node);
+	ac_ptr = kzalloc_node(memsize, gfp, node);
 	if (ac_ptr) {
 		for_each_node(i) {
-			if (i == node || !node_online(i)) {
-				ac_ptr[i] = NULL;
+			if (i == node || !node_online(i))
 				continue;
-			}
 			ac_ptr[i] = alloc_arraycache(node, limit, 0xbaadf00d, gfp);
 			if (!ac_ptr[i]) {
 				for (i--; i >= 0; i--)
@@ -1170,19 +1168,10 @@ free_array_cache:
 	}
 }
 
-static int __cpuinit cpuup_prepare(long cpu)
+/* The caller needs to hold cache_chain_mutex. */
+static int slab_node_prepare(int node)
 {
 	struct kmem_cache *cachep;
-	struct kmem_list3 *l3 = NULL;
-	int node = cpu_to_node(cpu);
-	const int memsize = sizeof(struct kmem_list3);
-
-	/*
-	 * We need to do this right in the beginning since
-	 * alloc_arraycache's are going to use this list.
-	 * kmalloc_node allows us to add the slab to the right
-	 * kmem_list3 and not this cpu's kmem_list3
-	 */
 
 	list_for_each_entry(cachep, &cache_chain, next) {
 		/*
@@ -1191,9 +1180,10 @@ static int __cpuinit cpuup_prepare(long cpu)
 		 * node has not already allocated this
 		 */
 		if (!cachep->nodelists[node]) {
-			l3 = kmalloc_node(memsize, GFP_KERNEL, node);
+			struct kmem_list3 *l3;
+			l3 = kmalloc_node(sizeof(struct kmem_list3), GFP_KERNEL, node);
 			if (!l3)
-				goto bad;
+				return -1;
 			kmem_list3_init(l3);
 			l3->next_reap = jiffies + REAPTIMEOUT_LIST3 +
 			    ((unsigned long)cachep) % REAPTIMEOUT_LIST3;
@@ -1212,6 +1202,23 @@ static int __cpuinit cpuup_prepare(long cpu)
 			cachep->batchcount + cachep->num;
 		spin_unlock_irq(&cachep->nodelists[node]->list_lock);
 	}
+	return 0;
+}
+
+static int __cpuinit cpuup_prepare(long cpu)
+{
+	struct kmem_cache *cachep;
+	struct kmem_list3 *l3 = NULL;
+	int node = cpu_to_node(cpu);
+
+	/*
+	 * We need to do this right in the beginning since
+	 * alloc_arraycache's are going to use this list.
+	 * kmalloc_node allows us to add the slab to the right
+	 * kmem_list3 and not this cpu's kmem_list3
+	 */
+	if (slab_node_prepare(node) < 0)
+		goto bad;
 
 	/*
 	 * Now we can go ahead with allocating the shared arrays and
@@ -1560,6 +1567,25 @@ void __init kmem_cache_init(void)
 	g_cpucache_up = EARLY;
 }
 
+#ifdef CONFIG_MEMORY_HOTPLUG
+static int slab_memory_callback(struct notifier_block *self,
+				unsigned long action, void *arg)
+{
+	struct memory_notify *mn = (struct memory_notify *)arg;
+
+	/*
+	 * When a node goes online allocate l3s early.	 This way
+	 * kmalloc_node() works for it.
+	 */
+	if (action == MEM_ONLINE && mn->status_change_nid >= 0) {
+		mutex_lock(&cache_chain_mutex);
+		slab_node_prepare(mn->status_change_nid);
+		mutex_unlock(&cache_chain_mutex);
+	}
+	return NOTIFY_OK;
+}
+#endif
+
 void __init kmem_cache_init_late(void)
 {
 	struct kmem_cache *cachep;
@@ -1582,6 +1608,8 @@ void __init kmem_cache_init_late(void)
 	 * cpu_cache_get for all new cpus
 	 */
 	register_cpu_notifier(&cpucache_notifier);
+
+	hotplug_memory_notifier(slab_memory_callback, SLAB_CALLBACK_PRI);
 
 	/*
 	 * The reap timers are started later, with a module init call: That part
@@ -2963,8 +2991,10 @@ retry:
 	spin_lock(&l3->list_lock);
 
 	/* See if we can refill from the shared array */
-	if (l3->shared && transfer_objects(ac, l3->shared, batchcount))
+	if (l3->shared && transfer_objects(ac, l3->shared, batchcount)) {
+		l3->shared->touched = 1;
 		goto alloc_done;
+	}
 
 	while (batchcount > 0) {
 		struct list_head *entry;
@@ -3210,7 +3240,24 @@ retry:
 		if (local_flags & __GFP_WAIT)
 			local_irq_enable();
 		kmem_flagcheck(cache, flags);
-		obj = kmem_getpages(cache, local_flags, numa_node_id());
+
+		/*
+		 * Node not set up yet? Try one that the cache has been set up
+		 * for.
+		 */
+		nid = numa_node_id();
+		if (cache->nodelists[nid] == NULL) {
+			for_each_zone_zonelist(zone, z, zonelist, high_zoneidx) {
+				nid = zone_to_nid(zone);
+				if (cache->nodelists[nid]) {
+					obj = kmem_getpages(cache, local_flags, nid);
+					if (obj)
+						break;
+				}
+			}
+		} else
+			obj = kmem_getpages(cache, local_flags, nid);
+
 		if (local_flags & __GFP_WAIT)
 			local_irq_disable();
 		if (obj) {
@@ -4070,6 +4117,9 @@ static void cache_reap(struct work_struct *w)
 		 * we can do some work if the lock was obtained.
 		 */
 		l3 = searchp->nodelists[node];
+		/* Note node yet set up */
+		if (!l3)
+			break;
 
 		reap_alien(searchp, l3);
 
