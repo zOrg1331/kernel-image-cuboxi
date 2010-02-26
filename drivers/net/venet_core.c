@@ -323,19 +323,13 @@ int venet_init_dev(struct net_device *dev)
 {
 	struct venet_stats *stats;
 
-	dev->hard_start_xmit = venet_xmit;
 	stats = kzalloc(sizeof(struct venet_stats), GFP_KERNEL);
 	if (stats == NULL)
 		goto fail;
 	stats->real_stats = alloc_percpu(struct net_device_stats);
 	if (stats->real_stats == NULL)
 		goto fail_free;
-	dev->priv = stats;
-
-	dev->get_stats = get_stats;
-	dev->open = venet_open;
-	dev->stop = venet_close;
-	dev->destructor = venet_destructor;
+	dev->ml_priv = stats;
 
 	/*
 	 *	Fill in the generic fields of the device structure.
@@ -357,6 +351,8 @@ fail:
 	return -ENOMEM;
 }
 
+static const struct net_device_ops venet_netdev_ops;
+
 static int
 venet_set_op(struct net_device *dev, u32 data,
 	     int (*fop)(struct net_device *, u32))
@@ -372,7 +368,7 @@ venet_set_op(struct net_device *dev, u32 data,
 		ve_old = set_exec_env(ve);
 		read_lock(&dev_base_lock);
 		for_each_netdev(ve->ve_netns, dev) {
-			if (dev->hard_start_xmit == venet_xmit)
+			if (dev->netdev_ops == &venet_netdev_ops)
 				ret = fop(dev, data);
 		}
 		read_unlock(&dev_base_lock);
@@ -425,15 +421,25 @@ static struct ethtool_ops venet_ethtool_ops = {
 	.get_tso = ethtool_op_get_tso,
 };
 
+static const struct net_device_ops venet_netdev_ops = {
+	.ndo_start_xmit = venet_xmit,
+	.ndo_get_stats = get_stats,
+	.ndo_open = venet_open,
+	.ndo_stop = venet_close,
+	.ndo_init = venet_init_dev,
+};
+
 static void venet_setup(struct net_device *dev)
 {
-	dev->init = venet_init_dev;
 	/*
 	 * No other features, as they are:
 	 *  - checksumming is required, and nobody else will done our job
 	 */
 	dev->features |= NETIF_F_VENET | NETIF_F_VIRTUAL | NETIF_F_LLTX |
 	       NETIF_F_HIGHDMA | NETIF_F_VLAN_CHALLENGED;
+
+	dev->netdev_ops = &venet_netdev_ops;
+	dev->destructor = venet_destructor;
 
 	dev->features |= common_features;
 

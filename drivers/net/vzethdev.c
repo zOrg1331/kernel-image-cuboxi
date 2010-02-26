@@ -353,20 +353,6 @@ static int veth_set_mac(struct net_device *dev, void *p)
 
 int veth_init_dev(struct net_device *dev)
 {
-	dev->hard_start_xmit = veth_xmit;
-	dev->get_stats = get_stats;
-	dev->open = veth_open;
-	dev->stop = veth_close;
-	dev->destructor = veth_destructor;
-
-	ether_setup(dev);
-	dev->set_mac_address = veth_set_mac;
-
-	/* remove setted by ether_setup() handler */
-	dev->change_mtu	= NULL;
-
-	dev->tx_queue_len = 0;
-
 	veth_from_netdev(dev)->real_stats =
 		alloc_percpu(struct net_device_stats);
 	if (veth_from_netdev(dev)->real_stats == NULL)
@@ -415,9 +401,23 @@ static struct ethtool_ops veth_ethtool_ops = {
 	.get_tso = ethtool_op_get_tso,
 };
 
+static const struct net_device_ops veth_ops = {
+	.ndo_init = veth_init_dev,
+	.ndo_start_xmit = veth_xmit,
+	.ndo_get_stats = get_stats,
+	.ndo_open = veth_open,
+	.ndo_stop = veth_close,
+	.ndo_set_mac_address = veth_set_mac,
+};
+
 static void veth_setup(struct net_device *dev)
 {
-	dev->init = veth_init_dev;
+	ether_setup(dev);
+
+	dev->netdev_ops = &veth_ops;
+	dev->destructor = veth_destructor;
+	dev->tx_queue_len = 0;
+
 	/*
 	 * No other features, as they are:
 	 *  - checksumming is required, and nobody else will done our job
