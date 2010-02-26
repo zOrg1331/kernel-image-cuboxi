@@ -111,6 +111,7 @@ EXPORT_SYMBOL(ub_list_head);
 static inline void free_ub(struct user_beancounter *ub)
 {
 	free_percpu(ub->ub_percpu);
+	percpu_counter_destroy(&ub->ub_orphan_count);
 	kmem_cache_free(ub_cachep, ub);
 }
 
@@ -166,6 +167,9 @@ retry:
 	if (new_ub == NULL)
 		return NULL;
 
+	if (percpu_counter_init(&new_ub->ub_orphan_count, 0))
+		goto fail_pcpu;
+
 	ub_debug(UBD_ALLOC, "Creating ub %p\n", new_ub);
 	memcpy(new_ub, &default_beancounter, sizeof(*new_ub));
 	init_beancounter_struct(new_ub);
@@ -176,6 +180,8 @@ retry:
 	goto retry;
 
 fail_free:
+	percpu_counter_destroy(&new_ub->ub_orphan_count);
+fail_pcpu:
 	kmem_cache_free(ub_cachep, new_ub);
 	return NULL;
 }
@@ -223,6 +229,9 @@ retry:
 	if (new_ub == NULL)
 		return NULL;
 
+	if (percpu_counter_init(&new_ub->ub_orphan_count, 0))
+		goto fail_pcpu;
+
 	ub_debug(UBD_ALLOC, "Creating sub %p\n", new_ub);
 	memset(new_ub, 0, sizeof(*new_ub));
 	init_beancounter_nolimits(new_ub);
@@ -236,6 +245,8 @@ retry:
 	goto retry;
 
 fail_free:
+	percpu_counter_destroy(&new_ub->ub_orphan_count);
+fail_pcpu:
 	kmem_cache_free(ub_cachep, new_ub);
 	return NULL;
 }

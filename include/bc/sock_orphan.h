@@ -17,7 +17,7 @@
 #include "bc/net.h"
 
 
-static inline atomic_t *__ub_get_orphan_count_ptr(struct sock *sk)
+static inline struct percpu_counter *__ub_get_orphan_count_ptr(struct sock *sk)
 {
 #ifdef CONFIG_BEANCOUNTERS
 	if (sock_has_ubc(sk))
@@ -28,17 +28,17 @@ static inline atomic_t *__ub_get_orphan_count_ptr(struct sock *sk)
 
 static inline void ub_inc_orphan_count(struct sock *sk)
 {
-	atomic_inc(__ub_get_orphan_count_ptr(sk));
+	percpu_counter_inc(__ub_get_orphan_count_ptr(sk));
 }
 
 static inline void ub_dec_orphan_count(struct sock *sk)
 {
-	atomic_dec(__ub_get_orphan_count_ptr(sk));
+	percpu_counter_dec(__ub_get_orphan_count_ptr(sk));
 }
 
 static inline int ub_get_orphan_count(struct sock *sk)
 {
-	return atomic_read(__ub_get_orphan_count_ptr(sk));
+	return percpu_counter_sum_positive(__ub_get_orphan_count_ptr(sk));
 }
 
 extern int __ub_too_many_orphans(struct sock *sk, int count);

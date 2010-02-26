@@ -156,7 +156,7 @@ struct sock_private {
 #define UB_RMEM_SHRINK          2
 	struct list_head	ubp_other_socks;
 	struct list_head	ubp_tcp_socks;
-	atomic_t		ubp_orphan_count;
+	struct percpu_counter	ubp_orphan_count;
 };
 
 struct ub_percpu_struct {
