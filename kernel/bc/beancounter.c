@@ -30,12 +30,12 @@
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/mm.h>
+#include <linux/sched.h>
 
 #include <bc/beancounter.h>
 #include <bc/hash.h>
 #include <bc/vmpages.h>
 #include <bc/proc.h>
-#include <bc/io_prio.h>
 
 static struct kmem_cache *ub_cachep;
 static struct user_beancounter default_beancounter;

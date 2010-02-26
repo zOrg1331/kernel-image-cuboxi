@@ -44,6 +44,9 @@
 #include <net/netfilter/nf_nat.h>
 #include <net/netfilter/nf_nat_core.h>
 
+#include <net/sock.h>
+#include <bc/sock.h>
+
 #define NF_CONNTRACK_VERSION	"0.5.0"
 
 int (*nfnetlink_parse_nat_setup_hook)(struct nf_conn *ct,

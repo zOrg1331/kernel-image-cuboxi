@@ -39,7 +39,7 @@ struct attribute_group {
 	struct attribute	**attrs;
 };
 
-
+#include <linux/fs.h>
 
 /**
  * Use these macros to make defining attributes easier. See include/linux/device.h

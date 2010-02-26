@@ -45,6 +45,8 @@
 
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_conntrack.h>
+
+#include <net/sock.h>
 #include <bc/beancounter.h>
 #include <bc/sock.h>
 

@@ -10,6 +10,8 @@
 
 #include <linux/virtinfo.h>
 #include <linux/compat.h>
+#include <linux/syscalls.h>
+#include <linux/sched.h>
 #include <asm/uaccess.h>
 
 #include <bc/beancounter.h>

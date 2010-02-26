@@ -14,6 +14,8 @@
 #include <linux/fs.h>
 #include <linux/veprintk.h>
 #include <linux/module.h>
+#include <linux/sched.h>
+#include <linux/ve.h>
 
 #include <asm/uaccess.h>
 #include <asm/io.h>

@@ -2,6 +2,7 @@
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/sched.h>
 
 static int cmdline_proc_show(struct seq_file *m, void *v)
 {

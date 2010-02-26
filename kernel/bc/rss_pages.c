@@ -13,6 +13,7 @@
 #include <linux/mm.h>
 #include <linux/gfp.h>
 #include <linux/vmalloc.h>
+#include <linux/sched.h>
 
 #include <bc/beancounter.h>
 #include <bc/hash.h>

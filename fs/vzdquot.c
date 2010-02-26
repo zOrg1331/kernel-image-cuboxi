@@ -16,6 +16,7 @@
 #include <asm/atomic.h>
 #include <linux/spinlock.h>
 #include <linux/slab.h>
+#include <linux/fs_struct.h>
 #include <linux/fs.h>
 #include <linux/dcache.h>
 #include <linux/quota.h>
@@ -29,6 +30,7 @@
 #include <linux/virtinfo.h>
 #include <linux/vzdq_tree.h>
 #include <linux/mount.h>
+#include <linux/quotaops.h>
 
 /* ----------------------------------------------------------------------
  *

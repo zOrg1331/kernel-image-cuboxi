@@ -13,6 +13,7 @@
 #include <linux/syscalls.h>
 #include <linux/err.h>
 #include <linux/acct.h>
+#include <linux/module.h>
 
 #include <bc/kmem.h>
 

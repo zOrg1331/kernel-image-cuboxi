@@ -12,6 +12,7 @@
 #include <linux/ve.h>
 #include <linux/ve_proto.h>
 #include <linux/ipc.h>
+#include <linux/fs_struct.h>
 #include <linux/fs.h>
 #include <linux/proc_fs.h>
 #include <linux/file.h>

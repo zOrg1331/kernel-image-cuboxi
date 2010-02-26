@@ -18,9 +18,11 @@
 #include <linux/sysctl.h>
 #include <linux/mount.h>
 #include <linux/mnt_namespace.h>
-#include <linux/quotaio_v2.h>
+#include "quota/quotaio_v2.h"
+#include "quota/quota_tree.h"
 #include <asm/uaccess.h>
 
+#include <linux/sched.h>
 #include <linux/ve.h>
 #include <linux/ve_proto.h>
 #include <linux/vzdq_tree.h>

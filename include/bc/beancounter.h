@@ -114,10 +114,10 @@ struct ubparm {
 #include <linux/cache.h>
 #include <linux/threads.h>
 #include <linux/percpu.h>
+#include <linux/percpu_counter.h>
 #include <bc/debug.h>
 #include <bc/decl.h>
 #include <asm/atomic.h>
-#include <bc/io_prio.h>
 
 /*
  * UB_MAXVALUE is essentially LONG_MAX declared in a cross-compiling safe form.

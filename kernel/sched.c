@@ -72,6 +72,7 @@
 #include <linux/ctype.h>
 #include <linux/ftrace.h>
 #include <linux/fairsched.h>
+#include <linux/ve_proto.h>
 
 #include <asm/tlb.h>
 #include <asm/irq_regs.h>

@@ -10,6 +10,7 @@
 #include <linux/list.h>
 #include <linux/sched.h>
 #include <linux/fs.h>
+#include <linux/fs_struct.h>
 #include <linux/dcache.h>
 #include <linux/mount.h>
 #include <linux/namei.h>

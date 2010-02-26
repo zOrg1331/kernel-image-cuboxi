@@ -23,6 +23,7 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/sys.h>
+#include <linux/fs_struct.h>
 #include <linux/fs.h>
 #include <linux/mnt_namespace.h>
 #include <linux/termios.h>
@@ -53,6 +54,8 @@
 #include <linux/freezer.h>
 #include <linux/pid_namespace.h>
 #include <linux/tty.h>
+#include <linux/mount.h>
+#include <linux/kthread.h>
 
 #include <net/route.h>
 #include <net/ip_fib.h>

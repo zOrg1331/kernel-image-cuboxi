@@ -10,6 +10,7 @@
 #include <linux/seq_file.h>
 #include <linux/swap.h>
 #include <linux/vmstat.h>
+#include <linux/virtinfo.h>
 #include <asm/atomic.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>

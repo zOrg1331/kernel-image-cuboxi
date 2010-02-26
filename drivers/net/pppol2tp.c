@@ -97,6 +97,7 @@
 #include <net/ip.h>
 #include <net/udp.h>
 #include <net/xfrm.h>
+#include <linux/vzcalluser.h>
 
 #include <asm/byteorder.h>
 #include <asm/atomic.h>
