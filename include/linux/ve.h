@@ -29,7 +29,6 @@
 #endif /* VZMON_DEBUG */
 
 struct tty_driver;
-struct devpts_config;
 struct task_struct;
 struct new_utsname;
 struct file_system_type;

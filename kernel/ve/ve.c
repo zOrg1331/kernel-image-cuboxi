@@ -99,9 +99,6 @@ struct ve_struct ve0 = {
 	.ve_list		= LIST_HEAD_INIT(ve0.ve_list),
 	.vetask_lh		= LIST_HEAD_INIT(ve0.vetask_lh),
 	.start_jiffies		= INITIAL_JIFFIES,
-#ifdef CONFIG_UNIX98_PTYS
-	.devpts_config		= &devpts_config,
-#endif
 	.ve_ns			= &init_nsproxy,
 	.ve_netns		= &init_net,
 	.is_running		= 1,

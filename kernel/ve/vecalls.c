@@ -341,31 +341,14 @@ static void free_ve_proc(struct ve_struct *ve)
 
 static int init_ve_devpts(struct ve_struct *ve)
 {
-	int err;
+	BUG(); /* XXX devpts is knda virtualized already */
 
-	err = -ENOMEM;
-	ve->devpts_config = kzalloc(sizeof(struct devpts_config), GFP_KERNEL);
-	if (ve->devpts_config == NULL)
-		goto out;
-
-	ve->devpts_config->mode = 0600;
-	err = register_ve_fs_type(ve, &devpts_fs_type,
-			&ve->devpts_fstype, &ve->devpts_mnt);
-	if (err) {
-		kfree(ve->devpts_config);
-		ve->devpts_config = NULL;
-	}
-out:
-	return err;
+	return -EINVAL;
 }
 
 static void fini_ve_devpts(struct ve_struct *ve)
 {
-	unregister_ve_fs_type(ve->devpts_fstype, ve->devpts_mnt);
-	/* devpts_fstype is freed in real_put_ve -> free_ve_filesystems */
-	ve->devpts_mnt = NULL;
-	kfree(ve->devpts_config);
-	ve->devpts_config = NULL;
+	BUG();
 }
 #else
 #define init_ve_devpts(ve)	(0)
