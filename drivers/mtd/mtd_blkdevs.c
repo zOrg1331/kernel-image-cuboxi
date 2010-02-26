@@ -242,9 +242,12 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 	if (new->devnum == -1)
 		new->devnum = last_devnum+1;
 
-	if ((new->devnum << tr->part_bits) > 256) {
+	/* Check that the device and any partitions will get valid
+	 * minor numbers and that the disk naming code below can cope
+	 * with this number. */
+	if (new->devnum > (MINORMASK >> tr->part_bits) ||
+	    (tr->part_bits && new->devnum >= 27 * 26))
 		return -EBUSY;
-	}
 
 	list_add_tail(&new->list, &tr->devs);
  added:
@@ -335,7 +338,8 @@ static struct mtd_notifier blktrans_notifier = {
 
 int register_mtd_blktrans(struct mtd_blktrans_ops *tr)
 {
-	int ret, i;
+	struct mtd_info *mtd;
+	int ret;
 
 	/* Register the notifier if/when the first device type is
 	   registered, to prevent the link/init ordering from fucking
@@ -389,10 +393,9 @@ int register_mtd_blktrans(struct mtd_blktrans_ops *tr)
 	INIT_LIST_HEAD(&tr->devs);
 	list_add(&tr->list, &blktrans_majors);
 
-	for (i=0; i<MAX_MTD_DEVICES; i++) {
-		if (mtd_table[i] && mtd_table[i]->type != MTD_ABSENT)
-			tr->add_mtd(tr, mtd_table[i]);
-	}
+	mtd_for_each_device(mtd)
+		if (mtd->type != MTD_ABSENT)
+			tr->add_mtd(tr, mtd);
 
 	mutex_unlock(&mtd_table_mutex);
 
