@@ -1154,54 +1154,6 @@ redirty:
 	return 0;
 }
 
-/* Insert a swap entry to shmem inode address space. */
-int shmem_insertpage(struct inode * inode, unsigned long index,
-		     swp_entry_t swap)
-{
-	struct shmem_inode_info *info;
-	swp_entry_t *entry;
-	int err;
-
-	info = SHMEM_I(inode);
-
-	spin_lock(&info->lock);
-	shmem_recalc_inode(inode, 0);
-	entry = shmem_swp_alloc(info, index, SGP_WRITE);
-	err = PTR_ERR(entry);
-	if (IS_ERR(entry))
-		goto unlock;
-
-	err = -EBUSY;
-	if (entry->val)
-		goto unlock_unmap;
-
-	err = -EINVAL;
-	if (!swap_duplicate(swap))
-		goto unlock_unmap;
-
-	info->alloced++;
-	ub_tmpfs_respages_inc(info);
-	inode->i_blocks += BLOCKS_PER_PAGE;
-	shmem_swp_set(info, entry, swap.val);
-	shmem_swp_unmap(entry);
-	spin_unlock(&info->lock);
-	if (list_empty(&info->swaplist)) {
-		mutex_lock(&shmem_swaplist_mutex);
-		/* move instead of add in case we're racing */
-		list_move_tail(&info->swaplist, &shmem_swaplist);
-		mutex_unlock(&shmem_swaplist_mutex);
-	}
-	return 0;
-
-unlock_unmap:
-	shmem_swp_unmap(entry);
-unlock:
-	spin_unlock(&info->lock);
-	return err;
-}
-EXPORT_SYMBOL(shmem_insertpage);
-
-
 #ifdef CONFIG_NUMA
 #ifdef CONFIG_TMPFS
 static void shmem_show_mpol(struct seq_file *seq, struct mempolicy *mpol)
