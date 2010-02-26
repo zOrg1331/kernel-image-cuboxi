@@ -483,12 +483,10 @@ int labpc_common_attach(struct comedi_device *dev, unsigned long iobase,
 
 	printk("comedi%d: ni_labpc: %s, io 0x%lx", dev->minor, thisboard->name,
 	       iobase);
-	if (irq) {
+	if (irq)
 		printk(", irq %u", irq);
-	}
-	if (dma_chan) {
+	if (dma_chan)
 		printk(", dma %u", dma_chan);
-	}
 	printk("\n");
 
 	if (iobase == 0) {
@@ -1503,7 +1501,7 @@ static void handle_isa_dma(struct comedi_device *dev)
 	devpriv->write_byte(0x1, dev->iobase + DMATC_CLEAR_REG);
 }
 
-/* makes sure all data aquired by board is transfered to comedi (used
+/* makes sure all data acquired by board is transfered to comedi (used
  * when aquisition is terminated by stop_src == TRIG_EXT). */
 static void labpc_drain_dregs(struct comedi_device *dev)
 {

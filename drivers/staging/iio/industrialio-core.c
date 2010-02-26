@@ -79,11 +79,14 @@ EXPORT_SYMBOL(__iio_change_event);
 	/* Does anyone care? */
 	mutex_lock(&ev_int->event_list_lock);
 	if (test_bit(IIO_BUSY_BIT_POS, &ev_int->handler.flags)) {
-		if (ev_int->current_events == ev_int->max_events)
+		if (ev_int->current_events == ev_int->max_events) {
+			mutex_unlock(&ev_int->event_list_lock);
 			return 0;
+		}
 		ev = kmalloc(sizeof(*ev), GFP_KERNEL);
 		if (ev == NULL) {
 			ret = -ENOMEM;
+			mutex_unlock(&ev_int->event_list_lock);
 			goto error_ret;
 		}
 		ev->ev.id = ev_code;
@@ -289,16 +292,16 @@ ssize_t iio_event_chrdev_read(struct file *filep,
 	mutex_unlock(&ev_int->event_list_lock);
 	/*
 	 * Possible concurency issue if an update of this event is on its way
-	 * through. May lead to new even being removed whilst the reported event
-	 * was the unescalated event. In typical use case this is not a problem
-	 * as userspace will say read half the buffer due to a 50% full event
-	 * which would make the correct 100% full incorrect anyway.
+	 * through. May lead to new event being removed whilst the reported
+	 * event was the unescalated event. In typical use case this is not a
+	 * problem as userspace will say read half the buffer due to a 50%
+	 * full event which would make the correct 100% full incorrect anyway.
 	 */
-	spin_lock(&el->shared_pointer->lock);
-	if (el->shared_pointer)
+	if (el->shared_pointer) {
+		spin_lock(&el->shared_pointer->lock);
 		(el->shared_pointer->ev_p) = NULL;
-	spin_unlock(&el->shared_pointer->lock);
-
+		spin_unlock(&el->shared_pointer->lock);
+	}
 	kfree(el);
 
 	return len;
