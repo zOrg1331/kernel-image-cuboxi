@@ -1186,8 +1186,10 @@ void umount_ve_fs_type(struct file_system_type *local_fs_type)
 	}
 
 	while (!list_empty(&kill)) {
+		LIST_HEAD(kill2);
 		mnt = list_entry(kill.next, struct vfsmount, mnt_list);
-		umount_tree(mnt, 1, &umount_list);
+		umount_tree(mnt, 1, &kill2);
+		list_splice(&kill2, &umount_list);
 	}
 	spin_unlock(&vfsmount_lock);
 	up_write(&namespace_sem);
