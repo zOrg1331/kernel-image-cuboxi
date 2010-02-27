@@ -85,6 +85,22 @@ static void inc_held_pages(struct user_beancounter *ub, int value)
 }
 
 /*
+ * ++ and -- beyond are protected with pb_lock
+ */
+
+static inline void inc_pbc_count(struct user_beancounter *ub)
+{
+	for (; ub != NULL; ub = ub->parent)
+		ub->ub_pbcs++;
+}
+
+static inline void dec_pbc_count(struct user_beancounter *ub)
+{
+	for (; ub != NULL; ub = ub->parent)
+		ub->ub_pbcs--;
+}
+
+/*
  * Alloc - free
  */
 

@@ -142,6 +142,7 @@ struct page_private {
 	unsigned long		ubp_unused_privvmpages;
 	unsigned long		ubp_tmpfs_respages;
 	unsigned long		ubp_swap_pages;
+	unsigned long		ubp_pbcs;
 	unsigned long long	ubp_held_pages;
 };
 
@@ -170,7 +171,6 @@ struct ub_percpu_struct {
 #ifdef CONFIG_BC_DEBUG_KMEM
 	long	pages_charged;
 	long	vmalloc_charged;
-	long	pbcs;
 #endif
 	unsigned long	sync;
 	unsigned long	sync_done;
@@ -213,6 +213,7 @@ struct user_beancounter
 #define ub_tmpfs_respages	ppriv.ubp_tmpfs_respages
 #define ub_swap_pages		ppriv.ubp_swap_pages
 #define ub_held_pages		ppriv.ubp_held_pages
+#define ub_pbcs			ppriv.ubp_pbcs
 	struct sock_private	spriv;
 #define ub_rmem_thres		spriv.ubp_rmem_thres
 #define ub_maxadvmss		spriv.ubp_maxadvmss
