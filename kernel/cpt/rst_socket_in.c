@@ -429,6 +429,11 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 		if (oi.cpt_object == CPT_OBJ_OPENREQ) {
 			struct request_sock *req;
 
+			if (oi.cpt_family == AF_INET6 &&
+			    sk->sk_family != AF_INET6)
+				/* related to non initialized cpt_family bug */
+				goto next;
+
 			if (oi.cpt_family == AF_INET6) {
 #if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
 				req = reqsk_alloc(&tcp6_request_sock_ops);
@@ -466,11 +471,7 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 			req->secid = 0;
 			req->peer_secid = 0;
 
-			if (oi.cpt_family == AF_INET) {
-				memcpy(&inet_rsk(req)->loc_addr, oi.cpt_loc_addr, 4);
-				memcpy(&inet_rsk(req)->rmt_addr, oi.cpt_rmt_addr, 4);
-				inet_csk_reqsk_queue_hash_add(sk, req, TCP_TIMEOUT_INIT);
-			} else {
+			if (oi.cpt_family == AF_INET6) {
 #if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
 				inet6_rsk(req)->pktopts = NULL;
 				memcpy(&inet6_rsk(req)->loc_addr, oi.cpt_loc_addr, 16);
@@ -478,8 +479,13 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 				inet6_rsk(req)->iif = oi.cpt_iif;
 				inet6_csk_reqsk_queue_hash_add(sk, req, TCP_TIMEOUT_INIT);
 #endif
+			} else {
+				memcpy(&inet_rsk(req)->loc_addr, oi.cpt_loc_addr, 4);
+				memcpy(&inet_rsk(req)->rmt_addr, oi.cpt_rmt_addr, 4);
+				inet_csk_reqsk_queue_hash_add(sk, req, TCP_TIMEOUT_INIT);
 			}
 		}
+next:
 		pos += oi.cpt_next;
 	}
 	release_sock(sk);
