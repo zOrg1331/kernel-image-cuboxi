@@ -1610,6 +1610,7 @@ extern void unregister_ve_fs_type(struct file_system_type *, struct vfsmount *);
 extern void umount_ve_fs_type(struct file_system_type *local_fs_type);
 #define kern_umount mntput
 extern int may_umount_tree(struct vfsmount *);
+extern struct vfsmount *next_mnt(struct vfsmount *p, struct vfsmount *root);
 extern int may_umount(struct vfsmount *);
 extern long do_mount(char *, char *, char *, unsigned long, void *);
 extern struct vfsmount *collect_mounts(struct vfsmount *, struct dentry *);

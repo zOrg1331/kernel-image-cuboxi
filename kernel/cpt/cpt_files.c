@@ -1618,7 +1618,7 @@ static int dump_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 {
 	struct mnt_namespace *n = obj->o_obj;
 	struct cpt_object_hdr v;
-	struct list_head *p;
+	struct vfsmount *rootmnt, *p;
 	loff_t saved_obj;
 	int err = 0;
 
@@ -1634,8 +1634,9 @@ static int dump_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 	cpt_push_object(&saved_obj, ctx);
 
 	down_read(&namespace_sem);
-	list_for_each(p, &n->list) {
-		err = dump_vfsmount(list_entry(p, struct vfsmount, mnt_list), ctx);
+	rootmnt = n->root;
+	for (p = rootmnt; p; p = next_mnt(p, rootmnt)) {
+		err = dump_vfsmount(p, ctx);
 		if (err)
 			break;
 	}

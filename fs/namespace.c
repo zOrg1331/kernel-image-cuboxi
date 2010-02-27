@@ -527,7 +527,7 @@ static void commit_tree(struct vfsmount *mnt)
 	touch_mnt_namespace(n);
 }
 
-static struct vfsmount *next_mnt(struct vfsmount *p, struct vfsmount *root)
+struct vfsmount *next_mnt(struct vfsmount *p, struct vfsmount *root)
 {
 	struct list_head *next = p->mnt_mounts.next;
 	if (next == &p->mnt_mounts) {
@@ -542,6 +542,7 @@ static struct vfsmount *next_mnt(struct vfsmount *p, struct vfsmount *root)
 	}
 	return list_entry(next, struct vfsmount, mnt_child);
 }
+EXPORT_SYMBOL(next_mnt);
 
 static struct vfsmount *skip_mnt_tree(struct vfsmount *p)
 {
