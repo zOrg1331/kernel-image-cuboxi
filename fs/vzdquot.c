@@ -405,28 +405,17 @@ void vzquota_put_super(struct super_block *sb)
 
 #else
 
-struct vzquota_new_sop {
-	struct super_operations new_op;
-	const struct super_operations *old_op;
-};
-
 /**
  * vzquota_shutdown_super - callback on umount
  */
 void vzquota_shutdown_super(struct super_block *sb)
 {
 	struct vz_quota_master *qmblk;
-	struct vzquota_new_sop *sop;
 
 	qmblk = __VZ_QUOTA_NOQUOTA(sb);
 	__VZ_QUOTA_NOQUOTA(sb) = NULL;
 	if (qmblk != NULL)
 		qmblk_put(qmblk);
-	sop = container_of(sb->s_op, struct vzquota_new_sop, new_op);
-	sb->s_op = sop->old_op;
-	kfree(sop);
-	if (sb->s_op->put_super != NULL)
-		(*sb->s_op->put_super)(sb);
 }
 
 /**
@@ -440,7 +429,6 @@ void vzquota_shutdown_super(struct super_block *sb)
 int vzquota_get_super(struct super_block *sb)
 {
 	struct vz_quota_master *qnew;
-	struct vzquota_new_sop *sop;
 	int err;
 
 	mutex_lock(&sb->s_dquot.dqonoff_mutex);
@@ -461,17 +449,6 @@ int vzquota_get_super(struct super_block *sb)
 	}
 
 	if (sb->dq_op != &vz_quota_operations) {
-		sop = kmalloc(sizeof(*sop), GFP_KERNEL);
-		if (sop == NULL) {
-			vzquota_free_master(__VZ_QUOTA_NOQUOTA(sb));
-			__VZ_QUOTA_NOQUOTA(sb) = NULL;
-			goto out_up;
-		}
-		memcpy(&sop->new_op, sb->s_op, sizeof(sop->new_op));
-		sop->new_op.put_super = &vzquota_shutdown_super;
-		sop->old_op = sb->s_op;
-		sb->s_op = &sop->new_op;
-
 		sb->dq_op = &vz_quota_operations;
 #ifdef CONFIG_VZ_QUOTA_UGID
 		sb->s_qcop = &vz_quotactl_operations;

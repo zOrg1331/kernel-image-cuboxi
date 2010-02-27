@@ -307,6 +307,7 @@ struct dquot_operations {
 	int (*rename) (struct inode *, struct inode *, struct inode *);
 
 	void (*swap_inode) (struct inode *, struct inode *);
+	void (*shutdown) (struct super_block *);
 };
 
 /* Operations handling requests from userspace */

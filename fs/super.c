@@ -305,6 +305,8 @@ void generic_shutdown_super(struct super_block *sb)
 
 		if (sop->write_super && sb->s_dirt)
 			sop->write_super(sb);
+		if (sb->dq_op && sb->dq_op->shutdown)
+			sb->dq_op->shutdown(sb);
 		if (sop->put_super)
 			sop->put_super(sb);
 
