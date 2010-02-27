@@ -488,8 +488,10 @@ static int open_listening_socket(loff_t pos, struct cpt_sock_image *si,
 
 	setup_sock_common(sock->sk, si, pos, ctx);
 
-	if (si->cpt_family == AF_INET || si->cpt_family == AF_INET6)
+	if (si->cpt_family == AF_INET || si->cpt_family == AF_INET6) {
+		rst_listen_socket_in(sock->sk, si, pos, ctx);
 		rst_restore_synwait_queue(sock->sk, si, pos, ctx);
+	}
 
 	return 0;
 
