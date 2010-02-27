@@ -839,8 +839,10 @@ static int show_vfsmnt(struct seq_file *m, void *v)
 	if (ve_is_super(get_exec_env()) ||
 	    !(mnt->mnt_sb->s_type->fs_flags & FS_MANGLE_PROC))
 		mangle(m, mnt->mnt_devname ? mnt->mnt_devname : "none");
-	else
+	else {
+		seq_puts(m, "/dev/");
 		mangle(m, mnt->mnt_sb->s_type->name);
+	}
 	seq_putc(m, ' ');
 	mangle(m, path);
 	free_page((unsigned long) path_buf);
