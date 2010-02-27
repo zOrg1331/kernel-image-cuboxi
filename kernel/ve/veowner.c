@@ -24,6 +24,7 @@
 #include <linux/list.h>
 #include <linux/inetdevice.h>
 #include <linux/pid_namespace.h>
+#include <linux/xattr.h>
 #include <asm/system.h>
 #include <asm/io.h>
 
@@ -75,6 +76,7 @@ static void prepare_proc(void)
  * OpenVZ sysctl
  * ------------------------------------------------------------------------
  */
+int ve_xattr_policy = VE_XATTR_POLICY_ACCEPT;
 extern int ve_area_access_check;
 
 #ifdef CONFIG_INET
@@ -104,6 +106,14 @@ static struct ctl_table vz_fs_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
+	},
+	{
+		.ctl_name	= 228,
+		.procname	= "ve-xattr-policy",
+		.data		= &ve_xattr_policy,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
 	},
 	{ 0 }
 };
