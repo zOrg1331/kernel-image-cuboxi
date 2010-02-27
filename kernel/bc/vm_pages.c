@@ -529,6 +529,7 @@ static int bc_vmaux_show(struct seq_file *f, void *v)
 			ub->ub_tmpfs_respages);
 	seq_printf(f, bc_proc_lu_fmt, ub_rnames[UB_SWAPPAGES],
 			ub->ub_swap_pages);
+	seq_printf(f, bc_proc_lu_fmt, "rss", ub->ub_pbcs);
 
 	seq_printf(f, bc_proc_lu_fmt, "swapin", swap);
 	seq_printf(f, bc_proc_lu_fmt, "unmap", unmap);

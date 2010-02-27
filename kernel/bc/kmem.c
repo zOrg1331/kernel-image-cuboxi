@@ -168,16 +168,15 @@ static int bc_kmem_debug_show(struct seq_file *f, void *v)
 {
 	struct user_beancounter *ub;
 	struct ub_cache_counter *cc;
-	long pages, vmpages, pbc;
+	long pages, vmpages;
 	int i;
 
 	ub = seq_beancounter(f);
 
-	pages = vmpages = pbc = 0;
+	pages = vmpages = 0;
 	for_each_online_cpu(i) {
 		pages += per_cpu_ptr(ub->ub_percpu, i)->pages_charged;
 		vmpages += per_cpu_ptr(ub->ub_percpu, i)->vmalloc_charged;
-		pbc += per_cpu_ptr(ub->ub_percpu, i)->pbcs;
 	}
 	if (pages < 0)
 		pages = 0;
@@ -186,7 +185,7 @@ static int bc_kmem_debug_show(struct seq_file *f, void *v)
 
 	seq_printf(f, bc_proc_lu_lu_fmt, "pages", pages, PAGE_SIZE);
 	seq_printf(f, bc_proc_lu_lu_fmt, "vmalloced", vmpages, PAGE_SIZE);
-	seq_printf(f, bc_proc_lu_lu_fmt, "pbcs", pbc,
+	seq_printf(f, bc_proc_lu_lu_fmt, "pbcs", ub->ub_pbcs,
 			sizeof(struct page_beancounter));
 
 	spin_lock_irq(&cc_lock);

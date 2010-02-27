@@ -91,16 +91,10 @@ struct vm_struct;
 			ub_percpu_sub(ub, vmalloc_charged,		\
 					vm->nr_pages);			\
 	} while (0)
-
-#define inc_pbc_count(ub)	ub_percpu_inc(ub, pbcs)
-#define dec_pbc_count(ub)	ub_percpu_dec(ub, pbcs)
 #else
 #define init_cache_counters()		do { } while (0)
 #define inc_vmalloc_charged(vm, f)	do { } while (0)
 #define dec_vmalloc_charged(vm)		do { } while (0)
-
-#define inc_pbc_count(ub)		do { } while (0)
-#define dec_pbc_count(ub)		do { } while (0)
 
 #define ub_free_counters(ub)		do { } while (0)
 #define ub_kmemcache_free(cachep)	do { } while (0)
