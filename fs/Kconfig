@@ -65,7 +65,6 @@ source "fs/fuse/Kconfig"
 
 config SIM_FS
 	tristate "VPS filesystem"
-	depends on VZ_QUOTA
 	default m
 	help
 	  This file system is a part of Virtuozzo. It intoduces a fake

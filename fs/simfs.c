@@ -175,10 +175,12 @@ static int sim_systemcall(struct vnotifier_block *me, unsigned long n,
 	return (err ? NOTIFY_BAD : NOTIFY_OK);
 }
 
+#ifdef CONFIG_QUOTA
 static struct inode *sim_quota_root(struct super_block *sb)
 {
 	return sb->s_root->d_inode;
 }
+#endif
 
 /*
  * NOTE: We need to setup s_bdev field on super block, since sys_quotactl()
@@ -225,7 +227,9 @@ static void sim_quota_free(struct super_block *sb)
 }
 
 static struct super_operations sim_super_ops = {
+#ifdef CONFIG_QUOTA
 	.get_quota_root	= sim_quota_root,
+#endif
 };
 
 static int sim_fill_super(struct super_block *s, void *data)
