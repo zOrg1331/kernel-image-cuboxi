@@ -925,6 +925,29 @@ static struct vz_quota_master *vzquota_dparents_check_same(struct inode *inode)
 	return qmblk;
 }
 
+/* NFS root is disconnected dentry. */
+
+static int is_nfs_root(struct inode * inode)
+{
+	struct dentry *de;
+
+	if (inode->i_sb->s_magic != 0x6969)
+		return 0;
+
+	if (list_empty(&inode->i_dentry))
+		return 0;
+
+	list_for_each_entry(de, &inode->i_dentry, d_alias) {
+		if (de->d_parent != de)
+			return 0;
+		if (d_unhashed(de))
+			return 0;
+		if (!(de->d_flags & DCACHE_DISCONNECTED))
+			return 0;
+	}
+	return 1;
+}
+
 static void vzquota_dbranch_actualize(struct inode *inode,
 		struct inode *refinode)
 {
@@ -935,7 +958,7 @@ static void vzquota_dbranch_actualize(struct inode *inode,
 	vzquota_qlnk_init(&qlnk);
 
 start:
-	if (inode == inode->i_sb->s_root->d_inode) {
+	if (inode == inode->i_sb->s_root->d_inode || is_nfs_root(inode)) {
 		/* filesystem root */
 		atomic_inc(&inode->i_count);
 		do {
@@ -990,7 +1013,7 @@ static void vzquota_dtree_qmblk_recalc(struct inode *inode,
 	struct inode *pinode;
 	struct vz_quota_master *qmblk;
 
-	if (inode == inode->i_sb->s_root->d_inode) {
+	if (inode == inode->i_sb->s_root->d_inode || is_nfs_root(inode)) {
 		/* filesystem root */
 		do {
 			qmblk = __VZ_QUOTA_NOQUOTA(inode->i_sb);
@@ -1254,6 +1277,39 @@ void vzquota_inode_init_call(struct inode *inode)
 		vzquota_cur_qmblk_set(inode);
 	spin_unlock(&dcache_lock);
 }
+
+void vzquota_inode_swap_call(struct inode *inode, struct inode *tmpl)
+{
+	struct vz_quota_master *qmblk;
+	struct vz_quota_datast data;
+
+	__vzquota_inode_init(inode, VZ_QUOTAO_INIT);
+
+	/* initializes inode's quota inside */
+	qmblk = vzquota_inode_data(tmpl, &data);
+	if (qmblk != NULL && qmblk != VZ_QUOTA_BAD) {
+		void * uq;
+		list_del_init(&INODE_QLNK(tmpl)->list);
+		vzquota_qlnk_swap(INODE_QLNK(tmpl), INODE_QLNK(inode));
+		uq = inode->i_dquot[USRQUOTA];
+		inode->i_dquot[USRQUOTA] = tmpl->i_dquot[USRQUOTA];
+		tmpl->i_dquot[USRQUOTA] = uq;
+		tmpl->i_flags |= S_NOQUOTA;
+		vzquota_data_unlock(inode, &data);
+
+		vzquota_inode_drop(tmpl);
+	}
+
+	/*
+	 * The check is needed for repeated new_inode() calls from a single
+	 * ext3 call like create or mkdir in case of -ENOSPC.
+	 */
+	spin_lock(&dcache_lock);
+	if (!list_empty(&inode->i_dentry))
+		vzquota_cur_qmblk_set(inode);
+	spin_unlock(&dcache_lock);
+}
+
 
 /**
  * vzquota_inode_drop_call - call from DQUOT_DROP
