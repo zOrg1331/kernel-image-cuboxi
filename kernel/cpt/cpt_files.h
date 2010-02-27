@@ -18,6 +18,7 @@ int rst_posix_locks(struct cpt_context *ctx);
 
 struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx);
 int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx);
+int rst_files_std(struct cpt_task_image *ti, struct cpt_context *ctx);
 __u32 rst_files_flag(struct cpt_task_image *ti, struct cpt_context *ctx);
 int rst_fs_complete(struct cpt_task_image *ti, struct cpt_context *ctx);
 int rst_restore_fs(struct cpt_context *ctx);
