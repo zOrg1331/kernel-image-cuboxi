@@ -16,6 +16,7 @@
 #include <bc/beancounter.h>
 #include <bc/hash.h>
 #include <bc/io_acct.h>
+#include <bc/proc.h>
 #include <linux/blkdev.h>
 
 struct cfq_bc_data *__find_cfq_bc(struct ub_iopriv *iopriv,
@@ -285,6 +286,31 @@ void bc_io_restore_context(struct user_beancounter *ub)
 		put_beancounter(old_ub);
 	}
 }
+
+#ifdef CONFIG_PROC_FS
+static int bc_ioprio_show(struct seq_file *f, void *v)
+{
+	struct user_beancounter *bc;
+
+	bc = seq_beancounter(f);
+	seq_printf(f, "prio: %u\n", bc->iopriv.ioprio);
+
+	return 0;
+}
+
+static struct bc_proc_entry bc_ioprio_entry = {
+	.name = "ioprio",
+	.u.show = bc_ioprio_show,
+};
+
+static int __init bc_ioprio_init(void)
+{
+	bc_register_proc_entry(&bc_ioprio_entry);
+	return 0;
+}
+
+late_initcall(bc_ioprio_init);
+#endif
 
 EXPORT_SYMBOL(bc_io_switch_context);
 EXPORT_SYMBOL(bc_io_restore_context);
