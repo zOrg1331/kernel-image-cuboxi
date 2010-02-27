@@ -147,8 +147,10 @@ free_uid:
 				free_uid(user);
 			break;
 		case IOPRIO_WHO_UBC:
-			if (class != IOPRIO_CLASS_BE)
-				return -ERANGE;
+			if (class != IOPRIO_CLASS_BE) {
+				ret = -ERANGE;
+				break;
+			}
 
 			ret = bc_set_ioprio(who, data);
 			break;
