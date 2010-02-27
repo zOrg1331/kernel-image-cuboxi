@@ -1066,7 +1066,8 @@ static void local_close_files(struct files_struct * files)
 extern int expand_fdtable(struct files_struct *files, int nr);
 
 
-int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
+static int rst_files(struct cpt_task_image *ti, struct cpt_context *ctx,
+		int from, int to)
 {
 	struct cpt_files_struct_image fi;
 	struct files_struct *f = current->files;
@@ -1079,6 +1080,14 @@ int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 		if (f)
 			put_files_struct(f);
 		return 0;
+	}
+
+	if (from == 3) {
+		err = rst_get_object(CPT_OBJ_FILES, ti->cpt_files, &fi, ctx);
+		if (err)
+			return err;
+
+		goto just_do_it;
 	}
 
 	obj = lookup_cpt_obj_bypos(CPT_OBJ_FILES, ti->cpt_files, ctx);
@@ -1106,6 +1115,7 @@ int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 			return err;
 	}
 
+just_do_it:
 	pos = ti->cpt_files + fi.cpt_hdrlen;
 	endpos = ti->cpt_files + fi.cpt_next;
 	while (pos < endpos) {
@@ -1115,6 +1125,9 @@ int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 		err = rst_get_object(CPT_OBJ_FILEDESC, pos, &fdi, ctx);
 		if (err)
 			return err;
+		if (fdi.cpt_fd < from || fdi.cpt_fd > to)
+			goto skip;
+
 		filp = rst_file(fdi.cpt_file, fdi.cpt_fd, ctx);
 		if (IS_ERR(filp)) {
 			eprintk_ctx("rst_file: %ld %Lu\n", PTR_ERR(filp),
@@ -1132,6 +1145,8 @@ int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 			if (fdi.cpt_flags&CPT_FD_FLAG_CLOSEEXEC)
 				FD_SET(fdi.cpt_fd, f->fdt->close_on_exec);
 		}
+
+skip:
 		pos += fdi.cpt_next;
 	}
 	f->next_fd = fi.cpt_next_fd;
@@ -1142,6 +1157,16 @@ int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 		cpt_obj_setindex(obj, fi.cpt_index, ctx);
 	}
 	return 0;
+}
+
+int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
+{
+	return rst_files(ti, ctx, (ti->cpt_pid == 1) ? 3 : 0, INT_MAX);
+}
+
+int rst_files_std(struct cpt_task_image *ti, struct cpt_context *ctx)
+{
+	return rst_files(ti, ctx, 0, 2);
 }
 
 int rst_do_filejobs(cpt_context_t *ctx)

@@ -229,6 +229,12 @@ static int hook(void *arg)
 			goto out;
 		}
 
+		err = rst_files_std(ti, ctx);
+		if (err) {
+			eprintk_ctx("rst_root_stds: %d\n", err);
+			goto out;
+		}
+
 		err = rst_root_namespace(ctx);
 		if (err) {
 			eprintk_ctx("rst_namespace: %d\n", err);

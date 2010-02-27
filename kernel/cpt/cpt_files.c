@@ -79,6 +79,16 @@ int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
 			return -EINVAL;
 		}
 		if (nd.path.dentry != d || (verify && nd.path.mnt != mnt)) {
+			if (!strcmp(path, "/dev/null")) {
+				/*
+				 * epic kludge to workaround the case, when the
+				 * init opens a /dev/null and then udevd
+				 * overmounts the /dev with tmpfs
+				 */
+				path_put(&nd.path);
+				return 0;
+			}
+
 			eprintk_ctx("d_path is invisible %s\n", path);
 			path_put(&nd.path);
 			return -EINVAL;
