@@ -293,28 +293,34 @@ last_try:
 	return err;
 }
 
+static inline int task_precharge_farnr(struct task_beancounter *task_bc)
+{
+       return (task_bc->file_precharged < (1UL << task_bc->file_quant));
+}
+
 void ub_file_uncharge(struct file *f)
 {
 	struct user_beancounter *ub, *pub;
 	struct task_beancounter *task_bc;
-	unsigned long nr;
+	int nr;
 
 	ub = f->f_ub;
 	task_bc = &current->task_bc;
 	if (likely(ub == task_bc->task_ub)) {
 		task_bc->file_precharged++;
 		pub = top_beancounter(ub);
-		if (ub_barrier_farnr(pub, UB_NUMFILE) &&
+		if (task_precharge_farnr(task_bc) &&
 				ub_barrier_farsz(pub, UB_KMEMSIZE))
-			return;
-		if (task_bc->file_precharged < (1UL << task_bc->file_quant))
 			return;
 		nr = task_bc->file_precharged
 			- (1UL << (task_bc->file_quant - 1));
-		task_bc->file_precharged -= nr;
-		__put_beancounter_batch(ub, nr);
-		uncharge_beancounter(ub, UB_NUMFILE, nr);
-		uncharge_beancounter(ub, UB_KMEMSIZE, ub_file_kmemsize(nr));
+		if (nr > 0) {
+			task_bc->file_precharged -= nr;
+			__put_beancounter_batch(ub, nr);
+			uncharge_beancounter(ub, UB_NUMFILE, nr);
+			uncharge_beancounter(ub, UB_KMEMSIZE,
+					ub_file_kmemsize(nr));
+		}
 	} else {
 		uncharge_beancounter(ub, UB_NUMFILE, 1);
 		uncharge_beancounter(ub, UB_KMEMSIZE, ub_file_kmemsize(1));
