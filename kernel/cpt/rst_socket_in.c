@@ -410,14 +410,19 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 	loff_t end = pos + si->cpt_next;
 
 	pos += si->cpt_hdrlen;
+
+	lock_sock(sk);
 	while (pos < end) {
 		struct cpt_openreq_image oi;
 
 		err = rst_get_object(CPT_OBJ_OPENREQ, pos, &oi, ctx);
 		if (err) {
 			err = rst_sock_attr(&pos, sk, ctx);
-			if (err)
+			if (err) {
+				release_sock(sk);
 				return err;
+			}
+
 			continue;
 		}
 
@@ -428,14 +433,17 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 #if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
 				req = reqsk_alloc(&tcp6_request_sock_ops);
 #else
+				release_sock(sk);
 				return -EINVAL;
 #endif
 			} else {
 				req = reqsk_alloc(&tcp_request_sock_ops);
 			}
 
-			if (req == NULL)
+			if (req == NULL) {
+				release_sock(sk);
 				return -ENOMEM;
+			}
 
 			tcp_rsk(req)->rcv_isn = oi.cpt_rcv_isn;
 			tcp_rsk(req)->snt_isn = oi.cpt_snt_isn;
@@ -474,6 +482,7 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 		}
 		pos += oi.cpt_next;
 	}
+	release_sock(sk);
 	return 0;
 }
 
