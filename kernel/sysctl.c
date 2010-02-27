@@ -50,6 +50,7 @@
 #include <linux/ftrace.h>
 #include <linux/slow-work.h>
 #include <linux/perf_event.h>
+#include <linux/ve_task.h>
 
 #include <asm/uaccess.h>
 #include <asm/processor.h>
@@ -183,6 +184,9 @@ static int proc_do_cad_pid(struct ctl_table *table, int write,
 static int proc_taint(struct ctl_table *table, int write,
 			       void __user *buffer, size_t *lenp, loff_t *ppos);
 #endif
+
+static int proc_dointvec_ve(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos);
 
 static struct ctl_table root_table[];
 static struct ctl_table_root sysctl_table_root;
@@ -3029,6 +3033,25 @@ static int proc_do_cad_pid(struct ctl_table *table, int write,
 	put_pid(xchg(&cad_pid, new_pid));
 	return 0;
 }
+
+#ifdef CONFIG_VE
+static int proc_dointvec_ve(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	struct ctl_table tmp_table;
+
+	tmp_table = *table;
+	tmp_table.data = (char *)get_exec_env() + (unsigned long)table->extra1;
+
+	return proc_dointvec(&tmp_table, write, buffer, lenp, ppos);
+}
+#else
+static int proc_dointvec_ve(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	return proc_dointvec(table, write, buffer, lenp, ppos);
+}
+#endif /* CONFIG_VE */
 
 #else /* CONFIG_PROC_FS */
 
