@@ -836,6 +836,9 @@ static int execdomains_read_proc(char *page, char **start, off_t off,
 static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 				   size_t count, loff_t *ppos)
 {
+	struct ve_struct *cur = get_exec_env();
+	static int pnum = 10;
+
 	if (count) {
 		int i, cnt;
 		char c[32];
@@ -845,8 +848,17 @@ static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 			return -EFAULT;
 
 
-		for (i = 0; i < cnt && c[i] != '\n'; i++)
+		for (i = 0; i < cnt && c[i] != '\n'; i++) {
+			if (!ve_is_super(cur))	{
+				if (!pnum)
+					continue;
+				printk("SysRq: CT#%u sent '%c' magic key.\n",
+						cur->veid, c[i]);
+				pnum--;
+				continue;
+			}
 			__handle_sysrq(c[i], NULL, 0);
+		}
 	}
 	return count;
 }
@@ -1064,6 +1076,6 @@ void __init proc_misc_init(void)
 	proc_vmcore = proc_create("vmcore", S_IRUSR, NULL, &proc_vmcore_operations);
 #endif
 #ifdef CONFIG_MAGIC_SYSRQ
-	proc_create("sysrq-trigger", S_IWUSR, NULL, &proc_sysrq_trigger_operations);
+	proc_create("sysrq-trigger", S_IWUSR, &glob_proc_root, &proc_sysrq_trigger_operations);
 #endif
 }
