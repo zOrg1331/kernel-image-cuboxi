@@ -59,7 +59,7 @@ struct file *rst_open_inotify(struct cpt_file_image *fi,
 
 
 int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
-			 cpt_context_t *ctx);
+			 int verify, cpt_context_t *ctx);
 
 #define check_one_vfsmount(mnt) \
 	(strcmp(mnt->mnt_sb->s_type->name, "rootfs") != 0 && \

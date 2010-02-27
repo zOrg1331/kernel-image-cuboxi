@@ -73,7 +73,7 @@ void cpt_printk_dentry(struct dentry *d, struct vfsmount *mnt)
 }
 
 int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
-			 cpt_context_t *ctx)
+			 int verify, cpt_context_t *ctx)
 {
 	if (path[0] == '/' && !(!IS_ROOT(d) && d_unhashed(d))) {
 		struct nameidata nd;
@@ -81,7 +81,7 @@ int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
 			eprintk_ctx("d_path cannot be looked up %s\n", path);
 			return -EINVAL;
 		}
-		if (nd.path.dentry != d || nd.path.mnt != mnt) {
+		if (nd.path.dentry != d || (verify && nd.path.mnt != mnt)) {
 			eprintk_ctx("d_path is invisible %s\n", path);
 			path_put(&nd.path);
 			return -EINVAL;
@@ -143,7 +143,7 @@ cpt_replaced(struct dentry * de, struct vfsmount *mnt, cpt_context_t * ctx)
 }
 
 static int cpt_dump_dentry(struct dentry *d, struct vfsmount *mnt,
-			   int replaced, cpt_context_t *ctx)
+			   int replaced, int verify, cpt_context_t *ctx)
 {
 	int len;
 	char *path;
@@ -208,7 +208,7 @@ static int cpt_dump_dentry(struct dentry *d, struct vfsmount *mnt,
 		o.cpt_content = CPT_CONTENT_NAME;
 		path[len] = 0;
 
-		if (cpt_verify_overmount(path, d, mnt, ctx)) {
+		if (cpt_verify_overmount(path, d, mnt, verify, ctx)) {
 			__cpt_release_buf(ctx);
 			return -EINVAL;
 		}
@@ -247,7 +247,7 @@ int cpt_dump_string(const char *s, struct cpt_context *ctx)
 static int
 cpt_dump_filename(struct file *file, int replaced, cpt_context_t *ctx)
 {
-	return cpt_dump_dentry(file->f_dentry, file->f_vfsmnt, replaced, ctx);
+	return cpt_dump_dentry(file->f_dentry, file->f_vfsmnt, replaced, 1, ctx);
 }
 
 int cpt_dump_inode(struct dentry *d, struct vfsmount *mnt, struct cpt_context *ctx)
@@ -914,7 +914,7 @@ static int find_linked_dentry(struct dentry *d, struct vfsmount *mnt,
 	}
 	spin_unlock(&dcache_lock);
 	if (found) {
-		err = cpt_dump_dentry(found, mnt, 0, ctx);
+		err = cpt_dump_dentry(found, mnt, 0, 1, ctx);
 		dput(found);
 		if (!err) {
 			dprintk_ctx("dentry found in aliases\n");
@@ -953,7 +953,7 @@ static int find_linked_dentry(struct dentry *d, struct vfsmount *mnt,
 
 	dprintk_ctx("dentry found in dir\n");
 	__cpt_release_buf(ctx);
-	err = cpt_dump_dentry(found, mnt, 0, ctx);
+	err = cpt_dump_dentry(found, mnt, 0, 1, ctx);
 
 err_lookup:
 	dput(found);
@@ -1510,7 +1510,7 @@ static int cpt_dump_bind_mnt(struct vfsmount * mnt, cpt_context_t * ctx)
 
 	/* One special case: mount --bind /a /a */
 	if (mnt->mnt_root == mnt->mnt_mountpoint)
-		return cpt_dump_dentry(mnt->mnt_root, mnt, 0, ctx);
+		return cpt_dump_dentry(mnt->mnt_root, mnt, 0, 0, ctx);
 
 	list_for_each_prev(p, &mnt->mnt_list) {
 		struct vfsmount * m;
@@ -1523,7 +1523,7 @@ static int cpt_dump_bind_mnt(struct vfsmount * mnt, cpt_context_t * ctx)
 		if (m->mnt_sb != mnt->mnt_sb)
 			continue;
 
-		err = cpt_dump_dentry(mnt->mnt_root, m, 0, ctx);
+		err = cpt_dump_dentry(mnt->mnt_root, m, 0, 1, ctx);
 		if (err == 0)
 			break;
 	}
