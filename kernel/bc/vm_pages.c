@@ -105,7 +105,8 @@ void __ub_update_physpages(struct user_beancounter *ub)
 void __ub_update_oomguarpages(struct user_beancounter *ub)
 {
 	ub->ub_parms[UB_OOMGUARPAGES].held =
-		ub->ub_parms[UB_PHYSPAGES].held + ub->ub_swap_pages;
+		ub->ub_parms[UB_PHYSPAGES].held +
+		ub->ub_parms[UB_SWAPPAGES].held;
 	ub_adjust_maxheld(ub, UB_OOMGUARPAGES);
 }
 
@@ -407,7 +408,7 @@ static inline void do_ub_swapentry_inc(struct user_beancounter *ub)
 	unsigned long flags;
 
 	spin_lock_irqsave(&ub->ub_lock, flags);
-	ub->ub_swap_pages++;
+	__charge_beancounter_locked(ub, UB_SWAPPAGES, 1, UB_FORCE);
 	__ub_update_oomguarpages(ub);
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
 }
@@ -426,10 +427,7 @@ static inline void do_ub_swapentry_dec(struct user_beancounter *ub)
 	unsigned long flags;
 
 	spin_lock_irqsave(&ub->ub_lock, flags);
-	if (ub->ub_swap_pages <= 0)
-		uncharge_warn(ub, UB_SWAPPAGES, 1, ub->ub_swap_pages);
-	else
-		ub->ub_swap_pages--;
+	__uncharge_beancounter_locked(ub, UB_SWAPPAGES, 1);
 	__ub_update_oomguarpages(ub);
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
 }
@@ -527,8 +525,6 @@ static int bc_vmaux_show(struct seq_file *f, void *v)
 			ub->ub_unused_privvmpages);
 	seq_printf(f, bc_proc_lu_fmt, ub_rnames[UB_TMPFSPAGES],
 			ub->ub_tmpfs_respages);
-	seq_printf(f, bc_proc_lu_fmt, ub_rnames[UB_SWAPPAGES],
-			ub->ub_swap_pages);
 	seq_printf(f, bc_proc_lu_fmt, "rss", ub->ub_pbcs);
 
 	seq_printf(f, bc_proc_lu_fmt, "swapin", swap);

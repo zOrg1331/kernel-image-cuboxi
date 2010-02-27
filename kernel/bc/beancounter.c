@@ -67,9 +67,9 @@ const char *ub_rnames[] = {
 	"dummy",
 	"dummy",
 	"numiptent",
+	"swappages",
 	"unused_privvmpages",	/* UB_RESOURCES */
 	"tmpfs_respages",
-	"swap_pages",
 	"held_pages",
 };
 
@@ -298,7 +298,6 @@ static inline void bc_verify_held(struct user_beancounter *ub)
 
 	clean &= verify_res(ub, UB_UNUSEDPRIVVM, ub->ub_unused_privvmpages);
 	clean &= verify_res(ub, UB_TMPFSPAGES, ub->ub_tmpfs_respages);
-	clean &= verify_res(ub, UB_SWAPPAGES, ub->ub_swap_pages);
 	clean &= verify_res(ub, UB_HELDPAGES, (unsigned long)ub->ub_held_pages);
 
 	ub_debug_trace(!clean, 5, 60*HZ);
@@ -647,6 +646,7 @@ static void init_beancounter_syslimits(struct user_beancounter *ub)
 	ub->ub_parms[UB_NUMSIGINFO].limit = 1024;
 	ub->ub_parms[UB_DCACHESIZE].limit = 1024*1024;
 	ub->ub_parms[UB_NUMFILE].limit = 1024;
+	ub->ub_parms[UB_SWAPPAGES].limit = UB_MAXVALUE;
 
 	for (k = 0; k < UB_RESOURCES; k++)
 		ub->ub_parms[k].barrier = ub->ub_parms[k].limit;
