@@ -1701,7 +1701,7 @@ struct cpt_beancounter_image {
 
 	__u64	cpt_parent;
 	__u32	cpt_id;
-	__u32	__cpt_pad;
+	__u32   cpt_ub_resources;
 	struct	cpt_ubparm	cpt_parms[32 * 2];
 } __attribute__ ((aligned (8)));
 
