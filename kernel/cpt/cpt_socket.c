@@ -512,7 +512,7 @@ int cpt_dump_socket(cpt_object_t *obj, struct sock *sk, int index, int parent, s
 					} else {
 						wprintk_ctx("af_unix path is too long: %s (%s)\n", path, ((char*)v->cpt_laddr)+2);
 					}
-					err = cpt_verify_overmount(path, d, unix_sk(sk)->mnt, ctx);
+					err = cpt_verify_overmount(path, d, unix_sk(sk)->mnt, 1, ctx);
 				} else {
 					eprintk_ctx("cannot get path of an af_unix socket\n");
 					err = PTR_ERR(path);
