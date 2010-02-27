@@ -70,4 +70,5 @@ int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
 	 strcmp(mnt->mnt_sb->s_type->name, "tmpfs") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "devpts") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "proc") != 0 && \
-	 strcmp(mnt->mnt_sb->s_type->name, "sysfs") != 0)
+	 strcmp(mnt->mnt_sb->s_type->name, "sysfs") != 0 && \
+	 strcmp(mnt->mnt_sb->s_type->name, "binfmt_misc") != 0)
