@@ -160,8 +160,11 @@ struct file * rst_sysv_shm_itself(loff_t pos, struct cpt_context *ctx)
 				 u.shmi.cpt_segsz, u.shmi.cpt_mode);
 	if (!IS_ERR(file)) {
 		err = fixup_shm(file, &u.shmi);
-		if (err != -EEXIST && dpos < epos)
+		if (err != -EEXIST && dpos < epos) {
 			err = fixup_shm_data(file, dpos, epos, ctx);
+			if (err)
+				goto err_put;
+		}
 	} else if (IS_ERR(file) && PTR_ERR(file) == -EEXIST) {
 		struct ipc_namespace *ipc_ns = current->nsproxy->ipc_ns;
 		struct shmid_kernel *shp;
@@ -174,6 +177,8 @@ struct file * rst_sysv_shm_itself(loff_t pos, struct cpt_context *ctx)
 	}
 	return file;
 
+err_put:
+	fput(file);
 err_out:
 	return ERR_PTR(err);
 }
