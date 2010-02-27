@@ -402,6 +402,17 @@ struct compat_dqblk {
 	__kernel_time_t dqb_itime;
 };
 
+struct compat_compat_dqblk {
+	compat_uint_t	dqb_ihardlimit;
+	compat_uint_t	dqb_isoftlimit;
+	compat_uint_t	dqb_curinodes;
+	compat_uint_t	dqb_bhardlimit;
+	compat_uint_t	dqb_bsoftlimit;
+	compat_u64	dqb_curspace;
+	compat_time_t	dqb_btime;
+	compat_time_t	dqb_itime;
+};
+
 struct compat_dqinfo {
 	unsigned int dqi_bgrace;
 	unsigned int dqi_igrace;
@@ -424,12 +435,18 @@ struct compat_dqstats {
 };
 
 asmlinkage long sys_quotactl(unsigned int cmd, const char __user *special, qid_t id, void __user *addr);
+
 static long compat_quotactl(unsigned int cmds, unsigned int type,
 		const char __user *special, qid_t id,
 		void __user *addr)
 {
 	struct super_block *sb;
 	long ret;
+
+	BUILD_BUG_ON(sizeof(struct compat_dqblk) != 12*4);
+	BUILD_BUG_ON(sizeof(struct compat_compat_dqblk) != 9*4);
+	BUILD_BUG_ON(sizeof(struct compat_dqinfo) != 6*4);
+	BUILD_BUG_ON(sizeof(struct compat_dqstats) != 9*4);
 
 	sb = NULL;
 	switch (cmds) {
@@ -667,6 +684,11 @@ asmlinkage long sys32_quotactl(unsigned int cmd, const char __user *special,
 	compat_uint_t data;
 	u16 xdata;
 	long ret;
+#ifdef CONFIG_QUOTA_COMPAT
+	struct compat_dqblk __user *cdq;
+	struct compat_compat_dqblk __user *compat_cdq;
+	compat_time_t time;
+#endif
 
 	cmds = cmd >> SUBCMDSHIFT;
 
@@ -727,6 +749,43 @@ asmlinkage long sys32_quotactl(unsigned int cmd, const char __user *special,
 			break;
 		ret = 0;
 		break;
+#ifdef CONFIG_QUOTA_COMPAT
+	case QC_GETQUOTA:
+		cdq = compat_alloc_user_space(sizeof(struct compat_dqblk));
+		compat_cdq = addr;
+		ret = sys_quotactl(cmd, special, id, cdq);
+		if (ret)
+			break;
+		ret = -EFAULT;
+		if (copy_in_user(compat_cdq, cdq, sizeof(struct compat_compat_dqblk) -
+				offsetof(struct compat_compat_dqblk, dqb_curspace)) ||
+			copy_in_user(&compat_cdq->dqb_curspace, &cdq->dqb_curspace,
+				sizeof(cdq->dqb_curspace)) ||
+			get_user(time, &cdq->dqb_btime) ||
+			put_user(time, &compat_cdq->dqb_btime) ||
+			get_user(time, &cdq->dqb_itime) ||
+			put_user(time, &compat_cdq->dqb_itime))
+			break;
+		ret = 0;
+		break;
+	case QC_SETQUOTA:
+	case QC_SETUSE:
+	case QC_SETQLIM:
+		cdq = compat_alloc_user_space(sizeof(struct compat_dqblk));
+		compat_cdq = addr;
+		ret = -EFAULT;
+		if (copy_in_user(cdq, compat_cdq, sizeof(struct compat_compat_dqblk) -
+				offsetof(struct compat_compat_dqblk, dqb_curspace)) ||
+			copy_in_user(&cdq->dqb_curspace, &compat_cdq->dqb_curspace,
+				sizeof(cdq->dqb_curspace)) ||
+			get_user(time, &compat_cdq->dqb_btime) ||
+			put_user(time, &cdq->dqb_btime) ||
+			get_user(time, &compat_cdq->dqb_itime) ||
+			put_user(time, &cdq->dqb_itime))
+			break;
+		ret = sys_quotactl(cmd, special, id, cdq);
+		break;
+#endif
 	default:
 		ret = sys_quotactl(cmd, special, id, addr);
 	}
