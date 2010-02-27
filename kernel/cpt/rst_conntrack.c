@@ -56,17 +56,33 @@ struct ct_holder
 	int index;
 };
 
-static void decode_tuple(struct cpt_ipct_tuple *v, struct ip_conntrack_tuple *tuple, int dir)
+static int decode_tuple(struct cpt_ipct_tuple *v,
+			 struct ip_conntrack_tuple *tuple, int dir,
+			 cpt_context_t *ctx)
 {
 	tuple->dst.ip = v->cpt_dst;
 	tuple->dst.u.all = v->cpt_dstport;
-	tuple->dst.protonum = v->cpt_protonum;
-	tuple->dst.dir = v->cpt_dir;
-	if (dir != tuple->dst.dir)
-		wprintk("dir != tuple->dst.dir\n");
+	if (ctx->image_version < CPT_VERSION_16) {
+		/* In 2.6.9 kernel protonum has short type */
+		__u16 protonum = *(__u16 *)&v->cpt_protonum;
+		if (protonum > 255) {
+			eprintk_ctx("tuple: protonum > 255: %u\n", protonum);
+			return -EINVAL;
+		}
+		tuple->dst.protonum = protonum;
+		tuple->dst.dir = dir;
+	} else {
+		tuple->dst.protonum = v->cpt_protonum;
+		tuple->dst.dir = v->cpt_dir;
+		if (dir != tuple->dst.dir) {
+			eprintk_ctx("dir != tuple->dst.dir\n");
+			return -EINVAL;
+		}
+	}
 
 	tuple->src.ip = v->cpt_src;
 	tuple->src.u.all = v->cpt_srcport;
+	return 0;
 }
 
 
@@ -128,8 +144,12 @@ static int undump_expect_list(struct ip_conntrack *ct,
 			continue;
 		}
 
-		decode_tuple(&v.cpt_tuple, &exp->tuple, 0);
-		decode_tuple(&v.cpt_mask, &exp->mask, 0);
+		if (decode_tuple(&v.cpt_tuple, &exp->tuple, 0, ctx) ||
+		    decode_tuple(&v.cpt_mask, &exp->mask, 0, ctx)) {
+			ip_conntrack_expect_put(exp);
+			write_unlock_bh(&ip_conntrack_lock);
+			return -EINVAL;
+		}
 
 		exp->master = ct;
 		nf_conntrack_get(&ct->ct_general);
@@ -166,8 +186,11 @@ static int undump_one_ct(struct cpt_ip_conntrack_image *ci, loff_t pos,
 	if (c == NULL)
 		return -ENOMEM;
 
-	decode_tuple(&ci->cpt_tuple[0], &orig, 0);
-	decode_tuple(&ci->cpt_tuple[1], &repl, 1);
+	if (decode_tuple(&ci->cpt_tuple[0], &orig, 0, ctx) ||
+	    decode_tuple(&ci->cpt_tuple[1], &repl, 1, ctx)) {
+		kfree(c);
+		return -EINVAL;
+	}
 
 	conntrack = ip_conntrack_alloc(&orig, &repl, get_exec_env()->_ip_conntrack->ub);
 	if (!conntrack || IS_ERR(conntrack)) {
@@ -179,9 +202,6 @@ static int undump_one_ct(struct cpt_ip_conntrack_image *ci, loff_t pos,
 	c->next = *ct_list;
 	*ct_list = c;
 	c->index = ci->cpt_index;
-
-	decode_tuple(&ci->cpt_tuple[0], &conntrack->tuplehash[0].tuple, 0);
-	decode_tuple(&ci->cpt_tuple[1], &conntrack->tuplehash[1].tuple, 1);
 
 	conntrack->status = ci->cpt_status;
 
