@@ -655,13 +655,16 @@ static int dump_content_regular(struct file *file, struct cpt_context *ctx)
 
 	if (!(file->f_mode & FMODE_READ) ||
 	    (file->f_flags & O_DIRECT)) {
-		file = dentry_open(dget(file->f_dentry),
-				   mntget(file->f_vfsmnt), O_RDONLY);
-		if (IS_ERR(file)) {
+		struct file *filp;
+		filp = dentry_open(dget(file->f_dentry),
+				   mntget(file->f_vfsmnt),
+				   O_RDONLY | O_LARGEFILE);
+		if (IS_ERR(filp)) {
 			cpt_printk_dentry(file->f_dentry, file->f_vfsmnt);
-			eprintk_ctx("cannot reopen file for read %ld\n", PTR_ERR(file));
-			return PTR_ERR(file);
+			eprintk_ctx("cannot reopen file for read %ld\n", PTR_ERR(filp));
+			return PTR_ERR(filp);
 		}
+		file = filp;
 	} else {
 		atomic_long_inc(&file->f_count);
 	}
@@ -923,7 +926,7 @@ static int find_linked_dentry(struct dentry *d, struct vfsmount *mnt,
 		return -EINVAL;
 
 	mntget(mnt);
-	f = dentry_open(de, mnt, O_RDONLY);
+	f = dentry_open(de, mnt, O_RDONLY | O_LARGEFILE);
 	if (IS_ERR(f))
 		return PTR_ERR(f);
 
