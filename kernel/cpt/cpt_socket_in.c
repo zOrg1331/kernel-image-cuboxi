@@ -59,7 +59,7 @@ int cpt_dump_ofo_queue(int idx, struct sock *sk, struct cpt_context *ctx)
 	while (skb && skb != (struct sk_buff*)&tp->out_of_order_queue) {
 		int err;
 
-		err = cpt_dump_skb(CPT_SKB_OFOQ, idx, skb, ctx);
+		err = cpt_dump_skb(CPT_SKB_OFOQ, idx, skb, sk, ctx);
 		if (err)
 			return err;
 

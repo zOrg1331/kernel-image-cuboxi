@@ -59,7 +59,7 @@ static int restore_queues(struct sock *sk, struct cpt_sock_image *si,
 		struct sk_buff *skb;
 		__u32 type;
 
-		skb = rst_skb(&pos, NULL, &type, ctx);
+		skb = rst_skb(sk, &pos, NULL, &type, ctx);
 		if (IS_ERR(skb)) {
 			if (PTR_ERR(skb) == -EINVAL) {
 				int err;

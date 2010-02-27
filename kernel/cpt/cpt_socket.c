@@ -179,7 +179,7 @@ void release_sock_nobacklog(struct sock *sk)
 }
 
 int cpt_dump_skb(int type, int owner, struct sk_buff *skb,
-		 struct cpt_context *ctx)
+		 struct sock *sk, struct cpt_context *ctx)
 {
 	struct cpt_skb_image *v = cpt_get_buf(ctx);
 	loff_t saved_obj;
@@ -203,7 +203,19 @@ int cpt_dump_skb(int type, int owner, struct sk_buff *skb,
 	v->cpt_nh = skb_network_header(skb) - skb->head;
 	v->cpt_mac = skb_mac_header(skb) - skb->head;
 	BUILD_BUG_ON(sizeof(skb->cb) < sizeof(v->cpt_cb));
-	memcpy(v->cpt_cb, skb->cb, sizeof(v->cpt_cb));
+	memset(v->cpt_cb, 0, sizeof(v->cpt_cb));
+#if !defined(CONFIG_IPV6) && !defined(CONFIG_IPV6_MODULE)
+	if (sk->sk_protocol == IPPROTO_TCP) {
+		/* Save control block according to tcp_skb_cb with IPv6 */
+		BUG_ON(sizeof(struct tcp_skb_cb) - sizeof(struct inet_skb_parm) >
+		       sizeof(v->cpt_cb) - sizeof(struct inet6_skb_parm));
+		memcpy(v->cpt_cb, skb->cb, sizeof(struct inet_skb_parm));
+		memcpy((void *)v->cpt_cb + sizeof(struct inet6_skb_parm),
+		       skb->cb + sizeof(struct inet_skb_parm),
+		       sizeof(struct tcp_skb_cb) - sizeof(struct inet_skb_parm));
+	} else
+#endif
+		memcpy(v->cpt_cb, skb->cb, sizeof(v->cpt_cb));
 	if (sizeof(skb->cb) > sizeof(v->cpt_cb)) {
 		int i;
 		for (i=sizeof(v->cpt_cb); i<sizeof(skb->cb); i++) {
@@ -330,7 +342,7 @@ static int dump_rqueue(int idx, struct sock *sk, struct cpt_context *ctx)
 			}
 		}
 
-		err = cpt_dump_skb(CPT_SKB_RQ, idx, skb, ctx);
+		err = cpt_dump_skb(CPT_SKB_RQ, idx, skb, sk, ctx);
 		if (err)
 			return err;
 
@@ -348,7 +360,7 @@ static int dump_wqueue(int idx, struct sock *sk, struct cpt_context *ctx)
 
 	skb = skb_peek(&sk->sk_write_queue);
 	while (skb && skb != (struct sk_buff*)&sk->sk_write_queue) {
-		int err = cpt_dump_skb(CPT_SKB_WQ, idx, skb, ctx);
+		int err = cpt_dump_skb(CPT_SKB_WQ, idx, skb, sk, ctx);
 		if (err)
 			return err;
 

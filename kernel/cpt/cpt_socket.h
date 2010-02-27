@@ -11,7 +11,8 @@ int rst_sockets_complete(struct cpt_context *ctx);
 int cpt_dump_orphaned_sockets(struct cpt_context *ctx);
 
 int rst_sock_attr(loff_t *pos_p, struct sock *sk, cpt_context_t *ctx);
-struct sk_buff * rst_skb(loff_t *pos_p, __u32 *owner, __u32 *queue, struct cpt_context *ctx);
+struct sk_buff * rst_skb(struct sock *sk, loff_t *pos_p, __u32 *owner,
+			 __u32 *queue, struct cpt_context *ctx);
 
 void cpt_unlock_sockets(cpt_context_t *);
 void cpt_kill_sockets(cpt_context_t *);
@@ -24,7 +25,8 @@ __u32 cpt_socket_fasync(struct file *file, struct cpt_context *ctx);
 int cpt_attach_accept(struct sock *lsk, struct sock *sk, cpt_context_t *);
 int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si, loff_t pos, struct cpt_context *ctx);
 int cpt_dump_ofo_queue(int idx, struct sock *sk, struct cpt_context *ctx);
-int cpt_dump_skb(int type, int owner, struct sk_buff *skb, struct cpt_context *ctx);
+int cpt_dump_skb(int type, int owner, struct sk_buff *skb, struct sock *sk,
+		 struct cpt_context *ctx);
 int cpt_dump_mcfilter(struct sock *sk, struct cpt_context *ctx);
 
 int rst_sk_mcfilter_in(struct sock *sk, struct cpt_sockmc_image *v,
