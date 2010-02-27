@@ -83,7 +83,7 @@ static int vzquota_create(unsigned int quota_id,
 	struct vz_quota_stat qstat;
 	struct vz_quota_master *qmblk;
 
-	down(&vz_quota_sem);
+	mutex_lock(&vz_quota_mutex);
 
 	err = -EFAULT;
 	if (!compat) {
@@ -111,7 +111,7 @@ static int vzquota_create(unsigned int quota_id,
 	if (IS_ERR(qmblk)) /* ENOMEM or EEXIST */
 		err = PTR_ERR(qmblk);
 out:
-	up(&vz_quota_sem);
+	mutex_unlock(&vz_quota_mutex);
 
 	return err;
 }
@@ -135,7 +135,7 @@ static int vzquota_on(unsigned int quota_id, const char __user *quota_root,
 	struct super_block *dqsb;
 
 	dqsb = NULL;
-	down(&vz_quota_sem);
+	mutex_lock(&vz_quota_mutex);
 
 	err = -ENOENT;
 	qmblk = vzquota_find_master(quota_id);
@@ -175,7 +175,7 @@ static int vzquota_on(unsigned int quota_id, const char __user *quota_root,
 		goto out_init;
 	qmblk->dq_state = VZDQ_WORKING;
 
-	up(&vz_quota_sem);
+	mutex_unlock(&vz_quota_mutex);
 	return 0;
 
 out_init:
@@ -190,7 +190,7 @@ out_path:
 out:
 	if (dqsb)
 		vzquota_put_super(dqsb);
-	up(&vz_quota_sem);
+	mutex_unlock(&vz_quota_mutex);
 	return err;
 }
 
@@ -208,7 +208,7 @@ static int vzquota_destroy(unsigned int quota_id)
 	struct vz_quota_master *qmblk;
 	struct path root;
 
-	down(&vz_quota_sem);
+	mutex_lock(&vz_quota_mutex);
 
 	err = -ENOENT;
 	qmblk = vzquota_find_master(quota_id);
@@ -226,14 +226,14 @@ static int vzquota_destroy(unsigned int quota_id)
 
 	if (qmblk->dq_sb)
 		vzquota_put_super(qmblk->dq_sb);
-	up(&vz_quota_sem);
+	mutex_unlock(&vz_quota_mutex);
 
 	qmblk_put(qmblk);
 	path_put(&root);
 	return 0;
 
 out:
-	up(&vz_quota_sem);
+	mutex_unlock(&vz_quota_mutex);
 	return err;
 }
 
@@ -311,7 +311,7 @@ static int vzquota_off(unsigned int quota_id, char __user *buf, int force)
 	int err, ret;
 	struct vz_quota_master *qmblk;
 
-	down(&vz_quota_sem);
+	mutex_lock(&vz_quota_mutex);
 
 	err = -ENOENT;
 	qmblk = vzquota_find_master(quota_id);
@@ -334,7 +334,7 @@ static int vzquota_off(unsigned int quota_id, char __user *buf, int force)
 	/* vzquota_destroy will free resources */
 	qmblk->dq_state = VZDQ_STOPING;
 out:
-	up(&vz_quota_sem);
+	mutex_unlock(&vz_quota_mutex);
 
 	return err;
 }
@@ -409,7 +409,7 @@ static int vzquota_setlimit(unsigned int quota_id,
 	struct vz_quota_stat qstat;
 	struct vz_quota_master *qmblk;
 
-	down(&vz_quota_sem); /* for hash list protection */
+	mutex_lock(&vz_quota_mutex); /* for hash list protection */
 
 	err = -ENOENT;
 	qmblk = vzquota_find_master(quota_id);
@@ -437,7 +437,7 @@ static int vzquota_setlimit(unsigned int quota_id,
 	qmblk_data_write_unlock(qmblk);
 
 out:
-	up(&vz_quota_sem);
+	mutex_unlock(&vz_quota_mutex);
 	return err;
 }
 
@@ -452,7 +452,7 @@ static int vzquota_getstat(unsigned int quota_id,
 	struct vz_quota_stat qstat;
 	struct vz_quota_master *qmblk;
 
-	down(&vz_quota_sem);
+	mutex_lock(&vz_quota_mutex);
 
 	err = -ENOENT;
 	qmblk = vzquota_find_master(quota_id);
@@ -479,7 +479,7 @@ static int vzquota_getstat(unsigned int quota_id,
 		err = -EFAULT;
 
 out:
-	up(&vz_quota_sem);
+	mutex_unlock(&vz_quota_mutex);
 	return err;
 }
 
@@ -673,7 +673,7 @@ static int vzquota_read_proc(char *page, char **start, off_t off, int count,
 		p += len;
 	}
 
-	down(&vz_quota_sem);
+	mutex_lock(&vz_quota_mutex);
 
 	/* traverse master hash table for all records */
 	for (i = 0; i < vzquota_hash_size; i++) {
@@ -714,7 +714,7 @@ static int vzquota_read_proc(char *page, char **start, off_t off, int count,
 
 	*eof = 1; /* checked all hash */
 out:
-	up(&vz_quota_sem);
+	mutex_unlock(&vz_quota_mutex);
 
 	len = 0;
 	if (*start != NULL) {
