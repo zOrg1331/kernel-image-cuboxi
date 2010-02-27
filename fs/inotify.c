@@ -120,6 +120,8 @@ void put_inotify_watch(struct inotify_watch *watch)
 		struct inotify_handle *ih = watch->ih;
 
 		iput(watch->inode);
+		if (watch->path.mnt)
+			mnt_unpin(watch->path.mnt);
 		path_put(&watch->path);
 		watch->path.dentry = NULL;
 		watch->path.mnt = NULL;
@@ -361,7 +363,7 @@ EXPORT_SYMBOL_GPL(inotify_get_cookie);
  * of inodes, and with iprune_mutex held, keeping shrink_icache_memory() at bay.
  * We temporarily drop inode_lock, however, and CAN block.
  */
-void inotify_unmount_inodes(struct list_head *list)
+void inotify_unmount_inodes_mnt(struct list_head *list, struct vfsmount *mnt)
 {
 	struct inode *inode, *next_i, *need_iput = NULL;
 
@@ -419,6 +421,10 @@ void inotify_unmount_inodes(struct list_head *list)
 		watches = &inode->inotify_watches;
 		list_for_each_entry_safe(watch, next_w, watches, i_list) {
 			struct inotify_handle *ih= watch->ih;
+
+			if (mnt && mnt != watch->path.mnt)
+				continue;
+
 			get_inotify_watch(watch);
 			mutex_lock(&ih->mutex);
 			ih->in_ops->handle_event(watch, watch->wd, IN_UNMOUNT, 0,
@@ -433,7 +439,19 @@ void inotify_unmount_inodes(struct list_head *list)
 		spin_lock(&inode_lock);
 	}
 }
+
+void inotify_unmount_inodes(struct list_head *list)
+{
+	inotify_unmount_inodes_mnt(list, NULL);
+}
 EXPORT_SYMBOL_GPL(inotify_unmount_inodes);
+
+void inotify_unmount_mnt(struct vfsmount *mnt)
+{
+	spin_lock(&inode_lock);
+	inotify_unmount_inodes_mnt(&mnt->mnt_sb->s_inodes, mnt);
+	spin_unlock(&inode_lock);
+}
 
 /**
  * inotify_inode_is_dead - an inode has been deleted, cleanup any watches
@@ -774,7 +792,8 @@ s32 __inotify_add_watch(struct inotify_handle *ih, struct inotify_watch *watch,
 	 * official.  We hold a reference to nameidata, which makes this safe.
 	 */
 	if (path) {
-		path_get(path);
+		mnt_pin(path->mnt);
+		dget(path->dentry);
 		watch->path = *path;
 	}
 	watch->inode = igrab(inode);

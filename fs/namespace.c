@@ -27,6 +27,7 @@
 #include <linux/ramfs.h>
 #include <linux/log2.h>
 #include <linux/idr.h>
+#include <linux/inotify.h>
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 #include "pnode.h"
@@ -656,6 +657,7 @@ repeat:
 		spin_unlock(&vfsmount_lock);
 		acct_auto_close_mnt(mnt);
 		security_sb_umount_close(mnt);
+		inotify_unmount_mnt(mnt);
 		goto repeat;
 	}
 }

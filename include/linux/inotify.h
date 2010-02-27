@@ -114,6 +114,7 @@ extern void inotify_inode_queue_event(struct inode *, __u32, __u32,
 extern void inotify_dentry_parent_queue_event(struct dentry *, __u32, __u32,
 					      const char *);
 extern void inotify_unmount_inodes(struct list_head *);
+extern void inotify_unmount_mnt(struct vfsmount *);
 extern void inotify_inode_is_dead(struct inode *);
 extern u32 inotify_get_cookie(void);
 
@@ -226,6 +227,10 @@ static inline void inotify_dentry_parent_queue_event(struct dentry *dentry,
 }
 
 static inline void inotify_unmount_inodes(struct list_head *list)
+{
+}
+
+static inline void inotify_unmount_mnt(struct vfsmount *)
 {
 }
 
