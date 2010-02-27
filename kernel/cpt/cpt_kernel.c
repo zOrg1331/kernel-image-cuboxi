@@ -93,7 +93,9 @@ int local_kernel_thread(int (*fn)(void *), void * arg, unsigned long flags, pid_
 	}
 	if (!try_module_get(THIS_MODULE))
 		return -EBUSY;
-	ret = asm_kernel_thread(fn, arg, flags, pid);
+	while ((ret = asm_kernel_thread(fn, arg, flags, pid)) ==
+							-ERESTARTNOINTR)
+		cond_resched();
 	if (ret < 0)
 		module_put(THIS_MODULE);
 	return ret;
