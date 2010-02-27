@@ -222,7 +222,9 @@ struct user_beancounter
 #define ub_other_sk_list	spriv.ubp_other_socks
 #define ub_orphan_count		spriv.ubp_orphan_count
 #define ub_tw_count		spriv.ubp_tw_count
+#ifdef CONFIG_BC_IO_SCHED
 	struct ub_iopriv	iopriv;
+#endif
 
 	struct user_beancounter *parent;
 	void			*private_data;
