@@ -373,6 +373,9 @@ static int devinfo_show(struct seq_file *f, void *v)
 
 static void *devinfo_start(struct seq_file *f, loff_t *pos)
 {
+	if (!ve_is_super(get_exec_env()))
+		return NULL;
+
 	if (*pos < (BLKDEV_MAJOR_HASH_SIZE + CHRDEV_MAJOR_HASH_SIZE))
 		return pos;
 	return NULL;
@@ -1018,7 +1021,7 @@ void __init proc_misc_init(void)
 	proc_create("kmsg", S_IRUSR, NULL, &proc_kmsg_operations);
 #endif
 	proc_create("locks", 0, &glob_proc_root, &proc_locks_operations);
-	proc_create("devices", 0, NULL, &proc_devinfo_operations);
+	proc_create("devices", 0, &glob_proc_root, &proc_devinfo_operations);
 	proc_create("cpuinfo", 0, &glob_proc_root, &proc_cpuinfo_operations);
 #ifdef CONFIG_BLOCK
 	proc_create("partitions", 0, NULL, &proc_partitions_operations);
