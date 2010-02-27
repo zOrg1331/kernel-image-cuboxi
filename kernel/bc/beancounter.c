@@ -649,7 +649,7 @@ void __init ub_init_early(void)
 	init_beancounter_nolimits(ub);
 	init_beancounter_store(ub);
 	init_beancounter_struct(ub);
-	ub->ub_percpu = alloc_percpu(struct ub_percpu_struct);
+	ub->ub_percpu = NULL;
 
 	memset(&current->task_bc, 0, sizeof(struct task_beancounter));
 	(void)set_exec_ub(ub);

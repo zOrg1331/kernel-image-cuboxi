@@ -1008,6 +1008,9 @@ static inline void task_rq_unlock(struct rq *rq, unsigned long *flags)
 }
 
 #ifdef CONFIG_VE
+struct ve_cpu_stats static_ve_cpu_stats;
+EXPORT_SYMBOL(static_ve_cpu_stats);
+
 static inline void ve_nr_iowait_inc(struct ve_struct *ve, int cpu)
 {
 	VE_CPU_STATS(ve, cpu)->nr_iowait++;

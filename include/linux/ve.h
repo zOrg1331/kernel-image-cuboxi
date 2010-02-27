@@ -294,7 +294,17 @@ struct ve_struct {
 int init_ve_cgroups(struct ve_struct *ve);
 void fini_ve_cgroups(struct ve_struct *ve);
 
-#define VE_CPU_STATS(ve, cpu)	(per_cpu_ptr((ve)->cpu_stats, cpu))
+extern struct ve_cpu_stats static_ve_cpu_stats;
+static inline struct ve_cpu_stats *VE_CPU_STATS(struct ve_struct *ve, int cpu)
+{
+	struct ve_cpu_stats *s;
+
+	s = per_cpu_ptr(ve->cpu_stats, cpu);
+	if (s == NULL)
+		return &static_ve_cpu_stats;
+	else
+		return s;
+}
 
 extern int nr_ve;
 extern struct proc_dir_entry *proc_vz_dir;

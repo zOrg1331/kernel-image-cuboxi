@@ -130,7 +130,7 @@ void init_ve0(void)
 	struct ve_struct *ve;
 
 	ve = get_ve0();
-	ve->cpu_stats = alloc_percpu(struct ve_cpu_stats);
+	ve->cpu_stats = NULL;
 	list_add(&ve->ve_list, &ve_list_head);
 }
 

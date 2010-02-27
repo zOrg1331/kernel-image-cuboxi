@@ -313,12 +313,16 @@ static inline void uncharge_beancounter(struct user_beancounter *ub,
 #else /* CONFIG_BEANCOUNTERS */
 
 #define ub_percpu_add(ub, field, v)		do {			\
+		if (ub->ub_percpu == NULL)				\
+			break;						\
 		per_cpu_ptr(ub->ub_percpu, get_cpu())->field += (v);	\
 		put_cpu();						\
 	} while (0)
 #define ub_percpu_inc(ub, field) ub_percpu_add(ub, field, 1)
 
 #define ub_percpu_sub(ub, field, v)		do {			\
+		if (ub->ub_percpu == NULL)				\
+			break;						\
 		per_cpu_ptr(ub->ub_percpu, get_cpu())->field -= (v);	\
 		put_cpu();						\
 	} while (0)
