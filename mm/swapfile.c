@@ -1526,16 +1526,50 @@ static const struct seq_operations swaps_op = {
 	.show =		swap_show
 };
 
+#include <linux/virtinfo.h>
+
+static int swap_show_ve(struct seq_file *swap, void *v)
+{
+	struct meminfo mi;
+
+	memset(&mi, 0, sizeof(mi));
+	si_swapinfo(&mi.si);
+	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_MEMINFO, &mi)
+			& NOTIFY_FAIL)
+		goto out;
+
+	seq_printf(swap, "Filename\t\t\t\tType\t\tSize\tUsed\tPriority\n");
+	if (!mi.si.totalswap)
+		goto out;
+	seq_printf(swap, "%-40s%s\t%lu\t%lu\t%d\n",
+			"/dev/null",
+			"partition",
+			mi.si.totalswap  << (PAGE_SHIFT - 10),
+			(mi.si.totalswap - mi.si.freeswap) << (PAGE_SHIFT - 10),
+			-1);
+out:
+	return 0;
+}
+
 static int swaps_open(struct inode *inode, struct file *file)
 {
+	if (!ve_is_super(get_exec_env()))
+		return single_open(file, &swap_show_ve, NULL);
 	return seq_open(file, &swaps_op);
+}
+
+static int swaps_release(struct inode *inode, struct file *file)
+{
+	if (!ve_is_super(file->owner_env))
+		return single_release(inode, file);
+	return seq_release(inode, file);
 }
 
 static const struct file_operations proc_swaps_operations = {
 	.open		= swaps_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
-	.release	= seq_release,
+	.release	= swaps_release,
 };
 
 static int __init procswaps_init(void)
