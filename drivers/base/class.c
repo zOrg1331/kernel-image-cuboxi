@@ -74,10 +74,10 @@ static struct kobj_type class_ktype = {
 };
 
 /* Hotplug events for classes go to the class class_subsys */
+#ifndef CONFIG_VE
 struct kset *class_kset;
 EXPORT_SYMBOL_GPL(class_kset);
 
-#ifndef CONFIG_VE
 #define visible_class_kset class_kset
 #else
 #define visible_class_kset (get_exec_env()->class_kset)
@@ -514,7 +514,7 @@ struct class_compat *class_compat_register(const char *name)
 	cls = kmalloc(sizeof(struct class_compat), GFP_KERNEL);
 	if (!cls)
 		return NULL;
-	cls->kobj = kobject_create_and_add(name, &class_kset->kobj);
+	cls->kobj = kobject_create_and_add(name, &visible_class_kset->kobj);
 	if (!cls->kobj) {
 		kfree(cls);
 		return NULL;
