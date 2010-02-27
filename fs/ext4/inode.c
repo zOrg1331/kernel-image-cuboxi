@@ -4963,9 +4963,14 @@ int ext4_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 	unsigned long len;
 	int ret = -EINVAL;
 	struct file *file = vma->vm_file;
-	struct inode *inode = file->f_path.dentry->d_inode;
-	struct address_space *mapping = inode->i_mapping;
+	struct inode *inode;
+	struct address_space *mapping;
 
+	if (file->f_op->get_host)
+		file = file->f_op->get_host(file);
+
+	inode = file->f_path.dentry->d_inode;
+	mapping = inode->i_mapping;
 	/*
 	 * Get i_alloc_sem to stop truncates messing with the inode. We cannot
 	 * get i_mutex because we are already holding mmap_sem.
