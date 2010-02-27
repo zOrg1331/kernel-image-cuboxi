@@ -297,7 +297,6 @@ static inline void show_state(void)
 }
 
 extern void show_regs(struct pt_regs *);
-extern void smp_show_regs(struct pt_regs *, void *);
 
 /*
  * TASK is a pointer to the task whose backtrace we want to see (or NULL for current

@@ -752,21 +752,6 @@ unknown_nmi_error(unsigned char reason, struct pt_regs *regs)
 	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
 }
 
-/*
- * Voyager doesn't implement these
- */
-void __attribute__((weak)) smp_show_regs(struct pt_regs *regs, void *info)
-{
-}
-
-#ifdef CONFIG_SMP
-int __attribute__((weak))
-smp_nmi_call_function(smp_nmi_function func, void *info, int wait)
-{
-	return 0;
-}
-#endif
-
 static DEFINE_SPINLOCK(nmi_print_lock);
 
 void notrace __kprobes die_nmi(char *str, struct pt_regs *regs, int do_panic)
@@ -784,8 +769,6 @@ void notrace __kprobes die_nmi(char *str, struct pt_regs *regs, int do_panic)
 	printk(" on CPU%d, ip %08lx, registers:\n",
 		smp_processor_id(), regs->ip);
 	show_registers(regs);
-	smp_nmi_call_function(smp_show_regs, NULL, 1);
-	bust_spinlocks(1);
 	if (!decode_call_traces)
 		show_registers(regs);
 	if (do_panic)
@@ -805,13 +788,6 @@ void notrace __kprobes die_nmi(char *str, struct pt_regs *regs, int do_panic)
 
 	do_exit(SIGSEGV);
 }
-
-static int dummy_nmi_callback(struct pt_regs *regs, int cpu)
-{
-	return 0;
-}
-
-static nmi_callback_t nmi_ipi_callback = dummy_nmi_callback;
 
 static notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 {
@@ -868,22 +844,10 @@ notrace __kprobes void do_nmi(struct pt_regs *regs, long error_code)
 
 	++nmi_count(cpu);
 
-	if (!ignore_nmis) {
-		if (!nmi_ipi_callback(regs, cpu))
-			default_do_nmi(regs);
-	}
+	if (!ignore_nmis)
+		default_do_nmi(regs);
 
 	nmi_exit();
-}
-
-void set_nmi_ipi_callback(nmi_callback_t callback)
-{
-	nmi_ipi_callback = callback;
-}
-
-void unset_nmi_ipi_callback(void)
-{
-	nmi_ipi_callback = dummy_nmi_callback;
 }
 
 void stop_nmi(void)

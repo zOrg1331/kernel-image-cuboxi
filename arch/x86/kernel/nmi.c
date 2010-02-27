@@ -378,21 +378,6 @@ void touch_nmi_watchdog(void)
 }
 EXPORT_SYMBOL(touch_nmi_watchdog);
 
-void smp_show_regs(struct pt_regs *regs, void *info)
-{
-	static DEFINE_SPINLOCK(show_regs_lock);
-
-	if (regs == NULL)
-		return;
-
-	spin_lock(&show_regs_lock);
-	bust_spinlocks(1);
-	printk("----------- IPI show regs -----------");
-	show_regs(regs);
-	bust_spinlocks(0);
-	spin_unlock(&show_regs_lock);
-}
-
 notrace __kprobes int
 nmi_watchdog_tick(struct pt_regs *regs, unsigned reason)
 {

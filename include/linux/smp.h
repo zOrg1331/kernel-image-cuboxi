@@ -61,8 +61,6 @@ extern int __cpu_up(unsigned int cpunum);
  */
 extern void smp_cpus_done(unsigned int max_cpus);
 
-extern int smp_nmi_call_function(smp_nmi_function func, void *info, int wait);
-
 /*
  * Call a function on all other processors
  */
@@ -142,11 +140,6 @@ static inline void smp_send_reschedule(int cpu) { }
 			(up_smp_call_function(func, info))
 static inline void init_call_single_data(void)
 {
-}
-static inline int smp_nmi_call_function(smp_nmi_function func,
-					 void *info, int wait)
-{
-	return 0;
 }
 
 #endif /* !SMP */
