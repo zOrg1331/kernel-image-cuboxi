@@ -1684,6 +1684,39 @@ struct cpt_ip_conntrack_image
 	__u32	cpt_mark;
 } __attribute__ ((aligned (8)));
 
+/* cpt_ip_conntrack_image struct from 2.6.9 kernel */
+struct cpt_ip_conntrack_image_compat
+{
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	struct cpt_ipct_tuple cpt_tuple[2];
+	__u64	cpt_status;
+	__u64	cpt_timeout;
+	__u32	cpt_index;
+	__u8	cpt_ct_helper;
+	__u8	cpt_nat_helper;
+	__u16	__cpt_pad1;
+
+	/* union ip_conntrack_proto. Used by tcp and icmp. */
+	__u32	cpt_proto_data[12];
+
+	/* union ip_conntrack_help. Used only by ftp helper. */
+	__u32	cpt_help_data[4];
+
+	/* nat info */
+	__u32	cpt_initialized;
+	__u32	cpt_num_manips;
+	struct  cpt_nat_manip	cpt_nat_manips[6];
+
+	struct	cpt_nat_seq	cpt_nat_seq[2];
+
+	__u32	cpt_masq_index;
+	__u32	__cpt_pad2;
+} __attribute__ ((aligned (8)));
+
 struct cpt_ubparm
 {
 	__u64	barrier;
