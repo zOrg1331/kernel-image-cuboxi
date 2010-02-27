@@ -57,6 +57,7 @@
 #include <linux/tty.h>
 #include <linux/mount.h>
 #include <linux/kthread.h>
+#include <linux/oom.h>
 
 #include <net/route.h>
 #include <net/ip_fib.h>
@@ -838,6 +839,10 @@ void ve_move_task(struct task_struct *tsk, struct ve_struct *new, struct cred *n
 		tsk->mm->vps_dumpable = 0;
 	/* setup capabilities before enter */
 	set_task_ve_caps(new, new_creds);
+
+	/* Drop OOM protection. */
+	if (tsk->signal->oom_adj == OOM_DISABLE)
+		tsk->signal->oom_adj = 0;
 
 	old = tsk->ve_task_info.owner_env;
 	tsk->ve_task_info.owner_env = new;
