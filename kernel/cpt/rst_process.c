@@ -1182,7 +1182,7 @@ static void rst_apply_mxcsr_mask(struct task_struct *tsk)
 #ifdef CONFIG_X86_32
 	unsigned int flags;
 
-	flags = test_cpu_caps();
+	flags = test_cpu_caps_and_features();
 
 	/* if cpu does not support sse2 mask 6 bit (DAZ flag) and 16-31 bits
 	   in MXCSR to avoid general protection fault */

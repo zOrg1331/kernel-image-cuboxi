@@ -170,6 +170,7 @@ struct cpt_major_hdr
 #define CPT_BIND_MOUNT		21
 #define CPT_UNSUPPORTED_NETDEV	22
 #define CPT_UNSUPPORTED_MISC	23
+#define CPT_SLM_DMPRST		24
 
 /* This mask is used to determine whether VE
    has some unsupported features or not */

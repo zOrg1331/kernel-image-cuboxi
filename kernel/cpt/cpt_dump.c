@@ -1185,7 +1185,7 @@ int cpt_vps_caps(struct cpt_context *ctx, __u32 *caps)
 	struct nsproxy *old_ns;
 	struct mnt_namespace *n;
 	int err;
-	unsigned int flags = test_cpu_caps();
+	unsigned int flags = test_cpu_caps_and_features();
 
 	if (!ctx->ve_id)
 		return -EINVAL;
@@ -1208,6 +1208,11 @@ int cpt_vps_caps(struct cpt_context *ctx, __u32 *caps)
 	}
 
 	*caps = flags & (1<<CPT_CPU_X86_CMOV);
+
+	if (flags & (1 << CPT_SLM_DMPRST)) {
+		eprintk_ctx("SLM is enabled, but slm_dmprst module is not loaded\n");
+		*caps |= (1 << CPT_SLM_DMPRST);
+	}
 
 	old_env = set_exec_env(env);
 	old_ns = current->nsproxy;

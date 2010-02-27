@@ -206,7 +206,7 @@ static int rst_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 	unlock_kernel();
 
 	if (cmd == CPT_TEST_CAPS) {
-		err = test_cpu_caps();
+		err = test_cpu_caps_and_features();
 		goto out_lock;
 	}
 
