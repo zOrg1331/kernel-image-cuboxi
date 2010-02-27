@@ -623,44 +623,18 @@ static void fini_venet(struct ve_struct *ve)
 
 static int init_ve_sched(struct ve_struct *ve)
 {
-#ifdef CONFIG_VZ_FAIRSCHED
 	int err;
 
-	/*
-	 * We refuse to switch to an already existing node since nodes
-	 * keep a pointer to their ve_struct...
-	 */
-	err = sys_fairsched_mknod(0, 1, ve->veid);
-	if (err < 0) {
-		printk(KERN_WARNING "Can't create fairsched node %d\n",
-				ve->veid);
-		return err;
-	}
-	err = sys_fairsched_mvpr(current->pid, ve->veid);
-	if (err) {
-		printk(KERN_WARNING "Can't switch to fairsched node %d\n",
-				ve->veid);
-		if (sys_fairsched_rmnod(ve->veid))
-			printk(KERN_ERR "Can't clean fairsched node %d\n",
-					ve->veid);
-		return err;
-	}
-#endif
-	ve_sched_attach(ve);
-	return 0;
+	err = fairsched_new_node(ve->veid, 0);
+	if (err == 0)
+		ve_sched_attach(ve);
+
+	return err;
 }
 
 static void fini_ve_sched(struct ve_struct *ve)
 {
-#ifdef CONFIG_VZ_FAIRSCHED
-	if (task_fairsched_node_id(current) == ve->veid)
-		if (sys_fairsched_mvpr(current->pid, FAIRSCHED_INIT_NODE_ID))
-			printk(KERN_WARNING "Can't leave fairsched node %d\n",
-					ve->veid);
-	if (sys_fairsched_rmnod(ve->veid))
-		printk(KERN_ERR "Can't remove fairsched node %d\n",
-				ve->veid);
-#endif
+	fairsched_drop_node(ve->veid);
 }
 
 /*
