@@ -137,13 +137,6 @@ static int undump_expect_list(struct ip_conntrack *ct,
 			return -ENOMEM;
 		}
 
-		if (ct->helper->timeout && !del_timer(&exp->timeout)) {
-			/* Dying already. We can do nothing. */
-			write_unlock_bh(&ip_conntrack_lock);
-			dprintk_ctx("conntrack expectation is dying\n");
-			continue;
-		}
-
 		if (decode_tuple(&v.cpt_tuple, &exp->tuple, 0, ctx) ||
 		    decode_tuple(&v.cpt_mask, &exp->mask, 0, ctx)) {
 			ip_conntrack_expect_put(exp);
@@ -164,8 +157,7 @@ static int undump_expect_list(struct ip_conntrack *ct,
 		} else
 #endif
 		if (ct->helper->timeout) {
-			exp->timeout.expires = jiffies + v.cpt_timeout;
-			add_timer(&exp->timeout);
+			mod_timer(&exp->timeout, jiffies + v.cpt_timeout);
 		}
 		write_unlock_bh(&ip_conntrack_lock);
 
