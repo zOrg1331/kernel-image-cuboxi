@@ -1886,6 +1886,20 @@ static inline unsigned long ve_used_mem(struct user_beancounter *ub)
 				 ub->ub_parms[UB_PRIVVMPAGES].held ;
 }
 
+static void ve_swapinfo(struct sysinfo *val, struct user_beancounter *ub)
+{
+	unsigned long size, used;
+
+	size = ub->ub_parms[UB_SWAPPAGES].limit;
+	used = ub->ub_parms[UB_SWAPPAGES].held;
+
+	if (size == UB_MAXVALUE)
+		size = 0;
+
+	val->totalswap = size;
+	val->freeswap = size > used ? size - used : 0;
+}
+
 static inline int ve_mi_replace(struct meminfo *mi, int old_ret)
 {
 #ifdef CONFIG_BEANCOUNTERS
@@ -1911,6 +1925,8 @@ static inline int ve_mi_replace(struct meminfo *mi, int old_ret)
 			nodettram : meminfo_val;
 	mi->si.freeram = (mi->si.totalram > usedmem) ?
 			(mi->si.totalram - usedmem) : 0;
+
+	ve_swapinfo(&mi->si, ub);
 
 	return NOTIFY_OK | NOTIFY_STOP_MASK;
 #else
