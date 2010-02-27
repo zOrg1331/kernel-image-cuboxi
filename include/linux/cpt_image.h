@@ -343,6 +343,7 @@ struct cpt_file_image
 #define CPT_DENTRY_INOTIFY	0x40
 #define CPT_DENTRY_FUTEX	0x80
 #define CPT_DENTRY_TUNTAP	0x100
+#define CPT_DENTRY_PROCPID_DEAD 0x200
 #define CPT_DENTRY_SIGNALFD	0x800
 	__u64	cpt_inode;
 	__u64	cpt_priv;

@@ -26,6 +26,7 @@
 #include <linux/namei.h>
 #include <linux/smp_lock.h>
 #include <linux/pagemap.h>
+#include <linux/proc_fs.h>
 #include <asm/uaccess.h>
 #include <linux/vzcalluser.h>
 #include <linux/ve_proto.h>
@@ -72,6 +73,10 @@ void cpt_printk_dentry(struct dentry *d, struct vfsmount *mnt)
 int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
 			 int verify, cpt_context_t *ctx)
 {
+	if (d->d_inode->i_sb->s_magic == FSMAGIC_PROC &&
+	    proc_dentry_of_dead_task(d))
+		return 0;
+
 	if (path[0] == '/' && !(!IS_ROOT(d) && d_unhashed(d))) {
 		struct nameidata nd;
 		if (path_lookup(path, 0, &nd)) {
@@ -495,20 +500,25 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 
 	v->cpt_i_mode = sbuf.mode;
 	v->cpt_lflags = 0;
+
+	if (file->f_dentry->d_inode->i_sb->s_magic == FSMAGIC_PROC) {
+		v->cpt_lflags |= CPT_DENTRY_PROC;
+		if (proc_dentry_of_dead_task(file->f_dentry))
+			v->cpt_lflags |= CPT_DENTRY_PROCPID_DEAD;
+	}
+
 	if (IS_ROOT(file->f_dentry))
 		v->cpt_lflags |= CPT_DENTRY_ROOT;
 	else if (d_unhashed(file->f_dentry)) {
 		if (cpt_replaced(file->f_dentry, file->f_vfsmnt, ctx)) {
 			v->cpt_lflags |= CPT_DENTRY_REPLACED;
 			replaced = 1;
-		} else {
+		} else if (!(v->cpt_lflags & CPT_DENTRY_PROCPID_DEAD))
 			v->cpt_lflags |= CPT_DENTRY_DELETED;
-		}
 	}
 	if (is_cloning_inode(file->f_dentry->d_inode))
 		v->cpt_lflags |= CPT_DENTRY_CLONING;
-	if (file->f_dentry->d_inode->i_sb->s_magic == FSMAGIC_PROC)
-		v->cpt_lflags |= CPT_DENTRY_PROC;
+
 	v->cpt_inode = CPT_NULL;
 	if (!(v->cpt_lflags & CPT_DENTRY_REPLACED)) {
 		iobj = lookup_cpt_object(CPT_OBJ_INODE, file->f_dentry->d_inode, ctx);
@@ -984,6 +994,10 @@ static int dump_one_inode(struct file *file, struct dentry *d,
 		return -EINVAL;
 
 	if (iobj->o_pos >= 0)
+		return 0;
+
+	if (ino->i_sb->s_magic == FSMAGIC_PROC &&
+	    proc_dentry_of_dead_task(d))
 		return 0;
 
 	if ((!IS_ROOT(d) && d_unhashed(d)) &&

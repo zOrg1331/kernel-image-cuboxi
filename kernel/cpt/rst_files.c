@@ -35,6 +35,7 @@
 #include <linux/fdtable.h>
 #include <linux/shm.h>
 #include <linux/signalfd.h>
+#include <linux/proc_fs.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -818,6 +819,7 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 	struct cpt_file_image fi;
 	__u8 *name = NULL;
 	struct file *file;
+	struct proc_dir_entry *proc_dead_file;
 	int flags;
 
 	obj = lookup_cpt_obj_bypos(CPT_OBJ_FILE, pos, ctx);
@@ -956,8 +958,32 @@ open_file:
 			goto map_file;
 	}
 
+	/* This hook is needed to open file /proc/<pid>/<somefile>
+	 * but there is no proccess with pid <pid>.
+	 */
+	proc_dead_file = NULL;
+	if (fi.cpt_lflags & CPT_DENTRY_PROCPID_DEAD) {
+		sprintf(name, "/proc/rst_dead_pid_file_%d", task_pid_vnr(current));
+
+		proc_dead_file = create_proc_entry(name + 6, S_IRUGO|S_IWUGO,
+						   NULL);
+		if (!proc_dead_file) {
+			eprintk_ctx("can't create proc entry %s\n", name);
+			err = -ENOMEM;
+			goto err_out;
+		}
+#ifdef CONFIG_PROC_FS
+		proc_dead_file->proc_fops = &dummy_proc_pid_file_operations;
+#endif
+	}
+
 	file = filp_open(name, flags, 0);
 
+	if (proc_dead_file) {
+		remove_proc_entry(proc_dead_file->name, NULL);
+		if (!IS_ERR(file))
+			d_drop(file->f_dentry);
+	}
 map_file:
 	if (!IS_ERR(file)) {
 		fixup_file_flags(file, &fi, was_dentry_open, pos, ctx);
@@ -1002,7 +1028,8 @@ map_file:
 				goto err_put;
 		}
 	} else {
-		if (fi.cpt_lflags & CPT_DENTRY_PROC) {
+		if ((fi.cpt_lflags & CPT_DENTRY_PROC) &&
+		    !(fi.cpt_lflags & CPT_DENTRY_PROCPID_DEAD)) {
 			dprintk_ctx("rst_file /proc delayed\n");
 			file = NULL;
 		} else if (name)
