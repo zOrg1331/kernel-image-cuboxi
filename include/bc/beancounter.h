@@ -224,6 +224,7 @@ struct user_beancounter
 #define ub_tw_count		spriv.ubp_tw_count
 
 	struct user_beancounter *parent;
+	int			ub_childs;
 	void			*private_data;
 	unsigned long		ub_aflags;
 
@@ -248,6 +249,8 @@ struct user_beancounter
 	struct list_head	ub_cclist;
 #endif
 };
+
+extern int ub_count;
 
 enum ub_severity { UB_HARD, UB_SOFT, UB_FORCE };
 

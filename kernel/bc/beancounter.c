@@ -172,6 +172,25 @@ static inline struct user_beancounter *bc_lookup_hash(struct hlist_head *hash,
 	return NULL;
 }
 
+int ub_count;
+
+/* next two must be called under ub_hash_lock */
+static inline void ub_count_inc(struct user_beancounter *ub)
+{
+	if (ub->parent)
+		ub->parent->ub_childs++;
+	else
+	       ub_count++;
+}
+
+static inline void ub_count_dec(struct user_beancounter *ub)
+{
+	if (ub->parent)
+		ub->parent->ub_childs--;
+	else
+		ub_count--;
+}
+
 struct user_beancounter *get_beancounter_byuid(uid_t uid, int create)
 {
 	struct user_beancounter *new_ub, *ub;
@@ -200,6 +219,7 @@ retry:
 	if (new_ub != NULL) {
 		list_add_rcu(&new_ub->ub_list, &ub_list_head);
 		hlist_add_head(&new_ub->ub_hash, hash);
+		ub_count_inc(new_ub);
 		spin_unlock_irqrestore(&ub_hash_lock, flags);
 		return new_ub;
 	}
@@ -245,6 +265,7 @@ retry:
 	if (new_ub != NULL) {
 		list_add_rcu(&new_ub->ub_list, &ub_list_head);
 		hlist_add_head(&new_ub->ub_hash, hash);
+		ub_count_inc(new_ub);
 		spin_unlock_irqrestore(&ub_hash_lock, flags);
 		return new_ub;
 	}
@@ -323,6 +344,7 @@ again:
 	}
 
 	hlist_del(&ub->ub_hash);
+	ub_count_dec(ub);
 	list_del_rcu(&ub->ub_list);
 	spin_unlock_irqrestore(&ub_hash_lock, flags);
 
@@ -669,6 +691,7 @@ void __init ub_init_early(void)
 
 	hlist_add_head(&ub->ub_hash, &ub_hash[ub->ub_uid]);
 	list_add(&ub->ub_list, &ub_list_head);
+	ub_count_inc(ub);
 }
 
 void __init ub_init_late(void)
