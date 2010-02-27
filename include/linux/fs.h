@@ -166,6 +166,9 @@ extern int dir_notify_enable;
 #define S_SWAPFILE	256	/* Do not truncate: swapon got its bmaps */
 #define S_PRIVATE	512	/* Inode is fs-internal */
 
+/* VZ flags -- These are not upstream! */
+#define S_NOUNUSE	(1 << 17) /* just destroy inode in cleanup */
+
 /*
  * Note that nosuid etc flags are inode-specific: setting some file-system
  * flags just means all the inodes inherit those flags by default. It might be

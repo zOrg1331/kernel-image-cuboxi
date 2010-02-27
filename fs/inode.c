@@ -1164,7 +1164,7 @@ static void generic_forget_inode(struct inode *inode)
 		if (!(inode->i_state & (I_DIRTY|I_SYNC)))
 			list_move(&inode->i_list, &inode_unused);
 		inodes_stat.nr_unused++;
-		if (sb->s_flags & MS_ACTIVE) {
+		if (sb->s_flags & MS_ACTIVE && !(inode->i_flags & S_NOUNUSE)) {
 			spin_unlock(&inode_lock);
 			return;
 		}
