@@ -407,7 +407,7 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 			      loff_t pos, struct cpt_context *ctx)
 {
 	int err;
-	loff_t end = si->cpt_next;
+	loff_t end = pos + si->cpt_next;
 
 	pos += si->cpt_hdrlen;
 	while (pos < end) {
@@ -422,11 +422,21 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 		}
 
 		if (oi.cpt_object == CPT_OBJ_OPENREQ) {
-			struct request_sock *req = reqsk_alloc(&tcp_request_sock_ops);
+			struct request_sock *req;
+
+			if (oi.cpt_family == AF_INET6) {
+#if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
+				req = reqsk_alloc(&tcp6_request_sock_ops);
+#else
+				return -EINVAL;
+#endif
+			} else {
+				req = reqsk_alloc(&tcp_request_sock_ops);
+			}
+
 			if (req == NULL)
 				return -ENOMEM;
 
-			memset(req, 0, sizeof(*req));
 			tcp_rsk(req)->rcv_isn = oi.cpt_rcv_isn;
 			tcp_rsk(req)->snt_isn = oi.cpt_snt_isn;
 			inet_rsk(req)->rmt_port = oi.cpt_rmt_port;
@@ -439,10 +449,14 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 			inet_rsk(req)->wscale_ok = oi.cpt_wscale_ok;
 			inet_rsk(req)->ecn_ok = oi.cpt_ecn_ok;
 			inet_rsk(req)->acked = oi.cpt_acked;
+			inet_rsk(req)->opt = NULL;
 			req->window_clamp = oi.cpt_window_clamp;
 			req->rcv_wnd = oi.cpt_rcv_wnd;
 			req->ts_recent = oi.cpt_ts_recent;
 			req->expires = jiffies_import(oi.cpt_expires);
+			req->sk = NULL;
+			req->secid = 0;
+			req->peer_secid = 0;
 
 			if (oi.cpt_family == AF_INET) {
 				memcpy(&inet_rsk(req)->loc_addr, oi.cpt_loc_addr, 4);
@@ -450,6 +464,7 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 				inet_csk_reqsk_queue_hash_add(sk, req, TCP_TIMEOUT_INIT);
 			} else {
 #if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
+				inet6_rsk(req)->pktopts = NULL;
 				memcpy(&inet6_rsk(req)->loc_addr, oi.cpt_loc_addr, 16);
 				memcpy(&inet6_rsk(req)->rmt_addr, oi.cpt_rmt_addr, 16);
 				inet6_rsk(req)->iif = oi.cpt_iif;

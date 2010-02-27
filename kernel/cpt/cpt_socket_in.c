@@ -314,7 +314,7 @@ static int dump_openreq(struct request_sock *req, struct sock *sk, int index,
 	v->cpt_snt_isn = tcp_rsk(req)->snt_isn;
 	v->cpt_rmt_port = inet_rsk(req)->rmt_port;
 	v->cpt_mss = req->mss;
-	// // v->cpt_family = (req->class == &or_ipv4 ? AF_INET : AF_INET6);
+	v->cpt_family = req->rsk_ops->family;
 	v->cpt_retrans = req->retrans;
 	v->cpt_snd_wscale = inet_rsk(req)->snd_wscale;
 	v->cpt_rcv_wscale = inet_rsk(req)->rcv_wscale;
