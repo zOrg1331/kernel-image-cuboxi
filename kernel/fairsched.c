@@ -328,6 +328,56 @@ asmlinkage int sys_fairsched_mvpr(pid_t pid, unsigned int nodeid)
 }
 EXPORT_SYMBOL(sys_fairsched_mvpr);
 
+int fairsched_new_node(int id, unsigned int vcpus)
+{
+	int err;
+
+	mutex_lock(&fairsched_mutex);
+	/*
+	 * We refuse to switch to an already existing node since nodes
+	 * keep a pointer to their ve_struct...
+	 */
+	err = do_fairsched_mknod(0, 1, id);
+	if (err < 0) {
+		printk(KERN_WARNING "Can't create fairsched node %d\n", id);
+		goto out;
+	}
+#if 0
+	err = do_fairsched_vcpus(id, vcpus);
+	if (err) {
+		printk(KERN_WARNING "Can't set sched vcpus on node %d\n", id);
+		goto cleanup;
+	}
+#endif
+	err = do_fairsched_mvpr(current->pid, id);
+	if (err) {
+		printk(KERN_WARNING "Can't switch to fairsched node %d\n", id);
+		goto cleanup;
+	}
+	mutex_unlock(&fairsched_mutex);
+	return 0;
+
+cleanup:
+	if (do_fairsched_rmnod(id))
+		printk(KERN_ERR "Can't clean fairsched node %d\n", id);
+out:
+	mutex_unlock(&fairsched_mutex);
+	return err;
+}
+EXPORT_SYMBOL(fairsched_new_node);
+
+void fairsched_drop_node(int id)
+{
+	mutex_lock(&fairsched_mutex);
+	if (task_fairsched_node_id(current) == id)
+		if (do_fairsched_mvpr(current->pid, FAIRSCHED_INIT_NODE_ID))
+			printk(KERN_WARNING "Can't leave sched node %d\n", id);
+	if (do_fairsched_rmnod(id))
+		printk(KERN_ERR "Can't remove fairsched node %d\n", id);
+	mutex_unlock(&fairsched_mutex);
+}
+EXPORT_SYMBOL(fairsched_drop_node);
+
 #ifdef CONFIG_PROC_FS
 
 /*********************************************************************/
