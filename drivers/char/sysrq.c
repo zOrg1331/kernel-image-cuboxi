@@ -866,6 +866,9 @@ EXPORT_SYMBOL(unregister_sysrq_key);
 static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 				   size_t count, loff_t *ppos)
 {
+	struct ve_struct *cur = get_exec_env();
+	static int pnum = 10;
+
 	if (count) {
 		int i, cnt;
 		char c[32];
@@ -875,8 +878,17 @@ static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 			return -EFAULT;
 
 
-		for (i = 0; i < cnt && c[i] != '\n'; i++)
+		for (i = 0; i < cnt && c[i] != '\n'; i++) {
+			if (!ve_is_super(cur))	{
+				if (!pnum)
+					continue;
+				printk("SysRq: CT#%u sent '%c' magic key.\n",
+						cur->veid, c[i]);
+				pnum--;
+				continue;
+			}
 			__handle_sysrq(c[i], NULL, 0);
+		}
 	}
 	return count;
 }
@@ -887,7 +899,7 @@ static const struct file_operations proc_sysrq_trigger_operations = {
 
 static int __init sysrq_init(void)
 {
-	proc_create("sysrq-trigger", S_IWUSR, NULL, &proc_sysrq_trigger_operations);
+	proc_create("sysrq-trigger", S_IWUSR, &glob_proc_root, &proc_sysrq_trigger_operations);
 	return 0;
 }
 module_init(sysrq_init);
