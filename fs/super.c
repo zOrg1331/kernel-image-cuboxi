@@ -98,6 +98,8 @@ static struct super_block *alloc_super(struct file_system_type *type)
 		s->s_qcop = sb_quotactl_ops;
 		s->s_op = &default_op;
 		s->s_time_gran = 1000000000;
+
+		spin_lock_init(&s->s_qe_lock);
 	}
 out:
 	return s;

@@ -79,7 +79,7 @@ struct ent {
 #define ENT_HASHMAX           (1 << ENT_HASHBITS)
 #define ENT_HASHMASK          (ENT_HASHMAX - 1)
 
-static void
+static int
 ent_init(struct cache_head *cnew, struct cache_head *citm)
 {
 	struct ent *new = container_of(cnew, struct ent, h);
@@ -90,6 +90,14 @@ ent_init(struct cache_head *cnew, struct cache_head *citm)
 
 	strlcpy(new->name, itm->name, sizeof(new->name));
 	strlcpy(new->authname, itm->authname, sizeof(new->name));
+
+	return 0;
+}
+
+static void
+ent_update(struct cache_head *cnew, struct cache_head *citm)
+{
+	ent_init(cnew, citm);
 }
 
 static void
@@ -198,7 +206,7 @@ static struct cache_detail idtoname_cache = {
 	.warn_no_listener = warn_no_idmapd,
 	.match		= idtoname_match,
 	.init		= ent_init,
-	.update		= ent_init,
+	.update		= ent_update,
 	.alloc		= ent_alloc,
 };
 
@@ -369,7 +377,7 @@ static struct cache_detail nametoid_cache = {
 	.warn_no_listener = warn_no_idmapd,
 	.match		= nametoid_match,
 	.init		= ent_init,
-	.update		= ent_init,
+	.update		= ent_update,
 	.alloc		= ent_alloc,
 };
 

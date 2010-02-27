@@ -76,7 +76,10 @@ struct cache_head *sunrpc_cache_lookup(struct cache_detail *detail,
 	 * cache_put it soon.
 	 */
 	cache_init(new);
-	detail->init(new, key);
+	if (detail->init(new, key) < 0) {
+		cache_put(new, detail);
+		return NULL;
+	}
 
 	write_lock(&detail->hash_lock);
 

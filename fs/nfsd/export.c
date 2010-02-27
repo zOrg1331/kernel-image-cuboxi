@@ -222,7 +222,7 @@ static inline int expkey_match (struct cache_head *a, struct cache_head *b)
 	return 1;
 }
 
-static inline void expkey_init(struct cache_head *cnew,
+static inline int expkey_init(struct cache_head *cnew,
 				   struct cache_head *citem)
 {
 	struct svc_expkey *new = container_of(cnew, struct svc_expkey, h);
@@ -233,6 +233,8 @@ static inline void expkey_init(struct cache_head *cnew,
 	new->ek_fsidtype = item->ek_fsidtype;
 
 	memcpy(new->ek_fsid, item->ek_fsid, sizeof(new->ek_fsid));
+
+	return 0;
 }
 
 static inline void expkey_update(struct cache_head *cnew,
@@ -330,6 +332,8 @@ static void nfsd4_fslocs_free(struct nfsd4_fs_locations *fsloc)
 static void svc_export_put(struct kref *ref)
 {
 	struct svc_export *exp = container_of(ref, struct svc_export, h.ref);
+	if (exp->ex_qe)
+		sb_qe_put(exp->ex_path.dentry->d_inode->i_sb, 1);
 	path_put(&exp->ex_path);
 	auth_domain_put(exp->ex_client);
 	kfree(exp->ex_pathname);
@@ -362,7 +366,6 @@ static struct svc_export *svc_export_lookup(struct svc_export *);
 
 static int check_export(struct inode *inode, int flags, unsigned char *uuid)
 {
-
 	/* We currently export only dirs and regular files.
 	 * This is what umountd does.
 	 */
@@ -681,10 +684,11 @@ static int svc_export_match(struct cache_head *a, struct cache_head *b)
 		orig->ex_path.mnt == new->ex_path.mnt;
 }
 
-static void svc_export_init(struct cache_head *cnew, struct cache_head *citem)
+static int svc_export_init(struct cache_head *cnew, struct cache_head *citem)
 {
 	struct svc_export *new = container_of(cnew, struct svc_export, h);
 	struct svc_export *item = container_of(citem, struct svc_export, h);
+	int err;
 
 	kref_get(&item->ex_client->ref);
 	new->ex_client = item->ex_client;
@@ -694,6 +698,12 @@ static void svc_export_init(struct cache_head *cnew, struct cache_head *citem)
 	new->ex_fslocs.locations = NULL;
 	new->ex_fslocs.locations_count = 0;
 	new->ex_fslocs.migrated = 0;
+
+	err = sb_qe_get_check(new->ex_path.dentry->d_inode->i_sb, 1);
+	if (err < 0)
+		return err;
+	new->ex_qe = 1;
+	return 0;
 }
 
 static void export_update(struct cache_head *cnew, struct cache_head *citem)

@@ -82,7 +82,7 @@ struct cache_detail {
 
 	struct cache_head *	(*alloc)(void);
 	int			(*match)(struct cache_head *orig, struct cache_head *new);
-	void			(*init)(struct cache_head *orig, struct cache_head *new);
+	int			(*init)(struct cache_head *orig, struct cache_head *new);
 	void			(*update)(struct cache_head *orig, struct cache_head *new);
 
 	/* fields below this comment are for internal use

@@ -123,7 +123,7 @@ static inline int dup_netobj(struct xdr_netobj *dst, struct xdr_netobj *src)
 	return dup_to_netobj(dst, src->data, src->len);
 }
 
-static void rsi_init(struct cache_head *cnew, struct cache_head *citem)
+static int rsi_init(struct cache_head *cnew, struct cache_head *citem)
 {
 	struct rsi *new = container_of(cnew, struct rsi, h);
 	struct rsi *item = container_of(citem, struct rsi, h);
@@ -140,6 +140,8 @@ static void rsi_init(struct cache_head *cnew, struct cache_head *citem)
 	item->in_handle.data = NULL;
 	new->in_token.data = item->in_token.data;
 	item->in_token.data = NULL;
+
+	return 0;
 }
 
 static void update_rsi(struct cache_head *cnew, struct cache_head *citem)
@@ -371,7 +373,7 @@ rsc_match(struct cache_head *a, struct cache_head *b)
 	return netobj_equal(&new->handle, &tmp->handle);
 }
 
-static void
+static int
 rsc_init(struct cache_head *cnew, struct cache_head *ctmp)
 {
 	struct rsc *new = container_of(cnew, struct rsc, h);
@@ -383,6 +385,8 @@ rsc_init(struct cache_head *cnew, struct cache_head *ctmp)
 	tmp->handle.data = NULL;
 	new->mechctx = NULL;
 	new->cred.cr_group_info = NULL;
+
+	return 0;
 }
 
 static void

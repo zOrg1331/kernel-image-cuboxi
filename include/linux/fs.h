@@ -1154,7 +1154,31 @@ struct super_block {
 	 * generic_show_options()
 	 */
 	char *s_options;
+
+	/* vzquota/NFS exports mutual exclusion */
+	spinlock_t	s_qe_lock;
+	int		s_qe_count;
 };
+
+static inline int sb_qe_get_check(struct super_block *sb, int count)
+{
+	int err = -EBUSY;
+
+	spin_lock(&sb->s_qe_lock);
+	if (count * sb->s_qe_count >= 0) {
+		sb->s_qe_count += count;
+		err = 0;
+	}
+	spin_unlock(&sb->s_qe_lock);
+	return err;
+}
+
+static inline void sb_qe_put(struct super_block *sb, int count)
+{
+	spin_lock(&sb->s_qe_lock);
+	sb->s_qe_count -= count;
+	spin_unlock(&sb->s_qe_lock);
+}
 
 extern struct timespec current_fs_time(struct super_block *sb);
 

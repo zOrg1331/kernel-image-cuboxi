@@ -317,10 +317,17 @@ struct quotactl_ops *orig_dq_cop;
  */
 int vzquota_get_super(struct super_block *sb)
 {
+	int err;
+
+	err = sb_qe_get_check(sb, -1);
+	if (err < 0)
+		return err;
+
 	if (sb->dq_op != &vz_quota_operations) {
 		down(&sb->s_dquot.dqonoff_sem);
 		if (sb->s_dquot.flags & (DQUOT_USR_ENABLED|DQUOT_GRP_ENABLED)) {
 			up(&sb->s_dquot.dqonoff_sem);
+			sb_qe_put(sb, -1);
 			return -EEXIST;
 		}
 		if (orig_dq_op == NULL && sb->dq_op != NULL)
@@ -401,6 +408,7 @@ void vzquota_put_super(struct super_block *sb)
 		 */
 		up(&sb->s_dquot.dqonoff_sem);
 	}
+	sb_qe_put(sb, -1);
 }
 
 #else
@@ -430,6 +438,10 @@ int vzquota_get_super(struct super_block *sb)
 {
 	struct vz_quota_master *qnew;
 	int err;
+
+	err = sb_qe_get_check(sb, -1);
+	if (err < 0)
+		return err;
 
 	mutex_lock(&sb->s_dquot.dqonoff_mutex);
 	err = -EEXIST;
@@ -482,6 +494,8 @@ int vzquota_get_super(struct super_block *sb)
 
 out_up:
 	mutex_unlock(&sb->s_dquot.dqonoff_mutex);
+	if (err < 0)
+		sb_qe_put(sb, -1);
 	return err;
 }
 
@@ -497,6 +511,7 @@ void vzquota_put_super(struct super_block *sb)
 	 * sb->s_dquot.flags can't be cleared, because otherwise vzquota_drop
 	 * won't be called and the remaining qmblk references won't be put.
 	 */
+	sb_qe_put(sb, -1);
 }
 
 #endif
