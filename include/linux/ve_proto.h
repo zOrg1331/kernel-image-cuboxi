@@ -15,6 +15,13 @@
 
 struct ve_struct;
 
+struct seq_file;
+
+typedef void (*ve_seq_print_t)(struct seq_file *, struct ve_struct *);
+
+void vzmon_register_veaddr_print_cb(ve_seq_print_t);
+void vzmon_unregister_veaddr_print_cb(ve_seq_print_t);
+
 #ifdef CONFIG_INET
 void tcp_v4_kill_ve_sockets(struct ve_struct *envid);
 #ifdef CONFIG_VE_NETDEV

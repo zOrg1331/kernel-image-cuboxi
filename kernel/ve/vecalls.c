@@ -2109,6 +2109,62 @@ static struct vnotifier_block meminfo_notifier_block = {
 	.priority = INT_MAX,
 };
 
+/* /proc/vz/veinfo */
+
+static ve_seq_print_t veaddr_seq_print_cb;
+
+void vzmon_register_veaddr_print_cb(ve_seq_print_t cb)
+{
+	rcu_assign_pointer(veaddr_seq_print_cb, cb);
+}
+EXPORT_SYMBOL(vzmon_register_veaddr_print_cb);
+
+void vzmon_unregister_veaddr_print_cb(ve_seq_print_t cb)
+{
+	rcu_assign_pointer(veaddr_seq_print_cb, NULL);
+	synchronize_rcu();
+}
+EXPORT_SYMBOL(vzmon_unregister_veaddr_print_cb);
+
+static int veinfo_seq_show(struct seq_file *m, void *v)
+{
+	struct ve_struct *ve;
+	ve_seq_print_t veaddr_seq_print;
+
+	ve = list_entry((struct list_head *)v, struct ve_struct, ve_list);
+
+	seq_printf(m, "%10u %5u %5u", ve->veid,
+			ve->class_id, atomic_read(&ve->pcounter));
+
+	rcu_read_lock();
+	veaddr_seq_print = rcu_dereference(veaddr_seq_print_cb);
+	if (veaddr_seq_print)
+		veaddr_seq_print(m, ve);
+	rcu_read_unlock();
+
+	seq_putc(m, '\n');
+	return 0;
+}
+
+static struct seq_operations veinfo_seq_op = {
+	.start	= ve_seq_start,
+	.next	=  ve_seq_next,
+	.stop	=  ve_seq_stop,
+	.show	=  veinfo_seq_show,
+};
+
+static int veinfo_open(struct inode *inode, struct file *file)
+{
+	return seq_open(file, &veinfo_seq_op);
+}
+
+static struct file_operations proc_veinfo_operations = {
+	.open		= veinfo_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release,
+};
+
 static int __init init_vecalls_proc(void)
 {
 	struct proc_dir_entry *de;
@@ -2128,6 +2184,11 @@ static int __init init_vecalls_proc(void)
 	if (!de)
 		printk(KERN_WARNING "VZMON: can't make version proc entry\n");
 
+	de = proc_create("veinfo", S_IFREG | S_IRUSR, proc_vz_dir,
+			&proc_veinfo_operations);
+	if (!de)
+		printk(KERN_WARNING "VZMON: can't make veinfo proc entry\n");
+
 	virtinfo_notifier_register(VITYPE_GENERAL, &meminfo_notifier_block);
 	return 0;
 }
@@ -2137,6 +2198,7 @@ static void fini_vecalls_proc(void)
 	remove_proc_entry("version", proc_vz_dir);
 	remove_proc_entry("devperms", proc_vz_dir);
 	remove_proc_entry("vestat", proc_vz_dir);
+	remove_proc_entry("veinfo", proc_vz_dir);
 	virtinfo_notifier_unregister(VITYPE_GENERAL, &meminfo_notifier_block);
 }
 #else

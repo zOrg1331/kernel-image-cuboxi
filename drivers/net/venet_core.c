@@ -441,15 +441,10 @@ static void venet_setup(struct net_device *dev)
 }
 
 #ifdef CONFIG_PROC_FS
-static int veinfo_seq_show(struct seq_file *m, void *v)
+static void veaddr_seq_print(struct seq_file *m, struct ve_struct *ve)
 {
-	struct ve_struct *ve;
 	struct ip_entry_struct *entry;
 
-	ve = list_entry((struct list_head *)v, struct ve_struct, ve_list);
-
-	seq_printf(m, "%10u %5u %5u", ve->veid,
-                                ve->class_id, atomic_read(&ve->pcounter));
 	read_lock(&veip_hash_lock);
 	if (ve->veip == NULL)
 		goto unlock;
@@ -467,28 +462,7 @@ static int veinfo_seq_show(struct seq_file *m, void *v)
 	}
 unlock:
 	read_unlock(&veip_hash_lock);
-	seq_putc(m, '\n');
-	return 0;
 }
-
-static struct seq_operations veinfo_seq_op = {
-	.start	= ve_seq_start,
-	.next	=  ve_seq_next,
-	.stop	=  ve_seq_stop,
-	.show	=  veinfo_seq_show,
-};
-
-static int veinfo_open(struct inode *inode, struct file *file)
-{
-        return seq_open(file, &veinfo_seq_op);
-}
-
-static struct file_operations proc_veinfo_operations = {
-	.open		= veinfo_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= seq_release,
-};
 
 static void *veip_seq_start(struct seq_file *m, loff_t *pos)
 {
@@ -732,11 +706,6 @@ __init int venet_init(void)
 		return err;
 
 #ifdef CONFIG_PROC_FS
-	de = proc_create("veinfo", S_IFREG | S_IRUSR, glob_proc_vz_dir,
-			&proc_veinfo_operations);
-	if (de == NULL)
-		printk(KERN_WARNING "venet: can't make veinfo proc entry\n");
-
 	de = proc_create("veip", S_IFREG | S_IRUSR, proc_vz_dir,
 			&proc_veip_operations);
 	if (de == NULL)
@@ -745,17 +714,18 @@ __init int venet_init(void)
 
 	ve_hook_register(VE_SS_CHAIN, &venet_ve_hook);
 	vzioctl_register(&venetcalls);
+	vzmon_register_veaddr_print_cb(veaddr_seq_print);
 	return 0;
 }
 
 __exit void venet_exit(void)
 {
+	vzmon_unregister_veaddr_print_cb(veaddr_seq_print);
 	vzioctl_unregister(&venetcalls);
 	ve_hook_unregister(&venet_ve_hook);
 
 #ifdef CONFIG_PROC_FS
 	remove_proc_entry("veip", proc_vz_dir);
-	remove_proc_entry("veinfo", glob_proc_vz_dir);
 #endif
 	venet_stop(get_ve0());
 	veip_cleanup();
