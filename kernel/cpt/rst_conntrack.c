@@ -161,6 +161,8 @@ static int undump_expect_list(struct ip_conntrack *ct,
 		}
 		write_unlock_bh(&ip_conntrack_lock);
 
+		ip_conntrack_expect_put(exp);
+
 		pos += v.cpt_next;
 	}
 	return 0;
