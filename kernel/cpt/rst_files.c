@@ -530,7 +530,7 @@ static int fixup_reg_data(struct file *file, loff_t pos, loff_t end,
 				fput(file);
 				file = dentry_open(dget(file->f_dentry),
 						   mntget(file->f_vfsmnt),
-						   O_WRONLY, NULL);
+						   O_WRONLY | O_LARGEFILE, NULL);
 				if (IS_ERR(file)) {
 					__cpt_release_buf(ctx);
 					return PTR_ERR(file);
