@@ -841,4 +841,21 @@ ia32_sys_call_table:
 	.quad compat_sys_pwritev
 	.quad compat_sys_rt_tgsigqueueinfo	/* 335 */
 	.quad sys_perf_event_open
+	.rept 500-(.-ia32_sys_call_table)/8
+		.quad sys_ni_syscall
+	.endr
+	.quad sys_fairsched_mknod	/* 500 */
+	.quad sys_fairsched_rmnod
+	.quad sys_fairsched_chwt
+	.quad sys_fairsched_mvpr
+	.quad sys_fairsched_rate
+	.quad sys_fairsched_vcpus	/* 505 */
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall
+	.quad sys_getluid		/* 510 */
+	.quad sys_setluid
+	.quad compat_sys_setublimit
+	.quad compat_sys_ubstat
 ia32_syscall_end:
