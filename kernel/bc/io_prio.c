@@ -303,9 +303,44 @@ static struct bc_proc_entry bc_ioprio_entry = {
 	.u.show = bc_ioprio_show,
 };
 
+static int bc_ioprio_queue_show(struct seq_file *f, void *v)
+{
+	struct user_beancounter *bc;
+	struct cfq_bc_data *cfq_bc;
+
+	bc = seq_beancounter(f);
+
+	read_lock_irq(&bc->iopriv.cfq_bc_list_lock);
+	list_for_each_entry(cfq_bc, &bc->iopriv.cfq_bc_head, cfq_bc_list) {
+		struct cfq_data *cfqd;
+
+		cfqd = cfq_bc->cfqd;
+		seq_printf(f, "\t%-10s%6lu %c%c\n",
+				/*
+				 * this per-bc -> queue-data -> queue -> device
+				 * access is safe w/o additional locks, since
+				 * all the stuff above dies in the order shown
+				 * and we're holding the first element
+				 */
+				kobject_name(cfqd->queue->kobj.parent),
+				cfq_bc->rqnum,
+				cfq_bc->on_dispatch ? 'D' : ' ',
+				cfqd->active_cfq_bc == cfq_bc ? 'A' : ' ');
+	}
+	read_unlock_irq(&bc->iopriv.cfq_bc_list_lock);
+
+	return 0;
+}
+
+static struct bc_proc_entry bc_ioprio_queues_entry = {
+	.name = "ioprio_queues",
+	.u.show = bc_ioprio_queue_show,
+};
+
 static int __init bc_ioprio_init(void)
 {
 	bc_register_proc_entry(&bc_ioprio_entry);
+	bc_register_proc_entry(&bc_ioprio_queues_entry);
 	return 0;
 }
 
