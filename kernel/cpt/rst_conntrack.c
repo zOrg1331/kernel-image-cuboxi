@@ -65,7 +65,7 @@ static int decode_tuple(struct cpt_ipct_tuple *v,
 	if (ctx->image_version < CPT_VERSION_16) {
 		/* In 2.6.9 kernel protonum has short type */
 		__u16 protonum = *(__u16 *)&v->cpt_protonum;
-		if (protonum > 255) {
+		if (protonum > 0xff && protonum < 0xffff) {
 			eprintk_ctx("tuple: protonum > 255: %u\n", protonum);
 			return -EINVAL;
 		}
