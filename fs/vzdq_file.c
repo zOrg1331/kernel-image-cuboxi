@@ -31,12 +31,12 @@
  * File read operation
  *
  * FIXME: functions in this section (as well as many functions in vzdq_ugid.c,
- * perhaps) abuse vz_quota_sem.
- * Taking a global semaphore for lengthy and user-controlled operations inside
+ * perhaps) abuse vz_quota_mutex.
+ * Taking a global mutex for lengthy and user-controlled operations inside
  * VPSs is not a good idea in general.
- * In this case, the reasons for taking this semaphore are completely unclear,
+ * In this case, the reasons for taking this mutex are completely unclear,
  * especially taking into account that the only function that has comments
- * about the necessity to be called under this semaphore
+ * about the necessity to be called under this mutex
  * (create_proc_quotafile) is actually called OUTSIDE it.
  *
  * --------------------------------------------------------------------- */
@@ -65,7 +65,7 @@ struct quotatree_data {
 	int			type;	/* type of the tree */
 };
 
-/* serialized by vz_quota_sem */
+/* serialized by vz_quota_mutex */
 static LIST_HEAD(qf_data_head);
 
 static const u_int32_t vzquota_magics[] = V2_INITQMAGICS;
@@ -302,7 +302,7 @@ static int read_proc_quotafile(char *page, char **start, off_t off, int count,
 		return -ENOMEM;
 
 	qtd = data;
-	down(&vz_quota_sem);
+	mutex_lock(&vz_quota_mutex);
 	down(&qtd->qmblk->dq_sem);
 
 	res = 0;
@@ -343,7 +343,7 @@ out_err:
 	*start += count;
 out_dq:
 	up(&qtd->qmblk->dq_sem);
-	up(&vz_quota_sem);
+	mutex_unlock(&vz_quota_mutex);
 	kfree(tmp);
 
 	return res;

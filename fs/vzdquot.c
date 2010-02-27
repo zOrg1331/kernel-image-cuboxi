@@ -40,7 +40,7 @@
  * Serializes on/off and all other do_vzquotactl operations.
  * Protects qmblk hash.
  */
-struct semaphore vz_quota_sem;
+struct mutex vz_quota_mutex;
 
 /*
  * Data access locks
@@ -104,7 +104,7 @@ struct quota_format_type vz_quota_empty_v2_format = {
  *
  * Master hash table handling.
  *
- * SMP not safe, serialied by vz_quota_sem within quota syscalls
+ * SMP not safe, serialied by vz_quota_mutex within quota syscalls
  *
  * --------------------------------------------------------------------- */
 
@@ -212,7 +212,7 @@ static struct vz_quota_master *vzquota_alloc_fake(void)
  * vzquota_find_master - find master record with given id
  *
  * Returns qmblk without touching its refcounter.
- * Called under vz_quota_sem.
+ * Called under vz_quota_mutex.
  */
 struct vz_quota_master *vzquota_find_master(unsigned int quota_id)
 {
@@ -231,7 +231,7 @@ struct vz_quota_master *vzquota_find_master(unsigned int quota_id)
  * vzquota_free_master - release resources taken by qmblk, freeing memory
  *
  * qmblk is assumed to be already taken out from the hash.
- * Should be called outside vz_quota_sem.
+ * Should be called outside vz_quota_mutex.
  */
 void vzquota_free_master(struct vz_quota_master *qmblk)
 {
@@ -313,7 +313,7 @@ struct quotactl_ops *orig_dq_cop;
  * quotas.  We keep a counter of such subtrees and set VZ quota operations or
  * reset the default ones.
  *
- * Called under vz_quota_sem (from quota_on).
+ * Called under vz_quota_mutex (from quota_on).
  */
 int vzquota_get_super(struct super_block *sb)
 {
@@ -355,7 +355,7 @@ int vzquota_get_super(struct super_block *sb)
 		__module_get(THIS_MODULE);
 		up(&sb->s_dquot.dqonoff_sem);
 	}
-	/* protected by vz_quota_sem */
+	/* protected by vz_quota_mutex */
 	__VZ_QUOTA_SBREF(sb)++;
 	return 0;
 }
@@ -363,7 +363,7 @@ int vzquota_get_super(struct super_block *sb)
 /**
  * quota_put_super - release superblock when one quota tree goes away
  *
- * Called under vz_quota_sem.
+ * Called under vz_quota_mutex.
  */
 void vzquota_put_super(struct super_block *sb)
 {
@@ -435,7 +435,7 @@ void vzquota_shutdown_super(struct super_block *sb)
  * One superblock can have multiple directory subtrees with different VZ
  * quotas.
  *
- * Called under vz_quota_sem (from vzquota_on).
+ * Called under vz_quota_mutex (from vzquota_on).
  */
 int vzquota_get_super(struct super_block *sb)
 {
@@ -511,7 +511,7 @@ out_up:
 /**
  * vzquota_put_super - one quota tree less on this superblock
  *
- * Called under vz_quota_sem.
+ * Called under vz_quota_mutex.
  */
 void vzquota_put_super(struct super_block *sb)
 {
@@ -1965,7 +1965,7 @@ static int __init vzquota_init(void)
 		goto out_ugid;
 #endif
 
-	init_MUTEX(&vz_quota_sem);
+	mutex_init(&vz_quota_mutex);
 	vzioctl_register(&vzdqcalls);
 	virtinfo_notifier_register(VITYPE_QUOTA, &quota_notifier_block);
 #if defined(CONFIG_VZ_QUOTA_UGID) && defined(CONFIG_PROC_FS)
