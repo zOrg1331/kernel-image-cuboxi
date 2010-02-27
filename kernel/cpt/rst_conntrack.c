@@ -208,6 +208,10 @@ static int undump_one_ct(struct cpt_ip_conntrack_image *ci, loff_t pos,
 	memcpy(&conntrack->proto, ci->cpt_proto_data, sizeof(conntrack->proto));
 	memcpy(&conntrack->help, ci->cpt_help_data, sizeof(conntrack->help));
 
+#if defined(CONFIG_IP_NF_CONNTRACK_MARK)
+	conntrack->mark = ci->cpt_mark;
+#endif
+
 #ifdef CONFIG_IP_NF_NAT_NEEDED
 #if defined(CONFIG_IP_NF_TARGET_MASQUERADE) || \
 	defined(CONFIG_IP_NF_TARGET_MASQUERADE_MODULE)
