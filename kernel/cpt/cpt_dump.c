@@ -786,6 +786,7 @@ static int cpt_dump_veinfo(cpt_context_t *ctx)
 	i->start_jiffies_delta = get_jiffies_64() - ve->start_jiffies;
 
 	i->last_pid = ve->ve_ns->pid_ns->last_pid;
+	i->rnd_va_space	= ve->_randomize_va_space + 1;
 
 	ctx->write(i, sizeof(*i), ctx);
 	cpt_release_buf(ctx);

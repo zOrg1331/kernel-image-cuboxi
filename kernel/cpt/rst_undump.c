@@ -109,6 +109,8 @@ static int vps_rst_veinfo(struct cpt_context *ctx)
 	// // ve->start_cycles -= (s64)i->start_jiffies_delta * cycles_per_jiffy;
 
 	ctx->last_vpid = i->last_pid;
+	if (i->rnd_va_space)
+		ve->_randomize_va_space = i->rnd_va_space - 1;
 
 	err = 0;
 out_rel:

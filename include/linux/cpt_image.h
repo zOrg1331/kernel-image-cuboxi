@@ -313,7 +313,7 @@ struct cpt_veinfo_image
 
 	/* later extension */
 	__u32	last_pid;
-	__u32	pad1;
+	__u32	rnd_va_space;
 	__u64	reserved[8];
 } __attribute__ ((aligned (8)));
 
