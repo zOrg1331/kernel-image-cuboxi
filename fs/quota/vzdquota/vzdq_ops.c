@@ -595,6 +595,12 @@ static int vzquota_transfer(struct inode *inode, struct iattr *iattr)
 		NO_QUOTA : QUOTA_OK;
 }
 
+static void vzquota_swap_inode(struct inode *inode, struct inode *tmpl)
+{
+	vzquota_inode_swap_call(inode, tmpl);
+}
+
+
 #else /* CONFIG_VZ_QUOTA_UGID */
 
 static int vzquota_transfer(struct inode *inode, struct iattr *iattr)
@@ -630,4 +636,6 @@ struct dquot_operations vz_quota_operations = {
 	.free_inode	= vzquota_free_inode,
 	.transfer	= vzquota_transfer,
 	.rename		= vzquota_rename,
+
+	.swap_inode	= vzquota_swap_inode,
 };

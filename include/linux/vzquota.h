@@ -282,6 +282,7 @@ void qmblk_data_write_unlock(struct vz_quota_master *qmblk);
 
 /* for quota operations */
 void vzquota_inode_init_call(struct inode *inode);
+void vzquota_inode_swap_call(struct inode *, struct inode *);
 void vzquota_inode_drop_call(struct inode *inode);
 int vzquota_inode_transfer_call(struct inode *, struct iattr *);
 struct vz_quota_master *vzquota_inode_data(struct inode *inode,
