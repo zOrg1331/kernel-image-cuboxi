@@ -700,6 +700,7 @@ int show_stat(struct seq_file *p, void *v)
 		show_stat_ve(p, env);
 		__nr_running = nr_running_ve(env);
 		__nr_iowait = nr_iowait_ve(env);
+		jif += env->start_timespec.tv_sec;
 	}
 #endif
 
