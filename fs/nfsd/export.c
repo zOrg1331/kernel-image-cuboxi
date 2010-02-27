@@ -700,8 +700,11 @@ static int svc_export_init(struct cache_head *cnew, struct cache_head *citem)
 	new->ex_fslocs.migrated = 0;
 
 	err = sb_qe_get_check(new->ex_path.dentry->d_inode->i_sb, 1);
-	if (err < 0)
+	if (err < 0) {
+		printk(KERN_ERR "Could not export filesystem via NFS "
+				"with VZQUOTA on\n");
 		return err;
+	}
 	new->ex_qe = 1;
 	return 0;
 }

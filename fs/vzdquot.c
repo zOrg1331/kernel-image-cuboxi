@@ -320,8 +320,11 @@ int vzquota_get_super(struct super_block *sb)
 	int err;
 
 	err = sb_qe_get_check(sb, -1);
-	if (err < 0)
+	if (err < 0) {
+		printk(KERN_ERR "Could not enable VZQUOTA on filesystem "
+				"exported via NFS\n");
 		return err;
+	}
 
 	if (sb->dq_op != &vz_quota_operations) {
 		down(&sb->s_dquot.dqonoff_sem);
@@ -440,8 +443,11 @@ int vzquota_get_super(struct super_block *sb)
 	int err;
 
 	err = sb_qe_get_check(sb, -1);
-	if (err < 0)
+	if (err < 0) {
+		printk(KERN_ERR "Could not enable VZQUOTA on filesystem "
+				"exported via NFS\n");
 		return err;
+	}
 
 	mutex_lock(&sb->s_dquot.dqonoff_mutex);
 	err = -EEXIST;
