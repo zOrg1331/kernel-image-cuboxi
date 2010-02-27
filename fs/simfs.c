@@ -133,7 +133,7 @@ static int sim_statfs(struct super_block *sb, struct kstatfs *buf)
 
 	err = -ENOSYS;
 	if (lsb && lsb->s_op && lsb->s_op->statfs)
-		err = lsb->s_op->statfs(lsb->s_root, &statbuf);
+		err = lsb->s_op->statfs(sb->s_root, &statbuf);
 	if (err)
 		return err;
 
