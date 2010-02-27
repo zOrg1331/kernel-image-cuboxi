@@ -313,8 +313,10 @@ static int bc_ioprio_queue_show(struct seq_file *f, void *v)
 	read_lock_irq(&bc->iopriv.cfq_bc_list_lock);
 	list_for_each_entry(cfq_bc, &bc->iopriv.cfq_bc_head, cfq_bc_list) {
 		struct cfq_data *cfqd;
+		struct kobject *parent;
 
 		cfqd = cfq_bc->cfqd;
+		parent = cfqd->queue->kobj.parent;
 		seq_printf(f, "\t%-10s%6lu %c%c\n",
 				/*
 				 * this per-bc -> queue-data -> queue -> device
@@ -322,7 +324,7 @@ static int bc_ioprio_queue_show(struct seq_file *f, void *v)
 				 * all the stuff above dies in the order shown
 				 * and we're holding the first element
 				 */
-				kobject_name(cfqd->queue->kobj.parent),
+				parent ? kobject_name(parent) : "?",
 				cfq_bc->rqnum,
 				cfq_bc->on_dispatch ? 'D' : ' ',
 				cfqd->active_cfq_bc == cfq_bc ? 'A' : ' ');
