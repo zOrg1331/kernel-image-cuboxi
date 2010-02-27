@@ -750,8 +750,9 @@ asmlinkage int __vprintk(const char *fmt, va_list args)
 
 	err = ve_log_init();
 	if (err) {
-		spin_unlock_irqrestore(&logbuf_lock, flags);
-		return err;
+		spin_unlock(&logbuf_lock);
+		printed_len = err;
+		goto out_lockdep;
 	}
 
 	if (recursion_bug) {
@@ -824,16 +825,21 @@ asmlinkage int __vprintk(const char *fmt, va_list args)
 	 */
 	if (!ve_is_super(get_exec_env())) {
 		need_wake = (ve_log_start != ve_log_end);
-		spin_unlock_irqrestore(&logbuf_lock, flags);
+		spin_unlock(&logbuf_lock);
+		lockdep_on();
+		raw_local_irq_restore(flags);
 		if (!oops_in_progress && need_wake)
 			wake_up_interruptible(&ve_log_wait);
+		goto out_preempt;
 	} else if (acquire_console_semaphore_for_printk(this_cpu))
 		release_console_sem();
 
+out_lockdep:
 	lockdep_on();
 out_restore_irqs:
 	raw_local_irq_restore(flags);
 
+out_preempt:
 	preempt_enable();
 	return printed_len;
 }
