@@ -624,6 +624,8 @@ static int vzquota_rename(struct inode *inode,
 		NO_QUOTA : QUOTA_OK;
 }
 
+extern void vzquota_shutdown_super(struct super_block *sb);
+
 /*
  * Structure of superblock diskquota operations.
  */
@@ -638,4 +640,5 @@ struct dquot_operations vz_quota_operations = {
 	.rename		= vzquota_rename,
 
 	.swap_inode	= vzquota_swap_inode,
+	.shutdown	= vzquota_shutdown_super,
 };
