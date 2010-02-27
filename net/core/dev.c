@@ -3765,6 +3765,7 @@ int dev_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 		case SIOCSIFMTU:
 		case SIOCSIFHWADDR:
 		case SIOCSIFFLAGS:
+		case SIOCSIFTXQLEN:
 			if (!capable(CAP_NET_ADMIN) &&
 			    !capable(CAP_VE_NET_ADMIN))
 				return -EPERM;
@@ -3780,7 +3781,6 @@ int dev_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 		case SIOCADDMULTI:
 		case SIOCDELMULTI:
 		case SIOCSIFHWBROADCAST:
-		case SIOCSIFTXQLEN:
 		case SIOCSMIIREG:
 		case SIOCBONDENSLAVE:
 		case SIOCBONDRELEASE:
