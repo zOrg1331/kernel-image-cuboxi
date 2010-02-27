@@ -1195,6 +1195,32 @@ static void rst_apply_mxcsr_mask(struct task_struct *tsk)
 #include <asm/i387.h>
 #endif
 
+#define RLIM_INFINITY32		0xffffffff
+#define RLIM_INFINITY64		(~0ULL)
+
+#ifdef CONFIG_X86_64
+#define rst_rlim_32_to_64(a, i, t, im)					\
+do {									\
+	if (im->cpt_rlim_##a[i] == RLIM_INFINITY32)			\
+		t->signal->rlim[i].rlim_##a = RLIM_INFINITY64;		\
+	else								\
+		t->signal->rlim[i].rlim_##a = im->cpt_rlim_##a[i];	\
+} while (0)
+#elif defined(CONFIG_X86_32)
+#define rst_rlim_64_to_32(a, i, t, im)					\
+do {									\
+	if (im->cpt_rlim_##a[i] == RLIM_INFINITY64)			\
+		t->signal->rlim[i].rlim_##a = RLIM_INFINITY32;		\
+	else if (im->cpt_rlim_##a[i] > RLIM_INFINITY32) {		\
+		eprintk_ctx("rlimit %Lu is too high for 32-bit task, "	\
+			    "dump file is corrupted\n",			\
+			    im->cpt_rlim_##a[i]);			\
+		return -EINVAL;						\
+	} else								\
+		t->signal->rlim[i].rlim_##a = im->cpt_rlim_##a[i];	\
+} while (0)
+#endif
+
 int rst_restore_process(struct cpt_context *ctx)
 {
 	cpt_object_t *obj;
@@ -1334,8 +1360,23 @@ int rst_restore_process(struct cpt_context *ctx)
 			tsk->signal->cmaj_flt = ti->cpt_cmaj_flt;
 
 			for (i=0; i<RLIM_NLIMITS; i++) {
-				tsk->signal->rlim[i].rlim_cur = ti->cpt_rlim_cur[i];
-				tsk->signal->rlim[i].rlim_max = ti->cpt_rlim_max[i];
+#ifdef CONFIG_X86_64
+				if (ctx->image_arch == CPT_OS_ARCH_I386) {
+					rst_rlim_32_to_64(cur, i, tsk, ti);
+					rst_rlim_32_to_64(max, i, tsk, ti);
+				} else 
+#elif defined(CONFIG_X86_32)
+				if (ctx->image_arch == CPT_OS_ARCH_EMT64) {
+					rst_rlim_64_to_32(cur, i, tsk, ti);
+					rst_rlim_64_to_32(max, i, tsk, ti);
+				} else 
+#endif
+				{
+					tsk->signal->rlim[i].rlim_cur =
+						ti->cpt_rlim_cur[i];
+					tsk->signal->rlim[i].rlim_max =
+						ti->cpt_rlim_max[i];
+				}
 			}
 		}
 #endif
