@@ -350,4 +350,6 @@ ENTRY(sys_call_table)
 	.long sys_setublimit
 	.long sys_ubstat
 	.long sys_ni_syscall
-	.long sys_ni_syscall
+	.long sys_ni_syscall		/* 515 */
+	.long sys_lchmod
+	.long sys_lutime

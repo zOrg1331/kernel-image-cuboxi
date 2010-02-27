@@ -104,6 +104,21 @@ asmlinkage long compat_sys_utime(char __user *filename, struct compat_utimbuf __
 	return do_utimes(AT_FDCWD, filename, t ? tv : NULL, 0);
 }
 
+asmlinkage long compat_sys_lutime(char __user * filename,
+		struct compat_utimbuf __user *t)
+{
+	struct timespec tv[2];
+
+	if (t) {
+		if (get_user(tv[0].tv_sec, &t->actime) ||
+		    get_user(tv[1].tv_sec, &t->modtime))
+			return -EFAULT;
+		tv[0].tv_nsec = 0;
+		tv[1].tv_nsec = 0;
+	}
+	return do_utimes(AT_FDCWD, filename, t ? tv : NULL, AT_SYMLINK_NOFOLLOW);
+}
+
 asmlinkage long compat_sys_utimensat(unsigned int dfd, char __user *filename, struct compat_timespec __user *t, int flags)
 {
 	struct timespec tv[2];

@@ -854,4 +854,8 @@ ia32_sys_call_table:
 	.quad sys_setluid
 	.quad compat_sys_setublimit
 	.quad compat_sys_ubstat
+	.quad sys_ni_syscall
+	.quad sys_ni_syscall		/* 515 */
+	.quad sys_lchmod
+	.quad compat_sys_lutime
 ia32_syscall_end:

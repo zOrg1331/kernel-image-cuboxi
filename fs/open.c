@@ -657,14 +657,20 @@ out:
 	return err;
 }
 
-SYSCALL_DEFINE3(fchmodat, int, dfd, const char __user *, filename, mode_t, mode)
+static int do_fchmodat(int dfd, const char __user *filename, mode_t mode, int flag)
 {
 	struct path path;
 	struct inode *inode;
 	int error;
 	struct iattr newattrs;
+	int follow;
 
-	error = user_path_at(dfd, filename, LOOKUP_FOLLOW, &path);
+	error = -EINVAL;
+	if ((flag & ~AT_SYMLINK_NOFOLLOW) != 0)
+		goto out;
+
+	follow = (flag & AT_SYMLINK_NOFOLLOW) ? 0 : LOOKUP_FOLLOW;
+	error = user_path_at(dfd, filename, follow, &path);
 	if (error)
 		goto out;
 	inode = path.dentry->d_inode;
@@ -686,9 +692,19 @@ out:
 	return error;
 }
 
+SYSCALL_DEFINE3(fchmodat, int, dfd, const char __user *, filename, mode_t, mode)
+{
+	return do_fchmodat(dfd, filename, mode, 0);
+}
+
 SYSCALL_DEFINE2(chmod, const char __user *, filename, mode_t, mode)
 {
-	return sys_fchmodat(AT_FDCWD, filename, mode);
+	return do_fchmodat(AT_FDCWD, filename, mode, 0);
+}
+
+SYSCALL_DEFINE2(lchmod, const char __user *, filename, mode_t, mode)
+{
+	return do_fchmodat(AT_FDCWD, filename, mode, AT_SYMLINK_NOFOLLOW);
 }
 
 static int chown_common(struct dentry * dentry, uid_t user, gid_t group)

@@ -673,6 +673,10 @@ __SYSCALL(__NR_fairsched_chwt, sys_fairsched_chwt)
 __SYSCALL(__NR_fairsched_mvpr, sys_fairsched_mvpr)
 #define __NR_fairsched_rate			508
 __SYSCALL(__NR_fairsched_rate, sys_fairsched_rate)
+#define __NR_lchmod				509
+__SYSCALL(__NR_lchmod, sys_lchmod)
+#define __NR_lutime				510
+__SYSCALL(__NR_lutime, sys_lutime)
 
 
 #ifndef __NO_STUBS
