@@ -207,7 +207,7 @@ struct vz_quota_master {
 	struct dq_info		dq_info;	/* grace times and flags */
 	spinlock_t		dq_data_lock;	/* for dq_stat */
 
-	struct semaphore	dq_sem;		/* semaphore to protect 
+	struct mutex		dq_mutex;	/* mutex to protect
 						   ugid tree */
 
 	struct list_head	dq_ilink_list;	/* list of vz_quota_ilink */

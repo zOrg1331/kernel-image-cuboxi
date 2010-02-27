@@ -61,7 +61,7 @@ static inline void vzquota_free_qugid(void *ptr)
 
 /*
  * destroy ugid, if it have zero refcount, limits and usage
- * must be called under qmblk->dq_sem
+ * must be called under qmblk->dq_mutex
  */
 void vzquota_put_ugid(struct vz_quota_master *qmblk,
 		struct vz_quota_ugid *qugid)
@@ -108,7 +108,7 @@ vzquota_get_next(struct vz_quota_master *qmblk, struct vz_quota_ugid *qugid)
 }
 
 /*
- * requires dq_sem
+ * requires dq_mutex
  */
 struct vz_quota_ugid *__vzquota_find_ugid(struct vz_quota_master *qmblk,
 			unsigned int quota_id, int type, int flags)
@@ -166,16 +166,16 @@ fail:
 }
 
 /*
- * takes dq_sem, may schedule
+ * takes dq_mutex, may schedule
  */
 struct vz_quota_ugid *vzquota_find_ugid(struct vz_quota_master *qmblk,
 			unsigned int quota_id, int type, int flags)
 {
 	struct vz_quota_ugid *qugid;
 
-	down(&qmblk->dq_sem);
+	mutex_lock(&qmblk->dq_mutex);
 	qugid = __vzquota_find_ugid(qmblk, quota_id, type, flags);
-	up(&qmblk->dq_sem);
+	mutex_unlock(&qmblk->dq_mutex);
 
 	return qugid;
 }
@@ -632,7 +632,7 @@ static int vz_get_quoti(struct super_block *sb, int type, qid_t idx,
 		goto out;
 
 	mutex_lock(&vz_quota_mutex);
-	down(&qmblk->dq_sem);
+	mutex_lock(&qmblk->dq_mutex);
 	for (ugid = vzquota_get_byindex(qmblk, idx, type), count = 0;
 		ugid != NULL && count < Q_GETQUOTI_SIZE;
 		count++)
@@ -647,7 +647,7 @@ static int vz_get_quoti(struct super_block *sb, int type, qid_t idx,
 		ugid = vzquota_get_next(qmblk, ugid);
 		BUG_ON(ugid != NULL && ugid->qugid_type != type);
 	}
-	up(&qmblk->dq_sem);
+	mutex_unlock(&qmblk->dq_mutex);
 	mutex_unlock(&vz_quota_mutex);
 
 	err = count;
@@ -865,9 +865,9 @@ static int quota_ugid_getstat(unsigned int quota_id,
 	if (qmblk == NULL)
 		goto out;
 
-	down(&qmblk->dq_sem);
+	mutex_lock(&qmblk->dq_mutex);
 	err = do_quota_ugid_getstat(qmblk, index, size, k_ugid_buf);
-	up(&qmblk->dq_sem);
+	mutex_unlock(&qmblk->dq_mutex);
 	if (err < 0)
 		goto out;
 

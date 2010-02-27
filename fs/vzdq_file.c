@@ -303,7 +303,7 @@ static int read_proc_quotafile(char *page, char **start, off_t off, int count,
 
 	qtd = data;
 	mutex_lock(&vz_quota_mutex);
-	down(&qtd->qmblk->dq_sem);
+	mutex_lock(&qtd->qmblk->dq_mutex);
 
 	res = 0;
 	tree = QUGID_TREE(qtd->qmblk, qtd->type);
@@ -342,7 +342,7 @@ static int read_proc_quotafile(char *page, char **start, off_t off, int count,
 out_err:
 	*start += count;
 out_dq:
-	up(&qtd->qmblk->dq_sem);
+	mutex_unlock(&qtd->qmblk->dq_mutex);
 	mutex_unlock(&vz_quota_mutex);
 	kfree(tmp);
 

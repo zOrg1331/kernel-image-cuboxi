@@ -158,7 +158,7 @@ struct vz_quota_master *vzquota_alloc_master(unsigned int quota_id,
 #endif
 
 	qmblk->dq_state = VZDQ_STARTING;
-	init_MUTEX(&qmblk->dq_sem);
+	mutex_init(&qmblk->dq_mutex);
 	spin_lock_init(&qmblk->dq_data_lock);
 
 	qmblk->dq_id = quota_id;
@@ -590,12 +590,12 @@ void vzquota_qlnk_destroy(struct vz_quota_ilink *qlnk)
 		quid = qlnk->qugid[USRQUOTA];
 		qgid = qlnk->qugid[GRPQUOTA];
 		if (quid != NULL || qgid != NULL) {
-			down(&qmblk->dq_sem);
+			mutex_lock(&qmblk->dq_mutex);
 			if (qgid != NULL)
 				vzquota_put_ugid(qmblk, qgid);
 			if (quid != NULL)
 				vzquota_put_ugid(qmblk, quid);
-			up(&qmblk->dq_sem);
+			mutex_unlock(&qmblk->dq_mutex);
 		}
 	}
 #endif
@@ -711,10 +711,10 @@ static int vzquota_qlnk_fill(struct vz_quota_ilink *qlnk,
 		spin_unlock(&dcache_lock);
 		inode_qmblk_unlock(inode->i_sb);
 
-		down(&qmblk->dq_sem);
+		mutex_lock(&qmblk->dq_mutex);
 		quid = __vzquota_find_ugid(qmblk, inode->i_uid, USRQUOTA, 0);
 		qgid = __vzquota_find_ugid(qmblk, inode->i_gid, GRPQUOTA, 0);
-		up(&qmblk->dq_sem);
+		mutex_unlock(&qmblk->dq_mutex);
 
 		inode_qmblk_lock(inode->i_sb);
 		spin_lock(&dcache_lock);
@@ -757,14 +757,14 @@ static int vzquota_qlnk_fill_attr(struct vz_quota_ilink *qlnk,
 		qmblk_data_write_unlock(qmblk);
 		inode_qmblk_unlock(inode->i_sb);
 
-		down(&qmblk->dq_sem);
+		mutex_lock(&qmblk->dq_mutex);
 		if (mask & (1 << USRQUOTA))
 			quid = __vzquota_find_ugid(qmblk, iattr->ia_uid,
 					USRQUOTA, 0);
 		if (mask & (1 << GRPQUOTA))
 			qgid = __vzquota_find_ugid(qmblk, iattr->ia_gid,
 					GRPQUOTA, 0);
-		up(&qmblk->dq_sem);
+		mutex_unlock(&qmblk->dq_mutex);
 
 		inode_qmblk_lock(inode->i_sb);
 		qmblk_data_write_lock(qmblk);
