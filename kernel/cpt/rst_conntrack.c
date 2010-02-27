@@ -222,6 +222,28 @@ static int undump_one_ct(struct cpt_ip_conntrack_image *ci, loff_t pos,
 	return err;
 }
 
+static void convert_conntrack_image(struct cpt_ip_conntrack_image *ci)
+{
+	struct cpt_ip_conntrack_image_compat img;
+
+	memcpy(&img, ci, sizeof(struct cpt_ip_conntrack_image_compat));
+	/* 
+	 * Size of cpt_help_data in 2.6.9 kernel is 16 bytes,
+	 * in 2.6.18 cpt_help_data size is 24 bytes, so zero the rest 8 bytes
+	 */
+	memset(ci->cpt_help_data + 4, 0, 8);
+	ci->cpt_initialized = img.cpt_initialized;
+	ci->cpt_num_manips = img.cpt_num_manips;
+	memcpy(ci->cpt_nat_manips, img.cpt_nat_manips, sizeof(img.cpt_nat_manips));
+	memcpy(ci->cpt_nat_seq, img.cpt_nat_seq, sizeof(img.cpt_nat_seq));
+	ci->cpt_masq_index = img.cpt_masq_index;
+	/* Id will be assigned in ip_conntrack_hash_insert(), so make it 0 here */
+	ci->cpt_id = 0;
+	/* mark was not supported in 2.6.9, so set it to default 0 value */
+	ci->cpt_mark = 0;
+
+}
+
 int rst_restore_ip_conntrack(struct cpt_context * ctx)
 {
 	int err = 0;
@@ -252,6 +274,8 @@ int rst_restore_ip_conntrack(struct cpt_context * ctx)
 		err = rst_get_object(CPT_OBJ_NET_CONNTRACK, sec, &ci, ctx);
 		if (err)
 			break;
+		if (ctx->image_version < CPT_VERSION_16)
+			convert_conntrack_image(&ci);
 		err = undump_one_ct(&ci, sec, &ct_list, ctx);
 		if (err)
 			break;
