@@ -285,7 +285,7 @@ static inline unsigned long bc_make_ino(struct user_beancounter *ub)
 
 	ret = 0xbc000000;
 	if (ub->parent)
-		ret |= ((ub->parent->ub_uid) << 4);
+		ret |= ((ub->parent->ub_uid + 1) << 4);
 	ret |= (ub->ub_uid + 1);
 	return ret;
 }
