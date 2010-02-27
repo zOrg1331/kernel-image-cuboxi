@@ -39,6 +39,7 @@
 #include <linux/kallsyms.h>
 #include <linux/slab.h>
 #include <linux/oom.h>
+#include <linux/nmi.h>
 
 #include <asm/ptrace.h>
 #include <asm/irq_regs.h>
@@ -243,8 +244,8 @@ static struct sysrq_key_op sysrq_showallcpus_op = {
 static void sysrq_handle_showregs(int key, struct tty_struct *tty)
 {
 	struct pt_regs *regs = get_irq_regs();
-	if (regs)
-		show_regs(regs);
+
+	nmi_show_regs(regs, 0);
 }
 
 static struct sysrq_key_op sysrq_showregs_op = {
