@@ -235,6 +235,9 @@ static int undump_one_ct(struct cpt_ip_conntrack_image *ci, loff_t pos,
 	if (err == 0 && ci->cpt_next > ci->cpt_hdrlen)
 		err = undump_expect_list(conntrack, ci, pos, *ct_list, ctx);
 
+	if (conntrack->helper)
+		ip_conntrack_helper_put(conntrack->helper);
+
 	return err;
 }
 
