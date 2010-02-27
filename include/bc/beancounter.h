@@ -77,12 +77,12 @@ int ub_ratelimit(struct ub_rate_info *);
 /* Add new resources here */
 
 #define UB_NUMXTENT	23
-#define UB_RESOURCES	24
+#define UB_SWAPPAGES	24
+#define UB_RESOURCES	25
 
 #define UB_UNUSEDPRIVVM	(UB_RESOURCES + 0)
 #define UB_TMPFSPAGES	(UB_RESOURCES + 1)
-#define UB_SWAPPAGES	(UB_RESOURCES + 2)
-#define UB_HELDPAGES	(UB_RESOURCES + 3)
+#define UB_HELDPAGES	(UB_RESOURCES + 2)
 
 struct ubparm {
 	/* 
@@ -141,7 +141,6 @@ struct sock_beancounter;
 struct page_private {
 	unsigned long		ubp_unused_privvmpages;
 	unsigned long		ubp_tmpfs_respages;
-	unsigned long		ubp_swap_pages;
 	unsigned long		ubp_pbcs;
 	unsigned long long	ubp_held_pages;
 };
@@ -211,7 +210,6 @@ struct user_beancounter
 	struct page_private	ppriv;
 #define ub_unused_privvmpages	ppriv.ubp_unused_privvmpages
 #define ub_tmpfs_respages	ppriv.ubp_tmpfs_respages
-#define ub_swap_pages		ppriv.ubp_swap_pages
 #define ub_held_pages		ppriv.ubp_held_pages
 #define ub_pbcs			ppriv.ubp_pbcs
 	struct sock_private	spriv;
