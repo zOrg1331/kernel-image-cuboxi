@@ -1041,13 +1041,24 @@ static __u64 setup_iptables_mask(__u64 init_mask)
 static inline int init_ve_cpustats(struct ve_struct *ve)
 {
 	ve->cpu_stats = alloc_percpu(struct ve_cpu_stats);
-	return ve->cpu_stats == NULL ? -ENOMEM : 0;
+	if (ve->cpu_stats == NULL)
+		return -ENOMEM;
+	ve->sched_lat_ve.cur = alloc_percpu(struct kstat_lat_pcpu_snap_struct);
+	if (ve == NULL)
+		goto fail;
+	return 0;
+
+fail:
+	free_percpu(ve->cpu_stats);
+	return -ENOMEM;
 }
 
 static inline void free_ve_cpustats(struct ve_struct *ve)
 {
 	free_percpu(ve->cpu_stats);
 	ve->cpu_stats = NULL;
+	free_percpu(ve->sched_lat_ve.cur);
+	ve->sched_lat_ve.cur = NULL;
 }
 
 static int alone_in_pgrp(struct task_struct *tsk)

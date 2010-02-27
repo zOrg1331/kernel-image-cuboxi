@@ -36,7 +36,7 @@ struct kstat_lat_struct {
 	cycles_t avg[3];
 };
 struct kstat_lat_pcpu_struct {
-	struct kstat_lat_pcpu_snap_struct cur[NR_CPUS];
+	struct kstat_lat_pcpu_snap_struct *cur;
 	cycles_t max_snap;
 	struct kstat_lat_snap_struct last;
 	cycles_t avg[3];
@@ -121,7 +121,7 @@ static inline void KSTAT_LAT_PCPU_ADD(struct kstat_lat_pcpu_struct *p, int cpu,
 {
 	struct kstat_lat_pcpu_snap_struct *cur;
 
-	cur = &p->cur[cpu];
+	cur = per_cpu_ptr(p->cur, cpu);
 	write_seqcount_begin(&cur->lock);
 	cur->count++;
 	if (cur->maxlat < dur)
@@ -152,8 +152,8 @@ static inline void KSTAT_LAT_PCPU_UPDATE(struct kstat_lat_pcpu_struct *p)
 	cycles_t m;
 
 	memset(&p->last, 0, sizeof(p->last));
-	for (cpu = 0; cpu < NR_CPUS; cpu++) {
-		cur = &p->cur[cpu];
+	for_each_online_cpu(cpu) {
+		cur = per_cpu_ptr(p->cur, cpu);
 		do {
 			i = read_seqcount_begin(&cur->lock);
 			memcpy(&snap, cur, sizeof(snap));
