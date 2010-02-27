@@ -780,10 +780,12 @@ static struct ctl_table kern_table[] = {
 	{
 		.ctl_name	= KERN_RANDOMIZE,
 		.procname	= "randomize_va_space",
-		.data		= &randomize_va_space,
+		.data		= &_randomize_va_space,
+		.extra1		= (void *)offsetof(struct ve_struct,
+							_randomize_va_space),
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
+		.proc_handler	= &proc_dointvec_ve,
 	},
 #endif
 #if defined(CONFIG_S390) && defined(CONFIG_SMP)

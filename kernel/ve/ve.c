@@ -111,6 +111,12 @@ struct ve_struct ve0 = {
 #endif
 	.features		= VE_FEATURE_SIT | VE_FEATURE_IPIP |
 				VE_FEATURE_PPP,
+	._randomize_va_space	=
+#ifdef CONFIG_COMPAT_BRK
+					1,
+#else
+					2,
+#endif
 };
 
 EXPORT_SYMBOL(ve0);

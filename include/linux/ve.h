@@ -272,6 +272,7 @@ struct ve_struct {
 	struct ve_monitor	*monitor;
 	struct proc_dir_entry	*monitor_proc;
 	unsigned long		meminfo_val;
+	int _randomize_va_space;
 
 #if defined(CONFIG_NFS_FS) || defined(CONFIG_NFS_FS_MODULE) \
 	|| defined(CONFIG_NFSD) || defined(CONFIG_NFSD_MODULE)

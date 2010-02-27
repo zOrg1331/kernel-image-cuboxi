@@ -782,6 +782,8 @@ static int init_ve_struct(struct ve_struct *ve, envid_t veid,
 	ve->start_jiffies = get_jiffies_64();
 	ve->start_cycles = get_cycles();
 
+	ve->_randomize_va_space = ve0._randomize_va_space;
+ 
 	return 0;
 }
 
