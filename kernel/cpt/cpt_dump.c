@@ -1161,8 +1161,10 @@ static void check_unsupported_mounts(struct cpt_context *ctx, __u32 *caps,
 
 		p.dentry = mnt->mnt_root;
 		p.mnt = mnt;
+		spin_lock(&dcache_lock);
 		path = __d_path(&p, &env->root_path,
 				path_buf, PAGE_SIZE);
+		spin_unlock(&dcache_lock);
 		if (IS_ERR(path))
 			continue;
 
@@ -1191,6 +1193,19 @@ int cpt_vps_caps(struct cpt_context *ctx, __u32 *caps)
 	env = get_ve_by_id(ctx->ve_id);
 	if (env == NULL)
 		return -ESRCH;
+
+	down_read(&env->op_sem);
+	err = -ESRCH;
+	if (!env->is_running) {
+		eprintk_ctx("CT is not running\n");
+		goto out_noenv;
+	}
+
+	err = -EBUSY;
+	if (env->is_locked) {
+		eprintk_ctx("CT is locked\n");
+		goto out_noenv;
+	}
 
 	*caps = flags & (1<<CPT_CPU_X86_CMOV);
 
@@ -1244,6 +1259,8 @@ out_root:
 out:
 	current->nsproxy = old_ns;
 	set_exec_env(old_env);
+out_noenv:
+	up_read(&env->op_sem);
 	put_ve(env);
 
 	return err;
