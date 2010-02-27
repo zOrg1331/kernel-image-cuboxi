@@ -1677,6 +1677,8 @@ static void free_ve_tty_drivers(struct ve_struct* ve)
 #ifdef CONFIG_UNIX98_PTYS
 	free_ve_tty_driver(ve->ptm_driver);
 	free_ve_tty_driver(ve->pts_driver);
+	if (ve->allocated_ptys)
+		ida_destroy(ve->allocated_ptys);
 	kfree(ve->allocated_ptys);
 	ve->ptm_driver = ve->pts_driver = NULL;
 	ve->allocated_ptys = NULL;
