@@ -750,6 +750,7 @@ asmlinkage int __vprintk(const char *fmt, va_list args)
 
 	err = ve_log_init();
 	if (err) {
+		printk_cpu = UINT_MAX;
 		spin_unlock(&logbuf_lock);
 		printed_len = err;
 		goto out_lockdep;
@@ -825,6 +826,7 @@ asmlinkage int __vprintk(const char *fmt, va_list args)
 	 */
 	if (!ve_is_super(get_exec_env())) {
 		need_wake = (ve_log_start != ve_log_end);
+		printk_cpu = UINT_MAX;
 		spin_unlock(&logbuf_lock);
 		lockdep_on();
 		raw_local_irq_restore(flags);
@@ -1143,6 +1145,7 @@ void release_console_sem(void)
 	}
 	console_locked = 0;
 	up(&console_sem);
+	printk_cpu = UINT_MAX;
 	spin_unlock_irqrestore(&logbuf_lock, flags);
 	if (wake_klogd)
 		wake_up_klogd();
