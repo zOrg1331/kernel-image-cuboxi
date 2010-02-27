@@ -146,7 +146,7 @@ static int vps_rst_reparent_root(cpt_object_t *obj, struct cpt_context *ctx)
 	param.known_features = (ctx->image_version < CPT_VERSION_18) ?
 		VE_FEATURES_OLD : ~(__u64)0;
 
-	err = real_env_create(ctx->ve_id, VE_CREATE|VE_LOCK, 2,
+	err = real_env_create(ctx->ve_id, VE_CREATE|VE_LOCK|VE_EXCLUSIVE, 2,
 			&param, sizeof(param));
 	if (err < 0)
 		eprintk_ctx("real_env_create: %d\n", err);
