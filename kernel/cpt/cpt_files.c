@@ -1357,6 +1357,7 @@ struct args_t
 {
 	int* pfd;
 	char* path;
+	envid_t veid;
 };
 
 static int dumptmpfs(void *arg)
@@ -1368,7 +1369,7 @@ static int dumptmpfs(void *arg)
 	char *path = args->path;
 	char *argv[] = { "tar", "-c", "-S", "--numeric-owner", path, NULL };
 
-	i = real_env_create(VEID(get_exec_env()), VE_ENTER|VE_SKIPLOCK, 2, NULL, 0);
+	i = real_env_create(args->veid, VE_ENTER|VE_SKIPLOCK, 2, NULL, 0);
 	if (i < 0) {
 		eprintk("cannot enter ve to dump tmpfs\n");
 		module_put(THIS_MODULE);
@@ -1415,16 +1416,20 @@ static int cpt_dump_tmpfs(char *path, struct cpt_context *ctx)
 	int status;
 	mm_segment_t oldfs;
 	sigset_t ignore, blocked;
+	struct ve_struct *oldenv;
 	
 	err = sc_pipe(pfd);
 	if (err < 0)
 		return err;
 	args.pfd = pfd;
 	args.path = path;
+	args.veid = VEID(get_exec_env());
 	ignore.sig[0] = CPT_SIG_IGNORE_MASK;
 	sigprocmask(SIG_BLOCK, &ignore, &blocked);
+	oldenv = set_exec_env(get_ve0());
 	err = pid = local_kernel_thread(dumptmpfs, (void*)&args,
 			SIGCHLD | CLONE_VFORK, 0);
+	set_exec_env(oldenv);
 	if (err < 0) {
 		eprintk_ctx("tmpfs local_kernel_thread: %d\n", err);
 		goto out;

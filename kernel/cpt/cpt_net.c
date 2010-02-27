@@ -490,13 +490,20 @@ out_sock:
 	return err;
 }
 
+struct args_t
+{
+	int* pfd;
+	envid_t veid;
+};
+
 static int dumpfn(void *arg)
 {
 	int i;
-	int *pfd = arg;
+	struct args_t *args = arg;
+	int *pfd = args->pfd;
 	char *argv[] = { "iptables-save", "-c", NULL };
 
-	i = real_env_create(VEID(get_exec_env()), VE_ENTER|VE_SKIPLOCK, 2, NULL, 0);
+	i = real_env_create(args->veid, VE_ENTER|VE_SKIPLOCK, 2, NULL, 0);
 	if (i < 0) {
 		eprintk("cannot enter ve to dump iptables\n");
 		module_put(THIS_MODULE);
@@ -536,6 +543,8 @@ static int cpt_dump_iptables(struct cpt_context * ctx)
 	int status;
 	mm_segment_t oldfs;
 	sigset_t ignore, blocked;
+	struct args_t args;
+	struct ve_struct *oldenv;
 
 	if (!(get_exec_env()->_iptables_modules & VE_IP_IPTABLES_MOD))
 		return 0;
@@ -545,9 +554,14 @@ static int cpt_dump_iptables(struct cpt_context * ctx)
 		eprintk_ctx("sc_pipe: %d\n", err);
 		return err;
 	}
+	args.pfd = pfd;
+	args.veid = VEID(get_exec_env());
 	ignore.sig[0] = CPT_SIG_IGNORE_MASK;
 	sigprocmask(SIG_BLOCK, &ignore, &blocked);
-	err = pid = local_kernel_thread(dumpfn, (void*)pfd, SIGCHLD, 0);
+	oldenv = set_exec_env(get_ve0());
+	err = pid = local_kernel_thread(dumpfn, (void*)&args,
+			SIGCHLD | CLONE_VFORK, 0);
+	set_exec_env(oldenv);
 	if (err < 0) {
 		eprintk_ctx("local_kernel_thread: %d\n", err);
 		goto out;
