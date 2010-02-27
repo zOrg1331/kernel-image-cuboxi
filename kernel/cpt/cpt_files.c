@@ -1598,8 +1598,15 @@ static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
 	cpt_dump_string(path, ctx);
 	cpt_dump_string(mnt->mnt_sb->s_type->name, ctx);
 
-	if (v.cpt_mntflags & CPT_MNT_BIND)
+	if (v.cpt_mntflags & CPT_MNT_BIND) {
 		err = cpt_dump_bind_mnt(mnt, ctx);
+
+		/* Temporary solution for Ubuntu 8.04 */
+		if (err == -EINVAL && !strcmp(path, "/dev/.static/dev")) {
+			cpt_dump_string("/dev", ctx);
+			err = 0;
+		}
+	}
 	else if (!(v.cpt_mntflags & CPT_MNT_EXT)) {
 
 		if (mnt->mnt_sb->s_type->fs_flags & FS_REQUIRES_DEV) {
