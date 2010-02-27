@@ -776,6 +776,7 @@ static int rst_restore_iptables(struct cpt_context * ctx)
 		err = (status & 0xff00) >> 8;
 		if (err != 0) {
 			eprintk_ctx("iptables-restore exited with %d\n", err);
+			eprintk_ctx("Most probably some iptables modules are not loaded\n");
 			err = -EINVAL;
 		}
 	} else {
