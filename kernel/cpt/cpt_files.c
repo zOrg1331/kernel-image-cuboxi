@@ -1586,17 +1586,21 @@ static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
 
 	if (v.cpt_mntflags & CPT_MNT_BIND)
 		err = cpt_dump_bind_mnt(mnt, ctx);
-	else if (!(v.cpt_mntflags & CPT_MNT_EXT) &&
-		   strcmp(mnt->mnt_sb->s_type->name, "tmpfs") == 0) {
-		mntget(mnt);
-		up_read(&namespace_sem);
-		err = cpt_dump_tmpfs(path, ctx);
-		down_read(&namespace_sem);
-		if (!err) {
-			if (list_empty(&mnt->mnt_list))
+	else if (!(v.cpt_mntflags & CPT_MNT_EXT)) {
+
+		if (mnt->mnt_sb->s_type->fs_flags & FS_REQUIRES_DEV) {
+			eprintk_ctx("Checkpoint supports only nodev fs: %s\n",
+				    mnt->mnt_sb->s_type->name);
+			err = -EXDEV;
+		} else if (!strcmp(mnt->mnt_sb->s_type->name, "tmpfs")) {
+			mntget(mnt);
+			up_read(&namespace_sem);
+			err = cpt_dump_tmpfs(path, ctx);
+			down_read(&namespace_sem);
+			if (!err && list_empty(&mnt->mnt_list))
 				err = -EBUSY;
+			mntput(mnt);
 		}
-		mntput(mnt);
 	}
 
 	cpt_pop_object(&saved_obj, ctx);
