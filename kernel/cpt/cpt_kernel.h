@@ -48,7 +48,7 @@ static inline void vefs_track_force_stop(struct super_block *super) { };
 static inline void vefs_track_notify(struct dentry *vdentry, int track_cow) { };
 #endif
 
-unsigned int test_cpu_caps(void);
+unsigned int test_cpu_caps_and_features(void);
 unsigned int test_kernel_config(void);
 
 #define test_one_flag_old(src, dst, flag, message, ret) \

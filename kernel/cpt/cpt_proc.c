@@ -204,7 +204,7 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		unsigned int src_flags, dst_flags = arg;
 
 		err = 0;
-		src_flags = test_cpu_caps();
+		src_flags = test_cpu_caps_and_features();
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_CMOV, "cmov", err);
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_FXSR, "fxsr", err);
 		test_one_flag_old(src_flags, dst_flags, CPT_CPU_X86_SSE, "sse", err);
@@ -386,7 +386,7 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 			break;
 		}
 		ctx->dst_cpu_flags = arg;
-		ctx->src_cpu_flags = test_cpu_caps();
+		ctx->src_cpu_flags = test_cpu_caps_and_features();
 		break;
 	case CPT_SUSPEND:
 		if (cpt_context_lookup_veid(ctx->ve_id) ||
@@ -460,6 +460,11 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_IA64, "ia64", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SYSCALL, "syscall", err);
 		test_one_flag(src_flags, dst_flags, CPT_CPU_X86_SYSCALL32, "syscall32", err);
+		if (dst_flags & (1 << CPT_SLM_DMPRST)) {
+			eprintk_ctx("SLM is enabled on destination node, but slm_dmprst module is not loaded\n");
+			err = 1;
+		}
+
 		if (src_flags & CPT_UNSUPPORTED_MASK)
 			err = 2;
 		break;
