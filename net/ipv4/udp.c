@@ -217,6 +217,7 @@ gotit:
 			    sk2 != sk                                        &&
 			    net_eq(sock_net(sk2), net)			     &&
 			    (!sk2->sk_reuse        || !sk->sk_reuse)         &&
+			    sk->sk_reuse != 2 &&
 			    (!sk2->sk_bound_dev_if || !sk->sk_bound_dev_if
 			     || sk2->sk_bound_dev_if == sk->sk_bound_dev_if) &&
 			    (*saddr_comp)(sk, sk2)                             )
