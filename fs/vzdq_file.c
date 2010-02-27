@@ -865,6 +865,33 @@ out:
 	return ERR_PTR(-ENOENT);
 }
 
+static int vzdq_aquotd_getattr(struct vfsmount *mnt, struct dentry *dentry,
+		struct kstat *stat)
+{
+	struct ve_struct *ve, *old_ve;
+	struct list_head mntlist, *pos;
+
+	generic_fillattr(dentry->d_inode, stat);
+	ve = dentry->d_sb->s_type->owner_env;
+#ifdef CONFIG_VE
+	/*
+	 * The only reason of disabling getattr for the host system is that
+	 * this getattr can be slow and CPU consuming with large number of VPSs
+	 * (or just mount points).
+	 */
+	if (ve_is_super(ve))
+		return 0;
+#endif
+	INIT_LIST_HEAD(&mntlist);
+	old_ve = set_exec_env(ve);
+	if (!vzdq_aquot_buildmntlist(ve, &mntlist))
+		list_for_each(pos, &mntlist)
+			stat->nlink++;
+	vzdq_aquot_releasemntlist(ve, &mntlist);
+	(void)set_exec_env(old_ve);
+	return 0;
+}
+
 static struct file_operations vzdq_aquotd_file_operations = {
 	.read		= &generic_read_dir,
 	.readdir	= &vzdq_aquotd_readdir,
@@ -872,6 +899,7 @@ static struct file_operations vzdq_aquotd_file_operations = {
 
 static struct inode_operations vzdq_aquotd_inode_operations = {
 	.lookup		= &vzdq_aquotd_lookup,
+	.getattr	= &vzdq_aquotd_getattr,
 };
 
 
