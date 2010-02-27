@@ -108,6 +108,9 @@ extern const struct file_operations proc_kmsg_operations;
 
 void proc_flush_task(struct task_struct *task);
 
+extern int proc_dentry_of_dead_task(struct dentry *dentry);
+extern struct file_operations dummy_proc_pid_file_operations;
+
 extern struct proc_dir_entry *create_proc_entry(const char *name, mode_t mode,
 						struct proc_dir_entry *parent);
 struct proc_dir_entry *proc_create_data(const char *name, mode_t mode,
@@ -187,6 +190,8 @@ extern void dup_mm_exe_file(struct mm_struct *oldmm, struct mm_struct *newmm);
 
 #define proc_net_fops_create(net, name, mode, fops)  ({ (void)(mode), NULL; })
 static inline void proc_net_remove(struct net *net, const char *name) {}
+
+static inline int proc_dentry_of_dead_task(struct dentry *dentry) { return 0; }
 
 static inline void proc_flush_task(struct task_struct *task)
 {
