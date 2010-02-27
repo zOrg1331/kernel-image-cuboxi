@@ -501,11 +501,13 @@ void vzquota_inode_off(struct inode * inode)
 		 * of vzquota.
 		 *
 		 * To be safe, we reacquire vzquota lock.
+		 * The assumption is that it would not hurt to call
+		 * vzquota_inode_drop() more than once, but it must
+		 * be called at least once after S_NOQUOTA is set.
 		 */
 		inode_qmblk_lock(inode->i_sb);
 		inode->i_flags |= S_NOQUOTA;
 		inode_qmblk_unlock(inode->i_sb);
-		return;
 	} else {
 		loff_t bytes = inode_get_bytes(inode);
 #ifdef CONFIG_VZ_QUOTA_UGID
@@ -528,9 +530,8 @@ void vzquota_inode_off(struct inode * inode)
 #endif
 
 		vzquota_data_unlock(inode, &data);
-
-		vzquota_inode_drop_call(inode);
 	}
+	vzquota_inode_drop_call(inode);
 }
 
 
