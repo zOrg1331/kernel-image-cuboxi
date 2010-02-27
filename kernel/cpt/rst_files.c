@@ -1250,8 +1250,31 @@ int cpt_get_dentry(struct dentry **dp, struct vfsmount **mp,
 		return err;
 
 	file = rst_file(*pos, -2, ctx);
-	if (IS_ERR(file))
+	if (IS_ERR(file)) {
+		if (PTR_ERR(file) == -EINVAL && S_ISLNK(fi.cpt_i_mode)) {
+			/* One special case: inotify on symlink */
+			struct nameidata nd;
+			__u8 *name = NULL;
+
+			if (fi.cpt_next > fi.cpt_hdrlen)
+				name = rst_get_name(*pos + sizeof(fi), ctx);
+			if (!name) {
+				eprintk_ctx("can't get name for file\n");
+				return -EINVAL;
+			}
+			if ((err = path_lookup(name, 0, &nd)) != 0) {
+				eprintk_ctx("path_lookup %s: %d\n", name, err);
+				rst_put_name(name, ctx);
+				return -EINVAL;
+			}
+			*dp = nd.path.dentry;
+			*mp = nd.path.mnt;
+			*pos += fi.cpt_next;
+			rst_put_name(name, ctx);
+			return 0;
+		}
 		return PTR_ERR(file);
+	}
 
 	*dp = dget(file->f_dentry);
 	*mp = mntget(file->f_vfsmnt);
