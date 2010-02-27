@@ -282,6 +282,14 @@ struct ve_struct {
 	struct svc_rqst*	_nlmsvc_rqst;
 #endif
 
+#if defined(CONFIG_BINFMT_MISC) || defined(CONFIG_BINFMT_MISC_MODULE)
+	struct file_system_type	*bm_fs_type;
+	struct vfsmount		*bm_mnt;
+	int			bm_enabled;
+	int			bm_entry_count;
+	struct list_head	bm_entries;
+#endif
+
 	struct nsproxy		*ve_ns;
 	struct net		*ve_netns;
 	struct cgroup		*ve_cgroup;
