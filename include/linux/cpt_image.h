@@ -1308,6 +1308,8 @@ struct cpt_task_image {
 
 	__u64	cpt_state;
 	__u64	cpt_flags;
+#define CPT_TASK_FLAGS_MASK	(PF_EXITING | PF_FORKNOEXEC | \
+				 PF_SUPERPRIV | PF_DUMPCORE | PF_SIGNALED)
 	__u64	cpt_ptrace;
 	__u32	cpt_prio;
 	__u32	cpt_static_prio;

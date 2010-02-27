@@ -791,7 +791,7 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 		return -EBUSY;
 	}
 
-	v->cpt_flags = tsk->flags&~(PF_FROZEN|PF_EXIT_RESTART);
+	v->cpt_flags = tsk->flags & CPT_TASK_FLAGS_MASK;
 	v->cpt_ptrace = tsk->ptrace;
 	v->cpt_prio = tsk->prio;
 	v->cpt_exit_code = tsk->exit_code;

@@ -1610,7 +1610,8 @@ int rst_restore_process(struct cpt_context *ctx)
 		}
 
 		tsk->ptrace = ti->cpt_ptrace;
-		tsk->flags = ti->cpt_flags & ~PF_FROZEN;
+		tsk->flags = (tsk->flags & PF_USED_MATH) |
+			(ti->cpt_flags & CPT_TASK_FLAGS_MASK);
 		clear_tsk_thread_flag(tsk, TIF_FREEZE);
 		tsk->exit_signal = ti->cpt_exit_signal;
 
