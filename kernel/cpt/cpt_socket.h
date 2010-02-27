@@ -21,6 +21,8 @@ void cpt_kill_sockets(cpt_context_t *);
 int cpt_kill_socket(struct sock *, cpt_context_t *);
 int cpt_dump_socket_in(struct cpt_sock_image *, struct sock *, struct cpt_context*);
 int rst_socket_in(struct cpt_sock_image *si, loff_t pos, struct sock *, struct cpt_context *ctx);
+int rst_listen_socket_in(struct sock *sk, struct cpt_sock_image *si,
+			 loff_t pos, struct cpt_context *ctx);
 __u32 cpt_socket_fasync(struct file *file, struct cpt_context *ctx);
 int cpt_attach_accept(struct sock *lsk, struct sock *sk, cpt_context_t *);
 int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si, loff_t pos, struct cpt_context *ctx);

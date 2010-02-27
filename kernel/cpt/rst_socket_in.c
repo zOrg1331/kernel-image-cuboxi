@@ -296,6 +296,62 @@ static int rst_socket_tcp(struct cpt_sock_image *si, loff_t pos, struct sock *sk
 	return 0;
 }
 
+static void rst_listen_socket_tcp(struct cpt_sock_image *si, struct sock *sk)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+
+	tp->rcv_tstamp = tcp_jiffies_import(si->cpt_rcv_tstamp);
+	tp->lsndtime = tcp_jiffies_import(si->cpt_lsndtime);
+	tp->tcp_header_len = si->cpt_tcp_header_len;
+	inet_csk(sk)->icsk_accept_queue.rskq_defer_accept = si->cpt_defer_accept;
+
+	/* Next options are inherited by children */
+	tp->mss_cache = si->cpt_mss_cache;
+	inet_csk(sk)->icsk_ext_hdr_len = si->cpt_ext_header_len;
+	tp->reordering = si->cpt_reordering;
+	tp->nonagle = si->cpt_nonagle;
+	tp->keepalive_probes = si->cpt_keepalive_probes;
+	tp->rx_opt.user_mss = si->cpt_user_mss;
+	inet_csk(sk)->icsk_syn_retries = si->cpt_syn_retries;
+	tp->keepalive_time = si->cpt_keepalive_time;
+	tp->keepalive_intvl = si->cpt_keepalive_intvl;
+	tp->linger2 = si->cpt_linger2;
+}
+
+int rst_listen_socket_in( struct sock *sk, struct cpt_sock_image *si,
+			  loff_t pos, struct cpt_context *ctx)
+{
+	struct inet_sock *inet = inet_sk(sk);
+
+	lock_sock(sk);
+
+	inet->uc_ttl = si->cpt_uc_ttl;
+	inet->tos = si->cpt_tos;
+	inet->cmsg_flags = si->cpt_cmsg_flags;
+	inet->pmtudisc = si->cpt_pmtudisc;
+	inet->recverr = si->cpt_recverr;
+	inet->freebind = si->cpt_freebind;
+	inet->id = si->cpt_idcounter;
+
+	if (sk->sk_family == AF_INET6) {
+		struct ipv6_pinfo *np = inet6_sk(sk);
+
+		np->frag_size = si->cpt_frag_size6;
+		np->hop_limit = si->cpt_hop_limit6;
+
+		np->rxopt.all = si->cpt_rxopt6;
+		np->mc_loop = si->cpt_mc_loop6;
+		np->recverr = si->cpt_recverr6;
+		np->pmtudisc = si->cpt_pmtudisc6;
+		np->ipv6only = si->cpt_ipv6only6;
+	}
+
+	if (sk->sk_protocol == IPPROTO_TCP)
+		rst_listen_socket_tcp(si, sk);
+
+	release_sock(sk);
+	return 0;
+}
 
 int rst_socket_in(struct cpt_sock_image *si, loff_t pos, struct sock *sk,
 		  struct cpt_context *ctx)
