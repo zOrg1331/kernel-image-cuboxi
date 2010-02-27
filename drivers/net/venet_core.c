@@ -413,6 +413,20 @@ static int venet_op_set_tx_csum(struct net_device *dev, u32 data)
 	return venet_set_op(dev, data, ethtool_op_set_tx_csum);
 }
 
+static int
+venet_op_set_tso(struct net_device *dev, u32 data)
+{
+	if (!ve_is_super(get_exec_env()))
+		return -EPERM;
+
+	if (data)
+		common_features |= NETIF_F_TSO;
+	else
+		common_features &= ~NETIF_F_TSO;
+
+	return venet_set_op(dev, data, ethtool_op_set_tso);
+}
+
 #define venet_op_set_rx_csum venet_op_set_tx_csum
 
 static struct ethtool_ops venet_ethtool_ops = {
@@ -423,6 +437,7 @@ static struct ethtool_ops venet_ethtool_ops = {
 	.get_rx_csum = ethtool_op_get_tx_csum,
 	.set_rx_csum = venet_op_set_rx_csum,
 	.get_tso = ethtool_op_get_tso,
+	.set_tso = venet_op_set_tso,
 };
 
 static void venet_setup(struct net_device *dev)
