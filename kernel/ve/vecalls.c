@@ -2076,7 +2076,7 @@ static inline int ve_mi_replace(struct meminfo *mi)
 		return NOTIFY_DONE; /* Default behaviour */
 
 	nodettram = mi->si.totalram;
-	ub = current->mm->mm_ub;
+	ub = top_beancounter(current->mm->mm_ub);
 	usedmem = ve_used_mem(ub);
 
 	memset(mi, 0, sizeof(*mi));
