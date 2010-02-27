@@ -212,7 +212,7 @@ int pb_alloc_all(struct page_beancounter **pbs)
 
 static inline int pb_hash(struct user_beancounter *ub, struct page *page)
 {
-	return (page_to_pfn(page) + (ub->ub_uid << 10)) & pb_hash_mask;
+	return (page_to_pfn(page) ^ ub->ub_cookie) & pb_hash_mask;
 }
 
 /* pb_lock should be held */

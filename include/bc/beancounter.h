@@ -203,6 +203,7 @@ struct user_beancounter
 
 	spinlock_t		ub_lock;
 	uid_t			ub_uid;
+	unsigned int		ub_cookie;
 
 	struct ub_rate_info	ub_limit_rl;
 	int			ub_oom_noproc;

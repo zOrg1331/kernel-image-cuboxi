@@ -30,6 +30,7 @@
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/mm.h>
+#include <linux/random.h>
 
 #include <bc/beancounter.h>
 #include <bc/hash.h>
@@ -584,6 +585,7 @@ EXPORT_SYMBOL(ub_ratelimit);
 static void init_beancounter_struct(struct user_beancounter *ub)
 {
 	ub->ub_magic = UB_MAGIC;
+	ub->ub_cookie = get_random_int();
 	atomic_set(&ub->ub_refcount, 1);
 	spin_lock_init(&ub->ub_lock);
 	INIT_LIST_HEAD(&ub->ub_tcp_sk_list);
