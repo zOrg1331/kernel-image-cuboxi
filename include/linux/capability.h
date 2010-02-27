@@ -330,10 +330,21 @@ typedef struct kernel_cap_struct {
  */
 
 /* Allow access to all information. In the other case some structures will be
-   hiding to ensure different Virtual Environment non-interaction on the same
-   node */
+ * hiding to ensure different Virtual Environment non-interaction on the same
+ * node (NOW OBSOLETED)
+ */
 #define CAP_SETVEID	     29
 
+#define capable_setveid()	({			\
+		ve_is_super(get_exec_env()) &&		\
+			(capable(CAP_SYS_ADMIN) ||	\
+			 capable(CAP_VE_ADMIN));	\
+	})
+
+/*
+ * coinsides with CAP_AUDIT_CONTROL but we don't care, since
+ * audit is disabled in Virtuozzo
+ */
 #define CAP_VE_ADMIN	     30
 
 #ifdef CONFIG_VE

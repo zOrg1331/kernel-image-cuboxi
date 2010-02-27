@@ -630,7 +630,7 @@ static int real_ve_ip_map(envid_t veid, int op, struct sockaddr __user *uaddr,
 	struct ve_addr_struct addr;
 
 	err = -EPERM;
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		goto out;
 
 	err = sockaddr_to_veaddr(uaddr, addrlen, &addr);

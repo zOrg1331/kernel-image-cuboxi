@@ -183,7 +183,7 @@ static int real_setdevperms(envid_t veid, unsigned type,
 	struct ve_struct *ve;
 	int err;
 
-	if (!capable(CAP_SETVEID) || veid == 0)
+	if (!capable_setveid() || veid == 0)
 		return -EPERM;
 
 	if ((ve = get_ve_by_id(veid)) == NULL)
@@ -811,7 +811,6 @@ static void set_ve_caps(struct ve_struct *ve, struct task_struct *tsk)
 {
 	/* required for real_setdevperms from register_ve_<fs> above */
 	memcpy(&ve->ve_cap_bset, &tsk->cap_effective, sizeof(kernel_cap_t));
-	cap_lower(ve->ve_cap_bset, CAP_SETVEID);
 }
 
 static int ve_list_add(struct ve_struct *ve)
@@ -1312,7 +1311,7 @@ int real_env_create(envid_t veid, unsigned flags, u32 class_id,
 	}
 
 	status = -EPERM;
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		goto out;
 
 	status = -EINVAL;
@@ -1855,7 +1854,7 @@ out:
 
 int real_ve_dev_map(envid_t veid, int op, char *dev_name)
 {
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		return -EPERM;
 	switch (op) {
 	case VE_NETDEV_ADD:

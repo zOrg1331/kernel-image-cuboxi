@@ -115,7 +115,7 @@ asmlinkage int sys_fairsched_mknod(unsigned int parent, unsigned int weight,
 {
 	int retval;
 
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		return -EPERM;
 
 	mutex_lock(&fairsched_mutex);
@@ -156,7 +156,7 @@ asmlinkage int sys_fairsched_rmnod(unsigned int id)
 {
 	int retval;
 
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		return -EPERM;
 
 	mutex_lock(&fairsched_mutex);
@@ -190,7 +190,7 @@ asmlinkage int sys_fairsched_chwt(unsigned int id, unsigned weight)
 {
 	int retval;
 
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		return -EPERM;
 
 	mutex_lock(&fairsched_mutex);
@@ -218,7 +218,7 @@ asmlinkage int sys_fairsched_vcpus(unsigned int id, unsigned int vcpus)
 {
 	int retval;
 
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		return -EPERM;
 
 	mutex_lock(&fairsched_mutex);
@@ -269,7 +269,7 @@ asmlinkage int sys_fairsched_rate(unsigned int id, int op, unsigned rate)
 {
 	int retval;
 
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		return -EPERM;
 
 	mutex_lock(&fairsched_mutex);
@@ -317,7 +317,7 @@ asmlinkage int sys_fairsched_mvpr(pid_t pid, unsigned int nodeid)
 {
 	int retval;
 
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		return -EPERM;
 
 	mutex_lock(&fairsched_mutex);
