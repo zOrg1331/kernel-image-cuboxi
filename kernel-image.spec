@@ -40,7 +40,7 @@ Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 
 Patch0: %name-%version-%release.patch
 
-ExclusiveArch: i586
+ExclusiveArch: i586 x86_64
 
 ExclusiveOS: Linux
 
