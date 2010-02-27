@@ -603,6 +603,17 @@ static struct dentry *bc_entry_lookup(struct inode *dir, struct dentry *dentry,
 	return bc_lookup(ub, dir, dentry);
 }
 
+static int bc_entry_getattr(struct vfsmount *mnt, struct dentry *dentry,
+		struct kstat *stat)
+{
+	struct user_beancounter *ub;
+
+	generic_fillattr(dentry->d_inode, stat);
+	ub = (struct user_beancounter *)dentry->d_fsdata;
+	stat->nlink = ub->ub_childs + 2;
+	return 0;
+}
+
 static struct file_operations bc_entry_fops = {
 	.read = generic_read_dir,
 	.readdir = bc_entry_readdir,
@@ -610,6 +621,7 @@ static struct file_operations bc_entry_fops = {
 
 static struct inode_operations bc_entry_iops = {
 	.lookup = bc_entry_lookup,
+	.getattr = bc_entry_getattr,
 };
 
 /*
@@ -647,6 +659,14 @@ static struct dentry *bc_root_lookup(struct inode *dir, struct dentry *dentry,
 	return bc_lookup(ub, dir, dentry);
 }
 
+static int bc_root_getattr(struct vfsmount *mnt, struct dentry *dentry,
+	struct kstat *stat)
+{
+	generic_fillattr(dentry->d_inode, stat);
+	stat->nlink = ub_count + 2;
+	return 0;
+}
+
 static struct file_operations bc_root_fops = {
 	.read = generic_read_dir,
 	.readdir = bc_root_readdir,
@@ -654,6 +674,7 @@ static struct file_operations bc_root_fops = {
 
 static struct inode_operations bc_root_iops = {
 	.lookup = bc_root_lookup,
+	.getattr = bc_root_getattr,
 };
 
 static int __init ub_init_proc(void)
