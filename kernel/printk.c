@@ -862,12 +862,14 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 asmlinkage int ve_vprintk(int dst, const char *fmt, va_list args)
 {
 	int printed_len;
+	va_list args2;
 
 	printed_len = 0;
+	va_copy(args2, args);
 	if (ve_is_super(get_exec_env()) || (dst & VE0_LOG))
 		printed_len = vprintk(fmt, args);
 	if (!ve_is_super(get_exec_env()) && (dst & VE_LOG))
-		printed_len = __vprintk(fmt, args);
+		printed_len = __vprintk(fmt, args2);
 	return printed_len;
 }
 
