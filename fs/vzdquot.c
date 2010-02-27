@@ -1281,13 +1281,20 @@ void vzquota_inode_init_call(struct inode *inode)
 void vzquota_inode_swap_call(struct inode *inode, struct inode *tmpl)
 {
 	struct vz_quota_master *qmblk;
-	struct vz_quota_datast data;
 
 	__vzquota_inode_init(inode, VZ_QUOTAO_INIT);
 
-	/* initializes inode's quota inside */
-	qmblk = vzquota_inode_data(tmpl, &data);
-	if (qmblk != NULL && qmblk != VZ_QUOTA_BAD) {
+	might_sleep();
+
+	inode_qmblk_lock(tmpl->i_sb);
+	if (unlikely(tmpl->i_flags & S_NOQUOTA)) {
+		inode_qmblk_unlock(tmpl->i_sb);
+		return;
+	}
+	__vzquota_inode_init(tmpl, VZ_QUOTAO_INICAL);
+
+	qmblk = INODE_QLNK(tmpl)->qmblk;
+	if (qmblk != VZ_QUOTA_BAD) {
 		void * uq;
 		list_del_init(&INODE_QLNK(tmpl)->list);
 		vzquota_qlnk_swap(INODE_QLNK(tmpl), INODE_QLNK(inode));
@@ -1295,19 +1302,12 @@ void vzquota_inode_swap_call(struct inode *inode, struct inode *tmpl)
 		inode->i_dquot[USRQUOTA] = tmpl->i_dquot[USRQUOTA];
 		tmpl->i_dquot[USRQUOTA] = uq;
 		tmpl->i_flags |= S_NOQUOTA;
-		vzquota_data_unlock(inode, &data);
+		inode_qmblk_unlock(inode->i_sb);
 
 		vzquota_inode_drop(tmpl);
+	} else {
+		inode_qmblk_unlock(tmpl->i_sb);
 	}
-
-	/*
-	 * The check is needed for repeated new_inode() calls from a single
-	 * ext3 call like create or mkdir in case of -ENOSPC.
-	 */
-	spin_lock(&dcache_lock);
-	if (!list_empty(&inode->i_dentry))
-		vzquota_cur_qmblk_set(inode);
-	spin_unlock(&dcache_lock);
 }
 
 
