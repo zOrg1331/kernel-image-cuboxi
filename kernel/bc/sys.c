@@ -150,17 +150,25 @@ asmlinkage long sys_ubstat(int func, unsigned long arg1, unsigned long arg2,
 }
 
 #ifdef CONFIG_COMPAT
-asmlinkage long compat_sys_setublimit(uid_t uid, int resource,
-		unsigned int __user *limits)
+#define UB_MAXVALUE_COMPAT ((1UL << (sizeof(compat_long_t) * 8 - 1)) - 1)
+
+asmlinkage long compat_sys_setublimit(uid_t uid,
+		compat_long_t resource,
+		compat_long_t __user *limits)
 {
-	unsigned int u_new_limits[2];
+	compat_long_t u_new_limits[2];
 	unsigned long new_limits[2];
 
-        if (copy_from_user(&u_new_limits, limits, sizeof(u_new_limits)))
-                return -EFAULT;
+	if (copy_from_user(&u_new_limits, limits, sizeof(u_new_limits)))
+		return -EFAULT;
 
 	new_limits[0] = u_new_limits[0];
 	new_limits[1] = u_new_limits[1];
+
+	if (u_new_limits[0] == UB_MAXVALUE_COMPAT)
+		new_limits[0] = UB_MAXVALUE;
+	if (u_new_limits[1] == UB_MAXVALUE_COMPAT)
+		new_limits[1] = UB_MAXVALUE;
 
 	return do_setublimit(uid, resource, new_limits);
 }
