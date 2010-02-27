@@ -247,6 +247,7 @@ static struct net_device_stats *get_stats(struct net_device *dev)
 		stats->tx_bytes   += dev_stats->tx_bytes;
 		stats->rx_packets += dev_stats->rx_packets;
 		stats->tx_packets += dev_stats->tx_packets;
+		stats->tx_dropped += dev_stats->tx_dropped;
 	}
 
 	return stats;
