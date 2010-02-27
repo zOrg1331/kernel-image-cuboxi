@@ -636,6 +636,98 @@ out:
 	return err;
 }
 
+static unsigned long fold_field(void *mib[], int offt)
+{
+	unsigned long res = 0;
+	int i;
+
+	for_each_possible_cpu(i) {
+		res += *(((unsigned long *) per_cpu_ptr(mib[0], i)) + offt);
+		res += *(((unsigned long *) per_cpu_ptr(mib[1], i)) + offt);
+	}
+	return res;
+}
+
+static void cpt_dump_snmp_stat(struct cpt_context *ctx, void *mib[], int n)
+{
+	int i;
+	struct cpt_object_hdr o;
+	__u32 *stats;
+
+	stats = cpt_get_buf(ctx);
+
+	cpt_open_object(NULL, ctx);
+
+	for (i = 0; i < n; i++)
+		stats[i] = fold_field(mib, i);
+
+ 	o.cpt_next = CPT_NULL;
+	o.cpt_object = CPT_OBJ_BITS;
+	o.cpt_hdrlen = sizeof(o);
+	o.cpt_content = CPT_CONTENT_DATA;
+
+	ctx->write(&o, sizeof(o), ctx);
+	ctx->write(stats, n * sizeof(*stats), ctx);
+	ctx->align(ctx);
+
+	cpt_close_object(ctx);
+
+	cpt_release_buf(ctx);
+}
+
+static void cpt_dump_snmp_stub(struct cpt_context *ctx)
+{
+	struct cpt_object_hdr o;
+
+	cpt_open_object(NULL, ctx);
+ 	o.cpt_next = CPT_NULL;
+	o.cpt_object = CPT_OBJ_BITS;
+	o.cpt_hdrlen = sizeof(o);
+	o.cpt_content = CPT_CONTENT_VOID;
+	ctx->write(&o, sizeof(o), ctx);
+	ctx->align(ctx);
+	cpt_close_object(ctx);
+}
+
+static int cpt_dump_snmp(struct cpt_context *ctx)
+{
+	struct ve_struct *ve;
+	struct net *net;
+
+	ve = get_exec_env();
+	net = ve->ve_netns;
+
+	cpt_open_section(ctx, CPT_SECT_SNMP_STATS);
+
+	cpt_dump_snmp_stat(ctx, (void **)&net->mib.net_statistics,
+				LINUX_MIB_MAX);
+	cpt_dump_snmp_stat(ctx, (void **)&net->mib.ip_statistics,
+				IPSTATS_MIB_MAX);
+	cpt_dump_snmp_stat(ctx, (void **)&net->mib.tcp_statistics,
+				TCP_MIB_MAX);
+	cpt_dump_snmp_stat(ctx, (void **)&net->mib.udp_statistics,
+				UDP_MIB_MAX);
+	cpt_dump_snmp_stat(ctx, (void **)&net->mib.icmp_statistics,
+				ICMP_MIB_MAX);
+	cpt_dump_snmp_stat(ctx, (void **)&net->mib.icmpmsg_statistics,
+				ICMPMSG_MIB_MAX);
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+	cpt_dump_snmp_stat(ctx, (void **)&ve->_ipv6_statistics,
+				IPSTATS_MIB_MAX);
+	cpt_dump_snmp_stat(ctx, (void **)&ve->_udp_stats_in6,
+				UDP_MIB_MAX);
+	cpt_dump_snmp_stat(ctx, (void **)&ve->_icmpv6_statistics,
+				ICMP6_MIB_MAX);
+#else
+	cpt_dump_snmp_stub(ctx);
+	cpt_dump_snmp_stub(ctx);
+	cpt_dump_snmp_stub(ctx);
+#endif
+	cpt_close_section(ctx);
+
+	return 0;
+}
+
 int cpt_dump_ifinfo(struct cpt_context * ctx)
 {
 	int err;
@@ -649,5 +741,7 @@ int cpt_dump_ifinfo(struct cpt_context * ctx)
 		err = cpt_dump_route(ctx);
 	if (!err)
 		err = cpt_dump_iptables(ctx);
+	if (!err)
+		err = cpt_dump_snmp(ctx);
 	return err;
 }

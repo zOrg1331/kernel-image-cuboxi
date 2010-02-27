@@ -797,6 +797,120 @@ out:
 	return err;
 }
 
+static int rst_restore_snmp_stat(struct cpt_context *ctx, void *mib[], int n,
+		loff_t *ppos, loff_t endpos)
+{
+	int err, in, i;
+	struct cpt_object_hdr o;
+	__u32 *stats;
+
+	err = rst_get_object(CPT_OBJ_BITS, *ppos, &o, ctx);
+	if (err)
+		return err;
+
+	in = o.cpt_next - o.cpt_hdrlen;
+	if (in >= PAGE_SIZE - 4) {
+		eprintk_ctx("Too long SNMP buf (%d)\n", in);
+		return -EINVAL;
+	}
+
+	if (o.cpt_content != CPT_CONTENT_DATA) {
+		if (o.cpt_content == CPT_CONTENT_VOID)
+			return 1;
+
+		eprintk_ctx("Corrupted SNMP stats\n");
+		return -EINVAL;
+	}
+
+	stats = cpt_get_buf(ctx);
+	err = ctx->pread(stats, in, ctx, (*ppos) + o.cpt_hdrlen);
+	if (err)
+		goto out;
+
+	in /= sizeof(*stats);
+	if (in > n)
+		wprintk_ctx("SNMP stats trimmed\n");
+	else
+		n = in;
+
+	for (i = 0; i < n; i++)
+		*((unsigned long *)(per_cpu_ptr(mib[0], 0)) + i) = stats[i];
+
+	*ppos += o.cpt_next;
+	if (*ppos < endpos)
+		err = 1; /* go on restoring */
+out:
+	cpt_release_buf(ctx);
+	return err;
+}
+
+static int rst_restore_snmp(struct cpt_context *ctx)
+{
+	int err;
+	loff_t sec = ctx->sections[CPT_SECT_SNMP_STATS];
+	loff_t endsec;
+	struct cpt_section_hdr h;
+	struct ve_struct *ve;
+	struct net *net;
+
+	if (sec == CPT_NULL)
+		return 0;
+
+	err = ctx->pread(&h, sizeof(h), ctx, sec);
+	if (err)
+		return err;
+	if (h.cpt_section != CPT_SECT_SNMP_STATS || h.cpt_hdrlen < sizeof(h))
+		return -EINVAL;
+
+	ve = get_exec_env();
+	net = ve->ve_netns;
+	endsec = sec + h.cpt_next;
+	sec += h.cpt_hdrlen;
+	if (sec >= endsec)
+		goto out;
+
+	err = rst_restore_snmp_stat(ctx, (void **)&net->mib.net_statistics,
+			LINUX_MIB_MAX, &sec, endsec);
+	if (err <= 0)
+		goto out;
+	err = rst_restore_snmp_stat(ctx, (void **)&net->mib.ip_statistics,
+			IPSTATS_MIB_MAX, &sec, endsec);
+	if (err <= 0)
+		goto out;
+	err = rst_restore_snmp_stat(ctx, (void **)&net->mib.tcp_statistics,
+			TCP_MIB_MAX, &sec, endsec);
+	if (err <= 0)
+		goto out;
+	err = rst_restore_snmp_stat(ctx, (void **)&net->mib.udp_statistics,
+			UDP_MIB_MAX, &sec, endsec);
+	if (err <= 0)
+		goto out;
+	err = rst_restore_snmp_stat(ctx, (void **)&net->mib.icmp_statistics,
+			ICMP_MIB_MAX, &sec, endsec);
+	if (err <= 0)
+		goto out;
+	err = rst_restore_snmp_stat(ctx, (void **)&net->mib.icmpmsg_statistics,
+			ICMPMSG_MIB_MAX, &sec, endsec);
+	if (err <= 0)
+		goto out;
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+	err = rst_restore_snmp_stat(ctx, (void **)&ve->_ipv6_statistics,
+			IPSTATS_MIB_MAX, &sec, endsec);
+	if (err <= 0)
+		goto out;
+	err = rst_restore_snmp_stat(ctx, (void **)&ve->_udp_stats_in6,
+			UDP_MIB_MAX, &sec, endsec);
+	if (err <= 0)
+		goto out;
+	err = rst_restore_snmp_stat(ctx, (void **)&ve->_icmpv6_statistics,
+			ICMP6_MIB_MAX, &sec, endsec);
+#endif
+	if (err == 1)
+		err = 0;
+out:
+	return err;
+}
+
 int rst_restore_net(struct cpt_context *ctx)
 {
 	int err;
@@ -810,5 +924,7 @@ int rst_restore_net(struct cpt_context *ctx)
 		err = rst_restore_iptables(ctx);
 	if (!err)
 		err = rst_restore_ip_conntrack(ctx);
+	if (!err)
+		err = rst_restore_snmp(ctx);
 	return err;
 }
