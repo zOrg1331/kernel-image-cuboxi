@@ -53,6 +53,7 @@
 #include <linux/freezer.h>
 #include <linux/pid_namespace.h>
 #include <linux/tty.h>
+#include <linux/oom.h>
 
 #include <net/route.h>
 #include <net/ip_fib.h>
@@ -887,6 +888,10 @@ void ve_move_task(struct task_struct *tsk, struct ve_struct *new)
 		tsk->mm->vps_dumpable = 0;
 	/* setup capabilities before enter */
 	set_task_ve_caps(tsk, new);
+
+	/* Drop OOM protection. */
+	if (tsk->oomkilladj == OOM_DISABLE)
+		tsk->oomkilladj = 0;
 
 	old = tsk->ve_task_info.owner_env;
 	tsk->ve_task_info.owner_env = new;
