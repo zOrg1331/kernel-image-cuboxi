@@ -119,6 +119,7 @@ struct cpt_major_hdr
 #define CPT_VERSION_16		0x200
 #define CPT_VERSION_18		0x300
 #define CPT_VERSION_18_1	0x301
+#define CPT_VERSION_18_2	0x302
 #define CPT_VERSION_20		0x400
 #define CPT_VERSION_24		0x500
 #define CPT_VERSION_26		0x600

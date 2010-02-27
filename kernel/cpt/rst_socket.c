@@ -235,7 +235,7 @@ static int generic_restore_queues(struct sock *sk, struct cpt_sock_image *si,
 		struct sk_buff *skb;
 		__u32 type;
 
-		skb = rst_skb(&pos, NULL, &type, ctx);
+		skb = rst_skb(sk, &pos, NULL, &type, ctx);
 		if (IS_ERR(skb)) {
 			if (PTR_ERR(skb) == -EINVAL) {
 				int err;
@@ -570,7 +570,53 @@ int rst_sock_attr(loff_t *pos_p, struct sock *sk, cpt_context_t *ctx)
 	return err;
 }
 
-struct sk_buff * rst_skb(loff_t *pos_p, __u32 *owner, __u32 *queue, struct cpt_context *ctx)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+static void rst_tcp_cb_ipv4_to_ipv6(struct cpt_skb_image *v, struct sk_buff *skb)
+{
+	BUG_ON(sizeof(skb->cb) - sizeof(struct inet6_skb_parm) <
+	       sizeof(struct tcp_skb_cb) - sizeof(struct inet6_skb_parm));
+	memcpy(skb->cb, v->cpt_cb, sizeof(struct inet_skb_parm));
+	memcpy(skb->cb + sizeof(struct inet6_skb_parm),
+	       (void *)v->cpt_cb + sizeof(struct inet_skb_parm),
+	       sizeof(struct tcp_skb_cb) - sizeof(struct inet6_skb_parm));
+}
+#else
+static void rst_tcp_cb_ipv6_to_ipv4(struct cpt_skb_image *v, struct sk_buff *skb)
+{
+	BUG_ON(sizeof(v->cpt_cb) - sizeof(struct inet6_skb_parm) <
+	       sizeof(struct tcp_skb_cb) - sizeof(struct inet_skb_parm));
+	memcpy(skb->cb, v->cpt_cb, sizeof(struct inet_skb_parm));
+	memcpy(skb->cb + sizeof(struct inet_skb_parm),
+	       (void *)v->cpt_cb + sizeof(struct inet6_skb_parm),
+	       sizeof(struct tcp_skb_cb) - sizeof(struct inet_skb_parm));
+}
+#endif
+
+struct tcp_skb_cb_ipv6 {
+	union {
+		struct inet_skb_parm	h4;
+		struct inet6_skb_parm	h6;
+	} header;
+	__u32		seq;
+	__u32		end_seq;
+	__u32		when;
+	__u8		flags;
+	__u8		sacked;
+	__u16		urg_ptr;
+	__u32		ack_seq;
+};
+
+#define check_tcp_cb_conv(op1, op2) do {			\
+	if (!ctx->tcp_cb_convert)				\
+		ctx->tcp_cb_convert = CPT_TCP_CB_##op1;		\
+	else if (ctx->tcp_cb_convert == CPT_TCP_CB_##op2) {	\
+		kfree_skb(skb);					\
+		return ERR_PTR(-EINVAL);			\
+	}							\
+} while (0)
+
+struct sk_buff * rst_skb(struct sock *sk, loff_t *pos_p, __u32 *owner,
+			 __u32 *queue, struct cpt_context *ctx)
 {
 	int err;
 	struct sk_buff *skb;
@@ -604,7 +650,34 @@ struct sk_buff * rst_skb(loff_t *pos_p, __u32 *owner, __u32 *queue, struct cpt_c
 	skb->mac_header = skb->head + v.cpt_mac;
 #endif
 	BUILD_BUG_ON(sizeof(skb->cb) < sizeof(v.cpt_cb));
-	memcpy(skb->cb, v.cpt_cb, sizeof(v.cpt_cb));
+	if (sk->sk_protocol == IPPROTO_TCP) {
+		/* 
+		 * According to Alexey all packets in queue have non-zero
+		 * flags, as at least TCPCB_FLAG_ACK is set on them.
+		 * Luckily for us, offset of field flags in tcp_skb_cb struct
+		 * with IPv6 is higher then total size of tcp_skb_cb struct
+		 * without IPv6.
+		 */
+		if (ctx->image_version >= CPT_VERSION_18_2 ||
+				((struct tcp_skb_cb_ipv6 *)&v.cpt_cb)->flags) {
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+			check_tcp_cb_conv(NOT_CONV, CONV);
+			memcpy(skb->cb, v.cpt_cb, sizeof(v.cpt_cb));
+#else
+			check_tcp_cb_conv(CONV, NOT_CONV);
+			rst_tcp_cb_ipv6_to_ipv4(&v, skb);
+#endif
+		} else {
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+			check_tcp_cb_conv(CONV, NOT_CONV);
+			rst_tcp_cb_ipv4_to_ipv6(&v, skb);
+#else
+			check_tcp_cb_conv(NOT_CONV, CONV);
+			memcpy(skb->cb, v.cpt_cb, sizeof(v.cpt_cb));
+#endif
+		}
+	} else
+		memcpy(skb->cb, v.cpt_cb, sizeof(v.cpt_cb));
 	skb->mac_len = v.cpt_mac_len;
 
 	skb->csum = v.cpt_csum;
@@ -682,7 +755,7 @@ static int restore_unix_rqueue(struct sock *sk, struct cpt_sock_image *si,
 		struct sock *owner_sk;
 		__u32 owner;
 
-		skb = rst_skb(&pos, &owner, NULL, ctx);
+		skb = rst_skb(sk, &pos, &owner, NULL, ctx);
 		if (IS_ERR(skb)) {
 			if (PTR_ERR(skb) == -EINVAL) {
 				int err;
