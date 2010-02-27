@@ -291,6 +291,9 @@ struct ve_struct {
 int init_ve_cgroups(struct ve_struct *ve);
 void fini_ve_cgroups(struct ve_struct *ve);
 
+#define VE_MEMINFO_DEFAULT	1	/* default behaviour */
+#define VE_MEMINFO_SYSTEM	0	/* disable meminfo virtualization */
+
 #define VE_CPU_STATS(ve, cpu)	(per_cpu_ptr((ve)->cpu_stats, cpu))
 
 extern int nr_ve;
