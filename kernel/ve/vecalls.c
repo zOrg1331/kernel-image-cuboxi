@@ -37,6 +37,7 @@
 #include <linux/proc_fs.h>
 #include <linux/devpts_fs.h>
 #include <linux/shmem_fs.h>
+#include <linux/user_namespace.h>
 #include <linux/sysfs.h>
 #include <linux/seq_file.h>
 #include <linux/kernel_stat.h>
@@ -622,8 +623,8 @@ static inline int init_ve_namespaces(struct ve_struct *ve,
 	tsk = current;
 	cur = tsk->nsproxy;
 
-	err = copy_namespaces(CLONE_NEWUTS | CLONE_NEWIPC
-			| CLONE_NEWUSER | CLONE_NEWPID, tsk, 1);
+	err = copy_namespaces(CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWPID,
+			tsk, 1);
 	if (err < 0)
 		return err;
 
@@ -652,6 +653,7 @@ static inline void fini_ve_namespaces(struct ve_struct *ve,
 		ve->ve_ns = get_nsproxy(old);
 		put_nsproxy(tmp);
 	} else {
+		put_user_ns(ve->user_ns);
 		put_nsproxy(ve->ve_ns);
 		ve->ve_ns = NULL;
 	}
@@ -861,6 +863,8 @@ void ve_move_task(struct task_struct *tsk, struct ve_struct *new, struct cred *n
 	get_ve(new);
 
 	tsk->cgroups = new->ve_css_set;
+
+	new->user_ns = get_user_ns(new_creds->user->user_ns);
 }
 
 EXPORT_SYMBOL(ve_move_task);
@@ -1158,6 +1162,9 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	if (new_creds == NULL)
 		goto err_creds;
 
+	if ((err = create_user_ns(new_creds)) < 0)
+		goto err_uns;
+
 	if ((err = ve_hook_iterate_init(VE_SS_CHAIN, ve)) < 0)
 		goto err_ve_hook;
 
@@ -1174,6 +1181,8 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 	return veid;
 
 err_ve_hook:
+	/* creds will put user and user ns */
+err_uns:
 	abort_creds(new_creds);
 err_creds:
 	mntget(ve->proc_mnt);
