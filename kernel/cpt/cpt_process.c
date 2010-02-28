@@ -23,6 +23,7 @@
 #include <linux/cpt_image.h>
 #include <linux/nsproxy.h>
 #include <linux/futex.h>
+#include <linux/posix-timers.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -594,18 +595,23 @@ static int dump_one_signal_struct(cpt_object_t *obj, struct cpt_context *ctx)
 	v->cpt_hdrlen = sizeof(*v);
 	v->cpt_content = CPT_CONTENT_ARRAY;
 
+	v->cpt_pgrp_type = CPT_PGRP_NORMAL;
+	v->cpt_pgrp = 0;
+
+#if 0 /* the code below seems to be unneeded */
 	if (sig->__pgrp <= 0) {
 		eprintk_ctx("bad pgid\n");
 		cpt_release_buf(ctx);
 		return -EINVAL;
 	}
-	v->cpt_pgrp_type = CPT_PGRP_NORMAL;
+
 	read_lock(&tasklist_lock);
 	tsk = find_task_by_pid_ns(sig->__pgrp, &init_pid_ns);
 	if (tsk == NULL)
 		v->cpt_pgrp_type = CPT_PGRP_ORPHAN;
 	read_unlock(&tasklist_lock);
 	v->cpt_pgrp = pid_to_vpid(sig->__pgrp);
+#endif
 
 	v->cpt_old_pgrp = 0;
 /*	if (!sig->tty_old_pgrp) {
@@ -635,18 +641,22 @@ static int dump_one_signal_struct(cpt_object_t *obj, struct cpt_context *ctx)
 		}
 	}
 
+	v->cpt_session_type = CPT_PGRP_NORMAL;
+	v->cpt_session = 0;
+
+#if 0 /* the code below seems to be unneeded */
 	if (sig->__session <= 0) {
 		eprintk_ctx("bad session\n");
 		cpt_release_buf(ctx);
 		return -EINVAL;
 	}
-	v->cpt_session_type = CPT_PGRP_NORMAL;
 	read_lock(&tasklist_lock);
 	tsk = find_task_by_pid_ns(sig->__session, &init_pid_ns);
 	if (tsk == NULL)
 		v->cpt_session_type = CPT_PGRP_ORPHAN;
 	read_unlock(&tasklist_lock);
 	v->cpt_session = pid_to_vpid(sig->__session);
+#endif
 
 	v->cpt_leader = sig->leader;
 	v->cpt_ctty = CPT_NULL;
@@ -717,7 +727,7 @@ int cpt_check_unsupported(struct task_struct *tsk, cpt_context_t *ctx)
 		return -EBUSY;
 	}
 #ifdef CONFIG_KEYS
-	if (tsk->request_key_auth || tsk->thread_keyring) {
+	if (tsk->cred->request_key_auth || tsk->cred->thread_keyring) {
 		eprintk_ctx("keys are used by " CPT_FID "\n", CPT_TID(tsk));
 		return -EBUSY;
 	}
@@ -740,6 +750,7 @@ int cpt_check_unsupported(struct task_struct *tsk, cpt_context_t *ctx)
 static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 {
 	struct task_struct *tsk = obj->o_obj;
+	const struct cred *cred;
 	int last_thread;
 	struct cpt_task_image *v = cpt_get_buf(ctx);
 	cpt_object_t *tobj;
@@ -901,18 +912,20 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 	v->cpt_set_tid = (unsigned long)tsk->set_child_tid;
 	v->cpt_clear_tid = (unsigned long)tsk->clear_child_tid;
 	memcpy(v->cpt_comm, tsk->comm, 16);
-	v->cpt_user = tsk->user->uid;
-	v->cpt_uid = tsk->uid;
-	v->cpt_euid = tsk->euid;
-	v->cpt_suid = tsk->suid;
-	v->cpt_fsuid = tsk->fsuid;
-	v->cpt_gid = tsk->gid;
-	v->cpt_egid = tsk->egid;
-	v->cpt_sgid = tsk->sgid;
-	v->cpt_fsgid = tsk->fsgid;
+
+	cred = tsk->cred;
+	v->cpt_user = cred->user->uid;
+	v->cpt_uid = cred->uid;
+	v->cpt_euid = cred->euid;
+	v->cpt_suid = cred->suid;
+	v->cpt_fsuid = cred->fsuid;
+	v->cpt_gid = cred->gid;
+	v->cpt_egid = cred->egid;
+	v->cpt_sgid = cred->sgid;
+	v->cpt_fsgid = cred->fsgid;
 	v->cpt_ngids = 0;
-	if (tsk->group_info && tsk->group_info->ngroups != 0) {
-		int i = tsk->group_info->ngroups;
+	if (cred->group_info && cred->group_info->ngroups != 0) {
+		int i = cred->group_info->ngroups;
 		if (i > 32) {
 			/* Shame... I did a simplified version and _forgot_
 			 * about this. Later, later. */
@@ -921,7 +934,7 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 		}
 		v->cpt_ngids = i;
 		for (i--; i>=0; i--)
-			v->cpt_gids[i] = tsk->group_info->small_block[i];
+			v->cpt_gids[i] = cred->group_info->small_block[i];
 	}
 	v->cpt_prctl_uac = 0;
 	v->cpt_prctl_fpemu = 0;
@@ -930,10 +943,10 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 	v->cpt_prctl_uac = (tsk->thread.flags & IA64_THREAD_UAC_MASK) >> IA64_THREAD_UAC_SHIFT;
 	v->cpt_prctl_fpemu = (tsk->thread.flags & IA64_THREAD_FPEMU_MASK) >> IA64_THREAD_FPEMU_SHIFT;
 #endif
-	memcpy(&v->cpt_ecap, &tsk->cap_effective, 8);
-	memcpy(&v->cpt_icap, &tsk->cap_inheritable, 8);
-	memcpy(&v->cpt_pcap, &tsk->cap_permitted, 8);
-	v->cpt_keepcap = tsk->securebits;
+	memcpy(&v->cpt_ecap, &cred->cap_effective, 8);
+	memcpy(&v->cpt_icap, &cred->cap_inheritable, 8);
+	memcpy(&v->cpt_pcap, &cred->cap_permitted, 8);
+	v->cpt_keepcap = cred->securebits;
 
 	v->cpt_did_exec = tsk->did_exec;
 	v->cpt_exec_domain = -1;
@@ -1042,8 +1055,8 @@ continue_dump:
 		ktime_t rem;
 
 		v->cpt_it_real_incr = ktime_to_ns(tsk->signal->it_real_incr);
-		v->cpt_it_prof_incr = tsk->signal->it_prof_incr;
-		v->cpt_it_virt_incr = tsk->signal->it_virt_incr;
+		v->cpt_it_prof_incr = tsk->signal->it[CPUCLOCK_PROF].incr;
+		v->cpt_it_virt_incr = tsk->signal->it[CPUCLOCK_VIRT].incr;
 
 		rem = hrtimer_get_remaining(&tsk->signal->real_timer);
 
@@ -1053,8 +1066,8 @@ continue_dump:
 			v->cpt_it_real_value = ktime_to_ns(rem);
 			dprintk("cpt itimer " CPT_FID " %Lu\n", CPT_TID(tsk), (unsigned long long)v->cpt_it_real_value);
 		}
-		v->cpt_it_prof_value = tsk->signal->it_prof_expires;
-		v->cpt_it_virt_value = tsk->signal->it_virt_expires;
+		v->cpt_it_prof_value = tsk->signal->it[CPUCLOCK_PROF].expires;
+		v->cpt_it_virt_value = tsk->signal->it[CPUCLOCK_VIRT].expires;
 	}
 	v->cpt_used_math = (tsk_used_math(tsk) != 0);
 

@@ -14,6 +14,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
+#include <linux/posix-timers.h>
 #include <linux/slab.h>
 #include <linux/file.h>
 #include <linux/mm.h>
@@ -185,7 +186,7 @@ static int restore_sigqueue(struct task_struct *tsk,
 			struct sigqueue *q = NULL;
 			struct user_struct *up;
 
-			up = alloc_uid(get_exec_env()->ve_ns->user_ns, si->cpt_user);
+			up = alloc_uid(get_exec_env()->user_ns, si->cpt_user);
 			if (!up)
 				return -ENOMEM;
 			q = kmem_cache_alloc(sigqueue_cachep, GFP_ATOMIC);
@@ -232,21 +233,19 @@ int rst_process_linkage(cpt_context_t *ctx)
 			struct pid *pid;
 
 			rcu_read_lock();
-			pid = find_vpid(ti->cpt_pgrp);
+			pid = alloc_vpid_safe(ti->cpt_pgrp);
 			if (!pid) {
 				eprintk_ctx("illegal PGRP " CPT_FID "\n", CPT_TID(tsk));
 				return -EINVAL;
 			}
 
 			write_lock_irq(&tasklist_lock);
-			if (task_pgrp_nr(tsk) != pid_nr(pid)) {
-				detach_pid(tsk, PIDTYPE_PGID);
-				set_task_pgrp(tsk, pid_nr(pid));
-				if (thread_group_leader(tsk))
-					attach_pid(tsk, PIDTYPE_PGID, pid);
-			}
+			detach_pid(tsk, PIDTYPE_PGID);
+			if (thread_group_leader(tsk))
+				attach_pid(tsk, PIDTYPE_PGID, pid);
 			write_unlock_irq(&tasklist_lock);
-			if (task_pgrp_nr(tsk) != pid_nr(pid)) {
+
+			if (task_pgrp_vnr(tsk) != pid_vnr(pid)) {
 				eprintk_ctx("cannot set PGRP " CPT_FID "\n", CPT_TID(tsk));
 				return -EINVAL;
 			}
@@ -256,21 +255,19 @@ int rst_process_linkage(cpt_context_t *ctx)
 			struct pid *pid;
 
 			rcu_read_lock();
-			pid = find_vpid(ti->cpt_session);
+			pid = alloc_vpid_safe(ti->cpt_session);
 			if (!pid) {
 				eprintk_ctx("illegal SID " CPT_FID "\n", CPT_TID(tsk));
 				return -EINVAL;
 			}
 
 			write_lock_irq(&tasklist_lock);
-			if (task_session_nr(tsk) != pid_nr(pid)) {
-				detach_pid(tsk, PIDTYPE_SID);
-				set_task_session(tsk, pid_nr(pid));
-				if (thread_group_leader(tsk))
-					attach_pid(tsk, PIDTYPE_SID, pid);
-			}
+			detach_pid(tsk, PIDTYPE_SID);
+			if (thread_group_leader(tsk))
+				attach_pid(tsk, PIDTYPE_SID, pid);
 			write_unlock_irq(&tasklist_lock);
-			if (task_session_nr(tsk) != pid_nr(pid)) {
+
+			if (task_session_vnr(tsk) != pid_vnr(pid)) {
 				eprintk_ctx("cannot set SID " CPT_FID "\n", CPT_TID(tsk));
 				return -EINVAL;
 			}
@@ -317,6 +314,7 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 		return err;
 	}
 
+#if 0 /* this should have been restored in rst_process_linkage */
 	if (task_pgrp_vnr(current) != si->cpt_pgrp) {
 		struct pid * pid = NULL, *free = NULL;
 
@@ -336,7 +334,6 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 		if (pid != NULL) {
 			if (task_pgrp_nr(current) != pid_nr(pid)) {
 				detach_pid(current, PIDTYPE_PGID);
-				set_task_pgrp(current, pid_nr(pid));
 				if (thread_group_leader(current)) {
 					attach_pid(current, PIDTYPE_PGID, pid);
 					free = NULL;
@@ -348,6 +345,7 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 			free_pid(free);
 		rcu_read_unlock();
 	}
+#endif
 
 	current->signal->tty_old_pgrp = NULL;
 	if ((int)si->cpt_old_pgrp > 0) {
@@ -371,6 +369,7 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 		}
 	}
 
+#if 0 /* this should have been restored in rst_process_linkage */
 	if (task_session_vnr(current) != si->cpt_session) {
 		struct pid * pid = NULL, *free = NULL;
 
@@ -404,6 +403,7 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 			free_pid(free);
 		rcu_read_unlock();
 	}
+#endif
 
 	cpt_sigset_import(&current->signal->shared_pending.signal, si->cpt_sigpending);
 	current->signal->leader = si->cpt_leader;
@@ -719,7 +719,7 @@ static void rst_last_siginfo(void)
 		info->si_errno = 0;
 		info->si_code = SI_USER;
 		info->si_pid = task_pid_vnr(current->parent);
-		info->si_uid = current->parent->uid;
+		info->si_uid = current->parent->cred->uid;
 	}
 
 	/* If the (new) signal is now blocked, requeue it.  */
@@ -1205,7 +1205,6 @@ int rst_restore_process(struct cpt_context *ctx)
 		struct pt_regs * regs;
 		struct cpt_object_hdr *b;
 		struct cpt_siginfo_image *lsi = NULL;
-		struct group_info *gids, *ogids;
 		struct resume_info *ri = NULL;
 		int i;
 		int err = 0;
@@ -1256,37 +1255,11 @@ int rst_restore_process(struct cpt_context *ctx)
 		cpt_sigset_import(&tsk->saved_sigmask, ti->cpt_sigsuspend_blocked);
 		cpt_sigset_import(&tsk->pending.signal, ti->cpt_sigpending);
 
-		tsk->uid = ti->cpt_uid;
-		tsk->euid = ti->cpt_euid;
-		tsk->suid = ti->cpt_suid;
-		tsk->fsuid = ti->cpt_fsuid;
-		tsk->gid = ti->cpt_gid;
-		tsk->egid = ti->cpt_egid;
-		tsk->sgid = ti->cpt_sgid;
-		tsk->fsgid = ti->cpt_fsgid;
 #ifdef CONFIG_IA64
 		SET_UNALIGN_CTL(tsk, ti->cpt_prctl_uac);
 		SET_FPEMU_CTL(tsk, ti->cpt_prctl_fpemu);
 #endif
-		memcpy(&tsk->cap_effective, &ti->cpt_ecap, sizeof(tsk->cap_effective));
-		memcpy(&tsk->cap_inheritable, &ti->cpt_icap, sizeof(tsk->cap_inheritable));
-		memcpy(&tsk->cap_permitted, &ti->cpt_pcap, sizeof(tsk->cap_permitted));
-		if (ctx->image_version < CPT_VERSION_26)
-			tsk->securebits = (ti->cpt_keepcap != 0) ?
-				issecure_mask(SECURE_KEEP_CAPS) : 0;
-		else
-			tsk->securebits = ti->cpt_keepcap;
 		tsk->did_exec = (ti->cpt_did_exec != 0);
-		gids = groups_alloc(ti->cpt_ngids);
-		ogids = tsk->group_info;
-		if (gids) {
-			int i;
-			for (i=0; i<32; i++)
-				gids->small_block[i] = ti->cpt_gids[i];
-			tsk->group_info = gids;
-		}
-		if (ogids)
-			put_group_info(ogids);
 		tsk->utime = ti->cpt_utime;
 		tsk->stime = ti->cpt_stime;
 		if (ctx->image_version == CPT_VERSION_8)
@@ -1596,8 +1569,8 @@ int rst_restore_process(struct cpt_context *ctx)
 		if (ti->cpt_state == TASK_TRACED)
 			tsk->state = TASK_TRACED;
 		else if (ti->cpt_state & (EXIT_ZOMBIE|EXIT_DEAD)) {
-			tsk->signal->it_virt_expires = 0;
-			tsk->signal->it_prof_expires = 0;
+			tsk->signal->it[CPUCLOCK_VIRT].expires = 0;
+			tsk->signal->it[CPUCLOCK_PROF].expires = 0;
 			if (tsk->state != TASK_DEAD)
 				eprintk_ctx("oops, schedule() did not make us dead\n");
 		}

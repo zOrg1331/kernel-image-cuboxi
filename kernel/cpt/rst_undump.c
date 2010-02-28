@@ -16,11 +16,13 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/file.h>
+#include <linux/fs_struct.h>
 #include <linux/mm.h>
 #include <linux/errno.h>
 #include <linux/pagemap.h>
 #include <linux/poll.h>
 #include <linux/mnt_namespace.h>
+#include <linux/posix-timers.h>
 #include <linux/personality.h>
 #include <linux/binfmts.h>
 #include <linux/smp_lock.h>
@@ -29,6 +31,7 @@
 #include <linux/virtinfoscp.h>
 #include <linux/compat.h>
 #include <linux/vzcalluser.h>
+#include <linux/securebits.h>
 #include <bc/beancounter.h>
 #ifdef CONFIG_X86
 #include <asm/desc.h>
@@ -160,6 +163,68 @@ static int vps_rst_reparent_root(cpt_object_t *obj, struct cpt_context *ctx)
 	return err < 0 ? err : 0;
 }
 
+
+static int rst_creds(struct cpt_task_image *ti, struct cpt_context *ctx)
+{
+	struct cred *cred;
+	struct user_struct *user;
+	struct group_info *gids;
+	int i;
+
+	cred = prepare_creds();
+	if (cred == NULL)
+		goto err_cred;
+
+	user = alloc_uid(get_exec_env()->user_ns, ti->cpt_user);
+	if (user == NULL)
+		goto err_uid;
+
+	gids = groups_alloc(ti->cpt_ngids);
+	if (gids == NULL)
+		goto err_gids;
+
+	free_uid(cred->user);
+	cred->user = user;
+
+	for (i=0; i<32; i++)
+		gids->small_block[i] = ti->cpt_gids[i];
+
+	put_group_info(cred->group_info);
+	cred->group_info = gids;
+
+	cred->uid = ti->cpt_uid;
+	cred->euid = ti->cpt_euid;
+	cred->suid = ti->cpt_suid;
+	cred->fsuid = ti->cpt_fsuid;
+	cred->gid = ti->cpt_gid;
+	cred->egid = ti->cpt_egid;
+	cred->sgid = ti->cpt_sgid;
+	cred->fsgid = ti->cpt_fsgid;
+
+	memcpy(&cred->cap_effective, &ti->cpt_ecap,
+			sizeof(cred->cap_effective));
+	memcpy(&cred->cap_inheritable, &ti->cpt_icap,
+			sizeof(cred->cap_inheritable));
+	memcpy(&cred->cap_permitted, &ti->cpt_pcap,
+			sizeof(cred->cap_permitted));
+
+	if (ctx->image_version < CPT_VERSION_26)
+		cred->securebits = (ti->cpt_keepcap != 0) ?
+			issecure_mask(SECURE_KEEP_CAPS) : 0;
+	else
+		cred->securebits = ti->cpt_keepcap;
+
+	commit_creds(cred);
+	return 0;
+
+err_gids:
+	free_uid(user);
+err_uid:
+	abort_creds(cred);
+err_cred:
+	return -ENOMEM;
+}
+
 static int hook(void *arg)
 {
 	struct thr_context *thr_ctx = arg;
@@ -257,18 +322,10 @@ static int hook(void *arg)
 #endif
 	}
 
-	do {
-		if (current->user->uid != ti->cpt_user) {
-			struct user_struct *u;
-
-			u = alloc_uid(get_exec_env()->ve_ns->user_ns, ti->cpt_user);
-			if (!u) {
-				eprintk_ctx("alloc_user\n");
-			} else {
-				switch_uid(u);
-			}
-		}
-	} while (0);
+	if ((err = rst_creds(ti, ctx)) != 0) {
+		eprintk_ctx("rst_creds: %d\n", err);
+		goto out;
+	}
 
 	if ((err = rst_mm_complete(ti, ctx)) != 0) {
 		eprintk_ctx("rst_mm: %d\n", err);
@@ -400,10 +457,10 @@ static int hook(void *arg)
 			current->signal->it_real_incr =
 			ktime_add_ns(current->signal->it_real_incr, ti->cpt_it_real_incr*TICK_NSEC);
 		}
-		current->signal->it_prof_incr = ti->cpt_it_prof_incr;
-		current->signal->it_virt_incr = ti->cpt_it_virt_incr; 
-		current->signal->it_prof_expires = ti->cpt_it_prof_value;
-		current->signal->it_virt_expires = ti->cpt_it_virt_value;
+		current->signal->it[CPUCLOCK_PROF].incr = ti->cpt_it_prof_incr;
+		current->signal->it[CPUCLOCK_VIRT].incr = ti->cpt_it_virt_incr; 
+		current->signal->it[CPUCLOCK_PROF].expires = ti->cpt_it_prof_value;
+		current->signal->it[CPUCLOCK_VIRT].expires = ti->cpt_it_virt_value;
 	}
 
 	err = rst_clone_children(tobj, ctx);

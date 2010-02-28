@@ -433,6 +433,7 @@ int cpt_kill(struct cpt_context *ctx)
 	cpt_object_t *obj;
 	struct task_struct *root_task = NULL;
 	long delay;
+	struct cred *c;
 
 	if (!ctx->ve_id)
 		return -EINVAL;
@@ -441,13 +442,20 @@ int cpt_kill(struct cpt_context *ctx)
 	if (!env)
 		return -ESRCH;
 
+	c = prepare_creds();
+	if (c == NULL) {
+		put_ve(env);
+		return -ENOMEM;
+	}
+
 	/* from here cpt_kill succeeds */
 	virtinfo_notifier_call(VITYPE_SCP, VIRTINFO_SCP_DMPFIN, ctx);
 
 	if (current->ve_task_info.owner_env == env) {
 		wprintk_ctx("attempt to kill ve from inside, escaping...\n");
-		ve_move_task(current, get_ve0());
-	}
+		ve_move_task(current, get_ve0(), c);
+	} else
+		abort_creds(c);
 
 #ifdef CONFIG_VZ_CHECKPOINT_LAZY
 	if (ctx->pgin_task) {
