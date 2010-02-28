@@ -283,6 +283,7 @@ struct ve_struct {
 #endif
 
 	struct nsproxy		*ve_ns;
+	struct user_namespace	*user_ns;
 	struct net		*ve_netns;
 	struct cgroup		*ve_cgroup;
 	struct css_set		*ve_css_set;

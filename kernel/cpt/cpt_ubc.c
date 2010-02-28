@@ -11,6 +11,7 @@
 
 #include <linux/types.h>
 #include <bc/beancounter.h>
+#include <asm/signal.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"

@@ -228,7 +228,7 @@ struct file * rst_open_tty(struct cpt_file_image *fi, struct cpt_inode_image *ii
 		}
 
 		master = dentry_open(dget(master->f_dentry),
-				     mntget(master->f_vfsmnt), flags);
+				     mntget(master->f_vfsmnt), flags, NULL);
 		if (!IS_ERR(master)) {
 			stty = master->private_data;
 			if (stty->driver->subtype != PTY_TYPE_MASTER)

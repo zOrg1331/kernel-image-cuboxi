@@ -27,7 +27,7 @@ static inline int sc_unlink(char *name)
 
 static inline int sc_pipe(int *pfd)
 {
-	return do_pipe(pfd);
+	return do_pipe_flags(pfd, 0);
 }
 
 static inline int sc_mknod(char *name, int mode, int dev)

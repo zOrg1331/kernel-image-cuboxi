@@ -562,7 +562,6 @@ static int __init init_cpt(void)
 
 	proc_ent->read_proc = proc_read;
 	proc_ent->data = NULL;
-	proc_ent->owner = THIS_MODULE;
 	return 0;
 
 err_out:
