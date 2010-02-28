@@ -71,6 +71,8 @@ static int collect_one_aio_ctx(struct mm_struct *mm, struct kioctx *aio_ctx,
 static int collect_one_mm(struct mm_struct *mm, cpt_context_t * ctx)
 {
 	struct vm_area_struct *vma;
+	struct hlist_node *n;
+	struct kioctx *aio_ctx;
 
 	for (vma = mm->mmap; vma; vma = vma->vm_next) {
 		if (vma->vm_file) {
@@ -88,13 +90,11 @@ static int collect_one_mm(struct mm_struct *mm, cpt_context_t * ctx)
 		return -ENOMEM;
 #endif
 
-	if (mm->ioctx_list) {
-		struct kioctx *aio_ctx;
+	hlist_for_each_entry(aio_ctx, n, &mm->ioctx_list, list) {
 		int err;
 
-		for (aio_ctx = mm->ioctx_list; aio_ctx; aio_ctx = aio_ctx->next)
-			if ((err = collect_one_aio_ctx(mm, aio_ctx, ctx)) != 0)
-				return err;
+		if ((err = collect_one_aio_ctx(mm, aio_ctx, ctx)) != 0)
+			return err;
 	}
 
 	return 0;
@@ -798,6 +798,8 @@ static int dump_one_mm(cpt_object_t *obj, struct cpt_context *ctx)
 	struct mm_struct *mm = obj->o_obj;
 	struct vm_area_struct *vma;
 	struct cpt_mm_image *v = cpt_get_buf(ctx);
+	struct kioctx *aio_ctx;
+	struct hlist_node *n;
 
 	cpt_open_object(obj, ctx);
 
@@ -882,13 +884,11 @@ static int dump_one_mm(cpt_object_t *obj, struct cpt_context *ctx)
 			return err;
 	}
 
-	if (mm->ioctx_list) {
-		struct kioctx *aio_ctx;
+	hlist_for_each_entry(aio_ctx, n, &mm->ioctx_list, list) {
 		int err;
 
-		for (aio_ctx = mm->ioctx_list; aio_ctx; aio_ctx = aio_ctx->next)
-			if ((err = dump_one_aio_ctx(mm, aio_ctx, ctx)) != 0)
-				return err;
+		if ((err = dump_one_aio_ctx(mm, aio_ctx, ctx)) != 0)
+			return err;
 	}
 
 	cpt_close_object(ctx);

@@ -321,10 +321,9 @@ static int do_rst_aio(struct cpt_aio_ctx_image *aimg, loff_t pos, cpt_context_t 
 	aio_nr += aio_ctx->max_reqs;
 	spin_unlock(&aio_nr_lock);
 
-	write_lock(&aio_ctx->mm->ioctx_list_lock);
-	aio_ctx->next = aio_ctx->mm->ioctx_list;
-	aio_ctx->mm->ioctx_list = aio_ctx;
-	write_unlock(&aio_ctx->mm->ioctx_list_lock);
+	spin_lock(&aio_ctx->mm->ioctx_lock);
+	hlist_add_head(&aio_ctx->list, &aio_ctx->mm->ioctx_list);
+	spin_unlock(&aio_ctx->mm->ioctx_lock);
 
 	return 0;
 }
