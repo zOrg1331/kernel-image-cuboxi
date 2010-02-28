@@ -365,7 +365,7 @@ no_quota:
  *	QUOTA_OK == 0 on SUCCESS
  *	NO_QUOTA == 1 if allocation should fail
  */
-static int vzquota_alloc_inode(const struct inode *inode, unsigned long number)
+static int vzquota_alloc_inode(const struct inode *inode, qsize_t number)
 {
 	struct vz_quota_master *qmblk;
 	struct vz_quota_datast data;
@@ -448,7 +448,7 @@ static int vzquota_free_space(struct inode *inode, qsize_t number)
 /*
  * Free inodes callback.
  */
-static int vzquota_free_inode(const struct inode *inode, unsigned long number)
+static int vzquota_free_inode(const struct inode *inode, qsize_t number)
 {
 	struct vz_quota_master *qmblk;
 	struct vz_quota_datast data;
