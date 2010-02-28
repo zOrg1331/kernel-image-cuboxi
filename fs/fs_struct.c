@@ -96,6 +96,7 @@ void exit_fs(struct task_struct *tsk)
 			free_fs_struct(fs);
 	}
 }
+EXPORT_SYMBOL(exit_fs);
 
 struct fs_struct *copy_fs_struct(struct fs_struct *old)
 {
