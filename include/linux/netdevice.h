@@ -490,6 +490,10 @@ struct netdev_queue {
 	unsigned long		tx_dropped;
 } ____cacheline_aligned_in_smp;
 
+struct cpt_context;
+struct cpt_ops;
+struct rst_ops;
+struct cpt_netdev_image;
 
 /*
  * This structure defines the management hooks for network devices.
@@ -641,7 +645,22 @@ struct net_device_ops {
 	int			(*ndo_fcoe_ddp_done)(struct net_device *dev,
 						     u16 xid);
 #endif
+	void			(*ndo_cpt)(struct net_device *dev,
+						struct cpt_ops *,
+						struct cpt_context *);
 };
+
+struct netdev_rst {
+	int			cpt_object;
+	int			(*ndo_rst)(loff_t, struct cpt_netdev_image *,
+						struct rst_ops *,
+						struct cpt_context *);
+	struct list_head	list;
+};
+
+void register_netdev_rst(struct netdev_rst *ops);
+void unregister_netdev_rst(struct netdev_rst *ops);
+struct netdev_rst *netdev_find_rst(int cpt_object, struct netdev_rst *ops);
 
 /*
  *	The DEVICE structure.

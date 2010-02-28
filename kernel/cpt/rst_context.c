@@ -20,9 +20,11 @@
 #include <linux/errno.h>
 #include <linux/pagemap.h>
 #include <linux/cpt_image.h>
+#include <linux/cpt_export.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
+#include "cpt_files.h"
 
 static ssize_t file_read(void *addr, size_t count, struct cpt_context *ctx)
 {
@@ -321,3 +323,8 @@ void rst_put_name(__u8 *name, struct cpt_context *ctx)
 	if (addr)
 		free_page(addr&~(PAGE_SIZE-1));
 }
+
+struct rst_ops rst_ops = {
+	.get_object = _rst_get_object,
+	.rst_file = rst_file,
+};

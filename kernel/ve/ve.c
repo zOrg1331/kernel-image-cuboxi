@@ -88,11 +88,6 @@ EXPORT_SYMBOL(do_env_free);
 int (*do_ve_enter_hook)(struct ve_struct *ve, unsigned int flags);
 EXPORT_SYMBOL(do_ve_enter_hook);
 
-#if defined(CONFIG_VE_ETHDEV) || defined(CONFIG_VE_ETHDEV_MODULE)
-INIT_KSYM_MODULE(vzethdev);
-INIT_KSYM_CALL(int, veth_open, (struct net_device *dev));
-#endif
-
 struct ve_struct ve0 = {
 	.counter		= ATOMIC_INIT(1),
 	.pcounter		= ATOMIC_INIT(1),

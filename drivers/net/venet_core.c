@@ -419,12 +419,18 @@ static struct ethtool_ops venet_ethtool_ops = {
 	.get_tso = ethtool_op_get_tso,
 };
 
+static void venet_cpt(struct net_device *dev,
+		struct cpt_ops *ops, struct cpt_context *ctx)
+{
+}
+
 static const struct net_device_ops venet_netdev_ops = {
 	.ndo_start_xmit = venet_xmit,
 	.ndo_get_stats = get_stats,
 	.ndo_open = venet_open,
 	.ndo_stop = venet_close,
 	.ndo_init = venet_init_dev,
+	.ndo_cpt = venet_cpt,
 };
 
 static void venet_setup(struct net_device *dev)

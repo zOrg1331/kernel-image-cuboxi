@@ -54,6 +54,9 @@
 #include <linux/vzcalluser.h>
 #include <linux/nfcalls.h>
 
+#include <linux/cpt_image.h>
+#include <linux/cpt_export.h>
+
 static LIST_HEAD(veth_hwaddr_list);
 static DEFINE_RWLOCK(ve_hwaddr_lock);
 static DECLARE_MUTEX(hwaddr_sem);
@@ -401,6 +404,55 @@ static struct ethtool_ops veth_ethtool_ops = {
 	.get_tso = ethtool_op_get_tso,
 };
 
+static void veth_cpt(struct net_device *dev,
+		struct cpt_ops *ops, struct cpt_context *ctx)
+{
+	struct cpt_veth_image v;
+	struct veth_struct *veth;
+
+	veth = veth_from_netdev(dev);
+
+	v.cpt_next = CPT_NULL;
+	v.cpt_object = CPT_OBJ_NET_VETH;
+	v.cpt_hdrlen = sizeof(v);
+	v.cpt_content = CPT_CONTENT_VOID;
+
+	v.cpt_allow_mac_change = veth->allow_mac_change;
+
+	ops->write(&v, sizeof(v), ctx);
+}
+
+static int veth_rst(loff_t pos, struct cpt_netdev_image *di,
+		struct rst_ops *ops,
+		struct cpt_context *ctx)
+
+{
+	int err;
+	struct cpt_veth_image vi;
+	struct veth_struct *veth;
+	struct net_device *dev;
+
+	pos = pos + di->cpt_hdrlen;
+	err = ops->get_object(CPT_OBJ_NET_VETH, pos,
+			&vi, sizeof(vi), ctx);
+	if (err)
+		return err;
+
+	dev = __dev_get_by_name(get_exec_env()->ve_ns->net_ns, di->cpt_name);
+	if (dev == NULL)
+		return -ENODEV;
+
+	veth = veth_from_netdev(dev);
+	veth->allow_mac_change = vi.cpt_allow_mac_change;
+
+	return 0;
+}
+
+static struct netdev_rst veth_netdev_rst = {
+	.cpt_object = CPT_OBJ_NET_VETH,
+	.ndo_rst = veth_rst,
+};
+
 static const struct net_device_ops veth_ops = {
 	.ndo_init = veth_init_dev,
 	.ndo_start_xmit = veth_xmit,
@@ -408,6 +460,7 @@ static const struct net_device_ops veth_ops = {
 	.ndo_open = veth_open,
 	.ndo_stop = veth_close,
 	.ndo_set_mac_address = veth_set_mac,
+	.ndo_cpt = veth_cpt,
 };
 
 static void veth_setup(struct net_device *dev)
@@ -648,10 +701,9 @@ __init int veth_init(void)
 		printk(KERN_WARNING "veth: can't make vehwaddr proc entry\n");
 #endif
 
+	register_netdev_rst(&veth_netdev_rst);
 	ve_hook_register(VE_SS_CHAIN, &veth_ve_hook);
 	vzioctl_register(&vethcalls);
-	KSYMRESOLVE(veth_open);
-	KSYMMODRESOLVE(vzethdev);
 	return 0;
 }
 
@@ -661,10 +713,10 @@ __exit void veth_exit(void)
 	struct list_head *tmp, *n;
 	struct ve_struct *ve;
 
-	KSYMMODUNRESOLVE(vzethdev);
-	KSYMUNRESOLVE(veth_open);
 	vzioctl_unregister(&vethcalls);
 	ve_hook_unregister(&veth_ve_hook);
+	unregister_netdev_rst(&veth_netdev_rst);
+
 #ifdef CONFIG_PROC_FS
 	remove_proc_entry("veth", proc_vz_dir);
 #endif

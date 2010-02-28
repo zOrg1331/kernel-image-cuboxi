@@ -36,6 +36,7 @@
 #include <linux/fdtable.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
+#include <linux/cpt_export.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -307,190 +308,14 @@ int rst_resume_network(struct cpt_context *ctx)
 	return 0;
 }
 
-static int rst_restore_tap_filter(loff_t start, struct cpt_tuntap_image *ti,
-			struct tap_filter *flt, struct cpt_context *ctx)
-{
-	int err;
-	struct cpt_tap_filter_image fi;
-	loff_t pos;
-
-	/* disable filtering */
-	flt->count = 0;
-
-	pos = start + ti->cpt_hdrlen;
-
-	/* no tap filter image? */
-	if (pos >= start + ti->cpt_next)
-		goto convert;
-
-	err  = rst_get_object(CPT_OBJ_NET_TAP_FILTER, pos, &fi, ctx);
-	if (err)
-		return err;
-
-	BUILD_BUG_ON(sizeof(flt->mask) != sizeof(fi.cpt_mask));
-	memcpy(flt->mask, fi.cpt_mask, sizeof(fi.cpt_mask));
-
-	BUILD_BUG_ON(sizeof(flt->addr) != sizeof(fi.cpt_addr));
-	memcpy(flt->addr, fi.cpt_addr, sizeof(fi.cpt_addr));
-
-	flt->count = fi.cpt_count;
-
-	return 0;
-
-convert:
-	/** From OLD filtering code:
-	 * Decide whether to accept this packet. This code is designed to
-	 * behave identically to an Ethernet interface. Accept the packet if
-	 * - we are promiscuous.
-	 * - the packet is addressed to us.
-	 * - the packet is broadcast.
-	 * - the packet is multicast and
-	 *   - we are multicast promiscous.
-	 *   - we belong to the multicast group.
-	 */
-
-	/* accept all, this is default if filter is untouched */
-	if (ti->cpt_if_flags & IFF_PROMISC)
-		return 0;
-
-	/* accept packets addressed to character device's hardware address */
-	BUILD_BUG_ON(sizeof(flt->addr[0]) != sizeof(ti->cpt_dev_addr));
-	memcpy(flt->addr[0], ti->cpt_dev_addr, sizeof(ti->cpt_dev_addr));
-
-	/* accept broadcast */
-	memset(flt->addr[1], ~0, sizeof(flt->addr[1]));
-
-	/* accept hashed multicast: hash function the same as in old code */
-	BUILD_BUG_ON(sizeof(flt->mask) != sizeof(ti->cpt_chr_filter));
-	memcpy(flt->mask, ti->cpt_chr_filter, sizeof(ti->cpt_chr_filter));
-
-	/* accept all multicast */
-	if (ti->cpt_if_flags & IFF_ALLMULTI)
-		memset(flt->mask, ~0, sizeof(flt->mask));
-
-	/* two exact filters: hw addr and broadcast */
-	flt->count = 2;
-
-	return 0;
-}
-
-#if defined(CONFIG_TUN) || defined(CONFIG_TUN_MODULE)
-extern unsigned int tun_net_id;
-#endif
-
-/* We do not restore skb queue, just reinit it */
-static int rst_restore_tuntap(loff_t start, struct cpt_netdev_image *di,
-			struct cpt_context *ctx)
-{
-	int err = -ENODEV;
-#if defined(CONFIG_TUN) || defined(CONFIG_TUN_MODULE)
-	struct cpt_tuntap_image ti;
-	struct net_device *dev;
-	struct file *bind_file = NULL;
-	struct net *net;
-	struct tun_struct *tun;
-	struct tun_net *tn;
-	loff_t pos;
-
-	pos = start + di->cpt_hdrlen;
-	err = rst_get_object(CPT_OBJ_NET_TUNTAP, pos, &ti, ctx);
-	if (err)
-		return err;
-
-	if (ti.cpt_bindfile) {
-		bind_file = rst_file(ti.cpt_bindfile, -1, ctx);
-		if (IS_ERR(bind_file)) {
-			eprintk_ctx("rst_restore_tuntap:"
-				"rst_file: %Ld\n",
-				(unsigned long long)ti.cpt_bindfile);
-			return PTR_ERR(bind_file);
-		}
-	}
-
-	rtnl_lock();
-	err = -ENOMEM;
-	dev = alloc_netdev(sizeof(struct tun_struct), di->cpt_name, tun_setup);
-	if (!dev)
-		goto out;
-
-	tun = netdev_priv(dev);
-
-	tun->dev = dev;
-	tun->owner = ti.cpt_owner;
-	tun->flags = ti.cpt_flags;
-	tun->attached = ti.cpt_attached;
-	tun_net_init(dev);
-
-	err = rst_restore_tap_filter(pos, &ti, &tun->txflt, ctx);
-	if (err < 0) {
-		free_netdev(dev);
-		goto out;
-	}
-
-	err = register_netdevice(dev);
-	if (err < 0) {
-		free_netdev(dev);
-		eprintk_ctx("failed to register tun/tap net device\n");
-		goto out;
-	}
-
-	pos += ti.cpt_next;
-	if (pos < start + di->cpt_next) {
-		struct cpt_hwaddr_image hw;
-		/* Restore hardware address */
-		err = rst_get_object(CPT_OBJ_NET_HWADDR, pos,
-				&hw, ctx);
-		if (err)
-			goto out;
-		BUILD_BUG_ON(sizeof(hw.cpt_dev_addr) != sizeof(dev->dev_addr));
-		memcpy(dev->dev_addr, hw.cpt_dev_addr,
-				sizeof(hw.cpt_dev_addr));
-	}
-	net = get_exec_env()->ve_ns->net_ns;
-	tn = net_generic(net, tun_net_id);
-	list_add(&tun->list, &tn->dev_list);
-
-	bind_file->private_data = tun;
-	tun->bind_file = bind_file;
-
-out:
-	fput(bind_file);
-	rtnl_unlock();
-#endif
-	return err;
-}
-
-static int rst_restore_veth(loff_t pos, struct net_device *dev,
-			struct cpt_context *ctx)
-{
-	int err = -ENODEV;
-#if defined(CONFIG_VE_ETHDEV) || defined(CONFIG_VE_ETHDEV_MODULE)
-	struct cpt_veth_image vi;
-	struct veth_struct *veth;
-
-	if (!KSYMREF(veth_open) || dev->open != KSYMREF(veth_open)) {
-		eprintk_ctx("Module vzethdev is not loaded, "
-			    "or device %s is not a veth device\n", dev->name);
-		return -EINVAL;
-	}
-	err = rst_get_object(CPT_OBJ_NET_VETH, pos, &vi, ctx);
-	if (err)
-		return err;
-	veth = veth_from_netdev(dev);
-	veth->allow_mac_change = vi.cpt_allow_mac_change;
-#endif
-	return err;
-}
-
 static int rst_restore_netstats(loff_t pos, struct net_device *dev,
 			struct cpt_context * ctx)
 {
 	struct cpt_netstats_image *n;
 	struct net_device_stats *stats = NULL;
-	struct net_device *lo = get_exec_env()->ve_netns->loopback_dev;
 	int err;
 
-	if (!dev->get_stats)
+	if (!dev->netdev_ops->ndo_get_stats)
 		return 0;
 
 	n = cpt_get_buf(ctx);
@@ -499,25 +324,14 @@ static int rst_restore_netstats(loff_t pos, struct net_device *dev,
 		goto out;
 	BUG_ON(sizeof(struct cpt_netstats_image) != n->cpt_hdrlen);
 	preempt_disable();
-	if (dev == lo)
-		stats = &lo->stats;
-#if defined(CONFIG_VE_ETHDEV) || defined(CONFIG_VE_ETHDEV_MODULE)
-	else if (KSYMREF(veth_open) && dev->open == KSYMREF(veth_open))
-		stats = veth_stats(dev, smp_processor_id());
-#endif
-#if defined(CONFIG_VE_NETDEV) || defined(CONFIG_VE_NETDEV_MODULE)
-	else if (dev == get_exec_env()->_venet_dev)
-		stats = venet_stats(dev, smp_processor_id());
-#endif
-#if defined(CONFIG_TUN) || defined(CONFIG_TUN_MODULE)
-	if (dev->open == tun_net_open)
-		stats = &dev->stats;
-#endif
-	if (!stats) {
+
+	if (dev->netdev_ops->ndo_cpt == NULL) {
 		err = -ENODEV;
 		eprintk_ctx("Network device %s is not supported\n", dev->name);
 		goto out;
 	}
+
+	stats = dev->netdev_ops->ndo_get_stats(dev);
 
 	stats->rx_packets = n->cpt_rx_packets;
 	stats->tx_packets = n->cpt_tx_packets;
@@ -575,29 +389,39 @@ int rst_restore_netdev(struct cpt_context *ctx)
 	while (sec < endsec) {
 		loff_t pos;
 		struct net_device *dev_new;
+		struct netdev_rst *ops;
+
 		err = rst_get_object(CPT_OBJ_NET_DEVICE, sec, &di, ctx);
 		if (err)
 			return err;
 
+		rtnl_lock();
 		pos = sec + di.cpt_hdrlen;
 		if (di.cpt_next > sizeof(di)) {
 			struct cpt_object_hdr hdr;
 			err = ctx->pread(&hdr, sizeof(struct cpt_object_hdr),
 					ctx, sec + di.cpt_hdrlen);
 			if (err)
-				return err;
-			if (hdr.cpt_object == CPT_OBJ_NET_TUNTAP) {
-				err = rst_restore_tuntap(sec, &di, ctx);
-				if (err) {
-					eprintk_ctx("restore tuntap %s: %d\n",
-							di.cpt_name, err);
-					return err;
+				goto out;
+
+			ops = NULL;
+			while (1) {
+				ops = netdev_find_rst(hdr.cpt_object, ops);
+				if (ops == NULL)
+					break;
+
+				err = ops->ndo_rst(sec, &di, &rst_ops, ctx);
+				if (!err) {
+					pos += hdr.cpt_next;
+					break;
+				} else if (err < 0) {
+					eprintk_ctx("netdev %d rst failed %d\n",
+							hdr.cpt_object, err);
+					goto out;
 				}
-				pos += hdr.cpt_next;
 			}
 		}
 
-		rtnl_lock();
 		dev = __dev_get_by_name(net, di.cpt_name);
 		if (dev) {
 			if (dev->ifindex != di.cpt_index) {
@@ -639,14 +463,7 @@ int rst_restore_netdev(struct cpt_context *ctx)
 						ctx, pos);
 				if (err)
 					goto out;
-				if (hdr.cpt_object == CPT_OBJ_NET_VETH) {
-					err = rst_restore_veth(pos, dev, ctx);
-					if (err) {
-						eprintk_ctx("restore veth %s: %d\n",
-								di.cpt_name, err);
-						goto out;
-					}
-				} else if (hdr.cpt_object == CPT_OBJ_NET_HWADDR) {
+				if (hdr.cpt_object == CPT_OBJ_NET_HWADDR) {
 					/* Restore hardware address */
 					struct cpt_hwaddr_image hw;
 					err = rst_get_object(CPT_OBJ_NET_HWADDR,
@@ -654,7 +471,7 @@ int rst_restore_netdev(struct cpt_context *ctx)
 					if (err)
 						goto out;
 					BUILD_BUG_ON(sizeof(hw.cpt_dev_addr) !=
-							sizeof(dev->dev_addr));
+							MAX_ADDR_LEN);
 					memcpy(dev->dev_addr, hw.cpt_dev_addr,
 							sizeof(hw.cpt_dev_addr));
 				} else if (hdr.cpt_object == CPT_OBJ_NET_STATS) {

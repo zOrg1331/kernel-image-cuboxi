@@ -34,46 +34,23 @@
 #include <linux/veth.h>
 #include <linux/fdtable.h>
 
+#include <linux/cpt_export.h>
+
 #include "cpt_obj.h"
 #include "cpt_context.h"
 #include "cpt_kernel.h"
 #include "cpt_syscalls.h"
-
-static void cpt_dump_veth(struct net_device *dev, struct cpt_context * ctx)
-{
-#if defined(CONFIG_VE_ETHDEV) || defined(CONFIG_VE_ETHDEV_MODULE)
-	struct cpt_veth_image v;
-	struct veth_struct *veth;
-
-	if (!KSYMREF(veth_open) || dev->open != KSYMREF(veth_open))
-		return;
-
-	veth = veth_from_netdev(dev);
-	cpt_open_object(NULL, ctx);
-
-	v.cpt_next = CPT_NULL;
-	v.cpt_object = CPT_OBJ_NET_VETH;
-	v.cpt_hdrlen = sizeof(v);
-	v.cpt_content = CPT_CONTENT_VOID;
-
-	v.cpt_allow_mac_change = veth->allow_mac_change;
-
-	ctx->write(&v, sizeof(v), ctx);
-	cpt_close_object(ctx);
-#endif
-	return;
-}
 
 static void cpt_dump_netstats(struct net_device *dev, struct cpt_context * ctx)
 {
 	struct cpt_netstats_image *n;
 	struct net_device_stats *stats;
 
-	if (!dev->get_stats)
+	if (!dev->netdev_ops->ndo_get_stats)
 		return;
 
 	n = cpt_get_buf(ctx);
-	stats = dev->get_stats(dev);
+	stats = dev->netdev_ops->ndo_get_stats(dev);
 	cpt_open_object(NULL, ctx);
 
 	n->cpt_next = CPT_NULL;
@@ -111,72 +88,6 @@ static void cpt_dump_netstats(struct net_device *dev, struct cpt_context * ctx)
 	return;
 }
 
-static void cpt_dump_tap_filter(struct tap_filter *flt, struct cpt_context *ctx)
-{
-	struct cpt_tap_filter_image v;
-	loff_t saved_obj;
-
-	cpt_push_object(&saved_obj, ctx);
-	cpt_open_object(NULL, ctx);
-
-	v.cpt_next = CPT_NULL;
-	v.cpt_object = CPT_OBJ_NET_TAP_FILTER;
-	v.cpt_hdrlen = sizeof(v);
-	v.cpt_content = CPT_CONTENT_VOID;
-
-	v.cpt_count = flt->count;
-
-	BUILD_BUG_ON(sizeof(flt->mask) != sizeof(v.cpt_mask));
-	memcpy(v.cpt_mask, flt->mask, sizeof(v.cpt_mask));
-
-	BUILD_BUG_ON(sizeof(flt->addr) != sizeof(v.cpt_addr));
-	memcpy(v.cpt_addr, flt->addr, sizeof(v.cpt_addr));
-
-	ctx->write(&v, sizeof(v), ctx);
-	cpt_close_object(ctx);
-	cpt_pop_object(&saved_obj, ctx);
-}
-
-static void cpt_dump_tuntap(struct net_device *dev, struct cpt_context * ctx)
-{
-#if defined(CONFIG_TUN) || defined(CONFIG_TUN_MODULE)
-	struct cpt_tuntap_image v;
-	struct tun_struct *tun;
-	cpt_object_t *obj;
-
-	if (dev->open != tun_net_open)
-		return;
-
-	tun = netdev_priv(dev);
-	cpt_open_object(NULL, ctx);
-
-	v.cpt_next = CPT_NULL;
-	v.cpt_object = CPT_OBJ_NET_TUNTAP;
-	v.cpt_hdrlen = sizeof(v);
-	v.cpt_content = CPT_CONTENT_VOID;
-
-	v.cpt_owner = tun->owner;
-	v.cpt_flags = tun->flags;
-	v.cpt_attached = tun->attached;
-
-	if (tun->bind_file) {
-		obj = lookup_cpt_object(CPT_OBJ_FILE, tun->bind_file, ctx);
-		BUG_ON(!obj);
-		v.cpt_bindfile = obj->o_pos;
-	}
-
-	v.cpt_if_flags = 0;
-	memset(v.cpt_dev_addr, 0, sizeof(v.cpt_dev_addr));
-	memset(v.cpt_chr_filter, 0, sizeof(v.cpt_chr_filter));
-	memset(v.cpt_net_filter, 0, sizeof(v.cpt_net_filter));
-
-	ctx->write(&v, sizeof(v), ctx);
-	cpt_dump_tap_filter(&tun->txflt, ctx);
-	cpt_close_object(ctx);
-#endif
-	return;
-}
-
 int cpt_dump_link(struct cpt_context * ctx)
 {
 	struct net *net = get_exec_env()->ve_netns;
@@ -187,6 +98,12 @@ int cpt_dump_link(struct cpt_context * ctx)
 		struct cpt_netdev_image v;
 		struct cpt_hwaddr_image hw;
 		loff_t saved_obj;
+
+		if (dev->netdev_ops->ndo_cpt == NULL) {
+			eprintk_ctx("unsupported netdev %s\n", dev->name);
+			cpt_close_section(ctx);
+			return -EBUSY;
+		}
 
 		cpt_open_object(NULL, ctx);
 
@@ -202,9 +119,8 @@ int cpt_dump_link(struct cpt_context * ctx)
 
 		cpt_push_object(&saved_obj, ctx);
 
-		cpt_dump_tuntap(dev, ctx);
-		
-		cpt_dump_veth(dev, ctx);
+		cpt_open_object(NULL, ctx);
+		dev->netdev_ops->ndo_cpt(dev, &cpt_ops, ctx);
 
 		/* Dump hardware address */
 		cpt_open_object(NULL, ctx);
@@ -212,7 +128,13 @@ int cpt_dump_link(struct cpt_context * ctx)
 		hw.cpt_object = CPT_OBJ_NET_HWADDR;
 		hw.cpt_hdrlen = sizeof(hw);
 		hw.cpt_content = CPT_CONTENT_VOID;
-		BUILD_BUG_ON(sizeof(hw.cpt_dev_addr) != sizeof(dev->dev_addr));
+
+		if (dev->dev_addrs.count != 1) {
+			eprintk_ctx("multiple hwaddrs on %s\n", dev->name);
+			return -EINVAL;
+		}
+
+		BUILD_BUG_ON(sizeof(hw.cpt_dev_addr) != MAX_ADDR_LEN);
 		memcpy(hw.cpt_dev_addr, dev->dev_addr, sizeof(hw.cpt_dev_addr));
 		ctx->write(&hw, sizeof(hw), ctx);
 		cpt_close_object(ctx);
@@ -222,22 +144,6 @@ int cpt_dump_link(struct cpt_context * ctx)
 		cpt_pop_object(&saved_obj, ctx);
 
 		cpt_close_object(ctx);
-
-		if (dev != net->loopback_dev
-#if defined(CONFIG_VE_ETHDEV) || defined(CONFIG_VE_ETHDEV_MODULE)
-		    && !(KSYMREF(veth_open) && dev->open == KSYMREF(veth_open))
-#endif
-#if defined(CONFIG_VE_NETDEV) || defined(CONFIG_VE_NETDEV_MODULE)
-		     && dev != get_exec_env()->_venet_dev
-#endif
-#if defined(CONFIG_TUN) || defined(CONFIG_TUN_MODULE)
-		    && dev->open != tun_net_open
-#endif
-							) {
-			eprintk_ctx("unsupported netdevice %s\n", dev->name);
-			cpt_close_section(ctx);
-			return -EBUSY;
-		}
 	}
 	cpt_close_section(ctx);
 	return 0;

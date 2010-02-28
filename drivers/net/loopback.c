@@ -159,10 +159,16 @@ static void loopback_dev_free(struct net_device *dev)
 	free_netdev(dev);
 }
 
+static void loopback_cpt(struct net_device *dev,
+		struct cpt_ops *ops, struct cpt_context *ctx)
+{
+}
+
 static const struct net_device_ops loopback_ops = {
 	.ndo_init      = loopback_dev_init,
 	.ndo_start_xmit= loopback_xmit,
 	.ndo_get_stats = loopback_get_stats,
+	.ndo_cpt = loopback_cpt,
 };
 
 /*

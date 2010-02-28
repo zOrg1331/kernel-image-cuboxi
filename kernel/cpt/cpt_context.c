@@ -21,6 +21,7 @@
 #include <linux/pagemap.h>
 
 #include <linux/cpt_image.h>
+#include <linux/cpt_export.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -61,6 +62,33 @@ static void file_align(struct cpt_context *ctx)
 	if (file)
 		file->f_pos = CPT_ALIGN(file->f_pos);
 }
+
+static void cpt_push(loff_t *p, struct cpt_context *ctx)
+{
+	cpt_push_object(p, ctx);
+	cpt_open_object(NULL, ctx);
+}
+
+static void cpt_pop(loff_t *p, struct cpt_context *ctx)
+{
+	cpt_close_object(ctx);
+	cpt_pop_object(p, ctx);
+}
+
+static loff_t lookup_cpt_object_pos(int type, void *p, struct cpt_context *ctx)
+{
+	cpt_object_t *obj;
+
+	obj = lookup_cpt_object(type, p, ctx);
+	return obj->o_pos;
+}
+
+struct cpt_ops cpt_ops = {
+	.write = file_write,
+	.push_object = cpt_push,
+	.pop_object = cpt_pop,
+	.lookup_object = lookup_cpt_object_pos,
+};
 
 void cpt_context_init(struct cpt_context *ctx)
 {

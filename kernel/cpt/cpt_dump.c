@@ -37,6 +37,7 @@
 #include <linux/pid_namespace.h>
 #include <linux/ipc_namespace.h>
 #include <linux/netdevice.h>
+#include <linux/mount.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -1052,17 +1053,7 @@ static void check_unsupported_netdevices(struct cpt_context *ctx, __u32 *caps)
 
 	read_lock(&dev_base_lock);
 	for_each_netdev(net, dev) {
-		if (dev != net->loopback_dev
-#if defined(CONFIG_VE_ETHDEV) || defined(CONFIG_VE_ETHDEV_MODULE)
-		    && !(KSYMREF(veth_open) && dev->open == KSYMREF(veth_open))
-#endif
-#if defined(CONFIG_VE_NETDEV) || defined(CONFIG_VE_NETDEV_MODULE)
-		    && dev != get_exec_env()->_venet_dev
-#endif
-#if defined(CONFIG_TUN) || defined(CONFIG_TUN_MODULE)
-		    && dev->open != tun_net_open
-#endif
-							) {
+		if (dev->netdev_ops->ndo_cpt == NULL) {
 			eprintk_ctx("unsupported netdevice %s\n", dev->name);
 			*caps |= (1<<CPT_UNSUPPORTED_NETDEV);
 		}

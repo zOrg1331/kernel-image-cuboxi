@@ -1503,7 +1503,7 @@ struct cpt_tuntap_image {
 	__u16	cpt_content;
 
 	__u32	cpt_owner;
-	__u32	cpt_attached;
+	__u32	unused; /* was cpt_attached */
 	__u64	cpt_flags;
 	__u64	cpt_bindfile;
 	__u64	cpt_if_flags;

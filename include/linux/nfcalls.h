@@ -159,11 +159,6 @@ DECL_KSYM_CALL(void, fini_nf_ct_l3proto_ipv6, (void));
 #include <linux/netfilter/x_tables.h>
 #endif
 
-#if defined(CONFIG_VE_ETHDEV) || defined(CONFIG_VE_ETHDEV_MODULE)
-DECL_KSYM_MODULE(vzethdev);
-DECL_KSYM_CALL(int, veth_open, (struct net_device *dev));
-#endif
-
 #if defined(CONFIG_VE_CALLS) || defined(CONFIG_VE_CALLS_MODULE)
 DECL_KSYM_MODULE(vzmon);
 DECL_KSYM_CALL(void, real_do_env_free, (struct ve_struct *env));
