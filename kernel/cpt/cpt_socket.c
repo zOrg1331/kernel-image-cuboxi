@@ -594,11 +594,11 @@ int cpt_dump_orphaned_sockets(struct cpt_context *ctx)
 
 	for (i = 0; i < tcp_hashinfo.ehash_size; i++) {
 		struct sock *sk;
-		struct hlist_node *node;
-		rwlock_t *lock = inet_ehash_lockp(&tcp_hashinfo, i);
+		struct hlist_nulls_node *node;
+		spinlock_t *lock = inet_ehash_lockp(&tcp_hashinfo, i);
 retry:
-		read_lock_bh(lock);
-		sk_for_each(sk, node, &tcp_hashinfo.ehash[i].chain) {
+		spin_lock_bh(lock);
+		sk_nulls_for_each(sk, node, &tcp_hashinfo.ehash[i].chain) {
 
 			if (sk->owner_env != get_exec_env())
 				continue;
@@ -609,7 +609,7 @@ retry:
 			if (lookup_cpt_object(CPT_OBJ_SOCKET, sk, ctx))
 				continue;
 			sock_hold(sk);
-			read_unlock_bh(lock);
+			spin_unlock_bh(lock);
 
 			local_bh_disable();
 			bh_lock_sock(sk);
@@ -632,7 +632,7 @@ retry:
 
 			goto retry;
 		}
-		read_unlock_bh(lock);
+		spin_unlock_bh(lock);
 	}
 	cpt_close_section(ctx);
 	return 0;

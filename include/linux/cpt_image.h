@@ -785,7 +785,7 @@ struct cpt_sock_image
 	__u64	cpt_ts_recent_stamp;
 	__u16	cpt_user_mss;
 	__u8	cpt_dsack;
-	__u8	cpt_eff_sacks;
+	__u8	unused; /* was cpt_eff_sacks */
 	__u32	cpt_sack_array[2*5];
 	__u32	cpt_window_clamp;
 
@@ -811,7 +811,7 @@ struct cpt_sock_image
 	__u32	cpt_urg_seq;
 	__u16	cpt_urg_data;
 	__u8	cpt_pending;
-	__u8	cpt_urg_mode;
+	__u8	unused2; /* was cpt_urg_mode */
 
 	__u32	cpt_snd_up;
 	__u32	cpt_keepalive_time;

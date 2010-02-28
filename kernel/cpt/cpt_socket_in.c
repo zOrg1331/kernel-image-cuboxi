@@ -150,7 +150,6 @@ static int cpt_dump_socket_tcp(struct cpt_sock_image *si, struct sock *sk,
 	si->cpt_ts_recent_stamp = tp->rx_opt.ts_recent_stamp;
 	si->cpt_user_mss = tp->rx_opt.user_mss;
 	si->cpt_dsack = tp->rx_opt.dsack;
-	si->cpt_eff_sacks = tp->rx_opt.eff_sacks;
 	si->cpt_sack_array[0] = tp->duplicate_sack[0].start_seq;
 	si->cpt_sack_array[1] = tp->duplicate_sack[0].end_seq;
 	si->cpt_sack_array[2] = tp->selective_acks[0].start_seq;
@@ -176,7 +175,6 @@ static int cpt_dump_socket_tcp(struct cpt_sock_image *si, struct sock *sk,
 	si->cpt_urg_seq = tp->urg_seq;
 	si->cpt_urg_data = tp->urg_data;
 	si->cpt_pending = inet_csk(sk)->icsk_pending;
-	si->cpt_urg_mode = tp->urg_mode;
 	si->cpt_snd_up = tp->snd_up;
 	si->cpt_keepalive_time = tp->keepalive_time;
 	si->cpt_keepalive_intvl = tp->keepalive_intvl;
