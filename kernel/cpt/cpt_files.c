@@ -35,6 +35,9 @@
 #include <linux/fdtable.h>
 #include <linux/shm.h>
 #include <linux/signalfd.h>
+#include <linux/nsproxy.h>
+#include <linux/fs_struct.h>
+#include <linux/miscdevice.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -478,8 +481,8 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 	v->cpt_flags = file->f_flags;
 	v->cpt_mode = file->f_mode;
 	v->cpt_pos = file->f_pos;
-	v->cpt_uid = file->f_uid;
-	v->cpt_gid = file->f_gid;
+	v->cpt_uid = file->f_cred->uid;
+	v->cpt_gid = file->f_cred->gid;
 
 	vfs_getattr(file->f_vfsmnt, file->f_dentry, &sbuf);
 
@@ -514,10 +517,9 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 			if (file->f_flags&FASYNC)
 				v->cpt_fown_fd = cpt_tty_fasync(file, ctx);
 		}
-#if defined(CONFIG_TUN) || defined(CONFIG_TUN_MODULE)
-		if (file->f_op && file->f_op->open == tun_chr_open)
+		if (imajor(file->f_dentry->d_inode) == MISC_MAJOR &&
+				iminor(file->f_dentry->d_inode) == TUN_MINOR)
 			v->cpt_lflags |= CPT_DENTRY_TUNTAP;
-#endif
 	}
 	if (S_ISSOCK(v->cpt_i_mode)) {
 		if (obj->o_index < 0) {
@@ -656,7 +658,8 @@ static int dump_content_regular(struct file *file, struct cpt_context *ctx)
 	if (!(file->f_mode & FMODE_READ) ||
 	    (file->f_flags & O_DIRECT)) {
 		file = dentry_open(dget(file->f_dentry),
-				   mntget(file->f_vfsmnt), O_RDONLY);
+				   mntget(file->f_vfsmnt), O_RDONLY,
+				   NULL /* not checked */);
 		if (IS_ERR(file)) {
 			cpt_printk_dentry(file->f_dentry, file->f_vfsmnt);
 			eprintk_ctx("cannot reopen file for read %ld\n", PTR_ERR(file));
@@ -743,10 +746,9 @@ static int dump_content_chrdev(struct file *file, struct cpt_context *ctx)
 	    maj == TTYAUX_MAJOR) {
 		return cpt_dump_content_tty(file, ctx);
 	}
-#if defined(CONFIG_TUN) || defined(CONFIG_TUN_MODULE)
-	if (file->f_op && file->f_op->open == tun_chr_open)
+	if (maj == MISC_MAJOR && iminor(ino) == TUN_MINOR)
 		return 0;
-#endif
+
 	eprintk_ctx("unsupported chrdev %d/%d\n", maj, iminor(ino));
 	return -EINVAL;
 }
@@ -923,7 +925,7 @@ static int find_linked_dentry(struct dentry *d, struct vfsmount *mnt,
 		return -EINVAL;
 
 	mntget(mnt);
-	f = dentry_open(de, mnt, O_RDONLY);
+	f = dentry_open(de, mnt, O_RDONLY, NULL);
 	if (IS_ERR(f))
 		return PTR_ERR(f);
 

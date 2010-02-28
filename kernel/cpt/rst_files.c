@@ -18,8 +18,10 @@
 #include <linux/file.h>
 #include <linux/mm.h>
 #include <linux/errno.h>
+#include <linux/nsproxy.h>
 #include <linux/major.h>
 #include <linux/pipe_fs_i.h>
+#include <linux/fs_struct.h>
 #include <linux/mman.h>
 #include <linux/mount.h>
 #include <linux/tty.h>
@@ -281,7 +283,7 @@ static struct file *open_pipe(char *name,
 		if (IS_ERR(rf))
 			return rf;
 		wf = dentry_open(dget(rf->f_dentry),
-				 mntget(rf->f_vfsmnt), flags);
+				 mntget(rf->f_vfsmnt), flags, NULL);
 	}
 
 	/* Add pipe inode to obj table. */
@@ -527,7 +529,8 @@ static int fixup_reg_data(struct file *file, loff_t pos, loff_t end,
 			    (file->f_flags&O_DIRECT)) {
 				fput(file);
 				file = dentry_open(dget(file->f_dentry),
-						   mntget(file->f_vfsmnt), O_WRONLY);
+						   mntget(file->f_vfsmnt),
+						   O_WRONLY, NULL);
 				if (IS_ERR(file)) {
 					__cpt_release_buf(ctx);
 					return PTR_ERR(file);
@@ -616,6 +619,8 @@ static int fixup_file_flags(struct file *file, struct cpt_file_image *fi,
 			    int was_dentry_open, loff_t pos,
 			    cpt_context_t *ctx)
 {
+	const struct cred *cred = current_cred() /* should be valid already */;
+
 	if (fi->cpt_pos != file->f_pos) {
 		int err = -ESPIPE;
 		if (file->f_op->llseek)
@@ -628,8 +633,18 @@ static int fixup_file_flags(struct file *file, struct cpt_file_image *fi,
 			file->f_pos = fi->cpt_pos;
 		}
 	}
-	file->f_uid = fi->cpt_uid;
-	file->f_gid = fi->cpt_gid;
+
+	if (cred->uid != fi->cpt_uid || cred->gid != fi->cpt_gid)
+		wprintk_ctx("fixup_file_flags: oops... creds mismatch\n");
+
+	/*
+	 * this is wrong. but with current cpt_file_image there's
+	 * nothing we can do
+	 */
+
+	put_cred(file->f_cred);
+	file->f_cred = get_cred(cred);
+
 	file->f_owner.pid = 0;
 	if (fi->cpt_fown_pid != CPT_FOWN_STRAY_PID) {
 		file->f_owner.pid = find_get_pid(fi->cpt_fown_pid);
@@ -846,7 +861,7 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 	    iobj->o_parent) {
 		struct file *filp = iobj->o_parent;
 		file = dentry_open(dget(filp->f_dentry),
-				   mntget(filp->f_vfsmnt), flags);
+				   mntget(filp->f_vfsmnt), flags, NULL);
 		dprintk_ctx("rst_file: file obtained by dentry_open\n");
 		was_dentry_open = 1;
 		goto map_file;
@@ -1221,7 +1236,9 @@ int rst_fs_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 		if (obj->o_obj != f) {
 			exit_fs(current);
 			f = obj->o_obj;
-			atomic_inc(&f->count);
+			write_lock(&f->lock);
+			f->users++;
+			write_unlock(&f->lock);
 			current->fs = f;
 		}
 		return 0;

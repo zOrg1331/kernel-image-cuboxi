@@ -580,13 +580,18 @@ static int make_baby(cpt_object_t *cobj,
 		tfs = get_exec_env()->ve_ns->pid_ns->child_reaper->fs;
 		if (tfs == NULL)
 			return -EINVAL;
-		atomic_inc(&tfs->count);
+		write_lock(&tfs->lock);
+		tfs->users++;
+		write_unlock(&tfs->lock);
 		current->fs = tfs;
 	}
 	pid = local_kernel_thread(hook, &thr_ctx, flags, ci->cpt_pid);
 	if (tfs) {
 		current->fs = NULL;
-		atomic_dec(&tfs->count);
+		write_lock(&tfs->lock);
+		tfs->users--;
+		WARN_ON(tfs->users == 0);
+		write_unlock(&tfs->lock);
 	}
 	if (pid < 0)
 		return pid;
