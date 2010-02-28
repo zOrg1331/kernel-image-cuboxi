@@ -38,12 +38,11 @@
 #include "cpt_fsmagic.h"
 #include "cpt_syscalls.h"
 
-extern struct file_operations inotify_fops;
-
 struct file *rst_open_inotify(struct cpt_file_image *fi,
 			      unsigned flags,
 			      struct cpt_context *ctx)
 {
+#if 0
 	struct file *file;
 	int fd;
 
@@ -54,8 +53,12 @@ struct file *rst_open_inotify(struct cpt_file_image *fi,
 	file = fget(fd);
 	sys_close(fd);
 	return file;
+#endif
+	__WARN();
+	return ERR_PTR(-EINVAL);
 }
 
+#if 0
 static int restore_one_inotify(cpt_object_t *obj,
 			       loff_t pos,
 			       struct cpt_inotify_image *ibuf,
@@ -154,17 +157,18 @@ static int restore_one_inotify(cpt_object_t *obj,
 	}
 	return err;
 }
+#endif
 
 int rst_inotify(cpt_context_t *ctx)
 {
-	int err;
 	loff_t sec = ctx->sections[CPT_SECT_INOTIFY];
-	loff_t endsec;
-	struct cpt_section_hdr h;
 
 	if (sec == CPT_NULL)
 		return 0;
 
+	__WARN();
+	return -EINVAL;
+#if 0
 	err = ctx->pread(&h, sizeof(h), ctx, sec);
 	if (err)
 		return err;
@@ -192,5 +196,5 @@ int rst_inotify(cpt_context_t *ctx)
 	}
 
 	return 0;
-	
+#endif	
 }

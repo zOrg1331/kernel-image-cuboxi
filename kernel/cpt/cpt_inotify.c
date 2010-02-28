@@ -38,10 +38,9 @@
 #include "cpt_fsmagic.h"
 #include "cpt_syscalls.h"
 
-extern struct file_operations inotify_fops;
-
 int cpt_dump_inotify(cpt_object_t *obj, cpt_context_t *ctx)
 {
+#if 0
 	int err = 0;
 	struct file *file = obj->o_obj;
 	struct inotify_device *dev;
@@ -141,4 +140,7 @@ int cpt_dump_inotify(cpt_object_t *obj, cpt_context_t *ctx)
 	cpt_close_object(ctx);
 
 	return err;
+#endif
+	eprintk_ctx("inotifies are not supported yet\n");
+	return -EOPNOTSUPP;
 }
