@@ -112,6 +112,7 @@ typedef struct cpt_context
 	struct file	*linkdirs[CPT_MAX_LINKDIRS];
 	int		linkdirs_num;
 	unsigned int	linkcnt; /* for create hardlinked files */
+	int	hardlinked_on;
 } cpt_context_t;
 
 typedef struct {

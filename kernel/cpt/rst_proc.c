@@ -406,6 +406,9 @@ static int rst_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 			fput(ctx->errorfile);
 		ctx->errorfile = dfile;
 		break;
+	case CPT_HARDLNK_ON:
+		ctx->hardlinked_on = 1;
+		break;
 	case CPT_SET_VEID:
 		if (ctx->ctx_state > 0) {
 			err = -EBUSY;
