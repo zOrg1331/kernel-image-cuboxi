@@ -417,6 +417,14 @@ M:	Matt Turner <mattst88@gmail.com>
 L:	linux-alpha@vger.kernel.org
 F:	arch/alpha/
 
+AMBIENT LIGHT SENSOR
+M:	Zhang Rui <rui.zhang@intel.com>
+M:	Jonathan Cameron <jic23@cam.ac.uk>
+S:	Supported
+F:	include/linux/als_sys.h
+F:	drivers/als/
+T:	git git://git.kernel.org/pub/scm/linux/kernel/git/jic23/als.git
+
 AMD GEODE CS5536 USB DEVICE CONTROLLER DRIVER
 M:	Thomas Dahlmann <dahlmann.thomas@arcor.de>
 L:	linux-geode@lists.infradead.org (moderated for non-subscribers)
