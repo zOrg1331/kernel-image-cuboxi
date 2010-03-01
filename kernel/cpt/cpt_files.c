@@ -522,8 +522,11 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 	v->cpt_inode = CPT_NULL;
 	if (!(v->cpt_lflags & CPT_DENTRY_REPLACED)) {
 		iobj = lookup_cpt_object(CPT_OBJ_INODE, file->f_dentry->d_inode, ctx);
-		if (iobj)
+		if (iobj) {
 			v->cpt_inode = iobj->o_pos;
+			if (iobj->o_flags & CPT_INODE_HARDLINKED)
+				v->cpt_lflags |= CPT_DENTRY_HARDLINKED;
+		}
 	}
 	v->cpt_priv = CPT_NULL;
 	v->cpt_fown_fd = -1;
@@ -1084,8 +1087,10 @@ static int dump_one_inode(struct file *file, struct dentry *d,
 			 * process group. */
 			if (ino->i_nlink != 0) {
 				err = find_linked_dentry(d, mnt, ino, ctx);
-				if (err && S_ISREG(ino->i_mode))
+				if (err && S_ISREG(ino->i_mode)) {
 					err = create_dump_hardlink(d, mnt, ino, ctx);
+					iobj->o_flags |= CPT_INODE_HARDLINKED;
+				}
 
 				if (err) {
 					eprintk_ctx("deleted reference to existing inode, checkpointing is impossible: %d\n", err);
