@@ -638,6 +638,7 @@ static void mxc_nand_command(struct mtd_info *mtd, unsigned command,
 
 	case NAND_CMD_ERASE1:
 	case NAND_CMD_ERASE2:
+	case NAND_CMD_RESET:
 		send_cmd(host, command, false);
 		mxc_do_addr_cycle(mtd, column, page_addr);
 
@@ -818,7 +819,7 @@ static int __init mxcnd_probe(struct platform_device *pdev)
 	}
 
 	/* first scan to find the device and get the page size */
-	if (nand_scan_ident(mtd, 1)) {
+	if (nand_scan_ident(mtd, 1, NULL)) {
 		err = -ENXIO;
 		goto escan;
 	}
@@ -886,11 +887,14 @@ static int mxcnd_suspend(struct platform_device *pdev, pm_message_t state)
 	int ret = 0;
 
 	DEBUG(MTD_DEBUG_LEVEL0, "MXC_ND : NAND suspend\n");
-	if (mtd) {
-		ret = mtd->suspend(mtd);
-		/* Disable the NFC clock */
-		clk_disable(host->clk);
-	}
+
+	ret = mtd->suspend(mtd);
+
+	/*
+	 * nand_suspend locks the device for exclusive access, so
+	 * the clock must already be off.
+	 */
+	BUG_ON(!ret && host->clk_act);
 
 	return ret;
 }
@@ -904,11 +908,7 @@ static int mxcnd_resume(struct platform_device *pdev)
 
 	DEBUG(MTD_DEBUG_LEVEL0, "MXC_ND : NAND resume\n");
 
-	if (mtd) {
-		/* Enable the NFC clock */
-		clk_enable(host->clk);
-		mtd->resume(mtd);
-	}
+	mtd->resume(mtd);
 
 	return ret;
 }
