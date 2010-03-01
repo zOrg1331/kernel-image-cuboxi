@@ -58,6 +58,8 @@ struct file *rst_open_inotify(struct cpt_file_image *fi,
 			      unsigned flags,
 			      struct cpt_context *ctx);
 
+struct dentry *cpt_fake_link(struct dentry *d, struct vfsmount *mnt,
+		struct inode *ino, struct cpt_context *ctx);
 
 int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
 			 int verify, cpt_context_t *ctx);
