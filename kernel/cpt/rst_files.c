@@ -891,6 +891,12 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 					err = -EINVAL;
 					goto err_out;
 				}
+				if ((fi.cpt_lflags & CPT_DENTRY_HARDLINKED) &&
+				    !ctx->hardlinked_on) {
+					eprintk_ctx("Open hardlinked is off\n");
+					err = -EPERM;
+					goto err_out;
+				}
 				goto open_file;
 			}
 		}
