@@ -83,6 +83,8 @@ done:
 
 void cpt_context_release(cpt_context_t *ctx)
 {
+	int i;
+
 	list_del(&ctx->ctx_list);
 	spin_unlock(&cpt_context_lock);
 
@@ -109,6 +111,8 @@ void cpt_context_release(cpt_context_t *ctx)
 		fput(ctx->errorfile);
 		ctx->errorfile = NULL;
 	}
+	for (i = 0; i < ctx->linkdirs_num; i++)
+		fput(ctx->linkdirs[i]);
 	if (ctx->error_msg) {
 		free_page((unsigned long)ctx->error_msg);
 		ctx->error_msg = NULL;
@@ -325,6 +329,26 @@ static int cpt_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		if (ctx->file)
 			fput(ctx->file);
 		ctx->file = dfile;
+		break;
+	case CPT_LINKDIR_ADD:
+		if (ctx->linkdirs_num >= CPT_MAX_LINKDIRS) {
+			err = -EMLINK;
+			break;
+		}
+
+		dfile = fget(arg);
+		if (!dfile) {
+			err = -EBADFD;
+			break;
+		}
+
+		if (!S_ISDIR(dfile->f_dentry->d_inode->i_mode)) {
+			err = -ENOTDIR;
+			fput(dfile);
+			break;
+		}
+
+		ctx->linkdirs[ctx->linkdirs_num++] = dfile;
 		break;
 	case CPT_SET_ERRORFD:
 		if (arg >= 0) {
