@@ -46,8 +46,9 @@ static const int cfq_hist_divisor = 4;
 #define CFQ_HW_QUEUE_MIN	(5)
 #define CFQ_SERVICE_SHIFT       12
 
-#define CFQQ_SEEK_THR		8 * 1024
-#define CFQQ_SEEKY(cfqq)	((cfqq)->seek_mean > CFQQ_SEEK_THR)
+#define CFQQ_SEEK_THR		(sector_t)(8 * 100)
+#define CFQQ_SECT_THR_NONROT	(sector_t)(2 * 32)
+#define CFQQ_SEEKY(cfqq)	(hweight32(cfqq->seek_history) > 32/8)
 
 #define RQ_CIC(rq)		\
 	((struct cfq_io_context *) (rq)->elevator_private)
@@ -115,11 +116,11 @@ struct cfq_queue {
 	/* time when queue got scheduled in to dispatch first request. */
 	unsigned long dispatch_start;
 	unsigned int allocated_slice;
+	unsigned int slice_dispatch;
 	/* time when first request from queue completed and slice started. */
 	unsigned long slice_start;
 	unsigned long slice_end;
 	long slice_resid;
-	unsigned int slice_dispatch;
 
 	/* pending metadata requests */
 	int meta_pending;
@@ -130,12 +131,10 @@ struct cfq_queue {
 	unsigned short ioprio, org_ioprio;
 	unsigned short ioprio_class, org_ioprio_class;
 
-	unsigned int seek_samples;
-	u64 seek_total;
-	sector_t seek_mean;
-	sector_t last_request_pos;
-
 	pid_t pid;
+
+	u32 seek_history;
+	sector_t last_request_pos;
 
 	struct cfq_rb_root *service_tree;
 	struct cfq_queue *new_cfqq;
@@ -223,8 +222,8 @@ struct cfq_data {
 
 	unsigned int busy_queues;
 
-	int rq_in_driver[2];
-	int sync_flight;
+	int rq_in_driver;
+	int rq_in_flight[2];
 
 	/*
 	 * queue-depth detection
@@ -416,11 +415,6 @@ static struct cfq_queue *cfq_get_queue(struct cfq_data *, bool,
 				       struct io_context *, gfp_t);
 static struct cfq_io_context *cfq_cic_lookup(struct cfq_data *,
 						struct io_context *);
-
-static inline int rq_in_driver(struct cfq_data *cfqd)
-{
-	return cfqd->rq_in_driver[0] + cfqd->rq_in_driver[1];
-}
 
 static inline struct cfq_queue *cic_to_cfqq(struct cfq_io_context *cic,
 					    bool is_sync)
@@ -951,10 +945,6 @@ cfq_find_alloc_cfqg(struct cfq_data *cfqd, struct cgroup *cgroup, int create)
 	struct backing_dev_info *bdi = &cfqd->queue->backing_dev_info;
 	unsigned int major, minor;
 
-	/* Do we need to take this reference */
-	if (!blkiocg_css_tryget(blkcg))
-		return NULL;;
-
 	cfqg = cfqg_of_blkg(blkiocg_lookup_group(blkcg, key));
 	if (cfqg || !create)
 		goto done;
@@ -985,7 +975,6 @@ cfq_find_alloc_cfqg(struct cfq_data *cfqd, struct cgroup *cgroup, int create)
 	hlist_add_head(&cfqg->cfqd_node, &cfqd->cfqg_list);
 
 done:
-	blkiocg_css_put(blkcg);
 	return cfqg;
 }
 
@@ -1420,9 +1409,9 @@ static void cfq_activate_request(struct request_queue *q, struct request *rq)
 {
 	struct cfq_data *cfqd = q->elevator->elevator_data;
 
-	cfqd->rq_in_driver[rq_is_sync(rq)]++;
+	cfqd->rq_in_driver++;
 	cfq_log_cfqq(cfqd, RQ_CFQQ(rq), "activate rq, drv=%d",
-						rq_in_driver(cfqd));
+						cfqd->rq_in_driver);
 
 	cfqd->last_position = blk_rq_pos(rq) + blk_rq_sectors(rq);
 }
@@ -1430,12 +1419,11 @@ static void cfq_activate_request(struct request_queue *q, struct request *rq)
 static void cfq_deactivate_request(struct request_queue *q, struct request *rq)
 {
 	struct cfq_data *cfqd = q->elevator->elevator_data;
-	const int sync = rq_is_sync(rq);
 
-	WARN_ON(!cfqd->rq_in_driver[sync]);
-	cfqd->rq_in_driver[sync]--;
+	WARN_ON(!cfqd->rq_in_driver);
+	cfqd->rq_in_driver--;
 	cfq_log_cfqq(cfqd, RQ_CFQQ(rq), "deactivate rq, drv=%d",
-						rq_in_driver(cfqd));
+						cfqd->rq_in_driver);
 }
 
 static void cfq_remove_request(struct request *rq)
@@ -1673,16 +1661,7 @@ static inline sector_t cfq_dist_from_last(struct cfq_data *cfqd,
 static inline int cfq_rq_close(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 			       struct request *rq, bool for_preempt)
 {
-	sector_t sdist = cfqq->seek_mean;
-
-	if (!sample_valid(cfqq->seek_samples))
-		sdist = CFQQ_SEEK_THR;
-
-	/* if seek_mean is big, using it as close criteria is meaningless */
-	if (sdist > CFQQ_SEEK_THR && !for_preempt)
-		sdist = CFQQ_SEEK_THR;
-
-	return cfq_dist_from_last(cfqd, rq) <= sdist;
+	return cfq_dist_from_last(cfqd, rq) <= CFQQ_SEEK_THR;
 }
 
 static struct cfq_queue *cfqq_close(struct cfq_data *cfqd,
@@ -1878,8 +1857,7 @@ static void cfq_dispatch_insert(struct request_queue *q, struct request *rq)
 	cfqq->dispatched++;
 	elv_dispatch_sort(q, rq);
 
-	if (cfq_cfqq_sync(cfqq))
-		cfqd->sync_flight++;
+	cfqd->rq_in_flight[cfq_cfqq_sync(cfqq)]++;
 	cfqq->nr_sectors += blk_rq_sectors(rq);
 }
 
@@ -2226,13 +2204,13 @@ static bool cfq_may_dispatch(struct cfq_data *cfqd, struct cfq_queue *cfqq)
 	/*
 	 * Drain async requests before we start sync IO
 	 */
-	if (cfq_should_idle(cfqd, cfqq) && cfqd->rq_in_driver[BLK_RW_ASYNC])
+	if (cfq_should_idle(cfqd, cfqq) && cfqd->rq_in_flight[BLK_RW_ASYNC])
 		return false;
 
 	/*
 	 * If this is an async queue and we have sync IO in flight, let it wait
 	 */
-	if (cfqd->sync_flight && !cfq_cfqq_sync(cfqq))
+	if (cfqd->rq_in_flight[BLK_RW_SYNC] && !cfq_cfqq_sync(cfqq))
 		return false;
 
 	max_dispatch = cfqd->cfq_quantum;
@@ -2980,30 +2958,20 @@ static void
 cfq_update_io_seektime(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 		       struct request *rq)
 {
-	sector_t sdist;
-	u64 total;
+	sector_t sdist = 0;
+	sector_t n_sec = blk_rq_sectors(rq);
+	if (cfqq->last_request_pos) {
+		if (cfqq->last_request_pos < blk_rq_pos(rq))
+			sdist = blk_rq_pos(rq) - cfqq->last_request_pos;
+		else
+			sdist = cfqq->last_request_pos - blk_rq_pos(rq);
+	}
 
-	if (!cfqq->last_request_pos)
-		sdist = 0;
-	else if (cfqq->last_request_pos < blk_rq_pos(rq))
-		sdist = blk_rq_pos(rq) - cfqq->last_request_pos;
+	cfqq->seek_history <<= 1;
+	if (blk_queue_nonrot(cfqd->queue))
+		cfqq->seek_history |= (n_sec < CFQQ_SECT_THR_NONROT);
 	else
-		sdist = cfqq->last_request_pos - blk_rq_pos(rq);
-
-	/*
-	 * Don't allow the seek distance to get too large from the
-	 * odd fragment, pagein, etc
-	 */
-	if (cfqq->seek_samples <= 60) /* second&third seek */
-		sdist = min(sdist, (cfqq->seek_mean * 4) + 2*1024*1024);
-	else
-		sdist = min(sdist, (cfqq->seek_mean * 4) + 2*1024*64);
-
-	cfqq->seek_samples = (7*cfqq->seek_samples + 256) / 8;
-	cfqq->seek_total = (7*cfqq->seek_total + (u64)256*sdist) / 8;
-	total = cfqq->seek_total + (cfqq->seek_samples/2);
-	do_div(total, cfqq->seek_samples);
-	cfqq->seek_mean = (sector_t)total;
+		cfqq->seek_history |= (sdist > CFQQ_SEEK_THR);
 }
 
 /*
@@ -3028,8 +2996,7 @@ cfq_update_idle_window(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 		cfq_mark_cfqq_deep(cfqq);
 
 	if (!atomic_read(&cic->ioc->nr_tasks) || !cfqd->cfq_slice_idle ||
-	    (!cfq_cfqq_deep(cfqq) && sample_valid(cfqq->seek_samples)
-	     && CFQQ_SEEKY(cfqq)))
+	    (!cfq_cfqq_deep(cfqq) && CFQQ_SEEKY(cfqq)))
 		enable_idle = 0;
 	else if (sample_valid(cic->ttime_samples)) {
 		if (cic->ttime_mean > cfqd->cfq_slice_idle)
@@ -3215,14 +3182,14 @@ static void cfq_update_hw_tag(struct cfq_data *cfqd)
 {
 	struct cfq_queue *cfqq = cfqd->active_queue;
 
-	if (rq_in_driver(cfqd) > cfqd->hw_tag_est_depth)
-		cfqd->hw_tag_est_depth = rq_in_driver(cfqd);
+	if (cfqd->rq_in_driver > cfqd->hw_tag_est_depth)
+		cfqd->hw_tag_est_depth = cfqd->rq_in_driver;
 
 	if (cfqd->hw_tag == 1)
 		return;
 
 	if (cfqd->rq_queued <= CFQ_HW_QUEUE_MIN &&
-	    rq_in_driver(cfqd) <= CFQ_HW_QUEUE_MIN)
+	    cfqd->rq_in_driver <= CFQ_HW_QUEUE_MIN)
 		return;
 
 	/*
@@ -3232,7 +3199,7 @@ static void cfq_update_hw_tag(struct cfq_data *cfqd)
 	 */
 	if (cfqq && cfq_cfqq_idle_window(cfqq) &&
 	    cfqq->dispatched + cfqq->queued[0] + cfqq->queued[1] <
-	    CFQ_HW_QUEUE_MIN && rq_in_driver(cfqd) < CFQ_HW_QUEUE_MIN)
+	    CFQ_HW_QUEUE_MIN && cfqd->rq_in_driver < CFQ_HW_QUEUE_MIN)
 		return;
 
 	if (cfqd->hw_tag_samples++ < 50)
@@ -3285,13 +3252,12 @@ static void cfq_completed_request(struct request_queue *q, struct request *rq)
 
 	cfq_update_hw_tag(cfqd);
 
-	WARN_ON(!cfqd->rq_in_driver[sync]);
+	WARN_ON(!cfqd->rq_in_driver);
 	WARN_ON(!cfqq->dispatched);
-	cfqd->rq_in_driver[sync]--;
+	cfqd->rq_in_driver--;
 	cfqq->dispatched--;
 
-	if (cfq_cfqq_sync(cfqq))
-		cfqd->sync_flight--;
+	cfqd->rq_in_flight[cfq_cfqq_sync(cfqq)]--;
 
 	if (sync) {
 		RQ_CIC(rq)->last_end_request = now;
@@ -3345,7 +3311,7 @@ static void cfq_completed_request(struct request_queue *q, struct request *rq)
 		}
 	}
 
-	if (!rq_in_driver(cfqd))
+	if (!cfqd->rq_in_driver)
 		cfq_schedule_dispatch(cfqd);
 }
 
