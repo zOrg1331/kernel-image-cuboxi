@@ -120,10 +120,13 @@ struct cpt_major_hdr
 #define CPT_VERSION_18		0x300
 #define CPT_VERSION_18_1	0x301
 #define CPT_VERSION_18_2	0x302
+#define CPT_VERSION_18_3	0x303
 #define CPT_VERSION_20		0x400
 #define CPT_VERSION_24		0x500
 #define CPT_VERSION_26		0x600
 #define CPT_VERSION_27		0x700
+#define CPT_VERSION_27_3	0x703
+#define CPT_CURRENT_VERSION	CPT_VERSION_27_3
 	__u16	cpt_os_arch;		/* Architecture */
 #define CPT_OS_ARCH_I386	0
 #define CPT_OS_ARCH_EMT64	1
