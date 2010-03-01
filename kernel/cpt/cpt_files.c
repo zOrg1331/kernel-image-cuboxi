@@ -994,8 +994,8 @@ static struct dentry *find_linkdir(struct vfsmount *mnt, struct cpt_context *ctx
 	return NULL;
 }
 
-static int create_dump_hardlink(struct dentry *d, struct vfsmount *mnt,
-				struct inode *ino, struct cpt_context *ctx)
+struct dentry *cpt_fake_link(struct dentry *d, struct vfsmount *mnt,
+		struct inode *ino, struct cpt_context *ctx)
 {
 	int err;
 	int order = 8;
@@ -1029,16 +1029,38 @@ static int create_dump_hardlink(struct dentry *d, struct vfsmount *mnt,
 		goto out_put;
 	}
 
-	err = vfs_link(d, dirde->d_inode, hardde);
-	if (err)
-		eprintk_ctx("error hardlink %s, %d\n", name, err);
+	if (d == NULL)
+		err = vfs_create(dirde->d_inode, hardde, 0600, NULL);
 	else
-		err = cpt_dump_dentry(hardde, mnt, 0, 1, ctx);
-out_put:
-	dput(hardde);
+		err = vfs_link(d, dirde->d_inode, hardde);
+	if (err) {
+		eprintk_ctx("error hardlink %s, %d\n", name, err);
+		goto out_put;
+	}
+
 out_unlock:
 	mutex_unlock(&dirde->d_inode->i_mutex);
 out:
+	return err ? ERR_PTR(err) : hardde;
+
+out_put:
+	dput(hardde);
+	goto out_unlock;
+}
+
+static int create_dump_hardlink(struct dentry *d, struct vfsmount *mnt,
+				struct inode *ino, struct cpt_context *ctx)
+{
+	int err;
+	struct dentry *hardde;
+
+	hardde = cpt_fake_link(d, mnt, ino, ctx);
+	if (IS_ERR(hardde))
+		return PTR_ERR(hardde);
+
+	err = cpt_dump_dentry(hardde, mnt, 0, 1, ctx);
+	dput(hardde);
+
 	return err;
 }
 
