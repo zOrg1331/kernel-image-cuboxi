@@ -1112,7 +1112,10 @@ static int dump_one_inode(struct file *file, struct dentry *d,
 				if (err && S_ISREG(ino->i_mode)) {
 					err = create_dump_hardlink(d, mnt, ino, ctx);
 					iobj->o_flags |= CPT_INODE_HARDLINKED;
-				}
+				} else if (S_ISCHR(ino->i_mode) ||
+					   S_ISBLK(ino->i_mode) ||
+					   S_ISFIFO(ino->i_mode))
+					err = 0;
 
 				if (err) {
 					eprintk_ctx("deleted reference to existing inode, checkpointing is impossible: %d\n", err);
