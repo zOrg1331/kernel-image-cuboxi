@@ -38,6 +38,7 @@ cpt_object_t *alloc_cpt_object(int gfp, struct cpt_context *ctx)
 		obj->o_index = CPT_NOINDEX;
 		obj->o_obj = NULL;
 		obj->o_image = NULL;
+		obj->o_flags = 0;
 		ctx->objcount++;
 	}
 	return obj;
