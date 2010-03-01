@@ -981,6 +981,64 @@ err_readdir:
 	return err;
 }
 
+static struct dentry *find_linkdir(struct vfsmount *mnt, struct cpt_context *ctx)
+{
+	int i;
+
+	for (i = 0; i < ctx->linkdirs_num; i++)
+		if (ctx->linkdirs[i]->f_vfsmnt == mnt)
+			return ctx->linkdirs[i]->f_dentry;
+	return NULL;
+}
+
+static int create_dump_hardlink(struct dentry *d, struct vfsmount *mnt,
+				struct inode *ino, struct cpt_context *ctx)
+{
+	int err;
+	int order = 8;
+	const char *prefix = ".cpt_hardlink.";
+	int preflen = strlen(prefix) + order;
+	char name[preflen + 1];
+	struct dentry *dirde, *hardde;
+
+	dirde = find_linkdir(mnt, ctx);
+	if (!dirde) {
+		err = -ENOENT;
+		goto out;
+	}
+
+	ctx->linkcnt++;
+	snprintf(name, sizeof(name), "%s%0*u", prefix, order, ctx->linkcnt);
+
+	mutex_lock(&dirde->d_inode->i_mutex);
+	hardde = lookup_one_len(name, dirde, strlen(name));
+	if (IS_ERR(hardde)) {
+		err = PTR_ERR(hardde);
+		goto out_unlock;
+	}
+
+	if (hardde->d_inode) {
+		/* Userspace should clean hardlinked files from previous
+		 * dump/undump
+		 */
+		eprintk_ctx("Hardlinked file already exists: %s\n", name);
+		err = -EEXIST;
+		goto out_put;
+	}
+
+	err = vfs_link(d, dirde->d_inode, hardde);
+	if (err)
+		eprintk_ctx("error hardlink %s, %d\n", name, err);
+	else
+		err = cpt_dump_dentry(hardde, mnt, 0, 1, ctx);
+out_put:
+	dput(hardde);
+out_unlock:
+	mutex_unlock(&dirde->d_inode->i_mutex);
+out:
+	return err;
+}
+
 static int dump_one_inode(struct file *file, struct dentry *d,
 			  struct vfsmount *mnt, struct cpt_context *ctx)
 {
@@ -1026,6 +1084,9 @@ static int dump_one_inode(struct file *file, struct dentry *d,
 			 * process group. */
 			if (ino->i_nlink != 0) {
 				err = find_linked_dentry(d, mnt, ino, ctx);
+				if (err && S_ISREG(ino->i_mode))
+					err = create_dump_hardlink(d, mnt, ino, ctx);
+
 				if (err) {
 					eprintk_ctx("deleted reference to existing inode, checkpointing is impossible: %d\n", err);
 					return -EBUSY;
