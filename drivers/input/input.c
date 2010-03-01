@@ -24,6 +24,7 @@
 #include <linux/mutex.h>
 #include <linux/rcupdate.h>
 #include <linux/smp_lock.h>
+#include <linux/interrupt.h>
 #include "input-compat.h"
 
 MODULE_AUTHOR("Vojtech Pavlik <vojtech@suse.cz>");
@@ -511,12 +512,30 @@ void input_close_device(struct input_handle *handle)
 EXPORT_SYMBOL(input_close_device);
 
 /*
+ * input_clear_keys - Simulate keyup events for all pressed keys so
+ * that handlers are not left with "stuck" keys.
+ */
+static void input_clear_keys(struct input_dev *dev)
+{
+	int code;
+
+	if (is_event_supported(EV_KEY, dev->evbit, EV_MAX)) {
+		for (code = 0; code <= KEY_MAX; code++) {
+			if (is_event_supported(code, dev->keybit, KEY_MAX) &&
+			    __test_and_clear_bit(code, dev->key)) {
+				input_pass_event(dev, EV_KEY, code, 0);
+			}
+		}
+		input_pass_event(dev, EV_SYN, SYN_REPORT, 1);
+	}
+}
+
+/*
  * Prepare device for unregistering
  */
 static void input_disconnect_device(struct input_dev *dev)
 {
 	struct input_handle *handle;
-	int code;
 
 	/*
 	 * Mark device as going away. Note that we take dev->mutex here
@@ -530,20 +549,10 @@ static void input_disconnect_device(struct input_dev *dev)
 	spin_lock_irq(&dev->event_lock);
 
 	/*
-	 * Simulate keyup events for all pressed keys so that handlers
-	 * are not left with "stuck" keys. The driver may continue
-	 * generate events even after we done here but they will not
-	 * reach any handlers.
+	 * The driver may continue generate events even after we done here
+	 * but they will not reach any handlers.
 	 */
-	if (is_event_supported(EV_KEY, dev->evbit, EV_MAX)) {
-		for (code = 0; code <= KEY_MAX; code++) {
-			if (is_event_supported(code, dev->keybit, KEY_MAX) &&
-			    __test_and_clear_bit(code, dev->key)) {
-				input_pass_event(dev, EV_KEY, code, 0);
-			}
-		}
-		input_pass_event(dev, EV_SYN, SYN_REPORT, 1);
-	}
+	input_clear_keys(dev);
 
 	list_for_each_entry(handle, &dev->h_list, d_node)
 		handle->open = 0;
@@ -1691,6 +1700,48 @@ int input_register_handler(struct input_handler *handler)
 	return retval;
 }
 EXPORT_SYMBOL(input_register_handler);
+
+#ifdef CONFIG_KDB_KEYBOARD
+static bool input_dbg_keys_cleared;
+
+/*
+ * input_dbg_clear_keys - Clear any keyboards if they have a call back,
+ * after returning from the kernel debugger
+ */
+static void input_clear_keys_task(unsigned long not_used)
+{
+	struct input_dev *dev;
+	unsigned long flags;
+
+	if (!input_dbg_keys_cleared)
+		return;
+	list_for_each_entry(dev, &input_dev_list, node) {
+		spin_lock_irqsave(&dev->event_lock, flags);
+		input_clear_keys(dev);
+		spin_unlock_irqrestore(&dev->event_lock, flags);
+	}
+	input_dbg_keys_cleared = false;
+}
+
+static DECLARE_TASKLET(input_clear_keys_tasklet, input_clear_keys_task, 0);
+
+void input_dbg_clear_keys(void)
+{
+	struct input_dev *dev;
+
+	if (input_dbg_keys_cleared)
+		return;
+	input_dbg_keys_cleared = true;
+	/* Schedule a tasklet unless all locks are avaialble */
+	list_for_each_entry(dev, &input_dev_list, node)
+		if (spin_is_locked(&dev->event_lock)) {
+			tasklet_schedule(&input_clear_keys_tasklet);
+			return;
+		}
+	input_clear_keys_task(0);
+}
+EXPORT_SYMBOL_GPL(input_dbg_clear_keys);
+#endif /* CONFIG_KDB_KEYBOARD */
 
 /**
  * input_unregister_handler - unregisters an input handler
