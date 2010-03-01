@@ -844,4 +844,6 @@ ia32_sys_call_table:
 	.quad compat_sys_recvmmsg
 	.quad sys_fanotify_init
 	.quad sys32_fanotify_mark
+	.quad compat_sys_getprlimit		/* 340 */
+	.quad compat_sys_setprlimit
 ia32_syscall_end:
