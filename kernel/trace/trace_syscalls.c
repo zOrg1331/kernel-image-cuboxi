@@ -399,6 +399,11 @@ unsigned long __init arch_syscall_addr(int nr)
 	return (unsigned long)sys_call_table[nr];
 }
 
+unsigned long __init arch_syscall_addr(int nr)
+{
+	return (unsigned long)sys_call_table[nr];
+}
+
 int __init init_ftrace_syscalls(void)
 {
 	struct syscall_metadata *meta;
