@@ -31,6 +31,7 @@
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
+#include <linux/dma-mapping.h>
 
 #include <mach/irqs.h>
 #include <mach/hardware.h>
@@ -197,7 +198,7 @@ struct platform_device mxc_fb_device = {
 	.num_resources = ARRAY_SIZE(mxc_fb),
 	.resource = mxc_fb,
 	.dev = {
-		.coherent_dma_mask = 0xFFFFFFFF,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
 	},
 };
 
@@ -287,14 +288,14 @@ struct platform_device mxc_pwm_device = {
 		},							\
 	};								\
 									\
-	static u64 mxc_sdhc ## n ## _dmamask = 0xffffffffUL;		\
+	static u64 mxc_sdhc ## n ## _dmamask = DMA_BIT_MASK(32);	\
 									\
 	struct platform_device mxc_sdhc_device ## n = {			\
 		.name = "mxc-mmc",					\
 		.id = n,						\
 		.dev = {						\
 			.dma_mask = &mxc_sdhc ## n ## _dmamask,		\
-			.coherent_dma_mask = 0xffffffff,		\
+			.coherent_dma_mask = DMA_BIT_MASK(32),		\
 		},							\
 		.num_resources = ARRAY_SIZE(mxc_sdhc_resources ## n),	\
 		.resource = mxc_sdhc_resources ## n,		\
@@ -316,15 +317,15 @@ static struct resource otg_resources[] = {
 	},
 };
 
-static u64 otg_dmamask = 0xffffffffUL;
+static u64 otg_dmamask = DMA_BIT_MASK(32);
 
 /* OTG gadget device */
 struct platform_device mxc_otg_udc_device = {
-	.name = "fsl-usb2-udc",
-	.id = -1,
-	.dev = {
-		.dma_mask = &otg_dmamask,
-		.coherent_dma_mask = 0xffffffffUL,
+	.name		= "fsl-usb2-udc",
+	.id		= -1,
+	.dev		= {
+		.dma_mask		= &otg_dmamask,
+		.coherent_dma_mask	= DMA_BIT_MASK(32),
 	},
 	.resource = otg_resources,
 	.num_resources = ARRAY_SIZE(otg_resources),
@@ -335,7 +336,7 @@ struct platform_device mxc_otg_host = {
 	.name = "mxc-ehci",
 	.id = 0,
 	.dev = {
-		.coherent_dma_mask = 0xffffffff,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
 		.dma_mask = &otg_dmamask,
 	},
 	.resource = otg_resources,
@@ -344,7 +345,7 @@ struct platform_device mxc_otg_host = {
 
 /* USB host 1 */
 
-static u64 usbh1_dmamask = 0xffffffffUL;
+static u64 usbh1_dmamask = DMA_BIT_MASK(32);
 
 static struct resource mxc_usbh1_resources[] = {
 	{
@@ -362,7 +363,7 @@ struct platform_device mxc_usbh1 = {
 	.name = "mxc-ehci",
 	.id = 1,
 	.dev = {
-		.coherent_dma_mask = 0xffffffff,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
 		.dma_mask = &usbh1_dmamask,
 	},
 	.resource = mxc_usbh1_resources,
@@ -370,7 +371,7 @@ struct platform_device mxc_usbh1 = {
 };
 
 /* USB host 2 */
-static u64 usbh2_dmamask = 0xffffffffUL;
+static u64 usbh2_dmamask = DMA_BIT_MASK(32);
 
 static struct resource mxc_usbh2_resources[] = {
 	{
@@ -388,7 +389,7 @@ struct platform_device mxc_usbh2 = {
 	.name = "mxc-ehci",
 	.id = 2,
 	.dev = {
-		.coherent_dma_mask = 0xffffffff,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
 		.dma_mask = &usbh2_dmamask,
 	},
 	.resource = mxc_usbh2_resources,
@@ -481,3 +482,30 @@ int __init mxc_register_gpios(void)
 #endif
 		return 0;
 }
+
+#ifdef CONFIG_MACH_MX21
+static struct resource mx21_usbhc_resources[] = {
+	{
+		.start	= USBOTG_BASE_ADDR,
+		.end	= USBOTG_BASE_ADDR + 0x1FFF,
+		.flags	= IORESOURCE_MEM,
+	},
+	{
+		.start		= MXC_INT_USBHOST,
+		.end		= MXC_INT_USBHOST,
+		.flags		= IORESOURCE_IRQ,
+	},
+};
+
+struct platform_device mx21_usbhc_device = {
+	.name		= "imx21-hcd",
+	.id		= 0,
+	.dev		= {
+		.dma_mask = &mx21_usbhc_device.dev.coherent_dma_mask,
+		.coherent_dma_mask = DMA_BIT_MASK(32),
+	},
+	.num_resources	= ARRAY_SIZE(mx21_usbhc_resources),
+	.resource	= mx21_usbhc_resources,
+};
+#endif
+
