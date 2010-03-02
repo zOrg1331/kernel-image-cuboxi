@@ -161,8 +161,6 @@ int __init arch_early_irq_init(void)
 	node= cpu_to_node(boot_cpu_id);
 
 	for (i = 0; i < count; i++) {
-		if (i < legacy_pic->nr_legacy_irqs)
-			cfg[i].vector = IRQ0_VECTOR + i;
 		desc = irq_to_desc(i);
 		desc->chip_data = &cfg[i];
 		zalloc_cpumask_var_node(&cfg[i].domain, GFP_NOWAIT, node);
@@ -1440,7 +1438,7 @@ static void setup_IO_APIC_irq(int apic_id, int pin, unsigned int irq, struct irq
 	 * controllers like 8259. Now that IO-APIC can handle this irq, update
 	 * the cfg->domain.
 	 */
-	if (irq < nr_legacy_irqs && cpumask_test_cpu(0, cfg->domain))
+	if (irq < legacy_pic->nr_legacy_irqs && cpumask_test_cpu(0, cfg->domain))
 		apic->vector_allocation_domain(0, cfg->domain);
 
 	if (assign_irq_vector(irq, cfg, apic->target_cpus()))
@@ -4302,4 +4300,25 @@ void __init mp_register_ioapic(int id, u32 address, u32 gsi_base)
 	       mp_gsi_routing[idx].gsi_base, mp_gsi_routing[idx].gsi_end);
 
 	nr_ioapics++;
+}
+
+/* Enable IOAPIC early just for system timer */
+void __init pre_init_apic_IRQ0(void)
+{
+	struct irq_cfg *cfg;
+	struct irq_desc *desc;
+
+	printk(KERN_INFO "Early APIC setup for system timer0\n");
+#ifndef CONFIG_SMP
+	phys_cpu_present_map = physid_mask_of_physid(boot_cpu_physical_apicid);
+#endif
+	desc = irq_to_desc_alloc_node(0, 0);
+
+	setup_local_APIC();
+
+	cfg = irq_cfg(0);
+	add_pin_to_irq_node(cfg, 0, 0, 0);
+	set_irq_chip_and_handler_name(0, &ioapic_chip, handle_edge_irq, "edge");
+
+	setup_IO_APIC_irq(0, 0, 0, desc, 0, 0);
 }
