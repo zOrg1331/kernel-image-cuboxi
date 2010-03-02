@@ -99,6 +99,8 @@ struct xc2028_data {
 	if (size != _rc)						\
 		tuner_info("i2c output error: rc = %d (should be %d)\n",\
 			   _rc, (int)size);				\
+	if (priv->ctrl.msleep)						\
+		msleep(priv->ctrl.msleep);				\
 	_rc;								\
 })
 
@@ -118,6 +120,8 @@ struct xc2028_data {
 	if (isize != _rc)						\
 		tuner_err("i2c input error: rc = %d (should be %d)\n",	\
 			   _rc, (int)isize); 				\
+	if (priv->ctrl.msleep)						\
+		msleep(priv->ctrl.msleep);				\
 	_rc;								\
 })
 
@@ -128,8 +132,8 @@ struct xc2028_data {
 			(_rc = tuner_i2c_xfer_send(&priv->i2c_props,	\
 						_val, sizeof(_val)))) {	\
 		tuner_err("Error on line %d: %d\n", __LINE__, _rc);	\
-	} else 								\
-		msleep(10);						\
+	} else if (priv->ctrl.msleep)					\
+		msleep(priv->ctrl.msleep);				\
 	_rc;								\
 })
 
@@ -808,10 +812,20 @@ check_device:
 		  hwmodel, (version & 0xf000) >> 12, (version & 0xf00) >> 8,
 		  (version & 0xf0) >> 4, version & 0xf);
 
+
+	if (priv->ctrl.read_not_reliable)
+		goto read_not_reliable;
+
 	/* Check firmware version against what we downloaded. */
 	if (priv->firm_version != ((version & 0xf0) << 4 | (version & 0x0f))) {
-		tuner_err("Incorrect readback of firmware version.\n");
-		goto fail;
+		if (!priv->ctrl.read_not_reliable) {
+			tuner_err("Incorrect readback of firmware version.\n");
+			goto fail;
+		} else {
+			tuner_err("Returned an incorrect version. However, "
+				  "read is not reliable enough. Ignoring it.\n");
+			hwmodel = 3028;
+		}
 	}
 
 	/* Check that the tuner hardware model remains consistent over time. */
@@ -825,6 +839,7 @@ check_device:
 		goto fail;
 	}
 
+read_not_reliable:
 	memcpy(&priv->cur_fw, &new_fw, sizeof(priv->cur_fw));
 
 	/*
@@ -995,6 +1010,8 @@ static int generic_set_freq(struct dvb_frontend *fe, u32 freq /* in HZ */,
 	   The reset CLK is needed only with tm6000.
 	   Driver should work fine even if this fails.
 	 */
+	if (priv->ctrl.msleep)
+		msleep(priv->ctrl.msleep);
 	do_tuner_callback(fe, XC2028_RESET_CLK, 1);
 
 	msleep(10);
