@@ -43,6 +43,15 @@ static void tmio_mmc_set_clock(struct tmio_mmc_host *host, int new_clock)
 		for (clock = host->mmc->f_min, clk = 0x80000080;
 			new_clock >= (clock<<1); clk >>= 1)
 			clock <<= 1;
+
+	/* Round the clock to the closest available. This is required
+	 * for some fussy cards that dont like to initialise below 400kHz
+	 */
+		if (new_clock - clock >= (clock << 1) - new_clock) {
+			clk >>= 1; clock <<= 1;
+		}
+
+	/* Clock enable */
 		clk |= 0x100;
 	}
 
@@ -426,18 +435,18 @@ static void tmio_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	if (ios->clock)
 		tmio_mmc_set_clock(host, ios->clock);
 
-	/* Power sequence - OFF -> ON -> UP */
+	/* Power sequence - OFF -> UP -> ON */
 	switch (ios->power_mode) {
 	case MMC_POWER_OFF: /* power down SD bus */
 		if (host->set_pwr)
 			host->set_pwr(host->pdev, 0);
 		tmio_mmc_clk_stop(host);
 		break;
-	case MMC_POWER_ON: /* power up SD bus */
+	case MMC_POWER_UP: /* power up SD bus */
 		if (host->set_pwr)
 			host->set_pwr(host->pdev, 1);
 		break;
-	case MMC_POWER_UP: /* start bus clock */
+	case MMC_POWER_ON: /* enable bus clock */
 		tmio_mmc_clk_start(host);
 		break;
 	}
@@ -478,8 +487,8 @@ static int tmio_mmc_suspend(struct platform_device *dev, pm_message_t state)
 	ret = mmc_suspend_host(mmc, state);
 
 	/* Tell MFD core it can disable us now.*/
-	if (!ret && cell->disable)
-		cell->disable(dev);
+	if (!ret && cell->suspend)
+		cell->suspend(dev);
 
 	return ret;
 }
