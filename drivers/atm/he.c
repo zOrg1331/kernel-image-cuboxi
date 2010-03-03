@@ -921,9 +921,9 @@ out_free_rbpq_base:
 			he_dev->rbrq_phys);
 	i = CONFIG_RBPL_SIZE;
 out_free_rbpl_virt:
-	while (--i)
-		pci_pool_free(he_dev->rbps_pool, he_dev->rbpl_virt[i].virt,
-				he_dev->rbps_base[i].phys);
+	while (i--)
+		pci_pool_free(he_dev->rbpl_pool, he_dev->rbpl_virt[i].virt,
+				he_dev->rbpl_base[i].phys);
 	kfree(he_dev->rbpl_virt);
 
 out_free_rbpl_base:
@@ -933,11 +933,11 @@ out_free_rbpl_base:
 out_destroy_rbpl_pool:
 	pci_pool_destroy(he_dev->rbpl_pool);
 
-	i = CONFIG_RBPL_SIZE;
+	i = CONFIG_RBPS_SIZE;
 out_free_rbps_virt:
-	while (--i)
-		pci_pool_free(he_dev->rbpl_pool, he_dev->rbps_virt[i].virt,
-				he_dev->rbpl_base[i].phys);
+	while (i--)
+		pci_pool_free(he_dev->rbps_pool, he_dev->rbps_virt[i].virt,
+				he_dev->rbps_base[i].phys);
 	kfree(he_dev->rbps_virt);
 
 out_free_rbps_base:
@@ -2505,7 +2505,7 @@ he_close(struct atm_vcc *vcc)
 		 * TBRQ, the host issues the close command to the adapter.
 		 */
 
-		while (((tx_inuse = atomic_read(&sk_atm(vcc)->sk_wmem_alloc)) > 0) &&
+		while (((tx_inuse = atomic_read(&sk_atm(vcc)->sk_wmem_alloc)) > 1) &&
 		       (retry < MAX_RETRY)) {
 			msleep(sleep);
 			if (sleep < 250)
@@ -2514,7 +2514,7 @@ he_close(struct atm_vcc *vcc)
 			++retry;
 		}
 
-		if (tx_inuse)
+		if (tx_inuse > 1)
 			hprintk("close tx cid 0x%x tx_inuse = %d\n", cid, tx_inuse);
 
 		/* 2.3.1.1 generic close operations with flush */
@@ -2739,7 +2739,7 @@ he_ioctl(struct atm_dev *atm_dev, unsigned int cmd, void __user *arg)
 			spin_lock_irqsave(&he_dev->global_lock, flags);
 			switch (reg.type) {
 				case HE_REGTYPE_PCI:
-					if (reg.addr < 0 || reg.addr >= HE_REGMAP_SIZE) {
+					if (reg.addr >= HE_REGMAP_SIZE) {
 						err = -EINVAL;
 						break;
 					}
