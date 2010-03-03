@@ -348,13 +348,9 @@ static int ocfs2_mknod(struct inode *dir,
 		goto leave;
 	}
 
-	/* We don't use standard VFS wrapper because we don't want vfs_dq_init
-	 * to be called. */
-	if (sb_any_quota_active(osb->sb) &&
-	    osb->sb->dq_op->alloc_inode(inode, 1) == NO_QUOTA) {
-		status = -EDQUOT;
+	status = dquot_alloc_inode(inode);
+	if (status)
 		goto leave;
-	}
 	did_quota_inode = 1;
 
 	mlog_entry("(0x%p, 0x%p, %d, %lu, '%.*s')\n", dir, dentry,
@@ -431,7 +427,7 @@ static int ocfs2_mknod(struct inode *dir,
 	status = 0;
 leave:
 	if (status < 0 && did_quota_inode)
-		vfs_dq_free_inode(inode);
+		dquot_free_inode(inode);
 	if (handle)
 		ocfs2_commit_trans(osb, handle);
 
@@ -1688,13 +1684,9 @@ static int ocfs2_symlink(struct inode *dir,
 		goto bail;
 	}
 
-	/* We don't use standard VFS wrapper because we don't want vfs_dq_init
-	 * to be called. */
-	if (sb_any_quota_active(osb->sb) &&
-	    osb->sb->dq_op->alloc_inode(inode, 1) == NO_QUOTA) {
-		status = -EDQUOT;
+	status = dquot_alloc_inode(inode);
+	if (status)
 		goto bail;
-	}
 	did_quota_inode = 1;
 
 	mlog_entry("(0x%p, 0x%p, %d, '%.*s')\n", dir, dentry,
@@ -1716,11 +1708,10 @@ static int ocfs2_symlink(struct inode *dir,
 		u32 offset = 0;
 
 		inode->i_op = &ocfs2_symlink_inode_operations;
-		if (vfs_dq_alloc_space_nodirty(inode,
-		    ocfs2_clusters_to_bytes(osb->sb, 1))) {
-			status = -EDQUOT;
+		status = dquot_alloc_space_nodirty(inode,
+		    ocfs2_clusters_to_bytes(osb->sb, 1));
+		if (status)
 			goto bail;
-		}
 		did_quota = 1;
 		status = ocfs2_add_inode_data(osb, inode, &offset, 1, 0,
 					      new_fe_bh,
@@ -1788,10 +1779,10 @@ static int ocfs2_symlink(struct inode *dir,
 	d_instantiate(dentry, inode);
 bail:
 	if (status < 0 && did_quota)
-		vfs_dq_free_space_nodirty(inode,
+		dquot_free_space_nodirty(inode,
 					ocfs2_clusters_to_bytes(osb->sb, 1));
 	if (status < 0 && did_quota_inode)
-		vfs_dq_free_inode(inode);
+		dquot_free_inode(inode);
 	if (handle)
 		ocfs2_commit_trans(osb, handle);
 
@@ -2099,13 +2090,9 @@ int ocfs2_create_inode_in_orphan(struct inode *dir,
 		goto leave;
 	}
 
-	/* We don't use standard VFS wrapper because we don't want vfs_dq_init
-	 * to be called. */
-	if (sb_any_quota_active(osb->sb) &&
-	    osb->sb->dq_op->alloc_inode(inode, 1) == NO_QUOTA) {
-		status = -EDQUOT;
+	status = dquot_alloc_inode(inode);
+	if (status)
 		goto leave;
-	}
 	did_quota_inode = 1;
 
 	inode->i_nlink = 0;
@@ -2140,7 +2127,7 @@ int ocfs2_create_inode_in_orphan(struct inode *dir,
 	insert_inode_hash(inode);
 leave:
 	if (status < 0 && did_quota_inode)
-		vfs_dq_free_inode(inode);
+		dquot_free_inode(inode);
 	if (handle)
 		ocfs2_commit_trans(osb, handle);
 

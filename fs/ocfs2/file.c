@@ -629,11 +629,10 @@ restart_all:
 	}
 
 restarted_transaction:
-	if (vfs_dq_alloc_space_nodirty(inode, ocfs2_clusters_to_bytes(osb->sb,
-	    clusters_to_add))) {
-		status = -EDQUOT;
+	status = dquot_alloc_space_nodirty(inode,
+			ocfs2_clusters_to_bytes(osb->sb, clusters_to_add));
+	if (status)
 		goto leave;
-	}
 	did_quota = 1;
 
 	/* reserve a write to the file entry early on - that we if we
@@ -674,7 +673,7 @@ restarted_transaction:
 	clusters_to_add -= (OCFS2_I(inode)->ip_clusters - prev_clusters);
 	spin_unlock(&OCFS2_I(inode)->ip_lock);
 	/* Release unused quota reservation */
-	vfs_dq_free_space(inode,
+	dquot_free_space(inode,
 			ocfs2_clusters_to_bytes(osb->sb, clusters_to_add));
 	did_quota = 0;
 
@@ -710,7 +709,7 @@ restarted_transaction:
 
 leave:
 	if (status < 0 && did_quota)
-		vfs_dq_free_space(inode,
+		dquot_free_space(inode,
 			ocfs2_clusters_to_bytes(osb->sb, clusters_to_add));
 	if (handle) {
 		ocfs2_commit_trans(osb, handle);
@@ -1021,7 +1020,7 @@ int ocfs2_setattr(struct dentry *dentry, struct iattr *attr)
 		/*
 		 * Gather pointers to quota structures so that allocation /
 		 * freeing of quota structures happens here and not inside
-		 * vfs_dq_transfer() where we have problems with lock ordering
+		 * dquot_transfer() where we have problems with lock ordering
 		 */
 		if (attr->ia_valid & ATTR_UID && attr->ia_uid != inode->i_uid
 		    && OCFS2_HAS_RO_COMPAT_FEATURE(sb,
@@ -1054,7 +1053,7 @@ int ocfs2_setattr(struct dentry *dentry, struct iattr *attr)
 			mlog_errno(status);
 			goto bail_unlock;
 		}
-		status = vfs_dq_transfer(inode, attr) ? -EDQUOT : 0;
+		status = dquot_transfer(inode, attr);
 		if (status < 0)
 			goto bail_commit;
 	} else {
