@@ -697,6 +697,7 @@ CONFIG_SSB_POSSIBLE=y
 # CONFIG_MFD_WM8400 is not set
 # CONFIG_MFD_WM8350_I2C is not set
 # CONFIG_MFD_PCF50633 is not set
+CONFIG_MEDIA_SUPPORT=m
 
 #
 # Multimedia devices
@@ -705,13 +706,16 @@ CONFIG_SSB_POSSIBLE=y
 #
 # Multimedia core support
 #
-# CONFIG_VIDEO_DEV is not set
+CONFIG_VIDEO_DEV=m
 # CONFIG_DVB_CORE is not set
 # CONFIG_VIDEO_MEDIA is not set
 
 #
 # Multimedia drivers
 #
+CONFIG_VIDEO_V4L2=m
+CONFIG_SOC_CAMERA=m
+CONFIG_VIDEO_MX1=m
 # CONFIG_DAB is not set
 
 #
