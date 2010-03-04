@@ -45,6 +45,7 @@ config X86
 	select HAVE_GENERIC_DMA_COHERENT if X86_32
 	select HAVE_EFFICIENT_UNALIGNED_ACCESS
 	select USER_STACKTRACE_SUPPORT
+	select HAVE_REGS_AND_STACK_ACCESS_API
 	select HAVE_DMA_API_DEBUG
 	select HAVE_KERNEL_GZIP
 	select HAVE_KERNEL_BZIP2
@@ -181,6 +182,9 @@ config ARCH_SUPPORTS_OPTIMIZED_INLINING
 	def_bool y
 
 config ARCH_SUPPORTS_DEBUG_PAGEALLOC
+	def_bool y
+
+config HAVE_EARLY_RES
 	def_bool y
 
 config HAVE_INTEL_TXT
@@ -567,6 +571,18 @@ config PARAVIRT_DEBUG
 	---help---
 	  Enable to debug paravirt_ops internals.  Specifically, BUG if
 	  a paravirt_op is missing when it is called.
+
+config NO_BOOTMEM
+	default y
+	bool "Disable Bootmem code"
+	---help---
+	  Use early_res directly instead of bootmem before slab is ready.
+		- allocator (buddy) [generic]
+		- early allocator (bootmem) [generic]
+		- very early allocator (reserve_early*()) [x86]
+		- very very early allocator (early brk model) [x86]
+	  So reduce one layer between early allocator to final allocator
+
 
 config MEMTEST
 	bool "Memtest"
@@ -988,12 +1004,6 @@ config X86_CPUID
 	  be executed on a specific processor.  It is a character device
 	  with major 203 and minors 0 to 31 for /dev/cpu/0/cpuid to
 	  /dev/cpu/31/cpuid.
-
-config X86_CPU_DEBUG
-	tristate "/sys/kernel/debug/x86/cpu/* - CPU Debug support"
-	---help---
-	  If you select this option, this will provide various x86 CPUs
-	  information through debugfs.
 
 choice
 	prompt "High Memory Support"

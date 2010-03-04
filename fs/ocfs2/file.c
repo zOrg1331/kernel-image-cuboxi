@@ -749,7 +749,7 @@ static int ocfs2_write_zero_page(struct inode *inode,
 	int ret;
 
 	offset = (size & (PAGE_CACHE_SIZE-1)); /* Within page */
-	/* ugh.  in prepare/commit_write, if from==to==start of block, we 
+	/* ugh.  in prepare/commit_write, if from==to==start of block, we
 	** skip the prepare.  make sure we never send an offset for the start
 	** of a block
 	*/
@@ -993,10 +993,9 @@ int ocfs2_setattr(struct dentry *dentry, struct iattr *attr)
 	}
 
 	if (size_change && attr->ia_size != i_size_read(inode)) {
-		if (attr->ia_size > sb->s_maxbytes) {
-			status = -EFBIG;
+		status = inode_newsize_ok(inode, attr->ia_size);
+		if (status)
 			goto bail_unlock;
-		}
 
 		if (i_size_read(inode) > attr->ia_size) {
 			if (ocfs2_should_order_data(inode)) {
@@ -1779,7 +1778,7 @@ static int ocfs2_prepare_inode_for_write(struct dentry *dentry,
 	struct inode *inode = dentry->d_inode;
 	loff_t saved_pos, end;
 
-	/* 
+	/*
 	 * We start with a read level meta lock and only jump to an ex
 	 * if we need to make modifications here.
 	 */
@@ -1836,6 +1835,8 @@ static int ocfs2_prepare_inode_for_write(struct dentry *dentry,
 							       &meta_level);
 			if (has_refcount)
 				*has_refcount = 1;
+			if (direct_io)
+				*direct_io = 0;
 		}
 
 		if (ret < 0) {
@@ -1859,10 +1860,6 @@ static int ocfs2_prepare_inode_for_write(struct dentry *dentry,
 			break;
 		}
 
-		if (has_refcount && *has_refcount == 1) {
-			*direct_io = 0;
-			break;
-		}
 		/*
 		 * Allowing concurrent direct writes means
 		 * i_size changes wouldn't be synchronized, so
@@ -2013,8 +2010,8 @@ out_dio:
 	/* buffered aio wouldn't have proper lock coverage today */
 	BUG_ON(ret == -EIOCBQUEUED && !(file->f_flags & O_DIRECT));
 
-	if ((file->f_flags & O_DSYNC && !direct_io) || IS_SYNC(inode) ||
-	    (file->f_flags & O_DIRECT && has_refcount)) {
+	if (((file->f_flags & O_DSYNC) && !direct_io) || IS_SYNC(inode) ||
+	    ((file->f_flags & O_DIRECT) && has_refcount)) {
 		ret = filemap_fdatawrite_range(file->f_mapping, pos,
 					       pos + count - 1);
 		if (ret < 0)
@@ -2033,7 +2030,7 @@ out_dio:
 						      pos + count - 1);
 	}
 
-	/* 
+	/*
 	 * deep in g_f_a_w_n()->ocfs2_direct_IO we pass in a ocfs2_dio_end_io
 	 * function pointer which is called when o_direct io completes so that
 	 * it can unlock our rw lock.  (it's the clustered equivalent of
@@ -2043,7 +2040,7 @@ out_dio:
 	 * async dio is going to do it in the future or an end_io after an
 	 * error has already done it.
 	 */
-	if (ret == -EIOCBQUEUED || !ocfs2_iocb_is_rw_locked(iocb)) {
+	if ((ret == -EIOCBQUEUED) || (!ocfs2_iocb_is_rw_locked(iocb))) {
 		rw_level = -1;
 		have_alloc_sem = 0;
 	}
@@ -2198,7 +2195,7 @@ static ssize_t ocfs2_file_aio_read(struct kiocb *iocb,
 		goto bail;
 	}
 
-	/* 
+	/*
 	 * buffered reads protect themselves in ->readpage().  O_DIRECT reads
 	 * need locks to protect pending reads from racing with truncate.
 	 */
@@ -2220,10 +2217,10 @@ static ssize_t ocfs2_file_aio_read(struct kiocb *iocb,
 	 * We're fine letting folks race truncates and extending
 	 * writes with read across the cluster, just like they can
 	 * locally. Hence no rw_lock during read.
-	 * 
+	 *
 	 * Take and drop the meta data lock to update inode fields
 	 * like i_size. This allows the checks down below
-	 * generic_file_aio_read() a chance of actually working. 
+	 * generic_file_aio_read() a chance of actually working.
 	 */
 	ret = ocfs2_inode_lock_atime(inode, filp->f_vfsmnt, &lock_level);
 	if (ret < 0) {
@@ -2248,7 +2245,7 @@ static ssize_t ocfs2_file_aio_read(struct kiocb *iocb,
 bail:
 	if (have_alloc_sem)
 		up_read(&inode->i_alloc_sem);
-	if (rw_level != -1) 
+	if (rw_level != -1)
 		ocfs2_rw_unlock(inode, rw_level);
 	mlog_exit(ret);
 
