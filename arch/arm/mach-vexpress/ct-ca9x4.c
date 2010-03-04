@@ -103,7 +103,6 @@ static void ct_ca9x4_clcd_enable(struct clcd_fb *fb)
 {
 	v2m_cfg_write(SYS_CFG_MUXFPGA | SYS_CFG_SITE_DB1, 0);
 	v2m_cfg_write(SYS_CFG_DVIMODE | SYS_CFG_SITE_DB1, 2);
-	v2m_cfg_write(SYS_CFG_OSC | SYS_CFG_SITE_DB1 | 1, 63500127);
 }
 
 static int ct_ca9x4_clcd_setup(struct clcd_fb *fb)
@@ -160,8 +159,23 @@ static struct amba_device *ct_ca9x4_amba_devs[] __initdata = {
 };
 
 
+static long ct_round(struct clk *clk, unsigned long rate)
+{
+	return rate;
+}
+
+static int ct_set(struct clk *clk, unsigned long rate)
+{
+	return v2m_cfg_write(SYS_CFG_OSC | SYS_CFG_SITE_DB1 | 1, rate);
+}
+
+static const struct clk_ops osc1_clk_ops = {
+	.round	= ct_round,
+	.set	= ct_set,
+};
 
 static struct clk osc1_clk = {
+	.ops	= &osc1_clk_ops,
 	.rate	= 24000000,
 };
 
