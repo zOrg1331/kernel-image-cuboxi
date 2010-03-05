@@ -136,8 +136,7 @@ bfa_fcs_fabric_sm_uninit(struct bfa_fcs_fabric_s *fabric,
 	case BFA_FCS_FABRIC_SM_CREATE:
 		bfa_sm_set_state(fabric, bfa_fcs_fabric_sm_created);
 		bfa_fcs_fabric_init(fabric);
-		bfa_fcs_lport_init(&fabric->bport, fabric->fcs, FC_VF_ID_NULL,
-				   &fabric->bport.port_cfg, NULL);
+		bfa_fcs_lport_init(&fabric->bport, &fabric->bport.port_cfg);
 		break;
 
 	case BFA_FCS_FABRIC_SM_LINK_UP:
@@ -814,10 +813,10 @@ bfa_fcs_fabric_delete_comp(void *cbarg)
  */
 
 /**
- *   Module initialization
+ *   Attach time initialization
  */
 void
-bfa_fcs_fabric_modinit(struct bfa_fcs_s *fcs)
+bfa_fcs_fabric_attach(struct bfa_fcs_s *fcs)
 {
 	struct bfa_fcs_fabric_s *fabric;
 
@@ -841,7 +840,13 @@ bfa_fcs_fabric_modinit(struct bfa_fcs_s *fcs)
 	bfa_wc_up(&fabric->wc);	/* For the base port */
 
 	bfa_sm_set_state(fabric, bfa_fcs_fabric_sm_uninit);
-	bfa_sm_send_event(fabric, BFA_FCS_FABRIC_SM_CREATE);
+	bfa_fcs_lport_attach(&fabric->bport, fabric->fcs, FC_VF_ID_NULL, NULL);
+}
+
+void
+bfa_fcs_fabric_modinit(struct bfa_fcs_s *fcs)
+{
+	bfa_sm_send_event(&fcs->fabric, BFA_FCS_FABRIC_SM_CREATE);
 	bfa_trc(fcs, 0);
 }
 

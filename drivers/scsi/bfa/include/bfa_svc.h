@@ -293,6 +293,7 @@ void bfa_uf_free(struct bfa_uf_s *uf);
  * bfa lport service api
  */
 
+u32	bfa_lps_get_max_vport(struct bfa_s *bfa);
 struct bfa_lps_s *bfa_lps_alloc(struct bfa_s *bfa);
 void bfa_lps_delete(struct bfa_lps_s *lps);
 void bfa_lps_discard(struct bfa_lps_s *lps);
@@ -319,6 +320,7 @@ void bfa_cb_lps_flogi_comp(void *bfad, void *uarg, bfa_status_t status);
 void bfa_cb_lps_flogo_comp(void *bfad, void *uarg);
 void bfa_cb_lps_fdisc_comp(void *bfad, void *uarg, bfa_status_t status);
 void bfa_cb_lps_fdisclogo_comp(void *bfad, void *uarg);
+void bfa_cb_lps_cvl_event(void *bfad, void *uarg);
 
 #endif /* __BFA_SVC_H__ */
 
