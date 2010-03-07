@@ -429,12 +429,9 @@ static int pcmcia_release_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 		dev_dbg(&s->dev, "IRQ attributes must match assigned ones\n");
 		goto out;
 	}
-	if (s->irq.AssignedIRQ != req->AssignedIRQ) {
+	if (s->pcmcia_irq != req->AssignedIRQ) {
 		dev_dbg(&s->dev, "IRQ must match assigned one\n");
 		goto out;
-	}
-	if (--s->irq.Config == 0) {
-		c->state &= ~CONFIG_IRQ_REQ;
 	}
 
 	if (req->Handler)
@@ -532,7 +529,7 @@ int pcmcia_request_configuration(struct pcmcia_device *p_dev,
 	if (req->Attributes & CONF_ENABLE_SPKR)
 		s->socket.flags |= SS_SPKR_ENA;
 	if (req->Attributes & CONF_ENABLE_IRQ)
-		s->socket.io_irq = s->irq.AssignedIRQ;
+		s->socket.io_irq = s->pcmcia_irq;
 	else
 		s->socket.io_irq = 0;
 	s->ops->set_socket(s, &s->socket);
@@ -555,7 +552,7 @@ int pcmcia_request_configuration(struct pcmcia_device *p_dev,
 			if (req->Present & PRESENT_IOBASE_0)
 				c->Option |= COR_ADDR_DECODE;
 		}
-		if (c->state & CONFIG_IRQ_REQ)
+		if (req->Attributes & CONF_ENABLE_IRQ)
 			if (!(c->irq.Attributes & IRQ_FORCED_PULSE))
 				c->Option |= COR_LEVEL_REQ;
 		pcmcia_write_cis_mem(s, 1, (base + CISREG_COR)>>1, 1, &c->Option);
@@ -710,10 +707,6 @@ int pcmcia_request_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 		dev_dbg(&s->dev, "Configuration is locked\n");
 		goto out;
 	}
-	if (c->state & CONFIG_IRQ_REQ) {
-		dev_dbg(&s->dev, "IRQ already configured\n");
-		goto out;
-	}
 
 	if (!irq) {
 		dev_dbg(&s->dev, "no IRQ available\n");
@@ -722,8 +715,6 @@ int pcmcia_request_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 
 	if (!(req->Attributes & IRQ_TYPE_DYNAMIC_SHARING)) {
 		req->Attributes |= IRQ_TYPE_DYNAMIC_SHARING;
-		dev_printk(KERN_WARNING, &p_dev->dev, "pcmcia: "
-			"request for exclusive IRQ could not be fulfilled.\n");
 		dev_printk(KERN_WARNING, &p_dev->dev, "pcmcia: the driver "
 			"needs updating to supported shared IRQ lines.\n");
 	}
@@ -740,9 +731,7 @@ int pcmcia_request_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 
 	c->irq.Attributes = req->Attributes;
 	req->AssignedIRQ = irq;
-	s->irq.Config++;
 
-	c->state |= CONFIG_IRQ_REQ;
 	p_dev->_irq = 1;
 
 	ret = 0;
@@ -794,7 +783,7 @@ static int pcmcia_setup_isa_irq(struct pcmcia_device *p_dev, int type)
 				  p_dev);
 		if (!ret) {
 			free_irq(irq, p_dev);
-			p_dev->irq_v = s->irq.AssignedIRQ = irq;
+			p_dev->irq_v = s->pcmcia_irq = irq;
 			pcmcia_used_irq[irq]++;
 			break;
 		}
@@ -805,8 +794,8 @@ static int pcmcia_setup_isa_irq(struct pcmcia_device *p_dev, int type)
 
 void pcmcia_cleanup_irq(struct pcmcia_socket *s)
 {
-	pcmcia_used_irq[s->irq.AssignedIRQ]--;
-	s->irq.AssignedIRQ = 0;
+	pcmcia_used_irq[s->pcmcia_irq]--;
+	s->pcmcia_irq = 0;
 }
 
 #else /* CONFIG_PCMCIA_PROBE */
@@ -818,7 +807,7 @@ static int pcmcia_setup_isa_irq(struct pcmcia_device *p_dev, int type)
 
 void pcmcia_cleanup_irq(struct pcmcia_socket *s)
 {
-	s->irq.AssignedIRQ = 0;
+	s->pcmcia_irq = 0;
 	return;
 }
 
@@ -839,8 +828,8 @@ int pcmcia_setup_irq(struct pcmcia_device *p_dev)
 		return 0;
 
 	/* already assigned? */
-	if (s->irq.AssignedIRQ) {
-		p_dev->irq_v = s->irq.AssignedIRQ;
+	if (s->pcmcia_irq) {
+		p_dev->irq_v = s->pcmcia_irq;
 		return 0;
 	}
 
@@ -854,7 +843,7 @@ int pcmcia_setup_irq(struct pcmcia_device *p_dev)
 
 	/* but use the PCI irq otherwise */
 	if (s->pci_irq) {
-		p_dev->irq_v = s->irq.AssignedIRQ = s->pci_irq;
+		p_dev->irq_v = s->pcmcia_irq = s->pci_irq;
 		return 0;
 	}
 
