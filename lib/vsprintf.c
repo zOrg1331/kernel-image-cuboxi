@@ -381,8 +381,8 @@ static noinline char *put_dec(char *buf, unsigned long long num)
 #define PLUS	4		/* show plus */
 #define SPACE	8		/* space if plus */
 #define LEFT	16		/* left justified */
-#define SMALL	32		/* Must be 32 == 0x20 */
-#define SPECIAL	64		/* 0x */
+#define SMALL	32		/* use lowercase in hex (must be 32 == 0x20) */
+#define SPECIAL	64		/* prefix hex with "0x", octal with "0" */
 
 enum format_type {
 	FORMAT_TYPE_NONE, /* Just a string part */
@@ -597,22 +597,35 @@ static char *resource_string(char *buf, char *end, struct resource *res,
 #ifndef MEM_RSRC_PRINTK_SIZE
 #define MEM_RSRC_PRINTK_SIZE	10
 #endif
-	struct printf_spec hex_spec = {
+	static const struct printf_spec io_spec = {
 		.base = 16,
+		.field_width = IO_RSRC_PRINTK_SIZE,
 		.precision = -1,
 		.flags = SPECIAL | SMALL | ZEROPAD,
 	};
-	struct printf_spec dec_spec = {
+	static const struct printf_spec mem_spec = {
+		.base = 16,
+		.field_width = MEM_RSRC_PRINTK_SIZE,
+		.precision = -1,
+		.flags = SPECIAL | SMALL | ZEROPAD,
+	};
+	static const struct printf_spec bus_spec = {
+		.base = 16,
+		.field_width = 2,
+		.precision = -1,
+		.flags = SMALL | ZEROPAD,
+	};
+	static const struct printf_spec dec_spec = {
 		.base = 10,
 		.precision = -1,
 		.flags = 0,
 	};
-	struct printf_spec str_spec = {
+	static const struct printf_spec str_spec = {
 		.field_width = -1,
 		.precision = 10,
 		.flags = LEFT,
 	};
-	struct printf_spec flag_spec = {
+	static const struct printf_spec flag_spec = {
 		.base = 16,
 		.precision = -1,
 		.flags = SPECIAL | SMALL,
@@ -622,47 +635,48 @@ static char *resource_string(char *buf, char *end, struct resource *res,
 	 * 64-bit res (sizeof==8): 20 chars in dec, 18 in hex ("0x" + 16) */
 #define RSRC_BUF_SIZE		((2 * sizeof(resource_size_t)) + 4)
 #define FLAG_BUF_SIZE		(2 * sizeof(res->flags))
-#define DECODED_BUF_SIZE	sizeof("[mem - 64bit pref disabled]")
+#define DECODED_BUF_SIZE	sizeof("[mem - 64bit pref window disabled]")
 #define RAW_BUF_SIZE		sizeof("[mem - flags 0x]")
 	char sym[max(2*RSRC_BUF_SIZE + DECODED_BUF_SIZE,
 		     2*RSRC_BUF_SIZE + FLAG_BUF_SIZE + RAW_BUF_SIZE)];
 
 	char *p = sym, *pend = sym + sizeof(sym);
-	int size = -1, addr = 0;
 	int decode = (fmt[0] == 'R') ? 1 : 0;
-
-	if (res->flags & IORESOURCE_IO) {
-		size = IO_RSRC_PRINTK_SIZE;
-		addr = 1;
-	} else if (res->flags & IORESOURCE_MEM) {
-		size = MEM_RSRC_PRINTK_SIZE;
-		addr = 1;
-	}
+	const struct printf_spec *specp;
 
 	*p++ = '[';
-	if (res->flags & IORESOURCE_IO)
+	if (res->flags & IORESOURCE_IO) {
 		p = string(p, pend, "io  ", str_spec);
-	else if (res->flags & IORESOURCE_MEM)
+		specp = &io_spec;
+	} else if (res->flags & IORESOURCE_MEM) {
 		p = string(p, pend, "mem ", str_spec);
-	else if (res->flags & IORESOURCE_IRQ)
+		specp = &mem_spec;
+	} else if (res->flags & IORESOURCE_IRQ) {
 		p = string(p, pend, "irq ", str_spec);
-	else if (res->flags & IORESOURCE_DMA)
+		specp = &dec_spec;
+	} else if (res->flags & IORESOURCE_DMA) {
 		p = string(p, pend, "dma ", str_spec);
-	else {
+		specp = &dec_spec;
+	} else if (res->flags & IORESOURCE_BUS) {
+		p = string(p, pend, "bus ", str_spec);
+		specp = &bus_spec;
+	} else {
 		p = string(p, pend, "??? ", str_spec);
+		specp = &mem_spec;
 		decode = 0;
 	}
-	hex_spec.field_width = size;
-	p = number(p, pend, res->start, addr ? hex_spec : dec_spec);
+	p = number(p, pend, res->start, *specp);
 	if (res->start != res->end) {
 		*p++ = '-';
-		p = number(p, pend, res->end, addr ? hex_spec : dec_spec);
+		p = number(p, pend, res->end, *specp);
 	}
 	if (decode) {
 		if (res->flags & IORESOURCE_MEM_64)
 			p = string(p, pend, " 64bit", str_spec);
 		if (res->flags & IORESOURCE_PREFETCH)
 			p = string(p, pend, " pref", str_spec);
+		if (res->flags & IORESOURCE_WINDOW)
+			p = string(p, pend, " window", str_spec);
 		if (res->flags & IORESOURCE_DISABLED)
 			p = string(p, pend, " disabled", str_spec);
 	} else {
