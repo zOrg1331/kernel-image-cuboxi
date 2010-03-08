@@ -2548,14 +2548,14 @@ void tcp_v4_kill_ve_sockets(struct ve_struct *envid)
 	head = tcp_hashinfo.ehash;
 	for (i = 0; i < tcp_hashinfo.ehash_size; i++) {
 		struct sock *sk;
-		struct hlist_node *node;
-		rwlock_t *lock = inet_ehash_lockp(&tcp_hashinfo, i);
+		struct hlist_nulls_node *node;
+		spinlock_t *lock = inet_ehash_lockp(&tcp_hashinfo, i);
 more_work:
-		write_lock(lock);
-		sk_for_each(sk, node, &head[i].chain) {
+		spin_lock(lock);
+		sk_nulls_for_each(sk, node, &head[i].chain) {
 			if (ve_accessible_strict(sk->owner_env, envid)) {
 				sock_hold(sk);
-				write_unlock(lock);
+				spin_unlock(lock);
 
 				bh_lock_sock(sk);
 				/* sk might have disappeared from the hash before
@@ -2567,7 +2567,7 @@ more_work:
 				goto more_work;
 			}
 		}
-		write_unlock(lock);
+		spin_unlock(lock);
 	}
 	local_bh_enable();
 }
