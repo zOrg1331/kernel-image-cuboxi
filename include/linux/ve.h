@@ -298,13 +298,10 @@ void fini_ve_cgroups(struct ve_struct *ve);
 extern struct ve_cpu_stats static_ve_cpu_stats;
 static inline struct ve_cpu_stats *VE_CPU_STATS(struct ve_struct *ve, int cpu)
 {
-	struct ve_cpu_stats *s;
-
-	s = per_cpu_ptr(ve->cpu_stats, cpu);
-	if (s == NULL)
+	if (ve->cpu_stats == NULL)
 		return &static_ve_cpu_stats;
 	else
-		return s;
+		return per_cpu_ptr(ve->cpu_stats, cpu);
 }
 
 extern int nr_ve;
