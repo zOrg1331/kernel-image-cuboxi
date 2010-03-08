@@ -307,14 +307,13 @@ static void free_ve_proc(struct ve_struct *ve)
 
 static int init_ve_devpts(struct ve_struct *ve)
 {
-	BUG(); /* XXX devpts is knda virtualized already */
-
-	return -EINVAL;
+	return register_ve_fs_type(ve, &devpts_fs_type,
+			&ve->devpts_fstype, &ve->devpts_mnt);
 }
 
 static void fini_ve_devpts(struct ve_struct *ve)
 {
-	BUG();
+	unregister_ve_fs_type(ve->devpts_fstype, ve->devpts_mnt);
 }
 #else
 #define init_ve_devpts(ve)	(0)
