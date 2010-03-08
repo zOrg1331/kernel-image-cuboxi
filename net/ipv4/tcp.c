@@ -2956,6 +2956,7 @@ void __init tcp_init(void)
 
 	percpu_counter_init(&tcp_sockets_allocated, 0);
 	percpu_counter_init(&tcp_orphan_count, 0);
+	percpu_counter_init(&get_ub0()->ub_orphan_count, 0);
 	tcp_hashinfo.bind_bucket_cachep =
 		kmem_cache_create("tcp_bind_bucket",
 				  sizeof(struct inet_bind_bucket), 0,
