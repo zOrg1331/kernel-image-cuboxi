@@ -922,9 +922,15 @@ static int __init acpi_processor_init(void)
 		return -ENOMEM;
 #endif
 
-	if (!cpuidle_register_driver(&acpi_idle_driver)
+	if (!cpuidle_register_driver(&acpi_idle_driver)) {
 		printk(KERN_DEBUG "ACPI: %s registered with cpuidle\n",
 			acpi_idle_driver.name);
+	} else {
+		extern int intel_idle_load_first;
+
+                printk(KERN_DEBUG "ACPI: intel_idle yielding to %s %d",
+                        cpuidle_get_driver()->name, intel_idle_load_first);
+	}
 
 	result = acpi_bus_register_driver(&acpi_processor_driver);
 	if (result < 0)
