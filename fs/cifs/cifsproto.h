@@ -142,6 +142,8 @@ extern int CIFSFindNext(const int xid, struct cifsTconInfo *tcon,
 extern int CIFSFindClose(const int, struct cifsTconInfo *tcon,
 			const __u16 search_handle);
 
+extern int CIFSSMBQFileInfo(const int xid, struct cifsTconInfo *tcon,
+			u16 netfid, FILE_ALL_INFO *pFindData);
 extern int CIFSSMBQPathInfo(const int xid, struct cifsTconInfo *tcon,
 			const unsigned char *searchName,
 			FILE_ALL_INFO *findData,
@@ -152,6 +154,8 @@ extern int SMBQueryInformation(const int xid, struct cifsTconInfo *tcon,
 			FILE_ALL_INFO *findData,
 			const struct nls_table *nls_codepage, int remap);
 
+extern int CIFSSMBUnixQFileInfo(const int xid, struct cifsTconInfo *tcon,
+			u16 netfid, FILE_UNIX_BASIC_INFO *pFindData);
 extern int CIFSSMBUnixQPathInfo(const int xid,
 			struct cifsTconInfo *tcon,
 			const unsigned char *searchName,
