@@ -1434,7 +1434,8 @@ static inline void pskb_trim_unique(struct sk_buff *skb, unsigned int len)
  */
 static inline void skb_orphan(struct sk_buff *skb)
 {
-	ub_skb_uncharge(skb);
+	if (skb->sk)
+		ub_skb_uncharge(skb);
 
 	if (skb->destructor)
 		skb->destructor(skb);
