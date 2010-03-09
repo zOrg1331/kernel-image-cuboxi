@@ -888,6 +888,8 @@ static void amd64_dump_misc_regs(struct amd64_pvt *pvt)
 		return;
 	}
 
+	debugf1("F3x180 (ECC symb.): %s\n", (pvt->x8_syndromes ? "x8" : "x4"));
+
 	/* Only if NOT ganged does dclr1 have valid info */
 	if (!dct_ganging_enabled(pvt))
 		amd64_dump_dramcfg_low(pvt->dclr1, 1);
@@ -1955,23 +1957,19 @@ static int map_err_sym_to_channel(int err_sym, int sym_size)
 static int get_channel_from_ecc_syndrome(struct mem_ctl_info *mci, u16 syndrome)
 {
 	struct amd64_pvt *pvt = mci->pvt_info;
-	u32 value = 0;
-	int err_sym = 0;
+	int err_sym = 0, sym_size = 0;
 
-	amd64_read_pci_cfg(pvt->misc_f3_ctl, 0x180, &value);
-
-	/* F3x180[EccSymbolSize]=1, x8 symbols */
-	if (boot_cpu_data.x86 == 0x10 &&
-	    boot_cpu_data.x86_model > 7 &&
-	    value & BIT(25)) {
+	if (pvt->x8_syndromes)	{
+		sym_size = 8;
 		err_sym = decode_syndrome(syndrome, x8_vectors,
 					  ARRAY_SIZE(x8_vectors), 8);
-		return map_err_sym_to_channel(err_sym, 8);
 	} else {
+		sym_size = 4;
 		err_sym = decode_syndrome(syndrome, x4_vectors,
 					  ARRAY_SIZE(x4_vectors), 4);
-		return map_err_sym_to_channel(err_sym, 4);
 	}
+
+	return map_err_sym_to_channel(err_sym, sym_size);
 }
 
 /*
@@ -2284,6 +2282,7 @@ static void amd64_free_mc_sibling_devices(struct amd64_pvt *pvt)
 static void amd64_read_mc_registers(struct amd64_pvt *pvt)
 {
 	u64 msr_val;
+	u32 tmp;
 	int dram;
 
 	/*
@@ -2353,6 +2352,17 @@ static void amd64_read_mc_registers(struct amd64_pvt *pvt)
 		amd64_read_pci_cfg(pvt->dram_f2_ctl, F10_DCLR_1, &pvt->dclr1);
 		amd64_read_pci_cfg(pvt->dram_f2_ctl, F10_DCHR_1, &pvt->dchr1);
 	}
+
+	amd64_read_pci_cfg(pvt->misc_f3_ctl, EXT_NB_MCA_CFG, &tmp);
+
+	/* F3x180[EccSymbolSize]=1, x8 symbols */
+	if (boot_cpu_data.x86 == 0x10 &&
+	    boot_cpu_data.x86_model > 7 &&
+	    tmp & BIT(25))
+		pvt->x8_syndromes = true;
+	else
+		pvt->x8_syndromes = false;
+
 	amd64_dump_misc_regs(pvt);
 }
 
