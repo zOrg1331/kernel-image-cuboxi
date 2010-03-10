@@ -22,7 +22,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/device.h>
-#include <linux/semaphore.h>
 #include <linux/interrupt.h>
 #include <linux/workqueue.h>
 #include <linux/i2c.h>
