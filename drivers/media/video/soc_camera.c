@@ -24,6 +24,7 @@
 #include <linux/mutex.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/pm_runtime.h>
 #include <linux/vmalloc.h>
 
 #include <media/soc_camera.h>
@@ -387,6 +388,11 @@ static int soc_camera_open(struct file *file)
 			goto eiciadd;
 		}
 
+		pm_runtime_enable(&icd->vdev->dev);
+		ret = pm_runtime_resume(&icd->vdev->dev);
+		if (ret < 0 && ret != -ENOSYS)
+			goto eresume;
+
 		/*
 		 * Try to configure with default parameters. Notice: this is the
 		 * very first open, so, we cannot race against other calls,
@@ -408,10 +414,12 @@ static int soc_camera_open(struct file *file)
 	return 0;
 
 	/*
-	 * First five errors are entered with the .video_lock held
+	 * First four errors are entered with the .video_lock held
 	 * and use_count == 1
 	 */
 esfmt:
+	pm_runtime_disable(&icd->vdev->dev);
+eresume:
 	ici->ops->remove(icd);
 eiciadd:
 	if (icl->power)
@@ -436,7 +444,11 @@ static int soc_camera_close(struct file *file)
 	if (!icd->use_count) {
 		struct soc_camera_link *icl = to_soc_camera_link(icd);
 
+		pm_runtime_suspend(&icd->vdev->dev);
+		pm_runtime_disable(&icd->vdev->dev);
+
 		ici->ops->remove(icd);
+
 		if (icl->power)
 			icl->power(icd->pdev, 0);
 	}
@@ -1318,6 +1330,7 @@ static int video_dev_create(struct soc_camera_device *icd)
  */
 static int soc_camera_video_start(struct soc_camera_device *icd)
 {
+	struct device_type *type = icd->vdev->dev.type;
 	int ret;
 
 	if (!icd->dev.parent)
@@ -1333,6 +1346,9 @@ static int soc_camera_video_start(struct soc_camera_device *icd)
 		dev_err(&icd->dev, "video_register_device failed: %d\n", ret);
 		return ret;
 	}
+
+	/* Restore device type, possibly set by the subdevice driver */
+	icd->vdev->dev.type = type;
 
 	return 0;
 }

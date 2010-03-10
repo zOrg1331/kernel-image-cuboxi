@@ -442,6 +442,7 @@ static struct stv090x_config tt1600_stv090x_config = {
 	.repeater_level		= STV090x_RPTLEVEL_16,
 
 	.tuner_init		= NULL,
+	.tuner_sleep		= NULL,
 	.tuner_set_mode		= NULL,
 	.tuner_set_frequency	= NULL,
 	.tuner_get_frequency	= NULL,
@@ -628,6 +629,7 @@ static void frontend_init(struct budget *budget)
 						 &budget->i2c_adap);
 
 				tt1600_stv090x_config.tuner_init	  = ctl->tuner_init;
+				tt1600_stv090x_config.tuner_sleep	  = ctl->tuner_sleep;
 				tt1600_stv090x_config.tuner_set_mode	  = ctl->tuner_set_mode;
 				tt1600_stv090x_config.tuner_set_frequency = ctl->tuner_set_frequency;
 				tt1600_stv090x_config.tuner_get_frequency = ctl->tuner_get_frequency;
@@ -637,6 +639,12 @@ static void frontend_init(struct budget *budget)
 				tt1600_stv090x_config.tuner_get_bbgain	  = ctl->tuner_get_bbgain;
 				tt1600_stv090x_config.tuner_set_refclk	  = ctl->tuner_set_refclk;
 				tt1600_stv090x_config.tuner_get_status	  = ctl->tuner_get_status;
+
+				/* call the init function once to initialize
+				   tuner's clock output divider and demod's
+				   master clock */
+				if (budget->dvb_frontend->ops.init)
+					budget->dvb_frontend->ops.init(budget->dvb_frontend);
 
 				dvb_attach(isl6423_attach,
 					budget->dvb_frontend,

@@ -976,17 +976,14 @@ static int az6027_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[], int n
 				i++;
 			} else {
 
-				if (msg[i].addr == 0xd0) {
-					/* demod 16bit addr */
-					req = 0xBD;
-					index = (((msg[i].buf[0] << 8) & 0xff00) | (msg[i].buf[1] & 0x00ff));
-					value = msg[i].addr + (2 << 8);
-					length = msg[i].len - 2;
-					len = msg[i].len - 2;
-					for (j = 0; j < len; j++)
-						data[j] = msg[i].buf[j + 2];
-
-				}
+				/* demod 16bit addr */
+				req = 0xBD;
+				index = (((msg[i].buf[0] << 8) & 0xff00) | (msg[i].buf[1] & 0x00ff));
+				value = msg[i].addr + (2 << 8);
+				length = msg[i].len - 2;
+				len = msg[i].len - 2;
+				for (j = 0; j < len; j++)
+					data[j] = msg[i].buf[j + 2];
 				az6027_usb_out_op(d, req, value, index, data, length);
 			}
 		}
@@ -1059,8 +1056,10 @@ int az6027_identify_state(struct usb_device *udev,
 
 static struct usb_device_id az6027_usb_table[] = {
 	{ USB_DEVICE(USB_VID_AZUREWAVE, USB_PID_AZUREWAVE_AZ6027) },
-	{ USB_DEVICE(USB_VID_TERRATEC,  USB_PID_TERRATEC_DVBS2CI) },
-	{ USB_DEVICE(USB_VID_TECHNISAT, USB_PID_TECHNISAT_USB2_HDCI) },
+	{ USB_DEVICE(USB_VID_TERRATEC,  USB_PID_TERRATEC_DVBS2CI_V1) },
+	{ USB_DEVICE(USB_VID_TERRATEC,  USB_PID_TERRATEC_DVBS2CI_V2) },
+	{ USB_DEVICE(USB_VID_TECHNISAT, USB_PID_TECHNISAT_USB2_HDCI_V1) },
+	{ USB_DEVICE(USB_VID_TECHNISAT, USB_PID_TECHNISAT_USB2_HDCI_V2) },
 	{ },
 };
 
@@ -1103,11 +1102,27 @@ static struct dvb_usb_device_properties az6027_properties = {
 	.rc_query         = az6027_rc_query,
 	.i2c_algo         = &az6027_i2c_algo,
 
-	.num_device_descs = 1,
+	.num_device_descs = 5,
 	.devices = {
 		{
 			.name = "AZUREWAVE DVB-S/S2 USB2.0 (AZ6027)",
 			.cold_ids = { &az6027_usb_table[0], NULL },
+			.warm_ids = { NULL },
+		}, {
+			.name = "TERRATEC S7",
+			.cold_ids = { &az6027_usb_table[1], NULL },
+			.warm_ids = { NULL },
+		}, {
+			.name = "TERRATEC S7 MKII",
+			.cold_ids = { &az6027_usb_table[2], NULL },
+			.warm_ids = { NULL },
+		}, {
+			.name = "Technisat SkyStar USB 2 HD CI",
+			.cold_ids = { &az6027_usb_table[3], NULL },
+			.warm_ids = { NULL },
+		}, {
+			.name = "Technisat SkyStar USB 2 HD CI",
+			.cold_ids = { &az6027_usb_table[4], NULL },
 			.warm_ids = { NULL },
 		},
 		{ NULL },
