@@ -319,8 +319,9 @@ struct dquot_operations {
 	int (*claim_space) (struct inode *, qsize_t);
 	/* release rsved quota for delayed alloc */
 	void (*release_rsv) (struct inode *, qsize_t);
-	/* get reserved quota for delayed alloc */
-	qsize_t (*get_reserved_space) (struct inode *);
+	/* get reserved quota for delayed alloc, value returned is managed by
+	 * quota code only */
+	qsize_t *(*get_reserved_space) (struct inode *);
 	int (*rename) (struct inode *, struct inode *, struct inode *);
 };
 

@@ -4905,6 +4905,11 @@ int register_netdevice(struct net_device *dev)
 		rollback_registered(dev);
 		dev->reg_state = NETREG_UNREGISTERED;
 	}
+	/*
+	 *	Prevent userspace races by waiting until the network
+	 *	device is fully setup before sending notifications.
+	 */
+	rtmsg_ifinfo(RTM_NEWLINK, dev, ~0U);
 
 out:
 	return ret;
@@ -5474,6 +5479,12 @@ int __dev_change_net_namespace(struct net_device *dev, struct net *net, const ch
 	set_exec_env(dst_ve);
 	call_netdevice_notifiers(NETDEV_REGISTER, dev);
 	(void)set_exec_env(cur_ve);
+
+	/*
+	 *	Prevent userspace races by waiting until the network
+	 *	device is fully setup before sending notifications.
+	 */
+	rtmsg_ifinfo(RTM_NEWLINK, dev, ~0U);
 
 	synchronize_net();
 	err = 0;
