@@ -316,6 +316,7 @@ void munlock_vma_pages_range(struct vm_area_struct *vma,
 	unsigned long addr;
 
 	lru_add_drain();
+	ub_locked_uncharge(vma->vm_mm, end - start);
 	vma->vm_flags &= ~VM_LOCKED;
 
 	for (addr = start; addr < end; addr += PAGE_SIZE) {
@@ -377,10 +378,8 @@ static int mlock_fixup(struct vm_area_struct *vma, struct vm_area_struct **prev,
 
 	if (newflags & VM_LOCKED) {
 		ret = ub_locked_charge(mm, end - start);
-		if (ret < 0) {
-			*prev = vma;
+		if (ret < 0)
 			goto out;
-		}
 	}
 
 	pgoff = vma->vm_pgoff + ((start - vma->vm_start) >> PAGE_SHIFT);
