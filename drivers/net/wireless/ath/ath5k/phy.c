@@ -20,8 +20,6 @@
  *
  */
 
-#define _ATH5K_PHY
-
 #include <linux/delay.h>
 
 #include "ath5k.h"
@@ -1190,7 +1188,7 @@ static s16 ath5k_hw_get_median_noise_floor(struct ath5k_hw *ah)
  * The median of the values in the history is then loaded into the
  * hardware for its own use for RSSI and CCA measurements.
  */
-void ath5k_hw_update_noise_floor(struct ath5k_hw *ah)
+static void ath5k_hw_update_noise_floor(struct ath5k_hw *ah)
 {
 	struct ath5k_eeprom_info *ee = &ah->ah_capabilities.cap_eeprom;
 	u32 val;
@@ -1399,7 +1397,11 @@ static int ath5k_hw_rf511x_calibrate(struct ath5k_hw *ah,
 	}
 
 	i_coffd = ((i_pwr >> 1) + (q_pwr >> 1)) >> 7;
-	q_coffd = q_pwr >> 7;
+
+	if (ah->ah_version == AR5K_AR5211)
+		q_coffd = q_pwr >> 6;
+	else
+		q_coffd = q_pwr >> 7;
 
 	/* protect against divide by 0 and loss of sign bits */
 	if (i_coffd == 0 || q_coffd < 2)
@@ -1408,7 +1410,10 @@ static int ath5k_hw_rf511x_calibrate(struct ath5k_hw *ah,
 	i_coff = (-iq_corr) / i_coffd;
 	i_coff = clamp(i_coff, -32, 31); /* signed 6 bit */
 
-	q_coff = (i_pwr / q_coffd) - 128;
+	if (ah->ah_version == AR5K_AR5211)
+		q_coff = (i_pwr / q_coffd) - 64;
+	else
+		q_coff = (i_pwr / q_coffd) - 128;
 	q_coff = clamp(q_coff, -16, 15); /* signed 5 bit */
 
 	ATH5K_DBG_UNLIMIT(ah->ah_sc, ATH5K_DEBUG_CALIBRATE,
@@ -1768,7 +1773,7 @@ u16 ath5k_hw_radio_revision(struct ath5k_hw *ah, unsigned int chan)
 * Antenna control *
 \*****************/
 
-void /*TODO:Boundary check*/
+static void /*TODO:Boundary check*/
 ath5k_hw_set_def_antenna(struct ath5k_hw *ah, u8 ant)
 {
 	ATH5K_TRACE(ah->ah_sc);
@@ -1777,6 +1782,7 @@ ath5k_hw_set_def_antenna(struct ath5k_hw *ah, u8 ant)
 		ath5k_hw_reg_write(ah, ant & 0x7, AR5K_DEFAULT_ANTENNA);
 }
 
+#if 0
 unsigned int ath5k_hw_get_def_antenna(struct ath5k_hw *ah)
 {
 	ATH5K_TRACE(ah->ah_sc);
@@ -1786,6 +1792,7 @@ unsigned int ath5k_hw_get_def_antenna(struct ath5k_hw *ah)
 
 	return false; /*XXX: What do we return for 5210 ?*/
 }
+#endif
 
 /*
  * Enable/disable fast rx antenna diversity
@@ -1930,6 +1937,7 @@ ath5k_hw_set_antenna_mode(struct ath5k_hw *ah, u8 ant_mode)
 
 	ah->ah_tx_ant = tx_ant;
 	ah->ah_ant_mode = ant_mode;
+	ah->ah_def_ant = def_ant;
 
 	sta_id1 |= use_def_for_tx ? AR5K_STA_ID1_DEFAULT_ANTENNA : 0;
 	sta_id1 |= update_def_on_tx ? AR5K_STA_ID1_DESC_ANTENNA : 0;
@@ -3143,5 +3151,3 @@ int ath5k_hw_set_txpower_limit(struct ath5k_hw *ah, u8 txpower)
 
 	return ath5k_hw_txpower(ah, channel, ee_mode, txpower);
 }
-
-#undef _ATH5K_PHY
