@@ -954,7 +954,7 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 	v->cpt_64bit = 0;
 #ifdef CONFIG_X86_64
 	/* Clear x86_64 specific flags */
-	v->cpt_thrflags &= ~(_TIF_FORK|_TIF_ABI_PENDING|_TIF_IA32);
+	v->cpt_thrflags &= ~(_TIF_FORK|_TIF_IA32);
 	if (!(task_thread_info(tsk)->flags & _TIF_IA32)) {
 		ctx->tasks64++;
 		v->cpt_64bit = 1;
