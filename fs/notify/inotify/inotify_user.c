@@ -464,7 +464,6 @@ static void inotify_free_mark(struct fsnotify_mark_entry *entry)
 	struct inotify_inode_mark_entry *ientry = (struct inotify_inode_mark_entry *)entry;
 
 	if (ientry->path.dentry) {
-		printk("DN: mark %p puts %p dentry\n", ientry, ientry->path.dentry);
 		dput(ientry->path.dentry);
 		mnt_unpin(ientry->path.mnt);
 	}
@@ -603,7 +602,6 @@ retry:
 	atomic_inc(&group->inotify_data.user->inotify_watches);
 
 	if (!ve_is_super(get_exec_env())) {
-		printk("DN: mark %p gets %p\n", tmp_ientry, path->dentry);
 		tmp_ientry->path.dentry = dget(path->dentry);
 		mnt_pin(path->mnt);
 		tmp_ientry->path.mnt = path->mnt;
