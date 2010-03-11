@@ -42,7 +42,6 @@ struct file *rst_open_inotify(struct cpt_file_image *fi,
 			      unsigned flags,
 			      struct cpt_context *ctx)
 {
-#if 0
 	struct file *file;
 	int fd;
 
@@ -53,12 +52,8 @@ struct file *rst_open_inotify(struct cpt_file_image *fi,
 	file = fget(fd);
 	sys_close(fd);
 	return file;
-#endif
-	__WARN();
-	return ERR_PTR(-EINVAL);
 }
 
-#if 0
 static int restore_one_inotify(cpt_object_t *obj,
 			       loff_t pos,
 			       struct cpt_inotify_image *ibuf,
@@ -67,16 +62,16 @@ static int restore_one_inotify(cpt_object_t *obj,
 	int err = 0;
 	loff_t endpos;
 	struct file *file = obj->o_obj;
-	struct inotify_device *dev;
+	struct fsnotify_group *group;
 
 	if (file->f_op != &inotify_fops) {
 		eprintk_ctx("bad inotify file\n");
 		return -EINVAL;
 	}
 
-	dev = file->private_data;
+	group = file->private_data;
 
-	if (unlikely(dev == NULL)) {
+	if (unlikely(group == NULL)) {
 		eprintk_ctx("bad inotify device\n");
 		return -EINVAL;
 	}
@@ -104,21 +99,14 @@ static int restore_one_inotify(cpt_object_t *obj,
 				return err;
 			}
 
-			mutex_lock(&dev->up_mutex);
-			dev->ih->last_wd = u.wi.cpt_wd - 1;
-			err = inotify_create_watch(dev, &p, u.wi.cpt_mask);
-			dev->ih->last_wd = ibuf->cpt_last_wd;
-			if (err != u.wi.cpt_wd) {
-				eprintk_ctx("wrong inotify descriptor %u %u\n", err, u.wi.cpt_wd);
-				if (err >= 0)
-					err = -EINVAL;
-			} else
-				err = 0;
-			mutex_unlock(&dev->up_mutex);
+			err = __inotify_new_watch(group, &p, u.wi.cpt_mask, u.wi.cpt_wd);
 			path_put(&p);
-			if (err)
+			if (err < 0)
 				break;
+
+			err = 0; /* for proper returt value */
 		} else if (u.wi.cpt_object == CPT_OBJ_INOTIFY_EVENT) {
+#if 0
 			struct inotify_user_watch dummy_watch;
 			struct inotify_watch *w;
 			char *name = NULL;
@@ -148,6 +136,8 @@ static int restore_one_inotify(cpt_object_t *obj,
 						      u.ei.cpt_cookie, name, NULL);
 			if (name)
 				kfree(name);
+#endif
+			wprintk_ctx("inotify events dropped\n");
 		} else {
 			eprintk_ctx("bad object: %u\n", u.wi.cpt_object);
 			err = -EINVAL;
@@ -157,18 +147,17 @@ static int restore_one_inotify(cpt_object_t *obj,
 	}
 	return err;
 }
-#endif
 
 int rst_inotify(cpt_context_t *ctx)
 {
+	int err;
 	loff_t sec = ctx->sections[CPT_SECT_INOTIFY];
+	loff_t endsec;
+	struct cpt_section_hdr h;
 
 	if (sec == CPT_NULL)
 		return 0;
 
-	__WARN();
-	return -EINVAL;
-#if 0
 	err = ctx->pread(&h, sizeof(h), ctx, sec);
 	if (err)
 		return err;
@@ -196,5 +185,4 @@ int rst_inotify(cpt_context_t *ctx)
 	}
 
 	return 0;
-#endif	
 }

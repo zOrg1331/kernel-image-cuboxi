@@ -29,6 +29,9 @@
 #include <linux/vzcalluser.h>
 #include <linux/inotify.h>
 #include <linux/cpt_image.h>
+#include <linux/fsnotify_backend.h>
+
+#include "../../fs/notify/inotify/inotify.h"
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -38,29 +41,89 @@
 #include "cpt_fsmagic.h"
 #include "cpt_syscalls.h"
 
+static int cpt_dump_watches(struct fsnotify_group *g, struct cpt_context *ctx)
+{
+	int err = 0;
+	struct fsnotify_mark_entry *fse;
+	struct inotify_inode_mark_entry *ie;
+	struct cpt_inotify_wd_image wi;
+	loff_t saved_obj;
+
+	/* FIXME locking */
+	list_for_each_entry(fse, &g->mark_entries, g_list) {
+		struct path path;
+
+		ie = container_of(fse, struct inotify_inode_mark_entry,
+				fsn_entry);
+
+		cpt_open_object(NULL, ctx);
+
+		wi.cpt_next = CPT_NULL;
+		wi.cpt_object = CPT_OBJ_INOTIFY_WATCH;
+		wi.cpt_hdrlen = sizeof(wi);
+		wi.cpt_content = CPT_CONTENT_ARRAY;
+		wi.cpt_wd = ie->wd;
+		wi.cpt_mask = fse->mask;
+
+		ctx->write(&wi, sizeof(wi), ctx);
+
+		cpt_push_object(&saved_obj, ctx);
+		spin_lock(&fse->lock);
+		if (ie->path.dentry == NULL) {
+			err = -EINVAL;
+			eprintk_ctx("inotify mark without path\n");
+			spin_unlock(&fse->lock);
+			break;
+		}
+
+		path = ie->path;
+		path_get(&path);
+		spin_unlock(&fse->lock);
+
+		err = cpt_dump_dir(path.dentry, path.mnt, ctx);
+		cpt_pop_object(&saved_obj, ctx);
+		path_put(&path);
+
+		if (err)
+			break;
+
+		cpt_close_object(ctx);
+	}
+
+	return err;
+}
+
+static int cpt_dump_events(struct fsnotify_group *g, struct cpt_context *ctx)
+{
+	/* FIXME - implement */
+	if (!list_empty(&g->notification_list))
+		wprintk_ctx("Inotify events are lost. Sorry...\n");
+
+	return 0;
+}
+
 int cpt_dump_inotify(cpt_object_t *obj, cpt_context_t *ctx)
 {
-#if 0
-	int err = 0;
+	int err;
 	struct file *file = obj->o_obj;
-	struct inotify_device *dev;
-	struct inotify_watch *watch;
-	struct inotify_kernel_event *kev;
+	struct fsnotify_group *group;
 	struct cpt_inotify_image ii;
+	loff_t saved_obj;
 
 	if (file->f_op != &inotify_fops) {
 		eprintk_ctx("bad inotify file\n");
 		return -EINVAL;
 	}
 
-	dev = file->private_data;
-
-	/* inotify_user.c does not protect open /proc/N/fd, silly.
-	 * Opener will get an invalid file with uninitialized private_data
-	 */
-	if (unlikely(dev == NULL)) {
-		eprintk_ctx("bad inotify dev\n");
+	group = file->private_data;
+	if (unlikely(group == NULL)) {
+		eprintk_ctx("bad inotify group\n");
 		return -EINVAL;
+	}
+
+	if (group->inotify_data.fa != NULL) {
+		eprintk_ctx("inotify with fasync\n");
+		return -ENOTSUPP;
 	}
 
 	cpt_open_object(NULL, ctx);
@@ -70,77 +133,19 @@ int cpt_dump_inotify(cpt_object_t *obj, cpt_context_t *ctx)
 	ii.cpt_hdrlen = sizeof(ii);
 	ii.cpt_content = CPT_CONTENT_ARRAY;
 	ii.cpt_file = obj->o_pos;
-	ii.cpt_user = dev->user->uid;
-	ii.cpt_max_events = dev->max_events;
-	ii.cpt_last_wd = dev->ih->last_wd;
+	ii.cpt_user = group->inotify_data.user->uid;
+	ii.cpt_max_events = group->max_events;
+	ii.cpt_last_wd = group->max_events;
 
 	ctx->write(&ii, sizeof(ii), ctx);
+	cpt_push_object(&saved_obj, ctx);
 
-	mutex_lock(&dev->ih->mutex);
-	list_for_each_entry(watch, &dev->ih->watches, h_list) {
-		loff_t saved_obj;
-		loff_t saved_obj2;
-		struct cpt_inotify_wd_image wi;
+	err = cpt_dump_watches(group, ctx);
+	if (err == 0)
+		err = cpt_dump_events(group, ctx);
 
-		cpt_push_object(&saved_obj, ctx);
-		cpt_open_object(NULL, ctx);
-
-		wi.cpt_next = CPT_NULL;
-		wi.cpt_object = CPT_OBJ_INOTIFY_WATCH;
-		wi.cpt_hdrlen = sizeof(wi);
-		wi.cpt_content = CPT_CONTENT_ARRAY;
-		wi.cpt_wd = watch->wd;
-		wi.cpt_mask = watch->mask;
-
-		ctx->write(&wi, sizeof(wi), ctx);
-
-		cpt_push_object(&saved_obj2, ctx);
-		err = cpt_dump_dir(watch->path.dentry, watch->path.mnt, ctx);
-		cpt_pop_object(&saved_obj2, ctx);
-		if (err)
-			break;
-
-		cpt_close_object(ctx);
-		cpt_pop_object(&saved_obj, ctx);
-	}
-	mutex_unlock(&dev->ih->mutex);
-
-	if (err)
-		return err;
-
-	mutex_lock(&dev->ev_mutex);
-	list_for_each_entry(kev, &dev->events, list) {
-		loff_t saved_obj;
-		struct cpt_inotify_ev_image ei;
-
-		cpt_push_object(&saved_obj, ctx);
-		cpt_open_object(NULL, ctx);
-
-		ei.cpt_next = CPT_NULL;
-		ei.cpt_object = CPT_OBJ_INOTIFY_EVENT;
-		ei.cpt_hdrlen = sizeof(ei);
-		ei.cpt_content = CPT_CONTENT_NAME;
-		ei.cpt_wd = kev->event.wd;
-		ei.cpt_mask = kev->event.mask;
-		ei.cpt_cookie = kev->event.cookie;
-		ei.cpt_namelen = kev->name ? strlen(kev->name) : 0;
-
-		ctx->write(&ei, sizeof(ei), ctx);
-
-		if (kev->name) {
-			ctx->write(kev->name, ei.cpt_namelen+1, ctx);
-			ctx->align(ctx);
-		}
-
-		cpt_close_object(ctx);
-		cpt_pop_object(&saved_obj, ctx);
-	}
-	mutex_unlock(&dev->ev_mutex);
-
+	cpt_pop_object(&saved_obj, ctx);
 	cpt_close_object(ctx);
 
 	return err;
-#endif
-	eprintk_ctx("inotifies are not supported yet\n");
-	return -EOPNOTSUPP;
 }

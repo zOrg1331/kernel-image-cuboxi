@@ -1245,6 +1245,8 @@ int cpt_dump_dir(struct dentry *d, struct vfsmount *mnt, struct cpt_context *ctx
 	file.f_dentry = d;
 	file.f_vfsmnt = mnt;
 	file.f_mode = FMODE_READ|FMODE_PREAD|FMODE_LSEEK;
+	file.f_cred = current->cred;
+
 	return dump_one_file(NULL, &file, ctx);
 }
 
