@@ -154,11 +154,11 @@ int add_to_swap(struct page *page)
 {
 	swp_entry_t entry;
 	int err;
+	struct user_beancounter *ub;
 
 	VM_BUG_ON(!PageLocked(page));
 	VM_BUG_ON(!PageUptodate(page));
 
-	struct user_beancounter *ub;
 
 	ub = pb_grab_page_ub(page);
 	if (IS_ERR(ub))
