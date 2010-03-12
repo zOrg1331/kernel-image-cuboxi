@@ -310,13 +310,14 @@ no_mlock:
  * and re-mlocked by try_to_{munlock|unmap} before we unmap and
  * free them.  This will result in freeing mlocked pages.
  */
-void munlock_vma_pages_range(struct vm_area_struct *vma,
-			     unsigned long start, unsigned long end)
+void __munlock_vma_pages_range(struct vm_area_struct *vma,
+			     unsigned long start, unsigned long end, int acct)
 {
 	unsigned long addr;
 
 	lru_add_drain();
-	ub_locked_uncharge(vma->vm_mm, end - start);
+	if (acct)
+		ub_locked_uncharge(vma->vm_mm, end - start);
 	vma->vm_flags &= ~VM_LOCKED;
 
 	for (addr = start; addr < end; addr += PAGE_SIZE) {
@@ -424,7 +425,6 @@ success:
 			ret = __mlock_posix_error_return(ret);
 	} else {
 		munlock_vma_pages_range(vma, start, end);
-		ub_locked_uncharge(mm, end - start);
 	}
 
 out:
