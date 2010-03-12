@@ -300,6 +300,19 @@ static struct regulator_consumer_supply rx51_vsim_supply = {
 	.dev_name = "mmci-omap-hs.1",
 };
 
+#if defined(CONFIG_FB_OMAP2) || defined(CONFIG_FB_OMAP2_MODULE)
+extern struct platform_device rx51_display_device;
+#endif
+
+static struct regulator_consumer_supply rx51_vaux1_consumers[] = {
+#if defined(CONFIG_FB_OMAP2) || defined(CONFIG_FB_OMAP2_MODULE)
+	{
+		.supply	= "vdds_sdi",
+		.dev	= &rx51_display_device.dev,
+	},
+#endif
+};
+
 static struct regulator_init_data rx51_vaux1 = {
 	.constraints = {
 		.name			= "V28",
@@ -310,6 +323,8 @@ static struct regulator_init_data rx51_vaux1 = {
 		.valid_ops_mask		= REGULATOR_CHANGE_MODE
 					| REGULATOR_CHANGE_STATUS,
 	},
+	.num_consumer_supplies	= ARRAY_SIZE(rx51_vaux1_consumers),
+	.consumer_supplies	= rx51_vaux1_consumers,
 };
 
 static struct regulator_init_data rx51_vaux2 = {
