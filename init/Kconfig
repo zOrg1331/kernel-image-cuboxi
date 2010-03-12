@@ -521,7 +521,7 @@ config CGROUP_NS
 
 config CGROUP_FREEZER
 	bool "Freezer cgroup subsystem"
-	depends on CGROUPS
+	depends on CGROUPS && !VE
 	help
 	  Provides a way to freeze and unfreeze all tasks in a
 	  cgroup.
@@ -551,7 +551,7 @@ config PROC_PID_CPUSET
 
 config CGROUP_CPUACCT
 	bool "Simple CPU accounting cgroup subsystem"
-	depends on CGROUPS
+	depends on CGROUPS && !VE
 	help
 	  Provides a simple Resource Controller for monitoring the
 	  total CPU consumed by the tasks in a cgroup.
