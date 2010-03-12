@@ -53,11 +53,6 @@ obj-$(CONFIG_GENERIC_ACL)	+= generic_acl.o
 
 obj-y				+= quota/
 
-obj-$(CONFIG_VZ_QUOTA)		+= vzdquota.o
-vzdquota-y			+= vzdquot.o vzdq_mgmt.o vzdq_ops.o vzdq_tree.o
-vzdquota-$(CONFIG_VZ_QUOTA_UGID) += vzdq_ugid.o
-vzdquota-$(CONFIG_VZ_QUOTA_UGID) += vzdq_file.o
-
 obj-$(CONFIG_SIM_FS)		+= simfs.o
 
 obj-$(CONFIG_PROC_FS)		+= proc/

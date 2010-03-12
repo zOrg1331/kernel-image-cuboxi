@@ -17,7 +17,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/quota.h>
-#include "quota/quotaio_v2.h"
+#include "../quotaio_v2.h"
 #include <linux/virtinfo.h>
 #include <linux/namei.h>
 #include <linux/mount.h>
