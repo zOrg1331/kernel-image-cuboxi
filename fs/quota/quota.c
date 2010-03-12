@@ -419,6 +419,8 @@ struct compat_dqblk {
 	__kernel_time_t dqb_itime;
 };
 
+#ifdef CONFIG_COMPAT
+
 struct compat_compat_dqblk {
 	compat_uint_t	dqb_ihardlimit;
 	compat_uint_t	dqb_isoftlimit;
@@ -429,6 +431,8 @@ struct compat_compat_dqblk {
 	compat_time_t	dqb_btime;
 	compat_time_t	dqb_itime;
 };
+
+#endif
 
 struct compat_dqinfo {
 	unsigned int dqi_bgrace;
@@ -459,11 +463,6 @@ static long compat_quotactl(unsigned int cmds, unsigned int type,
 {
 	struct super_block *sb;
 	long ret;
-
-	BUILD_BUG_ON(sizeof(struct compat_dqblk) != 12*4);
-	BUILD_BUG_ON(sizeof(struct compat_compat_dqblk) != 9*4);
-	BUILD_BUG_ON(sizeof(struct compat_dqinfo) != 6*4);
-	BUILD_BUG_ON(sizeof(struct compat_dqstats) != 9*4);
 
 	sb = NULL;
 	switch (cmds) {
