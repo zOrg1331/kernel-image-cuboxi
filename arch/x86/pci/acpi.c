@@ -179,11 +179,19 @@ align_resource(struct acpi_device *bridge, struct resource *res)
 	}
 }
 
+static bool
+resource_contains(struct resource *res, resource_size_t n)
+{
+	if (n < res->start || n > res->end)
+		return false;
+	return true;
+}
+
 static acpi_status
 setup_resource(struct acpi_resource *acpi_res, void *data)
 {
 	struct pci_root_info *info = data;
-	struct resource *res;
+	struct resource *res, *conflict;
 	struct acpi_resource_address64 addr;
 	acpi_status status;
 	unsigned long flags;
@@ -222,21 +230,35 @@ setup_resource(struct acpi_resource *acpi_res, void *data)
 		return AE_OK;
 	}
 
-	if (insert_resource(root, res)) {
+	conflict = insert_resource_conflict(root, res);
+	while (conflict) {
 		dev_err(&info->bridge->dev,
-			"can't allocate host bridge window %pR\n", res);
-	} else {
-		pci_bus_add_resource(info->bus, res, 0);
-		info->res_num++;
-		if (addr.translation_offset)
-			dev_info(&info->bridge->dev, "host bridge window %pR "
-				 "(PCI address [%#llx-%#llx])\n",
-				 res, res->start - addr.translation_offset,
-				 res->end - addr.translation_offset);
+		        "host bridge window %pR conflicts with %s %pR\n",
+			res, conflict->name, conflict);
+
+		if (resource_contains(res, conflict->end))
+			res->start = conflict->end + 1;
+		else if (resource_contains(res, conflict->start))
+			res->end = conflict->start - 1;
 		else
-			dev_info(&info->bridge->dev,
-				 "host bridge window %pR\n", res);
+			return AE_OK;
+
+		if (res->start >= res->end)
+			return AE_OK;
+
+		conflict = insert_resource_conflict(root, res);
 	}
+
+	pci_bus_add_resource(info->bus, res, 0);
+	info->res_num++;
+	if (addr.translation_offset)
+		dev_info(&info->bridge->dev, "host bridge window %pR "
+			 "(PCI address [%#llx-%#llx])\n",
+			 res, res->start - addr.translation_offset,
+			 res->end - addr.translation_offset);
+	else
+		dev_info(&info->bridge->dev,
+			 "host bridge window %pR\n", res);
 	return AE_OK;
 }
 
