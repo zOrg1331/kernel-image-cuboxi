@@ -194,9 +194,7 @@ struct ve_struct {
 	struct super_block	*sysfs_sb;
 	struct sysfs_dirent	*_sysfs_root;
 #endif
-#ifndef CONFIG_SYSFS_DEPRECATED
 	struct kobject		*_virtual_dir;
-#endif
 	struct kset		*class_kset;
 	struct kset		*devices_kset;
 	struct kobject		*dev_kobj;

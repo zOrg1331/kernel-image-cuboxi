@@ -27,6 +27,17 @@ struct vfsmount *sysfs_mount;
 struct super_block * sysfs_sb = NULL;
 #endif
 
+#ifdef CONFIG_SYSFS_DEPRECATED_DYN
+unsigned sysfs_deprecated __read_mostly;
+
+static int __init sysfs_init_deprecated(char *str)
+{
+	sysfs_deprecated = 1;
+	return 1;
+}
+__setup("old_sysfs", sysfs_init_deprecated);
+#endif
+
 struct kmem_cache *sysfs_dir_cachep;
 
 static const struct super_operations sysfs_ops = {

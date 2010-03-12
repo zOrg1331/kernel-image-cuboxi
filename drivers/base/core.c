@@ -199,7 +199,9 @@ static int dev_uevent(struct kset *kset, struct kobject *kobj,
 	if (dev->driver)
 		add_uevent_var(env, "DRIVER=%s", dev->driver->name);
 
-#ifdef CONFIG_SYSFS_DEPRECATED
+	if (!sysfs_deprecated)
+		goto skip;
+
 	if (dev->class) {
 		struct device *parent = dev->parent;
 
@@ -228,7 +230,7 @@ static int dev_uevent(struct kset *kset, struct kobject *kobj,
 			add_uevent_var(env, "PHYSDEVDRIVER=%s",
 				       dev->driver->name);
 	}
-#endif
+skip:
 
 	/* have the bus specific function add its stuff */
 	if (dev->bus && dev->bus->uevent) {
@@ -576,8 +578,7 @@ void device_initialize(struct device *dev)
 	set_dev_node(dev, -1);
 }
 
-#ifdef CONFIG_SYSFS_DEPRECATED
-static struct kobject *get_device_parent(struct device *dev,
+static struct kobject *get_device_parent_dep(struct device *dev,
 					 struct device *parent)
 {
 	/* class devices without a parent live in /sys/class/<classname>/ */
@@ -590,11 +591,9 @@ static struct kobject *get_device_parent(struct device *dev,
 	return NULL;
 }
 
-static inline void cleanup_device_parent(struct device *dev) {}
-static inline void cleanup_glue_dir(struct device *dev,
+static inline void cleanup_device_parent_dep(struct device *dev) {}
+static inline void cleanup_glue_dir_dep(struct device *dev,
 				    struct kobject *glue_dir) {}
-#else
-
 #ifndef CONFIG_VE
 static struct kobject *virtual_dir = NULL;
 #else
@@ -610,7 +609,7 @@ static struct kobject *virtual_device_parent(struct device *dev)
 	return virtual_dir;
 }
 
-static struct kobject *get_device_parent(struct device *dev,
+static struct kobject *get_device_parent_nodep(struct device *dev,
 					 struct device *parent)
 {
 	int retval;
@@ -662,7 +661,7 @@ static struct kobject *get_device_parent(struct device *dev,
 	return NULL;
 }
 
-static void cleanup_glue_dir(struct device *dev, struct kobject *glue_dir)
+static void cleanup_glue_dir_nodep(struct device *dev, struct kobject *glue_dir)
 {
 	/* see if we live in a "glue" directory */
 	if (!glue_dir || !dev->class ||
@@ -672,11 +671,36 @@ static void cleanup_glue_dir(struct device *dev, struct kobject *glue_dir)
 	kobject_put(glue_dir);
 }
 
+static void cleanup_device_parent_nodep(struct device *dev)
+{
+	cleanup_glue_dir_nodep(dev, dev->kobj.parent);
+}
+
+static struct kobject *get_device_parent(struct device *dev,
+		struct device *parent)
+{
+	if (sysfs_deprecated)
+		return get_device_parent_dep(dev, parent);
+	else
+		return get_device_parent_nodep(dev, parent);
+}
+
+static void cleanup_glue_dir(struct device *dev, struct kobject *glue_dir)
+{
+	if (sysfs_deprecated)
+		cleanup_glue_dir_dep(dev, glue_dir);
+	else
+		cleanup_glue_dir_nodep(dev, glue_dir);
+}
+
 static void cleanup_device_parent(struct device *dev)
 {
-	cleanup_glue_dir(dev, dev->kobj.parent);
+	if (sysfs_deprecated)
+		cleanup_device_parent_dep(dev);
+	else
+		cleanup_device_parent_nodep(dev);
 }
-#endif
+
 
 static void setup_parent(struct device *dev, struct device *parent)
 {
@@ -699,7 +723,9 @@ static int device_add_class_symlinks(struct device *dev)
 	if (error)
 		goto out;
 
-#ifdef CONFIG_SYSFS_DEPRECATED
+	if (!sysfs_deprecated)
+		goto nodep;
+
 	/* stacked class devices need a symlink in the class directory */
 	if (dev->kobj.parent != &dev->class->p->class_subsys.kobj &&
 	    device_is_not_partition(dev)) {
@@ -724,7 +750,7 @@ static int device_add_class_symlinks(struct device *dev)
 					  &parent->kobj,
 					  "device");
 		if (error)
-			goto out_busid;
+			goto out_busid_dep;
 
 		class_name = make_class_name(dev->class->name,
 						&dev->kobj);
@@ -740,12 +766,14 @@ static int device_add_class_symlinks(struct device *dev)
 out_device:
 	if (dev->parent && device_is_not_partition(dev))
 		sysfs_remove_link(&dev->kobj, "device");
-out_busid:
+out_busid_dep:
 	if (dev->kobj.parent != &dev->class->p->class_subsys.kobj &&
 	    device_is_not_partition(dev))
 		sysfs_remove_link(&dev->class->p->class_subsys.kobj,
 				  dev_name(dev));
-#else
+	goto out_subsys;
+
+nodep:
 	/* link in the class directory pointing to the device */
 	error = sysfs_create_link(&dev->class->p->class_subsys.kobj,
 				  &dev->kobj, dev_name(dev));
@@ -756,14 +784,12 @@ out_busid:
 		error = sysfs_create_link(&dev->kobj, &dev->parent->kobj,
 					  "device");
 		if (error)
-			goto out_busid;
+			goto out_busid_nodep;
 	}
 	return 0;
 
-out_busid:
+out_busid_nodep:
 	sysfs_remove_link(&dev->class->p->class_subsys.kobj, dev_name(dev));
-#endif
-
 out_subsys:
 	sysfs_remove_link(&dev->kobj, "subsystem");
 out:
@@ -775,7 +801,9 @@ static void device_remove_class_symlinks(struct device *dev)
 	if (!dev->class)
 		return;
 
-#ifdef CONFIG_SYSFS_DEPRECATED
+	if (!sysfs_deprecated)
+		goto nodep;
+
 	if (dev->parent && device_is_not_partition(dev)) {
 		char *class_name;
 
@@ -791,13 +819,14 @@ static void device_remove_class_symlinks(struct device *dev)
 	    device_is_not_partition(dev))
 		sysfs_remove_link(&dev->class->p->class_subsys.kobj,
 				  dev_name(dev));
-#else
+	goto done;
+
+nodep:
 	if (dev->parent && device_is_not_partition(dev))
 		sysfs_remove_link(&dev->kobj, "device");
 
 	sysfs_remove_link(&dev->class->p->class_subsys.kobj, dev_name(dev));
-#endif
-
+done:
 	sysfs_remove_link(&dev->kobj, "subsystem");
 }
 
@@ -1572,10 +1601,8 @@ int device_rename(struct device *dev, char *new_name)
 	pr_debug("device: '%s': %s: renaming to '%s'\n", dev_name(dev),
 		 __func__, new_name);
 
-#ifdef CONFIG_SYSFS_DEPRECATED
-	if ((dev->class) && (dev->parent))
+	if (sysfs_deprecated && (dev->class) && (dev->parent))
 		old_class_name = make_class_name(dev->class->name, &dev->kobj);
-#endif
 
 	old_device_name = kstrdup(dev_name(dev), GFP_KERNEL);
 	if (!old_device_name) {
@@ -1587,8 +1614,7 @@ int device_rename(struct device *dev, char *new_name)
 	if (error)
 		goto out;
 
-#ifdef CONFIG_SYSFS_DEPRECATED
-	if (old_class_name) {
+	if (sysfs_deprecated && old_class_name) {
 		new_class_name = make_class_name(dev->class->name, &dev->kobj);
 		if (new_class_name) {
 			error = sysfs_create_link_nowarn(&dev->parent->kobj,
@@ -1599,8 +1625,7 @@ int device_rename(struct device *dev, char *new_name)
 			sysfs_remove_link(&dev->parent->kobj, old_class_name);
 		}
 	}
-#else
-	if (dev->class) {
+	if (!sysfs_deprecated && dev->class) {
 		error = sysfs_create_link_nowarn(&dev->class->p->class_subsys.kobj,
 						 &dev->kobj, dev_name(dev));
 		if (error)
@@ -1608,7 +1633,6 @@ int device_rename(struct device *dev, char *new_name)
 		sysfs_remove_link(&dev->class->p->class_subsys.kobj,
 				  old_device_name);
 	}
-#endif
 
 out:
 	put_device(dev);
@@ -1626,8 +1650,10 @@ static int device_move_class_links(struct device *dev,
 				   struct device *new_parent)
 {
 	int error = 0;
-#ifdef CONFIG_SYSFS_DEPRECATED
 	char *class_name;
+
+	if (!sysfs_deprecated)
+		goto nodep;
 
 	class_name = make_class_name(dev->class->name, &dev->kobj);
 	if (!class_name) {
@@ -1652,14 +1678,14 @@ static int device_move_class_links(struct device *dev,
 out:
 	kfree(class_name);
 	return error;
-#else
+
+nodep:
 	if (old_parent)
 		sysfs_remove_link(&dev->kobj, "device");
 	if (new_parent)
 		error = sysfs_create_link(&dev->kobj, &new_parent->kobj,
 					  "device");
 	return error;
-#endif
 }
 
 /**

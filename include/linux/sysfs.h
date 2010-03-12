@@ -17,6 +17,20 @@
 #include <linux/list.h>
 #include <asm/atomic.h>
 
+#ifdef CONFIG_SYSFS_DEPRECATED_DYN
+extern unsigned sysfs_deprecated;
+#else
+
+/* static deprecation */
+
+#ifdef CONFIG_SYSFS_DEPRECATED
+#define sysfs_deprecated 1
+#else
+#define sysfs_deprecated 0
+#endif
+
+#endif
+
 struct kobject;
 struct module;
 struct sysfs_open_dirent;

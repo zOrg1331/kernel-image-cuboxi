@@ -646,6 +646,15 @@ config SYSFS_DEPRECATED_V2
 	  if the original kernel, that came with your distribution, has
 	  this option set to N.
 
+config SYSFS_DEPRECATED_DYN
+	bool "make deprecatd sysfs leayou dynamically"
+	depends on SYSFS
+	default y
+	select SYSFS_DEPRECATED_V2
+	help
+	  This option works like the DEPRECATED_V2 but alows selecting the
+	  sysfs layout dynamically
+
 config RELAY
 	bool "Kernel->user space relay support (formerly relayfs)"
 	help
