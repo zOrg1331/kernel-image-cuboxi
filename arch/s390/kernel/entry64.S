@@ -269,39 +269,22 @@ sysc_noemu:
 sysc_return:
 	tm	__TI_flags+7(%r9),_TIF_WORK_SVC
 	jnz	sysc_work	# there is work to do (signals etc.)
-sysc_restore:
-#ifdef CONFIG_TRACE_IRQFLAGS
-	larl	%r1,sysc_restore_trace_psw
-	lpswe	0(%r1)
-sysc_restore_trace:
-	TRACE_IRQS_CHECK
-	LOCKDEP_SYS_EXIT
-#endif
 sysc_leave:
 	RESTORE_ALL __LC_RETURN_PSW,1
 sysc_done:
-
-#ifdef CONFIG_TRACE_IRQFLAGS
-	.section .data,"aw",@progbits
-	.align	8
-	.globl sysc_restore_trace_psw
-sysc_restore_trace_psw:
-	.quad	0, sysc_restore_trace
-	.previous
-#endif
 
 #
 # recheck if there is more work to do
 #
 sysc_work_loop:
 	tm	__TI_flags+7(%r9),_TIF_WORK_SVC
-	jz	sysc_restore	  # there is no work to do
+	jz	sysc_leave	  # there is no work to do
 #
 # One of the work bits is on. Find out which one.
 #
 sysc_work:
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
-	jno	sysc_restore
+	jno	sysc_leave
 	tm	__TI_flags+7(%r9),_TIF_MCCK_PENDING
 	jo	sysc_mcck_pending
 	tm	__TI_flags+7(%r9),_TIF_NEED_RESCHED
@@ -314,7 +297,7 @@ sysc_work:
 	jo	sysc_restart
 	tm	__TI_flags+7(%r9),_TIF_SINGLE_STEP
 	jo	sysc_singlestep
-	j	sysc_restore
+	j	sysc_leave
 sysc_work_done:
 
 #
@@ -475,10 +458,10 @@ pgm_check_handler:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_SYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
+	mvc	SP_ILC(2,%r15),__LC_PGM_ILC
 pgm_no_vtime:
 	lg	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
 	mvc	SP_ARGS(8,%r15),__LC_LAST_BREAK
-	TRACE_IRQS_OFF
 	lgf	%r3,__LC_PGM_ILC	# load program interruption code
 	lghi	%r8,0x7f
 	ngr	%r8,%r3
@@ -516,7 +499,6 @@ pgm_per_std:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 pgm_no_vtime2:
 	lg	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
-	TRACE_IRQS_OFF
 	lg	%r1,__TI_task(%r9)
 	tm	SP_PSW+1(%r15),0x01	# kernel per event ?
 	jz	kernel_per
@@ -557,7 +539,7 @@ pgm_svcper:
 kernel_per:
 	xc	SP_SVCNR(2,%r15),SP_SVCNR(%r15)	# clear svc number
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
-	larl	%r14,sysc_restore	# load adr. of system ret, no work
+	larl	%r14,sysc_leave		# load adr. of system ret, no work
 	jg	do_single_step		# branch to do_single_step
 
 /*
