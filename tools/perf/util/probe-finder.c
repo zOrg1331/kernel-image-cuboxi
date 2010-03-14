@@ -169,7 +169,7 @@ static const char *cu_find_realpath(Dwarf_Die *cu_die, const char *fname)
 {
 	Dwarf_Files *files;
 	size_t nfiles, i;
-	const char *src;
+	const char *src = NULL;
 	int ret;
 
 	if (!fname)
@@ -454,6 +454,9 @@ static void show_probe_point(Dwarf_Die *sp_die, struct probe_finder *pf)
 
 	/* *pf->fb_ops will be cached in libdw. Don't free it. */
 	pf->fb_ops = NULL;
+
+	if (pp->found == MAX_PROBES)
+		die("Too many( > %d) probe point found.\n", MAX_PROBES);
 
 	pp->probes[pp->found] = strdup(tmp);
 	pp->found++;
