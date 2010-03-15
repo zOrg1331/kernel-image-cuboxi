@@ -338,12 +338,8 @@ static void __kprobes inline do_trap(long interruption_code, int signr,
 					char *str, struct pt_regs *regs,
 					siginfo_t *info)
 {
-	/*
-	 * We got all needed information from the lowcore and can
-	 * now safely switch on interrupts.
-	 */
-        if (regs->psw.mask & PSW_MASK_PSTATE)
-		local_irq_enable();
+	if (!raw_irqs_disabled_flags(regs->psw.mask))
+		raw_local_irq_enable();
 
 	if (notify_die(DIE_TRAP, str, regs, interruption_code,
 				interruption_code, signr) == NOTIFY_STOP)
@@ -373,7 +369,7 @@ static void __kprobes inline do_trap(long interruption_code, int signr,
 
 static inline void __user *get_check_address(struct pt_regs *regs)
 {
-	return (void __user *)((regs->psw.addr-S390_lowcore.pgm_ilc) & PSW_ADDR_INSN);
+	return (void __user *)((regs->psw.addr - regs->ilc) & PSW_ADDR_INSN);
 }
 
 void __kprobes do_single_step(struct pt_regs *regs)
@@ -388,8 +384,9 @@ void __kprobes do_single_step(struct pt_regs *regs)
 
 static void default_trap_handler(struct pt_regs * regs, long interruption_code)
 {
+	if (!raw_irqs_disabled_flags(regs->psw.mask))
+		raw_local_irq_enable();
         if (regs->psw.mask & PSW_MASK_PSTATE) {
-		local_irq_enable();
 		do_exit(SIGSEGV);
 		report_user_fault(interruption_code, regs);
 	} else
@@ -470,14 +467,9 @@ static void illegal_op(struct pt_regs * regs, long interruption_code)
 	__u16 __user *location;
 	int signal = 0;
 
+	if (!raw_irqs_disabled_flags(regs->psw.mask))
+		raw_local_irq_enable();
 	location = get_check_address(regs);
-
-	/*
-	 * We got all needed information from the lowcore and can
-	 * now safely switch on interrupts.
-	 */
-	if (regs->psw.mask & PSW_MASK_PSTATE)
-		local_irq_enable();
 
 	if (regs->psw.mask & PSW_MASK_PSTATE) {
 		if (get_user(*((__u16 *) opcode), (__u16 __user *) location))
@@ -554,14 +546,9 @@ specification_exception(struct pt_regs * regs, long interruption_code)
 	__u16 __user *location = NULL;
 	int signal = 0;
 
+	if (!raw_irqs_disabled_flags(regs->psw.mask))
+		raw_local_irq_enable();
 	location = (__u16 __user *) get_check_address(regs);
-
-	/*
-	 * We got all needed information from the lowcore and can
-	 * now safely switch on interrupts.
-	 */
-        if (regs->psw.mask & PSW_MASK_PSTATE)
-		local_irq_enable();
 
         if (regs->psw.mask & PSW_MASK_PSTATE) {
 		get_user(*((__u16 *) opcode), location);
@@ -618,14 +605,9 @@ static void data_exception(struct pt_regs * regs, long interruption_code)
 	__u16 __user *location;
 	int signal = 0;
 
+	if (!raw_irqs_disabled_flags(regs->psw.mask))
+		raw_local_irq_enable();
 	location = get_check_address(regs);
-
-	/*
-	 * We got all needed information from the lowcore and can
-	 * now safely switch on interrupts.
-	 */
-	if (regs->psw.mask & PSW_MASK_PSTATE)
-		local_irq_enable();
 
 	if (MACHINE_HAS_IEEE)
 		asm volatile("stfpc %0" : "=m" (current->thread.fp_regs.fpc));

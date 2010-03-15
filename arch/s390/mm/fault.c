@@ -310,12 +310,6 @@ static inline int do_exception(struct pt_regs *regs, int access,
 		goto out;
 
 	address = trans_exc_code & __FAIL_ADDR_MASK;
-	/*
-	 * When we get here, the fault happened in the current
-	 * task's user address space, so we can switch on the
-	 * interrupts again and then search the VMAs
-	 */
-	local_irq_enable();
 	perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS, 1, 0, regs, address);
 	down_read(&mm->mmap_sem);
 
@@ -377,6 +371,8 @@ void __kprobes do_protection_exception(struct pt_regs *regs, long int_code)
 	unsigned long trans_exc_code = S390_lowcore.trans_exc_code;
 	int fault;
 
+	if (!raw_irqs_disabled_flags(regs->psw.mask))
+		raw_local_irq_enable();
 	/* Protection exception is supressing, decrement psw address. */
 	regs->psw.addr -= (int_code >> 16);
 	/*
@@ -398,6 +394,8 @@ void __kprobes do_dat_exception(struct pt_regs *regs, long int_code)
 	unsigned long trans_exc_code = S390_lowcore.trans_exc_code;
 	int access, fault;
 
+	if (!raw_irqs_disabled_flags(regs->psw.mask))
+		raw_local_irq_enable();
 	access = VM_READ | VM_EXEC | VM_WRITE;
 #ifdef CONFIG_S390_EXEC_PROTECT
 	if ((regs->psw.mask & PSW_MASK_ASC) == PSW_ASC_SECONDARY &&
@@ -416,10 +414,10 @@ void __kprobes do_asce_exception(struct pt_regs *regs, long int_code)
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
 
+	if (!raw_irqs_disabled_flags(regs->psw.mask))
+		raw_local_irq_enable();
 	if (unlikely(!user_space_fault(trans_exc_code) || in_atomic() || !mm))
 		goto no_context;
-
-	local_irq_enable();
 
 	down_read(&mm->mmap_sem);
 	vma = find_vma(mm, trans_exc_code & __FAIL_ADDR_MASK);
