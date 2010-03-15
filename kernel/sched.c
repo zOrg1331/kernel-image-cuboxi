@@ -2192,34 +2192,30 @@ static void activate_task(struct rq *rq, struct task_struct *p, int wakeup)
 static void deactivate_task(struct rq *rq, struct task_struct *p, int sleep)
 {
 	cycles_t cycles;
-#ifdef CONFIG_VE
-	unsigned int cpu, pcpu;
-	struct ve_struct *ve;
+	unsigned int cpu;
 
 	cycles = get_cycles();
 	cpu = task_cpu(p);
-	pcpu = smp_processor_id();
-	ve = p->ve_task_info.owner_env;
 
 	p->ve_task_info.sleep_time -= cycles;
-#endif
-	if (p->state == TASK_UNINTERRUPTIBLE) {
-		ve_nr_unint_inc(ve, cpu);
-	}
+
+#if 0 /* this is broken */
 	if (p->state == TASK_INTERRUPTIBLE) {
 		rq->nr_sleeping++;
 	}
 	if (p->state == TASK_STOPPED) {
 		rq->nr_stopped++;
 	}
+#endif
 
-	ve_nr_running_dec(VE_TASK_INFO(p)->owner_env, cpu, cycles);
-
-	if (task_contributes_to_load(p))
+	if (task_contributes_to_load(p)) {
 		rq->nr_uninterruptible++;
+		ve_nr_unint_inc(VE_TASK_INFO(p)->owner_env, cpu);
+	}
 
 	dequeue_task(rq, p, sleep);
 	dec_nr_running(rq);
+	ve_nr_running_dec(VE_TASK_INFO(p)->owner_env, cpu, cycles);
 }
 
 /**
@@ -2635,8 +2631,11 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	 *
 	 * First fix up the nr_uninterruptible count:
 	 */
-	if (task_contributes_to_load(p))
+	if (task_contributes_to_load(p)) {
 		rq->nr_uninterruptible--;
+		ve_nr_unint_dec(VE_TASK_INFO(p)->owner_env, cpu);
+	}
+
 	p->state = TASK_WAKING;
 	task_rq_unlock(rq, &flags);
 
@@ -3331,6 +3330,14 @@ void get_avenrun_ve(struct ve_struct *ve,
 
 
 
+static unsigned long
+calc_load(unsigned long load, unsigned long exp, unsigned long active)
+{
+	load *= exp;
+	load += active * (FIXED_1 - exp);
+	return load >> FSHIFT;
+}
+
 #ifdef CONFIG_VE
 static void calc_load_ve(void)
 {
@@ -3342,9 +3349,9 @@ static void calc_load_ve(void)
 		nr_active = nr_running_ve(ve) + nr_uninterruptible_ve(ve);
 		nr_active *= FIXED_1;
 
-		CALC_LOAD(ve->avenrun[0], EXP_1, nr_active);
-		CALC_LOAD(ve->avenrun[1], EXP_5, nr_active);
-		CALC_LOAD(ve->avenrun[2], EXP_15, nr_active);
+		ve->avenrun[0] = calc_load(ve->avenrun[0], EXP_1, nr_active);
+		ve->avenrun[1] = calc_load(ve->avenrun[1], EXP_5, nr_active);
+		ve->avenrun[2] = calc_load(ve->avenrun[2], EXP_15, nr_active);
 	}
 	read_unlock(&ve_list_lock);
 
@@ -3359,14 +3366,6 @@ static void calc_load_ve(void)
 #else
 #define calc_load_ve()	do { } while (0)
 #endif
-
-static unsigned long
-calc_load(unsigned long load, unsigned long exp, unsigned long active)
-{
-	load *= exp;
-	load += active * (FIXED_1 - exp);
-	return load >> FSHIFT;
-}
 
 /*
  * calc_load - update the avenrun load estimates 10 ticks after the
