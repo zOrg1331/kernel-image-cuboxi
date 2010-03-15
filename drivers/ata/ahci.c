@@ -294,6 +294,7 @@ struct ahci_em_priv {
 };
 
 struct ahci_host_priv {
+	void __iomem *		mmio;		/* bus-independant mem map */
 	unsigned int		flags;		/* AHCI_HFLAG_* */
 	u32			cap;		/* cap to use */
 	u32			cap2;		/* cap2 to use */
@@ -744,7 +745,8 @@ static inline int ahci_nr_ports(u32 cap)
 static inline void __iomem *__ahci_port_base(struct ata_host *host,
 					     unsigned int port_no)
 {
-	void __iomem *mmio = host->iomap[AHCI_PCI_BAR];
+	struct ahci_host_priv *hpriv = host->private_data;
+	void __iomem *mmio = hpriv->mmio;
 
 	return mmio + 0x100 + (port_no * 0x80);
 }
@@ -804,7 +806,8 @@ static ssize_t ahci_show_host_version(struct device *dev,
 {
 	struct Scsi_Host *shost = class_to_shost(dev);
 	struct ata_port *ap = ata_shost_to_port(shost);
-	void __iomem *mmio = ap->host->iomap[AHCI_PCI_BAR];
+	struct ahci_host_priv *hpriv = ap->host->private_data;
+	void __iomem *mmio = hpriv->mmio;
 
 	return sprintf(buf, "%x\n", readl(mmio + HOST_VERSION));
 }
@@ -821,8 +824,10 @@ static ssize_t ahci_show_port_cmd(struct device *dev,
 
 /**
  *	ahci_save_initial_config - Save and fixup initial config values
- *	@pdev: target PCI device
+ *	@dev: target AHCI device
  *	@hpriv: host private area to store config values
+ *	@force_port_map: force port map to a specified value
+ *	@mask_port_map: mask out particular bits from port map
  *
  *	Some registers containing configuration info might be setup by
  *	BIOS and might be cleared on reset.  This function saves the
@@ -834,13 +839,14 @@ static ssize_t ahci_show_port_cmd(struct device *dev,
  *	LOCKING:
  *	None.
  */
-static void ahci_save_initial_config(struct pci_dev *pdev,
-				     struct ahci_host_priv *hpriv)
+static void ahci_save_initial_config(struct device *dev,
+				     struct ahci_host_priv *hpriv,
+				     unsigned int force_port_map,
+				     unsigned int mask_port_map)
 {
-	void __iomem *mmio = pcim_iomap_table(pdev)[AHCI_PCI_BAR];
+	void __iomem *mmio = hpriv->mmio;
 	u32 cap, cap2, vers, port_map;
 	int i;
-	int mv;
 
 	/* make sure AHCI mode is enabled before accessing CAP */
 	ahci_enable_ahci(mmio);
@@ -861,61 +867,46 @@ static void ahci_save_initial_config(struct pci_dev *pdev,
 
 	/* some chips have errata preventing 64bit use */
 	if ((cap & HOST_CAP_64) && (hpriv->flags & AHCI_HFLAG_32BIT_ONLY)) {
-		dev_printk(KERN_INFO, &pdev->dev,
+		dev_printk(KERN_INFO, dev,
 			   "controller can't do 64bit DMA, forcing 32bit\n");
 		cap &= ~HOST_CAP_64;
 	}
 
 	if ((cap & HOST_CAP_NCQ) && (hpriv->flags & AHCI_HFLAG_NO_NCQ)) {
-		dev_printk(KERN_INFO, &pdev->dev,
+		dev_printk(KERN_INFO, dev,
 			   "controller can't do NCQ, turning off CAP_NCQ\n");
 		cap &= ~HOST_CAP_NCQ;
 	}
 
 	if (!(cap & HOST_CAP_NCQ) && (hpriv->flags & AHCI_HFLAG_YES_NCQ)) {
-		dev_printk(KERN_INFO, &pdev->dev,
+		dev_printk(KERN_INFO, dev,
 			   "controller can do NCQ, turning on CAP_NCQ\n");
 		cap |= HOST_CAP_NCQ;
 	}
 
 	if ((cap & HOST_CAP_PMP) && (hpriv->flags & AHCI_HFLAG_NO_PMP)) {
-		dev_printk(KERN_INFO, &pdev->dev,
+		dev_printk(KERN_INFO, dev,
 			   "controller can't do PMP, turning off CAP_PMP\n");
 		cap &= ~HOST_CAP_PMP;
 	}
 
 	if ((cap & HOST_CAP_SNTF) && (hpriv->flags & AHCI_HFLAG_NO_SNTF)) {
-		dev_printk(KERN_INFO, &pdev->dev,
+		dev_printk(KERN_INFO, dev,
 			   "controller can't do SNTF, turning off CAP_SNTF\n");
 		cap &= ~HOST_CAP_SNTF;
 	}
 
-	if (pdev->vendor == PCI_VENDOR_ID_JMICRON && pdev->device == 0x2361 &&
-	    port_map != 1) {
-		dev_printk(KERN_INFO, &pdev->dev,
-			   "JMB361 has only one port, port_map 0x%x -> 0x%x\n",
-			   port_map, 1);
-		port_map = 1;
+	if (force_port_map && port_map != force_port_map) {
+		dev_printk(KERN_INFO, dev, "forcing port_map 0x%x -> 0x%x\n",
+			   port_map, force_port_map);
+		port_map = force_port_map;
 	}
 
-	/*
-	 * Temporary Marvell 6145 hack: PATA port presence
-	 * is asserted through the standard AHCI port
-	 * presence register, as bit 4 (counting from 0)
-	 */
-	if (hpriv->flags & AHCI_HFLAG_MV_PATA) {
-		if (pdev->device == 0x6121)
-			mv = 0x3;
-		else
-			mv = 0xf;
-		dev_printk(KERN_ERR, &pdev->dev,
-			   "MV_AHCI HACK: port_map %x -> %x\n",
+	if (mask_port_map) {
+		dev_printk(KERN_ERR, dev, "masking port_map 0x%x -> 0x%x\n",
 			   port_map,
-			   port_map & mv);
-		dev_printk(KERN_ERR, &pdev->dev,
-			  "Disabling your PATA port. Use the boot option 'ahci.marvell_enable=0' to avoid this.\n");
-
-		port_map &= mv;
+			   port_map & mask_port_map);
+		port_map &= mask_port_map;
 	}
 
 	/* cross check port_map and cap.n_ports */
@@ -930,7 +921,7 @@ static void ahci_save_initial_config(struct pci_dev *pdev,
 		 * port_map and let it be generated from n_ports.
 		 */
 		if (map_ports > ahci_nr_ports(cap)) {
-			dev_printk(KERN_WARNING, &pdev->dev,
+			dev_printk(KERN_WARNING, dev,
 				   "implemented port map (0x%x) contains more "
 				   "ports than nr_ports (%u), using nr_ports\n",
 				   port_map, ahci_nr_ports(cap));
@@ -941,7 +932,7 @@ static void ahci_save_initial_config(struct pci_dev *pdev,
 	/* fabricate port_map from cap.nr_ports */
 	if (!port_map) {
 		port_map = (1 << ahci_nr_ports(cap)) - 1;
-		dev_printk(KERN_WARNING, &pdev->dev,
+		dev_printk(KERN_WARNING, dev,
 			   "forcing PORTS_IMPL to 0x%x\n", port_map);
 
 		/* write the fixed up value to the PI register */
@@ -952,6 +943,35 @@ static void ahci_save_initial_config(struct pci_dev *pdev,
 	hpriv->cap = cap;
 	hpriv->cap2 = cap2;
 	hpriv->port_map = port_map;
+}
+
+static void ahci_pci_save_initial_config(struct pci_dev *pdev,
+					 struct ahci_host_priv *hpriv)
+{
+	unsigned int force_port_map = 0;
+	unsigned int mask_port_map = 0;
+
+	if (pdev->vendor == PCI_VENDOR_ID_JMICRON && pdev->device == 0x2361) {
+		dev_info(&pdev->dev, "JMB361 has only one port\n");
+		force_port_map = 1;
+	}
+
+	/*
+	 * Temporary Marvell 6145 hack: PATA port presence
+	 * is asserted through the standard AHCI port
+	 * presence register, as bit 4 (counting from 0)
+	 */
+	if (hpriv->flags & AHCI_HFLAG_MV_PATA) {
+		if (pdev->device == 0x6121)
+			mask_port_map = 0x3;
+		else
+			mask_port_map = 0xf;
+		dev_info(&pdev->dev,
+			  "Disabling your PATA port. Use the boot option 'ahci.marvell_enable=0' to avoid this.\n");
+	}
+
+	ahci_save_initial_config(&pdev->dev, hpriv, force_port_map,
+				 mask_port_map);
 }
 
 /**
@@ -966,7 +986,7 @@ static void ahci_save_initial_config(struct pci_dev *pdev,
 static void ahci_restore_initial_config(struct ata_host *host)
 {
 	struct ahci_host_priv *hpriv = host->private_data;
-	void __iomem *mmio = host->iomap[AHCI_PCI_BAR];
+	void __iomem *mmio = hpriv->mmio;
 
 	writel(hpriv->saved_cap, mmio + HOST_CAP);
 	if (hpriv->saved_cap2)
@@ -1323,9 +1343,8 @@ static int ahci_deinit_port(struct ata_port *ap, const char **emsg)
 
 static int ahci_reset_controller(struct ata_host *host)
 {
-	struct pci_dev *pdev = to_pci_dev(host->dev);
 	struct ahci_host_priv *hpriv = host->private_data;
-	void __iomem *mmio = host->iomap[AHCI_PCI_BAR];
+	void __iomem *mmio = hpriv->mmio;
 	u32 tmp;
 
 	/* we must be in AHCI mode, before using anything
@@ -1367,7 +1386,17 @@ static int ahci_reset_controller(struct ata_host *host)
 		dev_printk(KERN_INFO, host->dev,
 			   "skipping global host reset\n");
 
+	return 0;
+}
+
+static int ahci_pci_reset_controller(struct ata_host *host)
+{
+	struct pci_dev *pdev = to_pci_dev(host->dev);
+
+	ahci_reset_controller(host);
+
 	if (pdev->vendor == PCI_VENDOR_ID_INTEL) {
+		struct ahci_host_priv *hpriv = host->private_data;
 		u16 tmp16;
 
 		/* configure PCS */
@@ -1456,7 +1485,8 @@ static void ahci_init_sw_activity(struct ata_link *link)
 
 static int ahci_reset_em(struct ata_host *host)
 {
-	void __iomem *mmio = host->iomap[AHCI_PCI_BAR];
+	struct ahci_host_priv *hpriv = host->private_data;
+	void __iomem *mmio = hpriv->mmio;
 	u32 em_ctl;
 
 	em_ctl = readl(mmio + HOST_EM_CTL);
@@ -1472,7 +1502,7 @@ static ssize_t ahci_transmit_led_message(struct ata_port *ap, u32 state,
 {
 	struct ahci_host_priv *hpriv = ap->host->private_data;
 	struct ahci_port_priv *pp = ap->private_data;
-	void __iomem *mmio = ap->host->iomap[AHCI_PCI_BAR];
+	void __iomem *mmio = hpriv->mmio;
 	u32 em_ctl;
 	u32 message[] = {0, 0};
 	unsigned long flags;
@@ -1608,7 +1638,7 @@ static ssize_t ahci_activity_show(struct ata_device *dev, char *buf)
 	return sprintf(buf, "%d\n", emp->blink_policy);
 }
 
-static void ahci_port_init(struct pci_dev *pdev, struct ata_port *ap,
+static void ahci_port_init(struct device *dev, struct ata_port *ap,
 			   int port_no, void __iomem *mmio,
 			   void __iomem *port_mmio)
 {
@@ -1619,8 +1649,7 @@ static void ahci_port_init(struct pci_dev *pdev, struct ata_port *ap,
 	/* make sure port is not active */
 	rc = ahci_deinit_port(ap, &emsg);
 	if (rc)
-		dev_printk(KERN_WARNING, &pdev->dev,
-			   "%s (%d)\n", emsg, rc);
+		dev_warn(dev, "%s (%d)\n", emsg, rc);
 
 	/* clear SError */
 	tmp = readl(port_mmio + PORT_SCR_ERR);
@@ -1639,9 +1668,32 @@ static void ahci_port_init(struct pci_dev *pdev, struct ata_port *ap,
 static void ahci_init_controller(struct ata_host *host)
 {
 	struct ahci_host_priv *hpriv = host->private_data;
-	struct pci_dev *pdev = to_pci_dev(host->dev);
-	void __iomem *mmio = host->iomap[AHCI_PCI_BAR];
+	void __iomem *mmio = hpriv->mmio;
 	int i;
+	void __iomem *port_mmio;
+	u32 tmp;
+
+	for (i = 0; i < host->n_ports; i++) {
+		struct ata_port *ap = host->ports[i];
+
+		port_mmio = ahci_port_base(ap);
+		if (ata_port_is_dummy(ap))
+			continue;
+
+		ahci_port_init(host->dev, ap, i, mmio, port_mmio);
+	}
+
+	tmp = readl(mmio + HOST_CTL);
+	VPRINTK("HOST_CTL 0x%x\n", tmp);
+	writel(tmp | HOST_IRQ_EN, mmio + HOST_CTL);
+	tmp = readl(mmio + HOST_CTL);
+	VPRINTK("HOST_CTL 0x%x\n", tmp);
+}
+
+static void ahci_pci_init_controller(struct ata_host *host)
+{
+	struct ahci_host_priv *hpriv = host->private_data;
+	struct pci_dev *pdev = to_pci_dev(host->dev);
 	void __iomem *port_mmio;
 	u32 tmp;
 	int mv;
@@ -1662,21 +1714,7 @@ static void ahci_init_controller(struct ata_host *host)
 			writel(tmp, port_mmio + PORT_IRQ_STAT);
 	}
 
-	for (i = 0; i < host->n_ports; i++) {
-		struct ata_port *ap = host->ports[i];
-
-		port_mmio = ahci_port_base(ap);
-		if (ata_port_is_dummy(ap))
-			continue;
-
-		ahci_port_init(pdev, ap, i, mmio, port_mmio);
-	}
-
-	tmp = readl(mmio + HOST_CTL);
-	VPRINTK("HOST_CTL 0x%x\n", tmp);
-	writel(tmp | HOST_IRQ_EN, mmio + HOST_CTL);
-	tmp = readl(mmio + HOST_CTL);
-	VPRINTK("HOST_CTL 0x%x\n", tmp);
+	ahci_init_controller(host);
 }
 
 static void ahci_dev_config(struct ata_device *dev)
@@ -2348,7 +2386,7 @@ static irqreturn_t ahci_interrupt(int irq, void *dev_instance)
 	VPRINTK("ENTER\n");
 
 	hpriv = host->private_data;
-	mmio = host->iomap[AHCI_PCI_BAR];
+	mmio = hpriv->mmio;
 
 	/* sigh.  0xffffffff is a valid return from h/w */
 	irq_stat = readl(mmio + HOST_IRQ_STAT);
@@ -2449,7 +2487,8 @@ static void ahci_freeze(struct ata_port *ap)
 
 static void ahci_thaw(struct ata_port *ap)
 {
-	void __iomem *mmio = ap->host->iomap[AHCI_PCI_BAR];
+	struct ahci_host_priv *hpriv = ap->host->private_data;
+	void __iomem *mmio = hpriv->mmio;
 	void __iomem *port_mmio = ahci_port_base(ap);
 	u32 tmp;
 	struct ahci_port_priv *pp = ap->private_data;
@@ -2614,7 +2653,7 @@ static int ahci_pci_device_suspend(struct pci_dev *pdev, pm_message_t mesg)
 {
 	struct ata_host *host = dev_get_drvdata(&pdev->dev);
 	struct ahci_host_priv *hpriv = host->private_data;
-	void __iomem *mmio = host->iomap[AHCI_PCI_BAR];
+	void __iomem *mmio = hpriv->mmio;
 	u32 ctl;
 
 	if (mesg.event & PM_EVENT_SUSPEND &&
@@ -2648,11 +2687,11 @@ static int ahci_pci_device_resume(struct pci_dev *pdev)
 		return rc;
 
 	if (pdev->dev.power.power_state.event == PM_EVENT_SUSPEND) {
-		rc = ahci_reset_controller(host);
+		rc = ahci_pci_reset_controller(host);
 		if (rc)
 			return rc;
 
-		ahci_init_controller(host);
+		ahci_pci_init_controller(host);
 	}
 
 	ata_host_resume(host);
@@ -2779,15 +2818,12 @@ static int ahci_configure_dma_masks(struct pci_dev *pdev, int using_dac)
 	return 0;
 }
 
-static void ahci_print_info(struct ata_host *host)
+static void ahci_print_info(struct ata_host *host, const char *scc_s)
 {
 	struct ahci_host_priv *hpriv = host->private_data;
-	struct pci_dev *pdev = to_pci_dev(host->dev);
-	void __iomem *mmio = host->iomap[AHCI_PCI_BAR];
+	void __iomem *mmio = hpriv->mmio;
 	u32 vers, cap, cap2, impl, speed;
 	const char *speed_s;
-	u16 cc;
-	const char *scc_s;
 
 	vers = readl(mmio + HOST_VERSION);
 	cap = hpriv->cap;
@@ -2804,17 +2840,7 @@ static void ahci_print_info(struct ata_host *host)
 	else
 		speed_s = "?";
 
-	pci_read_config_word(pdev, 0x0a, &cc);
-	if (cc == PCI_CLASS_STORAGE_IDE)
-		scc_s = "IDE";
-	else if (cc == PCI_CLASS_STORAGE_SATA)
-		scc_s = "SATA";
-	else if (cc == PCI_CLASS_STORAGE_RAID)
-		scc_s = "RAID";
-	else
-		scc_s = "unknown";
-
-	dev_printk(KERN_INFO, &pdev->dev,
+	dev_info(host->dev,
 		"AHCI %02x%02x.%02x%02x "
 		"%u slots %u ports %s Gbps 0x%x impl %s mode\n"
 		,
@@ -2830,7 +2856,7 @@ static void ahci_print_info(struct ata_host *host)
 		impl,
 		scc_s);
 
-	dev_printk(KERN_INFO, &pdev->dev,
+	dev_info(host->dev,
 		"flags: "
 		"%s%s%s%s%s%s%s"
 		"%s%s%s%s%s%s%s"
@@ -2858,6 +2884,25 @@ static void ahci_print_info(struct ata_host *host)
 		cap2 & HOST_CAP2_NVMHCI ? "nvmp " : "",
 		cap2 & HOST_CAP2_BOH ? "boh " : ""
 		);
+}
+
+static void ahci_pci_print_info(struct ata_host *host)
+{
+	struct pci_dev *pdev = to_pci_dev(host->dev);
+	u16 cc;
+	const char *scc_s;
+
+	pci_read_config_word(pdev, 0x0a, &cc);
+	if (cc == PCI_CLASS_STORAGE_IDE)
+		scc_s = "IDE";
+	else if (cc == PCI_CLASS_STORAGE_SATA)
+		scc_s = "SATA";
+	else if (cc == PCI_CLASS_STORAGE_RAID)
+		scc_s = "RAID";
+	else
+		scc_s = "unknown";
+
+	ahci_print_info(host, scc_s);
 }
 
 /* On ASUS P5W DH Deluxe, the second port of PCI device 00:1f.2 is
@@ -3186,6 +3231,29 @@ static inline void ahci_gtf_filter_workaround(struct ata_host *host)
 {}
 #endif
 
+static void ahci_set_em_messages(struct ahci_host_priv *hpriv,
+				 struct ata_port_info *pi)
+{
+	u8 messages;
+	void __iomem *mmio = hpriv->mmio;
+	u32 em_loc = readl(mmio + HOST_EM_LOC);
+	u32 em_ctl = readl(mmio + HOST_EM_CTL);
+
+	if (!ahci_em_messages || !(hpriv->cap & HOST_CAP_EMS))
+		return;
+
+	messages = (em_ctl & EM_CTRL_MSG_TYPE) >> 16;
+
+	/* we only support LED message type right now */
+	if ((messages & 0x01) && (ahci_em_messages == 1)) {
+		/* store em_loc */
+		hpriv->em_loc = ((em_loc >> 16) * 4);
+		pi->flags |= ATA_FLAG_EM;
+		if (!(em_ctl & EM_CTL_ALHD))
+			pi->flags |= ATA_FLAG_SW_ACTIVITY;
+	}
+}
+
 static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	static int printed_version;
@@ -3269,8 +3337,10 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if ((hpriv->flags & AHCI_HFLAG_NO_MSI) || pci_enable_msi(pdev))
 		pci_intx(pdev, 1);
 
+	hpriv->mmio = pcim_iomap_table(pdev)[AHCI_PCI_BAR];
+
 	/* save initial config */
-	ahci_save_initial_config(pdev, hpriv);
+	ahci_pci_save_initial_config(pdev, hpriv);
 
 	/* prepare host */
 	if (hpriv->cap & HOST_CAP_NCQ) {
@@ -3287,23 +3357,7 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (hpriv->cap & HOST_CAP_PMP)
 		pi.flags |= ATA_FLAG_PMP;
 
-	if (ahci_em_messages && (hpriv->cap & HOST_CAP_EMS)) {
-		u8 messages;
-		void __iomem *mmio = pcim_iomap_table(pdev)[AHCI_PCI_BAR];
-		u32 em_loc = readl(mmio + HOST_EM_LOC);
-		u32 em_ctl = readl(mmio + HOST_EM_CTL);
-
-		messages = (em_ctl & EM_CTRL_MSG_TYPE) >> 16;
-
-		/* we only support LED message type right now */
-		if ((messages & 0x01) && (ahci_em_messages == 1)) {
-			/* store em_loc */
-			hpriv->em_loc = ((em_loc >> 16) * 4);
-			pi.flags |= ATA_FLAG_EM;
-			if (!(em_ctl & EM_CTL_ALHD))
-				pi.flags |= ATA_FLAG_SW_ACTIVITY;
-		}
-	}
+	ahci_set_em_messages(hpriv, &pi);
 
 	if (ahci_broken_system_poweroff(pdev)) {
 		pi.flags |= ATA_FLAG_NO_POWEROFF_SPINDOWN;
@@ -3333,7 +3387,6 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	host = ata_host_alloc_pinfo(&pdev->dev, ppi, n_ports);
 	if (!host)
 		return -ENOMEM;
-	host->iomap = pcim_iomap_table(pdev);
 	host->private_data = hpriv;
 
 	if (!(hpriv->cap & HOST_CAP_SSS) || ahci_ignore_sss)
@@ -3375,12 +3428,12 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (rc)
 		return rc;
 
-	rc = ahci_reset_controller(host);
+	rc = ahci_pci_reset_controller(host);
 	if (rc)
 		return rc;
 
-	ahci_init_controller(host);
-	ahci_print_info(host);
+	ahci_pci_init_controller(host);
+	ahci_pci_print_info(host);
 
 	pci_set_master(pdev);
 	return ata_host_activate(host, pdev->irq, ahci_interrupt, IRQF_SHARED,
