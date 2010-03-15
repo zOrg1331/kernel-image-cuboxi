@@ -11,10 +11,11 @@ diff -up ./kernel/ve/vecalls.c.veoops ./kernel/ve/vecalls.c
  err_struct:
  	printk(KERN_INFO "CT: %d: failed to start with err=%d\n", veid, err);
  	return err;
-@@ -1769,6 +1766,7 @@ err_struct:
+@@ -1769,6 +1766,8 @@ err_struct:
  err_exist:
  	free_ve_cpustats(ve);
  err_cpu_stats:
++	kfree(ve->uidhash_table);
 +err_uidhash_table:
  	kfree(ve);
  	goto err_struct;

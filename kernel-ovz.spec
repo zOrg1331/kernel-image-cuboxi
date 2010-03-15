@@ -3,7 +3,7 @@
 %define buildsmp 1
 %define buildpae 1
 %define buildenterprise 1
-%define buildxen 1
+%define buildxen 0
 %define buildopenafs 0
 
 %define builddebug 0
@@ -13,7 +13,7 @@
 %define _without_kabichk 1
 
 %define ovzver 028stab068
-%define ovzrel 3
+%define ovzrel 5
 
 %if !%{buildup}
 %define _without_up 1
@@ -4583,6 +4583,7 @@ Patch100025: diff-ms-alow-ve0-exceed-threads-max
 Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-ve-uidhash-oops-fix
 Patch100028: diff-rh-dont-add-timer-twise
+Patch100029: diff-ve-sched-nr-unint-summing-negative-20100309
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -9008,6 +9009,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100026 -p1
 %patch100027 -p1
 %patch100028 -p1
+%patch100029 -p1
 
 %patch101000 -p1
 %patch101001 -p1
