@@ -27,6 +27,8 @@
 #include "saa7134-reg.h"
 #include "saa7134.h"
 
+#define MODULE_NAME "saa7134"
+
 static unsigned int disable_ir;
 module_param(disable_ir, int, 0444);
 MODULE_PARM_DESC(disable_ir,"disable infrared remote support");
@@ -472,6 +474,7 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	switch (dev->board) {
 	case SAA7134_BOARD_FLYVIDEO2000:
 	case SAA7134_BOARD_FLYVIDEO3000:
+	case SAA7134_BOARD_HAWELL_HW_404M7:
 	case SAA7134_BOARD_FLYTVPLATINUM_FM:
 	case SAA7134_BOARD_FLYTVPLATINUM_MINI2:
 	case SAA7134_BOARD_ROVERMEDIA_LINK_PRO_FM:
@@ -729,7 +732,7 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	dev->remote = ir;
 	saa7134_ir_start(dev, ir);
 
-	err = ir_input_register(ir->dev, ir_codes, NULL);
+	err = ir_input_register(ir->dev, ir_codes, NULL, MODULE_NAME);
 	if (err)
 		goto err_out_stop;
 
@@ -836,6 +839,7 @@ void saa7134_probe_i2c_ir(struct saa7134_dev *dev)
 		dev->init_data.name = "BeholdTV";
 		dev->init_data.get_key = get_key_beholdm6xx;
 		dev->init_data.ir_codes = &ir_codes_behold_table;
+		dev->init_data.type = IR_TYPE_NEC;
 		info.addr = 0x2d;
 		break;
 	case SAA7134_BOARD_AVERMEDIA_CARDBUS_501:

@@ -125,12 +125,12 @@ static const struct stb0899_s1_reg az6027_stb0899_s1_init_3[] = {
 	{ STB0899_RCOMPC        	, 0xc9 },
 	{ STB0899_AGC1CN        	, 0x01 },
 	{ STB0899_AGC1REF       	, 0x10 },
-	{ STB0899_RTC	        	, 0x23 },
+	{ STB0899_RTC			, 0x23 },
 	{ STB0899_TMGCFG        	, 0x4e },
 	{ STB0899_AGC2REF       	, 0x34 },
 	{ STB0899_TLSR          	, 0x84 },
 	{ STB0899_CFD           	, 0xf7 },
-	{ STB0899_ACLC	        	, 0x87 },
+	{ STB0899_ACLC			, 0x87 },
 	{ STB0899_BCLC          	, 0x94 },
 	{ STB0899_EQON          	, 0x41 },
 	{ STB0899_LDT           	, 0xf1 },
@@ -183,10 +183,10 @@ static const struct stb0899_s1_reg az6027_stb0899_s1_init_3[] = {
 	{ STB0899_ECNT3M		, 0x0a },
 	{ STB0899_ECNT3L		, 0xad },
 	{ STB0899_FECAUTO1      	, 0x06 },
-	{ STB0899_FECM	        	, 0x01 },
+	{ STB0899_FECM			, 0x01 },
 	{ STB0899_VTH12         	, 0xb0 },
 	{ STB0899_VTH23         	, 0x7a },
-	{ STB0899_VTH34	        	, 0x58 },
+	{ STB0899_VTH34			, 0x58 },
 	{ STB0899_VTH56         	, 0x38 },
 	{ STB0899_VTH67         	, 0x34 },
 	{ STB0899_VTH78         	, 0x24 },
@@ -195,7 +195,7 @@ static const struct stb0899_s1_reg az6027_stb0899_s1_init_3[] = {
 	{ STB0899_RSULC         	, 0xb1 }, /* DVB = 0xb1, DSS = 0xa1 */
 	{ STB0899_TSULC         	, 0x42 },
 	{ STB0899_RSLLC         	, 0x41 },
-	{ STB0899_TSLPL	        	, 0x12 },
+	{ STB0899_TSLPL			, 0x12 },
 	{ STB0899_TSCFGH        	, 0x0c },
 	{ STB0899_TSCFGM        	, 0x00 },
 	{ STB0899_TSCFGL        	, 0x00 },
@@ -976,17 +976,14 @@ static int az6027_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[], int n
 				i++;
 			} else {
 
-				if (msg[i].addr == 0xd0) {
-					/* demod 16bit addr */
-					req = 0xBD;
-					index = (((msg[i].buf[0] << 8) & 0xff00) | (msg[i].buf[1] & 0x00ff));
-					value = msg[i].addr + (2 << 8);
-					length = msg[i].len - 2;
-					len = msg[i].len - 2;
-					for (j = 0; j < len; j++)
-						data[j] = msg[i].buf[j + 2];
-
-				}
+				/* demod 16bit addr */
+				req = 0xBD;
+				index = (((msg[i].buf[0] << 8) & 0xff00) | (msg[i].buf[1] & 0x00ff));
+				value = msg[i].addr + (2 << 8);
+				length = msg[i].len - 2;
+				len = msg[i].len - 2;
+				for (j = 0; j < len; j++)
+					data[j] = msg[i].buf[j + 2];
 				az6027_usb_out_op(d, req, value, index, data, length);
 			}
 		}
@@ -1059,8 +1056,10 @@ int az6027_identify_state(struct usb_device *udev,
 
 static struct usb_device_id az6027_usb_table[] = {
 	{ USB_DEVICE(USB_VID_AZUREWAVE, USB_PID_AZUREWAVE_AZ6027) },
-	{ USB_DEVICE(USB_VID_TERRATEC,  USB_PID_TERRATEC_DVBS2CI) },
-	{ USB_DEVICE(USB_VID_TECHNISAT, USB_PID_TECHNISAT_USB2_HDCI) },
+	{ USB_DEVICE(USB_VID_TERRATEC,  USB_PID_TERRATEC_DVBS2CI_V1) },
+	{ USB_DEVICE(USB_VID_TERRATEC,  USB_PID_TERRATEC_DVBS2CI_V2) },
+	{ USB_DEVICE(USB_VID_TECHNISAT, USB_PID_TECHNISAT_USB2_HDCI_V1) },
+	{ USB_DEVICE(USB_VID_TECHNISAT, USB_PID_TECHNISAT_USB2_HDCI_V2) },
 	{ },
 };
 
@@ -1103,11 +1102,27 @@ static struct dvb_usb_device_properties az6027_properties = {
 	.rc_query         = az6027_rc_query,
 	.i2c_algo         = &az6027_i2c_algo,
 
-	.num_device_descs = 1,
+	.num_device_descs = 5,
 	.devices = {
 		{
 			.name = "AZUREWAVE DVB-S/S2 USB2.0 (AZ6027)",
 			.cold_ids = { &az6027_usb_table[0], NULL },
+			.warm_ids = { NULL },
+		}, {
+			.name = "TERRATEC S7",
+			.cold_ids = { &az6027_usb_table[1], NULL },
+			.warm_ids = { NULL },
+		}, {
+			.name = "TERRATEC S7 MKII",
+			.cold_ids = { &az6027_usb_table[2], NULL },
+			.warm_ids = { NULL },
+		}, {
+			.name = "Technisat SkyStar USB 2 HD CI",
+			.cold_ids = { &az6027_usb_table[3], NULL },
+			.warm_ids = { NULL },
+		}, {
+			.name = "Technisat SkyStar USB 2 HD CI",
+			.cold_ids = { &az6027_usb_table[4], NULL },
 			.warm_ids = { NULL },
 		},
 		{ NULL },
