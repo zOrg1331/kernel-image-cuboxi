@@ -30,6 +30,9 @@ struct ve_ipt_recent {
 	struct list_head	tables;
 #ifdef CONFIG_PROC_FS
 	struct proc_dir_entry	*proc_dir;
+#ifdef CONFIG_NETFILTER_XT_MATCH_RECENT_PROC_COMPAT
+	struct proc_dir_entry	*proc_old_dir;
+#endif
 #endif
 };
 #endif
