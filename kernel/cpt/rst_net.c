@@ -275,8 +275,7 @@ int rst_restore_route(struct cpt_context *ctx)
 		err = sock_recvmsg(sock, &msg, PAGE_SIZE, MSG_DONTWAIT);
 		set_fs(oldfs);
 		if (err != -EAGAIN) {
-			if (err == NLMSG_LENGTH(sizeof(struct nlmsgerr)) &&
-			    n->nlmsg_type == NLMSG_ERROR) {
+			if (n->nlmsg_type == NLMSG_ERROR) {
 				struct nlmsgerr *e = NLMSG_DATA(n);
 				if (e->error != -EEXIST || !kernel_flag)
 					eprintk_ctx("NLMERR: %d\n", e->error);
