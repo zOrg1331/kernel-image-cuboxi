@@ -20,6 +20,7 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/mount.h>
 #include <linux/srcu.h>
 
 #include <linux/fsnotify_backend.h>
@@ -33,6 +34,11 @@ void __fsnotify_inode_delete(struct inode *inode)
 	fsnotify_clear_marks_by_inode(inode);
 }
 EXPORT_SYMBOL_GPL(__fsnotify_inode_delete);
+
+void __fsnotify_vfsmount_delete(struct vfsmount *mnt)
+{
+	fsnotify_clear_marks_by_mount(mnt);
+}
 
 /*
  * Given an inode, first check if we care what happens to our children.  Inotify
@@ -77,12 +83,15 @@ void __fsnotify_update_child_dentry_flags(struct inode *inode)
 }
 
 /* Notify this dentry's parent about a child's events. */
-void __fsnotify_parent(struct dentry *dentry, __u32 mask)
+void __fsnotify_parent(struct path *path, struct dentry *dentry, __u32 mask)
 {
 	struct dentry *parent;
 	struct inode *p_inode;
 	bool send = false;
 	bool should_update_children = false;
+
+	if (!dentry)
+		dentry = path->dentry;
 
 	if (!(dentry->d_flags & DCACHE_FSNOTIFY_PARENT_WATCHED))
 		return;
@@ -114,8 +123,12 @@ void __fsnotify_parent(struct dentry *dentry, __u32 mask)
 		 * specifies these are events which came from a child. */
 		mask |= FS_EVENT_ON_CHILD;
 
-		fsnotify(p_inode, mask, dentry->d_inode, FSNOTIFY_EVENT_INODE,
-			 dentry->d_name.name, 0);
+		if (path)
+			fsnotify(p_inode, mask, path, FSNOTIFY_EVENT_PATH,
+				 dentry->d_name.name, 0);
+		else
+			fsnotify(p_inode, mask, dentry->d_inode, FSNOTIFY_EVENT_INODE,
+				 dentry->d_name.name, 0);
 		dput(parent);
 	}
 
@@ -126,51 +139,127 @@ void __fsnotify_parent(struct dentry *dentry, __u32 mask)
 }
 EXPORT_SYMBOL_GPL(__fsnotify_parent);
 
+void __fsnotify_flush_ignored_mask(struct inode *inode, void *data, int data_is)
+{
+	struct fsnotify_mark *mark;
+	struct hlist_node *node;
+
+	if (!hlist_empty(&inode->i_fsnotify_marks)) {
+		spin_lock(&inode->i_lock);
+		hlist_for_each_entry(mark, node, &inode->i_fsnotify_marks, i.i_list) {
+			if (!(mark->flags & FSNOTIFY_MARK_FLAG_IGNORED_SURV_MODIFY))
+				mark->ignored_mask = 0;
+		}
+		spin_unlock(&inode->i_lock);
+	}
+
+	if (data_is == FSNOTIFY_EVENT_PATH) {
+		struct vfsmount *mnt;
+
+		mnt = ((struct path *)data)->mnt;
+		if (mnt && !hlist_empty(&mnt->mnt_fsnotify_marks)) {
+			spin_lock(&mnt->mnt_root->d_lock);
+			hlist_for_each_entry(mark, node, &mnt->mnt_fsnotify_marks, m.m_list) {
+				if (!(mark->flags & FSNOTIFY_MARK_FLAG_IGNORED_SURV_MODIFY))
+					mark->ignored_mask = 0;
+			}
+			spin_unlock(&mnt->mnt_root->d_lock);
+		}
+	}
+}
+
+static int send_to_group(struct fsnotify_group *group, struct inode *to_tell,
+			 struct vfsmount *mnt, __u32 mask, void *data,
+			 int data_is, u32 cookie, const unsigned char *file_name,
+			 struct fsnotify_event **event)
+{
+	if (!group->ops->should_send_event(group, to_tell, mnt, mask,
+					   data, data_is))
+		return 0;
+	if (!*event) {
+		*event = fsnotify_create_event(to_tell, mask, data,
+						data_is, file_name,
+						cookie, GFP_KERNEL);
+		if (!*event)
+			return -ENOMEM;
+	}
+	return group->ops->handle_event(group, *event);
+}
+
+static bool needed_by_vfsmount(__u32 test_mask, struct vfsmount *mnt)
+{
+	if (!mnt)
+		return false;
+
+	return (test_mask & mnt->mnt_fsnotify_mask);
+}
+
 /*
  * This is the main call to fsnotify.  The VFS calls into hook specific functions
  * in linux/fsnotify.h.  Those functions then in turn call here.  Here will call
  * out to all of the registered fsnotify_group.  Those groups can then use the
  * notification event in whatever means they feel necessary.
  */
-void fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is, const char *file_name, u32 cookie)
+int fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is,
+	     const unsigned char *file_name, u32 cookie)
 {
 	struct fsnotify_group *group;
 	struct fsnotify_event *event = NULL;
-	int idx;
+	struct vfsmount *mnt = NULL;
+	int idx, ret = 0;
 	/* global tests shouldn't care about events on child only the specific event */
 	__u32 test_mask = (mask & ~FS_EVENT_ON_CHILD);
 
-	if (list_empty(&fsnotify_groups))
-		return;
+	/* if no fsnotify listeners, nothing to do */
+	if (list_empty(&fsnotify_inode_groups) &&
+	    list_empty(&fsnotify_vfsmount_groups))
+		return 0;
+ 
+	if (mask & FS_MODIFY)
+		__fsnotify_flush_ignored_mask(to_tell, data, data_is);
 
-	if (!(test_mask & fsnotify_mask))
-		return;
+	/* if none of the directed listeners or vfsmount listeners care */
+	if (!(test_mask & fsnotify_inode_mask) &&
+	    !(test_mask & fsnotify_vfsmount_mask))
+		return 0;
+ 
+	if (data_is == FSNOTIFY_EVENT_PATH)
+		mnt = ((struct path *)data)->mnt;
 
-	if (!(test_mask & to_tell->i_fsnotify_mask))
-		return;
+	/* if this inode's directed listeners don't care and nothing on the vfsmount
+	 * listeners list cares, nothing to do */
+	if (!(test_mask & to_tell->i_fsnotify_mask) &&
+	    !needed_by_vfsmount(test_mask, mnt))
+		return 0;
+
 	/*
 	 * SRCU!!  the groups list is very very much read only and the path is
 	 * very hot.  The VAST majority of events are not going to need to do
 	 * anything other than walk the list so it's crazy to pre-allocate.
 	 */
 	idx = srcu_read_lock(&fsnotify_grp_srcu);
-	list_for_each_entry_rcu(group, &fsnotify_groups, group_list) {
-		if (test_mask & group->mask) {
-			if (!group->ops->should_send_event(group, to_tell, mask))
-				continue;
-			if (!event) {
-				event = fsnotify_create_event(to_tell, mask, data,
-							      data_is, file_name, cookie,
-							      GFP_KERNEL);
-				/* shit, we OOM'd and now we can't tell, maybe
-				 * someday someone else will want to do something
-				 * here */
-				if (!event)
-					break;
+
+	if (test_mask & to_tell->i_fsnotify_mask) {
+		list_for_each_entry_rcu(group, &fsnotify_inode_groups, inode_group_list) {
+			if (test_mask & group->mask) {
+				ret = send_to_group(group, to_tell, NULL, mask, data, data_is,
+						    cookie, file_name, &event);
+				if (ret)
+					goto out;
 			}
-			group->ops->handle_event(group, event);
 		}
 	}
+	if (needed_by_vfsmount(test_mask, mnt)) {
+		list_for_each_entry_rcu(group, &fsnotify_vfsmount_groups, vfsmount_group_list) {
+			if (test_mask & group->mask) {
+				ret = send_to_group(group, to_tell, mnt, mask, data, data_is,
+						    cookie, file_name, &event);
+				if (ret)
+					goto out;
+			}
+		}
+	}
+out:
 	srcu_read_unlock(&fsnotify_grp_srcu, idx);
 	/*
 	 * fsnotify_create_event() took a reference so the event can't be cleaned
@@ -178,6 +267,8 @@ void fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is, const 
 	 */
 	if (event)
 		fsnotify_put_event(event);
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(fsnotify);
 
