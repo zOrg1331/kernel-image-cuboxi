@@ -31,7 +31,6 @@
 #include <asm/leds.h>
 #include <asm/mach-types.h>
 #include <asm/hardware/gic.h>
-#include <asm/hardware/icst307.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
@@ -42,7 +41,6 @@
 #include <mach/irqs.h>
 
 #include "core.h"
-#include "clock.h"
 
 static struct map_desc realview_pba8_io_desc[] __initdata = {
 	{
