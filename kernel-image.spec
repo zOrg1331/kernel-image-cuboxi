@@ -602,6 +602,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %changelog
 * Mon Mar 15 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt10
 - 2.6.32.10
+- drm-next merged
 
 * Tue Feb 23 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt9
 - 2.6.32.9
