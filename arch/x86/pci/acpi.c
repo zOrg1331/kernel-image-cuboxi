@@ -65,14 +65,79 @@ resource_to_addr(struct acpi_resource *resource,
 			struct acpi_resource_address64 *addr)
 {
 	acpi_status status;
+	struct acpi_resource_io *io;
+	struct acpi_resource_fixed_io *fixed_io;
+	struct acpi_resource_memory24 *memory24;
+	struct acpi_resource_memory32 *memory32;
+	struct acpi_resource_fixed_memory32 *fixed_memory32;
+	struct acpi_resource_extended_address64 *ext_addr64;
 
-	status = acpi_resource_to_address64(resource, addr);
-	if (ACPI_SUCCESS(status) &&
-	    (addr->resource_type == ACPI_MEMORY_RANGE ||
-	    addr->resource_type == ACPI_IO_RANGE) &&
-	    addr->address_length > 0 &&
-	    addr->producer_consumer == ACPI_PRODUCER) {
+	memset(addr, 0, sizeof(*addr));
+
+	switch (resource->type) {
+	case ACPI_RESOURCE_TYPE_IO:
+		io = &resource->data.io;
+		addr->resource_type = ACPI_IO_RANGE;
+		addr->minimum = io->minimum;
+		addr->address_length = io->address_length;
 		return AE_OK;
+
+	case ACPI_RESOURCE_TYPE_FIXED_IO:
+		fixed_io = &resource->data.fixed_io;
+		addr->resource_type = ACPI_IO_RANGE;
+		addr->minimum = fixed_io->address;
+		addr->address_length = fixed_io->address_length;
+		return AE_OK;
+
+	case ACPI_RESOURCE_TYPE_MEMORY24:
+		memory24 = &resource->data.memory24;
+		addr->resource_type = ACPI_MEMORY_RANGE;
+		addr->minimum = memory24->minimum;
+		addr->address_length = memory24->address_length;
+		return AE_OK;
+
+	case ACPI_RESOURCE_TYPE_MEMORY32:
+		memory32 = &resource->data.memory32;
+		addr->resource_type = ACPI_MEMORY_RANGE;
+		addr->minimum = memory32->minimum;
+		addr->address_length = memory32->address_length;
+		return AE_OK;
+
+	case ACPI_RESOURCE_TYPE_FIXED_MEMORY32:
+		fixed_memory32 = &resource->data.fixed_memory32;
+		addr->resource_type = ACPI_MEMORY_RANGE;
+		addr->minimum = fixed_memory32->address;
+		addr->address_length = fixed_memory32->address_length;
+		return AE_OK;
+
+	case ACPI_RESOURCE_TYPE_ADDRESS16:
+	case ACPI_RESOURCE_TYPE_ADDRESS32:
+	case ACPI_RESOURCE_TYPE_ADDRESS64:
+		status = acpi_resource_to_address64(resource, addr);
+		if (ACPI_SUCCESS(status) &&
+		    (addr->resource_type == ACPI_MEMORY_RANGE ||
+		     addr->resource_type == ACPI_IO_RANGE) &&
+		    addr->address_length > 0) {
+			return AE_OK;
+		}
+		break;
+
+	case ACPI_RESOURCE_TYPE_EXTENDED_ADDRESS64:
+		ext_addr64 = &resource->data.ext_address64;
+		if ((ext_addr64->resource_type == ACPI_MEMORY_RANGE ||
+		     ext_addr64->resource_type == ACPI_IO_RANGE) &&
+		    ext_addr64->address_length > 0) {
+			addr->resource_type = ext_addr64->resource_type;
+			addr->minimum = ext_addr64->minimum;
+			addr->address_length = ext_addr64->address_length;
+			addr->translation_offset =
+					ext_addr64->translation_offset;
+			if (ext_addr64->resource_type == ACPI_MEMORY_RANGE)
+				addr->info.mem.caching =
+						ext_addr64->info.mem.caching;
+			return AE_OK;
+		}
+		break;
 	}
 	return AE_ERROR;
 }
