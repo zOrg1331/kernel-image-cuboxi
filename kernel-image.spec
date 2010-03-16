@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.32
-Release: alt9.1
+Release: alt10
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -348,6 +348,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Tue Mar 16 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt10
+- 2.6.32.10
+- drm/nouveau: 2010-03-15 (f4053509669f904aec70c51e2ff75563ba7ae823)
+
 * Thu Feb 25 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt9.1
 - drm/intel: revert to 2.6.33
 - drm/nouveau: 2010-02-25 (511829364524fdc4b3f9c09d38fe9c2b8143631c)
