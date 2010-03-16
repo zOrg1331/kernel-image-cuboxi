@@ -845,6 +845,7 @@ asmlinkage int __vprintk(const char *fmt, va_list args)
 	 */
 	if (!ve_is_super(get_exec_env())) {
 		need_wake = (ve_log_start != ve_log_end);
+		printk_cpu = UINT_MAX;
 		spin_unlock_irqrestore(&logbuf_lock, flags);
 		if (!oops_in_progress && need_wake)
 			wake_up_interruptible(&ve_log_wait);
@@ -1162,6 +1163,7 @@ void release_console_sem(void)
 	}
 	console_locked = 0;
 	up(&console_sem);
+	printk_cpu = UINT_MAX;
 	spin_unlock_irqrestore(&logbuf_lock, flags);
 	if (wake_klogd)
 		wake_up_klogd();
