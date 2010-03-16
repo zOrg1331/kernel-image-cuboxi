@@ -34,7 +34,6 @@
 #include "nouveau_drm.h"
 #include "nv50_display.h"
 
-static int nouveau_stub_init(struct drm_device *dev) { return 0; }
 static void nouveau_stub_takedown(struct drm_device *dev) {}
 
 static int nouveau_init_engine_ptrs(struct drm_device *dev)
@@ -276,8 +275,8 @@ static int nouveau_init_engine_ptrs(struct drm_device *dev)
 		engine->timer.init		= nv04_timer_init;
 		engine->timer.read		= nv04_timer_read;
 		engine->timer.takedown		= nv04_timer_takedown;
-		engine->fb.init			= nouveau_stub_init;
-		engine->fb.takedown		= nouveau_stub_takedown;
+		engine->fb.init			= nv50_fb_init;
+		engine->fb.takedown		= nv50_fb_takedown;
 		engine->graph.grclass		= nv50_graph_grclass;
 		engine->graph.init		= nv50_graph_init;
 		engine->graph.takedown		= nv50_graph_takedown;
@@ -391,6 +390,7 @@ nouveau_card_init(struct drm_device *dev)
 		goto out;
 	engine = &dev_priv->engine;
 	dev_priv->init_state = NOUVEAU_CARD_INIT_FAILED;
+	spin_lock_init(&dev_priv->context_switch_lock);
 
 	/* Parse BIOS tables / Run init tables if card not POSTed */
 	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
@@ -774,13 +774,6 @@ int nouveau_unload(struct drm_device *dev)
 	kfree(dev_priv);
 	dev->dev_private = NULL;
 	return 0;
-}
-
-int
-nouveau_ioctl_card_init(struct drm_device *dev, void *data,
-			struct drm_file *file_priv)
-{
-	return nouveau_card_init(dev);
 }
 
 int nouveau_ioctl_getparam(struct drm_device *dev, void *data,
