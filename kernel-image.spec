@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.32
-Release: alt9
+Release: alt10
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -600,6 +600,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Mon Mar 15 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt10
+- 2.6.32.10
+
 * Tue Feb 23 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt9
 - 2.6.32.9
 - NETFLOW activated
