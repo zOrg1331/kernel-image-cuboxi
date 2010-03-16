@@ -1,0 +1,56 @@
+Importing driver-core.current based on 2.6.34-rc1
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.34-rc1-git5
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard bca14dd14f3b0c5e3e2d1d314679f85b67871365
+HEAD is now at bca14dd Merge branch 'core-fixes-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+acpi-support-ibm-smbus-cmi-devices.patch
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+i2c-scmi-provide-module-aliases-for-automatic-loading.patch
+i2c-i801-02-new-parameter-to-disable-features.patch
+i2c-i801-03-default-to-all-features-present.patch
+i2c-scx200_acb-make-pci-device-ids-constant.patch
+i2c-stub-show-actual-functionality.patch
+eeprom-at24-fallback-to-byte-reads.patch
+i2c-dev-remove-unnecessary-casts.patch
+i2c-parport-make-template-struct-const.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + dd80552...73b681f master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.34-rc1-git5
+$ cd ../quilt-tmp
+$ git reset --hard bca14dd14f3b0c5e3e2d1d314679f85b67871365
+HEAD is now at bca14dd Merge branch 'core-fixes-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-coretemp-fix-cpu-model-output.patch
+hwmon-w83793-saving-negative-errors-in-unsigned.patch
+hwmon-asus_atk0110-dont-use-if-unsafe.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 1031d9f...308afde master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.33-rc3-git5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.33-rc7-10-g6339204
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.33-5070-g64ba992
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
