@@ -199,7 +199,7 @@ gss_verify_mic_v2(struct krb5_ctx *ctx,
 
 	/* do sequencing checks */
 
-	seqnum = be64_to_cpu((__be64 *)ptr + 8);
+	seqnum = be64_to_cpup((__be64 *)ptr + 8);
 
 	return GSS_S_COMPLETE;
 }
