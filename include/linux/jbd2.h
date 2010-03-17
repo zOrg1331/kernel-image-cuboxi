@@ -69,15 +69,8 @@ extern u8 jbd2_journal_enable_debug;
 #define jbd_debug(f, a...)	/**/
 #endif
 
-static inline void *jbd2_alloc(size_t size, gfp_t flags)
-{
-	return (void *)__get_free_pages(flags, get_order(size));
-}
-
-static inline void jbd2_free(void *ptr, size_t size)
-{
-	free_pages((unsigned long)ptr, get_order(size));
-};
+extern void *jbd2_alloc(size_t size, gfp_t flags);
+extern void jbd2_free(void *ptr, size_t size);
 
 #define JBD2_MIN_JOURNAL_BLOCKS 1024
 
@@ -284,19 +277,8 @@ typedef struct journal_superblock_s
 
 #define J_ASSERT(assert)	BUG_ON(!(assert))
 
-#if defined(CONFIG_BUFFER_DEBUG)
-void buffer_assertion_failure(struct buffer_head *bh);
-#define J_ASSERT_BH(bh, expr)						\
-	do {								\
-		if (!(expr))						\
-			buffer_assertion_failure(bh);			\
-		J_ASSERT(expr);						\
-	} while (0)
-#define J_ASSERT_JH(jh, expr)	J_ASSERT_BH(jh2bh(jh), expr)
-#else
 #define J_ASSERT_BH(bh, expr)	J_ASSERT(expr)
 #define J_ASSERT_JH(jh, expr)	J_ASSERT(expr)
-#endif
 
 #if defined(JBD2_PARANOID_IOFAIL)
 #define J_EXPECT(expr, why...)		J_ASSERT(expr)
@@ -464,9 +446,9 @@ struct handle_s
  */
 struct transaction_chp_stats_s {
 	unsigned long		cs_chp_time;
-	unsigned long		cs_forced_to_close;
-	unsigned long		cs_written;
-	unsigned long		cs_dropped;
+	__u32			cs_forced_to_close;
+	__u32			cs_written;
+	__u32			cs_dropped;
 };
 
 /* The transaction_t type is the guts of the journaling mechanism.  It
@@ -653,6 +635,7 @@ struct transaction_s
 	 * waiting for it to finish.
 	 */
 	unsigned int t_synchronous_commit:1;
+	unsigned int t_flushed_data_blocks:1;
 
 	/*
 	 * For use by the filesystem to store fs-specific data
@@ -668,22 +651,15 @@ struct transaction_run_stats_s {
 	unsigned long		rs_flushing;
 	unsigned long		rs_logging;
 
-	unsigned long		rs_handle_count;
-	unsigned long		rs_blocks;
-	unsigned long		rs_blocks_logged;
+	__u32			rs_handle_count;
+	__u32			rs_blocks;
+	__u32			rs_blocks_logged;
 };
 
 struct transaction_stats_s {
-	int 			ts_type;
 	unsigned long		ts_tid;
-	union {
-		struct transaction_run_stats_s run;
-		struct transaction_chp_stats_s chp;
-	} u;
+	struct transaction_run_stats_s run;
 };
-
-#define JBD2_STATS_RUN		1
-#define JBD2_STATS_CHECKPOINT	2
 
 static inline unsigned long
 jbd2_time_diff(unsigned long start, unsigned long end)
@@ -987,12 +963,6 @@ struct journal_s
 
 	/*
 	 * Journal statistics
-	 */
-	struct transaction_stats_s *j_history;
-	int			j_history_max;
-	int			j_history_cur;
-	/*
-	 * Protect the transactions statistics history
 	 */
 	spinlock_t		j_history_lock;
 	struct proc_dir_entry	*j_proc_entry;

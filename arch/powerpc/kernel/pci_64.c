@@ -97,7 +97,9 @@ int pcibios_unmap_io_space(struct pci_bus *bus)
 	 * to do an appropriate TLB flush here too
 	 */
 	if (bus->self) {
+#ifdef CONFIG_PPC_STD_MMU_64
 		struct resource *res = bus->resource[0];
+#endif
 
 		pr_debug("IO unmapping for PCI-PCI bridge %s\n",
 			 pci_name(bus->self));
@@ -222,7 +224,7 @@ long sys_pciconfig_iobase(long which, unsigned long in_bus,
 	 * G5 machines... So when something asks for bus 0 io base
 	 * (bus 0 is HT root), we return the AGP one instead.
 	 */
-	if (in_bus == 0 && machine_is_compatible("MacRISC4")) {
+	if (in_bus == 0 && of_machine_is_compatible("MacRISC4")) {
 		struct device_node *agp;
 
 		agp = of_find_compatible_node(NULL, NULL, "u3-agp");

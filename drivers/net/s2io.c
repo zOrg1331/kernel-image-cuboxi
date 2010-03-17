@@ -523,7 +523,7 @@ module_param_array(rts_frm_len, uint, NULL, 0);
  * S2IO device table.
  * This table lists all the devices that this driver supports.
  */
-static struct pci_device_id s2io_tbl[] __devinitdata = {
+static DEFINE_PCI_DEVICE_TABLE(s2io_tbl) = {
 	{PCI_VENDOR_ID_S2IO, PCI_DEVICE_ID_S2IO_WIN,
 	 PCI_ANY_ID, PCI_ANY_ID},
 	{PCI_VENDOR_ID_S2IO, PCI_DEVICE_ID_S2IO_UNI,
@@ -3238,7 +3238,7 @@ static u64 s2io_mdio_read(u32 mmd_type, u64 addr, struct net_device *dev)
 
 /**
  *  s2io_chk_xpak_counter - Function to check the status of the xpak counters
- *  @counter      : couter value to be updated
+ *  @counter      : counter value to be updated
  *  @flag         : flag to indicate the status
  *  @type         : counter type
  *  Description:
@@ -3421,7 +3421,7 @@ static int wait_for_cmd_complete(void __iomem *addr, u64 busy_bit,
 				break;
 			}
 		} else {
-			if (!(val64 & busy_bit)) {
+			if (val64 & busy_bit) {
 				ret = SUCCESS;
 				break;
 			}
@@ -3494,6 +3494,7 @@ static void s2io_reset(struct s2io_nic *sp)
 
 		/* Restore the PCI state saved during initialization. */
 		pci_restore_state(sp->pdev);
+		pci_save_state(sp->pdev);
 		pci_read_config_word(sp->pdev, 0x2, &val16);
 		if (check_pci_device_id(val16) != (u16)PCI_ANY_ID)
 			break;
@@ -5054,8 +5055,8 @@ static void s2io_set_multicast(struct net_device *dev)
 	}
 
 	/*  Update individual M_CAST address list */
-	if ((!sp->m_cast_flg) && dev->mc_count) {
-		if (dev->mc_count >
+	if ((!sp->m_cast_flg) && netdev_mc_count(dev)) {
+		if (netdev_mc_count(dev) >
 		    (config->max_mc_addr - config->max_mac_addr)) {
 			DBG_PRINT(ERR_DBG,
 				  "%s: No more Rx filters can be added - "
@@ -5065,7 +5066,7 @@ static void s2io_set_multicast(struct net_device *dev)
 		}
 
 		prev_cnt = sp->mc_addr_count;
-		sp->mc_addr_count = dev->mc_count;
+		sp->mc_addr_count = netdev_mc_count(dev);
 
 		/* Clear out the previous list of Mc in the H/W. */
 		for (i = 0; i < prev_cnt; i++) {
@@ -5091,8 +5092,8 @@ static void s2io_set_multicast(struct net_device *dev)
 		}
 
 		/* Create the new Rx filter list and update the same in H/W. */
-		for (i = 0, mclist = dev->mc_list; i < dev->mc_count;
-		     i++, mclist = mclist->next) {
+		i = 0;
+		netdev_for_each_mc_addr(mclist, dev) {
 			memcpy(sp->usr_addrs[i].addr, mclist->dmi_addr,
 			       ETH_ALEN);
 			mac_addr = 0;
@@ -5120,6 +5121,7 @@ static void s2io_set_multicast(struct net_device *dev)
 					  dev->name);
 				return;
 			}
+			i++;
 		}
 	}
 }

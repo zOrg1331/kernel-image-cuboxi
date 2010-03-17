@@ -27,39 +27,6 @@
 #include <asm/cacheflush.h>
 #include <asm/unistd.h>
 
-/* common code for old and new mmaps */
-static inline long do_mmap2(
-	unsigned long addr, unsigned long len,
-	unsigned long prot, unsigned long flags,
-	unsigned long fd, unsigned long pgoff)
-{
-	int error = -EBADF;
-	struct file * file = NULL;
-
-	flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
-	if (!(flags & MAP_ANONYMOUS)) {
-		file = fget(fd);
-		if (!file)
-			goto out;
-	}
-
-	down_write(&current->mm->mmap_sem);
-	error = do_mmap_pgoff(file, addr, len, prot, flags, pgoff);
-	up_write(&current->mm->mmap_sem);
-
-	if (file)
-		fput(file);
-out:
-	return error;
-}
-
-asmlinkage long sys_mmap2(unsigned long addr, unsigned long len,
-	unsigned long prot, unsigned long flags,
-	unsigned long fd, unsigned long pgoff)
-{
-	return do_mmap2(addr, len, prot, flags, fd, pgoff);
-}
-
 /*
  * Perform the select(nd, in, out, ex, tv) and mmap() system
  * calls. Linux/m68k cloned Linux/i386, which didn't use to be able to
@@ -88,9 +55,8 @@ asmlinkage int old_mmap(struct mmap_arg_struct *arg)
 	if (a.offset & ~PAGE_MASK)
 		goto out;
 
-	a.flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
-
-	error = do_mmap2(a.addr, a.len, a.prot, a.flags, a.fd, a.offset >> PAGE_SHIFT);
+	error = sys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd,
+				a.offset >> PAGE_SHIFT);
 out:
 	return error;
 }
@@ -223,4 +189,40 @@ int kernel_execve(const char *filename, char *const argv[], char *const envp[])
 	asm volatile ("trap  #0" : "+d" (__res)
 			: "d" (__a), "d" (__b), "d" (__c));
 	return __res;
+}
+
+asmlinkage unsigned long sys_get_thread_area(void)
+{
+	return current_thread_info()->tp_value;
+}
+
+asmlinkage int sys_set_thread_area(unsigned long tp)
+{
+	current_thread_info()->tp_value = tp;
+	return 0;
+}
+
+/* This syscall gets its arguments in A0 (mem), D2 (oldval) and
+   D1 (newval).  */
+asmlinkage int
+sys_atomic_cmpxchg_32(unsigned long newval, int oldval, int d3, int d4, int d5,
+		      unsigned long __user * mem)
+{
+	struct mm_struct *mm = current->mm;
+	unsigned long mem_value;
+
+	down_read(&mm->mmap_sem);
+
+	mem_value = *mem;
+	if (mem_value == oldval)
+		*mem = newval;
+
+	up_read(&mm->mmap_sem);
+	return mem_value;
+}
+
+asmlinkage int sys_atomic_barrier(void)
+{
+	/* no code needed for uniprocs */
+	return 0;
 }

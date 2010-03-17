@@ -10,6 +10,7 @@
  */
 #include <linux/debug_locks.h>
 #include <linux/interrupt.h>
+#include <linux/kmsg_dump.h>
 #include <linux/kallsyms.h>
 #include <linux/notifier.h>
 #include <linux/module.h>
@@ -35,14 +36,35 @@ ATOMIC_NOTIFIER_HEAD(panic_notifier_list);
 
 EXPORT_SYMBOL(panic_notifier_list);
 
-static long no_blink(long time)
-{
-	return 0;
-}
-
 /* Returns how long it waited in ms */
 long (*panic_blink)(long time);
 EXPORT_SYMBOL(panic_blink);
+
+static void panic_blink_one_second(void)
+{
+	static long i = 0, end;
+
+	if (panic_blink) {
+		end = i + MSEC_PER_SEC;
+
+		while (i < end) {
+			i += panic_blink(i);
+			mdelay(1);
+			i++;
+		}
+	} else {
+		/*
+		 * When running under a hypervisor a small mdelay may get
+		 * rounded up to the hypervisor timeslice. For example, with
+		 * a 1ms in 10ms hypervisor timeslice we might inflate a
+		 * mdelay(1) loop by 10x.
+		 *
+		 * If we have nothing to blink, spin on 1 second calls to
+		 * mdelay to avoid this.
+		 */
+		mdelay(MSEC_PER_SEC);
+	}
+}
 
 /**
  *	panic - halt the system
@@ -81,6 +103,8 @@ NORET_TYPE void panic(const char * fmt, ...)
 	 */
 	crash_kexec(NULL);
 
+	kmsg_dump(KMSG_DUMP_PANIC);
+
 	/*
 	 * Note smp_send_stop is the usual smp shutdown function, which
 	 * unfortunately means it may not be hardened to work in a panic
@@ -90,8 +114,7 @@ NORET_TYPE void panic(const char * fmt, ...)
 
 	atomic_notifier_call_chain(&panic_notifier_list, 0, buf);
 
-	if (!panic_blink)
-		panic_blink = no_blink;
+	bust_spinlocks(0);
 
 	if (panic_timeout > 0) {
 		/*
@@ -100,11 +123,9 @@ NORET_TYPE void panic(const char * fmt, ...)
 		 */
 		printk(KERN_EMERG "Rebooting in %d seconds..", panic_timeout);
 
-		for (i = 0; i < panic_timeout*1000; ) {
+		for (i = 0; i < panic_timeout; i++) {
 			touch_nmi_watchdog();
-			i += panic_blink(i);
-			mdelay(1);
-			i++;
+			panic_blink_one_second();
 		}
 		/*
 		 * This will not be a clean reboot, with everything
@@ -130,13 +151,10 @@ NORET_TYPE void panic(const char * fmt, ...)
 	}
 #endif
 	local_irq_enable();
-	for (i = 0; ; ) {
+	while (1) {
 		touch_softlockup_watchdog();
-		i += panic_blink(i);
-		mdelay(1);
-		i++;
+		panic_blink_one_second();
 	}
-	bust_spinlocks(0);
 }
 
 EXPORT_SYMBOL(panic);
@@ -338,6 +356,7 @@ void oops_exit(void)
 {
 	do_oops_enter_exit();
 	print_oops_end_marker();
+	kmsg_dump(KMSG_DUMP_OOPS);
 }
 
 #ifdef WANT_WARN_ON_SLOWPATH

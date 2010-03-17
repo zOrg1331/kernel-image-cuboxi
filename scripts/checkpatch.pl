@@ -1,8 +1,8 @@
 #!/usr/bin/perl -w
-# (c) 2001, Dave Jones. <davej@redhat.com> (the file handling bit)
+# (c) 2001, Dave Jones. (the file handling bit)
 # (c) 2005, Joel Schopp <jschopp@austin.ibm.com> (the ugly bit)
 # (c) 2007,2008, Andy Whitcroft <apw@uk.ibm.com> (new conditions, test suite)
-# (c) 2008, Andy Whitcroft <apw@canonical.com>
+# (c) 2008,2009, Andy Whitcroft <apw@canonical.com>
 # Licensed under the terms of the GNU GPL License version 2
 
 use strict;
@@ -10,7 +10,7 @@ use strict;
 my $P = $0;
 $P =~ s@.*/@@g;
 
-my $V = '0.29';
+my $V = '0.30';
 
 use Getopt::Long qw(:config no_auto_abbrev);
 
@@ -130,7 +130,10 @@ if ($tree) {
 
 my $emitted_corrupt = 0;
 
-our $Ident       = qr{[A-Za-z_][A-Za-z\d_]*};
+our $Ident	= qr{
+			[A-Za-z_][A-Za-z\d_]*
+			(?:\s*\#\#\s*[A-Za-z_][A-Za-z\d_]*)*
+		}x;
 our $Storage	= qr{extern|static|asmlinkage};
 our $Sparse	= qr{
 			__user|
@@ -142,11 +145,14 @@ our $Sparse	= qr{
 			__kprobes|
 			__ref
 		}x;
+
+# Notes to $Attribute:
+# We need \b after 'init' otherwise 'initconst' will cause a false positive in a check
 our $Attribute	= qr{
 			const|
 			__read_mostly|
 			__kprobes|
-			__(?:mem|cpu|dev|)(?:initdata|init)|
+			__(?:mem|cpu|dev|)(?:initdata|initconst|init\b)|
 			____cacheline_aligned|
 			____cacheline_aligned_in_smp|
 			____cacheline_internodealigned_in_smp|
@@ -184,6 +190,14 @@ our $UTF8	= qr {
 our $typeTypedefs = qr{(?x:
 	(?:__)?(?:u|s|be|le)(?:8|16|32|64)|
 	atomic_t
+)};
+
+our $logFunctions = qr{(?x:
+	printk|
+	pr_(debug|dbg|vdbg|devel|info|warning|err|notice|alert|crit|emerg|cont)|
+	dev_(printk|dbg|vdbg|info|warn|err|notice|alert|crit|emerg|WARN)|
+	WARN|
+	panic
 )};
 
 our @typeList = (
@@ -997,23 +1011,25 @@ sub annotate_values {
 
 sub possible {
 	my ($possible, $line) = @_;
-
-	print "CHECK<$possible> ($line)\n" if ($dbg_possible > 2);
-	if ($possible !~ /(?:
+	my $notPermitted = qr{(?:
 		^(?:
 			$Modifier|
 			$Storage|
 			$Type|
-			DEFINE_\S+|
+			DEFINE_\S+
+		)$|
+		^(?:
 			goto|
 			return|
 			case|
 			else|
 			asm|__asm__|
 			do
-		)$|
+		)(?:\s|$)|
 		^(?:typedef|struct|enum)\b
-	    )/x) {
+	    )}x;
+	warn "CHECK<$possible> ($line)\n" if ($dbg_possible > 2);
+	if ($possible !~ $notPermitted) {
 		# Check for modifiers.
 		$possible =~ s/\s*$Storage\s*//g;
 		$possible =~ s/\s*$Sparse\s*//g;
@@ -1022,8 +1038,10 @@ sub possible {
 		} elsif ($possible =~ /\s/) {
 			$possible =~ s/\s*$Type\s*//g;
 			for my $modifier (split(' ', $possible)) {
-				warn "MODIFIER: $modifier ($possible) ($line)\n" if ($dbg_possible);
-				push(@modifierList, $modifier);
+				if ($modifier !~ $notPermitted) {
+					warn "MODIFIER: $modifier ($possible) ($line)\n" if ($dbg_possible);
+					push(@modifierList, $modifier);
+				}
 			}
 
 		} else {
@@ -1138,6 +1156,7 @@ sub process {
 	# suppression flags
 	my %suppress_ifbraces;
 	my %suppress_whiletrailers;
+	my %suppress_export;
 
 	# Pre-scan the patch sanitizing the lines.
 	# Pre-scan the patch looking for any __setup documentation.
@@ -1230,7 +1249,6 @@ sub process {
 		$linenr++;
 
 		my $rawline = $rawlines[$linenr - 1];
-		my $hunk_line = ($realcnt != 0);
 
 #extract the line range in the file after the patch is applied
 		if ($line=~/^\@\@ -\d+(?:,\d+)? \+(\d+)(,(\d+))? \@\@/) {
@@ -1247,6 +1265,7 @@ sub process {
 
 			%suppress_ifbraces = ();
 			%suppress_whiletrailers = ();
+			%suppress_export = ();
 			next;
 
 # track the line number as we move through the hunk, note that
@@ -1269,6 +1288,8 @@ sub process {
 		} elsif ($realcnt == 1) {
 			$realcnt--;
 		}
+
+		my $hunk_line = ($realcnt != 0);
 
 #make up the handle for any error we report on this line
 		$prefix = "$filename:$realline: " if ($emacs && $file);
@@ -1367,10 +1388,15 @@ sub process {
 #80 column limit
 		if ($line =~ /^\+/ && $prevrawline !~ /\/\*\*/ &&
 		    $rawline !~ /^.\s*\*\s*\@$Ident\s/ &&
-		    $line !~ /^\+\s*printk\s*\(\s*(?:KERN_\S+\s*)?"[X\t]*"\s*(?:,|\)\s*;)\s*$/ &&
+		    $line !~ /^\+\s*$logFunctions\s*\(\s*(?:KERN_\S+\s*)?"[X\t]*"\s*(?:,|\)\s*;)\s*$/ &&
 		    $length > 80)
 		{
 			WARN("line over 80 characters\n" . $herecurr);
+		}
+
+# check for spaces before a quoted newline
+		if ($rawline =~ /^.*\".*\s\\n/) {
+			WARN("unnecessary whitespace before a quoted newline\n" . $herecurr);
 		}
 
 # check for adding lines without a newline.
@@ -1401,6 +1427,12 @@ sub process {
 			ERROR("code indent should use tabs where possible\n" . $herevet);
 		}
 
+# check for space before tabs.
+		if ($rawline =~ /^\+/ && $rawline =~ / \t/) {
+			my $herevet = "$here\n" . cat_vet($rawline) . "\n";
+			WARN("please, no space before tabs\n" . $herevet);
+		}
+
 # check we are in a valid C source file if not then ignore this hunk
 		next if ($realfile !~ /\.(h|c)$/);
 
@@ -1420,12 +1452,21 @@ sub process {
 		}
 
 # Check for potential 'bare' types
-		my ($stat, $cond, $line_nr_next, $remain_next, $off_next);
+		my ($stat, $cond, $line_nr_next, $remain_next, $off_next,
+		    $realline_next);
 		if ($realcnt && $line =~ /.\s*\S/) {
 			($stat, $cond, $line_nr_next, $remain_next, $off_next) =
 				ctx_statement_block($linenr, $realcnt, 0);
 			$stat =~ s/\n./\n /g;
 			$cond =~ s/\n./\n /g;
+
+			# Find the real next line.
+			$realline_next = $line_nr_next;
+			if (defined $realline_next &&
+			    (!defined $lines[$realline_next - 1] ||
+			     substr($lines[$realline_next - 1], $off_next) =~ /^\s*$/)) {
+				$realline_next++;
+			}
 
 			my $s = $stat;
 			$s =~ s/{.*$//s;
@@ -1661,8 +1702,8 @@ sub process {
 		}
 
 # check for initialisation to aggregates open brace on the next line
-		if ($prevline =~ /$Declare\s*$Ident\s*=\s*$/ &&
-		    $line =~ /^.\s*{/) {
+		if ($line =~ /^.\s*{/ &&
+		    $prevline =~ /(?:^|[^=])=\s*$/) {
 			ERROR("that open brace { should be on the previous line\n" . $hereprev);
 		}
 
@@ -1687,20 +1728,39 @@ sub process {
 		$line =~ s@//.*@@;
 		$opline =~ s@//.*@@;
 
-#EXPORT_SYMBOL should immediately follow its function closing }.
-		if (($line =~ /EXPORT_SYMBOL.*\((.*)\)/) ||
-		    ($line =~ /EXPORT_UNUSED_SYMBOL.*\((.*)\)/)) {
+# EXPORT_SYMBOL should immediately follow the thing it is exporting, consider
+# the whole statement.
+#print "APW <$lines[$realline_next - 1]>\n";
+		if (defined $realline_next &&
+		    exists $lines[$realline_next - 1] &&
+		    !defined $suppress_export{$realline_next} &&
+		    ($lines[$realline_next - 1] =~ /EXPORT_SYMBOL.*\((.*)\)/ ||
+		     $lines[$realline_next - 1] =~ /EXPORT_UNUSED_SYMBOL.*\((.*)\)/)) {
 			my $name = $1;
-			if ($prevline !~ /(?:
-				^.}|
+			if ($stat !~ /(?:
+				\n.}\s*$|
 				^.DEFINE_$Ident\(\Q$name\E\)|
 				^.DECLARE_$Ident\(\Q$name\E\)|
 				^.LIST_HEAD\(\Q$name\E\)|
-				^.$Type\s*\(\s*\*\s*\Q$name\E\s*\)\s*\(|
-				\b\Q$name\E(?:\s+$Attribute)?\s*(?:;|=|\[)
+				^.(?:$Storage\s+)?$Type\s*\(\s*\*\s*\Q$name\E\s*\)\s*\(|
+				\b\Q$name\E(?:\s+$Attribute)*\s*(?:;|=|\[|\()
 			    )/x) {
-				WARN("EXPORT_SYMBOL(foo); should immediately follow its function/variable\n" . $herecurr);
+#print "FOO A<$lines[$realline_next - 1]> stat<$stat> name<$name>\n";
+				$suppress_export{$realline_next} = 2;
+			} else {
+				$suppress_export{$realline_next} = 1;
 			}
+		}
+		if (!defined $suppress_export{$linenr} &&
+		    $prevline =~ /^.\s*$/ &&
+		    ($line =~ /EXPORT_SYMBOL.*\((.*)\)/ ||
+		     $line =~ /EXPORT_UNUSED_SYMBOL.*\((.*)\)/)) {
+#print "FOO B <$lines[$linenr - 1]>\n";
+			$suppress_export{$linenr} = 2;
+		}
+		if (defined $suppress_export{$linenr} &&
+		    $suppress_export{$linenr} == 2) {
+			WARN("EXPORT_SYMBOL(foo); should immediately follow its function/variable\n" . $herecurr);
 		}
 
 # check for external initialisers.
@@ -2144,8 +2204,10 @@ sub process {
 				# Find out how long the conditional actually is.
 				my @newlines = ($c =~ /\n/gs);
 				my $cond_lines = 1 + $#newlines;
+				my $stat_real = '';
 
-				my $stat_real = raw_line($linenr, $cond_lines);
+				$stat_real = raw_line($linenr, $cond_lines)
+							. "\n" if ($cond_lines);
 				if (defined($stat_real) && $cond_lines > 1) {
 					$stat_real = "[...]\n$stat_real";
 				}
@@ -2310,6 +2372,8 @@ sub process {
 				DECLARE_PER_CPU|
 				DEFINE_PER_CPU|
 				__typeof__\(|
+				union|
+				struct|
 				\.$Ident\s*=\s*|
 				^\"|\"$
 			}x;
@@ -2534,6 +2598,11 @@ sub process {
 			WARN("plain inline is preferred over $1\n" . $herecurr);
 		}
 
+# check for sizeof(&)
+		if ($line =~ /\bsizeof\s*\(\s*\&/) {
+			WARN("sizeof(& should be avoided\n" . $herecurr);
+		}
+
 # check for new externs in .c files.
 		if ($realfile =~ /\.c$/ && defined $stat &&
 		    $stat =~ /^.\s*(?:extern\s+)?$Type\s+($Ident)(\s*)\(/s)
@@ -2596,9 +2665,46 @@ sub process {
 		if ($line =~ /^.\s*__initcall\s*\(/) {
 			WARN("please use device_initcall() instead of __initcall()\n" . $herecurr);
 		}
-# check for struct file_operations, ensure they are const.
+# check for various ops structs, ensure they are const.
+		my $struct_ops = qr{acpi_dock_ops|
+				address_space_operations|
+				backlight_ops|
+				block_device_operations|
+				dentry_operations|
+				dev_pm_ops|
+				dma_map_ops|
+				extent_io_ops|
+				file_lock_operations|
+				file_operations|
+				hv_ops|
+				ide_dma_ops|
+				intel_dvo_dev_ops|
+				item_operations|
+				iwl_ops|
+				kgdb_arch|
+				kgdb_io|
+				kset_uevent_ops|
+				lock_manager_operations|
+				microcode_ops|
+				mtrr_ops|
+				neigh_ops|
+				nlmsvc_binding|
+				pci_raw_ops|
+				pipe_buf_operations|
+				platform_hibernation_ops|
+				platform_suspend_ops|
+				proto_ops|
+				rpc_pipe_ops|
+				seq_operations|
+				snd_ac97_build_ops|
+				soc_pcmcia_socket_ops|
+				stacktrace_ops|
+				sysfs_ops|
+				tty_operations|
+				usb_mon_operations|
+				wd_ops}x;
 		if ($line !~ /\bconst\b/ &&
-		    $line =~ /\bstruct\s+(file_operations|seq_operations)\b/) {
+		    $line =~ /\bstruct\s+($struct_ops)\b/) {
 			WARN("struct $1 should normally be const\n" .
 				$herecurr);
 		}

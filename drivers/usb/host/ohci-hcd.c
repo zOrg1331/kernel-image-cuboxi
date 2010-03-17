@@ -87,12 +87,17 @@ static int ohci_restart (struct ohci_hcd *ohci);
 #ifdef CONFIG_PCI
 static void quirk_amd_pll(int state);
 static void amd_iso_dev_put(void);
+static void sb800_prefetch(struct ohci_hcd *ohci, int on);
 #else
 static inline void quirk_amd_pll(int state)
 {
 	return;
 }
 static inline void amd_iso_dev_put(void)
+{
+	return;
+}
+static inline void sb800_prefetch(struct ohci_hcd *ohci, int on)
 {
 	return;
 }
@@ -1044,6 +1049,11 @@ MODULE_LICENSE ("GPL");
 #ifdef CONFIG_ARCH_PNX4008
 #include "ohci-pnx4008.c"
 #define PLATFORM_DRIVER		usb_hcd_pnx4008_driver
+#endif
+
+#ifdef CONFIG_ARCH_DAVINCI_DA8XX
+#include "ohci-da8xx.c"
+#define PLATFORM_DRIVER		ohci_hcd_da8xx_driver
 #endif
 
 #if defined(CONFIG_CPU_SUBTYPE_SH7720) || \

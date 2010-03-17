@@ -473,7 +473,8 @@ static void vp_del_vqs(struct virtio_device *vdev)
 
 	list_for_each_entry_safe(vq, n, &vdev->vqs, list) {
 		info = vq->priv;
-		if (vp_dev->per_vq_vectors)
+		if (vp_dev->per_vq_vectors &&
+			info->msix_vector != VIRTIO_MSI_NO_VECTOR)
 			free_irq(vp_dev->msix_entries[info->msix_vector].vector,
 				 vq);
 		vp_del_vq(vq);
@@ -530,19 +531,22 @@ static int vp_try_to_find_vqs(struct virtio_device *vdev, unsigned nvqs,
 			err = PTR_ERR(vqs[i]);
 			goto error_find;
 		}
+
+		if (!vp_dev->per_vq_vectors || msix_vec == VIRTIO_MSI_NO_VECTOR)
+			continue;
+
 		/* allocate per-vq irq if available and necessary */
-		if (vp_dev->per_vq_vectors) {
-			snprintf(vp_dev->msix_names[msix_vec],
-				 sizeof *vp_dev->msix_names,
-				 "%s-%s",
-				 dev_name(&vp_dev->vdev.dev), names[i]);
-			err = request_irq(msix_vec, vring_interrupt, 0,
-					  vp_dev->msix_names[msix_vec],
-					  vqs[i]);
-			if (err) {
-				vp_del_vq(vqs[i]);
-				goto error_find;
-			}
+		snprintf(vp_dev->msix_names[msix_vec],
+			 sizeof *vp_dev->msix_names,
+			 "%s-%s",
+			 dev_name(&vp_dev->vdev.dev), names[i]);
+		err = request_irq(vp_dev->msix_entries[msix_vec].vector,
+				  vring_interrupt, 0,
+				  vp_dev->msix_names[msix_vec],
+				  vqs[i]);
+		if (err) {
+			vp_del_vq(vqs[i]);
+			goto error_find;
 		}
 	}
 	return 0;
@@ -645,6 +649,7 @@ static int __devinit virtio_pci_probe(struct pci_dev *pci_dev,
 		goto out_req_regions;
 
 	pci_set_drvdata(pci_dev, vp_dev);
+	pci_set_master(pci_dev);
 
 	/* we use the subsystem vendor/device id as the virtio vendor/device
 	 * id.  this allows us to use the same PCI vendor/device id for all
@@ -699,7 +704,7 @@ static struct pci_driver virtio_pci_driver = {
 	.name		= "virtio-pci",
 	.id_table	= virtio_pci_id_table,
 	.probe		= virtio_pci_probe,
-	.remove		= virtio_pci_remove,
+	.remove		= __devexit_p(virtio_pci_remove),
 #ifdef CONFIG_PM
 	.suspend	= virtio_pci_suspend,
 	.resume		= virtio_pci_resume,

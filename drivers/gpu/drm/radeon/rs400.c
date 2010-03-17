@@ -27,27 +27,12 @@
  */
 #include <linux/seq_file.h>
 #include <drm/drmP.h>
-#include "radeon_reg.h"
 #include "radeon.h"
+#include "rs400d.h"
 
-/* rs400,rs480 depends on : */
-void r100_hdp_reset(struct radeon_device *rdev);
-void r100_mc_disable_clients(struct radeon_device *rdev);
-int r300_mc_wait_for_idle(struct radeon_device *rdev);
-void r420_pipes_init(struct radeon_device *rdev);
+/* This files gather functions specifics to : rs400,rs480 */
+static int rs400_debugfs_pcie_gart_info_init(struct radeon_device *rdev);
 
-/* This files gather functions specifics to :
- * rs400,rs480
- *
- * Some of these functions might be used by newer ASICs.
- */
-void rs400_gpu_init(struct radeon_device *rdev);
-int rs400_debugfs_pcie_gart_info_init(struct radeon_device *rdev);
-
-
-/*
- * GART functions.
- */
 void rs400_gart_adjust_size(struct radeon_device *rdev)
 {
 	/* Check gart size */
@@ -128,6 +113,7 @@ int rs400_gart_enable(struct radeon_device *rdev)
 	uint32_t size_reg;
 	uint32_t tmp;
 
+	radeon_gart_restore(rdev);
 	tmp = RREG32_MC(RS690_AIC_CTRL_SCRATCH);
 	tmp |= RS690_DIS_OUT_OF_PCI_GART_ACCESS;
 	WREG32_MC(RS690_AIC_CTRL_SCRATCH, tmp);
@@ -165,9 +151,8 @@ int rs400_gart_enable(struct radeon_device *rdev)
 		WREG32(RADEON_AGP_BASE, 0xFFFFFFFF);
 		WREG32(RS480_AGP_BASE_2, 0);
 	}
-	tmp = rdev->mc.gtt_location + rdev->mc.gtt_size - 1;
-	tmp = REG_SET(RS690_MC_AGP_TOP, tmp >> 16);
-	tmp |= REG_SET(RS690_MC_AGP_START, rdev->mc.gtt_location >> 16);
+	tmp = REG_SET(RS690_MC_AGP_TOP, rdev->mc.gtt_end >> 16);
+	tmp |= REG_SET(RS690_MC_AGP_START, rdev->mc.gtt_start >> 16);
 	if ((rdev->family == CHIP_RS690) || (rdev->family == CHIP_RS740)) {
 		WREG32_MC(RS690_MCCFG_AGP_LOCATION, tmp);
 		tmp = RREG32(RADEON_BUS_CNTL) & ~RS600_BUS_MASTER_DIS;
@@ -238,59 +223,20 @@ int rs400_gart_set_page(struct radeon_device *rdev, int i, uint64_t addr)
 	return 0;
 }
 
-
-/*
- * MC functions.
- */
-int rs400_mc_init(struct radeon_device *rdev)
+int rs400_mc_wait_for_idle(struct radeon_device *rdev)
 {
+	unsigned i;
 	uint32_t tmp;
-	int r;
 
-	if (r100_debugfs_rbbm_init(rdev)) {
-		DRM_ERROR("Failed to register debugfs file for RBBM !\n");
+	for (i = 0; i < rdev->usec_timeout; i++) {
+		/* read MC_STATUS */
+		tmp = RREG32(0x0150);
+		if (tmp & (1 << 2)) {
+			return 0;
+		}
+		DRM_UDELAY(1);
 	}
-
-	rs400_gpu_init(rdev);
-	rs400_gart_disable(rdev);
-	rdev->mc.gtt_location = rdev->mc.mc_vram_size;
-	rdev->mc.gtt_location += (rdev->mc.gtt_size - 1);
-	rdev->mc.gtt_location &= ~(rdev->mc.gtt_size - 1);
-	r = radeon_mc_setup(rdev);
-	if (r) {
-		return r;
-	}
-
-	r100_mc_disable_clients(rdev);
-	if (r300_mc_wait_for_idle(rdev)) {
-		printk(KERN_WARNING "Failed to wait MC idle while "
-		       "programming pipes. Bad things might happen.\n");
-	}
-
-	tmp = rdev->mc.vram_location + rdev->mc.mc_vram_size - 1;
-	tmp = REG_SET(RADEON_MC_FB_TOP, tmp >> 16);
-	tmp |= REG_SET(RADEON_MC_FB_START, rdev->mc.vram_location >> 16);
-	WREG32(RADEON_MC_FB_LOCATION, tmp);
-	tmp = RREG32(RADEON_HOST_PATH_CNTL) | RADEON_HP_LIN_RD_CACHE_DIS;
-	WREG32(RADEON_HOST_PATH_CNTL, tmp | RADEON_HDP_SOFT_RESET | RADEON_HDP_READ_BUFFER_INVALIDATE);
-	(void)RREG32(RADEON_HOST_PATH_CNTL);
-	WREG32(RADEON_HOST_PATH_CNTL, tmp);
-	(void)RREG32(RADEON_HOST_PATH_CNTL);
-
-	return 0;
-}
-
-void rs400_mc_fini(struct radeon_device *rdev)
-{
-}
-
-
-/*
- * Global GPU functions
- */
-void rs400_errata(struct radeon_device *rdev)
-{
-	rdev->pll_errata = 0;
+	return -1;
 }
 
 void rs400_gpu_init(struct radeon_device *rdev)
@@ -299,30 +245,27 @@ void rs400_gpu_init(struct radeon_device *rdev)
 	r100_hdp_reset(rdev);
 	/* FIXME: is this correct ? */
 	r420_pipes_init(rdev);
-	if (r300_mc_wait_for_idle(rdev)) {
-		printk(KERN_WARNING "Failed to wait MC idle while "
-		       "programming pipes. Bad things might happen.\n");
+	if (rs400_mc_wait_for_idle(rdev)) {
+		printk(KERN_WARNING "rs400: Failed to wait MC idle while "
+		       "programming pipes. Bad things might happen. %08x\n", RREG32(0x150));
 	}
 }
 
-
-/*
- * VRAM info.
- */
-void rs400_vram_info(struct radeon_device *rdev)
+void rs400_mc_init(struct radeon_device *rdev)
 {
+	u64 base;
+
 	rs400_gart_adjust_size(rdev);
+	rdev->mc.igp_sideport_enabled = radeon_combios_sideport_present(rdev);
 	/* DDR for all card after R300 & IGP */
 	rdev->mc.vram_is_ddr = true;
 	rdev->mc.vram_width = 128;
-
 	r100_vram_init_sizes(rdev);
+	base = (RREG32(RADEON_NB_TOM) & 0xffff) << 16;
+	radeon_vram_location(rdev, &rdev->mc, base);
+	radeon_gtt_location(rdev, &rdev->mc);
 }
 
-
-/*
- * Indirect registers accessor
- */
 uint32_t rs400_mc_rreg(struct radeon_device *rdev, uint32_t reg)
 {
 	uint32_t r;
@@ -340,10 +283,6 @@ void rs400_mc_wreg(struct radeon_device *rdev, uint32_t reg, uint32_t v)
 	WREG32(RS480_NB_MC_INDEX, 0xff);
 }
 
-
-/*
- * Debugfs info
- */
 #if defined(CONFIG_DEBUG_FS)
 static int rs400_debugfs_gart_info(struct seq_file *m, void *data)
 {
@@ -419,11 +358,181 @@ static struct drm_info_list rs400_gart_info_list[] = {
 };
 #endif
 
-int rs400_debugfs_pcie_gart_info_init(struct radeon_device *rdev)
+static int rs400_debugfs_pcie_gart_info_init(struct radeon_device *rdev)
 {
 #if defined(CONFIG_DEBUG_FS)
 	return radeon_debugfs_add_files(rdev, rs400_gart_info_list, 1);
 #else
 	return 0;
 #endif
+}
+
+void rs400_mc_program(struct radeon_device *rdev)
+{
+	struct r100_mc_save save;
+
+	/* Stops all mc clients */
+	r100_mc_stop(rdev, &save);
+
+	/* Wait for mc idle */
+	if (rs400_mc_wait_for_idle(rdev))
+		dev_warn(rdev->dev, "rs400: Wait MC idle timeout before updating MC.\n");
+	WREG32(R_000148_MC_FB_LOCATION,
+		S_000148_MC_FB_START(rdev->mc.vram_start >> 16) |
+		S_000148_MC_FB_TOP(rdev->mc.vram_end >> 16));
+
+	r100_mc_resume(rdev, &save);
+}
+
+static int rs400_startup(struct radeon_device *rdev)
+{
+	int r;
+
+	rs400_mc_program(rdev);
+	/* Resume clock */
+	r300_clock_startup(rdev);
+	/* Initialize GPU configuration (# pipes, ...) */
+	rs400_gpu_init(rdev);
+	r100_enable_bm(rdev);
+	/* Initialize GART (initialize after TTM so we can allocate
+	 * memory through TTM but finalize after TTM) */
+	r = rs400_gart_enable(rdev);
+	if (r)
+		return r;
+	/* Enable IRQ */
+	r100_irq_set(rdev);
+	rdev->config.r300.hdp_cntl = RREG32(RADEON_HOST_PATH_CNTL);
+	/* 1M ring buffer */
+	r = r100_cp_init(rdev, 1024 * 1024);
+	if (r) {
+		dev_err(rdev->dev, "failled initializing CP (%d).\n", r);
+		return r;
+	}
+	r = r100_wb_init(rdev);
+	if (r)
+		dev_err(rdev->dev, "failled initializing WB (%d).\n", r);
+	r = r100_ib_init(rdev);
+	if (r) {
+		dev_err(rdev->dev, "failled initializing IB (%d).\n", r);
+		return r;
+	}
+	return 0;
+}
+
+int rs400_resume(struct radeon_device *rdev)
+{
+	/* Make sur GART are not working */
+	rs400_gart_disable(rdev);
+	/* Resume clock before doing reset */
+	r300_clock_startup(rdev);
+	/* setup MC before calling post tables */
+	rs400_mc_program(rdev);
+	/* Reset gpu before posting otherwise ATOM will enter infinite loop */
+	if (radeon_gpu_reset(rdev)) {
+		dev_warn(rdev->dev, "GPU reset failed ! (0xE40=0x%08X, 0x7C0=0x%08X)\n",
+			RREG32(R_000E40_RBBM_STATUS),
+			RREG32(R_0007C0_CP_STAT));
+	}
+	/* post */
+	radeon_combios_asic_init(rdev->ddev);
+	/* Resume clock after posting */
+	r300_clock_startup(rdev);
+	/* Initialize surface registers */
+	radeon_surface_init(rdev);
+	return rs400_startup(rdev);
+}
+
+int rs400_suspend(struct radeon_device *rdev)
+{
+	r100_cp_disable(rdev);
+	r100_wb_disable(rdev);
+	r100_irq_disable(rdev);
+	rs400_gart_disable(rdev);
+	return 0;
+}
+
+void rs400_fini(struct radeon_device *rdev)
+{
+	r100_cp_fini(rdev);
+	r100_wb_fini(rdev);
+	r100_ib_fini(rdev);
+	radeon_gem_fini(rdev);
+	rs400_gart_fini(rdev);
+	radeon_irq_kms_fini(rdev);
+	radeon_fence_driver_fini(rdev);
+	radeon_bo_fini(rdev);
+	radeon_atombios_fini(rdev);
+	kfree(rdev->bios);
+	rdev->bios = NULL;
+}
+
+int rs400_init(struct radeon_device *rdev)
+{
+	int r;
+
+	/* Disable VGA */
+	r100_vga_render_disable(rdev);
+	/* Initialize scratch registers */
+	radeon_scratch_init(rdev);
+	/* Initialize surface registers */
+	radeon_surface_init(rdev);
+	/* TODO: disable VGA need to use VGA request */
+	/* BIOS*/
+	if (!radeon_get_bios(rdev)) {
+		if (ASIC_IS_AVIVO(rdev))
+			return -EINVAL;
+	}
+	if (rdev->is_atom_bios) {
+		dev_err(rdev->dev, "Expecting combios for RS400/RS480 GPU\n");
+		return -EINVAL;
+	} else {
+		r = radeon_combios_init(rdev);
+		if (r)
+			return r;
+	}
+	/* Reset gpu before posting otherwise ATOM will enter infinite loop */
+	if (radeon_gpu_reset(rdev)) {
+		dev_warn(rdev->dev,
+			"GPU reset failed ! (0xE40=0x%08X, 0x7C0=0x%08X)\n",
+			RREG32(R_000E40_RBBM_STATUS),
+			RREG32(R_0007C0_CP_STAT));
+	}
+	/* check if cards are posted or not */
+	if (radeon_boot_test_post_card(rdev) == false)
+		return -EINVAL;
+
+	/* Initialize clocks */
+	radeon_get_clock_info(rdev->ddev);
+	/* Initialize power management */
+	radeon_pm_init(rdev);
+	/* initialize memory controller */
+	rs400_mc_init(rdev);
+	/* Fence driver */
+	r = radeon_fence_driver_init(rdev);
+	if (r)
+		return r;
+	r = radeon_irq_kms_init(rdev);
+	if (r)
+		return r;
+	/* Memory manager */
+	r = radeon_bo_init(rdev);
+	if (r)
+		return r;
+	r = rs400_gart_init(rdev);
+	if (r)
+		return r;
+	r300_set_reg_safe(rdev);
+	rdev->accel_working = true;
+	r = rs400_startup(rdev);
+	if (r) {
+		/* Somethings want wront with the accel init stop accel */
+		dev_err(rdev->dev, "Disabling GPU acceleration\n");
+		r100_cp_fini(rdev);
+		r100_wb_fini(rdev);
+		r100_ib_fini(rdev);
+		rs400_gart_fini(rdev);
+		radeon_irq_kms_fini(rdev);
+		rdev->accel_working = false;
+	}
+	return 0;
 }

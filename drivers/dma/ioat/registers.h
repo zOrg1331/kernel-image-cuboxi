@@ -27,6 +27,7 @@
 
 #define IOAT_PCI_DEVICE_ID_OFFSET		0x02
 #define IOAT_PCI_DMAUNCERRSTS_OFFSET		0x148
+#define IOAT_PCI_CHANERR_INT_OFFSET		0x180
 #define IOAT_PCI_CHANERRMASK_INT_OFFSET		0x184
 
 /* MMIO Device Registers */
@@ -59,7 +60,7 @@
 #define IOAT_PERPORTOFFSET_OFFSET		0x0A	/* 16-bit */
 
 #define IOAT_INTRDELAY_OFFSET			0x0C	/* 16-bit */
-#define IOAT_INTRDELAY_INT_DELAY_MASK		0x3FFF	/* Interrupt Delay Time */
+#define IOAT_INTRDELAY_MASK			0x3FFF	/* Interrupt Delay Time */
 #define IOAT_INTRDELAY_COALESE_SUPPORT		0x8000	/* Interrupt Coalescing Supported */
 
 #define IOAT_DEVICE_STATUS_OFFSET		0x0E	/* 16-bit */
@@ -92,9 +93,7 @@
 #define IOAT_CHANCTRL_ERR_COMPLETION_EN		0x0004
 #define IOAT_CHANCTRL_INT_REARM			0x0001
 #define IOAT_CHANCTRL_RUN			(IOAT_CHANCTRL_INT_REARM |\
-						 IOAT_CHANCTRL_ERR_COMPLETION_EN |\
-						 IOAT_CHANCTRL_ANY_ERR_ABORT_EN |\
-						 IOAT_CHANCTRL_ERR_INT_EN)
+						 IOAT_CHANCTRL_ANY_ERR_ABORT_EN)
 
 #define IOAT_DMA_COMP_OFFSET			0x02	/* 16-bit DMA channel compatibility */
 #define IOAT_DMA_COMP_V1			0x0001	/* Compatibility with DMA version 1 */

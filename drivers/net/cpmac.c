@@ -36,6 +36,7 @@
 #include <linux/phy_fixed.h>
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
+#include <linux/clk.h>
 #include <asm/gpio.h>
 #include <asm/atomic.h>
 
@@ -294,9 +295,16 @@ static int cpmac_mdio_write(struct mii_bus *bus, int phy_id,
 
 static int cpmac_mdio_reset(struct mii_bus *bus)
 {
+	struct clk *cpmac_clk;
+
+	cpmac_clk = clk_get(&bus->dev, "cpmac");
+	if (IS_ERR(cpmac_clk)) {
+		printk(KERN_ERR "unable to get cpmac clock\n");
+		return -1;
+	}
 	ar7_device_reset(AR7_RESET_BIT_MDIO);
 	cpmac_write(bus->priv, CPMAC_MDIO_CONTROL, MDIOC_ENABLE |
-		    MDIOC_CLKDIV(ar7_cpmac_freq() / 2200000 - 1));
+		    MDIOC_CLKDIV(clk_get_rate(cpmac_clk) / 2200000 - 1));
 	return 0;
 }
 
@@ -320,7 +328,6 @@ static int cpmac_config(struct net_device *dev, struct ifmap *map)
 static void cpmac_set_multicast_list(struct net_device *dev)
 {
 	struct dev_mc_list *iter;
-	int i;
 	u8 tmp;
 	u32 mbp, bit, hash[2] = { 0, };
 	struct cpmac_priv *priv = netdev_priv(dev);
@@ -340,8 +347,7 @@ static void cpmac_set_multicast_list(struct net_device *dev)
 			 * cpmac uses some strange mac address hashing
 			 * (not crc32)
 			 */
-			for (i = 0, iter = dev->mc_list; i < dev->mc_count;
-			     i++, iter = iter->next) {
+			netdev_for_each_mc_addr(iter, dev) {
 				bit = 0;
 				tmp = iter->dmi_addr[0];
 				bit  ^= (tmp >> 2) ^ (tmp << 4);
@@ -380,9 +386,8 @@ static struct sk_buff *cpmac_rx_one(struct cpmac_priv *priv,
 		return NULL;
 	}
 
-	skb = netdev_alloc_skb(priv->dev, CPMAC_SKB_SIZE);
+	skb = netdev_alloc_skb_ip_align(priv->dev, CPMAC_SKB_SIZE);
 	if (likely(skb)) {
-		skb_reserve(skb, 2);
 		skb_put(desc->skb, desc->datalen);
 		desc->skb->protocol = eth_type_trans(desc->skb, priv->dev);
 		desc->skb->ip_summed = CHECKSUM_NONE;
@@ -991,12 +996,11 @@ static int cpmac_open(struct net_device *dev)
 
 	priv->rx_head = &priv->desc_ring[CPMAC_QUEUES];
 	for (i = 0, desc = priv->rx_head; i < priv->ring_size; i++, desc++) {
-		skb = netdev_alloc_skb(dev, CPMAC_SKB_SIZE);
+		skb = netdev_alloc_skb_ip_align(dev, CPMAC_SKB_SIZE);
 		if (unlikely(!skb)) {
 			res = -ENOMEM;
 			goto fail_desc;
 		}
-		skb_reserve(skb, 2);
 		desc->skb = skb;
 		desc->data_mapping = dma_map_single(&dev->dev, skb->data,
 						    CPMAC_SKB_SIZE,
@@ -1165,7 +1169,7 @@ static int __devinit cpmac_probe(struct platform_device *pdev)
 	priv->dev = dev;
 	priv->ring_size = 64;
 	priv->msg_enable = netif_msg_init(debug_level, 0xff);
-	memcpy(dev->dev_addr, pdata->dev_addr, sizeof(dev->dev_addr));
+	memcpy(dev->dev_addr, pdata->dev_addr, sizeof(pdata->dev_addr));
 
 	snprintf(priv->phy_name, MII_BUS_ID_SIZE, PHY_ID_FMT, mdio_bus_id, phy_id);
 

@@ -122,9 +122,7 @@ static char *next_arg(char *args, char **param, char **val)
 		next = args + i;
 
 	/* Chew up trailing spaces. */
-	while (isspace(*next))
-		next++;
-	return next;
+	return skip_spaces(next);
 }
 
 /* Args looks like "foo=bar,bar2 baz=fuz wiz". */
@@ -139,8 +137,7 @@ int parse_args(const char *name,
 	DEBUGP("Parsing ARGS: %s\n", args);
 
 	/* Chew leading spaces */
-	while (isspace(*args))
-		args++;
+	args = skip_spaces(args);
 
 	while (*args) {
 		int ret;
@@ -218,15 +215,11 @@ int param_set_charp(const char *val, struct kernel_param *kp)
 		return -ENOSPC;
 	}
 
-	if (kp->flags & KPARAM_KMALLOCED)
-		kfree(*(char **)kp->arg);
-
 	/* This is a hack.  We can't need to strdup in early boot, and we
 	 * don't need to; this mangled commandline is preserved. */
 	if (slab_is_available()) {
-		kp->flags |= KPARAM_KMALLOCED;
 		*(char **)kp->arg = kstrdup(val, GFP_KERNEL);
-		if (!kp->arg)
+		if (!*(char **)kp->arg)
 			return -ENOMEM;
 	} else
 		*(const char **)kp->arg = val;
@@ -304,6 +297,7 @@ static int param_array(const char *name,
 		       unsigned int min, unsigned int max,
 		       void *elem, int elemsize,
 		       int (*set)(const char *, struct kernel_param *kp),
+		       u16 flags,
 		       unsigned int *num)
 {
 	int ret;
@@ -313,6 +307,7 @@ static int param_array(const char *name,
 	/* Get the name right for errors. */
 	kp.name = name;
 	kp.arg = elem;
+	kp.flags = flags;
 
 	/* No equals sign? */
 	if (!val) {
@@ -358,7 +353,8 @@ int param_array_set(const char *val, struct kernel_param *kp)
 	unsigned int temp_num;
 
 	return param_array(kp->name, val, 1, arr->max, arr->elem,
-			   arr->elemsize, arr->set, arr->num ?: &temp_num);
+			   arr->elemsize, arr->set, kp->flags,
+			   arr->num ?: &temp_num);
 }
 
 int param_array_get(char *buffer, struct kernel_param *kp)
@@ -520,6 +516,7 @@ static __modinit int add_sysfs_param(struct module_kobject *mk,
 	new->grp.attrs = attrs;
 
 	/* Tack new one on the end. */
+	sysfs_attr_init(&new->attrs[num].mattr.attr);
 	new->attrs[num].param = kp;
 	new->attrs[num].mattr.show = param_attr_show;
 	new->attrs[num].mattr.store = param_attr_store;
@@ -605,11 +602,7 @@ void module_param_sysfs_remove(struct module *mod)
 
 void destroy_params(const struct kernel_param *params, unsigned num)
 {
-	unsigned int i;
-
-	for (i = 0; i < num; i++)
-		if (params[i].flags & KPARAM_KMALLOCED)
-			kfree(*(char **)params[i].arg);
+	/* FIXME: This should free kmalloced charp parameters.  It doesn't. */
 }
 
 static void __init kernel_add_sysfs_param(const char *name,
@@ -730,7 +723,7 @@ static ssize_t module_attr_store(struct kobject *kobj,
 	return ret;
 }
 
-static struct sysfs_ops module_sysfs_ops = {
+static const struct sysfs_ops module_sysfs_ops = {
 	.show = module_attr_show,
 	.store = module_attr_store,
 };
@@ -744,7 +737,7 @@ static int uevent_filter(struct kset *kset, struct kobject *kobj)
 	return 0;
 }
 
-static struct kset_uevent_ops module_uevent_ops = {
+static const struct kset_uevent_ops module_uevent_ops = {
 	.filter = uevent_filter,
 };
 

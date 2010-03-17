@@ -80,7 +80,7 @@ struct smsc9420_pdata {
 	int last_carrier;
 };
 
-static const struct pci_device_id smsc9420_id_table[] = {
+static DEFINE_PCI_DEVICE_TABLE(smsc9420_id_table) = {
 	{ PCI_VENDOR_ID_9420, PCI_DEVICE_ID_9420, PCI_ANY_ID, PCI_ANY_ID, },
 	{ 0, }
 };
@@ -252,6 +252,9 @@ static int smsc9420_ethtool_get_settings(struct net_device *dev,
 {
 	struct smsc9420_pdata *pd = netdev_priv(dev);
 
+	if (!pd->phy_dev)
+		return -ENODEV;
+
 	cmd->maxtxpkt = 1;
 	cmd->maxrxpkt = 1;
 	return phy_ethtool_gset(pd->phy_dev, cmd);
@@ -261,6 +264,9 @@ static int smsc9420_ethtool_set_settings(struct net_device *dev,
 					 struct ethtool_cmd *cmd)
 {
 	struct smsc9420_pdata *pd = netdev_priv(dev);
+
+	if (!pd->phy_dev)
+		return -ENODEV;
 
 	return phy_ethtool_sset(pd->phy_dev, cmd);
 }
@@ -290,6 +296,10 @@ static void smsc9420_ethtool_set_msglevel(struct net_device *netdev, u32 data)
 static int smsc9420_ethtool_nway_reset(struct net_device *netdev)
 {
 	struct smsc9420_pdata *pd = netdev_priv(netdev);
+
+	if (!pd->phy_dev)
+		return -ENODEV;
+
 	return phy_start_aneg(pd->phy_dev);
 }
 
@@ -311,6 +321,10 @@ smsc9420_ethtool_getregs(struct net_device *dev, struct ethtool_regs *regs,
 	regs->version = smsc9420_reg_read(pd, ID_REV);
 	for (i = 0; i < 0x100; i += (sizeof(u32)))
 		data[j++] = smsc9420_reg_read(pd, i);
+
+	// cannot read phy registers if the net device is down
+	if (!phy_dev)
+		return;
 
 	for (i = 0; i <= 31; i++)
 		data[j++] = smsc9420_mii_read(phy_dev->bus, phy_dev->addr, i);
@@ -1048,12 +1062,12 @@ static void smsc9420_set_multicast_list(struct net_device *dev)
 		mac_cr &= (~MAC_CR_PRMS_);
 		mac_cr |= MAC_CR_MCPAS_;
 		mac_cr &= (~MAC_CR_HPFILT_);
-	} else if (dev->mc_count > 0) {
-		struct dev_mc_list *mc_list = dev->mc_list;
+	} else if (!netdev_mc_empty(dev)) {
+		struct dev_mc_list *mc_list;
 		u32 hash_lo = 0, hash_hi = 0;
 
 		smsc_dbg(HW, "Multicast filter enabled");
-		while (mc_list) {
+		netdev_for_each_mc_addr(mc_list, dev) {
 			u32 bit_num = smsc9420_hash(mc_list->dmi_addr);
 			u32 mask = 1 << (bit_num & 0x1F);
 
@@ -1062,7 +1076,6 @@ static void smsc9420_set_multicast_list(struct net_device *dev)
 			else
 				hash_lo |= mask;
 
-			mc_list = mc_list->next;
 		}
 		smsc9420_reg_write(pd, HASHH, hash_hi);
 		smsc9420_reg_write(pd, HASHL, hash_lo);
@@ -1161,7 +1174,7 @@ static int smsc9420_mii_probe(struct net_device *dev)
 		phydev->phy_id);
 
 	phydev = phy_connect(dev, dev_name(&phydev->dev),
-		&smsc9420_phy_adjust_link, 0, PHY_INTERFACE_MODE_MII);
+		smsc9420_phy_adjust_link, 0, PHY_INTERFACE_MODE_MII);
 
 	if (IS_ERR(phydev)) {
 		pr_err("%s: Could not attach to PHY\n", dev->name);

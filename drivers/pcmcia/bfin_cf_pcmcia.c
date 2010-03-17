@@ -205,7 +205,7 @@ static int __devinit bfin_cf_probe(struct platform_device *pdev)
 	dev_info(&pdev->dev, "Blackfin CompactFlash/PCMCIA Socket Driver\n");
 
 	irq = platform_get_irq(pdev, 0);
-	if (!irq)
+	if (irq <= 0)
 		return -EINVAL;
 
 	cd_pfx = platform_get_irq(pdev, 1);	/*Card Detect GPIO PIN */
@@ -302,7 +302,7 @@ static int __devexit bfin_cf_remove(struct platform_device *pdev)
 
 static int bfin_cf_suspend(struct platform_device *pdev, pm_message_t mesg)
 {
-	return pcmcia_socket_dev_suspend(&pdev->dev, mesg);
+	return pcmcia_socket_dev_suspend(&pdev->dev);
 }
 
 static int bfin_cf_resume(struct platform_device *pdev)

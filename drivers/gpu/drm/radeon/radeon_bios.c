@@ -30,15 +30,51 @@
 #include "radeon.h"
 #include "atom.h"
 
+#include <linux/vga_switcheroo.h>
 /*
  * BIOS.
  */
+
+/* If you boot an IGP board with a discrete card as the primary,
+ * the IGP rom is not accessible via the rom bar as the IGP rom is
+ * part of the system bios.  On boot, the system bios puts a
+ * copy of the igp rom at the start of vram if a discrete card is
+ * present.
+ */
+static bool igp_read_bios_from_vram(struct radeon_device *rdev)
+{
+	uint8_t __iomem *bios;
+	resource_size_t vram_base;
+	resource_size_t size = 256 * 1024; /* ??? */
+
+	rdev->bios = NULL;
+	vram_base = drm_get_resource_start(rdev->ddev, 0);
+	bios = ioremap(vram_base, size);
+	if (!bios) {
+		return false;
+	}
+
+	if (size == 0 || bios[0] != 0x55 || bios[1] != 0xaa) {
+		iounmap(bios);
+		return false;
+	}
+	rdev->bios = kmalloc(size, GFP_KERNEL);
+	if (rdev->bios == NULL) {
+		iounmap(bios);
+		return false;
+	}
+	memcpy_fromio(rdev->bios, bios, size);
+	iounmap(bios);
+	return true;
+}
+
 static bool radeon_read_bios(struct radeon_device *rdev)
 {
 	uint8_t __iomem *bios;
 	size_t size;
 
 	rdev->bios = NULL;
+	/* XXX: some cards may return 0 for rom size? ddx has a workaround */
 	bios = pci_map_rom(rdev->pdev, &size);
 	if (!bios) {
 		return false;
@@ -58,6 +94,38 @@ static bool radeon_read_bios(struct radeon_device *rdev)
 	return true;
 }
 
+/* ATRM is used to get the BIOS on the discrete cards in
+ * dual-gpu systems.
+ */
+static bool radeon_atrm_get_bios(struct radeon_device *rdev)
+{
+	int ret;
+	int size = 64 * 1024;
+	int i;
+
+	if (!radeon_atrm_supported(rdev->pdev))
+		return false;
+
+	rdev->bios = kmalloc(size, GFP_KERNEL);
+	if (!rdev->bios) {
+		DRM_ERROR("Unable to allocate bios\n");
+		return false;
+	}
+
+	for (i = 0; i < size / ATRM_BIOS_PAGE; i++) {
+		ret = radeon_atrm_get_bios_chunk(rdev->bios,
+						 (i * ATRM_BIOS_PAGE),
+						 ATRM_BIOS_PAGE);
+		if (ret <= 0)
+			break;
+	}
+
+	if (i == 0 || rdev->bios[0] != 0x55 || rdev->bios[1] != 0xaa) {
+		kfree(rdev->bios);
+		return false;
+	}
+	return true;
+}
 static bool r700_read_disabled_bios(struct radeon_device *rdev)
 {
 	uint32_t viph_control;
@@ -341,7 +409,9 @@ static bool legacy_read_disabled_bios(struct radeon_device *rdev)
 
 static bool radeon_read_disabled_bios(struct radeon_device *rdev)
 {
-	if (rdev->family >= CHIP_RV770)
+	if (rdev->flags & RADEON_IS_IGP)
+		return igp_read_bios_from_vram(rdev);
+	else if (rdev->family >= CHIP_RV770)
 		return r700_read_disabled_bios(rdev);
 	else if (rdev->family >= CHIP_R600)
 		return r600_read_disabled_bios(rdev);
@@ -351,12 +421,17 @@ static bool radeon_read_disabled_bios(struct radeon_device *rdev)
 		return legacy_read_disabled_bios(rdev);
 }
 
+
 bool radeon_get_bios(struct radeon_device *rdev)
 {
 	bool r;
 	uint16_t tmp;
 
-	r = radeon_read_bios(rdev);
+	r = radeon_atrm_get_bios(rdev);
+	if (r == false)
+		r = igp_read_bios_from_vram(rdev);
+	if (r == false)
+		r = radeon_read_bios(rdev);
 	if (r == false) {
 		r = radeon_read_disabled_bios(rdev);
 	}
@@ -366,6 +441,13 @@ bool radeon_get_bios(struct radeon_device *rdev)
 		return false;
 	}
 	if (rdev->bios[0] != 0x55 || rdev->bios[1] != 0xaa) {
+		printk("BIOS signature incorrect %x %x\n", rdev->bios[0], rdev->bios[1]);
+		goto free_bios;
+	}
+
+	tmp = RBIOS16(0x18);
+	if (RBIOS8(tmp + 0x14) != 0x0) {
+		DRM_INFO("Not an x86 BIOS ROM, not using.\n");
 		goto free_bios;
 	}
 

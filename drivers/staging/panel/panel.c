@@ -41,7 +41,6 @@
 #include <linux/signal.h>
 #include <linux/sched.h>
 #include <linux/spinlock.h>
-#include <linux/smp_lock.h>
 #include <linux/interrupt.h>
 #include <linux/miscdevice.h>
 #include <linux/slab.h>
@@ -55,7 +54,7 @@
 #include <linux/list.h>
 #include <linux/notifier.h>
 #include <linux/reboot.h>
-#include <linux/utsrelease.h>
+#include <generated/utsrelease.h>
 
 #include <linux/io.h>
 #include <asm/uaccess.h>
@@ -378,7 +377,7 @@ static unsigned char lcd_bits[LCD_PORTS][LCD_BITS][BIT_STATES];
 
 #ifdef CONFIG_PANEL_LCD_CHARSET
 #undef DEFAULT_LCD_CHARSET
-#define DEFAULT_LCD_CHARSET
+#define DEFAULT_LCD_CHARSET CONFIG_PANEL_LCD_CHARSET
 #endif
 
 #endif /* DEFAULT_PROFILE == 0 */
@@ -2071,11 +2070,15 @@ static void panel_detach(struct parport *port)
 		return;
 	}
 
-	if (keypad_enabled && keypad_initialized)
+	if (keypad_enabled && keypad_initialized) {
 		misc_deregister(&keypad_dev);
+		keypad_initialized = 0;
+	}
 
-	if (lcd_enabled && lcd_initialized)
+	if (lcd_enabled && lcd_initialized) {
 		misc_deregister(&lcd_dev);
+		lcd_initialized = 0;
+	}
 
 	parport_release(pprt);
 	parport_unregister_device(pprt);
@@ -2211,13 +2214,16 @@ static void __exit panel_cleanup_module(void)
 		del_timer(&scan_timer);
 
 	if (pprt != NULL) {
-		if (keypad_enabled)
+		if (keypad_enabled) {
 			misc_deregister(&keypad_dev);
+			keypad_initialized = 0;
+		}
 
 		if (lcd_enabled) {
 			panel_lcd_print("\x0cLCD driver " PANEL_VERSION
 					"\nunloaded.\x1b[Lc\x1b[Lb\x1b[L-");
 			misc_deregister(&lcd_dev);
+			lcd_initialized = 0;
 		}
 
 		/* TODO: free all input signals */

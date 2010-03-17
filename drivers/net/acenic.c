@@ -134,7 +134,7 @@
 #define PCI_DEVICE_ID_SGI_ACENIC	0x0009
 #endif
 
-static struct pci_device_id acenic_pci_tbl[] = {
+static DEFINE_PCI_DEVICE_TABLE(acenic_pci_tbl) = {
 	{ PCI_VENDOR_ID_ALTEON, PCI_DEVICE_ID_ALTEON_ACENIC_FIBRE,
 	  PCI_ANY_ID, PCI_ANY_ID, PCI_CLASS_NETWORK_ETHERNET << 8, 0xffff00, },
 	{ PCI_VENDOR_ID_ALTEON, PCI_DEVICE_ID_ALTEON_ACENIC_COPPER,
@@ -1209,7 +1209,8 @@ static int __devinit ace_init(struct net_device *dev)
 	memset(ap->info, 0, sizeof(struct ace_info));
 	memset(ap->skb, 0, sizeof(struct ace_skb));
 
-	if (ace_load_firmware(dev))
+	ecode = ace_load_firmware(dev);
+	if (ecode)
 		goto init_error;
 
 	ap->fw_running = 0;
@@ -2844,7 +2845,7 @@ static void ace_set_multicast_list(struct net_device *dev)
 	 * set the entire multicast list at a time and keeping track of
 	 * it here is going to be messy.
 	 */
-	if ((dev->mc_count) && !(ap->mcast_all)) {
+	if (!netdev_mc_empty(dev) && !ap->mcast_all) {
 		cmd.evt = C_SET_MULTICAST_MODE;
 		cmd.code = C_C_MCAST_ENABLE;
 		cmd.idx = 0;

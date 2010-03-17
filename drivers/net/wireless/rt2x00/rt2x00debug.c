@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2004 - 2009 rt2x00 SourceForge Project
+	Copyright (C) 2004 - 2009 Ivo van Doorn <IvDoorn@gmail.com>
 	<http://rt2x00.serialmonkey.com>
 
 	This program is free software; you can redistribute it and/or modify
@@ -27,6 +27,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/poll.h>
+#include <linux/sched.h>
 #include <linux/uaccess.h>
 
 #include "rt2x00.h"
@@ -183,7 +184,7 @@ void rt2x00debug_dump_frame(struct rt2x00_dev *rt2x00dev,
 	dump_hdr->data_length = cpu_to_le32(skb->len);
 	dump_hdr->chip_rt = cpu_to_le16(rt2x00dev->chip.rt);
 	dump_hdr->chip_rf = cpu_to_le16(rt2x00dev->chip.rf);
-	dump_hdr->chip_rev = cpu_to_le32(rt2x00dev->chip.rev);
+	dump_hdr->chip_rev = cpu_to_le16(rt2x00dev->chip.rev);
 	dump_hdr->type = cpu_to_le16(type);
 	dump_hdr->queue_index = desc->entry->queue->qid;
 	dump_hdr->entry_index = desc->entry->entry_idx;
@@ -572,7 +573,7 @@ static struct dentry *rt2x00debug_create_file_chipset(const char *name,
 	blob->data = data;
 	data += sprintf(data, "rt chip:\t%04x\n", intf->rt2x00dev->chip.rt);
 	data += sprintf(data, "rf chip:\t%04x\n", intf->rt2x00dev->chip.rf);
-	data += sprintf(data, "revision:\t%08x\n", intf->rt2x00dev->chip.rev);
+	data += sprintf(data, "revision:\t%04x\n", intf->rt2x00dev->chip.rev);
 	data += sprintf(data, "\n");
 	data += sprintf(data, "register\tbase\twords\twordsize\n");
 	data += sprintf(data, "csr\t%d\t%d\t%d\n",

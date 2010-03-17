@@ -59,6 +59,7 @@ xfs_bulkstat_one_iget(
 {
 	xfs_icdinode_t	*dic;	/* dinode core info pointer */
 	xfs_inode_t	*ip;		/* incore inode pointer */
+	struct inode	*inode;
 	int		error;
 
 	error = xfs_iget(mp, NULL, ino,
@@ -72,6 +73,7 @@ xfs_bulkstat_one_iget(
 	ASSERT(ip->i_imap.im_blkno != 0);
 
 	dic = &ip->i_d;
+	inode = VFS_I(ip);
 
 	/* xfs_iget returns the following without needing
 	 * further change.
@@ -83,16 +85,19 @@ xfs_bulkstat_one_iget(
 	buf->bs_uid = dic->di_uid;
 	buf->bs_gid = dic->di_gid;
 	buf->bs_size = dic->di_size;
+
 	/*
-	 * We are reading the atime from the Linux inode because the
-	 * dinode might not be uptodate.
+	 * We need to read the timestamps from the Linux inode because
+	 * the VFS keeps writing directly into the inode structure instead
+	 * of telling us about the updates.
 	 */
-	buf->bs_atime.tv_sec = VFS_I(ip)->i_atime.tv_sec;
-	buf->bs_atime.tv_nsec = VFS_I(ip)->i_atime.tv_nsec;
-	buf->bs_mtime.tv_sec = dic->di_mtime.t_sec;
-	buf->bs_mtime.tv_nsec = dic->di_mtime.t_nsec;
-	buf->bs_ctime.tv_sec = dic->di_ctime.t_sec;
-	buf->bs_ctime.tv_nsec = dic->di_ctime.t_nsec;
+	buf->bs_atime.tv_sec = inode->i_atime.tv_sec;
+	buf->bs_atime.tv_nsec = inode->i_atime.tv_nsec;
+	buf->bs_mtime.tv_sec = inode->i_mtime.tv_sec;
+	buf->bs_mtime.tv_nsec = inode->i_mtime.tv_nsec;
+	buf->bs_ctime.tv_sec = inode->i_ctime.tv_sec;
+	buf->bs_ctime.tv_nsec = inode->i_ctime.tv_nsec;
+
 	buf->bs_xflags = xfs_ip2xflags(ip);
 	buf->bs_extsize = dic->di_extsize << mp->m_sb.sb_blocklog;
 	buf->bs_extents = dic->di_nextents;
@@ -101,6 +106,7 @@ xfs_bulkstat_one_iget(
 	buf->bs_dmevmask = dic->di_dmevmask;
 	buf->bs_dmstate = dic->di_dmstate;
 	buf->bs_aextents = dic->di_anextents;
+	buf->bs_forkoff = XFS_IFORK_BOFF(ip);
 
 	switch (dic->di_format) {
 	case XFS_DINODE_FMT_DEV:
@@ -171,6 +177,7 @@ xfs_bulkstat_one_dinode(
 	buf->bs_dmevmask = be32_to_cpu(dic->di_dmevmask);
 	buf->bs_dmstate = be16_to_cpu(dic->di_dmstate);
 	buf->bs_aextents = be16_to_cpu(dic->di_anextents);
+	buf->bs_forkoff = XFS_DFORK_BOFF(dic);
 
 	switch (dic->di_format) {
 	case XFS_DINODE_FMT_DEV:
@@ -403,8 +410,10 @@ xfs_bulkstat(
 		(XFS_INODE_CLUSTER_SIZE(mp) >> mp->m_sb.sb_inodelog);
 	nimask = ~(nicluster - 1);
 	nbcluster = nicluster >> mp->m_sb.sb_inopblog;
-	irbuf = kmem_zalloc_greedy(&irbsize, PAGE_SIZE, PAGE_SIZE * 4,
-				   KM_SLEEP | KM_MAYFAIL | KM_LARGE);
+	irbuf = kmem_zalloc_greedy(&irbsize, PAGE_SIZE, PAGE_SIZE * 4);
+	if (!irbuf)
+		return ENOMEM;
+
 	nirbuf = irbsize / sizeof(*irbuf);
 
 	/*
@@ -415,9 +424,7 @@ xfs_bulkstat(
 	while (XFS_BULKSTAT_UBLEFT(ubleft) && agno < mp->m_sb.sb_agcount) {
 		cond_resched();
 		bp = NULL;
-		down_read(&mp->m_peraglock);
 		error = xfs_ialloc_read_agi(mp, NULL, agno, &agbp);
-		up_read(&mp->m_peraglock);
 		if (error) {
 			/*
 			 * Skip this allocation group and go to the next one.
@@ -724,7 +731,7 @@ xfs_bulkstat(
 	/*
 	 * Done, we're either out of filesystem or space to put the data.
 	 */
-	kmem_free(irbuf);
+	kmem_free_large(irbuf);
 	*ubcountp = ubelem;
 	/*
 	 * Found some inodes, return them now and return the error next time.
@@ -844,9 +851,7 @@ xfs_inumbers(
 	agbp = NULL;
 	while (left > 0 && agno < mp->m_sb.sb_agcount) {
 		if (agbp == NULL) {
-			down_read(&mp->m_peraglock);
 			error = xfs_ialloc_read_agi(mp, NULL, agno, &agbp);
-			up_read(&mp->m_peraglock);
 			if (error) {
 				/*
 				 * If we can't read the AGI of this ag,

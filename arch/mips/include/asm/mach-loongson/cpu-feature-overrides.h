@@ -3,7 +3,7 @@
  * License.  See the file "COPYING" in the main directory of this archive
  * for more details.
  *
- * Copyright (C) 2009 Wu Zhangjin <wuzj@lemote.com>
+ * Copyright (C) 2009 Wu Zhangjin <wuzhangjin@gmail.com>
  * Copyright (C) 2009 Philippe Vachon <philippe@cowpig.ca>
  * Copyright (C) 2009 Zhang Le <r0bertz@gentoo.org>
  *
@@ -29,7 +29,7 @@
 #define cpu_has_cache_cdex_p	0
 #define cpu_has_cache_cdex_s	0
 #define cpu_has_counter		1
-#define cpu_has_dc_aliases	1
+#define cpu_has_dc_aliases	(PAGE_SIZE < 0x4000)
 #define cpu_has_divec		0
 #define cpu_has_dsp		0
 #define cpu_has_ejtag		0
@@ -54,6 +54,5 @@
 #define cpu_has_vce		0
 #define cpu_has_vtag_icache	0
 #define cpu_has_watch		1
-#define cpu_icache_snoops_remote_store	1
 
 #endif /* __ASM_MACH_LOONGSON_CPU_FEATURE_OVERRIDES_H */

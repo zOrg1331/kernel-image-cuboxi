@@ -794,16 +794,15 @@ static int process_eb(struct ubi_device *ubi, struct ubi_scan_info *si,
 		 * number.
 		 */
 		image_seq = be32_to_cpu(ech->image_seq);
-		if (!si->image_seq_set) {
+		if (!ubi->image_seq && image_seq)
 			ubi->image_seq = image_seq;
-			si->image_seq_set = 1;
-		} else if (ubi->image_seq && ubi->image_seq != image_seq) {
+		if (ubi->image_seq && image_seq &&
+		    ubi->image_seq != image_seq) {
 			ubi_err("bad image sequence number %d in PEB %d, "
 				"expected %d", image_seq, pnum, ubi->image_seq);
 			ubi_dbg_dump_ec_hdr(ech);
 			return -EINVAL;
 		}
-
 	}
 
 	/* OK, we've done with the EC header, let's look at the VID header */
@@ -975,11 +974,8 @@ struct ubi_scan_info *ubi_scan(struct ubi_device *ubi)
 			seb->ec = si->mean_ec;
 
 	err = paranoid_check_si(ubi, si);
-	if (err) {
-		if (err > 0)
-			err = -EINVAL;
+	if (err)
 		goto out_vidh;
-	}
 
 	ubi_free_vid_hdr(ubi, vidh);
 	kfree(ech);
@@ -1087,8 +1083,8 @@ void ubi_scan_destroy_si(struct ubi_scan_info *si)
  * @ubi: UBI device description object
  * @si: scanning information
  *
- * This function returns zero if the scanning information is all right, %1 if
- * not and a negative error code if an error occurred.
+ * This function returns zero if the scanning information is all right, and a
+ * negative error code if not or if an error occurred.
  */
 static int paranoid_check_si(struct ubi_device *ubi, struct ubi_scan_info *si)
 {
@@ -1347,7 +1343,7 @@ bad_vid_hdr:
 
 out:
 	ubi_dbg_dump_stack();
-	return 1;
+	return -EINVAL;
 }
 
 #endif /* CONFIG_MTD_UBI_DEBUG_PARANOID */

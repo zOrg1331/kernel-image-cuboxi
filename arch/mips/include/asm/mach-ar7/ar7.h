@@ -78,6 +78,9 @@
 #define AR7_REF_CLOCK	25000000
 #define AR7_XTAL_CLOCK	24000000
 
+/* DCL */
+#define AR7_WDT_HW_ENA	0x10
+
 struct plat_cpmac_data {
 	int reset_bit;
 	int power_bit;
@@ -102,26 +105,9 @@ static inline u8 ar7_chip_rev(void)
 	return (readl((void *)KSEG1ADDR(AR7_REGS_GPIO + 0x14)) >> 16) & 0xff;
 }
 
-static inline int ar7_cpu_freq(void)
-{
-	return ar7_cpu_clock;
-}
-
-static inline int ar7_bus_freq(void)
-{
-	return ar7_bus_clock;
-}
-
-static inline int ar7_vbus_freq(void)
-{
-	return ar7_bus_clock / 2;
-}
-#define ar7_cpmac_freq ar7_vbus_freq
-
-static inline int ar7_dsp_freq(void)
-{
-	return ar7_dsp_clock;
-}
+struct clk {
+	unsigned int	rate;
+};
 
 static inline int ar7_has_high_cpmac(void)
 {

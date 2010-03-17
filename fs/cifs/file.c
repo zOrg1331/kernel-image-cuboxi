@@ -76,8 +76,10 @@ static inline fmode_t cifs_posix_convert_flags(unsigned int flags)
 	   reopening a file.  They had their effect on the original open */
 	if (flags & O_APPEND)
 		posix_flags |= (fmode_t)O_APPEND;
-	if (flags & O_SYNC)
-		posix_flags |= (fmode_t)O_SYNC;
+	if (flags & O_DSYNC)
+		posix_flags |= (fmode_t)O_DSYNC;
+	if (flags & __O_SYNC)
+		posix_flags |= (fmode_t)__O_SYNC;
 	if (flags & O_DIRECTORY)
 		posix_flags |= (fmode_t)O_DIRECTORY;
 	if (flags & O_NOFOLLOW)
@@ -2287,9 +2289,9 @@ cifs_oplock_break(struct slow_work *work)
 	if (inode && S_ISREG(inode->i_mode)) {
 #ifdef CONFIG_CIFS_EXPERIMENTAL
 		if (cinode->clientCanCacheAll == 0)
-			break_lease(inode, FMODE_READ);
+			break_lease(inode, O_RDONLY);
 		else if (cinode->clientCanCacheRead == 0)
-			break_lease(inode, FMODE_WRITE);
+			break_lease(inode, O_WRONLY);
 #endif
 		rc = filemap_fdatawrite(inode->i_mapping);
 		if (cinode->clientCanCacheRead == 0) {

@@ -39,11 +39,12 @@ enum {
 };
 
 struct davinci_audio_dev {
+	struct davinci_pcm_dma_params dma_params[2];
 	void __iomem *base;
 	int sample_rate;
 	struct clk *clk;
-	struct davinci_pcm_dma_params *dma_params[2];
 	unsigned int codec_fmt;
+	u8 clk_active;
 
 	/* McASP specific data */
 	int	tdm_slots;

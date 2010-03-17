@@ -2,6 +2,7 @@
 #define CCISS_H
 
 #include <linux/genhd.h>
+#include <linux/mutex.h>
 
 #include "cciss_cmd.h"
 
@@ -29,7 +30,7 @@ struct access_method {
 };
 typedef struct _drive_info_struct
 {
- 	__u32   LunID;	
+	unsigned char LunID[8];
 	int 	usage_count;
 	struct request_queue *queue;
 	sector_t nr_blocks;
@@ -51,14 +52,15 @@ typedef struct _drive_info_struct
 	char vendor[VENDOR_LEN + 1]; /* SCSI vendor string */
 	char model[MODEL_LEN + 1];   /* SCSI model string */
 	char rev[REV_LEN + 1];       /* SCSI revision string */
+	char device_initialized;     /* indicates whether dev is initialized */
 } drive_info_struct;
 
-struct ctlr_info 
+struct ctlr_info
 {
 	int	ctlr;
 	char	devname[8];
 	char    *product_name;
-	char	firm_ver[4]; // Firmware version 
+	char	firm_ver[4]; /* Firmware version */
 	struct pci_dev *pdev;
 	__u32	board_id;
 	void __iomem *vaddr;
@@ -73,6 +75,16 @@ struct ctlr_info
 	int	num_luns;
 	int 	highest_lun;
 	int	usage_count;  /* number of opens all all minor devices */
+	/* Need space for temp sg list
+	 * number of scatter/gathers supported
+	 * number of scatter/gathers in chained block
+	 */
+	struct	scatterlist **scatter_list;
+	int	maxsgentries;
+	int	chainsize;
+	int	max_cmd_sgentries;
+	SGDescriptor_struct **cmd_sg_list;
+
 #	define DOORBELL_INT	0
 #	define PERF_MODE_INT	1
 #	define SIMPLE_MODE_INT	2
@@ -85,8 +97,8 @@ struct ctlr_info
 	BYTE	cciss_write;
 	BYTE	cciss_read_capacity;
 
-	// information about each logical volume
-	drive_info_struct drv[CISS_MAX_LUN];
+	/* information about each logical volume */
+	drive_info_struct *drv[CISS_MAX_LUN];
 
 	struct access_method access;
 
@@ -98,7 +110,7 @@ struct ctlr_info
 	unsigned int maxSG;
 	spinlock_t lock;
 
-	//* pointers to command and error info pool */ 
+	/* pointers to command and error info pool */
 	CommandList_struct 	*cmd_pool;
 	dma_addr_t		cmd_pool_dhandle; 
 	ErrorInfo_struct 	*errinfo_pool;
@@ -108,22 +120,22 @@ struct ctlr_info
 	int			nr_frees; 
 	int			busy_configuring;
 	int			busy_initializing;
+	int			busy_scanning;
+	struct mutex		busy_shutting_down;
 
 	/* This element holds the zero based queue number of the last
 	 * queue to be started.  It is used for fairness.
 	*/
 	int			next_to_run;
 
-	// Disk structures we need to pass back
+	/* Disk structures we need to pass back */
 	struct gendisk   *gendisk[CISS_MAX_LUN];
 #ifdef CONFIG_CISS_SCSI_TAPE
-	void *scsi_ctlr; /* ptr to structure containing scsi related stuff */
-	/* list of block side commands the scsi error handling sucked up */
-	/* and saved for later processing */
+	struct cciss_scsi_adapter_data_t *scsi_ctlr;
 #endif
 	unsigned char alive;
-	struct completion *rescan_wait;
-	struct task_struct *cciss_scan_thread;
+	struct list_head scan_list;
+	struct completion scan_wait;
 	struct device dev;
 };
 
@@ -295,4 +307,3 @@ struct board_type {
 #define CCISS_LOCK(i)	(&hba[i]->lock)
 
 #endif /* CCISS_H */
-

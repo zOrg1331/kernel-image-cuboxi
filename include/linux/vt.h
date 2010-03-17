@@ -27,7 +27,7 @@ struct vt_mode {
 #define VT_SETMODE	0x5602	/* set mode of active vt */
 #define		VT_AUTO		0x00	/* auto vt switching */
 #define		VT_PROCESS	0x01	/* process controls switching */
-#define		VT_ACKACQ	0x02	/* acknowledge switch */
+#define		VT_PROCESS_AUTO 0x02	/* process is notified of switching */
 
 struct vt_stat {
 	unsigned short v_active;	/* active vt */
@@ -38,6 +38,7 @@ struct vt_stat {
 #define VT_SENDSIG	0x5604	/* signal to send to bitmask of vts */
 
 #define VT_RELDISP	0x5605	/* release display */
+#define		VT_ACKACQ	0x02	/* acknowledge switch */
 
 #define VT_ACTIVATE	0x5606	/* make vt active */
 #define VT_WAITACTIVE	0x5607	/* wait for vt active */
@@ -70,8 +71,8 @@ struct vt_event {
 #define VT_EVENT_UNBLANK	0x0004	/* Screen unblank */
 #define VT_EVENT_RESIZE		0x0008	/* Resize display */
 #define VT_MAX_EVENT		0x000F
-	unsigned int old;		/* Old console */
-	unsigned int new;		/* New console (if changing) */
+	unsigned int oldev;		/* Old console */
+	unsigned int newev;		/* New console (if changing) */
 	unsigned int pad[4];		/* Padding for expansion */
 };
 
@@ -83,5 +84,24 @@ struct vt_setactivate {
 };
 
 #define VT_SETACTIVATE	0x560F	/* Activate and set the mode of a console */
+
+#ifdef __KERNEL__
+
+#ifdef CONFIG_VT_CONSOLE
+
+extern int vt_kmsg_redirect(int new);
+
+#else
+
+static inline int vt_kmsg_redirect(int new)
+{
+	return 0;
+}
+
+#endif
+
+#endif /* __KERNEL__ */
+
+#define vt_get_kmsg_redirect() vt_kmsg_redirect(-1)
 
 #endif /* _LINUX_VT_H */

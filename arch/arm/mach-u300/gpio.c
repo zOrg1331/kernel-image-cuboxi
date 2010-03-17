@@ -281,6 +281,16 @@ int gpio_unregister_callback(unsigned gpio)
 }
 EXPORT_SYMBOL(gpio_unregister_callback);
 
+/* Non-zero means valid */
+int gpio_is_valid(int number)
+{
+	if (number >= 0 &&
+	    number < (U300_GPIO_NUM_PORTS * U300_GPIO_PINS_PER_PORT))
+		return 1;
+	return 0;
+}
+EXPORT_SYMBOL(gpio_is_valid);
+
 int gpio_request(unsigned gpio, const char *label)
 {
 	if (gpio_pin[gpio].users)
@@ -536,7 +546,7 @@ static void gpio_set_initial_values(void)
 	for (i = 0; i < U300_GPIO_MAX; i++) {
 		val = 0;
 		for (j = 0; j < 8; j++)
-			val |= (u32)((u300_gpio_config[i][j].pull_up == DISABLE_PULL_UP)) << j;
+			val |= (u32)((u300_gpio_config[i][j].pull_up == DISABLE_PULL_UP) << j);
 		local_irq_save(flags);
 		writel(val, virtbase + U300_GPIO_PXPER + i * U300_GPIO_PORTX_SPACING);
 		local_irq_restore(flags);

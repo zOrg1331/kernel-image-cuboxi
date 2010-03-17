@@ -13,6 +13,7 @@
 #define EVDEV_BUFFER_SIZE	64
 
 #include <linux/poll.h>
+#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -58,7 +59,8 @@ static void evdev_pass_event(struct evdev_client *client,
 	client->head &= EVDEV_BUFFER_SIZE - 1;
 	spin_unlock(&client->buffer_lock);
 
-	kill_fasync(&client->fasync, SIGIO, POLL_IN);
+	if (event->type == EV_SYN)
+		kill_fasync(&client->fasync, SIGIO, POLL_IN);
 }
 
 /*
@@ -276,6 +278,8 @@ static int evdev_open(struct inode *inode, struct file *file)
 		goto err_free_client;
 
 	file->private_data = client;
+	nonseekable_open(inode, file);
+
 	return 0;
 
  err_free_client:

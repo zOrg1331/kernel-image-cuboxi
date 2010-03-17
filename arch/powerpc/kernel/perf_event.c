@@ -116,20 +116,23 @@ static inline void perf_get_data_addr(struct pt_regs *regs, u64 *addrp)
 static inline u32 perf_get_misc_flags(struct pt_regs *regs)
 {
 	unsigned long mmcra = regs->dsisr;
+	unsigned long sihv = MMCRA_SIHV;
+	unsigned long sipr = MMCRA_SIPR;
 
 	if (TRAP(regs) != 0xf00)
 		return 0;	/* not a PMU interrupt */
 
 	if (ppmu->flags & PPMU_ALT_SIPR) {
-		if (mmcra & POWER6_MMCRA_SIHV)
-			return PERF_RECORD_MISC_HYPERVISOR;
-		return (mmcra & POWER6_MMCRA_SIPR) ?
-			PERF_RECORD_MISC_USER : PERF_RECORD_MISC_KERNEL;
+		sihv = POWER6_MMCRA_SIHV;
+		sipr = POWER6_MMCRA_SIPR;
 	}
-	if (mmcra & MMCRA_SIHV)
+
+	/* PR has priority over HV, so order below is important */
+	if (mmcra & sipr)
+		return PERF_RECORD_MISC_USER;
+	if ((mmcra & sihv) && (freeze_events_kernel != MMCR0_FCHV))
 		return PERF_RECORD_MISC_HYPERVISOR;
-	return (mmcra & MMCRA_SIPR) ? PERF_RECORD_MISC_USER :
-		PERF_RECORD_MISC_KERNEL;
+	return PERF_RECORD_MISC_KERNEL;
 }
 
 /*
@@ -715,10 +718,10 @@ static int collect_events(struct perf_event *group, int max_count,
 	return n;
 }
 
-static void event_sched_in(struct perf_event *event, int cpu)
+static void event_sched_in(struct perf_event *event)
 {
 	event->state = PERF_EVENT_STATE_ACTIVE;
-	event->oncpu = cpu;
+	event->oncpu = smp_processor_id();
 	event->tstamp_running += event->ctx->time - event->tstamp_stopped;
 	if (is_software_event(event))
 		event->pmu->enable(event);
@@ -732,7 +735,7 @@ static void event_sched_in(struct perf_event *event, int cpu)
  */
 int hw_perf_group_sched_in(struct perf_event *group_leader,
 	       struct perf_cpu_context *cpuctx,
-	       struct perf_event_context *ctx, int cpu)
+	       struct perf_event_context *ctx)
 {
 	struct cpu_hw_events *cpuhw;
 	long i, n, n0;
@@ -763,10 +766,10 @@ int hw_perf_group_sched_in(struct perf_event *group_leader,
 		cpuhw->event[i]->hw.config = cpuhw->events[i];
 	cpuctx->active_oncpu += n;
 	n = 1;
-	event_sched_in(group_leader, cpu);
+	event_sched_in(group_leader);
 	list_for_each_entry(sub, &group_leader->sibling_list, group_entry) {
 		if (sub->state != PERF_EVENT_STATE_OFF) {
-			event_sched_in(sub, cpu);
+			event_sched_in(sub);
 			++n;
 		}
 	}
@@ -1162,7 +1165,7 @@ static void record_and_restart(struct perf_event *event, unsigned long val,
 	 */
 	if (record) {
 		struct perf_sample_data data = {
-			.addr	= 0,
+			.addr	= ~0ULL,
 			.period	= event->hw.last_period,
 		};
 

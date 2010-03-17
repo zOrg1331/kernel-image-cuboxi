@@ -28,9 +28,9 @@
 #include <linux/mm.h>
 #include <linux/uaccess.h>
 
-#include <mach/dma.h>
-#include <mach/omapfb.h>
+#include <plat/dma.h>
 
+#include "omapfb.h"
 #include "lcdc.h"
 #include "dispc.h"
 
@@ -81,6 +81,19 @@ static struct caps_table_struct color_caps[] = {
 	{ 1 << OMAPFB_COLOR_CLUT_1BPP,	"CLUT1", },
 	{ 1 << OMAPFB_COLOR_RGB444,	"RGB444", },
 	{ 1 << OMAPFB_COLOR_YUY422,	"YUY422", },
+};
+
+static void omapdss_release(struct device *dev)
+{
+}
+
+/* dummy device for clocks */
+static struct platform_device omapdss_device = {
+	.name		= "omapdss",
+	.id		= -1,
+	.dev            = {
+		.release = omapdss_release,
+	},
 };
 
 /*
@@ -393,7 +406,7 @@ static void omapfb_sync(struct fb_info *fbi)
  * Set fb_info.fix fields and also updates fbdev.
  * When calling this fb_info.var must be set up already.
  */
-static void set_fb_fix(struct fb_info *fbi)
+static void set_fb_fix(struct fb_info *fbi, int from_init)
 {
 	struct fb_fix_screeninfo *fix = &fbi->fix;
 	struct fb_var_screeninfo *var = &fbi->var;
@@ -403,10 +416,16 @@ static void set_fb_fix(struct fb_info *fbi)
 
 	rg = &plane->fbdev->mem_desc.region[plane->idx];
 	fbi->screen_base	= rg->vaddr;
-	mutex_lock(&fbi->mm_lock);
-	fix->smem_start		= rg->paddr;
-	fix->smem_len		= rg->size;
-	mutex_unlock(&fbi->mm_lock);
+
+	if (!from_init) {
+		mutex_lock(&fbi->mm_lock);
+		fix->smem_start		= rg->paddr;
+		fix->smem_len		= rg->size;
+		mutex_unlock(&fbi->mm_lock);
+	} else {
+		fix->smem_start		= rg->paddr;
+		fix->smem_len		= rg->size;
+	}
 
 	fix->type = FB_TYPE_PACKED_PIXELS;
 	bpp = var->bits_per_pixel;
@@ -467,10 +486,11 @@ static int set_color_mode(struct omapfb_plane_struct *plane,
 		return 0;
 	case 12:
 		var->bits_per_pixel = 16;
-		plane->color_mode = OMAPFB_COLOR_RGB444;
-		return 0;
 	case 16:
-		plane->color_mode = OMAPFB_COLOR_RGB565;
+		if (plane->fbdev->panel->bpp == 12)
+			plane->color_mode = OMAPFB_COLOR_RGB444;
+		else
+			plane->color_mode = OMAPFB_COLOR_RGB565;
 		return 0;
 	default:
 		return -EINVAL;
@@ -704,7 +724,7 @@ static int omapfb_set_par(struct fb_info *fbi)
 	int r = 0;
 
 	omapfb_rqueue_lock(fbdev);
-	set_fb_fix(fbi);
+	set_fb_fix(fbi, 0);
 	r = ctrl_change_mode(fbi);
 	omapfb_rqueue_unlock(fbdev);
 
@@ -904,7 +924,7 @@ static int omapfb_setup_mem(struct fb_info *fbi, struct omapfb_mem_info *mi)
 		if (old_size != size) {
 			if (size) {
 				memcpy(&fbi->var, new_var, sizeof(fbi->var));
-				set_fb_fix(fbi);
+				set_fb_fix(fbi, 0);
 			} else {
 				/*
 				 * Set these explicitly to indicate that the
@@ -1504,7 +1524,7 @@ static int fbinfo_init(struct omapfb_device *fbdev, struct fb_info *info)
 	var->bits_per_pixel = fbdev->panel->bpp;
 
 	set_fb_var(info, var);
-	set_fb_fix(info);
+	set_fb_fix(info, 1);
 
 	r = fb_alloc_cmap(&info->cmap, 16, 0);
 	if (r != 0)
@@ -1694,6 +1714,7 @@ static int omapfb_do_probe(struct platform_device *pdev,
 
 	fbdev->dev = &pdev->dev;
 	fbdev->panel = panel;
+	fbdev->dssdev = &omapdss_device;
 	platform_set_drvdata(pdev, fbdev);
 
 	mutex_init(&fbdev->rqueue_mutex);
@@ -1808,7 +1829,15 @@ cleanup:
 
 static int omapfb_probe(struct platform_device *pdev)
 {
+	int r;
+
 	BUG_ON(fbdev_pdev != NULL);
+
+	r = platform_device_register(&omapdss_device);
+	if (r) {
+		dev_err(&pdev->dev, "can't register omapdss device\n");
+		return r;
+	}
 
 	/* Delay actual initialization until the LCD is registered */
 	fbdev_pdev = pdev;
@@ -1836,6 +1865,9 @@ static int omapfb_remove(struct platform_device *pdev)
 
 	fbdev->state = OMAPFB_DISABLED;
 	omapfb_free_resources(fbdev, saved_state);
+
+	platform_device_unregister(&omapdss_device);
+	fbdev->dssdev = NULL;
 
 	return 0;
 }

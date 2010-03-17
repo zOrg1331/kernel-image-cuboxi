@@ -31,7 +31,6 @@
 #include <linux/clocksource.h>
 #include <linux/clockchips.h>
 
-#include <linux/amba/bus.h>
 #include <mach/csp/mm_addr.h>
 #include <mach/hardware.h>
 #include <asm/clkdev.h>
@@ -45,7 +44,6 @@
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
 #include <asm/mach/map.h>
-#include <asm/mach/mmc.h>
 
 #include <cfg_global.h>
 
@@ -144,8 +142,7 @@ void __init bcmring_amba_init(void)
 
 	chipcHw_busInterfaceClockEnable(bus_clock);
 
-	for (i = 0; i < ARRAY_SIZE(lookups); i++)
-		clkdev_add(&lookups[i]);
+	clkdev_add_table(lookups, ARRAY_SIZE(lookups));
 
 	for (i = 0; i < ARRAY_SIZE(amba_devs); i++) {
 		struct amba_device *d = amba_devs[i];
@@ -273,12 +270,12 @@ static struct irqaction bcmring_timer_irq = {
 	.handler = bcmring_timer_interrupt,
 };
 
-static cycle_t bcmring_get_cycles_timer1(void)
+static cycle_t bcmring_get_cycles_timer1(struct clocksource *cs)
 {
 	return ~readl(TIMER1_VA_BASE + TIMER_VALUE);
 }
 
-static cycle_t bcmring_get_cycles_timer3(void)
+static cycle_t bcmring_get_cycles_timer3(struct clocksource *cs)
 {
 	return ~readl(TIMER3_VA_BASE + TIMER_VALUE);
 }

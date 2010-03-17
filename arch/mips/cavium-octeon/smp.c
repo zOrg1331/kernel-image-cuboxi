@@ -65,11 +65,12 @@ void octeon_send_ipi_single(int cpu, unsigned int action)
 	cvmx_write_csr(CVMX_CIU_MBOX_SETX(coreid), action);
 }
 
-static inline void octeon_send_ipi_mask(cpumask_t mask, unsigned int action)
+static inline void octeon_send_ipi_mask(const struct cpumask *mask,
+					unsigned int action)
 {
 	unsigned int i;
 
-	for_each_cpu_mask(i, mask)
+	for_each_cpu_mask(i, *mask)
 		octeon_send_ipi_single(i, action);
 }
 
@@ -326,7 +327,7 @@ static void octeon_cpu_die(unsigned int cpu)
 				   avail_coremask);
 	}
 
-	pr_info("Reset core %d. Available Coremask = %x \n", coreid,
+	pr_info("Reset core %d. Available Coremask = %x\n", coreid,
 		avail_coremask);
 	cvmx_write_csr(CVMX_CIU_PP_RST, 1 << coreid);
 	cvmx_write_csr(CVMX_CIU_PP_RST, 0);

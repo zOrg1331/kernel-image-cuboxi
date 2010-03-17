@@ -364,9 +364,6 @@ void __init pxa27x_set_i2c_power_info(struct i2c_pxa_platform_data *info)
 
 static struct platform_device *devices[] __initdata = {
 	&pxa27x_device_udc,
-	&pxa_device_ffuart,
-	&pxa_device_btuart,
-	&pxa_device_stuart,
 	&pxa_device_i2s,
 	&sa1100_device_rtc,
 	&pxa_device_rtc,
@@ -395,7 +392,7 @@ static int __init pxa27x_init(void)
 
 		reset_status = RCSR;
 
-		clks_register(pxa27x_clkregs, ARRAY_SIZE(pxa27x_clkregs));
+		clkdev_add_table(pxa27x_clkregs, ARRAY_SIZE(pxa27x_clkregs));
 
 		if ((ret = pxa_init_dma(IRQ_DMA, 32)))
 			return ret;

@@ -747,7 +747,6 @@ static void ipaq_read_bulk_callback(struct urb *urb)
 
 	tty = tty_port_tty_get(&port->port);
 	if (tty && urb->actual_length) {
-		tty_buffer_request_room(tty, urb->actual_length);
 		tty_insert_flip_string(tty, data, urb->actual_length);
 		tty_flip_buffer_push(tty);
 		bytes_in += urb->actual_length;
@@ -966,6 +965,15 @@ static int ipaq_calc_num_ports(struct usb_serial *serial)
 static int ipaq_startup(struct usb_serial *serial)
 {
 	dbg("%s", __func__);
+
+	/* Some of the devices in ipaq_id_table[] are composite, and we
+	 * shouldn't bind to all the interfaces.  This test will rule out
+	 * some obviously invalid possibilities.
+	 */
+	if (serial->num_bulk_in < serial->num_ports ||
+			serial->num_bulk_out < serial->num_ports)
+		return -ENODEV;
+
 	if (serial->dev->actconfig->desc.bConfigurationValue != 1) {
 		/*
 		 * FIXME: HP iPaq rx3715, possibly others, have 1 config that

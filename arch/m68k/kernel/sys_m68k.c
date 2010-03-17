@@ -28,38 +28,22 @@
 #include <asm/traps.h>
 #include <asm/page.h>
 #include <asm/unistd.h>
+#include <linux/elf.h>
+#include <asm/tlb.h>
 
-/* common code for old and new mmaps */
-static inline long do_mmap2(
-	unsigned long addr, unsigned long len,
-	unsigned long prot, unsigned long flags,
-	unsigned long fd, unsigned long pgoff)
-{
-	int error = -EBADF;
-	struct file * file = NULL;
-
-	flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
-	if (!(flags & MAP_ANONYMOUS)) {
-		file = fget(fd);
-		if (!file)
-			goto out;
-	}
-
-	down_write(&current->mm->mmap_sem);
-	error = do_mmap_pgoff(file, addr, len, prot, flags, pgoff);
-	up_write(&current->mm->mmap_sem);
-
-	if (file)
-		fput(file);
-out:
-	return error;
-}
+asmlinkage int do_page_fault(struct pt_regs *regs, unsigned long address,
+			     unsigned long error_code);
 
 asmlinkage long sys_mmap2(unsigned long addr, unsigned long len,
 	unsigned long prot, unsigned long flags,
 	unsigned long fd, unsigned long pgoff)
 {
-	return do_mmap2(addr, len, prot, flags, fd, pgoff);
+	/*
+	 * This is wrong for sun3 - there PAGE_SIZE is 8Kb,
+	 * so we need to shift the argument down by 1; m68k mmap64(3)
+	 * (in libc) expects the last argument of mmap2 in 4Kb units.
+	 */
+	return sys_mmap_pgoff(addr, len, prot, flags, fd, pgoff);
 }
 
 /*
@@ -90,57 +74,11 @@ asmlinkage int old_mmap(struct mmap_arg_struct __user *arg)
 	if (a.offset & ~PAGE_MASK)
 		goto out;
 
-	a.flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
-
-	error = do_mmap2(a.addr, a.len, a.prot, a.flags, a.fd, a.offset >> PAGE_SHIFT);
+	error = sys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd,
+			       a.offset >> PAGE_SHIFT);
 out:
 	return error;
 }
-
-#if 0
-struct mmap_arg_struct64 {
-	__u32 addr;
-	__u32 len;
-	__u32 prot;
-	__u32 flags;
-	__u64 offset; /* 64 bits */
-	__u32 fd;
-};
-
-asmlinkage long sys_mmap64(struct mmap_arg_struct64 *arg)
-{
-	int error = -EFAULT;
-	struct file * file = NULL;
-	struct mmap_arg_struct64 a;
-	unsigned long pgoff;
-
-	if (copy_from_user(&a, arg, sizeof(a)))
-		return -EFAULT;
-
-	if ((long)a.offset & ~PAGE_MASK)
-		return -EINVAL;
-
-	pgoff = a.offset >> PAGE_SHIFT;
-	if ((a.offset >> PAGE_SHIFT) != pgoff)
-		return -EINVAL;
-
-	if (!(a.flags & MAP_ANONYMOUS)) {
-		error = -EBADF;
-		file = fget(a.fd);
-		if (!file)
-			goto out;
-	}
-	a.flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
-
-	down_write(&current->mm->mmap_sem);
-	error = do_mmap_pgoff(file, a.addr, a.len, a.prot, a.flags, pgoff);
-	up_write(&current->mm->mmap_sem);
-	if (file)
-		fput(file);
-out:
-	return error;
-}
-#endif
 
 struct sel_arg_struct {
 	unsigned long n;
@@ -661,4 +599,80 @@ int kernel_execve(const char *filename, char *const argv[], char *const envp[])
 	asm volatile ("trap  #0" : "+d" (__res)
 			: "d" (__a), "d" (__b), "d" (__c));
 	return __res;
+}
+
+asmlinkage unsigned long sys_get_thread_area(void)
+{
+	return current_thread_info()->tp_value;
+}
+
+asmlinkage int sys_set_thread_area(unsigned long tp)
+{
+	current_thread_info()->tp_value = tp;
+	return 0;
+}
+
+/* This syscall gets its arguments in A0 (mem), D2 (oldval) and
+   D1 (newval).  */
+asmlinkage int
+sys_atomic_cmpxchg_32(unsigned long newval, int oldval, int d3, int d4, int d5,
+		      unsigned long __user * mem)
+{
+	/* This was borrowed from ARM's implementation.  */
+	for (;;) {
+		struct mm_struct *mm = current->mm;
+		pgd_t *pgd;
+		pmd_t *pmd;
+		pte_t *pte;
+		spinlock_t *ptl;
+		unsigned long mem_value;
+
+		down_read(&mm->mmap_sem);
+		pgd = pgd_offset(mm, (unsigned long)mem);
+		if (!pgd_present(*pgd))
+			goto bad_access;
+		pmd = pmd_offset(pgd, (unsigned long)mem);
+		if (!pmd_present(*pmd))
+			goto bad_access;
+		pte = pte_offset_map_lock(mm, pmd, (unsigned long)mem, &ptl);
+		if (!pte_present(*pte) || !pte_dirty(*pte)
+		    || !pte_write(*pte)) {
+			pte_unmap_unlock(pte, ptl);
+			goto bad_access;
+		}
+
+		mem_value = *mem;
+		if (mem_value == oldval)
+			*mem = newval;
+
+		pte_unmap_unlock(pte, ptl);
+		up_read(&mm->mmap_sem);
+		return mem_value;
+
+	      bad_access:
+		up_read(&mm->mmap_sem);
+		/* This is not necessarily a bad access, we can get here if
+		   a memory we're trying to write to should be copied-on-write.
+		   Make the kernel do the necessary page stuff, then re-iterate.
+		   Simulate a write access fault to do that.  */
+		{
+			/* The first argument of the function corresponds to
+			   D1, which is the first field of struct pt_regs.  */
+			struct pt_regs *fp = (struct pt_regs *)&newval;
+
+			/* '3' is an RMW flag.  */
+			if (do_page_fault(fp, (unsigned long)mem, 3))
+				/* If the do_page_fault() failed, we don't
+				   have anything meaningful to return.
+				   There should be a SIGSEGV pending for
+				   the process.  */
+				return 0xdeadbeef;
+		}
+	}
+}
+
+asmlinkage int sys_atomic_barrier(void)
+{
+	/* no code needed for uniprocs */
+	return 0;
 }

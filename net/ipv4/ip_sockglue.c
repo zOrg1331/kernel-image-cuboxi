@@ -245,7 +245,7 @@ int ip_ra_control(struct sock *sk, unsigned char on,
 {
 	struct ip_ra_chain *ra, *new_ra, **rap;
 
-	if (sk->sk_type != SOCK_RAW || inet_sk(sk)->num == IPPROTO_RAW)
+	if (sk->sk_type != SOCK_RAW || inet_sk(sk)->inet_num == IPPROTO_RAW)
 		return -EINVAL;
 
 	new_ra = on ? kmalloc(sizeof(*new_ra), GFP_KERNEL) : NULL;
@@ -440,7 +440,7 @@ out:
  */
 
 static int do_ip_setsockopt(struct sock *sk, int level,
-			    int optname, char __user *optval, int optlen)
+			    int optname, char __user *optval, unsigned int optlen)
 {
 	struct inet_sock *inet = inet_sk(sk);
 	int val = 0, err;
@@ -451,7 +451,8 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 			     (1<<IP_TTL) | (1<<IP_HDRINCL) |
 			     (1<<IP_MTU_DISCOVER) | (1<<IP_RECVERR) |
 			     (1<<IP_ROUTER_ALERT) | (1<<IP_FREEBIND) |
-			     (1<<IP_PASSSEC) | (1<<IP_TRANSPARENT))) ||
+			     (1<<IP_PASSSEC) | (1<<IP_TRANSPARENT) |
+			     (1<<IP_MINTTL))) ||
 	    optname == IP_MULTICAST_TTL ||
 	    optname == IP_MULTICAST_ALL ||
 	    optname == IP_MULTICAST_LOOP ||
@@ -480,7 +481,7 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 	case IP_OPTIONS:
 	{
 		struct ip_options *opt = NULL;
-		if (optlen > 40 || optlen < 0)
+		if (optlen > 40)
 			goto e_inval;
 		err = ip_options_get_from_user(sock_net(sk), &opt,
 					       optval, optlen);
@@ -492,7 +493,7 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 			if (sk->sk_family == PF_INET ||
 			    (!((1 << sk->sk_state) &
 			       (TCPF_LISTEN | TCPF_CLOSE)) &&
-			     inet->daddr != LOOPBACK4_IPV6)) {
+			     inet->inet_daddr != LOOPBACK4_IPV6)) {
 #endif
 				if (inet->opt)
 					icsk->icsk_ext_hdr_len -= inet->opt->optlen;
@@ -575,7 +576,7 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 		inet->hdrincl = val ? 1 : 0;
 		break;
 	case IP_MTU_DISCOVER:
-		if (val < 0 || val > 3)
+		if (val < IP_PMTUDISC_DONT || val > IP_PMTUDISC_PROBE)
 			goto e_inval;
 		inet->pmtudisc = val;
 		break;
@@ -634,17 +635,16 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 				break;
 			}
 			dev = ip_dev_find(sock_net(sk), mreq.imr_address.s_addr);
-			if (dev) {
+			if (dev)
 				mreq.imr_ifindex = dev->ifindex;
-				dev_put(dev);
-			}
 		} else
-			dev = __dev_get_by_index(sock_net(sk), mreq.imr_ifindex);
+			dev = dev_get_by_index(sock_net(sk), mreq.imr_ifindex);
 
 
 		err = -EADDRNOTAVAIL;
 		if (!dev)
 			break;
+		dev_put(dev);
 
 		err = -EINVAL;
 		if (sk->sk_bound_dev_if &&
@@ -937,6 +937,14 @@ mc_msf_out:
 		inet->transparent = !!val;
 		break;
 
+	case IP_MINTTL:
+		if (optlen < 1)
+			goto e_inval;
+		if (val < 0 || val > 255)
+			goto e_inval;
+		inet->min_ttl = val;
+		break;
+
 	default:
 		err = -ENOPROTOOPT;
 		break;
@@ -950,7 +958,7 @@ e_inval:
 }
 
 int ip_setsockopt(struct sock *sk, int level,
-		int optname, char __user *optval, int optlen)
+		int optname, char __user *optval, unsigned int optlen)
 {
 	int err;
 
@@ -975,7 +983,7 @@ EXPORT_SYMBOL(ip_setsockopt);
 
 #ifdef CONFIG_COMPAT
 int compat_ip_setsockopt(struct sock *sk, int level, int optname,
-			 char __user *optval, int optlen)
+			 char __user *optval, unsigned int optlen)
 {
 	int err;
 
@@ -1181,8 +1189,8 @@ static int do_ip_getsockopt(struct sock *sk, int level, int optname,
 		if (inet->cmsg_flags & IP_CMSG_PKTINFO) {
 			struct in_pktinfo info;
 
-			info.ipi_addr.s_addr = inet->rcv_saddr;
-			info.ipi_spec_dst.s_addr = inet->rcv_saddr;
+			info.ipi_addr.s_addr = inet->inet_rcv_saddr;
+			info.ipi_spec_dst.s_addr = inet->inet_rcv_saddr;
 			info.ipi_ifindex = inet->mc_index;
 			put_cmsg(&msg, SOL_IP, IP_PKTINFO, sizeof(info), &info);
 		}
@@ -1198,6 +1206,9 @@ static int do_ip_getsockopt(struct sock *sk, int level, int optname,
 		break;
 	case IP_TRANSPARENT:
 		val = inet->transparent;
+		break;
+	case IP_MINTTL:
+		val = inet->min_ttl;
 		break;
 	default:
 		release_sock(sk);

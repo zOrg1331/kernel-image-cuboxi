@@ -62,6 +62,7 @@
 /* #define DEBUG_STATUS_B */
 
 #include <linux/interrupt.h>
+#include <linux/sched.h>
 #include "8255.h"
 #include "mite.h"
 #include "comedi_fc.h"
@@ -2206,7 +2207,7 @@ static int ni_ai_cmdtest(struct comedi_device *dev, struct comedi_subdevice *s,
 
 	/* step 2: make sure trigger sources are unique and mutually compatible */
 
-	/* note that mutual compatiblity is not an issue here */
+	/* note that mutual compatibility is not an issue here */
 	if (cmd->start_src != TRIG_NOW &&
 	    cmd->start_src != TRIG_INT && cmd->start_src != TRIG_EXT)
 		err++;
@@ -3794,7 +3795,7 @@ static int ni_cdo_inttrig(struct comedi_device *dev, struct comedi_subdevice *s,
 #endif
 	int retval = 0;
 	unsigned i;
-	const unsigned timeout = 100;
+	const unsigned timeout = 1000;
 
 	s->async->inttrig = NULL;
 

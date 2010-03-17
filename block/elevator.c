@@ -154,10 +154,7 @@ static struct elevator_type *elevator_get(const char *name)
 
 		spin_unlock(&elv_list_lock);
 
-		if (!strcmp(name, "anticipatory"))
-			sprintf(elv, "as-iosched");
-		else
-			sprintf(elv, "%s-iosched", name);
+		sprintf(elv, "%s-iosched", name);
 
 		request_module("%s", elv);
 		spin_lock(&elv_list_lock);
@@ -193,10 +190,7 @@ static int __init elevator_setup(char *str)
 	 * Be backwards-compatible with previous kernels, so users
 	 * won't get the wrong elevator.
 	 */
-	if (!strcmp(str, "as"))
-		strcpy(chosen_elevator, "anticipatory");
-	else
-		strncpy(chosen_elevator, str, sizeof(chosen_elevator) - 1);
+	strncpy(chosen_elevator, str, sizeof(chosen_elevator) - 1);
 	return 1;
 }
 
@@ -480,6 +474,15 @@ int elv_merge(struct request_queue *q, struct request **req, struct bio *bio)
 	int ret;
 
 	/*
+	 * Levels of merges:
+	 * 	nomerges:  No merges at all attempted
+	 * 	noxmerges: Only simple one-hit cache try
+	 * 	merges:	   All merge tries attempted
+	 */
+	if (blk_queue_nomerges(q))
+		return ELEVATOR_NO_MERGE;
+
+	/*
 	 * First try one-hit cache.
 	 */
 	if (q->last_merge) {
@@ -490,7 +493,7 @@ int elv_merge(struct request_queue *q, struct request **req, struct bio *bio)
 		}
 	}
 
-	if (blk_queue_nomerges(q))
+	if (blk_queue_noxmerges(q))
 		return ELEVATOR_NO_MERGE;
 
 	/*
@@ -889,7 +892,7 @@ elv_attr_store(struct kobject *kobj, struct attribute *attr,
 	return error;
 }
 
-static struct sysfs_ops elv_sysfs_ops = {
+static const struct sysfs_ops elv_sysfs_ops = {
 	.show	= elv_attr_show,
 	.store	= elv_attr_store,
 };
@@ -1059,9 +1062,7 @@ ssize_t elv_iosched_store(struct request_queue *q, const char *name,
 		return count;
 
 	strlcpy(elevator_name, name, sizeof(elevator_name));
-	strstrip(elevator_name);
-
-	e = elevator_get(elevator_name);
+	e = elevator_get(strstrip(elevator_name));
 	if (!e) {
 		printk(KERN_ERR "elevator: type %s not found\n", elevator_name);
 		return -EINVAL;

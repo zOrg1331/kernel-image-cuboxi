@@ -30,11 +30,13 @@
 
 #define	D1CRTC_CONTROL					0x6080
 #define		CRTC_EN						(1 << 0)
+#define	D1CRTC_STATUS					0x609c
 #define	D1CRTC_UPDATE_LOCK				0x60E8
 #define	D1GRPH_PRIMARY_SURFACE_ADDRESS			0x6110
 #define	D1GRPH_SECONDARY_SURFACE_ADDRESS		0x6118
 
 #define	D2CRTC_CONTROL					0x6880
+#define	D2CRTC_STATUS					0x689c
 #define	D2CRTC_UPDATE_LOCK				0x68E8
 #define	D2GRPH_PRIMARY_SURFACE_ADDRESS			0x6910
 #define	D2GRPH_SECONDARY_SURFACE_ADDRESS		0x6918
@@ -56,14 +58,5 @@
 #define	VGA_MEMORY_BASE_ADDRESS				0x0310
 #define	VGA_RENDER_CONTROL				0x0300
 #define		VGA_VSTATUS_CNTL_MASK				0x00030000
-
-/* AVIVO disable VGA rendering */
-static inline void radeon_avivo_vga_render_disable(struct radeon_device *rdev)
-{
-	u32 vga_render;
-	vga_render = RREG32(VGA_RENDER_CONTROL);
-	vga_render &= ~VGA_VSTATUS_CNTL_MASK;
-	WREG32(VGA_RENDER_CONTROL, vga_render);
-}
 
 #endif

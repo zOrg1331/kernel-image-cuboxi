@@ -79,11 +79,7 @@ unsigned long vmi_tsc_khz(void)
 
 static inline unsigned int vmi_get_timer_vector(void)
 {
-#ifdef CONFIG_X86_IO_APIC
-	return FIRST_DEVICE_VECTOR;
-#else
-	return FIRST_EXTERNAL_VECTOR;
-#endif
+	return IRQ0_VECTOR;
 }
 
 /** vmi clockchip */
@@ -226,7 +222,7 @@ static void __devinit vmi_time_init_clockevent(void)
 	evt->min_delta_ns = clockevent_delta2ns(1, evt);
 	evt->cpumask = cpumask_of(cpu);
 
-	printk(KERN_WARNING "vmi: registering clock event %s. mult=%lu shift=%u\n",
+	printk(KERN_WARNING "vmi: registering clock event %s. mult=%u shift=%u\n",
 	       evt->name, evt->mult, evt->shift);
 	clockevents_register_device(evt);
 }

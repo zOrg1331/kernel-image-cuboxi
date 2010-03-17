@@ -55,6 +55,7 @@ static void __init reset_tod_clock(void)
 		disabled_wait(0);
 
 	sched_clock_base_cc = TOD_UNIX_EPOCH;
+	S390_lowcore.last_update_clock = sched_clock_base_cc;
 }
 
 #ifdef CONFIG_SHARED_KERNEL
@@ -167,6 +168,14 @@ static noinline __init void create_kernel_nss(void)
 		return;
 	}
 
+	/* re-initialize cputime accounting. */
+	sched_clock_base_cc = get_clock();
+	S390_lowcore.last_update_clock = sched_clock_base_cc;
+	S390_lowcore.last_update_timer = 0x7fffffffffffffffULL;
+	S390_lowcore.user_timer = 0;
+	S390_lowcore.system_timer = 0;
+	asm volatile("SPT 0(%0)" : : "a" (&S390_lowcore.last_update_timer));
+
 	/* re-setup boot command line with new ipl vm parms */
 	ipl_update_parameters();
 	setup_boot_command_line();
@@ -205,10 +214,13 @@ static __initdata struct sysinfo_3_2_2 vmms __aligned(PAGE_SIZE);
 
 static noinline __init void detect_machine_type(void)
 {
-	/* No VM information? Looks like LPAR */
-	if (stsi(&vmms, 3, 2, 2) == -ENOSYS)
+	/* Check current-configuration-level */
+	if ((stsi(NULL, 0, 0, 0) >> 28) <= 2) {
+		S390_lowcore.machine_flags |= MACHINE_FLAG_LPAR;
 		return;
-	if (!vmms.count)
+	}
+	/* Get virtual-machine cpu information. */
+	if (stsi(&vmms, 3, 2, 2) == -ENOSYS || !vmms.count)
 		return;
 
 	/* Running under KVM? If not we assume z/VM */
@@ -393,8 +405,19 @@ static void __init append_to_cmdline(size_t (*ipl_data)(char *, size_t))
 
 static void __init setup_boot_command_line(void)
 {
+	int i;
+
+	/* convert arch command line to ascii */
+	for (i = 0; i < ARCH_COMMAND_LINE_SIZE; i++)
+		if (COMMAND_LINE[i] & 0x80)
+			break;
+	if (i < ARCH_COMMAND_LINE_SIZE)
+		EBCASC(COMMAND_LINE, ARCH_COMMAND_LINE_SIZE);
+	COMMAND_LINE[ARCH_COMMAND_LINE_SIZE-1] = 0;
+
 	/* copy arch command line */
-	strlcpy(boot_command_line, COMMAND_LINE, ARCH_COMMAND_LINE_SIZE);
+	strlcpy(boot_command_line, strstrip(COMMAND_LINE),
+		ARCH_COMMAND_LINE_SIZE);
 
 	/* append IPL PARM data to the boot command line */
 	if (MACHINE_IS_VM)

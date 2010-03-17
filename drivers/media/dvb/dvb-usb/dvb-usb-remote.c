@@ -107,6 +107,7 @@ static void dvb_usb_read_remote_control(struct work_struct *work)
 		case REMOTE_KEY_REPEAT:
 			deb_rc("key repeated\n");
 			input_event(d->rc_input_dev, EV_KEY, event, 1);
+			input_sync(d->rc_input_dev);
 			input_event(d->rc_input_dev, EV_KEY, d->last_event, 0);
 			input_sync(d->rc_input_dev);
 			break;
@@ -259,7 +260,7 @@ int dvb_usb_nec_rc_key_to_event(struct dvb_usb_device *d,
 			*state = REMOTE_KEY_REPEAT;
 			break;
 		default:
-			deb_err("unkown type of remote status: %d\n",keybuf[0]);
+			deb_err("unknown type of remote status: %d\n",keybuf[0]);
 			break;
 	}
 	return 0;

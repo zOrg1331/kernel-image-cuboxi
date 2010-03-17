@@ -111,17 +111,17 @@ static int debug;
    separate ID tables, and then a third table that combines them
    just for the purpose of exporting the autoloading information.
 */
-static struct usb_device_id id_table_std [] = {
+static const struct usb_device_id id_table_std[] = {
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_WHITE_HEAT_ID) },
 	{ }						/* Terminating entry */
 };
 
-static struct usb_device_id id_table_prerenumeration [] = {
+static const struct usb_device_id id_table_prerenumeration[] = {
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_FAKE_WHITE_HEAT_ID) },
 	{ }						/* Terminating entry */
 };
 
-static struct usb_device_id id_table_combined [] = {
+static const struct usb_device_id id_table_combined[] = {
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_WHITE_HEAT_ID) },
 	{ USB_DEVICE(CONNECT_TECH_VENDOR_ID, CONNECT_TECH_FAKE_WHITE_HEAT_ID) },
 	{ }						/* Terminating entry */
@@ -949,13 +949,12 @@ static void whiteheat_throttle(struct tty_struct *tty)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct whiteheat_private *info = usb_get_serial_port_data(port);
-	unsigned long flags;
 
 	dbg("%s - port %d", __func__, port->number);
 
-	spin_lock_irqsave(&info->lock, flags);
+	spin_lock_irq(&info->lock);
 	info->flags |= THROTTLED;
-	spin_unlock_irqrestore(&info->lock, flags);
+	spin_unlock_irq(&info->lock);
 
 	return;
 }
@@ -966,14 +965,13 @@ static void whiteheat_unthrottle(struct tty_struct *tty)
 	struct usb_serial_port *port = tty->driver_data;
 	struct whiteheat_private *info = usb_get_serial_port_data(port);
 	int actually_throttled;
-	unsigned long flags;
 
 	dbg("%s - port %d", __func__, port->number);
 
-	spin_lock_irqsave(&info->lock, flags);
+	spin_lock_irq(&info->lock);
 	actually_throttled = info->flags & ACTUALLY_THROTTLED;
 	info->flags &= ~(THROTTLED | ACTUALLY_THROTTLED);
-	spin_unlock_irqrestore(&info->lock, flags);
+	spin_unlock_irq(&info->lock);
 
 	if (actually_throttled)
 		rx_data_softint(&info->rx_work);
@@ -1494,21 +1492,9 @@ static void rx_data_softint(struct work_struct *work)
 		wrap = list_entry(tmp, struct whiteheat_urb_wrap, list);
 		urb = wrap->urb;
 
-		if (tty && urb->actual_length) {
-			int len = tty_buffer_request_room(tty,
-							urb->actual_length);
-			/* This stuff can go away now I suspect */
-			if (unlikely(len < urb->actual_length)) {
-				spin_lock_irqsave(&info->lock, flags);
-				list_add(tmp, &info->rx_urb_q);
-				spin_unlock_irqrestore(&info->lock, flags);
-				tty_flip_buffer_push(tty);
-				schedule_work(&info->rx_work);
-				goto out;
-			}
-			tty_insert_flip_string(tty, urb->transfer_buffer, len);
-			sent += len;
-		}
+		if (tty && urb->actual_length)
+			sent += tty_insert_flip_string(tty,
+				urb->transfer_buffer, urb->actual_length);
 
 		urb->dev = port->serial->dev;
 		result = usb_submit_urb(urb, GFP_ATOMIC);

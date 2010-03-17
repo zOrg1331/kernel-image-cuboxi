@@ -78,7 +78,7 @@ static int debug;
 #define DRIVER_DESC "AIRcable USB Driver"
 
 /* ID table that will be registered with USB core */
-static struct usb_device_id id_table [] = {
+static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(AIRCABLE_VID, AIRCABLE_USB_PID) },
 	{ },
 };
@@ -468,10 +468,6 @@ static void aircable_read_bulk_callback(struct urb *urb)
 
 	if (status) {
 		dbg("%s - urb status = %d", __func__, status);
-		if (!port->port.count) {
-			dbg("%s - port is closed, exiting.", __func__);
-			return;
-		}
 		if (status == -EPROTO) {
 			dbg("%s - caught -EPROTO, resubmitting the urb",
 			    __func__);
@@ -530,23 +526,19 @@ static void aircable_read_bulk_callback(struct urb *urb)
 	}
 	tty_kref_put(tty);
 
-	/* Schedule the next read _if_ we are still open */
-	if (port->port.count) {
-		usb_fill_bulk_urb(port->read_urb, port->serial->dev,
-				  usb_rcvbulkpipe(port->serial->dev,
-					  port->bulk_in_endpointAddress),
-				  port->read_urb->transfer_buffer,
-				  port->read_urb->transfer_buffer_length,
-				  aircable_read_bulk_callback, port);
+	/* Schedule the next read */
+	usb_fill_bulk_urb(port->read_urb, port->serial->dev,
+			  usb_rcvbulkpipe(port->serial->dev,
+				  port->bulk_in_endpointAddress),
+			  port->read_urb->transfer_buffer,
+			  port->read_urb->transfer_buffer_length,
+			  aircable_read_bulk_callback, port);
 
-		result = usb_submit_urb(urb, GFP_ATOMIC);
-		if (result)
-			dev_err(&urb->dev->dev,
-				"%s - failed resubmitting read urb, error %d\n",
-				__func__, result);
-	}
-
-	return;
+	result = usb_submit_urb(urb, GFP_ATOMIC);
+	if (result && result != -EPERM)
+		dev_err(&urb->dev->dev,
+			"%s - failed resubmitting read urb, error %d\n",
+			__func__, result);
 }
 
 /* Based on ftdi_sio.c throttle */
@@ -554,13 +546,12 @@ static void aircable_throttle(struct tty_struct *tty)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct aircable_private *priv = usb_get_serial_port_data(port);
-	unsigned long flags;
 
 	dbg("%s - port %d", __func__, port->number);
 
-	spin_lock_irqsave(&priv->rx_lock, flags);
+	spin_lock_irq(&priv->rx_lock);
 	priv->rx_flags |= THROTTLED;
-	spin_unlock_irqrestore(&priv->rx_lock, flags);
+	spin_unlock_irq(&priv->rx_lock);
 }
 
 /* Based on ftdi_sio.c unthrottle */
@@ -569,14 +560,13 @@ static void aircable_unthrottle(struct tty_struct *tty)
 	struct usb_serial_port *port = tty->driver_data;
 	struct aircable_private *priv = usb_get_serial_port_data(port);
 	int actually_throttled;
-	unsigned long flags;
 
 	dbg("%s - port %d", __func__, port->number);
 
-	spin_lock_irqsave(&priv->rx_lock, flags);
+	spin_lock_irq(&priv->rx_lock);
 	actually_throttled = priv->rx_flags & ACTUALLY_THROTTLED;
 	priv->rx_flags &= ~(THROTTLED | ACTUALLY_THROTTLED);
-	spin_unlock_irqrestore(&priv->rx_lock, flags);
+	spin_unlock_irq(&priv->rx_lock);
 
 	if (actually_throttled)
 		schedule_work(&priv->rx_work);

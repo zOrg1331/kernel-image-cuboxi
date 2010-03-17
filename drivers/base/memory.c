@@ -44,7 +44,7 @@ static int memory_uevent(struct kset *kset, struct kobject *obj, struct kobj_uev
 	return retval;
 }
 
-static struct kset_uevent_ops memory_uevent_ops = {
+static const struct kset_uevent_ops memory_uevent_ops = {
 	.name		= memory_uevent_name,
 	.uevent		= memory_uevent,
 };
@@ -62,6 +62,20 @@ void unregister_memory_notifier(struct notifier_block *nb)
         blocking_notifier_chain_unregister(&memory_chain, nb);
 }
 EXPORT_SYMBOL(unregister_memory_notifier);
+
+static ATOMIC_NOTIFIER_HEAD(memory_isolate_chain);
+
+int register_memory_isolate_notifier(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_register(&memory_isolate_chain, nb);
+}
+EXPORT_SYMBOL(register_memory_isolate_notifier);
+
+void unregister_memory_isolate_notifier(struct notifier_block *nb)
+{
+	atomic_notifier_chain_unregister(&memory_isolate_chain, nb);
+}
+EXPORT_SYMBOL(unregister_memory_isolate_notifier);
 
 /*
  * register_memory - Setup a sysfs device for a memory block
@@ -155,6 +169,11 @@ static ssize_t show_mem_state(struct sys_device *dev,
 int memory_notify(unsigned long val, void *v)
 {
 	return blocking_notifier_call_chain(&memory_chain, val, v);
+}
+
+int memory_isolate_notify(unsigned long val, void *v)
+{
+	return atomic_notifier_call_chain(&memory_isolate_chain, val, v);
 }
 
 /*
@@ -290,17 +309,18 @@ static SYSDEV_ATTR(removable, 0444, show_mem_removable, NULL);
  * Block size attribute stuff
  */
 static ssize_t
-print_block_size(struct class *class, char *buf)
+print_block_size(struct sysdev_class *class, struct sysdev_class_attribute *attr,
+		 char *buf)
 {
-	return sprintf(buf, "%lx\n", (unsigned long)PAGES_PER_SECTION * PAGE_SIZE);
+	return sprintf(buf, "%#lx\n", (unsigned long)PAGES_PER_SECTION * PAGE_SIZE);
 }
 
-static CLASS_ATTR(block_size_bytes, 0444, print_block_size, NULL);
+static SYSDEV_CLASS_ATTR(block_size_bytes, 0444, print_block_size, NULL);
 
 static int block_size_init(void)
 {
 	return sysfs_create_file(&memory_sysdev_class.kset.kobj,
-				&class_attr_block_size_bytes.attr);
+				&attr_block_size_bytes.attr);
 }
 
 /*
@@ -311,7 +331,8 @@ static int block_size_init(void)
  */
 #ifdef CONFIG_ARCH_MEMORY_PROBE
 static ssize_t
-memory_probe_store(struct class *class, const char *buf, size_t count)
+memory_probe_store(struct class *class, struct class_attribute *attr,
+		   const char *buf, size_t count)
 {
 	u64 phys_addr;
 	int nid;
@@ -336,6 +357,68 @@ static int memory_probe_init(void)
 }
 #else
 static inline int memory_probe_init(void)
+{
+	return 0;
+}
+#endif
+
+#ifdef CONFIG_MEMORY_FAILURE
+/*
+ * Support for offlining pages of memory
+ */
+
+/* Soft offline a page */
+static ssize_t
+store_soft_offline_page(struct class *class,
+			struct class_attribute *attr,
+			const char *buf, size_t count)
+{
+	int ret;
+	u64 pfn;
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	if (strict_strtoull(buf, 0, &pfn) < 0)
+		return -EINVAL;
+	pfn >>= PAGE_SHIFT;
+	if (!pfn_valid(pfn))
+		return -ENXIO;
+	ret = soft_offline_page(pfn_to_page(pfn), 0);
+	return ret == 0 ? count : ret;
+}
+
+/* Forcibly offline a page, including killing processes. */
+static ssize_t
+store_hard_offline_page(struct class *class,
+			struct class_attribute *attr,
+			const char *buf, size_t count)
+{
+	int ret;
+	u64 pfn;
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	if (strict_strtoull(buf, 0, &pfn) < 0)
+		return -EINVAL;
+	pfn >>= PAGE_SHIFT;
+	ret = __memory_failure(pfn, 0, 0);
+	return ret ? ret : count;
+}
+
+static CLASS_ATTR(soft_offline_page, 0644, NULL, store_soft_offline_page);
+static CLASS_ATTR(hard_offline_page, 0644, NULL, store_hard_offline_page);
+
+static __init int memory_fail_init(void)
+{
+	int err;
+
+	err = sysfs_create_file(&memory_sysdev_class.kset.kobj,
+				&class_attr_soft_offline_page.attr);
+	if (!err)
+		err = sysfs_create_file(&memory_sysdev_class.kset.kobj,
+				&class_attr_hard_offline_page.attr);
+	return err;
+}
+#else
+static inline int memory_fail_init(void)
 {
 	return 0;
 }
@@ -471,6 +554,9 @@ int __init memory_dev_init(void)
 	}
 
 	err = memory_probe_init();
+	if (!ret)
+		ret = err;
+	err = memory_fail_init();
 	if (!ret)
 		ret = err;
 	err = block_size_init();

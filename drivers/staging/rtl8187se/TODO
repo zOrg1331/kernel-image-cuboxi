@@ -5,11 +5,9 @@ TODO:
 - switch to use shared "librtl" instead of private ieee80211 stack
 - switch to use LIB80211
 - switch to use MAC80211
-- switch to use EEPROM_93CX6
 - use kernel coding style
 - checkpatch.pl fixes
 - sparse fixes
 - integrate with drivers/net/wireless/rtl818x
 
-Please send any patches to Greg Kroah-Hartman <greg@kroah.com> and
-Bartlomiej Zolnierkiewicz <bzolnier@gmail.com>.
+Please send any patches to Greg Kroah-Hartman <greg@kroah.com>.

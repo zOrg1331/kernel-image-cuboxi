@@ -1513,7 +1513,6 @@ register_framebuffer(struct fb_info *fb_info)
 				       fb_info->fix.id,
 				       registered_fb[i]->fix.id);
 				unregister_framebuffer(registered_fb[i]);
-				break;
 			}
 		}
 	}
@@ -1800,7 +1799,7 @@ static int __init video_setup(char *options)
  		global = 1;
  	}
 
- 	if (!global && !strstr(options, "fb:")) {
+ 	if (!global && !strchr(options, ':')) {
  		fb_mode_option = options;
  		global = 1;
  	}

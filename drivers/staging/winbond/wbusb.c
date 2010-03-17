@@ -23,7 +23,7 @@ MODULE_DESCRIPTION("IS89C35 802.11bg WLAN USB Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("0.1");
 
-static struct usb_device_id wb35_table[] __devinitdata = {
+static const struct usb_device_id wb35_table[] __devinitconst = {
 	{ USB_DEVICE(0x0416, 0x0035) },
 	{ USB_DEVICE(0x18E8, 0x6201) },
 	{ USB_DEVICE(0x18E8, 0x6206) },
@@ -51,15 +51,31 @@ static struct ieee80211_supported_band wbsoft_band_2GHz = {
 	.n_bitrates	= ARRAY_SIZE(wbsoft_rates),
 };
 
-static int wbsoft_add_interface(struct ieee80211_hw *dev,
-				struct ieee80211_if_init_conf *conf)
+static void hal_set_beacon_period(struct hw_data *pHwData, u16 beacon_period)
 {
-	printk("wbsoft_add interface called\n");
+	u32 tmp;
+
+	if (pHwData->SurpriseRemove)
+		return;
+
+	pHwData->BeaconPeriod = beacon_period;
+	tmp = pHwData->BeaconPeriod << 16;
+	tmp |= pHwData->ProbeDelay;
+	Wb35Reg_Write(pHwData, 0x0848, tmp);
+}
+
+static int wbsoft_add_interface(struct ieee80211_hw *dev,
+				struct ieee80211_vif *vif)
+{
+	struct wbsoft_priv *priv = dev->priv;
+
+	hal_set_beacon_period(&priv->sHwData, vif->bss_conf.beacon_int);
+
 	return 0;
 }
 
 static void wbsoft_remove_interface(struct ieee80211_hw *dev,
-				    struct ieee80211_if_init_conf *conf)
+				    struct ieee80211_vif *vif)
 {
 	printk("wbsoft_remove interface called\n");
 }
@@ -76,17 +92,16 @@ static int wbsoft_get_stats(struct ieee80211_hw *hw,
 	return 0;
 }
 
-static int wbsoft_get_tx_stats(struct ieee80211_hw *hw,
-			       struct ieee80211_tx_queue_stats *stats)
+static u64 wbsoft_prepare_multicast(struct ieee80211_hw *hw, int mc_count,
+				    struct dev_addr_list *mc_list)
 {
-	printk(KERN_INFO "%s called\n", __func__);
-	return 0;
+	return mc_count;
 }
 
 static void wbsoft_configure_filter(struct ieee80211_hw *dev,
 				    unsigned int changed_flags,
 				    unsigned int *total_flags,
-				    int mc_count, struct dev_mc_list *mclist)
+				    u64 multicast)
 {
 	unsigned int new_flags;
 
@@ -94,7 +109,7 @@ static void wbsoft_configure_filter(struct ieee80211_hw *dev,
 
 	if (*total_flags & FIF_PROMISC_IN_BSS)
 		new_flags |= FIF_PROMISC_IN_BSS;
-	else if ((*total_flags & FIF_ALLMULTI) || (mc_count > 32))
+	else if ((*total_flags & FIF_ALLMULTI) || (multicast > 32))
 		new_flags |= FIF_ALLMULTI;
 
 	dev->flags &= ~IEEE80211_HW_RX_INCLUDES_FCS;
@@ -138,21 +153,8 @@ static void hal_set_radio_mode(struct hw_data *pHwData, unsigned char radio_off)
 	Wb35Reg_Write(pHwData, 0x0824, reg->M24_MacControl);
 }
 
-static void hal_set_beacon_period(struct hw_data *pHwData, u16 beacon_period)
-{
-	u32 tmp;
-
-	if (pHwData->SurpriseRemove)
-		return;
-
-	pHwData->BeaconPeriod = beacon_period;
-	tmp = pHwData->BeaconPeriod << 16;
-	tmp |= pHwData->ProbeDelay;
-	Wb35Reg_Write(pHwData, 0x0848, tmp);
-}
-
 static void
-hal_set_current_channel_ex(struct hw_data *pHwData, ChanInfo channel)
+hal_set_current_channel_ex(struct hw_data *pHwData, struct chan_info channel)
 {
 	struct wb35_reg *reg = &pHwData->reg;
 
@@ -171,10 +173,10 @@ hal_set_current_channel_ex(struct hw_data *pHwData, ChanInfo channel)
 	reg->M28_MacControl &= ~0xff;	// Clean channel information field
 	reg->M28_MacControl |= channel.ChanNo;
 	Wb35Reg_WriteWithCallbackValue(pHwData, 0x0828, reg->M28_MacControl,
-				       (s8 *) & channel, sizeof(ChanInfo));
+				       (s8 *) & channel, sizeof(struct chan_info));
 }
 
-static void hal_set_current_channel(struct hw_data *pHwData, ChanInfo channel)
+static void hal_set_current_channel(struct hw_data *pHwData, struct chan_info channel)
 {
 	hal_set_current_channel_ex(pHwData, channel);
 }
@@ -244,8 +246,7 @@ static void hal_set_accept_beacon(struct hw_data *pHwData, u8 enable)
 static int wbsoft_config(struct ieee80211_hw *dev, u32 changed)
 {
 	struct wbsoft_priv *priv = dev->priv;
-	struct ieee80211_conf *conf = &dev->conf;
-	ChanInfo ch;
+	struct chan_info ch;
 
 	printk("wbsoft_config called\n");
 
@@ -254,7 +255,6 @@ static int wbsoft_config(struct ieee80211_hw *dev, u32 changed)
 	ch.ChanNo = 1;
 
 	hal_set_current_channel(&priv->sHwData, ch);
-	hal_set_beacon_period(&priv->sHwData, conf->beacon_int);
 	hal_set_accept_broadcast(&priv->sHwData, 1);
 	hal_set_accept_promiscuous(&priv->sHwData, 1);
 	hal_set_accept_multicast(&priv->sHwData, 1);
@@ -277,9 +277,9 @@ static const struct ieee80211_ops wbsoft_ops = {
 	.add_interface		= wbsoft_add_interface,
 	.remove_interface	= wbsoft_remove_interface,
 	.config			= wbsoft_config,
+	.prepare_multicast	= wbsoft_prepare_multicast,
 	.configure_filter	= wbsoft_configure_filter,
 	.get_stats		= wbsoft_get_stats,
-	.get_tx_stats		= wbsoft_get_tx_stats,
 	.get_tsf		= wbsoft_get_tsf,
 };
 

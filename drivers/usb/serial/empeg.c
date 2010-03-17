@@ -93,7 +93,7 @@ static void empeg_init_termios(struct tty_struct *tty);
 static void empeg_write_bulk_callback(struct urb *urb);
 static void empeg_read_bulk_callback(struct urb *urb);
 
-static struct usb_device_id id_table [] = {
+static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(EMPEG_VENDOR_ID, EMPEG_PRODUCT_ID) },
 	{ }					/* Terminating entry */
 };
@@ -346,7 +346,6 @@ static void empeg_read_bulk_callback(struct urb *urb)
 	tty = tty_port_tty_get(&port->port);
 
 	if (urb->actual_length) {
-		tty_buffer_request_room(tty, urb->actual_length);
 		tty_insert_flip_string(tty, data, urb->actual_length);
 		tty_flip_buffer_push(tty);
 		bytes_in += urb->actual_length;
@@ -391,7 +390,7 @@ static void empeg_unthrottle(struct tty_struct *tty)
 	dbg("%s - port %d", __func__, port->number);
 
 	port->read_urb->dev = port->serial->dev;
-	result = usb_submit_urb(port->read_urb, GFP_ATOMIC);
+	result = usb_submit_urb(port->read_urb, GFP_KERNEL);
 	if (result)
 		dev_err(&port->dev,
 			"%s - failed submitting read urb, error %d\n",
