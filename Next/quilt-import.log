@@ -1,0 +1,186 @@
+Importing driver-core.current based on 2.6.34-rc1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 57d54889cd00db2752994b389ba714138652e60c
+HEAD is now at 57d5488 Linux 2.6.34-rc1
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core.current
+sysfs-use-sysfs_bin_attr_init-in-firmware-class-driver.patch
+sysfs-initialised-pci-bus-legacy_mem-field-before-use.patch
+sysfs-fix-sysfs-lockdep-warning-in-ipmi-code.patch
+sysfs-fix-sysfs-lockdep-warning-in-infiniband-code.patch
+sysfs-fix-sysfs-lockdep-warning-in-mlx4-code.patch
+driver-core-early-platform-kernel-doc-update.patch
+driver-core-fix-missing-kernel-doc-in-firmware_class.patch
+kobject-documentation-fix-erroneous-example-in-kobject-doc.patch
+sysdev-the-cpu-probe-release-attributes-should-be-sysdev_class_attributes.patch
+kobject-documentation-update-to-refer-to-kset-example.c.patch
+driver-core-document-err_ptr-return-values.patch
+driver-core-numa-fix-build_bug_on-for-node_read_distance.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core.current
+From ../quilt-tmp
+   57d5488..d3e40b4  master     -> quilt/driver-core.current
+Importing tty.current based on quilt/driver-core.current
+$ cd ../quilt-tmp
+$ git reset --hard d3e40b4b26d5faede7df748dece1d47dc0f9eb64
+HEAD is now at d3e40b4 driver core: numa: fix BUILD_BUG_ON for node_read_distance
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+revert-tty-add-a-new-vt-mode-which-is-like-vt_process-but-doesn-t-require-a-vt_reldisp-ioctl-call.patch
+tty-take-a-256-byte-padding-into-account-when-buffering-below-sub-page-units.patch
+uartlite-fix-build-on-sparc.patch
+hvc_console-fix-race-between-hvc_close-and-hvc_remove.patch
+tty_buffer-fix-distinct-type-warning.patch
+tty-cpm_uart-use-resource_size.patch
+tty_port-usb-console-fix-usb-serial-console-open-close-regression.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+   57d5488..d8d3331  master     -> quilt/tty.current
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard d8d3331c295d6e91d0d85a7b4606e1f39af7db3b
+HEAD is now at d8d3331 tty_port,usb-console: Fix usb serial console open/close regression
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-fix-usbfs-regression.patch
+usb-serial-fix-error-message-on-close-in-generic-driver.patch
+usb-serial-fix-softint-not-being-called-on-errors.patch
+usb-serial-use-port-endpoint-size-to-determine-if-ep-is-available.patch
+usb-unusual_devs.h-fix-capacity-for-sl11r-ide-2.6c.patch
+usb-option-add-support-for-a-variant-of-dlink-dwm-652-u5.patch
+usb-ehci-fix-itd-list-order.patch
+usb-ehci-adjust-ehci_iso_stream-for-changes-in-ehci_qh.patch
+usb-cdc-acm-fix-stupid-null-pointer-in-resume.patch
+usb-qcserial-add-new-device-ids.patch
+usb-musb-fix-build-error-introduced-by-isoc-change.patch
+usb-xhci-rename-driver-to-xhci_hcd.patch
+usb-xhci-re-initialize-cmd_completion.patch
+usb-serial-ftdi-add-contec-vendor-and-product-id.patch
+usb-option-fix-incorrect-manufacturer-name-in-usb-serial-option-maxon-cmotech.patch
+usb-option-move-hardcoded-pid-to-a-macro-in-usb-serial-option.patch
+usb-option-add-support-for-a-new-cmotech-device-to-usb-serial-option.patch
+usb-fix-documentation-for-avoid_reset_quirk.patch
+usb-gadget-fix-compile-error-on-r8a66597-udc.c.patch
+usb-musb-fix-compile-error-for-omaps-for-musb_hdrc.patch
+usb-musb-abstract-out-ulpi_buscontrol-register-reads-writes.patch
+usb-musb-fix-warnings-in-blackfin-regs.patch
+usb-musb-core-declare-mbase-only-where-it-s-used.patch
+usb-cdc-wdm-fix-race-between-write-and-disconnect.patch
+usb-cdc-wdm-fix-race-between-autosuspend-and-reading-from-the-device.patch
+usb-cdc-wdm-fix-race-between-disconnect-and-debug-messages.patch
+usb-cdc-wdm-fix-submission-of-urb-after-suspension.patch
+usb-cdc-wdm-fix-loss-of-data-due-to-autosuspend.patch
+usb-cdc-wdm-fix-order-in-disconnect-and-fix-locking.patch
+usb-cdc-wdm-fix-deadlock-between-write-and-resume.patch
+usb-serial-fix-module-name-typo-for-qcaux-kconfig-entry.patch
+usb-option.c-add-pirelli-vid-pid-and-indicate-pirelli-s-modem-interface-is-0xff.patch
+usb-goku_udc-remove-potential-null-dereference.patch
+usb-gadget-fix-blackfin-builds-after-gadget-cleansing.patch
+usb-g_mass_storage-fix-section-mismatch-warnings.patch
+usb-gadget-f_mass_storage-fsg_bind-fix-error-handling.patch
+usb-g_mass_storage-fixed-module-name-in-kconfig.patch
+usb-ftdi_sio-fix-locking-for-change_speed-function.patch
+usb-gadget-add-gadget-controller-number-for-s3c-hsotg-driver.patch
+usb-remove-last-bit-of-config_usb_berry_charge.patch
+usb-cp210x-remove-double-usb_control_msg-from-cp210x_set_config.patch
+usb-fix-usb_fill_int_urb-for-superspeed-devices.patch
+usb-xhci-make-endpoint-interval-debugging-clearer.patch
+usb-r8a66597-hcd-fix-removed-from-an-attached-hub.patch
+usb-gadget-multi-cdc_do_config-remove-redundant-check.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+   57d5488..7faacce  master     -> quilt/usb.current
+Importing staging.current based on quilt/usb.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/staging.current 7faaccebbb1e171ce83dfdabc18501f7fb6c4415
+Importing i2c based on 2.6.34-rc1-git6
+$ cd ../quilt-tmp
+$ git reset --hard a3d3203e4bb40f253b1541e310dc0f9305be7c84
+HEAD is now at a3d3203 Merge branch 'release' of git://git.kernel.org/pub/scm/linux/kernel/git/lenb/linux-acpi-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+acpi-support-ibm-smbus-cmi-devices.patch
+i2c-scmi-support-ibm-smbus-cmi-devices.patch
+i2c-scmi-provide-module-aliases-for-automatic-loading.patch
+i2c-i801-02-new-parameter-to-disable-features.patch
+i2c-i801-03-default-to-all-features-present.patch
+i2c-i801-04-coding-style-fixes.patch
+i2c-scx200_acb-make-pci-device-ids-constant.patch
+i2c-stub-show-actual-functionality.patch
+eeprom-at24-fallback-to-byte-reads.patch
+i2c-dev-remove-unnecessary-casts.patch
+i2c-parport-make-template-struct-const.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 73b681f...c96b64d master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.34-rc1-git6
+$ cd ../quilt-tmp
+$ git reset --hard a3d3203e4bb40f253b1541e310dc0f9305be7c84
+HEAD is now at a3d3203 Merge branch 'release' of git://git.kernel.org/pub/scm/linux/kernel/git/lenb/linux-acpi-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-coretemp-fix-cpu-model-output.patch
+hwmon-w83793-saving-negative-errors-in-unsigned.patch
+hwmon-asus_atk0110-dont-use-if-unsafe.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 308afde...bd8cbeb master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.33-rc3-git5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.33-rc7-10-g6339204
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.33-5070-g64ba992
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+$ cd ../quilt-tmp
+$ git reset --hard 7faaccebbb1e171ce83dfdabc18501f7fb6c4415
+HEAD is now at 7faacce USB: gadget/multi: cdc_do_config: remove redundant check
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core
+kref-remove-kref_set.patch
+driver-core-reduce-the-level-of-request_firmware-messages.patch
+driver-core-fix-potential-race-condition-in-drivers-base-dd.c.patch
+driver-core-don-t-initialize-wakeup-flags.patch
+driver-core-early-dev_name-support.patch
+driver-core-module.c-use-kasprintf.patch
+devtmpfs-support-config_tmpfs.patch
+drivers-base-convert-sema.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core
+From ../quilt-tmp
+ + 7dfcad3...07a8d3c master     -> quilt/driver-core  (forced update)
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty 07a8d3c5d6b586a3947a26e314d2913fcd1b1949
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 07a8d3c5d6b586a3947a26e314d2913fcd1b1949
+HEAD is now at 07a8d3c drivers/base: Convert dev->sem to mutex
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-sisusbvga-remove-the-bkl-from-ioctl.patch
+usb-cdc-acm-make-bitfields-unsigned.patch
+usb-remove-large-struct-from-the-stack-in-usb-storage-isd200-driver.patch
+usb-remove-duplicated-include.patch
+usb-remove-bogus-usb_port_feat_-_speed-symbols.patch
+usb-straighten-out-port-feature-vs.-port-status-usage.patch
+usb-remove-uses-of-urb_no_setup_dma_map.patch
+usb-ehci-au1xxx-does-not-need-ehci-io-watchdog.patch
+usb-serial-use-tty_port-version-console-instead-of-usb_serial_port.patch
+usb-musb-allow-board-to-pass-down-fifo-mode.patch
+usb-musb-set-transceiver-interface-type.patch
+usb-musb-build-musb-driver-for-omap4.patch
+usb-musb-add-omap4-support-in-musb-driver.patch
+usb-musb-allow-the-blackfin-vrsel-gpio-to-be-active-low.patch
+usb-musb-add-debugfs-support.patch
+usb-musb-gadget-support-musb-specific-test-modes.patch
+usb-musb-hsdma-use-musb_read-writel.patch
+usb-f_mass_storage-dynamic-buffers-for-better-alignment.patch
+usb-console-pass-baud-from-console-to-the-initial-tty-open.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 7dfcad3...26eb563 master     -> quilt/usb  (forced update)
+Importing staging based on quilt/usb
+	quilt series is empty
+$ git update-ref refs/heads/quilt/staging 26eb563e589c9e1674d92110104cb3b28a70ca40
