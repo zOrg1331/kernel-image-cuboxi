@@ -91,6 +91,7 @@ extern int radeon_tv;
 extern int radeon_new_pll;
 extern int radeon_dynpm;
 extern int radeon_audio;
+extern int radeon_hw_i2c;
 
 /*
  * Copy from radeon_drv.h so we don't have to include both and have conflicting
