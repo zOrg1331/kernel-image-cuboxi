@@ -1,7 +1,7 @@
 /*
  *  s2255drv.c - a driver for the Sensoray 2255 USB video capture device
  *
- *   Copyright (C) 2007-2008 by Sensoray Company Inc.
+ *   Copyright (C) 2007-2010 by Sensoray Company Inc.
  *                              Dean Anderson
  *
  * Some video buffer code based on vivi driver:
@@ -75,11 +75,13 @@
 #define S2255_LOAD_TIMEOUT      (5000 + S2255_DSP_BOOTTIME)
 #define S2255_DEF_BUFS          16
 #define S2255_SETMODE_TIMEOUT   500
+#define S2255_VIDSTATUS_TIMEOUT 350
 #define MAX_CHANNELS		4
-#define S2255_MARKER_FRAME	0x2255DA4AL
-#define S2255_MARKER_RESPONSE	0x2255ACACL
-#define S2255_RESPONSE_SETMODE  0x01
-#define S2255_RESPONSE_FW       0x10
+#define S2255_MARKER_FRAME	cpu_to_le32(0x2255DA4AL)
+#define S2255_MARKER_RESPONSE	cpu_to_le32(0x2255ACACL)
+#define S2255_RESPONSE_SETMODE  cpu_to_le32(0x01)
+#define S2255_RESPONSE_FW       cpu_to_le32(0x10)
+#define S2255_RESPONSE_STATUS   cpu_to_le32(0x20)
 #define S2255_USB_XFER_SIZE	(16 * 1024)
 #define MAX_CHANNELS		4
 #define MAX_PIPE_BUFFERS	1
@@ -117,9 +119,10 @@
 #define COLOR_YUVPK	2	/* YUV packed */
 #define COLOR_Y8	4	/* monochrome */
 #define COLOR_JPG       5       /* JPEG */
-#define MASK_COLOR      0xff
-#define MASK_JPG_QUALITY 0xff00
 
+#define MASK_COLOR       0x000000ff
+#define MASK_JPG_QUALITY 0x0000ff00
+#define MASK_INPUT_TYPE  0x000f0000
 /* frame decimation. Not implemented by V4L yet(experimental in V4L) */
 #define FDEC_1		1	/* capture every frame. default */
 #define FDEC_2		2	/* capture every 2nd frame */
@@ -138,12 +141,12 @@
 #define DEF_HUE		0
 
 /* usb config commands */
-#define IN_DATA_TOKEN	0x2255c0de
-#define CMD_2255	0xc2255000
-#define CMD_SET_MODE	(CMD_2255 | 0x10)
-#define CMD_START	(CMD_2255 | 0x20)
-#define CMD_STOP	(CMD_2255 | 0x30)
-#define CMD_STATUS	(CMD_2255 | 0x40)
+#define IN_DATA_TOKEN	cpu_to_le32(0x2255c0de)
+#define CMD_2255	cpu_to_le32(0xc2255000)
+#define CMD_SET_MODE	cpu_to_le32((CMD_2255 | 0x10))
+#define CMD_START	cpu_to_le32((CMD_2255 | 0x20))
+#define CMD_STOP	cpu_to_le32((CMD_2255 | 0x30))
+#define CMD_STATUS	cpu_to_le32((CMD_2255 | 0x40))
 
 struct s2255_mode {
 	u32 format;	/* input video format (NTSC, PAL) */
@@ -193,7 +196,6 @@ struct s2255_dmaqueue {
 #define S2255_FW_SUCCESS	2
 #define S2255_FW_FAILED		3
 #define S2255_FW_DISCONNECTING  4
-
 #define S2255_FW_MARKER		cpu_to_le32(0x22552f2f)
 /* 2255 read states */
 #define S2255_READ_IDLE         0
@@ -260,9 +262,16 @@ struct s2255_dev {
 	int                     chn_configured[MAX_CHANNELS];
 	wait_queue_head_t       wait_setmode[MAX_CHANNELS];
 	int                     setmode_ready[MAX_CHANNELS];
+	/* video status items */
+	int                     vidstatus[MAX_CHANNELS];
+	wait_queue_head_t       wait_vidstatus[MAX_CHANNELS];
+	int                     vidstatus_ready[MAX_CHANNELS];
 	int                     chn_ready;
-	struct kref		kref;
 	spinlock_t              slock;
+	/* dsp firmware version (f2255usb.bin) */
+	int                     dsp_fw_ver;
+	u16                     pid; /* product id */
+	struct kref		kref;
 };
 #define to_s2255_dev(d) container_of(d, struct s2255_dev, kref)
 
@@ -295,17 +304,50 @@ struct s2255_fh {
 
 /* current cypress EEPROM firmware version */
 #define S2255_CUR_USB_FWVER	((3 << 8) | 6)
+/* current DSP FW version */
+#define S2255_CUR_DSP_FWVER     8
+/* Need DSP version 5+ for video status feature */
+#define S2255_MIN_DSP_STATUS      5
+#define S2255_MIN_DSP_COLORFILTER 8
 #define S2255_MAJOR_VERSION	1
-#define S2255_MINOR_VERSION	14
+#define S2255_MINOR_VERSION	18
 #define S2255_RELEASE		0
 #define S2255_VERSION		KERNEL_VERSION(S2255_MAJOR_VERSION, \
 					       S2255_MINOR_VERSION, \
 					       S2255_RELEASE)
 
-/* vendor ids */
-#define USB_S2255_VENDOR_ID	0x1943
-#define USB_S2255_PRODUCT_ID	0x2255
 #define S2255_NORMS		(V4L2_STD_PAL | V4L2_STD_NTSC)
+
+/* private V4L2 controls */
+
+/*
+ * The following chart displays how COLORFILTER should be set
+ *  =========================================================
+ *  =     fourcc              =     COLORFILTER             =
+ *  =                         ===============================
+ *  =                         =   0             =    1      =
+ *  =========================================================
+ *  =  V4L2_PIX_FMT_GREY(Y8)  = monochrome from = monochrome=
+ *  =                         = s-video or      = composite =
+ *  =                         = B/W camera      = input     =
+ *  =========================================================
+ *  =    other                = color, svideo   = color,    =
+ *  =                         =                 = composite =
+ *  =========================================================
+ *
+ * Notes:
+ *   channels 0-3 on 2255 are composite
+ *   channels 0-1 on 2257 are composite, 2-3 are s-video
+ * If COLORFILTER is 0 with a composite color camera connected,
+ * the output will appear monochrome but hatching
+ * will occur.
+ * COLORFILTER is different from "color killer" and "color effects"
+ * for reasons above.
+ */
+#define S2255_V4L2_YC_ON  1
+#define S2255_V4L2_YC_OFF 0
+#define V4L2_CID_PRIVATE_COLORFILTER (V4L2_CID_PRIVATE_BASE + 0)
+
 /* frame prefix size (sent once every frame) */
 #define PREFIX_SIZE		512
 
@@ -346,7 +388,6 @@ static long s2255_vendor_req(struct s2255_dev *dev, unsigned char req,
 
 static struct usb_driver s2255_driver;
 
-
 /* Declare static vars that will be used as parameters */
 static unsigned int vid_limit = 16;	/* Video memory limit, in Mb */
 
@@ -361,57 +402,15 @@ module_param(video_nr, int, 0644);
 MODULE_PARM_DESC(video_nr, "start video minor(-1 default autodetect)");
 
 /* USB device table */
+#define USB_SENSORAY_VID	0x1943
 static struct usb_device_id s2255_table[] = {
-	{USB_DEVICE(USB_S2255_VENDOR_ID, USB_S2255_PRODUCT_ID)},
+	{USB_DEVICE(USB_SENSORAY_VID, 0x2255)},
+	{USB_DEVICE(USB_SENSORAY_VID, 0x2257)}, /*same family as 2255*/
 	{ }			/* Terminating entry */
 };
 MODULE_DEVICE_TABLE(usb, s2255_table);
 
-
 #define BUFFER_TIMEOUT msecs_to_jiffies(400)
-
-/* supported controls */
-static struct v4l2_queryctrl s2255_qctrl[] = {
-	{
-	.id = V4L2_CID_BRIGHTNESS,
-	.type = V4L2_CTRL_TYPE_INTEGER,
-	.name = "Brightness",
-	.minimum = -127,
-	.maximum = 128,
-	.step = 1,
-	.default_value = 0,
-	.flags = 0,
-	}, {
-	.id = V4L2_CID_CONTRAST,
-	.type = V4L2_CTRL_TYPE_INTEGER,
-	.name = "Contrast",
-	.minimum = 0,
-	.maximum = 255,
-	.step = 0x1,
-	.default_value = DEF_CONTRAST,
-	.flags = 0,
-	}, {
-	.id = V4L2_CID_SATURATION,
-	.type = V4L2_CTRL_TYPE_INTEGER,
-	.name = "Saturation",
-	.minimum = 0,
-	.maximum = 255,
-	.step = 0x1,
-	.default_value = DEF_SATURATION,
-	.flags = 0,
-	}, {
-	.id = V4L2_CID_HUE,
-	.type = V4L2_CTRL_TYPE_INTEGER,
-	.name = "Hue",
-	.minimum = 0,
-	.maximum = 255,
-	.step = 0x1,
-	.default_value = DEF_HUE,
-	.flags = 0,
-	}
-};
-
-static int qctl_regs[ARRAY_SIZE(s2255_qctrl)];
 
 /* image formats.  */
 static const struct s2255_fmt formats[] = {
@@ -827,6 +826,28 @@ static void res_free(struct s2255_dev *dev, struct s2255_fh *fh)
 	dprintk(1, "res: put\n");
 }
 
+static int vidioc_querymenu(struct file *file, void *priv,
+			    struct v4l2_querymenu *qmenu)
+{
+	static const char *colorfilter[] = {
+		"Off",
+		"On",
+		NULL
+	};
+	if (qmenu->id == V4L2_CID_PRIVATE_COLORFILTER) {
+		int i;
+		const char **menu_items = colorfilter;
+		for (i = 0; i < qmenu->index && menu_items[i]; i++)
+			; /* do nothing (from v4l2-common.c) */
+		if (menu_items[i] == NULL || menu_items[i][0] == '\0')
+			return -EINVAL;
+		strlcpy(qmenu->name, menu_items[qmenu->index],
+			sizeof(qmenu->name));
+		return 0;
+	}
+	return v4l2_ctrl_query_menu(qmenu, NULL, NULL);
+}
+
 
 static int vidioc_querycap(struct file *file, void *priv,
 			   struct v4l2_capability *cap)
@@ -1036,19 +1057,23 @@ static int vidioc_s_fmt_vid_cap(struct file *file, void *priv,
 	/* color mode */
 	switch (fh->fmt->fourcc) {
 	case V4L2_PIX_FMT_GREY:
-		fh->mode.color = COLOR_Y8;
+		fh->mode.color &= ~MASK_COLOR;
+		fh->mode.color |= COLOR_Y8;
 		break;
 	case V4L2_PIX_FMT_JPEG:
-		fh->mode.color = COLOR_JPG |
-			(fh->dev->jc[fh->channel].quality << 8);
+		fh->mode.color &= ~MASK_COLOR;
+		fh->mode.color |= COLOR_JPG;
+		fh->mode.color |= (fh->dev->jc[fh->channel].quality << 8);
 		break;
 	case V4L2_PIX_FMT_YUV422P:
-		fh->mode.color = COLOR_YUVPL;
+		fh->mode.color &= ~MASK_COLOR;
+		fh->mode.color |= COLOR_YUVPL;
 		break;
 	case V4L2_PIX_FMT_YUYV:
 	case V4L2_PIX_FMT_UYVY:
 	default:
-		fh->mode.color = COLOR_YUVPK;
+		fh->mode.color &= ~MASK_COLOR;
+		fh->mode.color |= COLOR_YUVPK;
 		break;
 	}
 	ret = 0;
@@ -1205,9 +1230,8 @@ static int s2255_set_mode(struct s2255_dev *dev, unsigned long chn,
 			  struct s2255_mode *mode)
 {
 	int res;
-	u32 *buffer;
+	__le32 *buffer;
 	unsigned long chn_rev;
-
 	mutex_lock(&dev->lock);
 	chn_rev = G_chnmap[chn];
 	dprintk(3, "mode scale [%ld] %p %d\n", chn, mode, mode->scale);
@@ -1216,8 +1240,12 @@ static int s2255_set_mode(struct s2255_dev *dev, unsigned long chn,
 	dprintk(2, "mode contrast %x\n", mode->contrast);
 
 	/* if JPEG, set the quality */
-	if ((mode->color & MASK_COLOR) == COLOR_JPG)
-		mode->color = (dev->jc[chn].quality << 8) | COLOR_JPG;
+	if ((mode->color & MASK_COLOR) == COLOR_JPG) {
+		mode->color &= ~MASK_COLOR;
+		mode->color |= COLOR_JPG;
+		mode->color &= ~MASK_JPG_QUALITY;
+		mode->color |= (dev->jc[chn].quality << 8);
+	}
 
 	/* save the mode */
 	dev->mode[chn] = *mode;
@@ -1233,7 +1261,7 @@ static int s2255_set_mode(struct s2255_dev *dev, unsigned long chn,
 
 	/* set the mode */
 	buffer[0] = IN_DATA_TOKEN;
-	buffer[1] = (u32) chn_rev;
+	buffer[1] = (__le32) cpu_to_le32(chn_rev);
 	buffer[2] = CMD_SET_MODE;
 	memcpy(&buffer[3], &dev->mode[chn], sizeof(struct s2255_mode));
 	dev->setmode_ready[chn] = 0;
@@ -1256,6 +1284,42 @@ static int s2255_set_mode(struct s2255_dev *dev, unsigned long chn,
 
 	/* clear the restart flag */
 	dev->mode[chn].restart = 0;
+	mutex_unlock(&dev->lock);
+	return res;
+}
+
+static int s2255_cmd_status(struct s2255_dev *dev, unsigned long chn,
+			    u32 *pstatus)
+{
+	int res;
+	__le32 *buffer;
+	u32 chn_rev;
+	mutex_lock(&dev->lock);
+	chn_rev = G_chnmap[chn];
+	dprintk(4, "%s chan %d\n", __func__, chn_rev);
+	buffer = kzalloc(512, GFP_KERNEL);
+	if (buffer == NULL) {
+		dev_err(&dev->udev->dev, "out of mem\n");
+		mutex_unlock(&dev->lock);
+		return -ENOMEM;
+	}
+	/* form the get vid status command */
+	buffer[0] = IN_DATA_TOKEN;
+	buffer[1] = (__le32) cpu_to_le32(chn_rev);
+	buffer[2] = CMD_STATUS;
+	*pstatus = 0;
+	dev->vidstatus_ready[chn] = 0;
+	res = s2255_write_config(dev->udev, (unsigned char *)buffer, 512);
+	kfree(buffer);
+	wait_event_timeout(dev->wait_vidstatus[chn],
+			   (dev->vidstatus_ready[chn] != 0),
+			   msecs_to_jiffies(S2255_VIDSTATUS_TIMEOUT));
+	if (dev->vidstatus_ready[chn] != 1) {
+		printk(KERN_DEBUG "s2255: no vidstatus response\n");
+		res = -EFAULT;
+	}
+	*pstatus = dev->vidstatus[chn];
+	dprintk(4, "%s, vid status %d\n", __func__, *pstatus);
 	mutex_unlock(&dev->lock);
 	return res;
 }
@@ -1290,7 +1354,7 @@ static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
 	new_mode = &fh->mode;
 	old_mode = &fh->dev->mode[chn];
 
-	if (new_mode->color != old_mode->color)
+	if ((new_mode->color & MASK_COLOR) != (old_mode->color & MASK_COLOR))
 		new_mode->restart = 1;
 	else if (new_mode->scale != old_mode->scale)
 		new_mode->restart = 1;
@@ -1348,6 +1412,7 @@ static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id *i)
 	int ret = 0;
 
 	mutex_lock(&q->vb_lock);
+
 	if (videobuf_queue_is_busy(q)) {
 		dprintk(1, "queue busy\n");
 		ret = -EBUSY;
@@ -1360,13 +1425,20 @@ static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id *i)
 		goto out_s_std;
 	}
 	mode = &fh->mode;
-
 	if (*i & V4L2_STD_NTSC) {
-		dprintk(4, "vidioc_s_std NTSC\n");
-		mode->format = FORMAT_NTSC;
+		dprintk(4, "%s NTSC\n", __func__);
+		/* if changing format, reset frame decimation/intervals */
+		if (mode->format != FORMAT_NTSC) {
+			mode->format = FORMAT_NTSC;
+			mode->fdec = FDEC_1;
+		}
 	} else if (*i & V4L2_STD_PAL) {
-		dprintk(4, "vidioc_s_std PAL\n");
+		dprintk(4, "%s PAL\n", __func__);
 		mode->format = FORMAT_PAL;
+		if (mode->format != FORMAT_PAL) {
+			mode->format = FORMAT_PAL;
+			mode->fdec = FDEC_1;
+		}
 	} else {
 		ret = -EINVAL;
 	}
@@ -1385,12 +1457,34 @@ out_s_std:
 static int vidioc_enum_input(struct file *file, void *priv,
 			     struct v4l2_input *inp)
 {
+	struct s2255_fh *fh = priv;
+	struct s2255_dev *dev = fh->dev;
+	u32 status = 0;
+
 	if (inp->index != 0)
 		return -EINVAL;
 
 	inp->type = V4L2_INPUT_TYPE_CAMERA;
 	inp->std = S2255_NORMS;
-	strlcpy(inp->name, "Camera", sizeof(inp->name));
+	inp->status = 0;
+	if (dev->dsp_fw_ver >= S2255_MIN_DSP_STATUS) {
+		int rc;
+		rc = s2255_cmd_status(dev, fh->channel, &status);
+		dprintk(4, "s2255_cmd_status rc: %d status %x\n", rc, status);
+		if (rc == 0)
+			inp->status =  (status & 0x01) ? 0
+				: V4L2_IN_ST_NO_SIGNAL;
+	}
+	switch (dev->pid) {
+	case 0x2255:
+	default:
+		strlcpy(inp->name, "Composite", sizeof(inp->name));
+		break;
+	case 0x2257:
+		strlcpy(inp->name, (fh->channel < 2) ? "Composite" : "S-Video",
+			sizeof(inp->name));
+		break;
+	}
 	return 0;
 }
 
@@ -1410,74 +1504,113 @@ static int vidioc_s_input(struct file *file, void *priv, unsigned int i)
 static int vidioc_queryctrl(struct file *file, void *priv,
 			    struct v4l2_queryctrl *qc)
 {
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(s2255_qctrl); i++)
-		if (qc->id && qc->id == s2255_qctrl[i].id) {
-			memcpy(qc, &(s2255_qctrl[i]), sizeof(*qc));
-			return 0;
-		}
-
-	dprintk(4, "query_ctrl -EINVAL %d\n", qc->id);
-	return -EINVAL;
+	struct s2255_fh *fh = priv;
+	struct s2255_dev *dev = fh->dev;
+	switch (qc->id) {
+	case V4L2_CID_BRIGHTNESS:
+		v4l2_ctrl_query_fill(qc, -127, 127, 1, DEF_BRIGHT);
+		break;
+	case V4L2_CID_CONTRAST:
+		v4l2_ctrl_query_fill(qc, 0, 255, 1, DEF_CONTRAST);
+		break;
+	case V4L2_CID_SATURATION:
+		v4l2_ctrl_query_fill(qc, 0, 255, 1, DEF_SATURATION);
+		break;
+	case V4L2_CID_HUE:
+		v4l2_ctrl_query_fill(qc, 0, 255, 1, DEF_HUE);
+		break;
+	case V4L2_CID_PRIVATE_COLORFILTER:
+		if (dev->dsp_fw_ver < S2255_MIN_DSP_COLORFILTER)
+			return -EINVAL;
+		if ((dev->pid == 0x2257) && (fh->channel > 1))
+			return -EINVAL;
+		strlcpy(qc->name, "Color Filter", sizeof(qc->name));
+		qc->type = V4L2_CTRL_TYPE_MENU;
+		qc->minimum = 0;
+		qc->maximum = 1;
+		qc->step = 1;
+		qc->default_value = 1;
+		qc->flags = 0;
+		break;
+	default:
+		return -EINVAL;
+	}
+	dprintk(4, "%s, id %d\n", __func__, qc->id);
+	return 0;
 }
 
 static int vidioc_g_ctrl(struct file *file, void *priv,
 			 struct v4l2_control *ctrl)
 {
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(s2255_qctrl); i++)
-		if (ctrl->id == s2255_qctrl[i].id) {
-			ctrl->value = qctl_regs[i];
-			return 0;
-		}
-	dprintk(4, "g_ctrl -EINVAL\n");
-
-	return -EINVAL;
+	struct s2255_fh *fh = priv;
+	struct s2255_dev *dev = fh->dev;
+	switch (ctrl->id) {
+	case V4L2_CID_BRIGHTNESS:
+		ctrl->value = fh->mode.bright;
+		break;
+	case V4L2_CID_CONTRAST:
+		ctrl->value = fh->mode.contrast;
+		break;
+	case V4L2_CID_SATURATION:
+		ctrl->value = fh->mode.saturation;
+		break;
+	case V4L2_CID_HUE:
+		ctrl->value = fh->mode.hue;
+		break;
+	case V4L2_CID_PRIVATE_COLORFILTER:
+		if (dev->dsp_fw_ver < S2255_MIN_DSP_COLORFILTER)
+			return -EINVAL;
+		if ((dev->pid == 0x2257) && (fh->channel > 1))
+			return -EINVAL;
+		ctrl->value = !((fh->mode.color & MASK_INPUT_TYPE) >> 16);
+		break;
+	default:
+		return -EINVAL;
+	}
+	dprintk(4, "%s, id %d val %d\n", __func__, ctrl->id, ctrl->value);
+	return 0;
 }
 
 static int vidioc_s_ctrl(struct file *file, void *priv,
 			 struct v4l2_control *ctrl)
 {
-	int i;
 	struct s2255_fh *fh = priv;
 	struct s2255_dev *dev = fh->dev;
 	struct s2255_mode *mode;
 	mode = &fh->mode;
-	dprintk(4, "vidioc_s_ctrl\n");
-	for (i = 0; i < ARRAY_SIZE(s2255_qctrl); i++) {
-		if (ctrl->id == s2255_qctrl[i].id) {
-			if (ctrl->value < s2255_qctrl[i].minimum ||
-			    ctrl->value > s2255_qctrl[i].maximum)
-				return -ERANGE;
-
-			qctl_regs[i] = ctrl->value;
-			/* update the mode to the corresponding value */
-			switch (ctrl->id) {
-			case V4L2_CID_BRIGHTNESS:
-				mode->bright = ctrl->value;
-				break;
-			case V4L2_CID_CONTRAST:
-				mode->contrast = ctrl->value;
-				break;
-			case V4L2_CID_HUE:
-				mode->hue = ctrl->value;
-				break;
-			case V4L2_CID_SATURATION:
-				mode->saturation = ctrl->value;
-				break;
-			}
-			mode->restart = 0;
-			/* set mode here.  Note: stream does not need restarted.
-			   some V4L programs restart stream unnecessarily
-			   after a s_crtl.
-			 */
-			s2255_set_mode(dev, fh->channel, mode);
-			return 0;
-		}
+	dprintk(4, "%s\n", __func__);
+	/* update the mode to the corresponding value */
+	switch (ctrl->id) {
+	case V4L2_CID_BRIGHTNESS:
+		mode->bright = ctrl->value;
+		break;
+	case V4L2_CID_CONTRAST:
+		mode->contrast = ctrl->value;
+		break;
+	case V4L2_CID_HUE:
+		mode->hue = ctrl->value;
+		break;
+	case V4L2_CID_SATURATION:
+		mode->saturation = ctrl->value;
+		break;
+	case V4L2_CID_PRIVATE_COLORFILTER:
+		if (dev->dsp_fw_ver < S2255_MIN_DSP_COLORFILTER)
+			return -EINVAL;
+		if ((dev->pid == 0x2257) && (fh->channel > 1))
+			return -EINVAL;
+		mode->color &= ~MASK_INPUT_TYPE;
+		mode->color |= ((ctrl->value ? 0 : 1) << 16);
+		break;
+	default:
+		return -EINVAL;
 	}
-	return -EINVAL;
+	mode->restart = 0;
+	/* set mode here.  Note: stream does not need restarted.
+	   some V4L programs restart stream unnecessarily
+	   after a s_crtl.
+	*/
+	s2255_set_mode(dev, fh->channel, mode);
+	return 0;
 }
 
 static int vidioc_g_jpegcomp(struct file *file, void *priv,
@@ -1507,10 +1640,34 @@ static int vidioc_g_parm(struct file *file, void *priv,
 {
 	struct s2255_fh *fh = priv;
 	struct s2255_dev *dev = fh->dev;
+	__u32 def_num, def_dem;
 	if (sp->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		return -EINVAL;
+	memset(sp, 0, sizeof(struct v4l2_streamparm));
+	sp->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
 	sp->parm.capture.capturemode = dev->cap_parm[fh->channel].capturemode;
-	dprintk(2, "getting parm %d\n", sp->parm.capture.capturemode);
+	def_num = (fh->mode.format == FORMAT_NTSC) ? 1001 : 1000;
+	def_dem = (fh->mode.format == FORMAT_NTSC) ? 30000 : 25000;
+	sp->parm.capture.timeperframe.denominator = def_dem;
+	switch (fh->mode.fdec) {
+	default:
+	case FDEC_1:
+		sp->parm.capture.timeperframe.numerator = def_num;
+		break;
+	case FDEC_2:
+		sp->parm.capture.timeperframe.numerator = def_num * 2;
+		break;
+	case FDEC_3:
+		sp->parm.capture.timeperframe.numerator = def_num * 3;
+		break;
+	case FDEC_5:
+		sp->parm.capture.timeperframe.numerator = def_num * 5;
+		break;
+	}
+	dprintk(4, "%s capture mode, %d timeperframe %d/%d\n", __func__,
+		sp->parm.capture.capturemode,
+		sp->parm.capture.timeperframe.numerator,
+		sp->parm.capture.timeperframe.denominator);
 	return 0;
 }
 
@@ -1519,15 +1676,79 @@ static int vidioc_s_parm(struct file *file, void *priv,
 {
 	struct s2255_fh *fh = priv;
 	struct s2255_dev *dev = fh->dev;
-
+	int fdec = FDEC_1;
+	__u32 def_num, def_dem;
 	if (sp->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		return -EINVAL;
-
-	dev->cap_parm[fh->channel].capturemode = sp->parm.capture.capturemode;
-	dprintk(2, "setting param capture mode %d\n",
-		sp->parm.capture.capturemode);
+	/* high quality capture mode requires a stream restart */
+	if (dev->cap_parm[fh->channel].capturemode
+	    != sp->parm.capture.capturemode && res_locked(fh->dev, fh))
+		return -EBUSY;
+	def_num = (fh->mode.format == FORMAT_NTSC) ? 1001 : 1000;
+	def_dem = (fh->mode.format == FORMAT_NTSC) ? 30000 : 25000;
+	if (def_dem != sp->parm.capture.timeperframe.denominator)
+		sp->parm.capture.timeperframe.numerator = def_num;
+	else if (sp->parm.capture.timeperframe.numerator <= def_num)
+		sp->parm.capture.timeperframe.numerator = def_num;
+	else if (sp->parm.capture.timeperframe.numerator <= (def_num * 2)) {
+		sp->parm.capture.timeperframe.numerator = def_num * 2;
+		fdec = FDEC_2;
+	} else if (sp->parm.capture.timeperframe.numerator <= (def_num * 3)) {
+		sp->parm.capture.timeperframe.numerator = def_num * 3;
+		fdec = FDEC_3;
+	} else {
+		sp->parm.capture.timeperframe.numerator = def_num * 5;
+		fdec = FDEC_5;
+	}
+	fh->mode.fdec = fdec;
+	sp->parm.capture.timeperframe.denominator = def_dem;
+	s2255_set_mode(dev, fh->channel, &fh->mode);
+	dprintk(4, "%s capture mode, %d timeperframe %d/%d, fdec %d\n",
+		__func__,
+		sp->parm.capture.capturemode,
+		sp->parm.capture.timeperframe.numerator,
+		sp->parm.capture.timeperframe.denominator, fdec);
 	return 0;
 }
+
+static int vidioc_enum_frameintervals(struct file *file, void *priv,
+			    struct v4l2_frmivalenum *fe)
+{
+	int is_ntsc = 0;
+#define NUM_FRAME_ENUMS 4
+	int frm_dec[NUM_FRAME_ENUMS] = {1, 2, 3, 5};
+	if (fe->index < 0 || fe->index >= NUM_FRAME_ENUMS)
+		return -EINVAL;
+	switch (fe->width) {
+	case 640:
+		if (fe->height != 240 && fe->height != 480)
+			return -EINVAL;
+		is_ntsc = 1;
+		break;
+	case 320:
+		if (fe->height != 240)
+			return -EINVAL;
+		is_ntsc = 1;
+		break;
+	case 704:
+		if (fe->height != 288 && fe->height != 576)
+			return -EINVAL;
+		break;
+	case 352:
+		if (fe->height != 288)
+			return -EINVAL;
+		break;
+	default:
+		return -EINVAL;
+	}
+	fe->type = V4L2_FRMIVAL_TYPE_DISCRETE;
+	fe->discrete.denominator = is_ntsc ? 30000 : 25000;
+	fe->discrete.numerator = (is_ntsc ? 1001 : 1000) * frm_dec[fe->index];
+	dprintk(4, "%s discrete %d/%d\n", __func__, fe->discrete.numerator,
+		fe->discrete.denominator);
+	return 0;
+}
+
 static int s2255_open(struct file *file)
 {
 	struct video_device *vdev = video_devdata(file);
@@ -1639,18 +1860,11 @@ static int s2255_open(struct file *file)
 	fh->width = LINE_SZ_4CIFS_NTSC;
 	fh->height = NUM_LINES_4CIFS_NTSC * 2;
 	fh->channel = cur_channel;
-
 	/* configure channel to default state */
 	if (!dev->chn_configured[cur_channel]) {
 		s2255_set_mode(dev, cur_channel, &fh->mode);
 		dev->chn_configured[cur_channel] = 1;
 	}
-
-
-	/* Put all controls at a sane state */
-	for (i = 0; i < ARRAY_SIZE(s2255_qctrl); i++)
-		qctl_regs[i] = s2255_qctrl[i].default_value;
-
 	dprintk(1, "s2255drv: open dev=%s type=%s users=%d\n",
 		video_device_node_name(vdev), v4l2_type_names[type],
 		dev->users[cur_channel]);
@@ -1699,6 +1913,8 @@ static void s2255_destroy(struct kref *kref)
 	for (i = 0; i < MAX_CHANNELS; i++) {
 		dev->setmode_ready[i] = 1;
 		wake_up(&dev->wait_setmode[i]);
+		dev->vidstatus_ready[i] = 1;
+		wake_up(&dev->wait_vidstatus[i]);
 	}
 	mutex_lock(&dev->open_lock);
 	/* reset the DSP so firmware can be reload next time */
@@ -1785,6 +2001,7 @@ static const struct v4l2_file_operations s2255_fops_v4l = {
 };
 
 static const struct v4l2_ioctl_ops s2255_ioctl_ops = {
+	.vidioc_querymenu = vidioc_querymenu,
 	.vidioc_querycap = vidioc_querycap,
 	.vidioc_enum_fmt_vid_cap = vidioc_enum_fmt_vid_cap,
 	.vidioc_g_fmt_vid_cap = vidioc_g_fmt_vid_cap,
@@ -1810,6 +2027,7 @@ static const struct v4l2_ioctl_ops s2255_ioctl_ops = {
 	.vidioc_g_jpegcomp = vidioc_g_jpegcomp,
 	.vidioc_s_parm = vidioc_s_parm,
 	.vidioc_g_parm = vidioc_g_parm,
+	.vidioc_enum_frameintervals = vidioc_enum_frameintervals,
 };
 
 static struct video_device template = {
@@ -1906,14 +2124,14 @@ static int save_frame(struct s2255_dev *dev, struct s2255_pipeinfo *pipe_info)
 	if (frm->ulState == S2255_READ_IDLE) {
 		int jj;
 		unsigned int cc;
-		s32 *pdword;
+		__le32 *pdword; /*data from dsp is little endian */
 		int payload;
 		/* search for marker codes */
 		pdata = (unsigned char *)pipe_info->transfer_buffer;
+		pdword = (__le32 *)pdata;
 		for (jj = 0; jj < (pipe_info->cur_transfer_size - 12); jj++) {
-			switch (*(s32 *) pdata) {
+			switch (*pdword) {
 			case S2255_MARKER_FRAME:
-				pdword = (s32 *)pdata;
 				dprintk(4, "found frame marker at offset:"
 					" %d [%x %x]\n", jj, pdata[0],
 					pdata[1]);
@@ -1937,7 +2155,6 @@ static int save_frame(struct s2255_dev *dev, struct s2255_pipeinfo *pipe_info)
 				dev->jpg_size[dev->cc] = pdword[4];
 				break;
 			case S2255_MARKER_RESPONSE:
-				pdword = (s32 *)pdata;
 				pdata += DEF_USB_BLOCK;
 				jj += DEF_USB_BLOCK;
 				if (pdword[1] >= MAX_CHANNELS)
@@ -1963,6 +2180,13 @@ static int save_frame(struct s2255_dev *dev, struct s2255_pipeinfo *pipe_info)
 					atomic_set(&dev->fw_data->fw_state,
 						   S2255_FW_SUCCESS);
 					wake_up(&dev->fw_data->wait_fw);
+					break;
+				case S2255_RESPONSE_STATUS:
+					dev->vidstatus[cc] = pdword[3];
+					dev->vidstatus_ready[cc] = 1;
+					wake_up(&dev->wait_vidstatus[cc]);
+					dprintk(5, "got vidstatus %x chan %d\n",
+						pdword[3], cc);
 					break;
 				default:
 					printk(KERN_INFO "s2255 unknown resp\n");
@@ -2202,6 +2426,8 @@ static int s2255_board_init(struct s2255_dev *dev)
 	for (j = 0; j < MAX_CHANNELS; j++) {
 		dev->b_acquire[j] = 0;
 		dev->mode[j] = mode_def;
+		if (dev->pid == 0x2257 && j > 1)
+			dev->mode[j].color |= (1 << 16);
 		dev->jc[j].quality = S2255_DEF_JPEG_QUAL;
 		dev->cur_fmt[j] = &formats[0];
 		dev->mode[j].restart = 1;
@@ -2365,9 +2591,9 @@ static int s2255_start_acquire(struct s2255_dev *dev, unsigned long chn)
 	}
 
 	/* send the start command */
-	*(u32 *) buffer = IN_DATA_TOKEN;
-	*((u32 *) buffer + 1) = (u32) chn_rev;
-	*((u32 *) buffer + 2) = (u32) CMD_START;
+	*(__le32 *) buffer = IN_DATA_TOKEN;
+	*((__le32 *) buffer + 1) = (__le32) cpu_to_le32(chn_rev);
+	*((__le32 *) buffer + 2) = CMD_START;
 	res = s2255_write_config(dev->udev, (unsigned char *)buffer, 512);
 	if (res != 0)
 		dev_err(&dev->udev->dev, "CMD_START error\n");
@@ -2382,24 +2608,21 @@ static int s2255_stop_acquire(struct s2255_dev *dev, unsigned long chn)
 	unsigned char *buffer;
 	int res;
 	unsigned long chn_rev;
-
 	if (chn >= MAX_CHANNELS) {
 		dprintk(2, "stop acquire failed, bad channel %lu\n", chn);
 		return -1;
 	}
 	chn_rev = G_chnmap[chn];
-
 	buffer = kzalloc(512, GFP_KERNEL);
 	if (buffer == NULL) {
 		dev_err(&dev->udev->dev, "out of mem\n");
 		return -ENOMEM;
 	}
-
 	/* send the stop command */
 	dprintk(4, "stop acquire %lu\n", chn);
-	*(u32 *) buffer = IN_DATA_TOKEN;
-	*((u32 *) buffer + 1) = (u32) chn_rev;
-	*((u32 *) buffer + 2) = CMD_STOP;
+	*(__le32 *) buffer = IN_DATA_TOKEN;
+	*((__le32 *) buffer + 1) = (__le32) cpu_to_le32(chn_rev);
+	*((__le32 *) buffer + 2) = CMD_STOP;
 	res = s2255_write_config(dev->udev, (unsigned char *)buffer, 512);
 
 	if (res != 0)
@@ -2481,7 +2704,7 @@ static int s2255_probe(struct usb_interface *interface,
 		s2255_dev_err(&interface->dev, "out of memory\n");
 		goto error;
 	}
-
+	dev->pid = id->idProduct;
 	dev->fw_data = kzalloc(sizeof(struct s2255_fw), GFP_KERNEL);
 	if (!dev->fw_data)
 		goto error;
@@ -2526,9 +2749,10 @@ static int s2255_probe(struct usb_interface *interface,
 	dev->timer.data = (unsigned long)dev->fw_data;
 
 	init_waitqueue_head(&dev->fw_data->wait_fw);
-	for (i = 0; i < MAX_CHANNELS; i++)
+	for (i = 0; i < MAX_CHANNELS; i++) {
 		init_waitqueue_head(&dev->wait_setmode[i]);
-
+		init_waitqueue_head(&dev->wait_vidstatus[i]);
+	}
 
 	dev->fw_data->fw_urb = usb_alloc_urb(0, GFP_KERNEL);
 
@@ -2560,6 +2784,11 @@ static int s2255_probe(struct usb_interface *interface,
 		__le32 *pRel;
 		pRel = (__le32 *) &dev->fw_data->fw->data[fw_size - 4];
 		printk(KERN_INFO "s2255 dsp fw version %x\n", *pRel);
+		dev->dsp_fw_ver = *pRel;
+		if (*pRel < S2255_CUR_DSP_FWVER)
+			printk(KERN_INFO "s2255: f2255usb.bin out of date.\n");
+		if (dev->pid == 0x2257 && *pRel < S2255_MIN_DSP_COLORFILTER)
+			printk(KERN_WARNING "s2255: 2257 requires firmware 8 or above.\n");
 	}
 	/* loads v4l specific */
 	s2255_probe_v4l(dev);
@@ -2596,6 +2825,8 @@ static void s2255_disconnect(struct usb_interface *interface)
 	for (i = 0; i < MAX_CHANNELS; i++) {
 		dev->setmode_ready[i] = 1;
 		wake_up(&dev->wait_setmode[i]);
+		dev->vidstatus_ready[i] = 1;
+		wake_up(&dev->wait_vidstatus[i]);
 	}
 
 	mutex_lock(&dev->open_lock);
