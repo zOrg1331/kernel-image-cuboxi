@@ -275,43 +275,22 @@ sysc_do_restart:
 sysc_return:
 	tm	__TI_flags+3(%r9),_TIF_WORK_SVC
 	bnz	BASED(sysc_work)  # there is work to do (signals etc.)
-sysc_restore:
-#ifdef CONFIG_TRACE_IRQFLAGS
-	la	%r1,BASED(sysc_restore_trace_psw_addr)
-	l	%r1,0(%r1)
-	lpsw	0(%r1)
-sysc_restore_trace:
-	TRACE_IRQS_CHECK
-	LOCKDEP_SYS_EXIT
-#endif
 sysc_leave:
 	RESTORE_ALL __LC_RETURN_PSW,1
 sysc_done:
-
-#ifdef CONFIG_TRACE_IRQFLAGS
-sysc_restore_trace_psw_addr:
-	.long sysc_restore_trace_psw
-
-	.section .data,"aw",@progbits
-	.align	8
-	.globl	sysc_restore_trace_psw
-sysc_restore_trace_psw:
-	.long	0, sysc_restore_trace + 0x80000000
-	.previous
-#endif
 
 #
 # recheck if there is more work to do
 #
 sysc_work_loop:
 	tm	__TI_flags+3(%r9),_TIF_WORK_SVC
-	bz	BASED(sysc_restore)	# there is no work to do
+	bz	BASED(sysc_leave)	# there is no work to do
 #
 # One of the work bits is on. Find out which one.
 #
 sysc_work:
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
-	bno	BASED(sysc_restore)
+	bno	BASED(sysc_leave)
 	tm	__TI_flags+3(%r9),_TIF_MCCK_PENDING
 	bo	BASED(sysc_mcck_pending)
 	tm	__TI_flags+3(%r9),_TIF_NEED_RESCHED
@@ -324,7 +303,7 @@ sysc_work:
 	bo	BASED(sysc_restart)
 	tm	__TI_flags+3(%r9),_TIF_SINGLE_STEP
 	bo	BASED(sysc_singlestep)
-	b	BASED(sysc_restore)
+	b	BASED(sysc_leave)
 sysc_work_done:
 
 #
@@ -498,9 +477,9 @@ pgm_check_handler:
 	UPDATE_VTIME __LC_EXIT_TIMER,__LC_SYNC_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
+	mvc	SP_ILC(2,%r15),__LC_PGM_ILC
 pgm_no_vtime:
 	l	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
-	TRACE_IRQS_OFF
 	l	%r3,__LC_PGM_ILC	# load program interruption code
 	la	%r8,0x7f
 	nr	%r8,%r3
@@ -538,7 +517,6 @@ pgm_per_std:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 pgm_no_vtime2:
 	l	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
-	TRACE_IRQS_OFF
 	l	%r1,__TI_task(%r9)
 	mvc	__THREAD_per+__PER_atmid(2,%r1),__LC_PER_ATMID
 	mvc	__THREAD_per+__PER_address(4,%r1),__LC_PER_ADDRESS
@@ -563,7 +541,6 @@ pgm_svcper:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 	lh	%r7,0x8a		# get svc number from lowcore
 	l	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
-	TRACE_IRQS_OFF
 	l	%r8,__TI_task(%r9)
 	mvc	__THREAD_per+__PER_atmid(2,%r8),__LC_PER_ATMID
 	mvc	__THREAD_per+__PER_address(4,%r8),__LC_PER_ADDRESS
@@ -582,7 +559,7 @@ kernel_per:
 	mvi	SP_SVCNR+1(%r15),0xff
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	l	%r1,BASED(.Lhandle_per)	# load adr. of per handler
-	la	%r14,BASED(sysc_restore)# load adr. of system return
+	la	%r14,BASED(sysc_leave)	# load adr. of system return
 	br	%r1			# branch to do_single_step
 
 /*
