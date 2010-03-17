@@ -38,7 +38,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt13.M51.3
+%define krelease alt13.M51.4
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -4273,6 +4273,7 @@ Patch99999: linux-kernel-test.patch
 
 # ALT-specific patches
 Patch200000: our_kernel.patch
+Patch200001: ve-sched-nr-unint-summing-negative.patch
 
 # Patches from Solar Designer
 # Patch210000: linux-2.6.18-128.2.1.el5.028stab064.4-128.4.1-qnd1.diff
@@ -8431,6 +8432,9 @@ perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 # ALT-specific patch
 %patch200000 -p1
 
+# until next openvz release
+%patch200001 -p1
+
 # %patch210000 -p1
 # %patch210001 -p1
 # %patch210002 -p1
@@ -8972,6 +8976,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Wed Mar 17 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.4
+- Fix openvz bug #1449 (strange load values)
+
 * Sat Feb 20 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.3
 - Release of 2.6.18-164.11.1.el5.028stab068.3
 - Enable CONFIG_PRINTK_TIME
