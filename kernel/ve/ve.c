@@ -46,35 +46,6 @@ struct module no_module = { .state = MODULE_STATE_GOING };
 EXPORT_SYMBOL(no_module);
 #endif
 
-INIT_KSYM_MODULE(ip_tables);
-INIT_KSYM_MODULE(ip6_tables);
-INIT_KSYM_MODULE(iptable_filter);
-INIT_KSYM_MODULE(ip6table_filter);
-INIT_KSYM_MODULE(iptable_mangle);
-INIT_KSYM_MODULE(ip6table_mangle);
-INIT_KSYM_MODULE(ip_conntrack);
-INIT_KSYM_MODULE(nf_conntrack);
-INIT_KSYM_MODULE(nf_conntrack_ipv4);
-INIT_KSYM_MODULE(nf_conntrack_ipv6);
-INIT_KSYM_MODULE(ip_nat);
-INIT_KSYM_MODULE(nf_nat);
-INIT_KSYM_MODULE(iptable_nat);
-
-INIT_KSYM_CALL(int, init_iptable_conntrack, (void));
-INIT_KSYM_CALL(int, nf_conntrack_init_ve, (void));
-INIT_KSYM_CALL(int, init_nf_ct_l3proto_ipv4, (void));
-INIT_KSYM_CALL(int, init_nf_ct_l3proto_ipv6, (void));
-INIT_KSYM_CALL(int, nf_nat_init, (void));
-INIT_KSYM_CALL(int, init_iptable_nat, (void));
-INIT_KSYM_CALL(void, fini_iptable_nat, (void));
-INIT_KSYM_CALL(int, init_nftable_nat, (void));
-INIT_KSYM_CALL(void, fini_nftable_nat, (void));
-INIT_KSYM_CALL(void, nf_nat_cleanup, (void));
-INIT_KSYM_CALL(void, fini_iptable_conntrack, (void));
-INIT_KSYM_CALL(void, nf_conntrack_cleanup_ve, (void));
-INIT_KSYM_CALL(void, fini_nf_ct_l3proto_ipv4, (void));
-INIT_KSYM_CALL(void, fini_nf_ct_l3proto_ipv6, (void));
-
 #if defined(CONFIG_VE_CALLS_MODULE) || defined(CONFIG_VE_CALLS)
 INIT_KSYM_MODULE(vzmon);
 INIT_KSYM_CALL(void, real_do_env_free, (struct ve_struct *env));
@@ -101,7 +72,7 @@ struct ve_struct ve0 = {
 	.is_running		= 1,
 	.op_sem			= __RWSEM_INITIALIZER(ve0.op_sem),
 #ifdef CONFIG_VE_IPTABLES
-	.ipt_mask 		= ~0ULL,
+	.ipt_mask 		= VE_IP_ALL,
 #endif
 	.features		= VE_FEATURE_SIT | VE_FEATURE_IPIP |
 				VE_FEATURE_PPP,

@@ -30,7 +30,6 @@
 #include <linux/nsproxy.h>
 #include <linux/mnt_namespace.h>
 #include <linux/netdevice.h>
-#include <linux/nfcalls.h>
 #include <linux/dcache.h>
 #include <linux/if_tun.h>
 #include <linux/utsname.h>

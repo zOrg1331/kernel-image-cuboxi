@@ -870,100 +870,6 @@ EXPORT_SYMBOL(ve_move_task);
 
 #ifdef CONFIG_VE_IPTABLES
 
-#define KSYMIPTINIT(mask, ve, full_mask, mod, name, args)	\
-({								\
-	int ret = 0;						\
-	if (VE_IPT_CMP(mask, full_mask) &&			\
-		VE_IPT_CMP((ve)->_iptables_modules, 		\
-			full_mask & ~(full_mask##_MOD))) {	\
-		ret = KSYMERRCALL(1, mod, name, args);		\
-		if (ret == 0)					\
-			(ve)->_iptables_modules |=		\
-					full_mask##_MOD;	\
-		if (ret == 1)					\
-			ret = 0;				\
-	}							\
-	ret;							\
-})
-
-#define KSYMIPTFINI(mask, full_mask, mod, name, args)		\
-({								\
- 	if (VE_IPT_CMP(mask, full_mask##_MOD))			\
-		KSYMSAFECALL_VOID(mod, name, args);		\
-})
-
-
-static int do_ve_iptables(struct ve_struct *ve, __u64 init_mask,
-		int init_or_cleanup)
-{
-	int err = 0;
-
-	if (!init_or_cleanup)
-		goto cleanup;
-
-	/* init part */
-#if defined(CONFIG_NF_CONNTRACK_IPV4) || \
-    defined(CONFIG_NF_CONNTRACK_IPV4_MODULE)
-	err = KSYMIPTINIT(init_mask, ve, VE_NF_CONNTRACK,
-			nf_conntrack, nf_conntrack_init_ve, ());
-	if (err < 0)
-		goto err_nf_conntrack;
-
-	err = KSYMIPTINIT(init_mask, ve, VE_IP_CONNTRACK,
-			nf_conntrack_ipv4, init_nf_ct_l3proto_ipv4, ());
-	if (err < 0)
-		goto err_nf_conntrack_ipv4;
-#endif
-#if defined(CONFIG_NF_NAT) || \
-    defined(CONFIG_NF_NAT_MODULE)
-	err = KSYMIPTINIT(init_mask, ve, VE_IP_NAT,
-			nf_nat, nf_nat_init, ());
-	if (err < 0)
-		goto err_nftable_nat;
-	err = KSYMIPTINIT(init_mask, ve, VE_IP_IPTABLE_NAT,
-			iptable_nat, init_nftable_nat, ());
-	if (err < 0)
-		goto err_nftable_nat2;
-#endif
-	return 0;
-
-/* ------------------------------------------------------------------------- */
-
-cleanup:
-#if defined(CONFIG_NF_NAT) || \
-    defined(CONFIG_NF_NAT_MODULE)
-	KSYMIPTFINI(ve->_iptables_modules, VE_IP_IPTABLE_NAT,
-			iptable_nat, fini_nftable_nat, ());
-err_nftable_nat2:
-	KSYMIPTFINI(ve->_iptables_modules, VE_IP_NAT,
-			nf_nat, nf_nat_cleanup, ());
-err_nftable_nat:
-#endif
-#if defined(CONFIG_NF_CONNTRACK_IPV4) || \
-    defined(CONFIG_NF_CONNTRACK_IPV4_MODULE)
-	KSYMIPTFINI(ve->_iptables_modules, VE_IP_CONNTRACK,
-		nf_conntrack_ipv4, fini_nf_ct_l3proto_ipv4, ());
-err_nf_conntrack_ipv4:
-	KSYMIPTFINI(ve->_iptables_modules, VE_NF_CONNTRACK,
-		nf_conntrack, nf_conntrack_cleanup_ve, ());
-err_nf_conntrack:
-#endif
-	/* Do not reset _iptables_modules as
-	 * net hooks used one
-	 */
-	return err;
-}
-
-static inline int init_ve_iptables(struct ve_struct *ve, __u64 init_mask)
-{
-	return do_ve_iptables(ve, init_mask, 1);
-}
-
-static inline void fini_ve_iptables(struct ve_struct *ve, __u64 init_mask)
-{
-	(void)do_ve_iptables(ve, init_mask, 0);
-}
-
 static __u64 setup_iptables_mask(__u64 init_mask)
 {
 	/* Remove when userspace will start supplying IPv6-related bits. */
@@ -972,24 +878,21 @@ static __u64 setup_iptables_mask(__u64 init_mask)
 	init_mask &= ~VE_IP_MANGLE6;
 	init_mask &= ~VE_IP_IPTABLE_NAT_MOD;
 	init_mask &= ~VE_NF_CONNTRACK_MOD;
-	if ((init_mask & VE_IP_IPTABLES) == VE_IP_IPTABLES)
-		init_mask |= VE_IP_IPTABLES6;
-	if ((init_mask & VE_IP_FILTER) == VE_IP_FILTER)
-		init_mask |= VE_IP_FILTER6;
-	if ((init_mask & VE_IP_MANGLE) == VE_IP_MANGLE)
-		init_mask |= VE_IP_MANGLE6;
-	if ((init_mask & VE_IP_NAT) == VE_IP_NAT)
-		init_mask |= VE_IP_IPTABLE_NAT;
 
-	if ((init_mask & VE_IP_CONNTRACK) == VE_IP_CONNTRACK)
+	if (mask_ipt_allow(init_mask, VE_IP_IPTABLES))
+		init_mask |= VE_IP_IPTABLES6;
+	if (mask_ipt_allow(init_mask, VE_IP_FILTER))
+		init_mask |= VE_IP_FILTER6;
+	if (mask_ipt_allow(init_mask, VE_IP_MANGLE))
+		init_mask |= VE_IP_MANGLE6;
+	if (mask_ipt_allow(init_mask, VE_IP_NAT))
+		init_mask |= VE_IP_IPTABLE_NAT;
+	if (mask_ipt_allow(init_mask, VE_IP_CONNTRACK))
 		init_mask |= VE_NF_CONNTRACK;
 
 	return init_mask;
 }
 
-#else
-#define init_ve_iptables(x, y)	(0)
-#define fini_ve_iptables(x, y)	do { } while (0)
 #endif
 
 static inline int init_ve_cpustats(struct ve_struct *ve)
@@ -1145,15 +1048,6 @@ static int do_env_create(envid_t veid, unsigned int flags, u32 class_id,
 
 	set_ve_caps(ve, tsk);
 
-	/* It is safe to initialize netfilter here as routing initialization and
-	   interface setup will be done below. This means that NO skb can be
-	   passed inside. Den */
-	/* iptables ve initialization for non ve0;
-	   ve0 init is in module_init */
-
-	if ((err = init_ve_iptables(ve, init_mask)) < 0)
-		goto err_iptables;
-
 	if ((err = pid_ns_attach_init(ve->ve_ns->pid_ns, tsk)) < 0)
 		goto err_vpid;
 
@@ -1187,8 +1081,6 @@ err_creds:
 	mntget(ve->proc_mnt);
 err_vpid:
 	fini_venet(ve);
-	fini_ve_iptables(ve, init_mask);
-err_iptables:
 	fini_ve_meminfo(ve);
 err_meminf:
 	fini_ve_devpts(ve);
@@ -1393,11 +1285,6 @@ static void env_cleanup(struct ve_struct *ve)
 	fini_venet(ve);
 
 	/* no new packets in flight beyond this point */
-
-	/* kill iptables */
-	/* No skb belonging to VE can exist at this point as unregister_netdev
-	   is an operation awaiting until ALL skb's gone */
-	fini_ve_iptables(ve, ve->_iptables_modules);
 
 	fini_ve_sched(ve);
 

@@ -31,7 +31,6 @@
 #include <net/addrconf.h>
 #include <linux/if_tun.h>
 #include <linux/veth.h>
-#include <linux/nfcalls.h>
 #include <linux/venet.h>
 #include <linux/fdtable.h>
 #include <net/net_namespace.h>

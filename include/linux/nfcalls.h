@@ -124,41 +124,6 @@ EXPORT_SYMBOL(vz_##name)
 #define KSYMUNRESOLVE(name)                            \
 	vz_##name = NULL
 
-#if defined(CONFIG_VE)
-DECL_KSYM_MODULE(ip_tables);
-DECL_KSYM_MODULE(ip6_tables);
-DECL_KSYM_MODULE(iptable_filter);
-DECL_KSYM_MODULE(ip6table_filter);
-DECL_KSYM_MODULE(iptable_mangle);
-DECL_KSYM_MODULE(ip6table_mangle);
-DECL_KSYM_MODULE(ip_conntrack);
-DECL_KSYM_MODULE(nf_conntrack);
-DECL_KSYM_MODULE(nf_conntrack_ipv4);
-DECL_KSYM_MODULE(nf_conntrack_ipv6);
-DECL_KSYM_MODULE(xt_conntrack);
-DECL_KSYM_MODULE(ip_nat);
-DECL_KSYM_MODULE(nf_nat);
-DECL_KSYM_MODULE(iptable_nat);
-
-struct sk_buff;
-
-DECL_KSYM_CALL(int, init_iptable_conntrack, (void));
-DECL_KSYM_CALL(int, nf_conntrack_init_ve, (void));
-DECL_KSYM_CALL(int, init_nf_ct_l3proto_ipv4, (void));
-DECL_KSYM_CALL(int, init_nf_ct_l3proto_ipv6, (void));
-DECL_KSYM_CALL(int, nf_nat_init, (void));
-DECL_KSYM_CALL(int, init_nftable_nat, (void));
-DECL_KSYM_CALL(int, nf_nat_init, (void));
-DECL_KSYM_CALL(void, fini_nftable_nat, (void));
-DECL_KSYM_CALL(void, nf_nat_cleanup, (void));
-DECL_KSYM_CALL(void, fini_iptable_conntrack, (void));
-DECL_KSYM_CALL(void, nf_conntrack_cleanup_ve, (void));
-DECL_KSYM_CALL(void, fini_nf_ct_l3proto_ipv4, (void));
-DECL_KSYM_CALL(void, fini_nf_ct_l3proto_ipv6, (void));
-
-#include <linux/netfilter/x_tables.h>
-#endif
-
 #if defined(CONFIG_VE_CALLS) || defined(CONFIG_VE_CALLS_MODULE)
 DECL_KSYM_MODULE(vzmon);
 DECL_KSYM_CALL(void, real_do_env_free, (struct ve_struct *env));

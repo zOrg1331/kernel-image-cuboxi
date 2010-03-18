@@ -351,7 +351,7 @@ ip6t_do_table(struct sk_buff *skb,
 	struct xt_match_param mtpar;
 	struct xt_target_param tgpar;
 
-	if (!table)		/* VE is not allowed to have this xtable */
+	if (ve_xt_table_forbidden(table))
 		return NF_ACCEPT;
 
 	/* Initialization */

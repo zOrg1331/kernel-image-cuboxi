@@ -29,7 +29,6 @@
 #include <linux/ve_proto.h>
 #include <linux/vzcalluser.h>
 #include <linux/cpt_image.h>
-#include <linux/nfcalls.h>
 #include <linux/if_tun.h>
 #include <linux/veth.h>
 #include <linux/fdtable.h>

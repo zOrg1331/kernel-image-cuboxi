@@ -52,7 +52,6 @@
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/vzcalluser.h>
-#include <linux/nfcalls.h>
 
 #include <linux/cpt_image.h>
 #include <linux/cpt_export.h>
