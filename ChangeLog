@@ -1,3 +1,11 @@
+commit 98a42f576eaa1136794544e57404c492cbf8a8fe
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Thu Mar 18 20:04:08 2010 +0900
+
+    aufs: support sysfs_attr_init()
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit dece7f0fce421044faa9ebd4428bfb8569236653
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Thu Mar 18 01:58:29 2010 +0900
