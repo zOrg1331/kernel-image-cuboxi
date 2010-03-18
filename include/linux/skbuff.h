@@ -300,7 +300,6 @@ typedef unsigned char *sk_buff_data_t;
  *	@nfct_reasm: netfilter conntrack re-assembly pointer
  *	@nf_bridge: Saved data about a bridged frame - see br_netfilter.c
  *	@skb_iif: ifindex of device we arrived on
- *	@rxhash: the packet hash computed on receive
  *	@queue_mapping: Queue mapping for multiqueue devices
  *	@tc_index: Traffic control index
  *	@tc_verd: traffic control verdict
@@ -375,8 +374,6 @@ struct sk_buff {
 	__u16			tc_verd;	/* traffic control verdict */
 #endif
 #endif
-
-	__u32			rxhash;
 
 	kmemcheck_bitfield_begin(flags2);
 	__u16			queue_mapping:16;
