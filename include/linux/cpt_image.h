@@ -99,6 +99,7 @@ enum _cpt_object_type
 	CPT_OBJ_NET_HWADDR,
 	CPT_OBJ_NET_VETH,
 	CPT_OBJ_NET_STATS,
+	CPT_OBJ_NET_IPIP_TUNNEL,
 
 	/* 2.6.27-specific */
 	CPT_OBJ_NET_TAP_FILTER = 0x01000000,
@@ -1532,6 +1533,25 @@ struct cpt_veth_image {
 
 	__u32	cpt_allow_mac_change;
 	__u32	__cpt_pad;
+} __attribute__ ((aligned (8)));
+
+struct cpt_tunnel_image {
+	__u64   cpt_next;
+	__u32   cpt_object;
+	__u16   cpt_hdrlen;
+	__u16   cpt_content;
+
+	__u32   cpt_tnl_flags;
+#define CPT_TUNNEL_FBDEV        0x1
+#define CPT_TUNNEL_SIT          0x2
+#define CPT_TUNNEL_GRE          0x4
+	__u16   cpt_i_flags;
+	__u16   cpt_o_flags;
+	__u32   cpt_i_key;
+	__u32   cpt_o_key;
+	__u32   cpt_iphdr[5];
+	__u32   cpt_i_seqno;
+	__u32   cpt_o_seqno;
 } __attribute__ ((aligned (8)));
 
 struct cpt_hwaddr_image {
