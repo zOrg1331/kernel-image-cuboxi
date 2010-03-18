@@ -36,7 +36,6 @@
 #include <linux/devpts_fs.h>
 #include <linux/user_namespace.h>
 
-#include <linux/nfcalls.h>
 #include <linux/vzcalluser.h>
 
 unsigned long vz_rstamp = 0x37e0f59d;
@@ -47,12 +46,17 @@ EXPORT_SYMBOL(no_module);
 #endif
 
 #if defined(CONFIG_VE_CALLS_MODULE) || defined(CONFIG_VE_CALLS)
-INIT_KSYM_MODULE(vzmon);
-INIT_KSYM_CALL(void, real_do_env_free, (struct ve_struct *env));
+void (*do_env_free_hook)(struct ve_struct *ve);
+EXPORT_SYMBOL(do_env_free_hook);
 
 void do_env_free(struct ve_struct *env)
 {
-	KSYMSAFECALL_VOID(vzmon, real_do_env_free, (env));
+	BUG_ON(atomic_read(&env->pcounter) > 0);
+	BUG_ON(env->is_running);
+
+	preempt_disable();
+	do_env_free_hook(env);
+	preempt_enable();
 }
 EXPORT_SYMBOL(do_env_free);
 #endif

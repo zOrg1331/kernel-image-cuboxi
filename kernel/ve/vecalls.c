@@ -72,7 +72,6 @@
 #include <linux/fairsched.h>
 #endif
 
-#include <linux/nfcalls.h>
 #include <linux/virtinfo.h>
 #include <linux/utsrelease.h>
 #include <linux/major.h>
@@ -117,7 +116,7 @@ EXPORT_SYMBOL(get_ve_by_id);
 /*
  * real_put_ve() MUST be used instead of put_ve() inside vecalls.
  */
-void real_do_env_free(struct ve_struct *ve);
+static void real_do_env_free(struct ve_struct *ve);
 static inline void real_put_ve(struct ve_struct *ve)
 {
 	if (ve && atomic_dec_and_test(&ve->counter)) {
@@ -1149,6 +1148,7 @@ err_exist:
 	free_ve_cpustats(ve);
 err_cpu_stats:
 	kfree(ve);
+	module_put(THIS_MODULE);
 	goto err_struct;
 }
 
@@ -1391,7 +1391,7 @@ static void fini_vzmond(void)
 	WARN_ON(!list_empty(&ve_cleanup_list));
 }
 
-void real_do_env_free(struct ve_struct *ve)
+static void real_do_env_free(struct ve_struct *ve)
 {
 	VZTRACE("real_do_env_free\n");
 
@@ -1403,8 +1403,6 @@ void real_do_env_free(struct ve_struct *ve)
 
 	module_put(THIS_MODULE);
 }
-EXPORT_SYMBOL(real_do_env_free);
-
 
 /**********************************************************************
  **********************************************************************
@@ -2159,19 +2157,6 @@ static struct vzioctlinfo vzcalls = {
  **********************************************************************
  **********************************************************************/
 
-static int __init init_vecalls_symbols(void)
-{
-	KSYMRESOLVE(real_do_env_free);
-	KSYMMODRESOLVE(vzmon);
-	return 0;
-}
-
-static void fini_vecalls_symbols(void)
-{
-	KSYMMODUNRESOLVE(vzmon);
-	KSYMUNRESOLVE(real_do_env_free);
-}
-
 static inline __init int init_vecalls_ioctls(void)
 {
 	vzioctl_register(&vzcalls);
@@ -2231,10 +2216,6 @@ static int __init vecalls_init(void)
 	if (err < 0)
 		goto out_sysctl;
 
-	err = init_vecalls_symbols();
-	if (err < 0)
-		goto out_sym;
-
 	err = init_vecalls_proc();
 	if (err < 0)
 		goto out_proc;
@@ -2247,15 +2228,17 @@ static int __init vecalls_init(void)
 	 * because in this case vzmon refcount > 0
 	 */
 	do_ve_enter_hook = do_env_enter;
-
+	/*
+	 * This one can also be dereferenced since not freed
+	 * VE holds reference on module
+	 */
+	do_env_free_hook = real_do_env_free;
 
 	return 0;
 
 out_ioctls:
 	fini_vecalls_proc();
 out_proc:
-	fini_vecalls_symbols();
-out_sym:
 	fini_vzmond();
 out_sysctl:
 	fini_vecalls_sysctl();
@@ -2265,10 +2248,10 @@ out_vzmond:
 
 static void vecalls_exit(void)
 {
+	do_env_free_hook = NULL;
 	do_ve_enter_hook = NULL;
 	fini_vecalls_ioctls();
 	fini_vecalls_proc();
-	fini_vecalls_symbols();
 	fini_vzmond();
 	fini_vecalls_sysctl();
 }

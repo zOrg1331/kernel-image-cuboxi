@@ -320,11 +320,8 @@ static inline struct ve_struct *get_ve(struct ve_struct *ptr)
 
 static inline void put_ve(struct ve_struct *ptr)
 {
-	if (ptr && atomic_dec_and_test(&ptr->counter)) {
-		BUG_ON(atomic_read(&ptr->pcounter) > 0);
-		BUG_ON(ptr->is_running);
+	if (ptr && atomic_dec_and_test(&ptr->counter))
 		do_env_free(ptr);
-	}
 }
 
 static inline void pget_ve(struct ve_struct *ptr)
@@ -344,6 +341,7 @@ extern struct list_head ve_cleanup_list;
 extern struct task_struct *ve_cleanup_thread;
 
 extern int (*do_ve_enter_hook)(struct ve_struct *ve, unsigned int flags);
+extern void (*do_env_free_hook)(struct ve_struct *ve);
 
 extern unsigned long long ve_relative_clock(struct timespec * ts);
 
