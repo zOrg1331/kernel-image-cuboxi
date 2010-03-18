@@ -245,10 +245,10 @@ static void bfin_vbus_power(struct musb *musb, int is_on, int sleeping)
 
 static void bfin_set_vbus(struct musb *musb, int is_on)
 {
-	if (is_on)
-		gpio_set_value(musb->config->gpio_vrsel, 1);
-	else
-		gpio_set_value(musb->config->gpio_vrsel, 0);
+	int value = musb->config->gpio_vrsel_active;
+	if (!is_on)
+		value = !value;
+	gpio_set_value(musb->config->gpio_vrsel, value);
 
 	DBG(1, "VBUS %s, devctl %02x "
 		/* otg %3x conf %08x prcm %08x */ "\n",
@@ -277,7 +277,7 @@ int musb_platform_set_mode(struct musb *musb, u8 musb_mode)
 	return -EIO;
 }
 
-int __init musb_platform_init(struct musb *musb)
+int __init musb_platform_init(struct musb *musb, void *board_data)
 {
 
 	/*
