@@ -1,0 +1,73 @@
+Importing driver-core.current based on 2.6.34-rc1
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.34-rc1-git6
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.34-rc1-git6
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.33-rc3-git5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.33-rc7-10-g6339204
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.33-5070-g64ba992
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 7faaccebbb1e171ce83dfdabc18501f7fb6c4415
+HEAD is now at 7faacce USB: gadget/multi: cdc_do_config: remove redundant check
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core
+kref-remove-kref_set.patch
+driver-core-reduce-the-level-of-request_firmware-messages.patch
+driver-core-fix-potential-race-condition-in-drivers-base-dd.c.patch
+driver-core-don-t-initialize-wakeup-flags.patch
+driver-core-early-dev_name-support.patch
+driver-core-module.c-use-kasprintf.patch
+devtmpfs-support-config_tmpfs.patch
+platform_bus-allow-custom-extensions-to-system-pm-methods.patch
+drivers-base-convert-sema.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core
+From ../quilt-tmp
+ + 07a8d3c...76b5efb master     -> quilt/driver-core  (forced update)
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty 76b5efb35f163567d24cb05cfc4be5d1cb90008e
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 76b5efb35f163567d24cb05cfc4be5d1cb90008e
+HEAD is now at 76b5efb drivers/base: Convert dev->sem to mutex
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-sisusbvga-remove-the-bkl-from-ioctl.patch
+usb-cdc-acm-make-bitfields-unsigned.patch
+usb-remove-large-struct-from-the-stack-in-usb-storage-isd200-driver.patch
+usb-remove-duplicated-include.patch
+usb-remove-bogus-usb_port_feat_-_speed-symbols.patch
+usb-straighten-out-port-feature-vs.-port-status-usage.patch
+usb-remove-uses-of-urb_no_setup_dma_map.patch
+usb-ehci-au1xxx-does-not-need-ehci-io-watchdog.patch
+usb-serial-use-tty_port-version-console-instead-of-usb_serial_port.patch
+usb-musb-allow-board-to-pass-down-fifo-mode.patch
+usb-musb-set-transceiver-interface-type.patch
+usb-musb-build-musb-driver-for-omap4.patch
+usb-musb-add-omap4-support-in-musb-driver.patch
+usb-musb-allow-the-blackfin-vrsel-gpio-to-be-active-low.patch
+usb-musb-add-debugfs-support.patch
+usb-musb-gadget-support-musb-specific-test-modes.patch
+usb-musb-hsdma-use-musb_read-writel.patch
+usb-f_mass_storage-dynamic-buffers-for-better-alignment.patch
+usb-console-pass-baud-from-console-to-the-initial-tty-open.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 26eb563...f8c027a master     -> quilt/usb  (forced update)
+Importing staging based on quilt/usb
+	quilt series is empty
+$ git update-ref refs/heads/quilt/staging f8c027a27412ddcbf8c754e80b71061eb894c0b8
