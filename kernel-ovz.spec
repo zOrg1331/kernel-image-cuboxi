@@ -38,7 +38,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt13.M51.4
+%define krelease alt13.M51.5
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -8974,6 +8974,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Sun Mar 21 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.5
+- Release of 2.6.18-164.11.1.el5 028stab068.5
+
 * Wed Mar 17 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.4
 - Fix openvz bug #1449 (strange load values)
 
