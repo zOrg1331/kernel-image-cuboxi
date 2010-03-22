@@ -341,7 +341,7 @@ asmlinkage long sys_mycall(int arg)
   </para>
 
   <para>
-   After you slept you should check if a signal occurred: the
+   After you sleep you should check if a signal occurred: the
    Unix/Linux way of handling signals is to temporarily exit the
    system call with the <constant>-ERESTARTSYS</constant> error.  The
    system call entry code will switch back to user context, process
