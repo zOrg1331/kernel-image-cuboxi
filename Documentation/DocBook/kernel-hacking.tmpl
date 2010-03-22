@@ -812,19 +812,30 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
 
   <sect1 id="routines-processorids">
    <title><function>{get,put}_cpu()</function>/<function>smp_processor_id()</function>
-    <filename class="headerfile">include/asm/smp.h</filename></title>
+    <filename class="headerfile">include/linux/smp.h</filename>
+    <filename class="headerfile">include/linux/threads.h</filename>
+   </title>
+
+   <para>
+    The constant <symbol>NR_CPUS</symbol> provides the maximum number of CPUS
+    that the kernel can support at one time. In general, the value of this
+    constant is provided during kernel build configuration via the
+    <symbol>CONFIG_NR_CPUS</symbol> configuration variable.
+   </para>
    
    <para>
-    <function>get_cpu()</function> disables preemption (so you won't
-    suddenly get moved to another CPU) and returns the current
-    processor number, between 0 and <symbol>NR_CPUS</symbol>.  Note
-    that the CPU numbers are not necessarily continuous.  You return
-    it again with <function>put_cpu()</function> when you are done.
+    <function>get_cpu()</function> disables preemption on the local CPU
+    (so you won't suddenly get moved to another CPU) and then returns
+    the local CPU id as a number ranging from 0 up to (but not including)
+    <symbol>NR_CPUS</symbol>.  When you're done with the local CPU, return
+    it to the scheduling system using <function>put_cpu()</function>.
    </para>
+
    <para>
     If you know you cannot be preempted by another task (ie. you are
-    in interrupt context, or have preemption disabled) you can use
-    smp_processor_id().
+    in interrupt context, or have preemption disabled) you can avoid
+    unnecessary overhead by using <function>smp_processor_id()</function>
+    to get the local CPU id number.
    </para>
   </sect1>
 
