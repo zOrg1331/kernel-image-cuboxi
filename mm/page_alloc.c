@@ -1997,7 +1997,7 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 				preferred_zone, migratetype);
 
 	__alloc_collect_stats(gfp_mask, order, page, start);
-	if (ub_page_charge(page, order, gfp_mask)) {
+	if (page && ub_page_charge(page, order, gfp_mask)) {
 		__free_pages(page, order);
 		page = NULL;
 	}
