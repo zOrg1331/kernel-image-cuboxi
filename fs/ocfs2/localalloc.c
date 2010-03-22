@@ -305,12 +305,7 @@ void ocfs2_shutdown_local_alloc(struct ocfs2_super *osb)
 	}
 
 	ocfs2_clear_local_alloc(alloc);
-
-	status = ocfs2_journal_dirty(handle, bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto out_commit;
-	}
+	ocfs2_journal_dirty(handle, bh);
 
 	brelse(bh);
 	osb->local_alloc_bh = NULL;
@@ -691,14 +686,8 @@ int ocfs2_claim_local_alloc_bits(struct ocfs2_super *osb,
 		ocfs2_set_bit(start++, bitmap);
 
 	le32_add_cpu(&alloc->id1.bitmap1.i_used, *num_bits);
+	ocfs2_journal_dirty(handle, osb->local_alloc_bh);
 
-	status = ocfs2_journal_dirty(handle, osb->local_alloc_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto bail;
-	}
-
-	status = 0;
 bail:
 	mlog_exit(status);
 	return status;
@@ -872,8 +861,10 @@ static int ocfs2_sync_local_to_main(struct ocfs2_super *osb,
 			     (unsigned long long)la_start_blk,
 			     (unsigned long long)blkno);
 
-			status = ocfs2_free_clusters(handle, main_bm_inode,
-						     main_bm_bh, blkno, count);
+			status = ocfs2_release_clusters(handle,
+							main_bm_inode,
+							main_bm_bh, blkno,
+							count);
 			if (status < 0) {
 				mlog_errno(status);
 				goto bail;
@@ -984,8 +975,7 @@ static int ocfs2_local_alloc_reserve_for_window(struct ocfs2_super *osb,
 	}
 
 retry_enospc:
-	(*ac)->ac_bits_wanted = osb->local_alloc_bits;
-
+	(*ac)->ac_bits_wanted = osb->local_alloc_default_bits;
 	status = ocfs2_reserve_cluster_bitmap_bits(osb, *ac);
 	if (status == -ENOSPC) {
 		if (ocfs2_recalc_la_window(osb, OCFS2_LA_EVENT_ENOSPC) ==
@@ -1061,6 +1051,7 @@ retry_enospc:
 		    OCFS2_LA_DISABLED)
 			goto bail;
 
+		ac->ac_bits_wanted = osb->local_alloc_default_bits;
 		status = ocfs2_claim_clusters(osb, handle, ac,
 					      osb->local_alloc_bits,
 					      &cluster_off,
@@ -1167,12 +1158,7 @@ static int ocfs2_local_alloc_slide_window(struct ocfs2_super *osb,
 	}
 
 	ocfs2_clear_local_alloc(alloc);
-
-	status = ocfs2_journal_dirty(handle, osb->local_alloc_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto bail;
-	}
+	ocfs2_journal_dirty(handle, osb->local_alloc_bh);
 
 	status = ocfs2_sync_local_to_main(osb, handle, alloc_copy,
 					  main_bm_inode, main_bm_bh);
@@ -1190,7 +1176,6 @@ static int ocfs2_local_alloc_slide_window(struct ocfs2_super *osb,
 
 	atomic_inc(&osb->alloc_stats.moves);
 
-	status = 0;
 bail:
 	if (handle)
 		ocfs2_commit_trans(osb, handle);

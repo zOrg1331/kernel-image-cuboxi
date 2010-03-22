@@ -739,11 +739,7 @@ static int ocfs2_xattr_extend_allocation(struct inode *inode,
 		goto leave;
 	}
 
-	status = ocfs2_journal_dirty(handle, vb->vb_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto leave;
-	}
+	ocfs2_journal_dirty(handle, vb->vb_bh);
 
 	clusters_to_add -= le32_to_cpu(vb->vb_xv->xr_clusters) - prev_clusters;
 
@@ -786,12 +782,7 @@ static int __ocfs2_remove_xattr_range(struct inode *inode,
 	}
 
 	le32_add_cpu(&vb->vb_xv->xr_clusters, -len);
-
-	ret = ocfs2_journal_dirty(handle, vb->vb_bh);
-	if (ret) {
-		mlog_errno(ret);
-		goto out;
-	}
+	ocfs2_journal_dirty(handle, vb->vb_bh);
 
 	if (ext_flags & OCFS2_EXT_REFCOUNTED)
 		ret = ocfs2_decrease_refcount(inode, handle,
@@ -1374,11 +1365,7 @@ static int __ocfs2_xattr_set_value_outside(struct inode *inode,
 				memset(bh->b_data + cp_len, 0,
 				       blocksize - cp_len);
 
-			ret = ocfs2_journal_dirty(handle, bh);
-			if (ret < 0) {
-				mlog_errno(ret);
-				goto out;
-			}
+			ocfs2_journal_dirty(handle, bh);
 			brelse(bh);
 			bh = NULL;
 
@@ -1622,7 +1609,7 @@ static void ocfs2_xa_block_wipe_namevalue(struct ocfs2_xa_loc *loc)
 	/* Now tell xh->xh_entries about it */
 	for (i = 0; i < count; i++) {
 		offset = le16_to_cpu(xh->xh_entries[i].xe_name_offset);
-		if (offset < namevalue_offset)
+		if (offset <= namevalue_offset)
 			le16_add_cpu(&xh->xh_entries[i].xe_name_offset,
 				     namevalue_size);
 	}
@@ -2594,9 +2581,7 @@ int ocfs2_xattr_remove(struct inode *inode, struct buffer_head *di_bh)
 	di->i_dyn_features = cpu_to_le16(oi->ip_dyn_features);
 	spin_unlock(&oi->ip_lock);
 
-	ret = ocfs2_journal_dirty(handle, di_bh);
-	if (ret < 0)
-		mlog_errno(ret);
+	ocfs2_journal_dirty(handle, di_bh);
 out_commit:
 	ocfs2_commit_trans(OCFS2_SB(inode->i_sb), handle);
 out:
@@ -2724,9 +2709,7 @@ static int ocfs2_xattr_ibody_init(struct inode *inode,
 	di->i_dyn_features = cpu_to_le16(oi->ip_dyn_features);
 	spin_unlock(&oi->ip_lock);
 
-	ret = ocfs2_journal_dirty(ctxt->handle, di_bh);
-	if (ret < 0)
-		mlog_errno(ret);
+	ocfs2_journal_dirty(ctxt->handle, di_bh);
 
 out:
 	return ret;
@@ -5153,9 +5136,7 @@ static int ocfs2_add_new_xattr_cluster(struct inode *inode,
 		goto leave;
 	}
 
-	ret = ocfs2_journal_dirty(handle, root_bh);
-	if (ret < 0)
-		mlog_errno(ret);
+	ocfs2_journal_dirty(handle, root_bh);
 
 leave:
 	return ret;
@@ -5477,12 +5458,7 @@ static int ocfs2_rm_xattr_cluster(struct inode *inode,
 	}
 
 	le32_add_cpu(&xb->xb_attrs.xb_root.xt_clusters, -len);
-
-	ret = ocfs2_journal_dirty(handle, root_bh);
-	if (ret) {
-		mlog_errno(ret);
-		goto out_commit;
-	}
+	ocfs2_journal_dirty(handle, root_bh);
 
 	ret = ocfs2_truncate_log_append(osb, handle, blkno, len);
 	if (ret)
@@ -6528,13 +6504,11 @@ static int ocfs2_create_empty_xattr_block(struct inode *inode,
 					  int indexed)
 {
 	int ret;
-	struct ocfs2_alloc_context *meta_ac;
 	struct ocfs2_super *osb = OCFS2_SB(inode->i_sb);
-	struct ocfs2_xattr_set_ctxt ctxt = {
-		.meta_ac = meta_ac,
-	};
+	struct ocfs2_xattr_set_ctxt ctxt;
 
-	ret = ocfs2_reserve_new_metadata_blocks(osb, 1, &meta_ac);
+	memset(&ctxt, 0, sizeof(ctxt));
+	ret = ocfs2_reserve_new_metadata_blocks(osb, 1, &ctxt.meta_ac);
 	if (ret < 0) {
 		mlog_errno(ret);
 		return ret;
@@ -6556,7 +6530,7 @@ static int ocfs2_create_empty_xattr_block(struct inode *inode,
 
 	ocfs2_commit_trans(osb, ctxt.handle);
 out:
-	ocfs2_free_alloc_context(meta_ac);
+	ocfs2_free_alloc_context(ctxt.meta_ac);
 	return ret;
 }
 
