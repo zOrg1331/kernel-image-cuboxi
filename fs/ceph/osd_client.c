@@ -913,7 +913,7 @@ static int __kick_requests(struct ceph_osd_client *osdc,
 
 kick:
 		dout("kicking %p tid %llu osd%d\n", req, req->r_tid,
-		     req->r_osd->o_osd);
+		     req->r_osd ? req->r_osd->o_osd : -1);
 		req->r_flags |= CEPH_OSD_FLAG_RETRY;
 		err = __send_request(osdc, req);
 		if (err) {
@@ -1058,45 +1058,6 @@ bad:
 	ceph_msg_dump(msg);
 	up_write(&osdc->map_sem);
 	return;
-}
-
-
-/*
- * A read request prepares specific pages that data is to be read into.
- * When a message is being read off the wire, we call prepare_pages to
- * find those pages.
- *  0 = success, -1 failure.
- */
-static int __prepare_pages(struct ceph_connection *con,
-			 struct ceph_msg_header *hdr,
-			 struct ceph_osd_request *req,
-			 u64 tid,
-			 struct ceph_msg *m)
-{
-	struct ceph_osd *osd = con->private;
-	struct ceph_osd_client *osdc;
-	int ret = -1;
-	int data_len = le32_to_cpu(hdr->data_len);
-	unsigned data_off = le16_to_cpu(hdr->data_off);
-
-	int want = calc_pages_for(data_off & ~PAGE_MASK, data_len);
-
-	if (!osd)
-		return -1;
-
-	osdc = osd->o_osdc;
-
-	dout("__prepare_pages on msg %p tid %llu, has %d pages, want %d\n", m,
-	     tid, req->r_num_pages, want);
-	if (unlikely(req->r_num_pages < want))
-		goto out;
-	m->pages = req->r_pages;
-	m->nr_pages = req->r_num_pages;
-	ret = 0; /* success */
-out:
-	BUG_ON(ret < 0 || m->nr_pages < want);
-
-	return ret;
 }
 
 /*
@@ -1367,7 +1328,8 @@ static void dispatch(struct ceph_connection *con, struct ceph_msg *msg)
 }
 
 /*
- * lookup and return message for incoming reply
+ * lookup and return message for incoming reply.  set up reply message
+ * pages.
  */
 static struct ceph_msg *get_reply(struct ceph_connection *con,
 				  struct ceph_msg_header *hdr,
@@ -1380,7 +1342,6 @@ static struct ceph_msg *get_reply(struct ceph_connection *con,
 	int front = le32_to_cpu(hdr->front_len);
 	int data_len = le32_to_cpu(hdr->data_len);
 	u64 tid;
-	int err;
 
 	tid = le64_to_cpu(hdr->tid);
 	mutex_lock(&osdc->request_mutex);
@@ -1412,12 +1373,19 @@ static struct ceph_msg *get_reply(struct ceph_connection *con,
 	m = ceph_msg_get(req->r_reply);
 
 	if (data_len > 0) {
-		err = __prepare_pages(con, hdr, req, tid, m);
-		if (err < 0) {
+		unsigned data_off = le16_to_cpu(hdr->data_off);
+		int want = calc_pages_for(data_off & ~PAGE_MASK, data_len);
+
+		if (unlikely(req->r_num_pages < want)) {
+			pr_warning("tid %lld reply %d > expected %d pages\n",
+				   tid, want, m->nr_pages);
 			*skip = 1;
 			ceph_msg_put(m);
-			m = ERR_PTR(err);
+			m = ERR_PTR(-EIO);
+			goto out;
 		}
+		m->pages = req->r_pages;
+		m->nr_pages = req->r_num_pages;
 	}
 	*skip = 0;
 	req->r_con_filling_msg = ceph_con_get(con);
