@@ -53,11 +53,8 @@ static int sockstat_seq_show(struct seq_file *seq, void *v)
 	struct net *net = seq->private;
 	int orphans, sockets;
 
-	if (!ve_is_super(get_exec_env()))
-		return 0;
-
 	local_bh_disable();
-	orphans = percpu_counter_sum_positive(&tcp_orphan_count);
+	orphans = percpu_counter_sum_positive(&get_exec_ub()->ub_orphan_count);
 	sockets = percpu_counter_sum_positive(&tcp_sockets_allocated);
 	local_bh_enable();
 

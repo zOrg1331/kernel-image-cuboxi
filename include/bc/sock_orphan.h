@@ -19,11 +19,8 @@
 
 static inline struct percpu_counter *__ub_get_orphan_count_ptr(struct sock *sk)
 {
-#if 0
-	FIXME this oopses in tcp_close
 	if (sock_has_ubc(sk))
 		return &sock_bc(sk)->ub->ub_orphan_count;
-#endif
 	return sk->sk_prot->orphan_count;
 }
 
