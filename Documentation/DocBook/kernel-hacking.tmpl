@@ -679,7 +679,7 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
    </title>
 
    <para>
-    These routines disable hard interrupts on the local CPU, and
+    These routines disable hard[ware] interrupts on the local CPU, and
     restore them.  They are reentrant; saving the previous state in
     their one <varname>unsigned long flags</varname> argument.  If you
     know that interrupts are enabled, you can simply use
