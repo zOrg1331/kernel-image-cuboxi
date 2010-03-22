@@ -482,7 +482,7 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
 
   <sect1 id="routines-copy">
    <title>
-    <function>copy_{to,from}_user()</function>
+    <function>copy_{from,to}_user()</function>
     /
     <function>get_user()</function>
     /
@@ -495,8 +495,8 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
    </para>
 
    <para>
-    <function>put_user()</function> and <function>get_user()</function>
-    are used to get and put single values (such as an int, char, or
+    <function>get_user()</function> and <function>put_user()</function>
+    are used to get and put a single value (such as an int, char, or
     long) from and to userspace.  A pointer into userspace should
     never be simply dereferenced: data should be copied using these
     routines.  Both return <constant>-EFAULT</constant> or 0.
