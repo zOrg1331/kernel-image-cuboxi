@@ -298,6 +298,10 @@
 #define INSTDONE	0x02090
 #define NOPID		0x02094
 #define HWSTAM		0x02098
+
+#define MI_MODE		0x0209c
+# define VS_TIMER_DISPATCH				(1 << 6)
+
 #define SCPD0		0x0209c /* 915+ only */
 #define IER		0x020a0
 #define IIR		0x020a4
@@ -366,7 +370,7 @@
 #define   FBC_CTL_PERIODIC	(1<<30)
 #define   FBC_CTL_INTERVAL_SHIFT (16)
 #define   FBC_CTL_UNCOMPRESSIBLE (1<<14)
-#define   FBC_C3_IDLE		(1<<13)
+#define   FBC_CTL_C3_IDLE	(1<<13)
 #define   FBC_CTL_STRIDE_SHIFT	(5)
 #define   FBC_CTL_FENCENO	(1<<0)
 #define FBC_COMMAND		0x0320c
