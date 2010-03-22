@@ -892,7 +892,7 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
 
    <para>
     This macro defines the function to be called at module removal
-    time (or never, in the case of the file compiled into the
+    time (or never, in the case of code that has been compiled into the
     kernel).  It will only be called if the module usage count has
     reached zero.  This function can also sleep, but cannot fail:
     everything must be cleaned up by the time it returns.
