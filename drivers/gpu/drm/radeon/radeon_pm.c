@@ -257,6 +257,12 @@ int radeon_pm_init(struct radeon_device *rdev)
 	return 0;
 }
 
+void radeon_pm_fini(struct radeon_device *rdev)
+{
+	if (rdev->pm.i2c_bus)
+		radeon_i2c_destroy(rdev->pm.i2c_bus);
+}
+
 void radeon_pm_compute_clocks(struct radeon_device *rdev)
 {
 	struct drm_device *ddev = rdev->ddev;
@@ -273,7 +279,8 @@ void radeon_pm_compute_clocks(struct radeon_device *rdev)
 	list_for_each_entry(connector,
 		&ddev->mode_config.connector_list, head) {
 		if (connector->encoder &&
-			connector->dpms != DRM_MODE_DPMS_OFF) {
+		    connector->encoder->crtc &&
+		    connector->dpms != DRM_MODE_DPMS_OFF) {
 			radeon_crtc = to_radeon_crtc(connector->encoder->crtc);
 			rdev->pm.active_crtcs |= (1 << radeon_crtc->crtc_id);
 			++count;
