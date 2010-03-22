@@ -463,8 +463,7 @@ acquirelock:
 	 * Make sure the above info reaches the primary CPU before
 	 * our cpu_in_kgdb[] flag setting does:
 	 */
-	smp_wmb();
-	atomic_set(&cpu_in_kgdb[cpu], 1);
+	atomic_inc(&cpu_in_kgdb[cpu]);
 
 	/*
 	 * CPU will loop if it is a slave or request to become a kgdb
@@ -475,7 +474,7 @@ acquirelock:
 			if (atomic_cmpxchg(&kgdb_active, -1, cpu) == cpu)
 				break;
 		} else if (kgdb_info[cpu].exception_state & DCPU_IS_SLAVE) {
-			if (!atomic_read(&passive_cpu_wait[cpu]))
+			if (!atomic_add_return(0, &passive_cpu_wait[cpu]))
 				goto return_normal;
 		} else {
 return_normal:
@@ -484,7 +483,7 @@ return_normal:
 			 */
 			if (arch_kgdb_ops.correct_hw_break)
 				arch_kgdb_ops.correct_hw_break();
-			atomic_set(&cpu_in_kgdb[cpu], 0);
+			atomic_dec(&cpu_in_kgdb[cpu]);
 			touch_softlockup_watchdog_sync();
 			clocksource_touch_watchdog();
 			local_irq_restore(flags);
@@ -533,7 +532,7 @@ return_normal:
 	 */
 	if (!kgdb_single_step) {
 		for (i = 0; i < NR_CPUS; i++)
-			atomic_set(&passive_cpu_wait[i], 1);
+			atomic_inc(&passive_cpu_wait[i]);
 	}
 
 #ifdef CONFIG_SMP
@@ -546,7 +545,7 @@ return_normal:
 	 * Wait for the other CPUs to be notified and be waiting for us:
 	 */
 	for_each_online_cpu(i) {
-		while (!atomic_read(&cpu_in_kgdb[i]))
+		while (!atomic_add_return(0, &cpu_in_kgdb[i]))
 			cpu_relax();
 	}
 
@@ -567,17 +566,17 @@ return_normal:
 	if (dbg_io_ops->post_exception)
 		dbg_io_ops->post_exception();
 
-	atomic_set(&cpu_in_kgdb[ks->cpu], 0);
+	atomic_dec(&cpu_in_kgdb[ks->cpu]);
 
 	if (!kgdb_single_step) {
 		for (i = NR_CPUS-1; i >= 0; i--)
-			atomic_set(&passive_cpu_wait[i], 0);
+			atomic_dec(&passive_cpu_wait[i]);
 		/*
 		 * Wait till all the CPUs have quit
 		 * from the debugger.
 		 */
 		for_each_online_cpu(i) {
-			while (atomic_read(&cpu_in_kgdb[i]))
+			while (atomic_add_return(0, &cpu_in_kgdb[i]))
 				cpu_relax();
 		}
 	}
@@ -820,11 +819,11 @@ EXPORT_SYMBOL_GPL(kgdb_unregister_io_module);
  */
 void kgdb_breakpoint(void)
 {
-	atomic_set(&kgdb_setting_breakpoint, 1);
+	atomic_inc(&kgdb_setting_breakpoint);
 	wmb(); /* Sync point before breakpoint */
 	arch_kgdb_breakpoint();
 	wmb(); /* Sync point after breakpoint */
-	atomic_set(&kgdb_setting_breakpoint, 0);
+	atomic_dec(&kgdb_setting_breakpoint);
 }
 EXPORT_SYMBOL_GPL(kgdb_breakpoint);
 
