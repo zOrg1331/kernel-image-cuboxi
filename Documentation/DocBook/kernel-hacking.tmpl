@@ -679,12 +679,112 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
    </title>
 
    <para>
-    These routines disable hard[ware] interrupts on the local CPU, and
-    restore them.  They are reentrant; saving the previous state in
-    their one <varname>unsigned long flags</varname> argument.  If you
-    know that interrupts are enabled, you can simply use
-    <function>local_irq_disable()</function> and
-    <function>local_irq_enable()</function>.
+    With respect to a CPU instruction, a <firstterm>local CPU</firstterm> is
+    a CPU that is executing that instruction.
+   </para>
+
+   <para>
+    Often, it is important to be able to execute a sequence of instructions
+    with the assurance that the corresponding local CPU won't be interrupted
+    until it has completed executing that sequence of instructions; under
+    these needs, such a sequence of instructions is considered as a whole to
+    be <firstterm>locally atomic</firstterm> (that is, 'indivisible' on the
+    corresponding local CPU). The routines discussed here are helpful in
+    creating such <firstterm>local atomicity</firstterm>.
+   </para>
+
+   <para>
+    The main purpose of these routines is to affect how a
+    local CPU treats hard[ware] interrupts: By executing
+    <function>local_irq_disable()</function>, a local CPU is instructed
+    to ignore hard interrupts; by executing
+    <function>local_irq_enable()</function>, a local CPU is instructed
+    to respond to hard interrupts. Consequently, in the simplest case,
+    a block of code can be rendered locally atomic by placing
+    <function>local_irq_disable()</function> before the block and
+    <function>local_irq_enable()</function> after the block.
+   </para>
+
+   <para>
+    However, what if one such locally atomic block calls a function that runs
+    another such locally atomic block? In that case, this latter block
+    might run <function>local_irq_enable()</function>
+    before the first block finishes, thereby ruining the local atomicity
+    of the first block.
+   </para>
+
+   <para>
+    This problem can be solved by noting whether a local CPU is already
+    ignoring hard interrupts when entering a locally atomic block, and then
+    restoring that same status upon exiting the block, all of which
+    can be achieved by replacing
+    <function>local_irq_{disable,enable}()</function> with
+    <function>local_irq_{save,restore}(<varname>flags</varname>)</function>
+    macros, where <varname>flags</varname> is a user-supplied stack-allocated
+    variable of type <emphasis>unsigned long</emphasis>
+    (note: it's <emphasis>not</emphasis> a pointer type).
+   </para>
+
+   <para>
+    The <function>local_irq_save(<varname>flags</varname>)</function> macro
+    expands around the <varname>flags</varname> variable to perform 2 tasks
+    on a local CPU:
+   </para>
+
+   <itemizedlist>
+    <listitem>
+     <para>
+      The local CPU's relevant processor-state bits (including
+      <emphasis>at least</emphasis> those that affect hard interrupts) are
+      stored in <varname>flags</varname>.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      The local CPU is instructed to ignore hard interrupts; essentially
+      a call to <function>local_irq_disable()</function> is made.
+     </para>
+    </listitem>
+   </itemizedlist>
+
+   <para>
+    The <function>local_irq_restore(<varname>flags</varname>)</function> macro
+    expands to instruct a local CPU to use as its relevant processor-state bits
+    the values stored in the <varname>flags</varname> variable.
+   </para>
+
+   <para>
+    Hence, if a local CPU is already ignoring hard interrupts when
+    <function>local_irq_save(<varname>flags</varname>)</function> is used,
+    then that local CPU will continue to ignore hard interrupts when the
+    corresponding
+    <function>local_irq_restore(<varname>flags</varname>)</function> is
+    used, thereby allowing for the nesting of locally atomic blocks. However,
+    if a local CPU is responding to hard interrupts when
+    <function>local_irq_save(<varname>flags</varname>)</function> is used,
+    then that local CPU will once again respond to hard interrupts when
+    the corresponding
+    <function>local_irq_restore(<varname>flags</varname>)</function>
+    is used, as if a call to <function>local_irq_enable()</function>
+    has been made.
+   </para>
+
+   <para>
+    Of course,
+    <function>local_irq_{save,restore}(<varname>flags</varname>)</function>
+    are more expensive in time and space than are
+    <function>local_irq_{disable,enable}()</function>. Consequently,
+    the latter should be used when it makes sense to do so.
+   </para>
+
+   <para>
+    These macros/functions are reentrant.
+   </para>
+
+   <para>
+    There are also other means by which kernel code can achieve synchronization
+    and atomicity through locking mechanisms, and they are especially important
+    for code that may run concurrently across multiple CPUs.
    </para>
   </sect1>
 
