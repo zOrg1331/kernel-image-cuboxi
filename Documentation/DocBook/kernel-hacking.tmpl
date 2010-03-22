@@ -794,10 +794,19 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
 
    <para>
     These routines disable or enable soft[ware] interrupts on the local CPU.
-    They are reentrant; if soft interrupts were
-    disabled before, they will still be disabled after this pair
-    of functions has been called.  They prevent softirqs and tasklets
-    from running on the current CPU.
+    As with <function>local_irq_{save,restore}()</function>, if soft interrupts
+    are already disabled when <function>local_bh_disable()</function> is
+    called, then soft interrupts remain disabled when the corresponding
+    <function>local_bh_enable()</function> is called.
+   </para>
+
+   <para>
+    These routines prevent softirqs and tasklets from running on the
+    local CPU.
+   </para>
+
+   <para>
+    These routines are reentrant.
    </para>
   </sect1>
 
