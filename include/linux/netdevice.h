@@ -223,6 +223,7 @@ struct netif_rx_stats {
 	unsigned dropped;
 	unsigned time_squeeze;
 	unsigned cpu_collision;
+	unsigned received_rps;
 };
 
 DECLARE_PER_CPU(struct netif_rx_stats, netdev_rx_stat);
@@ -530,6 +531,24 @@ struct netdev_queue {
 	unsigned long		tx_dropped;
 } ____cacheline_aligned_in_smp;
 
+/*
+ * This structure holds an RPS map which can be of variable length.  The
+ * map is an array of CPUs.
+ */
+struct rps_map {
+	unsigned int len;
+	struct rcu_head rcu;
+	u16 cpus[0];
+};
+#define RPS_MAP_SIZE(_num) (sizeof(struct rps_map) + (_num * sizeof(u16)))
+
+/* This structure contains an instance of an RX queue. */
+struct netdev_rx_queue {
+	struct rps_map *rps_map;
+	struct kobject kobj;
+	struct netdev_rx_queue *first;
+	atomic_t count;
+} ____cacheline_aligned_in_smp;
 
 /*
  * This structure defines the management hooks for network devices.
@@ -877,6 +896,13 @@ struct net_device {
 						      hw addresses */
 
 	unsigned char		broadcast[MAX_ADDR_LEN];	/* hw bcast add	*/
+
+	struct kset		*queues_kset;
+
+	struct netdev_rx_queue	*_rx;
+
+	/* Number of RX queues allocated at alloc_netdev_mq() time  */
+	unsigned int		num_rx_queues;
 
 	struct netdev_queue	rx_queue;
 
@@ -1311,14 +1337,18 @@ static inline int unregister_gifconf(unsigned int family)
  */
 struct softnet_data {
 	struct Qdisc		*output_queue;
-	struct sk_buff_head	input_pkt_queue;
 	struct list_head	poll_list;
 	struct sk_buff		*completion_queue;
 
+	/* Elements below can be accessed between CPUs for RPS */
+#ifdef CONFIG_SMP
+	struct call_single_data	csd ____cacheline_aligned_in_smp;
+#endif
+	struct sk_buff_head	input_pkt_queue;
 	struct napi_struct	backlog;
 };
 
-DECLARE_PER_CPU(struct softnet_data,softnet_data);
+DECLARE_PER_CPU_ALIGNED(struct softnet_data, softnet_data);
 
 #define HAVE_NETIF_QUEUE
 
@@ -1975,7 +2005,7 @@ extern void		__dev_addr_unsync(struct dev_addr_list **to, int *to_count, struct 
 extern int		dev_set_promiscuity(struct net_device *dev, int inc);
 extern int		dev_set_allmulti(struct net_device *dev, int inc);
 extern void		netdev_state_change(struct net_device *dev);
-extern void		netdev_bonding_change(struct net_device *dev,
+extern int		netdev_bonding_change(struct net_device *dev,
 					      unsigned long event);
 extern void		netdev_features_change(struct net_device *dev);
 /* Load a device via the kmod */
