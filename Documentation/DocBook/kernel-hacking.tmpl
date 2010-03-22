@@ -637,13 +637,13 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
   </sect1>
 
   <sect1 id="routines-udelay">
-   <title><function>mdelay()</function>/<function>udelay()</function>
+   <title><function>{n,u,m}delay()</function>/<function>msleep()</function>
      <filename class="headerfile">include/asm/delay.h</filename>
      <filename class="headerfile">include/linux/delay.h</filename>
    </title>
 
    <para>
-    The <function>udelay()</function> and <function>ndelay()</function> functions can be used for small pauses.
+    The <function>ndelay()</function> and <function>udelay()</function> functions can be used for small pauses.
     Do not use large values with them as you risk
     overflow - the helper function <function>mdelay()</function> is useful
     here, or consider <function>msleep()</function>.
