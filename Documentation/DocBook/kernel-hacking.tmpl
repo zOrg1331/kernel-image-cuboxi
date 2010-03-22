@@ -434,8 +434,12 @@ cond_resched(); /* Will sleep */
     and reporting errors, and can be used inside interrupt context,
     but use with caution: a machine which has its console flooded with
     printk messages is unusable.  It uses a format string mostly
-    compatible with ANSI C printf, and C string concatenation to give
-    it a first "priority" argument:
+    compatible with ANSI C printf.
+   </para>
+
+   <para>
+    Provide a <firstterm>message priority level</firstterm> by using
+    predefined macros and C string concatenation:
    </para>
 
    <programlisting>
