@@ -53,7 +53,6 @@ __strncpy_user:
 	nop
 	.size   __strncpy_user, . - __strncpy_user
 
-
 	.section	.fixup, "ax"
 	.align	2
 4:
@@ -95,7 +94,6 @@ __strnlen_user:
 	nop
 	.size   __strnlen_user, . - __strnlen_user
 
-
 	.section	.fixup,"ax"
 4:
 	brid	3b
@@ -121,21 +119,34 @@ __copy_tofrom_user:
 	 * r7, r3 - count
 	 * r4 - tempval
 	 */
-	addik	r3,r7,0
-	beqi	r3,3f
-1:
-	lbu	r4,r6,r0
-	addik	r6,r6,1
-2:
-	sb	r4,r5,r0
-	addik	r3,r3,-1
-	bneid	r3,1b
-	addik	r5,r5,1		/* delay slot */
+	beqid	r7, 3f /* zero size is not likely */
+	andi	r3, r7, 0x3 /* filter add count */
+	bneid	r3, 4f /* if is odd value then byte copying */
+	or	r3, r5, r6 /* find if is any to/from unaligned */
+	andi	r3, r3, 0x3 /* mask unaligned */
+	bneid	r3, 4f /* it is unaligned -> then jump */
+	nop
+
+	addik	r7, r7, -4
+/* at least one 4 byte copy */
+5:	lw	r4, r6, r7
+6:	sw	r4, r5, r7
+	bgtid	r7, 5b
+	addik	r7, r7, -4
+
+	addik	r3, r7, 4
+	rtsd	r15, 8
+	nop
+4:	addik	r7, r7, -1
+1:	lbu	r4,r6,r7
+2:	sb	r4,r5,r7
+	bgtid	r7,1b
+	addik	r7,r7,-1
 3:
+	addik	r3,r7,1
 	rtsd	r15,8
 	nop
 	.size   __copy_tofrom_user, . - __copy_tofrom_user
 
-
 	.section	__ex_table,"a"
-	.word	1b,3b,2b,3b
+	.word	1b,3b,2b,3b,5b,3b,6b,3b
