@@ -1111,24 +1111,49 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
   </sect1>
 
   <sect1 id="convention-returns">
-   <title>Return Conventions</title>
+   <title>Return Conventions: <function>PTR_ERR()</function>/<function>ERR_PTR()</function>
+    <filename class="headerfile">include/linux/err.h</filename>
+   </title>
 
    <para>
-    For code called in user context, it's very common to defy C
-    convention, and return <returnvalue>0</returnvalue> for success,
-    and a negative error number
-    (eg. <returnvalue>-EFAULT</returnvalue>) for failure.  This can be
-    unintuitive at first, but it's fairly widespread in the kernel.
+    For code called in user context, errors are reported via
+    return values rather than through something like C's 'errno';
+    however, it's very common in kernel code to defy C convention
+    by returning <returnvalue>0</returnvalue> for success and a
+    <emphasis>negative</emphasis> value known as an
+    <firstterm>error number</firstterm>
+    (eg. <returnvalue>-EFAULT</returnvalue>) for failure.
    </para>
 
    <para>
-    Using <function>ERR_PTR()</function>
+    If the return value is of pointer type, then an error number is
+    encoded as an <firstterm>error pointer</firstterm>; whether a pointer
+    value is a valid pointer or an error pointer can be determined by
+    <function>IS_ERR(<varname>ptr</varname>)</function>. An error pointer
+    can be explicitly converted to an error number using
+    <function>PTR_ERR(<varname>ptr</varname>)</function>; similarly, an
+    error number can be converted to an error pointer using
+    <function>ERR_PTR(<varname>num</varname>)</function>.
+   </para>
 
-    <filename class="headerfile">include/linux/err.h</filename>; to
-    encode a negative error number into a pointer, and
-    <function>IS_ERR()</function> and <function>PTR_ERR()</function>
-    to get it back out again: avoids a separate pointer parameter for
-    the error number.  Icky, but in a good way.
+   <para>
+    Both error numbers and error pointers are collectively called
+    <firstterm>error codes</firstterm>.
+   </para>
+
+   <para>
+    This convention of multiplexing a return value between error codes
+    and valid values avoids the need for an output parameter or some
+    other more complicated abstraction in order to handle returning
+    both kinds of data.
+   </para>
+
+   <para>
+    Functions for which it would make sense to have valid negative
+    return values can simply return values offset enough to produce
+    only non-negative values (provided the original valid output range
+    is sufficiently small to do so). If this is not possible, then
+    an extra output parameter may be used.
    </para>
   </sect1>
 
