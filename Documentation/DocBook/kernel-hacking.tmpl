@@ -334,7 +334,7 @@ asmlinkage long sys_mycall(int arg)
   </para>
 
   <para>
-   Inside the ioctl you're in user context to a process.  When a
+   Inside the ioctl you're in user context to a process.  When an
    error occurs you return a negated errno (see
    <filename class="headerfile">include/linux/errno.h</filename>),
    otherwise you return <returnvalue>0</returnvalue>.
