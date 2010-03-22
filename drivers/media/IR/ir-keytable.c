@@ -403,7 +403,8 @@ EXPORT_SYMBOL_GPL(ir_g_keycode_from_table);
  */
 int ir_input_register(struct input_dev *input_dev,
 		      const struct ir_scancode_table *rc_tab,
-		      const struct ir_dev_props *props)
+		      const struct ir_dev_props *props,
+		      const char *driver_name)
 {
 	struct ir_input_dev *ir_dev;
 	struct ir_scancode  *keymap    = rc_tab->scan;
@@ -418,6 +419,11 @@ int ir_input_register(struct input_dev *input_dev,
 
 	spin_lock_init(&ir_dev->rc_tab.lock);
 
+	ir_dev->driver_name = kmalloc(strlen(driver_name) + 1, GFP_KERNEL);
+	if (!ir_dev->driver_name)
+		return -ENOMEM;
+	strcpy(ir_dev->driver_name, driver_name);
+	ir_dev->rc_tab.name = rc_tab->name;
 	ir_dev->rc_tab.size = ir_roundup_tablesize(rc_tab->size);
 	ir_dev->rc_tab.scan = kzalloc(ir_dev->rc_tab.size *
 				    sizeof(struct ir_scancode), GFP_KERNEL);
@@ -448,22 +454,15 @@ int ir_input_register(struct input_dev *input_dev,
 	input_dev->setkeycode = ir_setkeycode;
 	input_set_drvdata(input_dev, ir_dev);
 
-	rc = input_register_device(input_dev);
+	rc = ir_register_class(input_dev);
 	if (rc < 0)
 		goto err;
-
-	rc = ir_register_class(input_dev);
-	if (rc < 0) {
-		input_unregister_device(input_dev);
-		goto err;
-	}
 
 	return 0;
 
 err:
 	kfree(rc_tab->scan);
 	kfree(ir_dev);
-	input_set_drvdata(input_dev, NULL);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(ir_input_register);
@@ -492,7 +491,6 @@ void ir_input_unregister(struct input_dev *dev)
 	ir_unregister_class(dev);
 
 	kfree(ir_dev);
-	input_unregister_device(dev);
 }
 EXPORT_SYMBOL_GPL(ir_input_unregister);
 
