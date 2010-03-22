@@ -793,8 +793,8 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
     <filename class="headerfile">include/linux/interrupt.h</filename></title>
 
    <para>
-    These routines disable soft interrupts on the local CPU, and
-    restore them.  They are reentrant; if soft interrupts were
+    These routines disable or enable soft[ware] interrupts on the local CPU.
+    They are reentrant; if soft interrupts were
     disabled before, they will still be disabled after this pair
     of functions has been called.  They prevent softirqs and tasklets
     from running on the current CPU.
