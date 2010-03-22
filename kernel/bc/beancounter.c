@@ -108,11 +108,55 @@ EXPORT_SYMBOL(ub_list_head);
  *	will mean the old entry is still around with resource tied to it.
  */
 
-static inline void free_ub(struct user_beancounter *ub)
+static struct user_beancounter *alloc_ub(uid_t uid, struct user_beancounter *p)
+{
+	struct user_beancounter *new_ub;
+
+	ub_debug(UBD_ALLOC, "Creating ub %p\n", new_ub);
+
+	new_ub = (struct user_beancounter *)kmem_cache_alloc(ub_cachep, 
+			GFP_KERNEL);
+	if (new_ub == NULL)
+		return NULL;
+
+	if (p == NULL) {
+		memcpy(new_ub, &default_beancounter, sizeof(*new_ub));
+		init_beancounter_struct(new_ub);
+	} else {
+		memset(new_ub, 0, sizeof(*new_ub));
+		init_beancounter_struct(new_ub);
+		init_beancounter_nolimits(new_ub);
+		init_beancounter_store(new_ub);
+	}
+
+	if (percpu_counter_init(&new_ub->ub_orphan_count, 0))
+		goto fail_pcpu;
+
+	new_ub->ub_percpu = alloc_percpu(struct ub_percpu_struct);
+	if (new_ub->ub_percpu == NULL)
+		goto fail_free;
+
+	new_ub->ub_uid = uid;
+	new_ub->parent = get_beancounter(p);
+	return new_ub;
+
+fail_free:
+	percpu_counter_destroy(&new_ub->ub_orphan_count);
+fail_pcpu:
+	kmem_cache_free(ub_cachep, new_ub);
+	return NULL;
+}
+
+static inline void __free_ub(struct user_beancounter *ub)
 {
 	free_percpu(ub->ub_percpu);
-	percpu_counter_destroy(&ub->ub_orphan_count);
 	kmem_cache_free(ub_cachep, ub);
+}
+
+static inline void free_ub(struct user_beancounter *ub)
+{
+	percpu_counter_destroy(&ub->ub_orphan_count);
+	__free_ub(ub);
 }
 
 static inline struct user_beancounter *bc_lookup_hash(struct hlist_head *hash,
@@ -161,29 +205,12 @@ retry:
 	}
 	spin_unlock_irqrestore(&ub_hash_lock, flags);
 
-	/* alloc new ub */
-	new_ub = (struct user_beancounter *)kmem_cache_alloc(ub_cachep, 
-			GFP_KERNEL);
+	new_ub = alloc_ub(uid, NULL);
 	if (new_ub == NULL)
 		return NULL;
 
-	if (percpu_counter_init(&new_ub->ub_orphan_count, 0))
-		goto fail_pcpu;
-
-	ub_debug(UBD_ALLOC, "Creating ub %p\n", new_ub);
-	memcpy(new_ub, &default_beancounter, sizeof(*new_ub));
-	init_beancounter_struct(new_ub);
-	new_ub->ub_percpu = alloc_percpu(struct ub_percpu_struct);
-	if (new_ub->ub_percpu == NULL)
-		goto fail_free;
-	new_ub->ub_uid = uid;
 	goto retry;
 
-fail_free:
-	percpu_counter_destroy(&new_ub->ub_orphan_count);
-fail_pcpu:
-	kmem_cache_free(ub_cachep, new_ub);
-	return NULL;
 }
 EXPORT_SYMBOL(get_beancounter_byuid);
 
@@ -223,32 +250,11 @@ retry:
 	}
 	spin_unlock_irqrestore(&ub_hash_lock, flags);
 
-	/* alloc new ub */
-	new_ub = (struct user_beancounter *)kmem_cache_alloc(ub_cachep, 
-			GFP_KERNEL);
+	new_ub = alloc_ub(id, p);
 	if (new_ub == NULL)
 		return NULL;
 
-	if (percpu_counter_init(&new_ub->ub_orphan_count, 0))
-		goto fail_pcpu;
-
-	ub_debug(UBD_ALLOC, "Creating sub %p\n", new_ub);
-	memset(new_ub, 0, sizeof(*new_ub));
-	init_beancounter_nolimits(new_ub);
-	init_beancounter_store(new_ub);
-	init_beancounter_struct(new_ub);
-	new_ub->ub_percpu = alloc_percpu(struct ub_percpu_struct);
-	if (new_ub->ub_percpu == NULL)
-		goto fail_free;
-	new_ub->ub_uid = id;
-	new_ub->parent = get_beancounter(p);
 	goto retry;
-
-fail_free:
-	percpu_counter_destroy(&new_ub->ub_orphan_count);
-fail_pcpu:
-	kmem_cache_free(ub_cachep, new_ub);
-	return NULL;
 }
 EXPORT_SYMBOL(get_subbeancounter_byid);
 
@@ -299,7 +305,7 @@ static void bc_free_rcu(struct rcu_head *rcu)
 	struct user_beancounter *ub;
 
 	ub = container_of(rcu, struct user_beancounter, rcu);
-	free_ub(ub);
+	__free_ub(ub);
 }
 
 static void delayed_release_beancounter(struct work_struct *w)
@@ -322,6 +328,8 @@ again:
 
 	bc_verify_held(ub);
 	ub_free_counters(ub);
+	percpu_counter_destroy(&ub->ub_orphan_count);
+
 	parent = ub->parent;
 
 	call_rcu(&ub->rcu, bc_free_rcu);
