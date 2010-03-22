@@ -865,8 +865,8 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
     (dynamically-loadable parts of the kernel).  Using the
     <function>module_init()</function> and
     <function>module_exit()</function> macros it is easy to write code
-    without #ifdefs which can operate both as a module or built into
-    the kernel.
+    (without #ifdefs) which can be built either into the kernel or as
+    a module.
    </para>
 
    <para>
