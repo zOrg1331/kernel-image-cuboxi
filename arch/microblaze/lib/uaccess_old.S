@@ -22,6 +22,7 @@
 
 	.text
 .globl __strncpy_user;
+.type  __strncpy_user, @function
 .align 4;
 __strncpy_user:
 
@@ -50,6 +51,7 @@ __strncpy_user:
 3:
 	rtsd	r15,8
 	nop
+	.size   __strncpy_user, . - __strncpy_user
 
 	.section	.fixup, "ax"
 	.align	2
@@ -71,6 +73,7 @@ __strncpy_user:
 
 	.text
 .globl __strnlen_user;
+.type  __strnlen_user, @function
 .align 4;
 __strnlen_user:
 	addik	r3,r6,0
@@ -89,6 +92,7 @@ __strnlen_user:
 3:
 	rtsd	r15,8
 	nop
+	.size   __strnlen_user, . - __strnlen_user
 
 	.section	.fixup,"ax"
 4:
@@ -106,6 +110,7 @@ __strnlen_user:
  */
 	.text
 .globl __copy_tofrom_user;
+.type  __copy_tofrom_user, @function
 .align 4;
 __copy_tofrom_user:
 	/*
@@ -141,6 +146,7 @@ __copy_tofrom_user:
 	addik	r3,r7,1
 	rtsd	r15,8
 	nop
+	.size   __copy_tofrom_user, . - __copy_tofrom_user
 
 	.section	__ex_table,"a"
 	.word	1b,3b,2b,3b,5b,3b,6b,3b
