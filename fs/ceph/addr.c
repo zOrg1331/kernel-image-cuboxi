@@ -273,7 +273,6 @@ static int ceph_readpages(struct file *file, struct address_space *mapping,
 	struct ceph_osd_client *osdc = &ceph_inode_to_client(inode)->osdc;
 	int rc = 0;
 	struct page **pages;
-	struct pagevec pvec;
 	loff_t offset;
 	u64 len;
 
@@ -296,8 +295,6 @@ static int ceph_readpages(struct file *file, struct address_space *mapping,
 	if (rc < 0)
 		goto out;
 
-	/* set uptodate and add to lru in pagevec-sized chunks */
-	pagevec_init(&pvec, 0);
 	for (; !list_empty(page_list) && len > 0;
 	     rc -= PAGE_CACHE_SIZE, len -= PAGE_CACHE_SIZE) {
 		struct page *page =
@@ -311,7 +308,7 @@ static int ceph_readpages(struct file *file, struct address_space *mapping,
 			zero_user_segment(page, s, PAGE_CACHE_SIZE);
 		}
 
-		if (add_to_page_cache(page, mapping, page->index, GFP_NOFS)) {
+		if (add_to_page_cache_lru(page, mapping, page->index, GFP_NOFS)) {
 			page_cache_release(page);
 			dout("readpages %p add_to_page_cache failed %p\n",
 			     inode, page);
@@ -322,10 +319,8 @@ static int ceph_readpages(struct file *file, struct address_space *mapping,
 		flush_dcache_page(page);
 		SetPageUptodate(page);
 		unlock_page(page);
-		if (pagevec_add(&pvec, page) == 0)
-			pagevec_lru_add_file(&pvec);   /* add to lru */
+		page_cache_release(page);
 	}
-	pagevec_lru_add_file(&pvec);
 	rc = 0;
 
 out:
@@ -919,6 +914,10 @@ static int context_is_writeable_or_written(struct inode *inode,
 /*
  * We are only allowed to write into/dirty the page if the page is
  * clean, or already dirty within the same snap context.
+ *
+ * called with page locked.
+ * return success with page locked,
+ * or any failure (incl -EAGAIN) with page unlocked.
  */
 static int ceph_update_writeable_page(struct file *file,
 			    loff_t pos, unsigned len,
@@ -961,9 +960,11 @@ retry_locked:
 			snapc = ceph_get_snap_context((void *)page->private);
 			unlock_page(page);
 			ceph_queue_writeback(inode);
-			wait_event_interruptible(ci->i_cap_wq,
+			r = wait_event_interruptible(ci->i_cap_wq,
 			       context_is_writeable_or_written(inode, snapc));
 			ceph_put_snap_context(snapc);
+			if (r == -ERESTARTSYS)
+				return r;
 			return -EAGAIN;
 		}
 
@@ -1035,7 +1036,7 @@ static int ceph_write_begin(struct file *file, struct address_space *mapping,
 	int r;
 
 	do {
-		/* get a page*/
+		/* get a page */
 		page = grab_cache_page_write_begin(mapping, index, 0);
 		if (!page)
 			return -ENOMEM;
