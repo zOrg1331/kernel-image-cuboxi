@@ -521,12 +521,6 @@ static u32 atombios_adjust_pll(struct drm_crtc *crtc,
 				/* DVO wants 2x pixel clock if the DVO chip is in 12 bit mode */
 				if (radeon_encoder->encoder_id == ENCODER_OBJECT_ID_INTERNAL_KLDSCP_DVO1)
 					adjusted_clock = mode->clock * 2;
-				/* LVDS PLL quirks */
-				if (encoder->encoder_type == DRM_MODE_ENCODER_LVDS) {
-					struct radeon_encoder_atom_dig *dig = radeon_encoder->enc_priv;
-					pll->algo = dig->pll_algo;
-					pll->flags |= RADEON_PLL_IS_LCD;
-				}
 			} else {
 				if (encoder->encoder_type != DRM_MODE_ENCODER_DAC)
 					pll->flags |= RADEON_PLL_NO_ODD_POST_DIV;
@@ -547,8 +541,9 @@ static u32 atombios_adjust_pll(struct drm_crtc *crtc,
 		int index;
 
 		index = GetIndexIntoMasterTable(COMMAND, AdjustDisplayPll);
-		atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev,
-				      &crev);
+		if (!atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev,
+					   &crev))
+			return adjusted_clock;
 
 		memset(&args, 0, sizeof(args));
 
@@ -636,8 +631,9 @@ static void atombios_crtc_set_dcpll(struct drm_crtc *crtc)
 	memset(&args, 0, sizeof(args));
 
 	index = GetIndexIntoMasterTable(COMMAND, SetPixelClock);
-	atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev,
-			      &crev);
+	if (!atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev,
+				   &crev))
+		return;
 
 	switch (frev) {
 	case 1:
@@ -711,8 +707,9 @@ static void atombios_crtc_set_pll(struct drm_crtc *crtc, struct drm_display_mode
 			   &ref_div, &post_div);
 
 	index = GetIndexIntoMasterTable(COMMAND, SetPixelClock);
-	atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev,
-			      &crev);
+	if (!atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev,
+				   &crev))
+		return;
 
 	switch (frev) {
 	case 1:
