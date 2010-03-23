@@ -657,12 +657,7 @@ static int ocfs2_remove_inode(struct inode *inode,
 
 	di->i_dtime = cpu_to_le64(CURRENT_TIME.tv_sec);
 	di->i_flags &= cpu_to_le32(~(OCFS2_VALID_FL | OCFS2_ORPHANED_FL));
-
-	status = ocfs2_journal_dirty(handle, di_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto bail_commit;
-	}
+	ocfs2_journal_dirty(handle, di_bh);
 
 	ocfs2_remove_from_cache(INODE_CACHE(inode), di_bh);
 	dquot_free_inode(inode);
@@ -891,6 +886,21 @@ static int ocfs2_query_inode_wipe(struct inode *inode,
 	/* Do some basic inode verification... */
 	di = (struct ocfs2_dinode *) di_bh->b_data;
 	if (!(di->i_flags & cpu_to_le32(OCFS2_ORPHANED_FL))) {
+		/*
+		 * Inodes in the orphan dir must have ORPHANED_FL.  The only
+		 * inodes that come back out of the orphan dir are reflink
+		 * targets. A reflink target may be moved out of the orphan
+		 * dir between the time we scan the directory and the time we
+		 * process it. This would lead to HAS_REFCOUNT_FL being set but
+		 * ORPHANED_FL not.
+		 */
+		if (di->i_dyn_features & cpu_to_le16(OCFS2_HAS_REFCOUNT_FL)) {
+			mlog(0, "Reflinked inode %llu is no longer orphaned.  "
+			     "it shouldn't be deleted\n",
+			     (unsigned long long)oi->ip_blkno);
+			goto bail;
+		}
+
 		/* for lack of a better error? */
 		status = -EEXIST;
 		mlog(ML_ERROR,
@@ -1276,13 +1286,8 @@ int ocfs2_mark_inode_dirty(handle_t *handle,
 	fe->i_mtime = cpu_to_le64(inode->i_mtime.tv_sec);
 	fe->i_mtime_nsec = cpu_to_le32(inode->i_mtime.tv_nsec);
 
-	status = ocfs2_journal_dirty(handle, bh);
-	if (status < 0)
-		mlog_errno(status);
-
-	status = 0;
+	ocfs2_journal_dirty(handle, bh);
 leave:
-
 	mlog_exit(status);
 	return status;
 }
