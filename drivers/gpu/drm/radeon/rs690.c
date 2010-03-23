@@ -27,6 +27,7 @@
  */
 #include "drmP.h"
 #include "radeon.h"
+#include "radeon_asic.h"
 #include "atom.h"
 #include "rs690d.h"
 
@@ -47,8 +48,6 @@ static int rs690_mc_wait_for_idle(struct radeon_device *rdev)
 
 static void rs690_gpu_init(struct radeon_device *rdev)
 {
-	/* FIXME: HDP same place on rs690 ? */
-	r100_hdp_reset(rdev);
 	/* FIXME: is this correct ? */
 	r420_pipes_init(rdev);
 	if (rs690_mc_wait_for_idle(rdev)) {
@@ -131,7 +130,6 @@ void rs690_pm_info(struct radeon_device *rdev)
 
 void rs690_mc_init(struct radeon_device *rdev)
 {
-	fixed20_12 a;
 	u64 base;
 
 	rs400_gart_adjust_size(rdev);
@@ -145,18 +143,10 @@ void rs690_mc_init(struct radeon_device *rdev)
 	base = RREG32_MC(R_000100_MCCFG_FB_LOCATION);
 	base = G_000100_MC_FB_START(base) << 16;
 	rs690_pm_info(rdev);
-	/* FIXME: we should enforce default clock in case GPU is not in
-	 * default setup
-	 */
-	a.full = rfixed_const(100);
-	rdev->pm.sclk.full = rfixed_const(rdev->clock.default_sclk);
-	rdev->pm.sclk.full = rfixed_div(rdev->pm.sclk, a);
-	a.full = rfixed_const(16);
-	/* core_bandwidth = sclk(Mhz) * 16 */
-	rdev->pm.core_bandwidth.full = rfixed_div(rdev->pm.sclk, a);
 	rdev->mc.igp_sideport_enabled = radeon_atombios_sideport_present(rdev);
 	radeon_vram_location(rdev, &rdev->mc, base);
 	radeon_gtt_location(rdev, &rdev->mc);
+	radeon_update_bandwidth_info(rdev);
 }
 
 void rs690_line_buffer_adjust(struct radeon_device *rdev,
@@ -632,7 +622,7 @@ int rs690_resume(struct radeon_device *rdev)
 	/* Resume clock before doing reset */
 	rv515_clock_startup(rdev);
 	/* Reset gpu before posting otherwise ATOM will enter infinite loop */
-	if (radeon_gpu_reset(rdev)) {
+	if (radeon_asic_reset(rdev)) {
 		dev_warn(rdev->dev, "GPU reset failed ! (0xE40=0x%08X, 0x7C0=0x%08X)\n",
 			RREG32(R_000E40_RBBM_STATUS),
 			RREG32(R_0007C0_CP_STAT));
@@ -657,6 +647,7 @@ int rs690_suspend(struct radeon_device *rdev)
 
 void rs690_fini(struct radeon_device *rdev)
 {
+	radeon_pm_fini(rdev);
 	r100_cp_fini(rdev);
 	r100_wb_fini(rdev);
 	r100_ib_fini(rdev);
@@ -695,7 +686,7 @@ int rs690_init(struct radeon_device *rdev)
 		return -EINVAL;
 	}
 	/* Reset gpu before posting otherwise ATOM will enter infinite loop */
-	if (radeon_gpu_reset(rdev)) {
+	if (radeon_asic_reset(rdev)) {
 		dev_warn(rdev->dev,
 			"GPU reset failed ! (0xE40=0x%08X, 0x7C0=0x%08X)\n",
 			RREG32(R_000E40_RBBM_STATUS),
