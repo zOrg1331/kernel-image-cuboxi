@@ -218,6 +218,10 @@ config MMU
 	  Select if you want MMU-based virtualised addressing space
 	  support by paged memory management. If unsure, say 'Y'.
 
+#
+# The "ARM system type" choice list is ordered alphabetically by option
+# text.  Please add new entries in the option alphabetic order.
+#
 choice
 	prompt "ARM system type"
 	default ARCH_VERSATILE
@@ -234,7 +238,6 @@ config ARCH_INTEGRATOR
 	bool "ARM Ltd. Integrator family"
 	select ARM_AMBA
 	select ARCH_HAS_CPUFREQ
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select ICST
 	select GENERIC_TIME
@@ -246,7 +249,6 @@ config ARCH_INTEGRATOR
 config ARCH_REALVIEW
 	bool "ARM Ltd. RealView family"
 	select ARM_AMBA
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select ICST
 	select GENERIC_TIME
@@ -261,7 +263,6 @@ config ARCH_VERSATILE
 	bool "ARM Ltd. Versatile family"
 	select ARM_AMBA
 	select ARM_VIC
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select ICST
 	select GENERIC_TIME
@@ -295,6 +296,18 @@ config ARCH_AT91
 	  This enables support for systems based on the Atmel AT91RM9200,
 	  AT91SAM9 and AT91CAP9 processors.
 
+config ARCH_BCMRING
+	bool "Broadcom BCMRING"
+	depends on MMU
+	select CPU_V6
+	select ARM_AMBA
+	select COMMON_CLKDEV
+	select GENERIC_TIME
+	select GENERIC_CLOCKEVENTS
+	select ARCH_WANT_OPTIONAL_GPIOLIB
+	help
+	  Support for Broadcom's BCMRing platform.
+
 config ARCH_CLPS711X
 	bool "Cirrus Logic CLPS711x/EP721x-based"
 	select CPU_ARM720T
@@ -326,7 +339,6 @@ config ARCH_EP93XX
 	select ARM_AMBA
 	select ARM_VIC
 	select GENERIC_GPIO
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select ARCH_REQUIRE_GPIOLIB
 	select ARCH_HAS_HOLES_MEMORYMODEL
@@ -346,7 +358,6 @@ config ARCH_MXC
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
 	select ARCH_REQUIRE_GPIOLIB
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	help
 	  Support for Freescale MXC/iMX-based family of processors
@@ -354,7 +365,6 @@ config ARCH_MXC
 config ARCH_STMP3XXX
 	bool "Freescale STMP3xxx"
 	select CPU_ARM926T
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select ARCH_REQUIRE_GPIOLIB
 	select GENERIC_TIME
@@ -379,20 +389,6 @@ config ARCH_H720X
 	select ISA_DMA_API
 	help
 	  This enables support for systems based on the Hynix HMS720x
-
-config ARCH_NOMADIK
-	bool "STMicroelectronics Nomadik"
-	select ARM_AMBA
-	select ARM_VIC
-	select CPU_ARM926T
-	select HAVE_CLK
-	select COMMON_CLKDEV
-	select GENERIC_TIME
-	select GENERIC_CLOCKEVENTS
-	select GENERIC_GPIO
-	select ARCH_REQUIRE_GPIOLIB
-	help
-	  Support for the Nomadik platform by ST-Ericsson
 
 config ARCH_IOP13XX
 	bool "IOP13xx-based"
@@ -535,7 +531,6 @@ config ARCH_MMP
 	depends on MMU
 	select GENERIC_GPIO
 	select ARCH_REQUIRE_GPIOLIB
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
@@ -571,7 +566,6 @@ config ARCH_W90X900
 	select CPU_ARM926T
 	select ARCH_REQUIRE_GPIOLIB
 	select GENERIC_GPIO
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
@@ -587,7 +581,6 @@ config ARCH_W90X900
 config ARCH_NUC93X
 	bool "Nuvoton NUC93X CPU"
 	select CPU_ARM926T
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	help
 	  Support for Nuvoton (Winbond logic dept.) NUC93X MCU,The NUC93X is a
@@ -596,7 +589,6 @@ config ARCH_NUC93X
 config ARCH_PNX4008
 	bool "Philips Nexperia PNX4008 Mobile"
 	select CPU_ARM926T
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	help
 	  This enables support for Philips PNX4008 mobile platform.
@@ -607,7 +599,6 @@ config ARCH_PXA
 	select ARCH_MTD_XIP
 	select ARCH_HAS_CPUFREQ
 	select GENERIC_GPIO
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select ARCH_REQUIRE_GPIOLIB
 	select GENERIC_TIME
@@ -762,11 +753,34 @@ config ARCH_U300
 	select ARM_VIC
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select GENERIC_GPIO
 	help
 	  Support for ST-Ericsson U300 series mobile platforms.
+
+config ARCH_U8500
+	bool "ST-Ericsson U8500 Series"
+	select CPU_V7
+	select ARM_AMBA
+	select GENERIC_TIME
+	select GENERIC_CLOCKEVENTS
+	select COMMON_CLKDEV
+	select ARCH_REQUIRE_GPIOLIB
+	help
+	  Support for ST-Ericsson's Ux500 architecture
+
+config ARCH_NOMADIK
+	bool "STMicroelectronics Nomadik"
+	select ARM_AMBA
+	select ARM_VIC
+	select CPU_ARM926T
+	select COMMON_CLKDEV
+	select GENERIC_TIME
+	select GENERIC_CLOCKEVENTS
+	select GENERIC_GPIO
+	select ARCH_REQUIRE_GPIOLIB
+	help
+	  Support for the Nomadik platform by ST-Ericsson
 
 config ARCH_DAVINCI
 	bool "TI DaVinci"
@@ -775,7 +789,6 @@ config ARCH_DAVINCI
 	select GENERIC_CLOCKEVENTS
 	select GENERIC_GPIO
 	select ARCH_REQUIRE_GPIOLIB
-	select HAVE_CLK
 	select ZONE_DMA
 	select HAVE_IDE
 	select COMMON_CLKDEV
@@ -796,30 +809,13 @@ config ARCH_OMAP
 	help
 	  Support for TI's OMAP platform (OMAP1 and OMAP2).
 
-config ARCH_BCMRING
-	bool "Broadcom BCMRING"
-	depends on MMU
-	select CPU_V6
-	select ARM_AMBA
-	select COMMON_CLKDEV
-	select GENERIC_TIME
-	select GENERIC_CLOCKEVENTS
-	select ARCH_WANT_OPTIONAL_GPIOLIB
-	help
-	  Support for Broadcom's BCMRing platform.
-
-config ARCH_U8500
-	bool "ST-Ericsson U8500 Series"
-	select CPU_V7
-	select ARM_AMBA
-	select GENERIC_TIME
-	select GENERIC_CLOCKEVENTS
-	select COMMON_CLKDEV
-	help
-	  Support for ST-Ericsson's Ux500 architecture
-
 endchoice
 
+#
+# This is sorted alphabetically by mach-* pathname.  However, plat-*
+# Kconfigs may be included either alphabetically (according to the
+# plat- suffix) or along side the corresponding mach-* source.
+#
 source "arch/arm/mach-aaec2000/Kconfig"
 
 source "arch/arm/mach-at91/Kconfig"
