@@ -238,21 +238,24 @@ config ARCH_INTEGRATOR
 	bool "ARM Ltd. Integrator family"
 	select ARM_AMBA
 	select ARCH_HAS_CPUFREQ
-	select HAVE_CLK
 	select COMMON_CLKDEV
-	select ICST525
+	select ICST
+	select GENERIC_TIME
+	select GENERIC_CLOCKEVENTS
+	select PLAT_VERSATILE
 	help
 	  Support for ARM's Integrator platform.
 
 config ARCH_REALVIEW
 	bool "ARM Ltd. RealView family"
 	select ARM_AMBA
-	select HAVE_CLK
 	select COMMON_CLKDEV
-	select ICST307
+	select ICST
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
 	select ARCH_WANT_OPTIONAL_GPIOLIB
+	select PLAT_VERSATILE
+	select ARM_TIMER_SP804
 	help
 	  This enables support for ARM Ltd RealView boards.
 
@@ -260,14 +263,29 @@ config ARCH_VERSATILE
 	bool "ARM Ltd. Versatile family"
 	select ARM_AMBA
 	select ARM_VIC
-	select HAVE_CLK
 	select COMMON_CLKDEV
-	select ICST307
+	select ICST
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
 	select ARCH_WANT_OPTIONAL_GPIOLIB
+	select PLAT_VERSATILE
+	select ARM_TIMER_SP804
 	help
 	  This enables support for ARM Ltd Versatile board.
+
+config ARCH_VEXPRESS
+	bool "ARM Ltd. Versatile Express family"
+	select ARCH_WANT_OPTIONAL_GPIOLIB
+	select ARM_AMBA
+	select ARM_TIMER_SP804
+	select COMMON_CLKDEV
+	select GENERIC_CLOCKEVENTS
+	select GENERIC_TIME
+	select HAVE_CLK
+	select ICST
+	select PLAT_VERSATILE
+	help
+	  This enables support for the ARM Ltd Versatile Express boards.
 
 config ARCH_AT91
 	bool "Atmel AT91"
@@ -321,7 +339,6 @@ config ARCH_EP93XX
 	select ARM_AMBA
 	select ARM_VIC
 	select GENERIC_GPIO
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select ARCH_REQUIRE_GPIOLIB
 	select ARCH_HAS_HOLES_MEMORYMODEL
@@ -341,7 +358,6 @@ config ARCH_MXC
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
 	select ARCH_REQUIRE_GPIOLIB
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	help
 	  Support for Freescale MXC/iMX-based family of processors
@@ -349,7 +365,6 @@ config ARCH_MXC
 config ARCH_STMP3XXX
 	bool "Freescale STMP3xxx"
 	select CPU_ARM926T
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select ARCH_REQUIRE_GPIOLIB
 	select GENERIC_TIME
@@ -516,7 +531,6 @@ config ARCH_MMP
 	depends on MMU
 	select GENERIC_GPIO
 	select ARCH_REQUIRE_GPIOLIB
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
@@ -552,7 +566,6 @@ config ARCH_W90X900
 	select CPU_ARM926T
 	select ARCH_REQUIRE_GPIOLIB
 	select GENERIC_GPIO
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
@@ -568,7 +581,6 @@ config ARCH_W90X900
 config ARCH_NUC93X
 	bool "Nuvoton NUC93X CPU"
 	select CPU_ARM926T
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	help
 	  Support for Nuvoton (Winbond logic dept.) NUC93X MCU,The NUC93X is a
@@ -577,7 +589,6 @@ config ARCH_NUC93X
 config ARCH_PNX4008
 	bool "Philips Nexperia PNX4008 Mobile"
 	select CPU_ARM926T
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	help
 	  This enables support for Philips PNX4008 mobile platform.
@@ -588,7 +599,6 @@ config ARCH_PXA
 	select ARCH_MTD_XIP
 	select ARCH_HAS_CPUFREQ
 	select GENERIC_GPIO
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select ARCH_REQUIRE_GPIOLIB
 	select GENERIC_TIME
@@ -743,7 +753,6 @@ config ARCH_U300
 	select ARM_VIC
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select GENERIC_GPIO
 	help
@@ -756,6 +765,7 @@ config ARCH_U8500
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
 	select COMMON_CLKDEV
+	select ARCH_REQUIRE_GPIOLIB
 	help
 	  Support for ST-Ericsson's Ux500 architecture
 
@@ -764,7 +774,6 @@ config ARCH_NOMADIK
 	select ARM_AMBA
 	select ARM_VIC
 	select CPU_ARM926T
-	select HAVE_CLK
 	select COMMON_CLKDEV
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
@@ -780,7 +789,6 @@ config ARCH_DAVINCI
 	select GENERIC_CLOCKEVENTS
 	select GENERIC_GPIO
 	select ARCH_REQUIRE_GPIOLIB
-	select HAVE_CLK
 	select ZONE_DMA
 	select HAVE_IDE
 	select COMMON_CLKDEV
@@ -919,6 +927,8 @@ source "arch/arm/mach-ux500/Kconfig"
 
 source "arch/arm/mach-versatile/Kconfig"
 
+source "arch/arm/mach-vexpress/Kconfig"
+
 source "arch/arm/mach-w90x900/Kconfig"
 
 # Definitions to make life easier
@@ -934,6 +944,12 @@ config PLAT_ORION
 	bool
 
 config PLAT_PXA
+	bool
+
+config PLAT_VERSATILE
+	bool
+
+config ARM_TIMER_SP804
 	bool
 
 source arch/arm/mm/Kconfig
@@ -1092,10 +1108,11 @@ source "kernel/time/Kconfig"
 config SMP
 	bool "Symmetric Multi-Processing (EXPERIMENTAL)"
 	depends on EXPERIMENTAL && (REALVIEW_EB_ARM11MP || REALVIEW_EB_A9MP ||\
-		 MACH_REALVIEW_PB11MP || MACH_REALVIEW_PBX || ARCH_OMAP4 || ARCH_U8500)
+		 MACH_REALVIEW_PB11MP || MACH_REALVIEW_PBX || ARCH_OMAP4 ||\
+		 ARCH_U8500 || ARCH_VEXPRESS_CA9X4)
 	depends on GENERIC_CLOCKEVENTS
 	select USE_GENERIC_SMP_HELPERS
-	select HAVE_ARM_SCU if (ARCH_REALVIEW || ARCH_OMAP4 || ARCH_U8500)
+	select HAVE_ARM_SCU if (ARCH_REALVIEW || ARCH_OMAP4 || ARCH_U8500 || ARCH_VEXPRESS_CA9X4)
 	help
 	  This enables support for systems with more than one CPU. If you have
 	  a system with only one CPU, like most personal computers, say N. If
