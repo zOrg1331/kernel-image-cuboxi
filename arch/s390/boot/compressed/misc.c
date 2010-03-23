@@ -24,8 +24,8 @@
 /* Symbols defined by linker scripts */
 extern char input_data[];
 extern int input_len;
-extern int _text;
-extern int _end;
+extern char _text, _end;
+extern char _bss, _ebss;
 
 static void error(char *m);
 
@@ -129,6 +129,7 @@ unsigned long decompress_kernel(void)
 	unsigned long output_addr;
 	unsigned char *output;
 
+	memset(&_bss, 0, &_ebss - &_bss);
 	free_mem_ptr = (unsigned long)&_end;
 	free_mem_end_ptr = free_mem_ptr + HEAP_SIZE;
 	output = (unsigned char *) ((free_mem_end_ptr + 4095UL) & -4096UL);
