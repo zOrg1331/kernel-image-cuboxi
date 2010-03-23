@@ -268,7 +268,7 @@ out:
 	if (event)
 		fsnotify_put_event(event);
 
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(fsnotify);
 
