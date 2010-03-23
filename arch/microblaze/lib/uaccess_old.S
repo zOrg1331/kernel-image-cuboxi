@@ -51,7 +51,6 @@ __strncpy_user:
 	rtsd	r15,8
 	nop
 
-
 	.section	.fixup, "ax"
 	.align	2
 4:
@@ -91,7 +90,6 @@ __strnlen_user:
 	rtsd	r15,8
 	nop
 
-
 	.section	.fixup,"ax"
 4:
 	brid	3b
@@ -121,27 +119,26 @@ __copy_tofrom_user:
 	bneid	r3, 4f /* if is odd value then byte copying */
 	or	r3, r5, r6 /* find if is any to/from unaligned */
 	andi	r3, r3, 0x3 /* mask unaligned */
-	bneid	r3, 1f /* it is unaligned -> then jump */
-	or	r3, r0, r0
-
-/* at least one 4 byte copy */
-5:	lw	r4, r6, r3
-6:	sw	r4, r5, r3
-	addik	r7, r7, -4
-	bneid	r7, 5b
-	addik	r3, r3, 4
-	addik	r3, r7, 0
-	rtsd	r15, 8
+	bneid	r3, 4f /* it is unaligned -> then jump */
 	nop
 
-4:	or	r3, r0, r0
-1:	lbu	r4,r6,r3
-2:	sb	r4,r5,r3
+	addik	r7, r7, -4
+/* at least one 4 byte copy */
+5:	lw	r4, r6, r7
+6:	sw	r4, r5, r7
+	bgtid	r7, 5b
+	addik	r7, r7, -4
+
+	addik	r3, r7, 4
+	rtsd	r15, 8
+	nop
+4:	addik	r7, r7, -1
+1:	lbu	r4,r6,r7
+2:	sb	r4,r5,r7
+	bgtid	r7,1b
 	addik	r7,r7,-1
-	bneid	r7,1b
-	addik	r3,r3,1		/* delay slot */
 3:
-	addik	r3,r7,0
+	addik	r3,r7,1
 	rtsd	r15,8
 	nop
 
