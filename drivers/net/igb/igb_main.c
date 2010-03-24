@@ -72,6 +72,7 @@ static DEFINE_PCI_DEVICE_TABLE(igb_pci_tbl) = {
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82576_FIBER), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82576_SERDES), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82576_SERDES_QUAD), board_82575 },
+	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82576_QUAD_COPPER_ET2), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82576_QUAD_COPPER), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82575EB_COPPER), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82575EB_FIBER_SERDES), board_82575 },
@@ -688,7 +689,7 @@ static void igb_set_interrupt_capability(struct igb_adapter *adapter)
 	/* start with one vector for every rx queue */
 	numvecs = adapter->num_rx_queues;
 
-	/* if tx handler is seperate add 1 for every tx queue */
+	/* if tx handler is separate add 1 for every tx queue */
 	if (!(adapter->flags & IGB_FLAG_QUEUE_PAIRS))
 		numvecs += adapter->num_tx_queues;
 
