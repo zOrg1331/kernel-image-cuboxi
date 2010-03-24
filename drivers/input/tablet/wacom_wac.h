@@ -9,6 +9,8 @@
 #ifndef WACOM_WAC_H
 #define WACOM_WAC_H
 
+#include <linux/types.h>
+
 /* maximum packet length for USB devices */
 #define WACOM_PKGLEN_MAX	32
 
@@ -71,6 +73,10 @@ struct wacom_features {
 	unsigned char unitExpo;
 };
 
+struct wacom_shared {
+	bool stylus_in_proximity;
+};
+
 struct wacom_wac {
 	char name[64];
 	unsigned char *data;
@@ -78,6 +84,8 @@ struct wacom_wac {
 	int id[2];
 	__u32 serial[2];
 	struct wacom_features features;
+	struct wacom_shared *shared;
+	struct input_dev *input;
 };
 
 #endif
