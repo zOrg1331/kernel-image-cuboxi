@@ -77,6 +77,7 @@ struct ve_struct ve0 = {
 	.op_sem			= __RWSEM_INITIALIZER(ve0.op_sem),
 #ifdef CONFIG_VE_IPTABLES
 	.ipt_mask 		= VE_IP_ALL,
+	._iptables_modules	= VE_IP_ALL,
 #endif
 	.features		= VE_FEATURE_SIT | VE_FEATURE_IPIP |
 				VE_FEATURE_PPP,
