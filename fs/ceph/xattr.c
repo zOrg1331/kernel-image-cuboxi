@@ -185,12 +185,6 @@ static int __set_xattr(struct ceph_inode_info *ci,
 		ci->i_xattrs.names_size -= xattr->name_len;
 		ci->i_xattrs.vals_size -= xattr->val_len;
 	}
-	if (!xattr) {
-		pr_err("__set_xattr ENOMEM on %p %llx.%llx xattr %s=%s\n",
-		       &ci->vfs_inode, ceph_vinop(&ci->vfs_inode), name,
-		       xattr->val);
-		return -ENOMEM;
-	}
 	ci->i_xattrs.names_size += name_len;
 	ci->i_xattrs.vals_size += val_len;
 	if (val)
@@ -640,7 +634,7 @@ static int ceph_sync_setxattr(struct dentry *dentry, const char *name,
 			return -ENOMEM;
 		err = -ENOMEM;
 		for (i = 0; i < nr_pages; i++) {
-			pages[i] = alloc_page(GFP_NOFS);
+			pages[i] = __page_cache_alloc(GFP_NOFS);
 			if (!pages[i]) {
 				nr_pages = i;
 				goto out;
