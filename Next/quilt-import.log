@@ -1,0 +1,46 @@
+Importing driver-core.current based on 2.6.34-rc1
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.34-rc2-git1
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.34-rc2-git1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard ae6be51ed01d6c4aaf249a207b4434bc7785853b
+HEAD is now at ae6be51 Fix up prototype for sys_ipc breakage
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-coretemp-01-fix-cpu-model-output.patch
+hwmon-coretemp-02-add-missing-newline-to-dev_warn-message.patch
+hwmon-w83793-saving-negative-errors-in-unsigned.patch
+hwmon-asc7621-add-x58-entry-in-kconfig.patch
+hwmon-asus_atk0110-dont-use-if-unsafe.patch
+hwmon-lm63-add-basic-support-for-lm64.patch
+hwmon-f71882fg-01-fixed-braces-coding-style-issues.patch
+hwmon-f71882fg-02-use-strict_strtol-instead-of-simple_strtol.patch
+hwmon-f71882fg-03-code-cleanup.patch
+hwmon-f71882fg-04-properly-acquire-io-regions-while-probing.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 9b45b74f...7042ee7 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.34-rc2
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.33-rc7-10-g6339204
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.33-5070-g64ba992
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing staging based on quilt/usb
+Unchanged quilt series staging
