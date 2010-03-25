@@ -1480,14 +1480,27 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
 				 bond_dev->name,
 				 bond_dev->type, slave_dev->type);
 
-			netdev_bonding_change(bond_dev, NETDEV_BONDING_OLDTYPE);
+			res = netdev_bonding_change(bond_dev,
+						    NETDEV_PRE_TYPE_CHANGE);
+			res = notifier_to_errno(res);
+			if (res) {
+				pr_err("%s: refused to change device type\n",
+				       bond_dev->name);
+				res = -EBUSY;
+				goto err_undo_flags;
+			}
+
+			/* Flush unicast and multicast addresses */
+			dev_unicast_flush(bond_dev);
+			dev_addr_discard(bond_dev);
 
 			if (slave_dev->type != ARPHRD_ETHER)
 				bond_setup_by_slave(bond_dev, slave_dev);
 			else
 				ether_setup(bond_dev);
 
-			netdev_bonding_change(bond_dev, NETDEV_BONDING_NEWTYPE);
+			netdev_bonding_change(bond_dev,
+					      NETDEV_POST_TYPE_CHANGE);
 		}
 	} else if (bond_dev->type != slave_dev->type) {
 		pr_err("%s ether type (%d) is different from other slaves (%d), can not enslave it.\n",
@@ -4654,13 +4667,13 @@ static int bond_check_params(struct bond_params *params)
 	}
 
 	if (num_grat_arp < 0 || num_grat_arp > 255) {
-		pr_warning("Warning: num_grat_arp (%d) not in range 0-255 so it was reset to 1 \n",
+		pr_warning("Warning: num_grat_arp (%d) not in range 0-255 so it was reset to 1\n",
 			   num_grat_arp);
 		num_grat_arp = 1;
 	}
 
 	if (num_unsol_na < 0 || num_unsol_na > 255) {
-		pr_warning("Warning: num_unsol_na (%d) not in range 0-255 so it was reset to 1 \n",
+		pr_warning("Warning: num_unsol_na (%d) not in range 0-255 so it was reset to 1\n",
 			   num_unsol_na);
 		num_unsol_na = 1;
 	}
