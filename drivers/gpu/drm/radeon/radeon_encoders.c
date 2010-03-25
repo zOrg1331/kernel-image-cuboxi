@@ -519,7 +519,8 @@ atombios_digital_setup(struct drm_encoder *encoder, int action)
 		break;
 	}
 
-	atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev, &crev);
+	if (!atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev, &crev))
+		return;
 
 	switch (frev) {
 	case 1:
@@ -593,7 +594,6 @@ atombios_digital_setup(struct drm_encoder *encoder, int action)
 	}
 
 	atom_execute_table(rdev->mode_info.atom_context, index, (uint32_t *)&args);
-	r600_hdmi_enable(encoder, hdmi_detected);
 }
 
 int
@@ -726,7 +726,8 @@ atombios_dig_encoder_setup(struct drm_encoder *encoder, int action)
 	}
 	num = dig->dig_encoder + 1;
 
-	atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev, &crev);
+	if (!atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev, &crev))
+		return;
 
 	args.v1.ucAction = action;
 	args.v1.usPixelClock = cpu_to_le16(radeon_encoder->pixel_clock / 10);
@@ -814,7 +815,8 @@ atombios_dig_transmitter_setup(struct drm_encoder *encoder, int action, uint8_t 
 		}
 	}
 
-	atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev, &crev);
+	if (!atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev, &crev))
+		return;
 
 	args.v1.ucAction = action;
 	if (action == ATOM_TRANSMITTER_ACTION_INIT) {
@@ -1104,7 +1106,8 @@ atombios_set_encoder_crtc_source(struct drm_encoder *encoder)
 
 	memset(&args, 0, sizeof(args));
 
-	atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev, &crev);
+	if (!atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev, &crev))
+		return;
 
 	switch (frev) {
 	case 1:
@@ -1216,6 +1219,9 @@ atombios_set_encoder_crtc_source(struct drm_encoder *encoder)
 	}
 
 	atom_execute_table(rdev->mode_info.atom_context, index, (uint32_t *)&args);
+
+	/* update scratch regs with new routing */
+	radeon_atombios_encoder_crtc_scratch_regs(encoder, radeon_crtc->crtc_id);
 }
 
 static void
@@ -1326,18 +1332,8 @@ radeon_atom_encoder_mode_set(struct drm_encoder *encoder,
 	struct drm_device *dev = encoder->dev;
 	struct radeon_device *rdev = dev->dev_private;
 	struct radeon_encoder *radeon_encoder = to_radeon_encoder(encoder);
-	struct radeon_crtc *radeon_crtc = to_radeon_crtc(encoder->crtc);
 
-	if (radeon_encoder->active_device &
-	    (ATOM_DEVICE_DFP_SUPPORT | ATOM_DEVICE_LCD_SUPPORT)) {
-		struct radeon_encoder_atom_dig *dig = radeon_encoder->enc_priv;
-		if (dig)
-			dig->dig_encoder = radeon_atom_pick_dig_encoder(encoder);
-	}
 	radeon_encoder->pixel_clock = adjusted_mode->clock;
-
-	radeon_atombios_encoder_crtc_scratch_regs(encoder, radeon_crtc->crtc_id);
-	atombios_set_encoder_crtc_source(encoder);
 
 	if (ASIC_IS_AVIVO(rdev)) {
 		if (radeon_encoder->active_device & (ATOM_DEVICE_CV_SUPPORT | ATOM_DEVICE_TV_SUPPORT))
@@ -1396,9 +1392,10 @@ radeon_atom_encoder_mode_set(struct drm_encoder *encoder,
 	}
 	atombios_apply_encoder_quirks(encoder, adjusted_mode);
 
-	/* XXX */
-	if (!ASIC_IS_DCE4(rdev))
+	if (atombios_get_encoder_mode(encoder) == ATOM_ENCODER_MODE_HDMI) {
+		r600_hdmi_enable(encoder);
 		r600_hdmi_setmode(encoder, adjusted_mode);
+	}
 }
 
 static bool
@@ -1418,7 +1415,8 @@ atombios_dac_load_detect(struct drm_encoder *encoder, struct drm_connector *conn
 
 		memset(&args, 0, sizeof(args));
 
-		atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev, &crev);
+		if (!atom_parse_cmd_header(rdev->mode_info.atom_context, index, &frev, &crev))
+			return false;
 
 		args.sDacload.ucMisc = 0;
 
@@ -1492,8 +1490,20 @@ radeon_atom_dac_detect(struct drm_encoder *encoder, struct drm_connector *connec
 
 static void radeon_atom_encoder_prepare(struct drm_encoder *encoder)
 {
+	struct radeon_encoder *radeon_encoder = to_radeon_encoder(encoder);
+
+	if (radeon_encoder->active_device &
+	    (ATOM_DEVICE_DFP_SUPPORT | ATOM_DEVICE_LCD_SUPPORT)) {
+		struct radeon_encoder_atom_dig *dig = radeon_encoder->enc_priv;
+		if (dig)
+			dig->dig_encoder = radeon_atom_pick_dig_encoder(encoder);
+	}
+
 	radeon_atom_output_lock(encoder, true);
 	radeon_atom_encoder_dpms(encoder, DRM_MODE_DPMS_OFF);
+
+	/* this is needed for the pll/ss setup to work correctly in some cases */
+	atombios_set_encoder_crtc_source(encoder);
 }
 
 static void radeon_atom_encoder_commit(struct drm_encoder *encoder)
@@ -1509,6 +1519,8 @@ static void radeon_atom_encoder_disable(struct drm_encoder *encoder)
 	radeon_atom_encoder_dpms(encoder, DRM_MODE_DPMS_OFF);
 
 	if (radeon_encoder_is_digital(encoder)) {
+		if (atombios_get_encoder_mode(encoder) == ATOM_ENCODER_MODE_HDMI)
+			r600_hdmi_disable(encoder);
 		dig = radeon_encoder->enc_priv;
 		dig->dig_encoder = -1;
 	}
@@ -1659,6 +1671,4 @@ radeon_add_atom_encoder(struct drm_device *dev, uint32_t encoder_id, uint32_t su
 		drm_encoder_helper_add(encoder, &radeon_atom_dig_helper_funcs);
 		break;
 	}
-
-	r600_hdmi_init(encoder);
 }
