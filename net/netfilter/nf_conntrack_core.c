@@ -736,6 +736,8 @@ resolve_normal_ct(struct net *net,
 	/* look for tuple match */
 	h = nf_conntrack_find_get(net, &tuple);
 	if (!h) {
+		if (!mask_ipt_allow(get_exec_env()->ipt_mask, VE_NF_CONNTRACK))
+			return NULL;
 		h = init_conntrack(net, &tuple, l3proto, l4proto, skb, dataoff);
 		if (!h)
 			return NULL;
