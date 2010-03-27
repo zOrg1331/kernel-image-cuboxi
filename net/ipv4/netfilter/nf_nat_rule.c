@@ -193,6 +193,9 @@ static int __net_init nf_nat_rule_net_init(struct net *net)
 						 &nat_initial_table.repl);
 	if (IS_ERR(net->ipv4.nat_table))
 		return PTR_ERR(net->ipv4.nat_table);
+
+	net_ipt_module_set(net, VE_IP_IPTABLE_NAT);
+
 	return 0;
 }
 
