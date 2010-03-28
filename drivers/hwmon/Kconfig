@@ -217,8 +217,8 @@ config SENSORS_ASC7621
 	depends on HWMON && I2C
 	help
 	  If you say yes here you get support for the aSC7621
-	  family of SMBus sensors chip found on most Intel X48, X38, 975,
-	  965 and 945 desktop boards.  Currently supported chips:
+	  family of SMBus sensors chip found on most Intel X38, X48, X58,
+	  945, 965 and 975 desktop boards.  Currently supported chips:
 	  aSC7621
 	  aSC7621a
 
@@ -447,13 +447,14 @@ config SENSORS_IT87
 	  will be called it87.
 
 config SENSORS_LM63
-	tristate "National Semiconductor LM63"
+	tristate "National Semiconductor LM63 and LM64"
 	depends on I2C
 	help
-	  If you say yes here you get support for the National Semiconductor
-	  LM63 remote diode digital temperature sensor with integrated fan
-	  control.  Such chips are found on the Tyan S4882 (Thunder K8QS Pro)
-	  motherboard, among others.
+	  If you say yes here you get support for the National
+	  Semiconductor LM63 and LM64 remote diode digital temperature
+	  sensors with integrated fan control.  Such chips are found
+	  on the Tyan S4882 (Thunder K8QS Pro) motherboard, among
+	  others.
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called lm63.
