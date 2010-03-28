@@ -172,7 +172,7 @@ static struct nf_hook_ops ip6t_ops[] __read_mostly = {
 
 static int __net_init ip6table_mangle_net_init(struct net *net)
 {
-	if (!net_ipt_module_permitted(net, VE_IP_MANGLE6))
+	if (!net_ipt_permitted(net, VE_IP_MANGLE6))
 		return 0;
 
 	/* Register table */

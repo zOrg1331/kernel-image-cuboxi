@@ -370,7 +370,7 @@ struct nf_conntrack_l3proto nf_conntrack_l3proto_ipv4 __read_mostly = {
 
 static int nf_conntrack_l3proto_ipv4_init_net(struct net *net)
 {
-	if (!net_ipt_module_permitted(net, VE_IP_CONNTRACK))
+	if (!net_ipt_permitted(net, VE_IP_CONNTRACK))
 		return 0;
 	/*
 	 * FIXME:

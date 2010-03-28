@@ -2224,7 +2224,7 @@ static int __net_init ip_tables_net_init(struct net *net)
 {
 	int res;
 
-	if (!net_ipt_module_permitted(net, VE_IP_IPTABLES))
+	if (!net_ipt_permitted(net, VE_IP_IPTABLES))
 		return 0;
 
 	res = xt_proto_init(net, NFPROTO_IPV4);

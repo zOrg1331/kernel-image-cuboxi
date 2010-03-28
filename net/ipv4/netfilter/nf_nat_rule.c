@@ -186,7 +186,7 @@ static struct xt_target ipt_dnat_reg __read_mostly = {
 
 static int __net_init nf_nat_rule_net_init(struct net *net)
 {
-	if (!net_ipt_module_permitted(net, VE_IP_IPTABLE_NAT))
+	if (!net_ipt_permitted(net, VE_IP_IPTABLE_NAT))
 		return 0;
 
 	net->ipv4.nat_table = ipt_register_table(net, &nat_table,

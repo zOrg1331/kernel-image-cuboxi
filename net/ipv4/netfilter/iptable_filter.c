@@ -128,7 +128,7 @@ module_param(forward, bool, 0000);
 
 static int __net_init iptable_filter_net_init(struct net *net)
 {
-	if (!net_ipt_module_permitted(net, VE_IP_FILTER))
+	if (!net_ipt_permitted(net, VE_IP_FILTER))
 		return 0;
 
 	/* Register table */
