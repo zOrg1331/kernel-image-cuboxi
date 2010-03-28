@@ -700,8 +700,9 @@ void cap_task_reparent_to_init (struct task_struct *p)
 
 int cap_syslog (int type)
 {
-	if ((type != 3 && type != 10) && !capable(CAP_VE_SYS_ADMIN))
-		return -EPERM;
+	if ((type != 3 && type != 10) &&
+		!capable(CAP_VE_SYS_ADMIN) && !capable(CAP_SYS_ADMIN))
+			return -EPERM;
 	return 0;
 }
 
