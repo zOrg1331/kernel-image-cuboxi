@@ -50,6 +50,8 @@
 
 #define RC5_EXTENDED_COMMAND_OFFSET	64
 
+#define MODULE_NAME "cx23885"
+
 static inline unsigned int rc5_command(u32 rc5_baseband)
 {
 	return RC5_INSTR(rc5_baseband) +
@@ -397,7 +399,7 @@ int cx23885_input_init(struct cx23885_dev *dev)
 	dev->ir_input = ir;
 	cx23885_input_ir_start(dev);
 
-	ret = ir_input_register(ir->dev, ir_codes, NULL);
+	ret = ir_input_register(ir->dev, ir_codes, NULL, MODULE_NAME);
 	if (ret)
 		goto err_out_stop;
 
