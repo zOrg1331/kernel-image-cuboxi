@@ -37,3 +37,11 @@ config GFS2_FS_LOCKING_DLM
 	  Most users of GFS2 will require this. It provides the locking
 	  interface between GFS2 and the DLM, which is required to use GFS2
 	  in a cluster environment.
+
+config GFS2_TRACER
+	bool "GFS2 tracing"
+	depends on GFS2_FS && EVENT_TRACING
+	help
+	  Provide trace points in block allocation functions, locking, and
+	  journaling code.
+
