@@ -467,6 +467,7 @@ static struct attribute_group wireless_group = {
 };
 #endif
 
+#ifdef CONFIG_RPS
 /*
  * RX queue sysfs structures and functions.
  */
@@ -677,6 +678,12 @@ static void rx_queue_remove_kobjects(struct net_device *net)
 	kset_unregister(net->queues_kset);
 }
 
+#else /* CONFIG_RPS */
+
+static int rx_queue_register_kobjects(struct net_device *net) { return 0; }
+static void rx_queue_remove_kobjects(struct net_device *net) { }
+
+#endif /* CONFIG_RPS */
 #endif /* CONFIG_SYSFS */
 
 #ifdef CONFIG_HOTPLUG
