@@ -829,7 +829,7 @@ static void enic_set_multicast_list(struct net_device *netdev)
 	int promisc = (netdev->flags & IFF_PROMISC) ? 1 : 0;
 	unsigned int mc_count = netdev_mc_count(netdev);
 	int allmulti = (netdev->flags & IFF_ALLMULTI) ||
-		       mc_count > ENIC_MULTICAST_PERFECT_FILTERS;
+		mc_count > ENIC_MULTICAST_PERFECT_FILTERS;
 	unsigned int flags = netdev->flags | (allmulti ? IFF_ALLMULTI : 0);
 	u8 mc_addr[ENIC_MULTICAST_PERFECT_FILTERS][ETH_ALEN];
 	unsigned int i, j;
@@ -2058,8 +2058,7 @@ static int __devinit enic_probe(struct pci_dev *pdev,
 	netdev->watchdog_timeo = 2 * HZ;
 	netdev->ethtool_ops = &enic_ethtool_ops;
 
-	netdev->features |= NETIF_F_HW_VLAN_TX |
-		NETIF_F_HW_VLAN_RX | NETIF_F_HW_VLAN_FILTER;
+	netdev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
 	if (ENIC_SETTING(enic, TXCSUM))
 		netdev->features |= NETIF_F_SG | NETIF_F_HW_CSUM;
 	if (ENIC_SETTING(enic, TSO))
