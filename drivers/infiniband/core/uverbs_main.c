@@ -214,13 +214,13 @@ static int ib_uverbs_cleanup_ucontext(struct ib_uverbs_file *file,
 
 	list_for_each_entry_safe(uobj, tmp, &context->srq_list, list) {
 		struct ib_srq *srq = uobj->object;
-		struct ib_uevent_object *uevent =
-			container_of(uobj, struct ib_uevent_object, uobject);
+		struct ib_usrq_object *usrq =
+			container_of(uobj, struct ib_usrq_object, uevent.uobject);
 
 		idr_remove_uobj(&ib_uverbs_srq_idr, uobj);
 		ib_destroy_srq(srq);
-		ib_uverbs_release_uevent(file, uevent);
-		kfree(uevent);
+		ib_uverbs_release_uevent(file, &usrq->uevent);
+		kfree(usrq);
 	}
 
 	list_for_each_entry_safe(uobj, tmp, &context->cq_list, list) {
@@ -247,10 +247,12 @@ static int ib_uverbs_cleanup_ucontext(struct ib_uverbs_file *file,
 
 	list_for_each_entry_safe(uobj, tmp, &context->xrcd_list, list) {
 		struct ib_xrcd *xrcd = uobj->object;
+		struct ib_uxrcd_object *uxrcd =
+			container_of(uobj, struct ib_uxrcd_object, uobject);
 
 		idr_remove_uobj(&ib_uverbs_xrcd_idr, uobj);
 		ib_dealloc_xrcd(xrcd);
-		kfree(uobj);
+		kfree(uxrcd);
 	}
 
 	list_for_each_entry_safe(uobj, tmp, &context->pd_list, list) {

@@ -120,6 +120,14 @@ struct ib_uevent_object {
 	u32			events_reported;
 };
 
+struct ib_uxrcd_object {
+	struct ib_uobject	uobject;
+};
+
+struct ib_usrq_object {
+	struct ib_uevent_object	uevent;
+};
+
 struct ib_uqp_object {
 	struct ib_uevent_object	uevent;
 	struct list_head 	mcast_list;
