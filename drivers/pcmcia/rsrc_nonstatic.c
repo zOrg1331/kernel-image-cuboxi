@@ -940,7 +940,8 @@ static int nonstatic_autoadd_resources(struct pcmcia_socket *s)
 		return -EINVAL;
 #endif
 
-	pci_bus_for_each_resource(s->cb_dev->bus, res, i) {
+	for (i = 0; i < PCI_BRIDGE_RESOURCE_NUM; i++) {
+		res = s->cb_dev->bus->resource[i];
 		if (!res)
 			continue;
 
