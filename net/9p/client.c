@@ -1139,11 +1139,8 @@ int p9_client_remove(struct p9_fid *fid)
 
 	p9_free_req(clnt, req);
 	p9_fid_destroy(fid);
-	return err;
 
 error:
-	/* if we failed remove clunk the fid */
-	p9_client_clunk(fid);
 	return err;
 }
 EXPORT_SYMBOL(p9_client_remove);
