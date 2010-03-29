@@ -41,6 +41,7 @@
 #include <linux/hrtimer.h>
 #include <linux/oom.h>
 #include <linux/input.h>
+#include <linux/gfp.h>
 
 #include <asm/ptrace.h>
 #include <asm/irq_regs.h>

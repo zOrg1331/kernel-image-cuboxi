@@ -24,6 +24,7 @@
 #include <linux/delay.h>
 #include <linux/uaccess.h>
 #include <linux/kdb.h>
+#include <linux/slab.h>
 #include "kdb_private.h"
 
 /*

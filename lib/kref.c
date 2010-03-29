@@ -13,6 +13,7 @@
 
 #include <linux/kref.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 
 /**
  * kref_init - initialize object.

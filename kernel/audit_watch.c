@@ -28,6 +28,7 @@
 #include <linux/namei.h>
 #include <linux/netlink.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/security.h>
 #include "audit.h"
 
