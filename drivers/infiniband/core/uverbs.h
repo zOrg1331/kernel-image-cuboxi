@@ -76,6 +76,8 @@ struct ib_uverbs_device {
 	struct ib_device		       *ib_dev;
 	int					devnum;
 	struct cdev			        cdev;
+	struct rb_root				xrcd_tree;
+	struct mutex				xrcd_tree_mutex;
 };
 
 struct ib_uverbs_event_file {
@@ -122,15 +124,18 @@ struct ib_uevent_object {
 
 struct ib_uxrcd_object {
 	struct ib_uobject	uobject;
+	atomic_t		refcnt;
 };
 
 struct ib_usrq_object {
 	struct ib_uevent_object	uevent;
+	struct ib_uxrcd_object *uxrcd;
 };
 
 struct ib_uqp_object {
 	struct ib_uevent_object	uevent;
 	struct list_head 	mcast_list;
+	struct ib_uxrcd_object *uxrcd;
 };
 
 struct ib_ucq_object {
@@ -170,6 +175,8 @@ void ib_uverbs_qp_event_handler(struct ib_event *event, void *context_ptr);
 void ib_uverbs_srq_event_handler(struct ib_event *event, void *context_ptr);
 void ib_uverbs_event_handler(struct ib_event_handler *handler,
 			     struct ib_event *event);
+void ib_uverbs_dealloc_xrcd(struct ib_uverbs_device *dev,
+			    struct ib_xrcd *xrcd);
 
 #define IB_UVERBS_DECLARE_CMD(name)					\
 	ssize_t ib_uverbs_##name(struct ib_uverbs_file *file,		\

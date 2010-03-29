@@ -1014,7 +1014,7 @@ struct ib_xrcd *ib_alloc_xrcd(struct ib_device *device)
 	xrcd = device->alloc_xrcd(device, NULL, NULL);
 	if (!IS_ERR(xrcd)) {
 		xrcd->device  = device;
-		xrcd->uobject = NULL;
+		xrcd->inode   = NULL;
 		atomic_set(&xrcd->usecnt, 0);
 	}
 

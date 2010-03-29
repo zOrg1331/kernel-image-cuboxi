@@ -848,7 +848,7 @@ struct ib_pd {
 
 struct ib_xrcd {
 	struct ib_device       *device;
-	struct ib_uobject      *uobject;
+	struct inode	       *inode;
 	atomic_t		usecnt; /* count all resources */
 };
 
