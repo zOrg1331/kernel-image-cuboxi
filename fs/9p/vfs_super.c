@@ -38,6 +38,7 @@
 #include <linux/idr.h>
 #include <linux/sched.h>
 #include <linux/statfs.h>
+#include <linux/slab.h>
 #include <net/9p/9p.h>
 #include <net/9p/client.h>
 
