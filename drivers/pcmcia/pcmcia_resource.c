@@ -121,6 +121,7 @@ int pcmcia_access_configuration_register(struct pcmcia_device *p_dev,
 	config_t *c;
 	int addr;
 	u_char val;
+	int ret = 0;
 
 	if (!p_dev || !p_dev->function_config)
 		return -EINVAL;
@@ -137,11 +138,10 @@ int pcmcia_access_configuration_register(struct pcmcia_device *p_dev,
 	}
 
 	addr = (c->ConfigBase + reg->Offset) >> 1;
-	mutex_unlock(&s->ops_mutex);
 
 	switch (reg->Action) {
 	case CS_READ:
-		pcmcia_read_cis_mem(s, 1, addr, 1, &val);
+		ret = pcmcia_read_cis_mem(s, 1, addr, 1, &val);
 		reg->Value = val;
 		break;
 	case CS_WRITE:
@@ -150,10 +150,11 @@ int pcmcia_access_configuration_register(struct pcmcia_device *p_dev,
 		break;
 	default:
 		dev_dbg(&s->dev, "Invalid conf register request\n");
-		return -EINVAL;
+		ret = -EINVAL;
 		break;
 	}
-	return 0;
+	mutex_unlock(&s->ops_mutex);
+	return ret;
 } /* pcmcia_access_configuration_register */
 EXPORT_SYMBOL(pcmcia_access_configuration_register);
 
@@ -434,7 +435,6 @@ int pcmcia_request_configuration(struct pcmcia_device *p_dev,
 		s->socket.io_irq = 0;
 	s->ops->set_socket(s, &s->socket);
 	s->lock_count++;
-	mutex_unlock(&s->ops_mutex);
 
 	/* Set up CIS configuration registers */
 	base = c->ConfigBase = req->ConfigBase;
@@ -483,7 +483,6 @@ int pcmcia_request_configuration(struct pcmcia_device *p_dev,
 
 	/* Configure I/O windows */
 	if (c->state & CONFIG_IO_REQ) {
-		mutex_lock(&s->ops_mutex);
 		iomap.speed = io_speed;
 		for (i = 0; i < MAX_IO_WIN; i++)
 			if (s->io[i].res) {
@@ -502,11 +501,11 @@ int pcmcia_request_configuration(struct pcmcia_device *p_dev,
 				s->ops->set_io_map(s, &iomap);
 				s->io[i].Config++;
 			}
-		mutex_unlock(&s->ops_mutex);
 	}
 
 	c->state |= CONFIG_LOCKED;
 	p_dev->_locked = 1;
+	mutex_unlock(&s->ops_mutex);
 	return 0;
 } /* pcmcia_request_configuration */
 EXPORT_SYMBOL(pcmcia_request_configuration);
