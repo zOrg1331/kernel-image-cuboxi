@@ -327,7 +327,7 @@ struct ieee80211_if_managed {
 	struct work_struct work;
 	struct work_struct monitor_work;
 	struct work_struct chswitch_work;
-	struct work_struct beacon_loss_work;
+	struct work_struct beacon_connection_loss_work;
 
 	unsigned long probe_timeout;
 	int probe_send_count;
@@ -745,6 +745,7 @@ struct ieee80211_local {
 	int scan_channel_idx;
 	int scan_ies_len;
 
+	unsigned long leave_oper_channel_time;
 	enum mac80211_scan_state next_scan_state;
 	struct delayed_work scan_work;
 	struct ieee80211_sub_if_data *scan_sdata;
@@ -1155,7 +1156,7 @@ void ieee80211_send_nullfunc(struct ieee80211_local *local,
 			     int powersave);
 void ieee80211_sta_rx_notify(struct ieee80211_sub_if_data *sdata,
 			     struct ieee80211_hdr *hdr);
-void ieee80211_beacon_loss_work(struct work_struct *work);
+void ieee80211_beacon_connection_loss_work(struct work_struct *work);
 
 void ieee80211_wake_queues_by_reason(struct ieee80211_hw *hw,
 				     enum queue_stop_reason reason);

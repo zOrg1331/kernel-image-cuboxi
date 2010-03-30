@@ -26,6 +26,8 @@
 
 *******************************************************************************/
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/init.h>
@@ -44,6 +46,7 @@
 #include <linux/cpu.h>
 #include <linux/smp.h>
 #include <linux/pm_qos_params.h>
+#include <linux/pm_runtime.h>
 #include <linux/aer.h>
 
 #include "e1000.h"
@@ -3080,11 +3083,14 @@ static int e1000_open(struct net_device *netdev)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
+	struct pci_dev *pdev = adapter->pdev;
 	int err;
 
 	/* disallow open during test */
 	if (test_bit(__E1000_TESTING, &adapter->state))
 		return -EBUSY;
+
+	pm_runtime_get_sync(&pdev->dev);
 
 	netif_carrier_off(netdev);
 
@@ -3146,6 +3152,9 @@ static int e1000_open(struct net_device *netdev)
 
 	netif_start_queue(netdev);
 
+	adapter->idle_check = true;
+	pm_runtime_put(&pdev->dev);
+
 	/* fire a link status change interrupt to start the watchdog */
 	ew32(ICS, E1000_ICS_LSC);
 
@@ -3159,6 +3168,7 @@ err_setup_rx:
 	e1000e_free_tx_resources(adapter);
 err_setup_tx:
 	e1000e_reset(adapter);
+	pm_runtime_put_sync(&pdev->dev);
 
 	return err;
 }
@@ -3177,11 +3187,17 @@ err_setup_tx:
 static int e1000_close(struct net_device *netdev)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
+	struct pci_dev *pdev = adapter->pdev;
 
 	WARN_ON(test_bit(__E1000_RESETTING, &adapter->state));
-	e1000e_down(adapter);
+
+	pm_runtime_get_sync(&pdev->dev);
+
+	if (!test_bit(__E1000_DOWN, &adapter->state)) {
+		e1000e_down(adapter);
+		e1000_free_irq(adapter);
+	}
 	e1000_power_down_phy(adapter);
-	e1000_free_irq(adapter);
 
 	e1000e_free_tx_resources(adapter);
 	e1000e_free_rx_resources(adapter);
@@ -3202,6 +3218,8 @@ static int e1000_close(struct net_device *netdev)
 	 */
 	if (adapter->flags & FLAG_HAS_AMT)
 		e1000_release_hw_control(adapter);
+
+	pm_runtime_put_sync(&pdev->dev);
 
 	return 0;
 }
@@ -3547,6 +3565,9 @@ static void e1000_watchdog_task(struct work_struct *work)
 
 	link = e1000e_has_link(adapter);
 	if ((netif_carrier_ok(netdev)) && link) {
+		/* Cancel scheduled suspend requests. */
+		pm_runtime_resume(netdev->dev.parent);
+
 		e1000e_enable_receives(adapter);
 		goto link_up;
 	}
@@ -3558,6 +3579,10 @@ static void e1000_watchdog_task(struct work_struct *work)
 	if (link) {
 		if (!netif_carrier_ok(netdev)) {
 			bool txb2b = 1;
+
+			/* Cancel scheduled suspend requests. */
+			pm_runtime_resume(netdev->dev.parent);
+
 			/* update snapshot of PHY registers on LSC */
 			e1000_phy_read_status(adapter);
 			mac->ops.get_link_up_info(&adapter->hw,
@@ -3667,6 +3692,9 @@ static void e1000_watchdog_task(struct work_struct *work)
 
 			if (adapter->flags & FLAG_RX_NEEDS_RESTART)
 				schedule_work(&adapter->reset_task);
+			else
+				pm_schedule_suspend(netdev->dev.parent,
+							LINK_TIMEOUT);
 		}
 	}
 
@@ -4464,13 +4492,15 @@ out:
 	return retval;
 }
 
-static int __e1000_shutdown(struct pci_dev *pdev, bool *enable_wake)
+static int __e1000_shutdown(struct pci_dev *pdev, bool *enable_wake,
+			    bool runtime)
 {
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
 	u32 ctrl, ctrl_ext, rctl, status;
-	u32 wufc = adapter->wol;
+	/* Runtime suspend should only enable wakeup for link changes */
+	u32 wufc = runtime ? E1000_WUFC_LNKC : adapter->wol;
 	int retval = 0;
 
 	netif_device_detach(netdev);
@@ -4627,42 +4657,20 @@ static void e1000e_disable_l1aspm(struct pci_dev *pdev)
 	}
 }
 
-#ifdef CONFIG_PM
-static int e1000_suspend(struct pci_dev *pdev, pm_message_t state)
+#ifdef CONFIG_PM_OPS
+static bool e1000e_pm_ready(struct e1000_adapter *adapter)
 {
-	int retval;
-	bool wake;
-
-	retval = __e1000_shutdown(pdev, &wake);
-	if (!retval)
-		e1000_complete_shutdown(pdev, true, wake);
-
-	return retval;
+	return !!adapter->tx_ring->buffer_info;
 }
 
-static int e1000_resume(struct pci_dev *pdev)
+static int __e1000_resume(struct pci_dev *pdev)
 {
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
 	u32 err;
 
-	pci_set_power_state(pdev, PCI_D0);
-	pci_restore_state(pdev);
-	pci_save_state(pdev);
 	e1000e_disable_l1aspm(pdev);
-
-	err = pci_enable_device_mem(pdev);
-	if (err) {
-		dev_err(&pdev->dev,
-			"Cannot enable PCI device from suspend\n");
-		return err;
-	}
-
-	pci_set_master(pdev);
-
-	pci_enable_wake(pdev, PCI_D3hot, 0);
-	pci_enable_wake(pdev, PCI_D3cold, 0);
 
 	e1000e_set_interrupt_capability(adapter);
 	if (netif_running(netdev)) {
@@ -4721,13 +4729,88 @@ static int e1000_resume(struct pci_dev *pdev)
 
 	return 0;
 }
-#endif
+
+#ifdef CONFIG_PM_SLEEP
+static int e1000_suspend(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	int retval;
+	bool wake;
+
+	retval = __e1000_shutdown(pdev, &wake, false);
+	if (!retval)
+		e1000_complete_shutdown(pdev, true, wake);
+
+	return retval;
+}
+
+static int e1000_resume(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct net_device *netdev = pci_get_drvdata(pdev);
+	struct e1000_adapter *adapter = netdev_priv(netdev);
+
+	if (e1000e_pm_ready(adapter))
+		adapter->idle_check = true;
+
+	return __e1000_resume(pdev);
+}
+#endif /* CONFIG_PM_SLEEP */
+
+#ifdef CONFIG_PM_RUNTIME
+static int e1000_runtime_suspend(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct net_device *netdev = pci_get_drvdata(pdev);
+	struct e1000_adapter *adapter = netdev_priv(netdev);
+
+	if (e1000e_pm_ready(adapter)) {
+		bool wake;
+
+		__e1000_shutdown(pdev, &wake, true);
+	}
+
+	return 0;
+}
+
+static int e1000_idle(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct net_device *netdev = pci_get_drvdata(pdev);
+	struct e1000_adapter *adapter = netdev_priv(netdev);
+
+	if (!e1000e_pm_ready(adapter))
+		return 0;
+
+	if (adapter->idle_check) {
+		adapter->idle_check = false;
+		if (!e1000e_has_link(adapter))
+			pm_schedule_suspend(dev, MSEC_PER_SEC);
+	}
+
+	return -EBUSY;
+}
+
+static int e1000_runtime_resume(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct net_device *netdev = pci_get_drvdata(pdev);
+	struct e1000_adapter *adapter = netdev_priv(netdev);
+
+	if (!e1000e_pm_ready(adapter))
+		return 0;
+
+	adapter->idle_check = !dev->power.runtime_auto;
+	return __e1000_resume(pdev);
+}
+#endif /* CONFIG_PM_RUNTIME */
+#endif /* CONFIG_PM_OPS */
 
 static void e1000_shutdown(struct pci_dev *pdev)
 {
 	bool wake = false;
 
-	__e1000_shutdown(pdev, &wake);
+	__e1000_shutdown(pdev, &wake, false);
 
 	if (system_state == SYSTEM_POWER_OFF)
 		e1000_complete_shutdown(pdev, false, wake);
@@ -4800,8 +4883,8 @@ static pci_ers_result_t e1000_io_slot_reset(struct pci_dev *pdev)
 		result = PCI_ERS_RESULT_DISCONNECT;
 	} else {
 		pci_set_master(pdev);
+		pdev->state_saved = true;
 		pci_restore_state(pdev);
-		pci_save_state(pdev);
 
 		pci_enable_wake(pdev, PCI_D3hot, 0);
 		pci_enable_wake(pdev, PCI_D3cold, 0);
@@ -5208,6 +5291,12 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
 
 	e1000_print_device_info(adapter);
 
+	if (pci_dev_run_wake(pdev)) {
+		pm_runtime_set_active(&pdev->dev);
+		pm_runtime_enable(&pdev->dev);
+	}
+	pm_schedule_suspend(&pdev->dev, MSEC_PER_SEC);
+
 	return 0;
 
 err_register:
@@ -5250,12 +5339,16 @@ static void __devexit e1000_remove(struct pci_dev *pdev)
 {
 	struct net_device *netdev = pci_get_drvdata(pdev);
 	struct e1000_adapter *adapter = netdev_priv(netdev);
+	bool down = test_bit(__E1000_DOWN, &adapter->state);
+
+	pm_runtime_get_sync(&pdev->dev);
 
 	/*
 	 * flush_scheduled work may reschedule our watchdog task, so
 	 * explicitly disable watchdog tasks from being rescheduled
 	 */
-	set_bit(__E1000_DOWN, &adapter->state);
+	if (!down)
+		set_bit(__E1000_DOWN, &adapter->state);
 	del_timer_sync(&adapter->watchdog_timer);
 	del_timer_sync(&adapter->phy_info_timer);
 
@@ -5269,7 +5362,16 @@ static void __devexit e1000_remove(struct pci_dev *pdev)
 	if (!(netdev->flags & IFF_UP))
 		e1000_power_down_phy(adapter);
 
+	/* Don't lie to e1000_close() down the road. */
+	if (!down)
+		clear_bit(__E1000_DOWN, &adapter->state);
 	unregister_netdev(netdev);
+
+	if (pci_dev_run_wake(pdev)) {
+		pm_runtime_disable(&pdev->dev);
+		pm_runtime_set_suspended(&pdev->dev);
+	}
+	pm_runtime_put_noidle(&pdev->dev);
 
 	/*
 	 * Release control of h/w to f/w.  If f/w is AMT enabled, this
@@ -5370,16 +5472,22 @@ static DEFINE_PCI_DEVICE_TABLE(e1000_pci_tbl) = {
 };
 MODULE_DEVICE_TABLE(pci, e1000_pci_tbl);
 
+#ifdef CONFIG_PM_OPS
+static const struct dev_pm_ops e1000_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(e1000_suspend, e1000_resume)
+	SET_RUNTIME_PM_OPS(e1000_runtime_suspend,
+				e1000_runtime_resume, e1000_idle)
+};
+#endif
+
 /* PCI Device API Driver */
 static struct pci_driver e1000_driver = {
 	.name     = e1000e_driver_name,
 	.id_table = e1000_pci_tbl,
 	.probe    = e1000_probe,
 	.remove   = __devexit_p(e1000_remove),
-#ifdef CONFIG_PM
-	/* Power Management Hooks */
-	.suspend  = e1000_suspend,
-	.resume   = e1000_resume,
+#ifdef CONFIG_PM_OPS
+	.driver.pm = &e1000_pm_ops,
 #endif
 	.shutdown = e1000_shutdown,
 	.err_handler = &e1000_err_handler
@@ -5394,10 +5502,9 @@ static struct pci_driver e1000_driver = {
 static int __init e1000_init_module(void)
 {
 	int ret;
-	printk(KERN_INFO "%s: Intel(R) PRO/1000 Network Driver - %s\n",
-	       e1000e_driver_name, e1000e_driver_version);
-	printk(KERN_INFO "%s: Copyright (c) 1999 - 2009 Intel Corporation.\n",
-	       e1000e_driver_name);
+	pr_info("Intel(R) PRO/1000 Network Driver - %s\n",
+		e1000e_driver_version);
+	pr_info("Copyright (c) 1999 - 2009 Intel Corporation.\n");
 	ret = pci_register_driver(&e1000_driver);
 
 	return ret;

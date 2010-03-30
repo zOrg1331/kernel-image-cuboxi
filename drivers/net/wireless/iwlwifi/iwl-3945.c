@@ -242,7 +242,7 @@ int iwl3945_rs_next_rate(struct iwl_priv *priv, int rate)
 			next_rate = IWL_RATE_6M_INDEX;
 		break;
 	case IEEE80211_BAND_2GHZ:
-		if (!(priv->sta_supp_rates & IWL_OFDM_RATES_MASK) &&
+		if (!(priv->_3945.sta_supp_rates & IWL_OFDM_RATES_MASK) &&
 		    iwl_is_associated(priv)) {
 			if (rate == IWL_RATE_11M_INDEX)
 				next_rate = IWL_RATE_5M_INDEX;
@@ -359,7 +359,7 @@ void iwl3945_hw_rx_statistics(struct iwl_priv *priv,
 		     (int)sizeof(struct iwl3945_notif_statistics),
 		     le32_to_cpu(pkt->len_n_flags) & FH_RSCSR_FRAME_SIZE_MSK);
 
-	memcpy(&priv->statistics_39, pkt->u.raw, sizeof(priv->statistics_39));
+	memcpy(&priv->_3945.statistics, pkt->u.raw, sizeof(priv->_3945.statistics));
 }
 
 /******************************************************************************
@@ -705,9 +705,10 @@ static void iwl3945_rx_reply_rx(struct iwl_priv *priv,
 	iwl_dbg_log_rx_data_frame(priv, le16_to_cpu(rx_hdr->len), header);
 
 	if (network_packet) {
-		priv->last_beacon_time = le32_to_cpu(rx_end->beacon_timestamp);
-		priv->last_tsf = le64_to_cpu(rx_end->timestamp);
-		priv->last_rx_rssi = rx_status.signal;
+		priv->_3945.last_beacon_time =
+			le32_to_cpu(rx_end->beacon_timestamp);
+		priv->_3945.last_tsf = le64_to_cpu(rx_end->timestamp);
+		priv->_3945.last_rx_rssi = rx_status.signal;
 		priv->last_rx_noise = rx_status.noise;
 	}
 
@@ -956,7 +957,7 @@ static int iwl3945_tx_reset(struct iwl_priv *priv)
 	iwl_write_prph(priv, ALM_SCD_TXF5MF_REG, 0x000005);
 
 	iwl_write_direct32(priv, FH39_TSSR_CBB_BASE,
-			     priv->shared_phys);
+			     priv->_3945.shared_phys);
 
 	iwl_write_direct32(priv, FH39_TSSR_MSG_CONFIG,
 		FH39_TSSR_TX_MSG_CONFIG_REG_VAL_SNOOP_RD_TXPD_ON |
@@ -1606,7 +1607,7 @@ static int iwl3945_hw_reg_set_new_power(struct iwl_priv *priv,
 	int power;
 
 	/* Get this chnlgrp's rate-to-max/clip-powers table */
-	clip_pwrs = priv->clip39_groups[ch_info->group_index].clip_powers;
+	clip_pwrs = priv->_3945.clip_groups[ch_info->group_index].clip_powers;
 
 	/* Get this channel's rate-to-current-power settings table */
 	power_info = ch_info->power_info;
@@ -1732,7 +1733,7 @@ static int iwl3945_hw_reg_comp_txpower_temp(struct iwl_priv *priv)
 		}
 
 		/* Get this chnlgrp's rate-to-max/clip-powers table */
-		clip_pwrs = priv->clip39_groups[ch_info->group_index].clip_powers;
+		clip_pwrs = priv->_3945.clip_groups[ch_info->group_index].clip_powers;
 
 		/* set scan tx power, 1Mbit for CCK, 6Mbit for OFDM */
 		for (scan_tbl_index = 0;
@@ -1910,6 +1911,8 @@ static int iwl3945_commit_rxon(struct iwl_priv *priv)
 				  "configuration (%d).\n", rc);
 			return rc;
 		}
+		iwl_clear_ucode_stations(priv, false);
+		iwl_restore_stations(priv);
 	}
 
 	IWL_DEBUG_INFO(priv, "Sending RXON\n"
@@ -1940,7 +1943,10 @@ static int iwl3945_commit_rxon(struct iwl_priv *priv)
 
 	memcpy(active_rxon, staging_rxon, sizeof(*active_rxon));
 
-	iwl_clear_stations_table(priv);
+	if (!new_assoc) {
+		iwl_clear_ucode_stations(priv, false);
+		iwl_restore_stations(priv);
+	}
 
 	/* If we issue a new RXON command which required a tune then we must
 	 * send a new TXPOWER command or we won't be able to Tx any frames */
@@ -1949,19 +1955,6 @@ static int iwl3945_commit_rxon(struct iwl_priv *priv)
 		IWL_ERR(priv, "Error setting Tx power (%d).\n", rc);
 		return rc;
 	}
-
-	/* Add the broadcast address so we can send broadcast frames */
-	priv->cfg->ops->lib->add_bcast_station(priv);
-
-	/* If we have set the ASSOC_MSK and we are in BSS mode then
-	 * add the IWL_AP_ID to the station rate table */
-	if (iwl_is_associated(priv) &&
-	    (priv->iw_mode == NL80211_IFTYPE_STATION))
-		if (iwl_add_station(priv, priv->active_rxon.bssid_addr,
-				true, CMD_SYNC, NULL) == IWL_INVALID_STATION) {
-			IWL_ERR(priv, "Error adding AP address for transmit\n");
-			return -EIO;
-		}
 
 	/* Init the hardware's rate fallback order based on the band */
 	rc = iwl3945_init_hw_rate_table(priv);
@@ -1997,13 +1990,13 @@ void iwl3945_reg_txpower_periodic(struct iwl_priv *priv)
 
  reschedule:
 	queue_delayed_work(priv->workqueue,
-			   &priv->thermal_periodic, REG_RECALIB_PERIOD * HZ);
+			   &priv->_3945.thermal_periodic, REG_RECALIB_PERIOD * HZ);
 }
 
 static void iwl3945_bg_reg_txpower_periodic(struct work_struct *work)
 {
 	struct iwl_priv *priv = container_of(work, struct iwl_priv,
-					     thermal_periodic.work);
+					     _3945.thermal_periodic.work);
 
 	if (test_bit(STATUS_EXIT_PENDING, &priv->status))
 		return;
@@ -2139,7 +2132,7 @@ static void iwl3945_hw_reg_init_channel_groups(struct iwl_priv *priv)
 		 *   power peaks, without too much distortion (clipping).
 		 */
 		/* we'll fill in this array with h/w max power levels */
-		clip_pwrs = (s8 *) priv->clip39_groups[i].clip_powers;
+		clip_pwrs = (s8 *) priv->_3945.clip_groups[i].clip_powers;
 
 		/* divide factory saturation power by 2 to find -3dB level */
 		satur_pwr = (s8) (group->saturation_power >> 1);
@@ -2223,7 +2216,7 @@ int iwl3945_txpower_set_from_eeprom(struct iwl_priv *priv)
 			iwl3945_hw_reg_get_ch_grp_index(priv, ch_info);
 
 		/* Get this chnlgrp's rate->max/clip-powers table */
-		clip_pwrs = priv->clip39_groups[ch_info->group_index].clip_powers;
+		clip_pwrs = priv->_3945.clip_groups[ch_info->group_index].clip_powers;
 
 		/* calculate power index *adjustment* value according to
 		 *  diff between current temperature and factory temperature */
@@ -2331,7 +2324,7 @@ int iwl3945_hw_tx_queue_init(struct iwl_priv *priv, struct iwl_tx_queue *txq)
 {
 	int txq_id = txq->q.id;
 
-	struct iwl3945_shared *shared_data = priv->shared_virt;
+	struct iwl3945_shared *shared_data = priv->_3945.shared_virt;
 
 	shared_data->tx_base_ptr[txq_id] = cpu_to_le32((u32)txq->q.dma_addr);
 
@@ -2431,7 +2424,7 @@ int iwl3945_init_hw_rate_table(struct iwl_priv *priv)
 		/* If an OFDM rate is used, have it fall back to the
 		 * 1M CCK rates */
 
-		if (!(priv->sta_supp_rates & IWL_OFDM_RATES_MASK) &&
+		if (!(priv->_3945.sta_supp_rates & IWL_OFDM_RATES_MASK) &&
 		    iwl_is_associated(priv)) {
 
 			index = IWL_FIRST_CCK_RATE;
@@ -2470,10 +2463,11 @@ int iwl3945_hw_set_hw_params(struct iwl_priv *priv)
 	memset((void *)&priv->hw_params, 0,
 	       sizeof(struct iwl_hw_params));
 
-	priv->shared_virt = dma_alloc_coherent(&priv->pci_dev->dev,
-					       sizeof(struct iwl3945_shared),
-					       &priv->shared_phys, GFP_KERNEL);
-	if (!priv->shared_virt) {
+	priv->_3945.shared_virt =
+		dma_alloc_coherent(&priv->pci_dev->dev,
+				   sizeof(struct iwl3945_shared),
+				   &priv->_3945.shared_phys, GFP_KERNEL);
+	if (!priv->_3945.shared_virt) {
 		IWL_ERR(priv, "failed to allocate pci memory\n");
 		mutex_unlock(&priv->mutex);
 		return -ENOMEM;
@@ -2536,13 +2530,13 @@ void iwl3945_hw_rx_handler_setup(struct iwl_priv *priv)
 
 void iwl3945_hw_setup_deferred_work(struct iwl_priv *priv)
 {
-	INIT_DELAYED_WORK(&priv->thermal_periodic,
+	INIT_DELAYED_WORK(&priv->_3945.thermal_periodic,
 			  iwl3945_bg_reg_txpower_periodic);
 }
 
 void iwl3945_hw_cancel_deferred_work(struct iwl_priv *priv)
 {
-	cancel_delayed_work(&priv->thermal_periodic);
+	cancel_delayed_work(&priv->_3945.thermal_periodic);
 }
 
 /* check contents of special bootstrap uCode SRAM */
@@ -2826,6 +2820,7 @@ static struct iwl_cfg iwl3945_bg_cfg = {
 	.led_compensation = 64,
 	.broken_powersave = true,
 	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_THRESHOLD_DEF,
+	.monitor_recover_period = IWL_MONITORING_PERIOD,
 };
 
 static struct iwl_cfg iwl3945_abg_cfg = {
@@ -2844,6 +2839,7 @@ static struct iwl_cfg iwl3945_abg_cfg = {
 	.led_compensation = 64,
 	.broken_powersave = true,
 	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_THRESHOLD_DEF,
+	.monitor_recover_period = IWL_MONITORING_PERIOD,
 };
 
 DEFINE_PCI_DEVICE_TABLE(iwl3945_hw_card_ids) = {
