@@ -1,0 +1,57 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 14 Jan 2010 15:31:48 -0500
+Subject: [net] e1000: fix rx length check errors
+Bugzilla: 550915
+CVE: CVE-2009-4536
+
+Hey all-
+
+A recent security conference unveiled an exploit in the e1000 driver. I've
+written the following patches, and am in the process of testing them.  Since its
+the holidays though I figured I should post these here now in case any customers
+call in about this issues.  Upstream discussions can be followed here:
+http://marc.info/?l=linux-netdev&m=126203101730472&w=2
+
+Satisfies bz 550915.
+
+diff --git a/drivers/net/e1000/e1000.h b/drivers/net/e1000/e1000.h
+index c6250c2..fa3e855 100644
+--- a/drivers/net/e1000/e1000.h
++++ b/drivers/net/e1000/e1000.h
+@@ -358,7 +358,8 @@ struct e1000_adapter {
+ enum e1000_state_t {
+ 	__E1000_TESTING,
+ 	__E1000_RESETTING,
+-	__E1000_DOWN
++	__E1000_DOWN,
++	__E1000_DISCARDING
+ };
+ 
+ extern char e1000_driver_name[];
+diff --git a/drivers/net/e1000/e1000_main.c b/drivers/net/e1000/e1000_main.c
+index cb5b9bd..edd9fd4 100644
+--- a/drivers/net/e1000/e1000_main.c
++++ b/drivers/net/e1000/e1000_main.c
+@@ -4233,15 +4233,21 @@ e1000_clean_rx_irq(struct e1000_adapter *adapter,
+ 
+ 		length = le16_to_cpu(rx_desc->length);
+ 
+-		if (unlikely(!(status & E1000_RXD_STAT_EOP) || (length <= 4))) {
++		if (unlikely(!(status & E1000_RXD_STAT_EOP)))
++			set_bit(__E1000_DISCARDING, &adapter->flags);
++
++		if (test_bit(__E1000_DISCARDING, &adapter->flags)) {
+ 			/* All receives must fit into a single buffer */
+ 			E1000_DBG("%s: Receive packet consumed multiple"
+ 				  " buffers\n", netdev->name);
+ 			/* recycle */
+ 			buffer_info->skb = skb;
++			if (status & E1000_RXD_STAT_EOP)
++				clear_bit(__E1000_DISCARDING, &adapter->flags);
+ 			goto next_desc;
+ 		}
+ 
++
+ 		if (unlikely(rx_desc->errors & E1000_RXD_ERR_FRAME_ERR_MASK)) {
+ 			last_byte = *(skb->data + length - 1);
+ 			if (TBI_ACCEPT(&adapter->hw, status,

@@ -1,0 +1,249 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Thu, 28 Jan 2010 22:10:14 -0500
+Subject: [mm] prevent performance hit for 32-bit apps on x86_64
+Message-id: <1264716614.3695.21.camel@dhcp-100-19-198.bos.redhat.com>
+Patchwork-id: 22982
+O-Subject: [RHEL5-U5 Patch] prevent severe performance degradation of 32-bit
+	apps running on x86_64 that mmap() thousands of files.
+Bugzilla: 544448
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+We have an urgent BZ(544448) from a customer that upgraded from RHEL4 to
+RHEL5-U4.  They have a 32-bit application that constantly mmap()s and
+munmap()s thousands of small files.  When they upgraded from RHEL4 to
+RHEL5 their application started out as fast as RHEL4 but gets slower and
+slower over time.
+
+After debugging the issue I realized the performance degradation was
+caused by backporting the upstream x86_64 version of
+arch_get_unmapped_area_topdown() into RHEL5-U2.
+
+-------------------------------------------------------------------------
+	From: Peter Zijlstra <pzijlstr@redhat.com>
+	Date: Mon, 17 Mar 2008 15:29:32 +0100
+	Subject: [x86_64] address space randomization
+	Message-id: 1205764172.26175.12.camel@taijtu
+	O-Subject: [PATCH RHEL5.2][BZ 222473] x86_64: address space
+	randomization
+	Bugzilla: 222473
+
+	Backport of the current up-stream randomization code for x86_64.
+	This should make x86_64 have the same randomization features already
+	present in i386.
+
+	Acked-by: Larry Woodman <lwoodman@redhat.com>
+--------------------------------------------------------------------------
+
+arch_get_unmapped_area_topdown() was changed upstream in 2.6.25 to
+reduce the 32-bit virtual address space fragmentation but use much more
+CPU time to do that.  Specifically  arch_get_unmapped_area_topdown() now
+searches the entire virtual address space looking for the first and best
+hole to mmap() a file much more frequently than the pre-2.6.25 version
+did.  This does reduce the fragmentation thereby increasing the
+usefulness of a 32-bit address space but at the cost of taking much more
+time(10x) to locate a hole especially when there are many thousands of
+mapped files.
+
+Since the latest upstream version of arch_get_unmapped_area_topdown()
+also adds randomization code for x86_64 we cant back it out. Since I
+think this type of application is a corner case and I dont think its
+safe to mess around with the default behavior of 32-bit memory
+allocation I added new tunable /proc/sys/vm/topdown_allocate_fast that
+controls whether the 32-bit topdown allocation should be optimized for
+address space fragmentation(default) or it should revert back to the old
+behavior and be optimized for performance(by setting it to 1).
+
+The attached patch adds that functionality and fixes BZ 544448
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/kernel/sys_x86_64.c b/arch/x86_64/kernel/sys_x86_64.c
+index 6bdde10..a7b10fd 100644
+--- a/arch/x86_64/kernel/sys_x86_64.c
++++ b/arch/x86_64/kernel/sys_x86_64.c
+@@ -241,6 +241,97 @@ bottomup:
+ 	return addr;
+ }
+ 
++unsigned long
++arch_get_unmapped_area_topdown_fast(struct file *filp, const unsigned long addr0,
++		const unsigned long len, const unsigned long pgoff,
++		const unsigned long flags)
++{
++	struct vm_area_struct *vma, *prev_vma;
++	struct mm_struct *mm = current->mm;
++	unsigned long base = mm->mmap_base, addr = addr0;
++	int first_time = 1;
++	unsigned long begin, end;
++	
++	find_start_end(flags, &begin, &end); 
++
++	/* requested length too big for entire address space */
++	if (len > TASK_SIZE)
++		return -ENOMEM;
++
++	/* dont allow allocations above current base */
++	if (mm->free_area_cache > base)
++		mm->free_area_cache = base;
++
++	if (flags & MAP_FIXED)
++		return addr;
++
++	/* requesting a specific address */
++	if (addr) {
++		addr = PAGE_ALIGN(addr);
++		vma = find_vma(mm, addr);
++		if (TASK_SIZE - len >= addr &&
++				(!vma || addr + len <= vma->vm_start))
++			return addr;
++	}
++
++try_again:
++	/* make sure it can fit in the remaining address space */
++	if (mm->free_area_cache < len)
++		goto bottomup;
++
++	/* either no address requested or cant fit in requested address hole */
++	addr = (mm->free_area_cache - len) & PAGE_MASK;
++	do {
++		/*
++		 * Lookup failure means no vma is above this address,
++		 * i.e return with success:
++		 */
++ 	 	if (!(vma = find_vma_prev(mm, addr, &prev_vma)))
++			return addr;
++
++		/*
++		 * new region fits between prev_vma->vm_end and
++		 * vma->vm_start, use it:
++		 */
++		if (addr && addr+len <= vma->vm_start &&
++				(!prev_vma || (addr >= prev_vma->vm_end)))
++			/* remember the address as a hint for next time */
++			return (mm->free_area_cache = addr);
++		else
++			/* pull free_area_cache down to the first hole */
++			if (mm->free_area_cache == vma->vm_end)
++				mm->free_area_cache = vma->vm_start;
++
++		/* try just below the current vma->vm_start */
++		addr = vma->vm_start-len;
++	} while (len <= vma->vm_start);
++
++bottomup:
++	/*
++	 * if hint left us with no space for the requested
++	 * mapping then try again:
++	 */
++	if (first_time) {
++		mm->free_area_cache = base;
++		first_time = 0;
++		goto try_again;
++	}
++	/*
++	 * A failed mmap() very likely causes application failure,
++	 * so fall back to the bottom-up function here. This scenario
++	 * can happen with large stack limits and large mmap()
++	 * allocations.
++	 */
++	mm->free_area_cache = begin;
++	addr = arch_get_unmapped_area(filp, addr0, len, pgoff, flags);
++	/*
++	 * Restore the topdown base:
++	 */
++	mm->free_area_cache = base;
++
++	return addr;
++}
++
+ asmlinkage long sys_uname(struct new_utsname __user * name)
+ {
+ 	int err;
+diff --git a/arch/x86_64/mm/mmap.c b/arch/x86_64/mm/mmap.c
+index 2c4d35a..fbd2440 100644
+--- a/arch/x86_64/mm/mmap.c
++++ b/arch/x86_64/mm/mmap.c
+@@ -125,7 +125,11 @@ void arch_pick_mmap_layout(struct mm_struct *mm)
+ 		mm->unmap_area = arch_unmap_area;
+ 	} else {
+ 		mm->mmap_base = mmap_base();
+-		mm->get_unmapped_area = arch_get_unmapped_area_topdown;
++		if (test_thread_flag(TIF_IA32) && sysctl_topdown_allocate_fast)
++			mm->get_unmapped_area = arch_get_unmapped_area_topdown_fast;
++		else
++			mm->get_unmapped_area = arch_get_unmapped_area_topdown;
+ 		mm->unmap_area = arch_unmap_area_topdown;
+ 	}
++
+ }
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index 452bbae..896e124 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -31,8 +31,10 @@ extern int page_cluster;
+ 
+ #ifdef CONFIG_SYSCTL
+ extern int sysctl_legacy_va_layout;
++extern int sysctl_topdown_allocate_fast;
+ #else
+ #define sysctl_legacy_va_layout 0
++#define sysctl_topdown_allocate_fast 0
+ #endif
+ 
+ #include <asm/page.h>
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index eaabf86..537fa60 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -273,6 +273,10 @@ extern unsigned long
+ arch_get_unmapped_exec_area(struct file *, unsigned long, unsigned long,
+ 		       unsigned long, unsigned long);
+ extern unsigned long
++arch_get_unmapped_area_topdown_fast(struct file *filp, unsigned long addr,
++			  unsigned long len, unsigned long pgoff,
++			  unsigned long flags);
++extern unsigned long
+ arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
+ 			  unsigned long len, unsigned long pgoff,
+ 			  unsigned long flags);
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+index 65bb74a..1d299be 100644
+--- a/include/linux/sysctl.h
++++ b/include/linux/sysctl.h
+@@ -207,6 +207,7 @@ enum
+ 	VM_MMAP_MIN_ADDR=38, 	/* amount of memory to protect from mmap */
+ 	VM_FLUSH_MMAP=39,       /* flush mmap()d pagecache pages */
+ 	VM_MAX_WRITEBACK_PAGES=40, /*maximum pages written per writeback loop */
++	VM_TOPDOWN_ALLOCATE_FAST=42, /* optimize speed over fragmentation in topdown alloc */
+ };
+ 
+ 
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index 8f8dbb4..715668f 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -203,6 +203,7 @@ extern ctl_table inotify_table[];
+ 
+ #ifdef HAVE_ARCH_PICK_MMAP_LAYOUT
+ int sysctl_legacy_va_layout;
++int sysctl_topdown_allocate_fast;
+ #endif
+ 
+ /* /proc declarations: */
+@@ -1050,6 +1051,16 @@ static ctl_table vm_table[] = {
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &zero,
+ 	},
++	{
++		.ctl_name	= VM_TOPDOWN_ALLOCATE_FAST,
++		.procname	= "topdown_allocate_fast",
++		.data		= &sysctl_topdown_allocate_fast,
++		.maxlen		= sizeof(sysctl_topdown_allocate_fast),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++		.strategy	= &sysctl_intvec,
++		.extra1		= &zero,
++	},
+ #endif
+ #ifdef CONFIG_SWAP
+ 	{
