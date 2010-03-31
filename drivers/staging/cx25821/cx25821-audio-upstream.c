@@ -33,6 +33,7 @@
 #include <linux/fcntl.h>
 #include <linux/delay.h>
 #include <linux/uaccess.h>
+#include <linux/slab.h>
 
 MODULE_DESCRIPTION("v4l2 driver module for cx25821 based TV cards");
 MODULE_AUTHOR("Hiep Huynh <hiep.huynh@conexant.com>");
