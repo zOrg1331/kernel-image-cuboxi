@@ -209,7 +209,6 @@ static hw_info_t dl10022_info = { 0, 0, 0, 0, IS_DL10022|HAS_MII };
 
 typedef struct pcnet_dev_t {
 	struct pcmcia_device	*p_dev;
-    dev_node_t		node;
     u_int		flags;
     void		__iomem *base;
     struct timer_list	watchdog;
@@ -265,7 +264,6 @@ static int pcnet_probe(struct pcmcia_device *link)
     info->p_dev = link;
     link->priv = dev;
 
-    link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
     link->conf.Attributes = CONF_ENABLE_IRQ;
     link->conf.IntType = INT_MEMORY_AND_IO;
 
@@ -289,8 +287,7 @@ static void pcnet_detach(struct pcmcia_device *link)
 
 	dev_dbg(&link->dev, "pcnet_detach\n");
 
-	if (link->dev_node)
-		unregister_netdev(dev);
+	unregister_netdev(dev);
 
 	pcnet_release(link);
 
@@ -489,8 +486,6 @@ static int try_io_port(struct pcmcia_device *link)
 	if (link->io.NumPorts2 > 0) {
 	    /* for master/slave multifunction cards */
 	    link->io.Attributes2 = IO_DATA_PATH_WIDTH_8;
-	    link->irq.Attributes =
-		IRQ_TYPE_DYNAMIC_SHARING;
 	}
     } else {
 	/* This should be two 16-port windows */
@@ -560,8 +555,7 @@ static int pcnet_config(struct pcmcia_device *link)
     if (ret)
 	goto failed;
 
-    ret = pcmcia_request_irq(link, &link->irq);
-    if (ret)
+    if (!link->irq)
 	    goto failed;
 
     if (link->io.NumPorts2 == 8) {
@@ -575,7 +569,7 @@ static int pcnet_config(struct pcmcia_device *link)
     ret = pcmcia_request_configuration(link, &link->conf);
     if (ret)
 	    goto failed;
-    dev->irq = link->irq.AssignedIRQ;
+    dev->irq = link->irq;
     dev->base_addr = link->io.BasePort1;
     if (info->flags & HAS_MISC_REG) {
 	if ((if_port == 1) || (if_port == 2))
@@ -644,16 +638,12 @@ static int pcnet_config(struct pcmcia_device *link)
     if (info->flags & (IS_DL10019|IS_DL10022))
 	mii_phy_probe(dev);
 
-    link->dev_node = &info->node;
     SET_NETDEV_DEV(dev, &link->dev);
 
     if (register_netdev(dev) != 0) {
 	printk(KERN_NOTICE "pcnet_cs: register_netdev() failed\n");
-	link->dev_node = NULL;
 	goto failed;
     }
-
-    strcpy(info->node.dev_name, dev->name);
 
     if (info->flags & (IS_DL10019|IS_DL10022)) {
 	u_char id = inb(dev->base_addr + 0x1a);
