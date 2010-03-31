@@ -377,6 +377,10 @@ void ocfs2_populate_inode(struct inode *inode, struct ocfs2_dinode *fe,
 
 	OCFS2_I(inode)->ip_last_used_slot = 0;
 	OCFS2_I(inode)->ip_last_used_group = 0;
+
+	if (S_ISDIR(inode->i_mode))
+		ocfs2_resv_set_type(&OCFS2_I(inode)->ip_la_data_resv,
+				    OCFS2_RESV_FLAG_DIR);
 	mlog_exit_void();
 }
 
@@ -657,12 +661,7 @@ static int ocfs2_remove_inode(struct inode *inode,
 
 	di->i_dtime = cpu_to_le64(CURRENT_TIME.tv_sec);
 	di->i_flags &= cpu_to_le32(~(OCFS2_VALID_FL | OCFS2_ORPHANED_FL));
-
-	status = ocfs2_journal_dirty(handle, di_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto bail_commit;
-	}
+	ocfs2_journal_dirty(handle, di_bh);
 
 	ocfs2_remove_from_cache(INODE_CACHE(inode), di_bh);
 	dquot_free_inode(inode);
@@ -1116,6 +1115,10 @@ void ocfs2_clear_inode(struct inode *inode)
 	ocfs2_mark_lockres_freeing(&oi->ip_inode_lockres);
 	ocfs2_mark_lockres_freeing(&oi->ip_open_lockres);
 
+	ocfs2_resv_discard(&OCFS2_SB(inode->i_sb)->osb_la_resmap,
+			   &oi->ip_la_data_resv);
+	ocfs2_resv_init_once(&oi->ip_la_data_resv);
+
 	/* We very well may get a clear_inode before all an inodes
 	 * metadata has hit disk. Of course, we can't drop any cluster
 	 * locks until the journal has finished with it. The only
@@ -1291,13 +1294,8 @@ int ocfs2_mark_inode_dirty(handle_t *handle,
 	fe->i_mtime = cpu_to_le64(inode->i_mtime.tv_sec);
 	fe->i_mtime_nsec = cpu_to_le32(inode->i_mtime.tv_nsec);
 
-	status = ocfs2_journal_dirty(handle, bh);
-	if (status < 0)
-		mlog_errno(status);
-
-	status = 0;
+	ocfs2_journal_dirty(handle, bh);
 leave:
-
 	mlog_exit(status);
 	return status;
 }
