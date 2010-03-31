@@ -334,14 +334,14 @@ asmlinkage long sys_mycall(int arg)
   </para>
 
   <para>
-   Inside the ioctl you're in user context to a process.  When a
+   Inside the ioctl you're in user context to a process.  When an
    error occurs you return a negated errno (see
    <filename class="headerfile">include/linux/errno.h</filename>),
    otherwise you return <returnvalue>0</returnvalue>.
   </para>
 
   <para>
-   After you slept you should check if a signal occurred: the
+   After you sleep you should check if a signal occurred: the
    Unix/Linux way of handling signals is to temporarily exit the
    system call with the <constant>-ERESTARTSYS</constant> error.  The
    system call entry code will switch back to user context, process
@@ -408,8 +408,8 @@ cond_resched(); /* Will sleep */
   </para>
 
   <para>
-   You should always compile your kernel
-   <symbol>CONFIG_DEBUG_SPINLOCK_SLEEP</symbol> on, and it will warn
+   You should always compile your kernel with
+   <symbol>CONFIG_DEBUG_SPINLOCK_SLEEP</symbol> on, so that it will warn
    you if you break these rules.  If you <emphasis>do</emphasis> break
    the rules, you will eventually lock up your box.
   </para>
@@ -434,8 +434,12 @@ cond_resched(); /* Will sleep */
     and reporting errors, and can be used inside interrupt context,
     but use with caution: a machine which has its console flooded with
     printk messages is unusable.  It uses a format string mostly
-    compatible with ANSI C printf, and C string concatenation to give
-    it a first "priority" argument:
+    compatible with ANSI C printf.
+   </para>
+
+   <para>
+    Provide a <firstterm>message priority level</firstterm> by using
+    predefined macros and C string concatenation:
    </para>
 
    <programlisting>
@@ -478,7 +482,7 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
 
   <sect1 id="routines-copy">
    <title>
-    <function>copy_[to/from]_user()</function>
+    <function>copy_{from,to}_user()</function>
     /
     <function>get_user()</function>
     /
@@ -491,8 +495,8 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
    </para>
 
    <para>
-    <function>put_user()</function> and <function>get_user()</function>
-    are used to get and put single values (such as an int, char, or
+    <function>get_user()</function> and <function>put_user()</function>
+    are used to get and put a single value (such as an int, char, or
     long) from and to userspace.  A pointer into userspace should
     never be simply dereferenced: data should be copied using these
     routines.  Both return <constant>-EFAULT</constant> or 0.
@@ -633,13 +637,13 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
   </sect1>
 
   <sect1 id="routines-udelay">
-   <title><function>mdelay()</function>/<function>udelay()</function>
+   <title><function>{n,u,m}delay()</function>/<function>msleep()</function>
      <filename class="headerfile">include/asm/delay.h</filename>
      <filename class="headerfile">include/linux/delay.h</filename>
    </title>
 
    <para>
-    The <function>udelay()</function> and <function>ndelay()</function> functions can be used for small pauses.
+    The <function>ndelay()</function> and <function>udelay()</function> functions can be used for small pauses.
     Do not use large values with them as you risk
     overflow - the helper function <function>mdelay()</function> is useful
     here, or consider <function>msleep()</function>.
@@ -647,7 +651,7 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
   </sect1>
  
   <sect1 id="routines-endian">
-   <title><function>cpu_to_be32()</function>/<function>be32_to_cpu()</function>/<function>cpu_to_le32()</function>/<function>le32_to_cpu()</function>
+   <title><function>cpu_to_{be,le}{16,32,64}{,p,s}()</function>/<function>{be,le}{16,32,64}{,p,s}_to_cpu()</function>
      <filename class="headerfile">include/asm/byteorder.h</filename>
    </title>
 
@@ -670,48 +674,168 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
   </sect1>
 
   <sect1 id="routines-local-irqs">
-   <title><function>local_irq_save()</function>/<function>local_irq_restore()</function>
-    <filename class="headerfile">include/asm/system.h</filename>
+   <title><function>local_irq_{save,restore,disable,enable}()</function>
+    <filename class="headerfile">include/linux/irqflags.h</filename>
    </title>
 
    <para>
-    These routines disable hard interrupts on the local CPU, and
-    restore them.  They are reentrant; saving the previous state in
-    their one <varname>unsigned long flags</varname> argument.  If you
-    know that interrupts are enabled, you can simply use
-    <function>local_irq_disable()</function> and
-    <function>local_irq_enable()</function>.
+    With respect to a CPU instruction, a <firstterm>local CPU</firstterm> is
+    a CPU that is executing that instruction.
+   </para>
+
+   <para>
+    Often, it is important to be able to execute a sequence of instructions
+    with the assurance that the corresponding local CPU won't be interrupted
+    until it has completed executing that sequence of instructions; under
+    these needs, such a sequence of instructions is considered as a whole to
+    be <firstterm>locally atomic</firstterm> (that is, 'indivisible' on the
+    corresponding local CPU). The routines discussed here are helpful in
+    creating such <firstterm>local atomicity</firstterm>.
+   </para>
+
+   <para>
+    The main purpose of these routines is to affect how a
+    local CPU treats hard[ware] interrupts: By executing
+    <function>local_irq_disable()</function>, a local CPU is instructed
+    to ignore hard interrupts; by executing
+    <function>local_irq_enable()</function>, a local CPU is instructed
+    to respond to hard interrupts. Consequently, in the simplest case,
+    a block of code can be rendered locally atomic by placing
+    <function>local_irq_disable()</function> before the block and
+    <function>local_irq_enable()</function> after the block.
+   </para>
+
+   <para>
+    However, what if one such locally atomic block calls a function that runs
+    another such locally atomic block? In that case, this latter block
+    might run <function>local_irq_enable()</function>
+    before the first block finishes, thereby ruining the local atomicity
+    of the first block.
+   </para>
+
+   <para>
+    This problem can be solved by noting whether a local CPU is already
+    ignoring hard interrupts when entering a locally atomic block, and then
+    restoring that same status upon exiting the block, all of which
+    can be achieved by replacing
+    <function>local_irq_{disable,enable}()</function> with
+    <function>local_irq_{save,restore}(<varname>flags</varname>)</function>
+    macros, where <varname>flags</varname> is a user-supplied stack-allocated
+    variable of type <emphasis>unsigned long</emphasis>
+    (note: it's <emphasis>not</emphasis> a pointer type).
+   </para>
+
+   <para>
+    The <function>local_irq_save(<varname>flags</varname>)</function> macro
+    expands around the <varname>flags</varname> variable to perform 2 tasks
+    on a local CPU:
+   </para>
+
+   <itemizedlist>
+    <listitem>
+     <para>
+      The local CPU's relevant processor-state bits (including
+      <emphasis>at least</emphasis> those that affect hard interrupts) are
+      stored in <varname>flags</varname>.
+     </para>
+    </listitem>
+    <listitem>
+     <para>
+      The local CPU is instructed to ignore hard interrupts; essentially
+      a call to <function>local_irq_disable()</function> is made.
+     </para>
+    </listitem>
+   </itemizedlist>
+
+   <para>
+    The <function>local_irq_restore(<varname>flags</varname>)</function> macro
+    expands to instruct a local CPU to use as its relevant processor-state bits
+    the values stored in the <varname>flags</varname> variable.
+   </para>
+
+   <para>
+    Hence, if a local CPU is already ignoring hard interrupts when
+    <function>local_irq_save(<varname>flags</varname>)</function> is used,
+    then that local CPU will continue to ignore hard interrupts when the
+    corresponding
+    <function>local_irq_restore(<varname>flags</varname>)</function> is
+    used, thereby allowing for the nesting of locally atomic blocks. However,
+    if a local CPU is responding to hard interrupts when
+    <function>local_irq_save(<varname>flags</varname>)</function> is used,
+    then that local CPU will once again respond to hard interrupts when
+    the corresponding
+    <function>local_irq_restore(<varname>flags</varname>)</function>
+    is used, as if a call to <function>local_irq_enable()</function>
+    has been made.
+   </para>
+
+   <para>
+    Of course,
+    <function>local_irq_{save,restore}(<varname>flags</varname>)</function>
+    are more expensive in time and space than are
+    <function>local_irq_{disable,enable}()</function>. Consequently,
+    the latter should be used when it makes sense to do so.
+   </para>
+
+   <para>
+    These macros/functions are reentrant.
+   </para>
+
+   <para>
+    There are also other means by which kernel code can achieve synchronization
+    and atomicity through locking mechanisms, and they are especially important
+    for code that may run concurrently across multiple CPUs.
    </para>
   </sect1>
 
   <sect1 id="routines-softirqs">
-   <title><function>local_bh_disable()</function>/<function>local_bh_enable()</function>
+   <title><function>local_bh_{disable,enable}()</function>
     <filename class="headerfile">include/linux/interrupt.h</filename></title>
 
    <para>
-    These routines disable soft interrupts on the local CPU, and
-    restore them.  They are reentrant; if soft interrupts were
-    disabled before, they will still be disabled after this pair
-    of functions has been called.  They prevent softirqs and tasklets
-    from running on the current CPU.
+    These routines disable or enable soft[ware] interrupts on the local CPU.
+    As with <function>local_irq_{save,restore}()</function>, if soft interrupts
+    are already disabled when <function>local_bh_disable()</function> is
+    called, then soft interrupts remain disabled when the corresponding
+    <function>local_bh_enable()</function> is called.
+   </para>
+
+   <para>
+    These routines prevent softirqs and tasklets from running on the
+    local CPU.
+   </para>
+
+   <para>
+    These routines are reentrant.
    </para>
   </sect1>
 
   <sect1 id="routines-processorids">
-   <title><function>smp_processor_id</function>()
-    <filename class="headerfile">include/asm/smp.h</filename></title>
+   <title><function>{get,put}_cpu()</function>/<function>smp_processor_id()</function>
+    <filename class="headerfile">include/linux/smp.h</filename>
+    <filename class="headerfile">include/linux/threads.h</filename>
+   </title>
+
+   <para>
+    The constant <symbol>NR_CPUS</symbol> provides the maximum number of CPUS
+    that the kernel can support at one time. In general, the value of this
+    constant is provided during kernel build configuration via the
+    <symbol>CONFIG_NR_CPUS</symbol> configuration variable.
+   </para>
    
    <para>
-    <function>get_cpu()</function> disables preemption (so you won't
-    suddenly get moved to another CPU) and returns the current
-    processor number, between 0 and <symbol>NR_CPUS</symbol>.  Note
-    that the CPU numbers are not necessarily continuous.  You return
-    it again with <function>put_cpu()</function> when you are done.
+    <function>get_cpu()</function> disables preemption on the local CPU
+    (so you won't suddenly get moved to another CPU) and then returns
+    the local CPU id as a number ranging from 0 up to (but not including)
+    <symbol>NR_CPUS</symbol>.  When you're done with the local CPU, return
+    it to the scheduling system using <function>put_cpu()</function>.
    </para>
+
    <para>
     If you know you cannot be preempted by another task (ie. you are
-    in interrupt context, or have preemption disabled) you can use
-    smp_processor_id().
+    in interrupt context, or have preemption disabled) you can avoid
+    unnecessary overhead by using <function>smp_processor_id()</function>
+    to get the local CPU id number.
    </para>
   </sect1>
 
@@ -741,8 +865,8 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
     (dynamically-loadable parts of the kernel).  Using the
     <function>module_init()</function> and
     <function>module_exit()</function> macros it is easy to write code
-    without #ifdefs which can operate both as a module or built into
-    the kernel.
+    (without #ifdefs) which can be built either into the kernel or as
+    a module.
    </para>
 
    <para>
@@ -768,7 +892,7 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
 
    <para>
     This macro defines the function to be called at module removal
-    time (or never, in the case of the file compiled into the
+    time (or never, in the case of code that has been compiled into the
     kernel).  It will only be called if the module usage count has
     reached zero.  This function can also sleep, but cannot fail:
     everything must be cleaned up by the time it returns.
@@ -987,24 +1111,49 @@ printk(KERN_INFO "my ip: %pI4\n", &amp;ipaddress);
   </sect1>
 
   <sect1 id="convention-returns">
-   <title>Return Conventions</title>
+   <title>Return Conventions: <function>PTR_ERR()</function>/<function>ERR_PTR()</function>
+    <filename class="headerfile">include/linux/err.h</filename>
+   </title>
 
    <para>
-    For code called in user context, it's very common to defy C
-    convention, and return <returnvalue>0</returnvalue> for success,
-    and a negative error number
-    (eg. <returnvalue>-EFAULT</returnvalue>) for failure.  This can be
-    unintuitive at first, but it's fairly widespread in the kernel.
+    For code called in user context, errors are reported via
+    return values rather than through something like C's 'errno';
+    however, it's very common in kernel code to defy C convention
+    by returning <returnvalue>0</returnvalue> for success and a
+    <emphasis>negative</emphasis> value known as an
+    <firstterm>error number</firstterm>
+    (eg. <returnvalue>-EFAULT</returnvalue>) for failure.
    </para>
 
    <para>
-    Using <function>ERR_PTR()</function>
+    If the return value is of pointer type, then an error number is
+    encoded as an <firstterm>error pointer</firstterm>; whether a pointer
+    value is a valid pointer or an error pointer can be determined by
+    <function>IS_ERR(<varname>ptr</varname>)</function>. An error pointer
+    can be explicitly converted to an error number using
+    <function>PTR_ERR(<varname>ptr</varname>)</function>; similarly, an
+    error number can be converted to an error pointer using
+    <function>ERR_PTR(<varname>num</varname>)</function>.
+   </para>
 
-    <filename class="headerfile">include/linux/err.h</filename>; to
-    encode a negative error number into a pointer, and
-    <function>IS_ERR()</function> and <function>PTR_ERR()</function>
-    to get it back out again: avoids a separate pointer parameter for
-    the error number.  Icky, but in a good way.
+   <para>
+    Both error numbers and error pointers are collectively called
+    <firstterm>error codes</firstterm>.
+   </para>
+
+   <para>
+    This convention of multiplexing a return value between error codes
+    and valid values avoids the need for an output parameter or some
+    other more complicated abstraction in order to handle returning
+    both kinds of data.
+   </para>
+
+   <para>
+    Functions for which it would make sense to have valid negative
+    return values can simply return values offset enough to produce
+    only non-negative values (provided the original valid output range
+    is sufficiently small to do so). If this is not possible, then
+    an extra output parameter may be used.
    </para>
   </sect1>
 
@@ -1059,11 +1208,6 @@ static struct block_device_operations opt_fops = {
    <itemizedlist>
     <listitem>
      <para>
-      Inline functions
-     </para>
-    </listitem>
-    <listitem>
-     <para>
       Statement expressions (ie. the ({ and }) constructs).
      </para>
     </listitem>
@@ -1091,11 +1235,6 @@ static struct block_device_operations opt_fops = {
     <listitem>
      <para>
       Arithmetic on void pointers
-     </para>
-    </listitem>
-    <listitem>
-     <para>
-      Non-Constant initializers
      </para>
     </listitem>
     <listitem>
@@ -1322,6 +1461,97 @@ C_LABEL(cputypvar_sun4m):
    and adding to the Configure section. <!-- Rusty insisted on this
    bit; I didn't do it! --> Telsa Gwynne for teaching me DocBook. 
   </para>
+ </chapter>
+
+ <chapter>
+  <title>Contributors</title>
+  <itemizedlist>
+
+   <listitem>
+    <para>
+     Rusty Russell
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Andi Kleen
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Philipp Rumpf
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Werner Almesberger
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Jes Sorensen
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Andrea Arcangeli
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Michael Elizabeth Chastain
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Telsa Gwynne
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Christoph Hellwig
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Randy Dunlap
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Harvey Harrison
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Tobias Klauser
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Shawn Bohrer
+    </para>
+   </listitem>
+
+   <listitem>
+    <para>
+     Michael Witten
+    </para>
+   </listitem>
+
+  </itemizedlist>
  </chapter>
 </book>
 
