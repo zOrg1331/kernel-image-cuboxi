@@ -262,6 +262,29 @@ config HID_PETALYNX
 	---help---
 	Support for Petalynx Maxter remote control.
 
+config HID_PICOLCD
+	tristate "PicoLCD (graphic version)"
+	depends on USB_HID
+	select FB_DEFERRED_IO if FB
+	select FB_SYS_FILLRECT if FB
+	select FB_SYS_COPYAREA if FB
+	select FB_SYS_IMAGEBLIT if FB
+	select FB_SYS_FOPS if FB
+	---help---
+	  This provides support for Minibox PicoLCD devices, currently
+	  only the graphical ones are supported.
+
+	  This includes support for the following device features:
+	  - Keypad
+	  - Switching between Firmware and Flash mode
+	  - Framebuffer for monochrome 256x64 display
+	  - Backlight control         (needs CONFIG_BACKLIGHT_CLASS_DEVICE)
+	  - Contrast control          (needs CONFIG_LCD_CLASS_DEVICE)
+	  - General purpose outputs   (needs CONFIG_LEDS_CLASS)
+	  - EEProm / Flash access     (via debugfs)
+	  Features that are not (yet) supported:
+	  - IR
+
 config HID_QUANTA
 	tristate "Quanta Optical Touch"
 	depends on USB_HID
