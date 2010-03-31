@@ -159,7 +159,8 @@ static unsigned int rds_poll(struct file *file, struct socket *sock,
 
 	poll_wait(file, sk->sk_sleep, wait);
 
-	poll_wait(file, &rds_poll_waitq, wait);
+	if (rs->rs_seen_congestion)
+		poll_wait(file, &rds_poll_waitq, wait);
 
 	read_lock_irqsave(&rs->rs_recv_lock, flags);
 	if (!rs->rs_cong_monitor) {
@@ -180,6 +181,10 @@ static unsigned int rds_poll(struct file *file, struct socket *sock,
 	if (rs->rs_snd_bytes < rds_sk_sndbuf(rs))
 		mask |= (POLLOUT | POLLWRNORM);
 	read_unlock_irqrestore(&rs->rs_recv_lock, flags);
+
+	/* clear state any time we wake a seen-congested socket */
+	if (mask)
+		rs->rs_seen_congestion = 0;
 
 	return mask;
 }
@@ -446,7 +451,6 @@ static void rds_sock_inc_info(struct socket *sock, unsigned int len,
 			      struct rds_info_lengths *lens)
 {
 	struct rds_sock *rs;
-	struct sock *sk;
 	struct rds_incoming *inc;
 	unsigned long flags;
 	unsigned int total = 0;
@@ -456,7 +460,6 @@ static void rds_sock_inc_info(struct socket *sock, unsigned int len,
 	spin_lock_irqsave(&rds_sock_lock, flags);
 
 	list_for_each_entry(rs, &rds_sock_list, rs_item) {
-		sk = rds_rs_to_sk(rs);
 		read_lock(&rs->rs_recv_lock);
 
 		/* XXX too lazy to maintain counts.. */

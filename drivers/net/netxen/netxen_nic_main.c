@@ -781,15 +781,22 @@ netxen_check_options(struct netxen_adapter *adapter)
 	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
 		adapter->msix_supported = !!use_msi_x;
 		adapter->rss_supported = !!use_msi_x;
-	} else if (adapter->fw_version >= NETXEN_VERSION_CODE(3, 4, 336)) {
-		switch (adapter->ahw.board_type) {
-		case NETXEN_BRDTYPE_P2_SB31_10G:
-		case NETXEN_BRDTYPE_P2_SB31_10G_CX4:
-			adapter->msix_supported = !!use_msi_x;
-			adapter->rss_supported = !!use_msi_x;
-			break;
-		default:
-			break;
+	} else {
+		u32 flashed_ver = 0;
+		netxen_rom_fast_read(adapter,
+				NX_FW_VERSION_OFFSET, (int *)&flashed_ver);
+		flashed_ver = NETXEN_DECODE_VERSION(flashed_ver);
+
+		if (flashed_ver >= NETXEN_VERSION_CODE(3, 4, 336)) {
+			switch (adapter->ahw.board_type) {
+			case NETXEN_BRDTYPE_P2_SB31_10G:
+			case NETXEN_BRDTYPE_P2_SB31_10G_CX4:
+				adapter->msix_supported = !!use_msi_x;
+				adapter->rss_supported = !!use_msi_x;
+				break;
+			default:
+				break;
+			}
 		}
 	}
 
@@ -2303,6 +2310,7 @@ netxen_fwinit_work(struct work_struct *work)
 		}
 		break;
 
+	case NX_DEV_NEED_RESET:
 	case NX_DEV_INITALIZING:
 		if (++adapter->fw_wait_cnt < FW_POLL_THRESH) {
 			netxen_schedule_work(adapter,
@@ -2345,6 +2353,9 @@ netxen_detach_work(struct work_struct *work)
 		goto err_ret;
 
 	ref_cnt = nx_decr_dev_ref_cnt(adapter);
+
+	if (ref_cnt == -EIO)
+		goto err_ret;
 
 	delay = (ref_cnt == 0) ? 0 : (2 * FW_POLL_DELAY);
 
