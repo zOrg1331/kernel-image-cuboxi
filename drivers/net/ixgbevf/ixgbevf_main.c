@@ -1495,22 +1495,6 @@ static void ixgbevf_restore_vlan(struct ixgbevf_adapter *adapter)
 	}
 }
 
-static u8 *ixgbevf_addr_list_itr(struct ixgbe_hw *hw, u8 **mc_addr_ptr,
-				 u32 *vmdq)
-{
-	struct dev_mc_list *mc_ptr;
-	u8 *addr = *mc_addr_ptr;
-	*vmdq = 0;
-
-	mc_ptr = container_of(addr, struct dev_mc_list, dmi_addr[0]);
-	if (mc_ptr->next)
-		*mc_addr_ptr = mc_ptr->next->dmi_addr;
-	else
-		*mc_addr_ptr = NULL;
-
-	return addr;
-}
-
 /**
  * ixgbevf_set_rx_mode - Multicast set
  * @netdev: network interface device structure
@@ -1523,16 +1507,10 @@ static void ixgbevf_set_rx_mode(struct net_device *netdev)
 {
 	struct ixgbevf_adapter *adapter = netdev_priv(netdev);
 	struct ixgbe_hw *hw = &adapter->hw;
-	u8 *addr_list = NULL;
-	int addr_count = 0;
 
 	/* reprogram multicast list */
-	addr_count = netdev_mc_count(netdev);
-	if (addr_count)
-		addr_list = netdev->mc_list->dmi_addr;
 	if (hw->mac.ops.update_mc_addr_list)
-		hw->mac.ops.update_mc_addr_list(hw, addr_list, addr_count,
-						ixgbevf_addr_list_itr);
+		hw->mac.ops.update_mc_addr_list(hw, netdev);
 }
 
 static void ixgbevf_napi_enable_all(struct ixgbevf_adapter *adapter)
@@ -2417,9 +2395,9 @@ static void ixgbevf_watchdog_task(struct work_struct *work)
 
 	if (link_up) {
 		if (!netif_carrier_ok(netdev)) {
-			hw_dbg(&adapter->hw, "NIC Link is Up %s, ",
-			       ((link_speed == IXGBE_LINK_SPEED_10GB_FULL) ?
-				"10 Gbps\n" : "1 Gbps\n"));
+			hw_dbg(&adapter->hw, "NIC Link is Up, %u Gbps\n",
+			       (link_speed == IXGBE_LINK_SPEED_10GB_FULL) ?
+			       10 : 1);
 			netif_carrier_on(netdev);
 			netif_tx_wake_all_queues(netdev);
 		} else {
@@ -3481,7 +3459,7 @@ static int __devinit ixgbevf_probe(struct pci_dev *pdev,
 
 	hw_dbg(hw, "MAC: %d\n", hw->mac.type);
 
-	hw_dbg(hw, "LRO is disabled \n");
+	hw_dbg(hw, "LRO is disabled\n");
 
 	hw_dbg(hw, "Intel(R) 82599 Virtual Function\n");
 	cards_found++;

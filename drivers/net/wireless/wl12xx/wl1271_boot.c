@@ -26,7 +26,6 @@
 #include "wl1271_acx.h"
 #include "wl1271_reg.h"
 #include "wl1271_boot.h"
-#include "wl1271_spi.h"
 #include "wl1271_io.h"
 #include "wl1271_event.h"
 
@@ -229,6 +228,14 @@ static int wl1271_boot_upload_nvs(struct wl1271 *wl)
 	nvs_len = sizeof(wl->nvs->nvs);
 	nvs_ptr = (u8 *)wl->nvs->nvs;
 
+	/* update current MAC address to NVS */
+	nvs_ptr[11] = wl->mac_addr[0];
+	nvs_ptr[10] = wl->mac_addr[1];
+	nvs_ptr[6] = wl->mac_addr[2];
+	nvs_ptr[5] = wl->mac_addr[3];
+	nvs_ptr[4] = wl->mac_addr[4];
+	nvs_ptr[3] = wl->mac_addr[5];
+
 	/*
 	 * Layout before the actual NVS tables:
 	 * 1 byte : burst length.
@@ -299,7 +306,7 @@ static int wl1271_boot_upload_nvs(struct wl1271 *wl)
 
 static void wl1271_boot_enable_interrupts(struct wl1271 *wl)
 {
-	enable_irq(wl->irq);
+	wl1271_enable_interrupts(wl);
 	wl1271_write32(wl, ACX_REG_INTERRUPT_MASK,
 		       WL1271_ACX_INTR_ALL & ~(WL1271_INTR_MASK));
 	wl1271_write32(wl, HI_CFG, HI_CFG_DEF_VAL);
