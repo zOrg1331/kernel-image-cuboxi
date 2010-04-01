@@ -38,6 +38,8 @@ static unsigned int ir_debug;
 module_param(ir_debug, int, 0644);
 MODULE_PARM_DESC(ir_debug, "enable debug messages [IR]");
 
+#define MODULE_NAME "em28xx"
+
 #define i2cdprintk(fmt, arg...) \
 	if (ir_debug) { \
 		printk(KERN_DEBUG "%s/ir: " fmt, ir->name , ## arg); \
@@ -473,7 +475,7 @@ int em28xx_ir_init(struct em28xx *dev)
 
 	/* all done */
 	err = ir_input_register(ir->input, dev->board.ir_codes,
-				&ir->props);
+				&ir->props, MODULE_NAME);
 	if (err)
 		goto err_out_stop;
 
