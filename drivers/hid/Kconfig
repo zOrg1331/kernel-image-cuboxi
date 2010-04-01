@@ -262,11 +262,40 @@ config HID_PETALYNX
 	---help---
 	Support for Petalynx Maxter remote control.
 
+config HID_PICOLCD
+	tristate "PicoLCD (graphic version)"
+	depends on USB_HID
+	select FB_DEFERRED_IO if FB
+	select FB_SYS_FILLRECT if FB
+	select FB_SYS_COPYAREA if FB
+	select FB_SYS_IMAGEBLIT if FB
+	select FB_SYS_FOPS if FB
+	---help---
+	  This provides support for Minibox PicoLCD devices, currently
+	  only the graphical ones are supported.
+
+	  This includes support for the following device features:
+	  - Keypad
+	  - Switching between Firmware and Flash mode
+	  - Framebuffer for monochrome 256x64 display
+	  - Backlight control         (needs CONFIG_BACKLIGHT_CLASS_DEVICE)
+	  - Contrast control          (needs CONFIG_LCD_CLASS_DEVICE)
+	  - General purpose outputs   (needs CONFIG_LEDS_CLASS)
+	  - EEProm / Flash access     (via debugfs)
+	  Features that are not (yet) supported:
+	  - IR
+
 config HID_QUANTA
 	tristate "Quanta Optical Touch"
 	depends on USB_HID
 	---help---
 	Support for Quanta Optical Touch dual-touch panels.
+
+config HID_ROCCAT_KONE
+	tristate "Roccat Kone Mouse support"
+	depends on USB_HID
+	---help---
+	Support for Roccat Kone mouse.
 
 config HID_SAMSUNG
 	tristate "Samsung" if EMBEDDED
@@ -356,6 +385,14 @@ config HID_WACOM
 	depends on BT_HIDP
 	---help---
 	Support for Wacom Graphire Bluetooth tablet.
+
+config HID_WACOM_POWER_SUPPLY
+	bool "Wacom Bluetooth devices power supply status support"
+	depends on HID_WACOM
+	select POWER_SUPPLY
+	---help---
+	  Say Y here if you want to enable power supply status monitoring for
+	  Wacom Bluetooth devices.
 
 config HID_ZEROPLUS
 	tristate "Zeroplus based game controller support" if EMBEDDED
