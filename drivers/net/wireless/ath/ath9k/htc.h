@@ -23,6 +23,7 @@
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
 #include <linux/leds.h>
+#include <linux/slab.h>
 #include <net/mac80211.h>
 
 #include "common.h"
@@ -349,6 +350,9 @@ struct ath9k_htc_priv {
 	struct sk_buff *beacon;
 	spinlock_t beacon_lock;
 
+	bool tx_queues_stop;
+	spinlock_t tx_lock;
+
 	struct ieee80211_vif *vif;
 	unsigned int rxfilter;
 	struct tasklet_struct wmi_tasklet;
@@ -415,6 +419,7 @@ int ath9k_rx_init(struct ath9k_htc_priv *priv);
 void ath9k_rx_cleanup(struct ath9k_htc_priv *priv);
 void ath9k_host_rx_init(struct ath9k_htc_priv *priv);
 void ath9k_rx_tasklet(unsigned long data);
+u32 ath9k_htc_calcrxfilter(struct ath9k_htc_priv *priv);
 
 void ath9k_start_rfkill_poll(struct ath9k_htc_priv *priv);
 void ath9k_init_leds(struct ath9k_htc_priv *priv);
