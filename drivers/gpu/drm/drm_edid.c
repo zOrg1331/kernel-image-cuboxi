@@ -1022,6 +1022,7 @@ static int add_detailed_modes(struct drm_connector *connector,
 	case EDID_DETAIL_MONITOR_RANGE:
 		if (gtf)
 			modes += drm_gtf_modes_for_range(connector, timing);
+		/* Get monitor range data */
 		break;
 	case EDID_DETAIL_STD_MODES:
 		/* Six modes per detailed section */
