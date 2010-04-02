@@ -1,0 +1,56 @@
+From: Eugene Teo <eugene@redhat.com>
+Date: Sun, 7 Feb 2010 15:32:14 -0500
+Subject: [mm] fix sys_move_pages infoleak
+Message-id: <4B6EDCFE.3060504@redhat.com>
+Patchwork-id: 23171
+O-Subject: [RHEL5 PATCH] CVE-2010-0415 sys_move_pages infoleak
+Bugzilla: 562590
+CVE: CVE-2010-0415
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Kyle McMartin <kmcmartin@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZ#562590
+
+CVE-2010-0415
+
+Description of problem:
+commit 6f5a55f1a6c5abee15a0e878e5c74d9f1569b8b0
+Author: Linus Torvalds <torvalds@linux-foundation.org>
+Date:   Fri Feb 5 16:16:50 2010 -0800
+
+     Fix potential crash with sys_move_pages
+
+     We incorrectly depended on the 'node_state/node_isset()' functions
+     testing the node range, rather than checking it explicitly.  That's
+     not reliable, even if it might often happen to work.  So do the
+     proper explicit test.
+
+     Reported-by: Marcus Meissner <meissner@suse.de>
+     Acked-and-tested-by: Brice Goglin <Brice.Goglin@inria.fr>
+     Acked-by: Hugh Dickins <hugh.dickins@tiscali.co.uk>
+     Cc: stable@kernel.org
+     Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+Status: Not tested but obvious backport of the upstream patch.
+
+Please review.
+
+Thanks, Eugene
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/mm/migrate.c b/mm/migrate.c
+index 2f454fd..7f9d835 100644
+--- a/mm/migrate.c
++++ b/mm/migrate.c
+@@ -952,6 +952,9 @@ asmlinkage long sys_move_pages(pid_t pid, unsigned long nr_pages,
+ 				goto out;
+ 
+ 			err = -ENODEV;
++			if (node < 0 || node >= MAX_NUMNODES)
++				goto out;
++
+ 			if (!node_online(node))
+ 				goto out;
+ 

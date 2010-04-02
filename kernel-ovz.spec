@@ -5,7 +5,7 @@
 %define with_headers   1
 %define with_openafs   0
 %define ovzver 028stab068
-%define ovzrel 5
+%define ovzrel 9
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -698,6 +698,9 @@ Patch20176: xen-support-interrupt-remapping-on-m-c.patch
 Patch20177: xen-iommu-enable-amd-iommu-debug-at-run-time.patch
 Patch20178: xen-iommu-add-passthrough-and-no-intremap-parameters.patch
 Patch20179: xen-iommu-amd-extend-loop-ctr-for-polling-completion-wait.patch
+Patch20180: xen-whitespace-fixups-in-xen-scheduler.patch
+Patch20181: xen-crank-the-correct-stat-in-the-scheduler.patch
+Patch20182: xen-hook-sched-rebalance-logic-to-opt_hardvirt.patch
 # end of Xen patches
 
 Patch21007: linux-2.6-netlabel-error-checking-cleanups.patch
@@ -4125,7 +4128,6 @@ Patch24478: linux-2.6-net-bnx2x-add-support-for-bcm8727-phy.patch
 Patch24479: linux-2.6-x86-fix-stale-data-in-shared_cpu_map-cpumasks.patch
 Patch24480: linux-2.6-net-ipv6-fix-ipv6_hop_jumbo-remote-system-crash.patch
 Patch24481: linux-2.6-net-e1000e-fix-rx-length-check-errors.patch
-Patch24482: linux-2.6-net-e1000-r9169-fix-rx-length-check-errors.patch
 Patch24483: linux-2.6-scsi-qla2xxx-npiv-vport-management-pseudofiles-are-world-writable.patch
 Patch24484: linux-2.6-fs-fasync-split-fasync_helper-into-separate-add-remove-functions.patch
 Patch24485: linux-2.6-net-emergency-route-cache-flushing-fixes.patch
@@ -4152,6 +4154,29 @@ Patch24505: linux-2.6-fs-ext3-replace-lock_super-with-explicit-resize-lock.patch
 Patch24506: linux-2.6-x86_64-disable-vsyscall-in-kvm-guests.patch
 Patch24507: linux-2.6-x86-sanity-check-for-amd-northbridges.patch
 Patch24508: linux-2.6-firewire-ohci-handle-receive-packets-with-zero-data.patch
+Patch24509: linux-2.6-fs-jbd-fix-race-in-slab-creation-deletion.patch
+Patch24510: linux-2.6-net-e1000-fix-rx-length-check-errors.patch
+Patch24511: linux-2.6-net-e1000e-fix-wol-on-82577-82578.patch
+Patch24512: linux-2.6-net-bonding-allow-bond-in-mode-balance-alb-to-work.patch
+Patch24513: linux-2.6-scsi-cciss-switch-to-using-hlist.patch
+Patch24514: linux-2.6-scsi-cciss-version-change-2.patch
+Patch24515: linux-2.6-scsi-cciss-ignore-stale-commands-after-reboot.patch
+Patch24516: linux-2.6-net-gro-fix-illegal-merging-of-trailer-trash.patch
+Patch24517: linux-2.6-net-e1000e-fix-broken-wol.patch
+Patch24518: linux-2.6-gfs2-gfs2_delete_inode-failing-on-ro-filesystem.patch
+Patch24519: linux-2.6-gfs2-careful-unlinking-inodes.patch
+Patch24520: linux-2.6-fs-fix-possible-inode-corruption-on-unlock.patch
+Patch24521: linux-2.6-mm-prevent-performance-hit-for-32-bit-apps-on-x86_64.patch
+Patch24522: linux-2.6-kvm-kvmclock-won-t-restore-properly-after-resume.patch
+Patch24523: linux-2.6-pci-vf-can-t-be-enabled-in-dom0.patch
+Patch24524: linux-2.6-kvm-pvclock-on-i386-suffers-from-double-registering.patch
+Patch24525: linux-2.6-net-ipv6-fix-oops-in-ip6_dst_lookup_tail.patch
+Patch24526: linux-2.6-misc-fix-kernel-info-leak-with-print-fatal-signals-1.patch
+Patch24527: linux-2.6-net-netfilter-enforce-cap_net_admin-in-ebtables.patch
+Patch24528: linux-2.6-x86_64-wire-up-compat-sched_rr_get_interval.patch
+Patch24529: linux-2.6-mm-fix-sys_move_pages-infoleak.patch
+Patch24531: linux-2.6-fs-ext4-avoid-null-pointer-dereference-when-decoding-erofs-w-o-a-journal.patch
+Patch24532: linux-2.6-net-sctp-backport-cleanups-for-ootb-handling-v2.patch
 
 Patch25000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch25001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -4249,6 +4274,20 @@ Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-ve-uidhash-oops-fix
 Patch100028: diff-rh-dont-add-timer-twise
 Patch100029: diff-ve-sched-nr-unint-summing-negative-20100309
+Patch100030: diff-rh-sysrq-showacpu-20100128
+Patch100031: diff-cpt-shm-file-align-20100324
+Patch100032: diff-rh-fix-emergency-flush-crap
+Patch100033: diff-cpt-shm-file-align-20100324-b
+
+Patch100040: diff-ve-acct-virtual-pids
+Patch100041: diff-ve-acct-rename-globals
+Patch100042: diff-ve-acct-move-lock
+Patch100043: diff-ve-acct-timeout-with-argument
+Patch100044: diff-ve-acct-switch-to-pointer
+Patch100045: diff-ve-acct-per-ve-acct-struct
+Patch100046: diff-ve-acct-auto-close-mnt-fixup
+Patch100047: diff-ve-acct-wait-for-timer-on-free
+
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -8296,7 +8335,6 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch24479 -p1
 %patch24480 -p1
 %patch24481 -p1
-%patch24482 -p1
 %patch24483 -p1
 %patch24484 -p1
 %patch24485 -p1
@@ -8323,6 +8361,29 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch24506 -p1
 %patch24507 -p1
 %patch24508 -p1
+%patch24509 -p1
+%patch24510 -p1
+%patch24511 -p1
+%patch24512 -p1
+%patch24513 -p1
+%patch24514 -p1
+%patch24515 -p1
+%patch24516 -p1
+%patch24517 -p1
+%patch24518 -p1
+%patch24519 -p1
+%patch24520 -p1
+%patch24521 -p1
+%patch24522 -p1
+%patch24523 -p1
+%patch24524 -p1
+%patch24525 -p1
+%patch24526 -p1
+%patch24527 -p1
+%patch24528 -p1
+%patch24529 -p1
+%patch24531 -p1
+%patch24532 -p1
 
 %patch25000 -p1
 %patch25001 -p1
@@ -8399,6 +8460,19 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100027 -p1
 %patch100028 -p1
 %patch100029 -p1
+%patch100030 -p1
+%patch100031 -p1
+%patch100032 -p1
+%patch100033 -p1
+
+%patch100040 -p1
+%patch100041 -p1
+%patch100042 -p1
+%patch100043 -p1
+%patch100044 -p1
+%patch100045 -p1
+%patch100046 -p1
+%patch100047 -p1
 
 %patch101000 -p1
 %patch101001 -p1
@@ -8637,6 +8711,9 @@ cd xen
 %patch20177 -p1
 %patch20178 -p1
 %patch20179 -p1
+%patch20180 -p1
+%patch20181 -p1
+%patch20182 -p1
 
 # end of necessary hypervisor patches
 %endif

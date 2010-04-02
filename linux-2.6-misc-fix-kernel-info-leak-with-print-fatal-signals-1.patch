@@ -1,0 +1,64 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Tue, 19 Jan 2010 10:30:04 -0500
+Subject: [misc] fix kernel info leak with print-fatal-signals=1
+Message-id: <20100119103053.19433.12001.sendpatchset@danny>
+Patchwork-id: 22647
+O-Subject: [PATCH RHEL5.5] CVE-2010-0003 kernel/signal.c: fix kernel information
+	leak with print-fatal-signals=1
+Bugzilla: 554584
+CVE: CVE-2010-0003
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+Backport upstream commit to fix CVE-2010-0003, which only affects i386 kernel and
+with print-fatal-signals=1 (off by default in rhel5)
+
+commit b45c6e76bc2c72f6426c14bed64fdcbc9bf37cb0
+Author: Andi Kleen <andi@firstfloor.org>
+Date:   Fri Jan 8 14:42:52 2010 -0800
+
+    kernel/signal.c: fix kernel information leak with print-fatal-signals=1
+
+    When print-fatal-signals is enabled it's possible to dump any memory
+    reachable by the kernel to the log by simply jumping to that address from
+    user space.
+
+    Or crash the system if there's some hardware with read side effects.
+
+    The fatal signals handler will dump 16 bytes at the execution address,
+    which is fully controlled by ring 3.
+
+    In addition when something jumps to a unmapped address there will be up to
+    16 additional useless page faults, which might be potentially slow (and at
+    least is not very efficient)
+
+    Fortunately this option is off by default and only there on i386.
+
+    But fix it by checking for kernel addresses and also stopping when there's
+    a page fault.
+
+    Signed-off-by: Andi Kleen <ak@linux.intel.com>
+    Cc: Ingo Molnar <mingo@elte.hu>
+    Cc: Oleg Nesterov <oleg@redhat.com>
+    Cc: <stable@kernel.org>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+Resolves bz554584
+Brew build is available at: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2209396
+
+diff --git a/kernel/signal.c b/kernel/signal.c
+index 2b5e7ac..df009a9 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -692,7 +692,8 @@ static void print_fatal_signal(struct pt_regs *regs, int signr)
+ 		for (i = 0; i < 16; i++) {
+ 			unsigned char insn;
+ 
+-			__get_user(insn, (unsigned char *)(regs->eip + i));
++			if (get_user(insn, (unsigned char *)(regs->eip + i)))
++				break;
+ 			printk("%02x ", insn);
+ 		}
+ 	}

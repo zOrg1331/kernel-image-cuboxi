@@ -1,0 +1,60 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Tue, 19 Jan 2010 08:57:26 -0500
+Subject: [net] netfilter: enforce CAP_NET_ADMIN in ebtables
+Message-id: <20100119085815.2029.82438.sendpatchset@danny>
+Patchwork-id: 22644
+O-Subject: [PATCH RHEL5.5] CVE-2010-0007 kernel: netfilter: ebtables: enforce
+	CAP_NET_ADMIN
+Bugzilla: 555243
+CVE: CVE-2010-0007
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Backport of upstream commit to fix CVE-2010-0007
+
+commit dce766af541f6605fa9889892c0280bab31c66ab
+Author: Florian Westphal <fwestphal@astaro.com>
+Date:   Fri Jan 8 17:31:24 2010 +0100
+
+    netfilter: ebtables: enforce CAP_NET_ADMIN
+
+    normal users are currently allowed to set/modify ebtables rules.
+    Restrict it to processes with CAP_NET_ADMIN.
+
+    Note that this cannot be reproduced with unmodified ebtables
+    binary
+    because it uses SOCK_RAW.
+
+    Signed-off-by: Florian Westphal <fwestphal@astaro.com>
+    Cc: stable@kernel.org
+    Signed-off-by: Patrick McHardy <kaber@trash.net>
+
+Resolves bz555243
+
+diff --git a/net/bridge/netfilter/ebtables.c b/net/bridge/netfilter/ebtables.c
+index 940b218..ff34004 100644
+--- a/net/bridge/netfilter/ebtables.c
++++ b/net/bridge/netfilter/ebtables.c
+@@ -1405,6 +1405,9 @@ static int do_ebt_set_ctl(struct sock *sk,
+ {
+ 	int ret;
+ 
++	if (!capable(CAP_NET_ADMIN))
++		return -EPERM;
++
+ 	switch(cmd) {
+ 	case EBT_SO_SET_ENTRIES:
+ 		ret = do_replace(user, len);
+@@ -1424,6 +1427,9 @@ static int do_ebt_get_ctl(struct sock *sk, int cmd, void __user *user, int *len)
+ 	struct ebt_replace tmp;
+ 	struct ebt_table *t;
+ 
++	if (!capable(CAP_NET_ADMIN))
++		return -EPERM;
++
+ 	if (copy_from_user(&tmp, user, sizeof(tmp)))
+ 		return -EFAULT;
+ 

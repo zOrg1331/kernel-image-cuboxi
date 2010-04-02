@@ -1,0 +1,33 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Fri, 9 Oct 2009 18:04:19 +0200
+Subject: [scsi] cciss: version change
+Message-id: 4ACF5F03.7070108@redhat.com
+O-Subject: [RHEL5.5 Patch 3/3] cciss: version change
+Bugzilla: 525440
+
+Version change
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index f26bafe..0a334fa 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -53,16 +53,16 @@
+ #include <linux/kthread.h>
+ 
+ #define CCISS_DRIVER_VERSION(maj,min,submin) ((maj<<16)|(min<<8)|(submin))
+-#define DRIVER_NAME "HP CISS Driver (v 3.6.20-RH3)"
++#define DRIVER_NAME "HP CISS Driver (v 3.6.20-RH4)"
+ #define DRIVER_VERSION CCISS_DRIVER_VERSION(3,6,20)
+ 
+ /* Embedded module documentation macros - see modules.h */
+ MODULE_AUTHOR("Hewlett-Packard Company");
+-MODULE_DESCRIPTION("Driver for HP Controller SA5xxx SA6xxx version 3.6.20-RH3");
++MODULE_DESCRIPTION("Driver for HP Controller SA5xxx SA6xxx version 3.6.20-RH4");
+ MODULE_SUPPORTED_DEVICE("HP SA5i SA5i+ SA532 SA5300 SA5312 SA641 SA642 SA6400"
+ 			" SA6i P600 P800 P400 P400i E200 E200i E500 P700m"
+ 			" and HP Smart Array G2 SAS/SATA Controllers");
+-MODULE_VERSION("3.6.20-RH3");
++MODULE_VERSION("3.6.20-RH4");
+ MODULE_LICENSE("GPL");
+ 
+ #include "cciss_cmd.h"
