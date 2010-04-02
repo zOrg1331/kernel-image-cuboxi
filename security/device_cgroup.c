@@ -549,14 +549,13 @@ static int __devcgroup_inode_permission(int blk, dev_t device, int mask)
 			continue;
 		if (wh->minor != ~0 && wh->minor != MINOR(device))
 			continue;
-
+found:
 		if ((mask & MAY_WRITE) && !(wh->access & ACC_WRITE))
 			continue;
 		if ((mask & MAY_READ) && !(wh->access & ACC_READ))
 			continue;
 		if ((mask & MAY_QUOTACTL) && !(wh->access & ACC_QUOTA))
 			continue;
-found:
 		rcu_read_unlock();
 		return 0;
 	}
@@ -598,10 +597,9 @@ int devcgroup_inode_mknod(int mode, dev_t dev)
 			continue;
 		if (wh->minor != ~0 && wh->minor != MINOR(dev))
 			continue;
-
+found:
 		if (!(wh->access & ACC_MKNOD))
 			continue;
-found:
 		rcu_read_unlock();
 		return 0;
 	}
