@@ -1218,7 +1218,7 @@ struct cpt_x86_regs
 	__u32	cpt_eflags;
 	__u32	cpt_esp;
 	__u32	cpt_xss;
-	__u32	pad;
+	__u32	cpt_ugs;
 };
 
 struct cpt_x86_64_regs

@@ -846,6 +846,7 @@ static int restore_registers(struct task_struct *tsk, struct pt_regs *regs,
 	tsk->thread.ip = (unsigned long) &i386_ret_from_resume;
 
 	tsk->thread.gs = decode_segment(b->cpt_gs);
+	task_user_gs(tsk) = decode_segment(b->cpt_ugs);
 	tsk->thread.debugreg0 = b->cpt_debugreg[0];
 	tsk->thread.debugreg1 = b->cpt_debugreg[1];
 	tsk->thread.debugreg2 = b->cpt_debugreg[2];

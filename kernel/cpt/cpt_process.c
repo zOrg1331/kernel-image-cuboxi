@@ -198,6 +198,7 @@ static int dump_registers(struct task_struct *tsk, struct cpt_context *ctx)
 
 	ri.cpt_fs = encode_segment(pt_regs->fs);
 	ri.cpt_gs = encode_segment(tsk->thread.gs);
+	ri.cpt_ugs = encode_segment(task_user_gs(tsk));
 
 	ri.cpt_ebx = pt_regs->bx;
 	ri.cpt_ecx = pt_regs->cx;
