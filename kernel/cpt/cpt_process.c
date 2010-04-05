@@ -712,10 +712,6 @@ static int dump_one_signal_struct(cpt_object_t *obj, struct cpt_context *ctx)
 
 int cpt_check_unsupported(struct task_struct *tsk, cpt_context_t *ctx)
 {
-	if (tsk->splice_pipe) {
-		eprintk_ctx("splice is used by " CPT_FID "\n", CPT_TID(tsk));
-		return -EBUSY;
-	}
 #ifdef CONFIG_KEYS
 	if (tsk->request_key_auth || tsk->thread_keyring) {
 		eprintk_ctx("keys are used by " CPT_FID "\n", CPT_TID(tsk));
