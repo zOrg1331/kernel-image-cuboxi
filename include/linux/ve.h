@@ -129,9 +129,9 @@ struct ve_cpu_stats {
 	cycles_t	strt_idle_time;
 	cycles_t	used_time;
 	seqcount_t	stat_lock;
-	int		nr_running;
-	int		nr_unint;
-	int		nr_iowait;
+	unsigned long	nr_running;
+	unsigned long	nr_unint;
+	unsigned long	nr_iowait;
 	cputime64_t	user;
 	cputime64_t	nice;
 	cputime64_t	system;
