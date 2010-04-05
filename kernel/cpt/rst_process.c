@@ -421,8 +421,13 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 		}
 	}
 
-	if (si->cpt_curr_target)
+	if (si->cpt_curr_target) {
 		current->signal->curr_target = find_task_by_vpid(si->cpt_curr_target);
+		if (current->signal->curr_target == NULL) {
+			wprintk_ctx("oops, curr_target=NULL, pid=%u\n", si->cpt_curr_target);
+			current->signal->curr_target = current;
+		}
+	}
 	current->signal->flags = 0;
 	*exiting = si->cpt_group_exit;
 	current->signal->group_exit_code = si->cpt_group_exit_code;
