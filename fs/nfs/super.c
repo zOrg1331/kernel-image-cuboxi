@@ -1708,7 +1708,7 @@ static int nfs_validate_mount_data(void *options,
 		goto out_v3_not_compiled;
 #endif /* !CONFIG_NFS_V3 */
 
-	if (!(data->flags & NFS_MOUNT_VER3)) {
+	if (!(args->flags & NFS_MOUNT_VER3)) {
 		printk("NFSv2 is broken and not supported\n");
 		return -EPROTONOSUPPORT;
 	}
