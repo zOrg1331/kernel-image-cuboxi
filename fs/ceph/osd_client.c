@@ -6,6 +6,7 @@
 #include <linux/pagemap.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/bio.h>
 
 #include "super.h"
 #include "osd_client.h"
@@ -111,6 +112,8 @@ void ceph_osdc_release_request(struct kref *kref)
 	if (req->r_own_pages)
 		ceph_release_page_vector(req->r_pages,
 					 req->r_num_pages);
+	if (req->r_bio)
+		bio_put(req->r_bio);
 	ceph_put_snap_context(req->r_snapc);
 	if (req->r_mempool)
 		mempool_free(req, req->r_osdc->req_mempool);
@@ -124,7 +127,8 @@ struct ceph_osd_request *ceph_osdc_alloc_request(struct ceph_osd_client *osdc,
 					       int do_sync,
 					       bool use_mempool,
 					       gfp_t gfp_flags,
-					       struct page **pages)
+					       struct page **pages,
+					       struct bio *bio)
 {
 	struct ceph_osd_request *req;
 	struct ceph_msg *msg;
@@ -189,6 +193,10 @@ struct ceph_osd_request *ceph_osdc_alloc_request(struct ceph_osd_client *osdc,
 
 	req->r_request = msg;
 	req->r_pages = pages;
+	if (bio) {
+		req->r_bio = bio;
+		bio_get(req->r_bio);
+	}
 
 	return req;
 }
@@ -290,7 +298,7 @@ struct ceph_osd_request *ceph_osdc_new_request(struct ceph_osd_client *osdc,
 		ceph_osdc_alloc_request(osdc, flags,
 					 snapc, do_sync,
 					 use_mempool,
-					 GFP_NOFS, NULL);
+					 GFP_NOFS, NULL, NULL);
 	if (IS_ERR(req))
 		return req;
 
@@ -1170,6 +1178,7 @@ int ceph_osdc_start_request(struct ceph_osd_client *osdc,
 
 	req->r_request->pages = req->r_pages;
 	req->r_request->nr_pages = req->r_num_pages;
+	req->r_request->bio = req->r_bio;
 
 	register_request(osdc, req);
 
@@ -1488,6 +1497,7 @@ static struct ceph_msg *get_reply(struct ceph_connection *con,
 		}
 		m->pages = req->r_pages;
 		m->nr_pages = req->r_num_pages;
+		m->bio = req->r_bio;
 	}
 	*skip = 0;
 	req->r_con_filling_msg = ceph_con_get(con);
