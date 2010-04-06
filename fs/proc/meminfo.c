@@ -49,6 +49,10 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	unsigned long pages[NR_LRU_LISTS];
 	int lru;
 
+	si_meminfo(&i);
+	si_swapinfo(&i);
+	mi.si = i;
+
 	ret = virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_MEMINFO, &mi);
 	if (ret & NOTIFY_FAIL)
 		return 0;
@@ -58,8 +62,6 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 /*
  * display in kilobytes.
  */
-	si_meminfo(&i);
-	si_swapinfo(&i);
 	committed = percpu_counter_read_positive(&vm_committed_as);
 	allowed = ((totalram_pages - hugetlb_total_pages())
 		* sysctl_overcommit_ratio / 100) + total_swap_pages;
