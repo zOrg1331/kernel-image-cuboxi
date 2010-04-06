@@ -317,7 +317,7 @@ void ceph_release_page_vector(struct page **pages, int num_pages)
 /*
  * allocate a vector new pages
  */
-static struct page **ceph_alloc_page_vector(int num_pages, gfp_t flags)
+struct page **ceph_alloc_page_vector(int num_pages, gfp_t flags)
 {
 	struct page **pages;
 	int i;
@@ -355,6 +355,52 @@ static int copy_user_to_page_vector(struct page **pages,
 		data += l - bad;
 		left -= l - bad;
 		po += l - bad;
+		if (po == PAGE_CACHE_SIZE) {
+			po = 0;
+			i++;
+		}
+	}
+	return len;
+}
+
+int ceph_copy_to_page_vector(struct page **pages,
+				    const char *data,
+				    loff_t off, size_t len)
+{
+	int i = 0;
+	size_t po = off & ~PAGE_CACHE_MASK;
+	size_t left = len;
+	size_t l;
+
+	while (left > 0) {
+		l = min_t(size_t, PAGE_CACHE_SIZE-po, left);
+		memcpy(page_address(pages[i]) + po, data, l);
+		data += l;
+		left -= l;
+		po += l;
+		if (po == PAGE_CACHE_SIZE) {
+			po = 0;
+			i++;
+		}
+	}
+	return len;
+}
+
+int ceph_copy_from_page_vector(struct page **pages,
+				    char *data,
+				    loff_t off, size_t len)
+{
+	int i = 0;
+	size_t po = off & ~PAGE_CACHE_MASK;
+	size_t left = len;
+	size_t l;
+
+	while (left > 0) {
+		l = min_t(size_t, PAGE_CACHE_SIZE-po, left);
+		memcpy(data, page_address(pages[i]) + po, l);
+		data += l;
+		left -= l;
+		po += l;
 		if (po == PAGE_CACHE_SIZE) {
 			po = 0;
 			i++;
