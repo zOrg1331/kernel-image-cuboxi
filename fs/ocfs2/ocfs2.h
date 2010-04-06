@@ -768,6 +768,13 @@ static inline unsigned int ocfs2_megabytes_to_clusters(struct super_block *sb,
 	return megs << (20 - OCFS2_SB(sb)->s_clustersize_bits);
 }
 
+static inline unsigned int ocfs2_clusters_to_megabytes(struct super_block *sb,
+						       unsigned int clusters)
+{
+	return clusters >> (20 - OCFS2_SB(sb)->s_clustersize_bits);
+}
+
+
 #define ocfs2_set_bit ext2_set_bit
 #define ocfs2_clear_bit ext2_clear_bit
 #define ocfs2_test_bit ext2_test_bit
