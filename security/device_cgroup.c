@@ -565,6 +565,7 @@ found:
 
 	return -EPERM;
 }
+EXPORT_SYMBOL(devcgroup_inode_permission);
 
 int devcgroup_inode_permission(struct inode *inode, int mask)
 {
