@@ -327,6 +327,7 @@ static int add_recvbuf_small(struct virtnet_info *vi, gfp_t gfp)
 	struct scatterlist sg[2];
 	int err;
 
+	sg_init_table(sg, 2);
 	skb = netdev_alloc_skb_ip_align(vi->dev, MAX_PACKET_LEN);
 	if (unlikely(!skb))
 		return -ENOMEM;
@@ -352,6 +353,7 @@ static int add_recvbuf_big(struct virtnet_info *vi, gfp_t gfp)
 	char *p;
 	int i, err, offset;
 
+	sg_init_table(sg, MAX_SKB_FRAGS + 2);
 	/* page in sg[MAX_SKB_FRAGS + 1] is list tail */
 	for (i = MAX_SKB_FRAGS + 1; i > 1; --i) {
 		first = get_a_page(vi, gfp);
@@ -720,7 +722,6 @@ static void virtnet_set_rx_mode(struct net_device *dev)
 	struct scatterlist sg[2];
 	u8 promisc, allmulti;
 	struct virtio_net_ctrl_mac *mac_data;
-	struct dev_addr_list *addr;
 	struct netdev_hw_addr *ha;
 	int uc_count;
 	int mc_count;
@@ -777,8 +778,8 @@ static void virtnet_set_rx_mode(struct net_device *dev)
 
 	mac_data->entries = mc_count;
 	i = 0;
-	netdev_for_each_mc_addr(addr, dev)
-		memcpy(&mac_data->macs[i++][0], addr->da_addr, ETH_ALEN);
+	netdev_for_each_mc_addr(ha, dev)
+		memcpy(&mac_data->macs[i++][0], ha->addr, ETH_ALEN);
 
 	sg_set_buf(&sg[1], mac_data,
 		   sizeof(mac_data->entries) + (mc_count * ETH_ALEN));
