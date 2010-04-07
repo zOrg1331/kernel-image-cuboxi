@@ -1461,6 +1461,8 @@ int snd_hda_codec_amp_update(struct hda_codec *codec, hda_nid_t nid, int ch,
 	info = get_alloc_amp_hash(codec, HDA_HASH_KEY(nid, direction, idx));
 	if (!info)
 		return 0;
+	if (snd_BUG_ON(mask & ~0xff))
+		mask &= 0xff;
 	val &= mask;
 	val |= get_vol_mute(codec, info, nid, ch, direction, idx) & ~mask;
 	if (info->vol[ch] == val)
@@ -1486,6 +1488,9 @@ int snd_hda_codec_amp_stereo(struct hda_codec *codec, hda_nid_t nid,
 			     int direction, int idx, int mask, int val)
 {
 	int ch, ret = 0;
+
+	if (snd_BUG_ON(mask & ~0xff))
+		mask &= 0xff;
 	for (ch = 0; ch < 2; ch++)
 		ret |= snd_hda_codec_amp_update(codec, nid, ch, direction,
 						idx, mask, val);
@@ -4218,7 +4223,8 @@ int snd_hda_parse_pin_def_config(struct hda_codec *codec,
 			break;
 		case AC_JACK_MIC_IN: {
 			int preferred, alt;
-			if (loc == AC_JACK_LOC_FRONT) {
+			if (loc == AC_JACK_LOC_FRONT ||
+			    (loc & 0x30) == AC_JACK_LOC_INTERNAL) {
 				preferred = AUTO_PIN_FRONT_MIC;
 				alt = AUTO_PIN_MIC;
 			} else {
