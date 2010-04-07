@@ -5,6 +5,7 @@
 
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM kvm
+#define TRACE_INCLUDE_FILE kvm
 
 #if defined(__KVM_HAVE_IOAPIC)
 TRACE_EVENT(kvm_set_irq,

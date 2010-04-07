@@ -979,13 +979,11 @@ long kvm_arch_vm_ioctl(struct file *filp,
 		r = -EFAULT;
 		if (copy_from_user(&irq_event, argp, sizeof irq_event))
 			goto out;
-		r = -ENXIO;
 		if (irqchip_in_kernel(kvm)) {
 			__s32 status;
 			status = kvm_set_irq(kvm, KVM_USERSPACE_IRQ_SOURCE_ID,
 				    irq_event.irq, irq_event.level);
 			if (ioctl == KVM_IRQ_LINE_STATUS) {
-				r = -EFAULT;
 				irq_event.status = status;
 				if (copy_to_user(argp, &irq_event,
 							sizeof irq_event))
@@ -1537,10 +1535,8 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 			goto out;
 
 		if (copy_to_user(user_stack, stack,
-				 sizeof(struct kvm_ia64_vcpu_stack))) {
-			r = -EFAULT;
+				 sizeof(struct kvm_ia64_vcpu_stack)))
 			goto out;
-		}
 
 		break;
 	}

@@ -257,9 +257,16 @@ map_again:
 
 	if (ret < 0) {
 		/* If we couldn't map a primary PTE, try a secondary */
+#ifdef USE_SECONDARY
 		hash = ~hash;
-		vflags ^= HPTE_V_SECONDARY;
 		attempt++;
+		if (attempt % 2)
+			vflags = HPTE_V_SECONDARY;
+		else
+			vflags = 0;
+#else
+		attempt = 2;
+#endif
 		goto map_again;
 	} else {
 		int hpte_id = kvmppc_mmu_hpte_cache_next(vcpu);
@@ -269,13 +276,6 @@ map_again:
 			    ((rflags & HPTE_R_PP) == 3) ? '-' : 'w',
 			    (rflags & HPTE_R_N) ? '-' : 'x',
 			    orig_pte->eaddr, hpteg, va, orig_pte->vpage, hpaddr);
-
-		/* The ppc_md code may give us a secondary entry even though we
-		   asked for a primary. Fix up. */
-		if ((ret & _PTEIDX_SECONDARY) && !(vflags & HPTE_V_SECONDARY)) {
-			hash = ~hash;
-			hpteg = ((hash & htab_hash_mask) * HPTES_PER_GROUP);
-		}
 
 		pte->slot = hpteg + (ret & 7);
 		pte->host_va = va;

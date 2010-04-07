@@ -6,6 +6,8 @@
 
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM kvmmmu
+#define TRACE_INCLUDE_PATH .
+#define TRACE_INCLUDE_FILE mmutrace
 
 #define KVM_MMU_PAGE_FIELDS \
 	__field(__u64, gfn) \
@@ -213,11 +215,6 @@ TRACE_EVENT(
 );
 
 #endif /* _TRACE_KVMMMU_H */
-
-#undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH .
-#undef TRACE_INCLUDE_FILE
-#define TRACE_INCLUDE_FILE mmutrace
 
 /* This part must be outside protection */
 #include <trace/define_trace.h>

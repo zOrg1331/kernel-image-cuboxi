@@ -418,6 +418,9 @@ static struct kvm *kvm_create_vm(void)
 	spin_lock(&kvm_lock);
 	list_add(&kvm->vm_list, &vm_list);
 	spin_unlock(&kvm_lock);
+#ifdef KVM_COALESCED_MMIO_PAGE_OFFSET
+	kvm_coalesced_mmio_init(kvm);
+#endif
 out:
 	return kvm;
 
@@ -907,11 +910,6 @@ int memslot_id(struct kvm *kvm, gfn_t gfn)
 	return memslot - slots->memslots;
 }
 
-static unsigned long gfn_to_hva_memslot(struct kvm_memory_slot *slot, gfn_t gfn)
-{
-	return slot->userspace_addr + (gfn - slot->base_gfn) * PAGE_SIZE;
-}
-
 unsigned long gfn_to_hva(struct kvm *kvm, gfn_t gfn)
 {
 	struct kvm_memory_slot *slot;
@@ -920,7 +918,7 @@ unsigned long gfn_to_hva(struct kvm *kvm, gfn_t gfn)
 	slot = gfn_to_memslot_unaliased(kvm, gfn);
 	if (!slot || slot->flags & KVM_MEMSLOT_INVALID)
 		return bad_hva();
-	return gfn_to_hva_memslot(slot, gfn);
+	return (slot->userspace_addr + (gfn - slot->base_gfn) * PAGE_SIZE);
 }
 EXPORT_SYMBOL_GPL(gfn_to_hva);
 
@@ -969,6 +967,11 @@ pfn_t gfn_to_pfn(struct kvm *kvm, gfn_t gfn)
 	return hva_to_pfn(kvm, addr);
 }
 EXPORT_SYMBOL_GPL(gfn_to_pfn);
+
+static unsigned long gfn_to_hva_memslot(struct kvm_memory_slot *slot, gfn_t gfn)
+{
+	return (slot->userspace_addr + (gfn - slot->base_gfn) * PAGE_SIZE);
+}
 
 pfn_t gfn_to_pfn_memslot(struct kvm *kvm,
 			 struct kvm_memory_slot *slot, gfn_t gfn)
@@ -1599,6 +1602,7 @@ static long kvm_vm_ioctl(struct file *filp,
 		r = -EFAULT;
 		if (copy_from_user(&zone, argp, sizeof zone))
 			goto out;
+		r = -ENXIO;
 		r = kvm_vm_ioctl_register_coalesced_mmio(kvm, &zone);
 		if (r)
 			goto out;
@@ -1610,6 +1614,7 @@ static long kvm_vm_ioctl(struct file *filp,
 		r = -EFAULT;
 		if (copy_from_user(&zone, argp, sizeof zone))
 			goto out;
+		r = -ENXIO;
 		r = kvm_vm_ioctl_unregister_coalesced_mmio(kvm, &zone);
 		if (r)
 			goto out;
@@ -1743,19 +1748,12 @@ static struct file_operations kvm_vm_fops = {
 
 static int kvm_dev_ioctl_create_vm(void)
 {
-	int fd, r;
+	int fd;
 	struct kvm *kvm;
 
 	kvm = kvm_create_vm();
 	if (IS_ERR(kvm))
 		return PTR_ERR(kvm);
-#ifdef KVM_COALESCED_MMIO_PAGE_OFFSET
-	r = kvm_coalesced_mmio_init(kvm);
-	if (r < 0) {
-		kvm_put_kvm(kvm);
-		return r;
-	}
-#endif
 	fd = anon_inode_getfd("kvm-vm", &kvm_vm_fops, kvm, O_RDWR);
 	if (fd < 0)
 		kvm_put_kvm(kvm);
@@ -2274,6 +2272,7 @@ EXPORT_SYMBOL_GPL(kvm_init);
 
 void kvm_exit(void)
 {
+	tracepoint_synchronize_unregister();
 	kvm_exit_debug();
 	misc_deregister(&kvm_dev);
 	kmem_cache_destroy(kvm_vcpu_cache);

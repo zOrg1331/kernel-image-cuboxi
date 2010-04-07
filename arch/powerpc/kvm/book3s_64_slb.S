@@ -145,7 +145,7 @@ slb_do_enter:
 	lwz	r11, (PACA_KVM_CR)(r13)
 	mtcr	r11
 
-	lwz	r11, (PACA_KVM_XER)(r13)
+	ld	r11, (PACA_KVM_XER)(r13)
 	mtxer	r11
 
 	ld	r11, (PACA_KVM_R11)(r13)

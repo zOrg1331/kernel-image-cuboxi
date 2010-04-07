@@ -148,6 +148,7 @@ module_param(oos_shadow, bool, 0644);
 
 #include <trace/events/kvm.h>
 
+#undef TRACE_INCLUDE_FILE
 #define CREATE_TRACE_POINTS
 #include "mmutrace.h"
 
@@ -326,6 +327,7 @@ static int mmu_topup_memory_cache_page(struct kvm_mmu_memory_cache *cache,
 		page = alloc_page(GFP_KERNEL);
 		if (!page)
 			return -ENOMEM;
+		set_page_private(page, 0);
 		cache->objects[cache->nobjs++] = page_address(page);
 	}
 	return 0;
@@ -1329,8 +1331,6 @@ static struct kvm_mmu_page *kvm_mmu_get_page(struct kvm_vcpu *vcpu,
 	role = vcpu->arch.mmu.base_role;
 	role.level = level;
 	role.direct = direct;
-	if (role.direct)
-		role.glevels = 0;
 	role.access = access;
 	if (vcpu->arch.mmu.root_level <= PT32_ROOT_LEVEL) {
 		quadrant = gaddr >> (PAGE_SHIFT + (PT64_PT_BITS * level));
@@ -2296,19 +2296,13 @@ static void reset_rsvds_bits_mask(struct kvm_vcpu *vcpu, int level)
 		/* no rsvd bits for 2 level 4K page table entries */
 		context->rsvd_bits_mask[0][1] = 0;
 		context->rsvd_bits_mask[0][0] = 0;
-		context->rsvd_bits_mask[1][0] = context->rsvd_bits_mask[0][0];
-
-		if (!is_pse(vcpu)) {
-			context->rsvd_bits_mask[1][1] = 0;
-			break;
-		}
-
 		if (is_cpuid_PSE36())
 			/* 36bits PSE 4MB page */
 			context->rsvd_bits_mask[1][1] = rsvd_bits(17, 21);
 		else
 			/* 32 bits PSE 4MB page */
 			context->rsvd_bits_mask[1][1] = rsvd_bits(13, 21);
+		context->rsvd_bits_mask[1][0] = context->rsvd_bits_mask[1][0];
 		break;
 	case PT32E_ROOT_LEVEL:
 		context->rsvd_bits_mask[0][2] =
@@ -2321,7 +2315,7 @@ static void reset_rsvds_bits_mask(struct kvm_vcpu *vcpu, int level)
 		context->rsvd_bits_mask[1][1] = exb_bit_rsvd |
 			rsvd_bits(maxphyaddr, 62) |
 			rsvd_bits(13, 20);		/* large page */
-		context->rsvd_bits_mask[1][0] = context->rsvd_bits_mask[0][0];
+		context->rsvd_bits_mask[1][0] = context->rsvd_bits_mask[1][0];
 		break;
 	case PT64_ROOT_LEVEL:
 		context->rsvd_bits_mask[0][3] = exb_bit_rsvd |
@@ -2339,7 +2333,7 @@ static void reset_rsvds_bits_mask(struct kvm_vcpu *vcpu, int level)
 		context->rsvd_bits_mask[1][1] = exb_bit_rsvd |
 			rsvd_bits(maxphyaddr, 51) |
 			rsvd_bits(13, 20);		/* large page */
-		context->rsvd_bits_mask[1][0] = context->rsvd_bits_mask[0][0];
+		context->rsvd_bits_mask[1][0] = context->rsvd_bits_mask[1][0];
 		break;
 	}
 }
@@ -2565,11 +2559,36 @@ static bool last_updated_pte_accessed(struct kvm_vcpu *vcpu)
 }
 
 static void mmu_guess_page_from_pte_write(struct kvm_vcpu *vcpu, gpa_t gpa,
-					  u64 gpte)
+					  const u8 *new, int bytes)
 {
 	gfn_t gfn;
+	int r;
+	u64 gpte = 0;
 	pfn_t pfn;
 
+	if (bytes != 4 && bytes != 8)
+		return;
+
+	/*
+	 * Assume that the pte write on a page table of the same type
+	 * as the current vcpu paging mode.  This is nearly always true
+	 * (might be false while changing modes).  Note it is verified later
+	 * by update_pte().
+	 */
+	if (is_pae(vcpu)) {
+		/* Handle a 32-bit guest writing two halves of a 64-bit gpte */
+		if ((bytes == 4) && (gpa % 4 == 0)) {
+			r = kvm_read_guest(vcpu->kvm, gpa & ~(u64)7, &gpte, 8);
+			if (r)
+				return;
+			memcpy((void *)&gpte + (gpa % 8), new, 4);
+		} else if ((bytes == 8) && (gpa % 8 == 0)) {
+			memcpy((void *)&gpte, new, 8);
+		}
+	} else {
+		if ((bytes == 4) && (gpa % 4 == 0))
+			memcpy((void *)&gpte, new, 4);
+	}
 	if (!is_present_gpte(gpte))
 		return;
 	gfn = (gpte & PT64_BASE_ADDR_MASK) >> PAGE_SHIFT;
@@ -2618,46 +2637,10 @@ void kvm_mmu_pte_write(struct kvm_vcpu *vcpu, gpa_t gpa,
 	int flooded = 0;
 	int npte;
 	int r;
-	int invlpg_counter;
 
 	pgprintk("%s: gpa %llx bytes %d\n", __func__, gpa, bytes);
-
-	invlpg_counter = atomic_read(&vcpu->kvm->arch.invlpg_counter);
-
-	/*
-	 * Assume that the pte write on a page table of the same type
-	 * as the current vcpu paging mode.  This is nearly always true
-	 * (might be false while changing modes).  Note it is verified later
-	 * by update_pte().
-	 */
-	if ((is_pae(vcpu) && bytes == 4) || !new) {
-		/* Handle a 32-bit guest writing two halves of a 64-bit gpte */
-		if (is_pae(vcpu)) {
-			gpa &= ~(gpa_t)7;
-			bytes = 8;
-		}
-		r = kvm_read_guest(vcpu->kvm, gpa, &gentry, min(bytes, 8));
-		if (r)
-			gentry = 0;
-		new = (const u8 *)&gentry;
-	}
-
-	switch (bytes) {
-	case 4:
-		gentry = *(const u32 *)new;
-		break;
-	case 8:
-		gentry = *(const u64 *)new;
-		break;
-	default:
-		gentry = 0;
-		break;
-	}
-
-	mmu_guess_page_from_pte_write(vcpu, gpa, gentry);
+	mmu_guess_page_from_pte_write(vcpu, gpa, new, bytes);
 	spin_lock(&vcpu->kvm->mmu_lock);
-	if (atomic_read(&vcpu->kvm->arch.invlpg_counter) != invlpg_counter)
-		gentry = 0;
 	kvm_mmu_access_page(vcpu, gfn);
 	kvm_mmu_free_some_pages(vcpu);
 	++vcpu->kvm->stat.mmu_pte_write;
@@ -2721,11 +2704,20 @@ void kvm_mmu_pte_write(struct kvm_vcpu *vcpu, gpa_t gpa,
 				continue;
 		}
 		spte = &sp->spt[page_offset / sizeof(*spte)];
+		if ((gpa & (pte_size - 1)) || (bytes < pte_size)) {
+			gentry = 0;
+			r = kvm_read_guest_atomic(vcpu->kvm,
+						  gpa & ~(u64)(pte_size - 1),
+						  &gentry, pte_size);
+			new = (const void *)&gentry;
+			if (r < 0)
+				new = NULL;
+		}
 		while (npte--) {
 			entry = *spte;
 			mmu_pte_write_zap_pte(vcpu, sp, spte);
-			if (gentry)
-				mmu_pte_write_new_pte(vcpu, sp, spte, &gentry);
+			if (new)
+				mmu_pte_write_new_pte(vcpu, sp, spte, new);
 			mmu_pte_write_flush_tlb(vcpu, entry, *spte);
 			++spte;
 		}
