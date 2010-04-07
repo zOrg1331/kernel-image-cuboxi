@@ -127,9 +127,9 @@ struct kvmppc_pte {
 	u64 eaddr;
 	u64 vpage;
 	u64 raddr;
-	bool may_read;
-	bool may_write;
-	bool may_execute;
+	bool may_read		: 1;
+	bool may_write		: 1;
+	bool may_execute	: 1;
 };
 
 struct kvmppc_mmu {
@@ -175,7 +175,7 @@ struct kvm_vcpu_arch {
 	ulong gpr[32];
 
 	u64 fpr[32];
-	u32 fpscr;
+	u64 fpscr;
 
 #ifdef CONFIG_ALTIVEC
 	vector128 vr[32];
@@ -184,6 +184,11 @@ struct kvm_vcpu_arch {
 
 #ifdef CONFIG_VSX
 	u64 vsr[32];
+#endif
+
+#ifdef CONFIG_PPC_BOOK3S
+	/* For Gekko paired singles */
+	u32 qpr[32];
 #endif
 
 	ulong pc;
@@ -255,7 +260,7 @@ struct kvm_vcpu_arch {
 
 	u32 last_inst;
 #ifdef CONFIG_PPC64
-	ulong fault_dsisr;
+	u32 fault_dsisr;
 #endif
 	ulong fault_dear;
 	ulong fault_esr;
@@ -265,8 +270,11 @@ struct kvm_vcpu_arch {
 
 	u8 io_gpr; /* GPR used as IO source/target */
 	u8 mmio_is_bigendian;
+	u8 mmio_sign_extend;
 	u8 dcr_needed;
 	u8 dcr_is_write;
+	u8 osi_needed;
+	u8 osi_enabled;
 
 	u32 cpr0_cfgaddr; /* holds the last set cpr0_cfgaddr */
 
