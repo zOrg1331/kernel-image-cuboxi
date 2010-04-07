@@ -758,7 +758,6 @@ static u8 dm365_default_priorities[DAVINCI_N_AINTC_IRQ] = {
 	[IRQ_MMCINT]			= 7,
 	[IRQ_DM365_MMCINT1]		= 7,
 	[IRQ_DM365_PWMINT3]		= 7,
-	[IRQ_DDRINT]			= 4,
 	[IRQ_AEMIFINT]			= 2,
 	[IRQ_DM365_SDIOINT1]		= 2,
 	[IRQ_TINT0_TINT12]		= 7,
@@ -1011,7 +1010,7 @@ static void __iomem *dm365_psc_bases[] = {
 	IO_ADDRESS(DAVINCI_PWR_SLEEP_CNTRL_BASE),
 };
 
-struct davinci_timer_info dm365_timer_info = {
+static struct davinci_timer_info dm365_timer_info = {
 	.timers		= davinci_timer_instance,
 	.clockevent_id	= T0_BOT,
 	.clocksource_id	= T0_TOP,
