@@ -83,61 +83,33 @@ EXPORT_SYMBOL(ttm_bo_move_ttm);
 
 int ttm_mem_io_reserve(struct ttm_bo_device *bdev, struct ttm_mem_reg *mem)
 {
-	struct ttm_mem_type_manager *man = &bdev->man[mem->mem_type];
-	int ret;
+	int ret = 0;
 
-	if (bdev->driver->io_mem_reserve) {
-		if (!mem->bus.io_reserved) {
-			mem->bus.io_reserved = true;
-			ret = bdev->driver->io_mem_reserve(bdev, mem);
-			if (unlikely(ret != 0))
-				return ret;
-		}
-	} else {
-		ret = ttm_bo_pci_offset(bdev, mem, &mem->bus.base, &mem->bus.offset, &mem->bus.size);
-		if (unlikely(ret != 0))
-			return ret;
-		mem->bus.addr = man->io_addr;
-		mem->bus.is_iomem = (mem->bus.size > 0) ? 1 : 0;
+	if (!mem->bus.io_reserved) {
+		mem->bus.io_reserved = true;
+		ret = bdev->driver->io_mem_reserve(bdev, mem);
 	}
-	return 0;
+	return ret;
 }
 
 void ttm_mem_io_free(struct ttm_bo_device *bdev, struct ttm_mem_reg *mem)
 {
-	if (bdev->driver->io_mem_reserve) {
-		if (mem->bus.io_reserved) {
-			mem->bus.io_reserved = false;
-			bdev->driver->io_mem_free(bdev, mem);
-		}
+	if (mem->bus.io_reserved) {
+		mem->bus.io_reserved = false;
+		bdev->driver->io_mem_free(bdev, mem);
 	}
 }
 
 int ttm_mem_reg_ioremap(struct ttm_bo_device *bdev, struct ttm_mem_reg *mem,
 			void **virtual)
 {
-	struct ttm_mem_type_manager *man = &bdev->man[mem->mem_type];
 	int ret;
-	void *addr;
 
 	*virtual = NULL;
 	ret = ttm_mem_io_reserve(bdev, mem);
 	if (ret)
 		return ret;
-
-	if (!(man->flags & TTM_MEMTYPE_FLAG_NEEDS_IOREMAP)) {
-		addr = mem->bus.addr;
-	} else {
-		if (mem->placement & TTM_PL_FLAG_WC)
-			addr = ioremap_wc(mem->bus.base + mem->bus.offset, mem->bus.size);
-		else
-			addr = ioremap_nocache(mem->bus.base + mem->bus.offset, mem->bus.size);
-		if (!addr) {
-			ttm_mem_io_free(bdev, mem);
-			return -ENOMEM;
-		}
-	}
-	*virtual = addr;
+	*virtual = mem->bus.addr;
 	return 0;
 }
 
@@ -147,9 +119,6 @@ void ttm_mem_reg_iounmap(struct ttm_bo_device *bdev, struct ttm_mem_reg *mem,
 	struct ttm_mem_type_manager *man;
 
 	man = &bdev->man[mem->mem_type];
-
-	if (virtual && (man->flags & TTM_MEMTYPE_FLAG_NEEDS_IOREMAP))
-		iounmap(virtual);
 	ttm_mem_io_free(bdev, mem);
 }
 
@@ -401,30 +370,6 @@ pgprot_t ttm_io_prot(uint32_t caching_flags, pgprot_t tmp)
 }
 EXPORT_SYMBOL(ttm_io_prot);
 
-static int ttm_bo_ioremap(struct ttm_buffer_object *bo,
-			  unsigned long offset,
-			  unsigned long size,
-			  struct ttm_bo_kmap_obj *map)
-{
-	struct ttm_bo_device *bdev = bo->bdev;
-	struct ttm_mem_reg *mem = &bo->mem;
-	struct ttm_mem_type_manager *man = &bdev->man[mem->mem_type];
-
-	if (!(man->flags & TTM_MEMTYPE_FLAG_NEEDS_IOREMAP)) {
-		map->bo_kmap_type = ttm_bo_map_premapped;
-		map->virtual = (void *)(((u8 *) bo->mem.bus.addr) + offset);
-	} else {
-		map->bo_kmap_type = ttm_bo_map_iomap;
-		if (mem->placement & TTM_PL_FLAG_WC)
-			map->virtual = ioremap_wc(bo->mem.bus.base + bo->mem.bus.offset + offset,
-						  size);
-		else
-			map->virtual = ioremap_nocache(bo->mem.bus.base + bo->mem.bus.offset + offset,
-						       size);
-	}
-	return (!map->virtual) ? -ENOMEM : 0;
-}
-
 static int ttm_bo_kmap_ttm(struct ttm_buffer_object *bo,
 			   unsigned long start_page,
 			   unsigned long num_pages,
@@ -495,7 +440,9 @@ int ttm_bo_kmap(struct ttm_buffer_object *bo,
 	} else {
 		offset = start_page << PAGE_SHIFT;
 		size = num_pages << PAGE_SHIFT;
-		return ttm_bo_ioremap(bo, offset, size, map);
+		map->bo_kmap_type = ttm_bo_map_iomap;
+		map->virtual = (void *)(((u8 *) bo->mem.bus.addr) + offset);
+		return 0;
 	}
 }
 EXPORT_SYMBOL(ttm_bo_kmap);
@@ -506,7 +453,6 @@ void ttm_bo_kunmap(struct ttm_bo_kmap_obj *map)
 		return;
 	switch (map->bo_kmap_type) {
 	case ttm_bo_map_iomap:
-		iounmap(map->virtual);
 		ttm_mem_io_free(map->bo->bdev, &map->bo->mem);
 		break;
 	case ttm_bo_map_vmap:
@@ -514,8 +460,6 @@ void ttm_bo_kunmap(struct ttm_bo_kmap_obj *map)
 		break;
 	case ttm_bo_map_kmap:
 		kunmap(map->page);
-		break;
-	case ttm_bo_map_premapped:
 		break;
 	default:
 		BUG();

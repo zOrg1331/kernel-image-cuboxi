@@ -282,8 +282,7 @@ struct ttm_buffer_object {
  *
  * Object describing a kernel mapping. Since a TTM bo may be located
  * in various memory types with various caching policies, the
- * mapping can either be an ioremap, a vmap, a kmap or part of a
- * premapped region.
+ * mapping can either be an ioremap, a vmap, a kmap.
  */
 
 #define TTM_BO_MAP_IOMEM_MASK 0x80
@@ -294,7 +293,6 @@ struct ttm_bo_kmap_obj {
 		ttm_bo_map_iomap        = 1 | TTM_BO_MAP_IOMEM_MASK,
 		ttm_bo_map_vmap         = 2,
 		ttm_bo_map_kmap         = 3,
-		ttm_bo_map_premapped    = 4 | TTM_BO_MAP_IOMEM_MASK,
 	} bo_kmap_type;
 	struct ttm_buffer_object *bo;
 };
