@@ -301,25 +301,24 @@ sysc_restore_trace_psw:
 #endif
 
 #
-# recheck if there is more work to do
-#
-sysc_work_loop:
-	tm	__TI_flags+3(%r9),_TIF_WORK_SVC
-	bz	BASED(sysc_restore)	# there is no work to do
-#
-# One of the work bits is on. Find out which one.
+# There is work to do, but first we need to check if we return to userspace.
 #
 sysc_work:
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
 	bno	BASED(sysc_restore)
+
+#
+# One of the work bits is on. Find out which one.
+#
+sysc_work_loop:
 	tm	__TI_flags+3(%r9),_TIF_MCCK_PENDING
 	bo	BASED(sysc_mcck_pending)
 	tm	__TI_flags+3(%r9),_TIF_NEED_RESCHED
 	bo	BASED(sysc_reschedule)
 	tm	__TI_flags+3(%r9),_TIF_SIGPENDING
-	bnz	BASED(sysc_sigpending)
+	bo	BASED(sysc_sigpending)
 	tm	__TI_flags+3(%r9),_TIF_NOTIFY_RESUME
-	bnz	BASED(sysc_notify_resume)
+	bo	BASED(sysc_notify_resume)
 	tm	__TI_flags+3(%r9),_TIF_RESTART_SVC
 	bo	BASED(sysc_restart)
 	tm	__TI_flags+3(%r9),_TIF_SINGLE_STEP
@@ -386,7 +385,7 @@ sysc_singlestep:
 	mvi	SP_SVCNR+1(%r15),0xff
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	l	%r1,BASED(.Lhandle_per)	# load adr. of per handler
-	la	%r14,BASED(sysc_return)	# load adr. of system return
+	la	%r14,BASED(sysc_work_loop)	# load adr. of system return
 	br	%r1			# branch to do_single_step
 
 #
@@ -636,30 +635,36 @@ io_restore_trace_psw:
 #endif
 
 #
-# switch to kernel stack, then check the TIF bits
+# There is work todo, find out in which context we have been interrupted:
+# 1) if we return to user space we can do all _TIF_WORK_INT work
+# 2) if we return to kernel code and preemptive scheduling is enabled check
+#    the preemption counter and if it is zero call preempt_schedule_irq
+# Before any work can be done, a switch to the kernel stack is required.
 #
 io_work:
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
-#ifndef CONFIG_PREEMPT
-	bno	BASED(io_restore)	# no-> skip resched & signal
-#else
-	bnz	BASED(io_work_user)	# no -> check for preemptive scheduling
+	bo	BASED(io_work_user)	# yes -> do resched & signal
+#ifdef CONFIG_PREEMPT
 	# check for preemptive scheduling
 	icm	%r0,15,__TI_precount(%r9)
 	bnz	BASED(io_restore)	# preemption disabled
+	# switch to kernel stack
 	l	%r1,SP_R15(%r15)
 	s	%r1,BASED(.Lc_spsize)
 	mvc	SP_PTREGS(__PT_SIZE,%r1),SP_PTREGS(%r15)
 	xc	__SF_BACKCHAIN(4,%r1),__SF_BACKCHAIN(%r1) # clear back chain
 	lr	%r15,%r1
 io_resume_loop:
-	tm	__TI_flags+3(%r9),_TIF_NEED_RESCHED
-	bno	BASED(io_restore)
 	l	%r1,BASED(.Lpreempt_schedule_irq)
 	la	%r14,BASED(io_resume_loop)
-	br	%r1			# call schedule
+	tm	__TI_flags+3(%r9),_TIF_NEED_RESCHED
+	bor	%r1			# call preempt_schedule_irq
 #endif
+	b	BASED(io_restore)
 
+#
+# Need to do work before returning to userspace, switch to kernel stack
+#
 io_work_user:
 	l	%r1,__LC_KERNEL_STACK
 	s	%r1,BASED(.Lc_spsize)
@@ -668,7 +673,7 @@ io_work_user:
 	lr	%r15,%r1
 #
 # One of the work bits is on. Find out which one.
-# Checked are: _TIF_SIGPENDING, _TIF_NEED_RESCHED
+# Checked are: _TIF_SIGPENDING, _TIF_NOTIFY_RESUME, _TIF_NEED_RESCHED
 #		and _TIF_MCCK_PENDING
 #
 io_work_loop:
@@ -677,9 +682,9 @@ io_work_loop:
 	tm	__TI_flags+3(%r9),_TIF_NEED_RESCHED
 	bo	BASED(io_reschedule)
 	tm	__TI_flags+3(%r9),_TIF_SIGPENDING
-	bnz	BASED(io_sigpending)
+	bo	BASED(io_sigpending)
 	tm	__TI_flags+3(%r9),_TIF_NOTIFY_RESUME
-	bnz	BASED(io_notify_resume)
+	bo	BASED(io_notify_resume)
 	b	BASED(io_restore)
 io_work_done:
 
@@ -701,8 +706,6 @@ io_reschedule:
 	basr	%r14,%r1		# call scheduler
 	stnsm	__SF_EMPTY(%r15),0xfc	# disable I/O and ext. interrupts
 	TRACE_IRQS_OFF
-	tm	__TI_flags+3(%r9),_TIF_WORK_INT
-	bz	BASED(io_restore)	# there is no work to do
 	b	BASED(io_work_loop)
 
 #
