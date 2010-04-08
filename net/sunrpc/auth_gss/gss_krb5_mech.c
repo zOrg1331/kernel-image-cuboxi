@@ -742,7 +742,7 @@ static struct gss_api_mech gss_kerberos_mech = {
 	.gm_ops		= &gss_kerberos_ops,
 	.gm_pf_num	= ARRAY_SIZE(gss_kerberos_pfs),
 	.gm_pfs		= gss_kerberos_pfs,
-	.gm_upcall_enctypes = "enctypes=1,2,3,16,17,18 ",
+	.gm_upcall_enctypes = "enctypes=1,2,3,16,17,18,23 ",
 };
 
 static int __init init_kerberos_module(void)
