@@ -796,6 +796,11 @@ void ieee80211_set_wmm_default(struct ieee80211_sub_if_data *sdata)
 
 		drv_conf_tx(local, queue, &qparam);
 	}
+
+	/* after reinitialize QoS TX queues setting to default,
+	 * disable QoS at all */
+	local->hw.conf.flags &=	~IEEE80211_CONF_QOS;
+	drv_config(local, IEEE80211_CONF_CHANGE_QOS);
 }
 
 void ieee80211_sta_def_wmm_params(struct ieee80211_sub_if_data *sdata,
@@ -1135,7 +1140,7 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 
 	if (hw->flags & IEEE80211_HW_AMPDU_AGGREGATION) {
 		list_for_each_entry_rcu(sta, &local->sta_list, list) {
-			clear_sta_flags(sta, WLAN_STA_SUSPEND);
+			clear_sta_flags(sta, WLAN_STA_BLOCK_BA);
 		}
 	}
 
