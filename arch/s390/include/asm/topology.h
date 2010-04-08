@@ -3,6 +3,8 @@
 
 #include <linux/cpumask.h>
 
+#define topology_physical_package_id(cpu)	((void)(cpu), 0)
+
 #define mc_capable()	(1)
 
 const struct cpumask *cpu_coregroup_mask(unsigned int cpu);
