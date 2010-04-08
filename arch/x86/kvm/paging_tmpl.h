@@ -258,11 +258,17 @@ static void FNAME(update_pte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *page,
 	pt_element_t gpte;
 	unsigned pte_access;
 	pfn_t pfn;
+	u64 new_spte;
 
 	gpte = *(const pt_element_t *)pte;
 	if (~gpte & (PT_PRESENT_MASK | PT_ACCESSED_MASK)) {
-		if (!is_present_gpte(gpte))
-			__set_spte(spte, shadow_notrap_nonpresent_pte);
+		if (!is_present_gpte(gpte)) {
+			if (page->unsync)
+				new_spte = shadow_trap_nonpresent_pte;
+			else
+				new_spte = shadow_notrap_nonpresent_pte;
+			__set_spte(spte, new_spte);
+		}
 		return;
 	}
 	pgprintk("%s: gpte %llx spte %p\n", __func__, (u64)gpte, spte);
@@ -457,6 +463,7 @@ out_unlock:
 static void FNAME(invlpg)(struct kvm_vcpu *vcpu, gva_t gva)
 {
 	struct kvm_shadow_walk_iterator iterator;
+	gpa_t pte_gpa = -1;
 	int level;
 	u64 *sptep;
 	int need_flush = 0;
@@ -470,6 +477,10 @@ static void FNAME(invlpg)(struct kvm_vcpu *vcpu, gva_t gva)
 		if (level == PT_PAGE_TABLE_LEVEL  ||
 		    ((level == PT_DIRECTORY_LEVEL && is_large_pte(*sptep))) ||
 		    ((level == PT_PDPE_LEVEL && is_large_pte(*sptep)))) {
+			struct kvm_mmu_page *sp = page_header(__pa(sptep));
+
+			pte_gpa = (sp->gfn << PAGE_SHIFT);
+			pte_gpa += (sptep - sp->spt) * sizeof(pt_element_t);
 
 			if (is_shadow_present_pte(*sptep)) {
 				rmap_remove(vcpu->kvm, sptep);
@@ -487,7 +498,17 @@ static void FNAME(invlpg)(struct kvm_vcpu *vcpu, gva_t gva)
 
 	if (need_flush)
 		kvm_flush_remote_tlbs(vcpu->kvm);
+
+	atomic_inc(&vcpu->kvm->arch.invlpg_counter);
+
 	spin_unlock(&vcpu->kvm->mmu_lock);
+
+	if (pte_gpa == -1)
+		return;
+
+	if (mmu_topup_memory_caches(vcpu))
+		return;
+	kvm_mmu_pte_write(vcpu, pte_gpa, NULL, sizeof(pt_element_t), 0);
 }
 
 static gpa_t FNAME(gva_to_gpa)(struct kvm_vcpu *vcpu, gva_t vaddr, u32 access,
