@@ -502,14 +502,14 @@ static void iwl4965_tx_queue_set_status(struct iwl_priv *priv,
 		       scd_retry ? "BA" : "AC", txq_id, tx_fifo_id);
 }
 
-static const u16 default_queue_to_tx_fifo[] = {
-	IWL_TX_FIFO_AC3,
-	IWL_TX_FIFO_AC2,
-	IWL_TX_FIFO_AC1,
-	IWL_TX_FIFO_AC0,
+static const s8 default_queue_to_tx_fifo[] = {
+	IWL_TX_FIFO_VO,
+	IWL_TX_FIFO_VI,
+	IWL_TX_FIFO_BE,
+	IWL_TX_FIFO_BK,
 	IWL49_CMD_FIFO_NUM,
-	IWL_TX_FIFO_HCCA_1,
-	IWL_TX_FIFO_HCCA_2
+	IWL_TX_FIFO_UNUSED,
+	IWL_TX_FIFO_UNUSED,
 };
 
 static int iwl4965_alive_notify(struct iwl_priv *priv)
@@ -589,9 +589,15 @@ static int iwl4965_alive_notify(struct iwl_priv *priv)
 	/* reset to 0 to enable all the queue first */
 	priv->txq_ctx_active_msk = 0;
 	/* Map each Tx/cmd queue to its corresponding fifo */
+	BUILD_BUG_ON(ARRAY_SIZE(default_queue_to_tx_fifo) != 7);
 	for (i = 0; i < ARRAY_SIZE(default_queue_to_tx_fifo); i++) {
 		int ac = default_queue_to_tx_fifo[i];
+
 		iwl_txq_ctx_activate(priv, i);
+
+		if (ac == IWL_TX_FIFO_UNUSED)
+			continue;
+
 		iwl4965_tx_queue_set_status(priv, &priv->txq[i], ac, 0);
 	}
 
@@ -2179,6 +2185,7 @@ static struct iwl_lib_ops iwl4965_lib = {
 	.load_ucode = iwl4965_load_bsm,
 	.dump_nic_event_log = iwl_dump_nic_event_log,
 	.dump_nic_error_log = iwl_dump_nic_error_log,
+	.dump_fh = iwl_dump_fh,
 	.set_channel_switch = iwl4965_hw_channel_switch,
 	.apm_ops = {
 		.init = iwl_apm_init,
@@ -2212,6 +2219,7 @@ static struct iwl_lib_ops iwl4965_lib = {
 		.set_ct_kill = iwl4965_set_ct_threshold,
 	},
 	.add_bcast_station = iwl_add_bcast_station,
+	.check_plcp_health = iwl_good_plcp_health,
 };
 
 static const struct iwl_ops iwl4965_ops = {
@@ -2223,7 +2231,7 @@ static const struct iwl_ops iwl4965_ops = {
 };
 
 struct iwl_cfg iwl4965_agn_cfg = {
-	.name = "4965AGN",
+	.name = "Intel(R) Wireless WiFi Link 4965AGN",
 	.fw_name_pre = IWL4965_FW_PRE,
 	.ucode_api_max = IWL4965_UCODE_API_MAX,
 	.ucode_api_min = IWL4965_UCODE_API_MIN,
@@ -2246,6 +2254,7 @@ struct iwl_cfg iwl4965_agn_cfg = {
 	.led_compensation = 61,
 	.chain_noise_num_beacons = IWL4965_CAL_NUM_BEACONS,
 	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_THRESHOLD_DEF,
+	.monitor_recover_period = IWL_MONITORING_PERIOD,
 };
 
 /* Module firmware */
