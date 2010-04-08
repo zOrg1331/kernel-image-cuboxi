@@ -14,7 +14,7 @@
 
 #include <linux/input.h>
 #include <linux/device.h>
-#include <media/ir-core.h>
+#include "ir-core-priv.h"
 
 #define IRRCV_NUM_DEVICES	256
 
