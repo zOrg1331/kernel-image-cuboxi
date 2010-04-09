@@ -38,7 +38,6 @@
 #include <linux/pci_ids.h>
 #include <linux/smp_lock.h>
 #include <linux/timer.h>
-#include <linux/version.h>
 #include <linux/byteorder/generic.h>
 #include <linux/firmware.h>
 #include <linux/vmalloc.h>

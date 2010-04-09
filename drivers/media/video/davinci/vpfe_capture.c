@@ -1853,7 +1853,6 @@ static __init int vpfe_probe(struct platform_device *pdev)
 		goto probe_free_dev_mem;
 	}
 
-	mutex_lock(&ccdc_lock);
 	/* Allocate memory for ccdc configuration */
 	ccdc_cfg = kmalloc(sizeof(struct ccdc_config), GFP_KERNEL);
 	if (NULL == ccdc_cfg) {
@@ -1861,6 +1860,8 @@ static __init int vpfe_probe(struct platform_device *pdev)
 			 "Memory allocation failed for ccdc_cfg\n");
 		goto probe_free_dev_mem;
 	}
+
+	mutex_lock(&ccdc_lock);
 
 	strncpy(ccdc_cfg->name, vpfe_cfg->ccdc, 32);
 	/* Get VINT0 irq resource */

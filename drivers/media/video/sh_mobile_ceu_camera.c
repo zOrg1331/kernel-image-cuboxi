@@ -212,8 +212,8 @@ static int sh_mobile_ceu_videobuf_setup(struct videobuf_queue *vq,
 		*count = 2;
 
 	if (pcdev->video_limit) {
-		while (PAGE_ALIGN(*size) * *count > pcdev->video_limit)
-			(*count)--;
+		if (PAGE_ALIGN(*size) * *count > pcdev->video_limit)
+			*count = pcdev->video_limit / PAGE_ALIGN(*size);
 	}
 
 	dev_dbg(icd->dev.parent, "count=%d, size=%d\n", *count, *size);
@@ -1632,7 +1632,7 @@ static int sh_mobile_ceu_try_fmt(struct soc_camera_device *icd,
 	height = pix->height;
 
 	pix->bytesperline = soc_mbus_bytes_per_line(width, xlate->host_fmt);
-	if (pix->bytesperline < 0)
+	if ((int)pix->bytesperline < 0)
 		return pix->bytesperline;
 	pix->sizeimage = height * pix->bytesperline;
 

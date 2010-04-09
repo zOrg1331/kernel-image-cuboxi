@@ -361,14 +361,20 @@ static void em28xx_ir_work(struct work_struct *work)
 	schedule_delayed_work(&ir->work, msecs_to_jiffies(ir->polling));
 }
 
-static void em28xx_ir_start(struct em28xx_IR *ir)
+static int em28xx_ir_start(void *priv)
 {
+	struct em28xx_IR *ir = priv;
+
 	INIT_DELAYED_WORK(&ir->work, em28xx_ir_work);
 	schedule_delayed_work(&ir->work, 0);
+
+	return 0;
 }
 
-static void em28xx_ir_stop(struct em28xx_IR *ir)
+static void em28xx_ir_stop(void *priv)
 {
+	struct em28xx_IR *ir = priv;
+
 	cancel_delayed_work_sync(&ir->work);
 }
 
@@ -381,7 +387,6 @@ int em28xx_ir_change_protocol(void *priv, u64 ir_type)
 
 	/* Adjust xclk based o IR table for RC5/NEC tables */
 
-	dev->board.ir_codes->ir_type = IR_TYPE_OTHER;
 	if (ir_type == IR_TYPE_RC5) {
 		dev->board.xclk |= EM28XX_XCLK_IR_RC5_MODE;
 		ir->full_code = 1;
@@ -389,10 +394,8 @@ int em28xx_ir_change_protocol(void *priv, u64 ir_type)
 		dev->board.xclk &= ~EM28XX_XCLK_IR_RC5_MODE;
 		ir_config = EM2874_IR_NEC;
 		ir->full_code = 1;
-	} else
+	} else if (ir_type != IR_TYPE_UNKNOWN)
 		rc = -EINVAL;
-
-	dev->board.ir_codes->ir_type = ir_type;
 
 	em28xx_write_reg_bits(dev, EM28XX_R0F_XCLK, dev->board.xclk,
 			      EM28XX_XCLK_IR_RC5_MODE);
@@ -444,6 +447,13 @@ int em28xx_ir_init(struct em28xx *dev)
 	ir->props.allowed_protos = IR_TYPE_RC5 | IR_TYPE_NEC;
 	ir->props.priv = ir;
 	ir->props.change_protocol = em28xx_ir_change_protocol;
+	ir->props.open = em28xx_ir_start;
+	ir->props.close = em28xx_ir_stop;
+
+	/* By default, keep protocol field untouched */
+	err = em28xx_ir_change_protocol(ir, IR_TYPE_UNKNOWN);
+	if (err)
+		goto err_out_free;
 
 	/* This is how often we ask the chip for IR information */
 	ir->polling = 100; /* ms */
@@ -456,7 +466,6 @@ int em28xx_ir_init(struct em28xx *dev)
 	strlcat(ir->phys, "/input0", sizeof(ir->phys));
 
 	/* Set IR protocol */
-	em28xx_ir_change_protocol(ir, dev->board.ir_codes->ir_type);
 	err = ir_input_init(input_dev, &ir->ir, IR_TYPE_OTHER);
 	if (err < 0)
 		goto err_out_free;
@@ -471,7 +480,6 @@ int em28xx_ir_init(struct em28xx *dev)
 	input_dev->dev.parent = &dev->udev->dev;
 
 
-	em28xx_ir_start(ir);
 
 	/* all done */
 	err = ir_input_register(ir->input, dev->board.ir_codes,
@@ -481,7 +489,6 @@ int em28xx_ir_init(struct em28xx *dev)
 
 	return 0;
  err_out_stop:
-	em28xx_ir_stop(ir);
 	dev->ir = NULL;
  err_out_free:
 	kfree(ir);

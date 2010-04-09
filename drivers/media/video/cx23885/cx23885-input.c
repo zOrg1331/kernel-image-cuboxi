@@ -339,7 +339,7 @@ int cx23885_input_init(struct cx23885_dev *dev)
 {
 	struct card_ir *ir;
 	struct input_dev *input_dev;
-	struct ir_scancode_table *ir_codes = NULL;
+	char *ir_codes = NULL;
 	int ir_type, ir_addr, ir_start;
 	int ret;
 
@@ -354,7 +354,7 @@ int cx23885_input_init(struct cx23885_dev *dev)
 	case CX23885_BOARD_HAUPPAUGE_HVR1850:
 	case CX23885_BOARD_HAUPPAUGE_HVR1290:
 		/* Parameters for the grey Hauppauge remote for the HVR-1850 */
-		ir_codes = &ir_codes_hauppauge_new_table;
+		ir_codes = RC_MAP_HAUPPAUGE_NEW;
 		ir_type = IR_TYPE_RC5;
 		ir_addr = 0x1e; /* RC-5 system bits emitted by the remote */
 		ir_start = RC5_START_BITS_NORMAL; /* A basic RC-5 remote */
