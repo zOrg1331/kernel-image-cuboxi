@@ -426,12 +426,13 @@ int cx88_video_mux(struct cx88_core *core, unsigned int input)
 		if (core->board.audio_chip &&
 		    core->board.audio_chip == V4L2_IDENT_WM8775) {
 			call_all(core, audio, s_routing,
-					INPUT(input).audioroute, 0, 0);
+				 INPUT(input).audioroute, 0, 0);
 		}
 		/* cx2388's C-ADC is connected to the tuner only.
 		   When used with S-Video, that ADC is busy dealing with
 		   chroma, so an external must be used for baseband audio */
-		if (INPUT(input).type != CX88_VMUX_TELEVISION ) {
+		if (INPUT(input).type != CX88_VMUX_TELEVISION &&
+		    INPUT(input).type != CX88_VMUX_CABLE) {
 			/* "I2S ADC mode" */
 			core->tvaudio = WW_I2SADC;
 			cx88_set_tvaudio(core);
@@ -1537,9 +1538,12 @@ static int radio_queryctrl (struct file *file, void *priv,
 		c->id >= V4L2_CID_LASTP1)
 		return -EINVAL;
 	if (c->id == V4L2_CID_AUDIO_MUTE) {
-		for (i = 0; i < CX8800_CTLS; i++)
+		for (i = 0; i < CX8800_CTLS; i++) {
 			if (cx8800_ctls[i].v.id == c->id)
 				break;
+		}
+		if (i == CX8800_CTLS)
+			return -EINVAL;
 		*c = cx8800_ctls[i].v;
 	} else
 		*c = no_ctl;

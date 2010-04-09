@@ -52,13 +52,18 @@
 #include <linux/smp_lock.h>
 #include <media/videobuf-vmalloc.h>
 #include <media/v4l2-common.h>
+#include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
 #include <linux/vmalloc.h>
 #include <linux/usb.h>
 
+#define S2255_MAJOR_VERSION	1
+#define S2255_MINOR_VERSION	19
+#define S2255_RELEASE		0
+#define S2255_VERSION		KERNEL_VERSION(S2255_MAJOR_VERSION, \
+					       S2255_MINOR_VERSION, \
+					       S2255_RELEASE)
 #define FIRMWARE_FILE_NAME "f2255usb.bin"
-
-
 
 /* default JPEG quality */
 #define S2255_DEF_JPEG_QUAL     50
@@ -77,7 +82,6 @@
 #define S2255_DEF_BUFS          16
 #define S2255_SETMODE_TIMEOUT   500
 #define S2255_VIDSTATUS_TIMEOUT 350
-#define MAX_CHANNELS		4
 #define S2255_MARKER_FRAME	cpu_to_le32(0x2255DA4AL)
 #define S2255_MARKER_RESPONSE	cpu_to_le32(0x2255ACACL)
 #define S2255_RESPONSE_SETMODE  cpu_to_le32(0x01)
@@ -85,7 +89,6 @@
 #define S2255_RESPONSE_STATUS   cpu_to_le32(0x20)
 #define S2255_USB_XFER_SIZE	(16 * 1024)
 #define MAX_CHANNELS		4
-#define MAX_PIPE_BUFFERS	1
 #define SYS_FRAMES		4
 /* maximum size is PAL full size plus room for the marker header(s) */
 #define SYS_FRAMES_MAXSIZE	(720*288*2*2 + 4096)
@@ -225,8 +228,10 @@ struct s2255_pipeinfo {
 struct s2255_fmt; /*forward declaration */
 
 struct s2255_dev {
+	struct video_device	vdev[MAX_CHANNELS];
+	struct v4l2_device 	v4l2_dev[MAX_CHANNELS];
+	int                     channels; /* number of channels registered */
 	int			frames;
-	int			users[MAX_CHANNELS];
 	struct mutex		lock;
 	struct mutex		open_lock;
 	int			resources[MAX_CHANNELS];
@@ -235,11 +240,10 @@ struct s2255_dev {
 	u8			read_endpoint;
 
 	struct s2255_dmaqueue	vidq[MAX_CHANNELS];
-	struct video_device	*vdev[MAX_CHANNELS];
 	struct timer_list	timer;
 	struct s2255_fw	*fw_data;
-	struct s2255_pipeinfo	pipes[MAX_PIPE_BUFFERS];
-	struct s2255_bufferi		buffer[MAX_CHANNELS];
+	struct s2255_pipeinfo	pipe;
+	struct s2255_bufferi	buffer[MAX_CHANNELS];
 	struct s2255_mode	mode[MAX_CHANNELS];
 	/* jpeg compression */
 	struct v4l2_jpegcompression jc[MAX_CHANNELS];
@@ -310,13 +314,6 @@ struct s2255_fh {
 /* Need DSP version 5+ for video status feature */
 #define S2255_MIN_DSP_STATUS      5
 #define S2255_MIN_DSP_COLORFILTER 8
-#define S2255_MAJOR_VERSION	1
-#define S2255_MINOR_VERSION	18
-#define S2255_RELEASE		0
-#define S2255_VERSION		KERNEL_VERSION(S2255_MAJOR_VERSION, \
-					       S2255_MINOR_VERSION, \
-					       S2255_RELEASE)
-
 #define S2255_NORMS		(V4L2_STD_PAL | V4L2_STD_NTSC)
 
 /* private V4L2 controls */
@@ -367,7 +364,6 @@ static void s2255_fillbuff(struct s2255_dev *dev, struct s2255_buffer *buf,
 static int s2255_set_mode(struct s2255_dev *dev, unsigned long chn,
 			  struct s2255_mode *mode);
 static int s2255_board_shutdown(struct s2255_dev *dev);
-static void s2255_exit_v4l(struct s2255_dev *dev);
 static void s2255_fwload_start(struct s2255_dev *dev, int reset);
 static void s2255_destroy(struct kref *kref);
 static long s2255_vendor_req(struct s2255_dev *dev, unsigned char req,
@@ -504,7 +500,7 @@ static void s2255_reset_dsppower(struct s2255_dev *dev)
 static void s2255_timer(unsigned long user_data)
 {
 	struct s2255_fw *data = (struct s2255_fw *)user_data;
-	dprintk(100, "s2255 timer\n");
+	dprintk(100, "%s\n", __func__);
 	if (usb_submit_urb(data->fw_urb, GFP_ATOMIC) < 0) {
 		printk(KERN_ERR "s2255: can't submit urb\n");
 		atomic_set(&data->fw_state, S2255_FW_FAILED);
@@ -526,7 +522,7 @@ static void s2255_fwchunk_complete(struct urb *urb)
 	struct s2255_fw *data = urb->context;
 	struct usb_device *udev = urb->dev;
 	int len;
-	dprintk(100, "udev %p urb %p", udev, urb);
+	dprintk(100, "%s: udev %p urb %p", __func__, udev, urb);
 	if (urb->status) {
 		dev_err(&udev->dev, "URB failed with status %d\n", urb->status);
 		atomic_set(&data->fw_state, S2255_FW_FAILED);
@@ -572,8 +568,8 @@ static void s2255_fwchunk_complete(struct urb *urb)
 		data->fw_loaded += len;
 	} else {
 		atomic_set(&data->fw_state, S2255_FW_LOADED_DSPWAIT);
+		dprintk(100, "%s: firmware upload complete\n", __func__);
 	}
-	dprintk(100, "2255 complete done\n");
 	return;
 
 }
@@ -584,9 +580,7 @@ static int s2255_got_frame(struct s2255_dev *dev, int chn, int jpgsize)
 	struct s2255_buffer *buf;
 	unsigned long flags = 0;
 	int rc = 0;
-	dprintk(2, "wakeup: %p channel: %d\n", &dma_q, chn);
 	spin_lock_irqsave(&dev->slock, flags);
-
 	if (list_empty(&dma_q->active)) {
 		dprintk(1, "No active queue to serve\n");
 		rc = -1;
@@ -594,23 +588,19 @@ static int s2255_got_frame(struct s2255_dev *dev, int chn, int jpgsize)
 	}
 	buf = list_entry(dma_q->active.next,
 			 struct s2255_buffer, vb.queue);
-
 	list_del(&buf->vb.queue);
 	do_gettimeofday(&buf->vb.ts);
-	dprintk(100, "[%p/%d] wakeup\n", buf, buf->vb.i);
 	s2255_fillbuff(dev, buf, dma_q->channel, jpgsize);
 	wake_up(&buf->vb.done);
-	dprintk(2, "wakeup [buf/i] [%p/%d]\n", buf, buf->vb.i);
+	dprintk(2, "%s: [buf/i] [%p/%d]\n", __func__, buf, buf->vb.i);
 unlock:
 	spin_unlock_irqrestore(&dev->slock, flags);
 	return 0;
 }
 
-
 static const struct s2255_fmt *format_by_fourcc(int fourcc)
 {
 	unsigned int i;
-
 	for (i = 0; i < ARRAY_SIZE(formats); i++) {
 		if (-1 == formats[i].fourcc)
 			continue;
@@ -619,9 +609,6 @@ static const struct s2255_fmt *format_by_fourcc(int fourcc)
 	}
 	return NULL;
 }
-
-
-
 
 /* video buffer vmalloc implementation based partly on VIVI driver which is
  *          Copyright (c) 2006 by
@@ -726,10 +713,10 @@ static int buffer_prepare(struct videobuf_queue *vq, struct videobuf_buffer *vb,
 	if (fh->fmt == NULL)
 		return -EINVAL;
 
-	if ((fh->width < norm_minw(fh->dev->vdev[fh->channel])) ||
-	    (fh->width > norm_maxw(fh->dev->vdev[fh->channel])) ||
-	    (fh->height < norm_minh(fh->dev->vdev[fh->channel])) ||
-	    (fh->height > norm_maxh(fh->dev->vdev[fh->channel]))) {
+	if ((fh->width < norm_minw(&fh->dev->vdev[fh->channel])) ||
+	    (fh->width > norm_maxw(&fh->dev->vdev[fh->channel])) ||
+	    (fh->height < norm_minh(&fh->dev->vdev[fh->channel])) ||
+	    (fh->height > norm_maxh(&fh->dev->vdev[fh->channel]))) {
 		dprintk(4, "invalid buffer prepare\n");
 		return -EINVAL;
 	}
@@ -745,7 +732,6 @@ static int buffer_prepare(struct videobuf_queue *vq, struct videobuf_buffer *vb,
 	buf->vb.width = fh->width;
 	buf->vb.height = fh->height;
 	buf->vb.field = field;
-
 
 	if (VIDEOBUF_NEEDS_INIT == buf->vb.state) {
 		rc = videobuf_iolock(vq, &buf->vb, NULL);
@@ -766,9 +752,7 @@ static void buffer_queue(struct videobuf_queue *vq, struct videobuf_buffer *vb)
 	struct s2255_fh *fh = vq->priv_data;
 	struct s2255_dev *dev = fh->dev;
 	struct s2255_dmaqueue *vidq = &dev->vidq[fh->channel];
-
 	dprintk(1, "%s\n", __func__);
-
 	buf->vb.state = VIDEOBUF_QUEUED;
 	list_add_tail(&buf->vb.queue, &vidq->active);
 }
@@ -849,7 +833,6 @@ static int vidioc_querymenu(struct file *file, void *priv,
 	return v4l2_ctrl_query_menu(qmenu, NULL, NULL);
 }
 
-
 static int vidioc_querycap(struct file *file, void *priv,
 			   struct v4l2_capability *cap)
 {
@@ -904,7 +887,7 @@ static int vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 	int is_ntsc;
 
 	is_ntsc =
-	    (dev->vdev[fh->channel]->current_norm & V4L2_STD_NTSC) ? 1 : 0;
+	    (dev->vdev[fh->channel].current_norm & V4L2_STD_NTSC) ? 1 : 0;
 
 	fmt = format_by_fourcc(f->fmt.pix.pixelformat);
 
@@ -915,10 +898,8 @@ static int vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 	if (field == V4L2_FIELD_ANY)
 		b_any_field = 1;
 
-	dprintk(4, "try format %d \n", is_ntsc);
-	/* supports 3 sizes. see s2255drv.h */
-	dprintk(50, "width test %d, height %d\n",
-		f->fmt.pix.width, f->fmt.pix.height);
+	dprintk(50, "%s NTSC: %d suggested width: %d, height: %d\n",
+		__func__, is_ntsc, f->fmt.pix.width, f->fmt.pix.height);
 	if (is_ntsc) {
 		/* NTSC */
 		if (f->fmt.pix.height >= NUM_LINES_1CIFS_NTSC * 2) {
@@ -973,29 +954,24 @@ static int vidioc_try_fmt_vid_cap(struct file *file, void *priv,
 			}
 		}
 		if (f->fmt.pix.width >= LINE_SZ_4CIFS_PAL) {
-			dprintk(50, "pal 704\n");
 			f->fmt.pix.width = LINE_SZ_4CIFS_PAL;
 			field = V4L2_FIELD_SEQ_TB;
 		} else if (f->fmt.pix.width >= LINE_SZ_2CIFS_PAL) {
-			dprintk(50, "pal 352A\n");
 			f->fmt.pix.width = LINE_SZ_2CIFS_PAL;
 			field = V4L2_FIELD_TOP;
 		} else if (f->fmt.pix.width >= LINE_SZ_1CIFS_PAL) {
-			dprintk(50, "pal 352B\n");
 			f->fmt.pix.width = LINE_SZ_1CIFS_PAL;
 			field = V4L2_FIELD_TOP;
 		} else {
-			dprintk(50, "pal 352C\n");
 			f->fmt.pix.width = LINE_SZ_1CIFS_PAL;
 			field = V4L2_FIELD_TOP;
 		}
 	}
-
-	dprintk(50, "width %d height %d field %d \n", f->fmt.pix.width,
-		f->fmt.pix.height, f->fmt.pix.field);
 	f->fmt.pix.field = field;
 	f->fmt.pix.bytesperline = (f->fmt.pix.width * fmt->depth) >> 3;
 	f->fmt.pix.sizeimage = f->fmt.pix.height * f->fmt.pix.bytesperline;
+	dprintk(50, "%s: set width %d height %d field %d\n", __func__,
+		f->fmt.pix.width, f->fmt.pix.height, f->fmt.pix.field);
 	return 0;
 }
 
@@ -1027,7 +1003,7 @@ static int vidioc_s_fmt_vid_cap(struct file *file, void *priv,
 	}
 
 	if (res_locked(fh->dev, fh)) {
-		dprintk(1, "can't change format after started\n");
+		dprintk(1, "%s: channel busy\n", __func__);
 		ret = -EBUSY;
 		goto out_s_fmt;
 	}
@@ -1037,17 +1013,14 @@ static int vidioc_s_fmt_vid_cap(struct file *file, void *priv,
 	fh->height = f->fmt.pix.height;
 	fh->vb_vidq.field = f->fmt.pix.field;
 	fh->type = f->type;
-	norm = norm_minw(fh->dev->vdev[fh->channel]);
-	if (fh->width > norm_minw(fh->dev->vdev[fh->channel])) {
-		if (fh->height > norm_minh(fh->dev->vdev[fh->channel])) {
+	norm = norm_minw(&fh->dev->vdev[fh->channel]);
+	if (fh->width > norm_minw(&fh->dev->vdev[fh->channel])) {
+		if (fh->height > norm_minh(&fh->dev->vdev[fh->channel])) {
 			if (fh->dev->cap_parm[fh->channel].capturemode &
-			    V4L2_MODE_HIGHQUALITY) {
+			    V4L2_MODE_HIGHQUALITY)
 				fh->mode.scale = SCALE_4CIFSI;
-				dprintk(2, "scale 4CIFSI\n");
-			} else {
+			else
 				fh->mode.scale = SCALE_4CIFS;
-				dprintk(2, "scale 4CIFS\n");
-			}
 		} else
 			fh->mode.scale = SCALE_2CIFS;
 
@@ -1203,19 +1176,13 @@ static u32 get_transfer_size(struct s2255_mode *mode)
 	return usbInSize;
 }
 
-static void dump_verify_mode(struct s2255_dev *sdev, struct s2255_mode *mode)
+static void s2255_print_cfg(struct s2255_dev *sdev, struct s2255_mode *mode)
 {
 	struct device *dev = &sdev->udev->dev;
 	dev_info(dev, "------------------------------------------------\n");
-	dev_info(dev, "verify mode\n");
-	dev_info(dev, "format: %d\n", mode->format);
-	dev_info(dev, "scale: %d\n", mode->scale);
-	dev_info(dev, "fdec: %d\n", mode->fdec);
-	dev_info(dev, "color: %d\n", mode->color);
+	dev_info(dev, "format: %d\nscale %d\n", mode->format, mode->scale);
+	dev_info(dev, "fdec: %d\ncolor %d\n", mode->fdec, mode->color);
 	dev_info(dev, "bright: 0x%x\n", mode->bright);
-	dev_info(dev, "restart: 0x%x\n", mode->restart);
-	dev_info(dev, "usb_block: 0x%x\n", mode->usb_block);
-	dev_info(dev, "single: 0x%x\n", mode->single);
 	dev_info(dev, "------------------------------------------------\n");
 }
 
@@ -1235,11 +1202,7 @@ static int s2255_set_mode(struct s2255_dev *dev, unsigned long chn,
 	unsigned long chn_rev;
 	mutex_lock(&dev->lock);
 	chn_rev = G_chnmap[chn];
-	dprintk(3, "mode scale [%ld] %p %d\n", chn, mode, mode->scale);
-	dprintk(3, "mode scale [%ld] %p %d\n", chn, &dev->mode[chn],
-		dev->mode[chn].scale);
-	dprintk(2, "mode contrast %x\n", mode->contrast);
-
+	dprintk(3, "%s channel %lu\n", __func__, chn);
 	/* if JPEG, set the quality */
 	if ((mode->color & MASK_COLOR) == COLOR_JPG) {
 		mode->color &= ~MASK_COLOR;
@@ -1247,19 +1210,16 @@ static int s2255_set_mode(struct s2255_dev *dev, unsigned long chn,
 		mode->color &= ~MASK_JPG_QUALITY;
 		mode->color |= (dev->jc[chn].quality << 8);
 	}
-
 	/* save the mode */
 	dev->mode[chn] = *mode;
 	dev->req_image_size[chn] = get_transfer_size(mode);
-	dprintk(1, "transfer size %ld\n", dev->req_image_size[chn]);
-
+	dprintk(1, "%s: reqsize %ld\n", __func__, dev->req_image_size[chn]);
 	buffer = kzalloc(512, GFP_KERNEL);
 	if (buffer == NULL) {
 		dev_err(&dev->udev->dev, "out of mem\n");
 		mutex_unlock(&dev->lock);
 		return -ENOMEM;
 	}
-
 	/* set the mode */
 	buffer[0] = IN_DATA_TOKEN;
 	buffer[1] = (__le32) cpu_to_le32(chn_rev);
@@ -1268,10 +1228,8 @@ static int s2255_set_mode(struct s2255_dev *dev, unsigned long chn,
 	dev->setmode_ready[chn] = 0;
 	res = s2255_write_config(dev->udev, (unsigned char *)buffer, 512);
 	if (debug)
-		dump_verify_mode(dev, mode);
+		s2255_print_cfg(dev, mode);
 	kfree(buffer);
-	dprintk(1, "set mode done chn %lu, %d\n", chn, res);
-
 	/* wait at least 3 frames before continuing */
 	if (mode->restart) {
 		wait_event_timeout(dev->wait_setmode[chn],
@@ -1282,10 +1240,10 @@ static int s2255_set_mode(struct s2255_dev *dev, unsigned long chn,
 			res = -EFAULT;
 		}
 	}
-
 	/* clear the restart flag */
 	dev->mode[chn].restart = 0;
 	mutex_unlock(&dev->lock);
+	dprintk(1, "%s chn %lu, result: %d\n", __func__, chn, res);
 	return res;
 }
 
@@ -1297,7 +1255,7 @@ static int s2255_cmd_status(struct s2255_dev *dev, unsigned long chn,
 	u32 chn_rev;
 	mutex_lock(&dev->lock);
 	chn_rev = G_chnmap[chn];
-	dprintk(4, "%s chan %d\n", __func__, chn_rev);
+	dprintk(4, "%s chan %lu\n", __func__, chn);
 	buffer = kzalloc(512, GFP_KERNEL);
 	if (buffer == NULL) {
 		dev_err(&dev->udev->dev, "out of mem\n");
@@ -1366,7 +1324,6 @@ static int vidioc_streamon(struct file *file, void *priv, enum v4l2_buf_type i)
 	new_mode->restart = 0;
 	*old_mode = *new_mode;
 	dev->cur_fmt[chn] = fh->fmt;
-	dprintk(1, "%s[%d]\n", __func__, chn);
 	dev->last_frame[chn] = -1;
 	dev->bad_payload[chn] = 0;
 	dev->cur_frame[chn] = 0;
@@ -1389,7 +1346,6 @@ static int vidioc_streamoff(struct file *file, void *priv, enum v4l2_buf_type i)
 {
 	struct s2255_fh *fh = priv;
 	struct s2255_dev *dev = fh->dev;
-
 	dprintk(4, "%s\n, channel: %d", __func__, fh->channel);
 	if (fh->type != V4L2_BUF_TYPE_VIDEO_CAPTURE) {
 		printk(KERN_ERR "invalid fh type0\n");
@@ -1411,15 +1367,12 @@ static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id *i)
 	struct s2255_mode *mode;
 	struct videobuf_queue *q = &fh->vb_vidq;
 	int ret = 0;
-
 	mutex_lock(&q->vb_lock);
-
 	if (videobuf_queue_is_busy(q)) {
 		dprintk(1, "queue busy\n");
 		ret = -EBUSY;
 		goto out_s_std;
 	}
-
 	if (res_locked(fh->dev, fh)) {
 		dprintk(1, "can't change standard after started\n");
 		ret = -EBUSY;
@@ -1461,10 +1414,8 @@ static int vidioc_enum_input(struct file *file, void *priv,
 	struct s2255_fh *fh = priv;
 	struct s2255_dev *dev = fh->dev;
 	u32 status = 0;
-
 	if (inp->index != 0)
 		return -EINVAL;
-
 	inp->type = V4L2_INPUT_TYPE_CAMERA;
 	inp->std = S2255_NORMS;
 	inp->status = 0;
@@ -1620,7 +1571,7 @@ static int vidioc_g_jpegcomp(struct file *file, void *priv,
 	struct s2255_fh *fh = priv;
 	struct s2255_dev *dev = fh->dev;
 	*jc = dev->jc[fh->channel];
-	dprintk(2, "getting jpegcompression, quality %d\n", jc->quality);
+	dprintk(2, "%s: quality %d\n", __func__, jc->quality);
 	return 0;
 }
 
@@ -1632,7 +1583,7 @@ static int vidioc_s_jpegcomp(struct file *file, void *priv,
 	if (jc->quality < 0 || jc->quality > 100)
 		return -EINVAL;
 	dev->jc[fh->channel].quality = jc->quality;
-	dprintk(2, "setting jpeg quality %d\n", jc->quality);
+	dprintk(2, "%s: quality %d\n", __func__, jc->quality);
 	return 0;
 }
 
@@ -1759,31 +1710,25 @@ static int s2255_open(struct file *file)
 	int i = 0;
 	int cur_channel = -1;
 	int state;
-
 	dprintk(1, "s2255: open called (dev=%s)\n",
 		video_device_node_name(vdev));
 
-	lock_kernel();
-
-	for (i = 0; i < MAX_CHANNELS; i++) {
-		if (dev->vdev[i] == vdev) {
+	for (i = 0; i < dev->channels; i++)
+		if (&dev->vdev[i] == vdev) {
 			cur_channel = i;
 			break;
 		}
-	}
-
-	if (atomic_read(&dev->fw_data->fw_state) == S2255_FW_DISCONNECTING) {
-		unlock_kernel();
-		printk(KERN_INFO "disconnecting\n");
-		return -ENODEV;
-	}
-	kref_get(&dev->kref);
+	/*
+	 * open lock necessary to prevent multiple instances
+	 * of v4l-conf (or other programs) from simultaneously
+	 * reloading firmware.
+	 */
 	mutex_lock(&dev->open_lock);
-
-	dev->users[cur_channel]++;
-	dprintk(4, "s2255: open_handles %d\n", dev->users[cur_channel]);
-
-	switch (atomic_read(&dev->fw_data->fw_state)) {
+	state = atomic_read(&dev->fw_data->fw_state);
+	switch (state) {
+	case S2255_FW_DISCONNECTING:
+		mutex_unlock(&dev->open_lock);
+		return -ENODEV;
 	case S2255_FW_FAILED:
 		s2255_dev_err(&dev->udev->dev,
 			"firmware load failed. retrying.\n");
@@ -1794,6 +1739,8 @@ static int s2255_open(struct file *file)
 				    (atomic_read(&dev->fw_data->fw_state)
 				     == S2255_FW_DISCONNECTING)),
 				   msecs_to_jiffies(S2255_LOAD_TIMEOUT));
+		/* state may have changed, re-read */
+		state = atomic_read(&dev->fw_data->fw_state);
 		break;
 	case S2255_FW_NOTLOADED:
 	case S2255_FW_LOADED_DSPWAIT:
@@ -1806,52 +1753,38 @@ static int s2255_open(struct file *file)
 				    (atomic_read(&dev->fw_data->fw_state)
 				     == S2255_FW_DISCONNECTING)),
 			msecs_to_jiffies(S2255_LOAD_TIMEOUT));
+		/* state may have changed, re-read */
+		state = atomic_read(&dev->fw_data->fw_state);
 		break;
 	case S2255_FW_SUCCESS:
 	default:
 		break;
 	}
-	state = atomic_read(&dev->fw_data->fw_state);
-	if (state != S2255_FW_SUCCESS) {
-		int rc;
-		switch (state) {
-		case S2255_FW_FAILED:
-			printk(KERN_INFO "2255 FW load failed. %d\n", state);
-			rc = -ENODEV;
-			break;
-		case S2255_FW_DISCONNECTING:
-			printk(KERN_INFO "%s: disconnecting\n", __func__);
-			rc = -ENODEV;
-			break;
-		case S2255_FW_LOADED_DSPWAIT:
-		case S2255_FW_NOTLOADED:
-			printk(KERN_INFO "%s: firmware not loaded yet"
-			       "please try again later\n",
-			       __func__);
-			rc = -EAGAIN;
-			break;
-		default:
-			printk(KERN_INFO "%s: unknown state\n", __func__);
-			rc = -EFAULT;
-			break;
-		}
-		dev->users[cur_channel]--;
-		mutex_unlock(&dev->open_lock);
-		kref_put(&dev->kref, s2255_destroy);
-		unlock_kernel();
-		return rc;
+	mutex_unlock(&dev->open_lock);
+	/* state may have changed in above switch statement */
+	switch (state) {
+	case S2255_FW_SUCCESS:
+		break;
+	case S2255_FW_FAILED:
+		printk(KERN_INFO "2255 firmware load failed.\n");
+		return -ENODEV;
+	case S2255_FW_DISCONNECTING:
+		printk(KERN_INFO "%s: disconnecting\n", __func__);
+		return -ENODEV;
+	case S2255_FW_LOADED_DSPWAIT:
+	case S2255_FW_NOTLOADED:
+		printk(KERN_INFO "%s: firmware not loaded yet"
+		       "please try again later\n",
+		       __func__);
+		return -EAGAIN;
+	default:
+		printk(KERN_INFO "%s: unknown state\n", __func__);
+		return -EFAULT;
 	}
-
 	/* allocate + initialize per filehandle data */
 	fh = kzalloc(sizeof(*fh), GFP_KERNEL);
-	if (NULL == fh) {
-		dev->users[cur_channel]--;
-		mutex_unlock(&dev->open_lock);
-		kref_put(&dev->kref, s2255_destroy);
-		unlock_kernel();
+	if (NULL == fh)
 		return -ENOMEM;
-	}
-
 	file->private_data = fh;
 	fh->dev = dev;
 	fh->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -1866,23 +1799,18 @@ static int s2255_open(struct file *file)
 		s2255_set_mode(dev, cur_channel, &fh->mode);
 		dev->chn_configured[cur_channel] = 1;
 	}
-	dprintk(1, "s2255drv: open dev=%s type=%s users=%d\n",
-		video_device_node_name(vdev), v4l2_type_names[type],
-		dev->users[cur_channel]);
-	dprintk(2, "s2255drv: open: fh=0x%08lx, dev=0x%08lx, vidq=0x%08lx\n",
+	dprintk(1, "%s: dev=%s type=%s\n", __func__,
+		video_device_node_name(vdev), v4l2_type_names[type]);
+	dprintk(2, "%s: fh=0x%08lx, dev=0x%08lx, vidq=0x%08lx\n", __func__,
 		(unsigned long)fh, (unsigned long)dev,
 		(unsigned long)&dev->vidq[cur_channel]);
-	dprintk(4, "s2255drv: open: list_empty active=%d\n",
+	dprintk(4, "%s: list_empty active=%d\n", __func__,
 		list_empty(&dev->vidq[cur_channel].active));
-
 	videobuf_queue_vmalloc_init(&fh->vb_vidq, &s2255_video_qops,
 				    NULL, &dev->slock,
 				    fh->type,
 				    V4L2_FIELD_INTERLACED,
 				    sizeof(struct s2255_buffer), fh);
-
-	mutex_unlock(&dev->open_lock);
-	unlock_kernel();
 	return 0;
 }
 
@@ -1893,10 +1821,8 @@ static unsigned int s2255_poll(struct file *file,
 	struct s2255_fh *fh = file->private_data;
 	int rc;
 	dprintk(100, "%s\n", __func__);
-
 	if (V4L2_BUF_TYPE_VIDEO_CAPTURE != fh->type)
 		return POLLERR;
-
 	rc = videobuf_poll_stream(file, &fh->vb_vidq, wait);
 	return rc;
 }
@@ -1904,30 +1830,11 @@ static unsigned int s2255_poll(struct file *file,
 static void s2255_destroy(struct kref *kref)
 {
 	struct s2255_dev *dev = to_s2255_dev(kref);
-	int i;
-	if (!dev) {
-		printk(KERN_ERR "s2255drv: kref problem\n");
-		return;
-	}
-	atomic_set(&dev->fw_data->fw_state, S2255_FW_DISCONNECTING);
-	wake_up(&dev->fw_data->wait_fw);
-	for (i = 0; i < MAX_CHANNELS; i++) {
-		dev->setmode_ready[i] = 1;
-		wake_up(&dev->wait_setmode[i]);
-		dev->vidstatus_ready[i] = 1;
-		wake_up(&dev->wait_vidstatus[i]);
-	}
-	mutex_lock(&dev->open_lock);
-	/* reset the DSP so firmware can be reload next time */
-	s2255_reset_dsppower(dev);
-	s2255_exit_v4l(dev);
 	/* board shutdown stops the read pipe if it is running */
 	s2255_board_shutdown(dev);
 	/* make sure firmware still not trying to load */
 	del_timer(&dev->timer);  /* only started in .probe and .open */
-
 	if (dev->fw_data->fw_urb) {
-		dprintk(2, "kill fw_urb\n");
 		usb_kill_urb(dev->fw_data->fw_urb);
 		usb_free_urb(dev->fw_data->fw_urb);
 		dev->fw_data->fw_urb = NULL;
@@ -1936,24 +1843,22 @@ static void s2255_destroy(struct kref *kref)
 		release_firmware(dev->fw_data->fw);
 	kfree(dev->fw_data->pfw_data);
 	kfree(dev->fw_data);
+	/* reset the DSP so firmware can be reloaded next time */
+	s2255_reset_dsppower(dev);
+	mutex_destroy(&dev->open_lock);
+	mutex_destroy(&dev->lock);
 	usb_put_dev(dev->udev);
 	dprintk(1, "%s", __func__);
-
-	mutex_unlock(&dev->open_lock);
 	kfree(dev);
 }
 
-static int s2255_close(struct file *file)
+static int s2255_release(struct file *file)
 {
 	struct s2255_fh *fh = file->private_data;
 	struct s2255_dev *dev = fh->dev;
 	struct video_device *vdev = video_devdata(file);
-
 	if (!dev)
 		return -ENODEV;
-
-	mutex_lock(&dev->open_lock);
-
 	/* turn off stream */
 	if (res_check(fh)) {
 		if (dev->b_acquire[fh->channel])
@@ -1961,15 +1866,8 @@ static int s2255_close(struct file *file)
 		videobuf_streamoff(&fh->vb_vidq);
 		res_free(dev, fh);
 	}
-
 	videobuf_mmap_free(&fh->vb_vidq);
-	dev->users[fh->channel]--;
-
-	mutex_unlock(&dev->open_lock);
-
-	kref_put(&dev->kref, s2255_destroy);
-	dprintk(1, "s2255: close called (dev=%s, users=%d)\n",
-		video_device_node_name(vdev), dev->users[fh->channel]);
+	dprintk(1, "%s (dev=%s)\n", __func__, video_device_node_name(vdev));
 	kfree(fh);
 	return 0;
 }
@@ -1981,21 +1879,18 @@ static int s2255_mmap_v4l(struct file *file, struct vm_area_struct *vma)
 
 	if (!fh)
 		return -ENODEV;
-	dprintk(4, "mmap called, vma=0x%08lx\n", (unsigned long)vma);
-
+	dprintk(4, "%s, vma=0x%08lx\n", __func__, (unsigned long)vma);
 	ret = videobuf_mmap_mapper(&fh->vb_vidq, vma);
-
-	dprintk(4, "vma start=0x%08lx, size=%ld, ret=%d\n",
+	dprintk(4, "%s vma start=0x%08lx, size=%ld, ret=%d\n", __func__,
 		(unsigned long)vma->vm_start,
 		(unsigned long)vma->vm_end - (unsigned long)vma->vm_start, ret);
-
 	return ret;
 }
 
 static const struct v4l2_file_operations s2255_fops_v4l = {
 	.owner = THIS_MODULE,
 	.open = s2255_open,
-	.release = s2255_close,
+	.release = s2255_release,
 	.poll = s2255_poll,
 	.ioctl = video_ioctl2,	/* V4L2 ioctl handler */
 	.mmap = s2255_mmap_v4l,
@@ -2031,11 +1926,18 @@ static const struct v4l2_ioctl_ops s2255_ioctl_ops = {
 	.vidioc_enum_frameintervals = vidioc_enum_frameintervals,
 };
 
+static void s2255_video_device_release(struct video_device *vdev)
+{
+	struct s2255_dev *dev = video_get_drvdata(vdev);
+	kref_put(&dev->kref, s2255_destroy);
+	return;
+}
+
 static struct video_device template = {
 	.name = "s2255v",
 	.fops = &s2255_fops_v4l,
 	.ioctl_ops = &s2255_ioctl_ops,
-	.release = video_device_release,
+	.release = s2255_video_device_release,
 	.tvnorms = S2255_NORMS,
 	.current_norm = V4L2_STD_NTSC_M,
 };
@@ -2045,7 +1947,11 @@ static int s2255_probe_v4l(struct s2255_dev *dev)
 	int ret;
 	int i;
 	int cur_nr = video_nr;
-
+	for (i = 0; i < MAX_CHANNELS; i++) {
+		ret = v4l2_device_register(&dev->udev->dev, &dev->v4l2_dev[i]);
+		if (ret)
+			goto unreg_v4l2;
+	}
 	/* initialize all video 4 linux */
 	/* register 4 video devices */
 	for (i = 0; i < MAX_CHANNELS; i++) {
@@ -2053,45 +1959,41 @@ static int s2255_probe_v4l(struct s2255_dev *dev)
 		dev->vidq[i].dev = dev;
 		dev->vidq[i].channel = i;
 		/* register 4 video devices */
-		dev->vdev[i] = video_device_alloc();
-		memcpy(dev->vdev[i], &template, sizeof(struct video_device));
-		dev->vdev[i]->parent = &dev->interface->dev;
-		video_set_drvdata(dev->vdev[i], dev);
+		memcpy(&dev->vdev[i], &template, sizeof(struct video_device));
+		dev->vdev[i].parent = &dev->interface->dev;
 		if (video_nr == -1)
-			ret = video_register_device(dev->vdev[i],
+			ret = video_register_device(&dev->vdev[i],
 						    VFL_TYPE_GRABBER,
 						    video_nr);
 		else
-			ret = video_register_device(dev->vdev[i],
+			ret = video_register_device(&dev->vdev[i],
 						    VFL_TYPE_GRABBER,
 						    cur_nr + i);
-		video_set_drvdata(dev->vdev[i], dev);
-
-		if (ret != 0) {
+		video_set_drvdata(&dev->vdev[i], dev);
+		if (ret) {
 			dev_err(&dev->udev->dev,
 				"failed to register video device!\n");
-			return ret;
+			break;
 		}
+		dev->channels++;
+		v4l2_info(&dev->v4l2_dev[i], "V4L2 device registered as %s\n",
+			  video_device_node_name(&dev->vdev[i]));
+
 	}
+
 	printk(KERN_INFO "Sensoray 2255 V4L driver Revision: %d.%d\n",
 	       S2255_MAJOR_VERSION,
 	       S2255_MINOR_VERSION);
+	/* if no channels registered, return error and probe will fail*/
+	if (dev->channels == 0)
+		return ret;
+	if (dev->channels != MAX_CHANNELS)
+		printk(KERN_WARNING "s2255: Not all channels available.\n");
+	return 0;
+unreg_v4l2:
+	for (i-- ; i > 0; i--)
+		v4l2_device_unregister(&dev->v4l2_dev[i]);
 	return ret;
-}
-
-static void s2255_exit_v4l(struct s2255_dev *dev)
-{
-
-	int i;
-	for (i = 0; i < MAX_CHANNELS; i++) {
-		if (video_is_registered(dev->vdev[i])) {
-			video_unregister_device(dev->vdev[i]);
-			printk(KERN_INFO "s2255 unregistered\n");
-		} else {
-			video_device_release(dev->vdev[i]);
-			printk(KERN_INFO "s2255 released\n");
-		}
-	}
 }
 
 /* this function moves the usb stream read pipe data
@@ -2389,28 +2291,22 @@ static int s2255_release_sys_buffers(struct s2255_dev *dev,
 
 static int s2255_board_init(struct s2255_dev *dev)
 {
-	int j;
 	struct s2255_mode mode_def = DEF_MODEI_NTSC_CONT;
 	int fw_ver;
+	int j;
+	struct s2255_pipeinfo *pipe = &dev->pipe;
 	dprintk(4, "board init: %p", dev);
+	memset(pipe, 0, sizeof(*pipe));
+	pipe->dev = dev;
+	pipe->cur_transfer_size = S2255_USB_XFER_SIZE;
+	pipe->max_transfer_size = S2255_USB_XFER_SIZE;
 
-	for (j = 0; j < MAX_PIPE_BUFFERS; j++) {
-		struct s2255_pipeinfo *pipe = &dev->pipes[j];
-
-		memset(pipe, 0, sizeof(*pipe));
-		pipe->dev = dev;
-		pipe->cur_transfer_size = S2255_USB_XFER_SIZE;
-		pipe->max_transfer_size = S2255_USB_XFER_SIZE;
-
-		pipe->transfer_buffer = kzalloc(pipe->max_transfer_size,
-						GFP_KERNEL);
-		if (pipe->transfer_buffer == NULL) {
-			dprintk(1, "out of memory!\n");
-			return -ENOMEM;
-		}
-
+	pipe->transfer_buffer = kzalloc(pipe->max_transfer_size,
+					GFP_KERNEL);
+	if (pipe->transfer_buffer == NULL) {
+		dprintk(1, "out of memory!\n");
+		return -ENOMEM;
 	}
-
 	/* query the firmware */
 	fw_ver = s2255_get_fx2fw(dev);
 
@@ -2439,16 +2335,14 @@ static int s2255_board_init(struct s2255_dev *dev)
 	}
 	/* start read pipe */
 	s2255_start_readpipe(dev);
-
-	dprintk(1, "S2255: board initialized\n");
+	dprintk(1, "%s: success\n", __func__);
 	return 0;
 }
 
 static int s2255_board_shutdown(struct s2255_dev *dev)
 {
 	u32 i;
-
-	dprintk(1, "S2255: board shutdown: %p", dev);
+	dprintk(1, "%s: dev: %p", __func__,  dev);
 
 	for (i = 0; i < MAX_CHANNELS; i++) {
 		if (dev->b_acquire[i])
@@ -2459,12 +2353,8 @@ static int s2255_board_shutdown(struct s2255_dev *dev)
 
 	for (i = 0; i < MAX_CHANNELS; i++)
 		s2255_release_sys_buffers(dev, i);
-
-	/* release transfer buffers */
-	for (i = 0; i < MAX_PIPE_BUFFERS; i++) {
-		struct s2255_pipeinfo *pipe = &dev->pipes[i];
-		kfree(pipe->transfer_buffer);
-	}
+	/* release transfer buffer */
+	kfree(dev->pipe.transfer_buffer);
 	return 0;
 }
 
@@ -2474,9 +2364,8 @@ static void read_pipe_completion(struct urb *purb)
 	struct s2255_dev *dev;
 	int status;
 	int pipe;
-
 	pipe_info = purb->context;
-	dprintk(100, "read pipe completion %p, status %d\n", purb,
+	dprintk(100, "%s: urb:%p, status %d\n", __func__, purb,
 		purb->status);
 	if (pipe_info == NULL) {
 		dev_err(&purb->dev->dev, "no context!\n");
@@ -2491,13 +2380,13 @@ static void read_pipe_completion(struct urb *purb)
 	status = purb->status;
 	/* if shutting down, do not resubmit, exit immediately */
 	if (status == -ESHUTDOWN) {
-		dprintk(2, "read_pipe_completion: err shutdown\n");
+		dprintk(2, "%s: err shutdown\n", __func__);
 		pipe_info->err_count++;
 		return;
 	}
 
 	if (pipe_info->state == 0) {
-		dprintk(2, "exiting USB pipe");
+		dprintk(2, "%s: exiting USB pipe", __func__);
 		return;
 	}
 
@@ -2505,7 +2394,7 @@ static void read_pipe_completion(struct urb *purb)
 		s2255_read_video_callback(dev, pipe_info);
 	else {
 		pipe_info->err_count++;
-		dprintk(1, "s2255drv: failed URB %d\n", status);
+		dprintk(1, "%s: failed URB %d\n", __func__, status);
 	}
 
 	pipe = usb_rcvbulkpipe(dev->udev, dev->read_endpoint);
@@ -2521,7 +2410,7 @@ static void read_pipe_completion(struct urb *purb)
 			dev_err(&dev->udev->dev, "error submitting urb\n");
 		}
 	} else {
-		dprintk(2, "read pipe complete state 0\n");
+		dprintk(2, "%s :complete state 0\n", __func__);
 	}
 	return;
 }
@@ -2530,35 +2419,28 @@ static int s2255_start_readpipe(struct s2255_dev *dev)
 {
 	int pipe;
 	int retval;
-	int i;
-	struct s2255_pipeinfo *pipe_info = dev->pipes;
+	struct s2255_pipeinfo *pipe_info = &dev->pipe;
 	pipe = usb_rcvbulkpipe(dev->udev, dev->read_endpoint);
-	dprintk(2, "start pipe IN %d\n", dev->read_endpoint);
-
-	for (i = 0; i < MAX_PIPE_BUFFERS; i++) {
-		pipe_info->state = 1;
-		pipe_info->err_count = 0;
-		pipe_info->stream_urb = usb_alloc_urb(0, GFP_KERNEL);
-		if (!pipe_info->stream_urb) {
-			dev_err(&dev->udev->dev,
-				"ReadStream: Unable to alloc URB\n");
-			return -ENOMEM;
-		}
-		/* transfer buffer allocated in board_init */
-		usb_fill_bulk_urb(pipe_info->stream_urb, dev->udev,
-				  pipe,
-				  pipe_info->transfer_buffer,
-				  pipe_info->cur_transfer_size,
-				  read_pipe_completion, pipe_info);
-
-		dprintk(4, "submitting URB %p\n", pipe_info->stream_urb);
-		retval = usb_submit_urb(pipe_info->stream_urb, GFP_KERNEL);
-		if (retval) {
-			printk(KERN_ERR "s2255: start read pipe failed\n");
-			return retval;
-		}
+	dprintk(2, "%s: IN %d\n", __func__, dev->read_endpoint);
+	pipe_info->state = 1;
+	pipe_info->err_count = 0;
+	pipe_info->stream_urb = usb_alloc_urb(0, GFP_KERNEL);
+	if (!pipe_info->stream_urb) {
+		dev_err(&dev->udev->dev,
+			"ReadStream: Unable to alloc URB\n");
+		return -ENOMEM;
 	}
-
+	/* transfer buffer allocated in board_init */
+	usb_fill_bulk_urb(pipe_info->stream_urb, dev->udev,
+			  pipe,
+			  pipe_info->transfer_buffer,
+			  pipe_info->cur_transfer_size,
+			  read_pipe_completion, pipe_info);
+	retval = usb_submit_urb(pipe_info->stream_urb, GFP_KERNEL);
+	if (retval) {
+		printk(KERN_ERR "s2255: start read pipe failed\n");
+		return retval;
+	}
 	return 0;
 }
 
@@ -2573,10 +2455,7 @@ static int s2255_start_acquire(struct s2255_dev *dev, unsigned long chn)
 		dprintk(2, "start acquire failed, bad channel %lu\n", chn);
 		return -1;
 	}
-
 	chn_rev = G_chnmap[chn];
-	dprintk(1, "S2255: start acquire %lu \n", chn);
-
 	buffer = kzalloc(512, GFP_KERNEL);
 	if (buffer == NULL) {
 		dev_err(&dev->udev->dev, "out of mem\n");
@@ -2620,51 +2499,33 @@ static int s2255_stop_acquire(struct s2255_dev *dev, unsigned long chn)
 		return -ENOMEM;
 	}
 	/* send the stop command */
-	dprintk(4, "stop acquire %lu\n", chn);
 	*(__le32 *) buffer = IN_DATA_TOKEN;
 	*((__le32 *) buffer + 1) = (__le32) cpu_to_le32(chn_rev);
 	*((__le32 *) buffer + 2) = CMD_STOP;
 	res = s2255_write_config(dev->udev, (unsigned char *)buffer, 512);
-
 	if (res != 0)
 		dev_err(&dev->udev->dev, "CMD_STOP error\n");
-
-	dprintk(4, "stop acquire: releasing states \n");
-
 	kfree(buffer);
 	dev->b_acquire[chn] = 0;
-
+	dprintk(4, "%s: chn %lu, res %d\n", __func__, chn, res);
 	return res;
 }
 
 static void s2255_stop_readpipe(struct s2255_dev *dev)
 {
-	int j;
-
+	struct s2255_pipeinfo *pipe = &dev->pipe;
 	if (dev == NULL) {
 		s2255_dev_err(&dev->udev->dev, "invalid device\n");
 		return;
 	}
-	dprintk(4, "stop read pipe\n");
-	for (j = 0; j < MAX_PIPE_BUFFERS; j++) {
-		struct s2255_pipeinfo *pipe_info = &dev->pipes[j];
-		if (pipe_info) {
-			if (pipe_info->state == 0)
-				continue;
-			pipe_info->state = 0;
-		}
+	pipe->state = 0;
+	if (pipe->stream_urb) {
+		/* cancel urb */
+		usb_kill_urb(pipe->stream_urb);
+		usb_free_urb(pipe->stream_urb);
+		pipe->stream_urb = NULL;
 	}
-
-	for (j = 0; j < MAX_PIPE_BUFFERS; j++) {
-		struct s2255_pipeinfo *pipe_info = &dev->pipes[j];
-		if (pipe_info->stream_urb) {
-			/* cancel urb */
-			usb_kill_urb(pipe_info->stream_urb);
-			usb_free_urb(pipe_info->stream_urb);
-			pipe_info->stream_urb = NULL;
-		}
-	}
-	dprintk(2, "s2255 stop read pipe: %d\n", j);
+	dprintk(4, "%s", __func__);
 	return;
 }
 
@@ -2696,31 +2557,27 @@ static int s2255_probe(struct usb_interface *interface,
 	int retval = -ENOMEM;
 	__le32 *pdata;
 	int fw_size;
-
-	dprintk(2, "s2255: probe\n");
-
+	dprintk(2, "%s\n", __func__);
 	/* allocate memory for our device state and initialize it to zero */
 	dev = kzalloc(sizeof(struct s2255_dev), GFP_KERNEL);
 	if (dev == NULL) {
 		s2255_dev_err(&interface->dev, "out of memory\n");
-		goto error;
+		return -ENOMEM;
 	}
+	kref_init(&dev->kref);
 	dev->pid = id->idProduct;
 	dev->fw_data = kzalloc(sizeof(struct s2255_fw), GFP_KERNEL);
 	if (!dev->fw_data)
-		goto error;
-
+		goto errorFWDATA1;
 	mutex_init(&dev->lock);
 	mutex_init(&dev->open_lock);
-
 	/* grab usb_device and save it */
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
 	if (dev->udev == NULL) {
 		dev_err(&interface->dev, "null usb device\n");
 		retval = -ENODEV;
-		goto error;
+		goto errorUDEV;
 	}
-	kref_init(&dev->kref);
 	dprintk(1, "dev: %p, kref: %p udev %p interface %p\n", dev, &dev->kref,
 		dev->udev, interface);
 	dev->interface = interface;
@@ -2737,18 +2594,13 @@ static int s2255_probe(struct usb_interface *interface,
 
 	if (!dev->read_endpoint) {
 		dev_err(&interface->dev, "Could not find bulk-in endpoint\n");
-		goto error;
+		goto errorEP;
 	}
-
 	/* set intfdata */
 	usb_set_intfdata(interface, dev);
-
-	dprintk(100, "after intfdata %p\n", dev);
-
 	init_timer(&dev->timer);
 	dev->timer.function = s2255_timer;
 	dev->timer.data = (unsigned long)dev->fw_data;
-
 	init_waitqueue_head(&dev->fw_data->wait_fw);
 	for (i = 0; i < MAX_CHANNELS; i++) {
 		init_waitqueue_head(&dev->wait_setmode[i]);
@@ -2756,21 +2608,21 @@ static int s2255_probe(struct usb_interface *interface,
 	}
 
 	dev->fw_data->fw_urb = usb_alloc_urb(0, GFP_KERNEL);
-
 	if (!dev->fw_data->fw_urb) {
 		dev_err(&interface->dev, "out of memory!\n");
-		goto error;
+		goto errorFWURB;
 	}
+
 	dev->fw_data->pfw_data = kzalloc(CHUNK_SIZE, GFP_KERNEL);
 	if (!dev->fw_data->pfw_data) {
 		dev_err(&interface->dev, "out of memory!\n");
-		goto error;
+		goto errorFWDATA2;
 	}
 	/* load the first chunk */
 	if (request_firmware(&dev->fw_data->fw,
 			     FIRMWARE_FILE_NAME, &dev->udev->dev)) {
 		printk(KERN_ERR "sensoray 2255 failed to get firmware\n");
-		goto error;
+		goto errorREQFW;
 	}
 	/* check the firmware is valid */
 	fw_size = dev->fw_data->fw->size;
@@ -2779,7 +2631,7 @@ static int s2255_probe(struct usb_interface *interface,
 	if (*pdata != S2255_FW_MARKER) {
 		printk(KERN_INFO "Firmware invalid.\n");
 		retval = -ENODEV;
-		goto error;
+		goto errorFWMARKER;
 	} else {
 		/* make sure firmware is the latest */
 		__le32 *pRel;
@@ -2789,38 +2641,59 @@ static int s2255_probe(struct usb_interface *interface,
 		if (*pRel < S2255_CUR_DSP_FWVER)
 			printk(KERN_INFO "s2255: f2255usb.bin out of date.\n");
 		if (dev->pid == 0x2257 && *pRel < S2255_MIN_DSP_COLORFILTER)
-			printk(KERN_WARNING "s2255: 2257 requires firmware 8 or above.\n");
+			printk(KERN_WARNING "s2255: 2257 requires firmware %d"
+			       "or above.\n", S2255_MIN_DSP_COLORFILTER);
 	}
-	/* loads v4l specific */
-	s2255_probe_v4l(dev);
 	usb_reset_device(dev->udev);
 	/* load 2255 board specific */
 	retval = s2255_board_init(dev);
 	if (retval)
-		goto error;
-
-	dprintk(4, "before probe done %p\n", dev);
+		goto errorBOARDINIT;
 	spin_lock_init(&dev->slock);
-
 	s2255_fwload_start(dev, 0);
+	/* kref for each vdev. Released on video_device_release callback */
+	for (i = 0; i < MAX_CHANNELS; i++)
+		kref_get(&dev->kref);
+	/* loads v4l specific */
+	retval = s2255_probe_v4l(dev);
+	if (retval)
+		goto errorBOARDINIT;
 	dev_info(&interface->dev, "Sensoray 2255 detected\n");
 	return 0;
-error:
+errorBOARDINIT:
+	s2255_board_shutdown(dev);
+errorFWMARKER:
+	release_firmware(dev->fw_data->fw);
+errorREQFW:
+	kfree(dev->fw_data->pfw_data);
+errorFWDATA2:
+	usb_free_urb(dev->fw_data->fw_urb);
+errorFWURB:
+	del_timer(&dev->timer);
+errorEP:
+	usb_put_dev(dev->udev);
+errorUDEV:
+	kfree(dev->fw_data);
+	mutex_destroy(&dev->open_lock);
+	mutex_destroy(&dev->lock);
+errorFWDATA1:
+	kfree(dev);
+	printk(KERN_WARNING "Sensoray 2255 driver load failed: 0x%x\n", retval);
 	return retval;
 }
+
 
 /* disconnect routine. when board is removed physically or with rmmod */
 static void s2255_disconnect(struct usb_interface *interface)
 {
 	struct s2255_dev *dev = NULL;
 	int i;
-	dprintk(1, "s2255: disconnect interface %p\n", interface);
 	dev = usb_get_intfdata(interface);
-
-	/*
-	 * wake up any of the timers to allow open_lock to be
-	 * acquired sooner
-	 */
+	/* unregister each video device. */
+	for (i = 0; i < MAX_CHANNELS; i++)
+		if (video_is_registered(&dev->vdev[i]))
+			video_unregister_device(&dev->vdev[i]);
+	/* wake up any of our timers */
 	atomic_set(&dev->fw_data->fw_state, S2255_FW_DISCONNECTING);
 	wake_up(&dev->fw_data->wait_fw);
 	for (i = 0; i < MAX_CHANNELS; i++) {
@@ -2829,16 +2702,9 @@ static void s2255_disconnect(struct usb_interface *interface)
 		dev->vidstatus_ready[i] = 1;
 		wake_up(&dev->wait_vidstatus[i]);
 	}
-
-	mutex_lock(&dev->open_lock);
 	usb_set_intfdata(interface, NULL);
-	mutex_unlock(&dev->open_lock);
-
-	if (dev) {
-		kref_put(&dev->kref, s2255_destroy);
-		dprintk(1, "s2255drv: disconnect\n");
-		dev_info(&interface->dev, "s2255usb now disconnected\n");
-	}
+	kref_put(&dev->kref, s2255_destroy);
+	dev_info(&interface->dev, "%s\n", __func__);
 }
 
 static struct usb_driver s2255_driver = {
@@ -2851,15 +2717,12 @@ static struct usb_driver s2255_driver = {
 static int __init usb_s2255_init(void)
 {
 	int result;
-
 	/* register this driver with the USB subsystem */
 	result = usb_register(&s2255_driver);
-
 	if (result)
 		pr_err(KBUILD_MODNAME
-			": usb_register failed. Error number %d\n", result);
-
-	dprintk(2, "s2255_init: done\n");
+		       ": usb_register failed. Error number %d\n", result);
+	dprintk(2, "%s\n", __func__);
 	return result;
 }
 

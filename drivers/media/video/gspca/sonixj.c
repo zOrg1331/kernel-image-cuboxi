@@ -1,7 +1,7 @@
 /*
  * Sonix sn9c102p sn9c105 sn9c120 (jpeg) subdriver
  *
- * Copyright (C) 2009 Jean-Francois Moine <http://moinejf.free.fr>
+ * Copyright (C) 2009-2010 Jean-François Moine <http://moinejf.free.fr>
  * Copyright (C) 2005 Michel Xhaard mxhaard@magic.fr
  *
  * This program is free software; you can redistribute it and/or modify
@@ -28,7 +28,7 @@
 
 #define V4L2_CID_INFRARED (V4L2_CID_PRIVATE_BASE + 0)
 
-MODULE_AUTHOR("Michel Xhaard <mxhaard@users.sourceforge.net>");
+MODULE_AUTHOR("Jean-François Moine <http://moinejf.free.fr>");
 MODULE_DESCRIPTION("GSPCA/SONIX JPEG USB Camera Driver");
 MODULE_LICENSE("GPL");
 
@@ -84,7 +84,7 @@ enum {
 } sensors;
 	u8 i2c_addr;
 
-	u8 *jpeg_hdr;
+	u8 jpeg_hdr[JPEG_HDR_SZ];
 };
 
 /* V4L2 controls supported by the driver */
@@ -291,8 +291,7 @@ static const __u32 ctrl_dis[] = {
 			(1 << VFLIP_IDX) |
 			(1 << FREQ_IDX),
 
-[SENSOR_GC0307] =	(1 << AUTOGAIN_IDX) |
-			(1 << INFRARED_IDX) |
+[SENSOR_GC0307] =	(1 << INFRARED_IDX) |
 			(1 << VFLIP_IDX) |
 			(1 << FREQ_IDX),
 
@@ -642,12 +641,6 @@ static const u8 gc0307_sensor_param1[][8] = {
 /*param3*/
 	{0xa0, 0x21, 0x01, 0x6e, 0x00, 0x00, 0x00, 0x10},
 	{0xa0, 0x21, 0x02, 0x88, 0x00, 0x00, 0x00, 0x10},
-
-	{0xa0, 0x21, 0x68, 0x22, 0x00, 0x00, 0x00, 0x10},
-	{0xdd, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-	{0xa0, 0x21, 0x03, 0x07, 0x00, 0x00, 0x00, 0x10},
-	{0xdd, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-	{0xa0, 0x21, 0x04, 0x91, 0x00, 0x00, 0x00, 0x10},
 	{}
 };
 
@@ -1815,6 +1808,18 @@ static u32 setexposure(struct gspca_dev *gspca_dev,
 	struct sd *sd = (struct sd *) gspca_dev;
 
 	switch (sd->sensor) {
+	case SENSOR_GC0307: {
+		int a, b;
+
+		/* expo = 0..255 -> a = 19..43 */
+		a = 19 + expo * 25 / 256;
+		i2c_w1(gspca_dev, 0x68, a);
+		a -= 12;
+		b = a * a * 4;			/* heuristic */
+		i2c_w1(gspca_dev, 0x03, b >> 8);
+		i2c_w1(gspca_dev, 0x04, b);
+		break;
+	    }
 	case SENSOR_HV7131R: {
 		u8 Expodoit[] =
 			{ 0xc1, 0x11, 0x25, 0x00, 0x00, 0x00, 0x00, 0x16 };
@@ -1925,6 +1930,7 @@ static void setbrightness(struct gspca_dev *gspca_dev)
 		expo = sd->brightness >> 4;
 		sd->exposure = setexposure(gspca_dev, expo);
 		break;
+	case SENSOR_GC0307:
 	case SENSOR_MT9V111:
 		expo = sd->brightness >> 8;
 		sd->exposure = setexposure(gspca_dev, expo);
@@ -2208,9 +2214,6 @@ static int sd_start(struct gspca_dev *gspca_dev)
 				{ 0x14, 0xe7, 0x1e, 0xdd };
 
 	/* create the JPEG header */
-	sd->jpeg_hdr = kmalloc(JPEG_HDR_SZ, GFP_KERNEL);
-	if (!sd->jpeg_hdr)
-		return -ENOMEM;
 	jpeg_define(sd->jpeg_hdr, gspca_dev->height, gspca_dev->width,
 			0x21);		/* JPEG 422 */
 	jpeg_set_qual(sd->jpeg_hdr, sd->quality);
@@ -2507,13 +2510,6 @@ static void sd_stopN(struct gspca_dev *gspca_dev)
 	/* reg_w1(gspca_dev, 0xf1, 0x01); */
 }
 
-static void sd_stop0(struct gspca_dev *gspca_dev)
-{
-	struct sd *sd = (struct sd *) gspca_dev;
-
-	kfree(sd->jpeg_hdr);
-}
-
 static void do_autogain(struct gspca_dev *gspca_dev)
 {
 	struct sd *sd = (struct sd *) gspca_dev;
@@ -2534,6 +2530,14 @@ static void do_autogain(struct gspca_dev *gspca_dev)
 	if (delta < luma_mean - luma_delta ||
 	    delta > luma_mean + luma_delta) {
 		switch (sd->sensor) {
+		case SENSOR_GC0307:
+			expotimes = sd->exposure;
+			expotimes += (luma_mean - delta) >> 6;
+			if (expotimes < 0)
+				expotimes = 0;
+			sd->exposure = setexposure(gspca_dev,
+						   (unsigned int) expotimes);
+			break;
 		case SENSOR_HV7131R:
 			expotimes = sd->exposure >> 8;
 			expotimes += (luma_mean - delta) >> 4;
@@ -2885,7 +2889,6 @@ static const struct sd_desc sd_desc = {
 	.init = sd_init,
 	.start = sd_start,
 	.stopN = sd_stopN,
-	.stop0 = sd_stop0,
 	.pkt_scan = sd_pkt_scan,
 	.dq_callback = do_autogain,
 	.get_jcomp = sd_get_jcomp,

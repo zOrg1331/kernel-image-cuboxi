@@ -103,6 +103,16 @@ enum tm6000_mode {
 	TM6000_MODE_DIGITAL,
 };
 
+struct tm6000_gpio {
+	int		tuner_reset;
+	int		tuner_on;
+	int		demod_reset;
+	int		demod_on;
+	int		power_led;
+	int		dvb_led;
+	int		ir;
+};
+
 struct tm6000_capabilities {
 	unsigned int    has_tuner:1;
 	unsigned int    has_tda9874:1;
@@ -140,7 +150,8 @@ struct tm6000_core {
 	/* Tuner configuration */
 	int				tuner_type;		/* type of the tuner */
 	int				tuner_addr;		/* tuner address */
-	int				tuner_reset_gpio;	/* GPIO used for tuner reset */
+
+	struct tm6000_gpio		gpio;
 
 	/* Demodulator configuration */
 	int				demod_addr;	/* demodulator address */
@@ -213,6 +224,7 @@ int tm6000_read_write_usb (struct tm6000_core *dev, u8 reqtype, u8 req,
 			   u16 value, u16 index, u8 *buf, u16 len);
 int tm6000_get_reg (struct tm6000_core *dev, u8 req, u16 value, u16 index);
 int tm6000_get_reg16(struct tm6000_core *dev, u8 req, u16 value, u16 index);
+int tm6000_get_reg32(struct tm6000_core *dev, u8 req, u16 value, u16 index);
 int tm6000_set_reg (struct tm6000_core *dev, u8 req, u16 value, u16 index);
 int tm6000_init (struct tm6000_core *dev);
 
