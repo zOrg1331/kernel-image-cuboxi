@@ -35,6 +35,7 @@
 #include <linux/moduleparam.h>
 #include <linux/random.h>
 #include <linux/highmem.h>
+#include <linux/slab.h>
 #include <asm/byteorder.h>
 
 #include <rdma/ib_verbs.h>
@@ -1323,6 +1324,7 @@ static struct ib_qp *nes_create_qp(struct ib_pd *ibpd,
 			nesqp->nesqp_context->aeq_token_low =  cpu_to_le32((u32)((unsigned long)(nesqp)));
 			nesqp->nesqp_context->aeq_token_high =  cpu_to_le32((u32)(upper_32_bits((unsigned long)(nesqp))));
 			nesqp->nesqp_context->ird_ord_sizes = cpu_to_le32(NES_QPCONTEXT_ORDIRD_ALSMM |
+					NES_QPCONTEXT_ORDIRD_AAH |
 					((((u32)nesadapter->max_irrq_wr) <<
 					NES_QPCONTEXT_ORDIRD_IRDSIZE_SHIFT) & NES_QPCONTEXT_ORDIRD_IRDSIZE_MASK));
 			if (disable_mpa_crc) {

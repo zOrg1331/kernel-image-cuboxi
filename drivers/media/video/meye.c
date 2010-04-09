@@ -31,6 +31,7 @@
 #include <linux/sched.h>
 #include <linux/init.h>
 #include <linux/videodev2.h>
+#include <linux/gfp.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
