@@ -341,7 +341,6 @@ static int bcm_enet_receive_queue(struct net_device *dev, int budget)
 		}
 
 		skb_put(skb, len);
-		skb->dev = dev;
 		skb->protocol = eth_type_trans(skb, dev);
 		priv->stats.rx_packets++;
 		priv->stats.rx_bytes += len;
@@ -605,7 +604,7 @@ static int bcm_enet_set_mac_address(struct net_device *dev, void *p)
 static void bcm_enet_set_multicast_list(struct net_device *dev)
 {
 	struct bcm_enet_priv *priv;
-	struct dev_mc_list *mc_list;
+	struct netdev_hw_addr *ha;
 	u32 val;
 	int i;
 
@@ -633,14 +632,14 @@ static void bcm_enet_set_multicast_list(struct net_device *dev)
 	}
 
 	i = 0;
-	netdev_for_each_mc_addr(mc_list, dev) {
+	netdev_for_each_mc_addr(ha, dev) {
 		u8 *dmi_addr;
 		u32 tmp;
 
 		if (i == 3)
 			break;
 		/* update perfect match registers */
-		dmi_addr = mc_list->dmi_addr;
+		dmi_addr = ha->addr;
 		tmp = (dmi_addr[2] << 24) | (dmi_addr[3] << 16) |
 			(dmi_addr[4] << 8) | dmi_addr[5];
 		enet_writel(priv, tmp, ENET_PML_REG(i + 1));

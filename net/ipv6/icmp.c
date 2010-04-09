@@ -483,6 +483,7 @@ route_done:
 			      np->tclass, NULL, &fl, (struct rt6_info*)dst,
 			      MSG_DONTWAIT);
 	if (err) {
+		ICMP6_INC_STATS_BH(net, idev, ICMP6_MIB_OUTMSGS);
 		ip6_flush_pending_frames(sk);
 		goto out_put;
 	}
@@ -563,6 +564,7 @@ static void icmpv6_echo_reply(struct sk_buff *skb)
 				(struct rt6_info*)dst, MSG_DONTWAIT);
 
 	if (err) {
+		ICMP6_INC_STATS_BH(net, idev, ICMP6_MIB_OUTMSGS);
 		ip6_flush_pending_frames(sk);
 		goto out_put;
 	}

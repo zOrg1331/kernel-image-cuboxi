@@ -88,7 +88,7 @@ static void bnep_net_set_mc_list(struct net_device *dev)
 		memcpy(__skb_put(skb, ETH_ALEN), dev->broadcast, ETH_ALEN);
 		r->len = htons(ETH_ALEN * 2);
 	} else {
-		struct dev_mc_list *dmi = dev->mc_list;
+		struct netdev_hw_addr *ha;
 		int i, len = skb->len;
 
 		if (dev->flags & IFF_BROADCAST) {
@@ -98,12 +98,12 @@ static void bnep_net_set_mc_list(struct net_device *dev)
 
 		/* FIXME: We should group addresses here. */
 
-		for (i = 0;
-		     i < netdev_mc_count(dev) && i < BNEP_MAX_MULTICAST_FILTERS;
-		     i++) {
-			memcpy(__skb_put(skb, ETH_ALEN), dmi->dmi_addr, ETH_ALEN);
-			memcpy(__skb_put(skb, ETH_ALEN), dmi->dmi_addr, ETH_ALEN);
-			dmi = dmi->next;
+		i = 0;
+		netdev_for_each_mc_addr(ha, dev) {
+			if (i == BNEP_MAX_MULTICAST_FILTERS)
+				break;
+			memcpy(__skb_put(skb, ETH_ALEN), ha->addr, ETH_ALEN);
+			memcpy(__skb_put(skb, ETH_ALEN), ha->addr, ETH_ALEN);
 		}
 		r->len = htons(skb->len - len);
 	}
