@@ -828,7 +828,8 @@ static void rt2800_config_channel(struct rt2x00_dev *rt2x00dev,
 	u8 bbp;
 
 	if ((rt2x00_rt(rt2x00dev, RT3070) ||
-	     rt2x00_rt(rt2x00dev, RT3090)) &&
+	     rt2x00_rt(rt2x00dev, RT3090) ||
+	     rt2x00_rt(rt2x00dev, RT2872)) &&
 	    (rt2x00_rf(rt2x00dev, RF2020) ||
 	     rt2x00_rf(rt2x00dev, RF3020) ||
 	     rt2x00_rf(rt2x00dev, RF3021) ||
@@ -1015,13 +1016,13 @@ static void rt2800_config_ps(struct rt2x00_dev *rt2x00dev,
 
 		rt2x00dev->ops->lib->set_device_state(rt2x00dev, state);
 	} else {
-		rt2x00dev->ops->lib->set_device_state(rt2x00dev, state);
-
 		rt2800_register_read(rt2x00dev, AUTOWAKEUP_CFG, &reg);
 		rt2x00_set_field32(&reg, AUTOWAKEUP_CFG_AUTO_LEAD_TIME, 0);
 		rt2x00_set_field32(&reg, AUTOWAKEUP_CFG_TBCN_BEFORE_WAKE, 0);
 		rt2x00_set_field32(&reg, AUTOWAKEUP_CFG_AUTOWAKE, 0);
 		rt2800_register_write(rt2x00dev, AUTOWAKEUP_CFG, reg);
+
+		rt2x00dev->ops->lib->set_device_state(rt2x00dev, state);
 	}
 }
 
