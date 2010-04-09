@@ -1,7 +1,7 @@
-Name: kernel-image-std-def
+Name: kernel-image-ovz-smp
 Version: 2.6.32
-Release: alt10
-epoch:1 
+Release: alt1
+
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -20,11 +20,13 @@ epoch:1
 # You can change compiler version by editing this line:
 %define kgcc_version	4.3
 
-# Enable/disable SGML docs formatting
-%def_enable docs
-
-#Remove oss
+# Enable/disable several parts of kernel
+%def_disable docs
 %def_disable oss
+%def_disable kvm
+%def_disable v4l
+%def_disable staging
+
 ## Don't edit below this line ##################################
 
 %define kversion	%kernel_base_version%kernel_extra_version
@@ -184,6 +186,7 @@ OpenGL implementations.
 
 These are modules for your ALT Linux system
 
+%if_enabled kvm
 %package -n kernel-modules-kvm-%flavour
 Summary: Linux KVM (Kernel Virtual Machine) modules
 Group: System/Kernel and hardware
@@ -198,8 +201,9 @@ Requires(postun): %name = %version-%release
 %description -n kernel-modules-kvm-%flavour
 Linux kernel module for Kernel Virtual Machine virtualization
 environment.
+%endif
 
-
+%if_enabled v4l
 %package -n kernel-modules-v4l-%flavour
 Summary: Video4Linux driver modules (obsolete)
 Group: System/Kernel and hardware
@@ -215,7 +219,9 @@ Requires(postun): %name = %version-%release
 
 %description -n kernel-modules-v4l-%flavour
 Video for linux drivers
+%endif
 
+%if_enabled staging
 %package -n kernel-modules-staging-%flavour
 Summary:  Kernel modules under development
 Group: System/Kernel and hardware
@@ -231,6 +237,7 @@ Requires(postun): %name = %version-%release
 Drivers and filesystems that are not ready to be merged into the main
 portion of the Linux kernel tree at this point in time for various
 technical reasons.
+%endif
 
 %package -n kernel-headers-%flavour
 Summary: Header files for the Linux kernel
@@ -476,30 +483,34 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-ide-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
-
 %post -n kernel-modules-drm-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
 %postun -n kernel-modules-drm-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
+%if_enabled kvm
 %post -n kernel-modules-kvm-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
 %postun -n kernel-modules-kvm-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
+%endif
 
+%if_enabled v4l
 %post -n kernel-modules-v4l-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
 %postun -n kernel-modules-v4l-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
+%endif
 
 %post -n kernel-modules-alsa-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
 %postun -n kernel-modules-alsa-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
+
 %post -n kernel-headers-%flavour
 %post_kernel_headers %kversion-%flavour-%krelease
 
@@ -513,10 +524,16 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir
 %exclude %modules_dir/build
 %exclude %modules_dir/kernel/sound
+%if_enabled v4l
 %exclude %modules_dir/kernel/drivers/media/
+%endif
+%if_enabled staging
 %exclude %modules_dir/kernel/drivers/staging/
+%endif
 %exclude %modules_dir/kernel/drivers/gpu/drm
+%if_enabled kvm
 %exclude %modules_dir/kernel/arch/x86/kvm
+%endif
 %exclude %modules_dir/kernel/drivers/ide/
 /lib/firmware/*
 %if_enabled oss
@@ -552,16 +569,25 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
 
+%if_enabled kvm
 %files -n kernel-modules-kvm-%flavour
 %modules_dir/kernel/arch/x86/kvm
+%endif # kvm
 
+%if_enabled v4l
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
+%endif # v4l
 
+%if_enabled staging
 %files -n kernel-modules-staging-%flavour
 %modules_dir/kernel/drivers/staging/
+%endif # staging
 
 %changelog
+* Wed Apr 07 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt1
+- Build for Sisyphus
+
 * Thu Mar 25 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt10
 - 2.6.32.10 
 
