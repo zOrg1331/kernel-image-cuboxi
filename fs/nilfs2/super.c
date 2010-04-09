@@ -1189,6 +1189,7 @@ static int __init init_nilfs_fs(void)
 	if (err)
 		goto free_cachep;
 
+	printk(KERN_INFO "NILFS version 2 loaded\n");
 	return 0;
 
 free_cachep:
