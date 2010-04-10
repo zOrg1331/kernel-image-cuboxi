@@ -2684,13 +2684,6 @@ static void nilfs_segctor_kill_thread(struct nilfs_sc_info *sci)
 	}
 }
 
-static int nilfs_segctor_init(struct nilfs_sc_info *sci)
-{
-	sci->sc_seq_done = sci->sc_seq_request;
-
-	return nilfs_segctor_start_thread(sci);
-}
-
 /*
  * Setup & clean-up functions
  */
@@ -2814,7 +2807,7 @@ int nilfs_attach_segment_constructor(struct nilfs_sb_info *sbi)
 		return -ENOMEM;
 
 	nilfs_attach_writer(nilfs, sbi);
-	err = nilfs_segctor_init(NILFS_SC(sbi));
+	err = nilfs_segctor_start_thread(NILFS_SC(sbi));
 	if (err) {
 		nilfs_detach_writer(nilfs, sbi);
 		kfree(sbi->s_sc_info);
