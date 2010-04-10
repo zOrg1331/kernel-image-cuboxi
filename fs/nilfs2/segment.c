@@ -2158,9 +2158,9 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int mode)
 static void nilfs_segctor_start_timer(struct nilfs_sc_info *sci)
 {
 	spin_lock(&sci->sc_state_lock);
-	if (sci->sc_timer && !(sci->sc_state & NILFS_SEGCTOR_COMMIT)) {
-		sci->sc_timer->expires = jiffies + sci->sc_interval;
-		add_timer(sci->sc_timer);
+	if (!(sci->sc_state & NILFS_SEGCTOR_COMMIT)) {
+		sci->sc_timer.expires = jiffies + sci->sc_interval;
+		add_timer(&sci->sc_timer);
 		sci->sc_state |= NILFS_SEGCTOR_COMMIT;
 	}
 	spin_unlock(&sci->sc_state_lock);
@@ -2365,9 +2365,7 @@ static void nilfs_segctor_accept(struct nilfs_sc_info *sci)
 	spin_lock(&sci->sc_state_lock);
 	sci->sc_seq_accepted = sci->sc_seq_request;
 	spin_unlock(&sci->sc_state_lock);
-
-	if (sci->sc_timer)
-		del_timer_sync(sci->sc_timer);
+	del_timer_sync(&sci->sc_timer);
 }
 
 /**
@@ -2393,9 +2391,9 @@ static void nilfs_segctor_notify(struct nilfs_sc_info *sci, int mode, int err)
 			sci->sc_flush_request &= ~FLUSH_DAT_BIT;
 
 		/* re-enable timer if checkpoint creation was not done */
-		if (sci->sc_timer && (sci->sc_state & NILFS_SEGCTOR_COMMIT) &&
-		    time_before(jiffies, sci->sc_timer->expires))
-			add_timer(sci->sc_timer);
+		if ((sci->sc_state & NILFS_SEGCTOR_COMMIT) &&
+		    time_before(jiffies, sci->sc_timer.expires))
+			add_timer(&sci->sc_timer);
 	}
 	spin_unlock(&sci->sc_state_lock);
 }
@@ -2574,13 +2572,10 @@ static int nilfs_segctor_thread(void *arg)
 {
 	struct nilfs_sc_info *sci = (struct nilfs_sc_info *)arg;
 	struct the_nilfs *nilfs = sci->sc_sbi->s_nilfs;
-	struct timer_list timer;
 	int timeout = 0;
 
-	init_timer(&timer);
-	timer.data = (unsigned long)current;
-	timer.function = nilfs_construction_timeout;
-	sci->sc_timer = &timer;
+	sci->sc_timer.data = (unsigned long)current;
+	sci->sc_timer.function = nilfs_construction_timeout;
 
 	/* start sync. */
 	sci->sc_task = current;
@@ -2629,7 +2624,7 @@ static int nilfs_segctor_thread(void *arg)
 			should_sleep = 0;
 		else if (sci->sc_state & NILFS_SEGCTOR_COMMIT)
 			should_sleep = time_before(jiffies,
-						   sci->sc_timer->expires);
+					sci->sc_timer.expires);
 
 		if (should_sleep) {
 			spin_unlock(&sci->sc_state_lock);
@@ -2638,7 +2633,7 @@ static int nilfs_segctor_thread(void *arg)
 		}
 		finish_wait(&sci->sc_wait_daemon, &wait);
 		timeout = ((sci->sc_state & NILFS_SEGCTOR_COMMIT) &&
-			   time_after_eq(jiffies, sci->sc_timer->expires));
+			   time_after_eq(jiffies, sci->sc_timer.expires));
 
 		if (nilfs_sb_dirty(nilfs) && nilfs_sb_need_update(nilfs))
 			set_nilfs_discontinued(nilfs);
@@ -2647,8 +2642,6 @@ static int nilfs_segctor_thread(void *arg)
 
  end_thread:
 	spin_unlock(&sci->sc_state_lock);
-	del_timer_sync(sci->sc_timer);
-	sci->sc_timer = NULL;
 
 	/* end sync. */
 	sci->sc_task = NULL;
@@ -2707,6 +2700,7 @@ static struct nilfs_sc_info *nilfs_segctor_new(struct nilfs_sb_info *sbi)
 	INIT_LIST_HEAD(&sci->sc_write_logs);
 	INIT_LIST_HEAD(&sci->sc_gc_inodes);
 	INIT_LIST_HEAD(&sci->sc_copied_buffers);
+	init_timer(&sci->sc_timer);
 
 	sci->sc_interval = HZ * NILFS_SC_DEFAULT_TIMEOUT;
 	sci->sc_mjcp_freq = HZ * NILFS_SC_DEFAULT_SR_FREQ;
@@ -2773,6 +2767,7 @@ static void nilfs_segctor_destroy(struct nilfs_sc_info *sci)
 
 	down_write(&sbi->s_nilfs->ns_segctor_sem);
 
+	del_timer_sync(&sci->sc_timer);
 	kfree(sci);
 }
 
