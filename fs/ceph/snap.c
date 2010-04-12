@@ -513,7 +513,7 @@ int __ceph_finish_cap_snap(struct ceph_inode_info *ci,
 			    struct ceph_cap_snap *capsnap)
 {
 	struct inode *inode = &ci->vfs_inode;
-	struct ceph_mds_client *mdsc = &ceph_client(inode->i_sb)->mdsc;
+	struct ceph_mds_client *mdsc = &ceph_sb_to_client(inode->i_sb)->mdsc;
 
 	BUG_ON(capsnap->writing);
 	capsnap->size = inode->i_size;
@@ -522,15 +522,17 @@ int __ceph_finish_cap_snap(struct ceph_inode_info *ci,
 	capsnap->ctime = inode->i_ctime;
 	capsnap->time_warp_seq = ci->i_time_warp_seq;
 	if (capsnap->dirty_pages) {
-		dout("finish_cap_snap %p cap_snap %p snapc %p %llu s=%llu "
+		dout("finish_cap_snap %p cap_snap %p snapc %p %llu %s s=%llu "
 		     "still has %d dirty pages\n", inode, capsnap,
 		     capsnap->context, capsnap->context->seq,
-		     capsnap->size, capsnap->dirty_pages);
+		     ceph_cap_string(capsnap->dirty), capsnap->size,
+		     capsnap->dirty_pages);
 		return 0;
 	}
-	dout("finish_cap_snap %p cap_snap %p snapc %p %llu s=%llu clean\n",
+	dout("finish_cap_snap %p cap_snap %p snapc %p %llu %s s=%llu\n",
 	     inode, capsnap, capsnap->context,
-	     capsnap->context->seq, capsnap->size);
+	     capsnap->context->seq, ceph_cap_string(capsnap->dirty),
+	     capsnap->size);
 
 	spin_lock(&mdsc->snap_flush_lock);
 	list_add_tail(&ci->i_snap_flush_item, &mdsc->snap_flush_list);
