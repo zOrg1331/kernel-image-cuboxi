@@ -23,7 +23,7 @@
 #define TG3_BDINFO_NIC_ADDR		0xcUL /* 32-bit */
 #define TG3_BDINFO_SIZE			0x10UL
 
-#define RX_COPY_THRESHOLD  		256
+#define RX_COPY_THRESHOLD		256
 
 #define TG3_RX_INTERNAL_RING_SZ_5906	32
 
@@ -252,7 +252,7 @@
 /* 0x94 --> 0x98 unused */
 #define TG3PCI_STD_RING_PROD_IDX	0x00000098 /* 64-bit */
 #define TG3PCI_RCV_RET_RING_CON_IDX	0x000000a0 /* 64-bit */
-/* 0xa0 --> 0xb8 unused */
+/* 0xa8 --> 0xb8 unused */
 #define TG3PCI_DUAL_MAC_CTRL		0x000000b8
 #define  DUAL_MAC_CTRL_CH_MASK		 0x00000003
 #define  DUAL_MAC_CTRL_ID		 0x00000004
@@ -2082,7 +2082,7 @@
 #define MII_TG3_DSP_AADJ1CH0		0x001f
 #define MII_TG3_DSP_AADJ1CH3		0x601f
 #define  MII_TG3_DSP_AADJ1CH3_ADCCKADJ	0x0002
-#define MII_TG3_DSP_EXP8		0x0708
+#define MII_TG3_DSP_EXP8		0x0f08
 #define  MII_TG3_DSP_EXP8_REJ2MHz	0x0001
 #define  MII_TG3_DSP_EXP8_AEDW		0x0200
 #define MII_TG3_DSP_EXP75		0x0f75
@@ -2561,7 +2561,7 @@ struct tg3_bufmgr_config {
 
 struct tg3_ethtool_stats {
 	/* Statistics maintained by Receive MAC. */
-	u64 	    	rx_octets;
+	u64		rx_octets;
 	u64		rx_fragments;
 	u64		rx_ucast_packets;
 	u64		rx_mcast_packets;

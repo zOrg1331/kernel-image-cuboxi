@@ -109,7 +109,7 @@ fib_rules_register(struct fib_rules_ops *tmpl, struct net *net)
 	struct fib_rules_ops *ops;
 	int err;
 
-	ops = kmemdup(tmpl, sizeof (*ops), GFP_KERNEL);
+	ops = kmemdup(tmpl, sizeof(*ops), GFP_KERNEL);
 	if (ops == NULL)
 		return ERR_PTR(-ENOMEM);
 
@@ -124,7 +124,6 @@ fib_rules_register(struct fib_rules_ops *tmpl, struct net *net)
 
 	return ops;
 }
-
 EXPORT_SYMBOL_GPL(fib_rules_register);
 
 void fib_rules_cleanup_ops(struct fib_rules_ops *ops)
@@ -158,7 +157,6 @@ void fib_rules_unregister(struct fib_rules_ops *ops)
 
 	call_rcu(&ops->rcu, fib_rules_put_rcu);
 }
-
 EXPORT_SYMBOL_GPL(fib_rules_unregister);
 
 static int fib_rule_match(struct fib_rule *rule, struct fib_rules_ops *ops,
@@ -221,7 +219,6 @@ out:
 
 	return err;
 }
-
 EXPORT_SYMBOL_GPL(fib_rules_lookup);
 
 static int validate_rulemsg(struct fib_rule_hdr *frh, struct nlattr **tb,
@@ -614,7 +611,7 @@ static int fib_nl_dumprule(struct sk_buff *skb, struct netlink_callback *cb)
 			break;
 
 		cb->args[1] = 0;
-	skip:
+skip:
 		idx++;
 	}
 	rcu_read_unlock();
@@ -686,7 +683,6 @@ static int fib_rules_event(struct notifier_block *this, unsigned long event,
 	struct fib_rules_ops *ops;
 
 	ASSERT_RTNL();
-	rcu_read_lock();
 
 	switch (event) {
 	case NETDEV_REGISTER:
@@ -699,8 +695,6 @@ static int fib_rules_event(struct notifier_block *this, unsigned long event,
 			detach_rules(&ops->rules_list, dev);
 		break;
 	}
-
-	rcu_read_unlock();
 
 	return NOTIFY_DONE;
 }
