@@ -23,6 +23,7 @@
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
 #include <linux/leds.h>
+#include <linux/slab.h>
 #include <net/mac80211.h>
 
 #include "common.h"
@@ -309,6 +310,14 @@ struct ath_led {
 	int brightness;
 };
 
+struct htc_beacon_config {
+	u16 beacon_interval;
+	u16 listen_interval;
+	u16 dtim_period;
+	u16 bmiss_timeout;
+	u8 dtim_count;
+};
+
 #define OP_INVALID        BIT(0)
 #define OP_SCANNING       BIT(1)
 #define OP_FULL_RESET     BIT(2)
@@ -349,7 +358,11 @@ struct ath9k_htc_priv {
 	struct sk_buff *beacon;
 	spinlock_t beacon_lock;
 
+	bool tx_queues_stop;
+	spinlock_t tx_lock;
+
 	struct ieee80211_vif *vif;
+	struct htc_beacon_config cur_beacon_conf;
 	unsigned int rxfilter;
 	struct tasklet_struct wmi_tasklet;
 	struct tasklet_struct rx_tasklet;
@@ -360,6 +373,11 @@ struct ath9k_htc_priv {
 	struct ath9k_htc_aggr_work aggr_work;
 	struct delayed_work ath9k_aggr_work;
 	struct delayed_work ath9k_ani_work;
+	struct work_struct ps_work;
+
+	struct mutex htc_pm_lock;
+	unsigned long ps_usecount;
+	bool ps_enabled;
 
 	struct ath_led radio_led;
 	struct ath_led assoc_led;
@@ -386,8 +404,7 @@ static inline void ath_read_cachesize(struct ath_common *common, int *csz)
 }
 
 void ath9k_htc_beacon_config(struct ath9k_htc_priv *priv,
-			     struct ieee80211_vif *vif,
-			     struct ieee80211_bss_conf *bss_conf);
+			     struct ieee80211_vif *vif);
 void ath9k_htc_swba(struct ath9k_htc_priv *priv, u8 beacon_pending);
 void ath9k_htc_beacon_update(struct ath9k_htc_priv *priv,
 			     struct ieee80211_vif *vif);
@@ -415,6 +432,11 @@ int ath9k_rx_init(struct ath9k_htc_priv *priv);
 void ath9k_rx_cleanup(struct ath9k_htc_priv *priv);
 void ath9k_host_rx_init(struct ath9k_htc_priv *priv);
 void ath9k_rx_tasklet(unsigned long data);
+u32 ath9k_htc_calcrxfilter(struct ath9k_htc_priv *priv);
+
+void ath9k_htc_ps_wakeup(struct ath9k_htc_priv *priv);
+void ath9k_htc_ps_restore(struct ath9k_htc_priv *priv);
+void ath9k_ps_work(struct work_struct *work);
 
 void ath9k_start_rfkill_poll(struct ath9k_htc_priv *priv);
 void ath9k_init_leds(struct ath9k_htc_priv *priv);
