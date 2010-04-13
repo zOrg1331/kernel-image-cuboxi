@@ -139,7 +139,7 @@ static void dwmac100_dump_dma_regs(unsigned long ioaddr)
 {
 	int i;
 
-	DBG(KERN_DEBUG "DWMAC 100 DMA CSR \n");
+	DBG(KERN_DEBUG "DWMAC 100 DMA CSR\n");
 	for (i = 0; i < 9; i++)
 		pr_debug("\t CSR%d (offset 0x%x): 0x%08x\n", i,
 		       (DMA_BUS_MODE + i * 4),
@@ -317,7 +317,7 @@ static void dwmac100_set_filter(struct net_device *dev)
 			   MAC_CONTROL_HO | MAC_CONTROL_HP);
 	} else {
 		u32 mc_filter[2];
-		struct dev_mc_list *mclist;
+		struct netdev_hw_addr *ha;
 
 		/* Perfect filter mode for physical address and Hash
 		   filter for multicast */
@@ -326,11 +326,11 @@ static void dwmac100_set_filter(struct net_device *dev)
 			   MAC_CONTROL_IF | MAC_CONTROL_HO);
 
 		memset(mc_filter, 0, sizeof(mc_filter));
-		netdev_for_each_mc_addr(mclist, dev) {
+		netdev_for_each_mc_addr(ha, dev) {
 			/* The upper 6 bits of the calculated CRC are used to
 			 * index the contens of the hash table */
 			int bit_nr =
-			    ether_crc(ETH_ALEN, mclist->dmi_addr) >> 26;
+			    ether_crc(ETH_ALEN, ha->addr) >> 26;
 			/* The most significant bit determines the register to
 			 * use (H/L) while the other 5 bits determine the bit
 			 * within the register. */

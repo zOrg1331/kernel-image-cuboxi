@@ -42,6 +42,7 @@
 #include "iwl-core.h"
 #include "iwl-io.h"
 #include "iwl-sta.h"
+#include "iwl-agn.h"
 #include "iwl-helpers.h"
 #include "iwl-5000-hw.h"
 #include "iwl-agn-led.h"
@@ -211,6 +212,9 @@ static struct iwl_lib_ops iwl1000_lib = {
 		.set_ct_kill = iwl1000_set_ct_threshold,
 	 },
 	.add_bcast_station = iwl_add_bcast_station,
+	.recover_from_tx_stall = iwl_bg_monitor_recover,
+	.check_plcp_health = iwl_good_plcp_health,
+	.check_ack_health = iwl_good_ack_health,
 };
 
 static const struct iwl_ops iwl1000_ops = {
@@ -222,7 +226,7 @@ static const struct iwl_ops iwl1000_ops = {
 };
 
 struct iwl_cfg iwl1000_bgn_cfg = {
-	.name = "1000 Series BGN",
+	.name = "Intel(R) Centrino(R) Wireless-N 1000 BGN",
 	.fw_name_pre = IWL1000_FW_PRE,
 	.ucode_api_max = IWL1000_UCODE_API_MAX,
 	.ucode_api_min = IWL1000_UCODE_API_MIN,
@@ -248,10 +252,11 @@ struct iwl_cfg iwl1000_bgn_cfg = {
 	.support_ct_kill_exit = true,
 	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_EXT_LONG_THRESHOLD_DEF,
 	.chain_noise_scale = 1000,
+	.monitor_recover_period = IWL_MONITORING_PERIOD,
 };
 
 struct iwl_cfg iwl1000_bg_cfg = {
-	.name = "1000 Series BG",
+	.name = "Intel(R) Centrino(R) Wireless-N 1000 BG",
 	.fw_name_pre = IWL1000_FW_PRE,
 	.ucode_api_max = IWL1000_UCODE_API_MAX,
 	.ucode_api_min = IWL1000_UCODE_API_MIN,
@@ -276,6 +281,7 @@ struct iwl_cfg iwl1000_bg_cfg = {
 	.support_ct_kill_exit = true,
 	.plcp_delta_threshold = IWL_MAX_PLCP_ERR_EXT_LONG_THRESHOLD_DEF,
 	.chain_noise_scale = 1000,
+	.monitor_recover_period = IWL_MONITORING_PERIOD,
 };
 
 MODULE_FIRMWARE(IWL1000_MODULE_FIRMWARE(IWL1000_UCODE_API_MAX));
