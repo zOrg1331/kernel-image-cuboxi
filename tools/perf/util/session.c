@@ -52,11 +52,6 @@ out_close:
 	return -1;
 }
 
-static inline int perf_session__create_kernel_maps(struct perf_session *self)
-{
-	return map_groups__create_kernel_maps(&self->kmaps, self->vmlinux_maps);
-}
-
 struct perf_session *perf_session__new(const char *filename, int mode, bool force)
 {
 	size_t len = filename ? strlen(filename) + 1 : 0;
@@ -117,22 +112,17 @@ static bool symbol__match_parent_regex(struct symbol *sym)
 	return 0;
 }
 
-struct symbol **perf_session__resolve_callchain(struct perf_session *self,
-						struct thread *thread,
-						struct ip_callchain *chain,
-						struct symbol **parent)
+struct map_symbol *perf_session__resolve_callchain(struct perf_session *self,
+						   struct thread *thread,
+						   struct ip_callchain *chain,
+						   struct symbol **parent)
 {
 	u8 cpumode = PERF_RECORD_MISC_USER;
-	struct symbol **syms = NULL;
 	unsigned int i;
+	struct map_symbol *syms = calloc(chain->nr, sizeof(*syms));
 
-	if (symbol_conf.use_callchain) {
-		syms = calloc(chain->nr, sizeof(*syms));
-		if (!syms) {
-			fprintf(stderr, "Can't allocate memory for symbols\n");
-			exit(-1);
-		}
-	}
+	if (!syms)
+		return NULL;
 
 	for (i = 0; i < chain->nr; i++) {
 		u64 ip = chain->ips[i];
@@ -160,7 +150,8 @@ struct symbol **perf_session__resolve_callchain(struct perf_session *self,
 				*parent = al.sym;
 			if (!symbol_conf.use_callchain)
 				break;
-			syms[i] = al.sym;
+			syms[i].map = al.map;
+			syms[i].sym = al.sym;
 		}
 	}
 
@@ -396,6 +387,10 @@ int __perf_session__process_events(struct perf_session *self,
 	event_t *event;
 	uint32_t size;
 	char *buf;
+	struct ui_progress *progress = ui_progress__new("Processing events...",
+							self->size);
+	if (progress == NULL)
+		return -1;
 
 	perf_event_ops__fill_defaults(ops);
 
@@ -424,6 +419,7 @@ remap:
 
 more:
 	event = (event_t *)(buf + head);
+	ui_progress__update(progress, offset);
 
 	if (self->header.needs_swap)
 		perf_event_header__bswap(&event->header);
@@ -474,6 +470,7 @@ more:
 done:
 	err = 0;
 out_err:
+	ui_progress__delete(progress);
 	return err;
 }
 
@@ -542,33 +539,4 @@ int perf_session__set_kallsyms_ref_reloc_sym(struct perf_session *self,
 	}
 
 	return 0;
-}
-
-static u64 map__reloc_map_ip(struct map *map, u64 ip)
-{
-	return ip + (s64)map->pgoff;
-}
-
-static u64 map__reloc_unmap_ip(struct map *map, u64 ip)
-{
-	return ip - (s64)map->pgoff;
-}
-
-void map__reloc_vmlinux(struct map *self)
-{
-	struct kmap *kmap = map__kmap(self);
-	s64 reloc;
-
-	if (!kmap->ref_reloc_sym || !kmap->ref_reloc_sym->unrelocated_addr)
-		return;
-
-	reloc = (kmap->ref_reloc_sym->unrelocated_addr -
-		 kmap->ref_reloc_sym->addr);
-
-	if (!reloc)
-		return;
-
-	self->map_ip   = map__reloc_map_ip;
-	self->unmap_ip = map__reloc_unmap_ip;
-	self->pgoff    = reloc;
 }

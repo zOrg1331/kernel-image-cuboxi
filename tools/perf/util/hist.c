@@ -22,8 +22,10 @@ struct hist_entry *__perf_session__add_hist_entry(struct rb_root *hists,
 	struct hist_entry *he;
 	struct hist_entry entry = {
 		.thread	= al->thread,
-		.map	= al->map,
-		.sym	= al->sym,
+		.ms = {
+			.map	= al->map,
+			.sym	= al->sym,
+		},
 		.ip	= al->addr,
 		.level	= al->level,
 		.count	= count,
@@ -48,7 +50,8 @@ struct hist_entry *__perf_session__add_hist_entry(struct rb_root *hists,
 			p = &(*p)->rb_right;
 	}
 
-	he = malloc(sizeof(*he));
+	he = malloc(sizeof(*he) + (symbol_conf.use_callchain ?
+				    sizeof(struct callchain_node) : 0));
 	if (!he)
 		return NULL;
 	*he = entry;
@@ -166,7 +169,7 @@ static void perf_session__insert_output_hist_entry(struct rb_root *root,
 	struct hist_entry *iter;
 
 	if (symbol_conf.use_callchain)
-		callchain_param.sort(&he->sorted_chain, &he->callchain,
+		callchain_param.sort(&he->sorted_chain, he->callchain,
 				      min_callchain_hits, &callchain_param);
 
 	while (*p != NULL) {
@@ -183,12 +186,13 @@ static void perf_session__insert_output_hist_entry(struct rb_root *root,
 	rb_insert_color(&he->rb_node, root);
 }
 
-void perf_session__output_resort(struct rb_root *hists, u64 total_samples)
+u64 perf_session__output_resort(struct rb_root *hists, u64 total_samples)
 {
 	struct rb_root tmp;
 	struct rb_node *next;
 	struct hist_entry *n;
 	u64 min_callchain_hits;
+	u64 nr_hists = 0;
 
 	min_callchain_hits =
 		total_samples * (callchain_param.min_percent / 100);
@@ -203,9 +207,11 @@ void perf_session__output_resort(struct rb_root *hists, u64 total_samples)
 		rb_erase(&n->rb_node, hists);
 		perf_session__insert_output_hist_entry(&tmp, n,
 						       min_callchain_hits);
+		++nr_hists;
 	}
 
 	*hists = tmp;
+	return nr_hists;
 }
 
 static size_t callchain__fprintf_left_margin(FILE *fp, int left_margin)
@@ -258,8 +264,8 @@ static size_t ipchain__fprintf_graph(FILE *fp, struct callchain_list *chain,
 		} else
 			ret += fprintf(fp, "%s", "          ");
 	}
-	if (chain->sym)
-		ret += fprintf(fp, "%s\n", chain->sym->name);
+	if (chain->ms.sym)
+		ret += fprintf(fp, "%s\n", chain->ms.sym->name);
 	else
 		ret += fprintf(fp, "%p\n", (void *)(long)chain->ip);
 
@@ -278,7 +284,7 @@ static void init_rem_hits(void)
 	}
 
 	strcpy(rem_sq_bracket->name, "[...]");
-	rem_hits.sym = rem_sq_bracket;
+	rem_hits.ms.sym = rem_sq_bracket;
 }
 
 static size_t __callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
@@ -328,8 +334,6 @@ static size_t __callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
 						   left_margin);
 		i = 0;
 		list_for_each_entry(chain, &child->val, list) {
-			if (chain->ip >= PERF_CONTEXT_MAX)
-				continue;
 			ret += ipchain__fprintf_graph(fp, chain, depth,
 						      new_depth_mask, i++,
 						      new_total,
@@ -368,9 +372,6 @@ static size_t callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
 	int ret = 0;
 
 	list_for_each_entry(chain, &self->val, list) {
-		if (chain->ip >= PERF_CONTEXT_MAX)
-			continue;
-
 		if (!i++ && sort__first_dimension == SORT_SYM)
 			continue;
 
@@ -385,8 +386,8 @@ static size_t callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
 		} else
 			ret += callchain__fprintf_left_margin(fp, left_margin);
 
-		if (chain->sym)
-			ret += fprintf(fp, " %s\n", chain->sym->name);
+		if (chain->ms.sym)
+			ret += fprintf(fp, " %s\n", chain->ms.sym->name);
 		else
 			ret += fprintf(fp, " %p\n", (void *)(long)chain->ip);
 	}
@@ -411,8 +412,8 @@ static size_t callchain__fprintf_flat(FILE *fp, struct callchain_node *self,
 	list_for_each_entry(chain, &self->val, list) {
 		if (chain->ip >= PERF_CONTEXT_MAX)
 			continue;
-		if (chain->sym)
-			ret += fprintf(fp, "                %s\n", chain->sym->name);
+		if (chain->ms.sym)
+			ret += fprintf(fp, "                %s\n", chain->ms.sym->name);
 		else
 			ret += fprintf(fp, "                %p\n",
 					(void *)(long)chain->ip);
@@ -455,16 +456,17 @@ static size_t hist_entry_callchain__fprintf(FILE *fp, struct hist_entry *self,
 	return ret;
 }
 
-static size_t hist_entry__fprintf(struct hist_entry *self,
-				  struct perf_session *pair_session,
-				  bool show_displacement,
-				  long displacement, FILE *fp,
-				  u64 session_total)
+int hist_entry__snprintf(struct hist_entry *self,
+			   char *s, size_t size,
+			   struct perf_session *pair_session,
+			   bool show_displacement,
+			   long displacement, bool color,
+			   u64 session_total)
 {
 	struct sort_entry *se;
 	u64 count, total;
 	const char *sep = symbol_conf.field_sep;
-	size_t ret;
+	int ret;
 
 	if (symbol_conf.exclude_other && !self->parent)
 		return 0;
@@ -477,17 +479,22 @@ static size_t hist_entry__fprintf(struct hist_entry *self,
 		total = session_total;
 	}
 
-	if (total)
-		ret = percent_color_fprintf(fp, sep ? "%.2f" : "   %6.2f%%",
-					    (count * 100.0) / total);
-	else
-		ret = fprintf(fp, sep ? "%lld" : "%12lld ", count);
+	if (total) {
+		if (color)
+			ret = percent_color_snprintf(s, size,
+						     sep ? "%.2f" : "   %6.2f%%",
+						     (count * 100.0) / total);
+		else
+			ret = snprintf(s, size, sep ? "%.2f" : "   %6.2f%%",
+				       (count * 100.0) / total);
+	} else
+		ret = snprintf(s, size, sep ? "%lld" : "%12lld ", count);
 
 	if (symbol_conf.show_nr_samples) {
 		if (sep)
-			fprintf(fp, "%c%lld", *sep, count);
+			ret += snprintf(s + ret, size - ret, "%c%lld", *sep, count);
 		else
-			fprintf(fp, "%11lld", count);
+			ret += snprintf(s + ret, size - ret, "%11lld", count);
 	}
 
 	if (pair_session) {
@@ -507,9 +514,9 @@ static size_t hist_entry__fprintf(struct hist_entry *self,
 			snprintf(bf, sizeof(bf), " ");
 
 		if (sep)
-			ret += fprintf(fp, "%c%s", *sep, bf);
+			ret += snprintf(s + ret, size - ret, "%c%s", *sep, bf);
 		else
-			ret += fprintf(fp, "%11.11s", bf);
+			ret += snprintf(s + ret, size - ret, "%11.11s", bf);
 
 		if (show_displacement) {
 			if (displacement)
@@ -518,9 +525,9 @@ static size_t hist_entry__fprintf(struct hist_entry *self,
 				snprintf(bf, sizeof(bf), " ");
 
 			if (sep)
-				fprintf(fp, "%c%s", *sep, bf);
+				ret += snprintf(s + ret, size - ret, "%c%s", *sep, bf);
 			else
-				fprintf(fp, "%6.6s", bf);
+				ret += snprintf(s + ret, size - ret, "%6.6s", bf);
 		}
 	}
 
@@ -528,27 +535,41 @@ static size_t hist_entry__fprintf(struct hist_entry *self,
 		if (se->elide)
 			continue;
 
-		fprintf(fp, "%s", sep ?: "  ");
-		ret += se->print(fp, self, se->width ? *se->width : 0);
-	}
-
-	ret += fprintf(fp, "\n");
-
-	if (symbol_conf.use_callchain) {
-		int left_margin = 0;
-
-		if (sort__first_dimension == SORT_COMM) {
-			se = list_first_entry(&hist_entry__sort_list, typeof(*se),
-						list);
-			left_margin = se->width ? *se->width : 0;
-			left_margin -= thread__comm_len(self->thread);
-		}
-
-		hist_entry_callchain__fprintf(fp, self, session_total,
-					      left_margin);
+		ret += snprintf(s + ret, size - ret, "%s", sep ?: "  ");
+		ret += se->snprintf(self, s + ret, size - ret,
+				    se->width ? *se->width : 0);
 	}
 
 	return ret;
+}
+
+int hist_entry__fprintf(struct hist_entry *self,
+			struct perf_session *pair_session,
+			bool show_displacement,
+			long displacement, FILE *fp,
+			u64 session_total)
+{
+	char bf[512];
+	hist_entry__snprintf(self, bf, sizeof(bf), pair_session,
+			     show_displacement, displacement,
+			     true, session_total);
+	return fprintf(fp, "%s\n", bf);
+}
+
+static size_t hist_entry__fprintf_callchain(struct hist_entry *self, FILE *fp,
+					    u64 session_total)
+{
+	int left_margin = 0;
+
+	if (sort__first_dimension == SORT_COMM) {
+		struct sort_entry *se = list_first_entry(&hist_entry__sort_list,
+							 typeof(*se), list);
+		left_margin = se->width ? *se->width : 0;
+		left_margin -= thread__comm_len(self->thread);
+	}
+
+	return hist_entry_callchain__fprintf(fp, self, session_total,
+					     left_margin);
 }
 
 size_t perf_session__fprintf_hists(struct rb_root *hists,
@@ -655,9 +676,13 @@ print_entries:
 		}
 		ret += hist_entry__fprintf(h, pair, show_displacement,
 					   displacement, fp, session_total);
-		if (h->map == NULL && verbose > 1) {
+
+		if (symbol_conf.use_callchain)
+			ret += hist_entry__fprintf_callchain(h, fp, session_total);
+
+		if (h->ms.map == NULL && verbose > 1) {
 			__map_groups__fprintf_maps(&h->thread->mg,
-						   MAP__FUNCTION, fp);
+						   MAP__FUNCTION, verbose, fp);
 			fprintf(fp, "%.10s end\n", graph_dotted_line);
 		}
 	}
