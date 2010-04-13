@@ -31,10 +31,12 @@ struct ntrig_data {
 	/* Incoming raw values for a single contact */
 	__u16 x, y, w, h;
 	__u16 id;
-	__u8 confidence;
+
+	bool tipswitch;
+	bool confidence;
+	bool first_contact_touch;
 
 	bool reading_mt;
-	__u8 first_contact_confidence;
 
 	__u8 mt_footer[4];
 	__u8 mt_foot_count;
@@ -141,9 +143,10 @@ static int ntrig_event (struct hid_device *hid, struct hid_field *field,
 		case 0xff000001:
 			/* Tag indicating the start of a multitouch group */
 			nd->reading_mt = 1;
-			nd->first_contact_confidence = 0;
+			nd->first_contact_touch = 0;
 			break;
 		case HID_DG_TIPSWITCH:
+			nd->tipswitch = value;
 			/* Prevent emission of touch until validated */
 			return 1;
 		case HID_DG_CONFIDENCE:
@@ -171,8 +174,15 @@ static int ntrig_event (struct hid_device *hid, struct hid_field *field,
 			 * to emit a normal (X, Y) position
 			 */
 			if (!nd->reading_mt) {
+				/*
+				 * TIPSWITCH indicates the presence of a
+				 * finger.  DOUBLETAP is emitted are both
+				 * emitted to support legacy drivers.
+				 */
+				input_report_key(input, BTN_TOUCH,
+						 nd->tipswitch);
 				input_report_key(input, BTN_TOOL_DOUBLETAP,
-						 (nd->confidence != 0));
+						 nd->tipswitch);
 				input_event(input, EV_ABS, ABS_X, nd->x);
 				input_event(input, EV_ABS, ABS_Y, nd->y);
 			}
@@ -211,7 +221,8 @@ static int ntrig_event (struct hid_device *hid, struct hid_field *field,
 
 			/* emit a normal (X, Y) for the first point only */
 			if (nd->id == 0) {
-				nd->first_contact_confidence = nd->confidence;
+				nd->first_contact_touch = nd->confidence &&
+					nd->tipswitch;
 				input_event(input, EV_ABS, ABS_X, nd->x);
 				input_event(input, EV_ABS, ABS_Y, nd->y);
 			}
@@ -241,7 +252,7 @@ static int ntrig_event (struct hid_device *hid, struct hid_field *field,
 
 			nd->reading_mt = 0;
 
-			if (nd->first_contact_confidence) {
+			if (nd->first_contact_touch) {
 				switch (value) {
 				case 0:	/* for single touch devices */
 				case 1:
