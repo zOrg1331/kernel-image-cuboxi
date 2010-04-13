@@ -17,7 +17,6 @@
 #include <linux/init_task.h>
 #include <linux/security.h>
 #include <linux/cn_proc.h>
-#include "cred-internals.h"
 
 #if 0
 #define kdebug(FMT, ...) \
@@ -557,8 +556,6 @@ int commit_creds(struct cred *new)
 	if (new->user != old->user)
 		atomic_dec(&old->user->processes);
 	alter_cred_subscribers(old, -2);
-
-	sched_switch_user(task);
 
 	/* send notifications */
 	if (new->uid   != old->uid  ||
