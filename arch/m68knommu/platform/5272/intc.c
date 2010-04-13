@@ -103,8 +103,26 @@ static void intc_irq_ack(unsigned int irq)
 
 static int intc_irq_set_type(unsigned int irq, unsigned int type)
 {
-	/* We can set the edge type here for external interrupts */
-	return 0;
+	/* set the edge type for external interrupts */
+	u32 pitr;
+
+	if ((type != IRQF_TRIGGER_RISING) || (type != IRQF_TRIGGER_FALLING))
+		return -EINVAL;
+
+	switch (irq) {
+	case MCF_IRQ_EINT1 ... MCF_IRQ_EINT4:
+	case MCF_IRQ_EINT5 ... MCF_IRQ_EINT6:
+		pitr = __raw_readl(MCFSIM_PITR);
+		if (type & IRQF_TRIGGER_RISING)
+			pitr |= 1 << (96 - irq);
+		else
+			pitr &= ~(1 << (96 - irq));
+		__raw_writel(pitr, MCFSIM_PITR);
+
+		return 0;
+	default:
+		return -EINVAL;
+	}
 }
 
 static struct irq_chip intc_irq_chip = {
@@ -128,11 +146,16 @@ void __init init_IRQ(void)
 	writel(0x88888888, MCF_MBAR + MCFSIM_ICR4);
 
 	for (irq = 0; (irq < NR_IRQS); irq++) {
-		irq_desc[irq].status = IRQ_DISABLED;
-		irq_desc[irq].action = NULL;
-		irq_desc[irq].depth = 1;
-		irq_desc[irq].chip = &intc_irq_chip;
-		intc_irq_set_type(irq, 0);
+		switch (irq) {
+		case MCF_IRQ_EINT1 ... MCF_IRQ_EINT4:
+		case MCF_IRQ_EINT5 ... MCF_IRQ_EINT6:
+			set_irq_chip_and_handler(irq, &intc_irq_chip,
+					handle_edge_irq);
+			break;
+		default:
+			set_irq_chip_and_handler(irq, &intc_irq_chip,
+					handle_level_irq);
+			break;
+		}
 	}
 }
-
