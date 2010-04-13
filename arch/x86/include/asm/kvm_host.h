@@ -224,14 +224,9 @@ struct kvm_pv_mmu_op_buffer {
 
 struct kvm_pio_request {
 	unsigned long count;
-	int cur_count;
-	gva_t guest_gva;
 	int in;
 	int port;
 	int size;
-	int string;
-	int down;
-	int rep;
 };
 
 /*
@@ -362,8 +357,8 @@ struct kvm_vcpu_arch {
 	u64 *mce_banks;
 
 	/* used for guest single stepping over the given code position */
-	u16 singlestep_cs;
 	unsigned long singlestep_rip;
+
 	/* fields used by HYPER-V emulation */
 	u64 hv_vapic;
 };
@@ -389,6 +384,7 @@ struct kvm_arch {
 	unsigned int n_free_mmu_pages;
 	unsigned int n_requested_mmu_pages;
 	unsigned int n_alloc_mmu_pages;
+	atomic_t invlpg_counter;
 	struct hlist_head mmu_page_hash[KVM_NUM_MMU_PAGES];
 	/*
 	 * Hash table of struct kvm_mmu_page.
@@ -461,11 +457,6 @@ struct kvm_vcpu_stat {
 	u32 nmi_injections;
 };
 
-struct descriptor_table {
-	u16 limit;
-	unsigned long base;
-} __attribute__((packed));
-
 struct kvm_x86_ops {
 	int (*cpu_has_kvm_support)(void);          /* __init */
 	int (*disabled_by_bios)(void);             /* __init */
@@ -503,10 +494,10 @@ struct kvm_x86_ops {
 	void (*set_cr3)(struct kvm_vcpu *vcpu, unsigned long cr3);
 	void (*set_cr4)(struct kvm_vcpu *vcpu, unsigned long cr4);
 	void (*set_efer)(struct kvm_vcpu *vcpu, u64 efer);
-	void (*get_idt)(struct kvm_vcpu *vcpu, struct descriptor_table *dt);
-	void (*set_idt)(struct kvm_vcpu *vcpu, struct descriptor_table *dt);
-	void (*get_gdt)(struct kvm_vcpu *vcpu, struct descriptor_table *dt);
-	void (*set_gdt)(struct kvm_vcpu *vcpu, struct descriptor_table *dt);
+	void (*get_idt)(struct kvm_vcpu *vcpu, struct desc_ptr *dt);
+	void (*set_idt)(struct kvm_vcpu *vcpu, struct desc_ptr *dt);
+	void (*get_gdt)(struct kvm_vcpu *vcpu, struct desc_ptr *dt);
+	void (*set_gdt)(struct kvm_vcpu *vcpu, struct desc_ptr *dt);
 	int (*get_dr)(struct kvm_vcpu *vcpu, int dr, unsigned long *dest);
 	int (*set_dr)(struct kvm_vcpu *vcpu, int dr, unsigned long value);
 	void (*cache_reg)(struct kvm_vcpu *vcpu, enum kvm_reg reg);
@@ -587,23 +578,14 @@ int emulate_instruction(struct kvm_vcpu *vcpu,
 void kvm_report_emulation_failure(struct kvm_vcpu *cvpu, const char *context);
 void realmode_lgdt(struct kvm_vcpu *vcpu, u16 size, unsigned long address);
 void realmode_lidt(struct kvm_vcpu *vcpu, u16 size, unsigned long address);
-void realmode_lmsw(struct kvm_vcpu *vcpu, unsigned long msw,
-		   unsigned long *rflags);
 
-unsigned long realmode_get_cr(struct kvm_vcpu *vcpu, int cr);
-void realmode_set_cr(struct kvm_vcpu *vcpu, int cr, unsigned long value,
-		     unsigned long *rflags);
 void kvm_enable_efer_bits(u64);
 int kvm_get_msr(struct kvm_vcpu *vcpu, u32 msr_index, u64 *data);
 int kvm_set_msr(struct kvm_vcpu *vcpu, u32 msr_index, u64 data);
 
 struct x86_emulate_ctxt;
 
-int kvm_emulate_pio(struct kvm_vcpu *vcpu, int in,
-		     int size, unsigned port);
-int kvm_emulate_pio_string(struct kvm_vcpu *vcpu, int in,
-			   int size, unsigned long count, int down,
-			    gva_t address, int rep, unsigned port);
+int kvm_fast_pio_out(struct kvm_vcpu *vcpu, int size, unsigned short port);
 void kvm_emulate_cpuid(struct kvm_vcpu *vcpu);
 int kvm_emulate_halt(struct kvm_vcpu *vcpu);
 int emulate_invlpg(struct kvm_vcpu *vcpu, gva_t address);
@@ -649,8 +631,6 @@ int emulator_write_emulated(unsigned long addr,
 			    unsigned int bytes,
 			    struct kvm_vcpu *vcpu);
 
-unsigned long segment_base(u16 selector);
-
 void kvm_mmu_flush_tlb(struct kvm_vcpu *vcpu);
 void kvm_mmu_pte_write(struct kvm_vcpu *vcpu, gpa_t gpa,
 		       const u8 *new, int bytes,
@@ -675,7 +655,6 @@ void kvm_mmu_invlpg(struct kvm_vcpu *vcpu, gva_t gva);
 void kvm_enable_tdp(void);
 void kvm_disable_tdp(void);
 
-int load_pdptrs(struct kvm_vcpu *vcpu, unsigned long cr3);
 int complete_pio(struct kvm_vcpu *vcpu);
 bool kvm_check_iopl(struct kvm_vcpu *vcpu);
 
@@ -722,23 +701,6 @@ static inline void kvm_load_gs(u16 sel)
 static inline void kvm_load_ldt(u16 sel)
 {
 	asm("lldt %0" : : "rm"(sel));
-}
-
-static inline void kvm_get_idt(struct descriptor_table *table)
-{
-	asm("sidt %0" : "=m"(*table));
-}
-
-static inline void kvm_get_gdt(struct descriptor_table *table)
-{
-	asm("sgdt %0" : "=m"(*table));
-}
-
-static inline unsigned long kvm_read_tr_base(void)
-{
-	u16 tr;
-	asm("str %0" : "=g"(tr));
-	return segment_base(tr);
 }
 
 #ifdef CONFIG_X86_64
@@ -825,5 +787,7 @@ int kvm_cpu_get_interrupt(struct kvm_vcpu *v);
 
 void kvm_define_shared_msr(unsigned index, u32 msr);
 void kvm_set_shared_msr(unsigned index, u64 val, u64 mask);
+
+bool kvm_is_linear_rip(struct kvm_vcpu *vcpu, unsigned long linear_rip);
 
 #endif /* _ASM_X86_KVM_HOST_H */
