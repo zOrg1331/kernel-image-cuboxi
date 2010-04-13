@@ -247,7 +247,7 @@ static void macio_create_fixup_irq(struct macio_dev *dev, int index,
 
 static void macio_add_missing_resources(struct macio_dev *dev)
 {
-	struct device_node *np = dev->ofdev.node;
+	struct device_node *np = dev->ofdev.dev.of_node;
 	unsigned int irq_base;
 
 	/* Gatwick has some missing interrupts on child nodes */
@@ -288,7 +288,7 @@ static void macio_add_missing_resources(struct macio_dev *dev)
 
 static void macio_setup_interrupts(struct macio_dev *dev)
 {
-	struct device_node *np = dev->ofdev.node;
+	struct device_node *np = dev->ofdev.dev.of_node;
 	unsigned int irq;
 	int i = 0, j = 0;
 
@@ -316,7 +316,7 @@ static void macio_setup_interrupts(struct macio_dev *dev)
 static void macio_setup_resources(struct macio_dev *dev,
 				  struct resource *parent_res)
 {
-	struct device_node *np = dev->ofdev.node;
+	struct device_node *np = dev->ofdev.dev.of_node;
 	struct resource r;
 	int index;
 
@@ -372,7 +372,7 @@ static struct macio_dev * macio_add_one_device(struct macio_chip *chip,
 
 	dev->bus = &chip->lbus;
 	dev->media_bay = in_bay;
-	dev->ofdev.node = np;
+	dev->ofdev.dev.of_node = np;
 	dev->ofdev.dma_mask = 0xffffffffUL;
 	dev->ofdev.dev.dma_mask = &dev->ofdev.dma_mask;
 	dev->ofdev.dev.parent = parent;
@@ -493,9 +493,9 @@ static void macio_pci_add_devices(struct macio_chip *chip)
 	}
 
 	/* Add media bay devices if any */
+	pnode = mbdev->ofdev.dev.of_node;
 	if (mbdev)
-		for (np = NULL; (np = of_get_next_child(mbdev->ofdev.node, np))
-			     != NULL;) {
+		for (np = NULL; (np = of_get_next_child(pnode, np)) != NULL;) {
 			if (macio_skip_device(np))
 				continue;
 			of_node_get(np);
@@ -505,9 +505,9 @@ static void macio_pci_add_devices(struct macio_chip *chip)
 		}
 
 	/* Add serial ports if any */
+	pnode = sdev->ofdev.dev.of_node;
 	if (sdev) {
-		for (np = NULL; (np = of_get_next_child(sdev->ofdev.node, np))
-			     != NULL;) {
+		for (np = NULL; (np = of_get_next_child(pnode, np)) != NULL;) {
 			if (macio_skip_device(np))
 				continue;
 			of_node_get(np);
