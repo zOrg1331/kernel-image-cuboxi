@@ -1,6 +1,8 @@
 #ifndef __SH_INTC_H
 #define __SH_INTC_H
 
+#include <linux/ioport.h>
+
 typedef unsigned char intc_enum;
 
 struct intc_vect {
@@ -71,6 +73,8 @@ struct intc_hw_desc {
 
 struct intc_desc {
 	char *name;
+	struct resource *resource;
+	unsigned int num_resources;
 	intc_enum force_enable;
 	intc_enum force_disable;
 	struct intc_hw_desc hw;
@@ -92,8 +96,17 @@ struct intc_desc symbol __initdata = {					\
 			   prio_regs, sense_regs, ack_regs),		\
 }
 
-void __init register_intc_controller(struct intc_desc *desc);
+int __init register_intc_controller(struct intc_desc *desc);
 int intc_set_priority(unsigned int irq, unsigned int prio);
+
+#ifdef CONFIG_INTC_USERIMASK
+int register_intc_userimask(unsigned long addr);
+#else
+static inline int register_intc_userimask(unsigned long addr)
+{
+	return 0;
+}
+#endif
 
 int reserve_irq_vector(unsigned int irq);
 void reserve_irq_legacy(void);

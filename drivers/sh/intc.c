@@ -28,6 +28,7 @@
 #include <linux/topology.h>
 #include <linux/bitmap.h>
 #include <linux/cpumask.h>
+#include <asm/sizes.h>
 
 #define _INTC_MK(fn, mode, addr_e, addr_d, width, shift) \
 	((shift) | ((width) << 5) | ((fn) << 9) | ((mode) << 13) | \
@@ -45,6 +46,12 @@ struct intc_handle_int {
 	unsigned long handle;
 };
 
+struct intc_window {
+	phys_addr_t phys;
+	void __iomem *virt;
+	unsigned long size;
+};
+
 struct intc_desc_int {
 	struct list_head list;
 	struct sys_device sysdev;
@@ -58,6 +65,8 @@ struct intc_desc_int {
 	unsigned int nr_prio;
 	struct intc_handle_int *sense;
 	unsigned int nr_sense;
+	struct intc_window *window;
+	unsigned int nr_windows;
 	struct irq_chip chip;
 };
 
@@ -87,7 +96,8 @@ static DEFINE_SPINLOCK(vector_lock);
 #define SMP_NR(d, x) 1
 #endif
 
-static unsigned int intc_prio_level[NR_IRQS]; /* for now */
+static unsigned int intc_prio_level[NR_IRQS];	/* for now */
+static unsigned int default_prio_level = 2;	/* 2 - 16 */
 static unsigned long ack_handle[NR_IRQS];
 
 static inline struct intc_desc_int *get_intc_desc(unsigned int irq)
@@ -447,10 +457,38 @@ static int intc_set_sense(unsigned int irq, unsigned int type)
 	return 0;
 }
 
+static unsigned long intc_phys_to_virt(struct intc_desc_int *d,
+				       unsigned long address)
+{
+	struct intc_window *window;
+	int k;
+
+	/* scan through physical windows and convert address */
+	for (k = 0; k < d->nr_windows; k++) {
+		window = d->window + k;
+
+		if (address < window->phys)
+			continue;
+
+		if (address >= (window->phys + window->size))
+			continue;
+
+		address -= window->phys;
+		address += (unsigned long)window->virt;
+
+		return address;
+	}
+
+	/* no windows defined, register must be 1:1 mapped virt:phys */
+	return address;
+}
+
 static unsigned int __init intc_get_reg(struct intc_desc_int *d,
-				 unsigned long address)
+					unsigned long address)
 {
 	unsigned int k;
+
+	address = intc_phys_to_virt(d, address);
 
 	for (k = 0; k < d->nr_reg; k++) {
 		if (d->reg[k] == address)
@@ -752,7 +790,7 @@ static void __init intc_register_irq(struct intc_desc *desc,
 	/* set priority level
 	 * - this needs to be at least 2 for 5-bit priorities on 7780
 	 */
-	intc_prio_level[irq] = 2;
+	intc_prio_level[irq] = default_prio_level;
 
 	/* enable secondary masking method if present */
 	if (data[!primary])
@@ -801,6 +839,8 @@ static unsigned int __init save_reg(struct intc_desc_int *d,
 				    unsigned int smp)
 {
 	if (value) {
+		value = intc_phys_to_virt(d, value);
+
 		d->reg[cnt] = value;
 #ifdef CONFIG_SMP
 		d->smp[cnt] = smp;
@@ -816,16 +856,41 @@ static void intc_redirect_irq(unsigned int irq, struct irq_desc *desc)
 	generic_handle_irq((unsigned int)get_irq_data(irq));
 }
 
-void __init register_intc_controller(struct intc_desc *desc)
+int __init register_intc_controller(struct intc_desc *desc)
 {
 	unsigned int i, k, smp;
 	struct intc_hw_desc *hw = &desc->hw;
 	struct intc_desc_int *d;
+	struct resource *res;
+
+	pr_info("intc: Registered controller '%s' with %u IRQs\n",
+		desc->name, hw->nr_vectors);
 
 	d = kzalloc(sizeof(*d), GFP_NOWAIT);
+	if (!d)
+		goto err0;
 
 	INIT_LIST_HEAD(&d->list);
 	list_add(&d->list, &intc_list);
+
+	if (desc->num_resources) {
+		d->nr_windows = desc->num_resources;
+		d->window = kzalloc(d->nr_windows * sizeof(*d->window),
+				    GFP_NOWAIT);
+		if (!d->window)
+			goto err1;
+
+		for (k = 0; k < d->nr_windows; k++) {
+			res = desc->resource + k;
+			WARN_ON(resource_type(res) != IORESOURCE_MEM);
+			d->window[k].phys = res->start;
+			d->window[k].size = resource_size(res);
+			d->window[k].virt = ioremap_nocache(res->start,
+							 resource_size(res));
+			if (!d->window[k].virt)
+				goto err2;
+		}
+	}
 
 	d->nr_reg = hw->mask_regs ? hw->nr_mask_regs * 2 : 0;
 	d->nr_reg += hw->prio_regs ? hw->nr_prio_regs * 2 : 0;
@@ -833,8 +898,13 @@ void __init register_intc_controller(struct intc_desc *desc)
 	d->nr_reg += hw->ack_regs ? hw->nr_ack_regs : 0;
 
 	d->reg = kzalloc(d->nr_reg * sizeof(*d->reg), GFP_NOWAIT);
+	if (!d->reg)
+		goto err2;
+
 #ifdef CONFIG_SMP
 	d->smp = kzalloc(d->nr_reg * sizeof(*d->smp), GFP_NOWAIT);
+	if (!d->smp)
+		goto err3;
 #endif
 	k = 0;
 
@@ -849,6 +919,8 @@ void __init register_intc_controller(struct intc_desc *desc)
 	if (hw->prio_regs) {
 		d->prio = kzalloc(hw->nr_vectors * sizeof(*d->prio),
 				  GFP_NOWAIT);
+		if (!d->prio)
+			goto err4;
 
 		for (i = 0; i < hw->nr_prio_regs; i++) {
 			smp = IS_SMP(hw->prio_regs[i]);
@@ -860,6 +932,8 @@ void __init register_intc_controller(struct intc_desc *desc)
 	if (hw->sense_regs) {
 		d->sense = kzalloc(hw->nr_vectors * sizeof(*d->sense),
 				   GFP_NOWAIT);
+		if (!d->sense)
+			goto err5;
 
 		for (i = 0; i < hw->nr_sense_regs; i++)
 			k += save_reg(d, k, hw->sense_regs[i].reg, 0);
@@ -906,7 +980,7 @@ void __init register_intc_controller(struct intc_desc *desc)
 
 		irq_desc = irq_to_desc_alloc_node(irq, numa_node_id());
 		if (unlikely(!irq_desc)) {
-			pr_info("can't get irq_desc for %d\n", irq);
+			pr_err("can't get irq_desc for %d\n", irq);
 			continue;
 		}
 
@@ -926,7 +1000,7 @@ void __init register_intc_controller(struct intc_desc *desc)
 			 */
 			irq_desc = irq_to_desc_alloc_node(irq2, numa_node_id());
 			if (unlikely(!irq_desc)) {
-				pr_info("can't get irq_desc for %d\n", irq2);
+				pr_err("can't get irq_desc for %d\n", irq2);
 				continue;
 			}
 
@@ -942,7 +1016,99 @@ void __init register_intc_controller(struct intc_desc *desc)
 	/* enable bits matching force_enable after registering irqs */
 	if (desc->force_enable)
 		intc_enable_disable_enum(desc, d, desc->force_enable, 1);
+
+	return 0;
+err5:
+	kfree(d->prio);
+err4:
+#ifdef CONFIG_SMP
+	kfree(d->smp);
+err3:
+#endif
+	kfree(d->reg);
+err2:
+	for (k = 0; k < d->nr_windows; k++)
+		if (d->window[k].virt)
+			iounmap(d->window[k].virt);
+
+	kfree(d->window);
+err1:
+	kfree(d);
+err0:
+	pr_err("unable to allocate INTC memory\n");
+
+	return -ENOMEM;
 }
+
+#ifdef CONFIG_INTC_USERIMASK
+static void __iomem *uimask;
+
+int register_intc_userimask(unsigned long addr)
+{
+	if (unlikely(uimask))
+		return -EBUSY;
+
+	uimask = ioremap_nocache(addr, SZ_4K);
+	if (unlikely(!uimask))
+		return -ENOMEM;
+
+	pr_info("intc: userimask support registered for levels 0 -> %d\n",
+		default_prio_level - 1);
+
+	return 0;
+}
+
+static ssize_t
+show_intc_userimask(struct sysdev_class *cls,
+		    struct sysdev_class_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", (__raw_readl(uimask) >> 4) & 0xf);
+}
+
+static ssize_t
+store_intc_userimask(struct sysdev_class *cls,
+		     struct sysdev_class_attribute *attr,
+		     const char *buf, size_t count)
+{
+	unsigned long level;
+
+	level = simple_strtoul(buf, NULL, 10);
+
+	/*
+	 * Minimal acceptable IRQ levels are in the 2 - 16 range, but
+	 * these are chomped so as to not interfere with normal IRQs.
+	 *
+	 * Level 1 is a special case on some CPUs in that it's not
+	 * directly settable, but given that USERIMASK cuts off below a
+	 * certain level, we don't care about this limitation here.
+	 * Level 0 on the other hand equates to user masking disabled.
+	 *
+	 * We use default_prio_level as a cut off so that only special
+	 * case opt-in IRQs can be mangled.
+	 */
+	if (level >= default_prio_level)
+		return -EINVAL;
+
+	__raw_writel(0xa5 << 24 | level << 4, uimask);
+
+	return count;
+}
+
+static SYSDEV_CLASS_ATTR(userimask, S_IRUSR | S_IWUSR,
+			 show_intc_userimask, store_intc_userimask);
+#endif
+
+static ssize_t
+show_intc_name(struct sys_device *dev, struct sysdev_attribute *attr, char *buf)
+{
+	struct intc_desc_int *d;
+
+	d = container_of(dev, struct intc_desc_int, sysdev);
+
+	return sprintf(buf, "%s\n", d->chip.name);
+}
+
+static SYSDEV_ATTR(name, S_IRUGO, show_intc_name, NULL);
 
 static int intc_suspend(struct sys_device *dev, pm_message_t state)
 {
@@ -1003,19 +1169,28 @@ static int __init register_intc_sysdevs(void)
 	int id = 0;
 
 	error = sysdev_class_register(&intc_sysdev_class);
+#ifdef CONFIG_INTC_USERIMASK
+	if (!error && uimask)
+		error = sysdev_class_create_file(&intc_sysdev_class,
+						 &attr_userimask);
+#endif
 	if (!error) {
 		list_for_each_entry(d, &intc_list, list) {
 			d->sysdev.id = id;
 			d->sysdev.cls = &intc_sysdev_class;
 			error = sysdev_register(&d->sysdev);
+			if (error == 0)
+				error = sysdev_create_file(&d->sysdev,
+							   &attr_name);
 			if (error)
 				break;
+
 			id++;
 		}
 	}
 
 	if (error)
-		pr_warning("intc: sysdev registration error\n");
+		pr_err("intc: sysdev registration error\n");
 
 	return error;
 }
@@ -1048,7 +1223,7 @@ unsigned int create_irq_nr(unsigned int irq_want, int node)
 
 	desc = irq_to_desc_alloc_node(new, node);
 	if (unlikely(!desc)) {
-		pr_info("can't get irq_desc for %d\n", new);
+		pr_err("can't get irq_desc for %d\n", new);
 		goto out_unlock;
 	}
 
