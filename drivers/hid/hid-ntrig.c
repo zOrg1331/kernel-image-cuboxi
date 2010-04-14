@@ -1,8 +1,8 @@
 /*
  *  HID driver for N-Trig touchscreens
  *
- *  Copyright (c) 2008 Rafi Rubin
- *  Copyright (c) 2009 Stephane Chatty
+ *  Copyright (c) 2008-2010 Rafi Rubin
+ *  Copyright (c) 2009-2010 Stephane Chatty
  *
  */
 
@@ -15,6 +15,8 @@
 
 #include <linux/device.h>
 #include <linux/hid.h>
+#include <linux/usb.h>
+#include "usbhid/usbhid.h"
 #include <linux/module.h>
 #include <linux/slab.h>
 
@@ -29,10 +31,12 @@ struct ntrig_data {
 	/* Incoming raw values for a single contact */
 	__u16 x, y, w, h;
 	__u16 id;
-	__u8 confidence;
+
+	bool tipswitch;
+	bool confidence;
+	bool first_contact_touch;
 
 	bool reading_mt;
-	__u8 first_contact_confidence;
 
 	__u8 mt_footer[4];
 	__u8 mt_foot_count;
@@ -139,9 +143,10 @@ static int ntrig_event (struct hid_device *hid, struct hid_field *field,
 		case 0xff000001:
 			/* Tag indicating the start of a multitouch group */
 			nd->reading_mt = 1;
-			nd->first_contact_confidence = 0;
+			nd->first_contact_touch = 0;
 			break;
 		case HID_DG_TIPSWITCH:
+			nd->tipswitch = value;
 			/* Prevent emission of touch until validated */
 			return 1;
 		case HID_DG_CONFIDENCE:
@@ -169,8 +174,15 @@ static int ntrig_event (struct hid_device *hid, struct hid_field *field,
 			 * to emit a normal (X, Y) position
 			 */
 			if (!nd->reading_mt) {
+				/*
+				 * TIPSWITCH indicates the presence of a
+				 * finger.  DOUBLETAP is emitted are both
+				 * emitted to support legacy drivers.
+				 */
+				input_report_key(input, BTN_TOUCH,
+						 nd->tipswitch);
 				input_report_key(input, BTN_TOOL_DOUBLETAP,
-						 (nd->confidence != 0));
+						 nd->tipswitch);
 				input_event(input, EV_ABS, ABS_X, nd->x);
 				input_event(input, EV_ABS, ABS_Y, nd->y);
 			}
@@ -209,7 +221,8 @@ static int ntrig_event (struct hid_device *hid, struct hid_field *field,
 
 			/* emit a normal (X, Y) for the first point only */
 			if (nd->id == 0) {
-				nd->first_contact_confidence = nd->confidence;
+				nd->first_contact_touch = nd->confidence &&
+					nd->tipswitch;
 				input_event(input, EV_ABS, ABS_X, nd->x);
 				input_event(input, EV_ABS, ABS_Y, nd->y);
 			}
@@ -239,7 +252,7 @@ static int ntrig_event (struct hid_device *hid, struct hid_field *field,
 
 			nd->reading_mt = 0;
 
-			if (nd->first_contact_confidence) {
+			if (nd->first_contact_touch) {
 				switch (value) {
 				case 0:	/* for single touch devices */
 				case 1:
@@ -286,6 +299,7 @@ static int ntrig_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	struct ntrig_data *nd;
 	struct hid_input *hidinput;
 	struct input_dev *input;
+	struct hid_report *report;
 
 	if (id->driver_data)
 		hdev->quirks |= HID_QUIRK_MULTI_INPUT;
@@ -348,6 +362,12 @@ static int ntrig_probe(struct hid_device *hdev, const struct hid_device_id *id)
 			break;
 		}
 	}
+
+	/* This is needed for devices with more recent firmware versions */
+	report = hdev->report_enum[HID_FEATURE_REPORT].report_id_hash[0x0a];
+	if (report)
+		usbhid_submit_report(hdev, report, USB_DIR_OUT);
+
 
 	return 0;
 err_free:
