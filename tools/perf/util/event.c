@@ -130,6 +130,7 @@ static int event__synthesize_mmap_events(pid_t pid, pid_t tgid,
 			continue;
 		pbf += n + 3;
 		if (*pbf == 'x') { /* vm_exec */
+			u64 vm_pgoff;
 			char *execname = strchr(bf, '/');
 
 			/* Catch VDSO */
@@ -138,6 +139,14 @@ static int event__synthesize_mmap_events(pid_t pid, pid_t tgid,
 
 			if (execname == NULL)
 				continue;
+
+			pbf += 3;
+			n = hex2u64(pbf, &vm_pgoff);
+			/* pgoff is in bytes, not pages */
+			if (n >= 0)
+				ev.mmap.pgoff = vm_pgoff << getpagesize();
+			else
+				ev.mmap.pgoff = 0;
 
 			size = strlen(execname);
 			execname[size - 1] = '\0'; /* Remove \n */
@@ -393,7 +402,8 @@ int event__process_mmap(event_t *self, struct perf_session *session)
 	}
 
 	thread = perf_session__findnew(session, self->mmap.pid);
-	map = map__new(&self->mmap, MAP__FUNCTION,
+	map = map__new(self->mmap.start, self->mmap.len, self->mmap.pgoff,
+		       self->mmap.pid, self->mmap.filename, MAP__FUNCTION,
 		       session->cwd, session->cwdlen);
 
 	if (thread == NULL || map == NULL)
@@ -513,24 +523,32 @@ int event__preprocess_sample(const event_t *self, struct perf_session *session,
 
 	dump_printf(" ... thread: %s:%d\n", thread->comm, thread->pid);
 
-	thread__find_addr_location(thread, session, cpumode, MAP__FUNCTION,
-				   self->ip.ip, al, filter);
+	thread__find_addr_map(thread, session, cpumode, MAP__FUNCTION,
+			      self->ip.ip, al);
 	dump_printf(" ...... dso: %s\n",
 		    al->map ? al->map->dso->long_name :
 			al->level == 'H' ? "[hypervisor]" : "<not found>");
-	/*
-	 * We have to do this here as we may have a dso with no symbol hit that
-	 * has a name longer than the ones with symbols sampled.
-	 */
-	if (al->map && !sort_dso.elide && !al->map->dso->slen_calculated)
-		dso__calc_col_width(al->map->dso);
+	al->sym = NULL;
 
-	if (symbol_conf.dso_list &&
-	    (!al->map || !al->map->dso ||
-	     !(strlist__has_entry(symbol_conf.dso_list, al->map->dso->short_name) ||
-	       (al->map->dso->short_name != al->map->dso->long_name &&
-		strlist__has_entry(symbol_conf.dso_list, al->map->dso->long_name)))))
-		goto out_filtered;
+	if (al->map) {
+		if (symbol_conf.dso_list &&
+		    (!al->map || !al->map->dso ||
+		     !(strlist__has_entry(symbol_conf.dso_list,
+					  al->map->dso->short_name) ||
+		       (al->map->dso->short_name != al->map->dso->long_name &&
+			strlist__has_entry(symbol_conf.dso_list,
+					   al->map->dso->long_name)))))
+			goto out_filtered;
+		/*
+		 * We have to do this here as we may have a dso with no symbol
+		 * hit that has a name longer than the ones with symbols
+		 * sampled.
+		 */
+		if (!sort_dso.elide && !al->map->dso->slen_calculated)
+			dso__calc_col_width(al->map->dso);
+
+		al->sym = map__find_symbol(al->map, al->addr, filter);
+	}
 
 	if (symbol_conf.sym_list && al->sym &&
 	    !strlist__has_entry(symbol_conf.sym_list, al->sym->name))
