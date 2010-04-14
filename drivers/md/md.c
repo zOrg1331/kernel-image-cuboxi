@@ -2774,8 +2774,9 @@ static void analyze_sbs(mddev_t * mddev)
 
 	i = 0;
 	rdev_for_each(rdev, tmp, mddev) {
-		if (rdev->desc_nr >= mddev->max_disks ||
-		    i > mddev->max_disks) {
+		if (mddev->max_disks &&
+		    (rdev->desc_nr >= mddev->max_disks ||
+		     i > mddev->max_disks)) {
 			printk(KERN_WARNING
 			       "md: %s: %s: only %d devices permitted\n",
 			       mdname(mddev), bdevname(rdev->bdev, b),
@@ -5363,7 +5364,7 @@ static int update_raid_disks(mddev_t *mddev, int raid_disks)
 	if (mddev->pers->check_reshape == NULL)
 		return -EINVAL;
 	if (raid_disks <= 0 ||
-	    raid_disks >= mddev->max_disks)
+	    (mddev->max_disks && raid_disks >= mddev->max_disks))
 		return -EINVAL;
 	if (mddev->sync_thread || mddev->reshape_position != MaxSector)
 		return -EBUSY;
