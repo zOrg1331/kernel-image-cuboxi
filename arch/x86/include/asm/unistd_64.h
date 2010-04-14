@@ -667,6 +667,10 @@ __SYSCALL(__NR_recvmmsg, sys_recvmmsg)
 __SYSCALL(__NR_fanotify_init, sys_fanotify_init)
 #define __NR_fanotify_mark			301
 __SYSCALL(__NR_fanotify_mark, sys_fanotify_mark)
+#define __NR_getprlimit				302
+__SYSCALL(__NR_getprlimit, sys_getprlimit)
+#define __NR_setprlimit				303
+__SYSCALL(__NR_setprlimit, sys_setprlimit)
 
 #ifndef __NO_STUBS
 #define __ARCH_WANT_OLD_READDIR
