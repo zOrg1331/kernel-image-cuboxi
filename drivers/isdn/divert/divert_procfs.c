@@ -20,6 +20,7 @@
 #include <linux/sched.h>
 #include <linux/isdnif.h>
 #include <net/net_namespace.h>
+#include <linux/smp_lock.h>
 #include "isdn_divert.h"
 
 
@@ -177,18 +178,20 @@ isdn_divert_close(struct inode *ino, struct file *filep)
 /*********/
 /* IOCTL */
 /*********/
-static int
-isdn_divert_ioctl(struct inode *inode, struct file *file,
-		  uint cmd, ulong arg)
+static long isdn_divert_ioctl(struct file *file, uint cmd, ulong arg)
 {
 	divert_ioctl dioctl;
-	int i;
 	unsigned long flags;
 	divert_rule *rulep;
 	char *cp;
 
-	if (copy_from_user(&dioctl, (void __user *) arg, sizeof(dioctl)))
+	/* Pushed down from procfs ioctl handler */
+	lock_kernel();
+
+	if (copy_from_user(&dioctl, (void __user *) arg, sizeof(dioctl))) {
+		unlock_kernel();
 		return -EFAULT;
+	}
 
 	switch (cmd) {
 		case IIOCGETVER:
@@ -196,65 +199,84 @@ isdn_divert_ioctl(struct inode *inode, struct file *file,
 			break;
 
 		case IIOCGETDRV:
-			if ((dioctl.getid.drvid = divert_if.name_to_drv(dioctl.getid.drvnam)) < 0)
-				return (-EINVAL);
+			if ((dioctl.getid.drvid = divert_if.name_to_drv(dioctl.getid.drvnam)) < 0) {
+				unlock_kernel();
+				return -EINVAL;
+			}
 			break;
 
 		case IIOCGETNAM:
 			cp = divert_if.drv_to_name(dioctl.getid.drvid);
-			if (!cp)
-				return (-EINVAL);
-			if (!*cp)
-				return (-EINVAL);
+			if (!cp || !*cp) {
+				unlock_kernel();
+				return -EINVAL;
+			}
 			strcpy(dioctl.getid.drvnam, cp);
 			break;
 
 		case IIOCGETRULE:
-			if (!(rulep = getruleptr(dioctl.getsetrule.ruleidx)))
-				return (-EINVAL);
+			if (!(rulep = getruleptr(dioctl.getsetrule.ruleidx))) {
+				unlock_kernel();
+				return -EINVAL;
+			}
 			dioctl.getsetrule.rule = *rulep;	/* copy data */
 			break;
 
 		case IIOCMODRULE:
-			if (!(rulep = getruleptr(dioctl.getsetrule.ruleidx)))
-				return (-EINVAL);
-            spin_lock_irqsave(&divert_lock, flags);
+			if (!(rulep = getruleptr(dioctl.getsetrule.ruleidx))) {
+				unlock_kernel();
+				return -EINVAL;
+			}
+			spin_lock_irqsave(&divert_lock, flags);
 			*rulep = dioctl.getsetrule.rule;	/* copy data */
 			spin_unlock_irqrestore(&divert_lock, flags);
-			return (0);	/* no copy required */
-			break;
+
+			unlock_kernel();
+			return 0;	/* no copy required */
 
 		case IIOCINSRULE:
-			return (insertrule(dioctl.getsetrule.ruleidx, &dioctl.getsetrule.rule));
-			break;
+			unlock_kernel();
+			return insertrule(dioctl.getsetrule.ruleidx, &dioctl.getsetrule.rule);
 
 		case IIOCDELRULE:
-			return (deleterule(dioctl.getsetrule.ruleidx));
-			break;
+			unlock_kernel();
+			return deleterule(dioctl.getsetrule.ruleidx);
 
 		case IIOCDODFACT:
-			return (deflect_extern_action(dioctl.fwd_ctrl.subcmd,
-						  dioctl.fwd_ctrl.callid,
-						 dioctl.fwd_ctrl.to_nr));
+			unlock_kernel();
+			return deflect_extern_action(dioctl.fwd_ctrl.subcmd,
+						     dioctl.fwd_ctrl.callid,
+						     dioctl.fwd_ctrl.to_nr);
 
 		case IIOCDOCFACT:
 		case IIOCDOCFDIS:
-		case IIOCDOCFINT:
-			if (!divert_if.drv_to_name(dioctl.cf_ctrl.drvid))
-				return (-EINVAL);	/* invalid driver */
-			if ((i = cf_command(dioctl.cf_ctrl.drvid,
+		case IIOCDOCFINT: {
+			long err;
+
+			if (!divert_if.drv_to_name(dioctl.cf_ctrl.drvid)) {
+				unlock_kernel();
+				return -EINVAL;	/* invalid driver */
+			}
+			err = cf_command(dioctl.cf_ctrl.drvid,
 					    (cmd == IIOCDOCFACT) ? 1 : (cmd == IIOCDOCFDIS) ? 0 : 2,
 					    dioctl.cf_ctrl.cfproc,
 					    dioctl.cf_ctrl.msn,
 					    dioctl.cf_ctrl.service,
 					    dioctl.cf_ctrl.fwd_nr,
-					    &dioctl.cf_ctrl.procid)))
-				return (i);
+					    &dioctl.cf_ctrl.procid);
+			if (err) {
+				unlock_kernel();
+				return err;
+			}
 			break;
 
+		}
 		default:
-			return (-EINVAL);
-	}			/* switch cmd */
+			unlock_kernel();
+			return -EINVAL;
+	}
+
+	unlock_kernel();
 	return copy_to_user((void __user *)arg, &dioctl, sizeof(dioctl)) ? -EFAULT : 0;
 }				/* isdn_divert_ioctl */
 
@@ -265,7 +287,7 @@ static const struct file_operations isdn_fops =
 	.read           = isdn_divert_read,
 	.write          = isdn_divert_write,
 	.poll           = isdn_divert_poll,
-	.ioctl          = isdn_divert_ioctl,
+	.unlocked_ioctl = isdn_divert_ioctl,
 	.open           = isdn_divert_open,
 	.release        = isdn_divert_close,                                      
 };
