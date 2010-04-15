@@ -1,0 +1,144 @@
+Importing driver-core.current based on 2.6.34-rc4
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 0d0fb0f9c5fddef4a10242fe3337f00f528a3099
+HEAD is now at 0d0fb0f Linux 2.6.34-rc4
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core.current
+documentation-stable-rules-upstream-commit-id-requirement-reworded.patch
+documentation-howto-update-git-home-url.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core.current
+From ../quilt-tmp
+   0d0fb0f..3fc5a04  master     -> quilt/driver-core.current
+Importing tty.current based on quilt/driver-core.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty.current 3fc5a04b7d81db979f820d9cfe7d2fa60c4b1f9c
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard 3fc5a04b7d81db979f820d9cfe7d2fa60c4b1f9c
+HEAD is now at 3fc5a04 Documentation/HOWTO: update git home URL
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-ti_usb_3410_5052-adding-multitech-dialup-fax-modem-devices.patch
+usb-fixed-bug-in-usbsevseg-using-usb-autosuspend-incorrectly.patch
+usb-ehci-omap-fix-kernel-panic-with-rmmod.patch
+usb-wusb-don-t-overflow-the-keep-alive-ie-buffer.patch
+usb-qcaux-add-lg-rumor-and-sanyo-katana-lx-device-ids.patch
+usb-ohci-da8xx-omap-l1x-fix-up-macro-rename.patch
+usb-add-id-for-hp-ev2210-a.k.a-sierra-mc5725-minipci-e-cell-modem.patch
+usb-pl2303-add-adlink-nd-6530-usb-ids.patch
+usb-fix-remote-wakeup-settings-during-system-sleep.patch
+usb-ehci-defer-reclamation-of-sitds.patch
+usb-put-claimed-interfaces-in-the-suspended-state.patch
+usb-increase-timeout-value-for-device-reset.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+   0d0fb0f..83e3c64  master     -> quilt/usb.current
+Importing staging.current based on quilt/usb.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/staging.current 83e3c6472d89d7de47dab6c7ec423c4b383973c3
+Importing i2c based on 2.6.34-rc4-git2
+$ cd ../quilt-tmp
+$ git reset --hard 2ba3abd8186f24c7fb418927025b4e2120e3a362
+HEAD is now at 2ba3abd Merge branch 'pm-fixes' of git://git.kernel.org/pub/scm/linux/kernel/git/rafael/suspend-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-core-erase-pointer-to-clientdata-on-removal.patch
+i2c-fix-probing-of-fsc-hwmon-chips.patch
+i2c-i801-02-new-parameter-to-disable-features.patch
+i2c-i801-03-default-to-all-features-present.patch
+i2c-i801-04-coding-style-fixes.patch
+i2c-scx200_acb-make-pci-device-ids-constant.patch
+i2c-stub-show-actual-functionality.patch
+eeprom-at24-fallback-to-byte-reads.patch
+i2c-dev-remove-unnecessary-casts.patch
+i2c-parport-make-template-struct-const.patch
+i2c-fix-bus-level-power-management-callbacks.patch
+i2c-gpio-move-initialization-code-to-subsys_initcall.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + f09d31a...5fca925 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.34-rc4-git2
+$ cd ../quilt-tmp
+$ git reset --hard 2ba3abd8186f24c7fb418927025b4e2120e3a362
+HEAD is now at 2ba3abd Merge branch 'pm-fixes' of git://git.kernel.org/pub/scm/linux/kernel/git/rafael/suspend-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-sht15-01-fix-sht15_calc_temp-interpolation-function.patch
+hwmon-sht15-02-handle-CONFIG_REGULATOR_n.patch
+hwmon-it87-01-dont-enable-temperature-channels.patch
+hwmon-it87-02-handle-invalid-thermal-sensor-type.patch
+hwmon-it87-03-invalidate-cache-on-temperature-sensor-change.patch
+hwmon-applesmc-add-imac9,1-and-macbookpro2,2-support.patch
+hwmon-applesmc-switch-maintainers.patch
+hwmon-asus_atk0110-dont-use-if-unsafe.patch
+hwmon-lm63-add-basic-support-for-lm64.patch
+hwmon-f71882fg-01-fixed-braces-coding-style-issues.patch
+hwmon-f71882fg-02-use-strict_strtol-instead-of-simple_strtol.patch
+hwmon-f71882fg-03-code-cleanup.patch
+hwmon-f71882fg-04-properly-acquire-io-regions-while-probing.patch
+hwmon-lm90-use-programmed-update-rate.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 2366511...c721be2 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.34-rc2
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.34-rc3-380-g48de8cb
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.33-5070-g64ba992
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+$ cd ../quilt-tmp
+$ git reset --hard 83e3c6472d89d7de47dab6c7ec423c4b383973c3
+HEAD is now at 83e3c64 usb: Increase timeout value for device reset
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core
+kref-remove-kref_set.patch
+driver-core-reduce-the-level-of-request_firmware-messages.patch
+driver-core-fix-potential-race-condition-in-drivers-base-dd.c.patch
+driver-core-don-t-initialize-wakeup-flags.patch
+driver-core-early-dev_name-support.patch
+driver-core-module.c-use-kasprintf.patch
+devtmpfs-support-config_tmpfs.patch
+platform_bus-allow-custom-extensions-to-system-pm-methods.patch
+drivers-base-convert-sema.patch
+lockdep-add-novalidate-class-for-dev-mutex-conversion.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core
+From ../quilt-tmp
+ + ef9e478...8232750 master     -> quilt/driver-core  (forced update)
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty 823275086173c792c74a0416a183829fdb3b5948
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 823275086173c792c74a0416a183829fdb3b5948
+HEAD is now at 8232750 lockdep: Add novalidate class for dev->mutex conversion
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-sisusbvga-remove-the-bkl-from-ioctl.patch
+usb-cdc-acm-make-bitfields-unsigned.patch
+usb-remove-large-struct-from-the-stack-in-usb-storage-isd200-driver.patch
+usb-remove-duplicated-include.patch
+usb-remove-bogus-usb_port_feat_-_speed-symbols.patch
+usb-straighten-out-port-feature-vs.-port-status-usage.patch
+usb-remove-uses-of-urb_no_setup_dma_map.patch
+usb-ehci-au1xxx-does-not-need-ehci-io-watchdog.patch
+usb-serial-use-tty_port-version-console-instead-of-usb_serial_port.patch
+usb-musb-allow-board-to-pass-down-fifo-mode.patch
+usb-musb-set-transceiver-interface-type.patch
+usb-musb-build-musb-driver-for-omap4.patch
+usb-musb-add-omap4-support-in-musb-driver.patch
+usb-musb-allow-the-blackfin-vrsel-gpio-to-be-active-low.patch
+usb-musb-add-debugfs-support.patch
+usb-musb-gadget-support-musb-specific-test-modes.patch
+usb-musb-hsdma-use-musb_read-writel.patch
+usb-f_mass_storage-dynamic-buffers-for-better-alignment.patch
+usb-console-pass-baud-from-console-to-the-initial-tty-open.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 8322640...cc4c5e7 master     -> quilt/usb  (forced update)
+Importing staging based on quilt/usb
+	quilt series is empty
+$ git update-ref refs/heads/quilt/staging cc4c5e78aafa5ace936175bdb74f8d4bc10008a0
