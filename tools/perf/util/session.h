@@ -57,10 +57,10 @@ int __perf_session__process_events(struct perf_session *self,
 int perf_session__process_events(struct perf_session *self,
 				 struct perf_event_ops *event_ops);
 
-struct symbol **perf_session__resolve_callchain(struct perf_session *self,
-						struct thread *thread,
-						struct ip_callchain *chain,
-						struct symbol **parent);
+struct map_symbol *perf_session__resolve_callchain(struct perf_session *self,
+						   struct thread *thread,
+						   struct ip_callchain *chain,
+						   struct symbol **parent);
 
 bool perf_session__has_traces(struct perf_session *self, const char *msg);
 
@@ -80,10 +80,30 @@ static inline int __perf_session__create_kernel_maps(struct perf_session *self,
 						self->vmlinux_maps, kernel);
 }
 
+static inline int perf_session__create_kernel_maps(struct perf_session *self)
+{
+	return map_groups__create_kernel_maps(&self->kmaps, self->vmlinux_maps);
+}
+
 static inline struct map *
 	perf_session__new_module_map(struct perf_session *self,
 				     u64 start, const char *filename)
 {
 	return map_groups__new_module(&self->kmaps, start, filename);
 }
+
+#ifdef NO_NEWT_SUPPORT
+static inline int perf_session__browse_hists(struct rb_root *hists __used,
+					      u64 nr_hists __used,
+					      u64 session_total __used,
+					     const char *helpline __used,
+					     const char *input_name __used)
+{
+	return 0;
+}
+#else
+int perf_session__browse_hists(struct rb_root *hists, u64 nr_hists,
+			       u64 session_total, const char *helpline,
+			       const char *input_name);
+#endif
 #endif /* __PERF_SESSION_H */

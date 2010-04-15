@@ -1,13 +1,19 @@
-#include "util.h"
-#include "../perf.h"
-#include "sort.h"
-#include "string.h"
+#define _GNU_SOURCE
+#include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
+#include <libgen.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/param.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include "symbol.h"
-#include "thread.h"
+#include "strlist.h"
 
-#include "debug.h"
-
-#include <asm/bug.h>
 #include <libelf.h>
 #include <gelf.h>
 #include <elf.h>
@@ -17,18 +23,6 @@
 #ifndef NT_GNU_BUILD_ID
 #define NT_GNU_BUILD_ID 3
 #endif
-
-enum dso_origin {
-	DSO__ORIG_KERNEL = 0,
-	DSO__ORIG_JAVA_JIT,
-	DSO__ORIG_BUILD_ID_CACHE,
-	DSO__ORIG_FEDORA,
-	DSO__ORIG_UBUNTU,
-	DSO__ORIG_BUILDID,
-	DSO__ORIG_DSO,
-	DSO__ORIG_KMODULE,
-	DSO__ORIG_NOT_FOUND,
-};
 
 static void dsos__add(struct list_head *head, struct dso *dso);
 static struct map *map__new2(u64 start, struct dso *dso, enum map_type type);
@@ -126,8 +120,8 @@ static void map_groups__fixup_end(struct map_groups *self)
 static struct symbol *symbol__new(u64 start, u64 len, const char *name)
 {
 	size_t namelen = strlen(name) + 1;
-	struct symbol *self = zalloc(symbol_conf.priv_size +
-				     sizeof(*self) + namelen);
+	struct symbol *self = calloc(1, (symbol_conf.priv_size +
+					 sizeof(*self) + namelen));
 	if (self == NULL)
 		return NULL;
 
@@ -178,7 +172,7 @@ static void dso__set_basename(struct dso *self)
 
 struct dso *dso__new(const char *name)
 {
-	struct dso *self = zalloc(sizeof(*self) + strlen(name) + 1);
+	struct dso *self = calloc(1, sizeof(*self) + strlen(name) + 1);
 
 	if (self != NULL) {
 		int i;
@@ -870,8 +864,8 @@ out_close:
 	if (err == 0)
 		return nr;
 out:
-	pr_warning("%s: problems reading %s PLT info.\n",
-		   __func__, self->long_name);
+	pr_debug("%s: problems reading %s PLT info.\n",
+		 __func__, self->long_name);
 	return 0;
 }
 
@@ -1025,7 +1019,7 @@ static int dso__load_sym(struct dso *self, struct map *map, const char *name,
 				}
 				curr_map->map_ip = identity__map_ip;
 				curr_map->unmap_ip = identity__map_ip;
-				curr_dso->origin = DSO__ORIG_KERNEL;
+				curr_dso->origin = self->origin;
 				map_groups__insert(kmap->kmaps, curr_map);
 				dsos__add(&dsos__kernel, curr_dso);
 				dso__set_loaded(curr_dso, map->type);
@@ -1394,13 +1388,13 @@ static int dso__kernel_module_get_build_id(struct dso *self)
 	return 0;
 }
 
-static int map_groups__set_modules_path_dir(struct map_groups *self, char *dirname)
+static int map_groups__set_modules_path_dir(struct map_groups *self, char *dir_name)
 {
 	struct dirent *dent;
-	DIR *dir = opendir(dirname);
+	DIR *dir = opendir(dir_name);
 
 	if (!dir) {
-		pr_debug("%s: cannot open %s dir\n", __func__, dirname);
+		pr_debug("%s: cannot open %s dir\n", __func__, dir_name);
 		return -1;
 	}
 
@@ -1413,7 +1407,7 @@ static int map_groups__set_modules_path_dir(struct map_groups *self, char *dirna
 				continue;
 
 			snprintf(path, sizeof(path), "%s/%s",
-				 dirname, dent->d_name);
+				 dir_name, dent->d_name);
 			if (map_groups__set_modules_path_dir(self, path) < 0)
 				goto failure;
 		} else {
@@ -1433,7 +1427,7 @@ static int map_groups__set_modules_path_dir(struct map_groups *self, char *dirna
 				continue;
 
 			snprintf(path, sizeof(path), "%s/%s",
-				 dirname, dent->d_name);
+				 dir_name, dent->d_name);
 
 			long_name = strdup(path);
 			if (long_name == NULL)
@@ -1470,8 +1464,8 @@ static int map_groups__set_modules_path(struct map_groups *self)
  */
 static struct map *map__new2(u64 start, struct dso *dso, enum map_type type)
 {
-	struct map *self = zalloc(sizeof(*self) +
-				  (dso->kernel ? sizeof(struct kmap) : 0));
+	struct map *self = calloc(1, (sizeof(*self) +
+				      (dso->kernel ? sizeof(struct kmap) : 0)));
 	if (self != NULL) {
 		/*
 		 * ->end will be filled after we load all the symbols
@@ -1895,6 +1889,17 @@ out_fail:
 	return -1;
 }
 
+size_t vmlinux_path__fprintf(FILE *fp)
+{
+	int i;
+	size_t printed = 0;
+
+	for (i = 0; i < vmlinux_path__nr_entries; ++i)
+		printed += fprintf(fp, "[%d] %s\n", i, vmlinux_path[i]);
+
+	return printed;
+}
+
 static int setup_list(struct strlist **list, const char *list_str,
 		      const char *list_name)
 {
@@ -1963,4 +1968,47 @@ int map_groups__create_kernel_maps(struct map_groups *self,
 	 */
 	map_groups__fixup_end(self);
 	return 0;
+}
+
+static int hex(char ch)
+{
+	if ((ch >= '0') && (ch <= '9'))
+		return ch - '0';
+	if ((ch >= 'a') && (ch <= 'f'))
+		return ch - 'a' + 10;
+	if ((ch >= 'A') && (ch <= 'F'))
+		return ch - 'A' + 10;
+	return -1;
+}
+
+/*
+ * While we find nice hex chars, build a long_val.
+ * Return number of chars processed.
+ */
+int hex2u64(const char *ptr, u64 *long_val)
+{
+	const char *p = ptr;
+	*long_val = 0;
+
+	while (*p) {
+		const int hex_val = hex(*p);
+
+		if (hex_val < 0)
+			break;
+
+		*long_val = (*long_val << 4) | hex_val;
+		p++;
+	}
+
+	return p - ptr;
+}
+
+char *strxfrchar(char *s, char from, char to)
+{
+	char *p = s;
+
+	while ((p = strchr(p, from)) != NULL)
+		*p++ = to;
+
+	return s;
 }

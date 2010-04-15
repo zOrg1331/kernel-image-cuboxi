@@ -21,7 +21,6 @@
 #include "util/cache.h"
 #include <linux/rbtree.h>
 #include "util/symbol.h"
-#include "util/string.h"
 #include "util/callchain.h"
 #include "util/strlist.h"
 
@@ -78,8 +77,6 @@ struct per_pid {
 
 	struct per_pidcomm *all;
 	struct per_pidcomm *current;
-
-	int painted;
 };
 
 
