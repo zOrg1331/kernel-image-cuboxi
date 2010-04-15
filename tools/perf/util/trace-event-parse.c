@@ -42,7 +42,7 @@ int header_page_overwrite_size;
 int header_page_data_offset;
 int header_page_data_size;
 
-int latency_format;
+bool latency_format;
 
 static char *input_buf;
 static unsigned long long input_buf_ptr;
@@ -761,7 +761,7 @@ static int field_is_string(struct format_field *field)
 
 static int field_is_dynamic(struct format_field *field)
 {
-	if (!strcmp(field->type, "__data_loc"))
+	if (!strncmp(field->type, "__data_loc", 10))
 		return 1;
 
 	return 0;

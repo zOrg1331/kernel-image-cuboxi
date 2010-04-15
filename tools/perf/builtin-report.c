@@ -32,11 +32,11 @@
 
 static char		const *input_name = "perf.data";
 
-static int		force;
+static bool		force;
 static bool		hide_unresolved;
 static bool		dont_use_callchains;
 
-static int		show_threads;
+static bool		show_threads;
 static struct perf_read_values	show_threads_values;
 
 static char		default_pretty_printing_style[] = "normal";
@@ -267,7 +267,18 @@ static struct perf_event_ops event_ops = {
 	.fork	= event__process_task,
 	.lost	= event__process_lost,
 	.read	= process_read_event,
+	.attr	= event__process_attr,
+	.event_type = event__process_event_type,
+	.tracing_data = event__process_tracing_data,
+	.build_id = event__process_build_id,
 };
+
+extern volatile int session_done;
+
+static void sig_handler(int sig __attribute__((__unused__)))
+{
+	session_done = 1;
+}
 
 static int __cmd_report(void)
 {
@@ -275,6 +286,8 @@ static int __cmd_report(void)
 	struct perf_session *session;
 	struct rb_node *next;
 	const char *help = "For a higher level overview, try: perf report --sort comm,dso";
+
+	signal(SIGINT, sig_handler);
 
 	session = perf_session__new(input_name, O_RDONLY, force);
 	if (session == NULL)
@@ -418,7 +431,7 @@ static const char * const report_usage[] = {
 static const struct option options[] = {
 	OPT_STRING('i', "input", &input_name, "file",
 		    "input file name"),
-	OPT_BOOLEAN('v', "verbose", &verbose,
+	OPT_INCR('v', "verbose", &verbose,
 		    "be more verbose (show symbol address, etc)"),
 	OPT_BOOLEAN('D', "dump-raw-trace", &dump_trace,
 		    "dump raw trace in ASCII"),
@@ -465,7 +478,8 @@ int cmd_report(int argc, const char **argv, const char *prefix __used)
 {
 	argc = parse_options(argc, argv, options, report_usage, 0);
 
-	setup_browser();
+	if (strcmp(input_name, "-") != 0)
+		setup_browser();
 
 	if (symbol__init() < 0)
 		return -1;
