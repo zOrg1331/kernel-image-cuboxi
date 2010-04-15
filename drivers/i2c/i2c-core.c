@@ -117,8 +117,10 @@ static int i2c_device_probe(struct device *dev)
 	dev_dbg(dev, "probe\n");
 
 	status = driver->probe(client, i2c_match_id(driver->id_table, client));
-	if (status)
+	if (status) {
 		client->driver = NULL;
+		i2c_set_clientdata(client, NULL);
+	}
 	return status;
 }
 
@@ -139,8 +141,10 @@ static int i2c_device_remove(struct device *dev)
 		dev->driver = NULL;
 		status = 0;
 	}
-	if (status == 0)
+	if (status == 0) {
 		client->driver = NULL;
+		i2c_set_clientdata(client, NULL);
+	}
 	return status;
 }
 
@@ -156,82 +160,8 @@ static void i2c_device_shutdown(struct device *dev)
 		driver->shutdown(client);
 }
 
-#ifdef CONFIG_SUSPEND
-static int i2c_device_pm_suspend(struct device *dev)
-{
-	const struct dev_pm_ops *pm;
-
-	if (!dev->driver)
-		return 0;
-	pm = dev->driver->pm;
-	if (!pm || !pm->suspend)
-		return 0;
-	return pm->suspend(dev);
-}
-
-static int i2c_device_pm_resume(struct device *dev)
-{
-	const struct dev_pm_ops *pm;
-
-	if (!dev->driver)
-		return 0;
-	pm = dev->driver->pm;
-	if (!pm || !pm->resume)
-		return 0;
-	return pm->resume(dev);
-}
-#else
-#define i2c_device_pm_suspend	NULL
-#define i2c_device_pm_resume	NULL
-#endif
-
-#ifdef CONFIG_PM_RUNTIME
-static int i2c_device_runtime_suspend(struct device *dev)
-{
-	const struct dev_pm_ops *pm;
-
-	if (!dev->driver)
-		return 0;
-	pm = dev->driver->pm;
-	if (!pm || !pm->runtime_suspend)
-		return 0;
-	return pm->runtime_suspend(dev);
-}
-
-static int i2c_device_runtime_resume(struct device *dev)
-{
-	const struct dev_pm_ops *pm;
-
-	if (!dev->driver)
-		return 0;
-	pm = dev->driver->pm;
-	if (!pm || !pm->runtime_resume)
-		return 0;
-	return pm->runtime_resume(dev);
-}
-
-static int i2c_device_runtime_idle(struct device *dev)
-{
-	const struct dev_pm_ops *pm = NULL;
-	int ret;
-
-	if (dev->driver)
-		pm = dev->driver->pm;
-	if (pm && pm->runtime_idle) {
-		ret = pm->runtime_idle(dev);
-		if (ret)
-			return ret;
-	}
-
-	return pm_runtime_suspend(dev);
-}
-#else
-#define i2c_device_runtime_suspend	NULL
-#define i2c_device_runtime_resume	NULL
-#define i2c_device_runtime_idle		NULL
-#endif
-
-static int i2c_device_suspend(struct device *dev, pm_message_t mesg)
+#ifdef CONFIG_PM_SLEEP
+static int i2c_legacy_suspend(struct device *dev, pm_message_t mesg)
 {
 	struct i2c_client *client = i2c_verify_client(dev);
 	struct i2c_driver *driver;
@@ -244,7 +174,7 @@ static int i2c_device_suspend(struct device *dev, pm_message_t mesg)
 	return driver->suspend(client, mesg);
 }
 
-static int i2c_device_resume(struct device *dev)
+static int i2c_legacy_resume(struct device *dev)
 {
 	struct i2c_client *client = i2c_verify_client(dev);
 	struct i2c_driver *driver;
@@ -256,6 +186,104 @@ static int i2c_device_resume(struct device *dev)
 		return 0;
 	return driver->resume(client);
 }
+
+static int i2c_device_pm_suspend(struct device *dev)
+{
+	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
+
+	if (pm_runtime_suspended(dev))
+		return 0;
+
+	if (pm)
+		return pm->suspend ? pm->suspend(dev) : 0;
+
+	return i2c_legacy_suspend(dev, PMSG_SUSPEND);
+}
+
+static int i2c_device_pm_resume(struct device *dev)
+{
+	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
+	int ret;
+
+	if (pm)
+		ret = pm->resume ? pm->resume(dev) : 0;
+	else
+		ret = i2c_legacy_resume(dev);
+
+	if (!ret) {
+		pm_runtime_disable(dev);
+		pm_runtime_set_active(dev);
+		pm_runtime_enable(dev);
+	}
+
+	return ret;
+}
+
+static int i2c_device_pm_freeze(struct device *dev)
+{
+	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
+
+	if (pm_runtime_suspended(dev))
+		return 0;
+
+	if (pm)
+		return pm->freeze ? pm->freeze(dev) : 0;
+
+	return i2c_legacy_suspend(dev, PMSG_FREEZE);
+}
+
+static int i2c_device_pm_thaw(struct device *dev)
+{
+	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
+
+	if (pm_runtime_suspended(dev))
+		return 0;
+
+	if (pm)
+		return pm->thaw ? pm->thaw(dev) : 0;
+
+	return i2c_legacy_resume(dev);
+}
+
+static int i2c_device_pm_poweroff(struct device *dev)
+{
+	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
+
+	if (pm_runtime_suspended(dev))
+		return 0;
+
+	if (pm)
+		return pm->poweroff ? pm->poweroff(dev) : 0;
+
+	return i2c_legacy_suspend(dev, PMSG_HIBERNATE);
+}
+
+static int i2c_device_pm_restore(struct device *dev)
+{
+	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
+	int ret;
+
+	if (pm)
+		ret = pm->restore ? pm->restore(dev) : 0;
+	else
+		ret = i2c_legacy_resume(dev);
+
+	if (!ret) {
+		pm_runtime_disable(dev);
+		pm_runtime_set_active(dev);
+		pm_runtime_enable(dev);
+	}
+
+	return ret;
+}
+#else /* !CONFIG_PM_SLEEP */
+#define i2c_device_pm_suspend	NULL
+#define i2c_device_pm_resume	NULL
+#define i2c_device_pm_freeze	NULL
+#define i2c_device_pm_thaw	NULL
+#define i2c_device_pm_poweroff	NULL
+#define i2c_device_pm_restore	NULL
+#endif /* !CONFIG_PM_SLEEP */
 
 static void i2c_client_dev_release(struct device *dev)
 {
@@ -298,9 +326,15 @@ static const struct attribute_group *i2c_dev_attr_groups[] = {
 static const struct dev_pm_ops i2c_device_pm_ops = {
 	.suspend = i2c_device_pm_suspend,
 	.resume = i2c_device_pm_resume,
-	.runtime_suspend = i2c_device_runtime_suspend,
-	.runtime_resume = i2c_device_runtime_resume,
-	.runtime_idle = i2c_device_runtime_idle,
+	.freeze = i2c_device_pm_freeze,
+	.thaw = i2c_device_pm_thaw,
+	.poweroff = i2c_device_pm_poweroff,
+	.restore = i2c_device_pm_restore,
+	SET_RUNTIME_PM_OPS(
+		pm_generic_runtime_suspend,
+		pm_generic_runtime_resume,
+		pm_generic_runtime_idle
+	)
 };
 
 struct bus_type i2c_bus_type = {
@@ -309,8 +343,6 @@ struct bus_type i2c_bus_type = {
 	.probe		= i2c_device_probe,
 	.remove		= i2c_device_remove,
 	.shutdown	= i2c_device_shutdown,
-	.suspend	= i2c_device_suspend,
-	.resume		= i2c_device_resume,
 	.pm		= &i2c_device_pm_ops,
 };
 EXPORT_SYMBOL_GPL(i2c_bus_type);
@@ -1260,12 +1292,23 @@ static int i2c_detect_address(struct i2c_client *temp_client,
 		return 0;
 
 	/* Make sure there is something at this address */
-	if (i2c_smbus_xfer(adapter, addr, 0, 0, 0, I2C_SMBUS_QUICK, NULL) < 0)
-		return 0;
+	if (addr == 0x73 && (adapter->class & I2C_CLASS_HWMON)) {
+		/* Special probe for FSC hwmon chips */
+		union i2c_smbus_data dummy;
 
-	/* Prevent 24RF08 corruption */
-	if ((addr & ~0x0f) == 0x50)
-		i2c_smbus_xfer(adapter, addr, 0, 0, 0, I2C_SMBUS_QUICK, NULL);
+		if (i2c_smbus_xfer(adapter, addr, 0, I2C_SMBUS_READ, 0,
+				   I2C_SMBUS_BYTE_DATA, &dummy) < 0)
+			return 0;
+	} else {
+		if (i2c_smbus_xfer(adapter, addr, 0, I2C_SMBUS_WRITE, 0,
+				   I2C_SMBUS_QUICK, NULL) < 0)
+			return 0;
+
+		/* Prevent 24RF08 corruption */
+		if ((addr & ~0x0f) == 0x50)
+			i2c_smbus_xfer(adapter, addr, 0, I2C_SMBUS_WRITE, 0,
+				       I2C_SMBUS_QUICK, NULL);
+	}
 
 	/* Finally call the custom detection function */
 	memset(&info, 0, sizeof(struct i2c_board_info));
