@@ -665,10 +665,6 @@ SYSCALL_DEFINE4(ptrace, long, request, long, pid, long, addr, long, data)
 	struct task_struct *child;
 	long ret;
 
-	/*
-	 * This lock_kernel fixes a subtle race with suid exec
-	 */
-	lock_kernel();
 	if (request == PTRACE_TRACEME) {
 		ret = ptrace_traceme();
 		if (!ret)
@@ -702,7 +698,6 @@ SYSCALL_DEFINE4(ptrace, long, request, long, pid, long, addr, long, data)
  out_put_task_struct:
 	put_task_struct(child);
  out:
-	unlock_kernel();
 	return ret;
 }
 
@@ -812,10 +807,6 @@ asmlinkage long compat_sys_ptrace(compat_long_t request, compat_long_t pid,
 	struct task_struct *child;
 	long ret;
 
-	/*
-	 * This lock_kernel fixes a subtle race with suid exec
-	 */
-	lock_kernel();
 	if (request == PTRACE_TRACEME) {
 		ret = ptrace_traceme();
 		goto out;
@@ -845,7 +836,6 @@ asmlinkage long compat_sys_ptrace(compat_long_t request, compat_long_t pid,
  out_put_task_struct:
 	put_task_struct(child);
  out:
-	unlock_kernel();
 	return ret;
 }
 #endif	/* CONFIG_COMPAT */
