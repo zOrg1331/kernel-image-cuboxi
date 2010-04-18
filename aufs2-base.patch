@@ -23,10 +23,10 @@ index a7dce91..c345520 100644
  {
  	unsigned long hash;
 diff --git a/fs/splice.c b/fs/splice.c
-index 3920866..b13a9a2 100644
+index 9313b61..b9e871f 100644
 --- a/fs/splice.c
 +++ b/fs/splice.c
-@@ -1053,8 +1053,8 @@ EXPORT_SYMBOL(generic_splice_sendpage);
+@@ -1054,8 +1054,8 @@ EXPORT_SYMBOL(generic_splice_sendpage);
  /*
   * Attempt to initiate a splice from pipe to file.
   */
@@ -37,7 +37,7 @@ index 3920866..b13a9a2 100644
  {
  	ssize_t (*splice_write)(struct pipe_inode_info *, struct file *,
  				loff_t *, size_t, unsigned int);
-@@ -1081,9 +1081,9 @@ static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
+@@ -1082,9 +1082,9 @@ static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
  /*
   * Attempt to initiate a splice from a file to a pipe.
   */
