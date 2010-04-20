@@ -23,6 +23,7 @@
  */
 
 #include <linux/device.h>
+#include <linux/slab.h>
 #include <linux/usb.h>
 #include <linux/usb/quirks.h>
 #include <linux/pm_runtime.h>
@@ -489,10 +490,10 @@ void usb_driver_release_interface(struct usb_driver *driver,
 	if (device_is_registered(dev)) {
 		device_release_driver(dev);
 	} else {
-		down(&dev->sem);
+		device_lock(dev);
 		usb_unbind_interface(dev);
 		dev->driver = NULL;
-		up(&dev->sem);
+		device_unlock(dev);
 	}
 }
 EXPORT_SYMBOL_GPL(usb_driver_release_interface);
