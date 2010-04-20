@@ -205,6 +205,8 @@ struct track {
 
 enum track_item { TRACK_ALLOC, TRACK_FREE };
 
+static DEFINE_SPINLOCK(cache_chain_lock);
+
 #ifdef CONFIG_SLUB_DEBUG
 static int sysfs_slab_add(struct kmem_cache *);
 static int sysfs_slab_alias(struct kmem_cache *, const char *);
@@ -408,11 +410,6 @@ static inline void dec_cache_grown(struct kmem_cache *s)
 {
 }
 #endif
-
-void show_slab_info(void)
-{
-	/* FIXME - show it */
-}
 
 #ifdef CONFIG_SLUB_DEBUG
 /*
@@ -2761,9 +2758,11 @@ static inline int kmem_cache_close(struct kmem_cache *s)
 void kmem_cache_destroy(struct kmem_cache *s)
 {
 	down_write(&slub_lock);
+	spin_lock(&cache_chain_lock);
 	s->refcount--;
 	if (!s->refcount) {
 		list_del(&s->list);
+		spin_unlock(&cache_chain_lock);
 		up_write(&slub_lock);
 		if (kmem_cache_close(s)) {
 			printk(KERN_ERR "SLUB %s: %s called for cache that "
@@ -2773,8 +2772,10 @@ void kmem_cache_destroy(struct kmem_cache *s)
 		if (s->flags & SLAB_DESTROY_BY_RCU)
 			rcu_barrier();
 		sysfs_slab_remove(s);
-	} else
+	} else {
+		spin_unlock(&cache_chain_lock);
 		up_write(&slub_lock);
+	}
 }
 EXPORT_SYMBOL(kmem_cache_destroy);
 
@@ -2846,7 +2847,9 @@ static struct kmem_cache *create_kmalloc_cache(struct kmem_cache *s,
 								flags, NULL))
 		goto panic;
 
+	spin_lock(&cache_chain_lock);
 	list_add(&s->list, &slab_caches);
+	spin_unlock(&cache_chain_lock);
 
 	if (sysfs_slab_add(s))
 		goto panic;
@@ -2919,7 +2922,9 @@ static noinline struct kmem_cache *dma_kmalloc_cache(int index, gfp_t flags)
 		goto unlock_out;
 	}
 
+	spin_lock(&cache_chain_lock);
 	list_add(&s->list, &slab_caches);
+	spin_unlock(&cache_chain_lock);
 	kmalloc_caches_dma[index] = s;
 
 	if (slab_state >= SYSFS)
@@ -3548,11 +3553,15 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t size,
 	if (s) {
 		if (kmem_cache_open(s, GFP_KERNEL, name,
 				size, align, flags, ctor)) {
+			spin_lock(&cache_chain_lock);
 			list_add(&s->list, &slab_caches);
+			spin_unlock(&cache_chain_lock);
 			up_write(&slub_lock);
 			if (sysfs_slab_add(s)) {
 				down_write(&slub_lock);
+				spin_lock(&cache_chain_lock);
 				list_del(&s->list);
+				spin_unlock(&cache_chain_lock);
 				up_write(&slub_lock);
 				kfree(s);
 				goto err;
@@ -4872,6 +4881,76 @@ static void print_slabinfo_header(struct seq_file *m)
 	seq_puts(m, " : tunables <limit> <batchcount> <sharedfactor>");
 	seq_puts(m, " : slabdata <active_slabs> <num_slabs> <sharedavail>");
 	seq_putc(m, '\n');
+}
+
+#define SHOW_TOP_SLABS	10
+
+static unsigned long get_cache_size(struct kmem_cache *cache)
+{
+	unsigned long flags;
+	unsigned long slabs;
+	struct kmem_cache_node *n;
+	struct list_head *lh;
+	int cpu, node;
+
+	slabs = 0;
+
+	for_each_online_cpu(cpu)
+		slabs++;
+
+	for_each_online_node(node) {
+		n = get_node(cache, node);
+		if (!n)
+			continue;
+		spin_lock_irqsave(&n->list_lock, flags);
+#ifdef CONFIG_SLUB_DEBUG
+		list_for_each(lh, &n->full)
+			slabs++;
+#endif
+		list_for_each(lh, &n->partial)
+			slabs++;
+		spin_unlock_irqrestore(&n->list_lock, flags);
+	}
+
+	return slabs * (PAGE_SIZE << oo_order(cache->oo));
+}
+
+void show_slab_info(void)
+{
+	int i, j;
+	unsigned long size;
+	struct kmem_cache *ptr;
+	unsigned long sizes[SHOW_TOP_SLABS];
+	struct kmem_cache *top[SHOW_TOP_SLABS];
+
+	memset(top, 0, sizeof(top));
+	memset(sizes, 0, sizeof(sizes));
+
+	printk("Top %d caches:\n", SHOW_TOP_SLABS);
+
+	spin_lock(&cache_chain_lock);
+	list_for_each_entry(ptr, &slab_caches, list) {
+		size = get_cache_size(ptr);
+
+		j = 0;
+		for (i = 1; i < SHOW_TOP_SLABS; i++) {
+			if (sizes[i] < sizes[j])
+				j = i;
+		}
+		if (size > sizes[j]) {
+			sizes[j] = size;
+			top[j] = ptr;
+		}
+	}
+
+	for (i = 0; i < SHOW_TOP_SLABS; i++) {
+		if (top[i])
+			printk("%-21s: size %10lu objsize %10u\n",
+				top[i]->name, sizes[i],
+				top[i]->size);
+	}
+
+	spin_unlock(&cache_chain_lock);
 }
 
 static void *s_start(struct seq_file *m, loff_t *pos)
