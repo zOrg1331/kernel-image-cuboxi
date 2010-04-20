@@ -661,8 +661,8 @@ static inline void init_lock_keys(void)
  * Guard access to the cache-chain.
  */
 static DEFINE_MUTEX(cache_chain_mutex);
-static struct list_head cache_chain;
-static spinlock_t cache_chain_lock;
+static LIST_HEAD(cache_chain);
+static DEFINE_SPINLOCK(cache_chain_lock);
 
 /*
  * chicken and egg problem: delay the per-cpu array allocation
@@ -1506,8 +1506,6 @@ void __init kmem_cache_init(void)
 	node = numa_node_id();
 
 	/* 1) create the cache_cache */
-	INIT_LIST_HEAD(&cache_chain);
-	spin_lock_init(&cache_chain_lock);
 	list_add(&cache_cache.next, &cache_chain);
 	cache_cache.colour_off = cache_line_size();
 	cache_cache.array[smp_processor_id()] = &initarray_cache.cache;
