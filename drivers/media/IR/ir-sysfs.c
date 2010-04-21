@@ -1,4 +1,4 @@
-/* ir-register.c - handle IR scancode->keycode tables
+/* ir-sysfs.c - sysfs interface for RC devices (/sys/class/rc)
  *
  * Copyright (C) 2009-2010 by Mauro Carvalho Chehab <mchehab@redhat.com>
  *
@@ -63,6 +63,10 @@ static ssize_t show_protocol(struct device *d,
 		s = "nec";
 	else if (ir_type == IR_TYPE_RC6)
 		s = "rc6";
+	else if (ir_type == IR_TYPE_JVC)
+		s = "jvc";
+	else if (ir_type == IR_TYPE_SONY)
+		s = "sony";
 	else
 		s = "other";
 
@@ -100,6 +104,10 @@ static ssize_t store_protocol(struct device *d,
 			ir_type |= IR_TYPE_PD;
 		if (!strcasecmp(buf, "nec"))
 			ir_type |= IR_TYPE_NEC;
+		if (!strcasecmp(buf, "jvc"))
+			ir_type |= IR_TYPE_JVC;
+		if (!strcasecmp(buf, "sony"))
+			ir_type |= IR_TYPE_SONY;
 	}
 
 	if (!ir_type) {
@@ -287,8 +295,6 @@ static int __init ir_core_init(void)
 
 	/* Initialize/load the decoders/keymap code that will be used */
 	ir_raw_init();
-	rc_map_init();
-
 
 	return 0;
 }

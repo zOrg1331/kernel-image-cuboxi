@@ -16,6 +16,8 @@
 #define IR_TYPE_PD	(1  << 1)	/* Pulse distance encoded IR */
 #define IR_TYPE_NEC	(1  << 2)
 #define IR_TYPE_RC6	(1  << 3)	/* Philips RC6 protocol */
+#define IR_TYPE_JVC	(1  << 4)	/* JVC protocol */
+#define IR_TYPE_SONY	(1  << 5)	/* Sony12/15/20 protocol */
 #define IR_TYPE_OTHER	(1u << 31)
 
 struct ir_scancode {
@@ -79,6 +81,8 @@ void rc_map_init(void);
 #define RC_MAP_GENIUS_TVGO_A11MCE        "rc-genius-tvgo-a11mce"
 #define RC_MAP_GOTVIEW7135               "rc-gotview7135"
 #define RC_MAP_HAUPPAUGE_NEW             "rc-hauppauge-new"
+#define RC_MAP_IMON_MCE                  "rc-imon-mce"
+#define RC_MAP_IMON_PAD                  "rc-imon-pad"
 #define RC_MAP_IODATA_BCTV7E             "rc-iodata-bctv7e"
 #define RC_MAP_KAIOMY                    "rc-kaiomy"
 #define RC_MAP_KWORLD_315U               "rc-kworld-315u"
