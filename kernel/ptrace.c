@@ -195,11 +195,10 @@ repeat:
 	/* the same process cannot be attached many times */
 	if (task->ptrace & PT_PTRACED)
 		goto bad;
+	if (task->mm->vps_dumpable == 2)
+		goto bad;
 	retval = __ptrace_may_access(task, PTRACE_MODE_ATTACH);
 	if (retval)
-		goto bad;
-	retval = -EACCES;
-	if (task->mm->vps_dumpable == 2)
 		goto bad;
 
 	/* Go */
