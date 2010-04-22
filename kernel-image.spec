@@ -113,29 +113,6 @@ not work well.
 
 Install this package only if you really need it.
 
-%package -n kernel-modules-ide-%flavour
-Summary: IDE  driver modules (obsolete by PATA)
-Group: System/Kernel and hardware
-Provides:  kernel-modules-ide-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease > %version-%release
-Prereq: coreutils
-Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
-
-%description -n kernel-modules-ide-%flavour
-This package contains  IDE driver modules for the Linux kernel
-package %name-%version-%release.
-
-These drivers are declared obsolete by the kernel maintainers; PATA
-drivers should be used instead.  However, the older IDE drivers may be
-still useful for some hardware, if the corresponding PATA drivers do
-not work well.
-
-Install this package only if you really need it.
-
-
 %package -n kernel-modules-alsa-%flavour
 Summary: The Advanced Linux Sound Architecture modules
 Group: System/Kernel and hardware
@@ -214,22 +191,6 @@ Requires(postun): %name = %version-%release
 
 %description -n kernel-modules-v4l-%flavour
 Video for linux drivers
-
-%package -n kernel-modules-staging-%flavour
-Summary:  Kernel modules under development
-Group: System/Kernel and hardware
-Provides:  kernel-modules-staging-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease > %version-%release
-Prereq: coreutils
-Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
-
-%description -n kernel-modules-staging-%flavour
-Drivers and filesystems that are not ready to be merged into the main
-portion of the Linux kernel tree at this point in time for various
-technical reasons.
 
 %package -n kernel-headers-%flavour
 Summary: Header files for the Linux kernel
@@ -450,6 +411,8 @@ install -d %buildroot%_docdir/kernel-doc-%base_flavour-%version/
 cp -a Documentation/* %buildroot%_docdir/kernel-doc-%base_flavour-%version/
 find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
+find %buildroot%_docdir/kernel-doc-%base_flavour-%version/ -executable -type f -delete
+find %buildroot%_docdir/kernel-doc-%base_flavour-%version/ -name "*.o*" -delete
 %endif # if_enabled docs
 
 #remove video headers
@@ -468,13 +431,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %postun -n kernel-modules-oss-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
-
-%post -n kernel-modules-ide-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-ide-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
 
 %post -n kernel-modules-drm-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
@@ -513,10 +469,8 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/build
 %exclude %modules_dir/kernel/sound
 %exclude %modules_dir/kernel/drivers/media/
-%exclude %modules_dir/kernel/drivers/staging/
 %exclude %modules_dir/kernel/drivers/gpu/drm
 %exclude %modules_dir/kernel/arch/x86/kvm
-%exclude %modules_dir/kernel/drivers/ide/
 /lib/firmware/*
 %if_enabled oss
 # OSS drivers
@@ -525,9 +479,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-modules-oss-%flavour
 %modules_dir/kernel/sound/oss
 %endif #oss
-
-%files -n kernel-modules-ide-%flavour
-%modules_dir/kernel/drivers/ide/
 
 %files -n kernel-headers-%flavour
 %kheaders_dir
@@ -542,6 +493,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-doc-%base_flavour
 %doc %_docdir/kernel-doc-%base_flavour-%version
 %endif
+
 %files -n kernel-modules-alsa-%flavour
 %modules_dir/kernel/sound/
 %if_enabled oss
@@ -556,9 +508,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
-
-%files -n kernel-modules-staging-%flavour
-%modules_dir/kernel/drivers/staging/
 
 %changelog
 * Thu Apr 22 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt1
