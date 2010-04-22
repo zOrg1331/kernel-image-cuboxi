@@ -2173,7 +2173,8 @@ static int inet6_addr_del(struct net *net, int ifindex, struct in6_addr *pfx,
 			   disable IPv6 on this interface.
 			 */
 			if (idev->addr_list == NULL)
-				addrconf_ifdown(idev->dev, 1);
+				addrconf_ifdown(idev->dev,
+						!(idev->dev->flags & IFF_LOOPBACK));
 			return 0;
 		}
 	}
