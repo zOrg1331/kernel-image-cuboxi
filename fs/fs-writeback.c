@@ -25,6 +25,7 @@
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
 #include <linux/buffer_head.h>
+#include <trace/events/kmem.h>
 #include "internal.h"
 
 #define inode_to_bdi(inode)	((inode)->i_mapping->backing_dev_info)
@@ -877,7 +878,9 @@ static long wb_check_old_data_flush(struct bdi_writeback *wb)
 			.range_cyclic	= 1,
 		};
 
-		return wb_writeback(wb, &args);
+		nr_pages = wb_writeback(wb, &args);
+		trace_mm_olddata_writeout(nr_pages);
+		return nr_pages;
 	}
 
 	return 0;
@@ -917,6 +920,7 @@ long wb_do_writeback(struct bdi_writeback *wb, int force_wait)
 		if (args.sync_mode == WB_SYNC_ALL)
 			wb_clear_pending(wb, work);
 	}
+	trace_mm_background_writeout(wrote);
 
 	/*
 	 * Check for periodic writeback, kupdated() style
@@ -1211,6 +1215,23 @@ void writeback_inodes_sb(struct super_block *sb)
 	bdi_start_writeback(sb->s_bdi, sb, nr_to_write);
 }
 EXPORT_SYMBOL(writeback_inodes_sb);
+
+/**
+ * writeback_inodes_sb_if_idle	-	start writeback if none underway
+ * @sb: the superblock
+ *
+ * Invoke writeback_inodes_sb if no writeback is currently underway.
+ * Returns 1 if writeback was started, 0 if not.
+ */
+int writeback_inodes_sb_if_idle(struct super_block *sb)
+{
+	if (!writeback_in_progress(sb->s_bdi)) {
+		writeback_inodes_sb(sb);
+		return 1;
+	} else
+		return 0;
+}
+EXPORT_SYMBOL(writeback_inodes_sb_if_idle);
 
 /**
  * sync_inodes_sb	-	sync sb inode pages

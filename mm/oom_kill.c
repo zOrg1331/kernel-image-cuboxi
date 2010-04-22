@@ -31,6 +31,7 @@
 int sysctl_panic_on_oom;
 int sysctl_oom_kill_allocating_task;
 int sysctl_oom_dump_tasks;
+int sysctl_would_have_oomkilled;
 static DEFINE_SPINLOCK(zone_scan_lock);
 /* #define DEBUG */
 
@@ -356,6 +357,12 @@ static void __oom_kill_task(struct task_struct *p, int verbose)
 		return;
 	}
 
+	if (sysctl_would_have_oomkilled == 1) {
+		printk(KERN_ERR "Would have killed process %d (%s). But continuing instead.\n",
+				task_pid_nr(p), p->comm);
+		return;
+	}
+
 	if (verbose)
 		printk(KERN_ERR "Killed process %d (%s)\n",
 				task_pid_nr(p), p->comm);
@@ -404,7 +411,7 @@ static int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
 		cpuset_print_task_mems_allowed(current);
 		task_unlock(current);
 		dump_stack();
-		mem_cgroup_print_oom_info(mem, current);
+		mem_cgroup_print_oom_info(mem, p);
 		show_mem();
 		if (sysctl_oom_dump_tasks)
 			dump_tasks(mem);

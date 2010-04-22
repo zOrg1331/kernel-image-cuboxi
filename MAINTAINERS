@@ -2322,10 +2322,25 @@ W:	http://www.kernel.org/pub/linux/kernel/people/fseidel/hdaps/
 S:	Maintained
 F:	drivers/hwmon/hdaps.c
 
+HWPOISON MEMORY FAILURE HANDLING
+M:	Andi Kleen <andi@firstfloor.org>
+L:	linux-mm@kvack.org
+L:	linux-kernel@vger.kernel.org
+T:	git git://git.kernel.org/pub/scm/linux/kernel/git/ak/linux-mce-2.6.git hwpoison
+S:	Maintained
+F:	mm/memory-failure.c
+F:	mm/hwpoison-inject.c
+
 HYPERVISOR VIRTUAL CONSOLE DRIVER
 L:	linuxppc-dev@ozlabs.org
 S:	Odd Fixes
 F:	drivers/char/hvc_*
+
+VIRTIO CONSOLE DRIVER
+M:	Amit Shah <amit.shah@redhat.com>
+L:	virtualization@lists.linux-foundation.org
+S:	Maintained
+F:	drivers/char/virtio_console.c
 
 GSPCA FINEPIX SUBDRIVER
 M:	Frank Zago <frank@zago.net>
@@ -5594,9 +5609,11 @@ S:	Maintained
 F:	drivers/net/wireless/rndis_wlan.c
 
 USB XHCI DRIVER
-M:	Sarah Sharp <sarah.a.sharp@intel.com>
+M:	Sarah Sharp <sarah.a.sharp@linux.intel.com>
 L:	linux-usb@vger.kernel.org
 S:	Supported
+F:	drivers/usb/host/xhci*
+F:	drivers/usb/host/pci-quirks*
 
 USB ZC0301 DRIVER
 M:	Luca Risolia <luca.risolia@studio.unibo.it>
@@ -5664,6 +5681,15 @@ M:	OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
 S:	Maintained
 F:	Documentation/filesystems/vfat.txt
 F:	fs/fat/
+
+VIRTIO HOST (VHOST)
+M:	"Michael S. Tsirkin" <mst@redhat.com>
+L:	kvm@vger.kernel.org
+L:	virtualization@lists.osdl.org
+L:	netdev@vger.kernel.org
+S:	Maintained
+F:	drivers/vhost/
+F:	include/linux/vhost.h
 
 VIA RHINE NETWORK DRIVER
 M:	Roger Luethi <rl@hellgate.ch>

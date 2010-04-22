@@ -101,21 +101,17 @@ s64 uv_bios_get_sn_info(int fc, int *uvtype, long *partid, long *coher,
 }
 
 int
-uv_bios_mq_watchlist_alloc(int blade, unsigned long addr, unsigned int mq_size,
+uv_bios_mq_watchlist_alloc(unsigned long addr, unsigned int mq_size,
 			   unsigned long *intr_mmr_offset)
 {
-	union uv_watchlist_u size_blade;
 	u64 watchlist;
 	s64 ret;
-
-	size_blade.size = mq_size;
-	size_blade.blade = blade;
 
 	/*
 	 * bios returns watchlist number or negative error number.
 	 */
 	ret = (int)uv_bios_call_irqsave(UV_BIOS_WATCHLIST_ALLOC, addr,
-			size_blade.val, (u64)intr_mmr_offset,
+			mq_size, (u64)intr_mmr_offset,
 			(u64)&watchlist, 0);
 	if (ret < BIOS_STATUS_SUCCESS)
 		return ret;
@@ -157,6 +153,25 @@ s64 uv_bios_freq_base(u64 clock_type, u64 *ticks_per_second)
 			   (u64)ticks_per_second, 0, 0, 0);
 }
 EXPORT_SYMBOL_GPL(uv_bios_freq_base);
+
+/*
+ * uv_bios_set_legacy_vga_target - Set Legacy VGA I/O Target
+ * @decode: true to enable target, false to disable target
+ * @domain: PCI domain number
+ * @bus: PCI bus number
+ *
+ * Returns:
+ *    0: Success
+ *    -EINVAL: Invalid domain or bus number
+ *    -ENOSYS: Capability not available
+ *    -EBUSY: Legacy VGA I/O cannot be retargeted at this time
+ */
+int uv_bios_set_legacy_vga_target(bool decode, int domain, int bus)
+{
+	return uv_bios_call(UV_BIOS_SET_LEGACY_VGA_TARGET,
+				(u64)decode, (u64)domain, (u64)bus, 0, 0);
+}
+EXPORT_SYMBOL_GPL(uv_bios_set_legacy_vga_target);
 
 
 #ifdef CONFIG_EFI

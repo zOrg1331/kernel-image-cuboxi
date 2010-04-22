@@ -75,7 +75,7 @@ MODULE_AUTHOR("Bruno Ducrot");
 MODULE_DESCRIPTION("ACPI Video Driver");
 MODULE_LICENSE("GPL");
 
-static int brightness_switch_enabled = 1;
+static int brightness_switch_enabled = 0;
 module_param(brightness_switch_enabled, bool, 0644);
 
 static int register_count = 0;
@@ -2088,7 +2088,7 @@ static int acpi_video_bus_put_devices(struct acpi_video_bus *video)
 
 static int acpi_video_bus_start_devices(struct acpi_video_bus *video)
 {
-	return acpi_video_bus_DOS(video, 0, 0);
+	return acpi_video_bus_DOS(video, 0, 1);
 }
 
 static int acpi_video_bus_stop_devices(struct acpi_video_bus *video)

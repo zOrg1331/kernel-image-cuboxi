@@ -1017,7 +1017,7 @@ and is between 256 and 4096 characters. It is defined in the file
 			No delay
 
 	ip=		[IP_PNP]
-			See Documentation/filesystems/nfsroot.txt.
+			See Documentation/filesystems/nfs/nfsroot.txt.
 
 	ip2=		[HW] Set IO/IRQ pairs for up to 4 IntelliPort boards
 			See comment before ip2_setup() in
@@ -1538,10 +1538,10 @@ and is between 256 and 4096 characters. It is defined in the file
 			going to be removed in 2.6.29.
 
 	nfsaddrs=	[NFS]
-			See Documentation/filesystems/nfsroot.txt.
+			See Documentation/filesystems/nfs/nfsroot.txt.
 
 	nfsroot=	[NFS] nfs root filesystem for disk-less boxes.
-			See Documentation/filesystems/nfsroot.txt.
+			See Documentation/filesystems/nfs/nfsroot.txt.
 
 	nfs.callback_tcpport=
 			[NFS] set the TCP port on which the NFSv4 callback
@@ -1864,6 +1864,9 @@ and is between 256 and 4096 characters. It is defined in the file
 		check_enable_amd_mmconf [X86] check for and enable
 				properly configured MMIO access to PCI
 				config space on AMD family 10h CPU
+		msi		[MSI] If the PCI_MSI kernel config parameter is
+				enabled, this kernel boot option can be used to
+				enable the use of MSI interrupts system-wide.
 		nomsi		[MSI] If the PCI_MSI kernel config parameter is
 				enabled, this kernel boot option can be used to
 				disable the use of MSI interrupts system-wide.
@@ -2181,6 +2184,8 @@ and is between 256 and 4096 characters. It is defined in the file
 			See drivers/net/irda/sa1100_ir.c.
 
 	sbni=		[NET] Granch SBNI12 leased line adapter
+
+	sched_debug	[KNL] Enables verbose scheduler debug messages.
 
 	sc1200wdt=	[HW,WDT] SC1200 WDT (watchdog) driver
 			Format: <io>[,<timeout>[,<isapnp>]]
@@ -2645,6 +2650,8 @@ and is between 256 and 4096 characters. It is defined in the file
 			to a common usb-storage quirk flag as follows:
 				a = SANE_SENSE (collect more than 18 bytes
 					of sense data);
+				b = BAD_SENSE (don't collect more than 18
+					bytes of sense data);
 				c = FIX_CAPACITY (decrease the reported
 					device capacity by one sector);
 				h = CAPACITY_HEURISTICS (decrease the

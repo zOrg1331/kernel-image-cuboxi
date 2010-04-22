@@ -29,9 +29,22 @@ char *zfcp_get_fcp_sns_info_ptr(struct fcp_rsp_iu *fcp_rsp_iu)
 	return fcp_sns_info_ptr;
 }
 
-static int zfcp_scsi_change_queue_depth(struct scsi_device *sdev, int depth)
+static int zfcp_scsi_change_queue_depth(struct scsi_device *sdev, int depth,
+					int reason)
 {
-	scsi_adjust_queue_depth(sdev, scsi_get_tag_type(sdev), depth);
+	switch (reason) {
+	case SCSI_QDEPTH_DEFAULT:
+		scsi_adjust_queue_depth(sdev, scsi_get_tag_type(sdev), depth);
+		break;
+	case SCSI_QDEPTH_QFULL:
+		scsi_track_queue_full(sdev, depth);
+		break;
+	case SCSI_QDEPTH_RAMP_UP:
+		scsi_adjust_queue_depth(sdev, scsi_get_tag_type(sdev), depth);
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
 	return sdev->queue_depth;
 }
 
@@ -99,9 +112,23 @@ static int zfcp_scsi_queuecommand(struct scsi_cmnd *scpnt,
 	}
 
 	status = atomic_read(&unit->status);
-	if (unlikely((status & ZFCP_STATUS_COMMON_ERP_FAILED) ||
-		     !(status & ZFCP_STATUS_COMMON_RUNNING))) {
+	if (unlikely(status & ZFCP_STATUS_COMMON_ERP_FAILED) &&
+		     !(atomic_read(&unit->port->status) &
+		       ZFCP_STATUS_COMMON_ERP_FAILED)) {
+		/* only unit access denied, but port is good
+		 * not covered by FC transport, have to fail here */
 		zfcp_scsi_command_fail(scpnt, DID_ERROR);
+		return 0;
+	}
+
+	if (unlikely(!(status & ZFCP_STATUS_COMMON_UNBLOCKED))) {
+		/* This could be either
+		 * open unit pending: this is temporary, will result in
+		 * 	open unit or ERP_FAILED, so retry command
+		 * call to rport_delete pending: mimic retry from
+		 * 	fc_remote_port_chkready until rport is BLOCKED
+		 */
+		zfcp_scsi_command_fail(scpnt, DID_IMM_RETRY);
 		return 0;
 	}
 
@@ -196,6 +223,7 @@ static int zfcp_scsi_eh_abort_handler(struct scsi_cmnd *scpnt)
 			break;
 
 		zfcp_erp_wait(adapter);
+		fc_block_scsi_eh(scpnt);
 		if (!(atomic_read(&adapter->status) &
 		      ZFCP_STATUS_COMMON_RUNNING)) {
 			zfcp_dbf_scsi_abort("nres", adapter->dbf, scpnt, NULL,
@@ -235,6 +263,7 @@ static int zfcp_task_mgmt_function(struct scsi_cmnd *scpnt, u8 tm_flags)
 			break;
 
 		zfcp_erp_wait(adapter);
+		fc_block_scsi_eh(scpnt);
 		if (!(atomic_read(&adapter->status) &
 		      ZFCP_STATUS_COMMON_RUNNING)) {
 			zfcp_dbf_scsi_devreset("nres", tm_flags, unit, scpnt);
@@ -276,6 +305,7 @@ static int zfcp_scsi_eh_host_reset_handler(struct scsi_cmnd *scpnt)
 
 	zfcp_erp_adapter_reopen(adapter, 0, "schrh_1", scpnt);
 	zfcp_erp_wait(adapter);
+	fc_block_scsi_eh(scpnt);
 
 	return SUCCESS;
 }
@@ -653,6 +683,7 @@ struct fc_function_template zfcp_transport_functions = {
 	.terminate_rport_io = zfcp_scsi_terminate_rport_io,
 	.show_host_port_state = 1,
 	.bsg_request = zfcp_execute_fc_job,
+	.bsg_timeout = zfcp_fc_timeout_bsg_job,
 	/* no functions registered for following dynamic attributes but
 	   directly set by LLDD */
 	.show_host_port_type = 1,
