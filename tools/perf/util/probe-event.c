@@ -78,6 +78,7 @@ static struct map *kmaps[MAP__NR_TYPES];
 /* Initialize symbol maps and path of vmlinux */
 static int init_vmlinux(void)
 {
+	struct dso *kernel;
 	int ret;
 
 	symbol_conf.sort_by_name = true;
@@ -91,8 +92,12 @@ static int init_vmlinux(void)
 		goto out;
 	}
 
+	kernel = dso__new_kernel(symbol_conf.vmlinux_name);
+	if (kernel == NULL)
+		die("Failed to create kernel dso.");
+
 	map_groups__init(&kmap_groups);
-	ret = map_groups__create_kernel_maps(&kmap_groups, kmaps);
+	ret = __map_groups__create_kernel_maps(&kmap_groups, kmaps, kernel);
 	if (ret < 0)
 		pr_debug("Failed to create kernel maps.\n");
 
@@ -1258,7 +1263,7 @@ static struct strlist *get_kprobe_trace_event_names(int fd, bool include_group)
 
 static int write_kprobe_trace_event(int fd, struct kprobe_trace_event *tev)
 {
-	int ret;
+	int ret = 0;
 	char *buf = synthesize_kprobe_trace_command(tev);
 
 	if (!buf) {
