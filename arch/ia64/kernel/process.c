@@ -452,7 +452,7 @@ copy_thread(unsigned long clone_flags,
 	if (likely(user_mode(child_ptregs))) {
 		if (clone_flags & CLONE_SETTLS)
 			child_ptregs->r13 = regs->r16;	/* see sys_clone2() in entry.S */
-		if (user_stack_base) {
+		if (user_stack_base && user_stack_size) {
 			child_ptregs->r12 = user_stack_base + user_stack_size - 16;
 			child_ptregs->ar_bspstore = user_stack_base;
 			child_ptregs->ar_rnat = 0;

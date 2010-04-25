@@ -114,15 +114,19 @@ GLOBAL_ENTRY(sys_clone2)
 	alloc r16=ar.pfs,8,2,6,0
 	DO_SAVE_SWITCH_STACK
 	adds r2=PT(R16)+IA64_SWITCH_STACK_SIZE+16,sp
+	adds r3=PT(AR_BSPSTORE)+IA64_SWITCH_STACK_SIZE+16,sp
 	mov loc0=rp
 	mov loc1=r16				// save ar.pfs across do_fork
 	.body
 	mov out1=in1
 	mov out3=in2
 	tbit.nz p6,p0=in0,CLONE_SETTLS_BIT
+	cmp.eq p7,p0=in1,r0
 	mov out4=in3	// parent_tidptr: valid only w/CLONE_PARENT_SETTID
 	;;
 (p6)	st8 [r2]=in5				// store TLS in r16 for copy_thread()
+(p7)	ld8 out1=[r3]	// stack_start: kernel expects a valid value
+(p7)	mov out3=r0
 	mov out5=in4	// child_tidptr:  valid only w/CLONE_CHILD_SETTID or CLONE_CHILD_CLEARTID
 	adds out2=IA64_SWITCH_STACK_SIZE+16,sp	// out2 = &regs
 	mov out0=in0				// out0 = clone_flags
@@ -146,15 +150,19 @@ GLOBAL_ENTRY(sys_clone)
 	alloc r16=ar.pfs,8,2,6,0
 	DO_SAVE_SWITCH_STACK
 	adds r2=PT(R16)+IA64_SWITCH_STACK_SIZE+16,sp
+	adds r3=PT(AR_BSPSTORE)+IA64_SWITCH_STACK_SIZE+16,sp
 	mov loc0=rp
 	mov loc1=r16				// save ar.pfs across do_fork
 	.body
 	mov out1=in1
 	mov out3=16				// stacksize (compensates for 16-byte scratch area)
 	tbit.nz p6,p0=in0,CLONE_SETTLS_BIT
+	cmp.eq p7,p0=in1,r0
 	mov out4=in2	// parent_tidptr: valid only w/CLONE_PARENT_SETTID
 	;;
 (p6)	st8 [r2]=in4				// store TLS in r13 (tp)
+(p7)	ld8 out1=[r3]	// stack_start: kernel expects a valid value
+(p7)	mov out3=r0
 	mov out5=in3	// child_tidptr:  valid only w/CLONE_CHILD_SETTID or CLONE_CHILD_CLEARTID
 	adds out2=IA64_SWITCH_STACK_SIZE+16,sp	// out2 = &regs
 	mov out0=in0				// out0 = clone_flags
