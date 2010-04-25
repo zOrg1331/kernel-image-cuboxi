@@ -52,7 +52,7 @@ MODULE_LICENSE("GPL");
 #define CALL(q, f, arg...)						\
 	((q->int_ops->f) ? q->int_ops->f(arg) : 0)
 
-void *videobuf_alloc(struct videobuf_queue *q)
+struct videobuf_buffer *videobuf_alloc(struct videobuf_queue *q)
 {
 	struct videobuf_buffer *vb;
 
@@ -105,15 +105,14 @@ int videobuf_iolock(struct videobuf_queue *q, struct videobuf_buffer *vb,
 }
 EXPORT_SYMBOL_GPL(videobuf_iolock);
 
-void *videobuf_queue_to_vmalloc(struct videobuf_queue *q,
-				struct videobuf_buffer *buf)
+void *videobuf_queue_to_vaddr(struct videobuf_queue *q,
+			      struct videobuf_buffer *buf)
 {
-	if (q->int_ops->vmalloc)
-		return q->int_ops->vmalloc(buf);
-	else
-		return NULL;
+	if (q->int_ops->vaddr)
+		return q->int_ops->vaddr(buf);
+	return NULL;
 }
-EXPORT_SYMBOL_GPL(videobuf_queue_to_vmalloc);
+EXPORT_SYMBOL_GPL(videobuf_queue_to_vaddr);
 
 /* --------------------------------------------------------------------- */
 
@@ -311,19 +310,15 @@ static void videobuf_status(struct videobuf_queue *q, struct v4l2_buffer *b,
 static int __videobuf_mmap_free(struct videobuf_queue *q)
 {
 	int i;
-	int rc;
 
 	if (!q)
 		return 0;
 
 	MAGIC_CHECK(q->int_ops->magic, MAGIC_QTYPE_OPS);
 
-	rc = CALL(q, mmap_free, q);
-
-	q->is_mmapped = 0;
-
-	if (rc < 0)
-		return rc;
+	for (i = 0; i < VIDEO_MAX_FRAME; i++)
+		if (q->bufs[i] && q->bufs[i]->map)
+			return -EBUSY;
 
 	for (i = 0; i < VIDEO_MAX_FRAME; i++) {
 		if (NULL == q->bufs[i])
@@ -333,7 +328,7 @@ static int __videobuf_mmap_free(struct videobuf_queue *q)
 		q->bufs[i] = NULL;
 	}
 
-	return rc;
+	return 0;
 }
 
 int videobuf_mmap_free(struct videobuf_queue *q)
@@ -798,6 +793,49 @@ done:
 	return retval;
 }
 
+static int __videobuf_copy_to_user(struct videobuf_queue *q,
+				   struct videobuf_buffer *buf,
+				   char __user *data, size_t count,
+				   int nonblocking)
+{
+	void *vaddr = CALL(q, vaddr, buf);
+
+	/* copy to userspace */
+	if (count > buf->size - q->read_off)
+		count = buf->size - q->read_off;
+
+	if (copy_to_user(data, vaddr + q->read_off, count))
+		return -EFAULT;
+
+	return count;
+}
+
+static int __videobuf_copy_stream(struct videobuf_queue *q,
+				  struct videobuf_buffer *buf,
+				  char __user *data, size_t count, size_t pos,
+				  int vbihack, int nonblocking)
+{
+	unsigned int *fc = CALL(q, vaddr, buf);
+
+	if (vbihack) {
+		/* dirty, undocumented hack -- pass the frame counter
+			* within the last four bytes of each vbi data block.
+			* We need that one to maintain backward compatibility
+			* to all vbi decoding software out there ... */
+		fc += (buf->size >> 2) - 1;
+		*fc = buf->field_count >> 1;
+		dprintk(1, "vbihack: %d\n", *fc);
+	}
+
+	/* copy stuff using the common method */
+	count = __videobuf_copy_to_user(q, buf, data, count, nonblocking);
+
+	if ((count == -EFAULT) && (pos == 0))
+		return -EFAULT;
+
+	return count;
+}
+
 ssize_t videobuf_read_one(struct videobuf_queue *q,
 			  char __user *data, size_t count, loff_t *ppos,
 			  int nonblocking)
@@ -866,7 +904,7 @@ ssize_t videobuf_read_one(struct videobuf_queue *q,
 	}
 
 	/* Copy to userspace */
-	retval = CALL(q, video_copy_to_user, q, data, count, nonblocking);
+	retval = __videobuf_copy_to_user(q, q->read_buf, data, count, nonblocking);
 	if (retval < 0)
 		goto done;
 
@@ -1008,7 +1046,7 @@ ssize_t videobuf_read_stream(struct videobuf_queue *q,
 		}
 
 		if (q->read_buf->state == VIDEOBUF_DONE) {
-			rc = CALL(q, copy_stream, q, data + retval, count,
+			rc = __videobuf_copy_stream(q, q->read_buf, data + retval, count,
 					retval, vbihack, nonblocking);
 			if (rc < 0) {
 				retval = rc;
@@ -1085,16 +1123,29 @@ EXPORT_SYMBOL_GPL(videobuf_poll_stream);
 
 int videobuf_mmap_mapper(struct videobuf_queue *q, struct vm_area_struct *vma)
 {
-	int retval;
+	int rc = -EINVAL;
+	int i;
 
 	MAGIC_CHECK(q->int_ops->magic, MAGIC_QTYPE_OPS);
 
+	if (!(vma->vm_flags & VM_WRITE) || !(vma->vm_flags & VM_SHARED)) {
+		dprintk(1, "mmap appl bug: PROT_WRITE and MAP_SHARED are required\n");
+		return -EINVAL;
+	}
+
 	mutex_lock(&q->vb_lock);
-	retval = CALL(q, mmap_mapper, q, vma);
-	q->is_mmapped = 1;
+	for (i = 0; i < VIDEO_MAX_FRAME; i++) {
+		struct videobuf_buffer *buf = q->bufs[i];
+
+		if (buf && buf->memory == V4L2_MEMORY_MMAP &&
+				buf->boff == (vma->vm_pgoff << PAGE_SHIFT)) {
+			rc = CALL(q, mmap_mapper, q, buf, vma);
+			break;
+		}
+	}
 	mutex_unlock(&q->vb_lock);
 
-	return retval;
+	return rc;
 }
 EXPORT_SYMBOL_GPL(videobuf_mmap_mapper);
 

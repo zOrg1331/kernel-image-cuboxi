@@ -613,6 +613,37 @@ static void destroy_urbs(struct gspca_dev *gspca_dev)
 	}
 }
 
+static int gspca_set_alt0(struct gspca_dev *gspca_dev)
+{
+	int ret;
+
+	if (gspca_dev->alt == 0)
+		return 0;
+	ret = usb_set_interface(gspca_dev->dev, gspca_dev->iface, 0);
+	if (ret < 0)
+		PDEBUG(D_ERR|D_STREAM, "set alt 0 err %d", ret);
+	return ret;
+}
+
+/* Note: both the queue and the usb locks should be held when calling this */
+static void gspca_stream_off(struct gspca_dev *gspca_dev)
+{
+	gspca_dev->streaming = 0;
+	if (gspca_dev->present) {
+		if (gspca_dev->sd_desc->stopN)
+			gspca_dev->sd_desc->stopN(gspca_dev);
+		destroy_urbs(gspca_dev);
+		gspca_input_destroy_urb(gspca_dev);
+		gspca_set_alt0(gspca_dev);
+		gspca_input_create_urb(gspca_dev);
+	}
+
+	/* always call stop0 to free the subdriver's resources */
+	if (gspca_dev->sd_desc->stop0)
+		gspca_dev->sd_desc->stop0(gspca_dev);
+	PDEBUG(D_STREAM, "stream off OK");
+}
+
 /*
  * look for an input transfer endpoint in an alternate setting
  */
@@ -838,8 +869,7 @@ static int gspca_init_transfer(struct gspca_dev *gspca_dev)
 		}
 		if (ret >= 0)
 			break;
-		gspca_dev->streaming = 0;
-		destroy_urbs(gspca_dev);
+		gspca_stream_off(gspca_dev);
 		if (ret != -ENOSPC) {
 			PDEBUG(D_ERR|D_STREAM,
 				"usb_submit_urb alt %d err %d",
@@ -867,37 +897,6 @@ static int gspca_init_transfer(struct gspca_dev *gspca_dev)
 out:
 	mutex_unlock(&gspca_dev->usb_lock);
 	return ret;
-}
-
-static int gspca_set_alt0(struct gspca_dev *gspca_dev)
-{
-	int ret;
-
-	if (gspca_dev->alt == 0)
-		return 0;
-	ret = usb_set_interface(gspca_dev->dev, gspca_dev->iface, 0);
-	if (ret < 0)
-		PDEBUG(D_ERR|D_STREAM, "set alt 0 err %d", ret);
-	return ret;
-}
-
-/* Note: both the queue and the usb locks should be held when calling this */
-static void gspca_stream_off(struct gspca_dev *gspca_dev)
-{
-	gspca_dev->streaming = 0;
-	if (gspca_dev->present) {
-		if (gspca_dev->sd_desc->stopN)
-			gspca_dev->sd_desc->stopN(gspca_dev);
-		destroy_urbs(gspca_dev);
-		gspca_input_destroy_urb(gspca_dev);
-		gspca_set_alt0(gspca_dev);
-		gspca_input_create_urb(gspca_dev);
-	}
-
-	/* always call stop0 to free the subdriver's resources */
-	if (gspca_dev->sd_desc->stop0)
-		gspca_dev->sd_desc->stop0(gspca_dev);
-	PDEBUG(D_STREAM, "stream off OK");
 }
 
 static void gspca_set_default_mode(struct gspca_dev *gspca_dev)
@@ -1503,7 +1502,7 @@ static int vidioc_reqbufs(struct file *file, void *priv,
 			  struct v4l2_requestbuffers *rb)
 {
 	struct gspca_dev *gspca_dev = priv;
-	int i, ret = 0;
+	int i, ret = 0, streaming;
 
 	switch (rb->memory) {
 	case GSPCA_MEMORY_READ:			/* (internal call) */
@@ -1538,7 +1537,8 @@ static int vidioc_reqbufs(struct file *file, void *priv,
 	}
 
 	/* stop streaming */
-	if (gspca_dev->streaming) {
+	streaming = gspca_dev->streaming;
+	if (streaming) {
 		mutex_lock(&gspca_dev->usb_lock);
 		gspca_dev->usb_err = 0;
 		gspca_stream_off(gspca_dev);
@@ -1557,6 +1557,8 @@ static int vidioc_reqbufs(struct file *file, void *priv,
 	if (ret == 0) {
 		rb->count = gspca_dev->nframes;
 		gspca_dev->capt_file = file;
+		if (streaming)
+			ret = gspca_init_transfer(gspca_dev);
 	}
 out:
 	mutex_unlock(&gspca_dev->queue_lock);
@@ -1589,6 +1591,12 @@ static int vidioc_streamon(struct file *file, void *priv,
 		return -EINVAL;
 	if (mutex_lock_interruptible(&gspca_dev->queue_lock))
 		return -ERESTARTSYS;
+
+	/* check the capture file */
+	if (gspca_dev->capt_file != file) {
+		ret = -EBUSY;
+		goto out;
+	}
 
 	if (gspca_dev->nframes == 0
 	    || !(gspca_dev->frame[0].v4l2_buf.flags & V4L2_BUF_FLAG_QUEUED)) {
@@ -1626,6 +1634,12 @@ static int vidioc_streamoff(struct file *file, void *priv,
 		return 0;
 	if (mutex_lock_interruptible(&gspca_dev->queue_lock))
 		return -ERESTARTSYS;
+
+	/* check the capture file */
+	if (gspca_dev->capt_file != file) {
+		ret = -EBUSY;
+		goto out;
+	}
 
 	/* stop streaming */
 	if (mutex_lock_interruptible(&gspca_dev->usb_lock)) {

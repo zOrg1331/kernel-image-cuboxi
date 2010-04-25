@@ -439,7 +439,7 @@ static const struct vm_operations_struct videobuf_vm_ops = {
 	struct videobuf_dma_sg_memory
  */
 
-static void *__videobuf_alloc(size_t size)
+static struct videobuf_buffer *__videobuf_alloc(size_t size)
 {
 	struct videobuf_dma_sg_memory *mem;
 	struct videobuf_buffer *vb;
@@ -460,7 +460,7 @@ static void *__videobuf_alloc(size_t size)
 	return vb;
 }
 
-static void *__videobuf_to_vmalloc(struct videobuf_buffer *buf)
+static void *__videobuf_to_vaddr(struct videobuf_buffer *buf)
 {
 	struct videobuf_dma_sg_memory *mem = buf->priv;
 	BUG_ON(!mem);
@@ -548,37 +548,16 @@ static int __videobuf_sync(struct videobuf_queue *q,
 	return videobuf_dma_sync(q, &mem->dma);
 }
 
-static int __videobuf_mmap_free(struct videobuf_queue *q)
-{
-	int i;
-
-	for (i = 0; i < VIDEO_MAX_FRAME; i++) {
-		if (q->bufs[i]) {
-			if (q->bufs[i]->map)
-				return -EBUSY;
-		}
-	}
-
-	return 0;
-}
-
 static int __videobuf_mmap_mapper(struct videobuf_queue *q,
-			 struct vm_area_struct *vma)
+				  struct videobuf_buffer *buf,
+				  struct vm_area_struct *vma)
 {
-	struct videobuf_dma_sg_memory *mem;
+	struct videobuf_dma_sg_memory *mem = buf->priv;
 	struct videobuf_mapping *map;
 	unsigned int first, last, size, i;
 	int retval;
 
 	retval = -EINVAL;
-	if (!(vma->vm_flags & VM_WRITE)) {
-		dprintk(1, "mmap app bug: PROT_WRITE please\n");
-		goto done;
-	}
-	if (!(vma->vm_flags & VM_SHARED)) {
-		dprintk(1, "mmap app bug: MAP_SHARED please\n");
-		goto done;
-	}
 
 	/* This function maintains backwards compatibility with V4L1 and will
 	 * map more than one buffer if the vma length is equal to the combined
@@ -588,44 +567,48 @@ static int __videobuf_mmap_mapper(struct videobuf_queue *q,
 	 * TODO: Allow drivers to specify if they support this mode
 	 */
 
+	BUG_ON(!mem);
+	MAGIC_CHECK(mem->magic, MAGIC_SG_MEM);
+
 	/* look for first buffer to map */
 	for (first = 0; first < VIDEO_MAX_FRAME; first++) {
-		if (NULL == q->bufs[first])
-			continue;
-		mem = q->bufs[first]->priv;
-		BUG_ON(!mem);
-		MAGIC_CHECK(mem->magic, MAGIC_SG_MEM);
-
-		if (V4L2_MEMORY_MMAP != q->bufs[first]->memory)
-			continue;
-		if (q->bufs[first]->boff == (vma->vm_pgoff << PAGE_SHIFT))
+		if (buf == q->bufs[first]) {
+			size = PAGE_ALIGN(q->bufs[first]->bsize);
 			break;
+		}
 	}
+
+	/* paranoia, should never happen since buf is always valid. */
 	if (VIDEO_MAX_FRAME == first) {
 		dprintk(1, "mmap app bug: offset invalid [offset=0x%lx]\n",
-			(vma->vm_pgoff << PAGE_SHIFT));
+				(vma->vm_pgoff << PAGE_SHIFT));
 		goto done;
 	}
 
-	/* look for last buffer to map */
-	for (size = 0, last = first; last < VIDEO_MAX_FRAME; last++) {
-		if (NULL == q->bufs[last])
-			continue;
-		if (V4L2_MEMORY_MMAP != q->bufs[last]->memory)
-			continue;
-		if (q->bufs[last]->map) {
-			retval = -EBUSY;
+	last = first;
+#ifdef CONFIG_VIDEO_V4L1_COMPAT
+	if (size != (vma->vm_end - vma->vm_start)) {
+		/* look for last buffer to map */
+		for (last = first + 1; last < VIDEO_MAX_FRAME; last++) {
+			if (NULL == q->bufs[last])
+				continue;
+			if (V4L2_MEMORY_MMAP != q->bufs[last]->memory)
+				continue;
+			if (q->bufs[last]->map) {
+				retval = -EBUSY;
+				goto done;
+			}
+			size += PAGE_ALIGN(q->bufs[last]->bsize);
+			if (size == (vma->vm_end - vma->vm_start))
+				break;
+		}
+		if (VIDEO_MAX_FRAME == last) {
+			dprintk(1, "mmap app bug: size invalid [size=0x%lx]\n",
+					(vma->vm_end - vma->vm_start));
 			goto done;
 		}
-		size += PAGE_ALIGN(q->bufs[last]->bsize);
-		if (size == (vma->vm_end - vma->vm_start))
-			break;
 	}
-	if (VIDEO_MAX_FRAME == last) {
-		dprintk(1, "mmap app bug: size invalid [size=0x%lx]\n",
-			(vma->vm_end - vma->vm_start));
-		goto done;
-	}
+#endif
 
 	/* create mapping + update buffer list */
 	retval = -ENOMEM;
@@ -658,64 +641,14 @@ done:
 	return retval;
 }
 
-static int __videobuf_copy_to_user(struct videobuf_queue *q,
-				char __user *data, size_t count,
-				int nonblocking)
-{
-	struct videobuf_dma_sg_memory *mem = q->read_buf->priv;
-	BUG_ON(!mem);
-	MAGIC_CHECK(mem->magic, MAGIC_SG_MEM);
-
-	/* copy to userspace */
-	if (count > q->read_buf->size - q->read_off)
-		count = q->read_buf->size - q->read_off;
-
-	if (copy_to_user(data, mem->dma.vmalloc+q->read_off, count))
-		return -EFAULT;
-
-	return count;
-}
-
-static int __videobuf_copy_stream(struct videobuf_queue *q,
-				char __user *data, size_t count, size_t pos,
-				int vbihack, int nonblocking)
-{
-	unsigned int *fc;
-	struct videobuf_dma_sg_memory *mem = q->read_buf->priv;
-	BUG_ON(!mem);
-	MAGIC_CHECK(mem->magic, MAGIC_SG_MEM);
-
-	if (vbihack) {
-		/* dirty, undocumented hack -- pass the frame counter
-		 * within the last four bytes of each vbi data block.
-		 * We need that one to maintain backward compatibility
-		 * to all vbi decoding software out there ... */
-		fc  = (unsigned int *)mem->dma.vmalloc;
-		fc += (q->read_buf->size >> 2) - 1;
-		*fc = q->read_buf->field_count >> 1;
-		dprintk(1, "vbihack: %d\n", *fc);
-	}
-
-	/* copy stuff using the common method */
-	count = __videobuf_copy_to_user(q, data, count, nonblocking);
-
-	if ((count == -EFAULT) && (0 == pos))
-		return -EFAULT;
-
-	return count;
-}
-
 static struct videobuf_qtype_ops sg_ops = {
 	.magic        = MAGIC_QTYPE_OPS,
 
 	.alloc        = __videobuf_alloc,
 	.iolock       = __videobuf_iolock,
 	.sync         = __videobuf_sync,
-	.mmap_free    = __videobuf_mmap_free,
 	.mmap_mapper  = __videobuf_mmap_mapper,
-	.video_copy_to_user = __videobuf_copy_to_user,
-	.copy_stream  = __videobuf_copy_stream,
-	.vmalloc      = __videobuf_to_vmalloc,
+	.vaddr        = __videobuf_to_vaddr,
 };
 
 void *videobuf_sg_alloc(size_t size)
