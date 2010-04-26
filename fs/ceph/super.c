@@ -8,14 +8,11 @@
 #include <linux/module.h>
 #include <linux/mount.h>
 #include <linux/parser.h>
-#include <linux/rwsem.h>
 #include <linux/sched.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/statfs.h>
 #include <linux/string.h>
-#include <linux/version.h>
-#include <linux/vmalloc.h>
 
 #include "decode.h"
 #include "super.h"
@@ -47,7 +44,7 @@ const char *ceph_file_part(const char *s, int len)
  */
 static void ceph_put_super(struct super_block *s)
 {
-	struct ceph_client *cl = ceph_client(s);
+	struct ceph_client *cl = ceph_sb_to_client(s);
 
 	dout("put_super\n");
 	ceph_mdsc_close_sessions(&cl->mdsc);
@@ -97,8 +94,8 @@ static int ceph_statfs(struct dentry *dentry, struct kstatfs *buf)
 static int ceph_syncfs(struct super_block *sb, int wait)
 {
 	dout("sync_fs %d\n", wait);
-	ceph_osdc_sync(&ceph_client(sb)->osdc);
-	ceph_mdsc_sync(&ceph_client(sb)->mdsc);
+	ceph_osdc_sync(&ceph_sb_to_client(sb)->osdc);
+	ceph_mdsc_sync(&ceph_sb_to_client(sb)->mdsc);
 	dout("sync_fs %d done\n", wait);
 	return 0;
 }
@@ -670,9 +667,10 @@ int ceph_check_fsid(struct ceph_client *client, struct ceph_fsid *fsid)
 /*
  * true if we have the mon map (and have thus joined the cluster)
  */
-static int have_mon_map(struct ceph_client *client)
+static int have_mon_and_osd_map(struct ceph_client *client)
 {
-	return client->monc.monmap && client->monc.monmap->epoch;
+	return client->monc.monmap && client->monc.monmap->epoch &&
+	       client->osdc.osdmap && client->osdc.osdmap->epoch;
 }
 
 /*
@@ -750,7 +748,7 @@ static int ceph_mount(struct ceph_client *client, struct vfsmount *mnt,
 	if (err < 0)
 		goto out;
 
-	while (!have_mon_map(client)) {
+	while (!have_mon_and_osd_map(client)) {
 		err = -EIO;
 		if (timeout && time_after_eq(jiffies, started + timeout))
 			goto out;
@@ -758,8 +756,8 @@ static int ceph_mount(struct ceph_client *client, struct vfsmount *mnt,
 		/* wait */
 		dout("mount waiting for mon_map\n");
 		err = wait_event_interruptible_timeout(client->auth_wq,
-			       have_mon_map(client) || (client->auth_err < 0),
-			       timeout);
+		       have_mon_and_osd_map(client) || (client->auth_err < 0),
+		       timeout);
 		if (err == -EINTR || err == -ERESTARTSYS)
 			goto out;
 		if (client->auth_err < 0) {
@@ -920,9 +918,9 @@ static int ceph_get_sb(struct file_system_type *fs_type,
 		goto out;
 	}
 
-	if (ceph_client(sb) != client) {
+	if (ceph_sb_to_client(sb) != client) {
 		ceph_destroy_client(client);
-		client = ceph_client(sb);
+		client = ceph_sb_to_client(sb);
 		dout("get_sb got existing client %p\n", client);
 	} else {
 		dout("get_sb using new client %p\n", client);
@@ -996,9 +994,10 @@ static int __init init_ceph(void)
 	if (ret)
 		goto out_icache;
 
-	pr_info("loaded %d.%d.%d (mon/mds/osd proto %d/%d/%d)\n",
-		CEPH_VERSION_MAJOR, CEPH_VERSION_MINOR, CEPH_VERSION_PATCH,
-		CEPH_MONC_PROTOCOL, CEPH_MDSC_PROTOCOL, CEPH_OSDC_PROTOCOL);
+	pr_info("loaded (mon/mds/osd proto %d/%d/%d, osdmap %d/%d %d/%d)\n",
+		CEPH_MONC_PROTOCOL, CEPH_MDSC_PROTOCOL, CEPH_OSDC_PROTOCOL,
+		CEPH_OSDMAP_VERSION, CEPH_OSDMAP_VERSION_EXT,
+		CEPH_OSDMAP_INC_VERSION, CEPH_OSDMAP_INC_VERSION_EXT);
 	return 0;
 
 out_icache:

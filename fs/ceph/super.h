@@ -10,6 +10,7 @@
 #include <linux/fs.h>
 #include <linux/mempool.h>
 #include <linux/pagemap.h>
+#include <linux/slab.h>
 #include <linux/wait.h>
 #include <linux/writeback.h>
 #include <linux/slab.h>
@@ -158,12 +159,6 @@ struct ceph_client {
 	struct dentry *debugfs_bdi;
 #endif
 };
-
-static inline struct ceph_client *ceph_client(struct super_block *sb)
-{
-	return sb->s_fs_info;
-}
-
 
 /*
  * File i/o capability.  This tracks shared state with the metadata
