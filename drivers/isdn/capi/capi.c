@@ -1026,7 +1026,7 @@ static const struct file_operations capi_fops =
 	.read		= capi_read,
 	.write		= capi_write,
 	.poll		= capi_poll,
-	.ioctl		= capi_ioctl,
+	.bkl_ioctl	= capi_ioctl,
 	.open		= capi_open,
 	.release	= capi_release,
 };

@@ -47,9 +47,9 @@ static long vfs_ioctl(struct file *filp, unsigned int cmd,
 		if (error == -ENOIOCTLCMD)
 			error = -EINVAL;
 		goto out;
-	} else if (filp->f_op->ioctl) {
+	} else if (filp->f_op->bkl_ioctl) {
 		lock_kernel();
-		error = filp->f_op->ioctl(filp->f_path.dentry->d_inode,
+		error = filp->f_op->bkl_ioctl(filp->f_path.dentry->d_inode,
 					  filp, cmd, arg);
 		unlock_kernel();
 	}

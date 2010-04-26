@@ -96,7 +96,7 @@ static struct mega_hbas mega_hbas[MAX_CONTROLLERS];
  */
 static const struct file_operations megadev_fops = {
 	.owner		= THIS_MODULE,
-	.ioctl		= megadev_ioctl,
+	.bkl_ioctl	= megadev_ioctl,
 	.open		= megadev_open,
 };
 

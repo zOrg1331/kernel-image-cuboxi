@@ -858,7 +858,7 @@ gpio_leds_ioctl(unsigned int cmd, unsigned long arg)
 static const struct file_operations gpio_fops = {
 	.owner       = THIS_MODULE,
 	.poll        = gpio_poll,
-	.ioctl       = gpio_ioctl,
+	.bkl_ioctl   = gpio_ioctl,
 	.write       = gpio_write,
 	.open        = gpio_open,
 	.release     = gpio_release,

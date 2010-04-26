@@ -864,7 +864,7 @@ error:
 }
 
 static const struct file_operations sn_hwperf_fops = {
-	.ioctl = sn_hwperf_ioctl,
+	.bkl_ioctl = sn_hwperf_ioctl,
 };
 
 static struct miscdevice sn_hwperf_dev = {

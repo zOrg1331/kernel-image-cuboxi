@@ -482,7 +482,7 @@ static const struct file_operations gen_rtc_fops = {
 	.read		= gen_rtc_read,
 	.poll		= gen_rtc_poll,
 #endif
-	.ioctl		= gen_rtc_ioctl,
+	.bkl_ioctl	= gen_rtc_ioctl,
 	.open		= gen_rtc_open,
 	.release	= gen_rtc_release,
 };

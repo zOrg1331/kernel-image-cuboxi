@@ -835,11 +835,11 @@ au1550_ioctl_mixdev(struct inode *inode, struct file *file,
 }
 
 static /*const */ struct file_operations au1550_mixer_fops = {
-	owner:THIS_MODULE,
-	llseek:au1550_llseek,
-	ioctl:au1550_ioctl_mixdev,
-	open:au1550_open_mixdev,
-	release:au1550_release_mixdev,
+	.owner = THIS_MODULE,
+	.llseek = au1550_llseek,
+	.bkl_ioctl = au1550_ioctl_mixdev,
+	.open = au1550_open_mixdev,
+	.release = au1550_release_mixdev,
 };
 
 static int
@@ -1885,15 +1885,15 @@ au1550_release(struct inode *inode, struct file *file)
 }
 
 static /*const */ struct file_operations au1550_audio_fops = {
-	owner:		THIS_MODULE,
-	llseek:		au1550_llseek,
-	read:		au1550_read,
-	write:		au1550_write,
-	poll:		au1550_poll,
-	ioctl:		au1550_ioctl,
-	mmap:		au1550_mmap,
-	open:		au1550_open,
-	release:	au1550_release,
+	.owner = 	THIS_MODULE,
+	.llseek = 	au1550_llseek,
+	.read = 	au1550_read,
+	.write = 	au1550_write,
+	.poll = 	au1550_poll,
+	.bkl_ioctl = 	au1550_ioctl,
+	.mmap = 	au1550_mmap,
+	.open = 	au1550_open,
+	.release = 	au1550_release,
 };
 
 MODULE_AUTHOR("Advanced Micro Devices (AMD), dan@embeddededge.com");

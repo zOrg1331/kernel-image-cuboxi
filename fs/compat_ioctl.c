@@ -1733,7 +1733,7 @@ asmlinkage long compat_sys_ioctl(unsigned int fd, unsigned int cmd,
 		}
 
 		if (!filp->f_op ||
-		    (!filp->f_op->ioctl && !filp->f_op->unlocked_ioctl))
+		    (!filp->f_op->bkl_ioctl && !filp->f_op->unlocked_ioctl))
 			goto do_ioctl;
 		break;
 	}

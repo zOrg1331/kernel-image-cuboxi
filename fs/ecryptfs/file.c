@@ -299,7 +299,7 @@ static int ecryptfs_ioctl(struct inode *inode, struct file *file,
 
 const struct file_operations ecryptfs_dir_fops = {
 	.readdir = ecryptfs_readdir,
-	.ioctl = ecryptfs_ioctl,
+	.bkl_ioctl = ecryptfs_ioctl,
 	.open = ecryptfs_open,
 	.flush = ecryptfs_flush,
 	.release = ecryptfs_release,
@@ -315,7 +315,7 @@ const struct file_operations ecryptfs_main_fops = {
 	.write = do_sync_write,
 	.aio_write = generic_file_aio_write,
 	.readdir = ecryptfs_readdir,
-	.ioctl = ecryptfs_ioctl,
+	.bkl_ioctl = ecryptfs_ioctl,
 	.mmap = generic_file_mmap,
 	.open = ecryptfs_open,
 	.flush = ecryptfs_flush,
@@ -334,8 +334,9 @@ ecryptfs_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 
 	if (ecryptfs_file_to_private(file))
 		lower_file = ecryptfs_file_to_lower(file);
-	if (lower_file && lower_file->f_op && lower_file->f_op->ioctl)
-		rc = lower_file->f_op->ioctl(ecryptfs_inode_to_lower(inode),
+	/* This is some seriously buggy crap. What about the non-BKL ioctl? */
+	if (lower_file && lower_file->f_op && lower_file->f_op->bkl_ioctl)
+		rc = lower_file->f_op->bkl_ioctl(ecryptfs_inode_to_lower(inode),
 					     lower_file, cmd, arg);
 	else
 		rc = -ENOTTY;

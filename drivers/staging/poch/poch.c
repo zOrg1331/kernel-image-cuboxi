@@ -1037,7 +1037,7 @@ static struct file_operations poch_fops = {
 	.owner = THIS_MODULE,
 	.open = poch_open,
 	.release = poch_release,
-	.ioctl = poch_ioctl,
+	.bkl_ioctl = poch_ioctl,
 	.poll = poch_poll,
 	.mmap = poch_mmap
 };

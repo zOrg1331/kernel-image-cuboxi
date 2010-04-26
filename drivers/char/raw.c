@@ -251,12 +251,12 @@ static const struct file_operations raw_fops = {
 	.fsync	=	blkdev_fsync,
 	.open	=	raw_open,
 	.release=	raw_release,
-	.ioctl	=	raw_ioctl,
+	.bkl_ioctl =	raw_ioctl,
 	.owner	=	THIS_MODULE,
 };
 
 static const struct file_operations raw_ctl_fops = {
-	.ioctl	=	raw_ctl_ioctl,
+	.bkl_ioctl =	raw_ctl_ioctl,
 	.open	=	raw_open,
 	.owner	=	THIS_MODULE,
 };

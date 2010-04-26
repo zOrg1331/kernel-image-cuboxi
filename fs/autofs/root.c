@@ -30,7 +30,7 @@ static int autofs_root_ioctl(struct inode *, struct file *,unsigned int,unsigned
 const struct file_operations autofs_root_operations = {
 	.read		= generic_read_dir,
 	.readdir	= autofs_root_readdir,
-	.ioctl		= autofs_root_ioctl,
+	.bkl_ioctl	= autofs_root_ioctl,
 };
 
 const struct inode_operations autofs_root_inode_operations = {

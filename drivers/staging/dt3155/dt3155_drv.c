@@ -851,9 +851,9 @@ static unsigned int dt3155_poll (struct file * filp, poll_table *wait)
  *****************************************************/
 static struct file_operations dt3155_fops = {
   read:		dt3155_read,
-  ioctl:		dt3155_ioctl,
+  bkl_ioctl:	dt3155_ioctl,
   mmap:		dt3155_mmap,
-  poll:           dt3155_poll,
+  poll:         dt3155_poll,
   open:		dt3155_open,
   release:	dt3155_close
 };

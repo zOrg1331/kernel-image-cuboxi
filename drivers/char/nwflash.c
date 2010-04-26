@@ -631,7 +631,7 @@ static const struct file_operations flash_fops =
 	.llseek		= flash_llseek,
 	.read		= flash_read,
 	.write		= flash_write,
-	.ioctl		= flash_ioctl,
+	.bkl_ioctl	= flash_ioctl,
 };
 
 static struct miscdevice flash_miscdev =

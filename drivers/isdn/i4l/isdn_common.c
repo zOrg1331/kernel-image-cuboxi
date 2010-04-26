@@ -1838,7 +1838,7 @@ static const struct file_operations isdn_fops =
 	.read		= isdn_read,
 	.write		= isdn_write,
 	.poll		= isdn_poll,
-	.ioctl		= isdn_ioctl,
+	.bkl_ioctl	= isdn_ioctl,
 	.open		= isdn_open,
 	.release	= isdn_close,
 };

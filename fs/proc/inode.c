@@ -215,7 +215,7 @@ static long proc_reg_unlocked_ioctl(struct file *file, unsigned int cmd, unsigne
 	struct proc_dir_entry *pde = PDE(file->f_path.dentry->d_inode);
 	long rv = -ENOTTY;
 	long (*unlocked_ioctl)(struct file *, unsigned int, unsigned long);
-	int (*ioctl)(struct inode *, struct file *, unsigned int, unsigned long);
+	int (*bkl_ioctl)(struct inode *, struct file *, unsigned int, unsigned long);
 
 	spin_lock(&pde->pde_unload_lock);
 	if (!pde->proc_fops) {
@@ -224,16 +224,16 @@ static long proc_reg_unlocked_ioctl(struct file *file, unsigned int cmd, unsigne
 	}
 	pde->pde_users++;
 	unlocked_ioctl = pde->proc_fops->unlocked_ioctl;
-	ioctl = pde->proc_fops->ioctl;
+	bkl_ioctl = pde->proc_fops->bkl_ioctl;
 	spin_unlock(&pde->pde_unload_lock);
 
 	if (unlocked_ioctl) {
 		rv = unlocked_ioctl(file, cmd, arg);
 		if (rv == -ENOIOCTLCMD)
 			rv = -EINVAL;
-	} else if (ioctl) {
+	} else if (bkl_ioctl) {
 		lock_kernel();
-		rv = ioctl(file->f_path.dentry->d_inode, file, cmd, arg);
+		rv = bkl_ioctl(file->f_path.dentry->d_inode, file, cmd, arg);
 		unlock_kernel();
 	}
 

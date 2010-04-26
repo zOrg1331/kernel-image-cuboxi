@@ -879,7 +879,7 @@ static int gpio_pwm_ioctl(struct gpio_private *priv, unsigned int cmd,
 static const struct file_operations gpio_fops = {
 	.owner       = THIS_MODULE,
 	.poll        = gpio_poll,
-	.ioctl       = gpio_ioctl,
+	.bkl_ioctl   = gpio_ioctl,
 	.write       = gpio_write,
 	.open        = gpio_open,
 	.release     = gpio_release,

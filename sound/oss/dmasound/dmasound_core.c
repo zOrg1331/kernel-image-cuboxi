@@ -366,7 +366,7 @@ static const struct file_operations mixer_fops =
 {
 	.owner		= THIS_MODULE,
 	.llseek		= no_llseek,
-	.ioctl		= mixer_ioctl,
+	.bkl_ioctl	= mixer_ioctl,
 	.open		= mixer_open,
 	.release	= mixer_release,
 };
@@ -1125,7 +1125,7 @@ static const struct file_operations sq_fops =
 	.llseek		= no_llseek,
 	.write		= sq_write,
 	.poll		= sq_poll,
-	.ioctl		= sq_ioctl,
+	.bkl_ioctl	= sq_ioctl,
 	.open		= sq_open,
 	.release	= sq_release,
 };

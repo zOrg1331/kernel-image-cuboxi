@@ -345,7 +345,7 @@ static int chd_dec_close(struct inode *in, struct file *fd)
 
 static const struct file_operations chd_dec_fops = {
 	.owner   = THIS_MODULE,
-	.ioctl   = chd_dec_ioctl,
+	.bkl_ioctl   = chd_dec_ioctl,
 	.open    = chd_dec_open,
 	.release = chd_dec_close,
 };

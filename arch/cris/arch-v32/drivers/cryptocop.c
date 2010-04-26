@@ -282,7 +282,7 @@ const struct file_operations cryptocop_fops = {
 	.owner =	THIS_MODULE,
 	.open =		cryptocop_open,
 	.release =	cryptocop_release,
-	.ioctl =	cryptocop_ioctl
+	.bkl_ioctl =	cryptocop_ioctl
 };
 
 

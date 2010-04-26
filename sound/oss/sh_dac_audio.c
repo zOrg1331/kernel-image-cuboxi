@@ -238,7 +238,7 @@ static int dac_audio_release(struct inode *inode, struct file *file)
 const struct file_operations dac_audio_fops = {
       .read =		dac_audio_read,
       .write =	dac_audio_write,
-      .ioctl =	dac_audio_ioctl,
+      .bkl_ioctl =	dac_audio_ioctl,
       .open =		dac_audio_open,
       .release =	dac_audio_release,
 };

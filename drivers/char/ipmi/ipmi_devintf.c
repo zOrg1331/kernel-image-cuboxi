@@ -826,7 +826,7 @@ static long compat_ipmi_ioctl(struct file *filep, unsigned int cmd,
 
 static const struct file_operations ipmi_fops = {
 	.owner		= THIS_MODULE,
-	.ioctl		= ipmi_ioctl,
+	.bkl_ioctl	= ipmi_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl   = compat_ipmi_ioctl,
 #endif

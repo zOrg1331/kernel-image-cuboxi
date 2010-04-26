@@ -344,7 +344,7 @@ static const struct file_operations coda_psdev_fops = {
 	.read		= coda_psdev_read,
 	.write		= coda_psdev_write,
 	.poll		= coda_psdev_poll,
-	.ioctl		= coda_psdev_ioctl,
+	.bkl_ioctl	= coda_psdev_ioctl,
 	.open		= coda_psdev_open,
 	.release	= coda_psdev_release,
 };

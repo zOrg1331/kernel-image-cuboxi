@@ -150,7 +150,7 @@ static int rtc_release(struct inode *inode, struct file *file)
  */
 
 static const struct file_operations rtc_fops = {
-	.ioctl =	rtc_ioctl,
+	.bkl_ioctl =	rtc_ioctl,
 	.open =		rtc_open,
 	.release =	rtc_release,
 };
