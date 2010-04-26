@@ -101,8 +101,7 @@ static inline void __disable_dcache_nomsr(void)
 do {									\
 	int align = ~(cache_line_length - 1);				\
 	end = min(start + cache_size, end);				\
-	start &= align;							\
-	end = ((end & align) + cache_line_length);			\
+	end = ((end & align) == end) ? end : (end & align) + cache_line_length;\
 } while (0);
 
 /*
