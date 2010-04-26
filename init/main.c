@@ -530,7 +530,6 @@ asmlinkage void __init start_kernel(void)
 	smp_setup_processor_id();
 
 	prepare_ve0_process(&init_task);
-	init_ve0();
 
 	/*
 	 * Need to run as early as possible, to initialize the
@@ -564,6 +563,7 @@ asmlinkage void __init start_kernel(void)
 	setup_command_line(command_line);
 	setup_nr_cpu_ids();
 	setup_per_cpu_areas();
+	init_ve0();
 	ub_init_early();
 	smp_prepare_boot_cpu();	/* arch-specific boot-cpu hooks */
 

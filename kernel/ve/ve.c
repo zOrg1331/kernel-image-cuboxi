@@ -98,12 +98,14 @@ EXPORT_SYMBOL(ve_cleanup_lock);
 EXPORT_SYMBOL(ve_cleanup_list);
 EXPORT_SYMBOL(ve_cleanup_thread);
 
+static DEFINE_PER_CPU(struct ve_cpu_stats, ve0_cpustats);
+
 void init_ve0(void)
 {
 	struct ve_struct *ve;
 
 	ve = get_ve0();
-	ve->cpu_stats = NULL;
+	ve->cpu_stats = &per_cpu__ve0_cpustats;
 	list_add(&ve->ve_list, &ve_list_head);
 }
 
