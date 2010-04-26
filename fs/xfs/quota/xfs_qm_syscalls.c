@@ -442,7 +442,7 @@ xfs_qm_scall_getqstat(
 			IRELE(gip);
 	}
 	if (mp->m_quotainfo) {
-		out->qs_incoredqs = XFS_QI_MPLNDQUOTS(mp);
+		out->qs_incoredqs = mp->m_quotainfo->qi_dquots;
 		out->qs_btimelimit = XFS_QI_BTIMELIMIT(mp);
 		out->qs_itimelimit = XFS_QI_ITIMELIMIT(mp);
 		out->qs_rtbtimelimit = XFS_QI_RTBTIMELIMIT(mp);
@@ -930,7 +930,8 @@ struct mutex  qcheck_lock;
 }
 
 typedef struct dqtest {
-	xfs_dqmarker_t	q_lists;
+	uint		 dq_flags;	/* various flags (XFS_DQ_*) */
+	struct list_head q_hashlist;
 	xfs_dqhash_t	*q_hash;	/* the hashchain header */
 	xfs_mount_t	*q_mount;	/* filesystem this relates to */
 	xfs_dqid_t	d_id;		/* user id or group id */
@@ -941,14 +942,9 @@ typedef struct dqtest {
 STATIC void
 xfs_qm_hashinsert(xfs_dqhash_t *h, xfs_dqtest_t *dqp)
 {
-	xfs_dquot_t *d;
-	if (((d) = (h)->qh_next))
-		(d)->HL_PREVP = &((dqp)->HL_NEXT);
-	(dqp)->HL_NEXT = d;
-	(dqp)->HL_PREVP = &((h)->qh_next);
-	(h)->qh_next = (xfs_dquot_t *)dqp;
-	(h)->qh_version++;
-	(h)->qh_nelems++;
+	list_add(&dqp->q_hashlist, &h->qh_list);
+	h->qh_version++;
+	h->qh_nelems++;
 }
 STATIC void
 xfs_qm_dqtest_print(
@@ -1060,9 +1056,7 @@ xfs_qm_internalqcheck_dqget(
 	xfs_dqhash_t	*h;
 
 	h = DQTEST_HASH(mp, id, type);
-	for (d = (xfs_dqtest_t *) h->qh_next; d != NULL;
-	     d = (xfs_dqtest_t *) d->HL_NEXT) {
-		/* DQTEST_LIST_PRINT(h, HL_NEXT, "@@@@@ dqtestlist @@@@@"); */
+	list_for_each_entry(d, &h->qh_list, q_hashlist) {
 		if (d->d_id == id && mp == d->q_mount) {
 			*O_dq = d;
 			return (0);
@@ -1073,6 +1067,7 @@ xfs_qm_internalqcheck_dqget(
 	d->d_id = id;
 	d->q_mount = mp;
 	d->q_hash = h;
+	INIT_LIST_HEAD(&d->q_hashlist);
 	xfs_qm_hashinsert(h, d);
 	*O_dq = d;
 	return (0);
@@ -1179,8 +1174,6 @@ xfs_qm_internalqcheck(
 	xfs_ino_t	lastino;
 	int		done, count;
 	int		i;
-	xfs_dqtest_t	*d, *e;
-	xfs_dqhash_t	*h1;
 	int		error;
 
 	lastino = 0;
@@ -1220,19 +1213,18 @@ xfs_qm_internalqcheck(
 	}
 	cmn_err(CE_DEBUG, "Checking results against system dquots");
 	for (i = 0; i < qmtest_hashmask; i++) {
-		h1 = &qmtest_udqtab[i];
-		for (d = (xfs_dqtest_t *) h1->qh_next; d != NULL; ) {
+		xfs_dqtest_t	*d, *n;
+		xfs_dqhash_t	*h;
+
+		h = &qmtest_udqtab[i];
+		list_for_each_entry_safe(d, n, &h->qh_list, q_hashlist) {
 			xfs_dqtest_cmp(d);
-			e = (xfs_dqtest_t *) d->HL_NEXT;
 			kmem_free(d);
-			d = e;
 		}
-		h1 = &qmtest_gdqtab[i];
-		for (d = (xfs_dqtest_t *) h1->qh_next; d != NULL; ) {
+		h = &qmtest_gdqtab[i];
+		list_for_each_entry_safe(d, n, &h->qh_list, q_hashlist) {
 			xfs_dqtest_cmp(d);
-			e = (xfs_dqtest_t *) d->HL_NEXT;
 			kmem_free(d);
-			d = e;
 		}
 	}
 

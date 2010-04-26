@@ -101,7 +101,7 @@ xfs_qm_dqinit(
 	 * No need to re-initialize these if this is a reclaimed dquot.
 	 */
 	if (brandnewdquot) {
-		dqp->dq_flnext = dqp->dq_flprev = dqp;
+		INIT_LIST_HEAD(&dqp->q_freelist);
 		mutex_init(&dqp->q_qlock);
 		init_waitqueue_head(&dqp->q_pinwait);
 
@@ -119,20 +119,20 @@ xfs_qm_dqinit(
 		 * Only the q_core portion was zeroed in dqreclaim_one().
 		 * So, we need to reset others.
 		 */
-		 dqp->q_nrefs = 0;
-		 dqp->q_blkno = 0;
-		 dqp->MPL_NEXT = dqp->HL_NEXT = NULL;
-		 dqp->HL_PREVP = dqp->MPL_PREVP = NULL;
-		 dqp->q_bufoffset = 0;
-		 dqp->q_fileoffset = 0;
-		 dqp->q_transp = NULL;
-		 dqp->q_gdquot = NULL;
-		 dqp->q_res_bcount = 0;
-		 dqp->q_res_icount = 0;
-		 dqp->q_res_rtbcount = 0;
-		 atomic_set(&dqp->q_pincount, 0);
-		 dqp->q_hash = NULL;
-		 ASSERT(dqp->dq_flnext == dqp->dq_flprev);
+		dqp->q_nrefs = 0;
+		dqp->q_blkno = 0;
+		INIT_LIST_HEAD(&dqp->q_mplist);
+		INIT_LIST_HEAD(&dqp->q_hashlist);
+		dqp->q_bufoffset = 0;
+		dqp->q_fileoffset = 0;
+		dqp->q_transp = NULL;
+		dqp->q_gdquot = NULL;
+		dqp->q_res_bcount = 0;
+		dqp->q_res_icount = 0;
+		dqp->q_res_rtbcount = 0;
+		atomic_set(&dqp->q_pincount, 0);
+		dqp->q_hash = NULL;
+		ASSERT(list_empty(&dqp->q_freelist));
 
 		trace_xfs_dqreuse(dqp);
 	}
@@ -158,7 +158,7 @@ void
 xfs_qm_dqdestroy(
 	xfs_dquot_t	*dqp)
 {
-	ASSERT(! XFS_DQ_IS_ON_FREELIST(dqp));
+	ASSERT(list_empty(&dqp->q_freelist));
 
 	mutex_destroy(&dqp->q_qlock);
 	sv_destroy(&dqp->q_pinwait);
@@ -751,7 +751,6 @@ xfs_qm_dqlookup(
 {
 	xfs_dquot_t		*dqp;
 	uint			flist_locked;
-	xfs_dquot_t		*d;
 
 	ASSERT(mutex_is_locked(&qh->qh_lock));
 
@@ -760,7 +759,7 @@ xfs_qm_dqlookup(
 	/*
 	 * Traverse the hashchain looking for a match
 	 */
-	for (dqp = qh->qh_next; dqp != NULL; dqp = dqp->HL_NEXT) {
+	list_for_each_entry(dqp, &qh->qh_list, q_hashlist) {
 		/*
 		 * We already have the hashlock. We don't need the
 		 * dqlock to look at the id field of the dquot, since the
@@ -772,12 +771,12 @@ xfs_qm_dqlookup(
 			/*
 			 * All in core dquots must be on the dqlist of mp
 			 */
-			ASSERT(dqp->MPL_PREVP != NULL);
+			ASSERT(!list_empty(&dqp->q_mplist));
 
 			xfs_dqlock(dqp);
 			if (dqp->q_nrefs == 0) {
-				ASSERT (XFS_DQ_IS_ON_FREELIST(dqp));
-				if (! xfs_qm_freelist_lock_nowait(xfs_Gqm)) {
+				ASSERT(!list_empty(&dqp->q_freelist));
+				if (!mutex_trylock(&xfs_Gqm->qm_dqfrlist_lock)) {
 					trace_xfs_dqlookup_want(dqp);
 
 					/*
@@ -787,7 +786,7 @@ xfs_qm_dqlookup(
 					 */
 					dqp->dq_flags |= XFS_DQ_WANT;
 					xfs_dqunlock(dqp);
-					xfs_qm_freelist_lock(xfs_Gqm);
+					mutex_lock(&xfs_Gqm->qm_dqfrlist_lock);
 					xfs_dqlock(dqp);
 					dqp->dq_flags &= ~(XFS_DQ_WANT);
 				}
@@ -802,46 +801,28 @@ xfs_qm_dqlookup(
 
 			if (flist_locked) {
 				if (dqp->q_nrefs != 0) {
-					xfs_qm_freelist_unlock(xfs_Gqm);
+					mutex_unlock(&xfs_Gqm->qm_dqfrlist_lock);
 					flist_locked = B_FALSE;
 				} else {
-					/*
-					 * take it off the freelist
-					 */
+					/* take it off the freelist */
 					trace_xfs_dqlookup_freelist(dqp);
-					XQM_FREELIST_REMOVE(dqp);
-					/* xfs_qm_freelist_print(&(xfs_Gqm->
-							qm_dqfreelist),
-							"after removal"); */
+					list_del_init(&dqp->q_freelist);
+					xfs_Gqm->qm_dqfrlist_cnt--;
 				}
 			}
 
-			/*
-			 * grab a reference
-			 */
 			XFS_DQHOLD(dqp);
 
 			if (flist_locked)
-				xfs_qm_freelist_unlock(xfs_Gqm);
+				mutex_unlock(&xfs_Gqm->qm_dqfrlist_lock);
 			/*
 			 * move the dquot to the front of the hashchain
 			 */
 			ASSERT(mutex_is_locked(&qh->qh_lock));
-			if (dqp->HL_PREVP != &qh->qh_next) {
-				trace_xfs_dqlookup_move(dqp);
-				if ((d = dqp->HL_NEXT))
-					d->HL_PREVP = dqp->HL_PREVP;
-				*(dqp->HL_PREVP) = d;
-				d = qh->qh_next;
-				d->HL_PREVP = &dqp->HL_NEXT;
-				dqp->HL_NEXT = d;
-				dqp->HL_PREVP = &qh->qh_next;
-				qh->qh_next = dqp;
-			}
+			list_move(&dqp->q_hashlist, &qh->qh_list);
 			trace_xfs_dqlookup_done(dqp);
 			*O_dqpp = dqp;
-			ASSERT(mutex_is_locked(&qh->qh_lock));
-			return (0);
+			return 0;
 		}
 	}
 
@@ -1033,13 +1014,14 @@ xfs_qm_dqget(
 	 */
 	ASSERT(mutex_is_locked(&h->qh_lock));
 	dqp->q_hash = h;
-	XQM_HASHLIST_INSERT(h, dqp);
+	list_add(&dqp->q_hashlist, &h->qh_list);
+	h->qh_version++;
 
 	/*
 	 * Attach this dquot to this filesystem's list of all dquots,
 	 * kept inside the mount structure in m_quotainfo field
 	 */
-	xfs_qm_mplist_lock(mp);
+	mutex_lock(&mp->m_quotainfo->qi_dqlist_lock);
 
 	/*
 	 * We return a locked dquot to the caller, with a reference taken
@@ -1047,9 +1029,9 @@ xfs_qm_dqget(
 	xfs_dqlock(dqp);
 	dqp->q_nrefs = 1;
 
-	XQM_MPLIST_INSERT(&(XFS_QI_MPL_LIST(mp)), dqp);
-
-	xfs_qm_mplist_unlock(mp);
+	list_add(&dqp->q_mplist, &mp->m_quotainfo->qi_dqlist);
+	mp->m_quotainfo->qi_dquots++;
+	mutex_unlock(&mp->m_quotainfo->qi_dqlist_lock);
 	mutex_unlock(&h->qh_lock);
  dqret:
 	ASSERT((ip == NULL) || xfs_isilocked(ip, XFS_ILOCK_EXCL));
@@ -1086,10 +1068,10 @@ xfs_qm_dqput(
 	 * drop the dqlock and acquire the freelist and dqlock
 	 * in the right order; but try to get it out-of-order first
 	 */
-	if (! xfs_qm_freelist_lock_nowait(xfs_Gqm)) {
+	if (!mutex_trylock(&xfs_Gqm->qm_dqfrlist_lock)) {
 		trace_xfs_dqput_wait(dqp);
 		xfs_dqunlock(dqp);
-		xfs_qm_freelist_lock(xfs_Gqm);
+		mutex_lock(&xfs_Gqm->qm_dqfrlist_lock);
 		xfs_dqlock(dqp);
 	}
 
@@ -1100,10 +1082,8 @@ xfs_qm_dqput(
 		if (--dqp->q_nrefs == 0) {
 			trace_xfs_dqput_free(dqp);
 
-			/*
-			 * insert at end of the freelist.
-			 */
-			XQM_FREELIST_INSERT(&(xfs_Gqm->qm_dqfreelist), dqp);
+			list_add_tail(&dqp->q_freelist, &xfs_Gqm->qm_dqfrlist);
+			xfs_Gqm->qm_dqfrlist_cnt++;
 
 			/*
 			 * If we just added a udquot to the freelist, then
@@ -1118,10 +1098,6 @@ xfs_qm_dqput(
 				xfs_dqlock(gdqp);
 				dqp->q_gdquot = NULL;
 			}
-
-			/* xfs_qm_freelist_print(&(xfs_Gqm->qm_dqfreelist),
-			   "@@@@@++ Free list (after append) @@@@@+");
-			   */
 		}
 		xfs_dqunlock(dqp);
 
@@ -1133,7 +1109,7 @@ xfs_qm_dqput(
 			break;
 		dqp = gdqp;
 	}
-	xfs_qm_freelist_unlock(xfs_Gqm);
+	mutex_unlock(&xfs_Gqm->qm_dqfrlist_lock);
 }
 
 /*
@@ -1386,10 +1362,10 @@ int
 xfs_qm_dqpurge(
 	xfs_dquot_t	*dqp)
 {
-	xfs_dqhash_t	*thishash;
+	xfs_dqhash_t	*qh = dqp->q_hash;
 	xfs_mount_t	*mp = dqp->q_mount;
 
-	ASSERT(XFS_QM_IS_MPLIST_LOCKED(mp));
+	ASSERT(mutex_is_locked(&mp->m_quotainfo->qi_dqlist_lock));
 	ASSERT(mutex_is_locked(&dqp->q_hash->qh_lock));
 
 	xfs_dqlock(dqp);
@@ -1407,7 +1383,7 @@ xfs_qm_dqpurge(
 		return (1);
 	}
 
-	ASSERT(XFS_DQ_IS_ON_FREELIST(dqp));
+	ASSERT(!list_empty(&dqp->q_freelist));
 
 	/*
 	 * If we're turning off quotas, we have to make sure that, for
@@ -1452,14 +1428,16 @@ xfs_qm_dqpurge(
 	ASSERT(XFS_FORCED_SHUTDOWN(mp) ||
 	       !(dqp->q_logitem.qli_item.li_flags & XFS_LI_IN_AIL));
 
-	thishash = dqp->q_hash;
-	XQM_HASHLIST_REMOVE(thishash, dqp);
-	XQM_MPLIST_REMOVE(&(XFS_QI_MPL_LIST(mp)), dqp);
+	list_del_init(&dqp->q_hashlist);
+	qh->qh_version++;
+	list_del_init(&dqp->q_mplist);
+	mp->m_quotainfo->qi_dqreclaims++;
+	mp->m_quotainfo->qi_dquots--;
 	/*
 	 * XXX Move this to the front of the freelist, if we can get the
 	 * freelist lock.
 	 */
-	ASSERT(XFS_DQ_IS_ON_FREELIST(dqp));
+	ASSERT(!list_empty(&dqp->q_freelist));
 
 	dqp->q_mount = NULL;
 	dqp->q_hash = NULL;
@@ -1467,7 +1445,7 @@ xfs_qm_dqpurge(
 	memset(&dqp->q_core, 0, sizeof(dqp->q_core));
 	xfs_dqfunlock(dqp);
 	xfs_dqunlock(dqp);
-	mutex_unlock(&thishash->qh_lock);
+	mutex_unlock(&qh->qh_lock);
 	return (0);
 }
 
