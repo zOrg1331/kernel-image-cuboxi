@@ -91,9 +91,9 @@ static unsigned int udp6_portaddr_hash(struct net *net,
 	if (ipv6_addr_any(addr6))
 		hash = jhash_1word(0, mix);
 	else if (ipv6_addr_v4mapped(addr6))
-		hash = jhash_1word(addr6->s6_addr32[3], mix);
+		hash = jhash_1word((__force u32)addr6->s6_addr32[3], mix);
 	else
-		hash = jhash2(addr6->s6_addr32, 4, mix);
+		hash = jhash2((__force u32 *)addr6->s6_addr32, 4, mix);
 
 	return hash ^ port;
 }
@@ -334,6 +334,9 @@ int udpv6_recvmsg(struct kiocb *iocb, struct sock *sk,
 
 	if (flags & MSG_ERRQUEUE)
 		return ipv6_recv_error(sk, msg, len);
+
+	if (np->rxpmtu && np->rxopt.bits.rxpmtu)
+		return ipv6_recv_rxpmtu(sk, msg, len);
 
 try_again:
 	skb = __skb_recv_datagram(sk, flags | (noblock ? MSG_DONTWAIT : 0),
@@ -919,6 +922,7 @@ int udpv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 	int ulen = len;
 	int hlimit = -1;
 	int tclass = -1;
+	int dontfrag = -1;
 	int corkreq = up->corkflag || msg->msg_flags&MSG_MORE;
 	int err;
 	int connected = 0;
@@ -1049,7 +1053,8 @@ do_udp_sendmsg:
 		memset(opt, 0, sizeof(struct ipv6_txoptions));
 		opt->tot_len = sizeof(*opt);
 
-		err = datagram_send_ctl(sock_net(sk), msg, &fl, opt, &hlimit, &tclass);
+		err = datagram_send_ctl(sock_net(sk), msg, &fl, opt, &hlimit,
+					&tclass, &dontfrag);
 		if (err < 0) {
 			fl6_sock_release(flowlabel);
 			return err;
@@ -1120,6 +1125,9 @@ do_udp_sendmsg:
 	if (tclass < 0)
 		tclass = np->tclass;
 
+	if (dontfrag < 0)
+		dontfrag = np->dontfrag;
+
 	if (msg->msg_flags&MSG_CONFIRM)
 		goto do_confirm;
 back_from_confirm:
@@ -1143,7 +1151,7 @@ do_append_data:
 	err = ip6_append_data(sk, getfrag, msg->msg_iov, ulen,
 		sizeof(struct udphdr), hlimit, tclass, opt, &fl,
 		(struct rt6_info*)dst,
-		corkreq ? msg->msg_flags|MSG_MORE : msg->msg_flags);
+		corkreq ? msg->msg_flags|MSG_MORE : msg->msg_flags, dontfrag);
 	if (err)
 		udp_v6_flush_pending_frames(sk);
 	else if (!corkreq)

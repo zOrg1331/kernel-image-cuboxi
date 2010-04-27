@@ -181,7 +181,7 @@ static int macvtap_forward(struct net_device *dev, struct sk_buff *skb)
 		return -ENOLINK;
 
 	skb_queue_tail(&q->sk.sk_receive_queue, skb);
-	wake_up_interruptible_poll(q->sk.sk_sleep, POLLIN | POLLRDNORM | POLLRDBAND);
+	wake_up_interruptible_poll(sk_sleep(&q->sk), POLLIN | POLLRDNORM | POLLRDBAND);
 	return 0;
 }
 
@@ -246,8 +246,8 @@ static void macvtap_sock_write_space(struct sock *sk)
 	    !test_and_clear_bit(SOCK_ASYNC_NOSPACE, &sk->sk_socket->flags))
 		return;
 
-	if (sk->sk_sleep && waitqueue_active(sk->sk_sleep))
-		wake_up_interruptible_poll(sk->sk_sleep, POLLOUT | POLLWRNORM | POLLWRBAND);
+	if (sk_sleep(sk) && waitqueue_active(sk_sleep(sk)))
+		wake_up_interruptible_poll(sk_sleep(sk), POLLOUT | POLLWRNORM | POLLWRBAND);
 }
 
 static int macvtap_open(struct inode *inode, struct file *file)
@@ -562,7 +562,7 @@ static ssize_t macvtap_do_read(struct macvtap_queue *q, struct kiocb *iocb,
 	struct sk_buff *skb;
 	ssize_t ret = 0;
 
-	add_wait_queue(q->sk.sk_sleep, &wait);
+	add_wait_queue(sk_sleep(&q->sk), &wait);
 	while (len) {
 		current->state = TASK_INTERRUPTIBLE;
 
@@ -587,7 +587,7 @@ static ssize_t macvtap_do_read(struct macvtap_queue *q, struct kiocb *iocb,
 	}
 
 	current->state = TASK_RUNNING;
-	remove_wait_queue(q->sk.sk_sleep, &wait);
+	remove_wait_queue(sk_sleep(&q->sk), &wait);
 	return ret;
 }
 

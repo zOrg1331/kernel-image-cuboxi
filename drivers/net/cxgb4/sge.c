@@ -1471,7 +1471,7 @@ EXPORT_SYMBOL(cxgb4_pktgl_to_skb);
  *	Releases the pages of a packet gather list.  We do not own the last
  *	page on the list and do not free it.
  */
-void t4_pktgl_free(const struct pkt_gl *gl)
+static void t4_pktgl_free(const struct pkt_gl *gl)
 {
 	int n;
 	const skb_frag_t *p;
@@ -2047,7 +2047,7 @@ int t4_sge_alloc_rxq(struct adapter *adap, struct sge_rspq *iq, bool fwevtq,
 	adap->sge.ingr_map[iq->cntxt_id] = iq;
 
 	if (fl) {
-		fl->cntxt_id = htons(c.fl0id);
+		fl->cntxt_id = ntohs(c.fl0id);
 		fl->avail = fl->pend_cred = 0;
 		fl->pidx = fl->cidx = 0;
 		fl->alloc_failed = fl->large_alloc_failed = fl->starving = 0;

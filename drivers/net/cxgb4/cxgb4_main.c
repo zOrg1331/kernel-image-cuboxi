@@ -240,9 +240,9 @@ static int set_addr_filters(const struct net_device *dev, bool sleep)
 	u16 filt_idx[7];
 	const u8 *addr[7];
 	int ret, naddr = 0;
-	const struct dev_addr_list *d;
 	const struct netdev_hw_addr *ha;
 	int uc_cnt = netdev_uc_count(dev);
+	int mc_cnt = netdev_mc_count(dev);
 	const struct port_info *pi = netdev_priv(dev);
 
 	/* first do the secondary unicast addresses */
@@ -260,9 +260,9 @@ static int set_addr_filters(const struct net_device *dev, bool sleep)
 	}
 
 	/* next set up the multicast addresses */
-	netdev_for_each_mc_addr(d, dev) {
-		addr[naddr++] = d->dmi_addr;
-		if (naddr >= ARRAY_SIZE(addr) || d->next == NULL) {
+	netdev_for_each_mc_addr(ha, dev) {
+		addr[naddr++] = ha->addr;
+		if (--mc_cnt == 0 || naddr >= ARRAY_SIZE(addr)) {
 			ret = t4_alloc_mac_filt(pi->adapter, 0, pi->viid, free,
 					naddr, addr, filt_idx, &mhash, sleep);
 			if (ret < 0)

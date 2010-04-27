@@ -262,7 +262,7 @@ struct sock {
 #ifdef CONFIG_XFRM
 	struct xfrm_policy	*sk_policy[2];
 #endif
-	rwlock_t		sk_dst_lock;
+	spinlock_t		sk_dst_lock;
 	atomic_t		sk_rmem_alloc;
 	atomic_t		sk_wmem_alloc;
 	atomic_t		sk_omem_alloc;
@@ -1160,6 +1160,10 @@ static inline void sk_set_socket(struct sock *sk, struct socket *sock)
 	sk->sk_socket = sock;
 }
 
+static inline wait_queue_head_t *sk_sleep(struct sock *sk)
+{
+	return sk->sk_sleep;
+}
 /* Detach socket from process context.
  * Announce socket dead, detach it from wait queue and inode.
  * Note that parent inode held reference count on this struct sock,
@@ -1192,7 +1196,9 @@ extern unsigned long sock_i_ino(struct sock *sk);
 static inline struct dst_entry *
 __sk_dst_get(struct sock *sk)
 {
-	return sk->sk_dst_cache;
+	return rcu_dereference_check(sk->sk_dst_cache, rcu_read_lock_held() ||
+						       sock_owned_by_user(sk) ||
+						       lockdep_is_held(&sk->sk_lock.slock));
 }
 
 static inline struct dst_entry *
@@ -1200,12 +1206,28 @@ sk_dst_get(struct sock *sk)
 {
 	struct dst_entry *dst;
 
-	read_lock(&sk->sk_dst_lock);
-	dst = sk->sk_dst_cache;
+	rcu_read_lock();
+	dst = rcu_dereference(sk->sk_dst_cache);
 	if (dst)
 		dst_hold(dst);
-	read_unlock(&sk->sk_dst_lock);
+	rcu_read_unlock();
 	return dst;
+}
+
+extern void sk_reset_txq(struct sock *sk);
+
+static inline void dst_negative_advice(struct sock *sk)
+{
+	struct dst_entry *ndst, *dst = __sk_dst_get(sk);
+
+	if (dst && dst->ops->negative_advice) {
+		ndst = dst->ops->negative_advice(dst);
+
+		if (ndst != dst) {
+			rcu_assign_pointer(sk->sk_dst_cache, ndst);
+			sk_reset_txq(sk);
+		}
+	}
 }
 
 static inline void
@@ -1214,36 +1236,32 @@ __sk_dst_set(struct sock *sk, struct dst_entry *dst)
 	struct dst_entry *old_dst;
 
 	sk_tx_queue_clear(sk);
-	old_dst = sk->sk_dst_cache;
-	sk->sk_dst_cache = dst;
+	old_dst = rcu_dereference_check(sk->sk_dst_cache,
+					lockdep_is_held(&sk->sk_dst_lock));
+	rcu_assign_pointer(sk->sk_dst_cache, dst);
 	dst_release(old_dst);
 }
 
 static inline void
 sk_dst_set(struct sock *sk, struct dst_entry *dst)
 {
-	write_lock(&sk->sk_dst_lock);
+	spin_lock(&sk->sk_dst_lock);
 	__sk_dst_set(sk, dst);
-	write_unlock(&sk->sk_dst_lock);
+	spin_unlock(&sk->sk_dst_lock);
 }
 
 static inline void
 __sk_dst_reset(struct sock *sk)
 {
-	struct dst_entry *old_dst;
-
-	sk_tx_queue_clear(sk);
-	old_dst = sk->sk_dst_cache;
-	sk->sk_dst_cache = NULL;
-	dst_release(old_dst);
+	__sk_dst_set(sk, NULL);
 }
 
 static inline void
 sk_dst_reset(struct sock *sk)
 {
-	write_lock(&sk->sk_dst_lock);
+	spin_lock(&sk->sk_dst_lock);
 	__sk_dst_reset(sk);
-	write_unlock(&sk->sk_dst_lock);
+	spin_unlock(&sk->sk_dst_lock);
 }
 
 extern struct dst_entry *__sk_dst_check(struct sock *sk, u32 cookie);
@@ -1333,8 +1351,8 @@ static inline int sk_has_allocations(const struct sock *sk)
  *   tp->rcv_nxt check   sock_def_readable
  *   ...                 {
  *   schedule               ...
- *                          if (sk->sk_sleep && waitqueue_active(sk->sk_sleep))
- *                              wake_up_interruptible(sk->sk_sleep)
+ *                          if (sk_sleep(sk) && waitqueue_active(sk_sleep(sk)))
+ *                              wake_up_interruptible(sk_sleep(sk))
  *                          ...
  *                       }
  *
@@ -1355,7 +1373,7 @@ static inline int sk_has_sleeper(struct sock *sk)
 	 * This memory barrier is paired in the sock_poll_wait.
 	 */
 	smp_mb__after_lock();
-	return sk->sk_sleep && waitqueue_active(sk->sk_sleep);
+	return sk_sleep(sk) && waitqueue_active(sk_sleep(sk));
 }
 
 /**

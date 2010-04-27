@@ -262,6 +262,13 @@ int determine_fw_capabilities(struct orinoco_private *priv,
 	if (fw_name)
 		dev_info(dev, "Firmware determined as %s\n", fw_name);
 
+#ifndef CONFIG_HERMES_PRISM
+	if (priv->firmware_type == FIRMWARE_TYPE_INTERSIL) {
+		dev_err(dev, "Support for Prism chipset is not enabled\n");
+		return -ENODEV;
+	}
+#endif
+
 	return 0;
 }
 
@@ -367,6 +374,32 @@ int orinoco_hw_read_card_settings(struct orinoco_private *priv, u8 *dev_addr)
 		err = hermes_read_wordrec(hw, USER_BAP,
 					  HERMES_RID_CNFPREAMBLE_SYMBOL,
 					  &priv->preamble);
+		if (err) {
+			dev_err(dev, "Failed to read preamble setup\n");
+			goto out;
+		}
+	}
+
+	/* Retry settings */
+	err = hermes_read_wordrec(hw, USER_BAP, HERMES_RID_SHORTRETRYLIMIT,
+				  &priv->short_retry_limit);
+	if (err) {
+		dev_err(dev, "Failed to read short retry limit\n");
+		goto out;
+	}
+
+	err = hermes_read_wordrec(hw, USER_BAP, HERMES_RID_LONGRETRYLIMIT,
+				  &priv->long_retry_limit);
+	if (err) {
+		dev_err(dev, "Failed to read long retry limit\n");
+		goto out;
+	}
+
+	err = hermes_read_wordrec(hw, USER_BAP, HERMES_RID_MAXTRANSMITLIFETIME,
+				  &priv->retry_lifetime);
+	if (err) {
+		dev_err(dev, "Failed to read max retry lifetime\n");
+		goto out;
 	}
 
 out:
@@ -1049,14 +1082,14 @@ int __orinoco_hw_set_multicast_list(struct orinoco_private *priv,
 	 * group address if either we want to multicast, or if we were
 	 * multicasting and want to stop */
 	if (!promisc && (mc_count || priv->mc_count)) {
-		struct dev_mc_list *p;
+		struct netdev_hw_addr *ha;
 		struct hermes_multicast mclist;
 		int i = 0;
 
-		netdev_for_each_mc_addr(p, dev) {
+		netdev_for_each_mc_addr(ha, dev) {
 			if (i == mc_count)
 				break;
-			memcpy(mclist.addr[i++], p->dmi_addr, ETH_ALEN);
+			memcpy(mclist.addr[i++], ha->addr, ETH_ALEN);
 		}
 
 		err = hermes_write_ltv(hw, USER_BAP,

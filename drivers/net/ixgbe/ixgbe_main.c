@@ -2482,12 +2482,74 @@ static void ixgbe_vlan_rx_kill_vid(struct net_device *netdev, u16 vid)
 	hw->mac.ops.set_vfta(&adapter->hw, vid, pool_ndx, false);
 }
 
+/**
+ * ixgbe_vlan_filter_disable - helper to disable hw vlan filtering
+ * @adapter: driver data
+ */
+static void ixgbe_vlan_filter_disable(struct ixgbe_adapter *adapter)
+{
+	struct ixgbe_hw *hw = &adapter->hw;
+	u32 vlnctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
+	int i, j;
+
+	switch (hw->mac.type) {
+	case ixgbe_mac_82598EB:
+		vlnctrl &= ~(IXGBE_VLNCTRL_VME | IXGBE_VLNCTRL_VFE);
+		vlnctrl &= ~IXGBE_VLNCTRL_CFIEN;
+		IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, vlnctrl);
+		break;
+	case ixgbe_mac_82599EB:
+		vlnctrl &= ~IXGBE_VLNCTRL_VFE;
+		vlnctrl &= ~IXGBE_VLNCTRL_CFIEN;
+		IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, vlnctrl);
+		for (i = 0; i < adapter->num_rx_queues; i++) {
+			j = adapter->rx_ring[i]->reg_idx;
+			vlnctrl = IXGBE_READ_REG(hw, IXGBE_RXDCTL(j));
+			vlnctrl &= ~IXGBE_RXDCTL_VME;
+			IXGBE_WRITE_REG(hw, IXGBE_RXDCTL(j), vlnctrl);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+/**
+ * ixgbe_vlan_filter_enable - helper to enable hw vlan filtering
+ * @adapter: driver data
+ */
+static void ixgbe_vlan_filter_enable(struct ixgbe_adapter *adapter)
+{
+	struct ixgbe_hw *hw = &adapter->hw;
+	u32 vlnctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
+	int i, j;
+
+	switch (hw->mac.type) {
+	case ixgbe_mac_82598EB:
+		vlnctrl |= IXGBE_VLNCTRL_VME | IXGBE_VLNCTRL_VFE;
+		vlnctrl &= ~IXGBE_VLNCTRL_CFIEN;
+		IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, vlnctrl);
+		break;
+	case ixgbe_mac_82599EB:
+		vlnctrl |= IXGBE_VLNCTRL_VFE;
+		vlnctrl &= ~IXGBE_VLNCTRL_CFIEN;
+		IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, vlnctrl);
+		for (i = 0; i < adapter->num_rx_queues; i++) {
+			j = adapter->rx_ring[i]->reg_idx;
+			vlnctrl = IXGBE_READ_REG(hw, IXGBE_RXDCTL(j));
+			vlnctrl |= IXGBE_RXDCTL_VME;
+			IXGBE_WRITE_REG(hw, IXGBE_RXDCTL(j), vlnctrl);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
 static void ixgbe_vlan_rx_register(struct net_device *netdev,
                                    struct vlan_group *grp)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
-	u32 ctrl;
-	int i, j;
 
 	if (!test_bit(__IXGBE_DOWN, &adapter->state))
 		ixgbe_irq_disable(adapter);
@@ -2498,25 +2560,7 @@ static void ixgbe_vlan_rx_register(struct net_device *netdev,
 	 * still receive traffic from a DCB-enabled host even if we're
 	 * not in DCB mode.
 	 */
-	ctrl = IXGBE_READ_REG(&adapter->hw, IXGBE_VLNCTRL);
-
-	/* Disable CFI check */
-	ctrl &= ~IXGBE_VLNCTRL_CFIEN;
-
-	/* enable VLAN tag stripping */
-	if (adapter->hw.mac.type == ixgbe_mac_82598EB) {
-		ctrl |= IXGBE_VLNCTRL_VME;
-	} else if (adapter->hw.mac.type == ixgbe_mac_82599EB) {
-		for (i = 0; i < adapter->num_rx_queues; i++) {
-			u32 ctrl;
-			j = adapter->rx_ring[i]->reg_idx;
-			ctrl = IXGBE_READ_REG(&adapter->hw, IXGBE_RXDCTL(j));
-			ctrl |= IXGBE_RXDCTL_VME;
-			IXGBE_WRITE_REG(&adapter->hw, IXGBE_RXDCTL(j), ctrl);
-		}
-	}
-
-	IXGBE_WRITE_REG(&adapter->hw, IXGBE_VLNCTRL, ctrl);
+	ixgbe_vlan_filter_enable(adapter);
 
 	ixgbe_vlan_rx_add_vid(netdev, 0);
 
@@ -2538,21 +2582,6 @@ static void ixgbe_restore_vlan(struct ixgbe_adapter *adapter)
 	}
 }
 
-static u8 *ixgbe_addr_list_itr(struct ixgbe_hw *hw, u8 **mc_addr_ptr, u32 *vmdq)
-{
-	struct dev_mc_list *mc_ptr;
-	u8 *addr = *mc_addr_ptr;
-	*vmdq = 0;
-
-	mc_ptr = container_of(addr, struct dev_mc_list, dmi_addr[0]);
-	if (mc_ptr->next)
-		*mc_addr_ptr = mc_ptr->next->dmi_addr;
-	else
-		*mc_addr_ptr = NULL;
-
-	return addr;
-}
-
 /**
  * ixgbe_set_rx_mode - Unicast, Multicast and Promiscuous mode set
  * @netdev: network interface device structure
@@ -2566,19 +2595,17 @@ void ixgbe_set_rx_mode(struct net_device *netdev)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	struct ixgbe_hw *hw = &adapter->hw;
-	u32 fctrl, vlnctrl;
-	u8 *addr_list = NULL;
-	int addr_count = 0;
+	u32 fctrl;
 
 	/* Check for Promiscuous and All Multicast modes */
 
 	fctrl = IXGBE_READ_REG(hw, IXGBE_FCTRL);
-	vlnctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
 
 	if (netdev->flags & IFF_PROMISC) {
 		hw->addr_ctrl.user_set_promisc = 1;
 		fctrl |= (IXGBE_FCTRL_UPE | IXGBE_FCTRL_MPE);
-		vlnctrl &= ~IXGBE_VLNCTRL_VFE;
+		/* don't hardware filter vlans in promisc mode */
+		ixgbe_vlan_filter_disable(adapter);
 	} else {
 		if (netdev->flags & IFF_ALLMULTI) {
 			fctrl |= IXGBE_FCTRL_MPE;
@@ -2586,22 +2613,18 @@ void ixgbe_set_rx_mode(struct net_device *netdev)
 		} else {
 			fctrl &= ~(IXGBE_FCTRL_UPE | IXGBE_FCTRL_MPE);
 		}
-		vlnctrl |= IXGBE_VLNCTRL_VFE;
+		ixgbe_vlan_filter_enable(adapter);
 		hw->addr_ctrl.user_set_promisc = 0;
 	}
 
 	IXGBE_WRITE_REG(hw, IXGBE_FCTRL, fctrl);
-	IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, vlnctrl);
 
 	/* reprogram secondary unicast list */
 	hw->mac.ops.update_uc_addr_list(hw, netdev);
 
 	/* reprogram multicast list */
-	addr_count = netdev_mc_count(netdev);
-	if (addr_count)
-		addr_list = netdev->mc_list->dmi_addr;
-	hw->mac.ops.update_mc_addr_list(hw, addr_list, addr_count,
-	                                ixgbe_addr_list_itr);
+	hw->mac.ops.update_mc_addr_list(hw, netdev);
+
 	if (adapter->num_vfs)
 		ixgbe_restore_vf_multicasts(adapter);
 }
@@ -2661,7 +2684,7 @@ static void ixgbe_napi_disable_all(struct ixgbe_adapter *adapter)
 static void ixgbe_configure_dcb(struct ixgbe_adapter *adapter)
 {
 	struct ixgbe_hw *hw = &adapter->hw;
-	u32 txdctl, vlnctrl;
+	u32 txdctl;
 	int i, j;
 
 	ixgbe_dcb_check_config(&adapter->dcb_cfg);
@@ -2679,22 +2702,8 @@ static void ixgbe_configure_dcb(struct ixgbe_adapter *adapter)
 		IXGBE_WRITE_REG(hw, IXGBE_TXDCTL(j), txdctl);
 	}
 	/* Enable VLAN tag insert/strip */
-	vlnctrl = IXGBE_READ_REG(hw, IXGBE_VLNCTRL);
-	if (hw->mac.type == ixgbe_mac_82598EB) {
-		vlnctrl |= IXGBE_VLNCTRL_VME | IXGBE_VLNCTRL_VFE;
-		vlnctrl &= ~IXGBE_VLNCTRL_CFIEN;
-		IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, vlnctrl);
-	} else if (hw->mac.type == ixgbe_mac_82599EB) {
-		vlnctrl |= IXGBE_VLNCTRL_VFE;
-		vlnctrl &= ~IXGBE_VLNCTRL_CFIEN;
-		IXGBE_WRITE_REG(hw, IXGBE_VLNCTRL, vlnctrl);
-		for (i = 0; i < adapter->num_rx_queues; i++) {
-			j = adapter->rx_ring[i]->reg_idx;
-			vlnctrl = IXGBE_READ_REG(hw, IXGBE_RXDCTL(j));
-			vlnctrl |= IXGBE_RXDCTL_VME;
-			IXGBE_WRITE_REG(hw, IXGBE_RXDCTL(j), vlnctrl);
-		}
-	}
+	ixgbe_vlan_filter_enable(adapter);
+
 	hw->mac.ops.set_vfta(&adapter->hw, 0, 0, true);
 }
 
@@ -3471,12 +3480,12 @@ static inline bool ixgbe_set_fcoe_queues(struct ixgbe_adapter *adapter)
 		adapter->num_tx_queues = 1;
 #ifdef CONFIG_IXGBE_DCB
 		if (adapter->flags & IXGBE_FLAG_DCB_ENABLED) {
-			DPRINTK(PROBE, INFO, "FCoE enabled with DCB \n");
+			DPRINTK(PROBE, INFO, "FCoE enabled with DCB\n");
 			ixgbe_set_dcb_queues(adapter);
 		}
 #endif
 		if (adapter->flags & IXGBE_FLAG_RSS_ENABLED) {
-			DPRINTK(PROBE, INFO, "FCoE enabled with RSS \n");
+			DPRINTK(PROBE, INFO, "FCoE enabled with RSS\n");
 			if ((adapter->flags & IXGBE_FLAG_FDIR_HASH_CAPABLE) ||
 			    (adapter->flags & IXGBE_FLAG_FDIR_PERFECT_CAPABLE))
 				ixgbe_set_fdir_queues(adapter);
@@ -5092,7 +5101,7 @@ static void ixgbe_fdir_reinit_task(struct work_struct *work)
 			        &(adapter->tx_ring[i]->reinit_state));
 	} else {
 		DPRINTK(PROBE, ERR, "failed to finish FDIR re-initialization, "
-		        "ignored adding FDIR ATR filters \n");
+			"ignored adding FDIR ATR filters\n");
 	}
 	/* Done FDIR Re-initialization, enable transmits */
 	netif_tx_start_all_queues(adapter->netdev);

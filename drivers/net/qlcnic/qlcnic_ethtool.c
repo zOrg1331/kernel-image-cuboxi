@@ -69,6 +69,14 @@ static const struct qlcnic_stats qlcnic_gstrings_stats[] = {
 		QLC_SIZEOF(stats.xmit_off), QLC_OFF(stats.xmit_off)},
 	{"skb_alloc_failure", QLC_SIZEOF(stats.skb_alloc_failure),
 		QLC_OFF(stats.skb_alloc_failure)},
+	{"null skb",
+		QLC_SIZEOF(stats.null_skb), QLC_OFF(stats.null_skb)},
+	{"null rxbuf",
+		QLC_SIZEOF(stats.null_rxbuf), QLC_OFF(stats.null_rxbuf)},
+	{"rx dma map error", QLC_SIZEOF(stats.rx_dma_map_error),
+					 QLC_OFF(stats.rx_dma_map_error)},
+	{"tx dma map error", QLC_SIZEOF(stats.tx_dma_map_error),
+					 QLC_OFF(stats.tx_dma_map_error)},
 
 };
 
@@ -998,6 +1006,20 @@ static int qlcnic_set_flags(struct net_device *netdev, u32 data)
 	return 0;
 }
 
+static u32 qlcnic_get_msglevel(struct net_device *netdev)
+{
+	struct qlcnic_adapter *adapter = netdev_priv(netdev);
+
+	return adapter->msg_enable;
+}
+
+static void qlcnic_set_msglevel(struct net_device *netdev, u32 msglvl)
+{
+	struct qlcnic_adapter *adapter = netdev_priv(netdev);
+
+	adapter->msg_enable = msglvl;
+}
+
 const struct ethtool_ops qlcnic_ethtool_ops = {
 	.get_settings = qlcnic_get_settings,
 	.set_settings = qlcnic_set_settings,
@@ -1029,4 +1051,6 @@ const struct ethtool_ops qlcnic_ethtool_ops = {
 	.get_flags = ethtool_op_get_flags,
 	.set_flags = qlcnic_set_flags,
 	.phys_id = qlcnic_blink_led,
+	.set_msglevel = qlcnic_set_msglevel,
+	.get_msglevel = qlcnic_get_msglevel,
 };
