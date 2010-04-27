@@ -309,7 +309,7 @@ acpi_status acpi_tb_verify_checksum(struct acpi_table_header *table, u32 length)
 
 	if (checksum) {
 		ACPI_WARNING((AE_INFO,
-			      "Incorrect checksum in table [%4.4s] - %2.2X, should be %2.2X",
+			      "Incorrect checksum in table [%4.4s] - 0x%2.2X, should be 0x%2.2X",
 			      table->signature, table->checksum,
 			      (u8) (table->checksum - checksum)));
 
@@ -345,6 +345,84 @@ u8 acpi_tb_checksum(u8 *buffer, u32 length)
 	}
 
 	return sum;
+}
+
+/*******************************************************************************
+ *
+ * FUNCTION:    acpi_tb_check_dsdt_header
+ *
+ * PARAMETERS:  None
+ *
+ * RETURN:      None
+ *
+ * DESCRIPTION: Quick compare to check validity of the DSDT. This will detect
+ *              if the DSDT has been replaced from outside the OS and/or if
+ *              the DSDT header has been corrupted.
+ *
+ ******************************************************************************/
+
+void acpi_tb_check_dsdt_header(void)
+{
+
+	/* Compare original length and checksum to current values */
+
+	if (acpi_gbl_original_dsdt_header.length != acpi_gbl_DSDT->length ||
+	    acpi_gbl_original_dsdt_header.checksum != acpi_gbl_DSDT->checksum) {
+		ACPI_ERROR((AE_INFO,
+			    "The DSDT has been corrupted or replaced - old, new headers below"));
+		acpi_tb_print_table_header(0, &acpi_gbl_original_dsdt_header);
+		acpi_tb_print_table_header(0, acpi_gbl_DSDT);
+
+		ACPI_ERROR((AE_INFO,
+			    "Please send DMI info to linux-acpi@vger.kernel.org\n"
+			    "If system does not work as expected, please boot with acpi=copy_dsdt"));
+
+		/* Disable further error messages */
+
+		acpi_gbl_original_dsdt_header.length = acpi_gbl_DSDT->length;
+		acpi_gbl_original_dsdt_header.checksum =
+		    acpi_gbl_DSDT->checksum;
+	}
+}
+
+/*******************************************************************************
+ *
+ * FUNCTION:    acpi_tb_copy_dsdt
+ *
+ * PARAMETERS:  table_desc          - Installed table to copy
+ *
+ * RETURN:      None
+ *
+ * DESCRIPTION: Implements a subsystem option to copy the DSDT to local memory.
+ *              Some very bad BIOSs are known to either corrupt the DSDT or
+ *              install a new, bad DSDT. This copy works around the problem.
+ *
+ ******************************************************************************/
+
+struct acpi_table_header *acpi_tb_copy_dsdt(u32 table_index)
+{
+	struct acpi_table_header *new_table;
+	struct acpi_table_desc *table_desc;
+
+	table_desc = &acpi_gbl_root_table_list.tables[table_index];
+
+	new_table = ACPI_ALLOCATE(table_desc->length);
+	if (!new_table) {
+		ACPI_ERROR((AE_INFO, "Could not copy DSDT of length 0x%X",
+			    table_desc->length));
+		return (NULL);
+	}
+
+	ACPI_MEMCPY(new_table, table_desc->pointer, table_desc->length);
+	acpi_tb_delete_table(table_desc);
+	table_desc->pointer = new_table;
+	table_desc->flags = ACPI_TABLE_ORIGIN_ALLOCATED;
+
+	ACPI_INFO((AE_INFO,
+		   "Forced DSDT copy: length 0x%05X copied locally, original unmapped",
+		   new_table->length));
+
+	return (new_table);
 }
 
 /*******************************************************************************
@@ -496,7 +574,7 @@ acpi_tb_get_root_table_entry(u8 *table_entry, u32 table_entry_size)
 			/* Will truncate 64-bit address to 32 bits, issue warning */
 
 			ACPI_WARNING((AE_INFO,
-				      "64-bit Physical Address in XSDT is too large (%8.8X%8.8X),"
+				      "64-bit Physical Address in XSDT is too large (0x%8.8X%8.8X),"
 				      " truncating",
 				      ACPI_FORMAT_UINT64(address64)));
 		}
