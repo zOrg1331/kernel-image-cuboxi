@@ -94,6 +94,8 @@ struct tlv320dac33_priv {
 	unsigned int nsample;		/* burst read amount from host */
 	u8 burst_bclkdiv;		/* BCLK divider value in burst mode */
 
+	int keep_bclk;			/* Keep the BCLK continuously running
+					 * in FIFO modes */
 	enum dac33_state state;
 };
 
@@ -166,7 +168,7 @@ static inline void dac33_write_reg_cache(struct snd_soc_codec *codec,
 static int dac33_read(struct snd_soc_codec *codec, unsigned int reg,
 		      u8 *value)
 {
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	int val;
 
 	*value = reg & 0xff;
@@ -191,7 +193,7 @@ static int dac33_read(struct snd_soc_codec *codec, unsigned int reg,
 static int dac33_write(struct snd_soc_codec *codec, unsigned int reg,
 		       unsigned int value)
 {
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	u8 data[2];
 	int ret = 0;
 
@@ -218,7 +220,7 @@ static int dac33_write(struct snd_soc_codec *codec, unsigned int reg,
 static int dac33_write_locked(struct snd_soc_codec *codec, unsigned int reg,
 		       unsigned int value)
 {
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	int ret;
 
 	mutex_lock(&dac33->mutex);
@@ -232,7 +234,7 @@ static int dac33_write_locked(struct snd_soc_codec *codec, unsigned int reg,
 static int dac33_write16(struct snd_soc_codec *codec, unsigned int reg,
 		       unsigned int value)
 {
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	u8 data[3];
 	int ret = 0;
 
@@ -264,7 +266,7 @@ static int dac33_write16(struct snd_soc_codec *codec, unsigned int reg,
 
 static void dac33_restore_regs(struct snd_soc_codec *codec)
 {
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	u8 *cache = codec->reg_cache;
 	u8 data[2];
 	int i, ret;
@@ -311,13 +313,14 @@ static inline void dac33_soft_power(struct snd_soc_codec *codec, int power)
 	if (power)
 		reg |= DAC33_PDNALLB;
 	else
-		reg &= ~DAC33_PDNALLB;
+		reg &= ~(DAC33_PDNALLB | DAC33_OSCPDNB |
+			 DAC33_DACRPDNB | DAC33_DACLPDNB);
 	dac33_write(codec, DAC33_PWR_CTRL, reg);
 }
 
 static int dac33_hard_power(struct snd_soc_codec *codec, int power)
 {
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	int ret;
 
 	mutex_lock(&dac33->mutex);
@@ -364,7 +367,7 @@ static int dac33_get_nsample(struct snd_kcontrol *kcontrol,
 			 struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 
 	ucontrol->value.integer.value[0] = dac33->nsample;
 
@@ -375,7 +378,7 @@ static int dac33_set_nsample(struct snd_kcontrol *kcontrol,
 			 struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	int ret = 0;
 
 	if (dac33->nsample == ucontrol->value.integer.value[0])
@@ -394,7 +397,7 @@ static int dac33_get_fifo_mode(struct snd_kcontrol *kcontrol,
 			 struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 
 	ucontrol->value.integer.value[0] = dac33->fifo_mode;
 
@@ -405,7 +408,7 @@ static int dac33_set_fifo_mode(struct snd_kcontrol *kcontrol,
 			 struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	int ret = 0;
 
 	if (dac33->fifo_mode == ucontrol->value.integer.value[0])
@@ -628,31 +631,11 @@ static void dac33_work(struct work_struct *work)
 static irqreturn_t dac33_interrupt_handler(int irq, void *dev)
 {
 	struct snd_soc_codec *codec = dev;
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 
 	queue_work(dac33->dac33_wq, &dac33->work);
 
 	return IRQ_HANDLED;
-}
-
-static void dac33_shutdown(struct snd_pcm_substream *substream,
-			     struct snd_soc_dai *dai)
-{
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_device *socdev = rtd->socdev;
-	struct snd_soc_codec *codec = socdev->card->codec;
-	struct tlv320dac33_priv *dac33 = codec->private_data;
-	unsigned int pwr_ctrl;
-
-	/* Stop pending workqueue */
-	if (dac33->fifo_mode)
-		cancel_work_sync(&dac33->work);
-
-	mutex_lock(&dac33->mutex);
-	pwr_ctrl = dac33_read_reg_cache(codec, DAC33_PWR_CTRL);
-	pwr_ctrl &= ~(DAC33_OSCPDNB | DAC33_DACRPDNB | DAC33_DACLPDNB);
-	dac33_write(codec, DAC33_PWR_CTRL, pwr_ctrl);
-	mutex_unlock(&dac33->mutex);
 }
 
 static void dac33_oscwait(struct snd_soc_codec *codec)
@@ -715,7 +698,7 @@ static int dac33_prepare_chip(struct snd_pcm_substream *substream)
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_device *socdev = rtd->socdev;
 	struct snd_soc_codec *codec = socdev->card->codec;
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	unsigned int oscset, ratioset, pwr_ctrl, reg_tmp;
 	u8 aictrl_a, aictrl_b, fifoctrl_a;
 
@@ -752,6 +735,7 @@ static int dac33_prepare_chip(struct snd_pcm_substream *substream)
 	}
 
 	mutex_lock(&dac33->mutex);
+	dac33_soft_power(codec, 0);
 	dac33_soft_power(codec, 1);
 
 	reg_tmp = dac33_read_reg_cache(codec, DAC33_INT_OSC_CTRL);
@@ -822,7 +806,10 @@ static int dac33_prepare_chip(struct snd_pcm_substream *substream)
 		 */
 		fifoctrl_a &= ~DAC33_FBYPAS;
 		fifoctrl_a &= ~DAC33_FAUTO;
-		aictrl_b &= ~DAC33_BCLKON;
+		if (dac33->keep_bclk)
+			aictrl_b |= DAC33_BCLKON;
+		else
+			aictrl_b &= ~DAC33_BCLKON;
 		break;
 	case DAC33_FIFO_MODE7:
 		/*
@@ -833,7 +820,10 @@ static int dac33_prepare_chip(struct snd_pcm_substream *substream)
 		 */
 		fifoctrl_a &= ~DAC33_FBYPAS;
 		fifoctrl_a |= DAC33_FAUTO;
-		aictrl_b &= ~DAC33_BCLKON;
+		if (dac33->keep_bclk)
+			aictrl_b |= DAC33_BCLKON;
+		else
+			aictrl_b &= ~DAC33_BCLKON;
 		break;
 	default:
 		/*
@@ -894,7 +884,7 @@ static void dac33_calculate_times(struct snd_pcm_substream *substream)
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_device *socdev = rtd->socdev;
 	struct snd_soc_codec *codec = socdev->card->codec;
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	unsigned int nsample_limit;
 
 	/* Number of samples (16bit, stereo) in one period */
@@ -947,7 +937,7 @@ static int dac33_pcm_trigger(struct snd_pcm_substream *substream, int cmd,
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_device *socdev = rtd->socdev;
 	struct snd_soc_codec *codec = socdev->card->codec;
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	int ret = 0;
 
 	switch (cmd) {
@@ -978,7 +968,7 @@ static int dac33_set_dai_sysclk(struct snd_soc_dai *codec_dai,
 		int clk_id, unsigned int freq, int dir)
 {
 	struct snd_soc_codec *codec = codec_dai->codec;
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	u8 ioc_reg, asrcb_reg;
 
 	ioc_reg = dac33_read_reg_cache(codec, DAC33_INT_OSC_CTRL);
@@ -1008,7 +998,7 @@ static int dac33_set_dai_fmt(struct snd_soc_dai *codec_dai,
 			     unsigned int fmt)
 {
 	struct snd_soc_codec *codec = codec_dai->codec;
-	struct tlv320dac33_priv *dac33 = codec->private_data;
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	u8 aictrl_a, aictrl_b;
 
 	aictrl_a = dac33_read_reg_cache(codec, DAC33_SER_AUDIOIF_CTRL_A);
@@ -1099,7 +1089,7 @@ static int dac33_soc_probe(struct platform_device *pdev)
 
 	codec = tlv320dac33_codec;
 	socdev->card->codec = codec;
-	dac33 = codec->private_data;
+	dac33 = snd_soc_codec_get_drvdata(codec);
 
 	/* Power up the codec */
 	dac33_hard_power(codec, 1);
@@ -1182,7 +1172,6 @@ EXPORT_SYMBOL_GPL(soc_codec_dev_tlv320dac33);
 #define DAC33_FORMATS	SNDRV_PCM_FMTBIT_S16_LE
 
 static struct snd_soc_dai_ops dac33_dai_ops = {
-	.shutdown	= dac33_shutdown,
 	.hw_params	= dac33_hw_params,
 	.prepare	= dac33_pcm_prepare,
 	.trigger	= dac33_pcm_trigger,
@@ -1221,7 +1210,7 @@ static int __devinit dac33_i2c_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	codec = &dac33->codec;
-	codec->private_data = dac33;
+	snd_soc_codec_set_drvdata(codec, dac33);
 	codec->control_data = client;
 
 	mutex_init(&codec->mutex);
@@ -1250,6 +1239,7 @@ static int __devinit dac33_i2c_probe(struct i2c_client *client,
 
 	dac33->power_gpio = pdata->power_gpio;
 	dac33->burst_bclkdiv = pdata->burst_bclkdiv;
+	dac33->keep_bclk = pdata->keep_bclk;
 	dac33->irq = client->irq;
 	dac33->nsample = NSAMPLE_MAX;
 	/* Disable FIFO use by default */
