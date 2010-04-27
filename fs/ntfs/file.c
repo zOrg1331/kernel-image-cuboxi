@@ -2221,7 +2221,7 @@ const struct file_operations ntfs_file_ops = {
 						    i/o operations on a
 						    kiocb. */
 #endif /* NTFS_RW */
-	/*.ioctl	= ,*/			 /* Perform function on the
+	/*.bkl_ioctl = ,*/			 /* Perform function on the
 						    mounted filesystem. */
 	.mmap		= generic_file_mmap,	 /* Mmap file. */
 	.open		= ntfs_file_open,	 /* Open file. */

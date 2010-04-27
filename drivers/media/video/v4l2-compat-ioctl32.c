@@ -228,9 +228,9 @@ static long native_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	if (file->f_op->unlocked_ioctl)
 		ret = file->f_op->unlocked_ioctl(file, cmd, arg);
-	else if (file->f_op->ioctl) {
+	else if (file->f_op->bkl_ioctl) {
 		lock_kernel();
-		ret = file->f_op->ioctl(file->f_path.dentry->d_inode, file, cmd, arg);
+		ret = file->f_op->bkl_ioctl(file->f_path.dentry->d_inode, file, cmd, arg);
 		unlock_kernel();
 	}
 
@@ -973,7 +973,7 @@ long v4l2_compat_ioctl32(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	long ret = -ENOIOCTLCMD;
 
-	if (!file->f_op->ioctl && !file->f_op->unlocked_ioctl)
+	if (!file->f_op->bkl_ioctl && !file->f_op->unlocked_ioctl)
 		return ret;
 
 	switch (cmd) {

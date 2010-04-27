@@ -397,7 +397,7 @@ static const struct file_operations apm_bios_fops = {
 	.owner		= THIS_MODULE,
 	.read		= apm_read,
 	.poll		= apm_poll,
-	.ioctl		= apm_ioctl,
+	.bkl_ioctl	= apm_ioctl,
 	.open		= apm_open,
 	.release	= apm_release,
 };

@@ -1105,7 +1105,7 @@ static const struct file_operations dev_fileops = {
 	.owner		= THIS_MODULE,
 	.read		= dev_read,
 	.write		= dev_write,
-	.ioctl		= dev_ioctl,
+	.bkl_ioctl	= dev_ioctl,
 	.open		= dev_open,
 	.release	= dev_release,
 };

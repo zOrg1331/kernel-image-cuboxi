@@ -248,7 +248,7 @@ static const struct file_operations sync_serial_fops = {
 	.write   = sync_serial_write,
 	.read    = sync_serial_read,
 	.poll    = sync_serial_poll,
-	.ioctl   = sync_serial_ioctl,
+	.bkl_ioctl   = sync_serial_ioctl,
 	.open    = sync_serial_open,
 	.release = sync_serial_release
 };

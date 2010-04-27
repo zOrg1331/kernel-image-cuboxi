@@ -115,7 +115,7 @@ static const struct file_operations ac_fops = {
 	.llseek = no_llseek,
 	.read = ac_read,
 	.write = ac_write,
-	.ioctl = ac_ioctl,
+	.bkl_ioctl = ac_ioctl,
 };
 
 static struct miscdevice ac_miscdev = {

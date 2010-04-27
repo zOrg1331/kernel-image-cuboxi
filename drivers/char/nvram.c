@@ -422,7 +422,7 @@ static const struct file_operations nvram_fops = {
 	.llseek		= nvram_llseek,
 	.read		= nvram_read,
 	.write		= nvram_write,
-	.ioctl		= nvram_ioctl,
+	.bkl_ioctl	= nvram_ioctl,
 	.open		= nvram_open,
 	.release	= nvram_release,
 };

@@ -1395,7 +1395,7 @@ static const struct file_operations watchdog_fops = {
 	.open = watchdog_open,
 	.release = watchdog_close,
 	.write = watchdog_write,
-	.ioctl = watchdog_ioctl,
+	.bkl_ioctl = watchdog_ioctl,
 };
 
 /*

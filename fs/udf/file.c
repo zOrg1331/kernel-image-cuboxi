@@ -207,7 +207,7 @@ static int udf_release_file(struct inode *inode, struct file *filp)
 const struct file_operations udf_file_operations = {
 	.read			= do_sync_read,
 	.aio_read		= generic_file_aio_read,
-	.ioctl			= udf_ioctl,
+	.bkl_ioctl			= udf_ioctl,
 	.open			= dquot_file_open,
 	.mmap			= generic_file_mmap,
 	.write			= do_sync_write,

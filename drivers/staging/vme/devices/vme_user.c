@@ -142,7 +142,7 @@ static struct file_operations vme_user_fops = {
         .read = vme_user_read,
         .write = vme_user_write,
         .llseek = vme_user_llseek,
-        .ioctl = vme_user_ioctl,
+        .bkl_ioctl = vme_user_ioctl,
 };
 
 

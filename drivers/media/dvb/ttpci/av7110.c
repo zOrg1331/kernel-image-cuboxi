@@ -727,7 +727,7 @@ static int dvb_osd_ioctl(struct inode *inode, struct file *file,
 
 static const struct file_operations dvb_osd_fops = {
 	.owner		= THIS_MODULE,
-	.ioctl		= dvb_generic_ioctl,
+	.bkl_ioctl	= dvb_generic_ioctl,
 	.open		= dvb_generic_open,
 	.release	= dvb_generic_release,
 };

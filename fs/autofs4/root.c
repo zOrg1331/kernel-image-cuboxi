@@ -38,7 +38,7 @@ const struct file_operations autofs4_root_operations = {
 	.read		= generic_read_dir,
 	.readdir	= dcache_readdir,
 	.llseek		= dcache_dir_lseek,
-	.ioctl		= autofs4_root_ioctl,
+	.bkl_ioctl	= autofs4_root_ioctl,
 };
 
 const struct file_operations autofs4_dir_operations = {

@@ -1576,7 +1576,7 @@ const struct file_operations cache_file_operations_pipefs = {
 	.read		= cache_read_pipefs,
 	.write		= cache_write_pipefs,
 	.poll		= cache_poll_pipefs,
-	.ioctl		= cache_ioctl_pipefs, /* for FIONREAD */
+	.bkl_ioctl	= cache_ioctl_pipefs, /* for FIONREAD */
 	.open		= cache_open_pipefs,
 	.release	= cache_release_pipefs,
 };

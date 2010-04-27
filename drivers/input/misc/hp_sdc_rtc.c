@@ -664,7 +664,7 @@ static const struct file_operations hp_sdc_rtc_fops = {
         .llseek =	no_llseek,
         .read =		hp_sdc_rtc_read,
         .poll =		hp_sdc_rtc_poll,
-        .ioctl =	hp_sdc_rtc_ioctl,
+        .bkl_ioctl =	hp_sdc_rtc_ioctl,
         .open =		hp_sdc_rtc_open,
         .fasync =	hp_sdc_rtc_fasync,
 };

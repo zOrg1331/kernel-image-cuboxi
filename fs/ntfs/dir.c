@@ -1570,7 +1570,7 @@ const struct file_operations ntfs_dir_ops = {
 	/*.aio_fsync	= ,*/			/* Sync all outstanding async
 						   i/o operations on a kiocb. */
 #endif /* NTFS_RW */
-	/*.ioctl	= ,*/			/* Perform function on the
+	/*.bkl_ioctl = ,*/			/* Perform function on the
 						   mounted filesystem. */
 	.open		= ntfs_dir_open,	/* Open directory. */
 };

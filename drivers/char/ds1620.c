@@ -344,7 +344,7 @@ static const struct file_operations ds1620_fops = {
 	.owner		= THIS_MODULE,
 	.open		= ds1620_open,
 	.read		= ds1620_read,
-	.ioctl		= ds1620_ioctl,
+	.bkl_ioctl	= ds1620_ioctl,
 };
 
 static struct miscdevice ds1620_miscdev = {

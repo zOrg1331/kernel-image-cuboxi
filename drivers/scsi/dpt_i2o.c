@@ -119,7 +119,7 @@ static long compat_adpt_ioctl(struct file *, unsigned int, unsigned long);
 #endif
 
 static const struct file_operations adpt_fops = {
-	.ioctl		= adpt_ioctl,
+	.bkl_ioctl	= adpt_ioctl,
 	.open		= adpt_open,
 	.release	= adpt_close,
 #ifdef CONFIG_COMPAT
