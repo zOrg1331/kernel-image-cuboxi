@@ -23,6 +23,7 @@
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
 #include <linux/leds.h>
+#include <linux/slab.h>
 #include <net/mac80211.h>
 
 #include "common.h"
@@ -329,6 +330,7 @@ struct htc_beacon_config {
 #define OP_ASSOCIATED     BIT(8)
 #define OP_ENABLE_BEACON  BIT(9)
 #define OP_LED_DEINIT     BIT(10)
+#define OP_UNPLUGGED      BIT(11)
 
 struct ath9k_htc_priv {
 	struct device *dev;
