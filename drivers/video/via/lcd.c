@@ -18,7 +18,7 @@
  * Foundation, Inc.,
  * 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
-#include <asm/olpc.h>
+
 #include "global.h"
 #include "lcdtbl.h"
 
@@ -172,13 +172,6 @@ static bool lvds_identify_integratedlvds(void)
 
 int viafb_lvds_trasmitter_identify(void)
 {
-	/*
-	 * OLPC XO 1.5 systems are wired differently, so there is
-	 * no point in probing them here.
-	 */
-	if (machine_is_olpc())
-		return FAIL;
-
 	viaparinfo->shared->i2c_stuff.i2c_port = I2CPORTINDEX;
 	if (viafb_lvds_identify_vt1636()) {
 		viaparinfo->chip_info->lvds_chip_info.i2c_port = I2CPORTINDEX;
