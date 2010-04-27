@@ -37,13 +37,11 @@
 #define VERSION_OS          0	/* 0: for 32 bits OS, 1: for 64 bits OS */
 #define VERSION_MINOR       4
 
-#define VIAFB_NUM_I2C		5
-
 struct viafb_shared {
 	struct proc_dir_entry *proc_entry;	/*viafb proc entry */
 
 	/* I2C stuff */
-	struct via_i2c_stuff i2c_stuff[VIAFB_NUM_I2C];
+	struct via_i2c_stuff i2c_stuff;
 
 	/* All the information will be needed to set engine */
 	struct tmds_setting_information tmds_setting_info;
