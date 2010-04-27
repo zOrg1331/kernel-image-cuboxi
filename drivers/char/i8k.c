@@ -23,6 +23,7 @@
 #include <linux/seq_file.h>
 #include <linux/dmi.h>
 #include <linux/capability.h>
+#include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 
@@ -82,8 +83,7 @@ module_param(fan_mult, int, 0);
 MODULE_PARM_DESC(fan_mult, "Factor to multiply fan speed with");
 
 static int i8k_open_fs(struct inode *inode, struct file *file);
-static int i8k_ioctl(struct inode *, struct file *, unsigned int,
-		     unsigned long);
+static long i8k_ioctl(struct file *, unsigned int, unsigned long);
 
 static const struct file_operations i8k_fops = {
 	.owner		= THIS_MODULE,
@@ -91,7 +91,7 @@ static const struct file_operations i8k_fops = {
 	.read		= seq_read,
 	.llseek		= seq_lseek,
 	.release	= single_release,
-	.ioctl		= i8k_ioctl,
+	.unlocked_ioctl	= i8k_ioctl,
 };
 
 struct smm_regs {
@@ -307,8 +307,7 @@ static int i8k_get_dell_signature(int req_fn)
 	return regs.eax == 1145651527 && regs.edx == 1145392204 ? 0 : -1;
 }
 
-static int i8k_ioctl(struct inode *ip, struct file *fp, unsigned int cmd,
-		     unsigned long arg)
+static long i8k_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 {
 	int val = 0;
 	int speed;
@@ -317,6 +316,9 @@ static int i8k_ioctl(struct inode *ip, struct file *fp, unsigned int cmd,
 
 	if (!argp)
 		return -EINVAL;
+
+	/* Pushed down from procfs ioctl handler */
+	lock_kernel();
 
 	switch (cmd) {
 	case I8K_BIOS_VERSION:
@@ -341,56 +343,77 @@ static int i8k_ioctl(struct inode *ip, struct file *fp, unsigned int cmd,
 		break;
 
 	case I8K_GET_SPEED:
-		if (copy_from_user(&val, argp, sizeof(int)))
+		if (copy_from_user(&val, argp, sizeof(int))) {
+			unlock_kernel();
 			return -EFAULT;
+		}
 
 		val = i8k_get_fan_speed(val);
 		break;
 
 	case I8K_GET_FAN:
-		if (copy_from_user(&val, argp, sizeof(int)))
+		if (copy_from_user(&val, argp, sizeof(int))) {
+			unlock_kernel();
 			return -EFAULT;
+		}
 
 		val = i8k_get_fan_status(val);
 		break;
 
 	case I8K_SET_FAN:
-		if (restricted && !capable(CAP_SYS_ADMIN))
+		if (restricted && !capable(CAP_SYS_ADMIN)) {
+			unlock_kernel();
 			return -EPERM;
+		}
 
-		if (copy_from_user(&val, argp, sizeof(int)))
+		if (copy_from_user(&val, argp, sizeof(int))) {
+			unlock_kernel();
 			return -EFAULT;
+		}
 
-		if (copy_from_user(&speed, argp + 1, sizeof(int)))
+		if (copy_from_user(&speed, argp + 1, sizeof(int))) {
+			unlock_kernel();
 			return -EFAULT;
+		}
 
 		val = i8k_set_fan(val, speed);
 		break;
 
 	default:
+		unlock_kernel();
 		return -EINVAL;
 	}
 
-	if (val < 0)
-		return val;
+	if (val < 0) {
+		unlock_kernel();
+		return -val;
+	}
 
 	switch (cmd) {
 	case I8K_BIOS_VERSION:
-		if (copy_to_user(argp, &val, 4))
+		if (copy_to_user(argp, &val, 4)) {
+			unlock_kernel();
 			return -EFAULT;
+		}
 
 		break;
 	case I8K_MACHINE_ID:
-		if (copy_to_user(argp, buff, 16))
+		if (copy_to_user(argp, buff, 16)) {
+			unlock_kernel();
 			return -EFAULT;
+		}
 
 		break;
 	default:
-		if (copy_to_user(argp, &val, sizeof(int)))
+		if (copy_to_user(argp, &val, sizeof(int))) {
+			unlock_kernel();
 			return -EFAULT;
+		}
 
 		break;
 	}
+
+	unlock_kernel();
 
 	return 0;
 }
