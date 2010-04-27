@@ -20,12 +20,42 @@
  */
 #include "global.h"
 
+/*
+ * Figure out an appropriate bytes-per-pixel setting.
+ */
+static int viafb_set_bpp(void __iomem *engine, u8 bpp)
+{
+	u32 gemode;
+
+	/* Preserve the reserved bits */
+	/* Lowest 2 bits to zero gives us no rotation */
+	gemode = readl(engine + VIA_REG_GEMODE) & 0xfffffcfc;
+	switch (bpp) {
+	case 8:
+		gemode |= VIA_GEM_8bpp;
+		break;
+	case 16:
+		gemode |= VIA_GEM_16bpp;
+		break;
+	case 32:
+		gemode |= VIA_GEM_32bpp;
+		break;
+	default:
+		printk(KERN_WARNING "viafb_set_bpp: Unsupported bpp %d\n", bpp);
+		return -EINVAL;
+	}
+	writel(gemode, engine + VIA_REG_GEMODE);
+	return 0;
+}
+
+
 static int hw_bitblt_1(void __iomem *engine, u8 op, u32 width, u32 height,
 	u8 dst_bpp, u32 dst_addr, u32 dst_pitch, u32 dst_x, u32 dst_y,
 	u32 *src_mem, u32 src_addr, u32 src_pitch, u32 src_x, u32 src_y,
 	u32 fg_color, u32 bg_color, u8 fill_rop)
 {
 	u32 ge_cmd = 0, tmp, i;
+	int ret;
 
 	if (!op || op > 3) {
 		printk(KERN_WARNING "hw_bitblt_1: Invalid operation: %d\n", op);
@@ -59,22 +89,9 @@ static int hw_bitblt_1(void __iomem *engine, u8 op, u32 width, u32 height,
 		}
 	}
 
-	switch (dst_bpp) {
-	case 8:
-		tmp = 0x00000000;
-		break;
-	case 16:
-		tmp = 0x00000100;
-		break;
-	case 32:
-		tmp = 0x00000300;
-		break;
-	default:
-		printk(KERN_WARNING "hw_bitblt_1: Unsupported bpp %d\n",
-			dst_bpp);
-		return -EINVAL;
-	}
-	writel(tmp, engine + 0x04);
+	ret = viafb_set_bpp(engine, dst_bpp);
+	if (ret)
+		return ret;
 
 	if (op != VIA_BITBLT_FILL) {
 		if (src_x & (op == VIA_BITBLT_MONO ? 0xFFFF8000 : 0xFFFFF000)
@@ -171,6 +188,7 @@ static int hw_bitblt_2(void __iomem *engine, u8 op, u32 width, u32 height,
 	u32 fg_color, u32 bg_color, u8 fill_rop)
 {
 	u32 ge_cmd = 0, tmp, i;
+	int ret;
 
 	if (!op || op > 3) {
 		printk(KERN_WARNING "hw_bitblt_2: Invalid operation: %d\n", op);
@@ -204,22 +222,9 @@ static int hw_bitblt_2(void __iomem *engine, u8 op, u32 width, u32 height,
 		}
 	}
 
-	switch (dst_bpp) {
-	case 8:
-		tmp = 0x00000000;
-		break;
-	case 16:
-		tmp = 0x00000100;
-		break;
-	case 32:
-		tmp = 0x00000300;
-		break;
-	default:
-		printk(KERN_WARNING "hw_bitblt_2: Unsupported bpp %d\n",
-			dst_bpp);
-		return -EINVAL;
-	}
-	writel(tmp, engine + 0x04);
+	ret = viafb_set_bpp(engine, dst_bpp);
+	if (ret)
+		return ret;
 
 	if (op == VIA_BITBLT_FILL)
 		tmp = 0;
@@ -312,6 +317,7 @@ int viafb_init_engine(struct fb_info *info)
 {
 	struct viafb_par *viapar = info->par;
 	void __iomem *engine;
+	int highest_reg, i;
 	u32 vq_start_addr, vq_end_addr, vq_start_low, vq_end_low, vq_high,
 		vq_len, chip_name = viapar->shared->chip_info.gfx_chip_name;
 
@@ -322,6 +328,18 @@ int viafb_init_engine(struct fb_info *info)
 			"hardware acceleration disabled\n");
 		return -ENOMEM;
 	}
+
+	/* Initialize registers to reset the 2D engine */
+	switch (viapar->shared->chip_info.twod_engine) {
+	case VIA_2D_ENG_M1:
+		highest_reg = 0x5c;
+		break;
+	default:
+		highest_reg = 0x40;
+		break;
+	}
+	for (i = 0; i <= highest_reg; i += 4)
+		writel(0x0, engine + i);
 
 	switch (chip_name) {
 	case UNICHROME_CLE266:
@@ -352,13 +370,12 @@ int viafb_init_engine(struct fb_info *info)
 	viapar->shared->vq_vram_addr = viapar->fbmem_free;
 	viapar->fbmem_used += VQ_SIZE;
 
-	/* Init 2D engine reg to reset 2D engine */
-	writel(0x0, engine + VIA_REG_KEYCONTROL);
-
 	/* Init AGP and VQ regs */
 	switch (chip_name) {
 	case UNICHROME_K8M890:
 	case UNICHROME_P4M900:
+	case UNICHROME_VX800:
+	case UNICHROME_VX855:
 		writel(0x00100000, engine + VIA_REG_CR_TRANSET);
 		writel(0x680A0000, engine + VIA_REG_CR_TRANSPACE);
 		writel(0x02000000, engine + VIA_REG_CR_TRANSPACE);
@@ -393,6 +410,8 @@ int viafb_init_engine(struct fb_info *info)
 	switch (chip_name) {
 	case UNICHROME_K8M890:
 	case UNICHROME_P4M900:
+	case UNICHROME_VX800:
+	case UNICHROME_VX855:
 		vq_start_low |= 0x20000000;
 		vq_end_low |= 0x20000000;
 		vq_high |= 0x20000000;
@@ -470,15 +489,25 @@ void viafb_wait_engine_idle(struct fb_info *info)
 {
 	struct viafb_par *viapar = info->par;
 	int loop = 0;
+	u32 mask;
 
-	while (!(readl(viapar->shared->engine_mmio + VIA_REG_STATUS) &
-			VIA_VR_QUEUE_BUSY) && (loop < MAXLOOP)) {
-		loop++;
-		cpu_relax();
+	switch (viapar->shared->chip_info.twod_engine) {
+	case VIA_2D_ENG_H5:
+	case VIA_2D_ENG_M1:
+		mask = VIA_CMD_RGTR_BUSY_M1 | VIA_2D_ENG_BUSY_M1 |
+			      VIA_3D_ENG_BUSY_M1;
+		break;
+	default:
+		while (!(readl(viapar->shared->engine_mmio + VIA_REG_STATUS) &
+				VIA_VR_QUEUE_BUSY) && (loop < MAXLOOP)) {
+			loop++;
+			cpu_relax();
+		}
+		mask = VIA_CMD_RGTR_BUSY | VIA_2D_ENG_BUSY | VIA_3D_ENG_BUSY;
+		break;
 	}
 
-	while ((readl(viapar->shared->engine_mmio + VIA_REG_STATUS) &
-		    (VIA_CMD_RGTR_BUSY | VIA_2D_ENG_BUSY | VIA_3D_ENG_BUSY)) &&
+	while ((readl(viapar->shared->engine_mmio + VIA_REG_STATUS) & mask) &&
 		    (loop < MAXLOOP)) {
 		loop++;
 		cpu_relax();

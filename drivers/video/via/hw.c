@@ -18,7 +18,7 @@
  * Foundation, Inc.,
  * 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
-
+#include <asm/olpc.h>
 #include "global.h"
 
 static struct pll_map pll_value[] = {
@@ -62,6 +62,7 @@ static struct pll_map pll_value[] = {
 	 CX700_52_977M,	VX855_52_977M},
 	{CLK_56_250M, CLE266_PLL_56_250M, K800_PLL_56_250M,
 	 CX700_56_250M, VX855_56_250M},
+	{CLK_57_275M, 0, 0, 0, VX855_57_275M},
 	{CLK_60_466M, CLE266_PLL_60_466M, K800_PLL_60_466M,
 	 CX700_60_466M, VX855_60_466M},
 	{CLK_61_500M, CLE266_PLL_61_500M, K800_PLL_61_500M,
@@ -2016,10 +2017,32 @@ static void init_gfx_chip_info(struct pci_dev *pdev,
 				CX700_REVISION_700;
 		}
 	}
+
+	/* Determine which 2D engine we have */
+	switch (viaparinfo->chip_info->gfx_chip_name) {
+	case UNICHROME_VX800:
+	case UNICHROME_VX855:
+		viaparinfo->chip_info->twod_engine = VIA_2D_ENG_M1;
+		break;
+	case UNICHROME_K8M890:
+	case UNICHROME_P4M900:
+		viaparinfo->chip_info->twod_engine = VIA_2D_ENG_H5;
+		break;
+	default:
+		viaparinfo->chip_info->twod_engine = VIA_2D_ENG_H2;
+		break;
+	}
 }
 
 static void init_tmds_chip_info(void)
 {
+	/*
+	 * OLPC XO 1.5 systems are wired differently, so there is
+	 * no point in probing them here.
+	 */
+	if (machine_is_olpc())
+		return;
+
 	viafb_tmds_trasmitter_identify();
 
 	if (INTERFACE_NONE == viaparinfo->chip_info->tmds_chip_info.
@@ -2473,24 +2496,37 @@ static void disable_second_display_channel(void)
 	viafb_write_reg_mask(CR6A, VIACR, BIT6, BIT6);
 }
 
+static u_int16_t via_function3[] = {
+	CLE266_FUNCTION3, KM400_FUNCTION3, CN400_FUNCTION3, CN700_FUNCTION3,
+	CX700_FUNCTION3, KM800_FUNCTION3, KM890_FUNCTION3, P4M890_FUNCTION3,
+	P4M900_FUNCTION3, VX800_FUNCTION3, VX855_FUNCTION3,
+};
+
+/* Get the BIOS-configured framebuffer size from PCI configuration space
+ * of function 3 in the respective chipset */
 int viafb_get_fb_size_from_pci(void)
 {
-	unsigned long configid, deviceid, FBSize = 0;
-	int VideoMemSize;
-	int DeviceFound = false;
+	int i;
+	u_int8_t offset = 0;
+	u_int32_t FBSize;
+	u_int32_t VideoMemSize;
 
-	for (configid = 0x80000000; configid < 0x80010800; configid += 0x100) {
-		outl(configid, (unsigned long)0xCF8);
-		deviceid = (inl((unsigned long)0xCFC) >> 16) & 0xffff;
+	/* search for the "FUNCTION3" device in this chipset */
+	for (i = 0; i < ARRAY_SIZE(via_function3); i++) {
+		struct pci_dev *pdev;
 
-		switch (deviceid) {
-		case CLE266:
-		case KM400:
-			outl(configid + 0xE0, (unsigned long)0xCF8);
-			FBSize = inl((unsigned long)0xCFC);
-			DeviceFound = true;	/* Found device id */
+		pdev = pci_get_device(PCI_VENDOR_ID_VIA, via_function3[i],
+				      NULL);
+		if (!pdev)
+			continue;
+
+		DEBUG_MSG(KERN_INFO "Device ID = %x\n", pdev->device);
+
+		switch (pdev->device) {
+		case CLE266_FUNCTION3:
+		case KM400_FUNCTION3:
+			offset = 0xE0;
 			break;
-
 		case CN400_FUNCTION3:
 		case CN700_FUNCTION3:
 		case CX700_FUNCTION3:
@@ -2500,21 +2536,22 @@ int viafb_get_fb_size_from_pci(void)
 		case P4M900_FUNCTION3:
 		case VX800_FUNCTION3:
 		case VX855_FUNCTION3:
-			/*case CN750_FUNCTION3: */
-			outl(configid + 0xA0, (unsigned long)0xCF8);
-			FBSize = inl((unsigned long)0xCFC);
-			DeviceFound = true;	/* Found device id */
-			break;
-
-		default:
+		/*case CN750_FUNCTION3: */
+			offset = 0xA0;
 			break;
 		}
 
-		if (DeviceFound)
+		if (!offset)
 			break;
+
+		pci_read_config_dword(pdev, offset, &FBSize);
+		pci_dev_put(pdev);
 	}
 
-	DEBUG_MSG(KERN_INFO "Device ID = %lx\n", deviceid);
+	if (!offset) {
+		printk(KERN_ERR "cannot determine framebuffer size\n");
+		return -EIO;
+	}
 
 	FBSize = FBSize & 0x00007000;
 	DEBUG_MSG(KERN_INFO "FB Size = %x\n", FBSize);
