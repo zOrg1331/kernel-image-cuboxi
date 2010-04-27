@@ -59,8 +59,6 @@ source "drivers/staging/wlan-ng/Kconfig"
 
 source "drivers/staging/echo/Kconfig"
 
-source "drivers/staging/poch/Kconfig"
-
 source "drivers/staging/otus/Kconfig"
 
 source "drivers/staging/rt2860/Kconfig"
@@ -142,6 +140,8 @@ source "drivers/staging/sm7xx/Kconfig"
 source "drivers/staging/dt3155/Kconfig"
 
 source "drivers/staging/crystalhd/Kconfig"
+
+source "drivers/staging/cxt1e1/Kconfig"
 
 endif # !STAGING_EXCLUDE_BUILD
 endif # STAGING
