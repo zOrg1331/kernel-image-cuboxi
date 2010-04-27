@@ -263,7 +263,7 @@ static inline void update_head_pos(int disk, r1bio_t *r1_bio)
 static void raid1_end_read_request(struct bio *bio, int error)
 {
 	int uptodate = test_bit(BIO_UPTODATE, &bio->bi_flags);
-	r1bio_t * r1_bio = (r1bio_t *)(bio->bi_private);
+	r1bio_t *r1_bio = bio->bi_private;
 	int mirror;
 	conf_t *conf = r1_bio->mddev->private;
 
@@ -308,7 +308,7 @@ static void raid1_end_read_request(struct bio *bio, int error)
 static void raid1_end_write_request(struct bio *bio, int error)
 {
 	int uptodate = test_bit(BIO_UPTODATE, &bio->bi_flags);
-	r1bio_t * r1_bio = (r1bio_t *)(bio->bi_private);
+	r1bio_t *r1_bio = bio->bi_private;
 	int mirror, behind = test_bit(R1BIO_BehindIO, &r1_bio->state);
 	conf_t *conf = r1_bio->mddev->private;
 	struct bio *to_put = NULL;
@@ -774,9 +774,8 @@ do_sync_io:
 	return NULL;
 }
 
-static int make_request(struct request_queue *q, struct bio * bio)
+static int make_request(mddev_t *mddev, struct bio * bio)
 {
-	mddev_t *mddev = q->queuedata;
 	conf_t *conf = mddev->private;
 	mirror_info_t *mirror;
 	r1bio_t *r1_bio;
@@ -788,7 +787,6 @@ static int make_request(struct request_queue *q, struct bio * bio)
 	struct page **behind_pages = NULL;
 	const int rw = bio_data_dir(bio);
 	const bool do_sync = bio_rw_flagged(bio, BIO_RW_SYNCIO);
-	int cpu;
 	bool do_barriers;
 	mdk_rdev_t *blocked_rdev;
 
@@ -834,12 +832,6 @@ static int make_request(struct request_queue *q, struct bio * bio)
 
 	bitmap = mddev->bitmap;
 
-	cpu = part_stat_lock();
-	part_stat_inc(cpu, &mddev->gendisk->part0, ios[rw]);
-	part_stat_add(cpu, &mddev->gendisk->part0, sectors[rw],
-		      bio_sectors(bio));
-	part_stat_unlock();
-
 	/*
 	 * make_request() can abort the operation when READA is being
 	 * used and no empty request is available.
@@ -866,6 +858,15 @@ static int make_request(struct request_queue *q, struct bio * bio)
 		}
 		mirror = conf->mirrors + rdisk;
 
+		if (test_bit(WriteMostly, &mirror->rdev->flags) &&
+		    bitmap) {
+			/* Reading from a write-mostly device must
+			 * take care not to over-take any writes
+			 * that are 'behind'
+			 */
+			wait_event(bitmap->behind_wait,
+				   atomic_read(&bitmap->behind_writes) == 0);
+		}
 		r1_bio->read_disk = rdisk;
 
 		read_bio = bio_clone(bio, GFP_NOIO);
@@ -942,10 +943,14 @@ static int make_request(struct request_queue *q, struct bio * bio)
 		set_bit(R1BIO_Degraded, &r1_bio->state);
 	}
 
-	/* do behind I/O ? */
+	/* do behind I/O ?
+	 * Not if there are too many, or cannot allocate memory,
+	 * or a reader on WriteMostly is waiting for behind writes 
+	 * to flush */
 	if (bitmap &&
 	    (atomic_read(&bitmap->behind_writes)
 	     < mddev->bitmap_info.max_write_behind) &&
+	    !waitqueue_active(&bitmap->behind_wait) &&
 	    (behind_pages = alloc_behind_pages(bio)) != NULL)
 		set_bit(R1BIO_BehindIO, &r1_bio->state);
 
@@ -1223,7 +1228,7 @@ abort:
 
 static void end_sync_read(struct bio *bio, int error)
 {
-	r1bio_t * r1_bio = (r1bio_t *)(bio->bi_private);
+	r1bio_t *r1_bio = bio->bi_private;
 	int i;
 
 	for (i=r1_bio->mddev->raid_disks; i--; )
@@ -1246,7 +1251,7 @@ static void end_sync_read(struct bio *bio, int error)
 static void end_sync_write(struct bio *bio, int error)
 {
 	int uptodate = test_bit(BIO_UPTODATE, &bio->bi_flags);
-	r1bio_t * r1_bio = (r1bio_t *)(bio->bi_private);
+	r1bio_t *r1_bio = bio->bi_private;
 	mddev_t *mddev = r1_bio->mddev;
 	conf_t *conf = mddev->private;
 	int i;
@@ -1697,10 +1702,10 @@ static void raid1d(mddev_t *mddev)
 				r1_bio->bios[r1_bio->read_disk] = bio;
 				rdev = conf->mirrors[disk].rdev;
 				if (printk_ratelimit())
-					printk(KERN_ERR "raid1: %s: redirecting sector %llu to"
-					       " another mirror\n",
-					       bdevname(rdev->bdev,b),
-					       (unsigned long long)r1_bio->sector);
+					printk(KERN_ERR "raid1: redirecting sector %llu to"
+					       " other mirror: %s\n",
+					       (unsigned long long)r1_bio->sector,
+					       bdevname(rdev->bdev,b));
 				bio->bi_sector = r1_bio->sector + rdev->data_offset;
 				bio->bi_bdev = rdev->bdev;
 				bio->bi_end_io = raid1_end_read_request;
@@ -2152,15 +2157,13 @@ static int stop(mddev_t *mddev)
 {
 	conf_t *conf = mddev->private;
 	struct bitmap *bitmap = mddev->bitmap;
-	int behind_wait = 0;
 
 	/* wait for behind writes to complete */
-	while (bitmap && atomic_read(&bitmap->behind_writes) > 0) {
-		behind_wait++;
-		printk(KERN_INFO "raid1: behind writes in progress on device %s, waiting to stop (%d)\n", mdname(mddev), behind_wait);
-		set_current_state(TASK_UNINTERRUPTIBLE);
-		schedule_timeout(HZ); /* wait a second */
+	if (bitmap && atomic_read(&bitmap->behind_writes) > 0) {
+		printk(KERN_INFO "raid1: behind writes in progress on device %s, waiting to stop.\n", mdname(mddev));
 		/* need to kick something here to make sure I/O goes? */
+		wait_event(bitmap->behind_wait,
+			   atomic_read(&bitmap->behind_writes) == 0);
 	}
 
 	raise_barrier(conf);
@@ -2191,7 +2194,6 @@ static int raid1_resize(mddev_t *mddev, sector_t sectors)
 	if (mddev->array_sectors > raid1_size(mddev, sectors, 0))
 		return -EINVAL;
 	set_capacity(mddev->gendisk, mddev->array_sectors);
-	mddev->changed = 1;
 	revalidate_disk(mddev->gendisk);
 	if (sectors > mddev->dev_sectors &&
 	    mddev->recovery_cp == MaxSector) {
