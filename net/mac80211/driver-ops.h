@@ -84,16 +84,14 @@ static inline void drv_bss_info_changed(struct ieee80211_local *local,
 }
 
 static inline u64 drv_prepare_multicast(struct ieee80211_local *local,
-					int mc_count,
-					struct dev_addr_list *mc_list)
+					struct netdev_hw_addr_list *mc_list)
 {
 	u64 ret = 0;
 
 	if (local->ops->prepare_multicast)
-		ret = local->ops->prepare_multicast(&local->hw, mc_count,
-						    mc_list);
+		ret = local->ops->prepare_multicast(&local->hw, mc_list);
 
-	trace_drv_prepare_multicast(local, mc_count, ret);
+	trace_drv_prepare_multicast(local, mc_list->count, ret);
 
 	return ret;
 }
@@ -346,6 +344,15 @@ static inline int drv_ampdu_action(struct ieee80211_local *local,
 	return ret;
 }
 
+static inline int drv_get_survey(struct ieee80211_local *local, int idx,
+				struct survey_info *survey)
+{
+	int ret = -EOPNOTSUPP;
+	if (local->ops->conf_tx)
+		ret = local->ops->get_survey(&local->hw, idx, survey);
+	/* trace_drv_get_survey(local, idx, survey, ret); */
+	return ret;
+}
 
 static inline void drv_rfkill_poll(struct ieee80211_local *local)
 {
