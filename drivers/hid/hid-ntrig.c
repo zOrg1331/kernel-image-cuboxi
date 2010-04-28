@@ -1,8 +1,8 @@
 /*
  *  HID driver for N-Trig touchscreens
  *
- *  Copyright (c) 2008 Rafi Rubin
- *  Copyright (c) 2009 Stephane Chatty
+ *  Copyright (c) 2008-2010 Rafi Rubin
+ *  Copyright (c) 2009-2010 Stephane Chatty
  *
  */
 
@@ -15,6 +15,8 @@
 
 #include <linux/device.h>
 #include <linux/hid.h>
+#include <linux/usb.h>
+#include "usbhid/usbhid.h"
 #include <linux/module.h>
 #include <linux/slab.h>
 
@@ -171,6 +173,8 @@ static int ntrig_event (struct hid_device *hid, struct hid_field *field,
 			if (!nd->reading_mt) {
 				input_report_key(input, BTN_TOOL_DOUBLETAP,
 						 (nd->confidence != 0));
+				input_report_key(input, BTN_TOUCH,
+						 (nd->confidence != 0));
 				input_event(input, EV_ABS, ABS_X, nd->x);
 				input_event(input, EV_ABS, ABS_Y, nd->y);
 			}
@@ -286,6 +290,7 @@ static int ntrig_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	struct ntrig_data *nd;
 	struct hid_input *hidinput;
 	struct input_dev *input;
+	struct hid_report *report;
 
 	if (id->driver_data)
 		hdev->quirks |= HID_QUIRK_MULTI_INPUT;
@@ -348,6 +353,12 @@ static int ntrig_probe(struct hid_device *hdev, const struct hid_device_id *id)
 			break;
 		}
 	}
+
+	/* This is needed for devices with more recent firmware versions */
+	report = hdev->report_enum[HID_FEATURE_REPORT].report_id_hash[0x0a];
+	if (report)
+		usbhid_submit_report(hdev, report, USB_DIR_OUT);
+
 
 	return 0;
 err_free:
