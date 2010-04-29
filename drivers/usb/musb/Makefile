@@ -22,6 +22,10 @@ ifeq ($(CONFIG_ARCH_OMAP3430),y)
 	musb_hdrc-objs	+= omap2430.o
 endif
 
+ifeq ($(CONFIG_ARCH_OMAP4),y)
+	musb_hdrc-objs  += omap2430.o
+endif
+
 ifeq ($(CONFIG_BF54x),y)
 	musb_hdrc-objs	+= blackfin.o
 endif
@@ -36,6 +40,10 @@ endif
 
 ifeq ($(CONFIG_USB_MUSB_HDRC_HCD),y)
 	musb_hdrc-objs		+= musb_virthub.o musb_host.o
+endif
+
+ifeq ($(CONFIG_DEBUG_FS),y)
+	musb_hdrc-objs		+= musb_debugfs.o
 endif
 
 # the kconfig must guarantee that only one of the
