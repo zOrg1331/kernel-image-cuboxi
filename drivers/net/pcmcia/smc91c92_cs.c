@@ -1621,10 +1621,10 @@ static void set_rx_mode(struct net_device *dev)
 	rx_cfg_setting = RxStripCRC | RxEnable | RxAllMulti;
     else {
 	if (!netdev_mc_empty(dev)) {
-	    struct dev_mc_list *mc_addr;
+	    struct netdev_hw_addr *ha;
 
-	    netdev_for_each_mc_addr(mc_addr, dev) {
-		u_int position = ether_crc(6, mc_addr->dmi_addr);
+	    netdev_for_each_mc_addr(ha, dev) {
+		u_int position = ether_crc(6, ha->addr);
 		multicast_table[position >> 29] |= 1 << ((position >> 26) & 7);
 	    }
 	}
