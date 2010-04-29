@@ -12,6 +12,7 @@
 struct firmware {
 	size_t size;
 	const u8 *data;
+	struct page **pages;
 };
 
 struct device;
@@ -42,7 +43,7 @@ int request_firmware_nowait(
 	const char *name, struct device *device, gfp_t gfp, void *context,
 	void (*cont)(const struct firmware *fw, void *context));
 
-void release_firmware(const struct firmware *fw);
+void release_firmware(struct firmware *fw);
 #else
 static inline int request_firmware(const struct firmware **fw,
 				   const char *name,
@@ -58,7 +59,7 @@ static inline int request_firmware_nowait(
 	return -EINVAL;
 }
 
-static inline void release_firmware(const struct firmware *fw)
+static inline void release_firmware(struct firmware *fw)
 {
 }
 #endif
