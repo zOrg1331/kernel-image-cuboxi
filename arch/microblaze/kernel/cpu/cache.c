@@ -102,7 +102,7 @@ do {									\
 	int align = ~(cache_line_length - 1);				\
 	end = min(start + cache_size, end);				\
 	start &= align;							\
-	end = ((end & align) + cache_line_length);			\
+	end = ((end & align) == end) ? end - cache_line_length : (end & align);\
 } while (0);
 
 /*
@@ -141,7 +141,7 @@ do {									\
 do {									\
 	int step = -line_length;					\
 	int count = end - start;					\
-	BUG_ON(count <= 0);						\
+	BUG_ON(count < 0);						\
 									\
 	__asm__ __volatile__ (" 1:	" #op "	%0, %1;			\
 					bgtid	%1, 1b;			\
@@ -154,7 +154,7 @@ do {									\
 #define CACHE_RANGE_LOOP_1(start, end, line_length, op)			\
 do {									\
 	int volatile temp;						\
-	BUG_ON(end - start <= 0);					\
+	BUG_ON(end - start < 0);					\
 									\
 	__asm__ __volatile__ (" 1:	" #op "	%1, r0;			\
 					cmpu	%0, %1, %2;		\
@@ -393,7 +393,7 @@ static void __invalidate_dcache_range_wb(unsigned long start,
 #ifdef ASM_LOOP
 	CACHE_RANGE_LOOP_2(start, end, cpuinfo.dcache_line_length, wdc.clear);
 #else
-	for (i = start; i < end; i += cpuinfo.icache_line_length)
+	for (i = start; i < end; i += cpuinfo.dcache_line_length)
 		__asm__ __volatile__ ("wdc.clear	%0, r0;"	\
 				: : "r" (i));
 #endif
@@ -413,7 +413,7 @@ static void __invalidate_dcache_range_nomsr_wt(unsigned long start,
 #ifdef ASM_LOOP
 	CACHE_RANGE_LOOP_1(start, end, cpuinfo.dcache_line_length, wdc);
 #else
-	for (i = start; i < end; i += cpuinfo.icache_line_length)
+	for (i = start; i < end; i += cpuinfo.dcache_line_length)
 		__asm__ __volatile__ ("wdc	%0, r0;"	\
 				: : "r" (i));
 #endif
@@ -437,7 +437,7 @@ static void __invalidate_dcache_range_msr_irq_wt(unsigned long start,
 #ifdef ASM_LOOP
 	CACHE_RANGE_LOOP_1(start, end, cpuinfo.dcache_line_length, wdc);
 #else
-	for (i = start; i < end; i += cpuinfo.icache_line_length)
+	for (i = start; i < end; i += cpuinfo.dcache_line_length)
 		__asm__ __volatile__ ("wdc	%0, r0;"	\
 				: : "r" (i));
 #endif
@@ -465,7 +465,7 @@ static void __invalidate_dcache_range_nomsr_irq(unsigned long start,
 #ifdef ASM_LOOP
 	CACHE_RANGE_LOOP_1(start, end, cpuinfo.dcache_line_length, wdc);
 #else
-	for (i = start; i < end; i += cpuinfo.icache_line_length)
+	for (i = start; i < end; i += cpuinfo.dcache_line_length)
 		__asm__ __volatile__ ("wdc	%0, r0;"	\
 				: : "r" (i));
 #endif
@@ -504,7 +504,7 @@ static void __flush_dcache_range_wb(unsigned long start, unsigned long end)
 #ifdef ASM_LOOP
 	CACHE_RANGE_LOOP_2(start, end, cpuinfo.dcache_line_length, wdc.flush);
 #else
-	for (i = start; i < end; i += cpuinfo.icache_line_length)
+	for (i = start; i < end; i += cpuinfo.dcache_line_length)
 		__asm__ __volatile__ ("wdc.flush	%0, r0;"	\
 				: : "r" (i));
 #endif
