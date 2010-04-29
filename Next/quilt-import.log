@@ -1,0 +1,235 @@
+Importing driver-core.current based on 2.6.34-rc5
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 01bf0b64579ead8a82e7cfc32ae44bc667e7ad0f
+HEAD is now at 01bf0b6 Linux 2.6.34-rc5
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core.current
+documentation-stable-rules-upstream-commit-id-requirement-reworded.patch
+documentation-howto-update-git-home-url.patch
+sysfs-use-sysfs_attr_init-in-asus-atk0110-driver.patch
+drivers-base-cpu.c-fix-the-output-from-sys-devices-system-cpu-offline.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core.current
+From ../quilt-tmp
+ + e14da97...c26afde master     -> quilt/driver-core.current  (forced update)
+Importing tty.current based on quilt/driver-core.current
+$ cd ../quilt-tmp
+$ git reset --hard c26afde0e4885af0b49728accf6dd6c94ea6fa76
+HEAD is now at c26afde drivers/base/cpu.c: fix the output from /sys/devices/system/cpu/offline
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+tty-fix-regressions-in-the-char-driver-conversion.patch
+serial-8250_pnp-add-fujitsu-wacom-device.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+ + 746b212...55ea056 master     -> quilt/tty.current  (forced update)
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard 55ea0567ae6e57b4120934a959261f7b73a65acc
+HEAD is now at 55ea056 serial: 8250_pnp - add Fujitsu Wacom device
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-ti_usb_3410_5052-adding-multitech-dialup-fax-modem-devices.patch
+usb-fixed-bug-in-usbsevseg-using-usb-autosuspend-incorrectly.patch
+usb-ehci-omap-fix-kernel-panic-with-rmmod.patch
+usb-wusb-don-t-overflow-the-keep-alive-ie-buffer.patch
+usb-qcaux-add-lg-rumor-and-sanyo-katana-lx-device-ids.patch
+usb-ohci-da8xx-omap-l1x-fix-up-macro-rename.patch
+usb-add-id-for-hp-ev2210-a.k.a-sierra-mc5725-minipci-e-cell-modem.patch
+usb-pl2303-add-adlink-nd-6530-usb-ids.patch
+usb-fix-remote-wakeup-settings-during-system-sleep.patch
+usb-ehci-defer-reclamation-of-sitds.patch
+usb-put-claimed-interfaces-in-the-suspended-state.patch
+usb-increase-timeout-value-for-device-reset.patch
+musb-fix-power-field-to-hold-all-possible-values.patch
+musb-blackfin-don-t-fake-blackfin_interrupt-result.patch
+musb-save-and-restore-missing-bus-control-register.patch
+musb-potential-use-after-free.patch
+musb_core-don-t-touch-musb-clock-in-musb_free.patch
+musb_core-don-t-prevent-disabling-clock-on-driver-unload.patch
+musb-davinci-fix-musb_platform_init-error-cleanup-path.patch
+musb-omap-don-t-call-clk_put.patch
+musb_core-don-t-call-musb_platform_exit-twice.patch
+musb-fix-davinci-glue-layer-dependency.patch
+musb_core-fix-musb_init_controller-error-cleanup-path.patch
+usb-fix-tusb6010-for-dma-api.patch
+usb-fix-testing-the-wrong-variable-in-fs_create_by_name.patch
+usb-cdc-acm-add-another-device-quirk.patch
+usb-don-t-choose-configs-with-no-interfaces.patch
+usb-ohci-don-t-look-at-the-root-hub-to-get-the-number-of-ports.patch
+usb-xhci-properly-set-the-mult-field-of-the-endpoint-context.patch
+usb-xhci-properly-set-endpoint-context-fields-for-periodic-eps.patch
+usb-option-add-id-for-zte-mf-330.patch
+usb-serial-pl2303-hybrid-reader-uniform-hcr331.patch
+usb-serial-option-zteac8710-support-with-device-id-0xffff.patch
+usb-serial-option-add-cinterion-device-id.patch
+usb-oxu210hp-release-spinlock-on-error-path.patch
+usb-fix-build-on-omaps-if-config_pm_runtime-is-not-set.patch
+usb-gadget-s3c-hsotg-add-missing-unlock.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + de8cdfb...ff141c8 master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard ff141c856ee7e6fa159720ef0a266bed70810833
+HEAD is now at ff141c8 USB: gadget: s3c-hsotg: Add missing unlock
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-iio-lis3l02dq-incorrect-ws-used-in-container-of-call.patch
+staging-iio-test-for-failed-allocation.patch
+staging-iio-light-fix-dangling-pointers.patch
+staging-iio-adc-fix-dangling-pointers.patch
+staging-iio-function-iio_get_new_idr_val-return-negative-value-if-fails.patch
+staging-iio-ring_sw-fix-incorrect-test-on-successful-read-of-last-value-causes-infinite-loop.patch
+staging-hv-fix-a-bug-affecting-ipv6.patch
+staging-hv-fix-up-memory-leak-on-hvcleanup.patch
+staging-hv-name-network-device-ethx-rather-than-sethx.patch
+staging-rtl8192su-add-usb-id-for-0bda-8171.patch
+staging-usbip-fix-deadlock.patch
+staging-dt3155-fix-50hz-configuration.patch
+staging-rtl8192su-add-support-for-belkin-f5d8053-v6.patch
+staging-fix-dt3155-build.patch
+staging-rt2860-add-belkin-f5d8055-wireless-n-usb-dongle-device-id.patch
+staging-add-add-sitecom-wl-349-to-rtl8192su.patch
+staging-iio-fix-up-the-iio_get_new_idr_val-comment.patch
+staging-batman-adv-don-t-have-interrupts-disabled-while-sending.patch
+staging-batman-adv-fix-vis-output-bug-for-secondary-interfaces.patch
+staging-batman-adv-fixing-wrap-around-bug-in-vis.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 50d44f5...48711b4 master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.34-rc5-git3
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.34-rc5
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.34-rc3-git5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.34-rc5
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.33-5070-g64ba992
+$ cd ../quilt-tmp
+$ git reset --hard 64ba9926759792cf7b95f823402e2781edd1b5d4
+HEAD is now at 64ba992 Merge branch 'for-linus' of git://git.open-osd.org/linux-open-osd
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-add-flakey-target.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:14: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + 1ef37bd...718fcf0 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+$ cd ../quilt-tmp
+$ git reset --hard 48711b442422f1c7343ec346a6e08dfc16a21bf5
+HEAD is now at 48711b4 Staging: batman-adv: Fixing wrap-around bug in vis
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core
+kref-remove-kref_set.patch
+driver-core-reduce-the-level-of-request_firmware-messages.patch
+driver-core-fix-potential-race-condition-in-drivers-base-dd.c.patch
+driver-core-don-t-initialize-wakeup-flags.patch
+driver-core-early-dev_name-support.patch
+driver-core-module.c-use-kasprintf.patch
+devtmpfs-support-config_tmpfs.patch
+platform_bus-allow-custom-extensions-to-system-pm-methods.patch
+drivers-base-convert-sema.patch
+lockdep-add-novalidate-class-for-dev-mutex-conversion.patch
+firmware-class-export-nowait-to-userspace.patch
+firmware-loader-rely-on-driver-core-to-create-class-attribute.patch
+firmware-loader-split-out-builtin-firmware-handling.patch
+firmware-loader-do-not-allocate-firmare-id-separately.patch
+driver-core-protect-device-shutdown-from-hot-unplug-events.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core
+From ../quilt-tmp
+ + 185f49d...ee8bc78 master     -> quilt/driver-core  (forced update)
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard ee8bc7837fc37cf56bd5fa59cbcd188b2c320ebc
+HEAD is now at ee8bc78 Driver core: Protect device shutdown from hot unplug events.
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+serial-bfin_sport_uart-work-around-anomaly-05000473-make-32bit-fifo-read-atomic.patch
+serial-bfin_sport_uart-shorten-the-sport-tx-waiting-loop.patch
+serial-bfin_sport_uart-remove-unused-peripheral-pin-lists.patch
+serial-bfin_sport_uart-add-missing-mapbase-initialization.patch
+serial-bfin_sport_uart-rename-early-platform-driver-class-string.patch
+serial-bfin_sport_uart-add-support-for-cts-rts-via-gpios.patch
+serial-bfin_sport_uart-protect-changes-to-uart_port.patch
+serial-bfin_sport_uart-zero-sport_uart_port-if-allocated-dynamically.patch
+serial-bfin_sport_uart-drop-useless-status-masks.patch
+serial-bfin_sport_uart-only-enable-sport-tx-if-data-is-to-be-sent.patch
+serial-bfin_sport_uart-pull-in-bfin_sport.h-for-sport-defines.patch
+serial-bfin_sport_uart-drop-the-experimental-markings.patch
+serial-bfin_sport_uart-drop-redundant-cpu-depends.patch
+serial-tty-new-ldiscs-for-staging.patch
+tty-n_gsm-line-discipline.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + 3026927...39658c5 master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 39658c58ebb52fe7a3488fd520aa89c75721fd20
+HEAD is now at 39658c5 tty: n_gsm line discipline
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-sisusbvga-remove-the-bkl-from-ioctl.patch
+usb-cdc-acm-make-bitfields-unsigned.patch
+usb-remove-large-struct-from-the-stack-in-usb-storage-isd200-driver.patch
+usb-remove-duplicated-include.patch
+usb-remove-bogus-usb_port_feat_-_speed-symbols.patch
+usb-straighten-out-port-feature-vs.-port-status-usage.patch
+usb-remove-uses-of-urb_no_setup_dma_map.patch
+usb-ehci-au1xxx-does-not-need-ehci-io-watchdog.patch
+usb-serial-use-tty_port-version-console-instead-of-usb_serial_port.patch
+usb-musb-allow-board-to-pass-down-fifo-mode.patch
+usb-musb-set-transceiver-interface-type.patch
+usb-musb-build-musb-driver-for-omap4.patch
+usb-musb-add-omap4-support-in-musb-driver.patch
+usb-musb-allow-the-blackfin-vrsel-gpio-to-be-active-low.patch
+usb-musb-add-debugfs-support.patch
+usb-musb-gadget-support-musb-specific-test-modes.patch
+usb-musb-hsdma-use-musb_read-writel.patch
+usb-f_mass_storage-dynamic-buffers-for-better-alignment.patch
+usb-console-pass-baud-from-console-to-the-initial-tty-open.patch
+usb-serial-driver-zio-motherboard.patch
+usb-fix-serial-build-when-sysrq-is-disabled.patch
+usb-add-a-new-quirk-usb_quirk_honor_bnuminterfaces.patch
+usb-serial-allow-drivers-to-define-bulk-buffer-sizes.patch
+usb-cp210x-increase-the-bulk-out-buffer-size-to-256-byte.patch
+usb-cp210x-increase-bulk-in-buffer-size-to-256-byte.patch
+usb-pl2303-increase-the-bulk-out-buffer-size-to-256-byte.patch
+usb-pl2303-increase-bulk-in-buffer-size-to-256-byte.patch
+usb-serial-fix-generic-chars_in_buffer.patch
+usb-serial-fix-missing-locking-on-fifo-in-write-callback.patch
+usb-serial-clear-fifo-on-close.patch
+usb-serial-refactor-generic-close.patch
+usb-serial-refactor-read-urb-submission-in-generic-driver.patch
+usb-serial-remove-unnecessary-re-initialisation-of-generic-urbs.patch
+usb-cp210x-use-generic-submit_read_urb-at-open.patch
+usb-serial-clean-up-read-processing-in-generic-driver.patch
+usb-serial-generalise-generic-read-implementation.patch
+usb-pl2303-switch-to-generic-read-implementation.patch
+usb-serial-export-generic-throttle-and-unthrottle.patch
+usb-ftdi_sio-switch-to-generic-read-implementation.patch
+usb-serial-clean-up-some-error-and-debug-messages-in-generic-driver.patch
+usb-serial-clean-up-generic-write-start-busy-test.patch
+usb-pl2303-switch-to-generic-write-implementation.patch
+usb-pl2303-use-generic-close.patch
+usb-usb_debug-use-the-generic-kfifo-based-write-implementation.patch
+usb-serial-allow-custom-multi-urb-write-bulk-callbacks.patch
+usb-serial-re-implement-multi-urb-writes-in-generic-driver.patch
+usb-serial-generalise-write-buffer-preparation.patch
+usb-ftdi_sio-fix-some-coding-style-issues.patch
+usb-gadget-add-hid-gadget-driver.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:96: space before tab in indent.
+ 	gadget driver. To use, point it at a hidg device and set the
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:97: space before tab in indent.
+ 	device type (keyboard / mouse / joystick) - E.G.:
+warning: 2 lines add whitespace errors.
+usb-option.c-option_indat_callback-resubmit-some-unsuccessful-urbs.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 94173f3...8671cbf master     -> quilt/usb  (forced update)
