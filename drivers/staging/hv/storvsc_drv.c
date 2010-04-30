@@ -112,7 +112,7 @@ static struct scsi_host_template scsi_driver = {
 	.slave_configure =	storvsc_device_configure,
 	.cmd_per_lun =		1,
 	/* 64 max_queue * 1 target */
-	.can_queue = 		STORVSC_MAX_IO_REQUESTS*STORVSC_MAX_TARGETS,
+	.can_queue =		STORVSC_MAX_IO_REQUESTS*STORVSC_MAX_TARGETS,
 	.this_id =		-1,
 	/* no use setting to 0 since ll_blk_rw reset it to 1 */
 	/* currently 32 */
@@ -130,7 +130,7 @@ static struct scsi_host_template scsi_driver = {
 };
 
 
-/**
+/*
  * storvsc_drv_init - StorVsc driver initialization.
  */
 static int storvsc_drv_init(int (*drv_init)(struct hv_driver *drv))
@@ -223,7 +223,7 @@ static void storvsc_drv_exit(void)
 	return;
 }
 
-/**
+/*
  * storvsc_probe - Add a new device for this driver
  */
 static int storvsc_probe(struct device *device)
@@ -319,7 +319,7 @@ static int storvsc_probe(struct device *device)
 	return ret;
 }
 
-/**
+/*
  * storvsc_remove - Callback when our device is removed
  */
 static int storvsc_remove(struct device *device)
@@ -372,7 +372,7 @@ static int storvsc_remove(struct device *device)
 	return ret;
 }
 
-/**
+/*
  * storvsc_commmand_completion - Command completion processing
  */
 static void storvsc_commmand_completion(struct hv_storvsc_request *request)
@@ -623,7 +623,7 @@ static unsigned int copy_from_bounce_buffer(struct scatterlist *orig_sgl,
 	return total_copied;
 }
 
-/**
+/*
  * storvsc_queuecommand - Initiate command processing
  */
 static int storvsc_queuecommand(struct scsi_cmnd *scmnd,
@@ -767,7 +767,7 @@ static int storvsc_queuecommand(struct scsi_cmnd *scmnd,
 		request->DataBuffer.Offset = sgl[0].offset;
 
 		for (i = 0; i < scsi_sg_count(scmnd); i++) {
-			DPRINT_DBG(STORVSC_DRV, "sgl[%d] len %d offset %d \n",
+			DPRINT_DBG(STORVSC_DRV, "sgl[%d] len %d offset %d\n",
 				   i, sgl[i].length, sgl[i].offset);
 			request->DataBuffer.PfnArray[i] =
 					page_to_pfn(sg_page((&sgl[i])));
@@ -824,7 +824,7 @@ static int storvsc_merge_bvec(struct request_queue *q,
 	return bvec->bv_len;
 }
 
-/**
+/*
  * storvsc_device_configure - Configure the specified scsi device
  */
 static int storvsc_device_alloc(struct scsi_device *sdevice)
@@ -863,7 +863,7 @@ static int storvsc_device_configure(struct scsi_device *sdevice)
 	return 0;
 }
 
-/**
+/*
  * storvsc_host_reset_handler - Reset the scsi HBA
  */
 static int storvsc_host_reset_handler(struct scsi_cmnd *scmnd)

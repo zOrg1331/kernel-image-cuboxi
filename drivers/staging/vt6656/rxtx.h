@@ -43,8 +43,8 @@
 typedef struct tagSRTSDataF {
     WORD    wFrameControl;
     WORD    wDurationID;
-    BYTE    abyRA[U_ETHER_ADDR_LEN];
-    BYTE    abyTA[U_ETHER_ADDR_LEN];
+    BYTE    abyRA[ETH_ALEN];
+    BYTE    abyTA[ETH_ALEN];
 } SRTSDataF, *PSRTSDataF;
 
 //
@@ -53,7 +53,7 @@ typedef struct tagSRTSDataF {
 typedef struct tagSCTSDataF {
     WORD    wFrameControl;
     WORD    wDurationID;
-    BYTE    abyRA[U_ETHER_ADDR_LEN];
+    BYTE    abyRA[ETH_ALEN];
     WORD    wReserved;
 } SCTSDataF, *PSCTSDataF;
 
@@ -667,17 +667,17 @@ typedef struct tagSBEACON_BUFFER
 
 BOOL
 bPacketToWirelessUsb(
-    IN  PSDevice         pDevice,
-    IN  BYTE             byPktType,
-    IN  PBYTE            usbPacketBuf,
-    IN  BOOL             bNeedEncrypt,
-    IN  UINT             cbPayloadSize,
-    IN  UINT             uDMAIdx,
-    IN  PSEthernetHeader psEthHeader,
-    IN  PBYTE            pPacket,
-    IN  PSKeyItem        pTransmitKey,
-    IN  UINT             uNodeIndex,
-    IN  WORD             wCurrentRate,
+      PSDevice         pDevice,
+      BYTE             byPktType,
+      PBYTE            usbPacketBuf,
+      BOOL             bNeedEncrypt,
+      UINT             cbPayloadSize,
+      UINT             uDMAIdx,
+      PSEthernetHeader psEthHeader,
+      PBYTE            pPacket,
+      PSKeyItem        pTransmitKey,
+      UINT             uNodeIndex,
+      WORD             wCurrentRate,
     OUT UINT             *pcbHeaderLen,
     OUT UINT             *pcbTotalLen
     );
