@@ -1355,9 +1355,13 @@ int usb_resume(struct device *dev, pm_message_t msg)
  *
  * The caller must hold @udev's device lock.
  */
-void usb_enable_autosuspend(struct usb_device *udev)
+int usb_enable_autosuspend(struct usb_device *udev)
 {
-	pm_runtime_allow(&udev->dev);
+	if (udev->autosuspend_disabled) {
+		udev->autosuspend_disabled = 0;
+		usb_autosuspend_device(udev);
+	}
+	return 0;
 }
 EXPORT_SYMBOL_GPL(usb_enable_autosuspend);
 
@@ -1370,9 +1374,16 @@ EXPORT_SYMBOL_GPL(usb_enable_autosuspend);
  *
  * The caller must hold @udev's device lock.
  */
-void usb_disable_autosuspend(struct usb_device *udev)
+int usb_disable_autosuspend(struct usb_device *udev)
 {
-	pm_runtime_forbid(&udev->dev);
+	int rc = 0;
+
+	if (!udev->autosuspend_disabled) {
+		rc = usb_autoresume_device(udev);
+		if (rc == 0)
+			udev->autosuspend_disabled = 1;
+	}
+	return rc;
 }
 EXPORT_SYMBOL_GPL(usb_disable_autosuspend);
 
@@ -1516,7 +1527,7 @@ void usb_autopm_put_interface_async(struct usb_interface *intf)
 	atomic_dec(&intf->pm_usage_cnt);
 	pm_runtime_put_noidle(&intf->dev);
 
-	if (udev->dev.power.runtime_auto) {
+	if (!udev->autosuspend_disabled) {
 		/* Optimization: Don't schedule a delayed autosuspend if
 		 * the timer is already running and the expiration time
 		 * wouldn't change.
