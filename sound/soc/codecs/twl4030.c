@@ -136,9 +136,11 @@ struct twl4030_priv {
 
 	unsigned int sysclk;
 
-	/* Headset output state handling */
-	unsigned int hsl_enabled;
-	unsigned int hsr_enabled;
+	/* Output (with associated amp) states */
+	u8 hsl_enabled, hsr_enabled;
+	u8 earpiece_enabled;
+	u8 predrivel_enabled, predriver_enabled;
+	u8 carkitl_enabled, carkitr_enabled;
 };
 
 /*
@@ -174,17 +176,52 @@ static inline void twl4030_write_reg_cache(struct snd_soc_codec *codec,
 static int twl4030_write(struct snd_soc_codec *codec,
 			unsigned int reg, unsigned int value)
 {
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
+	int write_to_reg = 0;
+
 	twl4030_write_reg_cache(codec, reg, value);
-	if (likely(reg < TWL4030_REG_SW_SHADOW))
-		return twl_i2c_write_u8(TWL4030_MODULE_AUDIO_VOICE, value,
-					    reg);
-	else
-		return 0;
+	if (likely(reg < TWL4030_REG_SW_SHADOW)) {
+		/* Decide if the given register can be written */
+		switch (reg) {
+		case TWL4030_REG_EAR_CTL:
+			if (twl4030->earpiece_enabled)
+				write_to_reg = 1;
+			break;
+		case TWL4030_REG_PREDL_CTL:
+			if (twl4030->predrivel_enabled)
+				write_to_reg = 1;
+			break;
+		case TWL4030_REG_PREDR_CTL:
+			if (twl4030->predriver_enabled)
+				write_to_reg = 1;
+			break;
+		case TWL4030_REG_PRECKL_CTL:
+			if (twl4030->carkitl_enabled)
+				write_to_reg = 1;
+			break;
+		case TWL4030_REG_PRECKR_CTL:
+			if (twl4030->carkitr_enabled)
+				write_to_reg = 1;
+			break;
+		case TWL4030_REG_HS_GAIN_SET:
+			if (twl4030->hsl_enabled || twl4030->hsr_enabled)
+				write_to_reg = 1;
+			break;
+		default:
+			/* All other register can be written */
+			write_to_reg = 1;
+			break;
+		}
+		if (write_to_reg)
+			return twl_i2c_write_u8(TWL4030_MODULE_AUDIO_VOICE,
+						    value, reg);
+	}
+	return 0;
 }
 
 static void twl4030_codec_enable(struct snd_soc_codec *codec, int enable)
 {
-	struct twl4030_priv *twl4030 = codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
 	int mode;
 
 	if (enable == twl4030->codec_powered)
@@ -222,7 +259,7 @@ static void twl4030_init_chip(struct snd_soc_codec *codec)
 
 static void twl4030_apll_enable(struct snd_soc_codec *codec, int enable)
 {
-	struct twl4030_priv *twl4030 = codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
 	int status;
 
 	if (enable == twl4030->apll_enabled)
@@ -243,7 +280,7 @@ static void twl4030_apll_enable(struct snd_soc_codec *codec, int enable)
 
 static void twl4030_power_up(struct snd_soc_codec *codec)
 {
-	struct twl4030_priv *twl4030 = codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
 	u8 anamicl, regmisc1, byte;
 	int i = 0;
 
@@ -526,26 +563,26 @@ static int micpath_event(struct snd_soc_dapm_widget *w,
  * Output PGA builder:
  * Handle the muting and unmuting of the given output (turning off the
  * amplifier associated with the output pin)
- * On mute bypass the reg_cache and mute the volume
- * On unmute: restore the register content
+ * On mute bypass the reg_cache and write 0 to the register
+ * On unmute: restore the register content from the reg_cache
  * Outputs handled in this way:  Earpiece, PreDrivL/R, CarkitL/R
  */
 #define TWL4030_OUTPUT_PGA(pin_name, reg, mask)				\
 static int pin_name##pga_event(struct snd_soc_dapm_widget *w,		\
 		struct snd_kcontrol *kcontrol, int event)		\
 {									\
-	u8 reg_val;							\
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(w->codec); \
 									\
 	switch (event) {						\
 	case SND_SOC_DAPM_POST_PMU:					\
+		twl4030->pin_name##_enabled = 1;			\
 		twl4030_write(w->codec, reg,				\
 			twl4030_read_reg_cache(w->codec, reg));		\
 		break;							\
 	case SND_SOC_DAPM_POST_PMD:					\
-		reg_val = twl4030_read_reg_cache(w->codec, reg);	\
-		twl_i2c_write_u8(TWL4030_MODULE_AUDIO_VOICE,	\
-					reg_val & (~mask),		\
-					reg);				\
+		twl4030->pin_name##_enabled = 0;			\
+		twl_i2c_write_u8(TWL4030_MODULE_AUDIO_VOICE,		\
+					0, reg);			\
 		break;							\
 	}								\
 	return 0;							\
@@ -642,7 +679,7 @@ static void headset_ramp(struct snd_soc_codec *codec, int ramp)
 	struct twl4030_setup_data *setup = socdev->codec_data;
 
 	unsigned char hs_gain, hs_pop;
-	struct twl4030_priv *twl4030 = codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
 	/* Base values for ramp delay calculation: 2^19 - 2^26 */
 	unsigned int ramp_base[] = {524288, 1048576, 2097152, 4194304,
 				    8388608, 16777216, 33554432, 67108864};
@@ -665,7 +702,10 @@ static void headset_ramp(struct snd_soc_codec *codec, int ramp)
 		/* Headset ramp-up according to the TRM */
 		hs_pop |= TWL4030_VMID_EN;
 		twl4030_write(codec, TWL4030_REG_HS_POPN_SET, hs_pop);
-		twl4030_write(codec, TWL4030_REG_HS_GAIN_SET, hs_gain);
+		/* Actually write to the register */
+		twl_i2c_write_u8(TWL4030_MODULE_AUDIO_VOICE,
+					hs_gain,
+					TWL4030_REG_HS_GAIN_SET);
 		hs_pop |= TWL4030_RAMP_EN;
 		twl4030_write(codec, TWL4030_REG_HS_POPN_SET, hs_pop);
 		/* Wait ramp delay time + 1, so the VMID can settle */
@@ -702,7 +742,7 @@ static void headset_ramp(struct snd_soc_codec *codec, int ramp)
 static int headsetlpga_event(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
 {
-	struct twl4030_priv *twl4030 = w->codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(w->codec);
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
@@ -726,7 +766,7 @@ static int headsetlpga_event(struct snd_soc_dapm_widget *w,
 static int headsetrpga_event(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
 {
-	struct twl4030_priv *twl4030 = w->codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(w->codec);
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
@@ -918,7 +958,7 @@ static int snd_soc_put_twl4030_opmode_enum_double(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
-	struct twl4030_priv *twl4030 = codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
 	unsigned short val;
 	unsigned short mask, bitmask;
@@ -1588,7 +1628,7 @@ static int twl4030_startup(struct snd_pcm_substream *substream,
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_device *socdev = rtd->socdev;
 	struct snd_soc_codec *codec = socdev->card->codec;
-	struct twl4030_priv *twl4030 = codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
 
 	if (twl4030->master_substream) {
 		twl4030->slave_substream = substream;
@@ -1619,7 +1659,7 @@ static void twl4030_shutdown(struct snd_pcm_substream *substream,
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_device *socdev = rtd->socdev;
 	struct snd_soc_codec *codec = socdev->card->codec;
-	struct twl4030_priv *twl4030 = codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
 
 	if (twl4030->master_substream == substream)
 		twl4030->master_substream = twl4030->slave_substream;
@@ -1645,7 +1685,7 @@ static int twl4030_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_device *socdev = rtd->socdev;
 	struct snd_soc_codec *codec = socdev->card->codec;
-	struct twl4030_priv *twl4030 = codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
 	u8 mode, old_mode, format, old_format;
 
 	 /* If the substream has 4 channel, do the necessary setup */
@@ -1765,7 +1805,7 @@ static int twl4030_set_dai_sysclk(struct snd_soc_dai *codec_dai,
 		int clk_id, unsigned int freq, int dir)
 {
 	struct snd_soc_codec *codec = codec_dai->codec;
-	struct twl4030_priv *twl4030 = codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
 
 	switch (freq) {
 	case 19200000:
@@ -1880,7 +1920,7 @@ static int twl4030_voice_startup(struct snd_pcm_substream *substream,
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_device *socdev = rtd->socdev;
 	struct snd_soc_codec *codec = socdev->card->codec;
-	struct twl4030_priv *twl4030 = codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
 	u8 mode;
 
 	/* If the system master clock is not 26MHz, the voice PCM interface is
@@ -1962,7 +2002,7 @@ static int twl4030_voice_set_dai_sysclk(struct snd_soc_dai *codec_dai,
 		int clk_id, unsigned int freq, int dir)
 {
 	struct snd_soc_codec *codec = codec_dai->codec;
-	struct twl4030_priv *twl4030 = codec->private_data;
+	struct twl4030_priv *twl4030 = snd_soc_codec_get_drvdata(codec);
 
 	if (freq != 26000000) {
 		dev_err(codec->dev, "Unsupported APLL mclk: %u, the Voice"
@@ -2125,7 +2165,7 @@ static int twl4030_soc_probe(struct platform_device *pdev)
 	BUG_ON(!twl4030_codec);
 
 	codec = twl4030_codec;
-	twl4030 = codec->private_data;
+	twl4030 = snd_soc_codec_get_drvdata(codec);
 	socdev->card->codec = codec;
 
 	/* Configuration for headset ramp delay from setup data */
@@ -2188,7 +2228,7 @@ static int __devinit twl4030_codec_probe(struct platform_device *pdev)
 	}
 
 	codec = &twl4030->codec;
-	codec->private_data = twl4030;
+	snd_soc_codec_set_drvdata(codec, twl4030);
 	codec->dev = &pdev->dev;
 	twl4030_dai[0].dev = &pdev->dev;
 	twl4030_dai[1].dev = &pdev->dev;
