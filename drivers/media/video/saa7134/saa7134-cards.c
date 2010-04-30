@@ -5355,6 +5355,23 @@ struct saa7134_board saa7134_boards[] = {
 			.amux = LINE2,
 		},
 	},
+	[SAA7134_BOARD_HAWELL_HW_404M7] = {
+		/* Hawell HW-404M7 & Hawell HW-808M7  */
+		/* Bogoslovskiy Viktor <bogovic@bk.ru> */
+		.name         = "Hawell HW-404M7",
+		.audio_clock   = 0x00200000,
+		.tuner_type    = UNSET,
+		.radio_type    = UNSET,
+		.tuner_addr   = ADDR_UNSET,
+		.radio_addr   = ADDR_UNSET,
+		.gpiomask      = 0x01fc00,
+		.inputs       = {{
+			.name = name_comp1,
+			.vmux = 3,
+			.amux = LINE1,
+			.gpio = 0x389c00,
+		} },
+	},
 
 };
 
@@ -7215,6 +7232,11 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 		       printk(KERN_INFO "%s: P7131 analog only, using "
 						       "entry of %s\n",
 		       dev->name, saa7134_boards[dev->board].name);
+
+			/* IR init has already happened for other cards, so
+			 * we have to catch up. */
+			dev->has_remote = SAA7134_REMOTE_GPIO;
+			saa7134_input_init1(dev);
 	       }
 	       break;
 	case SAA7134_BOARD_HAUPPAUGE_HVR1150:
