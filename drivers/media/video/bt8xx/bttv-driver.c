@@ -1524,7 +1524,7 @@ static int bttv_s_ctrl(struct file *file, void *f,
 	struct bttv_fh *fh = f;
 	struct bttv *btv = fh->btv;
 
-	err = v4l2_prio_check(&btv->prio, &fh->prio);
+	err = v4l2_prio_check(&btv->prio, fh->prio);
 	if (0 != err)
 		return err;
 
@@ -1858,7 +1858,7 @@ static int bttv_s_std(struct file *file, void *priv, v4l2_std_id *id)
 	unsigned int i;
 	int err;
 
-	err = v4l2_prio_check(&btv->prio, &fh->prio);
+	err = v4l2_prio_check(&btv->prio, fh->prio);
 	if (0 != err)
 		return err;
 
@@ -1940,7 +1940,7 @@ static int bttv_s_input(struct file *file, void *priv, unsigned int i)
 
 	int err;
 
-	err = v4l2_prio_check(&btv->prio, &fh->prio);
+	err = v4l2_prio_check(&btv->prio, fh->prio);
 	if (0 != err)
 		return err;
 
@@ -1960,7 +1960,7 @@ static int bttv_s_tuner(struct file *file, void *priv,
 	struct bttv *btv = fh->btv;
 	int err;
 
-	err = v4l2_prio_check(&btv->prio, &fh->prio);
+	err = v4l2_prio_check(&btv->prio, fh->prio);
 	if (0 != err)
 		return err;
 
@@ -2000,7 +2000,7 @@ static int bttv_s_frequency(struct file *file, void *priv,
 	struct bttv *btv = fh->btv;
 	int err;
 
-	err = v4l2_prio_check(&btv->prio, &fh->prio);
+	err = v4l2_prio_check(&btv->prio, fh->prio);
 	if (0 != err)
 		return err;
 
@@ -3023,7 +3023,7 @@ static int bttv_s_crop(struct file *file, void *f, struct v4l2_crop *crop)
 	    crop->type != V4L2_BUF_TYPE_VIDEO_OVERLAY)
 		return -EINVAL;
 
-	retval = v4l2_prio_check(&btv->prio, &fh->prio);
+	retval = v4l2_prio_check(&btv->prio, fh->prio);
 	if (0 != retval)
 		return retval;
 
@@ -3235,7 +3235,7 @@ static int bttv_open(struct file *file)
 	*fh = btv->init;
 	fh->type = type;
 	fh->ov.setup_ok = 0;
-	v4l2_prio_open(&btv->prio,&fh->prio);
+	v4l2_prio_open(&btv->prio, &fh->prio);
 
 	videobuf_queue_sg_init(&fh->cap, &bttv_video_qops,
 			    &btv->c.pci->dev, &btv->s_lock,
@@ -3306,7 +3306,7 @@ static int bttv_release(struct file *file)
 	/* free stuff */
 	videobuf_mmap_free(&fh->cap);
 	videobuf_mmap_free(&fh->vbi);
-	v4l2_prio_close(&btv->prio,&fh->prio);
+	v4l2_prio_close(&btv->prio, fh->prio);
 	file->private_data = NULL;
 	kfree(fh);
 
@@ -3443,7 +3443,7 @@ static int radio_release(struct file *file)
 	struct bttv *btv = fh->btv;
 	struct rds_command cmd;
 
-	v4l2_prio_close(&btv->prio,&fh->prio);
+	v4l2_prio_close(&btv->prio, fh->prio);
 	file->private_data = NULL;
 	kfree(fh);
 
