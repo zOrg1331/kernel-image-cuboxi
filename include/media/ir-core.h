@@ -35,7 +35,8 @@ struct ir_scancode {
 struct ir_scancode_table {
 	struct ir_scancode	*scan;
 	int			size;
-	u64		ir_type;
+	u64			ir_type;
+	char			*name;
 	spinlock_t		lock;
 };
 
@@ -47,11 +48,10 @@ struct ir_dev_props {
 
 
 struct ir_input_dev {
-	struct input_dev		*dev;		/* Input device*/
+	struct device			dev;		/* device */
+	char				*driver_name;	/* Name of the driver module */
 	struct ir_scancode_table	rc_tab;		/* scan/key table */
 	unsigned long			devno;		/* device number */
-	struct attribute_group		attr;		/* IR attributes */
-	struct device			*class_dev;	/* virtual class dev */
 	const struct ir_dev_props	*props;		/* Device properties */
 };
 #define to_ir_input_dev(_attr) container_of(_attr, struct ir_input_dev, attr)
@@ -63,7 +63,8 @@ u32 ir_g_keycode_from_table(struct input_dev *input_dev,
 
 int ir_input_register(struct input_dev *dev,
 		      const struct ir_scancode_table *ir_codes,
-		      const struct ir_dev_props *props);
+		      const struct ir_dev_props *props,
+		      const char *driver_name);
 void ir_input_unregister(struct input_dev *input_dev);
 
 /* Routines from ir-sysfs.c */
