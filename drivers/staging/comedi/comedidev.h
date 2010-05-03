@@ -57,7 +57,7 @@
 	static int __init x ## _init_module(void)			\
 		{return comedi_driver_register(&(x)); }			\
 	static void __exit x ## _cleanup_module(void)			\
-		{comedi_driver_unregister(&(x)); } 			\
+		{comedi_driver_unregister(&(x)); }			\
 	module_init(x ## _init_module);					\
 	module_exit(x ## _cleanup_module);
 
@@ -109,17 +109,9 @@
 	COMEDI_MODULE_MACROS \
 	COMEDI_PCI_INITCLEANUP_NOMODULE(comedi_driver, pci_id_table)
 
-#define PCI_VENDOR_ID_INOVA		0x104c
-#define PCI_VENDOR_ID_NATINST		0x1093
-#define PCI_VENDOR_ID_DATX		0x1116
-#define PCI_VENDOR_ID_COMPUTERBOARDS	0x1307
-#define PCI_VENDOR_ID_ADVANTECH		0x13fe
-#define PCI_VENDOR_ID_RTD		0x1435
-#define PCI_VENDOR_ID_AMPLICON		0x14dc
 #define PCI_VENDOR_ID_ADLINK		0x144a
 #define PCI_VENDOR_ID_ICP		0x104c
 #define PCI_VENDOR_ID_CONTEC		0x1221
-#define PCI_VENDOR_ID_MEILHAUS		0x1402
 
 #define COMEDI_NUM_MINORS 0x100
 #define COMEDI_NUM_BOARD_MINORS 0x30
@@ -132,7 +124,7 @@ struct comedi_subdevice {
 	struct comedi_device *device;
 	int type;
 	int n_chan;
-	volatile int subdev_flags;
+	int subdev_flags;
 	int len_chanlist;	/* maximum length of channel/gain list */
 
 	void *private;
@@ -390,7 +382,7 @@ enum subdevice_runflags {
  */
 
 int do_rangeinfo_ioctl(struct comedi_device *dev, struct comedi_rangeinfo *arg);
-int check_chanlist(struct comedi_subdevice *s, int n, unsigned int *chanlist);
+int comedi_check_chanlist(struct comedi_subdevice *s, int n, unsigned int *chanlist);
 void comedi_set_subdevice_runflags(struct comedi_subdevice *s, unsigned mask,
 				   unsigned bits);
 unsigned comedi_get_subdevice_runflags(struct comedi_subdevice *s);
@@ -402,7 +394,7 @@ int insn_inval(struct comedi_device *dev, struct comedi_subdevice *s,
 #define RANGE(a, b)		{(a)*1e6, (b)*1e6, 0}
 #define RANGE_ext(a, b)		{(a)*1e6, (b)*1e6, RF_EXTERNAL}
 #define RANGE_mA(a, b)		{(a)*1e6, (b)*1e6, UNIT_mA}
-#define RANGE_unitless(a, b)	{(a)*1e6, (b)*1e6, 0}	/* XXX */
+#define RANGE_unitless(a, b)	{(a)*1e6, (b)*1e6, 0}
 #define BIP_RANGE(a)		{-(a)*1e6, (a)*1e6, 0}
 #define UNI_RANGE(a)		{0, (a)*1e6, 0}
 

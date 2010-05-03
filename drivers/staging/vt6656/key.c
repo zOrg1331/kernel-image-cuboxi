@@ -163,9 +163,9 @@ VOID KeyvInitTable(PVOID pDeviceHandler, PSKeyManagement pTable)
  *
  */
 BOOL KeybGetKey (
-    IN  PSKeyManagement pTable,
-    IN  PBYTE           pbyBSSID,
-    IN  DWORD           dwKeyIndex,
+      PSKeyManagement pTable,
+      PBYTE           pbyBSSID,
+      DWORD           dwKeyIndex,
     OUT PSKeyItem       *pKey
     )
 {
@@ -312,7 +312,7 @@ BOOL KeybSetKey (
         }
     }
     if (j < (MAX_KEY_TABLE-1)) {
-        memcpy(pTable->KeyTable[j].abyBSSID,pbyBSSID,U_ETHER_ADDR_LEN);
+	memcpy(pTable->KeyTable[j].abyBSSID, pbyBSSID, ETH_ALEN);
         pTable->KeyTable[j].bInUse = TRUE;
         if ((dwKeyIndex & PAIRWISE_KEY) != 0)  {
             // Pairwise key
@@ -562,9 +562,9 @@ VOID KeyvRemoveAllWEPKey (
  *
  */
 BOOL KeybGetTransmitKey (
-    IN  PSKeyManagement pTable,
-    IN  PBYTE           pbyBSSID,
-    IN  DWORD           dwKeyType,
+      PSKeyManagement pTable,
+      PBYTE           pbyBSSID,
+      DWORD           dwKeyType,
     OUT PSKeyItem       *pKey
     )
 {
@@ -642,7 +642,7 @@ BOOL KeybGetTransmitKey (
  *
  */
 BOOL KeybCheckPairewiseKey (
-    IN  PSKeyManagement pTable,
+      PSKeyManagement pTable,
     OUT PSKeyItem       *pKey
     )
 {
@@ -700,7 +700,7 @@ BOOL KeybSetDefaultKey (
     }
 
     pTable->KeyTable[MAX_KEY_TABLE-1].bInUse = TRUE;
-    for(ii=0;ii<U_ETHER_ADDR_LEN;ii++)
+    for (ii = 0; ii < ETH_ALEN; ii++)
         pTable->KeyTable[MAX_KEY_TABLE-1].abyBSSID[ii] = 0xFF;
 
     // Group key

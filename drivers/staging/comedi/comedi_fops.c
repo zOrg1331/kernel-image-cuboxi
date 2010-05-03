@@ -57,6 +57,7 @@ MODULE_LICENSE("GPL");
 
 #ifdef CONFIG_COMEDI_DEBUG
 int comedi_debug;
+EXPORT_SYMBOL(comedi_debug);
 module_param(comedi_debug, int, 0644);
 #endif
 
@@ -598,19 +599,19 @@ copyback:
 static int parse_insn(struct comedi_device *dev, struct comedi_insn *insn,
 		      unsigned int *data, void *file);
 /*
- * 	COMEDI_INSNLIST
- * 	synchronous instructions
+ *	COMEDI_INSNLIST
+ *	synchronous instructions
  *
- * 	arg:
- * 		pointer to sync cmd structure
+ *	arg:
+ *		pointer to sync cmd structure
  *
- * 	reads:
- * 		sync cmd struct at arg
- * 		instruction list
- * 		data (for writes)
+ *	reads:
+ *		sync cmd struct at arg
+ *		instruction list
+ *		data (for writes)
  *
- * 	writes:
- * 		data (for reads)
+ *	writes:
+ *		data (for reads)
  */
 /* arbitrary limits */
 #define MAX_SAMPLES 256
@@ -736,7 +737,8 @@ static int check_insn_config_length(struct comedi_insn *insn,
 		/* by default we allow the insn since we don't have checks for
 		 * all possible cases yet */
 	default:
-		printk("comedi: no check for data length of config insn id "
+		printk(KERN_WARNING
+		       "comedi: no check for data length of config insn id "
 		       "%i is implemented.\n"
 		       " Add a check to %s in %s.\n"
 		       " Assuming n=%i is correct.\n", data[0], __func__,
@@ -837,7 +839,7 @@ static int parse_insn(struct comedi_device *dev, struct comedi_insn *insn,
 			goto out;
 		}
 
-		ret = check_chanlist(s, 1, &insn->chanspec);
+		ret = comedi_check_chanlist(s, 1, &insn->chanspec);
 		if (ret < 0) {
 			ret = -EINVAL;
 			DPRINTK("bad chanspec\n");
@@ -894,18 +896,18 @@ out:
 }
 
 /*
- * 	COMEDI_INSN
- * 	synchronous instructions
+ *	COMEDI_INSN
+ *	synchronous instructions
  *
- * 	arg:
- * 		pointer to insn
+ *	arg:
+ *		pointer to insn
  *
- * 	reads:
- * 		struct comedi_insn struct at arg
- * 		data (for writes)
+ *	reads:
+ *		struct comedi_insn struct at arg
+ *		data (for writes)
  *
- * 	writes:
- * 		data (for reads)
+ *	writes:
+ *		data (for reads)
  */
 static int do_insn_ioctl(struct comedi_device *dev, void *arg, void *file)
 {
@@ -1050,7 +1052,7 @@ static int do_cmd_ioctl(struct comedi_device *dev, void *arg, void *file)
 	}
 
 	/* make sure each element in channel/gain list is valid */
-	ret = check_chanlist(s, async->cmd.chanlist_len, async->cmd.chanlist);
+	ret = comedi_check_chanlist(s, async->cmd.chanlist_len, async->cmd.chanlist);
 	if (ret < 0) {
 		DPRINTK("bad chanlist\n");
 		goto cleanup;
@@ -1172,7 +1174,7 @@ static int do_cmdtest_ioctl(struct comedi_device *dev, void *arg, void *file)
 		}
 
 		/* make sure each element in channel/gain list is valid */
-		ret = check_chanlist(s, user_cmd.chanlist_len, chanlist);
+		ret = comedi_check_chanlist(s, user_cmd.chanlist_len, chanlist);
 		if (ret < 0) {
 			DPRINTK("bad chanlist\n");
 			goto cleanup;
@@ -1925,7 +1927,7 @@ static int __init comedi_init(void)
 	}
 	comedi_class = class_create(THIS_MODULE, "comedi");
 	if (IS_ERR(comedi_class)) {
-		printk("comedi: failed to create class");
+		printk(KERN_ERR "comedi: failed to create class");
 		cdev_del(&comedi_cdev);
 		unregister_chrdev_region(MKDEV(COMEDI_MAJOR, 0),
 					 COMEDI_NUM_MINORS);
@@ -1971,8 +1973,10 @@ module_exit(comedi_cleanup);
 
 void comedi_error(const struct comedi_device *dev, const char *s)
 {
-	printk("comedi%d: %s: %s\n", dev->minor, dev->driver->driver_name, s);
+	printk(KERN_ERR "comedi%d: %s: %s\n", dev->minor,
+	       dev->driver->driver_name, s);
 }
+EXPORT_SYMBOL(comedi_error);
 
 void comedi_event(struct comedi_device *dev, struct comedi_subdevice *s)
 {
@@ -2015,6 +2019,7 @@ void comedi_event(struct comedi_device *dev, struct comedi_subdevice *s)
 	}
 	s->async->events = 0;
 }
+EXPORT_SYMBOL(comedi_event);
 
 void comedi_set_subdevice_runflags(struct comedi_subdevice *s, unsigned mask,
 				   unsigned bits)
@@ -2026,6 +2031,7 @@ void comedi_set_subdevice_runflags(struct comedi_subdevice *s, unsigned mask,
 	s->runflags |= (bits & mask);
 	spin_unlock_irqrestore(&s->spin_lock, flags);
 }
+EXPORT_SYMBOL(comedi_set_subdevice_runflags);
 
 unsigned comedi_get_subdevice_runflags(struct comedi_subdevice *s)
 {
@@ -2037,6 +2043,7 @@ unsigned comedi_get_subdevice_runflags(struct comedi_subdevice *s)
 	spin_unlock_irqrestore(&s->spin_lock, flags);
 	return runflags;
 }
+EXPORT_SYMBOL(comedi_get_subdevice_runflags);
 
 static int is_device_busy(struct comedi_device *dev)
 {
@@ -2105,6 +2112,7 @@ int comedi_alloc_board_minor(struct device *hardware_device)
 		kfree(info->device);
 		kfree(info);
 		printk(KERN_ERR
+
 		       "comedi: error: ran out of minor numbers for board device files.\n");
 		return -EBUSY;
 	}
@@ -2149,6 +2157,7 @@ int comedi_alloc_board_minor(struct device *hardware_device)
 	}
 	return i;
 }
+EXPORT_SYMBOL_GPL(comedi_alloc_board_minor);
 
 void comedi_free_board_minor(unsigned minor)
 {
@@ -2174,6 +2183,7 @@ void comedi_free_board_minor(unsigned minor)
 		kfree(info);
 	}
 }
+EXPORT_SYMBOL_GPL(comedi_free_board_minor);
 
 int comedi_alloc_subdevice_minor(struct comedi_device *dev,
 				 struct comedi_subdevice *s)
@@ -2283,6 +2293,7 @@ struct comedi_device_file_info *comedi_get_device_file_info(unsigned minor)
 	spin_unlock_irqrestore(&comedi_file_info_table_lock, flags);
 	return info;
 }
+EXPORT_SYMBOL_GPL(comedi_get_device_file_info);
 
 static int resize_async_buffer(struct comedi_device *dev,
 			       struct comedi_subdevice *s,

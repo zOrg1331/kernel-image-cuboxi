@@ -87,6 +87,7 @@ Configuration Options:
  * options that are used with comedi_config.
  */
 
+#include "../comedi.h"
 #include "../comedilib.h"
 #include "../comedidev.h"
 #include <linux/string.h>
@@ -96,9 +97,7 @@ Configuration Options:
 #define MAX_CHANS 256
 
 #define MODULE_NAME "comedi_bond"
-#ifdef MODULE_LICENSE
 MODULE_LICENSE("GPL");
-#endif
 #ifndef STR
 #  define STR1(x) #x
 #  define STR(x) STR1(x)
