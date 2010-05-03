@@ -263,6 +263,7 @@ config ARCH_REALVIEW
 	select ARCH_WANT_OPTIONAL_GPIOLIB
 	select PLAT_VERSATILE
 	select ARM_TIMER_SP804
+	select GPIO_PL061 if GPIOLIB
 	help
 	  This enables support for ARM Ltd RealView boards.
 
@@ -322,6 +323,15 @@ config ARCH_CLPS711X
 	select ARCH_USES_GETTIMEOFFSET
 	help
 	  Support for Cirrus Logic 711x/721x based boards.
+
+config ARCH_CNS3XXX
+	bool "Cavium Networks CNS3XXX family"
+	select CPU_V6
+	select GENERIC_TIME
+	select GENERIC_CLOCKEVENTS
+	select ARM_GIC
+	help
+	  Support for Cavium Networks CNS3XXX platform.
 
 config ARCH_GEMINI
 	bool "Cortina Systems Gemini"
@@ -629,14 +639,15 @@ config ARCH_PXA
 
 config ARCH_MSM
 	bool "Qualcomm MSM"
-	select CPU_V6
+	select HAVE_CLK
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
 	help
-	  Support for Qualcomm MSM7K based systems.  This runs on the ARM11
-	  apps processor of the MSM7K and depends on a shared memory
-	  interface to the ARM9 modem processor which runs the baseband stack
-	  and controls some vital subsystems (clock and power control, etc).
+	  Support for Qualcomm MSM/QSD based systems.  This runs on the
+	  apps processor of the MSM/QSD and depends on a shared memory
+	  interface to the modem processor which runs the baseband
+	  stack and controls some vital subsystems
+	  (clock and power control, etc).
 
 config ARCH_SHMOBILE
 	bool "Renesas SH-Mobile"
@@ -859,6 +870,8 @@ source "arch/arm/mach-at91/Kconfig"
 source "arch/arm/mach-bcmring/Kconfig"
 
 source "arch/arm/mach-clps711x/Kconfig"
+
+source "arch/arm/mach-cns3xxx/Kconfig"
 
 source "arch/arm/mach-davinci/Kconfig"
 
