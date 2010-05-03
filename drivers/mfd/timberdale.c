@@ -31,6 +31,7 @@
 
 #include <linux/i2c.h>
 #include <linux/i2c-ocores.h>
+#include <linux/i2c-xiic.h>
 #include <linux/i2c/tsc2007.h>
 
 #include <linux/spi/spi.h>
@@ -39,6 +40,8 @@
 #include <linux/spi/mc33880.h>
 
 #include <media/timb_radio.h>
+
+#include <linux/timb_dma.h>
 
 #include "timberdale.h"
 
@@ -69,12 +72,31 @@ static struct i2c_board_info timberdale_i2c_board_info[] = {
 	},
 };
 
+static __devinitdata struct xiic_i2c_platform_data
+timberdale_xiic_platform_data = {
+	.devices = timberdale_i2c_board_info,
+	.num_devices = ARRAY_SIZE(timberdale_i2c_board_info)
+};
+
 static __devinitdata struct ocores_i2c_platform_data
 timberdale_ocores_platform_data = {
 	.regstep = 4,
 	.clock_khz = 62500,
 	.devices = timberdale_i2c_board_info,
 	.num_devices = ARRAY_SIZE(timberdale_i2c_board_info)
+};
+
+const static __devinitconst struct resource timberdale_xiic_resources[] = {
+	{
+		.start	= XIICOFFSET,
+		.end	= XIICEND,
+		.flags	= IORESOURCE_MEM,
+	},
+	{
+		.start	= IRQ_TIMBERDALE_I2C,
+		.end	= IRQ_TIMBERDALE_I2C,
+		.flags	= IORESOURCE_IRQ,
+	},
 };
 
 const static __devinitconst struct resource timberdale_ocores_resources[] = {
@@ -250,6 +272,65 @@ static __devinitdata struct timb_radio_platform_data
 	}
 };
 
+static __devinitdata struct timb_dma_platform_data timb_dma_platform_data = {
+	.nr_channels = 10,
+	.channels = {
+		{
+			/* UART RX */
+			.rx = true,
+			.descriptors = 2,
+			.descriptor_elements = 1
+		},
+		{
+			/* UART TX */
+			.rx = false,
+			.descriptors = 2,
+			.descriptor_elements = 1
+		},
+		{
+			/* MLB RX */
+			.rx = true,
+			.descriptors = 2,
+			.descriptor_elements = 1
+		},
+		{
+			/* MLB TX */
+			.rx = false,
+			.descriptors = 2,
+			.descriptor_elements = 1
+		},
+		{
+			/* Video RX */
+			.rx = true,
+			.bytes_per_line = 1440,
+			.descriptors = 2,
+			.descriptor_elements = 16
+		},
+		{
+			/* Video framedrop */
+		},
+		{
+			/* SDHCI RX */
+			.rx = true,
+		},
+		{
+			/* SDHCI TX */
+		},
+		{
+			/* ETH RX */
+			.rx = true,
+			.descriptors = 2,
+			.descriptor_elements = 1
+		},
+		{
+			/* ETH TX */
+			.rx = false,
+			.descriptors = 2,
+			.descriptor_elements = 1
+		},
+	}
+};
+
 const static __devinitconst struct resource timberdale_dma_resources[] = {
 	{
 		.start	= DMAOFFSET,
@@ -265,9 +346,23 @@ const static __devinitconst struct resource timberdale_dma_resources[] = {
 
 static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg0[] = {
 	{
+		.name = "timb-dma",
+		.num_resources = ARRAY_SIZE(timberdale_dma_resources),
+		.resources = timberdale_dma_resources,
+		.platform_data = &timb_dma_platform_data,
+		.data_size = sizeof(timb_dma_platform_data),
+	},
+	{
 		.name = "timb-uart",
 		.num_resources = ARRAY_SIZE(timberdale_uart_resources),
 		.resources = timberdale_uart_resources,
+	},
+	{
+		.name = "xiic-i2c",
+		.num_resources = ARRAY_SIZE(timberdale_xiic_resources),
+		.resources = timberdale_xiic_resources,
+		.platform_data = &timberdale_xiic_platform_data,
+		.data_size = sizeof(timberdale_xiic_platform_data),
 	},
 	{
 		.name = "timb-gpio",
@@ -295,14 +390,16 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg0[] = {
 		.num_resources = ARRAY_SIZE(timberdale_eth_resources),
 		.resources = timberdale_eth_resources,
 	},
+};
+
+static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg1[] = {
 	{
 		.name = "timb-dma",
 		.num_resources = ARRAY_SIZE(timberdale_dma_resources),
 		.resources = timberdale_dma_resources,
+		.platform_data = &timb_dma_platform_data,
+		.data_size = sizeof(timb_dma_platform_data),
 	},
-};
-
-static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg1[] = {
 	{
 		.name = "timb-uart",
 		.num_resources = ARRAY_SIZE(timberdale_uart_resources),
@@ -312,6 +409,13 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg1[] = {
 		.name = "uartlite",
 		.num_resources = ARRAY_SIZE(timberdale_uartlite_resources),
 		.resources = timberdale_uartlite_resources,
+	},
+	{
+		.name = "xiic-i2c",
+		.num_resources = ARRAY_SIZE(timberdale_xiic_resources),
+		.resources = timberdale_xiic_resources,
+		.platform_data = &timberdale_xiic_platform_data,
+		.data_size = sizeof(timberdale_xiic_platform_data),
 	},
 	{
 		.name = "timb-gpio",
@@ -344,18 +448,27 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg1[] = {
 		.num_resources = ARRAY_SIZE(timberdale_eth_resources),
 		.resources = timberdale_eth_resources,
 	},
-	{
-		.name = "timb-dma",
-		.num_resources = ARRAY_SIZE(timberdale_dma_resources),
-		.resources = timberdale_dma_resources,
-	},
 };
 
 static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg2[] = {
 	{
+		.name = "timb-dma",
+		.num_resources = ARRAY_SIZE(timberdale_dma_resources),
+		.resources = timberdale_dma_resources,
+		.platform_data = &timb_dma_platform_data,
+		.data_size = sizeof(timb_dma_platform_data),
+	},
+	{
 		.name = "timb-uart",
 		.num_resources = ARRAY_SIZE(timberdale_uart_resources),
 		.resources = timberdale_uart_resources,
+	},
+	{
+		.name = "xiic-i2c",
+		.num_resources = ARRAY_SIZE(timberdale_xiic_resources),
+		.resources = timberdale_xiic_resources,
+		.platform_data = &timberdale_xiic_platform_data,
+		.data_size = sizeof(timberdale_xiic_platform_data),
 	},
 	{
 		.name = "timb-gpio",
@@ -378,14 +491,16 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg2[] = {
 		.platform_data = &timberdale_xspi_platform_data,
 		.data_size = sizeof(timberdale_xspi_platform_data),
 	},
+};
+
+static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg3[] = {
 	{
 		.name = "timb-dma",
 		.num_resources = ARRAY_SIZE(timberdale_dma_resources),
 		.resources = timberdale_dma_resources,
+		.platform_data = &timb_dma_platform_data,
+		.data_size = sizeof(timb_dma_platform_data),
 	},
-};
-
-static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg3[] = {
 	{
 		.name = "timb-uart",
 		.num_resources = ARRAY_SIZE(timberdale_uart_resources),
@@ -423,11 +538,6 @@ static __devinitdata struct mfd_cell timberdale_cells_bar0_cfg3[] = {
 		.name = "ks8842",
 		.num_resources = ARRAY_SIZE(timberdale_eth_resources),
 		.resources = timberdale_eth_resources,
-	},
-	{
-		.name = "timb-dma",
-		.num_resources = ARRAY_SIZE(timberdale_dma_resources),
-		.resources = timberdale_dma_resources,
 	},
 };
 
