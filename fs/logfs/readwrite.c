@@ -892,6 +892,8 @@ u64 logfs_seek_hole(struct inode *inode, u64 bix)
 		return bix;
 	else if (li->li_data[INDIRECT_INDEX] & LOGFS_FULLY_POPULATED)
 		bix = maxbix(li->li_height);
+	else if (bix >= maxbix(li->li_height))
+		return bix;
 	else {
 		bix = seek_holedata_loop(inode, bix, 0);
 		if (bix < maxbix(li->li_height))
@@ -1861,7 +1863,7 @@ int logfs_truncate(struct inode *inode, u64 target)
 			size = target;
 
 		logfs_get_wblocks(sb, NULL, 1);
-		err = __logfs_truncate(inode, target);
+		err = __logfs_truncate(inode, size);
 		if (!err)
 			err = __logfs_write_inode(inode, 0);
 		logfs_put_wblocks(sb, NULL, 1);
