@@ -688,7 +688,7 @@ static int input_default_setkeycode(struct input_dev *dev,
 	}
 
 	__clear_bit(old_keycode, dev->keybit);
-	__set_bit(keycode, dev->keybit);
+	__set_bit(kt_entry->keycode, dev->keybit);
 
 	for (i = 0; i < dev->keycodemax; i++) {
 		if (input_fetch_keycode(dev, i) == old_keycode) {
@@ -816,6 +816,8 @@ EXPORT_SYMBOL(input_set_keycode_big);
 int input_get_keycode(struct input_dev *dev,
 		      unsigned int scancode, unsigned int *keycode)
 {
+	unsigned long flags;
+
 	if (dev->getkeycode) {
 		/*
 		 * Use the legacy calls
@@ -836,7 +838,9 @@ int input_get_keycode(struct input_dev *dev,
 		kt_entry.len = 4;
 		kt_entry.index = scancode;
 
+		spin_lock_irqsave(&dev->event_lock, flags);
 		retval = dev->getkeycodebig_from_index(dev, &kt_entry);
+		spin_unlock_irqrestore(&dev->event_lock, flags);
 
 		*keycode = kt_entry.keycode;
 		return retval;
