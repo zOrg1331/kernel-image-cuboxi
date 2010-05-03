@@ -384,11 +384,7 @@ static int ocfs2_mknod(struct inode *dir,
 			goto leave;
 		}
 		ocfs2_add_links_count(dirfe, 1);
-		status = ocfs2_journal_dirty(handle, parent_fe_bh);
-		if (status < 0) {
-			mlog_errno(status);
-			goto leave;
-		}
+		ocfs2_journal_dirty(handle, parent_fe_bh);
 		inc_nlink(dir);
 	}
 
@@ -408,6 +404,19 @@ static int ocfs2_mknod(struct inode *dir,
 		}
 	}
 
+	/*
+	 * Do this before adding the entry to the directory. We add
+	 * also set d_op after success so that ->d_iput() will cleanup
+	 * the dentry lock even if ocfs2_add_entry() fails below.
+	 */
+	status = ocfs2_dentry_attach_lock(dentry, inode,
+					  OCFS2_I(dir)->ip_blkno);
+	if (status) {
+		mlog_errno(status);
+		goto leave;
+	}
+	dentry->d_op = &ocfs2_dentry_ops;
+
 	status = ocfs2_add_entry(handle, dentry, inode,
 				 OCFS2_I(inode)->ip_blkno, parent_fe_bh,
 				 &lookup);
@@ -416,15 +425,7 @@ static int ocfs2_mknod(struct inode *dir,
 		goto leave;
 	}
 
-	status = ocfs2_dentry_attach_lock(dentry, inode,
-					  OCFS2_I(dir)->ip_blkno);
-	if (status) {
-		mlog_errno(status);
-		goto leave;
-	}
-
 	insert_inode_hash(inode);
-	dentry->d_op = &ocfs2_dentry_ops;
 	d_instantiate(dentry, inode);
 	status = 0;
 leave:
@@ -445,11 +446,6 @@ leave:
 
 	ocfs2_free_dir_lookup_result(&lookup);
 
-	if ((status < 0) && inode) {
-		clear_nlink(inode);
-		iput(inode);
-	}
-
 	if (inode_ac)
 		ocfs2_free_alloc_context(inode_ac);
 
@@ -458,6 +454,17 @@ leave:
 
 	if (meta_ac)
 		ocfs2_free_alloc_context(meta_ac);
+
+	/*
+	 * We should call iput after the i_mutex of the bitmap been
+	 * unlocked in ocfs2_free_alloc_context, or the
+	 * ocfs2_delete_inode will mutex_lock again.
+	 */
+	if ((status < 0) && inode) {
+		OCFS2_I(inode)->ip_flags |= OCFS2_INODE_SKIP_ORPHAN_DIR;
+		clear_nlink(inode);
+		iput(inode);
+	}
 
 	mlog_exit(status);
 
@@ -556,11 +563,7 @@ static int ocfs2_mknod_locked(struct ocfs2_super *osb,
 		fel->l_count = cpu_to_le16(ocfs2_extent_recs_per_inode(osb->sb));
 	}
 
-	status = ocfs2_journal_dirty(handle, *new_fe_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto leave;
-	}
+	ocfs2_journal_dirty(handle, *new_fe_bh);
 
 	ocfs2_populate_inode(inode, fe, 1);
 	ocfs2_ci_set_new(osb, INODE_CACHE(inode));
@@ -694,14 +697,7 @@ static int ocfs2_link(struct dentry *old_dentry,
 	ocfs2_set_links_count(fe, inode->i_nlink);
 	fe->i_ctime = cpu_to_le64(inode->i_ctime.tv_sec);
 	fe->i_ctime_nsec = cpu_to_le32(inode->i_ctime.tv_nsec);
-
-	err = ocfs2_journal_dirty(handle, fe_bh);
-	if (err < 0) {
-		ocfs2_add_links_count(fe, -1);
-		drop_nlink(inode);
-		mlog_errno(err);
-		goto out_commit;
-	}
+	ocfs2_journal_dirty(handle, fe_bh);
 
 	err = ocfs2_add_entry(handle, dentry, inode,
 			      OCFS2_I(inode)->ip_blkno,
@@ -898,12 +894,7 @@ static int ocfs2_unlink(struct inode *dir,
 		drop_nlink(inode);
 	drop_nlink(inode);
 	ocfs2_set_links_count(fe, inode->i_nlink);
-
-	status = ocfs2_journal_dirty(handle, fe_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto leave;
-	}
+	ocfs2_journal_dirty(handle, fe_bh);
 
 	dir->i_ctime = dir->i_mtime = CURRENT_TIME;
 	if (S_ISDIR(inode->i_mode))
@@ -1321,12 +1312,7 @@ static int ocfs2_rename(struct inode *old_dir,
 			ocfs2_set_links_count(newfe, 0);
 		else
 			ocfs2_add_links_count(newfe, -1);
-
-		status = ocfs2_journal_dirty(handle, newfe_bh);
-		if (status < 0) {
-			mlog_errno(status);
-			goto bail;
-		}
+		ocfs2_journal_dirty(handle, newfe_bh);
 	} else {
 		/* if the name was not found in new_dir, add it now */
 		status = ocfs2_add_entry(handle, new_dentry, old_inode,
@@ -1345,10 +1331,7 @@ static int ocfs2_rename(struct inode *old_dir,
 
 		old_di->i_ctime = cpu_to_le64(old_inode->i_ctime.tv_sec);
 		old_di->i_ctime_nsec = cpu_to_le32(old_inode->i_ctime.tv_nsec);
-
-		status = ocfs2_journal_dirty(handle, old_inode_bh);
-		if (status < 0)
-			mlog_errno(status);
+		ocfs2_journal_dirty(handle, old_inode_bh);
 	} else
 		mlog_errno(status);
 
@@ -1420,7 +1403,7 @@ static int ocfs2_rename(struct inode *old_dir,
 							 OCFS2_JOURNAL_ACCESS_WRITE);
 			fe = (struct ocfs2_dinode *) old_dir_bh->b_data;
 			ocfs2_set_links_count(fe, old_dir->i_nlink);
-			status = ocfs2_journal_dirty(handle, old_dir_bh);
+			ocfs2_journal_dirty(handle, old_dir_bh);
 		}
 	}
 	ocfs2_dentry_move(old_dentry, new_dentry, old_dir, new_dir);
@@ -1552,11 +1535,7 @@ static int ocfs2_create_symlink_data(struct ocfs2_super *osb,
 		       (bytes_left > sb->s_blocksize) ? sb->s_blocksize :
 		       bytes_left);
 
-		status = ocfs2_journal_dirty(handle, bhs[virtual]);
-		if (status < 0) {
-			mlog_errno(status);
-			goto bail;
-		}
+		ocfs2_journal_dirty(handle, bhs[virtual]);
 
 		virtual++;
 		p_blkno++;
@@ -1771,6 +1750,18 @@ static int ocfs2_symlink(struct inode *dir,
 		}
 	}
 
+	/*
+	 * Do this before adding the entry to the directory. We add
+	 * also set d_op after success so that ->d_iput() will cleanup
+	 * the dentry lock even if ocfs2_add_entry() fails below.
+	 */
+	status = ocfs2_dentry_attach_lock(dentry, inode, OCFS2_I(dir)->ip_blkno);
+	if (status) {
+		mlog_errno(status);
+		goto bail;
+	}
+	dentry->d_op = &ocfs2_dentry_ops;
+
 	status = ocfs2_add_entry(handle, dentry, inode,
 				 le64_to_cpu(fe->i_blkno), parent_fe_bh,
 				 &lookup);
@@ -1779,14 +1770,7 @@ static int ocfs2_symlink(struct inode *dir,
 		goto bail;
 	}
 
-	status = ocfs2_dentry_attach_lock(dentry, inode, OCFS2_I(dir)->ip_blkno);
-	if (status) {
-		mlog_errno(status);
-		goto bail;
-	}
-
 	insert_inode_hash(inode);
-	dentry->d_op = &ocfs2_dentry_ops;
 	d_instantiate(dentry, inode);
 bail:
 	if (status < 0 && did_quota)
@@ -1811,6 +1795,7 @@ bail:
 	if (xattr_ac)
 		ocfs2_free_alloc_context(xattr_ac);
 	if ((status < 0) && inode) {
+		OCFS2_I(inode)->ip_flags |= OCFS2_INODE_SKIP_ORPHAN_DIR;
 		clear_nlink(inode);
 		iput(inode);
 	}
@@ -1944,12 +1929,7 @@ static int ocfs2_orphan_add(struct ocfs2_super *osb,
 	if (S_ISDIR(inode->i_mode))
 		ocfs2_add_links_count(orphan_fe, 1);
 	orphan_dir_inode->i_nlink = ocfs2_read_links_count(orphan_fe);
-
-	status = ocfs2_journal_dirty(handle, orphan_dir_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto leave;
-	}
+	ocfs2_journal_dirty(handle, orphan_dir_bh);
 
 	status = __ocfs2_add_entry(handle, orphan_dir_inode, name,
 				   OCFS2_ORPHAN_NAMELEN, inode,
@@ -1976,6 +1956,7 @@ static int ocfs2_orphan_add(struct ocfs2_super *osb,
 	}
 
 	le32_add_cpu(&fe->i_flags, OCFS2_ORPHANED_FL);
+	OCFS2_I(inode)->ip_flags &= ~OCFS2_INODE_SKIP_ORPHAN_DIR;
 
 	/* Record which orphan dir our inode now resides
 	 * in. delete_inode will use this to determine which orphan
@@ -2047,12 +2028,7 @@ int ocfs2_orphan_del(struct ocfs2_super *osb,
 	if (S_ISDIR(inode->i_mode))
 		ocfs2_add_links_count(orphan_fe, -1);
 	orphan_dir_inode->i_nlink = ocfs2_read_links_count(orphan_fe);
-
-	status = ocfs2_journal_dirty(handle, orphan_dir_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto leave;
-	}
+	ocfs2_journal_dirty(handle, orphan_dir_bh);
 
 leave:
 	ocfs2_free_dir_lookup_result(&lookup);
