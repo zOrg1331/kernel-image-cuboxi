@@ -303,7 +303,7 @@ static int __devinit fun_probe(struct of_device *ofdev,
 				  FSL_UPM_WAIT_WRITE_BYTE;
 
 	fun->io_base = devm_ioremap_nocache(&ofdev->dev, io_res.start,
-					    io_res.end - io_res.start + 1);
+					    resource_size(&io_res));
 	if (!fun->io_base) {
 		ret = -ENOMEM;
 		goto err2;
@@ -350,7 +350,7 @@ static int __devexit fun_remove(struct of_device *ofdev)
 	return 0;
 }
 
-static struct of_device_id of_fun_match[] = {
+static const struct of_device_id of_fun_match[] = {
 	{ .compatible = "fsl,upm-nand" },
 	{},
 };
