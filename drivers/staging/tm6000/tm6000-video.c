@@ -149,7 +149,8 @@ static inline void get_next_buf(struct tm6000_dmaqueue *dma_q,
 
 	/* Cleans up buffer - Usefull for testing for frame/URB loss */
 	outp = videobuf_to_vmalloc(&(*buf)->vb);
-	memset(outp, 0, (*buf)->vb.size);
+	if (outp)
+		memset(outp, 0, (*buf)->vb.size);
 
 	return;
 }
@@ -282,7 +283,8 @@ static int copy_packet(struct urb *urb, u32 header, u8 **ptr, u8 *endp,
 			start_line=line;
 			last_field=field;
 		}
-		last_line=line;
+		if (cmd == TM6000_URB_MSG_VIDEO)
+			last_line = line;
 
 		pktsize = TM6000_URB_MSG_LEN;
 	} else {
@@ -356,13 +358,13 @@ static int copy_streams(u8 *data, u8 *out_p, unsigned long len,
 					dev->isoc_ctl.tmp_buf_len--;
 				}
 				if (dev->isoc_ctl.tmp_buf_len) {
-					memcpy (&header,p,
+					memcpy(&header, p,
 						dev->isoc_ctl.tmp_buf_len);
-					memcpy (((u8 *)header)+
-						dev->isoc_ctl.tmp_buf,
+					memcpy((u8 *)&header +
+						dev->isoc_ctl.tmp_buf_len,
 						ptr,
-						4-dev->isoc_ctl.tmp_buf_len);
-					ptr+=4-dev->isoc_ctl.tmp_buf_len;
+						4 - dev->isoc_ctl.tmp_buf_len);
+					ptr += 4 - dev->isoc_ctl.tmp_buf_len;
 					goto HEADER;
 				}
 			}
@@ -393,6 +395,8 @@ HEADER:
 					jiffies);
 			return rc;
 		}
+		if (!*buf)
+			return 0;
 	}
 
 	return 0;
@@ -526,7 +530,7 @@ static inline int tm6000_isoc_copy(struct urb *urb)
 				}
 			}
 			copied += len;
-			if (copied>=size)
+			if (copied >= size || !buf)
 				break;
 //		}
 	}
@@ -614,14 +618,18 @@ static int tm6000_prepare_isoc(struct tm6000_core *dev, unsigned int framesize)
 	/* De-allocates all pending stuff */
 	tm6000_uninit_isoc(dev);
 
+	usb_set_interface(dev->udev,
+			  dev->isoc_in.bInterfaceNumber,
+			  dev->isoc_in.bAlternateSetting);
+
 	pipe = usb_rcvisocpipe(dev->udev,
-			       dev->isoc_in->desc.bEndpointAddress &
+			       dev->isoc_in.endp->desc.bEndpointAddress &
 			       USB_ENDPOINT_NUMBER_MASK);
 
 	size = usb_maxpacket(dev->udev, pipe, usb_pipeout(pipe));
 
-	if (size > dev->max_isoc_in)
-		size = dev->max_isoc_in;
+	if (size > dev->isoc_in.maxsize)
+		size = dev->isoc_in.maxsize;
 
 	dev->isoc_ctl.max_pkt_size = size;
 
@@ -651,8 +659,7 @@ static int tm6000_prepare_isoc(struct tm6000_core *dev, unsigned int framesize)
 	dprintk(dev, V4L2_DEBUG_QUEUE, "Allocating %d x %d packets"
 		    " (%d bytes) of %d bytes each to handle %u size\n",
 		    max_packets, num_bufs, sb_size,
-		    dev->max_isoc_in, size);
-
+		    dev->isoc_in.maxsize, size);
 
 	/* allocate urbs and transfer buffers */
 	for (i = 0; i < dev->isoc_ctl.num_bufs; i++) {
@@ -680,7 +687,7 @@ static int tm6000_prepare_isoc(struct tm6000_core *dev, unsigned int framesize)
 		usb_fill_bulk_urb(urb, dev->udev, pipe,
 				  dev->isoc_ctl.transfer_buffer[i], sb_size,
 				  tm6000_irq_callback, dma_q);
-		urb->interval = dev->isoc_in->desc.bInterval;
+		urb->interval = dev->isoc_in.endp->desc.bInterval;
 		urb->number_of_packets = max_packets;
 		urb->transfer_flags = URB_ISO_ASAP | URB_NO_TRANSFER_DMA_MAP;
 
