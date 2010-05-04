@@ -115,6 +115,18 @@ config TPS65010
 	  This driver can also be built as a module.  If so, the module
 	  will be called tps65010.
 
+config TPS6507X
+	tristate "TPS6507x Power Management / Touch Screen chips"
+	select MFD_CORE
+	depends on I2C
+	help
+	  If you say yes here you get support for the TPS6507x series of
+	  Power Management / Touch Screen chips.  These include voltage
+	  regulators, lithium ion/polymer battery charging, touch screen
+	  and other features that are often used in portable devices.
+	  This driver can also be built as a module.  If so, the module
+	  will be called tps6507x.
+
 config MENELAUS
 	bool "Texas Instruments TWL92330/Menelaus PM chip"
 	depends on I2C=y && ARCH_OMAP2
@@ -402,6 +414,25 @@ config LPC_SCH
 	help
 	  LPC bridge function of the Intel SCH provides support for
 	  System Management Bus and General Purpose I/O.
+
+config MFD_RDC321X
+	tristate "Support for RDC-R321x southbridge"
+	select MFD_CORE
+	depends on PCI
+	help
+	  Say yes here if you want to have support for the RDC R-321x SoC
+	  southbridge which provides access to GPIOs and Watchdog using the
+	  southbridge PCI device configuration space.
+
+config MFD_JANZ_CMODIO
+	tristate "Support for Janz CMOD-IO PCI MODULbus Carrier Board"
+	select MFD_CORE
+	depends on PCI
+	help
+	  This is the core driver for the Janz CMOD-IO PCI MODULbus
+	  carrier board. This device is a PCI to MODULbus bridge which may
+	  host many different types of MODULbus daughterboards, including
+	  CAN and GPIO controllers.
 
 endmenu
 
