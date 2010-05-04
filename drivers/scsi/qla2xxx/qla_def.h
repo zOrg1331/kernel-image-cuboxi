@@ -33,6 +33,8 @@
 #include <scsi/scsi_transport_fc.h>
 #include <scsi/scsi_bsg_fc.h>
 
+#include "qla_bsg.h"
+#include "qla_nx.h"
 #define QLA2XXX_DRIVER_NAME  "qla2xxx"
 
 /*
@@ -206,6 +208,7 @@ typedef struct srb {
  * SRB flag definitions
  */
 #define SRB_DMA_VALID		BIT_0	/* Command sent to ISP */
+#define SRB_FCP_CMND_DMA_VALID	BIT_12  /* FCP command in IOCB */
 
 /*
  * SRB extensions.
@@ -416,6 +419,7 @@ typedef union {
 		struct device_reg_2xxx isp;
 		struct device_reg_24xx isp24;
 		struct device_reg_25xxmq isp25mq;
+		struct device_reg_82xx isp82;
 } device_reg_t;
 
 #define ISP_REQ_Q_IN(ha, reg) \
@@ -1579,6 +1583,8 @@ typedef struct fc_port {
 	uint16_t loop_id;
 	uint16_t old_loop_id;
 
+	uint8_t fcp_prio;
+
 	uint8_t fabric_port_name[WWN_SIZE];
 	uint16_t fp_speed;
 
@@ -2109,6 +2115,7 @@ struct isp_operations {
 
 	int (*get_flash_version) (struct scsi_qla_host *, void *);
 	int (*start_scsi) (srb_t *);
+	int (*abort_isp) (struct scsi_qla_host *);
 };
 
 /* MSI-X Support *************************************************************/
@@ -2295,6 +2302,7 @@ struct qla_hw_data {
 		uint32_t	eeh_busy		:1;
 		uint32_t	cpu_affinity_enabled	:1;
 		uint32_t	disable_msix_handshake	:1;
+		uint32_t	fcp_prio_enabled	:1;
 	} flags;
 
 	/* This spinlock is used to protect "io transactions", you must
@@ -2382,7 +2390,8 @@ struct qla_hw_data {
 #define DT_ISP2532                      BIT_11
 #define DT_ISP8432                      BIT_12
 #define DT_ISP8001			BIT_13
-#define DT_ISP_LAST			(DT_ISP8001 << 1)
+#define DT_ISP8021			BIT_14
+#define DT_ISP_LAST			(DT_ISP8021 << 1)
 
 #define DT_IIDMA                        BIT_26
 #define DT_FWI2                         BIT_27
@@ -2405,6 +2414,7 @@ struct qla_hw_data {
 #define IS_QLA2532(ha)  (DT_MASK(ha) & DT_ISP2532)
 #define IS_QLA8432(ha)  (DT_MASK(ha) & DT_ISP8432)
 #define IS_QLA8001(ha)	(DT_MASK(ha) & DT_ISP8001)
+#define IS_QLA82XX(ha)	(DT_MASK(ha) & DT_ISP8021)
 
 #define IS_QLA23XX(ha)  (IS_QLA2300(ha) || IS_QLA2312(ha) || IS_QLA2322(ha) || \
 			IS_QLA6312(ha) || IS_QLA6322(ha))
@@ -2415,8 +2425,10 @@ struct qla_hw_data {
 #define IS_QLA24XX_TYPE(ha)     (IS_QLA24XX(ha) || IS_QLA54XX(ha) || \
 				IS_QLA84XX(ha))
 #define IS_QLA81XX(ha)		(IS_QLA8001(ha))
+#define IS_QLA8XXX_TYPE(ha)	(IS_QLA81XX(ha) || IS_QLA82XX(ha))
 #define IS_QLA2XXX_MIDTYPE(ha)	(IS_QLA24XX(ha) || IS_QLA84XX(ha) || \
-				IS_QLA25XX(ha) || IS_QLA81XX(ha))
+				IS_QLA25XX(ha) || IS_QLA81XX(ha) || \
+				IS_QLA82XX(ha))
 #define IS_MSIX_NACK_CAPABLE(ha) (IS_QLA81XX(ha))
 #define IS_NOPOLLING_TYPE(ha)	((IS_QLA25XX(ha) || IS_QLA81XX(ha)) && \
 				(ha)->flags.msix_enabled)
@@ -2598,6 +2610,8 @@ struct qla_hw_data {
 	uint32_t        flt_region_nvram;
 	uint32_t        flt_region_npiv_conf;
 	uint32_t	flt_region_gold_fw;
+	uint32_t	flt_region_fcp_prio;
+	uint32_t	flt_region_bootload;
 
 	/* Needed for BEACON */
 	uint16_t        beacon_blink_led;
@@ -2626,6 +2640,41 @@ struct qla_hw_data {
 	struct isp_operations *isp_ops;
 	struct workqueue_struct *wq;
 	struct qlfc_fw fw_buf;
+
+	/* FCP_CMND priority support */
+	struct qla_fcp_prio_cfg *fcp_prio_cfg;
+
+	struct dma_pool *dl_dma_pool;
+#define DSD_LIST_DMA_POOL_SIZE  512
+
+	struct dma_pool *fcp_cmnd_dma_pool;
+	mempool_t       *ctx_mempool;
+#define FCP_CMND_DMA_POOL_SIZE 512
+
+	unsigned long	nx_pcibase;		/* Base I/O address */
+	uint8_t		*nxdb_rd_ptr;		/* Doorbell read pointer */
+	unsigned long	nxdb_wr_ptr;		/* Door bell write pointer */
+	unsigned long	first_page_group_start;
+	unsigned long	first_page_group_end;
+
+	uint32_t	crb_win;
+	uint32_t	curr_window;
+	uint32_t	ddr_mn_window;
+	unsigned long	mn_win_crb;
+	unsigned long	ms_win_crb;
+	int		qdr_sn_window;
+	uint32_t	nx_dev_init_timeout;
+	uint32_t	nx_reset_timeout;
+	rwlock_t	hw_lock;
+	uint16_t	portnum;		/* port number */
+	int		link_width;
+	struct fw_blob	*hablob;
+	struct qla82xx_legacy_intr_set nx_legacy_intr;
+
+	uint16_t	gbl_dsd_inuse;
+	uint16_t	gbl_dsd_avail;
+	struct list_head gbl_dsd_list;
+#define NUM_DSD_CHAIN 4096
 };
 
 /*
@@ -2678,10 +2727,13 @@ typedef struct scsi_qla_host {
 #define VP_DPC_NEEDED		14	/* wake up for VP dpc handling */
 #define UNLOADING		15
 #define NPIV_CONFIG_NEEDED	16
+#define ISP_UNRECOVERABLE	17
+#define FCOE_CTX_RESET_NEEDED	18	/* Initiate FCoE context reset */
 
 	uint32_t	device_flags;
 #define SWITCH_FOUND		BIT_0
 #define DFLG_NO_CABLE		BIT_1
+#define DFLG_DEV_FAILED		BIT_5
 
 	/* ISP configuration data. */
 	uint16_t	loop_id;		/* Host adapter loop id */
@@ -2739,6 +2791,8 @@ typedef struct scsi_qla_host {
 #define VP_ERR_ADAP_NORESOURCES	5
 	struct qla_hw_data *hw;
 	struct req_que *req;
+	int		fw_heartbeat_counter;
+	int		seconds_since_last_heartbeat;
 } scsi_qla_host_t;
 
 /*
@@ -2791,134 +2845,14 @@ typedef struct scsi_qla_host {
 #define OPTROM_SIZE_24XX	0x100000
 #define OPTROM_SIZE_25XX	0x200000
 #define OPTROM_SIZE_81XX	0x400000
+#define OPTROM_SIZE_82XX	0x800000
+
+#define OPTROM_BURST_SIZE	0x1000
+#define OPTROM_BURST_DWORDS	(OPTROM_BURST_SIZE / 4)
 
 #include "qla_gbl.h"
 #include "qla_dbg.h"
 #include "qla_inline.h"
 
 #define CMD_SP(Cmnd)		((Cmnd)->SCp.ptr)
-
-/*
- * BSG Vendor specific commands
- */
-
-#define QL_VND_LOOPBACK		0x01
-#define QLA84_RESET		0x02
-#define QLA84_UPDATE_FW		0x03
-#define QLA84_MGMT_CMD		0x04
-
-/* BSG definations for interpreting CommandSent field */
-#define INT_DEF_LB_LOOPBACK_CMD         0
-#define INT_DEF_LB_ECHO_CMD             1
-
-/* BSG Vendor specific definations */
-typedef struct _A84_RESET {
-	uint16_t Flags;
-	uint16_t Reserved;
-#define A84_RESET_FLAG_ENABLE_DIAG_FW   1
-} __attribute__((packed)) A84_RESET, *PA84_RESET;
-
-#define A84_ISSUE_WRITE_TYPE_CMD        0
-#define A84_ISSUE_READ_TYPE_CMD         1
-#define A84_CLEANUP_CMD                 2
-#define A84_ISSUE_RESET_OP_FW           3
-#define A84_ISSUE_RESET_DIAG_FW         4
-#define A84_ISSUE_UPDATE_OPFW_CMD       5
-#define A84_ISSUE_UPDATE_DIAGFW_CMD     6
-
-struct qla84_mgmt_param {
-	union {
-		struct {
-			uint32_t start_addr;
-		} mem; /* for QLA84_MGMT_READ/WRITE_MEM */
-		struct {
-			uint32_t id;
-#define QLA84_MGMT_CONFIG_ID_UIF        1
-#define QLA84_MGMT_CONFIG_ID_FCOE_COS   2
-#define QLA84_MGMT_CONFIG_ID_PAUSE      3
-#define QLA84_MGMT_CONFIG_ID_TIMEOUTS   4
-
-		uint32_t param0;
-		uint32_t param1;
-	} config; /* for QLA84_MGMT_CHNG_CONFIG */
-
-	struct {
-		uint32_t type;
-#define QLA84_MGMT_INFO_CONFIG_LOG_DATA         1 /* Get Config Log Data */
-#define QLA84_MGMT_INFO_LOG_DATA                2 /* Get Log Data */
-#define QLA84_MGMT_INFO_PORT_STAT               3 /* Get Port Statistics */
-#define QLA84_MGMT_INFO_LIF_STAT                4 /* Get LIF Statistics  */
-#define QLA84_MGMT_INFO_ASIC_STAT               5 /* Get ASIC Statistics */
-#define QLA84_MGMT_INFO_CONFIG_PARAMS           6 /* Get Config Parameters */
-#define QLA84_MGMT_INFO_PANIC_LOG               7 /* Get Panic Log */
-
-		uint32_t context;
-/*
-* context definitions for QLA84_MGMT_INFO_CONFIG_LOG_DATA
-*/
-#define IC_LOG_DATA_LOG_ID_DEBUG_LOG                    0
-#define IC_LOG_DATA_LOG_ID_LEARN_LOG                    1
-#define IC_LOG_DATA_LOG_ID_FC_ACL_INGRESS_LOG           2
-#define IC_LOG_DATA_LOG_ID_FC_ACL_EGRESS_LOG            3
-#define IC_LOG_DATA_LOG_ID_ETHERNET_ACL_INGRESS_LOG     4
-#define IC_LOG_DATA_LOG_ID_ETHERNET_ACL_EGRESS_LOG      5
-#define IC_LOG_DATA_LOG_ID_MESSAGE_TRANSMIT_LOG         6
-#define IC_LOG_DATA_LOG_ID_MESSAGE_RECEIVE_LOG          7
-#define IC_LOG_DATA_LOG_ID_LINK_EVENT_LOG               8
-#define IC_LOG_DATA_LOG_ID_DCX_LOG                      9
-
-/*
-* context definitions for QLA84_MGMT_INFO_PORT_STAT
-*/
-#define IC_PORT_STATISTICS_PORT_NUMBER_ETHERNET_PORT0   0
-#define IC_PORT_STATISTICS_PORT_NUMBER_ETHERNET_PORT1   1
-#define IC_PORT_STATISTICS_PORT_NUMBER_NSL_PORT0        2
-#define IC_PORT_STATISTICS_PORT_NUMBER_NSL_PORT1        3
-#define IC_PORT_STATISTICS_PORT_NUMBER_FC_PORT0         4
-#define IC_PORT_STATISTICS_PORT_NUMBER_FC_PORT1         5
-
-
-/*
-* context definitions for QLA84_MGMT_INFO_LIF_STAT
-*/
-#define IC_LIF_STATISTICS_LIF_NUMBER_ETHERNET_PORT0     0
-#define IC_LIF_STATISTICS_LIF_NUMBER_ETHERNET_PORT1     1
-#define IC_LIF_STATISTICS_LIF_NUMBER_FC_PORT0           2
-#define IC_LIF_STATISTICS_LIF_NUMBER_FC_PORT1           3
-#define IC_LIF_STATISTICS_LIF_NUMBER_CPU                6
-
-		} info; /* for QLA84_MGMT_GET_INFO */
-	} u;
-};
-
-struct qla84_msg_mgmt {
-	uint16_t cmd;
-#define QLA84_MGMT_READ_MEM     0x00
-#define QLA84_MGMT_WRITE_MEM    0x01
-#define QLA84_MGMT_CHNG_CONFIG  0x02
-#define QLA84_MGMT_GET_INFO     0x03
-	uint16_t rsrvd;
-	struct qla84_mgmt_param mgmtp;/* parameters for cmd */
-	uint32_t len; /* bytes in payload following this struct */
-	uint8_t payload[0]; /* payload for cmd */
-};
-
-struct msg_update_fw {
-	/*
-	* diag_fw = 0  operational fw
-	*      otherwise diagnostic fw
-	* offset, len, fw_len are present to overcome the current limitation
-	* of 128Kb xfer size. The fw is sent in smaller chunks. Each chunk
-	* specifies the byte "offset" where it fits in the fw buffer. The
-	* number of bytes in each chunk is specified in "len". "fw_len"
-	* is the total size of fw. The first chunk should start at offset = 0.
-	* When offset+len == fw_len, the fw is written to the HBA.
-	*/
-	uint32_t diag_fw;
-	uint32_t offset;/* start offset */
-	uint32_t len;   /* num bytes in cur xfer */
-	uint32_t fw_len; /* size of fw in bytes */
-	uint8_t fw_bytes[0];
-};
-
 #endif
