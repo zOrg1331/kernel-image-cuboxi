@@ -69,16 +69,15 @@ void perf_session__update_sample_type(struct perf_session *self)
 
 int perf_session__create_kernel_maps(struct perf_session *self)
 {
-	int ret;
-	struct rb_root *root = &self->kerninfo_root;
+	struct rb_root *machines = &self->machines;
+	int ret = machines__create_kernel_maps(machines, HOST_KERNEL_ID);
 
-	ret = map_groups__create_kernel_maps(root, HOST_KERNEL_ID);
 	if (ret >= 0)
-		ret = map_groups__create_guest_kernel_maps(root);
+		ret = machines__create_guest_kernel_maps(machines);
 	return ret;
 }
 
-struct perf_session *perf_session__new(const char *filename, int mode, bool force)
+struct perf_session *perf_session__new(const char *filename, int mode, bool force, bool repipe)
 {
 	size_t len = filename ? strlen(filename) + 1 : 0;
 	struct perf_session *self = zalloc(sizeof(*self) + len);
@@ -97,7 +96,8 @@ struct perf_session *perf_session__new(const char *filename, int mode, bool forc
 	self->cwd = NULL;
 	self->cwdlen = 0;
 	self->unknown_events = 0;
-	self->kerninfo_root = RB_ROOT;
+	self->machines = RB_ROOT;
+	self->repipe = repipe;
 	self->ordered_samples.flush_limit = ULLONG_MAX;
 	INIT_LIST_HEAD(&self->ordered_samples.samples_head);
 
