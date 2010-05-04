@@ -82,7 +82,7 @@
 
 /*
  * There are three quota SMP locks. dq_list_lock protects all lists with quotas
- * and quota formats, dqstats structure containing statistics about the lists
+ * and quota formats.
  * dq_data_lock protects data from dq_dqb and also mem_dqinfo structures and
  * also guards consistency of dquot->dq_dqb with inode->i_blocks, i_bytes.
  * i_blocks and i_bytes updates itself are guarded by i_lock acquired directly
@@ -132,7 +132,9 @@ static __cacheline_aligned_in_smp DEFINE_SPINLOCK(dq_state_lock);
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(dq_data_lock);
 EXPORT_SYMBOL(dq_data_lock);
 
+#if defined(CONFIG_QUOTA_DEBUG) || defined(CONFIG_PRINT_QUOTA_WARNING)
 static char *quotatypes[] = INITQFNAMES;
+#endif
 static struct quota_format_type *quota_formats;	/* List of registered formats */
 static struct quota_module_name module_names[] = INIT_QUOTA_MODULE_NAMES;
 
@@ -226,6 +228,10 @@ static struct hlist_head *dquot_hash;
 
 struct dqstats dqstats;
 EXPORT_SYMBOL(dqstats);
+#ifdef CONFIG_SMP
+struct dqstats *dqstats_pcpu;
+EXPORT_SYMBOL(dqstats_pcpu);
+#endif
 
 static qsize_t inode_get_rsv_space(struct inode *inode);
 static void __dquot_initialize(struct inode *inode, int type);
@@ -273,7 +279,7 @@ static struct dquot *find_dquot(unsigned int hashent, struct super_block *sb,
 static inline void put_dquot_last(struct dquot *dquot)
 {
 	list_add_tail(&dquot->dq_free, &free_dquots);
-	dqstats.free_dquots++;
+	dqstats_inc(DQST_FREE_DQUOTS);
 }
 
 static inline void remove_free_dquot(struct dquot *dquot)
@@ -281,7 +287,7 @@ static inline void remove_free_dquot(struct dquot *dquot)
 	if (list_empty(&dquot->dq_free))
 		return;
 	list_del_init(&dquot->dq_free);
-	dqstats.free_dquots--;
+	dqstats_dec(DQST_FREE_DQUOTS);
 }
 
 static inline void put_inuse(struct dquot *dquot)
@@ -289,12 +295,12 @@ static inline void put_inuse(struct dquot *dquot)
 	/* We add to the back of inuse list so we don't have to restart
 	 * when traversing this list and we block */
 	list_add_tail(&dquot->dq_inuse, &inuse_list);
-	dqstats.allocated_dquots++;
+	dqstats_inc(DQST_ALLOC_DQUOTS);
 }
 
 static inline void remove_inuse(struct dquot *dquot)
 {
-	dqstats.allocated_dquots--;
+	dqstats_dec(DQST_ALLOC_DQUOTS);
 	list_del(&dquot->dq_inuse);
 }
 /*
@@ -317,14 +323,23 @@ static inline int mark_dquot_dirty(struct dquot *dquot)
 	return dquot->dq_sb->dq_op->mark_dirty(dquot);
 }
 
+/* Mark dquot dirty in atomic manner, and return it's old dirty flag state */
 int dquot_mark_dquot_dirty(struct dquot *dquot)
 {
+	int ret = 1;
+
+	/* If quota is dirty already, we don't have to acquire dq_list_lock */
+	if (test_bit(DQ_MOD_B, &dquot->dq_flags))
+		return 1;
+
 	spin_lock(&dq_list_lock);
-	if (!test_and_set_bit(DQ_MOD_B, &dquot->dq_flags))
+	if (!test_and_set_bit(DQ_MOD_B, &dquot->dq_flags)) {
 		list_add(&dquot->dq_dirty, &sb_dqopt(dquot->dq_sb)->
 				info[dquot->dq_type].dqi_dirty_list);
+		ret = 0;
+	}
 	spin_unlock(&dq_list_lock);
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL(dquot_mark_dquot_dirty);
 
@@ -550,8 +565,8 @@ int dquot_scan_active(struct super_block *sb,
 			continue;
 		/* Now we have active dquot so we can just increase use count */
 		atomic_inc(&dquot->dq_count);
-		dqstats.lookups++;
 		spin_unlock(&dq_list_lock);
+		dqstats_inc(DQST_LOOKUPS);
 		dqput(old_dquot);
 		old_dquot = dquot;
 		ret = fn(dquot, priv);
@@ -596,8 +611,8 @@ int vfs_quota_sync(struct super_block *sb, int type, int wait)
  			 * holding reference so we can safely just increase
 			 * use count */
 			atomic_inc(&dquot->dq_count);
-			dqstats.lookups++;
 			spin_unlock(&dq_list_lock);
+			dqstats_inc(DQST_LOOKUPS);
 			sb->dq_op->write_dquot(dquot);
 			dqput(dquot);
 			spin_lock(&dq_list_lock);
@@ -609,9 +624,7 @@ int vfs_quota_sync(struct super_block *sb, int type, int wait)
 		if ((cnt == type || type == -1) && sb_has_quota_active(sb, cnt)
 		    && info_dirty(&dqopt->info[cnt]))
 			sb->dq_op->write_info(sb, cnt);
-	spin_lock(&dq_list_lock);
-	dqstats.syncs++;
-	spin_unlock(&dq_list_lock);
+	dqstats_inc(DQST_SYNCS);
 	mutex_unlock(&dqopt->dqonoff_mutex);
 
 	if (!wait || (sb_dqopt(sb)->flags & DQUOT_QUOTA_SYS_FILE))
@@ -663,6 +676,22 @@ static void prune_dqcache(int count)
 	}
 }
 
+static int dqstats_read(unsigned int type)
+{
+	int count = 0;
+	int cpu;
+#ifdef CONFIG_SMP
+	for_each_possible_cpu(cpu)
+		count += per_cpu_ptr(dqstats_pcpu, cpu)->stat[type];
+	/* Statistics reading is racy, but absolute accuracy isn't required */
+	if (count < 0)
+		count = 0;
+#else
+	count = dqstats.stat[type];
+#endif
+	return count;
+}
+
 /*
  * This is called from kswapd when we think we need some
  * more memory
@@ -675,7 +704,7 @@ static int shrink_dqcache_memory(int nr, gfp_t gfp_mask)
 		prune_dqcache(nr);
 		spin_unlock(&dq_list_lock);
 	}
-	return (dqstats.free_dquots / 100) * sysctl_vfs_cache_pressure;
+	return (dqstats_read(DQST_FREE_DQUOTS)/100) * sysctl_vfs_cache_pressure;
 }
 
 static struct shrinker dqcache_shrinker = {
@@ -703,10 +732,7 @@ void dqput(struct dquot *dquot)
 		BUG();
 	}
 #endif
-	
-	spin_lock(&dq_list_lock);
-	dqstats.drops++;
-	spin_unlock(&dq_list_lock);
+	dqstats_inc(DQST_DROPS);
 we_slept:
 	spin_lock(&dq_list_lock);
 	if (atomic_read(&dquot->dq_count) > 1) {
@@ -823,15 +849,15 @@ we_slept:
 		put_inuse(dquot);
 		/* hash it first so it can be found */
 		insert_dquot_hash(dquot);
-		dqstats.lookups++;
 		spin_unlock(&dq_list_lock);
+		dqstats_inc(DQST_LOOKUPS);
 	} else {
 		if (!atomic_read(&dquot->dq_count))
 			remove_free_dquot(dquot);
 		atomic_inc(&dquot->dq_count);
-		dqstats.cache_hits++;
-		dqstats.lookups++;
 		spin_unlock(&dq_list_lock);
+		dqstats_inc(DQST_CACHE_HITS);
+		dqstats_inc(DQST_LOOKUPS);
 	}
 	/* Wait for dq_lock - after this we know that either dquot_release() is
 	 * already finished or it will be canceled due to dq_count > 1 test */
@@ -2465,62 +2491,74 @@ const struct quotactl_ops vfs_quotactl_ops = {
 	.set_dqblk	= vfs_set_dqblk
 };
 
+
+static int do_proc_dqstats(struct ctl_table *table, int write,
+		     void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+#ifdef CONFIG_SMP
+	/* Update global table */
+	unsigned int type = (int *)table->data - dqstats.stat;
+	dqstats.stat[type] = dqstats_read(type);
+#endif
+	return proc_dointvec(table, write, buffer, lenp, ppos);
+}
+
 static ctl_table fs_dqstats_table[] = {
 	{
 		.procname	= "lookups",
-		.data		= &dqstats.lookups,
+		.data		= &dqstats.stat[DQST_LOOKUPS],
 		.maxlen		= sizeof(int),
 		.mode		= 0444,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= do_proc_dqstats,
 	},
 	{
 		.procname	= "drops",
-		.data		= &dqstats.drops,
+		.data		= &dqstats.stat[DQST_DROPS],
 		.maxlen		= sizeof(int),
 		.mode		= 0444,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= do_proc_dqstats,
 	},
 	{
 		.procname	= "reads",
-		.data		= &dqstats.reads,
+		.data		= &dqstats.stat[DQST_READS],
 		.maxlen		= sizeof(int),
 		.mode		= 0444,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= do_proc_dqstats,
 	},
 	{
 		.procname	= "writes",
-		.data		= &dqstats.writes,
+		.data		= &dqstats.stat[DQST_WRITES],
 		.maxlen		= sizeof(int),
 		.mode		= 0444,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= do_proc_dqstats,
 	},
 	{
 		.procname	= "cache_hits",
-		.data		= &dqstats.cache_hits,
+		.data		= &dqstats.stat[DQST_CACHE_HITS],
 		.maxlen		= sizeof(int),
 		.mode		= 0444,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= do_proc_dqstats,
 	},
 	{
 		.procname	= "allocated_dquots",
-		.data		= &dqstats.allocated_dquots,
+		.data		= &dqstats.stat[DQST_ALLOC_DQUOTS],
 		.maxlen		= sizeof(int),
 		.mode		= 0444,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= do_proc_dqstats,
 	},
 	{
 		.procname	= "free_dquots",
-		.data		= &dqstats.free_dquots,
+		.data		= &dqstats.stat[DQST_FREE_DQUOTS],
 		.maxlen		= sizeof(int),
 		.mode		= 0444,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= do_proc_dqstats,
 	},
 	{
 		.procname	= "syncs",
-		.data		= &dqstats.syncs,
+		.data		= &dqstats.stat[DQST_SYNCS],
 		.maxlen		= sizeof(int),
 		.mode		= 0444,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= do_proc_dqstats,
 	},
 #ifdef CONFIG_PRINT_QUOTA_WARNING
 	{
@@ -2571,6 +2609,13 @@ static int __init dquot_init(void)
 	dquot_hash = (struct hlist_head *)__get_free_pages(GFP_ATOMIC, order);
 	if (!dquot_hash)
 		panic("Cannot create dquot hash table");
+
+#ifdef CONFIG_SMP
+	dqstats_pcpu = alloc_percpu(struct dqstats);
+	if (!dqstats_pcpu)
+		panic("Cannot create dquot stats table");
+#endif
+	memset(&dqstats, 0, sizeof(struct dqstats));
 
 	/* Find power-of-two hlist_heads which can fit into allocation */
 	nr_hash = (1UL << order) * PAGE_SIZE / sizeof(struct hlist_head);
