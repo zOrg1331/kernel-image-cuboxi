@@ -167,7 +167,7 @@ static struct netvsc_device *ReleaseInboundNetDevice(struct hv_device *Device)
 	return netDevice;
 }
 
-/**
+/*
  * NetVscInitialize - Main entry point
  */
 int NetVscInitialize(struct hv_driver *drv)
@@ -705,7 +705,7 @@ static void NetVscDisconnectFromVsp(struct netvsc_device *NetDevice)
 	DPRINT_EXIT(NETVSC);
 }
 
-/**
+/*
  * NetVscOnDeviceAdd - Callback when the device belonging to this driver is added
  */
 static int NetVscOnDeviceAdd(struct hv_device *Device, void *AdditionalInfo)
@@ -807,7 +807,7 @@ Cleanup:
 	return ret;
 }
 
-/**
+/*
  * NetVscOnDeviceRemove - Callback when the root bus device is removed
  */
 static int NetVscOnDeviceRemove(struct hv_device *Device)
@@ -864,7 +864,7 @@ static int NetVscOnDeviceRemove(struct hv_device *Device)
 	return 0;
 }
 
-/**
+/*
  * NetVscOnCleanup - Perform any cleanup when the driver is removed
  */
 static void NetVscOnCleanup(struct hv_driver *drv)
@@ -1087,7 +1087,7 @@ static void NetVscOnReceive(struct hv_device *Device,
 	}
 
 	/* Remove the 1st packet to represent the xfer page packet itself */
-	xferpagePacket = (struct xferpage_packet*)listHead.next;
+	xferpagePacket = (struct xferpage_packet *)listHead.next;
 	list_del(&xferpagePacket->ListEntry);
 
 	/* This is how much we can satisfy */
@@ -1103,7 +1103,7 @@ static void NetVscOnReceive(struct hv_device *Device,
 
 	/* Each range represents 1 RNDIS pkt that contains 1 ethernet frame */
 	for (i = 0; i < (count - 1); i++) {
-		netvscPacket = (struct hv_netvsc_packet*)listHead.next;
+		netvscPacket = (struct hv_netvsc_packet *)listHead.next;
 		list_del(&netvscPacket->ListEntry);
 
 		/* Initialize the netvsc packet */
@@ -1286,30 +1286,35 @@ static void NetVscOnReceiveCompletion(void *Context)
 	DPRINT_EXIT(NETVSC);
 }
 
-void NetVscOnChannelCallback(void *Context)
+static void NetVscOnChannelCallback(void *Context)
 {
-	const int netPacketSize = 2048;
 	int ret;
 	struct hv_device *device = Context;
 	struct netvsc_device *netDevice;
 	u32 bytesRecvd;
 	u64 requestId;
-	unsigned char packet[netPacketSize];
+	unsigned char *packet;
 	struct vmpacket_descriptor *desc;
-	unsigned char *buffer = packet;
-	int bufferlen = netPacketSize;
+	unsigned char *buffer;
+	int bufferlen = NETVSC_PACKET_SIZE;
 
 
 	DPRINT_ENTER(NETVSC);
 
 	ASSERT(device);
 
+	packet = kzalloc(NETVSC_PACKET_SIZE * sizeof(unsigned char),
+			 GFP_KERNEL);
+	if (!packet)
+		return;
+	buffer = packet;
+
 	netDevice = GetInboundNetDevice(device);
 	if (!netDevice) {
 		DPRINT_ERR(NETVSC, "net device (%p) shutting down..."
 			   "ignoring inbound packets", netDevice);
 		DPRINT_EXIT(NETVSC);
-		return;
+		goto out;
 	}
 
 	do {
@@ -1341,17 +1346,17 @@ void NetVscOnChannelCallback(void *Context)
 				}
 
 				/* reset */
-				if (bufferlen > netPacketSize) {
+				if (bufferlen > NETVSC_PACKET_SIZE) {
 					kfree(buffer);
 					buffer = packet;
-					bufferlen = netPacketSize;
+					bufferlen = NETVSC_PACKET_SIZE;
 				}
 			} else {
 				/* reset */
-				if (bufferlen > netPacketSize) {
+				if (bufferlen > NETVSC_PACKET_SIZE) {
 					kfree(buffer);
 					buffer = packet;
-					bufferlen = netPacketSize;
+					bufferlen = NETVSC_PACKET_SIZE;
 				}
 
 				break;
@@ -1375,5 +1380,7 @@ void NetVscOnChannelCallback(void *Context)
 
 	PutNetDevice(device);
 	DPRINT_EXIT(NETVSC);
+out:
+	kfree(buffer);
 	return;
 }

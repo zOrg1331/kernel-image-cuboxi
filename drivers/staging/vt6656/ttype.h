@@ -33,14 +33,6 @@
 
 /******* Common definitions and typedefs ***********************************/
 
-#ifndef VOID
-#define VOID            void
-#endif
-
-#ifndef IN
-#define IN
-#endif
-
 #ifndef OUT
 #define OUT
 #endif
@@ -150,13 +142,11 @@ typedef DWORD *          PDWORD;
 
 typedef QWORD *          PQWORD;
 
-typedef void *           PVOID;
-
 // handle declaration
 #ifdef STRICT
 typedef void *HANDLE;
 #else
-typedef PVOID HANDLE;
+typedef void *HANDLE;
 #endif
 
-#endif // __TTYPE_H__
+#endif /* __TTYPE_H__ */
