@@ -172,7 +172,7 @@ static void fc_lport_rport_callback(struct fc_lport *lport,
 				    struct fc_rport_priv *rdata,
 				    enum fc_rport_event event)
 {
-	FC_LPORT_DBG(lport, "Received a %d event for port (%6x)\n", event,
+	FC_LPORT_DBG(lport, "Received a %d event for port (%6.6x)\n", event,
 		     rdata->ids.port_id);
 
 	mutex_lock(&lport->lp_mutex);
@@ -183,7 +183,7 @@ static void fc_lport_rport_callback(struct fc_lport *lport,
 			fc_lport_enter_ns(lport, LPORT_ST_RNN_ID);
 		} else {
 			FC_LPORT_DBG(lport, "Received an READY event "
-				     "on port (%6x) for the directory "
+				     "on port (%6.6x) for the directory "
 				     "server, but the lport is not "
 				     "in the DNS state, it's in the "
 				     "%d state", rdata->ids.port_id,
@@ -228,9 +228,12 @@ static void fc_lport_ptp_setup(struct fc_lport *lport,
 			       u64 remote_wwnn)
 {
 	mutex_lock(&lport->disc.disc_mutex);
-	if (lport->ptp_rdata)
+	if (lport->ptp_rdata) {
 		lport->tt.rport_logoff(lport->ptp_rdata);
+		kref_put(&lport->ptp_rdata->kref, lport->tt.rport_destroy);
+	}
 	lport->ptp_rdata = lport->tt.rport_create(lport, remote_fid);
+	kref_get(&lport->ptp_rdata->kref);
 	lport->ptp_rdata->ids.port_name = remote_wwpn;
 	lport->ptp_rdata->ids.node_name = remote_wwnn;
 	mutex_unlock(&lport->disc.disc_mutex);
@@ -572,7 +575,7 @@ void __fc_linkup(struct fc_lport *lport)
  */
 void fc_linkup(struct fc_lport *lport)
 {
-	printk(KERN_INFO "host%d: libfc: Link up on port (%6x)\n",
+	printk(KERN_INFO "host%d: libfc: Link up on port (%6.6x)\n",
 	       lport->host->host_no, fc_host_port_id(lport->host));
 
 	mutex_lock(&lport->lp_mutex);
@@ -602,7 +605,7 @@ void __fc_linkdown(struct fc_lport *lport)
  */
 void fc_linkdown(struct fc_lport *lport)
 {
-	printk(KERN_INFO "host%d: libfc: Link down on port (%6x)\n",
+	printk(KERN_INFO "host%d: libfc: Link down on port (%6.6x)\n",
 	       lport->host->host_no, fc_host_port_id(lport->host));
 
 	mutex_lock(&lport->lp_mutex);
@@ -704,7 +707,7 @@ void fc_lport_disc_callback(struct fc_lport *lport, enum fc_disc_event event)
 		break;
 	case DISC_EV_FAILED:
 		printk(KERN_ERR "host%d: libfc: "
-		       "Discovery failed for port (%6x)\n",
+		       "Discovery failed for port (%6.6x)\n",
 		       lport->host->host_no, fc_host_port_id(lport->host));
 		mutex_lock(&lport->lp_mutex);
 		fc_lport_enter_reset(lport);
@@ -750,7 +753,7 @@ static void fc_lport_set_port_id(struct fc_lport *lport, u32 port_id,
 				 struct fc_frame *fp)
 {
 	if (port_id)
-		printk(KERN_INFO "host%d: Assigned Port ID %6x\n",
+		printk(KERN_INFO "host%d: Assigned Port ID %6.6x\n",
 		       lport->host->host_no, port_id);
 
 	fc_host_port_id(lport->host) = port_id;
@@ -797,11 +800,11 @@ static void fc_lport_recv_flogi_req(struct fc_seq *sp_in,
 	remote_wwpn = get_unaligned_be64(&flp->fl_wwpn);
 	if (remote_wwpn == lport->wwpn) {
 		printk(KERN_WARNING "host%d: libfc: Received FLOGI from port "
-		       "with same WWPN %llx\n",
+		       "with same WWPN %16.16llx\n",
 		       lport->host->host_no, remote_wwpn);
 		goto out;
 	}
-	FC_LPORT_DBG(lport, "FLOGI from port WWPN %llx\n", remote_wwpn);
+	FC_LPORT_DBG(lport, "FLOGI from port WWPN %16.16llx\n", remote_wwpn);
 
 	/*
 	 * XXX what is the right thing to do for FIDs?
@@ -832,7 +835,7 @@ static void fc_lport_recv_flogi_req(struct fc_seq *sp_in,
 		 */
 		f_ctl = FC_FC_EX_CTX | FC_FC_LAST_SEQ | FC_FC_END_SEQ;
 		ep = fc_seq_exch(sp);
-		fc_fill_fc_hdr(fp, FC_RCTL_ELS_REP, ep->did, ep->sid,
+		fc_fill_fc_hdr(fp, FC_RCTL_ELS_REP, remote_fid, local_fid,
 			       FC_TYPE_ELS, f_ctl, 0);
 		lport->tt.seq_send(lport, sp, fp);
 
@@ -947,7 +950,11 @@ static void fc_lport_reset_locked(struct fc_lport *lport)
 	if (lport->dns_rdata)
 		lport->tt.rport_logoff(lport->dns_rdata);
 
-	lport->ptp_rdata = NULL;
+	if (lport->ptp_rdata) {
+		lport->tt.rport_logoff(lport->ptp_rdata);
+		kref_put(&lport->ptp_rdata->kref, lport->tt.rport_destroy);
+		lport->ptp_rdata = NULL;
+	}
 
 	lport->tt.disc_stop(lport);
 
@@ -1492,7 +1499,7 @@ void fc_lport_flogi_resp(struct fc_seq *sp, struct fc_frame *fp,
 				lport->r_a_tov = 2 * e_d_tov;
 				fc_lport_set_port_id(lport, did, fp);
 				printk(KERN_INFO "host%d: libfc: "
-				       "Port (%6x) entered "
+				       "Port (%6.6x) entered "
 				       "point-to-point mode\n",
 				       lport->host->host_no, did);
 				fc_lport_ptp_setup(lport, ntoh24(fh->fh_s_id),
