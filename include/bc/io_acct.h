@@ -13,6 +13,8 @@
 #ifndef __UB_IO_ACCT_H_
 #define __UB_IO_ACCT_H_
 
+#define PAGE_IO_MARK   (0x1UL)
+
 #ifdef CONFIG_BC_IO_ACCOUNTING
 #include <bc/beancounter.h>
 #include <bc/rss_pages.h>
@@ -46,8 +48,6 @@ extern struct page_beancounter **page_pblist(struct page *);
 
 extern void ub_io_save_context(struct page *, size_t);
 extern void ub_io_release_context(struct page *pg, size_t size);
-
-#define PAGE_IO_MARK	(0x1UL)
 
 static inline struct page_beancounter *iopb_to_pb(struct page_beancounter *pb)
 {

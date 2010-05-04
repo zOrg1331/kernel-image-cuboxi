@@ -198,7 +198,7 @@ static struct nf_hook_ops ipt_ops[] __read_mostly = {
 
 static int __net_init iptable_mangle_net_init(struct net *net)
 {
-	if (!net_ipt_module_permitted(net, VE_IP_MANGLE))
+	if (!net_ipt_permitted(net, VE_IP_MANGLE))
 		return 0;
 
 	/* Register table */

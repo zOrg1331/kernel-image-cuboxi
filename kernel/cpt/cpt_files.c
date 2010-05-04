@@ -26,6 +26,7 @@
 #include <linux/namei.h>
 #include <linux/smp_lock.h>
 #include <linux/pagemap.h>
+#include <linux/proc_fs.h>
 #include <asm/uaccess.h>
 #include <linux/vzcalluser.h>
 #include <linux/ve_proto.h>
@@ -73,15 +74,29 @@ void cpt_printk_dentry(struct dentry *d, struct vfsmount *mnt)
 }
 
 int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
-			 cpt_context_t *ctx)
+			 int verify, cpt_context_t *ctx)
 {
+	if (d->d_inode->i_sb->s_magic == FSMAGIC_PROC &&
+	    proc_dentry_of_dead_task(d))
+		return 0;
+
 	if (path[0] == '/' && !(!IS_ROOT(d) && d_unhashed(d))) {
 		struct nameidata nd;
 		if (path_lookup(path, 0, &nd)) {
 			eprintk_ctx("d_path cannot be looked up %s\n", path);
 			return -EINVAL;
 		}
-		if (nd.path.dentry != d || nd.path.mnt != mnt) {
+		if (nd.path.dentry != d || (verify && nd.path.mnt != mnt)) {
+			if (!strcmp(path, "/dev/null")) {
+				/*
+				 * epic kludge to workaround the case, when the
+				 * init opens a /dev/null and then udevd
+				 * overmounts the /dev with tmpfs
+				 */
+				path_put(&nd.path);
+				return 0;
+			}
+
 			eprintk_ctx("d_path is invisible %s\n", path);
 			path_put(&nd.path);
 			return -EINVAL;
@@ -143,7 +158,7 @@ cpt_replaced(struct dentry * de, struct vfsmount *mnt, cpt_context_t * ctx)
 }
 
 static int cpt_dump_dentry(struct dentry *d, struct vfsmount *mnt,
-			   int replaced, cpt_context_t *ctx)
+			   int replaced, int verify, cpt_context_t *ctx)
 {
 	int len;
 	char *path;
@@ -208,7 +223,7 @@ static int cpt_dump_dentry(struct dentry *d, struct vfsmount *mnt,
 		o.cpt_content = CPT_CONTENT_NAME;
 		path[len] = 0;
 
-		if (cpt_verify_overmount(path, d, mnt, ctx)) {
+		if (cpt_verify_overmount(path, d, mnt, verify, ctx)) {
 			__cpt_release_buf(ctx);
 			return -EINVAL;
 		}
@@ -247,7 +262,7 @@ int cpt_dump_string(const char *s, struct cpt_context *ctx)
 static int
 cpt_dump_filename(struct file *file, int replaced, cpt_context_t *ctx)
 {
-	return cpt_dump_dentry(file->f_dentry, file->f_vfsmnt, replaced, ctx);
+	return cpt_dump_dentry(file->f_dentry, file->f_vfsmnt, replaced, 1, ctx);
 }
 
 int cpt_dump_inode(struct dentry *d, struct vfsmount *mnt, struct cpt_context *ctx)
@@ -488,25 +503,33 @@ static int dump_one_file(cpt_object_t *obj, struct file *file, cpt_context_t *ct
 
 	v->cpt_i_mode = sbuf.mode;
 	v->cpt_lflags = 0;
+
+	if (file->f_dentry->d_inode->i_sb->s_magic == FSMAGIC_PROC) {
+		v->cpt_lflags |= CPT_DENTRY_PROC;
+		if (proc_dentry_of_dead_task(file->f_dentry))
+			v->cpt_lflags |= CPT_DENTRY_PROCPID_DEAD;
+	}
+
 	if (IS_ROOT(file->f_dentry))
 		v->cpt_lflags |= CPT_DENTRY_ROOT;
 	else if (d_unhashed(file->f_dentry)) {
 		if (cpt_replaced(file->f_dentry, file->f_vfsmnt, ctx)) {
 			v->cpt_lflags |= CPT_DENTRY_REPLACED;
 			replaced = 1;
-		} else {
+		} else if (!(v->cpt_lflags & CPT_DENTRY_PROCPID_DEAD))
 			v->cpt_lflags |= CPT_DENTRY_DELETED;
-		}
 	}
 	if (is_cloning_inode(file->f_dentry->d_inode))
 		v->cpt_lflags |= CPT_DENTRY_CLONING;
-	if (file->f_dentry->d_inode->i_sb->s_magic == FSMAGIC_PROC)
-		v->cpt_lflags |= CPT_DENTRY_PROC;
+
 	v->cpt_inode = CPT_NULL;
 	if (!(v->cpt_lflags & CPT_DENTRY_REPLACED)) {
 		iobj = lookup_cpt_object(CPT_OBJ_INODE, file->f_dentry->d_inode, ctx);
-		if (iobj)
+		if (iobj) {
 			v->cpt_inode = iobj->o_pos;
+			if (iobj->o_flags & CPT_INODE_HARDLINKED)
+				v->cpt_lflags |= CPT_DENTRY_HARDLINKED;
+		}
 	}
 	v->cpt_priv = CPT_NULL;
 	v->cpt_fown_fd = -1;
@@ -657,14 +680,17 @@ static int dump_content_regular(struct file *file, struct cpt_context *ctx)
 
 	if (!(file->f_mode & FMODE_READ) ||
 	    (file->f_flags & O_DIRECT)) {
-		file = dentry_open(dget(file->f_dentry),
-				   mntget(file->f_vfsmnt), O_RDONLY,
+		struct file *filp;
+		filp = dentry_open(dget(file->f_dentry),
+				   mntget(file->f_vfsmnt),
+				   O_RDONLY | O_LARGEFILE,
 				   NULL /* not checked */);
-		if (IS_ERR(file)) {
+		if (IS_ERR(filp)) {
 			cpt_printk_dentry(file->f_dentry, file->f_vfsmnt);
-			eprintk_ctx("cannot reopen file for read %ld\n", PTR_ERR(file));
-			return PTR_ERR(file);
+			eprintk_ctx("cannot reopen file for read %ld\n", PTR_ERR(filp));
+			return PTR_ERR(filp);
 		}
+		file = filp;
 	} else {
 		atomic_long_inc(&file->f_count);
 	}
@@ -911,7 +937,7 @@ static int find_linked_dentry(struct dentry *d, struct vfsmount *mnt,
 	}
 	spin_unlock(&dcache_lock);
 	if (found) {
-		err = cpt_dump_dentry(found, mnt, 0, ctx);
+		err = cpt_dump_dentry(found, mnt, 0, 1, ctx);
 		dput(found);
 		if (!err) {
 			dprintk_ctx("dentry found in aliases\n");
@@ -925,7 +951,7 @@ static int find_linked_dentry(struct dentry *d, struct vfsmount *mnt,
 		return -EINVAL;
 
 	mntget(mnt);
-	f = dentry_open(de, mnt, O_RDONLY, NULL);
+	f = dentry_open(de, mnt, O_RDONLY | O_LARGEFILE, NULL);
 	if (IS_ERR(f))
 		return PTR_ERR(f);
 
@@ -950,13 +976,93 @@ static int find_linked_dentry(struct dentry *d, struct vfsmount *mnt,
 
 	dprintk_ctx("dentry found in dir\n");
 	__cpt_release_buf(ctx);
-	err = cpt_dump_dentry(found, mnt, 0, ctx);
+	err = cpt_dump_dentry(found, mnt, 0, 1, ctx);
 
 err_lookup:
 	dput(found);
 err_readdir:
 	fput(f);
 	__cpt_release_buf(ctx);
+	return err;
+}
+
+static struct dentry *find_linkdir(struct vfsmount *mnt, struct cpt_context *ctx)
+{
+	int i;
+
+	for (i = 0; i < ctx->linkdirs_num; i++)
+		if (ctx->linkdirs[i]->f_vfsmnt == mnt)
+			return ctx->linkdirs[i]->f_dentry;
+	return NULL;
+}
+
+struct dentry *cpt_fake_link(struct dentry *d, struct vfsmount *mnt,
+		struct inode *ino, struct cpt_context *ctx)
+{
+	int err;
+	int order = 8;
+	const char *prefix = ".cpt_hardlink.";
+	int preflen = strlen(prefix) + order;
+	char name[preflen + 1];
+	struct dentry *dirde, *hardde;
+
+	dirde = find_linkdir(mnt, ctx);
+	if (!dirde) {
+		err = -ENOENT;
+		goto out;
+	}
+
+	ctx->linkcnt++;
+	snprintf(name, sizeof(name), "%s%0*u", prefix, order, ctx->linkcnt);
+
+	mutex_lock(&dirde->d_inode->i_mutex);
+	hardde = lookup_one_len(name, dirde, strlen(name));
+	if (IS_ERR(hardde)) {
+		err = PTR_ERR(hardde);
+		goto out_unlock;
+	}
+
+	if (hardde->d_inode) {
+		/* Userspace should clean hardlinked files from previous
+		 * dump/undump
+		 */
+		eprintk_ctx("Hardlinked file already exists: %s\n", name);
+		err = -EEXIST;
+		goto out_put;
+	}
+
+	if (d == NULL)
+		err = vfs_create(dirde->d_inode, hardde, 0600, NULL);
+	else
+		err = vfs_link(d, dirde->d_inode, hardde);
+	if (err) {
+		eprintk_ctx("error hardlink %s, %d\n", name, err);
+		goto out_put;
+	}
+
+out_unlock:
+	mutex_unlock(&dirde->d_inode->i_mutex);
+out:
+	return err ? ERR_PTR(err) : hardde;
+
+out_put:
+	dput(hardde);
+	goto out_unlock;
+}
+
+static int create_dump_hardlink(struct dentry *d, struct vfsmount *mnt,
+				struct inode *ino, struct cpt_context *ctx)
+{
+	int err;
+	struct dentry *hardde;
+
+	hardde = cpt_fake_link(d, mnt, ino, ctx);
+	if (IS_ERR(hardde))
+		return PTR_ERR(hardde);
+
+	err = cpt_dump_dentry(hardde, mnt, 0, 1, ctx);
+	dput(hardde);
+
 	return err;
 }
 
@@ -973,6 +1079,10 @@ static int dump_one_inode(struct file *file, struct dentry *d,
 		return -EINVAL;
 
 	if (iobj->o_pos >= 0)
+		return 0;
+
+	if (ino->i_sb->s_magic == FSMAGIC_PROC &&
+	    proc_dentry_of_dead_task(d))
 		return 0;
 
 	if ((!IS_ROOT(d) && d_unhashed(d)) &&
@@ -1001,6 +1111,14 @@ static int dump_one_inode(struct file *file, struct dentry *d,
 			 * process group. */
 			if (ino->i_nlink != 0) {
 				err = find_linked_dentry(d, mnt, ino, ctx);
+				if (err && S_ISREG(ino->i_mode)) {
+					err = create_dump_hardlink(d, mnt, ino, ctx);
+					iobj->o_flags |= CPT_INODE_HARDLINKED;
+				} else if (S_ISCHR(ino->i_mode) ||
+					   S_ISBLK(ino->i_mode) ||
+					   S_ISFIFO(ino->i_mode))
+					err = 0;
+
 				if (err) {
 					eprintk_ctx("deleted reference to existing inode, checkpointing is impossible: %d\n", err);
 					return -EBUSY;
@@ -1358,6 +1476,7 @@ struct args_t
 {
 	int* pfd;
 	char* path;
+	envid_t veid;
 };
 
 static int dumptmpfs(void *arg)
@@ -1369,7 +1488,7 @@ static int dumptmpfs(void *arg)
 	char *path = args->path;
 	char *argv[] = { "tar", "-c", "-S", "--numeric-owner", path, NULL };
 
-	i = real_env_create(VEID(get_exec_env()), VE_ENTER|VE_SKIPLOCK, 2, NULL, 0);
+	i = real_env_create(args->veid, VE_ENTER|VE_SKIPLOCK, 2, NULL, 0);
 	if (i < 0) {
 		eprintk("cannot enter ve to dump tmpfs\n");
 		module_put(THIS_MODULE);
@@ -1416,16 +1535,20 @@ static int cpt_dump_tmpfs(char *path, struct cpt_context *ctx)
 	int status;
 	mm_segment_t oldfs;
 	sigset_t ignore, blocked;
+	struct ve_struct *oldenv;
 	
 	err = sc_pipe(pfd);
 	if (err < 0)
 		return err;
 	args.pfd = pfd;
 	args.path = path;
+	args.veid = VEID(get_exec_env());
 	ignore.sig[0] = CPT_SIG_IGNORE_MASK;
 	sigprocmask(SIG_BLOCK, &ignore, &blocked);
+	oldenv = set_exec_env(get_ve0());
 	err = pid = local_kernel_thread(dumptmpfs, (void*)&args,
 			SIGCHLD | CLONE_VFORK, 0);
+	set_exec_env(oldenv);
 	if (err < 0) {
 		eprintk_ctx("tmpfs local_kernel_thread: %d\n", err);
 		goto out;
@@ -1507,7 +1630,7 @@ static int cpt_dump_bind_mnt(struct vfsmount * mnt, cpt_context_t * ctx)
 
 	/* One special case: mount --bind /a /a */
 	if (mnt->mnt_root == mnt->mnt_mountpoint)
-		return cpt_dump_dentry(mnt->mnt_root, mnt, 0, ctx);
+		return cpt_dump_dentry(mnt->mnt_root, mnt, 0, 0, ctx);
 
 	list_for_each_prev(p, &mnt->mnt_list) {
 		struct vfsmount * m;
@@ -1520,7 +1643,7 @@ static int cpt_dump_bind_mnt(struct vfsmount * mnt, cpt_context_t * ctx)
 		if (m->mnt_sb != mnt->mnt_sb)
 			continue;
 
-		err = cpt_dump_dentry(mnt->mnt_root, m, 0, ctx);
+		err = cpt_dump_dentry(mnt->mnt_root, m, 0, 1, ctx);
 		if (err == 0)
 			break;
 	}
@@ -1570,19 +1693,30 @@ static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
 	cpt_dump_string(path, ctx);
 	cpt_dump_string(mnt->mnt_sb->s_type->name, ctx);
 
-	if (v.cpt_mntflags & CPT_MNT_BIND)
+	if (v.cpt_mntflags & CPT_MNT_BIND) {
 		err = cpt_dump_bind_mnt(mnt, ctx);
-	else if (!(v.cpt_mntflags & CPT_MNT_EXT) &&
-		   strcmp(mnt->mnt_sb->s_type->name, "tmpfs") == 0) {
-		mntget(mnt);
-		up_read(&namespace_sem);
-		err = cpt_dump_tmpfs(path, ctx);
-		down_read(&namespace_sem);
-		if (!err) {
-			if (list_empty(&mnt->mnt_list))
-				err = -EBUSY;
+
+		/* Temporary solution for Ubuntu 8.04 */
+		if (err == -EINVAL && !strcmp(path, "/dev/.static/dev")) {
+			cpt_dump_string("/dev", ctx);
+			err = 0;
 		}
-		mntput(mnt);
+	}
+	else if (!(v.cpt_mntflags & CPT_MNT_EXT)) {
+
+		if (mnt->mnt_sb->s_type->fs_flags & FS_REQUIRES_DEV) {
+			eprintk_ctx("Checkpoint supports only nodev fs: %s\n",
+				    mnt->mnt_sb->s_type->name);
+			err = -EXDEV;
+		} else if (!strcmp(mnt->mnt_sb->s_type->name, "tmpfs")) {
+			mntget(mnt);
+			up_read(&namespace_sem);
+			err = cpt_dump_tmpfs(path, ctx);
+			down_read(&namespace_sem);
+			if (!err && list_empty(&mnt->mnt_list))
+				err = -EBUSY;
+			mntput(mnt);
+		}
 	}
 
 	cpt_pop_object(&saved_obj, ctx);
@@ -1600,7 +1734,7 @@ static int dump_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 {
 	struct mnt_namespace *n = obj->o_obj;
 	struct cpt_object_hdr v;
-	struct list_head *p;
+	struct vfsmount *rootmnt, *p;
 	loff_t saved_obj;
 	int err = 0;
 
@@ -1616,8 +1750,9 @@ static int dump_one_namespace(cpt_object_t *obj, struct cpt_context *ctx)
 	cpt_push_object(&saved_obj, ctx);
 
 	down_read(&namespace_sem);
-	list_for_each(p, &n->list) {
-		err = dump_vfsmount(list_entry(p, struct vfsmount, mnt_list), ctx);
+	rootmnt = n->root;
+	for (p = rootmnt; p; p = next_mnt(p, rootmnt)) {
+		err = dump_vfsmount(p, ctx);
 		if (err)
 			break;
 	}

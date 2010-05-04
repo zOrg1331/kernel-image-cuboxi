@@ -182,7 +182,9 @@ cond_syscall(sys_perf_event_open);
 cond_syscall(sys_getluid);
 cond_syscall(sys_setluid);
 cond_syscall(sys_setublimit);
+cond_syscall(compat_sys_setublimit);
 cond_syscall(sys_ubstat);
+cond_syscall(compat_sys_lutime);
 
 /* fairsched compat */
 cond_syscall(sys_fairsched_mknod);

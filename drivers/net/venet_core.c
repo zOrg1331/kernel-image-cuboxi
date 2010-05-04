@@ -87,6 +87,86 @@ struct ip_entry_struct *venet_entry_lookup(struct ve_addr_struct *addr)
 	return NULL;
 }
 
+struct ext_entry_struct *venet_ext_lookup(struct ve_struct *ve,
+		struct ve_addr_struct *addr)
+{
+	struct ext_entry_struct *entry;
+
+	if (ve->veip == NULL)
+		return NULL;
+
+	list_for_each_entry (entry, &ve->veip->ext_lh, list)
+		if (memcmp(&entry->addr, addr, sizeof(*addr)) == 0)
+			return entry;
+	return NULL;
+}
+
+int venet_ext_add(struct ve_struct *ve, struct ve_addr_struct *addr)
+{
+	struct ext_entry_struct *entry, *found;
+	int err;
+
+	if (ve->veip == NULL)
+		return -ENONET;
+
+	entry = kzalloc(sizeof(struct ext_entry_struct), GFP_KERNEL);
+	if (entry == NULL)
+		return -ENOMEM;
+
+	write_lock_irq(&veip_hash_lock);
+	err = -EADDRINUSE;
+	found = venet_ext_lookup(ve, addr);
+	if (found != NULL)
+		goto out_unlock;
+
+	entry->addr = *addr;
+	list_add(&entry->list, &ve->veip->ext_lh);
+	err = 0;
+	entry = NULL;
+out_unlock:
+	write_unlock_irq(&veip_hash_lock);
+	if (entry != NULL)
+		kfree(entry);
+	return err;
+}
+
+int venet_ext_del(struct ve_struct *ve, struct ve_addr_struct *addr)
+{
+	struct ext_entry_struct *found;
+	int err;
+
+	if (ve->veip == NULL)
+		return -ENONET;
+
+	err = -EADDRNOTAVAIL;
+	write_lock_irq(&veip_hash_lock);
+	found = venet_ext_lookup(ve, addr);
+	if (found == NULL)
+		goto out;
+
+	list_del(&found->list);
+	kfree(found);
+	err = 0;
+out:
+	write_unlock_irq(&veip_hash_lock);
+	return err;
+}
+
+void venet_ext_clean(struct ve_struct *ve)
+{
+	struct ext_entry_struct *entry, *tmp;
+
+	if (ve->veip == NULL)
+		return;
+
+	write_lock_irq(&veip_hash_lock);
+	list_for_each_entry_safe (entry, tmp, &ve->veip->ext_lh, list) {
+		list_del(&entry->list);
+		kfree(entry);
+	}
+	write_unlock_irq(&veip_hash_lock);
+}
+
 struct veip_struct *veip_find(envid_t veid)
 {
 	struct veip_struct *ptr;
@@ -114,6 +194,7 @@ struct veip_struct *veip_findcreate(envid_t veid)
 	INIT_LIST_HEAD(&ptr->ip_lh);
 	INIT_LIST_HEAD(&ptr->src_lh);
 	INIT_LIST_HEAD(&ptr->dst_lh);
+	INIT_LIST_HEAD(&ptr->ext_lh);
 	ptr->veid = veid;
 	list_add(&ptr->list, &veip_lh);
 	return ptr;
@@ -407,6 +488,20 @@ static int venet_op_set_tx_csum(struct net_device *dev, u32 data)
 	return venet_set_op(dev, data, ethtool_op_set_tx_csum);
 }
 
+static int
+venet_op_set_tso(struct net_device *dev, u32 data)
+{
+	if (!ve_is_super(get_exec_env()))
+		return -EPERM;
+
+	if (data)
+		common_features |= NETIF_F_TSO;
+	else
+		common_features &= ~NETIF_F_TSO;
+
+	return venet_set_op(dev, data, ethtool_op_set_tso);
+}
+
 #define venet_op_set_rx_csum venet_op_set_tx_csum
 
 static struct ethtool_ops venet_ethtool_ops = {
@@ -417,6 +512,7 @@ static struct ethtool_ops venet_ethtool_ops = {
 	.get_rx_csum = ethtool_op_get_tx_csum,
 	.set_rx_csum = venet_op_set_rx_csum,
 	.get_tso = ethtool_op_get_tso,
+	.set_tso = venet_op_set_tso,
 };
 
 static void venet_cpt(struct net_device *dev,
@@ -451,15 +547,10 @@ static void venet_setup(struct net_device *dev)
 }
 
 #ifdef CONFIG_PROC_FS
-static int veinfo_seq_show(struct seq_file *m, void *v)
+static void veaddr_seq_print(struct seq_file *m, struct ve_struct *ve)
 {
-	struct ve_struct *ve;
 	struct ip_entry_struct *entry;
 
-	ve = list_entry((struct list_head *)v, struct ve_struct, ve_list);
-
-	seq_printf(m, "%10u %5u %5u", ve->veid,
-                                ve->class_id, atomic_read(&ve->pcounter));
 	read_lock(&veip_hash_lock);
 	if (ve->veip == NULL)
 		goto unlock;
@@ -477,28 +568,7 @@ static int veinfo_seq_show(struct seq_file *m, void *v)
 	}
 unlock:
 	read_unlock(&veip_hash_lock);
-	seq_putc(m, '\n');
-	return 0;
 }
-
-static struct seq_operations veinfo_seq_op = {
-	.start	= ve_seq_start,
-	.next	=  ve_seq_next,
-	.stop	=  ve_seq_stop,
-	.show	=  veinfo_seq_show,
-};
-
-static int veinfo_open(struct inode *inode, struct file *file)
-{
-        return seq_open(file, &veinfo_seq_op);
-}
-
-static struct file_operations proc_veinfo_operations = {
-	.open		= veinfo_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= seq_release,
-};
 
 static void *veip_seq_start(struct seq_file *m, loff_t *pos)
 {
@@ -570,7 +640,7 @@ static int real_ve_ip_map(envid_t veid, int op, struct sockaddr __user *uaddr,
 	struct ve_addr_struct addr;
 
 	err = -EPERM;
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		goto out;
 
 	err = sockaddr_to_veaddr(uaddr, addrlen, &addr);
@@ -594,6 +664,28 @@ static int real_ve_ip_map(envid_t veid, int op, struct sockaddr __user *uaddr,
 
 		case VE_IP_DEL:
 			err = veip_entry_del(veid, &addr);
+			break;
+		case VE_IP_EXT_ADD:
+			ve = get_ve_by_id(veid);
+			err = -ESRCH;
+			if (!ve)
+				goto out;
+
+			down_read(&ve->op_sem);
+			err = venet_ext_add(ve, &addr);
+			up_read(&ve->op_sem);
+			put_ve(ve);
+			break;
+		case VE_IP_EXT_DEL:
+			ve = get_ve_by_id(veid);
+			err = -ESRCH;
+			if (!ve)
+				goto out;
+
+			down_read(&ve->op_sem);
+			err = venet_ext_del(ve, &addr);
+			up_read(&ve->op_sem);
+			put_ve(ve);
 			break;
 		default:
 			err = -EINVAL;
@@ -706,6 +798,7 @@ static void venet_stop(void *data)
 	struct net_device *dev;
 
 	env = (struct ve_struct *)data;
+	venet_ext_clean(env);
 	veip_stop(env);
 
 	dev = env->_venet_dev;
@@ -742,11 +835,6 @@ __init int venet_init(void)
 		return err;
 
 #ifdef CONFIG_PROC_FS
-	de = proc_create("veinfo", S_IFREG | S_IRUSR, glob_proc_vz_dir,
-			&proc_veinfo_operations);
-	if (de == NULL)
-		printk(KERN_WARNING "venet: can't make veinfo proc entry\n");
-
 	de = proc_create("veip", S_IFREG | S_IRUSR, proc_vz_dir,
 			&proc_veip_operations);
 	if (de == NULL)
@@ -755,17 +843,18 @@ __init int venet_init(void)
 
 	ve_hook_register(VE_SS_CHAIN, &venet_ve_hook);
 	vzioctl_register(&venetcalls);
+	vzmon_register_veaddr_print_cb(veaddr_seq_print);
 	return 0;
 }
 
 __exit void venet_exit(void)
 {
+	vzmon_unregister_veaddr_print_cb(veaddr_seq_print);
 	vzioctl_unregister(&venetcalls);
 	ve_hook_unregister(&venet_ve_hook);
 
 #ifdef CONFIG_PROC_FS
 	remove_proc_entry("veip", proc_vz_dir);
-	remove_proc_entry("veinfo", glob_proc_vz_dir);
 #endif
 	venet_stop(get_ve0());
 	veip_cleanup();

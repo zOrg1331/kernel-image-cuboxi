@@ -323,6 +323,9 @@ struct dquot_operations {
 	 * quota code only */
 	qsize_t *(*get_reserved_space) (struct inode *);
 	int (*rename) (struct inode *, struct inode *, struct inode *);
+
+	void (*swap_inode) (struct inode *, struct inode *);
+	void (*shutdown) (struct super_block *);
 };
 
 /* Operations handling requests from userspace */

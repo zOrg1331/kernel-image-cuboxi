@@ -70,6 +70,9 @@ asmlinkage int sys_fairsched_vcpus(unsigned int id, unsigned int vcpus);
 asmlinkage int sys_fairsched_chwt(unsigned int id, unsigned int weight);
 asmlinkage int sys_fairsched_rate(unsigned int id, int op, unsigned rate);
 
+int fairsched_new_node(int id, unsigned int vcpus);
+void fairsched_drop_node(int id);
+
 #else /* CONFIG_VZ_FAIRSCHED */
 
 static inline void fairsched_init_early(void) { }
@@ -77,6 +80,9 @@ static inline void fairsched_init_late(void) { }
 static inline int task_fairsched_node_id(struct task_struct *p) { return 0; }
 static inline void get_task_fairsched_node(struct task_struct *p) { }
 static inline void put_task_fairsched_node(struct task_struct *p) { }
+
+static inline int fairsched_new_node(int id, unsigned int vcpus) { return 0; }
+static inline void fairsched_drop_node(int id) { }
 
 #define	INIT_VZ_FAIRSCHED
 

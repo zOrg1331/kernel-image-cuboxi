@@ -356,6 +356,9 @@ static inline void nf_ct_attach(struct sk_buff *new, struct sk_buff *skb) {}
 #ifdef CONFIG_VE_IPTABLES
 #include <linux/vziptable_defs.h>
 
+#define net_ipt_permitted(netns, ipt)					\
+	(mask_ipt_allow((netns)->owner_ve->ipt_mask, ipt))
+
 #define net_ipt_module_permitted(netns, ipt)				\
 	(mask_ipt_allow((netns)->owner_ve->ipt_mask, ipt) &&		\
 	 mask_ipt_allow((netns)->owner_ve->_iptables_modules,		\

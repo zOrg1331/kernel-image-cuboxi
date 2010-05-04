@@ -1,8 +1,8 @@
 VERSION = 2
 PATCHLEVEL = 6
 SUBLEVEL = 32
-EXTRAVERSION = .10
-VZVERSION = afanasyev
+EXTRAVERSION = .12
+VZVERSION = avdeyev
 NAME = Man-Eating Seals of Antiquity
 
 # *DOCUMENTATION*

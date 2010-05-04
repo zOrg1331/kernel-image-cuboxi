@@ -20,6 +20,8 @@
 #include <asm/cpufeature.h>
 #endif
 #include <linux/cpt_image.h>
+#include <linux/virtinfo.h>
+#include <linux/virtinfoscp.h>
 
 #include "cpt_kernel.h"
 #include "cpt_syscalls.h"
@@ -44,6 +46,7 @@ int asm_kernel_thread(int (*fn)(void *), void * arg, unsigned long flags, pid_t 
 	regs.ds = __USER_DS;
 	regs.es = __USER_DS;
 	regs.fs = __KERNEL_PERCPU;
+	regs.gs = __KERNEL_STACK_CANARY;
 	regs.orig_ax = -1;
 	regs.ip = (unsigned long) kernel_thread_helper;
 	regs.cs = __KERNEL_CS | get_kernel_rpl();
@@ -91,7 +94,9 @@ int local_kernel_thread(int (*fn)(void *), void * arg, unsigned long flags, pid_
 	}
 	if (!try_module_get(THIS_MODULE))
 		return -EBUSY;
-	ret = asm_kernel_thread(fn, arg, flags, pid);
+	while ((ret = asm_kernel_thread(fn, arg, flags, pid)) ==
+							-ERESTARTNOINTR)
+		cond_resched();
 	if (ret < 0)
 		module_put(THIS_MODULE);
 	return ret;
@@ -120,7 +125,7 @@ int sc_execve(char *cmd, char **argv, char **env)
 	return ret;
 }
 
-unsigned int test_cpu_caps(void)
+unsigned int test_cpu_caps_and_features(void)
 {
 	unsigned int flags = 0;
 
@@ -162,6 +167,9 @@ unsigned int test_cpu_caps(void)
 	flags |= 1 << CPT_CPU_X86_IA64;
 	flags |= 1 << CPT_CPU_X86_FXSR;
 #endif
+	if (virtinfo_notifier_call(VITYPE_SCP,
+				VIRTINFO_SCP_TEST, NULL) & NOTIFY_FAIL)
+		flags |= 1 << CPT_SLM_DMPRST;
 	return flags;
 }
 

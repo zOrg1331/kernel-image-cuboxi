@@ -466,6 +466,7 @@ static void inotify_free_mark(struct fsnotify_mark_entry *entry)
 	if (ientry->path.dentry) {
 		dput(ientry->path.dentry);
 		mnt_unpin(ientry->path.mnt);
+		mntput(ientry->path.mnt);
 	}
 
 	kmem_cache_free(inotify_inode_mark_cachep, ientry);

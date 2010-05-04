@@ -240,6 +240,9 @@ struct inodes_stat_t {
 #define S_SWAPFILE	256	/* Do not truncate: swapon got its bmaps */
 #define S_PRIVATE	512	/* Inode is fs-internal */
 
+/* VZ flags -- These are not upstream! */
+#define S_NOUNUSE	(1 << 17) /* just destroy inode in cleanup */
+
 /*
  * Note that nosuid etc flags are inode-specific: setting some file-system
  * flags just means all the inodes inherit those flags by default. It might be
@@ -1834,6 +1837,7 @@ extern void unregister_ve_fs_type(struct file_system_type *, struct vfsmount *);
 extern void umount_ve_fs_type(struct file_system_type *local_fs_type);
 #define kern_umount mntput
 extern int may_umount_tree(struct vfsmount *);
+extern struct vfsmount *next_mnt(struct vfsmount *p, struct vfsmount *root);
 extern int may_umount(struct vfsmount *);
 extern long do_mount(char *, char *, char *, unsigned long, void *);
 extern struct vfsmount *collect_mounts(struct path *);
@@ -2260,6 +2264,7 @@ extern int generic_segment_checks(const struct iovec *iov,
 /* fs/block_dev.c */
 extern ssize_t blkdev_aio_write(struct kiocb *iocb, const struct iovec *iov,
 				unsigned long nr_segs, loff_t pos);
+extern int block_fsync(struct file *filp, struct dentry *dentry, int datasync);
 
 /* fs/splice.c */
 extern ssize_t generic_file_splice_read(struct file *, loff_t *,

@@ -81,6 +81,12 @@ struct ve_struct ve0 = {
 #endif
 	.features		= VE_FEATURE_SIT | VE_FEATURE_IPIP |
 				VE_FEATURE_PPP,
+	._randomize_va_space	=
+#ifdef CONFIG_COMPAT_BRK
+					1,
+#else
+					2,
+#endif
 };
 
 EXPORT_SYMBOL(ve0);
@@ -98,12 +104,16 @@ EXPORT_SYMBOL(ve_cleanup_lock);
 EXPORT_SYMBOL(ve_cleanup_list);
 EXPORT_SYMBOL(ve_cleanup_thread);
 
+static DEFINE_PER_CPU(struct ve_cpu_stats, ve0_cpustats);
+static DEFINE_PER_CPU(struct kstat_lat_pcpu_snap_struct, ve0_lat_stats);
+
 void init_ve0(void)
 {
 	struct ve_struct *ve;
 
 	ve = get_ve0();
-	ve->cpu_stats = NULL;
+	ve->cpu_stats = &per_cpu__ve0_cpustats;
+	ve->sched_lat_ve.cur = &per_cpu__ve0_lat_stats;
 	list_add(&ve->ve_list, &ve_list_head);
 }
 

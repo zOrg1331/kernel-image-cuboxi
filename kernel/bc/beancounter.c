@@ -31,6 +31,7 @@
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
+#include <linux/random.h>
 
 #include <bc/beancounter.h>
 #include <bc/hash.h>
@@ -67,9 +68,9 @@ const char *ub_rnames[] = {
 	"dummy",
 	"dummy",
 	"numiptent",
+	"swappages",
 	"unused_privvmpages",	/* UB_RESOURCES */
 	"tmpfs_respages",
-	"swap_pages",
 	"held_pages",
 };
 
@@ -172,6 +173,25 @@ static inline struct user_beancounter *bc_lookup_hash(struct hlist_head *hash,
 	return NULL;
 }
 
+int ub_count;
+
+/* next two must be called under ub_hash_lock */
+static inline void ub_count_inc(struct user_beancounter *ub)
+{
+	if (ub->parent)
+		ub->parent->ub_childs++;
+	else
+	       ub_count++;
+}
+
+static inline void ub_count_dec(struct user_beancounter *ub)
+{
+	if (ub->parent)
+		ub->parent->ub_childs--;
+	else
+		ub_count--;
+}
+
 struct user_beancounter *get_beancounter_byuid(uid_t uid, int create)
 {
 	struct user_beancounter *new_ub, *ub;
@@ -200,6 +220,7 @@ retry:
 	if (new_ub != NULL) {
 		list_add_rcu(&new_ub->ub_list, &ub_list_head);
 		hlist_add_head(&new_ub->ub_hash, hash);
+		ub_count_inc(new_ub);
 		spin_unlock_irqrestore(&ub_hash_lock, flags);
 		return new_ub;
 	}
@@ -245,6 +266,7 @@ retry:
 	if (new_ub != NULL) {
 		list_add_rcu(&new_ub->ub_list, &ub_list_head);
 		hlist_add_head(&new_ub->ub_hash, hash);
+		ub_count_inc(new_ub);
 		spin_unlock_irqrestore(&ub_hash_lock, flags);
 		return new_ub;
 	}
@@ -294,7 +316,6 @@ static inline void bc_verify_held(struct user_beancounter *ub)
 
 	clean &= verify_res(ub, UB_UNUSEDPRIVVM, ub->ub_unused_privvmpages);
 	clean &= verify_res(ub, UB_TMPFSPAGES, ub->ub_tmpfs_respages);
-	clean &= verify_res(ub, UB_SWAPPAGES, ub->ub_swap_pages);
 	clean &= verify_res(ub, UB_HELDPAGES, (unsigned long)ub->ub_held_pages);
 
 	ub_debug_trace(!clean, 5, 60*HZ);
@@ -323,6 +344,7 @@ again:
 	}
 
 	hlist_del(&ub->ub_hash);
+	ub_count_dec(ub);
 	list_del_rcu(&ub->ub_list);
 	spin_unlock_irqrestore(&ub_hash_lock, flags);
 
@@ -579,6 +601,7 @@ EXPORT_SYMBOL(ub_ratelimit);
 static void init_beancounter_struct(struct user_beancounter *ub)
 {
 	ub->ub_magic = UB_MAGIC;
+	ub->ub_cookie = get_random_int();
 	atomic_set(&ub->ub_refcount, 1);
 	spin_lock_init(&ub->ub_lock);
 	INIT_LIST_HEAD(&ub->ub_tcp_sk_list);
@@ -638,6 +661,7 @@ static void init_beancounter_syslimits(struct user_beancounter *ub)
 	ub->ub_parms[UB_NUMSIGINFO].limit = 1024;
 	ub->ub_parms[UB_DCACHESIZE].limit = 1024*1024;
 	ub->ub_parms[UB_NUMFILE].limit = 1024;
+	ub->ub_parms[UB_SWAPPAGES].limit = UB_MAXVALUE;
 
 	for (k = 0; k < UB_RESOURCES; k++)
 		ub->ub_parms[k].barrier = ub->ub_parms[k].limit;
@@ -645,6 +669,8 @@ static void init_beancounter_syslimits(struct user_beancounter *ub)
 	ub->ub_limit_rl.burst = 4;
 	ub->ub_limit_rl.interval = 300*HZ;
 }
+
+static DEFINE_PER_CPU(struct ub_percpu_struct, ub0_percpu);
 
 void __init ub_init_early(void)
 {
@@ -657,7 +683,7 @@ void __init ub_init_early(void)
 	init_beancounter_nolimits(ub);
 	init_beancounter_store(ub);
 	init_beancounter_struct(ub);
-	ub->ub_percpu = NULL;
+	ub->ub_percpu = &per_cpu__ub0_percpu;
 
 	memset(&current->task_bc, 0, sizeof(struct task_beancounter));
 	(void)set_exec_ub(ub);
@@ -669,6 +695,7 @@ void __init ub_init_early(void)
 
 	hlist_add_head(&ub->ub_hash, &ub_hash[ub->ub_uid]);
 	list_add(&ub->ub_list, &ub_list_head);
+	ub_count_inc(ub);
 }
 
 void __init ub_init_late(void)

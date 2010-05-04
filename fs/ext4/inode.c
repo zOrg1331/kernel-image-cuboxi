@@ -3031,11 +3031,18 @@ static int ext4_nonda_switch(struct super_block *sb)
 	if (2 * free_blocks < 3 * dirty_blocks ||
 		free_blocks < (dirty_blocks + EXT4_FREEBLOCKS_WATERMARK)) {
 		/*
-		 * free block count is less that 150% of dirty blocks
-		 * or free blocks is less that watermark
+		 * free block count is less than 150% of dirty blocks
+		 * or free blocks is less than watermark
 		 */
 		return 1;
 	}
+	/*
+	 * Even if we don't switch but are nearing capacity,
+	 * start pushing delalloc when 1/2 of free blocks are dirty.
+	 */
+	if (free_blocks < 2 * dirty_blocks)
+		writeback_inodes_sb_if_idle(sb);
+
 	return 0;
 }
 
@@ -3540,7 +3547,7 @@ static int ext4_end_aio_dio_nolock(ext4_io_end_t *io)
 {
 	struct inode *inode = io->inode;
 	loff_t offset = io->offset;
-	size_t size = io->size;
+	ssize_t size = io->size;
 	int ret = 0;
 
 	ext4_debug("end_aio_dio_onlock: io 0x%p from inode %lu,list->next 0x%p,"
@@ -5763,9 +5770,14 @@ int ext4_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 	int ret = -EINVAL;
 	void *fsdata;
 	struct file *file = vma->vm_file;
-	struct inode *inode = file->f_path.dentry->d_inode;
-	struct address_space *mapping = inode->i_mapping;
+	struct inode *inode;
+	struct address_space *mapping;
 
+	if (file->f_op->get_host)
+		file = file->f_op->get_host(file);
+
+	inode = file->f_path.dentry->d_inode;
+	mapping = inode->i_mapping;
 	/*
 	 * Get i_alloc_sem to stop truncates messing with the inode. We cannot
 	 * get i_mutex because we are already holding mmap_sem.

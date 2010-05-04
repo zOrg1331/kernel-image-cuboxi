@@ -2257,7 +2257,7 @@ static int __net_init ip6_tables_net_init(struct net *net)
 {
 	int res;
 
-	if (!net_ipt_module_permitted(net, VE_IP_IPTABLES6))
+	if (!net_ipt_permitted(net, VE_IP_IPTABLES6))
 		return 0;
 
 	res = xt_proto_init(net, NFPROTO_IPV6);

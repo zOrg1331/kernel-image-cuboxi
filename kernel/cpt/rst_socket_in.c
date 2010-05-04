@@ -59,7 +59,7 @@ static int restore_queues(struct sock *sk, struct cpt_sock_image *si,
 		struct sk_buff *skb;
 		__u32 type;
 
-		skb = rst_skb(&pos, NULL, &type, ctx);
+		skb = rst_skb(sk, &pos, NULL, &type, ctx);
 		if (IS_ERR(skb)) {
 			if (PTR_ERR(skb) == -EINVAL) {
 				int err;
@@ -294,6 +294,62 @@ static int rst_socket_tcp(struct cpt_sock_image *si, loff_t pos, struct sock *sk
 	return 0;
 }
 
+static void rst_listen_socket_tcp(struct cpt_sock_image *si, struct sock *sk)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+
+	tp->rcv_tstamp = tcp_jiffies_import(si->cpt_rcv_tstamp);
+	tp->lsndtime = tcp_jiffies_import(si->cpt_lsndtime);
+	tp->tcp_header_len = si->cpt_tcp_header_len;
+	inet_csk(sk)->icsk_accept_queue.rskq_defer_accept = si->cpt_defer_accept;
+
+	/* Next options are inherited by children */
+	tp->mss_cache = si->cpt_mss_cache;
+	inet_csk(sk)->icsk_ext_hdr_len = si->cpt_ext_header_len;
+	tp->reordering = si->cpt_reordering;
+	tp->nonagle = si->cpt_nonagle;
+	tp->keepalive_probes = si->cpt_keepalive_probes;
+	tp->rx_opt.user_mss = si->cpt_user_mss;
+	inet_csk(sk)->icsk_syn_retries = si->cpt_syn_retries;
+	tp->keepalive_time = si->cpt_keepalive_time;
+	tp->keepalive_intvl = si->cpt_keepalive_intvl;
+	tp->linger2 = si->cpt_linger2;
+}
+
+int rst_listen_socket_in( struct sock *sk, struct cpt_sock_image *si,
+			  loff_t pos, struct cpt_context *ctx)
+{
+	struct inet_sock *inet = inet_sk(sk);
+
+	lock_sock(sk);
+
+	inet->uc_ttl = si->cpt_uc_ttl;
+	inet->tos = si->cpt_tos;
+	inet->cmsg_flags = si->cpt_cmsg_flags;
+	inet->pmtudisc = si->cpt_pmtudisc;
+	inet->recverr = si->cpt_recverr;
+	inet->freebind = si->cpt_freebind;
+	inet->id = si->cpt_idcounter;
+
+	if (sk->sk_family == AF_INET6) {
+		struct ipv6_pinfo *np = inet6_sk(sk);
+
+		np->frag_size = si->cpt_frag_size6;
+		np->hop_limit = si->cpt_hop_limit6;
+
+		np->rxopt.all = si->cpt_rxopt6;
+		np->mc_loop = si->cpt_mc_loop6;
+		np->recverr = si->cpt_recverr6;
+		np->pmtudisc = si->cpt_pmtudisc6;
+		np->ipv6only = si->cpt_ipv6only6;
+	}
+
+	if (sk->sk_protocol == IPPROTO_TCP)
+		rst_listen_socket_tcp(si, sk);
+
+	release_sock(sk);
+	return 0;
+}
 
 int rst_socket_in(struct cpt_sock_image *si, loff_t pos, struct sock *sk,
 		  struct cpt_context *ctx)
@@ -405,26 +461,49 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 			      loff_t pos, struct cpt_context *ctx)
 {
 	int err;
-	loff_t end = si->cpt_next;
+	loff_t end = pos + si->cpt_next;
 
 	pos += si->cpt_hdrlen;
+
+	lock_sock(sk);
 	while (pos < end) {
 		struct cpt_openreq_image oi;
 
 		err = rst_get_object(CPT_OBJ_OPENREQ, pos, &oi, ctx);
 		if (err) {
 			err = rst_sock_attr(&pos, sk, ctx);
-			if (err)
+			if (err) {
+				release_sock(sk);
 				return err;
+			}
+
 			continue;
 		}
 
 		if (oi.cpt_object == CPT_OBJ_OPENREQ) {
-			struct request_sock *req = reqsk_alloc(&tcp_request_sock_ops);
-			if (req == NULL)
-				return -ENOMEM;
+			struct request_sock *req;
 
-			memset(req, 0, sizeof(*req));
+			if (oi.cpt_family == AF_INET6 &&
+			    sk->sk_family != AF_INET6)
+				/* related to non initialized cpt_family bug */
+				goto next;
+
+			if (oi.cpt_family == AF_INET6) {
+#if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
+				req = reqsk_alloc(&tcp6_request_sock_ops);
+#else
+				release_sock(sk);
+				return -EINVAL;
+#endif
+			} else {
+				req = reqsk_alloc(&tcp_request_sock_ops);
+			}
+
+			if (req == NULL) {
+				release_sock(sk);
+				return -ENOMEM;
+			}
+
 			tcp_rsk(req)->rcv_isn = oi.cpt_rcv_isn;
 			tcp_rsk(req)->snt_isn = oi.cpt_snt_isn;
 			inet_rsk(req)->rmt_port = oi.cpt_rmt_port;
@@ -437,26 +516,33 @@ int rst_restore_synwait_queue(struct sock *sk, struct cpt_sock_image *si,
 			inet_rsk(req)->wscale_ok = oi.cpt_wscale_ok;
 			inet_rsk(req)->ecn_ok = oi.cpt_ecn_ok;
 			inet_rsk(req)->acked = oi.cpt_acked;
+			inet_rsk(req)->opt = NULL;
 			req->window_clamp = oi.cpt_window_clamp;
 			req->rcv_wnd = oi.cpt_rcv_wnd;
 			req->ts_recent = oi.cpt_ts_recent;
 			req->expires = jiffies_import(oi.cpt_expires);
+			req->sk = NULL;
+			req->secid = 0;
+			req->peer_secid = 0;
 
-			if (oi.cpt_family == AF_INET) {
-				memcpy(&inet_rsk(req)->loc_addr, oi.cpt_loc_addr, 4);
-				memcpy(&inet_rsk(req)->rmt_addr, oi.cpt_rmt_addr, 4);
-				inet_csk_reqsk_queue_hash_add(sk, req, TCP_TIMEOUT_INIT);
-			} else {
+			if (oi.cpt_family == AF_INET6) {
 #if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
+				inet6_rsk(req)->pktopts = NULL;
 				memcpy(&inet6_rsk(req)->loc_addr, oi.cpt_loc_addr, 16);
 				memcpy(&inet6_rsk(req)->rmt_addr, oi.cpt_rmt_addr, 16);
 				inet6_rsk(req)->iif = oi.cpt_iif;
 				inet6_csk_reqsk_queue_hash_add(sk, req, TCP_TIMEOUT_INIT);
 #endif
+			} else {
+				memcpy(&inet_rsk(req)->loc_addr, oi.cpt_loc_addr, 4);
+				memcpy(&inet_rsk(req)->rmt_addr, oi.cpt_rmt_addr, 4);
+				inet_csk_reqsk_queue_hash_add(sk, req, TCP_TIMEOUT_INIT);
 			}
 		}
+next:
 		pos += oi.cpt_next;
 	}
+	release_sock(sk);
 	return 0;
 }
 

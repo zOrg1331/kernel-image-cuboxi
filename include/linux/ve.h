@@ -129,9 +129,9 @@ struct ve_cpu_stats {
 	cycles_t	strt_idle_time;
 	cycles_t	used_time;
 	seqcount_t	stat_lock;
-	int		nr_running;
-	int		nr_unint;
-	int		nr_iowait;
+	unsigned long	nr_running;
+	unsigned long	nr_unint;
+	unsigned long	nr_iowait;
 	cputime64_t	user;
 	cputime64_t	nice;
 	cputime64_t	system;
@@ -270,6 +270,7 @@ struct ve_struct {
 	struct ve_monitor	*monitor;
 	struct proc_dir_entry	*monitor_proc;
 	unsigned long		meminfo_val;
+	int _randomize_va_space;
 
 #if defined(CONFIG_NFS_FS) || defined(CONFIG_NFS_FS_MODULE) \
 	|| defined(CONFIG_NFSD) || defined(CONFIG_NFSD_MODULE)
@@ -278,6 +279,14 @@ struct ve_struct {
 	unsigned long		_nlmsvc_grace_period;
 	unsigned long		_nlmsvc_timeout;
 	struct svc_rqst*	_nlmsvc_rqst;
+#endif
+
+#if defined(CONFIG_BINFMT_MISC) || defined(CONFIG_BINFMT_MISC_MODULE)
+	struct file_system_type	*bm_fs_type;
+	struct vfsmount		*bm_mnt;
+	int			bm_enabled;
+	int			bm_entry_count;
+	struct list_head	bm_entries;
 #endif
 
 	struct nsproxy		*ve_ns;
@@ -296,10 +305,7 @@ void fini_ve_cgroups(struct ve_struct *ve);
 extern struct ve_cpu_stats static_ve_cpu_stats;
 static inline struct ve_cpu_stats *VE_CPU_STATS(struct ve_struct *ve, int cpu)
 {
-	if (ve->cpu_stats == NULL)
-		return &static_ve_cpu_stats;
-	else
-		return per_cpu_ptr(ve->cpu_stats, cpu);
+	return per_cpu_ptr(ve->cpu_stats, cpu);
 }
 
 extern int nr_ve;

@@ -103,6 +103,16 @@ typedef struct cpt_context
 	   and restore them before resuming */
 	struct ubparm	saved_ubc[UB_RESOURCES];
 #endif
+
+	int		tcp_cb_convert;
+#define CPT_TCP_CB_CONV		1
+#define CPT_TCP_CB_NOT_CONV	2
+
+#define CPT_MAX_LINKDIRS	1
+	struct file	*linkdirs[CPT_MAX_LINKDIRS];
+	int		linkdirs_num;
+	unsigned int	linkcnt; /* for create hardlinked files */
+	int	hardlinked_on;
 } cpt_context_t;
 
 typedef struct {

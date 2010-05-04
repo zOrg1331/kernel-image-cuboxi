@@ -436,6 +436,8 @@ void daemonize(const char *name, ...)
 	va_list args;
 	sigset_t blocked;
 
+	(void)virtinfo_gencall(VIRTINFO_DOEXIT, NULL);
+
 	va_start(args, name);
 	vsnprintf(current->comm, sizeof(current->comm), name, args);
 	va_end(args);

@@ -770,8 +770,9 @@ asmlinkage int __vprintk(const char *fmt, va_list args)
 
 	err = ve_log_init();
 	if (err) {
-		spin_unlock_irqrestore(&logbuf_lock, flags);
-		return err;
+		spin_unlock(&logbuf_lock);
+		printed_len = err;
+		goto out_lockdep;
 	}
 
 	if (recursion_bug) {
@@ -860,16 +861,21 @@ asmlinkage int __vprintk(const char *fmt, va_list args)
 	if (!ve_is_super(get_exec_env())) {
 		need_wake = (ve_log_start != ve_log_end);
 		printk_cpu = UINT_MAX;
-		spin_unlock_irqrestore(&logbuf_lock, flags);
+		spin_unlock(&logbuf_lock);
+		lockdep_on();
+		raw_local_irq_restore(flags);
 		if (!oops_in_progress && need_wake)
 			wake_up_interruptible(&ve_log_wait);
+		goto out_preempt;
 	} else if (acquire_console_semaphore_for_printk(this_cpu))
 		release_console_sem();
 
+out_lockdep:
 	lockdep_on();
 out_restore_irqs:
 	raw_local_irq_restore(flags);
 
+out_preempt:
 	preempt_enable();
 	return printed_len;
 }
@@ -890,12 +896,14 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 asmlinkage int ve_vprintk(int dst, const char *fmt, va_list args)
 {
 	int printed_len;
+	va_list args2;
 
 	printed_len = 0;
+	va_copy(args2, args);
 	if (ve_is_super(get_exec_env()) || (dst & VE0_LOG))
 		printed_len = vprintk(fmt, args);
 	if (!ve_is_super(get_exec_env()) && (dst & VE_LOG))
-		printed_len = __vprintk(fmt, args);
+		printed_len = __vprintk(fmt, args2);
 	return printed_len;
 }
 
@@ -1547,3 +1555,65 @@ bool printk_timed_ratelimit(unsigned long *caller_jiffies,
 }
 EXPORT_SYMBOL(printk_timed_ratelimit);
 #endif
+
+static cpumask_t nmi_show_regs_cpus = CPU_MASK_NONE;
+static unsigned long nmi_show_regs_timeout;
+
+void __attribute__((weak)) send_nmi_ipi_allbutself(void)
+{
+	cpus_clear(nmi_show_regs_cpus);
+}
+
+static void busted_show_regs(struct pt_regs *regs, int in_nmi)
+{
+	if (!regs || (in_nmi && spin_is_locked(&logbuf_lock)))
+		return;
+
+	bust_spinlocks(1);
+	printk("----------- IPI show regs -----------\n");
+	show_regs(regs);
+	bust_spinlocks(0);
+}
+
+void nmi_show_regs(struct pt_regs *regs, int in_nmi)
+{
+	if (cpus_empty(nmi_show_regs_cpus))
+		goto doit;
+
+	/* Previous request still in progress */
+	if (time_before(jiffies, nmi_show_regs_timeout))
+		return;
+
+	if (!in_nmi || !spin_is_locked(&logbuf_lock)) {
+		int cpu;
+
+		bust_spinlocks(1);
+		printk("previous show regs lost IPI to: ");
+		for_each_cpu_mask(cpu, nmi_show_regs_cpus)
+			printk("%d ", cpu);
+		printk("\n");
+		bust_spinlocks(0);
+	}
+
+doit:
+	nmi_show_regs_timeout = jiffies + HZ/10;
+	nmi_show_regs_cpus = cpu_online_map;
+	cpu_clear(raw_smp_processor_id(), nmi_show_regs_cpus);
+	busted_show_regs(regs, in_nmi);
+	send_nmi_ipi_allbutself();
+}
+
+/* call only from nmi handler */
+int do_nmi_show_regs(struct pt_regs *regs, int cpu)
+{
+	static DEFINE_SPINLOCK(nmi_show_regs_lock);
+
+	if (!cpu_isset(cpu, nmi_show_regs_cpus))
+		return 0;
+
+	spin_lock(&nmi_show_regs_lock);
+	busted_show_regs(regs, 1);
+	cpu_clear(cpu, nmi_show_regs_cpus);
+	spin_unlock(&nmi_show_regs_lock);
+	return 1;
+}

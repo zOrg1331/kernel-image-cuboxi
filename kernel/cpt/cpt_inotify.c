@@ -41,6 +41,29 @@
 #include "cpt_fsmagic.h"
 #include "cpt_syscalls.h"
 
+static int dump_watch_inode(struct path *path, cpt_context_t *ctx)
+{
+	int err;
+	struct dentry *d;
+
+	d = path->dentry;
+	if (IS_ROOT(d) || !d_unhashed(d))
+		goto dump_dir;
+
+	d = cpt_fake_link(d->d_inode->i_nlink ? d : NULL,
+			path->mnt, d->d_inode, ctx);
+
+	if (IS_ERR(d))
+		return PTR_ERR(d);
+
+dump_dir:
+	err = cpt_dump_dir(d, path->mnt, ctx);
+	if (d != path->dentry)
+		dput(d);
+
+	return err;
+}
+
 static int cpt_dump_watches(struct fsnotify_group *g, struct cpt_context *ctx)
 {
 	int err = 0;
@@ -80,7 +103,7 @@ static int cpt_dump_watches(struct fsnotify_group *g, struct cpt_context *ctx)
 		path_get(&path);
 		spin_unlock(&fse->lock);
 
-		err = cpt_dump_dir(path.dentry, path.mnt, ctx);
+		err = dump_watch_inode(&path, ctx);
 		cpt_pop_object(&saved_obj, ctx);
 		path_put(&path);
 

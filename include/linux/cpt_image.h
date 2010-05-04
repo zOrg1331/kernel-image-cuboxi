@@ -120,11 +120,15 @@ struct cpt_major_hdr
 #define CPT_VERSION_16		0x200
 #define CPT_VERSION_18		0x300
 #define CPT_VERSION_18_1	0x301
+#define CPT_VERSION_18_2	0x302
+#define CPT_VERSION_18_3	0x303
 #define CPT_VERSION_20		0x400
 #define CPT_VERSION_24		0x500
 #define CPT_VERSION_26		0x600
 #define CPT_VERSION_27		0x700
+#define CPT_VERSION_27_3	0x703
 #define CPT_VERSION_32		0x800
+#define CPT_CURRENT_VERSION	CPT_VERSION_32
 	__u16	cpt_os_arch;		/* Architecture */
 #define CPT_OS_ARCH_I386	0
 #define CPT_OS_ARCH_EMT64	1
@@ -171,6 +175,7 @@ struct cpt_major_hdr
 #define CPT_BIND_MOUNT		21
 #define CPT_UNSUPPORTED_NETDEV	22
 #define CPT_UNSUPPORTED_MISC	23
+#define CPT_SLM_DMPRST		24
 
 /* This mask is used to determine whether VE
    has some unsupported features or not */
@@ -224,6 +229,7 @@ enum
 	CPT_SECT_VSYSCALL,
 	CPT_SECT_INOTIFY,
 	CPT_SECT_SYSV_MSG,
+	CPT_SECT_SNMP_STATS,
 	CPT_SECT_MAX
 };
 
@@ -313,7 +319,7 @@ struct cpt_veinfo_image
 
 	/* later extension */
 	__u32	last_pid;
-	__u32	pad1;
+	__u32	rnd_va_space;
 	__u64	reserved[8];
 } __attribute__ ((aligned (8)));
 
@@ -342,6 +348,8 @@ struct cpt_file_image
 #define CPT_DENTRY_INOTIFY	0x40
 #define CPT_DENTRY_FUTEX	0x80
 #define CPT_DENTRY_TUNTAP	0x100
+#define CPT_DENTRY_PROCPID_DEAD 0x200
+#define CPT_DENTRY_HARDLINKED	0x400
 #define CPT_DENTRY_SIGNALFD	0x800
 	__u64	cpt_inode;
 	__u64	cpt_priv;
@@ -1218,7 +1226,7 @@ struct cpt_x86_regs
 	__u32	cpt_eflags;
 	__u32	cpt_esp;
 	__u32	cpt_xss;
-	__u32	pad;
+	__u32	cpt_ugs;
 };
 
 struct cpt_x86_64_regs
@@ -1306,6 +1314,8 @@ struct cpt_task_image {
 
 	__u64	cpt_state;
 	__u64	cpt_flags;
+#define CPT_TASK_FLAGS_MASK	(PF_EXITING | PF_FORKNOEXEC | \
+				 PF_SUPERPRIV | PF_DUMPCORE | PF_SIGNALED)
 	__u64	cpt_ptrace;
 	__u32	cpt_prio;
 	__u32	cpt_static_prio;
@@ -1704,6 +1714,39 @@ struct cpt_ip_conntrack_image
 	__u32	cpt_mark;
 } __attribute__ ((aligned (8)));
 
+/* cpt_ip_conntrack_image struct from 2.6.9 kernel */
+struct cpt_ip_conntrack_image_compat
+{
+	__u64	cpt_next;
+	__u32	cpt_object;
+	__u16	cpt_hdrlen;
+	__u16	cpt_content;
+
+	struct cpt_ipct_tuple cpt_tuple[2];
+	__u64	cpt_status;
+	__u64	cpt_timeout;
+	__u32	cpt_index;
+	__u8	cpt_ct_helper;
+	__u8	cpt_nat_helper;
+	__u16	__cpt_pad1;
+
+	/* union ip_conntrack_proto. Used by tcp and icmp. */
+	__u32	cpt_proto_data[12];
+
+	/* union ip_conntrack_help. Used only by ftp helper. */
+	__u32	cpt_help_data[4];
+
+	/* nat info */
+	__u32	cpt_initialized;
+	__u32	cpt_num_manips;
+	struct  cpt_nat_manip	cpt_nat_manips[6];
+
+	struct	cpt_nat_seq	cpt_nat_seq[2];
+
+	__u32	cpt_masq_index;
+	__u32	__cpt_pad2;
+} __attribute__ ((aligned (8)));
+
 struct cpt_ubparm
 {
 	__u64	barrier;
@@ -1722,7 +1765,7 @@ struct cpt_beancounter_image {
 
 	__u64	cpt_parent;
 	__u32	cpt_id;
-	__u32	__cpt_pad;
+	__u32   cpt_ub_resources;
 	struct	cpt_ubparm	cpt_parms[32 * 2];
 } __attribute__ ((aligned (8)));
 

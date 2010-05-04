@@ -56,17 +56,33 @@ struct ct_holder
 	int index;
 };
 
-static void decode_tuple(struct cpt_ipct_tuple *v, struct ip_conntrack_tuple *tuple, int dir)
+static int decode_tuple(struct cpt_ipct_tuple *v,
+			 struct ip_conntrack_tuple *tuple, int dir,
+			 cpt_context_t *ctx)
 {
 	tuple->dst.ip = v->cpt_dst;
 	tuple->dst.u.all = v->cpt_dstport;
-	tuple->dst.protonum = v->cpt_protonum;
-	tuple->dst.dir = v->cpt_dir;
-	if (dir != tuple->dst.dir)
-		wprintk("dir != tuple->dst.dir\n");
+	if (ctx->image_version < CPT_VERSION_16) {
+		/* In 2.6.9 kernel protonum has short type */
+		__u16 protonum = *(__u16 *)&v->cpt_protonum;
+		if (protonum > 0xff && protonum < 0xffff) {
+			eprintk_ctx("tuple: protonum > 255: %u\n", protonum);
+			return -EINVAL;
+		}
+		tuple->dst.protonum = protonum;
+		tuple->dst.dir = dir;
+	} else {
+		tuple->dst.protonum = v->cpt_protonum;
+		tuple->dst.dir = v->cpt_dir;
+		if (dir != tuple->dst.dir) {
+			eprintk_ctx("dir != tuple->dst.dir\n");
+			return -EINVAL;
+		}
+	}
 
 	tuple->src.ip = v->cpt_src;
 	tuple->src.u.all = v->cpt_srcport;
+	return 0;
 }
 
 
@@ -121,15 +137,12 @@ static int undump_expect_list(struct ip_conntrack *ct,
 			return -ENOMEM;
 		}
 
-		if (ct->helper->timeout && !del_timer(&exp->timeout)) {
-			/* Dying already. We can do nothing. */
+		if (decode_tuple(&v.cpt_tuple, &exp->tuple, 0, ctx) ||
+		    decode_tuple(&v.cpt_mask, &exp->mask, 0, ctx)) {
+			ip_conntrack_expect_put(exp);
 			write_unlock_bh(&ip_conntrack_lock);
-			dprintk_ctx("conntrack expectation is dying\n");
-			continue;
+			return -EINVAL;
 		}
-
-		decode_tuple(&v.cpt_tuple, &exp->tuple, 0);
-		decode_tuple(&v.cpt_mask, &exp->mask, 0);
 
 		exp->master = ct;
 		nf_conntrack_get(&ct->ct_general);
@@ -144,10 +157,11 @@ static int undump_expect_list(struct ip_conntrack *ct,
 		} else
 #endif
 		if (ct->helper->timeout) {
-			exp->timeout.expires = jiffies + v.cpt_timeout;
-			add_timer(&exp->timeout);
+			mod_timer(&exp->timeout, jiffies + v.cpt_timeout);
 		}
 		write_unlock_bh(&ip_conntrack_lock);
+
+		ip_conntrack_expect_put(exp);
 
 		pos += v.cpt_next;
 	}
@@ -166,8 +180,11 @@ static int undump_one_ct(struct cpt_ip_conntrack_image *ci, loff_t pos,
 	if (c == NULL)
 		return -ENOMEM;
 
-	decode_tuple(&ci->cpt_tuple[0], &orig, 0);
-	decode_tuple(&ci->cpt_tuple[1], &repl, 1);
+	if (decode_tuple(&ci->cpt_tuple[0], &orig, 0, ctx) ||
+	    decode_tuple(&ci->cpt_tuple[1], &repl, 1, ctx)) {
+		kfree(c);
+		return -EINVAL;
+	}
 
 	conntrack = ip_conntrack_alloc(&orig, &repl, get_exec_env()->_ip_conntrack->ub);
 	if (!conntrack || IS_ERR(conntrack)) {
@@ -180,13 +197,14 @@ static int undump_one_ct(struct cpt_ip_conntrack_image *ci, loff_t pos,
 	*ct_list = c;
 	c->index = ci->cpt_index;
 
-	decode_tuple(&ci->cpt_tuple[0], &conntrack->tuplehash[0].tuple, 0);
-	decode_tuple(&ci->cpt_tuple[1], &conntrack->tuplehash[1].tuple, 1);
-
 	conntrack->status = ci->cpt_status;
 
 	memcpy(&conntrack->proto, ci->cpt_proto_data, sizeof(conntrack->proto));
 	memcpy(&conntrack->help, ci->cpt_help_data, sizeof(conntrack->help));
+
+#if defined(CONFIG_IP_NF_CONNTRACK_MARK)
+	conntrack->mark = ci->cpt_mark;
+#endif
 
 #ifdef CONFIG_IP_NF_NAT_NEEDED
 #if defined(CONFIG_IP_NF_TARGET_MASQUERADE) || \
@@ -219,7 +237,32 @@ static int undump_one_ct(struct cpt_ip_conntrack_image *ci, loff_t pos,
 	if (err == 0 && ci->cpt_next > ci->cpt_hdrlen)
 		err = undump_expect_list(conntrack, ci, pos, *ct_list, ctx);
 
+	if (conntrack->helper)
+		ip_conntrack_helper_put(conntrack->helper);
+
 	return err;
+}
+
+static void convert_conntrack_image(struct cpt_ip_conntrack_image *ci)
+{
+	struct cpt_ip_conntrack_image_compat img;
+
+	memcpy(&img, ci, sizeof(struct cpt_ip_conntrack_image_compat));
+	/* 
+	 * Size of cpt_help_data in 2.6.9 kernel is 16 bytes,
+	 * in 2.6.18 cpt_help_data size is 24 bytes, so zero the rest 8 bytes
+	 */
+	memset(ci->cpt_help_data + 4, 0, 8);
+	ci->cpt_initialized = img.cpt_initialized;
+	ci->cpt_num_manips = img.cpt_num_manips;
+	memcpy(ci->cpt_nat_manips, img.cpt_nat_manips, sizeof(img.cpt_nat_manips));
+	memcpy(ci->cpt_nat_seq, img.cpt_nat_seq, sizeof(img.cpt_nat_seq));
+	ci->cpt_masq_index = img.cpt_masq_index;
+	/* Id will be assigned in ip_conntrack_hash_insert(), so make it 0 here */
+	ci->cpt_id = 0;
+	/* mark was not supported in 2.6.9, so set it to default 0 value */
+	ci->cpt_mark = 0;
+
 }
 
 int rst_restore_ip_conntrack(struct cpt_context * ctx)
@@ -252,6 +295,8 @@ int rst_restore_ip_conntrack(struct cpt_context * ctx)
 		err = rst_get_object(CPT_OBJ_NET_CONNTRACK, sec, &ci, ctx);
 		if (err)
 			break;
+		if (ctx->image_version < CPT_VERSION_16)
+			convert_conntrack_image(&ci);
 		err = undump_one_ct(&ci, sec, &ct_list, ctx);
 		if (err)
 			break;

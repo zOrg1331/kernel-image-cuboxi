@@ -57,6 +57,7 @@
 #include <linux/tty.h>
 #include <linux/mount.h>
 #include <linux/kthread.h>
+#include <linux/oom.h>
 
 #include <net/route.h>
 #include <net/ip_fib.h>
@@ -185,7 +186,7 @@ static int real_setdevperms(envid_t veid, unsigned type,
 	struct ve_struct *ve;
 	int err;
 
-	if (!capable(CAP_SETVEID) || veid == 0)
+	if (!capable_setveid() || veid == 0)
 		return -EPERM;
 
 	if ((ve = get_ve_by_id(veid)) == NULL)
@@ -567,44 +568,18 @@ static void fini_venet(struct ve_struct *ve)
 
 static int init_ve_sched(struct ve_struct *ve)
 {
-#ifdef CONFIG_VZ_FAIRSCHED
 	int err;
 
-	/*
-	 * We refuse to switch to an already existing node since nodes
-	 * keep a pointer to their ve_struct...
-	 */
-	err = sys_fairsched_mknod(0, 1, ve->veid);
-	if (err < 0) {
-		printk(KERN_WARNING "Can't create fairsched node %d\n",
-				ve->veid);
-		return err;
-	}
-	err = sys_fairsched_mvpr(current->pid, ve->veid);
-	if (err) {
-		printk(KERN_WARNING "Can't switch to fairsched node %d\n",
-				ve->veid);
-		if (sys_fairsched_rmnod(ve->veid))
-			printk(KERN_ERR "Can't clean fairsched node %d\n",
-					ve->veid);
-		return err;
-	}
-#endif
-	ve_sched_attach(ve);
-	return 0;
+	err = fairsched_new_node(ve->veid, 0);
+	if (err == 0)
+		ve_sched_attach(ve);
+
+	return err;
 }
 
 static void fini_ve_sched(struct ve_struct *ve)
 {
-#ifdef CONFIG_VZ_FAIRSCHED
-	if (task_fairsched_node_id(current) == ve->veid)
-		if (sys_fairsched_mvpr(current->pid, FAIRSCHED_INIT_NODE_ID))
-			printk(KERN_WARNING "Can't leave fairsched node %d\n",
-					ve->veid);
-	if (sys_fairsched_rmnod(ve->veid))
-		printk(KERN_ERR "Can't remove fairsched node %d\n",
-				ve->veid);
-#endif
+	fairsched_drop_node(ve->veid);
 }
 
 /*
@@ -727,6 +702,8 @@ static int init_ve_struct(struct ve_struct *ve, envid_t veid,
 	ve->start_jiffies = get_jiffies_64();
 	ve->start_cycles = get_cycles();
 
+	ve->_randomize_va_space = ve0._randomize_va_space;
+ 
 	return 0;
 }
 
@@ -781,7 +758,6 @@ static void set_ve_caps(struct ve_struct *ve, struct task_struct *tsk)
 {
 	/* required for real_setdevperms from register_ve_<fs> above */
 	memcpy(&ve->ve_cap_bset, &tsk->cred->cap_effective, sizeof(kernel_cap_t));
-	cap_lower(ve->ve_cap_bset, CAP_SETVEID);
 }
 
 static int ve_list_add(struct ve_struct *ve)
@@ -838,6 +814,10 @@ void ve_move_task(struct task_struct *tsk, struct ve_struct *new, struct cred *n
 		tsk->mm->vps_dumpable = 0;
 	/* setup capabilities before enter */
 	set_task_ve_caps(new, new_creds);
+
+	/* Drop OOM protection. */
+	if (tsk->signal->oom_adj == OOM_DISABLE)
+		tsk->signal->oom_adj = 0;
 
 	old = tsk->ve_task_info.owner_env;
 	tsk->ve_task_info.owner_env = new;
@@ -897,13 +877,24 @@ static __u64 setup_iptables_mask(__u64 init_mask)
 static inline int init_ve_cpustats(struct ve_struct *ve)
 {
 	ve->cpu_stats = alloc_percpu(struct ve_cpu_stats);
-	return ve->cpu_stats == NULL ? -ENOMEM : 0;
+	if (ve->cpu_stats == NULL)
+		return -ENOMEM;
+	ve->sched_lat_ve.cur = alloc_percpu(struct kstat_lat_pcpu_snap_struct);
+	if (ve == NULL)
+		goto fail;
+	return 0;
+
+fail:
+	free_percpu(ve->cpu_stats);
+	return -ENOMEM;
 }
 
 static inline void free_ve_cpustats(struct ve_struct *ve)
 {
 	free_percpu(ve->cpu_stats);
 	ve->cpu_stats = NULL;
+	free_percpu(ve->sched_lat_ve.cur);
+	ve->sched_lat_ve.cur = NULL;
 }
 
 static int alone_in_pgrp(struct task_struct *tsk)
@@ -1173,7 +1164,7 @@ int real_env_create(envid_t veid, unsigned flags, u32 class_id,
 	}
 
 	status = -EPERM;
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		goto out;
 
 	status = -EINVAL;
@@ -1518,6 +1509,8 @@ static void free_ve_tty_drivers(struct ve_struct* ve)
 #ifdef CONFIG_UNIX98_PTYS
 	free_ve_tty_driver(ve->ptm_driver);
 	free_ve_tty_driver(ve->pts_driver);
+	if (ve->allocated_ptys)
+		ida_destroy(ve->allocated_ptys);
 	kfree(ve->allocated_ptys);
 	ve->ptm_driver = ve->pts_driver = NULL;
 	ve->allocated_ptys = NULL;
@@ -1702,7 +1695,7 @@ out:
 
 int real_ve_dev_map(envid_t veid, int op, char *dev_name)
 {
-	if (!capable(CAP_SETVEID))
+	if (!capable_setveid())
 		return -EPERM;
 	switch (op) {
 	case VE_NETDEV_ADD:
@@ -1886,6 +1879,20 @@ static inline unsigned long ve_used_mem(struct user_beancounter *ub)
 				 ub->ub_parms[UB_PRIVVMPAGES].held ;
 }
 
+static void ve_swapinfo(struct sysinfo *val, struct user_beancounter *ub)
+{
+	unsigned long size, used;
+
+	size = ub->ub_parms[UB_SWAPPAGES].limit;
+	used = ub->ub_parms[UB_SWAPPAGES].held;
+
+	if (size == UB_MAXVALUE)
+		size = 0;
+
+	val->totalswap = size;
+	val->freeswap = size > used ? size - used : 0;
+}
+
 static inline int ve_mi_replace(struct meminfo *mi, int old_ret)
 {
 #ifdef CONFIG_BEANCOUNTERS
@@ -1902,7 +1909,7 @@ static inline int ve_mi_replace(struct meminfo *mi, int old_ret)
 		return NOTIFY_DONE | NOTIFY_STOP_MASK; /* No virtualization */
 
 	nodettram = mi->si.totalram;
-	ub = current->mm->mm_ub;
+	ub = top_beancounter(current->mm->mm_ub);
 	usedmem = ve_used_mem(ub);
 
 	memset(mi, 0, sizeof(*mi));
@@ -1911,6 +1918,8 @@ static inline int ve_mi_replace(struct meminfo *mi, int old_ret)
 			nodettram : meminfo_val;
 	mi->si.freeram = (mi->si.totalram > usedmem) ?
 			(mi->si.totalram - usedmem) : 0;
+
+	ve_swapinfo(&mi->si, ub);
 
 	return NOTIFY_OK | NOTIFY_STOP_MASK;
 #else
@@ -1932,6 +1941,62 @@ static struct vnotifier_block meminfo_notifier_block = {
 	.notifier_call = meminfo_call
 };
 
+/* /proc/vz/veinfo */
+
+static ve_seq_print_t veaddr_seq_print_cb;
+
+void vzmon_register_veaddr_print_cb(ve_seq_print_t cb)
+{
+	rcu_assign_pointer(veaddr_seq_print_cb, cb);
+}
+EXPORT_SYMBOL(vzmon_register_veaddr_print_cb);
+
+void vzmon_unregister_veaddr_print_cb(ve_seq_print_t cb)
+{
+	rcu_assign_pointer(veaddr_seq_print_cb, NULL);
+	synchronize_rcu();
+}
+EXPORT_SYMBOL(vzmon_unregister_veaddr_print_cb);
+
+static int veinfo_seq_show(struct seq_file *m, void *v)
+{
+	struct ve_struct *ve;
+	ve_seq_print_t veaddr_seq_print;
+
+	ve = list_entry((struct list_head *)v, struct ve_struct, ve_list);
+
+	seq_printf(m, "%10u %5u %5u", ve->veid,
+			ve->class_id, atomic_read(&ve->pcounter));
+
+	rcu_read_lock();
+	veaddr_seq_print = rcu_dereference(veaddr_seq_print_cb);
+	if (veaddr_seq_print)
+		veaddr_seq_print(m, ve);
+	rcu_read_unlock();
+
+	seq_putc(m, '\n');
+	return 0;
+}
+
+static struct seq_operations veinfo_seq_op = {
+	.start	= ve_seq_start,
+	.next	=  ve_seq_next,
+	.stop	=  ve_seq_stop,
+	.show	=  veinfo_seq_show,
+};
+
+static int veinfo_open(struct inode *inode, struct file *file)
+{
+	return seq_open(file, &veinfo_seq_op);
+}
+
+static struct file_operations proc_veinfo_operations = {
+	.open		= veinfo_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release,
+};
+
 static int __init init_vecalls_proc(void)
 {
 	struct proc_dir_entry *de;
@@ -1951,6 +2016,11 @@ static int __init init_vecalls_proc(void)
 	if (!de)
 		printk(KERN_WARNING "VZMON: can't make version proc entry\n");
 
+	de = proc_create("veinfo", S_IFREG | S_IRUSR, proc_vz_dir,
+			&proc_veinfo_operations);
+	if (!de)
+		printk(KERN_WARNING "VZMON: can't make veinfo proc entry\n");
+
 	virtinfo_notifier_register(VITYPE_GENERAL, &meminfo_notifier_block);
 	return 0;
 }
@@ -1960,6 +2030,7 @@ static void fini_vecalls_proc(void)
 	remove_proc_entry("version", proc_vz_dir);
 	remove_proc_entry("devperms", proc_vz_dir);
 	remove_proc_entry("vestat", proc_vz_dir);
+	remove_proc_entry("veinfo", proc_vz_dir);
 	virtinfo_notifier_unregister(VITYPE_GENERAL, &meminfo_notifier_block);
 }
 #else

@@ -251,6 +251,7 @@ static struct net_device_stats *get_stats(struct net_device *dev)
 		stats->tx_bytes   += dev_stats->tx_bytes;
 		stats->rx_packets += dev_stats->rx_packets;
 		stats->tx_packets += dev_stats->tx_packets;
+		stats->tx_dropped += dev_stats->tx_dropped;
 	}
 
 	return stats;
@@ -391,6 +392,12 @@ static int veth_op_set_tx_csum(struct net_device *dev, u32 data)
 	return veth_set_op(dev, data, ethtool_op_set_tx_csum);
 }
 
+static int
+veth_op_set_tso(struct net_device *dev, u32 data)
+{
+	return veth_set_op(dev, data, ethtool_op_set_tso);
+}
+
 #define veth_op_set_rx_csum veth_op_set_tx_csum
 
 static struct ethtool_ops veth_ethtool_ops = {
@@ -401,6 +408,7 @@ static struct ethtool_ops veth_ethtool_ops = {
 	.get_rx_csum = ethtool_op_get_tx_csum,
 	.set_rx_csum = veth_op_set_rx_csum,
 	.get_tso = ethtool_op_get_tso,
+	.set_tso = veth_op_set_tso,
 };
 
 static void veth_cpt(struct net_device *dev,

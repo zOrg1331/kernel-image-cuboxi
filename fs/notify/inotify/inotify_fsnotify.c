@@ -171,6 +171,7 @@ static void inotify_detach_mnt(struct fsnotify_mark_entry *fe)
 		dput(e->path.dentry);
 		e->path.dentry = NULL;
 		mnt_unpin(e->path.mnt);
+		mntput(e->path.mnt);
 		e->path.dentry = NULL;
 	}
 }

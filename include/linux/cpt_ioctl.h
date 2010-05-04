@@ -39,5 +39,7 @@
 #define CPT_SET_ERRORFD _IOW(CPTCTLTYPE, 21, int)
 
 #define CPT_ITER	_IOW(CPTCTLTYPE, 23, int)
+#define CPT_LINKDIR_ADD	_IOW(CPTCTLTYPE, 24, int)
+#define CPT_HARDLNK_ON	_IOW(CPTCTLTYPE, 25, int)
 
 #endif

@@ -207,7 +207,7 @@ struct vz_quota_master {
 	struct dq_info		dq_info;	/* grace times and flags */
 	spinlock_t		dq_data_lock;	/* for dq_stat */
 
-	struct semaphore	dq_sem;		/* semaphore to protect 
+	struct mutex		dq_mutex;	/* mutex to protect
 						   ugid tree */
 
 	struct list_head	dq_ilink_list;	/* list of vz_quota_ilink */
@@ -272,7 +272,8 @@ struct virt_info_quota {
 #define DQUOT_CMD_CHECK		12
 #define DQUOT_CMD_FORCE		13
 
-extern struct semaphore vz_quota_sem;
+extern struct mutex vz_quota_mutex;
+
 void inode_qmblk_lock(struct super_block *sb);
 void inode_qmblk_unlock(struct super_block *sb);
 void qmblk_data_read_lock(struct vz_quota_master *qmblk);
@@ -282,6 +283,7 @@ void qmblk_data_write_unlock(struct vz_quota_master *qmblk);
 
 /* for quota operations */
 void vzquota_inode_init_call(struct inode *inode);
+void vzquota_inode_swap_call(struct inode *, struct inode *);
 void vzquota_inode_drop_call(struct inode *inode);
 int vzquota_inode_transfer_call(struct inode *, struct iattr *);
 struct vz_quota_master *vzquota_inode_data(struct inode *inode,
@@ -369,7 +371,6 @@ long do_vzquotactl(int cmd, unsigned int quota_id,
 int vzquota_proc_init(void);
 void vzquota_proc_release(void);
 struct vz_quota_master *vzquota_find_qmblk(struct super_block *);
-extern struct semaphore vz_quota_sem;
 
 void vzaquota_init(void);
 void vzaquota_fini(void);

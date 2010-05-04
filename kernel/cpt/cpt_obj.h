@@ -17,6 +17,8 @@ typedef struct _cpt_object
 	void			*o_image;
 	void			*o_parent;
 	struct list_head	o_alist;
+	unsigned int		o_flags;
+#define CPT_INODE_HARDLINKED	0x1
 } cpt_object_t;
 
 struct cpt_context;

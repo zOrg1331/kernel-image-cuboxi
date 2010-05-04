@@ -421,8 +421,13 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 		}
 	}
 
-	if (si->cpt_curr_target)
+	if (si->cpt_curr_target) {
 		current->signal->curr_target = find_task_by_vpid(si->cpt_curr_target);
+		if (current->signal->curr_target == NULL) {
+			wprintk_ctx("oops, curr_target=NULL, pid=%u\n", si->cpt_curr_target);
+			current->signal->curr_target = current;
+		}
+	}
 	current->signal->flags = 0;
 	*exiting = si->cpt_group_exit;
 	current->signal->group_exit_code = si->cpt_group_exit_code;
@@ -846,6 +851,7 @@ static int restore_registers(struct task_struct *tsk, struct pt_regs *regs,
 	tsk->thread.ip = (unsigned long) &i386_ret_from_resume;
 
 	tsk->thread.gs = decode_segment(b->cpt_gs);
+	task_user_gs(tsk) = decode_segment(b->cpt_ugs);
 	tsk->thread.debugreg0 = b->cpt_debugreg[0];
 	tsk->thread.debugreg1 = b->cpt_debugreg[1];
 	tsk->thread.debugreg2 = b->cpt_debugreg[2];
@@ -1182,7 +1188,7 @@ static void rst_apply_mxcsr_mask(struct task_struct *tsk)
 #ifdef CONFIG_X86_32
 	unsigned int flags;
 
-	flags = test_cpu_caps();
+	flags = test_cpu_caps_and_features();
 
 	/* if cpu does not support sse2 mask 6 bit (DAZ flag) and 16-31 bits
 	   in MXCSR to avoid general protection fault */
@@ -1193,6 +1199,32 @@ static void rst_apply_mxcsr_mask(struct task_struct *tsk)
 
 #ifdef CONFIG_X86
 #include <asm/i387.h>
+#endif
+
+#define RLIM_INFINITY32		0xffffffff
+#define RLIM_INFINITY64		(~0ULL)
+
+#ifdef CONFIG_X86_64
+#define rst_rlim_32_to_64(a, i, t, im)					\
+do {									\
+	if (im->cpt_rlim_##a[i] == RLIM_INFINITY32)			\
+		t->signal->rlim[i].rlim_##a = RLIM_INFINITY64;		\
+	else								\
+		t->signal->rlim[i].rlim_##a = im->cpt_rlim_##a[i];	\
+} while (0)
+#elif defined(CONFIG_X86_32)
+#define rst_rlim_64_to_32(a, i, t, im)					\
+do {									\
+	if (im->cpt_rlim_##a[i] == RLIM_INFINITY64)			\
+		t->signal->rlim[i].rlim_##a = RLIM_INFINITY32;		\
+	else if (im->cpt_rlim_##a[i] > RLIM_INFINITY32) {		\
+		eprintk_ctx("rlimit %Lu is too high for 32-bit task, "	\
+			    "dump file is corrupted\n",			\
+			    im->cpt_rlim_##a[i]);			\
+		return -EINVAL;						\
+	} else								\
+		t->signal->rlim[i].rlim_##a = im->cpt_rlim_##a[i];	\
+} while (0)
 #endif
 
 int rst_restore_process(struct cpt_context *ctx)
@@ -1307,8 +1339,23 @@ int rst_restore_process(struct cpt_context *ctx)
 			tsk->signal->cmaj_flt = ti->cpt_cmaj_flt;
 
 			for (i=0; i<RLIM_NLIMITS; i++) {
-				tsk->signal->rlim[i].rlim_cur = ti->cpt_rlim_cur[i];
-				tsk->signal->rlim[i].rlim_max = ti->cpt_rlim_max[i];
+#ifdef CONFIG_X86_64
+				if (ctx->image_arch == CPT_OS_ARCH_I386) {
+					rst_rlim_32_to_64(cur, i, tsk, ti);
+					rst_rlim_32_to_64(max, i, tsk, ti);
+				} else 
+#elif defined(CONFIG_X86_32)
+				if (ctx->image_arch == CPT_OS_ARCH_EMT64) {
+					rst_rlim_64_to_32(cur, i, tsk, ti);
+					rst_rlim_64_to_32(max, i, tsk, ti);
+				} else 
+#endif
+				{
+					tsk->signal->rlim[i].rlim_cur =
+						ti->cpt_rlim_cur[i];
+					tsk->signal->rlim[i].rlim_max =
+						ti->cpt_rlim_max[i];
+				}
 			}
 		}
 #endif
@@ -1542,7 +1589,8 @@ int rst_restore_process(struct cpt_context *ctx)
 		}
 
 		tsk->ptrace = ti->cpt_ptrace;
-		tsk->flags = ti->cpt_flags & ~PF_FROZEN;
+		tsk->flags = (tsk->flags & PF_USED_MATH) |
+			(ti->cpt_flags & CPT_TASK_FLAGS_MASK);
 		clear_tsk_thread_flag(tsk, TIF_FREEZE);
 		tsk->exit_signal = ti->cpt_exit_signal;
 
