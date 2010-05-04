@@ -130,6 +130,7 @@ void ocfs2_free_ac_resource(struct ocfs2_alloc_context *ac)
 	}
 	brelse(ac->ac_bh);
 	ac->ac_bh = NULL;
+	ac->ac_resv = NULL;
 }
 
 void ocfs2_free_alloc_context(struct ocfs2_alloc_context *ac)
@@ -369,9 +370,7 @@ static int ocfs2_block_group_fill(handle_t *handle,
 	ocfs2_set_bit(0, (unsigned long *)bg->bg_bitmap);
 	bg->bg_free_bits_count = cpu_to_le16(le16_to_cpu(bg->bg_bits) - 1);
 
-	status = ocfs2_journal_dirty(handle, bg_bh);
-	if (status < 0)
-		mlog_errno(status);
+	ocfs2_journal_dirty(handle, bg_bh);
 
 	/* There is no need to zero out or otherwise initialize the
 	 * other blocks in a group - All valid FS metadata in a block
@@ -506,11 +505,7 @@ static int ocfs2_block_group_alloc(struct ocfs2_super *osb,
 	le32_add_cpu(&fe->id1.bitmap1.i_total, le16_to_cpu(bg->bg_bits));
 	le32_add_cpu(&fe->i_clusters, le16_to_cpu(cl->cl_cpg));
 
-	status = ocfs2_journal_dirty(handle, bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto bail;
-	}
+	ocfs2_journal_dirty(handle, bh);
 
 	spin_lock(&OCFS2_I(alloc_inode)->ip_lock);
 	OCFS2_I(alloc_inode)->ip_clusters = le32_to_cpu(fe->i_clusters);
@@ -760,7 +755,7 @@ int ocfs2_reserve_new_metadata_blocks(struct ocfs2_super *osb,
 	status = ocfs2_reserve_suballoc_bits(osb, (*ac),
 					     EXTENT_ALLOC_SYSTEM_INODE,
 					     (u32)osb->slot_num, NULL,
-					     ALLOC_NEW_GROUP);
+					     ALLOC_GROUPS_FROM_GLOBAL|ALLOC_NEW_GROUP);
 
 
 	if (status >= 0) {
@@ -946,11 +941,7 @@ static int ocfs2_reserve_clusters_with_limit(struct ocfs2_super *osb,
 		status = ocfs2_reserve_local_alloc_bits(osb,
 							bits_wanted,
 							*ac);
-		if (status == -EFBIG) {
-			/* The local alloc window is outside ac_max_block.
-			 * use the main bitmap. */
-			status = -ENOSPC;
-		} else if ((status < 0) && (status != -ENOSPC)) {
+		if ((status < 0) && (status != -ENOSPC)) {
 			mlog_errno(status);
 			goto bail;
 		}
@@ -1129,16 +1120,10 @@ static inline int ocfs2_block_group_set_bits(handle_t *handle,
 	}
 
 	le16_add_cpu(&bg->bg_free_bits_count, -num_bits);
-
 	while(num_bits--)
 		ocfs2_set_bit(bit_off++, bitmap);
 
-	status = ocfs2_journal_dirty(handle,
-				     group_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto bail;
-	}
+	ocfs2_journal_dirty(handle, group_bh);
 
 bail:
 	mlog_exit(status);
@@ -1202,12 +1187,7 @@ static int ocfs2_relink_block_group(handle_t *handle,
 	}
 
 	prev_bg->bg_next_group = bg->bg_next_group;
-
-	status = ocfs2_journal_dirty(handle, prev_bg_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto out_rollback;
-	}
+	ocfs2_journal_dirty(handle, prev_bg_bh);
 
 	status = ocfs2_journal_access_gd(handle, INODE_CACHE(alloc_inode),
 					 bg_bh, OCFS2_JOURNAL_ACCESS_WRITE);
@@ -1217,12 +1197,7 @@ static int ocfs2_relink_block_group(handle_t *handle,
 	}
 
 	bg->bg_next_group = fe->id2.i_chain.cl_recs[chain].c_blkno;
-
-	status = ocfs2_journal_dirty(handle, bg_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto out_rollback;
-	}
+	ocfs2_journal_dirty(handle, bg_bh);
 
 	status = ocfs2_journal_access_di(handle, INODE_CACHE(alloc_inode),
 					 fe_bh, OCFS2_JOURNAL_ACCESS_WRITE);
@@ -1232,14 +1207,8 @@ static int ocfs2_relink_block_group(handle_t *handle,
 	}
 
 	fe->id2.i_chain.cl_recs[chain].c_blkno = bg->bg_blkno;
+	ocfs2_journal_dirty(handle, fe_bh);
 
-	status = ocfs2_journal_dirty(handle, fe_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto out_rollback;
-	}
-
-	status = 0;
 out_rollback:
 	if (status < 0) {
 		fe->id2.i_chain.cl_recs[chain].c_blkno = cpu_to_le64(fe_ptr);
@@ -1386,10 +1355,7 @@ static int ocfs2_alloc_dinode_update_counts(struct inode *inode,
 	tmp_used = le32_to_cpu(di->id1.bitmap1.i_used);
 	di->id1.bitmap1.i_used = cpu_to_le32(num_bits + tmp_used);
 	le32_add_cpu(&cl->cl_recs[chain].c_free, -num_bits);
-
-	ret = ocfs2_journal_dirty(handle, di_bh);
-	if (ret < 0)
-		mlog_errno(ret);
+	ocfs2_journal_dirty(handle, di_bh);
 
 out:
 	return ret;
@@ -1560,13 +1526,7 @@ static int ocfs2_search_chain(struct ocfs2_alloc_context *ac,
 	tmp_used = le32_to_cpu(fe->id1.bitmap1.i_used);
 	fe->id1.bitmap1.i_used = cpu_to_le32(*num_bits + tmp_used);
 	le32_add_cpu(&cl->cl_recs[chain].c_free, -(*num_bits));
-
-	status = ocfs2_journal_dirty(handle,
-				     ac->ac_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto bail;
-	}
+	ocfs2_journal_dirty(handle, ac->ac_bh);
 
 	status = ocfs2_block_group_set_bits(handle,
 					    alloc_inode,
@@ -1907,6 +1867,8 @@ int __ocfs2_claim_clusters(struct ocfs2_super *osb,
 	       && ac->ac_which != OCFS2_AC_USE_MAIN);
 
 	if (ac->ac_which == OCFS2_AC_USE_LOCAL) {
+		WARN_ON(min_clusters > 1);
+
 		status = ocfs2_claim_local_alloc_bits(osb,
 						      handle,
 						      ac,
@@ -2023,9 +1985,7 @@ static int ocfs2_block_group_clear_bits(handle_t *handle,
 	if (undo_fn)
 		jbd_unlock_bh_state(group_bh);
 
-	status = ocfs2_journal_dirty(handle, group_bh);
-	if (status < 0)
-		mlog_errno(status);
+	ocfs2_journal_dirty(handle, group_bh);
 bail:
 	return status;
 }
@@ -2092,12 +2052,7 @@ static int _ocfs2_free_suballoc_bits(handle_t *handle,
 		     count);
 	tmp_used = le32_to_cpu(fe->id1.bitmap1.i_used);
 	fe->id1.bitmap1.i_used = cpu_to_le32(tmp_used - count);
-
-	status = ocfs2_journal_dirty(handle, alloc_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto bail;
-	}
+	ocfs2_journal_dirty(handle, alloc_bh);
 
 bail:
 	brelse(group_bh);
