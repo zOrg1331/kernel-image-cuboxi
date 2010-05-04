@@ -55,6 +55,9 @@ static int __init omap_l2_cache_init(void)
 	extern void omap_smc1(u32 fn, u32 arg);
 	void __iomem *l2cache_base;
 
+	if (!cpu_is_omap44xx())
+		return -ENODEV;
+
 	/* To avoid code running on other OMAPs in
 	 * multi-omap builds
 	 */
