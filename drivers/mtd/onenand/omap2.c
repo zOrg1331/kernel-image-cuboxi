@@ -309,7 +309,7 @@ static int omap3_onenand_read_bufferram(struct mtd_info *mtd, int area,
 		goto out_copy;
 
 	/* panic_write() may be in an interrupt context */
-	if (in_interrupt())
+	if (in_interrupt() || oops_in_progress)
 		goto out_copy;
 
 	if (buf >= high_memory) {
@@ -386,7 +386,7 @@ static int omap3_onenand_write_bufferram(struct mtd_info *mtd, int area,
 		goto out_copy;
 
 	/* panic_write() may be in an interrupt context */
-	if (in_interrupt())
+	if (in_interrupt() || oops_in_progress)
 		goto out_copy;
 
 	if (buf >= high_memory) {
