@@ -2,10 +2,10 @@
 #define _FS_CEPH_MON_CLIENT_H
 
 #include <linux/completion.h>
+#include <linux/kref.h>
 #include <linux/rbtree.h>
 
 #include "messenger.h"
-#include "msgpool.h"
 
 struct ceph_client;
 struct ceph_mount_args;
@@ -44,13 +44,14 @@ struct ceph_mon_request {
  * to the caller
  */
 struct ceph_mon_statfs_request {
+	struct kref kref;
 	u64 tid;
 	struct rb_node node;
 	int result;
 	struct ceph_statfs *buf;
 	struct completion completion;
-	unsigned long last_attempt, delay; /* jiffies */
 	struct ceph_msg *request;  /* original request */
+	struct ceph_msg *reply;    /* and reply */
 };
 
 struct ceph_mon_client {
@@ -61,7 +62,7 @@ struct ceph_mon_client {
 	struct delayed_work delayed_work;
 
 	struct ceph_auth_client *auth;
-	struct ceph_msg *m_auth;
+	struct ceph_msg *m_auth, *m_auth_reply, *m_subscribe_ack;
 	int pending_auth;
 
 	bool hunting;
@@ -69,11 +70,6 @@ struct ceph_mon_client {
 	unsigned long sub_sent, sub_renew_after;
 	struct ceph_connection *con;
 	bool have_fsid;
-
-	/* msg pools */
-	struct ceph_msgpool msgpool_subscribe_ack;
-	struct ceph_msgpool msgpool_statfs_reply;
-	struct ceph_msgpool msgpool_auth_reply;
 
 	/* pending statfs requests */
 	struct rb_root statfs_request_tree;
