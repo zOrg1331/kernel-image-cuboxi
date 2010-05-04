@@ -2148,7 +2148,7 @@ static netdev_tx_t nv_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	unsigned int i;
 	u32 offset = 0;
 	u32 bcnt;
-	u32 size = skb->len-skb->data_len;
+	u32 size = skb_headlen(skb);
 	u32 entries = (size >> NV_TX2_TSO_MAX_SHIFT) + ((size & (NV_TX2_TSO_MAX_SIZE-1)) ? 1 : 0);
 	u32 empty_slots;
 	struct ring_desc* put_tx;
@@ -2269,7 +2269,7 @@ static netdev_tx_t nv_start_xmit_optimized(struct sk_buff *skb,
 	unsigned int i;
 	u32 offset = 0;
 	u32 bcnt;
-	u32 size = skb->len-skb->data_len;
+	u32 size = skb_headlen(skb);
 	u32 entries = (size >> NV_TX2_TSO_MAX_SHIFT) + ((size & (NV_TX2_TSO_MAX_SIZE-1)) ? 1 : 0);
 	u32 empty_slots;
 	struct ring_desc_ex* put_tx;
@@ -3104,12 +3104,14 @@ static void nv_set_multicast(struct net_device *dev)
 			if (dev->flags & IFF_ALLMULTI) {
 				alwaysOn[0] = alwaysOn[1] = alwaysOff[0] = alwaysOff[1] = 0;
 			} else {
-				struct dev_mc_list *walk;
+				struct netdev_hw_addr *ha;
 
-				netdev_for_each_mc_addr(walk, dev) {
+				netdev_for_each_mc_addr(ha, dev) {
+					unsigned char *addr = ha->addr;
 					u32 a, b;
-					a = le32_to_cpu(*(__le32 *) walk->dmi_addr);
-					b = le16_to_cpu(*(__le16 *) (&walk->dmi_addr[4]));
+
+					a = le32_to_cpu(*(__le32 *) addr);
+					b = le16_to_cpu(*(__le16 *) (&addr[4]));
 					alwaysOn[0] &= a;
 					alwaysOff[0] &= ~a;
 					alwaysOn[1] &= b;
@@ -3741,23 +3743,26 @@ static int nv_napi_poll(struct napi_struct *napi, int budget)
 	u8 __iomem *base = get_hwbase(dev);
 	unsigned long flags;
 	int retcode;
-	int tx_work, rx_work;
+	int rx_count, tx_work=0, rx_work=0;
 
-	if (!nv_optimized(np)) {
-		spin_lock_irqsave(&np->lock, flags);
-		tx_work = nv_tx_done(dev, np->tx_ring_size);
-		spin_unlock_irqrestore(&np->lock, flags);
+	do {
+		if (!nv_optimized(np)) {
+			spin_lock_irqsave(&np->lock, flags);
+			tx_work += nv_tx_done(dev, np->tx_ring_size);
+			spin_unlock_irqrestore(&np->lock, flags);
 
-		rx_work = nv_rx_process(dev, budget);
-		retcode = nv_alloc_rx(dev);
-	} else {
-		spin_lock_irqsave(&np->lock, flags);
-		tx_work = nv_tx_done_optimized(dev, np->tx_ring_size);
-		spin_unlock_irqrestore(&np->lock, flags);
+			rx_count = nv_rx_process(dev, budget);
+			retcode = nv_alloc_rx(dev);
+		} else {
+			spin_lock_irqsave(&np->lock, flags);
+			tx_work += nv_tx_done_optimized(dev, np->tx_ring_size);
+			spin_unlock_irqrestore(&np->lock, flags);
 
-		rx_work = nv_rx_process_optimized(dev, budget);
-		retcode = nv_alloc_rx_optimized(dev);
-	}
+			rx_count = nv_rx_process_optimized(dev, budget);
+			retcode = nv_alloc_rx_optimized(dev);
+		}
+	} while (retcode == 0 &&
+		 rx_count > 0 && (rx_work += rx_count) < budget);
 
 	if (retcode) {
 		spin_lock_irqsave(&np->lock, flags);
