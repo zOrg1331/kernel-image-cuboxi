@@ -445,14 +445,14 @@ static irqreturn_t __ei_interrupt(int irq, void *dev_id)
 
 	if (ei_local->irqlock)
 	{
-#if 1 /* This might just be an interrupt for a PCI device sharing this line */
-		/* The "irqlock" check is only for testing. */
-		printk(ei_local->irqlock
-			   ? "%s: Interrupted while interrupts are masked! isr=%#2x imr=%#2x.\n"
-			   : "%s: Reentering the interrupt handler! isr=%#2x imr=%#2x.\n",
+		/*
+		 * This might just be an interrupt for a PCI device sharing
+		 * this line
+		 */
+		printk("%s: Interrupted while interrupts are masked!"
+			   " isr=%#2x imr=%#2x.\n",
 			   dev->name, ei_inb_p(e8390_base + EN0_ISR),
 			   ei_inb_p(e8390_base + EN0_IMR));
-#endif
 		spin_unlock(&ei_local->page_lock);
 		return IRQ_NONE;
 	}
@@ -905,10 +905,10 @@ static struct net_device_stats *__ei_get_stats(struct net_device *dev)
 
 static inline void make_mc_bits(u8 *bits, struct net_device *dev)
 {
-	struct dev_mc_list *dmi;
+	struct netdev_hw_addr *ha;
 
-	netdev_for_each_mc_addr(dmi, dev) {
-		u32 crc = ether_crc(ETH_ALEN, dmi->dmi_addr);
+	netdev_for_each_mc_addr(ha, dev) {
+		u32 crc = ether_crc(ETH_ALEN, ha->addr);
 		/*
 		 * The 8390 uses the 6 most significant bits of the
 		 * CRC to index the multicast table.

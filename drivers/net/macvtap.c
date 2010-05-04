@@ -37,6 +37,7 @@
 struct macvtap_queue {
 	struct sock sk;
 	struct socket sock;
+	struct socket_wq wq;
 	struct macvlan_dev *vlan;
 	struct file *file;
 	unsigned int flags;
@@ -181,7 +182,7 @@ static int macvtap_forward(struct net_device *dev, struct sk_buff *skb)
 		return -ENOLINK;
 
 	skb_queue_tail(&q->sk.sk_receive_queue, skb);
-	wake_up_interruptible_poll(q->sk.sk_sleep, POLLIN | POLLRDNORM | POLLRDBAND);
+	wake_up_interruptible_poll(sk_sleep(&q->sk), POLLIN | POLLRDNORM | POLLRDBAND);
 	return 0;
 }
 
@@ -242,12 +243,15 @@ static struct rtnl_link_ops macvtap_link_ops __read_mostly = {
 
 static void macvtap_sock_write_space(struct sock *sk)
 {
+	wait_queue_head_t *wqueue;
+
 	if (!sock_writeable(sk) ||
 	    !test_and_clear_bit(SOCK_ASYNC_NOSPACE, &sk->sk_socket->flags))
 		return;
 
-	if (sk->sk_sleep && waitqueue_active(sk->sk_sleep))
-		wake_up_interruptible_poll(sk->sk_sleep, POLLOUT | POLLWRNORM | POLLWRBAND);
+	wqueue = sk_sleep(sk);
+	if (wqueue && waitqueue_active(wqueue))
+		wake_up_interruptible_poll(wqueue, POLLOUT | POLLWRNORM | POLLWRBAND);
 }
 
 static int macvtap_open(struct inode *inode, struct file *file)
@@ -272,7 +276,8 @@ static int macvtap_open(struct inode *inode, struct file *file)
 	if (!q)
 		goto out;
 
-	init_waitqueue_head(&q->sock.wait);
+	q->sock.wq = &q->wq;
+	init_waitqueue_head(&q->wq.wait);
 	q->sock.type = SOCK_RAW;
 	q->sock.state = SS_CONNECTED;
 	q->sock.file = file;
@@ -308,7 +313,7 @@ static unsigned int macvtap_poll(struct file *file, poll_table * wait)
 		goto out;
 
 	mask = 0;
-	poll_wait(file, &q->sock.wait, wait);
+	poll_wait(file, &q->wq.wait, wait);
 
 	if (!skb_queue_empty(&q->sk.sk_receive_queue))
 		mask |= POLLIN | POLLRDNORM;
@@ -562,7 +567,7 @@ static ssize_t macvtap_do_read(struct macvtap_queue *q, struct kiocb *iocb,
 	struct sk_buff *skb;
 	ssize_t ret = 0;
 
-	add_wait_queue(q->sk.sk_sleep, &wait);
+	add_wait_queue(sk_sleep(&q->sk), &wait);
 	while (len) {
 		current->state = TASK_INTERRUPTIBLE;
 
@@ -587,7 +592,7 @@ static ssize_t macvtap_do_read(struct macvtap_queue *q, struct kiocb *iocb,
 	}
 
 	current->state = TASK_RUNNING;
-	remove_wait_queue(q->sk.sk_sleep, &wait);
+	remove_wait_queue(sk_sleep(&q->sk), &wait);
 	return ret;
 }
 
