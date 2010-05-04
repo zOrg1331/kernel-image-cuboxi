@@ -376,6 +376,10 @@ void ocfs2_populate_inode(struct inode *inode, struct ocfs2_dinode *fe,
 
 	OCFS2_I(inode)->ip_last_used_slot = 0;
 	OCFS2_I(inode)->ip_last_used_group = 0;
+
+	if (S_ISDIR(inode->i_mode))
+		ocfs2_resv_set_type(&OCFS2_I(inode)->ip_la_data_resv,
+				    OCFS2_RESV_FLAG_DIR);
 	mlog_exit_void();
 }
 
@@ -558,6 +562,7 @@ static int ocfs2_truncate_for_delete(struct ocfs2_super *osb,
 		handle = ocfs2_start_trans(osb, OCFS2_INODE_UPDATE_CREDITS);
 		if (IS_ERR(handle)) {
 			status = PTR_ERR(handle);
+			handle = NULL;
 			mlog_errno(status);
 			goto out;
 		}
@@ -639,11 +644,13 @@ static int ocfs2_remove_inode(struct inode *inode,
 		goto bail_unlock;
 	}
 
-	status = ocfs2_orphan_del(osb, handle, orphan_dir_inode, inode,
-				  orphan_dir_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto bail_commit;
+	if (!(OCFS2_I(inode)->ip_flags & OCFS2_INODE_SKIP_ORPHAN_DIR)) {
+		status = ocfs2_orphan_del(osb, handle, orphan_dir_inode, inode,
+					  orphan_dir_bh);
+		if (status < 0) {
+			mlog_errno(status);
+			goto bail_commit;
+		}
 	}
 
 	/* set the inodes dtime */
@@ -656,12 +663,7 @@ static int ocfs2_remove_inode(struct inode *inode,
 
 	di->i_dtime = cpu_to_le64(CURRENT_TIME.tv_sec);
 	di->i_flags &= cpu_to_le32(~(OCFS2_VALID_FL | OCFS2_ORPHANED_FL));
-
-	status = ocfs2_journal_dirty(handle, di_bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto bail_commit;
-	}
+	ocfs2_journal_dirty(handle, di_bh);
 
 	ocfs2_remove_from_cache(INODE_CACHE(inode), di_bh);
 	dquot_free_inode(inode);
@@ -726,34 +728,35 @@ static int ocfs2_wipe_inode(struct inode *inode,
 	struct inode *orphan_dir_inode = NULL;
 	struct buffer_head *orphan_dir_bh = NULL;
 	struct ocfs2_super *osb = OCFS2_SB(inode->i_sb);
-	struct ocfs2_dinode *di;
+	struct ocfs2_dinode *di = (struct ocfs2_dinode *) di_bh->b_data;
 
-	di = (struct ocfs2_dinode *) di_bh->b_data;
-	orphaned_slot = le16_to_cpu(di->i_orphaned_slot);
+	if (!(OCFS2_I(inode)->ip_flags & OCFS2_INODE_SKIP_ORPHAN_DIR)) {
+		orphaned_slot = le16_to_cpu(di->i_orphaned_slot);
 
-	status = ocfs2_check_orphan_recovery_state(osb, orphaned_slot);
-	if (status)
-		return status;
+		status = ocfs2_check_orphan_recovery_state(osb, orphaned_slot);
+		if (status)
+			return status;
 
-	orphan_dir_inode = ocfs2_get_system_file_inode(osb,
-						       ORPHAN_DIR_SYSTEM_INODE,
-						       orphaned_slot);
-	if (!orphan_dir_inode) {
-		status = -EEXIST;
-		mlog_errno(status);
-		goto bail;
-	}
+		orphan_dir_inode = ocfs2_get_system_file_inode(osb,
+							       ORPHAN_DIR_SYSTEM_INODE,
+							       orphaned_slot);
+		if (!orphan_dir_inode) {
+			status = -EEXIST;
+			mlog_errno(status);
+			goto bail;
+		}
 
-	/* Lock the orphan dir. The lock will be held for the entire
-	 * delete_inode operation. We do this now to avoid races with
-	 * recovery completion on other nodes. */
-	mutex_lock(&orphan_dir_inode->i_mutex);
-	status = ocfs2_inode_lock(orphan_dir_inode, &orphan_dir_bh, 1);
-	if (status < 0) {
-		mutex_unlock(&orphan_dir_inode->i_mutex);
+		/* Lock the orphan dir. The lock will be held for the entire
+		 * delete_inode operation. We do this now to avoid races with
+		 * recovery completion on other nodes. */
+		mutex_lock(&orphan_dir_inode->i_mutex);
+		status = ocfs2_inode_lock(orphan_dir_inode, &orphan_dir_bh, 1);
+		if (status < 0) {
+			mutex_unlock(&orphan_dir_inode->i_mutex);
 
-		mlog_errno(status);
-		goto bail;
+			mlog_errno(status);
+			goto bail;
+		}
 	}
 
 	/* we do this while holding the orphan dir lock because we
@@ -794,6 +797,9 @@ static int ocfs2_wipe_inode(struct inode *inode,
 		mlog_errno(status);
 
 bail_unlock_dir:
+	if (OCFS2_I(inode)->ip_flags & OCFS2_INODE_SKIP_ORPHAN_DIR)
+		return status;
+
 	ocfs2_inode_unlock(orphan_dir_inode, 1);
 	mutex_unlock(&orphan_dir_inode->i_mutex);
 	brelse(orphan_dir_bh);
@@ -889,7 +895,8 @@ static int ocfs2_query_inode_wipe(struct inode *inode,
 
 	/* Do some basic inode verification... */
 	di = (struct ocfs2_dinode *) di_bh->b_data;
-	if (!(di->i_flags & cpu_to_le32(OCFS2_ORPHANED_FL))) {
+	if (!(di->i_flags & cpu_to_le32(OCFS2_ORPHANED_FL)) &&
+	    !(oi->ip_flags & OCFS2_INODE_SKIP_ORPHAN_DIR)) {
 		/*
 		 * Inodes in the orphan dir must have ORPHANED_FL.  The only
 		 * inodes that come back out of the orphan dir are reflink
@@ -1115,6 +1122,10 @@ void ocfs2_clear_inode(struct inode *inode)
 	ocfs2_mark_lockres_freeing(&oi->ip_inode_lockres);
 	ocfs2_mark_lockres_freeing(&oi->ip_open_lockres);
 
+	ocfs2_resv_discard(&OCFS2_SB(inode->i_sb)->osb_la_resmap,
+			   &oi->ip_la_data_resv);
+	ocfs2_resv_init_once(&oi->ip_la_data_resv);
+
 	/* We very well may get a clear_inode before all an inodes
 	 * metadata has hit disk. Of course, we can't drop any cluster
 	 * locks until the journal has finished with it. The only
@@ -1290,13 +1301,8 @@ int ocfs2_mark_inode_dirty(handle_t *handle,
 	fe->i_mtime = cpu_to_le64(inode->i_mtime.tv_sec);
 	fe->i_mtime_nsec = cpu_to_le32(inode->i_mtime.tv_nsec);
 
-	status = ocfs2_journal_dirty(handle, bh);
-	if (status < 0)
-		mlog_errno(status);
-
-	status = 0;
+	ocfs2_journal_dirty(handle, bh);
 leave:
-
 	mlog_exit(status);
 	return status;
 }
