@@ -1457,8 +1457,6 @@ struct usb_sg_request {
 
 	struct usb_device	*dev;
 	int			pipe;
-	struct scatterlist	*sg;
-	int			nents;
 
 	int			entries;
 	struct urb		**urbs;
