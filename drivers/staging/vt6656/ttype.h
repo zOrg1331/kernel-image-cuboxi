@@ -33,10 +33,6 @@
 
 /******* Common definitions and typedefs ***********************************/
 
-#ifndef OUT
-#define OUT
-#endif
-
 //2007-0115-05<Add>by MikeLiu
 #ifndef TxInSleep
 #define TxInSleep
@@ -62,11 +58,6 @@ typedef int             BOOL;
 #endif
 #if !defined(FALSE)
 #define FALSE           0
-#endif
-
-
-#if !defined(SUCCESS)
-#define SUCCESS         0
 #endif
 
 //2007-0809-01<Add>by MikeLiu
