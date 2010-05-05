@@ -16,6 +16,7 @@
 #include <linux/nodemask.h>
 #include <linux/initrd.h>
 #include <linux/highmem.h>
+#include <linux/gfp.h>
 
 #include <asm/mach-types.h>
 #include <asm/sections.h>
