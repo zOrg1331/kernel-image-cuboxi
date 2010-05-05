@@ -554,7 +554,7 @@ static int __cmd_annotate(void)
 	int ret;
 	struct perf_session *session;
 
-	session = perf_session__new(input_name, O_RDONLY, force);
+	session = perf_session__new(input_name, O_RDONLY, force, false);
 	if (session == NULL)
 		return -ENOMEM;
 
@@ -571,7 +571,7 @@ static int __cmd_annotate(void)
 		perf_session__fprintf(session, stdout);
 
 	if (verbose > 2)
-		dsos__fprintf(&session->kerninfo_root, stdout);
+		perf_session__fprintf_dsos(session, stdout);
 
 	perf_session__collapse_resort(&session->hists);
 	perf_session__output_resort(&session->hists, session->event_total[0]);
