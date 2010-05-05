@@ -45,8 +45,6 @@
 
 /* standard VGA IO port
 */
-#define VIARMisc    0x3CC
-#define VIAWMisc    0x3C2
 #define VIAStatus   0x3DA
 #define VIACR       0x3D4
 #define VIASR       0x3C4
@@ -570,6 +568,10 @@
 #define M1200X720_R60_HSP       NEGATIVE
 #define M1200X720_R60_VSP       POSITIVE
 
+/* 1200x900@60 Sync Polarity (DCON) */
+#define M1200X900_R60_HSP       NEGATIVE
+#define M1200X900_R60_VSP       NEGATIVE
+
 /* 1280x600@60 Sync Polarity (GTF Mode) */
 #define M1280x600_R60_HSP       NEGATIVE
 #define M1280x600_R60_VSP       POSITIVE
@@ -651,6 +653,7 @@
 #define CLK_52_406M     52406000
 #define CLK_52_977M     52977000
 #define CLK_56_250M     56250000
+#define CLK_57_275M     57275000
 #define CLK_60_466M     60466000
 #define CLK_61_500M     61500000
 #define CLK_65_000M     65000000
@@ -939,6 +942,7 @@
 #define VX855_52_406M     0x00580C03
 #define VX855_52_977M     0x00940C05
 #define VX855_56_250M     0x009D0C05
+#define VX855_57_275M     0x009D8C85    /* Used by XO panel */
 #define VX855_60_466M     0x00A90C05
 #define VX855_61_500M     0x00AC0C05
 #define VX855_65_000M     0x006D0C03
@@ -1065,6 +1069,7 @@
 #define RES_1600X1200_60HZ_PIXCLOCK  6172
 #define RES_1600X1200_75HZ_PIXCLOCK  4938
 #define RES_1280X720_60HZ_PIXCLOCK   13426
+#define RES_1200X900_60HZ_PIXCLOCK   17459
 #define RES_1920X1080_60HZ_PIXCLOCK  5787
 #define RES_1400X1050_60HZ_PIXCLOCK  8214
 #define RES_1400X1050_75HZ_PIXCLOCK  6410
