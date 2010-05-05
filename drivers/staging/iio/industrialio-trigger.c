@@ -156,6 +156,9 @@ struct iio_trigger *iio_trigger_find_by_name(const char *name, size_t len)
 	struct iio_trigger *trig;
 	bool found = false;
 
+	if (len && name[len - 1] == '\n')
+		len--;
+
 	mutex_lock(&iio_trigger_list_lock);
 	list_for_each_entry(trig, &iio_trigger_list, list) {
 		if (strncmp(trig->name, name, len) == 0) {
@@ -362,7 +365,7 @@ struct iio_trigger *iio_allocate_trigger(void)
 	trig = kzalloc(sizeof *trig, GFP_KERNEL);
 	if (trig) {
 		trig->dev.type = &iio_trig_type;
-		trig->dev.class = &iio_class;
+		trig->dev.bus = &iio_bus_type;
 		device_initialize(&trig->dev);
 		dev_set_drvdata(&trig->dev, (void *)trig);
 		spin_lock_init(&trig->pollfunc_list_lock);
