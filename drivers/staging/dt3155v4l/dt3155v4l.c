@@ -4,6 +4,7 @@
 #include <linux/pci.h>
 #include <linux/version.h>
 #include <linux/stringify.h>
+#include <linux/delay.h>
 #include <media/videobuf-dma-contig.h>
 #include <linux/kthread.h>
 
@@ -64,7 +65,7 @@ static u8 config_init = ACQ_MODE_EVEN;
  * in a byte pointed by data.
  */
 static int
-read_i2c_reg(void *addr, u8 index, u8 *data)
+read_i2c_reg(void __iomem *addr, u8 index, u8 *data)
 {
 	u32 tmp = index;
 
@@ -101,7 +102,7 @@ read_i2c_reg(void *addr, u8 index, u8 *data)
  * and busy waits for the process to finish.
  */
 static int
-write_i2c_reg(void *addr, u8 index, u8 data)
+write_i2c_reg(void __iomem *addr, u8 index, u8 data)
 {
 	u32 tmp = index;
 
@@ -133,8 +134,7 @@ write_i2c_reg(void *addr, u8 index, u8 data)
  * This function starts writting the specified (by index) register
  * and then returns.
  */
-void
-write_i2c_reg_nowait(void *addr, u8 index, u8 data)
+static void write_i2c_reg_nowait(void __iomem *addr, u8 index, u8 data)
 {
 	u32 tmp = index;
 
@@ -151,8 +151,7 @@ write_i2c_reg_nowait(void *addr, u8 index, u8 data)
  *
  * This function waits reading/writting to finish.
  */
-static int
-wait_i2c_reg(void *addr)
+static int wait_i2c_reg(void __iomem *addr)
 {
 	if (ioread32(addr + IIC_CSR2) & NEW_CYCLE)
 		udelay(65); /* wait at least 63 usec for NEW_CYCLE to clear */
