@@ -47,7 +47,7 @@
 
 /* Current ACPICA subsystem version in YYYYMMDD format */
 
-#define ACPI_CA_VERSION                 0x20100121
+#define ACPI_CA_VERSION                 0x20100331
 
 #include "actypes.h"
 #include "actbl.h"
@@ -67,6 +67,8 @@ extern u8 acpi_gbl_leave_wake_gpes_disabled;
 extern u8 acpi_gbl_use_default_register_widths;
 extern acpi_name acpi_gbl_trace_method_name;
 extern u32 acpi_gbl_trace_flags;
+extern u8 acpi_gbl_enable_aml_debug_object;
+extern u8 acpi_gbl_copy_dsdt_locally;
 
 extern u32 acpi_current_gpe_count;
 extern struct acpi_table_fadt acpi_gbl_FADT;
@@ -283,16 +285,17 @@ acpi_status acpi_get_event_status(u32 event, acpi_event_status * event_status);
  */
 acpi_status acpi_set_gpe(acpi_handle gpe_device, u32 gpe_number, u8 action);
 
-acpi_status acpi_enable_gpe(acpi_handle gpe_device, u32 gpe_number, u8 type);
+acpi_status
+acpi_enable_gpe(acpi_handle gpe_device, u32 gpe_number, u8 gpe_type);
 
-acpi_status acpi_disable_gpe(acpi_handle gpe_device, u32 gpe_number, u8 type);
+acpi_status
+acpi_disable_gpe(acpi_handle gpe_device, u32 gpe_number, u8 gpe_type);
 
-acpi_status acpi_clear_gpe(acpi_handle gpe_device, u32 gpe_number, u32 flags);
+acpi_status acpi_clear_gpe(acpi_handle gpe_device, u32 gpe_number);
 
 acpi_status
 acpi_get_gpe_status(acpi_handle gpe_device,
-		    u32 gpe_number,
-		    u32 flags, acpi_event_status * event_status);
+		    u32 gpe_number, acpi_event_status *event_status);
 
 acpi_status acpi_disable_all_gpes(void);
 
