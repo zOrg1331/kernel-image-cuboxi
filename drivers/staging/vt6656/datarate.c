@@ -65,16 +65,9 @@ const BYTE acbyIERate[MAX_RATE] =
 
 /*---------------------  Static Functions  --------------------------*/
 
-VOID s_vResetCounter (
-    IN PKnownNodeDB psNodeDBTable
-    );
+void s_vResetCounter(PKnownNodeDB psNodeDBTable);
 
-
-
-VOID
-s_vResetCounter (
-    IN PKnownNodeDB psNodeDBTable
-    )
+void s_vResetCounter(PKnownNodeDB psNodeDBTable)
 {
     BYTE            ii;
 
@@ -107,7 +100,7 @@ s_vResetCounter (
 -*/
 BYTE
 DATARATEbyGetRateIdx (
-    IN BYTE byRate
+     BYTE byRate
     )
 {
     BYTE    ii;
@@ -161,7 +154,7 @@ DATARATEbyGetRateIdx (
 -*/
 WORD
 RATEwGetRateIdx(
-    IN BYTE byRate
+     BYTE byRate
     )
 {
     WORD    ii;
@@ -195,17 +188,16 @@ RATEwGetRateIdx(
  * Return Value: none
  *
 -*/
-VOID
-RATEvParseMaxRate (
-    IN PVOID pDeviceHandler,
-    IN PWLAN_IE_SUPP_RATES pItemRates,
-    IN PWLAN_IE_SUPP_RATES pItemExtRates,
-    IN BOOL bUpdateBasicRate,
-    OUT PWORD pwMaxBasicRate,
-    OUT PWORD pwMaxSuppRate,
-    OUT PWORD pwSuppRate,
-    OUT PBYTE pbyTopCCKRate,
-    OUT PBYTE pbyTopOFDMRate
+void RATEvParseMaxRate(
+     void *pDeviceHandler,
+     PWLAN_IE_SUPP_RATES pItemRates,
+     PWLAN_IE_SUPP_RATES pItemExtRates,
+     BOOL bUpdateBasicRate,
+     PWORD pwMaxBasicRate,
+     PWORD pwMaxSuppRate,
+     PWORD pwSuppRate,
+     PBYTE pbyTopCCKRate,
+     PBYTE pbyTopOFDMRate
     )
 {
 PSDevice  pDevice = (PSDevice) pDeviceHandler;
@@ -236,7 +228,7 @@ UINT  uRateLen;
         if (WLAN_MGMT_IS_BASICRATE(byRate) &&
             (bUpdateBasicRate == TRUE))  {
             // Add to basic rate set, update pDevice->byTopCCKBasicRate and pDevice->byTopOFDMBasicRate
-            CARDbAddBasicRate((PVOID)pDevice, RATEwGetRateIdx(byRate));
+		CARDbAddBasicRate((void *)pDevice, RATEwGetRateIdx(byRate));
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"ParseMaxRate AddBasicRate: %d\n", RATEwGetRateIdx(byRate));
         }
         byRate = (BYTE)(pItemRates->abyRates[ii]&0x7F);
@@ -259,7 +251,7 @@ UINT  uRateLen;
             // select highest basic rate
             if (WLAN_MGMT_IS_BASICRATE(pItemExtRates->abyRates[ii])) {
             	// Add to basic rate set, update pDevice->byTopCCKBasicRate and pDevice->byTopOFDMBasicRate
-                CARDbAddBasicRate((PVOID)pDevice, RATEwGetRateIdx(byRate));
+		    CARDbAddBasicRate((void *)pDevice, RATEwGetRateIdx(byRate));
                 DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"ParseMaxRate AddBasicRate: %d\n", RATEwGetRateIdx(byRate));
             }
             byRate = (BYTE)(pItemExtRates->abyRates[ii]&0x7F);
@@ -272,7 +264,8 @@ UINT  uRateLen;
         }
     } //if(pItemExtRates != NULL)
 
-    if ((pDevice->byPacketType == PK_TYPE_11GB) && CARDbIsOFDMinBasicRate((PVOID)pDevice)) {
+    if ((pDevice->byPacketType == PK_TYPE_11GB)
+	&& CARDbIsOFDMinBasicRate((void *)pDevice)) {
         pDevice->byPacketType = PK_TYPE_11GA;
     }
 
@@ -284,7 +277,7 @@ UINT  uRateLen;
     else
        *pwMaxBasicRate = pDevice->byTopOFDMBasicRate;
     if (wOldBasicRate != pDevice->wBasicRate)
-        CARDvSetRSPINF((PVOID)pDevice, pDevice->byBBType);
+	CARDvSetRSPINF((void *)pDevice, pDevice->byBBType);
 
      DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Exit ParseMaxRate\n");
 }
@@ -308,10 +301,10 @@ UINT  uRateLen;
 #define AUTORATE_TXCNT_THRESHOLD        20
 #define AUTORATE_INC_THRESHOLD          30
 
-VOID
-RATEvTxRateFallBack (
-    IN PVOID pDeviceHandler,
-    IN PKnownNodeDB psNodeDBTable
+void
+RATEvTxRateFallBack(
+     void *pDeviceHandler,
+     PKnownNodeDB psNodeDBTable
     )
 {
 PSDevice        pDevice = (PSDevice) pDeviceHandler;
@@ -473,9 +466,9 @@ if (wIdxUpRate == RATE_54M ) {     //11a/g
 -*/
 BYTE
 RATEuSetIE (
-    IN PWLAN_IE_SUPP_RATES pSrcRates,
-    IN PWLAN_IE_SUPP_RATES pDstRates,
-    IN UINT                uRateLen
+     PWLAN_IE_SUPP_RATES pSrcRates,
+     PWLAN_IE_SUPP_RATES pDstRates,
+     UINT                uRateLen
     )
 {
     UINT ii, uu, uRateCnt = 0;
