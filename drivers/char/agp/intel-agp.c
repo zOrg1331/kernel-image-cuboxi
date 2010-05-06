@@ -11,6 +11,8 @@
 #include <asm/smp.h>
 #include "agp.h"
 
+int wbinvd_on_all_cpus(void);
+
 /*
  * If we have Intel graphics, we're not going to have anything other than
  * an Intel IOMMU. So make the correct use of the PCI DMA API contingent
