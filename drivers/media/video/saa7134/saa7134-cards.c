@@ -5355,6 +5355,23 @@ struct saa7134_board saa7134_boards[] = {
 			.amux = LINE2,
 		},
 	},
+	[SAA7134_BOARD_HAWELL_HW_404M7] = {
+		/* Hawell HW-404M7 & Hawell HW-808M7  */
+		/* Bogoslovskiy Viktor <bogovic@bk.ru> */
+		.name         = "Hawell HW-404M7",
+		.audio_clock   = 0x00200000,
+		.tuner_type    = UNSET,
+		.radio_type    = UNSET,
+		.tuner_addr   = ADDR_UNSET,
+		.radio_addr   = ADDR_UNSET,
+		.gpiomask      = 0x389c00,
+		.inputs       = {{
+			.name = name_comp1,
+			.vmux = 3,
+			.amux = LINE1,
+			.gpio = 0x01fc00,
+		} },
+	},
 
 };
 
@@ -7215,6 +7232,11 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 		       printk(KERN_INFO "%s: P7131 analog only, using "
 						       "entry of %s\n",
 		       dev->name, saa7134_boards[dev->board].name);
+
+			/* IR init has already happened for other cards, so
+			 * we have to catch up. */
+			dev->has_remote = SAA7134_REMOTE_GPIO;
+			saa7134_input_init1(dev);
 	       }
 	       break;
 	case SAA7134_BOARD_HAUPPAUGE_HVR1150:
@@ -7342,6 +7364,23 @@ int saa7134_board_init2(struct saa7134_dev *dev)
 				       "%s: Unable to enable tuner(%i).\n",
 				       dev->name, i);
 		}
+		break;
+	}
+	case SAA7134_BOARD_BEHOLD_H6:
+	{
+		u8 data[] = { 0x09, 0x9f, 0x86, 0x11};
+		struct i2c_msg msg = {.addr = 0x61, .flags = 0, .buf = data,
+							.len = sizeof(data)};
+
+		/* The tuner TUNER_PHILIPS_FMD1216MEX_MK3 after hardware    */
+		/* start has disabled IF and enabled DVB-T. When saa7134    */
+		/* scan I2C devices it not detect IF tda9887 and can`t      */
+		/* watch TV without software reboot. For solve this problem */
+		/* switch the tuner to analog TV mode manually.             */
+		if (i2c_transfer(&dev->i2c_adap, &msg, 1) != 1)
+				printk(KERN_WARNING
+				      "%s: Unable to enable IF of the tuner.\n",
+				       dev->name);
 		break;
 	}
 	} /* switch() */
