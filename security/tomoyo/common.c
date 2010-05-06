@@ -884,7 +884,7 @@ static struct tomoyo_profile *tomoyo_find_or_assign_new_profile(const unsigned
 	ptr = tomoyo_profile_ptr[profile];
 	if (ptr)
 		goto ok;
-	ptr = kmalloc(sizeof(*ptr), GFP_KERNEL);
+	ptr = kmalloc(sizeof(*ptr), GFP_NOFS);
 	if (!tomoyo_memory_ok(ptr)) {
 		kfree(ptr);
 		ptr = NULL;
@@ -1089,7 +1089,7 @@ static int tomoyo_update_manager_entry(const char *manager,
 	if (!saved_manager)
 		return -ENOMEM;
 	if (!is_delete)
-		entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+		entry = kmalloc(sizeof(*entry), GFP_NOFS);
 	mutex_lock(&tomoyo_policy_lock);
 	list_for_each_entry_rcu(ptr, &tomoyo_policy_manager_list, list) {
 		if (ptr->manager != saved_manager)
@@ -1369,7 +1369,6 @@ static bool tomoyo_print_path_acl(struct tomoyo_io_buffer *head,
 {
 	int pos;
 	u8 bit;
-	const char *atmark = "";
 	const char *filename;
 	const u32 perm = ptr->perm | (((u32) ptr->perm_high) << 16);
 
@@ -1384,8 +1383,7 @@ static bool tomoyo_print_path_acl(struct tomoyo_io_buffer *head,
 			continue;
 		msg = tomoyo_path2keyword(bit);
 		pos = head->read_avail;
-		if (!tomoyo_io_printf(head, "allow_%s %s%s\n", msg,
-				      atmark, filename))
+		if (!tomoyo_io_printf(head, "allow_%s %s\n", msg, filename))
 			goto out;
 	}
 	head->read_bit = 0;
@@ -1408,8 +1406,6 @@ static bool tomoyo_print_path2_acl(struct tomoyo_io_buffer *head,
 				   struct tomoyo_path2_acl *ptr)
 {
 	int pos;
-	const char *atmark1 = "";
-	const char *atmark2 = "";
 	const char *filename1;
 	const char *filename2;
 	const u8 perm = ptr->perm;
@@ -1423,8 +1419,8 @@ static bool tomoyo_print_path2_acl(struct tomoyo_io_buffer *head,
 			continue;
 		msg = tomoyo_path22keyword(bit);
 		pos = head->read_avail;
-		if (!tomoyo_io_printf(head, "allow_%s %s%s %s%s\n", msg,
-				      atmark1, filename1, atmark2, filename2))
+		if (!tomoyo_io_printf(head, "allow_%s %s %s\n", msg,
+				      filename1, filename2))
 			goto out;
 	}
 	head->read_bit = 0;
@@ -1886,7 +1882,7 @@ static int tomoyo_read_self_domain(struct tomoyo_io_buffer *head)
  */
 static int tomoyo_open_control(const u8 type, struct file *file)
 {
-	struct tomoyo_io_buffer *head = kzalloc(sizeof(*head), GFP_KERNEL);
+	struct tomoyo_io_buffer *head = kzalloc(sizeof(*head), GFP_NOFS);
 
 	if (!head)
 		return -ENOMEM;
@@ -1947,7 +1943,7 @@ static int tomoyo_open_control(const u8 type, struct file *file)
 	} else {
 		if (!head->readbuf_size)
 			head->readbuf_size = 4096 * 2;
-		head->read_buf = kzalloc(head->readbuf_size, GFP_KERNEL);
+		head->read_buf = kzalloc(head->readbuf_size, GFP_NOFS);
 		if (!head->read_buf) {
 			kfree(head);
 			return -ENOMEM;
@@ -1961,7 +1957,7 @@ static int tomoyo_open_control(const u8 type, struct file *file)
 		head->write = NULL;
 	} else if (head->write) {
 		head->writebuf_size = 4096 * 2;
-		head->write_buf = kzalloc(head->writebuf_size, GFP_KERNEL);
+		head->write_buf = kzalloc(head->writebuf_size, GFP_NOFS);
 		if (!head->write_buf) {
 			kfree(head->read_buf);
 			kfree(head);
