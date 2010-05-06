@@ -58,7 +58,8 @@ EXPORT_SYMBOL_GPL(unregister_acpi_hed_notifier);
  */
 static void acpi_hed_notify(struct acpi_device *device, u32 event)
 {
-	return blocking_notifier_call_chain(&acpi_hed_notify_list, 0, NULL);
+	blocking_notifier_call_chain(&acpi_hed_notify_list, 0, NULL);
+	return;
 }
 
 static int __devinit acpi_hed_add(struct acpi_device *device)
