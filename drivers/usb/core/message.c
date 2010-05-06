@@ -14,9 +14,9 @@
 #include <linux/device.h>
 #include <linux/scatterlist.h>
 #include <linux/usb/quirks.h>
+#include <linux/usb/hcd.h>	/* for usbcore internals */
 #include <asm/byteorder.h>
 
-#include "hcd.h"	/* for usbcore internals */
 #include "usb.h"
 
 static void cancel_async_set_config(struct usb_device *udev);
@@ -226,8 +226,7 @@ int usb_bulk_msg(struct usb_device *usb_dev, unsigned int pipe,
 	struct urb *urb;
 	struct usb_host_endpoint *ep;
 
-	ep = (usb_pipein(pipe) ? usb_dev->ep_in : usb_dev->ep_out)
-			[usb_pipeendpoint(pipe)];
+	ep = usb_pipe_endpoint(usb_dev, pipe);
 	if (!ep || len < 0)
 		return -EINVAL;
 
@@ -259,9 +258,6 @@ static void sg_clean(struct usb_sg_request *io)
 		kfree(io->urbs);
 		io->urbs = NULL;
 	}
-	if (io->dev->dev.dma_mask != NULL)
-		usb_buffer_unmap_sg(io->dev, usb_pipein(io->pipe),
-				    io->sg, io->nents);
 	io->dev = NULL;
 }
 
@@ -364,7 +360,6 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 {
 	int i;
 	int urb_flags;
-	int dma;
 	int use_sg;
 
 	if (!io || !dev || !sg
@@ -378,21 +373,9 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 	io->pipe = pipe;
 	io->sg = sg;
 	io->nents = nents;
-
-	/* not all host controllers use DMA (like the mainstream pci ones);
-	 * they can use PIO (sl811) or be software over another transport.
-	 */
-	dma = (dev->dev.dma_mask != NULL);
-	if (dma)
-		io->entries = usb_buffer_map_sg(dev, usb_pipein(pipe),
-						sg, nents);
-	else
-		io->entries = nents;
+	io->entries = nents;
 
 	/* initialize all the urbs we'll use */
-	if (io->entries <= 0)
-		return io->entries;
-
 	if (dev->bus->sg_tablesize > 0) {
 		io->urbs = kmalloc(sizeof *io->urbs, mem_flags);
 		use_sg = true;
@@ -404,8 +387,6 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 		goto nomem;
 
 	urb_flags = 0;
-	if (dma)
-		urb_flags |= URB_NO_TRANSFER_DMA_MAP;
 	if (usb_pipein(pipe))
 		urb_flags |= URB_SHORT_NOT_OK;
 
@@ -423,15 +404,16 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 
 		io->urbs[0]->complete = sg_complete;
 		io->urbs[0]->context = io;
+
 		/* A length of zero means transfer the whole sg list */
 		io->urbs[0]->transfer_buffer_length = length;
 		if (length == 0) {
 			for_each_sg(sg, sg, io->entries, i) {
 				io->urbs[0]->transfer_buffer_length +=
-					sg_dma_len(sg);
+					sg->length;
 			}
 		}
-		io->urbs[0]->sg = io;
+		io->urbs[0]->sg = sg;
 		io->urbs[0]->num_sgs = io->entries;
 		io->entries = 1;
 	} else {
@@ -454,26 +436,16 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 			io->urbs[i]->context = io;
 
 			/*
-			 * Some systems need to revert to PIO when DMA is temporarily
-			 * unavailable.  For their sakes, both transfer_buffer and
-			 * transfer_dma are set when possible.
-			 *
-			 * Note that if IOMMU coalescing occurred, we cannot
-			 * trust sg_page anymore, so check if S/G list shrunk.
+			 * Some systems can't use DMA; they use PIO instead.
+			 * For their sakes, transfer_buffer is set whenever
+			 * possible.
 			 */
-			if (io->nents == io->entries && !PageHighMem(sg_page(sg)))
+			if (!PageHighMem(sg_page(sg)))
 				io->urbs[i]->transfer_buffer = sg_virt(sg);
 			else
 				io->urbs[i]->transfer_buffer = NULL;
 
-			if (dma) {
-				io->urbs[i]->transfer_dma = sg_dma_address(sg);
-				len = sg_dma_len(sg);
-			} else {
-				/* hc may use _only_ transfer_buffer */
-				len = sg->length;
-			}
-
+			len = sg->length;
 			if (length) {
 				len = min_t(unsigned, len, length);
 				length -= len;
@@ -481,6 +453,8 @@ int usb_sg_init(struct usb_sg_request *io, struct usb_device *dev,
 					io->entries = i + 1;
 			}
 			io->urbs[i]->transfer_buffer_length = len;
+
+			io->urbs[i]->sg = sg;
 		}
 		io->urbs[--i]->transfer_flags &= ~URB_NO_INTERRUPT;
 	}
