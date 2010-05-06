@@ -69,10 +69,12 @@
 #define	MCFSIM_DMA1ICR		MCFSIM_ICR7	/* DMA 1 ICR */
 #define	MCFSIM_DMA2ICR		MCFSIM_ICR8	/* DMA 2 ICR */
 #define	MCFSIM_DMA3ICR		MCFSIM_ICR9	/* DMA 3 ICR */
+#define	MCFSIM_QSPIICR		MCFSIM_ICR10	/* QSPI ICR */
 
 /*
  *	Define system peripheral IRQ usage.
  */
+#define	MCF_IRQ_QSPI		28		/* QSPI, Level 4 */
 #define	MCF_IRQ_TIMER		30		/* Timer0, Level 6 */
 #define	MCF_IRQ_PROFILER	31		/* Timer1, Level 7 */
 
@@ -126,8 +128,8 @@
  * Generic GPIO support
  */
 #define MCFGPIO_PIN_MAX		64
-#define MCFGPIO_IRQ_MAX		-1
-#define MCFGPIO_IRQ_VECBASE	-1
+#define MCFGPIO_IRQ_MAX		MCFINTC2_GPIOIRQ7
+#define MCFGPIO_IRQ_VECBASE	MCFINTC2_GPIOIRQ0
 
 /****************************************************************************/
 
