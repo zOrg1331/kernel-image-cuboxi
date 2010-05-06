@@ -20,6 +20,8 @@
 #include <asm/k8.h>
 #include <asm/smp.h>
 
+void wbinvd_on_cpu(int cpu);
+
 #define LVL_1_INST	1
 #define LVL_1_DATA	2
 #define LVL_2		3
