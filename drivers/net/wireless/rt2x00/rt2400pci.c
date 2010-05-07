@@ -526,6 +526,10 @@ static void rt2400pci_config_ps(struct rt2x00_dev *rt2x00dev,
 
 		rt2x00_set_field32(&reg, CSR20_AUTOWAKE, 1);
 		rt2x00pci_register_write(rt2x00dev, CSR20, reg);
+	} else {
+		rt2x00pci_register_read(rt2x00dev, CSR20, &reg);
+		rt2x00_set_field32(&reg, CSR20_AUTOWAKE, 0);
+		rt2x00pci_register_write(rt2x00dev, CSR20, reg);
 	}
 
 	rt2x00dev->ops->lib->set_device_state(rt2x00dev, state);
@@ -1014,8 +1018,8 @@ static void rt2400pci_write_tx_desc(struct rt2x00_dev *rt2x00dev,
 	rt2x00_desc_write(entry_priv->desc, 1, word);
 
 	rt2x00_desc_read(txd, 2, &word);
-	rt2x00_set_field32(&word, TXD_W2_BUFFER_LENGTH, skb->len);
-	rt2x00_set_field32(&word, TXD_W2_DATABYTE_COUNT, skb->len);
+	rt2x00_set_field32(&word, TXD_W2_BUFFER_LENGTH, txdesc->length);
+	rt2x00_set_field32(&word, TXD_W2_DATABYTE_COUNT, txdesc->length);
 	rt2x00_desc_write(txd, 2, word);
 
 	rt2x00_desc_read(txd, 3, &word);
