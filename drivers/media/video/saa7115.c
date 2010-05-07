@@ -1091,7 +1091,7 @@ static void saa711x_set_lcr(struct v4l2_subdev *sd, struct v4l2_sliced_vbi_forma
 				saa7115_cfg_vbi_off);
 }
 
-static int saa711x_g_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
+static int saa711x_g_sliced_fmt(struct v4l2_subdev *sd, struct v4l2_sliced_vbi_format *sliced)
 {
 	static u16 lcr2vbi[] = {
 		0, V4L2_SLICED_TELETEXT_B, 0,	/* 1 */
@@ -1100,11 +1100,8 @@ static int saa711x_g_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
 		V4L2_SLICED_VPS, 0, 0, 0, 0,	/* 7 */
 		0, 0, 0, 0
 	};
-	struct v4l2_sliced_vbi_format *sliced = &fmt->fmt.sliced;
 	int i;
 
-	if (fmt->type != V4L2_BUF_TYPE_SLICED_VBI_CAPTURE)
-		return -EINVAL;
 	memset(sliced, 0, sizeof(*sliced));
 	/* done if using raw VBI */
 	if (saa711x_read(sd, R_80_GLOBAL_CNTL_1) & 0x10)
@@ -1120,16 +1117,27 @@ static int saa711x_g_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
 	return 0;
 }
 
+static int saa711x_g_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
+{
+	if (fmt->type != V4L2_BUF_TYPE_SLICED_VBI_CAPTURE)
+		return -EINVAL;
+	return saa711x_g_sliced_fmt(sd, &fmt->fmt.sliced);
+}
+
+static int saa711x_s_raw_fmt(struct v4l2_subdev *sd, struct v4l2_vbi_format *fmt)
+{
+	saa711x_set_lcr(sd, NULL);
+	return 0;
+}
+
+static int saa711x_s_sliced_fmt(struct v4l2_subdev *sd, struct v4l2_sliced_vbi_format *fmt)
+{
+	saa711x_set_lcr(sd, fmt);
+	return 0;
+}
+
 static int saa711x_s_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
 {
-	if (fmt->type == V4L2_BUF_TYPE_SLICED_VBI_CAPTURE) {
-		saa711x_set_lcr(sd, &fmt->fmt.sliced);
-		return 0;
-	}
-	if (fmt->type == V4L2_BUF_TYPE_VBI_CAPTURE) {
-		saa711x_set_lcr(sd, NULL);
-		return 0;
-	}
 	if (fmt->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		return -EINVAL;
 
@@ -1550,11 +1558,17 @@ static const struct v4l2_subdev_video_ops saa711x_video_ops = {
 	.s_crystal_freq = saa711x_s_crystal_freq,
 	.g_fmt = saa711x_g_fmt,
 	.s_fmt = saa711x_s_fmt,
-	.g_vbi_data = saa711x_g_vbi_data,
-	.decode_vbi_line = saa711x_decode_vbi_line,
 	.s_stream = saa711x_s_stream,
 	.querystd = saa711x_querystd,
 	.g_input_status = saa711x_g_input_status,
+};
+
+static const struct v4l2_subdev_vbi_ops saa711x_vbi_ops = {
+	.g_vbi_data = saa711x_g_vbi_data,
+	.decode_vbi_line = saa711x_decode_vbi_line,
+	.g_sliced_fmt = saa711x_g_sliced_fmt,
+	.s_sliced_fmt = saa711x_s_sliced_fmt,
+	.s_raw_fmt = saa711x_s_raw_fmt,
 };
 
 static const struct v4l2_subdev_ops saa711x_ops = {
@@ -1562,6 +1576,7 @@ static const struct v4l2_subdev_ops saa711x_ops = {
 	.tuner = &saa711x_tuner_ops,
 	.audio = &saa711x_audio_ops,
 	.video = &saa711x_video_ops,
+	.vbi = &saa711x_vbi_ops,
 };
 
 /* ----------------------------------------------------------------------- */

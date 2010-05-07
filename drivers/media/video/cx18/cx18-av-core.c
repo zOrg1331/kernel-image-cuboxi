@@ -1023,9 +1023,9 @@ static int cx18_av_queryctrl(struct v4l2_subdev *sd, struct v4l2_queryctrl *qc)
 
 static int cx18_av_g_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
 {
-	struct cx18 *cx = v4l2_get_subdevdata(sd);
-
-	return cx18_av_vbi_g_fmt(cx, fmt);
+	if (fmt->type != V4L2_BUF_TYPE_SLICED_VBI_CAPTURE)
+		return -EINVAL;
+	return cx18_av_g_sliced_fmt(sd, &fmt->fmt.sliced);
 }
 
 static int cx18_av_s_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
@@ -1097,12 +1097,6 @@ static int cx18_av_s_fmt(struct v4l2_subdev *sd, struct v4l2_format *fmt)
 		/* VS_INTRLACE=1 VFILT=filter */
 		cx18_av_write(cx, 0x41e, 0x8 | filter);
 		break;
-
-	case V4L2_BUF_TYPE_SLICED_VBI_CAPTURE:
-		return cx18_av_vbi_s_fmt(cx, fmt);
-
-	case V4L2_BUF_TYPE_VBI_CAPTURE:
-		return cx18_av_vbi_s_fmt(cx, fmt);
 
 	default:
 		return -EINVAL;
@@ -1403,10 +1397,16 @@ static const struct v4l2_subdev_audio_ops cx18_av_audio_ops = {
 
 static const struct v4l2_subdev_video_ops cx18_av_video_ops = {
 	.s_routing = cx18_av_s_video_routing,
-	.decode_vbi_line = cx18_av_decode_vbi_line,
 	.s_stream = cx18_av_s_stream,
 	.g_fmt = cx18_av_g_fmt,
 	.s_fmt = cx18_av_s_fmt,
+};
+
+static const struct v4l2_subdev_vbi_ops cx18_av_vbi_ops = {
+	.decode_vbi_line = cx18_av_decode_vbi_line,
+	.g_sliced_fmt = cx18_av_g_sliced_fmt,
+	.s_sliced_fmt = cx18_av_s_sliced_fmt,
+	.s_raw_fmt = cx18_av_s_raw_fmt,
 };
 
 static const struct v4l2_subdev_ops cx18_av_ops = {
@@ -1414,6 +1414,7 @@ static const struct v4l2_subdev_ops cx18_av_ops = {
 	.tuner = &cx18_av_tuner_ops,
 	.audio = &cx18_av_audio_ops,
 	.video = &cx18_av_video_ops,
+	.vbi = &cx18_av_vbi_ops,
 };
 
 int cx18_av_probe(struct cx18 *cx)
