@@ -37,6 +37,7 @@
 #include <linux/platform_device.h>
 #include <linux/clk.h>
 #include <linux/io.h>
+#include <linux/slab.h>
 
 /* I2C controller revisions */
 #define OMAP_I2C_REV_2			0x20
@@ -850,7 +851,7 @@ static const struct i2c_algorithm omap_i2c_algo = {
 	.functionality	= omap_i2c_func,
 };
 
-static int __init
+static int __devinit
 omap_i2c_probe(struct platform_device *pdev)
 {
 	struct omap_i2c_dev	*dev;
@@ -902,6 +903,11 @@ omap_i2c_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, dev);
 
+	if (cpu_is_omap7xx())
+		dev->reg_shift = 1;
+	else
+		dev->reg_shift = 2;
+
 	if ((r = omap_i2c_get_clocks(dev)) != 0)
 		goto err_iounmap;
 
@@ -924,11 +930,6 @@ omap_i2c_probe(struct platform_device *pdev)
 		dev->fifo_size = (dev->fifo_size / 2);
 		dev->b_hw = 1; /* Enable hardware fixes */
 	}
-
-	if (cpu_is_omap7xx())
-		dev->reg_shift = 1;
-	else
-		dev->reg_shift = 2;
 
 	/* reset ASAP, clearing any IRQs */
 	omap_i2c_init(dev);

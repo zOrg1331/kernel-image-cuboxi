@@ -436,7 +436,7 @@ static int nilfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	/*
 	 * Compute the overhead
 	 *
-	 * When distributing meta data blocks outside semgent structure,
+	 * When distributing meta data blocks outside segment structure,
 	 * We must count them as the overhead.
 	 */
 	overhead = 0;
@@ -749,6 +749,7 @@ nilfs_fill_super(struct super_block *sb, void *data, int silent,
 	sb->s_export_op = &nilfs_export_ops;
 	sb->s_root = NULL;
 	sb->s_time_gran = 1;
+	sb->s_bdi = nilfs->ns_bdi;
 
 	err = load_nilfs(nilfs, sbi);
 	if (err)
@@ -866,7 +867,7 @@ static int nilfs_remount(struct super_block *sb, int *flags, char *data)
 	if ((*flags & MS_RDONLY) &&
 	    sbi->s_snapshot_cno != old_opts.snapshot_cno) {
 		printk(KERN_WARNING "NILFS (device %s): couldn't "
-		       "remount to a different snapshot. \n",
+		       "remount to a different snapshot.\n",
 		       sb->s_id);
 		err = -EINVAL;
 		goto restore_opts;

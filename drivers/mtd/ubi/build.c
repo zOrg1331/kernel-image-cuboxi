@@ -44,6 +44,7 @@
 #include <linux/kthread.h>
 #include <linux/reboot.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include "ubi.h"
 
 /* Maximum length of the 'mtd=' parameter */
@@ -89,7 +90,8 @@ DEFINE_MUTEX(ubi_devices_mutex);
 static DEFINE_SPINLOCK(ubi_devices_lock);
 
 /* "Show" method for files in '/<sysfs>/class/ubi/' */
-static ssize_t ubi_version_show(struct class *class, char *buf)
+static ssize_t ubi_version_show(struct class *class, struct class_attribute *attr,
+				char *buf)
 {
 	return sprintf(buf, "%d\n", UBI_VERSION);
 }
