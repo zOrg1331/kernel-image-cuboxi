@@ -74,9 +74,6 @@ struct mdk_rdev_s
 #define Blocked		8		/* An error occured on an externally
 					 * managed array, don't allow writes
 					 * until it is cleared */
-#define StateChanged	9		/* Faulty or Blocked has changed during
-					 * interrupt, so it needs to be
-					 * notified by the thread */
 	wait_queue_head_t blocked_wait;
 
 	int desc_nr;			/* descriptor index in the superblock */
@@ -240,7 +237,6 @@ struct mddev_s
 	atomic_t			active;		/* general refcount */
 	atomic_t			openers;	/* number of active opens */
 
-	int				changed;	/* true if we might need to reread partition info */
 	int				degraded;	/* whether md should consider
 							 * adding a spare
 							 */
@@ -279,9 +275,6 @@ struct mddev_s
 	atomic_t			writes_pending; 
 	struct request_queue		*queue;	/* for plugging ... */
 
-	atomic_t                        write_behind; /* outstanding async IO */
-	unsigned int                    max_write_behind; /* 0 = sync */
-
 	struct bitmap                   *bitmap; /* the bitmap for the device */
 	struct {
 		struct file		*file; /* the bitmap file */
@@ -305,6 +298,7 @@ struct mddev_s
 	atomic_t 			max_corr_read_errors; /* max read retries */
 	struct list_head		all_mddevs;
 
+	struct attribute_group		*to_remove;
 	/* Generic barrier handling.
 	 * If there is a pending barrier request, all other
 	 * writes are blocked while the devices are flushed.
@@ -336,7 +330,7 @@ struct mdk_personality
 	int level;
 	struct list_head list;
 	struct module *owner;
-	int (*make_request)(struct request_queue *q, struct bio *bio);
+	int (*make_request)(mddev_t *mddev, struct bio *bio);
 	int (*run)(mddev_t *mddev);
 	int (*stop)(mddev_t *mddev);
 	void (*status)(struct seq_file *seq, mddev_t *mddev);
