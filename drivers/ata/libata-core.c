@@ -65,6 +65,7 @@
 #include <linux/libata.h>
 #include <asm/byteorder.h>
 #include <linux/cdrom.h>
+#include <linux/ratelimit.h>
 
 #include "libata.h"
 
@@ -3631,8 +3632,14 @@ int ata_wait_ready(struct ata_link *link, unsigned long deadline,
 		   int (*check_ready)(struct ata_link *link))
 {
 	unsigned long start = jiffies;
-	unsigned long nodev_deadline = ata_deadline(start, ATA_TMOUT_FF_WAIT);
+	unsigned long nodev_deadline;
 	int warned = 0;
+
+	/* choose which 0xff timeout to use, read comment in libata.h */
+	if (link->ap->host->flags & ATA_HOST_PARALLEL_SCAN)
+		nodev_deadline = ata_deadline(start, ATA_TMOUT_FF_WAIT_LONG);
+	else
+		nodev_deadline = ata_deadline(start, ATA_TMOUT_FF_WAIT);
 
 	/* Slave readiness can't be tested separately from master.  On
 	 * M/S emulation configuration, this function should be called
@@ -3651,12 +3658,12 @@ int ata_wait_ready(struct ata_link *link, unsigned long deadline,
 		if (ready > 0)
 			return 0;
 
-		/* -ENODEV could be transient.  Ignore -ENODEV if link
+		/*
+		 * -ENODEV could be transient.  Ignore -ENODEV if link
 		 * is online.  Also, some SATA devices take a long
-		 * time to clear 0xff after reset.  For example,
-		 * HHD424020F7SV00 iVDR needs >= 800ms while Quantum
-		 * GoVault needs even more than that.  Wait for
-		 * ATA_TMOUT_FF_WAIT on -ENODEV if link isn't offline.
+		 * time to clear 0xff after reset.  Wait for
+		 * ATA_TMOUT_FF_WAIT[_LONG] on -ENODEV if link isn't
+		 * offline.
 		 *
 		 * Note that some PATA controllers (pata_ali) explode
 		 * if status register is read more than once when
@@ -6700,25 +6707,11 @@ static void __exit ata_exit(void)
 subsys_initcall(ata_init);
 module_exit(ata_exit);
 
-static unsigned long ratelimit_time;
-static DEFINE_SPINLOCK(ata_ratelimit_lock);
+static DEFINE_RATELIMIT_STATE(ratelimit, HZ / 5, 1);
 
 int ata_ratelimit(void)
 {
-	int rc;
-	unsigned long flags;
-
-	spin_lock_irqsave(&ata_ratelimit_lock, flags);
-
-	if (time_after(jiffies, ratelimit_time)) {
-		rc = 1;
-		ratelimit_time = jiffies + (HZ/5);
-	} else
-		rc = 0;
-
-	spin_unlock_irqrestore(&ata_ratelimit_lock, flags);
-
-	return rc;
+	return __ratelimit(&ratelimit);
 }
 
 /**
