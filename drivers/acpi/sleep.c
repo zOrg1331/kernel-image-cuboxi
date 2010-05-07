@@ -356,12 +356,6 @@ static int __init init_old_suspend_ordering(const struct dmi_system_id *d)
 	return 0;
 }
 
-static int __init init_set_sci_en_on_resume(const struct dmi_system_id *d)
-{
-	set_sci_en_on_resume = true;
-	return 0;
-}
-
 static struct dmi_system_id __initdata acpisleep_dmi_table[] = {
 	{
 	.callback = init_old_suspend_ordering,
@@ -380,83 +374,11 @@ static struct dmi_system_id __initdata acpisleep_dmi_table[] = {
 		},
 	},
 	{
-	.callback = init_set_sci_en_on_resume,
-	.ident = "Apple MacBook 1,1",
-	.matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Apple Computer, Inc."),
-		DMI_MATCH(DMI_PRODUCT_NAME, "MacBook1,1"),
-		},
-	},
-	{
-	.callback = init_set_sci_en_on_resume,
-	.ident = "Apple MacMini 1,1",
-	.matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Apple Computer, Inc."),
-		DMI_MATCH(DMI_PRODUCT_NAME, "Macmini1,1"),
-		},
-	},
-	{
 	.callback = init_old_suspend_ordering,
 	.ident = "Asus Pundit P1-AH2 (M2N8L motherboard)",
 	.matches = {
 		DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTek Computer INC."),
 		DMI_MATCH(DMI_BOARD_NAME, "M2N8L"),
-		},
-	},
-	{
-	.callback = init_set_sci_en_on_resume,
-	.ident = "Toshiba Satellite L300",
-	.matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "Satellite L300"),
-		},
-	},
-	{
-	.callback = init_set_sci_en_on_resume,
-	.ident = "Hewlett-Packard HP G7000 Notebook PC",
-	.matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "HP G7000 Notebook PC"),
-		},
-	},
-	{
-	.callback = init_set_sci_en_on_resume,
-	.ident = "Hewlett-Packard HP Pavilion dv3 Notebook PC",
-	.matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "HP Pavilion dv3 Notebook PC"),
-		},
-	},
-	{
-	.callback = init_set_sci_en_on_resume,
-	.ident = "Hewlett-Packard Pavilion dv4",
-	.matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "HP Pavilion dv4"),
-		},
-	},
-	{
-	.callback = init_set_sci_en_on_resume,
-	.ident = "Hewlett-Packard Pavilion dv7",
-	.matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "HP Pavilion dv7"),
-		},
-	},
-	{
-	.callback = init_set_sci_en_on_resume,
-	.ident = "Hewlett-Packard Compaq Presario C700 Notebook PC",
-	.matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "Compaq Presario C700 Notebook PC"),
-		},
-	},
-	{
-	.callback = init_set_sci_en_on_resume,
-	.ident = "Hewlett-Packard Compaq Presario CQ40 Notebook PC",
-	.matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "Compaq Presario CQ40 Notebook PC"),
 		},
 	},
 	{
