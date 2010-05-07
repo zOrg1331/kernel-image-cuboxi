@@ -655,7 +655,7 @@ struct wlp {
 	struct mutex nbmutex; /* Neighbor mutex protects neighbors list */
 	struct list_head neighbors; /* Elements are wlp_neighbor_e */
 	struct uwb_notifs_handler uwb_notifs_handler;
-	struct wlp_device_info *dev_info;
+	struct wlp_device_info *wdi;
 	void (*fill_device_info)(struct wlp *wlp, struct wlp_device_info *info);
 	int (*xmit_frame)(struct wlp *, struct sk_buff *,
 			  struct uwb_dev_addr *);
