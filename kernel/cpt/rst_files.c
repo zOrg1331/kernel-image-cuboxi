@@ -34,6 +34,8 @@
 #include <linux/mnt_namespace.h>
 #include <linux/fdtable.h>
 #include <linux/shm.h>
+#include <linux/signalfd.h>
+#include <linux/proc_fs.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -526,7 +528,8 @@ static int fixup_reg_data(struct file *file, loff_t pos, loff_t end,
 			    (file->f_flags&O_DIRECT)) {
 				fput(file);
 				file = dentry_open(dget(file->f_dentry),
-						   mntget(file->f_vfsmnt), O_WRONLY);
+						   mntget(file->f_vfsmnt),
+						   O_WRONLY | O_LARGEFILE);
 				if (IS_ERR(file)) {
 					__cpt_release_buf(ctx);
 					return PTR_ERR(file);
@@ -778,6 +781,35 @@ change_dir:
 	goto try_again;
 }
 
+#ifdef CONFIG_SIGNALFD
+static struct file *open_signalfd(struct cpt_file_image *fi, int flags, struct cpt_context *ctx)
+{
+	sigset_t mask;
+	mm_segment_t old_fs;
+	int fd;
+	struct file *file;
+
+	cpt_sigset_import(&mask, fi->cpt_priv);
+
+	old_fs = get_fs(); set_fs(KERNEL_DS);
+	fd = do_signalfd(-1, &mask, flags & (O_CLOEXEC | O_NONBLOCK));
+	set_fs(old_fs);
+
+	if (fd < 0)
+		return ERR_PTR(fd);
+
+	file = fget(fd);
+	sys_close(fd);
+
+	return file;
+}
+#else
+static struct file *open_signalfd(struct cpt_file_image *fi, int flags, struct cpt_context *ctx)
+{
+	return ERR_PTR(-EINVAL);
+}
+#endif
+
 struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 {
 	int err;
@@ -787,6 +819,7 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 	struct cpt_file_image fi;
 	__u8 *name = NULL;
 	struct file *file;
+	struct proc_dir_entry *proc_dead_file;
 	int flags;
 
 	obj = lookup_cpt_obj_bypos(CPT_OBJ_FILE, pos, ctx);
@@ -858,6 +891,12 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 					err = -EINVAL;
 					goto err_out;
 				}
+				if ((fi.cpt_lflags & CPT_DENTRY_HARDLINKED) &&
+				    !ctx->hardlinked_on) {
+					eprintk_ctx("Open hardlinked is off\n");
+					err = -EPERM;
+					goto err_out;
+				}
 				goto open_file;
 			}
 		}
@@ -914,6 +953,9 @@ open_file:
 			goto err_out;
 		}
 #endif
+		if ((fi.cpt_lflags & CPT_DENTRY_SIGNALFD) &&
+			(file = open_signalfd(&fi, flags, ctx)) != NULL)
+			goto map_file;
 		if (S_ISFIFO(fi.cpt_i_mode) &&
 		    (file = open_pipe(name, &fi, flags, ctx)) != NULL)
 			goto map_file;
@@ -922,8 +964,32 @@ open_file:
 			goto map_file;
 	}
 
+	/* This hook is needed to open file /proc/<pid>/<somefile>
+	 * but there is no proccess with pid <pid>.
+	 */
+	proc_dead_file = NULL;
+	if (fi.cpt_lflags & CPT_DENTRY_PROCPID_DEAD) {
+		sprintf(name, "/proc/rst_dead_pid_file_%d", task_pid_vnr(current));
+
+		proc_dead_file = create_proc_entry(name + 6, S_IRUGO|S_IWUGO,
+						   NULL);
+		if (!proc_dead_file) {
+			eprintk_ctx("can't create proc entry %s\n", name);
+			err = -ENOMEM;
+			goto err_out;
+		}
+#ifdef CONFIG_PROC_FS
+		proc_dead_file->proc_fops = &dummy_proc_pid_file_operations;
+#endif
+	}
+
 	file = filp_open(name, flags, 0);
 
+	if (proc_dead_file) {
+		remove_proc_entry(proc_dead_file->name, NULL);
+		if (!IS_ERR(file))
+			d_drop(file->f_dentry);
+	}
 map_file:
 	if (!IS_ERR(file)) {
 		fixup_file_flags(file, &fi, was_dentry_open, pos, ctx);
@@ -968,7 +1034,8 @@ map_file:
 				goto err_put;
 		}
 	} else {
-		if (fi.cpt_lflags & CPT_DENTRY_PROC) {
+		if ((fi.cpt_lflags & CPT_DENTRY_PROC) &&
+		    !(fi.cpt_lflags & CPT_DENTRY_PROCPID_DEAD)) {
 			dprintk_ctx("rst_file /proc delayed\n");
 			file = NULL;
 		} else if (name)
@@ -1032,7 +1099,8 @@ static void local_close_files(struct files_struct * files)
 extern int expand_fdtable(struct files_struct *files, int nr);
 
 
-int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
+static int rst_files(struct cpt_task_image *ti, struct cpt_context *ctx,
+		int from, int to)
 {
 	struct cpt_files_struct_image fi;
 	struct files_struct *f = current->files;
@@ -1045,6 +1113,14 @@ int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 		if (f)
 			put_files_struct(f);
 		return 0;
+	}
+
+	if (from == 3) {
+		err = rst_get_object(CPT_OBJ_FILES, ti->cpt_files, &fi, ctx);
+		if (err)
+			return err;
+
+		goto just_do_it;
 	}
 
 	obj = lookup_cpt_obj_bypos(CPT_OBJ_FILES, ti->cpt_files, ctx);
@@ -1072,6 +1148,7 @@ int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 			return err;
 	}
 
+just_do_it:
 	pos = ti->cpt_files + fi.cpt_hdrlen;
 	endpos = ti->cpt_files + fi.cpt_next;
 	while (pos < endpos) {
@@ -1081,6 +1158,9 @@ int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 		err = rst_get_object(CPT_OBJ_FILEDESC, pos, &fdi, ctx);
 		if (err)
 			return err;
+		if (fdi.cpt_fd < from || fdi.cpt_fd > to)
+			goto skip;
+
 		filp = rst_file(fdi.cpt_file, fdi.cpt_fd, ctx);
 		if (IS_ERR(filp)) {
 			eprintk_ctx("rst_file: %ld %Lu\n", PTR_ERR(filp),
@@ -1098,6 +1178,8 @@ int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 			if (fdi.cpt_flags&CPT_FD_FLAG_CLOSEEXEC)
 				FD_SET(fdi.cpt_fd, f->fdt->close_on_exec);
 		}
+
+skip:
 		pos += fdi.cpt_next;
 	}
 	f->next_fd = fi.cpt_next_fd;
@@ -1108,6 +1190,16 @@ int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
 		cpt_obj_setindex(obj, fi.cpt_index, ctx);
 	}
 	return 0;
+}
+
+int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx)
+{
+	return rst_files(ti, ctx, (ti->cpt_pid == 1) ? 3 : 0, INT_MAX);
+}
+
+int rst_files_std(struct cpt_task_image *ti, struct cpt_context *ctx)
+{
+	return rst_files(ti, ctx, 0, 2);
 }
 
 int rst_do_filejobs(cpt_context_t *ctx)
@@ -1217,8 +1309,31 @@ int cpt_get_dentry(struct dentry **dp, struct vfsmount **mp,
 		return err;
 
 	file = rst_file(*pos, -2, ctx);
-	if (IS_ERR(file))
+	if (IS_ERR(file)) {
+		if (PTR_ERR(file) == -EINVAL && S_ISLNK(fi.cpt_i_mode)) {
+			/* One special case: inotify on symlink */
+			struct nameidata nd;
+			__u8 *name = NULL;
+
+			if (fi.cpt_next > fi.cpt_hdrlen)
+				name = rst_get_name(*pos + sizeof(fi), ctx);
+			if (!name) {
+				eprintk_ctx("can't get name for file\n");
+				return -EINVAL;
+			}
+			if ((err = path_lookup(name, 0, &nd)) != 0) {
+				eprintk_ctx("path_lookup %s: %d\n", name, err);
+				rst_put_name(name, ctx);
+				return -EINVAL;
+			}
+			*dp = nd.path.dentry;
+			*mp = nd.path.mnt;
+			*pos += fi.cpt_next;
+			rst_put_name(name, ctx);
+			return 0;
+		}
 		return PTR_ERR(file);
+	}
 
 	*dp = dget(file->f_dentry);
 	*mp = mntget(file->f_vfsmnt);

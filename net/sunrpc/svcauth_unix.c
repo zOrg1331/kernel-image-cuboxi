@@ -128,13 +128,15 @@ static int ip_map_match(struct cache_head *corig, struct cache_head *cnew)
 	return strcmp(orig->m_class, new->m_class) == 0
 		&& ipv6_addr_equal(&orig->m_addr, &new->m_addr);
 }
-static void ip_map_init(struct cache_head *cnew, struct cache_head *citem)
+static int ip_map_init(struct cache_head *cnew, struct cache_head *citem)
 {
 	struct ip_map *new = container_of(cnew, struct ip_map, h);
 	struct ip_map *item = container_of(citem, struct ip_map, h);
 
 	strcpy(new->m_class, item->m_class);
 	ipv6_addr_copy(&new->m_addr, &item->m_addr);
+
+	return 0;
 }
 static void update(struct cache_head *cnew, struct cache_head *citem)
 {

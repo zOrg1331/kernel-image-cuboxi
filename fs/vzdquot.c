@@ -40,7 +40,7 @@
  * Serializes on/off and all other do_vzquotactl operations.
  * Protects qmblk hash.
  */
-struct semaphore vz_quota_sem;
+struct mutex vz_quota_mutex;
 
 /*
  * Data access locks
@@ -104,7 +104,7 @@ struct quota_format_type vz_quota_empty_v2_format = {
  *
  * Master hash table handling.
  *
- * SMP not safe, serialied by vz_quota_sem within quota syscalls
+ * SMP not safe, serialied by vz_quota_mutex within quota syscalls
  *
  * --------------------------------------------------------------------- */
 
@@ -158,7 +158,7 @@ struct vz_quota_master *vzquota_alloc_master(unsigned int quota_id,
 #endif
 
 	qmblk->dq_state = VZDQ_STARTING;
-	init_MUTEX(&qmblk->dq_sem);
+	mutex_init(&qmblk->dq_mutex);
 	spin_lock_init(&qmblk->dq_data_lock);
 
 	qmblk->dq_id = quota_id;
@@ -212,7 +212,7 @@ static struct vz_quota_master *vzquota_alloc_fake(void)
  * vzquota_find_master - find master record with given id
  *
  * Returns qmblk without touching its refcounter.
- * Called under vz_quota_sem.
+ * Called under vz_quota_mutex.
  */
 struct vz_quota_master *vzquota_find_master(unsigned int quota_id)
 {
@@ -231,7 +231,7 @@ struct vz_quota_master *vzquota_find_master(unsigned int quota_id)
  * vzquota_free_master - release resources taken by qmblk, freeing memory
  *
  * qmblk is assumed to be already taken out from the hash.
- * Should be called outside vz_quota_sem.
+ * Should be called outside vz_quota_mutex.
  */
 void vzquota_free_master(struct vz_quota_master *qmblk)
 {
@@ -313,14 +313,24 @@ struct quotactl_ops *orig_dq_cop;
  * quotas.  We keep a counter of such subtrees and set VZ quota operations or
  * reset the default ones.
  *
- * Called under vz_quota_sem (from quota_on).
+ * Called under vz_quota_mutex (from quota_on).
  */
 int vzquota_get_super(struct super_block *sb)
 {
+	int err;
+
+	err = sb_qe_get_check(sb, -1);
+	if (err < 0) {
+		printk(KERN_ERR "Could not enable VZQUOTA on filesystem "
+				"exported via NFS\n");
+		return err;
+	}
+
 	if (sb->dq_op != &vz_quota_operations) {
 		down(&sb->s_dquot.dqonoff_sem);
 		if (sb->s_dquot.flags & (DQUOT_USR_ENABLED|DQUOT_GRP_ENABLED)) {
 			up(&sb->s_dquot.dqonoff_sem);
+			sb_qe_put(sb, -1);
 			return -EEXIST;
 		}
 		if (orig_dq_op == NULL && sb->dq_op != NULL)
@@ -355,7 +365,7 @@ int vzquota_get_super(struct super_block *sb)
 		__module_get(THIS_MODULE);
 		up(&sb->s_dquot.dqonoff_sem);
 	}
-	/* protected by vz_quota_sem */
+	/* protected by vz_quota_mutex */
 	__VZ_QUOTA_SBREF(sb)++;
 	return 0;
 }
@@ -363,7 +373,7 @@ int vzquota_get_super(struct super_block *sb)
 /**
  * quota_put_super - release superblock when one quota tree goes away
  *
- * Called under vz_quota_sem.
+ * Called under vz_quota_mutex.
  */
 void vzquota_put_super(struct super_block *sb)
 {
@@ -401,14 +411,10 @@ void vzquota_put_super(struct super_block *sb)
 		 */
 		up(&sb->s_dquot.dqonoff_sem);
 	}
+	sb_qe_put(sb, -1);
 }
 
 #else
-
-struct vzquota_new_sop {
-	struct super_operations new_op;
-	const struct super_operations *old_op;
-};
 
 /**
  * vzquota_shutdown_super - callback on umount
@@ -416,17 +422,11 @@ struct vzquota_new_sop {
 void vzquota_shutdown_super(struct super_block *sb)
 {
 	struct vz_quota_master *qmblk;
-	struct vzquota_new_sop *sop;
 
 	qmblk = __VZ_QUOTA_NOQUOTA(sb);
 	__VZ_QUOTA_NOQUOTA(sb) = NULL;
 	if (qmblk != NULL)
 		qmblk_put(qmblk);
-	sop = container_of(sb->s_op, struct vzquota_new_sop, new_op);
-	sb->s_op = sop->old_op;
-	kfree(sop);
-	if (sb->s_op->put_super != NULL)
-		(*sb->s_op->put_super)(sb);
 }
 
 /**
@@ -435,13 +435,19 @@ void vzquota_shutdown_super(struct super_block *sb)
  * One superblock can have multiple directory subtrees with different VZ
  * quotas.
  *
- * Called under vz_quota_sem (from vzquota_on).
+ * Called under vz_quota_mutex (from vzquota_on).
  */
 int vzquota_get_super(struct super_block *sb)
 {
 	struct vz_quota_master *qnew;
-	struct vzquota_new_sop *sop;
 	int err;
+
+	err = sb_qe_get_check(sb, -1);
+	if (err < 0) {
+		printk(KERN_ERR "Could not enable VZQUOTA on filesystem "
+				"exported via NFS\n");
+		return err;
+	}
 
 	mutex_lock(&sb->s_dquot.dqonoff_mutex);
 	err = -EEXIST;
@@ -461,17 +467,6 @@ int vzquota_get_super(struct super_block *sb)
 	}
 
 	if (sb->dq_op != &vz_quota_operations) {
-		sop = kmalloc(sizeof(*sop), GFP_KERNEL);
-		if (sop == NULL) {
-			vzquota_free_master(__VZ_QUOTA_NOQUOTA(sb));
-			__VZ_QUOTA_NOQUOTA(sb) = NULL;
-			goto out_up;
-		}
-		memcpy(&sop->new_op, sb->s_op, sizeof(sop->new_op));
-		sop->new_op.put_super = &vzquota_shutdown_super;
-		sop->old_op = sb->s_op;
-		sb->s_op = &sop->new_op;
-
 		sb->dq_op = &vz_quota_operations;
 #ifdef CONFIG_VZ_QUOTA_UGID
 		sb->s_qcop = &vz_quotactl_operations;
@@ -505,13 +500,15 @@ int vzquota_get_super(struct super_block *sb)
 
 out_up:
 	mutex_unlock(&sb->s_dquot.dqonoff_mutex);
+	if (err < 0)
+		sb_qe_put(sb, -1);
 	return err;
 }
 
 /**
  * vzquota_put_super - one quota tree less on this superblock
  *
- * Called under vz_quota_sem.
+ * Called under vz_quota_mutex.
  */
 void vzquota_put_super(struct super_block *sb)
 {
@@ -520,6 +517,7 @@ void vzquota_put_super(struct super_block *sb)
 	 * sb->s_dquot.flags can't be cleared, because otherwise vzquota_drop
 	 * won't be called and the remaining qmblk references won't be put.
 	 */
+	sb_qe_put(sb, -1);
 }
 
 #endif
@@ -590,12 +588,12 @@ void vzquota_qlnk_destroy(struct vz_quota_ilink *qlnk)
 		quid = qlnk->qugid[USRQUOTA];
 		qgid = qlnk->qugid[GRPQUOTA];
 		if (quid != NULL || qgid != NULL) {
-			down(&qmblk->dq_sem);
+			mutex_lock(&qmblk->dq_mutex);
 			if (qgid != NULL)
 				vzquota_put_ugid(qmblk, qgid);
 			if (quid != NULL)
 				vzquota_put_ugid(qmblk, quid);
-			up(&qmblk->dq_sem);
+			mutex_unlock(&qmblk->dq_mutex);
 		}
 	}
 #endif
@@ -711,10 +709,10 @@ static int vzquota_qlnk_fill(struct vz_quota_ilink *qlnk,
 		spin_unlock(&dcache_lock);
 		inode_qmblk_unlock(inode->i_sb);
 
-		down(&qmblk->dq_sem);
+		mutex_lock(&qmblk->dq_mutex);
 		quid = __vzquota_find_ugid(qmblk, inode->i_uid, USRQUOTA, 0);
 		qgid = __vzquota_find_ugid(qmblk, inode->i_gid, GRPQUOTA, 0);
-		up(&qmblk->dq_sem);
+		mutex_unlock(&qmblk->dq_mutex);
 
 		inode_qmblk_lock(inode->i_sb);
 		spin_lock(&dcache_lock);
@@ -757,14 +755,14 @@ static int vzquota_qlnk_fill_attr(struct vz_quota_ilink *qlnk,
 		qmblk_data_write_unlock(qmblk);
 		inode_qmblk_unlock(inode->i_sb);
 
-		down(&qmblk->dq_sem);
+		mutex_lock(&qmblk->dq_mutex);
 		if (mask & (1 << USRQUOTA))
 			quid = __vzquota_find_ugid(qmblk, iattr->ia_uid,
 					USRQUOTA, 0);
 		if (mask & (1 << GRPQUOTA))
 			qgid = __vzquota_find_ugid(qmblk, iattr->ia_gid,
 					GRPQUOTA, 0);
-		up(&qmblk->dq_sem);
+		mutex_unlock(&qmblk->dq_mutex);
 
 		inode_qmblk_lock(inode->i_sb);
 		qmblk_data_write_lock(qmblk);
@@ -925,6 +923,29 @@ static struct vz_quota_master *vzquota_dparents_check_same(struct inode *inode)
 	return qmblk;
 }
 
+/* NFS root is disconnected dentry. */
+
+static int is_nfs_root(struct inode * inode)
+{
+	struct dentry *de;
+
+	if (inode->i_sb->s_magic != 0x6969)
+		return 0;
+
+	if (list_empty(&inode->i_dentry))
+		return 0;
+
+	list_for_each_entry(de, &inode->i_dentry, d_alias) {
+		if (de->d_parent != de)
+			return 0;
+		if (d_unhashed(de))
+			return 0;
+		if (!(de->d_flags & DCACHE_DISCONNECTED))
+			return 0;
+	}
+	return 1;
+}
+
 static void vzquota_dbranch_actualize(struct inode *inode,
 		struct inode *refinode)
 {
@@ -935,7 +956,7 @@ static void vzquota_dbranch_actualize(struct inode *inode,
 	vzquota_qlnk_init(&qlnk);
 
 start:
-	if (inode == inode->i_sb->s_root->d_inode) {
+	if (inode == inode->i_sb->s_root->d_inode || is_nfs_root(inode)) {
 		/* filesystem root */
 		atomic_inc(&inode->i_count);
 		do {
@@ -990,7 +1011,7 @@ static void vzquota_dtree_qmblk_recalc(struct inode *inode,
 	struct inode *pinode;
 	struct vz_quota_master *qmblk;
 
-	if (inode == inode->i_sb->s_root->d_inode) {
+	if (inode == inode->i_sb->s_root->d_inode || is_nfs_root(inode)) {
 		/* filesystem root */
 		do {
 			qmblk = __VZ_QUOTA_NOQUOTA(inode->i_sb);
@@ -1254,6 +1275,39 @@ void vzquota_inode_init_call(struct inode *inode)
 		vzquota_cur_qmblk_set(inode);
 	spin_unlock(&dcache_lock);
 }
+
+void vzquota_inode_swap_call(struct inode *inode, struct inode *tmpl)
+{
+	struct vz_quota_master *qmblk;
+
+	__vzquota_inode_init(inode, VZ_QUOTAO_INIT);
+
+	might_sleep();
+
+	inode_qmblk_lock(tmpl->i_sb);
+	if (unlikely(tmpl->i_flags & S_NOQUOTA)) {
+		inode_qmblk_unlock(tmpl->i_sb);
+		return;
+	}
+	__vzquota_inode_init(tmpl, VZ_QUOTAO_INICAL);
+
+	qmblk = INODE_QLNK(tmpl)->qmblk;
+	if (qmblk != VZ_QUOTA_BAD) {
+		void * uq;
+		list_del_init(&INODE_QLNK(tmpl)->list);
+		vzquota_qlnk_swap(INODE_QLNK(tmpl), INODE_QLNK(inode));
+		uq = inode->i_dquot[USRQUOTA];
+		inode->i_dquot[USRQUOTA] = tmpl->i_dquot[USRQUOTA];
+		tmpl->i_dquot[USRQUOTA] = uq;
+		tmpl->i_flags |= S_NOQUOTA;
+		inode_qmblk_unlock(inode->i_sb);
+
+		vzquota_inode_drop(tmpl);
+	} else {
+		inode_qmblk_unlock(tmpl->i_sb);
+	}
+}
+
 
 /**
  * vzquota_inode_drop_call - call from DQUOT_DROP
@@ -1909,7 +1963,7 @@ static int __init vzquota_init(void)
 		goto out_ugid;
 #endif
 
-	init_MUTEX(&vz_quota_sem);
+	mutex_init(&vz_quota_mutex);
 	vzioctl_register(&vzdqcalls);
 	virtinfo_notifier_register(VITYPE_QUOTA, &quota_notifier_block);
 #if defined(CONFIG_VZ_QUOTA_UGID) && defined(CONFIG_PROC_FS)

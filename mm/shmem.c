@@ -88,14 +88,31 @@ enum sgp_type {
 };
 
 #ifdef CONFIG_TMPFS
+
+#include <linux/virtinfo.h>
+
+static unsigned long tmpfs_ram_pages(void)
+{
+	struct meminfo mi;
+
+	if (ve_is_super(get_exec_env()))
+		return totalram_pages;
+
+	memset(&mi, 0, sizeof(mi));
+	si_meminfo(&mi.si);
+	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_MEMINFO, &mi) & NOTIFY_FAIL)
+		return 0;
+	return mi.si.totalram;
+}
+
 static unsigned long shmem_default_max_blocks(void)
 {
-	return totalram_pages / 2;
+	return tmpfs_ram_pages() / 2;
 }
 
 static unsigned long shmem_default_max_inodes(void)
 {
-	return min(totalram_pages - totalhigh_pages, totalram_pages / 2);
+	return min(totalram_pages - totalhigh_pages, tmpfs_ram_pages() / 2);
 }
 #endif
 
@@ -2228,7 +2245,7 @@ static int shmem_parse_options(char *options, struct shmem_sb_info *sbinfo,
 			size = memparse(value,&rest);
 			if (*rest == '%') {
 				size <<= PAGE_SHIFT;
-				size *= totalram_pages;
+				size *= tmpfs_ram_pages();
 				do_div(size, 100);
 				rest++;
 			}

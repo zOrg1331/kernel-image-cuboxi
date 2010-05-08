@@ -109,6 +109,8 @@ static int vps_rst_veinfo(struct cpt_context *ctx)
 	// // ve->start_cycles -= (s64)i->start_jiffies_delta * cycles_per_jiffy;
 
 	ctx->last_vpid = i->last_pid;
+	if (i->rnd_va_space)
+		ve->_randomize_va_space = i->rnd_va_space - 1;
 
 	err = 0;
 out_rel:
@@ -146,7 +148,7 @@ static int vps_rst_reparent_root(cpt_object_t *obj, struct cpt_context *ctx)
 	param.known_features = (ctx->image_version < CPT_VERSION_18) ?
 		VE_FEATURES_OLD : ~(__u64)0;
 
-	err = real_env_create(ctx->ve_id, VE_CREATE|VE_LOCK, 2,
+	err = real_env_create(ctx->ve_id, VE_CREATE|VE_LOCK|VE_EXCLUSIVE, 2,
 			&param, sizeof(param));
 	if (err < 0)
 		eprintk_ctx("real_env_create: %d\n", err);
@@ -224,6 +226,12 @@ static int hook(void *arg)
 		err = rst_utsname(ctx);
 		if (err) {
 			eprintk_ctx("rst_utsname: %d\n", err);
+			goto out;
+		}
+
+		err = rst_files_std(ti, ctx);
+		if (err) {
+			eprintk_ctx("rst_root_stds: %d\n", err);
 			goto out;
 		}
 

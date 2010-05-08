@@ -518,6 +518,13 @@ static void hrtimer_force_reprogram(struct hrtimer_cpu_base *cpu_base)
 			continue;
 		timer = rb_entry(base->first, struct hrtimer, node);
 		expires = ktime_sub(timer->expires, base->offset);
+		/*
+		 * clock_was_set() has changed base->offset so the
+		 * result might be negative. Fix it up to prevent a
+		 * false positive in clockevents_program_event()
+		 */
+		if (expires.tv64 < 0)
+			expires.tv64 = 0;
 		if (expires.tv64 < cpu_base->expires_next.tv64)
 			cpu_base->expires_next = expires;
 	}
@@ -983,7 +990,13 @@ hrtimer_start(struct hrtimer *timer, ktime_t tim, const enum hrtimer_mode mode)
 #endif
 	}
 
-	timer->expires = tim;
+	/*
+	 * We still have a few callers from a userspace
+	 * so that we can't be sure they send a proper value,
+	 * lets prevent overflow
+	 */
+	timer->expires = (tim.tv64 < 0) ?
+		ktime_set(KTIME_SEC_MAX, 0) : tim;
 
 	timer_stats_hrtimer_set_start_info(timer);
 

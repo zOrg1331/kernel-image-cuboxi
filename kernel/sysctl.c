@@ -48,6 +48,7 @@
 #include <linux/acpi.h>
 #include <linux/reboot.h>
 #include <linux/ftrace.h>
+#include <linux/ve_task.h>
 
 #include <asm/uaccess.h>
 #include <asm/processor.h>
@@ -170,6 +171,9 @@ static int proc_do_cad_pid(struct ctl_table *table, int write, struct file *filp
 static int proc_dointvec_taint(struct ctl_table *table, int write, struct file *filp,
 			       void __user *buffer, size_t *lenp, loff_t *ppos);
 #endif
+
+static int proc_dointvec_ve(ctl_table *table, int write, struct file * filp,
+		void __user *buffer, size_t *lenp, loff_t *ppos);
 
 static struct ctl_table root_table[];
 static struct ctl_table_root sysctl_table_root;
@@ -776,10 +780,12 @@ static struct ctl_table kern_table[] = {
 	{
 		.ctl_name	= KERN_RANDOMIZE,
 		.procname	= "randomize_va_space",
-		.data		= &randomize_va_space,
+		.data		= &_randomize_va_space,
+		.extra1		= (void *)offsetof(struct ve_struct,
+							_randomize_va_space),
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
+		.proc_handler	= &proc_dointvec_ve,
 	},
 #endif
 #if defined(CONFIG_S390) && defined(CONFIG_SMP)
@@ -2800,6 +2806,25 @@ static int proc_do_cad_pid(struct ctl_table *table, int write, struct file *filp
 	put_pid(xchg(&cad_pid, new_pid));
 	return 0;
 }
+
+#ifdef CONFIG_VE
+static int proc_dointvec_ve(ctl_table *table, int write, struct file * filp,
+		void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	struct ctl_table tmp_table;
+
+	tmp_table = *table;
+	tmp_table.data = (char *)get_exec_env() + (unsigned long)table->extra1;
+
+	return proc_dointvec(&tmp_table, write, filp, buffer, lenp, ppos);
+}
+#else
+static int proc_dointvec_ve(ctl_table *table, int write, struct file * filp,
+		void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	return proc_dointvec(table, write, filp, buffer, lenp, ppos);
+}
+#endif /* CONFIG_VE */
 
 #else /* CONFIG_PROC_FS */
 

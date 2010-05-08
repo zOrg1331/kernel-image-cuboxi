@@ -111,11 +111,18 @@ struct ve_struct ve0 = {
 #endif
 	.features		= VE_FEATURE_SIT | VE_FEATURE_IPIP |
 				VE_FEATURE_PPP,
+	._randomize_va_space	=
+#ifdef CONFIG_COMPAT_BRK
+					1,
+#else
+					2,
+#endif
 };
 
 EXPORT_SYMBOL(ve0);
 
 DEFINE_PER_CPU_STATIC(struct ve_cpu_stats, ve0_cpu_stats);
+DEFINE_PER_CPU_STATIC(struct kstat_lat_pcpu_snap_struct, ve0_lat_pcpu_stats);
 
 LIST_HEAD(ve_list_head);
 rwlock_t ve_list_lock = RW_LOCK_UNLOCKED;
@@ -136,6 +143,7 @@ void init_ve0(void)
 
 	ve = get_ve0();
 	ve->cpu_stats = percpu_static_init(ve0_cpu_stats);
+	ve->sched_lat_ve.cur = percpu_static_init(ve0_lat_pcpu_stats);
 	list_add(&ve->ve_list, &ve_list_head);
 }
 

@@ -16,6 +16,7 @@
 #include <bc/beancounter.h>
 #include <bc/hash.h>
 #include <bc/io_acct.h>
+#include <bc/proc.h>
 #include <linux/blkdev.h>
 
 struct cfq_bc_data *__find_cfq_bc(struct ub_iopriv *iopriv,
@@ -285,6 +286,68 @@ void bc_io_restore_context(struct user_beancounter *ub)
 		put_beancounter(old_ub);
 	}
 }
+
+#ifdef CONFIG_PROC_FS
+static int bc_ioprio_show(struct seq_file *f, void *v)
+{
+	struct user_beancounter *bc;
+
+	bc = seq_beancounter(f);
+	seq_printf(f, "prio: %u\n", bc->iopriv.ioprio);
+
+	return 0;
+}
+
+static struct bc_proc_entry bc_ioprio_entry = {
+	.name = "ioprio",
+	.u.show = bc_ioprio_show,
+};
+
+static int bc_ioprio_queue_show(struct seq_file *f, void *v)
+{
+	struct user_beancounter *bc;
+	struct cfq_bc_data *cfq_bc;
+
+	bc = seq_beancounter(f);
+
+	read_lock_irq(&bc->iopriv.cfq_bc_list_lock);
+	list_for_each_entry(cfq_bc, &bc->iopriv.cfq_bc_head, cfq_bc_list) {
+		struct cfq_data *cfqd;
+		struct kobject *parent;
+
+		cfqd = cfq_bc->cfqd;
+		parent = cfqd->queue->kobj.parent;
+		seq_printf(f, "\t%-10s%6lu %c%c\n",
+				/*
+				 * this per-bc -> queue-data -> queue -> device
+				 * access is safe w/o additional locks, since
+				 * all the stuff above dies in the order shown
+				 * and we're holding the first element
+				 */
+				parent ? kobject_name(parent) : "?",
+				cfq_bc->rqnum,
+				cfq_bc->on_dispatch ? 'D' : ' ',
+				cfqd->active_cfq_bc == cfq_bc ? 'A' : ' ');
+	}
+	read_unlock_irq(&bc->iopriv.cfq_bc_list_lock);
+
+	return 0;
+}
+
+static struct bc_proc_entry bc_ioprio_queues_entry = {
+	.name = "ioprio_queues",
+	.u.show = bc_ioprio_queue_show,
+};
+
+static int __init bc_ioprio_init(void)
+{
+	bc_register_proc_entry(&bc_ioprio_entry);
+	bc_register_proc_entry(&bc_ioprio_queues_entry);
+	return 0;
+}
+
+late_initcall(bc_ioprio_init);
+#endif
 
 EXPORT_SYMBOL(bc_io_switch_context);
 EXPORT_SYMBOL(bc_io_restore_context);

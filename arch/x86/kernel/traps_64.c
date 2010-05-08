@@ -583,6 +583,7 @@ die_nmi(char *str, struct pt_regs *regs, int do_panic)
 	printk(" on CPU%d, ip %08lx, registers:\n",
 		smp_processor_id(), regs->ip);
 	show_registers(regs);
+	nmi_show_regs(regs, 1);
 	if (kexec_should_crash(current))
 		crash_kexec(regs);
 	if (do_panic || panic_on_oops)
@@ -815,7 +816,8 @@ asmlinkage notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 		 * Ok, so this is none of the documented NMI sources,
 		 * so it must be the NMI watchdog.
 		 */
-		if (nmi_watchdog_tick(regs, reason))
+		if (nmi_watchdog_tick(regs, reason) +
+				do_nmi_show_regs(regs, cpu))
 			return;
 		if (!do_nmi_callback(regs, cpu))
 			unknown_nmi_error(reason, regs);
@@ -832,13 +834,6 @@ asmlinkage notrace __kprobes void default_do_nmi(struct pt_regs *regs)
 		io_check_error(reason, regs);
 }
 
-static int dummy_nmi_callback(struct pt_regs *regs, int cpu)
-{
-	return 0;
-}
-
-static nmi_callback_t nmi_ipi_callback = dummy_nmi_callback;
-
 asmlinkage notrace __kprobes void
 do_nmi(struct pt_regs *regs, long error_code)
 {
@@ -846,22 +841,10 @@ do_nmi(struct pt_regs *regs, long error_code)
 
 	add_pda(__nmi_count, 1);
 
-	if (!ignore_nmis) {
-		if (!nmi_ipi_callback(regs, smp_processor_id()))
-			default_do_nmi(regs);
-	}
+	if (!ignore_nmis)
+		default_do_nmi(regs);
 
 	nmi_exit();
-}
-
-void set_nmi_ipi_callback(nmi_callback_t callback)
-{
-	nmi_ipi_callback = callback;
-}
-
-void unset_nmi_ipi_callback(void)
-{
-	nmi_ipi_callback = dummy_nmi_callback;
 }
 
 void stop_nmi(void)

@@ -16,6 +16,8 @@
 #define VIRTINFO_SCP_RSTTSK     0x20
 #define VIRTINFO_SCP_RSTMM      0x21
 
+#define VIRTINFO_SCP_TEST	0x30
+
 #define VIRTNOTIFY_CHANGE       0x100 
 
 #endif /* __VIRTINFO_SCP_H__ */

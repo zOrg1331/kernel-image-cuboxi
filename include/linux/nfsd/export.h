@@ -92,6 +92,7 @@ struct svc_export {
 	unsigned char *		ex_uuid; /* 16 byte fsid */
 	struct nfsd4_fs_locations ex_fslocs;
 	int			ex_nflavors;
+	int			ex_qe;
 	struct exp_flavor_info	ex_flavors[MAX_SECINFO_LIST];
 };
 

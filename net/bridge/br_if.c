@@ -174,16 +174,16 @@ static void del_br(struct net_bridge *br)
 	unregister_netdevice(br->dev);
 }
 
-static struct net_device *new_bridge_dev(const char *name)
+static struct net_device *new_bridge_dev(struct net *net, const char *name)
 {
 	struct net_bridge *br;
 	struct net_device *dev;
 
 	dev = alloc_netdev(sizeof(struct net_bridge), name,
 			   br_dev_setup);
-
 	if (!dev)
 		return NULL;
+	dev_net_set(dev, net);
 
 	br = netdev_priv(dev);
 	br->dev = dev;
@@ -268,12 +268,12 @@ static struct net_bridge_port *new_nbp(struct net_bridge *br,
 	return p;
 }
 
-int br_add_bridge(const char *name)
+int br_add_bridge(struct net *net, const char *name)
 {
 	struct net_device *dev;
 	int ret;
 
-	dev = new_bridge_dev(name);
+	dev = new_bridge_dev(net, name);
 	if (!dev)
 		return -ENOMEM;
 
@@ -300,13 +300,13 @@ out_free:
 	goto out;
 }
 
-int br_del_bridge(const char *name)
+int br_del_bridge(struct net *net, const char *name)
 {
 	struct net_device *dev;
 	int ret = 0;
 
 	rtnl_lock();
-	dev = __dev_get_by_name(current->nsproxy->net_ns, name);
+	dev = __dev_get_by_name(net, name);
 	if (dev == NULL)
 		ret =  -ENXIO; 	/* Could not find device */
 
@@ -464,13 +464,13 @@ int br_del_if(struct net_bridge *br, struct net_device *dev)
 	return 0;
 }
 
-void __exit br_cleanup_bridges(void)
+void br_net_exit(struct net *net)
 {
 	struct net_device *dev;
 
 	rtnl_lock();
 restart:
-	for_each_netdev(current->nsproxy->net_ns, dev) {
+	for_each_netdev(net, dev) {
 		if (dev->priv_flags & IFF_EBRIDGE) {
 			del_br(dev->priv);
 			goto restart;

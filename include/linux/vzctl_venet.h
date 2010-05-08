@@ -25,6 +25,8 @@ struct vzctl_ve_ip_map {
 	int op;
 #define VE_IP_ADD	1
 #define VE_IP_DEL	2
+#define VE_IP_EXT_ADD	3
+#define VE_IP_EXT_DEL	4
 	struct sockaddr *addr;
 	int addrlen;
 };

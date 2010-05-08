@@ -157,8 +157,19 @@ void __init proc_root_init(void)
 static int proc_root_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat *stat
 )
 {
+	struct ve_struct *ve = get_exec_env();
+
 	generic_fillattr(dentry->d_inode, stat);
-	stat->nlink = proc_root.nlink + nr_processes();
+	stat->nlink = glob_proc_root.nlink;
+	if (ve_is_super(ve))
+		stat->nlink += nr_processes();
+#ifdef CONFIG_VE
+	else
+		/* thread count. not really processes count */
+		stat->nlink += atomic_read(&ve->pcounter);
+	/* the same logic as in the proc_getattr */
+	stat->nlink += ve->proc_root->nlink - 2;
+#endif
 	return 0;
 }
 

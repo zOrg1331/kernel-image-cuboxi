@@ -36,12 +36,19 @@ struct ip_entry_struct
 	struct list_head 	ve_list;
 };
 
+struct ext_entry_struct
+{
+	struct list_head	list;
+	struct ve_addr_struct	addr;
+};
+
 struct veip_struct
 {
 	struct list_head	src_lh;
 	struct list_head	dst_lh;
 	struct list_head	ip_lh;
 	struct list_head	list;
+	struct list_head	ext_lh;
 	envid_t			veid;
 };
 
@@ -75,6 +82,8 @@ __exit void veip_cleanup(void);
 int veip_entry_add(struct ve_struct *ve, struct ve_addr_struct *addr);
 int veip_entry_del(envid_t veid, struct ve_addr_struct *addr);
 int venet_change_skb_owner(struct sk_buff *skb);
+struct ext_entry_struct *venet_ext_lookup(struct ve_struct *ve,
+		struct ve_addr_struct *addr);
 
 extern struct list_head ip_entry_hash_table[];
 extern rwlock_t veip_hash_lock;

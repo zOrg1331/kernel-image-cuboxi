@@ -144,6 +144,11 @@ static inline struct ub_iopriv *cfqq_ub_iopriv(struct cfq_data *cfqd, int sync)
 	return mode ? &get_io_ub()->iopriv : &get_ub0()->iopriv;
 }
 
+static inline struct user_beancounter *ub_by_iopriv(struct ub_iopriv *iopriv)
+{
+	return container_of(iopriv, struct user_beancounter, iopriv);
+}
+
 static inline void cfq_put_async_queues(struct cfq_data *cfqd)
 {
 	struct user_beancounter *ub;
@@ -164,6 +169,11 @@ static inline void cfq_put_async_queues(struct cfq_data *cfqd)
 }
 #else
 static inline struct ub_iopriv *cfqq_ub_iopriv(struct cfq_data *cfqd, int sync)
+{
+	return NULL;
+}
+
+static inline struct user_beancounter *ub_by_iopriv(struct ub_iopriv *iopriv)
 {
 	return NULL;
 }
@@ -261,11 +271,6 @@ static inline int cfq_slice_used(struct cfq_queue *cfqq)
 		return 0;
 
 	return 1;
-}
-
-static inline struct user_beancounter *ub_by_iopriv(struct ub_iopriv *iopriv)
-{
-	return container_of(iopriv, struct user_beancounter, iopriv);
 }
 
 /*
@@ -2218,7 +2223,7 @@ static void *cfq_init_queue(struct request_queue *q)
 #ifndef CONFIG_BC_IO_SCHED
 	cfq_init_cfq_bc(&cfqd->cfq_bc);
 	cfqd->cfq_bc.cfqd = cfqd;
-	cfqd->cfq_bc.ub_iopriv = &ub0.iopriv;
+	cfqd->cfq_bc.ub_iopriv = NULL;
 	/*
 	 *  Adding ub0 to active list in order to serve force dispatching
 	 *  case uniformally. Note, that nobody removes ub0 from this list.

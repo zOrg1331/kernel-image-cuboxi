@@ -373,6 +373,9 @@ static int devinfo_show(struct seq_file *f, void *v)
 
 static void *devinfo_start(struct seq_file *f, loff_t *pos)
 {
+	if (!ve_is_super(get_exec_env()))
+		return NULL;
+
 	if (*pos < (BLKDEV_MAJOR_HASH_SIZE + CHRDEV_MAJOR_HASH_SIZE))
 		return pos;
 	return NULL;
@@ -700,6 +703,7 @@ int show_stat(struct seq_file *p, void *v)
 		show_stat_ve(p, env);
 		__nr_running = nr_running_ve(env);
 		__nr_iowait = nr_iowait_ve(env);
+		jif += env->start_timespec.tv_sec;
 	}
 #endif
 
@@ -832,6 +836,9 @@ static int execdomains_read_proc(char *page, char **start, off_t off,
 static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 				   size_t count, loff_t *ppos)
 {
+	struct ve_struct *cur = get_exec_env();
+	static int pnum = 10;
+
 	if (count) {
 		int i, cnt;
 		char c[32];
@@ -841,8 +848,17 @@ static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 			return -EFAULT;
 
 
-		for (i = 0; i < cnt && c[i] != '\n'; i++)
+		for (i = 0; i < cnt && c[i] != '\n'; i++) {
+			if (!ve_is_super(cur))	{
+				if (!pnum)
+					continue;
+				printk("SysRq: CT#%u sent '%c' magic key.\n",
+						cur->veid, c[i]);
+				pnum--;
+				continue;
+			}
 			__handle_sysrq(c[i], NULL, 0);
+		}
 	}
 	return count;
 }
@@ -1017,7 +1033,7 @@ void __init proc_misc_init(void)
 	proc_create("kmsg", S_IRUSR, NULL, &proc_kmsg_operations);
 #endif
 	proc_create("locks", 0, &glob_proc_root, &proc_locks_operations);
-	proc_create("devices", 0, NULL, &proc_devinfo_operations);
+	proc_create("devices", 0, &glob_proc_root, &proc_devinfo_operations);
 	proc_create("cpuinfo", 0, &glob_proc_root, &proc_cpuinfo_operations);
 #ifdef CONFIG_BLOCK
 	proc_create("partitions", 0, NULL, &proc_partitions_operations);
@@ -1060,6 +1076,6 @@ void __init proc_misc_init(void)
 	proc_vmcore = proc_create("vmcore", S_IRUSR, NULL, &proc_vmcore_operations);
 #endif
 #ifdef CONFIG_MAGIC_SYSRQ
-	proc_create("sysrq-trigger", S_IWUSR, NULL, &proc_sysrq_trigger_operations);
+	proc_create("sysrq-trigger", S_IWUSR, &glob_proc_root, &proc_sysrq_trigger_operations);
 #endif
 }

@@ -523,7 +523,10 @@ struct net_device
 #define NETIF_F_LLTX		4096	/* LockLess TX - deprecated. Please */
 					/* do not use LLTX in new drivers */
 #define NETIF_F_NETNS_LOCAL	8192	/* Does not change network namespaces */
+#define NETIF_F_VIRTUAL		16384	/* Can be registered inside CT */
 #define NETIF_F_LRO		32768	/* large receive offload */
+#define NETIF_F_VENET		65536   /* Device is venet device */
+
 
 	/* Segmentation offload features */
 #define NETIF_F_GSO_SHIFT	20
@@ -533,10 +536,6 @@ struct net_device
 #define NETIF_F_GSO_ROBUST	(SKB_GSO_DODGY << NETIF_F_GSO_SHIFT)
 #define NETIF_F_TSO_ECN		(SKB_GSO_TCP_ECN << NETIF_F_GSO_SHIFT)
 #define NETIF_F_TSO6		(SKB_GSO_TCPV6 << NETIF_F_GSO_SHIFT)
-/* device is venet device */
-#define NETIF_F_VENET		(1 << (NETIF_F_GSO_SHIFT - 1))
-/* can be registered inside VE */
-#define NETIF_F_VIRTUAL		(1 << (NETIF_F_GSO_SHIFT - 2))
 
 	/* List of features with software fallbacks. */
 #define NETIF_F_GSO_SOFTWARE	(NETIF_F_TSO | NETIF_F_TSO_ECN | NETIF_F_TSO6)

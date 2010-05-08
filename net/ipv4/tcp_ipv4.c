@@ -2416,16 +2416,13 @@ static void tcp_kill_ve_onesk(struct sock *sk)
 
 	/* Check the assumed state of the socket. */
 	if (!sock_flag(sk, SOCK_DEAD)) {
-		static int printed;
-invalid:
-		if (!printed)
-			printk(KERN_DEBUG "Killing sk: dead %d, state %d, "
-				"wrseq %u unseq %u, wrqu %d.\n",
-				sock_flag(sk, SOCK_DEAD), sk->sk_state,
-				tp->write_seq, tp->snd_una,
-				!skb_queue_empty(&sk->sk_write_queue));
-		printed = 1;
-		return;
+		printk(KERN_WARNING "Killing sk: dead %d, state %d, "
+			"wrseq %u unseq %u, wrqu %d.\n",
+			sock_flag(sk, SOCK_DEAD), sk->sk_state,
+			tp->write_seq, tp->snd_una,
+			!skb_queue_empty(&sk->sk_write_queue));
+		sk->sk_err = ECONNRESET;
+		sk->sk_error_report(sk);
 	}
 
 	tcp_send_active_reset(sk, GFP_ATOMIC);
@@ -2444,22 +2441,21 @@ invalid:
 			 */
 			tcp_time_wait(sk, TCP_FIN_WAIT2, 0);
 			break;
-		case TCP_LAST_ACK:
+		default:
 			/* Just jump into CLOSED state. */
 			tcp_done(sk);
 			break;
-		default:
-			/* The socket must be already close()d. */
-			goto invalid;
 	}
 }
 
 void tcp_v4_kill_ve_sockets(struct ve_struct *envid)
 {
 	struct inet_ehash_bucket *head;
-	int i;
+	int i, retry;
 
 	/* alive */
+again:
+	retry = 0;
 	local_bh_disable();
 	head = tcp_hashinfo.ehash;
 	for (i = 0; i < tcp_hashinfo.ehash_size; i++) {
@@ -2474,6 +2470,12 @@ more_work:
 				write_unlock(lock);
 
 				bh_lock_sock(sk);
+				if (sock_owned_by_user(sk)) {
+					retry = 1;
+					bh_unlock_sock(sk);
+					sock_put(sk);
+					break;
+				}
 				/* sk might have disappeared from the hash before
 				 * we got the lock */
 				if (sk->sk_state != TCP_CLOSE)
@@ -2486,6 +2488,10 @@ more_work:
 		write_unlock(lock);
 	}
 	local_bh_enable();
+	if (retry) {
+		schedule_timeout_interruptible(HZ);
+		goto again;
+	}
 }
 EXPORT_SYMBOL(tcp_v4_kill_ve_sockets);
 #endif

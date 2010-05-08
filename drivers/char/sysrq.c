@@ -39,6 +39,7 @@
 #include <linux/kallsyms.h>
 #include <linux/slab.h>
 #include <linux/oom.h>
+#include <linux/nmi.h>
 
 #include <asm/ptrace.h>
 #include <asm/irq_regs.h>
@@ -244,13 +245,7 @@ static void sysrq_handle_showregs(int key, struct tty_struct *tty)
 {
 	struct pt_regs *regs = get_irq_regs();
 
-	bust_spinlocks(1);
-	if (regs)
-		show_regs(regs);
-	bust_spinlocks(0);
-#if defined(__i386__) || defined(__x86_64__)
-	smp_nmi_call_function(smp_show_regs, NULL, 1);
-#endif
+	nmi_show_regs(regs, 0);
 }
 
 static struct sysrq_key_op sysrq_showregs_op = {

@@ -254,11 +254,22 @@ static int proc_getattr(struct vfsmount *mnt, struct dentry *dentry,
 			struct kstat *stat)
 {
 	struct inode *inode = dentry->d_inode;
-	struct proc_dir_entry *de = PROC_I(inode)->pde;
-	if (de && de->nlink)
-		inode->i_nlink = de->nlink;
+	struct proc_dir_entry *de = PDE(inode);
+	struct proc_dir_entry *lde = LPDE(inode);
 
 	generic_fillattr(inode, stat);
+
+	if (de && de->nlink)
+		stat->nlink = de->nlink;
+	/* if dentry is found in both trees and it is a directory
+	 * then inode's nlink count must be altered, because local
+	 * and global subtrees may differ.
+	 * on the other hand, they may intersect, so actual nlink
+	 * value is difficult to calculate - upper estimate is used
+	 * instead of it.
+	 */
+	if (lde && lde != de && lde->nlink > 1)
+		stat->nlink += lde->nlink - 2;
 	return 0;
 }
 

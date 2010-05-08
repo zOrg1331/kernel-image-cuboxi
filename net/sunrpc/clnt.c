@@ -1073,7 +1073,7 @@ call_connect_status(struct rpc_task *task)
 	case -ENOTCONN:
 	case -EAGAIN:
 		task->tk_action = call_bind;
-		if (RPC_IS_SOFT(task) || rpc_abort_hard(task))
+		if (RPC_IS_SOFT(task))
 			return;
 		/* if soft mounted, test if we've timed out */
 	case -ETIMEDOUT:

@@ -786,6 +786,7 @@ static int cpt_dump_veinfo(cpt_context_t *ctx)
 	i->start_jiffies_delta = get_jiffies_64() - ve->start_jiffies;
 
 	i->last_pid = ve->ve_ns->pid_ns->last_pid;
+	i->rnd_va_space	= ve->_randomize_va_space + 1;
 
 	ctx->write(i, sizeof(*i), ctx);
 	cpt_release_buf(ctx);
@@ -1161,8 +1162,10 @@ static void check_unsupported_mounts(struct cpt_context *ctx, __u32 *caps,
 
 		p.dentry = mnt->mnt_root;
 		p.mnt = mnt;
+		spin_lock(&dcache_lock);
 		path = __d_path(&p, &env->root_path,
 				path_buf, PAGE_SIZE);
+		spin_unlock(&dcache_lock);
 		if (IS_ERR(path))
 			continue;
 
@@ -1183,7 +1186,7 @@ int cpt_vps_caps(struct cpt_context *ctx, __u32 *caps)
 	struct nsproxy *old_ns;
 	struct mnt_namespace *n;
 	int err;
-	unsigned int flags = test_cpu_caps();
+	unsigned int flags = test_cpu_caps_and_features();
 
 	if (!ctx->ve_id)
 		return -EINVAL;
@@ -1192,7 +1195,25 @@ int cpt_vps_caps(struct cpt_context *ctx, __u32 *caps)
 	if (env == NULL)
 		return -ESRCH;
 
+	down_read(&env->op_sem);
+	err = -ESRCH;
+	if (!env->is_running) {
+		eprintk_ctx("CT is not running\n");
+		goto out_noenv;
+	}
+
+	err = -EBUSY;
+	if (env->is_locked) {
+		eprintk_ctx("CT is locked\n");
+		goto out_noenv;
+	}
+
 	*caps = flags & (1<<CPT_CPU_X86_CMOV);
+
+	if (flags & (1 << CPT_SLM_DMPRST)) {
+		eprintk_ctx("SLM is enabled, but slm_dmprst module is not loaded\n");
+		*caps |= (1 << CPT_SLM_DMPRST);
+	}
 
 	old_env = set_exec_env(env);
 	old_ns = current->nsproxy;
@@ -1244,6 +1265,8 @@ out_root:
 out:
 	current->nsproxy = old_ns;
 	set_exec_env(old_env);
+out_noenv:
+	up_read(&env->op_sem);
 	put_ve(env);
 
 	return err;

@@ -707,7 +707,8 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 
 		err = -EINVAL;
 
-		if (!capable(CAP_NET_ADMIN))
+		if (!capable(CAP_NET_ADMIN) &&
+				!capable(CAP_VE_NET_ADMIN))
 			return -EPERM;
 
 		/* Set dev type */

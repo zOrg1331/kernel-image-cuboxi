@@ -56,7 +56,7 @@ static int restore_one_bc(struct cpt_beancounter_image *v,
 {
 	struct user_beancounter *bc;
 	cpt_object_t *pobj;
-	int i;
+	int resources, i;
 
 	if (v->cpt_parent != CPT_NULL) {
 		pobj = lookup_cpt_obj_bypos(CPT_OBJ_UBC, v->cpt_parent, ctx);
@@ -77,7 +77,15 @@ static int restore_one_bc(struct cpt_beancounter_image *v,
 			CPT_VERSION_MINOR(ctx->image_version) < 1)
 		goto out;
 
-	for (i = 0; i < UB_RESOURCES; i++) {
+	if (v->cpt_content == CPT_CONTENT_ARRAY)
+		resources = v->cpt_ub_resources;
+	else
+		resources = UB_RESOURCES_COMPAT;
+
+	if (resources > UB_RESOURCES)
+		return -EINVAL;
+
+	for (i = 0; i < resources; i++) {
 		restore_one_bc_parm(v->cpt_parms + i * 2, bc->ub_parms + i, 0);
 		restore_one_bc_parm(v->cpt_parms + i * 2 + 1,
 				bc->ub_store + i, 1);
@@ -114,9 +122,12 @@ int rst_undump_ubc(struct cpt_context *ctx)
 		cpt_obj_setpos(obj, start, ctx);
 		intern_cpt_object(CPT_OBJ_UBC, obj, ctx);
 
-		restore_one_bc(v, obj, ctx);
+		err = restore_one_bc(v, obj, ctx);
 
 		cpt_release_buf(ctx);
+		if (err)
+			return err;
+
 		start += v->cpt_next;
 	}
 	return 0;

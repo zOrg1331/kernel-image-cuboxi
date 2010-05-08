@@ -717,7 +717,7 @@ int cap_syslog (int type)
 		return 0;
 
 	default:
-		if (!capable(CAP_SYS_ADMIN))
+		if (!capable(CAP_VE_SYS_ADMIN) && !capable(CAP_SYS_ADMIN))
 			return -EPERM;
 		return 0;
 	}

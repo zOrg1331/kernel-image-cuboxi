@@ -32,4 +32,6 @@ static inline void acpi_nmi_enable(void) { }
 #define trigger_all_cpu_backtrace() do { } while (0)
 #endif
 
+extern void nmi_show_regs(struct pt_regs *regs, int in_nmi);
+extern int do_nmi_show_regs(struct pt_regs *regs, int cpu);
 #endif

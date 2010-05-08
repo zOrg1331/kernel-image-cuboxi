@@ -211,6 +211,35 @@ static inline int vfs_dq_off(struct super_block *sb, int remount)
 	return ret;
 }
 
+static __inline__ void DQUOT_SWAP(struct inode *inode, struct inode *tmpl)
+{
+	if (sb_any_quota_enabled(tmpl->i_sb) &&
+	    tmpl->i_sb->dq_op->swap_inode)
+		tmpl->i_sb->dq_op->swap_inode(inode, tmpl);
+}
+
+static __inline__ int DQUOT_CHECK_SPACE(struct inode *inode)
+{
+	if (vfs_dq_alloc_space_nodirty(inode, 512))
+		return -EDQUOT;
+	vfs_dq_free_space_nodirty(inode, 512);
+	return 0;
+}
+
+static __inline__ void DQUOT_SYNC_BLOCKS(struct inode *inode, blkcnt_t blocks)
+{
+	if (sb_any_quota_enabled(inode->i_sb)) {
+		if (blocks > inode->i_blocks)
+			inode->i_sb->dq_op->alloc_space(inode,
+							(qsize_t)(blocks-inode->i_blocks)*512,
+							13 /*DQUOT_CMD_FORCE*/);
+		else if (blocks < inode->i_blocks)
+			inode->i_sb->dq_op->free_space(inode, (qsize_t)(inode->i_blocks-blocks)*512);
+	} else
+		inode->i_blocks = blocks;
+}
+
+
 #else
 
 static inline int sb_has_quota_enabled(struct super_block *sb, int type)
@@ -317,6 +346,15 @@ static inline void vfs_dq_free_space(struct inode *inode, qsize_t nr)
 	vfs_dq_free_space_nodirty(inode, nr);
 	mark_inode_dirty(inode);
 }	
+
+static inline void DQUOT_SWAP(struct inode *inode, struct inode *tmpl)
+{
+}
+
+static inline void DQUOT_SYNC_BLOCKS(struct inode *inode, blkcnt_t blocks)
+{
+	inode->i_blocks = blocks;
+}
 
 #endif /* CONFIG_QUOTA */
 

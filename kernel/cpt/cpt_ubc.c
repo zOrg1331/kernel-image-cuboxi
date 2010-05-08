@@ -67,13 +67,15 @@ static int dump_one_bc(cpt_object_t *obj, struct cpt_context *ctx)
 	v->cpt_next = CPT_NULL;
 	v->cpt_object = CPT_OBJ_UBC;
 	v->cpt_hdrlen = sizeof(*v);
-	v->cpt_content = CPT_CONTENT_VOID;
+	v->cpt_content = CPT_CONTENT_ARRAY;
 
 	if (obj->o_parent != NULL)
 		v->cpt_parent = ((cpt_object_t *)obj->o_parent)->o_pos;
 	else
 		v->cpt_parent = CPT_NULL;
 	v->cpt_id = (obj->o_parent != NULL) ? bc->ub_uid : 0;
+	v->cpt_ub_resources = UB_RESOURCES;
+	BUILD_BUG_ON(ARRAY_SIZE(v->cpt_parms) < UB_RESOURCES * 2);
 	for (i = 0; i < UB_RESOURCES; i++) {
 		dump_one_bc_parm(v->cpt_parms + i * 2, bc->ub_parms + i, 0);
 		dump_one_bc_parm(v->cpt_parms + i * 2 + 1, bc->ub_store + i, 1);

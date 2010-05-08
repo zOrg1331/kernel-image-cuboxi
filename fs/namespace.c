@@ -27,6 +27,7 @@
 #include <linux/ramfs.h>
 #include <linux/log2.h>
 #include <linux/idr.h>
+#include <linux/inotify.h>
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 #include "pnode.h"
@@ -526,7 +527,7 @@ static void commit_tree(struct vfsmount *mnt)
 	touch_mnt_namespace(n);
 }
 
-static struct vfsmount *next_mnt(struct vfsmount *p, struct vfsmount *root)
+struct vfsmount *next_mnt(struct vfsmount *p, struct vfsmount *root)
 {
 	struct list_head *next = p->mnt_mounts.next;
 	if (next == &p->mnt_mounts) {
@@ -541,6 +542,7 @@ static struct vfsmount *next_mnt(struct vfsmount *p, struct vfsmount *root)
 	}
 	return list_entry(next, struct vfsmount, mnt_child);
 }
+EXPORT_SYMBOL(next_mnt);
 
 static struct vfsmount *skip_mnt_tree(struct vfsmount *p)
 {
@@ -656,6 +658,7 @@ repeat:
 		spin_unlock(&vfsmount_lock);
 		acct_auto_close_mnt(mnt);
 		security_sb_umount_close(mnt);
+		inotify_unmount_mnt(mnt);
 		goto repeat;
 	}
 }
@@ -837,8 +840,10 @@ static int show_vfsmnt(struct seq_file *m, void *v)
 	if (ve_is_super(get_exec_env()) ||
 	    !(mnt->mnt_sb->s_type->fs_flags & FS_MANGLE_PROC))
 		mangle(m, mnt->mnt_devname ? mnt->mnt_devname : "none");
-	else
+	else {
+		seq_puts(m, "/dev/");
 		mangle(m, mnt->mnt_sb->s_type->name);
+	}
 	seq_putc(m, ' ');
 	mangle(m, path);
 	free_page((unsigned long) path_buf);
@@ -1184,8 +1189,10 @@ void umount_ve_fs_type(struct file_system_type *local_fs_type)
 	}
 
 	while (!list_empty(&kill)) {
+		LIST_HEAD(kill2);
 		mnt = list_entry(kill.next, struct vfsmount, mnt_list);
-		umount_tree(mnt, 1, &umount_list);
+		umount_tree(mnt, 1, &kill2);
+		list_splice(&kill2, &umount_list);
 	}
 	spin_unlock(&vfsmount_lock);
 	up_write(&namespace_sem);

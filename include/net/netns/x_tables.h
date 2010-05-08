@@ -4,7 +4,16 @@
 #include <linux/list.h>
 #include <linux/net.h>
 
+struct ebt_table;
+
 struct netns_xt {
 	struct list_head tables[NPROTO];
+#if defined(CONFIG_BRIDGE_NF_EBTABLES) || \
+	defined(CONFIG_BRIDGE_NF_EBTABLES_MODULE)
+	struct list_head *ebt_tables;
+	struct ebt_table *broute_table;
+	struct ebt_table *frame_filter;
+	struct ebt_table *frame_nat;
+#endif
 };
 #endif

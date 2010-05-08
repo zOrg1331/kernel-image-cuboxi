@@ -218,9 +218,6 @@ static struct dentry *d_kill(struct dentry *dentry)
 
 void dput(struct dentry *dentry)
 {
-	struct user_beancounter *ub;
-	unsigned long d_ubsize;
-
 	if (!dentry)
 		return;
 
@@ -272,14 +269,17 @@ kill_it:
 	/* if dentry was on the d_lru list delete it from there */
 	dentry_lru_del(dentry);
 
-	ub = dentry->dentry_bc.d_ub;
-	d_ubsize = dentry->dentry_bc.d_ubsize;
-	dentry = d_kill(dentry);
-	preempt_disable();
 	if (unlikely(ub_dentry_on)) {
-		uncharge_dcache(ub, d_ubsize);
+		struct user_beancounter *ub;
+
+		ub = dentry->dentry_bc.d_ub;
+		BUG_ON(!ub_dput_testzero(dentry));
+		uncharge_dcache(ub, dentry->dentry_bc.d_ubsize);
 		put_beancounter(ub);
 	}
+
+	dentry = d_kill(dentry);
+	preempt_disable();
 	if (dentry) 
 		goto repeat;
 	preempt_enable();

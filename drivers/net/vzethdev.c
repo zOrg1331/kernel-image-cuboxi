@@ -42,6 +42,7 @@
 #include <net/sock.h>
 #include <linux/if_ether.h>	/* For the statistics structure. */
 #include <linux/if_arp.h>	/* For ARPHRD_ETHER */
+#include <linux/if_bridge.h>
 #include <linux/ethtool.h>
 #include <linux/ve_proto.h>
 #include <linux/veth.h>
@@ -246,6 +247,7 @@ static struct net_device_stats *get_stats(struct net_device *dev)
 		stats->tx_bytes   += dev_stats->tx_bytes;
 		stats->rx_packets += dev_stats->rx_packets;
 		stats->tx_packets += dev_stats->tx_packets;
+		stats->tx_dropped += dev_stats->tx_dropped;
 	}
 
 	return stats;
@@ -288,21 +290,20 @@ static int veth_xmit(struct sk_buff *skb, struct net_device *dev)
 		if (is_multicast_ether_addr(
 					((struct ethhdr *)skb->data)->h_dest))
 			goto out;
-		if (compare_ether_addr(((struct ethhdr *)skb->data)->h_dest,
-					rcv->dev_addr))
-			goto outf;
+		if (!rcv->br_port &&
+			compare_ether_addr(((struct ethhdr *)skb->data)->h_dest, rcv->dev_addr))
+				goto outf;
 	} else if (!ve_is_super(dev->owner_env) &&
 			!entry->allow_mac_change) {
-		/* from VE to VE0 */
-		if (compare_ether_addr(((struct ethhdr *)skb->data)->h_source,
-					dev->dev_addr))
-			goto outf;
+		/* from VEX to VE0 */
+		if (!skb->dev->br_port &&
+			compare_ether_addr(((struct ethhdr *)skb->data)->h_source, dev->dev_addr))
+				goto outf;
 	}
 
 out:
 	skb->owner_env = rcv->owner_env;
 
-	skb->dev = rcv;
 	skb->pkt_type = PACKET_HOST;
 	skb->protocol = eth_type_trans(skb, rcv);
 
@@ -313,6 +314,7 @@ out:
 	skb->dst = NULL;
 	nf_reset(skb);
 	length = skb->len;
+	skb_init_brmark(skb);
 
 	netif_rx(skb);
 
@@ -402,6 +404,12 @@ static int veth_op_set_tx_csum(struct net_device *dev, u32 data)
 	return veth_set_op(dev, data, ethtool_op_set_tx_csum);
 }
 
+static int
+veth_op_set_tso(struct net_device *dev, u32 data)
+{
+	return veth_set_op(dev, data, ethtool_op_set_tso);
+}
+
 #define veth_op_set_rx_csum veth_op_set_tx_csum
 
 static struct ethtool_ops veth_ethtool_ops = {
@@ -412,6 +420,7 @@ static struct ethtool_ops veth_ethtool_ops = {
 	.get_rx_csum = ethtool_op_get_tx_csum,
 	.set_rx_csum = veth_op_set_rx_csum,
 	.get_tso = ethtool_op_get_tso,
+	.set_tso = veth_op_set_tso,
 };
 
 static void veth_setup(struct net_device *dev)

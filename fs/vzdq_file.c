@@ -31,12 +31,12 @@
  * File read operation
  *
  * FIXME: functions in this section (as well as many functions in vzdq_ugid.c,
- * perhaps) abuse vz_quota_sem.
- * Taking a global semaphore for lengthy and user-controlled operations inside
+ * perhaps) abuse vz_quota_mutex.
+ * Taking a global mutex for lengthy and user-controlled operations inside
  * VPSs is not a good idea in general.
- * In this case, the reasons for taking this semaphore are completely unclear,
+ * In this case, the reasons for taking this mutex are completely unclear,
  * especially taking into account that the only function that has comments
- * about the necessity to be called under this semaphore
+ * about the necessity to be called under this mutex
  * (create_proc_quotafile) is actually called OUTSIDE it.
  *
  * --------------------------------------------------------------------- */
@@ -65,7 +65,7 @@ struct quotatree_data {
 	int			type;	/* type of the tree */
 };
 
-/* serialized by vz_quota_sem */
+/* serialized by vz_quota_mutex */
 static LIST_HEAD(qf_data_head);
 
 static const u_int32_t vzquota_magics[] = V2_INITQMAGICS;
@@ -302,8 +302,8 @@ static int read_proc_quotafile(char *page, char **start, off_t off, int count,
 		return -ENOMEM;
 
 	qtd = data;
-	down(&vz_quota_sem);
-	down(&qtd->qmblk->dq_sem);
+	mutex_lock(&vz_quota_mutex);
+	mutex_lock(&qtd->qmblk->dq_mutex);
 
 	res = 0;
 	tree = QUGID_TREE(qtd->qmblk, qtd->type);
@@ -342,8 +342,8 @@ static int read_proc_quotafile(char *page, char **start, off_t off, int count,
 out_err:
 	*start += count;
 out_dq:
-	up(&qtd->qmblk->dq_sem);
-	up(&vz_quota_sem);
+	mutex_unlock(&qtd->qmblk->dq_mutex);
+	mutex_unlock(&vz_quota_mutex);
 	kfree(tmp);
 
 	return res;
@@ -865,6 +865,33 @@ out:
 	return ERR_PTR(-ENOENT);
 }
 
+static int vzdq_aquotd_getattr(struct vfsmount *mnt, struct dentry *dentry,
+		struct kstat *stat)
+{
+	struct ve_struct *ve, *old_ve;
+	struct list_head mntlist, *pos;
+
+	generic_fillattr(dentry->d_inode, stat);
+	ve = dentry->d_sb->s_type->owner_env;
+#ifdef CONFIG_VE
+	/*
+	 * The only reason of disabling getattr for the host system is that
+	 * this getattr can be slow and CPU consuming with large number of VPSs
+	 * (or just mount points).
+	 */
+	if (ve_is_super(ve))
+		return 0;
+#endif
+	INIT_LIST_HEAD(&mntlist);
+	old_ve = set_exec_env(ve);
+	if (!vzdq_aquot_buildmntlist(ve, &mntlist))
+		list_for_each(pos, &mntlist)
+			stat->nlink++;
+	vzdq_aquot_releasemntlist(ve, &mntlist);
+	(void)set_exec_env(old_ve);
+	return 0;
+}
+
 static struct file_operations vzdq_aquotd_file_operations = {
 	.read		= &generic_read_dir,
 	.readdir	= &vzdq_aquotd_readdir,
@@ -872,6 +899,7 @@ static struct file_operations vzdq_aquotd_file_operations = {
 
 static struct inode_operations vzdq_aquotd_inode_operations = {
 	.lookup		= &vzdq_aquotd_lookup,
+	.getattr	= &vzdq_aquotd_getattr,
 };
 
 

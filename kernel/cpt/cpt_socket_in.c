@@ -59,7 +59,7 @@ int cpt_dump_ofo_queue(int idx, struct sock *sk, struct cpt_context *ctx)
 	while (skb && skb != (struct sk_buff*)&tp->out_of_order_queue) {
 		int err;
 
-		err = cpt_dump_skb(CPT_SKB_OFOQ, idx, skb, ctx);
+		err = cpt_dump_skb(CPT_SKB_OFOQ, idx, skb, sk, ctx);
 		if (err)
 			return err;
 
@@ -314,7 +314,7 @@ static int dump_openreq(struct request_sock *req, struct sock *sk, int index,
 	v->cpt_snt_isn = tcp_rsk(req)->snt_isn;
 	v->cpt_rmt_port = inet_rsk(req)->rmt_port;
 	v->cpt_mss = req->mss;
-	// // v->cpt_family = (req->class == &or_ipv4 ? AF_INET : AF_INET6);
+	v->cpt_family = req->rsk_ops->family;
 	v->cpt_retrans = req->retrans;
 	v->cpt_snd_wscale = inet_rsk(req)->snd_wscale;
 	v->cpt_rcv_wscale = inet_rsk(req)->rcv_wscale;

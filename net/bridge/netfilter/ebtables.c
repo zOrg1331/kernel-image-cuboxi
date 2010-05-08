@@ -54,7 +54,6 @@
 
 
 static DEFINE_MUTEX(ebt_mutex);
-static LIST_HEAD(ebt_tables);
 static LIST_HEAD(ebt_targets);
 static LIST_HEAD(ebt_matches);
 static LIST_HEAD(ebt_watchers);
@@ -307,9 +306,9 @@ find_inlist_lock(struct list_head *head, const char *name, const char *prefix,
 #endif
 
 static inline struct ebt_table *
-find_table_lock(const char *name, int *error, struct mutex *mutex)
+find_table_lock(struct net *net, const char *name, int *error, struct mutex *mutex)
 {
-	return find_inlist_lock(&ebt_tables, name, "ebtable_", error, mutex);
+	return find_inlist_lock(net->xt.ebt_tables, name, "ebtable_", error, mutex);
 }
 
 static inline struct ebt_match *
@@ -915,7 +914,7 @@ static void get_counters(struct ebt_counter *oldcounters,
 }
 
 /* replace the table */
-static int do_replace(void __user *user, unsigned int len)
+static int do_replace(struct net *net, void __user *user, unsigned int len)
 {
 	int ret, i, countersize;
 	struct ebt_table_info *newinfo;
@@ -987,7 +986,7 @@ static int do_replace(void __user *user, unsigned int len)
 	if (ret != 0)
 		goto free_counterstmp;
 
-	t = find_table_lock(tmp.name, &ret, &ebt_mutex);
+	t = find_table_lock(net, tmp.name, &ret, &ebt_mutex);
 	if (!t) {
 		ret = -ENOENT;
 		goto free_iterate;
@@ -1149,7 +1148,7 @@ void ebt_unregister_watcher(struct ebt_watcher *watcher)
 	mutex_unlock(&ebt_mutex);
 }
 
-int ebt_register_table(struct ebt_table *table)
+struct ebt_table *ebt_register_table(struct net *net, struct ebt_table *table)
 {
 	struct ebt_table_info *newinfo;
 	struct ebt_table *t;
@@ -1161,14 +1160,21 @@ int ebt_register_table(struct ebt_table *table)
 	    repl->entries_size == 0 ||
 	    repl->counters || table->private) {
 		BUGPRINT("Bad table data for ebt_register_table!!!\n");
-		return -EINVAL;
+		return ERR_PTR(-EINVAL);
+	}
+
+	/* Don't add one table to multiple lists. */
+	table = kmemdup(table, sizeof(*table), GFP_KERNEL);
+	if (!table) {
+		ret = -ENOMEM;
+		goto out;
 	}
 
 	countersize = COUNTER_OFFSET(repl->nentries) * nr_cpu_ids;
 	newinfo = vmalloc(sizeof(*newinfo) + countersize);
 	ret = -ENOMEM;
 	if (!newinfo)
-		return -ENOMEM;
+		goto free_table;
 
 	p = vmalloc(repl->entries_size);
 	if (!p)
@@ -1198,9 +1204,10 @@ int ebt_register_table(struct ebt_table *table)
 		goto free_chainstack;
 	}
 
+	ret = -EINVAL;
 	if (table->check && table->check(newinfo, table->valid_hooks)) {
 		BUGPRINT("The table doesn't like its own initial data, lol\n");
-		return -EINVAL;
+		goto free_chainstack;
 	}
 
 	table->private = newinfo;
@@ -1209,7 +1216,7 @@ int ebt_register_table(struct ebt_table *table)
 	if (ret != 0)
 		goto free_chainstack;
 
-	list_for_each_entry(t, &ebt_tables, list) {
+	list_for_each_entry(t, net->xt.ebt_tables, list) {
 		if (strcmp(t->name, table->name) == 0) {
 			ret = -EEXIST;
 			BUGPRINT("Table name already exists\n");
@@ -1222,9 +1229,11 @@ int ebt_register_table(struct ebt_table *table)
 		ret = -ENOENT;
 		goto free_unlock;
 	}
-	list_add(&table->list, &ebt_tables);
+
+	list_add(&table->list, net->xt.ebt_tables);
 	mutex_unlock(&ebt_mutex);
-	return 0;
+	return table;
+
 free_unlock:
 	mutex_unlock(&ebt_mutex);
 free_chainstack:
@@ -1236,10 +1245,13 @@ free_chainstack:
 	vfree(newinfo->entries);
 free_newinfo:
 	vfree(newinfo);
-	return ret;
+free_table:
+	kfree(table);
+out:
+	return ERR_PTR(ret);
 }
 
-void ebt_unregister_table(struct ebt_table *table)
+void ebt_unregister_table(struct net *net, struct ebt_table *table)
 {
 	int i;
 
@@ -1257,10 +1269,11 @@ void ebt_unregister_table(struct ebt_table *table)
 		vfree(table->private->chainstack);
 	}
 	vfree(table->private);
+	kfree(table);
 }
 
 /* userspace just supplied us with counters */
-static int update_counters(void __user *user, unsigned int len)
+static int update_counters(struct net *net, void __user *user, unsigned int len)
 {
 	int i, ret;
 	struct ebt_counter *tmp;
@@ -1280,7 +1293,7 @@ static int update_counters(void __user *user, unsigned int len)
 		return -ENOMEM;
 	}
 
-	t = find_table_lock(hlp.name, &ret, &ebt_mutex);
+	t = find_table_lock(net, hlp.name, &ret, &ebt_mutex);
 	if (!t)
 		goto free_tmp;
 
@@ -1436,12 +1449,15 @@ static int do_ebt_set_ctl(struct sock *sk,
 {
 	int ret;
 
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
+
 	switch(cmd) {
 	case EBT_SO_SET_ENTRIES:
-		ret = do_replace(user, len);
+		ret = do_replace(sock_net(sk), user, len);
 		break;
 	case EBT_SO_SET_COUNTERS:
-		ret = update_counters(user, len);
+		ret = update_counters(sock_net(sk), user, len);
 		break;
 	default:
 		ret = -EINVAL;
@@ -1455,10 +1471,13 @@ static int do_ebt_get_ctl(struct sock *sk, int cmd, void __user *user, int *len)
 	struct ebt_replace tmp;
 	struct ebt_table *t;
 
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
+
 	if (copy_from_user(&tmp, user, sizeof(tmp)))
 		return -EFAULT;
 
-	t = find_table_lock(tmp.name, &ret, &ebt_mutex);
+	t = find_table_lock(sock_net(sk), tmp.name, &ret, &ebt_mutex);
 	if (!t)
 		return ret;
 
@@ -1514,9 +1533,33 @@ static struct nf_sockopt_ops ebt_sockopts =
 	.owner		= THIS_MODULE,
 };
 
+static int __net_init ebtables_net_init(struct net *net)
+{
+	net->xt.ebt_tables = kmalloc(sizeof(*net->xt.ebt_tables), GFP_KERNEL);
+	if (!net->xt.ebt_tables)
+		return -ENOMEM;
+	INIT_LIST_HEAD(net->xt.ebt_tables);
+	return 0;
+}
+
+static void __net_exit ebtables_net_fini(struct net *net)
+{
+	kfree(net->xt.ebt_tables);
+	net->xt.ebt_tables = NULL;
+}
+
+static struct pernet_operations ebtables_net_ops = {
+	.init = ebtables_net_init,
+	.exit = ebtables_net_fini,
+};
+
 static int __init ebtables_init(void)
 {
 	int ret;
+
+	ret = register_pernet_subsys(&ebtables_net_ops);
+	if (ret)
+		return ret;
 
 	mutex_lock(&ebt_mutex);
 	list_add(&ebt_standard_target.list, &ebt_targets);
@@ -1531,6 +1574,8 @@ static int __init ebtables_init(void)
 static void __exit ebtables_fini(void)
 {
 	nf_unregister_sockopt(&ebt_sockopts);
+	unregister_pernet_subsys(&ebtables_net_ops);
+
 	printk(KERN_INFO "Ebtables v2.0 unregistered\n");
 }
 

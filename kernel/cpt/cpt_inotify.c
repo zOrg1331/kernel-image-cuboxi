@@ -40,6 +40,29 @@
 
 extern struct file_operations inotify_fops;
 
+static int dump_watch_inode(struct inotify_watch *watch, cpt_context_t *ctx)
+{
+	int err;
+	struct dentry *d;
+
+	d = watch->path.dentry;
+	if (IS_ROOT(d) || !d_unhashed(d))
+		goto dump_dir;
+
+	d = cpt_fake_link(d->d_inode->i_nlink ? d : NULL,
+			watch->path.mnt, d->d_inode, ctx);
+
+	if (IS_ERR(d))
+		return PTR_ERR(d);
+
+dump_dir:
+	err = cpt_dump_dir(d, watch->path.mnt, ctx);
+	if (d != watch->path.dentry)
+		dput(d);
+
+	return err;
+}
+
 int cpt_dump_inotify(cpt_object_t *obj, cpt_context_t *ctx)
 {
 	int err = 0;
@@ -96,7 +119,7 @@ int cpt_dump_inotify(cpt_object_t *obj, cpt_context_t *ctx)
 		ctx->write(&wi, sizeof(wi), ctx);
 
 		cpt_push_object(&saved_obj2, ctx);
-		err = cpt_dump_dir(watch->path.dentry, watch->path.mnt, ctx);
+		err = dump_watch_inode(watch, ctx);
 		cpt_pop_object(&saved_obj2, ctx);
 		if (err)
 			break;

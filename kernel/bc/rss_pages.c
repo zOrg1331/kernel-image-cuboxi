@@ -85,6 +85,22 @@ static void inc_held_pages(struct user_beancounter *ub, int value)
 }
 
 /*
+ * ++ and -- beyond are protected with pb_lock
+ */
+
+static inline void inc_pbc_count(struct user_beancounter *ub)
+{
+	for (; ub != NULL; ub = ub->parent)
+		ub->ub_pbcs++;
+}
+
+static inline void dec_pbc_count(struct user_beancounter *ub)
+{
+	for (; ub != NULL; ub = ub->parent)
+		ub->ub_pbcs--;
+}
+
+/*
  * Alloc - free
  */
 
@@ -196,7 +212,7 @@ int pb_alloc_all(struct page_beancounter **pbs)
 
 static inline int pb_hash(struct user_beancounter *ub, struct page *page)
 {
-	return (page_to_pfn(page) + (ub->ub_uid << 10)) & pb_hash_mask;
+	return (page_to_pfn(page) ^ ub->ub_cookie) & pb_hash_mask;
 }
 
 /* pb_lock should be held */

@@ -77,12 +77,12 @@ int ub_ratelimit(struct ub_rate_info *);
 /* Add new resources here */
 
 #define UB_NUMXTENT	23
-#define UB_RESOURCES	24
+#define UB_SWAPPAGES	24
+#define UB_RESOURCES	25
 
 #define UB_UNUSEDPRIVVM	(UB_RESOURCES + 0)
 #define UB_TMPFSPAGES	(UB_RESOURCES + 1)
-#define UB_SWAPPAGES	(UB_RESOURCES + 2)
-#define UB_HELDPAGES	(UB_RESOURCES + 3)
+#define UB_HELDPAGES	(UB_RESOURCES + 2)
 
 struct ubparm {
 	/* 
@@ -141,7 +141,7 @@ struct sock_beancounter;
 struct page_private {
 	unsigned long		ubp_unused_privvmpages;
 	unsigned long		ubp_tmpfs_respages;
-	unsigned long		ubp_swap_pages;
+	unsigned long		ubp_pbcs;
 	unsigned long long	ubp_held_pages;
 };
 
@@ -170,7 +170,6 @@ struct ub_percpu_struct {
 #ifdef CONFIG_BC_DEBUG_KMEM
 	long	pages_charged;
 	long	vmalloc_charged;
-	long	pbcs;
 #endif
 	unsigned long	sync;
 	unsigned long	sync_done;
@@ -204,6 +203,7 @@ struct user_beancounter
 
 	spinlock_t		ub_lock;
 	uid_t			ub_uid;
+	unsigned int		ub_cookie;
 
 	struct ub_rate_info	ub_limit_rl;
 	int			ub_oom_noproc;
@@ -211,8 +211,8 @@ struct user_beancounter
 	struct page_private	ppriv;
 #define ub_unused_privvmpages	ppriv.ubp_unused_privvmpages
 #define ub_tmpfs_respages	ppriv.ubp_tmpfs_respages
-#define ub_swap_pages		ppriv.ubp_swap_pages
 #define ub_held_pages		ppriv.ubp_held_pages
+#define ub_pbcs			ppriv.ubp_pbcs
 	struct sock_private	spriv;
 #define ub_rmem_thres		spriv.ubp_rmem_thres
 #define ub_maxadvmss		spriv.ubp_maxadvmss
@@ -222,9 +222,12 @@ struct user_beancounter
 #define ub_other_sk_list	spriv.ubp_other_socks
 #define ub_orphan_count		spriv.ubp_orphan_count
 #define ub_tw_count		spriv.ubp_tw_count
+#ifdef CONFIG_BC_IO_SCHED
 	struct ub_iopriv	iopriv;
+#endif
 
 	struct user_beancounter *parent;
+	int			ub_childs;
 	void			*private_data;
 	unsigned long		ub_aflags;
 
@@ -249,6 +252,8 @@ struct user_beancounter
 	struct list_head	ub_cclist;
 #endif
 };
+
+extern int ub_count;
 
 enum ub_severity { UB_HARD, UB_SOFT, UB_FORCE };
 

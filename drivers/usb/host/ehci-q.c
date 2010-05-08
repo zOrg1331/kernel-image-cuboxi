@@ -346,12 +346,11 @@ qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh)
 				 */
 				if ((token & QTD_STS_XACT) &&
 						QTD_CERR(token) == 0 &&
-						--qh->xacterrs > 0 &&
+						++qh->xacterrs < QH_XACTERR_MAX &&
 						!urb->unlinked) {
 					ehci_dbg(ehci,
-	"detected XactErr len %d/%d retry %d\n",
-	qtd->length - QTD_LENGTH(token), qtd->length,
-	QH_XACTERR_MAX - qh->xacterrs);
+	"detected XactErr len %zu/%zu retry %d\n",
+	qtd->length - QTD_LENGTH(token), qtd->length, qh->xacterrs);
 
 					/* reset the token in the qtd and the
 					 * qh overlay (which still contains
@@ -451,7 +450,7 @@ halt:
 		last = qtd;
 
 		/* reinit the xacterr counter for the next qtd */
-		qh->xacterrs = QH_XACTERR_MAX;
+		qh->xacterrs = 0;
 	}
 
 	/* last urb's completion might still need calling */
@@ -748,9 +747,10 @@ qh_make (
 				 * But interval 1 scheduling is simpler, and
 				 * includes high bandwidth.
 				 */
-				dbg ("intr period %d uframes, NYET!",
-						urb->interval);
-				goto done;
+				urb->interval = 1;
+			} else if (qh->period > ehci->periodic_size) {
+				qh->period = ehci->periodic_size;
+				urb->interval = qh->period << 3;
 			}
 		} else {
 			int		think_time;
@@ -773,6 +773,10 @@ qh_make (
 					usb_calc_bus_time (urb->dev->speed,
 					is_input, 0, max_packet (maxp)));
 			qh->period = urb->interval;
+			if (qh->period > ehci->periodic_size) {
+				qh->period = ehci->periodic_size;
+				urb->interval = qh->period;
+			}
 		}
 	}
 
@@ -893,7 +897,7 @@ static void qh_link_async (struct ehci_hcd *ehci, struct ehci_qh *qh)
 	head->qh_next.qh = qh;
 	head->hw_next = dma;
 
-	qh->xacterrs = QH_XACTERR_MAX;
+	qh->xacterrs = 0;
 	qh->qh_state = QH_STATE_LINKED;
 	/* qtd completions reported later by interrupt */
 }

@@ -305,6 +305,9 @@ struct dquot_operations {
 	int (*mark_dirty) (struct dquot *);		/* Dquot is marked dirty */
 	int (*write_info) (struct super_block *, int);	/* Write of quota "superblock" */
 	int (*rename) (struct inode *, struct inode *, struct inode *);
+
+	void (*swap_inode) (struct inode *, struct inode *);
+	void (*shutdown) (struct super_block *);
 };
 
 /* Operations handling requests from userspace */

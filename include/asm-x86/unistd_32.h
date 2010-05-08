@@ -348,6 +348,8 @@
 #define __NR_setluid		511
 #define __NR_setublimit		512
 #define __NR_ubstat		513
+#define __NR_lchmod		516
+#define __NR_lutime		517
 
 #ifdef __KERNEL__
 

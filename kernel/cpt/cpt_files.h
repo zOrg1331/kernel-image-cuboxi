@@ -18,6 +18,7 @@ int rst_posix_locks(struct cpt_context *ctx);
 
 struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx);
 int rst_files_complete(struct cpt_task_image *ti, struct cpt_context *ctx);
+int rst_files_std(struct cpt_task_image *ti, struct cpt_context *ctx);
 __u32 rst_files_flag(struct cpt_task_image *ti, struct cpt_context *ctx);
 int rst_fs_complete(struct cpt_task_image *ti, struct cpt_context *ctx);
 int rst_restore_fs(struct cpt_context *ctx);
@@ -39,6 +40,8 @@ void rst_flush_filejobs(struct cpt_context *);
 int rst_do_filejobs(struct cpt_context *);
 
 extern struct file_operations eventpoll_fops;
+extern struct file_operations signalfd_fops;
+
 int rst_eventpoll(struct cpt_context *);
 struct file *cpt_open_epolldev(struct cpt_file_image *fi,
 			       unsigned flags,
@@ -55,9 +58,11 @@ struct file *rst_open_inotify(struct cpt_file_image *fi,
 			      unsigned flags,
 			      struct cpt_context *ctx);
 
+struct dentry *cpt_fake_link(struct dentry *d, struct vfsmount *mnt,
+		struct inode *ino, struct cpt_context *ctx);
 
 int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
-			 cpt_context_t *ctx);
+			 int verify, cpt_context_t *ctx);
 
 #define check_one_vfsmount(mnt) \
 	(strcmp(mnt->mnt_sb->s_type->name, "rootfs") != 0 && \
@@ -68,4 +73,5 @@ int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
 	 strcmp(mnt->mnt_sb->s_type->name, "tmpfs") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "devpts") != 0 && \
 	 strcmp(mnt->mnt_sb->s_type->name, "proc") != 0 && \
-	 strcmp(mnt->mnt_sb->s_type->name, "sysfs") != 0)
+	 strcmp(mnt->mnt_sb->s_type->name, "sysfs") != 0 && \
+	 strcmp(mnt->mnt_sb->s_type->name, "binfmt_misc") != 0)

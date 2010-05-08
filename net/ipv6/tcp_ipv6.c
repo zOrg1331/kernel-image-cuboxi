@@ -894,6 +894,7 @@ struct request_sock_ops tcp6_request_sock_ops __read_mostly = {
 	.destructor	=	tcp_v6_reqsk_destructor,
 	.send_reset	=	tcp_v6_send_reset
 };
+EXPORT_SYMBOL(tcp6_request_sock_ops);
 
 #ifdef CONFIG_TCP_MD5SIG
 static struct tcp_request_sock_ops tcp_request_sock_ipv6_ops = {

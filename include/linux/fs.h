@@ -166,6 +166,9 @@ extern int dir_notify_enable;
 #define S_SWAPFILE	256	/* Do not truncate: swapon got its bmaps */
 #define S_PRIVATE	512	/* Inode is fs-internal */
 
+/* VZ flags -- These are not upstream! */
+#define S_NOUNUSE	(1 << 17) /* just destroy inode in cleanup */
+
 /*
  * Note that nosuid etc flags are inode-specific: setting some file-system
  * flags just means all the inodes inherit those flags by default. It might be
@@ -1154,7 +1157,31 @@ struct super_block {
 	 * generic_show_options()
 	 */
 	char *s_options;
+
+	/* vzquota/NFS exports mutual exclusion */
+	spinlock_t	s_qe_lock;
+	int		s_qe_count;
 };
+
+static inline int sb_qe_get_check(struct super_block *sb, int count)
+{
+	int err = -EBUSY;
+
+	spin_lock(&sb->s_qe_lock);
+	if (count * sb->s_qe_count >= 0) {
+		sb->s_qe_count += count;
+		err = 0;
+	}
+	spin_unlock(&sb->s_qe_lock);
+	return err;
+}
+
+static inline void sb_qe_put(struct super_block *sb, int count)
+{
+	spin_lock(&sb->s_qe_lock);
+	sb->s_qe_count -= count;
+	spin_unlock(&sb->s_qe_lock);
+}
 
 extern struct timespec current_fs_time(struct super_block *sb);
 
@@ -1583,6 +1610,7 @@ extern void unregister_ve_fs_type(struct file_system_type *, struct vfsmount *);
 extern void umount_ve_fs_type(struct file_system_type *local_fs_type);
 #define kern_umount mntput
 extern int may_umount_tree(struct vfsmount *);
+extern struct vfsmount *next_mnt(struct vfsmount *p, struct vfsmount *root);
 extern int may_umount(struct vfsmount *);
 extern long do_mount(char *, char *, char *, unsigned long, void *);
 extern struct vfsmount *collect_mounts(struct vfsmount *, struct dentry *);

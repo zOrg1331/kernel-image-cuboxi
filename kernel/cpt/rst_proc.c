@@ -206,7 +206,7 @@ static int rst_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 	unlock_kernel();
 
 	if (cmd == CPT_TEST_CAPS) {
-		err = test_cpu_caps();
+		err = test_cpu_caps_and_features();
 		goto out_lock;
 	}
 
@@ -405,6 +405,9 @@ static int rst_ioctl(struct inode * inode, struct file * file, unsigned int cmd,
 		if (ctx->errorfile)
 			fput(ctx->errorfile);
 		ctx->errorfile = dfile;
+		break;
+	case CPT_HARDLNK_ON:
+		ctx->hardlinked_on = 1;
 		break;
 	case CPT_SET_VEID:
 		if (ctx->ctx_state > 0) {

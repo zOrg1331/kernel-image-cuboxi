@@ -163,7 +163,7 @@ static int preallocate_pmds(pmd_t *pmds[])
 	bool failed = false;
 
 	for(i = 0; i < PREALLOCATED_PMDS; i++) {
-		pmd_t *pmd = (pmd_t *)get_zeroed_page(GFP_KERNEL|__GFP_REPEAT);
+		pmd_t *pmd = (pmd_t *)get_zeroed_page(GFP_KERNEL_UBC|__GFP_REPEAT);
 		if (pmd == NULL)
 			failed = true;
 		pmds[i] = pmd;
