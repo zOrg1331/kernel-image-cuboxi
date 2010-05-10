@@ -240,9 +240,9 @@ static int set_addr_filters(const struct net_device *dev, bool sleep)
 	u16 filt_idx[7];
 	const u8 *addr[7];
 	int ret, naddr = 0;
-	const struct dev_addr_list *d;
 	const struct netdev_hw_addr *ha;
 	int uc_cnt = netdev_uc_count(dev);
+	int mc_cnt = netdev_mc_count(dev);
 	const struct port_info *pi = netdev_priv(dev);
 
 	/* first do the secondary unicast addresses */
@@ -260,9 +260,9 @@ static int set_addr_filters(const struct net_device *dev, bool sleep)
 	}
 
 	/* next set up the multicast addresses */
-	netdev_for_each_mc_addr(d, dev) {
-		addr[naddr++] = d->dmi_addr;
-		if (naddr >= ARRAY_SIZE(addr) || d->next == NULL) {
+	netdev_for_each_mc_addr(ha, dev) {
+		addr[naddr++] = ha->addr;
+		if (--mc_cnt == 0 || naddr >= ARRAY_SIZE(addr)) {
 			ret = t4_alloc_mac_filt(pi->adapter, 0, pi->viid, free,
 					naddr, addr, filt_idx, &mhash, sleep);
 			if (ret < 0)
@@ -1711,6 +1711,18 @@ static int set_tso(struct net_device *dev, u32 value)
 	return 0;
 }
 
+static int set_flags(struct net_device *dev, u32 flags)
+{
+	if (flags & ~ETH_FLAG_RXHASH)
+		return -EOPNOTSUPP;
+
+	if (flags & ETH_FLAG_RXHASH)
+		dev->features |= NETIF_F_RXHASH;
+	else
+		dev->features &= ~NETIF_F_RXHASH;
+	return 0;
+}
+
 static struct ethtool_ops cxgb_ethtool_ops = {
 	.get_settings      = get_settings,
 	.set_settings      = set_settings,
@@ -1741,6 +1753,7 @@ static struct ethtool_ops cxgb_ethtool_ops = {
 	.get_wol           = get_wol,
 	.set_wol           = set_wol,
 	.set_tso           = set_tso,
+	.set_flags         = set_flags,
 	.flash_device      = set_flash,
 };
 
@@ -3203,7 +3216,7 @@ static int __devinit init_one(struct pci_dev *pdev,
 
 		netdev->features |= NETIF_F_SG | NETIF_F_TSO | NETIF_F_TSO6;
 		netdev->features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
-		netdev->features |= NETIF_F_GRO | highdma;
+		netdev->features |= NETIF_F_GRO | NETIF_F_RXHASH | highdma;
 		netdev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
 		netdev->vlan_features = netdev->features & VLAN_FEAT;
 

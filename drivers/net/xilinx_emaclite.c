@@ -639,7 +639,6 @@ static void xemaclite_rx_handler(struct net_device *dev)
 	}
 
 	skb_put(skb, len);	/* Tell the skb how much data we got */
-	skb->dev = dev;		/* Fill out required meta-data */
 
 	skb->protocol = eth_type_trans(skb, dev);
 	skb->ip_summed = CHECKSUM_NONE;
@@ -1172,7 +1171,7 @@ static int __devinit xemaclite_of_probe(struct of_device *ofdev,
 	}
 
 	/* Get the virtual base address for the device */
-	lp->base_addr = ioremap(r_mem.start, r_mem.end - r_mem.start + 1);
+	lp->base_addr = ioremap(r_mem.start, resource_size(&r_mem));
 	if (NULL == lp->base_addr) {
 		dev_err(dev, "EmacLite: Could not allocate iomem\n");
 		rc = -EIO;
@@ -1225,7 +1224,7 @@ static int __devinit xemaclite_of_probe(struct of_device *ofdev,
 	return 0;
 
 error1:
-	release_mem_region(ndev->mem_start, r_mem.end - r_mem.start + 1);
+	release_mem_region(ndev->mem_start, resource_size(&r_mem));
 
 error2:
 	xemaclite_remove_ndev(ndev);

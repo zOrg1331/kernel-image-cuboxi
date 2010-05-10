@@ -1809,7 +1809,8 @@ static void rt61pci_write_tx_desc(struct rt2x00_dev *rt2x00dev,
 
 	if (skbdesc->desc_len > TXINFO_SIZE) {
 		rt2x00_desc_read(txd, 11, &word);
-		rt2x00_set_field32(&word, TXD_W11_BUFFER_LENGTH0, skb->len);
+		rt2x00_set_field32(&word, TXD_W11_BUFFER_LENGTH0,
+				   txdesc->length);
 		rt2x00_desc_write(txd, 11, word);
 	}
 
@@ -1832,7 +1833,7 @@ static void rt61pci_write_tx_desc(struct rt2x00_dev *rt2x00dev,
 	rt2x00_set_field32(&word, TXD_W0_KEY_TABLE,
 			   test_bit(ENTRY_TXD_ENCRYPT_PAIRWISE, &txdesc->flags));
 	rt2x00_set_field32(&word, TXD_W0_KEY_INDEX, txdesc->key_idx);
-	rt2x00_set_field32(&word, TXD_W0_DATABYTE_COUNT, skb->len);
+	rt2x00_set_field32(&word, TXD_W0_DATABYTE_COUNT, txdesc->length);
 	rt2x00_set_field32(&word, TXD_W0_BURST,
 			   test_bit(ENTRY_TXD_BURST, &txdesc->flags));
 	rt2x00_set_field32(&word, TXD_W0_CIPHER_ALG, txdesc->cipher);
@@ -2118,6 +2119,14 @@ static void rt61pci_txdone(struct rt2x00_dev *rt2x00dev)
 	}
 }
 
+static void rt61pci_wakeup(struct rt2x00_dev *rt2x00dev)
+{
+	struct ieee80211_conf conf = { .flags = 0 };
+	struct rt2x00lib_conf libconf = { .conf = &conf };
+
+	rt61pci_config(rt2x00dev, &libconf, IEEE80211_CONF_CHANGE_PS);
+}
+
 static irqreturn_t rt61pci_interrupt(int irq, void *dev_instance)
 {
 	struct rt2x00_dev *rt2x00dev = dev_instance;
@@ -2164,6 +2173,12 @@ static irqreturn_t rt61pci_interrupt(int irq, void *dev_instance)
 	if (reg_mcu)
 		rt2x00pci_register_write(rt2x00dev,
 					 M2H_CMD_DONE_CSR, 0xffffffff);
+
+	/*
+	 * 4 - MCU Autowakeup interrupt.
+	 */
+	if (rt2x00_get_field32(reg_mcu, MCU_INT_SOURCE_CSR_TWAKEUP))
+		rt61pci_wakeup(rt2x00dev);
 
 	return IRQ_HANDLED;
 }
