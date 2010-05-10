@@ -774,8 +774,6 @@ static int dev_rename(struct dm_ioctl *param, size_t param_size)
 	if (r)
 		return r;
 
-	param->data_size = 0;
-
 	return dm_hash_rename(param->event_nr, &param->flags, param->name,
 			      new_name);
 }
