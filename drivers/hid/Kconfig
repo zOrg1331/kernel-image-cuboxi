@@ -274,6 +274,64 @@ config HID_PETALYNX
 	---help---
 	Support for Petalynx Maxter remote control.
 
+config HID_PICOLCD
+	tristate "PicoLCD (graphic version)"
+	depends on USB_HID
+	---help---
+	  This provides support for Minibox PicoLCD devices, currently
+	  only the graphical ones are supported.
+
+	  This includes support for the following device features:
+	  - Keypad
+	  - Switching between Firmware and Flash mode
+	  - EEProm / Flash access     (via debugfs)
+	  Features selectively enabled:
+	  - Framebuffer for monochrome 256x64 display
+	  - Backlight control
+	  - Contrast control
+	  - General purpose outputs
+	  Features that are not (yet) supported:
+	  - IR
+
+config HID_PICOLCD_FB
+	bool "Framebuffer support" if EMBEDDED
+	default !EMBEDDED
+	depends on HID_PICOLCD
+	depends on HID_PICOLCD=FB || FB=y
+	select FB_DEFERRED_IO
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	select FB_SYS_FOPS
+	---help---
+	  Provide access to PicoLCD's 256x64 monochrome display via a
+	  frambuffer device.
+
+config HID_PICOLCD_BACKLIGHT
+	bool "Backlight control" if EMBEDDED
+	default !EMBEDDED
+	depends on HID_PICOLCD
+	depends on HID_PICOLCD=BACKLIGHT_CLASS_DEVICE || BACKLIGHT_CLASS_DEVICE=y
+	---help---
+	  Provide access to PicoLCD's backlight control via backlight
+	  class.
+
+config HID_PICOLCD_LCD
+	bool "Contrast control" if EMBEDDED
+	default !EMBEDDED
+	depends on HID_PICOLCD
+	depends on HID_PICOLCD=LCD_CLASS_DEVICE || LCD_CLASS_DEVICE=y
+	---help---
+	  Provide access to PicoLCD's LCD contrast via lcd class.
+
+config HID_PICOLCD_LEDS
+	bool "GPO via leds class" if EMBEDDED
+	default !EMBEDDED
+	depends on HID_PICOLCD
+	depends on HID_PICOLCD=LEDS_CLASS || LEDS_CLASS=y
+	---help---
+	  Provide access to PicoLCD's GPO pins via leds class.
+
 config HID_QUANTA
 	tristate "Quanta Optical Touch"
 	depends on USB_HID
