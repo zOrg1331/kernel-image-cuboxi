@@ -82,8 +82,7 @@ static int perf_session__add_hist_entry(struct perf_session *self,
 {
 	struct map_symbol *syms = NULL;
 	struct symbol *parent = NULL;
-	bool hit;
-	int err;
+	int err = -ENOMEM;
 	struct hist_entry *he;
 	struct event_stat_id *stats;
 	struct perf_event_attr *attr;
@@ -101,39 +100,17 @@ static int perf_session__add_hist_entry(struct perf_session *self,
 	else
 		stats = get_stats(self, data->id, 0, 0);
 	if (stats == NULL)
-		return -ENOMEM;
+		goto out_free_syms;
 	he = __perf_session__add_hist_entry(&stats->hists, al, parent,
-					    data->period, &hit);
+					    data->period);
 	if (he == NULL)
-		return -ENOMEM;
-
-	if (hit)
-		__perf_session__add_count(he, al,  data->period);
-
-	if (symbol_conf.use_callchain) {
-		if (!hit)
-			callchain_init(he->callchain);
+		goto out_free_syms;
+	err = 0;
+	if (symbol_conf.use_callchain)
 		err = append_chain(he->callchain, data->callchain, syms);
-		free(syms);
-
-		if (err)
-			return err;
-	}
-
-	return 0;
-}
-
-static int validate_chain(struct ip_callchain *chain, event_t *event)
-{
-	unsigned int chain_size;
-
-	chain_size = event->header.size;
-	chain_size -= (unsigned long)&event->ip.__more_data - (unsigned long)event;
-
-	if (chain->nr*sizeof(u64) > chain_size)
-		return -1;
-
-	return 0;
+out_free_syms:
+	free(syms);
+	return err;
 }
 
 static int add_event_total(struct perf_session *session,
@@ -171,7 +148,7 @@ static int process_sample_event(event_t *event, struct perf_session *session)
 
 		dump_printf("... chain: nr:%Lu\n", data.callchain->nr);
 
-		if (validate_chain(data.callchain, event) < 0) {
+		if (!ip_callchain__valid(data.callchain, event)) {
 			pr_debug("call-chain problem with event, "
 				 "skipping it.\n");
 			return 0;
@@ -366,7 +343,7 @@ static int
 parse_callchain_opt(const struct option *opt __used, const char *arg,
 		    int unset)
 {
-	char *tok;
+	char *tok, *tok2;
 	char *endptr;
 
 	/*
@@ -411,10 +388,13 @@ parse_callchain_opt(const struct option *opt __used, const char *arg,
 	if (!tok)
 		goto setup;
 
+	tok2 = strtok(NULL, ",");
 	callchain_param.min_percent = strtod(tok, &endptr);
 	if (tok == endptr)
 		return -1;
 
+	if (tok2)
+		callchain_param.print_limit = strtod(tok2, &endptr);
 setup:
 	if (register_callchain_param(&callchain_param) < 0) {
 		fprintf(stderr, "Can't register callchain params\n");
@@ -457,7 +437,7 @@ static const struct option options[] = {
 	OPT_BOOLEAN('x', "exclude-other", &symbol_conf.exclude_other,
 		    "Only display entries with parent-match"),
 	OPT_CALLBACK_DEFAULT('g', "call-graph", NULL, "output_type,min_percent",
-		     "Display callchains using output_type and min percent threshold. "
+		     "Display callchains using output_type (graph, flat, fractal, or none) and min percent threshold. "
 		     "Default: fractal,0.5", &parse_callchain_opt, callchain_default_opt),
 	OPT_STRING('d', "dsos", &symbol_conf.dso_list_str, "dso[,dso...]",
 		   "only consider symbols in these dsos"),
