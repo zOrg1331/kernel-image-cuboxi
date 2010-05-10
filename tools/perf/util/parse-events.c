@@ -418,12 +418,6 @@ parse_single_tracepoint_event(char *sys_name,
 	u64 id;
 	int fd;
 
-	attr->sample_type |= PERF_SAMPLE_RAW;
-	attr->sample_type |= PERF_SAMPLE_TIME;
-	attr->sample_type |= PERF_SAMPLE_CPU;
-
-	attr->sample_period = 1;
-
 	snprintf(evt_path, MAXPATHLEN, "%s/%s/%s/id", debugfs_path,
 		 sys_name, evt_name);
 
@@ -441,6 +435,13 @@ parse_single_tracepoint_event(char *sys_name,
 	attr->config = id;
 	attr->type = PERF_TYPE_TRACEPOINT;
 	*strp = evt_name + evt_length;
+
+	attr->sample_type |= PERF_SAMPLE_RAW;
+	attr->sample_type |= PERF_SAMPLE_TIME;
+	attr->sample_type |= PERF_SAMPLE_CPU;
+
+	attr->sample_period = 1;
+
 
 	return EVT_HANDLED;
 }
@@ -935,7 +936,7 @@ void print_events(void)
 
 	printf("\n");
 	printf("  %-42s [%s]\n",
-		"rNNN", event_type_descriptors[PERF_TYPE_RAW]);
+		"rNNN (NNN=<UMASK VALUE><EVENT NUM>)", event_type_descriptors[PERF_TYPE_RAW]);
 	printf("\n");
 
 	printf("  %-42s [%s]\n",

@@ -289,7 +289,7 @@ static int __cmd_report(void)
 
 	signal(SIGINT, sig_handler);
 
-	session = perf_session__new(input_name, O_RDONLY, force);
+	session = perf_session__new(input_name, O_RDONLY, force, false);
 	if (session == NULL)
 		return -ENOMEM;
 
@@ -313,7 +313,7 @@ static int __cmd_report(void)
 		perf_session__fprintf(session, stdout);
 
 	if (verbose > 2)
-		dsos__fprintf(&session->kerninfo_root, stdout);
+		perf_session__fprintf_dsos(session, stdout);
 
 	next = rb_first(&session->stats_by_id);
 	while (next) {

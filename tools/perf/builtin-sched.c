@@ -1651,15 +1651,16 @@ static int process_lost_event(event_t *event __used,
 }
 
 static struct perf_event_ops event_ops = {
-	.sample	= process_sample_event,
-	.comm	= event__process_comm,
-	.lost	= process_lost_event,
+	.sample			= process_sample_event,
+	.comm			= event__process_comm,
+	.lost			= process_lost_event,
+	.ordered_samples	= true,
 };
 
 static int read_events(void)
 {
 	int err = -EINVAL;
-	struct perf_session *session = perf_session__new(input_name, O_RDONLY, 0);
+	struct perf_session *session = perf_session__new(input_name, O_RDONLY, 0, false);
 	if (session == NULL)
 		return -ENOMEM;
 
@@ -1850,7 +1851,6 @@ static const char *record_args[] = {
 	"record",
 	"-a",
 	"-R",
-	"-M",
 	"-f",
 	"-m", "1024",
 	"-c", "1",
