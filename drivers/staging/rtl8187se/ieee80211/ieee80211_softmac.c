@@ -1555,7 +1555,8 @@ ieee80211_rx_auth_rq(struct ieee80211_device *ieee, struct sk_buff *skb)
 	//IEEE80211DMESG("Rx probe");
 	ieee->softmac_stats.rx_auth_rq++;
 
-	if ((status = auth_rq_parse(skb, dest))!= -1){
+	status = auth_rq_parse(skb, dest);
+	if (status != -1) {
 		ieee80211_resp_to_auth(ieee, status, dest);
 	}
 	//DMESG("Dest is "MACSTR, MAC2STR(dest));
@@ -2321,9 +2322,11 @@ void ieee80211_disassociate(struct ieee80211_device *ieee)
 
 	if(IS_DOT11D_ENABLE(ieee))
 		Dot11d_Reset(ieee);
-	ieee->state = IEEE80211_NOLINK;
+
 	ieee->link_change(ieee->dev);
-	notify_wx_assoc_event(ieee);
+	if (ieee->state == IEEE80211_LINKED)
+		notify_wx_assoc_event(ieee);
+	ieee->state = IEEE80211_NOLINK;
 
 }
 void ieee80211_associate_retry_wq(struct work_struct *work)
