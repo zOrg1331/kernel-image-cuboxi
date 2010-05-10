@@ -623,6 +623,7 @@ int usbhid_wait_io(struct hid_device *hid)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(usbhid_wait_io);
 
 static int hid_set_idle(struct usb_device *dev, int ifnum, int report, int idle)
 {
@@ -999,13 +1000,6 @@ static int usbhid_start(struct hid_device *hid)
 		}
 	}
 
-	init_waitqueue_head(&usbhid->wait);
-	INIT_WORK(&usbhid->reset_work, hid_reset);
-	INIT_WORK(&usbhid->restart_work, __usbhid_restart_queues);
-	setup_timer(&usbhid->io_retry, hid_retry_timeout, (unsigned long) hid);
-
-	spin_lock_init(&usbhid->lock);
-
 	usbhid->urbctrl = usb_alloc_urb(0, GFP_KERNEL);
 	if (!usbhid->urbctrl) {
 		ret = -ENOMEM;
@@ -1026,12 +1020,15 @@ static int usbhid_start(struct hid_device *hid)
 	/* Some keyboards don't work until their LEDs have been set.
 	 * Since BIOSes do set the LEDs, it must be safe for any device
 	 * that supports the keyboard boot protocol.
+	 * In addition, enable remote wakeup by default for all keyboard
+	 * devices supporting the boot protocol.
 	 */
 	if (interface->desc.bInterfaceSubClass == USB_INTERFACE_SUBCLASS_BOOT &&
 			interface->desc.bInterfaceProtocol ==
-				USB_INTERFACE_PROTOCOL_KEYBOARD)
+				USB_INTERFACE_PROTOCOL_KEYBOARD) {
 		usbhid_set_leds(hid);
-
+		device_set_wakeup_enable(&dev->dev, 1);
+	}
 	return 0;
 
 fail:
@@ -1140,6 +1137,7 @@ static int usbhid_probe(struct usb_interface *intf, const struct usb_device_id *
 	hid->vendor = le16_to_cpu(dev->descriptor.idVendor);
 	hid->product = le16_to_cpu(dev->descriptor.idProduct);
 	hid->name[0] = 0;
+	hid->quirks = usbhid_lookup_quirk(hid->vendor, hid->product);
 	if (intf->cur_altsetting->desc.bInterfaceProtocol ==
 			USB_INTERFACE_PROTOCOL_MOUSE)
 		hid->type = HID_TYPE_USBMOUSE;
@@ -1178,6 +1176,12 @@ static int usbhid_probe(struct usb_interface *intf, const struct usb_device_id *
 	usbhid->hid = hid;
 	usbhid->intf = intf;
 	usbhid->ifnum = interface->desc.bInterfaceNumber;
+
+	init_waitqueue_head(&usbhid->wait);
+	INIT_WORK(&usbhid->reset_work, hid_reset);
+	INIT_WORK(&usbhid->restart_work, __usbhid_restart_queues);
+	setup_timer(&usbhid->io_retry, hid_retry_timeout, (unsigned long) hid);
+	spin_lock_init(&usbhid->lock);
 
 	ret = hid_add_device(hid);
 	if (ret) {
@@ -1290,6 +1294,11 @@ static int hid_suspend(struct usb_interface *intf, pm_message_t message)
 		{
 			set_bit(HID_REPORTED_IDLE, &usbhid->iofl);
 			spin_unlock_irq(&usbhid->lock);
+			if (hid->driver && hid->driver->suspend) {
+				status = hid->driver->suspend(hid, message);
+				if (status < 0)
+					return status;
+			}
 		} else {
 			usbhid_mark_busy(usbhid);
 			spin_unlock_irq(&usbhid->lock);
@@ -1297,6 +1306,11 @@ static int hid_suspend(struct usb_interface *intf, pm_message_t message)
 		}
 
 	} else {
+		if (hid->driver && hid->driver->suspend) {
+			status = hid->driver->suspend(hid, message);
+			if (status < 0)
+				return status;
+		}
 		spin_lock_irq(&usbhid->lock);
 		set_bit(HID_REPORTED_IDLE, &usbhid->iofl);
 		spin_unlock_irq(&usbhid->lock);
@@ -1351,6 +1365,11 @@ static int hid_resume(struct usb_interface *intf)
 		hid_io_error(hid);
 	usbhid_restart_queues(usbhid);
 
+	if (status >= 0 && hid->driver && hid->driver->resume) {
+		int ret = hid->driver->resume(hid);
+		if (ret < 0)
+			status = ret;
+	}
 	dev_dbg(&intf->dev, "resume status %d\n", status);
 	return 0;
 }
@@ -1359,9 +1378,16 @@ static int hid_reset_resume(struct usb_interface *intf)
 {
 	struct hid_device *hid = usb_get_intfdata(intf);
 	struct usbhid_device *usbhid = hid->driver_data;
+	int status;
 
 	clear_bit(HID_REPORTED_IDLE, &usbhid->iofl);
-	return hid_post_reset(intf);
+	status = hid_post_reset(intf);
+	if (status >= 0 && hid->driver && hid->driver->reset_resume) {
+		int ret = hid->driver->reset_resume(hid);
+		if (ret < 0)
+			status = ret;
+	}
+	return status;
 }
 
 #endif /* CONFIG_PM */
