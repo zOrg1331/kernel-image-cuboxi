@@ -332,7 +332,7 @@ config HID_TOPSEED
 	depends on USB_HID
 	default !EMBEDDED
 	---help---
-	Say Y if you have a TopSeed Cyberlink remote control.
+	Say Y if you have a TopSeed Cyberlink or BTC Emprex remote control.
 
 config HID_THRUSTMASTER
 	tristate "ThrustMaster devices support" if EMBEDDED
@@ -356,6 +356,14 @@ config HID_WACOM
 	depends on BT_HIDP
 	---help---
 	Support for Wacom Graphire Bluetooth tablet.
+
+config HID_WACOM_POWER_SUPPLY
+	bool "Wacom Bluetooth devices power supply status support"
+	depends on HID_WACOM
+	select POWER_SUPPLY
+	---help---
+	  Say Y here if you want to enable power supply status monitoring for
+	  Wacom Bluetooth devices.
 
 config HID_ZEROPLUS
 	tristate "Zeroplus based game controller support" if EMBEDDED
