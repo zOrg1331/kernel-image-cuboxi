@@ -116,35 +116,35 @@ typedef enum tagCMD_STATE {
 
 
 /*---------------------  Export Functions  --------------------------*/
-VOID
+void
 vResetCommandTimer(
-    IN HANDLE      hDeviceContext
+     HANDLE      hDeviceContext
     );
 
 BOOL
 bScheduleCommand(
-    IN HANDLE      hDeviceContext,
-    IN CMD_CODE    eCommand,
-    IN PBYTE       pbyItem0
+     HANDLE      hDeviceContext,
+     CMD_CODE    eCommand,
+     PBYTE       pbyItem0
     );
 
-VOID
+void
 vRunCommand(
-    IN  HANDLE      hDeviceContext
+      HANDLE      hDeviceContext
     );
 /*
-VOID
+void
 WCMDvCommandThread(
-    PVOID Context
+    void * Context
     );
 */
 
 //2007-0115-09<Add>by MikeLiu
 #ifdef TxInSleep
-VOID
+void
 BSSvSecondTxData(
-    IN  HANDLE      hDeviceContext
+      HANDLE      hDeviceContext
     );
 #endif
 
-#endif //__WCMD_H__
+#endif /* __WCMD_H__ */

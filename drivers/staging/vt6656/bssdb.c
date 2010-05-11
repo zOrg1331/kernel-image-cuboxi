@@ -91,17 +91,17 @@ const WORD             awHWRetry1[5][5] = {
 
 /*---------------------  Static Functions  --------------------------*/
 
-VOID s_vCheckSensitivity(
-    IN HANDLE hDeviceContext
+void s_vCheckSensitivity(
+     HANDLE hDeviceContext
     );
 
-VOID s_vCheckPreEDThreshold(
-    IN HANDLE hDeviceContext
+void s_vCheckPreEDThreshold(
+     HANDLE hDeviceContext
     );
 
 #ifdef Calcu_LinkQual
-VOID s_uCalculateLinkQual(
-    IN HANDLE hDeviceContext
+void s_uCalculateLinkQual(
+     HANDLE hDeviceContext
     );
 #endif
 /*---------------------  Export Variables  --------------------------*/
@@ -125,10 +125,10 @@ VOID s_uCalculateLinkQual(
 
 PKnownBSS
 BSSpSearchBSSList(
-    IN HANDLE hDeviceContext,
-    IN PBYTE pbyDesireBSSID,
-    IN PBYTE pbyDesireSSID,
-    IN CARD_PHY_TYPE  ePhyType
+     HANDLE hDeviceContext,
+     PBYTE pbyDesireBSSID,
+     PBYTE pbyDesireSSID,
+     CARD_PHY_TYPE  ePhyType
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
@@ -296,10 +296,10 @@ pDevice->bSameBSSMaxNum = jj;
 -*/
 
 
-VOID
+void
 BSSvClearBSSList(
-    IN HANDLE hDeviceContext,
-    IN BOOL bKeepCurrBSSID
+     HANDLE hDeviceContext,
+     BOOL bKeepCurrBSSID
     )
 {
     PSDevice     pDevice = (PSDevice)hDeviceContext;
@@ -344,9 +344,9 @@ BSSvClearBSSList(
 -*/
 PKnownBSS
 BSSpAddrIsInBSSList(
-    IN HANDLE hDeviceContext,
-    IN PBYTE abyBSSID,
-    IN PWLAN_IE_SSID pSSID
+     HANDLE hDeviceContext,
+     PBYTE abyBSSID,
+     PWLAN_IE_SSID pSSID
     )
 {
     PSDevice     pDevice = (PSDevice)hDeviceContext;
@@ -385,23 +385,23 @@ BSSpAddrIsInBSSList(
 
 BOOL
 BSSbInsertToBSSList (
-    IN HANDLE hDeviceContext,
-    IN PBYTE abyBSSIDAddr,
-    IN QWORD qwTimestamp,
-    IN WORD wBeaconInterval,
-    IN WORD wCapInfo,
-    IN BYTE byCurrChannel,
-    IN PWLAN_IE_SSID pSSID,
-    IN PWLAN_IE_SUPP_RATES pSuppRates,
-    IN PWLAN_IE_SUPP_RATES pExtSuppRates,
-    IN PERPObject psERP,
-    IN PWLAN_IE_RSN pRSN,
-    IN PWLAN_IE_RSN_EXT pRSNWPA,
-    IN PWLAN_IE_COUNTRY pIE_Country,
-    IN PWLAN_IE_QUIET pIE_Quiet,
-    IN UINT uIELength,
-    IN PBYTE pbyIEs,
-    IN HANDLE pRxPacketContext
+     HANDLE hDeviceContext,
+     PBYTE abyBSSIDAddr,
+     QWORD qwTimestamp,
+     WORD wBeaconInterval,
+     WORD wCapInfo,
+     BYTE byCurrChannel,
+     PWLAN_IE_SSID pSSID,
+     PWLAN_IE_SUPP_RATES pSuppRates,
+     PWLAN_IE_SUPP_RATES pExtSuppRates,
+     PERPObject psERP,
+     PWLAN_IE_RSN pRSN,
+     PWLAN_IE_RSN_EXT pRSNWPA,
+     PWLAN_IE_COUNTRY pIE_Country,
+     PWLAN_IE_QUIET pIE_Quiet,
+     UINT uIELength,
+     PBYTE pbyIEs,
+     HANDLE pRxPacketContext
     )
 {
 
@@ -604,24 +604,24 @@ BSSbInsertToBSSList (
 
 BOOL
 BSSbUpdateToBSSList (
-    IN HANDLE hDeviceContext,
-    IN QWORD qwTimestamp,
-    IN WORD wBeaconInterval,
-    IN WORD wCapInfo,
-    IN BYTE byCurrChannel,
-    IN BOOL bChannelHit,
-    IN PWLAN_IE_SSID pSSID,
-    IN PWLAN_IE_SUPP_RATES pSuppRates,
-    IN PWLAN_IE_SUPP_RATES pExtSuppRates,
-    IN PERPObject psERP,
-    IN PWLAN_IE_RSN pRSN,
-    IN PWLAN_IE_RSN_EXT pRSNWPA,
-    IN PWLAN_IE_COUNTRY pIE_Country,
-    IN PWLAN_IE_QUIET pIE_Quiet,
-    IN PKnownBSS pBSSList,
-    IN UINT uIELength,
-    IN PBYTE pbyIEs,
-    IN HANDLE pRxPacketContext
+     HANDLE hDeviceContext,
+     QWORD qwTimestamp,
+     WORD wBeaconInterval,
+     WORD wCapInfo,
+     BYTE byCurrChannel,
+     BOOL bChannelHit,
+     PWLAN_IE_SSID pSSID,
+     PWLAN_IE_SUPP_RATES pSuppRates,
+     PWLAN_IE_SUPP_RATES pExtSuppRates,
+     PERPObject psERP,
+     PWLAN_IE_RSN pRSN,
+     PWLAN_IE_RSN_EXT pRSNWPA,
+     PWLAN_IE_COUNTRY pIE_Country,
+     PWLAN_IE_QUIET pIE_Quiet,
+     PKnownBSS pBSSList,
+     UINT uIELength,
+     PBYTE pbyIEs,
+     HANDLE pRxPacketContext
     )
 {
     int             ii, jj;
@@ -770,9 +770,9 @@ BSSbUpdateToBSSList (
 
 BOOL
 BSSbIsSTAInNodeDB(
-    IN HANDLE hDeviceContext,
-    IN PBYTE abyDstAddr,
-    OUT PUINT puNodeIndex
+     HANDLE hDeviceContext,
+     PBYTE abyDstAddr,
+     PUINT puNodeIndex
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
@@ -804,10 +804,10 @@ BSSbIsSTAInNodeDB(
  *    None
  *
 -*/
-VOID
+void
 BSSvCreateOneNode(
-    IN HANDLE hDeviceContext,
-    OUT PUINT puNodeIndex
+     HANDLE hDeviceContext,
+     PUINT puNodeIndex
     )
 {
 
@@ -869,10 +869,10 @@ BSSvCreateOneNode(
  *    None
  *
 -*/
-VOID
+void
 BSSvRemoveOneNode(
-    IN HANDLE hDeviceContext,
-    IN UINT uNodeIndex
+     HANDLE hDeviceContext,
+     UINT uNodeIndex
     )
 {
 
@@ -902,12 +902,12 @@ BSSvRemoveOneNode(
  *
 -*/
 
-VOID
+void
 BSSvUpdateAPNode(
-    IN HANDLE hDeviceContext,
-    IN PWORD pwCapInfo,
-    IN PWLAN_IE_SUPP_RATES pSuppRates,
-    IN PWLAN_IE_SUPP_RATES pExtSuppRates
+     HANDLE hDeviceContext,
+     PWORD pwCapInfo,
+     PWLAN_IE_SUPP_RATES pSuppRates,
+     PWLAN_IE_SUPP_RATES pExtSuppRates
     )
 {
     PSDevice     pDevice = (PSDevice)hDeviceContext;
@@ -926,7 +926,7 @@ BSSvUpdateAPNode(
     pMgmt->abyCurrExtSuppRates[1] = RATEuSetIE((PWLAN_IE_SUPP_RATES)pExtSuppRates,
                                             (PWLAN_IE_SUPP_RATES)pMgmt->abyCurrExtSuppRates,
                                             uRateLen);
-    RATEvParseMaxRate((PVOID) pDevice,
+    RATEvParseMaxRate((void *) pDevice,
                        (PWLAN_IE_SUPP_RATES)pMgmt->abyCurrSuppRates,
                        (PWLAN_IE_SUPP_RATES)pMgmt->abyCurrExtSuppRates,
                        TRUE,
@@ -962,9 +962,9 @@ BSSvUpdateAPNode(
 -*/
 
 
-VOID
+void
 BSSvAddMulticastNode(
-    IN HANDLE hDeviceContext
+     HANDLE hDeviceContext
     )
 {
     PSDevice     pDevice = (PSDevice)hDeviceContext;
@@ -976,7 +976,7 @@ BSSvAddMulticastNode(
     pMgmt->sNodeDBTable[0].bActive = TRUE;
     pMgmt->sNodeDBTable[0].bPSEnable = FALSE;
     skb_queue_head_init(&pMgmt->sNodeDBTable[0].sTxPSQueue);
-    RATEvParseMaxRate((PVOID) pDevice,
+    RATEvParseMaxRate((void *) pDevice,
                       (PWLAN_IE_SUPP_RATES)pMgmt->abyCurrSuppRates,
                       (PWLAN_IE_SUPP_RATES)pMgmt->abyCurrExtSuppRates,
                       TRUE,
@@ -1009,9 +1009,9 @@ BSSvAddMulticastNode(
 -*/
 
 
-VOID
+void
 BSSvSecondCallBack(
-    IN  HANDLE hDeviceContext
+      HANDLE hDeviceContext
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
@@ -1131,12 +1131,14 @@ if((pMgmt->eCurrState!=WMAC_STATE_ASSOC) &&
 */
                 if (ii > 0) {
                     // ii = 0 for multicast node (AP & Adhoc)
-                    RATEvTxRateFallBack((PVOID)pDevice, &(pMgmt->sNodeDBTable[ii]));
+			RATEvTxRateFallBack((void *)pDevice,
+					    &(pMgmt->sNodeDBTable[ii]));
                 }
                 else {
                     // ii = 0 reserved for unicast AP node (Infra STA)
-                    if (pMgmt->eCurrMode == WMAC_MODE_ESS_STA)
-                        RATEvTxRateFallBack((PVOID)pDevice, &(pMgmt->sNodeDBTable[ii]));
+			if (pMgmt->eCurrMode == WMAC_MODE_ESS_STA)
+				RATEvTxRateFallBack((void *)pDevice,
+						    &(pMgmt->sNodeDBTable[ii]));
                 }
 
             }
@@ -1177,14 +1179,14 @@ if((pMgmt->eCurrState!=WMAC_STATE_ASSOC) &&
             if (pDevice->bShortSlotTime) {
                 pDevice->bShortSlotTime = FALSE;
                 BBvSetShortSlotTime(pDevice);
-                vUpdateIFS((PVOID)pDevice);
+		vUpdateIFS((void *)pDevice);
             }
         }
         else {
             if (!pDevice->bShortSlotTime) {
                 pDevice->bShortSlotTime = TRUE;
                 BBvSetShortSlotTime(pDevice);
-                vUpdateIFS((PVOID)pDevice);
+		vUpdateIFS((void *)pDevice);
             }
         }
 
@@ -1395,12 +1397,12 @@ else {
 
 
 
-VOID
+void
 BSSvUpdateNodeTxCounter(
-    IN HANDLE      hDeviceContext,
-    IN PSStatCounter    pStatistic,
-    IN BYTE             byTSR,
-    IN BYTE             byPktNO
+     HANDLE      hDeviceContext,
+     PSStatCounter    pStatistic,
+     BYTE             byTSR,
+     BYTE             byPktNO
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
@@ -1564,10 +1566,10 @@ BSSvUpdateNodeTxCounter(
 -*/
 
 
-VOID
+void
 BSSvClearNodeDBTable(
-    IN HANDLE hDeviceContext,
-    IN UINT uStartIndex
+     HANDLE hDeviceContext,
+     UINT uStartIndex
     )
 
 {
@@ -1593,8 +1595,8 @@ BSSvClearNodeDBTable(
 };
 
 
-VOID s_vCheckSensitivity(
-    IN HANDLE hDeviceContext
+void s_vCheckSensitivity(
+     HANDLE hDeviceContext
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
@@ -1637,8 +1639,8 @@ VOID s_vCheckSensitivity(
 }
 
 #ifdef Calcu_LinkQual
-VOID s_uCalculateLinkQual(
-    IN HANDLE hDeviceContext
+void s_uCalculateLinkQual(
+     HANDLE hDeviceContext
     )
 {
    PSDevice        pDevice = (PSDevice)hDeviceContext;
@@ -1685,9 +1687,9 @@ else
 }
 #endif
 
-VOID
+void
 BSSvClearAnyBSSJoinRecord (
-    IN HANDLE hDeviceContext
+     HANDLE hDeviceContext
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
@@ -1700,8 +1702,8 @@ BSSvClearAnyBSSJoinRecord (
     return;
 }
 
-VOID s_vCheckPreEDThreshold(
-    IN HANDLE hDeviceContext
+void s_vCheckPreEDThreshold(
+     HANDLE hDeviceContext
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
