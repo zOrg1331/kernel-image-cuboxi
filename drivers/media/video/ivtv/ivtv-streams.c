@@ -42,6 +42,7 @@
 #include "ivtv-yuv.h"
 #include "ivtv-cards.h"
 #include "ivtv-streams.h"
+#include <media/v4l2-event.h>
 
 static const struct v4l2_file_operations ivtv_v4l2_enc_fops = {
 	.owner = THIS_MODULE,
@@ -581,10 +582,9 @@ int ivtv_start_v4l2_encode_stream(struct ivtv_stream *s)
 		v4l2_subdev_call(itv->sd_audio, audio, s_stream, 1);
 		/* Avoid unpredictable PCI bus hang - disable video clocks */
 		v4l2_subdev_call(itv->sd_video, video, s_stream, 0);
-		ivtv_msleep_timeout(150, 1);
+		ivtv_msleep_timeout(300, 1);
 		ivtv_vapi(itv, CX2341X_ENC_INITIALIZE_INPUT, 0);
 		v4l2_subdev_call(itv->sd_video, video, s_stream, 1);
-		ivtv_msleep_timeout(150, 1);
 	}
 
 	/* begin_capture */
@@ -830,6 +830,10 @@ int ivtv_stop_v4l2_encode_stream(struct ivtv_stream *s, int gop_end)
 		ivtv_set_irq_mask(itv, IVTV_IRQ_ENC_VIM_RST);
 	}
 
+	/* Raw-passthrough is implied on start. Make sure it's stopped so
+	   the encoder will re-initialize when next started */
+	ivtv_vapi(itv, CX2341X_ENC_STOP_CAPTURE, 3, 1, 2, 7);
+
 	wake_up(&s->waitq);
 
 	return 0;
@@ -837,6 +841,9 @@ int ivtv_stop_v4l2_encode_stream(struct ivtv_stream *s, int gop_end)
 
 int ivtv_stop_v4l2_decode_stream(struct ivtv_stream *s, int flags, u64 pts)
 {
+	static const struct v4l2_event ev = {
+		.type = V4L2_EVENT_EOS,
+	};
 	struct ivtv *itv = s->itv;
 
 	if (s->vdev == NULL)
@@ -888,6 +895,7 @@ int ivtv_stop_v4l2_decode_stream(struct ivtv_stream *s, int flags, u64 pts)
 
 	set_bit(IVTV_F_I_EV_DEC_STOPPED, &itv->i_flags);
 	wake_up(&itv->event_waitq);
+	v4l2_event_queue(s->vdev, &ev);
 
 	/* wake up wait queues */
 	wake_up(&s->waitq);
