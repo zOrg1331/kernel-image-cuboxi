@@ -1456,6 +1456,87 @@ static int hv7131r_init_sensor(struct gspca_dev *gspca_dev)
 	return 0;
 }
 
+#ifdef CONFIG_USB_GSPCA_SN9C20X_EVDEV
+static int input_kthread(void *data)
+{
+	struct gspca_dev *gspca_dev = (struct gspca_dev *)data;
+	struct sd *sd = (struct sd *) gspca_dev;
+
+	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wait);
+	set_freezable();
+	for (;;) {
+		if (kthread_should_stop())
+			break;
+
+		if (reg_r(gspca_dev, 0x1005, 1) < 0)
+			continue;
+
+		input_report_key(sd->input_dev,
+				 KEY_CAMERA,
+				 gspca_dev->usb_buf[0] & sd->input_gpio);
+		input_sync(sd->input_dev);
+
+		wait_event_freezable_timeout(wait,
+					     kthread_should_stop(),
+					     msecs_to_jiffies(100));
+	}
+	return 0;
+}
+
+
+static int sn9c20x_input_init(struct gspca_dev *gspca_dev)
+{
+	struct sd *sd = (struct sd *) gspca_dev;
+	if (sd->input_gpio == 0)
+		return 0;
+
+	sd->input_dev = input_allocate_device();
+	if (!sd->input_dev)
+		return -ENOMEM;
+
+	sd->input_dev->name = "SN9C20X Webcam";
+
+	sd->input_dev->phys = kasprintf(GFP_KERNEL, "usb-%s-%s",
+					 gspca_dev->dev->bus->bus_name,
+					 gspca_dev->dev->devpath);
+
+	if (!sd->input_dev->phys)
+		return -ENOMEM;
+
+	usb_to_input_id(gspca_dev->dev, &sd->input_dev->id);
+	sd->input_dev->dev.parent = &gspca_dev->dev->dev;
+
+	set_bit(EV_KEY, sd->input_dev->evbit);
+	set_bit(KEY_CAMERA, sd->input_dev->keybit);
+
+	if (input_register_device(sd->input_dev))
+		return -EINVAL;
+
+	sd->input_task = kthread_run(input_kthread, gspca_dev, "sn9c20x/%s-%s",
+				     gspca_dev->dev->bus->bus_name,
+				     gspca_dev->dev->devpath);
+
+	if (IS_ERR(sd->input_task))
+		return -EINVAL;
+
+	return 0;
+}
+
+static void sn9c20x_input_cleanup(struct gspca_dev *gspca_dev)
+{
+	struct sd *sd = (struct sd *) gspca_dev;
+	if (sd->input_task != NULL && !IS_ERR(sd->input_task))
+		kthread_stop(sd->input_task);
+
+	if (sd->input_dev != NULL) {
+		input_unregister_device(sd->input_dev);
+		kfree(sd->input_dev->phys);
+		input_free_device(sd->input_dev);
+		sd->input_dev = NULL;
+	}
+}
+#endif
+
 static int set_cmatrix(struct gspca_dev *gspca_dev)
 {
 	struct sd *sd = (struct sd *) gspca_dev;
