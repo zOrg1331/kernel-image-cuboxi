@@ -72,8 +72,6 @@ static int annotate__hist_hit(struct hist_entry *he, u64 ip)
 	struct sym_priv *priv;
 	struct sym_hist *h;
 
-	he->count++;
-
 	if (!sym || !he->ms.map)
 		return 0;
 
@@ -98,10 +96,8 @@ static int annotate__hist_hit(struct hist_entry *he, u64 ip)
 	return 0;
 }
 
-static int perf_session__add_hist_entry(struct perf_session *self,
-					struct addr_location *al, u64 count)
+static int hists__add_entry(struct hists *self, struct addr_location *al)
 {
-	bool hit;
 	struct hist_entry *he;
 
 	if (sym_hist_filter != NULL &&
@@ -115,7 +111,7 @@ static int perf_session__add_hist_entry(struct perf_session *self,
 		return 0;
 	}
 
-	he = __perf_session__add_hist_entry(&self->hists, al, NULL, count, &hit);
+	he = __hists__add_entry(self, al, NULL, 1);
 	if (he == NULL)
 		return -ENOMEM;
 
@@ -135,7 +131,7 @@ static int process_sample_event(event_t *event, struct perf_session *session)
 		return -1;
 	}
 
-	if (!al.filtered && perf_session__add_hist_entry(session, &al, 1)) {
+	if (!al.filtered && hists__add_entry(&session->hists, &al)) {
 		pr_warning("problem incrementing symbol count, "
 			   "skipping event\n");
 		return -1;
@@ -517,11 +513,11 @@ static void annotate_sym(struct hist_entry *he)
 		free_source_line(he, len);
 }
 
-static void perf_session__find_annotations(struct perf_session *self)
+static void hists__find_annotations(struct hists *self)
 {
 	struct rb_node *nd;
 
-	for (nd = rb_first(&self->hists); nd; nd = rb_next(nd)) {
+	for (nd = rb_first(&self->entries); nd; nd = rb_next(nd)) {
 		struct hist_entry *he = rb_entry(nd, struct hist_entry, rb_node);
 		struct sym_priv *priv;
 
@@ -554,7 +550,7 @@ static int __cmd_annotate(void)
 	int ret;
 	struct perf_session *session;
 
-	session = perf_session__new(input_name, O_RDONLY, force);
+	session = perf_session__new(input_name, O_RDONLY, force, false);
 	if (session == NULL)
 		return -ENOMEM;
 
@@ -571,11 +567,11 @@ static int __cmd_annotate(void)
 		perf_session__fprintf(session, stdout);
 
 	if (verbose > 2)
-		dsos__fprintf(&session->kerninfo_root, stdout);
+		perf_session__fprintf_dsos(session, stdout);
 
-	perf_session__collapse_resort(&session->hists);
-	perf_session__output_resort(&session->hists, session->event_total[0]);
-	perf_session__find_annotations(session);
+	hists__collapse_resort(&session->hists);
+	hists__output_resort(&session->hists);
+	hists__find_annotations(&session->hists);
 out_delete:
 	perf_session__delete(session);
 

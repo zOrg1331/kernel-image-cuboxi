@@ -8,24 +8,21 @@ struct callchain_param	callchain_param = {
 	.min_percent = 0.5
 };
 
-void __perf_session__add_count(struct hist_entry *he,
-			struct addr_location *al,
-			u64 count)
+static void hist_entry__add_cpumode_count(struct hist_entry *self,
+					  unsigned int cpumode, u64 count)
 {
-	he->count += count;
-
-	switch (al->cpumode) {
+	switch (cpumode) {
 	case PERF_RECORD_MISC_KERNEL:
-		he->count_sys += count;
+		self->count_sys += count;
 		break;
 	case PERF_RECORD_MISC_USER:
-		he->count_us += count;
+		self->count_us += count;
 		break;
 	case PERF_RECORD_MISC_GUEST_KERNEL:
-		he->count_guest_sys += count;
+		self->count_guest_sys += count;
 		break;
 	case PERF_RECORD_MISC_GUEST_USER:
-		he->count_guest_us += count;
+		self->count_guest_us += count;
 		break;
 	default:
 		break;
@@ -36,12 +33,25 @@ void __perf_session__add_count(struct hist_entry *he,
  * histogram, sorted on item, collects counts
  */
 
-struct hist_entry *__perf_session__add_hist_entry(struct rb_root *hists,
-						  struct addr_location *al,
-						  struct symbol *sym_parent,
-						  u64 count, bool *hit)
+static struct hist_entry *hist_entry__new(struct hist_entry *template)
 {
-	struct rb_node **p = &hists->rb_node;
+	size_t callchain_size = symbol_conf.use_callchain ? sizeof(struct callchain_node) : 0;
+	struct hist_entry *self = malloc(sizeof(*self) + callchain_size);
+
+	if (self != NULL) {
+		*self = *template;
+		if (symbol_conf.use_callchain)
+			callchain_init(self->callchain);
+	}
+
+	return self;
+}
+
+struct hist_entry *__hists__add_entry(struct hists *self,
+				      struct addr_location *al,
+				      struct symbol *sym_parent, u64 count)
+{
+	struct rb_node **p = &self->entries.rb_node;
 	struct rb_node *parent = NULL;
 	struct hist_entry *he;
 	struct hist_entry entry = {
@@ -64,8 +74,8 @@ struct hist_entry *__perf_session__add_hist_entry(struct rb_root *hists,
 		cmp = hist_entry__cmp(&entry, he);
 
 		if (!cmp) {
-			*hit = true;
-			return he;
+			he->count += count;
+			goto out;
 		}
 
 		if (cmp < 0)
@@ -74,14 +84,13 @@ struct hist_entry *__perf_session__add_hist_entry(struct rb_root *hists,
 			p = &(*p)->rb_right;
 	}
 
-	he = malloc(sizeof(*he) + (symbol_conf.use_callchain ?
-				    sizeof(struct callchain_node) : 0));
+	he = hist_entry__new(&entry);
 	if (!he)
 		return NULL;
-	*he = entry;
 	rb_link_node(&he->rb_node, parent, p);
-	rb_insert_color(&he->rb_node, hists);
-	*hit = false;
+	rb_insert_color(&he->rb_node, &self->entries);
+out:
+	hist_entry__add_cpumode_count(he, al->cpumode, count);
 	return he;
 }
 
@@ -157,7 +166,7 @@ static void collapse__insert_entry(struct rb_root *root, struct hist_entry *he)
 	rb_insert_color(&he->rb_node, root);
 }
 
-void perf_session__collapse_resort(struct rb_root *hists)
+void hists__collapse_resort(struct hists *self)
 {
 	struct rb_root tmp;
 	struct rb_node *next;
@@ -167,28 +176,28 @@ void perf_session__collapse_resort(struct rb_root *hists)
 		return;
 
 	tmp = RB_ROOT;
-	next = rb_first(hists);
+	next = rb_first(&self->entries);
 
 	while (next) {
 		n = rb_entry(next, struct hist_entry, rb_node);
 		next = rb_next(&n->rb_node);
 
-		rb_erase(&n->rb_node, hists);
+		rb_erase(&n->rb_node, &self->entries);
 		collapse__insert_entry(&tmp, n);
 	}
 
-	*hists = tmp;
+	self->entries = tmp;
 }
 
 /*
  * reverse the map, sort on count.
  */
 
-static void perf_session__insert_output_hist_entry(struct rb_root *root,
-						   struct hist_entry *he,
-						   u64 min_callchain_hits)
+static void __hists__insert_output_entry(struct rb_root *entries,
+					 struct hist_entry *he,
+					 u64 min_callchain_hits)
 {
-	struct rb_node **p = &root->rb_node;
+	struct rb_node **p = &entries->rb_node;
 	struct rb_node *parent = NULL;
 	struct hist_entry *iter;
 
@@ -207,10 +216,10 @@ static void perf_session__insert_output_hist_entry(struct rb_root *root,
 	}
 
 	rb_link_node(&he->rb_node, parent, p);
-	rb_insert_color(&he->rb_node, root);
+	rb_insert_color(&he->rb_node, entries);
 }
 
-u64 perf_session__output_resort(struct rb_root *hists, u64 total_samples)
+u64 hists__output_resort(struct hists *self)
 {
 	struct rb_root tmp;
 	struct rb_node *next;
@@ -218,23 +227,21 @@ u64 perf_session__output_resort(struct rb_root *hists, u64 total_samples)
 	u64 min_callchain_hits;
 	u64 nr_hists = 0;
 
-	min_callchain_hits =
-		total_samples * (callchain_param.min_percent / 100);
+	min_callchain_hits = self->stats.total * (callchain_param.min_percent / 100);
 
 	tmp = RB_ROOT;
-	next = rb_first(hists);
+	next = rb_first(&self->entries);
 
 	while (next) {
 		n = rb_entry(next, struct hist_entry, rb_node);
 		next = rb_next(&n->rb_node);
 
-		rb_erase(&n->rb_node, hists);
-		perf_session__insert_output_hist_entry(&tmp, n,
-						       min_callchain_hits);
+		rb_erase(&n->rb_node, &self->entries);
+		__hists__insert_output_entry(&tmp, n, min_callchain_hits);
 		++nr_hists;
 	}
 
-	*hists = tmp;
+	self->entries = tmp;
 	return nr_hists;
 }
 
@@ -323,6 +330,7 @@ static size_t __callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
 	u64 remaining;
 	size_t ret = 0;
 	int i;
+	uint entries_printed = 0;
 
 	if (callchain_param.mode == CHAIN_GRAPH_REL)
 		new_total = self->children_hit;
@@ -369,6 +377,8 @@ static size_t __callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
 						  new_depth_mask | (1 << depth),
 						  left_margin);
 		node = next;
+		if (++entries_printed == callchain_param.print_limit)
+			break;
 	}
 
 	if (callchain_param.mode == CHAIN_GRAPH_REL &&
@@ -394,6 +404,7 @@ static size_t callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
 	bool printed = false;
 	int i = 0;
 	int ret = 0;
+	u32 entries_printed = 0;
 
 	list_for_each_entry(chain, &self->val, list) {
 		if (!i++ && sort__first_dimension == SORT_SYM)
@@ -414,6 +425,9 @@ static size_t callchain__fprintf_graph(FILE *fp, struct callchain_node *self,
 			ret += fprintf(fp, " %s\n", chain->ms.sym->name);
 		else
 			ret += fprintf(fp, " %p\n", (void *)(long)chain->ip);
+
+		if (++entries_printed == callchain_param.print_limit)
+			break;
 	}
 
 	ret += __callchain__fprintf_graph(fp, self, total_samples, 1, 1, left_margin);
@@ -452,6 +466,7 @@ static size_t hist_entry_callchain__fprintf(FILE *fp, struct hist_entry *self,
 	struct rb_node *rb_node;
 	struct callchain_node *chain;
 	size_t ret = 0;
+	u32 entries_printed = 0;
 
 	rb_node = rb_first(&self->sorted_chain);
 	while (rb_node) {
@@ -474,18 +489,17 @@ static size_t hist_entry_callchain__fprintf(FILE *fp, struct hist_entry *self,
 			break;
 		}
 		ret += fprintf(fp, "\n");
+		if (++entries_printed == callchain_param.print_limit)
+			break;
 		rb_node = rb_next(rb_node);
 	}
 
 	return ret;
 }
 
-int hist_entry__snprintf(struct hist_entry *self,
-			   char *s, size_t size,
-			   struct perf_session *pair_session,
-			   bool show_displacement,
-			   long displacement, bool color,
-			   u64 session_total)
+int hist_entry__snprintf(struct hist_entry *self, char *s, size_t size,
+			 struct hists *pair_hists, bool show_displacement,
+			 long displacement, bool color, u64 session_total)
 {
 	struct sort_entry *se;
 	u64 count, total, count_sys, count_us, count_guest_sys, count_guest_us;
@@ -495,9 +509,9 @@ int hist_entry__snprintf(struct hist_entry *self,
 	if (symbol_conf.exclude_other && !self->parent)
 		return 0;
 
-	if (pair_session) {
+	if (pair_hists) {
 		count = self->pair ? self->pair->count : 0;
-		total = pair_session->events_stats.total;
+		total = pair_hists->stats.total;
 		count_sys = self->pair ? self->pair->count_sys : 0;
 		count_us = self->pair ? self->pair->count_us : 0;
 		count_guest_sys = self->pair ? self->pair->count_guest_sys : 0;
@@ -549,7 +563,7 @@ int hist_entry__snprintf(struct hist_entry *self,
 			ret += snprintf(s + ret, size - ret, "%11lld", count);
 	}
 
-	if (pair_session) {
+	if (pair_hists) {
 		char bf[32];
 		double old_percent = 0, new_percent = 0, diff;
 
@@ -595,14 +609,12 @@ int hist_entry__snprintf(struct hist_entry *self,
 	return ret;
 }
 
-int hist_entry__fprintf(struct hist_entry *self,
-			struct perf_session *pair_session,
-			bool show_displacement,
-			long displacement, FILE *fp,
+int hist_entry__fprintf(struct hist_entry *self, struct hists *pair_hists,
+			bool show_displacement, long displacement, FILE *fp,
 			u64 session_total)
 {
 	char bf[512];
-	hist_entry__snprintf(self, bf, sizeof(bf), pair_session,
+	hist_entry__snprintf(self, bf, sizeof(bf), pair_hists,
 			     show_displacement, displacement,
 			     true, session_total);
 	return fprintf(fp, "%s\n", bf);
@@ -624,10 +636,8 @@ static size_t hist_entry__fprintf_callchain(struct hist_entry *self, FILE *fp,
 					     left_margin);
 }
 
-size_t perf_session__fprintf_hists(struct rb_root *hists,
-				   struct perf_session *pair,
-				   bool show_displacement, FILE *fp,
-				   u64 session_total)
+size_t hists__fprintf(struct hists *self, struct hists *pair,
+		      bool show_displacement, FILE *fp)
 {
 	struct sort_entry *se;
 	struct rb_node *nd;
@@ -733,7 +743,7 @@ size_t perf_session__fprintf_hists(struct rb_root *hists,
 	fprintf(fp, "\n#\n");
 
 print_entries:
-	for (nd = rb_first(hists); nd; nd = rb_next(nd)) {
+	for (nd = rb_first(&self->entries); nd; nd = rb_next(nd)) {
 		struct hist_entry *h = rb_entry(nd, struct hist_entry, rb_node);
 
 		if (show_displacement) {
@@ -745,10 +755,10 @@ print_entries:
 			++position;
 		}
 		ret += hist_entry__fprintf(h, pair, show_displacement,
-					   displacement, fp, session_total);
+					   displacement, fp, self->stats.total);
 
 		if (symbol_conf.use_callchain)
-			ret += hist_entry__fprintf_callchain(h, fp, session_total);
+			ret += hist_entry__fprintf_callchain(h, fp, self->stats.total);
 
 		if (h->ms.map == NULL && verbose > 1) {
 			__map_groups__fprintf_maps(&h->thread->mg,
