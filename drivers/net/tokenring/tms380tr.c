@@ -1211,17 +1211,17 @@ static void tms380tr_set_multicast_list(struct net_device *dev)
 		}
 		else
 		{
-			struct dev_mc_list *mclist;
+			struct netdev_hw_addr *ha;
 
-			netdev_for_each_mc_addr(mclist, dev) {
+			netdev_for_each_mc_addr(ha, dev) {
 				((char *)(&tp->ocpl.FunctAddr))[0] |=
-					mclist->dmi_addr[2];
+					ha->addr[2];
 				((char *)(&tp->ocpl.FunctAddr))[1] |=
-					mclist->dmi_addr[3];
+					ha->addr[3];
 				((char *)(&tp->ocpl.FunctAddr))[2] |=
-					mclist->dmi_addr[4];
+					ha->addr[4];
 				((char *)(&tp->ocpl.FunctAddr))[3] |=
-					mclist->dmi_addr[5];
+					ha->addr[5];
 			}
 		}
 		tms380tr_exec_cmd(dev, OC_SET_FUNCT_ADDR);
@@ -1390,7 +1390,7 @@ static int tms380tr_bringup_diags(struct net_device *dev)
 			Status &= STS_MASK;
 
 			if(tms380tr_debug > 3)
-				printk(KERN_DEBUG " %04X \n", Status);
+				printk(KERN_DEBUG " %04X\n", Status);
 			/* BUD successfully completed */
 			if(Status == STS_INITIALIZE)
 				return (1);
@@ -1846,7 +1846,7 @@ static void tms380tr_chk_irq(struct net_device *dev)
 			break;
 
 		case DMA_WRITE_ABORT:
-			printk(KERN_INFO "%s: DMA write operation aborted: \n",
+			printk(KERN_INFO "%s: DMA write operation aborted:\n",
 				dev->name);
 			switch (AdapterCheckBlock[1])
 			{

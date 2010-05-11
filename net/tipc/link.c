@@ -877,7 +877,7 @@ static void link_state_event(struct link *l_ptr, unsigned event)
 		case TIMEOUT_EVT:
 			dbg_link("TIM ");
 			if (l_ptr->next_in_no != l_ptr->checkpoint) {
-				dbg_link("-> WW \n");
+				dbg_link("-> WW\n");
 				l_ptr->state = WORKING_WORKING;
 				l_ptr->fsm_msg_cnt = 0;
 				l_ptr->checkpoint = l_ptr->next_in_no;
@@ -934,7 +934,7 @@ static void link_state_event(struct link *l_ptr, unsigned event)
 			link_set_timer(l_ptr, cont_intv);
 			break;
 		case RESET_MSG:
-			dbg_link("RES \n");
+			dbg_link("RES\n");
 			dbg_link(" -> RR\n");
 			l_ptr->state = RESET_RESET;
 			l_ptr->fsm_msg_cnt = 0;
@@ -947,7 +947,7 @@ static void link_state_event(struct link *l_ptr, unsigned event)
 			l_ptr->started = 1;
 			/* fall through */
 		case TIMEOUT_EVT:
-			dbg_link("TIM \n");
+			dbg_link("TIM\n");
 			tipc_link_send_proto_msg(l_ptr, RESET_MSG, 0, 0, 0, 0, 0);
 			l_ptr->fsm_msg_cnt++;
 			link_set_timer(l_ptr, cont_intv);
@@ -1553,7 +1553,7 @@ u32 tipc_link_push_packet(struct link *l_ptr)
 
 	/* Continue retransmission now, if there is anything: */
 
-	if (r_q_size && buf && !skb_cloned(buf)) {
+	if (r_q_size && buf) {
 		msg_set_ack(buf_msg(buf), mod(l_ptr->next_in_no - 1));
 		msg_set_bcast_ack(buf_msg(buf), l_ptr->owner->bclink.last_in);
 		if (tipc_bearer_send(l_ptr->b_ptr, buf, &l_ptr->media_addr)) {
@@ -1722,15 +1722,16 @@ void tipc_link_retransmit(struct link *l_ptr, struct sk_buff *buf,
 	dbg("Retransmitting %u in link %x\n", retransmits, l_ptr);
 
 	if (tipc_bearer_congested(l_ptr->b_ptr, l_ptr)) {
-		if (!skb_cloned(buf)) {
+		if (l_ptr->retransm_queue_size == 0) {
 			msg_dbg(msg, ">NO_RETR->BCONG>");
 			dbg_print_link(l_ptr, "   ");
 			l_ptr->retransm_queue_head = msg_seqno(msg);
 			l_ptr->retransm_queue_size = retransmits;
-			return;
 		} else {
-			/* Don't retransmit if driver already has the buffer */
+			err("Unexpected retransmit on link %s (qsize=%d)\n",
+			    l_ptr->name, l_ptr->retransm_queue_size);
 		}
+		return;
 	} else {
 		/* Detect repeated retransmit failures on uncongested bearer */
 
@@ -1745,7 +1746,7 @@ void tipc_link_retransmit(struct link *l_ptr, struct sk_buff *buf,
 		}
 	}
 
-	while (retransmits && (buf != l_ptr->next_out) && buf && !skb_cloned(buf)) {
+	while (retransmits && (buf != l_ptr->next_out) && buf) {
 		msg = buf_msg(buf);
 		msg_set_ack(msg, mod(l_ptr->next_in_no - 1));
 		msg_set_bcast_ack(msg, l_ptr->owner->bclink.last_in);
@@ -3294,7 +3295,7 @@ static void link_dump_rec_queue(struct link *l_ptr)
 			info("buffer %x invalid\n", crs);
 			return;
 		}
-		msg_dbg(buf_msg(crs), "In rec queue: \n");
+		msg_dbg(buf_msg(crs), "In rec queue:\n");
 		crs = crs->next;
 	}
 }

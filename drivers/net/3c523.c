@@ -503,7 +503,6 @@ static int __init do_elmc_probe(struct net_device *dev)
 		break;
 	}
 
-	memset(pr, 0, sizeof(struct priv));
 	pr->slot = slot;
 
 	pr_info("%s: 3Com 3c523 Rev 0x%x at %#lx\n", dev->name, (int) revision,
@@ -624,7 +623,7 @@ static int init586(struct net_device *dev)
 	volatile struct iasetup_cmd_struct *ias_cmd;
 	volatile struct tdr_cmd_struct *tdr_cmd;
 	volatile struct mcsetup_cmd_struct *mc_cmd;
-	struct dev_mc_list *dmi;
+	struct netdev_hw_addr *ha;
 	int num_addrs = netdev_mc_count(dev);
 
 	ptr = (void *) ((char *) p->scb + sizeof(struct scb_struct));
@@ -787,8 +786,9 @@ static int init586(struct net_device *dev)
 			mc_cmd->cmd_link = 0xffff;
 			mc_cmd->mc_cnt = num_addrs * 6;
 			i = 0;
-			netdev_for_each_mc_addr(dmi, dev)
-				memcpy((char *) mc_cmd->mc_list[i++], dmi->dmi_addr, 6);
+			netdev_for_each_mc_addr(ha, dev)
+				memcpy((char *) mc_cmd->mc_list[i++],
+				       ha->addr, 6);
 			p->scb->cbl_offset = make16(mc_cmd);
 			p->scb->cmd = CUC_START;
 			elmc_id_attn586();

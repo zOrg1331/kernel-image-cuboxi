@@ -181,11 +181,11 @@ int ip6_output(struct sk_buff *skb)
 }
 
 /*
- *	xmit an sk_buff (used by TCP)
+ *	xmit an sk_buff (used by TCP, SCTP and DCCP)
  */
 
 int ip6_xmit(struct sock *sk, struct sk_buff *skb, struct flowi *fl,
-	     struct ipv6_txoptions *opt, int ipfragok)
+	     struct ipv6_txoptions *opt)
 {
 	struct net *net = sock_net(sk);
 	struct ipv6_pinfo *np = inet6_sk(sk);
@@ -218,8 +218,7 @@ int ip6_xmit(struct sock *sk, struct sk_buff *skb, struct flowi *fl,
 			}
 			kfree_skb(skb);
 			skb = skb2;
-			if (sk)
-				skb_set_owner_w(skb, sk);
+			skb_set_owner_w(skb, sk);
 		}
 		if (opt->opt_flen)
 			ipv6_push_frag_opts(skb, opt, &proto);
@@ -230,10 +229,6 @@ int ip6_xmit(struct sock *sk, struct sk_buff *skb, struct flowi *fl,
 	skb_push(skb, sizeof(struct ipv6hdr));
 	skb_reset_network_header(skb);
 	hdr = ipv6_hdr(skb);
-
-	/* Allow local fragmentation. */
-	if (ipfragok)
-		skb->local_df = 1;
 
 	/*
 	 *	Fill in the IPv6 header
@@ -1109,7 +1104,7 @@ int ip6_append_data(struct sock *sk, int getfrag(void *from, char *to,
 	int offset, int len, int odd, struct sk_buff *skb),
 	void *from, int length, int transhdrlen,
 	int hlimit, int tclass, struct ipv6_txoptions *opt, struct flowi *fl,
-	struct rt6_info *rt, unsigned int flags)
+	struct rt6_info *rt, unsigned int flags, int dontfrag)
 {
 	struct inet_sock *inet = inet_sk(sk);
 	struct ipv6_pinfo *np = inet6_sk(sk);
@@ -1223,15 +1218,23 @@ int ip6_append_data(struct sock *sk, int getfrag(void *from, char *to,
 	 */
 
 	inet->cork.length += length;
-	if (((length > mtu) && (sk->sk_protocol == IPPROTO_UDP)) &&
-	    (rt->u.dst.dev->features & NETIF_F_UFO)) {
+	if (length > mtu) {
+		int proto = sk->sk_protocol;
+		if (dontfrag && (proto == IPPROTO_UDP || proto == IPPROTO_RAW)){
+			ipv6_local_rxpmtu(sk, fl, mtu-exthdrlen);
+			return -EMSGSIZE;
+		}
 
-		err = ip6_ufo_append_data(sk, getfrag, from, length, hh_len,
-					  fragheaderlen, transhdrlen, mtu,
-					  flags);
-		if (err)
-			goto error;
-		return 0;
+		if (proto == IPPROTO_UDP &&
+		    (rt->u.dst.dev->features & NETIF_F_UFO)) {
+
+			err = ip6_ufo_append_data(sk, getfrag, from, length,
+						  hh_len, fragheaderlen,
+						  transhdrlen, mtu, flags);
+			if (err)
+				goto error;
+			return 0;
+		}
 	}
 
 	if ((skb = skb_peek_tail(&sk->sk_write_queue)) == NULL)

@@ -1523,13 +1523,13 @@ static int happy_meal_init(struct happy_meal *hp)
 		hme_write32(hp, bregs + BMAC_HTABLE3, 0xffff);
 	} else if ((hp->dev->flags & IFF_PROMISC) == 0) {
 		u16 hash_table[4];
-		struct dev_mc_list *dmi;
+		struct netdev_hw_addr *ha;
 		char *addrs;
 		u32 crc;
 
 		memset(hash_table, 0, sizeof(hash_table));
-		netdev_for_each_mc_addr(dmi, hp->dev) {
-			addrs = dmi->dmi_addr;
+		netdev_for_each_mc_addr(ha, hp->dev) {
+			addrs = ha->addr;
 
 			if (!(*addrs & 1))
 				continue;
@@ -2362,7 +2362,7 @@ static void happy_meal_set_multicast(struct net_device *dev)
 {
 	struct happy_meal *hp = netdev_priv(dev);
 	void __iomem *bregs = hp->bigmacregs;
-	struct dev_mc_list *dmi;
+	struct netdev_hw_addr *ha;
 	char *addrs;
 	u32 crc;
 
@@ -2380,8 +2380,8 @@ static void happy_meal_set_multicast(struct net_device *dev)
 		u16 hash_table[4];
 
 		memset(hash_table, 0, sizeof(hash_table));
-		netdev_for_each_mc_addr(dmi, dev) {
-			addrs = dmi->dmi_addr;
+		netdev_for_each_mc_addr(ha, dev) {
+			addrs = ha->addr;
 
 			if (!(*addrs & 1))
 				continue;
@@ -3004,7 +3004,6 @@ static int __devinit happy_meal_pci_probe(struct pci_dev *pdev,
 	dev->base_addr = (long) pdev;
 
 	hp = netdev_priv(dev);
-	memset(hp, 0, sizeof(*hp));
 
 	hp->happy_dev = pdev;
 	hp->dma_dev = &pdev->dev;
