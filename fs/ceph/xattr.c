@@ -186,12 +186,6 @@ static int __set_xattr(struct ceph_inode_info *ci,
 		ci->i_xattrs.names_size -= xattr->name_len;
 		ci->i_xattrs.vals_size -= xattr->val_len;
 	}
-	if (!xattr) {
-		pr_err("__set_xattr ENOMEM on %p %llx.%llx xattr %s=%s\n",
-		       &ci->vfs_inode, ceph_vinop(&ci->vfs_inode), name,
-		       xattr->val);
-		return -ENOMEM;
-	}
 	ci->i_xattrs.names_size += name_len;
 	ci->i_xattrs.vals_size += val_len;
 	if (val)
@@ -574,7 +568,7 @@ ssize_t ceph_listxattr(struct dentry *dentry, char *names, size_t size)
 	     ci->i_xattrs.version, ci->i_xattrs.index_version);
 
 	if (__ceph_caps_issued_mask(ci, CEPH_CAP_XATTR_SHARED, 1) &&
-	    (ci->i_xattrs.index_version > ci->i_xattrs.version)) {
+	    (ci->i_xattrs.index_version >= ci->i_xattrs.version)) {
 		goto list_xattr;
 	} else {
 		spin_unlock(&inode->i_lock);
@@ -622,7 +616,7 @@ out:
 static int ceph_sync_setxattr(struct dentry *dentry, const char *name,
 			      const char *value, size_t size, int flags)
 {
-	struct ceph_client *client = ceph_client(dentry->d_sb);
+	struct ceph_client *client = ceph_sb_to_client(dentry->d_sb);
 	struct inode *inode = dentry->d_inode;
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	struct inode *parent_inode = dentry->d_parent->d_inode;
@@ -641,7 +635,7 @@ static int ceph_sync_setxattr(struct dentry *dentry, const char *name,
 			return -ENOMEM;
 		err = -ENOMEM;
 		for (i = 0; i < nr_pages; i++) {
-			pages[i] = alloc_page(GFP_NOFS);
+			pages[i] = __page_cache_alloc(GFP_NOFS);
 			if (!pages[i]) {
 				nr_pages = i;
 				goto out;
@@ -779,7 +773,7 @@ out:
 
 static int ceph_send_removexattr(struct dentry *dentry, const char *name)
 {
-	struct ceph_client *client = ceph_client(dentry->d_sb);
+	struct ceph_client *client = ceph_sb_to_client(dentry->d_sb);
 	struct ceph_mds_client *mdsc = &client->mdsc;
 	struct inode *inode = dentry->d_inode;
 	struct inode *parent_inode = dentry->d_parent->d_inode;
