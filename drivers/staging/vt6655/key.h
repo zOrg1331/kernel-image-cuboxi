@@ -66,7 +66,7 @@ typedef struct tagSKeyItem
     BYTE        byCipherSuite;
     BYTE        byReserved0;
     DWORD       dwKeyIndex;
-    PVOID       pvKeyTable;
+    void *pvKeyTable;
 } SKeyItem, *PSKeyItem; //64
 
 typedef struct tagSKeyTable
@@ -101,7 +101,7 @@ typedef struct tagSKeyManagement
 
 /*---------------------  Export Functions  --------------------------*/
 
-VOID KeyvInitTable(PSKeyManagement pTable, DWORD_PTR dwIoBase);
+void KeyvInitTable(PSKeyManagement pTable, DWORD_PTR dwIoBase);
 
 BOOL KeybGetKey(
     IN  PSKeyManagement pTable,
@@ -158,13 +158,13 @@ BOOL KeybRemoveAllKey(
     DWORD_PTR       dwIoBase
     );
 
-VOID KeyvRemoveWEPKey(
+void KeyvRemoveWEPKey(
     PSKeyManagement pTable,
     DWORD           dwKeyIndex,
     DWORD_PTR       dwIoBase
     );
 
-VOID KeyvRemoveAllWEPKey(
+void KeyvRemoveAllWEPKey(
     PSKeyManagement pTable,
     DWORD_PTR       dwIoBase
     );
