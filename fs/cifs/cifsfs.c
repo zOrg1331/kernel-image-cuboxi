@@ -61,7 +61,7 @@ unsigned int experimEnabled = 0;
 unsigned int linuxExtEnabled = 1;
 unsigned int lookupCacheEnabled = 1;
 unsigned int multiuser_mount = 0;
-unsigned int extended_security = CIFSSEC_DEF;
+unsigned int global_secflags = CIFSSEC_DEF;
 /* unsigned int ntlmv2_support = 0; */
 unsigned int sign_CIFS_PDUs = 1;
 static const struct super_operations cifs_super_ops;
@@ -85,8 +85,6 @@ MODULE_PARM_DESC(cifs_max_pending, "Simultaneous requests to server. "
 extern mempool_t *cifs_sm_req_poolp;
 extern mempool_t *cifs_req_poolp;
 extern mempool_t *cifs_mid_poolp;
-
-extern struct kmem_cache *cifs_oplock_cachep;
 
 static int
 cifs_read_super(struct super_block *sb, void *data,
@@ -135,8 +133,7 @@ cifs_read_super(struct super_block *sb, void *data,
 
 	if (rc) {
 		if (!silent)
-			cERROR(1,
-			       ("cifs_mount failed w/return code = %d", rc));
+			cERROR(1, "cifs_mount failed w/return code = %d", rc);
 		goto out_mount_failed;
 	}
 
@@ -168,7 +165,7 @@ cifs_read_super(struct super_block *sb, void *data,
 
 #ifdef CONFIG_CIFS_EXPERIMENTAL
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_SERVER_INUM) {
-		cFYI(1, ("export ops supported"));
+		cFYI(1, "export ops supported");
 		sb->s_export_op = &cifs_export_ops;
 	}
 #endif /* EXPERIMENTAL */
@@ -176,7 +173,7 @@ cifs_read_super(struct super_block *sb, void *data,
 	return 0;
 
 out_no_root:
-	cERROR(1, ("cifs_read_super: get root inode failed"));
+	cERROR(1, "cifs_read_super: get root inode failed");
 	if (inode)
 		iput(inode);
 
@@ -203,10 +200,10 @@ cifs_put_super(struct super_block *sb)
 	int rc = 0;
 	struct cifs_sb_info *cifs_sb;
 
-	cFYI(1, ("In cifs_put_super"));
+	cFYI(1, "In cifs_put_super");
 	cifs_sb = CIFS_SB(sb);
 	if (cifs_sb == NULL) {
-		cFYI(1, ("Empty cifs superblock info passed to unmount"));
+		cFYI(1, "Empty cifs superblock info passed to unmount");
 		return;
 	}
 
@@ -214,7 +211,7 @@ cifs_put_super(struct super_block *sb)
 
 	rc = cifs_umount(sb, cifs_sb);
 	if (rc)
-		cERROR(1, ("cifs_umount failed with return code %d", rc));
+		cERROR(1, "cifs_umount failed with return code %d", rc);
 #ifdef CONFIG_CIFS_DFS_UPCALL
 	if (cifs_sb->mountdata) {
 		kfree(cifs_sb->mountdata);
@@ -300,7 +297,6 @@ static int cifs_permission(struct inode *inode, int mask)
 static struct kmem_cache *cifs_inode_cachep;
 static struct kmem_cache *cifs_req_cachep;
 static struct kmem_cache *cifs_mid_cachep;
-struct kmem_cache *cifs_oplock_cachep;
 static struct kmem_cache *cifs_sm_req_cachep;
 mempool_t *cifs_sm_req_poolp;
 mempool_t *cifs_req_poolp;
@@ -449,7 +445,7 @@ int cifs_xquota_set(struct super_block *sb, int quota_type, qid_t qid,
 
 	xid = GetXid();
 	if (pTcon) {
-		cFYI(1, ("set type: 0x%x id: %d", quota_type, qid));
+		cFYI(1, "set type: 0x%x id: %d", quota_type, qid);
 	} else
 		rc = -EIO;
 
@@ -472,7 +468,7 @@ int cifs_xquota_get(struct super_block *sb, int quota_type, qid_t qid,
 
 	xid = GetXid();
 	if (pTcon) {
-		cFYI(1, ("set type: 0x%x id: %d", quota_type, qid));
+		cFYI(1, "set type: 0x%x id: %d", quota_type, qid);
 	} else
 		rc = -EIO;
 
@@ -494,7 +490,7 @@ int cifs_xstate_set(struct super_block *sb, unsigned int flags, int operation)
 
 	xid = GetXid();
 	if (pTcon) {
-		cFYI(1, ("flags: 0x%x operation: 0x%x", flags, operation));
+		cFYI(1, "flags: 0x%x operation: 0x%x", flags, operation);
 	} else
 		rc = -EIO;
 
@@ -516,7 +512,7 @@ int cifs_xstate_get(struct super_block *sb, struct fs_quota_stat *qstats)
 
 	xid = GetXid();
 	if (pTcon) {
-		cFYI(1, ("pqstats %p", qstats));
+		cFYI(1, "pqstats %p", qstats);
 	} else
 		rc = -EIO;
 
@@ -558,7 +554,7 @@ static void cifs_umount_begin(struct super_block *sb)
 	/* cancel_brl_requests(tcon); */ /* BB mark all brl mids as exiting */
 	/* cancel_notify_requests(tcon); */
 	if (tcon->ses && tcon->ses->server) {
-		cFYI(1, ("wake up tasks now - umount begin not complete"));
+		cFYI(1, "wake up tasks now - umount begin not complete");
 		wake_up_all(&tcon->ses->server->request_q);
 		wake_up_all(&tcon->ses->server->response_q);
 		msleep(1); /* yield */
@@ -609,7 +605,7 @@ cifs_get_sb(struct file_system_type *fs_type,
 	int rc;
 	struct super_block *sb = sget(fs_type, NULL, set_anon_super, NULL);
 
-	cFYI(1, ("Devname: %s flags: %d ", dev_name, flags));
+	cFYI(1, "Devname: %s flags: %d ", dev_name, flags);
 
 	if (IS_ERR(sb))
 		return PTR_ERR(sb);
@@ -656,7 +652,6 @@ static loff_t cifs_llseek(struct file *file, loff_t offset, int origin)
 	return generic_file_llseek_unlocked(file, offset, origin);
 }
 
-#ifdef CONFIG_CIFS_EXPERIMENTAL
 static int cifs_setlease(struct file *file, long arg, struct file_lock **lease)
 {
 	/* note that this is called by vfs setlease with the BKL held
@@ -685,7 +680,6 @@ static int cifs_setlease(struct file *file, long arg, struct file_lock **lease)
 	else
 		return -EAGAIN;
 }
-#endif
 
 struct file_system_type cifs_fs_type = {
 	.owner = THIS_MODULE,
@@ -762,10 +756,7 @@ const struct file_operations cifs_file_ops = {
 #ifdef CONFIG_CIFS_POSIX
 	.unlocked_ioctl	= cifs_ioctl,
 #endif /* CONFIG_CIFS_POSIX */
-
-#ifdef CONFIG_CIFS_EXPERIMENTAL
 	.setlease = cifs_setlease,
-#endif /* CONFIG_CIFS_EXPERIMENTAL */
 };
 
 const struct file_operations cifs_file_direct_ops = {
@@ -784,9 +775,7 @@ const struct file_operations cifs_file_direct_ops = {
 	.unlocked_ioctl  = cifs_ioctl,
 #endif /* CONFIG_CIFS_POSIX */
 	.llseek = cifs_llseek,
-#ifdef CONFIG_CIFS_EXPERIMENTAL
 	.setlease = cifs_setlease,
-#endif /* CONFIG_CIFS_EXPERIMENTAL */
 };
 const struct file_operations cifs_file_nobrl_ops = {
 	.read = do_sync_read,
@@ -803,10 +792,7 @@ const struct file_operations cifs_file_nobrl_ops = {
 #ifdef CONFIG_CIFS_POSIX
 	.unlocked_ioctl	= cifs_ioctl,
 #endif /* CONFIG_CIFS_POSIX */
-
-#ifdef CONFIG_CIFS_EXPERIMENTAL
 	.setlease = cifs_setlease,
-#endif /* CONFIG_CIFS_EXPERIMENTAL */
 };
 
 const struct file_operations cifs_file_direct_nobrl_ops = {
@@ -824,9 +810,7 @@ const struct file_operations cifs_file_direct_nobrl_ops = {
 	.unlocked_ioctl  = cifs_ioctl,
 #endif /* CONFIG_CIFS_POSIX */
 	.llseek = cifs_llseek,
-#ifdef CONFIG_CIFS_EXPERIMENTAL
 	.setlease = cifs_setlease,
-#endif /* CONFIG_CIFS_EXPERIMENTAL */
 };
 
 const struct file_operations cifs_dir_ops = {
@@ -878,7 +862,7 @@ cifs_init_request_bufs(void)
 	} else {
 		CIFSMaxBufSize &= 0x1FE00; /* Round size to even 512 byte mult*/
 	}
-/*	cERROR(1,("CIFSMaxBufSize %d 0x%x",CIFSMaxBufSize,CIFSMaxBufSize)); */
+/*	cERROR(1, "CIFSMaxBufSize %d 0x%x",CIFSMaxBufSize,CIFSMaxBufSize); */
 	cifs_req_cachep = kmem_cache_create("cifs_request",
 					    CIFSMaxBufSize +
 					    MAX_CIFS_HDR_SIZE, 0,
@@ -890,7 +874,7 @@ cifs_init_request_bufs(void)
 		cifs_min_rcv = 1;
 	else if (cifs_min_rcv > 64) {
 		cifs_min_rcv = 64;
-		cERROR(1, ("cifs_min_rcv set to maximum (64)"));
+		cERROR(1, "cifs_min_rcv set to maximum (64)");
 	}
 
 	cifs_req_poolp = mempool_create_slab_pool(cifs_min_rcv,
@@ -921,7 +905,7 @@ cifs_init_request_bufs(void)
 		cifs_min_small = 2;
 	else if (cifs_min_small > 256) {
 		cifs_min_small = 256;
-		cFYI(1, ("cifs_min_small set to maximum (256)"));
+		cFYI(1, "cifs_min_small set to maximum (256)");
 	}
 
 	cifs_sm_req_poolp = mempool_create_slab_pool(cifs_min_small,
@@ -962,15 +946,6 @@ cifs_init_mids(void)
 		return -ENOMEM;
 	}
 
-	cifs_oplock_cachep = kmem_cache_create("cifs_oplock_structs",
-					sizeof(struct oplock_q_entry), 0,
-					SLAB_HWCACHE_ALIGN, NULL);
-	if (cifs_oplock_cachep == NULL) {
-		mempool_destroy(cifs_mid_poolp);
-		kmem_cache_destroy(cifs_mid_cachep);
-		return -ENOMEM;
-	}
-
 	return 0;
 }
 
@@ -979,7 +954,6 @@ cifs_destroy_mids(void)
 {
 	mempool_destroy(cifs_mid_poolp);
 	kmem_cache_destroy(cifs_mid_cachep);
-	kmem_cache_destroy(cifs_oplock_cachep);
 }
 
 static int __init
@@ -1019,10 +993,10 @@ init_cifs(void)
 
 	if (cifs_max_pending < 2) {
 		cifs_max_pending = 2;
-		cFYI(1, ("cifs_max_pending set to min of 2"));
+		cFYI(1, "cifs_max_pending set to min of 2");
 	} else if (cifs_max_pending > 256) {
 		cifs_max_pending = 256;
-		cFYI(1, ("cifs_max_pending set to max of 256"));
+		cFYI(1, "cifs_max_pending set to max of 256");
 	}
 
 	rc = cifs_init_inodecache();
@@ -1080,7 +1054,7 @@ init_cifs(void)
 static void __exit
 exit_cifs(void)
 {
-	cFYI(DBG2, ("exit_cifs"));
+	cFYI(DBG2, "exit_cifs");
 	cifs_proc_clean();
 #ifdef CONFIG_CIFS_DFS_UPCALL
 	cifs_dfs_release_automount_timer();
