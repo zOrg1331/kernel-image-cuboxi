@@ -131,9 +131,10 @@ static int __init dmar_parse_dev_scope(void *start, void *end, int *cnt,
 		if (scope->entry_type == ACPI_DMAR_SCOPE_TYPE_ENDPOINT ||
 		    scope->entry_type == ACPI_DMAR_SCOPE_TYPE_BRIDGE)
 			(*cnt)++;
-		else
+		else if (scope->entry_type != ACPI_DMAR_SCOPE_TYPE_IOAPIC) {
 			printk(KERN_WARNING PREFIX
-				"Unsupported device scope\n");
+			       "Unsupported device scope\n");
+		}
 		start += scope->length;
 	}
 	if (*cnt == 0)
@@ -308,6 +309,8 @@ int dmar_find_matched_atsr_unit(struct pci_dev *dev)
 	struct pci_bus *bus;
 	struct acpi_dmar_atsr *atsr;
 	struct dmar_atsr_unit *atsru;
+
+	dev = pci_physfn(dev);
 
 	list_for_each_entry(atsru, &dmar_atsr_units, list) {
 		atsr = container_of(atsru->hdr, struct acpi_dmar_atsr, header);
@@ -507,7 +510,7 @@ parse_dmar_table(void)
 	return ret;
 }
 
-int dmar_pci_device_match(struct pci_dev *devices[], int cnt,
+static int dmar_pci_device_match(struct pci_dev *devices[], int cnt,
 			  struct pci_dev *dev)
 {
 	int index;
@@ -529,6 +532,8 @@ dmar_find_matched_drhd_unit(struct pci_dev *dev)
 {
 	struct dmar_drhd_unit *dmaru = NULL;
 	struct acpi_dmar_hardware_unit *drhd;
+
+	dev = pci_physfn(dev);
 
 	list_for_each_entry(dmaru, &dmar_drhd_units, list) {
 		drhd = container_of(dmaru->hdr,
@@ -806,7 +811,8 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
 	}
 
 	ver = readl(iommu->reg + DMAR_VER_REG);
-	pr_info("IOMMU %llx: ver %d:%d cap %llx ecap %llx\n",
+	pr_info("IOMMU %d: reg_base_addr %llx ver %d:%d cap %llx ecap %llx\n",
+		iommu->seq_id,
 		(unsigned long long)drhd->reg_base_addr,
 		DMAR_VER_MAJOR(ver), DMAR_VER_MINOR(ver),
 		(unsigned long long)iommu->cap,
@@ -1457,9 +1463,11 @@ int dmar_reenable_qi(struct intel_iommu *iommu)
 /*
  * Check interrupt remapping support in DMAR table description.
  */
-int dmar_ir_support(void)
+int __init dmar_ir_support(void)
 {
 	struct acpi_table_dmar *dmar;
 	dmar = (struct acpi_table_dmar *)dmar_tbl;
+	if (!dmar)
+		return 0;
 	return dmar->flags & 0x1;
 }
