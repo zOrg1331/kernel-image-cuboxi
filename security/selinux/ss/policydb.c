@@ -40,7 +40,7 @@
 #define _DEBUG_HASHES
 
 #ifdef DEBUG_HASHES
-static char *symtab_name[SYM_NUM] = {
+static const char *symtab_name[SYM_NUM] = {
 	"common prefixes",
 	"classes",
 	"roles",
@@ -156,7 +156,7 @@ static int roles_init(struct policydb *p)
 		rc = -EINVAL;
 		goto out_free_role;
 	}
-	key = kmalloc(strlen(OBJECT_R)+1, GFP_KERNEL);
+	key = kmalloc(strlen(OBJECT_R) + 1, GFP_KERNEL);
 	if (!key) {
 		rc = -ENOMEM;
 		goto out_free_role;
@@ -2195,7 +2195,7 @@ int policydb_read(struct policydb *p, void *fp)
 		rangetr_hash_eval(p->range_tr);
 	}
 
-	p->type_attr_map = kmalloc(p->p_types.nprim*sizeof(struct ebitmap), GFP_KERNEL);
+	p->type_attr_map = kmalloc(p->p_types.nprim * sizeof(struct ebitmap), GFP_KERNEL);
 	if (!p->type_attr_map)
 		goto bad;
 
