@@ -671,7 +671,7 @@ int radeon_device_init(struct radeon_device *rdev,
 		/* Acceleration not working on AGP card try again
 		 * with fallback to PCI or PCIE GART
 		 */
-		radeon_gpu_reset(rdev);
+		radeon_asic_reset(rdev);
 		radeon_fini(rdev);
 		radeon_agp_disable(rdev);
 		r = radeon_init(rdev);
@@ -691,6 +691,8 @@ void radeon_device_fini(struct radeon_device *rdev)
 {
 	DRM_INFO("radeon: finishing device.\n");
 	rdev->shutdown = true;
+	/* evict vram memory */
+	radeon_bo_evict_vram(rdev);
 	radeon_fini(rdev);
 	destroy_workqueue(rdev->wq);
 	vga_switcheroo_unregister_client(rdev->pdev);
@@ -728,9 +730,10 @@ int radeon_suspend_kms(struct drm_device *dev, pm_message_t state)
 			continue;
 		}
 		robj = rfb->obj->driver_private;
-		if (robj != rdev->fbdev_rbo) {
+		/* don't unpin kernel fb objects */
+		if (!radeon_fbdev_robj_is_fb(rdev, robj)) {
 			r = radeon_bo_reserve(robj, false);
-			if (unlikely(r == 0)) {
+			if (r == 0) {
 				radeon_bo_unpin(robj);
 				radeon_bo_unreserve(robj);
 			}
@@ -755,7 +758,7 @@ int radeon_suspend_kms(struct drm_device *dev, pm_message_t state)
 		pci_set_power_state(dev->pdev, PCI_D3hot);
 	}
 	acquire_console_sem();
-	fb_set_suspend(rdev->fbdev_info, 1);
+	radeon_fbdev_set_suspend(rdev, 1);
 	release_console_sem();
 	return 0;
 }
@@ -779,7 +782,7 @@ int radeon_resume_kms(struct drm_device *dev)
 	radeon_agp_resume(rdev);
 	radeon_resume(rdev);
 	radeon_restore_bios_scratch_regs(rdev);
-	fb_set_suspend(rdev->fbdev_info, 0);
+	radeon_fbdev_set_suspend(rdev, 0);
 	release_console_sem();
 
 	/* reset hpd state */
@@ -787,6 +790,26 @@ int radeon_resume_kms(struct drm_device *dev)
 	/* blat the mode back in */
 	drm_helper_resume_force_mode(dev);
 	return 0;
+}
+
+int radeon_gpu_reset(struct radeon_device *rdev)
+{
+	int r;
+
+	radeon_save_bios_scratch_regs(rdev);
+	radeon_suspend(rdev);
+
+	r = radeon_asic_reset(rdev);
+	if (!r) {
+		dev_info(rdev->dev, "GPU reset succeed\n");
+		radeon_resume(rdev);
+		radeon_restore_bios_scratch_regs(rdev);
+		drm_helper_resume_force_mode(rdev->ddev);
+		return 0;
+	}
+	/* bad news, how to tell it to userspace ? */
+	dev_info(rdev->dev, "GPU reset failed\n");
+	return r;
 }
 
 
