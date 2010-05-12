@@ -55,7 +55,6 @@
 #define BIT_DURATION	250	/* each bit received is 250us */
 
 #define IMON_CLOCK_ENABLE_PACKETS	2
-#define IMON_KEY_RELEASE_OFFSET		1000
 
 /*** P R O T O T Y P E S ***/
 
@@ -974,7 +973,7 @@ static void imon_touch_display_timeout(unsigned long data)
 {
 	struct imon_context *ictx = (struct imon_context *)data;
 
-	if (!ictx->display_type == IMON_DISPLAY_TYPE_VGA)
+	if (ictx->display_type != IMON_DISPLAY_TYPE_VGA)
 		return;
 
 	input_report_abs(ictx->touch, ABS_X, ictx->touch_x);
@@ -1199,13 +1198,14 @@ static u32 imon_panel_key_lookup(u64 hw_code)
 {
 	int i;
 	u64 code = be64_to_cpu(hw_code);
-	u32 keycode;
+	u32 keycode = KEY_RESERVED;
 
-	for (i = 0; i < ARRAY_SIZE(imon_panel_key_table); i++)
-		if (imon_panel_key_table[i].hw_code == (code | 0xffee))
+	for (i = 0; i < ARRAY_SIZE(imon_panel_key_table); i++) {
+		if (imon_panel_key_table[i].hw_code == (code | 0xffee)) {
+			keycode = imon_panel_key_table[i].keycode;
 			break;
-
-	keycode = imon_panel_key_table[i % IMON_KEY_RELEASE_OFFSET].keycode;
+		}
+	}
 
 	return keycode;
 }
@@ -1671,7 +1671,7 @@ static struct input_dev *imon_init_idev(struct imon_context *ictx)
 	}
 
 	ir = kzalloc(sizeof(struct ir_input_dev), GFP_KERNEL);
-	if (!props) {
+	if (!ir) {
 		dev_err(ictx->dev, "remote ir input dev allocation failed\n");
 		goto ir_dev_alloc_failed;
 	}
@@ -1776,7 +1776,6 @@ static struct input_dev *imon_init_touch(struct imon_context *ictx)
 
 touch_register_failed:
 	input_free_device(ictx->touch);
-	mutex_unlock(&ictx->lock);
 
 touch_alloc_failed:
 	return NULL;

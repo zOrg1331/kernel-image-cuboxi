@@ -22,6 +22,7 @@
 #include <linux/version.h>
 #include <linux/timer.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 
 #include <linux/platform_device.h>
 #include <media/v4l2-mem2mem.h>
@@ -871,8 +872,10 @@ static int m2mtest_open(struct file *file)
 
 	ctx->m2m_ctx = v4l2_m2m_ctx_init(ctx, dev->m2m_dev, queue_init);
 	if (IS_ERR(ctx->m2m_ctx)) {
+		int ret = PTR_ERR(ctx->m2m_ctx);
+
 		kfree(ctx);
-		return PTR_ERR(ctx->m2m_ctx);
+		return ret;
 	}
 
 	atomic_inc(&dev->num_inst);

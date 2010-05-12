@@ -55,7 +55,7 @@ MODULE_LICENSE("GPL");
 #define SENSOR_MT9VPRB	20
 
 /* camera flags */
-#define HAS_BUTTON	0x1
+#define HAS_NO_BUTTON	0x1
 #define LED_REVERSE	0x2 /* some cameras unset gpio to turn on leds */
 #define FLIP_DETECT	0x4
 
@@ -144,6 +144,20 @@ static const struct dmi_system_id flip_dmi_table[] = {
 		.matches = {
 			DMI_MATCH(DMI_BOARD_VENDOR, "MSI"),
 			DMI_MATCH(DMI_BOARD_NAME, "MS-1632")
+		}
+	},
+	{
+		.ident = "MSI MS-1635X",
+		.matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "MSI"),
+			DMI_MATCH(DMI_BOARD_NAME, "MS-1635X")
+		}
+	},
+	{
+		.ident = "ASUSTeK W7J",
+		.matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTeK Computer Inc."),
+			DMI_MATCH(DMI_BOARD_NAME, "W7J       ")
 		}
 	},
 	{}
@@ -982,29 +996,12 @@ static struct i2c_reg_u16 mt9v112_init[] = {
 
 static struct i2c_reg_u16 mt9v111_init[] = {
 	{0x01, 0x0004}, {0x0d, 0x0001}, {0x0d, 0x0000},
-	{0x01, 0x0001}, {0x02, 0x0016}, {0x03, 0x01e1},
-	{0x04, 0x0281}, {0x05, 0x0004}, {0x07, 0x3002},
-	{0x21, 0x0000}, {0x25, 0x4024}, {0x26, 0xff03},
-	{0x27, 0xff10}, {0x2b, 0x7828}, {0x2c, 0xb43c},
-	{0x2d, 0xf0a0},	{0x2e, 0x0c64},	{0x2f, 0x0064},
-	{0x67, 0x4010},	{0x06, 0x301e},	{0x08, 0x0480},
-	{0x01, 0x0004},	{0x02, 0x0016}, {0x03, 0x01e6},
-	{0x04, 0x0286},	{0x05, 0x0004}, {0x06, 0x0000},
-	{0x07, 0x3002},	{0x08, 0x0008}, {0x0c, 0x0000},
-	{0x0d, 0x0000}, {0x0e, 0x0000}, {0x0f, 0x0000},
-	{0x10, 0x0000},	{0x11, 0x0000},	{0x12, 0x00b0},
-	{0x13, 0x007c},	{0x14, 0x0000}, {0x15, 0x0000},
-	{0x16, 0x0000}, {0x17, 0x0000},	{0x18, 0x0000},
-	{0x19, 0x0000},	{0x1a, 0x0000},	{0x1b, 0x0000},
-	{0x1c, 0x0000},	{0x1d, 0x0000},	{0x30, 0x0000},
-	{0x30, 0x0005},	{0x31, 0x0000},	{0x02, 0x0016},
-	{0x03, 0x01e1},	{0x04, 0x0281}, {0x05, 0x0004},
-	{0x06, 0x0000},	{0x07, 0x3002},	{0x06, 0x002d},
-	{0x05, 0x0004},	{0x09, 0x0064},	{0x2b, 0x00a0},
-	{0x2c, 0x00a0},	{0x2d, 0x00a0},	{0x2e, 0x00a0},
-	{0x02, 0x0016},	{0x03, 0x01e1},	{0x04, 0x0281},
-	{0x05, 0x0004},	{0x06, 0x002d},	{0x07, 0x3002},
-	{0x0e, 0x0008},	{0x06, 0x002d},	{0x05, 0x0004},
+	{0x01, 0x0001}, {0x05, 0x0004}, {0x2d, 0xe0a0},
+	{0x2e, 0x0c64},	{0x2f, 0x0064}, {0x06, 0x600e},
+	{0x08, 0x0480}, {0x01, 0x0004}, {0x02, 0x0016},
+	{0x03, 0x01e7}, {0x04, 0x0287}, {0x05, 0x0004},
+	{0x06, 0x002d},	{0x07, 0x3002}, {0x08, 0x0008},
+	{0x0e, 0x0008}, {0x20, 0x0000}
 };
 
 static struct i2c_reg_u16 mt9v011_init[] = {
@@ -1355,6 +1352,7 @@ static int mt9v_init_sensor(struct gspca_dev *gspca_dev)
 				return -ENODEV;
 			}
 		}
+		gspca_dev->ctrl_dis = (1 << EXPOSURE_IDX) | (1 << AUTOGAIN_IDX) | (1 << GAIN_IDX);
 		sd->hstart = 2;
 		sd->vstart = 2;
 		sd->sensor = SENSOR_MT9V111;
@@ -1690,7 +1688,6 @@ static int set_exposure(struct gspca_dev *gspca_dev)
 		break;
 	case SENSOR_MT9M001:
 	case SENSOR_MT9V112:
-	case SENSOR_MT9V111:
 	case SENSOR_MT9V011:
 		exp[0] |= (3 << 4);
 		exp[2] = 0x09;
@@ -1725,7 +1722,6 @@ static int set_gain(struct gspca_dev *gspca_dev)
 		gain[3] = ov_gain[sd->gain];
 		break;
 	case SENSOR_MT9V011:
-	case SENSOR_MT9V111:
 		gain[0] |= (3 << 4);
 		gain[2] = 0x35;
 		gain[3] = micron1_gain[sd->gain] >> 8;
@@ -2407,7 +2403,7 @@ static int sd_int_pkt_scan(struct gspca_dev *gspca_dev,
 {
 	struct sd *sd = (struct sd *) gspca_dev;
 	int ret = -EINVAL;
-	if (sd->flags & HAS_BUTTON && len == 1) {
+	if (!(sd->flags & HAS_NO_BUTTON) && len == 1) {
 			input_report_key(gspca_dev->input_dev, KEY_CAMERA, 1);
 			input_sync(gspca_dev->input_dev);
 			input_report_key(gspca_dev->input_dev, KEY_CAMERA, 0);
@@ -2505,9 +2501,9 @@ static const __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x0c45, 0x6242), SN9C20X(MT9M111, 0x5d, 0)},
 	{USB_DEVICE(0x0c45, 0x6248), SN9C20X(OV9655, 0x30, 0)},
 	{USB_DEVICE(0x0c45, 0x624c), SN9C20X(MT9M112, 0x5d, 0)},
-	{USB_DEVICE(0x0c45, 0x624e), SN9C20X(SOI968, 0x30,
-					     (HAS_BUTTON | LED_REVERSE))},
-	{USB_DEVICE(0x0c45, 0x624f), SN9C20X(OV9650, 0x30, FLIP_DETECT)},
+	{USB_DEVICE(0x0c45, 0x624e), SN9C20X(SOI968, 0x30, LED_REVERSE)},
+	{USB_DEVICE(0x0c45, 0x624f), SN9C20X(OV9650, 0x30,
+					     (FLIP_DETECT | HAS_NO_BUTTON))},
 	{USB_DEVICE(0x0c45, 0x6251), SN9C20X(OV9650, 0x30, 0)},
 	{USB_DEVICE(0x0c45, 0x6253), SN9C20X(OV9650, 0x30, 0)},
 	{USB_DEVICE(0x0c45, 0x6260), SN9C20X(OV7670, 0x21, 0)},
@@ -2517,14 +2513,14 @@ static const __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x0c45, 0x627f), SN9C20X(OV9650, 0x30, 0)},
 	{USB_DEVICE(0x0c45, 0x6280), SN9C20X(MT9M001, 0x5d, 0)},
 	{USB_DEVICE(0x0c45, 0x6282), SN9C20X(MT9M111, 0x5d, 0)},
-	{USB_DEVICE(0x0c45, 0x6288), SN9C20X(OV9655, 0x30, HAS_BUTTON)},
+	{USB_DEVICE(0x0c45, 0x6288), SN9C20X(OV9655, 0x30, 0)},
 	{USB_DEVICE(0x0c45, 0x628c), SN9C20X(MT9M112, 0x5d, 0)},
 	{USB_DEVICE(0x0c45, 0x628e), SN9C20X(SOI968, 0x30, 0)},
 	{USB_DEVICE(0x0c45, 0x628f), SN9C20X(OV9650, 0x30, 0)},
 	{USB_DEVICE(0x0c45, 0x62a0), SN9C20X(OV7670, 0x21, 0)},
 	{USB_DEVICE(0x0c45, 0x62b0), SN9C20X(MT9VPRB, 0x00, 0)},
 	{USB_DEVICE(0x0c45, 0x62b3), SN9C20X(OV9655, 0x30, 0)},
-	{USB_DEVICE(0x0c45, 0x62bb), SN9C20X(OV7660, 0x21, HAS_BUTTON)},
+	{USB_DEVICE(0x0c45, 0x62bb), SN9C20X(OV7660, 0x21, 0)},
 	{USB_DEVICE(0x0c45, 0x62bc), SN9C20X(HV7131R, 0x11, 0)},
 	{USB_DEVICE(0x045e, 0x00f4), SN9C20X(OV9650, 0x30, 0)},
 	{USB_DEVICE(0x145f, 0x013d), SN9C20X(OV7660, 0x21, 0)},
@@ -2535,7 +2531,7 @@ static const __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0xa168, 0x0611), SN9C20X(HV7131R, 0x11, 0)},
 	{USB_DEVICE(0xa168, 0x0613), SN9C20X(HV7131R, 0x11, 0)},
 	{USB_DEVICE(0xa168, 0x0618), SN9C20X(HV7131R, 0x11, 0)},
-	{USB_DEVICE(0xa168, 0x0614), SN9C20X(MT9M111, 0x5d, HAS_BUTTON)},
+	{USB_DEVICE(0xa168, 0x0614), SN9C20X(MT9M111, 0x5d, 0)},
 	{USB_DEVICE(0xa168, 0x0615), SN9C20X(MT9M111, 0x5d, 0)},
 	{USB_DEVICE(0xa168, 0x0617), SN9C20X(MT9M111, 0x5d, 0)},
 	{}

@@ -759,8 +759,9 @@ int input_set_keycode_big(struct input_dev *dev,
 		if (!dev->setkeycode)
 			goto out;
 
-		if (input_fetch_scancode(kt_entry, &scancode))
-			return -EINVAL;
+		retval = input_fetch_scancode(kt_entry, &scancode);
+		if (retval)
+			goto out;
 
 		retval = dev->getkeycode(dev, scancode,
 					 &old_keycode);
