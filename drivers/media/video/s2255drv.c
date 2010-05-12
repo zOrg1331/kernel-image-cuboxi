@@ -1715,11 +1715,15 @@ static int s2255_open(struct file *file)
 	dprintk(1, "s2255: open called (dev=%s)\n",
 		video_device_node_name(vdev));
 
-	for (i = 0; i < MAX_CHANNELS; i++)
+	for (i = 0; i < MAX_CHANNELS; i++) {
 		if (&dev->vdev[i] == vdev) {
 			cur_channel = i;
 			break;
 		}
+	}
+	if (i == MAX_CHANNELS)
+		return -ENODEV;
+
 	/*
 	 * open lock necessary to prevent multiple instances
 	 * of v4l-conf (or other programs) from simultaneously
@@ -2523,10 +2527,7 @@ static int s2255_stop_acquire(struct s2255_dev *dev, unsigned long chn)
 static void s2255_stop_readpipe(struct s2255_dev *dev)
 {
 	struct s2255_pipeinfo *pipe = &dev->pipe;
-	if (dev == NULL) {
-		s2255_dev_err(&dev->udev->dev, "invalid device\n");
-		return;
-	}
+
 	pipe->state = 0;
 	if (pipe->stream_urb) {
 		/* cancel urb */
