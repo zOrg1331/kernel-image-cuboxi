@@ -23,7 +23,7 @@ Release: alt1
 # Enable/disable several parts of kernel
 %def_disable docs
 %def_disable oss
-%def_disable kvm
+%def_enable kvm
 %def_disable v4l
 %def_disable staging
 
