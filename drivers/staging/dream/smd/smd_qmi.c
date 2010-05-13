@@ -25,7 +25,7 @@
 #include <linux/miscdevice.h>
 #include <linux/workqueue.h>
 
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <mach/msm_smd.h>
 
 #define QMI_CTL 0x00
@@ -211,11 +211,10 @@ static int qmi_send(struct qmi_ctxt *ctxt, struct qmi_msg *msg)
 
 	qmi_dump_msg(msg, "send");
 
-	if (msg->service == QMI_CTL) {
+	if (msg->service == QMI_CTL)
 		hlen = QMUX_HEADER - 1;
-	} else {
+	else
 		hlen = QMUX_HEADER;
-	}
 
 	/* QMUX length is total header + total payload - IFC selector */
 	len = hlen + msg->size - 1;
@@ -248,11 +247,10 @@ static int qmi_send(struct qmi_ctxt *ctxt, struct qmi_msg *msg)
 	/* len + 1 takes the interface selector into account */
 	r = smd_write(ctxt->ch, msg->tlv - hlen, len + 1);
 
-	if (r != len) {
+	if (r != len)
 		return -1;
-	} else {
+	else
 		return 0;
-	}
 }
 
 static void qmi_process_ctl_msg(struct qmi_ctxt *ctxt, struct qmi_msg *msg)
@@ -376,7 +374,7 @@ static void qmi_process_broadcast_wds_msg(struct qmi_ctxt *ctxt,
 static void qmi_process_wds_msg(struct qmi_ctxt *ctxt,
 				struct qmi_msg *msg)
 {
-	printk("wds: %04x @ %02x\n", msg->type, msg->client_id);
+	printk(KERN_INFO "wds: %04x @ %02x\n", msg->type, msg->client_id);
 	if (msg->client_id == ctxt->wds_client_id) {
 		qmi_process_unicast_wds_msg(ctxt, msg);
 	} else if (msg->client_id == 0xff) {
@@ -504,9 +502,8 @@ static void qmi_notify(void *priv, unsigned event)
 	case SMD_EVENT_DATA: {
 		int sz;
 		sz = smd_cur_packet_size(ctxt->ch);
-		if ((sz > 0) && (sz <= smd_read_avail(ctxt->ch))) {
+		if ((sz > 0) && (sz <= smd_read_avail(ctxt->ch)))
 			queue_work(qmi_wq, &ctxt->read_work);
-		}
 		break;
 	}
 	case SMD_EVENT_OPEN:
@@ -643,11 +640,10 @@ static int qmi_print_state(struct qmi_ctxt *ctxt, char *buf, int max)
 	}
 
 	i = scnprintf(buf, max, "STATE=%s\n", statename);
-	i += scnprintf(buf + i, max - i, "CID=%d\n",ctxt->wds_client_id);
+	i += scnprintf(buf + i, max - i, "CID=%d\n", ctxt->wds_client_id);
 
-	if (ctxt->state != STATE_ONLINE){
+	if (ctxt->state != STATE_ONLINE)
 		return i;
-	}
 
 	i += scnprintf(buf + i, max - i, "ADDR=%d.%d.%d.%d\n",
 		ctxt->addr[0], ctxt->addr[1], ctxt->addr[2], ctxt->addr[3]);

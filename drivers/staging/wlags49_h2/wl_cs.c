@@ -314,15 +314,15 @@ void wl_adapter_insert( struct pcmcia_device *link )
     /* Do we need to allocate an interrupt? */
     link->conf.Attributes |= CONF_ENABLE_IRQ;
 
-    CS_CHECK(RequestIO, pcmcia_request_io(link, &link->io));
-    CS_CHECK(RequestIRQ, pcmcia_request_irq(link, wl_isr));
-    CS_CHECK(RequestConfiguration, pcmcia_request_configuration(link, &link->conf));
+//    CS_CHECK(RequestIO, pcmcia_request_io(link, &link->io));
+//    CS_CHECK(RequestIRQ, pcmcia_request_irq(link, wl_isr));
+//    CS_CHECK(RequestConfiguration, pcmcia_request_configuration(link, &link->conf));
 
 
     dev->irq        = link->irq;
     dev->base_addr  = link->io.BasePort1;
 
-    SET_NETDEV_DEV(dev, &handle_to_dev(link));
+    SET_NETDEV_DEV(dev, &link->dev);
     if (register_netdev(dev) != 0) {
 	printk("%s: register_netdev() failed\n", MODULE_NAME);
 	goto failed;
@@ -342,7 +342,7 @@ void wl_adapter_insert( struct pcmcia_device *link )
 
 
 cs_failed:
-    cs_error( link, last_fn, last_ret );
+//    cs_error( link, last_fn, last_ret );
 
 
 failed:

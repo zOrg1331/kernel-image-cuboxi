@@ -478,7 +478,7 @@ pDevice->bUpdateBBVGA = TRUE;
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO" pDevice->bDiversityRegCtlON= %d\n",(INT)pDevice->bDiversityRegCtlON);
 }
 
-static VOID s_vCompleteCurrentMeasure (IN PSDevice pDevice, IN BYTE byResult)
+static void s_vCompleteCurrentMeasure (IN PSDevice pDevice, IN BYTE byResult)
 {
     UINT    ii;
     DWORD   dwDuration = 0;
@@ -638,7 +638,8 @@ byValue1 = SROMbyReadEmbedded(pDevice->PortOffset, EEP_OFS_ANTENNA);
 //2008-8-4 <add> by chester
 //zonetype initial
  pDevice->byOriginalZonetype = pDevice->abyEEPROM[EEP_OFS_ZONETYPE];
- if((zonetype=Config_FileOperation(pDevice,FALSE,NULL)) >= 0) {         //read zonetype file ok!
+ zonetype = Config_FileOperation(pDevice,FALSE,NULL);
+ if (zonetype >= 0) {         //read zonetype file ok!
   if ((zonetype == 0)&&
         (pDevice->abyEEPROM[EEP_OFS_ZONETYPE] !=0x00)){          //for USA
     pDevice->abyEEPROM[EEP_OFS_ZONETYPE] = 0;
@@ -728,7 +729,7 @@ else
             pDevice->abyOFDMPwrTbl[ii+CB_MAX_CHANNEL_24G+1] = SROMbyReadEmbedded(pDevice->PortOffset, (BYTE)(ii + EEP_OFS_OFDMA_PWR_TBL));
             pDevice->abyOFDMDefaultPwr[ii+CB_MAX_CHANNEL_24G+1] = SROMbyReadEmbedded(pDevice->PortOffset, (BYTE)(ii + EEP_OFS_OFDMA_PWR_dBm));
         }
-        CARDvInitChannelTable((PVOID)pDevice);
+        CARDvInitChannelTable((void *)pDevice);
 
 
         if (pDevice->byLocalID > REV_ID_VT3253_B1) {
@@ -846,7 +847,7 @@ else  CARDbRadioPowerOn(pDevice);
 
 
 
-static VOID device_init_diversity_timer(PSDevice pDevice) {
+static void device_init_diversity_timer(PSDevice pDevice) {
 
     init_timer(&pDevice->TimerSQ3Tmax1);
     pDevice->TimerSQ3Tmax1.data = (ULONG)pDevice;
@@ -1073,7 +1074,7 @@ device_found1(struct pci_dev *pcid, const struct pci_device_id *ent)
     //Enable the chip specified capbilities
     pDevice->flags = pDevice->sOpts.flags | (pChip_info->flags & 0xFF000000UL);
     pDevice->tx_80211 = device_dma0_tx_80211;
-    pDevice->sMgmtObj.pAdapter = (PVOID)pDevice;
+    pDevice->sMgmtObj.pAdapter = (void *)pDevice;
     pDevice->pMgmt = &(pDevice->sMgmtObj);
 
     dev->irq                = pcid->irq;
@@ -1090,11 +1091,13 @@ device_found1(struct pci_dev *pcid, const struct pci_device_id *ent)
     }
 //2008-07-21-01<Add>by MikeLiu
 //register wpadev
+#if 0
    if(wpa_set_wpadev(pDevice, 1)!=0) {
      printk("Fail to Register WPADEV?\n");
         unregister_netdev(pDevice->dev);
         free_netdev(dev);
    }
+#endif
     device_print_info(pDevice);
     pci_set_drvdata(pcid, pDevice);
     return 0;
@@ -1242,13 +1245,13 @@ device_release_WPADEV(pDevice);
     }
 #ifdef HOSTAP
     if (dev)
-        hostap_set_hostapd(pDevice, 0, 0);
+        vt6655_hostap_set_hostapd(pDevice, 0, 0);
 #endif
     if (dev)
         unregister_netdev(dev);
 
     if (pDevice->PortOffset)
-        iounmap((PVOID)pDevice->PortOffset);
+        iounmap((void *)pDevice->PortOffset);
 
     if (pDevice->pcid)
         pci_release_regions(pDevice->pcid);
@@ -1460,7 +1463,7 @@ static void device_free_rd0_ring(PSDevice pDevice) {
 
         dev_kfree_skb(pRDInfo->skb);
 
-        kfree((PVOID)pDesc->pRDInfo);
+        kfree((void *)pDesc->pRDInfo);
     }
 
 }
@@ -1478,7 +1481,7 @@ static void device_free_rd1_ring(PSDevice pDevice) {
 
         dev_kfree_skb(pRDInfo->skb);
 
-        kfree((PVOID)pDesc->pRDInfo);
+        kfree((void *)pDesc->pRDInfo);
     }
 
 }
@@ -1563,7 +1566,7 @@ static void device_free_td0_ring(PSDevice pDevice) {
         if (pTDInfo->skb)
             dev_kfree_skb(pTDInfo->skb);
 
-        kfree((PVOID)pDesc->pTDInfo);
+        kfree((void *)pDesc->pTDInfo);
     }
 }
 
@@ -1581,7 +1584,7 @@ static void device_free_td1_ring(PSDevice pDevice) {
         if (pTDInfo->skb)
             dev_kfree_skb(pTDInfo->skb);
 
-        kfree((PVOID)pDesc->pTDInfo);
+        kfree((void *)pDesc->pTDInfo);
     }
 
 }
@@ -1829,7 +1832,7 @@ static void device_free_tx_buf(PSDevice pDevice, PSTxDesc pDesc) {
 
 
 //PLICE_DEBUG ->
-VOID	InitRxManagementQueue(PSDevice  pDevice)
+void	InitRxManagementQueue(PSDevice  pDevice)
 {
 	pDevice->rxManeQueue.packet_num = 0;
 	pDevice->rxManeQueue.head = pDevice->rxManeQueue.tail = 0;
@@ -3022,7 +3025,7 @@ int Config_FileOperation(PSDevice pDevice,BOOL fwrite,unsigned char *Parameter) 
 	  goto error1;
      	}
 
-buffer = (UCHAR *)kmalloc(1024, GFP_KERNEL);
+buffer = kmalloc(1024, GFP_KERNEL);
 if(buffer==NULL) {
   printk("alllocate mem for file fail?\n");
   result = -1;
@@ -3328,7 +3331,7 @@ static int  device_ioctl(struct net_device *dev, struct ifreq *rq, int cmd) {
 		break;
 
 	case SIOCSIWTXPOW:
-        DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO " SIOCGIWTXPOW \n");
+        DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO " SIOCSIWTXPOW \n");
         rc = -EOPNOTSUPP;
 		break;
 
@@ -3406,7 +3409,7 @@ static int  device_ioctl(struct net_device *dev, struct ifreq *rq, int cmd) {
 		// Get the spy list
 	case SIOCGIWSPY:
 
-        DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO " SIOCSIWSPY \n");
+        DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO " SIOCGIWSPY \n");
 		rc = -EOPNOTSUPP;
 		break;
 
@@ -3523,7 +3526,7 @@ static int  device_ioctl(struct net_device *dev, struct ifreq *rq, int cmd) {
     case IOCTL_CMD_HOSTAPD:
 
 
-	rc = hostap_ioctl(pDevice, &wrq->u.data);
+	rc = vt6655_hostap_ioctl(pDevice, &wrq->u.data);
         break;
 
     case IOCTL_CMD_WPA:

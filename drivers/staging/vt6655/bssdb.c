@@ -90,18 +90,18 @@ const WORD             awHWRetry1[5][5] = {
 
 /*---------------------  Static Functions  --------------------------*/
 
-VOID s_vCheckSensitivity(
+void s_vCheckSensitivity(
     IN HANDLE hDeviceContext
     );
 
 #ifdef Calcu_LinkQual
-VOID s_uCalculateLinkQual(
+void s_uCalculateLinkQual(
     IN HANDLE hDeviceContext
     );
 #endif
 
 
-VOID s_vCheckPreEDThreshold(
+void s_vCheckPreEDThreshold(
     IN HANDLE hDeviceContext
     );
 /*---------------------  Export Variables  --------------------------*/
@@ -280,7 +280,7 @@ if(pDevice->bLinkPass==FALSE) pCurrBSS->bSelected = FALSE;
 -*/
 
 
-VOID
+void
 BSSvClearBSSList(
     IN HANDLE hDeviceContext,
     IN BOOL bKeepCurrBSSID
@@ -764,7 +764,7 @@ BSSbUpdateToBSSList (
 
 BOOL
 BSSDBbIsSTAInNodeDB(
-    IN PVOID pMgmtObject,
+    IN void *pMgmtObject,
     IN PBYTE abyDstAddr,
     OUT PUINT puNodeIndex
     )
@@ -797,7 +797,7 @@ BSSDBbIsSTAInNodeDB(
  *    None
  *
 -*/
-VOID
+void
 BSSvCreateOneNode(
     IN HANDLE hDeviceContext,
     OUT PUINT puNodeIndex
@@ -862,7 +862,7 @@ BSSvCreateOneNode(
  *    None
  *
 -*/
-VOID
+void
 BSSvRemoveOneNode(
     IN HANDLE hDeviceContext,
     IN UINT uNodeIndex
@@ -895,7 +895,7 @@ BSSvRemoveOneNode(
  *
 -*/
 
-VOID
+void
 BSSvUpdateAPNode(
     IN HANDLE hDeviceContext,
     IN PWORD pwCapInfo,
@@ -919,7 +919,7 @@ BSSvUpdateAPNode(
     pMgmt->abyCurrExtSuppRates[1] = RATEuSetIE((PWLAN_IE_SUPP_RATES)pExtSuppRates,
                                             (PWLAN_IE_SUPP_RATES)pMgmt->abyCurrExtSuppRates,
                                             uRateLen);
-    RATEvParseMaxRate((PVOID) pDevice,
+    RATEvParseMaxRate((void *)pDevice,
                        (PWLAN_IE_SUPP_RATES)pMgmt->abyCurrSuppRates,
                        (PWLAN_IE_SUPP_RATES)pMgmt->abyCurrExtSuppRates,
                        TRUE,
@@ -958,7 +958,7 @@ BSSvUpdateAPNode(
 -*/
 
 
-VOID
+void
 BSSvAddMulticastNode(
     IN HANDLE hDeviceContext
     )
@@ -972,7 +972,7 @@ BSSvAddMulticastNode(
     pMgmt->sNodeDBTable[0].bActive = TRUE;
     pMgmt->sNodeDBTable[0].bPSEnable = FALSE;
     skb_queue_head_init(&pMgmt->sNodeDBTable[0].sTxPSQueue);
-    RATEvParseMaxRate((PVOID) pDevice,
+    RATEvParseMaxRate((void *)pDevice,
                       (PWLAN_IE_SUPP_RATES)pMgmt->abyCurrSuppRates,
                       (PWLAN_IE_SUPP_RATES)pMgmt->abyCurrExtSuppRates,
                       TRUE,
@@ -1011,7 +1011,7 @@ BSSvAddMulticastNode(
 BOOL cc=FALSE;
 UINT status;
 #endif
-VOID
+void
 BSSvSecondCallBack(
     IN  HANDLE hDeviceContext
     )
@@ -1162,7 +1162,7 @@ start:
 */
                 if (ii > 0) {
                     // ii = 0 for multicast node (AP & Adhoc)
-                    RATEvTxRateFallBack((PVOID)pDevice, &(pMgmt->sNodeDBTable[ii]));
+                    RATEvTxRateFallBack((void *)pDevice, &(pMgmt->sNodeDBTable[ii]));
                 }
                 else {
                     // ii = 0 reserved for unicast AP node (Infra STA)
@@ -1170,7 +1170,7 @@ start:
 #ifdef	PLICE_DEBUG
 		printk("SecondCallback:Before:TxDataRate is %d\n",pMgmt->sNodeDBTable[0].wTxDataRate);
 #endif
-                        RATEvTxRateFallBack((PVOID)pDevice, &(pMgmt->sNodeDBTable[ii]));
+                        RATEvTxRateFallBack((void *)pDevice, &(pMgmt->sNodeDBTable[ii]));
 #ifdef	PLICE_DEBUG
 		printk("SecondCallback:After:TxDataRate is %d\n",pMgmt->sNodeDBTable[0].wTxDataRate);
 #endif
@@ -1215,14 +1215,14 @@ start:
             if (pDevice->bShortSlotTime) {
                 pDevice->bShortSlotTime = FALSE;
                 BBvSetShortSlotTime(pDevice);
-                vUpdateIFS((PVOID)pDevice);
+                vUpdateIFS((void *)pDevice);
             }
         }
         else {
             if (!pDevice->bShortSlotTime) {
                 pDevice->bShortSlotTime = TRUE;
                 BBvSetShortSlotTime(pDevice);
-                vUpdateIFS((PVOID)pDevice);
+                vUpdateIFS((void *)pDevice);
             }
         }
 
@@ -1388,7 +1388,7 @@ start:
 
 
 
-VOID
+void
 BSSvUpdateNodeTxCounter(
     IN HANDLE      hDeviceContext,
     IN BYTE        byTsr0,
@@ -1581,7 +1581,7 @@ BSSvUpdateNodeTxCounter(
 -*/
 
 
-VOID
+void
 BSSvClearNodeDBTable(
     IN HANDLE hDeviceContext,
     IN UINT uStartIndex
@@ -1610,7 +1610,7 @@ BSSvClearNodeDBTable(
 };
 
 
-VOID s_vCheckSensitivity(
+void s_vCheckSensitivity(
     IN HANDLE hDeviceContext
     )
 {
@@ -1659,7 +1659,7 @@ VOID s_vCheckSensitivity(
 }
 
 
-VOID
+void
 BSSvClearAnyBSSJoinRecord (
     IN HANDLE hDeviceContext
     )
@@ -1675,7 +1675,7 @@ BSSvClearAnyBSSJoinRecord (
 }
 
 #ifdef Calcu_LinkQual
-VOID s_uCalculateLinkQual(
+void s_uCalculateLinkQual(
     IN HANDLE hDeviceContext
     )
 {
@@ -1723,7 +1723,7 @@ else
 }
 #endif
 
-VOID s_vCheckPreEDThreshold(
+void s_vCheckPreEDThreshold(
     IN HANDLE hDeviceContext
     )
 {

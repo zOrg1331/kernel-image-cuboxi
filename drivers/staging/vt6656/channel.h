@@ -45,13 +45,13 @@ typedef struct tagSChannelTblElement {
 
 /*---------------------  Export Functions  --------------------------*/
 BOOL    ChannelValid(UINT CountryCode, UINT ChannelNum);
-VOID    CHvInitChannelTable (PVOID pDeviceHandler);
+void    CHvInitChannelTable(void *pDeviceHandler);
 BYTE    CHbyGetChannelMapping(BYTE byChannelNumber);
 
 BOOL
 CHvChannelGetList (
-    IN  UINT       uCountryCodeIdx,
-    OUT PBYTE      pbyChannelTable
+      UINT       uCountryCodeIdx,
+     PBYTE      pbyChannelTable
     );
 
 #endif  /* _REGULATE_H_ */
