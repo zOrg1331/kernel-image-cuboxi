@@ -2400,7 +2400,8 @@ qlcnic_sysfs_validate_crb(struct qlcnic_adapter *adapter,
 }
 
 static ssize_t
-qlcnic_sysfs_read_crb(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_read_crb(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -2418,7 +2419,8 @@ qlcnic_sysfs_read_crb(struct kobject *kobj, struct bin_attribute *attr,
 }
 
 static ssize_t
-qlcnic_sysfs_write_crb(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_write_crb(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -2449,7 +2451,8 @@ qlcnic_sysfs_validate_mem(struct qlcnic_adapter *adapter,
 }
 
 static ssize_t
-qlcnic_sysfs_read_mem(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_read_mem(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -2470,7 +2473,8 @@ qlcnic_sysfs_read_mem(struct kobject *kobj, struct bin_attribute *attr,
 }
 
 static ssize_t
-qlcnic_sysfs_write_mem(struct kobject *kobj, struct bin_attribute *attr,
+qlcnic_sysfs_write_mem(struct file *filp, struct kobject *kobj,
+		struct bin_attribute *attr,
 		char *buf, loff_t offset, size_t size)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
