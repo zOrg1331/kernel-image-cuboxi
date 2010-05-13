@@ -209,7 +209,7 @@ i915_gem_detect_bit_6_swizzle(struct drm_device *dev)
 	uint32_t swizzle_y = I915_BIT_6_SWIZZLE_UNKNOWN;
 	bool need_disable;
 
-	if (IS_IRONLAKE(dev)) {
+	if (IS_IRONLAKE(dev) || IS_GEN6(dev)) {
 		/* On Ironlake whatever DRAM config, GPU always do
 		 * same swizzling setup.
 		 */
@@ -357,11 +357,11 @@ i915_tiling_ok(struct drm_device *dev, int stride, int size, int tiling_mode)
 		 * reg, so dont bother to check the size */
 		if (stride / 128 > I965_FENCE_MAX_PITCH_VAL)
 			return false;
-	} else if (IS_I9XX(dev) || IS_I8XX(dev)) {
+	} else if (IS_GEN3(dev) || IS_GEN2(dev)) {
 		if (stride > 8192)
 			return false;
 
-		if (IS_I9XX(dev)) {
+		if (IS_GEN3(dev)) {
 			if (size > I830_FENCE_MAX_SIZE_VAL << 20)
 				return false;
 		} else {
