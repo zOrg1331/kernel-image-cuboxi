@@ -1863,6 +1863,8 @@ static void handle_reply(struct ceph_mds_session *session, struct ceph_msg *msg)
 		goto out_err;
 	}
 
+	mutex_lock(&req->r_fill_mutex);
+
 	/* snap trace */
 	if (rinfo->snapblob_len) {
 		down_write(&mdsc->snap_rwsem);
@@ -1884,6 +1886,7 @@ static void handle_reply(struct ceph_mds_session *session, struct ceph_msg *msg)
 	}
 	mutex_unlock(&req->r_fill_mutex);
 
+	mutex_unlock(&req->r_fill_mutex);
 	up_read(&mdsc->snap_rwsem);
 out_err:
 	mutex_lock(&mdsc->mutex);
