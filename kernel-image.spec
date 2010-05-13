@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.32
-Release: alt12
+Release: alt13
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -600,6 +600,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Thu May 13 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt13
+- 2.6.32.13
+
 * Mon Apr 26 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt12
 - 2.6.32.12
 
