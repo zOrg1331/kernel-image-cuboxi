@@ -1,0 +1,289 @@
+Importing driver-core.current based on 2.6.34-rc7
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.34-rc7-git3
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard cea0d767c29669bf89f86e4aee46ef462d2ebae8
+HEAD is now at cea0d76 Merge branch 'hwmon-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/jdelvare/staging
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-i801-02-new-parameter-to-disable-features.patch
+i2c-i801-03-default-to-all-features-present.patch
+i2c-i801-04-coding-style-fixes.patch
+i2c-scx200_acb-make-pci-device-ids-constant.patch
+i2c-stub-show-actual-functionality.patch
+eeprom-at24-fallback-to-byte-reads.patch
+i2c-dev-remove-unnecessary-casts.patch
+i2c-parport-make-template-struct-const.patch
+i2c-gpio-move-initialization-code-to-subsys_initcall.patch
+i2c-core-fix-some-coding-style-issues.patch
+i2c-dev-fix-all-coding-style-issues.patch
+i2c-algo-pca-fix-coding-style-issues.patch
+i2c-use-linux-io.h-instead-of-asm-io.h.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 4296475...4bade58 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.34-rc7-git3
+$ cd ../quilt-tmp
+$ git reset --hard cea0d767c29669bf89f86e4aee46ef462d2ebae8
+HEAD is now at cea0d76 Merge branch 'hwmon-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/jdelvare/staging
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-asus_atk0110-dont-use-if-unsafe.patch
+hwmon-lm63-add-basic-support-for-lm64.patch
+hwmon-f71882fg-01-fixed-braces-coding-style-issues.patch
+hwmon-f71882fg-02-use-strict_strtol-instead-of-simple_strtol.patch
+hwmon-f71882fg-03-code-cleanup.patch
+hwmon-f71882fg-04-properly-acquire-io-regions-while-probing.patch
+hwmon-lm90-use-programmed-update-rate.patch
+hwmon-add-description-of-the-update_rate-sysfs-attribute.patch
+hwmon-adm1031-allow-setting-update-rate-2.patch
+hwmon-tmp401-01-use-constants-for-sysfs-file-permissions.patch
+hwmon-tmp401-02-reorganize-code-to-get-rid-of-static-forward-declarations.patch
+hwmon-applesmc-01-add-support-for-macbook-pro-5-3-and-5-4.patch
+hwmon-applesmc-02-add-generic-support-for-macbook-pro-6.patch
+hwmon-applesmc-03-add-generic-support-for-macbook-pro-7.patch
+hwmon-applesmc-04-add-temperature-sensor-labels-to-sysfs-interface.patch
+hwmon-emc1403-thermal-sensor-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 3972f18...d6762ed master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.34-rc3-git5
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.34-rc7
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.34-rc7
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard 0a3d7174442c7646f8cc1f054ac590a264951bd8
+HEAD is now at 0a3d717 sysfs: Don't use enums in inline function declaration.
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+serial-bfin_sport_uart-work-around-anomaly-05000473-make-32bit-fifo-read-atomic.patch
+serial-bfin_sport_uart-shorten-the-sport-tx-waiting-loop.patch
+serial-bfin_sport_uart-remove-unused-peripheral-pin-lists.patch
+serial-bfin_sport_uart-add-missing-mapbase-initialization.patch
+serial-bfin_sport_uart-rename-early-platform-driver-class-string.patch
+serial-bfin_sport_uart-add-support-for-cts-rts-via-gpios.patch
+serial-bfin_sport_uart-protect-changes-to-uart_port.patch
+serial-bfin_sport_uart-zero-sport_uart_port-if-allocated-dynamically.patch
+serial-bfin_sport_uart-drop-useless-status-masks.patch
+serial-bfin_sport_uart-only-enable-sport-tx-if-data-is-to-be-sent.patch
+serial-bfin_sport_uart-pull-in-bfin_sport.h-for-sport-defines.patch
+serial-bfin_sport_uart-drop-the-experimental-markings.patch
+serial-bfin_sport_uart-drop-redundant-cpu-depends.patch
+serial-tty-new-ldiscs-for-staging.patch
+tty-n_gsm-line-discipline.patch
+tty-n_gsm-depends-on-net.patch
+serial-uartlite-move-from-byte-accesses-to-word-accesses.patch
+serial-two-branches-the-same-in-timbuart_set_mctrl.patch
+serial-timbuart-make-sure-last-byte-is-sent-when-port-is-closed.patch
+serial167-kill-unused-variables.patch
+serial-add-driver-for-the-altera-jtag-uart.patch
+serial-add-driver-for-the-altera-uart.patch
+tty-fix-obsolete-comment-on-tty_insert_flip_string_fixed_flag.patch
+serial-bfin_sport_uart-use-resource-size-to-fix-off-by-one-error.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + cf68a78...9341c3f master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 9341c3f14b67e2a9430afc5fdddffcea85092c48
+HEAD is now at 9341c3f serial: bfin_sport_uart: Use resource size to fix off-by-one error
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-xhci-fix-issue-with-set-interface-after-stall.patch
+usb-make-hcd.h-public-drivers-dependency.patch
+usb-make-hub.h-public-drivers-dependency.patch
+usb-split-hub.h-into-ch11.h-and-merge-in-hcd.h.patch
+usb-sisusbvga-remove-the-bkl-from-ioctl.patch
+usb-cdc-acm-make-bitfields-unsigned.patch
+usb-remove-large-struct-from-the-stack-in-usb-storage-isd200-driver.patch
+usb-remove-duplicated-include.patch
+usb-remove-bogus-usb_port_feat_-_speed-symbols.patch
+usb-straighten-out-port-feature-vs.-port-status-usage.patch
+usb-remove-uses-of-urb_no_setup_dma_map.patch
+usb-ehci-au1xxx-does-not-need-ehci-io-watchdog.patch
+usb-serial-use-tty_port-version-console-instead-of-usb_serial_port.patch
+usb-musb-allow-board-to-pass-down-fifo-mode.patch
+usb-musb-set-transceiver-interface-type.patch
+usb-musb-build-musb-driver-for-omap4.patch
+usb-musb-add-omap4-support-in-musb-driver.patch
+usb-musb-allow-the-blackfin-vrsel-gpio-to-be-active-low.patch
+usb-musb-add-debugfs-support.patch
+usb-musb-gadget-support-musb-specific-test-modes.patch
+usb-musb-hsdma-use-musb_read-writel.patch
+usb-f_mass_storage-dynamic-buffers-for-better-alignment.patch
+usb-console-pass-baud-from-console-to-the-initial-tty-open.patch
+usb-serial-driver-zio-motherboard.patch
+usb-fix-serial-build-when-sysrq-is-disabled.patch
+usb-add-a-new-quirk-usb_quirk_honor_bnuminterfaces.patch
+usb-serial-allow-drivers-to-define-bulk-buffer-sizes.patch
+usb-cp210x-increase-the-bulk-out-buffer-size-to-256-byte.patch
+usb-cp210x-increase-bulk-in-buffer-size-to-256-byte.patch
+usb-pl2303-increase-the-bulk-out-buffer-size-to-256-byte.patch
+usb-pl2303-increase-bulk-in-buffer-size-to-256-byte.patch
+usb-serial-fix-generic-chars_in_buffer.patch
+usb-serial-fix-missing-locking-on-fifo-in-write-callback.patch
+usb-serial-clear-fifo-on-close.patch
+usb-serial-refactor-generic-close.patch
+usb-serial-refactor-read-urb-submission-in-generic-driver.patch
+usb-serial-remove-unnecessary-re-initialisation-of-generic-urbs.patch
+usb-cp210x-use-generic-submit_read_urb-at-open.patch
+usb-serial-clean-up-read-processing-in-generic-driver.patch
+usb-serial-generalise-generic-read-implementation.patch
+usb-pl2303-switch-to-generic-read-implementation.patch
+usb-serial-export-generic-throttle-and-unthrottle.patch
+usb-ftdi_sio-switch-to-generic-read-implementation.patch
+usb-serial-clean-up-some-error-and-debug-messages-in-generic-driver.patch
+usb-serial-clean-up-generic-write-start-busy-test.patch
+usb-pl2303-switch-to-generic-write-implementation.patch
+usb-pl2303-use-generic-close.patch
+usb-usb_debug-use-the-generic-kfifo-based-write-implementation.patch
+usb-serial-allow-custom-multi-urb-write-bulk-callbacks.patch
+usb-serial-re-implement-multi-urb-writes-in-generic-driver.patch
+usb-serial-generalise-write-buffer-preparation.patch
+usb-ftdi_sio-fix-some-coding-style-issues.patch
+usb-gadget-add-hid-gadget-driver.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:96: space before tab in indent.
+ 	gadget driver. To use, point it at a hidg device and set the
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:97: space before tab in indent.
+ 	device type (keyboard / mouse / joystick) - E.G.:
+warning: 2 lines add whitespace errors.
+usb-option.c-option_indat_callback-resubmit-some-unsuccessful-urbs.patch
+usb-musb-debugfs-musb_exit_debugfs-can-be-called-on-probe.patch
+usb-musb-support-host-gadget-role-switching-on-blackfin-parts.patch
+musb-omap-remove-omap_vbus_power.patch
+musb-blackfin-remove-bfin_vbus_power.patch
+musb-omap-make-musb_platform_suspend-static.patch
+musb-blackfin-remove-musb_platform_-suspend-resume.patch
+usb-musb-omap2430-remove-unused-define.patch
+usb-musb-omap2430.c-remove-unnecessary-includes.patch
+usb-musb-makefile-remove-unexistent-config-option.patch
+usb-musb-add-extvbus-in-musb_board_data.patch
+usb-musb-add-ulpi-access-operations.patch
+usb-gadget-allow-larger-configuration-descriptors.patch
+usb-gadget-f_mass_storage-per-function.patch
+usb-otg-add-global-ulpi-register-definitions.patch
+usb-otg-ulpi-use-the-global-ulpi-register-definitions.patch
+usb-otg-twl4030-use-the-global-ulpi-register-definitions.patch
+usb-pxa27x_udc-use-four-bits-to-store-endpoint-addresses.patch
+usb-fix-usbmon-and-dma-mapping-for-scatter-gather-urbs.patch
+usb-improve-runtime-remote-wakeup-settings.patch
+usb-don-t-enable-remote-wakeup-by-default.patch
+usb-use-pm-core-routines-to-enable-disable-autosuspend.patch
+usb-deprecate-the-power-level-sysfs-attribute.patch
+usb-serial-add-generic-usb-wwan-support.patch
+usb-option-use-generic-usb-wwan-code.patch
+usb-qcserial-use-generic-usb-wwan-code.patch
+usb-qcserial-add-support-for-qualcomm-gobi-2000-devices.patch
+usb-add-parsing-of-superspeed-endpoint-companion-descriptor.patch
+usb-add-stream-id-field-to-struct-urb.patch
+xhci-add-memory-allocation-for-usb3-bulk-streams.patch
+usb-xhci-correct-assumptions-about-number-of-rings-per-endpoint.patch
+usb-support-for-allocating-usb-3.0-streams.patch
+usb-storage-remove-unneeded-sl11r-unusual_devs-entry.patch
+usb-ehci-elide-i-o-watchdog-on-nec-parts.patch
+usb-omap-switch-to-subsys_initcall-for-isp1301-transceiver.patch
+usb-ueagle-fix-coding-styles.patch
+devices-fix-coding-styles.patch
+short-new-graph-for-usb-serial.txt.patch
+usb-rename-usb_buffer_alloc-and-usb_buffer_free-users.patch
+usb-staging-fix-up-usb_buffer_alloc-calls-in-the-staging-tree.patch
+usb-usbserial-mos7720-add-support-for-parallel-port-on-moschip-7715.patch
+usb-usbserial-mos7720-cleanup-consolidation-replace-send_mos_cmd-with-read-write-_mos_reg.patch
+usb-usbserial-fix-mos7720-dependencies.patch
+usb-cdc-ncm-constants-and-structures-added.patch
+usb-ncm-added-ncm.h-with-auxiliary-definitions.patch
+usb-core-config.c-usb_get_configuration-simplified.patch
+usb-clean-up-some-host-controller-sparse-warnings.patch
+usb-composite-framework-add-suspended-sysfs-entry.patch
+usb-mass-storage-gadget-handle-eject-request.patch
+usb-sisusbvga-remove-the-bkl-from-open.patch
+usb-mos7840-cleanup-useless-header.patch
+usb-g_hid-unregister-platform-driver-on-probe-usb_composite_register-errors.patch
+usb-remove-leftover-references-to-udev-autosuspend_disabled.patch
+usb-export-the-new-ch11.h-file-to-userspce.patch
+usb-remove-the-usb_host_ss_ep_comp-structure.patch
+usb-remove-urb_no_setup_dma_map.patch
+usb-xhci-avoid-double-free-after-streams-are-disabled.patch
+usb-option-add-pid-for-zte-product.patch
+usb-qcaux-add-samsung-u520-device-id.patch
+usb-ehci-omap-fix-compilation-warning.patch
+usb-ehci-omap-fix-si-version-related-programming.patch
+usb-mxc-gadget-fix-bitfield-for-calculating-maximum-packet-size.patch
+usb-unusual-dev-add-bad-sense-flag-for-appotech-ax203-based-picture-frames.patch
+usb-whci-declare-functions-as-static.patch
+usb-oti6858-declare-send_data-as-static.patch
+usb-sisusb_con.c-fix-shadows-sparse-warning.patch
+usb-u132-hcd.c-fix-shadows-sparse-warning.patch
+usb-add-definition-for-the-pipe-usage-descriptor.patch
+usb-add-a-usb_pipe_endpoint-convenience-function.patch
+usb-turn-interface_to_usbdev-into-an-inline-function.patch
+usb-change-the-scatterlist-type-in-struct-urb.patch
+usb-gadget-video-class-function-driver.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:13: new blank line at EOF.
++
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:677: new blank line at EOF.
++
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:1056: new blank line at EOF.
++
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:1300: new blank line at EOF.
++
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:1886: new blank line at EOF.
++
+warning: squelched 2 whitespace errors
+warning: 7 lines add whitespace errors.
+usb-gadget-webcam-device.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:44: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+usb-simplify-usb_sg_init.patch
+usb-isp1760-use-resource_size.patch
+usb-ftdi_sio-switch-to-generic-write-implementation.patch
+usb-ftdi_sio-clean-up-sio-write-support.patch
+usb-aircable-rewrite-using-generic-read-and-write-implementations.patch
+usb-serial-reimplement-generic-fifo-based-writes.patch
+usb-serial-remove-multi-urb-write-from-generic-driver.patch
+usb-gadget-webcam-depends-on-video_dev.patch
+wait_event_interruptible_locked-interface.patch
+fs-timerfd.c-make-use-of-wait_event_interruptible_locked_irq.patch
+usb-gadget-__init-and-__exit-tags-removed.patch
+usb-f_fs-the-functionfs-driver.patch
+usb-g_ffs-the-functionfs-gadget-driver.patch
+usb-ffs-test-functionfs-testing-program.patch
+usb-testusb-an-usb-testing-application.patch
+usb-testusb-testusb-compatibility-with-functionfs-gadget.patch
+usb-xhci-set-stream-id-to-0-after-cleaning-up-stalls.patch
+usb-fix-u132-hcd-code-data-warning.patch
+usb-gadget-allow-function-access-to-device-id-data-during-bind.patch
+usb-tty-fix-incorrect-use-of-tty_insert_flip_string_fixed_flag.patch
+usb-ark3116-reimplement-read-processing.patch
+usb-usbcore-do-not-disable-usb3-protocol-ports-in-hub_activate.patch
+usb-isp1760-soften-dw3-x-transaction-error-bit-handling.patch
+usb-ftdi_sio-use-tty_insert_flip_string_fixed_flag.patch
+usb-pl2303-use-tty_insert_flip_string_fixed_flag.patch
+usb-ftdi_sio-clean-up-line-status-handling.patch
+usb-mxc-gadget-remove-60mhz-clock-requirement-for-freescale-mx51-usb-core.patch
+usb-omap3-add-platform-init-code-for-ohci-driver.patch
+usb-ohci-introduce-omap3-ohci-hcd-driver.patch
+usb-ohci-add-kconfig-entries-for-ohci-omap3.patch
+usb-gadget-f_fs.c-needs-to-include-pagemap.h.patch
+usb-xhci-transfer-ring-link-trb-activation-change.patch
+usb-xhci-fix-wrong-usage-of-macro-trb_type.patch
+usb-fix-interface-runtime-pm-settings.patch
+usb-remove-unused-usb_buffer_alloc-and-usb_buffer_free-macros.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 783b686...326f6b9 master     -> quilt/usb  (forced update)
