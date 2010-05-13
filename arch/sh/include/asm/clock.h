@@ -45,13 +45,6 @@ struct clk {
 	struct cpufreq_frequency_table *freq_table;
 };
 
-struct clk_lookup {
-	struct list_head	node;
-	const char		*dev_id;
-	const char		*con_id;
-	struct clk		*clk;
-};
-
 #define CLK_ENABLE_ON_INIT	(1 << 0)
 
 /* Should be defined by processor-specific code */
@@ -158,12 +151,11 @@ int sh_clk_div4_enable_register(struct clk *clks, int nr,
 int sh_clk_div4_reparent_register(struct clk *clks, int nr,
 			 struct clk_div4_table *table);
 
-#define SH_CLK_DIV6(_name, _parent, _reg, _flags)	\
-{							\
-	.name = _name,					\
-	.parent = _parent,				\
-	.enable_reg = (void __iomem *)_reg,		\
-	.flags = _flags,				\
+#define SH_CLK_DIV6(_parent, _reg, _flags)	\
+{						\
+	.parent = _parent,			\
+	.enable_reg = (void __iomem *)_reg,	\
+	.flags = _flags,			\
 }
 
 int sh_clk_div6_register(struct clk *clks, int nr);
