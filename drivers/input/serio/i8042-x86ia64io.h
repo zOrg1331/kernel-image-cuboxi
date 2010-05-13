@@ -479,6 +479,30 @@ static const struct dmi_system_id __initconst i8042_dmi_reset_table[] = {
 	{ }
 };
 
+/*
+ * List of legacy-free boxes that may get upset if we do not trust their
+ * PNP data and try banging ports directly. Boxes that survive direct
+ * port probes without any adverse effects should not be listed here.
+ */
+static const struct dmi_system_id __initconst i8042_dmi_legacy_free_table[] = {
+	{
+		/*
+		 * Intel-based Apple Macs never have an i8042 controller,
+		 * and we shouldn't even try to probe for it as it may
+		 * upset them.
+		 */
+		.matches = {
+			DMI_MATCH(DMI_BIOS_VENDOR, "Apple Computer, Inc.")
+		},
+	},
+	{
+		.matches = {
+			DMI_MATCH(DMI_BIOS_VENDOR, "Apple Inc.")
+		},
+	},
+	{}
+};
+
 #ifdef CONFIG_PNP
 static const struct dmi_system_id __initconst i8042_dmi_nopnp_table[] = {
 	{
@@ -826,6 +850,11 @@ static int __init i8042_platform_init(void)
 {
 	int retval;
 
+#ifdef CONFIG_X86
+	if (dmi_check_system(i8042_dmi_legacy_free_table))
+		return -ENODEV;
+#endif
+
 /*
  * On ix86 platforms touching the i8042 data register region can do really
  * bad things. Because of this the region is always reserved on ix86 boxes.
@@ -833,7 +862,6 @@ static int __init i8042_platform_init(void)
  *	if (!request_region(I8042_DATA_REG, 16, "i8042"))
  *		return -EBUSY;
  */
-
 	i8042_kbd_irq = I8042_MAP_IRQ(1);
 	i8042_aux_irq = I8042_MAP_IRQ(12);
 
