@@ -53,7 +53,7 @@
 
 enum {
 	MAX_NPORTS = 4,     /* max # of ports */
-	SERNUM_LEN = 16,    /* Serial # length */
+	SERNUM_LEN = 24,    /* Serial # length */
 	EC_LEN     = 16,    /* E/C length */
 	ID_LEN     = 16,    /* ID length */
 };
@@ -651,14 +651,11 @@ int t4_link_start(struct adapter *adap, unsigned int mbox, unsigned int port,
 		  struct link_config *lc);
 int t4_restart_aneg(struct adapter *adap, unsigned int mbox, unsigned int port);
 int t4_seeprom_wp(struct adapter *adapter, bool enable);
-int t4_read_flash(struct adapter *adapter, unsigned int addr,
-		  unsigned int nwords, u32 *data, int byte_oriented);
 int t4_load_fw(struct adapter *adapter, const u8 *fw_data, unsigned int size);
 int t4_check_fw_version(struct adapter *adapter);
 int t4_prep_adapter(struct adapter *adapter);
 int t4_port_init(struct adapter *adap, int mbox, int pf, int vf);
 void t4_fatal_err(struct adapter *adapter);
-void t4_set_vlan_accel(struct adapter *adapter, unsigned int ports, int on);
 int t4_set_trace_filter(struct adapter *adapter, const struct trace_params *tp,
 			int filter_index, int enable);
 void t4_get_trace_filter(struct adapter *adapter, struct trace_params *tp,
@@ -709,7 +706,8 @@ int t4_alloc_vi(struct adapter *adap, unsigned int mbox, unsigned int port,
 int t4_free_vi(struct adapter *adap, unsigned int mbox, unsigned int pf,
 	       unsigned int vf, unsigned int viid);
 int t4_set_rxmode(struct adapter *adap, unsigned int mbox, unsigned int viid,
-		int mtu, int promisc, int all_multi, int bcast, bool sleep_ok);
+		int mtu, int promisc, int all_multi, int bcast, int vlanex,
+		bool sleep_ok);
 int t4_alloc_mac_filt(struct adapter *adap, unsigned int mbox,
 		      unsigned int viid, bool free, unsigned int naddr,
 		      const u8 **addr, u16 *idx, u64 *hash, bool sleep_ok);
