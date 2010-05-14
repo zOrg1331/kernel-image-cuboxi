@@ -237,7 +237,6 @@ void r700_cp_stop(struct radeon_device *rdev)
 	WREG32(CP_ME_CNTL, (CP_ME_HALT | CP_PFP_HALT));
 }
 
-
 static int rv770_cp_load_microcode(struct radeon_device *rdev)
 {
 	const __be32 *fw_data;
@@ -272,6 +271,11 @@ static int rv770_cp_load_microcode(struct radeon_device *rdev)
 	return 0;
 }
 
+void r700_cp_fini(struct radeon_device *rdev)
+{
+	r700_cp_stop(rdev);
+	radeon_ring_fini(rdev);
+}
 
 /*
  * Core functions
@@ -906,21 +910,10 @@ int rv770_mc_init(struct radeon_device *rdev)
 	rdev->mc.mc_vram_size = RREG32(CONFIG_MEMSIZE);
 	rdev->mc.real_vram_size = RREG32(CONFIG_MEMSIZE);
 	rdev->mc.visible_vram_size = rdev->mc.aper_size;
-	/* FIXME remove this once we support unmappable VRAM */
-	if (rdev->mc.mc_vram_size > rdev->mc.aper_size) {
-		rdev->mc.mc_vram_size = rdev->mc.aper_size;
-		rdev->mc.real_vram_size = rdev->mc.aper_size;
-	}
 	r600_vram_gtt_location(rdev, &rdev->mc);
 	radeon_update_bandwidth_info(rdev);
 
 	return 0;
-}
-
-int rv770_gpu_reset(struct radeon_device *rdev)
-{
-	/* FIXME: implement any rv770 specific bits */
-	return r600_gpu_reset(rdev);
 }
 
 static int rv770_startup(struct radeon_device *rdev)
@@ -1132,7 +1125,7 @@ int rv770_init(struct radeon_device *rdev)
 	r = rv770_startup(rdev);
 	if (r) {
 		dev_err(rdev->dev, "disabling GPU acceleration\n");
-		r600_cp_fini(rdev);
+		r700_cp_fini(rdev);
 		r600_wb_fini(rdev);
 		r600_irq_fini(rdev);
 		radeon_irq_kms_fini(rdev);
@@ -1166,7 +1159,7 @@ void rv770_fini(struct radeon_device *rdev)
 {
 	radeon_pm_fini(rdev);
 	r600_blit_fini(rdev);
-	r600_cp_fini(rdev);
+	r700_cp_fini(rdev);
 	r600_wb_fini(rdev);
 	r600_irq_fini(rdev);
 	radeon_irq_kms_fini(rdev);
