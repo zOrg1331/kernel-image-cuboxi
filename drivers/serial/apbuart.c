@@ -520,11 +520,16 @@ static struct console grlib_apbuart_console = {
 };
 
 
-static void grlib_apbuart_configure(void);
+static int __init grlib_apbuart_configure(void);
 
 static int __init apbuart_console_init(void)
 {
-	grlib_apbuart_configure();
+	int ret;
+
+	ret = grlib_apbuart_configure();
+	if (ret)
+		return ret;
+
 	register_console(&grlib_apbuart_console);
 	return 0;
 }
@@ -593,7 +598,7 @@ static struct of_platform_driver grlib_apbuart_of_driver = {
 };
 
 
-static void grlib_apbuart_configure(void)
+static int __init grlib_apbuart_configure(void)
 {
 	static int enum_done;
 	struct device_node *np, *rp;
@@ -606,12 +611,14 @@ static void grlib_apbuart_configure(void)
 	struct amba_prom_registers *regs;
 
 	if (enum_done)
-		return;
+		return -ENODEV;
 
 	/* Get bus frequency */
 	rp = of_find_node_by_path("/");
 	rp = of_get_next_child(rp, NULL);
 	prop = of_get_property(rp, "clock-frequency", NULL);
+	if (!prop)
+		return -ENODEV;
 	freq_khz = *prop;
 
 	line = 0;
@@ -629,7 +636,7 @@ static void grlib_apbuart_configure(void)
 			d = *device;
 
 		if (!irqs || !regs)
-			return;
+			return -ENODEV;
 
 		grlib_apbuart_nodes[line] = np;
 
@@ -658,6 +665,8 @@ static void grlib_apbuart_configure(void)
 	enum_done = 1;
 
 	grlib_apbuart_driver.nr = grlib_apbuart_port_nr = line;
+
+	return line ? 0 : -ENODEV;
 }
 
 static int __init grlib_apbuart_init(void)
