@@ -158,7 +158,6 @@ struct ceph_connection {
 	struct list_head out_queue;
 	struct list_head out_sent;   /* sending or sent but unacked */
 	u64 out_seq;		     /* last message queued for send */
-	u64 out_seq_sent;            /* last message sent */
 	bool out_keepalive_pending;
 
 	u64 in_seq, in_seq_acked;  /* last message received, acked */
@@ -234,9 +233,7 @@ extern void ceph_con_keepalive(struct ceph_connection *con);
 extern struct ceph_connection *ceph_con_get(struct ceph_connection *con);
 extern void ceph_con_put(struct ceph_connection *con);
 
-extern struct ceph_msg *ceph_msg_new(int type, int front_len,
-				     int page_len, int page_off,
-				     struct page **pages);
+extern struct ceph_msg *ceph_msg_new(int type, int front_len);
 extern void ceph_msg_kfree(struct ceph_msg *m);
 
 
