@@ -44,6 +44,12 @@
 
 #include "r8192S_firmware.h"
 
+/* EEPROM defs for use with linux/eeprom_93cx6.h */
+#define RTL819X_EEPROM_CMD_READ		(1 << 0)
+#define RTL819X_EEPROM_CMD_WRITE	(1 << 1)
+#define RTL819X_EEPROM_CMD_CK		(1 << 2)
+#define RTL819X_EEPROM_CMD_CS		(1 << 3)
+
 //#define RTL8192U
 #define RTL819xU_MODULE_NAME "rtl819xU"
 //added for HW security, john.0629
@@ -735,11 +741,6 @@ typedef enum _RTL8192SUSB_LOOPBACK{
 #define RSVD_FW_QUEUE_PAGE_CMD_SHIFT	0x08
 #define RSVD_FW_QUEUE_PAGE_BCN_SHIFT	0x00
 #define RSVD_FW_QUEUE_PAGE_PUB_SHIFT	0x08
-//=================================================================
-//=================================================================
-
-#define EPROM_93c46 0
-#define EPROM_93c56 1
 
 #define DEFAULT_FRAG_THRESHOLD 2342U
 #define MIN_FRAG_THRESHOLD     256U
@@ -1123,8 +1124,7 @@ typedef struct r8192_priv
 {
 	struct rtl819x_ops* ops;
 	struct usb_device *udev;
-	//added for maintain info from eeprom
-	short epromtype;
+	/* added for maintain info from eeprom */
 	u16 eeprom_vid;
 	u16 eeprom_pid;
 	u8  eeprom_CustomerID;

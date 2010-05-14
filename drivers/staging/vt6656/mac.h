@@ -421,7 +421,7 @@
 /*---------------------  Export Functions  --------------------------*/
 
 void MACvSetMultiAddrByHash (PSDevice pDevice, BYTE byHashIdx);
-VOID MACvWriteMultiAddr (PSDevice pDevice, UINT uByteIdx, BYTE byData);
+void MACvWriteMultiAddr(PSDevice pDevice, UINT uByteIdx, BYTE byData);
 BOOL MACbShutdown(PSDevice pDevice);;
 void MACvSetBBType(PSDevice pDevice,BYTE byType);
 void MACvSetMISCFifo (PSDevice pDevice, WORD wOffset, DWORD dwData);
@@ -439,4 +439,4 @@ void MACvEnableBarkerPreambleMd(PSDevice pDevice);
 void MACvDisableBarkerPreambleMd(PSDevice pDevice);
 void MACvWriteBeaconInterval(PSDevice pDevice, WORD wInterval);
 
-#endif // __MAC_H__
+#endif /* __MAC_H__ */

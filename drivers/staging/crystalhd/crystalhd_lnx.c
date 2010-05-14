@@ -15,7 +15,7 @@
   along with this driver.  If not, see <http://www.gnu.org/licenses/>.
 ***************************************************************************/
 
-#include <linux/version.h>
+#include <linux/smp_lock.h>
 #include <linux/slab.h>
 
 #include "crystalhd_lnx.h"
@@ -51,7 +51,7 @@ static int chd_dec_enable_int(struct crystalhd_adp *adp)
 	rc = request_irq(adp->pdev->irq, chd_dec_isr, IRQF_SHARED,
 			 adp->name, (void *)adp);
 	if (rc) {
-		BCMLOG_ERR("Interrupt request failed.. \n");
+		BCMLOG_ERR("Interrupt request failed..\n");
 		pci_disable_msi(adp->pdev);
 	}
 
@@ -112,7 +112,7 @@ static inline int crystalhd_user_data(unsigned long ud, void *dr, int size, int 
 	int rc;
 
 	if (!ud || !dr) {
-		BCMLOG_ERR("Invalid arg \n");
+		BCMLOG_ERR("Invalid arg\n");
 		return -EINVAL;
 	}
 
@@ -122,7 +122,7 @@ static inline int crystalhd_user_data(unsigned long ud, void *dr, int size, int 
 		rc = copy_from_user(dr, (void *)ud, size);
 
 	if (rc) {
-		BCMLOG_ERR("Invalid args for command \n");
+		BCMLOG_ERR("Invalid args for command\n");
 		rc = -EFAULT;
 	}
 
@@ -206,7 +206,7 @@ static int chd_dec_proc_user_data(struct crystalhd_adp *adp,
 
 	rc = crystalhd_user_data(ua, &io->udata, sizeof(io->udata), set);
 	if (rc) {
-		BCMLOG_ERR("failed to %s iodata \n", (set ? "set" : "get"));
+		BCMLOG_ERR("failed to %s iodata\n", (set ? "set" : "get"));
 		return rc;
 	}
 
@@ -261,12 +261,12 @@ static int chd_dec_api_cmd(struct crystalhd_adp *adp, unsigned long ua,
 }
 
 /* API interfaces */
-static int chd_dec_ioctl(struct inode *in, struct file *fd,
-			 unsigned int cmd, unsigned long ua)
+static long chd_dec_ioctl(struct file *fd, unsigned int cmd, unsigned long ua)
 {
 	struct crystalhd_adp *adp = chd_get_adp();
 	crystalhd_cmd_proc cproc;
 	struct crystalhd_user *uc;
+	int ret;
 
 	if (!adp || !fd) {
 		BCMLOG_ERR("Invalid adp\n");
@@ -279,13 +279,17 @@ static int chd_dec_ioctl(struct inode *in, struct file *fd,
 		return -ENODATA;
 	}
 
+	lock_kernel();
 	cproc = crystalhd_get_cmd_proc(&adp->cmds, cmd, uc);
 	if (!cproc) {
 		BCMLOG_ERR("Unhandled command: %d\n", cmd);
+		unlock_kernel();
 		return -EINVAL;
 	}
 
-	return chd_dec_api_cmd(adp, ua, uc->uid, cmd, cproc);
+	ret = chd_dec_api_cmd(adp, ua, uc->uid, cmd, cproc);
+	unlock_kernel();
+	return ret;
 }
 
 static int chd_dec_open(struct inode *in, struct file *fd)
@@ -308,7 +312,7 @@ static int chd_dec_open(struct inode *in, struct file *fd)
 
 	sts = crystalhd_user_open(&adp->cmds, &uc);
 	if (sts != BC_STS_SUCCESS) {
-		BCMLOG_ERR("cmd_user_open - %d \n", sts);
+		BCMLOG_ERR("cmd_user_open - %d\n", sts);
 		rc = -EBUSY;
 	}
 
@@ -326,7 +330,7 @@ static int chd_dec_close(struct inode *in, struct file *fd)
 
 	BCMLOG_ENTER;
 	if (!adp) {
-		BCMLOG_ERR("Invalid adp \n");
+		BCMLOG_ERR("Invalid adp\n");
 		return -EINVAL;
 	}
 
@@ -345,7 +349,7 @@ static int chd_dec_close(struct inode *in, struct file *fd)
 
 static const struct file_operations chd_dec_fops = {
 	.owner   = THIS_MODULE,
-	.ioctl   = chd_dec_ioctl,
+	.unlocked_ioctl = chd_dec_ioctl,
 	.open    = chd_dec_open,
 	.release = chd_dec_close,
 };
@@ -376,7 +380,7 @@ static int __devinit chd_dec_init_chdev(struct crystalhd_adp *adp)
 
 	dev = device_create(crystalhd_class, NULL, MKDEV(adp->chd_dec_major, 0),
 			    NULL, "crystalhd");
-	if (!dev) {
+	if (IS_ERR(dev)) {
 		BCMLOG_ERR("failed to create device\n");
 		goto device_create_fail;
 	}
@@ -521,7 +525,7 @@ static void __devexit chd_dec_pci_remove(struct pci_dev *pdev)
 
 	sts = crystalhd_delete_cmd_context(&pinfo->cmds);
 	if (sts != BC_STS_SUCCESS)
-		BCMLOG_ERR("cmd delete :%d \n", sts);
+		BCMLOG_ERR("cmd delete :%d\n", sts);
 
 	chd_dec_release_chdev(pinfo);
 
@@ -581,7 +585,7 @@ static int __devinit chd_dec_pci_probe(struct pci_dev *pdev,
 	chd_dec_init_chdev(pinfo);
 	rc = chd_dec_enable_int(pinfo);
 	if (rc) {
-		BCMLOG_ERR("_enable_int err:%d \n", rc);
+		BCMLOG_ERR("_enable_int err:%d\n", rc);
 		pci_disable_device(pdev);
 		return -ENODEV;
 	}
@@ -601,7 +605,7 @@ static int __devinit chd_dec_pci_probe(struct pci_dev *pdev,
 
 	sts = crystalhd_setup_cmd_context(&pinfo->cmds, pinfo);
 	if (sts != BC_STS_SUCCESS) {
-		BCMLOG_ERR("cmd setup :%d \n", sts);
+		BCMLOG_ERR("cmd setup :%d\n", sts);
 		pci_disable_device(pdev);
 		return -ENODEV;
 	}
@@ -675,7 +679,7 @@ int chd_dec_pci_resume(struct pci_dev *pdev)
 
 	rc = chd_dec_enable_int(adp);
 	if (rc) {
-		BCMLOG_ERR("_enable_int err:%d \n", rc);
+		BCMLOG_ERR("_enable_int err:%d\n", rc);
 		pci_disable_device(pdev);
 		return -ENODEV;
 	}
@@ -738,13 +742,13 @@ static int __init chd_dec_module_init(void)
 	int rc;
 
 	chd_set_log_level(NULL, "debug");
-	BCMLOG(BCMLOG_DATA, "Loading crystalhd %d.%d.%d \n",
+	BCMLOG(BCMLOG_DATA, "Loading crystalhd %d.%d.%d\n",
 	       crystalhd_kmod_major, crystalhd_kmod_minor, crystalhd_kmod_rev);
 
 	rc = pci_register_driver(&bc_chd_70012_driver);
 
 	if (rc < 0)
-		BCMLOG_ERR("Could not find any devices. err:%d \n", rc);
+		BCMLOG_ERR("Could not find any devices. err:%d\n", rc);
 
 	return rc;
 }
@@ -752,7 +756,7 @@ module_init(chd_dec_module_init);
 
 static void __exit chd_dec_module_cleanup(void)
 {
-	BCMLOG(BCMLOG_DATA, "unloading crystalhd %d.%d.%d \n",
+	BCMLOG(BCMLOG_DATA, "unloading crystalhd %d.%d.%d\n",
 	       crystalhd_kmod_major, crystalhd_kmod_minor, crystalhd_kmod_rev);
 
 	pci_unregister_driver(&bc_chd_70012_driver);
