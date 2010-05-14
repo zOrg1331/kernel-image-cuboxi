@@ -32,6 +32,7 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
+#include <linux/reboot.h>
 #include <linux/mtd/compatmac.h>
 #include <linux/mtd/map.h>
 #include <linux/mtd/mtd.h>
@@ -43,10 +44,6 @@
 
 #define MAX_WORD_RETRIES 3
 
-#define MANUFACTURER_AMD	0x0001
-#define MANUFACTURER_ATMEL	0x001F
-#define MANUFACTURER_MACRONIX	0x00C2
-#define MANUFACTURER_SST	0x00BF
 #define SST49LF004B	        0x0060
 #define SST49LF040B	        0x0050
 #define SST49LF008A		0x005a
@@ -60,6 +57,7 @@ static int cfi_amdstd_erase_varsize(struct mtd_info *, struct erase_info *);
 static void cfi_amdstd_sync (struct mtd_info *);
 static int cfi_amdstd_suspend (struct mtd_info *);
 static void cfi_amdstd_resume (struct mtd_info *);
+static int cfi_amdstd_reboot(struct notifier_block *, unsigned long, void *);
 static int cfi_amdstd_secsi_read (struct mtd_info *, loff_t, size_t, size_t *, u_char *);
 
 static void cfi_amdstd_destroy(struct mtd_info *);
@@ -168,7 +166,7 @@ static void fixup_amd_bootblock(struct mtd_info *mtd, void* param)
 			 * This reduces the risk of false detection due to
 			 * the 8-bit device ID.
 			 */
-			(cfi->mfr == MANUFACTURER_MACRONIX)) {
+			(cfi->mfr == CFI_MFR_MACRONIX)) {
 			DEBUG(MTD_DEBUG_LEVEL1,
 				"%s: Macronix MX29LV400C with bottom boot block"
 				" detected\n", map->name);
@@ -286,7 +284,7 @@ static struct cfi_fixup cfi_fixup_table[] = {
 	{ CFI_MFR_ATMEL, CFI_ID_ANY, fixup_convert_atmel_pri, NULL },
 #ifdef AMD_BOOTLOC_BUG
 	{ CFI_MFR_AMD, CFI_ID_ANY, fixup_amd_bootblock, NULL },
-	{ MANUFACTURER_MACRONIX, CFI_ID_ANY, fixup_amd_bootblock, NULL },
+	{ CFI_MFR_MACRONIX, CFI_ID_ANY, fixup_amd_bootblock, NULL },
 #endif
 	{ CFI_MFR_AMD, 0x0050, fixup_use_secsi, NULL, },
 	{ CFI_MFR_AMD, 0x0053, fixup_use_secsi, NULL, },
@@ -304,9 +302,9 @@ static struct cfi_fixup cfi_fixup_table[] = {
 	{ 0, 0, NULL, NULL }
 };
 static struct cfi_fixup jedec_fixup_table[] = {
-	{ MANUFACTURER_SST, SST49LF004B, fixup_use_fwh_lock, NULL, },
-	{ MANUFACTURER_SST, SST49LF040B, fixup_use_fwh_lock, NULL, },
-	{ MANUFACTURER_SST, SST49LF008A, fixup_use_fwh_lock, NULL, },
+	{ CFI_MFR_SST, SST49LF004B, fixup_use_fwh_lock, NULL, },
+	{ CFI_MFR_SST, SST49LF040B, fixup_use_fwh_lock, NULL, },
+	{ CFI_MFR_SST, SST49LF008A, fixup_use_fwh_lock, NULL, },
 	{ 0, 0, NULL, NULL }
 };
 
@@ -354,6 +352,8 @@ struct mtd_info *cfi_cmdset_0002(struct map_info *map, int primary)
 	mtd->flags   = MTD_CAP_NORFLASH;
 	mtd->name    = map->name;
 	mtd->writesize = 1;
+
+	mtd->reboot_notifier.notifier_call = cfi_amdstd_reboot;
 
 	if (cfi->cfi_mode==CFI_MODE_CFI){
 		unsigned char bootloc;
@@ -491,13 +491,12 @@ static struct mtd_info *cfi_amdstd_setup(struct mtd_info *mtd)
 #endif
 
 	__module_get(THIS_MODULE);
+	register_reboot_notifier(&mtd->reboot_notifier);
 	return mtd;
 
  setup_err:
-	if(mtd) {
-		kfree(mtd->eraseregions);
-		kfree(mtd);
-	}
+	kfree(mtd->eraseregions);
+	kfree(mtd);
 	kfree(cfi->cmdset_priv);
 	kfree(cfi->cfiq);
 	return NULL;
@@ -571,9 +570,9 @@ static int get_chip(struct map_info *map, struct flchip *chip, unsigned long adr
 				printk(KERN_ERR "Waiting for chip to be ready timed out.\n");
 				return -EIO;
 			}
-			spin_unlock(chip->mutex);
+			mutex_unlock(&chip->mutex);
 			cfi_udelay(1);
-			spin_lock(chip->mutex);
+			mutex_lock(&chip->mutex);
 			/* Someone else might have been playing with it. */
 			goto retry;
 		}
@@ -617,9 +616,9 @@ static int get_chip(struct map_info *map, struct flchip *chip, unsigned long adr
 				return -EIO;
 			}
 
-			spin_unlock(chip->mutex);
+			mutex_unlock(&chip->mutex);
 			cfi_udelay(1);
-			spin_lock(chip->mutex);
+			mutex_lock(&chip->mutex);
 			/* Nobody will touch it while it's in state FL_ERASE_SUSPENDING.
 			   So we can just loop here. */
 		}
@@ -634,6 +633,10 @@ static int get_chip(struct map_info *map, struct flchip *chip, unsigned long adr
 		chip->state = FL_READY;
 		return 0;
 
+	case FL_SHUTDOWN:
+		/* The machine is rebooting */
+		return -EIO;
+
 	case FL_POINT:
 		/* Only if there's no operation suspended... */
 		if (mode == FL_READY && chip->oldstate == FL_READY)
@@ -643,10 +646,10 @@ static int get_chip(struct map_info *map, struct flchip *chip, unsigned long adr
 	sleep:
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		add_wait_queue(&chip->wq, &wait);
-		spin_unlock(chip->mutex);
+		mutex_unlock(&chip->mutex);
 		schedule();
 		remove_wait_queue(&chip->wq, &wait);
-		spin_lock(chip->mutex);
+		mutex_lock(&chip->mutex);
 		goto resettime;
 	}
 }
@@ -778,7 +781,7 @@ static void __xipram xip_udelay(struct map_info *map, struct flchip *chip,
 			(void) map_read(map, adr);
 			xip_iprefetch();
 			local_irq_enable();
-			spin_unlock(chip->mutex);
+			mutex_unlock(&chip->mutex);
 			xip_iprefetch();
 			cond_resched();
 
@@ -788,15 +791,15 @@ static void __xipram xip_udelay(struct map_info *map, struct flchip *chip,
 			 * a suspended erase state.  If so let's wait
 			 * until it's done.
 			 */
-			spin_lock(chip->mutex);
+			mutex_lock(&chip->mutex);
 			while (chip->state != FL_XIP_WHILE_ERASING) {
 				DECLARE_WAITQUEUE(wait, current);
 				set_current_state(TASK_UNINTERRUPTIBLE);
 				add_wait_queue(&chip->wq, &wait);
-				spin_unlock(chip->mutex);
+				mutex_unlock(&chip->mutex);
 				schedule();
 				remove_wait_queue(&chip->wq, &wait);
-				spin_lock(chip->mutex);
+				mutex_lock(&chip->mutex);
 			}
 			/* Disallow XIP again */
 			local_irq_disable();
@@ -858,17 +861,17 @@ static void __xipram xip_udelay(struct map_info *map, struct flchip *chip,
 
 #define UDELAY(map, chip, adr, usec)  \
 do {  \
-	spin_unlock(chip->mutex);  \
+	mutex_unlock(&chip->mutex);  \
 	cfi_udelay(usec);  \
-	spin_lock(chip->mutex);  \
+	mutex_lock(&chip->mutex);  \
 } while (0)
 
 #define INVALIDATE_CACHE_UDELAY(map, chip, adr, len, usec)  \
 do {  \
-	spin_unlock(chip->mutex);  \
+	mutex_unlock(&chip->mutex);  \
 	INVALIDATE_CACHED_RANGE(map, adr, len);  \
 	cfi_udelay(usec);  \
-	spin_lock(chip->mutex);  \
+	mutex_lock(&chip->mutex);  \
 } while (0)
 
 #endif
@@ -884,10 +887,10 @@ static inline int do_read_onechip(struct map_info *map, struct flchip *chip, lof
 	/* Ensure cmd read/writes are aligned. */
 	cmd_addr = adr & ~(map_bankwidth(map)-1);
 
-	spin_lock(chip->mutex);
+	mutex_lock(&chip->mutex);
 	ret = get_chip(map, chip, cmd_addr, FL_READY);
 	if (ret) {
-		spin_unlock(chip->mutex);
+		mutex_unlock(&chip->mutex);
 		return ret;
 	}
 
@@ -900,7 +903,7 @@ static inline int do_read_onechip(struct map_info *map, struct flchip *chip, lof
 
 	put_chip(map, chip, cmd_addr);
 
-	spin_unlock(chip->mutex);
+	mutex_unlock(&chip->mutex);
 	return 0;
 }
 
@@ -954,7 +957,7 @@ static inline int do_read_secsi_onechip(struct map_info *map, struct flchip *chi
 	struct cfi_private *cfi = map->fldrv_priv;
 
  retry:
-	spin_lock(chip->mutex);
+	mutex_lock(&chip->mutex);
 
 	if (chip->state != FL_READY){
 #if 0
@@ -963,7 +966,7 @@ static inline int do_read_secsi_onechip(struct map_info *map, struct flchip *chi
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		add_wait_queue(&chip->wq, &wait);
 
-		spin_unlock(chip->mutex);
+		mutex_unlock(&chip->mutex);
 
 		schedule();
 		remove_wait_queue(&chip->wq, &wait);
@@ -992,7 +995,7 @@ static inline int do_read_secsi_onechip(struct map_info *map, struct flchip *chi
 	cfi_send_gen_cmd(0x00, cfi->addr_unlock1, chip->start, map, cfi, cfi->device_type, NULL);
 
 	wake_up(&chip->wq);
-	spin_unlock(chip->mutex);
+	mutex_unlock(&chip->mutex);
 
 	return 0;
 }
@@ -1061,10 +1064,10 @@ static int __xipram do_write_oneword(struct map_info *map, struct flchip *chip, 
 
 	adr += chip->start;
 
-	spin_lock(chip->mutex);
+	mutex_lock(&chip->mutex);
 	ret = get_chip(map, chip, adr, FL_WRITING);
 	if (ret) {
-		spin_unlock(chip->mutex);
+		mutex_unlock(&chip->mutex);
 		return ret;
 	}
 
@@ -1107,11 +1110,11 @@ static int __xipram do_write_oneword(struct map_info *map, struct flchip *chip, 
 
 			set_current_state(TASK_UNINTERRUPTIBLE);
 			add_wait_queue(&chip->wq, &wait);
-			spin_unlock(chip->mutex);
+			mutex_unlock(&chip->mutex);
 			schedule();
 			remove_wait_queue(&chip->wq, &wait);
 			timeo = jiffies + (HZ / 2); /* FIXME */
-			spin_lock(chip->mutex);
+			mutex_lock(&chip->mutex);
 			continue;
 		}
 
@@ -1143,7 +1146,7 @@ static int __xipram do_write_oneword(struct map_info *map, struct flchip *chip, 
  op_done:
 	chip->state = FL_READY;
 	put_chip(map, chip, adr);
-	spin_unlock(chip->mutex);
+	mutex_unlock(&chip->mutex);
 
 	return ret;
 }
@@ -1175,7 +1178,7 @@ static int cfi_amdstd_write_words(struct mtd_info *mtd, loff_t to, size_t len,
 		map_word tmp_buf;
 
  retry:
-		spin_lock(cfi->chips[chipnum].mutex);
+		mutex_lock(&cfi->chips[chipnum].mutex);
 
 		if (cfi->chips[chipnum].state != FL_READY) {
 #if 0
@@ -1184,7 +1187,7 @@ static int cfi_amdstd_write_words(struct mtd_info *mtd, loff_t to, size_t len,
 			set_current_state(TASK_UNINTERRUPTIBLE);
 			add_wait_queue(&cfi->chips[chipnum].wq, &wait);
 
-			spin_unlock(cfi->chips[chipnum].mutex);
+			mutex_unlock(&cfi->chips[chipnum].mutex);
 
 			schedule();
 			remove_wait_queue(&cfi->chips[chipnum].wq, &wait);
@@ -1198,7 +1201,7 @@ static int cfi_amdstd_write_words(struct mtd_info *mtd, loff_t to, size_t len,
 		/* Load 'tmp_buf' with old contents of flash */
 		tmp_buf = map_read(map, bus_ofs+chipstart);
 
-		spin_unlock(cfi->chips[chipnum].mutex);
+		mutex_unlock(&cfi->chips[chipnum].mutex);
 
 		/* Number of bytes to copy from buffer */
 		n = min_t(int, len, map_bankwidth(map)-i);
@@ -1253,7 +1256,7 @@ static int cfi_amdstd_write_words(struct mtd_info *mtd, loff_t to, size_t len,
 		map_word tmp_buf;
 
  retry1:
-		spin_lock(cfi->chips[chipnum].mutex);
+		mutex_lock(&cfi->chips[chipnum].mutex);
 
 		if (cfi->chips[chipnum].state != FL_READY) {
 #if 0
@@ -1262,7 +1265,7 @@ static int cfi_amdstd_write_words(struct mtd_info *mtd, loff_t to, size_t len,
 			set_current_state(TASK_UNINTERRUPTIBLE);
 			add_wait_queue(&cfi->chips[chipnum].wq, &wait);
 
-			spin_unlock(cfi->chips[chipnum].mutex);
+			mutex_unlock(&cfi->chips[chipnum].mutex);
 
 			schedule();
 			remove_wait_queue(&cfi->chips[chipnum].wq, &wait);
@@ -1275,7 +1278,7 @@ static int cfi_amdstd_write_words(struct mtd_info *mtd, loff_t to, size_t len,
 
 		tmp_buf = map_read(map, ofs + chipstart);
 
-		spin_unlock(cfi->chips[chipnum].mutex);
+		mutex_unlock(&cfi->chips[chipnum].mutex);
 
 		tmp_buf = map_word_load_partial(map, tmp_buf, buf, 0, len);
 
@@ -1310,10 +1313,10 @@ static int __xipram do_write_buffer(struct map_info *map, struct flchip *chip,
 	adr += chip->start;
 	cmd_adr = adr;
 
-	spin_lock(chip->mutex);
+	mutex_lock(&chip->mutex);
 	ret = get_chip(map, chip, adr, FL_WRITING);
 	if (ret) {
-		spin_unlock(chip->mutex);
+		mutex_unlock(&chip->mutex);
 		return ret;
 	}
 
@@ -1368,11 +1371,11 @@ static int __xipram do_write_buffer(struct map_info *map, struct flchip *chip,
 
 			set_current_state(TASK_UNINTERRUPTIBLE);
 			add_wait_queue(&chip->wq, &wait);
-			spin_unlock(chip->mutex);
+			mutex_unlock(&chip->mutex);
 			schedule();
 			remove_wait_queue(&chip->wq, &wait);
 			timeo = jiffies + (HZ / 2); /* FIXME */
-			spin_lock(chip->mutex);
+			mutex_lock(&chip->mutex);
 			continue;
 		}
 
@@ -1400,7 +1403,7 @@ static int __xipram do_write_buffer(struct map_info *map, struct flchip *chip,
  op_done:
 	chip->state = FL_READY;
 	put_chip(map, chip, adr);
-	spin_unlock(chip->mutex);
+	mutex_unlock(&chip->mutex);
 
 	return ret;
 }
@@ -1500,10 +1503,10 @@ static int __xipram do_erase_chip(struct map_info *map, struct flchip *chip)
 
 	adr = cfi->addr_unlock1;
 
-	spin_lock(chip->mutex);
+	mutex_lock(&chip->mutex);
 	ret = get_chip(map, chip, adr, FL_WRITING);
 	if (ret) {
-		spin_unlock(chip->mutex);
+		mutex_unlock(&chip->mutex);
 		return ret;
 	}
 
@@ -1536,10 +1539,10 @@ static int __xipram do_erase_chip(struct map_info *map, struct flchip *chip)
 			/* Someone's suspended the erase. Sleep */
 			set_current_state(TASK_UNINTERRUPTIBLE);
 			add_wait_queue(&chip->wq, &wait);
-			spin_unlock(chip->mutex);
+			mutex_unlock(&chip->mutex);
 			schedule();
 			remove_wait_queue(&chip->wq, &wait);
-			spin_lock(chip->mutex);
+			mutex_lock(&chip->mutex);
 			continue;
 		}
 		if (chip->erase_suspended) {
@@ -1573,7 +1576,7 @@ static int __xipram do_erase_chip(struct map_info *map, struct flchip *chip)
 	chip->state = FL_READY;
 	xip_enable(map, chip, adr);
 	put_chip(map, chip, adr);
-	spin_unlock(chip->mutex);
+	mutex_unlock(&chip->mutex);
 
 	return ret;
 }
@@ -1588,10 +1591,10 @@ static int __xipram do_erase_oneblock(struct map_info *map, struct flchip *chip,
 
 	adr += chip->start;
 
-	spin_lock(chip->mutex);
+	mutex_lock(&chip->mutex);
 	ret = get_chip(map, chip, adr, FL_ERASING);
 	if (ret) {
-		spin_unlock(chip->mutex);
+		mutex_unlock(&chip->mutex);
 		return ret;
 	}
 
@@ -1624,10 +1627,10 @@ static int __xipram do_erase_oneblock(struct map_info *map, struct flchip *chip,
 			/* Someone's suspended the erase. Sleep */
 			set_current_state(TASK_UNINTERRUPTIBLE);
 			add_wait_queue(&chip->wq, &wait);
-			spin_unlock(chip->mutex);
+			mutex_unlock(&chip->mutex);
 			schedule();
 			remove_wait_queue(&chip->wq, &wait);
-			spin_lock(chip->mutex);
+			mutex_lock(&chip->mutex);
 			continue;
 		}
 		if (chip->erase_suspended) {
@@ -1663,7 +1666,7 @@ static int __xipram do_erase_oneblock(struct map_info *map, struct flchip *chip,
 
 	chip->state = FL_READY;
 	put_chip(map, chip, adr);
-	spin_unlock(chip->mutex);
+	mutex_unlock(&chip->mutex);
 	return ret;
 }
 
@@ -1715,7 +1718,7 @@ static int do_atmel_lock(struct map_info *map, struct flchip *chip,
 	struct cfi_private *cfi = map->fldrv_priv;
 	int ret;
 
-	spin_lock(chip->mutex);
+	mutex_lock(&chip->mutex);
 	ret = get_chip(map, chip, adr + chip->start, FL_LOCKING);
 	if (ret)
 		goto out_unlock;
@@ -1741,7 +1744,7 @@ static int do_atmel_lock(struct map_info *map, struct flchip *chip,
 	ret = 0;
 
 out_unlock:
-	spin_unlock(chip->mutex);
+	mutex_unlock(&chip->mutex);
 	return ret;
 }
 
@@ -1751,7 +1754,7 @@ static int do_atmel_unlock(struct map_info *map, struct flchip *chip,
 	struct cfi_private *cfi = map->fldrv_priv;
 	int ret;
 
-	spin_lock(chip->mutex);
+	mutex_lock(&chip->mutex);
 	ret = get_chip(map, chip, adr + chip->start, FL_UNLOCKING);
 	if (ret)
 		goto out_unlock;
@@ -1769,7 +1772,7 @@ static int do_atmel_unlock(struct map_info *map, struct flchip *chip,
 	ret = 0;
 
 out_unlock:
-	spin_unlock(chip->mutex);
+	mutex_unlock(&chip->mutex);
 	return ret;
 }
 
@@ -1797,7 +1800,7 @@ static void cfi_amdstd_sync (struct mtd_info *mtd)
 		chip = &cfi->chips[i];
 
 	retry:
-		spin_lock(chip->mutex);
+		mutex_lock(&chip->mutex);
 
 		switch(chip->state) {
 		case FL_READY:
@@ -1811,7 +1814,7 @@ static void cfi_amdstd_sync (struct mtd_info *mtd)
 			 * with the chip now anyway.
 			 */
 		case FL_SYNCING:
-			spin_unlock(chip->mutex);
+			mutex_unlock(&chip->mutex);
 			break;
 
 		default:
@@ -1819,7 +1822,7 @@ static void cfi_amdstd_sync (struct mtd_info *mtd)
 			set_current_state(TASK_UNINTERRUPTIBLE);
 			add_wait_queue(&chip->wq, &wait);
 
-			spin_unlock(chip->mutex);
+			mutex_unlock(&chip->mutex);
 
 			schedule();
 
@@ -1834,13 +1837,13 @@ static void cfi_amdstd_sync (struct mtd_info *mtd)
 	for (i--; i >=0; i--) {
 		chip = &cfi->chips[i];
 
-		spin_lock(chip->mutex);
+		mutex_lock(&chip->mutex);
 
 		if (chip->state == FL_SYNCING) {
 			chip->state = chip->oldstate;
 			wake_up(&chip->wq);
 		}
-		spin_unlock(chip->mutex);
+		mutex_unlock(&chip->mutex);
 	}
 }
 
@@ -1856,7 +1859,7 @@ static int cfi_amdstd_suspend(struct mtd_info *mtd)
 	for (i=0; !ret && i<cfi->numchips; i++) {
 		chip = &cfi->chips[i];
 
-		spin_lock(chip->mutex);
+		mutex_lock(&chip->mutex);
 
 		switch(chip->state) {
 		case FL_READY:
@@ -1876,7 +1879,7 @@ static int cfi_amdstd_suspend(struct mtd_info *mtd)
 			ret = -EAGAIN;
 			break;
 		}
-		spin_unlock(chip->mutex);
+		mutex_unlock(&chip->mutex);
 	}
 
 	/* Unlock the chips again */
@@ -1885,13 +1888,13 @@ static int cfi_amdstd_suspend(struct mtd_info *mtd)
 		for (i--; i >=0; i--) {
 			chip = &cfi->chips[i];
 
-			spin_lock(chip->mutex);
+			mutex_lock(&chip->mutex);
 
 			if (chip->state == FL_PM_SUSPENDED) {
 				chip->state = chip->oldstate;
 				wake_up(&chip->wq);
 			}
-			spin_unlock(chip->mutex);
+			mutex_unlock(&chip->mutex);
 		}
 	}
 
@@ -1910,7 +1913,7 @@ static void cfi_amdstd_resume(struct mtd_info *mtd)
 
 		chip = &cfi->chips[i];
 
-		spin_lock(chip->mutex);
+		mutex_lock(&chip->mutex);
 
 		if (chip->state == FL_PM_SUSPENDED) {
 			chip->state = FL_READY;
@@ -1920,15 +1923,62 @@ static void cfi_amdstd_resume(struct mtd_info *mtd)
 		else
 			printk(KERN_ERR "Argh. Chip not in PM_SUSPENDED state upon resume()\n");
 
-		spin_unlock(chip->mutex);
+		mutex_unlock(&chip->mutex);
 	}
 }
+
+
+/*
+ * Ensure that the flash device is put back into read array mode before
+ * unloading the driver or rebooting.  On some systems, rebooting while
+ * the flash is in query/program/erase mode will prevent the CPU from
+ * fetching the bootloader code, requiring a hard reset or power cycle.
+ */
+static int cfi_amdstd_reset(struct mtd_info *mtd)
+{
+	struct map_info *map = mtd->priv;
+	struct cfi_private *cfi = map->fldrv_priv;
+	int i, ret;
+	struct flchip *chip;
+
+	for (i = 0; i < cfi->numchips; i++) {
+
+		chip = &cfi->chips[i];
+
+		mutex_lock(&chip->mutex);
+
+		ret = get_chip(map, chip, chip->start, FL_SHUTDOWN);
+		if (!ret) {
+			map_write(map, CMD(0xF0), chip->start);
+			chip->state = FL_SHUTDOWN;
+			put_chip(map, chip, chip->start);
+		}
+
+		mutex_unlock(&chip->mutex);
+	}
+
+	return 0;
+}
+
+
+static int cfi_amdstd_reboot(struct notifier_block *nb, unsigned long val,
+			       void *v)
+{
+	struct mtd_info *mtd;
+
+	mtd = container_of(nb, struct mtd_info, reboot_notifier);
+	cfi_amdstd_reset(mtd);
+	return NOTIFY_DONE;
+}
+
 
 static void cfi_amdstd_destroy(struct mtd_info *mtd)
 {
 	struct map_info *map = mtd->priv;
 	struct cfi_private *cfi = map->fldrv_priv;
 
+	cfi_amdstd_reset(mtd);
+	unregister_reboot_notifier(&mtd->reboot_notifier);
 	kfree(cfi->cmdset_priv);
 	kfree(cfi->cfiq);
 	kfree(cfi);
