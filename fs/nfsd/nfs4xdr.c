@@ -1900,7 +1900,7 @@ nfsd4_encode_fattr(struct svc_fh *fhp, struct svc_export *exp,
 	if (bmval0 & FATTR4_WORD0_LEASE_TIME) {
 		if ((buflen -= 4) < 0)
 			goto out_resource;
-		WRITE32(NFSD_LEASE_TIME);
+		WRITE32(nfsd4_lease);
 	}
 	if (bmval0 & FATTR4_WORD0_RDATTR_ERROR) {
 		if ((buflen -= 4) < 0)
@@ -3307,11 +3307,13 @@ nfs4svc_encode_compoundres(struct svc_rqst *rqstp, __be32 *p, struct nfsd4_compo
 		iov = &rqstp->rq_res.head[0];
 	iov->iov_len = ((char*)resp->p) - (char*)iov->iov_base;
 	BUG_ON(iov->iov_len > PAGE_SIZE);
-	if (nfsd4_has_session(cs) && cs->status != nfserr_replay_cache) {
-		nfsd4_store_cache_entry(resp);
-		dprintk("%s: SET SLOT STATE TO AVAILABLE\n", __func__);
-		resp->cstate.slot->sl_inuse = false;
-		nfsd4_put_session(resp->cstate.session);
+	if (nfsd4_has_session(cs)) {
+		if (cs->status != nfserr_replay_cache) {
+			nfsd4_store_cache_entry(resp);
+			dprintk("%s: SET SLOT STATE TO AVAILABLE\n", __func__);
+			cs->slot->sl_inuse = false;
+		}
+		nfsd4_put_session(cs->session);
 	}
 	return 1;
 }
