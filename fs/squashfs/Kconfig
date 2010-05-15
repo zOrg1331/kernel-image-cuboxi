@@ -121,3 +121,12 @@ config SQUASHFS_FRAGMENT_CACHE_SIZE
 
 	  Note there must be at least one cached fragment.  Anything
 	  much more than three will probably not make much difference.
+
+config SQUASHFS_WRITE
+	bool "Write support for Squashfs"
+	depends on SQUASHFS
+	default n
+	help
+	  Saying Y here allows you mount Squashfs in RW mode.
+
+	  If unsure, say N.
