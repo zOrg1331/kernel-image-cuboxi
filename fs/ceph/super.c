@@ -348,6 +348,7 @@ enum {
 	Opt_snapdirname,
 	Opt_name,
 	Opt_secret,
+	Opt_snap,
 	Opt_last_string,
 	/* string args above */
 	Opt_ip,
@@ -378,6 +379,7 @@ static match_table_t arg_tokens = {
 	{Opt_snapdirname, "snapdirname=%s"},
 	{Opt_name, "name=%s"},
 	{Opt_secret, "secret=%s"},
+	{Opt_snap, "snap=%s"},
 	/* string args above */
 	{Opt_ip, "ip=%s"},
 	{Opt_noshare, "noshare"},
@@ -541,6 +543,11 @@ struct ceph_mount_args *parse_mount_args(int flags, char *options,
 						argstr[0].to-argstr[0].from,
 						GFP_KERNEL);
 			break;
+		case Opt_snap:
+			args->snap = kstrndup(argstr[0].from,
+					      argstr[0].to-argstr[0].from,
+					      GFP_KERNEL);
+			break;
 
 			/* misc */
 		case Opt_wsize:
@@ -615,6 +622,7 @@ void ceph_destroy_mount_args(struct ceph_mount_args *args)
 	kfree(args->snapdir_name);
 	kfree(args->name);
 	kfree(args->secret);
+	kfree(args->snap);
 	kfree(args);
 }
 
@@ -651,6 +659,10 @@ int ceph_compare_mount_args(struct ceph_mount_args *new_args,
 		return ret;
 
 	ret = strcmp_null(args1->secret, args2->secret);
+	if (ret)
+		return ret;
+
+	ret = strcmp_null(args1->snap, args2->snap);
 	if (ret)
 		return ret;
 
@@ -749,6 +761,11 @@ fail:
 	return ERR_PTR(err);
 }
 
+u64 ceph_client_id(struct ceph_client *client)
+{
+	return client->monc.auth->global_id;
+}
+
 void ceph_destroy_client(struct ceph_client *client)
 {
 	dout("destroy_client %p\n", client);
@@ -796,8 +813,7 @@ int ceph_check_fsid(struct ceph_client *client, struct ceph_fsid *fsid)
 			return -1;
 		}
 	} else {
-		pr_info("client%lld fsid %pU\n", client->monc.auth->global_id,
-			fsid);
+		pr_info("client%lld fsid %pU\n", ceph_client_id(client), fsid);
 		memcpy(&client->fsid, fsid, sizeof(*fsid));
 		ceph_debugfs_client_init(client);
 		client->have_fsid = true;
