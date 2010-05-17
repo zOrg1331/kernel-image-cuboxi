@@ -153,19 +153,6 @@ void ceph_osdc_release_request(struct kref *kref)
 		kfree(req);
 }
 
-static int op_needs_trail(int op)
-{
-	switch (op) {
-	case CEPH_OSD_OP_GETXATTR:
-	case CEPH_OSD_OP_SETXATTR:
-	case CEPH_OSD_OP_CMPXATTR:
-	case CEPH_OSD_OP_CALL:
-		return 1;
-	default:
-		return 0;
-	}
-}
-
 static int get_num_ops(struct ceph_osd_req_op *ops, int *needs_trail)
 {
 	int i = 0;
