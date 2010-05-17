@@ -28,5 +28,3 @@ else
         lib-y += copy_user_64.o rwlock_64.o copy_user_nocache_64.o
 	lib-$(CONFIG_RWSEM_XCHGADD_ALGORITHM) += rwsem_64.o
 endif
-
-lib-$(CONFIG_XEN_SCRUB_PAGES) += scrub.o

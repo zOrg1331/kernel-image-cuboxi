@@ -1009,11 +1009,6 @@ static void pci_init_capabilities(struct pci_dev *dev)
 	/* Vital Product Data */
 	pci_vpd_pci22_init(dev);
 
-#ifdef CONFIG_XEN
-	if (!is_initial_xendomain())
-		return;
-#endif
-
 	/* Alternative Routing-ID Forwarding */
 	pci_enable_ari(dev);
 
@@ -1092,11 +1087,7 @@ int pci_scan_slot(struct pci_bus *bus, int devfn)
 	if (dev && !dev->is_added)	/* new device? */
 		nr++;
 
-#ifndef pcibios_scan_all_fns
 	if (dev && dev->multifunction) {
-#else
-	if (dev ? dev->multifunction : pcibios_scan_all_fns(bus, devfn)) {
-#endif
 		for (fn = 1; fn < 8; fn++) {
 			dev = pci_scan_single_device(bus, devfn + fn);
 			if (dev) {

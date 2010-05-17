@@ -1267,7 +1267,7 @@ ENTRY(call_softirq)
 	CFI_ENDPROC
 END(call_softirq)
 
-#ifdef CONFIG_PARAVIRT_XEN
+#ifdef CONFIG_XEN
 zeroentry xen_hypervisor_callback xen_do_hypervisor_callback
 
 /*
@@ -1364,7 +1364,7 @@ ENTRY(xen_failsafe_callback)
 	CFI_ENDPROC
 END(xen_failsafe_callback)
 
-#endif /* CONFIG_PARAVIRT_XEN */
+#endif /* CONFIG_XEN */
 
 /*
  * Some functions should be protected against kprobes
@@ -1374,7 +1374,7 @@ END(xen_failsafe_callback)
 paranoidzeroentry_ist debug do_debug DEBUG_STACK
 paranoidzeroentry_ist int3 do_int3 DEBUG_STACK
 paranoiderrorentry stack_segment do_stack_segment
-#ifdef CONFIG_PARAVIRT_XEN
+#ifdef CONFIG_XEN
 zeroentry xen_debug do_debug
 zeroentry xen_int3 do_int3
 errorentry xen_stack_segment do_stack_segment
