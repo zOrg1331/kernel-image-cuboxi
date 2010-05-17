@@ -256,12 +256,13 @@ enum {
 	ATA_TMOUT_INTERNAL_QUICK = 5000,
 	ATA_TMOUT_MAX_PARK	= 30000,
 
-	/* FIXME: GoVault needs 2s but we can't afford that without
-	 * parallel probing.  800ms is enough for iVDR disk
-	 * HHD424020F7SV00.  Increase to 2secs when parallel probing
-	 * is in place.
+	/*
+	 * GoVault needs 2s and iVDR disk HHD424020F7SV00 800ms.  2s
+	 * is too much without parallel probing.  Use 2s if parallel
+	 * probing is available, 800ms otherwise.
 	 */
-	ATA_TMOUT_FF_WAIT	=  800,
+	ATA_TMOUT_FF_WAIT_LONG	=  2000,
+	ATA_TMOUT_FF_WAIT	=   800,
 
 	/* Spec mandates to wait for ">= 2ms" before checking status
 	 * after reset.  We wait 150ms, because that was the magic
@@ -849,6 +850,7 @@ struct ata_port_operations {
 	 * SFF / taskfile oriented ops
 	 */
 	void (*sff_dev_select)(struct ata_port *ap, unsigned int device);
+	void (*sff_set_devctl)(struct ata_port *ap, u8 ctl);
 	u8   (*sff_check_status)(struct ata_port *ap);
 	u8   (*sff_check_altstatus)(struct ata_port *ap);
 	void (*sff_tf_load)(struct ata_port *ap, const struct ata_taskfile *tf);
@@ -857,7 +859,7 @@ struct ata_port_operations {
 				 const struct ata_taskfile *tf);
 	unsigned int (*sff_data_xfer)(struct ata_device *dev,
 			unsigned char *buf, unsigned int buflen, int rw);
-	u8   (*sff_irq_on)(struct ata_port *);
+	void (*sff_irq_on)(struct ata_port *);
 	bool (*sff_irq_check)(struct ata_port *);
 	void (*sff_irq_clear)(struct ata_port *);
 
@@ -1597,7 +1599,7 @@ extern unsigned int ata_sff_data_xfer32(struct ata_device *dev,
 			unsigned char *buf, unsigned int buflen, int rw);
 extern unsigned int ata_sff_data_xfer_noirq(struct ata_device *dev,
 			unsigned char *buf, unsigned int buflen, int rw);
-extern u8 ata_sff_irq_on(struct ata_port *ap);
+extern void ata_sff_irq_on(struct ata_port *ap);
 extern void ata_sff_irq_clear(struct ata_port *ap);
 extern int ata_sff_hsm_move(struct ata_port *ap, struct ata_queued_cmd *qc,
 			    u8 status, int in_wq);
@@ -1631,7 +1633,6 @@ extern void ata_bmdma_setup(struct ata_queued_cmd *qc);
 extern void ata_bmdma_start(struct ata_queued_cmd *qc);
 extern void ata_bmdma_stop(struct ata_queued_cmd *qc);
 extern u8 ata_bmdma_status(struct ata_port *ap);
-extern void ata_bus_reset(struct ata_port *ap);
 
 #ifdef CONFIG_PCI
 extern int ata_pci_bmdma_clear_simplex(struct pci_dev *pdev);
