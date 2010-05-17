@@ -2,7 +2,7 @@
  *  arch/s390/kernel/entry64.S
  *    S390 low-level entry points.
  *
- *    Copyright (C) IBM Corp. 1999,2006
+ *    Copyright (C) IBM Corp. 1999,2010
  *    Author(s): Martin Schwidefsky (schwidefsky@de.ibm.com),
  *		 Hartmut Penner (hp@de.ibm.com),
  *		 Denis Joseph Barrow (djbarrow@de.ibm.com,barrow_dj@yahoo.com),
@@ -59,30 +59,45 @@ _TIF_SYSCALL = (_TIF_SYSCALL_TRACE>>8 | _TIF_SYSCALL_AUDIT>>8 | \
 
 #define BASED(name) name-system_call(%r13)
 
+	.macro	HANDLE_SIE_INTERCEPT
+#if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
+	lg	%r3,__LC_SIE_HOOK
+	ltgr	%r3,%r3
+	jz	0f
+	basr	%r14,%r3
+	0:
+#endif
+	.endm
+
 #ifdef CONFIG_TRACE_IRQFLAGS
 	.macro	TRACE_IRQS_ON
-	 basr	%r2,%r0
-	 brasl	%r14,trace_hardirqs_on_caller
+	basr	%r2,%r0
+	brasl	%r14,trace_hardirqs_on_caller
 	.endm
 
 	.macro	TRACE_IRQS_OFF
-	 basr	%r2,%r0
-	 brasl	%r14,trace_hardirqs_off_caller
+	basr	%r2,%r0
+	brasl	%r14,trace_hardirqs_off_caller
 	.endm
 
-	.macro TRACE_IRQS_CHECK
-	basr	%r2,%r0
+	.macro TRACE_IRQS_CHECK_ON
 	tm	SP_PSW(%r15),0x03	# irqs enabled?
 	jz	0f
-	brasl	%r14,trace_hardirqs_on_caller
-	j	1f
-0:	brasl	%r14,trace_hardirqs_off_caller
-1:
+	TRACE_IRQS_ON
+0:
+	.endm
+
+	.macro TRACE_IRQS_CHECK_OFF
+	tm	SP_PSW(%r15),0x03	# irqs enabled?
+	jz	0f
+	TRACE_IRQS_OFF
+0:
 	.endm
 #else
 #define TRACE_IRQS_ON
 #define TRACE_IRQS_OFF
-#define TRACE_IRQS_CHECK
+#define TRACE_IRQS_CHECK_ON
+#define TRACE_IRQS_CHECK_OFF
 #endif
 
 #ifdef CONFIG_LOCKDEP
@@ -267,68 +282,51 @@ sysc_noemu:
 	stg	%r2,SP_R2(%r15) # store return value (change R2 on stack)
 
 sysc_return:
+	LOCKDEP_SYS_EXIT
+sysc_tif:
 	tm	__TI_flags+7(%r9),_TIF_WORK_SVC
 	jnz	sysc_work	# there is work to do (signals etc.)
 sysc_restore:
-#ifdef CONFIG_TRACE_IRQFLAGS
-	larl	%r1,sysc_restore_trace_psw
-	lpswe	0(%r1)
-sysc_restore_trace:
-	TRACE_IRQS_CHECK
-	LOCKDEP_SYS_EXIT
-#endif
-sysc_leave:
 	RESTORE_ALL __LC_RETURN_PSW,1
 sysc_done:
 
-#ifdef CONFIG_TRACE_IRQFLAGS
-	.section .data,"aw",@progbits
-	.align	8
-	.globl sysc_restore_trace_psw
-sysc_restore_trace_psw:
-	.quad	0, sysc_restore_trace
-	.previous
-#endif
-
 #
-# recheck if there is more work to do
-#
-sysc_work_loop:
-	tm	__TI_flags+7(%r9),_TIF_WORK_SVC
-	jz	sysc_restore	  # there is no work to do
-#
-# One of the work bits is on. Find out which one.
+# There is work to do, but first we need to check if we return to userspace.
 #
 sysc_work:
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
 	jno	sysc_restore
+
+#
+# One of the work bits is on. Find out which one.
+#
+sysc_work_tif:
 	tm	__TI_flags+7(%r9),_TIF_MCCK_PENDING
 	jo	sysc_mcck_pending
 	tm	__TI_flags+7(%r9),_TIF_NEED_RESCHED
 	jo	sysc_reschedule
 	tm	__TI_flags+7(%r9),_TIF_SIGPENDING
-	jnz	sysc_sigpending
+	jo	sysc_sigpending
 	tm	__TI_flags+7(%r9),_TIF_NOTIFY_RESUME
-	jnz	sysc_notify_resume
+	jo	sysc_notify_resume
 	tm	__TI_flags+7(%r9),_TIF_RESTART_SVC
 	jo	sysc_restart
 	tm	__TI_flags+7(%r9),_TIF_SINGLE_STEP
 	jo	sysc_singlestep
-	j	sysc_restore
-sysc_work_done:
+	j	sysc_return		# beware of critical section cleanup
 
 #
 # _TIF_NEED_RESCHED is set, call schedule
 #
 sysc_reschedule:
-	larl	%r14,sysc_work_loop
-	jg	schedule	# return point is sysc_return
+	larl	%r14,sysc_return
+	jg	schedule		# return point is sysc_return
 
 #
 # _TIF_MCCK_PENDING is set, call handler
 #
 sysc_mcck_pending:
-	larl	%r14,sysc_work_loop
+	larl	%r14,sysc_return
 	jg	s390_handle_mcck	# TIF bit will be cleared by handler
 
 #
@@ -342,14 +340,14 @@ sysc_sigpending:
 	jo	sysc_restart
 	tm	__TI_flags+7(%r9),_TIF_SINGLE_STEP
 	jo	sysc_singlestep
-	j	sysc_work_loop
+	j	sysc_return
 
 #
 # _TIF_NOTIFY_RESUME is set, call do_notify_resume
 #
 sysc_notify_resume:
 	la	%r2,SP_PTREGS(%r15)	# load pt_regs
-	larl	%r14,sysc_work_loop
+	larl	%r14,sysc_return
 	jg	do_notify_resume	# call do_notify_resume
 
 #
@@ -435,12 +433,14 @@ kernel_execve:
 	br	%r14
 	# execve succeeded.
 0:	stnsm	__SF_EMPTY(%r15),0xfc	# disable interrupts
+#	TRACE_IRQS_OFF
 	lg	%r15,__LC_KERNEL_STACK	# load ksp
 	aghi	%r15,-SP_SIZE		# make room for registers & psw
 	lg	%r13,__LC_SVC_NEW_PSW+8
 	lg	%r9,__LC_THREAD_INFO
 	mvc	SP_PTREGS(__PT_SIZE,%r15),0(%r12)	# copy pt_regs
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
+#	TRACE_IRQS_ON
 	stosm	__SF_EMPTY(%r15),0x03	# reenable interrupts
 	brasl	%r14,execve_tail
 	j	sysc_return
@@ -476,9 +476,10 @@ pgm_check_handler:
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 pgm_no_vtime:
+	HANDLE_SIE_INTERCEPT
+	TRACE_IRQS_CHECK_OFF
 	lg	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
 	mvc	SP_ARGS(8,%r15),__LC_LAST_BREAK
-	TRACE_IRQS_OFF
 	lgf	%r3,__LC_PGM_ILC	# load program interruption code
 	lghi	%r8,0x7f
 	ngr	%r8,%r3
@@ -487,8 +488,10 @@ pgm_do_call:
 	larl	%r1,pgm_check_table
 	lg	%r1,0(%r8,%r1)		# load address of handler routine
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
-	larl	%r14,sysc_return
-	br	%r1			# branch to interrupt-handler
+	basr	%r14,%r1		# branch to interrupt-handler
+pgm_exit:
+	TRACE_IRQS_CHECK_ON
+	j	sysc_return
 
 #
 # handle per exception
@@ -515,8 +518,9 @@ pgm_per_std:
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 pgm_no_vtime2:
+	HANDLE_SIE_INTERCEPT
+	TRACE_IRQS_CHECK_OFF
 	lg	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
-	TRACE_IRQS_OFF
 	lg	%r1,__TI_task(%r9)
 	tm	SP_PSW+1(%r15),0x01	# kernel per event ?
 	jz	kernel_per
@@ -527,7 +531,7 @@ pgm_no_vtime2:
 	lgf	%r3,__LC_PGM_ILC	# load program interruption code
 	lghi	%r8,0x7f
 	ngr	%r8,%r3			# clear per-event-bit and ilc
-	je	sysc_return
+	je	pgm_exit
 	j	pgm_do_call
 
 #
@@ -541,14 +545,15 @@ pgm_svcper:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_SYNC_ENTER_TIMER
 	llgh	%r7,__LC_SVC_INT_CODE	# get svc number from lowcore
 	lg	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
+	TRACE_IRQS_OFF
 	lg	%r8,__TI_task(%r9)
 	mvc	__THREAD_per+__PER_atmid(2,%r8),__LC_PER_ATMID
 	mvc	__THREAD_per+__PER_address(8,%r8),__LC_PER_ADDRESS
 	mvc	__THREAD_per+__PER_access_id(1,%r8),__LC_PER_ACCESS_ID
 	oi	__TI_flags+7(%r9),_TIF_SINGLE_STEP # set TIF_SINGLE_STEP
 	TRACE_IRQS_ON
-	lmg	%r2,%r6,SP_R2(%r15)	# load svc arguments
 	stosm	__SF_EMPTY(%r15),0x03	# reenable interrupts
+	lmg	%r2,%r6,SP_R2(%r15)	# load svc arguments
 	j	sysc_do_svc
 
 #
@@ -557,8 +562,8 @@ pgm_svcper:
 kernel_per:
 	xc	SP_SVCNR(2,%r15),SP_SVCNR(%r15)	# clear svc number
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
-	larl	%r14,sysc_restore	# load adr. of system ret, no work
-	jg	do_single_step		# branch to do_single_step
+	brasl	%r14,do_single_step
+	j	pgm_exit
 
 /*
  * IO interrupt handler routine
@@ -577,152 +582,122 @@ io_int_handler:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_ASYNC_ENTER_TIMER
 io_no_vtime:
 	lg	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
+	HANDLE_SIE_INTERCEPT
 	TRACE_IRQS_OFF
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	brasl	%r14,do_IRQ		# call standard irq handler
 io_return:
+	LOCKDEP_SYS_EXIT
+	TRACE_IRQS_ON
+io_tif:
 	tm	__TI_flags+7(%r9),_TIF_WORK_INT
 	jnz	io_work 		# there is work to do (signals etc.)
 io_restore:
-#ifdef CONFIG_TRACE_IRQFLAGS
-	larl	%r1,io_restore_trace_psw
-	lpswe	0(%r1)
-io_restore_trace:
-	TRACE_IRQS_CHECK
-	LOCKDEP_SYS_EXIT
-#endif
-io_leave:
 	RESTORE_ALL __LC_RETURN_PSW,0
 io_done:
 
-#ifdef CONFIG_TRACE_IRQFLAGS
-	.section .data,"aw",@progbits
-	.align	8
-	.globl io_restore_trace_psw
-io_restore_trace_psw:
-	.quad	0, io_restore_trace
-	.previous
-#endif
-
 #
-# There is work todo, we need to check if we return to userspace, then
-# check, if we are in SIE, if yes leave it
+# There is work todo, find out in which context we have been interrupted:
+# 1) if we return to user space we can do all _TIF_WORK_INT work
+# 2) if we return to kernel code and kvm is enabled check if we need to
+#    modify the psw to leave SIE
+# 3) if we return to kernel code and preemptive scheduling is enabled check
+#    the preemption counter and if it is zero call preempt_schedule_irq
+# Before any work can be done, a switch to the kernel stack is required.
 #
 io_work:
 	tm	SP_PSW+1(%r15),0x01	# returning to user ?
-#ifndef CONFIG_PREEMPT
-#if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
-	jnz	io_work_user		# yes -> no need to check for SIE
-	la	%r1, BASED(sie_opcode)	# we return to kernel here
-	lg	%r2, SP_PSW+8(%r15)
-	clc	0(2,%r1), 0(%r2)	# is current instruction = SIE?
-	jne	io_restore		# no-> return to kernel
-	lg	%r1, SP_PSW+8(%r15)	# yes-> add 4 bytes to leave SIE
-	aghi	%r1, 4
-	stg	%r1, SP_PSW+8(%r15)
-	j	io_restore		# return to kernel
-#else
-	jno	io_restore		# no-> skip resched & signal
-#endif
-#else
-	jnz	io_work_user		# yes -> do resched & signal
-#if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
-	la	%r1, BASED(sie_opcode)
-	lg	%r2, SP_PSW+8(%r15)
-	clc	0(2,%r1), 0(%r2)	# is current instruction = SIE?
-	jne	0f			# no -> leave PSW alone
-	lg	%r1, SP_PSW+8(%r15)	# yes-> add 4 bytes to leave SIE
-	aghi	%r1, 4
-	stg	%r1, SP_PSW+8(%r15)
-0:
-#endif
+	jo	io_work_user		# yes -> do resched & signal
+#ifdef CONFIG_PREEMPT
 	# check for preemptive scheduling
 	icm	%r0,15,__TI_precount(%r9)
 	jnz	io_restore		# preemption is disabled
+	tm	__TI_flags+7(%r12),_TIF_NEED_RESCHED
+	jno	io_restore
 	# switch to kernel stack
 	lg	%r1,SP_R15(%r15)
 	aghi	%r1,-SP_SIZE
 	mvc	SP_PTREGS(__PT_SIZE,%r1),SP_PTREGS(%r15)
 	xc	__SF_BACKCHAIN(8,%r1),__SF_BACKCHAIN(%r1) # clear back chain
 	lgr	%r15,%r1
-io_resume_loop:
-	tm	__TI_flags+7(%r9),_TIF_NEED_RESCHED
-	jno	io_restore
-	larl	%r14,io_resume_loop
-	jg	preempt_schedule_irq
+	# TRACE_IRQS_ON already done at io_return, call
+	# TRACE_IRQS_OFF to keep things symmetrical
+	TRACE_IRQS_OFF
+	brasl	%r14,preempt_schedule_irq
+	j	io_return
+#else
+	j	io_restore
 #endif
 
+#
+# Need to do work before returning to userspace, switch to kernel stack
+#
 io_work_user:
 	lg	%r1,__LC_KERNEL_STACK
 	aghi	%r1,-SP_SIZE
 	mvc	SP_PTREGS(__PT_SIZE,%r1),SP_PTREGS(%r15)
 	xc	__SF_BACKCHAIN(8,%r1),__SF_BACKCHAIN(%r1) # clear back chain
 	lgr	%r15,%r1
+
 #
 # One of the work bits is on. Find out which one.
-# Checked are: _TIF_SIGPENDING, _TIF_RESTORE_SIGPENDING, _TIF_NEED_RESCHED
+# Checked are: _TIF_SIGPENDING, _TIF_NOTIFY_RESUME, _TIF_NEED_RESCHED
 #	       and _TIF_MCCK_PENDING
 #
-io_work_loop:
+io_work_tif:
 	tm	__TI_flags+7(%r9),_TIF_MCCK_PENDING
 	jo	io_mcck_pending
 	tm	__TI_flags+7(%r9),_TIF_NEED_RESCHED
 	jo	io_reschedule
 	tm	__TI_flags+7(%r9),_TIF_SIGPENDING
-	jnz	io_sigpending
+	jo	io_sigpending
 	tm	__TI_flags+7(%r9),_TIF_NOTIFY_RESUME
-	jnz	io_notify_resume
-	j	io_restore
-io_work_done:
-
-#if defined(CONFIG_KVM) || defined(CONFIG_KVM_MODULE)
-sie_opcode:
-	.long 0xb2140000
-#endif
+	jo	io_notify_resume
+	j	io_return		# beware of critical section cleanup
 
 #
 # _TIF_MCCK_PENDING is set, call handler
 #
 io_mcck_pending:
+	# TRACE_IRQS_ON already done at io_return
 	brasl	%r14,s390_handle_mcck	# TIF bit will be cleared by handler
-	j	io_work_loop
+	TRACE_IRQS_OFF
+	j	io_return
 
 #
 # _TIF_NEED_RESCHED is set, call schedule
 #
 io_reschedule:
-	TRACE_IRQS_ON
+	# TRACE_IRQS_ON already done at io_return
 	stosm	__SF_EMPTY(%r15),0x03	# reenable interrupts
 	brasl	%r14,schedule		# call scheduler
 	stnsm	__SF_EMPTY(%r15),0xfc	# disable I/O and ext. interrupts
 	TRACE_IRQS_OFF
-	tm	__TI_flags+7(%r9),_TIF_WORK_INT
-	jz	io_restore		# there is no work to do
-	j	io_work_loop
+	j	io_return
 
 #
 # _TIF_SIGPENDING or is set, call do_signal
 #
 io_sigpending:
-	TRACE_IRQS_ON
+	# TRACE_IRQS_ON already done at io_return
 	stosm	__SF_EMPTY(%r15),0x03	# reenable interrupts
 	la	%r2,SP_PTREGS(%r15)	# load pt_regs
 	brasl	%r14,do_signal		# call do_signal
 	stnsm	__SF_EMPTY(%r15),0xfc	# disable I/O and ext. interrupts
 	TRACE_IRQS_OFF
-	j	io_work_loop
+	j	io_return
 
 #
 # _TIF_NOTIFY_RESUME or is set, call do_notify_resume
 #
 io_notify_resume:
-	TRACE_IRQS_ON
+	# TRACE_IRQS_ON already done at io_return
 	stosm	__SF_EMPTY(%r15),0x03	# reenable interrupts
 	la	%r2,SP_PTREGS(%r15)	# load pt_regs
 	brasl	%r14,do_notify_resume	# call do_notify_resume
 	stnsm	__SF_EMPTY(%r15),0xfc	# disable I/O and ext. interrupts
 	TRACE_IRQS_OFF
-	j	io_work_loop
+	j	io_return
 
 /*
  * External interrupt handler routine
@@ -741,6 +716,7 @@ ext_int_handler:
 	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_ASYNC_ENTER_TIMER
 ext_no_vtime:
 	lg	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
+	HANDLE_SIE_INTERCEPT
 	TRACE_IRQS_OFF
 	la	%r2,SP_PTREGS(%r15)	# address of register-save area
 	llgh	%r3,__LC_EXT_INT_CODE	# get interruption code
@@ -754,7 +730,7 @@ __critical_end:
  */
 	.globl mcck_int_handler
 mcck_int_handler:
-	stck	__LC_INT_CLOCK
+	stck	__LC_MCCK_CLOCK
 	la	%r1,4095		# revalidate r1
 	spt	__LC_CPU_TIMER_SAVE_AREA-4095(%r1)	# revalidate cpu timer
 	lmg	%r0,%r15,__LC_GPREGS_SAVE_AREA-4095(%r1)# revalidate gprs
@@ -763,8 +739,7 @@ mcck_int_handler:
 	tm	__LC_MCCK_CODE,0x80	# system damage?
 	jo	mcck_int_main		# yes -> rest of mcck code invalid
 	la	%r14,4095
-	mvc	__LC_SAVE_AREA+104(8),__LC_ASYNC_ENTER_TIMER
-	mvc	__LC_ASYNC_ENTER_TIMER(8),__LC_CPU_TIMER_SAVE_AREA-4095(%r14)
+	mvc	__LC_MCCK_ENTER_TIMER(8),__LC_CPU_TIMER_SAVE_AREA-4095(%r14)
 	tm	__LC_MCCK_CODE+5,0x02	# stored cpu timer value valid?
 	jo	1f
 	la	%r14,__LC_SYNC_ENTER_TIMER
@@ -778,7 +753,7 @@ mcck_int_handler:
 	jl	0f
 	la	%r14,__LC_LAST_UPDATE_TIMER
 0:	spt	0(%r14)
-	mvc	__LC_ASYNC_ENTER_TIMER(8),0(%r14)
+	mvc	__LC_MCCK_ENTER_TIMER(8),0(%r14)
 1:	tm	__LC_MCCK_CODE+2,0x09	# mwp + ia of old psw valid?
 	jno	mcck_int_main		# no -> skip cleanup critical
 	tm	__LC_MCK_OLD_PSW+1,0x01 # test problem state bit
@@ -799,9 +774,9 @@ mcck_int_main:
 	jno	mcck_no_vtime		# no -> no timer update
 	tm	SP_PSW+1(%r15),0x01	# interrupting from user ?
 	jz	mcck_no_vtime
-	UPDATE_VTIME __LC_EXIT_TIMER,__LC_ASYNC_ENTER_TIMER,__LC_USER_TIMER
+	UPDATE_VTIME __LC_EXIT_TIMER,__LC_MCCK_ENTER_TIMER,__LC_USER_TIMER
 	UPDATE_VTIME __LC_LAST_UPDATE_TIMER,__LC_EXIT_TIMER,__LC_SYSTEM_TIMER
-	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_ASYNC_ENTER_TIMER
+	mvc	__LC_LAST_UPDATE_TIMER(8),__LC_MCCK_ENTER_TIMER
 mcck_no_vtime:
 	lg	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
 	la	%r2,SP_PTREGS(%r15)	# load pt_regs
@@ -816,6 +791,7 @@ mcck_no_vtime:
 	stosm	__SF_EMPTY(%r15),0x04	# turn dat on
 	tm	__TI_flags+7(%r9),_TIF_MCCK_PENDING
 	jno	mcck_return
+	HANDLE_SIE_INTERCEPT
 	TRACE_IRQS_OFF
 	brasl	%r14,s390_handle_mcck
 	TRACE_IRQS_ON
@@ -823,7 +799,6 @@ mcck_return:
 	mvc	__LC_RETURN_MCCK_PSW(16),SP_PSW(%r15) # move return PSW
 	ni	__LC_RETURN_MCCK_PSW+1,0xfd # clear wait state bit
 	lmg	%r0,%r15,SP_R0(%r15)	# load gprs 0-15
-	mvc	__LC_ASYNC_ENTER_TIMER(8),__LC_SAVE_AREA+104
 	tm	__LC_RETURN_MCCK_PSW+1,0x01 # returning to user ?
 	jno	0f
 	stpt	__LC_EXIT_TIMER
@@ -899,18 +874,14 @@ stack_overflow:
 
 cleanup_table_system_call:
 	.quad	system_call, sysc_do_svc
-cleanup_table_sysc_return:
-	.quad	sysc_return, sysc_leave
-cleanup_table_sysc_leave:
-	.quad	sysc_leave, sysc_done
-cleanup_table_sysc_work_loop:
-	.quad	sysc_work_loop, sysc_work_done
-cleanup_table_io_return:
-	.quad	io_return, io_leave
-cleanup_table_io_leave:
-	.quad	io_leave, io_done
-cleanup_table_io_work_loop:
-	.quad	io_work_loop, io_work_done
+cleanup_table_sysc_tif:
+	.quad	sysc_tif, sysc_restore
+cleanup_table_sysc_restore:
+	.quad	sysc_restore, sysc_done
+cleanup_table_io_tif:
+	.quad	io_tif, io_restore
+cleanup_table_io_restore:
+	.quad	io_restore, io_done
 
 cleanup_critical:
 	clc	8(8,%r12),BASED(cleanup_table_system_call)
@@ -918,49 +889,40 @@ cleanup_critical:
 	clc	8(8,%r12),BASED(cleanup_table_system_call+8)
 	jl	cleanup_system_call
 0:
-	clc	8(8,%r12),BASED(cleanup_table_sysc_return)
+	clc	8(8,%r12),BASED(cleanup_table_sysc_tif)
 	jl	0f
-	clc	8(8,%r12),BASED(cleanup_table_sysc_return+8)
-	jl	cleanup_sysc_return
+	clc	8(8,%r12),BASED(cleanup_table_sysc_tif+8)
+	jl	cleanup_sysc_tif
 0:
-	clc	8(8,%r12),BASED(cleanup_table_sysc_leave)
+	clc	8(8,%r12),BASED(cleanup_table_sysc_restore)
 	jl	0f
-	clc	8(8,%r12),BASED(cleanup_table_sysc_leave+8)
-	jl	cleanup_sysc_leave
+	clc	8(8,%r12),BASED(cleanup_table_sysc_restore+8)
+	jl	cleanup_sysc_restore
 0:
-	clc	8(8,%r12),BASED(cleanup_table_sysc_work_loop)
+	clc	8(8,%r12),BASED(cleanup_table_io_tif)
 	jl	0f
-	clc	8(8,%r12),BASED(cleanup_table_sysc_work_loop+8)
-	jl	cleanup_sysc_return
+	clc	8(8,%r12),BASED(cleanup_table_io_tif+8)
+	jl	cleanup_io_tif
 0:
-	clc	8(8,%r12),BASED(cleanup_table_io_return)
+	clc	8(8,%r12),BASED(cleanup_table_io_restore)
 	jl	0f
-	clc	8(8,%r12),BASED(cleanup_table_io_return+8)
-	jl	cleanup_io_return
-0:
-	clc	8(8,%r12),BASED(cleanup_table_io_leave)
-	jl	0f
-	clc	8(8,%r12),BASED(cleanup_table_io_leave+8)
-	jl	cleanup_io_leave
-0:
-	clc	8(8,%r12),BASED(cleanup_table_io_work_loop)
-	jl	0f
-	clc	8(8,%r12),BASED(cleanup_table_io_work_loop+8)
-	jl	cleanup_io_work_loop
+	clc	8(8,%r12),BASED(cleanup_table_io_restore+8)
+	jl	cleanup_io_restore
 0:
 	br	%r14
 
 cleanup_system_call:
 	mvc	__LC_RETURN_PSW(16),0(%r12)
-	cghi	%r12,__LC_MCK_OLD_PSW
-	je	0f
-	la	%r12,__LC_SAVE_AREA+32
-	j	1f
-0:	la	%r12,__LC_SAVE_AREA+64
-1:
 	clc	__LC_RETURN_PSW+8(8),BASED(cleanup_system_call_insn+8)
 	jh	0f
+	mvc	__LC_SYNC_ENTER_TIMER(8),__LC_MCCK_ENTER_TIMER
+	cghi	%r12,__LC_MCK_OLD_PSW
+	je	0f
 	mvc	__LC_SYNC_ENTER_TIMER(8),__LC_ASYNC_ENTER_TIMER
+0:	cghi	%r12,__LC_MCK_OLD_PSW
+	la	%r12,__LC_SAVE_AREA+64
+	je	0f
+	la	%r12,__LC_SAVE_AREA+32
 0:	clc	__LC_RETURN_PSW+8(8),BASED(cleanup_system_call_insn+16)
 	jhe	cleanup_vtime
 	clc	__LC_RETURN_PSW+8(8),BASED(cleanup_system_call_insn)
@@ -993,61 +955,54 @@ cleanup_system_call_insn:
 	.quad	sysc_stime
 	.quad	sysc_update
 
-cleanup_sysc_return:
+cleanup_sysc_tif:
 	mvc	__LC_RETURN_PSW(8),0(%r12)
-	mvc	__LC_RETURN_PSW+8(8),BASED(cleanup_table_sysc_return)
+	mvc	__LC_RETURN_PSW+8(8),BASED(cleanup_table_sysc_tif)
 	la	%r12,__LC_RETURN_PSW
 	br	%r14
 
-cleanup_sysc_leave:
-	clc	8(8,%r12),BASED(cleanup_sysc_leave_insn)
-	je	3f
-	clc	8(8,%r12),BASED(cleanup_sysc_leave_insn+8)
+cleanup_sysc_restore:
+	clc	8(8,%r12),BASED(cleanup_sysc_restore_insn)
+	je	2f
+	clc	8(8,%r12),BASED(cleanup_sysc_restore_insn+8)
 	jhe	0f
+	mvc	__LC_EXIT_TIMER(8),__LC_MCCK_ENTER_TIMER
+	cghi	%r12,__LC_MCK_OLD_PSW
+	je	0f
 	mvc	__LC_EXIT_TIMER(8),__LC_ASYNC_ENTER_TIMER
 0:	mvc	__LC_RETURN_PSW(16),SP_PSW(%r15)
 	cghi	%r12,__LC_MCK_OLD_PSW
-	jne	1f
-	mvc	__LC_SAVE_AREA+64(32),SP_R12(%r15)
-	j	2f
-1:	mvc	__LC_SAVE_AREA+32(32),SP_R12(%r15)
-2:	lmg	%r0,%r11,SP_R0(%r15)
+	la	%r12,__LC_SAVE_AREA+64
+	je	1f
+	la	%r12,__LC_SAVE_AREA+32
+1:	mvc	0(32,%r12),SP_R12(%r15)
+	lmg	%r0,%r11,SP_R0(%r15)
 	lg	%r15,SP_R15(%r15)
-3:	la	%r12,__LC_RETURN_PSW
+2:	la	%r12,__LC_RETURN_PSW
 	br	%r14
-cleanup_sysc_leave_insn:
+cleanup_sysc_restore_insn:
 	.quad	sysc_done - 4
 	.quad	sysc_done - 16
 
-cleanup_io_return:
+cleanup_io_tif:
 	mvc	__LC_RETURN_PSW(8),0(%r12)
-	mvc	__LC_RETURN_PSW+8(8),BASED(cleanup_table_io_return)
+	mvc	__LC_RETURN_PSW+8(8),BASED(cleanup_table_io_tif)
 	la	%r12,__LC_RETURN_PSW
 	br	%r14
 
-cleanup_io_work_loop:
-	mvc	__LC_RETURN_PSW(8),0(%r12)
-	mvc	__LC_RETURN_PSW+8(8),BASED(cleanup_table_io_work_loop)
-	la	%r12,__LC_RETURN_PSW
-	br	%r14
-
-cleanup_io_leave:
-	clc	8(8,%r12),BASED(cleanup_io_leave_insn)
-	je	3f
-	clc	8(8,%r12),BASED(cleanup_io_leave_insn+8)
+cleanup_io_restore:
+	clc	8(8,%r12),BASED(cleanup_io_restore_insn)
+	je	1f
+	clc	8(8,%r12),BASED(cleanup_io_restore_insn+8)
 	jhe	0f
-	mvc	__LC_EXIT_TIMER(8),__LC_ASYNC_ENTER_TIMER
+	mvc	__LC_EXIT_TIMER(8),__LC_MCCK_ENTER_TIMER
 0:	mvc	__LC_RETURN_PSW(16),SP_PSW(%r15)
-	cghi	%r12,__LC_MCK_OLD_PSW
-	jne	1f
 	mvc	__LC_SAVE_AREA+64(32),SP_R12(%r15)
-	j	2f
-1:	mvc	__LC_SAVE_AREA+32(32),SP_R12(%r15)
-2:	lmg	%r0,%r11,SP_R0(%r15)
+	lmg	%r0,%r11,SP_R0(%r15)
 	lg	%r15,SP_R15(%r15)
-3:	la	%r12,__LC_RETURN_PSW
+1:	la	%r12,__LC_RETURN_PSW
 	br	%r14
-cleanup_io_leave_insn:
+cleanup_io_restore_insn:
 	.quad	io_done - 4
 	.quad	io_done - 16
 

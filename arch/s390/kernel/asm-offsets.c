@@ -112,6 +112,7 @@ int main(void)
 	DEFINE(__LC_RETURN_MCCK_PSW, offsetof(struct _lowcore, return_mcck_psw));
 	DEFINE(__LC_SYNC_ENTER_TIMER, offsetof(struct _lowcore, sync_enter_timer));
 	DEFINE(__LC_ASYNC_ENTER_TIMER, offsetof(struct _lowcore, async_enter_timer));
+	DEFINE(__LC_MCCK_ENTER_TIMER, offsetof(struct _lowcore, mcck_enter_timer));
 	DEFINE(__LC_EXIT_TIMER, offsetof(struct _lowcore, exit_timer));
 	DEFINE(__LC_USER_TIMER, offsetof(struct _lowcore, user_timer));
 	DEFINE(__LC_SYSTEM_TIMER, offsetof(struct _lowcore, system_timer));
@@ -126,10 +127,12 @@ int main(void)
 	DEFINE(__LC_KERNEL_ASCE, offsetof(struct _lowcore, kernel_asce));
 	DEFINE(__LC_USER_ASCE, offsetof(struct _lowcore, user_asce));
 	DEFINE(__LC_USER_EXEC_ASCE, offsetof(struct _lowcore, user_exec_asce));
-	DEFINE(__LC_CPUID, offsetof(struct _lowcore, cpu_id));
 	DEFINE(__LC_INT_CLOCK, offsetof(struct _lowcore, int_clock));
+	DEFINE(__LC_MCCK_CLOCK, offsetof(struct _lowcore, mcck_clock));
 	DEFINE(__LC_MACHINE_FLAGS, offsetof(struct _lowcore, machine_flags));
 	DEFINE(__LC_FTRACE_FUNC, offsetof(struct _lowcore, ftrace_func));
+	DEFINE(__LC_SIE_HOOK, offsetof(struct _lowcore, sie_hook));
+	DEFINE(__LC_CMF_HPP, offsetof(struct _lowcore, cmf_hpp));
 	DEFINE(__LC_IRB, offsetof(struct _lowcore, irb));
 	DEFINE(__LC_CPU_TIMER_SAVE_AREA, offsetof(struct _lowcore, cpu_timer_save_area));
 	DEFINE(__LC_CLOCK_COMP_SAVE_AREA, offsetof(struct _lowcore, clock_comp_save_area));
