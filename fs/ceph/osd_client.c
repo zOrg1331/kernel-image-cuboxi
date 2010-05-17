@@ -27,6 +27,7 @@ static void kick_requests(struct ceph_osd_client *osdc, struct ceph_osd *osd);
 
 void ceph_calc_raw_layout(struct ceph_osd_client *osdc,
 			struct ceph_file_layout *layout,
+			u64 snapid,
 			u64 off, u64 len, u64 *bno,
 			struct ceph_osd_request *req)
 {
@@ -34,6 +35,8 @@ void ceph_calc_raw_layout(struct ceph_osd_client *osdc,
 	struct ceph_osd_op *op = (void *)(reqhead + 1);
 	u64 orig_len = len;
 	u64 objoff, objlen;    /* extent in object */
+
+	reqhead->snapid = cpu_to_le64(snapid);
 
 	/* object extent? */
 	ceph_calc_file_object_mapping(layout, off, &len, bno,
@@ -77,15 +80,14 @@ void ceph_calc_raw_layout(struct ceph_osd_client *osdc,
  * fill osd op in request message.
  */
 static void calc_layout(struct ceph_osd_client *osdc,
-			struct ceph_vino vino, struct ceph_file_layout *layout,
+			struct ceph_vino vino,
+			struct ceph_file_layout *layout,
 			u64 off, u64 *plen,
 			struct ceph_osd_request *req)
 {
-	struct ceph_osd_request_head *reqhead = req->r_request->front.iov_base;
 	u64 bno;
 
-	reqhead->snapid = cpu_to_le64(vino.snap);
-	ceph_calc_raw_layout(osdc, layout, off, *plen, &bno, req);
+	ceph_calc_raw_layout(osdc, layout, vino.snap, off, *plen, &bno, req);
 
 	sprintf(req->r_oid, "%llx.%08llx", vino.ino, bno);
 	req->r_oid_len = strlen(req->r_oid);
