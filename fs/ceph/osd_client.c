@@ -6,7 +6,9 @@
 #include <linux/pagemap.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#ifdef CONFIG_BLOCK
 #include <linux/bio.h>
+#endif
 
 #include "super.h"
 #include "osd_client.h"
@@ -112,8 +114,10 @@ void ceph_osdc_release_request(struct kref *kref)
 	if (req->r_own_pages)
 		ceph_release_page_vector(req->r_pages,
 					 req->r_num_pages);
+#ifdef CONFIG_BLOCK
 	if (req->r_bio)
 		bio_put(req->r_bio);
+#endif
 	ceph_put_snap_context(req->r_snapc);
 	if (req->r_mempool)
 		mempool_free(req, req->r_osdc->req_mempool);
@@ -193,10 +197,12 @@ struct ceph_osd_request *ceph_osdc_alloc_request(struct ceph_osd_client *osdc,
 
 	req->r_request = msg;
 	req->r_pages = pages;
+#ifdef CONFIG_BLOCK
 	if (bio) {
 		req->r_bio = bio;
 		bio_get(req->r_bio);
 	}
+#endif
 
 	return req;
 }
@@ -1178,7 +1184,9 @@ int ceph_osdc_start_request(struct ceph_osd_client *osdc,
 
 	req->r_request->pages = req->r_pages;
 	req->r_request->nr_pages = req->r_num_pages;
+#ifdef CONFIG_BLOCK
 	req->r_request->bio = req->r_bio;
+#endif
 
 	register_request(osdc, req);
 
@@ -1497,7 +1505,9 @@ static struct ceph_msg *get_reply(struct ceph_connection *con,
 		}
 		m->pages = req->r_pages;
 		m->nr_pages = req->r_num_pages;
+#ifdef CONFIG_BLOCK
 		m->bio = req->r_bio;
+#endif
 	}
 	*skip = 0;
 	req->r_con_filling_msg = ceph_con_get(con);
