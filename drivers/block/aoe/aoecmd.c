@@ -987,8 +987,12 @@ aoecmd_cfg_rsp(struct sk_buff *skb)
 	}
 
 	sysminor = SYSMINOR(aoemajor, h->minor);
-	if (sysminor * AOE_PARTITIONS + AOE_PARTITIONS > MINORMASK) {
-		printk(KERN_INFO "aoe: e%ld.%d: minor number too large\n",
+	if (h->minor >= NPERSHELF) {
+		printk(KERN_INFO "aoe: e%ld.%d: AoE minor address too large\n",
+			aoemajor, (int) h->minor);
+		return;
+	} else if (sysminor * AOE_PARTITIONS + AOE_PARTITIONS > MINORMASK) {
+		printk(KERN_INFO "aoe: e%ld.%d: AoE major address too large\n",
 			aoemajor, (int) h->minor);
 		return;
 	}
