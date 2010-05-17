@@ -46,16 +46,17 @@
 #include <mach/h1940.h>
 #include <mach/h1940-latch.h>
 #include <mach/fb.h>
-#include <mach/ts.h>
 #include <plat/udc.h>
 #include <plat/iic.h>
 
+#include <plat/gpio-cfg.h>
 #include <plat/clock.h>
 #include <plat/devs.h>
 #include <plat/cpu.h>
 #include <plat/pll.h>
 #include <plat/pm.h>
 #include <plat/mci.h>
+#include <plat/ts.h>
 
 static struct map_desc h1940_iodesc[] __initdata = {
 	[0] = {
@@ -207,16 +208,16 @@ static int h1940_backlight_init(struct device *dev)
 {
 	gpio_request(S3C2410_GPB(0), "Backlight");
 
-	s3c2410_gpio_setpin(S3C2410_GPB(0), 0);
-	s3c2410_gpio_pullup(S3C2410_GPB(0), 0);
-	s3c2410_gpio_cfgpin(S3C2410_GPB(0), S3C2410_GPB0_TOUT0);
+	gpio_direction_output(S3C2410_GPB(0), 0);
+	s3c_gpio_setpull(S3C2410_GPB(0), S3C_GPIO_PULL_NONE);
+	s3c_gpio_cfgpin(S3C2410_GPB(0), S3C2410_GPB0_TOUT0);
 
 	return 0;
 }
 
 static void h1940_backlight_exit(struct device *dev)
 {
-	s3c2410_gpio_cfgpin(S3C2410_GPB(0), 1/*S3C2410_GPB0_OUTP*/);
+	gpio_direction_output(S3C2410_GPB(0), 1);
 }
 
 static struct platform_pwm_backlight_data backlight_data = {
@@ -245,18 +246,18 @@ static void h1940_lcd_power_set(struct plat_lcd_data *pd,
 
 	if (!power) {
 		/* set to 3ec */
-		s3c2410_gpio_setpin(S3C2410_GPC(0), 0);
+		gpio_direction_output(S3C2410_GPC(0), 0);
 		/* wait for 3ac */
 		do {
-			value = s3c2410_gpio_getpin(S3C2410_GPC(6));
+			value = gpio_get_value(S3C2410_GPC(6));
 		} while (value);
 		/* set to 38c */
-		s3c2410_gpio_setpin(S3C2410_GPC(5), 0);
+		gpio_direction_output(S3C2410_GPC(5), 0);
 	} else {
 		/* Set to 3ac */
-		s3c2410_gpio_setpin(S3C2410_GPC(5), 1);
+		gpio_direction_output(S3C2410_GPC(5), 1);
 		/* Set to 3ad */
-		s3c2410_gpio_setpin(S3C2410_GPC(0), 1);
+		gpio_direction_output(S3C2410_GPC(0), 1);
 	}
 }
 
@@ -271,7 +272,6 @@ static struct platform_device h1940_lcd_powerdev = {
 };
 
 static struct platform_device *h1940_devices[] __initdata = {
-	&s3c_device_ts,
 	&s3c_device_ohci,
 	&s3c_device_lcd,
 	&s3c_device_wdt,
@@ -285,6 +285,8 @@ static struct platform_device *h1940_devices[] __initdata = {
 	&s3c_device_timer[0],
 	&h1940_backlight,
 	&h1940_lcd_powerdev,
+	&s3c_device_adc,
+	&s3c_device_ts,
 };
 
 static void __init h1940_map_io(void)
@@ -332,12 +334,13 @@ static void __init h1940_init(void)
 	gpio_request(S3C2410_GPC(5), "LCD power");
 	gpio_request(S3C2410_GPC(6), "LCD power");
 
+	gpio_direction_input(S3C2410_GPC(6));
 
 	platform_add_devices(h1940_devices, ARRAY_SIZE(h1940_devices));
 }
 
 MACHINE_START(H1940, "IPAQ-H1940")
-	/* Maintainer: Ben Dooks <ben@fluff.org> */
+	/* Maintainer: Ben Dooks <ben-linux@fluff.org> */
 	.phys_io	= S3C2410_PA_UART,
 	.io_pg_offst	= (((u32)S3C24XX_VA_UART) >> 18) & 0xfffc,
 	.boot_params	= S3C2410_SDRAM_PA + 0x100,
