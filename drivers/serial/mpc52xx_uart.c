@@ -1379,7 +1379,7 @@ mpc52xx_uart_of_probe(struct of_device *op, const struct of_device_id *match)
 
 	/* Check validity & presence */
 	for (idx = 0; idx < MPC52xx_PSC_MAXNUM; idx++)
-		if (mpc52xx_uart_nodes[idx] == op->node)
+		if (mpc52xx_uart_nodes[idx] == op->dev.of_node)
 			break;
 	if (idx >= MPC52xx_PSC_MAXNUM)
 		return -EINVAL;
@@ -1389,7 +1389,7 @@ mpc52xx_uart_of_probe(struct of_device *op, const struct of_device_id *match)
 	/* set the uart clock to the input clock of the psc, the different
 	 * prescalers are taken into account in the set_baudrate() methods
 	 * of the respective chip */
-	uartclk = mpc5xxx_get_bus_frequency(op->node);
+	uartclk = mpc5xxx_get_bus_frequency(op->dev.of_node);
 	if (uartclk == 0) {
 		dev_dbg(&op->dev, "Could not find uart clock frequency!\n");
 		return -EINVAL;
@@ -1409,7 +1409,7 @@ mpc52xx_uart_of_probe(struct of_device *op, const struct of_device_id *match)
 	port->dev	= &op->dev;
 
 	/* Search for IRQ and mapbase */
-	ret = of_address_to_resource(op->node, 0, &res);
+	ret = of_address_to_resource(op->dev.of_node, 0, &res);
 	if (ret)
 		return ret;
 
@@ -1419,7 +1419,7 @@ mpc52xx_uart_of_probe(struct of_device *op, const struct of_device_id *match)
 		return -EINVAL;
 	}
 
-	psc_ops->get_irq(port, op->node);
+	psc_ops->get_irq(port, op->dev.of_node);
 	if (port->irq == NO_IRQ) {
 		dev_dbg(&op->dev, "Could not get irq\n");
 		return -EINVAL;
@@ -1518,15 +1518,16 @@ mpc52xx_uart_of_enumerate(void)
 MODULE_DEVICE_TABLE(of, mpc52xx_uart_of_match);
 
 static struct of_platform_driver mpc52xx_uart_of_driver = {
-	.match_table	= mpc52xx_uart_of_match,
 	.probe		= mpc52xx_uart_of_probe,
 	.remove		= mpc52xx_uart_of_remove,
 #ifdef CONFIG_PM
 	.suspend	= mpc52xx_uart_of_suspend,
 	.resume		= mpc52xx_uart_of_resume,
 #endif
-	.driver		= {
-		.name	= "mpc52xx-psc-uart",
+	.driver = {
+		.name = "mpc52xx-psc-uart",
+		.owner = THIS_MODULE,
+		.of_match_table = mpc52xx_uart_of_match,
 	},
 };
 
