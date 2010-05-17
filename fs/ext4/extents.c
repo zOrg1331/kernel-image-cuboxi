@@ -107,11 +107,8 @@ static int ext4_ext_truncate_extend_restart(handle_t *handle,
 	if (err <= 0)
 		return err;
 	err = ext4_truncate_restart_trans(handle, inode, needed);
-	/*
-	 * We have dropped i_data_sem so someone might have cached again
-	 * an extent we are going to truncate.
-	 */
-	ext4_ext_invalidate_cache(inode);
+	if (!err && !ext4_test_inode_state(inode, EXT4_STATE_EXT_TRUNC))
+		err = -EAGAIN;
 
 	return err;
 }
@@ -2368,12 +2365,15 @@ static int ext4_ext_remove_space(struct inode *inode, ext4_lblk_t start)
 	if (IS_ERR(handle))
 		return PTR_ERR(handle);
 
+again:
 	ext4_ext_invalidate_cache(inode);
 
 	/*
 	 * We start scanning from right side, freeing all the blocks
 	 * after i_size and walking into the tree depth-wise.
 	 */
+	ext4_set_inode_state(inode, EXT4_STATE_EXT_TRUNC);
+	depth = ext_depth(inode);
 	path = kzalloc(sizeof(struct ext4_ext_path) * (depth + 1), GFP_NOFS);
 	if (path == NULL) {
 		ext4_journal_stop(handle);
@@ -2478,6 +2478,11 @@ static int ext4_ext_remove_space(struct inode *inode, ext4_lblk_t start)
 out:
 	ext4_ext_drop_refs(path);
 	kfree(path);
+	if (err == -EAGAIN) {
+		err = 0;
+		goto again;
+	}
+	ext4_clear_inode_state(inode, EXT4_STATE_EXT_TRUNC);
 	ext4_journal_stop(handle);
 
 	return err;
@@ -3327,6 +3332,9 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
 	ext_debug("blocks %u/%u requested for inode %lu\n",
 		  map->m_lblk, map->m_len, inode->i_ino);
 
+	if (unlikely((flags & EXT4_GET_BLOCKS_CREATE)) &&
+		ext4_test_inode_state(inode, EXT4_STATE_EXT_TRUNC))
+		ext4_clear_inode_state(inode, EXT4_STATE_EXT_TRUNC);
 	/* check in cache */
 	cache_type = ext4_ext_in_cache(inode, map->m_lblk, &newex);
 	if (cache_type) {

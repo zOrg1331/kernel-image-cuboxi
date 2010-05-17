@@ -1162,6 +1162,7 @@ enum {
 	EXT4_STATE_DA_ALLOC_CLOSE,	/* Alloc DA blks on close */
 	EXT4_STATE_EXT_MIGRATE,		/* Inode is migrating */
 	EXT4_STATE_DIO_UNWRITTEN,	/* need convert on dio done*/
+	EXT4_STATE_EXT_TRUNC,		/* truncate is in progress, modified under i_data_sem */
 };
 
 #define EXT4_INODE_BIT_FNS(name, field)					\
