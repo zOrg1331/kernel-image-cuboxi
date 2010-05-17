@@ -12,7 +12,7 @@
  *  SAS disks.
  *
  *
- *  For documentation see http://www.torque.net/sg/sdebug26.html
+ *  For documentation see http://sg.danny.cz/sg/sdebug26.html
  *
  *   D. Gilbert (dpg) work for Magneto-Optical device test [20010421]
  *   dpg: work for devfs large number of disks [20010809]
