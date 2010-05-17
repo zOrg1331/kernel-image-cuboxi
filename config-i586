@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.32-xen-dom0-alt11
-# Thu Apr  8 08:33:49 2010
+# Linux kernel version: 2.6.32-xen-dom0-alt12
+# Mon May 17 14:30:27 2010
 #
 # CONFIG_64BIT is not set
 CONFIG_X86_32=y
@@ -289,6 +289,7 @@ CONFIG_PAGE_OFFSET=0xC0000000
 CONFIG_HIGHMEM=y
 CONFIG_X86_PAE=y
 CONFIG_ARCH_PHYS_ADDR_T_64BIT=y
+CONFIG_ILLEGAL_POINTER_VALUE=0
 CONFIG_SELECT_MEMORY_MODEL=y
 CONFIG_FLATMEM_MANUAL=y
 # CONFIG_DISCONTIGMEM_MANUAL is not set
