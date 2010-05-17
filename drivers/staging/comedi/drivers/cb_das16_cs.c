@@ -175,16 +175,16 @@ static int das16cs_attach(struct comedi_device *dev,
 	printk("I/O base=0x%04lx ", dev->iobase);
 
 	printk("fingerprint:\n");
-	for (i = 0; i < 48; i += 2) {
+	for (i = 0; i < 48; i += 2)
 		printk("%04x ", inw(dev->iobase + i));
-	}
+
 	printk("\n");
 
 	ret = request_irq(link->irq, das16cs_interrupt,
 			  IRQF_SHARED, "cb_das16_cs", dev);
-	if (ret < 0) {
+	if (ret < 0)
 		return ret;
-	}
+
 	dev->irq = link->irq;
 	printk("irq=%u ", dev->irq);
 
@@ -262,9 +262,9 @@ static int das16cs_detach(struct comedi_device *dev)
 {
 	printk("comedi%d: das16cs: remove\n", dev->minor);
 
-	if (dev->irq) {
+	if (dev->irq)
 		free_irq(dev->irq, dev);
-	}
+
 
 	return 0;
 }
@@ -834,6 +834,9 @@ static struct pcmcia_device_id das16cs_id_table[] = {
 };
 
 MODULE_DEVICE_TABLE(pcmcia, das16cs_id_table);
+MODULE_AUTHOR("David A. Schleef <ds@schleef.org>");
+MODULE_DESCRIPTION("Comedi driver for Computer Boards PC-CARD DAS16/16");
+MODULE_LICENSE("GPL");
 
 struct pcmcia_driver das16cs_driver = {
 	.probe = das16cs_pcmcia_attach,

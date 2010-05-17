@@ -30,7 +30,6 @@
 
 ******************************************************************************/
 #include <linux/wireless.h>
-#include <linux/version.h>
 #include <linux/kmod.h>
 #include <linux/slab.h>
 #include <linux/module.h>
@@ -380,11 +379,10 @@ int ieee80211_wx_set_encode(struct ieee80211_device *ieee,
 		struct ieee80211_crypt_data *new_crypt;
 
 		/* take WEP into use */
-		new_crypt = kmalloc(sizeof(struct ieee80211_crypt_data),
+		new_crypt = kzalloc(sizeof(struct ieee80211_crypt_data),
 				    GFP_KERNEL);
 		if (new_crypt == NULL)
 			return -ENOMEM;
-		memset(new_crypt, 0, sizeof(struct ieee80211_crypt_data));
 		new_crypt->ops = ieee80211_get_crypto_ops("WEP");
 		if (!new_crypt->ops) {
 			request_module("ieee80211_crypt_wep");

@@ -246,8 +246,7 @@ typedef struct tagSRxMgmtPacket {
 
 typedef struct tagSMgmtObject
 {
-
-    PVOID                   pAdapter;
+	void *pAdapter;
     // MAC address
     BYTE                    abyMACAddr[WLAN_ADDR_LEN];
 
@@ -401,102 +400,61 @@ typedef struct tagSMgmtObject
 
 } SMgmtObject, *PSMgmtObject;
 
-
 /*---------------------  Export Macros ------------------------------*/
-
 
 /*---------------------  Export Functions  --------------------------*/
 
+void vMgrObjectInit(void *hDeviceContext);
 
-void
-vMgrObjectInit(
-    IN  HANDLE hDeviceContext
-    );
+void vMgrAssocBeginSta(void *hDeviceContext,
+		       PSMgmtObject pMgmt,
+		       PCMD_STATUS pStatus);
 
+void vMgrReAssocBeginSta(void *hDeviceContext,
+			 PSMgmtObject pMgmt,
+			 PCMD_STATUS pStatus);
 
-void
-vMgrAssocBeginSta(
-    IN  HANDLE hDeviceContext,
-    IN  PSMgmtObject pMgmt,
-    OUT PCMD_STATUS pStatus
-    );
+void vMgrDisassocBeginSta(void *hDeviceContext,
+			  PSMgmtObject pMgmt,
+			  PBYTE abyDestAddress,
+			  WORD wReason,
+			  PCMD_STATUS pStatus);
 
-VOID
-vMgrReAssocBeginSta(
-    IN  HANDLE hDeviceContext,
-    IN  PSMgmtObject pMgmt,
-    OUT PCMD_STATUS pStatus
-    );
+void vMgrAuthenBeginSta(void *hDeviceContext,
+			PSMgmtObject pMgmt,
+			PCMD_STATUS pStatus);
 
-VOID
-vMgrDisassocBeginSta(
-    IN  HANDLE hDeviceContext,
-    IN  PSMgmtObject pMgmt,
-    IN  PBYTE  abyDestAddress,
-    IN  WORD    wReason,
-    OUT PCMD_STATUS pStatus
-    );
+void vMgrCreateOwnIBSS(void *hDeviceContext,
+		       PCMD_STATUS pStatus);
 
-VOID
-vMgrAuthenBeginSta(
-    IN  HANDLE hDeviceContext,
-    IN  PSMgmtObject pMgmt,
-    OUT PCMD_STATUS pStatus
-    );
+void vMgrJoinBSSBegin(void *hDeviceContext,
+		      PCMD_STATUS pStatus);
 
-VOID
-vMgrCreateOwnIBSS(
-    IN  HANDLE hDeviceContext,
-    OUT PCMD_STATUS pStatus
-    );
-
-VOID
-vMgrJoinBSSBegin(
-    IN  HANDLE hDeviceContext,
-    OUT PCMD_STATUS pStatus
-    );
-
-VOID
-vMgrRxManagePacket(
-    IN  HANDLE hDeviceContext,
-    IN  PSMgmtObject pMgmt,
-    IN  PSRxMgmtPacket pRxPacket
-    );
+void vMgrRxManagePacket(void *hDeviceContext,
+			PSMgmtObject pMgmt,
+			PSRxMgmtPacket pRxPacket);
 
 /*
-VOID
+void
 vMgrScanBegin(
-    IN  HANDLE hDeviceContext,
-    OUT PCMD_STATUS pStatus
+      void *hDeviceContext,
+     PCMD_STATUS pStatus
     );
 */
 
-VOID
-vMgrDeAuthenBeginSta(
-    IN  HANDLE hDeviceContext,
-    IN  PSMgmtObject  pMgmt,
-    IN  PBYTE   abyDestAddress,
-    IN  WORD    wReason,
-    OUT PCMD_STATUS pStatus
-    );
+void vMgrDeAuthenBeginSta(void *hDeviceContext,
+			  PSMgmtObject pMgmt,
+			  PBYTE abyDestAddress,
+			  WORD wReason,
+			  PCMD_STATUS pStatus);
 
-BOOL
-bMgrPrepareBeaconToSend(
-    IN  HANDLE hDeviceContext,
-    IN  PSMgmtObject pMgmt
-    );
+BOOL bMgrPrepareBeaconToSend(void *hDeviceContext,
+			     PSMgmtObject pMgmt);
 
+BOOL bAdd_PMKID_Candidate(void *hDeviceContext,
+			  PBYTE pbyBSSID,
+			  PSRSNCapObject psRSNCapObj);
 
-BOOL
-bAdd_PMKID_Candidate (
-    IN HANDLE    hDeviceContext,
-    IN PBYTE          pbyBSSID,
-    IN PSRSNCapObject psRSNCapObj
-    );
+void vFlush_PMKID_Candidate(void *hDeviceContext);
 
-VOID
-vFlush_PMKID_Candidate (
-    IN HANDLE hDeviceContext
-    );
-
-#endif // __WMGR_H__
+#endif /* __WMGR_H__ */
