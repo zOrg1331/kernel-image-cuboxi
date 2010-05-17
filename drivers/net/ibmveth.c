@@ -957,7 +957,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 	} else {
 		tx_packets++;
 		tx_bytes += skb->len;
-		netdev->trans_start = jiffies;
+		netdev->trans_start = jiffies; /* NETIF_F_LLTX driver :( */
 	}
 
 	if (!used_bounce)
@@ -1073,7 +1073,7 @@ static void ibmveth_set_multicast_list(struct net_device *netdev)
 			ibmveth_error_printk("h_multicast_ctrl rc=%ld when entering promisc mode\n", lpar_rc);
 		}
 	} else {
-		struct dev_mc_list *mclist;
+		struct netdev_hw_addr *ha;
 		/* clear the filter table & disable filtering */
 		lpar_rc = h_multicast_ctrl(adapter->vdev->unit_address,
 					   IbmVethMcastEnableRecv |
@@ -1084,10 +1084,10 @@ static void ibmveth_set_multicast_list(struct net_device *netdev)
 			ibmveth_error_printk("h_multicast_ctrl rc=%ld when attempting to clear filter table\n", lpar_rc);
 		}
 		/* add the addresses to the filter table */
-		netdev_for_each_mc_addr(mclist, netdev) {
+		netdev_for_each_mc_addr(ha, netdev) {
 			// add the multicast address to the filter table
 			unsigned long mcast_addr = 0;
-			memcpy(((char *)&mcast_addr)+2, mclist->dmi_addr, 6);
+			memcpy(((char *)&mcast_addr)+2, ha->addr, 6);
 			lpar_rc = h_multicast_ctrl(adapter->vdev->unit_address,
 						   IbmVethMcastAddFilter,
 						   mcast_addr);
@@ -1421,7 +1421,6 @@ static void ibmveth_proc_register_adapter(struct ibmveth_adapter *adapter)
 		if (!entry)
 			ibmveth_error_printk("Cannot create adapter proc entry");
 	}
-	return;
 }
 
 static void ibmveth_proc_unregister_adapter(struct ibmveth_adapter *adapter)

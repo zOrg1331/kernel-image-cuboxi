@@ -98,7 +98,7 @@ int lockdep_rtnl_is_held(void)
 EXPORT_SYMBOL(lockdep_rtnl_is_held);
 #endif /* #ifdef CONFIG_PROVE_LOCKING */
 
-static struct rtnl_link *rtnl_msg_handlers[NPROTO];
+static struct rtnl_link *rtnl_msg_handlers[RTNL_FAMILY_MAX + 1];
 
 static inline int rtm_msgindex(int msgtype)
 {
@@ -118,7 +118,11 @@ static rtnl_doit_func rtnl_get_doit(int protocol, int msgindex)
 {
 	struct rtnl_link *tab;
 
-	tab = rtnl_msg_handlers[protocol];
+	if (protocol <= RTNL_FAMILY_MAX)
+		tab = rtnl_msg_handlers[protocol];
+	else
+		tab = NULL;
+
 	if (tab == NULL || tab[msgindex].doit == NULL)
 		tab = rtnl_msg_handlers[PF_UNSPEC];
 
@@ -129,7 +133,11 @@ static rtnl_dumpit_func rtnl_get_dumpit(int protocol, int msgindex)
 {
 	struct rtnl_link *tab;
 
-	tab = rtnl_msg_handlers[protocol];
+	if (protocol <= RTNL_FAMILY_MAX)
+		tab = rtnl_msg_handlers[protocol];
+	else
+		tab = NULL;
+
 	if (tab == NULL || tab[msgindex].dumpit == NULL)
 		tab = rtnl_msg_handlers[PF_UNSPEC];
 
@@ -159,7 +167,7 @@ int __rtnl_register(int protocol, int msgtype,
 	struct rtnl_link *tab;
 	int msgindex;
 
-	BUG_ON(protocol < 0 || protocol >= NPROTO);
+	BUG_ON(protocol < 0 || protocol > RTNL_FAMILY_MAX);
 	msgindex = rtm_msgindex(msgtype);
 
 	tab = rtnl_msg_handlers[protocol];
@@ -211,7 +219,7 @@ int rtnl_unregister(int protocol, int msgtype)
 {
 	int msgindex;
 
-	BUG_ON(protocol < 0 || protocol >= NPROTO);
+	BUG_ON(protocol < 0 || protocol > RTNL_FAMILY_MAX);
 	msgindex = rtm_msgindex(msgtype);
 
 	if (rtnl_msg_handlers[protocol] == NULL)
@@ -233,7 +241,7 @@ EXPORT_SYMBOL_GPL(rtnl_unregister);
  */
 void rtnl_unregister_all(int protocol)
 {
-	BUG_ON(protocol < 0 || protocol >= NPROTO);
+	BUG_ON(protocol < 0 || protocol > RTNL_FAMILY_MAX);
 
 	kfree(rtnl_msg_handlers[protocol]);
 	rtnl_msg_handlers[protocol] = NULL;
@@ -600,7 +608,41 @@ static void copy_rtnl_link_stats(struct rtnl_link_stats *a,
 
 	a->rx_compressed = b->rx_compressed;
 	a->tx_compressed = b->tx_compressed;
-};
+}
+
+static void copy_rtnl_link_stats64(void *v, const struct net_device_stats *b)
+{
+	struct rtnl_link_stats64 a;
+
+	a.rx_packets = b->rx_packets;
+	a.tx_packets = b->tx_packets;
+	a.rx_bytes = b->rx_bytes;
+	a.tx_bytes = b->tx_bytes;
+	a.rx_errors = b->rx_errors;
+	a.tx_errors = b->tx_errors;
+	a.rx_dropped = b->rx_dropped;
+	a.tx_dropped = b->tx_dropped;
+
+	a.multicast = b->multicast;
+	a.collisions = b->collisions;
+
+	a.rx_length_errors = b->rx_length_errors;
+	a.rx_over_errors = b->rx_over_errors;
+	a.rx_crc_errors = b->rx_crc_errors;
+	a.rx_frame_errors = b->rx_frame_errors;
+	a.rx_fifo_errors = b->rx_fifo_errors;
+	a.rx_missed_errors = b->rx_missed_errors;
+
+	a.tx_aborted_errors = b->tx_aborted_errors;
+	a.tx_carrier_errors = b->tx_carrier_errors;
+	a.tx_fifo_errors = b->tx_fifo_errors;
+	a.tx_heartbeat_errors = b->tx_heartbeat_errors;
+	a.tx_window_errors = b->tx_window_errors;
+
+	a.rx_compressed = b->rx_compressed;
+	a.tx_compressed = b->tx_compressed;
+	memcpy(v, &a, sizeof(a));
+}
 
 /* All VF info */
 static inline int rtnl_vfinfo_size(const struct net_device *dev)
@@ -626,6 +668,7 @@ static inline size_t if_nlmsg_size(const struct net_device *dev)
 	       + nla_total_size(IFNAMSIZ) /* IFLA_QDISC */
 	       + nla_total_size(sizeof(struct rtnl_link_ifmap))
 	       + nla_total_size(sizeof(struct rtnl_link_stats))
+	       + nla_total_size(sizeof(struct rtnl_link_stats64))
 	       + nla_total_size(MAX_ADDR_LEN) /* IFLA_ADDRESS */
 	       + nla_total_size(MAX_ADDR_LEN) /* IFLA_BROADCAST */
 	       + nla_total_size(4) /* IFLA_TXQLEN */
@@ -704,6 +747,12 @@ static int rtnl_fill_ifinfo(struct sk_buff *skb, struct net_device *dev,
 
 	stats = dev_get_stats(dev);
 	copy_rtnl_link_stats(nla_data(attr), stats);
+
+	attr = nla_reserve(skb, IFLA_STATS64,
+			sizeof(struct rtnl_link_stats64));
+	if (attr == NULL)
+		goto nla_put_failure;
+	copy_rtnl_link_stats64(nla_data(attr), stats);
 
 	if (dev->netdev_ops->ndo_get_vf_config && dev->dev.parent) {
 		int i;
@@ -1397,7 +1446,7 @@ static int rtnl_dump_all(struct sk_buff *skb, struct netlink_callback *cb)
 
 	if (s_idx == 0)
 		s_idx = 1;
-	for (idx = 1; idx < NPROTO; idx++) {
+	for (idx = 1; idx <= RTNL_FAMILY_MAX; idx++) {
 		int type = cb->nlh->nlmsg_type-RTM_BASE;
 		if (idx < s_idx || idx == PF_PACKET)
 			continue;
@@ -1465,9 +1514,6 @@ static int rtnetlink_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh)
 		return 0;
 
 	family = ((struct rtgenmsg *)NLMSG_DATA(nlh))->rtgen_family;
-	if (family >= NPROTO)
-		return -EAFNOSUPPORT;
-
 	sz_idx = type>>2;
 	kind = type&3;
 
@@ -1535,6 +1581,7 @@ static int rtnetlink_event(struct notifier_block *this, unsigned long event, voi
 	case NETDEV_POST_INIT:
 	case NETDEV_REGISTER:
 	case NETDEV_CHANGE:
+	case NETDEV_PRE_TYPE_CHANGE:
 	case NETDEV_GOING_DOWN:
 	case NETDEV_UNREGISTER:
 	case NETDEV_UNREGISTER_BATCH:
