@@ -2784,9 +2784,9 @@ source "drivers/ieee802154/Kconfig"
 
 source "drivers/s390/net/Kconfig"
 
-config XEN_NETDEV_FRONTEND
+config XEN_NETFRONT
 	tristate "Xen network device frontend driver"
-	depends on XEN
+	depends on PARAVIRT_XEN
 	default y
 	help
 	  The network device frontend driver allows the kernel to
@@ -3235,7 +3235,7 @@ config VIRTIO_NET
 
 config VMXNET3
        tristate "VMware VMXNET3 ethernet driver"
-       depends on PCI && X86 && INET
+       depends on PCI && X86 && !XEN && INET
        help
          This driver supports VMware's vmxnet3 virtual ethernet NIC.
          To compile this driver as a module, choose M here: the
