@@ -1641,30 +1641,26 @@ static int process_sample_event(event_t *event, struct perf_session *session)
 	return 0;
 }
 
-static int process_lost_event(event_t *event __used,
-			      struct perf_session *session __used)
-{
-	nr_lost_chunks++;
-	nr_lost_events += event->lost.lost;
-
-	return 0;
-}
-
 static struct perf_event_ops event_ops = {
-	.sample	= process_sample_event,
-	.comm	= event__process_comm,
-	.lost	= process_lost_event,
+	.sample			= process_sample_event,
+	.comm			= event__process_comm,
+	.lost			= event__process_lost,
+	.ordered_samples	= true,
 };
 
 static int read_events(void)
 {
 	int err = -EINVAL;
-	struct perf_session *session = perf_session__new(input_name, O_RDONLY, 0);
+	struct perf_session *session = perf_session__new(input_name, O_RDONLY, 0, false);
 	if (session == NULL)
 		return -ENOMEM;
 
-	if (perf_session__has_traces(session, "record -R"))
+	if (perf_session__has_traces(session, "record -R")) {
 		err = perf_session__process_events(session, &event_ops);
+		nr_events      = session->hists.stats.nr_events[0];
+		nr_lost_events = session->hists.stats.total_lost;
+		nr_lost_chunks = session->hists.stats.nr_events[PERF_RECORD_LOST];
+	}
 
 	perf_session__delete(session);
 	return err;
@@ -1850,7 +1846,6 @@ static const char *record_args[] = {
 	"record",
 	"-a",
 	"-R",
-	"-M",
 	"-f",
 	"-m", "1024",
 	"-c", "1",
