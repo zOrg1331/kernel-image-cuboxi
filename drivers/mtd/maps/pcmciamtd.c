@@ -49,7 +49,6 @@ static const int debug = 0;
 
 struct pcmciamtd_dev {
 	struct pcmcia_device	*p_dev;
-	dev_node_t	node;		/* device node */
 	caddr_t		win_base;	/* ioremapped address of PCMCIA window */
 	unsigned int	win_size;	/* size of window */
 	unsigned int	offset;		/* offset into card the window currently points at */
@@ -656,9 +655,7 @@ static int pcmciamtd_config(struct pcmcia_device *link)
 		pcmciamtd_release(link);
 		return -ENODEV;
 	}
-	snprintf(dev->node.dev_name, sizeof(dev->node.dev_name), "mtd%d", mtd->index);
 	dev_info(&dev->p_dev->dev, "mtd%d: %s\n", mtd->index, mtd->name);
-	link->dev_node = &dev->node;
 	return 0;
 
 	dev_err(&dev->p_dev->dev, "CS Error, exiting\n");
