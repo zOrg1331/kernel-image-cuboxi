@@ -1100,6 +1100,7 @@ static int qeth_setup_card(struct qeth_card *card)
 	spin_lock_init(&card->lock);
 	spin_lock_init(&card->ip_lock);
 	spin_lock_init(&card->thread_mask_lock);
+	mutex_init(&card->conf_mutex);
 	card->thread_start_mask = 0;
 	card->thread_allowed_mask = 0;
 	card->thread_running_mask = 0;
@@ -1977,6 +1978,7 @@ static int qeth_ulp_setup_cb(struct qeth_card *card, struct qeth_reply *reply,
 		unsigned long data)
 {
 	struct qeth_cmd_buffer *iob;
+	int rc = 0;
 
 	QETH_DBF_TEXT(SETUP, 2, "ulpstpcb");
 
@@ -1984,8 +1986,15 @@ static int qeth_ulp_setup_cb(struct qeth_card *card, struct qeth_reply *reply,
 	memcpy(&card->token.ulp_connection_r,
 	       QETH_ULP_SETUP_RESP_CONNECTION_TOKEN(iob->data),
 	       QETH_MPC_TOKEN_LENGTH);
+	if (!strncmp("00S", QETH_ULP_SETUP_RESP_CONNECTION_TOKEN(iob->data),
+		     3)) {
+		QETH_DBF_TEXT(SETUP, 2, "olmlimit");
+		dev_err(&card->gdev->dev, "A connection could not be "
+			"established because of an OLM limit\n");
+		rc = -EMLINK;
+	}
 	QETH_DBF_TEXT_(SETUP, 2, "  rc%d", iob->rc);
-	return 0;
+	return rc;
 }
 
 static int qeth_ulp_setup(struct qeth_card *card)

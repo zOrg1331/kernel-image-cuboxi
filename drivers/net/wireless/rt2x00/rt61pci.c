@@ -1809,7 +1809,8 @@ static void rt61pci_write_tx_desc(struct rt2x00_dev *rt2x00dev,
 
 	if (skbdesc->desc_len > TXINFO_SIZE) {
 		rt2x00_desc_read(txd, 11, &word);
-		rt2x00_set_field32(&word, TXD_W11_BUFFER_LENGTH0, skb->len);
+		rt2x00_set_field32(&word, TXD_W11_BUFFER_LENGTH0,
+				   txdesc->length);
 		rt2x00_desc_write(txd, 11, word);
 	}
 
@@ -1832,7 +1833,7 @@ static void rt61pci_write_tx_desc(struct rt2x00_dev *rt2x00dev,
 	rt2x00_set_field32(&word, TXD_W0_KEY_TABLE,
 			   test_bit(ENTRY_TXD_ENCRYPT_PAIRWISE, &txdesc->flags));
 	rt2x00_set_field32(&word, TXD_W0_KEY_INDEX, txdesc->key_idx);
-	rt2x00_set_field32(&word, TXD_W0_DATABYTE_COUNT, skb->len);
+	rt2x00_set_field32(&word, TXD_W0_DATABYTE_COUNT, txdesc->length);
 	rt2x00_set_field32(&word, TXD_W0_BURST,
 			   test_bit(ENTRY_TXD_BURST, &txdesc->flags));
 	rt2x00_set_field32(&word, TXD_W0_CIPHER_ALG, txdesc->cipher);
@@ -1842,7 +1843,8 @@ static void rt61pci_write_tx_desc(struct rt2x00_dev *rt2x00dev,
 /*
  * TX data initialization
  */
-static void rt61pci_write_beacon(struct queue_entry *entry)
+static void rt61pci_write_beacon(struct queue_entry *entry,
+				 struct txentry_desc *txdesc)
 {
 	struct rt2x00_dev *rt2x00dev = entry->queue->rt2x00dev;
 	struct skb_frame_desc *skbdesc = get_skb_frame_desc(entry->skb);
@@ -1869,6 +1871,19 @@ static void rt61pci_write_beacon(struct queue_entry *entry)
 				      entry->skb->data, entry->skb->len);
 
 	/*
+	 * Enable beaconing again.
+	 *
+	 * For Wi-Fi faily generated beacons between participating
+	 * stations. Set TBTT phase adaptive adjustment step to 8us.
+	 */
+	rt2x00pci_register_write(rt2x00dev, TXRX_CSR10, 0x00001008);
+
+	rt2x00_set_field32(&reg, TXRX_CSR9_TSF_TICKING, 1);
+	rt2x00_set_field32(&reg, TXRX_CSR9_TBTT_ENABLE, 1);
+	rt2x00_set_field32(&reg, TXRX_CSR9_BEACON_GEN, 1);
+	rt2x00pci_register_write(rt2x00dev, TXRX_CSR9, reg);
+
+	/*
 	 * Clean up beacon skb.
 	 */
 	dev_kfree_skb_any(entry->skb);
@@ -1879,23 +1894,6 @@ static void rt61pci_kick_tx_queue(struct rt2x00_dev *rt2x00dev,
 				  const enum data_queue_qid queue)
 {
 	u32 reg;
-
-	if (queue == QID_BEACON) {
-		/*
-		 * For Wi-Fi faily generated beacons between participating
-		 * stations. Set TBTT phase adaptive adjustment step to 8us.
-		 */
-		rt2x00pci_register_write(rt2x00dev, TXRX_CSR10, 0x00001008);
-
-		rt2x00pci_register_read(rt2x00dev, TXRX_CSR9, &reg);
-		if (!rt2x00_get_field32(reg, TXRX_CSR9_BEACON_GEN)) {
-			rt2x00_set_field32(&reg, TXRX_CSR9_TSF_TICKING, 1);
-			rt2x00_set_field32(&reg, TXRX_CSR9_TBTT_ENABLE, 1);
-			rt2x00_set_field32(&reg, TXRX_CSR9_BEACON_GEN, 1);
-			rt2x00pci_register_write(rt2x00dev, TXRX_CSR9, reg);
-		}
-		return;
-	}
 
 	rt2x00pci_register_read(rt2x00dev, TX_CNTL_CSR, &reg);
 	rt2x00_set_field32(&reg, TX_CNTL_CSR_KICK_TX_AC0, (queue == QID_AC_BE));
@@ -1968,12 +1966,8 @@ static void rt61pci_fill_rxdone(struct queue_entry *entry,
 	if (rt2x00_get_field32(word0, RXD_W0_CRC_ERROR))
 		rxdesc->flags |= RX_FLAG_FAILED_FCS_CRC;
 
-	if (test_bit(CONFIG_SUPPORT_HW_CRYPTO, &rt2x00dev->flags)) {
-		rxdesc->cipher =
-		    rt2x00_get_field32(word0, RXD_W0_CIPHER_ALG);
-		rxdesc->cipher_status =
-		    rt2x00_get_field32(word0, RXD_W0_CIPHER_ERROR);
-	}
+	rxdesc->cipher = rt2x00_get_field32(word0, RXD_W0_CIPHER_ALG);
+	rxdesc->cipher_status = rt2x00_get_field32(word0, RXD_W0_CIPHER_ERROR);
 
 	if (rxdesc->cipher != CIPHER_NONE) {
 		_rt2x00_desc_read(entry_priv->desc, 2, &rxdesc->iv[0]);
@@ -2118,6 +2112,14 @@ static void rt61pci_txdone(struct rt2x00_dev *rt2x00dev)
 	}
 }
 
+static void rt61pci_wakeup(struct rt2x00_dev *rt2x00dev)
+{
+	struct ieee80211_conf conf = { .flags = 0 };
+	struct rt2x00lib_conf libconf = { .conf = &conf };
+
+	rt61pci_config(rt2x00dev, &libconf, IEEE80211_CONF_CHANGE_PS);
+}
+
 static irqreturn_t rt61pci_interrupt(int irq, void *dev_instance)
 {
 	struct rt2x00_dev *rt2x00dev = dev_instance;
@@ -2164,6 +2166,12 @@ static irqreturn_t rt61pci_interrupt(int irq, void *dev_instance)
 	if (reg_mcu)
 		rt2x00pci_register_write(rt2x00dev,
 					 M2H_CMD_DONE_CSR, 0xffffffff);
+
+	/*
+	 * 4 - MCU Autowakeup interrupt.
+	 */
+	if (rt2x00_get_field32(reg_mcu, MCU_INT_SOURCE_CSR_TWAKEUP))
+		rt61pci_wakeup(rt2x00dev);
 
 	return IRQ_HANDLED;
 }

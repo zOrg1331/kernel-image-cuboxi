@@ -83,6 +83,21 @@
 #define D_SUBMODULE control
 #include "debug-levels.h"
 
+static int i2400m_idle_mode_disabled;/* 0 (idle mode enabled) by default */
+module_param_named(idle_mode_disabled, i2400m_idle_mode_disabled, int, 0644);
+MODULE_PARM_DESC(idle_mode_disabled,
+		 "If true, the device will not enable idle mode negotiation "
+		 "with the base station (when connected) to save power.");
+
+/* 0 (power saving enabled) by default */
+static int i2400m_power_save_disabled;
+module_param_named(power_save_disabled, i2400m_power_save_disabled, int, 0644);
+MODULE_PARM_DESC(power_save_disabled,
+		 "If true, the driver will not tell the device to enter "
+		 "power saving mode when it reports it is ready for it. "
+		 "False by default (so the device is told to do power "
+		 "saving).");
+
 int i2400m_passive_mode;	/* 0 (passive mode disabled) by default */
 module_param_named(passive_mode, i2400m_passive_mode, int, 0644);
 MODULE_PARM_DESC(passive_mode,
@@ -568,7 +583,6 @@ void i2400m_msg_ack_hook(struct i2400m *i2400m,
 		}
 		break;
 	};
-	return;
 }
 
 
@@ -1419,5 +1433,4 @@ void i2400m_dev_shutdown(struct i2400m *i2400m)
 
 	d_fnstart(3, dev, "(i2400m %p)\n", i2400m);
 	d_fnend(3, dev, "(i2400m %p) = void\n", i2400m);
-	return;
 }
