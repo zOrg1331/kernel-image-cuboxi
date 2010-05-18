@@ -509,4 +509,11 @@ struct mdio_device_id {
 	__u32 phy_id_mask;
 };
 
+#define ISAPNP_ANY_ID		0xffff
+struct isapnp_device_id {
+	unsigned short card_vendor, card_device;
+	unsigned short vendor, function;
+	kernel_ulong_t driver_data;	/* data private to the driver */
+};
+
 #endif /* LINUX_MOD_DEVICETABLE_H */
