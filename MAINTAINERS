@@ -4883,7 +4883,7 @@ F:	drivers/scsi/sr*
 SCSI SG DRIVER
 M:	Doug Gilbert <dgilbert@interlog.com>
 L:	linux-scsi@vger.kernel.org
-W:	http://www.torque.net/sg
+W:	http://sg.danny.cz/sg/index.html
 S:	Maintained
 F:	drivers/scsi/sg.c
 F:	include/scsi/sg.h
