@@ -46,7 +46,6 @@
 #include <mach/h1940.h>
 #include <mach/h1940-latch.h>
 #include <mach/fb.h>
-#include <mach/ts.h>
 #include <plat/udc.h>
 #include <plat/iic.h>
 
@@ -57,6 +56,7 @@
 #include <plat/pll.h>
 #include <plat/pm.h>
 #include <plat/mci.h>
+#include <plat/ts.h>
 
 static struct map_desc h1940_iodesc[] __initdata = {
 	[0] = {
@@ -272,7 +272,6 @@ static struct platform_device h1940_lcd_powerdev = {
 };
 
 static struct platform_device *h1940_devices[] __initdata = {
-	&s3c_device_ts,
 	&s3c_device_ohci,
 	&s3c_device_lcd,
 	&s3c_device_wdt,
@@ -286,6 +285,8 @@ static struct platform_device *h1940_devices[] __initdata = {
 	&s3c_device_timer[0],
 	&h1940_backlight,
 	&h1940_lcd_powerdev,
+	&s3c_device_adc,
+	&s3c_device_ts,
 };
 
 static void __init h1940_map_io(void)
@@ -339,7 +340,7 @@ static void __init h1940_init(void)
 }
 
 MACHINE_START(H1940, "IPAQ-H1940")
-	/* Maintainer: Ben Dooks <ben@fluff.org> */
+	/* Maintainer: Ben Dooks <ben-linux@fluff.org> */
 	.phys_io	= S3C2410_PA_UART,
 	.io_pg_offst	= (((u32)S3C24XX_VA_UART) >> 18) & 0xfffc,
 	.boot_params	= S3C2410_SDRAM_PA + 0x100,
