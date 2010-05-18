@@ -1,0 +1,74 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Wed, 10 Mar 2010 19:27:46 -0500
+Subject: [acpi] power_meter: avoid oops on driver load
+Message-id: <1268249266-15627-1-git-send-email-mjg@redhat.com>
+Patchwork-id: 23541
+O-Subject: [PATCH] RHEL 5.5: Avoid oops on ACPI power meter driver load
+Bugzilla: 566575
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+bz 566575
+
+The RHEL kernel is sufficiently old that it doesn't call device_register()
+on ACPI devices, resulting in the power meter driver oopsing on probe.
+Handle this at the driver level rather than performing more invasive
+changes in the core.
+
+diff --git a/drivers/acpi/power_meter.c b/drivers/acpi/power_meter.c
+index 0c9e39b..001249f 100644
+--- a/drivers/acpi/power_meter.c
++++ b/drivers/acpi/power_meter.c
+@@ -60,6 +60,7 @@ ACPI_MODULE_NAME(ACPI_POWER_METER_NAME);
+ 
+ static int cap_in_hardware;
+ static int force_cap_on;
++static int meter_count;
+ 
+ static int can_cap_in_hardware(void)
+ {
+@@ -888,6 +889,12 @@ static int acpi_power_meter_add(struct acpi_device *device)
+ 	if (!resource)
+ 		return -ENOMEM;
+ 
++	snprintf(device->dev.bus_id, sizeof (device->dev.bus_id),
++		 "power_meter%d", meter_count);
++	res = device_register(&device->dev);
++	if (res)
++		goto exit_free;
++
+ 	resource->sensors_valid = 0;
+ 	resource->acpi_dev = device;
+ 	mutex_init(&resource->lock);
+@@ -898,7 +905,7 @@ static int acpi_power_meter_add(struct acpi_device *device)
+ 	free_capabilities(resource);
+ 	res = read_capabilities(resource);
+ 	if (res)
+-		goto exit_free;
++		goto exit_unregister;
+ 
+ 	resource->trip[0] = resource->trip[1] = -1;
+ 
+@@ -912,11 +919,14 @@ static int acpi_power_meter_add(struct acpi_device *device)
+ 		goto exit_remove;
+ 	}
+ 
++	meter_count++;
+ 	res = 0;
+ 	goto exit;
+ 
+ exit_remove:
+ 	remove_attrs(resource);
++exit_unregister:
++	device_unregister(&device->dev);
+ exit_free:
+ 	kfree(resource);
+ exit:
+@@ -940,6 +950,7 @@ static int acpi_power_meter_remove(struct acpi_device *device, int type)
+ 	remove_attrs(resource);
+ 
+ 	kfree(resource);
++	device_unregister(&device->dev);
+ 	return 0;
+ }
+ 

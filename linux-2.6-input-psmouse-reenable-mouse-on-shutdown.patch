@@ -1,0 +1,83 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 5 Jun 2009 11:18:21 -0400
+Subject: [input] psmouse: reenable mouse on shutdown
+Message-id: 20090605151817.24330.54117.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH]: psmouse - reenable mouse on shutdown
+Bugzilla: 501025
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+RH-Acked-by: Matthew Garrett <mjg@redhat.com>
+
+Backport of upstream a1cec06177386ecc320af643de11cfa77e8945bd.
+
+HP nw8440 gets confused if the PS mouse is not fully enabled before shutting
+down.
+
+Succesfully tested by customer, compiled by me.
+
+Resolves BZ 501025.
+
+diff --git a/drivers/input/mouse/psmouse-base.c b/drivers/input/mouse/psmouse-base.c
+index 4300ac6..2a9dd1b 100644
+--- a/drivers/input/mouse/psmouse-base.c
++++ b/drivers/input/mouse/psmouse-base.c
+@@ -1011,8 +1011,36 @@ static void psmouse_resync(void *p)
+ static void psmouse_cleanup(struct serio *serio)
+ {
+ 	struct psmouse *psmouse = serio_get_drvdata(serio);
++	struct psmouse *parent = NULL;
++
++	mutex_lock(&psmouse_mutex);
++
++	if (serio->parent && serio->id.type == SERIO_PS_PSTHRU) {
++		parent = serio_get_drvdata(serio->parent);
++		psmouse_deactivate(parent);
++	}
++
++	psmouse_deactivate(psmouse);
+ 
++	if (psmouse->cleanup)
++		psmouse->cleanup(psmouse);
++	
+ 	psmouse_reset(psmouse);
++
++/*
++ * Some boxes, such as HP nx7400, get terribly confused if mouse
++ * is not fully enabled before suspending/shutting down.
++ */
++	ps2_command(&psmouse->ps2dev, NULL, PSMOUSE_CMD_ENABLE);
++
++	if (parent) {
++		if (parent->pt_deactivate)
++			parent->pt_deactivate(parent);
++
++		psmouse_activate(parent);
++	}
++
++	mutex_unlock(&psmouse_mutex);	
+ }
+ 
+ /*
+diff --git a/drivers/input/mouse/psmouse.h b/drivers/input/mouse/psmouse.h
+index 2e191dd..3655b57 100644
+--- a/drivers/input/mouse/psmouse.h
++++ b/drivers/input/mouse/psmouse.h
+@@ -68,6 +68,7 @@ struct psmouse {
+ 
+ 	int (*reconnect)(struct psmouse *psmouse);
+ 	void (*disconnect)(struct psmouse *psmouse);
++	void (*cleanup)(struct psmouse *psmouse);
+ 	int (*poll)(struct psmouse *psmouse);
+ 
+ 	void (*pt_activate)(struct psmouse *psmouse);
+diff --git a/drivers/input/mouse/synaptics.c b/drivers/input/mouse/synaptics.c
+index ad5d0a8..e24c2b3 100644
+--- a/drivers/input/mouse/synaptics.c
++++ b/drivers/input/mouse/synaptics.c
+@@ -655,6 +655,7 @@ int synaptics_init(struct psmouse *psmouse)
+ 	psmouse->set_rate = synaptics_set_rate;
+ 	psmouse->disconnect = synaptics_disconnect;
+ 	psmouse->reconnect = synaptics_reconnect;
++	psmouse->cleanup = synaptics_reset;
+ 	psmouse->pktsize = 6;
+ 	/* Synaptics can usually stay in sync without extra help */
+ 	psmouse->resync_time = 0;

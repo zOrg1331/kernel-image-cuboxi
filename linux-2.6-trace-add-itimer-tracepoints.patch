@@ -1,0 +1,92 @@
+From: Jason Baron <jbaron@redhat.com>
+Date: Tue, 1 Dec 2009 21:59:56 -0500
+Subject: [trace] add itimer tracepoints
+Message-id: <20091201215955.GA6458@redhat.com>
+Patchwork-id: 21625
+O-Subject: [RHEL5.5 PATCH] tracepoint: add itimer tracepoints
+Bugzilla: 534178
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+hi,
+
+Add two itimer tracepoints to 5.5. The first one, 'itimer_state',
+precisely copies the upstream tracepoint. The second one,
+'itimer_expire', differs from upstream in that the second of the 3
+parameters is a 'struct signal_struct', whereas upstream passes a
+'struct pid'. The corresponding 'struct pid' can still be derived from
+the 'struct signal_struct'. RHEL5.5 would need extra memory references
+in order to get to the correct 'struct pid', and since the compiler
+evaluates the arguments, even when the tracepoint is disabled, I think
+this is reasonable. BZ #534178.
+
+thanks,
+
+-Jason
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/include/trace/timer.h b/include/trace/timer.h
+new file mode 100644
+index 0000000..d1699d6
+--- /dev/null
++++ b/include/trace/timer.h
+@@ -0,0 +1,15 @@
++#ifndef _TRACE_TIMER_H
++#define _TRACE_TIMER_H
++
++#include <linux/tracepoint.h>
++
++DEFINE_TRACE(itimer_state,
++	TPPROTO(int which, struct itimerval *value,
++		cputime_t expires),
++	TPARGS(which, value, expires));
++DEFINE_TRACE(itimer_expire,
++	TPPROTO(int which, struct signal_struct *sig, cputime_t now),
++	TPARGS(which, sig, now));
++
++
++#endif
+diff --git a/kernel/itimer.c b/kernel/itimer.c
+index 204ed79..46ede01 100644
+--- a/kernel/itimer.c
++++ b/kernel/itimer.c
+@@ -13,6 +13,7 @@
+ #include <linux/time.h>
+ #include <linux/posix-timers.h>
+ #include <linux/hrtimer.h>
++#include <trace/timer.h>
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -133,6 +134,7 @@ int it_real_fn(struct hrtimer *timer)
+ 	struct signal_struct *sig =
+ 	    container_of(timer, struct signal_struct, real_timer);
+ 
++	trace_itimer_expire(ITIMER_REAL, sig, 0);
+ 	send_group_sig_info(SIGALRM, SEND_SIG_PRIV, sig->tsk);
+ 
+ 	if (sig->it_real_incr.tv64 != 0) {
+@@ -236,6 +238,7 @@ again:
+ 		expires = timeval_to_ktime(value->it_value);
+ 		if (expires.tv64 != 0)
+ 			hrtimer_start(timer, expires, HRTIMER_REL);
++		trace_itimer_state(ITIMER_REAL, value, 0);
+ 		spin_unlock_irq(&tsk->sighand->siglock);
+ 		break;
+ 	case ITIMER_VIRTUAL:
+@@ -255,6 +258,7 @@ again:
+ 		}
+ 		tsk->signal->it_virt_expires = nval;
+ 		tsk->signal->it_virt_incr = ninterval;
++		trace_itimer_state(ITIMER_VIRTUAL, value, nval);
+ 		spin_unlock_irq(&tsk->sighand->siglock);
+ 		read_unlock(&tasklist_lock);
+ 		if (ovalue) {
+@@ -279,6 +283,7 @@ again:
+ 		}
+ 		tsk->signal->it_prof_expires = nval;
+ 		tsk->signal->it_prof_incr = ninterval;
++		trace_itimer_state(ITIMER_PROF, value, nval);
+ 		spin_unlock_irq(&tsk->sighand->siglock);
+ 		read_unlock(&tasklist_lock);
+ 		if (ovalue) {

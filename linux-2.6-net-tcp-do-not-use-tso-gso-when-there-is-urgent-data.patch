@@ -1,0 +1,125 @@
+From: Jiri Olsa <jolsa@redhat.com>
+Date: Mon, 18 May 2009 10:02:50 +0200
+Subject: [net] tcp: do not use TSO/GSO when there is urgent data
+Message-id: 20090518080250.GA4026@jolsa.englab.brq.redhat.com
+O-Subject: [PATCH RHEL5.4] BZ497032 - tcp: Do not use TSO/GSO when there is urgent data
+Bugzilla: 497032
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Bugzilla:
+=========
+https://bugzilla.redhat.com/show_bug.cgi?id=497032
+
+Description:
+============
+Since most (if not all) implementations of TSO and even the in-kernel
+software GSO do not update the urgent pointer when splitting a large
+segment, it is necessary to turn off TSO/GSO for all outgoing traffic
+with the URG pointer set.
+
+Looking at tcp_current_mss (and the preceding comment) I even think
+this was the original intention. However, this approach is insufficient,
+because TSO/GSO is turned off only for newly created frames, not for
+frames which were already pending at the arrival of a message with
+MSG_OOB set. These frames were created when TSO/GSO was enabled,
+so they may be large, and they will have the urgent pointer set
+in tcp_transmit_skb().
+
+With this patch, such large packets will be fragmented again before
+going to the transmit routine.
+
+Upstream status:
+================
+* tcp: Do not use TSO/GSO when there is urgent data
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=33cf71cee14743185305c61625c4544885055733
+
+This upstream commit seems to have some regression, that is described in the
+following commit which is fixing it:
+
+* tcp: make urg+gso work for real this time
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=f8269a495a1924f8b023532dd3e77423432db810
+
+I applied both patches and made slight modification
+because of the commit:
+
+* tcp: kill pointless urg_mode
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=33f5f57eeb0c6386fdd85f9c690dc8d700ba7928
+
+Test status of the patch:
+=========================
+tested as described in the BZ description,
+also tested by customer with possitive results
+
+Brew:
+=====
+https://brewweb.devel.redhat.com/taskinfo?taskID=1799350
+
+wbr, jirka
+
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index bcf3912..1b4622b 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -812,10 +812,6 @@ unsigned int tcp_sync_mss(struct sock *sk, u32 pmtu)
+ 
+ /* Compute the current effective MSS, taking SACKs and IP options,
+  * and even PMTU discovery events into account.
+- *
+- * LARGESEND note: !urg_mode is overkill, only frames up to snd_up
+- * cannot be large. However, taking into account rare use of URG, this
+- * is not a big flaw.
+  */
+ unsigned int tcp_current_mss(struct sock *sk, int large_allowed)
+ {
+@@ -827,7 +823,7 @@ unsigned int tcp_current_mss(struct sock *sk, int large_allowed)
+ 
+ 	mss_now = tp->mss_cache;
+ 
+-	if (large_allowed && sk_can_gso(sk) && !tp->urg_mode)
++	if (large_allowed && sk_can_gso(sk))
+ 		doing_tso = 1;
+ 
+ 	if (dst) {
+@@ -918,9 +914,7 @@ static int tcp_init_tso_segs(struct sock *sk, struct sk_buff *skb, unsigned int
+ {
+ 	int tso_segs = tcp_skb_pcount(skb);
+ 
+-	if (!tso_segs ||
+-	    (tso_segs > 1 &&
+-	     tcp_skb_mss(skb) != mss_now)) {
++	if (!tso_segs || (tso_segs > 1 && tcp_skb_mss(skb) != mss_now)) {
+ 		tcp_set_skb_tso_segs(sk, skb, mss_now);
+ 		tso_segs = tcp_skb_pcount(skb);
+ 	}
+@@ -1276,6 +1270,10 @@ static int tcp_mtu_probe(struct sock *sk)
+  * send_head.  This happens as incoming acks open up the remote
+  * window for us.
+  *
++ * LARGESEND note: !tp->urg_mode is overkill, only frames between
++ * snd_up-64k-mss .. snd_up cannot be large. However, taking into
++ * account rare use of URG, this is not a big flaw.
++ *
+  * Returns 1, if no segments are in flight and we have queued segments, but
+  * cannot send anything now because of SWS or another problem.
+  */
+@@ -1327,7 +1325,7 @@ static int tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle)
+ 		}
+ 
+ 		limit = mss_now;
+-		if (tso_segs > 1) {
++		if (tso_segs > 1 && !tp->urg_mode) {
+ 			limit = tcp_window_allows(tp, skb,
+ 						  mss_now, cwnd_quota);
+ 
+@@ -1400,7 +1398,7 @@ void tcp_push_one(struct sock *sk, unsigned int mss_now)
+ 		BUG_ON(!tso_segs);
+ 
+ 		limit = mss_now;
+-		if (tso_segs > 1) {
++		if (tso_segs > 1 && !tp->urg_mode) {
+ 			limit = tcp_window_allows(tp, skb,
+ 						  mss_now, cwnd_quota);
+ 

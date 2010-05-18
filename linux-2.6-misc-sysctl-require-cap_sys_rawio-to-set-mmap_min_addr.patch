@@ -1,0 +1,42 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Wed, 2 Dec 2009 12:01:13 -0500
+Subject: [misc] sysctl: require CAP_SYS_RAWIO to set mmap_min_addr
+Message-id: <20091202120411.10837.29175.sendpatchset@localhost.localdomain>
+Patchwork-id: 21647
+O-Subject: [PATCH RHEL5.x] sysctl: require CAP_SYS_RAWIO to set mmap_min_addr
+Bugzilla: 534018
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+BZ:
+https://bugzilla.redhat.com/show_bug.cgi?id=534018
+
+Description:
+Currently the mmap_min_addr value can only be bypassed during mmap when the
+task has CAP_SYS_RAWIO.  However, the mmap_min_addr sysctl value itself can be
+adjusted to 0 if euid == 0, allowing a bypass without CAP_SYS_RAWIO. This patch
+adds a check for the capability before allowing mmap_min_addr to be changed.
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2114810
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/jmorris/security-testing-2.6.git;a=commitdiff;h=0e1a6ef2dea88101b056b6d9984f3325c5efced3
+
+Signed-off-by: WANG Cong <amwang@redhat.com>
+
+
+diff --git a/security/min_addr.c b/security/min_addr.c
+index 5e3a07d..7d035df 100644
+--- a/security/min_addr.c
++++ b/security/min_addr.c
+@@ -34,6 +34,9 @@ int mmap_min_addr_handler(struct ctl_table *table, int write, struct file *filp,
+ {
+ 	int ret;
+ 
++	if (!capable(CAP_SYS_RAWIO))
++		return -EPERM;
++
+ 	ret = proc_doulongvec_minmax(table, write, filp, buffer, lenp, ppos);
+ 
+ 	update_mmap_min_addr();

@@ -1,0 +1,42 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Wed, 4 Nov 2009 18:38:11 -0500
+Subject: [mm] oom killer output should display UID
+Message-id: <1257359891.11307.44.camel@dhcp-100-19-198.bos.redhat.com>
+Patchwork-id: 21313
+O-Subject: Re: [RHEL5.5 PATCH] oom killer output should display UID
+Bugzilla: 520419
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+The attached patch includes the UID in the printk that gets
+written to the messages file when a process on OOM killed.
+This has been requested from multiple customers
+
+-------------------------------------------------------------
+#swapoff -a
+#suckdownmemory 16000 0
+
+#dmesg
+
+...
+1227 pages shared
+0 pages swap cached
+Out of memory: Killed process 9196, UID 0, (memory).
+[root@dhcp-100-19-50 ~]#
+...
+
+diff --git a/mm/oom_kill.c b/mm/oom_kill.c
+index b4643dd..58f8b28 100644
+--- a/mm/oom_kill.c
++++ b/mm/oom_kill.c
+@@ -278,8 +278,8 @@ static void __oom_kill_task(struct task_struct *p, const char *message)
+ 	}
+ 	task_unlock(p);
+ 	if (message) 
+-		printk(KERN_ERR "%s: Killed process %d (%s).\n",
+-				message, p->pid, p->comm);
++		printk(KERN_ERR "%s: Killed process %d, UID %d, (%s).\n",
++				message, p->pid, p->uid, p->comm);
+ 
+ 	/*
+ 	 * We give our sacrificial lamb high priority and access to

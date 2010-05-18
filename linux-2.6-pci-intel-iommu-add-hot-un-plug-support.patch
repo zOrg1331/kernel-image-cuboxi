@@ -1,0 +1,121 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Tue, 1 Dec 2009 23:43:24 -0500
+Subject: [pci] intel-iommu: add hot (un)plug support
+Message-id: <4B15AA1C.7040501@redhat.com>
+Patchwork-id: 21634
+O-Subject: [RHEL5.5 PATCH V2] 6/9: INTEL-IOMMU: Add PCI Hot (un)Plug support
+Bugzilla: 516811 518103
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+V2: fixed indenting.
+
+BZ 516727
+
+Backport of following patch from iommu-2.6.32.git tree:
+
+    intel-iommu: Support PCIe hot-plug
+    commit 99dcadede42f8898d4c963ef69192ef4b9b76ba8
+
+To support PCIe hot plug in IOMMU, we register a notifier to respond to device
+change action.
+
+When the notifier gets BUS_NOTIFY_UNBOUND_DRIVER, it removes the device
+from its DMAR domain.
+
+A hot added device will be added into an IOMMU domain when it first does IOMMU
+op. So there is no need to add more code for hot add.
+
+Without the patch, after a hot-remove, a hot-added device on the same
+slot will not work.
+
+0/9 states build & tests.
+
+Please review and ACK.
+
+- Don
+>From 071bfdd509bc6da9958b7fc7fb44e442058726af Mon Sep 17 00:00:00 2001
+From: Donald Dutile <ddutile@redhat.com>
+Date: Tue, 17 Nov 2009 17:03:56 -0500
+Subject: [PATCH 6/9]   INTEL-IOMMU: Add PCI Hot (un)Plug support
+
+
+diff --git a/drivers/base/dd.c b/drivers/base/dd.c
+index bce7b65..669e71d 100644
+--- a/drivers/base/dd.c
++++ b/drivers/base/dd.c
+@@ -235,6 +235,14 @@ static void __device_release_driver(struct device * dev)
+ 			drv->remove(dev);
+ 		devres_release_all(dev);
+ 		dev->driver = NULL;
++		if (dev->bus) {
++			struct blocking_notifier_head *notifier_head;
++
++			notifier_head = get_notifier_for_bus(dev->bus);
++			if (notifier_head)
++				blocking_notifier_call_chain(notifier_head,
++						BUS_NOTIFY_UNBOUND_DRIVER, dev);
++		}
+ 		put_driver(drv);
+ 	}
+ }
+diff --git a/drivers/pci/intel-iommu.c b/drivers/pci/intel-iommu.c
+index 42a596d..69622a0 100644
+--- a/drivers/pci/intel-iommu.c
++++ b/drivers/pci/intel-iommu.c
+@@ -3228,6 +3228,33 @@ static int __init init_iommu_sysfs(void)
+ }
+ #endif	/* CONFIG_PM */
+ 
++/*
++ * Here we only respond to action of unbound device from driver.
++ *
++ * Added device is not attached to its DMAR domain here yet. That will happen
++ * when mapping the device to iova.
++ */
++static int device_notifier(struct notifier_block *nb,
++				unsigned long action, void *data)
++{
++	struct device *dev = data;
++	struct pci_dev *pdev = to_pci_dev(dev);
++	struct dmar_domain *domain;
++
++	domain = find_domain(pdev);
++	if (!domain)
++		return 0;
++
++	if (action == BUS_NOTIFY_UNBOUND_DRIVER && !iommu_pass_through)
++		domain_remove_one_dev_info(domain, pdev);
++
++	return 0;
++}
++
++static struct notifier_block device_nb = {
++	.notifier_call = device_notifier,
++};
++
+ int __init intel_iommu_init(void)
+ {
+ 	int ret = 0;
+@@ -3268,6 +3295,8 @@ int __init intel_iommu_init(void)
+ 
+ 	register_iommu(&intel_iommu_ops);
+ 
++	bus_register_notifier(&pci_bus_type, &device_nb);
++
+ 	return 0;
+ }
+ 
+diff --git a/include/linux/device.h b/include/linux/device.h
+index 9cd3442..774b167 100644
+--- a/include/linux/device.h
++++ b/include/linux/device.h
+@@ -93,6 +93,8 @@ extern struct blocking_notifier_head *get_notifier_for_bus(struct bus_type *bus)
+ #define BUS_NOTIFY_DEL_DEVICE		0x00000002 /* device removed */
+ #define BUS_NOTIFY_BOUND_DRIVER		0x00000003 /* driver bound to device */
+ #define BUS_NOTIFY_UNBIND_DRIVER	0x00000004 /* about to be unbound */
++#define BUS_NOTIFY_UNBOUND_DRIVER	0x00000005 /* driver is unbound
++						      from the device */
+ 
+ /* driverfs interface for exporting bus attributes */
+ 

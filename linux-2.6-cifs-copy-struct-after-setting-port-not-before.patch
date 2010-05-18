@@ -1,0 +1,39 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 19 Nov 2009 14:38:29 -0500
+Subject: [cifs] copy struct *after* setting port, not before
+Message-id: <1258641517-20756-3-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21437
+O-Subject: [RHEL5.5 PATCH 02/10] BZ#500838: cifs: Copy struct *after* setting
+	the port, instead of before.
+Bugzilla: 500838
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Simo Leone <simo@archlinux.org>
+
+(Upstream commit 6debdbc0ba6253ac519cd5a3d22e30f1f9f1dd12)
+
+Acked-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Simo Leone <simo@archlinux.org>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index f3c56c2..d4eb872 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -1579,14 +1579,14 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
+ 		cFYI(1, ("attempting ipv6 connect"));
+ 		/* BB should we allow ipv6 on port 139? */
+ 		/* other OS never observed in Wild doing 139 with v6 */
++		sin_server6->sin6_port = htons(volume_info->port);
+ 		memcpy(&tcp_ses->addr.sockAddr6, sin_server6,
+ 			sizeof(struct sockaddr_in6));
+-		sin_server6->sin6_port = htons(volume_info->port);
+ 		rc = ipv6_connect(tcp_ses);
+ 	} else {
++		sin_server->sin_port = htons(volume_info->port);
+ 		memcpy(&tcp_ses->addr.sockAddr, sin_server,
+ 			sizeof(struct sockaddr_in));
+-		sin_server->sin_port = htons(volume_info->port);
+ 		rc = ipv4_connect(tcp_ses);
+ 	}
+ 	if (rc < 0) {

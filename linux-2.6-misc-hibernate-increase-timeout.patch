@@ -1,0 +1,27 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Tue, 10 Nov 2009 19:35:02 -0500
+Subject: [misc] hibernate: increase timeout
+Message-id: <1257881702-1947-1-git-send-email-mjg@redhat.com>
+Patchwork-id: 21354
+O-Subject: [PATCH] [RHEL 5.5] hibernate: Increase timeout
+Bugzilla: 507331
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Bug 507331 describes a case where running multiple threads that are
+generating dirty pages will prevent syslogd's fsync() call from completing
+before the freezer timeout. Bump the timeout in order to avoid this.
+
+diff --git a/kernel/power/process.c b/kernel/power/process.c
+index 8ac7e80..6c24a9f 100644
+--- a/kernel/power/process.c
++++ b/kernel/power/process.c
+@@ -17,8 +17,8 @@
+ /* 
+  * Timeout for stopping processes
+  */
+-#define TIMEOUT	(20 * HZ)
+ 
++#define TIMEOUT (120 * HZ)
+ 
+ static inline int freezeable(struct task_struct * p)
+ {

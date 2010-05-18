@@ -1,0 +1,60 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Tue, 30 Jun 2009 05:55:00 -0400
+Subject: [audit] correct the record length of execve
+Message-id: 20090630095714.6510.51663.sendpatchset@localhost.localdomain
+O-Subject: [PATCH RHEL5 v2] audit: correct the record length of execve
+Bugzilla: 509134
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+
+BZ502473
+https://bugzilla.redhat.com/show_bug.cgi?id=502473
+
+Description:
+===========
+Execute the following command:
+
+seq 1 1000 | xargs echo
+
+In the output, you get a single EXECVE record, which start with this:
+
+type=EXECVE msg=audit(1243248052.942:49):  a857="857" a858="858"
+
+The first 857 arguments have been lost.
+
+Note: Although in BZ it is reported for rhel4, rhel5 also has
+the same problem. This one is for rhel5.
+
+Brew:
+=====
+https://brewweb.devel.redhat.com/taskinfo?taskID=1867554
+
+KABI:
+====
+No breakage.
+
+Upstream status:
+================
+Commit b87ce6e4187 is the fix.
+
+Test status:
+===========
+I have tested this patch on x86_64, I can confirm it fixes the
+problem.
+
+Please review and ACK.
+
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 57fb721..9643f69 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -1017,8 +1017,8 @@ static int audit_log_single_execve_arg(struct audit_context *context,
+ {
+ 	char arg_num_len_buf[12];
+ 	const char __user *tmp_p = p;
+-	/* how many digits are in arg_num? 3 is the length of " a=" */
+-	size_t arg_num_len = snprintf(arg_num_len_buf, 12, "%d", arg_num) + 3;
++	/* how many digits are in arg_num? 5 is the length of ' a=""' */
++	size_t arg_num_len = snprintf(arg_num_len_buf, 12, "%d", arg_num) + 5;
+ 	size_t len, len_left, to_send;
+ 	size_t max_execve_audit_len = MAX_EXECVE_AUDIT_LEN;
+ 	unsigned int i, has_cntl = 0, too_long = 0;

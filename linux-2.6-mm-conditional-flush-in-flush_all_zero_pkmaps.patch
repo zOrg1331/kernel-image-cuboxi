@@ -1,0 +1,66 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 19 Nov 2009 22:40:23 -0500
+Subject: [mm] conditional flush in flush_all_zero_pkmaps
+Message-id: <4B05C957.3040700@redhat.com>
+Patchwork-id: 21446
+O-Subject: [PATCH RHEL5.5] conditional flush in flush_all_zero_pkmaps
+Bugzilla: 484683
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+This is for
+https://bugzilla.redhat.com/show_bug.cgi?id=484683
+Bug 484683 - BUG on ecryptfs file syestem, while running file system stress test against RHEL5.3snap2
+
+They encountered a softlockup apparently from all the k(un)mapping
+ecryptfs does ...
+
+The following patch was found to alleviate the problem, and it
+is a portion of an upstream commit.  I don't see a problem
+with it, but would very much appreciate review by our
+mm/* gurus - bearing in mind that eCryptfs is in tech preview,
+this was hit under an insanely high load on eCryptfs, and
+this is a core mm/* change ...
+
+Thanks,
+-Eric
+
+	From: Nick Piggin <npiggin@suse.de>
+	Date: Fri, 1 Aug 2008 01:15:21 +0000 (+0200)
+	Subject: x86, pat: avoid highmem cache attribute aliasing
+	X-Git-Tag: v2.6.28-rc1~713^2~26
+	X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=5843d9a4d0ba89719916c8f07fc9c57b7126be6d
+
+	<ERS: snip>
+
+	I've also just added code for conditional flushing if we haven't got
+	any dangling highmem aliases -- this should help performance if we
+	change page attributes frequently or systems that aren't using much
+	highmem pages (eg. if < 4G RAM). Should be turned into 2 patches, but
+	just for RFC...
+
+	Signed-off-by: Ingo Molnar <mingo@elte.hu>
+
+diff --git a/mm/highmem.c b/mm/highmem.c
+index 547afb4..8b1b83d 100644
+--- a/mm/highmem.c
++++ b/mm/highmem.c
+@@ -58,6 +58,7 @@ static DECLARE_WAIT_QUEUE_HEAD(pkmap_map_wait);
+ static void flush_all_zero_pkmaps(void)
+ {
+ 	int i;
++	int need_flush = 0;
+ 
+ 	flush_cache_kmaps();
+ 
+@@ -89,8 +90,10 @@ static void flush_all_zero_pkmaps(void)
+ 			  &pkmap_page_table[i]);
+ 
+ 		set_page_address(page, NULL);
++		need_flush = 1;
+ 	}
+-	flush_tlb_kernel_range(PKMAP_ADDR(0), PKMAP_ADDR(LAST_PKMAP));
++	if (need_flush)
++		flush_tlb_kernel_range(PKMAP_ADDR(0), PKMAP_ADDR(LAST_PKMAP));
+ }
+ 
+ static inline unsigned long map_new_virtual(struct page *page)

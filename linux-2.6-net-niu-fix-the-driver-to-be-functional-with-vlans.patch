@@ -1,0 +1,44 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Tue, 12 Jan 2010 09:18:10 -0500
+Subject: [net] niu: fix the driver to be functional with vlans
+Message-id: <20100112091810.GA2534@psychotron.redhat.com>
+Patchwork-id: 22429
+O-Subject: [RHEL5.5 patch] BZ538649 net: niu: fix the driver to be functional
+	with vlans
+Bugzilla: 538649
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+BZ538649
+https://bugzilla.redhat.com/show_bug.cgi?id=538649
+
+Description:
+VLAN_ETH_HLEN should be used to make sure that the whole MAC header was copied
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=845de8afa66550331dca164ab77fa49de930b699
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2154275
+
+Test:
+Tested by customer.
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/niu.c b/drivers/net/niu.c
+index ada1e94..b102d41 100644
+--- a/drivers/net/niu.c
++++ b/drivers/net/niu.c
+@@ -3137,7 +3137,7 @@ static int niu_process_rx_pkt(struct niu *np, struct rx_ring_info *rp)
+ 	rp->rcr_index = index;
+ 
+ 	skb_reserve(skb, NET_IP_ALIGN);
+-	__pskb_pull_tail(skb, min(len, NIU_RXPULL_MAX));
++	__pskb_pull_tail(skb, min(len, VLAN_ETH_HLEN));
+ 
+ 	rp->rx_packets++;
+ 	rp->rx_bytes += skb->len;

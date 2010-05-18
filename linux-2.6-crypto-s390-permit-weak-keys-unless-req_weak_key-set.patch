@@ -1,0 +1,56 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Wed, 22 Jul 2009 12:06:15 -0400
+Subject: [crypto] s390: permit weak keys unless REQ_WEAK_KEY set
+Message-id: 200907221206.15964.jarod@redhat.com
+O-Subject: [RHEL5.5 PATCH] crypto: s390 des3 - permit weak keys unless REQ_WEAK_KEY set
+Bugzilla: 504667
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Bugzilla #504667
+http://bugzilla.redhat.com/504667
+
+At present, while we don't really *care* about fips cavs tests being
+able to run on s390{,x}, the des3 test vectors currently fail, because
+I missed patching up the s390-specific des3 routines to permit the use
+of weak keys that degenerate des3 to plain old des strength.
+
+The following remedies that, and with it in place, all fips cavs test
+vectors pass testing on s390.
+
+This compliments:
+http://git.engineering.redhat.com/?p=users/dzickus/rhel5/kernel;a=commit;h=3776d100288fea75262612887e0b58ed66dd6c3c
+
+Patch was submitted upstream and accepted into the cryptodev tree back
+on June 18, 2009:
+
+http://git.kernel.org/?p=linux/kernel/git/herbert/cryptodev-2.6.git;a=commit;h=03b56ce54143a3a69d4fea6ff8130b1c903a47ce
+
+diff --git a/arch/s390/crypto/des_s390.c b/arch/s390/crypto/des_s390.c
+index b3f7496..5e74361 100644
+--- a/arch/s390/crypto/des_s390.c
++++ b/arch/s390/crypto/des_s390.c
+@@ -173,8 +173,9 @@ static int des3_128_setkey(struct crypto_tfm *tfm, const u8 *key,
+ 	struct crypt_s390_des3_128_ctx *dctx = crypto_tfm_ctx(tfm);
+ 	const u8* temp_key = key;
+ 
+-	if (!(memcmp(key, &key[DES_KEY_SIZE], DES_KEY_SIZE))) {
+-		*flags |= CRYPTO_TFM_RES_BAD_KEY_SCHED;
++	if (!(memcmp(key, &key[DES_KEY_SIZE], DES_KEY_SIZE)) &&
++	    (*flags & CRYPTO_TFM_REQ_WEAK_KEY)) {
++		*flags |= CRYPTO_TFM_RES_WEAK_KEY;
+ 		return -EINVAL;
+ 	}
+ 	for (i = 0; i < 2; i++, temp_key += DES_KEY_SIZE) {
+@@ -311,9 +312,10 @@ static int des3_192_setkey(struct crypto_tfm *tfm, const u8 *key,
+ 
+ 	if (!(memcmp(key, &key[DES_KEY_SIZE], DES_KEY_SIZE) &&
+ 	    memcmp(&key[DES_KEY_SIZE], &key[DES_KEY_SIZE * 2],
+-		   DES_KEY_SIZE))) {
++		   DES_KEY_SIZE)) &&
++	    (*flags & CRYPTO_TFM_REQ_WEAK_KEY)) {
+ 
+-		*flags |= CRYPTO_TFM_RES_BAD_KEY_SCHED;
++		*flags |= CRYPTO_TFM_RES_WEAK_KEY;
+ 		return -EINVAL;
+ 	}
+ 	for (i = 0; i < 3; i++, temp_key += DES_KEY_SIZE) {

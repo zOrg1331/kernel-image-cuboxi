@@ -1,0 +1,86 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Tue, 17 Nov 2009 11:10:43 -0500
+Subject: [s390] dasd: fix DIAG access for read-only devices
+Message-id: <20091117111042.GA21180@redhat.com>
+Patchwork-id: 21392
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - dasd: Fix DIAG access for read-only
+	devices
+Bugzilla: 537859
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+===========
+If a DASD is attached as read-only under z/VM and it is configured
+to be used with the DIAG discipline, then setting the device online
+will fail.
+The message log will show a message 'DIAG initialization failed (rc=4)'.
+
+The DIAG return code 4 indicates that the initialization was successful
+and the device is read-only, but the DASD device driver interprets this
+as an error.
+
+The solution is to fix the DIAG device initialization to accept a return
+value of 4 as indication of success.
+
+Bugzilla
+========
+BZ 537859
+https://bugzilla.redhat.com/show_bug.cgi?id=537859
+
+Upstream status of the patch
+============================
+The patch will be upstream in kernel version 2.6.33.
+
+The patch has been posted to LKML: http://lkml.org/lkml/2009/11/13/232
+
+Test status
+===========
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/s390/block/dasd_diag.c b/drivers/s390/block/dasd_diag.c
+index a919fed..4b15fa4 100644
+--- a/drivers/s390/block/dasd_diag.c
++++ b/drivers/s390/block/dasd_diag.c
+@@ -160,6 +160,15 @@ dasd_diag_erp(struct dasd_device *device)
+ 
+ 	mdsk_term_io(device);
+ 	rc = mdsk_init_io(device, device->bp_block, 0, NULL);
++	if (rc == 4) {
++		if (!(device->features & DASD_FEATURE_READONLY)) {
++			DEV_MESSAGE(KERN_WARNING, device, "%s",
++				 "The access mode of a DIAG device changed"
++				 " to read-only");
++			device->features |= DASD_FEATURE_READONLY;
++		}
++		rc = 0;
++	}
+ 	if (rc)
+ 		DEV_MESSAGE(KERN_WARNING, device, "DIAG ERP unsuccessful, "
+ 			    "rc=%d", rc);
+@@ -433,16 +442,20 @@ dasd_diag_check_device(struct dasd_device *device)
+ 	for (sb = 512; sb < bsize; sb = sb << 1)
+ 		device->s2b_shift++;
+ 	rc = mdsk_init_io(device, device->bp_block, 0, NULL);
+-	if (rc) {
++	if (rc && (rc != 4)) {
+ 		DEV_MESSAGE(KERN_WARNING, device, "DIAG initialization "
+ 			"failed (rc=%d)", rc);
+ 		rc = -EIO;
+ 	} else {
++		if (rc == 4)
++			device->features |= DASD_FEATURE_READONLY;
+ 		DEV_MESSAGE(KERN_INFO, device,
+-			    "(%ld B/blk): %ldkB",
++			    "(%ld B/blk): %ldkB%s",
+ 			    (unsigned long) device->bp_block,
+ 			    (unsigned long) (device->blocks <<
+-				device->s2b_shift) >> 1);
++					     device->s2b_shift) >> 1,
++			    (rc == 4) ? ", read-only device" : "");
++		rc = 0;
+ 	}
+ out:
+ 	free_page((long) label);

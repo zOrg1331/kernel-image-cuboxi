@@ -1,0 +1,202 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Thu, 11 Mar 2010 11:07:02 -0500
+Subject: [net] virtio_net: refill rx buffer on out-of-memory
+Message-id: <20100311110702.GA3822@gondor.apana.org.au>
+Patchwork-id: 23549
+O-Subject: Re: [RHEL5.5 PATCH] virtio: net refill on out-of-memory
+Bugzilla: 554078
+
+RHEL5 Bugzilla #554078
+
+Here's a revised patch that switches the delayed work to a timer.
+This means that we'll be using GFP_ATOMIC instead of GFP_KERNEL, but
+that should be fine as the expectation is not that GFP_KERNEL will
+give us memory where there is none, but rather that waiting for a
+period of time will allow memory to be freed.
+
+As a consequence of using a timer, we can no longer execute the
+refill asynchronousely.  Therefore this patch simply uses the
+normal poll path to perform the actual refill.
+
+Original description:
+
+    virtio: net refill on out-of-memory
+
+    If we run out of memory, use keventd to fill the buffer.  There's a
+    report of this happening: "Page allocation failures in guest",
+    Message-ID: <20090713115158.0a4892b0@mjolnir.ossman.eu>
+
+    Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Thanks,
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/virtio_net.c b/drivers/net/virtio_net.c
+index 74b3854..bfd0eaf 100644
+--- a/drivers/net/virtio_net.c
++++ b/drivers/net/virtio_net.c
+@@ -24,6 +24,7 @@
+ #include <linux/virtio.h>
+ #include <linux/virtio_net.h>
+ #include <linux/scatterlist.h>
++#include <linux/timer.h>
+ #include <net/esp.h> /* for skb_to_sgvec() */
+ 
+ static int napi_weight = 128;
+@@ -66,6 +67,9 @@ struct virtnet_info
+ 	struct sk_buff_head recv;
+ 	struct sk_buff_head send;
+ 
++	/* Timer for refilling if we run low on memory. */
++	struct timer_list refill;
++
+ 	/* Chain pages by the private ptr. */
+ 	struct page *pages;
+ 
+@@ -268,18 +272,21 @@ drop:
+ 	dev_kfree_skb(skb);
+ }
+ 
+-static void try_fill_recv_maxbufs(struct virtnet_info *vi)
++static bool try_fill_recv_maxbufs(struct virtnet_info *vi, gfp_t gfp)
+ {
+ 	struct sk_buff *skb;
+ 	struct scatterlist sg[2+MAX_SKB_FRAGS];
+ 	int num, err, i;
++	bool oom = false;
+ 
+ 	for (;;) {
+ 		struct virtio_net_hdr *hdr;
+ 
+ 		skb = netdev_alloc_skb(vi->dev, MAX_PACKET_LEN);
+-		if (unlikely(!skb))
++		if (unlikely(!skb)) {
++			oom = true;
+ 			break;
++		}
+ 
+ 		skb_put(skb, MAX_PACKET_LEN);
+ 
+@@ -289,7 +296,7 @@ static void try_fill_recv_maxbufs(struct virtnet_info *vi)
+ 		if (vi->big_packets) {
+ 			for (i = 0; i < MAX_SKB_FRAGS; i++) {
+ 				skb_frag_t *f = &skb_shinfo(skb)->frags[i];
+-				f->page = get_a_page(vi, GFP_ATOMIC);
++				f->page = get_a_page(vi, gfp);
+ 				if (!f->page)
+ 					break;
+ 
+@@ -318,31 +325,35 @@ static void try_fill_recv_maxbufs(struct virtnet_info *vi)
+ 	if (unlikely(vi->num > vi->max))
+ 		vi->max = vi->num;
+ 	vi->rvq->vq_ops->kick(vi->rvq);
++	return !oom;
+ }
+ 
+-static void try_fill_recv(struct virtnet_info *vi)
++/* Returns false if we couldn't fill entirely (OOM). */
++static bool try_fill_recv(struct virtnet_info *vi, gfp_t gfp)
+ {
+ 	struct sk_buff *skb;
+ 	struct scatterlist sg[1];
+ 	int err;
++	bool oom = false;
+ 
+-	if (!vi->mergeable_rx_bufs) {
+-		try_fill_recv_maxbufs(vi);
+-		return;
+-	}
++	if (!vi->mergeable_rx_bufs)
++		return try_fill_recv_maxbufs(vi, gfp);
+ 
+ 	for (;;) {
+ 		skb_frag_t *f;
+ 
+ 		skb = netdev_alloc_skb(vi->dev, GOOD_COPY_LEN + NET_IP_ALIGN);
+-		if (unlikely(!skb))
++		if (unlikely(!skb)) {
++			oom = true;
+ 			break;
++		}
+ 
+ 		skb_reserve(skb, NET_IP_ALIGN);
+ 
+ 		f = &skb_shinfo(skb)->frags[0];
+-		f->page = get_a_page(vi, GFP_ATOMIC);
++		f->page = get_a_page(vi, gfp);
+ 		if (!f->page) {
++			oom = true;
+ 			kfree_skb(skb);
+ 			break;
+ 		}
+@@ -366,6 +377,7 @@ static void try_fill_recv(struct virtnet_info *vi)
+ 	if (unlikely(vi->num > vi->max))
+ 		vi->max = vi->num;
+ 	vi->rvq->vq_ops->kick(vi->rvq);
++	return !oom;
+ }
+ 
+ static void skb_recv_done(struct virtqueue *rvq)
+@@ -378,6 +390,12 @@ static void skb_recv_done(struct virtqueue *rvq)
+ 	}
+ }
+ 
++static void refill_timer(unsigned long data)
++{
++	struct virtnet_info *vi = (void *)data;
++	skb_recv_done(vi->rvq);
++}
++
+ static int virtnet_poll(struct net_device *dev, int *budget)
+ {
+ 	struct virtnet_info *vi = netdev_priv(dev);
+@@ -395,10 +413,10 @@ again:
+ 		received++;
+ 	}
+ 
+-	/* FIXME: If we oom and completely run out of inbufs, we need
+-	 * to start a timer trying to fill more. */
+-	if (vi->num < vi->max / 2)
+-		try_fill_recv(vi);
++	if (vi->num < vi->max / 2) {
++		if (!try_fill_recv(vi, GFP_ATOMIC))
++			mod_timer(&vi->refill, jiffies + HZ/2);
++	}
+ 
+ 	/* Out of packets? */
+ 	if (skb) {
+@@ -705,6 +723,7 @@ static int virtnet_probe(struct virtio_device *vdev)
+ 	vi->vdev = vdev;
+ 	vdev->priv = vi;
+ 	vi->pages = NULL;
++	setup_timer(&vi->refill, refill_timer, (unsigned long)vi);
+ 
+ 	/* If they give us a callback when all buffers are done, we don't need
+ 	 * the timer. */
+@@ -748,7 +767,7 @@ static int virtnet_probe(struct virtio_device *vdev)
+ 	}
+ 
+ 	/* Last of all, set up some receive buffers. */
+-	try_fill_recv(vi);
++	try_fill_recv(vi, GFP_KERNEL);
+ 
+ 	/* If we didn't even get one input buffer, we're useless. */
+ 	if (vi->num == 0) {
+@@ -761,6 +780,7 @@ static int virtnet_probe(struct virtio_device *vdev)
+ 
+ unregister:
+ 	unregister_netdev(dev);
++	del_timer_sync(&vi->refill);
+ free_send:
+ 	vdev->config->del_vq(vi->svq);
+ free_recv:
+@@ -793,6 +813,7 @@ static void virtnet_remove(struct virtio_device *vdev)
+ 	vdev->config->del_vq(vi->svq);
+ 	vdev->config->del_vq(vi->rvq);
+ 	unregister_netdev(vi->dev);
++	del_timer_sync(&vi->refill);
+ 
+ 	while (vi->pages)
+ 		__free_pages(get_a_page(vi, GFP_KERNEL), 0);

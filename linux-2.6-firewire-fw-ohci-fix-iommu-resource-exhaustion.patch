@@ -1,0 +1,102 @@
+From: Jay Fenlason <fenlason@redhat.com>
+Date: Fri, 9 Oct 2009 16:24:01 -0400
+Subject: [firewire] fw-ohci: fix IOMMU resource exhaustion
+Message-id: 20091009202400.GA6737@redhat.com
+O-Subject: [RHEL5.5 PATCH] bz513827: Out of SW-IOMMU space: External hard disk inaccessible
+Bugzilla: 513827
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Chuck Ebbert <cebbert@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+This patch was written by the upstream maintainer and backported by
+Bryn M. Reeves (bmr@redhat.com) It solves a hard-to-trigger memory
+leak.
+
+I've tested this over a few days on an x86-64 box, and it hasn't
+caused any problems.  The upstream patch has been well tested, of
+course.
+
+diff --git a/drivers/firewire/fw-ohci.c b/drivers/firewire/fw-ohci.c
+index 3e9a011..4f1e32f 100644
+--- a/drivers/firewire/fw-ohci.c
++++ b/drivers/firewire/fw-ohci.c
+@@ -973,6 +973,7 @@ at_context_queue_packet(struct context *ctx, struct fw_packet *packet)
+ 			packet->ack = RCODE_SEND_ERROR;
+ 			return -1;
+ 		}
++		packet->payload_bus = payload_bus;
+ 
+ 		d[2].req_count    = cpu_to_le16(packet->payload_length);
+ 		d[2].data_address = cpu_to_le32(payload_bus);
+@@ -1024,7 +1025,6 @@ static int handle_at_packet(struct context *context,
+ 	struct driver_data *driver_data;
+ 	struct fw_packet *packet;
+ 	struct fw_ohci *ohci = context->ohci;
+-	dma_addr_t payload_bus;
+ 	int evt;
+ 
+ 	if (last->transfer_status == 0)
+@@ -1037,9 +1037,8 @@ static int handle_at_packet(struct context *context,
+ 		/* This packet was cancelled, just continue. */
+ 		return 1;
+ 
+-	payload_bus = le32_to_cpu(last->data_address);
+-	if (payload_bus != 0)
+-		dma_unmap_single(ohci->card.device, payload_bus,
++	if (packet->payload_bus)
++		dma_unmap_single(ohci->card.device, packet->payload_bus,
+ 				 packet->payload_length, DMA_TO_DEVICE);
+ 
+ 	evt = le16_to_cpu(last->transfer_status) & 0x1f;
+@@ -1698,6 +1697,10 @@ static int ohci_cancel_packet(struct fw_card *card, struct fw_packet *packet)
+ 	if (packet->ack != 0)
+ 		goto out;
+ 
++	if (packet->payload_bus)
++		dma_unmap_single(ohci->card.device, packet->payload_bus,
++				 packet->payload_length, DMA_TO_DEVICE);
++
+ 	log_ar_at_event('T', packet->speed, packet->header, 0x20);
+ 	driver_data->packet = NULL;
+ 	packet->ack = RCODE_CANCELLED;
+diff --git a/drivers/firewire/fw-transaction.c b/drivers/firewire/fw-transaction.c
+index 022ac4f..2884f87 100644
+--- a/drivers/firewire/fw-transaction.c
++++ b/drivers/firewire/fw-transaction.c
+@@ -207,6 +207,7 @@ fw_fill_request(struct fw_packet *packet, int tcode, int tlabel,
+ 	packet->speed = speed;
+ 	packet->generation = generation;
+ 	packet->ack = 0;
++	packet->payload_bus = 0;
+ }
+ 
+ /**
+@@ -581,6 +582,8 @@ fw_fill_response(struct fw_packet *response, u32 *request_header,
+ 		BUG();
+ 		return;
+ 	}
++
++	response->payload_bus = 0;
+ }
+ EXPORT_SYMBOL(fw_fill_response);
+ 
+diff --git a/drivers/firewire/fw-transaction.h b/drivers/firewire/fw-transaction.h
+index 9c7ec75..7564ccc 100644
+--- a/drivers/firewire/fw-transaction.h
++++ b/drivers/firewire/fw-transaction.h
+@@ -27,6 +27,7 @@
+ #include <linux/list.h>
+ #include <linux/spinlock_types.h>
+ #include <linux/timer.h>
++#include <linux/types.h>
+ #include <linux/workqueue.h>
+ 
+ #define TCODE_IS_READ_REQUEST(tcode)	(((tcode) & ~1) == 4)
+@@ -153,6 +154,7 @@ struct fw_packet {
+ 	size_t header_length;
+ 	void *payload;
+ 	size_t payload_length;
++	dma_addr_t payload_bus;
+ 	u32 timestamp;
+ 
+ 	/*

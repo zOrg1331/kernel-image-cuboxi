@@ -1,10 +1,8 @@
 From: Amerigo Wang <amwang@redhat.com>
-Date: Wed, 30 Dec 2009 05:00:02 -0500
+Date: Thu, 14 Jan 2010 15:36:38 -0500
 Subject: [net] e1000e: fix rx length check errors
-Message-id: 20091230100313.4453.44607.sendpatchset@localhost.localdomain
-O-Subject: [PATCH RHEL5] e1000e: fix rx length check errors
 Bugzilla: 551223
-RH-Acked-by: Neil Horman <nhorman@redhat.com>
+CVE: CVE-2009-4538
 
 BZ:
 https://bugzilla.redhat.com/show_bug.cgi?id=551223
@@ -24,14 +22,12 @@ http://marc.info/?l=linux-netdev&m=126202972828626&w=2
 
 This patch is just for the e1000e part, very similar to e1000 part.
 
-
 Brew:
 (this one together with the one from Neil, with a compile error fixed)
 https://brewweb.devel.redhat.com/taskinfo?taskID=2169141
 
 Signed-off-by: WANG Cong <amwang@redhat.com>
 
----
 diff --git a/drivers/net/e1000e/e1000.h b/drivers/net/e1000e/e1000.h
 index 944af96..1f753c7 100644
 --- a/drivers/net/e1000e/e1000.h
@@ -75,4 +71,3 @@ index cc29cea..239ace8 100644
  			goto next_desc;
  		}
  
-

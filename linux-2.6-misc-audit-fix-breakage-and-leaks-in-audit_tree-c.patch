@@ -1,0 +1,68 @@
+From: Alexander Viro <aviro@redhat.com>
+Date: Tue, 22 Dec 2009 16:40:11 -0500
+Subject: [misc] audit: fix breakage and leaks in audit_tree.c
+Message-id: <20091222164011.GB14493@shell.devel.redhat.com>
+Patchwork-id: 22253
+O-Subject: [rhel5][bz549750] fix braindamage in audit_tree.c
+Bugzilla: 549750
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+
+Mainline commits 6f5d51148921c242680a7a1d9913384a30ab3cbe
+and b4c30aad39805902cf5b855aa8a8b22d728ad057; fix breakage in
+untag_chunk() and leaks in tag_chunk()
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/kernel/audit_tree.c b/kernel/audit_tree.c
+index d4ab307..e53fc98 100644
+--- a/kernel/audit_tree.c
++++ b/kernel/audit_tree.c
+@@ -278,7 +278,7 @@ static void untag_chunk(struct node *p)
+ 		owner->root = NULL;
+ 	}
+ 
+-	for (i = j = 0; i < size; i++, j++) {
++	for (i = j = 0; j <= size; i++, j++) {
+ 		struct audit_tree *s;
+ 		if (&chunk->owners[j] == p) {
+ 			list_del_init(&p->list);
+@@ -291,7 +291,7 @@ static void untag_chunk(struct node *p)
+ 		if (!s) /* result of earlier fallback */
+ 			continue;
+ 		get_tree(s);
+-		list_replace_init(&chunk->owners[i].list, &new->owners[j].list);
++		list_replace_init(&chunk->owners[j].list, &new->owners[i].list);
+ 	}
+ 
+ 	list_replace_rcu(&chunk->hash, &new->hash);
+@@ -374,15 +374,17 @@ static int tag_chunk(struct inode *inode, struct audit_tree *tree)
+ 	for (n = 0; n < old->count; n++) {
+ 		if (old->owners[n].owner == tree) {
+ 			spin_unlock(&hash_lock);
+-			put_inotify_watch(watch);
++			put_inotify_watch(&old->watch);
+ 			return 0;
+ 		}
+ 	}
+ 	spin_unlock(&hash_lock);
+ 
+ 	chunk = alloc_chunk(old->count + 1);
+-	if (!chunk)
++	if (!chunk) {
++		put_inotify_watch(&old->watch);
+ 		return -ENOMEM;
++	}
+ 
+ 	mutex_lock(&inode->inotify_mutex);
+ 	if (inotify_clone_watch(&old->watch, &chunk->watch) < 0) {
+@@ -424,7 +426,8 @@ static int tag_chunk(struct inode *inode, struct audit_tree *tree)
+ 	spin_unlock(&hash_lock);
+ 	inotify_evict_watch(&old->watch);
+ 	mutex_unlock(&inode->inotify_mutex);
+-	put_inotify_watch(&old->watch);
++	put_inotify_watch(&old->watch); /* pair to inotify_find_watch */
++	put_inotify_watch(&old->watch); /* and kill it */
+ 	return 0;
+ }
+ 

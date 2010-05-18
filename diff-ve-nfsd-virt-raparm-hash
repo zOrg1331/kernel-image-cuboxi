@@ -1,0 +1,100 @@
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 0c64e9b..81f88c0 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -77,25 +77,10 @@
+  * If you increase the number of cached files very much, you'll need to
+  * add a hash table here.
+  */
+-struct raparms {
+-	struct raparms		*p_next;
+-	unsigned int		p_count;
+-	ino_t			p_ino;
+-	dev_t			p_dev;
+-	int			p_set;
+-	struct file_ra_state	p_ra;
+-	unsigned int		p_hindex;
+-};
+-
+-struct raparm_hbucket {
+-	struct raparms		*pb_head;
+-	spinlock_t		pb_lock;
+-} ____cacheline_aligned_in_smp;
+ 
+-#define RAPARM_HASH_BITS	4
+-#define RAPARM_HASH_SIZE	(1<<RAPARM_HASH_BITS)
+-#define RAPARM_HASH_MASK	(RAPARM_HASH_SIZE-1)
+-static struct raparm_hbucket	raparm_hash[RAPARM_HASH_SIZE];
++#ifndef CONFIG_VE
++struct raparm_hbucket	raparm_hash[RAPARM_HASH_SIZE];
++#endif
+ 
+ /* 
+  * Called from nfsd_lookup and encode_dirent. Check if we have crossed 
+@@ -1908,7 +1893,7 @@ nfsd_racache_init(int cache_size)
+ 
+ 		raparm = &raparm_hash[i].pb_head;
+ 		for (j = 0; j < nperbucket; j++) {
+-			*raparm = kzalloc(sizeof(struct raparms), GFP_KERNEL);
++			*raparm = kzalloc(sizeof(struct raparms), GFP_KERNEL_UBC);
+ 			if (!*raparm)
+ 				goto out_nomem;
+ 			raparm = &(*raparm)->p_next;
+diff --git a/include/linux/nfsd/nfsd.h b/include/linux/nfsd/nfsd.h
+index 14c3780..7cd4db3 100644
+--- a/include/linux/nfsd/nfsd.h
++++ b/include/linux/nfsd/nfsd.h
+@@ -46,6 +46,9 @@
+ #define MAY_CREATE		(MAY_EXEC|MAY_WRITE)
+ #define MAY_REMOVE		(MAY_EXEC|MAY_WRITE|MAY_TRUNC)
+ 
++#define RAPARM_HASH_BITS	4
++#define RAPARM_HASH_SIZE	(1<<RAPARM_HASH_BITS)
++#define RAPARM_HASH_MASK	(RAPARM_HASH_SIZE-1)
+ /*
+  * Callback function for readdir
+  */
+@@ -60,6 +63,21 @@ extern struct svc_program	nfsd_program;
+ extern struct svc_version	nfsd_version2, nfsd_version3,
+ 				nfsd_version4;
+ 
++struct raparms {
++	struct raparms		*p_next;
++	unsigned int		p_count;
++	ino_t			p_ino;
++	dev_t			p_dev;
++	int			p_set;
++	struct file_ra_state	p_ra;
++	unsigned int		p_hindex;
++};
++
++struct raparm_hbucket {
++	struct raparms		*pb_head;
++	spinlock_t		pb_lock;
++} ____cacheline_aligned_in_smp;
++
+ struct ve_nfsd_data {
+ 	struct file_system_type *nfsd_fs;
+ 	struct cache_detail *exp_cache;
+@@ -68,10 +86,17 @@ struct ve_nfsd_data {
+ 	struct svc_serv *_nfsd_serv;
+ 	struct nfsd_stats stats;
+ 	struct svc_stat *svc_stat;
++	struct raparm_hbucket raparm_hash[RAPARM_HASH_SIZE];
+ };
+ 
+ #define nfsd_serv	(get_exec_env()->nfsd_data->_nfsd_serv)
+ 
++#ifndef CONFIG_VE
++extern struct raparm_hbucket	raparm_hash[RAPARM_HASH_SIZE];
++#else
++#define raparm_hash (get_exec_env()->nfsd_data->raparm_hash)
++#endif
++
+ void nfsd_kill_all(struct list_head *);
+ /*
+  * Function prototypes.
+-- 
+1.6.6.1
+
+

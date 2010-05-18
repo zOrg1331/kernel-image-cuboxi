@@ -1,0 +1,36 @@
+From: Anthony Liguori <aliguori@redhat.com>
+Date: Fri, 12 Feb 2010 19:05:39 -0500
+Subject: [virtio] fix module loading for virtio-balloon module
+Message-id: <1266001539-22336-1-git-send-email-aliguori@redhat.com>
+Patchwork-id: 23266
+O-Subject: [RHEL5.5 PATCH] BZ 564361 Fix module loading for virtio-balloon module
+Bugzilla: 564361
+RH-Acked-by: Mark McLoughlin <markmc@redhat.com>
+RH-Acked-by: Jon Masters <jcm@redhat.com>
+RH-Acked-by: Zachary Amsden <zamsden@redhat.com>
+RH-Acked-by: Avi Kivity <avi@redhat.com>
+
+Because the virtio module id infrastructure is missing from the RHEL5.5 kernel,
+an explicit MODULE_ALIAS() is needed to allow the module to be automatically
+loaded.
+
+This is specific to the RHEL5.5 as the module alias is extracted automatically
+in upstream.
+
+I've tested this against an SRPM from the RHEL5.5 beta and it fixes the module
+autoloads properly with this patch applied.
+
+Signed-off-by: Anthony Liguori <aliguori@us.ibm.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/virtio/virtio_balloon.c b/drivers/virtio/virtio_balloon.c
+index 5e2eb6c..3e16229 100644
+--- a/drivers/virtio/virtio_balloon.c
++++ b/drivers/virtio/virtio_balloon.c
+@@ -297,5 +297,6 @@ module_init(init);
+ module_exit(fini);
+ 
+ MODULE_DEVICE_TABLE(virtio, id_table);
++MODULE_ALIAS("virtio:d00000005v*");
+ MODULE_DESCRIPTION("Virtio balloon driver");
+ MODULE_LICENSE("GPL");

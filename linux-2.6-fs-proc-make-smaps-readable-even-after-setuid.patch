@@ -1,0 +1,53 @@
+From: Dave Anderson <anderson@redhat.com>
+Date: Wed, 3 Feb 2010 16:24:10 -0500
+Subject: [fs] proc: make smaps readable even after setuid
+Message-id: <946406746.746851265214250120.JavaMail.root@zmail05.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 23118
+O-Subject: [RHEL5.5 PATCH] BZ #322881: /proc/self/smaps unreadable after setuid
+Bugzilla: 322881
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BZ #322881: /proc/self/smaps unreadable after setuid
+https://bugzilla.redhat.com/show_bug.cgi?id=322881
+
+When a binary is setuid to a non-root user, and then
+run as root, the /proc/<pid>/smaps file's ownership does
+not get downgraded, and cannot be opened.  This is because
+the "smaps" file is set S_IRUSR -- unlike the "maps" file
+which is set S_IRUGO:
+
+  $ ls -l /proc/self/maps /proc/self/smaps
+  -r--r--r-- 1 anderson anderson 0 Feb  3 10:43 /proc/self/maps
+  -r-------- 1 anderson anderson 0 Feb  3 10:43 /proc/self/smaps
+  $
+
+In 2.6.18-30.el5, the /proc/<pid>/maps file was changed to S_IRUGO in
+linux-2.6-fs-setuid-program-unable-to-read-own-proc-pid-map.patch:
+
+  BZ #221173: LTC30605-setuid program unable to read its own /proc/pid/maps
+              file after giving up root privileges
+  https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=221173
+
+The attached patch makes the analogous change for the "smaps" file.
+
+Both "/proc/<pid>/maps" and "/proc/<pid>/smaps" are S_IRUGO upstream/RHEL6.
+
+Tested by myself and the BZ reporter.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index 6e1e6c0..bbc96b8 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -231,7 +231,7 @@ static struct pid_entry tgid_base_stuff[] = {
+ 	E(PROC_TGID_MOUNTS,    "mounts",  S_IFREG|S_IRUGO),
+ 	E(PROC_TGID_MOUNTSTATS, "mountstats", S_IFREG|S_IRUSR),
+ #ifdef CONFIG_MMU
+-	E(PROC_TGID_SMAPS,     "smaps",   S_IFREG|S_IRUSR),
++	E(PROC_TGID_SMAPS,     "smaps",   S_IFREG|S_IRUGO),
+ #endif
+ #ifdef CONFIG_SECURITY
+ 	E(PROC_TGID_ATTR,      "attr",    S_IFDIR|S_IRUGO|S_IXUGO),

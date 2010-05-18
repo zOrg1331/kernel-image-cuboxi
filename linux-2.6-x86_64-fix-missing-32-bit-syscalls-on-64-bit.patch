@@ -1,0 +1,92 @@
+From: Wade Mealing <wmealing@redhat.com>
+Date: Thu, 28 Jan 2010 05:17:43 -0500
+Subject: [x86_64] fix missing 32 bit syscalls on 64 bit
+Message-id: <1013736839.279981264655863201.JavaMail.root@zmail04.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 22974
+O-Subject: [RHEL5.6 PATCH]  fix missing 32 bit syscalls on 64 bit. (BZ 559410 )
+Bugzilla: 559410
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+Gday
+
+This is a backport of the commit:
+
+e412ac4971d27ea84f3d63ce425c6ab2d6a67f23
+author	Andi Kleen <ak@suse.de>
+	Wed, 20 Jun 2007 10:23:30 +0000 (12:23 +0200)
+
+X86_64: Fix readahead/sync_file_range/fadvise64 compat calls
+
+Correctly convert the u64 arguments from 32bit to 64bit.
+
+Pointed out by Heiko Carstens.
+
+I guess this proves Linus' theory that nobody uses the more exotic Linux
+specific syscalls.  It wasn't discovered by a user.
+
+Red Hat Bugzilla: 559410
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/ia32/ia32entry.S b/arch/x86_64/ia32/ia32entry.S
+index 175ac6b..c62b9a0 100644
+--- a/arch/x86_64/ia32/ia32entry.S
++++ b/arch/x86_64/ia32/ia32entry.S
+@@ -638,7 +638,7 @@ ia32_sys_call_table:
+ #endif
+ 	.quad quiet_ni_syscall    	/* security */
+ 	.quad sys_gettid	
+-	.quad sys_readahead	/* 225 */
++	.quad sys32_readahead	/* 225 */
+ 	.quad sys_setxattr
+ 	.quad sys_lsetxattr
+ 	.quad sys_fsetxattr
+@@ -663,7 +663,7 @@ ia32_sys_call_table:
+ 	.quad compat_sys_io_getevents
+ 	.quad compat_sys_io_submit
+ 	.quad sys_io_cancel
+-	.quad sys_fadvise64		/* 250 */
++	.quad sys32_fadvise64		/* 250 */
+ 	.quad quiet_ni_syscall 	/* free_huge_pages */
+ 	.quad sys_exit_group
+ 	.quad sys32_lookup_dcookie
+@@ -727,7 +727,7 @@ ia32_sys_call_table:
+ 	.quad compat_sys_set_robust_list
+ 	.quad compat_sys_get_robust_list
+ 	.quad sys_splice
+-	.quad sys_sync_file_range
++	.quad sys32_sync_file_range
+ 	.quad sys_tee			/* 315 */
+ 	.quad compat_sys_vmsplice
+ 	.quad compat_sys_move_pages
+diff --git a/arch/x86_64/ia32/sys_ia32.c b/arch/x86_64/ia32/sys_ia32.c
+index 07ae9ab..21c14b1 100644
+--- a/arch/x86_64/ia32/sys_ia32.c
++++ b/arch/x86_64/ia32/sys_ia32.c
+@@ -879,6 +879,26 @@ long sys32_lookup_dcookie(u32 addr_low, u32 addr_high,
+ 	return sys_lookup_dcookie(((u64)addr_high << 32) | addr_low, buf, len);
+ }
+ 
++asmlinkage ssize_t sys32_readahead(int fd, unsigned off_lo, unsigned off_hi, size_t count)
++{
++	return sys_readahead(fd, ((u64)off_hi << 32) | off_lo, count);
++}
++
++asmlinkage long sys32_sync_file_range(int fd, unsigned off_low, unsigned off_hi,
++			unsigned n_low, unsigned n_hi,  int flags)
++{
++	return sys_sync_file_range(fd,
++				   ((u64)off_hi << 32) | off_low,
++				   ((u64)n_hi << 32) | n_low, flags);
++}
++
++asmlinkage long sys32_fadvise64(int fd, unsigned offset_lo, unsigned offset_hi, size_t len,
++		int advice)
++{
++	return sys_fadvise64_64(fd, ((u64)offset_hi << 32) | offset_lo,
++				len, advice);
++}
++
+ asmlinkage long sys32_fallocate(int fd, int mode, unsigned offset_lo,
+ 				unsigned offset_hi, unsigned len_lo,
+ 				unsigned len_hi)

@@ -1,0 +1,60 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Fri, 16 Oct 2009 07:34:54 -0400
+Subject: [s390] do not annotate cmdline as __initdata
+Message-id: <20091016073454.GA3534@redhat.com>
+Patchwork-id: 21126
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - kernel: Do not annotate the s390
+	cmdline as __initdata
+Bugzilla: 506898
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+===========
+
+Parameters specified on the kernel command line do not appear
+as environment variables or arguments to the init process.
+
+The s390 command line has been marked as __initdata. During parameter
+parsing, pointers to parameters are stored in an environment and argument
+vector.
+Before the init process is started, all __init* memory locations
+are freed and, thus, the saved parameters are no longer available.
+
+The solution is to remove the __initdata annotation from the s390
+kernel parameter line variable.
+
+
+Bugzilla
+========
+
+BZ 506898
+https://bugzilla.redhat.com/show_bug.cgi?id=506898
+
+
+Upstream status of the patch
+============================
+
+The patch is specific to RHEL5.
+
+
+Test status
+===========
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+
+
+diff --git a/arch/s390/kernel/setup.c b/arch/s390/kernel/setup.c
+index a0067e4..b2837a6 100644
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -216,7 +216,7 @@ static void __init conmode_default(void)
+ }
+ 
+ /* Set up boot command line */
+-static char __initdata s390_command_line[COMMAND_LINE_SIZE];
++static char s390_command_line[COMMAND_LINE_SIZE];
+ 
+ static void __init setup_boot_command_line(void)
+ {

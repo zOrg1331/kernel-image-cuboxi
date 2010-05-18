@@ -1,4 +1,5 @@
 copy: *.2
+copy: *.3ad-slave-speed-20100421
 bzip2: patch-2.6.18.4
 copy: patch-linux-2.6.18-rhel5-drbd-8.3.4
 copy: *.diff
@@ -20,8 +21,7 @@ copy: *.pl
 copy: *.sh
 copy: check-kabi
 copy: diff-backport-dm-delay-20070716
-copy: diff-cpt-shm-file-align-20100324
-copy: diff-cpt-shm-file-align-20100324-b
+copy: diff-cpt-restore-itimers-properly
 copy: diff-dm-limits-bounce_pfn-20071029
 copy: diff-drbd-compilation
 copy: diff-drbd-dont-use-connector
@@ -57,6 +57,7 @@ copy: diff-ms-devleak-dstdebug-20080504
 copy: diff-ms-devleaktime-20081111
 copy: diff-ms-ext4-nodelalloc-by-default
 copy: diff-ms-mmap-min-addr
+copy: diff-ms-nfsd-report-v4-as-off
 copy: diff-ms-nfssync-20081118
 copy: diff-ms-reboot-via-pci-port-cf9-20090922
 copy: diff-ms-splice-access-20080211
@@ -75,23 +76,12 @@ copy: diff-openafs-exec-context
 copy: diff-openafs-find_task_by_pid
 copy: diff-openafs-for_each_process
 copy: diff-rh-cifs-disable-posix-extensons-by-default-20090304
-copy: diff-rh-dont-add-timer-twise
-copy: diff-rh-fix-emergency-flush-crap
-copy: diff-rh-sysrq-showacpu-20100128
+copy: diff-rh-hung-task-tunes-and-fixes
 copy: diff-scsi-add-modalias-mainstream
 copy: diff-snd-hda-intel
 copy: diff-tossing-headers-around
-copy: diff-ve-acct-auto-close-mnt-fixup
-copy: diff-ve-acct-move-lock
-copy: diff-ve-acct-per-ve-acct-struct
-copy: diff-ve-acct-rename-globals
-copy: diff-ve-acct-switch-to-pointer
-copy: diff-ve-acct-timeout-with-argument
-copy: diff-ve-acct-virtual-pids
-copy: diff-ve-acct-wait-for-timer-on-free
 copy: diff-ve-moreleaks-20090829
-copy: diff-ve-sched-nr-unint-summing-negative-20100309
-copy: diff-ve-uidhash-oops-fix
+copy: diff-ve-nfsd-virt-raparm-hash
 copy: diff-xen-smpboot-ifdef-hotplug-20090306
 copy: find-provides
 copy: genkey
@@ -107,5 +97,5 @@ copy: kabi_whitelist_x86_64
 copy: kabi_whitelist_x86_64xen
 copy: kabitool
 tar.bz2: linux name=linux-2.6.18
-copy: patch-028stab068-core
+copy: patch-028stab069-core
 tar.gz: xen name=xen-15502 base= suffix=.tar.bz2

@@ -1,0 +1,312 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 26 Oct 2009 15:41:51 -0500
+Subject: [gfs2] improve statfs and quota usability
+Message-id: 20091026204150.GB3555@ether.msp.redhat.com
+O-Subject: [RHEL5.5 PATCH V2] BZ529796 GFS2: Improve statfs and quota usability
+Bugzilla: 529796
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+GFS2 now has three new mount options, statfs_quantum, quota_quantum and
+statfs_percent.  statfs_quantum and quota_quantum simply allow you to set the
+tunables of the same name.  Setting setting statfs_quantum to 0 will also turn
+on the statfs_slow tunable.  statfs_percent accepts an integer between 0 and
+100.  Numbers between 1 and 100 will cause GFS2 to do any early sync when the
+local number of blocks free changes by at least statfs_percent from the totoal
+number of blocks free.  Setting statfs_percent to 0 disables this. This version
+doesn't do any 64bit division.
+
+This patch is already upstream:
+http://git.kernel.org/?p=linux/kernel/git/steve/gfs2-2.6-nmw.git;a=commitdiff;h=7ab1917ba190df9911d856dbde4293df04579983
+
+This patch has been tested on my 3 node cluster.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+
+diff --git a/fs/gfs2/incore.h b/fs/gfs2/incore.h
+index 0083d92..c62e974 100644
+--- a/fs/gfs2/incore.h
++++ b/fs/gfs2/incore.h
+@@ -400,6 +400,9 @@ struct gfs2_args {
+ 	int ar_data; /* ordered/writeback */
+ 	int ar_meta; /* mount metafs */
+ 	int ar_errors; /* errors=panic|withdraw */
++	int ar_statfs_quantum; /* The fast statfs interval */
++	int ar_quota_quantum; /* The quota interval */
++	int ar_statfs_percent; /* The % change to force sync */
+ };
+ 
+ struct gfs2_tune {
+@@ -513,6 +516,7 @@ struct gfs2_sbd {
+ 	spinlock_t sd_statfs_spin;
+ 	struct gfs2_statfs_change_host sd_statfs_master;
+ 	struct gfs2_statfs_change_host sd_statfs_local;
++	int sd_statfs_force_sync;
+ 
+ 	/* Resource group stuff */
+ 
+diff --git a/fs/gfs2/mount.c b/fs/gfs2/mount.c
+index 88679ba..b2cb196 100644
+--- a/fs/gfs2/mount.c
++++ b/fs/gfs2/mount.c
+@@ -47,6 +47,9 @@ enum {
+ 	Opt_meta,
+ 	Opt_err_withdraw,
+ 	Opt_err_panic,
++	Opt_statfs_quantum,
++	Opt_statfs_percent,
++	Opt_quota_quantum,
+ 	Opt_err,
+ };
+ 
+@@ -76,6 +79,9 @@ static match_table_t tokens = {
+ 	{Opt_meta, "meta"},
+ 	{Opt_err_withdraw, "errors=withdraw"},
+ 	{Opt_err_panic, "errors=panic"},
++	{Opt_statfs_quantum, "statfs_quantum=%d"},
++	{Opt_statfs_percent, "statfs_percent=%d"},
++	{Opt_quota_quantum, "quota_quantum=%d"},
+ 	{Opt_err, NULL}
+ };
+ 
+@@ -92,6 +98,7 @@ int gfs2_mount_args(struct gfs2_sbd *sdp, struct gfs2_args *args, char *options)
+ 	char *o;
+ 	int token;
+ 	substring_t tmp[MAX_OPT_ARGS];
++	int rv;
+ 
+ 	/* Split the options into tokens with the "," character and
+ 	   process them */
+@@ -177,6 +184,28 @@ int gfs2_mount_args(struct gfs2_sbd *sdp, struct gfs2_args *args, char *options)
+ 		case Opt_meta:
+ 			args->ar_meta = 1;
+ 			break;
++		case Opt_statfs_quantum:
++			rv = match_int(&tmp[0], &args->ar_statfs_quantum);
++			if (rv || args->ar_statfs_quantum < 0) {
++				printk(KERN_WARNING "GFS2: statfs_quantum mount option requires a non-negative numeric argument\n");
++				return rv ? rv : -EINVAL;
++			}
++			break;
++		case Opt_quota_quantum:
++			rv = match_int(&tmp[0], &args->ar_quota_quantum);
++			if (rv || args->ar_quota_quantum <= 0) {
++				printk(KERN_WARNING "GFS2: quota_quantum mount option requires a positive numeric argument\n");
++				return rv ? rv : -EINVAL;
++			}
++			break;
++		case Opt_statfs_percent:
++			rv = match_int(&tmp[0], &args->ar_statfs_percent);
++			if (rv || args->ar_statfs_percent < 0 ||
++			    args->ar_statfs_percent > 100) {
++				printk(KERN_WARNING "GFS2: statfs_percent mount option requires a numeric argument between 0 and 100\n");
++				return rv ? rv : -EINVAL;
++			}
++			break;
+ 		case Opt_err_withdraw:
+ 			args->ar_errors = GFS2_ERRORS_WITHDRAW;
+ 			break;
+diff --git a/fs/gfs2/ops_fstype.c b/fs/gfs2/ops_fstype.c
+index 17a2914..d2e8206 100644
+--- a/fs/gfs2/ops_fstype.c
++++ b/fs/gfs2/ops_fstype.c
+@@ -67,14 +67,11 @@ static void gfs2_tune_init(struct gfs2_tune *gt)
+ 	gt->gt_quota_scale_num = 1;
+ 	gt->gt_quota_scale_den = 1;
+ 	gt->gt_quota_cache_secs = 300;
+-	gt->gt_quota_quantum = 60;
+ 	gt->gt_new_files_jdata = 0;
+ 	gt->gt_new_files_directio = 0;
+ 	gt->gt_max_readahead = 1 << 18;
+ 	gt->gt_stall_secs = 600;
+ 	gt->gt_complain_secs = 10;
+-	gt->gt_statfs_quantum = 30;
+-	gt->gt_statfs_slow = 0;
+ }
+ 
+ static struct gfs2_sbd *init_sbd(struct super_block *sb)
+@@ -986,6 +983,8 @@ static int fill_super(struct super_block *sb, void *data, int silent)
+ 	sdp->sd_args.ar_quota = GFS2_QUOTA_DEFAULT;
+ 	sdp->sd_args.ar_data = GFS2_DATA_DEFAULT;
+ 	sdp->sd_args.ar_errors = GFS2_ERRORS_DEFAULT;
++	sdp->sd_args.ar_statfs_quantum = 30;
++	sdp->sd_args.ar_quota_quantum = 60;
+ 
+ 	error = gfs2_mount_args(sdp, &sdp->sd_args, data);
+ 	if (error) {
+@@ -1014,6 +1013,16 @@ static int fill_super(struct super_block *sb, void *data, int silent)
+                                GFS2_BASIC_BLOCK_SHIFT;
+ 	sdp->sd_fsb2bb = 1 << sdp->sd_fsb2bb_shift;
+ 
++	sdp->sd_tune.gt_quota_quantum = sdp->sd_args.ar_quota_quantum;
++	if (sdp->sd_args.ar_statfs_quantum) {
++		sdp->sd_tune.gt_statfs_slow = 0;
++		sdp->sd_tune.gt_statfs_quantum = sdp->sd_args.ar_statfs_quantum;
++	}
++	else {
++		sdp->sd_tune.gt_statfs_slow = 1;
++		sdp->sd_tune.gt_statfs_quantum = 30;
++	}
++
+ 	error = init_names(sdp, silent);
+ 	if (error)
+ 		goto fail;
+diff --git a/fs/gfs2/ops_super.c b/fs/gfs2/ops_super.c
+index 7aec6d7..7d634a3 100644
+--- a/fs/gfs2/ops_super.c
++++ b/fs/gfs2/ops_super.c
+@@ -307,8 +307,17 @@ static int gfs2_remount_fs(struct super_block *sb, int *flags, char *data)
+ {
+ 	struct gfs2_sbd *sdp = sb->s_fs_info;
+ 	struct gfs2_args args = sdp->sd_args; /* Default to current settings */
++	struct gfs2_tune *gt = &sdp->sd_tune;
+ 	int error;
+ 
++	spin_lock(&gt->gt_spin);
++	args.ar_quota_quantum = gt->gt_quota_quantum;
++	if (gt->gt_statfs_slow)
++		args.ar_statfs_quantum = 0;
++	else
++		args.ar_statfs_quantum = gt->gt_statfs_quantum;
++	spin_unlock(&gt->gt_spin);
++
+ 	error = gfs2_mount_args(sdp, &args, data);
+ 	if (error)
+ 		return error;
+@@ -344,6 +353,19 @@ static int gfs2_remount_fs(struct super_block *sb, int *flags, char *data)
+ 		sb->s_flags |= MS_POSIXACL;
+ 	else
+ 		sb->s_flags &= ~MS_POSIXACL;
++
++	spin_lock(&gt->gt_spin);
++	gt->gt_quota_quantum = args.ar_quota_quantum;
++	if (args.ar_statfs_quantum) {
++		gt->gt_statfs_slow = 0;
++		gt->gt_statfs_quantum = args.ar_statfs_quantum;
++	}
++	else {
++		gt->gt_statfs_slow = 1;
++		gt->gt_statfs_quantum = 30;
++	}
++	spin_unlock(&gt->gt_spin);
++
+         /* Indicate support for setlease fop */
+         *flags |= MS_HAS_SETLEASE;
+ 	return 0;
+diff --git a/fs/gfs2/quota.c b/fs/gfs2/quota.c
+index 1213b23..e21380c 100644
+--- a/fs/gfs2/quota.c
++++ b/fs/gfs2/quota.c
+@@ -1317,6 +1317,13 @@ static void quotad_check_trunc_list(struct gfs2_sbd *sdp)
+ 	}
+ }
+ 
++void gfs2_wake_up_statfs(struct gfs2_sbd *sdp) {
++	if (!sdp->sd_statfs_force_sync) {
++		sdp->sd_statfs_force_sync = 1;
++		wake_up(&sdp->sd_quota_wait);
++	}
++}
++
+ /**
+  * gfs2_quotad - Write cached quota changes into the quota file
+  * @sdp: Pointer to GFS2 superblock
+@@ -1336,8 +1343,15 @@ int gfs2_quotad(void *data)
+ 	while (!kthread_should_stop()) {
+ 
+ 		/* Update the master statfs file */
+-		quotad_check_timeo(sdp, "statfs", gfs2_statfs_sync, t,
+-				   &statfs_timeo, &tune->gt_statfs_quantum);
++		if (sdp->sd_statfs_force_sync) {
++			int error = gfs2_statfs_sync(sdp);
++			quotad_error(sdp, "statfs", error);
++			statfs_timeo = gfs2_tune_get(sdp, gt_statfs_quantum) * HZ;
++		}
++		else
++			quotad_check_timeo(sdp, "statfs", gfs2_statfs_sync, t,
++					   &statfs_timeo,
++					   &tune->gt_statfs_quantum);
+ 
+ 		/* Update quota file */
+ 		quotad_check_timeo(sdp, "sync", gfs2_quota_sync, t,
+@@ -1357,7 +1371,7 @@ int gfs2_quotad(void *data)
+ 		spin_lock(&sdp->sd_trunc_lock);
+ 		empty = list_empty(&sdp->sd_trunc_list);
+ 		spin_unlock(&sdp->sd_trunc_lock);
+-		if (empty)
++		if (empty && !sdp->sd_statfs_force_sync)
+ 			t -= schedule_timeout(t);
+ 		else
+ 			t = 0;
+diff --git a/fs/gfs2/quota.h b/fs/gfs2/quota.h
+index b8b5ccd..9118f0e 100644
+--- a/fs/gfs2/quota.h
++++ b/fs/gfs2/quota.h
+@@ -31,6 +31,7 @@ extern int gfs2_quota_refresh(struct gfs2_sbd *sdp, int user, u32 id);
+ extern int gfs2_quota_init(struct gfs2_sbd *sdp);
+ extern void gfs2_quota_scan(struct gfs2_sbd *sdp);
+ extern void gfs2_quota_cleanup(struct gfs2_sbd *sdp);
++extern void gfs2_wake_up_statfs(struct gfs2_sbd *sdp);
+ extern int gfs2_quotad(void *data);
+ 
+ #endif /* __QUOTA_DOT_H__ */
+diff --git a/fs/gfs2/super.c b/fs/gfs2/super.c
+index 88c4270..1909fba 100644
+--- a/fs/gfs2/super.c
++++ b/fs/gfs2/super.c
+@@ -343,7 +343,10 @@ void gfs2_statfs_change(struct gfs2_sbd *sdp, s64 total, s64 free,
+ {
+ 	struct gfs2_inode *l_ip = GFS2_I(sdp->sd_sc_inode);
+ 	struct gfs2_statfs_change_host *l_sc = &sdp->sd_statfs_local;
++	struct gfs2_statfs_change_host *m_sc = &sdp->sd_statfs_master;
+ 	struct buffer_head *l_bh;
++	s64 x, y;
++	int need_sync = 0;
+ 	int error;
+ 
+ 	error = gfs2_meta_inode_buffer(l_ip, &l_bh);
+@@ -356,9 +359,17 @@ void gfs2_statfs_change(struct gfs2_sbd *sdp, s64 total, s64 free,
+ 	l_sc->sc_free += free;
+ 	l_sc->sc_dinodes += dinodes;
+ 	gfs2_statfs_change_out(l_sc, l_bh->b_data + sizeof(struct gfs2_dinode));
++	if (sdp->sd_args.ar_statfs_percent) {
++		x = 100 * l_sc->sc_free;
++		y = m_sc->sc_free * sdp->sd_args.ar_statfs_percent;
++		if (x >= y || x <= -y)
++			need_sync = 1;
++	}
+ 	spin_unlock(&sdp->sd_statfs_spin);
+ 
+ 	brelse(l_bh);
++	if (need_sync)
++		gfs2_wake_up_statfs(sdp);
+ }
+ 
+ void update_statfs(struct gfs2_sbd *sdp, struct buffer_head *m_bh,
+@@ -420,6 +431,7 @@ int gfs2_statfs_sync(struct gfs2_sbd *sdp)
+ 		goto out_bh2;
+ 
+ 	update_statfs(sdp, m_bh, l_bh);
++	sdp->sd_statfs_force_sync = 0;
+ 
+ 	gfs2_trans_end(sdp);
+ 
+diff --git a/fs/gfs2/sys.c b/fs/gfs2/sys.c
+index 5921844..d34cc67 100644
+--- a/fs/gfs2/sys.c
++++ b/fs/gfs2/sys.c
+@@ -289,6 +289,7 @@ ARGS_ATTR(posix_acl,       "%d\n");
+ ARGS_ATTR(quota,           "%u\n");
+ ARGS_ATTR(suiddir,         "%d\n");
+ ARGS_ATTR(data,            "%d\n");
++ARGS_ATTR(statfs_percent,  "%d\n");
+ 
+ static struct attribute *args_attrs[] = {
+ 	&args_attr_lockproto.attr,
+@@ -304,6 +305,7 @@ static struct attribute *args_attrs[] = {
+ 	&args_attr_quota.attr,
+ 	&args_attr_suiddir.attr,
+ 	&args_attr_data.attr,
++	&args_attr_statfs_percent.attr,
+ 	NULL,
+ };
+ 

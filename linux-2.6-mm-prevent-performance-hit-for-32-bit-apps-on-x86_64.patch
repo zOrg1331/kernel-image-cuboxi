@@ -58,10 +58,10 @@ The attached patch adds that functionality and fixes BZ 544448
 Signed-off-by: Jarod Wilson <jarod@redhat.com>
 
 diff --git a/arch/x86_64/kernel/sys_x86_64.c b/arch/x86_64/kernel/sys_x86_64.c
-index 6bdde10..a7b10fd 100644
+index 272bfa9..e0b23f4 100644
 --- a/arch/x86_64/kernel/sys_x86_64.c
 +++ b/arch/x86_64/kernel/sys_x86_64.c
-@@ -241,6 +241,97 @@ bottomup:
+@@ -224,6 +224,97 @@ bottomup:
  	return addr;
  }
  
@@ -192,10 +192,10 @@ index 452bbae..896e124 100644
  
  #include <asm/page.h>
 diff --git a/include/linux/sched.h b/include/linux/sched.h
-index eaabf86..537fa60 100644
+index ee0e62e..5f09c65 100644
 --- a/include/linux/sched.h
 +++ b/include/linux/sched.h
-@@ -273,6 +273,10 @@ extern unsigned long
+@@ -283,6 +283,10 @@ extern unsigned long
  arch_get_unmapped_exec_area(struct file *, unsigned long, unsigned long,
  		       unsigned long, unsigned long);
  extern unsigned long
@@ -207,22 +207,22 @@ index eaabf86..537fa60 100644
  			  unsigned long len, unsigned long pgoff,
  			  unsigned long flags);
 diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
-index 65bb74a..1d299be 100644
+index c9ce04c..7f51dbc 100644
 --- a/include/linux/sysctl.h
 +++ b/include/linux/sysctl.h
-@@ -207,6 +207,7 @@ enum
- 	VM_MMAP_MIN_ADDR=38, 	/* amount of memory to protect from mmap */
+@@ -212,6 +212,7 @@ enum
  	VM_FLUSH_MMAP=39,       /* flush mmap()d pagecache pages */
  	VM_MAX_WRITEBACK_PAGES=40, /*maximum pages written per writeback loop */
+ 	VM_ZONE_RECLAIM_INTERVAL=41, /* interval between zone_reclaim failures */
 +	VM_TOPDOWN_ALLOCATE_FAST=42, /* optimize speed over fragmentation in topdown alloc */
  };
  
  
 diff --git a/kernel/sysctl.c b/kernel/sysctl.c
-index 8f8dbb4..715668f 100644
+index 25e37bf..cb68181 100644
 --- a/kernel/sysctl.c
 +++ b/kernel/sysctl.c
-@@ -203,6 +203,7 @@ extern ctl_table inotify_table[];
+@@ -204,6 +204,7 @@ extern ctl_table inotify_table[];
  
  #ifdef HAVE_ARCH_PICK_MMAP_LAYOUT
  int sysctl_legacy_va_layout;
@@ -230,7 +230,7 @@ index 8f8dbb4..715668f 100644
  #endif
  
  /* /proc declarations: */
-@@ -1050,6 +1051,16 @@ static ctl_table vm_table[] = {
+@@ -1102,6 +1103,16 @@ static ctl_table vm_table[] = {
  		.strategy	= &sysctl_intvec,
  		.extra1		= &zero,
  	},

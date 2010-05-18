@@ -1,0 +1,36 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Fri, 16 Oct 2009 18:26:35 -0400
+Subject: [net] igb: return PCI_ERS_RESULT_DISCONNECT on failure
+Message-id: 20091016222635.6819.27614.send-patch@aqua
+O-Subject: [RHEL5.5 PATCH] igb: return PCI_ERS_RESULT_DISCONNECT on permanent failure [v2]
+Bugzilla: 514250
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+PCI drivers that implement the struct pci_error_handlers' error_detected
+callback should return PCI_ERS_RESULT_DISCONNECT if the state passed in is
+pci_channel_io_perm_failure. This patch fixes the issue for igb.
+
+This patch is a backport of an upstream commit:
+http://git.kernel.org/linus/59ed6eecff4aa00c5c5d18ffd180acac108d596e
+
+We have no way to test/verify this patch. Relying on code-review.
+See RHBZ 514250 for details
+
+Resolves RHBZ 514256.
+
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index c5075da..68e3101 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -4767,6 +4767,9 @@ static pci_ers_result_t igb_io_error_detected(struct pci_dev *pdev,
+ 
+ 	netif_device_detach(netdev);
+ 
++	if (state == pci_channel_io_perm_failure)
++		return PCI_ERS_RESULT_DISCONNECT;
++
+ 	if (netif_running(netdev))
+ 		igb_down(adapter);
+ 	pci_disable_device(pdev);

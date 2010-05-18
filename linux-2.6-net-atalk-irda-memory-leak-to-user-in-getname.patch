@@ -1,0 +1,55 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Fri, 28 Aug 2009 05:28:41 -0400
+Subject: [net] atalk/irda: memory leak to user in getname
+Message-id: 20090828092854.29236.94786.sendpatchset@danny
+O-Subject: [PATCH RHEL5.5] net: atalk/irda avoid leak kernel memory to user in getname()
+Bugzilla: 519310
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+CVE: CVE-2009-3001 CVE-2009-3002
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=519310
+
+Description:
+There are numerous getname() infoleaks in rhel5, including
+appletalk and irda. Backport upstream patches to avoid leak
+kernel memory to users.
+
+Upstream status:
+[irda]:http://git.kernel.org/linus/09384dfc76e526c3993c09c42e016372dc9dd22c
+[appletalk]:http://git.kernel.org/linus/3d392475c873c10c10d6d96b94d092a34ebd4791
+
+Brew #:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1945684
+
+KABI:
+no harm
+
+diff --git a/net/appletalk/ddp.c b/net/appletalk/ddp.c
+index 96dc6bb..983ed04 100644
+--- a/net/appletalk/ddp.c
++++ b/net/appletalk/ddp.c
+@@ -1237,6 +1237,7 @@ static int atalk_getname(struct socket *sock, struct sockaddr *uaddr,
+ 			return -ENOBUFS;
+ 
+ 	*uaddr_len = sizeof(struct sockaddr_at);
++	memset(&sat.sat_zero, 0, sizeof(sat.sat_zero));
+ 
+ 	if (peer) {
+ 		if (sk->sk_state != TCP_ESTABLISHED)
+diff --git a/net/irda/af_irda.c b/net/irda/af_irda.c
+index 17699ee..f51de09 100644
+--- a/net/irda/af_irda.c
++++ b/net/irda/af_irda.c
+@@ -721,6 +721,7 @@ static int irda_getname(struct socket *sock, struct sockaddr *uaddr,
+ 	struct sock *sk = sock->sk;
+ 	struct irda_sock *self = irda_sk(sk);
+ 
++	memset(&saddr, 0, sizeof(saddr));
+ 	if (peer) {
+ 		if (sk->sk_state != TCP_ESTABLISHED)
+ 			return -ENOTCONN;

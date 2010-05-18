@@ -1,0 +1,55 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Tue, 1 Dec 2009 19:33:16 -0500
+Subject: [md] raid: deal with soft lockups during resync
+Message-id: <1259696003-21028-2-git-send-email-dledford@redhat.com>
+Patchwork-id: 21585
+O-Subject: [Patch RHEL5.5] [md] deal with soft lockups during resync
+Bugzilla: 501075
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Use both upstream commits and local patches to resolve issue in raid1/4/5/6/10
+under known failure case (bz was against raid6 only, use patch in bugzilla for
+raid4/5/6, but also pull identical patch from upstream commits to preemptively
+solve same issue in raid1/10 code)
+
+Resolves bz501075
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/md/raid1.c b/drivers/md/raid1.c
+index ac323a1..8469f83 100644
+--- a/drivers/md/raid1.c
++++ b/drivers/md/raid1.c
+@@ -1610,6 +1610,7 @@ static void raid1d(mddev_t *mddev)
+ 				generic_make_request(bio);
+ 			}
+ 		}
++		cond_resched();
+ 	}
+ 	if (unplug)
+ 		unplug_slaves(mddev);
+diff --git a/drivers/md/raid10.c b/drivers/md/raid10.c
+index 5276ddf..e1e9853 100644
+--- a/drivers/md/raid10.c
++++ b/drivers/md/raid10.c
+@@ -1546,6 +1546,7 @@ static void raid10d(mddev_t *mddev)
+ 				generic_make_request(bio);
+ 			}
+ 		}
++		cond_resched();
+ 	}
+ 	spin_unlock_irqrestore(&conf->device_lock, flags);
+ 	if (unplug)
+diff --git a/drivers/md/raid5.c b/drivers/md/raid5.c
+index 53c3faa..083b44c 100644
+--- a/drivers/md/raid5.c
++++ b/drivers/md/raid5.c
+@@ -2993,6 +2993,8 @@ static void raid5d (mddev_t *mddev)
+ 		handle_stripe(sh, conf->spare_page);
+ 		release_stripe(sh);
+ 
++		cond_resched();
++
+ 		spin_lock_irq(&conf->device_lock);
+ 	}
+ 	PRINTK("%d stripes handled\n", handled);

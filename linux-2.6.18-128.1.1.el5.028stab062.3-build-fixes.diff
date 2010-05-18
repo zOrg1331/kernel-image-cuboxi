@@ -61,9 +61,9 @@ diff -urpX nopatch linux-2.6.18-128.1.1.el5.028stab062.3/include/linux/pci.h lin
  static inline void pci_disable_msix(struct pci_dev *dev) {}
  static inline void msi_remove_pci_irq_vectors(struct pci_dev *dev) {}
 -static inline void pci_restore_msi_state(struct pci_dev *dev) {}
+ static inline int pci_msi_enabled(void) {return 0;}
  #ifdef CONFIG_XEN
  #define register_msi_get_owner(func) 0
- #define unregister_msi_get_owner(func) 0
 @@ -666,7 +665,6 @@ extern int pci_enable_msix(struct pci_de
  	struct msix_entry *entries, int nvec);
  extern void pci_disable_msix(struct pci_dev *dev);

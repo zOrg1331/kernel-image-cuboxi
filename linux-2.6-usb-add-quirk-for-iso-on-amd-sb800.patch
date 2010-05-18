@@ -1,0 +1,129 @@
+From: Pete Zaitcev <zaitcev@redhat.com>
+Date: Tue, 8 Dec 2009 16:16:30 -0500
+Subject: [usb] add quirk for iso on amd sb800
+Message-id: <20091208091630.26dd7c00@redhat.com>
+Patchwork-id: 21746
+O-Subject: [Patch RHEL5] Add quirk for ISO on AMD SB800
+Bugzilla: 537433
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+New SBx00, new quirk. This one is worked around by flipping magic bits in
+the device itself, not in upstream bridge.
+
+I built a test kernel in Brew and AMD tested it to confirm that it works.
+The fix is properly limited to specific devices and I consider it safe.
+It is in upstream (although depending on what gets into RHEL 6 we might
+need it ported there too).
+
+Please ack.
+
+-- Pete
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/usb/host/ohci-hcd.c b/drivers/usb/host/ohci-hcd.c
+index 72a6902..5e01963 100644
+--- a/drivers/usb/host/ohci-hcd.c
++++ b/drivers/usb/host/ohci-hcd.c
+@@ -138,6 +138,7 @@ static int ohci_reboot (struct notifier_block *, unsigned long , void *);
+ #ifdef CONFIG_PCI
+ static void quirk_amd_pll(int state);
+ static void amd_iso_dev_put(void);
++static void sb800_prefetch(struct ohci_hcd *ohci, int on);
+ #else
+ static inline void quirk_amd_pll(int state)
+ {
+@@ -147,6 +148,10 @@ static inline void amd_iso_dev_put(void)
+ {
+ 	return;
+ }
++static inline void sb800_prefetch(struct ohci_hcd *ohci, int on)
++{
++	return;
++}
+ #endif
+ 
+ #include "ohci-hub.c"
+diff --git a/drivers/usb/host/ohci-pci.c b/drivers/usb/host/ohci-pci.c
+index 1ebc2ce..22ce63c 100644
+--- a/drivers/usb/host/ohci-pci.c
++++ b/drivers/usb/host/ohci-pci.c
+@@ -63,6 +63,13 @@ ohci_quirk_amd700(struct ohci_hcd *ohci)
+ 		return;
+ 
+ 	pci_read_config_byte(amd_smbus_dev, PCI_REVISION_ID, &rev);
++
++	/* SB800 needs pre-fetch fix */
++	if ((rev >= 0x40) && (rev <= 0x4f)) {
++		ohci->flags |= OHCI_QUIRK_AMD_PREFETCH;
++		ohci_dbg(ohci, "enabled AMD prefetch quirk\n");
++	}
++
+ 	if ((rev > 0x3b) || (rev < 0x30)) {
+ 		pci_dev_put(amd_smbus_dev);
+ 		amd_smbus_dev = NULL;
+@@ -235,6 +242,19 @@ static void amd_iso_dev_put(void)
+ 	}
+ }
+ 
++static void sb800_prefetch(struct ohci_hcd *ohci, int on)
++{
++	struct pci_dev *pdev;
++	u16 misc;
++
++	pdev = to_pci_dev(ohci_to_hcd(ohci)->self.controller);
++	pci_read_config_word(pdev, 0x50, &misc);
++	if (on == 0)
++		pci_write_config_word(pdev, 0x50, misc & 0xfcff);
++	else
++		pci_write_config_word(pdev, 0x50, misc | 0x0300);
++}
++
+ #ifdef	CONFIG_PM
+ 
+ static int ohci_pci_suspend (struct usb_hcd *hcd, pm_message_t message)
+diff --git a/drivers/usb/host/ohci-q.c b/drivers/usb/host/ohci-q.c
+index 2797ede..7902cda 100644
+--- a/drivers/usb/host/ohci-q.c
++++ b/drivers/usb/host/ohci-q.c
+@@ -61,9 +61,12 @@ __acquires(ohci->lock)
+ 	switch (usb_pipetype (urb->pipe)) {
+ 	case PIPE_ISOCHRONOUS:
+ 		ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs--;
+-		if (ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs == 0)
++		if (ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs == 0) {
+ 			if (ohci->flags & OHCI_QUIRK_AMD_ISO)
+ 				quirk_amd_pll(1);
++			if (ohci->flags & OHCI_QUIRK_AMD_PREFETCH)
++				sb800_prefetch(ohci, 0);
++		}
+ 		break;
+ 	case PIPE_INTERRUPT:
+ 		ohci_to_hcd(ohci)->self.bandwidth_int_reqs--;
+@@ -692,9 +695,12 @@ static void td_submit_urb (
+ 				data + urb->iso_frame_desc [cnt].offset,
+ 				urb->iso_frame_desc [cnt].length, urb, cnt);
+ 		}
+-		if (ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs == 0)
++		if (ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs == 0) {
+ 			if (ohci->flags & OHCI_QUIRK_AMD_ISO)
+ 				quirk_amd_pll(0);
++			if (ohci->flags & OHCI_QUIRK_AMD_PREFETCH)
++				sb800_prefetch(ohci, 1);
++		}
+ 		periodic = ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs++ == 0
+ 			&& ohci_to_hcd(ohci)->self.bandwidth_int_reqs == 0;
+ 		break;
+diff --git a/drivers/usb/host/ohci.h b/drivers/usb/host/ohci.h
+index 2c39785..1e1c1e3 100644
+--- a/drivers/usb/host/ohci.h
++++ b/drivers/usb/host/ohci.h
+@@ -398,6 +398,7 @@ struct ohci_hcd {
+ #define	OHCI_BIG_ENDIAN		0x08			/* big endian HC */
+ #define	OHCI_QUIRK_ZFMICRO	0x10			/* Compaq ZFMicro chipset*/
+ #define	OHCI_QUIRK_AMD_ISO	0x200			/* ISO transfers */
++#define	OHCI_QUIRK_AMD_PREFETCH	0x400			/* pre-fetch for ISO transfer */
+ 	// there are also chip quirks/bugs in init logic
+ 
+ };

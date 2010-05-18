@@ -1,0 +1,53 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Thu, 7 Jan 2010 12:41:39 -0500
+Subject: [net] virtio_net: fix tx wakeup race condition
+Message-id: <20100107124139.GA10078@gondor.apana.org.au>
+Patchwork-id: 22333
+O-Subject: [RHEL5.5 PATCH] virtio_net: Fix tx wakeup race condition
+Bugzilla: 524651
+RH-Acked-by: Mark McLoughlin <markmc@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Avi Kivity <avi@redhat.com>
+
+Hi:
+
+RHEL5 Bugzilla #524651
+
+This patch fixes a race condition that causes TX to completely
+stop in a guest using virtio_net.  This bug doesn't exist upstream
+as virtio_net has diverged from the RHEL5.4 code base.
+
+This fix has been verified by the bug reporter.
+
+virtio_net: Fix tx wakeup race condition
+
+We free completed TX requests in xmit_tasklet but do not wake
+the queue.  This creates a race condition whereupon the queue
+may be emptied by xmit_tasklet and yet it remains in the stopped
+state.
+
+This patch fixes this by waking the queue after freeing packets
+in xmit_tasklet.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Cheers,
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/virtio_net.c b/drivers/net/virtio_net.c
+index 9eec5a5..74b3854 100644
+--- a/drivers/net/virtio_net.c
++++ b/drivers/net/virtio_net.c
+@@ -521,8 +521,10 @@ static void xmit_tasklet(unsigned long data)
+ 		vi->svq->vq_ops->kick(vi->svq);
+ 		vi->last_xmit_skb = NULL;
+ 	}
+-	if (vi->free_in_tasklet)
++	if (vi->free_in_tasklet) {
+ 		free_old_xmit_skbs(vi);
++		netif_wake_queue(vi->dev);
++	}
+ 	netif_tx_unlock_bh(vi->dev);
+ }
+ 

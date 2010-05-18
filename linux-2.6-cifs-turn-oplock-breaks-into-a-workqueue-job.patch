@@ -1,0 +1,496 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 26 Oct 2009 15:54:24 -0400
+Subject: [cifs] turn oplock breaks into a workqueue job
+Message-id: <1256572464-27293-10-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21209
+O-Subject: [RHEL5.5 PATCH 9/9] BZ#531005: cifs: turn oplock breaks into a
+	workqueue job
+Bugzilla: 531005
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+Currently, when an oplock break comes in there's a chance that the
+oplock break job won't occur if the allocation of the oplock_q_entry
+fails. There are also some rather nasty races in the allocation and
+handling these structs.
+
+Rather than allocating oplock queue entries when an oplock break comes
+in, add a few extra fields to the cifsFileInfo struct.
+
+The upstream patch converted this job to use the slow_work facility, but
+RHEL-5 doesn't have that. So this patch turns the oplock kthread into a
+standard single-threaded workqueue and queues the work to it when an
+oplock break comes in.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/cifs/cifsfs.c b/fs/cifs/cifsfs.c
+index 1238996..4071bf2 100644
+--- a/fs/cifs/cifsfs.c
++++ b/fs/cifs/cifsfs.c
+@@ -68,14 +68,7 @@ unsigned int multiuser_mount = 0;
+ unsigned int extended_security = CIFSSEC_DEF;
+ /* unsigned int ntlmv2_support = 0; */
+ unsigned int sign_CIFS_PDUs = 1;
+-extern struct task_struct *oplockThread; /* remove sparse warning */
+-struct task_struct *oplockThread = NULL;
+-/* extern struct task_struct * dnotifyThread; remove sparse warning */
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 20)
+-static const struct super_operations cifs_super_ops;
+-#else
+ static struct super_operations cifs_super_ops;
+-#endif
+ unsigned int CIFSMaxBufSize = CIFS_MAX_MSGSIZE;
+ module_param(CIFSMaxBufSize, int, 0);
+ MODULE_PARM_DESC(CIFSMaxBufSize, "Network buffer size (not including header). "
+@@ -99,6 +92,8 @@ extern mempool_t *cifs_mid_poolp;
+ 
+ extern struct kmem_cache *cifs_oplock_cachep;
+ 
++struct workqueue_struct *cifswq;
++
+ static int
+ cifs_read_super(struct super_block *sb, void *data,
+ 		const char *devname, int silent)
+@@ -1096,87 +1091,12 @@ cifs_destroy_mids(void)
+ 	kmem_cache_destroy(cifs_oplock_cachep);
+ }
+ 
+-static int cifs_oplock_thread(void *dummyarg)
+-{
+-	struct oplock_q_entry *oplock_item;
+-	struct cifsTconInfo *pTcon;
+-	struct inode *inode;
+-	__u16  netfid;
+-	int rc, waitrc = 0;
+-
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 22)
+-	set_freezable();
+-#endif
+-	do {
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
+-		if (try_to_freeze())
+-			continue;
+-#endif
+-
+-		spin_lock(&cifs_oplock_lock);
+-		if (list_empty(&cifs_oplock_list)) {
+-			spin_unlock(&cifs_oplock_lock);
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(39*HZ);
+-		} else {
+-			oplock_item = list_entry(cifs_oplock_list.next,
+-						struct oplock_q_entry, qhead);
+-			cFYI(1, ("found oplock item to write out"));
+-			pTcon = oplock_item->tcon;
+-			inode = oplock_item->pinode;
+-			netfid = oplock_item->netfid;
+-			spin_unlock(&cifs_oplock_lock);
+-			DeleteOplockQEntry(oplock_item);
+-			/* can not grab inode sem here since it would
+-				deadlock when oplock received on delete
+-				since vfs_unlink holds the i_mutex across
+-				the call */
+-			/* mutex_lock(&inode->i_mutex);*/
+-			if (S_ISREG(inode->i_mode)) {
+-				rc = filemap_fdatawrite(inode->i_mapping);
+-				if (CIFS_I(inode)->clientCanCacheRead == 0) {
+-					waitrc = filemap_fdatawait(
+-							      inode->i_mapping);
+-					invalidate_remote_inode(inode);
+-				}
+-				if (rc == 0)
+-					rc = waitrc;
+-			} else
+-				rc = 0;
+-			/* mutex_unlock(&inode->i_mutex);*/
+-			if (rc)
+-				CIFS_I(inode)->write_behind_rc = rc;
+-			cFYI(1, ("Oplock flush inode %p rc %d",
+-				inode, rc));
+-
+-				/* releasing stale oplock after recent reconnect
+-				of smb session using a now incorrect file
+-				handle is not a data integrity issue but do
+-				not bother sending an oplock release if session
+-				to server still is disconnected since oplock
+-				already released by the server in that case */
+-			if (!pTcon->need_reconnect) {
+-				rc = CIFSSMBLock(0, pTcon, netfid,
+-						0 /* len */ , 0 /* offset */, 0,
+-						0, LOCKING_ANDX_OPLOCK_RELEASE,
+-						false /* wait flag */);
+-				cFYI(1, ("Oplock release rc = %d", rc));
+-			}
+-			set_current_state(TASK_INTERRUPTIBLE);
+-			schedule_timeout(1);  /* yield in case q were corrupt */
+-		}
+-	} while (!kthread_should_stop());
+-
+-	return 0;
+-}
+-
+ static int __init
+ init_cifs(void)
+ {
+ 	int rc = 0;
+ 	cifs_proc_init();
+ 	INIT_LIST_HEAD(&cifs_tcp_ses_list);
+-	INIT_LIST_HEAD(&cifs_oplock_list);
+ #ifdef CONFIG_CIFS_EXPERIMENTAL
+ 	INIT_LIST_HEAD(&GlobalDnotifyReqList);
+ 	INIT_LIST_HEAD(&GlobalDnotifyRsp_Q);
+@@ -1205,7 +1125,6 @@ init_cifs(void)
+ 	rwlock_init(&GlobalSMBSeslock);
+ 	rwlock_init(&cifs_tcp_ses_lock);
+ 	spin_lock_init(&GlobalMid_Lock);
+-	spin_lock_init(&cifs_oplock_lock);
+ 
+ 	if (cifs_max_pending < 2) {
+ 		cifs_max_pending = 2;
+@@ -1240,10 +1159,10 @@ init_cifs(void)
+ 	if (rc)
+ 		goto out_unregister_key_type;
+ #endif
+-	oplockThread = kthread_run(cifs_oplock_thread, NULL, "cifsoplockd");
+-	if (IS_ERR(oplockThread)) {
+-		rc = PTR_ERR(oplockThread);
+-		cERROR(1, ("error %d create oplock thread", rc));
++	cifswq = create_singlethread_workqueue("cifswq");
++	if (!cifswq) {
++		rc = -ENOMEM;
++		cERROR(1, ("error %d creating workqueue", rc));
+ 		goto out_unregister_dfs_key_type;
+ 	}
+ 
+@@ -1277,6 +1196,7 @@ exit_cifs(void)
+ 	cifs_proc_clean();
+ #ifdef CONFIG_CIFS_DFS_UPCALL
+ 	cifs_dfs_release_automount_timer();
++	destroy_workqueue(cifswq);
+ 	unregister_key_type(&key_type_dns_resolver);
+ #endif
+ #ifdef CONFIG_CIFS_UPCALL
+@@ -1286,7 +1206,6 @@ exit_cifs(void)
+ 	cifs_destroy_inodecache();
+ 	cifs_destroy_mids();
+ 	cifs_destroy_request_bufs();
+-	kthread_stop(oplockThread);
+ }
+ 
+ MODULE_AUTHOR("Steve French <sfrench@us.ibm.com>");
+diff --git a/fs/cifs/cifsglob.h b/fs/cifs/cifsglob.h
+index f83b226..f701f2c 100644
+--- a/fs/cifs/cifsglob.h
++++ b/fs/cifs/cifsglob.h
+@@ -352,18 +352,16 @@ struct cifsFileInfo {
+ 	/* lock scope id (0 if none) */
+ 	struct file *pfile; /* needed for writepage */
+ 	struct inode *pInode; /* needed for oplock break */
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 17)
++	struct vfsmount *mnt;
+ 	struct mutex lock_mutex;
+-#else
+-	struct semaphore lock_mutex;
+-#endif
+ 	struct list_head llist; /* list of byte range locks we have. */
+ 	bool closePend:1;	/* file is marked to close */
+ 	bool invalidHandle:1;	/* file closed via session abend */
+-	bool messageMode:1;	/* for pipes: message vs byte mode */
++	bool oplock_break_cancelled:1;
+ 	atomic_t count;		/* reference count */
+ 	struct semaphore fh_sem; /* prevents reopen race after dead ses*/
+ 	struct cifs_search_info srch_inf;
++	struct work_struct oplock_break; /* workqueue job for oplock breaks */
+ };
+ 
+ /* Take a reference on the file private data */
+@@ -668,12 +666,6 @@ GLOBAL_EXTERN rwlock_t		cifs_tcp_ses_lock;
+  */
+ GLOBAL_EXTERN rwlock_t GlobalSMBSeslock;
+ 
+-/* Global list of oplocks */
+-GLOBAL_EXTERN struct list_head cifs_oplock_list;
+-
+-/* Protects the cifs_oplock_list */
+-GLOBAL_EXTERN spinlock_t cifs_oplock_lock;
+-
+ /* Outstanding dir notify requests */
+ GLOBAL_EXTERN struct list_head GlobalDnotifyReqList;
+ /* DirNotify response queue */
+@@ -724,3 +716,4 @@ GLOBAL_EXTERN unsigned int cifs_min_rcv;    /* min size of big ntwrk buf pool */
+ GLOBAL_EXTERN unsigned int cifs_min_small;  /* min size of small buf pool */
+ GLOBAL_EXTERN unsigned int cifs_max_pending; /* MAX requests at once to server*/
+ 
++extern struct workqueue_struct *cifswq;
+diff --git a/fs/cifs/cifsproto.h b/fs/cifs/cifsproto.h
+index 3bb70b4..4a31917 100644
+--- a/fs/cifs/cifsproto.h
++++ b/fs/cifs/cifsproto.h
+@@ -99,21 +99,12 @@ extern int CIFS_SessSetup(unsigned int xid, struct cifsSesInfo *ses,
+ 			     const int stage,
+ 			     const struct nls_table *nls_cp);
+ extern __u16 GetNextMid(struct TCP_Server_Info *server);
+-extern struct oplock_q_entry *AllocOplockQEntry(struct inode *, u16,
+-						 struct cifsTconInfo *);
+-extern void DeleteOplockQEntry(struct oplock_q_entry *);
+-extern void DeleteTconOplockQEntries(struct cifsTconInfo *);
+-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,5,0)
+ extern struct timespec cifs_NTtimeToUnix(u64 /* utc nanoseconds since 1601 */ );
+ extern u64 cifs_UnixTimeToNT(struct timespec);
+ extern struct timespec cnvrtDosUnixTm(__u16 date, __u16 time);
+-#else
+-extern u64 cifs_UnixTimeToNT(time_t);
+-extern time_t cifs_NTtimeToUnix(u64);
+-extern time_t cnvrtDosUnixTm(__u16 date, __u16 time);
+-#endif
+ extern __le64 cnvrtDosCifsTm(__u16 date, __u16 time);
+ 
++extern void cifs_oplock_break(void *data);
+ extern int cifs_posix_open(char *full_path, struct inode **pinode,
+ 			   struct super_block *sb, int mode, int oflags,
+ 			   __u32 *poplock, __u16 *pnetfid, int xid);
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index 650ceeb..20d1a92 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -97,6 +97,7 @@ static void mark_open_files_invalid(struct cifsTconInfo *pTcon)
+ 	list_for_each_safe(tmp, tmp1, &pTcon->openFileList) {
+ 		open_file = list_entry(tmp, struct cifsFileInfo, tlist);
+ 		open_file->invalidHandle = true;
++		open_file->oplock_break_cancelled = true;
+ 	}
+ 	write_unlock(&GlobalSMBSeslock);
+ 	/* BB Add call to invalidate_inodes(sb) for all superblocks mounted
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index 92cb173..e9e3a93 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -1714,7 +1714,6 @@ cifs_put_tcon(struct cifsTconInfo *tcon)
+ 	CIFSSMBTDis(xid, tcon);
+ 	_FreeXid(xid);
+ 
+-	DeleteTconOplockQEntries(tcon);
+ 	tconInfoFree(tcon);
+ 	cifs_put_smb_ses(ses);
+ }
+diff --git a/fs/cifs/dir.c b/fs/cifs/dir.c
+index 2bb9b51..9698889 100644
+--- a/fs/cifs/dir.c
++++ b/fs/cifs/dir.c
+@@ -425,11 +425,14 @@ cifs_create_set_dentry:
+ 		pCifsFile->pid = current->tgid;
+ 		pCifsFile->pInode = igrab(newinode);
+ 		pCifsFile->invalidHandle = false;
++		pCifsFile->mnt = nd->mnt;
+ 		pCifsFile->closePend     = false;
+ 		init_MUTEX(&pCifsFile->fh_sem);
+ 		mutex_init(&pCifsFile->lock_mutex);
+ 		INIT_LIST_HEAD(&pCifsFile->llist);
+ 		atomic_set(&pCifsFile->count, 1);
++		INIT_WORK(&pCifsFile->oplock_break, cifs_oplock_break,
++			  pCifsFile);
+ 
+ 		/* set the following in open now
+ 				pCifsFile->pfile = file; */
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index 6ecd969..4d11df4 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -22,6 +22,7 @@
+  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+  */
+ #include <linux/fs.h>
++#include <linux/mount.h>
+ #include <linux/stat.h>
+ #include <linux/fcntl.h>
+ #include <linux/pagemap.h>
+@@ -62,11 +63,13 @@ static inline struct cifsFileInfo *cifs_init_private(
+ 	INIT_LIST_HEAD(&private_data->llist);
+ 	private_data->pfile = file; /* needed for writepage */
+ 	private_data->pInode = igrab(inode);
++	private_data->mnt = file->f_vfsmnt;
+ 	private_data->invalidHandle = false;
+ 	private_data->closePend = false;
+ 	/* Initialize reference count to one.  The private data is
+ 	freed on the release of the last reference */
+ 	atomic_set(&private_data->count, 1);
++	INIT_WORK(&private_data->oplock_break, cifs_oplock_break, private_data);
+ 
+ 	return private_data;
+ }
+@@ -2441,6 +2444,56 @@ out:
+ 	return rc;
+ }
+ 
++void
++cifs_oplock_break(void *data)
++{
++	struct cifsFileInfo *cfile = (struct cifsFileInfo *) data;
++	struct inode *inode = cfile->pInode;
++	struct cifsInodeInfo *cinode = CIFS_I(inode);
++	struct cifs_sb_info *cifs_sb = CIFS_SB(cfile->mnt->mnt_sb);
++	int rc, waitrc = 0;
++
++	/*
++	 * yes, this is really ugly and silly-looking... We cannot take
++	 * references to the cifsFileInfo and the vfsmount until we know that
++	 * the work has been queued in is_valid_oplock_break. Since that
++	 * work is queued while holding this lock for read, we take the write
++	 * lock below and immediately release it to ensure that the necessary
++	 * references have been taken. That allows us to avoid adding extra
++	 * completion variables or something for this.
++	 */
++	write_lock(&GlobalSMBSeslock);
++	write_unlock(&GlobalSMBSeslock);
++
++	if (inode && S_ISREG(inode->i_mode)) {
++		rc = filemap_fdatawrite(inode->i_mapping);
++		if (cinode->clientCanCacheRead == 0) {
++			waitrc = filemap_fdatawait(inode->i_mapping);
++			invalidate_remote_inode(inode);
++		}
++		if (!rc)
++			rc = waitrc;
++		if (rc)
++			cinode->write_behind_rc = rc;
++		cFYI(1, ("Oplock flush inode %p rc %d", inode, rc));
++	}
++
++	/*
++	 * releasing stale oplock after recent reconnect of smb session using
++	 * a now incorrect file handle is not a data integrity issue but do
++	 * not bother sending an oplock release if session to server still is
++	 * disconnected since oplock already released by the server
++	 */
++	if (!cfile->closePend && !cfile->oplock_break_cancelled) {
++		rc = CIFSSMBLock(0, cifs_sb->tcon, cfile->netfid, 0, 0, 0, 0,
++				 LOCKING_ANDX_OPLOCK_RELEASE, false);
++		cFYI(1, ("Oplock release rc = %d", rc));
++	}
++
++	mntput(cfile->mnt);
++	cifsFileInfo_put(cfile);
++}
++
+ struct address_space_operations_ext cifs_addr_ops = {
+ 	.orig_aops.readpage = cifs_readpage,
+ 	.orig_aops.readpages = cifs_readpages,
+diff --git a/fs/cifs/misc.c b/fs/cifs/misc.c
+index e092c5c..bfabb48 100644
+--- a/fs/cifs/misc.c
++++ b/fs/cifs/misc.c
+@@ -22,6 +22,7 @@
+ #include <linux/slab.h>
+ #include <linux/ctype.h>
+ #include <linux/version.h>
++#include <linux/mount.h>
+ #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 5, 0)
+ #include <linux/mempool.h>
+ #endif
+@@ -40,7 +41,6 @@ extern mempool_t *cifs_req_poolp;
+ extern kmem_cache_t *cifs_sm_req_cachep;
+ extern kmem_cache_t *cifs_req_cachep;
+ #endif
+-extern struct task_struct *oplockThread;
+ 
+ /* The xid serves as a useful identifier for each incoming vfs request,
+    in a similar way to the mid which is useful to track each sent smb,
+@@ -594,19 +594,28 @@ is_valid_oplock_break(struct smb_hdr *buf, struct TCP_Server_Info *srv)
+ 				if (pSMB->Fid != netfile->netfid)
+ 					continue;
+ 
+-				read_unlock(&GlobalSMBSeslock);
+-				read_unlock(&cifs_tcp_ses_lock);
++				/*
++				 * don't do anything if file is about to be
++				 * closed anyway.
++				 */
++				if (netfile->closePend) {
++					read_unlock(&GlobalSMBSeslock);
++					read_unlock(&cifs_tcp_ses_lock);
++					return true;
++				}
++
+ 				cFYI(1, ("file id match, oplock break"));
+ 				pCifsInode = CIFS_I(netfile->pInode);
+ 				pCifsInode->clientCanCacheAll = false;
+ 				if (pSMB->OplockLevel == 0)
+ 					pCifsInode->clientCanCacheRead = false;
+-				AllocOplockQEntry(netfile->pInode,
+-						  netfile->netfid, tcon);
+-				cFYI(1, ("about to wake up oplock thread"));
+-				if (oplockThread)
+-					wake_up_process(oplockThread);
+-
++				if (queue_work(cifswq, &netfile->oplock_break)) {
++					cifsFileInfo_get(netfile);
++					mntget(netfile->mnt);
++					netfile->oplock_break_cancelled = false;
++				}
++				read_unlock(&GlobalSMBSeslock);
++				read_unlock(&cifs_tcp_ses_lock);
+ 				return true;
+ 			}
+ 			read_unlock(&GlobalSMBSeslock);
+diff --git a/fs/cifs/transport.c b/fs/cifs/transport.c
+index 9bc5df1..33ce46b 100644
+--- a/fs/cifs/transport.c
++++ b/fs/cifs/transport.c
+@@ -119,56 +119,6 @@ DeleteMidQEntry(struct mid_q_entry *midEntry)
+ #endif	
+ }
+ 
+-struct oplock_q_entry *
+-AllocOplockQEntry(struct inode *pinode, __u16 fid, struct cifsTconInfo *tcon)
+-{
+-	struct oplock_q_entry *temp;
+-	if ((pinode == NULL) || (tcon == NULL)) {
+-		cERROR(1, ("Null parms passed to AllocOplockQEntry"));
+-		return NULL;
+-	}
+-	temp = (struct oplock_q_entry *) kmem_cache_alloc(cifs_oplock_cachep,
+-						       GFP_KERNEL);
+-	if (temp == NULL)
+-		return temp;
+-	else {
+-		temp->pinode = pinode;
+-		temp->tcon = tcon;
+-		temp->netfid = fid;
+-		spin_lock(&cifs_oplock_lock);
+-		list_add_tail(&temp->qhead, &cifs_oplock_list);
+-		spin_unlock(&cifs_oplock_lock);
+-	}
+-	return temp;
+-}
+-
+-void DeleteOplockQEntry(struct oplock_q_entry *oplockEntry)
+-{
+-	spin_lock(&cifs_oplock_lock);
+-    /* should we check if list empty first? */
+-	list_del(&oplockEntry->qhead);
+-	spin_unlock(&cifs_oplock_lock);
+-	kmem_cache_free(cifs_oplock_cachep, oplockEntry);
+-}
+-
+-
+-void DeleteTconOplockQEntries(struct cifsTconInfo *tcon)
+-{
+-	struct oplock_q_entry *temp;
+-
+-	if (tcon == NULL)
+-		return;
+-
+-	spin_lock(&cifs_oplock_lock);
+-	list_for_each_entry(temp, &cifs_oplock_list, qhead) {
+-		if ((temp->tcon) && (temp->tcon == tcon)) {
+-			list_del(&temp->qhead);
+-			kmem_cache_free(cifs_oplock_cachep, temp);
+-		}
+-	}
+-	spin_unlock(&cifs_oplock_lock);
+-}
+-
+ static int
+ smb_sendv(struct TCP_Server_Info *server, struct kvec *iov, int n_vec)
+ {

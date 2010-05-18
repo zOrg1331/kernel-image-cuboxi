@@ -1,0 +1,437 @@
+From: Rob Evers <revers@redhat.com>
+Date: Thu, 3 Dec 2009 15:46:55 -0500
+Subject: [scsi] lpfc: update version from 8.2.0.58 to 8.2.0.59
+Message-id: <20091203153927.5613.4609.sendpatchset@localhost.localdomain>
+Patchwork-id: 21670
+O-Subject: [RHEL5.5 PATCH 3/3 v3] lpfc: update version from 8.2.0.58 to 8.2.0.59
+Bugzilla: 529244
+
+https://bugzilla.redhat.com/show_bug.cgi?id=529244
+
+Description from bz529244:
+
+Following patch is to update Emulex LPFC driver to 8.2.0.59 (applies on top of
+LPFC 8.2.0.58).
+
+These are the changes included in this patch:
+
+    * Changed version number to 8.2.0.59
+
+    * Fixed in-band remote firmware download - This was a fix for
+      functionality regression issue.
+
+    * Fix bug with mbox sysfs attribute smaller than the mailbox extension
+      size - This was a fix for functionality regression issue.
+
+    * Phase out use of ONLINE registers - This was a fix due to new hardware
+      requirements/firmware update. If not fixed it would result in unexpected
+      behavior of PCI drivers on unrecoverable errors.
+
+    * Made ABTS WQE go to the same WQ as the WQE to be aborted - This
+      was a fix for a possible data corruption issue due to underlying
+      firmware changes.
+
+    * Add new READ_FCF_RECORD failure code - This fix was due to new firmware
+      changes.
+
+    * A minor fix to remove unnecessary semicolons - This fix was pulled
+      down from the upstream driver and a patch submitted by the community,
+      in an effort to match upstream driver and this code stream.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_ct.c b/drivers/scsi/lpfc/lpfc_ct.c
+index 7522bde..8fca0f0 100644
+--- a/drivers/scsi/lpfc/lpfc_ct.c
++++ b/drivers/scsi/lpfc/lpfc_ct.c
+@@ -1241,7 +1241,7 @@ lpfc_ns_cmd(struct lpfc_vport *vport, int cmdcode,
+ 		vport->ct_flags &= ~FC_CT_RFF_ID;
+ 		CtReq->CommandResponse.bits.CmdRsp =
+ 		    be16_to_cpu(SLI_CTNS_RFF_ID);
+-		CtReq->un.rff.PortId = cpu_to_be32(vport->fc_myDID);;
++		CtReq->un.rff.PortId = cpu_to_be32(vport->fc_myDID);
+ 		CtReq->un.rff.fbits = FC4_FEATURE_INIT;
+ 		CtReq->un.rff.type_code = FC_TYPE_FCP;
+ 		cmpl = lpfc_cmpl_ct_cmd_rff_id;
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index 8e11821..e42ddce 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -1681,11 +1681,16 @@ lpfc_mbx_cmpl_read_fcf_record(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 	 * to book keeping the FCFIs can be used.
+ 	 */
+ 	if (shdr_status || shdr_add_status) {
+-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+-				"2521 READ_FCF_RECORD mailbox failed "
+-				"with status x%x add_status x%x, mbx\n",
+-				shdr_status, shdr_add_status);
+-		goto out;
++		if (shdr_status == STATUS_FCF_TABLE_EMPTY) {
++			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
++					"2726 READ_FCF_RECORD Indicates empty "
++					"FCF table.\n");
++		} else {
++			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
++					"2521 READ_FCF_RECORD mailbox failed "
++					"with status x%x add_status x%x, mbx\n",
++					shdr_status, shdr_add_status);
++		}
+ 	}
+ 	/* Interpreting the returned information of FCF records */
+ 	read_fcf = (struct lpfc_mbx_read_fcf_tbl *)virt_addr;
+diff --git a/drivers/scsi/lpfc/lpfc_hw.h b/drivers/scsi/lpfc/lpfc_hw.h
+index 94b7ea2..617a71b 100644
+--- a/drivers/scsi/lpfc/lpfc_hw.h
++++ b/drivers/scsi/lpfc/lpfc_hw.h
+@@ -2856,10 +2856,12 @@ typedef struct {
+ /* Union of all Mailbox Command types */
+ #define MAILBOX_CMD_WSIZE	32
+ #define MAILBOX_CMD_SIZE	(MAILBOX_CMD_WSIZE * sizeof(uint32_t))
++/* ext_wsize times 4 bytes should not be greater than max xmit size */
+ #define MAILBOX_EXT_WSIZE	512
+ #define MAILBOX_EXT_SIZE	(MAILBOX_EXT_WSIZE * sizeof(uint32_t))
+ #define MAILBOX_HBA_EXT_OFFSET  0x100
+-#define MAILBOX_MAX_XMIT_SIZE   1024
++/* max mbox xmit size is a page size for sysfs IO operations */
++#define MAILBOX_MAX_XMIT_SIZE   PAGE_SIZE
+ 
+ typedef union {
+ 	uint32_t varWords[MAILBOX_CMD_WSIZE - 1]; /* first word is type/
+diff --git a/drivers/scsi/lpfc/lpfc_hw4.h b/drivers/scsi/lpfc/lpfc_hw4.h
+index a6e467a..970e743 100644
+--- a/drivers/scsi/lpfc/lpfc_hw4.h
++++ b/drivers/scsi/lpfc/lpfc_hw4.h
+@@ -516,8 +516,8 @@ struct lpfc_register {
+ 
+ #define LPFC_UERR_STATUS_HI		0x00A4
+ #define LPFC_UERR_STATUS_LO		0x00A0
+-#define LPFC_ONLINE0			0x00B0
+-#define LPFC_ONLINE1			0x00B4
++#define LPFC_UE_MASK_HI			0x00AC
++#define LPFC_UE_MASK_LO			0x00A8
+ #define LPFC_SCRATCHPAD			0x0058
+ 
+ /* BAR0 Registers */
+@@ -1015,7 +1015,7 @@ struct lpfc_mbx_wq_destroy {
+ };
+ 
+ #define LPFC_HDR_BUF_SIZE 128
+-#define LPFC_DATA_BUF_SIZE 4096
++#define LPFC_DATA_BUF_SIZE 2048
+ struct rq_context {
+ 	uint32_t word0;
+ #define lpfc_rq_context_rq_size_SHIFT	16
+@@ -1373,6 +1373,7 @@ struct lpfc_mbx_query_fw_cfg {
+ #define STATUS_ERROR_ACITMAIN				0x2a
+ #define STATUS_REBOOT_REQUIRED				0x2c
+ #define STATUS_FCF_IN_USE				0x3a
++#define STATUS_FCF_TABLE_EMPTY				0x43
+ 
+ struct lpfc_mbx_sli4_config {
+ 	struct mbox_header header;
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 94e8c4f..a2f46b8 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -4655,7 +4655,6 @@ int
+ lpfc_sli4_post_status_check(struct lpfc_hba *phba)
+ {
+ 	struct lpfc_register sta_reg, uerrlo_reg, uerrhi_reg, scratchpad;
+-	uint32_t onlnreg0, onlnreg1;
+ 	int i, port_error = -ENODEV;
+ 
+ 	if (!phba->sli4_hba.STAregaddr)
+@@ -4699,21 +4698,20 @@ lpfc_sli4_post_status_check(struct lpfc_hba *phba)
+ 			bf_get(lpfc_scratchpad_slirev, &scratchpad),
+ 			bf_get(lpfc_scratchpad_featurelevel1, &scratchpad),
+ 			bf_get(lpfc_scratchpad_featurelevel2, &scratchpad));
+-
++	phba->sli4_hba.ue_mask_lo = readl(phba->sli4_hba.UEMASKLOregaddr);
++	phba->sli4_hba.ue_mask_hi = readl(phba->sli4_hba.UEMASKHIregaddr);
+ 	/* With uncoverable error, log the error message and return error */
+-	onlnreg0 = readl(phba->sli4_hba.ONLINE0regaddr);
+-	onlnreg1 = readl(phba->sli4_hba.ONLINE1regaddr);
+-	if ((onlnreg0 != LPFC_ONLINE_NERR) || (onlnreg1 != LPFC_ONLINE_NERR)) {
+-		uerrlo_reg.word0 = readl(phba->sli4_hba.UERRLOregaddr);
+-		uerrhi_reg.word0 = readl(phba->sli4_hba.UERRHIregaddr);
+-		if (uerrlo_reg.word0 || uerrhi_reg.word0) {
+-			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+-					"1422 HBA Unrecoverable error: "
+-					"uerr_lo_reg=0x%x, uerr_hi_reg=0x%x, "
+-					"online0_reg=0x%x, online1_reg=0x%x\n",
+-					uerrlo_reg.word0, uerrhi_reg.word0,
+-					onlnreg0, onlnreg1);
+-		}
++	uerrlo_reg.word0 = readl(phba->sli4_hba.UERRLOregaddr);
++	uerrhi_reg.word0 = readl(phba->sli4_hba.UERRHIregaddr);
++	if ((~phba->sli4_hba.ue_mask_lo & uerrlo_reg.word0) ||
++	    (~phba->sli4_hba.ue_mask_hi & uerrhi_reg.word0)) {
++		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
++				"1422 HBA Unrecoverable error: "
++				"uerr_lo_reg=0x%x, uerr_hi_reg=0x%x, "
++				"ue_mask_lo_reg=0x%x, ue_mask_hi_reg=0x%x\n",
++				uerrlo_reg.word0, uerrhi_reg.word0,
++				phba->sli4_hba.ue_mask_lo,
++				phba->sli4_hba.ue_mask_hi);
+ 		return -ENODEV;
+ 	}
+ 
+@@ -4734,10 +4732,10 @@ lpfc_sli4_bar0_register_memmap(struct lpfc_hba *phba)
+ 					LPFC_UERR_STATUS_LO;
+ 	phba->sli4_hba.UERRHIregaddr = phba->sli4_hba.conf_regs_memmap_p +
+ 					LPFC_UERR_STATUS_HI;
+-	phba->sli4_hba.ONLINE0regaddr = phba->sli4_hba.conf_regs_memmap_p +
+-					LPFC_ONLINE0;
+-	phba->sli4_hba.ONLINE1regaddr = phba->sli4_hba.conf_regs_memmap_p +
+-					LPFC_ONLINE1;
++	phba->sli4_hba.UEMASKLOregaddr = phba->sli4_hba.conf_regs_memmap_p +
++					LPFC_UE_MASK_LO;
++	phba->sli4_hba.UEMASKHIregaddr = phba->sli4_hba.conf_regs_memmap_p +
++					LPFC_UE_MASK_HI;
+ 	phba->sli4_hba.SCRATCHPADregaddr = phba->sli4_hba.conf_regs_memmap_p +
+ 					LPFC_SCRATCHPAD;
+ }
+@@ -7380,7 +7378,6 @@ lpfc_io_error_detected_s3(struct pci_dev *pdev, pci_channel_state_t state)
+ 		lpfc_sli_prep_dev_for_reset(phba);
+ 		return PCI_ERS_RESULT_NEED_RESET;
+ 	}
+-
+ }
+ 
+ /**
+diff --git a/drivers/scsi/lpfc/lpfc_scsi.c b/drivers/scsi/lpfc/lpfc_scsi.c
+index 8bbe53e..1bfafe8 100644
+--- a/drivers/scsi/lpfc/lpfc_scsi.c
++++ b/drivers/scsi/lpfc/lpfc_scsi.c
+@@ -2213,6 +2213,10 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
+ 
+ 	icmd->ulpLe = 1;
+ 	icmd->ulpClass = cmd->ulpClass;
++
++	/* ABTS WQE must go to the same WQ as the WQE to be aborted */
++	abtsiocb->fcp_wqidx = iocb->fcp_wqidx;
++
+ 	if (lpfc_is_link_up(phba))
+ 		icmd->ulpCommand = CMD_ABORT_XRI_CN;
+ 	else
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 0b99a62..b19e1ea 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -6144,7 +6144,6 @@ __lpfc_sli_issue_iocb_s4(struct lpfc_hba *phba, uint32_t ring_number,
+ 	uint16_t xritag;
+ 	union lpfc_wqe wqe;
+ 	struct lpfc_sli_ring *pring = &phba->sli.ring[ring_number];
+-	uint32_t fcp_wqidx;
+ 
+ 	if (piocb->sli4_xritag == NO_XRI) {
+ 		if (piocb->iocb.ulpCommand == CMD_ABORT_XRI_CN ||
+@@ -6179,8 +6178,17 @@ __lpfc_sli_issue_iocb_s4(struct lpfc_hba *phba, uint32_t ring_number,
+ 		return IOCB_ERROR;
+ 
+ 	if (piocb->iocb_flag &  LPFC_IO_FCP) {
+-		fcp_wqidx = lpfc_sli4_scmd_to_wqidx_distr(phba);
+-		if (lpfc_sli4_wq_put(phba->sli4_hba.fcp_wq[fcp_wqidx], &wqe))
++		/*
++		 * For FCP command IOCB, get a new WQ index to distribute
++		 * WQE across the WQsr. On the other hand, for abort IOCB,
++		 * it carries the same WQ index to the original command
++		 * IOCB.
++		 */
++		if ((piocb->iocb.ulpCommand != CMD_ABORT_XRI_CN) &&
++		    (piocb->iocb.ulpCommand != CMD_CLOSE_XRI_CN))
++			piocb->fcp_wqidx = lpfc_sli4_scmd_to_wqidx_distr(phba);
++		if (lpfc_sli4_wq_put(phba->sli4_hba.fcp_wq[piocb->fcp_wqidx],
++				     &wqe))
+ 			return IOCB_ERROR;
+ 	} else {
+ 		if (lpfc_sli4_wq_put(phba->sli4_hba.els_wq, &wqe))
+@@ -7172,6 +7180,9 @@ lpfc_sli_issue_abort_iotag(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
+ 	iabt->ulpLe = 1;
+ 	iabt->ulpClass = icmd->ulpClass;
+ 
++	/* ABTS WQE must go to the same WQ as the WQE to be aborted */
++	abtsiocbp->fcp_wqidx = cmdiocb->fcp_wqidx;
++
+ 	if (phba->link_state >= LPFC_LINK_UP)
+ 		iabt->ulpCommand = CMD_ABORT_XRI_CN;
+ 	else
+@@ -7378,6 +7389,9 @@ lpfc_sli_abort_iocb(struct lpfc_vport *vport, struct lpfc_sli_ring *pring,
+ 		abtsiocb->iocb.ulpClass = cmd->ulpClass;
+ 		abtsiocb->vport = phba->pport;
+ 
++		/* ABTS WQE must go to the same WQ as the WQE to be aborted */
++		abtsiocb->fcp_wqidx = iocbq->fcp_wqidx;
++
+ 		if (lpfc_is_link_up(phba))
+ 			abtsiocb->iocb.ulpCommand = CMD_ABORT_XRI_CN;
+ 		else
+@@ -7743,31 +7757,28 @@ static int
+ lpfc_sli4_eratt_read(struct lpfc_hba *phba)
+ {
+ 	uint32_t uerr_sta_hi, uerr_sta_lo;
+-	uint32_t onlnreg0, onlnreg1;
+ 
+ 	/* For now, use the SLI4 device internal unrecoverable error
+ 	 * registers for error attention. This can be changed later.
+ 	 */
+-	onlnreg0 = readl(phba->sli4_hba.ONLINE0regaddr);
+-	onlnreg1 = readl(phba->sli4_hba.ONLINE1regaddr);
+-	if ((onlnreg0 != LPFC_ONLINE_NERR) || (onlnreg1 != LPFC_ONLINE_NERR)) {
+-		uerr_sta_lo = readl(phba->sli4_hba.UERRLOregaddr);
+-		uerr_sta_hi = readl(phba->sli4_hba.UERRHIregaddr);
+-		if (uerr_sta_lo || uerr_sta_hi) {
+-			lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+-					"1423 HBA Unrecoverable error: "
+-					"uerr_lo_reg=0x%x, uerr_hi_reg=0x%x, "
+-					"online0_reg=0x%x, online1_reg=0x%x\n",
+-					uerr_sta_lo, uerr_sta_hi,
+-					onlnreg0, onlnreg1);
+-			phba->work_status[0] = uerr_sta_lo;
+-			phba->work_status[1] = uerr_sta_hi;
+-			/* Set the driver HA work bitmap */
+-			phba->work_ha |= HA_ERATT;
+-			/* Indicate polling handles this ERATT */
+-			phba->hba_flag |= HBA_ERATT_HANDLED;
+-			return 1;
+-		}
++	uerr_sta_lo = readl(phba->sli4_hba.UERRLOregaddr);
++	uerr_sta_hi = readl(phba->sli4_hba.UERRHIregaddr);
++	if ((~phba->sli4_hba.ue_mask_lo & uerr_sta_lo) ||
++	    (~phba->sli4_hba.ue_mask_hi & uerr_sta_hi)) {
++		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
++				"1423 HBA Unrecoverable error: "
++				"uerr_lo_reg=0x%x, uerr_hi_reg=0x%x, "
++				"ue_mask_lo_reg=0x%x, ue_mask_hi_reg=0x%x\n",
++				uerr_sta_lo, uerr_sta_hi,
++				phba->sli4_hba.ue_mask_lo,
++				phba->sli4_hba.ue_mask_hi);
++		phba->work_status[0] = uerr_sta_lo;
++		phba->work_status[1] = uerr_sta_hi;
++		/* Set the driver HA work bitmap */
++		phba->work_ha |= HA_ERATT;
++		/* Indicate polling handles this ERATT */
++		phba->hba_flag |= HBA_ERATT_HANDLED;
++		return 1;
+ 	}
+ 	return 0;
+ }
+@@ -11017,7 +11028,8 @@ lpfc_fc_frame_add(struct lpfc_vport *vport, struct hbq_dmabuf *dmabuf)
+ 		return dmabuf;
+ 	}
+ 	temp_hdr = seq_dmabuf->hbuf.virt;
+-	if (new_hdr->fh_seq_cnt < temp_hdr->fh_seq_cnt) {
++	if (be32_to_cpu(new_hdr->fh_seq_cnt) <
++		be32_to_cpu(temp_hdr->fh_seq_cnt)) {
+ 		list_del_init(&seq_dmabuf->hbuf.list);
+ 		list_add_tail(&dmabuf->hbuf.list, &vport->rcv_buffer_list);
+ 		list_add_tail(&dmabuf->dbuf.list, &seq_dmabuf->dbuf.list);
+@@ -11028,6 +11040,11 @@ lpfc_fc_frame_add(struct lpfc_vport *vport, struct hbq_dmabuf *dmabuf)
+ 	list_move_tail(&seq_dmabuf->hbuf.list, &vport->rcv_buffer_list);
+ 	seq_dmabuf->time_stamp = jiffies;
+ 	lpfc_update_rcv_time_stamp(vport);
++	if (list_empty(&seq_dmabuf->dbuf.list)) {
++		temp_hdr = dmabuf->hbuf.virt;
++		list_add_tail(&dmabuf->dbuf.list, &seq_dmabuf->dbuf.list);
++		return seq_dmabuf;
++	}
+ 	/* find the correct place in the sequence to insert this frame */
+ 	list_for_each_entry_reverse(d_buf, &seq_dmabuf->dbuf.list, list) {
+ 		temp_dmabuf = container_of(d_buf, struct hbq_dmabuf, dbuf);
+@@ -11036,7 +11053,8 @@ lpfc_fc_frame_add(struct lpfc_vport *vport, struct hbq_dmabuf *dmabuf)
+ 		 * If the frame's sequence count is greater than the frame on
+ 		 * the list then insert the frame right after this frame
+ 		 */
+-		if (new_hdr->fh_seq_cnt > temp_hdr->fh_seq_cnt) {
++		if (be32_to_cpu(new_hdr->fh_seq_cnt) >
++			be32_to_cpu(temp_hdr->fh_seq_cnt)) {
+ 			list_add(&dmabuf->dbuf.list, &temp_dmabuf->dbuf.list);
+ 			return seq_dmabuf;
+ 		}
+@@ -11283,7 +11301,7 @@ lpfc_seq_complete(struct hbq_dmabuf *dmabuf)
+ 		seq_dmabuf = container_of(d_buf, struct hbq_dmabuf, dbuf);
+ 		hdr = (struct fc_frame_header *)seq_dmabuf->hbuf.virt;
+ 		/* If there is a hole in the sequence count then fail. */
+-		if (++seq_count != hdr->fh_seq_cnt)
++		if (++seq_count != be16_to_cpu(hdr->fh_seq_cnt))
+ 			return 0;
+ 		fctl = (hdr->fh_f_ctl[0] << 16 |
+ 			hdr->fh_f_ctl[1] << 8 |
+@@ -11315,6 +11333,7 @@ lpfc_prep_seq(struct lpfc_vport *vport, struct hbq_dmabuf *seq_dmabuf)
+ 	struct lpfc_iocbq *first_iocbq, *iocbq;
+ 	struct fc_frame_header *fc_hdr;
+ 	uint32_t sid;
++	struct ulp_bde64 *pbde;
+ 
+ 	fc_hdr = (struct fc_frame_header *)seq_dmabuf->hbuf.virt;
+ 	/* remove from receive buffer list */
+@@ -11357,8 +11376,9 @@ lpfc_prep_seq(struct lpfc_vport *vport, struct hbq_dmabuf *seq_dmabuf)
+ 		if (!iocbq->context3) {
+ 			iocbq->context3 = d_buf;
+ 			iocbq->iocb.ulpBdeCount++;
+-			iocbq->iocb.unsli3.rcvsli3.bde2.tus.f.bdeSize =
+-							LPFC_DATA_BUF_SIZE;
++			pbde = (struct ulp_bde64 *)
++					&iocbq->iocb.unsli3.sli3Words[4];
++			pbde->tus.f.bdeSize = LPFC_DATA_BUF_SIZE;
+ 			first_iocbq->iocb.unsli3.rcvsli3.acc_len +=
+ 				bf_get(lpfc_rcqe_length,
+ 				       &seq_dmabuf->cq_event.cqe.rcqe_cmpl);
+@@ -11481,7 +11501,6 @@ lpfc_sli4_handle_received_buffer(struct lpfc_hba *phba,
+ 		 * frame to be freed when it is finished.
+ 		 **/
+ 		lpfc_sli_hbqbuf_fill_hbqs(phba, LPFC_ELS_HBQ, 1);
+-		dmabuf->tag = -1;
+ 		return;
+ 	}
+ 	/* Send the complete sequence to the upper layer protocol */
+diff --git a/drivers/scsi/lpfc/lpfc_sli.h b/drivers/scsi/lpfc/lpfc_sli.h
+index afe0b66..45877cd 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.h
++++ b/drivers/scsi/lpfc/lpfc_sli.h
+@@ -66,6 +66,7 @@ struct lpfc_iocbq {
+ 	uint8_t abort_count;
+ 	uint8_t rsvd2;
+ 	uint32_t drvrTimeout;	/* driver timeout in seconds */
++	uint32_t fcp_wqidx;	/* index to FCP work queue */
+ 	struct lpfc_vport *vport;/* virtual port pointer */
+ 	void *context1;		/* caller context information */
+ 	void *context2;		/* caller context information */
+diff --git a/drivers/scsi/lpfc/lpfc_sli4.h b/drivers/scsi/lpfc/lpfc_sli4.h
+index 9fba19f..1366d48 100644
+--- a/drivers/scsi/lpfc/lpfc_sli4.h
++++ b/drivers/scsi/lpfc/lpfc_sli4.h
+@@ -293,9 +293,8 @@ struct lpfc_sli4_hba {
+ 	/* BAR0 PCI config space register memory map */
+ 	void __iomem *UERRLOregaddr; /* Address to UERR_STATUS_LO register */
+ 	void __iomem *UERRHIregaddr; /* Address to UERR_STATUS_HI register */
+-	void __iomem *ONLINE0regaddr; /* Address to components of internal UE */
+-	void __iomem *ONLINE1regaddr; /* Address to components of internal UE */
+-#define LPFC_ONLINE_NERR	0xFFFFFFFF
++	void __iomem *UEMASKLOregaddr; /* Address to UE_MASK_LO register */
++	void __iomem *UEMASKHIregaddr; /* Address to UE_MASK_HI register */
+ 	void __iomem *SCRATCHPADregaddr; /* Address to scratchpad register */
+ 	/* BAR1 FCoE function CSR register memory map */
+ 	void __iomem *STAregaddr;    /* Address to HST_STATE register */
+@@ -309,6 +308,8 @@ struct lpfc_sli4_hba {
+ 	void __iomem *MQDBregaddr;   /* Address to MQ_DOORBELL register */
+ 	void __iomem *BMBXregaddr;   /* Address to BootStrap MBX register */
+ 
++	uint32_t ue_mask_lo;
++	uint32_t ue_mask_hi;
+ 	struct msix_entry *msix_entries;
+ 	uint32_t cfg_eqn;
+ 	struct lpfc_fcp_eq_hdl *fcp_eq_hdl; /* FCP per-WQ handle */
+diff --git a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+index 29e283b..38a4095 100644
+--- a/drivers/scsi/lpfc/lpfc_version.h
++++ b/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.2.0.58"
++#define LPFC_DRIVER_VERSION "8.2.0.59"
+ 
+ #define LPFC_DRIVER_NAME		"lpfc"
+ #define LPFC_SP_DRIVER_HANDLER_NAME	"lpfc:sp"

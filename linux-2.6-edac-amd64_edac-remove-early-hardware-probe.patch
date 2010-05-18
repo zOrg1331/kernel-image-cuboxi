@@ -1,0 +1,110 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Tue, 17 Nov 2009 18:12:50 -0500
+Subject: [edac] amd64_edac: remove early hardware probe
+Message-id: <20091117181536.4748.6601.sendpatchset@localhost.localdomain>
+Patchwork-id: 21402
+O-Subject: [RHEL5.5 PATCH 4/5] Remove early HW probe
+Bugzilla: 479070
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+Resolves BZ 479070
+
+This patch removes the very early HW probe that was in place prior to adding
+the DDR3 support.  The .probe_valid_hardware low_ops member checked whether
+the DCTs are in DDR3 mode and bailed out if so. Now that all the needed changes
+for DDR3 support is in place, it is removed with this patch.
+
+diff --git a/drivers/edac/amd64_edac.c b/drivers/edac/amd64_edac.c
+index 7da9e45..7bf5921 100644
+--- a/drivers/edac/amd64_edac.c
++++ b/drivers/edac/amd64_edac.c
+@@ -1507,42 +1507,6 @@ static void f10_debug_display_dimm_sizes(int ctrl, struct amd64_pvt *pvt,
+ }
+ 
+ /*
+- * Very early hardware probe on pci_probe thread to determine if this module
+- * supports the hardware.
+- *
+- * Return:
+- *      0 for OK
+- *      1 for error
+- */
+-static int f10_probe_valid_hardware(struct amd64_pvt *pvt)
+-{
+-       int ret = 0;
+-
+-       /*
+-        * If we are on a DDR3 machine, we don't know yet if
+-        * we support that properly at this time
+-        */
+-       if ((pvt->dchr0 & DDR3_MODE) ||
+-           (pvt->dchr1 & DDR3_MODE)) {
+-
+-               amd64_printk(KERN_WARNING,
+-                       "%s() This machine is running with DDR3 memory. "
+-                       "This is not currently supported. "
+-                       "DCHR0=0x%x DCHR1=0x%x\n",
+-                       __func__, pvt->dchr0, pvt->dchr1);
+-
+-               amd64_printk(KERN_WARNING,
+-                       "   Contact '%s' module MAINTAINER to help add"
+-                       " support.\n",
+-                       EDAC_MOD_STR);
+-
+-               ret = 1;
+-
+-       }
+-       return ret;
+-}
+-
+-/*
+  * There currently are 3 types type of MC devices for AMD Athlon/Opterons
+  * (as per PCI DEVICE_IDs):
+  *
+@@ -1559,7 +1523,6 @@ static struct amd64_family_type amd64_family_types[] = {
+                .addr_f1_ctl = PCI_DEVICE_ID_AMD_10H_NB_MAP,
+                .misc_f3_ctl = PCI_DEVICE_ID_AMD_10H_NB_MISC,
+                .ops = {
+-			.probe_valid_hardware	= f10_probe_valid_hardware,
+ 			.early_channel_count	= f10_early_channel_count,
+ 			.get_error_address	= f10_get_error_address,
+ 			.read_dram_base_limit	= f10_read_dram_base_limit,
+@@ -1573,7 +1536,6 @@ static struct amd64_family_type amd64_family_types[] = {
+                .addr_f1_ctl = PCI_DEVICE_ID_AMD_11H_NB_MAP,
+                .misc_f3_ctl = PCI_DEVICE_ID_AMD_11H_NB_MISC,
+                .ops = {
+-			.probe_valid_hardware	= f10_probe_valid_hardware,
+ 			.early_channel_count	= f10_early_channel_count,
+ 			.get_error_address	= f10_get_error_address,
+ 			.read_dram_base_limit	= f10_read_dram_base_limit,
+@@ -2651,17 +2613,10 @@ static int amd64_init_2nd_stage(struct amd64_pvt *pvt)
+ {
+        int node_id = pvt->mc_node_id;
+        struct mem_ctl_info *mci;
+-       int ret, err = 0;
++       int ret;
+ 
+        amd64_read_mc_registers(pvt);
+ 
+-       ret = -ENODEV;
+-       if (pvt->ops->probe_valid_hardware) {
+-               err = pvt->ops->probe_valid_hardware(pvt);
+-               if (err)
+-                       goto err_exit;
+-       }
+-
+        /*
+         * We need to determine how many memory channels there are. Then use
+         * that information for calculating the size of the dynamic instance
+diff --git a/drivers/edac/amd64_edac.h b/drivers/edac/amd64_edac.h
+index c2f50f3..b1606c9 100644
+--- a/drivers/edac/amd64_edac.h
++++ b/drivers/edac/amd64_edac.h
+@@ -532,7 +532,6 @@ extern const char *htlink_msgs[8];
+  * functions and per device encoding/decoding logic.
+  */
+ struct low_ops {
+-	int (*probe_valid_hardware)	(struct amd64_pvt *pvt);
+ 	int (*early_channel_count)	(struct amd64_pvt *pvt);
+ 
+ 	u64 (*get_error_address)	(struct mem_ctl_info *mci,

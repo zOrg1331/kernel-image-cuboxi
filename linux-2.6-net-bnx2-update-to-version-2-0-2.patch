@@ -1,0 +1,448 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Mon, 16 Nov 2009 18:03:14 -0500
+Subject: [net] bnx2: update to version 2.0.2
+Message-id: <4B0193E2.8040700@redhat.com>
+Patchwork-id: 21384
+O-Subject: [RHEL5.5 PATCH] Update bnx2 to version 2.0.2
+Bugzilla: 517377
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+bz517377
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=517377
+Update bnx2 to 2.0.x
+
+Description of problem:
+The bnx2 code needs to be updated to conform with upstream to
+support new devices et al. This patch will bring the bnx2
+driver up to version 2.0.2.
+
+Solution:
+The code was updated with the following commits:
+  Yang Hongyang - 4/7/2009
+    replace all DMA_64BIT_MASK macro w/DMA_BIT_MASK(64)
+    6a35528a8346f6e6fd32ed7e51f04d1fa4ca2c01
+  Yang Hongyang - 4/7/2009
+    replace all DMA_40BIT_MASK macro w/DMA_BIT_MASK(40)
+    50cf156af7dc68a44409bef636585ef88ebbab34
+  Yang Hongyang - 4/7/2009
+    replace all DMA_32BIT_MASK macro w/DMA_BIT_MASK(32)
+    284901a90a9e0b812ca3f5f852cbbfb60d10249d
+  Michael Chan - 5/6/2009
+    Fix panic in bnx2_poll_work()
+    581daf7e00c5e766f26aff80a61a860a17b0d75a
+  Eric Dumazet - 5/12/2009
+    bnx2_tx_int() optimizations
+    d62fda082c48b417b47a553860abf75d9cf8b591
+  Breno Leitao - 6/8/2009
+    no need to check before vfreeing
+    25b0b999fbf5cc1893b110d530102951795d2f73
+  Ooiwa Naohiro - 6/24/2009
+    Fix the behavior of ethtool when ONBOOT=no
+    7959ea254ed18faee41160b1c50b3c9664735967
+  Dean Nelson - 7/31/2009
+    return PCI_ERS_RESULT_DISCONNECT on permanent failure
+    2ec3de26d2dc666159b79a8b9394fa00b6f414ae
+  Michael Chan - 8/14/2009
+    Use mutex on slow patch cnic calls
+    c5a889508203446c1abc1d670599b3a816841813
+  Michael Chan - 8/21/2009
+    Zero out status block before chip reset.
+    155d5561f570c5b3af7a178670061927d89209fb
+  Michael Chan - 8/21/2009
+    Check if_running() before touching chip registers.
+    3767546cc24de8f104e745d59a0a43a09d9267df
+  Michael Chan - 8/21/2009
+    Close device if MTU change or ring size change fails.
+    6fefb65e78f098c09d0ab877b2c70421e4c84116
+  Michael Chan - 8/21/2009
+    Report FTQ discard counter.
+    790dab2f671cb477e6179322a6c48c898e311e72
+  Michael Chan - 8/21/2009
+    Refine coalescing parameters.
+    cf7474a6f4eda22603591b7d6253dffc224e4784
+  Michael Chan - 8/21/2009
+    Use const on flash_table structure.
+    0ced9d01d19795f913b95cebedd7d03986671379
+  Michael Chan - 8/21/2009
+    Update version to 2.0.2
+    8fea0f0db87a4aaed41a93eed147af61cc5f9e3f
+
+Brew:
+Successfully built in Brew for all architectures (task_2063824).
+
+Testing:
+Successfully ran connectathon on systems with BCM5708, BCM5709S,
+BCM5709, and BCM5708S, as well as systems with e1000 and tg3.
+Ran the kernel-workflow script successfully as well.
+
+Also manually tested patches that produce changes seen by user,
+such as ethtool output.
+
+As a bonus, a customer tested this full patch when testing for
+a specific patch (Naohiro - 6/24/2009) and found it to work.
+See bz513417 (which will be closed as a dup of this one soon.)
+
+Acks would be appreciated. Thanks.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/net/bnx2.c b/drivers/net/bnx2.c
+index dd2272f..f21d596 100644
+--- a/drivers/net/bnx2.c
++++ b/drivers/net/bnx2.c
+@@ -61,8 +61,8 @@
+ 
+ #define DRV_MODULE_NAME		"bnx2"
+ #define PFX DRV_MODULE_NAME	": "
+-#define DRV_MODULE_VERSION	"1.9.3"
+-#define DRV_MODULE_RELDATE	"March 17, 2009"
++#define DRV_MODULE_VERSION	"2.0.2"
++#define DRV_MODULE_RELDATE	"Aug 21, 2009"
+ 
+ #define RUN_AT(x) (jiffies + (x))
+ 
+@@ -145,7 +145,7 @@ static struct pci_device_id bnx2_pci_tbl[] = {
+ 	{ 0, }
+ };
+ 
+-static struct flash_spec flash_table[] =
++static const struct flash_spec flash_table[] =
+ {
+ #define BUFFERED_FLAGS		(BNX2_NV_BUFFERED | BNX2_NV_TRANSLATE)
+ #define NONBUFFERED_FLAGS	(BNX2_NV_WREN)
+@@ -234,7 +234,7 @@ static struct flash_spec flash_table[] =
+ 	 "Buffered flash (256kB)"},
+ };
+ 
+-static struct flash_spec flash_5709 = {
++static const struct flash_spec flash_5709 = {
+ 	.flags		= BNX2_NV_BUFFERED,
+ 	.page_bits	= BCM5709_FLASH_PAGE_BITS,
+ 	.page_size	= BCM5709_FLASH_PAGE_SIZE,
+@@ -621,6 +621,9 @@ bnx2_disable_int_sync(struct bnx2 *bp)
+ 	int i;
+ 
+ 	atomic_inc(&bp->intr_sem);
++	if (!netif_running(bp->dev))
++		return;
++
+ 	bnx2_disable_int(bp);
+ 	for (i = 0; i < bp->irq_nvecs; i++)
+ 		synchronize_irq(bp->irq_tbl[i].vector);
+@@ -706,8 +709,7 @@ bnx2_free_rx_mem(struct bnx2 *bp)
+ 						    rxr->rx_desc_mapping[j]);
+ 			rxr->rx_desc_ring[j] = NULL;
+ 		}
+-		if (rxr->rx_buf_ring)
+-			vfree(rxr->rx_buf_ring);
++		vfree(rxr->rx_buf_ring);
+ 		rxr->rx_buf_ring = NULL;
+ 
+ 		for (j = 0; j < bp->rx_max_pg_ring; j++) {
+@@ -717,8 +719,7 @@ bnx2_free_rx_mem(struct bnx2 *bp)
+ 						    rxr->rx_pg_desc_mapping[j]);
+ 			rxr->rx_pg_desc_ring[j] = NULL;
+ 		}
+-		if (rxr->rx_pg_ring)
+-			vfree(rxr->rx_pg_ring);
++		vfree(rxr->rx_pg_ring);
+ 		rxr->rx_pg_ring = NULL;
+ 	}
+ }
+@@ -2752,6 +2753,7 @@ bnx2_get_hw_tx_cons(struct bnx2_napi *bnapi)
+ 	/* Tell compiler that status block fields can change. */
+ 	barrier();
+ 	cons = *bnapi->hw_tx_cons_ptr;
++	barrier();
+ 	if (unlikely((cons & MAX_TX_DESC_CNT) == MAX_TX_DESC_CNT))
+ 		cons++;
+ 	return cons;
+@@ -2777,14 +2779,15 @@ bnx2_tx_int(struct bnx2 *bp, struct bnx2_napi *bnapi, int budget)
+ 		tx_buf = &txr->tx_buf_ring[sw_ring_cons];
+ 		skb = tx_buf->skb;
+ 
++		/* prefetch skb_end_pointer() to speedup skb_shinfo(skb) */
++		prefetch(&skb->end);
++
+ 		/* partial BD completions possible with TSO packets */
+-		if (skb_is_gso(skb)) {
++		if (tx_buf->is_gso) {
+ 			u16 last_idx, last_ring_idx;
+ 
+-			last_idx = sw_cons +
+-				skb_shinfo(skb)->nr_frags + 1;
+-			last_ring_idx = sw_ring_cons +
+-				skb_shinfo(skb)->nr_frags + 1;
++			last_idx = sw_cons + tx_buf->nr_frags + 1;
++			last_ring_idx = sw_ring_cons + tx_buf->nr_frags + 1;
+ 			if (unlikely(last_ring_idx >= MAX_TX_DESC_CNT)) {
+ 				last_idx++;
+ 			}
+@@ -2797,7 +2800,7 @@ bnx2_tx_int(struct bnx2 *bp, struct bnx2_napi *bnapi, int budget)
+ 			skb_headlen(skb), PCI_DMA_TODEVICE);
+ 
+ 		tx_buf->skb = NULL;
+-		last = skb_shinfo(skb)->nr_frags;
++		last = tx_buf->nr_frags;
+ 
+ 		for (i = 0; i < last; i++) {
+ 			sw_cons = NEXT_TX_BD(sw_cons);
+@@ -2817,7 +2820,8 @@ bnx2_tx_int(struct bnx2 *bp, struct bnx2_napi *bnapi, int budget)
+ 		if (tx_pkt == budget)
+ 			break;
+ 
+-		hw_cons = bnx2_get_hw_tx_cons(bnapi);
++		if (hw_cons == sw_cons)
++			hw_cons = bnx2_get_hw_tx_cons(bnapi);
+ 	}
+ 
+ 	txr->hw_tx_cons = hw_cons;
+@@ -3033,6 +3037,7 @@ bnx2_get_hw_rx_cons(struct bnx2_napi *bnapi)
+ 	/* Tell compiler that status block fields can change. */
+ 	barrier();
+ 	cons = *bnapi->hw_rx_cons_ptr;
++	barrier();
+ 	if (unlikely((cons & MAX_RX_DESC_CNT) == MAX_RX_DESC_CNT))
+ 		cons++;
+ 	return cons;
+@@ -4233,7 +4238,7 @@ bnx2_init_nvram(struct bnx2 *bp)
+ {
+ 	u32 val;
+ 	int j, entry_count, rc = 0;
+-	struct flash_spec *flash;
++	const struct flash_spec *flash;
+ 
+ 	if (CHIP_NUM(bp) == CHIP_NUM_5709) {
+ 		bp->flash_info = &flash_5709;
+@@ -4865,6 +4870,7 @@ bnx2_init_chip(struct bnx2 *bp)
+ 	bnx2_reg_wr_ind(bp, BNX2_RBUF_CONFIG2, BNX2_RBUF_CONFIG2_VAL(mtu));
+ 	bnx2_reg_wr_ind(bp, BNX2_RBUF_CONFIG3, BNX2_RBUF_CONFIG3_VAL(mtu));
+ 
++	memset(bp->bnx2_napi[0].status_blk.msi, 0, bp->status_stats_size);
+ 	for (i = 0; i < BNX2_MAX_MSIX_VEC; i++)
+ 		bp->bnx2_napi[i].last_status_idx = 0;
+ 
+@@ -4924,7 +4930,7 @@ bnx2_init_chip(struct bnx2 *bp)
+ 	}
+ 
+ 	if (bp->flags & BNX2_FLAG_ONE_SHOT_MSI)
+-		val |= BNX2_HC_CONFIG_ONE_SHOT;
++		val |= BNX2_HC_CONFIG_ONE_SHOT | BNX2_HC_CONFIG_USE_INT_PARAM;
+ 
+ 	REG_WR(bp, BNX2_HC_CONFIG, val);
+ 
+@@ -6274,9 +6280,14 @@ bnx2_vlan_rx_register(struct net_device *dev, struct vlan_group *vlgrp)
+ {
+ 	struct bnx2 *bp = netdev_priv(dev);
+ 
+-	bnx2_netif_stop(bp);
++	if (netif_running(dev))
++		bnx2_netif_stop(bp);
+ 
+ 	bp->vlgrp = vlgrp;
++
++	if (!netif_running(dev))
++		return;
++
+ 	bnx2_set_rx_mode(dev);
+ 	if (bp->flags & BNX2_FLAG_CAN_KEEP_VLAN)
+ 		bnx2_fw_sync(bp, BNX2_DRV_MSG_CODE_KEEP_VLAN_UPDATE, 0, 1);
+@@ -6381,6 +6392,8 @@ bnx2_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	mapping = dma_maps[0];
+ 	tx_buf = &txr->tx_buf_ring[ring_prod];
+ 	tx_buf->skb = skb;
++	tx_buf->nr_frags = last_frag;
++	tx_buf->is_gso = skb_is_gso(skb);
+ 	pci_unmap_addr_set(tx_buf, mapping, mapping);
+ 
+ 	txbd = &txr->tx_desc_ring[ring_prod];
+@@ -6519,7 +6532,8 @@ bnx2_get_stats(struct net_device *dev)
+ 		stats_blk->stat_EtherStatsOverrsizePkts);
+ 
+ 	net_stats->rx_over_errors =
+-		(unsigned long) stats_blk->stat_IfInMBUFDiscards;
++		(unsigned long) (stats_blk->stat_IfInFTQDiscards +
++		stats_blk->stat_IfInMBUFDiscards);
+ 
+ 	net_stats->rx_frame_errors =
+ 		(unsigned long) stats_blk->stat_Dot3StatsAlignmentErrors;
+@@ -6552,8 +6566,8 @@ bnx2_get_stats(struct net_device *dev)
+ 		net_stats->tx_carrier_errors;
+ 
+ 	net_stats->rx_missed_errors =
+-		(unsigned long) (stats_blk->stat_IfInMBUFDiscards +
+-		stats_blk->stat_FwRxDrop);
++		(unsigned long) (stats_blk->stat_IfInFTQDiscards +
++		stats_blk->stat_IfInMBUFDiscards + stats_blk->stat_FwRxDrop);
+ 
+ 	return net_stats;
+ }
+@@ -6868,6 +6882,14 @@ bnx2_nway_reset(struct net_device *dev)
+ 	return 0;
+ }
+ 
++static u32
++bnx2_get_link(struct net_device *dev)
++{
++	struct bnx2 *bp = netdev_priv(dev);
++
++	return bp->link_up;
++}
++
+ static int
+ bnx2_get_eeprom_len(struct net_device *dev)
+ {
+@@ -7018,9 +7040,14 @@ bnx2_change_ring_size(struct bnx2 *bp, u32 rx, u32 tx)
+ 		int rc;
+ 
+ 		rc = bnx2_alloc_mem(bp);
+-		if (rc)
++		if (!rc)
++			rc = bnx2_init_nic(bp, 0);
++
++		if (rc) {
++			bnx2_napi_enable(bp);
++			dev_close(bp->dev);
+ 			return rc;
+-		bnx2_init_nic(bp, 0);
++		}
+ 		bnx2_netif_start(bp);
+ 	}
+ 	return 0;
+@@ -7111,11 +7138,10 @@ bnx2_set_tso(struct net_device *dev, u32 data)
+ 	return 0;
+ }
+ 
+-#define BNX2_NUM_STATS 46
+ 
+ static struct {
+ 	char string[ETH_GSTRING_LEN];
+-} bnx2_stats_str_arr[BNX2_NUM_STATS] = {
++} bnx2_stats_str_arr[] = {
+ 	{ "rx_bytes" },
+ 	{ "rx_error_bytes" },
+ 	{ "tx_bytes" },
+@@ -7160,10 +7186,14 @@ static struct {
+ 	{ "tx_xoff_frames" },
+ 	{ "rx_mac_ctrl_frames" },
+ 	{ "rx_filtered_packets" },
++	{ "rx_ftq_discards" },
+ 	{ "rx_discards" },
+ 	{ "rx_fw_discards" },
+ };
+ 
++#define BNX2_NUM_STATS (sizeof(bnx2_stats_str_arr)/\
++			sizeof(bnx2_stats_str_arr[0]))
++
+ #define STATS_OFFSET32(offset_name) (offsetof(struct statistics_block, offset_name) / 4)
+ 
+ static const unsigned long bnx2_stats_offset_arr[BNX2_NUM_STATS] = {
+@@ -7211,6 +7241,7 @@ static const unsigned long bnx2_stats_offset_arr[BNX2_NUM_STATS] = {
+     STATS_OFFSET32(stat_OutXoffSent),
+     STATS_OFFSET32(stat_MacControlFramesReceived),
+     STATS_OFFSET32(stat_IfInFramesL2FilterDiscards),
++    STATS_OFFSET32(stat_IfInFTQDiscards),
+     STATS_OFFSET32(stat_IfInMBUFDiscards),
+     STATS_OFFSET32(stat_FwRxDrop),
+ };
+@@ -7223,7 +7254,7 @@ static u8 bnx2_5706_stats_len_arr[BNX2_NUM_STATS] = {
+ 	4,0,4,4,4,4,4,4,4,4,
+ 	4,4,4,4,4,4,4,4,4,4,
+ 	4,4,4,4,4,4,4,4,4,4,
+-	4,4,4,4,4,4,
++	4,4,4,4,4,4,4,
+ };
+ 
+ static u8 bnx2_5708_stats_len_arr[BNX2_NUM_STATS] = {
+@@ -7231,7 +7262,7 @@ static u8 bnx2_5708_stats_len_arr[BNX2_NUM_STATS] = {
+ 	4,4,4,4,4,4,4,4,4,4,
+ 	4,4,4,4,4,4,4,4,4,4,
+ 	4,4,4,4,4,4,4,4,4,4,
+-	4,4,4,4,4,4,
++	4,4,4,4,4,4,4,
+ };
+ 
+ #define BNX2_NUM_TESTS 6
+@@ -7434,7 +7465,7 @@ static struct ethtool_ops bnx2_ethtool_ops = {
+ 	.get_wol		= bnx2_get_wol,
+ 	.set_wol		= bnx2_set_wol,
+ 	.nway_reset		= bnx2_nway_reset,
+-	.get_link		= ethtool_op_get_link,
++	.get_link		= bnx2_get_link,
+ 	.get_eeprom_len		= bnx2_get_eeprom_len,
+ 	.get_eeprom		= bnx2_get_eeprom,
+ 	.set_eeprom		= bnx2_set_eeprom,
+@@ -7766,9 +7797,9 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
+ 
+ 	/* 5708 cannot support DMA addresses > 40-bit.  */
+ 	if (CHIP_NUM(bp) == CHIP_NUM_5708)
+-		persist_dma_mask = dma_mask = DMA_40BIT_MASK;
++		persist_dma_mask = dma_mask = DMA_BIT_MASK(40);
+ 	else
+-		persist_dma_mask = dma_mask = DMA_64BIT_MASK;
++		persist_dma_mask = dma_mask = DMA_BIT_MASK(64);
+ 
+ 	/* Configure DMA attributes. */
+ 	if (pci_set_dma_mask(pdev, dma_mask) == 0) {
+@@ -7779,7 +7810,7 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
+ 				"pci_set_consistent_dma_mask failed, aborting.\n");
+ 			goto err_out_unmap;
+ 		}
+-	} else if ((rc = pci_set_dma_mask(pdev, DMA_32BIT_MASK)) != 0) {
++	} else if ((rc = pci_set_dma_mask(pdev, DMA_BIT_MASK(32))) != 0) {
+ 		dev_err(&pdev->dev, "System does not support DMA, aborting.\n");
+ 		goto err_out_unmap;
+ 	}
+@@ -7883,13 +7914,13 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
+ 
+ 	bp->rx_csum = 1;
+ 
+-	bp->tx_quick_cons_trip_int = 20;
++	bp->tx_quick_cons_trip_int = 2;
+ 	bp->tx_quick_cons_trip = 20;
+-	bp->tx_ticks_int = 80;
++	bp->tx_ticks_int = 18;
+ 	bp->tx_ticks = 80;
+ 
+-	bp->rx_quick_cons_trip_int = 6;
+-	bp->rx_quick_cons_trip = 6;
++	bp->rx_quick_cons_trip_int = 2;
++	bp->rx_quick_cons_trip = 12;
+ 	bp->rx_ticks_int = 18;
+ 	bp->rx_ticks = 18;
+ 
+@@ -8234,6 +8265,11 @@ static pci_ers_result_t bnx2_io_error_detected(struct pci_dev *pdev,
+ 	rtnl_lock();
+ 	netif_device_detach(dev);
+ 
++	if (state == pci_channel_io_perm_failure) {
++		rtnl_unlock();
++		return PCI_ERS_RESULT_DISCONNECT;
++	}
++
+ 	if (netif_running(dev)) {
+ 		bnx2_netif_stop(bp);
+ 		del_timer_sync(&bp->timer);
+diff --git a/drivers/net/bnx2.h b/drivers/net/bnx2.h
+index de50e97..b6ef4a6 100644
+--- a/drivers/net/bnx2.h
++++ b/drivers/net/bnx2.h
+@@ -6542,6 +6542,8 @@ struct l2_fhdr {
+ struct sw_bd {
+ 	struct sk_buff		*skb;
+ 	DECLARE_PCI_UNMAP_ADDR(mapping)
++	unsigned short		is_gso;
++	unsigned short		nr_frags;
+ };
+ 
+ struct sw_pg {
+@@ -6882,7 +6884,7 @@ struct bnx2 {
+ 
+ 	struct net_device_stats net_stats;
+ 
+-	struct flash_spec	*flash_info;
++	const struct flash_spec	*flash_info;
+ 	u32			flash_size;
+ 
+ 	int			status_stats_size;

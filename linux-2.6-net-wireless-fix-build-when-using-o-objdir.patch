@@ -1,0 +1,41 @@
+From: John Linville <linville@redhat.com>
+Date: Tue, 15 Dec 2009 17:10:51 -0500
+Subject: [net] wireless: fix build when using O=objdir
+Message-id: <20091215171051.GH22227@redhat.com>
+Patchwork-id: 21967
+O-Subject: Re: [RHEL5.5 urgent PATCH] wireless: use internal regulatory database
+	infrastructure
+Bugzilla: 546712
+
+For some reason using make O=<objdir> fails to build because it can't find
+the above awk script.  Building a second time seems to work.  Proably
+just a silly Makefile bug using objdirs.
+
+Jeff B. wrote a buildcheck test in rhts that tries to mimic how a
+developer might compile a kernel, because we have been burned in the past
+where it compiled on beehive/brew but locally it failed.  Anyway he stuck the
+O=<objdir> option in there and that is where we see the problem.
+
+So running
+
+make -jX O=<objdir>
+make -jX O=<objdir> modules
+
+should mimic the problem.
+
+Here's the fix:
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/wireless/Makefile b/net/wireless/Makefile
+index f5a902f..aaa4f84 100644
+--- a/net/wireless/Makefile
++++ b/net/wireless/Makefile
+@@ -12,6 +12,6 @@ wireless_compat-y += compat.o
+ obj-$(CONFIG_WIRELESS_COMPAT) += wireless_compat.o
+ 
+ $(obj)/regdb.c: $(src)/db.txt $(src)/genregdb.awk
+-	@$(AWK) -f $(src)/genregdb.awk < $< > $@
++	@$(AWK) -f $(srctree)/$(src)/genregdb.awk < $< > $@
+ 
+ clean-files := regdb.c

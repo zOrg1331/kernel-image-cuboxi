@@ -1,0 +1,59 @@
+From: Takahiro Yasui <tyasui@redhat.com>
+Date: Tue, 24 Nov 2009 16:50:42 -0500
+Subject: [scsi] devinfo update for hitachi entries for RHEL5.5
+Message-id: <4B0C0EE2.3050800@redhat.com>
+Patchwork-id: 21478
+O-Subject: [RHEL5.5 PATCH] scsi devinfo update for Hitachi entries
+Bugzilla: 430631
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+
+BZ#:
+----
+  https://bugzilla.redhat.com/show_bug.cgi?id=430631
+
+Description:
+-----------
+  The current kernel detects ghost LUs for Hitachi storages of models,
+  OPEN-/DF400/DF500. This patch solves this issue. In addition, DF600
+  doesn't require any flag because it returns ANSI 03h (SPC).
+
+Upstream status:
+----------------
+  Merged in scsi-misc
+  commit: 045ba557f522234638262b8b4b4c0081f82937a2
+
+Brew Build:
+-----------
+  https://brewweb.devel.redhat.com/taskinfo?taskID=2092947
+
+Test status:
+------------
+  Patch was tested with kernel-2.6.18-173.el5. The flags, OPEN-,
+  DF400/500 and DISK-SUBSYSTEM were set correctly.
+
+Thanks,
+Takahiro Yasui
+
+Signed-off-by: Takahiro Yasui <tyasui@redhat.com>
+
+diff --git a/drivers/scsi/scsi_devinfo.c b/drivers/scsi/scsi_devinfo.c
+index 2ec076c..3f87354 100644
+--- a/drivers/scsi/scsi_devinfo.c
++++ b/drivers/scsi/scsi_devinfo.c
+@@ -157,11 +157,10 @@ static struct {
+ 	{"Generic", "USB SD Reader", "1.00", BLIST_FORCELUN | BLIST_INQUIRY_36},
+ 	{"Generic", "USB Storage-SMC", "0180", BLIST_FORCELUN | BLIST_INQUIRY_36},
+ 	{"Generic", "USB Storage-SMC", "0207", BLIST_FORCELUN | BLIST_INQUIRY_36},
+-	{"HITACHI", "DF400", "*", BLIST_SPARSELUN | BLIST_LARGELUN},
+-	{"HITACHI", "DF500", "*", BLIST_SPARSELUN | BLIST_LARGELUN},
+-	{"HITACHI", "DF600", "*", BLIST_SPARSELUN | BLIST_LARGELUN},
+-	{"HITACHI", "DISK-SUBSYSTEM", "*", BLIST_SPARSELUN | BLIST_LARGELUN},
+-	{"HITACHI", "OPEN-", "*", BLIST_SPARSELUN | BLIST_LARGELUN},
++	{"HITACHI", "DF400", "*", BLIST_REPORTLUN2},
++	{"HITACHI", "DF500", "*", BLIST_REPORTLUN2},
++	{"HITACHI", "DISK-SUBSYSTEM", "*", BLIST_REPORTLUN2},
++	{"HITACHI", "OPEN-", "*", BLIST_REPORTLUN2},
+ 	{"HITACHI", "OP-C-", "*", BLIST_SPARSELUN | BLIST_LARGELUN},
+ 	{"HITACHI", "3380-", "*", BLIST_SPARSELUN | BLIST_LARGELUN},
+ 	{"HITACHI", "3390-", "*", BLIST_SPARSELUN | BLIST_LARGELUN},

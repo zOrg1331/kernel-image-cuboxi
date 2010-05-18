@@ -1,0 +1,175 @@
+From: Ian Kent <ikent@redhat.com>
+Date: Tue, 1 Dec 2009 17:07:37 -0500
+Subject: [nfs] nfsiod: ensure the asynchronous RPC calls complete
+Message-id: <20091201170736.12228.97886.stgit@zeus.themaw.net>
+Patchwork-id: 21574
+O-Subject: [RHEL 5.4 PATCH 4/5] NFS: Ensure that the asynchronous RPC calls
+	complete on nfsiod (bz489931)
+Bugzilla: 489931
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+We want to ensure that rpc_call_ops that involve mntput() are run on nfsiod
+rather than on rpciod, so that they don't deadlock when the resulting
+umount calls rpc_shutdown_client(). Hence we specify that read, write and
+commit calls must complete on nfsiod.
+Ditto for NFSv4 open, lock, locku and close asynchronous calls.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+diff --git a/fs/nfs/direct.c b/fs/nfs/direct.c
+index 2cb97fb..fbcf17d 100644
+--- a/fs/nfs/direct.c
++++ b/fs/nfs/direct.c
+@@ -54,6 +54,7 @@
+ #include <asm/uaccess.h>
+ #include <asm/atomic.h>
+ 
++#include "internal.h"
+ #include "iostat.h"
+ 
+ #define NFSDBG_FACILITY		NFSDBG_VFS
+@@ -315,8 +316,8 @@ static ssize_t nfs_direct_read_schedule(struct nfs_direct_req *dreq, unsigned lo
+ 		data->res.eof = 0;
+ 		data->res.count = bytes;
+ 
+-		rpc_init_task(&data->task, NFS_CLIENT(inode), RPC_TASK_ASYNC,
+-				&nfs_read_direct_ops, data);
++		rpc_init_task_wq(&data->task, NFS_CLIENT(inode), RPC_TASK_ASYNC,
++				 &nfs_read_direct_ops, data, nfsiod_workqueue);
+ 		NFS_PROTO(inode)->read_setup(data);
+ 
+ 		data->task.tk_cookie = (unsigned long) inode;
+@@ -415,8 +416,8 @@ static void nfs_direct_write_reschedule(struct nfs_direct_req *dreq)
+ 		 * Reuse data->task; data->args should not have changed
+ 		 * since the original request was sent.
+ 		 */
+-		rpc_init_task(&data->task, NFS_CLIENT(inode), RPC_TASK_ASYNC,
+-				&nfs_write_direct_ops, data);
++		rpc_init_task_wq(&data->task, NFS_CLIENT(inode), RPC_TASK_ASYNC,
++				&nfs_write_direct_ops, data, nfsiod_workqueue);
+ 		NFS_PROTO(inode)->write_setup(data, FLUSH_STABLE);
+ 
+ 		data->task.tk_priority = RPC_PRIORITY_NORMAL;
+@@ -480,8 +481,8 @@ static void nfs_direct_commit_schedule(struct nfs_direct_req *dreq)
+ 	data->res.fattr = &data->fattr;
+ 	data->res.verf = &data->verf;
+ 
+-	rpc_init_task(&data->task, NFS_CLIENT(dreq->inode), RPC_TASK_ASYNC,
+-				&nfs_commit_direct_ops, data);
++	rpc_init_task_wq(&data->task, NFS_CLIENT(dreq->inode), RPC_TASK_ASYNC,
++				&nfs_commit_direct_ops, data, nfsiod_workqueue);
+ 	NFS_PROTO(data->inode)->commit_setup(data, 0);
+ 
+ 	data->task.tk_priority = RPC_PRIORITY_NORMAL;
+@@ -655,8 +656,8 @@ static ssize_t nfs_direct_write_schedule(struct nfs_direct_req *dreq, unsigned l
+ 		data->res.count = bytes;
+ 		data->res.verf = &data->verf;
+ 
+-		rpc_init_task(&data->task, NFS_CLIENT(inode), RPC_TASK_ASYNC,
+-				&nfs_write_direct_ops, data);
++		rpc_init_task_wq(&data->task, NFS_CLIENT(inode), RPC_TASK_ASYNC,
++				 &nfs_write_direct_ops, data, nfsiod_workqueue);
+ 		NFS_PROTO(inode)->write_setup(data, sync);
+ 
+ 		data->task.tk_priority = RPC_PRIORITY_NORMAL;
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index 572af58..bc6d415 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -51,6 +51,7 @@
+ 
+ #include "nfs4_fs.h"
+ #include "delegation.h"
++#include "internal.h"
+ #include "iostat.h"
+ 
+ #define NFSDBG_FACILITY		NFSDBG_PROC
+@@ -302,7 +303,8 @@ static int nfs4_call_async(struct rpc_clnt *clnt,
+ {
+ 	struct rpc_task *task;
+ 
+-	if (!(task = rpc_new_task(clnt, RPC_TASK_ASYNC, tk_ops, calldata)))
++	if (!(task = rpc_new_task_wq(clnt, RPC_TASK_ASYNC, tk_ops, calldata,
++				     nfsiod_workqueue)))
+ 		return -ENOMEM;
+ 	rpc_execute(task);
+ 	return 0;
+@@ -630,7 +632,8 @@ static int _nfs4_proc_open_confirm(struct nfs4_opendata *data)
+ 	 * want to ensure that it takes the 'error' code path.
+ 	 */
+ 	data->rpc_status = -ENOMEM;
+-	task = rpc_run_task(server->client, RPC_TASK_ASYNC, &nfs4_open_confirm_ops, data);
++	task = rpc_run_task_wq(server->client, RPC_TASK_ASYNC,
++			       &nfs4_open_confirm_ops, data, nfsiod_workqueue);
+ 	if (IS_ERR(task))
+ 		return PTR_ERR(task);
+ 	status = nfs4_wait_for_completion_rpc_task(task);
+@@ -736,7 +739,8 @@ static int _nfs4_proc_open(struct nfs4_opendata *data)
+ 	 * want to ensure that it takes the 'error' code path.
+ 	 */
+ 	data->rpc_status = -ENOMEM;
+-	task = rpc_run_task(server->client, RPC_TASK_ASYNC, &nfs4_open_ops, data);
++	task = rpc_run_task_wq(server->client, RPC_TASK_ASYNC, &nfs4_open_ops,
++				data, nfsiod_workqueue);
+ 	if (IS_ERR(task))
+ 		return PTR_ERR(task);
+ 	status = nfs4_wait_for_completion_rpc_task(task);
+@@ -3324,7 +3328,7 @@ static struct rpc_task *nfs4_do_unlck(struct file_lock *fl,
+ 		return ERR_PTR(-ENOMEM);
+ 	}
+ 
+-	return rpc_run_task(NFS_CLIENT(lsp->ls_state->inode), RPC_TASK_ASYNC, &nfs4_locku_ops, data);
++	return rpc_run_task_wq(NFS_CLIENT(lsp->ls_state->inode), RPC_TASK_ASYNC, &nfs4_locku_ops, data, nfsiod_workqueue);
+ }
+ 
+ static int nfs4_proc_unlck(struct nfs4_state *state, int cmd, struct file_lock *request)
+@@ -3503,8 +3507,8 @@ static int _nfs4_do_setlk(struct nfs4_state *state, int cmd, struct file_lock *f
+ 		data->arg.block = 1;
+ 	if (reclaim != 0)
+ 		data->arg.reclaim = 1;
+-	task = rpc_run_task(NFS_CLIENT(state->inode), RPC_TASK_ASYNC,
+-			&nfs4_lock_ops, data);
++	task = rpc_run_task_wq(NFS_CLIENT(state->inode), RPC_TASK_ASYNC,
++			&nfs4_lock_ops, data, nfsiod_workqueue);
+ 	if (IS_ERR(task))
+ 		return PTR_ERR(task);
+ 	ret = nfs4_wait_for_completion_rpc_task(task);
+diff --git a/fs/nfs/read.c b/fs/nfs/read.c
+index 57fd698..768a20c 100644
+--- a/fs/nfs/read.c
++++ b/fs/nfs/read.c
+@@ -300,7 +300,8 @@ static void nfs_read_rpcsetup(struct nfs_page *req, struct nfs_read_data *data,
+ 
+ 	/* Set up the initial task struct. */
+ 	flags = RPC_TASK_ASYNC | (IS_SWAPFILE(inode)? NFS_RPC_SWAPFLAGS : 0);
+-	rpc_init_task(&data->task, NFS_CLIENT(inode), flags, call_ops, data);
++	rpc_init_task_wq(&data->task, NFS_CLIENT(inode), flags, call_ops, data,
++			 nfsiod_workqueue);
+ 	NFS_PROTO(inode)->read_setup(data);
+ 
+ 	data->task.tk_cookie = (unsigned long)inode;
+diff --git a/fs/nfs/write.c b/fs/nfs/write.c
+index f683476..1de7756 100644
+--- a/fs/nfs/write.c
++++ b/fs/nfs/write.c
+@@ -996,7 +996,8 @@ static void nfs_write_rpcsetup(struct nfs_page *req,
+ 
+ 	/* Set up the initial task struct.  */
+ 	flags = (how & FLUSH_SYNC) ? 0 : RPC_TASK_ASYNC;
+-	rpc_init_task(&data->task, NFS_CLIENT(inode), flags, call_ops, data);
++	rpc_init_task_wq(&data->task, NFS_CLIENT(inode), flags, call_ops, data,
++			 nfsiod_workqueue);
+ 	NFS_PROTO(inode)->write_setup(data, how);
+ 
+ 	data->task.tk_priority = flush_task_priority(how);
+@@ -1397,7 +1398,7 @@ static void nfs_commit_rpcsetup(struct list_head *head,
+ 
+ 	/* Set up the initial task struct.  */
+ 	flags = (how & FLUSH_SYNC) ? 0 : RPC_TASK_ASYNC;
+-	rpc_init_task(&data->task, NFS_CLIENT(inode), flags, &nfs_commit_ops, data);
++	rpc_init_task_wq(&data->task, NFS_CLIENT(inode), flags, &nfs_commit_ops, data, nfsiod_workqueue);
+ 	NFS_PROTO(inode)->commit_setup(data, how);
+ 
+ 	data->task.tk_priority = flush_task_priority(how);

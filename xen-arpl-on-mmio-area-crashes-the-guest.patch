@@ -1,0 +1,53 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Thu,  8 Apr 2010 12:52:05 +0200
+Subject: [xen] arpl on MMIO area crashes the guest
+Message-id: <1270723925-32730-1-git-send-email-pbonzini@redhat.com>
+O-Subject: [kernel team] [RHEL5.5.z/5.6 EMBARGOED PATCH v2] CVE-2010-0730: arpl on MMIO area crashes the guest
+Bugzilla: 572979
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+Bugzilla: 572971
+
+Upstream status: c/s 15523 and 15532 in xen-3.1-testing.hg
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2369823
+
+Due to a mismatch between the opcode decoding table and the implementation
+of the operand decoder in platform.c, the ARPL instruction would cause
+the guest to crash if executed on a MMIO area.  While this is difficult
+to exploit from non-root, it is theoretically possible to do so.  This
+patch changes the failure path to inject #UD instead of crashing the domain.
+The guest kernel will transform the #UD into a SIGILL.
+
+Side note: the emulator vulnerabilities found in KVM are not present in
+RHEL5 Xen because it uses VM86 mode to execute real-mode code on VMX,
+and small specialized decoders for MMIO operations.  The emulator in
+arch/x86/x86_emulate.c is only used rarely (the shadow paging code uses
+it) and only to execute kernel-mode code.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+---
+ arch/x86/hvm/platform.c |    4 +++-
+ 1 files changed, 3 insertions(+), 1 deletions(-)
+
+diff --git a/arch/x86/hvm/platform.c b/arch/x86/hvm/platform.c
+index 3d69e9c..86c478d 100644
+--- a/arch/x86/hvm/platform.c
++++ b/arch/x86/hvm/platform.c
+@@ -1057,7 +1057,9 @@ void handle_mmio(unsigned long gpa)
+         for ( i = 0; i < inst_len; i++ )
+             printk(" %02x", inst[i] & 0xFF);
+         printk("\n");
+-        domain_crash_synchronous();
++
++	hvm_inject_exception(TRAP_invalid_op, -1, 0);
++	return;
+     }
+ 
+     regs->eip += inst_len; /* advance %eip */
+-- 
+1.6.6.1
+

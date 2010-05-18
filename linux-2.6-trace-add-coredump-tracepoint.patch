@@ -1,0 +1,216 @@
+From: Masami Hiramatsu <mhiramat@redhat.com>
+Date: Wed, 9 Dec 2009 19:56:23 -0500
+Subject: [trace] add coredump tracepoint
+Message-id: <4B2000E7.8070305@redhat.com>
+Patchwork-id: 21831
+O-Subject: [PATCH RHEL5.5][REPOST] tracepoint: add coredump tracepoint
+Bugzilla: 517115
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Hi,
+
+This patch is related to BZ#517115 and depends on BZ#517121
+"add signal tracepoints" patch
+
+BZ:
+     Bug 517115 -  Tracepoint for coredump event
+
+Description:
+This patch adds a new tracepoint for coredump event and introduces
+coredump_params only for this tracepoint (because it breaks kABI
+compatibility).
+
+This tracepoint requirement comes mainly from the viewpoint of
+administrators. Since now we have introduced many coredump
+configurations (e.g. dumpable, coredump_filter, core_pattern,
+etc) and some of them can be modified by users, it will be hard
+to know what was actually dumped (or not dumped) after some
+problem happened on the system. For example, a process didn't
+generated core, coredump doesn't have some sections, etc.
+In those cases, the coredump tracepoint can help us to know
+why the core file is so big or small, or not generated, by
+recording all configurations for all processes on the system.
+That will reduce system-administration cost.
+
+Upstream status:
+This patch is still waiting for upstream acceptance.
+(Some parts of this patch is in -mm tree. tracepoint itself is
+  under discussing on LKML.)
+
+Test status:
+Successfully tested.
+
+Brew status:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2114134
+
+Signed-off-by: Masami Hiramatsu <mhiramat@redhat.com>
+This patch is related to BZ#517115 and depends on BZ#517121
+"add signal tracepoints" patch
+
+BZ:
+     Bug 517115 -  Tracepoint for coredump event
+
+Description:
+This patch adds a new tracepoint for coredump event and introduces
+coredump_params only for this tracepoint (because it breaks kABI
+compatibility).
+
+This tracepoint requirement comes mainly from the viewpoint of
+administrators. Since now we have introduced many coredump
+configurations (e.g. dumpable, coredump_filter, core_pattern,
+etc) and some of them can be modified by users, it will be hard
+to know what was actually dumped (or not dumped) after some
+problem happened on the system. For example, a process didn't
+generated core, coredump doesn't have some sections, etc.
+In those cases, the coredump tracepoint can help us to know
+why the core file is so big or small, or not generated, by
+recording all configurations for all processes on the system.
+That will reduce system-administration cost.
+
+Upstream status:
+This patch is still waiting for upstream acceptance.
+(Some parts of this patch is in -mm tree. tracepoint itself is
+  under discussing on LKML.)
+
+Test status:
+Successfully tested.
+
+Brew status:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2114134
+
+Signed-off-by: Masami Hiramatsu <mhiramat@redhat.com>
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/fs/exec.c b/fs/exec.c
+index 3b6f6bc..2af9026 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -50,6 +50,7 @@
+ #include <linux/acct.h>
+ #include <linux/cn_proc.h>
+ #include <linux/audit.h>
++#include <trace/signal.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/mmu_context.h>
+@@ -1674,7 +1675,7 @@ int do_coredump(long signr, int exit_code, struct pt_regs * regs)
+ 	struct mm_struct *mm = current->mm;
+ 	struct linux_binfmt * binfmt;
+ 	struct inode * inode;
+-	struct file * file;
++	struct file * file = NULL;
+ 	int retval = 0;
+ 	int fsuid = current->fsuid;
+ 	int flag = 0;
+@@ -1683,6 +1684,13 @@ int do_coredump(long signr, int exit_code, struct pt_regs * regs)
+ 	char **helper_argv = NULL;
+ 	int helper_argc = 0;
+ 	char *delimit;
++	struct coredump_params cprm = {
++		.signr = signr,
++		.file = NULL,
++		.regs = regs,
++		.limit = current->signal->rlim[RLIMIT_CORE].rlim_cur,
++		.mm_flags = get_mm_flags(mm),
++	};
+ 
+ 	audit_core_dumps(signr);
+ 
+@@ -1735,9 +1743,6 @@ int do_coredump(long signr, int exit_code, struct pt_regs * regs)
+ 	 * at which point file size limits and permissions will be imposed
+ 	 * as it does with any other process
+ 	 */
+-	if ((!ispipe) && (core_limit < binfmt->min_coredump))
+-		goto fail_unlock;
+-
+ 	if (ispipe) {
+ 		helper_argv = argv_split(GFP_KERNEL, corename+1, &helper_argc);
+ 		/* Terminate the string before the first option */
+@@ -1752,22 +1757,30 @@ int do_coredump(long signr, int exit_code, struct pt_regs * regs)
+ 		if (!strcmp(delimit, current->comm)) {
+ 			printk(KERN_NOTICE "Recursive core dump detected, "
+ 					   "aborting\n");
+-			goto fail_unlock;
++			goto end_open;
+ 		}
+ 		current->signal->rlim[RLIMIT_CORE].rlim_cur = RLIM_INFINITY;
+ 
+ 		/* SIGPIPE can happen, but it's just never processed */
+ 		if(call_usermodehelper_pipe(corename+1, helper_argv, NULL, 
+ 			       &file)) {
++			file = NULL;	/*
++					 * call_usermodehelper_pipe can return
++					 * error without setting file = NULL
++					 */
+ 			printk(KERN_INFO "Core dump to %s pipe failed\n",
+ 			       corename);
+-			goto fail_unlock;
++			goto end_open;
+ 		}
+-	} else
++	} else if (core_limit >= binfmt->min_coredump)
+ 		file = filp_open(corename,
+ 				 O_CREAT | 2 | O_NOFOLLOW | O_LARGEFILE, 0600);
+ 
+-	if (IS_ERR(file))
++end_open:
++	cprm.file = file;
++	trace_signal_coredump(&cprm, corename);
++
++	if (!file || IS_ERR(file))
+ 		goto fail_unlock;
+ 	inode = file->f_dentry->d_inode;
+ 	if (inode->i_nlink > 1)
+diff --git a/include/linux/binfmts.h b/include/linux/binfmts.h
+index 0f0d525..4345a54 100644
+--- a/include/linux/binfmts.h
++++ b/include/linux/binfmts.h
+@@ -57,6 +57,15 @@ struct linux_binprm{
+ #define BINPRM_FLAGS_EXECFD (1 << BINPRM_FLAGS_EXECFD_BIT)
+ 
+ 
++/* Function parameter for binfmt->coredump */
++struct coredump_params {
++	long signr;
++	struct pt_regs *regs;
++	struct file *file;
++	unsigned long limit;
++	unsigned long mm_flags;
++};
++
+ /*
+  * This structure defines the functions that are used to load the binary formats that
+  * linux accepts.
+diff --git a/include/trace/signal.h b/include/trace/signal.h
+index adc8bb1..e9edc2e 100644
+--- a/include/trace/signal.h
++++ b/include/trace/signal.h
+@@ -3,6 +3,7 @@
+ 
+ #include <linux/signal.h>
+ #include <linux/sched.h>
++#include <linux/binfmts.h>
+ #include <linux/tracepoint.h>
+ 
+ /**
+@@ -68,4 +69,19 @@ DEFINE_TRACE(signal_lose_info,
+ 	TPPROTO(int sig, struct siginfo *info),
+ 	TPARGS(sig, info)
+ );
++
++/**
++ * signal_coredump - called when dumping core by signal
++ * @cprm: pointer to struct coredump_params
++ * @core_name: core-name string
++ *
++ * Current process dumps core file to 'core_name' file, because 'cprm->signr'
++ * signal is delivered.
++ * 'cprm->file' is a pointer to file structure of core file, if it is NULL
++ * or an error number(IS_ERR(cprm->file)), coredump should be failed.
++ */
++DEFINE_TRACE(signal_coredump,
++	TPPROTO(struct coredump_params *cprm, const char *core_name),
++	TPARGS(cprm, core_name)
++);
+ #endif /* _TRACE_SIGNAL_H */

@@ -1,0 +1,35 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Fri, 14 Aug 2009 21:08:35 +0200
+Subject: [xen] x86: fix wrong asm
+Message-id: 1250276916-30916-2-git-send-email-pbonzini@redhat.com
+O-Subject: [RHEL5.5 PATCH 1/2] Fix wrong asm
+Bugzilla: 510686
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+
+Bugzilla: http://bugzilla.redhat.com/show_bug.cgi?id=510686
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1929311
+
+Upstream status: http://xenbits.xensource.com/xen-unstable.hg?rev/19243
+
+This patch fixes a small bug in an asm statement.  This could cause
+wrong assembly to be generated on 32-bit, referring to the non-existent
+low-byte of a register like %esi.  While this is exposed only on
+newer GCC, the fix is safe and worth including.
+
+Test status: used daily for a month.
+
+diff --git a/arch/x86/hvm/vpic.c b/arch/x86/hvm/vpic.c
+index 0835698..db698a6 100644
+--- a/arch/x86/hvm/vpic.c
++++ b/arch/x86/hvm/vpic.c
+@@ -56,7 +56,7 @@ static int vpic_get_priority(struct hvm_hw_vpic *vpic, uint8_t mask)
+ 
+     /* prio = ffs(mask ROR vpic->priority_add); */
+     asm ( "ror %%cl,%b1 ; bsf %1,%0"
+-          : "=r" (prio) : "r" ((uint32_t)mask), "c" (vpic->priority_add) );
++          : "=r" (prio) : "q" ((uint32_t)mask), "c" (vpic->priority_add) );
+     return prio;
+ }
+ 

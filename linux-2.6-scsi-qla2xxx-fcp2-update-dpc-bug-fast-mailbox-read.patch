@@ -1,0 +1,197 @@
+From: Rob Evers <revers@redhat.com>
+Date: Thu, 28 Jan 2010 20:26:18 -0500
+Subject: [scsi] qla2xxx: FCP2 update, dpc bug, fast mailbox read
+Message-id: <20100128202552.19979.18460.sendpatchset@localhost.localdomain>
+Patchwork-id: 22979
+O-Subject: [RHEL5.5 PATCH V2] qla2xxx: FCP2 update, dpc bug,
+	fast mailbox read for flash
+Bugzilla: 550286
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=550286
+
+Repost:  1st post had a broken attempt to fix a white space
+problem that didn't exist.  This is the original patch from
+Qlogic, which should have been posted to begin with.
+
+This was compiled and re-tested doing some minimal IO.
+
+Description:
+
+    From bugzilla report:
+
+    1. qla2xxx: Correct FCP2 recovery handling.
+    The driver did not account for non-tape devices needing to employ
+    proper FCP2 recovery.  Driver now checks the FCP2-capable flag
+    only, rather than using a midlayer-determined flag (TYPE_TAPE).
+
+    2. qla2xxx: dpc thread can execute before scsi host has been added
+    Fix crash in qla2x00_fdmi_register() due to the dpc
+    thread executing before the scsi host has been fully
+    added
+
+    3. qla2xxx: Perform fast mailbox read  of flash regardless of size nor address
+    alignment.
+
+Upstream status:
+
+    Verified that the equivalent code is upstream though some divergence exists
+    between rhel5 and the upstream code.
+
+Brew:
+
+    https://brewweb.devel.redhat.com/taskinfo?taskID=2222131
+
+
+diff --git a/drivers/scsi/qla2xxx/qla_def.h b/drivers/scsi/qla2xxx/qla_def.h
+index 20870bf..14517c6 100644
+--- a/drivers/scsi/qla2xxx/qla_def.h
++++ b/drivers/scsi/qla2xxx/qla_def.h
+@@ -1684,7 +1684,7 @@ typedef struct fc_port {
+ #define FCF_FAILOVER_NEEDED	BIT_3
+ #define FCF_RESET_NEEDED	BIT_4
+ #define FCF_PERSISTENT_BOUND	BIT_5
+-#define FCF_TAPE_PRESENT	BIT_6
++#define FCF_FCP2_DEVICE		BIT_6
+ #define FCF_FARP_DONE		BIT_7
+ #define FCF_FARP_FAILED		BIT_8
+ #define FCF_FARP_REPLY_NEEDED	BIT_9
+@@ -1704,7 +1704,6 @@ typedef struct fc_port {
+ #define FCF_DSXXX_DEVICE	BIT_23
+ #define FCF_AA_EVA_DEVICE	BIT_24
+ #define FCF_AA_MSA_DEVICE	BIT_25
+-#define FCF_FCP2_DEVICE		BIT_26
+ 
+ /* No loop ID flag. */
+ #define FC_NO_LOOP_ID		0x1000
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index 87a1b11..f0835b7 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -2469,7 +2469,7 @@ qla2x00_configure_fabric(scsi_qla_host_t *ha)
+ 
+ 		/*
+ 		 * Logout all previous fabric devices marked lost, except
+-		 * tape devices.
++		 * FCP2 devices.
+ 		 */
+ 		list_for_each_entry(fcport, &pha->fcports, list) {
+ 			if (fcport->vp_idx !=ha->vp_idx)
+@@ -2485,7 +2485,7 @@ qla2x00_configure_fabric(scsi_qla_host_t *ha)
+ 				qla2x00_mark_device_lost(ha, fcport,
+ 				    ql2xplogiabsentdevice, 0);
+ 				if (fcport->loop_id != FC_NO_LOOP_ID &&
+-				    (fcport->flags & FCF_TAPE_PRESENT) == 0 &&
++				    (fcport->flags & FCF_FCP2_DEVICE) == 0 &&
+ 				    fcport->port_type != FCT_INITIATOR &&
+ 				    fcport->port_type != FCT_BROADCAST) {
+ 					ha->isp_ops->fabric_logout(ha,
+@@ -2788,7 +2788,7 @@ qla2x00_find_all_fabric_devs(scsi_qla_host_t *ha, struct list_head *new_fcports)
+ 			fcport->d_id.b24 = new_fcport->d_id.b24;
+ 			fcport->flags |= FCF_LOGIN_NEEDED;
+ 			if (fcport->loop_id != FC_NO_LOOP_ID &&
+-			    (fcport->flags & FCF_TAPE_PRESENT) == 0 &&
++			    (fcport->flags & FCF_FCP2_DEVICE) == 0 &&
+ 			    fcport->port_type != FCT_INITIATOR &&
+ 			    fcport->port_type != FCT_BROADCAST) {
+ 				ha->isp_ops->fabric_logout(ha, fcport->loop_id,
+@@ -3040,9 +3040,9 @@ qla2x00_fabric_dev_login(scsi_qla_host_t *ha, fc_port_t *fcport,
+ 
+ 	rval = qla2x00_fabric_login(ha, fcport, next_loopid);
+ 	if (rval == QLA_SUCCESS) {
+-		/* Send an ADISC to tape devices.*/
++		/* Send an ADISC to FCP2 devices.*/
+ 		opts = 0;
+-		if (fcport->flags & FCF_TAPE_PRESENT)
++		if (fcport->flags & FCF_FCP2_DEVICE)
+ 			opts |= BIT_1;
+ 		rval = qla2x00_get_port_database(ha, fcport, opts);
+ 		if (rval != QLA_SUCCESS) {
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index a32e394..8c76290 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -1300,7 +1300,6 @@ qla2xxx_slave_configure(struct scsi_device *sdev)
+ {
+ 	scsi_qla_host_t *ha = to_qla_host(sdev->host);
+ 	struct fc_rport *rport = starget_to_rport(sdev->sdev_target);
+-	fc_port_t *fcport = *(fc_port_t **)rport->dd_data;
+ 
+ 	if (sdev->tagged_supported)
+ 		scsi_activate_tcq(sdev, ha->max_q_depth);
+@@ -1308,8 +1307,6 @@ qla2xxx_slave_configure(struct scsi_device *sdev)
+ 		scsi_deactivate_tcq(sdev, ha->max_q_depth);
+ 
+ 	rport->dev_loss_tmo = ha->port_down_retry_count;
+-	if (sdev->type == TYPE_TAPE)
+-		fcport->flags |= FCF_TAPE_PRESENT;
+ 
+ 	return 0;
+ }
+@@ -2035,15 +2032,15 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
+ 
+ 	pci_set_drvdata(pdev, ha);
+ 
+-	ha->flags.init_done = 1;
+-	ha->flags.online = 1;
+-
+ 	num_hosts++;
+ 
+ 	ret = scsi_add_host(host, &pdev->dev);
+ 	if (ret)
+ 		goto probe_failed;
+ 
++	ha->flags.init_done = 1;
++	ha->flags.online = 1;
++
+ 	scsi_scan_host(host);
+ 
+ 	qla2x00_alloc_sysfs_attr(ha);
+@@ -2898,7 +2895,7 @@ qla2x00_do_dpc(void *data)
+ 
+ 					if (fcport->flags & FCF_FABRIC_DEVICE) {
+ 						if (fcport->flags &
+-						    FCF_TAPE_PRESENT)
++						    FCF_FCP2_DEVICE)
+ 							ha->isp_ops->fabric_logout(
+ 							    ha, fcport->loop_id,
+ 							    fcport->d_id.b.domain,
+@@ -3140,7 +3137,9 @@ qla2x00_timer(scsi_qla_host_t *ha)
+ 			if (!IS_QLA2100(ha) && ha->link_down_timeout)
+ 				atomic_set(&ha->loop_state, LOOP_DEAD);
+ 
+-			/* Schedule an ISP abort to return any tape commands. */
++			/* Schedule an ISP abort to return any FCP2-device
++			 * commands.
++			 */
+ 			/* NPIV - scan physical port only */
+ 			if (!ha->parent) {
+ 				spin_lock_irqsave(&ha->hardware_lock,
+@@ -3154,7 +3153,7 @@ qla2x00_timer(scsi_qla_host_t *ha)
+ 					if (!sp)
+ 						continue;
+ 					sfcp = sp->fcport;
+-					if (!(sfcp->flags & FCF_TAPE_PRESENT))
++					if (!(sfcp->flags & FCF_FCP2_DEVICE))
+ 						continue;
+ 
+ 					set_bit(ISP_ABORT_NEEDED,
+diff --git a/drivers/scsi/qla2xxx/qla_sup.c b/drivers/scsi/qla2xxx/qla_sup.c
+index 2c89255..6403e7d 100644
+--- a/drivers/scsi/qla2xxx/qla_sup.c
++++ b/drivers/scsi/qla2xxx/qla_sup.c
+@@ -2260,11 +2260,14 @@ qla25xx_read_optrom_data(struct scsi_qla_host *ha, uint8_t *buf,
+ 	uint8_t *pbuf;
+ 	uint32_t faddr, left, burst;
+ 
++	if (IS_QLA25XX(ha) || IS_QLA81XX(ha))
++		goto try_fast;
+ 	if (offset & 0xfff)
+ 		goto slow_read;
+ 	if (length < OPTROM_BURST_SIZE)
+ 		goto slow_read;
+ 
++try_fast:
+ 	optrom = dma_alloc_coherent(&ha->pdev->dev, OPTROM_BURST_SIZE,
+ 	    &optrom_dma, GFP_KERNEL);
+ 	if (!optrom) {

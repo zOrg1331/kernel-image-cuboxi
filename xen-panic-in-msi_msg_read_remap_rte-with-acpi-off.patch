@@ -1,0 +1,73 @@
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Thu, 15 Oct 2009 09:27:58 -0400
+Subject: [xen] panic in msi_msg_read_remap_rte with acpi=off
+Message-id: 1933004651.248341255613278300.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com
+O-Subject: Re: [RHEL5.5 Patch v2] BZ525467 - Xen panic in msi_msg_read_remap_rte with acpi=off
+Bugzilla: 525467
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+BZ 525467 (https://bugzilla.redhat.com/show_bug.cgi?id=525467)- Xen panic in msi_msg_read_remap_rte with acpi=off
+Version 2 - add checks into iommu.c.
+
+Problem:
+
+Xen kernel panics when "acpi=off noacpi". Non-xen kernel boots normally with this option. As Gerd Hoffmann pointed out, problem is caused by dereferncing NULL pointer.
+
+Solution:
+
+Add checks before use.
+
+Note:
+Gerd wrote: "Sanity check logic is bogous here, checking iommu *after* dereferencing it is quite pointless ;)". Check is not bogous, just redundant. In case of iommu == NULL, ir_ctrl is NULL too (this is handled by iommu_ir_ctrl). However, I decided to leave check as it has no remarkable impact.
+
+Patch:
+-----
+
+diff --git a/drivers/passthrough/vtd/intremap.c b/drivers/passthrough/vtd/intremap.c
+index 1ff6905..a836ae7 100644
+--- a/drivers/passthrough/vtd/intremap.c
++++ b/drivers/passthrough/vtd/intremap.c
+@@ -451,6 +451,8 @@ void msi_msg_read_remap_rte(
+     struct ir_ctrl *ir_ctrl;
+ 
+     drhd = acpi_find_matched_drhd_unit(pdev->bus, pdev->devfn);
++    if (!drhd)
++	return;
+     iommu = drhd->iommu;
+ 
+     ir_ctrl = iommu_ir_ctrl(iommu);
+@@ -469,6 +471,8 @@ void msi_msg_write_remap_rte(
+     struct ir_ctrl *ir_ctrl;
+ 
+     drhd = acpi_find_matched_drhd_unit(pdev->bus, pdev->devfn);
++    if (!drhd)
++	return;
+     iommu = drhd->iommu;
+ 
+     ir_ctrl = iommu_ir_ctrl(iommu);
+diff --git a/drivers/passthrough/vtd/iommu.c b/drivers/passthrough/vtd/iommu.c
+index 04d0291..307b9a2 100644
+--- a/drivers/passthrough/vtd/iommu.c
++++ b/drivers/passthrough/vtd/iommu.c
+@@ -1402,6 +1402,8 @@ static int reassign_device_ownership(
+         return -ENODEV;
+ 
+     drhd = acpi_find_matched_drhd_unit(bus, devfn);
++    if ( !drhd )
++        return -ENODEV;
+     pdev_iommu = drhd->iommu;
+     domain_context_unmap(source, bus, devfn);
+ 
+@@ -1415,7 +1417,7 @@ static int reassign_device_ownership(
+     for_each_pdev ( source, pdev )
+     {
+         drhd = acpi_find_matched_drhd_unit(pdev->bus, pdev->devfn);
+-        if ( drhd->iommu == pdev_iommu )
++        if ( drhd && drhd->iommu == pdev_iommu )
+         {
+             found = 1;
+             break;

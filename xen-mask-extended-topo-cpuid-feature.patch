@@ -1,0 +1,55 @@
+From: Andrew Jones <drjones@redhat.com>
+Date: Wed, 18 Nov 2009 15:36:50 -0500
+Subject: [xen] mask extended topo cpuid feature
+Message-id: <5919d717c4960323fc20f9e5de802c784ba744ee.1258558545.git.drjones@redhat.com>
+Patchwork-id: 21417
+O-Subject: [RHEL5.5 PATCH] [xen] mask extended topo cpuid feature
+Bugzilla: 533292
+RH-Acked-by: Anton Arapov <Anton@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+
+The extended topo cpu feature is not supported for Xen hosted guests. If
+the guest attempts to use ext. topo, then it may fail to boot. Upstream
+half-way emulates this by returning a vcpu id in edx, but still only zero
+for the extended topology information (ebx). This patch returns zero for
+all registers to avoid confusing the guest. It also takes the added
+precaution of always stating the max cpuid input as <= 0xa. Features > 0xa,
+for example 0xb: ext. topo are not supported, so the max input should not
+state it as such. This patch resolves bz 533292.
+
+Tested by me by booting a guest and running 'x86info -r'. A subset of this
+patch, the returning of zero for the cpuid 0xb, was tested on a system that
+failed to boot. The patch allowed the system to boot.
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2082312
+
+---
+ arch/x86/hvm/vmx/vmx.c |    7 ++++++-
+ 1 files changed, 6 insertions(+), 1 deletions(-)
+
+diff --git a/arch/x86/hvm/vmx/vmx.c b/arch/x86/hvm/vmx/vmx.c
+index ce8da33..d5b6002 100644
+--- a/arch/x86/hvm/vmx/vmx.c
++++ b/arch/x86/hvm/vmx/vmx.c
+@@ -1599,6 +1599,10 @@ static void vmx_do_cpuid(struct cpu_user_regs *regs)
+     } else {
+         hvm_cpuid(input, &eax, &ebx, &ecx, &edx);
+ 
++	/* don't support features > 0xa */
++	if (unlikely(input == 0x0) && eax > 0xa)
++		eax = 0xa;
++
+         if ( input == 0x00000001 )
+         {
+             /* Mask off reserved bits. */
+@@ -1619,7 +1623,8 @@ static void vmx_do_cpuid(struct cpu_user_regs *regs)
+                      bitmaskof(X86_FEATURE_ACC));
+         }
+ 
+-        if ( input == 0x00000006 || input == 0x00000009 || input == 0x0000000A )
++        if ( input == 0x00000006 || input == 0x00000009 ||
++		input == 0x0000000A || input == 0x0000000B )
+             eax = ebx = ecx = edx = 0x0;
+     }
+ 

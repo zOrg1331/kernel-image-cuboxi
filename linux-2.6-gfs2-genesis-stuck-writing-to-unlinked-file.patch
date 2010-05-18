@@ -1,0 +1,54 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Mon, 14 Sep 2009 21:50:52 -0400
+Subject: [gfs2] genesis stuck writing to unlinked file
+Message-id: 1658240421.124761252979452366.JavaMail.root@zmail05.collab.prod.int.phx2.redhat.com
+O-Subject: [RHEL5.5 PATCH][GFS2] - Bug 505331 - GFS2: genesis stuck writing to unlinked file
+Bugzilla: 505331
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+In try_rgrp_unlink, lookup gets stuck when the inode finds itself in the unlinked inode list. This patch allows it to skip over itself when encountered in the list.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+Signed-off-by: Abhi Das <adas@redhat.com>
+
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index 830bc21..a7164e7 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -895,7 +895,8 @@ static int try_rgrp_fit(struct gfs2_rgrpd *rgd, struct gfs2_alloc *al)
+  * Returns: The inode, if one has been found
+  */
+ 
+-static struct inode *try_rgrp_unlink(struct gfs2_rgrpd *rgd, u64 *last_unlinked)
++static struct inode *try_rgrp_unlink(struct gfs2_rgrpd *rgd, u64 *last_unlinked,
++				     u64 skip)
+ {
+ 	struct inode *inode;
+ 	u32 goal = 0, block;
+@@ -917,6 +918,8 @@ static struct inode *try_rgrp_unlink(struct gfs2_rgrpd *rgd, u64 *last_unlinked)
+ 		goal++;
+ 		if (*last_unlinked != NO_BLOCK && no_addr <= *last_unlinked)
+ 			continue;
++		if (no_addr == skip)
++			continue;
+ 		*last_unlinked = no_addr;
+ 		inode = gfs2_inode_lookup(rgd->rd_sbd->sd_vfs, DT_UNKNOWN,
+ 					  no_addr, -1, 1);
+@@ -1115,7 +1118,7 @@ static struct inode *get_local_rgrp(struct gfs2_inode *ip, u64 *last_unlinked)
+ 			if (try_rgrp_fit(rgd, al))
+ 				goto out;
+ 			if (rgd->rd_flags & GFS2_RDF_CHECK)
+-				inode = try_rgrp_unlink(rgd, last_unlinked);
++				inode = try_rgrp_unlink(rgd, last_unlinked, ip->i_no_addr);
+ 			if (!rg_locked)
+ 				gfs2_glock_dq_uninit(&al->al_rgd_gh);
+ 			if (inode)
+@@ -1151,7 +1154,7 @@ static struct inode *get_local_rgrp(struct gfs2_inode *ip, u64 *last_unlinked)
+ 			if (try_rgrp_fit(rgd, al))
+ 				goto out;
+ 			if (rgd->rd_flags & GFS2_RDF_CHECK)
+-				inode = try_rgrp_unlink(rgd, last_unlinked);
++				inode = try_rgrp_unlink(rgd, last_unlinked, ip->i_no_addr);
+ 			if (!rg_locked)
+ 				gfs2_glock_dq_uninit(&al->al_rgd_gh);
+ 			if (inode)

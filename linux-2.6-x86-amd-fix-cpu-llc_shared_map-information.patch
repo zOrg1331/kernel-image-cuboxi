@@ -11,9 +11,10 @@ RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
 Resolves BZ 513684
 Fix CPU llc_shared_map information on AMD Magny-cours.
 
-diff -urpN linux-2.6.18.noarch.orig/arch/i386/kernel/cpu/amd.c linux-2.6.18.noarch/arch/i386/kernel/cpu/amd.c
---- linux-2.6.18.noarch.orig/arch/i386/kernel/cpu/amd.c	2009-11-21 19:52:48.436855853 +0100
-+++ linux-2.6.18.noarch/arch/i386/kernel/cpu/amd.c	2009-11-21 19:53:06.217858247 +0100
+diff --git a/arch/i386/kernel/cpu/amd.c b/arch/i386/kernel/cpu/amd.c
+index fd46f5b..b287e49 100644
+--- a/arch/i386/kernel/cpu/amd.c
++++ b/arch/i386/kernel/cpu/amd.c
 @@ -3,6 +3,7 @@
  #include <linux/mm.h>
  #include <asm/io.h>
@@ -87,7 +88,7 @@ diff -urpN linux-2.6.18.noarch.orig/arch/i386/kernel/cpu/amd.c linux-2.6.18.noar
  static void __init init_amd(struct cpuinfo_x86 *c)
  {
  	u32 l, h;
-@@ -240,6 +299,9 @@ static void __init init_amd(struct cpuin
+@@ -240,6 +299,9 @@ static void __init init_amd(struct cpuinfo_x86 *c)
  		}
  		c->cpu_core_id = c->phys_proc_id & ((1<<bits)-1);
  		c->phys_proc_id >>= bits;
@@ -97,9 +98,10 @@ diff -urpN linux-2.6.18.noarch.orig/arch/i386/kernel/cpu/amd.c linux-2.6.18.noar
  		printk(KERN_INFO "CPU %d(%d) -> Core %d\n",
  		       cpu, c->x86_max_cores, c->cpu_core_id);
  	}
-diff -urpN linux-2.6.18.noarch.orig/arch/x86_64/kernel/setup.c linux-2.6.18.noarch/arch/x86_64/kernel/setup.c
---- linux-2.6.18.noarch.orig/arch/x86_64/kernel/setup.c	2009-11-21 19:52:48.573856453 +0100
-+++ linux-2.6.18.noarch/arch/x86_64/kernel/setup.c	2009-11-21 19:53:28.824858696 +0100
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index 8624d95..308a6fa 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
 @@ -67,6 +67,7 @@
  #include <asm/sections.h>
  #include <asm/dmi.h>
@@ -108,7 +110,7 @@ diff -urpN linux-2.6.18.noarch.orig/arch/x86_64/kernel/setup.c linux-2.6.18.noar
  
  /*
   * Machine setup..
-@@ -790,6 +791,64 @@ static int nearby_node(int apicid)
+@@ -792,6 +793,64 @@ static int nearby_node(int apicid)
  #endif
  
  /*
@@ -173,7 +175,7 @@ diff -urpN linux-2.6.18.noarch.orig/arch/x86_64/kernel/setup.c linux-2.6.18.noar
   * On a AMD dual core setup the lower bits of the APIC id distingush the cores.
   * Assumes number of cores is a power of two.
   */
-@@ -815,13 +874,17 @@ static void __init amd_detect_cmp(struct
+@@ -817,13 +876,17 @@ static void __init amd_detect_cmp(struct cpuinfo_x86 *c)
  			bits++;
  	}
  
@@ -192,25 +194,27 @@ diff -urpN linux-2.6.18.noarch.orig/arch/x86_64/kernel/setup.c linux-2.6.18.noar
   	if (apicid_to_node[apicid] != NUMA_NO_NODE)
   		node = apicid_to_node[apicid];
   	if (!node_online(node)) {
-diff -urpN linux-2.6.18.noarch.orig/include/asm-i386/cpufeature.h linux-2.6.18.noarch/include/asm-i386/cpufeature.h
---- linux-2.6.18.noarch.orig/include/asm-i386/cpufeature.h	2009-11-21 19:52:47.985981135 +0100
-+++ linux-2.6.18.noarch/include/asm-i386/cpufeature.h	2009-11-21 19:53:06.219859318 +0100
-@@ -78,6 +78,7 @@
- #define X86_FEATURE_LFENCE_RDTSC (3*32+18) /* Lfence synchronizes RDTSC */
+diff --git a/include/asm-i386/cpufeature.h b/include/asm-i386/cpufeature.h
+index ea5b3fc..633cc2d 100644
+--- a/include/asm-i386/cpufeature.h
++++ b/include/asm-i386/cpufeature.h
+@@ -79,6 +79,7 @@
  #define X86_FEATURE_TSC_RELIABLE (3*32+23) /* TSC is known to be reliable */
  #define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
-+#define X86_FEATURE_AMD_DCM   (3*32+27) /* multi-node processor */
+ #define X86_FEATURE_ARAT	(3*32+25) /* Always Running APIC Timer */
++#define X86_FEATURE_AMD_DCM	(3*32+27) /* multi-node processor */
  
  /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
  #define X86_FEATURE_XMM3	(4*32+ 0) /* Streaming SIMD Extensions-3 */
-diff -urpN linux-2.6.18.noarch.orig/include/asm-x86_64/cpufeature.h linux-2.6.18.noarch/include/asm-x86_64/cpufeature.h
---- linux-2.6.18.noarch.orig/include/asm-x86_64/cpufeature.h	2009-11-21 19:52:48.021981272 +0100
-+++ linux-2.6.18.noarch/include/asm-x86_64/cpufeature.h	2009-11-21 19:53:06.220859120 +0100
-@@ -73,6 +73,7 @@
- #define X86_FEATURE_LFENCE_RDTSC (3*32+18) /* Lfence synchronizes RDTSC */
+diff --git a/include/asm-x86_64/cpufeature.h b/include/asm-x86_64/cpufeature.h
+index e75d39d..8372583 100644
+--- a/include/asm-x86_64/cpufeature.h
++++ b/include/asm-x86_64/cpufeature.h
+@@ -74,6 +74,7 @@
  #define X86_FEATURE_TSC_RELIABLE (3*32+23) /* TSC is known to be reliable */
  #define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
-+#define X86_FEATURE_AMD_DCM   (3*32+27) /* multi-node processor */
+ #define X86_FEATURE_ARAT	(3*32+25) /* Always Running APIC Timer */
++#define X86_FEATURE_AMD_DCM	(3*32+27) /* multi-node processor */
  
  /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
  #define X86_FEATURE_XMM3	(4*32+ 0) /* Streaming SIMD Extensions-3 */

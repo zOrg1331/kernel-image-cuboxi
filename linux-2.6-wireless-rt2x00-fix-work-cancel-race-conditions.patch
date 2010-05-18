@@ -1,0 +1,67 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Thu, 4 Mar 2010 16:32:25 -0500
+Subject: [wireless] rt2x00: fix work cancel race conditions
+Message-id: <20100304163224.GA2486@dhcp-lab-161.englab.brq.redhat.com>
+Patchwork-id: 23485
+O-Subject: [RHEL5 PATCH] rt2x00: fix work cancel race conditions
+Bugzilla: 562972
+RH-Acked-by: John Linville <linville@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BZ#562972
+
+Description:
+cancel_rearming_delayed_work() will go into infinite loop if work
+function exits without rescheduling, which in consequence lead to
+live lock the system. To fix always reschedule work.
+
+Brew:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2297287
+
+Upstream:
+Not related. Bug was introduced during 5.4 backporting.
+
+Testing:
+Tested by my and bugzilla reporter.
+
+
+diff --git a/drivers/net/wireless/rt2x00/rt2x00link.c b/drivers/net/wireless/rt2x00/rt2x00link.c
+index 910cd13..408f1fa 100644
+--- a/drivers/net/wireless/rt2x00/rt2x00link.c
++++ b/drivers/net/wireless/rt2x00/rt2x00link.c
+@@ -422,10 +422,15 @@ static void rt2x00link_tuner(void *r)
+ 
+ 	/*
+ 	 * When the radio is shutting down we should
+-	 * immediately cease all link tuning.
++	 * immediately cease all link tuning ...
+ 	 */
+-	if (!test_bit(DEVICE_STATE_ENABLED_RADIO, &rt2x00dev->flags))
++	if (!test_bit(DEVICE_STATE_ENABLED_RADIO, &rt2x00dev->flags)) {
++		/* ... but in RHEL5 we have no working cancel_work_sync,
++		   so we are rescheduling here to avoid infinite loop
++		   in cancel_rearming_delayed_work() */
++		ieee80211_queue_delayed_work(rt2x00dev->hw, &link->work, LINK_TUNE_INTERVAL);
+ 		return;
++	}
+ 
+ 	/*
+ 	 * Update statistics.
+@@ -475,9 +480,16 @@ static void rt2x00link_tuner(void *r)
+ 	 */
+ 	link->count++;
+ 
++#if 0 /* Not in RHEL5... */
+ 	if (test_bit(DEVICE_STATE_PRESENT, &rt2x00dev->flags))
+ 		ieee80211_queue_delayed_work(rt2x00dev->hw,
+ 					     &link->work, LINK_TUNE_INTERVAL);
++#else
++	/* Queue delayed work no matter what, otherwise
++	   cancel_rearming_delayed_work() may hang and live lock the system */
++		ieee80211_queue_delayed_work(rt2x00dev->hw,
++					     &link->work, LINK_TUNE_INTERVAL);
++#endif
+ }
+ 
+ void rt2x00link_register(struct rt2x00_dev *rt2x00dev)

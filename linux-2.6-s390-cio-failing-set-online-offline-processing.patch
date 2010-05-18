@@ -1,0 +1,176 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 22 Sep 2009 22:09:10 +0200
+Subject: [s390] cio: failing set online/offline processing
+Message-id: 20090922200910.GA32244@blc4eb509856389.ibm.com
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - cio: failing set online/offline processing
+Bugzilla: 523323
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+===========
+A set online or set offline fails for a DASD device.
+Afterwards this device can neither be set online nor offline.
+
+When unit checks trigger sensing the device state is set to W4SENSE
+until sense completion; then the device state is set back to ONLINE.
+If a unit check occurs while set online or set offline requests are
+processed then it might happen that the device's temporary W4SENSE
+state causes these functions to terminate, leaving the device in an
+inconsistent state when the state is set back to ONLINE later on so
+that the device cannot be set online or offline any longer.
+
+To solve this, set online/offline and related rollback or error
+routines are processed only if the device is in a final or
+DISCONNECTED state.
+
+Bugzilla
+========
+
+BZ 523323
+https://bugzilla.redhat.com/show_bug.cgi?id=523323
+
+Upstream status of the patch
+============================
+
+The patch will be  upstream as of kernel version 2.6.32
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=217ee6c64a9589bc5ad4d1c88136fc359d17930b
+
+Test status
+===========
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+        Hans
+
+diff --git a/drivers/s390/cio/device.c b/drivers/s390/cio/device.c
+index 5166e67..1366749 100644
+--- a/drivers/s390/cio/device.c
++++ b/drivers/s390/cio/device.c
+@@ -331,30 +331,36 @@ ccw_device_set_offline(struct ccw_device *cdev)
+ 	}
+ 	cdev->online = 0;
+ 	spin_lock_irq(cdev->ccwlock);
+-	ret = ccw_device_offline(cdev);
+-	if (ret == -ENODEV) {
+-		if (cdev->private->state != DEV_STATE_NOT_OPER) {
+-			cdev->private->state = DEV_STATE_OFFLINE;
+-			dev_fsm_event(cdev, DEV_EVENT_NOTOPER);
+-		}
++	/* Wait until a final state or DISCONNECTED is reached */
++	while (!dev_fsm_final_state(cdev) &&
++	       cdev->private->state != DEV_STATE_DISCONNECTED) {
+ 		spin_unlock_irq(cdev->ccwlock);
+-		return ret;
++		wait_event(cdev->private->wait_q, (dev_fsm_final_state(cdev) ||
++			   cdev->private->state == DEV_STATE_DISCONNECTED));
++		spin_lock_irq(cdev->ccwlock);
+ 	}
++	ret = ccw_device_offline(cdev);
++	if (ret)
++		goto error;
+ 	spin_unlock_irq(cdev->ccwlock);
+-	if (ret == 0)
+-		wait_event(cdev->private->wait_q, dev_fsm_final_state(cdev));
+-	else {
+-		pr_debug("ccw_device_offline returned %d, device %s\n",
+-			 ret, cdev->dev.bus_id);
+-		cdev->online = 1;
+-	}
+- 	return ret;
++	wait_event(cdev->private->wait_q, (dev_fsm_final_state(cdev) ||
++		   cdev->private->state == DEV_STATE_DISCONNECTED));
++	return 0;
++
++error:
++	pr_debug("ccw_device_offline returned %d, device %s\n",
++		 ret, cdev->dev.bus_id);
++	cdev->private->state = DEV_STATE_OFFLINE;
++	dev_fsm_event(cdev, DEV_EVENT_NOTOPER);
++	spin_unlock_irq(cdev->ccwlock);
++	return -ENODEV;
+ }
+ 
+ int
+ ccw_device_set_online(struct ccw_device *cdev)
+ {
+ 	int ret;
++	int ret2;
+ 
+ 	if (!cdev)
+ 		return -ENODEV;
+@@ -371,21 +377,45 @@ ccw_device_set_online(struct ccw_device *cdev)
+ 			 ret, cdev->dev.bus_id);
+ 		return ret;
+ 	}
+-	if (cdev->private->state != DEV_STATE_ONLINE)
++	spin_lock_irq(cdev->ccwlock);
++	/* Check if online processing was successful */
++	if ((cdev->private->state != DEV_STATE_ONLINE) &&
++	    (cdev->private->state != DEV_STATE_W4SENSE)) {
++		spin_unlock_irq(cdev->ccwlock);
+ 		return -ENODEV;
+-	if (!cdev->drv->set_online || cdev->drv->set_online(cdev) == 0) {
+-		cdev->online = 1;
+-		return 0;
+ 	}
++	spin_unlock_irq(cdev->ccwlock);
++	if (cdev->drv->set_online)
++		ret = cdev->drv->set_online(cdev);
++	if (ret)
++		goto rollback;
++	cdev->online = 1;
++	return 0;
++
++rollback:
+ 	spin_lock_irq(cdev->ccwlock);
+-	ret = ccw_device_offline(cdev);
++	/* Wait until a final state or DISCONNECTED is reached */
++	while (!dev_fsm_final_state(cdev) &&
++	       cdev->private->state != DEV_STATE_DISCONNECTED) {
++		spin_unlock_irq(cdev->ccwlock);
++		wait_event(cdev->private->wait_q, (dev_fsm_final_state(cdev) ||
++			   cdev->private->state == DEV_STATE_DISCONNECTED));
++		spin_lock_irq(cdev->ccwlock);
++	}
++	ret2 = ccw_device_offline(cdev);
++	if (ret2)
++		goto error;
+ 	spin_unlock_irq(cdev->ccwlock);
+-	if (ret == 0)
+-		wait_event(cdev->private->wait_q, dev_fsm_final_state(cdev));
+-	else 
+-		pr_debug("ccw_device_offline returned %d, device %s\n",
+-			 ret, cdev->dev.bus_id);
+-	return (ret == 0) ? -ENODEV : ret;
++	wait_event(cdev->private->wait_q, (dev_fsm_final_state(cdev) ||
++		   cdev->private->state == DEV_STATE_DISCONNECTED));
++	return ret;
++
++error:
++	pr_debug("rollback ccw_device_offline returned %d, device %s\n",
++		 ret2, cdev->dev.bus_id);
++	cdev->private->state = DEV_STATE_OFFLINE;
++	spin_unlock_irq(cdev->ccwlock);
++	return ret;
+ }
+ 
+ static ssize_t
+diff --git a/drivers/s390/cio/device_fsm.c b/drivers/s390/cio/device_fsm.c
+index 4531340..9feab04 100644
+--- a/drivers/s390/cio/device_fsm.c
++++ b/drivers/s390/cio/device_fsm.c
+@@ -960,6 +960,8 @@ ccw_device_w4sense(struct ccw_device *cdev, enum dev_event dev_event)
+ 	}
+ call_handler:
+ 	cdev->private->state = DEV_STATE_ONLINE;
++	/* In case sensing interfered with setting the device online */
++	wake_up(&cdev->private->wait_q);
+ 	/* Call the handler. */
+ 	if (ccw_device_call_handler(cdev) && cdev->private->flags.doverify)
+ 		/* Start delayed path verification. */

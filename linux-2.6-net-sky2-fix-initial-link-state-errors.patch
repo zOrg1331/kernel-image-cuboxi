@@ -1,0 +1,94 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Thu, 28 Jan 2010 14:37:36 -0500
+Subject: [net] sky2: fix initial link state errors
+Message-id: <20100128143735.GE28333@gospo.rdu.redhat.com>
+Patchwork-id: 22975
+O-Subject: Re: [RHEL5.5 PATCH] sky2: fix initial link state errors
+Bugzilla: 559329
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+This RHEL5 commit:
+
+	commit 4924957a9749f11728a37e640b6ae9c9468e4e91
+	Author: Neil Horman <nhorman@redhat.com>
+	Date:   Tue Jul 28 15:21:50 2009 -0400
+
+	    [net] sky2: revert some phy power refactoring changes
+
+dropped a netif_carrier_off call from sky2_up.  If a system with a
+sky2-based device was booted without a cable connected, ethtool would
+report that the link was up (and would remain incorrect until a cable
+was connected for the first time).  After that the link status as
+reported by ethtool was correct.
+
+When I started looking at upstream sky2, there there two commits that
+were there to clean-up netif_carrier_on/off calls, so I added both of
+those commits, so that the bugs they addressed were fixed in RHEL too.
+Those upstream commits were:
+
+	commit 33cb7d33a1c36e07839d08a4d1a33bf6a0f70bba
+	Author: Brandon Philips <bphilips@suse.de>
+	Date:   Thu Oct 29 13:58:07 2009 +0000
+
+	    sky2: set carrier off in probe
+
+	    Before bringing up a sky2 interface up ethtool reports
+	    "Link detected: yes". Do as ixgbe does and netif_carrier_off() on
+	    probe().
+
+	commit 55d7b4e6ed6ad3ec5e5e30b3b4515a0a6a53e344
+	Author: Stephen Hemminger <shemminger@linux-foundation.org>
+	Date:   Mon Jul 9 15:33:34 2007 -0700
+
+	    sky2: carrier management
+
+	    Make sky2 handle carrier similar to other drivers,
+	    eliminate some possible races in carrier state transistions.
+
+Reporter indicated this patch made the card work as expected.
+
+This will resolve RHBZ 559329.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/sky2.c b/drivers/net/sky2.c
+index 0881762..be1b7f9 100644
+--- a/drivers/net/sky2.c
++++ b/drivers/net/sky2.c
+@@ -1411,6 +1411,8 @@ static int sky2_up(struct net_device *dev)
+ 	if (netif_msg_ifup(sky2))
+ 		printk(KERN_INFO PFX "%s: enabling interface\n", dev->name);
+ 
++	netif_carrier_off(dev);
++
+ 	/* must be power of 2 */
+ 	sky2->tx_le = pci_alloc_consistent(hw->pdev,
+ 					   TX_RING_SIZE *
+@@ -1757,7 +1759,6 @@ static int sky2_down(struct net_device *dev)
+ 
+ 	/* Stop more packets from being queued */
+ 	netif_stop_queue(dev);
+-	netif_carrier_off(dev);
+ 
+ 	/* Disable port IRQ */
+ 	imask = sky2_read32(hw, B0_IMSK);
+@@ -1816,6 +1817,8 @@ static int sky2_down(struct net_device *dev)
+ 
+ 	sky2_phy_power_down(hw, port);
+ 
++	netif_carrier_off(dev);
++
+ 	/* turn off LED's */
+ 	sky2_write16(hw, B0_Y2LED, LED_STAT_OFF);
+ 
+@@ -4322,6 +4325,8 @@ static int __devinit sky2_probe(struct pci_dev *pdev,
+ 		goto err_out_free_netdev;
+ 	}
+ 
++	netif_carrier_off(dev);
++
+ 	dev->poll = sky2_poll;
+ 	dev->weight = 64;
+ 

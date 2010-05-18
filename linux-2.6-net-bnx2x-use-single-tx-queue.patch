@@ -1,0 +1,45 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Thu, 25 Feb 2010 12:52:04 -0500
+Subject: [net] bnx2x: use single tx queue
+Message-id: <20100225135204.3913385c@dhcp-lab-109.englab.brq.redhat.com>
+Patchwork-id: 23425
+O-Subject: [RHEL5 PATCH] bnx2x: use single tx queue
+Bugzilla: 567979
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+BZ#567979
+
+From:
+Vladislav Zolotarov <vladz@broadcom.com>
+
+Description:
+We are using multi queue for transmit data, but single queue tx ON/OFF scheme.
+That lead to race conditions when one queue can be full, but not stopped,
+because other queue enable transmission.
+
+To solve issue use single queue as it does not degrade performance, compared
+what we have now (can not tx data on many cpu simultaneously due to locking).
+
+Upstream:
+Not related. Bug was introduced by me during 5.4 backporting.
+
+Testing:
+Vladislav Zolotarov confirm patch fix problem.
+
+
+diff --git a/drivers/net/bnx2x_main.c b/drivers/net/bnx2x_main.c
+index cb4d892..6a96d9c 100644
+--- a/drivers/net/bnx2x_main.c
++++ b/drivers/net/bnx2x_main.c
+@@ -11209,7 +11209,7 @@ static int bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	fp_index = skb_get_queue_mapping(skb);
+ 	txq = netdev_get_tx_queue(dev, fp_index);
+ #endif
+-	fp_index = (smp_processor_id() % bp->num_queues);
++	fp_index = 0; /* no multi queue */
+ 
+ 	fp = &bp->fp[fp_index];
+ 

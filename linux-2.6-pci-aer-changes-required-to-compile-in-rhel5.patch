@@ -1,0 +1,515 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 30 Oct 2009 12:47:22 -0400
+Subject: [pci] aer: changes required to compile in RHEL5
+Message-id: <20091030124600.6431.7164.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 21266
+O-Subject: [RHEL5 PATCH 2/8]: AER: PCI AER changes required to compile in RHEL5
+	[v2]
+Bugzilla: 514442 517093
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+All code changes required to compile in RHEL5, including kabi fixes.
+
+Resolves BZ 517093 and 514442.
+
+diff --git a/arch/i386/kernel/acpi/boot-xen.c b/arch/i386/kernel/acpi/boot-xen.c
+index 971d940..4cfb374 100644
+--- a/arch/i386/kernel/acpi/boot-xen.c
++++ b/arch/i386/kernel/acpi/boot-xen.c
+@@ -64,7 +64,7 @@ static inline int gsi_irq_sharing(int gsi) { return gsi; }
+ #define PREFIX			"ACPI: "
+ 
+ int acpi_noirq;	/* skip ACPI IRQ initialization */
+-int acpi_pci_disabled __initdata;	/* skip ACPI PCI scan and IRQ initialization */
++int acpi_pci_disabled;	/* skip ACPI PCI scan and IRQ initialization */
+ int acpi_ht __initdata = 1;	/* enable HT */
+ 
+ int acpi_lapic;
+diff --git a/arch/i386/kernel/acpi/boot.c b/arch/i386/kernel/acpi/boot.c
+index 34bd312..dfa658b 100644
+--- a/arch/i386/kernel/acpi/boot.c
++++ b/arch/i386/kernel/acpi/boot.c
+@@ -64,7 +64,7 @@ static inline int gsi_irq_sharing(int gsi) { return gsi; }
+ #define PREFIX			"ACPI: "
+ 
+ int acpi_noirq;	/* skip ACPI IRQ initialization */
+-int acpi_pci_disabled __initdata;	/* skip ACPI PCI scan and IRQ initialization */
++int acpi_pci_disabled;	/* skip ACPI PCI scan and IRQ initialization */
+ int acpi_ht __initdata = 1;	/* enable HT */
+ 
+ int acpi_lapic;
+diff --git a/drivers/pci/access.c b/drivers/pci/access.c
+index ea16805..3f71a23 100644
+--- a/drivers/pci/access.c
++++ b/drivers/pci/access.c
+@@ -63,6 +63,26 @@ EXPORT_SYMBOL(pci_bus_write_config_byte);
+ EXPORT_SYMBOL(pci_bus_write_config_word);
+ EXPORT_SYMBOL(pci_bus_write_config_dword);
+ 
++/**
++ * pci_bus_set_ops - Set raw operations of pci bus
++ * @bus:	pci bus struct
++ * @ops:	new raw operations
++ *
++ * Return previous raw operations
++ */
++struct pci_ops *pci_bus_set_ops(struct pci_bus *bus, struct pci_ops *ops)
++{
++	struct pci_ops *old_ops;
++	unsigned long flags;
++
++	spin_lock_irqsave(&pci_lock, flags);
++	old_ops = bus->ops;
++	bus->ops = ops;
++	spin_unlock_irqrestore(&pci_lock, flags);
++	return old_ops;
++}
++EXPORT_SYMBOL(pci_bus_set_ops);
++
+ static u32 pci_user_cached_config(struct pci_dev *dev, int pos)
+ {
+ 	u32 data;
+diff --git a/drivers/pci/bus.c b/drivers/pci/bus.c
+index 5f7db9d..030e822 100644
+--- a/drivers/pci/bus.c
++++ b/drivers/pci/bus.c
+@@ -196,6 +196,59 @@ void pci_walk_bus(struct pci_bus *top, void (*cb)(struct pci_dev *, void *),
+ }
+ EXPORT_SYMBOL_GPL(pci_walk_bus);
+ 
++/** pci_walk_bus_int - walk devices on/under bus, calling callback.
++ *  @top      bus whose devices should be walked
++ *  @cb       int callback to be called for each device found
++ *  @userdata arbitrary pointer to be passed to callback.
++ *
++ *  Walk the given bus, including any bridged devices
++ *  on buses under this bus.  Call the provided callback
++ *  on each device found.
++ *
++ *  We check the return of @cb each time. If it returns anything
++ *  other than 0, we break out.
++ *
++ *  This is upstream's implementation of pci_walk_bus.
++ */
++void pci_walk_bus_int(struct pci_bus *top, int (*cb)(struct pci_dev *, void *),
++		      void *userdata)
++{
++	struct pci_dev *dev;
++	struct pci_bus *bus;
++	struct list_head *next;
++	int retval;
++
++	bus = top;
++	down_read(&pci_bus_sem);
++	next = top->devices.next;
++	for (;;) {
++		if (next == &bus->devices) {
++			/* end of this bus, go up or finish */
++			if (bus == top)
++				break;
++			next = bus->self->bus_list.next;
++			bus = bus->self->bus;
++			continue;
++		}
++		dev = list_entry(next, struct pci_dev, bus_list);
++		if (dev->subordinate) {
++			/* this is a pci-pci bridge, do its devices next */
++			next = dev->subordinate->devices.next;
++			bus = dev->subordinate;
++		} else
++			next = dev->bus_list.next;
++
++		/* Run device routines with the device locked */
++		down(&dev->dev.sem);
++		retval = cb(dev, userdata);
++		up(&dev->dev.sem);
++		if (retval)
++			break;
++	}
++	up_read(&pci_bus_sem);
++}
++EXPORT_SYMBOL_GPL(pci_walk_bus_int);
++
+ EXPORT_SYMBOL(pci_bus_alloc_resource);
+ EXPORT_SYMBOL_GPL(pci_bus_add_device);
+ EXPORT_SYMBOL(pci_bus_add_devices);
+diff --git a/drivers/pci/msi.c b/drivers/pci/msi.c
+index 0a497e5..046866d 100644
+--- a/drivers/pci/msi.c
++++ b/drivers/pci/msi.c
+@@ -1264,6 +1264,18 @@ void pci_no_msi(void)
+ 	pci_msi_enable = 0;
+ }
+ 
++/**
++ * pci_msi_enabled - is MSI enabled?
++ *
++ * Returns true if MSI has not been disabled by the command-line option
++ * pci=nomsi.
++ **/
++int pci_msi_enabled(void)
++{
++	return pci_msi_enable;
++}
++EXPORT_SYMBOL(pci_msi_enabled);
++
+ EXPORT_SYMBOL(pci_enable_msi);
+ EXPORT_SYMBOL(pci_disable_msi);
+ EXPORT_SYMBOL(pci_enable_msix);
+diff --git a/drivers/pci/pcie/Makefile b/drivers/pci/pcie/Makefile
+index 984fa87..e00fb99 100644
+--- a/drivers/pci/pcie/Makefile
++++ b/drivers/pci/pcie/Makefile
+@@ -5,3 +5,6 @@
+ pcieportdrv-y			:= portdrv_core.o portdrv_pci.o portdrv_bus.o
+ 
+ obj-$(CONFIG_PCIEPORTBUS)	+= pcieportdrv.o
++
++# Build PCI Express AER if needed
++obj-$(CONFIG_PCIEAER)		+= aer/
+diff --git a/drivers/pci/pcie/aer/aer_inject.c b/drivers/pci/pcie/aer/aer_inject.c
+index 62d15f6..bc3f1b1 100644
+--- a/drivers/pci/pcie/aer/aer_inject.c
++++ b/drivers/pci/pcie/aer/aer_inject.c
+@@ -280,7 +280,7 @@ static int find_aer_device_iter(struct device *device, void *data)
+ 
+ 	if (device->bus == &pcie_port_bus_type) {
+ 		pcie_dev = to_pcie_device(device);
+-		if (pcie_dev->service & PCIE_PORT_SERVICE_AER) {
++		if (pcie_dev->id.service_type & PCIE_PORT_SERVICE_AER) {
+ 			*result = pcie_dev;
+ 			return 1;
+ 		}
+@@ -393,7 +393,7 @@ static int aer_inject(struct aer_error_inj *einj)
+ 		goto out_put;
+ 
+ 	if (find_aer_device(rpdev, &edev))
+-		aer_irq(-1, edev);
++		aer_irq(-1, edev, NULL);
+ 	else
+ 		ret = -EINVAL;
+ out_put:
+diff --git a/drivers/pci/pcie/aer/aerdrv.c b/drivers/pci/pcie/aer/aerdrv.c
+index 2ce8f9c..a6fec8a 100644
+--- a/drivers/pci/pcie/aer/aerdrv.c
++++ b/drivers/pci/pcie/aer/aerdrv.c
+@@ -38,7 +38,8 @@ MODULE_AUTHOR(DRIVER_AUTHOR);
+ MODULE_DESCRIPTION(DRIVER_DESC);
+ MODULE_LICENSE("GPL");
+ 
+-static int __devinit aer_probe(struct pcie_device *dev);
++static int __devinit aer_probe(struct pcie_device *dev,
++			       const struct pcie_port_service_id *id);
+ static void aer_remove(struct pcie_device *dev);
+ static pci_ers_result_t aer_error_detected(struct pci_dev *dev,
+ 	enum pci_channel_state error);
+@@ -50,11 +51,19 @@ static struct pci_error_handlers aer_error_handlers = {
+ 	.resume		= aer_error_resume,
+ };
+ 
++static struct pcie_port_service_id aer_pci_ids[] = {
++	{
++		.vendor = PCI_ANY_ID,
++		.device = PCI_ANY_ID,
++		.port_type = PCIE_RC_PORT,
++		.service_type = PCIE_PORT_SERVICE_AER,
++		.driver_data =	0,
++	}, { /* end: all zeroes */ }
++};
++
+ static struct pcie_port_service_driver aerdriver = {
+ 	.name		= "aer",
+-	.port_type	= PCIE_ANY_PORT,
+-	.service	= PCIE_PORT_SERVICE_AER,
+-
++	.id_table	= aer_pci_ids,
+ 	.probe		= aer_probe,
+ 	.remove		= aer_remove,
+ 
+@@ -74,10 +83,11 @@ void pci_no_aer(void)
+  * aer_irq - Root Port's ISR
+  * @irq: IRQ assigned to Root Port
+  * @context: pointer to Root Port data structure
++ * @regs: pointer to register structure
+  *
+  * Invoked when Root Port detects AER messages.
+  **/
+-irqreturn_t aer_irq(int irq, void *context)
++irqreturn_t aer_irq(int irq, void *context, struct pt_regs *regs)
+ {
+ 	unsigned int status, id;
+ 	struct pcie_device *pdev = (struct pcie_device *)context;
+@@ -149,7 +159,8 @@ static struct aer_rpc *aer_alloc_rpc(struct pcie_device *dev)
+ 	spin_lock_init(&rpc->e_lock);
+ 
+ 	rpc->rpd = dev;
+-	INIT_WORK(&rpc->dpc_handler, aer_isr);
++	INIT_WORK(&rpc->dpc_handler, (void (*)(void *))aer_isr,
++		  &rpc->dpc_handler);
+ 	rpc->prod_idx = rpc->cons_idx = 0;
+ 	mutex_init(&rpc->rpc_mutex);
+ 	init_waitqueue_head(&rpc->wait_release);
+@@ -189,7 +200,8 @@ static void aer_remove(struct pcie_device *dev)
+  *
+  * Invoked when PCI Express bus loads AER service driver.
+  **/
+-static int __devinit aer_probe(struct pcie_device *dev)
++static int __devinit aer_probe(struct pcie_device *dev,
++			       const struct pcie_port_service_id *id)
+ {
+ 	int status;
+ 	struct aer_rpc *rpc;
+diff --git a/drivers/pci/pcie/aer/aerdrv.h b/drivers/pci/pcie/aer/aerdrv.h
+index bd833ea..d74f035 100644
+--- a/drivers/pci/pcie/aer/aerdrv.h
++++ b/drivers/pci/pcie/aer/aerdrv.h
+@@ -123,7 +123,7 @@ extern int aer_init(struct pcie_device *dev);
+ extern void aer_isr(struct work_struct *work);
+ extern void aer_print_error(struct pci_dev *dev, struct aer_err_info *info);
+ extern void aer_print_port_info(struct pci_dev *dev, struct aer_err_info *info);
+-extern irqreturn_t aer_irq(int irq, void *context);
++extern irqreturn_t aer_irq(int irq, void *context, struct pt_regs *regs);
+ 
+ #ifdef CONFIG_ACPI
+ extern int aer_osc_setup(struct pcie_device *pciedev);
+diff --git a/drivers/pci/pcie/aer/aerdrv_acpi.c b/drivers/pci/pcie/aer/aerdrv_acpi.c
+index 8edb2f3..ebce26c 100644
+--- a/drivers/pci/pcie/aer/aerdrv_acpi.c
++++ b/drivers/pci/pcie/aer/aerdrv_acpi.c
+@@ -38,7 +38,7 @@ int aer_osc_setup(struct pcie_device *pciedev)
+ 
+ 	handle = acpi_find_root_bridge_handle(pdev);
+ 	if (handle) {
+-		status = acpi_pci_osc_control_set(handle,
++		status = pci_osc_control_set(handle,
+ 					OSC_PCI_EXPRESS_AER_CONTROL |
+ 					OSC_PCI_EXPRESS_CAP_STRUCTURE_CONTROL);
+ 	}
+diff --git a/drivers/pci/pcie/aer/aerdrv_core.c b/drivers/pci/pcie/aer/aerdrv_core.c
+index 9f5ccbe..eabc438 100644
+--- a/drivers/pci/pcie/aer/aerdrv_core.c
++++ b/drivers/pci/pcie/aer/aerdrv_core.c
+@@ -144,7 +144,7 @@ static void set_downstream_devices_error_reporting(struct pci_dev *dev,
+ 
+ 	if (!dev->subordinate)
+ 		return;
+-	pci_walk_bus(dev->subordinate, set_device_error_reporting, &enable);
++	pci_walk_bus_int(dev->subordinate, set_device_error_reporting, &enable);
+ }
+ 
+ static inline int compare_device_id(struct pci_dev *dev,
+@@ -216,7 +216,7 @@ static int find_device_iter(struct pci_dev *dev, void *data)
+ 	 *      3) There are multiple errors and prior id comparing fails;
+ 	 * We check AER status registers to find the initial reporter.
+ 	 */
+-	if (atomic_read(&dev->enable_cnt) == 0)
++	if (!dev->is_enabled)
+ 		return 0;
+ 	pos = pci_find_capability(dev, PCI_CAP_ID_EXP);
+ 	if (!pos)
+@@ -278,7 +278,7 @@ static void find_source_device(struct pci_dev *parent,
+ 	if (result)
+ 		return;
+ 
+-	pci_walk_bus(parent->subordinate, find_device_iter, e_info);
++	pci_walk_bus_int(parent->subordinate, find_device_iter, e_info);
+ }
+ 
+ static int report_error_detected(struct pci_dev *dev, void *data)
+@@ -401,7 +401,7 @@ static pci_ers_result_t broadcast_error_message(struct pci_dev *dev,
+ 		 */
+ 		if (cb == report_error_detected)
+ 			dev->error_state = state;
+-		pci_walk_bus(dev->subordinate, cb, &result_data);
++		pci_walk_bus_int(dev->subordinate, cb, &result_data);
+ 		if (cb == report_resume) {
+ 			pci_cleanup_aer_uncorrect_error_status(dev);
+ 			dev->error_state = pci_channel_io_normal;
+@@ -411,7 +411,7 @@ static pci_ers_result_t broadcast_error_message(struct pci_dev *dev,
+ 		 * If the error is reported by an end point, we think this
+ 		 * error is related to the upstream link of the end point.
+ 		 */
+-		pci_walk_bus(dev->bus, cb, &result_data);
++		pci_walk_bus_int(dev->bus, cb, &result_data);
+ 	}
+ 
+ 	return result_data.result;
+@@ -431,16 +431,15 @@ static int find_aer_service_iter(struct device *device, void *data)
+ 	result = (struct find_aer_service_data *) data;
+ 
+ 	if (device->bus == &pcie_port_bus_type) {
+-		struct pcie_port_data *port_data;
++		struct pcie_device *pciedev = to_pcie_device(device);
+ 
+-		port_data = pci_get_drvdata(to_pcie_device(device)->port);
+-		if (port_data->port_type == PCIE_SW_DOWNSTREAM_PORT)
++		if (pciedev->id.port_type == PCIE_SW_DOWNSTREAM_PORT)
+ 			result->is_downstream = 1;
+ 
+ 		driver = device->driver;
+ 		if (driver) {
+ 			service_driver = to_service_driver(driver);
+-			if (service_driver->service == PCIE_PORT_SERVICE_AER) {
++			if (pciedev->id.service_type == PCIE_PORT_SERVICE_AER) {
+ 				result->aer_driver = service_driver;
+ 				return 1;
+ 			}
+diff --git a/drivers/pci/pcie/aer/aerdrv_errprint.c b/drivers/pci/pcie/aer/aerdrv_errprint.c
+index 44acde7..18c1424 100644
+--- a/drivers/pci/pcie/aer/aerdrv_errprint.c
++++ b/drivers/pci/pcie/aer/aerdrv_errprint.c
+@@ -57,6 +57,11 @@
+ 	(e & AER_DATA_LINK_LAYER_ERROR_MASK(t)) ? AER_DATA_LINK_LAYER_ERROR : \
+ 	AER_TRANSACTION_LAYER_ERROR)
+ 
++static inline const char *dev_name(const struct device *dev)
++{
++	return kobject_name(&dev->kobj);
++}
++
+ #define AER_PR(info, pdev, fmt, args...)				\
+ 	printk("%s%s %s: " fmt, (info->severity == AER_CORRECTABLE) ?	\
+ 		KERN_WARNING : KERN_ERR, dev_driver_string(&pdev->dev),	\
+diff --git a/include/linux/pci-acpi.h b/include/linux/pci-acpi.h
+index 936ef82..5b0bf39 100644
+--- a/include/linux/pci-acpi.h
++++ b/include/linux/pci-acpi.h
+@@ -49,6 +49,24 @@
+ #ifdef CONFIG_ACPI
+ extern acpi_status pci_osc_control_set(acpi_handle handle, u32 flags);
+ extern acpi_status pci_osc_support_set(u32 flags);
++
++static inline acpi_handle acpi_find_root_bridge_handle(struct pci_dev *pdev)
++{
++	struct pci_bus *pbus = pdev->bus;
++	/* Find a PCI root bus */
++	while (!pci_is_root_bus(pbus))
++		pbus = pbus->parent;
++	return acpi_get_pci_rootbridge_handle(pci_domain_nr(pbus),
++					      pbus->number);
++}
++
++static inline acpi_handle acpi_pci_get_bridge_handle(struct pci_bus *pbus)
++{
++	if (!pci_is_root_bus(pbus))
++		return DEVICE_ACPI_HANDLE(&(pbus->self->dev));
++	return acpi_get_pci_rootbridge_handle(pci_domain_nr(pbus),
++					      pbus->number);
++}
+ #else
+ #if !defined(AE_ERROR)
+ typedef u32 		acpi_status;
+@@ -57,6 +75,8 @@ typedef u32 		acpi_status;
+ static inline acpi_status pci_osc_control_set(acpi_handle handle, u32 flags)
+ {return AE_ERROR;}
+ static inline acpi_status pci_osc_support_set(u32 flags) {return AE_ERROR;} 
+-#endif
+ 
++static inline acpi_handle acpi_find_root_bridge_handle(struct pci_dev *pdev)
++{ return NULL; }
++#endif
+ #endif	/* _PCI_ACPI_H_ */
+diff --git a/include/linux/pci.h b/include/linux/pci.h
+index 6f981a8..76b934b 100644
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -297,6 +297,15 @@ struct pci_bus {
+ #define to_pci_bus(n)	container_of(n, struct pci_bus, class_dev)
+ 
+ /*
++ * Returns true if the pci bus is root (behind host-pci bridge),
++ * false otherwise
++ */
++static inline bool pci_is_root_bus(struct pci_bus *pbus)
++{
++	return !(pbus->parent);
++}
++
++/*
+  * Error values that may be returned by PCI functions.
+  */
+ #define PCIBIOS_SUCCESSFUL		0x00
+@@ -535,6 +544,7 @@ int pci_bus_read_config_dword (struct pci_bus *bus, unsigned int devfn, int wher
+ int pci_bus_write_config_byte (struct pci_bus *bus, unsigned int devfn, int where, u8 val);
+ int pci_bus_write_config_word (struct pci_bus *bus, unsigned int devfn, int where, u16 val);
+ int pci_bus_write_config_dword (struct pci_bus *bus, unsigned int devfn, int where, u32 val);
++struct pci_ops *pci_bus_set_ops(struct pci_bus *bus, struct pci_ops *ops);
+ 
+ static inline int pci_read_config_byte(struct pci_dev *dev, int where, u8 *val)
+ {
+@@ -650,6 +660,8 @@ int pci_scan_bridge(struct pci_bus *bus, struct pci_dev * dev, int max, int pass
+ 
+ void pci_walk_bus(struct pci_bus *top, void (*cb)(struct pci_dev *, void *),
+ 		  void *userdata);
++void pci_walk_bus_int(struct pci_bus *top, int (*cb)(struct pci_dev *, void *),
++		      void *userdata);
+ int pci_cfg_space_size(struct pci_dev *dev);
+ unsigned char pci_bus_max_busnr(struct pci_bus* bus);
+ 
+@@ -691,6 +703,7 @@ static inline int pci_enable_msix(struct pci_dev* dev,
+ static inline void pci_disable_msix(struct pci_dev *dev) {}
+ static inline void msi_remove_pci_irq_vectors(struct pci_dev *dev) {}
+ static inline void pci_restore_msi_state(struct pci_dev *dev) {}
++static inline int pci_msi_enabled(void) {return 0;}
+ #ifdef CONFIG_XEN
+ #define register_msi_get_owner(func) 0
+ #define unregister_msi_get_owner(func) 0
+@@ -707,6 +720,9 @@ extern void pci_restore_msi_state(struct pci_dev *dev);
+ #ifdef CONFIG_XEN
+ extern int register_msi_get_owner(int (*func)(struct pci_dev *dev));
+ extern int unregister_msi_get_owner(int (*func)(struct pci_dev *dev));
++static inline int pci_msi_enabled(void) { return 0;}
++#else
++extern int pci_msi_enabled(void);
+ #endif
+ #endif
+ 
+@@ -718,6 +734,17 @@ extern int save_pcie_reg(struct pci_dev *dev);
+ extern void restore_pcie_reg(struct pci_dev *dev);
+ #endif
+ 
++#ifndef CONFIG_PCIE_ECRC
++static inline void pcie_set_ecrc_checking(struct pci_dev *dev)
++{
++	return;
++}
++static inline void pcie_ecrc_get_policy(char *str) {};
++#else
++extern void pcie_set_ecrc_checking(struct pci_dev *dev);
++extern void pcie_ecrc_get_policy(char *str);
++#endif
++
+ extern void pci_block_user_cfg_access(struct pci_dev *dev);
+ extern void pci_unblock_user_cfg_access(struct pci_dev *dev);
+ 
+diff --git a/include/linux/pcieport_if.h b/include/linux/pcieport_if.h
+index b44e01a..22e6d2c 100644
+--- a/include/linux/pcieport_if.h
++++ b/include/linux/pcieport_if.h
+@@ -56,14 +56,22 @@ static inline void* get_service_data(struct pcie_device *dev)
+ 
+ struct pcie_port_service_driver {
+ 	const char *name;
+-	int (*probe) (struct pcie_device *dev, 
+-		const struct pcie_port_service_id *id);
++	int (*probe) (struct pcie_device *dev,
++		      const struct pcie_port_service_id *id);
+ 	void (*remove) (struct pcie_device *dev);
+ 	int (*suspend) (struct pcie_device *dev, pm_message_t state);
+ 	int (*resume) (struct pcie_device *dev);
+ 
+ 	const struct pcie_port_service_id *id_table;
+ 	struct device_driver driver;
++
++#ifndef __GENKSYMS__
++	/* Service Error Recovery Handler */
++	struct pci_error_handlers *err_handler;
++
++	/* Link Reset Capability - AER service driver specific */
++	pci_ers_result_t (*reset_link) (struct pci_dev *dev);
++#endif
+ };
+ #define to_service_driver(d) \
+ 	container_of(d, struct pcie_port_service_driver, driver)

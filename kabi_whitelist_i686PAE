@@ -357,6 +357,12 @@
 	cn_netlink_send
 	cn_add_callback
 	cn_del_callback
+[rhel5_drivers_dca_u5]
+	dca3_get_tag
+	dca_add_requester
+	dca_register_notify
+	dca_remove_requester
+	dca_unregister_notify
 [rhel5_drivers_dma_ga]
 	dma_async_device_register
 	dma_async_device_unregister
@@ -1153,6 +1159,15 @@
 	spi_print_msg
 	spi_release_transport
 	starget_for_each_device
+[rhel5_drivers_scsi_u5]
+	__user_walk_fd
+	do_settimeofday
+	scsi_nl_add_driver
+	scsi_nl_remove_driver
+	scsi_nl_send_vendor_msg
+[rhel5_drivers_scsi_lib_dma_u5]
+	scsi_dma_map
+	scsi_dma_unmap
 [rhel5_drivers_scsi_libsas_ga]
 	sas_bios_param
 	sas_change_queue_depth
@@ -2639,6 +2654,10 @@
 	sock_unregister
 	sock_wake_async
 	sockfd_lookup
+[rhel5_net_8021q_u5]
+	vlan_gro_receive
+[rhel5_net_u5]
+	napi_gro_receive
 [rhel5_net_ieee80211_ga]
 	alloc_ieee80211
 	escape_essid

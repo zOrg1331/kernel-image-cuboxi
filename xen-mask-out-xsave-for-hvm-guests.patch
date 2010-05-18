@@ -1,0 +1,43 @@
+From: Andrew Jones <drjones@redhat.com>
+Date: Wed, 7 Oct 2009 13:43:48 +0200
+Subject: [xen] mask out xsave for hvm guests
+Message-id: f45d2faa689c4b76282060583cdbd64972d91463.1254915619.git.drjones@redhat.com
+O-Subject: [RHEL5.5 PATCH v2] [xen] mask out xsave for hvm guests
+Bugzilla: 524052
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+This patch insures that the XSAVE cpu feature is not advertised to an
+HVM guest. Without this patch the guest may attempt to use XSAVE, but
+since it is not supported by the hypervisor the guest will fail to boot.
+As an added precaution OSXSAVE is also masked. With the patch, tested by
+me, the guest boots. Resolves BZ 524052.
+
+diff --git a/arch/x86/hvm/vmx/vmx.c b/arch/x86/hvm/vmx/vmx.c
+index 1e60e4d..ce8da33 100644
+--- a/arch/x86/hvm/vmx/vmx.c
++++ b/arch/x86/hvm/vmx/vmx.c
+@@ -1610,7 +1610,9 @@ static void vmx_do_cpuid(struct cpu_user_regs *regs)
+             ecx &= ~(bitmaskof(X86_FEATURE_VMXE) |
+                      bitmaskof(X86_FEATURE_EST)  |
+                      bitmaskof(X86_FEATURE_TM2)  |
+-                     bitmaskof(X86_FEATURE_CID));
++                     bitmaskof(X86_FEATURE_CID)  |
++                     bitmaskof(X86_FEATURE_XSAVE)|
++                     bitmaskof(X86_FEATURE_OSXSAVE));
+ 
+             edx &= ~(bitmaskof(X86_FEATURE_HT)   |
+                      bitmaskof(X86_FEATURE_ACPI) |
+diff --git a/include/asm-x86/cpufeature.h b/include/asm-x86/cpufeature.h
+index ec86f05..f5b4c34 100644
+--- a/include/asm-x86/cpufeature.h
++++ b/include/asm-x86/cpufeature.h
+@@ -89,6 +89,7 @@
+ #define X86_FEATURE_PDCM	(4*32+15) /* Perf/Debug Capability MSR */
+ #define X86_FEATURE_DCA		(4*32+18) /* Direct Cache Access */
+ #define X86_FEATURE_XSAVE	(4*32+26) /* XSAVE/XRSTOR/XSETBV/XGETBV */
++#define X86_FEATURE_OSXSAVE	(4*32+27) /* "" XSAVE enabled in the OS */
+ 
+ /* VIA/Cyrix/Centaur-defined CPU features, CPUID level 0xC0000001, word 5 */
+ #define X86_FEATURE_XSTORE	(5*32+ 2) /* on-CPU RNG present (xstore insn) */

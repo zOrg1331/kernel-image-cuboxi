@@ -1,0 +1,103 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Tue, 15 Dec 2009 13:10:32 -0500
+Subject: vxge: avoid netpoll<->NAPI race
+Message-id: <20091215141032.6a87a5f5@leela>
+Patchwork-id: 21952
+O-Subject: [RHEL5.5 PATCH BZ453683] vxge: avoid netpoll<->NAPI race
+Bugzilla: 453683
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+On Mon, 30 Nov 2009 13:35:22 -0500 Neil Horman wrote:
+> Or we could stop supporting netconsole, disable netpoll and dance in
+> the street.
+>
+> Sorry, I usually just think that last one to myself.  I guess the
+> lock is the best solution
+
+Here's an additional patch which adds the lock.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=453683
+
+As noticed by Neil Horman during patch review, vxge's ->poll_controller
+method could modify data structures for a given queue while running on CPU A
+and at the same time CPU B could touch the same data in NAPI ->poll method.
+This could cause a hard to reproduce corruption.
+
+This patch fixes the race by protecting each RX ring with a spinlock.
+The TX fifos are already protected by fifo->tx_lock.
+
+diff --git a/drivers/net/vxge/vxge-main.c b/drivers/net/vxge/vxge-main.c
+index fb5084b..78ec87f 100644
+--- a/drivers/net/vxge/vxge-main.c
++++ b/drivers/net/vxge/vxge-main.c
+@@ -127,7 +127,11 @@ static inline void VXGE_COMPLETE_ALL_RX(struct vxgedev *vdev)
+ 	/* Complete all receives*/
+ 	for (i = 0; i < vdev->no_of_vpath; i++) {
+ 		ring = &vdev->vpaths[i].ring;
+-		vxge_hw_vpath_poll_rx(ring->handle);
++		/* We're netpoll. Avoid race with NAPI polling this ring. */
++		if (spin_trylock(&ring->poll_lock)) {
++			vxge_hw_vpath_poll_rx(ring->handle);
++			spin_unlock(&ring->poll_lock);
++		}
+ 	}
+ }
+ 
+@@ -1687,6 +1691,9 @@ static int vxge_poll_msix(struct napi_struct *napi, int budget)
+ 	struct vxge_ring *ring =
+ 		container_of(napi, struct vxge_ring, napi);
+ 	int budget_org = budget;
++	int pkts_processed;
++
++	spin_lock(&ring->poll_lock);
+ 	ring->budget = budget;
+ 
+ 	vxge_hw_vpath_poll_rx(ring->handle);
+@@ -1699,7 +1706,9 @@ static int vxge_poll_msix(struct napi_struct *napi, int budget)
+ 				ring->rx_vector_no);
+ 	}
+ 
+-	return ring->pkts_processed;
++	pkts_processed = ring->pkts_processed;
++	spin_unlock(&ring->poll_lock);
++	return pkts_processed;
+ }
+ 
+ static int vxge_poll_inta(struct napi_struct *napi, int budget)
+@@ -1715,10 +1724,12 @@ static int vxge_poll_inta(struct napi_struct *napi, int budget)
+ 
+ 	for (i = 0; i < vdev->no_of_vpath; i++) {
+ 		ring = &vdev->vpaths[i].ring;
++		spin_lock(&ring->poll_lock);
+ 		ring->budget = budget;
+ 		vxge_hw_vpath_poll_rx(ring->handle);
+ 		pkts_processed += ring->pkts_processed;
+ 		budget -= ring->pkts_processed;
++		spin_unlock(&ring->poll_lock);
+ 		if (budget <= 0)
+ 			break;
+ 	}
+@@ -3313,8 +3324,10 @@ int __devinit vxge_device_register(struct __vxge_hw_device *hldev,
+ 	ndev->features |= NETIF_F_LLTX;
+ #endif
+ 
+-	for (i = 0; i < no_of_vpath; i++)
++	for (i = 0; i < no_of_vpath; i++) {
+ 		spin_lock_init(&vdev->vpaths[i].fifo.tx_lock);
++		spin_lock_init(&vdev->vpaths[i].ring.poll_lock);
++	}
+ 
+ 	if (register_netdev(ndev)) {
+ 		vxge_debug_init(vxge_hw_device_trace_level_get(hldev),
+diff --git a/drivers/net/vxge/vxge-main.h b/drivers/net/vxge/vxge-main.h
+index 7c83ba4..4eb70d4 100644
+--- a/drivers/net/vxge/vxge-main.h
++++ b/drivers/net/vxge/vxge-main.h
+@@ -260,6 +260,7 @@ struct vxge_ring {
+ 
+ 	struct napi_struct napi;
+ 	struct napi_struct *napi_p;
++	spinlock_t poll_lock;
+ 
+ #define VXGE_MAX_MAC_ADDR_COUNT		30
+ 

@@ -1,0 +1,130 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Mon, 15 Feb 2010 22:08:13 -0500
+Subject: [fs] ecryptfs: fix metadata in xattr feature regression
+Message-id: <4B79C5CD.6070906@redhat.com>
+Patchwork-id: 23278
+O-Subject: [PATCH RHEL5.5] eCryptfs: Fix metadata in xattr feature regression
+Bugzilla: 553670
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+This is for Bug 553670:
+filesystem mounted with ecryptfs_xattr option could not be written
+
+Talked w/ the upstream maintainer about the problem, he provided
+this patch.  I've reviewed & tested it, it addresses the problem.
+
+Thanks,
+-Eric
+
+Fixes regression in 8faece5f906725c10e7a1f6caf84452abadbdc7b
+
+When using the ecryptfs_xattr_metadata mount option, eCryptfs stores the
+metadata (normally stored at the front of the file) in the user.ecryptfs
+xattr.  This causes ecryptfs_crypt_stat.num_header_bytes_at_front to be
+0, since there is no header data at the front of the file.  This results
+in too much memory being requested and ENOMEM being returned from
+ecryptfs_write_metadata().
+
+This patch fixes the problem by using the num_header_bytes_at_front
+variable for specifying the max size of the metadata, despite whether it
+is stored in the header or xattr.
+
+Signed-off-by: Tyler Hicks <tyhicks@linux.vnet.ibm.com>
+Cc: Eric Sandeen <sandeen@redhat.com>
+
+diff --git a/fs/ecryptfs/crypto.c b/fs/ecryptfs/crypto.c
+index 65968a6..14001fb 100644
+--- a/fs/ecryptfs/crypto.c
++++ b/fs/ecryptfs/crypto.c
+@@ -333,8 +333,8 @@ out:
+ static void ecryptfs_lower_offset_for_extent(loff_t *offset, loff_t extent_num,
+ 					     struct ecryptfs_crypt_stat *crypt_stat)
+ {
+-	(*offset) = (crypt_stat->num_header_bytes_at_front
+-		     + (crypt_stat->extent_size * extent_num));
++	(*offset) = ecryptfs_lower_header_size(crypt_stat)
++		    + (crypt_stat->extent_size * extent_num);
+ }
+ 
+ /**
+@@ -790,7 +790,8 @@ void ecryptfs_set_default_sizes(struct ecryptfs_crypt_stat *crypt_stat)
+ 	set_extent_mask_and_shift(crypt_stat);
+ 	crypt_stat->iv_bytes = ECRYPTFS_DEFAULT_IV_BYTES;
+ 	if (crypt_stat->flags & ECRYPTFS_METADATA_IN_XATTR)
+-		crypt_stat->num_header_bytes_at_front = 0;
++		crypt_stat->num_header_bytes_at_front =
++					ECRYPTFS_MINIMUM_HEADER_EXTENT_SIZE;
+ 	else {
+ 		if (PAGE_CACHE_SIZE <= ECRYPTFS_MINIMUM_HEADER_EXTENT_SIZE)
+ 			crypt_stat->num_header_bytes_at_front =
+diff --git a/fs/ecryptfs/ecryptfs_kernel.h b/fs/ecryptfs/ecryptfs_kernel.h
+index a9cf078..ba69adb 100644
+--- a/fs/ecryptfs/ecryptfs_kernel.h
++++ b/fs/ecryptfs/ecryptfs_kernel.h
+@@ -425,6 +425,14 @@ struct ecryptfs_daemon {
+ 
+ extern struct mutex ecryptfs_daemon_hash_mux;
+ 
++static inline size_t
++ecryptfs_lower_header_size(struct ecryptfs_crypt_stat *crypt_stat)
++{
++	if (crypt_stat->flags & ECRYPTFS_METADATA_IN_XATTR)
++		return 0;
++	return crypt_stat->num_header_bytes_at_front;
++}
++
+ static inline struct ecryptfs_file_info *
+ ecryptfs_file_to_private(struct file *file)
+ {
+diff --git a/fs/ecryptfs/inode.c b/fs/ecryptfs/inode.c
+index b7d0015..ebf878b 100644
+--- a/fs/ecryptfs/inode.c
++++ b/fs/ecryptfs/inode.c
+@@ -715,7 +715,7 @@ upper_size_to_lower_size(struct ecryptfs_crypt_stat *crypt_stat,
+ {
+ 	loff_t lower_size;
+ 
+-	lower_size = crypt_stat->num_header_bytes_at_front;
++	lower_size = ecryptfs_lower_header_size(crypt_stat);
+ 	if (upper_size != 0) {
+ 		loff_t num_extents;
+ 
+diff --git a/fs/ecryptfs/mmap.c b/fs/ecryptfs/mmap.c
+index fe6b55e..34e5bca 100644
+--- a/fs/ecryptfs/mmap.c
++++ b/fs/ecryptfs/mmap.c
+@@ -97,19 +97,6 @@ out:
+  *                        (big-endian)
+  *     Octet  26:         Begin RFC 2440 authentication token packet set
+  */
+-static void set_header_info(char *page_virt,
+-			    struct ecryptfs_crypt_stat *crypt_stat)
+-{
+-	size_t written;
+-	size_t save_num_header_bytes_at_front =
+-		crypt_stat->num_header_bytes_at_front;
+-
+-	crypt_stat->num_header_bytes_at_front =
+-		ECRYPTFS_MINIMUM_HEADER_EXTENT_SIZE;
+-	ecryptfs_write_header_metadata(page_virt + 20, crypt_stat, &written);
+-	crypt_stat->num_header_bytes_at_front =
+-		save_num_header_bytes_at_front;
+-}
+ 
+ /**
+  * ecryptfs_copy_up_encrypted_with_header
+@@ -146,9 +133,13 @@ ecryptfs_copy_up_encrypted_with_header(struct page *page,
+ 			memset(page_virt, 0, PAGE_CACHE_SIZE);
+ 			/* TODO: Support more than one header extent */
+ 			if (view_extent_num == 0) {
++				size_t written;
++
+ 				rc = ecryptfs_read_xattr_region(
+ 					page_virt, page->mapping->host);
+-				set_header_info(page_virt, crypt_stat);
++				ecryptfs_write_header_metadata(page_virt + 20,
++							       crypt_stat,
++							       &written);
+ 			}
+ 			kunmap_atomic(page_virt, KM_USER0);
+ 			flush_dcache_page(page);
