@@ -13,4 +13,3 @@ obj-$(CONFIG_XEN_SYSFS)		+= xen_sysfs.o
 obj-$(CONFIG_XEN_SMPBOOT)	+= smpboot.o
 obj-$(CONFIG_SMP)		+= spinlock.o
 obj-$(CONFIG_KEXEC)		+= machine_kexec.o
-obj-$(CONFIG_XEN_XENCOMM)	+= xencomm.o

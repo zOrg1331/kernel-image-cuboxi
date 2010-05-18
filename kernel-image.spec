@@ -1,6 +1,6 @@
 Name: kernel-image-xen-dom0
 Version: 2.6.32
-Release: alt12
+Release: alt13
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -476,8 +476,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Mon May 17 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt13
+- xen 2.6.32.13
+
 * Thu May 06 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt12
-- xen 2.6.32.12 
+- xen 2.6.32.12
 
 * Thu Apr 08 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt11
 - xen 2.6.32.11
