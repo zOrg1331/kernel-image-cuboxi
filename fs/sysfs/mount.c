@@ -157,8 +157,8 @@ void sysfs_exit_ns(enum kobj_ns_type type, const void *ns)
 	list_for_each_entry(sb, &sysfs_fs_type.fs_supers, s_instances) {
 		struct sysfs_super_info *info = sysfs_info(sb);
 		/* Ignore superblocks that are in the process of unmounting */
-		if (sb->s_count <= S_BIAS)
-			continue;
+//		if (sb->s_count <= S_BIAS)
+//			continue;
 		/* Ignore superblocks with the wrong ns */
 		if (info->ns[type] != ns)
 			continue;
