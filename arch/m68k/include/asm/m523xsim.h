@@ -110,9 +110,12 @@
  * EPort
  */
 
+#define MCFEPORT_EPPAR		(MCF_IPSBAR + 0x130000)
 #define MCFEPORT_EPDDR		(MCF_IPSBAR + 0x130002)
+#define MCFEPORT_EPIER		(MCF_IPSBAR + 0x130003)
 #define MCFEPORT_EPDR		(MCF_IPSBAR + 0x130004)
 #define MCFEPORT_EPPDR		(MCF_IPSBAR + 0x130005)
+#define MCFEPORT_EPFR		(MCF_IPSBAR + 0x130006)
 
 /*
  * Generic GPIO support
@@ -127,5 +130,10 @@
 #define MCFGPIO_IRQ_MAX			8
 #define MCFGPIO_IRQ_VECBASE		MCFINT_VECBASE
 
+/*
+ * Pin Assignment
+*/
+#define	MCFGPIO_PAR_QSPI	(MCF_IPSBAR + 0x10004A)
+#define	MCFGPIO_PAR_TIMER	(MCF_IPSBAR + 0x10004C)
 /****************************************************************************/
 #endif	/* m523xsim_h */
