@@ -479,7 +479,7 @@ static int snd_cx25821_hw_params(struct snd_pcm_substream *substream,
 					  buf->vb.width, buf->vb.height, 1);
 	if (ret < 0) {
 		printk(KERN_INFO
-			"DEBUG: ERROR after cx25821_risc_databuffer_audio()\n");
+		       "DEBUG: ERROR after cx25821_risc_databuffer_audio()\n");
 		goto error;
 	}
 

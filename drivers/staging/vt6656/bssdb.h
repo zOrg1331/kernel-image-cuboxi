@@ -226,134 +226,82 @@ typedef struct tagKnownNodeDB {
 
 } KnownNodeDB, *PKnownNodeDB;
 
-
 /*---------------------  Export Functions  --------------------------*/
 
+PKnownBSS BSSpSearchBSSList(void *hDeviceContext,
+			    PBYTE pbyDesireBSSID,
+			    PBYTE pbyDesireSSID,
+			    CARD_PHY_TYPE ePhyType);
 
+PKnownBSS BSSpAddrIsInBSSList(void *hDeviceContext,
+			      PBYTE abyBSSID,
+			      PWLAN_IE_SSID pSSID);
 
-PKnownBSS
-BSSpSearchBSSList(
-    IN HANDLE hDeviceContext,
-    IN PBYTE pbyDesireBSSID,
-    IN PBYTE pbyDesireSSID,
-    IN CARD_PHY_TYPE ePhyType
-    );
+void BSSvClearBSSList(void *hDeviceContext, BOOL bKeepCurrBSSID);
 
-PKnownBSS
-BSSpAddrIsInBSSList(
-    IN HANDLE hDeviceContext,
-    IN PBYTE abyBSSID,
-    IN PWLAN_IE_SSID pSSID
-    );
+BOOL BSSbInsertToBSSList(void *hDeviceContext,
+			 PBYTE abyBSSIDAddr,
+			 QWORD qwTimestamp,
+			 WORD wBeaconInterval,
+			 WORD wCapInfo,
+			 BYTE byCurrChannel,
+			 PWLAN_IE_SSID pSSID,
+			 PWLAN_IE_SUPP_RATES pSuppRates,
+			 PWLAN_IE_SUPP_RATES pExtSuppRates,
+			 PERPObject psERP,
+			 PWLAN_IE_RSN pRSN,
+			 PWLAN_IE_RSN_EXT pRSNWPA,
+			 PWLAN_IE_COUNTRY pIE_Country,
+			 PWLAN_IE_QUIET pIE_Quiet,
+			 UINT uIELength,
+			 PBYTE pbyIEs,
+			 void *pRxPacketContext);
 
-VOID
-BSSvClearBSSList(
-    IN HANDLE hDeviceContext,
-    IN BOOL bKeepCurrBSSID
-    );
+BOOL BSSbUpdateToBSSList(void *hDeviceContext,
+			 QWORD qwTimestamp,
+			 WORD wBeaconInterval,
+			 WORD wCapInfo,
+			 BYTE byCurrChannel,
+			 BOOL bChannelHit,
+			 PWLAN_IE_SSID pSSID,
+			 PWLAN_IE_SUPP_RATES pSuppRates,
+			 PWLAN_IE_SUPP_RATES pExtSuppRates,
+			 PERPObject psERP,
+			 PWLAN_IE_RSN pRSN,
+			 PWLAN_IE_RSN_EXT pRSNWPA,
+			 PWLAN_IE_COUNTRY pIE_Country,
+			 PWLAN_IE_QUIET pIE_Quiet,
+			 PKnownBSS pBSSList,
+			 UINT uIELength,
+			 PBYTE pbyIEs,
+			 void *pRxPacketContext);
 
-BOOL
-BSSbInsertToBSSList(
-    IN HANDLE hDeviceContext,
-    IN PBYTE abyBSSIDAddr,
-    IN QWORD qwTimestamp,
-    IN WORD wBeaconInterval,
-    IN WORD wCapInfo,
-    IN BYTE byCurrChannel,
-    IN PWLAN_IE_SSID pSSID,
-    IN PWLAN_IE_SUPP_RATES pSuppRates,
-    IN PWLAN_IE_SUPP_RATES pExtSuppRates,
-    IN PERPObject psERP,
-    IN PWLAN_IE_RSN pRSN,
-    IN PWLAN_IE_RSN_EXT pRSNWPA,
-    IN PWLAN_IE_COUNTRY pIE_Country,
-    IN PWLAN_IE_QUIET pIE_Quiet,
-    IN UINT uIELength,
-    IN PBYTE pbyIEs,
-    IN HANDLE pRxPacketContext
-    );
+BOOL BSSbIsSTAInNodeDB(void *hDeviceContext,
+		       PBYTE abyDstAddr,
+		       PUINT puNodeIndex);
 
+void BSSvCreateOneNode(void *hDeviceContext, PUINT puNodeIndex);
 
-BOOL
-BSSbUpdateToBSSList(
-    IN HANDLE hDeviceContext,
-    IN QWORD qwTimestamp,
-    IN WORD wBeaconInterval,
-    IN WORD wCapInfo,
-    IN BYTE byCurrChannel,
-    IN BOOL bChannelHit,
-    IN PWLAN_IE_SSID pSSID,
-    IN PWLAN_IE_SUPP_RATES pSuppRates,
-    IN PWLAN_IE_SUPP_RATES pExtSuppRates,
-    IN PERPObject psERP,
-    IN PWLAN_IE_RSN pRSN,
-    IN PWLAN_IE_RSN_EXT pRSNWPA,
-    IN PWLAN_IE_COUNTRY pIE_Country,
-    IN PWLAN_IE_QUIET pIE_Quiet,
-    IN PKnownBSS pBSSList,
-    IN UINT uIELength,
-    IN PBYTE pbyIEs,
-    IN HANDLE pRxPacketContext
-    );
+void BSSvUpdateAPNode(void *hDeviceContext,
+		      PWORD pwCapInfo,
+		      PWLAN_IE_SUPP_RATES pItemRates,
+		      PWLAN_IE_SUPP_RATES pExtSuppRates);
 
+void BSSvSecondCallBack(void *hDeviceContext);
 
-BOOL
-BSSbIsSTAInNodeDB(
-    IN HANDLE hDeviceContext,
-    IN PBYTE abyDstAddr,
-    OUT PUINT puNodeIndex
-    );
+void BSSvUpdateNodeTxCounter(void *hDeviceContext,
+			     PSStatCounter pStatistic,
+			     BYTE byTSR,
+			     BYTE byPktNO);
 
-VOID
-BSSvCreateOneNode(
-    IN HANDLE hDeviceContext,
-    OUT PUINT puNodeIndex
-    );
+void BSSvRemoveOneNode(void *hDeviceContext,
+		       UINT uNodeIndex);
 
-VOID
-BSSvUpdateAPNode(
-    IN HANDLE hDeviceContext,
-    IN PWORD pwCapInfo,
-    IN PWLAN_IE_SUPP_RATES pItemRates,
-    IN PWLAN_IE_SUPP_RATES pExtSuppRates
-    );
+void BSSvAddMulticastNode(void *hDeviceContext);
 
+void BSSvClearNodeDBTable(void *hDeviceContext,
+			  UINT uStartIndex);
 
-VOID
-BSSvSecondCallBack(
-    IN HANDLE hDeviceContext
-    );
+void BSSvClearAnyBSSJoinRecord(void *hDeviceContext);
 
-
-VOID
-BSSvUpdateNodeTxCounter(
-    IN HANDLE      hDeviceContext,
-    IN PSStatCounter    pStatistic,
-    IN BYTE             byTSR,
-    IN BYTE             byPktNO
-    );
-
-VOID
-BSSvRemoveOneNode(
-    IN HANDLE hDeviceContext,
-    IN UINT uNodeIndex
-    );
-
-VOID
-BSSvAddMulticastNode(
-    IN HANDLE hDeviceContext
-    );
-
-
-VOID
-BSSvClearNodeDBTable(
-    IN HANDLE hDeviceContext,
-    IN UINT uStartIndex
-    );
-
-VOID
-BSSvClearAnyBSSJoinRecord(
-    IN HANDLE hDeviceContext
-    );
-
-#endif //__BSSDB_H__
+#endif /* __BSSDB_H__ */

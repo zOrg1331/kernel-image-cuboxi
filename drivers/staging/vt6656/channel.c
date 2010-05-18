@@ -425,8 +425,8 @@ exit:
  ************************************************************************/
 BOOL
 CHvChannelGetList (
-    IN  UINT       uCountryCodeIdx,
-    OUT PBYTE      pbyChannelTable
+      UINT       uCountryCodeIdx,
+     PBYTE      pbyChannelTable
     )
 {
     if (uCountryCodeIdx >= CCODE_MAX) {
@@ -437,7 +437,7 @@ CHvChannelGetList (
 }
 
 
-VOID CHvInitChannelTable (PVOID pDeviceHandler)
+void CHvInitChannelTable(void *pDeviceHandler)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
     BOOL        bMultiBand = FALSE;

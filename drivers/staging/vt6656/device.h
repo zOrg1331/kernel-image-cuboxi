@@ -107,7 +107,7 @@
 #define MAC_MAX_CONTEXT_REG     (256+128)
 
 #define MAX_MULTICAST_ADDRESS_NUM       32
-#define MULTICAST_ADDRESS_LIST_SIZE     (MAX_MULTICAST_ADDRESS_NUM * U_ETHER_ADDR_LEN)
+#define MULTICAST_ADDRESS_LIST_SIZE     (MAX_MULTICAST_ADDRESS_NUM * ETH_ALEN)
 
 
 //#define OP_MODE_INFRASTRUCTURE  0
@@ -209,9 +209,9 @@ typedef enum _CONTEXT_TYPE {
 // RCB (Receive Control Block)
 typedef struct _RCB
 {
-    PVOID                   Next;
+    void *Next;
     LONG                    Ref;
-    PVOID                   pDevice;
+    void *pDevice;
     struct urb              *pUrb;
     SRxMgmtPacket           sMngPacket;
     struct sk_buff*         skb;
@@ -222,13 +222,13 @@ typedef struct _RCB
 
 // used to track bulk out irps
 typedef struct _USB_SEND_CONTEXT {
-    PVOID           pDevice;
+    void *pDevice;
     struct sk_buff *pPacket;
     struct urb      *pUrb;
     UINT            uBufLen;
     CONTEXT_TYPE    Type;
     SEthernetHeader sEthHeader;
-    PVOID           Next;
+    void *Next;
     BOOL            bBoolInUse;
     UCHAR           Data[MAX_TOTAL_SIZE_WITH_ALL_HEADERS];
 } USB_SEND_CONTEXT, *PUSB_SEND_CONTEXT;
@@ -369,7 +369,7 @@ typedef struct tagSQuietControl {
 // The receive duplicate detection cache entry
 typedef struct tagSCacheEntry{
     WORD        wFmSequence;
-    BYTE        abyAddr2[U_ETHER_ADDR_LEN];
+    BYTE        abyAddr2[ETH_ALEN];
     WORD        wFrameCtl;
 } SCacheEntry, *PSCacheEntry;
 
@@ -387,7 +387,7 @@ typedef struct tagSDeFragControlBlock
 {
     WORD            wSequence;
     WORD            wFragNum;
-    BYTE            abyAddr2[U_ETHER_ADDR_LEN];
+    BYTE            abyAddr2[ETH_ALEN];
 	UINT            uLifetime;
     struct sk_buff* skb;
     PBYTE           pbyRxBuffer;
@@ -435,7 +435,7 @@ typedef struct __device_opt {
     int         short_retry;
     int         long_retry;
     int         bbp_type;
-    U32         flags;
+    u32         flags;
 } OPTIONS, *POPTIONS;
 
 
@@ -453,17 +453,17 @@ typedef struct __device_info {
 	struct tasklet_struct       ReadWorkItem;
 	struct tasklet_struct       RxMngWorkItem;
 
-    U32                         rx_buf_sz;
+    u32                         rx_buf_sz;
     int                         multicast_limit;
     BYTE                        byRxMode;
 
     spinlock_t                  lock;
 
-    U32                         rx_bytes;
+    u32                         rx_bytes;
 
     BYTE                        byRevId;
 
-    U32                         flags;
+    u32                         flags;
     ULONG                       Flags;
 
     SCache                      sDupRxCache;
@@ -547,10 +547,10 @@ typedef struct __device_info {
     BYTE                        byOriginalZonetype;
 
     BOOL                        bLinkPass;          // link status: OK or fail
-    BYTE                        abyCurrentNetAddr[U_ETHER_ADDR_LEN];
-    BYTE                        abyPermanentNetAddr[U_ETHER_ADDR_LEN];
+    BYTE                        abyCurrentNetAddr[ETH_ALEN];
+    BYTE                        abyPermanentNetAddr[ETH_ALEN];
     // SW network address
-//    BYTE                        abySoftwareNetAddr[U_ETHER_ADDR_LEN];
+	/* u8 abySoftwareNetAddr[ETH_ALEN]; */
     BOOL                        bExistSWNetAddr;
 
     // Adapter statistics
@@ -671,8 +671,8 @@ typedef struct __device_info {
     CARD_OP_MODE                eOPMode;
     BOOL                        bBSSIDFilter;
     WORD                        wMaxTransmitMSDULifetime;
-    BYTE                        abyBSSID[U_ETHER_ADDR_LEN];
-    BYTE                        abyDesireBSSID[U_ETHER_ADDR_LEN];
+    BYTE                        abyBSSID[ETH_ALEN];
+    BYTE                        abyDesireBSSID[ETH_ALEN];
     WORD                        wCTSDuration;       // update while speed change
     WORD                        wACKDuration;       // update while speed change
     WORD                        wRTSTransmitLen;    // update while speed change
@@ -826,9 +826,9 @@ typedef struct __device_info {
 
     SEthernetHeader         sTxEthHeader;
     SEthernetHeader         sRxEthHeader;
-    BYTE                    abyBroadcastAddr[U_ETHER_ADDR_LEN];
-    BYTE                    abySNAP_RFC1042[U_ETHER_ADDR_LEN];
-    BYTE                    abySNAP_Bridgetunnel[U_ETHER_ADDR_LEN];
+    BYTE                    abyBroadcastAddr[ETH_ALEN];
+    BYTE                    abySNAP_RFC1042[ETH_ALEN];
+    BYTE                    abySNAP_Bridgetunnel[ETH_ALEN];
 
     // Pre-Authentication & PMK cache
     SPMKID                  gsPMKID;
