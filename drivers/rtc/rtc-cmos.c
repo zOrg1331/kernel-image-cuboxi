@@ -517,8 +517,7 @@ static const struct rtc_class_ops cmos_rtc_ops = {
 #define NVRAM_OFFSET	(RTC_REG_D + 1)
 
 static ssize_t
-cmos_nvram_read(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *attr,
+cmos_nvram_read(struct kobject *kobj, struct bin_attribute *attr,
 		char *buf, loff_t off, size_t count)
 {
 	int	retval;
@@ -546,8 +545,7 @@ cmos_nvram_read(struct file *filp, struct kobject *kobj,
 }
 
 static ssize_t
-cmos_nvram_write(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *attr,
+cmos_nvram_write(struct kobject *kobj, struct bin_attribute *attr,
 		char *buf, loff_t off, size_t count)
 {
 	struct cmos_rtc	*cmos;
