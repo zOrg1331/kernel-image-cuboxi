@@ -278,10 +278,7 @@ int ocfs2_update_inode_atime(struct inode *inode,
 	inode->i_atime = CURRENT_TIME;
 	di->i_atime = cpu_to_le64(inode->i_atime.tv_sec);
 	di->i_atime_nsec = cpu_to_le32(inode->i_atime.tv_nsec);
-
-	ret = ocfs2_journal_dirty(handle, bh);
-	if (ret < 0)
-		mlog_errno(ret);
+	ocfs2_journal_dirty(handle, bh);
 
 out_commit:
 	ocfs2_commit_trans(OCFS2_SB(inode->i_sb), handle);
@@ -430,9 +427,7 @@ static int ocfs2_orphan_for_truncate(struct ocfs2_super *osb,
 	di->i_ctime = di->i_mtime = cpu_to_le64(inode->i_ctime.tv_sec);
 	di->i_ctime_nsec = di->i_mtime_nsec = cpu_to_le32(inode->i_ctime.tv_nsec);
 
-	status = ocfs2_journal_dirty(handle, fe_bh);
-	if (status < 0)
-		mlog_errno(status);
+	ocfs2_journal_dirty(handle, fe_bh);
 
 out_commit:
 	ocfs2_commit_trans(osb, handle);
@@ -487,6 +482,9 @@ static int ocfs2_truncate_file(struct inode *inode,
 		goto bail;
 
 	down_write(&OCFS2_I(inode)->ip_alloc_sem);
+
+	ocfs2_resv_discard(&osb->osb_la_resmap,
+			   &OCFS2_I(inode)->ip_la_data_resv);
 
 	/*
 	 * The inode lock forced other nodes to sync and drop their
@@ -666,11 +664,7 @@ restarted_transaction:
 		goto leave;
 	}
 
-	status = ocfs2_journal_dirty(handle, bh);
-	if (status < 0) {
-		mlog_errno(status);
-		goto leave;
-	}
+	ocfs2_journal_dirty(handle, bh);
 
 	spin_lock(&OCFS2_I(inode)->ip_lock);
 	clusters_to_add -= (OCFS2_I(inode)->ip_clusters - prev_clusters);
@@ -1188,9 +1182,7 @@ static int __ocfs2_write_remove_suid(struct inode *inode,
 	di = (struct ocfs2_dinode *) bh->b_data;
 	di->i_mode = cpu_to_le16(inode->i_mode);
 
-	ret = ocfs2_journal_dirty(handle, bh);
-	if (ret < 0)
-		mlog_errno(ret);
+	ocfs2_journal_dirty(handle, bh);
 
 out_trans:
 	ocfs2_commit_trans(osb, handle);
