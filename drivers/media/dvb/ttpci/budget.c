@@ -442,6 +442,7 @@ static struct stv090x_config tt1600_stv090x_config = {
 	.repeater_level		= STV090x_RPTLEVEL_16,
 
 	.tuner_init		= NULL,
+	.tuner_sleep		= NULL,
 	.tuner_set_mode		= NULL,
 	.tuner_set_frequency	= NULL,
 	.tuner_get_frequency	= NULL,
