@@ -29,7 +29,7 @@
 #include <linux/rcupdate.h>
 
 #define MAX_SEQ_NR INT_MAX - NR_CPUS
-#define MAX_OBJ_NUM 10000 * NR_CPUS
+#define MAX_OBJ_NUM 1000
 
 static int padata_index_to_cpu(struct parallel_data *pd, int cpu_index)
 {
@@ -358,17 +358,15 @@ static struct parallel_data *padata_alloc_pd(struct padata_instance *pinst,
 	if (!alloc_cpumask_var(&pd->cpumask, GFP_KERNEL))
 		goto err_free_queue;
 
-	for_each_possible_cpu(cpu) {
+	cpumask_and(pd->cpumask, cpumask, cpu_active_mask);
+
+	for_each_cpu(cpu, pd->cpumask) {
 		queue = per_cpu_ptr(pd->queue, cpu);
 
 		queue->pd = pd;
 
-		if (cpumask_test_cpu(cpu, cpumask)
-		    && cpumask_test_cpu(cpu, cpu_active_mask)) {
-			queue->cpu_index = cpu_index;
-			cpu_index++;
-		} else
-			queue->cpu_index = -1;
+		queue->cpu_index = cpu_index;
+		cpu_index++;
 
 		INIT_LIST_HEAD(&queue->reorder.list);
 		INIT_LIST_HEAD(&queue->parallel.list);
@@ -381,8 +379,6 @@ static struct parallel_data *padata_alloc_pd(struct padata_instance *pinst,
 		INIT_WORK(&queue->swork, padata_serial_worker);
 		atomic_set(&queue->num_obj, 0);
 	}
-
-	cpumask_and(pd->cpumask, cpumask, cpu_active_mask);
 
 	num_cpus = cpumask_weight(pd->cpumask);
 	pd->max_seq_nr = (MAX_SEQ_NR / num_cpus) * num_cpus - 1;
@@ -443,9 +439,9 @@ int padata_set_cpumask(struct padata_instance *pinst,
 	struct parallel_data *pd;
 	int err = 0;
 
-	might_sleep();
-
 	mutex_lock(&pinst->lock);
+
+	get_online_cpus();
 
 	pd = padata_alloc_pd(pinst, cpumask);
 	if (!pd) {
@@ -458,6 +454,8 @@ int padata_set_cpumask(struct padata_instance *pinst,
 	padata_replace(pinst, pd);
 
 out:
+	put_online_cpus();
+
 	mutex_unlock(&pinst->lock);
 
 	return err;
@@ -489,12 +487,12 @@ int padata_add_cpu(struct padata_instance *pinst, int cpu)
 {
 	int err;
 
-	might_sleep();
-
 	mutex_lock(&pinst->lock);
 
+	get_online_cpus();
 	cpumask_set_cpu(cpu, pinst->cpumask);
 	err = __padata_add_cpu(pinst, cpu);
+	put_online_cpus();
 
 	mutex_unlock(&pinst->lock);
 
@@ -527,12 +525,12 @@ int padata_remove_cpu(struct padata_instance *pinst, int cpu)
 {
 	int err;
 
-	might_sleep();
-
 	mutex_lock(&pinst->lock);
 
+	get_online_cpus();
 	cpumask_clear_cpu(cpu, pinst->cpumask);
 	err = __padata_remove_cpu(pinst, cpu);
+	put_online_cpus();
 
 	mutex_unlock(&pinst->lock);
 
@@ -547,8 +545,6 @@ EXPORT_SYMBOL(padata_remove_cpu);
  */
 void padata_start(struct padata_instance *pinst)
 {
-	might_sleep();
-
 	mutex_lock(&pinst->lock);
 	pinst->flags |= PADATA_INIT;
 	mutex_unlock(&pinst->lock);
@@ -562,16 +558,15 @@ EXPORT_SYMBOL(padata_start);
  */
 void padata_stop(struct padata_instance *pinst)
 {
-	might_sleep();
-
 	mutex_lock(&pinst->lock);
 	pinst->flags &= ~PADATA_INIT;
 	mutex_unlock(&pinst->lock);
 }
 EXPORT_SYMBOL(padata_stop);
 
-static int __cpuinit padata_cpu_callback(struct notifier_block *nfb,
-					 unsigned long action, void *hcpu)
+#ifdef CONFIG_HOTPLUG_CPU
+static int padata_cpu_callback(struct notifier_block *nfb,
+			       unsigned long action, void *hcpu)
 {
 	int err;
 	struct padata_instance *pinst;
@@ -621,6 +616,7 @@ static int __cpuinit padata_cpu_callback(struct notifier_block *nfb,
 
 	return NOTIFY_OK;
 }
+#endif
 
 /*
  * padata_alloc - allocate and initialize a padata instance
@@ -631,13 +627,14 @@ static int __cpuinit padata_cpu_callback(struct notifier_block *nfb,
 struct padata_instance *padata_alloc(const struct cpumask *cpumask,
 				     struct workqueue_struct *wq)
 {
-	int err;
 	struct padata_instance *pinst;
 	struct parallel_data *pd;
 
 	pinst = kzalloc(sizeof(struct padata_instance), GFP_KERNEL);
 	if (!pinst)
 		goto err;
+
+	get_online_cpus();
 
 	pd = padata_alloc_pd(pinst, cpumask);
 	if (!pd)
@@ -654,22 +651,23 @@ struct padata_instance *padata_alloc(const struct cpumask *cpumask,
 
 	pinst->flags = 0;
 
+#ifdef CONFIG_HOTPLUG_CPU
 	pinst->cpu_notifier.notifier_call = padata_cpu_callback;
 	pinst->cpu_notifier.priority = 0;
-	err = register_hotcpu_notifier(&pinst->cpu_notifier);
-	if (err)
-		goto err_free_cpumask;
+	register_hotcpu_notifier(&pinst->cpu_notifier);
+#endif
+
+	put_online_cpus();
 
 	mutex_init(&pinst->lock);
 
 	return pinst;
 
-err_free_cpumask:
-	free_cpumask_var(pinst->cpumask);
 err_free_pd:
 	padata_free_pd(pd);
 err_free_inst:
 	kfree(pinst);
+	put_online_cpus();
 err:
 	return NULL;
 }
@@ -689,7 +687,9 @@ void padata_free(struct padata_instance *pinst)
 	while (atomic_read(&pinst->pd->refcnt) != 0)
 		yield();
 
+#ifdef CONFIG_HOTPLUG_CPU
 	unregister_hotcpu_notifier(&pinst->cpu_notifier);
+#endif
 	padata_free_pd(pinst->pd);
 	free_cpumask_var(pinst->cpumask);
 	kfree(pinst);
