@@ -491,13 +491,11 @@ static void domain_update_iommu_coherency(struct dmar_domain *domain)
 
 	domain->iommu_coherency = 1;
 
-	i = find_first_bit(&domain->iommu_bmp, g_num_of_iommus);
-	for (; i < g_num_of_iommus; ) {
+	for_each_set_bit(i, &domain->iommu_bmp, g_num_of_iommus) {
 		if (!ecap_coherent(g_iommus[i]->ecap)) {
 			domain->iommu_coherency = 0;
 			break;
 		}
-		i = find_next_bit(&domain->iommu_bmp, g_num_of_iommus, i+1);
 	}
 }
 
@@ -507,13 +505,11 @@ static void domain_update_iommu_snooping(struct dmar_domain *domain)
 
 	domain->iommu_snooping = 1;
 
-	i = find_first_bit(&domain->iommu_bmp, g_num_of_iommus);
-	for (; i < g_num_of_iommus; ) {
+	for_each_set_bit(i, &domain->iommu_bmp, g_num_of_iommus) {
 		if (!ecap_sc_support(g_iommus[i]->ecap)) {
 			domain->iommu_snooping = 0;
 			break;
 		}
-		i = find_next_bit(&domain->iommu_bmp, g_num_of_iommus, i+1);
 	}
 }
 
@@ -1068,7 +1064,7 @@ static void iommu_flush_dev_iotlb(struct dmar_domain *domain,
 }
 
 static void iommu_flush_iotlb_psi(struct intel_iommu *iommu, u16 did,
-				  unsigned long pfn, unsigned int pages)
+				  unsigned long pfn, unsigned int pages, int map)
 {
 	unsigned int mask = ilog2(__roundup_pow_of_two(pages));
 	uint64_t addr = (uint64_t)pfn << VTD_PAGE_SHIFT;
@@ -1089,10 +1085,10 @@ static void iommu_flush_iotlb_psi(struct intel_iommu *iommu, u16 did,
 						DMA_TLB_PSI_FLUSH);
 
 	/*
-	 * In caching mode, domain ID 0 is reserved for non-present to present
-	 * mapping flush. Device IOTLB doesn't need to be flushed in this case.
+	 * In caching mode, changes of pages from non-present to present require
+	 * flush. However, device IOTLB doesn't need to be flushed in this case.
 	 */
-	if (!cap_caching_mode(iommu->cap) || did)
+	if (!cap_caching_mode(iommu->cap) || !map)
 		iommu_flush_dev_iotlb(iommu->domains[did], addr, mask);
 }
 
@@ -1154,7 +1150,8 @@ static int iommu_init_domains(struct intel_iommu *iommu)
 	unsigned long nlongs;
 
 	ndomains = cap_ndoms(iommu->cap);
-	pr_debug("Number of Domains supportd <%ld>\n", ndomains);
+	pr_debug("IOMMU %d: Number of Domains supportd <%ld>\n", iommu->seq_id,
+			ndomains);
 	nlongs = BITS_TO_LONGS(ndomains);
 
 	spin_lock_init(&iommu->lock);
@@ -1194,8 +1191,7 @@ void free_dmar_iommu(struct intel_iommu *iommu)
 	unsigned long flags;
 
 	if ((iommu->domains) && (iommu->domain_ids)) {
-		i = find_first_bit(iommu->domain_ids, cap_ndoms(iommu->cap));
-		for (; i < cap_ndoms(iommu->cap); ) {
+		for_each_set_bit(i, iommu->domain_ids, cap_ndoms(iommu->cap)) {
 			domain = iommu->domains[i];
 			clear_bit(i, iommu->domain_ids);
 
@@ -1207,9 +1203,6 @@ void free_dmar_iommu(struct intel_iommu *iommu)
 					domain_exit(domain);
 			}
 			spin_unlock_irqrestore(&domain->iommu_lock, flags);
-
-			i = find_next_bit(iommu->domain_ids,
-				cap_ndoms(iommu->cap), i+1);
 		}
 	}
 
@@ -1292,14 +1285,11 @@ static void iommu_detach_domain(struct dmar_domain *domain,
 
 	spin_lock_irqsave(&iommu->lock, flags);
 	ndomains = cap_ndoms(iommu->cap);
-	num = find_first_bit(iommu->domain_ids, ndomains);
-	for (; num < ndomains; ) {
+	for_each_set_bit(num, iommu->domain_ids, ndomains) {
 		if (iommu->domains[num] == domain) {
 			found = 1;
 			break;
 		}
-		num = find_next_bit(iommu->domain_ids,
-				    cap_ndoms(iommu->cap), num+1);
 	}
 
 	if (found) {
@@ -1485,15 +1475,12 @@ static int domain_context_mapping_one(struct dmar_domain *domain, int segment,
 
 		/* find an available domain id for this device in iommu */
 		ndomains = cap_ndoms(iommu->cap);
-		num = find_first_bit(iommu->domain_ids, ndomains);
-		for (; num < ndomains; ) {
+		for_each_set_bit(num, iommu->domain_ids, ndomains) {
 			if (iommu->domains[num] == domain) {
 				id = num;
 				found = 1;
 				break;
 			}
-			num = find_next_bit(iommu->domain_ids,
-					    cap_ndoms(iommu->cap), num+1);
 		}
 
 		if (found == 0) {
@@ -1558,7 +1545,7 @@ static int domain_context_mapping_one(struct dmar_domain *domain, int segment,
 					   (((u16)bus) << 8) | devfn,
 					   DMA_CCMD_MASK_NOBIT,
 					   DMA_CCMD_DEVICE_INVL);
-		iommu->flush.flush_iotlb(iommu, 0, 0, 0, DMA_TLB_DSI_FLUSH);
+		iommu->flush.flush_iotlb(iommu, domain->id, 0, 0, DMA_TLB_DSI_FLUSH);
 	} else {
 		iommu_flush_write_buffer(iommu);
 	}
@@ -2333,14 +2320,16 @@ int __init init_dmars(void)
 			 */
 			iommu->flush.flush_context = __iommu_flush_context;
 			iommu->flush.flush_iotlb = __iommu_flush_iotlb;
-			printk(KERN_INFO "IOMMU 0x%Lx: using Register based "
+			printk(KERN_INFO "IOMMU %d 0x%Lx: using Register based "
 			       "invalidation\n",
+				iommu->seq_id,
 			       (unsigned long long)drhd->reg_base_addr);
 		} else {
 			iommu->flush.flush_context = qi_flush_context;
 			iommu->flush.flush_iotlb = qi_flush_iotlb;
-			printk(KERN_INFO "IOMMU 0x%Lx: using Queued "
+			printk(KERN_INFO "IOMMU %d 0x%Lx: using Queued "
 			       "invalidation\n",
+				iommu->seq_id,
 			       (unsigned long long)drhd->reg_base_addr);
 		}
 	}
@@ -2621,7 +2610,7 @@ static dma_addr_t __intel_map_single(struct device *hwdev, phys_addr_t paddr,
 
 	/* it's a non-present to present mapping. Only flush if caching mode */
 	if (cap_caching_mode(iommu->cap))
-		iommu_flush_iotlb_psi(iommu, 0, mm_to_dma_pfn(iova->pfn_lo), size);
+		iommu_flush_iotlb_psi(iommu, domain->id, mm_to_dma_pfn(iova->pfn_lo), size, 1);
 	else
 		iommu_flush_write_buffer(iommu);
 
@@ -2661,15 +2650,24 @@ static void flush_unmaps(void)
 		if (!deferred_flush[i].next)
 			continue;
 
-		iommu->flush.flush_iotlb(iommu, 0, 0, 0,
+		/* In caching mode, global flushes turn emulation expensive */
+		if (!cap_caching_mode(iommu->cap))
+			iommu->flush.flush_iotlb(iommu, 0, 0, 0,
 					 DMA_TLB_GLOBAL_FLUSH);
 		for (j = 0; j < deferred_flush[i].next; j++) {
 			unsigned long mask;
 			struct iova *iova = deferred_flush[i].iova[j];
+			struct dmar_domain *domain = deferred_flush[i].domain[j];
 
-			mask = ilog2(mm_to_dma_pfn(iova->pfn_hi - iova->pfn_lo + 1));
-			iommu_flush_dev_iotlb(deferred_flush[i].domain[j],
-					(uint64_t)iova->pfn_lo << PAGE_SHIFT, mask);
+			/* On real hardware multiple invalidations are expensive */
+			if (cap_caching_mode(iommu->cap))
+				iommu_flush_iotlb_psi(iommu, domain->id,
+				iova->pfn_lo, iova->pfn_hi - iova->pfn_lo + 1, 0);
+			else {
+				mask = ilog2(mm_to_dma_pfn(iova->pfn_hi - iova->pfn_lo + 1));
+				iommu_flush_dev_iotlb(deferred_flush[i].domain[j],
+						(uint64_t)iova->pfn_lo << PAGE_SHIFT, mask);
+			}
 			__free_iova(&deferred_flush[i].domain[j]->iovad, iova);
 		}
 		deferred_flush[i].next = 0;
@@ -2750,7 +2748,7 @@ static void intel_unmap_page(struct device *dev, dma_addr_t dev_addr,
 
 	if (intel_iommu_strict) {
 		iommu_flush_iotlb_psi(iommu, domain->id, start_pfn,
-				      last_pfn - start_pfn + 1);
+				      last_pfn - start_pfn + 1, 0);
 		/* free iova */
 		__free_iova(&domain->iovad, iova);
 	} else {
@@ -2840,7 +2838,7 @@ static void intel_unmap_sg(struct device *hwdev, struct scatterlist *sglist,
 
 	if (intel_iommu_strict) {
 		iommu_flush_iotlb_psi(iommu, domain->id, start_pfn,
-				      last_pfn - start_pfn + 1);
+				      last_pfn - start_pfn + 1, 0);
 		/* free iova */
 		__free_iova(&domain->iovad, iova);
 	} else {
@@ -2874,7 +2872,6 @@ static int intel_map_sg(struct device *hwdev, struct scatterlist *sglist, int ne
 	struct dmar_domain *domain;
 	size_t size = 0;
 	int prot = 0;
-	size_t offset_pfn = 0;
 	struct iova *iova = NULL;
 	int ret;
 	struct scatterlist *sg;
@@ -2928,7 +2925,7 @@ static int intel_map_sg(struct device *hwdev, struct scatterlist *sglist, int ne
 
 	/* it's a non-present to present mapping. Only flush if caching mode */
 	if (cap_caching_mode(iommu->cap))
-		iommu_flush_iotlb_psi(iommu, 0, start_vpfn, offset_pfn);
+		iommu_flush_iotlb_psi(iommu, domain->id, start_vpfn, size, 1);
 	else
 		iommu_flush_write_buffer(iommu);
 
@@ -3441,12 +3438,9 @@ static int vm_domain_min_agaw(struct dmar_domain *domain)
 	int i;
 	int min_agaw = domain->agaw;
 
-	i = find_first_bit(&domain->iommu_bmp, g_num_of_iommus);
-	for (; i < g_num_of_iommus; ) {
+	for_each_set_bit(i, &domain->iommu_bmp, g_num_of_iommus) {
 		if (min_agaw > g_iommus[i]->agaw)
 			min_agaw = g_iommus[i]->agaw;
-
-		i = find_next_bit(&domain->iommu_bmp, g_num_of_iommus, i+1);
 	}
 
 	return min_agaw;
@@ -3512,8 +3506,7 @@ static void iommu_free_vm_domain(struct dmar_domain *domain)
 		iommu = drhd->iommu;
 
 		ndomains = cap_ndoms(iommu->cap);
-		i = find_first_bit(iommu->domain_ids, ndomains);
-		for (; i < ndomains; ) {
+		for_each_set_bit(i, iommu->domain_ids, ndomains) {
 			if (iommu->domains[i] == domain) {
 				spin_lock_irqsave(&iommu->lock, flags);
 				clear_bit(i, iommu->domain_ids);
@@ -3521,7 +3514,6 @@ static void iommu_free_vm_domain(struct dmar_domain *domain)
 				spin_unlock_irqrestore(&iommu->lock, flags);
 				break;
 			}
-			i = find_next_bit(iommu->domain_ids, ndomains, i+1);
 		}
 	}
 }
