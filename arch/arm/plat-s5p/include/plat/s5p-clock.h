@@ -23,10 +23,12 @@
 #define clk_fin_vpll clk_ext_xtal_mux
 
 extern struct clk clk_ext_xtal_mux;
+extern struct clk clk_xusbxti;
 extern struct clk clk_48m;
 extern struct clk clk_fout_apll;
 extern struct clk clk_fout_mpll;
 extern struct clk clk_fout_epll;
+extern struct clk clk_fout_vpll;
 extern struct clk clk_arm;
 extern struct clk clk_vpll;
 
