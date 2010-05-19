@@ -26,7 +26,6 @@
 #include <linux/smp_lock.h>
 #include <linux/acct.h>
 #include <linux/blkdev.h>
-#include <linux/quotaops.h>
 #include <linux/namei.h>
 #include <linux/mount.h>
 #include <linux/security.h>
@@ -101,8 +100,6 @@ static struct super_block *alloc_super(struct file_system_type *type)
 		init_rwsem(&s->s_dquot.dqptr_sem);
 		init_waitqueue_head(&s->s_wait_unfrozen);
 		s->s_maxbytes = MAX_NON_LFS;
-		s->dq_op = sb_dquot_ops;
-		s->s_qcop = sb_quotactl_ops;
 		s->s_op = &default_op;
 		s->s_time_gran = 1000000000;
 	}
