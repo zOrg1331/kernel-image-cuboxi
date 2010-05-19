@@ -65,6 +65,7 @@
 #include <linux/libata.h>
 #include <asm/byteorder.h>
 #include <linux/cdrom.h>
+#include <linux/ratelimit.h>
 
 #include "libata.h"
 
@@ -1906,22 +1907,6 @@ unsigned ata_exec_internal_sg(struct ata_device *dev,
 	ap->qc_active = preempted_qc_active;
 	ap->nr_active_links = preempted_nr_active_links;
 
-	/* XXX - Some LLDDs (sata_mv) disable port on command failure.
-	 * Until those drivers are fixed, we detect the condition
-	 * here, fail the command with AC_ERR_SYSTEM and reenable the
-	 * port.
-	 *
-	 * Note that this doesn't change any behavior as internal
-	 * command failure results in disabling the device in the
-	 * higher layer for LLDDs without new reset/EH callbacks.
-	 *
-	 * Kill the following code as soon as those drivers are fixed.
-	 */
-	if (ap->flags & ATA_FLAG_DISABLED) {
-		err_mask |= AC_ERR_SYSTEM;
-		ata_port_probe(ap);
-	}
-
 	spin_unlock_irqrestore(ap->lock, flags);
 
 	if ((err_mask & AC_ERR_TIMEOUT) && auto_timeout)
@@ -2767,8 +2752,6 @@ int ata_bus_probe(struct ata_port *ap)
 	int rc;
 	struct ata_device *dev;
 
-	ata_port_probe(ap);
-
 	ata_for_each_dev(dev, &ap->link, ALL)
 		tries[dev->devno] = ATA_PROBE_MAX_TRIES;
 
@@ -2796,16 +2779,13 @@ int ata_bus_probe(struct ata_port *ap)
 	ap->ops->phy_reset(ap);
 
 	ata_for_each_dev(dev, &ap->link, ALL) {
-		if (!(ap->flags & ATA_FLAG_DISABLED) &&
-		    dev->class != ATA_DEV_UNKNOWN)
+		if (dev->class != ATA_DEV_UNKNOWN)
 			classes[dev->devno] = dev->class;
 		else
 			classes[dev->devno] = ATA_DEV_NONE;
 
 		dev->class = ATA_DEV_UNKNOWN;
 	}
-
-	ata_port_probe(ap);
 
 	/* read IDENTIFY page and configure devices. We have to do the identify
 	   specific sequence bass-ackwards so that PDIAG- is released by
@@ -2856,8 +2836,6 @@ int ata_bus_probe(struct ata_port *ap)
 	ata_for_each_dev(dev, &ap->link, ENABLED)
 		return 0;
 
-	/* no device present, disable port */
-	ata_port_disable(ap);
 	return -ENODEV;
 
  fail:
@@ -2886,22 +2864,6 @@ int ata_bus_probe(struct ata_port *ap)
 		ata_dev_disable(dev);
 
 	goto retry;
-}
-
-/**
- *	ata_port_probe - Mark port as enabled
- *	@ap: Port for which we indicate enablement
- *
- *	Modify @ap data structure such that the system
- *	thinks that the entire port is enabled.
- *
- *	LOCKING: host lock, or some other form of
- *	serialization.
- */
-
-void ata_port_probe(struct ata_port *ap)
-{
-	ap->flags &= ~ATA_FLAG_DISABLED;
 }
 
 /**
@@ -2948,26 +2910,6 @@ struct ata_device *ata_dev_pair(struct ata_device *adev)
 	if (!ata_dev_enabled(pair))
 		return NULL;
 	return pair;
-}
-
-/**
- *	ata_port_disable - Disable port.
- *	@ap: Port to be disabled.
- *
- *	Modify @ap data structure such that the system
- *	thinks that the entire port is disabled, and should
- *	never attempt to probe or communicate with devices
- *	on this port.
- *
- *	LOCKING: host lock, or some other form of
- *	serialization.
- */
-
-void ata_port_disable(struct ata_port *ap)
-{
-	ap->link.device[0].class = ATA_DEV_NONE;
-	ap->link.device[1].class = ATA_DEV_NONE;
-	ap->flags |= ATA_FLAG_DISABLED;
 }
 
 /**
@@ -3631,8 +3573,14 @@ int ata_wait_ready(struct ata_link *link, unsigned long deadline,
 		   int (*check_ready)(struct ata_link *link))
 {
 	unsigned long start = jiffies;
-	unsigned long nodev_deadline = ata_deadline(start, ATA_TMOUT_FF_WAIT);
+	unsigned long nodev_deadline;
 	int warned = 0;
+
+	/* choose which 0xff timeout to use, read comment in libata.h */
+	if (link->ap->host->flags & ATA_HOST_PARALLEL_SCAN)
+		nodev_deadline = ata_deadline(start, ATA_TMOUT_FF_WAIT_LONG);
+	else
+		nodev_deadline = ata_deadline(start, ATA_TMOUT_FF_WAIT);
 
 	/* Slave readiness can't be tested separately from master.  On
 	 * M/S emulation configuration, this function should be called
@@ -3651,12 +3599,12 @@ int ata_wait_ready(struct ata_link *link, unsigned long deadline,
 		if (ready > 0)
 			return 0;
 
-		/* -ENODEV could be transient.  Ignore -ENODEV if link
+		/*
+		 * -ENODEV could be transient.  Ignore -ENODEV if link
 		 * is online.  Also, some SATA devices take a long
-		 * time to clear 0xff after reset.  For example,
-		 * HHD424020F7SV00 iVDR needs >= 800ms while Quantum
-		 * GoVault needs even more than that.  Wait for
-		 * ATA_TMOUT_FF_WAIT on -ENODEV if link isn't offline.
+		 * time to clear 0xff after reset.  Wait for
+		 * ATA_TMOUT_FF_WAIT[_LONG] on -ENODEV if link isn't
+		 * offline.
 		 *
 		 * Note that some PATA controllers (pata_ali) explode
 		 * if status register is read more than once when
@@ -5558,30 +5506,6 @@ void ata_host_resume(struct ata_host *host)
 #endif
 
 /**
- *	ata_port_start - Set port up for dma.
- *	@ap: Port to initialize
- *
- *	Called just after data structures for each port are
- *	initialized.  Allocates space for PRD table.
- *
- *	May be used as the port_start() entry in ata_port_operations.
- *
- *	LOCKING:
- *	Inherited from caller.
- */
-int ata_port_start(struct ata_port *ap)
-{
-	struct device *dev = ap->dev;
-
-	ap->prd = dmam_alloc_coherent(dev, ATA_PRD_TBL_SZ, &ap->prd_dma,
-				      GFP_KERNEL);
-	if (!ap->prd)
-		return -ENOMEM;
-
-	return 0;
-}
-
-/**
  *	ata_dev_init - Initialize an ata_device structure
  *	@dev: Device structure to initialize
  *
@@ -5709,7 +5633,6 @@ struct ata_port *ata_port_alloc(struct ata_host *host)
 
 	ap->pflags |= ATA_PFLAG_INITIALIZING;
 	ap->lock = &host->lock;
-	ap->flags = ATA_FLAG_DISABLED;
 	ap->print_id = -1;
 	ap->ctl = ATA_DEVCTL_OBS;
 	ap->host = host;
@@ -5747,6 +5670,8 @@ struct ata_port *ata_port_alloc(struct ata_host *host)
 	ap->stats.unhandled_irq = 1;
 	ap->stats.idle_irq = 1;
 #endif
+	ata_sff_port_init(ap);
+
 	return ap;
 }
 
@@ -6137,8 +6062,6 @@ static void async_port_probe(void *data, async_cookie_t cookie)
 	if (ap->ops->error_handler) {
 		struct ata_eh_info *ehi = &ap->link.eh_info;
 		unsigned long flags;
-
-		ata_port_probe(ap);
 
 		/* kick EH for boot probing */
 		spin_lock_irqsave(ap->lock, flags);
@@ -6663,6 +6586,8 @@ static void __init ata_parse_force_param(void)
 
 static int __init ata_init(void)
 {
+	int rc = -ENOMEM;
+
 	ata_parse_force_param();
 
 	/*
@@ -6674,24 +6599,31 @@ static int __init ata_init(void)
 	 */
 	ata_wq = create_workqueue("ata");
 	if (!ata_wq)
-		goto free_force_tbl;
+		goto fail;
 
 	ata_aux_wq = create_singlethread_workqueue("ata_aux");
 	if (!ata_aux_wq)
-		goto free_wq;
+		goto fail;
+
+	rc = ata_sff_init();
+	if (rc)
+		goto fail;
 
 	printk(KERN_DEBUG "libata version " DRV_VERSION " loaded.\n");
 	return 0;
 
-free_wq:
-	destroy_workqueue(ata_wq);
-free_force_tbl:
+fail:
 	kfree(ata_force_tbl);
-	return -ENOMEM;
+	if (ata_wq)
+		destroy_workqueue(ata_wq);
+	if (ata_aux_wq)
+		destroy_workqueue(ata_aux_wq);
+	return rc;
 }
 
 static void __exit ata_exit(void)
 {
+	ata_sff_exit();
 	kfree(ata_force_tbl);
 	destroy_workqueue(ata_wq);
 	destroy_workqueue(ata_aux_wq);
@@ -6700,25 +6632,11 @@ static void __exit ata_exit(void)
 subsys_initcall(ata_init);
 module_exit(ata_exit);
 
-static unsigned long ratelimit_time;
-static DEFINE_SPINLOCK(ata_ratelimit_lock);
+static DEFINE_RATELIMIT_STATE(ratelimit, HZ / 5, 1);
 
 int ata_ratelimit(void)
 {
-	int rc;
-	unsigned long flags;
-
-	spin_lock_irqsave(&ata_ratelimit_lock, flags);
-
-	if (time_after(jiffies, ratelimit_time)) {
-		rc = 1;
-		ratelimit_time = jiffies + (HZ/5);
-	} else
-		rc = 0;
-
-	spin_unlock_irqrestore(&ata_ratelimit_lock, flags);
-
-	return rc;
+	return __ratelimit(&ratelimit);
 }
 
 /**
@@ -6826,11 +6744,9 @@ EXPORT_SYMBOL_GPL(ata_xfer_mode2mask);
 EXPORT_SYMBOL_GPL(ata_xfer_mode2shift);
 EXPORT_SYMBOL_GPL(ata_mode_string);
 EXPORT_SYMBOL_GPL(ata_id_xfermask);
-EXPORT_SYMBOL_GPL(ata_port_start);
 EXPORT_SYMBOL_GPL(ata_do_set_mode);
 EXPORT_SYMBOL_GPL(ata_std_qc_defer);
 EXPORT_SYMBOL_GPL(ata_noop_qc_prep);
-EXPORT_SYMBOL_GPL(ata_port_probe);
 EXPORT_SYMBOL_GPL(ata_dev_disable);
 EXPORT_SYMBOL_GPL(sata_set_spd);
 EXPORT_SYMBOL_GPL(ata_wait_after_reset);
@@ -6842,7 +6758,6 @@ EXPORT_SYMBOL_GPL(sata_std_hardreset);
 EXPORT_SYMBOL_GPL(ata_std_postreset);
 EXPORT_SYMBOL_GPL(ata_dev_classify);
 EXPORT_SYMBOL_GPL(ata_dev_pair);
-EXPORT_SYMBOL_GPL(ata_port_disable);
 EXPORT_SYMBOL_GPL(ata_ratelimit);
 EXPORT_SYMBOL_GPL(ata_wait_register);
 EXPORT_SYMBOL_GPL(ata_scsi_queuecmd);

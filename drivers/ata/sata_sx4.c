@@ -302,11 +302,6 @@ static int pdc_port_start(struct ata_port *ap)
 {
 	struct device *dev = ap->host->dev;
 	struct pdc_port_priv *pp;
-	int rc;
-
-	rc = ata_port_start(ap);
-	if (rc)
-		return rc;
 
 	pp = devm_kzalloc(dev, sizeof(*pp), GFP_KERNEL);
 	if (!pp)
@@ -840,8 +835,7 @@ static irqreturn_t pdc20621_interrupt(int irq, void *dev_instance)
 			ap = host->ports[port_no];
 		tmp = mask & (1 << i);
 		VPRINTK("seq %u, port_no %u, ap %p, tmp %x\n", i, port_no, ap, tmp);
-		if (tmp && ap &&
-		    !(ap->flags & ATA_FLAG_DISABLED)) {
+		if (tmp && ap) {
 			struct ata_queued_cmd *qc;
 
 			qc = ata_qc_from_tag(ap, ap->link.active_tag);

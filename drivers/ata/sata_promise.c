@@ -333,7 +333,8 @@ static int pdc_common_port_start(struct ata_port *ap)
 	struct pdc_port_priv *pp;
 	int rc;
 
-	rc = ata_port_start(ap);
+	/* we use the same prd table as bmdma, allocate it */
+	rc = ata_bmdma_port_start(ap);
 	if (rc)
 		return rc;
 
@@ -984,8 +985,7 @@ static irqreturn_t pdc_interrupt(int irq, void *dev_instance)
 		/* check for a plug or unplug event */
 		ata_no = pdc_port_no_to_ata_no(i, is_sataii_tx4);
 		tmp = hotplug_status & (0x11 << ata_no);
-		if (tmp && ap &&
-		    !(ap->flags & ATA_FLAG_DISABLED)) {
+		if (tmp) {
 			struct ata_eh_info *ehi = &ap->link.eh_info;
 			ata_ehi_clear_desc(ehi);
 			ata_ehi_hotplugged(ehi);
@@ -997,8 +997,7 @@ static irqreturn_t pdc_interrupt(int irq, void *dev_instance)
 
 		/* check for a packet interrupt */
 		tmp = mask & (1 << (i + 1));
-		if (tmp && ap &&
-		    !(ap->flags & ATA_FLAG_DISABLED)) {
+		if (tmp) {
 			struct ata_queued_cmd *qc;
 
 			qc = ata_qc_from_tag(ap, ap->link.active_tag);
