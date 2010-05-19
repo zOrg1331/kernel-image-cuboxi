@@ -129,7 +129,6 @@ enum RxFilter {
 
 struct el3_private {
 	struct pcmcia_device	*p_dev;
-	dev_node_t		node;
 	/* For transceiver monitoring */
 	struct timer_list	media;
 	u16			media_status;
@@ -217,8 +216,7 @@ static int tc589_probe(struct pcmcia_device *link)
     spin_lock_init(&lp->lock);
     link->io.NumPorts1 = 16;
     link->io.Attributes1 = IO_DATA_PATH_WIDTH_16;
-    link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
-    link->irq.Handler = &el3_interrupt;
+
     link->conf.Attributes = CONF_ENABLE_IRQ;
     link->conf.IntType = INT_MEMORY_AND_IO;
     link->conf.ConfigIndex = 1;
@@ -246,8 +244,7 @@ static void tc589_detach(struct pcmcia_device *link)
 
     dev_dbg(&link->dev, "3c589_detach\n");
 
-    if (link->dev_node)
-	unregister_netdev(dev);
+    unregister_netdev(dev);
 
     tc589_release(link);
 
@@ -265,7 +262,6 @@ static void tc589_detach(struct pcmcia_device *link)
 static int tc589_config(struct pcmcia_device *link)
 {
     struct net_device *dev = link->priv;
-    struct el3_private *lp = netdev_priv(dev);
     __be16 *phys_addr;
     int ret, i, j, multi = 0, fifo;
     unsigned int ioaddr;
@@ -294,7 +290,7 @@ static int tc589_config(struct pcmcia_device *link)
     if (i != 0)
 	goto failed;
 
-    ret = pcmcia_request_irq(link, &link->irq);
+    ret = pcmcia_request_irq(link, el3_interrupt);
     if (ret)
 	    goto failed;
 
@@ -302,7 +298,7 @@ static int tc589_config(struct pcmcia_device *link)
     if (ret)
 	    goto failed;
 
-    dev->irq = link->irq.AssignedIRQ;
+    dev->irq = link->irq;
     dev->base_addr = link->io.BasePort1;
     ioaddr = dev->base_addr;
     EL3WINDOW(0);
@@ -336,16 +332,12 @@ static int tc589_config(struct pcmcia_device *link)
     else
 	printk(KERN_ERR "3c589_cs: invalid if_port requested\n");
 
-    link->dev_node = &lp->node;
     SET_NETDEV_DEV(dev, &link->dev);
 
     if (register_netdev(dev) != 0) {
 	printk(KERN_ERR "3c589_cs: register_netdev() failed\n");
-	link->dev_node = NULL;
 	goto failed;
     }
-
-    strcpy(lp->node.dev_name, dev->name);
 
     netdev_info(dev, "3Com 3c%s, io %#3lx, irq %d, hw_addr %pM\n",
 		(multi ? "562" : "589"), dev->base_addr, dev->irq,
