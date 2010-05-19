@@ -542,8 +542,7 @@ static void msg_init(struct spi_message *m, struct spi_transfer *x,
 }
 
 static ssize_t
-ds1305_nvram_read(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *attr,
+ds1305_nvram_read(struct kobject *kobj, struct bin_attribute *attr,
 		char *buf, loff_t off, size_t count)
 {
 	struct spi_device	*spi;
@@ -573,8 +572,7 @@ ds1305_nvram_read(struct file *filp, struct kobject *kobj,
 }
 
 static ssize_t
-ds1305_nvram_write(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *attr,
+ds1305_nvram_write(struct kobject *kobj, struct bin_attribute *attr,
 		char *buf, loff_t off, size_t count)
 {
 	struct spi_device	*spi;
