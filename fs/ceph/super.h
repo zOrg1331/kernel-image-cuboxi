@@ -922,4 +922,9 @@ static inline struct inode *get_dentry_parent_inode(struct dentry *dentry)
 	return NULL;
 }
 
+#ifndef CONFIG_RBD
+static inline int __init rbd_init(void) { return 0; }
+static inline void __exit rbd_exit(void) {}
+#endif
+
 #endif /* _FS_CEPH_SUPER_H */

@@ -721,6 +721,7 @@ out:
 	return ret;  /* done! */
 }
 
+#ifdef CONFIG_BLOCK
 static void init_bio_iter(struct bio *bio, struct bio **iter, int *seg)
 {
 	if (!bio) {
@@ -743,6 +744,7 @@ static void iter_bio_next(struct bio **bio_iter, int *seg)
 	if (*seg == (*bio_iter)->bi_vcnt)
 		init_bio_iter((*bio_iter)->bi_next, bio_iter, seg);
 }
+#endif
 
 /*
  * Write as much message data payload as we can.  If we finish, queue
@@ -763,9 +765,10 @@ static int write_partial_msg_pages(struct ceph_connection *con)
 	     con, con->out_msg, con->out_msg_pos.page, con->out_msg->nr_pages,
 	     con->out_msg_pos.page_pos);
 
+#ifdef CONFIG_BLOCK
 	if (msg->bio && !msg->bio_iter)
 		init_bio_iter(msg->bio, &msg->bio_iter, &msg->bio_seg);
-
+#endif
 
 	while (data_len - con->out_msg_pos.data_pos > 0) {
 		struct page *page = NULL;
@@ -787,6 +790,7 @@ static int write_partial_msg_pages(struct ceph_connection *con)
 						struct page, lru);
 			if (crc)
 				kaddr = kmap(page);
+#ifdef CONFIG_BLOCK
 		} else if (msg->bio) {
 			struct bio_vec *bv;
 
@@ -796,6 +800,7 @@ static int write_partial_msg_pages(struct ceph_connection *con)
 			if (crc)
 				kaddr = kmap(page) + page_shift;
 			max_write = bv->bv_len;
+#endif
 		} else {
 			page = con->msgr->zero_page;
 			if (crc)
@@ -834,8 +839,10 @@ static int write_partial_msg_pages(struct ceph_connection *con)
 			if (msg->pagelist)
 				list_move_tail(&page->lru,
 					       &msg->pagelist->head);
+#ifdef CONFIG_BLOCK
 			if (msg->bio)
 				iter_bio_next(&msg->bio_iter, &msg->bio_seg);
+#endif
 		}
 	}
 
@@ -1399,6 +1406,7 @@ static int read_partial_message_pages(struct ceph_connection *con,
 	return ret;
 }
 
+#ifdef CONFIG_BLOCK
 static int read_partial_message_bio(struct ceph_connection *con,
 				    struct bio **bio_iter, int *bio_seg,
 				    unsigned data_len, int datacrc)
@@ -1433,6 +1441,7 @@ static int read_partial_message_bio(struct ceph_connection *con,
 
 	return ret;
 }
+#endif
 
 /*
  * read (part of) a message.
@@ -1544,8 +1553,10 @@ static int read_partial_message(struct ceph_connection *con)
 		if (ret <= 0)
 			return ret;
 	}
+#ifdef CONFIG_BLOCK
 	if (m->bio && !m->bio_iter)
 		init_bio_iter(m->bio, &m->bio_iter, &m->bio_seg);
+#endif
 
 	/* (page) data */
 	while (con->in_msg_pos.data_pos < data_len) {
@@ -1554,6 +1565,7 @@ static int read_partial_message(struct ceph_connection *con)
 						 data_len, datacrc);
 			if (ret <= 0)
 				return ret;
+#ifdef CONFIG_BLOCK
 		} else if (m->bio) {
 
 			ret = read_partial_message_bio(con,
@@ -1561,6 +1573,7 @@ static int read_partial_message(struct ceph_connection *con)
 						 data_len, datacrc);
 			if (ret <= 0)
 				return ret;
+#endif
 		} else {
 			BUG_ON(1);
 		}
