@@ -16,7 +16,7 @@ Version 2 and 3 extensions to driver:
     Version: 3.5.34 (20060920)
     This version is for 2.6 series kernels.
 
-    For a full changelog see http://www.torque.net/sg
+    For a full changelog see http://sg.danny.cz/sg/index.html
 
 Map of SG verions to the Linux kernels in which they appear:
        ----------        ----------------------------------
@@ -44,28 +44,29 @@ Major new features in SG 3.x driver (cf SG 2.x drivers)
  ** N.B. To use direct IO 'echo 1 > /proc/scsi/sg/allow_dio' or
          'echo 1 > /sys/module/sg/parameters/allow_dio' is needed.
          That attribute is 0 by default. **
- 
- Historical note: this SCSI pass-through driver has been known as "sg" for 
+
+ Historical note: this SCSI pass-through driver has been known as "sg" for
  a decade. In broader kernel discussions "sg" is used to refer to scatter
  gather techniques. The context should clarify which "sg" is referred to.
 
  Documentation
  =============
  A web site for the SG device driver can be found at:
-	http://www.torque.net/sg  [alternatively check the MAINTAINERS file]
+	http://sg.danny.cz/sg/index.html
+	[alternatively check the MAINTAINERS file]
  The documentation for the sg version 3 driver can be found at:
- 	http://www.torque.net/sg/p/sg_v3_ho.html
+ 	http://sg.danny.cz/sg/p/scsi-generic_v3.txt
  This is a rendering from DocBook source [change the extension to "sgml"
  or "xml"]. There are renderings in "ps", "pdf", "rtf" and "txt" (soon).
  The SG_IO ioctl is now found in other parts kernel (e.g. the block layer).
- For more information see http://www.torque.net/sg/sg_io.html
+ For more information see http://sg.danny.cz/sg/sg_io.html
 
  The older, version 2 documents discuss the original sg interface in detail:
-	http://www.torque.net/sg/p/scsi-generic.txt
-	http://www.torque.net/sg/p/scsi-generic_long.txt
+	http://sg.danny.cz/sg/p/scsi-generic.txt
+	http://sg.danny.cz/sg/p/scsi-generic_long.txt
  Also available: <kernel_source>/Documentation/scsi/scsi-generic.txt
 
- Utility and test programs are available at the sg web site. They are 
+ Utility and test programs are available at the sg web site. They are
  packaged as sg3_utils (for the lk 2.4 and 2.6 series) and sg_utils
  (for the lk 2.2 series).
 */
