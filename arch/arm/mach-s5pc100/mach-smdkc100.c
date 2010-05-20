@@ -43,38 +43,48 @@
 #include <plat/fb.h>
 #include <plat/iic.h>
 
-#define UCON (S3C2410_UCON_DEFAULT | S3C2410_UCON_UCLK)
-#define ULCON (S3C2410_LCON_CS8 | S3C2410_LCON_PNONE | S3C2410_LCON_STOPB)
-#define UFCON (S3C2410_UFCON_RXTRIG8 | S3C2410_UFCON_FIFOMODE)
+/* Following are default values for UCON, ULCON and UFCON UART registers */
+#define S5PC100_UCON_DEFAULT	(S3C2410_UCON_TXILEVEL |	\
+				 S3C2410_UCON_RXILEVEL |	\
+				 S3C2410_UCON_TXIRQMODE |	\
+				 S3C2410_UCON_RXIRQMODE |	\
+				 S3C2410_UCON_RXFIFO_TOI |	\
+				 S3C2443_UCON_RXERR_IRQEN)
+
+#define S5PC100_ULCON_DEFAULT	S3C2410_LCON_CS8
+
+#define S5PC100_UFCON_DEFAULT	(S3C2410_UFCON_FIFOMODE |	\
+				 S3C2440_UFCON_RXTRIG8 |	\
+				 S3C2440_UFCON_TXTRIG16)
 
 static struct s3c2410_uartcfg smdkc100_uartcfgs[] __initdata = {
 	[0] = {
 		.hwport	     = 0,
 		.flags	     = 0,
-		.ucon	     = 0x3c5,
-		.ulcon	     = 0x03,
-		.ufcon	     = 0x51,
+		.ucon	     = S5PC100_UCON_DEFAULT,
+		.ulcon	     = S5PC100_ULCON_DEFAULT,
+		.ufcon	     = S5PC100_UFCON_DEFAULT,
 	},
 	[1] = {
 		.hwport	     = 1,
 		.flags	     = 0,
-		.ucon	     = 0x3c5,
-		.ulcon	     = 0x03,
-		.ufcon	     = 0x51,
+		.ucon	     = S5PC100_UCON_DEFAULT,
+		.ulcon	     = S5PC100_ULCON_DEFAULT,
+		.ufcon	     = S5PC100_UFCON_DEFAULT,
 	},
 	[2] = {
 		.hwport	     = 2,
 		.flags	     = 0,
-		.ucon	     = 0x3c5,
-		.ulcon	     = 0x03,
-		.ufcon	     = 0x51,
+		.ucon	     = S5PC100_UCON_DEFAULT,
+		.ulcon	     = S5PC100_ULCON_DEFAULT,
+		.ufcon	     = S5PC100_UFCON_DEFAULT,
 	},
 	[3] = {
 		.hwport	     = 3,
 		.flags	     = 0,
-		.ucon	     = 0x3c5,
-		.ulcon	     = 0x03,
-		.ufcon	     = 0x51,
+		.ucon	     = S5PC100_UCON_DEFAULT,
+		.ulcon	     = S5PC100_ULCON_DEFAULT,
+		.ufcon	     = S5PC100_UFCON_DEFAULT,
 	},
 };
 
@@ -118,8 +128,7 @@ static struct platform_device smdkc100_lcd_powerdev = {
 static struct s3c_fb_pd_win smdkc100_fb_win0 = {
 	/* this is to ensure we use win0 */
 	.win_mode	= {
-		.refresh	= 70,
-		.pixclock	= (8+13+3+800)*(7+5+1+480),
+		.pixclock = 1000000000000ULL / ((8+13+3+800)*(7+5+1+480)*80),
 		.left_margin	= 8,
 		.right_margin	= 13,
 		.upper_margin	= 7,
