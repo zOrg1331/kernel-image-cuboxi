@@ -93,11 +93,11 @@ struct bin_attribute {
 	struct attribute	attr;
 	size_t			size;
 	void			*private;
-	ssize_t (*read)(struct file *, struct kobject *, struct bin_attribute *,
+	ssize_t (*read)(struct kobject *, struct bin_attribute *,
 			char *, loff_t, size_t);
-	ssize_t (*write)(struct file *,struct kobject *, struct bin_attribute *,
+	ssize_t (*write)(struct kobject *, struct bin_attribute *,
 			 char *, loff_t, size_t);
-	int (*mmap)(struct file *, struct kobject *, struct bin_attribute *attr,
+	int (*mmap)(struct kobject *, struct bin_attribute *attr,
 		    struct vm_area_struct *vma);
 };
 
