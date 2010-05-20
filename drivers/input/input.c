@@ -838,6 +838,7 @@ int input_get_keycode(struct input_dev *dev,
 		memset(&kt_entry, 0, sizeof(kt_entry));
 		kt_entry.len = 4;
 		kt_entry.index = scancode;
+		kt_entry.scancode = (char *)&scancode;
 
 		spin_lock_irqsave(&dev->event_lock, flags);
 		retval = dev->getkeycodebig_from_index(dev, &kt_entry);
