@@ -14,6 +14,7 @@
 #include <linux/types.h>
 #include <linux/input.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/random.h>
 #include <linux/major.h>
 #include <linux/proc_fs.h>
@@ -87,12 +88,14 @@ static int input_defuzz_abs_event(int value, int old_val, int fuzz)
 }
 
 /*
- * Pass event through all open handles. This function is called with
+ * Pass event first through all filters and then, if event has not been
+ * filtered out, through all open handles. This function is called with
  * dev->event_lock held and interrupts disabled.
  */
 static void input_pass_event(struct input_dev *dev,
 			     unsigned int type, unsigned int code, int value)
 {
+	struct input_handler *handler;
 	struct input_handle *handle;
 
 	rcu_read_lock();
@@ -100,11 +103,25 @@ static void input_pass_event(struct input_dev *dev,
 	handle = rcu_dereference(dev->grab);
 	if (handle)
 		handle->handler->event(handle, type, code, value);
-	else
-		list_for_each_entry_rcu(handle, &dev->h_list, d_node)
-			if (handle->open)
-				handle->handler->event(handle,
-							type, code, value);
+	else {
+		bool filtered = false;
+
+		list_for_each_entry_rcu(handle, &dev->h_list, d_node) {
+			if (!handle->open)
+				continue;
+
+			handler = handle->handler;
+			if (!handler->filter) {
+				if (filtered)
+					break;
+
+				handler->event(handle, type, code, value);
+
+			} else if (handler->filter(handle, type, code, value))
+				filtered = true;
+		}
+	}
+
 	rcu_read_unlock();
 }
 
@@ -632,7 +649,7 @@ static int input_default_getkeycode_from_scancode(struct input_dev *dev,
 static int input_default_setkeycode(struct input_dev *dev,
 				    struct keycode_table_entry *kt_entry)
 {
-	int old_keycode;
+	u32 old_keycode;
 	int i;
 	u32 scancode;
 
@@ -670,12 +687,12 @@ static int input_default_setkeycode(struct input_dev *dev,
 		}
 	}
 
-	clear_bit(old_keycode, dev->keybit);
-	set_bit(kt_entry->keycode, dev->keybit);
+	__clear_bit(old_keycode, dev->keybit);
+	__set_bit(kt_entry->keycode, dev->keybit);
 
 	for (i = 0; i < dev->keycodemax; i++) {
 		if (input_fetch_keycode(dev, i) == old_keycode) {
-			set_bit(old_keycode, dev->keybit);
+			__set_bit(old_keycode, dev->keybit);
 			break; /* Setting the bit twice is useless, so break */
 		}
 	}
@@ -797,8 +814,11 @@ EXPORT_SYMBOL(input_set_keycode_big);
  * This function should be called by anyone interested in retrieving current
  * keymap. Presently keyboard and evdev handlers use it.
  */
-int input_get_keycode(struct input_dev *dev, int scancode, int *keycode)
+int input_get_keycode(struct input_dev *dev,
+		      unsigned int scancode, unsigned int *keycode)
 {
+	unsigned long flags;
+
 	if (dev->getkeycode) {
 		/*
 		 * Use the legacy calls
@@ -818,8 +838,11 @@ int input_get_keycode(struct input_dev *dev, int scancode, int *keycode)
 		memset(&kt_entry, 0, sizeof(kt_entry));
 		kt_entry.len = 4;
 		kt_entry.index = scancode;
+		kt_entry.scancode = (char *)&scancode;
 
+		spin_lock_irqsave(&dev->event_lock, flags);
 		retval = dev->getkeycodebig_from_index(dev, &kt_entry);
+		spin_unlock_irqrestore(&dev->event_lock, flags);
 
 		*keycode = kt_entry.keycode;
 		return retval;
@@ -836,13 +859,14 @@ EXPORT_SYMBOL(input_get_keycode);
  * This function should be called by anyone needing to update current
  * keymap. Presently keyboard and evdev handlers use it.
  */
-int input_set_keycode(struct input_dev *dev, int scancode, int keycode)
+int input_set_keycode(struct input_dev *dev,
+		      unsigned int scancode, unsigned int keycode)
 {
 	unsigned long flags;
 	int old_keycode;
 	int retval;
 
-	if (keycode < 0 || keycode > KEY_MAX)
+	if (keycode > KEY_MAX)
 		return -EINVAL;
 
 	spin_lock_irqsave(&dev->event_lock, flags);
@@ -883,6 +907,9 @@ int input_set_keycode(struct input_dev *dev, int scancode, int keycode)
 			goto out;
 	}
 
+	/* Make sure KEY_RESERVED did not get enabled. */
+	__clear_bit(KEY_RESERVED, dev->keybit);
+
 	/*
 	 * Simulate keyup event if keycode is not present
 	 * in the keymap anymore
@@ -910,12 +937,13 @@ EXPORT_SYMBOL(input_set_keycode);
 		if (i != BITS_TO_LONGS(max)) \
 			continue;
 
-static const struct input_device_id *input_match_device(const struct input_device_id *id,
+static const struct input_device_id *input_match_device(struct input_handler *handler,
 							struct input_dev *dev)
 {
+	const struct input_device_id *id;
 	int i;
 
-	for (; id->flags || id->driver_info; id++) {
+	for (id = handler->id_table; id->flags || id->driver_info; id++) {
 
 		if (id->flags & INPUT_DEVICE_ID_MATCH_BUS)
 			if (id->bustype != dev->id.bustype)
@@ -943,7 +971,8 @@ static const struct input_device_id *input_match_device(const struct input_devic
 		MATCH_BIT(ffbit,  FF_MAX);
 		MATCH_BIT(swbit,  SW_MAX);
 
-		return id;
+		if (!handler->match || handler->match(handler, dev))
+			return id;
 	}
 
 	return NULL;
@@ -954,10 +983,7 @@ static int input_attach_handler(struct input_dev *dev, struct input_handler *han
 	const struct input_device_id *id;
 	int error;
 
-	if (handler->blacklist && input_match_device(handler->blacklist, dev))
-		return -ENODEV;
-
-	id = input_match_device(handler->id_table, dev);
+	id = input_match_device(handler, dev);
 	if (!id)
 		return -ENODEV;
 
@@ -1193,6 +1219,8 @@ static int input_handlers_seq_show(struct seq_file *seq, void *v)
 	union input_seq_state *state = (union input_seq_state *)&seq->private;
 
 	seq_printf(seq, "N: Number=%u Name=%s", state->pos, handler->name);
+	if (handler->filter)
+		seq_puts(seq, " (filter)");
 	if (handler->fops)
 		seq_printf(seq, " Minor=%d", handler->minor);
 	seq_putc(seq, '\n');
@@ -1756,6 +1784,25 @@ void input_set_capability(struct input_dev *dev, unsigned int type, unsigned int
 }
 EXPORT_SYMBOL(input_set_capability);
 
+#define INPUT_CLEANSE_BITMASK(dev, type, bits)				\
+	do {								\
+		if (!test_bit(EV_##type, dev->evbit))			\
+			memset(dev->bits##bit, 0,			\
+				sizeof(dev->bits##bit));		\
+	} while (0)
+
+static void input_cleanse_bitmasks(struct input_dev *dev)
+{
+	INPUT_CLEANSE_BITMASK(dev, KEY, key);
+	INPUT_CLEANSE_BITMASK(dev, REL, rel);
+	INPUT_CLEANSE_BITMASK(dev, ABS, abs);
+	INPUT_CLEANSE_BITMASK(dev, MSC, msc);
+	INPUT_CLEANSE_BITMASK(dev, LED, led);
+	INPUT_CLEANSE_BITMASK(dev, SND, snd);
+	INPUT_CLEANSE_BITMASK(dev, FF, ff);
+	INPUT_CLEANSE_BITMASK(dev, SW, sw);
+}
+
 /**
  * input_register_device - register device with input core
  * @dev: device to be registered
@@ -1775,13 +1822,19 @@ int input_register_device(struct input_dev *dev)
 	const char *path;
 	int error;
 
+	/* Every input device generates EV_SYN/SYN_REPORT events. */
 	__set_bit(EV_SYN, dev->evbit);
+
+	/* KEY_RESERVED is not supposed to be transmitted to userspace. */
+	__clear_bit(KEY_RESERVED, dev->keybit);
+
+	/* Make sure that bitmasks not mentioned in dev->evbit are clean. */
+	input_cleanse_bitmasks(dev);
 
 	/*
 	 * If delay and period are pre-set by the driver, then autorepeating
 	 * is handled by the driver itself and we don't do it in input.c.
 	 */
-
 	init_timer(&dev->timer);
 	if (!dev->rep[REP_DELAY] && !dev->rep[REP_PERIOD]) {
 		dev->timer.data = (long) dev;
@@ -1987,7 +2040,16 @@ int input_register_handle(struct input_handle *handle)
 	error = mutex_lock_interruptible(&dev->mutex);
 	if (error)
 		return error;
-	list_add_tail_rcu(&handle->d_node, &dev->h_list);
+
+	/*
+	 * Filters go to the head of the list, normal handlers
+	 * to the tail.
+	 */
+	if (handler->filter)
+		list_add_rcu(&handle->d_node, &dev->h_list);
+	else
+		list_add_tail_rcu(&handle->d_node, &dev->h_list);
+
 	mutex_unlock(&dev->mutex);
 
 	/*
@@ -2038,35 +2100,37 @@ static int input_open_file(struct inode *inode, struct file *file)
 	const struct file_operations *old_fops, *new_fops = NULL;
 	int err;
 
-	lock_kernel();
+	err = mutex_lock_interruptible(&input_mutex);
+	if (err)
+		return err;
+
 	/* No load-on-demand here? */
 	handler = input_table[iminor(inode) >> 5];
-	if (!handler || !(new_fops = fops_get(handler->fops))) {
-		err = -ENODEV;
-		goto out;
-	}
+	if (handler)
+		new_fops = fops_get(handler->fops);
+
+	mutex_unlock(&input_mutex);
 
 	/*
 	 * That's _really_ odd. Usually NULL ->open means "nothing special",
 	 * not "no device". Oh, well...
 	 */
-	if (!new_fops->open) {
+	if (!new_fops || !new_fops->open) {
 		fops_put(new_fops);
 		err = -ENODEV;
 		goto out;
 	}
+
 	old_fops = file->f_op;
 	file->f_op = new_fops;
 
 	err = new_fops->open(inode, file);
-
 	if (err) {
 		fops_put(file->f_op);
 		file->f_op = fops_get(old_fops);
 	}
 	fops_put(old_fops);
 out:
-	unlock_kernel();
 	return err;
 }
 

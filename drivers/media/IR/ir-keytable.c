@@ -14,6 +14,7 @@
 
 
 #include <linux/input.h>
+#include <linux/slab.h>
 #include "ir-core-priv.h"
 
 /* Sizes are in bytes, 256 bytes allows for 32 entries on x64 */
@@ -85,7 +86,7 @@ static int ir_resize_table(struct ir_scancode_table *rc_tab)
  */
 static int ir_do_setkeycode(struct input_dev *dev,
 			    struct ir_scancode_table *rc_tab,
-			    int scancode, int keycode,
+			    unsigned scancode, unsigned keycode,
 			    bool resize)
 {
 	unsigned int i;
@@ -170,7 +171,7 @@ static int ir_do_setkeycode(struct input_dev *dev,
  * This routine is used to handle evdev EVIOCSKEY ioctl.
  */
 static int ir_setkeycode(struct input_dev *dev,
-			 int scancode, int keycode)
+			 unsigned int scancode, unsigned int keycode)
 {
 	int rc;
 	unsigned long flags;
@@ -223,7 +224,7 @@ static int ir_setkeytable(struct input_dev *dev,
  * This routine is used to handle evdev EVIOCGKEY ioctl.
  */
 static int ir_getkeycode(struct input_dev *dev,
-			 int scancode, int *keycode)
+			 unsigned int scancode, unsigned int *keycode)
 {
 	int start, end, mid;
 	unsigned long flags;

@@ -278,6 +278,8 @@ static int evdev_open(struct inode *inode, struct file *file)
 		goto err_free_client;
 
 	file->private_data = client;
+	nonseekable_open(inode, file);
+
 	return 0;
 
  err_free_client:
@@ -515,7 +517,7 @@ static long evdev_do_ioctl(struct file *file, unsigned int cmd,
 	int __user *ip = (int __user *)p;
 	struct keycode_table_entry kt, *kt_p = p;
 	char scancode[16];
-	int i, t, u, v;
+	unsigned int i, t, u, v;
 	int error;
 
 	switch (cmd) {
