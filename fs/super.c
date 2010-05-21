@@ -30,7 +30,9 @@
 #include <linux/writeback.h>		/* for the emergency remount stuff */
 #include <linux/idr.h>
 #include <linux/mutex.h>
+#include <linux/file.h>
 #include <linux/backing-dev.h>
+#include <asm/uaccess.h>
 #include "internal.h"
 
 
