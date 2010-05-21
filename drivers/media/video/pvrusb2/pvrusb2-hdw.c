@@ -2459,6 +2459,19 @@ struct pvr2_hdw *pvr2_hdw_create(struct usb_interface *intf,
 		   hdw,hdw_desc->description);
 	pvr2_trace(PVR2_TRACE_INFO, "Hardware description: %s",
 		hdw_desc->description);
+	if (hdw_desc->flag_is_experimental) {
+		pvr2_trace(PVR2_TRACE_INFO, "**********");
+		pvr2_trace(PVR2_TRACE_INFO,
+			   "WARNING: Support for this device (%s) is"
+			   " experimental.", hdw_desc->description);
+		pvr2_trace(PVR2_TRACE_INFO,
+			   "Important functionality might not be"
+			   " entirely working.");
+		pvr2_trace(PVR2_TRACE_INFO,
+			   "Please consider contacting the driver author to"
+			   " help with further stabilization of the driver.");
+		pvr2_trace(PVR2_TRACE_INFO, "**********");
+	}
 	if (!hdw) goto fail;
 
 	init_timer(&hdw->quiescent_timer);
@@ -4084,11 +4097,19 @@ void pvr2_hdw_device_reset(struct pvr2_hdw *hdw)
 
 void pvr2_hdw_cpureset_assert(struct pvr2_hdw *hdw,int val)
 {
-	char da[1];
+	char *da;
 	unsigned int pipe;
 	int ret;
 
 	if (!hdw->usb_dev) return;
+
+	da = kmalloc(16, GFP_KERNEL);
+
+	if (da == NULL) {
+		pvr2_trace(PVR2_TRACE_ERROR_LEGS,
+			   "Unable to allocate memory to control CPU reset");
+		return;
+	}
 
 	pvr2_trace(PVR2_TRACE_INIT,"cpureset_assert(%d)",val);
 
@@ -4103,6 +4124,8 @@ void pvr2_hdw_cpureset_assert(struct pvr2_hdw *hdw,int val)
 			   "cpureset_assert(%d) error=%d",val,ret);
 		pvr2_hdw_render_useless(hdw);
 	}
+
+	kfree(da);
 }
 
 
