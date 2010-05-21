@@ -21,6 +21,7 @@ config ARCH_SH7372
 	select CPU_V7
 	select HAVE_CLK
 	select COMMON_CLKDEV
+	select SH_CLK_CPG
 	select GENERIC_CLOCKEVENTS
 
 comment "SH-Mobile Board Type"
@@ -76,6 +77,15 @@ config SH_TIMER_CMT
 	help
 	  This enables build of the CMT timer driver.
 
+config SH_TIMER_TMU
+	bool "TMU timer driver"
+	default y
+	help
+	  This enables build of the TMU timer driver.
+
 endmenu
+
+config SH_CLK_CPG
+	bool
 
 endif

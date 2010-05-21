@@ -26,16 +26,20 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/physmap.h>
+#include <linux/i2c.h>
+#include <linux/i2c/tsc2007.h>
 #include <linux/io.h>
 #include <linux/smsc911x.h>
 #include <linux/gpio.h>
 #include <linux/input.h>
 #include <linux/input/sh_keysc.h>
+#include <linux/usb/r8a66597.h>
 #include <mach/common.h>
 #include <mach/sh7372.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
+#include <asm/mach/time.h>
 
 /*
  * Address	Interface		BusWidth	note
@@ -80,12 +84,25 @@
  */
 
 /*
- * KEYSC
+ * LCD / IRQ / KEYSC / IrDA
  *
- * SW43		KEYSC
- * -------------------------
- * ON		enable
- * OFF		disable
+ * IRQ = IRQ26 (TS), IRQ27 (VIO), IRQ28 (TouchScreen)
+ * LCD = 2nd LCDC
+ *
+ * 		|		SW43			|
+ * SW3		|	ON		|	OFF	|
+ * -------------+-----------------------+---------------+
+ * ON		| KEY / IrDA		| LCD		|
+ * OFF		| KEY / IrDA / IRQ	| IRQ		|
+ */
+
+/*
+ * USB
+ *
+ * J7 : 1-2  MAX3355E VBUS
+ *      2-3  DC 5.0V
+ *
+ * S39: bit2: off
  */
 
 /* MTD */
@@ -227,11 +244,73 @@ static struct platform_device sdhi0_device = {
 	.id             = 0,
 };
 
+/* USB1 */
+void usb1_host_port_power(int port, int power)
+{
+	if (!power) /* only power-on supported for now */
+		return;
+
+	/* set VBOUT/PWEN and EXTLP1 in DVSTCTR */
+	__raw_writew(__raw_readw(0xE68B0008) | 0x600, 0xE68B0008);
+}
+
+static struct r8a66597_platdata usb1_host_data = {
+	.on_chip	= 1,
+	.port_power	= usb1_host_port_power,
+};
+
+static struct resource usb1_host_resources[] = {
+	[0] = {
+		.name	= "USBHS",
+		.start	= 0xE68B0000,
+		.end	= 0xE68B00E6 - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start	= 215,
+		.end	= 215,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device usb1_host_device = {
+	.name	= "r8a66597_hcd",
+	.id	= 1,
+	.dev = {
+		.dma_mask		= NULL,         /*  not use dma */
+		.coherent_dma_mask	= 0xffffffff,
+		.platform_data		= &usb1_host_data,
+	},
+	.num_resources	= ARRAY_SIZE(usb1_host_resources),
+	.resource	= usb1_host_resources,
+};
+
 static struct platform_device *ap4evb_devices[] __initdata = {
 	&nor_flash_device,
 	&smc911x_device,
 	&keysc_device,
 	&sdhi0_device,
+	&usb1_host_device,
+};
+
+/* TouchScreen (Needs SW3 set to OFF) */
+#define IRQ28	396
+struct tsc2007_platform_data tsc2007_info = {
+	.model			= 2007,
+	.x_plate_ohms		= 180,
+};
+
+/* I2C */
+static struct i2c_board_info i2c1_devices[] = {
+	{
+		I2C_BOARD_INFO("r2025sd", 0x32),
+	},
+	{
+		I2C_BOARD_INFO("tsc2007", 0x48),
+		.type		= "tsc2007",
+		.platform_data	= &tsc2007_info,
+		.irq		= IRQ28,
+	},
 };
 
 static struct map_desc ap4evb_io_desc[] __initdata = {
@@ -250,9 +329,8 @@ static void __init ap4evb_map_io(void)
 {
 	iotable_init(ap4evb_io_desc, ARRAY_SIZE(ap4evb_io_desc));
 
-	/* setup early devices, clocks and console here as well */
+	/* setup early devices and console here as well */
 	sh7372_add_early_devices();
-	sh7367_clock_init(); /* use g3 clocks for now */
 	shmobile_setup_console();
 }
 
@@ -318,10 +396,38 @@ static void __init ap4evb_init(void)
 	gpio_request(GPIO_FN_SDHID0_1, NULL);
 	gpio_request(GPIO_FN_SDHID0_0, NULL);
 
+	/* enable TouchScreen */
+	gpio_request(GPIO_FN_IRQ28_123, NULL);
+	set_irq_type(IRQ28, IRQ_TYPE_LEVEL_LOW);
+
+	i2c_register_board_info(1, i2c1_devices,
+				ARRAY_SIZE(i2c1_devices));
+
+	/* USB enable */
+	gpio_request(GPIO_FN_VBUS0_1,    NULL);
+	gpio_request(GPIO_FN_IDIN_1_18,  NULL);
+	gpio_request(GPIO_FN_PWEN_1_115, NULL);
+	gpio_request(GPIO_FN_OVCN_1_114, NULL);
+	gpio_request(GPIO_FN_EXTLP_1,    NULL);
+	gpio_request(GPIO_FN_OVCN2_1,    NULL);
+
+	/* setup USB phy */
+	__raw_writew(0x8a0a, 0xE6058130);	/* USBCR2 */
+
 	sh7372_add_standard_devices();
 
 	platform_add_devices(ap4evb_devices, ARRAY_SIZE(ap4evb_devices));
 }
+
+static void __init ap4evb_timer_init(void)
+{
+	sh7372_clock_init();
+	shmobile_timer.init();
+}
+
+static struct sys_timer ap4evb_timer = {
+	.init		= ap4evb_timer_init,
+};
 
 MACHINE_START(AP4EVB, "ap4evb")
 	.phys_io	= 0xe6000000,
@@ -329,5 +435,5 @@ MACHINE_START(AP4EVB, "ap4evb")
 	.map_io		= ap4evb_map_io,
 	.init_irq	= sh7372_init_irq,
 	.init_machine	= ap4evb_init,
-	.timer		= &shmobile_timer,
+	.timer		= &ap4evb_timer,
 MACHINE_END
