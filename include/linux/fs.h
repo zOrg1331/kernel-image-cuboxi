@@ -1314,8 +1314,6 @@ extern int send_sigurg(struct fown_struct *fown);
 extern struct list_head super_blocks;
 extern spinlock_t sb_lock;
 
-#define sb_entry(list)  list_entry((list), struct super_block, s_list)
-#define S_BIAS (1<<30)
 struct super_block {
 	struct list_head	s_list;		/* Keep this first */
 	dev_t			s_dev;		/* search index; _not_ kdev_t */
@@ -1334,12 +1332,11 @@ struct super_block {
 	struct rw_semaphore	s_umount;
 	struct mutex		s_lock;
 	int			s_count;
-	int			s_need_sync;
 	atomic_t		s_active;
 #ifdef CONFIG_SECURITY
 	void                    *s_security;
 #endif
-	struct xattr_handler	**s_xattr;
+	const struct xattr_handler **s_xattr;
 
 	struct list_head	s_inodes;	/* all inodes */
 	struct hlist_head	s_anon;		/* anonymous dentries for (nfs) exporting */
@@ -1431,7 +1428,8 @@ extern void dentry_unhash(struct dentry *dentry);
  * VFS file helper functions.
  */
 extern int file_permission(struct file *, int);
-
+extern void inode_init_owner(struct inode *inode, const struct inode *dir,
+			mode_t mode);
 /*
  * VFS FS_IOC_FIEMAP helper definitions.
  */
@@ -1744,6 +1742,7 @@ struct file_system_type {
 
 	struct lock_class_key s_lock_key;
 	struct lock_class_key s_umount_key;
+	struct lock_class_key s_vfs_rename_key;
 
 	struct lock_class_key i_lock_key;
 	struct lock_class_key i_mutex_key;
@@ -1781,8 +1780,6 @@ extern int get_sb_pseudo(struct file_system_type *, char *,
 	const struct super_operations *ops, unsigned long,
 	struct vfsmount *mnt);
 extern void simple_set_mnt(struct vfsmount *mnt, struct super_block *sb);
-int __put_super_and_need_restart(struct super_block *sb);
-void put_super(struct super_block *sb);
 
 /* Alas, no aliases. Too much hassle with bringing module.h everywhere */
 #define fops_get(fops) \
@@ -1802,6 +1799,8 @@ extern void drop_collected_mounts(struct vfsmount *);
 extern int iterate_mounts(int (*)(struct vfsmount *, void *), void *,
 			  struct vfsmount *);
 extern int vfs_statfs(struct dentry *, struct kstatfs *);
+extern int freeze_super(struct super_block *super);
+extern int thaw_super(struct super_block *super);
 
 extern int current_umask(void);
 
@@ -2087,9 +2086,9 @@ extern int __filemap_fdatawrite_range(struct address_space *mapping,
 extern int filemap_fdatawrite_range(struct address_space *mapping,
 				loff_t start, loff_t end);
 
-extern int vfs_fsync_range(struct file *file, struct dentry *dentry,
-			   loff_t start, loff_t end, int datasync);
-extern int vfs_fsync(struct file *file, struct dentry *dentry, int datasync);
+extern int vfs_fsync_range(struct file *file, loff_t start, loff_t end,
+			   int datasync);
+extern int vfs_fsync(struct file *file, int datasync);
 extern int generic_write_sync(struct file *file, loff_t pos, loff_t count);
 extern void sync_supers(void);
 extern void emergency_sync(void);
@@ -2329,6 +2328,7 @@ extern struct super_block *get_super(struct block_device *);
 extern struct super_block *get_active_super(struct block_device *bdev);
 extern struct super_block *user_get_super(dev_t);
 extern void drop_super(struct super_block *sb);
+extern void iterate_supers(void (*)(struct super_block *, void *), void *);
 
 extern int dcache_dir_open(struct inode *, struct file *);
 extern int dcache_dir_close(struct inode *, struct file *);
