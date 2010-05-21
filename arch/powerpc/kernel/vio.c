@@ -645,8 +645,10 @@ void vio_cmo_set_dev_desired(struct vio_dev *viodev, size_t desired)
 			found = 1;
 			break;
 		}
-	if (!found)
+	if (!found) {
+		spin_unlock_irqrestore(&vio_cmo.lock, flags);
 		return;
+	}
 
 	/* Increase/decrease in desired device entitlement */
 	if (desired >= viodev->cmo.desired) {
@@ -958,9 +960,12 @@ viodev_cmo_rd_attr(allocated);
 
 static ssize_t name_show(struct device *, struct device_attribute *, char *);
 static ssize_t devspec_show(struct device *, struct device_attribute *, char *);
+static ssize_t modalias_show(struct device *dev, struct device_attribute *attr,
+			     char *buf);
 static struct device_attribute vio_cmo_dev_attrs[] = {
 	__ATTR_RO(name),
 	__ATTR_RO(devspec),
+	__ATTR_RO(modalias),
 	__ATTR(cmo_desired,       S_IWUSR|S_IRUSR|S_IWGRP|S_IRGRP|S_IROTH,
 	       viodev_cmo_desired_show, viodev_cmo_desired_set),
 	__ATTR(cmo_entitled,      S_IRUGO, viodev_cmo_entitled_show,      NULL),
@@ -1320,9 +1325,27 @@ static ssize_t devspec_show(struct device *dev,
 	return sprintf(buf, "%s\n", of_node ? of_node->full_name : "none");
 }
 
+static ssize_t modalias_show(struct device *dev, struct device_attribute *attr,
+			     char *buf)
+{
+	const struct vio_dev *vio_dev = to_vio_dev(dev);
+	struct device_node *dn;
+	const char *cp;
+
+	dn = dev->archdata.of_node;
+	if (!dn)
+		return -ENODEV;
+	cp = of_get_property(dn, "compatible", NULL);
+	if (!cp)
+		return -ENODEV;
+
+	return sprintf(buf, "vio:T%sS%s\n", vio_dev->type, cp);
+}
+
 static struct device_attribute vio_dev_attrs[] = {
 	__ATTR_RO(name),
 	__ATTR_RO(devspec),
+	__ATTR_RO(modalias),
 	__ATTR_NULL
 };
 
@@ -1358,6 +1381,29 @@ static int vio_hotplug(struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
+static int vio_pm_suspend(struct device *dev)
+{
+	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
+
+	if (pm && pm->suspend)
+		return pm->suspend(dev);
+	return 0;
+}
+
+static int vio_pm_resume(struct device *dev)
+{
+	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
+
+	if (pm && pm->resume)
+		return pm->resume(dev);
+	return 0;
+}
+
+const struct dev_pm_ops vio_dev_pm_ops = {
+	.suspend = vio_pm_suspend,
+	.resume = vio_pm_resume,
+};
+
 static struct bus_type vio_bus_type = {
 	.name = "vio",
 	.dev_attrs = vio_dev_attrs,
@@ -1365,6 +1411,7 @@ static struct bus_type vio_bus_type = {
 	.match = vio_bus_match,
 	.probe = vio_bus_probe,
 	.remove = vio_bus_remove,
+	.pm = &vio_dev_pm_ops,
 };
 
 /**
