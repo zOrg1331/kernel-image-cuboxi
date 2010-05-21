@@ -1,0 +1,58 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Wed, 5 Aug 2009 09:11:06 +0200
+Subject: [net] igbvf: recognize failure to set mac address
+Message-id: 4A79308A.7010408@redhat.com
+O-Subject: [PATCH RHEL 5.5] igbvf: Allow VF driver to correctly recognize failure to set mac address
+Bugzilla: 512469
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=512469
+
+Description:
+The VF driver was not correctly recognizing that it did not correctly set
+it's mac address. As a result the VF driver was unable to receive network
+traffic until being unloaded and reloaded.  The issue was root caused to
+the fact that the CTS bit was not taken into account when checking for the
+request being NAKed.
+
+Without this patch the MAC address cannot be set by the guests.
+
+Upstream Status:
+According to bugzilla comment #4 from John Ronciak this is going
+upstream soon.
+
+Brew Build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1916201
+
+Test Status:
+Couldn't verify the patch myself due to lack of hardware but it's pretty
+straight forward.
+
+   Stefan
+
+diff --git a/drivers/net/igbvf/vf.c b/drivers/net/igbvf/vf.c
+index 2a4faf9..a9a61ef 100644
+--- a/drivers/net/igbvf/vf.c
++++ b/drivers/net/igbvf/vf.c
+@@ -274,6 +274,8 @@ static s32 e1000_set_vfta_vf(struct e1000_hw *hw, u16 vid, bool set)
+ 
+ 	err = mbx->ops.read_posted(hw, msgbuf, 2);
+ 
++	msgbuf[0] &= ~E1000_VT_MSGTYPE_CTS;
++
+ 	/* if nacked the vlan was rejected */
+ 	if (!err && (msgbuf[0] == (E1000_VF_SET_VLAN | E1000_VT_MSGTYPE_NACK)))
+ 		err = -E1000_ERR_MAC_INIT;
+@@ -317,6 +319,8 @@ static void e1000_rar_set_vf(struct e1000_hw *hw, u8 * addr, u32 index)
+ 	if (!ret_val)
+ 		ret_val = mbx->ops.read_posted(hw, msgbuf, 3);
+ 
++	msgbuf[0] &= ~E1000_VT_MSGTYPE_CTS;
++
+ 	/* if nacked the address was rejected, use "perm_addr" */
+ 	if (!ret_val &&
+ 	    (msgbuf[0] == (E1000_VF_SET_MAC_ADDR | E1000_VT_MSGTYPE_NACK)))

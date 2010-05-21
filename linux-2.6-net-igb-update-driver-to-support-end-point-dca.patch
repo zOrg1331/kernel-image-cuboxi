@@ -1,0 +1,388 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Wed, 27 Jan 2010 14:07:25 -0500
+Subject: [net] igb: update driver to support End Point DCA
+Message-id: <4B60489D.3040300@redhat.com>
+Patchwork-id: 22949
+O-Subject: [RHEL 5.5 PATCH] igb: Update the igb driver to support End Point DCA
+Bugzilla: 513712
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: John Linville <linville@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=513712
+
+Description:
+DCA allows the network device to put data in the CPU cache and notify
+the chipset of that event. This reduces cache misses during receives.
+
+A new config option called CONFIG_IGB_DCA is introduced. The code is
+mostly guarded by this option, except for a few defines and renames.
+
+Upstream Status:
+http://git.kernel.org/linus/fe4506b6a2f9716ef62583020581ae2032573fed
+http://git.kernel.org/linus/421e02f0e9c3335028750ee411e5534dab82efbd
+http://git.kernel.org/linus/7e0e99ef43b1fab8caf0348e31704c7d15060ce0
+http://git.kernel.org/linus/2d064c06fecadadcb81a452acd373af00dfb1fec
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2228409
+
+Test Status:
+Intel has positively tested this update.
+
+  Stefan
+
+diff --git a/drivers/net/Kconfig b/drivers/net/Kconfig
+index 2c48ac7..abd18ac 100644
+--- a/drivers/net/Kconfig
++++ b/drivers/net/Kconfig
+@@ -2027,6 +2027,11 @@ config IGBVF
+          To compile this driver as a module, choose M here. The module
+          will be called igbvf.
+ 
++config IGB_DCA
++	bool "Enable DCA"
++	default y
++	depends on IGB && DCA && !(IGB=y && DCA=m)
++
+ source "drivers/net/ixp2000/Kconfig"
+ 
+ config MYRI_SBUS
+diff --git a/drivers/net/igb/e1000_82575.h b/drivers/net/igb/e1000_82575.h
+index ded7b4c..bd8e275 100644
+--- a/drivers/net/igb/e1000_82575.h
++++ b/drivers/net/igb/e1000_82575.h
+@@ -152,6 +152,16 @@ struct e1000_adv_tx_context_desc {
+ #define E1000_RXDCTL_QUEUE_ENABLE  0x02000000 /* Enable specific Rx Queue */
+ 
+ /* Direct Cache Access (DCA) definitions */
++#define E1000_DCA_CTRL_DCA_MODE_DISABLE 0x01 /* DCA Disable */
++#define E1000_DCA_CTRL_DCA_MODE_CB2     0x02 /* DCA Mode CB2 */
++
++#define E1000_DCA_RXCTRL_CPUID_MASK 0x0000001F /* Rx CPUID Mask */
++#define E1000_DCA_RXCTRL_DESC_DCA_EN (1 << 5) /* DCA Rx Desc enable */
++#define E1000_DCA_RXCTRL_HEAD_DCA_EN (1 << 6) /* DCA Rx Desc header enable */
++#define E1000_DCA_RXCTRL_DATA_DCA_EN (1 << 7) /* DCA Rx Desc payload enable */
++
++#define E1000_DCA_TXCTRL_CPUID_MASK 0x0000001F /* Tx CPUID Mask */
++#define E1000_DCA_TXCTRL_DESC_DCA_EN (1 << 5) /* DCA Tx Desc enable */
+ #define E1000_DCA_TXCTRL_TX_WB_RO_EN (1 << 11) /* Tx Desc writeback RO bit */
+ 
+ /* Additional DCA related definitions, note change in position of CPUID */
+diff --git a/drivers/net/igb/e1000_regs.h b/drivers/net/igb/e1000_regs.h
+index a49b5fc..9be0f42 100644
+--- a/drivers/net/igb/e1000_regs.h
++++ b/drivers/net/igb/e1000_regs.h
+@@ -243,6 +243,8 @@
+ #define E1000_FACTPS    0x05B30 /* Function Active and Power State to MNG */
+ #define E1000_SWSM      0x05B50 /* SW Semaphore */
+ #define E1000_FWSM      0x05B54 /* FW Semaphore */
++#define E1000_DCA_ID    0x05B70 /* DCA Requester ID Information - RO */
++#define E1000_DCA_CTRL  0x05B74 /* DCA Control - RW */
+ 
+ /* RSS registers */
+ #define E1000_MRQC      0x05818 /* Multiple Receive Control - RW */
+diff --git a/drivers/net/igb/igb.h b/drivers/net/igb/igb.h
+index 057991f..e92ae1d 100644
+--- a/drivers/net/igb/igb.h
++++ b/drivers/net/igb/igb.h
+@@ -268,6 +268,9 @@ struct igb_adapter {
+ 	/* to not mess up cache alignment, always add to the bottom */
+ 	unsigned long state;
+ 	unsigned int flags;
++#ifdef CONFIG_IGB_DCA
++	unsigned int dca_enabled;
++#endif
+ 	u32 eeprom_wol;
+ 	unsigned int tx_ring_count;
+ 	unsigned int rx_ring_count;
+@@ -276,7 +279,7 @@ struct igb_adapter {
+ };
+ 
+ #define IGB_FLAG_HAS_MSI           (1 << 0)
+-#define IGB_FLAG_HAS_DCA           (1 << 1)
++#define IGB_FLAG_DCA_ENABLED       (1 << 1)
+ #define IGB_FLAG_QUAD_PORT_A       (1 << 2)
+ #define IGB_FLAG_NEED_CTX_IDX      (1 << 3)
+ 
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index 4f99d64..ff31099 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -41,6 +41,9 @@
+ #include <linux/delay.h>
+ #include <linux/interrupt.h>
+ #include <linux/if_ether.h>
++#ifdef CONFIG_IGB_DCA
++#include <linux/dca.h>
++#endif
+ #include "igb.h"
+ 
+ #define DRV_VERSION "2.1.0-k2"
+@@ -109,6 +112,11 @@ static irqreturn_t igb_intr_msi(int irq, void *, struct pt_regs *);
+ static irqreturn_t igb_msix_other(int irq, void *, struct pt_regs *);
+ static irqreturn_t igb_msix_rx(int irq, void *, struct pt_regs *);
+ static irqreturn_t igb_msix_tx(int irq, void *, struct pt_regs *);
++#ifdef CONFIG_IGB_DCA
++static void igb_update_rx_dca(struct igb_ring *);
++static void igb_update_tx_dca(struct igb_ring *);
++static void igb_setup_dca(struct igb_adapter *);
++#endif /* CONFIG_IGB_DCA */
+ static bool igb_clean_tx_irq(struct igb_ring *);
+ static int igb_poll(struct net_device *, int *);
+ static bool igb_clean_rx_irq_adv(struct igb_ring *, int *, int);
+@@ -175,6 +183,15 @@ static int igb_suspend(struct pci_dev *, pm_message_t);
+ static int igb_resume(struct pci_dev *);
+ #endif
+ static void igb_shutdown(struct pci_dev *);
++#ifdef CONFIG_IGB_DCA
++static int igb_notify_dca(struct notifier_block *, unsigned long, void *);
++static struct notifier_block dca_notifier = {
++	.notifier_call	= igb_notify_dca,
++	.next		= NULL,
++	.priority	= 0
++};
++#endif
++
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ /* for netdump / net console */
+ static void igb_netpoll(struct net_device *);
+@@ -258,6 +275,10 @@ static int __init igb_init_module(void)
+ 
+ 	global_quad_port_a = 0;
+ 
++#ifdef CONFIG_IGB_DCA
++	dca_register_notify(&dca_notifier);
++#endif
++
+ 	ret = pci_register_driver(&igb_driver);
+ 	return ret;
+ }
+@@ -272,6 +293,9 @@ module_init(igb_init_module);
+  **/
+ static void __exit igb_exit_module(void)
+ {
++#ifdef CONFIG_IGB_DCA
++	dca_unregister_notify(&dca_notifier);
++#endif
+ 	pci_unregister_driver(&igb_driver);
+ }
+ 
+@@ -1024,6 +1048,11 @@ void igb_down(struct igb_adapter *adapter)
+ 		igb_reset(adapter);
+ 	igb_clean_all_tx_rings(adapter);
+ 	igb_clean_all_rx_rings(adapter);
++#ifdef CONFIG_IGB_DCA
++
++	/* since we reset the hardware DCA settings were cleared */
++	igb_setup_dca(adapter);
++#endif
+ }
+ 
+ void igb_reinit_locked(struct igb_adapter *adapter)
+@@ -1502,6 +1531,14 @@ static int __devinit igb_probe(struct pci_dev *pdev,
+ 	if (err)
+ 		goto err_register;
+ 
++#ifdef CONFIG_IGB_DCA
++	if (dca_add_requester(&pdev->dev) == 0) {
++		adapter->flags |= IGB_FLAG_DCA_ENABLED;
++		dev_info(&pdev->dev, "DCA enabled\n");
++		igb_setup_dca(adapter);
++	}
++#endif
++
+ 	dev_info(&pdev->dev, "Intel(R) Gigabit Ethernet Network Connection\n");
+ 	/* print bus type/speed/width info */
+ 	dev_info(&pdev->dev,
+@@ -1574,6 +1611,15 @@ static void __devexit igb_remove(struct pci_dev *pdev)
+ 
+ 	flush_scheduled_work();
+ 
++#ifdef CONFIG_IGB_DCA
++	if (adapter->flags & IGB_FLAG_DCA_ENABLED) {
++		dev_info(&pdev->dev, "DCA disabled\n");
++		dca_remove_requester(&pdev->dev);
++		adapter->flags &= ~IGB_FLAG_DCA_ENABLED;
++		wr32(E1000_DCA_CTRL, E1000_DCA_CTRL_DCA_MODE_DISABLE);
++	}
++#endif
++
+ 	/* Release control of h/w to f/w.  If f/w is AMT enabled, this
+ 	 * would have already happened in close and is redundant. */
+ 	igb_release_hw_control(adapter);
+@@ -3589,6 +3635,10 @@ static irqreturn_t igb_msix_tx(int irq, void *data, struct pt_regs *regs)
+ 	struct igb_adapter *adapter = tx_ring->adapter;
+ 	struct e1000_hw *hw = &adapter->hw;
+ 
++#ifdef CONFIG_IGB_DCA
++	if (adapter->flags & IGB_FLAG_DCA_ENABLED)
++		igb_update_tx_dca(tx_ring);
++#endif
+ 
+ 	tx_ring->total_bytes = 0;
+ 	tx_ring->total_packets = 0;
+@@ -3636,6 +3686,11 @@ static irqreturn_t igb_msix_rx(int irq, void *data, struct pt_regs *regs)
+ 		__netif_rx_schedule(rx_ring->netdev);
+ 	}
+ 
++#ifdef CONFIG_IGB_DCA
++	/* Do not call igb_update_rx_dca here, it should only be
++	 * called from igb_poll.
++	 */
++#endif
+ 	return IRQ_HANDLED;
+ }
+ 
+@@ -3997,6 +4052,129 @@ static void igb_msg_task(struct igb_adapter *adapter)
+ 	}
+ }
+ 
++#ifdef CONFIG_IGB_DCA
++static void igb_update_rx_dca(struct igb_ring *rx_ring)
++{
++	u32 dca_rxctrl;
++	struct igb_adapter *adapter = rx_ring->adapter;
++	struct e1000_hw *hw = &adapter->hw;
++	int cpu = get_cpu();
++	int q = rx_ring->reg_idx;
++
++	if (rx_ring->cpu != cpu) {
++		dca_rxctrl = rd32(E1000_DCA_RXCTRL(q));
++		if (hw->mac.type == e1000_82576) {
++			dca_rxctrl &= ~E1000_DCA_RXCTRL_CPUID_MASK_82576;
++			dca_rxctrl |= dca3_get_tag(&adapter->pdev->dev, cpu) <<
++			              E1000_DCA_RXCTRL_CPUID_SHIFT;
++		} else {
++			dca_rxctrl &= ~E1000_DCA_RXCTRL_CPUID_MASK;
++			dca_rxctrl |= dca3_get_tag(&adapter->pdev->dev, cpu);
++		}
++		dca_rxctrl |= E1000_DCA_RXCTRL_DESC_DCA_EN;
++		dca_rxctrl |= E1000_DCA_RXCTRL_HEAD_DCA_EN;
++		dca_rxctrl |= E1000_DCA_RXCTRL_DATA_DCA_EN;
++		wr32(E1000_DCA_RXCTRL(q), dca_rxctrl);
++		rx_ring->cpu = cpu;
++	}
++	put_cpu();
++}
++
++static void igb_update_tx_dca(struct igb_ring *tx_ring)
++{
++	u32 dca_txctrl;
++	struct igb_adapter *adapter = tx_ring->adapter;
++	struct e1000_hw *hw = &adapter->hw;
++	int cpu = get_cpu();
++	int q = tx_ring->reg_idx;
++
++	if (tx_ring->cpu != cpu) {
++		dca_txctrl = rd32(E1000_DCA_TXCTRL(q));
++		if (hw->mac.type == e1000_82576) {
++			dca_txctrl &= ~E1000_DCA_TXCTRL_CPUID_MASK_82576;
++			dca_txctrl |= dca3_get_tag(&adapter->pdev->dev, cpu) <<
++			              E1000_DCA_TXCTRL_CPUID_SHIFT;
++		} else {
++			dca_txctrl &= ~E1000_DCA_TXCTRL_CPUID_MASK;
++			dca_txctrl |= dca3_get_tag(&adapter->pdev->dev, cpu);
++		}
++		dca_txctrl |= E1000_DCA_TXCTRL_DESC_DCA_EN;
++		wr32(E1000_DCA_TXCTRL(q), dca_txctrl);
++		tx_ring->cpu = cpu;
++	}
++	put_cpu();
++}
++
++static void igb_setup_dca(struct igb_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++	int i;
++
++	if (!(adapter->flags & IGB_FLAG_DCA_ENABLED))
++		return;
++
++	/* Always use CB2 mode, difference is masked in the CB driver. */
++	wr32(E1000_DCA_CTRL, E1000_DCA_CTRL_DCA_MODE_CB2);
++
++	for (i = 0; i < adapter->num_tx_queues; i++) {
++		adapter->tx_ring[i].cpu = -1;
++		igb_update_tx_dca(&adapter->tx_ring[i]);
++	}
++	for (i = 0; i < adapter->num_rx_queues; i++) {
++		adapter->rx_ring[i].cpu = -1;
++		igb_update_rx_dca(&adapter->rx_ring[i]);
++	}
++}
++
++static int __igb_notify_dca(struct device *dev, void *data)
++{
++	struct net_device *netdev = dev_get_drvdata(dev);
++	struct igb_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++	unsigned long event = *(unsigned long *)data;
++
++	switch (event) {
++	case DCA_PROVIDER_ADD:
++		/* if already enabled, don't do it again */
++		if (adapter->flags & IGB_FLAG_DCA_ENABLED)
++			break;
++		/* Always use CB2 mode, difference is masked
++		 * in the CB driver. */
++		wr32(E1000_DCA_CTRL, E1000_DCA_CTRL_DCA_MODE_CB2);
++		if (dca_add_requester(dev) == 0) {
++			adapter->flags |= IGB_FLAG_DCA_ENABLED;
++			dev_info(&adapter->pdev->dev, "DCA enabled\n");
++			igb_setup_dca(adapter);
++			break;
++		}
++		/* Fall Through since DCA is disabled. */
++	case DCA_PROVIDER_REMOVE:
++		if (adapter->flags & IGB_FLAG_DCA_ENABLED) {
++			/* without this a class_device is left
++ 			 * hanging around in the sysfs model */
++			dca_remove_requester(dev);
++			dev_info(&adapter->pdev->dev, "DCA disabled\n");
++			adapter->flags &= ~IGB_FLAG_DCA_ENABLED;
++			wr32(E1000_DCA_CTRL, E1000_DCA_CTRL_DCA_MODE_DISABLE);
++		}
++		break;
++	}
++
++	return 0;
++}
++
++static int igb_notify_dca(struct notifier_block *nb, unsigned long event,
++                          void *p)
++{
++	int ret_val;
++
++	ret_val = driver_for_each_device(&igb_driver.driver, NULL, &event,
++	                                 __igb_notify_dca);
++
++	return ret_val ? NOTIFY_BAD : NOTIFY_DONE;
++}
++#endif /* CONFIG_IGB_DCA */
++
+ /**
+  * igb_intr_msi - Interrupt Handler
+  * @irq: interrupt number
+@@ -4117,12 +4295,20 @@ static int igb_poll(struct net_device *netdev, int *budget)
+ 	if (!netif_carrier_ok(real_netdev))
+ 		goto quit_polling;
+ 
++#ifdef CONFIG_IGB_DCA
++	if (rx_ring->adapter->flags & IGB_FLAG_DCA_ENABLED)
++		igb_update_rx_dca(rx_ring);
++#endif
+ 	igb_clean_rx_irq_adv(rx_ring, &work_done, work_to_do);
+ 
+ 	*budget -= work_done;
+ 	netdev->quota -= work_done;
+ 
+ 	if (rx_ring->buddy) {
++#ifdef CONFIG_IGB_DCA
++		if (rx_ring->adapter->flags & IGB_FLAG_DCA_ENABLED)
++			igb_update_tx_dca(rx_ring->buddy);
++#endif
+ 		if (!igb_clean_tx_irq(rx_ring->buddy))
+ 			work_done = work_to_do;
+ 	}

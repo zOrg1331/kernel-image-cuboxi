@@ -95,3 +95,16 @@ index b1aa938..6d2349e 100644
                  " 1 = enable MSI-X interrupt mechanism."
                  " 2 = enable MSI interrupt mechanism.");
  
+diff --git a/drivers/scsi/qla2xxx/qla_version.h b/drivers/scsi/qla2xxx/qla_version.h
+index ed31feb..7494018 100644
+--- a/drivers/scsi/qla2xxx/qla_version.h
++++ b/drivers/scsi/qla2xxx/qla_version.h
+@@ -7,7 +7,7 @@
+ /*
+  * Driver version
+  */
+-#define QLA2XXX_VERSION      "8.03.01.02.05.05-k"
++#define QLA2XXX_VERSION      "8.03.01.03.05.05-k"
+ 
+ #define QLA_DRIVER_MAJOR_VER	8
+ #define QLA_DRIVER_MINOR_VER	3

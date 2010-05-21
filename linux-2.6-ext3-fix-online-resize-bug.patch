@@ -1,0 +1,64 @@
+From: Josef Bacik <josef@redhat.com>
+Date: Fri, 7 Aug 2009 15:46:34 -0400
+Subject: [ext3] fix online resize bug
+Message-id: 20090807194634.GA5824@localhost.localdomain
+O-Subject: [RHEL 5.5][PATCH] ext3: fix online resize bug
+Bugzilla: 515759
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+Hello,
+
+This is in reference to bz 515759.  I'm a moron and fixed this problem for a
+different bug, but I posted the wrong patch, and we just figured it out last
+week that this happened.  So lets try this again, here is the patch that
+actually fixes the problem and has been tested with the testcase, it is a
+backport of the following upstream commit
+
+commit 9bb91784de6618c955994b2d5be332fb68c87ef1
+Author: Josef Bacik <jbacik@redhat.com>
+Date:   Thu Jun 5 22:46:47 2008 -0700
+
+    ext3: fix online resize bug
+
+    There is a bug when we are trying to verify that the reserve inode's
+    double indirect blocks point back to the primary gdt blocks.  The fix is
+    obvious, we need to mod the gdb count by the addr's per block.  You can
+    verify this with the following test case
+
+    dd if=/dev/zero of=disk1 seek=1024 count=1 bs=100M
+    losetup /dev/loop1 disk1
+    pvcreate /dev/loop1
+    vgcreate loopvg1 /dev/loop1
+    lvcreate -l 100%VG loopvg1 -n looplv1
+    mkfs.ext3 -J size=64 -b 1024 /dev/loopvg1/looplv1
+    mount /dev/loopvg1/looplv1 /mnt/loop
+    dd if=/dev/zero of=disk2 seek=1024 count=1 bs=50M
+    losetup /dev/loop2 disk2
+    pvcreate /dev/loop2
+    vgextend loopvg1 /dev/loop2
+    lvextend -l 100%VG /dev/loopvg1/looplv1
+    resize2fs /dev/loopvg1/looplv1
+
+    without this patch the resize2fs fails, with it the resize2fs succeeds.
+
+    Signed-off-by: Josef Bacik <jbacik@redhat.com>
+    Acked-by: Andreas Dilger <adilger@sun.com>
+    Cc: <linux-ext4@vger.kernel.org>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/ext3/resize.c b/fs/ext3/resize.c
+index f2354d2..e9a7a54 100644
+--- a/fs/ext3/resize.c
++++ b/fs/ext3/resize.c
+@@ -583,7 +583,8 @@ static int reserve_backup_gdb(handle_t *handle, struct inode *inode,
+ 	}
+ 
+ 	blk = EXT3_SB(sb)->s_sbh->b_blocknr + 1 + EXT3_SB(sb)->s_gdb_count;
+-	data = (__u32 *)dind->b_data + EXT3_SB(sb)->s_gdb_count;
++	data = (__u32 *)dind->b_data + EXT3_SB(sb)->s_gdb_count %
++		EXT3_ADDR_PER_BLOCK(sb);
+ 	end = (__u32 *)dind->b_data + EXT3_ADDR_PER_BLOCK(sb);
+ 
+ 	/* Get each reserved primary GDT block and verify it holds backups */

@@ -1,0 +1,218 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Tue, 8 Dec 2009 15:06:10 -0500
+Subject: [mm] add kernel pagefault tracepoint for x86 & x86_64
+Message-id: <1260284770.3221.42.camel@dhcp-100-19-198.bos.redhat.com>
+Patchwork-id: 21744
+O-Subject: Re: [RHEL5.5 PATCH] re-post: Add kernel pagefault tracepoint for
+	x86 & x86_64.
+Bugzilla: 517133
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+On Tue, 2009-12-08 at 00:31 -0500, Don Zickus wrote:
+> On Mon, Dec 07, 2009 at 03:39:48PM -0500, Larry Woodman wrote:
+> > This is a repost of a corrected patch that I self-NAK'd last week
+> > because Hitachi said it didnt meet their requirements.
+> >
+> > >>>
+> > mm, unfortunately, I think our original request is not achieved by this
+> > patch, because the information your tracepoint traced is easily found in
+> > kernel vmcore image or oops message. And also, right after your
+> > tracepoint is hit, the kernel goes to crash.
+> > >>>
+> >
+> > +	if (!user_mode_vm())
+> > +		trace_mm_kernel_pagefault(current, address, regs->eip);
+>
+> This fails to compile complaining about user_mode_vm() doesn't have enough
+> args.
+>
+> Cheers,
+> Don
+>
+
+Sorry, accidentally posted an earlier patch :(
+
+This is the correct one:
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/arch/i386/mm/fault.c b/arch/i386/mm/fault.c
+index dd6cef4..c88708a 100644
+--- a/arch/i386/mm/fault.c
++++ b/arch/i386/mm/fault.c
+@@ -22,6 +22,7 @@
+ #include <linux/highmem.h>
+ #include <linux/module.h>
+ #include <linux/kprobes.h>
++#include <trace/mm.h>
+ 
+ #include <asm/system.h>
+ #include <asm/uaccess.h>
+@@ -318,31 +319,16 @@ static inline int vmalloc_fault(unsigned long address)
+ 	return 0;
+ }
+ 
+-/*
+- * This routine handles page faults.  It determines the address,
+- * and the problem, and then passes it off to one of the appropriate
+- * routines.
+- *
+- * error_code:
+- *	bit 0 == 0 means no page found, 1 means protection fault
+- *	bit 1 == 0 means read, 1 means write
+- *	bit 2 == 0 means kernel, 1 means user-mode
+- *	bit 3 == 1 means use of reserved bit detected
+- *	bit 4 == 1 means fault was an instruction fetch
+- */
+-fastcall void __kprobes do_page_fault(struct pt_regs *regs,
++static inline void __do_page_fault(struct pt_regs *regs,
++				      unsigned long address,
+ 				      unsigned long error_code)
+ {
+ 	struct task_struct *tsk;
+ 	struct mm_struct *mm;
+ 	struct vm_area_struct * vma;
+-	unsigned long address;
+ 	unsigned long page;
+ 	int write, si_code;
+ 
+-	/* get the address */
+-        address = read_cr2();
+-
+ 	tsk = current;
+ 
+ 	si_code = SEGV_MAPERR;
+@@ -548,7 +534,6 @@ no_context:
+  * Oops. The kernel tried to access some bad page. We'll have to
+  * terminate things with extreme prejudice.
+  */
+-
+ 	bust_spinlocks(1);
+ 
+ 	if (oops_may_print()) {
+@@ -630,6 +615,32 @@ do_sigbus:
+ 	force_sig_info_fault(SIGBUS, BUS_ADRERR, address, tsk);
+ }
+ 
++/*
++ * This routine handles page faults.  It determines the address,
++ * and the problem, and then passes it off to one of the appropriate
++ * routines.
++ *
++ * error_code:
++ *	bit 0 == 0 means no page found, 1 means protection fault
++ *	bit 1 == 0 means read, 1 means write
++ *	bit 2 == 0 means kernel, 1 means user-mode
++ *	bit 3 == 1 means use of reserved bit detected
++ *	bit 4 == 1 means fault was an instruction fetch
++ */
++fastcall void __kprobes do_page_fault(struct pt_regs *regs,
++				      unsigned long error_code)
++{
++	unsigned long address;
++
++	/* get the address */
++	address = read_cr2();
++
++	__do_page_fault(regs, address, error_code);
++
++	if (!user_mode_vm(regs))
++		trace_mm_kernel_pagefault(current, address, regs->eip);
++}
++
+ #ifndef CONFIG_X86_PAE
+ void vmalloc_sync_all(void)
+ {
+diff --git a/arch/x86_64/mm/fault.c b/arch/x86_64/mm/fault.c
+index 5a0c483..6dd6a22 100644
+--- a/arch/x86_64/mm/fault.c
++++ b/arch/x86_64/mm/fault.c
+@@ -23,6 +23,7 @@
+ #include <linux/compiler.h>
+ #include <linux/module.h>
+ #include <linux/kprobes.h>
++#include <trace/mm.h>
+ 
+ #include <asm/system.h>
+ #include <asm/uaccess.h>
+@@ -335,18 +336,13 @@ static int vmalloc_fault(unsigned long address)
+ int page_fault_trace = 0;
+ int exception_trace = 1;
+ 
+-/*
+- * This routine handles page faults.  It determines the address,
+- * and the problem, and then passes it off to one of the appropriate
+- * routines.
+- */
+-asmlinkage void __kprobes do_page_fault(struct pt_regs *regs,
++static inline void __do_page_fault(struct pt_regs *regs,
++					unsigned long address,
+ 					unsigned long error_code)
+ {
+ 	struct task_struct *tsk;
+ 	struct mm_struct *mm;
+ 	struct vm_area_struct * vma;
+-	unsigned long address;
+ 	const struct exception_table_entry *fixup;
+ 	int write;
+ 	unsigned long flags;
+@@ -356,9 +352,6 @@ asmlinkage void __kprobes do_page_fault(struct pt_regs *regs,
+ 	mm = tsk->mm;
+ 	prefetchw(&mm->mmap_sem);
+ 
+-	/* get the address */
+-	__asm__("movq %%cr2,%0":"=r" (address));
+-
+ 	info.si_code = SEGV_MAPERR;
+ 
+ 
+@@ -572,7 +565,6 @@ no_context:
+  * Oops. The kernel tried to access some bad page. We'll have to
+  * terminate things with extreme prejudice.
+  */
+-
+ 	flags = oops_begin();
+ 
+ 	if (address < PAGE_SIZE)
+@@ -624,6 +616,25 @@ do_sigbus:
+ 	return;
+ }
+ 
++/*
++ * This routine handles page faults.  It determines the address,
++ * and the problem, and then passes it off to one of the appropriate
++ * routines.
++ */
++asmlinkage void __kprobes do_page_fault(struct pt_regs *regs,
++					unsigned long error_code)
++{
++	unsigned long address;
++
++	/* get the address */
++	__asm__("movq %%cr2,%0":"=r" (address));
++
++	__do_page_fault(regs, address, error_code);
++
++	if (!user_mode_vm(regs))
++		trace_mm_kernel_pagefault(current, address, regs->rip);
++}
++	
+ DEFINE_SPINLOCK(pgd_lock);
+ struct page *pgd_list;
+ 
+diff --git a/include/trace/mm.h b/include/trace/mm.h
+index 7b949bc..df6392c 100644
+--- a/include/trace/mm.h
++++ b/include/trace/mm.h
+@@ -7,6 +7,10 @@
+ #include <linux/tracepoint.h>
+ #include <linux/mm.h>
+ 
++DEFINE_TRACE(mm_kernel_pagefault,
++	TPPROTO(struct task_struct *task, unsigned long address, unsigned long ip),
++	TPARGS(task, address, ip));
++
+ DEFINE_TRACE(mm_anon_fault,
+ 	TPPROTO(struct mm_struct *mm, unsigned long address, struct page *page),
+ 	TPARGS(mm, address, page));

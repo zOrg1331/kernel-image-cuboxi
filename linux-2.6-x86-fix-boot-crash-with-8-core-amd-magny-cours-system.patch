@@ -33,10 +33,11 @@ http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1993083
 Testing:
 Patch tested on 2P Dinar system and HP Proliant G7 M-C system.
 
-diff -urpN linux-2.6.18.noarch.orig/arch/i386/kernel/cpu/amd.c linux-2.6.18.noarch/arch/i386/kernel/cpu/amd.c
---- linux-2.6.18.noarch.orig/arch/i386/kernel/cpu/amd.c	2009-11-21 18:25:02.280856091 +0100
-+++ linux-2.6.18.noarch/arch/i386/kernel/cpu/amd.c	2009-11-21 18:25:09.406989735 +0100
-@@ -105,6 +105,15 @@ static void __cpuinit init_amd(struct cp
+diff --git a/arch/i386/kernel/cpu/amd.c b/arch/i386/kernel/cpu/amd.c
+index 58f5e41..522c1a0 100644
+--- a/arch/i386/kernel/cpu/amd.c
++++ b/arch/i386/kernel/cpu/amd.c
+@@ -105,6 +105,15 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
  	}
  #endif
  
@@ -52,20 +53,22 @@ diff -urpN linux-2.6.18.noarch.orig/arch/i386/kernel/cpu/amd.c linux-2.6.18.noar
  	/*
  	 *	FIXME: We should handle the K5 here. Set up the write
  	 *	range and also turn on MSR 83 bits 4 and 31 (write alloc,
-diff -urpN linux-2.6.18.noarch.orig/include/asm-i386/cpufeature.h linux-2.6.18.noarch/include/asm-i386/cpufeature.h
---- linux-2.6.18.noarch.orig/include/asm-i386/cpufeature.h	2009-11-21 18:25:01.987856655 +0100
-+++ linux-2.6.18.noarch/include/asm-i386/cpufeature.h	2009-11-21 18:26:10.330983566 +0100
-@@ -78,6 +78,7 @@
- #define X86_FEATURE_LFENCE_RDTSC (3*32+18) /* Lfence synchronizes RDTSC */
+diff --git a/include/asm-i386/cpufeature.h b/include/asm-i386/cpufeature.h
+index 633cc2d..4a305ef 100644
+--- a/include/asm-i386/cpufeature.h
++++ b/include/asm-i386/cpufeature.h
+@@ -79,6 +79,7 @@
  #define X86_FEATURE_TSC_RELIABLE (3*32+23) /* TSC is known to be reliable */
  #define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
-+#define X86_FEATURE_EXTD_APICID       (3*32+26) /* has extended APICID (8 bits) */
- #define X86_FEATURE_AMD_DCM   (3*32+27) /* multi-node processor */
+ #define X86_FEATURE_ARAT	(3*32+25) /* Always Running APIC Timer */
++#define X86_FEATURE_EXTD_APICID	(3*32+26) /* has extended APICID (8 bits) */
+ #define X86_FEATURE_AMD_DCM	(3*32+27) /* multi-node processor */
  
  /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
-diff -urpN linux-2.6.18.noarch.orig/include/asm-i386/mach-default/mach_apicdef.h linux-2.6.18.noarch/include/asm-i386/mach-default/mach_apicdef.h
---- linux-2.6.18.noarch.orig/include/asm-i386/mach-default/mach_apicdef.h	2009-11-21 18:25:01.990856270 +0100
-+++ linux-2.6.18.noarch/include/asm-i386/mach-default/mach_apicdef.h	2009-11-21 18:25:09.407981017 +0100
+diff --git a/include/asm-i386/mach-default/mach_apicdef.h b/include/asm-i386/mach-default/mach_apicdef.h
+index ae98413..c0f4a4a 100644
+--- a/include/asm-i386/mach-default/mach_apicdef.h
++++ b/include/asm-i386/mach-default/mach_apicdef.h
 @@ -8,7 +8,7 @@
  static inline unsigned get_apic_id(unsigned long x) 
  { 

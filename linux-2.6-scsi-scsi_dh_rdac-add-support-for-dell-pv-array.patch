@@ -1,0 +1,28 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 30 Sep 2009 17:11:22 -0400
+Subject: [scsi] scsi_dh_rdac: add support for Dell PV array
+Message-id: 20090930210519.22936.20502.sendpatchset@localhost.localdomain
+O-Subject: [LSI 5.5 feat 3/7] scsi_dh_rdac: add support for next generation of Dell PV array
+Bugzilla: 524335
+
+https://bugzilla.redhat.com/show_bug.cgi?id=524335
+
+This patch is to add DM support for next generation of Dell PowerVault
+storage array.
+
+Signed-off-by: Yanqing Liu &lt;Yanqing_Liu@Dell.com
+Acked-by: Chandra Seetharaman &lt;sekharan@us.ibm.com
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index 470f8c4..823ad33 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -639,6 +639,8 @@ const struct scsi_dh_devlist rdac_dev_list[] = {
+ 	{"SUN", "LCSM100_F"},
+ 	{"DELL", "MD3000"},
+ 	{"DELL", "MD3000i"},
++	{"DELL", "MD32xx"},
++	{"DELL", "MD32xxi"},
+ 	{"LSI", "INF-01-00"},
+ 	{"ENGENIO", "INF-01-00"},
+ 	{NULL, NULL},

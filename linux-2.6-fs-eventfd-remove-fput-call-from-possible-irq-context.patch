@@ -1,0 +1,141 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 1 Dec 2009 21:06:40 -0500
+Subject: [fs] eventfd: remove fput call from possible IRQ context
+Message-id: <1259701600-23508-13-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21621
+O-Subject: [RHEL5 PATCH 12/12 v2] eventfd: remove fput() call from possible IRQ
+	context
+Bugzilla: 493101
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Fixes bug 493101.
+
+commit 87c3a86e1c220121d0ced59d1a71e78ed9abc6dd
+Author: Davide Libenzi <davidel@xmailserver.org>
+Date:   Wed Mar 18 17:04:19 2009 -0700
+
+    eventfd: remove fput() call from possible IRQ context
+
+    Remove a source of fput() call from inside IRQ context.  Myself, like Eric,
+    wasn't able to reproduce an fput() call from IRQ context, but Jeff said he was
+    able to, with the attached test program.  Independently from this, the bug is
+    conceptually there, so we might be better off fixing it.  This patch adds an
+    optimization similar to the one we already do on ->ki_filp, on ->ki_eventfd.
+    Playing with ->f_count directly is not pretty in general, but the alternative
+    here would be to add a brand new delayed fput() infrastructure, that I'm not
+    sure is worth it.
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/fs/aio.c b/fs/aio.c
+index 181b1e6..7917d3b 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -117,6 +117,31 @@ static struct kiocb_hash_entry *kiocb_hash_lookup(struct kiocb *kiocb)
+ 	return NULL;
+ }
+ 
++static struct file *aio_eventfp_lookup(struct kiocb *kiocb)
++{
++	struct kiocb_hash_entry *kh;
++	unsigned long flags;
++
++	spin_lock_irqsave(&kiocb_list_lock, flags);
++	kh = kiocb_hash_lookup(kiocb);
++	spin_unlock_irqrestore(&kiocb_list_lock, flags);
++	if (!kh)
++		return NULL;
++	return kh->filp;
++}
++
++static void aio_eventfd_unhash(struct kiocb *kiocb)
++{
++	struct kiocb_hash_entry *kh;
++	unsigned long flags;
++
++	spin_lock_irqsave(&kiocb_list_lock, flags);
++	kh = kiocb_hash_lookup(kiocb);
++	hlist_del(&kh->list);
++	spin_unlock_irqrestore(&kiocb_list_lock, flags);
++	kfree(kh);
++}
++
+ static void aio_eventfd_fput(struct kiocb *kiocb)
+ {
+ 	unsigned long flags;
+@@ -569,7 +594,6 @@ static inline void really_put_req(struct kioctx *ctx, struct kiocb *req)
+ {
+ 	assert_spin_locked(&ctx->ctx_lock);
+ 
+-	aio_eventfd_fput(req);
+ 	if (req->ki_dtor)
+ 		req->ki_dtor(req);
+ 	kmem_cache_free(kiocb_cachep, req);
+@@ -590,7 +614,9 @@ static void aio_fput_routine(void *data)
+ 		spin_unlock_irq(&fput_lock);
+ 
+ 		/* Complete the fput */
+-		__fput(req->ki_filp);
++		if (req->ki_filp != NULL)
++			__fput(req->ki_filp);
++		aio_eventfd_fput(req);
+ 
+ 		/* Link the iocb into the context's free list */
+ 		spin_lock_irq(&ctx->ctx_lock);
+@@ -608,12 +634,15 @@ static void aio_fput_routine(void *data)
+  */
+ static int __aio_put_req(struct kioctx *ctx, struct kiocb *req)
+ {
++	int schedule_putreq = 0;
++	struct file *eventfp;
++
+ 	dprintk(KERN_DEBUG "aio_put(%p): f_count=%d\n",
+ 		req, atomic_read(&req->ki_filp->f_count));
+ 
+ 	assert_spin_locked(&ctx->ctx_lock);
+ 
+-	req->ki_users --;
++	req->ki_users--;
+ 	if (unlikely(req->ki_users < 0))
+ 		BUG();
+ 	if (likely(req->ki_users))
+@@ -622,10 +651,23 @@ static int __aio_put_req(struct kioctx *ctx, struct kiocb *req)
+ 	req->ki_cancel = NULL;
+ 	req->ki_retry = NULL;
+ 
+-	/* Must be done under the lock to serialise against cancellation.
+-	 * Call this aio_fput as it duplicates fput via the fput_work.
++	/*
++	 * Try to optimize the aio and eventfd file* puts, by avoiding to
++	 * schedule work in case it is not __fput() time. In normal cases,
++	 * we would not be holding the last reference to the file*, so
++	 * this function will be executed w/out any aio kthread wakeup.
+ 	 */
+-	if (unlikely(atomic_dec_and_test(&req->ki_filp->f_count))) {
++	if (unlikely(atomic_dec_and_test(&req->ki_filp->f_count)))
++		schedule_putreq++;
++	else
++		req->ki_filp = NULL;
++	if ((eventfp = aio_eventfp_lookup(req))) {
++		if (unlikely(atomic_dec_and_test(&eventfp->f_count)))
++			schedule_putreq++;
++		else
++			aio_eventfd_unhash(req);
++	}
++	if (unlikely(schedule_putreq)) {
+ 		get_ioctx(ctx);
+ 		spin_lock(&fput_lock);
+ 		list_add(&req->ki_list, &fput_head);
+diff --git a/fs/eventfd.c b/fs/eventfd.c
+index 343942d..6094265 100644
+--- a/fs/eventfd.c
++++ b/fs/eventfd.c
+@@ -214,7 +214,7 @@ asmlinkage long sys_eventfd(unsigned int count)
+ 	 * When we call this, the initialization must be complete, since
+ 	 * anon_inode_getfd() will install the fd.
+ 	 */
+-	fd = anon_inode_getfd("[eventfd]", &eventfd_fops, ctx);
++	fd = anon_inode_getfd("[eventfd]", &eventfd_fops, ctx, 0);
+ 	if (fd < 0)
+ 		kfree(ctx);
+ 	return fd;

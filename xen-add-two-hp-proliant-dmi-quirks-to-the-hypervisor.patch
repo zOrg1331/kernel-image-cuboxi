@@ -1,0 +1,58 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Wed, 11 Nov 2009 17:21:16 -0500
+Subject: [xen] add two HP ProLiant DMI quirks to the hypervisor
+Message-id: <1257960076-27204-1-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 21367
+O-Subject: [RHEL5.5 PATCH] [BZ536677] xen: add two DMI matches to the hypervisor
+Bugzilla: 536677
+RH-Acked-by: Anton Arapov <Anton@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=536677
+
+Upstream: http://xenbits.xensource.com/xen-unstable.hg?rev/18336
+    http://xenbits.xensource.com/xen-unstable.hg?rev/19597
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2072732
+
+This patch adds two DMI matches to Xen's table.  It is low risk
+as it only does something on the matched ProLiant systems.
+---
+ arch/x86/ioport_emulate.c |   16 ++++++++++++++++
+ 1 files changed, 16 insertions(+), 0 deletions(-)
+
+diff --git a/arch/x86/ioport_emulate.c b/arch/x86/ioport_emulate.c
+index 2180b60..566640b 100644
+--- a/arch/x86/ioport_emulate.c
++++ b/arch/x86/ioport_emulate.c
+@@ -74,6 +74,14 @@ static struct dmi_system_id __initdata ioport_quirks_tbl[] = {
+     },
+     {
+         .callback = proliant_quirk,
++        .ident = "HP ProLiant DL7xx",
++        .matches = {
++            DMI_MATCH(DMI_BIOS_VENDOR, "HP"),
++            DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL7"),
++        },
++    },
++    {
++        .callback = proliant_quirk,
+         .ident = "HP ProLiant ML3xx",
+         .matches = {
+             DMI_MATCH(DMI_BIOS_VENDOR, "HP"),
+@@ -90,6 +98,14 @@ static struct dmi_system_id __initdata ioport_quirks_tbl[] = {
+     },
+     {
+         .callback = proliant_quirk,
++        .ident = "HP ProLiant BL2xx",
++        .matches = {
++            DMI_MATCH(DMI_BIOS_VENDOR, "HP"),
++            DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant BL2"),
++        },
++    },
++    {
++        .callback = proliant_quirk,
+         .ident = "HP ProLiant BL4xx",
+         .matches = {
+             DMI_MATCH(DMI_BIOS_VENDOR, "HP"),

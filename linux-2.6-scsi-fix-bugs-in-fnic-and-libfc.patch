@@ -1,0 +1,109 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Wed, 17 Feb 2010 21:16:07 -0500
+Subject: [scsi] fix bugs in fnic and libfc
+Message-id: <1266441367-1649-1-git-send-email-mchristi@redhat.com>
+Patchwork-id: 23323
+O-Subject: [PATCH] RHEL 5.5: Fix bugs in fnic and libfc
+Bugzilla: 565594
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ: 565594.
+
+It fixes several bugs Cisco found while testing RHEL 5.5.
+
+One patch is upstream and in stable here:
+http://git.kernel.org/?p=linux/kernel/git/stable/linux-2.6.32.y.git;a=commit;h=5543c72e2bbb30e5ba5938b18ec26617b8b3fb04
+
+The other patches were just sent upstream by the fcoe maintainer
+
+http://marc.info/?l=linux-scsi&m=126635134802937&w=2
+http://marc.info/?l=linux-scsi&m=126635135202946&w=2
+http://marc.info/?l=linux-scsi&m=126635135802961&w=2
+http://marc.info/?l=linux-scsi&m=126635133602924&w=2
+
+The libfc patches have been tested by Cisco and Intel. The fnic
+patches have been tested by Cisco.
+
+I did some quick tests to cause ports to go offline and back onlinje
+and did some quick IO tests. Most of the fixes are for a feature called FIP
+which is basically a discovery protocol for fcoe. Our switch
+does not support it, so I could not test those code paths. So
+I concentrated on checking for regressions on
+http://git.kernel.org/?p=linux/kernel/git/stable/linux-2.6.32.y.git;a=commit;h=5543c72e2bbb30e5ba5938b18ec26617b8b3fb04
+this patch by doing the port tests.
+
+diff --git a/drivers/scsi/fcoe/libfcoe.c b/drivers/scsi/fcoe/libfcoe.c
+index 2ed9b54..7c108a6 100644
+--- a/drivers/scsi/fcoe/libfcoe.c
++++ b/drivers/scsi/fcoe/libfcoe.c
+@@ -1169,7 +1169,7 @@ static void fcoe_ctlr_timeout(unsigned long arg)
+ 			next_timer = fip->ctlr_ka_time;
+ 
+ 		if (time_after_eq(jiffies, fip->port_ka_time)) {
+-			fip->port_ka_time += jiffies +
++			fip->port_ka_time = jiffies +
+ 				msecs_to_jiffies(FIP_VN_KA_PERIOD);
+ 			fip->send_port_ka = 1;
+ 		}
+diff --git a/drivers/scsi/fnic/fnic.h b/drivers/scsi/fnic/fnic.h
+index 0529d5d..3a7c6bd 100644
+--- a/drivers/scsi/fnic/fnic.h
++++ b/drivers/scsi/fnic/fnic.h
+@@ -37,7 +37,7 @@
+ 
+ #define DRV_NAME		"fnic"
+ #define DRV_DESCRIPTION		"Cisco FCoE HBA Driver"
+-#define DRV_VERSION		"1.0.0.1121"
++#define DRV_VERSION		"1.4.0.98"
+ #define PFX			DRV_NAME ": "
+ #define DFX                     DRV_NAME "%d: "
+ 
+diff --git a/drivers/scsi/fnic/fnic_main.c b/drivers/scsi/fnic/fnic_main.c
+index 84400bd..8cadb4e 100644
+--- a/drivers/scsi/fnic/fnic_main.c
++++ b/drivers/scsi/fnic/fnic_main.c
+@@ -627,6 +627,8 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
+ 	if (fnic->config.flags & VFCF_FIP_CAPABLE) {
+ 		shost_printk(KERN_INFO, fnic->lport->host,
+ 			     "firmware supports FIP\n");
++		/* enable directed and multicast */
++		vnic_dev_packet_filter(fnic->vdev, 1, 1, 0, 0, 0);
+ 		vnic_dev_add_addr(fnic->vdev, FIP_ALL_ENODE_MACS);
+ 		vnic_dev_add_addr(fnic->vdev, fnic->ctlr.ctl_src_addr);
+ 	} else {
+@@ -705,6 +707,8 @@ static int __devinit fnic_probe(struct pci_dev *pdev,
+ 		goto err_out_remove_scsi_host;
+ 	}
+ 
++	fc_lport_init_stats(lp);
++
+ 	fc_lport_config(lp);
+ 
+ 	if (fc_set_mfs(lp, fnic->config.maxdatafieldsize +
+diff --git a/drivers/scsi/fnic/vnic_devcmd.h b/drivers/scsi/fnic/vnic_devcmd.h
+index d62b906..7c9ccbd 100644
+--- a/drivers/scsi/fnic/vnic_devcmd.h
++++ b/drivers/scsi/fnic/vnic_devcmd.h
+@@ -94,7 +94,7 @@ enum vnic_devcmd_cmd {
+ 	CMD_STATS_DUMP          = _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ALL, 4),
+ 
+ 	/* set Rx packet filter: (u32)a0=filters (see CMD_PFILTER_*) */
+-	CMD_PACKET_FILTER	= _CMDCNW(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 7),
++	CMD_PACKET_FILTER       = _CMDCNW(_CMD_DIR_WRITE, _CMD_VTYPE_ALL, 7),
+ 
+ 	/* hang detection notification */
+ 	CMD_HANG_NOTIFY         = _CMDC(_CMD_DIR_NONE, _CMD_VTYPE_ALL, 8),
+diff --git a/drivers/scsi/libfc/fc_rport.c b/drivers/scsi/libfc/fc_rport.c
+index 91e2ba2..7b09a3e 100644
+--- a/drivers/scsi/libfc/fc_rport.c
++++ b/drivers/scsi/libfc/fc_rport.c
+@@ -310,6 +310,7 @@ static void fc_rport_work(struct work_struct *work)
+ 				restart = 1;
+ 			else
+ 				list_del(&rdata->peers);
++			rdata->event = RPORT_EV_NONE;
+ 			mutex_unlock(&rdata->rp_mutex);
+ 			mutex_unlock(&lport->disc.disc_mutex);
+ 		}

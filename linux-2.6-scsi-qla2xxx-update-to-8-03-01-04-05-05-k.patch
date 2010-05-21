@@ -1,0 +1,319 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Tue, 1 Dec 2009 03:35:36 -0500
+Subject: [scsi] qla2xxx: update to 8.03.01.04.05.05-k
+Message-id: <20091201033536.7221.28263.sendpatchset@file.bos.redhat.com>
+Patchwork-id: 21561
+O-Subject: [rhel 5.5 patch] qla2xxx - further testing updates.
+Bugzilla: 542834
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+BZ 542834
+
+Fixes found during testing by QLogic and it's partners. These patches apply and
+build cleanly with 2.6.18-175.
+
+Tested at QLogic.
+
+ - 8.03.01.04.05.05-k
+ - Properly re-register FC4 FDMI after physical and logical link disruptions
+ - Reset topology under LOOP-DOWN instead of LOOP-UP
+ - In eh_bus_reset reset targets belonging to correct host
+ - Fix return status being truncated to 8 bits
+ - Use low priority DEBUG macro to log info type messages
+ - Set BIT_15 in options field of echo loopback test only for 81xx
+ - Correct usage of inconsistent timeout values while issuing ELS commands
+
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index dd41c52..0234348 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -315,7 +315,7 @@ qla2x00_sysfs_write_optrom_ctl(struct kobject *kobj, char *buf, loff_t off,
+ 
+ 		ha->optrom_state = QLA_SWAITING;
+ 
+-		DEBUG2(qla_printk(KERN_INFO, ha,
++		DEBUG9(qla_printk(KERN_INFO, ha,
+ 		    "Freeing flash region allocation -- 0x%x bytes.\n",
+ 		    ha->optrom_region_size));
+ 
+@@ -341,7 +341,7 @@ qla2x00_sysfs_write_optrom_ctl(struct kobject *kobj, char *buf, loff_t off,
+ 			return count;
+ 		}
+ 
+-		DEBUG2(qla_printk(KERN_INFO, ha,
++		DEBUG9(qla_printk(KERN_INFO, ha,
+ 		    "Reading flash region -- 0x%x/0x%x.\n",
+ 		    ha->optrom_region_start, ha->optrom_region_size));
+ 
+@@ -813,7 +813,7 @@ qla2x00_sysfs_write_ct(struct kobject *kobj, char *buf, loff_t off,
+ 		ct_iocb->nport_handle = cpu_to_le16(ha->mgmt_svr_loop_id);
+ 		ct_iocb->cmd_dsd_count = __constant_cpu_to_le16(1);
+ 		ct_iocb->vp_index = ha->vp_idx;
+-		ct_iocb->timeout = __constant_cpu_to_le16(25);
++		ct_iocb->timeout = (cpu_to_le16(ha->r_a_tov / 10 * 2) + 2);
+ 		ct_iocb->rsp_dsd_count = __constant_cpu_to_le16(1);
+ 		ct_iocb->rsp_byte_count = cpu_to_le32(PAGE_SIZE);
+ 		ct_iocb->cmd_byte_count = cpu_to_le32(count);
+@@ -844,7 +844,7 @@ qla2x00_sysfs_write_ct(struct kobject *kobj, char *buf, loff_t off,
+ 		SET_TARGET_ID(ha, ct_iocb_2G->loop_id, ha->mgmt_svr_loop_id);
+ 		ct_iocb_2G->status = __constant_cpu_to_le16(0);
+ 		ct_iocb_2G->control_flags = __constant_cpu_to_le16(0);
+-		ct_iocb_2G->timeout = __constant_cpu_to_le16(25);
++		ct_iocb_2G->timeout = (cpu_to_le16(ha->r_a_tov / 10 * 2) + 2);
+ 		ct_iocb_2G->cmd_dsd_count = __constant_cpu_to_le16(1);
+ 		ct_iocb_2G->total_dsd_count = __constant_cpu_to_le16(2);
+ 		ct_iocb_2G->rsp_bytecount = cpu_to_le32(PAGE_SIZE);
+diff --git a/drivers/scsi/qla2xxx/qla_gs.c b/drivers/scsi/qla2xxx/qla_gs.c
+index eba7ad1..b3d50b4 100644
+--- a/drivers/scsi/qla2xxx/qla_gs.c
++++ b/drivers/scsi/qla2xxx/qla_gs.c
+@@ -39,7 +39,7 @@ qla2x00_prep_ms_iocb(scsi_qla_host_t *ha, uint32_t req_size, uint32_t rsp_size)
+ 	ms_pkt->entry_count = 1;
+ 	SET_TARGET_ID(ha, ms_pkt->loop_id, SIMPLE_NAME_SERVER);
+ 	ms_pkt->control_flags = __constant_cpu_to_le16(CF_READ | CF_HEAD_TAG);
+-	ms_pkt->timeout = __constant_cpu_to_le16(25);
++	ms_pkt->timeout = cpu_to_le16(ha->r_a_tov / 10 * 2);
+ 	ms_pkt->cmd_dsd_count = __constant_cpu_to_le16(1);
+ 	ms_pkt->total_dsd_count = __constant_cpu_to_le16(2);
+ 	ms_pkt->rsp_bytecount = cpu_to_le32(rsp_size);
+@@ -75,7 +75,7 @@ qla24xx_prep_ms_iocb(scsi_qla_host_t *ha, uint32_t req_size, uint32_t rsp_size)
+ 	ct_pkt->entry_type = CT_IOCB_TYPE;
+ 	ct_pkt->entry_count = 1;
+ 	ct_pkt->nport_handle = __constant_cpu_to_le16(NPH_SNS);
+-	ct_pkt->timeout = __constant_cpu_to_le16(25);
++	ct_pkt->timeout = cpu_to_le16(ha->r_a_tov / 10 * 2);
+ 	ct_pkt->cmd_dsd_count = __constant_cpu_to_le16(1);
+ 	ct_pkt->rsp_dsd_count = __constant_cpu_to_le16(1);
+ 	ct_pkt->rsp_byte_count = cpu_to_le32(rsp_size);
+@@ -1144,7 +1144,7 @@ qla2x00_prep_ms_fdmi_iocb(scsi_qla_host_t *ha, uint32_t req_size,
+ 	ms_pkt->entry_count = 1;
+ 	SET_TARGET_ID(ha, ms_pkt->loop_id, ha->mgmt_svr_loop_id);
+ 	ms_pkt->control_flags = __constant_cpu_to_le16(CF_READ | CF_HEAD_TAG);
+-	ms_pkt->timeout = __constant_cpu_to_le16(59);
++	ms_pkt->timeout = cpu_to_le16(ha->r_a_tov / 10 * 2);
+ 	ms_pkt->cmd_dsd_count = __constant_cpu_to_le16(1);
+ 	ms_pkt->total_dsd_count = __constant_cpu_to_le16(2);
+ 	ms_pkt->rsp_bytecount = cpu_to_le32(rsp_size);
+@@ -1181,7 +1181,7 @@ qla24xx_prep_ms_fdmi_iocb(scsi_qla_host_t *ha, uint32_t req_size,
+ 	ct_pkt->entry_type = CT_IOCB_TYPE;
+ 	ct_pkt->entry_count = 1;
+ 	ct_pkt->nport_handle = cpu_to_le16(ha->mgmt_svr_loop_id);
+-	ct_pkt->timeout = __constant_cpu_to_le16(59);
++	ct_pkt->timeout = cpu_to_le16(ha->r_a_tov / 10 * 2);
+ 	ct_pkt->cmd_dsd_count = __constant_cpu_to_le16(1);
+ 	ct_pkt->rsp_dsd_count = __constant_cpu_to_le16(1);
+ 	ct_pkt->rsp_byte_count = cpu_to_le32(rsp_size);
+@@ -1768,7 +1768,7 @@ qla24xx_prep_ms_fm_iocb(scsi_qla_host_t *ha, uint32_t req_size,
+ 	ct_pkt->entry_type = CT_IOCB_TYPE;
+ 	ct_pkt->entry_count = 1;
+ 	ct_pkt->nport_handle = cpu_to_le16(ha->mgmt_svr_loop_id);
+-	ct_pkt->timeout = __constant_cpu_to_le16(59);
++	ct_pkt->timeout = cpu_to_le16(ha->r_a_tov / 10 * 2);
+ 	ct_pkt->cmd_dsd_count = __constant_cpu_to_le16(1);
+ 	ct_pkt->rsp_dsd_count = __constant_cpu_to_le16(1);
+ 	ct_pkt->rsp_byte_count = cpu_to_le32(rsp_size);
+diff --git a/drivers/scsi/qla2xxx/qla_init.c b/drivers/scsi/qla2xxx/qla_init.c
+index a64fdf8..7b61a89 100644
+--- a/drivers/scsi/qla2xxx/qla_init.c
++++ b/drivers/scsi/qla2xxx/qla_init.c
+@@ -78,7 +78,6 @@ qla2x00_initialize_adapter(scsi_qla_host_t *ha)
+ 	ha->mbx_flags = 0;
+ 	ha->isp_abort_cnt = 0;
+ 	ha->beacon_blink_led = 0;
+-	set_bit(REGISTER_FDMI_NEEDED, &ha->dpc_flags);
+ 
+ 	qla_printk(KERN_INFO, ha, "Configuring PCI space...\n");
+ 	rval = ha->isp_ops->pci_config(ha);
+@@ -1822,8 +1821,8 @@ qla2x00_nvram_config(scsi_qla_host_t *ha)
+ 	ha->login_timeout = nv->login_timeout;
+ 	icb->login_timeout = nv->login_timeout;
+ 
+-	/* Set minimum RATOV to 200 tenths of a second. */
+-	ha->r_a_tov = 200;
++	/* Set minimum RATOV to 100 tenths of a second. */
++	ha->r_a_tov = 100;
+ 
+ 	ha->loop_reset_delay = nv->reset_delay;
+ 
+@@ -3465,7 +3464,7 @@ isp_return:
+ static int
+ qla2x00_restart_isp(scsi_qla_host_t *ha)
+ {
+-	uint8_t		status = 0;
++	int		status = 0;
+ 	struct device_reg_2xxx __iomem *reg = &ha->iobase->isp;
+ 	unsigned long	flags = 0;
+ 	uint32_t wait_time;
+@@ -3721,8 +3720,8 @@ qla24xx_nvram_config(scsi_qla_host_t *ha)
+ 	ha->login_timeout = le16_to_cpu(nv->login_timeout);
+ 	icb->login_timeout = cpu_to_le16(nv->login_timeout);
+ 
+-	/* Set minimum RATOV to 200 tenths of a second. */
+-	ha->r_a_tov = 200;
++	/* Set minimum RATOV to 100 tenths of a second. */
++	ha->r_a_tov = 100;
+ 
+ 	ha->loop_reset_delay = nv->reset_delay;
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_isr.c b/drivers/scsi/qla2xxx/qla_isr.c
+index 46eb081..1adab17 100644
+--- a/drivers/scsi/qla2xxx/qla_isr.c
++++ b/drivers/scsi/qla2xxx/qla_isr.c
+@@ -477,11 +477,11 @@ skip_rio:
+ 		qla_printk(KERN_INFO, ha, "LOOP UP detected (%s Gbps).\n",
+ 		    link_speed);
+ 
+-		ha->current_topology = 0;
+ 		ha->flags.management_server_logged_in = 0;
+ 		break;
+ 
+ 	case MBA_LOOP_DOWN:		/* Loop Down Event */
++		ha->current_topology = 0;
+ 		qla2x00_set_loop_down( ha, mb );
+ 		if (ql2xfdmienable)
+ 			set_bit(REGISTER_FDMI_NEEDED, &ha->dpc_flags);
+@@ -1150,7 +1150,7 @@ qla2x00_status_entry(scsi_qla_host_t *ha, void *pkt)
+ 		break;
+ 
+ 	case CS_DATA_UNDERRUN:
+-		DEBUG2(printk(KERN_INFO
++		DEBUG3(printk(KERN_INFO
+ 		    "scsi(%ld:%d:%d) UNDERRUN status detected: "
+ 		    "0x%x-0x%x. resid=0x%x fw_resid=0x%x cdb=0x%x "
+ 		    "os_underflow=0x%x srb_flags=0x%x\n", ha->host_no,
+diff --git a/drivers/scsi/qla2xxx/qla_mbx.c b/drivers/scsi/qla2xxx/qla_mbx.c
+index 870a0c8..929e6e4 100644
+--- a/drivers/scsi/qla2xxx/qla_mbx.c
++++ b/drivers/scsi/qla2xxx/qla_mbx.c
+@@ -2284,7 +2284,7 @@ qla24xx_abort_target(fc_port_t *fcport)
+ 	tsk->p.tsk.entry_type = TSK_MGMT_IOCB_TYPE;
+ 	tsk->p.tsk.entry_count = 1;
+ 	tsk->p.tsk.nport_handle = cpu_to_le16(fcport->loop_id);
+-	tsk->p.tsk.timeout = __constant_cpu_to_le16(25);
++	tsk->p.tsk.timeout = cpu_to_le16(ha->r_a_tov / 10 * 2);
+ 	tsk->p.tsk.control_flags = __constant_cpu_to_le32(TCF_TARGET_RESET);
+ 	tsk->p.tsk.port_id[0] = fcport->d_id.b.al_pa;
+ 	tsk->p.tsk.port_id[1] = fcport->d_id.b.area;
+@@ -2672,8 +2672,10 @@ qla24xx_report_id_acquisition(scsi_qla_host_t *ha,
+ 		    vp_idx, MSB(stat),
+ 		    rptid_entry->port_id[2], rptid_entry->port_id[1],
+ 		    rptid_entry->port_id[0]));
+-		if (vp_idx == 0)
+-			return;
++
++		vha = ha;
++		if (vp_idx == 0 && (MSB(stat) != 1))
++			goto reg_needed;
+ 
+ 		if (MSB(stat) == 1) {
+ 			DEBUG2(printk("scsi(%ld): Could not acquire ID for "
+@@ -2697,6 +2699,9 @@ qla24xx_report_id_acquisition(scsi_qla_host_t *ha,
+ 		 * response queue. Handle it in dpc context.
+ 		 */
+ 		set_bit(VP_IDX_ACQUIRED, &vha->vp_flags);
++reg_needed:
++	    	set_bit(REGISTER_FC4_NEEDED, &vha->dpc_flags);
++	    	set_bit(REGISTER_FDMI_NEEDED, &vha->dpc_flags);
+ 	    	set_bit(VP_DPC_NEEDED, &ha->dpc_flags);
+ 
+ 		wake_up_process(ha->dpc_thread);
+@@ -3359,6 +3364,8 @@ qla2x00_loopback_test(scsi_qla_host_t *ha, struct msg_loopback *req,
+ 
+ 	mcp->mb[0] = MBC_DIAGNOSTIC_LOOP_BACK;
+ 	mcp->mb[1] = req->options | BIT_6;
++	if (IS_QLA81XX(ha))
++		mcp->mb[2] = 0;
+ 	mcp->mb[10] = LSW(req->tx_cnt);
+ 	mcp->mb[11] = MSW(req->tx_cnt);
+ 	mcp->mb[14] = LSW(ha->loopback_buf.loopback_dma);
+@@ -3373,6 +3380,9 @@ qla2x00_loopback_test(scsi_qla_host_t *ha, struct msg_loopback *req,
+ 	mcp->mb[19] = MSW(req->iter_cnt);
+ 	mcp->out_mb = MBX_21|MBX_20|MBX_19|MBX_18|MBX_17|MBX_16|MBX_15|
+ 	    MBX_14|MBX_13|MBX_12|MBX_11|MBX_10|MBX_7|MBX_6|MBX_1|MBX_0;
++	if (IS_QLA81XX(ha))
++		mcp->out_mb |= MBX_2;
++
+ 	mcp->in_mb = MBX_19|MBX_18|MBX_3|MBX_2|MBX_1|MBX_0;
+ 	mcp->buf_size = req->tx_cnt;
+ 	mcp->flags = MBX_DMA_OUT|MBX_DMA_IN|IOCTL_CMD;
+@@ -3404,6 +3414,10 @@ qla2x00_echo_test(scsi_qla_host_t *ha, struct msg_loopback *req,
+ 
+ 	mcp->mb[0] = MBC_DIAGNOSTIC_ECHO;
+ 	mcp->mb[1] = BIT_6;
++	if (IS_QLA81XX(ha)) {
++		mcp->mb[1] |= BIT_15;
++		mcp->mb[2] |= 0;
++	}
+ 	mcp->mb[10] = req->tx_cnt;
+ 	mcp->mb[14] = LSW(ha->loopback_buf.loopback_dma);
+ 	mcp->mb[15] = MSW(ha->loopback_buf.loopback_dma);
+@@ -3414,8 +3428,16 @@ qla2x00_echo_test(scsi_qla_host_t *ha, struct msg_loopback *req,
+ 	mcp->mb[6] = LSW(MSD(ha->loopback_buf.loopback_dma));
+ 	mcp->mb[7] = MSW(MSD(ha->loopback_buf.loopback_dma));
+ 	mcp->out_mb = MBX_21|MBX_20|MBX_17|MBX_16|MBX_15|MBX_14|MBX_10|
+-	   MBX_7|MBX_6|MBX_2|MBX_1|MBX_0;
+-	mcp->in_mb = MBX_1|MBX_0;
++	   MBX_7|MBX_6|MBX_1|MBX_0;
++	if (IS_QLA81XX(ha))
++		mcp->out_mb |= MBX_2;
++
++	mcp->in_mb = MBX_0;
++	if (IS_QLA24XX_TYPE(ha) || IS_QLA25XX(ha) || IS_QLA81XX(ha))
++		mcp->in_mb |= MBX_1;
++	if (IS_QLA81XX(ha))
++		mcp->in_mb |= MBX_3;
++
+ 	mcp->buf_size = req->tx_cnt;
+ 	mcp->flags = MBX_DMA_OUT|MBX_DMA_IN|IOCTL_CMD;
+ 	mcp->tov = MBX_TOV_SECONDS;
+diff --git a/drivers/scsi/qla2xxx/qla_mid.c b/drivers/scsi/qla2xxx/qla_mid.c
+index 73cc416..d721aac 100644
+--- a/drivers/scsi/qla2xxx/qla_mid.c
++++ b/drivers/scsi/qla2xxx/qla_mid.c
+@@ -469,8 +469,6 @@ qla24xx_create_vhost(scsi_qla_host_t *ha, uint64_t fc_wwpn, uint64_t fc_wwnn)
+ 	init_completion(&vha->mbx_intr_comp);
+ 
+ 	vha->dpc_flags = 0L;
+-	set_bit(REGISTER_FDMI_NEEDED, &vha->dpc_flags);
+-	set_bit(REGISTER_FC4_NEEDED, &vha->dpc_flags);
+ 
+ 	/*
+ 	 * To fix the issue of processing a parent's RSCN for the vport before
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 6d2349e..e2d6be5 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -1222,7 +1222,8 @@ qla2x00_loop_reset(scsi_qla_host_t *ha)
+ 
+ 	if (ha->flags.enable_target_reset) {
+ 		list_for_each_entry(fcport, &ha->fcports, list) {
+-			if (fcport->port_type != FCT_TARGET)
++			if (fcport->port_type != FCT_TARGET ||
++			    ha->vp_idx != fcport->vp_idx)
+ 				continue;
+ 
+ 			ret = qla2x00_device_reset(ha, fcport);
+@@ -2798,7 +2799,7 @@ qla2x00_do_dpc(void *data)
+ {
+ 	scsi_qla_host_t *ha;
+ 	fc_port_t	*fcport;
+-	uint8_t		status;
++	int		status;
+ 	uint16_t	next_loopid;
+ 	int		rval;
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_version.h b/drivers/scsi/qla2xxx/qla_version.h
+index 7494018..9e08386 100644
+--- a/drivers/scsi/qla2xxx/qla_version.h
++++ b/drivers/scsi/qla2xxx/qla_version.h
+@@ -7,7 +7,7 @@
+ /*
+  * Driver version
+  */
+-#define QLA2XXX_VERSION      "8.03.01.03.05.05-k"
++#define QLA2XXX_VERSION      "8.03.01.04.05.05-k"
+ 
+ #define QLA_DRIVER_MAJOR_VER	8
+ #define QLA_DRIVER_MINOR_VER	3

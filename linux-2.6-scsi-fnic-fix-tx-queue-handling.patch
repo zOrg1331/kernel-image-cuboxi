@@ -1,0 +1,53 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Sat, 27 Mar 2010 04:25:29 -0400
+Subject: [scsi] fnic: fix tx queue handling
+Message-id: <1269663929-14211-1-git-send-email-mchristi@redhat.com>
+Patchwork-id: 23793
+O-Subject: [PATCH RHEL 5.6]: fnic: Fix tx queue handling
+Bugzilla: 576709
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 576709.
+
+>From the BZ:
+
+Fnic 5.5 driver has a bug where once the fabric login has completed, it
+flushes the Rx queue instead of flushing the intended Tx queue.
+This can cause a crash during SAN Boot or other times like when using an
+"fcc reset" to re-login to the fabric.
+
+The patch was sent here:
+http://www.open-fcoe.org/pipermail/devel/2010-March/010116.html
+http://www.open-fcoe.org/pipermail/devel/2010-March/010117.html
+
+I have only compile tested the patch. I do not have a working
+fnic card. The patch and the testing has been done by Cisco.
+
+diff --git a/drivers/scsi/fnic/fnic.h b/drivers/scsi/fnic/fnic.h
+index 3a7c6bd..f91e80d 100644
+--- a/drivers/scsi/fnic/fnic.h
++++ b/drivers/scsi/fnic/fnic.h
+@@ -37,7 +37,7 @@
+ 
+ #define DRV_NAME		"fnic"
+ #define DRV_DESCRIPTION		"Cisco FCoE HBA Driver"
+-#define DRV_VERSION		"1.4.0.98"
++#define DRV_VERSION		"1.4.0.145"
+ #define PFX			DRV_NAME ": "
+ #define DFX                     DRV_NAME "%d: "
+ 
+diff --git a/drivers/scsi/fnic/fnic_fcs.c b/drivers/scsi/fnic/fnic_fcs.c
+index 54f8d0e..73df9d1 100644
+--- a/drivers/scsi/fnic/fnic_fcs.c
++++ b/drivers/scsi/fnic/fnic_fcs.c
+@@ -616,7 +616,7 @@ void fnic_flush_tx(struct fnic *fnic)
+ 	struct sk_buff *skb;
+ 	struct fc_frame *fp;
+ 
+-	while ((skb = skb_dequeue(&fnic->frame_queue))) {
++	while ((skb = skb_dequeue(&fnic->tx_queue))) {
+ 		fp = (struct fc_frame *)skb;
+ 		fnic_send_frame(fnic, fp);
+ 	}

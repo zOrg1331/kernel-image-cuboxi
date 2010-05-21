@@ -1,0 +1,676 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Tue, 5 Jan 2010 17:51:00 -0500
+Subject: [net] be2net: multiple bug fixes
+Message-id: <1262713860-14499-1-git-send-email-ivecera@redhat.com>
+Patchwork-id: 22314
+O-Subject: [RHEL5.5 PATCH] be2net: Multiple bug fixes for be2net
+Bugzilla: 549460
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZs:
+#549460 - Multiple bug fixes for be2net
+
+Description:
+This includes several upstream fixes for bugs found in Emulex QA.
+
+1) be2net: Bug fix to return correct values in ethtool get_settings
+16c02145902d8597841a25e8443cfb082898a2d7
+
+2) be2net: Add support for ethtool self test
+ff33a6e2ab97f4cde484cdf1a41778af6d6b7cff
+
+3) be2net: Bug fix to config NIC appropriately before loopback test
+fced9999ed7f6975fbb2350a73048918ba60a773
+
+4) be2net: Bug fix to avoid soft lockup in loopback test.
+d7b901418250f00eaaa18f9135d09ba61b72a5bc
+
+5) be2net: fix error in rx completion processing
+e1187b3be72be59625e445b186007e6eae27fef1
+
+Signed-off-by: Ivan Vecera <ivecera@redhat.com>
+
+diff --git a/drivers/net/benet/be.h b/drivers/net/benet/be.h
+index 655d191..ee196ca 100644
+--- a/drivers/net/benet/be.h
++++ b/drivers/net/benet/be.h
+@@ -34,7 +34,7 @@
+ 
+ #include "be_hw.h"
+ 
+-#define DRV_VER			"2.101.331r"
++#define DRV_VER			"2.101.377r"
+ #define DRV_NAME		"be2net"
+ #define BE_NAME			"ServerEngines BladeEngine2 10Gbps NIC"
+ #define BE3_NAME		"ServerEngines BladeEngine3 10Gbps NIC"
+@@ -46,16 +46,14 @@
+ #define BE_DEVICE_ID1		0x211
+ #define BE_DEVICE_ID2		0x221
+ #define OC_DEVICE_ID1		0x700
+-#define OC_DEVICE_ID2		0x701
+-#define OC_DEVICE_ID3		0x710
++#define OC_DEVICE_ID2		0x710
+ 
+ static inline char *nic_name(struct pci_dev *pdev)
+ {
+ 	switch (pdev->device) {
+ 	case OC_DEVICE_ID1:
+-	case OC_DEVICE_ID2:
+ 		return OC_NAME;
+-	case OC_DEVICE_ID3:
++	case OC_DEVICE_ID2:
+ 		return OC_NAME1;
+ 	case BE_DEVICE_ID2:
+ 		return BE3_NAME;
+@@ -284,6 +282,7 @@ struct be_adapter {
+ 	u32 tx_fc;		/* Tx flow control */
+ 	int link_speed;
+ 	u8 port_type;
++	u8 transceiver;
+ };
+ 
+ extern struct ethtool_ops be_ethtool_ops;
+diff --git a/drivers/net/benet/be_cmds.c b/drivers/net/benet/be_cmds.c
+index 4da2597..c632e66 100644
+--- a/drivers/net/benet/be_cmds.c
++++ b/drivers/net/benet/be_cmds.c
+@@ -1492,3 +1492,162 @@ err:
+ 	spin_unlock_bh(&adapter->mcc_lock);
+ 	return status;
+ }
++
++int be_cmd_set_loopback(struct be_adapter *adapter, u8 port_num,
++			u8 loopback_type, u8 enable)
++{
++	struct be_mcc_wrb *wrb;
++	struct be_cmd_req_set_lmode *req;
++	int status;
++
++	spin_lock_bh(&adapter->mcc_lock);
++
++	wrb = wrb_from_mccq(adapter);
++	if (!wrb) {
++		status = -EBUSY;
++		goto err;
++	}
++
++	req = embedded_payload(wrb);
++
++	be_wrb_hdr_prepare(wrb, sizeof(*req), true, 0,
++				OPCODE_LOWLEVEL_SET_LOOPBACK_MODE);
++
++	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_LOWLEVEL,
++			OPCODE_LOWLEVEL_SET_LOOPBACK_MODE,
++			sizeof(*req));
++
++	req->src_port = port_num;
++	req->dest_port = port_num;
++	req->loopback_type = loopback_type;
++	req->loopback_state = enable;
++
++	status = be_mcc_notify_wait(adapter);
++err:
++	spin_unlock_bh(&adapter->mcc_lock);
++	return status;
++}
++int be_cmd_loopback_test(struct be_adapter *adapter, u32 port_num,
++		u32 loopback_type, u32 pkt_size, u32 num_pkts, u64 pattern)
++{
++	struct be_mcc_wrb *wrb;
++	struct be_cmd_req_loopback_test *req;
++	int status;
++
++	spin_lock_bh(&adapter->mcc_lock);
++
++	wrb = wrb_from_mccq(adapter);
++	if (!wrb) {
++		status = -EBUSY;
++		goto err;
++	}
++
++	req = embedded_payload(wrb);
++
++	be_wrb_hdr_prepare(wrb, sizeof(*req), true, 0,
++				OPCODE_LOWLEVEL_LOOPBACK_TEST);
++
++	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_LOWLEVEL,
++			OPCODE_LOWLEVEL_LOOPBACK_TEST, sizeof(*req));
++	req->hdr.timeout = 4;
++
++	req->pattern = cpu_to_le64(pattern);
++	req->src_port = cpu_to_le32(port_num);
++	req->dest_port = cpu_to_le32(port_num);
++	req->pkt_size = cpu_to_le32(pkt_size);
++	req->num_pkts = cpu_to_le32(num_pkts);
++	req->loopback_type = cpu_to_le32(loopback_type);
++
++	status = be_mcc_notify_wait(adapter);
++	if (!status) {
++		struct be_cmd_resp_loopback_test *resp = embedded_payload(wrb);
++		status = le32_to_cpu(resp->status);
++	}
++
++err:
++	spin_unlock_bh(&adapter->mcc_lock);
++	return status;
++}
++
++int be_cmd_ddr_dma_test(struct be_adapter *adapter, u64 pattern,
++				u32 byte_cnt, struct be_dma_mem *cmd)
++{
++	struct be_mcc_wrb *wrb;
++	struct be_cmd_req_ddrdma_test *req;
++	struct be_sge *sge;
++	int status;
++	int i, j = 0;
++
++	spin_lock_bh(&adapter->mcc_lock);
++
++	wrb = wrb_from_mccq(adapter);
++	if (!wrb) {
++		status = -EBUSY;
++		goto err;
++	}
++	req = cmd->va;
++	sge = nonembedded_sgl(wrb);
++	be_wrb_hdr_prepare(wrb, cmd->size, false, 1,
++				OPCODE_LOWLEVEL_HOST_DDR_DMA);
++	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_LOWLEVEL,
++			OPCODE_LOWLEVEL_HOST_DDR_DMA, cmd->size);
++
++	sge->pa_hi = cpu_to_le32(upper_32_bits(cmd->dma));
++	sge->pa_lo = cpu_to_le32(cmd->dma & 0xFFFFFFFF);
++	sge->len = cpu_to_le32(cmd->size);
++
++	req->pattern = cpu_to_le64(pattern);
++	req->byte_count = cpu_to_le32(byte_cnt);
++	for (i = 0; i < byte_cnt; i++) {
++		req->snd_buff[i] = (u8)(pattern >> (j*8));
++		j++;
++		if (j > 7)
++			j = 0;
++	}
++
++	status = be_mcc_notify_wait(adapter);
++
++	if (!status) {
++		struct be_cmd_resp_ddrdma_test *resp;
++		resp = cmd->va;
++		if ((memcmp(resp->rcv_buff, req->snd_buff, byte_cnt) != 0) ||
++				resp->snd_err) {
++			status = -1;
++		}
++	}
++
++err:
++	spin_unlock_bh(&adapter->mcc_lock);
++	return status;
++}
++
++extern int be_cmd_get_seeprom_data(struct be_adapter *adapter,
++				struct be_dma_mem *nonemb_cmd)
++{
++	struct be_mcc_wrb *wrb;
++	struct be_cmd_req_seeprom_read *req;
++	struct be_sge *sge;
++	int status;
++
++	spin_lock_bh(&adapter->mcc_lock);
++
++	wrb = wrb_from_mccq(adapter);
++	req = nonemb_cmd->va;
++	sge = nonembedded_sgl(wrb);
++
++	be_wrb_hdr_prepare(wrb, sizeof(*req), false, 1,
++			OPCODE_COMMON_SEEPROM_READ);
++
++	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
++			OPCODE_COMMON_SEEPROM_READ, sizeof(*req));
++
++	sge->pa_hi = cpu_to_le32(upper_32_bits(nonemb_cmd->dma));
++	sge->pa_lo = cpu_to_le32(nonemb_cmd->dma & 0xFFFFFFFF);
++	sge->len = cpu_to_le32(nonemb_cmd->size);
++
++	status = be_mcc_notify_wait(adapter);
++
++	spin_unlock_bh(&adapter->mcc_lock);
++	return status;
++}
++
+diff --git a/drivers/net/benet/be_cmds.h b/drivers/net/benet/be_cmds.h
+index a091360..9b659aa 100644
+--- a/drivers/net/benet/be_cmds.h
++++ b/drivers/net/benet/be_cmds.h
+@@ -112,6 +112,7 @@ struct be_mcc_mailbox {
+ 
+ #define CMD_SUBSYSTEM_COMMON	0x1
+ #define CMD_SUBSYSTEM_ETH 	0x3
++#define CMD_SUBSYSTEM_LOWLEVEL  0xb
+ 
+ #define OPCODE_COMMON_NTWK_MAC_QUERY			1
+ #define OPCODE_COMMON_NTWK_MAC_SET			2
+@@ -123,6 +124,8 @@ struct be_mcc_mailbox {
+ #define OPCODE_COMMON_CQ_CREATE				12
+ #define OPCODE_COMMON_EQ_CREATE				13
+ #define OPCODE_COMMON_MCC_CREATE        		21
++#define OPCODE_COMMON_SEEPROM_READ			30
++#define OPCODE_COMMON_GET_CNTL_ATTRIBUTES               32
+ #define OPCODE_COMMON_NTWK_RX_FILTER    		34
+ #define OPCODE_COMMON_GET_FW_VERSION			35
+ #define OPCODE_COMMON_SET_FLOW_CONTROL			36
+@@ -152,6 +155,10 @@ struct be_mcc_mailbox {
+ #define OPCODE_ETH_RX_DESTROY           		10
+ #define OPCODE_ETH_ACPI_WOL_MAGIC_CONFIG		12
+ 
++#define OPCODE_LOWLEVEL_HOST_DDR_DMA                    17
++#define OPCODE_LOWLEVEL_LOOPBACK_TEST                   18
++#define OPCODE_LOWLEVEL_SET_LOOPBACK_MODE		19
++
+ struct be_cmd_req_hdr {
+ 	u8 opcode;		/* dword 0 */
+ 	u8 subsystem;		/* dword 0 */
+@@ -797,6 +804,77 @@ struct be_cmd_req_acpi_wol_magic_config{
+ 	u8 rsvd2[2];
+ } __packed;
+ 
++/********************** LoopBack test *********************/
++
++#define BE_MAC_LOOPBACK 0x0
++#define BE_PHY_LOOPBACK 0x1
++#define BE_ONE_PORT_EXT_LOOPBACK 0x2
++#define BE_NO_LOOPBACK     0xff
++
++struct be_cmd_req_loopback_test {
++	struct be_cmd_req_hdr hdr;
++	u32 loopback_type;
++	u32 num_pkts;
++	u64 pattern;
++	u32 src_port;
++	u32 dest_port;
++	u32 pkt_size;
++};
++
++struct be_cmd_resp_loopback_test {
++	struct be_cmd_resp_hdr resp_hdr;
++	u32    status;
++	u32    num_txfer;
++	u32    num_rx;
++	u32    miscomp_off;
++	u32    ticks_compl;
++};
++
++struct be_cmd_req_set_lmode {
++	struct be_cmd_req_hdr hdr;
++	u8 src_port;
++	u8 dest_port;
++	u8 loopback_type;
++	u8 loopback_state;
++};
++
++struct be_cmd_resp_set_lmode {
++	struct be_cmd_resp_hdr resp_hdr;
++	u8 rsvd0[4];
++};
++
++/********************** DDR DMA test *********************/
++struct be_cmd_req_ddrdma_test {
++	struct be_cmd_req_hdr hdr;
++	u64 pattern;
++	u32 byte_count;
++	u32 rsvd0;
++	u8  snd_buff[4096];
++	u8  rsvd1[4096];
++};
++
++struct be_cmd_resp_ddrdma_test {
++	struct be_cmd_resp_hdr hdr;
++	u64 pattern;
++	u32 byte_cnt;
++	u32 snd_err;
++	u8  rsvd0[4096];
++	u8  rcv_buff[4096];
++};
++
++/*********************** SEEPROM Read ***********************/
++
++#define BE_READ_SEEPROM_LEN 1024
++struct be_cmd_req_seeprom_read {
++	struct be_cmd_req_hdr hdr;
++	u8 rsvd0[BE_READ_SEEPROM_LEN];
++};
++
++struct be_cmd_resp_seeprom_read {
++	struct be_cmd_req_hdr hdr;
++	u8 seeprom_data[BE_READ_SEEPROM_LEN];
++};
++
+ extern int be_pci_fnum_get(struct be_adapter *adapter);
+ extern int be_cmd_POST(struct be_adapter *adapter);
+ extern int be_cmd_mac_addr_query(struct be_adapter *adapter, u8 *mac_addr,
+@@ -866,3 +944,12 @@ extern int be_cmd_fw_init(struct be_adapter *adapter);
+ extern int be_cmd_fw_clean(struct be_adapter *adapter);
+ extern void be_async_mcc_enable(struct be_adapter *adapter);
+ extern void be_async_mcc_disable(struct be_adapter *adapter);
++extern int be_cmd_get_seeprom_data(struct be_adapter *adapter,
++				struct be_dma_mem *nonemb_cmd);
++extern int be_cmd_loopback_test(struct be_adapter *adapter, u32 port_num,
++				u32 loopback_type, u32 pkt_size,
++				u32 num_pkts, u64 pattern);
++extern int be_cmd_ddr_dma_test(struct be_adapter *adapter, u64 pattern,
++			u32 byte_cnt, struct be_dma_mem *cmd);
++extern int be_cmd_set_loopback(struct be_adapter *adapter, u8 port_num,
++				u8 loopback_type, u8 enable);
+diff --git a/drivers/net/benet/be_ethtool.c b/drivers/net/benet/be_ethtool.c
+index 13e7516..3663af2 100644
+--- a/drivers/net/benet/be_ethtool.c
++++ b/drivers/net/benet/be_ethtool.c
+@@ -107,6 +107,15 @@ static const struct be_ethtool_stat et_stats[] = {
+ };
+ #define ETHTOOL_STATS_NUM ARRAY_SIZE(et_stats)
+ 
++static const char et_self_tests[][ETH_GSTRING_LEN] = {
++	"MAC Loopback test",
++	"PHY Loopback test",
++	"External Loopback test",
++	"DDR DMA test",
++	"Link test"
++};
++#define BE_NUM_TESTS ARRAY_SIZE(et_self_tests)
++
+ static void
+ be_get_drvinfo(struct net_device *netdev, struct ethtool_drvinfo *drvinfo)
+ {
+@@ -295,6 +304,12 @@ be_get_stat_strings(struct net_device *netdev, uint32_t stringset,
+ 			data += ETH_GSTRING_LEN;
+ 		}
+ 		break;
++	case ETH_SS_TEST:
++		for (i = 0; i < BE_NUM_TESTS; i++) {
++			memcpy(data, et_self_tests[i], ETH_GSTRING_LEN);
++			data += ETH_GSTRING_LEN;
++		}
++		break;
+ 	}
+ }
+ 
+@@ -306,13 +321,15 @@ static int be_get_stats_count(struct net_device *netdev)
+ static int be_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
+ {
+ 	struct be_adapter *adapter = netdev_priv(netdev);
++
++	int status;
+ 	u8 mac_speed = 0, connector = 0;
+ 	u16 link_speed = 0;
+ 	bool link_up = false;
+ 
+ 	if (adapter->link_speed < 0) {
+-		be_cmd_link_status_query(adapter, &link_up, &mac_speed,
+-					 &link_speed);
++		status = be_cmd_link_status_query(adapter, &link_up, &mac_speed,
++						&link_speed);
+ 
+ 		/* link_speed is in units of 10 Mbps */
+ 		if (link_speed) {
+@@ -328,28 +345,51 @@ static int be_get_settings(struct net_device *netdev, struct ethtool_cmd *ecmd)
+ 			}
+ 		}
+ 
+-		be_cmd_read_port_type(adapter, adapter->port_num, &connector);
+-		switch (connector) {
+-		case 7:
+-			ecmd->port = PORT_FIBRE;
+-			break;
+-		default:
+-			ecmd->port = PORT_TP;
+-			break;
++		status = be_cmd_read_port_type(adapter, adapter->port_num,
++						&connector);
++		if (!status) {
++			switch (connector) {
++			case 7:
++				ecmd->port = PORT_FIBRE;
++				ecmd->transceiver = XCVR_EXTERNAL;
++				break;
++			case 0:
++				ecmd->port = PORT_TP;
++				ecmd->transceiver = XCVR_EXTERNAL;
++				break;
++			default:
++				ecmd->port = PORT_TP;
++				ecmd->transceiver = XCVR_INTERNAL;
++				break;
++			}
++		} else {
++			ecmd->port = PORT_AUI;
++			ecmd->transceiver = XCVR_INTERNAL;
+ 		}
+ 
+ 		adapter->link_speed = ecmd->speed;
+ 		adapter->port_type = ecmd->port;
++		adapter->transceiver = ecmd->transceiver;
+ 	} else {
+ 		ecmd->speed = adapter->link_speed;
+ 		ecmd->port = adapter->port_type;
++		ecmd->transceiver = adapter->transceiver;
+ 	}
+ 
+ 	ecmd->duplex = DUPLEX_FULL;
+ 	ecmd->autoneg = AUTONEG_DISABLE;
+-	ecmd->supported = (SUPPORTED_10000baseT_Full | SUPPORTED_TP);
+ 	ecmd->phy_address = adapter->port_num;
+-	ecmd->transceiver = XCVR_INTERNAL;
++	switch (ecmd->port) {
++	case PORT_FIBRE:
++		ecmd->supported = (SUPPORTED_10000baseT_Full | SUPPORTED_FIBRE);
++		break;
++	case PORT_TP:
++		ecmd->supported = (SUPPORTED_10000baseT_Full | SUPPORTED_TP);
++		break;
++	case PORT_AUI:
++		ecmd->supported = (SUPPORTED_10000baseT_Full | SUPPORTED_AUI);
++		break;
++	}
+ 
+ 	return 0;
+ }
+@@ -417,6 +457,7 @@ be_phys_id(struct net_device *netdev, u32 data)
+ 	status = be_cmd_set_beacon_state(adapter, adapter->port_num, 0, 0,
+ 			BEACON_STATE_DISABLED);
+ 
++
+ 	return status;
+ }
+ 
+@@ -450,12 +491,143 @@ be_set_wol(struct net_device *netdev, struct ethtool_wolinfo *wol)
+ 	return 0;
+ }
+ 
++static int
++be_test_ddr_dma(struct be_adapter *adapter)
++{
++	int ret, i;
++	struct be_dma_mem ddrdma_cmd;
++	u64 pattern[2] = {0x5a5a5a5a5a5a5a5a, 0xa5a5a5a5a5a5a5a5};
++
++	ddrdma_cmd.size = sizeof(struct be_cmd_req_ddrdma_test);
++	ddrdma_cmd.va = pci_alloc_consistent(adapter->pdev, ddrdma_cmd.size,
++			&ddrdma_cmd.dma);
++	if (!ddrdma_cmd.va) {
++		dev_err(&adapter->pdev->dev, "Memory allocation failure \n");
++		return -ENOMEM;
++	}
++
++	for (i = 0; i < 2; i++) {
++		ret = be_cmd_ddr_dma_test(adapter, pattern[i],
++						4096, &ddrdma_cmd);
++		if (ret)
++			goto err;
++	}
++
++err:
++	pci_free_consistent(adapter->pdev, ddrdma_cmd.size,
++			ddrdma_cmd.va, ddrdma_cmd.dma);
++	return ret;
++}
++
++static u64 be_loopback_test(struct be_adapter *adapter, u8 loopback_type,
++				u64 *status)
++{
++	be_cmd_set_loopback(adapter, adapter->port_num,
++				loopback_type, 1);
++	*status = be_cmd_loopback_test(adapter, adapter->port_num,
++				loopback_type, 1500,
++				2, 0xabc);
++	be_cmd_set_loopback(adapter, adapter->port_num,
++				BE_NO_LOOPBACK, 1);
++	return *status;
++}
++
++static int
++be_self_test_count(struct net_device *dev)
++{
++	return BE_NUM_TESTS;
++}
++
++static void
++be_self_test(struct net_device *netdev, struct ethtool_test *test, u64 *data)
++{
++	struct be_adapter *adapter = netdev_priv(netdev);
++	bool link_up;
++	u8 mac_speed = 0;
++	u16 qos_link_speed = 0;
++
++	memset(data, 0, sizeof(u64) * BE_NUM_TESTS);
++	if (test->flags & ETH_TEST_FL_OFFLINE) {
++		if (be_loopback_test(adapter, BE_MAC_LOOPBACK,
++						&data[0]) != 0) {
++			test->flags |= ETH_TEST_FL_FAILED;
++		}
++		if (be_loopback_test(adapter, BE_PHY_LOOPBACK,
++						&data[1]) != 0) {
++			test->flags |= ETH_TEST_FL_FAILED;
++		}
++		if (be_loopback_test(adapter, BE_ONE_PORT_EXT_LOOPBACK,
++						&data[2]) != 0) {
++			test->flags |= ETH_TEST_FL_FAILED;
++		}
++	}
++
++	if (be_test_ddr_dma(adapter) != 0) {
++		data[3] = 1;
++		test->flags |= ETH_TEST_FL_FAILED;
++	}
++
++	if (be_cmd_link_status_query(adapter, &link_up,
++				&mac_speed, &qos_link_speed) != 0) {
++		test->flags |= ETH_TEST_FL_FAILED;
++		data[4] = -1;
++	} else if (mac_speed) {
++		data[4] = 1;
++	}
++
++}
++
++static int
++be_get_eeprom_len(struct net_device *netdev)
++{
++	return BE_READ_SEEPROM_LEN;
++}
++
++static int
++be_read_eeprom(struct net_device *netdev, struct ethtool_eeprom *eeprom,
++			uint8_t *data)
++{
++	struct be_adapter *adapter = netdev_priv(netdev);
++	struct be_dma_mem eeprom_cmd;
++	struct be_cmd_resp_seeprom_read *resp;
++	int status;
++
++	if (!eeprom->len)
++		return -EINVAL;
++
++	eeprom->magic = BE_VENDOR_ID | (adapter->pdev->device<<16);
++
++	memset(&eeprom_cmd, 0, sizeof(struct be_dma_mem));
++	eeprom_cmd.size = sizeof(struct be_cmd_req_seeprom_read);
++	eeprom_cmd.va = pci_alloc_consistent(adapter->pdev, eeprom_cmd.size,
++				&eeprom_cmd.dma);
++
++	if (!eeprom_cmd.va) {
++		dev_err(&adapter->pdev->dev,
++			"Memory allocation failure. Could not read eeprom\n");
++		return -ENOMEM;
++	}
++
++	status = be_cmd_get_seeprom_data(adapter, &eeprom_cmd);
++
++	if (!status) {
++		resp = (struct be_cmd_resp_seeprom_read *) eeprom_cmd.va;
++		memcpy(data, resp->seeprom_data, eeprom->len);
++	}
++	pci_free_consistent(adapter->pdev, eeprom_cmd.size, eeprom_cmd.va,
++			eeprom_cmd.dma);
++
++	return status;
++}
++
+ struct ethtool_ops be_ethtool_ops = {
+ 	.get_settings = be_get_settings,
+ 	.get_drvinfo = be_get_drvinfo,
+ 	.get_wol = be_get_wol,
+ 	.set_wol = be_set_wol,
+ 	.get_link = ethtool_op_get_link,
++	.get_eeprom_len = be_get_eeprom_len,
++	.get_eeprom = be_read_eeprom,
+ 	.get_coalesce = be_get_coalesce,
+ 	.set_coalesce = be_set_coalesce,
+ 	.get_ringparam = be_get_ringparam,
+@@ -473,4 +645,6 @@ struct ethtool_ops be_ethtool_ops = {
+ 	.phys_id = be_phys_id,
+ 	.get_stats_count = be_get_stats_count,
+ 	.get_ethtool_stats = be_get_ethtool_stats,
++	.self_test = be_self_test,
++	.self_test_count = be_self_test_count
+ };
+diff --git a/drivers/net/benet/be_main.c b/drivers/net/benet/be_main.c
+index 49c91a0..b704e60 100644
+--- a/drivers/net/benet/be_main.c
++++ b/drivers/net/benet/be_main.c
+@@ -38,7 +38,6 @@ static DEFINE_PCI_DEVICE_TABLE(be_dev_ids) = {
+ 	{ PCI_DEVICE(BE_VENDOR_ID, BE_DEVICE_ID2) },
+ 	{ PCI_DEVICE(BE_VENDOR_ID, OC_DEVICE_ID1) },
+ 	{ PCI_DEVICE(BE_VENDOR_ID, OC_DEVICE_ID2) },
+-	{ PCI_DEVICE(BE_VENDOR_ID, OC_DEVICE_ID3) },
+ 	{ 0 }
+ };
+ MODULE_DEVICE_TABLE(pci, be_dev_ids);
+@@ -763,7 +762,7 @@ static void be_rx_compl_process(struct be_adapter *adapter,
+ 
+ 	/* vlanf could be wrongly set in some cards.
+ 	 * ignore if vtm is not set */
+-	if ((adapter->cap == 0x400) && !vtm)
++	if ((adapter->cap & 0x400) && !vtm)
+ 		vlanf = 0;
+ 
+ 	skb = netdev_alloc_skb(adapter->netdev, BE_HDR_LEN + NET_IP_ALIGN);
+@@ -822,7 +821,7 @@ static void be_rx_compl_process_gro(struct be_adapter *adapter,
+ 
+ 	/* vlanf could be wrongly set in some cards.
+ 	 * ignore if vtm is not set */
+-	if ((adapter->cap == 0x400) && !vtm)
++	if ((adapter->cap & 0x400) && !vtm)
+ 		vlanf = 0;
+ 
+ 	skb = napi_get_frags(&adapter->napi);
+@@ -2146,6 +2145,10 @@ static ssize_t flash_fw_store(struct class_device *cdev, const char *buf,
+ 	file_name[ETHTOOL_FLASH_MAX_FILENAME - 1] = 0;
+ 	strncpy(file_name, buf, (ETHTOOL_FLASH_MAX_FILENAME - 1));
+ 
++	/* Handle situation if filename comes with newline */
++	if (file_name[strlen(file_name) - 1] == '\n')
++		file_name[strlen(file_name) - 1] = '\0';
++
+ 	status = be_load_fw(adapter, file_name);
+ 	if (!status)
+ 		return len;

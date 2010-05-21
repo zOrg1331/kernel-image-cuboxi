@@ -1,0 +1,1308 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Tue, 1 Dec 2009 19:45:55 -0500
+Subject: [net] enic: update to upstream version 1.1.0.100
+Message-id: <20091201194554.GI3259@gospo.rdu.redhat.com>
+Patchwork-id: 21596
+O-Subject: [RHEL5.5 PATCH] enic: update to upstream version 1.1.0.100
+Bugzilla: 519086
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+Cisco requested we update the enic 10GbE driver to resolve some bugs
+that have been found and fixed upstream since our last update.
+
+This pulls in all upstream updates to:
+
+    commit 6fdfa97073a2bcbb60d900654c612b2ff09b9cb7
+    Author: Scott Feldman <scofeldm@cisco.com>
+    Date:   Thu Sep 3 17:02:45 2009 +0000
+
+        enic: organize device initialization/deinit into separate functions
+
+Cisco has done some initial testing and found the hardware functions
+well on standard and Xen kernels.
+
+This will resolve the request from RHBZ 519086.
+
+diff --git a/drivers/net/enic/enic.h b/drivers/net/enic/enic.h
+index 4becad6..60d6250 100644
+--- a/drivers/net/enic/enic.h
++++ b/drivers/net/enic/enic.h
+@@ -29,29 +29,35 @@
+ #include "vnic_cq.h"
+ #include "vnic_intr.h"
+ #include "vnic_stats.h"
++#include "vnic_nic.h"
+ #include "vnic_rss.h"
+ #include "enic_compat.h"
+ 
+ #define DRV_NAME		"enic"
+ #define DRV_DESCRIPTION		"Cisco 10G Ethernet Driver"
+-#define DRV_VERSION		"1.0.0.933"
+-#define DRV_COPYRIGHT		"Copyright 2008 Cisco Systems, Inc"
++#define DRV_VERSION		"1.1.0.100"
++#define DRV_COPYRIGHT		"Copyright 2008-2009 Cisco Systems, Inc"
+ #define PFX			DRV_NAME ": "
+ 
+ #define ENIC_LRO_MAX_DESC	8
+ #define ENIC_LRO_MAX_AGGR	64
+ 
++#define ENIC_BARS_MAX		6
++
++#define ENIC_WQ_MAX		8
++#define ENIC_RQ_MAX		8
++#define ENIC_CQ_MAX		(ENIC_WQ_MAX + ENIC_RQ_MAX)
++#define ENIC_INTR_MAX		(ENIC_CQ_MAX + 2)
++
+ enum enic_cq_index {
+ 	ENIC_CQ_RQ,
+ 	ENIC_CQ_WQ,
+-	ENIC_CQ_MAX,
+ };
+ 
+ enum enic_intx_intr_index {
+ 	ENIC_INTX_WQ_RQ,
+ 	ENIC_INTX_ERR,
+ 	ENIC_INTX_NOTIFY,
+-	ENIC_INTX_MAX,
+ };
+ 
+ enum enic_msix_intr_index {
+@@ -74,7 +80,7 @@ struct enic {
+ 	struct net_device *netdev;
+ 	struct pci_dev *pdev;
+ 	struct vnic_enet_config config;
+-	struct vnic_dev_bar bar0;
++	struct vnic_dev_bar bar[ENIC_BARS_MAX];
+ 	struct vnic_dev *vdev;
+ 	struct net_device_stats net_stats;
+ 	struct timer_list notify_timer;
+@@ -90,22 +96,23 @@ struct enic {
+ 	u32 port_mtu;
+ 
+ 	/* work queue cache line section */
+-	____cacheline_aligned struct vnic_wq wq[1];
+-	spinlock_t wq_lock[1];
++	____cacheline_aligned struct vnic_wq wq[ENIC_WQ_MAX];
++	spinlock_t wq_lock[ENIC_WQ_MAX];
+ 	unsigned int wq_count;
+ 	struct vlan_group *vlan_group;
+ 
+ 	/* receive queue cache line section */
+-	____cacheline_aligned struct vnic_rq rq[1];
++	____cacheline_aligned struct vnic_rq rq[ENIC_RQ_MAX];
+ 	unsigned int rq_count;
+ 	int (*rq_alloc_buf)(struct vnic_rq *rq);
++	u64 rq_truncated_pkts;
+ 	u64 rq_bad_fcs;
+ 
+ 	struct net_lro_mgr lro_mgr;
+ 	struct net_lro_desc lro_desc[ENIC_LRO_MAX_DESC];
+ 
+ 	/* interrupt resource cache line section */
+-	____cacheline_aligned struct vnic_intr intr[ENIC_MSIX_MAX];
++	____cacheline_aligned struct vnic_intr intr[ENIC_INTR_MAX];
+ 	unsigned int intr_count;
+ 	u32 __iomem *legacy_pba;		/* memory-mapped */
+ 
+diff --git a/drivers/net/enic/enic_main.c b/drivers/net/enic/enic_main.c
+index a46da0a..1098245 100644
+--- a/drivers/net/enic/enic_main.c
++++ b/drivers/net/enic/enic_main.c
+@@ -44,10 +44,15 @@
+ #include "enic.h"
+ 
+ #define ENIC_NOTIFY_TIMER_PERIOD	(2 * HZ)
++#define WQ_ENET_MAX_DESC_LEN		(1 << WQ_ENET_LEN_BITS)
++#define MAX_TSO				(1 << 16)
++#define ENIC_DESC_MAX_SPLITS		(MAX_TSO / WQ_ENET_MAX_DESC_LEN + 1)
++
++#define PCI_DEVICE_ID_CISCO_VIC_ENET         0x0043  /* ethernet vnic */
+ 
+ /* Supported devices */
+ static struct pci_device_id enic_id_table[] = {
+-	{ PCI_VDEVICE(CISCO, 0x0043) },
++	{ PCI_VDEVICE(CISCO, PCI_DEVICE_ID_CISCO_VIC_ENET) },
+ 	{ 0, }	/* end of table */
+ };
+ 
+@@ -307,7 +312,8 @@ static int enic_wq_service(struct vnic_dev *vdev, struct cq_desc *cq_desc,
+ 		opaque);
+ 
+ 	if (netif_queue_stopped(enic->netdev) &&
+-	    vnic_wq_desc_avail(&enic->wq[q_number]) >= MAX_SKB_FRAGS + 1)
++	    vnic_wq_desc_avail(&enic->wq[q_number]) >=
++	    (MAX_SKB_FRAGS + ENIC_DESC_MAX_SPLITS))
+ 		netif_wake_queue(enic->netdev);
+ 
+ 	spin_unlock(&enic->wq_lock[q_number]);
+@@ -353,7 +359,7 @@ static void enic_mtu_check(struct enic *enic)
+ {
+ 	u32 mtu = vnic_dev_mtu(enic->vdev);
+ 
+-	if (mtu != enic->port_mtu) {
++	if (mtu && mtu != enic->port_mtu) {
+ 		if (mtu < enic->netdev->mtu)
+ 			printk(KERN_WARNING PFX
+ 				"%s: interface MTU (%d) set higher "
+@@ -522,7 +528,11 @@ static inline void enic_queue_wq_skb_vlan(struct enic *enic,
+ 	unsigned int len_left = skb->len - head_len;
+ 	int eop = (len_left == 0);
+ 
+-	/* Queue the main skb fragment */
++	/* Queue the main skb fragment. The fragments are no larger
++	 * than max MTU(9000)+ETH_HDR_LEN(14) bytes, which is less
++	 * than WQ_ENET_MAX_DESC_LEN length. So only one descriptor
++	 * per fragment is queued.
++	 */
+ 	enic_queue_wq_desc(wq, skb,
+ 		pci_map_single(enic->pdev, skb->data,
+ 			head_len, PCI_DMA_TODEVICE),
+@@ -544,7 +554,11 @@ static inline void enic_queue_wq_skb_csum_l4(struct enic *enic,
+ 	unsigned int csum_offset = hdr_len + skb->csum;
+ 	int eop = (len_left == 0);
+ 
+-	/* Queue the main skb fragment */
++	/* Queue the main skb fragment. The fragments are no larger
++	 * than max MTU(9000)+ETH_HDR_LEN(14) bytes, which is less
++	 * than WQ_ENET_MAX_DESC_LEN length. So only one descriptor
++	 * per fragment is queued.
++	 */
+ 	enic_queue_wq_desc_csum_l4(wq, skb,
+ 		pci_map_single(enic->pdev, skb->data,
+ 			head_len, PCI_DMA_TODEVICE),
+@@ -562,10 +576,14 @@ static inline void enic_queue_wq_skb_tso(struct enic *enic,
+ 	struct vnic_wq *wq, struct sk_buff *skb, unsigned int mss,
+ 	int vlan_tag_insert, unsigned int vlan_tag)
+ {
+-	unsigned int head_len = skb_headlen(skb);
+-	unsigned int len_left = skb->len - head_len;
++	unsigned int frag_len_left = skb_headlen(skb);
++	unsigned int len_left = skb->len - frag_len_left;
+ 	unsigned int hdr_len = skb_transport_offset(skb) + tcp_hdrlen(skb);
+ 	int eop = (len_left == 0);
++	unsigned int len;
++	dma_addr_t dma_addr;
++	unsigned int offset = 0;
++	skb_frag_t *frag;
+ 
+ 	/* Preload TCP csum field with IP pseudo hdr calculated
+ 	 * with IP length set to zero.  HW will later add in length
+@@ -581,17 +599,49 @@ static inline void enic_queue_wq_skb_tso(struct enic *enic,
+ 			&ipv6_hdr(skb)->daddr, 0, IPPROTO_TCP, 0);
+ 	}
+ 
+-	/* Queue the main skb fragment */
+-	enic_queue_wq_desc_tso(wq, skb,
+-		pci_map_single(enic->pdev, skb->data,
+-			head_len, PCI_DMA_TODEVICE),
+-		head_len,
+-		mss, hdr_len,
+-		vlan_tag_insert, vlan_tag,
+-		eop);
++	/* Queue WQ_ENET_MAX_DESC_LEN length descriptors
++	 * for the main skb fragment
++	 */
++	while (frag_len_left) {
++		len = min(frag_len_left, (unsigned int)WQ_ENET_MAX_DESC_LEN);
++		dma_addr = pci_map_single(enic->pdev, skb->data + offset,
++				len, PCI_DMA_TODEVICE);
++		enic_queue_wq_desc_tso(wq, skb,
++			dma_addr,
++			len,
++			mss, hdr_len,
++			vlan_tag_insert, vlan_tag,
++			eop && (len == frag_len_left));
++		frag_len_left -= len;
++		offset += len;
++	}
+ 
+-	if (!eop)
+-		enic_queue_wq_skb_cont(enic, wq, skb, len_left);
++	if (eop)
++		return;
++
++	/* Queue WQ_ENET_MAX_DESC_LEN length descriptors
++	 * for additional data fragments
++	 */
++	for (frag = skb_shinfo(skb)->frags; len_left; frag++) {
++		len_left -= frag->size;
++		frag_len_left = frag->size;
++		offset = frag->page_offset;
++
++		while (frag_len_left) {
++			len = min(frag_len_left,
++				(unsigned int)WQ_ENET_MAX_DESC_LEN);
++			dma_addr = pci_map_page(enic->pdev, frag->page,
++				offset, len,
++				PCI_DMA_TODEVICE);
++			enic_queue_wq_desc_cont(wq, skb,
++				dma_addr,
++				len,
++				(len_left == 0) &&
++				(len == frag_len_left));	/* EOP? */
++			frag_len_left -= len;
++			offset += len;
++		}
++	}
+ }
+ 
+ static inline void enic_queue_wq_skb(struct enic *enic,
+@@ -644,7 +694,8 @@ static int enic_hard_start_xmit(struct sk_buff *skb, struct net_device *netdev)
+ 
+ 	spin_lock_irqsave(&enic->wq_lock[0], flags);
+ 
+-	if (vnic_wq_desc_avail(wq) < skb_shinfo(skb)->nr_frags + 1) {
++	if (vnic_wq_desc_avail(wq) <
++	    skb_shinfo(skb)->nr_frags + ENIC_DESC_MAX_SPLITS) {
+ 		netif_stop_queue(netdev);
+ 		/* This is a hard error, log it */
+ 		printk(KERN_ERR PFX "%s: BUG! Tx ring full when "
+@@ -655,7 +706,7 @@ static int enic_hard_start_xmit(struct sk_buff *skb, struct net_device *netdev)
+ 
+ 	enic_queue_wq_skb(enic, wq, skb);
+ 
+-	if (vnic_wq_desc_avail(wq) < MAX_SKB_FRAGS + 1)
++	if (vnic_wq_desc_avail(wq) < MAX_SKB_FRAGS + ENIC_DESC_MAX_SPLITS)
+ 		netif_stop_queue(netdev);
+ 
+ 	netdev->trans_start = jiffies;
+@@ -684,8 +735,9 @@ static struct net_device_stats *enic_get_stats(struct net_device *netdev)
+ 	enic->net_stats.rx_bytes = stats->rx.rx_bytes_ok;
+ 	enic->net_stats.rx_errors = stats->rx.rx_errors;
+ 	enic->net_stats.multicast = stats->rx.rx_multicast_frames_ok;
++	enic->net_stats.rx_over_errors = enic->rq_truncated_pkts;
+ 	enic->net_stats.rx_crc_errors = enic->rq_bad_fcs;
+-	enic->net_stats.rx_dropped = stats->rx.rx_no_bufs;
++	enic->net_stats.rx_dropped = stats->rx.rx_no_bufs + stats->rx.rx_drop;
+ 
+ 	return &enic->net_stats;
+ }
+@@ -848,6 +900,50 @@ static int enic_rq_alloc_buf(struct vnic_rq *rq)
+ 	return 0;
+ }
+ 
++static int enic_rq_alloc_buf_a1(struct vnic_rq *rq)
++{
++	struct rq_enet_desc *desc = vnic_rq_next_desc(rq);
++
++	if (vnic_rq_posting_soon(rq)) {
++
++		/* SW workaround for A0 HW erratum: if we're just about
++		 * to write posted_index, insert a dummy desc
++		 * of type resvd
++		 */
++
++		rq_enet_desc_enc(desc, 0, RQ_ENET_TYPE_RESV2, 0);
++		vnic_rq_post(rq, 0, 0, 0, 0);
++	} else {
++		return enic_rq_alloc_buf(rq);
++	}
++
++	return 0;
++}
++
++static int enic_set_rq_alloc_buf(struct enic *enic)
++{
++	enum vnic_dev_hw_version hw_ver;
++	int err;
++
++	err = vnic_dev_hw_version(enic->vdev, &hw_ver);
++	if (err)
++		return err;
++
++	switch (hw_ver) {
++	case VNIC_DEV_HW_VER_A1:
++		enic->rq_alloc_buf = enic_rq_alloc_buf_a1;
++		break;
++	case VNIC_DEV_HW_VER_A2:
++	case VNIC_DEV_HW_VER_UNKNOWN:
++		enic->rq_alloc_buf = enic_rq_alloc_buf;
++		break;
++	default:
++		return -ENODEV;
++	}
++
++	return 0;
++}
++
+ static int enic_get_skb_header(struct sk_buff *skb, void **iphdr,
+ 	void **tcph, u64 *hdr_flags, void *priv)
+ {
+@@ -929,8 +1025,12 @@ static void enic_rq_indicate_buf(struct vnic_rq *rq,
+ 
+ 	if (packet_error) {
+ 
+-		if (bytes_written > 0 && !fcs_ok)
+-			enic->rq_bad_fcs++;
++		if (!fcs_ok) {
++			if (bytes_written > 0)
++				enic->rq_bad_fcs++;
++			else if (bytes_written == 0)
++				enic->rq_truncated_pkts++;
++		}
+ 
+ 		dev_kfree_skb_any(skb);
+ 
+@@ -1055,7 +1155,7 @@ static int enic_poll(struct net_device *netdev, int *budget)
+ 		/* Replenish RQ
+ 		 */
+ 
+-		vnic_rq_fill(&enic->rq[0], enic_rq_alloc_buf);
++		vnic_rq_fill(&enic->rq[0], enic->rq_alloc_buf);
+ 
+ 	} else {
+ 
+@@ -1090,7 +1190,7 @@ static int enic_poll_msix(struct net_device *netdev, int *budget)
+ 		/* Replenish RQ
+ 		 */
+ 
+-		vnic_rq_fill(&enic->rq[0], enic_rq_alloc_buf);
++		vnic_rq_fill(&enic->rq[0], enic->rq_alloc_buf);
+ 
+ 		/* Return intr event credits for this polling
+ 		 * cycle.  An intr event is the completion of a
+@@ -1217,6 +1317,7 @@ static int enic_notify_set(struct enic *enic)
+ {
+ 	int err;
+ 
++	spin_lock(&enic->devcmd_lock);
+ 	switch (vnic_dev_get_intr_mode(enic->vdev)) {
+ 	case VNIC_DEV_INTR_MODE_INTX:
+ 		err = vnic_dev_notify_set(enic->vdev, ENIC_INTX_NOTIFY);
+@@ -1228,6 +1329,7 @@ static int enic_notify_set(struct enic *enic)
+ 		err = vnic_dev_notify_set(enic->vdev, -1 /* no intr */);
+ 		break;
+ 	}
++	spin_unlock(&enic->devcmd_lock);
+ 
+ 	return err;
+ }
+@@ -1267,7 +1369,7 @@ static int enic_open(struct net_device *netdev)
+ 	}
+ 
+ 	for (i = 0; i < enic->rq_count; i++) {
+-		err = vnic_rq_fill(&enic->rq[i], enic_rq_alloc_buf);
++		err = vnic_rq_fill(&enic->rq[i], enic->rq_alloc_buf);
+ 		if (err) {
+ 			printk(KERN_ERR PFX
+ 				"%s: Unable to alloc receive buffers.\n",
+@@ -1281,12 +1383,16 @@ static int enic_open(struct net_device *netdev)
+ 	for (i = 0; i < enic->rq_count; i++)
+ 		vnic_rq_enable(&enic->rq[i]);
+ 
++	spin_lock(&enic->devcmd_lock);
+ 	enic_add_station_addr(enic);
++	spin_unlock(&enic->devcmd_lock);
+ 	enic_set_multicast_list(netdev);
+ 
+ 	netif_wake_queue(netdev);
+ 	netif_poll_enable(netdev);
++	spin_lock(&enic->devcmd_lock);
+ 	vnic_dev_enable(enic->vdev);
++	spin_unlock(&enic->devcmd_lock);
+ 
+ 	for (i = 0; i < enic->intr_count; i++)
+ 		vnic_intr_unmask(&enic->intr[i]);
+@@ -1296,7 +1402,9 @@ static int enic_open(struct net_device *netdev)
+ 	return 0;
+ 
+ err_out_notify_unset:
++	spin_lock(&enic->devcmd_lock);
+ 	vnic_dev_notify_unset(enic->vdev);
++	spin_unlock(&enic->devcmd_lock);
+ err_out_free_intr:
+ 	enic_free_intr(enic);
+ 
+@@ -1312,7 +1420,9 @@ static int enic_stop(struct net_device *netdev)
+ 
+ 	del_timer_sync(&enic->notify_timer);
+ 
++	spin_lock(&enic->devcmd_lock);
+ 	vnic_dev_disable(enic->vdev);
++	spin_unlock(&enic->devcmd_lock);
+ 	netif_poll_disable(netdev);
+ 	netif_stop_queue(netdev);
+ 
+@@ -1330,7 +1440,9 @@ static int enic_stop(struct net_device *netdev)
+ 			return err;
+ 	}
+ 
++	spin_lock(&enic->devcmd_lock);
+ 	vnic_dev_notify_unset(enic->vdev);
++	spin_unlock(&enic->devcmd_lock);
+ 	enic_free_intr(enic);
+ 
+ 	(void)vnic_cq_service(&enic->cq[ENIC_CQ_RQ],
+@@ -1470,7 +1582,7 @@ static int enic_set_niccfg(struct enic *enic)
+ 	const u8 ig_vlan_strip_en = 1;
+ 
+ 	/* Enable VLAN tag stripping.  RSS not enabled (yet).
+-	*/
++	 */
+ 
+ 	return enic_set_nic_cfg(enic,
+ 		rss_default_cpu, rss_hash_type,
+@@ -1503,8 +1615,8 @@ static void enic_reset(struct enic *enic)
+ 
+ static int enic_set_intr_mode(struct enic *enic)
+ {
+-	unsigned int n = ARRAY_SIZE(enic->rq);
+-	unsigned int m = ARRAY_SIZE(enic->wq);
++	unsigned int n = 1;
++	unsigned int m = 1;
+ 	unsigned int i;
+ 
+ 	/* Set interrupt mode (INTx, MSI, MSI-X) depending
+@@ -1605,10 +1717,99 @@ static void enic_clear_intr_mode(struct enic *enic)
+ 	vnic_dev_set_intr_mode(enic->vdev, VNIC_DEV_INTR_MODE_UNKNOWN);
+ }
+ 
++void enic_dev_deinit(struct enic *enic)
++{
++	enic_free_vnic_resources(enic);
++	enic_clear_intr_mode(enic);
++}
++
++int enic_dev_init(struct enic *enic)
++{
++	struct net_device *netdev = enic->netdev;
++	int err;
++
++	/* Get vNIC configuration
++	 */
++
++	err = enic_get_vnic_config(enic);
++	if (err) {
++		printk(KERN_ERR PFX
++			"Get vNIC configuration failed, aborting.\n");
++		return err;
++	}
++
++	/* Disable LRO if required
++	*/
++	if (lro_disable) {
++		enic->config.flags &= ~VENETF_LRO;
++	}
++	/* Get available resource counts
++	 */
++
++	enic_get_res_counts(enic);
++
++	/* Set interrupt mode based on resource counts and system
++	 * capabilities
++	 */
++
++	err = enic_set_intr_mode(enic);
++	if (err) {
++		printk(KERN_ERR PFX
++			"Failed to set intr mode, aborting.\n");
++		return err;
++	}
++
++	/* Allocate and configure vNIC resources
++	 */
++
++	err = enic_alloc_vnic_resources(enic);
++	if (err) {
++		printk(KERN_ERR PFX
++			"Failed to alloc vNIC resources, aborting.\n");
++		goto err_out_free_vnic_resources;
++	}
++
++	enic_init_vnic_resources(enic);
++
++	err = enic_set_rq_alloc_buf(enic);
++	if (err) {
++		printk(KERN_ERR PFX
++			"Failed to set RQ buffer allocator, aborting.\n");
++		goto err_out_free_vnic_resources;
++	}
++
++	err = enic_set_niccfg(enic);
++	if (err) {
++		printk(KERN_ERR PFX
++			"Failed to config nic, aborting.\n");
++		goto err_out_free_vnic_resources;
++	}
++
++	switch (vnic_dev_get_intr_mode(enic->vdev)) {
++	default:
++		netdev->poll = enic_poll;
++		break;
++	case VNIC_DEV_INTR_MODE_MSIX:
++		netdev->poll = enic_poll_msix;
++		break;
++	}
++	netdev->weight = 64;
++
++	return 0;
++
++err_out_free_vnic_resources:
++	enic_clear_intr_mode(enic);
++	enic_free_vnic_resources(enic);
++
++	return err;
++}
++
+ static void enic_iounmap(struct enic *enic)
+ {
+-	if (enic->bar0.vaddr)
+-		iounmap(enic->bar0.vaddr);
++	unsigned int i;
++	for (i = 0; i < ARRAY_SIZE(enic->bar); i++)
++		if (enic->bar[i].vaddr)
++			iounmap(enic->bar[i].vaddr);
+ }
+ 
+ static int __devinit enic_probe(struct pci_dev *pdev,
+@@ -1662,15 +1863,15 @@ static int __devinit enic_probe(struct pci_dev *pdev,
+ 	 * fail to 32-bit.
+ 	 */
+ 
+-	err = pci_set_dma_mask(pdev, DMA_40BIT_MASK);
++	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(40));
+ 	if (err) {
+-		err = pci_set_dma_mask(pdev, DMA_32BIT_MASK);
++		err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+ 		if (err) {
+ 			printk(KERN_ERR PFX
+ 				"No usable DMA configuration, aborting.\n");
+ 			goto err_out_release_regions;
+ 		}
+-		err = pci_set_consistent_dma_mask(pdev, DMA_32BIT_MASK);
++		err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32));
+ 		if (err) {
+ 			printk(KERN_ERR PFX
+ 				"Unable to obtain 32-bit DMA "
+@@ -1678,7 +1879,7 @@ static int __devinit enic_probe(struct pci_dev *pdev,
+ 			goto err_out_release_regions;
+ 		}
+ 	} else {
+-		err = pci_set_consistent_dma_mask(pdev, DMA_40BIT_MASK);
++		err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(40));
+ 		if (err) {
+ 			printk(KERN_ERR PFX
+ 				"Unable to obtain 40-bit DMA "
+@@ -1688,31 +1889,28 @@ static int __devinit enic_probe(struct pci_dev *pdev,
+ 		using_dac = 1;
+ 	}
+ 
+-	/* Map vNIC resources from BAR0
++	/* Map vNIC resources from BAR0-5
+ 	 */
+ 
+-	if (!(pci_resource_flags(pdev, 0) & IORESOURCE_MEM)) {
+-		printk(KERN_ERR PFX
+-			"BAR0 not memory-map'able, aborting.\n");
+-		err = -ENODEV;
+-		goto err_out_release_regions;
+-	}
+-
+-	enic->bar0.vaddr = pci_iomap(pdev, 0, enic->bar0.len);
+-	enic->bar0.bus_addr = pci_resource_start(pdev, 0);
+-	enic->bar0.len = pci_resource_len(pdev, 0);
+-
+-	if (!enic->bar0.vaddr) {
+-		printk(KERN_ERR PFX
+-			"Cannot memory-map BAR0 res hdr, aborting.\n");
+-		err = -ENODEV;
+-		goto err_out_release_regions;
++	for (i = 0; i < ARRAY_SIZE(enic->bar); i++) {
++		if (!(pci_resource_flags(pdev, i) & IORESOURCE_MEM))
++			continue;
++		enic->bar[i].len = pci_resource_len(pdev, i);
++		enic->bar[i].vaddr = pci_iomap(pdev, i, enic->bar[i].len);
++		if (!enic->bar[i].vaddr) {
++			printk(KERN_ERR PFX
++				"Cannot memory-map BAR %d, aborting.\n", i);
++			err = -ENODEV;
++			goto err_out_iounmap;
++		}
++		enic->bar[i].bus_addr = pci_resource_start(pdev, i);
+ 	}
+ 
+ 	/* Register vNIC device
+ 	 */
+ 
+-	enic->vdev = vnic_dev_register(NULL, enic, pdev, &enic->bar0);
++	enic->vdev = vnic_dev_register(NULL, enic, pdev, enic->bar,
++		ARRAY_SIZE(enic->bar));
+ 	if (!enic->vdev) {
+ 		printk(KERN_ERR PFX
+ 			"vNIC registration failed, aborting.\n");
+@@ -1747,56 +1945,13 @@ static int __devinit enic_probe(struct pci_dev *pdev,
+ 		goto err_out_dev_close;
+ 	}
+ 
+-	/* Get vNIC configuration
+-	 */
+-
+-	err = enic_get_vnic_config(enic);
+-	if (err) {
+-		printk(KERN_ERR PFX
+-			"Get vNIC configuration failed, aborting.\n");
+-		goto err_out_dev_close;
+-	}
+-
+-	/* Disable LRO if required 
+-	*/
+-	if (lro_disable) {
+-		enic->config.flags &= ~VENETF_LRO;
+-	}
+-	/* Get available resource counts
+-	 */
+-
+-	enic_get_res_counts(enic);
+-
+-	/* Set interrupt mode based on resource counts and system
+-	 * capabilities
+-	 */
+-
+-	err = enic_set_intr_mode(enic);
++	err = enic_dev_init(enic);
+ 	if (err) {
+ 		printk(KERN_ERR PFX
+-			"Failed to set intr mode, aborting.\n");
++			"Device initialization failed, aborting.\n");
+ 		goto err_out_dev_close;
+ 	}
+ 
+-	/* Allocate and configure vNIC resources
+-	 */
+-
+-	err = enic_alloc_vnic_resources(enic);
+-	if (err) {
+-		printk(KERN_ERR PFX
+-			"Failed to alloc vNIC resources, aborting.\n");
+-		goto err_out_free_vnic_resources;
+-	}
+-
+-	enic_init_vnic_resources(enic);
+-
+-	err = enic_set_niccfg(enic);
+-	if (err) {
+-		printk(KERN_ERR PFX
+-			"Failed to config nic, aborting.\n");
+-		goto err_out_free_vnic_resources;
+-	}
+-
+ 	/* Setup notification timer, HW reset task, and locks
+ 	 */
+ 
+@@ -1821,7 +1976,7 @@ static int __devinit enic_probe(struct pci_dev *pdev,
+ 	if (err) {
+ 		printk(KERN_ERR PFX
+ 			"Invalid MAC address, aborting.\n");
+-		goto err_out_free_vnic_resources;
++		goto err_out_dev_deinit;
+ 	}
+ 
+ 	netdev->open = enic_open;
+@@ -1839,18 +1994,11 @@ static int __devinit enic_probe(struct pci_dev *pdev,
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ 	netdev->poll_controller = enic_poll_controller;
+ #endif
++	netdev->watchdog_timeo = 2 * HZ;
++	netdev->ethtool_ops = &enic_ethtool_ops;
+ 
+-	switch (vnic_dev_get_intr_mode(enic->vdev)) {
+-	default:
+-		netdev->poll = enic_poll;
+-		break;
+-	case VNIC_DEV_INTR_MODE_MSIX:
+-		netdev->poll = enic_poll_msix;
+-		break;
+-	}
+-	netdev->weight = 64;
+-
+-	netdev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
++	netdev->features |= NETIF_F_HW_VLAN_TX |
++		NETIF_F_HW_VLAN_RX | NETIF_F_HW_VLAN_FILTER;
+ 	if (ENIC_SETTING(enic, TXCSUM))
+ 		netdev->features |= NETIF_F_SG | NETIF_F_HW_CSUM;
+ 	if (ENIC_SETTING(enic, TSO))
+@@ -1875,17 +2023,16 @@ static int __devinit enic_probe(struct pci_dev *pdev,
+ 	if (err) {
+ 		printk(KERN_ERR PFX
+ 			"Cannot register net device, aborting.\n");
+-		goto err_out_free_vnic_resources;
++		goto err_out_dev_deinit;
+ 	}
+ 
+ 	return 0;
+ 
+-err_out_free_vnic_resources:
+-	enic_free_vnic_resources(enic);
++err_out_dev_deinit:
++	enic_dev_deinit(enic);
+ err_out_dev_close:
+ 	vnic_dev_close(enic->vdev);
+ err_out_vnic_unregister:
+-	enic_clear_intr_mode(enic);
+ 	vnic_dev_unregister(enic->vdev);
+ err_out_iounmap:
+ 	enic_iounmap(enic);
+@@ -1909,9 +2056,8 @@ static void __devexit enic_remove(struct pci_dev *pdev)
+ 
+ 		flush_scheduled_work();
+ 		unregister_netdev(netdev);
+-		enic_free_vnic_resources(enic);
++		enic_dev_deinit(enic);
+ 		vnic_dev_close(enic->vdev);
+-		enic_clear_intr_mode(enic);
+ 		vnic_dev_unregister(enic->vdev);
+ 		enic_iounmap(enic);
+ 		pci_release_regions(pdev);
+diff --git a/drivers/net/enic/enic_res.c b/drivers/net/enic/enic_res.c
+index 95184b9..baff228 100644
+--- a/drivers/net/enic/enic_res.c
++++ b/drivers/net/enic/enic_res.c
+@@ -159,6 +159,22 @@ int enic_set_nic_cfg(struct enic *enic, u8 rss_default_cpu, u8 rss_hash_type,
+ 	return vnic_dev_cmd(enic->vdev, CMD_NIC_CFG, &a0, &a1, wait);
+ }
+ 
++int enic_set_rss_key(struct enic *enic, dma_addr_t key_pa, u64 len)
++{
++	u64 a0 = (u64)key_pa, a1 = len;
++	int wait = 1000;
++
++	return vnic_dev_cmd(enic->vdev, CMD_RSS_KEY, &a0, &a1, wait);
++}
++
++int enic_set_rss_cpu(struct enic *enic, dma_addr_t cpu_pa, u64 len)
++{
++	u64 a0 = (u64)cpu_pa, a1 = len;
++	int wait = 1000;
++
++	return vnic_dev_cmd(enic->vdev, CMD_RSS_CPU, &a0, &a1, wait);
++}
++
+ void enic_free_vnic_resources(struct enic *enic)
+ {
+ 	unsigned int i;
+@@ -175,11 +191,18 @@ void enic_free_vnic_resources(struct enic *enic)
+ 
+ void enic_get_res_counts(struct enic *enic)
+ {
+-	enic->wq_count = vnic_dev_get_res_count(enic->vdev, RES_TYPE_WQ);
+-	enic->rq_count = vnic_dev_get_res_count(enic->vdev, RES_TYPE_RQ);
+-	enic->cq_count = vnic_dev_get_res_count(enic->vdev, RES_TYPE_CQ);
+-	enic->intr_count = vnic_dev_get_res_count(enic->vdev,
+-		RES_TYPE_INTR_CTRL);
++	enic->wq_count = min_t(int,
++		vnic_dev_get_res_count(enic->vdev, RES_TYPE_WQ),
++		ENIC_WQ_MAX);
++	enic->rq_count = min_t(int,
++		vnic_dev_get_res_count(enic->vdev, RES_TYPE_RQ),
++		ENIC_RQ_MAX);
++	enic->cq_count = min_t(int,
++		vnic_dev_get_res_count(enic->vdev, RES_TYPE_CQ),
++		ENIC_CQ_MAX);
++	enic->intr_count = min_t(int,
++		vnic_dev_get_res_count(enic->vdev, RES_TYPE_INTR_CTRL),
++		ENIC_INTR_MAX);
+ 
+ 	printk(KERN_INFO PFX "vNIC resources avail: "
+ 		"wq %d rq %d cq %d intr %d\n",
+diff --git a/drivers/net/enic/enic_res.h b/drivers/net/enic/enic_res.h
+index 7bf272f..abc1974 100644
+--- a/drivers/net/enic/enic_res.h
++++ b/drivers/net/enic/enic_res.h
+@@ -139,6 +139,8 @@ void enic_del_vlan(struct enic *enic, u16 vlanid);
+ int enic_set_nic_cfg(struct enic *enic, u8 rss_default_cpu, u8 rss_hash_type,
+ 	u8 rss_hash_bits, u8 rss_base_cpu, u8 rss_enable, u8 tso_ipid_split_en,
+ 	u8 ig_vlan_strip_en);
++int enic_set_rss_key(struct enic *enic, dma_addr_t key_pa, u64 len);
++int enic_set_rss_cpu(struct enic *enic, dma_addr_t cpu_pa, u64 len);
+ void enic_get_res_counts(struct enic *enic);
+ void enic_init_vnic_resources(struct enic *enic);
+ int enic_alloc_vnic_resources(struct enic *);
+diff --git a/drivers/net/enic/vnic_dev.c b/drivers/net/enic/vnic_dev.c
+index 679e25e..5eec4f4 100644
+--- a/drivers/net/enic/vnic_dev.c
++++ b/drivers/net/enic/vnic_dev.c
+@@ -31,6 +31,7 @@
+ 
+ struct vnic_res {
+ 	void __iomem *vaddr;
++	dma_addr_t bus_addr;
+ 	unsigned int count;
+ };
+ 
+@@ -67,12 +68,15 @@ void *vnic_dev_priv(struct vnic_dev *vdev)
+ }
+ 
+ static int vnic_dev_discover_res(struct vnic_dev *vdev,
+-	struct vnic_dev_bar *bar)
++	struct vnic_dev_bar *bar, unsigned int num_bars)
+ {
+ 	struct vnic_resource_header __iomem *rh;
+ 	struct vnic_resource __iomem *r;
+ 	u8 type;
+ 
++	if (num_bars == 0)
++		return -EINVAL;
++
+ 	if (bar->len < VNIC_MAX_RES_HDR_SIZE) {
+ 		printk(KERN_ERR "vNIC BAR0 res hdr length error\n");
+ 		return -EINVAL;
+@@ -104,7 +108,10 @@ static int vnic_dev_discover_res(struct vnic_dev *vdev,
+ 
+ 		r++;
+ 
+-		if (bar_num != 0)  /* only mapping in BAR0 resources */
++		if (bar_num >= num_bars)
++			continue;
++
++		if (!bar[bar_num].len || !bar[bar_num].vaddr)
+ 			continue;
+ 
+ 		switch (type) {
+@@ -114,13 +121,13 @@ static int vnic_dev_discover_res(struct vnic_dev *vdev,
+ 		case RES_TYPE_INTR_CTRL:
+ 			/* each count is stride bytes long */
+ 			len = count * VNIC_RES_STRIDE;
+-			if (len + bar_offset > bar->len) {
++			if (len + bar_offset > bar[bar_num].len) {
+ 				printk(KERN_ERR "vNIC BAR0 resource %d "
+ 					"out-of-bounds, offset 0x%x + "
+ 					"size 0x%x > bar len 0x%lx\n",
+ 					type, bar_offset,
+ 					len,
+-					bar->len);
++					bar[bar_num].len);
+ 				return -EINVAL;
+ 			}
+ 			break;
+@@ -133,7 +140,9 @@ static int vnic_dev_discover_res(struct vnic_dev *vdev,
+ 		}
+ 
+ 		vdev->res[type].count = count;
+-		vdev->res[type].vaddr = (char __iomem *)bar->vaddr + bar_offset;
++		vdev->res[type].vaddr = (char __iomem *)bar[bar_num].vaddr +
++			bar_offset;
++		vdev->res[type].bus_addr = bar[bar_num].bus_addr + bar_offset;
+ 	}
+ 
+ 	return 0;
+@@ -163,6 +172,21 @@ void __iomem *vnic_dev_get_res(struct vnic_dev *vdev, enum vnic_res_type type,
+ 	}
+ }
+ 
++dma_addr_t vnic_dev_get_res_bus_addr(struct vnic_dev *vdev,
++	enum vnic_res_type type, unsigned int index)
++{
++	switch (type) {
++	case RES_TYPE_WQ:
++	case RES_TYPE_RQ:
++	case RES_TYPE_CQ:
++	case RES_TYPE_INTR_CTRL:
++		return vdev->res[type].bus_addr +
++			index * VNIC_RES_STRIDE;
++	default:
++		return vdev->res[type].bus_addr;
++	}
++}
++
+ unsigned int vnic_dev_desc_ring_size(struct vnic_dev_ring *ring,
+ 	unsigned int desc_count, unsigned int desc_size)
+ {
+@@ -257,7 +281,7 @@ int vnic_dev_cmd(struct vnic_dev *vdev, enum vnic_devcmd_cmd cmd,
+ 	iowrite32(cmd, &devcmd->cmd);
+ 
+ 	if ((_CMD_FLAGS(cmd) & _CMD_FLAGS_NOWAIT))
+-			return 0;
++		return 0;
+ 
+ 	for (delay = 0; delay < wait; delay++) {
+ 
+@@ -325,6 +349,25 @@ int vnic_dev_fw_info(struct vnic_dev *vdev,
+ 	return err;
+ }
+ 
++int vnic_dev_hw_version(struct vnic_dev *vdev, enum vnic_dev_hw_version *hw_ver)
++{
++	struct vnic_devcmd_fw_info *fw_info;
++	int err;
++
++	err = vnic_dev_fw_info(vdev, &fw_info);
++	if (err)
++		return err;
++
++	if (strncmp(fw_info->hw_version, "A1", sizeof("A1")) == 0)
++		*hw_ver = VNIC_DEV_HW_VER_A1;
++	else if (strncmp(fw_info->hw_version, "A2", sizeof("A2")) == 0)
++		*hw_ver = VNIC_DEV_HW_VER_A2;
++	else
++		*hw_ver = VNIC_DEV_HW_VER_UNKNOWN;
++
++	return 0;
++}
++
+ int vnic_dev_spec(struct vnic_dev *vdev, unsigned int offset, unsigned int size,
+ 	void *value)
+ {
+@@ -523,6 +566,20 @@ void vnic_dev_del_addr(struct vnic_dev *vdev, u8 *addr)
+ 			err);
+ }
+ 
++int vnic_dev_raise_intr(struct vnic_dev *vdev, u16 intr)
++{
++	u64 a0 = intr, a1 = 0;
++	int wait = 1000;
++	int err;
++
++	err = vnic_dev_cmd(vdev, CMD_IAR, &a0, &a1, wait);
++	if (err)
++		printk(KERN_ERR "Failed to raise INTR[%d], err %d\n",
++			intr, err);
++
++	return err;
++}
++
+ int vnic_dev_notify_set(struct vnic_dev *vdev, u16 intr)
+ {
+ 	u64 a0, a1;
+@@ -690,7 +747,8 @@ void vnic_dev_unregister(struct vnic_dev *vdev)
+ }
+ 
+ struct vnic_dev *vnic_dev_register(struct vnic_dev *vdev,
+-	void *priv, struct pci_dev *pdev, struct vnic_dev_bar *bar)
++	void *priv, struct pci_dev *pdev, struct vnic_dev_bar *bar,
++	unsigned int num_bars)
+ {
+ 	if (!vdev) {
+ 		vdev = kzalloc(sizeof(struct vnic_dev), GFP_ATOMIC);
+@@ -701,7 +759,7 @@ struct vnic_dev *vnic_dev_register(struct vnic_dev *vdev,
+ 	vdev->priv = priv;
+ 	vdev->pdev = pdev;
+ 
+-	if (vnic_dev_discover_res(vdev, bar))
++	if (vnic_dev_discover_res(vdev, bar, num_bars))
+ 		goto err_out;
+ 
+ 	vdev->devcmd = vnic_dev_get_res(vdev, RES_TYPE_DEVCMD, 0);
+diff --git a/drivers/net/enic/vnic_dev.h b/drivers/net/enic/vnic_dev.h
+index 5d878eb..21fafe1 100644
+--- a/drivers/net/enic/vnic_dev.h
++++ b/drivers/net/enic/vnic_dev.h
+@@ -28,6 +28,12 @@
+ #define VNIC_PADDR_TARGET	0x0000000000000000ULL
+ #endif
+ 
++enum vnic_dev_hw_version {
++	VNIC_DEV_HW_VER_UNKNOWN,
++	VNIC_DEV_HW_VER_A1,
++	VNIC_DEV_HW_VER_A2,
++};
++
+ enum vnic_dev_intr_mode {
+ 	VNIC_DEV_INTR_MODE_UNKNOWN,
+ 	VNIC_DEV_INTR_MODE_INTX,
+@@ -62,6 +68,8 @@ unsigned int vnic_dev_get_res_count(struct vnic_dev *vdev,
+ 	enum vnic_res_type type);
+ void __iomem *vnic_dev_get_res(struct vnic_dev *vdev, enum vnic_res_type type,
+ 	unsigned int index);
++dma_addr_t vnic_dev_get_res_bus_addr(struct vnic_dev *vdev,
++	enum vnic_res_type type, unsigned int index);
+ unsigned int vnic_dev_desc_ring_size(struct vnic_dev_ring *ring,
+ 	unsigned int desc_count, unsigned int desc_size);
+ void vnic_dev_clear_desc_ring(struct vnic_dev_ring *ring);
+@@ -73,6 +81,8 @@ int vnic_dev_cmd(struct vnic_dev *vdev, enum vnic_devcmd_cmd cmd,
+ 	u64 *a0, u64 *a1, int wait);
+ int vnic_dev_fw_info(struct vnic_dev *vdev,
+ 	struct vnic_devcmd_fw_info **fw_info);
++int vnic_dev_hw_version(struct vnic_dev *vdev,
++	enum vnic_dev_hw_version *hw_ver);
+ int vnic_dev_spec(struct vnic_dev *vdev, unsigned int offset, unsigned int size,
+ 	void *value);
+ int vnic_dev_stats_clear(struct vnic_dev *vdev);
+@@ -83,6 +93,7 @@ void vnic_dev_packet_filter(struct vnic_dev *vdev, int directed, int multicast,
+ void vnic_dev_add_addr(struct vnic_dev *vdev, u8 *addr);
+ void vnic_dev_del_addr(struct vnic_dev *vdev, u8 *addr);
+ int vnic_dev_mac_addr(struct vnic_dev *vdev, u8 *mac_addr);
++int vnic_dev_raise_intr(struct vnic_dev *vdev, u16 intr);
+ int vnic_dev_notify_set(struct vnic_dev *vdev, u16 intr);
+ void vnic_dev_notify_unset(struct vnic_dev *vdev);
+ int vnic_dev_link_status(struct vnic_dev *vdev);
+@@ -104,6 +115,7 @@ void vnic_dev_set_intr_mode(struct vnic_dev *vdev,
+ enum vnic_dev_intr_mode vnic_dev_get_intr_mode(struct vnic_dev *vdev);
+ void vnic_dev_unregister(struct vnic_dev *vdev);
+ struct vnic_dev *vnic_dev_register(struct vnic_dev *vdev,
+-	void *priv, struct pci_dev *pdev, struct vnic_dev_bar *bar);
++	void *priv, struct pci_dev *pdev, struct vnic_dev_bar *bar,
++	unsigned int num_bars);
+ 
+ #endif /* _VNIC_DEV_H_ */
+diff --git a/drivers/net/enic/vnic_devcmd.h b/drivers/net/enic/vnic_devcmd.h
+index 2587f34..d78bbcc 100644
+--- a/drivers/net/enic/vnic_devcmd.h
++++ b/drivers/net/enic/vnic_devcmd.h
+@@ -105,14 +105,6 @@ enum vnic_devcmd_cmd {
+ 	CMD_MAC_ADDR            = _CMDC(_CMD_DIR_READ,
+ 					_CMD_VTYPE_ENET | _CMD_VTYPE_FC, 9),
+ 
+-	/* disable/enable promisc mode: (u8)a0=0/1 */
+-/***** XXX DEPRECATED *****/
+-	CMD_PROMISC_MODE        = _CMDCNW(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 10),
+-
+-	/* disable/enable all-multi mode: (u8)a0=0/1 */
+-/***** XXX DEPRECATED *****/
+-	CMD_ALLMULTI_MODE       = _CMDCNW(_CMD_DIR_WRITE, _CMD_VTYPE_ENET, 11),
+-
+ 	/* add addr from (u48)a0 */
+ 	CMD_ADDR_ADD            = _CMDCNW(_CMD_DIR_WRITE,
+ 					_CMD_VTYPE_ENET | _CMD_VTYPE_FC, 12),
+@@ -182,7 +174,9 @@ enum vnic_devcmd_cmd {
+ 	/* disable virtual link */
+ 	CMD_DISABLE		= _CMDC(_CMD_DIR_NONE, _CMD_VTYPE_ALL, 29),
+ 
+-	/* stats dump all vnics on uplink in mem: (u64)a0=paddr (u32)a1=uif */
++	/* stats dump sum of all vnic stats on same uplink in mem:
++	 *     (u64)a0=paddr
++	 *     (u16)a1=sizeof stats area */
+ 	CMD_STATS_DUMP_ALL	= _CMDC(_CMD_DIR_WRITE, _CMD_VTYPE_ALL, 30),
+ 
+ 	/* init status:
+@@ -211,7 +205,12 @@ enum vnic_devcmd_cmd {
+ 	/* persistent binding info
+ 	 * in:  (u64)a0=paddr of arg
+ 	 *      (u32)a1=CMD_PERBI_XXX */
+-	CMD_PERBI               = _CMDC(_CMD_DIR_RW, _CMD_VTYPE_FC, 37),
++	CMD_PERBI		= _CMDC(_CMD_DIR_RW, _CMD_VTYPE_FC, 37),
++
++	/* Interrupt Assert Register functionality
++	 * in: (u16)a0=interrupt number to assert
++	 */
++	CMD_IAR			= _CMDCNW(_CMD_DIR_WRITE, _CMD_VTYPE_ALL, 38),
+ };
+ 
+ /* flags for CMD_OPEN */
+@@ -244,6 +243,7 @@ enum vnic_devcmd_error {
+ 	ERR_ENOMEM = 7,
+ 	ERR_ETIMEDOUT = 8,
+ 	ERR_ELINKDOWN = 9,
++	ERR_EMAXRES = 10,
+ };
+ 
+ struct vnic_devcmd_fw_info {
+diff --git a/drivers/net/enic/vnic_intr.c b/drivers/net/enic/vnic_intr.c
+index ddc38f8..1f8786d 100644
+--- a/drivers/net/enic/vnic_intr.c
++++ b/drivers/net/enic/vnic_intr.c
+@@ -60,3 +60,8 @@ void vnic_intr_clean(struct vnic_intr *intr)
+ {
+ 	iowrite32(0, &intr->ctrl->int_credits);
+ }
++
++void vnic_intr_raise(struct vnic_intr *intr)
++{
++	vnic_dev_raise_intr(intr->vdev, (u16)intr->index);
++}
+diff --git a/drivers/net/enic/vnic_nic.h b/drivers/net/enic/vnic_nic.h
+index dadf26f..eeaf329 100644
+--- a/drivers/net/enic/vnic_nic.h
++++ b/drivers/net/enic/vnic_nic.h
+@@ -41,6 +41,13 @@
+ #define NIC_CFG_IG_VLAN_STRIP_EN_MASK_FIELD	1UL
+ #define NIC_CFG_IG_VLAN_STRIP_EN_SHIFT		24
+ 
++#define NIC_CFG_RSS_HASH_TYPE_IPV4		(1 << 0)
++#define NIC_CFG_RSS_HASH_TYPE_TCP_IPV4		(1 << 1)
++#define NIC_CFG_RSS_HASH_TYPE_IPV6		(1 << 2)
++#define NIC_CFG_RSS_HASH_TYPE_TCP_IPV6		(1 << 3)
++#define NIC_CFG_RSS_HASH_TYPE_IPV6_EX		(1 << 4)
++#define NIC_CFG_RSS_HASH_TYPE_TCP_IPV6_EX	(1 << 5)
++
+ static inline void vnic_set_nic_cfg(u32 *nic_cfg,
+ 	u8 rss_default_cpu, u8 rss_hash_type,
+ 	u8 rss_hash_bits, u8 rss_base_cpu,
+diff --git a/drivers/net/enic/vnic_rq.c b/drivers/net/enic/vnic_rq.c
+index 9365e63..7558397 100644
+--- a/drivers/net/enic/vnic_rq.c
++++ b/drivers/net/enic/vnic_rq.c
+@@ -62,7 +62,6 @@ static int vnic_rq_alloc_bufs(struct vnic_rq *rq)
+ 	}
+ 
+ 	rq->to_use = rq->to_clean = rq->bufs[0];
+-	rq->buf_index = 0;
+ 
+ 	return 0;
+ }
+@@ -113,12 +112,12 @@ int vnic_rq_alloc(struct vnic_dev *vdev, struct vnic_rq *rq, unsigned int index,
+ 	return 0;
+ }
+ 
+-void vnic_rq_init(struct vnic_rq *rq, unsigned int cq_index,
++void vnic_rq_init_start(struct vnic_rq *rq, unsigned int cq_index,
++	unsigned int fetch_index, unsigned int posted_index,
+ 	unsigned int error_interrupt_enable,
+ 	unsigned int error_interrupt_offset)
+ {
+ 	u64 paddr;
+-	u32 fetch_index;
+ 
+ 	paddr = (u64)rq->ring.base_addr | VNIC_PADDR_TARGET;
+ 	writeq(paddr, &rq->ctrl->ring_base);
+@@ -128,15 +127,27 @@ void vnic_rq_init(struct vnic_rq *rq, unsigned int cq_index,
+ 	iowrite32(error_interrupt_offset, &rq->ctrl->error_interrupt_offset);
+ 	iowrite32(0, &rq->ctrl->dropped_packet_count);
+ 	iowrite32(0, &rq->ctrl->error_status);
++	iowrite32(fetch_index, &rq->ctrl->fetch_index);
++	iowrite32(posted_index, &rq->ctrl->posted_index);
+ 
+-	/* Use current fetch_index as the ring starting point */
+-	fetch_index = ioread32(&rq->ctrl->fetch_index);
+ 	rq->to_use = rq->to_clean =
+ 		&rq->bufs[fetch_index / VNIC_RQ_BUF_BLK_ENTRIES]
+ 			[fetch_index % VNIC_RQ_BUF_BLK_ENTRIES];
+-	iowrite32(fetch_index, &rq->ctrl->posted_index);
++}
++
++void vnic_rq_init(struct vnic_rq *rq, unsigned int cq_index,
++	unsigned int error_interrupt_enable,
++	unsigned int error_interrupt_offset)
++{
++	u32 fetch_index;
+ 
+-	rq->buf_index = 0;
++	/* Use current fetch_index as the ring starting point */
++	fetch_index = ioread32(&rq->ctrl->fetch_index);
++
++	vnic_rq_init_start(rq, cq_index,
++		fetch_index, fetch_index,
++		error_interrupt_enable,
++		error_interrupt_offset);
+ }
+ 
+ unsigned int vnic_rq_error_status(struct vnic_rq *rq)
+@@ -192,8 +203,6 @@ void vnic_rq_clean(struct vnic_rq *rq,
+ 			[fetch_index % VNIC_RQ_BUF_BLK_ENTRIES];
+ 	iowrite32(fetch_index, &rq->ctrl->posted_index);
+ 
+-	rq->buf_index = 0;
+-
+ 	vnic_dev_clear_desc_ring(&rq->ring);
+ }
+ 
+diff --git a/drivers/net/enic/vnic_rq.h b/drivers/net/enic/vnic_rq.h
+index fd0ef66..35e736c 100644
+--- a/drivers/net/enic/vnic_rq.h
++++ b/drivers/net/enic/vnic_rq.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright 2008 Cisco Systems, Inc.  All rights reserved.
++ * Copyright 2008, 2009 Cisco Systems, Inc.  All rights reserved.
+  * Copyright 2007 Nuova Systems, Inc.  All rights reserved.
+  *
+  * This program is free software; you may redistribute it and/or modify
+@@ -79,7 +79,6 @@ struct vnic_rq {
+ 	struct vnic_rq_buf *to_use;
+ 	struct vnic_rq_buf *to_clean;
+ 	void *os_buf_head;
+-	unsigned int buf_index;
+ 	unsigned int pkts_outstanding;
+ };
+ 
+@@ -105,11 +104,6 @@ static inline unsigned int vnic_rq_next_index(struct vnic_rq *rq)
+ 	return rq->to_use->index;
+ }
+ 
+-static inline unsigned int vnic_rq_next_buf_index(struct vnic_rq *rq)
+-{
+-	return rq->buf_index++;
+-}
+-
+ static inline void vnic_rq_post(struct vnic_rq *rq,
+ 	void *os_buf, unsigned int os_buf_index,
+ 	dma_addr_t dma_addr, unsigned int len)
+@@ -143,6 +137,11 @@ static inline void vnic_rq_post(struct vnic_rq *rq,
+ 	}
+ }
+ 
++static inline int vnic_rq_posting_soon(struct vnic_rq *rq)
++{
++	return ((rq->to_use->index & VNIC_RQ_RETURN_RATE) == 0);
++}
++
+ static inline void vnic_rq_return_descs(struct vnic_rq *rq, unsigned int count)
+ {
+ 	rq->ring.desc_avail += count;
+@@ -186,7 +185,7 @@ static inline int vnic_rq_fill(struct vnic_rq *rq,
+ {
+ 	int err;
+ 
+-	while (vnic_rq_desc_avail(rq) > 1) {
++	while (vnic_rq_desc_avail(rq) > 0) {
+ 
+ 		err = (*buf_fill)(rq);
+ 		if (err)
+@@ -199,6 +198,10 @@ static inline int vnic_rq_fill(struct vnic_rq *rq,
+ void vnic_rq_free(struct vnic_rq *rq);
+ int vnic_rq_alloc(struct vnic_dev *vdev, struct vnic_rq *rq, unsigned int index,
+ 	unsigned int desc_count, unsigned int desc_size);
++void vnic_rq_init_start(struct vnic_rq *rq, unsigned int cq_index,
++	unsigned int fetch_index, unsigned int posted_index,
++	unsigned int error_interrupt_enable,
++	unsigned int error_interrupt_offset);
+ void vnic_rq_init(struct vnic_rq *rq, unsigned int cq_index,
+ 	unsigned int error_interrupt_enable,
+ 	unsigned int error_interrupt_offset);
+diff --git a/drivers/net/enic/vnic_wq.c b/drivers/net/enic/vnic_wq.c
+index a576d04..d2e00e5 100644
+--- a/drivers/net/enic/vnic_wq.c
++++ b/drivers/net/enic/vnic_wq.c
+@@ -112,7 +112,8 @@ int vnic_wq_alloc(struct vnic_dev *vdev, struct vnic_wq *wq, unsigned int index,
+ 	return 0;
+ }
+ 
+-void vnic_wq_init(struct vnic_wq *wq, unsigned int cq_index,
++void vnic_wq_init_start(struct vnic_wq *wq, unsigned int cq_index,
++	unsigned int fetch_index, unsigned int posted_index,
+ 	unsigned int error_interrupt_enable,
+ 	unsigned int error_interrupt_offset)
+ {
+@@ -121,12 +122,25 @@ void vnic_wq_init(struct vnic_wq *wq, unsigned int cq_index,
+ 	paddr = (u64)wq->ring.base_addr | VNIC_PADDR_TARGET;
+ 	writeq(paddr, &wq->ctrl->ring_base);
+ 	iowrite32(wq->ring.desc_count, &wq->ctrl->ring_size);
+-	iowrite32(0, &wq->ctrl->fetch_index);
+-	iowrite32(0, &wq->ctrl->posted_index);
++	iowrite32(fetch_index, &wq->ctrl->fetch_index);
++	iowrite32(posted_index, &wq->ctrl->posted_index);
+ 	iowrite32(cq_index, &wq->ctrl->cq_index);
+ 	iowrite32(error_interrupt_enable, &wq->ctrl->error_interrupt_enable);
+ 	iowrite32(error_interrupt_offset, &wq->ctrl->error_interrupt_offset);
+ 	iowrite32(0, &wq->ctrl->error_status);
++
++	wq->to_use = wq->to_clean =
++		&wq->bufs[fetch_index / VNIC_WQ_BUF_BLK_ENTRIES]
++			[fetch_index % VNIC_WQ_BUF_BLK_ENTRIES];
++}
++
++void vnic_wq_init(struct vnic_wq *wq, unsigned int cq_index,
++	unsigned int error_interrupt_enable,
++	unsigned int error_interrupt_offset)
++{
++	vnic_wq_init_start(wq, cq_index, 0, 0,
++		error_interrupt_enable,
++		error_interrupt_offset);
+ }
+ 
+ unsigned int vnic_wq_error_status(struct vnic_wq *wq)
+diff --git a/drivers/net/enic/vnic_wq.h b/drivers/net/enic/vnic_wq.h
+index c826137..9c34d41 100644
+--- a/drivers/net/enic/vnic_wq.h
++++ b/drivers/net/enic/vnic_wq.h
+@@ -149,6 +149,10 @@ static inline void vnic_wq_service(struct vnic_wq *wq,
+ void vnic_wq_free(struct vnic_wq *wq);
+ int vnic_wq_alloc(struct vnic_dev *vdev, struct vnic_wq *wq, unsigned int index,
+ 	unsigned int desc_count, unsigned int desc_size);
++void vnic_wq_init_start(struct vnic_wq *wq, unsigned int cq_index,
++	unsigned int fetch_index, unsigned int posted_index,
++	unsigned int error_interrupt_enable,
++	unsigned int error_interrupt_offset);
+ void vnic_wq_init(struct vnic_wq *wq, unsigned int cq_index,
+ 	unsigned int error_interrupt_enable,
+ 	unsigned int error_interrupt_offset);

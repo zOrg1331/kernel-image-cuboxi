@@ -1,0 +1,43 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 3 Dec 2009 16:56:27 -0500
+Subject: [net] ipv4: fix possible invalid memory access
+Message-id: <20091203165401.18694.72005.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 21671
+O-Subject: [RHEL5 PATCH]: ipv4 - fix possible invalid memory access
+Bugzilla: 541213
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Someone was eventually going to complain about this.
+
+The compile error
+
+net/ipv4/route.c:3318: warning: initialization from incompatible pointer type
+
+points to a possible invalid memory access.
+
+Resolves BZ 541213.
+
+Successfully compiled by me.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/net/ipv4/route.c b/net/ipv4/route.c
+index f902549..1586943 100644
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -3140,10 +3140,12 @@ static int ipv4_sysctl_rt_secret_interval(ctl_table *ctl, int write,
+ }
+ 
+ static int ipv4_sysctl_rt_secret_interval_strategy(ctl_table *table,
++						   int __user *name, int nlen,
+ 						   void __user *oldval,
+ 						   size_t __user *oldlenp,
+ 						   void __user *newval,
+-						   size_t newlen)
++						   size_t newlen,
++						   void **context)
+ {
+ 	int old = ip_rt_secret_interval;
+ 

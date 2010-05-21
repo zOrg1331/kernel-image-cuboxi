@@ -1,0 +1,41 @@
+From: Don Dugger <ddugger@redhat.com>
+Date: Fri, 4 Sep 2009 15:23:33 -0400
+Subject: [pci] fix SR-IOV function dependency link problem
+Message-id: <200909041523.n84FNX1T024317@sobek.n0ano.com>
+Patchwork-id: 20835
+O-Subject: [RHEL5.5 PATCH V2] BZ 503837: PCI: fix SR-IOV function dependency
+	link problem
+Bugzilla: 503837
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+
+PCIe root complex integrated endpoint does not implement ARI, so this
+    kind of endpoint uses 3-bit function number. The function dependency
+    link of the integrated endpoint should be calculated using the device
+    number plus the value from function dependency link register.
+
+    Normal endpoint always implements ARI and the function dependency link
+    register contains 8-bit function number (i.e. `devfn' from software's
+    perspective).
+
+    Signed-off-by: Yu Zhao <yu.zhao@intel.com>
+    Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+
+Upstream status: Accepted (CS: 4d135dbee7b0a89e946f7ba284f2b957505a2c3a)
+
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/pci/iov.c b/drivers/pci/iov.c
+index 2db7950..2c9111b 100644
+--- a/drivers/pci/iov.c
++++ b/drivers/pci/iov.c
+@@ -372,6 +372,8 @@ found:
+ 	iov->self = dev;
+ 	pci_read_config_dword(dev, pos + PCI_SRIOV_CAP, &iov->cap);
+ 	pci_read_config_byte(dev, pos + PCI_SRIOV_FUNC_LINK, &iov->link);
++	if (dev->pcie_type == PCI_EXP_TYPE_RC_END)
++		iov->link = PCI_DEVFN(PCI_SLOT(dev->devfn), iov->link);
+ 
+ 	if (pdev)
+ 		iov->dev = pci_dev_get(pdev);

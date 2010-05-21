@@ -1,0 +1,73 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 1 Dec 2009 21:06:39 -0500
+Subject: [fs] eventfd: kaio integration fix
+Message-id: <1259701600-23508-12-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21620
+O-Subject: [RHEL5 PATCH 11/12 v2] eventfd/kaio integration fix
+Bugzilla: 493101
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Fixes bug 493101.
+
+commit 8d1c98b0b5c0148b519c6416e689ef6a89ffcea3
+Author: Davide Libenzi <davidel@xmailserver.org>
+Date:   Thu Apr 10 21:29:19 2008 -0700
+
+    eventfd/kaio integration fix
+
+    Jeff Roberson discovered a race when using kaio eventfd based notifications.
+    When it occurs it can lead tomissed wakeups and hung userspace.
+
+    This patch fixes the race by moving the notification inside the spinlocked
+    section of kaio.  The operation is safe since eventfd spinlock and kaio one
+    are unrelated.
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/fs/aio.c b/fs/aio.c
+index fe01818..181b1e6 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -141,12 +141,11 @@ static void aio_eventfd_fput(struct kiocb *kiocb)
+ 
+ static void aio_eventfd_signal(struct kiocb *kiocb)
+ {
+-	unsigned long flags;
+ 	struct kiocb_hash_entry *kh;
+ 
+-	spin_lock_irqsave(&kiocb_list_lock, flags);
++	spin_lock(&kiocb_list_lock);
+ 	kh = kiocb_hash_lookup(kiocb);
+-	spin_unlock_irqrestore(&kiocb_list_lock, flags);
++	spin_unlock(&kiocb_list_lock);
+ 	if (!kh)
+ 		return;
+ 
+@@ -1066,13 +1065,6 @@ int fastcall aio_complete(struct kiocb *iocb, long res, long res2)
+ 		return 1;
+ 	}
+ 
+-	/*
+-	 * Check if the user asked us to deliver the result through an
+-	 * eventfd. The eventfd_signal() function is safe to be called
+-	 * from IRQ context.
+-	 */
+-	aio_eventfd_signal(iocb);
+-
+ 	info = &ctx->ring_info;
+ 
+ 	/* add a completion event to the ring buffer.
+@@ -1122,6 +1114,13 @@ int fastcall aio_complete(struct kiocb *iocb, long res, long res2)
+ 
+ 	pr_debug("added to ring %p at [%lu]\n", iocb, tail);
+ 
++	/*
++	 * Check if the user asked us to deliver the result through an
++	 * eventfd. The eventfd_signal() function is safe to be called
++	 * from IRQ context.
++	 */
++	aio_eventfd_signal(iocb);
++
+ 	pr_debug("%ld retries: %d of %d\n", iocb->ki_retried,
+ 		iocb->ki_nbytes - iocb->ki_left, iocb->ki_nbytes);
+ put_rq:

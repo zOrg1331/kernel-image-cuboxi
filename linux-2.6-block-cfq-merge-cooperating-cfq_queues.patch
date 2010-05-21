@@ -1,0 +1,194 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 3 Nov 2009 11:36:42 -0500
+Subject: [block] cfq: merge cooperating cfq_queues
+Message-id: 1257266206-24003-9-git-send-email-jmoyer@redhat.com
+O-Subject: [PATCH 08/12] cfq: merge cooperating cfq_queues
+Bugzilla: 456181 448130 427709
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+commit df5fe3e8e13883f58dc97489076bbcc150789a21
+Author: Jeff Moyer <jmoyer@redhat.com>
+Date:   Fri Oct 23 17:14:50 2009 -0400
+
+    cfq: merge cooperating cfq_queues
+
+    When cooperating cfq_queues are detected currently, they are allowed to
+    skip ahead in the scheduling order.  It is much more efficient to
+    automatically share the cfq_queue data structure between cooperating process
+    Performance of the read-test2 benchmark (which is written to emulate the
+    dump(8) utility) went from 12MB/s to 90MB/s on my SATA disk.  NFS servers
+    with multiple nfsd threads also saw performance increases.
+
+    Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 7834e08..9d38fd8 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -214,6 +214,8 @@ struct cfq_queue {
+ 
+ 	/* various state flags, see below */
+ 	unsigned int flags;
++
++	struct cfq_queue *new_cfqq;
+ };
+ 
+ struct cfq_rq {
+@@ -1091,6 +1093,12 @@ static struct cfq_queue *cfq_close_cooperator(struct cfq_data *cfqd,
+ 	if (!cfqq)
+ 		return NULL;
+ 
++	/*
++	 * It only makes sense to merge sync queues.
++	 */
++	if (!cfq_cfqq_sync(cfqq))
++		return NULL;
++
+ 	if (cfq_cfqq_coop(cfqq))
+ 		return NULL;
+ 
+@@ -1213,6 +1221,43 @@ cfq_prio_to_maxrq(struct cfq_data *cfqd, struct cfq_queue *cfqq)
+ }
+ 
+ /*
++ * Must be called with the queue_lock held.
++ */
++static int cfqq_process_refs(struct cfq_queue *cfqq)
++{
++	int process_refs, io_refs;
++
++	io_refs = cfqq->allocated[READ] + cfqq->allocated[WRITE];
++	process_refs = atomic_read(&cfqq->ref) - io_refs;
++	BUG_ON(process_refs < 0);
++	return process_refs;
++}
++
++static void cfq_setup_merge(struct cfq_queue *cfqq, struct cfq_queue *new_cfqq)
++{
++	int process_refs;
++	struct cfq_queue *__cfqq;
++
++	/* Avoid a circular list and skip interim queue merges */
++	while ((__cfqq = new_cfqq->new_cfqq)) {
++		if (__cfqq == cfqq)
++			return;
++		new_cfqq = __cfqq;
++	}
++
++	process_refs = cfqq_process_refs(cfqq);
++	/*
++	 * If the process for the cfqq has gone away, there is
++	 * no sense in merging the queues.
++	 */
++	if (process_refs == 0)
++		return;
++
++	cfqq->new_cfqq = new_cfqq;
++	atomic_add(process_refs, &new_cfqq->ref);
++}
++
++/*
+  * get next queue for service
+  */
+ static struct cfq_queue *cfq_select_queue(struct cfq_data *cfqd)
+@@ -1240,11 +1285,13 @@ static struct cfq_queue *cfq_select_queue(struct cfq_data *cfqd)
+ 	 * If another queue has a request waiting within our mean seek
+ 	 * distance, let it run.  The expire code will check for close
+ 	 * cooperators and put the close queue at the front of the service
+-	 * tree.
++	 * tree.  If possible, merge the expiring queue with the new cfqq.
+ 	 */
+-	else if ((new_cfqq = cfq_close_cooperator(cfqd, cfqq, 0)))
++	else if ((new_cfqq = cfq_close_cooperator(cfqd, cfqq, 0))) {
++		if (!cfqq->new_cfqq)
++			cfq_setup_merge(cfqq, new_cfqq);
+ 		goto expire;
+-	else if (cfq_cfqq_dispatched(cfqq)) {
++	} else if (cfq_cfqq_dispatched(cfqq)) {
+ 		cfqq = NULL;
+ 		goto keep_queue;
+ 	} else if (cfq_cfqq_class_sync(cfqq)) {
+@@ -1476,6 +1523,34 @@ static void cfq_trim(struct io_context *ioc)
+ 	cfq_free_io_context(ioc);
+ }
+ 
++static void cfq_exit_cfqq(struct cfq_data *cfqd, struct cfq_queue *cfqq)
++{
++	struct cfq_queue *__cfqq, *next;
++
++	if (unlikely(cfqq == cfqd->active_queue)) {
++		__cfq_slice_expired(cfqd, cfqq, 0);
++		cfq_schedule_dispatch(cfqd);
++	}
++
++	/*
++	 * If this queue was scheduled to merge with another queue, be
++	 * sure to drop the reference taken on that queue (and others in
++	 * the merge chain).  See cfq_setup_merge and cfq_merge_cfqqs.
++	 */
++	__cfqq = cfqq->new_cfqq;
++	while (__cfqq) {
++		if (__cfqq == cfqq) {
++			printk(KERN_WARNING "cfqq->new_cfqq loop detected.\n");
++			break;
++		}
++		next = __cfqq->new_cfqq;
++		cfq_put_queue(__cfqq);
++		__cfqq = next;
++	}
++
++	cfq_put_queue(cfqq);
++}
++
+ /*
+  * Called with interrupts disabled
+  */
+@@ -1494,16 +1569,12 @@ static void cfq_exit_single_io_context(struct cfq_io_context *cic)
+ 	spin_lock(q->queue_lock);
+ 
+ 	if (cic->cfqq[ASYNC]) {
+-		if (unlikely(cic->cfqq[ASYNC] == cfqd->active_queue))
+-			__cfq_slice_expired(cfqd, cic->cfqq[ASYNC], 0);
+-		cfq_put_queue(cic->cfqq[ASYNC]);
++		cfq_exit_cfqq(cfqd, cic->cfqq[ASYNC]);
+ 		cic->cfqq[ASYNC] = NULL;
+ 	}
+ 
+ 	if (cic->cfqq[SYNC]) {
+-		if (unlikely(cic->cfqq[SYNC] == cfqd->active_queue))
+-			__cfq_slice_expired(cfqd, cic->cfqq[SYNC], 0);
+-		cfq_put_queue(cic->cfqq[SYNC]);
++		cfq_exit_cfqq(cfqd, cic->cfqq[SYNC]);
+ 		cic->cfqq[SYNC] = NULL;
+ 	}
+ 
+@@ -2225,6 +2296,15 @@ static void cfq_put_request(request_queue_t *q, struct request *rq)
+ 	}
+ }
+ 
++static struct cfq_queue *
++cfq_merge_cfqqs(struct cfq_data *cfqd, struct cfq_io_context *cic,
++		struct cfq_queue *cfqq)
++{
++	cic->cfqq[SYNC] = cfqq->new_cfqq;
++	cfq_put_queue(cfqq);
++	return cic->cfqq[SYNC];
++}
++
+ /*
+  * Allocate cfq data structures associated with this request.
+  */
+@@ -2257,7 +2337,9 @@ cfq_set_request(request_queue_t *q, struct request *rq, struct bio *bio,
+ 			goto queue_fail;
+ 
+ 		cic->cfqq[is_sync] = cfqq;
+-	} else
++	} else if (cic->cfqq[is_sync]->new_cfqq)
++		cfqq = cfq_merge_cfqqs(cfqd, cic, cic->cfqq[is_sync]);
++	else
+ 		cfqq = cic->cfqq[is_sync];
+ 
+ 	cfqq->allocated[rw]++;

@@ -1,0 +1,51 @@
+From: Rob Evers <revers@redhat.com>
+Date: Fri, 15 Jan 2010 12:11:21 -0500
+Subject: [scsi] lpfc: update driver to version 8.2.0.63.1p FC/FCoE
+Message-id: <20100115121113.19443.52217.sendpatchset@localhost.localdomain>
+Patchwork-id: 22566
+O-Subject: [PATCH RHEL5.5] Update lpfc driver to 8.2.0.63.1p FC/FCoE
+Bugzilla: 555604
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=555604
+
+Update lpfc from 8.2.0.63 to 8.2.0.63.1p
+
+* Changed version number to 8.2.0.63.1p
+* Clean up ELS commands when unregistering unused ELS commands (CR 97048)
+
+Patch provided by, and tested by Emulex
+
+Compile tested and loaded new driver.
+
+--
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index 74767f7..bdb8ca8 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -4715,6 +4715,9 @@ lpfc_unregister_unused_fcf(struct lpfc_hba *phba)
+ 		}
+ 	lpfc_destroy_vport_work_array(phba, vports);
+ 
++	/* Cleanup any outstanding ELS commands */
++	lpfc_els_flush_all_cmd(phba);
++
+ 	/* Unregister VFI */
+ 	mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+ 	if (!mbox) {
+diff --git a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+index 6393dbf..e41dd8e 100644
+--- a/drivers/scsi/lpfc/lpfc_version.h
++++ b/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.2.0.63"
++#define LPFC_DRIVER_VERSION "8.2.0.63.1p"
+ 
+ #define LPFC_DRIVER_NAME		"lpfc"
+ #define LPFC_SP_DRIVER_HANDLER_NAME	"lpfc:sp"

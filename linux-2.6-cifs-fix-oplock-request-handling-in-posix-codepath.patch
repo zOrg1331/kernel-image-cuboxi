@@ -1,0 +1,110 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 26 Oct 2009 15:54:23 -0400
+Subject: [cifs] fix oplock request handling in posix codepath
+Message-id: <1256572464-27293-9-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21218
+O-Subject: [RHEL5.5 PATCH 8/9] BZ#531005: cifs: fix oplock request handling in
+	posix codepath
+Bugzilla: 531005
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+cifs_posix_open takes a "poplock" argument that's intended to be used in
+the actual posix open call to set the "Flags" field. It ignores this
+value however and declares an "oplock" parameter on the stack that it
+passes uninitialized to the CIFSPOSIXOpen function. Not only does this
+mean that the oplock request flags are bogus, but the result that's
+expected to be in that variable is unchanged.
+
+Fix this, and also clean up the type of the oplock parameter used. Since
+it's expected to be __u32, we should use that everywhere and not
+implicitly cast it from a signed type.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/cifs/cifsproto.h b/fs/cifs/cifsproto.h
+index 216ad5d..3bb70b4 100644
+--- a/fs/cifs/cifsproto.h
++++ b/fs/cifs/cifsproto.h
+@@ -116,7 +116,7 @@ extern __le64 cnvrtDosCifsTm(__u16 date, __u16 time);
+ 
+ extern int cifs_posix_open(char *full_path, struct inode **pinode,
+ 			   struct super_block *sb, int mode, int oflags,
+-			   int *poplock, __u16 *pnetfid, int xid);
++			   __u32 *poplock, __u16 *pnetfid, int xid);
+ extern void posix_fill_in_inode(struct inode *tmp_inode,
+ 				FILE_UNIX_BASIC_INFO *pData, int isNewInode);
+ extern struct inode *cifs_new_inode(struct super_block *sb, __u64 *inum);
+diff --git a/fs/cifs/dir.c b/fs/cifs/dir.c
+index a24bc54..2bb9b51 100644
+--- a/fs/cifs/dir.c
++++ b/fs/cifs/dir.c
+@@ -137,10 +137,9 @@ cifs_bp_rename_retry:
+ 
+ int cifs_posix_open(char *full_path, struct inode **pinode,
+ 		    struct super_block *sb, int mode, int oflags,
+-		    int *poplock, __u16 *pnetfid, int xid)
++		    __u32 *poplock, __u16 *pnetfid, int xid)
+ {
+ 	int rc;
+-	__u32 oplock;
+ 	FILE_UNIX_BASIC_INFO *presp_data;
+ 	__u32 posix_flags = 0;
+ 	struct cifs_sb_info *cifs_sb = CIFS_SB(sb);
+@@ -180,7 +179,7 @@ int cifs_posix_open(char *full_path, struct inode **pinode,
+ 
+ 
+ 	rc = CIFSPOSIXCreate(xid, cifs_sb->tcon, posix_flags, mode,
+-			pnetfid, presp_data, &oplock, full_path,
++			pnetfid, presp_data, poplock, full_path,
+ 			cifs_sb->local_nls, cifs_sb->mnt_cifs_flags &
+ 					CIFS_MOUNT_MAP_SPECIAL_CHR);
+ 	if (rc)
+@@ -231,7 +230,7 @@ cifs_create(struct inode *inode, struct dentry *direntry, int mode,
+ 	int rc = -ENOENT;
+ 	int xid;
+ 	int create_options = CREATE_NOT_DIR;
+-	int oplock = 0;
++	__u32 oplock = 0;
+ 	int oflags;
+ 	/*
+ 	 * BB below access is probably too much for mknod to request
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index 1e677fb..6ecd969 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -138,9 +138,11 @@ static inline int cifs_get_disposition(unsigned int flags)
+ }
+ 
+ /* all arguments to this function must be checked for validity in caller */
+-static inline int cifs_posix_open_inode_helper(struct inode *inode,
+-			struct file *file, struct cifsInodeInfo *pCifsInode,
+-			struct cifsFileInfo *pCifsFile, int oplock, u16 netfid)
++static inline int
++cifs_posix_open_inode_helper(struct inode *inode, struct file *file,
++			     struct cifsInodeInfo *pCifsInode,
++			     struct cifsFileInfo *pCifsFile, __u32 oplock,
++			     u16 netfid)
+ {
+ 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
+ /*	struct timespec temp; */   /* BB REMOVEME BB */
+@@ -280,7 +282,8 @@ client_can_cache:
+ int cifs_open(struct inode *inode, struct file *file)
+ {
+ 	int rc = -EACCES;
+-	int xid, oplock;
++	int xid;
++	__u32 oplock;
+ 	struct cifs_sb_info *cifs_sb;
+ 	struct cifsTconInfo *tcon;
+ 	struct cifsFileInfo *pCifsFile;
+@@ -496,7 +499,8 @@ static int cifs_relock_file(struct cifsFileInfo *cifsFile)
+ static int cifs_reopen_file(struct file *file, bool can_flush)
+ {
+ 	int rc = -EACCES;
+-	int xid, oplock;
++	int xid;
++	__u32 oplock;
+ 	struct cifs_sb_info *cifs_sb;
+ 	struct cifsTconInfo *tcon;
+ 	struct cifsFileInfo *pCifsFile;

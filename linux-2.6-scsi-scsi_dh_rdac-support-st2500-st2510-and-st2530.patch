@@ -1,0 +1,45 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 30 Sep 2009 17:11:10 -0400
+Subject: [scsi] scsi_dh_rdac: support ST2500, ST2510 and ST2530
+Message-id: 20090930210508.22936.80261.sendpatchset@localhost.localdomain
+O-Subject: [LSI 5.5 feat 1/7] scsi_dh_rdac: Add support for Sun StorageTek ST2500, ST2510 and ST2530
+Bugzilla: 524335
+
+https://bugzilla.redhat.com/show_bug.cgi?id=524335
+
+>From patchwork Wed Aug 26 18:16:57 2009
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Subject: scsi_dh_rdac: Add support for Sun StorageTek ST2500, ST2510 and ST2530
+Date: Wed, 26 Aug 2009 18:16:57 -0000
+From: Charlie Brady <charlieb-dm-devel@budge.apana.org.au>
+X-Patchwork-Id: 44086
+
+[Re-submit - ST2500 added.]
+
+These storage arrays can use RDAC when configured with 'linux' as the
+initiator.
+
+http://www.sun.com/storage/disk_systems/workgroup/2500/
+http://www.sun.com/storage/disk_systems/workgroup/2510/
+http://www.sun.com/storage/disk_systems/workgroup/2530/
+
+Signed-off-by: Charlie Brady <charlieb@budge.apana.org.au>
+Reviewed-by: Babu Moger <babu.moger@lsi.com>
+Reviewed-by: Chandra Seetharaman <sekharan@us.ibm.com>
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index a85e57b..c7bede0 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -632,6 +632,9 @@ const struct scsi_dh_devlist rdac_dev_list[] = {
+ 	{"STK", "OPENstorage D280"},
+ 	{"STK", "FLEXLINE 380"},
+ 	{"SUN", "CSM200_R"},
++	{"SUN", "LCSM100_I"},
++	{"SUN", "LCSM100_S"},
++	{"SUN", "LCSM100_E"},
+ 	{"SUN", "LCSM100_F"},
+ 	{"DELL", "MD3000"},
+ 	{"DELL", "MD3000i"},

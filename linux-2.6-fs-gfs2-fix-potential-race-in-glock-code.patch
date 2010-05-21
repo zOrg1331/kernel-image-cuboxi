@@ -1,0 +1,55 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Tue, 17 Nov 2009 14:49:53 -0500
+Subject: [fs] gfs2: fix potential race in glock code
+Message-id: <1258469393.6052.907.camel@localhost.localdomain>
+Patchwork-id: 21396
+O-Subject: [RHEL 5.5] GFS2: Fix potential race in glock code (bz #498976)
+Bugzilla: 498976
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+
+This patch has been in upstream for a couple of months now. The idea is
+to close any possible races between the clearing of the GLF_LOCK bit
+and the scheduling of the work queue.
+
+We haven't found a way to reproduce the originally reported issue. The
+reports that we do have strongly seem to point to a missing schedule of
+the glock workqueue and this looks to be the most likely candidate for
+that.
+
+This patch has also gone to a customer to test with as well.
+
+Steve.
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index fdbdb9c..282d593 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -725,11 +725,15 @@ __acquires(&gl->gl_spin)
+ 	return;
+ 
+ out_sched:
++	clear_bit(GLF_LOCK, &gl->gl_flags);
++	smp_mb__after_clear_bit();
+ 	gfs2_glock_hold(gl);
+ 	if (queue_delayed_work(glock_workqueue, &gl->gl_work, 0) == 0)
+ 		gfs2_glock_put_nolock(gl);
++	return;
+ out:
+ 	clear_bit(GLF_LOCK, &gl->gl_flags);
++	smp_mb__after_clear_bit();
+ }
+ 
+ static void delete_work_func(void *data)
+@@ -1498,10 +1502,11 @@ static int gfs2_shrink_glock_memory(int nr, gfp_t gfp_mask)
+ 				handle_callback(gl, LM_ST_UNLOCKED, 0);
+ 				nr--;
+ 			}
++			clear_bit(GLF_LOCK, &gl->gl_flags);
++			smp_mb__after_clear_bit();
+ 			if (queue_delayed_work(glock_workqueue, &gl->gl_work, 0) == 0)
+ 				gfs2_glock_put_nolock(gl);
+ 			spin_unlock(&gl->gl_spin);
+-			clear_bit(GLF_LOCK, &gl->gl_flags);
+ 			spin_lock(&lru_lock);
+ 			continue;
+ 		}

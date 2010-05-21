@@ -1,0 +1,216 @@
+From: Don Dugger <ddugger@redhat.com>
+Date: Tue, 24 Nov 2009 17:56:15 -0500
+Subject: [xen] domU irq ratelimiting
+Message-id: <200911241756.nAOHuFeQ023922@sobek.n0ano.com>
+Patchwork-id: 21481
+O-Subject: [RHEL5.5 PATCH v2] BZ 524747: xen: irq ratelimiting
+Bugzilla: 524747
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+Backport Xen-unstable changeset 20214, original change set log follows:
+        x86: irq ratelimit
+
+        This patch adds the feature of irq ratelimit. It temporarily masks
+        the interrupt (guest) if too many irqs are observed in a short
+        period (irq storm), to ensure responsiveness of Xen and other guests.
+
+        As for now, the threshold can be adjusted at boot time using command-
+        line option irq_ratelimit=xxx.
+
+        Signed-off-by: Qing He <qing.he@intel.com>
+        Signed-off-by: Keir Fraser <keir.fraser@citrix.com>
+
+This version of the patch is modified slightly from the upstream patch to
+not do rate limiting for IRQs thar are assigned to Dom0 and to not rate
+limit IRQs that are shared among multiple domains.  These enhancements to
+the patch is being pushed upstream.
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2047227
+Testing: Tested on Tylersberg platform and HVM & PV guests work with no
+ill effects.
+
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+---
+ arch/x86/i8259.c   |    2 +
+ arch/x86/io_apic.c |    8 +++---
+ arch/x86/irq.c     |   68 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ include/xen/irq.h  |    7 +++++
+ 4 files changed, 81 insertions(+), 4 deletions(-)
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/arch/x86/i8259.c b/arch/x86/i8259.c
+index 0874fad..9a3d698 100644
+--- a/arch/x86/i8259.c
++++ b/arch/x86/i8259.c
+@@ -395,6 +395,8 @@ void __init init_IRQ(void)
+         irq_desc[i].handler = &no_irq_type;
+         irq_desc[i].action  = NULL;
+         irq_desc[i].depth   = 1;
++        irq_desc[i].vector = i;
++        INIT_LIST_HEAD(&irq_desc[i].rl_link);
+         spin_lock_init(&irq_desc[i].lock);
+         set_intr_gate(i, interrupt[i]);
+     }
+diff --git a/arch/x86/io_apic.c b/arch/x86/io_apic.c
+index d625aeb..b388973 100644
+--- a/arch/x86/io_apic.c
++++ b/arch/x86/io_apic.c
+@@ -723,8 +723,8 @@ int assign_irq_vector(int irq)
+     return vector;
+ }
+ 
+-static struct hw_interrupt_type ioapic_level_type;
+-static struct hw_interrupt_type ioapic_edge_type;
++struct hw_interrupt_type ioapic_level_type;
++struct hw_interrupt_type ioapic_edge_type;
+ 
+ #define IOAPIC_AUTO	-1
+ #define IOAPIC_EDGE	0
+@@ -1521,7 +1521,7 @@ static void end_edge_ioapic_vector(unsigned int vector)
+  * edge-triggered handler, without risking IRQ storms and other ugly
+  * races.
+  */
+-static struct hw_interrupt_type ioapic_edge_type = {
++struct hw_interrupt_type ioapic_edge_type = {
+     .typename 	= "IO-APIC-edge",
+     .startup 	= startup_edge_ioapic_vector,
+     .shutdown 	= disable_edge_ioapic_vector,
+@@ -1532,7 +1532,7 @@ static struct hw_interrupt_type ioapic_edge_type = {
+     .set_affinity 	= set_ioapic_affinity_vector,
+ };
+ 
+-static struct hw_interrupt_type ioapic_level_type = {
++struct hw_interrupt_type ioapic_level_type = {
+     .typename 	= "IO-APIC-level",
+     .startup 	= startup_level_ioapic_vector,
+     .shutdown 	= mask_IO_APIC_vector,
+diff --git a/arch/x86/irq.c b/arch/x86/irq.c
+index cb40528..1085276 100644
+--- a/arch/x86/irq.c
++++ b/arch/x86/irq.c
+@@ -25,6 +25,14 @@ boolean_param("noirqbalance", opt_noirqbalance);
+ 
+ irq_desc_t irq_desc[NR_IRQS];
+ 
++static LIST_HEAD(irq_ratelimit_list);
++static DEFINE_SPINLOCK(irq_ratelimit_lock);
++static struct timer irq_ratelimit_timer;
++
++/* irq_ratelimit: the max irq rate allowed in every 10ms, set 0 to disable */
++unsigned int __read_mostly irq_ratelimit_threshold = 10000;
++integer_param("irq_ratelimit", irq_ratelimit_threshold);
++
+ static void __do_IRQ_guest(int vector);
+ 
+ void no_action(int cpl, void *dev_id, struct cpu_user_regs *regs) { }
+@@ -100,6 +108,33 @@ asmlinkage void do_IRQ(struct cpu_user_regs *regs)
+     spin_unlock(&desc->lock);
+ }
+ 
++static void irq_ratelimit_timer_fn(void *data)
++{
++    irq_desc_t *desc, *tmp;
++    unsigned long flags;
++
++    spin_lock_irqsave(&irq_ratelimit_lock, flags);
++
++    list_for_each_entry_safe ( desc, tmp, &irq_ratelimit_list, rl_link )
++    {
++        spin_lock(&desc->lock);
++        desc->handler->enable(desc->vector);
++        list_del(&desc->rl_link);
++        INIT_LIST_HEAD(&desc->rl_link);
++        spin_unlock(&desc->lock);
++    }
++
++    spin_unlock_irqrestore(&irq_ratelimit_lock, flags);
++}
++
++static int __init irq_ratelimit_init(void)
++{
++    if ( irq_ratelimit_threshold )
++        init_timer(&irq_ratelimit_timer, irq_ratelimit_timer_fn, NULL, 0);
++    return 0;
++}
++__initcall(irq_ratelimit_init);
++
+ int request_irq(unsigned int irq,
+         void (*handler)(int, void *, struct cpu_user_regs *),
+         unsigned long irqflags, const char * devname, void *dev_id)
+@@ -203,6 +238,8 @@ struct pending_eoi {
+ static DEFINE_PER_CPU(struct pending_eoi, pending_eoi[NR_VECTORS]);
+ #define pending_eoi_sp(p) ((p)[NR_VECTORS-1].vector)
+ 
++extern struct hw_interrupt_type ioapic_level_type;
++
+ static void __do_IRQ_guest(int vector)
+ {
+     irq_desc_t         *desc = &irq_desc[vector];
+@@ -220,6 +257,37 @@ static void __do_IRQ_guest(int vector)
+         return;
+     }
+ 
++    if ( action->nr_guests == 1 && action->guest[0]->domain_id != 0 &&
++         desc->handler != &ioapic_level_type )
++    {
++        if ( irq_ratelimit_timer.function && /* irq rate limiting enabled? */
++             unlikely(desc->rl_cnt++ >= irq_ratelimit_threshold) )
++        {
++            s_time_t now = NOW();
++            if ( now < (desc->rl_quantum_start + MILLISECS(10)) )
++            {
++                desc->handler->disable(vector);
++                /*
++                 * If handler->disable doesn't actually mask the interrupt, a
++                 * disabled irq still can fire. This check also avoids possible
++                 * deadlocks if ratelimit_timer_fn runs at the same time.
++                 */
++                if ( likely(list_empty(&desc->rl_link)) )
++                {
++                    spin_lock(&irq_ratelimit_lock);
++                    if ( list_empty(&irq_ratelimit_list) )
++                        set_timer(&irq_ratelimit_timer, now + MILLISECS(10));
++                    list_add(&desc->rl_link, &irq_ratelimit_list);
++                    spin_unlock(&irq_ratelimit_lock);
++                }
++                desc->handler->end(vector);
++                return;
++            }
++            desc->rl_cnt = 0;
++            desc->rl_quantum_start = now;
++        }
++    }
++
+     if ( action->ack_type == ACKTYPE_EOI )
+     {
+         sp = pending_eoi_sp(peoi);
+diff --git a/include/xen/irq.h b/include/xen/irq.h
+index 81677e0..0bfc37f 100644
+--- a/include/xen/irq.h
++++ b/include/xen/irq.h
+@@ -4,6 +4,7 @@
+ #include <xen/config.h>
+ #include <xen/cpumask.h>
+ #include <xen/spinlock.h>
++#include <xen/time.h>
+ #include <asm/regs.h>
+ #include <asm/hardirq.h>
+ 
+@@ -58,8 +59,14 @@ typedef struct {
+     struct msi_desc   *msi_desc;
+     struct irqaction *action;	/* IRQ action list */
+     unsigned int depth;		/* nested irq disables */
++    int vector;
+     spinlock_t lock;
+     cpumask_t affinity;
++
++    /* irq ratelimit */
++    s_time_t rl_quantum_start;
++    unsigned int rl_cnt;
++    struct list_head rl_link;
+ } __cacheline_aligned irq_desc_t;
+ 
+ extern irq_desc_t irq_desc[NR_IRQS];

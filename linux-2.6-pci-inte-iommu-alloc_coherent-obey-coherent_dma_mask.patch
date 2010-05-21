@@ -1,0 +1,51 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Tue, 1 Dec 2009 23:43:16 -0500
+Subject: [pci] inte-iommu: alloc_coherent obey coherent_dma_mask
+Message-id: <4B15AA14.4020905@redhat.com>
+Patchwork-id: 21633
+O-Subject: [RHEL5.5 PATCH V2] 5/9: INTEL_IOMMU: obey coherent_dma_mask
+	for	alloc_coherent
+Bugzilla: 516811 518103
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+V2: indent clean up.
+
+BZ 516727.
+
+Backport of following patch from iommu-2.6.32 tree:
+     intel-iommu: Obey coherent_dma_mask for alloc_coherent on passthrough
+     commit e8bb910d1bbc65e7081e73aab4b3a3dd8630332c
+
+0/9 states build & tests.
+
+Please review & ACK.
+
+- Don
+>From 68bd044f448fca7f19779c679894367b053db460 Mon Sep 17 00:00:00 2001
+From: Donald Dutile <ddutile@redhat.com>
+Date: Mon, 16 Nov 2009 18:13:18 -0500
+Subject: [PATCH 5/9]   INTEL_IOMMU: obey coherent_dma_mask for alloc_coherent
+
+
+diff --git a/drivers/pci/intel-iommu.c b/drivers/pci/intel-iommu.c
+index 9cb7f43..42a596d 100644
+--- a/drivers/pci/intel-iommu.c
++++ b/drivers/pci/intel-iommu.c
+@@ -2783,7 +2783,15 @@ static void *intel_alloc_coherent(struct device *hwdev, size_t size,
+ 
+ 	size = PAGE_ALIGN(size);
+ 	order = get_order(size);
+-	flags &= ~(GFP_DMA | GFP_DMA32);
++
++	if (!iommu_no_mapping(hwdev))
++		flags &= ~(GFP_DMA | GFP_DMA32);
++	else if (hwdev->coherent_dma_mask < dma_get_required_mask(hwdev)) {
++		if (hwdev->coherent_dma_mask < DMA_BIT_MASK(32))
++			flags |= GFP_DMA;
++		else
++			flags |= GFP_DMA32;
++	}
+ 
+ 	vaddr = (void *)__get_free_pages(flags, order);
+ 	if (!vaddr)

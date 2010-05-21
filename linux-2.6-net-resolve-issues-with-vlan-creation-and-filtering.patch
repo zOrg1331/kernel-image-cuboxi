@@ -1,0 +1,587 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Tue, 1 Dec 2009 01:48:24 -0500
+Subject: [net] resolve issues with vlan creation and filtering
+Message-id: <20091201014824.GB3259@gospo.rdu.redhat.com>
+Patchwork-id: 21560
+O-Subject: [RHEL5.4 PATCH] net: resolve issues with vlan creation and filtering
+Bugzilla: 521345
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+A customer reported that after a sky2 update in 5.4, they were unable
+to use vlans.  This message appeared in their logs:
+
+register_vlan_device: Device eth0 has buggy VLAN hw accel.
+
+I did some looking and we took some code in the sky2 driver that we
+should not have taken in 5.4 and the removal of the pointer for the
+vlan_rx_kill_vid function was causing the problem.  After looking at
+this more I decided we should just take the upstream changes that clean
+up vlan management in drivers and backported the following upstream
+commits:
+
+    commit 25805dcf9d83098cf5492117ad2669cd14cc9b24
+    Author: Stephen Hemminger <shemminger@linux-foundation.org>
+    Date:   Fri Jun 1 09:44:01 2007 -0700
+
+        network drivers: eliminate unneeded kill_vid code
+
+    commit cb434e380d58d3956c75dc5ead00eced599b9d16
+    Author: Stephen Hemminger <shemminger@linux-foundation.org>
+    Date:   Fri Jun 1 09:44:00 2007 -0700
+
+        atl1: eliminate unneeded kill_vid code
+
+    commit 7b332244a63dc1f408fd2ebb2636d58ac69a4916
+    Author: Stephen Hemminger <shemminger@linux-foundation.org>
+    Date:   Fri Jun 1 09:43:59 2007 -0700
+
+        8139cp: fix VLAN unregistration
+
+    commit d2d1acdb6a632486be9a731f40c68980c09f0490
+    Author: Stephen Hemminger <shemminger@linux-foundation.org>
+    Date:   Fri Jun 1 09:43:57 2007 -0700
+
+        VLAN: kill_vid is only useful for VLAN filtering devices
+
+I have tested several of the drivers and the reporter who first noticed
+the problem on sky2 verified the fix in my test kernels.
+
+This will resolve RHBZ 521345.
+
+
+diff --git a/drivers/net/8139cp.c b/drivers/net/8139cp.c
+index 38cfafc..750a656 100644
+--- a/drivers/net/8139cp.c
++++ b/drivers/net/8139cp.c
+@@ -443,21 +443,12 @@ static void cp_vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
+ 
+ 	spin_lock_irqsave(&cp->lock, flags);
+ 	cp->vlgrp = grp;
+-	cp->cpcmd |= RxVlanOn;
+-	cpw16(CpCmd, cp->cpcmd);
+-	spin_unlock_irqrestore(&cp->lock, flags);
+-}
+-
+-static void cp_vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
+-{
+-	struct cp_private *cp = netdev_priv(dev);
+-	unsigned long flags;
++	if (grp)
++		cp->cpcmd |= RxVlanOn;
++	else
++		cp->cpcmd &= ~RxVlanOn;
+ 
+-	spin_lock_irqsave(&cp->lock, flags);
+-	cp->cpcmd &= ~RxVlanOn;
+ 	cpw16(CpCmd, cp->cpcmd);
+-	if (cp->vlgrp)
+-		cp->vlgrp->vlan_devices[vid] = NULL;
+ 	spin_unlock_irqrestore(&cp->lock, flags);
+ }
+ #endif /* CP_VLAN_TAG_USED */
+@@ -1979,7 +1970,6 @@ static int cp_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
+ #if CP_VLAN_TAG_USED
+ 	dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 	dev->vlan_rx_register = cp_vlan_rx_register;
+-	dev->vlan_rx_kill_vid = cp_vlan_rx_kill_vid;
+ #endif
+ 
+ 	if (pci_using_dac)
+diff --git a/drivers/net/acenic.c b/drivers/net/acenic.c
+index 1c01e9b..be9fa86 100644
+--- a/drivers/net/acenic.c
++++ b/drivers/net/acenic.c
+@@ -484,12 +484,10 @@ static int __devinit acenic_probe_one(struct pci_dev *pdev,
+ #if ACENIC_DO_VLAN
+ 	dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 	dev->vlan_rx_register = ace_vlan_rx_register;
+-	dev->vlan_rx_kill_vid = ace_vlan_rx_kill_vid;
+ #endif
+-	if (1) {
+-		dev->tx_timeout = &ace_watchdog;
+-		dev->watchdog_timeo = 5*HZ;
+-	}
++
++	dev->tx_timeout = &ace_watchdog;
++	dev->watchdog_timeo = 5*HZ;
+ 
+ 	dev->open = &ace_open;
+ 	dev->stop = &ace_close;
+@@ -2288,22 +2286,6 @@ static void ace_vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
+ 	ace_unmask_irq(dev);
+ 	local_irq_restore(flags);
+ }
+-
+-
+-static void ace_vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
+-{
+-	struct ace_private *ap = netdev_priv(dev);
+-	unsigned long flags;
+-
+-	local_irq_save(flags);
+-	ace_mask_irq(dev);
+-
+-	if (ap->vlgrp)
+-		ap->vlgrp->vlan_devices[vid] = NULL;
+-
+-	ace_unmask_irq(dev);
+-	local_irq_restore(flags);
+-}
+ #endif /* ACENIC_DO_VLAN */
+ 
+ 
+diff --git a/drivers/net/acenic.h b/drivers/net/acenic.h
+index 62ec8ce..aa39298 100644
+--- a/drivers/net/acenic.h
++++ b/drivers/net/acenic.h
+@@ -787,7 +787,6 @@ static struct net_device_stats *ace_get_stats(struct net_device *dev);
+ static int read_eeprom_byte(struct net_device *dev, unsigned long offset);
+ #if ACENIC_DO_VLAN
+ static void ace_vlan_rx_register(struct net_device *dev, struct vlan_group *grp);
+-static void ace_vlan_rx_kill_vid(struct net_device *dev, unsigned short vid);
+ #endif
+ 
+ #endif /* _ACENIC_H_ */
+diff --git a/drivers/net/amd8111e.c b/drivers/net/amd8111e.c
+index ed322a7..e6d25a1 100644
+--- a/drivers/net/amd8111e.c
++++ b/drivers/net/amd8111e.c
+@@ -1759,16 +1759,8 @@ static void amd8111e_vlan_rx_register(struct net_device *dev, struct vlan_group
+ 	lp->vlgrp = grp;
+ 	spin_unlock_irq(&lp->lock);
+ }
+-	
+-static void amd8111e_vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
+-{
+-	struct amd8111e_priv *lp = netdev_priv(dev);
+-	spin_lock_irq(&lp->lock);
+-	if (lp->vlgrp)
+-		lp->vlgrp->vlan_devices[vid] = NULL;
+-	spin_unlock_irq(&lp->lock);
+-}
+-#endif
++	#endif
++
+ static int amd8111e_enable_magicpkt(struct amd8111e_priv* lp)
+ {
+ 	writel( VAL1|MPPLBA, lp->mmio + CMD3);
+@@ -2028,7 +2020,6 @@ static int __devinit amd8111e_probe_one(struct pci_dev *pdev,
+ #if AMD8111E_VLAN_TAG_USED
+ 	dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX ;
+ 	dev->vlan_rx_register =amd8111e_vlan_rx_register;
+-	dev->vlan_rx_kill_vid = amd8111e_vlan_rx_kill_vid;
+ #endif	
+ 	
+ 	lp = netdev_priv(dev);
+@@ -2081,7 +2072,6 @@ static int __devinit amd8111e_probe_one(struct pci_dev *pdev,
+ #if AMD8111E_VLAN_TAG_USED
+ 	dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 	dev->vlan_rx_register =amd8111e_vlan_rx_register;
+-	dev->vlan_rx_kill_vid = amd8111e_vlan_rx_kill_vid;
+ #endif	
+ 	/* Probe the external PHY */
+ 	amd8111e_probe_ext_phy(dev);
+diff --git a/drivers/net/bnx2.c b/drivers/net/bnx2.c
+index fa8c5b1..2ee87aa 100644
+--- a/drivers/net/bnx2.c
++++ b/drivers/net/bnx2.c
+@@ -6283,21 +6283,6 @@ bnx2_vlan_rx_register(struct net_device *dev, struct vlan_group *vlgrp)
+ 
+ 	bnx2_netif_start(bp);
+ }
+-
+-/* Called with rtnl_lock */
+-static void
+-bnx2_vlan_rx_kill_vid(struct net_device *dev, uint16_t vid)
+-{
+-	struct bnx2 *bp = netdev_priv(dev);
+-
+-	bnx2_netif_stop(bp);
+-
+-	if (bp->vlgrp)
+-		bp->vlgrp->vlan_devices[vid] = NULL;
+-	bnx2_set_rx_mode(dev);
+-
+-	bnx2_netif_start(bp);
+-}
+ #endif
+ 
+ /* Called with netif_tx_lock.
+@@ -8115,7 +8100,6 @@ bnx2_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 	dev->watchdog_timeo = TX_TIMEOUT;
+ #ifdef BCM_VLAN
+ 	dev->vlan_rx_register = bnx2_vlan_rx_register;
+-	dev->vlan_rx_kill_vid = bnx2_vlan_rx_kill_vid;
+ #endif
+ 	dev->ethtool_ops = &bnx2_ethtool_ops;
+ 
+diff --git a/drivers/net/chelsio/cxgb2.c b/drivers/net/chelsio/cxgb2.c
+index e678724..cbe3814 100644
+--- a/drivers/net/chelsio/cxgb2.c
++++ b/drivers/net/chelsio/cxgb2.c
+@@ -899,16 +899,6 @@ static void vlan_rx_register(struct net_device *dev,
+ 	t1_set_vlan_accel(adapter, grp != NULL);
+ 	spin_unlock_irq(&adapter->async_lock);
+ }
+-
+-static void vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
+-{
+-	struct adapter *adapter = dev->priv;
+-
+-	spin_lock_irq(&adapter->async_lock);
+-	if (adapter->vlan_grp)
+-		adapter->vlan_grp->vlan_devices[vid] = NULL;
+-	spin_unlock_irq(&adapter->async_lock);
+-}
+ #endif
+ 
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+@@ -1120,7 +1110,6 @@ static int __devinit init_one(struct pci_dev *pdev,
+ 			netdev->features |=
+ 				NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 			netdev->vlan_rx_register = vlan_rx_register;
+-			netdev->vlan_rx_kill_vid = vlan_rx_kill_vid;
+ #endif
+ 			adapter->flags |= TSO_CAPABLE;
+ 			netdev->features |= NETIF_F_TSO;
+diff --git a/drivers/net/cxgb3/cxgb3_main.c b/drivers/net/cxgb3/cxgb3_main.c
+index 03a5913..b340fd4 100644
+--- a/drivers/net/cxgb3/cxgb3_main.c
++++ b/drivers/net/cxgb3/cxgb3_main.c
+@@ -2519,11 +2519,6 @@ static void vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
+ 	t3_synchronize_rx(adapter, pi);
+ }
+ 
+-static void vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
+-{
+-	/* nothing */
+-}
+-
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ static void cxgb_netpoll(struct net_device *dev)
+ {
+@@ -3172,7 +3167,6 @@ static int __devinit init_one(struct pci_dev *pdev,
+ 
+ 		netdev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 		netdev->vlan_rx_register = vlan_rx_register;
+-		netdev->vlan_rx_kill_vid = vlan_rx_kill_vid;
+ 
+ 		netdev->open = cxgb_open;
+ 		netdev->stop = cxgb_close;
+diff --git a/drivers/net/forcedeth.c b/drivers/net/forcedeth.c
+index 56748b6..06ae3ee 100644
+--- a/drivers/net/forcedeth.c
++++ b/drivers/net/forcedeth.c
+@@ -5185,12 +5185,7 @@ static void nv_vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
+ 	writel(np->txrxctl_bits, get_hwbase(dev) + NvRegTxRxControl);
+ 
+ 	spin_unlock_irq(&np->lock);
+-};
+-
+-static void nv_vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
+-{
+-	/* nothing to do */
+-};
++}
+ 
+ /* The mgmt unit and driver use a semaphore to access the phy during init */
+ static int nv_mgmt_acquire_sema(struct net_device *dev)
+@@ -5563,7 +5558,6 @@ static int __devinit nv_probe(struct pci_dev *pci_dev, const struct pci_device_i
+ 		np->vlanctl_bits = NVREG_VLANCONTROL_ENABLE;
+ 		dev->features |= NETIF_F_HW_VLAN_RX | NETIF_F_HW_VLAN_TX;
+ 		dev->vlan_rx_register = nv_vlan_rx_register;
+-		dev->vlan_rx_kill_vid = nv_vlan_rx_kill_vid;
+ 	}
+ 
+ 	np->msi_flags = 0;
+diff --git a/drivers/net/gianfar.c b/drivers/net/gianfar.c
+index ebbbd6c..0f5eec1 100644
+--- a/drivers/net/gianfar.c
++++ b/drivers/net/gianfar.c
+@@ -137,7 +137,6 @@ int gfar_clean_rx_ring(struct net_device *dev, int rx_work_limit);
+ static int gfar_process_frame(struct net_device *dev, struct sk_buff *skb, int length);
+ static void gfar_vlan_rx_register(struct net_device *netdev,
+ 		                struct vlan_group *grp);
+-static void gfar_vlan_rx_kill_vid(struct net_device *netdev, uint16_t vid);
+ void gfar_halt(struct net_device *dev);
+ void gfar_start(struct net_device *dev);
+ static void gfar_clear_exact_match(struct net_device *dev);
+@@ -278,7 +277,6 @@ static int gfar_probe(struct platform_device *pdev)
+ 
+ 	if (priv->einfo->device_flags & FSL_GIANFAR_DEV_HAS_VLAN) {
+ 		dev->vlan_rx_register = gfar_vlan_rx_register;
+-		dev->vlan_rx_kill_vid = gfar_vlan_rx_kill_vid;
+ 
+ 		dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 
+@@ -1083,21 +1081,6 @@ static void gfar_vlan_rx_register(struct net_device *dev,
+ 	spin_unlock_irqrestore(&priv->rxlock, flags);
+ }
+ 
+-
+-static void gfar_vlan_rx_kill_vid(struct net_device *dev, uint16_t vid)
+-{
+-	struct gfar_private *priv = netdev_priv(dev);
+-	unsigned long flags;
+-
+-	spin_lock_irqsave(&priv->rxlock, flags);
+-
+-	if (priv->vlgrp)
+-		priv->vlgrp->vlan_devices[vid] = NULL;
+-
+-	spin_unlock_irqrestore(&priv->rxlock, flags);
+-}
+-
+-
+ static int gfar_change_mtu(struct net_device *dev, int new_mtu)
+ {
+ 	int tempsize, tempval;
+diff --git a/drivers/net/ns83820.c b/drivers/net/ns83820.c
+index 23397f9..2701227 100644
+--- a/drivers/net/ns83820.c
++++ b/drivers/net/ns83820.c
+@@ -506,18 +506,6 @@ static void ns83820_vlan_rx_register(struct net_device *ndev, struct vlan_group
+ 	spin_unlock(&dev->tx_lock);
+ 	spin_unlock_irq(&dev->misc_lock);
+ }
+-
+-static void ns83820_vlan_rx_kill_vid(struct net_device *ndev, unsigned short vid)
+-{
+-	struct ns83820 *dev = PRIV(ndev);
+-
+-	spin_lock_irq(&dev->misc_lock);
+-	spin_lock(&dev->tx_lock);
+-	if (dev->vlgrp)
+-		dev->vlgrp->vlan_devices[vid] = NULL;
+-	spin_unlock(&dev->tx_lock);
+-	spin_unlock_irq(&dev->misc_lock);
+-}
+ #endif
+ 
+ /* Packet Receiver
+@@ -2081,7 +2069,6 @@ static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_
+ 	/* We also support hardware vlan acceleration */
+ 	ndev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 	ndev->vlan_rx_register = ns83820_vlan_rx_register;
+-	ndev->vlan_rx_kill_vid = ns83820_vlan_rx_kill_vid;
+ #endif
+ 
+ 	if (using_dac) {
+diff --git a/drivers/net/r8169.c b/drivers/net/r8169.c
+index 063d949..09c1d5f 100644
+--- a/drivers/net/r8169.c
++++ b/drivers/net/r8169.c
+@@ -990,16 +990,6 @@ static void rtl8169_vlan_rx_register(struct net_device *dev,
+ 	spin_unlock_irqrestore(&tp->lock, flags);
+ }
+ 
+-static void rtl8169_vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
+-{
+-	struct rtl8169_private *tp = netdev_priv(dev);
+-	unsigned long flags;
+-
+-	spin_lock_irqsave(&tp->lock, flags);
+-	vlan_group_set_device(tp->vlgrp, vid, NULL);
+-	spin_unlock_irqrestore(&tp->lock, flags);
+-}
+-
+ static int rtl8169_rx_vlan_skb(struct rtl8169_private *tp, struct RxDesc *desc,
+ 			       struct sk_buff *skb)
+ {
+@@ -2136,7 +2126,6 @@ rtl8169_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
+ #ifdef CONFIG_R8169_VLAN
+ 	dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 	dev->vlan_rx_register = rtl8169_vlan_rx_register;
+-	dev->vlan_rx_kill_vid = rtl8169_vlan_rx_kill_vid;
+ #endif
+ 
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+diff --git a/drivers/net/s2io.c b/drivers/net/s2io.c
+index 4f4124b..cba6289 100644
+--- a/drivers/net/s2io.c
++++ b/drivers/net/s2io.c
+@@ -344,18 +344,6 @@ static void s2io_vlan_rx_register(struct net_device *dev,
+ /* A flag indicating whether 'RX_PA_CFG_STRIP_VLAN_TAG' bit is set or not */
+ int vlan_strip_flag;
+ 
+-/* Unregister the vlan */
+-static void s2io_vlan_rx_kill_vid(struct net_device *dev, unsigned long vid)
+-{
+-	struct s2io_nic *nic = dev->priv;
+-	unsigned long flags;
+-
+-	spin_lock_irqsave(&nic->tx_lock, flags);
+-	if (nic->vlgrp)
+-		nic->vlgrp->vlan_devices[vid] = NULL;
+-	spin_unlock_irqrestore(&nic->tx_lock, flags);
+-}
+-
+ /*
+  * Constants to be programmed into the Xena's registers, to configure
+  * the XAUI.
+@@ -7276,7 +7264,6 @@ s2io_init_nic(struct pci_dev *pdev, const struct pci_device_id *pre)
+ 	SET_ETHTOOL_OPS(dev, &netdev_ethtool_ops);
+ 	dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 	dev->vlan_rx_register = s2io_vlan_rx_register;
+-	dev->vlan_rx_kill_vid = (void *)s2io_vlan_rx_kill_vid;
+ 
+ 	/*
+ 	 * will use eth_mac_addr() for  dev->set_mac_address
+diff --git a/drivers/net/spider_net.c b/drivers/net/spider_net.c
+index aecaed7..063b50c 100644
+--- a/drivers/net/spider_net.c
++++ b/drivers/net/spider_net.c
+@@ -1325,43 +1325,6 @@ spider_net_poll(struct net_device *netdev, int *budget)
+ }
+ 
+ /**
+- * spider_net_vlan_rx_reg - initializes VLAN structures in the driver and card
+- * @netdev: interface device structure
+- * @grp: vlan_group structure that is registered (NULL on destroying interface)
+- */
+-static void
+-spider_net_vlan_rx_reg(struct net_device *netdev, struct vlan_group *grp)
+-{
+-	/* further enhancement... yet to do */
+-	return;
+-}
+-
+-/**
+- * spider_net_vlan_rx_add - adds VLAN id to the card filter
+- * @netdev: interface device structure
+- * @vid: VLAN id to add
+- */
+-static void
+-spider_net_vlan_rx_add(struct net_device *netdev, uint16_t vid)
+-{
+-	/* further enhancement... yet to do */
+-	/* add vid to card's VLAN filter table */
+-	return;
+-}
+-
+-/**
+- * spider_net_vlan_rx_kill - removes VLAN id to the card filter
+- * @netdev: interface device structure
+- * @vid: VLAN id to remove
+- */
+-static void
+-spider_net_vlan_rx_kill(struct net_device *netdev, uint16_t vid)
+-{
+-	/* further enhancement... yet to do */
+-	/* remove vid from card's VLAN filter table */
+-}
+-
+-/**
+  * spider_net_get_stats - get interface statistics
+  * @netdev: interface device structure
+  *
+@@ -2320,9 +2283,6 @@ spider_net_setup_netdev_ops(struct net_device *netdev)
+ 	netdev->poll = &spider_net_poll;
+ 	netdev->weight = SPIDER_NET_NAPI_WEIGHT;
+ 	/* HW VLAN */
+-	netdev->vlan_rx_register = &spider_net_vlan_rx_reg;
+-	netdev->vlan_rx_add_vid = &spider_net_vlan_rx_add;
+-	netdev->vlan_rx_kill_vid = &spider_net_vlan_rx_kill;
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ 	/* poll controller */
+ 	netdev->poll_controller = &spider_net_poll_controller;
+diff --git a/drivers/net/tg3.c b/drivers/net/tg3.c
+index 3540a1d..730178e 100644
+--- a/drivers/net/tg3.c
++++ b/drivers/net/tg3.c
+@@ -10083,22 +10083,6 @@ static void tg3_vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
+ 
+ 	tg3_full_unlock(tp);
+ }
+-
+-static void tg3_vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
+-{
+-	struct tg3 *tp = netdev_priv(dev);
+-
+-	if (netif_running(dev))
+-		tg3_netif_stop(tp);
+-
+-	tg3_full_lock(tp, 0);
+-	if (tp->vlgrp)
+-		tp->vlgrp->vlan_devices[vid] = NULL;
+-	tg3_full_unlock(tp);
+-
+-	if (netif_running(dev))
+-		tg3_netif_start(tp);
+-}
+ #endif
+ 
+ static int tg3_get_coalesce(struct net_device *dev, struct ethtool_coalesce *ec)
+@@ -13254,7 +13238,6 @@ static int __devinit tg3_init_one(struct pci_dev *pdev,
+ #if TG3_VLAN_TAG_USED
+ 	dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
+ 	dev->vlan_rx_register = tg3_vlan_rx_register;
+-	dev->vlan_rx_kill_vid = tg3_vlan_rx_kill_vid;
+ #endif
+ 
+ 	tp = netdev_priv(dev);
+diff --git a/drivers/net/typhoon.c b/drivers/net/typhoon.c
+index 4103c37..9298dfe 100644
+--- a/drivers/net/typhoon.c
++++ b/drivers/net/typhoon.c
+@@ -745,16 +745,6 @@ typhoon_vlan_rx_register(struct net_device *dev, struct vlan_group *grp)
+ 	spin_unlock_bh(&tp->state_lock);
+ }
+ 
+-static void
+-typhoon_vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
+-{
+-	struct typhoon *tp = netdev_priv(dev);
+-	spin_lock_bh(&tp->state_lock);
+-	if(tp->vlgrp)
+-		tp->vlgrp->vlan_devices[vid] = NULL;
+-	spin_unlock_bh(&tp->state_lock);
+-}
+-
+ static inline void
+ typhoon_tso_fill(struct sk_buff *skb, struct transmit_ring *txRing,
+ 			u32 ring_dma)
+@@ -2550,7 +2540,7 @@ typhoon_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 	dev->get_stats		= typhoon_get_stats;
+ 	dev->set_mac_address	= typhoon_set_mac_address;
+ 	dev->vlan_rx_register	= typhoon_vlan_rx_register;
+-	dev->vlan_rx_kill_vid	= typhoon_vlan_rx_kill_vid;
++
+ 	SET_ETHTOOL_OPS(dev, &typhoon_ethtool_ops);
+ 
+ 	/* We can handle scatter gather, up to 16 entries, and
+diff --git a/net/8021q/vlan.c b/net/8021q/vlan.c
+index 7440493..0ade055 100644
+--- a/net/8021q/vlan.c
++++ b/net/8021q/vlan.c
+@@ -232,10 +232,8 @@ static int unregister_vlan_dev(struct net_device *real_dev,
+ 			 * interlock with HW accelerating devices or SW vlan
+ 			 * input packet processing.
+ 			 */
+-			if (real_dev->features &
+-			    (NETIF_F_HW_VLAN_RX | NETIF_F_HW_VLAN_FILTER)) {
++			if (real_dev->features & NETIF_F_HW_VLAN_FILTER)
+ 				real_dev->vlan_rx_kill_vid(real_dev, vlan_id);
+-			}
+ 
+ 			grp->vlan_devices[vlan_id] = NULL;
+ 			synchronize_net();
+@@ -408,16 +406,14 @@ static struct net_device *register_vlan_device(const char *eth_IF_name,
+ 	}
+ 
+ 	if ((real_dev->features & NETIF_F_HW_VLAN_RX) &&
+-	    (real_dev->vlan_rx_register == NULL ||
+-	     real_dev->vlan_rx_kill_vid == NULL)) {
++	    !real_dev->vlan_rx_register) {
+ 		printk(VLAN_DBG "%s: Device %s has buggy VLAN hw accel.\n",
+ 			__FUNCTION__, real_dev->name);
+ 		goto out_put_dev;
+ 	}
+ 
+ 	if ((real_dev->features & NETIF_F_HW_VLAN_FILTER) &&
+-	    (real_dev->vlan_rx_add_vid == NULL ||
+-	     real_dev->vlan_rx_kill_vid == NULL)) {
++	    (!real_dev->vlan_rx_add_vid || !real_dev->vlan_rx_kill_vid)) {
+ 		printk(VLAN_DBG "%s: Device %s has buggy VLAN hw accel.\n",
+ 			__FUNCTION__, real_dev->name);
+ 		goto out_put_dev;

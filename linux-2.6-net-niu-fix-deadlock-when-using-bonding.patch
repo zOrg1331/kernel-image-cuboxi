@@ -1,0 +1,41 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 8 Jan 2010 18:24:06 -0500
+Subject: [net] niu: fix deadlock when using bonding
+Message-id: <20100108182405.GK10827@gospo.rdu.redhat.com>
+Patchwork-id: 22357
+O-Subject: [RHEL5.5 PATCH] niu: fix deadlock when using bonding
+Bugzilla: 547943
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+A small problem was found with the niu driver included in RHEL5.  The
+system would deadlock when removing it from a bond due to the misplaced
+flush_scheduled_work.  Flushing the work on remove is the correct way to
+do this instead.
+
+This has been verified by me.
+
+This will resolve RHBZ 547943.
+
+
+diff --git a/drivers/net/niu.c b/drivers/net/niu.c
+index b102d41..4106368 100644
+--- a/drivers/net/niu.c
++++ b/drivers/net/niu.c
+@@ -5721,8 +5721,6 @@ out_err:
+ 
+ static void niu_full_shutdown(struct niu *np, struct net_device *dev)
+ {
+-	flush_scheduled_work();
+-
+ 	niu_disable_napi(np);
+ 	netif_stop_queue(dev);
+ 
+@@ -8934,6 +8932,8 @@ static int __devexit niu_of_remove(struct of_device *op)
+ 	if (dev) {
+ 		struct niu *np = netdev_priv(dev);
+ 
++		flush_scheduled_work();
++
+ 		unregister_netdev(dev);
+ 
+ 		if (np->vir_regs_1) {

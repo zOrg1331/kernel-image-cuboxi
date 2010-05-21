@@ -1,0 +1,111 @@
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Thu, 24 Sep 2009 13:46:30 -0300
+Subject: [misc] hotplug: add CPU_DYING notifier
+Message-id: 1253810790-11195-5-git-send-email-ehabkost@redhat.com
+O-Subject: [RHEL-5.5 PATCH 4/4] HOTPLUG: Add CPU_DYING notifier
+Bugzilla: 510814
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=510814
+
+This is a backport of two upstream commits:
+
+commit db912f963909b3cbc3a059b7528f6a1a1eb6ffae
+Author: Avi Kivity <avi@qumranet.com>
+Date:   Thu May 24 12:23:10 2007 +0300
+
+    HOTPLUG: Add CPU_DYING notifier
+
+    KVM wants a notification when a cpu is about to die, so it can disable
+    hardware extensions, but at a time when user processes cannot be scheduled
+    on the cpu, so it doesn't try to use virtualization extensions after they
+    have been disabled.
+
+    This adds a CPU_DYING notification.  The notification is called in atomic
+    context on the doomed cpu.
+
+    Signed-off-by: Avi Kivity <avi@qumranet.com>
+
+and:
+
+commit 3ba35573ad9a149a3af19625b502679283382f6b
+Author: Manfred Spraul <manfred@colorfullife.com>
+Date:   Sun Aug 31 19:58:49 2008 +0200
+
+    kernel/cpu.c: Move the CPU_DYING notifiers
+
+    When a cpu is taken offline, the CPU_DYING notifiers are called on the
+    dying cpu. According to <linux/notifiers.h>, the cpu should be "not
+    running any task, not handling interrupts, soon dead".
+
+    For the current implementation, this is not true:
+    - __cpu_disable can fail. If it fails, then the cpu will remain alive
+      and happy.
+    - At least on x86, __cpu_disable() briefly enables the local interrupts
+      to handle any outstanding interrupts.
+
+    What about moving CPU_DYING down a few lines, behind the __cpu_disable()
+    line?
+    There are only two CPU_DYING handlers in the kernel right now: one in
+    kvm, one in the scheduler. Both should work with the patch applied
+    [and: I'm not sure if either one handles a failing __cpu_disable()]
+
+    The patch survives simple offlining a cpu. kvm untested due to lack
+    of a test setup.
+
+    Signed-off-By: Manfred Spraul <manfred@colorfullife.com>
+    Signed-off-by: Ingo Molnar <mingo@elte.hu>
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+
+diff --git a/kernel/cpu.c b/kernel/cpu.c
+index 54a8ae9..1876547 100644
+--- a/kernel/cpu.c
++++ b/kernel/cpu.c
+@@ -103,9 +103,15 @@ static inline void check_for_tasks(int cpu)
+ 	write_unlock_irq(&tasklist_lock);
+ }
+ 
++struct take_cpu_down_param {
++	unsigned long mod;
++	void *hcpu;
++};
++
+ /* Take this CPU down. */
+-static int take_cpu_down(void *unused)
++static int take_cpu_down(void *_param)
+ {
++	struct take_cpu_down_param *param = _param;
+ 	int err;
+ 
+ 	/* Ensure this CPU doesn't handle any more interrupts. */
+@@ -113,6 +119,9 @@ static int take_cpu_down(void *unused)
+ 	if (err < 0)
+ 		return err;
+ 
++	raw_notifier_call_chain(&cpu_chain, CPU_DYING | param->mod,
++				param->hcpu);
++
+ 	/* Force idle task to run as soon as we yield: it should
+ 	   immediately notice cpu is offline and die quickly. */
+ 	sched_idle_next();
+@@ -125,6 +134,10 @@ static int _cpu_down(unsigned int cpu)
+ 	int err;
+ 	struct task_struct *p;
+ 	cpumask_t old_allowed, tmp;
++	struct take_cpu_down_param tcd_param = {
++		.mod = 0,
++		.hcpu = (void *)(long)cpu,
++	};
+ 
+ 	if (num_online_cpus() == 1)
+ 		return -EBUSY;
+@@ -147,7 +160,7 @@ static int _cpu_down(unsigned int cpu)
+ 	set_cpus_allowed(current, tmp);
+ 
+ 	mutex_lock(&cpu_bitmask_lock);
+-	p = __stop_machine_run(take_cpu_down, NULL, cpu);
++	p = __stop_machine_run(take_cpu_down, &tcd_param, cpu);
+ 	mutex_unlock(&cpu_bitmask_lock);
+ 
+ 	if (IS_ERR(p) || cpu_online(cpu)) {

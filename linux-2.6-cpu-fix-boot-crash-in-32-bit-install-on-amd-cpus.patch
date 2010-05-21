@@ -1,0 +1,65 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Mon, 12 Apr 2010 19:17:00 -0400
+Subject: [cpu] fix boot crash in 32-bit install on AMD cpus
+Message-id: <20100412192131.8760.34926.sendpatchset@localhost.localdomain>
+Patchwork-id: 24103
+O-Subject: [RHEL5 PATCH V2] Fix boot crash in 32-bit RHEL
+Bugzilla: 575799
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Resolves BZ 575799
+
+This patch fixes a kernel panic seen on RHEL5.5 32-bit during boot up.
+
+Note: The Kconfig is quite different in RHEL5 when compared to upstream and the
+Kconfig changes are not necessary to fix this bug.
+
+The patch has been applied to the RHEL5.5 RC kernel (which probably is the GA
+kernel) and 32-bit has been tested successfully on AMD reference platforms.
+
+This patch needs to be applied to both RHEL5.6 and RHEL5.5.z
+
+Upstream link:
+http://git.kernel.org/?p=linux/kernel/git/x86/linux-2.6-tip.git;a=commitdiff;h=0e152cd7c16832bd5cadee0c2e41d9959bc9b6f9
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/intel_cacheinfo.c b/arch/i386/kernel/cpu/intel_cacheinfo.c
+index 81c2c40..2f3328a 100644
+--- a/arch/i386/kernel/cpu/intel_cacheinfo.c
++++ b/arch/i386/kernel/cpu/intel_cacheinfo.c
+@@ -331,6 +331,10 @@ amd_check_l3_disable(int index, struct _cpuid4_info *this_leaf)
+ 	     (boot_cpu_data.x86_mask  < 0x1)))
+ 		return;
+ 
++	/* not in virtualized environments */
++	if (num_k8_northbridges == 0)
++		return;
++
+ 	this_leaf->can_disable = true;
+ 	this_leaf->l3_indices  = amd_calc_l3_indices();
+ }
+diff --git a/arch/x86_64/kernel/k8.c b/arch/x86_64/kernel/k8.c
+index f9d9770..fedf7c8 100644
+--- a/arch/x86_64/kernel/k8.c
++++ b/arch/x86_64/kernel/k8.c
+@@ -116,3 +116,19 @@ void k8_flush_garts(void)
+ }
+ EXPORT_SYMBOL_GPL(k8_flush_garts);
+ 
++static __init int init_k8_nbs(void)
++{
++	int err = 0;
++
++	err = cache_k8_northbridges();
++
++	if (err < 0)
++		printk(KERN_NOTICE "K8 NB: Cannot enumerate AMD northbridges.\n");
++
++	return err;
++}
++
++/* This has to go after the PCI subsystem */
++fs_initcall(init_k8_nbs);
++
++

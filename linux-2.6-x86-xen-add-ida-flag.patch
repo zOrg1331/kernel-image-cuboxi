@@ -1,0 +1,95 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 25 Sep 2009 11:12:54 -0400
+Subject: [x86] xen: add 'ida' flag
+Message-id: 20090925151236.9162.91772.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH] add "ida" flag on i386 and x86_64 xen
+Bugzilla: 522846
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+32 and 64 bit x86 xen kernels do not output the "ida" flag in /proc/cpuinfo.
+
+>From the BZ:
+
+"We need a way to know if Turbo Boost is active, because it
+messes with our certification results. The time it takes for us to calculate
+test workloads is less than can be accounted for by the displayed clock speed.
+If we had the 'ida' flag, we would know to expect discrepancies due to the
+automatic overclocking that occurs with Turbo Boost."
+
+2.6.18-166.el5
+
+flags           : fpu tsc msr pae mce cx8 apic mtrr mca cmov pat pse36 clflush
+dts acpi mmx fxsr sse sse2 ss ht tm syscall nx lm constant_tsc pni monitor
+ds_cpl vmx est tm2 cx16 xtpr lahf_lm
+
+2.6.18-166.el5 + patch
+
+flags           : fpu tsc msr pae mce cx8 apic mtrr mca cmov pat pse36 clflush
+dts acpi mmx fxsr sse sse2 ss ht tm syscall nx lm constant_tsc ida pni monitor
+ds_cpl vmx est tm2 cx16 xtpr lahf_lm
+
+Successfully compiled and tested on i686 and x86_64.
+
+Resolves BZ 522846.
+
+diff --git a/arch/i386/kernel/cpu/common-xen.c b/arch/i386/kernel/cpu/common-xen.c
+index 1dc3163..71865d9 100644
+--- a/arch/i386/kernel/cpu/common-xen.c
++++ b/arch/i386/kernel/cpu/common-xen.c
+@@ -317,6 +317,8 @@ void __cpuinit generic_identify(struct cpuinfo_x86 * c)
+ 			if ( xlvl >= 0x80000004 )
+ 				get_model_name(c); /* Default name */
+ 		}
++
++		init_scattered_cpuid_features(c);
+ 	}
+ 
+ 	early_intel_workaround(c);
+diff --git a/arch/x86_64/kernel/setup-xen.c b/arch/x86_64/kernel/setup-xen.c
+index 72f73ed..83d8992 100644
+--- a/arch/x86_64/kernel/setup-xen.c
++++ b/arch/x86_64/kernel/setup-xen.c
+@@ -1416,6 +1416,8 @@ void __cpuinit identify_cpu(struct cpuinfo_x86 *c)
+ 			c->x86_capability[2] = cpuid_edx(0x80860001);
+ 	}
+ 
++	init_scattered_cpuid_features(c);
++
+ 	c->apicid = phys_pkg_id(0);
+ 
+ 	/*
+@@ -1520,8 +1522,8 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 		/* Other (Linux-defined) */
+ 		"cxmmx", NULL, "cyrix_arr", "centaur_mcr", NULL,
+ 		"constant_tsc", NULL, NULL,
+-		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 		"up", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++		"ida", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 
+ 		/* Intel-defined (#2) */
+diff --git a/include/asm-i386/mach-xen/asm/processor.h b/include/asm-i386/mach-xen/asm/processor.h
+index 8f1eae3..2f725a1 100644
+--- a/include/asm-i386/mach-xen/asm/processor.h
++++ b/include/asm-i386/mach-xen/asm/processor.h
+@@ -124,6 +124,7 @@ extern char ignore_fpu_irq;
+ 
+ extern void identify_cpu(struct cpuinfo_x86 *);
+ extern void print_cpu_info(struct cpuinfo_x86 *);
++extern void init_scattered_cpuid_features(struct cpuinfo_x86 *c);
+ extern unsigned int init_intel_cacheinfo(struct cpuinfo_x86 *c);
+ extern unsigned short num_cache_leaves;
+ 
+diff --git a/include/asm-x86_64/mach-xen/asm/processor.h b/include/asm-x86_64/mach-xen/asm/processor.h
+index 9b5b225..c75e458 100644
+--- a/include/asm-x86_64/mach-xen/asm/processor.h
++++ b/include/asm-x86_64/mach-xen/asm/processor.h
+@@ -106,6 +106,7 @@ extern char ignore_irq13;
+ 
+ extern void identify_cpu(struct cpuinfo_x86 *);
+ extern void print_cpu_info(struct cpuinfo_x86 *);
++extern void init_scattered_cpuid_features(struct cpuinfo_x86 *c);
+ extern unsigned int init_intel_cacheinfo(struct cpuinfo_x86 *c);
+ extern unsigned short num_cache_leaves;
+ 

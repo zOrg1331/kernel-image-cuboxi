@@ -1,0 +1,80 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Fri, 5 Mar 2010 14:59:28 -0500
+Subject: [block] cfq: kick busy queues w/o waiting for merged req
+Message-id: <x49635a24rz.fsf@segfault.boston.devel.redhat.com>
+Patchwork-id: 23502
+O-Subject: [RHEL 5.5 Patch] cfq: Don't wait for request merges when there are
+	other busy queues
+Bugzilla: 570814
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Hi,
+
+During 5.5 beta testing, Fujitsu identified a pretty significant
+performance regression when testing multiple O_DIRECT readers:
+
+  When two or more O_DIRECT reads simultaneously run on different
+  partitions of a disk, each performance critically slows down.  An
+  example of using multiple dd commands:
+
+  # dd if=/dev/sdb1 of=/dev/null iflag=direct &
+  # dd if=/dev/sdb2 of=/dev/null iflag=direct &
+
+  The result of read performance is as follows:
+
+               |      number of dds    |
+               |   1   |   2   |   4   |
+  -------------+-------+-------+-------|
+  RHEL5.5 beta | 107.6 |   3.7 |   3.7 |
+  RHEL5.4      | 109.1 |  78.1 |  75.0 |
+                       read speed (MB/s)
+
+They also identified the upstream patch that fixes the problem, and
+verified that it fixed the problem in their test environment.  In
+addition, they have committed QA resources to ensure that this patch
+does not regress other workloads.
+
+The attached patch addresses bug 570814.  Comments, as always, are
+appreciated.
+
+Cheers,
+Jeff
+
+commit 2d870722965211de072bb36b446a4df99dae07e1
+Author: Jens Axboe <jens.axboe@oracle.com>
+Date:   Wed Apr 15 12:12:46 2009 +0200
+
+    cfq-iosched: tweak kick logic a bit more
+
+    We only kick the dispatch for an idling queue, if we think it's a
+    (somewhat) fully merged request. Also allow a kick if we have other
+    busy queues in the system, since we don't want to risk waiting for
+    a potential merge in that case. It's better to get some work done and
+    proceed.
+
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 8ead467..ab0badf 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -2085,10 +2085,13 @@ cfq_crq_enqueued(struct cfq_data *cfqd, struct cfq_queue *cfqq,
+ 		 * of tiny requests, because we disrupt the normal plugging
+ 		 * and merging. If the request is already larger than a single
+ 		 * page, let it rip immediately. For that case we assume that
+-		 * merging is already done.
++		 * merging is already done. Ditto for a busy system that
++		 * has other work pending, don't risk delaying until the
++		 * idle timer unplug to continue working.
+ 		 */
+ 		if (cfq_cfqq_wait_request(cfqq)) {
+-			if (crq->request->data_len > PAGE_CACHE_SIZE) {
++			if (crq->request->data_len > PAGE_CACHE_SIZE ||
++			    cfqd->busy_queues > 1) {
+ 				del_timer(&cfqd->idle_slice_timer);
+ 				cfq_start_queueing(cfqd, cfqq);
+ 			}

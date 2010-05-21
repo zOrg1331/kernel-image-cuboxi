@@ -1,0 +1,55 @@
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Sun, 7 Feb 2010 18:11:15 -0500
+Subject: [x86_64] fix floating point state corruption after signal
+Message-id: <20100207181115.GA12449@redhat.com>
+Patchwork-id: 23172
+O-Subject: [RHEL5 PATCH] BZ#560891: x86_64: floating point state corruption
+	after handling the signal
+Bugzilla: 560891
+RH-Acked-by: Zachary Amsden <zamsden@redhat.com>
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=560891
+
+This patch is simplified version of
+https://bugzilla.redhat.com/attachment.cgi?id=378651
+from chuck.anderson@oracle.com
+
+Upstream status: the patched code matches upstream, but I failed to find
+the patch which does this change, there were to many renames.
+
+We must never clear PF_USED_MATH before we save FPU registers. Otherwise,
+if we get a preemption in between, math_state_restore() will reinitialize
+the FPU state when the task is scheduled again, before fxsave actually
+save it.
+
+Change save_i387() to clear PF_USED_MATH after we saved the FPU state.
+
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/kernel/i387.c b/arch/x86_64/kernel/i387.c
+index 3aa1e9b..51d2329 100644
+--- a/arch/x86_64/kernel/i387.c
++++ b/arch/x86_64/kernel/i387.c
+@@ -93,17 +93,17 @@ int save_i387(struct _fpstate __user *buf)
+ 
+ 	if (!used_math())
+ 		return 0;
+-	clear_used_math(); /* trigger finit */
+ 	if (task_thread_info(tsk)->status & TS_USEDFPU) {
+ 		err = save_i387_checking((struct i387_fxsave_struct __user *)buf);
+ 		if (err) return err;
+ 		stts();
+-		} else {
++	} else {
+ 		if (__copy_to_user(buf, &tsk->thread.i387.fxsave, 
+ 				   sizeof(struct i387_fxsave_struct)))
+ 			return -1;
+ 	} 
+-		return 1;
++	clear_used_math(); /* trigger finit */
++	return 1;
+ }
+ 
+ /*

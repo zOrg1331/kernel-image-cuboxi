@@ -1,0 +1,49 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 29 Jan 2010 20:09:24 -0500
+Subject: [x86_64] export additional features in cpuinfo for xen
+Message-id: <20100129200015.26302.40429.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 23008
+O-Subject: [RHEL5] Follow-up-patch: Export additional features in /proc/cpuinfo
+	for xen
+Bugzilla: 517928
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+I had a false positive during testing.  Not sure how we screwed that up but
+these two chunks of code are required to output the ssse3, sse4_1, sse4_2,
+popcnt, sse4a, misalignsse, and abm symbols in /proc/cpuinfo on -xen kernels.
+
+Successfully tested by myself and ddutile on a xen system.
+
+Resolves (really resolves) BZ 517928.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/kernel/setup-xen.c b/arch/x86_64/kernel/setup-xen.c
+index 78cad9f..debea88 100644
+--- a/arch/x86_64/kernel/setup-xen.c
++++ b/arch/x86_64/kernel/setup-xen.c
+@@ -1530,8 +1530,8 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 
+ 		/* Intel-defined (#2) */
+ 		"pni", NULL, NULL, "monitor", "ds_cpl", "vmx", "smx", "est",
+-		"tm2", NULL, "cid", NULL, NULL, "cx16", "xtpr", NULL,
+-		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++		"tm2", "ssse3", "cid", NULL, NULL, "cx16", "xtpr", NULL,
++		NULL, NULL, NULL, "sse4_1", "sse4_2", NULL, NULL, "popcnt",
+ 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 
+ 		/* VIA/Cyrix/Centaur-defined */
+@@ -1541,8 +1541,9 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 
+ 		/* AMD-defined (#2) */
+-		"lahf_lm", "cmp_legacy", "svm", NULL, "cr8_legacy", NULL, NULL, NULL,
+-		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++		"lahf_lm", "cmp_legacy", "svm", NULL, "cr8_legacy",
++		NULL, "abm", "sse4a",
++		"misalignsse", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 	};

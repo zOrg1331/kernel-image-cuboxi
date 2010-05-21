@@ -1,0 +1,132 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 3 Nov 2009 11:36:40 -0500
+Subject: [block] cfq-iosched: cache prio_tree root in cfqq->p_root
+Message-id: 1257266206-24003-7-git-send-email-jmoyer@redhat.com
+O-Subject: [PATCH 06/12] cfq-iosched: cache prio_tree root in cfqq->p_root
+Bugzilla: 456181 448130 427709
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+commit f2d1f0ae7851be5ebd9613a80dac139270938809
+Author: Jens Axboe <jens.axboe@oracle.com>
+Date:   Thu Apr 23 12:19:38 2009 +0200
+
+    cfq-iosched: cache prio_tree root in cfqq->p_root
+
+    Currently we look it up from ->ioprio, but ->ioprio can change if
+    either the process gets its IO priority changed explicitly, or if
+    cfq decides to temporarily boost it. So if we are unlucky, we can
+    end up attempting to remove a node from a different rbtree root than
+    where it was added.
+
+    Fix this by using ->org_ioprio as the prio_tree index, since that
+    will only change for explicit IO priority settings (not for a boost).
+    Additionally cache the rbtree root inside the cfqq, then we don't have
+    to add code to reinsert the cfqq in the prio_tree if IO priority changes.
+
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 7f3674d..805b55c 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -182,6 +182,8 @@ struct cfq_queue {
+ 	struct list_head cfq_list;
+ 	/* prio tree member */
+ 	struct rb_node p_node;
++	/* prio tree root we belong to, if any */
++	struct rb_root *p_root;
+ 	/* sorted list of pending requests */
+ 	struct rb_root sort_list;
+ 	/* if fifo isn't expired, next request to serve */
+@@ -471,10 +473,10 @@ static void cfq_update_next_crq(struct cfq_rq *crq)
+ 
+ 
+ static struct cfq_queue *
+-cfq_prio_tree_lookup(struct cfq_data *cfqd, int ioprio, sector_t sector,
+-		     struct rb_node **ret_parent, struct rb_node ***rb_link)
++cfq_prio_tree_lookup(struct cfq_data *cfqd, struct rb_root *root,
++		     sector_t sector, struct rb_node **ret_parent,
++		     struct rb_node ***rb_link)
+ {
+-	struct rb_root *root = &cfqd->prio_trees[ioprio];
+ 	struct rb_node **p, *parent;
+ 	struct cfq_queue *cfqq = NULL;
+ 
+@@ -506,33 +508,30 @@ cfq_prio_tree_lookup(struct cfq_data *cfqd, int ioprio, sector_t sector,
+ 	return cfqq;
+ }
+ 
+-static void rb_erase_init(struct rb_node *n, struct rb_root *root)
+-{
+-	rb_erase(n, root);
+-	RB_CLEAR_NODE(n);
+-}
+-
+ static void cfq_prio_tree_add(struct cfq_data *cfqd, struct cfq_queue *cfqq)
+ {
+-	struct rb_root *root = &cfqd->prio_trees[cfqq->ioprio];
+ 	struct rb_node **p, *parent;
+ 	struct cfq_queue *__cfqq;
+ 
+-	if (!RB_EMPTY_NODE(&cfqq->p_node))
+-		rb_erase_init(&cfqq->p_node, root);
++	if (cfqq->p_root) {
++		rb_erase(&cfqq->p_node, cfqq->p_root);
++		cfqq->p_root = NULL;
++	}
+ 
+ 	if (cfq_class_idle(cfqq))
+ 		return;
+ 	if (!cfqq->next_crq)
+ 		return;
+ 
+-	__cfqq = cfq_prio_tree_lookup(cfqd, cfqq->ioprio,
++	cfqq->p_root = &cfqd->prio_trees[cfqq->org_ioprio];
++	__cfqq = cfq_prio_tree_lookup(cfqd, cfqq->p_root,
+ 				      cfqq->next_crq->request->sector,
+ 				      &parent, &p);
+ 	if (!__cfqq) {
+ 		rb_link_node(&cfqq->p_node, parent, p);
+-		rb_insert_color(&cfqq->p_node, root);
+-	}
++		rb_insert_color(&cfqq->p_node, cfqq->p_root);
++	} else
++		cfqq->p_root = NULL;
+ }
+ 
+ static void cfq_resort_rr_list(struct cfq_queue *cfqq, int preempted)
+@@ -611,8 +610,10 @@ cfq_del_cfqq_rr(struct cfq_data *cfqd, struct cfq_queue *cfqq)
+ 	BUG_ON(!cfq_cfqq_on_rr(cfqq));
+ 	cfq_clear_cfqq_on_rr(cfqq);
+ 	list_move(&cfqq->cfq_list, &cfqd->empty_list);
+-	if (!RB_EMPTY_NODE(&cfqq->p_node))
+-		rb_erase_init(&cfqq->p_node, &cfqd->prio_trees[cfqq->ioprio]);
++	if (cfqq->p_root) {
++		rb_erase(&cfqq->p_node, cfqq->p_root);
++		cfqq->p_root = NULL;
++	}
+ 
+ 	BUG_ON(!cfqd->busy_queues);
+ 	cfqd->busy_queues--;
+@@ -1022,7 +1023,7 @@ set_queue:
+ static struct cfq_queue *cfqq_close(struct cfq_data *cfqd,
+ 				    struct cfq_queue *cur_cfqq)
+ {
+-	struct rb_root *root = &cfqd->prio_trees[cur_cfqq->ioprio];
++	struct rb_root *root = &cfqd->prio_trees[cur_cfqq->org_ioprio];
+ 	struct rb_node *parent, *node;
+ 	struct cfq_queue *__cfqq;
+ 	sector_t sector = cfqd->last_position;
+@@ -1034,8 +1035,7 @@ static struct cfq_queue *cfqq_close(struct cfq_data *cfqd,
+ 	 * First, if we find a request starting at the end of the last
+ 	 * request, choose it.
+ 	 */
+-	__cfqq = cfq_prio_tree_lookup(cfqd, cur_cfqq->ioprio,
+-				      sector, &parent, NULL);
++	__cfqq = cfq_prio_tree_lookup(cfqd, root, sector, &parent, NULL);
+ 	if (__cfqq)
+ 		return __cfqq;
+ 

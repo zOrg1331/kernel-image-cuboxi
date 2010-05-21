@@ -1,0 +1,80 @@
+From: Takahiro Yasui <tyasui@redhat.com>
+Date: Fri, 20 Nov 2009 20:39:45 -0500
+Subject: [scsi] disable state transition from OFFLINE to RUNNING
+Message-id: <4B06FE91.1090700@redhat.com>
+Patchwork-id: 21459
+O-Subject: [RHEL5.5 PATCH] BZ#516934: disable scsi state transition from OFFLINE
+	to RUNNING
+Bugzilla: 516934
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+
+BZ#:
+----
+  https://bugzilla.redhat.com/show_bug.cgi?id=516934
+
+Description:
+-----------
+  This patch prevents repeated timeouts on the same device by disabling
+  the state transition from SDEV_OFFLINE to SDEV_RUNNING in the
+  scsi_internal_device_unblock() function.
+
+  scsi timeout on two or more devices may cause extremely long execution
+  time for user applications because SDEV_OFFLINE state is changed to
+  SDEV_RUNNING state during scsi error recovery procedures triggered by
+  a bus reset or a host reset of scsi LLD, and scsi timeout can happens
+  on the same devices many times.
+
+  This happens because scsi_internal_device_unblock() changes device's
+  state to SDEV_RUNNING even if a device in other states than SDEV_BLOCK,
+  while the following transition is required in this function.
+
+    SDEV_BLOCK -> SDEV_RUNNING
+
+  Otherwise, it returns -EINVAL.
+
+  Notes:
+  The current RHEL5 kernel doesn't have the state SDEV_CREATED_BLOCK.
+  In this patch, the transition from SDEV_CREATED_BLOCK to SDEV_CREATED
+  is removed from the upstream patch.
+
+Upstream status:
+----------------
+  Merged in 2.6.31-rc1
+  http://git.kernel.org/linus/5c10e63c943b4c67561ddc6bf61e01d4141f881f
+
+Brew Build:
+-----------
+  https://brewweb.devel.redhat.com/taskinfo?taskID=2085751
+
+Test status:
+------------
+  Patch was tested with kernel-2.6.18-173.el5 on x86 Server, and offline
+  devices were not activated after timeouts happened on other devices.
+
+Signed-off-by: Takahiro Yasui <tyasui@redhat.com>
+
+diff --git a/drivers/scsi/scsi_lib.c b/drivers/scsi/scsi_lib.c
+index 7a26d25..5d412ad 100644
+--- a/drivers/scsi/scsi_lib.c
++++ b/drivers/scsi/scsi_lib.c
+@@ -2395,16 +2395,16 @@ int
+ scsi_internal_device_unblock(struct scsi_device *sdev)
+ {
+ 	request_queue_t *q = sdev->request_queue; 
+-	int err;
+ 	unsigned long flags;
+ 	
+ 	/* 
+ 	 * Try to transition the scsi device to SDEV_RUNNING
+ 	 * and goose the device queue if successful.  
+ 	 */
+-	err = scsi_device_set_state(sdev, SDEV_RUNNING);
+-	if (err)
+-		return err;
++	if (sdev->sdev_state == SDEV_BLOCK)
++		sdev->sdev_state = SDEV_RUNNING;
++	else
++		return -EINVAL;
+ 
+ 	spin_lock_irqsave(q->queue_lock, flags);
+ 	blk_start_queue(q);

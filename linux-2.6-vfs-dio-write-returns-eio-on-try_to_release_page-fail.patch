@@ -1,0 +1,144 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Mon, 7 Dec 2009 15:51:21 -0500
+Subject: [vfs] DIO write returns -EIO on try_to_release_page fail
+Message-id: <x497hsyg4ue.fsf@segfault.boston.devel.redhat.com>
+Patchwork-id: 21713
+O-Subject: [rhel5 patch v3] vfs: fix DIO write returning -EIO when
+	try_to_release_page fails
+Bugzilla: 461100
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+Hi,
+
+This updated patch includes a comment fix suggested by Peter Staubach
+(and put in the right place this time).  Aside from that, it is the
+same.
+
+A customer is running Oracle's backup software on an OCFS2 volume and
+running into -EIO errors.  Oracle support tracked the issue down to a
+bug that was fixed by the following upstream commit:
+
+commit 6ccfa806a9cfbbf1cd43d5b6aa47ef2c0eb518fd
+Author: Hisashi Hifumi <hifumi.hisashi@oss.ntt.co.jp>
+Date:   Tue Sep 2 14:35:40 2008 -0700
+
+    VFS: fix dio write returning EIO when try_to_release_page fails
+
+    Dio write returns EIO when try_to_release_page fails because bh is
+    still referenced.
+
+    The patch
+
+        commit 3f31fddfa26b7594b44ff2b34f9a04ba409e0f91
+        Author: Mingming Cao <cmm@us.ibm.com>
+        Date:   Fri Jul 25 01:46:22 2008 -0700
+
+            jbd: fix race between free buffer and commit transaction
+
+    was merged into 2.6.27-rc1, but I noticed that this patch is not
+    enough to fix the race.
+
+    I did fsstress test heavily to 2.6.27-rc1, and found that dio write
+    still sometimes got EIO through this test.
+
+    The patch above fixed race between freeing buffer(dio) and
+    committing transaction(jbd) but I discovered that there is another
+    race, freeing buffer(dio) and ext3/4_ordered_writepage.
+
+    : background_writeout()
+         ->write_cache_pages()
+           ->ext3_ordered_writepage()
+                   walk_page_buffers() -> take a bh ref
+           block_write_full_page() -> unlock_page
+                : <- end_page_writeback
+                    : <- race! (dio write->try_to_release_page fails)
+                   walk_page_buffers() ->release a bh ref
+
+    ext3_ordered_writepage holds bh ref and does unlock_page remaining
+    taking a bh ref, so this causes the race and failure of
+    try_to_release_page.
+
+    To fix this race, I used the approach of falling back to buffered
+    writes if try_to_release_page() fails on a page.
+
+The earlier commit mentioned in the changelog was incorporated into RHEL
+in 2.6.18-104.el5:
+
+- [fs] jbd: fix races that lead to EIO for O_DIRECT (Brad Peters )
+  [446599]
+
+Now, the customer appears to be running a kernel that is older than
+-104, but I think it's best to solve the known races in this code path
+so we don't have to debug the problem again.
+
+We have, thus far, been unable to reproduce the problem in-house.  I'll
+be sure to run the rhts test that was written for the previous fix
+against this patch once it's incorporated.  Further, since this is so
+rare, falling back to buffered I/O is certainly not going to hurt
+performance, and should be safe in general anyway.  In my opinion, the
+risk of the patch is low.
+
+This resolves bugzilla 461100.
+
+Comments, as always, are appreciated.
+
+Cheers,
+Jeff
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 6204c0f..f002f4c 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -3010,13 +3010,16 @@ generic_file_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
+ 	 * After a write we want buffered reads to be sure to go to disk to get
+ 	 * the new data.  We invalidate clean cached page from the region we're
+ 	 * about to write.  We do this *before* the write so that we can return
+-	 * -EIO without clobbering -EIOCBQUEUED from ->direct_IO().
++	 * without clobbering -EIOCBQUEUED from ->direct_IO().
+ 	 */
+ 	if (rw == WRITE && mapping->nrpages) {
+ 		retval = invalidate_inode_pages2_range(mapping,
+ 					offset >> PAGE_CACHE_SHIFT, end);
+-		if (retval)
++		if (retval) {
++			if (retval == -EBUSY)
++				return 0;
+ 			goto out;
++		}
+ 	}
+ 
+ 	retval = mapping->a_ops->direct_IO(rw, iocb, iov, offset, nr_segs);
+diff --git a/mm/truncate.c b/mm/truncate.c
+index 69394aa..2f0e796 100644
+--- a/mm/truncate.c
++++ b/mm/truncate.c
+@@ -325,7 +325,7 @@ failed:
+  * Any pages which are found to be mapped into pagetables are unmapped prior to
+  * invalidation.
+  *
+- * Returns -EIO if any pages could not be invalidated.
++ * Returns -EBUSY if any pages could not be invalidated.
+  */
+ int invalidate_inode_pages2_range(struct address_space *mapping,
+ 				  pgoff_t start, pgoff_t end)
+@@ -385,7 +385,7 @@ int invalidate_inode_pages2_range(struct address_space *mapping,
+ 			if (!invalidate_complete_page2(mapping, page)) {
+ 				if (was_dirty)
+ 					set_page_dirty(page);
+-				ret = -EIO;
++				ret = -EBUSY;
+ 			}
+ 			unlock_page(page);
+ 		}
+@@ -403,7 +403,7 @@ EXPORT_SYMBOL_GPL(invalidate_inode_pages2_range);
+  * Any pages which are found to be mapped into pagetables are unmapped prior to
+  * invalidation.
+  *
+- * Returns -EIO if any pages could not be invalidated.
++ * Returns -EBUSY if any pages could not be invalidated.
+  */
+ int invalidate_inode_pages2(struct address_space *mapping)
+ {

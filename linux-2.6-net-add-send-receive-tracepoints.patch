@@ -1,0 +1,115 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Tue, 15 Dec 2009 00:57:16 -0500
+Subject: [net] add send/receive tracepoints
+Message-id: <20091215005716.GB2898@localhost.localdomain>
+Patchwork-id: 21934
+O-Subject: [RHEL 5.5 PATCH] net: add send/receive tracepoints (bz 475457)
+Bugzilla: 475457
+RH-Acked-by: Jason Baron <jbaron@redhat.com>
+
+Hey all-
+	This is a patch to add tracepoints to the end of the tx path and the
+start of the rx path in the network stack.  They're not upstream yet, but I'll
+be proposing them shortly as part of my port mirroring feature.  Fujitsu was
+hoping to get them into 5.5 for some other apps of theirs, so I'm posting the
+tracepoints, without the rest of the port mirroring code here.  I've tested the
+tracepoints myself in rhts, and they've worked well.  When off, theres no
+measureable impact on network throughput. Satisfies bz 475457
+
+Neil
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/trace/net.h b/include/trace/net.h
+new file mode 100644
+index 0000000..1cde93b
+--- /dev/null
++++ b/include/trace/net.h
+@@ -0,0 +1,13 @@
++#ifndef _TRACE_NET_H_
++#define _TRACE_NET_H_
++
++#include <linux/tracepoint.h>
++
++DEFINE_TRACE(net_dev_xmit,
++	TPPROTO(struct sk_buff *skb, int rc),
++	TPARGS(skb, rc));
++
++DEFINE_TRACE(net_dev_receive,
++	TPPROTO(struct sk_buff *skb),
++	TPARGS(skb));
++#endif
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 9f5f1fa..e9a472f 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -118,6 +118,7 @@
+ #include <linux/err.h>
+ #include <linux/ctype.h>
+ #include <trace/napi.h>
++#include <trace/net.h>
+ 
+ #ifdef CONFIG_XEN
+ #include <net/ip.h>
+@@ -1417,6 +1418,7 @@ static int dev_gso_segment(struct sk_buff *skb)
+ 
+ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ {
++	int rc;
+ 	if (likely(!skb->next)) {
+ 		if (netdev_nit)
+ 			dev_queue_xmit_nit(skb, dev);
+@@ -1428,17 +1430,19 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 				goto gso;
+ 		}
+ 
+-		return dev->hard_start_xmit(skb, dev);
++		rc = dev->hard_start_xmit(skb, dev);
++		trace_net_dev_xmit(skb, rc);
++		return rc;
+ 	}
+ 
+ gso:
+ 	do {
+ 		struct sk_buff *nskb = skb->next;
+-		int rc;
+ 
+ 		skb->next = nskb->next;
+ 		nskb->next = NULL;
+ 		rc = dev->hard_start_xmit(nskb, dev);
++		trace_net_dev_xmit(skb, rc);
+ 		if (unlikely(rc)) {
+ 			nskb->next = skb->next;
+ 			skb->next = nskb;
+@@ -1875,6 +1879,8 @@ int netif_receive_skb(struct sk_buff *skb)
+ 	int ret = NET_RX_DROP;
+ 	unsigned short type;
+ 
++	trace_net_dev_receive(skb);
++
+ 	/* if we've gotten here through NAPI, check netpoll */
+ 	if (skb->dev->poll && netpoll_rx(skb))
+ 		return NET_RX_DROP;
+diff --git a/net/core/net-traces.c b/net/core/net-traces.c
+index b07b25b..53b8d0e 100644
+--- a/net/core/net-traces.c
++++ b/net/core/net-traces.c
+@@ -21,6 +21,7 @@
+ #include <linux/net_dropmon.h>
+ #include <trace/skb.h>
+ #include <trace/napi.h>
++#include <trace/net.h>
+ 
+ #include <asm/unaligned.h>
+ #include <asm/bitops.h>
+@@ -31,3 +32,10 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(kfree_skb);
+ 
+ DEFINE_TRACE(napi_poll);
+ EXPORT_TRACEPOINT_SYMBOL_GPL(napi_poll);
++
++DEFINE_TRACE(net_dev_xmit);
++EXPORT_TRACEPOINT_SYMBOL_GPL(net_dev_xmit);
++
++DEFINE_TRACE(net_dev_receive);
++EXPORT_TRACEPOINT_SYMBOL_GPL(net_dev_receive);
++

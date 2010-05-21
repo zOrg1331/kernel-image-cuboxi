@@ -1,0 +1,362 @@
+From: John Linville <linville@redhat.com>
+Date: Mon, 1 Feb 2010 18:43:57 -0500
+Subject: [net] wireless fixes from 2.6.32.4
+Message-id: <20100201184357.GF28565@redhat.com>
+Patchwork-id: 23058
+O-Subject: [RHEL5 Patch 3/4] wireless fixes from 2.6.32.4
+Bugzilla: 559711
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+On Mon, Feb 01, 2010 at 01:36:11PM -0500, John W. Linville wrote:
+> As you may know, the mac80211-based wireless bits in RHEL 5.5 are
+> basically identical to the equivalent components in 2.6.32.  Since it's
+> release, there have been a number of fixes propogated to the 2.6.32
+> -stable tree.  This series brings those fixes to the RHEL 5.5 kernel.
+>
+> BZ559711
+
+These are the bits included in 2.6.32.4.
+
+Reasonably extensive "real world" testing by me, with positive
+results...
+
+commit 9b13cca3a8623088d95d9897d29370b4e0b9c213
+Author: Felix Fietkau <nbd@openwrt.org>
+Date:   Thu Jan 7 20:23:53 2010 +0100
+
+    mac80211: add missing sanity checks for action frames
+
+    commit d79074488083ec0d7ecd15352192dc1631f25643 upstream.
+
+    Various missing sanity checks caused rejected action frames to be
+    interpreted as channel switch announcements, which can cause a client
+    mode interface to switch away from its operating channel, thereby losing
+    connectivity. This patch ensures that only spectrum management action
+    frames are processed by the CSA handling function and prevents rejected
+    action frames from getting processed by the MLME code.
+
+    Signed-off-by: Felix Fietkau <nbd@openwrt.org>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+commit 0ea5505e18a1cb8eebf3384f825840897894ceda
+Author: Dan Carpenter <error27@gmail.com>
+Date:   Sun Jan 3 11:19:35 2010 +0200
+
+    iwl: off by one bug
+
+    commit 8a9ac160e844c7ce8074f6aa531feefb4acdee7c upstream.
+
+    tid is used as an array offset.
+    	agg = &priv->stations[sta_id].tid[tid].agg;
+    	iwl4965_tx_status_reply_tx(priv, agg, tx_resp, txq_id, index);
+
+    It should be limitted to MAX_TID_COUNT - 1;
+            struct iwl_tid_data tid[MAX_TID_COUNT];
+
+    regards,
+    dan carpenter
+
+    Signed-off-by: Dan Carpenter <error27@gmail.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+commit 724ad42667b42b363bbef867d1c31850b599fecc
+Author: Luis R. Rodriguez <lrodriguez@atheros.com>
+Date:   Mon Jan 4 11:37:39 2010 -0500
+
+    cfg80211: fix syntax error on user regulatory hints
+
+    commit e12822e1d3fface0d9e1095c5177e10141bd6bd6 upstream.
+
+    This fixes a syntax error when setting up the user regulatory
+    hint. This change yields the same exact binary object though
+    so it ends up just being a syntax typo fix, fortunately.
+
+    Signed-off-by: Luis R. Rodriguez <lrodriguez@atheros.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+commit e6efac7b7c4ce45d40f5e07d3105e07704e95673
+Author: Luis R. Rodriguez <lrodriguez@atheros.com>
+Date:   Mon Jan 4 10:40:39 2010 -0500
+
+    ath5k: Fix eeprom checksum check for custom sized eeproms
+
+    commit 359207c687cc8f4f9845c8dadd0d6dabad44e584 upstream.
+
+    Commit 8bf3d79bc401ca417ccf9fc076d3295d1a71dbf5 enabled EEPROM
+    checksum checks to avoid bogus bug reports but failed to address
+    updating the code to consider devices with custom EEPROM sizes.
+    Devices with custom sized EEPROMs have the upper limit size stuffed
+    in the EEPROM. Use this as the upper limit instead of the static
+    default size. In case of a checksum error also provide back the
+    max size and whether or not this was the default size or a custom
+    one. If the EEPROM is busted we add a failsafe check to ensure
+    we don't loop forever or try to read bogus areas of hardware.
+
+    This closes bug 14874
+
+    http://bugzilla.kernel.org/show_bug.cgi?id=14874
+
+    Cc: David Quan <david.quan@atheros.com>
+    Cc: Stephen Beahm <stephenbeahm@comcast.net>
+    Reported-by: Joshua Covington <joshuacov@googlemail.com>
+    Signed-off-by: Luis R. Rodriguez <lrodriguez@atheros.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+commit fc95845f174a07d4200a30681067d22c9e34723c
+Author: Zhu Yi <yi.zhu@intel.com>
+Date:   Fri Jan 8 10:04:30 2010 -0800
+
+    iwlwifi: fix iwl_queue_used bug when read_ptr == write_ptr
+
+    commit c8106d7625a58ee4387cb2efe3e82320ad44b467 upstream.
+
+    When txq read_ptr equals to write_ptr, iwl_queue_used should
+    always return false. Because there is no used TFD in this case.
+
+    This is a complementary fix to the fix already included in commit "iwl3945:
+    fix panic in iwl3945 driver". Both fixes are needed to address the panic
+    below.
+
+    This problem was discussed on linux-wireless in
+    http://thread.gmane.org/gmane.linux.kernel.wireless.general/43568
+
+    <1>[ 7290.414172] IP: [<ffffffffa0dd53a1>] iwl3945_rx_reply_tx+0xc1/0x450 [iwl3945]
+    <4>[ 7290.414205] PGD 0
+    <1>[ 7290.414214] Thread overran stack, or stack corrupted
+    <0>[ 7290.414229] Oops: 0002 [#1] PREEMPT SMP
+    <0>[ 7290.414246] last sysfs file: /sys/devices/platform/coretemp.1/temp1_input
+    <4>[ 7290.414265] CPU 0
+    <4>[ 7290.414274] Modules linked in: af_packet nfsd usb_storage usb_libusual cpufreq_powersave exportfs cpufreq_conservative iwl3945 nfs cpufreq_userspace snd_hda_codec_realtek acpi_cpufreq uvcvideo lockd iwlcore snd_hda_intel joydev coretemp nfs_acl videodev snd_hda_codec mac80211 v4l1_compat snd_hwdep sbp2 v4l2_compat_ioctl32 uhci_hcd psmouse auth_rpcgss ohci1394 cfg80211 ehci_hcd video ieee1394 snd_pcm serio_raw battery ac nvidia(P) usbcore output sunrpc evdev lirc_ene0100 snd_page_alloc rfkill tg3 libphy fuse lzo lzo_decompress lzo_compress
+    <6>[ 7290.414486] Pid: 0, comm: swapper Tainted: P           2.6.32-rc8-wl #213 Aspire 5720
+    <6>[ 7290.414507] RIP: 0010:[<ffffffffa0dd53a1>]  [<ffffffffa0dd53a1>] iwl3945_rx_reply_tx+0xc1/0x450 [iwl3945]
+    <6>[ 7290.414541] RSP: 0018:ffff880002203d60  EFLAGS: 00010246
+    <6>[ 7290.414557] RAX: 000000000000004f RBX: ffff880064c11600 RCX: 0000000000000013
+    <6>[ 7290.414576] RDX: ffffffffa0ddcf20 RSI: ffff8800512b7008 RDI: 0000000000000038
+    <6>[ 7290.414596] RBP: ffff880002203dd0 R08: 0000000000000000 R09: 0000000000000100
+    <6>[ 7290.414616] R10: 0000000000000001 R11: 0000000000000000 R12: 00000000000000a0
+    <6>[ 7290.414635] R13: 0000000000000002 R14: 0000000000000013 R15: 0000000000020201
+    <6>[ 7290.414655] FS:  0000000000000000(0000) GS:ffff880002200000(0000) knlGS:0000000000000000
+    <6>[ 7290.414677] CS:  0010 DS: 0018 ES: 0018 CR0: 000000008005003b
+    <6>[ 7290.414693] CR2: 0000000000000041 CR3: 0000000001001000 CR4: 00000000000006f0
+    <6>[ 7290.414712] DR0: 0000000000000000 DR1: 0000000000000000 DR2: 0000000000000000
+    <6>[ 7290.414732] DR3: 0000000000000000 DR6: 00000000ffff0ff0 DR7: 0000000000000400
+    <4>[ 7290.414752] Process swapper (pid: 0, threadinfo ffffffff81524000, task ffffffff81528b60)
+    <0>[ 7290.414772] Stack:
+    <4>[ 7290.414780]  ffff880002203da0 0000000000000046 0000000000000000 0000000000000046
+    <4>[ 7290.414804] <0> 0000000000000282 0000000000000282 0000000000000282 ffff880064c12010
+    <4>[ 7290.414830] <0> ffff880002203db0 ffff880064c11600 ffff880064c12e50 ffff8800512b7000
+    <0>[ 7290.414858] Call Trace:
+    <0>[ 7290.414867]  <IRQ>
+    <4>[ 7290.414884]  [<ffffffffa0dc8c47>] iwl3945_irq_tasklet+0x657/0x1740 [iwl3945]
+    <4>[ 7290.414910]  [<ffffffff8138fc60>] ? _spin_unlock+0x30/0x60
+    <4>[ 7290.414931]  [<ffffffff81049a21>] tasklet_action+0x101/0x110
+    <4>[ 7290.414950]  [<ffffffff8104a3d0>] __do_softirq+0xc0/0x160
+    <4>[ 7290.414968]  [<ffffffff8100d01c>] call_softirq+0x1c/0x30
+    <4>[ 7290.414986]  [<ffffffff8100eff5>] do_softirq+0x75/0xb0
+    <4>[ 7290.415003]  [<ffffffff81049ee5>] irq_exit+0x95/0xa0
+    <4>[ 7290.415020]  [<ffffffff8100e547>] do_IRQ+0x77/0xf0
+    <4>[ 7290.415038]  [<ffffffff8100c7d3>] ret_from_intr+0x0/0xf
+    <0>[ 7290.415052]  <EOI>
+    <4>[ 7290.415067]  [<ffffffff81234efa>] ? acpi_idle_enter_bm+0x270/0x2a5
+    <4>[ 7290.415087]  [<ffffffff81234f04>] ? acpi_idle_enter_bm+0x27a/0x2a5
+    <4>[ 7290.415107]  [<ffffffff81234efa>] ? acpi_idle_enter_bm+0x270/0x2a5
+    <4>[ 7290.415130]  [<ffffffff812c11f3>] ? cpuidle_idle_call+0x93/0xf0
+    <4>[ 7290.415149]  [<ffffffff8100b0d7>] ? cpu_idle+0xa7/0x110
+    <4>[ 7290.415168]  [<ffffffff8137b3d5>] ? rest_init+0x75/0x80
+    <4>[ 7290.415187]  [<ffffffff8158cd0a>] ? start_kernel+0x3a7/0x3b3
+    <4>[ 7290.415206]  [<ffffffff8158c315>] ? x86_64_start_reservations+0x125/0x129
+    <4>[ 7290.415227]  [<ffffffff8158c3fd>] ? x86_64_start_kernel+0xe4/0xeb
+    <0>[ 7290.415243] Code: 00 41 39 ce 0f 8d e8 01 00 00 48 8b 47 40 48 63 d2 48 69 d2 98 00 00 00 4c 8b 04 02 48 c7 c2 20 cf dd a0 49 8d 78 38 49 8d 40 4f <c6> 47 09 00 c6 47 0c 00 c6 47 0f 00 c6 47 12 00 c6 47 15 00 49
+    <1>[ 7290.415382] RIP  [<ffffffffa0dd53a1>] iwl3945_rx_reply_tx+0xc1/0x450 [iwl3945]
+    <4>[ 7290.415410]  RSP <ffff880002203d60>
+    <0>[ 7290.415421] CR2: 0000000000000041
+    <4>[ 7290.415436] ---[ end trace ec46807277caa515 ]---
+    <0>[ 7290.415450] Kernel panic - not syncing: Fatal exception in interrupt
+    <4>[ 7290.415468] Pid: 0, comm: swapper Tainted: P      D    2.6.32-rc8-wl #213
+    <4>[ 7290.415486] Call Trace:
+    <4>[ 7290.415495]  <IRQ>  [<ffffffff8138c040>] panic+0x7d/0x13a
+    <4>[ 7290.415519]  [<ffffffff8101071a>] oops_end+0xda/0xe0
+    <4>[ 7290.415538]  [<ffffffff8102e1ea>] no_context+0xea/0x250
+    <4>[ 7290.415557]  [<ffffffff81038991>] ? select_task_rq_fair+0x511/0x780
+    <4>[ 7290.415578]  [<ffffffff8102e475>] __bad_area_nosemaphore+0x125/0x1e0
+    <4>[ 7290.415597]  [<ffffffff81038d0c>] ? __enqueue_entity+0x7c/0x80
+    <4>[ 7290.415616]  [<ffffffff81039201>] ? enqueue_task_fair+0x111/0x150
+    <4>[ 7290.415636]  [<ffffffff8102e53e>] bad_area_nosemaphore+0xe/0x10
+    <4>[ 7290.415656]  [<ffffffff8102e8fa>] do_page_fault+0x26a/0x320
+    <4>[ 7290.415674]  [<ffffffff813905df>] page_fault+0x1f/0x30
+    <4>[ 7290.415697]  [<ffffffffa0dd53a1>] ? iwl3945_rx_reply_tx+0xc1/0x450 [iwl3945]
+    <4>[ 7290.415723]  [<ffffffffa0dc8c47>] iwl3945_irq_tasklet+0x657/0x1740 [iwl3945]
+    <4>[ 7290.415746]  [<ffffffff8138fc60>] ? _spin_unlock+0x30/0x60
+    <4>[ 7290.415764]  [<ffffffff81049a21>] tasklet_action+0x101/0x110
+    <4>[ 7290.415783]  [<ffffffff8104a3d0>] __do_softirq+0xc0/0x160
+    <4>[ 7290.415801]  [<ffffffff8100d01c>] call_softirq+0x1c/0x30
+    <4>[ 7290.415818]  [<ffffffff8100eff5>] do_softirq+0x75/0xb0
+    <4>[ 7290.415835]  [<ffffffff81049ee5>] irq_exit+0x95/0xa0
+    <4>[ 7290.415852]  [<ffffffff8100e547>] do_IRQ+0x77/0xf0
+    <4>[ 7290.415869]  [<ffffffff8100c7d3>] ret_from_intr+0x0/0xf
+    <4>[ 7290.415883]  <EOI>  [<ffffffff81234efa>] ? acpi_idle_enter_bm+0x270/0x2a5
+    <4>[ 7290.415911]  [<ffffffff81234f04>] ? acpi_idle_enter_bm+0x27a/0x2a5
+    <4>[ 7290.415931]  [<ffffffff81234efa>] ? acpi_idle_enter_bm+0x270/0x2a5
+    <4>[ 7290.415952]  [<ffffffff812c11f3>] ? cpuidle_idle_call+0x93/0xf0
+    <4>[ 7290.415971]  [<ffffffff8100b0d7>] ? cpu_idle+0xa7/0x110
+    <4>[ 7290.415989]  [<ffffffff8137b3d5>] ? rest_init+0x75/0x80
+    <4>[ 7290.416007]  [<ffffffff8158cd0a>] ? start_kernel+0x3a7/0x3b3
+    <4>[ 7290.416026]  [<ffffffff8158c315>] ? x86_64_start_reservations+0x125/0x129
+    <4>[ 7290.416047]  [<ffffffff8158c3fd>] ? x86_64_start_kernel+0xe4/0xeb
+
+    Reported-by: Maxim Levitsky <maximlevitsky@gmail.com>
+    Tested-by: Maxim Levitsky <maximlevitsky@gmail.com>
+    Signed-off-by: Zhu Yi <yi.zhu@intel.com>
+    Signed-off-by: Reinette Chatre <reinette.chatre@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/wireless/ath/ath5k/eeprom.c b/drivers/net/wireless/ath/ath5k/eeprom.c
+index 755e4c8..b753ff7 100644
+--- a/drivers/net/wireless/ath/ath5k/eeprom.c
++++ b/drivers/net/wireless/ath/ath5k/eeprom.c
+@@ -99,7 +99,7 @@ ath5k_eeprom_init_header(struct ath5k_hw *ah)
+ 	struct ath5k_eeprom_info *ee = &ah->ah_capabilities.cap_eeprom;
+ 	int ret;
+ 	u16 val;
+-	u32 cksum, offset;
++	u32 cksum, offset, eep_max = AR5K_EEPROM_INFO_MAX;
+ 
+ 	/*
+ 	 * Read values from EEPROM and store them in the capability structure
+@@ -118,12 +118,38 @@ ath5k_eeprom_init_header(struct ath5k_hw *ah)
+ 	 * Validate the checksum of the EEPROM date. There are some
+ 	 * devices with invalid EEPROMs.
+ 	 */
+-	for (cksum = 0, offset = 0; offset < AR5K_EEPROM_INFO_MAX; offset++) {
++	AR5K_EEPROM_READ(AR5K_EEPROM_SIZE_UPPER, val);
++	if (val) {
++		eep_max = (val & AR5K_EEPROM_SIZE_UPPER_MASK) <<
++			   AR5K_EEPROM_SIZE_ENDLOC_SHIFT;
++		AR5K_EEPROM_READ(AR5K_EEPROM_SIZE_LOWER, val);
++		eep_max = (eep_max | val) - AR5K_EEPROM_INFO_BASE;
++
++		/*
++		 * Fail safe check to prevent stupid loops due
++		 * to busted EEPROMs. XXX: This value is likely too
++		 * big still, waiting on a better value.
++		 */
++		if (eep_max > (3 * AR5K_EEPROM_INFO_MAX)) {
++			ATH5K_ERR(ah->ah_sc, "Invalid max custom EEPROM size: "
++				  "%d (0x%04x) max expected: %d (0x%04x)\n",
++				  eep_max, eep_max,
++				  3 * AR5K_EEPROM_INFO_MAX,
++				  3 * AR5K_EEPROM_INFO_MAX);
++			return -EIO;
++		}
++	}
++
++	for (cksum = 0, offset = 0; offset < eep_max; offset++) {
+ 		AR5K_EEPROM_READ(AR5K_EEPROM_INFO(offset), val);
+ 		cksum ^= val;
+ 	}
+ 	if (cksum != AR5K_EEPROM_INFO_CKSUM) {
+-		ATH5K_ERR(ah->ah_sc, "Invalid EEPROM checksum 0x%04x\n", cksum);
++		ATH5K_ERR(ah->ah_sc, "Invalid EEPROM "
++			  "checksum: 0x%04x eep_max: 0x%04x (%s)\n",
++			  cksum, eep_max,
++			  eep_max == AR5K_EEPROM_INFO_MAX ?
++				"default size" : "custom size");
+ 		return -EIO;
+ 	}
+ 
+diff --git a/drivers/net/wireless/ath/ath5k/eeprom.h b/drivers/net/wireless/ath/ath5k/eeprom.h
+index 0123f35..473a483 100644
+--- a/drivers/net/wireless/ath/ath5k/eeprom.h
++++ b/drivers/net/wireless/ath/ath5k/eeprom.h
+@@ -37,6 +37,14 @@
+ #define AR5K_EEPROM_RFKILL_POLARITY_S	1
+ 
+ #define AR5K_EEPROM_REG_DOMAIN		0x00bf	/* EEPROM regdom */
++
++/* FLASH(EEPROM) Defines for AR531X chips */
++#define AR5K_EEPROM_SIZE_LOWER		0x1b /* size info -- lower */
++#define AR5K_EEPROM_SIZE_UPPER		0x1c /* size info -- upper */
++#define AR5K_EEPROM_SIZE_UPPER_MASK	0xfff0
++#define AR5K_EEPROM_SIZE_UPPER_SHIFT	4
++#define AR5K_EEPROM_SIZE_ENDLOC_SHIFT	12
++
+ #define AR5K_EEPROM_CHECKSUM		0x00c0	/* EEPROM checksum */
+ #define AR5K_EEPROM_INFO_BASE		0x00c0	/* EEPROM header */
+ #define AR5K_EEPROM_INFO_MAX		(0x400 - AR5K_EEPROM_INFO_BASE)
+diff --git a/drivers/net/wireless/iwlwifi/iwl-4965.c b/drivers/net/wireless/iwlwifi/iwl-4965.c
+index 7bf5543..a730f72 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-4965.c
++++ b/drivers/net/wireless/iwlwifi/iwl-4965.c
+@@ -2088,7 +2088,7 @@ static void iwl4965_rx_reply_tx(struct iwl_priv *priv,
+ 	struct ieee80211_tx_info *info;
+ 	struct iwl4965_tx_resp *tx_resp = (void *)&pkt->u.raw[0];
+ 	u32  status = le32_to_cpu(tx_resp->u.status);
+-	int tid = MAX_TID_COUNT;
++	int tid = MAX_TID_COUNT - 1;
+ 	int sta_id;
+ 	int freed;
+ 	u8 *qc = NULL;
+diff --git a/drivers/net/wireless/iwlwifi/iwl-dev.h b/drivers/net/wireless/iwlwifi/iwl-dev.h
+index 3cb368b..472edeb 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-dev.h
++++ b/drivers/net/wireless/iwlwifi/iwl-dev.h
+@@ -703,7 +703,7 @@ extern void iwl_txq_ctx_stop(struct iwl_priv *priv);
+ extern int iwl_queue_space(const struct iwl_queue *q);
+ static inline int iwl_queue_used(const struct iwl_queue *q, int i)
+ {
+-	return q->write_ptr > q->read_ptr ?
++	return q->write_ptr >= q->read_ptr ?
+ 		(i >= q->read_ptr && i < q->write_ptr) :
+ 		!(i < q->read_ptr && i >= q->write_ptr);
+ }
+diff --git a/net/mac80211/mlme.c b/net/mac80211/mlme.c
+index 3207932..b661901 100644
+--- a/net/mac80211/mlme.c
++++ b/net/mac80211/mlme.c
+@@ -1972,7 +1972,9 @@ static void ieee80211_sta_rx_queued_mgmt(struct ieee80211_sub_if_data *sdata,
+ 			rma = ieee80211_rx_mgmt_disassoc(sdata, mgmt, skb->len);
+ 			break;
+ 		case IEEE80211_STYPE_ACTION:
+-			/* XXX: differentiate, can only happen for CSA now! */
++			if (mgmt->u.action.category != WLAN_CATEGORY_SPECTRUM_MGMT)
++				break;
++
+ 			ieee80211_sta_process_chanswitch(sdata,
+ 					&mgmt->u.action.u.chan_switch.sw_elem,
+ 					ifmgd->associated);
+diff --git a/net/mac80211/rx.c b/net/mac80211/rx.c
+index 3293d8d..f0bebe4 100644
+--- a/net/mac80211/rx.c
++++ b/net/mac80211/rx.c
+@@ -1832,6 +1832,10 @@ ieee80211_rx_h_action(struct ieee80211_rx_data *rx)
+ 		}
+ 		break;
+ 	default:
++		/* do not process rejected action frames */
++		if (mgmt->u.action.category & 0x80)
++			return RX_DROP_MONITOR;
++
+ 		return RX_CONTINUE;
+ 	}
+ 
+diff --git a/net/wireless/reg.c b/net/wireless/reg.c
+index df6b1b9..cdca8b7 100644
+--- a/net/wireless/reg.c
++++ b/net/wireless/reg.c
+@@ -1764,7 +1764,7 @@ int regulatory_hint_user(const char *alpha2)
+ 	request->wiphy_idx = WIPHY_IDX_STALE;
+ 	request->alpha2[0] = alpha2[0];
+ 	request->alpha2[1] = alpha2[1];
+-	request->initiator = NL80211_REGDOM_SET_BY_USER,
++	request->initiator = NL80211_REGDOM_SET_BY_USER;
+ 
+ 	queue_regulatory_request(request);
+ 

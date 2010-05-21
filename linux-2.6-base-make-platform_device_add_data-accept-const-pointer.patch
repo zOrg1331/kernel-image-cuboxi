@@ -1,0 +1,51 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Fri, 12 Feb 2010 17:14:29 -0500
+Subject: [base] make platform_device_add_data accept const pointer
+Message-id: <20100212171428.3355.86657.send-patch@aqua>
+Patchwork-id: 23258
+O-Subject: [RHEL5.6 PATCH 1/5] Make platform_device_add_data() accept a const
+	pointer
+Bugzilla: 557172 559950 560944 564399
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Needed to resolve RHBZ 557172, 559950, 560944, and 564399.
+
+Add a 'const' to the second argument to platform_device_add_data() to
+eliminate compiler warning errors when building the f71805f, it87, smsc47m1,
+and w83627hf hwmon drivers.
+
+Backport of upstream commit:
+http://git.kernel.org/linus/6eefd34fdcbd34e2cddb8b7da26d838367591954
+
+A subsequent upstream commit fixed some related coding style issues:
+http://git.kernel.org/linus/4a3ad20ccd8f4d2a0535cf98fa83f7b561ba59a9
+
+
+diff --git a/drivers/base/platform.c b/drivers/base/platform.c
+index 8c0b947..f596762 100644
+--- a/drivers/base/platform.c
++++ b/drivers/base/platform.c
+@@ -212,7 +212,8 @@ EXPORT_SYMBOL_GPL(platform_device_add_resources);
+  *	pointer.  The memory associated with the platform data will be freed
+  *	when the platform device is released.
+  */
+-int platform_device_add_data(struct platform_device *pdev, void *data, size_t size)
++int platform_device_add_data(struct platform_device *pdev, const void *data,
++			     size_t size)
+ {
+ 	void *d;
+ 
+diff --git a/include/linux/platform_device.h b/include/linux/platform_device.h
+index 782090c..969fabb 100644
+--- a/include/linux/platform_device.h
++++ b/include/linux/platform_device.h
+@@ -39,7 +39,7 @@ extern struct platform_device *platform_device_register_simple(char *, unsigned
+ 
+ extern struct platform_device *platform_device_alloc(const char *name, unsigned int id);
+ extern int platform_device_add_resources(struct platform_device *pdev, struct resource *res, unsigned int num);
+-extern int platform_device_add_data(struct platform_device *pdev, void *data, size_t size);
++extern int platform_device_add_data(struct platform_device *pdev, const void *data, size_t size);
+ extern int platform_device_add(struct platform_device *pdev);
+ extern void platform_device_del(struct platform_device *pdev);
+ extern void platform_device_put(struct platform_device *pdev);

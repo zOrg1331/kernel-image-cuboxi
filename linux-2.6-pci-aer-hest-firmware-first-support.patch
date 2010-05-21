@@ -1,0 +1,531 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 16 Dec 2009 18:42:15 -0500
+Subject: : PCI AER HEST Firmware First Support
+Message-id: <20091216183816.16974.53029.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 22004
+O-Subject: [RHEL5 1/2]: PCI AER HEST Firmware First Support
+Bugzilla: 547762
+
+commit 527337e0fdb893fee671c3b534940d4c8f4ab42b
+Author: Prarit Bhargava <prarit@redhat.com>
+Date:   Wed Dec 16 11:49:39 2009 -0500
+
+    PCI AER HEST Firmware First Support
+
+    Backport of upstream commit 0584396157ad2d008e2cc76b4ed6254151183a25
+
+    Some HP, Fujitsu, and Dell systems have firmware that will handle PCI AER
+    errors.  Support detection and parsing of the HEST table in RHEL5.
+
+    Successfully tested by me on HP and Dell systems.
+
+    Resolves BZ 547762.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/acpi/Makefile b/drivers/acpi/Makefile
+index 137f59f..aeffa25 100644
+--- a/drivers/acpi/Makefile
++++ b/drivers/acpi/Makefile
+@@ -65,3 +65,4 @@ obj-$(CONFIG_ACPI_SBS)		+= i2c_ec.o sbs.o
+ obj-$(CONFIG_ACPI_POWER_METER)        += power_meter.o
+ obj-$(CONFIG_DELL_WMI)		+= dell-wmi.o
+ obj-$(CONFIG_THINKPAD_ACPI)	+= thinkpad_acpi.o
++obj-$(CONFIG_PCIEAER)		+= hest.o
+diff --git a/drivers/acpi/hest.c b/drivers/acpi/hest.c
+new file mode 100644
+index 0000000..e3dfee7
+--- /dev/null
++++ b/drivers/acpi/hest.c
+@@ -0,0 +1,136 @@
++#include <linux/acpi.h>
++#include <linux/pci.h>
++
++#define PREFIX "ACPI: "
++
++static inline unsigned long parse_acpi_hest_ia_machine_check(struct acpi_hest_ia_machine_check *p)
++{
++	return sizeof(*p) +
++		(sizeof(struct acpi_hest_ia_error_bank) * p->num_hardware_banks);
++}
++
++static inline unsigned long parse_acpi_hest_ia_corrected(struct acpi_hest_ia_corrected *p)
++{
++	return sizeof(*p) +
++		(sizeof(struct acpi_hest_ia_error_bank) * p->num_hardware_banks);
++}
++
++static inline unsigned long parse_acpi_hest_ia_nmi(struct acpi_hest_ia_nmi *p)
++{
++	return sizeof(*p);
++}
++
++static inline unsigned long parse_acpi_hest_generic(struct acpi_hest_generic *p)
++{
++	return sizeof(*p);
++}
++
++static inline unsigned int hest_match_pci(struct acpi_hest_aer_common *p, struct pci_dev *pci)
++{
++	return	(0           == pci_domain_nr(pci->bus) &&
++		 p->bus      == pci->bus->number &&
++		 p->device   == PCI_SLOT(pci->devfn) &&
++		 p->function == PCI_FUNC(pci->devfn));
++}
++
++static unsigned long parse_acpi_hest_aer(void *hdr, int type, struct pci_dev *pci, int *firmware_first)
++{
++	struct acpi_hest_aer_common *p = hdr + sizeof(struct acpi_hest_header);
++	unsigned long rc=0;
++	u8 pcie_type = 0;
++	u8 bridge = 0;
++	switch (type) {
++	case ACPI_HEST_TYPE_AER_ROOT_PORT:
++		rc = sizeof(struct acpi_hest_aer_root);
++		pcie_type = PCI_EXP_TYPE_ROOT_PORT;
++		break;
++	case ACPI_HEST_TYPE_AER_ENDPOINT:
++		rc = sizeof(struct acpi_hest_aer);
++		pcie_type = PCI_EXP_TYPE_ENDPOINT;
++		break;
++	case ACPI_HEST_TYPE_AER_BRIDGE:
++		rc = sizeof(struct acpi_hest_aer_bridge);
++		if ((pci->class >> 16) == PCI_BASE_CLASS_BRIDGE)
++			bridge = 1;
++		break;
++	}
++
++	if (p->flags & ACPI_HEST_GLOBAL) {
++		if ((pci->is_pcie && (pci->pcie_type == pcie_type)) || bridge)
++			*firmware_first = !!(p->flags & ACPI_HEST_FIRMWARE_FIRST);
++	}
++	else
++		if (hest_match_pci(p, pci))
++			*firmware_first = !!(p->flags & ACPI_HEST_FIRMWARE_FIRST);
++	return rc;
++}
++
++static int acpi_hest_firmware_first(struct acpi_table_header *stdheader, struct pci_dev *pci)
++{
++	struct acpi_table_hest *hest = (struct acpi_table_hest *)stdheader;
++	void *p = (void *)hest + sizeof(*hest); /* defined by the ACPI 4.0 spec */
++	struct acpi_hest_header *hdr = p;
++
++	int i;
++	int firmware_first = 0;
++	static unsigned char printed_unused = 0;
++	static unsigned char printed_reserved = 0;
++
++	for (i=0, hdr=p; p < (((void *)hest) + hest->header.length) && i < hest->error_source_count; i++) {
++		switch (hdr->type) {
++		case ACPI_HEST_TYPE_IA32_CHECK:
++			p += parse_acpi_hest_ia_machine_check(p);
++			break;
++		case ACPI_HEST_TYPE_IA32_CORRECTED_CHECK:
++			p += parse_acpi_hest_ia_corrected(p);
++			break;
++		case ACPI_HEST_TYPE_IA32_NMI:
++			p += parse_acpi_hest_ia_nmi(p);
++			break;
++		/* These three should never appear */
++		case ACPI_HEST_TYPE_NOT_USED3:
++		case ACPI_HEST_TYPE_NOT_USED4:
++		case ACPI_HEST_TYPE_NOT_USED5:
++			if (!printed_unused) {
++				printk(KERN_DEBUG PREFIX
++				       "HEST Error Source list contains an obsolete type (%d).\n", hdr->type);
++				printed_unused = 1;
++			}
++			break;
++		case ACPI_HEST_TYPE_AER_ROOT_PORT:
++		case ACPI_HEST_TYPE_AER_ENDPOINT:
++		case ACPI_HEST_TYPE_AER_BRIDGE:
++			p += parse_acpi_hest_aer(p, hdr->type, pci, &firmware_first);
++			break;
++		case ACPI_HEST_TYPE_GENERIC_ERROR:
++			p += parse_acpi_hest_generic(p);
++			break;
++		/* These should never appear either */
++		case ACPI_HEST_TYPE_RESERVED:
++		default:
++			if (!printed_reserved) {
++				printk(KERN_DEBUG PREFIX
++				       "HEST Error Source list contains a reserved type (%d).\n", hdr->type);
++				printed_reserved = 1;
++			}
++			break;
++		}
++	}
++	return firmware_first;
++}
++
++int acpi_hest_firmware_first_pci(struct pci_dev *pci)
++{
++	acpi_status status = AE_NOT_FOUND;
++	struct acpi_table_header *hest = NULL;
++	status = acpi_get_firmware_table("HEST", 1, ACPI_LOGICAL_ADDRESSING,
++					 (struct acpi_table_header **) &hest);
++
++	if (ACPI_SUCCESS(status)) {
++		if (acpi_hest_firmware_first(hest, pci)) {
++			return 1;
++		}
++	}
++	return 0;
++}
++EXPORT_SYMBOL_GPL(acpi_hest_firmware_first_pci);
+diff --git a/drivers/pci/pcie/aer/aerdrv_core.c b/drivers/pci/pcie/aer/aerdrv_core.c
+index 03a009f..50de6cf 100644
+--- a/drivers/pci/pcie/aer/aerdrv_core.c
++++ b/drivers/pci/pcie/aer/aerdrv_core.c
+@@ -35,6 +35,9 @@ int pci_enable_pcie_error_reporting(struct pci_dev *dev)
+ 	u16 reg16 = 0;
+ 	int pos;
+ 
++	if (dev->aer_firmware_first)
++		return -EIO;
++
+ 	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR);
+ 	if (!pos)
+ 		return -EIO;
+@@ -60,6 +63,9 @@ int pci_disable_pcie_error_reporting(struct pci_dev *dev)
+ 	u16 reg16 = 0;
+ 	int pos;
+ 
++	if (dev->aer_firmware_first)
++		return -EIO;
++
+ 	pos = pci_find_capability(dev, PCI_CAP_ID_EXP);
+ 	if (!pos)
+ 		return -EIO;
+@@ -852,8 +858,22 @@ void aer_delete_rootport(struct aer_rpc *rpc)
+  */
+ int aer_init(struct pcie_device *dev)
+ {
+-	if (aer_osc_setup(dev) && !forceload)
+-		return -ENXIO;
++	if (dev->port->aer_firmware_first) {
++		dev_printk(KERN_DEBUG, &dev->device,
++			   "PCIe errors handled by platform firmware.\n");
++		goto out;
++	}
++
++	if (aer_osc_setup(dev))
++		goto out;
+ 
+ 	return 0;
++out:
++	if (forceload) {
++		dev_printk(KERN_DEBUG, &dev->device,
++			   "aerdrv forceload requested.\n");
++		dev->port->aer_firmware_first = 0;
++		return 0;
++	}
++	return -ENXIO;
+ }
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index 59ca63a..5588fb2 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -9,6 +9,7 @@
+ #include <linux/module.h>
+ #include <linux/pci.h>
+ #include <linux/slab.h>
++#include <acpi/acpi_hest.h>
+ #include "pci.h"
+ 
+ #define CARDBUS_LATENCY_TIMER	176	/* secondary latency timer */
+@@ -701,6 +702,12 @@ static void set_pcie_port_type(struct pci_dev *pdev)
+ 	pdev->pcie_type = (reg16 & PCI_EXP_FLAGS_TYPE) >> 4;
+ }
+ 
++static void set_pci_aer_firmware_first(struct pci_dev *pdev)
++{
++	if (acpi_hest_firmware_first_pci(pdev))
++		pdev->aer_firmware_first = 1;
++}
++
+ /**
+  * pci_setup_device - fill in class and map information of a device
+  * @dev: the device structure to fill
+@@ -727,6 +734,7 @@ int pci_setup_device(struct pci_dev * dev)
+ 	dev->cfg_size = pci_cfg_space_size(dev);
+ 	dev->error_state = pci_channel_io_normal;
+ 	set_pcie_port_type(dev);
++	set_pci_aer_firmware_first(dev);
+ 
+ 	/* Assume 32-bit PCI; let 64-bit PCI cards (which are far rarer)
+ 	   set this higher, assuming the system even supports it.  */
+@@ -1232,4 +1240,3 @@ void __init pci_sort_breadthfirst(void)
+ 	pci_sort_breadthfirst_devices();
+ 	pci_sort_breadthfirst_klist();
+ }
+-
+diff --git a/include/acpi/acpi_hest.h b/include/acpi/acpi_hest.h
+new file mode 100644
+index 0000000..63194d0
+--- /dev/null
++++ b/include/acpi/acpi_hest.h
+@@ -0,0 +1,12 @@
++#ifndef __ACPI_HEST_H
++#define __ACPI_HEST_H
++
++#include <linux/pci.h>
++
++#ifdef CONFIG_ACPI
++extern int acpi_hest_firmware_first_pci(struct pci_dev *pci);
++#else
++static inline int acpi_hest_firmware_first_pci(struct pci_dev *pci) { return 0; }
++#endif
++
++#endif
+diff --git a/include/acpi/actbl.h b/include/acpi/actbl.h
+index b125cee..b5431ef 100644
+--- a/include/acpi/actbl.h
++++ b/include/acpi/actbl.h
+@@ -367,4 +367,233 @@ extern u8 acpi_fadt_is_v1;	/* is set to 1 if FADT is revision 1,
+ #define ACPI_FADT_FLAG_OFFSET(f,o)      ACPI_FLAG_OFFSET (struct fadt_descriptor,f,o)
+ #define ACPI_FACS_FLAG_OFFSET(f,o)      ACPI_FLAG_OFFSET (struct facs_descriptor,f,o)
+ 
++/*******************************************************************************
++ *
++ * HEST - Hardware Error Source Table (ACPI 4.0)
++ *        Version 1
++ *
++ ******************************************************************************/
++
++struct acpi_table_hest {
++	struct acpi_table_header header;	/* Common ACPI table header */
++	u32 error_source_count;
++};
++
++/* HEST subtable header */
++
++struct acpi_hest_header {
++	u16 type;
++	u16 source_id;
++};
++
++/* Values for Type field above for subtables */
++
++enum acpi_hest_types {
++	ACPI_HEST_TYPE_IA32_CHECK = 0,
++	ACPI_HEST_TYPE_IA32_CORRECTED_CHECK = 1,
++	ACPI_HEST_TYPE_IA32_NMI = 2,
++	ACPI_HEST_TYPE_NOT_USED3 = 3,
++	ACPI_HEST_TYPE_NOT_USED4 = 4,
++	ACPI_HEST_TYPE_NOT_USED5 = 5,
++	ACPI_HEST_TYPE_AER_ROOT_PORT = 6,
++	ACPI_HEST_TYPE_AER_ENDPOINT = 7,
++	ACPI_HEST_TYPE_AER_BRIDGE = 8,
++	ACPI_HEST_TYPE_GENERIC_ERROR = 9,
++	ACPI_HEST_TYPE_RESERVED = 10	/* 10 and greater are reserved */
++};
++
++/*
++ * HEST substructures contained in subtables
++ */
++
++/*
++ * IA32 Error Bank(s) - Follows the struct acpi_hest_ia_machine_check and
++ * struct acpi_hest_ia_corrected structures.
++ */
++struct acpi_hest_ia_error_bank {
++	u8 bank_number;
++	u8 clear_status_on_init;
++	u8 status_format;
++	u8 reserved;
++	u32 control_register;
++	u64 control_data;
++	u32 status_register;
++	u32 address_register;
++	u32 misc_register;
++};
++
++/* Common HEST sub-structure for PCI/AER structures below (6,7,8) */
++
++struct acpi_hest_aer_common {
++	u16 reserved1;
++	u8 flags;
++	u8 enabled;
++	u32 records_to_preallocate;
++	u32 max_sections_per_record;
++	u32 bus;
++	u16 device;
++	u16 function;
++	u16 device_control;
++	u16 reserved2;
++	u32 uncorrectable_mask;
++	u32 uncorrectable_severity;
++	u32 correctable_mask;
++	u32 advanced_capabilities;
++};
++
++/* Masks for HEST Flags fields */
++
++#define ACPI_HEST_FIRMWARE_FIRST        (1)
++#define ACPI_HEST_GLOBAL                (1<<1)
++
++/* Hardware Error Notification */
++
++struct acpi_hest_notify {
++	u8 type;
++	u8 length;
++	u16 config_write_enable;
++	u32 poll_interval;
++	u32 vector;
++	u32 polling_threshold_value;
++	u32 polling_threshold_window;
++	u32 error_threshold_value;
++	u32 error_threshold_window;
++};
++
++/* Values for Notify Type field above */
++
++enum acpi_hest_notify_types {
++	ACPI_HEST_NOTIFY_POLLED = 0,
++	ACPI_HEST_NOTIFY_EXTERNAL = 1,
++	ACPI_HEST_NOTIFY_LOCAL = 2,
++	ACPI_HEST_NOTIFY_SCI = 3,
++	ACPI_HEST_NOTIFY_NMI = 4,
++	ACPI_HEST_NOTIFY_RESERVED = 5	/* 5 and greater are reserved */
++};
++
++/* Values for config_write_enable bitfield above */
++
++#define ACPI_HEST_TYPE                  (1)
++#define ACPI_HEST_POLL_INTERVAL         (1<<1)
++#define ACPI_HEST_POLL_THRESHOLD_VALUE  (1<<2)
++#define ACPI_HEST_POLL_THRESHOLD_WINDOW (1<<3)
++#define ACPI_HEST_ERR_THRESHOLD_VALUE   (1<<4)
++#define ACPI_HEST_ERR_THRESHOLD_WINDOW  (1<<5)
++
++/*
++ * HEST subtables
++ */
++
++/* 0: IA32 Machine Check Exception */
++
++struct acpi_hest_ia_machine_check {
++	struct acpi_hest_header header;
++	u16 reserved1;
++	u8 flags;
++	u8 enabled;
++	u32 records_to_preallocate;
++	u32 max_sections_per_record;
++	u64 global_capability_data;
++	u64 global_control_data;
++	u8 num_hardware_banks;
++	u8 reserved3[7];
++};
++
++/* 1: IA32 Corrected Machine Check */
++
++struct acpi_hest_ia_corrected {
++	struct acpi_hest_header header;
++	u16 reserved1;
++	u8 flags;
++	u8 enabled;
++	u32 records_to_preallocate;
++	u32 max_sections_per_record;
++	struct acpi_hest_notify notify;
++	u8 num_hardware_banks;
++	u8 reserved2[3];
++};
++
++/* 2: IA32 Non-Maskable Interrupt */
++
++struct acpi_hest_ia_nmi {
++	struct acpi_hest_header header;
++	u32 reserved;
++	u32 records_to_preallocate;
++	u32 max_sections_per_record;
++	u32 max_raw_data_length;
++};
++
++/* 3,4,5: Not used */
++
++/* 6: PCI Express Root Port AER */
++
++struct acpi_hest_aer_root {
++	struct acpi_hest_header header;
++	struct acpi_hest_aer_common aer;
++	u32 root_error_command;
++};
++
++/* 7: PCI Express AER (AER Endpoint) */
++
++struct acpi_hest_aer {
++	struct acpi_hest_header header;
++	struct acpi_hest_aer_common aer;
++};
++
++/* 8: PCI Express/PCI-X Bridge AER */
++
++struct acpi_hest_aer_bridge {
++	struct acpi_hest_header header;
++	struct acpi_hest_aer_common aer;
++	u32 uncorrectable_mask2;
++	u32 uncorrectable_severity2;
++	u32 advanced_capabilities2;
++};
++
++/* 9: Generic Hardware Error Source */
++
++struct acpi_hest_generic {
++	struct acpi_hest_header header;
++	u16 related_source_id;
++	u8 reserved;
++	u8 enabled;
++	u32 records_to_preallocate;
++	u32 max_sections_per_record;
++	u32 max_raw_data_length;
++	struct acpi_generic_address error_status_address;
++	struct acpi_hest_notify notify;
++	u32 error_block_length;
++};
++
++/* Generic Error Status block */
++
++struct acpi_hest_generic_status {
++	u32 block_status;
++	u32 raw_data_offset;
++	u32 raw_data_length;
++	u32 data_length;
++	u32 error_severity;
++};
++
++/* Values for block_status flags above */
++
++#define ACPI_HEST_UNCORRECTABLE             (1)
++#define ACPI_HEST_CORRECTABLE               (1<<1)
++#define ACPI_HEST_MULTIPLE_UNCORRECTABLE    (1<<2)
++#define ACPI_HEST_MULTIPLE_CORRECTABLE      (1<<3)
++#define ACPI_HEST_ERROR_ENTRY_COUNT         (0xFF<<4)	/* 8 bits, error count */
++
++/* Generic Error Data entry */
++
++struct acpi_hest_generic_data {
++	u8 section_type[16];
++	u32 error_severity;
++	u16 revision;
++	u8 validation_bits;
++	u8 flags;
++	u32 error_data_length;
++	u8 fru_id[16];
++	u8 fru_text[20];
++};
++
+ #endif				/* __ACTBL_H__ */
+diff --git a/include/linux/pci.h b/include/linux/pci.h
+index 452803a..6ee67f9 100644
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -214,6 +214,7 @@ struct pci_dev {
+ #ifdef CONFIG_PCI_IOV
+ 	struct pci_ats *ats; /* Address Translation Service */
+ #endif
++	unsigned int aer_firmware_first:1;
+ #endif /* !__GENKSYMS__ */
+ };
+ 

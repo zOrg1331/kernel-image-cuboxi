@@ -1,0 +1,111 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Tue, 5 Jan 2010 11:46:52 +0100
+Subject: [net] emergency route cache flushing fixes
+Message-id: 20100105114630.GB22815@lsx.localdomain
+O-Subject: [kernel team] [RHEL5.5 PATCH][EMBARGOED] emergency route cache flushing fixes  (BZ545411)
+Bugzilla: 545663
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+CVE: CVE-2009-4272
+
+Hello all -
+
+Konstantin Khorenko reported various issues regarding the emergency route
+cache flush mechanism:
+
+  1) deadlock while doing an emergency flush, chain is locked twice:
+
+   rt_intern_hash(
+     spin_lock_bh(rt_hash_lock_addr(hash));  <-- locked 1st time
+     rt_emergency_hash_rebuild
+       rt_secret_rebuild_oneshot
+         rt_cache_flush
+	   rt_run_flush()
+	     for (i = rt_hash_mask; i >= 0; i--) {
+	       spin_lock_bh(rt_hash_lock_addr(i)); <-- locked again, deadlock
+
+     Upstream is not affected by this as it does not flush the cache
+     immediately but instead invalidates it and lets a gc do the flush.
+
+  2) Uninitialized **rp pointer during route lookup. This was fixed upstream
+     in commit 73e42897e8e5619eacb787d2ce69be12f47cfc21 but was not back
+     ported to RHEL yet.
+
+  3) Although not reported, I also back ported commit
+     b6280b47a7a42970d098a3059f4ebe7e55e90d8d to fix a leak and make routes
+     useable while caching is off.
+
+Related upstream commits:
+  73e42897e8e5619eacb787d2ce69be12f47cfc21
+  b6280b47a7a42970d098a3059f4ebe7e55e90d8d
+
+Bugzilla:
+  Fixes bugzilla BZ545411
+
+Testing:
+  The patch was successfully tested by the customer.
+
+diff --git a/net/ipv4/route.c b/net/ipv4/route.c
+index 1586943..8251ce8 100644
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -1013,8 +1013,35 @@ restart:
+ 	now = jiffies;
+ 
+ 	if (!rt_caching()) {
+-		rt_drop(rt);
+-		return 0;
++		/*
++		 * If we're not caching, just tell the caller we
++		 * were successful and don't touch the route.  The
++		 * caller hold the sole reference to the cache entry, and
++		 * it will be released when the caller is done with it.
++		 * If we drop it here, the callers have no way to resolve routes
++		 * when we're not caching.  Instead, just point *rp at rt, so
++		 * the caller gets a single use out of the route
++		 * Note that we do rt_free on this new route entry, so that
++		 * once its refcount hits zero, we are still able to reap it
++		 * (Thanks Alexey)
++		 * Note also the rt_free uses call_rcu.  We don't actually
++		 * need rcu protection here, this is just our path to get
++		 * on the route gc list.
++ 		 */
++
++		if (rt->rt_type == RTN_UNICAST || rt->fl.iif == 0) {
++			int err = arp_bind_neighbour(&rt->u.dst);
++			if (err) {
++				if (net_ratelimit())
++					printk(KERN_WARNING
++					    "Neighbour table failure & not caching routes.\n");
++				rt_drop(rt);
++				return err;
++			}
++		}
++
++		rt_free(rt);
++		goto skip_hashing;
+ 	}
+ 
+ 	rthp = &rt_hash_table[hash].chain;
+@@ -1098,7 +1125,13 @@ restart:
+ 				       "limit, route caching disabled\n",
+ 				rt->u.dst.dev->name, current_rt_cache_rebuild_count);
+ 			}
++
++			/* We need to unlock here, flushing the cache will lock each chain */
++			spin_unlock_bh(rt_hash_lock_addr(hash));
+ 			rt_emergency_hash_rebuild();
++
++			/* Start over, someone might have inserted right after the flush */
++			goto restart;
+ 		}
+ 	}
+ 
+@@ -1158,6 +1191,7 @@ restart:
+ 		rt_hash_table[hash].chain = rt;
+ 
+ 	spin_unlock_bh(rt_hash_lock_addr(hash));
++skip_hashing:
+ 	*rp = rt;
+ 	return 0;
+ }

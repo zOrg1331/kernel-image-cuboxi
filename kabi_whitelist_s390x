@@ -500,6 +500,12 @@
 	spi_print_msg
 	spi_release_transport
 	starget_for_each_device
+[rhel5_drivers_scsi_u5]
+	__user_walk_fd
+	do_settimeofday
+	scsi_nl_add_driver
+	scsi_nl_remove_driver
+	scsi_nl_send_vendor_msg
 [rhel5_drivers_scsi_libsas_ga]
 	sas_bios_param
 	sas_change_queue_depth
@@ -1524,6 +1530,10 @@
 	zone_table
 [rhel5_mm_u1]
 	default_unplug_io_fn
+[rhel5_net_8021q_u5]
+	vlan_gro_receive
+[rhel5_net_u5]
+	napi_gro_receive
 [rhel5_net_802_ga]
 	alloc_trdev
 	tr_type_trans

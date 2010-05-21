@@ -1,0 +1,81 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 28 Aug 2009 14:00:27 -0400
+Subject: [s390] optimize storage key operations for anon pages
+Message-id: <20090828140027.GC7396@blc4eb509856389.ibm.com>
+Patchwork-id: 20813
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - kernel: Optimize storage key
+	operations for anon pages
+Bugzilla: 519977
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+Description
+============
+
+For anonymous pages without a swap cache backing the check in
+page_remove_rmap() for the physical dirty bit is unnecessary.
+The instructions that are used to check and reset the dirty bit
+are expensive.
+This results in poor performance when anoynmous mappings are removed.
+
+The solution is to remove the check for anonymous pages that aren't
+swap cache backed.
+
+
+Bugzilla
+=========
+
+BZ 519977
+https://bugzilla.redhat.com/show_bug.cgi?id=519977
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of kernel version 2.6.27
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=a4b526b3ba6353cd89a38e41da48ed83b0ead16f
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+
+
+diff --git a/mm/rmap.c b/mm/rmap.c
+index 3c53315..da83d7b 100644
+--- a/mm/rmap.c
++++ b/mm/rmap.c
+@@ -495,10 +495,11 @@ int page_mkclean(struct page *page)
+ 
+ 	if (page_mapped(page)) {
+ 		struct address_space *mapping = page_mapping(page);
+-		if (mapping)
++		if (mapping) {
+ 			ret = page_mkclean_file(mapping, page);
+-		if (page_test_and_clear_dirty(page))
+-			ret = 1;
++			if (page_test_and_clear_dirty(page))
++				ret = 1;
++		}
+ 	}
+ 
+ 	return ret;
+@@ -597,7 +598,8 @@ void page_remove_rmap(struct page *page)
+ 		 * Leaving it set also helps swapoff to reinstate ptes
+ 		 * faster for those pages still in swapcache.
+ 		 */
+-		if (page_test_and_clear_dirty(page))
++		if ((!PageAnon(page) || PageSwapCache(page)) &&
++		    page_test_and_clear_dirty(page))
+ 			set_page_dirty(page);
+ 		__dec_zone_page_state(page,
+ 				PageAnon(page) ? NR_ANON_PAGES : NR_FILE_MAPPED);

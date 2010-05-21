@@ -1,0 +1,238 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Thu, 3 Dec 2009 15:18:21 -0500
+Subject: [x86] support AMD L3 cache index disable
+Message-id: <4B17D6BD.9000301@redhat.com>
+Patchwork-id: 21666
+O-Subject: Re: [RHEL5 PATCH] Support AMD L3 cache index disable
+Bugzilla: 517586
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Resolves BZ 517586
+
+The L3 cache index disable is an AMD feature that allows the OS to turn off
+parts of the L3 cache if excessive MCEs occur.  L3 cache errors can be reported
+by a thresholding MCE registers.  OS can selectively disable parts of the L3
+cache indices.
+
+Upstream status:
+This feature went upstream in 2.6.26, and some fixes were added to 2.6.32 (link
+below).
+http://lkml.org/lkml/2009/4/9/199
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2112531
+
+Testing:
+Regression tested on a few Dinar platforms successfully.
+
+Please review and ACK.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/intel_cacheinfo.c b/arch/i386/kernel/cpu/intel_cacheinfo.c
+index 2a00fa4..c181137 100644
+--- a/arch/i386/kernel/cpu/intel_cacheinfo.c
++++ b/arch/i386/kernel/cpu/intel_cacheinfo.c
+@@ -17,6 +17,9 @@
+ #include <asm/processor.h>
+ #include <asm/smp.h>
+ 
++#include <linux/pci.h>
++#include <asm/k8.h>
++
+ #define LVL_1_INST	1
+ #define LVL_1_DATA	2
+ #define LVL_2		3
+@@ -129,6 +132,7 @@ struct _cpuid4_info {
+ 	union _cpuid4_leaf_ebx ebx;
+ 	union _cpuid4_leaf_ecx ecx;
+ 	unsigned long size;
++	unsigned long can_disable;
+ 	cpumask_t shared_cpu_map;
+ };
+ 
+@@ -258,6 +262,22 @@ static void __cpuinit amd_cpuid4(int leaf, union _cpuid4_leaf_eax *eax,
+ 		(ebx->split.ways_of_associativity + 1) - 1;
+ }
+ 
++static void __cpuinit
++amd_check_l3_disable(int index, struct _cpuid4_info *this_leaf)
++{
++	if (index < 3)
++		return;
++
++	if (boot_cpu_data.x86 == 0x11)
++		return;
++
++	/* see erratum #382 */
++	if ((boot_cpu_data.x86 == 0x10) && (boot_cpu_data.x86_model < 0x8))
++		return;
++
++	this_leaf->can_disable = 1;
++}
++
+ static int __cpuinit cpuid4_cache_lookup(int index, struct _cpuid4_info *this_leaf)
+ {
+ 	union _cpuid4_leaf_eax 	eax;
+@@ -265,10 +285,13 @@ static int __cpuinit cpuid4_cache_lookup(int index, struct _cpuid4_info *this_le
+ 	union _cpuid4_leaf_ecx 	ecx;
+ 	unsigned		edx;
+ 
+-	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD)
++	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
+ 		amd_cpuid4(index, &eax, &ebx, &ecx);
+-	else
+-		cpuid_count(4, index, &eax.full, &ebx.full, &ecx.full,  &edx);
++		if (boot_cpu_data.x86 >= 0x10)
++			amd_check_l3_disable(index, this_leaf);
++	} else {
++		cpuid_count(4, index, &eax.full, &ebx.full, &ecx.full, &edx);
++	}
+ 	if (eax.split.type == CACHE_TYPE_NULL)
+ 		return -EIO; /* better error ? */
+ 
+@@ -628,6 +651,79 @@ static ssize_t show_type(struct _cpuid4_info *this_leaf, char *buf) {
+ 	}
+ }
+ 
++#define to_object(k) container_of(k, struct _index_kobject, kobj)
++#define to_attr(a) container_of(a, struct _cache_attr, attr)
++
++static ssize_t show_cache_disable(struct _cpuid4_info *this_leaf, char *buf,
++				  unsigned int index)
++{
++	int cpu = first_cpu(this_leaf->shared_cpu_map);
++	int node = cpu_to_node(cpu);
++	struct pci_dev *dev = node_to_k8_nb_misc(node);
++	unsigned int reg = 0;
++
++	if (!this_leaf->can_disable)
++		return -EINVAL;
++
++	if (!dev)
++		return -EINVAL;
++
++	pci_read_config_dword(dev, 0x1BC + index * 4, &reg);
++	return sprintf(buf, "%x\n", reg);
++}
++
++#define SHOW_CACHE_DISABLE(index)					\
++static ssize_t								\
++show_cache_disable_##index(struct _cpuid4_info *this_leaf, char *buf)	\
++{									\
++	return show_cache_disable(this_leaf, buf, index);		\
++}
++SHOW_CACHE_DISABLE(0)
++SHOW_CACHE_DISABLE(1)
++
++static ssize_t store_cache_disable(struct _cpuid4_info *this_leaf,
++	const char *buf, size_t count, unsigned int index)
++{
++	int cpu = first_cpu(this_leaf->shared_cpu_map);
++	int node = cpu_to_node(cpu);
++	struct pci_dev *dev = node_to_k8_nb_misc(node);
++	unsigned long val = 0;
++	unsigned int scrubber = 0;
++
++	if (!this_leaf->can_disable)
++		return -EINVAL;
++
++	if (!capable(CAP_SYS_ADMIN))
++		return -EPERM;
++
++	if (!dev)
++		return -EINVAL;
++
++	if (simple_strtoul(buf, (char **)(10), (unsigned int)(&val)) < 0)
++		return -EINVAL;
++
++	val |= 0xc0000000;
++
++	pci_read_config_dword(dev, 0x58, &scrubber);
++	scrubber &= ~0x1f000000;
++	pci_write_config_dword(dev, 0x58, scrubber);
++
++	pci_write_config_dword(dev, 0x1BC + index * 4, val & ~0x40000000);
++	wbinvd();
++	pci_write_config_dword(dev, 0x1BC + index * 4, val);
++	return count;
++}
++
++#define STORE_CACHE_DISABLE(index)					\
++static ssize_t								\
++store_cache_disable_##index(struct _cpuid4_info *this_leaf,		\
++			    const char *buf, size_t count)		\
++{									\
++	return store_cache_disable(this_leaf, buf, count, index);	\
++}
++STORE_CACHE_DISABLE(0)
++STORE_CACHE_DISABLE(1)
++
+ struct _cache_attr {
+ 	struct attribute attr;
+ 	ssize_t (*show)(struct _cpuid4_info *, char *);
+@@ -647,6 +743,11 @@ define_one_ro(number_of_sets);
+ define_one_ro(size);
+ define_one_ro(shared_cpu_map);
+ 
++static struct _cache_attr cache_disable_0 = __ATTR(cache_disable_0, 0644,
++		show_cache_disable_0, store_cache_disable_0);
++static struct _cache_attr cache_disable_1 = __ATTR(cache_disable_1, 0644,
++		show_cache_disable_1, store_cache_disable_1);
++
+ static struct attribute * default_attrs[] = {
+ 	&type.attr,
+ 	&level.attr,
+@@ -656,12 +757,11 @@ static struct attribute * default_attrs[] = {
+ 	&number_of_sets.attr,
+ 	&size.attr,
+ 	&shared_cpu_map.attr,
++	&cache_disable_0.attr,
++	&cache_disable_1.attr,
+ 	NULL
+ };
+ 
+-#define to_object(k) container_of(k, struct _index_kobject, kobj)
+-#define to_attr(a) container_of(a, struct _cache_attr, attr)
+-
+ static ssize_t show(struct kobject * kobj, struct attribute * attr, char * buf)
+ {
+ 	struct _cache_attr *fattr = to_attr(attr);
+@@ -678,7 +778,15 @@ static ssize_t show(struct kobject * kobj, struct attribute * attr, char * buf)
+ static ssize_t store(struct kobject * kobj, struct attribute * attr,
+ 		     const char * buf, size_t count)
+ {
+-	return 0;
++	struct _cache_attr *fattr = to_attr(attr);
++	struct _index_kobject *this_leaf = to_object(kobj);
++	ssize_t ret;
++
++	ret = fattr->store ?
++		fattr->store(CPUID4_INFO_IDX(this_leaf->cpu, this_leaf->index),
++			buf, count) :
++		0;
++	return ret;
+ }
+ 
+ static struct sysfs_ops sysfs_ops = {
+diff --git a/include/asm-x86_64/k8.h b/include/asm-x86_64/k8.h
+index 699dd69..56084e3 100644
+--- a/include/asm-x86_64/k8.h
++++ b/include/asm-x86_64/k8.h
+@@ -11,4 +11,16 @@ extern int num_k8_northbridges;
+ extern int cache_k8_northbridges(void);
+ extern void k8_flush_garts(void);
+ 
++#ifdef CONFIG_K8_NB
++static inline struct pci_dev *node_to_k8_nb_misc(int node)
++{
++	return (node < num_k8_northbridges) ? k8_northbridges[node] : NULL;
++}
++#else
++static inline struct pci_dev *node_to_k8_nb_misc(int node)
++{
++	return NULL;
++}
++#endif
++
+ #endif

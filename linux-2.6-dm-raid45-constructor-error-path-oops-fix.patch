@@ -1,0 +1,50 @@
+From: Heinz Mauelshagen <heinzm@redhat.com>
+Date: Tue, 23 Feb 2010 11:31:21 -0500
+Subject: [dm] raid45: constructor error path oops fix
+Message-id: <1266924681.21349.18.camel@o>
+Patchwork-id: 23404
+O-Subject: [RHEL5.5 PATCH] dm: raid45 target: constructor error path oops fix
+Bugzilla: 565494
+RH-Acked-by: Bryn M. Reeves <bmr@redhat.com>
+RH-Acked-by: Jonathan E Brassow <jbrassow@redhat.com>
+
+RHEL5.5 device mapper: raid45 target
+
+The RAID target oopses in el5.5 kernels on mapping table loads in the
+error path, because of an unconditional release of a failed dm_io_client
+creation in stripe_recover_free().
+
+Resolves: bz#565494
+
+Please ACK.
+
+Signed-off-by: Heinz Mauelshagen <heinzm@redhat.com>
+
+
+diff --git a/drivers/md/dm-raid45.c b/drivers/md/dm-raid45.c
+index bf74af8..889eac0 100644
+--- a/drivers/md/dm-raid45.c
++++ b/drivers/md/dm-raid45.c
+@@ -1449,7 +1449,7 @@ static void stripe_recover_free(struct raid_set *rs)
+ 
+ 	mc = rec->mem_cache_client;
+ 	rec->mem_cache_client = NULL;
+-	if (mc) {
++	if (mc && !IS_ERR(mc)) {
+ 		struct stripe *stripe;
+ 
+ 		while (!list_empty(&rec->stripes)) {
+@@ -1461,8 +1461,11 @@ static void stripe_recover_free(struct raid_set *rs)
+ 		}
+ 	
+ 		dm_mem_cache_client_destroy(mc);
+-		dm_io_client_destroy(rec->dm_io_client);
+-		rec->dm_io_client = NULL;
++
++		if (rec->dm_io_client && !IS_ERR(rec->dm_io_client)) {
++			dm_io_client_destroy(rec->dm_io_client);
++			rec->dm_io_client = NULL;
++		}
+ 	}
+ }
+ 

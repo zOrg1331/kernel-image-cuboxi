@@ -1,0 +1,76 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 4 Jun 2009 10:23:12 -0400
+Subject: [net] sunrpc: remove flush_workqueue from xs_connect
+Message-id: 1244125392-4954-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ#495059: sunrpc: remove unneeded flush_workqueue from xs_connect
+Bugzilla: 495059
+
+Posting this as a RHEL5.5 patch, but it might be nice to get this into
+5.4 if there's time...
+
+Frank Filz at IBM ran across this deadlock in a -128.el5 kernel. The
+NFSv4 renewal thread was hung here:
+
+10.0.11.43-re D 0000000000000000 12512 14208    515               13543 (L-TLB)
+Call Trace:
+[C0000000017475B0] [C000000000565D28] 0xc000000000565d28 (unreliable)
+[C000000001747780] [C000000000010ACC] .__switch_to+0x124/0x148
+[C000000001747810] [C0000000003C6454] .schedule+0xbfc/0xdb0
+[C000000001747920] [C000000000081DE0] .flush_cpu_workqueue+0xbc/0x140
+[C0000000017479E0] [C000000000081EFC] .flush_workqueue+0x98/0xe0
+[C000000001747A70] [D000000000D2545C] .xs_connect+0x108/0x128 [sunrpc]
+[C000000001747B00] [D000000000D240FC] .xprt_connect+0x194/0x1bc [sunrpc]
+[C000000001747BA0] [D000000000D21F34] .call_connect+0xa0/0xc0 [sunrpc]
+[C000000001747C30] [D000000000D2841C] .__rpc_execute+0xec/0x344 [sunrpc]
+[C000000001747CD0] [D000000000D20E84] .rpc_call_sync+0xac/0x100 [sunrpc]
+[C000000001747D70] [D000000000F3D18C] .nfs4_proc_renew+0x68/0xe0 [nfs]
+[C000000001747E20] [D000000000F4CBD8] .reclaimer+0x80/0x3a4 [nfs]
+[C000000001747EE0] [C000000000087248] .kthread+0x128/0x178
+[C000000001747F90] [C0000000000274C4] .kernel_thread+0x4c/0x68
+
+...and there's a hung events thread that looks like this:
+
+events/5      D 0000000000000000  9792    31      1 32    30 (L-TLB)
+Call Trace:
+[C0000001DFDB77D0] [C0000001D9430C00] 0xc0000001d9430c00 (unreliable)
+[C0000001DFDB79A0] [C000000000010ACC] .__switch_to+0x124/0x148
+[C0000001DFDB7A30] [C0000000003C6454] .schedule+0xbfc/0xdb0
+[C0000001DFDB7B40] [C0000000003C8C10] .rwsem_down_read_failed+0x27c/0x2c4
+[C0000001DFDB7C10] [C00000000008B06C] .down_read+0x44/0x5c
+[C0000001DFDB7CA0] [D000000000F4DED8] .nfs4_renew_state+0x3c/0x270 [nfs]
+[C0000001DFDB7D50] [C0000000000819D0] .run_workqueue+0xdc/0x168
+[C0000001DFDB7DF0] [C00000000008273C] .worker_thread+0x12c/0x19c
+[C0000001DFDB7EE0] [C000000000087248] .kthread+0x128/0x178
+[C0000001DFDB7F90] [C0000000000274C4] .kernel_thread+0x4c/0x68
+
+This makes all access to any NFS mounts come to a stop. The renewal
+thread is holding the semaphore that the events thread needs to complete
+its work. It called flush_workqueue but that can't complete until the
+work on events/5 is done.
+
+I believe the flush_workqueue() call in xs_connect() is no longer needed
+and should have been removed as part of the fix for BZ#448754. Since
+that code no longer queues work to the events workqueue, there should be
+no need to flush it.
+
+This is a difficult to reproduce deadlock so I can't confirm that this
+fixes the problem, but I have run this patch in my test kernels for a
+month or two and haven't seen any ill effects.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/net/sunrpc/xprtsock.c b/net/sunrpc/xprtsock.c
+index 2b694e1..a46af3b 100644
+--- a/net/sunrpc/xprtsock.c
++++ b/net/sunrpc/xprtsock.c
+@@ -1275,10 +1275,6 @@ static void xs_connect(struct rpc_task *task)
+ 	} else {
+ 		dprintk("RPC:      xs_connect scheduled xprt %p\n", xprt);
+ 		queue_work(rpciod_workqueue, &xprt->connect_worker);
+-
+-		/* flush_scheduled_work can sleep... */
+-		if (!RPC_IS_ASYNC(task))
+-			flush_scheduled_work();
+ 	}
+ }
+ 

@@ -1,0 +1,42 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 4 Jan 2010 22:52:36 -0500
+Subject: [scsi] lpfc: Fix fc header seq_count checks
+Message-id: <20100104225242.24386.30877.sendpatchset@localhost.localdomain>
+Patchwork-id: 22305
+O-Subject: [RHEL5.5 PATCH 13/18] Fixed fc header seq_count checks. (CR: 97010)
+Bugzilla: 549763
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=549763
+
+Fixed fc header seq_count checks. (CR: 97010)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index ed13f5d..4607e60 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -11034,8 +11034,8 @@ lpfc_fc_frame_add(struct lpfc_vport *vport, struct hbq_dmabuf *dmabuf)
+ 		return dmabuf;
+ 	}
+ 	temp_hdr = seq_dmabuf->hbuf.virt;
+-	if (be32_to_cpu(new_hdr->fh_seq_cnt) <
+-		be32_to_cpu(temp_hdr->fh_seq_cnt)) {
++	if (be16_to_cpu(new_hdr->fh_seq_cnt) <
++		be16_to_cpu(temp_hdr->fh_seq_cnt)) {
+ 		list_del_init(&seq_dmabuf->hbuf.list);
+ 		list_add_tail(&dmabuf->hbuf.list, &vport->rcv_buffer_list);
+ 		list_add_tail(&dmabuf->dbuf.list, &seq_dmabuf->dbuf.list);
+@@ -11059,8 +11059,8 @@ lpfc_fc_frame_add(struct lpfc_vport *vport, struct hbq_dmabuf *dmabuf)
+ 		 * If the frame's sequence count is greater than the frame on
+ 		 * the list then insert the frame right after this frame
+ 		 */
+-		if (be32_to_cpu(new_hdr->fh_seq_cnt) >
+-			be32_to_cpu(temp_hdr->fh_seq_cnt)) {
++		if (be16_to_cpu(new_hdr->fh_seq_cnt) >
++			be16_to_cpu(temp_hdr->fh_seq_cnt)) {
+ 			list_add(&dmabuf->dbuf.list, &temp_dmabuf->dbuf.list);
+ 			return seq_dmabuf;
+ 		}
