@@ -49,27 +49,33 @@
 #define ceph_test_opt(client, opt) \
 	(!!((client)->mount_args->flags & CEPH_OPT_##opt))
 
-
 struct ceph_mount_args {
 	int sb_flags;
-	int num_mon;
-	struct ceph_entity_addr *mon_addr;
 	int flags;
-	int mount_timeout;
-	int osd_idle_ttl;
-	int caps_wanted_delay_min, caps_wanted_delay_max;
 	struct ceph_fsid fsid;
 	struct ceph_entity_addr my_addr;
-	int wsize;
-	int rsize;            /* max readahead */
-	int max_readdir;      /* max readdir size */
-	int congestion_kb;      /* max readdir size */
+	int mount_timeout;
+	int osd_idle_ttl;
 	int osd_timeout;
 	int osd_keepalive_timeout;
+	int wsize;
+	int rsize;            /* max readahead */
+	int congestion_kb;    /* max writeback in flight */
+	int caps_wanted_delay_min, caps_wanted_delay_max;
+	int cap_release_safety;
+	int max_readdir;       /* max readdir result (entires) */
+	int max_readdir_bytes; /* max readdir result (bytes) */
+
+	/* any type that can't be simply compared or doesn't need
+	   need to be compared should go beyond this point,
+	   ceph_compare_mount_args() should be updated accordingly */
+	struct ceph_entity_addr *mon_addr; /* should be the first
+					      pointer type of args */
+	int num_mon;
 	char *snapdir_name;   /* default ".snap" */
 	char *name;
 	char *secret;
-	int cap_release_safety;
+	char *snap;	/* rbd snapshot */
 };
 
 /*
@@ -80,13 +86,14 @@ struct ceph_mount_args {
 #define CEPH_OSD_KEEPALIVE_DEFAULT  5
 #define CEPH_OSD_IDLE_TTL_DEFAULT    60
 #define CEPH_MOUNT_RSIZE_DEFAULT    (512*1024) /* readahead */
+#define CEPH_MAX_READDIR_DEFAULT    1024
+#define CEPH_MAX_READDIR_BYTES_DEFAULT    (512*1024)
 
 #define CEPH_MSG_MAX_FRONT_LEN	(16*1024*1024)
 #define CEPH_MSG_MAX_DATA_LEN	(16*1024*1024)
 
 #define CEPH_SNAPDIRNAME_DEFAULT ".snap"
 #define CEPH_AUTH_NAME_DEFAULT   "guest"
-
 /*
  * Delay telling the MDS we no longer want caps, in case we reopen
  * the file.  Delay a minimum amount of time, even if we send a cap
@@ -96,6 +103,7 @@ struct ceph_mount_args {
 #define CEPH_CAPS_WANTED_DELAY_MIN_DEFAULT      5  /* cap release delay */
 #define CEPH_CAPS_WANTED_DELAY_MAX_DEFAULT     60  /* cap release delay */
 
+#define CEPH_CAP_RELEASE_SAFETY_DEFAULT        (CEPH_CAPS_PER_RELEASE * 4)
 
 /* mount state */
 enum {
@@ -137,6 +145,8 @@ struct ceph_client {
 
 	int min_caps;                  /* min caps i added */
 
+	int have_mdsc;
+
 	struct ceph_messenger *msgr;   /* messenger instance */
 	struct ceph_mon_client monc;
 	struct ceph_mds_client mdsc;
@@ -159,12 +169,6 @@ struct ceph_client {
 	struct dentry *debugfs_bdi;
 #endif
 };
-
-static inline struct ceph_client *ceph_client(struct super_block *sb)
-{
-	return sb->s_fs_info;
-}
-
 
 /*
  * File i/o capability.  This tracks shared state with the metadata
@@ -741,6 +745,17 @@ extern struct kmem_cache *ceph_file_cachep;
 
 extern const char *ceph_msg_type_name(int type);
 extern int ceph_check_fsid(struct ceph_client *client, struct ceph_fsid *fsid);
+extern struct ceph_mount_args *parse_mount_args(int flags, char *options,
+						const char *dev_name,
+						const char **path);
+extern void ceph_destroy_mount_args(struct ceph_mount_args *args);
+extern int ceph_compare_mount_args(struct ceph_mount_args *new_args,
+			    struct ceph_client *client);
+extern struct ceph_client *ceph_create_client(struct ceph_mount_args *args,
+					      int need_mdsc);
+extern u64 ceph_client_id(struct ceph_client *client);
+extern void ceph_destroy_client(struct ceph_client *client);
+extern int ceph_open_session(struct ceph_client *client);
 
 #define FSID_FORMAT "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-" \
 	"%02x%02x%02x%02x%02x%02x"
@@ -851,6 +866,13 @@ extern int ceph_mmap(struct file *file, struct vm_area_struct *vma);
 /* file.c */
 extern const struct file_operations ceph_file_fops;
 extern const struct address_space_operations ceph_aops;
+extern int ceph_copy_to_page_vector(struct page **pages,
+				    const char *data,
+				    loff_t off, size_t len);
+extern int ceph_copy_from_page_vector(struct page **pages,
+				    char *data,
+				    loff_t off, size_t len);
+extern struct page **ceph_alloc_page_vector(int num_pages, gfp_t flags);
 extern int ceph_open(struct inode *inode, struct file *file);
 extern struct dentry *ceph_lookup_open(struct inode *dir, struct dentry *dentry,
 				       struct nameidata *nd, int mode,
@@ -871,6 +893,7 @@ extern struct dentry *ceph_finish_lookup(struct ceph_mds_request *req,
 extern void ceph_dentry_lru_add(struct dentry *dn);
 extern void ceph_dentry_lru_touch(struct dentry *dn);
 extern void ceph_dentry_lru_del(struct dentry *dn);
+extern void ceph_invalidate_dentry_lease(struct dentry *dentry);
 
 /*
  * our d_ops vary depending on whether the inode is live,
@@ -898,5 +921,10 @@ static inline struct inode *get_dentry_parent_inode(struct dentry *dentry)
 
 	return NULL;
 }
+
+#ifndef CONFIG_RBD
+static inline int __init rbd_init(void) { return 0; }
+static inline void __exit rbd_exit(void) {}
+#endif
 
 #endif /* _FS_CEPH_SUPER_H */
