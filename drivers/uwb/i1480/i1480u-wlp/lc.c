@@ -93,28 +93,28 @@ void i1480u_init(struct i1480u *i1480u)
  * information elements have intuitive mappings, other not.
  */
 static
-void i1480u_fill_device_info(struct wlp *wlp, struct wlp_device_info *dev_info)
+void i1480u_fill_device_info(struct wlp *wlp, struct wlp_device_info *wdi)
 {
 	struct i1480u *i1480u = container_of(wlp, struct i1480u, wlp);
 	struct usb_device *usb_dev = i1480u->usb_dev;
 	/* Treat device name and model name the same */
 	if (usb_dev->descriptor.iProduct) {
 		usb_string(usb_dev, usb_dev->descriptor.iProduct,
-			   dev_info->name, sizeof(dev_info->name));
+			   wdi->name, sizeof(wdi->name));
 		usb_string(usb_dev, usb_dev->descriptor.iProduct,
-			   dev_info->model_name, sizeof(dev_info->model_name));
+			   wdi->model_name, sizeof(wdi->model_name));
 	}
 	if (usb_dev->descriptor.iManufacturer)
 		usb_string(usb_dev, usb_dev->descriptor.iManufacturer,
-			   dev_info->manufacturer,
-			   sizeof(dev_info->manufacturer));
-	scnprintf(dev_info->model_nr, sizeof(dev_info->model_nr), "%04x",
+			   wdi->manufacturer,
+			   sizeof(wdi->manufacturer));
+	scnprintf(wdi->model_nr, sizeof(wdi->model_nr), "%04x",
 		  __le16_to_cpu(usb_dev->descriptor.bcdDevice));
 	if (usb_dev->descriptor.iSerialNumber)
 		usb_string(usb_dev, usb_dev->descriptor.iSerialNumber,
-			   dev_info->serial, sizeof(dev_info->serial));
+			   wdi->serial, sizeof(wdi->serial));
 	/* FIXME: where should we obtain category? */
-	dev_info->prim_dev_type.category = cpu_to_le16(WLP_DEV_CAT_OTHER);
+	wdi->prim_dev_type.category = cpu_to_le16(WLP_DEV_CAT_OTHER);
 	/* FIXME: Complete OUI and OUIsubdiv attributes */
 }
 
