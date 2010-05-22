@@ -9,6 +9,8 @@
 #include <linux/slab.h>
 #include <linux/socket.h>
 #include <linux/string.h>
+#include <linux/bio.h>
+#include <linux/blkdev.h>
 #include <net/tcp.h>
 
 #include "super.h"
@@ -38,18 +40,6 @@ static struct lock_class_key socket_class;
 static void queue_con(struct ceph_connection *con);
 static void con_work(struct work_struct *);
 static void ceph_fault(struct ceph_connection *con);
-
-const char *ceph_name_type_str(int t)
-{
-	switch (t) {
-	case CEPH_ENTITY_TYPE_MON: return "mon";
-	case CEPH_ENTITY_TYPE_MDS: return "mds";
-	case CEPH_ENTITY_TYPE_OSD: return "osd";
-	case CEPH_ENTITY_TYPE_CLIENT: return "client";
-	case CEPH_ENTITY_TYPE_ADMIN: return "admin";
-	default: return "???";
-	}
-}
 
 /*
  * nicely render a sockaddr as a string.
@@ -340,6 +330,7 @@ static void reset_connection(struct ceph_connection *con)
 		ceph_msg_put(con->out_msg);
 		con->out_msg = NULL;
 	}
+	con->out_keepalive_pending = false;
 	con->in_seq = 0;
 	con->in_seq_acked = 0;
 }
@@ -357,6 +348,7 @@ void ceph_con_close(struct ceph_connection *con)
 	clear_bit(WRITE_PENDING, &con->state);
 	mutex_lock(&con->mutex);
 	reset_connection(con);
+	con->peer_global_seq = 0;
 	cancel_delayed_work(&con->work);
 	mutex_unlock(&con->mutex);
 	queue_con(con);
@@ -543,8 +535,11 @@ static void prepare_write_message(struct ceph_connection *con)
 	if (le32_to_cpu(m->hdr.data_len) > 0) {
 		/* initialize page iterator */
 		con->out_msg_pos.page = 0;
-		con->out_msg_pos.page_pos =
-			le16_to_cpu(m->hdr.data_off) & ~PAGE_MASK;
+		if (m->pages)
+			con->out_msg_pos.page_pos =
+				le16_to_cpu(m->hdr.data_off) & ~PAGE_MASK;
+		else
+			con->out_msg_pos.page_pos = 0;
 		con->out_msg_pos.data_pos = 0;
 		con->out_msg_pos.did_page_crc = 0;
 		con->out_more = 1;  /* data + footer will follow */
@@ -661,7 +656,7 @@ static void prepare_write_connect(struct ceph_messenger *msgr,
 	dout("prepare_write_connect %p cseq=%d gseq=%d proto=%d\n", con,
 	     con->connect_seq, global_seq, proto);
 
-	con->out_connect.features = CEPH_FEATURE_SUPPORTED;
+	con->out_connect.features = CEPH_FEATURE_SUPPORTED_CLIENT;
 	con->out_connect.host_type = cpu_to_le32(CEPH_ENTITY_TYPE_CLIENT);
 	con->out_connect.connect_seq = cpu_to_le32(con->connect_seq);
 	con->out_connect.global_seq = cpu_to_le32(global_seq);
@@ -726,6 +721,31 @@ out:
 	return ret;  /* done! */
 }
 
+#ifdef CONFIG_BLOCK
+static void init_bio_iter(struct bio *bio, struct bio **iter, int *seg)
+{
+	if (!bio) {
+		*iter = NULL;
+		*seg = 0;
+		return;
+	}
+	*iter = bio;
+	*seg = bio->bi_idx;
+}
+
+static void iter_bio_next(struct bio **bio_iter, int *seg)
+{
+	if (*bio_iter == NULL)
+		return;
+
+	BUG_ON(*seg >= (*bio_iter)->bi_vcnt);
+
+	(*seg)++;
+	if (*seg == (*bio_iter)->bi_vcnt)
+		init_bio_iter((*bio_iter)->bi_next, bio_iter, seg);
+}
+#endif
+
 /*
  * Write as much message data payload as we can.  If we finish, queue
  * up the footer.
@@ -745,9 +765,16 @@ static int write_partial_msg_pages(struct ceph_connection *con)
 	     con, con->out_msg, con->out_msg_pos.page, con->out_msg->nr_pages,
 	     con->out_msg_pos.page_pos);
 
-	while (con->out_msg_pos.page < con->out_msg->nr_pages) {
+#ifdef CONFIG_BLOCK
+	if (msg->bio && !msg->bio_iter)
+		init_bio_iter(msg->bio, &msg->bio_iter, &msg->bio_seg);
+#endif
+
+	while (data_len - con->out_msg_pos.data_pos > 0) {
 		struct page *page = NULL;
 		void *kaddr = NULL;
+		int max_write = PAGE_SIZE;
+		int page_shift = 0;
 
 		/*
 		 * if we are calculating the data crc (the default), we need
@@ -763,13 +790,24 @@ static int write_partial_msg_pages(struct ceph_connection *con)
 						struct page, lru);
 			if (crc)
 				kaddr = kmap(page);
+#ifdef CONFIG_BLOCK
+		} else if (msg->bio) {
+			struct bio_vec *bv;
+
+			bv = bio_iovec_idx(msg->bio_iter, msg->bio_seg);
+			page = bv->bv_page;
+			page_shift = bv->bv_offset;
+			if (crc)
+				kaddr = kmap(page) + page_shift;
+			max_write = bv->bv_len;
+#endif
 		} else {
 			page = con->msgr->zero_page;
 			if (crc)
 				kaddr = page_address(con->msgr->zero_page);
 		}
-		len = min((int)(PAGE_SIZE - con->out_msg_pos.page_pos),
-			  (int)(data_len - con->out_msg_pos.data_pos));
+		len = min_t(int, max_write - con->out_msg_pos.page_pos,
+			    data_len - con->out_msg_pos.data_pos);
 		if (crc && !con->out_msg_pos.did_page_crc) {
 			void *base = kaddr + con->out_msg_pos.page_pos;
 			u32 tmpcrc = le32_to_cpu(con->out_msg->footer.data_crc);
@@ -781,11 +819,12 @@ static int write_partial_msg_pages(struct ceph_connection *con)
 		}
 
 		ret = kernel_sendpage(con->sock, page,
-				      con->out_msg_pos.page_pos, len,
+				      con->out_msg_pos.page_pos + page_shift,
+				      len,
 				      MSG_DONTWAIT | MSG_NOSIGNAL |
 				      MSG_MORE);
 
-		if (crc && (msg->pages || msg->pagelist))
+		if (crc && (msg->pages || msg->pagelist || msg->bio))
 			kunmap(page);
 
 		if (ret <= 0)
@@ -800,6 +839,10 @@ static int write_partial_msg_pages(struct ceph_connection *con)
 			if (msg->pagelist)
 				list_move_tail(&page->lru,
 					       &msg->pagelist->head);
+#ifdef CONFIG_BLOCK
+			if (msg->bio)
+				iter_bio_next(&msg->bio_iter, &msg->bio_seg);
+#endif
 		}
 	}
 
@@ -1124,8 +1167,8 @@ static void fail_protocol(struct ceph_connection *con)
 
 static int process_connect(struct ceph_connection *con)
 {
-	u64 sup_feat = CEPH_FEATURE_SUPPORTED;
-	u64 req_feat = CEPH_FEATURE_REQUIRED;
+	u64 sup_feat = CEPH_FEATURE_SUPPORTED_CLIENT;
+	u64 req_feat = CEPH_FEATURE_REQUIRED_CLIENT;
 	u64 server_feat = le64_to_cpu(con->in_reply.features);
 
 	dout("process_connect on %p tag %d\n", con, (int)con->in_tag);
@@ -1233,6 +1276,7 @@ static int process_connect(struct ceph_connection *con)
 		clear_bit(CONNECTING, &con->state);
 		con->peer_global_seq = le32_to_cpu(con->in_reply.global_seq);
 		con->connect_seq++;
+		con->peer_features = server_feat;
 		dout("process_connect got READY gseq %d cseq %d (%d)\n",
 		     con->peer_global_seq,
 		     le32_to_cpu(con->in_reply.connect_seq),
@@ -1305,8 +1349,7 @@ static int read_partial_message_section(struct ceph_connection *con,
 					struct kvec *section, unsigned int sec_len,
 					u32 *crc)
 {
-	int left;
-	int ret;
+	int ret, left;
 
 	BUG_ON(!section);
 
@@ -1329,13 +1372,83 @@ static int read_partial_message_section(struct ceph_connection *con,
 static struct ceph_msg *ceph_alloc_msg(struct ceph_connection *con,
 				struct ceph_msg_header *hdr,
 				int *skip);
+
+
+static int read_partial_message_pages(struct ceph_connection *con,
+				      struct page **pages,
+				      unsigned data_len, int datacrc)
+{
+	void *p;
+	int ret;
+	int left;
+
+	left = min((int)(data_len - con->in_msg_pos.data_pos),
+		   (int)(PAGE_SIZE - con->in_msg_pos.page_pos));
+	/* (page) data */
+	BUG_ON(pages == NULL);
+	p = kmap(pages[con->in_msg_pos.page]);
+	ret = ceph_tcp_recvmsg(con->sock, p + con->in_msg_pos.page_pos,
+			       left);
+	if (ret > 0 && datacrc)
+		con->in_data_crc =
+			crc32c(con->in_data_crc,
+				  p + con->in_msg_pos.page_pos, ret);
+	kunmap(pages[con->in_msg_pos.page]);
+	if (ret <= 0)
+		return ret;
+	con->in_msg_pos.data_pos += ret;
+	con->in_msg_pos.page_pos += ret;
+	if (con->in_msg_pos.page_pos == PAGE_SIZE) {
+		con->in_msg_pos.page_pos = 0;
+		con->in_msg_pos.page++;
+	}
+
+	return ret;
+}
+
+#ifdef CONFIG_BLOCK
+static int read_partial_message_bio(struct ceph_connection *con,
+				    struct bio **bio_iter, int *bio_seg,
+				    unsigned data_len, int datacrc)
+{
+	struct bio_vec *bv = bio_iovec_idx(*bio_iter, *bio_seg);
+	void *p;
+	int ret, left;
+
+	if (IS_ERR(bv))
+		return PTR_ERR(bv);
+
+	left = min((int)(data_len - con->in_msg_pos.data_pos),
+		   (int)(bv->bv_len - con->in_msg_pos.page_pos));
+
+	p = kmap(bv->bv_page) + bv->bv_offset;
+
+	ret = ceph_tcp_recvmsg(con->sock, p + con->in_msg_pos.page_pos,
+			       left);
+	if (ret > 0 && datacrc)
+		con->in_data_crc =
+			crc32c(con->in_data_crc,
+				  p + con->in_msg_pos.page_pos, ret);
+	kunmap(bv->bv_page);
+	if (ret <= 0)
+		return ret;
+	con->in_msg_pos.data_pos += ret;
+	con->in_msg_pos.page_pos += ret;
+	if (con->in_msg_pos.page_pos == bv->bv_len) {
+		con->in_msg_pos.page_pos = 0;
+		iter_bio_next(bio_iter, bio_seg);
+	}
+
+	return ret;
+}
+#endif
+
 /*
  * read (part of) a message.
  */
 static int read_partial_message(struct ceph_connection *con)
 {
 	struct ceph_msg *m = con->in_msg;
-	void *p;
 	int ret;
 	int to, left;
 	unsigned front_len, middle_len, data_len, data_off;
@@ -1402,19 +1515,17 @@ static int read_partial_message(struct ceph_connection *con)
 		con->in_msg = ceph_alloc_msg(con, &con->in_hdr, &skip);
 		if (skip) {
 			/* skip this message */
-			dout("alloc_msg returned NULL, skipping message\n");
+			dout("alloc_msg said skip message\n");
 			con->in_base_pos = -front_len - middle_len - data_len -
 				sizeof(m->footer);
 			con->in_tag = CEPH_MSGR_TAG_READY;
 			con->in_seq++;
 			return 0;
 		}
-		if (IS_ERR(con->in_msg)) {
-			ret = PTR_ERR(con->in_msg);
-			con->in_msg = NULL;
+		if (!con->in_msg) {
 			con->error_msg =
 				"error allocating memory for incoming message";
-			return ret;
+			return -ENOMEM;
 		}
 		m = con->in_msg;
 		m->front.iov_len = 0;    /* haven't read it yet */
@@ -1422,7 +1533,10 @@ static int read_partial_message(struct ceph_connection *con)
 			m->middle->vec.iov_len = 0;
 
 		con->in_msg_pos.page = 0;
-		con->in_msg_pos.page_pos = data_off & ~PAGE_MASK;
+		if (m->pages)
+			con->in_msg_pos.page_pos = data_off & ~PAGE_MASK;
+		else
+			con->in_msg_pos.page_pos = 0;
 		con->in_msg_pos.data_pos = 0;
 	}
 
@@ -1439,27 +1553,29 @@ static int read_partial_message(struct ceph_connection *con)
 		if (ret <= 0)
 			return ret;
 	}
+#ifdef CONFIG_BLOCK
+	if (m->bio && !m->bio_iter)
+		init_bio_iter(m->bio, &m->bio_iter, &m->bio_seg);
+#endif
 
 	/* (page) data */
 	while (con->in_msg_pos.data_pos < data_len) {
-		left = min((int)(data_len - con->in_msg_pos.data_pos),
-			   (int)(PAGE_SIZE - con->in_msg_pos.page_pos));
-		BUG_ON(m->pages == NULL);
-		p = kmap(m->pages[con->in_msg_pos.page]);
-		ret = ceph_tcp_recvmsg(con->sock, p + con->in_msg_pos.page_pos,
-				       left);
-		if (ret > 0 && datacrc)
-			con->in_data_crc =
-				crc32c(con->in_data_crc,
-					  p + con->in_msg_pos.page_pos, ret);
-		kunmap(m->pages[con->in_msg_pos.page]);
-		if (ret <= 0)
-			return ret;
-		con->in_msg_pos.data_pos += ret;
-		con->in_msg_pos.page_pos += ret;
-		if (con->in_msg_pos.page_pos == PAGE_SIZE) {
-			con->in_msg_pos.page_pos = 0;
-			con->in_msg_pos.page++;
+		if (m->pages) {
+			ret = read_partial_message_pages(con, m->pages,
+						 data_len, datacrc);
+			if (ret <= 0)
+				return ret;
+#ifdef CONFIG_BLOCK
+		} else if (m->bio) {
+
+			ret = read_partial_message_bio(con,
+						 &m->bio_iter, &m->bio_seg,
+						 data_len, datacrc);
+			if (ret <= 0)
+				return ret;
+#endif
+		} else {
+			BUG_ON(1);
 		}
 	}
 
@@ -1514,14 +1630,14 @@ static void process_message(struct ceph_connection *con)
 
 	/* if first message, set peer_name */
 	if (con->peer_name.type == 0)
-		con->peer_name = msg->hdr.src.name;
+		con->peer_name = msg->hdr.src;
 
 	con->in_seq++;
 	mutex_unlock(&con->mutex);
 
 	dout("===== %p %llu from %s%lld %d=%s len %d+%d (%u %u %u) =====\n",
 	     msg, le64_to_cpu(msg->hdr.seq),
-	     ENTITY_NAME(msg->hdr.src.name),
+	     ENTITY_NAME(msg->hdr.src),
 	     le16_to_cpu(msg->hdr.type),
 	     ceph_msg_type_name(le16_to_cpu(msg->hdr.type)),
 	     le32_to_cpu(msg->hdr.front_len),
@@ -1546,7 +1662,6 @@ static int try_write(struct ceph_connection *con)
 	dout("try_write start %p state %lu nref %d\n", con, con->state,
 	     atomic_read(&con->nref));
 
-	mutex_lock(&con->mutex);
 more:
 	dout("try_write out_kvec_bytes %d\n", con->out_kvec_bytes);
 
@@ -1639,7 +1754,6 @@ do_next:
 done:
 	ret = 0;
 out:
-	mutex_unlock(&con->mutex);
 	dout("try_write done on %p\n", con);
 	return ret;
 }
@@ -1651,7 +1765,6 @@ out:
  */
 static int try_read(struct ceph_connection *con)
 {
-	struct ceph_messenger *msgr;
 	int ret = -1;
 
 	if (!con->sock)
@@ -1661,9 +1774,6 @@ static int try_read(struct ceph_connection *con)
 		return 0;
 
 	dout("try_read start on %p\n", con);
-	msgr = con->msgr;
-
-	mutex_lock(&con->mutex);
 
 more:
 	dout("try_read tag %d in_base_pos %d\n", (int)con->in_tag,
@@ -1758,7 +1868,6 @@ more:
 done:
 	ret = 0;
 out:
-	mutex_unlock(&con->mutex);
 	dout("try_read done on %p\n", con);
 	return ret;
 
@@ -1830,6 +1939,8 @@ more:
 	dout("con_work %p start, clearing QUEUED\n", con);
 	clear_bit(QUEUED, &con->state);
 
+	mutex_lock(&con->mutex);
+
 	if (test_bit(CLOSED, &con->state)) { /* e.g. if we are replaced */
 		dout("con_work CLOSED\n");
 		con_close_socket(con);
@@ -1844,11 +1955,16 @@ more:
 	if (test_and_clear_bit(SOCK_CLOSED, &con->state) ||
 	    try_read(con) < 0 ||
 	    try_write(con) < 0) {
+		mutex_unlock(&con->mutex);
 		backoff = 1;
 		ceph_fault(con);     /* error/fault path */
+		goto done_unlocked;
 	}
 
 done:
+	mutex_unlock(&con->mutex);
+
+done_unlocked:
 	clear_bit(BUSY, &con->state);
 	dout("con->state=%lu\n", con->state);
 	if (test_bit(QUEUED, &con->state)) {
@@ -1947,7 +2063,7 @@ struct ceph_messenger *ceph_messenger_create(struct ceph_entity_addr *myaddr)
 
 	/* the zero page is needed if a request is "canceled" while the message
 	 * is being written over the socket */
-	msgr->zero_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+	msgr->zero_page = __page_cache_alloc(GFP_KERNEL | __GFP_ZERO);
 	if (!msgr->zero_page) {
 		kfree(msgr);
 		return ERR_PTR(-ENOMEM);
@@ -1987,9 +2103,7 @@ void ceph_con_send(struct ceph_connection *con, struct ceph_msg *msg)
 	}
 
 	/* set src+dst */
-	msg->hdr.src.name = con->msgr->inst.name;
-	msg->hdr.src.addr = con->msgr->my_enc_addr;
-	msg->hdr.orig_src = msg->hdr.src;
+	msg->hdr.src = con->msgr->inst.name;
 
 	BUG_ON(msg->front.iov_len != le32_to_cpu(msg->hdr.front_len));
 
@@ -2083,12 +2197,11 @@ void ceph_con_keepalive(struct ceph_connection *con)
  * construct a new message with given type, size
  * the new msg has a ref count of 1.
  */
-struct ceph_msg *ceph_msg_new(int type, int front_len,
-			      int page_len, int page_off, struct page **pages)
+struct ceph_msg *ceph_msg_new(int type, int front_len, gfp_t flags)
 {
 	struct ceph_msg *m;
 
-	m = kmalloc(sizeof(*m), GFP_NOFS);
+	m = kmalloc(sizeof(*m), flags);
 	if (m == NULL)
 		goto out;
 	kref_init(&m->kref);
@@ -2100,8 +2213,8 @@ struct ceph_msg *ceph_msg_new(int type, int front_len,
 	m->hdr.version = 0;
 	m->hdr.front_len = cpu_to_le32(front_len);
 	m->hdr.middle_len = 0;
-	m->hdr.data_len = cpu_to_le32(page_len);
-	m->hdr.data_off = cpu_to_le16(page_off);
+	m->hdr.data_len = 0;
+	m->hdr.data_off = 0;
 	m->hdr.reserved = 0;
 	m->footer.front_crc = 0;
 	m->footer.middle_crc = 0;
@@ -2115,11 +2228,11 @@ struct ceph_msg *ceph_msg_new(int type, int front_len,
 	/* front */
 	if (front_len) {
 		if (front_len > PAGE_CACHE_SIZE) {
-			m->front.iov_base = __vmalloc(front_len, GFP_NOFS,
+			m->front.iov_base = __vmalloc(front_len, flags,
 						      PAGE_KERNEL);
 			m->front_is_vmalloc = true;
 		} else {
-			m->front.iov_base = kmalloc(front_len, GFP_NOFS);
+			m->front.iov_base = kmalloc(front_len, flags);
 		}
 		if (m->front.iov_base == NULL) {
 			pr_err("msg_new can't allocate %d bytes\n",
@@ -2135,19 +2248,21 @@ struct ceph_msg *ceph_msg_new(int type, int front_len,
 	m->middle = NULL;
 
 	/* data */
-	m->nr_pages = calc_pages_for(page_off, page_len);
-	m->pages = pages;
+	m->nr_pages = 0;
+	m->pages = NULL;
 	m->pagelist = NULL;
+	m->bio = NULL;
+	m->bio_iter = NULL;
+	m->bio_seg = 0;
 
-	dout("ceph_msg_new %p page %d~%d -> %d\n", m, page_off, page_len,
-	     m->nr_pages);
+	dout("ceph_msg_new %p front %d\n", m, front_len);
 	return m;
 
 out2:
 	ceph_msg_put(m);
 out:
-	pr_err("msg_new can't create type %d len %d\n", type, front_len);
-	return ERR_PTR(-ENOMEM);
+	pr_err("msg_new can't create type %d front %d\n", type, front_len);
+	return NULL;
 }
 
 /*
@@ -2190,29 +2305,25 @@ static struct ceph_msg *ceph_alloc_msg(struct ceph_connection *con,
 		mutex_unlock(&con->mutex);
 		msg = con->ops->alloc_msg(con, hdr, skip);
 		mutex_lock(&con->mutex);
-		if (IS_ERR(msg))
-			return msg;
-
-		if (*skip)
+		if (!msg || *skip)
 			return NULL;
 	}
 	if (!msg) {
 		*skip = 0;
-		msg = ceph_msg_new(type, front_len, 0, 0, NULL);
+		msg = ceph_msg_new(type, front_len, GFP_NOFS);
 		if (!msg) {
 			pr_err("unable to allocate msg type %d len %d\n",
 			       type, front_len);
-			return ERR_PTR(-ENOMEM);
+			return NULL;
 		}
 	}
 	memcpy(&msg->hdr, &con->in_hdr, sizeof(con->in_hdr));
 
-	if (middle_len) {
+	if (middle_len && !msg->middle) {
 		ret = ceph_alloc_middle(con, msg);
-
 		if (ret < 0) {
 			ceph_msg_put(msg);
-			return msg;
+			return NULL;
 		}
 	}
 
