@@ -49,7 +49,8 @@ void cpuidle_unregister_driver(struct cpuidle_driver *drv)
 		return;
 
 	spin_lock(&cpuidle_driver_lock);
-	cpuidle_curr_driver = NULL;
+	if (drv == cpuidle_curr_driver)
+		cpuidle_curr_driver = NULL;
 	spin_unlock(&cpuidle_driver_lock);
 }
 
