@@ -45,8 +45,7 @@ EXPORT_SYMBOL_GPL(cpuidle_register_driver);
  */
 void cpuidle_unregister_driver(struct cpuidle_driver *drv)
 {
-	if (!drv)
-		return;
+	WARN_ON(drv != cpuidle_curr_driver);
 
 	spin_lock(&cpuidle_driver_lock);
 	cpuidle_curr_driver = NULL;
