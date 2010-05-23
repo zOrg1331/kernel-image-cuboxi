@@ -125,6 +125,7 @@ struct cpuidle_driver {
 #ifdef CONFIG_CPU_IDLE
 
 extern int cpuidle_register_driver(struct cpuidle_driver *drv);
+struct cpuidle_driver *cpuidle_get_driver(void);
 extern void cpuidle_unregister_driver(struct cpuidle_driver *drv);
 extern int cpuidle_register_device(struct cpuidle_device *dev);
 extern void cpuidle_unregister_device(struct cpuidle_device *dev);
