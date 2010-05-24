@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004 Topspin Communications.  All rights reserved.
+ * Copyright (c) 2007, 2008 QLogic Corporation. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -29,24 +29,24 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
+#include <linux/device.h>
 
-#ifndef _CORE_PRIV_H
-#define _CORE_PRIV_H
+struct qib_user_sdma_queue;
 
-#include <linux/list.h>
-#include <linux/spinlock.h>
+struct qib_user_sdma_queue *
+qib_user_sdma_queue_create(struct device *dev, int unit, int port, int sport);
+void qib_user_sdma_queue_destroy(struct qib_user_sdma_queue *pq);
 
-#include <rdma/ib_verbs.h>
+int qib_user_sdma_writev(struct qib_ctxtdata *pd,
+			 struct qib_user_sdma_queue *pq,
+			 const struct iovec *iov,
+			 unsigned long dim);
 
-int  ib_device_register_sysfs(struct ib_device *device,
-			      int (*port_callback)(struct ib_device *,
-						   u8, struct kobject *));
-void ib_device_unregister_sysfs(struct ib_device *device);
+int qib_user_sdma_make_progress(struct qib_pportdata *ppd,
+				struct qib_user_sdma_queue *pq);
 
-int  ib_sysfs_setup(void);
-void ib_sysfs_cleanup(void);
+void qib_user_sdma_queue_drain(struct qib_pportdata *ppd,
+			       struct qib_user_sdma_queue *pq);
 
-int  ib_cache_setup(void);
-void ib_cache_cleanup(void);
-
-#endif /* _CORE_PRIV_H */
+u32 qib_user_sdma_complete_counter(const struct qib_user_sdma_queue *pq);
+u32 qib_user_sdma_inflight_counter(struct qib_user_sdma_queue *pq);
