@@ -160,6 +160,11 @@ blkiocg_weight_write(struct cgroup *cgroup, struct cftype *cftype, u64 val)
 	return 0;
 }
 
+int blkiocg_set_weight(struct cgroup *cgroup, u64 val)
+{
+	return blkiocg_weight_write(cgroup, NULL, val);
+}
+
 #define SHOW_FUNCTION_PER_GROUP(__VAR)					\
 static int blkiocg_##__VAR##_read(struct cgroup *cgroup,		\
 			struct cftype *cftype, struct seq_file *m)	\
