@@ -789,6 +789,7 @@ static struct ctl_table kern_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec_ve,
+		.strategy	= &sysctl_data_ve,
 	},
 #endif
 #if defined(CONFIG_S390) && defined(CONFIG_SMP)
