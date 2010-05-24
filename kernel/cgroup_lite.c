@@ -19,6 +19,11 @@ static struct css_set init_css_set;
 static struct cgroup init_cgroup;
 static struct cftype *subsys_cftypes[CGROUP_SUBSYS_COUNT];
 
+void __css_put(struct cgroup_subsys_state *css)
+{
+	atomic_dec(&css->refcnt);
+}
+
 static int init_css_set_subsystems(struct cgroup *g, struct css_set *set)
 {
 	int i;
@@ -33,7 +38,7 @@ static int init_css_set_subsystems(struct cgroup *g, struct css_set *set)
 
 		g->subsys[i] = ss;
 		set->subsys[i] = ss;
-		atomic_set(&ss->refcnt, 0);
+		atomic_set(&ss->refcnt, 1);
 		ss->cgroup = g;
 	}
 	return 0;
@@ -96,7 +101,7 @@ void fini_ve_cgroups(struct ve_struct *ve)
 		if (cs->pre_destroy)
 			cs->pre_destroy(cs, g);
 
-		if (atomic_read(&ss->refcnt))
+		if (atomic_read(&ss->refcnt) != 1)
 			printk(KERN_ERR "CG: leaking %d/%s subsys\n",
 					ve->veid, subsys[i]->name);
 		else
