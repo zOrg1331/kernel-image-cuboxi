@@ -317,16 +317,16 @@ void ceph_release_page_vector(struct page **pages, int num_pages)
 /*
  * allocate a vector new pages
  */
-static struct page **alloc_page_vector(int num_pages)
+struct page **ceph_alloc_page_vector(int num_pages, gfp_t flags)
 {
 	struct page **pages;
 	int i;
 
-	pages = kmalloc(sizeof(*pages) * num_pages, GFP_NOFS);
+	pages = kmalloc(sizeof(*pages) * num_pages, flags);
 	if (!pages)
 		return ERR_PTR(-ENOMEM);
 	for (i = 0; i < num_pages; i++) {
-		pages[i] = alloc_page(GFP_NOFS);
+		pages[i] = __page_cache_alloc(flags);
 		if (pages[i] == NULL) {
 			ceph_release_page_vector(pages, i);
 			return ERR_PTR(-ENOMEM);
@@ -355,6 +355,52 @@ static int copy_user_to_page_vector(struct page **pages,
 		data += l - bad;
 		left -= l - bad;
 		po += l - bad;
+		if (po == PAGE_CACHE_SIZE) {
+			po = 0;
+			i++;
+		}
+	}
+	return len;
+}
+
+int ceph_copy_to_page_vector(struct page **pages,
+				    const char *data,
+				    loff_t off, size_t len)
+{
+	int i = 0;
+	size_t po = off & ~PAGE_CACHE_MASK;
+	size_t left = len;
+	size_t l;
+
+	while (left > 0) {
+		l = min_t(size_t, PAGE_CACHE_SIZE-po, left);
+		memcpy(page_address(pages[i]) + po, data, l);
+		data += l;
+		left -= l;
+		po += l;
+		if (po == PAGE_CACHE_SIZE) {
+			po = 0;
+			i++;
+		}
+	}
+	return len;
+}
+
+int ceph_copy_from_page_vector(struct page **pages,
+				    char *data,
+				    loff_t off, size_t len)
+{
+	int i = 0;
+	size_t po = off & ~PAGE_CACHE_MASK;
+	size_t left = len;
+	size_t l;
+
+	while (left > 0) {
+		l = min_t(size_t, PAGE_CACHE_SIZE-po, left);
+		memcpy(data, page_address(pages[i]) + po, l);
+		data += l;
+		left -= l;
+		po += l;
 		if (po == PAGE_CACHE_SIZE) {
 			po = 0;
 			i++;
@@ -540,7 +586,7 @@ static ssize_t ceph_sync_read(struct file *file, char __user *data,
 		 * in sequence.
 		 */
 	} else {
-		pages = alloc_page_vector(num_pages);
+		pages = ceph_alloc_page_vector(num_pages, GFP_NOFS);
 	}
 	if (IS_ERR(pages))
 		return PTR_ERR(pages);
@@ -649,8 +695,8 @@ more:
 				    do_sync,
 				    ci->i_truncate_seq, ci->i_truncate_size,
 				    &mtime, false, 2);
-	if (IS_ERR(req))
-		return PTR_ERR(req);
+	if (!req)
+		return -ENOMEM;
 
 	num_pages = calc_pages_for(pos, len);
 
@@ -668,7 +714,7 @@ more:
 		truncate_inode_pages_range(inode->i_mapping, pos, 
 					   (pos+len) | (PAGE_CACHE_SIZE-1));
 	} else {
-		pages = alloc_page_vector(num_pages);
+		pages = ceph_alloc_page_vector(num_pages, GFP_NOFS);
 		if (IS_ERR(pages)) {
 			ret = PTR_ERR(pages);
 			goto out;
@@ -809,7 +855,7 @@ static ssize_t ceph_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file->f_dentry->d_inode;
 	struct ceph_inode_info *ci = ceph_inode(inode);
-	struct ceph_osd_client *osdc = &ceph_client(inode->i_sb)->osdc;
+	struct ceph_osd_client *osdc = &ceph_sb_to_client(inode->i_sb)->osdc;
 	loff_t endoff = pos + iov->iov_len;
 	int got = 0;
 	int ret, err;

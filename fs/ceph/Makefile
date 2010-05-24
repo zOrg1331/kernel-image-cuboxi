@@ -18,6 +18,8 @@ ceph-objs := super.o inode.o dir.o file.o addr.o ioctl.o \
 	auth_x.o \
 	ceph_fs.o ceph_strings.o ceph_hash.o ceph_frag.o
 
+obj-$(CONFIG_RBD) += rbd.o
+
 else
 #Otherwise we were called directly from the command
 # line; invoke the kernel build system.
