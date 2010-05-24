@@ -174,6 +174,9 @@ static int proc_dointvec_taint(struct ctl_table *table, int write, struct file *
 
 static int proc_dointvec_ve(ctl_table *table, int write, struct file * filp,
 		void __user *buffer, size_t *lenp, loff_t *ppos);
+static int sysctl_data_ve(struct ctl_table *table, int __user *name, int nlen,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen);
 
 static struct ctl_table root_table[];
 static struct ctl_table_root sysctl_table_root;
@@ -2921,6 +2924,27 @@ int sysctl_data(struct ctl_table *table, int __user *name, int nlen,
 	return 1;
 }
 
+#ifdef CONFIG_VE
+static int sysctl_data_ve(struct ctl_table *table, int __user *name, int nlen,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen)
+{
+	struct ctl_table tmp_table;
+
+	tmp_table = *table;
+	tmp_table.data = (char *)get_exec_env() + (unsigned long)table->extra1;
+
+	return sysctl_data(&tmp_table, name, nlen, oldval, oldlenp, newval, newlen);
+}
+#else
+static int sysctl_data_ve(struct ctl_table *table, int __user *name, int nlen,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen)
+{
+	return sysctl_data(table, name, nlen, oldval, oldlenp, newval, newlen);
+}
+#endif
+
 /* The generic string strategy routine: */
 int sysctl_string(struct ctl_table *table, int __user *name, int nlen,
 		  void __user *oldval, size_t __user *oldlenp,
@@ -3094,6 +3118,13 @@ SYSCALL_DEFINE1(sysctl, struct __sysctl_args __user *, args)
 }
 
 int sysctl_data(struct ctl_table *table, int __user *name, int nlen,
+		  void __user *oldval, size_t __user *oldlenp,
+		  void __user *newval, size_t newlen)
+{
+	return -ENOSYS;
+}
+
+static int sysctl_data_ve(struct ctl_table *table, int __user *name, int nlen,
 		  void __user *oldval, size_t __user *oldlenp,
 		  void __user *newval, size_t newlen)
 {
