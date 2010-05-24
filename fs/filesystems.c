@@ -333,9 +333,12 @@ static int filesystems_proc_show(struct seq_file *m, void *v)
 	read_lock(&file_systems_lock);
 	tmp = file_systems;
 	while (tmp) {
+		if (!check_ve_fstype(tmp, get_exec_env()))
+			goto next; /* skip in VE */
 		seq_printf(m, "%s\t%s\n",
 			(tmp->fs_flags & FS_REQUIRES_DEV) ? "" : "nodev",
 			tmp->name);
+next:
 		tmp = tmp->next;
 	}
 	read_unlock(&file_systems_lock);
