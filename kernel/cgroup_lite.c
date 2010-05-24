@@ -216,6 +216,40 @@ int cgroupstats_build(struct cgroupstats *stats, struct dentry *dentry)
 	return -ENODATA;
 }
 
+int cgroup_set_task_css(struct task_struct *tsk, struct css_set *css)
+{
+	int i, err;
+	struct cgroup_subsys *cs;
+	struct css_set *old_css;
+
+	old_css = tsk->cgroups;
+
+	if (old_css == css)
+		return 0;
+
+	for (i = 0; i < CGROUP_SUBSYS_COUNT; i++) {
+		cs = subsys[i];
+		if (!cs->can_attach)
+			continue;
+		err = cs->can_attach(cs, css->subsys[i]->cgroup, tsk, false);
+		if (err)
+			return err;
+	}
+
+	tsk->cgroups = css;
+
+	for (i = 0; i < CGROUP_SUBSYS_COUNT; i++) {
+		cs = subsys[i];
+		if (!cs->attach)
+			continue;
+		cs->attach(cs, css->subsys[i]->cgroup,
+				old_css->subsys[i]->cgroup, tsk, false);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(cgroup_set_task_css);
+
 /*
  * proc struts
  */

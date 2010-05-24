@@ -840,7 +840,7 @@ void ve_move_task(struct task_struct *tsk, struct ve_struct *new, struct cred *n
 	atomic_inc(&new->pcounter);
 	get_ve(new);
 
-	tsk->cgroups = new->ve_css_set;
+	cgroup_set_task_css(tsk, new->ve_css_set);
 
 	new->user_ns = get_user_ns(new_creds->user->user_ns);
 }
