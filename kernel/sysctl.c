@@ -187,7 +187,7 @@ static int proc_taint(struct ctl_table *table, int write,
 
 static int proc_dointvec_ve(struct ctl_table *table, int write,
 		void __user *buffer, size_t *lenp, loff_t *ppos);
-static int sysctl_data_ve(struct ctl_table *table, int __user *name, int nlen,
+static int sysctl_data_ve(struct ctl_table *table,
 		void __user *oldval, size_t __user *oldlenp,
 		void __user *newval, size_t newlen);
 
