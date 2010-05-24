@@ -220,6 +220,8 @@ struct cgroup {
 
 	/* For RCU-protected deletion */
 	struct rcu_head rcu_head;
+
+	int cgroup_lite_id;
 };
 
 /*

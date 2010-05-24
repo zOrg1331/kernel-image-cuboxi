@@ -19,6 +19,73 @@ static struct css_set init_css_set;
 static struct cgroup init_cgroup;
 static struct cftype *subsys_cftypes[CGROUP_SUBSYS_COUNT];
 
+static struct idr cgroup_idr;
+static DEFINE_SPINLOCK(cgroup_idr_lock);
+
+unsigned short css_id(struct cgroup_subsys_state *css)
+{
+	return css->cgroup->cgroup_lite_id;
+}
+
+unsigned short css_depth(struct cgroup_subsys_state *css)
+{
+	return (css->cgroup == &init_cgroup) ? 0 : 1;
+}
+
+int cgroup_path(const struct cgroup *cgrp, char *buf, int buflen)
+{
+	snprintf(buf, buflen, "/%d", cgrp->cgroup_lite_id);
+	return 0;
+}
+
+struct cgroup_subsys_state *css_lookup(struct cgroup_subsys *ss, int id)
+{
+	struct cgroup *g;
+
+	BUG_ON(!ss->use_id);
+	g = idr_find(&cgroup_idr, id);
+	if (!g)
+		return NULL;
+	return g->subsys[ss->subsys_id];
+}
+
+void free_css_id(struct cgroup_subsys *ss, struct cgroup_subsys_state *css)
+{
+}
+
+static int init_cgroup_id(struct cgroup *g)
+{
+	int err, id;
+
+	if (unlikely(!idr_pre_get(&cgroup_idr, GFP_KERNEL)))
+		return -ENOMEM;
+
+	spin_lock(&cgroup_idr_lock);
+	err = idr_get_new_above(&cgroup_idr, g, 1, &id);
+	spin_unlock(&cgroup_idr_lock);
+
+	if (err)
+		return err;
+
+	if (id > USHORT_MAX) {
+		spin_lock(&cgroup_idr_lock);
+		idr_remove(&cgroup_idr, id);
+		spin_unlock(&cgroup_idr_lock);
+		return -ENOSPC;
+	}
+
+	g->cgroup_lite_id = id;
+
+	return 0;
+}
+
+static void fini_cgroup_id(struct cgroup *g)
+{
+	spin_lock(&cgroup_idr_lock);
+	idr_remove(&cgroup_idr, g->cgroup_lite_id);
+	spin_unlock(&cgroup_idr_lock);
+}
+
 void __css_put(struct cgroup_subsys_state *css)
 {
 	atomic_dec(&css->refcnt);
@@ -67,6 +134,10 @@ int init_ve_cgroups(struct ve_struct *ve)
 	if (cs == NULL)
 		goto err_calloc;
 
+	err = init_cgroup_id(g);
+	if (err)
+		goto err_id;
+
 	g->parent = &init_cgroup;
 	err = init_css_set_subsystems(g, cs);
 	if (err)
@@ -78,6 +149,8 @@ int init_ve_cgroups(struct ve_struct *ve)
 	return 0;
 
 err_subsys:
+	fini_cgroup_id(g);
+err_id:
 	kfree(cs);
 err_calloc:
 	kfree(g);
@@ -108,6 +181,7 @@ void fini_ve_cgroups(struct ve_struct *ve)
 			cs->destroy(cs, g);
 	}
 
+	fini_cgroup_id(g);
 	kfree(g);
 	kfree(css);
 	ve->ve_cgroup = NULL;
@@ -225,6 +299,9 @@ int __init cgroup_init(void)
 {
 	get_ve0()->ve_cgroup = &init_cgroup;
 	get_ve0()->ve_css_set = &init_css_set;
+	idr_init(&cgroup_idr);
+	if (init_cgroup_id(&init_cgroup))
+		panic("CG: Can't init initial cgroup id\n");
 	if (init_css_set_subsystems(&init_cgroup, &init_css_set) != 0)
 		panic("CG: Can't init initial set\n");
 	return 0;
