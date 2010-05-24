@@ -210,3 +210,44 @@ void nf_conntrack_helper_fini(void)
 	nf_ct_free_hashtable(ve_nf_ct_helper_hash, ve_nf_ct_helper_vmalloc,
 			     nf_ct_helper_hsize);
 }
+
+int ve_nf_conntrack_helper_register(struct nf_conntrack_helper *me)
+{
+	int ret;
+	struct module *mod = me->me;
+
+	if (!ve_is_super(get_exec_env())) {
+		struct nf_conntrack_helper *tmp;
+		__module_get(mod);
+		ret = -ENOMEM;
+		tmp = kmemdup(me, sizeof(*tmp), GFP_KERNEL);
+		if (!tmp)
+			goto nomem;
+		me = tmp;
+	}
+
+	ret = nf_conntrack_helper_register(me);
+	if (ret)
+		goto out;
+
+	return 0;
+out:
+	if (!ve_is_super(get_exec_env())) {
+		kfree(me);
+nomem:
+		module_put(mod);
+	}
+	return ret;
+}
+EXPORT_SYMBOL_GPL(ve_nf_conntrack_helper_register);
+
+void ve_nf_conntrack_helper_unregister(struct nf_conntrack_helper *me)
+{
+	nf_conntrack_helper_unregister(me);
+
+	if (!ve_is_super(get_exec_env())) {
+		module_put(me->me);
+		kfree(me);
+	}
+}
+EXPORT_SYMBOL_GPL(ve_nf_conntrack_helper_unregister);

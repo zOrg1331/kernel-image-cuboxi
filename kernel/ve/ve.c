@@ -58,6 +58,7 @@ INIT_KSYM_MODULE(nf_conntrack_ipv6);
 INIT_KSYM_MODULE(ip_nat);
 INIT_KSYM_MODULE(nf_nat);
 INIT_KSYM_MODULE(iptable_nat);
+INIT_KSYM_MODULE(nf_conntrack_ftp);
 
 INIT_KSYM_CALL(int, init_iptable_conntrack, (void));
 INIT_KSYM_CALL(int, nf_conntrack_init_ve, (void));
@@ -73,6 +74,8 @@ INIT_KSYM_CALL(void, fini_iptable_conntrack, (void));
 INIT_KSYM_CALL(void, nf_conntrack_cleanup_ve, (void));
 INIT_KSYM_CALL(void, fini_nf_ct_l3proto_ipv4, (void));
 INIT_KSYM_CALL(void, fini_nf_ct_l3proto_ipv6, (void));
+INIT_KSYM_CALL(int, init_nf_ct_ftp, (void));
+INIT_KSYM_CALL(void, fini_nf_ct_ftp, (void));
 
 #if defined(CONFIG_VE_CALLS_MODULE) || defined(CONFIG_VE_CALLS)
 INIT_KSYM_MODULE(vzmon);

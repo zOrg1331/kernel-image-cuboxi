@@ -25,6 +25,8 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <linux/netfilter/nf_conntrack_ftp.h>
 
+#include <linux/nfcalls.h>
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Rusty Russell <rusty@rustcorp.com.au>");
 MODULE_DESCRIPTION("ftp connection tracking helper");
@@ -101,6 +103,9 @@ static struct ftp_search {
 		},
 	},
 };
+
+int init_nf_ct_ftp(void);
+void fini_nf_ct_ftp(void);
 
 static int
 get_ipv6_addr(const char *src, size_t dlen, struct in6_addr *dst, u_int8_t term)
@@ -527,6 +532,11 @@ static const struct nf_conntrack_expect_policy ftp_exp_policy = {
 static void nf_conntrack_ftp_fini(void)
 {
 	int i, j;
+
+	KSYMMODUNRESOLVE(nf_conntrack_ftp);
+	KSYMUNRESOLVE(init_nf_ct_ftp);
+	KSYMUNRESOLVE(fini_nf_ct_ftp);
+
 	for (i = 0; i < ports_c; i++) {
 		for (j = 0; j < 2; j++) {
 			if (ftp[i][j].me == NULL)
@@ -586,8 +596,58 @@ static int __init nf_conntrack_ftp_init(void)
 		}
 	}
 
+	KSYMMODRESOLVE(nf_conntrack_ftp);
+	KSYMRESOLVE(init_nf_ct_ftp);
+	KSYMRESOLVE(fini_nf_ct_ftp);
+
 	return 0;
 }
 
 module_init(nf_conntrack_ftp_init);
 module_exit(nf_conntrack_ftp_fini);
+
+/*
+ * per-VE snippets
+ */
+int init_nf_ct_ftp(void)
+{
+	int i, j, ret;
+
+	if (ve_is_super(get_exec_env()))
+		return 0;
+
+	for (i = 0; i < ports_c; i++) {
+		for (j = 0; j < 2; j++) {
+			pr_debug("ve nf_ct_ftp: registering helper for port %d\n",
+				ports[i]);
+			ret = ve_nf_conntrack_helper_register(&ftp[i][j]);
+			if (ret) {
+				fini_nf_ct_ftp();
+				return ret;
+			}
+		}
+	}
+
+	__module_get(THIS_MODULE);
+
+	return 0;
+}
+
+void fini_nf_ct_ftp(void)
+{
+	int i, j;
+
+	if (ve_is_super(get_exec_env()))
+		return;
+
+	module_put(THIS_MODULE);
+
+	for (i = 0; i < ports_c; i++) {
+		for (j = 0; j < 2; j++) {
+			pr_debug("ve nf_ct_ftp: unregistering helper for port %d\n",
+				ports[i]);
+			ve_nf_conntrack_helper_register(&ftp[i][j]);
+		}
+	}
+
+}

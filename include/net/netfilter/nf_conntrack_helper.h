@@ -47,6 +47,9 @@ __nf_conntrack_helper_find_byname(const char *name);
 extern int nf_conntrack_helper_register(struct nf_conntrack_helper *);
 extern void nf_conntrack_helper_unregister(struct nf_conntrack_helper *);
 
+extern int ve_nf_conntrack_helper_register(struct nf_conntrack_helper *);
+extern void ve_nf_conntrack_helper_unregister(struct nf_conntrack_helper *);
+
 extern struct nf_conn_help *nf_ct_helper_ext_add(struct nf_conn *ct, gfp_t gfp);
 
 static inline struct nf_conn_help *nfct_help(const struct nf_conn *ct)
