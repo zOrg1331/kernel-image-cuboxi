@@ -7,6 +7,8 @@ obj-$(CONFIG_PM)		+= main.o
 obj-$(CONFIG_PM_SLEEP)		+= console.o
 obj-$(CONFIG_FREEZER)		+= process.o
 obj-$(CONFIG_SUSPEND)		+= suspend.o
+obj-$(CONFIG_OPPORTUNISTIC_SUSPEND)	+= opportunistic_suspend.o
+obj-$(CONFIG_USER_SUSPEND_BLOCKERS)	+= user_suspend_blocker.o
 obj-$(CONFIG_PM_TEST_SUSPEND)	+= suspend_test.o
 obj-$(CONFIG_HIBERNATION)	+= hibernate.o snapshot.o swap.o user.o \
 				   block_io.o
