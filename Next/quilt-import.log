@@ -1,0 +1,40 @@
+Importing driver-core.current based on 2.6.34-git6
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.34-git7
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.34-git6
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.34
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc e40152ee1e1c7a63f4777791863215e3faa37a86
+Importing rr based on v2.6.34-2641-ga0fe3cc
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.34
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard e40152ee1e1c7a63f4777791863215e3faa37a86
+HEAD is now at e40152e Linus 2.6.34
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-ioctl-use-nonseekable_open.patch
+dm-crypt-use-kstrdup.patch
+dm-ioctl-remove-__dev_status-from-geometry-and-target-message.patch
+dm-ioctl-make-__dev_status-void.patch
+dm-ioctl-return-uevent-flag-after-rename.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + cafeca1...9243534 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
