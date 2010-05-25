@@ -59,6 +59,10 @@ config GENERIC_HARDIRQS
 	bool
 	default y
 
+config GENERIC_HARDIRQS_NO__DO_IRQ
+	bool
+	default y
+
 config GENERIC_CALIBRATE_DELAY
 	bool
 	default y
@@ -566,7 +570,7 @@ config RAMBASE
 	  processor address space.
 
 config RAMSIZE
-	hex "Size of RAM (in bytes)"
+	hex "Size of RAM (in bytes), or 0 for automatic"
 	default "0x400000"
 	help
 	  Define the size of the system RAM. If you select 0 then the
