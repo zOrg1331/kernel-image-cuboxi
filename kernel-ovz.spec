@@ -38,7 +38,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt13.M51.6
+%define krelease alt13.M51.7
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -10096,7 +10096,11 @@ cp -a drivers/net/wireless/Kconfig \
 	%buildroot%kbuild_dir/drivers/net/wireless/
 cp -a lib/hexdump.c %buildroot%kbuild_dir/lib/
 cp -a kernel/workqueue.c %buildroot%kbuild_dir/kernel/
-cp -a net/mac80211/ieee80211_{i,key,rate}.h \
+cp -a net/mac80211/ieee80211_i.h \
+	%buildroot%kbuild_dir/net/mac80211/
+cp -a net/mac80211/key.h \
+	%buildroot%kbuild_dir/net/mac80211/
+cp -a net/mac80211/rate.h \
 	%buildroot%kbuild_dir/net/mac80211/
 cp -a net/mac80211/sta_info.h \
 	%buildroot%kbuild_dir/net/mac80211/
@@ -10198,6 +10202,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Tue May 25 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.7
+- Release of 2.6.18-194.3.1.el5 028stab069.5
+
 * Fri Apr 02 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.6
 - Release of 2.6.18-164.15.1.el5 028stab068.9
 
