@@ -18,7 +18,6 @@
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
-#include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <asm/irq.h>
 #include <asm/mach/irq.h>
