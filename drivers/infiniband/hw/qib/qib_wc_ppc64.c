@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004 Topspin Communications.  All rights reserved.
+ * Copyright (c) 2006, 2007, 2008 QLogic Corporation. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -30,23 +30,33 @@
  * SOFTWARE.
  */
 
-#ifndef _CORE_PRIV_H
-#define _CORE_PRIV_H
+/*
+ * This file is conditionally built on PowerPC only.  Otherwise weak symbol
+ * versions of the functions exported from here are used.
+ */
 
-#include <linux/list.h>
-#include <linux/spinlock.h>
+#include "qib.h"
 
-#include <rdma/ib_verbs.h>
+/**
+ * qib_enable_wc - enable write combining for MMIO writes to the device
+ * @dd: qlogic_ib device
+ *
+ * Nothing to do on PowerPC, so just return without error.
+ */
+int qib_enable_wc(struct qib_devdata *dd)
+{
+	return 0;
+}
 
-int  ib_device_register_sysfs(struct ib_device *device,
-			      int (*port_callback)(struct ib_device *,
-						   u8, struct kobject *));
-void ib_device_unregister_sysfs(struct ib_device *device);
-
-int  ib_sysfs_setup(void);
-void ib_sysfs_cleanup(void);
-
-int  ib_cache_setup(void);
-void ib_cache_cleanup(void);
-
-#endif /* _CORE_PRIV_H */
+/**
+ * qib_unordered_wc - indicate whether write combining is unordered
+ *
+ * Because our performance depends on our ability to do write
+ * combining mmio writes in the most efficient way, we need to
+ * know if we are on a processor that may reorder stores when
+ * write combining.
+ */
+int qib_unordered_wc(void)
+{
+	return 1;
+}
