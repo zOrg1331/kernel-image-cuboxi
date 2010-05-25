@@ -61,10 +61,12 @@ static inline int pm_enter_state(int state_idx)
 
 static inline bool hibernation_supported(void) { return true; }
 
+#ifdef CONFIG_SUSPEND
 static inline bool pm_state_valid(int state_idx)
 {
 	return pm_states[state_idx] && valid_state(state_idx);
 }
+#endif /* CONFIG_SUSPEND */
 
 static inline int pm_enter_state(int state_idx)
 {
