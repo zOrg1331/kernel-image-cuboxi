@@ -1,0 +1,79 @@
+Importing driver-core.current based on 2.6.34-git6
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.34-git9
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 7e125f7b9cbfce4101191b8076d606c517a73066
+HEAD is now at 7e125f7 Merge git://git.kernel.org/pub/scm/linux/kernel/git/davem/ide-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-documentation-checkpatch-cleanup.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+   6e45139..d900ca8  master     -> quilt/i2c
+Importing jdelvare-hwmon based on 2.6.34-git9
+$ cd ../quilt-tmp
+$ git reset --hard 7e125f7b9cbfce4101191b8076d606c517a73066
+HEAD is now at 7e125f7 Merge git://git.kernel.org/pub/scm/linux/kernel/git/davem/ide-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-asus_atk0110-dont-use-if-unsafe.patch
+hwmon-lm63-add-basic-support-for-lm64.patch
+hwmon-f71882fg-01-fixed-braces-coding-style-issues.patch
+hwmon-f71882fg-02-use-strict_strtol-instead-of-simple_strtol.patch
+hwmon-f71882fg-03-code-cleanup.patch
+hwmon-f71882fg-04-properly-acquire-io-regions-while-probing.patch
+hwmon-lm90-use-programmed-update-rate.patch
+hwmon-add-description-of-the-update_rate-sysfs-attribute.patch
+hwmon-adm1031-allow-setting-update-rate-2.patch
+hwmon-tmp401-01-use-constants-for-sysfs-file-permissions.patch
+hwmon-tmp401-02-reorganize-code-to-get-rid-of-static-forward-declarations.patch
+hwmon-applesmc-01-add-support-for-macbook-pro-5-3-and-5-4.patch
+hwmon-applesmc-02-add-generic-support-for-macbook-pro-6.patch
+hwmon-applesmc-03-add-generic-support-for-macbook-pro-7.patch
+hwmon-applesmc-04-add-temperature-sensor-labels-to-sysfs-interface.patch
+hwmon-emc1403-thermal-sensor-support.patch
+hwmon-tmp102-01-driver-for-ti-tmp102-temperature-sensor.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:17: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+hwmon-tmp102-02-misc-fixes.patch
+hwmon-tmp102-03-fix-suspend-resume.patch
+hwmon-tmp102-04-restore-configuration-at-exit.patch
+hwmon-dme1737-add-support-for-sch5127.patch
+hwmon-ltc4245-01-read-only-one-gpio-pin.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 3296f92...7c4740f master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.34-git8
+$ cd ../quilt-tmp
+$ git reset --hard f4b87dee923342505e1ddba8d34ce9de33e75050
+HEAD is now at f4b87de fbmem: avoid printk format warning with 32-bit resources
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+aio-fix-subsys-comments.patch
+docs-vm-pagetypes-spello.patch
+docs-kbuild-make-examples-content.patch
+docs-kbuild-make-examples2.patch
+docs-kbuild-make-examples-content2.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+   e40152e..74bb700  master     -> quilt/kernel-doc
+Importing rr based on v2.6.34-2641-ga0fe3cc
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.34
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
