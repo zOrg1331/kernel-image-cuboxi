@@ -1818,12 +1818,16 @@ static int kdb_rm(int argc, const char **argv)
  */
 static int kdb_sr(int argc, const char **argv)
 {
+	int toggle_save;
+
 	if (argc != 1)
 		return KDB_ARGCOUNT;
-	sysrq_toggle_support(1);
+	toggle_save = sysrq_toggle_support(1);
 	kdb_trap_printk++;
 	handle_sysrq(*argv[1], NULL);
 	kdb_trap_printk--;
+
+	sysrq_toggle_support(toggle_save);
 
 	return 0;
 }
@@ -2296,6 +2300,9 @@ static int kdb_ll(int argc, const char **argv)
 
 	while (va) {
 		char buf[80];
+
+		if (KDB_FLAG(CMD_INTERRUPT))
+			return 0;
 
 		sprintf(buf, "%s " kdb_machreg_fmt "\n", command, va);
 		diag = kdb_parse(buf);
