@@ -193,8 +193,7 @@ static void bdi_wait_on_work_clear(struct bdi_work *work)
 }
 
 static void bdi_alloc_queue_work(struct backing_dev_info *bdi,
-				 struct wb_writeback_args *args,
-				 int wait)
+				 struct wb_writeback_args *args)
 {
 	struct bdi_work *work;
 
@@ -206,14 +205,24 @@ static void bdi_alloc_queue_work(struct backing_dev_info *bdi,
 	if (work) {
 		bdi_work_init(work, args);
 		bdi_queue_work(bdi, work);
-		if (wait)
-			bdi_wait_on_work_clear(work);
 	} else {
 		struct bdi_writeback *wb = &bdi->wb;
 
 		if (wb->task)
 			wake_up_process(wb->task);
 	}
+}
+
+static void bdi_queue_wait_wb_args(struct backing_dev_info *bdi,
+				   struct wb_writeback_args *args)
+{
+	struct bdi_work work;
+
+	bdi_work_init(&work, args);
+	work.state |= WS_ONSTACK;
+
+	bdi_queue_work(bdi, &work);
+	bdi_wait_on_work_clear(&work);
 }
 
 /**
@@ -240,13 +249,8 @@ static void bdi_sync_writeback(struct backing_dev_info *bdi,
 		 */
 		.sb_pinned	= 1,
 	};
-	struct bdi_work work;
 
-	bdi_work_init(&work, &args);
-	work.state |= WS_ONSTACK;
-
-	bdi_queue_work(bdi, &work);
-	bdi_wait_on_work_clear(&work);
+	bdi_queue_wait_wb_args(bdi, &args);
 }
 
 /**
@@ -282,7 +286,10 @@ void bdi_start_writeback(struct backing_dev_info *bdi, struct super_block *sb,
 		args.for_background = 1;
 	}
 
-	bdi_alloc_queue_work(bdi, &args, sb_locked);
+	if (!sb_locked)
+		bdi_alloc_queue_work(bdi, &args);
+	else
+		bdi_queue_wait_wb_args(bdi, &args);
 }
 
 /*
@@ -1011,7 +1018,7 @@ static void bdi_writeback_all(struct super_block *sb, long nr_pages)
 		if (!bdi_has_dirty_io(bdi))
 			continue;
 
-		bdi_alloc_queue_work(bdi, &args, 0);
+		bdi_alloc_queue_work(bdi, &args);
 	}
 
 	rcu_read_unlock();
