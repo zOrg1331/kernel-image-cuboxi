@@ -25,3 +25,13 @@ config CEPH_FS_PRETTYDEBUG
 
 	  If unsure, say N.
 
+config CEPH_RBD
+	bool "Rados block device (RBD)"
+	depends on CEPH_FS
+	select  CONFIG_BLOCK
+	default y
+	help
+	  If you say Y here, ceph will include rbd, the RADOS block
+	  device which stripes a block device over objects stored in
+	  the Ceph distributed object store.
+
