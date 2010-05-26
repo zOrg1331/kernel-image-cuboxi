@@ -927,7 +927,7 @@ long wb_do_writeback(struct bdi_writeback *wb, int force_wait)
 		if (force_wait)
 			work->args.sync_mode = args.sync_mode = WB_SYNC_ALL;
 
-		post_clear = WB_SYNC_ALL || args.sb_pinned;
+		post_clear = args.sync_mode == WB_SYNC_ALL || args.sb_pinned;
 
 		/*
 		 * If this isn't a data integrity operation, just notify
