@@ -647,13 +647,14 @@ config SYSFS_DEPRECATED_V2
 	  this option set to N.
 
 config SYSFS_DEPRECATED_DYN
-	bool "make deprecatd sysfs leayou dynamically"
+	bool "make deprecated sysfs layout dynamically"
 	depends on SYSFS
 	default y
 	select SYSFS_DEPRECATED_V2
 	help
-	  This option works like the DEPRECATED_V2 but alows selecting the
-	  sysfs layout dynamically
+	  This option works like the DEPRECATED_V2 but allows selecting the
+	  sysfs layout dynamically, i.e. on boot. To select the old
+	  (deprecated) layout, supply old_sysfs kernel boot parameter.
 
 config RELAY
 	bool "Kernel->user space relay support (formerly relayfs)"
