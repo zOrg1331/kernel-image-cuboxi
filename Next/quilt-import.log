@@ -1,0 +1,156 @@
+Importing driver-core.current based on 2.6.34-git6
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.34-git10
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard ec96e2fe954c23a54bfdf2673437a39e193a1822
+HEAD is now at ec96e2f Merge branch 'devel' of master.kernel.org:/home/rmk/linux-2.6-arm
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-documentation-checkpatch-cleanup.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + d900ca8...f3c5da8 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.34-git10
+$ cd ../quilt-tmp
+$ git reset --hard ec96e2fe954c23a54bfdf2673437a39e193a1822
+HEAD is now at ec96e2f Merge branch 'devel' of master.kernel.org:/home/rmk/linux-2.6-arm
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-asus_atk0110-dont-use-if-unsafe.patch
+hwmon-lm63-add-basic-support-for-lm64.patch
+hwmon-f71882fg-01-fixed-braces-coding-style-issues.patch
+hwmon-f71882fg-02-use-strict_strtol-instead-of-simple_strtol.patch
+hwmon-f71882fg-03-code-cleanup.patch
+hwmon-f71882fg-04-properly-acquire-io-regions-while-probing.patch
+hwmon-lm90-use-programmed-update-rate.patch
+hwmon-add-description-of-the-update_rate-sysfs-attribute.patch
+hwmon-adm1031-allow-setting-update-rate-2.patch
+hwmon-tmp401-01-use-constants-for-sysfs-file-permissions.patch
+hwmon-tmp401-02-reorganize-code-to-get-rid-of-static-forward-declarations.patch
+hwmon-applesmc-01-add-support-for-macbook-pro-5-3-and-5-4.patch
+hwmon-applesmc-02-add-generic-support-for-macbook-pro-6.patch
+hwmon-applesmc-03-add-generic-support-for-macbook-pro-7.patch
+hwmon-applesmc-04-add-temperature-sensor-labels-to-sysfs-interface.patch
+hwmon-emc1403-thermal-sensor-support.patch
+hwmon-tmp102-01-driver-for-ti-tmp102-temperature-sensor.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:17: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+hwmon-tmp102-02-misc-fixes.patch
+hwmon-tmp102-03-fix-suspend-resume.patch
+hwmon-tmp102-04-restore-configuration-at-exit.patch
+hwmon-dme1737-add-support-for-sch5127.patch
+hwmon-ltc4245-01-read-only-one-gpio-pin.patch
+hwmon-lm75-add-support-for-tmp105.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 7c4740f...ec2f9c9 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.34-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.34-7097-gf4b87de
+$ cd ../quilt-tmp
+$ git reset --hard f4b87dee923342505e1ddba8d34ce9de33e75050
+HEAD is now at f4b87de fbmem: avoid printk format warning with 32-bit resources
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+virtio:blk_fix_minimum_number_of_s_g_elements.patch
+virtio:put_last_seen_used_index_into_ring_itself.patch
+virtio:net_pass_gfp_to_add_buf.patch
+misc:fix-email.patch
+kernel-params_c-check-null-for-non-bool.diff
+param:neaten-param.c-exports.patch
+param:param_ops.patch
+param:param_ops-for-hvc_iucv-driver.patch
+param:param_ops-modpost-complaint-silence.patch
+param:add-free-hook.patch
+param:use-free-hook-for-charp.patch
+param:params-are-const.patch
+param:kernel_param_lock.patch
+param:documentation.patch
+param:remove-useless-writable-charp.patch
+param:lock-charp-simple.patch
+param:lock-charp-myri10ge.patch
+param:lock-charp-if_sdio.patch
+param:ipmi_watchdog.patch
+param:cleanup-ide.patch
+param:cleanup-mptbase.patch
+param:acpi-use-ops.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + c3a326d...8582e80 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.34
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
+Importing driver-core.current based on 2.6.34-git11
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core.current b1cdc4670b9508fcd47a15fbd12f70d269880b37
+Importing tty.current based on quilt/driver-core.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty.current b1cdc4670b9508fcd47a15fbd12f70d269880b37
+Importing usb.current based on quilt/tty.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb.current b1cdc4670b9508fcd47a15fbd12f70d269880b37
+Importing staging.current based on quilt/usb.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/staging.current b1cdc4670b9508fcd47a15fbd12f70d269880b37
+Importing i2c based on 2.6.34-git10
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.34-git10
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.34-git8
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard f4b87dee923342505e1ddba8d34ce9de33e75050
+HEAD is now at f4b87de fbmem: avoid printk format warning with 32-bit resources
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+aio-fix-subsys-comments.patch
+docs-vm-pagetypes-spello.patch
+docs-kbuild-make-examples-content.patch
+docs-kbuild-make-examples2.patch
+docs-kbuild-make-examples-content2.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+ + 74bb700...968c3b4 master     -> quilt/kernel-doc  (forced update)
+Importing rr based on v2.6.34-7097-gf4b87de
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.34
+$ cd ../quilt-tmp
+$ git reset --hard e40152ee1e1c7a63f4777791863215e3faa37a86
+HEAD is now at e40152e Linus 2.6.34
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-ioctl-use-nonseekable_open.patch
+dm-crypt-use-kstrdup.patch
+dm-ioctl-remove-__dev_status-from-geometry-and-target-message.patch
+dm-ioctl-make-__dev_status-void.patch
+dm-ioctl-return-uevent-flag-after-rename.patch
+dm-snapshot-persistent-use-define-for-disk-header-chunk-size.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + 9243534...a843335 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core b1cdc4670b9508fcd47a15fbd12f70d269880b37
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty b1cdc4670b9508fcd47a15fbd12f70d269880b37
+Importing usb based on quilt/tty
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb b1cdc4670b9508fcd47a15fbd12f70d269880b37
