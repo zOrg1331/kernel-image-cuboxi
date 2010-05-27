@@ -567,12 +567,17 @@ retry:
 		start_wd = group->inotify_data.last_wd + 1;
 	else
 		start_wd = wd;
+	/* we are putting the mark on the idr, take a reference */
+	fsnotify_get_mark(&tmp_ientry->fsn_entry);
 
 	spin_lock(&group->inotify_data.idr_lock);
 	ret = idr_get_new_above(&group->inotify_data.idr, &tmp_ientry->fsn_entry,
 				start_wd, &tmp_ientry->wd);
 	spin_unlock(&group->inotify_data.idr_lock);
 	if (ret) {
+		/* we didn't get on the idr, drop the idr reference */
+		fsnotify_put_mark(&tmp_ientry->fsn_entry);
+
 		/* idr was out of memory allocate and try again */
 		if (ret == -EAGAIN)
 			goto retry;
@@ -581,12 +586,10 @@ retry:
 
 	if (wd != -1 && tmp_ientry->wd != wd) {
 		ret = -EBUSY;
+		fsnotify_put_mark(&tmp_ientry->fsn_entry);
 		inotify_remove_from_idr(group, tmp_ientry);
 		goto out_err;
 	}
-
-	/* we put the mark on the idr, take a reference */
-	fsnotify_get_mark(&tmp_ientry->fsn_entry);
 
 	/* we are on the idr, now get on the inode */
 	ret = fsnotify_add_mark(&tmp_ientry->fsn_entry, group, path->dentry->d_inode);
