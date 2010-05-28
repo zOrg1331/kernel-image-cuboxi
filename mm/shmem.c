@@ -433,8 +433,6 @@ static swp_entry_t *shmem_swp_alloc(struct shmem_inode_info *info, unsigned long
 
 		spin_unlock(&info->lock);
 		page = shmem_dir_alloc(mapping_gfp_mask(inode->i_mapping));
-		if (page)
-			set_page_private(page, 0);
 		spin_lock(&info->lock);
 
 		if (!page) {
@@ -1545,8 +1543,8 @@ static int shmem_mmap(struct file *file, struct vm_area_struct *vma)
 	return 0;
 }
 
-static struct inode *shmem_get_inode(struct super_block *sb, int mode,
-					dev_t dev, unsigned long flags)
+static struct inode *shmem_get_inode(struct super_block *sb, const struct inode *dir,
+				     int mode, dev_t dev, unsigned long flags)
 {
 	struct inode *inode;
 	struct shmem_inode_info *info;
@@ -1557,9 +1555,7 @@ static struct inode *shmem_get_inode(struct super_block *sb, int mode,
 
 	inode = new_inode(sb);
 	if (inode) {
-		inode->i_mode = mode;
-		inode->i_uid = current_fsuid();
-		inode->i_gid = current_fsgid();
+		inode_init_owner(inode, dir, mode);
 		inode->i_blocks = 0;
 		inode->i_mapping->backing_dev_info = &shmem_backing_dev_info;
 		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
@@ -1814,7 +1810,7 @@ shmem_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 	struct inode *inode;
 	int error = -ENOSPC;
 
-	inode = shmem_get_inode(dir->i_sb, mode, dev, VM_NORESERVE);
+	inode = shmem_get_inode(dir->i_sb, dir, mode, dev, VM_NORESERVE);
 	if (inode) {
 		error = security_inode_init_security(inode, dir, NULL, NULL,
 						     NULL);
@@ -1833,11 +1829,6 @@ shmem_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 #else
 		error = 0;
 #endif
-		if (dir->i_mode & S_ISGID) {
-			inode->i_gid = dir->i_gid;
-			if (S_ISDIR(mode))
-				inode->i_mode |= S_ISGID;
-		}
 		dir->i_size += BOGO_DIRENT_SIZE;
 		dir->i_ctime = dir->i_mtime = CURRENT_TIME;
 		d_instantiate(dentry, inode);
@@ -1957,7 +1948,7 @@ static int shmem_symlink(struct inode *dir, struct dentry *dentry, const char *s
 	if (len > PAGE_CACHE_SIZE)
 		return -ENAMETOOLONG;
 
-	inode = shmem_get_inode(dir->i_sb, S_IFLNK|S_IRWXUGO, 0, VM_NORESERVE);
+	inode = shmem_get_inode(dir->i_sb, dir, S_IFLNK|S_IRWXUGO, 0, VM_NORESERVE);
 	if (!inode)
 		return -ENOSPC;
 
@@ -1992,8 +1983,6 @@ static int shmem_symlink(struct inode *dir, struct dentry *dentry, const char *s
 		unlock_page(page);
 		page_cache_release(page);
 	}
-	if (dir->i_mode & S_ISGID)
-		inode->i_gid = dir->i_gid;
 	dir->i_size += BOGO_DIRENT_SIZE;
 	dir->i_ctime = dir->i_mtime = CURRENT_TIME;
 	d_instantiate(dentry, inode);
@@ -2071,14 +2060,14 @@ static int shmem_xattr_security_set(struct dentry *dentry, const char *name,
 					  size, flags);
 }
 
-static struct xattr_handler shmem_xattr_security_handler = {
+static const struct xattr_handler shmem_xattr_security_handler = {
 	.prefix = XATTR_SECURITY_PREFIX,
 	.list   = shmem_xattr_security_list,
 	.get    = shmem_xattr_security_get,
 	.set    = shmem_xattr_security_set,
 };
 
-static struct xattr_handler *shmem_xattr_handlers[] = {
+static const struct xattr_handler *shmem_xattr_handlers[] = {
 	&generic_acl_access_handler,
 	&generic_acl_default_handler,
 	&shmem_xattr_security_handler,
@@ -2366,7 +2355,7 @@ int shmem_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_flags |= MS_POSIXACL;
 #endif
 
-	inode = shmem_get_inode(sb, S_IFDIR | sbinfo->mode, 0, VM_NORESERVE);
+	inode = shmem_get_inode(sb, NULL, S_IFDIR | sbinfo->mode, 0, VM_NORESERVE);
 	if (!inode)
 		goto failed;
 	inode->i_uid = sbinfo->uid;
@@ -2570,6 +2559,45 @@ out4:
 	return error;
 }
 
+#ifdef CONFIG_CGROUP_MEM_RES_CTLR
+/**
+ * mem_cgroup_get_shmem_target - find a page or entry assigned to the shmem file
+ * @inode: the inode to be searched
+ * @pgoff: the offset to be searched
+ * @pagep: the pointer for the found page to be stored
+ * @ent: the pointer for the found swap entry to be stored
+ *
+ * If a page is found, refcount of it is incremented. Callers should handle
+ * these refcount.
+ */
+void mem_cgroup_get_shmem_target(struct inode *inode, pgoff_t pgoff,
+					struct page **pagep, swp_entry_t *ent)
+{
+	swp_entry_t entry = { .val = 0 }, *ptr;
+	struct page *page = NULL;
+	struct shmem_inode_info *info = SHMEM_I(inode);
+
+	if ((pgoff << PAGE_CACHE_SHIFT) >= i_size_read(inode))
+		goto out;
+
+	spin_lock(&info->lock);
+	ptr = shmem_swp_entry(info, pgoff, NULL);
+#ifdef CONFIG_SWAP
+	if (ptr && ptr->val) {
+		entry.val = ptr->val;
+		page = find_get_page(&swapper_space, entry.val);
+	} else
+#endif
+		page = find_get_page(inode->i_mapping, pgoff);
+	if (ptr)
+		shmem_swp_unmap(ptr);
+	spin_unlock(&info->lock);
+out:
+	*pagep = page;
+	*ent = entry;
+}
+#endif
+
 #else /* !CONFIG_SHMEM */
 
 /*
@@ -2609,9 +2637,34 @@ int shmem_lock(struct file *file, int lock, struct user_struct *user)
 	return 0;
 }
 
+#ifdef CONFIG_CGROUP_MEM_RES_CTLR
+/**
+ * mem_cgroup_get_shmem_target - find a page or entry assigned to the shmem file
+ * @inode: the inode to be searched
+ * @pgoff: the offset to be searched
+ * @pagep: the pointer for the found page to be stored
+ * @ent: the pointer for the found swap entry to be stored
+ *
+ * If a page is found, refcount of it is incremented. Callers should handle
+ * these refcount.
+ */
+void mem_cgroup_get_shmem_target(struct inode *inode, pgoff_t pgoff,
+					struct page **pagep, swp_entry_t *ent)
+{
+	struct page *page = NULL;
+
+	if ((pgoff << PAGE_CACHE_SHIFT) >= i_size_read(inode))
+		goto out;
+	page = find_get_page(inode->i_mapping, pgoff);
+out:
+	*pagep = page;
+	*ent = (swp_entry_t){ .val = 0 };
+}
+#endif
+
 #define shmem_vm_ops				generic_file_vm_ops
 #define shmem_file_operations			ramfs_file_operations
-#define shmem_get_inode(sb, mode, dev, flags)	ramfs_get_inode(sb, mode, dev)
+#define shmem_get_inode(sb, dir, mode, dev, flags)	ramfs_get_inode(sb, dir, mode, dev)
 #define shmem_acct_size(flags, size)		0
 #define shmem_unacct_size(flags, size)		do {} while (0)
 #define SHMEM_MAX_BYTES				MAX_LFS_FILESIZE
@@ -2655,7 +2708,7 @@ struct file *shmem_file_setup(const char *name, loff_t size, unsigned long flags
 	path.mnt = mntget(shm_mnt);
 
 	error = -ENOSPC;
-	inode = shmem_get_inode(root->d_sb, S_IFREG | S_IRWXUGO, 0, flags);
+	inode = shmem_get_inode(root->d_sb, NULL, S_IFREG | S_IRWXUGO, 0, flags);
 	if (!inode)
 		goto put_dentry;
 
