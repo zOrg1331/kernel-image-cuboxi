@@ -32,11 +32,13 @@
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 
+/* SCIFA0 */
 static struct plat_sci_port scif0_platform_data = {
 	.mapbase	= 0xe6c40000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.type		= PORT_SCIF,
-	.irqs		= { 80, 80, 80, 80 },
+	.type		= PORT_SCIFA,
+	.irqs		= { evt2irq(0x0c00), evt2irq(0x0c00),
+			    evt2irq(0x0c00), evt2irq(0x0c00) },
 };
 
 static struct platform_device scif0_device = {
@@ -47,11 +49,13 @@ static struct platform_device scif0_device = {
 	},
 };
 
+/* SCIFA1 */
 static struct plat_sci_port scif1_platform_data = {
 	.mapbase	= 0xe6c50000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.type		= PORT_SCIF,
-	.irqs           = { 81, 81, 81, 81 },
+	.type		= PORT_SCIFA,
+	.irqs		= { evt2irq(0x0c20), evt2irq(0x0c20),
+			    evt2irq(0x0c20), evt2irq(0x0c20) },
 };
 
 static struct platform_device scif1_device = {
@@ -62,11 +66,13 @@ static struct platform_device scif1_device = {
 	},
 };
 
+/* SCIFA2 */
 static struct plat_sci_port scif2_platform_data = {
 	.mapbase	= 0xe6c60000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.type		= PORT_SCIF,
-	.irqs           = { 82, 82, 82, 82 },
+	.type		= PORT_SCIFA,
+	.irqs		= { evt2irq(0x0c40), evt2irq(0x0c40),
+			    evt2irq(0x0c40), evt2irq(0x0c40) },
 };
 
 static struct platform_device scif2_device = {
@@ -77,11 +83,13 @@ static struct platform_device scif2_device = {
 	},
 };
 
+/* SCIFA3 */
 static struct plat_sci_port scif3_platform_data = {
 	.mapbase	= 0xe6c70000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.type		= PORT_SCIF,
-	.irqs           = { 83, 83, 83, 83 },
+	.type		= PORT_SCIFA,
+	.irqs		= { evt2irq(0x0c60), evt2irq(0x0c60),
+			    evt2irq(0x0c60), evt2irq(0x0c60) },
 };
 
 static struct platform_device scif3_device = {
@@ -92,11 +100,13 @@ static struct platform_device scif3_device = {
 	},
 };
 
+/* SCIFA4 */
 static struct plat_sci_port scif4_platform_data = {
 	.mapbase	= 0xe6c80000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.type		= PORT_SCIF,
-	.irqs           = { 89, 89, 89, 89 },
+	.type		= PORT_SCIFA,
+	.irqs		= { evt2irq(0x0d20), evt2irq(0x0d20),
+			    evt2irq(0x0d20), evt2irq(0x0d20) },
 };
 
 static struct platform_device scif4_device = {
@@ -107,11 +117,13 @@ static struct platform_device scif4_device = {
 	},
 };
 
+/* SCIFA5 */
 static struct plat_sci_port scif5_platform_data = {
 	.mapbase	= 0xe6cb0000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.type		= PORT_SCIF,
-	.irqs           = { 90, 90, 90, 90 },
+	.type		= PORT_SCIFA,
+	.irqs		= { evt2irq(0x0d40), evt2irq(0x0d40),
+			    evt2irq(0x0d40), evt2irq(0x0d40) },
 };
 
 static struct platform_device scif5_device = {
@@ -122,11 +134,13 @@ static struct platform_device scif5_device = {
 	},
 };
 
+/* SCIFB */
 static struct plat_sci_port scif6_platform_data = {
 	.mapbase	= 0xe6c30000,
 	.flags		= UPF_BOOT_AUTOCONF,
-	.type		= PORT_SCIF,
-	.irqs           = { 91, 91, 91, 91 },
+	.type		= PORT_SCIFB,
+	.irqs		= { evt2irq(0x0d60), evt2irq(0x0d60),
+			    evt2irq(0x0d60), evt2irq(0x0d60) },
 };
 
 static struct platform_device scif6_device = {
@@ -137,11 +151,12 @@ static struct platform_device scif6_device = {
 	},
 };
 
+/* CMT */
 static struct sh_timer_config cmt10_platform_data = {
 	.name = "CMT10",
 	.channel_offset = 0x10,
 	.timer_bit = 0,
-	.clk = "r_clk",
+	.clk = "cmt1",
 	.clockevent_rating = 125,
 	.clocksource_rating = 125,
 };
@@ -154,7 +169,7 @@ static struct resource cmt10_resources[] = {
 		.flags	= IORESOURCE_MEM,
 	},
 	[1] = {
-		.start	= 72,
+		.start	= evt2irq(0x0b00), /* CMT1_CMT10 */
 		.flags	= IORESOURCE_IRQ,
 	},
 };
@@ -169,6 +184,49 @@ static struct platform_device cmt10_device = {
 	.num_resources	= ARRAY_SIZE(cmt10_resources),
 };
 
+/* I2C */
+static struct resource iic0_resources[] = {
+	[0] = {
+		.name	= "IIC0",
+		.start  = 0xFFF20000,
+		.end    = 0xFFF20425 - 1,
+		.flags  = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start  = intcs_evt2irq(0xe00), /* IIC0_ALI0 */
+		.end    = intcs_evt2irq(0xe60), /* IIC0_DTEI0 */
+		.flags  = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device iic0_device = {
+	.name           = "i2c-sh_mobile",
+	.id             = 0, /* "i2c0" clock */
+	.num_resources  = ARRAY_SIZE(iic0_resources),
+	.resource       = iic0_resources,
+};
+
+static struct resource iic1_resources[] = {
+	[0] = {
+		.name	= "IIC1",
+		.start  = 0xE6C20000,
+		.end    = 0xE6C20425 - 1,
+		.flags  = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start  = evt2irq(0x780), /* IIC1_ALI1 */
+		.end    = evt2irq(0x7e0), /* IIC1_DTEI1 */
+		.flags  = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device iic1_device = {
+	.name           = "i2c-sh_mobile",
+	.id             = 1, /* "i2c1" clock */
+	.num_resources  = ARRAY_SIZE(iic1_resources),
+	.resource       = iic1_resources,
+};
+
 static struct platform_device *sh7372_early_devices[] __initdata = {
 	&scif0_device,
 	&scif1_device,
@@ -178,6 +236,8 @@ static struct platform_device *sh7372_early_devices[] __initdata = {
 	&scif5_device,
 	&scif6_device,
 	&cmt10_device,
+	&iic0_device,
+	&iic1_device,
 };
 
 void __init sh7372_add_standard_devices(void)
@@ -186,14 +246,8 @@ void __init sh7372_add_standard_devices(void)
 			    ARRAY_SIZE(sh7372_early_devices));
 }
 
-#define SMSTPCR3 0xe615013c
-#define SMSTPCR3_CMT1 (1 << 29)
-
 void __init sh7372_add_early_devices(void)
 {
-	/* enable clock to CMT1 */
-	__raw_writel(__raw_readl(SMSTPCR3) & ~SMSTPCR3_CMT1, SMSTPCR3);
-
 	early_platform_add_devices(sh7372_early_devices,
 				   ARRAY_SIZE(sh7372_early_devices));
 }
