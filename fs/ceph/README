@@ -7,6 +7,7 @@ src/include/ceph_fs.h	    fs/ceph/ceph_fs.h
 src/include/ceph_fs.cc	    fs/ceph/ceph_fs.c
 src/include/msgr.h	    fs/ceph/msgr.h
 src/include/rados.h	    fs/ceph/rados.h
+src/include/rbd_types.h	    fs/ceph/rbd_types.h
 src/include/ceph_strings.cc fs/ceph/ceph_strings.c
 src/include/ceph_frag.h	    fs/ceph/ceph_frag.h
 src/include/ceph_frag.cc    fs/ceph/ceph_frag.c
