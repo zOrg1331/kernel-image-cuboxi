@@ -223,6 +223,7 @@ struct tm6000_core {
 };
 
 #define TM6000_AUDIO 0x10
+#define TM6000_DVB	0x20
 
 struct tm6000_ops {
 	struct list_head	next;
