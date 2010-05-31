@@ -5,7 +5,7 @@
 %define with_headers   1
 %define with_openafs   0
 %define ovzver 028stab069
-%define ovzrel 5
+%define ovzrel 6
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -4862,6 +4862,7 @@ Patch100028: diff-rh-bond802.3ad-slave-speed-20100421
 Patch100029: diff-cpt-restore-itimers-properly
 Patch100030: diff-ms-nfsd-report-v4-as-off
 Patch100031: diff-ve-nfsd-virt-raparm-hash
+Patch100032: diff-cfq-fix-requests-merging
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -9593,6 +9594,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100029 -p1
 %patch100030 -p1
 %patch100031 -p1
+%patch100032 -p1
 
 %patch101000 -p1
 %patch101001 -p1

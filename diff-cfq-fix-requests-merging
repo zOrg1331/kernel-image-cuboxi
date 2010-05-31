@@ -1,0 +1,223 @@
+diff -up ./block/cfq-iosched.c.khln ./block/cfq-iosched.c
+--- ./block/cfq-iosched.c.khln	2010-05-26 17:46:05.000000000 +0400
++++ ./block/cfq-iosched.c	2010-05-26 17:49:48.000000000 +0400
+@@ -174,6 +174,8 @@ static inline void cic_set_cfqq(struct c
+ }
+ static void cfq_put_queue(struct cfq_queue *cfqq);
+ 
++static int cfq_get_async_cfqq_index(struct task_struct *tsk);
++
+ #ifdef CONFIG_UBC_IO_PRIO
+ static inline struct ub_iopriv *cfqq_ub_iopriv(struct cfq_data *cfqd, int is_sync)
+ {
+@@ -798,7 +800,7 @@ static int cfq_allow_merge(request_queue
+ 			   struct bio *bio)
+ {
+ 	struct cfq_data *cfqd = q->elevator->elevator_data;
+-	const int rw = bio_data_dir(bio);
++	int bio_sync = cfq_bio_sync(bio);
+ 	struct cfq_rq *crq = RQ_DATA(rq);
+ 	struct cfq_queue *cfqq;
+ 	struct cfq_io_context *cic;
+@@ -806,8 +808,7 @@ static int cfq_allow_merge(request_queue
+ 	/*
+ 	 * Disallow merge of a sync bio into an async request.
+ 	 */
+-	if ((bio_data_dir(bio) == READ || bio_sync(bio))
+-					&& !cfq_crq_is_sync(crq))
++	if (bio_sync && !cfq_crq_is_sync(crq))
+ 		return 0;
+ 
+ 	/*
+@@ -818,7 +819,7 @@ static int cfq_allow_merge(request_queue
+ 	if (!cic)
+ 		return 0;
+ 
+-	cfqq = cic_to_cfqq(cic, rw & REQ_RW_SYNC);
++	cfqq = cic_to_cfqq(cic, bio_sync);
+ 	if (cfqq == crq->cfq_queue)
+ 		return 1;
+ 
+@@ -1291,6 +1292,9 @@ static struct cfq_queue *cfq_select_queu
+ 	if (!cfqq)
+ 		goto new_queue;
+ 
++	if (!cfqq->cfq_bc)
++		goto expire;
++
+ 	/*
+ 	 * slice has expired
+ 	 */
+@@ -1596,10 +1600,6 @@ static void cfq_exit_single_io_context(s
+ 
+ 	spin_lock(q->queue_lock);
+ 
+-	/*
+-	 * cic->cfqq[ASYNC] is always NULL and the put of async queues
+-	 * happens on appropriate bc death or device unplug
+-	 */
+ 	if (cic->cfqq[ASYNC]) {
+ 		cfq_exit_cfqq(cfqd, cic->cfqq[ASYNC]);
+ 		cic->cfqq[ASYNC] = NULL;
+@@ -1713,10 +1713,6 @@ static inline void changed_ioprio(struct
+ 
+ 	spin_lock_irqsave(cfqd->queue->queue_lock, flags);
+ 
+-	/* 
+-	 * cic->cfqq[ASYNC] is always NULL, ioprio change
+-	 * for async queues happens automatically
+-	 */
+ 	cfqq = cic->cfqq[ASYNC];
+ 	if (cfqq) {
+ 		struct cfq_queue *new_cfqq;
+@@ -1766,12 +1762,24 @@ cfq_get_queue(struct cfq_data *cfqd, int
+ 	struct cfq_queue *cfqq, *new_cfqq = NULL;
+ 	struct cfq_io_context *cic;
+ 	struct cfq_bc_data *cfq_bc = NULL;
++	struct cfq_queue **async_cfqq = NULL;
+ 
+ retry:
+ 	cic = cfq_cic_rb_lookup(cfqd, tsk->io_context);
+ 	/* cic always exists here */
+ 	cfqq = cic_to_cfqq(cic, is_sync);
+ 
++	if (!is_sync) {
++		read_lock(&iopriv->cfq_bc_list_lock);
++		cfq_bc = __find_cfq_bc(iopriv, cfqd);
++		read_unlock(&iopriv->cfq_bc_list_lock);
++		if (cfq_bc) {
++			async_cfqq = cfq_bc->async_cfqq +
++				cfq_get_async_cfqq_index(tsk);
++			cfqq = *async_cfqq;
++		}
++	}
++
+ 	if (!cfqq) {
+ 		if (new_cfqq) {
+ 			cfqq = new_cfqq;
+@@ -1820,6 +1828,11 @@ retry:
+ 		cfq_mark_cfqq_idle_window(cfqq);
+ 		cfq_mark_cfqq_prio_changed(cfqq);
+ 		cfq_init_prio_data(cfqq);
++
++		if (async_cfqq) {
++			atomic_inc(&cfqq->ref);
++			*async_cfqq = cfqq;
++		}
+ 	}
+ 
+ 	if (new_cfqq)
+@@ -2467,66 +2480,49 @@ cfq_set_request(request_queue_t *q, stru
+ 	struct task_struct *tsk = current;
+ 	struct cfq_io_context *cic;
+ 	const int rw = rq_data_dir(rq);
+-	const int is_sync = (rw == READ || rw == WRITE_SYNC);
++	const int is_sync = (rw == READ || rq->flags & REQ_RW_SYNC);
+ 	struct cfq_queue *cfqq;
+ 	struct cfq_rq *crq;
+ 	unsigned long flags;
+ 	struct ub_iopriv *iopriv;
+-	struct cfq_bc_data *cfq_bc = NULL;
+-	int cfqq_index;
+ 
+ 	might_sleep_if(gfp_mask & __GFP_WAIT);
+ 
+ 	cic = cfq_get_io_context(cfqd, gfp_mask);
+ 	iopriv = cfqq_ub_iopriv(cfqd, is_sync);
+-	if (!is_sync)
+-		cfq_bc = bc_findcreate_cfq_bc(iopriv, cfqd, gfp_mask);
+ 
+ 	spin_lock_irqsave(q->queue_lock, flags);
+ 
+ new_queue:
+-	if (!cic || (!is_sync && cfq_bc == NULL))
++	if (!cic)
+ 		goto queue_fail;
+ 
+-	/*
+-	 * We store task's sync cfqq at IO context as usual,
+-	 * and async cfqqs are stored at cfq_bc_data
+-	 */
+-	if (is_sync) {
+-		cfqq = cic_to_cfqq(cic, is_sync);
+-		if (!cfqq) {
+-get_queue:
+-			cfqq = cfq_get_queue(cfqd, is_sync, tsk, iopriv, gfp_mask);
+-			if (!cfqq)
+-				goto queue_fail;
+-	
+-			cic_set_cfqq(cic, cfqq, is_sync);
+-		} else {
+-			/*
+-			 * If the queue was seeky for too long, break it apart.
+-			 */
+-			if (cfq_cfqq_coop(cfqq) && should_split_cfqq(cfqq)) {
+-				cfqq = split_cfqq(cic, cfqq);
+-				if (!cfqq)
+-					goto new_queue;
+-			} else if (cfqq->new_cfqq)
+-				cfqq = cfq_merge_cfqqs(cfqd, cic, cfqq);
+-			if (!cfqq->cfq_bc || cfqq->cfq_bc->ub_iopriv != iopriv) {
+-				cfq_put_queue(cfqq);
+-				cic->cfqq[is_sync] = NULL;
+-				goto get_queue;
+-			}
+-		}
++	cfqq = cic_to_cfqq(cic, is_sync);
++	if (!cfqq) {
++		cfqq = cfq_get_queue(cfqd, is_sync, tsk, iopriv, gfp_mask);
++		if (!cfqq)
++			goto queue_fail;
++
++		cic_set_cfqq(cic, cfqq, is_sync);
+ 	} else {
+-		cfqq_index = cfq_get_async_cfqq_index(tsk);
+-		if (!cfq_bc->async_cfqq[cfqq_index]) {
+-			cfqq = cfq_get_queue(cfqd, is_sync, tsk, iopriv, gfp_mask);
++		/*
++		 * If the queue was seeky for too long, break it apart.
++		 */
++		if (cfq_cfqq_coop(cfqq) && should_split_cfqq(cfqq)) {
++			cfqq = split_cfqq(cic, cfqq);
+ 			if (!cfqq)
+-				goto queue_fail;
++				goto new_queue;
++		} else if (cfqq->new_cfqq)
++			cfqq = cfq_merge_cfqqs(cfqd, cic, cfqq);
++	}
+ 
+-			cfq_bc->async_cfqq[cfqq_index] = cfqq;
+-		} else
+-			cfqq = cfq_bc->async_cfqq[cfqq_index];
++	/*
++	 * UB was released or changed
++	 */
++	if (!cfqq->cfq_bc || cfqq->cfq_bc->ub_iopriv != iopriv) {
++		cic_set_cfqq(cic, NULL, is_sync);
++		cfq_put_queue(cfqq);
++		goto new_queue;
+ 	}
+ 
+ 	cfqq->allocated[rw]++;
+@@ -2692,15 +2688,15 @@ static void cfq_exit_queue(elevator_t *e
+ 	if (cfqd->active_queue)
+ 		__cfq_slice_expired(cfqd, cfqd->active_queue, 0);
+ 
++	/*
++	 * putting async queues on all beancounters,
++	 */
++	cfq_put_async_queue(cfqd);
++
+ 	while (!list_empty(&cfqd->cic_list)) {
+ 		struct cfq_io_context *cic = list_entry(cfqd->cic_list.next,
+ 							struct cfq_io_context,
+ 							queue_list);
+-		/*
+-		 * putting async queues on all beancounters,
+-		 * ->cfqq[ASYNC] below always equals NULL
+-		 */
+-		cfq_put_async_queue(cfqd);
+ 		if (cic->cfqq[ASYNC]) {
+ 			cfq_put_queue(cic->cfqq[ASYNC]);
+ 			cic->cfqq[ASYNC] = NULL;
+diff -up ./block/elevator.c.khln ./block/elevator.c
