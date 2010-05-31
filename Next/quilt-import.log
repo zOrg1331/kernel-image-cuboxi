@@ -1,0 +1,47 @@
+Importing driver-core.current based on 2.6.34-git11
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.34-git16
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 52b0ace7dfe8f70350218017a95d7cab1eb41fbb
+HEAD is now at 52b0ace Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tiwai/sound-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-documentation-checkpatch-cleanup.patch
+i2c-core-01-share-address-probing-code.patch
+i2c-core-02-check-for-address-validity.patch
+i2c-core-03-document-invalid-addresses.patch
+i2c-core-04-rename-i2c_check_addr.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 6684cda...5e63642 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.34-git15
+$ cd ../quilt-tmp
+$ git reset --hard 24010e460454ec0d2f4f0213b667b4349cbdb8e1
+HEAD is now at 24010e4 Merge branch 'drm-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/airlied/drm-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-ltc4245-expose-all-gpio-pins-as-analog-voltages.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 94c50ff...0f07b5f master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.34-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.34-7097-gf4b87de
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.34
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
