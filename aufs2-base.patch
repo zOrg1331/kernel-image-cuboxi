@@ -1,10 +1,10 @@
 aufs2 base patch for linux-2.6.
 
 diff --git a/fs/namei.c b/fs/namei.c
-index b86b96f..c43d6b8 100644
+index 48e1f60..6aaeadc 100644
 --- a/fs/namei.c
 +++ b/fs/namei.c
-@@ -1177,7 +1177,7 @@ out:
+@@ -1178,7 +1178,7 @@ out:
   * needs parent already locked. Doesn't follow mounts.
   * SMP-safe.
   */
@@ -13,7 +13,7 @@ index b86b96f..c43d6b8 100644
  {
  	int err;
  
-@@ -1187,7 +1187,7 @@ static struct dentry *lookup_hash(struct nameidata *nd)
+@@ -1188,7 +1188,7 @@ static struct dentry *lookup_hash(struct nameidata *nd)
  	return __lookup_hash(&nd->last, nd->path.dentry, nd);
  }
  
@@ -23,10 +23,10 @@ index b86b96f..c43d6b8 100644
  {
  	unsigned long hash;
 diff --git a/fs/splice.c b/fs/splice.c
-index 9313b61..b9e871f 100644
+index ac22b00..67450c4 100644
 --- a/fs/splice.c
 +++ b/fs/splice.c
-@@ -1054,8 +1054,8 @@ EXPORT_SYMBOL(generic_splice_sendpage);
+@@ -1104,8 +1104,8 @@ EXPORT_SYMBOL(generic_splice_sendpage);
  /*
   * Attempt to initiate a splice from pipe to file.
   */
@@ -37,7 +37,7 @@ index 9313b61..b9e871f 100644
  {
  	ssize_t (*splice_write)(struct pipe_inode_info *, struct file *,
  				loff_t *, size_t, unsigned int);
-@@ -1082,9 +1082,9 @@ static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
+@@ -1132,9 +1132,9 @@ static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
  /*
   * Attempt to initiate a splice from a file to a pipe.
   */
@@ -65,12 +65,12 @@ index 05b441d..91bc74e 100644
  
  extern int follow_down(struct path *);
 diff --git a/include/linux/splice.h b/include/linux/splice.h
-index 18e7c7c..8393b5c 100644
+index 997c3b4..be9a153 100644
 --- a/include/linux/splice.h
 +++ b/include/linux/splice.h
-@@ -82,4 +82,10 @@ extern ssize_t splice_to_pipe(struct pipe_inode_info *,
- extern ssize_t splice_direct_to_actor(struct file *, struct splice_desc *,
- 				      splice_direct_actor *);
+@@ -89,4 +89,10 @@ extern int splice_grow_spd(struct pipe_inode_info *, struct splice_pipe_desc *);
+ extern void splice_shrink_spd(struct pipe_inode_info *,
+ 				struct splice_pipe_desc *);
  
 +extern long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
 +			   loff_t *ppos, size_t len, unsigned int flags);

@@ -13,7 +13,7 @@ index 5f85b59..6ee7cf8 100644
  endif # MISC_FILESYSTEMS
  
 diff --git a/fs/Makefile b/fs/Makefile
-index 97f340f..9a631ef 100644
+index e6ec1d3..b0d795a 100644
 --- a/fs/Makefile
 +++ b/fs/Makefile
 @@ -126,3 +126,4 @@ obj-$(CONFIG_BTRFS_FS)		+= btrfs/
@@ -22,7 +22,7 @@ index 97f340f..9a631ef 100644
  obj-$(CONFIG_CEPH_FS)		+= ceph/
 +obj-$(CONFIG_AUFS_FS)           += aufs/
 diff --git a/include/linux/Kbuild b/include/linux/Kbuild
-index e2ea0b2..b5a1c6e 100644
+index 2fc8e14..3b766a7 100644
 --- a/include/linux/Kbuild
 +++ b/include/linux/Kbuild
 @@ -34,6 +34,7 @@ header-y += atmppp.h
