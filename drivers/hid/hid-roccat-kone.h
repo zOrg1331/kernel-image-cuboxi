@@ -14,7 +14,7 @@
 
 #include <linux/types.h>
 
-#define ROCCAT_KONE_DRIVER_VERSION "v0.3.1"
+#define ROCCAT_KONE_ABI_VERSION "1"
 
 #pragma pack(push)
 #pragma pack(1)
@@ -189,6 +189,12 @@ enum kone_commands {
 	kone_command_firmware = 0xe5a
 };
 
+struct kone_roccat_report {
+	uint8_t event;
+	uint8_t value; /* holds dpi or profile value */
+	uint8_t key; /* macro key on overlong macro execution */
+};
+
 #pragma pack(pop)
 
 struct kone_device {
@@ -219,6 +225,9 @@ struct kone_device {
 	 * so it's read only once
 	 */
 	int firmware_version;
+
+	int roccat_claimed;
+	int chrdev_minor;
 };
 
 #endif
