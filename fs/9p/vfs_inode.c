@@ -1220,6 +1220,49 @@ clunk_fid:
 }
 
 /**
+ * v9fs_vfs_link_dotl - create a hardlink for dotl
+ * @old_dentry: dentry for file to link to
+ * @dir: inode destination for new link
+ * @dentry: dentry for link
+ *
+ */
+
+static int
+v9fs_vfs_link_dotl(struct dentry *old_dentry, struct inode *dir,
+		struct dentry *dentry)
+{
+	int err;
+	struct p9_fid *dfid;
+	char *name;
+	struct v9fs_session_info *v9ses;
+
+	P9_DPRINTK(P9_DEBUG_VFS,
+		" %lu,%s,%s\n", dir->i_ino, dentry->d_name.name,
+		old_dentry->d_name.name);
+
+	v9ses = v9fs_inode2v9ses(dir);
+	dfid = v9fs_fid_lookup(dentry->d_parent);
+	if (IS_ERR(dfid))
+		return PTR_ERR(dfid);
+
+	name = (char *) dentry->d_name.name;
+
+	err = p9_client_link(dfid, (char *)old_dentry->d_name.name,
+			(char *)dentry->d_name.name);
+	if (err < 0) {
+		P9_DPRINTK(P9_DEBUG_VFS, "p9_client_link failed %d\n", err);
+		return err;
+	}
+
+	dentry->d_op = old_dentry->d_op;
+	/* Hard link, so we can use old_dentry's inode. Just i_count++ */
+	atomic_inc(&old_dentry->d_inode->i_count);
+	d_instantiate(dentry, old_dentry->d_inode);
+
+	return err;
+}
+
+/**
  * v9fs_vfs_mknod - create a special file
  * @dir: inode destination for new link
  * @dentry: dentry for file
@@ -1268,7 +1311,7 @@ static const struct inode_operations v9fs_dir_inode_operations_dotu = {
 	.create = v9fs_vfs_create,
 	.lookup = v9fs_vfs_lookup,
 	.symlink = v9fs_vfs_symlink,
-	.link = v9fs_vfs_link,
+	.link = v9fs_vfs_link_dotl,
 	.unlink = v9fs_vfs_unlink,
 	.mkdir = v9fs_vfs_mkdir,
 	.rmdir = v9fs_vfs_rmdir,
