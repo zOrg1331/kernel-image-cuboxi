@@ -1577,7 +1577,9 @@ EXPORT_SYMBOL(__netif_schedule);
 
 void dev_kfree_skb_irq(struct sk_buff *skb)
 {
-	if (atomic_dec_and_test(&skb->users)) {
+	if (!skb->destructor)
+		dev_kfree_skb(skb);
+	else if (atomic_dec_and_test(&skb->users)) {
 		struct softnet_data *sd;
 		unsigned long flags;
 
@@ -2822,8 +2824,7 @@ static int __netif_receive_skb(struct sk_buff *skb)
 			skb->dev = master;
 	}
 
-	__get_cpu_var(softnet_data).processed++;
-
+	__this_cpu_inc(softnet_data.processed);
 	skb_reset_network_header(skb);
 	skb_reset_transport_header(skb);
 	skb->mac_len = skb->network_header - skb->mac_header;
