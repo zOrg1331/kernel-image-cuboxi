@@ -717,7 +717,7 @@ int sysrq_toggle_support(int enable_mask)
 			sysrq_unregister_handler();
 	}
 
-	return 0;
+	return was_enabled;
 }
 
 static int __sysrq_swap_key_ops(int key, struct sysrq_key_op *insert_op_p,
