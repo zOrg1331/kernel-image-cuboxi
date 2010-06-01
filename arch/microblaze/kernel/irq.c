@@ -36,6 +36,7 @@ static u32 concurrent_irq;
 void __irq_entry do_IRQ(struct pt_regs *regs)
 {
 	unsigned int irq;
+	trace_hardirqs_off();
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
 	irq_enter();
@@ -53,6 +54,7 @@ next_irq:
 
 	irq_exit();
 	set_irq_regs(old_regs);
+	trace_hardirqs_on();
 }
 
 int show_interrupts(struct seq_file *p, void *v)
