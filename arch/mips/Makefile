@@ -209,13 +209,7 @@ endif
 #
 # Board-dependent options and extra files
 #
-
-#
-# Texas Instruments AR7
-#
-core-$(CONFIG_AR7)		+= arch/mips/ar7/
-cflags-$(CONFIG_AR7)		+= -I$(srctree)/arch/mips/include/asm/mach-ar7
-load-$(CONFIG_AR7)		+= 0xffffffff94100000
+include $(srctree)/arch/mips/Kbuild.platforms
 
 #
 # Acer PICA 61, Mips Magnum 4000 and Olivetti M700.
@@ -706,7 +700,8 @@ head-y := arch/mips/kernel/head.o arch/mips/kernel/init_task.o
 
 libs-y			+= arch/mips/lib/
 
-core-y			+= arch/mips/kernel/ arch/mips/mm/ arch/mips/math-emu/
+# See arch/mips/Kbuild for content of core part of the kernel
+core-y += arch/mips/
 
 drivers-$(CONFIG_OPROFILE)	+= arch/mips/oprofile/
 
@@ -733,35 +728,19 @@ vmlinux.32: vmlinux
 vmlinux.64: vmlinux
 	$(OBJCOPY) -O $(64bit-bfd) $(OBJCOPYFLAGS) $< $@
 
-makeboot =$(Q)$(MAKE) $(build)=arch/mips/boot VMLINUX=$(vmlinux-32) $(1)
-makezboot =$(Q)$(MAKE) $(build)=arch/mips/boot/compressed \
-	   VMLINUX_LOAD_ADDRESS=$(load-y) 32bit-bfd=$(32bit-bfd) $(1)
-
 all:	$(all-y)
 
-vmlinuz: vmlinux FORCE
-	+@$(call makezboot,$@)
+# boot
+vmlinux.bin vmlinux.ecoff vmlinux.srec: $(vmlinux-32) FORCE
+	$(Q)$(MAKE) $(build)=arch/mips/boot VMLINUX=$(vmlinux-32) arch/mips/boot/$@
 
-vmlinuz.bin: vmlinux
-	+@$(call makezboot,$@)
+# boot/compressed
+vmlinuz vmlinuz.bin vmlinuz.ecoff vmlinuz.srec: $(vmlinux-32) FORCE
+	$(Q)$(MAKE) $(build)=arch/mips/boot/compressed \
+	   VMLINUX_LOAD_ADDRESS=$(load-y) 32bit-bfd=$(32bit-bfd) $@
 
-vmlinuz.ecoff: vmlinux
-	+@$(call makezboot,$@)
 
-vmlinuz.srec: vmlinux
-	+@$(call makezboot,$@)
-
-vmlinux.bin: $(vmlinux-32)
-	+@$(call makeboot,$@)
-
-vmlinux.ecoff: $(vmlinux-32)
-	+@$(call makeboot,$@)
-
-vmlinux.srec: $(vmlinux-32)
-	+@$(call makeboot,$@)
-
-CLEAN_FILES += vmlinux.ecoff \
-	       vmlinux.srec
+CLEAN_FILES += vmlinux.32 vmlinux.64
 
 archprepare:
 ifdef CONFIG_MIPS32_N32
@@ -780,9 +759,9 @@ install:
 	$(Q)install -D -m 644 System.map $(INSTALL_PATH)/System.map-$(KERNELRELEASE)
 
 archclean:
-	@$(MAKE) $(clean)=arch/mips/boot
-	@$(MAKE) $(clean)=arch/mips/boot/compressed
-	@$(MAKE) $(clean)=arch/mips/lasat
+	$(Q)$(MAKE) $(clean)=arch/mips/boot
+	$(Q)$(MAKE) $(clean)=arch/mips/boot/compressed
+	$(Q)$(MAKE) $(clean)=arch/mips/lasat
 
 define archhelp
 	echo '  install              - install kernel into $(INSTALL_PATH)'
@@ -796,11 +775,3 @@ define archhelp
 	echo
 	echo '  These will be default as apropriate for a configured platform.'
 endef
-
-CLEAN_FILES += vmlinux.32 \
-	       vmlinux.64 \
-	       vmlinux.ecoff \
-	       vmlinuz \
-	       vmlinuz.ecoff \
-	       vmlinuz.bin \
-	       vmlinuz.srec
