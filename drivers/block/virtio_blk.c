@@ -2,7 +2,7 @@
 #include <linux/spinlock.h>
 #include <linux/slab.h>
 #include <linux/blkdev.h>
-#include <linux/smp_lock.h>
+#include <linux/mutex.h>
 #include <linux/hdreg.h>
 #include <linux/virtio.h>
 #include <linux/virtio_blk.h>
@@ -10,6 +10,7 @@
 
 #define PART_BITS 4
 
+static DEFINE_MUTEX(virtio_blk_mutex);
 static int major, index;
 
 struct virtio_blk
@@ -239,9 +240,9 @@ static int virtblk_ioctl(struct block_device *bdev, fmode_t mode,
 {
 	int ret;
 
-	lock_kernel();
+	mutex_lock(&virtio_blk_mutex);
 	ret = virtblk_locked_ioctl(bdev, mode, cmd, param);
-	unlock_kernel();
+	mutex_unlock(&virtio_blk_mutex);
 
 	return ret;
 }
