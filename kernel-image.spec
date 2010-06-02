@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.32
-Release: alt14
+Release: alt15
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -348,6 +348,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Wed Jun 02 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt15
+- 2.6.32.15
+
 * Thu May 27 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt14
 - 2.6.32.14
 
