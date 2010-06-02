@@ -139,6 +139,7 @@ DECL_KSYM_MODULE(xt_conntrack);
 DECL_KSYM_MODULE(ip_nat);
 DECL_KSYM_MODULE(nf_nat);
 DECL_KSYM_MODULE(iptable_nat);
+DECL_KSYM_MODULE(nf_conntrack_ftp);
 
 struct sk_buff;
 
@@ -155,6 +156,8 @@ DECL_KSYM_CALL(void, fini_iptable_conntrack, (void));
 DECL_KSYM_CALL(void, nf_conntrack_cleanup_ve, (void));
 DECL_KSYM_CALL(void, fini_nf_ct_l3proto_ipv4, (void));
 DECL_KSYM_CALL(void, fini_nf_ct_l3proto_ipv6, (void));
+DECL_KSYM_CALL(int, init_nf_ct_ftp, (void));
+DECL_KSYM_CALL(void, fini_nf_ct_ftp, (void));
 
 #include <linux/netfilter/x_tables.h>
 #endif

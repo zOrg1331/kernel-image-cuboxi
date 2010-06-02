@@ -953,7 +953,7 @@ unsigned long do_mmap_pgoff(struct file * file, unsigned long addr,
 			prot |= PROT_EXEC;
 
 	if (!len)
-		return strncmp(current->comm, "rpm", 3) ? -EINVAL : addr;
+		return -EINVAL;
 
 	if (!(flags & MAP_FIXED))
 		addr = round_hint_to_min(addr);

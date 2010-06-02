@@ -951,11 +951,24 @@ static int do_ve_iptables(struct ve_struct *ve, __u64 init_mask,
 	if (err < 0)
 		goto err_nftable_nat2;
 #endif
+#if defined(CONFIG_NF_CONNTRACK_FTP) || \
+    defined(CONFIG_NF_CONNTRACK_FTP_MODULE)
+	err = KSYMIPTINIT(init_mask, ve, VE_IP_CONNTRACK_FTP,
+			nf_conntrack_ftp, init_nf_ct_ftp, ());
+	if (err < 0)
+		goto err_nf_conntrack_ftp;
+#endif
 	return 0;
 
 /* ------------------------------------------------------------------------- */
 
 cleanup:
+#if defined(CONFIG_NF_CONNTRACK_FTP) || \
+    defined(CONFIG_NF_CONNTRACK_FTP_MODULE)
+	KSYMIPTFINI(ve->_iptables_modules, VE_IP_CONNTRACK_FTP,
+			nf_conntrack_ftp, fini_nf_ct_ftp, ());
+err_nf_conntrack_ftp:
+#endif
 #if defined(CONFIG_NF_NAT) || \
     defined(CONFIG_NF_NAT_MODULE)
 	KSYMIPTFINI(ve->_iptables_modules, VE_IP_IPTABLE_NAT,
