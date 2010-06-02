@@ -2749,7 +2749,7 @@ static int __devexit qe_udc_remove(struct of_device *ofdev)
 }
 
 /*-------------------------------------------------------------------------*/
-static struct of_device_id __devinitdata qe_udc_match[] = {
+static const struct of_device_id qe_udc_match[] __devinitconst = {
 	{
 		.compatible = "fsl,mpc8323-qe-usb",
 		.data = (void *)PORT_QE,
@@ -2768,8 +2768,11 @@ static struct of_device_id __devinitdata qe_udc_match[] = {
 MODULE_DEVICE_TABLE(of, qe_udc_match);
 
 static struct of_platform_driver udc_driver = {
-	.name           = (char *)driver_name,
-	.match_table    = qe_udc_match,
+	.driver = {
+		.name = (char *)driver_name,
+		.owner = THIS_MODULE,
+		.of_match_table = qe_udc_match,
+	},
 	.probe          = qe_udc_probe,
 	.remove         = __devexit_p(qe_udc_remove),
 #ifdef CONFIG_PM

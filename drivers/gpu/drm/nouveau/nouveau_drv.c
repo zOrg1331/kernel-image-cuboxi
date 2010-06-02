@@ -75,13 +75,21 @@ MODULE_PARM_DESC(ignorelid, "Ignore ACPI lid status");
 int nouveau_ignorelid = 0;
 module_param_named(ignorelid, nouveau_ignorelid, int, 0400);
 
-MODULE_PARM_DESC(noagp, "Disable all acceleration");
+MODULE_PARM_DESC(noaccel, "Disable all acceleration");
 int nouveau_noaccel = 0;
 module_param_named(noaccel, nouveau_noaccel, int, 0400);
 
-MODULE_PARM_DESC(noagp, "Disable fbcon acceleration");
+MODULE_PARM_DESC(nofbaccel, "Disable fbcon acceleration");
 int nouveau_nofbaccel = 0;
 module_param_named(nofbaccel, nouveau_nofbaccel, int, 0400);
+
+MODULE_PARM_DESC(override_conntype, "Ignore DCB connector type");
+int nouveau_override_conntype = 0;
+module_param_named(override_conntype, nouveau_override_conntype, int, 0400);
+
+MODULE_PARM_DESC(tv_disable, "Disable TV-out detection\n");
+int nouveau_tv_disable = 0;
+module_param_named(tv_disable, nouveau_tv_disable, int, 0400);
 
 MODULE_PARM_DESC(tv_norm, "Default TV norm.\n"
 		 "\t\tSupported: PAL, PAL-M, PAL-N, PAL-Nc, NTSC-M, NTSC-J,\n"
@@ -135,7 +143,7 @@ nouveau_pci_remove(struct pci_dev *pdev)
 	drm_put_dev(dev);
 }
 
-static int
+int
 nouveau_pci_suspend(struct pci_dev *pdev, pm_message_t pm_state)
 {
 	struct drm_device *dev = pci_get_drvdata(pdev);
@@ -145,7 +153,6 @@ nouveau_pci_suspend(struct pci_dev *pdev, pm_message_t pm_state)
 	struct nouveau_fifo_engine *pfifo = &dev_priv->engine.fifo;
 	struct nouveau_channel *chan;
 	struct drm_crtc *crtc;
-	uint32_t fbdev_flags;
 	int ret, i;
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
@@ -154,9 +161,10 @@ nouveau_pci_suspend(struct pci_dev *pdev, pm_message_t pm_state)
 	if (pm_state.event == PM_EVENT_PRETHAW)
 		return 0;
 
-	fbdev_flags = dev_priv->fbdev_info->flags;
-	dev_priv->fbdev_info->flags |= FBINFO_HWACCEL_DISABLED;
+	NV_INFO(dev, "Disabling fbcon acceleration...\n");
+	nouveau_fbcon_save_disable_accel(dev);
 
+	NV_INFO(dev, "Unpinning framebuffer(s)...\n");
 	list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
 		struct nouveau_framebuffer *nouveau_fb;
 
@@ -220,9 +228,9 @@ nouveau_pci_suspend(struct pci_dev *pdev, pm_message_t pm_state)
 	}
 
 	acquire_console_sem();
-	fb_set_suspend(dev_priv->fbdev_info, 1);
+	nouveau_fbcon_set_suspend(dev, 1);
 	release_console_sem();
-	dev_priv->fbdev_info->flags = fbdev_flags;
+	nouveau_fbcon_restore_accel(dev);
 	return 0;
 
 out_abort:
@@ -233,21 +241,19 @@ out_abort:
 	return ret;
 }
 
-static int
+int
 nouveau_pci_resume(struct pci_dev *pdev)
 {
 	struct drm_device *dev = pci_get_drvdata(pdev);
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct nouveau_engine *engine = &dev_priv->engine;
 	struct drm_crtc *crtc;
-	uint32_t fbdev_flags;
 	int ret, i;
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		return -ENODEV;
 
-	fbdev_flags = dev_priv->fbdev_info->flags;
-	dev_priv->fbdev_info->flags |= FBINFO_HWACCEL_DISABLED;
+	nouveau_fbcon_save_disable_accel(dev);
 
 	NV_INFO(dev, "We're back, enabling device...\n");
 	pci_set_power_state(pdev, PCI_D0);
@@ -322,13 +328,14 @@ nouveau_pci_resume(struct pci_dev *pdev)
 	}
 
 	acquire_console_sem();
-	fb_set_suspend(dev_priv->fbdev_info, 0);
+	nouveau_fbcon_set_suspend(dev, 0);
 	release_console_sem();
 
-	nouveau_fbcon_zfill(dev);
+	nouveau_fbcon_zfill_all(dev);
 
 	drm_helper_resume_force_mode(dev);
-	dev_priv->fbdev_info->flags = fbdev_flags;
+
+	nouveau_fbcon_restore_accel(dev);
 	return 0;
 }
 
@@ -402,8 +409,10 @@ static int __init nouveau_init(void)
 			nouveau_modeset = 1;
 	}
 
-	if (nouveau_modeset == 1)
+	if (nouveau_modeset == 1) {
 		driver.driver_features |= DRIVER_MODESET;
+		nouveau_register_dsm_handler();
+	}
 
 	return drm_init(&driver);
 }
@@ -411,6 +420,7 @@ static int __init nouveau_init(void)
 static void __exit nouveau_exit(void)
 {
 	drm_exit(&driver);
+	nouveau_unregister_dsm_handler();
 }
 
 module_init(nouveau_init);

@@ -24,7 +24,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/firewire.h>
 #include <linux/firewire-constants.h>
-#include <linux/gfp.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
@@ -35,6 +34,7 @@
 #include <linux/moduleparam.h>
 #include <linux/pci.h>
 #include <linux/pci_ids.h>
+#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
 
@@ -1206,7 +1206,7 @@ static void handle_local_lock(struct fw_ohci *ohci,
 			      struct fw_packet *packet, u32 csr)
 {
 	struct fw_packet response;
-	int tcode, length, ext_tcode, sel;
+	int tcode, length, ext_tcode, sel, try;
 	__be32 *payload, lock_old;
 	u32 lock_arg, lock_data;
 
@@ -1233,21 +1233,26 @@ static void handle_local_lock(struct fw_ohci *ohci,
 	reg_write(ohci, OHCI1394_CSRCompareData, lock_arg);
 	reg_write(ohci, OHCI1394_CSRControl, sel);
 
-	if (reg_read(ohci, OHCI1394_CSRControl) & 0x80000000)
-		lock_old = cpu_to_be32(reg_read(ohci, OHCI1394_CSRData));
-	else
-		fw_notify("swap not done yet\n");
+	for (try = 0; try < 20; try++)
+		if (reg_read(ohci, OHCI1394_CSRControl) & 0x80000000) {
+			lock_old = cpu_to_be32(reg_read(ohci,
+							OHCI1394_CSRData));
+			fw_fill_response(&response, packet->header,
+					 RCODE_COMPLETE,
+					 &lock_old, sizeof(lock_old));
+			goto out;
+		}
 
-	fw_fill_response(&response, packet->header,
-			 RCODE_COMPLETE, &lock_old, sizeof(lock_old));
+	fw_error("swap not done (CSR lock timeout)\n");
+	fw_fill_response(&response, packet->header, RCODE_BUSY, NULL, 0);
+
  out:
 	fw_core_handle_response(&ohci->card, &response);
 }
 
 static void handle_local_request(struct context *ctx, struct fw_packet *packet)
 {
-	u64 offset;
-	u32 csr;
+	u64 offset, csr;
 
 	if (ctx == &ctx->ohci->at_request_ctx) {
 		packet->ack = ACK_PENDING;
@@ -1394,7 +1399,7 @@ static void bus_reset_tasklet(unsigned long data)
 	 * was set up before this reset, the old one is now no longer
 	 * in use and we can free it. Update the config rom pointers
 	 * to point to the current config rom and clear the
-	 * next_config_rom pointer so a new udpate can take place.
+	 * next_config_rom pointer so a new update can take place.
 	 */
 
 	if (ohci->next_config_rom != NULL) {

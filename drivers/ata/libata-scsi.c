@@ -33,6 +33,7 @@
  *
  */
 
+#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/blkdev.h>
 #include <linux/spinlock.h>
@@ -1097,7 +1098,7 @@ static int ata_scsi_dev_config(struct scsi_device *sdev,
 		dev->flags |= ATA_DFLAG_NO_UNLOAD;
 
 	/* configure max sectors */
-	blk_queue_max_sectors(sdev->request_queue, dev->max_sectors);
+	blk_queue_max_hw_sectors(sdev->request_queue, dev->max_sectors);
 
 	if (dev->class == ATA_DEV_ATAPI) {
 		struct request_queue *q = sdev->request_queue;
@@ -3343,9 +3344,6 @@ void ata_scsi_scan_host(struct ata_port *ap, int sync)
 	struct ata_device *last_failed_dev = NULL;
 	struct ata_link *link;
 	struct ata_device *dev;
-
-	if (ap->flags & ATA_FLAG_DISABLED)
-		return;
 
  repeat:
 	ata_for_each_link(link, ap, EDGE) {
