@@ -1,0 +1,8 @@
+# All platforms listed in alphabetic order
+
+platforms += ar7
+platforms += loongson
+platforms += mipssim
+
+# include the platform specific files
+include $(patsubst %, $(srctree)/arch/mips/%/Platform, $(platforms))
