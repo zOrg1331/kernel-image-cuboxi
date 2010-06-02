@@ -524,7 +524,7 @@ static char last_unloaded_module[MODULE_NAME_LEN+1];
 EXPORT_TRACEPOINT_SYMBOL(module_get);
 
 /* Init the unload section of the module. */
-static void module_unload_init(struct module *mod)
+static int module_unload_init(struct module *mod)
 {
 	INIT_LIST_HEAD(&mod->source_list);
 	INIT_LIST_HEAD(&mod->target_list);
@@ -533,6 +533,11 @@ static void module_unload_init(struct module *mod)
 	__this_cpu_write(mod->refptr->incs, 1);
 	/* Backwards compatibility macros put refcount during init. */
 	mod->waiter = current;
+
+	mod->refptr = alloc_percpu(struct module_ref);
+	if (!mod->refptr)
+		return -ENOMEM;
+	return 0;
 }
 
 /* Does a already use b? */
@@ -612,6 +617,8 @@ static void module_unload_free(struct module *mod)
 		kfree(use);
 	}
 	mutex_unlock(&module_mutex);
+
+	free_percpu(mod->refptr);
 }
 
 #ifdef CONFIG_MODULE_FORCE_UNLOAD
@@ -886,8 +893,9 @@ int ref_module(struct module *a, struct module *b)
 }
 EXPORT_SYMBOL_GPL(ref_module);
 
-static inline void module_unload_init(struct module *mod)
+static inline int module_unload_init(struct module *mod)
 {
+	return 0;
 }
 #endif /* CONFIG_MODULE_UNLOAD */
 
@@ -1557,10 +1565,7 @@ static void free_module(struct module *mod)
 	module_free(mod, mod->module_init);
 	kfree(mod->args);
 	percpu_modfree(mod);
-#if defined(CONFIG_MODULE_UNLOAD)
-	if (mod->refptr)
-		free_percpu(mod->refptr);
-#endif
+
 	/* Free lock-classes: */
 	lockdep_free_key_range(mod->module_core, mod->core_size);
 
@@ -2433,15 +2438,10 @@ static noinline struct module *load_module(void __user *umod,
 		goto free_percpu;
 	}
 
-#if defined(CONFIG_MODULE_UNLOAD)
-	mod->refptr = alloc_percpu(struct module_ref);
-	if (!mod->refptr) {
-		err = -ENOMEM;
-		goto free_init;
-	}
-#endif
 	/* Now we've moved module, initialize linked lists, etc. */
-	module_unload_init(mod);
+	err = module_unload_init(mod);
+	if (err)
+		goto free_init;
 
 	/* Set up license info based on the info section */
 	set_license(mod, get_modinfo(sechdrs, infoindex, "license"));
@@ -2611,10 +2611,7 @@ static noinline struct module *load_module(void __user *umod,
  cleanup:
 	free_modinfo(mod);
 	module_unload_free(mod);
-#if defined(CONFIG_MODULE_UNLOAD)
-	free_percpu(mod->refptr);
  free_init:
-#endif
 	module_free(mod, mod->module_init);
 	module_free(mod, mod->module_core);
 	/* mod will be freed with core. Don't access it beyond this line! */
