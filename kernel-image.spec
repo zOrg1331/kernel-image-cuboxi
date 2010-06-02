@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-smp
 Version: 2.6.27
-Release: alt13
+Release: alt14
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -468,6 +468,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Jun 02 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt14
+- Update to 2.6.27 kuindzhi
+
 * Sat May 08 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt13
 - Update to 2.6.27 kramskoi.3
 
