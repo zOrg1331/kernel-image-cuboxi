@@ -1,0 +1,176 @@
+Importing driver-core.current based on 2.6.35-rc1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 67a3e12b05e055c0415c556a315a3d3eb637e29e
+HEAD is now at 67a3e12 Linux 2.6.35-rc1
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core.current
+lib-kobject_uevent.c-fix-conig_net-n-warning.patch
+kobject-free-memory-if-netlink_kernel_create-fails.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core.current
+From ../quilt-tmp
+   b1cdc46..b2f2de9  master     -> quilt/driver-core.current
+Importing tty.current based on quilt/driver-core.current
+$ cd ../quilt-tmp
+$ git reset --hard b2f2de90e44691f0fc04766c246686ae0ddbcd67
+HEAD is now at b2f2de9 kobject: free memory if netlink_kernel_create() fails
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+msm-serial-fix-serial-on-msm7x30.patch
+serial_cs-add-and-sort-ids-for-serial-and-modem-cards.patch
+serial-bfin_5xx-irda-is-not-affected-by-anomaly-05000230.patch
+serial-bfin_5xx-fix-typo-in-ier-check.patch
+tty-n_gsm-potential-double-lock.patch
+altera_uart-don-t-take-spinlock-in-already-protected-functions.patch
+altera_uart-simplify-altera_uart_console_putc.patch
+tty-fix-a-little-bug-in-scrup-vt.c.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+   b1cdc46..5496aed  master     -> quilt/tty.current
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard 5496aed6375fd98256103327d722f941e7f5a321
+HEAD is now at 5496aed tty: fix a little bug in scrup, vt.c
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-mos7840-fix-null-pointer-dereference.patch
+usb-isp1362-fix-inw-warning-on-blackfin-systems.patch
+usb-xhci-wait-for-controller-to-be-ready-after-reset.patch
+usb-xhci-wait-for-host-to-start-running.patch
+usb-xhci-print-nec-firmware-version.patch
+usb-s3c-enable-soft-disconnect-during-initialization.patch
+usb-s3c_hsotg-define-usb_gadget_dualspeed-in-kconfig.patch
+usb-s3c-hsotg-ensure-tx-fifo-addresses-setup-when-initialising-fifos.patch
+usb-s3c-hsotg-softdisconnect-minimum-3ms.patch
+usb-s3c-hsotg-ensure-fifos-are-fully-flushed-after-layout.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+   b1cdc46..4bc5c4c  master     -> quilt/usb.current
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard 4bc5c4c227f12c8d89ab6da757d6f0ff808527f3
+HEAD is now at 4bc5c4c USB: s3c-hsotg: Ensure FIFOs are fully flushed after layout
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-add-framebuffer-driver-for-xgi-chipsets.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:212: space before tab in indent.
+   	3, 10, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:448: space before tab in indent.
+   	return;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:481: space before tab in indent.
+   	cfb_copyarea(info, area);
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:486: space before tab in indent.
+   	return;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:2106: space before tab in indent.
+		       	    unsigned int cmd, unsigned long arg, int con,
+warning: squelched 535 whitespace errors
+warning: 540 lines add whitespace errors.
+staging-mid-intel-mid-touch-screen-driver.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:39: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+staging-comedi-give-the-addi_apci_-drivers-different-driver-names.patch
+staging-comedi-addi-data-don-t-overwrite-name-for-request_irq.patch
+staging-comedi-adv_pci_dio-support-advantech-pci-1735u.patch
+staging-comedi-amplc_dio200-protect-counter-subdevice-with-spinlock.patch
+staging-comedi-don-t-write-to-buffer-if-command-finished.patch
+staging-comedi-comedi_bufinfo-with-no-async-report-no-bytes-read-or-written.patch
+staging-comedi-for-comedi_bufinfo-check-access-to-command.patch
+staging-comedi-fix-8255-and-das08-kconfig-dependancies.patch
+staging-comedi-fixing-ni_tio-to-mite-pci-dependancy.patch
+staging-add-msm-framebuffer-driver.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:326: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+staging-batman-adv-fix-rogue-packets-on-shutdown.patch
+staging-batman-adv-call-unregister_netdev-on-failures-to-get-rtnl-lock.patch
+staging-batman-adv-don-t-call-free_netdev-twice.patch
+staging-batman-adv-don-t-allocate-icmp-packet-with-gfp_kernel.patch
+staging-adis16255-fix-typo-in-kconfig.patch
+staging-adis16255-add-proper-section-markings-to-hotplug-funcs.patch
+staging-iio-utils-fix-memory-overflow-for-dynamically-allocateded-memory-to-hold-filename.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+   b1cdc46..02c15eb  master     -> quilt/staging.current
+Importing i2c based on 2.6.35-rc1
+$ cd ../quilt-tmp
+$ git reset --hard 67a3e12b05e055c0415c556a315a3d3eb637e29e
+HEAD is now at 67a3e12 Linux 2.6.35-rc1
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-documentation-checkpatch-cleanup.patch
+i2c-core-01-share-address-probing-code.patch
+i2c-core-02-check-for-address-validity.patch
+i2c-core-03-document-invalid-addresses.patch
+i2c-core-04-rename-i2c_check_addr.patch
+i2c-busses-move-two-drivers-to-embedded-section.patch
+i2c-remove-all-i2c_set_clientdata-client-null-in-drivers.patch
+i2c-dev-01-remove-unnecessary-kmalloc-casts.patch
+i2c-dev-02-use-memdup_user.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 5e63642...7ace3b1 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.35-rc1
+$ cd ../quilt-tmp
+$ git reset --hard 67a3e12b05e055c0415c556a315a3d3eb637e29e
+HEAD is now at 67a3e12 Linux 2.6.35-rc1
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k10temp-refine-erratum-319-detection.patch
+hwmon-ltc4245-expose-all-gpio-pins-as-analog-voltages.patch
+hwmon-emc1403-add-power-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 0f07b5f...303c97b master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.34-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-rc1
+$ cd ../quilt-tmp
+$ git reset --hard 67a3e12b05e055c0415c556a315a3d3eb637e29e
+HEAD is now at 67a3e12 Linux 2.6.35-rc1
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+module:fix-percpu_free-after-mod-free.patch
+module:reduce-locking.patch
+module:fix-libcrc32-waiting-bug.patch
+module:make_the_usage_lists_be_two_way.patch
+virtio:blk_fix_minimum_number_of_s_g_elements.patch
+virtio:console_fix_crash_when_hot_unplugging_a_port_and_read_is_blocked.patch
+virtio:console_fix_crash_when_port_is_unplugged_and_blocked_for_write.patch
+virtio:put_last_seen_used_index_into_ring_itself.patch
+virtio:net_pass_gfp_to_add_buf.patch
+misc:fix-email.patch
+kernel-params_c-check-null-for-non-bool.diff
+param:neaten-param.c-exports.patch
+param:param_ops.patch
+param:param_ops-for-hvc_iucv-driver.patch
+param:param_ops-modpost-complaint-silence.patch
+param:add-free-hook.patch
+param:use-free-hook-for-charp.patch
+param:params-are-const.patch
+param:kernel_param_lock.patch
+param:documentation.patch
+param:remove-useless-writable-charp.patch
+param:lock-charp-simple.patch
+param:lock-charp-myri10ge.patch
+param:lock-charp-if_sdio.patch
+param:ipmi_watchdog.patch
+param:cleanup-ide.patch
+param:cleanup-mptbase.patch
+param:acpi-use-ops.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + f602711...e549b52 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.34
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core 02c15eb03ae14c2cb5c6ea5d7fc239c103bb8f46
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty 02c15eb03ae14c2cb5c6ea5d7fc239c103bb8f46
+Importing usb based on quilt/tty
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb 02c15eb03ae14c2cb5c6ea5d7fc239c103bb8f46
