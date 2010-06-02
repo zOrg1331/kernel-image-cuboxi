@@ -443,6 +443,11 @@ static void hpwdt_ping(void)
 	iowrite16(reload, hpwdt_timer_reg);
 }
 
+static int hpwdt_time_left(void)
+{
+	return TICKS_TO_SECS(ioread16(hpwdt_timer_reg));
+}
+
 static int hpwdt_change_timer(int new_margin)
 {
 	if (new_margin < 1 || new_margin > HPWDT_MAX_TIMER) {
@@ -581,6 +586,10 @@ static long hpwdt_ioctl(struct file *file, unsigned int cmd,
 	case WDIOC_GETSTATUS:
 	case WDIOC_GETBOOTSTATUS:
 		ret = put_user(0, p);
+		break;
+
+	case WDIOC_GETTIMELEFT:
+		ret = put_user(hpwdt_time_left(), p);
 		break;
 
 	case WDIOC_KEEPALIVE:
