@@ -295,7 +295,6 @@ int tm6000_init_analog_mode(struct tm6000_core *dev)
 			tm6000_set_reg(dev, TM6010_REQ07_RC0_ACTIVE_VIDEO_SOURCE, 0x20);
 		else	/* Enable Hfilter and disable TS Drop err */
 			tm6000_set_reg(dev, TM6010_REQ07_RC0_ACTIVE_VIDEO_SOURCE, 0x80);
-		}
 
 		tm6000_set_reg(dev, TM6010_REQ07_RC3_HSTART1, 0x88);
 		tm6000_set_reg(dev, TM6010_REQ07_RD8_IR_WAKEUP_SEL, 0x23);
@@ -401,7 +400,7 @@ int tm6000_init_digital_mode(struct tm6000_core *dev)
 
 	return 0;
 }
-EXPORT_SYMBOL(tm6000_init_digial_mode);
+EXPORT_SYMBOL(tm6000_init_digital_mode);
 
 struct reg_init {
 	u8 req;

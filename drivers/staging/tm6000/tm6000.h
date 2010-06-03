@@ -269,9 +269,6 @@ int tm6000_init_analog_mode(struct tm6000_core *dev);
 int tm6000_init_digital_mode(struct tm6000_core *dev);
 int tm6000_set_audio_bitrate(struct tm6000_core *dev, int bitrate);
 
-int tm6000_dvb_register(struct tm6000_core *dev);
-void tm6000_dvb_unregister(struct tm6000_core *dev);
-
 int tm6000_v4l2_register(struct tm6000_core *dev);
 int tm6000_v4l2_unregister(struct tm6000_core *dev);
 int tm6000_v4l2_exit(void);

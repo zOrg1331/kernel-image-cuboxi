@@ -683,7 +683,6 @@ static int tm6000_init_dev(struct tm6000_core *dev)
 	tm6000_add_into_devlist(dev);
 	tm6000_init_extension(dev);
 
-	}
 	mutex_unlock(&dev->lock);
 	return 0;
 

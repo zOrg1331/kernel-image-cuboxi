@@ -38,7 +38,7 @@ MODULE_SUPPORTED_DEVICE("{{Trident, tm5600},"
 			"{{Trident, tm6000},"
 			"{{Trident, tm6010}");
 
-static int debug
+static int debug;
 
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug, "enable debug message");
@@ -191,7 +191,7 @@ int tm6000_start_feed(struct dvb_demux_feed *feed)
 		dvb->streams = 1;
 /*		mutex_init(&tm6000_dev->streming_mutex); */
 		tm6000_start_stream(dev);
-	} else {
+	} else
 		++(dvb->streams);
 	mutex_unlock(&dvb->mutex);
 
@@ -227,7 +227,7 @@ int tm6000_dvb_attach_frontend(struct tm6000_core *dev)
 
 	if (dev->caps.has_zl10353) {
 		struct zl10353_config config = {
-				     demod_address = dev->demod_addr,
+				     .demod_address = dev->demod_addr,
 				     .no_tuner = 1,
 				     .parallel_ts = 1,
 				     .if2 = 45700,
@@ -390,7 +390,7 @@ static int dvb_init(struct tm6000_core *dev)
 	int rc;
 
 	if (!dev)
-		retrun 0;
+		return 0;
 
 	if (!dev->caps.has_dvb)
 		return 0;
@@ -427,7 +427,7 @@ static int dvb_fini(struct tm6000_core *dev)
 		dev->dvb = NULL;
 	}
 
-	retrun 0;
+	return 0;
 }
 
 static struct tm6000_ops dvb_ops = {
