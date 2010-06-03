@@ -554,7 +554,7 @@ static int __init mac8390_initdev(struct net_device *dev,
 	case MAC8390_APPLE:
 		switch (mac8390_testio(dev->mem_start)) {
 		case ACCESS_UNKNOWN:
-			pr_info("Don't know how to access card memory!\n");
+			pr_err("Don't know how to access card memory!\n");
 			return -ENODEV;
 			break;
 
@@ -641,12 +641,13 @@ static int __init mac8390_initdev(struct net_device *dev,
 
 static int mac8390_open(struct net_device *dev)
 {
+	int err;
+
 	__ei_open(dev);
-	if (request_irq(dev->irq, __ei_interrupt, 0, "8390 Ethernet", dev)) {
-		pr_info("%s: unable to get IRQ %d.\n", dev->name, dev->irq);
-		return -EAGAIN;
-	}
-	return 0;
+	err = request_irq(dev->irq, __ei_interrupt, 0, "8390 Ethernet", dev);
+	if (err)
+		pr_err("%s: unable to get IRQ %d\n", dev->name, dev->irq);
+	return err;
 }
 
 static int mac8390_close(struct net_device *dev)

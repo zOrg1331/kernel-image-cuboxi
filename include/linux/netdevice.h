@@ -381,6 +381,8 @@ enum gro_result {
 };
 typedef enum gro_result gro_result_t;
 
+typedef struct sk_buff *rx_handler_func_t(struct sk_buff *skb);
+
 extern void __napi_schedule(struct napi_struct *n);
 
 static inline int napi_disable_pending(struct napi_struct *n)
@@ -957,6 +959,7 @@ struct net_device {
 #endif
 
 	struct netdev_queue	rx_queue;
+	rx_handler_func_t	*rx_handler;
 
 	struct netdev_queue	*_tx ____cacheline_aligned_in_smp;
 
@@ -1087,11 +1090,7 @@ static inline void netdev_for_each_tx_queue(struct net_device *dev,
 static inline
 struct net *dev_net(const struct net_device *dev)
 {
-#ifdef CONFIG_NET_NS
-	return dev->nd_net;
-#else
-	return &init_net;
-#endif
+	return read_pnet(&dev->nd_net);
 }
 
 static inline
@@ -1693,6 +1692,10 @@ static inline void napi_free_frags(struct napi_struct *napi)
 	napi->skb = NULL;
 }
 
+extern int netdev_rx_handler_register(struct net_device *dev,
+				      rx_handler_func_t *rx_handler);
+extern void netdev_rx_handler_unregister(struct net_device *dev);
+
 extern void		netif_nit_deliver(struct sk_buff *skb);
 extern int		dev_valid_name(const char *name);
 extern int		dev_ioctl(struct net *net, unsigned int cmd, void __user *);
@@ -1771,6 +1774,8 @@ extern void __netdev_watchdog_up(struct net_device *dev);
 extern void netif_carrier_on(struct net_device *dev);
 
 extern void netif_carrier_off(struct net_device *dev);
+
+extern void netif_notify_peers(struct net_device *dev);
 
 /**
  *	netif_dormant_on - mark device as dormant.
