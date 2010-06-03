@@ -72,7 +72,11 @@
 /* If this is set, the section belongs in the init part of the module */
 #define INIT_OFFSET_MASK (1UL << (BITS_PER_LONG-1))
 
-/* List of modules, protected by module_mutex or preempt_disable
+/*
+ * Mutex protects:
+ * 1) List of modules (also safely readable with preempt_disable),
+ * 2) module_use links,
+ * 3) module_addr_min/module_addr_max.
  * (delete uses stop_machine/add uses RCU list operations). */
 DEFINE_MUTEX(module_mutex);
 EXPORT_SYMBOL_GPL(module_mutex);
@@ -90,7 +94,8 @@ static DECLARE_WAIT_QUEUE_HEAD(module_wq);
 
 static BLOCKING_NOTIFIER_HEAD(module_notify_list);
 
-/* Bounds of module allocation, for speeding __module_address */
+/* Bounds of module allocation, for speeding __module_address.
+ * Protected by module_mutex. */
 static unsigned long module_addr_min = -1UL, module_addr_max = 0;
 
 int register_module_notifier(struct notifier_block * nb)
@@ -329,7 +334,7 @@ static bool find_symbol_in_section(const struct symsearch *syms,
 }
 
 /* Find a symbol and return it, along with, (optional) crc and
- * (optional) module which owns it */
+ * (optional) module which owns it.  Needs preempt disabled or module_mutex. */
 const struct kernel_symbol *find_symbol(const char *name,
 					struct module **owner,
 					const unsigned long **crc,
@@ -519,36 +524,29 @@ static char last_unloaded_module[MODULE_NAME_LEN+1];
 EXPORT_TRACEPOINT_SYMBOL(module_get);
 
 /* Init the unload section of the module. */
-static void module_unload_init(struct module *mod)
+static int module_unload_init(struct module *mod)
 {
-	int cpu;
-
-	INIT_LIST_HEAD(&mod->modules_which_use_me);
-	for_each_possible_cpu(cpu) {
-		per_cpu_ptr(mod->refptr, cpu)->incs = 0;
-		per_cpu_ptr(mod->refptr, cpu)->decs = 0;
-	}
+	INIT_LIST_HEAD(&mod->source_list);
+	INIT_LIST_HEAD(&mod->target_list);
 
 	/* Hold reference count during initialization. */
 	__this_cpu_write(mod->refptr->incs, 1);
 	/* Backwards compatibility macros put refcount during init. */
 	mod->waiter = current;
-}
 
-/* modules using other modules */
-struct module_use
-{
-	struct list_head list;
-	struct module *module_which_uses;
-};
+	mod->refptr = alloc_percpu(struct module_ref);
+	if (!mod->refptr)
+		return -ENOMEM;
+	return 0;
+}
 
 /* Does a already use b? */
 static int already_uses(struct module *a, struct module *b)
 {
 	struct module_use *use;
 
-	list_for_each_entry(use, &b->modules_which_use_me, list) {
-		if (use->module_which_uses == a) {
+	list_for_each_entry(use, &b->source_list, source_list) {
+		if (use->source == a) {
 			DEBUGP("%s uses %s!\n", a->name, b->name);
 			return 1;
 		}
@@ -557,62 +555,70 @@ static int already_uses(struct module *a, struct module *b)
 	return 0;
 }
 
-/* Module a uses b */
-int use_module(struct module *a, struct module *b)
+/*
+ * Module a uses b
+ *  - we add 'a' as a "source", 'b' as a "target" of module use
+ *  - the module_use is added to the list of 'b' sources (so
+ *    'b' can walk the list to see who sourced them), and of 'a'
+ *    targets (so 'a' can see what modules it targets).
+ */
+static int add_module_usage(struct module *a, struct module *b)
 {
 	struct module_use *use;
-	int no_warn, err;
-
-	if (b == NULL || already_uses(a, b)) return 1;
-
-	/* If we're interrupted or time out, we fail. */
-	if (wait_event_interruptible_timeout(
-		    module_wq, (err = strong_try_module_get(b)) != -EBUSY,
-		    30 * HZ) <= 0) {
-		printk("%s: gave up waiting for init of module %s.\n",
-		       a->name, b->name);
-		return 0;
-	}
-
-	/* If strong_try_module_get() returned a different error, we fail. */
-	if (err)
-		return 0;
 
 	DEBUGP("Allocating new usage for %s.\n", a->name);
 	use = kmalloc(sizeof(*use), GFP_ATOMIC);
 	if (!use) {
-		printk("%s: out of memory loading\n", a->name);
-		module_put(b);
-		return 0;
+		printk(KERN_WARNING "%s: out of memory loading\n", a->name);
+		return -ENOMEM;
 	}
 
-	use->module_which_uses = a;
-	list_add(&use->list, &b->modules_which_use_me);
-	no_warn = sysfs_create_link(b->holders_dir, &a->mkobj.kobj, a->name);
-	return 1;
+	use->source = a;
+	use->target = b;
+	list_add(&use->source_list, &b->source_list);
+	list_add(&use->target_list, &a->target_list);
+	return 0;
 }
-EXPORT_SYMBOL_GPL(use_module);
+
+/* Module a uses b: caller needs module_mutex() */
+int ref_module(struct module *a, struct module *b)
+{
+	int err;
+
+	if (b == NULL || already_uses(a, b))
+		return 0;
+
+	/* If module isn't available, we fail. */
+	err = strong_try_module_get(b);
+	if (err)
+		return err;
+
+	err = add_module_usage(a, b);
+	if (err) {
+		module_put(b);
+		return err;
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(ref_module);
 
 /* Clear the unload stuff of the module. */
 static void module_unload_free(struct module *mod)
 {
-	struct module *i;
+	struct module_use *use, *tmp;
 
-	list_for_each_entry(i, &modules, list) {
-		struct module_use *use;
-
-		list_for_each_entry(use, &i->modules_which_use_me, list) {
-			if (use->module_which_uses == mod) {
-				DEBUGP("%s unusing %s\n", mod->name, i->name);
-				module_put(i);
-				list_del(&use->list);
-				kfree(use);
-				sysfs_remove_link(i->holders_dir, mod->name);
-				/* There can be at most one match. */
-				break;
-			}
-		}
+	mutex_lock(&module_mutex);
+	list_for_each_entry_safe(use, tmp, &mod->target_list, target_list) {
+		struct module *i = use->target;
+		DEBUGP("%s unusing %s\n", mod->name, i->name);
+		module_put(i);
+		list_del(&use->source_list);
+		list_del(&use->target_list);
+		kfree(use);
 	}
+	mutex_unlock(&module_mutex);
+
+	free_percpu(mod->refptr);
 }
 
 #ifdef CONFIG_MODULE_FORCE_UNLOAD
@@ -735,7 +741,7 @@ SYSCALL_DEFINE2(delete_module, const char __user *, name_user,
 		goto out;
 	}
 
-	if (!list_empty(&mod->modules_which_use_me)) {
+	if (!list_empty(&mod->source_list)) {
 		/* Other modules depend on us: get rid of them first. */
 		ret = -EWOULDBLOCK;
 		goto out;
@@ -779,13 +785,14 @@ SYSCALL_DEFINE2(delete_module, const char __user *, name_user,
 	blocking_notifier_call_chain(&module_notify_list,
 				     MODULE_STATE_GOING, mod);
 	async_synchronize_full();
-	mutex_lock(&module_mutex);
+
 	/* Store the name of the last unloaded module for diagnostic purposes */
 	strlcpy(last_unloaded_module, mod->name, sizeof(last_unloaded_module));
 	ddebug_remove_module(mod->name);
-	free_module(mod);
 
- out:
+	free_module(mod);
+	return 0;
+out:
 	mutex_unlock(&module_mutex);
 	return ret;
 }
@@ -799,9 +806,9 @@ static inline void print_unload_info(struct seq_file *m, struct module *mod)
 
 	/* Always include a trailing , so userspace can differentiate
            between this and the old multi-field proc format. */
-	list_for_each_entry(use, &mod->modules_which_use_me, list) {
+	list_for_each_entry(use, &mod->source_list, source_list) {
 		printed_something = 1;
-		seq_printf(m, "%s,", use->module_which_uses->name);
+		seq_printf(m, "%s,", use->source->name);
 	}
 
 	if (mod->init != NULL && mod->exit == NULL) {
@@ -880,14 +887,15 @@ static inline void module_unload_free(struct module *mod)
 {
 }
 
-int use_module(struct module *a, struct module *b)
+int ref_module(struct module *a, struct module *b)
 {
-	return strong_try_module_get(b) == 0;
+	return strong_try_module_get(b);
 }
-EXPORT_SYMBOL_GPL(use_module);
+EXPORT_SYMBOL_GPL(ref_module);
 
-static inline void module_unload_init(struct module *mod)
+static inline int module_unload_init(struct module *mod)
 {
+	return 0;
 }
 #endif /* CONFIG_MODULE_UNLOAD */
 
@@ -1001,6 +1009,8 @@ static inline int check_modstruct_version(Elf_Shdr *sechdrs,
 {
 	const unsigned long *crc;
 
+	/* Since this should be found in kernel (which can't be removed),
+	 * no locking is necessary. */
 	if (!find_symbol(MODULE_SYMBOL_PREFIX "module_layout", NULL,
 			 &crc, true, false))
 		BUG();
@@ -1043,27 +1053,60 @@ static inline int same_magic(const char *amagic, const char *bmagic,
 }
 #endif /* CONFIG_MODVERSIONS */
 
-/* Resolve a symbol for this module.  I.e. if we find one, record usage.
-   Must be holding module_mutex. */
+/* Resolve a symbol for this module.  I.e. if we find one, record usage. */
 static const struct kernel_symbol *resolve_symbol(Elf_Shdr *sechdrs,
 						  unsigned int versindex,
 						  const char *name,
-						  struct module *mod)
+						  struct module *mod,
+						  char ownername[])
 {
 	struct module *owner;
 	const struct kernel_symbol *sym;
 	const unsigned long *crc;
+	int err;
 
+	mutex_lock(&module_mutex);
 	sym = find_symbol(name, &owner, &crc,
 			  !(mod->taints & (1 << TAINT_PROPRIETARY_MODULE)), true);
-	/* use_module can fail due to OOM,
-	   or module initialization or unloading */
-	if (sym) {
-		if (!check_version(sechdrs, versindex, name, mod, crc, owner)
-		    || !use_module(mod, owner))
-			sym = NULL;
+	if (!sym)
+		goto unlock;
+
+	if (!check_version(sechdrs, versindex, name, mod, crc, owner)) {
+		sym = ERR_PTR(-EINVAL);
+		goto getname;
 	}
+
+	err = ref_module(mod, owner);
+	if (err) {
+		sym = ERR_PTR(err);
+		goto getname;
+	}
+
+getname:
+	/* We must make copy under the lock if we failed to get ref. */
+	strncpy(ownername, module_name(owner), MODULE_NAME_LEN);
+unlock:
+	mutex_unlock(&module_mutex);
 	return sym;
+}
+
+static const struct kernel_symbol *resolve_symbol_wait(Elf_Shdr *sechdrs,
+						       unsigned int versindex,
+						       const char *name,
+						       struct module *mod)
+{
+	const struct kernel_symbol *ksym;
+	char ownername[MODULE_NAME_LEN];
+
+	if (wait_event_interruptible_timeout(module_wq,
+			!IS_ERR(ksym = resolve_symbol(sechdrs, versindex, name,
+						      mod, ownername)) ||
+			PTR_ERR(ksym) != -EBUSY,
+					     30 * HZ) <= 0) {
+		printk(KERN_WARNING "%s: gave up waiting for init of module %s.\n",
+		       mod->name, ownername);
+	}
+	return ksym;
 }
 
 /*
@@ -1295,7 +1338,34 @@ static inline void remove_notes_attrs(struct module *mod)
 #endif
 
 #ifdef CONFIG_SYSFS
-int module_add_modinfo_attrs(struct module *mod)
+static void add_usage_links(struct module *mod)
+{
+#ifdef CONFIG_MODULE_UNLOAD
+	struct module_use *use;
+	int nowarn;
+
+	mutex_lock(&module_mutex);
+	list_for_each_entry(use, &mod->target_list, target_list) {
+		nowarn = sysfs_create_link(use->target->holders_dir,
+					   &mod->mkobj.kobj, mod->name);
+	}
+	mutex_unlock(&module_mutex);
+#endif
+}
+
+static void del_usage_links(struct module *mod)
+{
+#ifdef CONFIG_MODULE_UNLOAD
+	struct module_use *use;
+
+	mutex_lock(&module_mutex);
+	list_for_each_entry(use, &mod->target_list, target_list)
+		sysfs_remove_link(use->target->holders_dir, mod->name);
+	mutex_unlock(&module_mutex);
+#endif
+}
+
+static int module_add_modinfo_attrs(struct module *mod)
 {
 	struct module_attribute *attr;
 	struct module_attribute *temp_attr;
@@ -1321,7 +1391,7 @@ int module_add_modinfo_attrs(struct module *mod)
 	return error;
 }
 
-void module_remove_modinfo_attrs(struct module *mod)
+static void module_remove_modinfo_attrs(struct module *mod)
 {
 	struct module_attribute *attr;
 	int i;
@@ -1337,7 +1407,7 @@ void module_remove_modinfo_attrs(struct module *mod)
 	kfree(mod->modinfo_attrs);
 }
 
-int mod_sysfs_init(struct module *mod)
+static int mod_sysfs_init(struct module *mod)
 {
 	int err;
 	struct kobject *kobj;
@@ -1371,11 +1441,15 @@ out:
 	return err;
 }
 
-int mod_sysfs_setup(struct module *mod,
+static int mod_sysfs_setup(struct module *mod,
 			   struct kernel_param *kparam,
 			   unsigned int num_params)
 {
 	int err;
+
+	err = mod_sysfs_init(mod);
+	if (err)
+		goto out;
 
 	mod->holders_dir = kobject_create_and_add("holders", &mod->mkobj.kobj);
 	if (!mod->holders_dir) {
@@ -1391,6 +1465,8 @@ int mod_sysfs_setup(struct module *mod,
 	if (err)
 		goto out_unreg_param;
 
+	add_usage_links(mod);
+
 	kobject_uevent(&mod->mkobj.kobj, KOBJ_ADD);
 	return 0;
 
@@ -1400,6 +1476,7 @@ out_unreg_holders:
 	kobject_put(mod->holders_dir);
 out_unreg:
 	kobject_put(&mod->mkobj.kobj);
+out:
 	return err;
 }
 
@@ -1410,7 +1487,32 @@ static void mod_sysfs_fini(struct module *mod)
 
 #else /* CONFIG_SYSFS */
 
+static inline int mod_sysfs_init(struct module *mod)
+{
+	return 0;
+}
+
+static inline int mod_sysfs_setup(struct module *mod,
+			   struct kernel_param *kparam,
+			   unsigned int num_params)
+{
+	return 0;
+}
+
+static inline int module_add_modinfo_attrs(struct module *mod)
+{
+	return 0;
+}
+
+static inline void module_remove_modinfo_attrs(struct module *mod)
+{
+}
+
 static void mod_sysfs_fini(struct module *mod)
+{
+}
+
+static void del_usage_links(struct module *mod)
 {
 }
 
@@ -1418,6 +1520,7 @@ static void mod_sysfs_fini(struct module *mod)
 
 static void mod_kobject_remove(struct module *mod)
 {
+	del_usage_links(mod);
 	module_remove_modinfo_attrs(mod);
 	module_param_sysfs_remove(mod);
 	kobject_put(mod->mkobj.drivers_dir);
@@ -1436,13 +1539,15 @@ static int __unlink_module(void *_mod)
 	return 0;
 }
 
-/* Free a module, remove from lists, etc (must hold module_mutex). */
+/* Free a module, remove from lists, etc. */
 static void free_module(struct module *mod)
 {
 	trace_module_free(mod);
 
 	/* Delete from various lists */
+	mutex_lock(&module_mutex);
 	stop_machine(__unlink_module, mod, NULL);
+	mutex_unlock(&module_mutex);
 	remove_notes_attrs(mod);
 	remove_sect_attrs(mod);
 	mod_kobject_remove(mod);
@@ -1460,10 +1565,7 @@ static void free_module(struct module *mod)
 	module_free(mod, mod->module_init);
 	kfree(mod->args);
 	percpu_modfree(mod);
-#if defined(CONFIG_MODULE_UNLOAD)
-	if (mod->refptr)
-		free_percpu(mod->refptr);
-#endif
+
 	/* Free lock-classes: */
 	lockdep_free_key_range(mod->module_core, mod->core_size);
 
@@ -1493,6 +1595,8 @@ EXPORT_SYMBOL_GPL(__symbol_get);
 /*
  * Ensure that an exported symbol [global namespace] does not already exist
  * in the kernel or in some other module's exported symbol table.
+ *
+ * You must hold the module_mutex.
  */
 static int verify_export_symbols(struct module *mod)
 {
@@ -1558,21 +1662,23 @@ static int simplify_symbols(Elf_Shdr *sechdrs,
 			break;
 
 		case SHN_UNDEF:
-			ksym = resolve_symbol(sechdrs, versindex,
-					      strtab + sym[i].st_name, mod);
+			ksym = resolve_symbol_wait(sechdrs, versindex,
+						   strtab + sym[i].st_name,
+						   mod);
 			/* Ok if resolved.  */
-			if (ksym) {
+			if (ksym && !IS_ERR(ksym)) {
 				sym[i].st_value = ksym->value;
 				break;
 			}
 
 			/* Ok if weak.  */
-			if (ELF_ST_BIND(sym[i].st_info) == STB_WEAK)
+			if (!ksym && ELF_ST_BIND(sym[i].st_info) == STB_WEAK)
 				break;
 
-			printk(KERN_WARNING "%s: Unknown symbol %s\n",
-			       mod->name, strtab + sym[i].st_name);
-			ret = -ENOENT;
+			printk(KERN_WARNING "%s: Unknown symbol %s (err %li)\n",
+			       mod->name, strtab + sym[i].st_name,
+			       PTR_ERR(ksym));
+			ret = PTR_ERR(ksym) ?: -ENOENT;
 			break;
 
 		default:
@@ -1587,6 +1693,39 @@ static int simplify_symbols(Elf_Shdr *sechdrs,
 	}
 
 	return ret;
+}
+
+static int apply_relocations(struct module *mod,
+			     Elf_Ehdr *hdr,
+			     Elf_Shdr *sechdrs,
+			     unsigned int symindex,
+			     unsigned int strindex)
+{
+	unsigned int i;
+	int err = 0;
+
+	/* Now do relocations. */
+	for (i = 1; i < hdr->e_shnum; i++) {
+		const char *strtab = (char *)sechdrs[strindex].sh_addr;
+		unsigned int info = sechdrs[i].sh_info;
+
+		/* Not a valid relocation section? */
+		if (info >= hdr->e_shnum)
+			continue;
+
+		/* Don't bother with non-allocated sections */
+		if (!(sechdrs[info].sh_flags & SHF_ALLOC))
+			continue;
+
+		if (sechdrs[i].sh_type == SHT_REL)
+			err = apply_relocate(sechdrs, strtab, symindex, i, mod);
+		else if (sechdrs[i].sh_type == SHT_RELA)
+			err = apply_relocate_add(sechdrs, strtab, symindex, i,
+						 mod);
+		if (err < 0)
+			break;
+	}
+	return err;
 }
 
 /* Additional bytes needed by arch in front of individual sections */
@@ -1700,7 +1839,7 @@ static char *next_string(char *string, unsigned long *secsize)
 	return string;
 }
 
-static char *get_modinfo(Elf_Shdr *sechdrs,
+static char *get_modinfo(const Elf_Shdr *sechdrs,
 			 unsigned int info,
 			 const char *tag)
 {
@@ -1960,18 +2099,21 @@ static void *module_alloc_update_bounds(unsigned long size)
 	void *ret = module_alloc(size);
 
 	if (ret) {
+		mutex_lock(&module_mutex);
 		/* Update module bounds. */
 		if ((unsigned long)ret < module_addr_min)
 			module_addr_min = (unsigned long)ret;
 		if ((unsigned long)ret + size > module_addr_max)
 			module_addr_max = (unsigned long)ret + size;
+		mutex_unlock(&module_mutex);
 	}
 	return ret;
 }
 
 #ifdef CONFIG_DEBUG_KMEMLEAK
 static void kmemleak_load_module(struct module *mod, Elf_Ehdr *hdr,
-				 Elf_Shdr *sechdrs, char *secstrings)
+				 const Elf_Shdr *sechdrs,
+				 const char *secstrings)
 {
 	unsigned int i;
 
@@ -1991,10 +2133,270 @@ static void kmemleak_load_module(struct module *mod, Elf_Ehdr *hdr,
 }
 #else
 static inline void kmemleak_load_module(struct module *mod, Elf_Ehdr *hdr,
-					Elf_Shdr *sechdrs, char *secstrings)
+					Elf_Shdr *sechdrs,
+					const char *secstrings)
 {
 }
 #endif
+
+static int copy_and_check(Elf_Ehdr **hdrp,
+			  const void __user *umod, unsigned long len)
+{
+	int err;
+	Elf_Ehdr *hdr;
+
+	if (len < sizeof(*hdr))
+		return -ENOEXEC;
+
+	/* Suck in entire file: we'll want most of it. */
+	/* vmalloc barfs on "unusual" numbers.  Check here */
+	if (len > 64 * 1024 * 1024 || (hdr = *hdrp = vmalloc(len)) == NULL)
+		return -ENOMEM;
+
+	if (copy_from_user(hdr, umod, len) != 0) {
+		err = -EFAULT;
+		goto free_hdr;
+	}
+
+	/* Sanity checks against insmoding binaries or wrong arch,
+	   weird elf version */
+	if (memcmp(hdr->e_ident, ELFMAG, SELFMAG) != 0
+	    || hdr->e_type != ET_REL
+	    || !elf_check_arch(hdr)
+	    || hdr->e_shentsize != sizeof(Elf_Shdr)) {
+		err = -ENOEXEC;
+		goto free_hdr;
+	}
+
+	if (len < hdr->e_shoff + hdr->e_shnum * sizeof(Elf_Shdr)) {
+		err = -ENOEXEC;
+		goto free_hdr;
+	}
+	return 0;
+
+free_hdr:
+	vfree(hdr);
+	return err;
+}
+
+static int check_modinfo(struct module *mod,
+			 const Elf_Shdr *sechdrs,
+			 unsigned int infoindex, unsigned int versindex)
+{
+	const char *modmagic = get_modinfo(sechdrs, infoindex, "vermagic");
+	int err;
+
+	/* This is allowed: modprobe --force will invalidate it. */
+	if (!modmagic) {
+		err = try_to_force_load(mod, "bad vermagic");
+		if (err)
+			return err;
+	} else if (!same_magic(modmagic, vermagic, versindex)) {
+		printk(KERN_ERR "%s: version magic '%s' should be '%s'\n",
+		       mod->name, modmagic, vermagic);
+		return -ENOEXEC;
+	}
+
+	if (get_modinfo(sechdrs, infoindex, "staging")) {
+		add_taint_module(mod, TAINT_CRAP);
+		printk(KERN_WARNING "%s: module is from the staging directory,"
+		       " the quality is unknown, you have been warned.\n",
+		       mod->name);
+	}
+
+	/* Set up license info based on the info section */
+	set_license(mod, get_modinfo(sechdrs, infoindex, "license"));
+
+	return 0;
+}
+
+static void find_module_sections(struct module *mod, Elf_Ehdr *hdr,
+				 Elf_Shdr *sechdrs, const char *secstrings)
+{
+	mod->kp = section_objs(hdr, sechdrs, secstrings, "__param",
+			       sizeof(*mod->kp), &mod->num_kp);
+	mod->syms = section_objs(hdr, sechdrs, secstrings, "__ksymtab",
+				 sizeof(*mod->syms), &mod->num_syms);
+	mod->crcs = section_addr(hdr, sechdrs, secstrings, "__kcrctab");
+	mod->gpl_syms = section_objs(hdr, sechdrs, secstrings, "__ksymtab_gpl",
+				     sizeof(*mod->gpl_syms),
+				     &mod->num_gpl_syms);
+	mod->gpl_crcs = section_addr(hdr, sechdrs, secstrings,
+				     "__kcrctab_gpl");
+	mod->gpl_future_syms = section_objs(hdr, sechdrs, secstrings,
+					    "__ksymtab_gpl_future",
+					    sizeof(*mod->gpl_future_syms),
+					    &mod->num_gpl_future_syms);
+	mod->gpl_future_crcs = section_addr(hdr, sechdrs, secstrings,
+					    "__kcrctab_gpl_future");
+
+#ifdef CONFIG_UNUSED_SYMBOLS
+	mod->unused_syms = section_objs(hdr, sechdrs, secstrings,
+					"__ksymtab_unused",
+					sizeof(*mod->unused_syms),
+					&mod->num_unused_syms);
+	mod->unused_crcs = section_addr(hdr, sechdrs, secstrings,
+					"__kcrctab_unused");
+	mod->unused_gpl_syms = section_objs(hdr, sechdrs, secstrings,
+					    "__ksymtab_unused_gpl",
+					    sizeof(*mod->unused_gpl_syms),
+					    &mod->num_unused_gpl_syms);
+	mod->unused_gpl_crcs = section_addr(hdr, sechdrs, secstrings,
+					    "__kcrctab_unused_gpl");
+#endif
+#ifdef CONFIG_CONSTRUCTORS
+	mod->ctors = section_objs(hdr, sechdrs, secstrings, ".ctors",
+				  sizeof(*mod->ctors), &mod->num_ctors);
+#endif
+
+#ifdef CONFIG_TRACEPOINTS
+	mod->tracepoints = section_objs(hdr, sechdrs, secstrings,
+					"__tracepoints",
+					sizeof(*mod->tracepoints),
+					&mod->num_tracepoints);
+#endif
+#ifdef CONFIG_EVENT_TRACING
+	mod->trace_events = section_objs(hdr, sechdrs, secstrings,
+					 "_ftrace_events",
+					 sizeof(*mod->trace_events),
+					 &mod->num_trace_events);
+	/*
+	 * This section contains pointers to allocated objects in the trace
+	 * code and not scanning it leads to false positives.
+	 */
+	kmemleak_scan_area(mod->trace_events, sizeof(*mod->trace_events) *
+			   mod->num_trace_events, GFP_KERNEL);
+#endif
+#ifdef CONFIG_FTRACE_MCOUNT_RECORD
+	/* sechdrs[0].sh_size is always zero */
+	mod->ftrace_callsites = section_objs(hdr, sechdrs, secstrings,
+					     "__mcount_loc",
+					     sizeof(*mod->ftrace_callsites),
+					     &mod->num_ftrace_callsites);
+#endif
+
+	if (section_addr(hdr, sechdrs, secstrings, "__obsparm"))
+		printk(KERN_WARNING "%s: Ignoring obsolete parameters\n",
+		       mod->name);
+}
+
+static struct module *move_module(struct module *mod,
+				  Elf_Ehdr *hdr, Elf_Shdr *sechdrs,
+				  const char *secstrings, unsigned modindex)
+{
+	int i;
+	void *ptr;
+
+	/* Do the allocs. */
+	ptr = module_alloc_update_bounds(mod->core_size);
+	/*
+	 * The pointer to this block is stored in the module structure
+	 * which is inside the block. Just mark it as not being a
+	 * leak.
+	 */
+	kmemleak_not_leak(ptr);
+	if (!ptr)
+		return ERR_PTR(-ENOMEM);
+
+	memset(ptr, 0, mod->core_size);
+	mod->module_core = ptr;
+
+	ptr = module_alloc_update_bounds(mod->init_size);
+	/*
+	 * The pointer to this block is stored in the module structure
+	 * which is inside the block. This block doesn't need to be
+	 * scanned as it contains data and code that will be freed
+	 * after the module is initialized.
+	 */
+	kmemleak_ignore(ptr);
+	if (!ptr && mod->init_size) {
+		module_free(mod, mod->module_core);
+		return ERR_PTR(-ENOMEM);
+	}
+	memset(ptr, 0, mod->init_size);
+	mod->module_init = ptr;
+
+	/* Transfer each section which specifies SHF_ALLOC */
+	DEBUGP("final section addresses:\n");
+	for (i = 0; i < hdr->e_shnum; i++) {
+		void *dest;
+
+		if (!(sechdrs[i].sh_flags & SHF_ALLOC))
+			continue;
+
+		if (sechdrs[i].sh_entsize & INIT_OFFSET_MASK)
+			dest = mod->module_init
+				+ (sechdrs[i].sh_entsize & ~INIT_OFFSET_MASK);
+		else
+			dest = mod->module_core + sechdrs[i].sh_entsize;
+
+		if (sechdrs[i].sh_type != SHT_NOBITS)
+			memcpy(dest, (void *)sechdrs[i].sh_addr,
+			       sechdrs[i].sh_size);
+		/* Update sh_addr to point to copy in image. */
+		sechdrs[i].sh_addr = (unsigned long)dest;
+		DEBUGP("\t0x%lx %s\n",
+		       sechdrs[i].sh_addr, secstrings + sechdrs[i].sh_name);
+	}
+	/* Module has been moved. */
+	mod = (void *)sechdrs[modindex].sh_addr;
+	kmemleak_load_module(mod, hdr, sechdrs, secstrings);
+	return mod;
+}
+
+static int check_module_license_and_versions(struct module *mod,
+					     Elf_Shdr *sechdrs)
+{
+	/*
+	 * ndiswrapper is under GPL by itself, but loads proprietary modules.
+	 * Don't use add_taint_module(), as it would prevent ndiswrapper from
+	 * using GPL-only symbols it needs.
+	 */
+	if (strcmp(mod->name, "ndiswrapper") == 0)
+		add_taint(TAINT_PROPRIETARY_MODULE);
+
+	/* driverloader was caught wrongly pretending to be under GPL */
+	if (strcmp(mod->name, "driverloader") == 0)
+		add_taint_module(mod, TAINT_PROPRIETARY_MODULE);
+
+#ifdef CONFIG_MODVERSIONS
+	if ((mod->num_syms && !mod->crcs)
+	    || (mod->num_gpl_syms && !mod->gpl_crcs)
+	    || (mod->num_gpl_future_syms && !mod->gpl_future_crcs)
+#ifdef CONFIG_UNUSED_SYMBOLS
+	    || (mod->num_unused_syms && !mod->unused_crcs)
+	    || (mod->num_unused_gpl_syms && !mod->unused_gpl_crcs)
+#endif
+		) {
+		return try_to_force_load(mod,
+					 "no versions for exported symbols");
+	}
+#endif
+	return 0;
+}
+
+static void flush_module_icache(const struct module *mod)
+{
+	mm_segment_t old_fs;
+
+	/* flush the icache in correct context */
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+
+	/*
+	 * Flush the instruction cache, since we've played with text.
+	 * Do it before processing of module parameters, so the module
+	 * can provide parameter accessor functions of its own.
+	 */
+	if (mod->module_init)
+		flush_icache_range((unsigned long)mod->module_init,
+				   (unsigned long)mod->module_init
+				   + mod->init_size);
+	flush_icache_range((unsigned long)mod->module_core,
+			   (unsigned long)mod->module_core + mod->core_size);
+
+	set_fs(old_fs);
+}
 
 /* Allocate and load the module: note that size of section 0 is always
    zero, and we rely on this for optional sections. */
@@ -2004,47 +2406,22 @@ static noinline struct module *load_module(void __user *umod,
 {
 	Elf_Ehdr *hdr;
 	Elf_Shdr *sechdrs;
-	char *secstrings, *args, *modmagic, *strtab = NULL;
-	char *staging;
+	char *secstrings, *args, *strtab = NULL;
 	unsigned int i;
 	unsigned int symindex = 0;
 	unsigned int strindex = 0;
 	unsigned int modindex, versindex, infoindex, pcpuindex;
 	struct module *mod;
-	long err = 0;
-	void *ptr = NULL; /* Stops spurious gcc warning */
+	long err;
 	unsigned long symoffs, stroffs, *strmap;
 	void __percpu *percpu;
 
-	mm_segment_t old_fs;
-
 	DEBUGP("load_module: umod=%p, len=%lu, uargs=%p\n",
 	       umod, len, uargs);
-	if (len < sizeof(*hdr))
-		return ERR_PTR(-ENOEXEC);
 
-	/* Suck in entire file: we'll want most of it. */
-	/* vmalloc barfs on "unusual" numbers.  Check here */
-	if (len > 64 * 1024 * 1024 || (hdr = vmalloc(len)) == NULL)
-		return ERR_PTR(-ENOMEM);
-
-	if (copy_from_user(hdr, umod, len) != 0) {
-		err = -EFAULT;
-		goto free_hdr;
-	}
-
-	/* Sanity checks against insmoding binaries or wrong arch,
-           weird elf version */
-	if (memcmp(hdr->e_ident, ELFMAG, SELFMAG) != 0
-	    || hdr->e_type != ET_REL
-	    || !elf_check_arch(hdr)
-	    || hdr->e_shentsize != sizeof(*sechdrs)) {
-		err = -ENOEXEC;
-		goto free_hdr;
-	}
-
-	if (len < hdr->e_shoff + hdr->e_shnum * sizeof(Elf_Shdr))
-		goto truncated;
+	err = copy_and_check(&hdr, umod, len);
+	if (err)
+		return ERR_PTR(err);
 
 	/* Convenience variables */
 	sechdrs = (void *)hdr + hdr->e_shoff;
@@ -2104,26 +2481,9 @@ static noinline struct module *load_module(void __user *umod,
 		goto free_hdr;
 	}
 
-	modmagic = get_modinfo(sechdrs, infoindex, "vermagic");
-	/* This is allowed: modprobe --force will invalidate it. */
-	if (!modmagic) {
-		err = try_to_force_load(mod, "bad vermagic");
-		if (err)
-			goto free_hdr;
-	} else if (!same_magic(modmagic, vermagic, versindex)) {
-		printk(KERN_ERR "%s: version magic '%s' should be '%s'\n",
-		       mod->name, modmagic, vermagic);
-		err = -ENOEXEC;
+	err = check_modinfo(mod, sechdrs, infoindex, versindex);
+	if (err)
 		goto free_hdr;
-	}
-
-	staging = get_modinfo(sechdrs, infoindex, "staging");
-	if (staging) {
-		add_taint_module(mod, TAINT_CRAP);
-		printk(KERN_WARNING "%s: module is from the staging directory,"
-		       " the quality is unknown, you have been warned.\n",
-		       mod->name);
-	}
 
 	/* Now copy in args */
 	args = strndup_user(uargs, ~0UL >> 1);
@@ -2136,11 +2496,6 @@ static noinline struct module *load_module(void __user *umod,
 			 * sizeof(long), GFP_KERNEL);
 	if (!strmap) {
 		err = -ENOMEM;
-		goto free_mod;
-	}
-
-	if (find_module(mod->name)) {
-		err = -EEXIST;
 		goto free_mod;
 	}
 
@@ -2169,90 +2524,25 @@ static noinline struct module *load_module(void __user *umod,
 	symoffs = layout_symtab(mod, sechdrs, symindex, strindex, hdr,
 				secstrings, &stroffs, strmap);
 
-	/* Do the allocs. */
-	ptr = module_alloc_update_bounds(mod->core_size);
-	/*
-	 * The pointer to this block is stored in the module structure
-	 * which is inside the block. Just mark it as not being a
-	 * leak.
-	 */
-	kmemleak_not_leak(ptr);
-	if (!ptr) {
-		err = -ENOMEM;
+	/* Allocate and move to the final place */
+	mod = move_module(mod, hdr, sechdrs, secstrings, modindex);
+	if (IS_ERR(mod)) {
+		err = PTR_ERR(mod);
 		goto free_percpu;
 	}
-	memset(ptr, 0, mod->core_size);
-	mod->module_core = ptr;
 
-	ptr = module_alloc_update_bounds(mod->init_size);
-	/*
-	 * The pointer to this block is stored in the module structure
-	 * which is inside the block. This block doesn't need to be
-	 * scanned as it contains data and code that will be freed
-	 * after the module is initialized.
-	 */
-	kmemleak_ignore(ptr);
-	if (!ptr && mod->init_size) {
-		err = -ENOMEM;
-		goto free_core;
-	}
-	memset(ptr, 0, mod->init_size);
-	mod->module_init = ptr;
-
-	/* Transfer each section which specifies SHF_ALLOC */
-	DEBUGP("final section addresses:\n");
-	for (i = 0; i < hdr->e_shnum; i++) {
-		void *dest;
-
-		if (!(sechdrs[i].sh_flags & SHF_ALLOC))
-			continue;
-
-		if (sechdrs[i].sh_entsize & INIT_OFFSET_MASK)
-			dest = mod->module_init
-				+ (sechdrs[i].sh_entsize & ~INIT_OFFSET_MASK);
-		else
-			dest = mod->module_core + sechdrs[i].sh_entsize;
-
-		if (sechdrs[i].sh_type != SHT_NOBITS)
-			memcpy(dest, (void *)sechdrs[i].sh_addr,
-			       sechdrs[i].sh_size);
-		/* Update sh_addr to point to copy in image. */
-		sechdrs[i].sh_addr = (unsigned long)dest;
-		DEBUGP("\t0x%lx %s\n", sechdrs[i].sh_addr, secstrings + sechdrs[i].sh_name);
-	}
-	/* Module has been moved. */
-	mod = (void *)sechdrs[modindex].sh_addr;
-	kmemleak_load_module(mod, hdr, sechdrs, secstrings);
-
-#if defined(CONFIG_MODULE_UNLOAD)
-	mod->refptr = alloc_percpu(struct module_ref);
-	if (!mod->refptr) {
-		err = -ENOMEM;
-		goto free_init;
-	}
-#endif
 	/* Now we've moved module, initialize linked lists, etc. */
-	module_unload_init(mod);
+	err = module_unload_init(mod);
+	if (err)
+		goto free_init;
 
-	/* add kobject, so we can reference it. */
-	err = mod_sysfs_init(mod);
+	/* Now we've got everything in the final locations, we can
+	 * find optional sections. */
+	find_module_sections(mod, hdr, sechdrs, secstrings);
+
+	err = check_module_license_and_versions(mod, sechdrs);
 	if (err)
 		goto free_unload;
-
-	/* Set up license info based on the info section */
-	set_license(mod, get_modinfo(sechdrs, infoindex, "license"));
-
-	/*
-	 * ndiswrapper is under GPL by itself, but loads proprietary modules.
-	 * Don't use add_taint_module(), as it would prevent ndiswrapper from
-	 * using GPL-only symbols it needs.
-	 */
-	if (strcmp(mod->name, "ndiswrapper") == 0)
-		add_taint(TAINT_PROPRIETARY_MODULE);
-
-	/* driverloader was caught wrongly pretending to be under GPL */
-	if (strcmp(mod->name, "driverloader") == 0)
-		add_taint_module(mod, TAINT_PROPRIETARY_MODULE);
 
 	/* Set up MODINFO_ATTR fields */
 	setup_modinfo(mod, sechdrs, infoindex);
@@ -2263,108 +2553,7 @@ static noinline struct module *load_module(void __user *umod,
 	if (err < 0)
 		goto cleanup;
 
-	/* Now we've got everything in the final locations, we can
-	 * find optional sections. */
-	mod->kp = section_objs(hdr, sechdrs, secstrings, "__param",
-			       sizeof(*mod->kp), &mod->num_kp);
-	mod->syms = section_objs(hdr, sechdrs, secstrings, "__ksymtab",
-				 sizeof(*mod->syms), &mod->num_syms);
-	mod->crcs = section_addr(hdr, sechdrs, secstrings, "__kcrctab");
-	mod->gpl_syms = section_objs(hdr, sechdrs, secstrings, "__ksymtab_gpl",
-				     sizeof(*mod->gpl_syms),
-				     &mod->num_gpl_syms);
-	mod->gpl_crcs = section_addr(hdr, sechdrs, secstrings, "__kcrctab_gpl");
-	mod->gpl_future_syms = section_objs(hdr, sechdrs, secstrings,
-					    "__ksymtab_gpl_future",
-					    sizeof(*mod->gpl_future_syms),
-					    &mod->num_gpl_future_syms);
-	mod->gpl_future_crcs = section_addr(hdr, sechdrs, secstrings,
-					    "__kcrctab_gpl_future");
-
-#ifdef CONFIG_UNUSED_SYMBOLS
-	mod->unused_syms = section_objs(hdr, sechdrs, secstrings,
-					"__ksymtab_unused",
-					sizeof(*mod->unused_syms),
-					&mod->num_unused_syms);
-	mod->unused_crcs = section_addr(hdr, sechdrs, secstrings,
-					"__kcrctab_unused");
-	mod->unused_gpl_syms = section_objs(hdr, sechdrs, secstrings,
-					    "__ksymtab_unused_gpl",
-					    sizeof(*mod->unused_gpl_syms),
-					    &mod->num_unused_gpl_syms);
-	mod->unused_gpl_crcs = section_addr(hdr, sechdrs, secstrings,
-					    "__kcrctab_unused_gpl");
-#endif
-#ifdef CONFIG_CONSTRUCTORS
-	mod->ctors = section_objs(hdr, sechdrs, secstrings, ".ctors",
-				  sizeof(*mod->ctors), &mod->num_ctors);
-#endif
-
-#ifdef CONFIG_TRACEPOINTS
-	mod->tracepoints = section_objs(hdr, sechdrs, secstrings,
-					"__tracepoints",
-					sizeof(*mod->tracepoints),
-					&mod->num_tracepoints);
-#endif
-#ifdef CONFIG_EVENT_TRACING
-	mod->trace_events = section_objs(hdr, sechdrs, secstrings,
-					 "_ftrace_events",
-					 sizeof(*mod->trace_events),
-					 &mod->num_trace_events);
-	/*
-	 * This section contains pointers to allocated objects in the trace
-	 * code and not scanning it leads to false positives.
-	 */
-	kmemleak_scan_area(mod->trace_events, sizeof(*mod->trace_events) *
-			   mod->num_trace_events, GFP_KERNEL);
-#endif
-#ifdef CONFIG_FTRACE_MCOUNT_RECORD
-	/* sechdrs[0].sh_size is always zero */
-	mod->ftrace_callsites = section_objs(hdr, sechdrs, secstrings,
-					     "__mcount_loc",
-					     sizeof(*mod->ftrace_callsites),
-					     &mod->num_ftrace_callsites);
-#endif
-#ifdef CONFIG_MODVERSIONS
-	if ((mod->num_syms && !mod->crcs)
-	    || (mod->num_gpl_syms && !mod->gpl_crcs)
-	    || (mod->num_gpl_future_syms && !mod->gpl_future_crcs)
-#ifdef CONFIG_UNUSED_SYMBOLS
-	    || (mod->num_unused_syms && !mod->unused_crcs)
-	    || (mod->num_unused_gpl_syms && !mod->unused_gpl_crcs)
-#endif
-		) {
-		err = try_to_force_load(mod,
-					"no versions for exported symbols");
-		if (err)
-			goto cleanup;
-	}
-#endif
-
-	/* Now do relocations. */
-	for (i = 1; i < hdr->e_shnum; i++) {
-		const char *strtab = (char *)sechdrs[strindex].sh_addr;
-		unsigned int info = sechdrs[i].sh_info;
-
-		/* Not a valid relocation section? */
-		if (info >= hdr->e_shnum)
-			continue;
-
-		/* Don't bother with non-allocated sections */
-		if (!(sechdrs[info].sh_flags & SHF_ALLOC))
-			continue;
-
-		if (sechdrs[i].sh_type == SHT_REL)
-			err = apply_relocate(sechdrs, strtab, symindex, i,mod);
-		else if (sechdrs[i].sh_type == SHT_RELA)
-			err = apply_relocate_add(sechdrs, strtab, symindex, i,
-						 mod);
-		if (err < 0)
-			goto cleanup;
-	}
-
-        /* Find duplicate symbols */
-	err = verify_export_symbols(mod);
+	err = apply_relocations(mod, hdr, sechdrs, symindex, strindex);
 	if (err < 0)
 		goto cleanup;
 
@@ -2396,28 +2585,9 @@ static noinline struct module *load_module(void __user *umod,
 	if (err < 0)
 		goto cleanup;
 
-	/* flush the icache in correct context */
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
-
-	/*
-	 * Flush the instruction cache, since we've played with text.
-	 * Do it before processing of module parameters, so the module
-	 * can provide parameter accessor functions of its own.
-	 */
-	if (mod->module_init)
-		flush_icache_range((unsigned long)mod->module_init,
-				   (unsigned long)mod->module_init
-				   + mod->init_size);
-	flush_icache_range((unsigned long)mod->module_core,
-			   (unsigned long)mod->module_core + mod->core_size);
-
-	set_fs(old_fs);
+	flush_module_icache(mod);
 
 	mod->args = args;
-	if (section_addr(hdr, sechdrs, secstrings, "__obsparm"))
-		printk(KERN_WARNING "%s: Ignoring obsolete parameters\n",
-		       mod->name);
 
 	/* Now sew it into the lists so we can get lockdep and oops
 	 * info during argument parsing.  Noone should access us, since
@@ -2426,7 +2596,19 @@ static noinline struct module *load_module(void __user *umod,
 	 * function to insert in a way safe to concurrent readers.
 	 * The mutex protects against concurrent writers.
 	 */
+	mutex_lock(&module_mutex);
+	if (find_module(mod->name)) {
+		err = -EEXIST;
+		goto unlock;
+	}
+
+	/* Find duplicate symbols */
+	err = verify_export_symbols(mod);
+	if (err < 0)
+		goto unlock;
+
 	list_add_rcu(&mod->list, &modules);
+	mutex_unlock(&module_mutex);
 
 	err = parse_args(mod->name, mod->args, mod->kp, mod->num_kp, NULL);
 	if (err < 0)
@@ -2435,6 +2617,7 @@ static noinline struct module *load_module(void __user *umod,
 	err = mod_sysfs_setup(mod, mod->kp, mod->num_kp);
 	if (err < 0)
 		goto unlink;
+
 	add_sect_attrs(mod, hdr->e_shnum, secstrings, sechdrs);
 	add_notes_attrs(mod, hdr->e_shnum, secstrings, sechdrs);
 
@@ -2447,22 +2630,19 @@ static noinline struct module *load_module(void __user *umod,
 	return mod;
 
  unlink:
+	mutex_lock(&module_mutex);
 	/* Unlink carefully: kallsyms could be walking list. */
 	list_del_rcu(&mod->list);
+ unlock:
+	mutex_unlock(&module_mutex);
 	synchronize_sched();
 	module_arch_cleanup(mod);
  cleanup:
 	free_modinfo(mod);
-	kobject_del(&mod->mkobj.kobj);
-	kobject_put(&mod->mkobj.kobj);
  free_unload:
 	module_unload_free(mod);
-#if defined(CONFIG_MODULE_UNLOAD)
-	free_percpu(mod->refptr);
  free_init:
-#endif
 	module_free(mod, mod->module_init);
- free_core:
 	module_free(mod, mod->module_core);
 	/* mod will be freed with core. Don't access it beyond this line! */
  free_percpu:
@@ -2502,19 +2682,10 @@ SYSCALL_DEFINE3(init_module, void __user *, umod,
 	if (!capable(CAP_SYS_MODULE) || modules_disabled)
 		return -EPERM;
 
-	/* Only one module load at a time, please */
-	if (mutex_lock_interruptible(&module_mutex) != 0)
-		return -EINTR;
-
 	/* Do all the hard work */
 	mod = load_module(umod, len, uargs);
-	if (IS_ERR(mod)) {
-		mutex_unlock(&module_mutex);
+	if (IS_ERR(mod))
 		return PTR_ERR(mod);
-	}
-
-	/* Drop lock so they can recurse */
-	mutex_unlock(&module_mutex);
 
 	blocking_notifier_call_chain(&module_notify_list,
 			MODULE_STATE_COMING, mod);
@@ -2531,9 +2702,7 @@ SYSCALL_DEFINE3(init_module, void __user *, umod,
 		module_put(mod);
 		blocking_notifier_call_chain(&module_notify_list,
 					     MODULE_STATE_GOING, mod);
-		mutex_lock(&module_mutex);
 		free_module(mod);
-		mutex_unlock(&module_mutex);
 		wake_up(&module_wq);
 		return ret;
 	}
