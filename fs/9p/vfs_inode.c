@@ -236,6 +236,23 @@ void v9fs_destroy_inode(struct inode *inode)
 #endif
 
 /**
+ * v9fs_get_fsgid_for_create - Helper function to get the gid for creating a
+ * new file system object. This checks the S_ISGID to determine the owning
+ * group of the new file system object.
+ */
+
+gid_t v9fs_get_fsgid_for_create(struct dentry *dir_dentry)
+{
+	BUG_ON(dir_dentry->d_inode == NULL);
+
+	if (dir_dentry->d_inode->i_mode & S_ISGID) {
+		/* set_gid bit is set.*/
+		return dir_dentry->d_inode->i_gid;
+	}
+	return current_fsgid();
+}
+
+/**
  * v9fs_get_inode - helper function to setup an inode
  * @sb: superblock
  * @mode: mode to setup inode with
