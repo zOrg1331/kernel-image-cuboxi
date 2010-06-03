@@ -549,6 +549,23 @@ v9fs_create(struct v9fs_session_info *v9ses, struct inode *dir,
 		goto error;
 	}
 
+	/* Server grabs uid information from the fid but we need to fix
+	 * gid as dotu doesn't support sending gid on the wire with Tcreate.
+	 * hardlink is an exception as it inherits all credentials.
+	 */
+	if (v9fs_proto_dotu(v9ses) && !(perm & P9_DMLINK)) {
+		struct p9_wstat wstat;
+
+		v9fs_blank_wstat(&wstat);
+		wstat.n_gid = v9fs_get_fsgid_for_create(dentry->d_parent);
+		err = p9_client_wstat(fid, &wstat);
+		if (err < 0) {
+			P9_DPRINTK(P9_DEBUG_VFS, "p9_client_wstat failed %d\n",
+					err);
+			goto error;
+		}
+	}
+
 	/* instantiate inode and assign the unopened fid to the dentry */
 	inode = v9fs_inode_from_fid(v9ses, fid, dir->i_sb);
 	if (IS_ERR(inode)) {
