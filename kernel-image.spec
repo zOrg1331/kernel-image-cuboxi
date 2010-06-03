@@ -1,6 +1,6 @@
 Name: kernel-image-rhel-smp
 Version: 2.6.32
-Release: alt2
+Release: alt3
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -233,6 +233,7 @@ directory.
 %package -n kernel-doc-%base_flavour
 Summary: Linux kernel %kversion-%base_flavour documentation
 Group: System/Kernel and hardware
+BuildArch: noarch
 
 %description -n kernel-doc-%base_flavour
 This package contains documentation files for ALT Linux kernel packages:
@@ -510,6 +511,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/ -name "*.o*" -delete
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Thu Jun 03 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt3
+- enable JFS
+- build docs as noarch
+
 * Fri Apr 23 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt2
 - re-enable KVM modules on i586
 
