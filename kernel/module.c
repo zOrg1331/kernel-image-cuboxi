@@ -2523,7 +2523,9 @@ static int post_relocation(struct module *mod, const struct load_info *info)
 	sort_extable(mod->extable, mod->extable + mod->num_exentries);
 
 	/* Copy relocated percpu area over. */
+#ifdef CONFIG_SMP
 	percpu_modcopy(mod, info->orig_percpu, mod->percpu_size);
+#endif
 
 	/* Setup kallsyms-specific fields. */
 	add_kallsyms(mod, info);
