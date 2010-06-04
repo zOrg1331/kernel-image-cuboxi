@@ -31,6 +31,7 @@ static void au_br_do_free(struct au_branch *br)
 {
 	int i;
 	struct au_wbr *wbr;
+	struct au_dykey **key;
 
 	if (br->br_xino.xi_file)
 		fput(br->br_xino.xi_file);
@@ -45,6 +46,13 @@ static void au_br_do_free(struct au_branch *br)
 		AuDebugOn(atomic_read(&wbr->wbr_wh_running));
 		AuRwDestroy(&wbr->wbr_wh_rwsem);
 	}
+
+	key = br->br_dykey;
+	for (i = 0; i < AuBrDynOp; i++, key++)
+		if (*key)
+			au_dy_put(*key);
+		else
+			break;
 
 	/* some filesystems acquire extra lock */
 	/* lockdep_off(); */
@@ -96,8 +104,8 @@ static int test_overlap(struct super_block *sb, struct dentry *h_d1,
 {
 	if (unlikely(h_d1 == h_d2))
 		return 1;
-	return !!au_test_subdir(h_d1, h_d2)
-		|| !!au_test_subdir(h_d2, h_d1)
+	return au_test_subdir(h_d1, h_d2)
+		|| au_test_subdir(h_d2, h_d1)
 		|| au_test_loopback_overlap(sb, h_d1, h_d2)
 		|| au_test_loopback_overlap(sb, h_d2, h_d1);
 }
@@ -272,7 +280,7 @@ static int au_br_init_wh(struct super_block *sb, struct au_branch *br,
 	bindex = au_br_index(sb, br->br_id);
 	if (0 <= bindex) {
 		hdir = au_hi(sb->s_root->d_inode, bindex);
-		au_hin_imtx_lock_nested(hdir, AuLsc_I_PARENT);
+		au_hn_imtx_lock_nested(hdir, AuLsc_I_PARENT);
 	} else {
 		h_mtx = &h_root->d_inode->i_mutex;
 		mutex_lock_nested(h_mtx, AuLsc_I_PARENT);
@@ -285,7 +293,7 @@ static int au_br_init_wh(struct super_block *sb, struct au_branch *br,
 		wbr_wh_write_unlock(wbr);
 	}
 	if (hdir)
-		au_hin_imtx_unlock(hdir);
+		au_hn_imtx_unlock(hdir);
 	else
 		mutex_unlock(h_mtx);
 	br->br_perm = old_perm;
@@ -343,6 +351,8 @@ static int au_br_init(struct au_branch *br, struct super_block *sb,
 	mutex_init(&br->br_xino.xi_nondir_mtx);
 	br->br_perm = add->perm;
 	br->br_mnt = add->path.mnt; /* set first, mntget() later */
+	spin_lock_init(&br->br_dykey_lock);
+	memset(br->br_dykey, 0, sizeof(br->br_dykey));
 	atomic_set(&br->br_count, 0);
 	br->br_xino_upper = AUFS_XINO_TRUNC_INIT;
 	atomic_set(&br->br_xino_running, 0);
@@ -411,7 +421,7 @@ static void au_br_do_add_hip(struct au_iinfo *iinfo, aufs_bindex_t bindex,
 	hip = iinfo->ii_hinode + bindex;
 	memmove(hip + 1, hip, sizeof(*hip) * amount);
 	hip->hi_inode = NULL;
-	au_hin_init(hip, NULL);
+	au_hn_init(hip);
 	iinfo->ii_bend++;
 	if (unlikely(bend < 0))
 		iinfo->ii_bstart = 0;
@@ -485,7 +495,7 @@ int au_br_add(struct super_block *sb, struct au_opt_add *add, int remount)
 		au_add_nlink(root_inode, h_dentry->d_inode);
 
 	/*
-	 * this test/set prevents aufs from handling unnecesary inotify events
+	 * this test/set prevents aufs from handling unnecesary notify events
 	 * of xino files, in a case of re-adding a writable branch which was
 	 * once detached from aufs.
 	 */
@@ -662,13 +672,14 @@ static void au_br_do_del_hdp(struct au_dinfo *dinfo, const aufs_bindex_t bindex,
 
 	AuRwMustWriteLock(&dinfo->di_rwsem);
 
-	hdp = dinfo->di_hdentry + bindex;
+	hdp = dinfo->di_hdentry;
 	if (bindex < bend)
-		memmove(hdp, hdp + 1, sizeof(*hdp) * (bend - bindex));
-	dinfo->di_hdentry[0 + bend].hd_dentry = NULL;
+		memmove(hdp + bindex, hdp + bindex + 1,
+			sizeof(*hdp) * (bend - bindex));
+	hdp[0 + bend].hd_dentry = NULL;
 	dinfo->di_bend--;
 
-	p = krealloc(dinfo->di_hdentry, sizeof(*p) * bend, GFP_NOFS);
+	p = krealloc(hdp, sizeof(*p) * bend, GFP_NOFS);
 	if (p)
 		dinfo->di_hdentry = p;
 	/* harmless error */
@@ -685,7 +696,7 @@ static void au_br_do_del_hip(struct au_iinfo *iinfo, const aufs_bindex_t bindex,
 	if (bindex < bend)
 		memmove(hip, hip + 1, sizeof(*hip) * (bend - bindex));
 	iinfo->ii_hinode[0 + bend].hi_inode = NULL;
-	au_hin_init(iinfo->ii_hinode + bend, NULL);
+	au_hn_init(iinfo->ii_hinode + bend);
 	iinfo->ii_bend--;
 
 	p = krealloc(iinfo->ii_hinode, sizeof(*p) * bend, GFP_NOFS);
@@ -869,7 +880,7 @@ static int au_br_mod_files_ro(struct super_block *sb, aufs_bindex_t bindex)
 			continue;
 		}
 
-		hf = au_h_fptr(file, bstart);
+		hf = au_hf_top(file);
 		FiMustNoWaiters(file);
 		fi_read_unlock(file);
 

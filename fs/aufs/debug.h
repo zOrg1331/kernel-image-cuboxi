@@ -29,6 +29,8 @@
 #include <linux/bug.h>
 /* #include <linux/err.h> */
 #include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kallsyms.h>
 /* #include <linux/kernel.h> */
 #include <linux/delay.h>
 /* #include <linux/kd.h> */
@@ -65,7 +67,7 @@ AuStubInt0(au_debug_test, void)
 	if (au_debug_test()) \
 		pr_debug("DEBUG: " fmt, ##__VA_ARGS__); \
 } while (0)
-#define AuLabel(l) 		AuDbg(#l "\n")
+#define AuLabel(l)		AuDbg(#l "\n")
 #define AuIOErr(fmt, ...)	pr_err("I/O Error, " fmt, ##__VA_ARGS__)
 #define AuWarn1(fmt, ...) do { \
 	static unsigned char _c; \
@@ -132,7 +134,6 @@ void au_dbg_iattr(struct iattr *ia);
 void au_dbg_verify_dir_parent(struct dentry *dentry, unsigned int sigen);
 void au_dbg_verify_nondir_parent(struct dentry *dentry, unsigned int sigen);
 void au_dbg_verify_gen(struct dentry *parent, unsigned int sigen);
-void au_dbg_verify_hf(struct au_finfo *finfo);
 void au_dbg_verify_kthread(void);
 
 int __init au_debug_init(void);
@@ -181,12 +182,23 @@ void au_debug_sbinfo_init(struct au_sbinfo *sbinfo);
 	AuDbg("ia_valid 0x%x\n", (ia)->ia_valid); \
 	au_dbg_iattr(ia); \
 } while (0)
+
+#define AuDbgSym(addr) do {				\
+	char sym[KSYM_SYMBOL_LEN];			\
+	sprint_symbol(sym, (unsigned long)addr);	\
+	AuDbg("%s\n", sym);				\
+} while (0)
+
+#define AuInfoSym(addr) do {				\
+	char sym[KSYM_SYMBOL_LEN];			\
+	sprint_symbol(sym, (unsigned long)addr);	\
+	AuInfo("%s\n", sym);				\
+} while (0)
 #else
 AuStubVoid(au_dbg_verify_dir_parent, struct dentry *dentry, unsigned int sigen)
 AuStubVoid(au_dbg_verify_nondir_parent, struct dentry *dentry,
 	   unsigned int sigen)
 AuStubVoid(au_dbg_verify_gen, struct dentry *parent, unsigned int sigen)
-AuStubVoid(au_dbg_verify_hf, struct au_finfo *finfo)
 AuStubVoid(au_dbg_verify_kthread, void)
 AuStubInt0(__init au_debug_init, void)
 AuStubVoid(au_debug_sbinfo_init, struct au_sbinfo *sbinfo)
@@ -200,6 +212,8 @@ AuStubVoid(au_debug_sbinfo_init, struct au_sbinfo *sbinfo)
 #define AuDbgSleep(sec)		do {} while (0)
 #define AuDbgSleepJiffy(jiffy)	do {} while (0)
 #define AuDbgIAttr(ia)		do {} while (0)
+#define AuDbgSym(addr)		do {} while (0)
+#define AuInfoSym(addr)		do {} while (0)
 #endif /* CONFIG_AUFS_DEBUG */
 
 /* ---------------------------------------------------------------------- */

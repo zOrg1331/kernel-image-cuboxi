@@ -158,6 +158,7 @@ void au_dpri_dentry(struct dentry *dentry)
 	struct au_dinfo *dinfo;
 	aufs_bindex_t bindex;
 	int err;
+	struct au_hdentry *hdp;
 
 	err = do_pri_dentry(-1, dentry);
 	if (err || !au_test_aufs(dentry->d_sb))
@@ -171,8 +172,9 @@ void au_dpri_dentry(struct dentry *dentry)
 	     dinfo->di_bwh, dinfo->di_bdiropq, au_digen(dentry));
 	if (dinfo->di_bstart < 0)
 		return;
+	hdp = dinfo->di_hdentry;
 	for (bindex = dinfo->di_bstart; bindex <= dinfo->di_bend; bindex++)
-		do_pri_dentry(bindex, dinfo->di_hdentry[0 + bindex].hd_dentry);
+		do_pri_dentry(bindex, hdp[0 + bindex].hd_dentry);
 }
 
 static int do_pri_file(aufs_bindex_t bindex, struct file *file)
@@ -189,7 +191,7 @@ static int do_pri_file(aufs_bindex_t bindex, struct file *file)
 	    && au_test_aufs(file->f_dentry->d_sb)
 	    && au_fi(file))
 		snprintf(a, sizeof(a), ", mmapped %d",
-			 !!au_fi(file)->fi_h_vm_ops);
+			 !!au_fi(file)->fi_hvmop);
 	dpri("f%d: mode 0x%x, flags 0%o, cnt %ld, pos %llu%s\n",
 	     bindex, file->f_mode, file->f_flags, (long)file_count(file),
 	     file->f_pos, a);
@@ -201,6 +203,8 @@ static int do_pri_file(aufs_bindex_t bindex, struct file *file)
 void au_dpri_file(struct file *file)
 {
 	struct au_finfo *finfo;
+	struct au_fidir *fidir;
+	struct au_hfile *hfile;
 	aufs_bindex_t bindex;
 	int err;
 
@@ -211,14 +215,17 @@ void au_dpri_file(struct file *file)
 	finfo = au_fi(file);
 	if (!finfo)
 		return;
-	if (finfo->fi_bstart < 0)
+	if (finfo->fi_btop < 0)
 		return;
-	for (bindex = finfo->fi_bstart; bindex <= finfo->fi_bend; bindex++) {
-		struct au_hfile *hf;
-
-		hf = finfo->fi_hfile + bindex;
-		do_pri_file(bindex, hf ? hf->hf_file : NULL);
-	}
+	fidir = finfo->fi_hdir;
+	if (!fidir)
+		do_pri_file(finfo->fi_btop, finfo->fi_htop.hf_file);
+	else
+		for (bindex = finfo->fi_btop; bindex <= fidir->fd_bbot;
+		     bindex++) {
+			hfile = fidir->fd_hfile + bindex;
+			do_pri_file(bindex, hfile ? hfile->hf_file : NULL);
+		}
 }
 
 static int do_pri_br(aufs_bindex_t bindex, struct au_branch *br)
@@ -365,20 +372,6 @@ void au_dbg_verify_gen(struct dentry *parent, unsigned int sigen)
 	au_dpages_free(&dpages);
 }
 
-void au_dbg_verify_hf(struct au_finfo *finfo)
-{
-	struct au_hfile *hf;
-	aufs_bindex_t bend, bindex;
-
-	if (finfo->fi_bstart >= 0) {
-		bend = finfo->fi_bend;
-		for (bindex = finfo->fi_bstart; bindex <= bend; bindex++) {
-			hf = finfo->fi_hfile + bindex;
-			AuDebugOn(hf->hf_file || hf->hf_br);
-		}
-	}
-}
-
 void au_dbg_verify_kthread(void)
 {
 	if (au_test_wkq(current)) {
@@ -400,8 +393,8 @@ void au_debug_sbinfo_init(struct au_sbinfo *sbinfo __maybe_unused)
 #ifdef AuForceNoRefrof
 	au_opt_clr(sbinfo->si_mntflags, REFROF);
 #endif
-#ifdef AuForceHinotify
-	au_opt_set_udba(sbinfo->si_mntflags, UDBA_HINOTIFY);
+#ifdef AuForceHnotify
+	au_opt_set_udba(sbinfo->si_mntflags, UDBA_HNOTIFY);
 #endif
 #ifdef AuForceRd0
 	sbinfo->si_rdblk = 0;

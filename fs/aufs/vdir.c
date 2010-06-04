@@ -521,7 +521,7 @@ static int au_handle_shwh(struct super_block *sb, struct au_vdir *vdir,
 	AuDebugOn(!au_opt_test(au_mntflags(sb), SHWH));
 
 	err = -ENOMEM;
-	o = p = __getname();
+	o = p = __getname_gfp(GFP_NOFS);
 	if (unlikely(!p))
 		goto out;
 
@@ -583,9 +583,9 @@ static int au_do_read_vdir(struct fillvdir_arg *arg)
 		au_fset_fillvdir(arg->flags, SHWH);
 	}
 	bstart = au_fbstart(file);
-	bend = au_fbend(file);
+	bend = au_fbend_dir(file);
 	for (bindex = bstart; !err && bindex <= bend; bindex++) {
-		hf = au_h_fptr(file, bindex);
+		hf = au_hf_dir(file, bindex);
 		if (!hf)
 			continue;
 

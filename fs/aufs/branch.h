@@ -28,6 +28,7 @@
 #include <linux/fs.h>
 #include <linux/mount.h>
 #include <linux/aufs_type.h>
+#include "dynop.h"
 #include "rwsem.h"
 #include "super.h"
 
@@ -50,7 +51,7 @@ enum {AuBrWh_BASE, AuBrWh_PLINK, AuBrWh_ORPH, AuBrWh_Last};
 struct au_wbr {
 	struct au_rwsem		wbr_wh_rwsem;
 	struct dentry		*wbr_wh[AuBrWh_Last];
-	atomic_t 		wbr_wh_running;
+	atomic_t		wbr_wh_running;
 #define wbr_whbase		wbr_wh[AuBrWh_BASE]	/* whiteout base */
 #define wbr_plink		wbr_wh[AuBrWh_PLINK]	/* pseudo-link dir */
 #define wbr_orph		wbr_wh[AuBrWh_ORPH]	/* dir for orphans */
@@ -58,6 +59,9 @@ struct au_wbr {
 	/* mfs mode */
 	unsigned long long	wbr_bytes;
 };
+
+/* ext2 has 3 types of operations at least, ext3 has 4 */
+#define AuBrDynOp (AuDyLast * 4)
 
 /* protected by superblock rwsem */
 struct au_branch {
@@ -67,6 +71,8 @@ struct au_branch {
 
 	int			br_perm;
 	struct vfsmount		*br_mnt;
+	spinlock_t		br_dykey_lock;
+	struct au_dykey		*br_dykey[AuBrDynOp];
 	atomic_t		br_count;
 
 	struct au_wbr		*br_wbr;
@@ -117,9 +123,9 @@ static inline int au_br_rdonly(struct au_branch *br)
 		? -EROFS : 0;
 }
 
-static inline int au_br_hinotifyable(int brperm __maybe_unused)
+static inline int au_br_hnotifyable(int brperm __maybe_unused)
 {
-#ifdef CONFIG_AUFS_HINOTIFY
+#ifdef CONFIG_AUFS_HNOTIFY
 	return brperm != AuBrPerm_RR && brperm != AuBrPerm_RRWH;
 #else
 	return 0;

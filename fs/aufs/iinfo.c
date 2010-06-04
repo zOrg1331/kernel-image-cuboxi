@@ -34,22 +34,9 @@ struct inode *au_h_iptr(struct inode *inode, aufs_bindex_t bindex)
 }
 
 /* todo: hard/soft set? */
-void au_set_ibstart(struct inode *inode, aufs_bindex_t bindex)
-{
-	struct au_iinfo *iinfo = au_ii(inode);
-	struct inode *h_inode;
-
-	IiMustWriteLock(inode);
-
-	iinfo->ii_bstart = bindex;
-	h_inode = iinfo->ii_hinode[bindex + 0].hi_inode;
-	if (h_inode)
-		au_cpup_igen(inode, h_inode);
-}
-
 void au_hiput(struct au_hinode *hinode)
 {
-	au_hin_free(hinode);
+	au_hn_free(hinode);
 	dput(hinode->hi_whdentry);
 	iput(hinode->hi_inode);
 }
@@ -62,8 +49,8 @@ unsigned int au_hi_flags(struct inode *inode, int isdir)
 	flags = 0;
 	if (au_opt_test(mnt_flags, XINO))
 		au_fset_hi(flags, XINO);
-	if (isdir && au_opt_test(mnt_flags, UDBA_HINOTIFY))
-		au_fset_hi(flags, HINOTIFY);
+	if (isdir && au_opt_test(mnt_flags, UDBA_HNOTIFY))
+		au_fset_hi(flags, HNOTIFY);
 	return flags;
 }
 
@@ -79,7 +66,6 @@ void au_set_h_iptr(struct inode *inode, aufs_bindex_t bindex,
 	hinode = iinfo->ii_hinode + bindex;
 	hi = hinode->hi_inode;
 	AuDebugOn(h_inode && atomic_read(&h_inode->i_count) <= 0);
-	AuDebugOn(h_inode && hi);
 
 	if (hi)
 		au_hiput(hinode);
@@ -100,11 +86,11 @@ void au_set_h_iptr(struct inode *inode, aufs_bindex_t bindex,
 				AuIOErr1("failed au_xino_write() %d\n", err);
 		}
 
-		if (au_ftest_hi(flags, HINOTIFY)
-		    && au_br_hinotifyable(br->br_perm)) {
-			err = au_hin_alloc(hinode, inode, h_inode);
+		if (au_ftest_hi(flags, HNOTIFY)
+		    && au_br_hnotifyable(br->br_perm)) {
+			err = au_hn_alloc(hinode, inode, h_inode);
 			if (unlikely(err))
-				AuIOErr1("au_hin_alloc() %d\n", err);
+				AuIOErr1("au_hn_alloc() %d\n", err);
 		}
 	}
 }
@@ -128,7 +114,7 @@ void au_update_iigen(struct inode *inode)
 }
 
 /* it may be called at remount time, too */
-void au_update_brange(struct inode *inode, int do_put_zero)
+void au_update_ibrange(struct inode *inode, int do_put_zero)
 {
 	struct au_iinfo *iinfo;
 
@@ -170,6 +156,15 @@ void au_update_brange(struct inode *inode, int do_put_zero)
 
 /* ---------------------------------------------------------------------- */
 
+void au_icntnr_init_once(void *_c)
+{
+	struct au_icntnr *c = _c;
+	struct au_iinfo *iinfo = &c->iinfo;
+
+	au_rw_init(&iinfo->ii_rwsem);
+	inode_init_once(&c->vfs_inode);
+}
+
 int au_iinfo_init(struct inode *inode)
 {
 	struct au_iinfo *iinfo;
@@ -188,7 +183,6 @@ int au_iinfo_init(struct inode *inode)
 
 		atomic_set(&iinfo->ii_generation, au_sigen(sb));
 		/* smp_mb(); */ /* atomic_set */
-		au_rw_init(&iinfo->ii_rwsem);
 		iinfo->ii_bstart = -1;
 		iinfo->ii_bend = -1;
 		iinfo->ii_vdir = NULL;

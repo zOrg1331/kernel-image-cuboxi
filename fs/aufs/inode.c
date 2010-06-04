@@ -41,7 +41,7 @@ static void au_refresh_hinode_attr(struct inode *inode, int do_version)
 
 int au_refresh_hinode_self(struct inode *inode, int do_attr)
 {
-	int err;
+	int err, e;
 	aufs_bindex_t bindex, new_bindex;
 	unsigned char update;
 	struct au_hinode *p, *q, tmp;
@@ -89,7 +89,10 @@ int au_refresh_hinode_self(struct inode *inode, int do_attr)
 			p--;
 		}
 	}
-	au_update_brange(inode, /*do_put_zero*/0);
+	au_update_ibrange(inode, /*do_put_zero*/0);
+	e = au_dy_irefresh(inode);
+	if (unlikely(e && !err))
+		err = e;
 	if (do_attr)
 		au_refresh_hinode_attr(inode, update && S_ISDIR(inode->i_mode));
 
@@ -99,7 +102,7 @@ int au_refresh_hinode_self(struct inode *inode, int do_attr)
 
 int au_refresh_hinode(struct inode *inode, struct dentry *dentry)
 {
-	int err;
+	int err, e;
 	unsigned int flags;
 	aufs_bindex_t bindex, bend;
 	unsigned char isdir, update;
@@ -140,11 +143,10 @@ int au_refresh_hinode(struct inode *inode, struct dentry *dentry)
 		au_set_h_iptr(inode, bindex, au_igrab(h_d->d_inode), flags);
 		update = 1;
 	}
-	au_update_brange(inode, /*do_put_zero*/0);
-
-	if (unlikely(err))
-		goto out;
-
+	au_update_ibrange(inode, /*do_put_zero*/0);
+	e = au_dy_irefresh(inode);
+	if (unlikely(e && !err))
+		err = e;
 	au_refresh_hinode_attr(inode, update && isdir);
 
  out:
@@ -175,7 +177,9 @@ static int set_inode(struct inode *inode, struct dentry *dentry)
 		btail = au_dbtail(dentry);
 		inode->i_op = &aufs_iop;
 		inode->i_fop = &aufs_file_fop;
-		inode->i_mapping->a_ops = &aufs_aop;
+		err = au_dy_iaop(inode, bstart, h_inode);
+		if (unlikely(err))
+			goto out;
 		break;
 	case S_IFDIR:
 		isdir = 1;
@@ -201,13 +205,13 @@ static int set_inode(struct inode *inode, struct dentry *dentry)
 		goto out;
 	}
 
-	/* do not set inotify for whiteouted dirs (SHWH mode) */
+	/* do not set hnotify for whiteouted dirs (SHWH mode) */
 	flags = au_hi_flags(inode, isdir);
 	if (au_opt_test(au_mntflags(dentry->d_sb), SHWH)
-	    && au_ftest_hi(flags, HINOTIFY)
+	    && au_ftest_hi(flags, HNOTIFY)
 	    && dentry->d_name.len > AUFS_WH_PFX_LEN
 	    && !memcmp(dentry->d_name.name, AUFS_WH_PFX, AUFS_WH_PFX_LEN))
-		au_fclr_hi(flags, HINOTIFY);
+		au_fclr_hi(flags, HNOTIFY);
 	iinfo = au_ii(inode);
 	iinfo->ii_bstart = bstart;
 	iinfo->ii_bend = btail;

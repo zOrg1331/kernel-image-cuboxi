@@ -20,6 +20,7 @@
  * readdir in userspace.
  */
 
+#include <linux/fs_stack.h>
 #include <linux/security.h>
 #include <linux/uaccess.h>
 #include <linux/aufs_type.h>
@@ -180,11 +181,11 @@ static int au_rdu(struct file *file, struct aufs_rdu *rdu)
 	bend = au_fbstart(file);
 	if (cookie->bindex < bend)
 		cookie->bindex = bend;
-	bend = au_fbend(file);
+	bend = au_fbend_dir(file);
 	/* AuDbg("b%d, b%d\n", cookie->bindex, bend); */
 	for (; !err && cookie->bindex <= bend;
 	     cookie->bindex++, cookie->h_pos = 0) {
-		h_file = au_h_fptr(file, cookie->bindex);
+		h_file = au_hf_dir(file, cookie->bindex);
 		if (!h_file)
 			continue;
 
@@ -231,14 +232,9 @@ static int au_rdu_ino(struct file *file, struct aufs_rdu *rdu)
 	sb = file->f_dentry->d_sb;
 	si_read_lock(sb, AuLock_FLUSH);
 	while (nent-- > 0) {
-		err = !access_ok(VERIFY_WRITE, u->e, sizeof(ent));
-		if (unlikely(err)) {
-			err = -EFAULT;
-			AuTraceErr(err);
-			break;
-		}
-
 		err = copy_from_user(&ent, u->e, sizeof(ent));
+		if (!err)
+			err = !access_ok(VERIFY_WRITE, &u->e->ino, sizeof(ino));
 		if (unlikely(err)) {
 			err = -EFAULT;
 			AuTraceErr(err);

@@ -26,6 +26,7 @@
 #include <linux/namei.h>
 #include <linux/nsproxy.h>
 #include <linux/random.h>
+#include <linux/writeback.h>
 #include "aufs.h"
 
 union conv {
@@ -263,32 +264,46 @@ static struct dentry *decode_by_ino(struct super_block *sb, ino_t ino,
 
 /* todo: dirty? */
 /* if exportfs_decode_fh() passed vfsmount*, we could be happy */
+
+struct au_compare_mnt_args {
+	/* input */
+	struct super_block *sb;
+
+	/* output */
+	struct vfsmount *mnt;
+};
+
+static int au_compare_mnt(struct vfsmount *mnt, void *arg)
+{
+	struct au_compare_mnt_args *a = arg;
+
+	if (mnt->mnt_sb != a->sb)
+		return 0;
+	a->mnt = mntget(mnt);
+	return 1;
+}
+
 static struct vfsmount *au_mnt_get(struct super_block *sb)
 {
+	int err;
+	struct au_compare_mnt_args args = {
+		.sb = sb
+	};
 	struct mnt_namespace *ns;
-	struct vfsmount *pos, *mnt;
 
-	spin_lock(&vfsmount_lock);
 	/* no get/put ?? */
 	AuDebugOn(!current->nsproxy);
 	ns = current->nsproxy->mnt_ns;
 	AuDebugOn(!ns);
-	mnt = NULL;
-	/* the order (reverse) will not be a problem */
-	list_for_each_entry(pos, &ns->list, mnt_list)
-		if (pos->mnt_sb == sb) {
-			mnt = mntget(pos);
-			break;
-		}
-	spin_unlock(&vfsmount_lock);
-	AuDebugOn(!mnt);
-
-	return mnt;
+	err = iterate_mounts(au_compare_mnt, &args, ns->root);
+	AuDebugOn(!err);
+	AuDebugOn(!args.mnt);
+	return args.mnt;
 }
 
 struct au_nfsd_si_lock {
-	const unsigned int sigen;
-	const aufs_bindex_t br_id;
+	unsigned int sigen;
+	aufs_bindex_t br_id;
 	unsigned char force_lock;
 };
 
@@ -353,7 +368,7 @@ static struct dentry *au_lkup_by_ino(struct path *path, ino_t ino,
 		goto out;
 
 	dentry = ERR_PTR(-ENOMEM);
-	arg.name = __getname();
+	arg.name = __getname_gfp(GFP_NOFS);
 	if (unlikely(!arg.name))
 		goto out_file;
 	arg.ino = ino;
@@ -559,14 +574,16 @@ aufs_fh_to_dentry(struct super_block *sb, struct fid *fid, int fh_len,
 	ino_t ino, dir_ino;
 	aufs_bindex_t bindex;
 	struct au_nfsd_si_lock nsi_lock = {
-		.sigen		= fh[Fh_sigen],
-		.br_id		= fh[Fh_br_id],
 		.force_lock	= 0
 	};
 
-	AuDebugOn(fh_len < Fh_tail);
-
 	dentry = ERR_PTR(-ESTALE);
+	/* it should never happen, but the file handle is unreliable */
+	if (unlikely(fh_len < Fh_tail))
+		goto out;
+	nsi_lock.sigen = fh[Fh_sigen];
+	nsi_lock.br_id = fh[Fh_br_id];
+
 	/* branch id may be wrapped around */
 	bindex = si_nfsd_read_lock(sb, &nsi_lock);
 	if (unlikely(bindex < 0))
@@ -575,7 +592,10 @@ aufs_fh_to_dentry(struct super_block *sb, struct fid *fid, int fh_len,
 
 	/* is this inode still cached? */
 	ino = decode_ino(fh + Fh_ino);
-	AuDebugOn(ino == AUFS_ROOT_INO);
+	/* it should never happen */
+	if (unlikely(ino == AUFS_ROOT_INO))
+		goto out;
+
 	dir_ino = decode_ino(fh + Fh_dir_ino);
 	dentry = decode_by_ino(sb, ino, dir_ino);
 	if (IS_ERR(dentry))
@@ -725,10 +745,46 @@ static int aufs_encode_fh(struct dentry *dentry, __u32 *fh, int *max_len,
 
 /* ---------------------------------------------------------------------- */
 
+static int aufs_commit_metadata(struct inode *inode)
+{
+	int err;
+	aufs_bindex_t bindex;
+	struct super_block *sb;
+	struct inode *h_inode;
+	int (*f)(struct inode *inode);
+
+	sb = inode->i_sb;
+	si_read_lock(sb, AuLock_FLUSH);
+	ii_write_lock_child(inode);
+	bindex = au_ibstart(inode);
+	AuDebugOn(bindex < 0);
+	h_inode = au_h_iptr(inode, bindex);
+
+	f = h_inode->i_sb->s_export_op->commit_metadata;
+	if (f)
+		err = f(h_inode);
+	else {
+		struct writeback_control wbc = {
+			.sync_mode	= WB_SYNC_ALL,
+			.nr_to_write	= 0 /* metadata only */
+		};
+
+		err = sync_inode(h_inode, &wbc);
+	}
+
+	au_cpup_attr_timesizes(inode);
+	ii_write_unlock(inode);
+	si_read_unlock(sb);
+	return err;
+}
+
+/* ---------------------------------------------------------------------- */
+
 static struct export_operations aufs_export_op = {
-	.fh_to_dentry	= aufs_fh_to_dentry,
+	.fh_to_dentry		= aufs_fh_to_dentry,
 	/* .fh_to_parent	= aufs_fh_to_parent, */
-	.encode_fh	= aufs_encode_fh
+	.encode_fh		= aufs_encode_fh,
+	.commit_metadata	= aufs_commit_metadata
 };
 
 void au_export_init(struct super_block *sb)
