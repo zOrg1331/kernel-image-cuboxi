@@ -1,0 +1,81 @@
+Importing driver-core.current based on 2.6.35-rc1
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.35-rc1-git1
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.35-rc1-git1
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.34-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-rc1-194-gaef4b9a
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard aef4b9aaae1decc775778903922bd0075cce7a88
+HEAD is now at aef4b9a Merge branch 'next' of git://git.kernel.org/pub/scm/linux/kernel/git/benh/powerpc
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+virtio:blk_fix_minimum_number_of_s_g_elements.patch
+virtio:console_fix_crash_when_hot_unplugging_a_port_and_read_is_blocked.patch
+virtio:console_fix_crash_when_port_is_unplugged_and_blocked_for_write.patch
+module:make_the_usage_lists_be_two_way.patch
+module:make_the_usage_lists_be_two_way-fix.patch
+module:move-sysfs-init-to-end.patch
+module:sysfs-function-cleanup.patch
+module:reduce-locking.patch
+module:reduce-locking-find-fix.patch
+module:reduce-locking-verify-fix.patch
+module:fix-libcrc32-waiting-bug.patch
+module:unload_init_cleanup.patch
+module:refactor-load-module-1.patch
+module:refactor-load-module-2.patch
+module:refactor-load-module-3.patch
+module:refactor-load-module-4.patch
+module:refactor-load-module-5.patch
+module:reduce-stack-usage.patch
+module:load_info.patch
+module:extract-rewrite_section_header.patch
+module:kallsyms-takes-info.patch
+module:layout_and_allocate.patch
+module:bunch-sysfs-setup.patch
+module:push-down-load_info.patch
+module:cleanup-args-usage.patch
+module:simplify-percpu.patch
+module:hoist-dynamic-debug.patch
+module:final-cleanup.patch
+misc:fix-email.patch
+kernel-params_c-check-null-for-non-bool.diff
+param:neaten-param.c-exports.patch
+param:param_ops.patch
+param:param_ops-for-hvc_iucv-driver.patch
+param:param_ops-modpost-complaint-silence.patch
+param:add-free-hook.patch
+param:use-free-hook-for-charp.patch
+param:params-are-const.patch
+param:kernel_param_lock.patch
+param:documentation.patch
+param:remove-useless-writable-charp.patch
+param:lock-charp-simple.patch
+param:lock-charp-myri10ge.patch
+param:lock-charp-if_sdio.patch
+param:ipmi_watchdog.patch
+param:cleanup-ide.patch
+param:cleanup-mptbase.patch
+param:acpi-use-ops.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 3d8ca64...5d9e156 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.34
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
