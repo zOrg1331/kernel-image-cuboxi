@@ -211,7 +211,8 @@ static ssize_t bonding_show_slaves(struct device *d,
 /*
  * Set the slaves in the current bond.  The bond interface must be
  * up for this to succeed.
- * This function is largely the same flow as bonding_update_bonds().
+ * This is supposed to be only thin wrapper for bond_enslave and bond_release.
+ * All hard work should be done there.
  */
 static ssize_t bonding_store_slaves(struct device *d,
 				    struct device_attribute *attr,
@@ -219,10 +220,8 @@ static ssize_t bonding_store_slaves(struct device *d,
 {
 	char command[IFNAMSIZ + 1] = { 0, };
 	char *ifname;
-	int i, res, found, ret = count;
-	u32 original_mtu;
-	struct slave *slave;
-	struct net_device *dev = NULL;
+	int res, ret = count;
+	struct net_device *dev;
 	struct bonding *bond = to_bond(d);
 
 	/* Quick sanity check -- is the bond interface up? */
@@ -230,8 +229,6 @@ static ssize_t bonding_store_slaves(struct device *d,
 		pr_warning("%s: doing slave updates when interface is down.\n",
 			   bond->dev->name);
 	}
-
-	/* Note:  We can't hold bond->lock here, as bond_create grabs it. */
 
 	if (!rtnl_trylock())
 		return restart_syscall();
@@ -242,90 +239,32 @@ static ssize_t bonding_store_slaves(struct device *d,
 	    !dev_valid_name(ifname))
 		goto err_no_cmd;
 
-	if (command[0] == '+') {
+	dev = __dev_get_by_name(dev_net(bond->dev), ifname);
+	if (!dev) {
+		pr_info("%s: Interface %s does not exist!\n",
+			bond->dev->name, ifname);
+		ret = -ENODEV;
+		goto out;
+	}
 
-		/* Got a slave name in ifname.  Is it already in the list? */
-		found = 0;
-
-		dev = __dev_get_by_name(dev_net(bond->dev), ifname);
-		if (!dev) {
-			pr_info("%s: Interface %s does not exist!\n",
-				bond->dev->name, ifname);
-			ret = -ENODEV;
-			goto out;
-		}
-
-		if (dev->flags & IFF_UP) {
-			pr_err("%s: Error: Unable to enslave %s because it is already up.\n",
-			       bond->dev->name, dev->name);
-			ret = -EPERM;
-			goto out;
-		}
-
-		read_lock(&bond->lock);
-		bond_for_each_slave(bond, slave, i)
-			if (slave->dev == dev) {
-				pr_err("%s: Interface %s is already enslaved!\n",
-				       bond->dev->name, ifname);
-				ret = -EPERM;
-				read_unlock(&bond->lock);
-				goto out;
-			}
-		read_unlock(&bond->lock);
-
-		pr_info("%s: Adding slave %s.\n", bond->dev->name, ifname);
-
-		/* If this is the first slave, then we need to set
-		   the master's hardware address to be the same as the
-		   slave's. */
-		if (is_zero_ether_addr(bond->dev->dev_addr))
-			memcpy(bond->dev->dev_addr, dev->dev_addr,
-			       dev->addr_len);
-
-		/* Set the slave's MTU to match the bond */
-		original_mtu = dev->mtu;
-		res = dev_set_mtu(dev, bond->dev->mtu);
-		if (res) {
-			ret = res;
-			goto out;
-		}
-
+	switch (command[0]) {
+	case '+':
+		pr_info("%s: Adding slave %s.\n", bond->dev->name, dev->name);
 		res = bond_enslave(bond->dev, dev);
-		bond_for_each_slave(bond, slave, i)
-			if (strnicmp(slave->dev->name, ifname, IFNAMSIZ) == 0)
-				slave->original_mtu = original_mtu;
-		if (res)
-			ret = res;
+		break;
 
-		goto out;
+	case '-':
+		pr_info("%s: Removing slave %s.\n", bond->dev->name, dev->name);
+		res = bond_release(bond->dev, dev);
+		break;
+
+	default:
+		goto err_no_cmd;
 	}
 
-	if (command[0] == '-') {
-		dev = NULL;
-		original_mtu = 0;
-		bond_for_each_slave(bond, slave, i)
-			if (strnicmp(slave->dev->name, ifname, IFNAMSIZ) == 0) {
-				dev = slave->dev;
-				original_mtu = slave->original_mtu;
-				break;
-			}
-		if (dev) {
-			pr_info("%s: Removing slave %s\n",
-				bond->dev->name, dev->name);
-				res = bond_release(bond->dev, dev);
-			if (res) {
-				ret = res;
-				goto out;
-			}
-			/* set the slave MTU to the default */
-			dev_set_mtu(dev, original_mtu);
-		} else {
-			pr_err("unable to remove non-existent slave %s for bond %s.\n",
-			       ifname, bond->dev->name);
-			ret = -ENODEV;
-		}
-		goto out;
-	}
+	if (res)
+		ret = res;
+	goto out;
 
 err_no_cmd:
 	pr_err("no command found in slaves file for bond %s. Use +ifname or -ifname.\n",
