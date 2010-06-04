@@ -117,6 +117,7 @@ struct load_info {
 	char *secstrings, *strtab;
 	unsigned long *strmap;
 	unsigned long symoffs, stroffs;
+	void *orig_percpu;
 	struct {
 		unsigned int sym, str, mod, vers, info, pcpu;
 	} index;
@@ -1676,11 +1677,7 @@ static int simplify_symbols(struct module *mod, const struct load_info *info)
 			break;
 
 		default:
-			/* Divert to percpu allocation if a percpu var. */
-			if (sym[i].st_shndx == info->index.pcpu)
-				secbase = (unsigned long)mod_percpu(mod);
-			else
-				secbase = info->sechdrs[sym[i].st_shndx].sh_addr;
+			secbase = info->sechdrs[sym[i].st_shndx].sh_addr;
 			sym[i].st_value += secbase;
 			break;
 		}
@@ -2462,6 +2459,8 @@ static struct module *layout_and_allocate(struct load_info *info)
 		if (err)
 			goto out;
 		pcpusec->sh_flags &= ~(unsigned long)SHF_ALLOC;
+		info->orig_percpu = (void *)pcpusec->sh_addr;
+		pcpusec->sh_addr = (unsigned long)mod_percpu(mod);
 	}
 
 	/* Determine total sizes, and put offsets in sh_entsize.  For now
@@ -2558,8 +2557,7 @@ static noinline struct module *load_module(void __user *umod,
 	sort_extable(mod->extable, mod->extable + mod->num_exentries);
 
 	/* Finally, copy percpu area over. */
-	percpu_modcopy(mod, (void *)info.sechdrs[info.index.pcpu].sh_addr,
-		       info.sechdrs[info.index.pcpu].sh_size);
+	percpu_modcopy(mod, info.orig_percpu, mod->percpu_size);
 
 	add_kallsyms(mod, &info);
 
