@@ -1665,10 +1665,9 @@ xfs_vm_direct_IO(
 	iocb->private = xfs_alloc_ioend(inode, rw == WRITE ?
 					IO_UNWRITTEN : IO_READ);
 
-	ret = blockdev_direct_IO_no_locking(rw, iocb, inode, bdev, iov,
-					    offset, nr_segs,
-					    xfs_get_blocks_direct,
-					    xfs_end_io_direct);
+	ret = __blockdev_direct_IO(rw, iocb, inode, bdev, iov, offset,
+				   nr_segs, xfs_get_blocks_direct,
+				   xfs_end_io_direct, NULL, 0);
 
 	if (unlikely(ret != -EIOCBQUEUED && iocb->private))
 		xfs_destroy_ioend(iocb->private);
