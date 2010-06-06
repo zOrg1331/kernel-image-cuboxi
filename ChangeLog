@@ -1,3 +1,13 @@
+commit 575bf8c6484fd12a0719a7ebcf6c0d2fd0af31f3
+Author: J. R. Okajima <hooanon05@yahoo.co.jp>
+Date:   Fri Jun 4 14:55:42 2010 +0900
+
+    aufs: follow linux-2.6.35, simple_setsize()
+    
+    Replace vmtruncate() by a new function simple_setsize().
+    
+    Signed-off-by: J. R. Okajima <hooanon05@yahoo.co.jp>
+
 commit c503a51d10c9c7767f1eba8e47de545d31ab7858
 Author: J. R. Okajima <hooanon05@yahoo.co.jp>
 Date:   Fri Jun 4 02:54:13 2010 +0900
