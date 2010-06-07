@@ -130,26 +130,6 @@ cflags-$(CONFIG_CPU_R4300)	+= -march=r4300 -Wa,--trap
 cflags-$(CONFIG_CPU_VR41XX)	+= -march=r4100 -Wa,--trap
 cflags-$(CONFIG_CPU_R4X00)	+= -march=r4600 -Wa,--trap
 cflags-$(CONFIG_CPU_TX49XX)	+= -march=r4600 -Wa,--trap
-# only gcc >= 4.4 have the loongson-specific support
-cflags-$(CONFIG_CPU_LOONGSON2)	+= -Wa,--trap
-cflags-$(CONFIG_CPU_LOONGSON2E) += \
-	$(call cc-option,-march=loongson2e,-march=r4600)
-cflags-$(CONFIG_CPU_LOONGSON2F) += \
-	$(call cc-option,-march=loongson2f,-march=r4600)
-# enable the workarounds for loongson2f
-ifdef CONFIG_CPU_LOONGSON2F_WORKAROUNDS
-  ifeq ($(call as-option,-Wa$(comma)-mfix-loongson2f-nop,),)
-    $(error only binutils >= 2.20.2 have needed option -mfix-loongson2f-nop)
-  else
-    cflags-$(CONFIG_CPU_NOP_WORKAROUNDS) += -Wa$(comma)-mfix-loongson2f-nop
-  endif
-  ifeq ($(call as-option,-Wa$(comma)-mfix-loongson2f-jump,),)
-    $(error only binutils >= 2.20.2 have needed option -mfix-loongson2f-jump)
-  else
-    cflags-$(CONFIG_CPU_JUMP_WORKAROUNDS) += -Wa$(comma)-mfix-loongson2f-jump
-  endif
-endif
-
 cflags-$(CONFIG_CPU_MIPS32_R1)	+= $(call cc-option,-march=mips32,-mips32 -U_MIPS_ISA -D_MIPS_ISA=_MIPS_ISA_MIPS32) \
 			-Wa,-mips32 -Wa,--trap
 cflags-$(CONFIG_CPU_MIPS32_R2)	+= $(call cc-option,-march=mips32r2,-mips32r2 -U_MIPS_ISA -D_MIPS_ISA=_MIPS_ISA_MIPS32) \
@@ -209,13 +189,7 @@ endif
 #
 # Board-dependent options and extra files
 #
-
-#
-# Texas Instruments AR7
-#
-core-$(CONFIG_AR7)		+= arch/mips/ar7/
-cflags-$(CONFIG_AR7)		+= -I$(srctree)/arch/mips/include/asm/mach-ar7
-load-$(CONFIG_AR7)		+= 0xffffffff94100000
+include $(srctree)/arch/mips/Kbuild.platforms
 
 #
 # Acer PICA 61, Mips Magnum 4000 and Olivetti M700.
@@ -223,118 +197,6 @@ load-$(CONFIG_AR7)		+= 0xffffffff94100000
 core-$(CONFIG_MACH_JAZZ)	+= arch/mips/jazz/
 cflags-$(CONFIG_MACH_JAZZ)	+= -I$(srctree)/arch/mips/include/asm/mach-jazz
 load-$(CONFIG_MACH_JAZZ)	+= 0xffffffff80080000
-
-#
-# Common Alchemy Au1x00 stuff
-#
-core-$(CONFIG_SOC_AU1X00)	+= arch/mips/alchemy/common/
-
-#
-# AMD Alchemy Pb1000 eval board
-#
-core-$(CONFIG_MIPS_PB1000)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_PB1000)	+= -I$(srctree)/arch/mips/include/asm/mach-pb1x00
-load-$(CONFIG_MIPS_PB1000)	+= 0xffffffff80100000
-
-#
-# AMD Alchemy Pb1100 eval board
-#
-core-$(CONFIG_MIPS_PB1100)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_PB1100)	+= -I$(srctree)/arch/mips/include/asm/mach-pb1x00
-load-$(CONFIG_MIPS_PB1100)	+= 0xffffffff80100000
-
-#
-# AMD Alchemy Pb1500 eval board
-#
-core-$(CONFIG_MIPS_PB1500)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_PB1500)	+= -I$(srctree)/arch/mips/include/asm/mach-pb1x00
-load-$(CONFIG_MIPS_PB1500)	+= 0xffffffff80100000
-
-#
-# AMD Alchemy Pb1550 eval board
-#
-core-$(CONFIG_MIPS_PB1550)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_PB1550)	+= -I$(srctree)/arch/mips/include/asm/mach-pb1x00
-load-$(CONFIG_MIPS_PB1550)	+= 0xffffffff80100000
-
-#
-# AMD Alchemy Pb1200 eval board
-#
-core-$(CONFIG_MIPS_PB1200)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_PB1200)	+= -I$(srctree)/arch/mips/include/asm/mach-pb1x00
-load-$(CONFIG_MIPS_PB1200)	+= 0xffffffff80100000
-
-#
-# AMD Alchemy Db1000 eval board
-#
-core-$(CONFIG_MIPS_DB1000)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_DB1000)	+= -I$(srctree)/arch/mips/include/asm/mach-db1x00
-load-$(CONFIG_MIPS_DB1000)	+= 0xffffffff80100000
-
-#
-# AMD Alchemy Db1100 eval board
-#
-core-$(CONFIG_MIPS_DB1100)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_DB1100)	+= -I$(srctree)/arch/mips/include/asm/mach-db1x00
-load-$(CONFIG_MIPS_DB1100)	+= 0xffffffff80100000
-
-#
-# AMD Alchemy Db1500 eval board
-#
-core-$(CONFIG_MIPS_DB1500)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_DB1500)	+= -I$(srctree)/arch/mips/include/asm/mach-db1x00
-load-$(CONFIG_MIPS_DB1500)	+= 0xffffffff80100000
-
-#
-# AMD Alchemy Db1550 eval board
-#
-core-$(CONFIG_MIPS_DB1550)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_DB1550)	+= -I$(srctree)/arch/mips/include/asm/mach-db1x00
-load-$(CONFIG_MIPS_DB1550)	+= 0xffffffff80100000
-
-#
-# AMD Alchemy Db1200 eval board
-#
-core-$(CONFIG_MIPS_DB1200)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_DB1200)	+= -I$(srctree)/arch/mips/include/asm/mach-db1x00
-load-$(CONFIG_MIPS_DB1200)	+= 0xffffffff80100000
-
-#
-# AMD Alchemy Bosporus eval board
-#
-core-$(CONFIG_MIPS_BOSPORUS)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_BOSPORUS)	+= -I$(srctree)/arch/mips/include/asm/mach-db1x00
-load-$(CONFIG_MIPS_BOSPORUS)	+= 0xffffffff80100000
-
-#
-# AMD Alchemy Mirage eval board
-#
-core-$(CONFIG_MIPS_MIRAGE)	+= arch/mips/alchemy/devboards/
-cflags-$(CONFIG_MIPS_MIRAGE)	+= -I$(srctree)/arch/mips/include/asm/mach-db1x00
-load-$(CONFIG_MIPS_MIRAGE)	+= 0xffffffff80100000
-
-#
-# 4G-Systems eval board
-#
-libs-$(CONFIG_MIPS_MTX1)	+= arch/mips/alchemy/mtx-1/
-load-$(CONFIG_MIPS_MTX1)	+= 0xffffffff80100000
-
-#
-# MyCable eval board
-#
-libs-$(CONFIG_MIPS_XXS1500)	+= arch/mips/alchemy/xxs1500/
-load-$(CONFIG_MIPS_XXS1500)	+= 0xffffffff80100000
-
-# must be last for Alchemy systems for GPIO to work properly
-cflags-$(CONFIG_SOC_AU1X00)	+= -I$(srctree)/arch/mips/include/asm/mach-au1x00
-
-
-#
-# Cobalt Server
-#
-core-$(CONFIG_MIPS_COBALT)	+= arch/mips/cobalt/
-cflags-$(CONFIG_MIPS_COBALT)	+= -I$(srctree)/arch/mips/include/asm/mach-cobalt
-load-$(CONFIG_MIPS_COBALT)	+= 0xffffffff80080000
 
 #
 # DECstation family
@@ -352,15 +214,6 @@ cflags-$(CONFIG_WR_PPMC)		+= -I$(srctree)/arch/mips/include/asm/mach-wrppmc
 load-$(CONFIG_WR_PPMC)		+= 0xffffffff80100000
 
 #
-# Loongson family
-#
-core-$(CONFIG_MACH_LOONGSON) += arch/mips/loongson/
-cflags-$(CONFIG_MACH_LOONGSON) += -I$(srctree)/arch/mips/include/asm/mach-loongson \
-                    -mno-branch-likely
-load-$(CONFIG_LEMOTE_FULOONG2E) += 0xffffffff80100000
-load-$(CONFIG_LEMOTE_MACH2F) += 0xffffffff80200000
-
-#
 # MIPS Malta board
 #
 core-$(CONFIG_MIPS_MALTA)	+= arch/mips/mti-malta/
@@ -369,66 +222,11 @@ load-$(CONFIG_MIPS_MALTA)	+= 0xffffffff80100000
 all-$(CONFIG_MIPS_MALTA)	:= $(COMPRESSION_FNAME).bin
 
 #
-# MIPS SIM
-#
-core-$(CONFIG_MIPS_SIM)		+= arch/mips/mipssim/
-cflags-$(CONFIG_MIPS_SIM)	+= -I$(srctree)/arch/mips/include/asm/mach-mipssim
-load-$(CONFIG_MIPS_SIM)		+= 0x80100000
-
-#
-# PMC-Sierra MSP SOCs
-#
-core-$(CONFIG_PMC_MSP)		+= arch/mips/pmc-sierra/msp71xx/
-cflags-$(CONFIG_PMC_MSP)	+= -I$(srctree)/arch/mips/include/asm/pmc-sierra/msp71xx \
-					-mno-branch-likely
-load-$(CONFIG_PMC_MSP)		+= 0xffffffff80100000
-
-#
-# PMC-Sierra Yosemite
-#
-core-$(CONFIG_PMC_YOSEMITE)	+= arch/mips/pmc-sierra/yosemite/
-cflags-$(CONFIG_PMC_YOSEMITE)	+= -I$(srctree)/arch/mips/include/asm/mach-yosemite
-load-$(CONFIG_PMC_YOSEMITE)	+= 0xffffffff80100000
-
-#
 # LASAT platforms
 #
 core-$(CONFIG_LASAT)		+= arch/mips/lasat/
 cflags-$(CONFIG_LASAT)		+= -I$(srctree)/arch/mips/include/asm/mach-lasat
 load-$(CONFIG_LASAT)		+= 0xffffffff80000000
-
-#
-# Common VR41xx
-#
-core-$(CONFIG_MACH_VR41XX)	+= arch/mips/vr41xx/common/
-cflags-$(CONFIG_MACH_VR41XX)	+= -I$(srctree)/arch/mips/include/asm/mach-vr41xx
-
-#
-# ZAO Networks Capcella (VR4131)
-#
-load-$(CONFIG_ZAO_CAPCELLA)	+= 0xffffffff80000000
-
-#
-# Victor MP-C303/304 (VR4122)
-#
-load-$(CONFIG_VICTOR_MPC30X)	+= 0xffffffff80001000
-
-#
-# IBM WorkPad z50 (VR4121)
-#
-core-$(CONFIG_IBM_WORKPAD)	+= arch/mips/vr41xx/ibm-workpad/
-load-$(CONFIG_IBM_WORKPAD)	+= 0xffffffff80004000
-
-#
-# CASIO CASSIPEIA E-55/65 (VR4111)
-#
-core-$(CONFIG_CASIO_E55)	+= arch/mips/vr41xx/casio-e55/
-load-$(CONFIG_CASIO_E55)	+= 0xffffffff80004000
-
-#
-# TANBAC VR4131 multichip module(TB0225) and TANBAC VR4131DIMM(TB0229) (VR4131)
-#
-load-$(CONFIG_TANBAC_TB022X)	+= 0xffffffff80000000
 
 # NXP STB225
 core-$(CONFIG_SOC_PNX833X)		+= arch/mips/nxp/pnx833x/common/
@@ -491,26 +289,6 @@ load-$(CONFIG_SGI_IP22)		+= 0xffffffff88002000
 endif
 ifdef CONFIG_64BIT
 load-$(CONFIG_SGI_IP22)		+= 0xffffffff88004000
-endif
-
-#
-# SGI-IP27 (Origin200/2000)
-#
-# Set the load address to >= 0xc000000000300000 if you want to leave space for
-# symmon, 0xc00000000001c000 for production kernels.  Note that the value must
-# be 16kb aligned or the handling of the current variable will break.
-#
-ifdef CONFIG_SGI_IP27
-core-$(CONFIG_SGI_IP27)		+= arch/mips/sgi-ip27/
-cflags-$(CONFIG_SGI_IP27)	+= -I$(srctree)/arch/mips/include/asm/mach-ip27
-ifdef CONFIG_MAPPED_KERNEL
-load-$(CONFIG_SGI_IP27)		+= 0xc00000004001c000
-OBJCOPYFLAGS			:= --change-addresses=0x3fffffff80000000
-dataoffset-$(CONFIG_SGI_IP27)	+= 0x01000000
-else
-load-$(CONFIG_SGI_IP27)		+= 0xa80000000001c000
-OBJCOPYFLAGS			:= --change-addresses=0x57ffffff80000000
-endif
 endif
 
 #
@@ -706,7 +484,8 @@ head-y := arch/mips/kernel/head.o arch/mips/kernel/init_task.o
 
 libs-y			+= arch/mips/lib/
 
-core-y			+= arch/mips/kernel/ arch/mips/mm/ arch/mips/math-emu/
+# See arch/mips/Kbuild for content of core part of the kernel
+core-y += arch/mips/
 
 drivers-$(CONFIG_OPROFILE)	+= arch/mips/oprofile/
 
@@ -733,35 +512,19 @@ vmlinux.32: vmlinux
 vmlinux.64: vmlinux
 	$(OBJCOPY) -O $(64bit-bfd) $(OBJCOPYFLAGS) $< $@
 
-makeboot =$(Q)$(MAKE) $(build)=arch/mips/boot VMLINUX=$(vmlinux-32) $(1)
-makezboot =$(Q)$(MAKE) $(build)=arch/mips/boot/compressed \
-	   VMLINUX_LOAD_ADDRESS=$(load-y) 32bit-bfd=$(32bit-bfd) $(1)
-
 all:	$(all-y)
 
-vmlinuz: vmlinux FORCE
-	+@$(call makezboot,$@)
+# boot
+vmlinux.bin vmlinux.ecoff vmlinux.srec: $(vmlinux-32) FORCE
+	$(Q)$(MAKE) $(build)=arch/mips/boot VMLINUX=$(vmlinux-32) arch/mips/boot/$@
 
-vmlinuz.bin: vmlinux
-	+@$(call makezboot,$@)
+# boot/compressed
+vmlinuz vmlinuz.bin vmlinuz.ecoff vmlinuz.srec: $(vmlinux-32) FORCE
+	$(Q)$(MAKE) $(build)=arch/mips/boot/compressed \
+	   VMLINUX_LOAD_ADDRESS=$(load-y) 32bit-bfd=$(32bit-bfd) $@
 
-vmlinuz.ecoff: vmlinux
-	+@$(call makezboot,$@)
 
-vmlinuz.srec: vmlinux
-	+@$(call makezboot,$@)
-
-vmlinux.bin: $(vmlinux-32)
-	+@$(call makeboot,$@)
-
-vmlinux.ecoff: $(vmlinux-32)
-	+@$(call makeboot,$@)
-
-vmlinux.srec: $(vmlinux-32)
-	+@$(call makeboot,$@)
-
-CLEAN_FILES += vmlinux.ecoff \
-	       vmlinux.srec
+CLEAN_FILES += vmlinux.32 vmlinux.64
 
 archprepare:
 ifdef CONFIG_MIPS32_N32
@@ -780,9 +543,9 @@ install:
 	$(Q)install -D -m 644 System.map $(INSTALL_PATH)/System.map-$(KERNELRELEASE)
 
 archclean:
-	@$(MAKE) $(clean)=arch/mips/boot
-	@$(MAKE) $(clean)=arch/mips/boot/compressed
-	@$(MAKE) $(clean)=arch/mips/lasat
+	$(Q)$(MAKE) $(clean)=arch/mips/boot
+	$(Q)$(MAKE) $(clean)=arch/mips/boot/compressed
+	$(Q)$(MAKE) $(clean)=arch/mips/lasat
 
 define archhelp
 	echo '  install              - install kernel into $(INSTALL_PATH)'
@@ -796,11 +559,3 @@ define archhelp
 	echo
 	echo '  These will be default as apropriate for a configured platform.'
 endef
-
-CLEAN_FILES += vmlinux.32 \
-	       vmlinux.64 \
-	       vmlinux.ecoff \
-	       vmlinuz \
-	       vmlinuz.ecoff \
-	       vmlinuz.bin \
-	       vmlinuz.srec
