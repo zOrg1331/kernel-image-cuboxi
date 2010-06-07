@@ -1,0 +1,206 @@
+Importing driver-core.current based on 2.6.35-rc1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 67a3e12b05e055c0415c556a315a3d3eb637e29e
+HEAD is now at 67a3e12 Linux 2.6.35-rc1
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core.current
+lib-kobject_uevent.c-fix-conig_net-n-warning.patch
+kobject-free-memory-if-netlink_kernel_create-fails.patch
+fix-setattr-error-handling-in-sysfs-configfs.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core.current
+From ../quilt-tmp
+ + b2f2de9...02a6862 master     -> quilt/driver-core.current  (forced update)
+Importing tty.current based on quilt/driver-core.current
+$ cd ../quilt-tmp
+$ git reset --hard 02a68629cec0fb24a8689898c25ee0593e1e6dcd
+HEAD is now at 02a6862 fix setattr error handling in sysfs, configfs
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+msm-serial-fix-serial-on-msm7x30.patch
+serial_cs-add-and-sort-ids-for-serial-and-modem-cards.patch
+serial-bfin_5xx-irda-is-not-affected-by-anomaly-05000230.patch
+serial-bfin_5xx-fix-typo-in-ier-check.patch
+tty-n_gsm-potential-double-lock.patch
+altera_uart-don-t-take-spinlock-in-already-protected-functions.patch
+altera_uart-simplify-altera_uart_console_putc.patch
+tty-fix-a-little-bug-in-scrup-vt.c.patch
+serial-altera_uart-proper-section-for-altera_uart_remove.patch
+vt_ioctl-return-efault-on-copy_from_user-errors.patch
+serial-add-support-for-various-titan-pci-cards.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+ + 5496aed...5a10856 master     -> quilt/tty.current  (forced update)
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard 5a10856fe5f7b1001fc4ed012d4be184bd811852
+HEAD is now at 5a10856 serial: add support for various Titan PCI cards
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-mos7840-fix-null-pointer-dereference.patch
+usb-isp1362-fix-inw-warning-on-blackfin-systems.patch
+usb-xhci-wait-for-controller-to-be-ready-after-reset.patch
+usb-xhci-wait-for-host-to-start-running.patch
+usb-xhci-print-nec-firmware-version.patch
+usb-s3c-enable-soft-disconnect-during-initialization.patch
+usb-s3c_hsotg-define-usb_gadget_dualspeed-in-kconfig.patch
+usb-s3c-hsotg-ensure-tx-fifo-addresses-setup-when-initialising-fifos.patch
+usb-s3c-hsotg-softdisconnect-minimum-3ms.patch
+usb-s3c-hsotg-ensure-fifos-are-fully-flushed-after-layout.patch
+usb-ftdi_sio-fix-dtr-rts-line-modes.patch
+usb-cdc-acm-fix-resource-reclaim-in-error-path-of-acm_probe.patch
+usb-fix-ehci_hcd-build-failure-when-both-generic-of-and-xilinx-is-selected.patch
+usb-serial-digi_acceleport-eliminate-a-null-pointer-dereference.patch
+usb-unbind-all-interfaces-before-rebinding-them.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + 4bc5c4c...fcb4e364 master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard fcb4e3641d8f756efd6c7db3cd04734daacda339
+HEAD is now at fcb4e364 USB: unbind all interfaces before rebinding them
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-add-framebuffer-driver-for-xgi-chipsets.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:212: space before tab in indent.
+   	3, 10, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:448: space before tab in indent.
+   	return;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:481: space before tab in indent.
+   	cfb_copyarea(info, area);
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:486: space before tab in indent.
+   	return;
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:2106: space before tab in indent.
+		       	    unsigned int cmd, unsigned long arg, int con,
+warning: squelched 535 whitespace errors
+warning: 540 lines add whitespace errors.
+staging-mid-intel-mid-touch-screen-driver.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:39: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+staging-comedi-give-the-addi_apci_-drivers-different-driver-names.patch
+staging-comedi-addi-data-don-t-overwrite-name-for-request_irq.patch
+staging-comedi-adv_pci_dio-support-advantech-pci-1735u.patch
+staging-comedi-amplc_dio200-protect-counter-subdevice-with-spinlock.patch
+staging-comedi-don-t-write-to-buffer-if-command-finished.patch
+staging-comedi-comedi_bufinfo-with-no-async-report-no-bytes-read-or-written.patch
+staging-comedi-for-comedi_bufinfo-check-access-to-command.patch
+staging-comedi-fix-8255-and-das08-kconfig-dependancies.patch
+staging-comedi-fixing-ni_tio-to-mite-pci-dependancy.patch
+staging-add-msm-framebuffer-driver.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:326: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+staging-batman-adv-fix-rogue-packets-on-shutdown.patch
+staging-batman-adv-call-unregister_netdev-on-failures-to-get-rtnl-lock.patch
+staging-batman-adv-don-t-call-free_netdev-twice.patch
+staging-batman-adv-don-t-allocate-icmp-packet-with-gfp_kernel.patch
+staging-adis16255-fix-typo-in-kconfig.patch
+staging-adis16255-add-proper-section-markings-to-hotplug-funcs.patch
+staging-iio-utils-fix-memory-overflow-for-dynamically-allocateded-memory-to-hold-filename.patch
+staging-phison-depends-on-ata_bmdma.patch
+staging-wlags49_h2-wlags49_h25-fixed-kconfig-dependencies.patch
+staging-comedi-fixing-ni_labpc-to-mite-dependancy.patch
+staging-comedi-correct-parameter-gainlkup-for-daqcard-6024e-in-driver-ni_mio_cs.c.patch
+staging-use-gfp_atomic-when-a-lock-is-held.patch
+staging-eliminate-a-null-pointer-dereference.patch
+staging-rc2860-return-efault-on-copy_to_user-errors.patch
+staging-sep-return-efault-on-copy_to_user-errors.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 02c15eb...176f4e4 master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.35-rc1-git2
+$ cd ../quilt-tmp
+$ git reset --hard ad8456361fa19068cf49b50a4f98e41b73c08e76
+HEAD is now at ad84563 Merge branch 'upstream-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/jgarzik/libata-dev
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-dev-01-remove-unnecessary-kmalloc-casts.patch
+i2c-dev-02-use-memdup_user.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + c288f74...4de6ac9 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.35-rc1-git2
+$ cd ../quilt-tmp
+$ git reset --hard ad8456361fa19068cf49b50a4f98e41b73c08e76
+HEAD is now at ad84563 Merge branch 'upstream-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/jgarzik/libata-dev
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k10temp-refine-erratum-319-detection.patch
+hwmon-ltc4245-expose-all-gpio-pins-as-analog-voltages.patch
+hwmon-emc1403-add-power-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + abc1c6f...5724a4d master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.34-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-rc1-194-gaef4b9a
+$ cd ../quilt-tmp
+$ git reset --hard aef4b9aaae1decc775778903922bd0075cce7a88
+HEAD is now at aef4b9a Merge branch 'next' of git://git.kernel.org/pub/scm/linux/kernel/git/benh/powerpc
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+module:make_the_usage_lists_be_two_way.patch
+module:make_the_usage_lists_be_two_way-fix.patch
+module:move-sysfs-init-to-end.patch
+module:sysfs-function-cleanup.patch
+module:reduce-locking.patch
+module:reduce-locking-find-fix.patch
+module:reduce-locking-verify-fix.patch
+module:fix-libcrc32-waiting-bug.patch
+module:unload_init_cleanup.patch
+module:refactor-load-module-1.patch
+module:refactor-load-module-2.patch
+module:refactor-load-module-3.patch
+module:refactor-load-module-4.patch
+module:refactor-load-module-5.patch
+module:reduce-stack-usage.patch
+module:load_info.patch
+module:extract-rewrite_section_header.patch
+module:fix-modversions.patch
+module:kallsyms-takes-info.patch
+module:layout_and_allocate.patch
+module:bunch-sysfs-setup.patch
+module:sysfs-no-CONFIG_SYSFS-compile-fix-and-cleanup.patch
+module:push-down-load_info.patch
+module:cleanup-args-usage.patch
+module:hoist-dynamic-debug.patch
+module:final-cleanup.patch
+virtio:blk_fix_minimum_number_of_s_g_elements.patch
+virtio:console_fix_crash_when_hot_unplugging_a_port_and_read_is_blocked.patch
+virtio:console_fix_crash_when_port_is_unplugged_and_blocked_for_write.patch
+misc:fix-email.patch
+kernel-params_c-check-null-for-non-bool.diff
+param:neaten-param.c-exports.patch
+param:param_ops.patch
+param:param_ops-for-hvc_iucv-driver.patch
+param:param_ops-modpost-complaint-silence.patch
+param:add-free-hook.patch
+param:use-free-hook-for-charp.patch
+param:params-are-const.patch
+param:kernel_param_lock.patch
+param:documentation.patch
+param:remove-useless-writable-charp.patch
+param:lock-charp-simple.patch
+param:lock-charp-myri10ge.patch
+param:lock-charp-if_sdio.patch
+param:ipmi_watchdog.patch
+param:cleanup-ide.patch
+param:cleanup-mptbase.patch
+param:acpi-use-ops.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 5d9e156...8190589 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.34
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core 176f4e4c5f4a1b43c4466afa924d6c7734bf9257
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty 176f4e4c5f4a1b43c4466afa924d6c7734bf9257
+Importing usb based on quilt/tty
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb 176f4e4c5f4a1b43c4466afa924d6c7734bf9257
