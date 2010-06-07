@@ -1991,7 +1991,7 @@ static void layout_symtab(struct module *mod, struct load_info *info)
 	mod->core_size += bitmap_weight(info->strmap, strsect->sh_size);
 }
 
-static void add_kallsyms(struct module *mod, struct load_info *info)
+static void add_kallsyms(struct module *mod, const struct load_info *info)
 {
 	unsigned int i, ndst;
 	const Elf_Sym *src;
@@ -2030,19 +2030,10 @@ static inline void layout_symtab(struct module *mod, struct load_info *info)
 {
 }
 
-static void add_kallsyms(struct module *mod, struct load_info *info)
+static void add_kallsyms(struct module *mod, const struct load_info *info)
 {
 }
 #endif /* CONFIG_KALLSYMS */
-
-static void dynamic_debug_setup(struct _ddebug *debug, unsigned int num)
-{
-#ifdef CONFIG_DYNAMIC_DEBUG
-	if (ddebug_add_module(debug, num, debug->modname))
-		printk(KERN_ERR "dynamic debug error adding module: %s\n",
-					debug->modname);
-#endif
-}
 
 static void *module_alloc_update_bounds(unsigned long size)
 {
@@ -2314,6 +2305,9 @@ static void find_module_sections(struct module *mod,
 					     &mod->num_ftrace_callsites);
 #endif
 
+	mod->extable = section_objs(info, "__ex_table",
+				    sizeof(*mod->extable), &mod->num_exentries);
+
 	if (section_addr(info, "__obsparm"))
 		printk(KERN_WARNING "%s: Ignoring obsolete parameters\n",
 		       mod->name);
@@ -2503,6 +2497,42 @@ static void module_deallocate(struct module *mod, struct load_info *info)
 	module_free(mod, mod->module_core);
 }
 
+static void setup_dynamic_debugging(struct module *mod,
+				    const struct load_info *info)
+{
+#ifdef CONFIG_DYNAMIC_DEBUG
+	struct _ddebug *debug;
+	unsigned int num_debug;
+
+	if (mod->taints)
+		return;
+
+	debug = section_objs(info, "__verbose", sizeof(*debug), &num_debug);
+	if (!debug)
+		return;
+
+	if (ddebug_add_module(debug, num_debug, debug->modname))
+		printk(KERN_ERR "dynamic debug error adding module: %s\n",
+					debug->modname);
+#endif
+}
+
+static int post_relocation(struct module *mod, const struct load_info *info)
+{
+	sort_extable(mod->extable, mod->extable + mod->num_exentries);
+
+	/* Copy relocated percpu area over. */
+	percpu_modcopy(mod, (void *)info->sechdrs[info->index.pcpu].sh_addr,
+		       info->sechdrs[info->index.pcpu].sh_size);
+
+	add_kallsyms(mod, info);
+
+	setup_dynamic_debugging(mod, info);
+
+	/* Arch-specific module finalizing. */
+	return module_finalize(info->hdr, info->sechdrs, mod);
+}
+
 /* Allocate and load the module: note that size of section 0 is always
    zero, and we rely on this for optional sections. */
 static noinline struct module *load_module(void __user *umod,
@@ -2553,28 +2583,7 @@ static noinline struct module *load_module(void __user *umod,
 	if (err < 0)
 		goto free_modinfo;
 
-  	/* Set up and sort exception table */
-	mod->extable = section_objs(&info, "__ex_table",
-				    sizeof(*mod->extable), &mod->num_exentries);
-	sort_extable(mod->extable, mod->extable + mod->num_exentries);
-
-	/* Finally, copy percpu area over. */
-	percpu_modcopy(mod, (void *)info.sechdrs[info.index.pcpu].sh_addr,
-		       info.sechdrs[info.index.pcpu].sh_size);
-
-	add_kallsyms(mod, &info);
-
-	if (!mod->taints) {
-		struct _ddebug *debug;
-		unsigned int num_debug;
-
-		debug = section_objs(&info, "__verbose",
-				     sizeof(*debug), &num_debug);
-		if (debug)
-			dynamic_debug_setup(debug, num_debug);
-	}
-
-	err = module_finalize(info.hdr, info.sechdrs, mod);
+	err = post_relocation(mod, &info);
 	if (err < 0)
 		goto free_modinfo;
 
