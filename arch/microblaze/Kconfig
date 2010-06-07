@@ -75,6 +75,9 @@ config LOCKDEP_SUPPORT
 config HAVE_LATENCYTOP_SUPPORT
 	def_bool y
 
+config NEED_SG_DMA_LENGTH
+	def_bool y
+
 config DTC
 	def_bool y
 
