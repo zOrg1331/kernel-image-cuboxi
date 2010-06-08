@@ -648,25 +648,9 @@ void of_parse_dma_window(struct device_node *dn, const void *dma_window_prop,
  * Interrupt remapper
  */
 
-static struct device_node *of_irq_find_parent(struct device_node *child)
+struct device_node *of_irq_find_parent_by_phandle(phandle p)
 {
-	struct device_node *p;
-	const phandle *parp;
-
-	if (!of_node_get(child))
-		return NULL;
-
-	do {
-		parp = of_get_property(child, "interrupt-parent", NULL);
-		if (parp == NULL)
-			p = of_get_parent(child);
-		else
-			p = of_find_node_by_phandle(*parp);
-		of_node_put(child);
-		child = p;
-	} while (p && of_get_property(p, "#interrupt-cells", NULL) == NULL);
-
-	return p;
+	return of_find_node_by_phandle(p);
 }
 
 int of_irq_map_raw(struct device_node *parent, const u32 *intspec, u32 ointsize,
@@ -783,7 +767,7 @@ int of_irq_map_raw(struct device_node *parent, const u32 *intspec, u32 ointsize,
 			pr_debug(" -> match=%d (imaplen=%d)\n", match, imaplen);
 
 			/* Get the interrupt parent */
-			newpar = of_find_node_by_phandle((phandle)*imap);
+			newpar = of_irq_find_parent_by_phandle((phandle)*imap);
 			imap++;
 			--imaplen;
 

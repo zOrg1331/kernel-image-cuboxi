@@ -30,6 +30,8 @@ struct of_irq {
 	u32 specifier[OF_MAX_IRQ_SPEC]; /* Specifier copy */
 };
 
+extern struct device_node *of_irq_find_parent_by_phandle(phandle p);
+extern struct device_node *of_irq_find_parent(struct device_node *child);
 extern int of_irq_map_one(struct device_node *device, int index,
 			  struct of_irq *out_irq);
 extern unsigned int irq_create_of_mapping(struct device_node *controller,

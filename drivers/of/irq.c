@@ -24,6 +24,34 @@
 #include <linux/of_irq.h>
 #include <linux/string.h>
 
+/**
+ * of_irq_find_parent - Given a device node, find its interrupt parent node
+ * @child: pointer to device node
+ *
+ * Returns a pointer to the interrupt parent node, or NULL if the interrupt
+ * parent could not be determined.
+ */
+struct device_node *of_irq_find_parent(struct device_node *child)
+{
+	struct device_node *p;
+	const phandle *parp;
+
+	if (!of_node_get(child))
+		return NULL;
+
+	do {
+		parp = of_get_property(child, "interrupt-parent", NULL);
+		if (parp == NULL)
+			p = of_get_parent(child);
+		else
+			p = of_irq_find_parent_by_phandle(*parp);
+		of_node_put(child);
+		child = p;
+	} while (p && of_get_property(p, "#interrupt-cells", NULL) == NULL);
+
+	return p;
+}
+
 unsigned int irq_of_parse_and_map(struct device_node *dev, int index)
 {
 	struct of_irq oirq;
