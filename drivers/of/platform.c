@@ -441,15 +441,40 @@ struct of_device *of_device_alloc(struct device_node *np,
 				  struct device *parent)
 {
 	struct of_device *dev;
+	int rc, i, num_reg = 0, num_irq = 0;
+	struct resource *res, temp_res;
 
-	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+	/* First count how many resources are needed */
+	while (of_address_to_resource(np, num_reg, &temp_res) == 0)
+		num_reg++;
+	while (of_irq_to_resource(np, num_irq, &temp_res) != NO_IRQ)
+		num_irq++;
+
+	/* Allocate the device including space for the resource table, and
+	 * initialize it. */
+	i = num_reg + num_irq;
+	dev = kzalloc(sizeof(*dev) + (sizeof(struct resource) * i), GFP_KERNEL);
 	if (!dev)
 		return NULL;
-
 	dev->dev.of_node = of_node_get(np);
 	dev->dev.dma_mask = &dev->archdata.dma_mask;
 	dev->dev.parent = parent;
 	dev->dev.release = of_release_dev;
+
+	/* Populate the resource table */
+	if (num_irq || num_reg) {
+		dev->resource = (void*)&dev[1];
+		dev->num_resources = num_reg + num_irq;
+		res = dev->resource;
+		for (i = 0; i < num_reg; i++, res++) {
+			rc = of_address_to_resource(np, i, res);
+			WARN_ON(rc);
+		}
+		for (i = 0; i < num_irq; i++, res++) {
+			rc = of_irq_to_resource(np, i, res);
+			WARN_ON(rc == NO_IRQ);
+		}
+	}
 
 	if (bus_id)
 		dev_set_name(&dev->dev, "%s", bus_id);
