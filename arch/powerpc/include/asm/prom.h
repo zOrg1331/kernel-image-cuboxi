@@ -123,27 +123,6 @@ extern const void *of_get_mac_address(struct device_node *np);
 extern void of_irq_map_init(unsigned int flags);
 
 /**
- * of_irq_map_raw - Low level interrupt tree parsing
- * @parent:	the device interrupt parent
- * @intspec:	interrupt specifier ("interrupts" property of the device)
- * @ointsize:   size of the passed in interrupt specifier
- * @addr:	address specifier (start of "reg" property of the device)
- * @out_irq:	structure of_irq filled by this function
- *
- * Returns 0 on success and a negative number on error
- *
- * This function is a low-level interrupt tree walking function. It
- * can be used to do a partial walk with synthetized reg and interrupts
- * properties, for example when resolving PCI interrupts when no device
- * node exist for the parent.
- *
- */
-
-extern int of_irq_map_raw(struct device_node *parent, const u32 *intspec,
-			  u32 ointsize, const u32 *addr,
-			  struct of_irq *out_irq);
-
-/**
  * of_irq_map_pci - Resolve the interrupt for a PCI device
  * @pdev:	the device whose interrupt is to be resolved
  * @out_irq:	structure of_irq filled by this function
