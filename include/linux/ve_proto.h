@@ -29,6 +29,10 @@ int venet_init(void);
 #endif
 #endif
 
+#define VE_IOPRIO_MIN 0
+#define VE_IOPRIO_MAX 8
+extern int ve_set_ioprio(int veid, int ioprio);
+
 extern struct list_head ve_list_head;
 #define for_each_ve(ve)	list_for_each_entry((ve), &ve_list_head, ve_list)
 extern rwlock_t ve_list_lock;

@@ -127,3 +127,35 @@ void ve_cleanup_schedule(struct ve_struct *ve)
 
 	wake_up_process(ve_cleanup_thread);
 }
+
+#ifdef CONFIG_BLK_CGROUP
+extern int blkiocg_set_weight(struct cgroup *cgroup, u64 val);
+
+static u64 ioprio_weight[VE_IOPRIO_MAX] = {200, 275, 350, 425, 500, 575, 650, 725};
+
+int ve_set_ioprio(int veid, int ioprio)
+{
+	struct ve_struct *ve;
+	int ret;
+
+	if (ioprio < VE_IOPRIO_MIN || ioprio >= VE_IOPRIO_MAX)
+		return -ERANGE;
+
+	ret = -ESRCH;
+	read_lock(&ve_list_lock);
+	for_each_ve(ve) {
+		if (ve->veid != veid)
+			continue;
+		ret = blkiocg_set_weight(ve->ve_cgroup, ioprio_weight[ioprio]);
+		break;
+	}
+	read_unlock(&ve_list_lock);
+
+	return ret;
+}
+#else
+int ve_set_ioprio(int veid, int ioprio)
+{
+	return -EINVAL;
+}
+#endif /* CONFIG_BLK_CGROUP */

@@ -108,7 +108,7 @@ static struct ctl_table vz_fs_table[] = {
 		.proc_handler	= proc_dointvec,
 	},
 	{
-		.ctl_name	= 228,
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "ve-xattr-policy",
 		.data		= &ve_xattr_policy,
 		.maxlen		= sizeof(int),
