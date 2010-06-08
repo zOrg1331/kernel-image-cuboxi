@@ -656,49 +656,7 @@ struct device_node *of_irq_find_parent_by_phandle(phandle p)
 int of_irq_map_one(struct device_node *device,
 			int index, struct of_irq *out_irq)
 {
-	struct device_node *p;
-	const u32 *intspec, *tmp, *addr;
-	u32 intsize, intlen;
-	int res;
-
-	pr_debug("of_irq_map_one: dev=%s, index=%d\n",
-			device->full_name, index);
-
-	/* Get the interrupts property */
-	intspec = of_get_property(device, "interrupts", (int *) &intlen);
-	if (intspec == NULL)
-		return -EINVAL;
-	intlen /= sizeof(u32);
-
-	pr_debug(" intspec=%d intlen=%d\n", *intspec, intlen);
-
-	/* Get the reg property (if any) */
-	addr = of_get_property(device, "reg", NULL);
-
-	/* Look for the interrupt parent. */
-	p = of_irq_find_parent(device);
-	if (p == NULL)
-		return -EINVAL;
-
-	/* Get size of interrupt specifier */
-	tmp = of_get_property(p, "#interrupt-cells", NULL);
-	if (tmp == NULL) {
-		of_node_put(p);
-		return -EINVAL;
-	}
-	intsize = *tmp;
-
-	pr_debug(" intsize=%d intlen=%d\n", intsize, intlen);
-
-	/* Check index */
-	if ((index + 1) * intsize > intlen)
-		return -EINVAL;
-
-	/* Get new specifier and map it */
-	res = of_irq_map_raw(p, intspec + index * intsize, intsize,
-				addr, out_irq);
-	of_node_put(p);
-	return res;
+	return __of_irq_map_one(device, index, out_irq);
 }
 EXPORT_SYMBOL_GPL(of_irq_map_one);
 
@@ -739,35 +697,6 @@ const void *of_get_mac_address(struct device_node *np)
 	return NULL;
 }
 EXPORT_SYMBOL(of_get_mac_address);
-
-int of_irq_to_resource(struct device_node *dev, int index, struct resource *r)
-{
-	struct of_irq out_irq;
-	int irq;
-	int res;
-
-	res = of_irq_map_one(dev, index, &out_irq);
-
-	/* Get irq for the device */
-	if (res) {
-		pr_debug("IRQ not found... code = %d", res);
-		return NO_IRQ;
-	}
-	/* Assuming single interrupt controller... */
-	irq = out_irq.specifier[0];
-
-	pr_debug("IRQ found = %d", irq);
-
-	/* Only dereference the resource if both the
-	 * resource and the irq are valid. */
-	if (r && irq != NO_IRQ) {
-		r->start = r->end = irq;
-		r->flags = IORESOURCE_IRQ;
-	}
-
-	return irq;
-}
-EXPORT_SYMBOL_GPL(of_irq_to_resource);
 
 void __iomem *of_iomap(struct device_node *np, int index)
 {

@@ -777,49 +777,11 @@ static int of_irq_map_oldworld(struct device_node *device, int index,
 
 int of_irq_map_one(struct device_node *device, int index, struct of_irq *out_irq)
 {
-	struct device_node *p;
-	const u32 *intspec, *tmp, *addr;
-	u32 intsize, intlen;
-	int res = -EINVAL;
-
-	DBG("of_irq_map_one: dev=%s, index=%d\n", device->full_name, index);
-
 	/* OldWorld mac stuff is "special", handle out of line */
 	if (of_irq_workarounds & OF_IMAP_OLDWORLD_MAC)
 		return of_irq_map_oldworld(device, index, out_irq);
 
-	/* Get the interrupts property */
-	intspec = of_get_property(device, "interrupts", &intlen);
-	if (intspec == NULL)
-		return -EINVAL;
-	intlen /= sizeof(u32);
-
-	/* Get the reg property (if any) */
-	addr = of_get_property(device, "reg", NULL);
-
-	/* Look for the interrupt parent. */
-	p = of_irq_find_parent(device);
-	if (p == NULL)
-		return -EINVAL;
-
-	/* Get size of interrupt specifier */
-	tmp = of_get_property(p, "#interrupt-cells", NULL);
-	if (tmp == NULL)
-		goto out;
-	intsize = *tmp;
-
-	DBG(" intsize=%d intlen=%d\n", intsize, intlen);
-
-	/* Check index */
-	if ((index + 1) * intsize > intlen)
-		goto out;
-
-	/* Get new specifier and map it */
-	res = of_irq_map_raw(p, intspec + index * intsize, intsize,
-			     addr, out_irq);
-out:
-	of_node_put(p);
-	return res;
+	return __of_irq_map_one(device, index, out_irq);
 }
 EXPORT_SYMBOL_GPL(of_irq_map_one);
 
@@ -860,21 +822,6 @@ const void *of_get_mac_address(struct device_node *np)
 	return NULL;
 }
 EXPORT_SYMBOL(of_get_mac_address);
-
-int of_irq_to_resource(struct device_node *dev, int index, struct resource *r)
-{
-	int irq = irq_of_parse_and_map(dev, index);
-
-	/* Only dereference the resource if both the
-	 * resource and the irq are valid. */
-	if (r && irq != NO_IRQ) {
-		r->start = r->end = irq;
-		r->flags = IORESOURCE_IRQ;
-	}
-
-	return irq;
-}
-EXPORT_SYMBOL_GPL(of_irq_to_resource);
 
 void __iomem *of_iomap(struct device_node *np, int index)
 {

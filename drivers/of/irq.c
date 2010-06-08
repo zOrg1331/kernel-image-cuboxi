@@ -31,7 +31,7 @@
  * Returns a pointer to the interrupt parent node, or NULL if the interrupt
  * parent could not be determined.
  */
-struct device_node *of_irq_find_parent(struct device_node *child)
+static struct device_node *of_irq_find_parent(struct device_node *child)
 {
 	struct device_node *p;
 	const phandle *parp;
@@ -240,6 +240,67 @@ int of_irq_map_raw(struct device_node *parent, const u32 *intspec, u32 ointsize,
 }
 EXPORT_SYMBOL_GPL(of_irq_map_raw);
 
+/**
+ * of_irq_map_one - Resolve an interrupt for a device
+ * @device: the device whose interrupt is to be resolved
+ * @index: index of the interrupt to resolve
+ * @out_irq: structure of_irq filled by this function
+ *
+ * This function resolves an interrupt, walking the tree, for a given
+ * device-tree node. It's the high level pendant to of_irq_map_raw().
+ *
+ * Architecture code must provide of_irq_map_one() which can simply be a
+ * wrapper around __of_irq_map_one(), or can override it to deal with
+ * arch specific quirks and bugs.
+ */
+int __of_irq_map_one(struct device_node *device, int index,
+		     struct of_irq *out_irq)
+{
+	struct device_node *p;
+	const u32 *intspec, *tmp, *addr;
+	u32 intsize, intlen;
+	int res = -EINVAL;
+
+	pr_debug("of_irq_map_one: dev=%s, index=%d\n",
+		 device->full_name, index);
+
+	/* Get the interrupts property */
+	intspec = of_get_property(device, "interrupts", &intlen);
+	if (intspec == NULL)
+		return -EINVAL;
+	intlen /= sizeof(u32);
+
+	pr_debug(" intspec=%d intlen=%d\n", *intspec, intlen);
+
+	/* Get the reg property (if any) */
+	addr = of_get_property(device, "reg", NULL);
+
+	/* Look for the interrupt parent. */
+	p = of_irq_find_parent(device);
+	if (p == NULL)
+		return -EINVAL;
+
+	/* Get size of interrupt specifier */
+	tmp = of_get_property(p, "#interrupt-cells", NULL);
+	if (tmp == NULL)
+		goto out;
+	intsize = *tmp;
+
+	pr_debug(" intsize=%d intlen=%d\n", intsize, intlen);
+
+	/* Check index */
+	if ((index + 1) * intsize > intlen)
+		goto out;
+
+	/* Get new specifier and map it */
+	res = of_irq_map_raw(p, intspec + index * intsize, intsize,
+			     addr, out_irq);
+ out:
+	of_node_put(p);
+	return res;
+}
+EXPORT_SYMBOL_GPL(__of_irq_map_one);
+
 unsigned int irq_of_parse_and_map(struct device_node *dev, int index)
 {
 	struct of_irq oirq;
@@ -251,3 +312,25 @@ unsigned int irq_of_parse_and_map(struct device_node *dev, int index)
 				     oirq.size);
 }
 EXPORT_SYMBOL_GPL(irq_of_parse_and_map);
+
+/**
+ * of_irq_to_resource - Decode a node's IRQ and return it as a resource
+ * @dev: pointer to device tree node
+ * @index: zero-based index of the irq
+ * @r: pointer to resource structure to return result into.
+ */
+unsigned int of_irq_to_resource(struct device_node *dev, int index,
+				struct resource *r)
+{
+	unsigned int irq = irq_of_parse_and_map(dev, index);
+
+	/* Only dereference the resource if both the
+	 * resource and the irq are valid. */
+	if (r && irq != NO_IRQ) {
+		r->start = r->end = irq;
+		r->flags = IORESOURCE_IRQ;
+	}
+
+	return irq;
+}
+EXPORT_SYMBOL_GPL(of_irq_to_resource);
