@@ -1,0 +1,61 @@
+Importing driver-core.current based on 2.6.35-rc2
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core.current e44a21b7268a022c7749f521c06214145bd161e4
+Importing tty.current based on quilt/driver-core.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty.current e44a21b7268a022c7749f521c06214145bd161e4
+Importing usb.current based on quilt/tty.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb.current e44a21b7268a022c7749f521c06214145bd161e4
+Importing staging.current based on quilt/usb.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard e44a21b7268a022c7749f521c06214145bd161e4
+HEAD is now at e44a21b Linux 2.6.35-rc2
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-usbip-usbip_common-kill-rx-thread-on-tx-thread-creation-error.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 176f4e4...acf550e master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.35-rc2
+$ cd ../quilt-tmp
+$ git reset --hard e44a21b7268a022c7749f521c06214145bd161e4
+HEAD is now at e44a21b Linux 2.6.35-rc2
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-dev-01-remove-unnecessary-kmalloc-casts.patch
+i2c-dev-02-use-memdup_user.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 4de6ac9...4ae79b1 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.35-rc2
+$ cd ../quilt-tmp
+$ git reset --hard e44a21b7268a022c7749f521c06214145bd161e4
+HEAD is now at e44a21b Linux 2.6.35-rc2
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k10temp-refine-erratum-319-detection.patch
+hwmon-ltc4245-expose-all-gpio-pins-as-analog-voltages.patch
+hwmon-emc1403-add-power-support.patch
+hwmon-lm75-add-suspend-and-resume.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 5724a4d...95321c7 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.34-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-rc1-194-gaef4b9a
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.34
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core acf550e60acb68e14d153eabe2ada6b4ad788084
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty acf550e60acb68e14d153eabe2ada6b4ad788084
+Importing usb based on quilt/tty
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb acf550e60acb68e14d153eabe2ada6b4ad788084
