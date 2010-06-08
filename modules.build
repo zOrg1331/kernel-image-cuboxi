@@ -9,20 +9,20 @@ igb
 #ndiswrapper
 #rt2860
 #rtl8187se
-bcmwl
+#bcmwl
 #madwifi-hal
 
 #vendor specific  hardware features drives
-tp_smapi
-omnibook
+#tp_smapi
+#omnibook
 
 #virtualization drivers
-virtualbox
-virtualbox-addition
+#virtualbox
+#virtualbox-addition
 
 #other drivers
-lirc
-subfs
+#lirc
+#subfs
 #svgalib_helper
 #etercifs
 
