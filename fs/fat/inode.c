@@ -159,7 +159,7 @@ static int fat_write_begin(struct file *file, struct address_space *mapping,
 	int err;
 
 	*pagep = NULL;
-	err = cont_write_begin_newtrunc(file, mapping, pos, len, flags,
+	err = cont_write_begin(file, mapping, pos, len, flags,
 				pagep, fsdata, fat_get_block,
 				&MSDOS_I(mapping->host)->mmu_private);
 	if (err < 0)
@@ -212,8 +212,8 @@ static ssize_t fat_direct_IO(int rw, struct kiocb *iocb,
 	 * FAT need to use the DIO_LOCKING for avoiding the race
 	 * condition of fat_get_block() and ->truncate().
 	 */
-	ret = blockdev_direct_IO_newtrunc(rw, iocb, inode, inode->i_sb->s_bdev,
-				iov, offset, nr_segs, fat_get_block, NULL);
+	ret = blockdev_direct_IO(rw, iocb, inode, inode->i_sb->s_bdev,
+				 iov, offset, nr_segs, fat_get_block, NULL);
 	if (ret < 0 && (rw & WRITE))
 		fat_write_failed(mapping, offset + iov_length(iov, nr_segs));
 

@@ -197,11 +197,15 @@ static int nilfs_write_begin(struct file *file, struct address_space *mapping,
 	if (unlikely(err))
 		return err;
 
-	*pagep = NULL;
-	err = block_write_begin(file, mapping, pos, len, flags, pagep,
-				fsdata, nilfs_get_block);
-	if (unlikely(err))
+	err = block_write_begin(mapping, pos, len, flags, pagep,
+				nilfs_get_block);
+	if (unlikely(err)) {
+		loff_t isize = mapping->host->i_size;
+		if (pos + len > isize)
+			vmtruncate(mapping->host, isize);
+
 		nilfs_transaction_abort(inode->i_sb);
+	}
 	return err;
 }
 
@@ -237,6 +241,19 @@ nilfs_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
 	/* Needs synchronization with the cleaner */
 	size = blockdev_direct_IO(rw, iocb, inode, inode->i_sb->s_bdev, iov,
 				  offset, nr_segs, nilfs_get_block, NULL);
+
+	/*
+	 * In case of error extending write may have instantiated a few
+	 * blocks outside i_size. Trim these off again.
+	 */
+	if (unlikely((rw & WRITE) && size < 0)) {
+		loff_t isize = i_size_read(inode);
+		loff_t end = offset + iov_length(iov, nr_segs);
+
+		if (end > isize)
+			vmtruncate(inode, isize);
+	}
+
 	return size;
 }
 
@@ -639,14 +656,27 @@ int nilfs_setattr(struct dentry *dentry, struct iattr *iattr)
 	err = nilfs_transaction_begin(sb, &ti, 0);
 	if (unlikely(err))
 		return err;
-	err = inode_setattr(inode, iattr);
-	if (!err && (iattr->ia_valid & ATTR_MODE))
-		err = nilfs_acl_chmod(inode);
-	if (likely(!err))
-		err = nilfs_transaction_commit(sb);
-	else
-		nilfs_transaction_abort(sb);
 
+	if ((iattr->ia_valid & ATTR_SIZE) &&
+	    iattr->ia_size != i_size_read(inode)) {
+		err = vmtruncate(inode, iattr->ia_size);
+		if (unlikely(err))
+			goto out_err;
+	}
+
+	setattr_copy(inode, iattr);
+	mark_inode_dirty(inode);
+
+	if (iattr->ia_valid & ATTR_MODE) {
+		err = nilfs_acl_chmod(inode);
+		if (unlikely(err))
+			goto out_err;
+	}
+
+	return nilfs_transaction_commit(sb);
+
+out_err:
+	nilfs_transaction_abort(sb);
 	return err;
 }
 
