@@ -12,6 +12,7 @@
  *  GNU General Public License for more details.
  */
 
+#include <linux/slab.h>
 #include <linux/input.h>
 #include <linux/device.h>
 #include "ir-core-priv.h"
@@ -220,9 +221,10 @@ int ir_register_class(struct input_dev *input_dev)
 	if (unlikely(devno < 0))
 		return devno;
 
-	if (ir_dev->props->driver_type == RC_DRIVER_SCANCODE)
-		ir_dev->dev.type = &rc_dev_type;
-	else
+	if (ir_dev->props) {
+		if (ir_dev->props->driver_type == RC_DRIVER_SCANCODE)
+			ir_dev->dev.type = &rc_dev_type;
+	} else
 		ir_dev->dev.type = &ir_raw_dev_type;
 
 	ir_dev->dev.class = &ir_input_class;

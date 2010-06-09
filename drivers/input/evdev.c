@@ -278,6 +278,8 @@ static int evdev_open(struct inode *inode, struct file *file)
 		goto err_free_client;
 
 	file->private_data = client;
+	nonseekable_open(inode, file);
+
 	return 0;
 
  err_free_client:
@@ -513,9 +515,7 @@ static long evdev_do_ioctl(struct file *file, unsigned int cmd,
 	struct input_absinfo abs;
 	struct ff_effect effect;
 	int __user *ip = (int __user *)p;
-	struct keycode_table_entry kt, *kt_p = p;
-	char scancode[16];
-	int i, t, u, v;
+	unsigned int i, t, u, v;
 	int error;
 
 	switch (cmd) {
@@ -568,43 +568,6 @@ static long evdev_do_ioctl(struct file *file, unsigned int cmd,
 			return -EFAULT;
 
 		return input_set_keycode(dev, t, v);
-
-	case EVIOCGKEYCODEBIG:
-		if (copy_from_user(&kt, kt_p, sizeof(kt)))
-			return -EFAULT;
-
-		if (kt.len > sizeof(scancode))
-			return -EINVAL;
-
-		kt.scancode = scancode;
-
-		error = input_get_keycode_big(dev, &kt);
-		if (error)
-			return error;
-
-		if (copy_to_user(kt_p, &kt, sizeof(kt)))
-			return -EFAULT;
-
-		/* FIXME: probably need some compat32 code */
-		if (copy_to_user(kt_p->scancode, kt.scancode, kt.len))
-			return -EFAULT;
-
-		return 0;
-
-	case EVIOCSKEYCODEBIG:
-		if (copy_from_user(&kt, kt_p, sizeof(kt)))
-			return -EFAULT;
-
-		if (kt.len > sizeof(scancode))
-			return -EINVAL;
-
-		kt.scancode = scancode;
-
-		/* FIXME: probably need some compat32 code */
-		if (copy_from_user(kt.scancode, kt_p->scancode, kt.len))
-			return -EFAULT;
-
-		return input_set_keycode_big(dev, &kt);
 
 	case EVIOCRMFF:
 		return input_ff_erase(dev, (int)(unsigned long) p, file);

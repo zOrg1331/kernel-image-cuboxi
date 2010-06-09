@@ -27,6 +27,7 @@
 #include <linux/moduleparam.h>
 #include <linux/time.h>
 #include <linux/version.h>
+#include <linux/slab.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/videodev2.h>
@@ -877,7 +878,7 @@ static bool sh_mobile_ceu_packing_supported(const struct soc_mbus_pixelfmt *fmt)
 
 static int client_g_rect(struct v4l2_subdev *sd, struct v4l2_rect *rect);
 
-static int sh_mobile_ceu_get_formats(struct soc_camera_device *icd, int idx,
+static int sh_mobile_ceu_get_formats(struct soc_camera_device *icd, unsigned int idx,
 				     struct soc_camera_format_xlate *xlate)
 {
 	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
@@ -896,7 +897,7 @@ static int sh_mobile_ceu_get_formats(struct soc_camera_device *icd, int idx,
 	fmt = soc_mbus_get_fmtdesc(code);
 	if (!fmt) {
 		dev_err(icd->dev.parent,
-			"Invalid format code #%d: %d\n", idx, code);
+			"Invalid format code #%u: %d\n", idx, code);
 		return -EINVAL;
 	}
 

@@ -14,6 +14,7 @@
 
 
 #include <linux/input.h>
+#include <linux/slab.h>
 #include "ir-core-priv.h"
 
 /* Sizes are in bytes, 256 bytes allows for 32 entries on x64 */
@@ -85,7 +86,7 @@ static int ir_resize_table(struct ir_scancode_table *rc_tab)
  */
 static int ir_do_setkeycode(struct input_dev *dev,
 			    struct ir_scancode_table *rc_tab,
-			    int scancode, int keycode,
+			    unsigned scancode, unsigned keycode,
 			    bool resize)
 {
 	unsigned int i;
@@ -170,7 +171,7 @@ static int ir_do_setkeycode(struct input_dev *dev,
  * This routine is used to handle evdev EVIOCSKEY ioctl.
  */
 static int ir_setkeycode(struct input_dev *dev,
-			 int scancode, int keycode)
+			 unsigned int scancode, unsigned int keycode)
 {
 	int rc;
 	unsigned long flags;
@@ -223,7 +224,7 @@ static int ir_setkeytable(struct input_dev *dev,
  * This routine is used to handle evdev EVIOCGKEY ioctl.
  */
 static int ir_getkeycode(struct input_dev *dev,
-			 int scancode, int *keycode)
+			 unsigned int scancode, unsigned int *keycode)
 {
 	int start, end, mid;
 	unsigned long flags;
@@ -489,11 +490,12 @@ int __ir_input_register(struct input_dev *input_dev,
 	if (rc < 0)
 		goto out_table;
 
-	if (ir_dev->props->driver_type == RC_DRIVER_IR_RAW) {
-		rc = ir_raw_event_register(input_dev);
-		if (rc < 0)
-			goto out_event;
-	}
+	if (ir_dev->props)
+		if (ir_dev->props->driver_type == RC_DRIVER_IR_RAW) {
+			rc = ir_raw_event_register(input_dev);
+			if (rc < 0)
+				goto out_event;
+		}
 
 	IR_dprintk(1, "Registered input device on %s for %s remote.\n",
 		   driver_name, rc_tab->name);
@@ -529,8 +531,10 @@ void ir_input_unregister(struct input_dev *input_dev)
 	IR_dprintk(1, "Freed keycode table\n");
 
 	del_timer_sync(&ir_dev->timer_keyup);
-	if (ir_dev->props->driver_type == RC_DRIVER_IR_RAW)
-		ir_raw_event_unregister(input_dev);
+	if (ir_dev->props)
+		if (ir_dev->props->driver_type == RC_DRIVER_IR_RAW)
+			ir_raw_event_unregister(input_dev);
+
 	rc_tab = &ir_dev->rc_tab;
 	rc_tab->size = 0;
 	kfree(rc_tab->scan);

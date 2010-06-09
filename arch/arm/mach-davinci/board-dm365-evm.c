@@ -22,8 +22,11 @@
 #include <linux/leds.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
+#include <linux/slab.h>
 #include <linux/mtd/nand.h>
 #include <linux/input.h>
+#include <linux/spi/spi.h>
+#include <linux/spi/eeprom.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -50,11 +53,6 @@ static inline int have_tvp7002(void)
 	/* REVISIT when it's supported, trigger via Kconfig */
 	return 0;
 }
-
-
-#define DM365_ASYNC_EMIF_CONTROL_BASE	0x01d10000
-#define DM365_ASYNC_EMIF_DATA_CE0_BASE	0x02000000
-#define DM365_ASYNC_EMIF_DATA_CE1_BASE	0x04000000
 
 #define DM365_EVM_PHY_MASK		(0x2)
 #define DM365_EVM_MDIO_FREQUENCY	(2200000) /* PHY bus frequency */
@@ -571,6 +569,24 @@ static void __init dm365_evm_map_io(void)
 	dm365_init();
 }
 
+static struct spi_eeprom at25640 = {
+	.byte_len	= SZ_64K / 8,
+	.name		= "at25640",
+	.page_size	= 32,
+	.flags		= EE_ADDR2,
+};
+
+static struct spi_board_info dm365_evm_spi_info[] __initconst = {
+	{
+		.modalias	= "at25",
+		.platform_data	= &at25640,
+		.max_speed_hz	= 10 * 1000 * 1000,
+		.bus_num	= 0,
+		.chip_select	= 0,
+		.mode		= SPI_MODE_0,
+	},
+};
+
 static __init void dm365_evm_init(void)
 {
 	evm_init_i2c();
@@ -584,14 +600,16 @@ static __init void dm365_evm_init(void)
 	/* maybe setup mmc1/etc ... _after_ mmc0 */
 	evm_init_cpld();
 
+#ifdef CONFIG_SND_DM365_AIC3X_CODEC
 	dm365_init_asp(&dm365_evm_snd_data);
+#elif defined(CONFIG_SND_DM365_VOICE_CODEC)
+	dm365_init_vc(&dm365_evm_snd_data);
+#endif
 	dm365_init_rtc();
 	dm365_init_ks(&dm365evm_ks_data);
-}
 
-static __init void dm365_evm_irq_init(void)
-{
-	davinci_irq_init();
+	dm365_init_spi0(BIT(0), dm365_evm_spi_info,
+			ARRAY_SIZE(dm365_evm_spi_info));
 }
 
 MACHINE_START(DAVINCI_DM365_EVM, "DaVinci DM365 EVM")
@@ -599,7 +617,7 @@ MACHINE_START(DAVINCI_DM365_EVM, "DaVinci DM365 EVM")
 	.io_pg_offst	= (__IO_ADDRESS(IO_PHYS) >> 18) & 0xfffc,
 	.boot_params	= (0x80000100),
 	.map_io		= dm365_evm_map_io,
-	.init_irq	= dm365_evm_irq_init,
+	.init_irq	= davinci_irq_init,
 	.timer		= &davinci_timer,
 	.init_machine	= dm365_evm_init,
 MACHINE_END

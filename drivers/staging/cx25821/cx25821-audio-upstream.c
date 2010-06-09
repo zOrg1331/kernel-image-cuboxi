@@ -32,6 +32,7 @@
 #include <linux/file.h>
 #include <linux/fcntl.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <linux/uaccess.h>
 
 MODULE_DESCRIPTION("v4l2 driver module for cx25821 based TV cards");
@@ -752,8 +753,7 @@ int cx25821_audio_upstream_init(struct cx25821_dev *dev, int channel_select)
 
 	if (dev->input_audiofilename) {
 		str_length = strlen(dev->input_audiofilename);
-		dev->_audiofilename =
-		    (char *)kmalloc(str_length + 1, GFP_KERNEL);
+		dev->_audiofilename = kmalloc(str_length + 1, GFP_KERNEL);
 
 		if (!dev->_audiofilename)
 			goto error;
@@ -767,8 +767,7 @@ int cx25821_audio_upstream_init(struct cx25821_dev *dev, int channel_select)
 		}
 	} else {
 		str_length = strlen(_defaultAudioName);
-		dev->_audiofilename =
-		    (char *)kmalloc(str_length + 1, GFP_KERNEL);
+		dev->_audiofilename = kmalloc(str_length + 1, GFP_KERNEL);
 
 		if (!dev->_audiofilename)
 			goto error;

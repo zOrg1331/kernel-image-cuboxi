@@ -16,6 +16,7 @@
 #ifndef _IR_RAW_EVENT
 #define _IR_RAW_EVENT
 
+#include <linux/slab.h>
 #include <media/ir-core.h>
 
 struct ir_raw_handler {

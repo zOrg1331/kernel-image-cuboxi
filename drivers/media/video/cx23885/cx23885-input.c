@@ -5,7 +5,7 @@
  *
  *  Most of this file is
  *
- *  Copyright (C) 2009  Andy Walls <awalls@radix.net>
+ *  Copyright (C) 2009  Andy Walls <awalls@md.metrocast.net>
  *
  *  However, the cx23885_input_{init,fini} functions contained herein are
  *  derived from Linux kernel files linux/media/video/.../...-input.c marked as:
@@ -36,6 +36,7 @@
  */
 
 #include <linux/input.h>
+#include <linux/slab.h>
 #include <media/ir-common.h>
 #include <media/v4l2-subdev.h>
 
