@@ -1303,6 +1303,57 @@ error:
 }
 EXPORT_SYMBOL(p9_client_stat);
 
+struct p9_stat_dotl *p9_client_getattr_dotl(struct p9_fid *fid)
+{
+	int err;
+	struct p9_client *clnt;
+	struct p9_stat_dotl *ret = kmalloc(sizeof(struct p9_stat_dotl),
+								GFP_KERNEL);
+	struct p9_req_t *req;
+
+	P9_DPRINTK(P9_DEBUG_9P, ">>> TGETATTR fid %d\n", fid->fid);
+
+	if (!ret)
+		return ERR_PTR(-ENOMEM);
+
+	err = 0;
+	clnt = fid->clnt;
+
+	req = p9_client_rpc(clnt, P9_TGETATTR, "d", fid->fid);
+	if (IS_ERR(req)) {
+		err = PTR_ERR(req);
+		goto error;
+	}
+
+	err = p9pdu_readf(req->rc, clnt->proto_version, "A", ret);
+	if (err) {
+		p9pdu_dump(1, req->rc);
+		p9_free_req(clnt, req);
+		goto error;
+	}
+
+	P9_DPRINTK(P9_DEBUG_9P,
+		"<<< RGETATTR qid=%x.%llx.%x st_mode=%8.8x\n"
+		"<<< st_nlink=%llu st_uid=%d st_gid=%d st_rdev=%llx\n"
+		"<<< st_size=%llx st_blksize=%llu st_blocks=%llu\n"
+		"<<< st_atime_sec=%lld st_atime_nsec=%lld\n"
+		"<<< st_mtime_sec=%lld st_mtime_nsec=%lld\n"
+		"<<< st_ctime_sec=%lld st_ctime_nsec=%lld\n",
+		ret->qid.type, ret->qid.path, ret->qid.version,
+		ret->st_mode, ret->st_nlink, ret->st_uid, ret->st_gid,
+		ret->st_rdev, ret->st_size, ret->st_blksize, ret->st_blocks,
+		ret->st_atime_sec, ret->st_atime_nsec, ret->st_mtime_sec,
+		ret->st_mtime_nsec, ret->st_ctime_sec, ret->st_ctime_nsec);
+
+	p9_free_req(clnt, req);
+	return ret;
+
+error:
+	kfree(ret);
+	return ERR_PTR(err);
+}
+EXPORT_SYMBOL(p9_client_getattr_dotl);
+
 static int p9_client_statsize(struct p9_wstat *wst, int proto_version)
 {
 	int ret;
