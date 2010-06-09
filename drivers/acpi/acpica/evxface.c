@@ -721,7 +721,7 @@ acpi_install_gpe_handler(acpi_handle gpe_device,
 
 	/* Disable the GPE before installing the handler */
 
-	status = acpi_ev_disable_gpe(gpe_event_info);
+	status = acpi_hw_low_set_gpe(gpe_event_info, ACPI_GPE_DISABLE);
 	if (ACPI_FAILURE (status)) {
 		goto unlock_and_exit;
 	}
