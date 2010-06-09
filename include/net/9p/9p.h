@@ -133,6 +133,8 @@ enum p9_msg_t {
 	P9_RSTATFS,
 	P9_TRENAME = 20,
 	P9_RRENAME,
+	P9_TGETATTR = 24,
+	P9_RGETATTR,
 	P9_TREADDIR = 40,
 	P9_RREADDIR,
 	P9_TVERSION = 100,
@@ -360,6 +362,24 @@ struct p9_wstat {
 	u32 n_uid;		/* 9p2000.u extensions */
 	u32 n_gid;		/* 9p2000.u extensions */
 	u32 n_muid;		/* 9p2000.u extensions */
+};
+
+struct p9_stat_dotl {
+	struct p9_qid qid;
+	u32 st_mode;
+	u64 st_nlink;
+	u32 st_uid;
+	u32 st_gid;
+	u64 st_rdev;
+	u64 st_size;
+	u64 st_blksize;
+	u64 st_blocks;
+	u64 st_atime_sec;
+	u64 st_atime_nsec;
+	u64 st_mtime_sec;
+	u64 st_mtime_nsec;
+	u64 st_ctime_sec;
+	u64 st_ctime_nsec;
 };
 
 /* Structures for Protocol Operations */
