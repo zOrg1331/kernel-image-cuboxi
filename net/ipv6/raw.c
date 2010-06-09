@@ -602,13 +602,14 @@ out:
 }
 
 static int rawv6_send_hdrinc(struct sock *sk, void *from, int length,
-			struct flowi *fl, struct rt6_info *rt,
+			struct flowi *fl, struct dst_entry **dstp,
 			unsigned int flags)
 {
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	struct ipv6hdr *iph;
 	struct sk_buff *skb;
 	int err;
+	struct rt6_info *rt = (struct rt6_info *)*dstp;
 
 	if (length > rt->u.dst.dev->mtu) {
 		ipv6_local_error(sk, EMSGSIZE, fl, rt->u.dst.dev->mtu);
@@ -626,7 +627,8 @@ static int rawv6_send_hdrinc(struct sock *sk, void *from, int length,
 
 	skb->priority = sk->sk_priority;
 	skb->mark = sk->sk_mark;
-	skb_dst_set(skb, dst_clone(&rt->u.dst));
+	skb_dst_set(skb, &rt->u.dst);
+	*dstp = NULL;
 
 	skb_put(skb, length);
 	skb_reset_network_header(skb);
@@ -725,7 +727,7 @@ static int rawv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 {
 	struct ipv6_txoptions opt_space;
 	struct sockaddr_in6 * sin6 = (struct sockaddr_in6 *) msg->msg_name;
-	struct in6_addr *daddr, *final_p = NULL, final;
+	struct in6_addr *daddr, *final_p, final;
 	struct inet_sock *inet = inet_sk(sk);
 	struct ipv6_pinfo *np = inet6_sk(sk);
 	struct raw6_sock *rp = raw6_sk(sk);
@@ -847,13 +849,7 @@ static int rawv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 	if (ipv6_addr_any(&fl.fl6_src) && !ipv6_addr_any(&np->saddr))
 		ipv6_addr_copy(&fl.fl6_src, &np->saddr);
 
-	/* merge ip6_build_xmit from ip6_output */
-	if (opt && opt->srcrt) {
-		struct rt0_hdr *rt0 = (struct rt0_hdr *) opt->srcrt;
-		ipv6_addr_copy(&final, &fl.fl6_dst);
-		ipv6_addr_copy(&fl.fl6_dst, rt0->addr);
-		final_p = &final;
-	}
+	final_p = fl6_update_dst(&fl, opt, &final);
 
 	if (!fl.oif && ipv6_addr_is_multicast(&fl.fl6_dst))
 		fl.oif = np->mcast_oif;
@@ -892,9 +888,9 @@ static int rawv6_sendmsg(struct kiocb *iocb, struct sock *sk,
 		goto do_confirm;
 
 back_from_confirm:
-	if (inet->hdrincl) {
-		err = rawv6_send_hdrinc(sk, msg->msg_iov, len, &fl, (struct rt6_info*)dst, msg->msg_flags);
-	} else {
+	if (inet->hdrincl)
+		err = rawv6_send_hdrinc(sk, msg->msg_iov, len, &fl, &dst, msg->msg_flags);
+	else {
 		lock_sock(sk);
 		err = ip6_append_data(sk, ip_generic_getfrag, msg->msg_iov,
 			len, 0, hlimit, tclass, opt, &fl, (struct rt6_info*)dst,
