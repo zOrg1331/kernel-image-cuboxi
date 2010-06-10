@@ -199,9 +199,9 @@ queue_store_##name(struct request_queue *q, const char *page, size_t count) \
 									\
 	spin_lock_irq(q->queue_lock);					\
 	if (val)							\
-		queue_flag_clear(QUEUE_FLAG_##flag, q);			\
-	else								\
 		queue_flag_set(QUEUE_FLAG_##flag, q);			\
+	else								\
+		queue_flag_clear(QUEUE_FLAG_##flag, q);			\
 	spin_unlock_irq(q->queue_lock);					\
 	return ret;							\
 }
