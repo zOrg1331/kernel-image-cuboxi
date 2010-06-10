@@ -144,6 +144,7 @@ int kvm_arch_hardware_enable(void *garbage)
 				VP_INIT_ENV : VP_INIT_ENV_INITALIZE,
 			__pa(kvm_vm_buffer), KVM_VM_BUFFER_BASE, &tmp_base);
 	if (status != 0) {
+		spin_unlock(&vp_lock);
 		printk(KERN_WARNING"kvm: Failed to Enable VT Support!!!!\n");
 		return -EINVAL;
 	}
@@ -724,8 +725,6 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 	int r;
 	sigset_t sigsaved;
 
-	vcpu_load(vcpu);
-
 	if (vcpu->sigset_active)
 		sigprocmask(SIG_SETMASK, &vcpu->sigset, &sigsaved);
 
@@ -747,7 +746,6 @@ out:
 	if (vcpu->sigset_active)
 		sigprocmask(SIG_SETMASK, &sigsaved, NULL);
 
-	vcpu_put(vcpu);
 	return r;
 }
 
@@ -882,8 +880,6 @@ int kvm_arch_vcpu_ioctl_set_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	struct vpd *vpd = to_host(vcpu->kvm, vcpu->arch.vpd);
 	int i;
 
-	vcpu_load(vcpu);
-
 	for (i = 0; i < 16; i++) {
 		vpd->vgr[i] = regs->vpd.vgr[i];
 		vpd->vbgr[i] = regs->vpd.vbgr[i];
@@ -929,8 +925,6 @@ int kvm_arch_vcpu_ioctl_set_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 	vcpu->arch.irq_new_pending = 1;
 	vcpu->arch.itc_offset = regs->saved_itc - kvm_get_itc(vcpu);
 	set_bit(KVM_REQ_RESUME, &vcpu->requests);
-
-	vcpu_put(vcpu);
 
 	return 0;
 }
@@ -1966,9 +1960,7 @@ int kvm_arch_vcpu_runnable(struct kvm_vcpu *vcpu)
 int kvm_arch_vcpu_ioctl_get_mpstate(struct kvm_vcpu *vcpu,
 				    struct kvm_mp_state *mp_state)
 {
-	vcpu_load(vcpu);
 	mp_state->mp_state = vcpu->arch.mp_state;
-	vcpu_put(vcpu);
 	return 0;
 }
 
@@ -1999,10 +1991,8 @@ int kvm_arch_vcpu_ioctl_set_mpstate(struct kvm_vcpu *vcpu,
 {
 	int r = 0;
 
-	vcpu_load(vcpu);
 	vcpu->arch.mp_state = mp_state->mp_state;
 	if (vcpu->arch.mp_state == KVM_MP_STATE_UNINITIALIZED)
 		r = vcpu_reset(vcpu);
-	vcpu_put(vcpu);
 	return r;
 }
