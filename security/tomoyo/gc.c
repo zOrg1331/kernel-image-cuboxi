@@ -14,8 +14,11 @@
 enum tomoyo_gc_id {
 	TOMOYO_ID_PATH_GROUP,
 	TOMOYO_ID_PATH_GROUP_MEMBER,
+	TOMOYO_ID_NUMBER_GROUP,
+	TOMOYO_ID_NUMBER_GROUP_MEMBER,
 	TOMOYO_ID_DOMAIN_INITIALIZER,
 	TOMOYO_ID_DOMAIN_KEEPER,
+	TOMOYO_ID_AGGREGATOR,
 	TOMOYO_ID_ALIAS,
 	TOMOYO_ID_GLOBALLY_READABLE,
 	TOMOYO_ID_PATTERN,
@@ -75,6 +78,12 @@ static void tomoyo_del_domain_keeper(struct tomoyo_domain_keeper_entry *ptr)
 	tomoyo_put_name(ptr->program);
 }
 
+static void tomoyo_del_aggregator(struct tomoyo_aggregator_entry *ptr)
+{
+	tomoyo_put_name(ptr->original_name);
+	tomoyo_put_name(ptr->aggregated_name);
+}
+
 static void tomoyo_del_alias(struct tomoyo_alias_entry *ptr)
 {
 	tomoyo_put_name(ptr->original_name);
@@ -102,6 +111,34 @@ static void tomoyo_del_acl(struct tomoyo_acl_info *acl)
 				= container_of(acl, typeof(*entry), head);
 			tomoyo_put_name_union(&entry->name1);
 			tomoyo_put_name_union(&entry->name2);
+		}
+		break;
+	case TOMOYO_TYPE_PATH_NUMBER_ACL:
+		{
+			struct tomoyo_path_number_acl *entry
+				= container_of(acl, typeof(*entry), head);
+			tomoyo_put_name_union(&entry->name);
+			tomoyo_put_number_union(&entry->number);
+		}
+		break;
+	case TOMOYO_TYPE_PATH_NUMBER3_ACL:
+		{
+			struct tomoyo_path_number3_acl *entry
+				= container_of(acl, typeof(*entry), head);
+			tomoyo_put_name_union(&entry->name);
+			tomoyo_put_number_union(&entry->mode);
+			tomoyo_put_number_union(&entry->major);
+			tomoyo_put_number_union(&entry->minor);
+		}
+		break;
+	case TOMOYO_TYPE_MOUNT_ACL:
+		{
+			struct tomoyo_mount_acl *entry
+				= container_of(acl, typeof(*entry), head);
+			tomoyo_put_name_union(&entry->dev_name);
+			tomoyo_put_name_union(&entry->dir_name);
+			tomoyo_put_name_union(&entry->fs_type);
+			tomoyo_put_number_union(&entry->flags);
 		}
 		break;
 	default:
@@ -158,6 +195,16 @@ static void tomoyo_del_path_group_member(struct tomoyo_path_group_member
 }
 
 static void tomoyo_del_path_group(struct tomoyo_path_group *group)
+{
+	tomoyo_put_name(group->group_name);
+}
+
+static void tomoyo_del_number_group_member(struct tomoyo_number_group_member
+					   *member)
+{
+}
+
+static void tomoyo_del_number_group(struct tomoyo_number_group *group)
 {
 	tomoyo_put_name(group->group_name);
 }
@@ -224,6 +271,17 @@ static void tomoyo_collect_entry(void)
 		}
 	}
 	{
+		struct tomoyo_aggregator_entry *ptr;
+		list_for_each_entry_rcu(ptr, &tomoyo_aggregator_list, list) {
+			if (!ptr->is_deleted)
+				continue;
+			if (tomoyo_add_to_gc(TOMOYO_ID_AGGREGATOR, ptr))
+				list_del_rcu(&ptr->list);
+			else
+				break;
+		}
+	}
+	{
 		struct tomoyo_alias_entry *ptr;
 		list_for_each_entry_rcu(ptr, &tomoyo_alias_list, list) {
 			if (!ptr->is_deleted)
@@ -256,15 +314,24 @@ static void tomoyo_collect_entry(void)
 				case TOMOYO_TYPE_PATH_ACL:
 					if (container_of(acl,
 					 struct tomoyo_path_acl,
-							 head)->perm ||
-					    container_of(acl,
-					 struct tomoyo_path_acl,
-							 head)->perm_high)
+							 head)->perm)
 						continue;
 					break;
 				case TOMOYO_TYPE_PATH2_ACL:
 					if (container_of(acl,
 					 struct tomoyo_path2_acl,
+							 head)->perm)
+						continue;
+					break;
+				case TOMOYO_TYPE_PATH_NUMBER_ACL:
+					if (container_of(acl,
+					 struct tomoyo_path_number_acl,
+							 head)->perm)
+						continue;
+					break;
+				case TOMOYO_TYPE_PATH_NUMBER3_ACL:
+					if (container_of(acl,
+					 struct tomoyo_path_number3_acl,
 							 head)->perm)
 						continue;
 					break;
@@ -329,6 +396,29 @@ static void tomoyo_collect_entry(void)
 				break;
 		}
 	}
+	{
+		struct tomoyo_number_group *group;
+		list_for_each_entry_rcu(group, &tomoyo_number_group_list, list) {
+			struct tomoyo_number_group_member *member;
+			list_for_each_entry_rcu(member, &group->member_list,
+						list) {
+				if (!member->is_deleted)
+					continue;
+				if (tomoyo_add_to_gc(TOMOYO_ID_NUMBER_GROUP_MEMBER,
+						     member))
+					list_del_rcu(&member->list);
+				else
+					break;
+			}
+			if (!list_empty(&group->member_list) ||
+			    atomic_read(&group->users))
+				continue;
+			if (tomoyo_add_to_gc(TOMOYO_ID_NUMBER_GROUP, group))
+				list_del_rcu(&group->list);
+			else
+				break;
+		}
+	}
 	mutex_unlock(&tomoyo_policy_lock);
 }
 
@@ -344,6 +434,9 @@ static void tomoyo_kfree_entry(void)
 			break;
 		case TOMOYO_ID_DOMAIN_KEEPER:
 			tomoyo_del_domain_keeper(p->element);
+			break;
+		case TOMOYO_ID_AGGREGATOR:
+			tomoyo_del_aggregator(p->element);
 			break;
 		case TOMOYO_ID_ALIAS:
 			tomoyo_del_alias(p->element);
@@ -375,6 +468,12 @@ static void tomoyo_kfree_entry(void)
 			break;
 		case TOMOYO_ID_PATH_GROUP:
 			tomoyo_del_path_group(p->element);
+			break;
+		case TOMOYO_ID_NUMBER_GROUP_MEMBER:
+			tomoyo_del_number_group_member(p->element);
+			break;
+		case TOMOYO_ID_NUMBER_GROUP:
+			tomoyo_del_number_group(p->element);
 			break;
 		default:
 			printk(KERN_WARNING "Unknown type\n");
