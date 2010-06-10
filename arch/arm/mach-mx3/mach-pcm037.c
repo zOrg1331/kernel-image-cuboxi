@@ -43,7 +43,6 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/time.h>
 #include <asm/mach/map.h>
-#include <mach/board-pcm037.h>
 #include <mach/common.h>
 #include <mach/hardware.h>
 #include <mach/i2c.h>
@@ -545,6 +544,7 @@ static struct platform_device pcm970_sja1000 = {
 	.num_resources = ARRAY_SIZE(pcm970_sja1000_resources),
 };
 
+#if defined(CONFIG_USB_ULPI)
 static struct mxc_usbh_platform_data otg_pdata = {
 	.portsc	= MXC_EHCI_MODE_ULPI,
 	.flags	= MXC_EHCI_INTERFACE_DIFF_UNI,
@@ -554,6 +554,7 @@ static struct mxc_usbh_platform_data usbh2_pdata = {
 	.portsc	= MXC_EHCI_MODE_ULPI,
 	.flags	= MXC_EHCI_INTERFACE_DIFF_UNI,
 };
+#endif
 
 static struct fsl_usb2_platform_data otg_device_pdata = {
 	.operating_mode = FSL_USB2_DR_DEVICE,
@@ -581,7 +582,6 @@ __setup("otg_mode=", pcm037_otg_mode);
 static void __init mxc_board_init(void)
 {
 	int ret;
-	u32 tmp;
 
 	mxc_iomux_set_gpr(MUX_PGP_UH2, 1);
 
