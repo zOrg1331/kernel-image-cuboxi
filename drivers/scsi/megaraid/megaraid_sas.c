@@ -662,6 +662,47 @@ static int
 megasas_adp_reset_gen2(struct megasas_instance *instance,
 			struct megasas_register_set __iomem *reg_set)
 {
+	u32			retry = 0 ;
+	u32			HostDiag;
+
+	writel(0, &reg_set->seq_offset);
+	writel(4, &reg_set->seq_offset);
+	writel(0xb, &reg_set->seq_offset);
+	writel(2, &reg_set->seq_offset);
+	writel(7, &reg_set->seq_offset);
+	writel(0xd, &reg_set->seq_offset);
+	msleep(1000);
+
+	HostDiag = (u32)readl(&reg_set->host_diag);
+
+	while ( !( HostDiag & DIAG_WRITE_ENABLE) ) {
+		msleep(100);
+		HostDiag = (u32)readl(&reg_set->host_diag);
+		printk(KERN_NOTICE "RESETGEN2: retry=%x, hostdiag=%x\n",
+					retry, HostDiag);
+
+		if (retry++ >= 100)
+			return 1;
+
+	}
+
+	printk(KERN_NOTICE "ADP_RESET_GEN2: HostDiag=%x\n", HostDiag);
+
+	writel((HostDiag | DIAG_RESET_ADAPTER), &reg_set->host_diag);
+
+	ssleep(10);
+
+	HostDiag = (u32)readl(&reg_set->host_diag);
+	while ( ( HostDiag & DIAG_RESET_ADAPTER) ) {
+		msleep(100);
+		HostDiag = (u32)readl(&reg_set->host_diag);
+		printk(KERN_NOTICE "RESET_GEN2: retry=%x, hostdiag=%x\n",
+				retry, HostDiag);
+
+		if (retry++ >= 1000)
+			return 1;
+
+	}
 	return 0;
 }
 
