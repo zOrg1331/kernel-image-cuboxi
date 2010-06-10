@@ -235,8 +235,69 @@ megasas_fire_cmd_xscale(struct megasas_instance *instance,
 		u32 frame_count,
 		struct megasas_register_set __iomem *regs)
 {
+	unsigned long flags;
+	spin_lock_irqsave(&instance->hba_lock, flags);
 	writel((frame_phys_addr >> 3)|(frame_count),
 	       &(regs)->inbound_queue_port);
+	spin_unlock_irqrestore(&instance->hba_lock, flags);
+}
+
+/**
+ * megasas_adp_reset_xscale -  For controller reset
+ * @regs:                              MFI register set
+ */
+static int
+megasas_adp_reset_xscale(struct megasas_instance *instance,
+	struct megasas_register_set __iomem *regs)
+{
+	u32 i;
+	u32 pcidata;
+	writel(MFI_ADP_RESET, &regs->inbound_doorbell);
+
+	for (i = 0; i < 3; i++)
+		msleep(1000); /* sleep for 3 secs */
+	pcidata  = 0;
+	pci_read_config_dword(instance->pdev, MFI_1068_PCSR_OFFSET, &pcidata);
+	printk(KERN_NOTICE "pcidata = %x\n", pcidata);
+	if (pcidata & 0x2) {
+		printk(KERN_NOTICE "mfi 1068 offset read=%x\n", pcidata);
+		pcidata &= ~0x2;
+		pci_write_config_dword(instance->pdev,
+				MFI_1068_PCSR_OFFSET, pcidata);
+
+		for (i = 0; i < 2; i++)
+			msleep(1000); /* need to wait 2 secs again */
+
+		pcidata  = 0;
+		pci_read_config_dword(instance->pdev,
+				MFI_1068_FW_HANDSHAKE_OFFSET, &pcidata);
+		printk(KERN_NOTICE "1068 offset handshake read=%x\n", pcidata);
+		if ((pcidata & 0xffff0000) == MFI_1068_FW_READY) {
+			printk(KERN_NOTICE "1068 offset pcidt=%x\n", pcidata);
+			pcidata = 0;
+			pci_write_config_dword(instance->pdev,
+				MFI_1068_FW_HANDSHAKE_OFFSET, pcidata);
+		}
+	}
+	return 0;
+}
+
+/**
+ * megasas_check_reset_xscale -	For controller reset check
+ * @regs:				MFI register set
+ */
+static int
+megasas_check_reset_xscale(struct megasas_instance *instance,
+		struct megasas_register_set __iomem *regs)
+{
+	u32 consumer;
+	consumer = *instance->consumer;
+
+	if ((instance->adprecovery != MEGASAS_HBA_OPERATIONAL) &&
+		(*instance->consumer == MEGASAS_ADPRESET_INPROG_SIGN)) {
+		return 1;
+	}
+	return 0;
 }
 
 static struct megasas_instance_template megasas_instance_template_xscale = {
@@ -246,6 +307,8 @@ static struct megasas_instance_template megasas_instance_template_xscale = {
 	.disable_intr = megasas_disable_intr_xscale,
 	.clear_intr = megasas_clear_intr_xscale,
 	.read_fw_status_reg = megasas_read_fw_status_reg_xscale,
+	.adp_reset = megasas_adp_reset_xscale,
+	.check_reset = megasas_check_reset_xscale,
 };
 
 /**
@@ -335,10 +398,34 @@ megasas_fire_cmd_ppc(struct megasas_instance *instance,
 		u32 frame_count,
 		struct megasas_register_set __iomem *regs)
 {
+	unsigned long flags;
+	spin_lock_irqsave(&instance->hba_lock, flags);
 	writel((frame_phys_addr | (frame_count<<1))|1, 
 			&(regs)->inbound_queue_port);
+	spin_unlock_irqrestore(&instance->hba_lock, flags);
 }
 
+/**
+ * megasas_adp_reset_ppc -	For controller reset
+ * @regs:				MFI register set
+ */
+static int
+megasas_adp_reset_ppc(struct megasas_instance *instance,
+			struct megasas_register_set __iomem *regs)
+{
+	return 0;
+}
+
+/**
+ * megasas_check_reset_ppc -	For controller reset check
+ * @regs:				MFI register set
+ */
+static int
+megasas_check_reset_ppc(struct megasas_instance *instance,
+			struct megasas_register_set __iomem *regs)
+{
+	return 0;
+}
 static struct megasas_instance_template megasas_instance_template_ppc = {
 	
 	.fire_cmd = megasas_fire_cmd_ppc,
@@ -346,6 +433,8 @@ static struct megasas_instance_template megasas_instance_template_ppc = {
 	.disable_intr = megasas_disable_intr_ppc,
 	.clear_intr = megasas_clear_intr_ppc,
 	.read_fw_status_reg = megasas_read_fw_status_reg_ppc,
+	.adp_reset = megasas_adp_reset_ppc,
+	.check_reset = megasas_check_reset_ppc,
 };
 
 /**
@@ -428,9 +517,34 @@ megasas_fire_cmd_skinny(struct megasas_instance *instance,
 			u32 frame_count,
 			struct megasas_register_set __iomem *regs)
 {
+	unsigned long flags;
+	spin_lock_irqsave(&instance->hba_lock, flags);
 	writel(0, &(regs)->inbound_high_queue_port);
 	writel((frame_phys_addr | (frame_count<<1))|1,
 		&(regs)->inbound_low_queue_port);
+	spin_unlock_irqrestore(&instance->hba_lock, flags);
+}
+
+/**
+ * megasas_adp_reset_skinny -	For controller reset
+ * @regs:				MFI register set
+ */
+static int
+megasas_adp_reset_skinny(struct megasas_instance *instance,
+			struct megasas_register_set __iomem *regs)
+{
+	return 0;
+}
+
+/**
+ * megasas_check_reset_skinny -	For controller reset check
+ * @regs:				MFI register set
+ */
+static int
+megasas_check_reset_skinny(struct megasas_instance *instance,
+				struct megasas_register_set __iomem *regs)
+{
+	return 0;
 }
 
 static struct megasas_instance_template megasas_instance_template_skinny = {
@@ -440,6 +554,8 @@ static struct megasas_instance_template megasas_instance_template_skinny = {
 	.disable_intr = megasas_disable_intr_skinny,
 	.clear_intr = megasas_clear_intr_skinny,
 	.read_fw_status_reg = megasas_read_fw_status_reg_skinny,
+	.adp_reset = megasas_adp_reset_skinny,
+	.check_reset = megasas_check_reset_skinny,
 };
 
 
@@ -531,8 +647,33 @@ megasas_fire_cmd_gen2(struct megasas_instance *instance,
 			u32 frame_count,
 			struct megasas_register_set __iomem *regs)
 {
+	unsigned long flags;
+	spin_lock_irqsave(&instance->hba_lock, flags);
 	writel((frame_phys_addr | (frame_count<<1))|1,
 			&(regs)->inbound_queue_port);
+	spin_unlock_irqrestore(&instance->hba_lock, flags);
+}
+
+/**
+ * megasas_adp_reset_gen2 -	For controller reset
+ * @regs:				MFI register set
+ */
+static int
+megasas_adp_reset_gen2(struct megasas_instance *instance,
+			struct megasas_register_set __iomem *reg_set)
+{
+	return 0;
+}
+
+/**
+ * megasas_check_reset_gen2 -	For controller reset check
+ * @regs:				MFI register set
+ */
+static int
+megasas_check_reset_gen2(struct megasas_instance *instance,
+		struct megasas_register_set __iomem *regs)
+{
+	return 0;
 }
 
 static struct megasas_instance_template megasas_instance_template_gen2 = {
@@ -542,6 +683,8 @@ static struct megasas_instance_template megasas_instance_template_gen2 = {
 	.disable_intr = megasas_disable_intr_gen2,
 	.clear_intr = megasas_clear_intr_gen2,
 	.read_fw_status_reg = megasas_read_fw_status_reg_gen2,
+	.adp_reset = megasas_adp_reset_gen2,
+	.check_reset = megasas_check_reset_gen2,
 };
 
 /**

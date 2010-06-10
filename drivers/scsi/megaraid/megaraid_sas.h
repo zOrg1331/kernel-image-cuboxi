@@ -1281,6 +1281,15 @@ struct megasas_instance {
 	struct timer_list io_completion_timer;
 };
 
+enum {
+	MEGASAS_HBA_OPERATIONAL			= 0,
+	MEGASAS_ADPRESET_SM_INFAULT		= 1,
+	MEGASAS_ADPRESET_SM_FW_RESET_SUCCESS	= 2,
+	MEGASAS_ADPRESET_SM_OPERATIONAL		= 3,
+	MEGASAS_HW_CRITICAL_ERROR		= 4,
+	MEGASAS_ADPRESET_INPROG_SIGN		= 0xDEADDEAD,
+};
+
 struct megasas_instance_template {
 	void (*fire_cmd)(struct megasas_instance *, dma_addr_t, \
 		u32, struct megasas_register_set __iomem *);
@@ -1291,6 +1300,10 @@ struct megasas_instance_template {
 	int (*clear_intr)(struct megasas_register_set __iomem *);
 
 	u32 (*read_fw_status_reg)(struct megasas_register_set __iomem *);
+	int (*adp_reset)(struct megasas_instance *, \
+		struct megasas_register_set __iomem *);
+	int (*check_reset)(struct megasas_instance *, \
+		struct megasas_register_set __iomem *);
 };
 
 #define MEGASAS_IS_LOGICAL(scp)						\
