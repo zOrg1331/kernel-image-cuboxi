@@ -21,6 +21,9 @@ struct pdev_archdata {
 	u64 dma_mask;
 };
 
+/* Don't override the default bus id behaviour */
+#define of_device_make_bus_id __of_device_make_bus_id
+
 #endif /* _ASM_MICROBLAZE_DEVICE_H */
 
 
