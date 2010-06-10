@@ -1275,10 +1275,12 @@ struct megasas_instance {
 	u8 flag;
 	u8 unload;
 	u8 flag_ieee;
+	u8 issuepend_done;
 	u8 adprecovery;
 	unsigned long last_time;
 
 	struct timer_list io_completion_timer;
+	struct list_head internal_reset_pending_q;
 };
 
 enum {
