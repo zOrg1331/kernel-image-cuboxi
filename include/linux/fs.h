@@ -1664,6 +1664,10 @@ struct inode_operations {
 	void (*truncate_range)(struct inode *, loff_t, loff_t);
 	int (*fiemap)(struct inode *, struct fiemap_extent_info *, u64 start,
 		      u64 len);
+	int (*may_create) (struct inode *, int);
+	int (*may_delete) (struct inode *, struct inode *, int);
+
+
 } ____cacheline_aligned;
 
 struct seq_file;
