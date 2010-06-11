@@ -32,6 +32,7 @@
 #include <linux/compiler.h>
 #include <linux/srcu.h>
 #include <linux/slab.h>
+#include <linux/uaccess.h>
 
 #include <asm/page.h>
 #include <asm/cmpxchg.h>
@@ -304,10 +305,11 @@ static int mmu_topup_memory_cache(struct kvm_mmu_memory_cache *cache,
 	return 0;
 }
 
-static void mmu_free_memory_cache(struct kvm_mmu_memory_cache *mc)
+static void mmu_free_memory_cache(struct kvm_mmu_memory_cache *mc,
+				  struct kmem_cache *cache)
 {
 	while (mc->nobjs)
-		kfree(mc->objects[--mc->nobjs]);
+		kmem_cache_free(cache, mc->objects[--mc->nobjs]);
 }
 
 static int mmu_topup_memory_cache_page(struct kvm_mmu_memory_cache *cache,
@@ -355,10 +357,11 @@ out:
 
 static void mmu_free_memory_caches(struct kvm_vcpu *vcpu)
 {
-	mmu_free_memory_cache(&vcpu->arch.mmu_pte_chain_cache);
-	mmu_free_memory_cache(&vcpu->arch.mmu_rmap_desc_cache);
+	mmu_free_memory_cache(&vcpu->arch.mmu_pte_chain_cache, pte_chain_cache);
+	mmu_free_memory_cache(&vcpu->arch.mmu_rmap_desc_cache, rmap_desc_cache);
 	mmu_free_memory_cache_page(&vcpu->arch.mmu_page_cache);
-	mmu_free_memory_cache(&vcpu->arch.mmu_page_header_cache);
+	mmu_free_memory_cache(&vcpu->arch.mmu_page_header_cache,
+				mmu_page_header_cache);
 }
 
 static void *mmu_memory_cache_alloc(struct kvm_mmu_memory_cache *mc,
@@ -379,7 +382,7 @@ static struct kvm_pte_chain *mmu_alloc_pte_chain(struct kvm_vcpu *vcpu)
 
 static void mmu_free_pte_chain(struct kvm_pte_chain *pc)
 {
-	kfree(pc);
+	kmem_cache_free(pte_chain_cache, pc);
 }
 
 static struct kvm_rmap_desc *mmu_alloc_rmap_desc(struct kvm_vcpu *vcpu)
@@ -390,7 +393,7 @@ static struct kvm_rmap_desc *mmu_alloc_rmap_desc(struct kvm_vcpu *vcpu)
 
 static void mmu_free_rmap_desc(struct kvm_rmap_desc *rd)
 {
-	kfree(rd);
+	kmem_cache_free(rmap_desc_cache, rd);
 }
 
 /*
@@ -897,7 +900,7 @@ static void kvm_mmu_free_page(struct kvm *kvm, struct kvm_mmu_page *sp)
 	list_del(&sp->link);
 	__free_page(virt_to_page(sp->spt));
 	__free_page(virt_to_page(sp->gfns));
-	kfree(sp);
+	kmem_cache_free(mmu_page_header_cache, sp);
 	++kvm->arch.n_free_mmu_pages;
 }
 
@@ -1196,16 +1199,20 @@ static void kvm_unlink_unsync_page(struct kvm *kvm, struct kvm_mmu_page *sp)
 
 static int kvm_mmu_zap_page(struct kvm *kvm, struct kvm_mmu_page *sp);
 
-static int kvm_sync_page(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp)
+static int __kvm_sync_page(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
+			   bool clear_unsync)
 {
 	if (sp->role.cr4_pae != !!is_pae(vcpu)) {
 		kvm_mmu_zap_page(vcpu->kvm, sp);
 		return 1;
 	}
 
-	if (rmap_write_protect(vcpu->kvm, sp->gfn))
-		kvm_flush_remote_tlbs(vcpu->kvm);
-	kvm_unlink_unsync_page(vcpu->kvm, sp);
+	if (clear_unsync) {
+		if (rmap_write_protect(vcpu->kvm, sp->gfn))
+			kvm_flush_remote_tlbs(vcpu->kvm);
+		kvm_unlink_unsync_page(vcpu->kvm, sp);
+	}
+
 	if (vcpu->arch.mmu.sync_page(vcpu, sp)) {
 		kvm_mmu_zap_page(vcpu->kvm, sp);
 		return 1;
@@ -1213,6 +1220,23 @@ static int kvm_sync_page(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp)
 
 	kvm_mmu_flush_tlb(vcpu);
 	return 0;
+}
+
+static void mmu_convert_notrap(struct kvm_mmu_page *sp);
+static int kvm_sync_page_transient(struct kvm_vcpu *vcpu,
+				   struct kvm_mmu_page *sp)
+{
+	int ret;
+
+	ret = __kvm_sync_page(vcpu, sp, false);
+	if (!ret)
+		mmu_convert_notrap(sp);
+	return ret;
+}
+
+static int kvm_sync_page(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp)
+{
+	return __kvm_sync_page(vcpu, sp, true);
 }
 
 struct mmu_page_path {
@@ -1313,7 +1337,7 @@ static struct kvm_mmu_page *kvm_mmu_get_page(struct kvm_vcpu *vcpu,
 	unsigned index;
 	unsigned quadrant;
 	struct hlist_head *bucket;
-	struct kvm_mmu_page *sp;
+	struct kvm_mmu_page *sp, *unsync_sp = NULL;
 	struct hlist_node *node, *tmp;
 
 	role = vcpu->arch.mmu.base_role;
@@ -1332,20 +1356,30 @@ static struct kvm_mmu_page *kvm_mmu_get_page(struct kvm_vcpu *vcpu,
 	hlist_for_each_entry_safe(sp, node, tmp, bucket, hash_link)
 		if (sp->gfn == gfn) {
 			if (sp->unsync)
-				if (kvm_sync_page(vcpu, sp))
-					continue;
+				unsync_sp = sp;
 
 			if (sp->role.word != role.word)
 				continue;
+
+			if (!direct && unsync_sp &&
+			      kvm_sync_page_transient(vcpu, unsync_sp)) {
+				unsync_sp = NULL;
+				break;
+			}
 
 			mmu_page_add_parent_pte(vcpu, sp, parent_pte);
 			if (sp->unsync_children) {
 				set_bit(KVM_REQ_MMU_SYNC, &vcpu->requests);
 				kvm_mmu_mark_parents_unsync(sp);
-			}
+			} else if (sp->unsync)
+				kvm_mmu_mark_parents_unsync(sp);
+
 			trace_kvm_mmu_get_page(sp, false);
 			return sp;
 		}
+	if (!direct && unsync_sp)
+		kvm_sync_page(vcpu, unsync_sp);
+
 	++vcpu->kvm->stat.mmu_cache_miss;
 	sp = kvm_mmu_alloc_page(vcpu, parent_pte);
 	if (!sp)
@@ -1503,6 +1537,8 @@ static int kvm_mmu_zap_page(struct kvm *kvm, struct kvm_mmu_page *sp)
 	if (sp->unsync)
 		kvm_unlink_unsync_page(kvm, sp);
 	if (!sp->root_count) {
+		/* Count self */
+		ret++;
 		hlist_del(&sp->hash_link);
 		kvm_mmu_free_page(kvm, sp);
 	} else {
@@ -1539,7 +1575,6 @@ void kvm_mmu_change_mmu_pages(struct kvm *kvm, unsigned int kvm_nr_mmu_pages)
 			page = container_of(kvm->arch.active_mmu_pages.prev,
 					    struct kvm_mmu_page, link);
 			used_pages -= kvm_mmu_zap_page(kvm, page);
-			used_pages--;
 		}
 		kvm_nr_mmu_pages = used_pages;
 		kvm->arch.n_free_mmu_pages = 0;
@@ -1809,6 +1844,7 @@ static int set_spte(struct kvm_vcpu *vcpu, u64 *sptep,
 		if (level > PT_PAGE_TABLE_LEVEL &&
 		    has_wrprotected_page(vcpu->kvm, gfn, level)) {
 			ret = 1;
+			rmap_remove(vcpu->kvm, sptep);
 			spte = shadow_trap_nonpresent_pte;
 			goto set_pte;
 		}
@@ -1958,6 +1994,27 @@ static int __direct_map(struct kvm_vcpu *vcpu, gpa_t v, int write,
 	return pt_write;
 }
 
+static void kvm_send_hwpoison_signal(struct kvm *kvm, gfn_t gfn)
+{
+	char buf[1];
+	void __user *hva;
+	int r;
+
+	/* Touch the page, so send SIGBUS */
+	hva = (void __user *)gfn_to_hva(kvm, gfn);
+	r = copy_from_user(buf, hva, 1);
+}
+
+static int kvm_handle_bad_page(struct kvm *kvm, gfn_t gfn, pfn_t pfn)
+{
+	kvm_release_pfn_clean(pfn);
+	if (is_hwpoison_pfn(pfn)) {
+		kvm_send_hwpoison_signal(kvm, gfn);
+		return 0;
+	}
+	return 1;
+}
+
 static int nonpaging_map(struct kvm_vcpu *vcpu, gva_t v, int write, gfn_t gfn)
 {
 	int r;
@@ -1981,10 +2038,8 @@ static int nonpaging_map(struct kvm_vcpu *vcpu, gva_t v, int write, gfn_t gfn)
 	pfn = gfn_to_pfn(vcpu->kvm, gfn);
 
 	/* mmio */
-	if (is_error_pfn(pfn)) {
-		kvm_release_pfn_clean(pfn);
-		return 1;
-	}
+	if (is_error_pfn(pfn))
+		return kvm_handle_bad_page(vcpu->kvm, gfn, pfn);
 
 	spin_lock(&vcpu->kvm->mmu_lock);
 	if (mmu_notifier_retry(vcpu, mmu_seq))
@@ -2071,6 +2126,7 @@ static int mmu_alloc_roots(struct kvm_vcpu *vcpu)
 			root_gfn = 0;
 		}
 		spin_lock(&vcpu->kvm->mmu_lock);
+		kvm_mmu_free_some_pages(vcpu);
 		sp = kvm_mmu_get_page(vcpu, root_gfn, 0,
 				      PT64_ROOT_LEVEL, direct,
 				      ACC_ALL, NULL);
@@ -2101,6 +2157,7 @@ static int mmu_alloc_roots(struct kvm_vcpu *vcpu)
 			root_gfn = i << 30;
 		}
 		spin_lock(&vcpu->kvm->mmu_lock);
+		kvm_mmu_free_some_pages(vcpu);
 		sp = kvm_mmu_get_page(vcpu, root_gfn, i << 30,
 				      PT32_ROOT_LEVEL, direct,
 				      ACC_ALL, NULL);
@@ -2196,10 +2253,8 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa,
 	mmu_seq = vcpu->kvm->mmu_notifier_seq;
 	smp_rmb();
 	pfn = gfn_to_pfn(vcpu->kvm, gfn);
-	if (is_error_pfn(pfn)) {
-		kvm_release_pfn_clean(pfn);
-		return 1;
-	}
+	if (is_error_pfn(pfn))
+		return kvm_handle_bad_page(vcpu->kvm, gfn, pfn);
 	spin_lock(&vcpu->kvm->mmu_lock);
 	if (mmu_notifier_retry(vcpu, mmu_seq))
 		goto out_unlock;
@@ -2455,10 +2510,9 @@ static int init_kvm_mmu(struct kvm_vcpu *vcpu)
 static void destroy_kvm_mmu(struct kvm_vcpu *vcpu)
 {
 	ASSERT(vcpu);
-	if (VALID_PAGE(vcpu->arch.mmu.root_hpa)) {
+	if (VALID_PAGE(vcpu->arch.mmu.root_hpa))
+		/* mmu.free() should set root_hpa = INVALID_PAGE */
 		vcpu->arch.mmu.free(vcpu);
-		vcpu->arch.mmu.root_hpa = INVALID_PAGE;
-	}
 }
 
 int kvm_mmu_reset_context(struct kvm_vcpu *vcpu)
@@ -2475,9 +2529,6 @@ int kvm_mmu_load(struct kvm_vcpu *vcpu)
 	r = mmu_topup_memory_caches(vcpu);
 	if (r)
 		goto out;
-	spin_lock(&vcpu->kvm->mmu_lock);
-	kvm_mmu_free_some_pages(vcpu);
-	spin_unlock(&vcpu->kvm->mmu_lock);
 	r = mmu_alloc_roots(vcpu);
 	spin_lock(&vcpu->kvm->mmu_lock);
 	mmu_sync_roots(vcpu);
@@ -2793,11 +2844,8 @@ int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gva_t cr2, u32 error_code)
 		return 1;
 	case EMULATE_DO_MMIO:
 		++vcpu->stat.mmio_exits;
-		return 0;
+		/* fall through */
 	case EMULATE_FAIL:
-		vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
-		vcpu->run->internal.suberror = KVM_INTERNAL_ERROR_EMULATION;
-		vcpu->run->internal.ndata = 0;
 		return 0;
 	default:
 		BUG();
@@ -2921,7 +2969,7 @@ static int kvm_mmu_remove_some_alloc_mmu_pages(struct kvm *kvm)
 
 	page = container_of(kvm->arch.active_mmu_pages.prev,
 			    struct kvm_mmu_page, link);
-	return kvm_mmu_zap_page(kvm, page) + 1;
+	return kvm_mmu_zap_page(kvm, page);
 }
 
 static int mmu_shrink(int nr_to_scan, gfp_t gfp_mask)
