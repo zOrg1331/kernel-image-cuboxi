@@ -554,29 +554,41 @@ static bool pin_sb_for_writeback(struct super_block *sb)
 
 /*
  * Write a portion of b_io inodes which belong to @sb.
- * If @wbc->sb != NULL, then find and write all such
+ *
+ * If @only_this_sb is true, then find and write all such
  * inodes. Otherwise write only ones which go sequentially
  * in reverse order.
+ *
  * Return 1, if the caller writeback routine should be
  * interrupted. Otherwise return 0.
  */
-static int writeback_sb_inodes(struct super_block *sb,
-			       struct bdi_writeback *wb,
-			       struct writeback_control *wbc)
+static int writeback_sb_inodes(struct super_block *sb, struct bdi_writeback *wb,
+		struct writeback_control *wbc, bool only_this_sb)
 {
 	while (!list_empty(&wb->b_io)) {
 		long pages_skipped;
 		struct inode *inode = list_entry(wb->b_io.prev,
 						 struct inode, i_list);
-		if (wbc->sb && sb != inode->i_sb) {
-			/* super block given and doesn't
-			   match, skip this inode */
-			redirty_tail(inode);
-			continue;
-		}
-		if (sb != inode->i_sb)
-			/* finish with this superblock */
+
+		if (inode->i_sb != sb) {
+			if (only_this_sb) {
+				/*
+				 * We only want to write back data for this
+				 * superblock, move all inodes not belonging
+				 * to it back onto the dirty list.
+				 */
+				redirty_tail(inode);
+				continue;
+			}
+
+			/*
+			 * The inode belongs to a different superblock.
+			 * Bounce back to the caller to unpin this and
+			 * pin the next superblock.
+			 */
 			return 0;
+		}
+
 		if (inode->i_state & (I_NEW | I_WILL_FREE)) {
 			requeue_io(inode);
 			continue;
@@ -614,8 +626,8 @@ static int writeback_sb_inodes(struct super_block *sb,
 	return 1;
 }
 
-static void writeback_inodes_wb(struct bdi_writeback *wb,
-				struct writeback_control *wbc)
+void writeback_inodes_wb(struct bdi_writeback *wb,
+		struct writeback_control *wbc)
 {
 	int ret = 0;
 
@@ -629,29 +641,12 @@ static void writeback_inodes_wb(struct bdi_writeback *wb,
 						 struct inode, i_list);
 		struct super_block *sb = inode->i_sb;
 
-		if (wbc->sb) {
-			/*
-			 * We are requested to write out inodes for a specific
-			 * superblock.  This means we already have s_umount
-			 * taken by the caller which also waits for us to
-			 * complete the writeout.
-			 */
-			if (sb != wbc->sb) {
-				redirty_tail(inode);
-				continue;
-			}
-
-			WARN_ON(!rwsem_is_locked(&sb->s_umount));
-
-			ret = writeback_sb_inodes(sb, wb, wbc);
-		} else {
-			if (!pin_sb_for_writeback(sb)) {
-				requeue_io(inode);
-				continue;
-			}
-			ret = writeback_sb_inodes(sb, wb, wbc);
-			drop_super(sb);
+		if (!pin_sb_for_writeback(sb)) {
+			requeue_io(inode);
+			continue;
 		}
+		ret = writeback_sb_inodes(sb, wb, wbc, false);
+		drop_super(sb);
 
 		if (ret)
 			break;
@@ -660,11 +655,17 @@ static void writeback_inodes_wb(struct bdi_writeback *wb,
 	/* Leave any unwritten inodes on b_io */
 }
 
-void writeback_inodes_wbc(struct writeback_control *wbc)
+static void __writeback_inodes_sb(struct super_block *sb,
+		struct bdi_writeback *wb, struct writeback_control *wbc)
 {
-	struct backing_dev_info *bdi = wbc->bdi;
+	WARN_ON(!rwsem_is_locked(&sb->s_umount));
 
-	writeback_inodes_wb(&bdi->wb, wbc);
+	wbc->wb_start = jiffies; /* livelock avoidance */
+	spin_lock(&inode_lock);
+	if (!wbc->for_kupdate || list_empty(&wb->b_io))
+		queue_io(wb, wbc->older_than_this);
+	writeback_sb_inodes(sb, wb, wbc, true);
+	spin_unlock(&inode_lock);
 }
 
 /*
@@ -705,8 +706,6 @@ static long wb_writeback(struct bdi_writeback *wb,
 			 struct wb_writeback_args *args)
 {
 	struct writeback_control wbc = {
-		.bdi			= wb->bdi,
-		.sb			= args->sb,
 		.sync_mode		= args->sync_mode,
 		.older_than_this	= NULL,
 		.for_kupdate		= args->for_kupdate,
@@ -744,7 +743,10 @@ static long wb_writeback(struct bdi_writeback *wb,
 		wbc.more_io = 0;
 		wbc.nr_to_write = MAX_WRITEBACK_PAGES;
 		wbc.pages_skipped = 0;
-		writeback_inodes_wb(wb, &wbc);
+		if (args->sb)
+			__writeback_inodes_sb(args->sb, wb, &wbc);
+		else
+			writeback_inodes_wb(wb, &wbc);
 		args->nr_pages -= MAX_WRITEBACK_PAGES - wbc.nr_to_write;
 		wrote += MAX_WRITEBACK_PAGES - wbc.nr_to_write;
 
