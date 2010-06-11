@@ -1,8 +1,8 @@
 /*
- * Copyright (C) 2009 Daniel Mack <daniel@caiaq.de>
+ * Copyright (C) 2010 Eric Benard - eric@eukrea.com
  *
- * Based on code for mobots boards,
- *   Copyright (C) 2009 Valentin Longchamp, EPFL Mobots group
+ * Based on board-pcm038.h which is :
+ * Copyright (C) 2008 Juergen Beisert (kernel@pengutronix.de)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -19,23 +19,22 @@
  * MA 02110-1301, USA.
  */
 
-#ifndef __ASM_ARCH_MXC_BOARD_MX31LILLY_H__
-#define __ASM_ARCH_MXC_BOARD_MX31LILLY_H__
+#ifndef __ASM_ARCH_MXC_BOARD_EUKREA_CPUIMX25_H__
+#define __ASM_ARCH_MXC_BOARD_EUKREA_CPUIMX25_H__
 
 #ifndef __ASSEMBLY__
-
-enum mx31lilly_boards {
-	MX31LILLY_NOBOARD	= 0,
-	MX31LILLY_DB		= 1,
-};
-
 /*
  * This CPU module needs a baseboard to work. After basic initializing
- * its own devices, it calls the baseboard's init function.
+ * its own devices, it calls baseboard's init function.
+ * TODO: Add your own baseboard init function and call it from
+ * inside eukrea_cpuimx25_init().
+ *
+ * This example here is for the development board. Refer
+ * eukrea_mbimx25-baseboard.c
  */
 
-extern void mx31lilly_db_init(void);
+extern void eukrea_mbimxsd_baseboard_init(void);
 
 #endif
 
-#endif /* __ASM_ARCH_MXC_BOARD_MX31LILLY_H__ */
+#endif /* __ASM_ARCH_MXC_BOARD_EUKREA_CPUIMX25_H__ */

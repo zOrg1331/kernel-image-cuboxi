@@ -31,8 +31,8 @@
  * This scb9328 has a 32MiB flash
  */
 static struct resource flash_resource = {
-	.start	= IMX_CS0_PHYS,
-	.end	= IMX_CS0_PHYS + (32 * 1024 * 1024) - 1,
+	.start	= MX1_CS0_PHYS,
+	.end	= MX1_CS0_PHYS + (32 * 1024 * 1024) - 1,
 	.flags	= IORESOURCE_MEM,
 };
 
@@ -70,13 +70,13 @@ static struct dm9000_plat_data dm9000_platdata = {
 static struct resource dm9000x_resources[] = {
 	{
 		.name	= "address area",
-		.start	= IMX_CS5_PHYS,
-		.end	= IMX_CS5_PHYS + 1,
+		.start	= MX1_CS5_PHYS,
+		.end	= MX1_CS5_PHYS + 1,
 		.flags	= IORESOURCE_MEM,	/* address access */
 	}, {
 		.name	= "data area",
-		.start	= IMX_CS5_PHYS + 4,
-		.end	= IMX_CS5_PHYS + 5,
+		.start	= MX1_CS5_PHYS + 4,
+		.end	= MX1_CS5_PHYS + 5,
 		.flags	= IORESOURCE_MEM,	/* data access */
 	}, {
 		.start	= IRQ_GPIOC(3),
@@ -108,11 +108,10 @@ static int uart1_mxc_init(struct platform_device *pdev)
 			ARRAY_SIZE(mxc_uart1_pins), "UART1");
 }
 
-static int uart1_mxc_exit(struct platform_device *pdev)
+static void uart1_mxc_exit(struct platform_device *pdev)
 {
 	mxc_gpio_release_multiple_pins(mxc_uart1_pins,
 			ARRAY_SIZE(mxc_uart1_pins));
-	return 0;
 }
 
 static struct imxuart_platform_data uart_pdata = {
