@@ -413,8 +413,10 @@ restore_one_signal_struct(struct cpt_task_image *ti, int *exiting, cpt_context_t
 			struct tty_struct *tty = obj->o_obj;
 			if (!tty->session || tty->session ==
 					task_session(current)) {
-				tty->session = task_session(current);
-				current->signal->tty = tty;
+				put_pid(tty->session);
+				tty->session = get_pid(task_session(current));
+				tty_kref_put(current->signal->tty);
+				current->signal->tty = tty_kref_get(tty);
 			} else {
 				wprintk_ctx("tty session mismatch\n");
 			}
