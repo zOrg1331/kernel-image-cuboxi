@@ -208,13 +208,19 @@ static void allocate_broadcast_channel(struct fw_card *card, int generation)
 {
 	int channel, bandwidth = 0;
 
-	fw_iso_resource_manage(card, generation, 1ULL << 31, &channel,
-			       &bandwidth, true, card->bm_transaction_data);
-	if (channel == 31) {
+	if (!card->broadcast_channel_allocated) {
+		fw_iso_resource_manage(card, generation, 1ULL << 31,
+				       &channel, &bandwidth, true,
+				       card->bm_transaction_data);
+		if (channel != 31) {
+			fw_notify("failed to allocate broadcast channel\n");
+			return;
+		}
 		card->broadcast_channel_allocated = true;
-		device_for_each_child(card->device, (void *)(long)generation,
-				      fw_device_set_broadcast_channel);
 	}
+
+	device_for_each_child(card->device, (void *)(long)generation,
+			      fw_device_set_broadcast_channel);
 }
 
 static const char gap_count_table[] = {
@@ -267,7 +273,8 @@ static void fw_card_bm_work(struct work_struct *work)
 
 	grace = time_after(jiffies, card->reset_jiffies + DIV_ROUND_UP(HZ, 8));
 
-	if (is_next_generation(generation, card->bm_generation) ||
+	if ((is_next_generation(generation, card->bm_generation) &&
+	     !card->bm_abdicate) ||
 	    (card->bm_generation != generation && grace)) {
 		/*
 		 * This first step is to figure out who is IRM and
@@ -320,6 +327,16 @@ static void fw_card_bm_work(struct work_struct *work)
 			goto out;
 		}
 
+		if (rcode == RCODE_SEND_ERROR) {
+			/*
+			 * We have been unable to send the lock request due to
+			 * some local problem.  Let's try again later and hope
+			 * that the problem has gone away by then.
+			 */
+			fw_schedule_bm_work(card, DIV_ROUND_UP(HZ, 8));
+			goto out;
+		}
+
 		spin_lock_irqsave(&card->lock, flags);
 
 		if (rcode != RCODE_COMPLETE) {
@@ -366,10 +383,8 @@ static void fw_card_bm_work(struct work_struct *work)
 		goto out;
 	} else if (root_device_is_cmc) {
 		/*
-		 * FIXME: I suppose we should set the cmstr bit in the
-		 * STATE_CLEAR register of this node, as described in
-		 * 1394-1995, 8.4.2.6.  Also, send out a force root
-		 * packet for this node.
+		 * We will send out a force root packet for this
+		 * node as part of the gap count optimization.
 		 */
 		new_root_id = root_id;
 	} else {
@@ -410,10 +425,24 @@ static void fw_card_bm_work(struct work_struct *work)
 		fw_send_phy_config(card, new_root_id, generation, gap_count);
 		fw_core_initiate_bus_reset(card, 1);
 		/* Will allocate broadcast channel after the reset. */
-	} else {
-		if (local_id == irm_id)
-			allocate_broadcast_channel(card, generation);
+		goto out;
 	}
+
+	if (root_device_is_cmc) {
+		/*
+		 * Make sure that the cycle master sends cycle start packets.
+		 */
+		card->bm_transaction_data[0] = cpu_to_be32(CSR_STATE_BIT_CMSTR);
+		rcode = fw_run_transaction(card, TCODE_WRITE_QUADLET_REQUEST,
+				root_id, generation, SCODE_100,
+				CSR_REGISTER_BASE + CSR_STATE_SET,
+				card->bm_transaction_data, sizeof(u32));
+		if (rcode == RCODE_GENERATION)
+			goto out;
+	}
+
+	if (local_id == irm_id)
+		allocate_broadcast_channel(card, generation);
 
  out:
 	fw_node_put(root_node);
@@ -432,6 +461,10 @@ void fw_card_initialize(struct fw_card *card,
 	card->device = device;
 	card->current_tlabel = 0;
 	card->tlabel_mask = 0;
+	card->split_timeout_hi = 0;
+	card->split_timeout_lo = 800 << 19;
+	card->split_timeout_cycles = 800;
+	card->split_timeout_jiffies = DIV_ROUND_UP(HZ, 10);
 	card->color = 0;
 	card->broadcast_channel = BROADCAST_CHANNEL_INITIAL;
 

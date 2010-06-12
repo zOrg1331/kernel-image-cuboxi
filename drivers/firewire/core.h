@@ -38,6 +38,12 @@ struct fw_packet;
 #define BROADCAST_CHANNEL_INITIAL	(1 << 31 | 31)
 #define BROADCAST_CHANNEL_VALID		(1 << 30)
 
+#define FEATURE_PRIORITY_BUDGET		0x01
+#define FEATURE_CHANNEL_31_ALLOCATED	0x02
+
+#define CSR_STATE_BIT_CMSTR	(1 << 8)
+#define CSR_STATE_BIT_ABDICATE	(1 << 10)
+
 struct fw_card_driver {
 	/*
 	 * Enable the given card with the given initial config rom.
@@ -75,7 +81,10 @@ struct fw_card_driver {
 	int (*enable_phys_dma)(struct fw_card *card,
 			       int node_id, int generation);
 
-	u32 (*get_cycle_time)(struct fw_card *card);
+	u32 (*read_csr_reg)(struct fw_card *card, int csr_offset);
+	void (*write_csr_reg)(struct fw_card *card, int csr_offset, u32 value);
+
+	unsigned int (*get_features)(struct fw_card *card);
 
 	struct fw_iso_context *
 	(*allocate_iso_context)(struct fw_card *card,
