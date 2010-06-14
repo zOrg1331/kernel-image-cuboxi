@@ -117,8 +117,6 @@ struct platform_device mxc_uart_device4 = {
 	.num_resources = ARRAY_SIZE(uart4),
 };
 
-#define MX25_OTG_BASE_ADDR 0x53FF4000
-
 static u64 otg_dmamask = DMA_BIT_MASK(32);
 
 static struct resource mxc_otg_resources[] = {
@@ -514,4 +512,62 @@ struct platform_device mxc_wdt = {
 	.id = 0,
 	.num_resources = ARRAY_SIZE(mxc_wdt_resources),
 	.resource = mxc_wdt_resources,
+};
+
+static struct resource mx25_kpp_resources[] = {
+	{
+		.start	= MX25_KPP_BASE_ADDR,
+		.end	= MX25_KPP_BASE_ADDR + 0xf,
+		.flags	= IORESOURCE_MEM,
+	},
+	{
+		.start	= MX25_INT_KPP,
+		.end	= MX25_INT_KPP,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+struct platform_device mx25_kpp_device = {
+	.name	= "imx-keypad",
+	.id	= -1,
+	.num_resources	= ARRAY_SIZE(mx25_kpp_resources),
+	.resource	= mx25_kpp_resources,
+};
+
+static struct resource imx_ssi_resources0[] = {
+	{
+		.start	= MX25_SSI1_BASE_ADDR,
+		.end	= MX25_SSI1_BASE_ADDR + 0x3fff,
+		.flags	= IORESOURCE_MEM,
+	}, {
+		.start	= MX25_INT_SSI1,
+		.end	= MX25_INT_SSI1,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct resource imx_ssi_resources1[] = {
+	{
+		.start	= MX25_SSI2_BASE_ADDR,
+		.end	= MX25_SSI2_BASE_ADDR + 0x3fff,
+		.flags	= IORESOURCE_MEM
+	}, {
+		.start	= MX25_INT_SSI2,
+		.end	= MX25_INT_SSI2,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+struct platform_device imx_ssi_device0 = {
+	.name = "imx-ssi",
+	.id = 0,
+	.num_resources = ARRAY_SIZE(imx_ssi_resources0),
+	.resource = imx_ssi_resources0,
+};
+
+struct platform_device imx_ssi_device1 = {
+	.name = "imx-ssi",
+	.id = 1,
+	.num_resources = ARRAY_SIZE(imx_ssi_resources1),
+	.resource = imx_ssi_resources1,
 };
