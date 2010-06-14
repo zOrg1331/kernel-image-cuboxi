@@ -16,6 +16,12 @@
  * Boston, MA  02110-1301, USA.
  */
 
+/*
+ * This machine is known as:
+ *  - i.MX25 3-Stack Development System
+ *  - i.MX25 Platform Development Kit (i.MX25 PDK)
+ */
+
 #include <linux/types.h>
 #include <linux/init.h>
 #include <linux/delay.h>
@@ -182,6 +188,7 @@ static void __init mx25pdk_init(void)
 	mxc_register_device(&mxc_nand_device, &mx25pdk_nand_board_info);
 	mxc_register_device(&mx25_rtc_device, NULL);
 	mxc_register_device(&mx25_fb_device, &mx25pdk_fb_pdata);
+	mxc_register_device(&mxc_wdt, NULL);
 
 	mx25pdk_fec_reset();
 	mxc_register_device(&mx25_fec_device, &mx25_fec_pdata);

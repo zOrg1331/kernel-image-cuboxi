@@ -109,6 +109,16 @@ static unsigned long get_rate_uart(struct clk *clk)
 	return get_rate_per(15);
 }
 
+static unsigned long get_rate_ssi2(struct clk *clk)
+{
+	return get_rate_per(14);
+}
+
+static unsigned long get_rate_ssi1(struct clk *clk)
+{
+	return get_rate_per(13);
+}
+
 static unsigned long get_rate_i2c(struct clk *clk)
 {
 	return get_rate_per(6);
@@ -131,7 +141,10 @@ static unsigned long get_rate_lcdc(struct clk *clk)
 
 static unsigned long get_rate_otg(struct clk *clk)
 {
-	return 48000000; /* FIXME */
+	unsigned long cctl = readl(CRM_BASE + CCM_CCTL);
+	unsigned long rate = get_rate_upll();
+
+	return (cctl & (1 << 23)) ? 0 : rate / ((0x3F & (cctl >> 16)) + 1);
 }
 
 static int clk_cgcr_enable(struct clk *clk)
@@ -166,8 +179,32 @@ static void clk_cgcr_disable(struct clk *clk)
 		.secondary	= s,			\
 	}
 
+/*
+ * Note: the following IPG clock gating bits are wrongly marked "Reserved" in
+ * the i.MX25 Reference Manual Rev 1, table 15-13. The information below is
+ * taken from the Freescale released BSP.
+ *
+ * bit	reg	offset	clock
+ *
+ * 0	CGCR1	0	AUDMUX
+ * 12	CGCR1	12	ESAI
+ * 16	CGCR1	16	GPIO1
+ * 17	CGCR1	17	GPIO2
+ * 18	CGCR1	18	GPIO3
+ * 23	CGCR1	23	I2C1
+ * 24	CGCR1	24	I2C2
+ * 25	CGCR1	25	I2C3
+ * 27	CGCR1	27	IOMUXC
+ * 28	CGCR1	28	KPP
+ * 30	CGCR1	30	OWIRE
+ * 36	CGCR2	4	RTIC
+ * 51	CGCR2	19	WDOG
+ */
+
 DEFINE_CLOCK(gpt_clk,    0, CCM_CGCR0,  5, get_rate_gpt, NULL, NULL);
 DEFINE_CLOCK(uart_per_clk, 0, CCM_CGCR0, 15, get_rate_uart, NULL, NULL);
+DEFINE_CLOCK(ssi1_per_clk, 0, CCM_CGCR0, 13, get_rate_ipg, NULL, NULL);
+DEFINE_CLOCK(ssi2_per_clk, 0, CCM_CGCR0, 14, get_rate_ipg, NULL, NULL);
 DEFINE_CLOCK(cspi1_clk,  0, CCM_CGCR1,  5, get_rate_ipg, NULL, NULL);
 DEFINE_CLOCK(cspi2_clk,  0, CCM_CGCR1,  6, get_rate_ipg, NULL, NULL);
 DEFINE_CLOCK(cspi3_clk,  0, CCM_CGCR1,  7, get_rate_ipg, NULL, NULL);
@@ -191,6 +228,10 @@ DEFINE_CLOCK(i2c_clk,	 0, CCM_CGCR0,  6, get_rate_i2c, NULL, NULL);
 DEFINE_CLOCK(fec_clk,	 0, CCM_CGCR1, 15, get_rate_ipg, NULL, &fec_ahb_clk);
 DEFINE_CLOCK(dryice_clk, 0, CCM_CGCR1,  8, get_rate_ipg, NULL, NULL);
 DEFINE_CLOCK(lcdc_clk,	 0, CCM_CGCR1, 29, get_rate_lcdc, NULL, &lcdc_per_clk);
+DEFINE_CLOCK(wdt_clk,    0, CCM_CGCR2, 19, get_rate_ipg, NULL,  NULL);
+DEFINE_CLOCK(ssi1_clk,  0, CCM_CGCR2, 11, get_rate_ssi1, NULL, &ssi1_per_clk);
+DEFINE_CLOCK(ssi2_clk,  1, CCM_CGCR2, 12, get_rate_ssi2, NULL, &ssi2_per_clk);
+DEFINE_CLOCK(audmux_clk, 0, CCM_CGCR1, 0, NULL, NULL, NULL);
 
 #define _REGISTER_CLOCK(d, n, c)	\
 	{				\
@@ -225,6 +266,10 @@ static struct clk_lookup lookups[] = {
 	_REGISTER_CLOCK("fec.0", NULL, fec_clk)
 	_REGISTER_CLOCK("imxdi_rtc.0", NULL, dryice_clk)
 	_REGISTER_CLOCK("imx-fb.0", NULL, lcdc_clk)
+	_REGISTER_CLOCK("imx-wdt.0", NULL, wdt_clk)
+	_REGISTER_CLOCK("imx-ssi.0", NULL, ssi1_clk)
+	_REGISTER_CLOCK("imx-ssi.1", NULL, ssi2_clk)
+	_REGISTER_CLOCK(NULL, "audmux", audmux_clk)
 };
 
 int __init mx25_clocks_init(void)
