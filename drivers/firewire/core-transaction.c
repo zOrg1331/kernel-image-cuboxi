@@ -246,7 +246,7 @@ static void fw_fill_request(struct fw_packet *packet, int tcode, int tlabel,
 		break;
 
 	default:
-		WARN(1, KERN_ERR "wrong tcode %d", tcode);
+		WARN(1, "wrong tcode %d", tcode);
 	}
  common:
 	packet->speed = speed;
@@ -339,7 +339,8 @@ void fw_send_request(struct fw_card *card, struct fw_transaction *t, int tcode,
 	setup_timer(&t->split_timeout_timer,
 		    split_transaction_timeout_callback, (unsigned long)t);
 	/* FIXME: start this timer later, relative to t->timestamp */
-	mod_timer(&t->split_timeout_timer, jiffies + DIV_ROUND_UP(HZ, 10));
+	mod_timer(&t->split_timeout_timer,
+		  jiffies + card->split_timeout_jiffies);
 	t->callback = callback;
 	t->callback_data = callback_data;
 
@@ -580,6 +581,41 @@ static void free_response_callback(struct fw_packet *packet,
 	kfree(request);
 }
 
+int fw_get_response_length(struct fw_request *r)
+{
+	int tcode, ext_tcode, data_length;
+
+	tcode = HEADER_GET_TCODE(r->request_header[0]);
+
+	switch (tcode) {
+	case TCODE_WRITE_QUADLET_REQUEST:
+	case TCODE_WRITE_BLOCK_REQUEST:
+		return 0;
+
+	case TCODE_READ_QUADLET_REQUEST:
+		return 4;
+
+	case TCODE_READ_BLOCK_REQUEST:
+		data_length = HEADER_GET_DATA_LENGTH(r->request_header[3]);
+		return data_length;
+
+	case TCODE_LOCK_REQUEST:
+		ext_tcode = HEADER_GET_EXTENDED_TCODE(r->request_header[3]);
+		data_length = HEADER_GET_DATA_LENGTH(r->request_header[3]);
+		switch (ext_tcode) {
+		case EXTCODE_FETCH_ADD:
+		case EXTCODE_LITTLE_ADD:
+			return data_length;
+		default:
+			return data_length / 2;
+		}
+
+	default:
+		WARN(1, "wrong tcode %d", tcode);
+		return 0;
+	}
+}
+
 void fw_fill_response(struct fw_packet *response, u32 *request_header,
 		      int rcode, void *payload, size_t length)
 {
@@ -631,18 +667,35 @@ void fw_fill_response(struct fw_packet *response, u32 *request_header,
 		break;
 
 	default:
-		WARN(1, KERN_ERR "wrong tcode %d", tcode);
+		WARN(1, "wrong tcode %d", tcode);
 	}
 
 	response->payload_mapped = false;
 }
 EXPORT_SYMBOL(fw_fill_response);
 
-static struct fw_request *allocate_request(struct fw_packet *p)
+static u32 compute_split_timeout_timestamp(struct fw_card *card,
+					   u32 request_timestamp)
+{
+	unsigned int cycles;
+	u32 timestamp;
+
+	cycles = card->split_timeout_cycles;
+	cycles += request_timestamp & 0x1fff;
+
+	timestamp = request_timestamp & ~0x1fff;
+	timestamp += (cycles / 8000) << 13;
+	timestamp |= cycles % 8000;
+
+	return timestamp;
+}
+
+static struct fw_request *allocate_request(struct fw_card *card,
+					   struct fw_packet *p)
 {
 	struct fw_request *request;
 	u32 *data, length;
-	int request_tcode, t;
+	int request_tcode;
 
 	request_tcode = HEADER_GET_TCODE(p->header[0]);
 	switch (request_tcode) {
@@ -677,14 +730,9 @@ static struct fw_request *allocate_request(struct fw_packet *p)
 	if (request == NULL)
 		return NULL;
 
-	t = (p->timestamp & 0x1fff) + 4000;
-	if (t >= 8000)
-		t = (p->timestamp & ~0x1fff) + 0x2000 + t - 8000;
-	else
-		t = (p->timestamp & ~0x1fff) + t;
-
 	request->response.speed = p->speed;
-	request->response.timestamp = t;
+	request->response.timestamp =
+			compute_split_timeout_timestamp(card, p->timestamp);
 	request->response.generation = p->generation;
 	request->response.ack = 0;
 	request->response.callback = free_response_callback;
@@ -713,7 +761,8 @@ void fw_send_response(struct fw_card *card,
 
 	if (rcode == RCODE_COMPLETE)
 		fw_fill_response(&request->response, request->request_header,
-				 rcode, request->data, request->length);
+				 rcode, request->data,
+				 fw_get_response_length(request));
 	else
 		fw_fill_response(&request->response, request->request_header,
 				 rcode, NULL, 0);
@@ -809,7 +858,7 @@ void fw_core_handle_request(struct fw_card *card, struct fw_packet *p)
 	if (p->ack != ACK_PENDING && p->ack != ACK_COMPLETE)
 		return;
 
-	request = allocate_request(p);
+	request = allocate_request(card, p);
 	if (request == NULL) {
 		/* FIXME: send statically allocated busy packet. */
 		return;
@@ -933,6 +982,52 @@ static const struct fw_address_region registers_region =
 	{ .start = CSR_REGISTER_BASE,
 	  .end   = CSR_REGISTER_BASE | CSR_CONFIG_ROM, };
 
+static u32 read_state_register(struct fw_card *card)
+{
+	/*
+	 * Fixed bits (IEEE 1394-2008 8.3.2.2.1):
+	 * Bits 0-1 (state) always read 00=running.
+	 * Bits 2,3 (off, atn) are not implemented as per the spec.
+	 * Bit 4 (elog) is not implemented because there is no error log.
+	 * Bit 6 (dreq) cannot be set.  It is intended to "disable requests
+	 *      from unreliable nodes"; however, IEEE 1212 states that devices
+	 *      may "clear their own dreq bit when it has been improperly set".
+	 *      Our implementation might be seen as an improperly extensive
+	 *      interpretation of "improperly", but the 1212-2001 revision
+	 *      dropped this bit altogether, so we're in the clear.  :o)
+	 * Bit 7 (lost) always reads 0 because a power reset has never occurred
+	 *      during normal operation.
+	 * Bit 9 (linkoff) is not implemented because the PC is not powered
+	 *      from the FireWire cable.
+	 * Bit 15 (gone) always reads 0.  It must be set at a power/command/bus
+	 *      reset, but then cleared when the units are ready again, which
+	 *      happens immediately for us.
+	 */
+	u32 value = 0x0000;
+
+	/* Bit 8 (cmstr): */
+	value |= card->driver->read_csr_reg(card, CSR_STATE_CLEAR);
+
+	/* Bit 10 (abdicate): */
+	if (card->csr_abdicate)
+		value |= CSR_STATE_BIT_ABDICATE;
+
+	return value;
+}
+
+static void update_split_timeout(struct fw_card *card)
+{
+	unsigned int cycles;
+
+	cycles = card->split_timeout_hi * 8000 + (card->split_timeout_lo >> 19);
+
+	cycles = max(cycles, 800u); /* minimum as per the spec */
+	cycles = min(cycles, 3u * 8000u); /* maximum OHCI timeout */
+
+	card->split_timeout_cycles = cycles;
+	card->split_timeout_jiffies = DIV_ROUND_UP(cycles * HZ, 8000);
+}
+
 static void handle_registers(struct fw_card *card, struct fw_request *request,
 		int tcode, int destination, int source, int generation,
 		int speed, unsigned long long offset,
@@ -941,11 +1036,132 @@ static void handle_registers(struct fw_card *card, struct fw_request *request,
 	int reg = offset & ~CSR_REGISTER_BASE;
 	__be32 *data = payload;
 	int rcode = RCODE_COMPLETE;
+	unsigned long flags;
 
 	switch (reg) {
+	case CSR_STATE_CLEAR:
+		if (tcode == TCODE_READ_QUADLET_REQUEST) {
+			*data = cpu_to_be32(read_state_register(card));
+		} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
+			card->driver->write_csr_reg(card, CSR_STATE_CLEAR,
+						    be32_to_cpu(*data));
+			if (*data & cpu_to_be32(CSR_STATE_BIT_ABDICATE))
+				card->csr_abdicate = false;
+		} else {
+			rcode = RCODE_TYPE_ERROR;
+		}
+		break;
+
+	case CSR_STATE_SET:
+		if (tcode == TCODE_READ_QUADLET_REQUEST) {
+			*data = cpu_to_be32(read_state_register(card));
+		} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
+			card->driver->write_csr_reg(card, CSR_STATE_SET,
+						    be32_to_cpu(*data));
+			if (*data & cpu_to_be32(CSR_STATE_BIT_ABDICATE))
+				card->csr_abdicate = true;
+		} else {
+			rcode = RCODE_TYPE_ERROR;
+		}
+		break;
+
+	case CSR_NODE_IDS:
+		if (tcode == TCODE_READ_QUADLET_REQUEST)
+			*data = cpu_to_be32(card->driver->
+					read_csr_reg(card, CSR_NODE_IDS));
+		else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
+			card->driver->write_csr_reg(card, CSR_NODE_IDS,
+						    be32_to_cpu(*data));
+		else
+			rcode = RCODE_TYPE_ERROR;
+		break;
+
+	case CSR_RESET_START:
+		if (tcode == TCODE_WRITE_QUADLET_REQUEST)
+			card->csr_abdicate = false;
+		else
+			rcode = RCODE_TYPE_ERROR;
+		break;
+
+	case CSR_SPLIT_TIMEOUT_HI:
+		if (tcode == TCODE_READ_QUADLET_REQUEST) {
+			*data = cpu_to_be32(card->split_timeout_hi);
+		} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
+			spin_lock_irqsave(&card->lock, flags);
+			card->split_timeout_hi = be32_to_cpu(*data) & 7;
+			update_split_timeout(card);
+			spin_unlock_irqrestore(&card->lock, flags);
+		} else {
+			rcode = RCODE_TYPE_ERROR;
+		}
+		break;
+
+	case CSR_SPLIT_TIMEOUT_LO:
+		if (tcode == TCODE_READ_QUADLET_REQUEST) {
+			*data = cpu_to_be32(card->split_timeout_lo);
+		} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
+			spin_lock_irqsave(&card->lock, flags);
+			card->split_timeout_lo =
+					be32_to_cpu(*data) & 0xfff80000;
+			update_split_timeout(card);
+			spin_unlock_irqrestore(&card->lock, flags);
+		} else {
+			rcode = RCODE_TYPE_ERROR;
+		}
+		break;
+
 	case CSR_CYCLE_TIME:
 		if (TCODE_IS_READ_REQUEST(tcode) && length == 4)
-			*data = cpu_to_be32(card->driver->get_cycle_time(card));
+			*data = cpu_to_be32(card->driver->
+					read_csr_reg(card, CSR_CYCLE_TIME));
+		else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
+			card->driver->write_csr_reg(card, CSR_CYCLE_TIME,
+						    be32_to_cpu(*data));
+		else
+			rcode = RCODE_TYPE_ERROR;
+		break;
+
+	case CSR_BUS_TIME:
+		if (tcode == TCODE_READ_QUADLET_REQUEST)
+			*data = cpu_to_be32(card->driver->
+					read_csr_reg(card, CSR_BUS_TIME));
+		else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
+			card->driver->write_csr_reg(card, CSR_BUS_TIME,
+						    be32_to_cpu(*data));
+		else
+			rcode = RCODE_TYPE_ERROR;
+		break;
+
+	case CSR_BUSY_TIMEOUT:
+		if (tcode == TCODE_READ_QUADLET_REQUEST)
+			*data = cpu_to_be32(card->driver->
+					read_csr_reg(card, CSR_BUSY_TIMEOUT));
+		else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
+			card->driver->write_csr_reg(card, CSR_BUSY_TIMEOUT,
+						    be32_to_cpu(*data));
+		else
+			rcode = RCODE_TYPE_ERROR;
+		break;
+
+	case CSR_PRIORITY_BUDGET:
+		if (!(card->driver->get_features(card) &
+						FEATURE_PRIORITY_BUDGET))
+			rcode = RCODE_ADDRESS_ERROR;
+		else if (tcode == TCODE_READ_QUADLET_REQUEST)
+			*data = cpu_to_be32(card->driver->
+				read_csr_reg(card, CSR_PRIORITY_BUDGET));
+		else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
+			card->driver->write_csr_reg(card, CSR_PRIORITY_BUDGET,
+						    be32_to_cpu(*data));
+		else
+			rcode = RCODE_TYPE_ERROR;
+		break;
+
+	case CSR_MAINT_UTILITY:
+		if (tcode == TCODE_READ_QUADLET_REQUEST)
+			*data = card->maint_utility_register;
+		else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
+			card->maint_utility_register = *data;
 		else
 			rcode = RCODE_TYPE_ERROR;
 		break;
@@ -974,12 +1190,6 @@ static void handle_registers(struct fw_card *card, struct fw_request *request,
 		 */
 		BUG();
 		break;
-
-	case CSR_BUSY_TIMEOUT:
-		/* FIXME: Implement this. */
-
-	case CSR_BUS_TIME:
-		/* Useless without initialization by the bus manager. */
 
 	default:
 		rcode = RCODE_ADDRESS_ERROR;
