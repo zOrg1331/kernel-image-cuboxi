@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.34
-# Wed May 26 19:04:39 2010
+# Linux kernel version: 2.6.35-rc3
+# Wed Jun 16 08:03:01 2010
 #
 CONFIG_ARM=y
 CONFIG_SYS_SUPPORTS_APM_EMULATION=y
@@ -34,6 +34,7 @@ CONFIG_EXPERIMENTAL=y
 CONFIG_BROKEN_ON_SMP=y
 CONFIG_LOCK_KERNEL=y
 CONFIG_INIT_ENV_ARG_LIMIT=32
+CONFIG_CROSS_COMPILE=""
 CONFIG_LOCALVERSION=""
 CONFIG_LOCALVERSION_AUTO=y
 CONFIG_HAVE_KERNEL_GZIP=y
@@ -253,6 +254,7 @@ CONFIG_SAMSUNG_GPIO_EXTRA=0
 CONFIG_S3C_GPIO_SPACE=0
 CONFIG_S3C_GPIO_TRACK=y
 # CONFIG_S3C_ADC is not set
+CONFIG_S3C_DEV_FB=y
 CONFIG_S3C_DEV_WDT=y
 CONFIG_SAMSUNG_DEV_ADC=y
 CONFIG_SAMSUNG_DEV_TS=y
@@ -264,10 +266,19 @@ CONFIG_S3C_PL330_DMA=y
 CONFIG_PLAT_S5P=y
 CONFIG_S5P_EXT_INT=y
 CONFIG_CPU_S5PV210=y
-# CONFIG_MACH_AQUILA is not set
+CONFIG_S5PV210_SETUP_FB_24BPP=y
+
+#
+# S5PC110 Machines
+#
+CONFIG_MACH_AQUILA=y
 # CONFIG_MACH_GONI is not set
+CONFIG_MACH_SMDKC110=y
+
+#
+# S5PV210 Machines
+#
 CONFIG_MACH_SMDKV210=y
-# CONFIG_MACH_SMDKC110 is not set
 
 #
 # Processor Type
@@ -567,6 +578,7 @@ CONFIG_HW_RANDOM=y
 # CONFIG_R3964 is not set
 # CONFIG_RAW_DRIVER is not set
 # CONFIG_TCG_TPM is not set
+# CONFIG_RAMOOPS is not set
 # CONFIG_I2C is not set
 # CONFIG_SPI is not set
 
@@ -599,6 +611,10 @@ CONFIG_GPIOLIB=y
 #
 # AC97 GPIO expanders:
 #
+
+#
+# MODULbus GPIO expanders:
+#
 # CONFIG_W1 is not set
 # CONFIG_POWER_SUPPLY is not set
 # CONFIG_HWMON is not set
@@ -611,10 +627,7 @@ CONFIG_SSB_POSSIBLE=y
 # Sonics Silicon Backplane
 #
 # CONFIG_SSB is not set
-
-#
-# Multifunction device drivers
-#
+CONFIG_MFD_SUPPORT=y
 # CONFIG_MFD_CORE is not set
 # CONFIG_MFD_SM501 is not set
 # CONFIG_MFD_ASIC3 is not set
@@ -624,6 +637,7 @@ CONFIG_SSB_POSSIBLE=y
 # CONFIG_MFD_T7L66XB is not set
 # CONFIG_MFD_TC6387XB is not set
 # CONFIG_MFD_TC6393XB is not set
+# CONFIG_ABX500_CORE is not set
 # CONFIG_REGULATOR is not set
 # CONFIG_MEDIA_SUPPORT is not set
 
