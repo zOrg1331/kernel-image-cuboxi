@@ -17,12 +17,12 @@ igb
 #omnibook
 
 #virtualization drivers
-#virtualbox
-#virtualbox-addition
+virtualbox
+virtualbox-addition
 
 #other drivers
 #lirc
-#subfs
+subfs
 #svgalib_helper
 #etercifs
 
