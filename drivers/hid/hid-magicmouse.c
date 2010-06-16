@@ -30,6 +30,10 @@ static bool emulate_scroll_wheel = true;
 module_param(emulate_scroll_wheel, bool, 0644);
 MODULE_PARM_DESC(emulate_scroll_wheel, "Emulate a scroll wheel");
 
+static bool scroll_acceleration = false;
+module_param(scroll_acceleration, bool, 0644);
+MODULE_PARM_DESC(scroll_acceleration, "Accelerate sequential scroll events");
+
 static bool report_touches = true;
 module_param(report_touches, bool, 0644);
 MODULE_PARM_DESC(report_touches, "Emit touch records (otherwise, only use them for emulation)");
@@ -160,10 +164,9 @@ static void magicmouse_emit_touch(struct magicmouse_sc *msc, int raw_id, u8 *tda
 	msc->touches[id].size = misc & 63;
 
 	/* If requested, emulate a scroll wheel by detecting small
-	 * vertical touch motions along the middle of the mouse.
+	 * vertical touch motions.
 	 */
-	if (emulate_scroll_wheel &&
-	    middle_button_start < x && x < middle_button_stop) {
+	if (emulate_scroll_wheel) {
 		static const int accel_profile[] = {
 			256, 228, 192, 160, 128, 96, 64, 32,
 		};
@@ -178,7 +181,9 @@ static void magicmouse_emit_touch(struct magicmouse_sc *msc, int raw_id, u8 *tda
 		switch (tdata[7] & TOUCH_STATE_MASK) {
 		case TOUCH_STATE_START:
 			msc->touches[id].scroll_y = y;
-			msc->scroll_accel = min_t(int, msc->scroll_accel + 1,
+			if (scroll_acceleration)
+				msc->scroll_accel = min_t(int,
+						msc->scroll_accel + 1,
 						ARRAY_SIZE(accel_profile) - 1);
 			break;
 		case TOUCH_STATE_DRAG:
