@@ -34,6 +34,11 @@
  * @in:		GPIO_IN_n
  * @out:	GPIO_OUT_n
  * @oe:		GPIO_OE_n
+ * @int_status:	GPIO_INT_STATUS_n
+ * @int_clear:	GPIO_INT_CLEAR_n
+ * @int_en:	GPIO_INT_EN_n
+ * @int_edge:	GPIO_INT_EDGE_n
+ * @int_pos:	GPIO_INT_POS_n
  *
  * Registers are not guaranteed to be packed in memory, or even
  * located in a predictable pattern.
@@ -42,6 +47,11 @@ struct msm7200a_gpio_regs {
 	void __iomem *in;
 	void __iomem *out;
 	void __iomem *oe;
+	void __iomem *int_status;
+	void __iomem *int_clear;
+	void __iomem *int_en;
+	void __iomem *int_edge;
+	void __iomem *int_pos;
 };
 
 /**
@@ -50,12 +60,27 @@ struct msm7200a_gpio_regs {
  *		directly to gpio_chip.base.
  * @ngpio:	The number of gpio lines to be managed by the device.
  *		Must be <= 32.  Corresponds directly to gpio_chip.ngpio.
+ * @irq_base:	The first irq to be assigned to the device.  The gpio
+ *		at 'gpio_base' will be assigned irq 'irq_base',
+ *		gpio 'gpio_base + 1' will receive irq 'irq_base + 1',
+ *		and so on.
+ * @irq_summary:	The summary irq line which will be used by the device
+ *			to notify the kernel when an interrupt occurs on
+ *			any of its gpio lines.  Most MSM SoCs have more
+ *			than one gpio device sharing each of these.
+ * @latch_level_irqs:	The MSM gpio hardware latches level interrupts,
+ *			which is atypical.  Setting this flag to false
+ *			makes the driver compensate for this and produce
+ *			the traditional unlatched behavior for level irqs.
  * @regs:	Addresses of the registers which control the gpios
  *		to be managed by the device.
  */
 struct msm7200a_gpio_platform_data {
 	unsigned gpio_base;
 	unsigned ngpio;
+	unsigned irq_base;
+	unsigned irq_summary;
+	bool latch_level_irqs;
 	struct msm7200a_gpio_regs regs;
 };
 
