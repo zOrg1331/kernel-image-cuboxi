@@ -34,7 +34,7 @@ int inode_change_ok(const struct inode *inode, struct iattr *attr)
 	 * First check size constraints.  These can't be overriden using
 	 * ATTR_FORCE.
 	 */
-	if (attr->ia_mode & ATTR_SIZE) {
+	if (ia_valid & ATTR_SIZE) {
 		int error = inode_newsize_ok(inode, attr->ia_size);
 		if (error)
 			return error;
