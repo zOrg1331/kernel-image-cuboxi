@@ -11,11 +11,14 @@
 #include <linux/kthread.h>
 #include <linux/slab.h>
 
-enum tomoyo_gc_id {
+enum tomoyo_policy_id {
 	TOMOYO_ID_PATH_GROUP,
 	TOMOYO_ID_PATH_GROUP_MEMBER,
+	TOMOYO_ID_NUMBER_GROUP,
+	TOMOYO_ID_NUMBER_GROUP_MEMBER,
 	TOMOYO_ID_DOMAIN_INITIALIZER,
 	TOMOYO_ID_DOMAIN_KEEPER,
+	TOMOYO_ID_AGGREGATOR,
 	TOMOYO_ID_ALIAS,
 	TOMOYO_ID_GLOBALLY_READABLE,
 	TOMOYO_ID_PATTERN,
@@ -23,7 +26,8 @@ enum tomoyo_gc_id {
 	TOMOYO_ID_MANAGER,
 	TOMOYO_ID_NAME,
 	TOMOYO_ID_ACL,
-	TOMOYO_ID_DOMAIN
+	TOMOYO_ID_DOMAIN,
+	TOMOYO_MAX_POLICY
 };
 
 struct tomoyo_gc_entry {
@@ -75,6 +79,12 @@ static void tomoyo_del_domain_keeper(struct tomoyo_domain_keeper_entry *ptr)
 	tomoyo_put_name(ptr->program);
 }
 
+static void tomoyo_del_aggregator(struct tomoyo_aggregator_entry *ptr)
+{
+	tomoyo_put_name(ptr->original_name);
+	tomoyo_put_name(ptr->aggregated_name);
+}
+
 static void tomoyo_del_alias(struct tomoyo_alias_entry *ptr)
 {
 	tomoyo_put_name(ptr->original_name);
@@ -102,6 +112,34 @@ static void tomoyo_del_acl(struct tomoyo_acl_info *acl)
 				= container_of(acl, typeof(*entry), head);
 			tomoyo_put_name_union(&entry->name1);
 			tomoyo_put_name_union(&entry->name2);
+		}
+		break;
+	case TOMOYO_TYPE_PATH_NUMBER_ACL:
+		{
+			struct tomoyo_path_number_acl *entry
+				= container_of(acl, typeof(*entry), head);
+			tomoyo_put_name_union(&entry->name);
+			tomoyo_put_number_union(&entry->number);
+		}
+		break;
+	case TOMOYO_TYPE_PATH_NUMBER3_ACL:
+		{
+			struct tomoyo_path_number3_acl *entry
+				= container_of(acl, typeof(*entry), head);
+			tomoyo_put_name_union(&entry->name);
+			tomoyo_put_number_union(&entry->mode);
+			tomoyo_put_number_union(&entry->major);
+			tomoyo_put_number_union(&entry->minor);
+		}
+		break;
+	case TOMOYO_TYPE_MOUNT_ACL:
+		{
+			struct tomoyo_mount_acl *entry
+				= container_of(acl, typeof(*entry), head);
+			tomoyo_put_name_union(&entry->dev_name);
+			tomoyo_put_name_union(&entry->dir_name);
+			tomoyo_put_name_union(&entry->fs_type);
+			tomoyo_put_number_union(&entry->flags);
 		}
 		break;
 	default:
@@ -162,120 +200,68 @@ static void tomoyo_del_path_group(struct tomoyo_path_group *group)
 	tomoyo_put_name(group->group_name);
 }
 
+static void tomoyo_del_number_group_member(struct tomoyo_number_group_member
+					   *member)
+{
+}
+
+static void tomoyo_del_number_group(struct tomoyo_number_group *group)
+{
+	tomoyo_put_name(group->group_name);
+}
+
+static struct list_head *tomoyo_policy_list[TOMOYO_MAX_POLICY] = {
+	[TOMOYO_ID_GLOBALLY_READABLE] = &tomoyo_globally_readable_list,
+	[TOMOYO_ID_PATTERN] = &tomoyo_pattern_list,
+	[TOMOYO_ID_NO_REWRITE] = &tomoyo_no_rewrite_list,
+	[TOMOYO_ID_DOMAIN_INITIALIZER] = &tomoyo_domain_initializer_list,
+	[TOMOYO_ID_DOMAIN_KEEPER] = &tomoyo_domain_keeper_list,
+	[TOMOYO_ID_AGGREGATOR] = &tomoyo_aggregator_list,
+	[TOMOYO_ID_ALIAS] = &tomoyo_alias_list,
+	[TOMOYO_ID_MANAGER] = &tomoyo_policy_manager_list,
+};
+
+static bool tomoyo_collect_member(struct list_head *member_list, int id)
+{
+	struct tomoyo_acl_head *member;
+	list_for_each_entry(member, member_list, list) {
+		if (!member->is_deleted)
+			continue;
+		if (!tomoyo_add_to_gc(id, &member->list))
+			return false;
+		list_del_rcu(&member->list);
+	}
+        return true;
+}
+
+static bool tomoyo_collect_acl(struct tomoyo_domain_info *domain)
+{
+	struct tomoyo_acl_info *acl;
+	list_for_each_entry(acl, &domain->acl_info_list, list) {
+		if (!acl->is_deleted)
+			continue;
+		if (!tomoyo_add_to_gc(TOMOYO_ID_ACL, &acl->list))
+			return false;
+		list_del_rcu(&acl->list);
+	}
+	return true;
+}
+
 static void tomoyo_collect_entry(void)
 {
+	int i;
 	if (mutex_lock_interruptible(&tomoyo_policy_lock))
 		return;
-	{
-		struct tomoyo_globally_readable_file_entry *ptr;
-		list_for_each_entry_rcu(ptr, &tomoyo_globally_readable_list,
-					list) {
-			if (!ptr->is_deleted)
-				continue;
-			if (tomoyo_add_to_gc(TOMOYO_ID_GLOBALLY_READABLE, ptr))
-				list_del_rcu(&ptr->list);
-			else
-				break;
-		}
-	}
-	{
-		struct tomoyo_pattern_entry *ptr;
-		list_for_each_entry_rcu(ptr, &tomoyo_pattern_list, list) {
-			if (!ptr->is_deleted)
-				continue;
-			if (tomoyo_add_to_gc(TOMOYO_ID_PATTERN, ptr))
-				list_del_rcu(&ptr->list);
-			else
-				break;
-		}
-	}
-	{
-		struct tomoyo_no_rewrite_entry *ptr;
-		list_for_each_entry_rcu(ptr, &tomoyo_no_rewrite_list, list) {
-			if (!ptr->is_deleted)
-				continue;
-			if (tomoyo_add_to_gc(TOMOYO_ID_NO_REWRITE, ptr))
-				list_del_rcu(&ptr->list);
-			else
-				break;
-		}
-	}
-	{
-		struct tomoyo_domain_initializer_entry *ptr;
-		list_for_each_entry_rcu(ptr, &tomoyo_domain_initializer_list,
-					list) {
-			if (!ptr->is_deleted)
-				continue;
-			if (tomoyo_add_to_gc(TOMOYO_ID_DOMAIN_INITIALIZER, ptr))
-				list_del_rcu(&ptr->list);
-			else
-				break;
-		}
-	}
-	{
-		struct tomoyo_domain_keeper_entry *ptr;
-		list_for_each_entry_rcu(ptr, &tomoyo_domain_keeper_list, list) {
-			if (!ptr->is_deleted)
-				continue;
-			if (tomoyo_add_to_gc(TOMOYO_ID_DOMAIN_KEEPER, ptr))
-				list_del_rcu(&ptr->list);
-			else
-				break;
-		}
-	}
-	{
-		struct tomoyo_alias_entry *ptr;
-		list_for_each_entry_rcu(ptr, &tomoyo_alias_list, list) {
-			if (!ptr->is_deleted)
-				continue;
-			if (tomoyo_add_to_gc(TOMOYO_ID_ALIAS, ptr))
-				list_del_rcu(&ptr->list);
-			else
-				break;
-		}
-	}
-	{
-		struct tomoyo_policy_manager_entry *ptr;
-		list_for_each_entry_rcu(ptr, &tomoyo_policy_manager_list,
-					list) {
-			if (!ptr->is_deleted)
-				continue;
-			if (tomoyo_add_to_gc(TOMOYO_ID_MANAGER, ptr))
-				list_del_rcu(&ptr->list);
-			else
-				break;
-		}
+	for (i = 0; i < TOMOYO_MAX_POLICY; i++) {
+		if (tomoyo_policy_list[i])
+			if (!tomoyo_collect_member(tomoyo_policy_list[i], i))
+				goto unlock;
 	}
 	{
 		struct tomoyo_domain_info *domain;
 		list_for_each_entry_rcu(domain, &tomoyo_domain_list, list) {
-			struct tomoyo_acl_info *acl;
-			list_for_each_entry_rcu(acl, &domain->acl_info_list,
-						list) {
-				switch (acl->type) {
-				case TOMOYO_TYPE_PATH_ACL:
-					if (container_of(acl,
-					 struct tomoyo_path_acl,
-							 head)->perm ||
-					    container_of(acl,
-					 struct tomoyo_path_acl,
-							 head)->perm_high)
-						continue;
-					break;
-				case TOMOYO_TYPE_PATH2_ACL:
-					if (container_of(acl,
-					 struct tomoyo_path2_acl,
-							 head)->perm)
-						continue;
-					break;
-				default:
-					continue;
-				}
-				if (tomoyo_add_to_gc(TOMOYO_ID_ACL, acl))
-					list_del_rcu(&acl->list);
-				else
-					break;
-			}
+			if (!tomoyo_collect_acl(domain))
+				goto unlock;
 			if (!domain->is_deleted || atomic_read(&domain->users))
 				continue;
 			/*
@@ -286,49 +272,50 @@ static void tomoyo_collect_entry(void)
 			if (tomoyo_add_to_gc(TOMOYO_ID_DOMAIN, domain))
 				list_del_rcu(&domain->list);
 			else
-				break;
+				goto unlock;
 		}
 	}
-	{
-		int i;
-		for (i = 0; i < TOMOYO_MAX_HASH; i++) {
-			struct tomoyo_name_entry *ptr;
-			list_for_each_entry_rcu(ptr, &tomoyo_name_list[i],
-						list) {
-				if (atomic_read(&ptr->users))
-					continue;
-				if (tomoyo_add_to_gc(TOMOYO_ID_NAME, ptr))
-					list_del_rcu(&ptr->list);
-				else {
-					i = TOMOYO_MAX_HASH;
-					break;
-				}
-			}
+	for (i = 0; i < TOMOYO_MAX_HASH; i++) {
+		struct tomoyo_name_entry *ptr;
+		list_for_each_entry_rcu(ptr, &tomoyo_name_list[i], list) {
+			if (atomic_read(&ptr->users))
+				continue;
+			if (tomoyo_add_to_gc(TOMOYO_ID_NAME, ptr))
+				list_del_rcu(&ptr->list);
+			else
+				goto unlock;
 		}
 	}
 	{
 		struct tomoyo_path_group *group;
 		list_for_each_entry_rcu(group, &tomoyo_path_group_list, list) {
-			struct tomoyo_path_group_member *member;
-			list_for_each_entry_rcu(member, &group->member_list,
-						list) {
-				if (!member->is_deleted)
-					continue;
-				if (tomoyo_add_to_gc(TOMOYO_ID_PATH_GROUP_MEMBER,
-						     member))
-					list_del_rcu(&member->list);
-				else
-					break;
-			}
+			tomoyo_collect_member(&group->member_list,
+					      TOMOYO_ID_PATH_GROUP_MEMBER);
 			if (!list_empty(&group->member_list) ||
 			    atomic_read(&group->users))
 				continue;
 			if (tomoyo_add_to_gc(TOMOYO_ID_PATH_GROUP, group))
 				list_del_rcu(&group->list);
 			else
-				break;
+				goto unlock;
 		}
 	}
+	{
+		struct tomoyo_number_group *group;
+		list_for_each_entry_rcu(group, &tomoyo_number_group_list,
+					list) {
+			tomoyo_collect_member(&group->member_list,
+					      TOMOYO_ID_NUMBER_GROUP_MEMBER);
+			if (!list_empty(&group->member_list) ||
+			    atomic_read(&group->users))
+				continue;
+			if (tomoyo_add_to_gc(TOMOYO_ID_NUMBER_GROUP, group))
+				list_del_rcu(&group->list);
+			else
+				goto unlock;
+		}
+	}
+ unlock:
 	mutex_unlock(&tomoyo_policy_lock);
 }
 
@@ -344,6 +331,9 @@ static void tomoyo_kfree_entry(void)
 			break;
 		case TOMOYO_ID_DOMAIN_KEEPER:
 			tomoyo_del_domain_keeper(p->element);
+			break;
+		case TOMOYO_ID_AGGREGATOR:
+			tomoyo_del_aggregator(p->element);
 			break;
 		case TOMOYO_ID_ALIAS:
 			tomoyo_del_alias(p->element);
@@ -375,6 +365,12 @@ static void tomoyo_kfree_entry(void)
 			break;
 		case TOMOYO_ID_PATH_GROUP:
 			tomoyo_del_path_group(p->element);
+			break;
+		case TOMOYO_ID_NUMBER_GROUP_MEMBER:
+			tomoyo_del_number_group_member(p->element);
+			break;
+		case TOMOYO_ID_NUMBER_GROUP:
+			tomoyo_del_number_group(p->element);
 			break;
 		default:
 			printk(KERN_WARNING "Unknown type\n");
