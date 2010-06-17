@@ -537,9 +537,6 @@ int netdev_register_kobject(struct net_device *net)
 #endif
 #endif /* CONFIG_SYSFS */
 
-	if (dev_net(net) != &init_net)
-		return 0;
-
 	return device_add(dev);
 }
 
