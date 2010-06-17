@@ -170,6 +170,10 @@ struct fw_ohci {
 	int generation;
 	int request_generation;	/* for timestamping incoming requests */
 	unsigned quirks;
+	unsigned int pri_req_max;
+	unsigned int features;
+	u32 bus_time;
+	bool is_root;
 
 	/*
 	 * Spinlock for accessing fw_ohci data.  Never call out of
@@ -231,12 +235,14 @@ static inline struct fw_ohci *fw_ohci(struct fw_card *card)
 
 static char ohci_driver_name[] = KBUILD_MODNAME;
 
+#define PCI_DEVICE_ID_JMICRON_JMB38X_FW	0x2380
 #define PCI_DEVICE_ID_TI_TSB12LV22	0x8009
 
 #define QUIRK_CYCLE_TIMER		1
 #define QUIRK_RESET_PACKET		2
 #define QUIRK_BE_HEADERS		4
 #define QUIRK_NO_1394A			8
+#define QUIRK_NO_MSI			16
 
 /* In case of multiple matches in ohci_quirks[], only the first one is used. */
 static const struct {
@@ -247,6 +253,7 @@ static const struct {
 							    QUIRK_NO_1394A},
 	{PCI_VENDOR_ID_TI,	PCI_ANY_ID,	QUIRK_RESET_PACKET},
 	{PCI_VENDOR_ID_AL,	PCI_ANY_ID,	QUIRK_CYCLE_TIMER},
+	{PCI_VENDOR_ID_JMICRON,	PCI_DEVICE_ID_JMICRON_JMB38X_FW, QUIRK_NO_MSI},
 	{PCI_VENDOR_ID_NEC,	PCI_ANY_ID,	QUIRK_CYCLE_TIMER},
 	{PCI_VENDOR_ID_VIA,	PCI_ANY_ID,	QUIRK_CYCLE_TIMER},
 	{PCI_VENDOR_ID_APPLE,	PCI_DEVICE_ID_APPLE_UNI_N_FW, QUIRK_BE_HEADERS},
@@ -260,6 +267,7 @@ MODULE_PARM_DESC(quirks, "Chip quirks (default = 0"
 	", reset packet generation = "	__stringify(QUIRK_RESET_PACKET)
 	", AR/selfID endianess = "	__stringify(QUIRK_BE_HEADERS)
 	", no 1394a enhancements = "	__stringify(QUIRK_NO_1394A)
+	", disable MSI = "		__stringify(QUIRK_NO_MSI)
 	")");
 
 #define OHCI_PARAM_DEBUG_AT_AR		1
@@ -288,7 +296,7 @@ static void log_irqs(u32 evt)
 	    !(evt & OHCI1394_busReset))
 		return;
 
-	fw_notify("IRQ %08x%s%s%s%s%s%s%s%s%s%s%s%s%s\n", evt,
+	fw_notify("IRQ %08x%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n", evt,
 	    evt & OHCI1394_selfIDComplete	? " selfID"		: "",
 	    evt & OHCI1394_RQPkt		? " AR_req"		: "",
 	    evt & OHCI1394_RSPkt		? " AR_resp"		: "",
@@ -298,6 +306,7 @@ static void log_irqs(u32 evt)
 	    evt & OHCI1394_isochTx		? " IT"			: "",
 	    evt & OHCI1394_postedWriteErr	? " postedWriteErr"	: "",
 	    evt & OHCI1394_cycleTooLong		? " cycleTooLong"	: "",
+	    evt & OHCI1394_cycle64Seconds	? " cycle64Seconds"	: "",
 	    evt & OHCI1394_cycleInconsistent	? " cycleInconsistent"	: "",
 	    evt & OHCI1394_regAccessFail	? " regAccessFail"	: "",
 	    evt & OHCI1394_busReset		? " busReset"		: "",
@@ -305,7 +314,8 @@ static void log_irqs(u32 evt)
 		    OHCI1394_RSPkt | OHCI1394_reqTxComplete |
 		    OHCI1394_respTxComplete | OHCI1394_isochRx |
 		    OHCI1394_isochTx | OHCI1394_postedWriteErr |
-		    OHCI1394_cycleTooLong | OHCI1394_cycleInconsistent |
+		    OHCI1394_cycleTooLong | OHCI1394_cycle64Seconds |
+		    OHCI1394_cycleInconsistent |
 		    OHCI1394_regAccessFail | OHCI1394_busReset)
 						? " ?"			: "");
 }
@@ -470,12 +480,17 @@ static int read_phy_reg(struct fw_ohci *ohci, int addr)
 	int i;
 
 	reg_write(ohci, OHCI1394_PhyControl, OHCI1394_PhyControl_Read(addr));
-	for (i = 0; i < 10; i++) {
+	for (i = 0; i < 3 + 100; i++) {
 		val = reg_read(ohci, OHCI1394_PhyControl);
 		if (val & OHCI1394_PhyControl_ReadDone)
 			return OHCI1394_PhyControl_ReadData(val);
 
-		msleep(1);
+		/*
+		 * Try a few times without waiting.  Sleeping is necessary
+		 * only when the link/PHY interface is busy.
+		 */
+		if (i >= 3)
+			msleep(1);
 	}
 	fw_error("failed to read phy reg\n");
 
@@ -488,12 +503,13 @@ static int write_phy_reg(const struct fw_ohci *ohci, int addr, u32 val)
 
 	reg_write(ohci, OHCI1394_PhyControl,
 		  OHCI1394_PhyControl_Write(addr, val));
-	for (i = 0; i < 100; i++) {
+	for (i = 0; i < 3 + 100; i++) {
 		val = reg_read(ohci, OHCI1394_PhyControl);
 		if (!(val & OHCI1394_PhyControl_WritePending))
 			return 0;
 
-		msleep(1);
+		if (i >= 3)
+			msleep(1);
 	}
 	fw_error("failed to write phy reg\n");
 
@@ -1311,6 +1327,78 @@ static void at_context_transmit(struct context *ctx, struct fw_packet *packet)
 
 }
 
+static u32 cycle_timer_ticks(u32 cycle_timer)
+{
+	u32 ticks;
+
+	ticks = cycle_timer & 0xfff;
+	ticks += 3072 * ((cycle_timer >> 12) & 0x1fff);
+	ticks += (3072 * 8000) * (cycle_timer >> 25);
+
+	return ticks;
+}
+
+/*
+ * Some controllers exhibit one or more of the following bugs when updating the
+ * iso cycle timer register:
+ *  - When the lowest six bits are wrapping around to zero, a read that happens
+ *    at the same time will return garbage in the lowest ten bits.
+ *  - When the cycleOffset field wraps around to zero, the cycleCount field is
+ *    not incremented for about 60 ns.
+ *  - Occasionally, the entire register reads zero.
+ *
+ * To catch these, we read the register three times and ensure that the
+ * difference between each two consecutive reads is approximately the same, i.e.
+ * less than twice the other.  Furthermore, any negative difference indicates an
+ * error.  (A PCI read should take at least 20 ticks of the 24.576 MHz timer to
+ * execute, so we have enough precision to compute the ratio of the differences.)
+ */
+static u32 get_cycle_time(struct fw_ohci *ohci)
+{
+	u32 c0, c1, c2;
+	u32 t0, t1, t2;
+	s32 diff01, diff12;
+	int i;
+
+	c2 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
+
+	if (ohci->quirks & QUIRK_CYCLE_TIMER) {
+		i = 0;
+		c1 = c2;
+		c2 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
+		do {
+			c0 = c1;
+			c1 = c2;
+			c2 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
+			t0 = cycle_timer_ticks(c0);
+			t1 = cycle_timer_ticks(c1);
+			t2 = cycle_timer_ticks(c2);
+			diff01 = t1 - t0;
+			diff12 = t2 - t1;
+		} while ((diff01 <= 0 || diff12 <= 0 ||
+			  diff01 / diff12 >= 2 || diff12 / diff01 >= 2)
+			 && i++ < 20);
+	}
+
+	return c2;
+}
+
+/*
+ * This function has to be called at least every 64 seconds.  The bus_time
+ * field stores not only the upper 25 bits of the BUS_TIME register but also
+ * the most significant bit of the cycle timer in bit 6 so that we can detect
+ * changes in this bit.
+ */
+static u32 update_bus_time(struct fw_ohci *ohci)
+{
+	u32 cycle_time_seconds = get_cycle_time(ohci) >> 25;
+
+	if ((ohci->bus_time & 0x40) != (cycle_time_seconds & 0x40))
+		ohci->bus_time += 0x40;
+
+	return ohci->bus_time | cycle_time_seconds;
+}
+
 static void bus_reset_tasklet(unsigned long data)
 {
 	struct fw_ohci *ohci = (struct fw_ohci *)data;
@@ -1319,6 +1407,7 @@ static void bus_reset_tasklet(unsigned long data)
 	unsigned long flags;
 	void *free_rom = NULL;
 	dma_addr_t free_rom_bus = 0;
+	bool is_new_root;
 
 	reg = reg_read(ohci, OHCI1394_NodeID);
 	if (!(reg & OHCI1394_NodeID_idValid)) {
@@ -1331,6 +1420,12 @@ static void bus_reset_tasklet(unsigned long data)
 	}
 	ohci->node_id = reg & (OHCI1394_NodeID_busNumber |
 			       OHCI1394_NodeID_nodeNumber);
+
+	is_new_root = (reg & OHCI1394_NodeID_root) != 0;
+	if (!(ohci->is_root && is_new_root))
+		reg_write(ohci, OHCI1394_LinkControlSet,
+			  OHCI1394_LinkControl_cycleMaster);
+	ohci->is_root = is_new_root;
 
 	reg = reg_read(ohci, OHCI1394_SelfIDCount);
 	if (reg & OHCI1394_SelfIDCount_selfIDError) {
@@ -1515,6 +1610,12 @@ static irqreturn_t irq_handler(int irq, void *data)
 			fw_notify("isochronous cycle inconsistent\n");
 	}
 
+	if (event & OHCI1394_cycle64Seconds) {
+		spin_lock(&ohci->lock);
+		update_bus_time(ohci);
+		spin_unlock(&ohci->lock);
+	}
+
 	return IRQ_HANDLED;
 }
 
@@ -1599,7 +1700,7 @@ static int ohci_enable(struct fw_card *card,
 {
 	struct fw_ohci *ohci = fw_ohci(card);
 	struct pci_dev *dev = to_pci_dev(card->device);
-	u32 lps;
+	u32 lps, seconds, version, irqs;
 	int i, ret;
 
 	if (software_reset(ohci)) {
@@ -1645,7 +1746,26 @@ static int ohci_enable(struct fw_card *card,
 	reg_write(ohci, OHCI1394_ATRetries,
 		  OHCI1394_MAX_AT_REQ_RETRIES |
 		  (OHCI1394_MAX_AT_RESP_RETRIES << 4) |
-		  (OHCI1394_MAX_PHYS_RESP_RETRIES << 8));
+		  (OHCI1394_MAX_PHYS_RESP_RETRIES << 8) |
+		  (200 << 16));
+
+	seconds = lower_32_bits(get_seconds());
+	reg_write(ohci, OHCI1394_IsochronousCycleTimer, seconds << 25);
+	ohci->bus_time = seconds & ~0x3f;
+
+	version = reg_read(ohci, OHCI1394_Version) & 0x00ff00ff;
+	if (version >= OHCI_VERSION_1_1) {
+		reg_write(ohci, OHCI1394_InitialChannelsAvailableHi,
+			  0xfffffffe);
+		ohci->features |= FEATURE_CHANNEL_31_ALLOCATED;
+	}
+
+	/* Get implemented bits of the priority arbitration request counter. */
+	reg_write(ohci, OHCI1394_FairnessControl, 0x3f);
+	ohci->pri_req_max = reg_read(ohci, OHCI1394_FairnessControl) & 0x3f;
+	reg_write(ohci, OHCI1394_FairnessControl, 0);
+	if (ohci->pri_req_max != 0)
+		ohci->features |= FEATURE_PRIORITY_BUDGET;
 
 	ar_context_run(&ohci->ar_request_ctx);
 	ar_context_run(&ohci->ar_response_ctx);
@@ -1653,16 +1773,6 @@ static int ohci_enable(struct fw_card *card,
 	reg_write(ohci, OHCI1394_PhyUpperBound, 0x00010000);
 	reg_write(ohci, OHCI1394_IntEventClear, ~0);
 	reg_write(ohci, OHCI1394_IntMaskClear, ~0);
-	reg_write(ohci, OHCI1394_IntMaskSet,
-		  OHCI1394_selfIDComplete |
-		  OHCI1394_RQPkt | OHCI1394_RSPkt |
-		  OHCI1394_reqTxComplete | OHCI1394_respTxComplete |
-		  OHCI1394_isochRx | OHCI1394_isochTx |
-		  OHCI1394_postedWriteErr | OHCI1394_cycleTooLong |
-		  OHCI1394_cycleInconsistent | OHCI1394_regAccessFail |
-		  OHCI1394_masterIntEnable);
-	if (param_debug & OHCI_PARAM_DEBUG_BUSRESETS)
-		reg_write(ohci, OHCI1394_IntMaskSet, OHCI1394_busReset);
 
 	ret = configure_1394a_enhancements(ohci);
 	if (ret < 0)
@@ -1719,14 +1829,30 @@ static int ohci_enable(struct fw_card *card,
 
 	reg_write(ohci, OHCI1394_AsReqFilterHiSet, 0x80000000);
 
+	if (!(ohci->quirks & QUIRK_NO_MSI))
+		pci_enable_msi(dev);
 	if (request_irq(dev->irq, irq_handler,
-			IRQF_SHARED, ohci_driver_name, ohci)) {
-		fw_error("Failed to allocate shared interrupt %d.\n",
-			 dev->irq);
+			pci_dev_msi_enabled(dev) ? 0 : IRQF_SHARED,
+			ohci_driver_name, ohci)) {
+		fw_error("Failed to allocate interrupt %d.\n", dev->irq);
+		pci_disable_msi(dev);
 		dma_free_coherent(ohci->card.device, CONFIG_ROM_SIZE,
 				  ohci->config_rom, ohci->config_rom_bus);
 		return -EIO;
 	}
+
+	irqs =	OHCI1394_reqTxComplete | OHCI1394_respTxComplete |
+		OHCI1394_RQPkt | OHCI1394_RSPkt |
+		OHCI1394_isochTx | OHCI1394_isochRx |
+		OHCI1394_postedWriteErr |
+		OHCI1394_selfIDComplete |
+		OHCI1394_regAccessFail |
+		OHCI1394_cycle64Seconds |
+		OHCI1394_cycleInconsistent | OHCI1394_cycleTooLong |
+		OHCI1394_masterIntEnable;
+	if (param_debug & OHCI_PARAM_DEBUG_BUSRESETS)
+		irqs |= OHCI1394_busReset;
+	reg_write(ohci, OHCI1394_IntMaskSet, irqs);
 
 	reg_write(ohci, OHCI1394_HCControlSet,
 		  OHCI1394_HCControl_linkEnable |
@@ -1903,61 +2029,118 @@ static int ohci_enable_phys_dma(struct fw_card *card,
 #endif /* CONFIG_FIREWIRE_OHCI_REMOTE_DMA */
 }
 
-static u32 cycle_timer_ticks(u32 cycle_timer)
-{
-	u32 ticks;
-
-	ticks = cycle_timer & 0xfff;
-	ticks += 3072 * ((cycle_timer >> 12) & 0x1fff);
-	ticks += (3072 * 8000) * (cycle_timer >> 25);
-
-	return ticks;
-}
-
-/*
- * Some controllers exhibit one or more of the following bugs when updating the
- * iso cycle timer register:
- *  - When the lowest six bits are wrapping around to zero, a read that happens
- *    at the same time will return garbage in the lowest ten bits.
- *  - When the cycleOffset field wraps around to zero, the cycleCount field is
- *    not incremented for about 60 ns.
- *  - Occasionally, the entire register reads zero.
- *
- * To catch these, we read the register three times and ensure that the
- * difference between each two consecutive reads is approximately the same, i.e.
- * less than twice the other.  Furthermore, any negative difference indicates an
- * error.  (A PCI read should take at least 20 ticks of the 24.576 MHz timer to
- * execute, so we have enough precision to compute the ratio of the differences.)
- */
-static u32 ohci_get_cycle_time(struct fw_card *card)
+static u32 ohci_read_csr_reg(struct fw_card *card, int csr_offset)
 {
 	struct fw_ohci *ohci = fw_ohci(card);
-	u32 c0, c1, c2;
-	u32 t0, t1, t2;
-	s32 diff01, diff12;
-	int i;
+	unsigned long flags;
+	u32 value;
 
-	c2 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
+	switch (csr_offset) {
+	case CSR_STATE_CLEAR:
+	case CSR_STATE_SET:
+		/* the controller driver handles only the cmstr bit */
+		if (ohci->is_root &&
+		    (reg_read(ohci, OHCI1394_LinkControlSet) &
+		     OHCI1394_LinkControl_cycleMaster))
+			return CSR_STATE_BIT_CMSTR;
+		else
+			return 0;
 
-	if (ohci->quirks & QUIRK_CYCLE_TIMER) {
-		i = 0;
-		c1 = c2;
-		c2 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
-		do {
-			c0 = c1;
-			c1 = c2;
-			c2 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
-			t0 = cycle_timer_ticks(c0);
-			t1 = cycle_timer_ticks(c1);
-			t2 = cycle_timer_ticks(c2);
-			diff01 = t1 - t0;
-			diff12 = t2 - t1;
-		} while ((diff01 <= 0 || diff12 <= 0 ||
-			  diff01 / diff12 >= 2 || diff12 / diff01 >= 2)
-			 && i++ < 20);
+	case CSR_NODE_IDS:
+		return reg_read(ohci, OHCI1394_NodeID) << 16;
+
+	case CSR_CYCLE_TIME:
+		return get_cycle_time(ohci);
+
+	case CSR_BUS_TIME:
+		/*
+		 * We might be called just after the cycle timer has wrapped
+		 * around but just before the cycle64Seconds handler, so we
+		 * better check here, too, if the bus time needs to be updated.
+		 */
+		spin_lock_irqsave(&ohci->lock, flags);
+		value = update_bus_time(ohci);
+		spin_unlock_irqrestore(&ohci->lock, flags);
+		return value;
+
+	case CSR_BUSY_TIMEOUT:
+		value = reg_read(ohci, OHCI1394_ATRetries);
+		return (value >> 4) & 0x0ffff00f;
+
+	case CSR_PRIORITY_BUDGET:
+		return (reg_read(ohci, OHCI1394_FairnessControl) & 0x3f) |
+			(ohci->pri_req_max << 8);
+
+	default:
+		WARN_ON(1);
+		return 0;
 	}
+}
 
-	return c2;
+static void ohci_write_csr_reg(struct fw_card *card, int csr_offset, u32 value)
+{
+	struct fw_ohci *ohci = fw_ohci(card);
+	unsigned long flags;
+
+	switch (csr_offset) {
+	case CSR_STATE_CLEAR:
+		/* the controller driver handles only the cmstr bit */
+		if ((value & CSR_STATE_BIT_CMSTR) && ohci->is_root) {
+			reg_write(ohci, OHCI1394_LinkControlClear,
+				  OHCI1394_LinkControl_cycleMaster);
+			flush_writes(ohci);
+		}
+		break;
+
+	case CSR_STATE_SET:
+		if ((value & CSR_STATE_BIT_CMSTR) && ohci->is_root) {
+			reg_write(ohci, OHCI1394_LinkControlSet,
+				  OHCI1394_LinkControl_cycleMaster);
+			flush_writes(ohci);
+		}
+		break;
+
+	case CSR_NODE_IDS:
+		reg_write(ohci, OHCI1394_NodeID, value >> 16);
+		flush_writes(ohci);
+		break;
+
+	case CSR_CYCLE_TIME:
+		reg_write(ohci, OHCI1394_IsochronousCycleTimer, value);
+		reg_write(ohci, OHCI1394_IntEventSet,
+			  OHCI1394_cycleInconsistent);
+		flush_writes(ohci);
+		break;
+
+	case CSR_BUS_TIME:
+		spin_lock_irqsave(&ohci->lock, flags);
+		ohci->bus_time = (ohci->bus_time & 0x7f) | (value & ~0x7f);
+		spin_unlock_irqrestore(&ohci->lock, flags);
+		break;
+
+	case CSR_BUSY_TIMEOUT:
+		value = (value & 0xf) | ((value & 0xf) << 4) |
+			((value & 0xf) << 8) | ((value & 0x0ffff000) << 4);
+		reg_write(ohci, OHCI1394_ATRetries, value);
+		flush_writes(ohci);
+		break;
+
+	case CSR_PRIORITY_BUDGET:
+		reg_write(ohci, OHCI1394_FairnessControl, value & 0x3f);
+		flush_writes(ohci);
+		break;
+
+	default:
+		WARN_ON(1);
+		break;
+	}
+}
+
+static unsigned int ohci_get_features(struct fw_card *card)
+{
+	struct fw_ohci *ohci = fw_ohci(card);
+
+	return ohci->features;
 }
 
 static void copy_iso_headers(struct iso_context *ctx, void *p)
@@ -2397,7 +2580,9 @@ static const struct fw_card_driver ohci_driver = {
 	.send_response		= ohci_send_response,
 	.cancel_packet		= ohci_cancel_packet,
 	.enable_phys_dma	= ohci_enable_phys_dma,
-	.get_cycle_time		= ohci_get_cycle_time,
+	.read_csr_reg		= ohci_read_csr_reg,
+	.write_csr_reg		= ohci_write_csr_reg,
+	.get_features		= ohci_get_features,
 
 	.allocate_iso_context	= ohci_allocate_iso_context,
 	.free_iso_context	= ohci_free_iso_context,
@@ -2625,6 +2810,7 @@ static void pci_remove(struct pci_dev *dev)
 	context_release(&ohci->at_response_ctx);
 	kfree(ohci->it_context_list);
 	kfree(ohci->ir_context_list);
+	pci_disable_msi(dev);
 	pci_iounmap(dev, ohci->registers);
 	pci_release_region(dev, 0);
 	pci_disable_device(dev);
@@ -2642,6 +2828,7 @@ static int pci_suspend(struct pci_dev *dev, pm_message_t state)
 
 	software_reset(ohci);
 	free_irq(dev->irq, ohci);
+	pci_disable_msi(dev);
 	err = pci_save_state(dev);
 	if (err) {
 		fw_error("pci_save_state failed\n");
