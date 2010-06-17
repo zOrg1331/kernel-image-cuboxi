@@ -301,8 +301,7 @@ struct kvm_vcpu_arch {
 		unsigned long mmu_seq;
 	} update_pte;
 
-	struct i387_fxsave_struct host_fx_image;
-	struct i387_fxsave_struct guest_fx_image;
+	struct fpu guest_fpu;
 
 	gva_t mmio_fault_cr2;
 	struct kvm_pio_request pio;
@@ -576,7 +575,6 @@ enum emulation_result {
 #define EMULTYPE_SKIP		    (1 << 2)
 int emulate_instruction(struct kvm_vcpu *vcpu,
 			unsigned long cr2, u16 error_code, int emulation_type);
-void kvm_report_emulation_failure(struct kvm_vcpu *cvpu, const char *context);
 void realmode_lgdt(struct kvm_vcpu *vcpu, u16 size, unsigned long address);
 void realmode_lidt(struct kvm_vcpu *vcpu, u16 size, unsigned long address);
 
@@ -591,10 +589,6 @@ void kvm_emulate_cpuid(struct kvm_vcpu *vcpu);
 int kvm_emulate_halt(struct kvm_vcpu *vcpu);
 int emulate_invlpg(struct kvm_vcpu *vcpu, gva_t address);
 int emulate_clts(struct kvm_vcpu *vcpu);
-int emulator_get_dr(struct x86_emulate_ctxt *ctxt, int dr,
-		    unsigned long *dest);
-int emulator_set_dr(struct x86_emulate_ctxt *ctxt, int dr,
-		    unsigned long value);
 
 void kvm_get_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg);
 int kvm_load_segment_descriptor(struct kvm_vcpu *vcpu, u16 selector, int seg);
@@ -631,11 +625,6 @@ int kvm_pic_set_irq(void *opaque, int irq, int level);
 void kvm_inject_nmi(struct kvm_vcpu *vcpu);
 
 void fx_init(struct kvm_vcpu *vcpu);
-
-int emulator_write_emulated(unsigned long addr,
-			    const void *val,
-			    unsigned int bytes,
-			    struct kvm_vcpu *vcpu);
 
 void kvm_mmu_flush_tlb(struct kvm_vcpu *vcpu);
 void kvm_mmu_pte_write(struct kvm_vcpu *vcpu, gpa_t gpa,
@@ -718,21 +707,6 @@ static inline unsigned long read_msr(unsigned long msr)
 	return value;
 }
 #endif
-
-static inline void kvm_fx_save(struct i387_fxsave_struct *image)
-{
-	asm("fxsave (%0)":: "r" (image));
-}
-
-static inline void kvm_fx_restore(struct i387_fxsave_struct *image)
-{
-	asm("fxrstor (%0)":: "r" (image));
-}
-
-static inline void kvm_fx_finit(void)
-{
-	asm("finit");
-}
 
 static inline u32 get_rdx_init_val(void)
 {
