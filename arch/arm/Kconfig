@@ -10,6 +10,7 @@ config ARM
 	default y
 	select HAVE_AOUT
 	select HAVE_IDE
+	select HAVE_LMB
 	select RTC_LIB
 	select SYS_SUPPORTS_APM_EMULATION
 	select GENERIC_ATOMIC64 if (!CPU_32v6K)
@@ -586,6 +587,7 @@ config ARCH_MSM
 	bool "Qualcomm MSM"
 	select HAVE_CLK
 	select GENERIC_CLOCKEVENTS
+	select ARCH_REQUIRE_GPIOLIB
 	help
 	  Support for Qualcomm MSM/QSD based systems.  This runs on the
 	  apps processor of the MSM/QSD and depends on a shared memory
@@ -719,7 +721,6 @@ config ARCH_SHARK
 config ARCH_LH7A40X
 	bool "Sharp LH7A40X"
 	select CPU_ARM922T
-	select ARCH_DISCONTIGMEM_ENABLE if !LH7A40X_CONTIGMEM
 	select ARCH_SPARSEMEM_ENABLE if !LH7A40X_CONTIGMEM
 	select ARCH_USES_GETTIMEOFFSET
 	help
@@ -1240,10 +1241,6 @@ config OABI_COMPAT
 config ARCH_HAS_HOLES_MEMORYMODEL
 	bool
 
-# Discontigmem is deprecated
-config ARCH_DISCONTIGMEM_ENABLE
-	bool
-
 config ARCH_SPARSEMEM_ENABLE
 	bool
 
@@ -1251,7 +1248,7 @@ config ARCH_SPARSEMEM_DEFAULT
 	def_bool ARCH_SPARSEMEM_ENABLE
 
 config ARCH_SELECT_MEMORY_MODEL
-	def_bool ARCH_DISCONTIGMEM_ENABLE && ARCH_SPARSEMEM_ENABLE
+	def_bool ARCH_SPARSEMEM_ENABLE
 
 config NODES_SHIFT
 	int
