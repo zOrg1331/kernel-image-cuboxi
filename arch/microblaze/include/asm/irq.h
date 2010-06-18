@@ -62,17 +62,4 @@ struct irq_host;
 extern unsigned int irq_create_mapping(struct irq_host *host,
 					irq_hw_number_t hwirq);
 
-/**
- * irq_create_of_mapping - Map a hardware interrupt into linux virq space
- * @controller: Device node of the interrupt controller
- * @inspec: Interrupt specifier from the device-tree
- * @intsize: Size of the interrupt specifier from the device-tree
- *
- * This function is identical to irq_create_mapping except that it takes
- * as input informations straight from the device-tree (typically the results
- * of the of_irq_map_*() functions.
- */
-extern unsigned int irq_create_of_mapping(struct device_node *controller,
-					u32 *intspec, unsigned int intsize);
-
 #endif /* _ASM_MICROBLAZE_IRQ_H */
