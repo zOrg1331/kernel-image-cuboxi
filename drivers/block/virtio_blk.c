@@ -74,6 +74,10 @@ static void blk_done(struct virtqueue *vq)
 		case REQ_TYPE_SPECIAL:
 			vbr->req->errors = (error != 0);
 			break;
+		default:
+			printk(KERN_ERR "virtio_blk: unknown rq type %d\n",
+						vbr->req->cmd_type);
+			break;
 		}
 
 		__blk_end_request_all(vbr->req, error);
