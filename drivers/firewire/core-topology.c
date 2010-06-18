@@ -543,7 +543,8 @@ void fw_core_handle_bus_reset(struct fw_card *card, int node_id, int generation,
 
 	spin_lock_irqsave(&card->lock, flags);
 
-	card->broadcast_channel_allocated = false;
+	card->broadcast_channel_allocated = (card->driver->get_features(card) &
+					     FEATURE_CHANNEL_31_ALLOCATED) != 0;
 	card->node_id = node_id;
 	/*
 	 * Update node_id before generation to prevent anybody from using
@@ -552,6 +553,8 @@ void fw_core_handle_bus_reset(struct fw_card *card, int node_id, int generation,
 	smp_wmb();
 	card->generation = generation;
 	card->reset_jiffies = jiffies;
+	card->bm_abdicate = card->csr_abdicate;
+	card->csr_abdicate = false;
 	fw_schedule_bm_work(card, 0);
 
 	local_node = build_tree(card, self_ids, self_id_count);
