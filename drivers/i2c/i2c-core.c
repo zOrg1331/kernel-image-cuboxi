@@ -1453,17 +1453,28 @@ static int i2c_detect(struct i2c_adapter *adapter, struct i2c_driver *driver)
 	return err;
 }
 
+int i2c_probe_func_quick_read(struct i2c_adapter *adap, unsigned short addr)
+{
+	return i2c_smbus_xfer(adap, addr, 0, I2C_SMBUS_READ, 0,
+			      I2C_SMBUS_QUICK, NULL) >= 0;
+}
+EXPORT_SYMBOL_GPL(i2c_probe_func_quick_read);
+
 struct i2c_client *
 i2c_new_probed_device(struct i2c_adapter *adap,
 		      struct i2c_board_info *info,
-		      unsigned short const *addr_list)
+		      unsigned short const *addr_list,
+		      int (*probe)(struct i2c_adapter *, unsigned short addr))
 {
 	int i;
 
-	/* Stop here if the bus doesn't support probing */
-	if (!i2c_check_functionality(adap, I2C_FUNC_SMBUS_READ_BYTE)) {
-		dev_err(&adap->dev, "Probing not supported\n");
-		return NULL;
+	if (!probe) {
+		/* Stop here if the bus doesn't support probing */
+		if (!i2c_check_functionality(adap, I2C_FUNC_SMBUS_READ_BYTE)) {
+			dev_err(&adap->dev, "Probing not supported\n");
+			return NULL;
+		}
+		probe = i2c_default_probe;
 	}
 
 	for (i = 0; addr_list[i] != I2C_CLIENT_END; i++) {
@@ -1482,7 +1493,7 @@ i2c_new_probed_device(struct i2c_adapter *adap,
 		}
 
 		/* Test address responsiveness */
-		if (i2c_default_probe(adap, addr_list[i]))
+		if (probe(adap, addr_list[i]))
 			break;
 	}
 
