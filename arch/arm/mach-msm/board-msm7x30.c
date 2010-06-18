@@ -69,11 +69,10 @@ static void __init msm7x30_init_irq(void)
 
 static void __init msm7x30_init(void)
 {
-	platform_add_devices(devices, ARRAY_SIZE(devices));
 #ifdef CONFIG_SERIAL_MSM_CONSOLE
 	msm7x30_init_uart2();
 #endif
-
+	platform_add_devices(devices, ARRAY_SIZE(devices));
 }
 
 static void __init msm7x30_map_io(void)
