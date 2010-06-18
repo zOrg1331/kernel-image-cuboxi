@@ -423,8 +423,6 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 	int r;
 	sigset_t sigsaved;
 
-	vcpu_load(vcpu);
-
 	if (vcpu->sigset_active)
 		sigprocmask(SIG_SETMASK, &vcpu->sigset, &sigsaved);
 
@@ -455,8 +453,6 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 
 	if (vcpu->sigset_active)
 		sigprocmask(SIG_SETMASK, &sigsaved, NULL);
-
-	vcpu_put(vcpu);
 
 	return r;
 }
@@ -523,8 +519,9 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 		if (copy_from_user(&irq, argp, sizeof(irq)))
 			goto out;
 		r = kvm_vcpu_ioctl_interrupt(vcpu, &irq);
-		break;
+		goto out;
 	}
+
 	case KVM_ENABLE_CAP:
 	{
 		struct kvm_enable_cap cap;
