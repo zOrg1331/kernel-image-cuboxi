@@ -1,0 +1,123 @@
+Importing driver-core.current based on 2.6.35-rc3
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.35-rc3
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.35-rc3
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.34-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-rc3
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.34
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 9f29468dcc97627c840b1f9c29d817be859d7d5d
+HEAD is now at 9f29468 Driver core: use kmemdup in platform_device_add_resources
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+n_gsm.c-removed-duplicated-includes.patch
+serial-there-s-no-config-console.patch
+vt-clean-up-the-code-use-kernel-library.patch
+serial-add-uart_cap_efr-and-uart_cap_sleep-flags-to-16c950-uarts-definition.patch
+mrst_max3110-add-uart-driver-for-max3110-on-moorestown.patch
+max3110-sanity-check-a-register.patch
+serial-replace-open-coded-mutex-with-a-real-mutex-in-mrst_max3110.c.patch
+serial-fix-wakup-races-in-the-mrst_max3110-driver.patch
+tty-remove-hayes-esp-ioctls.patch
+tty-remove-remaining-hayes-esp-ioctls.patch
+stallion-prune-lock_kernel-calls.patch
+istallion-use-bit-ops-for-the-board-flags.patch
+riscom8-kill-use-of-lock_kernel.patch
+isicom-kill-off-the-bkl.patch
+rocket-kill-bkl.patch
+synclink-kill-the-big-kernel-lock.patch
+cyclades-kill-off-bkl-usage.patch
+epca-kill-the-big-kernel-lock.patch
+specialix-kill-the-bkl.patch
+tty-fix-the-digi-acceleport-driver-null-checks.patch
+synclink-reworking-locking-a-bit.patch
+tty-serial-fix-various-misuses-mishandlings-of-port-tty.patch
+tty-serial-fix-tty-back-references-in-termios.patch
+tty-serial-fix-tty-referencing-in-set_ldisc.patch
+vc-locking-clean-up.patch
+tty-make-vt-s-have-a-tty_port.patch
+tty-move-the-vt_tty-field-from-the-vc_data-into-the-standard-tty_port.patch
+serial-change-the-wait-for-carrier-locking.patch
+serial-add-port-helpers.patch
+serial-trim-locking-on-the-helpers.patch
+serial-use-block_til_ready-helper.patch
+tty-replace-bkl-with-a-new-tty_lock.patch
+tty-never-hold-btm-while-getting-tty_mutex.patch
+tty-fix-console_sem-lock-order.patch
+cdc-acm-remove-dead-code.patch
+tty-introduce-wait_event_interruptible_tty.patch
+tty-reorder-ldisc-locking.patch
+tty-untangle-locking-of-wait_until_sent.patch
+tty-remove-tty_lock_nested.patch
+tty-implement-btm-as-mutex-instead-of-bkl.patch
+tty-release-btm-while-sleeping-in-block_til_ready.patch
+8250-fix-set_ldisc-operation.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + 3d67091...d5c2b78 master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard d5c2b781097858dc10a4f6fd9f0daf905037b4b6
+HEAD is now at d5c2b78 8250: fix set_ldisc operation
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-fix-failure-path-in-usb_add_hcd.patch
+usb-don-t-stop-root-hub-status-polls-too-soon.patch
+usb-add-check-to-detect-host-controller-hardware-removal.patch
+usb-uhci-acquire-spinlock-before-calling-start_rh.patch
+usb-speedtouch-fixed-brace-and-spacing-coding-style-issues.patch
+usb-speedtouch-fixed-more-brace-and-spacing-coding-style-issues.patch
+usb-xhci-remove-obsolete-debugging-printk.patch
+usb-iuu_phoenix-add-support-for-different-baud-rates.patch
+usb-ehci-make-config_usb_ehci_tt_newsched-default-to-y.patch
+usb-gadget-use-memdup_user.patch
+usb-documentation-usb-ehci.txt-checkpatch-cleanup.patch
+usb-documentation-usb-hotplug.txt-checkpatch-cleanup.patch
+usb-documentation-usb-linux.inf-checkpatch-cleanup.patch
+usb-core-driver-fix-coding-styles.patch
+usb-core-endpoint-fix-coding-styles.patch
+usb-otg.h-fix-the-mixup-in-parameters-order.patch
+usb-host-eliminate-null-dereference.patch
+usb-isd200.c-remove-unnecessary-kmalloc-cast.patch
+usb-throw-away-custom-hex-digit-methods.patch
+usb-uvc-move-constants-and-structures-definitions-to-linux-usb-video.h.patch
+usb-ehci-ehci-1.1-addendum-preparation.patch
+usb-ehci-ehci-1.1-addendum-basic-lpm-feature-support.patch
+usb-ehci-ehci-1.1-addendum-enable-per-port-change-detect-bits.patch
+usb-option-remove-duplicate-amoi_vendor_id.patch
+revert-usb-adding-support-for-htc-smartphones-to-ipaq.patch
+usb-gadget-langwell_udc.c-printk-needs-a-unsigned-long-long-cast-for-a-dma_t.patch
+usb-conexant-fixed-spacing-and-brace-coding-style-issues.patch
+usb-add-a-serial-number-parameter-to-g_file_storage-module.patch
+usb-atm-fixed-spacing-and-indentation-coding-style-issues.patch
+usb-bkl-remove-lock_kernel-in-usbfs-update_sb.patch
+usb-bkl-convert-usb_driver-ioctl-to-unlocked_ioctl.patch
+usb-bkl-remove-bkl-use-for-usb-serial-driver-probing.patch
+usb-bkl-remove-bkl-use-in-uhci-debug.patch
+usb-gadget-do-not-take-bkl-for-gadget-ops-ioctl.patch
+usb-mon-kill-bkl-usage.patch
+usb-gadget-g_mass_storage-static-data-instead-of-dynamic-allocation.patch
+usb-gadget-f_mass_storage-fsg_add-renamed-to-fsg_bind_config.patch
+usb-gadget-f_fs-functionfs_add-renamed-to-functionfs_bind_config.patch
+usb-gadget-composite-usb_string_ids_-functions-added.patch
+usb-gadget-f_fs-use-usb_string_ids_n.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 978a1a2...bed54ce master     -> quilt/usb  (forced update)
