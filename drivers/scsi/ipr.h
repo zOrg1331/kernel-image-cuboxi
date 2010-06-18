@@ -996,7 +996,7 @@ struct ipr_hostrcb64_fabric_desc {
 	__be16 length;
 	u8 descriptor_id;
 
-	u8 reserved;
+	u8 reserved[2];
 	u8 path_state;
 
 	u8 reserved2[2];
@@ -1054,7 +1054,7 @@ struct ipr_hostrcb64_error {
 	__be64 fd_lun;
 	u8 fd_res_path[8];
 	__be64 time_stamp;
-	u8 reserved[2];
+	u8 reserved[16];
 	union {
 		struct ipr_hostrcb_type_ff_error type_ff_error;
 		struct ipr_hostrcb_type_12_error type_12_error;
@@ -1254,6 +1254,9 @@ struct ipr_interrupt_offsets {
 
 	unsigned long dump_addr_reg;
 	unsigned long dump_data_reg;
+
+#define IPR_ENDIAN_SWAP_KEY		0x000C0C00
+	unsigned long endian_swap_reg;
 };
 
 struct ipr_interrupts {
@@ -1279,6 +1282,8 @@ struct ipr_interrupts {
 
 	void __iomem *dump_addr_reg;
 	void __iomem *dump_data_reg;
+
+	void __iomem *endian_swap_reg;
 };
 
 struct ipr_chip_cfg_t {
@@ -1684,8 +1689,9 @@ struct ipr_ucode_image_header {
 	if (ipr_is_device(hostrcb)) {					\
 		if ((hostrcb)->ioa_cfg->sis64) {			\
 			printk(KERN_ERR IPR_NAME ": %s: " fmt, 		\
-				ipr_format_resource_path(&hostrcb->hcam.u.error64.fd_res_path[0], \
-					&hostrcb->rp_buffer[0]),	\
+				ipr_format_res_path(hostrcb->hcam.u.error64.fd_res_path, \
+					hostrcb->rp_buffer,		\
+					sizeof(hostrcb->rp_buffer)),	\
 				__VA_ARGS__);				\
 		} else {						\
 			ipr_ra_err((hostrcb)->ioa_cfg,			\
@@ -1854,4 +1860,12 @@ static inline int ipr_sdt_is_fmt2(u32 sdt_word)
 	return 0;
 }
 
+#ifndef writeq
+static inline void writeq(u64 val, void __iomem *addr)
+{
+        writel(((u32) (val >> 32)), addr);
+        writel(((u32) (val)), (addr + 4));
+}
 #endif
+
+#endif /* _IPR_H */

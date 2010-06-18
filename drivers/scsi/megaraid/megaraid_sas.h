@@ -73,6 +73,12 @@
  * HOTPLUG	: Resume from Hotplug
  * MFI_STOP_ADP	: Send signal to FW to stop processing
  */
+#define WRITE_SEQUENCE_OFFSET		(0x0000000FC) /* I20 */
+#define HOST_DIAGNOSTIC_OFFSET		(0x000000F8)  /* I20 */
+#define DIAG_WRITE_ENABLE			(0x00000080)
+#define DIAG_RESET_ADAPTER			(0x00000004)
+
+#define MFI_ADP_RESET				0x00000040
 #define MFI_INIT_ABORT				0x00000001
 #define MFI_INIT_READY				0x00000002
 #define MFI_INIT_MFIMODE			0x00000004
@@ -704,6 +710,12 @@ struct megasas_ctrl_info {
  */
 #define IS_DMA64				(sizeof(dma_addr_t) == 8)
 
+#define MFI_XSCALE_OMR0_CHANGE_INTERRUPT		0x00000001
+
+#define MFI_INTR_FLAG_REPLY_MESSAGE			0x00000001
+#define MFI_INTR_FLAG_FIRMWARE_STATE_CHANGE		0x00000002
+#define MFI_G2_OUTBOUND_DOORBELL_CHANGE_INTERRUPT	0x00000004
+
 #define MFI_OB_INTR_STATUS_MASK			0x00000002
 #define MFI_POLL_TIMEOUT_SECS			60
 #define MEGASAS_COMPLETION_TIMER_INTERVAL      (HZ/10)
@@ -714,6 +726,9 @@ struct megasas_ctrl_info {
 #define MFI_REPLY_SKINNY_MESSAGE_INTERRUPT	0x40000000
 #define MFI_SKINNY_ENABLE_INTERRUPT_MASK	(0x00000001)
 
+#define MFI_1068_PCSR_OFFSET			0x84
+#define MFI_1068_FW_HANDSHAKE_OFFSET		0x64
+#define MFI_1068_FW_READY			0xDDDD0000
 /*
 * register set for both 1068 and 1078 controllers
 * structure extended for 1078 registers
@@ -755,8 +770,10 @@ struct megasas_register_set {
 	u32 	inbound_high_queue_port ;	/*00C4h*/
 
 	u32 	reserved_5;			/*00C8h*/
-	u32 	index_registers[820];		/*00CCh*/
-
+	u32	res_6[11];			/*CCh*/
+	u32	host_diag;
+	u32	seq_offset;
+	u32 	index_registers[807];		/*00CCh*/
 } __attribute__ ((packed));
 
 struct megasas_sge32 {
@@ -1226,11 +1243,12 @@ struct megasas_instance {
 
 	struct megasas_cmd **cmd_list;
 	struct list_head cmd_pool;
+	/* used to sync fire the cmd to fw */
 	spinlock_t cmd_pool_lock;
+	/* used to sync fire the cmd to fw */
+	spinlock_t hba_lock;
 	/* used to synch producer, consumer ptrs in dpc */
 	spinlock_t completion_lock;
-	/* used to sync fire the cmd to fw */
-	spinlock_t fire_lock;
 	struct dma_pool *frame_dma_pool;
 	struct dma_pool *sense_dma_pool;
 
@@ -1257,9 +1275,21 @@ struct megasas_instance {
 	u8 flag;
 	u8 unload;
 	u8 flag_ieee;
+	u8 issuepend_done;
+	u8 adprecovery;
 	unsigned long last_time;
 
 	struct timer_list io_completion_timer;
+	struct list_head internal_reset_pending_q;
+};
+
+enum {
+	MEGASAS_HBA_OPERATIONAL			= 0,
+	MEGASAS_ADPRESET_SM_INFAULT		= 1,
+	MEGASAS_ADPRESET_SM_FW_RESET_SUCCESS	= 2,
+	MEGASAS_ADPRESET_SM_OPERATIONAL		= 3,
+	MEGASAS_HW_CRITICAL_ERROR		= 4,
+	MEGASAS_ADPRESET_INPROG_SIGN		= 0xDEADDEAD,
 };
 
 struct megasas_instance_template {
@@ -1272,6 +1302,10 @@ struct megasas_instance_template {
 	int (*clear_intr)(struct megasas_register_set __iomem *);
 
 	u32 (*read_fw_status_reg)(struct megasas_register_set __iomem *);
+	int (*adp_reset)(struct megasas_instance *, \
+		struct megasas_register_set __iomem *);
+	int (*check_reset)(struct megasas_instance *, \
+		struct megasas_register_set __iomem *);
 };
 
 #define MEGASAS_IS_LOGICAL(scp)						\

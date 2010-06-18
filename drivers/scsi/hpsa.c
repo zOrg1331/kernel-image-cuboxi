@@ -148,6 +148,8 @@ static ssize_t lunid_show(struct device *dev,
 	struct device_attribute *attr, char *buf);
 static ssize_t unique_id_show(struct device *dev,
 	struct device_attribute *attr, char *buf);
+static ssize_t host_show_firmware_revision(struct device *dev,
+	     struct device_attribute *attr, char *buf);
 static void hpsa_update_scsi_devices(struct ctlr_info *h, int hostno);
 static ssize_t host_store_rescan(struct device *dev,
 	 struct device_attribute *attr, const char *buf, size_t count);
@@ -158,13 +160,15 @@ static void check_ioctl_unit_attention(struct ctlr_info *h,
 /* performant mode helper functions */
 static void calc_bucket_map(int *bucket, int num_buckets,
 	int nsgs, int *bucket_map);
-static void hpsa_put_ctlr_into_performant_mode(struct ctlr_info *h);
+static __devinit void hpsa_put_ctlr_into_performant_mode(struct ctlr_info *h);
 static inline u32 next_command(struct ctlr_info *h);
 
 static DEVICE_ATTR(raid_level, S_IRUGO, raid_level_show, NULL);
 static DEVICE_ATTR(lunid, S_IRUGO, lunid_show, NULL);
 static DEVICE_ATTR(unique_id, S_IRUGO, unique_id_show, NULL);
 static DEVICE_ATTR(rescan, S_IWUSR, NULL, host_store_rescan);
+static DEVICE_ATTR(firmware_revision, S_IRUGO,
+	host_show_firmware_revision, NULL);
 
 static struct device_attribute *hpsa_sdev_attrs[] = {
 	&dev_attr_raid_level,
@@ -175,6 +179,7 @@ static struct device_attribute *hpsa_sdev_attrs[] = {
 
 static struct device_attribute *hpsa_shost_attrs[] = {
 	&dev_attr_rescan,
+	&dev_attr_firmware_revision,
 	NULL,
 };
 
@@ -258,6 +263,21 @@ static ssize_t host_store_rescan(struct device *dev,
 	h = shost_to_hba(shost);
 	hpsa_scan_start(h->scsi_host);
 	return count;
+}
+
+static ssize_t host_show_firmware_revision(struct device *dev,
+	     struct device_attribute *attr, char *buf)
+{
+	struct ctlr_info *h;
+	struct Scsi_Host *shost = class_to_shost(dev);
+	unsigned char *fwrev;
+
+	h = shost_to_hba(shost);
+	if (!h->hba_inquiry_data)
+		return 0;
+	fwrev = &h->hba_inquiry_data[32];
+	return snprintf(buf, 20, "%c%c%c%c\n",
+		fwrev[0], fwrev[1], fwrev[2], fwrev[3]);
 }
 
 /* Enqueuing and dequeuing functions for cmdlists. */
@@ -1439,12 +1459,6 @@ static int hpsa_update_device_info(struct ctlr_info *h,
 			"hpsa_update_device_info: inquiry failed\n");
 		goto bail_out;
 	}
-
-	/* As a side effect, record the firmware version number
-	 * if we happen to be talking to the RAID controller.
-	 */
-	if (is_hba_lunid(scsi3addr))
-		memcpy(h->firm_ver, &inq_buff[32], 4);
 
 	this_device->devtype = (inq_buff[0] & 0x1f);
 	memcpy(this_device->scsi3addr, scsi3addr, 8);
@@ -3135,9 +3149,9 @@ static __devinit int hpsa_hard_reset_controller(struct pci_dev *pdev)
  *   the io functions.
  *   This is for debug only.
  */
-#ifdef HPSA_DEBUG
 static void print_cfg_table(struct device *dev, struct CfgTable *tb)
 {
+#ifdef HPSA_DEBUG
 	int i;
 	char temp_name[17];
 
@@ -3167,8 +3181,8 @@ static void print_cfg_table(struct device *dev, struct CfgTable *tb)
 	dev_info(dev, "   Server Name = %s\n", temp_name);
 	dev_info(dev, "   Heartbeat Counter = 0x%x\n\n\n",
 		readl(&(tb->HeartBeat)));
-}
 #endif				/* HPSA_DEBUG */
+}
 
 static int find_PCI_BAR_index(struct pci_dev *pdev, unsigned long pci_bar_addr)
 {
@@ -3209,8 +3223,7 @@ static int find_PCI_BAR_index(struct pci_dev *pdev, unsigned long pci_bar_addr)
  * controllers that are capable. If not, we use IO-APIC mode.
  */
 
-static void __devinit hpsa_interrupt_mode(struct ctlr_info *h,
-					   struct pci_dev *pdev, u32 board_id)
+static void __devinit hpsa_interrupt_mode(struct ctlr_info *h)
 {
 #ifdef CONFIG_PCI_MSI
 	int err;
@@ -3219,13 +3232,12 @@ static void __devinit hpsa_interrupt_mode(struct ctlr_info *h,
 	};
 
 	/* Some boards advertise MSI but don't really support it */
-	if ((board_id == 0x40700E11) ||
-	    (board_id == 0x40800E11) ||
-	    (board_id == 0x40820E11) || (board_id == 0x40830E11))
+	if ((h->board_id == 0x40700E11) || (h->board_id == 0x40800E11) ||
+	    (h->board_id == 0x40820E11) || (h->board_id == 0x40830E11))
 		goto default_int_mode;
-	if (pci_find_capability(pdev, PCI_CAP_ID_MSIX)) {
-		dev_info(&pdev->dev, "MSIX\n");
-		err = pci_enable_msix(pdev, hpsa_msix_entries, 4);
+	if (pci_find_capability(h->pdev, PCI_CAP_ID_MSIX)) {
+		dev_info(&h->pdev->dev, "MSIX\n");
+		err = pci_enable_msix(h->pdev, hpsa_msix_entries, 4);
 		if (!err) {
 			h->intr[0] = hpsa_msix_entries[0].vector;
 			h->intr[1] = hpsa_msix_entries[1].vector;
@@ -3235,144 +3247,134 @@ static void __devinit hpsa_interrupt_mode(struct ctlr_info *h,
 			return;
 		}
 		if (err > 0) {
-			dev_warn(&pdev->dev, "only %d MSI-X vectors "
+			dev_warn(&h->pdev->dev, "only %d MSI-X vectors "
 			       "available\n", err);
 			goto default_int_mode;
 		} else {
-			dev_warn(&pdev->dev, "MSI-X init failed %d\n",
+			dev_warn(&h->pdev->dev, "MSI-X init failed %d\n",
 			       err);
 			goto default_int_mode;
 		}
 	}
-	if (pci_find_capability(pdev, PCI_CAP_ID_MSI)) {
-		dev_info(&pdev->dev, "MSI\n");
-		if (!pci_enable_msi(pdev))
+	if (pci_find_capability(h->pdev, PCI_CAP_ID_MSI)) {
+		dev_info(&h->pdev->dev, "MSI\n");
+		if (!pci_enable_msi(h->pdev))
 			h->msi_vector = 1;
 		else
-			dev_warn(&pdev->dev, "MSI init failed\n");
+			dev_warn(&h->pdev->dev, "MSI init failed\n");
 	}
 default_int_mode:
 #endif				/* CONFIG_PCI_MSI */
 	/* if we get here we're going to use the default interrupt mode */
-	h->intr[PERF_MODE_INT] = pdev->irq;
+	h->intr[PERF_MODE_INT] = h->pdev->irq;
 }
 
-static int __devinit hpsa_pci_init(struct ctlr_info *h, struct pci_dev *pdev)
+static int __devinit hpsa_lookup_board_id(struct pci_dev *pdev, u32 *board_id)
 {
-	ushort subsystem_vendor_id, subsystem_device_id, command;
-	u32 board_id, scratchpad = 0;
+	int i;
+	u32 subsystem_vendor_id, subsystem_device_id;
+
+	subsystem_vendor_id = pdev->subsystem_vendor;
+	subsystem_device_id = pdev->subsystem_device;
+	*board_id = ((subsystem_device_id << 16) & 0xffff0000) |
+		    subsystem_vendor_id;
+
+	for (i = 0; i < ARRAY_SIZE(products); i++)
+		if (*board_id == products[i].board_id)
+			return i;
+
+	if (subsystem_vendor_id != PCI_VENDOR_ID_HP || !hpsa_allow_any) {
+		dev_warn(&pdev->dev, "unrecognized board ID: "
+			"0x%08x, ignoring.\n", *board_id);
+			return -ENODEV;
+	}
+	return ARRAY_SIZE(products) - 1; /* generic unknown smart array */
+}
+
+static inline bool hpsa_board_disabled(struct pci_dev *pdev)
+{
+	u16 command;
+
+	(void) pci_read_config_word(pdev, PCI_COMMAND, &command);
+	return ((command & PCI_COMMAND_MEMORY) == 0);
+}
+
+static int __devinit hpsa_pci_find_memory_BAR(struct ctlr_info *h,
+	unsigned long *memory_bar)
+{
+	int i;
+
+	for (i = 0; i < DEVICE_COUNT_RESOURCE; i++)
+		if (pci_resource_flags(h->pdev, i) & IORESOURCE_MEM) {
+			/* addressing mode bits already removed */
+			*memory_bar = pci_resource_start(h->pdev, i);
+			dev_dbg(&h->pdev->dev, "memory BAR = %lx\n",
+				*memory_bar);
+			return 0;
+		}
+	dev_warn(&h->pdev->dev, "no memory BAR found\n");
+	return -ENODEV;
+}
+
+static int __devinit hpsa_wait_for_board_ready(struct ctlr_info *h)
+{
+	int i;
+	u32 scratchpad;
+
+	for (i = 0; i < HPSA_BOARD_READY_ITERATIONS; i++) {
+		scratchpad = readl(h->vaddr + SA5_SCRATCHPAD_OFFSET);
+		if (scratchpad == HPSA_FIRMWARE_READY)
+			return 0;
+		msleep(HPSA_BOARD_READY_POLL_INTERVAL_MSECS);
+	}
+	dev_warn(&h->pdev->dev, "board not ready, timed out.\n");
+	return -ENODEV;
+}
+
+static int __devinit hpsa_find_cfgtables(struct ctlr_info *h)
+{
 	u64 cfg_offset;
 	u32 cfg_base_addr;
 	u64 cfg_base_addr_index;
 	u32 trans_offset;
-	int i, prod_index, err;
-
-	subsystem_vendor_id = pdev->subsystem_vendor;
-	subsystem_device_id = pdev->subsystem_device;
-	board_id = (((u32) (subsystem_device_id << 16) & 0xffff0000) |
-		    subsystem_vendor_id);
-
-	for (i = 0; i < ARRAY_SIZE(products); i++)
-		if (board_id == products[i].board_id)
-			break;
-
-	prod_index = i;
-
-	if (prod_index == ARRAY_SIZE(products)) {
-		prod_index--;
-		if (subsystem_vendor_id != PCI_VENDOR_ID_HP ||
-				!hpsa_allow_any) {
-			dev_warn(&pdev->dev, "unrecognized board ID:"
-				" 0x%08lx, ignoring.\n",
-				(unsigned long) board_id);
-			return -ENODEV;
-		}
-	}
-	/* check to see if controller has been disabled
-	 * BEFORE trying to enable it
-	 */
-	(void)pci_read_config_word(pdev, PCI_COMMAND, &command);
-	if (!(command & 0x02)) {
-		dev_warn(&pdev->dev, "controller appears to be disabled\n");
-		return -ENODEV;
-	}
-
-	err = pci_enable_device(pdev);
-	if (err) {
-		dev_warn(&pdev->dev, "unable to enable PCI device\n");
-		return err;
-	}
-
-	err = pci_request_regions(pdev, "hpsa");
-	if (err) {
-		dev_err(&pdev->dev, "cannot obtain PCI resources, aborting\n");
-		return err;
-	}
-
-	/* If the kernel supports MSI/MSI-X we will try to enable that,
-	 * else we use the IO-APIC interrupt assigned to us by system ROM.
-	 */
-	hpsa_interrupt_mode(h, pdev, board_id);
-
-	/* find the memory BAR */
-	for (i = 0; i < DEVICE_COUNT_RESOURCE; i++) {
-		if (pci_resource_flags(pdev, i) & IORESOURCE_MEM)
-			break;
-	}
-	if (i == DEVICE_COUNT_RESOURCE) {
-		dev_warn(&pdev->dev, "no memory BAR found\n");
-		err = -ENODEV;
-		goto err_out_free_res;
-	}
-
-	h->paddr = pci_resource_start(pdev, i); /* addressing mode bits
-						 * already removed
-						 */
-
-	h->vaddr = remap_pci_mem(h->paddr, 0x250);
-
-	/* Wait for the board to become ready.  */
-	for (i = 0; i < HPSA_BOARD_READY_ITERATIONS; i++) {
-		scratchpad = readl(h->vaddr + SA5_SCRATCHPAD_OFFSET);
-		if (scratchpad == HPSA_FIRMWARE_READY)
-			break;
-		msleep(HPSA_BOARD_READY_POLL_INTERVAL_MSECS);
-	}
-	if (scratchpad != HPSA_FIRMWARE_READY) {
-		dev_warn(&pdev->dev, "board not ready, timed out.\n");
-		err = -ENODEV;
-		goto err_out_free_res;
-	}
 
 	/* get the address index number */
 	cfg_base_addr = readl(h->vaddr + SA5_CTCFG_OFFSET);
 	cfg_base_addr &= (u32) 0x0000ffff;
-	cfg_base_addr_index = find_PCI_BAR_index(pdev, cfg_base_addr);
+	cfg_base_addr_index = find_PCI_BAR_index(h->pdev, cfg_base_addr);
 	if (cfg_base_addr_index == -1) {
-		dev_warn(&pdev->dev, "cannot find cfg_base_addr_index\n");
-		err = -ENODEV;
-		goto err_out_free_res;
+		dev_warn(&h->pdev->dev, "cannot find cfg_base_addr_index\n");
+		return -ENODEV;
 	}
-
 	cfg_offset = readl(h->vaddr + SA5_CTMEM_OFFSET);
-	h->cfgtable = remap_pci_mem(pci_resource_start(pdev,
+	h->cfgtable = remap_pci_mem(pci_resource_start(h->pdev,
 			       cfg_base_addr_index) + cfg_offset,
 				sizeof(h->cfgtable));
+	if (!h->cfgtable)
+		return -ENOMEM;
 	/* Find performant mode table. */
 	trans_offset = readl(&(h->cfgtable->TransMethodOffset));
-	h->transtable = remap_pci_mem(pci_resource_start(pdev,
+	h->transtable = remap_pci_mem(pci_resource_start(h->pdev,
 				cfg_base_addr_index)+cfg_offset+trans_offset,
 				sizeof(*h->transtable));
+	if (!h->transtable)
+		return -ENOMEM;
+	return 0;
+}
 
-	h->board_id = board_id;
+/* Interrogate the hardware for some limits:
+ * max commands, max SG elements without chaining, and with chaining,
+ * SG chain block size, etc.
+ */
+static void __devinit hpsa_find_board_params(struct ctlr_info *h)
+{
 	h->max_commands = readl(&(h->cfgtable->MaxPerformantModeCommands));
+	h->nr_cmds = h->max_commands - 4; /* Allow room for some ioctls */
 	h->maxsgentries = readl(&(h->cfgtable->MaxScatterGatherElements));
-
 	/*
 	 * Limit in-command s/g elements to 32 save dma'able memory.
 	 * Howvever spec says if 0, use 31
 	 */
-
 	h->max_cmd_sg_entries = 31;
 	if (h->maxsgentries > 512) {
 		h->max_cmd_sg_entries = 32;
@@ -3382,45 +3384,49 @@ static int __devinit hpsa_pci_init(struct ctlr_info *h, struct pci_dev *pdev)
 		h->maxsgentries = 31; /* default to traditional values */
 		h->chainsize = 0;
 	}
+}
 
-	h->product_name = products[prod_index].product_name;
-	h->access = *(products[prod_index].access);
-	/* Allow room for some ioctls */
-	h->nr_cmds = h->max_commands - 4;
-
+static inline bool hpsa_CISS_signature_present(struct ctlr_info *h)
+{
 	if ((readb(&h->cfgtable->Signature[0]) != 'C') ||
 	    (readb(&h->cfgtable->Signature[1]) != 'I') ||
 	    (readb(&h->cfgtable->Signature[2]) != 'S') ||
 	    (readb(&h->cfgtable->Signature[3]) != 'S')) {
-		dev_warn(&pdev->dev, "not a valid CISS config table\n");
-		err = -ENODEV;
-		goto err_out_free_res;
+		dev_warn(&h->pdev->dev, "not a valid CISS config table\n");
+		return false;
 	}
+	return true;
+}
+
+/* Need to enable prefetch in the SCSI core for 6400 in x86 */
+static inline void hpsa_enable_scsi_prefetch(struct ctlr_info *h)
+{
 #ifdef CONFIG_X86
-	{
-		/* Need to enable prefetch in the SCSI core for 6400 in x86 */
-		u32 prefetch;
-		prefetch = readl(&(h->cfgtable->SCSI_Prefetch));
-		prefetch |= 0x100;
-		writel(prefetch, &(h->cfgtable->SCSI_Prefetch));
-	}
+	u32 prefetch;
+
+	prefetch = readl(&(h->cfgtable->SCSI_Prefetch));
+	prefetch |= 0x100;
+	writel(prefetch, &(h->cfgtable->SCSI_Prefetch));
 #endif
+}
 
-	/* Disabling DMA prefetch for the P600
-	 * An ASIC bug may result in a prefetch beyond
-	 * physical memory.
-	 */
-	if (board_id == 0x3225103C) {
-		u32 dma_prefetch;
-		dma_prefetch = readl(h->vaddr + I2O_DMA1_CFG);
-		dma_prefetch |= 0x8000;
-		writel(dma_prefetch, h->vaddr + I2O_DMA1_CFG);
-	}
+/* Disable DMA prefetch for the P600.  Otherwise an ASIC bug may result
+ * in a prefetch beyond physical memory.
+ */
+static inline void hpsa_p600_dma_prefetch_quirk(struct ctlr_info *h)
+{
+	u32 dma_prefetch;
 
-	h->max_commands = readl(&(h->cfgtable->CmdsOutMax));
-	/* Update the field, and then ring the doorbell */
-	writel(CFGTBL_Trans_Simple, &(h->cfgtable->HostWrite.TransportRequest));
-	writel(CFGTBL_ChangeReq, h->vaddr + SA5_DOORBELL);
+	if (h->board_id != 0x3225103C)
+		return;
+	dma_prefetch = readl(h->vaddr + I2O_DMA1_CFG);
+	dma_prefetch |= 0x8000;
+	writel(dma_prefetch, h->vaddr + I2O_DMA1_CFG);
+}
+
+static void __devinit hpsa_wait_for_mode_change_ack(struct ctlr_info *h)
+{
+	int i;
 
 	/* under certain very rare conditions, this can take awhile.
 	 * (e.g.: hot replace a failed 144GB drive in a RAID 5 set right
@@ -3432,24 +3438,96 @@ static int __devinit hpsa_pci_init(struct ctlr_info *h, struct pci_dev *pdev)
 		/* delay and try again */
 		msleep(10);
 	}
+}
 
-#ifdef HPSA_DEBUG
-	print_cfg_table(&pdev->dev, h->cfgtable);
-#endif				/* HPSA_DEBUG */
+static int __devinit hpsa_enter_simple_mode(struct ctlr_info *h)
+{
+	u32 trans_support;
 
+	trans_support = readl(&(h->cfgtable->TransportSupport));
+	if (!(trans_support & SIMPLE_MODE))
+		return -ENOTSUPP;
+
+	h->max_commands = readl(&(h->cfgtable->CmdsOutMax));
+	/* Update the field, and then ring the doorbell */
+	writel(CFGTBL_Trans_Simple, &(h->cfgtable->HostWrite.TransportRequest));
+	writel(CFGTBL_ChangeReq, h->vaddr + SA5_DOORBELL);
+	hpsa_wait_for_mode_change_ack(h);
+	print_cfg_table(&h->pdev->dev, h->cfgtable);
 	if (!(readl(&(h->cfgtable->TransportActive)) & CFGTBL_Trans_Simple)) {
-		dev_warn(&pdev->dev, "unable to get board into simple mode\n");
+		dev_warn(&h->pdev->dev,
+			"unable to get board into simple mode\n");
+		return -ENODEV;
+	}
+	return 0;
+}
+
+static int __devinit hpsa_pci_init(struct ctlr_info *h)
+{
+	int prod_index, err;
+
+	prod_index = hpsa_lookup_board_id(h->pdev, &h->board_id);
+	if (prod_index < 0)
+		return -ENODEV;
+	h->product_name = products[prod_index].product_name;
+	h->access = *(products[prod_index].access);
+
+	if (hpsa_board_disabled(h->pdev)) {
+		dev_warn(&h->pdev->dev, "controller appears to be disabled\n");
+		return -ENODEV;
+	}
+	err = pci_enable_device(h->pdev);
+	if (err) {
+		dev_warn(&h->pdev->dev, "unable to enable PCI device\n");
+		return err;
+	}
+
+	err = pci_request_regions(h->pdev, "hpsa");
+	if (err) {
+		dev_err(&h->pdev->dev,
+			"cannot obtain PCI resources, aborting\n");
+		return err;
+	}
+	hpsa_interrupt_mode(h);
+	err = hpsa_pci_find_memory_BAR(h, &h->paddr);
+	if (err)
+		goto err_out_free_res;
+	h->vaddr = remap_pci_mem(h->paddr, 0x250);
+	if (!h->vaddr) {
+		err = -ENOMEM;
+		goto err_out_free_res;
+	}
+	err = hpsa_wait_for_board_ready(h);
+	if (err)
+		goto err_out_free_res;
+	err = hpsa_find_cfgtables(h);
+	if (err)
+		goto err_out_free_res;
+	hpsa_find_board_params(h);
+
+	if (!hpsa_CISS_signature_present(h)) {
 		err = -ENODEV;
 		goto err_out_free_res;
 	}
+	hpsa_enable_scsi_prefetch(h);
+	hpsa_p600_dma_prefetch_quirk(h);
+	err = hpsa_enter_simple_mode(h);
+	if (err)
+		goto err_out_free_res;
 	return 0;
 
 err_out_free_res:
+	if (h->transtable)
+		iounmap(h->transtable);
+	if (h->cfgtable)
+		iounmap(h->cfgtable);
+	if (h->vaddr)
+		iounmap(h->vaddr);
 	/*
 	 * Deliberately omit pci_disable_device(): it does something nasty to
 	 * Smart Array controllers that pci_enable_device does not undo
 	 */
-	pci_release_regions(pdev);
+	pci_release_regions(h->pdev);
 	return err;
 }
 
@@ -3507,17 +3585,17 @@ static int __devinit hpsa_init_one(struct pci_dev *pdev,
 	if (!h)
 		return -ENOMEM;
 
+	h->pdev = pdev;
 	h->busy_initializing = 1;
 	INIT_HLIST_HEAD(&h->cmpQ);
 	INIT_HLIST_HEAD(&h->reqQ);
-	rc = hpsa_pci_init(h, pdev);
+	rc = hpsa_pci_init(h);
 	if (rc != 0)
 		goto clean1;
 
 	sprintf(h->devname, "hpsa%d", number_of_controllers);
 	h->ctlr = number_of_controllers;
 	number_of_controllers++;
-	h->pdev = pdev;
 
 	/* configure PCI DMA stuff */
 	rc = pci_set_dma_mask(pdev, DMA_BIT_MASK(64));
@@ -3663,6 +3741,8 @@ static void __devexit hpsa_remove_one(struct pci_dev *pdev)
 	hpsa_unregister_scsi(h);	/* unhook from SCSI subsystem */
 	hpsa_shutdown(pdev);
 	iounmap(h->vaddr);
+	iounmap(h->transtable);
+	iounmap(h->cfgtable);
 	hpsa_free_sg_chain_blocks(h);
 	pci_free_consistent(h->pdev,
 		h->nr_cmds * sizeof(struct CommandList),
@@ -3742,19 +3822,69 @@ static void  calc_bucket_map(int bucket[], int num_buckets,
 	}
 }
 
-static void hpsa_put_ctlr_into_performant_mode(struct ctlr_info *h)
+static __devinit void hpsa_enter_performant_mode(struct ctlr_info *h)
 {
-	u32 trans_support;
-	u64 trans_offset;
+	int i;
+	unsigned long register_value;
+
+	/* This is a bit complicated.  There are 8 registers on
+	 * the controller which we write to to tell it 8 different
+	 * sizes of commands which there may be.  It's a way of
+	 * reducing the DMA done to fetch each command.  Encoded into
+	 * each command's tag are 3 bits which communicate to the controller
+	 * which of the eight sizes that command fits within.  The size of
+	 * each command depends on how many scatter gather entries there are.
+	 * Each SG entry requires 16 bytes.  The eight registers are programmed
+	 * with the number of 16-byte blocks a command of that size requires.
+	 * The smallest command possible requires 5 such 16 byte blocks.
+	 * the largest command possible requires MAXSGENTRIES + 4 16-byte
+	 * blocks.  Note, this only extends to the SG entries contained
+	 * within the command block, and does not extend to chained blocks
+	 * of SG elements.   bft[] contains the eight values we write to
+	 * the registers.  They are not evenly distributed, but have more
+	 * sizes for small commands, and fewer sizes for larger commands.
+	 */
+	int bft[8] = {5, 6, 8, 10, 12, 20, 28, MAXSGENTRIES + 4};
+	BUILD_BUG_ON(28 > MAXSGENTRIES + 4);
 	/*  5 = 1 s/g entry or 4k
 	 *  6 = 2 s/g entry or 8k
 	 *  8 = 4 s/g entry or 16k
 	 * 10 = 6 s/g entry or 24k
 	 */
-	int bft[8] = {5, 6, 8, 10, 12, 20, 28, 35}; /* for scatter/gathers */
-	int i = 0;
-	int l = 0;
-	unsigned long register_value;
+
+	h->reply_pool_wraparound = 1; /* spec: init to 1 */
+
+	/* Controller spec: zero out this buffer. */
+	memset(h->reply_pool, 0, h->reply_pool_size);
+	h->reply_pool_head = h->reply_pool;
+
+	bft[7] = h->max_sg_entries + 4;
+	calc_bucket_map(bft, ARRAY_SIZE(bft), 32, h->blockFetchTable);
+	for (i = 0; i < 8; i++)
+		writel(bft[i], &h->transtable->BlockFetch[i]);
+
+	/* size of controller ring buffer */
+	writel(h->max_commands, &h->transtable->RepQSize);
+	writel(1, &h->transtable->RepQCount);
+	writel(0, &h->transtable->RepQCtrAddrLow32);
+	writel(0, &h->transtable->RepQCtrAddrHigh32);
+	writel(h->reply_pool_dhandle, &h->transtable->RepQAddr0Low32);
+	writel(0, &h->transtable->RepQAddr0High32);
+	writel(CFGTBL_Trans_Performant,
+		&(h->cfgtable->HostWrite.TransportRequest));
+	writel(CFGTBL_ChangeReq, h->vaddr + SA5_DOORBELL);
+	hpsa_wait_for_mode_change_ack(h);
+	register_value = readl(&(h->cfgtable->TransportActive));
+	if (!(register_value & CFGTBL_Trans_Performant)) {
+		dev_warn(&h->pdev->dev, "unable to get board into"
+					" performant mode\n");
+		return;
+	}
+}
+
+static __devinit void hpsa_put_ctlr_into_performant_mode(struct ctlr_info *h)
+{
+	u32 trans_support;
 
 	trans_support = readl(&(h->cfgtable->TransportSupport));
 	if (!(trans_support & PERFORMANT_MODE))
@@ -3775,45 +3905,7 @@ static void hpsa_put_ctlr_into_performant_mode(struct ctlr_info *h)
 		|| (h->blockFetchTable == NULL))
 		goto clean_up;
 
-	h->reply_pool_wraparound = 1; /* spec: init to 1 */
-
-	/* Controller spec: zero out this buffer. */
-	memset(h->reply_pool, 0, h->reply_pool_size);
-	h->reply_pool_head = h->reply_pool;
-
-	trans_offset = readl(&(h->cfgtable->TransMethodOffset));
-	bft[7] = h->max_sg_entries + 4;
-	calc_bucket_map(bft, ARRAY_SIZE(bft), 32, h->blockFetchTable);
-	for (i = 0; i < 8; i++)
-		writel(bft[i], &h->transtable->BlockFetch[i]);
-
-	/* size of controller ring buffer */
-	writel(h->max_commands, &h->transtable->RepQSize);
-	writel(1, &h->transtable->RepQCount);
-	writel(0, &h->transtable->RepQCtrAddrLow32);
-	writel(0, &h->transtable->RepQCtrAddrHigh32);
-	writel(h->reply_pool_dhandle, &h->transtable->RepQAddr0Low32);
-	writel(0, &h->transtable->RepQAddr0High32);
-	writel(CFGTBL_Trans_Performant,
-		&(h->cfgtable->HostWrite.TransportRequest));
-	writel(CFGTBL_ChangeReq, h->vaddr + SA5_DOORBELL);
-	/* under certain very rare conditions, this can take awhile.
-	 * (e.g.: hot replace a failed 144GB drive in a RAID 5 set right
-	 * as we enter this code.) */
-	for (l = 0; l < MAX_CONFIG_WAIT; l++) {
-		register_value = readl(h->vaddr + SA5_DOORBELL);
-		if (!(register_value & CFGTBL_ChangeReq))
-			break;
-		/* delay and try again */
-		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_timeout(10);
-	}
-	register_value = readl(&(h->cfgtable->TransportActive));
-	if (!(register_value & CFGTBL_Trans_Performant)) {
-		dev_warn(&h->pdev->dev, "unable to get board into"
-					" performant mode\n");
-		return;
-	}
+	hpsa_enter_performant_mode(h);
 
 	/* Change the access methods to the performant access methods */
 	h->access = SA5_performant_access;
