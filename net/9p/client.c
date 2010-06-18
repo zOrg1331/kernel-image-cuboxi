@@ -460,7 +460,8 @@ static int p9_check_errors(struct p9_client *c, struct p9_req_t *req)
 			return err;
 		}
 
-		if (p9_is_proto_dotu(c))
+		if (p9_is_proto_dotu(c) ||
+			p9_is_proto_dotl(c))
 			err = -ecode;
 
 		if (!err || !IS_ERR_VALUE(err))
@@ -1432,3 +1433,50 @@ error:
 }
 EXPORT_SYMBOL(p9_client_rename);
 
+int p9_client_readdir(struct p9_fid *fid, char *data, u32 count, u64 offset)
+{
+	int err, rsize, total;
+	struct p9_client *clnt;
+	struct p9_req_t *req;
+	char *dataptr;
+
+	P9_DPRINTK(P9_DEBUG_9P, ">>> TREADDIR fid %d offset %llu count %d\n",
+				fid->fid, (long long unsigned) offset, count);
+
+	err = 0;
+	clnt = fid->clnt;
+	total = 0;
+
+	rsize = fid->iounit;
+	if (!rsize || rsize > clnt->msize-P9_READDIRHDRSZ)
+		rsize = clnt->msize - P9_READDIRHDRSZ;
+
+	if (count < rsize)
+		rsize = count;
+
+	req = p9_client_rpc(clnt, P9_TREADDIR, "dqd", fid->fid, offset, rsize);
+	if (IS_ERR(req)) {
+		err = PTR_ERR(req);
+		goto error;
+	}
+
+	err = p9pdu_readf(req->rc, clnt->proto_version, "D", &count, &dataptr);
+	if (err) {
+		p9pdu_dump(1, req->rc);
+		goto free_and_error;
+	}
+
+	P9_DPRINTK(P9_DEBUG_9P, "<<< RREADDIR count %d\n", count);
+
+	if (data)
+		memmove(data, dataptr, count);
+
+	p9_free_req(clnt, req);
+	return count;
+
+free_and_error:
+	p9_free_req(clnt, req);
+error:
+	return err;
+}
+EXPORT_SYMBOL(p9_client_readdir);
