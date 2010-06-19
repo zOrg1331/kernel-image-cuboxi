@@ -881,13 +881,12 @@ void fw_core_handle_response(struct fw_card *card, struct fw_packet *p)
 	unsigned long flags;
 	u32 *data;
 	size_t data_length;
-	int tcode, tlabel, destination, source, rcode;
+	int tcode, tlabel, source, rcode;
 
-	tcode       = HEADER_GET_TCODE(p->header[0]);
-	tlabel      = HEADER_GET_TLABEL(p->header[0]);
-	destination = HEADER_GET_DESTINATION(p->header[0]);
-	source      = HEADER_GET_SOURCE(p->header[1]);
-	rcode       = HEADER_GET_RCODE(p->header[1]);
+	tcode	= HEADER_GET_TCODE(p->header[0]);
+	tlabel	= HEADER_GET_TLABEL(p->header[0]);
+	source	= HEADER_GET_SOURCE(p->header[1]);
+	rcode	= HEADER_GET_RCODE(p->header[1]);
 
 	spin_lock_irqsave(&card->lock, flags);
 	list_for_each_entry(t, &card->transaction_list, link) {
@@ -982,39 +981,6 @@ static const struct fw_address_region registers_region =
 	{ .start = CSR_REGISTER_BASE,
 	  .end   = CSR_REGISTER_BASE | CSR_CONFIG_ROM, };
 
-static u32 read_state_register(struct fw_card *card)
-{
-	/*
-	 * Fixed bits (IEEE 1394-2008 8.3.2.2.1):
-	 * Bits 0-1 (state) always read 00=running.
-	 * Bits 2,3 (off, atn) are not implemented as per the spec.
-	 * Bit 4 (elog) is not implemented because there is no error log.
-	 * Bit 6 (dreq) cannot be set.  It is intended to "disable requests
-	 *      from unreliable nodes"; however, IEEE 1212 states that devices
-	 *      may "clear their own dreq bit when it has been improperly set".
-	 *      Our implementation might be seen as an improperly extensive
-	 *      interpretation of "improperly", but the 1212-2001 revision
-	 *      dropped this bit altogether, so we're in the clear.  :o)
-	 * Bit 7 (lost) always reads 0 because a power reset has never occurred
-	 *      during normal operation.
-	 * Bit 9 (linkoff) is not implemented because the PC is not powered
-	 *      from the FireWire cable.
-	 * Bit 15 (gone) always reads 0.  It must be set at a power/command/bus
-	 *      reset, but then cleared when the units are ready again, which
-	 *      happens immediately for us.
-	 */
-	u32 value = 0x0000;
-
-	/* Bit 8 (cmstr): */
-	value |= card->driver->read_csr_reg(card, CSR_STATE_CLEAR);
-
-	/* Bit 10 (abdicate): */
-	if (card->csr_abdicate)
-		value |= CSR_STATE_BIT_ABDICATE;
-
-	return value;
-}
-
 static void update_split_timeout(struct fw_card *card)
 {
 	unsigned int cycles;
@@ -1039,46 +1005,37 @@ static void handle_registers(struct fw_card *card, struct fw_request *request,
 	unsigned long flags;
 
 	switch (reg) {
-	case CSR_STATE_CLEAR:
-		if (tcode == TCODE_READ_QUADLET_REQUEST) {
-			*data = cpu_to_be32(read_state_register(card));
-		} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
-			card->driver->write_csr_reg(card, CSR_STATE_CLEAR,
-						    be32_to_cpu(*data));
-			if (*data & cpu_to_be32(CSR_STATE_BIT_ABDICATE))
-				card->csr_abdicate = false;
-		} else {
-			rcode = RCODE_TYPE_ERROR;
+	case CSR_PRIORITY_BUDGET:
+		if (!card->priority_budget_implemented) {
+			rcode = RCODE_ADDRESS_ERROR;
+			break;
 		}
-		break;
-
-	case CSR_STATE_SET:
-		if (tcode == TCODE_READ_QUADLET_REQUEST) {
-			*data = cpu_to_be32(read_state_register(card));
-		} else if (tcode == TCODE_WRITE_QUADLET_REQUEST) {
-			card->driver->write_csr_reg(card, CSR_STATE_SET,
-						    be32_to_cpu(*data));
-			if (*data & cpu_to_be32(CSR_STATE_BIT_ABDICATE))
-				card->csr_abdicate = true;
-		} else {
-			rcode = RCODE_TYPE_ERROR;
-		}
-		break;
+		/* else fall through */
 
 	case CSR_NODE_IDS:
+		/*
+		 * per IEEE 1394-2008 8.3.22.3, not IEEE 1394.1-2004 3.2.8
+		 * and 9.6, but interoperable with IEEE 1394.1-2004 bridges
+		 */
+		/* fall through */
+
+	case CSR_STATE_CLEAR:
+	case CSR_STATE_SET:
+	case CSR_CYCLE_TIME:
+	case CSR_BUS_TIME:
+	case CSR_BUSY_TIMEOUT:
 		if (tcode == TCODE_READ_QUADLET_REQUEST)
-			*data = cpu_to_be32(card->driver->
-					read_csr_reg(card, CSR_NODE_IDS));
+			*data = cpu_to_be32(card->driver->read_csr(card, reg));
 		else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
-			card->driver->write_csr_reg(card, CSR_NODE_IDS,
-						    be32_to_cpu(*data));
+			card->driver->write_csr(card, reg, be32_to_cpu(*data));
 		else
 			rcode = RCODE_TYPE_ERROR;
 		break;
 
 	case CSR_RESET_START:
 		if (tcode == TCODE_WRITE_QUADLET_REQUEST)
-			card->csr_abdicate = false;
+			card->driver->write_csr(card, CSR_STATE_CLEAR,
+						CSR_STATE_BIT_ABDICATE);
 		else
 			rcode = RCODE_TYPE_ERROR;
 		break;
@@ -1108,53 +1065,6 @@ static void handle_registers(struct fw_card *card, struct fw_request *request,
 		} else {
 			rcode = RCODE_TYPE_ERROR;
 		}
-		break;
-
-	case CSR_CYCLE_TIME:
-		if (TCODE_IS_READ_REQUEST(tcode) && length == 4)
-			*data = cpu_to_be32(card->driver->
-					read_csr_reg(card, CSR_CYCLE_TIME));
-		else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
-			card->driver->write_csr_reg(card, CSR_CYCLE_TIME,
-						    be32_to_cpu(*data));
-		else
-			rcode = RCODE_TYPE_ERROR;
-		break;
-
-	case CSR_BUS_TIME:
-		if (tcode == TCODE_READ_QUADLET_REQUEST)
-			*data = cpu_to_be32(card->driver->
-					read_csr_reg(card, CSR_BUS_TIME));
-		else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
-			card->driver->write_csr_reg(card, CSR_BUS_TIME,
-						    be32_to_cpu(*data));
-		else
-			rcode = RCODE_TYPE_ERROR;
-		break;
-
-	case CSR_BUSY_TIMEOUT:
-		if (tcode == TCODE_READ_QUADLET_REQUEST)
-			*data = cpu_to_be32(card->driver->
-					read_csr_reg(card, CSR_BUSY_TIMEOUT));
-		else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
-			card->driver->write_csr_reg(card, CSR_BUSY_TIMEOUT,
-						    be32_to_cpu(*data));
-		else
-			rcode = RCODE_TYPE_ERROR;
-		break;
-
-	case CSR_PRIORITY_BUDGET:
-		if (!(card->driver->get_features(card) &
-						FEATURE_PRIORITY_BUDGET))
-			rcode = RCODE_ADDRESS_ERROR;
-		else if (tcode == TCODE_READ_QUADLET_REQUEST)
-			*data = cpu_to_be32(card->driver->
-				read_csr_reg(card, CSR_PRIORITY_BUDGET));
-		else if (tcode == TCODE_WRITE_QUADLET_REQUEST)
-			card->driver->write_csr_reg(card, CSR_PRIORITY_BUDGET,
-						    be32_to_cpu(*data));
-		else
-			rcode = RCODE_TYPE_ERROR;
 		break;
 
 	case CSR_MAINT_UTILITY:

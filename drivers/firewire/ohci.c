@@ -18,6 +18,7 @@
  * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
+#include <linux/bug.h>
 #include <linux/compiler.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -171,9 +172,9 @@ struct fw_ohci {
 	int request_generation;	/* for timestamping incoming requests */
 	unsigned quirks;
 	unsigned int pri_req_max;
-	unsigned int features;
 	u32 bus_time;
 	bool is_root;
+	bool csr_state_setclear_abdicate;
 
 	/*
 	 * Spinlock for accessing fw_ohci data.  Never call out of
@@ -1534,7 +1535,9 @@ static void bus_reset_tasklet(unsigned long data)
 		    self_id_count, ohci->self_id_buffer);
 
 	fw_core_handle_bus_reset(&ohci->card, ohci->node_id, generation,
-				 self_id_count, ohci->self_id_buffer);
+				 self_id_count, ohci->self_id_buffer,
+				 ohci->csr_state_setclear_abdicate);
+	ohci->csr_state_setclear_abdicate = false;
 }
 
 static irqreturn_t irq_handler(int irq, void *data)
@@ -1757,15 +1760,14 @@ static int ohci_enable(struct fw_card *card,
 	if (version >= OHCI_VERSION_1_1) {
 		reg_write(ohci, OHCI1394_InitialChannelsAvailableHi,
 			  0xfffffffe);
-		ohci->features |= FEATURE_CHANNEL_31_ALLOCATED;
+		card->broadcast_channel_auto_allocated = true;
 	}
 
 	/* Get implemented bits of the priority arbitration request counter. */
 	reg_write(ohci, OHCI1394_FairnessControl, 0x3f);
 	ohci->pri_req_max = reg_read(ohci, OHCI1394_FairnessControl) & 0x3f;
 	reg_write(ohci, OHCI1394_FairnessControl, 0);
-	if (ohci->pri_req_max != 0)
-		ohci->features |= FEATURE_PRIORITY_BUDGET;
+	card->priority_budget_implemented = ohci->pri_req_max != 0;
 
 	ar_context_run(&ohci->ar_request_ctx);
 	ar_context_run(&ohci->ar_response_ctx);
@@ -2029,7 +2031,7 @@ static int ohci_enable_phys_dma(struct fw_card *card,
 #endif /* CONFIG_FIREWIRE_OHCI_REMOTE_DMA */
 }
 
-static u32 ohci_read_csr_reg(struct fw_card *card, int csr_offset)
+static u32 ohci_read_csr(struct fw_card *card, int csr_offset)
 {
 	struct fw_ohci *ohci = fw_ohci(card);
 	unsigned long flags;
@@ -2038,13 +2040,16 @@ static u32 ohci_read_csr_reg(struct fw_card *card, int csr_offset)
 	switch (csr_offset) {
 	case CSR_STATE_CLEAR:
 	case CSR_STATE_SET:
-		/* the controller driver handles only the cmstr bit */
 		if (ohci->is_root &&
 		    (reg_read(ohci, OHCI1394_LinkControlSet) &
 		     OHCI1394_LinkControl_cycleMaster))
-			return CSR_STATE_BIT_CMSTR;
+			value = CSR_STATE_BIT_CMSTR;
 		else
-			return 0;
+			value = 0;
+		if (ohci->csr_state_setclear_abdicate)
+			value |= CSR_STATE_BIT_ABDICATE;
+
+		return value;
 
 	case CSR_NODE_IDS:
 		return reg_read(ohci, OHCI1394_NodeID) << 16;
@@ -2077,19 +2082,20 @@ static u32 ohci_read_csr_reg(struct fw_card *card, int csr_offset)
 	}
 }
 
-static void ohci_write_csr_reg(struct fw_card *card, int csr_offset, u32 value)
+static void ohci_write_csr(struct fw_card *card, int csr_offset, u32 value)
 {
 	struct fw_ohci *ohci = fw_ohci(card);
 	unsigned long flags;
 
 	switch (csr_offset) {
 	case CSR_STATE_CLEAR:
-		/* the controller driver handles only the cmstr bit */
 		if ((value & CSR_STATE_BIT_CMSTR) && ohci->is_root) {
 			reg_write(ohci, OHCI1394_LinkControlClear,
 				  OHCI1394_LinkControl_cycleMaster);
 			flush_writes(ohci);
 		}
+		if (value & CSR_STATE_BIT_ABDICATE)
+			ohci->csr_state_setclear_abdicate = false;
 		break;
 
 	case CSR_STATE_SET:
@@ -2098,6 +2104,8 @@ static void ohci_write_csr_reg(struct fw_card *card, int csr_offset, u32 value)
 				  OHCI1394_LinkControl_cycleMaster);
 			flush_writes(ohci);
 		}
+		if (value & CSR_STATE_BIT_ABDICATE)
+			ohci->csr_state_setclear_abdicate = true;
 		break;
 
 	case CSR_NODE_IDS:
@@ -2134,13 +2142,6 @@ static void ohci_write_csr_reg(struct fw_card *card, int csr_offset, u32 value)
 		WARN_ON(1);
 		break;
 	}
-}
-
-static unsigned int ohci_get_features(struct fw_card *card)
-{
-	struct fw_ohci *ohci = fw_ohci(card);
-
-	return ohci->features;
 }
 
 static void copy_iso_headers(struct iso_context *ctx, void *p)
@@ -2580,9 +2581,8 @@ static const struct fw_card_driver ohci_driver = {
 	.send_response		= ohci_send_response,
 	.cancel_packet		= ohci_cancel_packet,
 	.enable_phys_dma	= ohci_enable_phys_dma,
-	.read_csr_reg		= ohci_read_csr_reg,
-	.write_csr_reg		= ohci_write_csr_reg,
-	.get_features		= ohci_get_features,
+	.read_csr		= ohci_read_csr,
+	.write_csr		= ohci_write_csr,
 
 	.allocate_iso_context	= ohci_allocate_iso_context,
 	.free_iso_context	= ohci_free_iso_context,
