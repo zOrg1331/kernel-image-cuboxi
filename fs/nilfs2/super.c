@@ -74,6 +74,25 @@ struct kmem_cache *nilfs_btree_path_cache;
 
 static int nilfs_remount(struct super_block *sb, int *flags, char *data);
 
+static void nilfs_set_error(struct nilfs_sb_info *sbi)
+{
+	struct the_nilfs *nilfs = sbi->s_nilfs;
+	struct nilfs_super_block **sbp;
+
+	down_write(&nilfs->ns_sem);
+	if (!(nilfs->ns_mount_state & NILFS_ERROR_FS)) {
+		nilfs->ns_mount_state |= NILFS_ERROR_FS;
+		sbp = nilfs_prepare_super(sbi);
+		if (likely(sbp)) {
+			sbp[0]->s_state |= cpu_to_le16(NILFS_ERROR_FS);
+			if (sbp[1])
+				sbp[1]->s_state |= cpu_to_le16(NILFS_ERROR_FS);
+			nilfs_commit_super(sbi, NILFS_SB_COMMIT_ALL);
+		}
+	}
+	up_write(&nilfs->ns_sem);
+}
+
 /**
  * nilfs_error() - report failure condition on a filesystem
  *
@@ -90,7 +109,6 @@ void nilfs_error(struct super_block *sb, const char *function,
 		 const char *fmt, ...)
 {
 	struct nilfs_sb_info *sbi = NILFS_SB(sb);
-	struct nilfs_super_block **sbp;
 	va_list args;
 
 	va_start(args, fmt);
@@ -100,18 +118,7 @@ void nilfs_error(struct super_block *sb, const char *function,
 	va_end(args);
 
 	if (!(sb->s_flags & MS_RDONLY)) {
-		struct the_nilfs *nilfs = sbi->s_nilfs;
-
-		down_write(&nilfs->ns_sem);
-		if (!(nilfs->ns_mount_state & NILFS_ERROR_FS)) {
-			nilfs->ns_mount_state |= NILFS_ERROR_FS;
-			sbp = nilfs_prepare_super(sbi);
-			if (likely(sbp)) {
-				sbp[0]->s_state |= cpu_to_le16(NILFS_ERROR_FS);
-				nilfs_commit_super(sbi, 1);
-			}
-		}
-		up_write(&nilfs->ns_sem);
+		nilfs_set_error(sbi);
 
 		if (nilfs_test_opt(sbi, ERRORS_RO)) {
 			printk(KERN_CRIT "Remounting filesystem read-only\n");
@@ -179,7 +186,7 @@ static void nilfs_clear_inode(struct inode *inode)
 	nilfs_btnode_cache_clear(&ii->i_btnode_cache);
 }
 
-static int nilfs_sync_super(struct nilfs_sb_info *sbi, int dupsb)
+static int nilfs_sync_super(struct nilfs_sb_info *sbi, int flag)
 {
 	struct the_nilfs *nilfs = sbi->s_nilfs;
 	int err;
@@ -205,6 +212,12 @@ static int nilfs_sync_super(struct nilfs_sb_info *sbi, int dupsb)
 		printk(KERN_ERR
 		       "NILFS: unable to write superblock (err=%d)\n", err);
 		if (err == -EIO && nilfs->ns_sbh[1]) {
+			/*
+			 * sbp[0] points to newer log than sbp[1],
+			 * so copy sbp[0] to sbp[1] to take over sbp[0].
+			 */
+			memcpy(nilfs->ns_sbp[1], nilfs->ns_sbp[0],
+			       nilfs->ns_sbsize);
 			nilfs_fall_back_super_block(nilfs);
 			goto retry;
 		}
@@ -219,11 +232,20 @@ static int nilfs_sync_super(struct nilfs_sb_info *sbi, int dupsb)
 
 		/* update GC protection for recent segments */
 		if (nilfs->ns_sbh[1]) {
-			sbp = NULL;
-			if (dupsb) {
+			sbp = nilfs->ns_sbp[1];
+			if (flag == NILFS_SB_COMMIT_ALL) {
 				set_buffer_dirty(nilfs->ns_sbh[1]);
-				if (!sync_dirty_buffer(nilfs->ns_sbh[1]))
-					sbp = nilfs->ns_sbp[1];
+				if (sync_dirty_buffer(nilfs->ns_sbh[1]))
+					sbp = NULL; /* not update prot_seq */
+			} else {
+				int flip_bits = (nilfs->ns_sbwcount & 0x0FL);
+				nilfs->ns_sbwcount++;
+				/*
+				 * flip super blocks 9 to 7 ratio.
+				 * unflip when LSB 4bits are 0x08 or 0x0F
+				 */
+				if (flip_bits != 0x08 && flip_bits != 0x0F)
+					nilfs_swap_super_block(nilfs);
 			}
 		}
 		if (sbp) {
@@ -245,50 +267,58 @@ struct nilfs_super_block **nilfs_prepare_super(struct nilfs_sb_info *sbi)
 	if (sbp[0]->s_magic != cpu_to_le16(NILFS_SUPER_MAGIC)) {
 		if (sbp[1] &&
 		    sbp[1]->s_magic == cpu_to_le16(NILFS_SUPER_MAGIC)) {
-			nilfs_swap_super_block(nilfs);
+			memcpy(sbp[0], sbp[1], nilfs->ns_sbsize);
 		} else {
 			printk(KERN_CRIT "NILFS: superblock broke on dev %s\n",
 			       sbi->s_super->s_id);
 			return NULL;
 		}
+	} else if (sbp[1] &&
+		   sbp[1]->s_magic != cpu_to_le16(NILFS_SUPER_MAGIC)) {
+			memcpy(sbp[1], sbp[0], nilfs->ns_sbsize);
 	}
 	return sbp;
 }
 
-int nilfs_commit_super(struct nilfs_sb_info *sbi, int dupsb)
+void nilfs_set_log_cursor(struct nilfs_super_block *sbp,
+			  struct the_nilfs *nilfs)
+{
+	sector_t nfreeblocks;
+
+	/* nilfs->ns_sem must be locked by the caller. */
+	nilfs_count_free_blocks(nilfs, &nfreeblocks);
+	sbp->s_free_blocks_count = cpu_to_le64(nfreeblocks);
+
+	spin_lock(&nilfs->ns_last_segment_lock);
+	sbp->s_last_seq = cpu_to_le64(nilfs->ns_last_seq);
+	sbp->s_last_pseg = cpu_to_le64(nilfs->ns_last_pseg);
+	sbp->s_last_cno = cpu_to_le64(nilfs->ns_last_cno);
+	spin_unlock(&nilfs->ns_last_segment_lock);
+}
+
+int nilfs_commit_super(struct nilfs_sb_info *sbi, int flag)
 {
 	struct the_nilfs *nilfs = sbi->s_nilfs;
 	struct nilfs_super_block **sbp = nilfs->ns_sbp;
-	sector_t nfreeblocks;
 	time_t t;
-	int err;
 
 	/* nilfs->ns_sem must be locked by the caller. */
-	err = nilfs_count_free_blocks(nilfs, &nfreeblocks);
-	if (unlikely(err)) {
-		printk(KERN_ERR "NILFS: failed to count free blocks\n");
-		return err;
-	}
-	spin_lock(&nilfs->ns_last_segment_lock);
-	sbp[0]->s_last_seq = cpu_to_le64(nilfs->ns_last_seq);
-	sbp[0]->s_last_pseg = cpu_to_le64(nilfs->ns_last_pseg);
-	sbp[0]->s_last_cno = cpu_to_le64(nilfs->ns_last_cno);
-	spin_unlock(&nilfs->ns_last_segment_lock);
-
 	t = get_seconds();
-	nilfs->ns_sbwtime[0] = t;
-	sbp[0]->s_free_blocks_count = cpu_to_le64(nfreeblocks);
+	nilfs->ns_sbwtime = t;
 	sbp[0]->s_wtime = cpu_to_le64(t);
 	sbp[0]->s_sum = 0;
 	sbp[0]->s_sum = cpu_to_le32(crc32_le(nilfs->ns_crc_seed,
 					     (unsigned char *)sbp[0],
 					     nilfs->ns_sbsize));
-	if (dupsb && sbp[1]) {
-		memcpy(sbp[1], sbp[0], nilfs->ns_sbsize);
-		nilfs->ns_sbwtime[1] = t;
+	if (flag == NILFS_SB_COMMIT_ALL && sbp[1]) {
+		sbp[1]->s_wtime = sbp[0]->s_wtime;
+		sbp[1]->s_sum = 0;
+		sbp[1]->s_sum = cpu_to_le32(crc32_le(nilfs->ns_crc_seed,
+					    (unsigned char *)sbp[1],
+					    nilfs->ns_sbsize));
 	}
 	clear_nilfs_sb_dirty(nilfs);
-	return nilfs_sync_super(sbi, dupsb);
+	return nilfs_sync_super(sbi, flag);
 }
 
 static void nilfs_put_super(struct super_block *sb)
@@ -305,8 +335,10 @@ static void nilfs_put_super(struct super_block *sb)
 		down_write(&nilfs->ns_sem);
 		sbp = nilfs_prepare_super(sbi);
 		if (likely(sbp)) {
+			/* set state only for newer super block */
 			sbp[0]->s_state = cpu_to_le16(nilfs->ns_mount_state);
-			nilfs_commit_super(sbi, 1);
+			nilfs_set_log_cursor(sbp[0], nilfs);
+			nilfs_commit_super(sbi, NILFS_SB_COMMIT);
 		}
 		up_write(&nilfs->ns_sem);
 	}
@@ -328,6 +360,7 @@ static int nilfs_sync_fs(struct super_block *sb, int wait)
 {
 	struct nilfs_sb_info *sbi = NILFS_SB(sb);
 	struct the_nilfs *nilfs = sbi->s_nilfs;
+	struct nilfs_super_block **sbp;
 	int err = 0;
 
 	/* This function is called when super block should be written back */
@@ -335,8 +368,13 @@ static int nilfs_sync_fs(struct super_block *sb, int wait)
 		err = nilfs_construct_segment(sb);
 
 	down_write(&nilfs->ns_sem);
-	if (nilfs_sb_dirty(nilfs) && nilfs_prepare_super(sbi))
-		nilfs_commit_super(sbi, 1);
+	if (nilfs_sb_dirty(nilfs)) {
+		sbp = nilfs_prepare_super(sbi);
+		if (likely(sbp)) {
+			nilfs_set_log_cursor(sbp[0], nilfs);
+			nilfs_commit_super(sbi, NILFS_SB_COMMIT);
+		}
+	}
 	up_write(&nilfs->ns_sem);
 
 	return err;
@@ -642,7 +680,6 @@ static int nilfs_setup_super(struct nilfs_sb_info *sbi)
 	max_mnt_count = le16_to_cpu(sbp[0]->s_max_mnt_count);
 	mnt_count = le16_to_cpu(sbp[0]->s_mnt_count);
 
-	/* nilfs->ns_sem must be locked by the caller. */
 	if (nilfs->ns_mount_state & NILFS_ERROR_FS) {
 		printk(KERN_WARNING
 		       "NILFS warning: mounting fs with errors\n");
@@ -659,7 +696,9 @@ static int nilfs_setup_super(struct nilfs_sb_info *sbi)
 	sbp[0]->s_state =
 		cpu_to_le16(le16_to_cpu(sbp[0]->s_state) & ~NILFS_VALID_FS);
 	sbp[0]->s_mtime = cpu_to_le64(get_seconds());
-	return nilfs_commit_super(sbi, 1);
+	/* synchronize sbp[1] with sbp[0] */
+	memcpy(sbp[1], sbp[0], nilfs->ns_sbsize);
+	return nilfs_commit_super(sbi, NILFS_SB_COMMIT_ALL);
 }
 
 struct nilfs_super_block *nilfs_read_super_block(struct super_block *sb,
@@ -913,7 +952,8 @@ static int nilfs_remount(struct super_block *sb, int *flags, char *data)
 				sbp[0]->s_state =
 					cpu_to_le16(nilfs->ns_mount_state);
 			sbp[0]->s_mtime = cpu_to_le64(get_seconds());
-			nilfs_commit_super(sbi, 1);
+			nilfs_set_log_cursor(sbp[0], nilfs);
+			nilfs_commit_super(sbi, NILFS_SB_COMMIT);
 		}
 		up_write(&nilfs->ns_sem);
 	} else {

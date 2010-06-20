@@ -329,8 +329,10 @@ int load_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi)
 	sbp = nilfs_prepare_super(sbi);
 	if (likely(sbp)) {
 		nilfs->ns_mount_state |= NILFS_VALID_FS;
+		/* set the flag only for newer super block */
 		sbp[0]->s_state = cpu_to_le16(nilfs->ns_mount_state);
-		err = nilfs_commit_super(sbi, 1);
+		nilfs_set_log_cursor(sbp[0], nilfs);
+		err = nilfs_commit_super(sbi, NILFS_SB_COMMIT);
 	}
 	up_write(&nilfs->ns_sem);
 
@@ -519,8 +521,8 @@ static int nilfs_load_super_block(struct the_nilfs *nilfs,
 		nilfs_swap_super_block(nilfs);
 	}
 
-	nilfs->ns_sbwtime[0] = le64_to_cpu(sbp[0]->s_wtime);
-	nilfs->ns_sbwtime[1] = valid[!swp] ? le64_to_cpu(sbp[1]->s_wtime) : 0;
+	nilfs->ns_sbwcount = 0;
+	nilfs->ns_sbwtime = le64_to_cpu(sbp[0]->s_wtime);
 	nilfs->ns_prot_seq = le64_to_cpu(sbp[valid[1] & !swp]->s_last_seq);
 	*sbpp = sbp[0];
 	return 0;
