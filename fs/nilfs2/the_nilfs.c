@@ -261,6 +261,7 @@ int load_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi)
 	unsigned int s_flags = sbi->s_super->s_flags;
 	int really_read_only = bdev_read_only(nilfs->ns_bdev);
 	int valid_fs = nilfs_valid_fs(nilfs);
+	struct nilfs_super_block **sbp;
 	int err;
 
 	if (nilfs_loaded(nilfs)) {
@@ -324,9 +325,13 @@ int load_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi)
 		goto failed_unload;
 
 	down_write(&nilfs->ns_sem);
-	nilfs->ns_mount_state |= NILFS_VALID_FS;
-	nilfs->ns_sbp[0]->s_state = cpu_to_le16(nilfs->ns_mount_state);
-	err = nilfs_commit_super(sbi, 1);
+	err = -EIO;
+	sbp = nilfs_prepare_super(sbi);
+	if (likely(sbp)) {
+		nilfs->ns_mount_state |= NILFS_VALID_FS;
+		sbp[0]->s_state = cpu_to_le16(nilfs->ns_mount_state);
+		err = nilfs_commit_super(sbi, 1);
+	}
 	up_write(&nilfs->ns_sem);
 
 	if (err) {

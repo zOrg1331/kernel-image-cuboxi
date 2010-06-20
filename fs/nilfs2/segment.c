@@ -2423,8 +2423,10 @@ static int nilfs_segctor_construct(struct nilfs_sc_info *sci, int mode)
 		if (test_bit(NILFS_SC_SUPER_ROOT, &sci->sc_flags) &&
 		    nilfs_discontinued(nilfs)) {
 			down_write(&nilfs->ns_sem);
-			err = nilfs_commit_super(
-				sbi, nilfs_altsb_need_update(nilfs));
+			err = -EIO;
+			if (likely(nilfs_prepare_super(sbi)))
+				err = nilfs_commit_super(
+					sbi, nilfs_altsb_need_update(nilfs));
 			up_write(&nilfs->ns_sem);
 		}
 	}
