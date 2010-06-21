@@ -21,6 +21,7 @@
 #include <linux/irqreturn.h>
 #include <linux/irqnr.h>
 #include <linux/errno.h>
+#include <linux/timer.h>
 #include <linux/topology.h>
 #include <linux/wait.h>
 
@@ -169,6 +170,7 @@ struct irq_2_iommu;
  * @pending_mask:	pending rebalanced interrupts
  * @threads_active:	number of irqaction threads currently running
  * @wait_for_threads:	wait queue for sync_irq to wait for threaded handlers
+ * @poll_timer:		timer for IRQ polling
  * @dir:		/proc/irq/ procfs entry
  * @name:		flow handler name for /proc/interrupts output
  */
@@ -203,6 +205,9 @@ struct irq_desc {
 #endif
 	atomic_t		threads_active;
 	wait_queue_head_t       wait_for_threads;
+
+	struct timer_list	poll_timer;
+
 #ifdef CONFIG_PROC_FS
 	struct proc_dir_entry	*dir;
 #endif

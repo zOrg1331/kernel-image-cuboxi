@@ -12,21 +12,21 @@
 #include <linux/kallsyms.h>
 #include <linux/interrupt.h>
 #include <linux/moduleparam.h>
-#include <linux/timer.h>
+
+#include "internals.h"
 
 enum {
 	/* irqfixup levels */
 	IRQFIXUP_SPURIOUS		= 0,		/* spurious storm detection */
 	IRQFIXUP_MISROUTED		= 1,		/* misrouted IRQ fixup */
 	IRQFIXUP_POLL			= 2,		/* enable polling by default */
+
+	/* IRQ polling common parameters */
+	IRQ_POLL_INTV			= HZ / 100,	/* from the good ol' 100HZ tick */
 };
 
 int noirqdebug __read_mostly;
 static int irqfixup __read_mostly = IRQFIXUP_SPURIOUS;
-
-#define POLL_SPURIOUS_IRQ_INTERVAL (HZ/10)
-static void poll_spurious_irqs(unsigned long dummy);
-static DEFINE_TIMER(poll_spurious_irq_timer, poll_spurious_irqs, 0, 0);
 
 /*
  * Recovery handler for misrouted interrupts.
@@ -36,7 +36,6 @@ static int try_one_irq(int irq, struct irq_desc *desc)
 	struct irqaction *action;
 	int ok = 0, work = 0;
 
-	raw_spin_lock(&desc->lock);
 	/* Already running on another processor */
 	if (desc->status & IRQ_INPROGRESS) {
 		/*
@@ -45,7 +44,6 @@ static int try_one_irq(int irq, struct irq_desc *desc)
 		 */
 		if (desc->action && (desc->action->flags & IRQF_SHARED))
 			desc->status |= IRQ_PENDING;
-		raw_spin_unlock(&desc->lock);
 		return ok;
 	}
 	/* Honour the normal IRQ locking */
@@ -88,7 +86,6 @@ static int try_one_irq(int irq, struct irq_desc *desc)
 	 */
 	if (work && desc->chip && desc->chip->end)
 		desc->chip->end(irq);
-	raw_spin_unlock(&desc->lock);
 
 	return ok;
 }
@@ -105,37 +102,13 @@ static int misrouted_irq(int irq)
 		if (i == irq)	/* Already tried */
 			continue;
 
+		raw_spin_lock(&desc->lock);
 		if (try_one_irq(i, desc))
 			ok = 1;
+		raw_spin_unlock(&desc->lock);
 	}
 	/* So the caller can adjust the irq error counts */
 	return ok;
-}
-
-static void poll_spurious_irqs(unsigned long dummy)
-{
-	struct irq_desc *desc;
-	int i;
-
-	for_each_irq_desc(i, desc) {
-		unsigned int status;
-
-		if (!i)
-			 continue;
-
-		/* Racy but it doesn't matter */
-		status = desc->status;
-		barrier();
-		if (!(status & IRQ_SPURIOUS_DISABLED))
-			continue;
-
-		local_irq_disable();
-		try_one_irq(i, desc);
-		local_irq_enable();
-	}
-
-	mod_timer(&poll_spurious_irq_timer,
-		  jiffies + POLL_SPURIOUS_IRQ_INTERVAL);
 }
 
 /*
@@ -264,10 +237,58 @@ void __note_interrupt(unsigned int irq, struct irq_desc *desc,
 		desc->depth++;
 		desc->chip->disable(irq);
 
-		mod_timer(&poll_spurious_irq_timer,
-			  jiffies + POLL_SPURIOUS_IRQ_INTERVAL);
+		mod_timer(&desc->poll_timer, jiffies + IRQ_POLL_INTV);
 	}
 	desc->irqs_unhandled = 0;
+}
+
+/*
+ * IRQ poller.  Called from desc->poll_timer.
+ */
+void poll_irq(unsigned long arg)
+{
+	struct irq_desc *desc = (void *)arg;
+
+	raw_spin_lock_irq(&desc->lock);
+	try_one_irq(desc->irq, desc);
+	raw_spin_unlock_irq(&desc->lock);
+
+	mod_timer(&desc->poll_timer, jiffies + IRQ_POLL_INTV);
+}
+
+void irq_poll_action_added(struct irq_desc *desc, struct irqaction *action)
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&desc->lock, flags);
+
+	/* if the interrupt was killed before, give it one more chance */
+	if (desc->status & IRQ_SPURIOUS_DISABLED) {
+		desc->status &= ~IRQ_SPURIOUS_DISABLED;
+		__enable_irq(desc, desc->irq, false);
+	}
+
+	raw_spin_unlock_irqrestore(&desc->lock, flags);
+}
+
+void irq_poll_action_removed(struct irq_desc *desc, struct irqaction *action)
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&desc->lock, flags);
+
+	/*
+	 * Make sure the timer is offline if no irqaction is left as
+	 * the irq_desc will be reinitialized when the next irqaction
+	 * is added.
+	 */
+	while (!desc->action && try_to_del_timer_sync(&desc->poll_timer) < 0) {
+		raw_spin_unlock_irqrestore(&desc->lock, flags);
+		cpu_relax();
+		raw_spin_lock_irqsave(&desc->lock, flags);
+	}
+
+	raw_spin_unlock_irqrestore(&desc->lock, flags);
 }
 
 int noirqdebug_setup(char *str)

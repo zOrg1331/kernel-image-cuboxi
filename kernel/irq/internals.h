@@ -38,6 +38,12 @@ extern int irq_select_affinity_usr(unsigned int irq);
 
 extern void irq_set_thread_affinity(struct irq_desc *desc);
 
+extern void poll_irq(unsigned long arg);
+extern void irq_poll_action_added(struct irq_desc *desc,
+				  struct irqaction *action);
+extern void irq_poll_action_removed(struct irq_desc *desc,
+				    struct irqaction *action);
+
 /* Inline functions for support of irq chips on slow busses */
 static inline void chip_bus_lock(unsigned int irq, struct irq_desc *desc)
 {
