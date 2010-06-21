@@ -80,7 +80,7 @@ static irqreturn_t pnx4008_timer_interrupt(int irq, void *dev_id)
 
 static struct irqaction pnx4008_timer_irq = {
 	.name = "PNX4008 Tick Timer",
-	.flags = IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
+	.flags = IRQF_DISABLED | IRQF_TIMER,
 	.handler = pnx4008_timer_interrupt
 };
 
