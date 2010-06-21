@@ -102,16 +102,16 @@ typedef irqreturn_t (*irq_handler_t)(int, void *);
  * @thread_flags:	flags related to @thread
  */
 struct irqaction {
-	irq_handler_t handler;
-	unsigned long flags;
-	const char *name;
-	void *dev_id;
-	struct irqaction *next;
-	int irq;
-	struct proc_dir_entry *dir;
-	irq_handler_t thread_fn;
-	struct task_struct *thread;
-	unsigned long thread_flags;
+	irq_handler_t		handler;
+	unsigned long		flags;
+	const char		*name;
+	void			*dev_id;
+	struct irqaction	*next;
+	int			irq;
+	struct proc_dir_entry	*dir;
+	irq_handler_t		thread_fn;
+	struct task_struct	*thread;
+	unsigned long		thread_flags;
 };
 
 extern irqreturn_t no_action(int cpl, void *dev_id);

@@ -28,6 +28,21 @@ enum {
 int noirqdebug __read_mostly;
 static int irqfixup __read_mostly = IRQFIXUP_SPURIOUS;
 
+static void print_irq_handlers(struct irq_desc *desc)
+{
+	struct irqaction *action;
+
+	printk(KERN_ERR "handlers:\n");
+
+	action = desc->action;
+	while (action) {
+		printk(KERN_ERR "[<%p>]", action->handler);
+		print_symbol(" (%s)", (unsigned long)action->handler);
+		printk("\n");
+		action = action->next;
+	}
+}
+
 /*
  * Recovery handler for misrouted interrupts.
  */
@@ -126,8 +141,6 @@ static void
 __report_bad_irq(unsigned int irq, struct irq_desc *desc,
 		 irqreturn_t action_ret)
 {
-	struct irqaction *action;
-
 	if (action_ret != IRQ_HANDLED && action_ret != IRQ_NONE) {
 		printk(KERN_ERR "irq event %d: bogus return value %x\n",
 				irq, action_ret);
@@ -136,16 +149,7 @@ __report_bad_irq(unsigned int irq, struct irq_desc *desc,
 				"the \"irqpoll\" option)\n", irq);
 	}
 	dump_stack();
-	printk(KERN_ERR "handlers:\n");
-
-	action = desc->action;
-	while (action) {
-		printk(KERN_ERR "[<%p>]", action->handler);
-		print_symbol(" (%s)",
-			(unsigned long)action->handler);
-		printk("\n");
-		action = action->next;
-	}
+	print_irq_handlers(desc);
 }
 
 static void
