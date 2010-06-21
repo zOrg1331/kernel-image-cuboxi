@@ -88,6 +88,14 @@ enum {
 
 typedef irqreturn_t (*irq_handler_t)(int, void *);
 
+struct irq_watch {
+	irqreturn_t		last_ret;
+	unsigned int		flags;
+	unsigned long		started;
+	unsigned int		nr_samples;
+	unsigned int		nr_polled;
+};
+
 /**
  * struct irqaction - per interrupt action descriptor
  * @handler:	interrupt handler function
@@ -100,6 +108,7 @@ typedef irqreturn_t (*irq_handler_t)(int, void *);
  * @thread_fn:	interupt handler function for threaded interrupts
  * @thread:	thread pointer for threaded interrupts
  * @thread_flags:	flags related to @thread
+ * @watch:	data for irq watching
  */
 struct irqaction {
 	irq_handler_t		handler;
@@ -112,6 +121,7 @@ struct irqaction {
 	irq_handler_t		thread_fn;
 	struct task_struct	*thread;
 	unsigned long		thread_flags;
+	struct irq_watch	watch;
 };
 
 extern irqreturn_t no_action(int cpl, void *dev_id);
@@ -183,6 +193,8 @@ devm_request_irq(struct device *dev, unsigned int irq, irq_handler_t handler,
 }
 
 extern void devm_free_irq(struct device *dev, unsigned int irq, void *dev_id);
+
+extern void watch_irq(unsigned int irq, void *dev_id);
 
 /*
  * On lockdep we dont want to enable hardirqs in hardirq
