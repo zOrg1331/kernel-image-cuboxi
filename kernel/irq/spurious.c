@@ -159,41 +159,6 @@ report_bad_irq(unsigned int irq, struct irq_desc *desc, irqreturn_t action_ret)
 	}
 }
 
-static inline int
-try_misrouted_irq(unsigned int irq, struct irq_desc *desc,
-		  irqreturn_t action_ret)
-{
-	struct irqaction *action;
-
-	if (irqfixup < IRQFIXUP_MISROUTED)
-		return 0;
-
-	/* We didn't actually handle the IRQ - see if it was misrouted? */
-	if (action_ret == IRQ_NONE)
-		return 1;
-
-	/*
-	 * But for IRQFIXUP_POLL we also do it for handled interrupts
-	 * if they are marked as IRQF_IRQPOLL (or for irq zero, which
-	 * is the traditional PC timer interrupt.. Legacy)
-	 */
-	if (irqfixup < IRQFIXUP_POLL)
-		return 0;
-
-	if (!irq)
-		return 1;
-
-	/*
-	 * Since we don't get the descriptor lock, "action" can
-	 * change under us.  We don't really care, but we don't
-	 * want to follow a NULL pointer. So tell the compiler to
-	 * just load it once by using a barrier.
-	 */
-	action = desc->action;
-	barrier();
-	return action && (action->flags & IRQF_IRQPOLL);
-}
-
 void __note_interrupt(unsigned int irq, struct irq_desc *desc,
 		      irqreturn_t action_ret)
 {
@@ -213,7 +178,8 @@ void __note_interrupt(unsigned int irq, struct irq_desc *desc,
 			report_bad_irq(irq, desc, action_ret);
 	}
 
-	if (unlikely(try_misrouted_irq(irq, desc, action_ret))) {
+	if (unlikely(irqfixup >= IRQFIXUP_MISROUTED &&
+		     action_ret == IRQ_NONE)) {
 		int ok = misrouted_irq(irq);
 		if (action_ret == IRQ_NONE)
 			desc->irqs_unhandled -= ok;
@@ -269,6 +235,9 @@ void irq_poll_action_added(struct irq_desc *desc, struct irqaction *action)
 	}
 
 	raw_spin_unlock_irqrestore(&desc->lock, flags);
+
+	if ((action->flags & IRQF_SHARED) && irqfixup >= IRQFIXUP_POLL)
+		mod_timer(&desc->poll_timer, jiffies + IRQ_POLL_INTV);
 }
 
 void irq_poll_action_removed(struct irq_desc *desc, struct irqaction *action)
