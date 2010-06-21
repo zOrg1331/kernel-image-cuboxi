@@ -324,8 +324,17 @@ static inline void generic_handle_irq(unsigned int irq)
 }
 
 /* Handling of unhandled and spurious interrupts: */
-extern void note_interrupt(unsigned int irq, struct irq_desc *desc,
-			   irqreturn_t action_ret);
+extern void __note_interrupt(unsigned int irq, struct irq_desc *desc,
+			     irqreturn_t action_ret);
+
+static inline void note_interrupt(unsigned int irq, struct irq_desc *desc,
+				  irqreturn_t action_ret)
+{
+	extern int noirqdebug;
+
+	if (!noirqdebug)
+		__note_interrupt(irq, desc, action_ret);
+}
 
 /* Resending of interrupts :*/
 void check_irq_resend(struct irq_desc *desc, unsigned int irq);

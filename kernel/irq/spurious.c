@@ -14,7 +14,15 @@
 #include <linux/moduleparam.h>
 #include <linux/timer.h>
 
-static int irqfixup __read_mostly;
+enum {
+	/* irqfixup levels */
+	IRQFIXUP_SPURIOUS		= 0,		/* spurious storm detection */
+	IRQFIXUP_MISROUTED		= 1,		/* misrouted IRQ fixup */
+	IRQFIXUP_POLL			= 2,		/* enable polling by default */
+};
+
+int noirqdebug __read_mostly;
+static int irqfixup __read_mostly = IRQFIXUP_SPURIOUS;
 
 #define POLL_SPURIOUS_IRQ_INTERVAL (HZ/10)
 static void poll_spurious_irqs(unsigned long dummy);
@@ -184,7 +192,7 @@ try_misrouted_irq(unsigned int irq, struct irq_desc *desc,
 {
 	struct irqaction *action;
 
-	if (!irqfixup)
+	if (irqfixup < IRQFIXUP_MISROUTED)
 		return 0;
 
 	/* We didn't actually handle the IRQ - see if it was misrouted? */
@@ -192,11 +200,11 @@ try_misrouted_irq(unsigned int irq, struct irq_desc *desc,
 		return 1;
 
 	/*
-	 * But for 'irqfixup == 2' we also do it for handled interrupts if
-	 * they are marked as IRQF_IRQPOLL (or for irq zero, which is the
-	 * traditional PC timer interrupt.. Legacy)
+	 * But for IRQFIXUP_POLL we also do it for handled interrupts
+	 * if they are marked as IRQF_IRQPOLL (or for irq zero, which
+	 * is the traditional PC timer interrupt.. Legacy)
 	 */
-	if (irqfixup < 2)
+	if (irqfixup < IRQFIXUP_POLL)
 		return 0;
 
 	if (!irq)
@@ -213,8 +221,8 @@ try_misrouted_irq(unsigned int irq, struct irq_desc *desc,
 	return action && (action->flags & IRQF_IRQPOLL);
 }
 
-void note_interrupt(unsigned int irq, struct irq_desc *desc,
-		    irqreturn_t action_ret)
+void __note_interrupt(unsigned int irq, struct irq_desc *desc,
+		      irqreturn_t action_ret)
 {
 	if (unlikely(action_ret != IRQ_HANDLED)) {
 		/*
@@ -262,8 +270,6 @@ void note_interrupt(unsigned int irq, struct irq_desc *desc,
 	desc->irqs_unhandled = 0;
 }
 
-int noirqdebug __read_mostly;
-
 int noirqdebug_setup(char *str)
 {
 	noirqdebug = 1;
@@ -278,7 +284,7 @@ MODULE_PARM_DESC(noirqdebug, "Disable irq lockup detection when true");
 
 static int __init irqfixup_setup(char *str)
 {
-	irqfixup = 1;
+	irqfixup = max(irqfixup, IRQFIXUP_MISROUTED);
 	printk(KERN_WARNING "Misrouted IRQ fixup support enabled.\n");
 	printk(KERN_WARNING "This may impact system performance.\n");
 
@@ -290,7 +296,7 @@ module_param(irqfixup, int, 0644);
 
 static int __init irqpoll_setup(char *str)
 {
-	irqfixup = 2;
+	irqfixup = IRQFIXUP_POLL;
 	printk(KERN_WARNING "Misrouted IRQ fixup and polling support "
 				"enabled\n");
 	printk(KERN_WARNING "This may significantly impact system "

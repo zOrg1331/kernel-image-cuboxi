@@ -2,8 +2,6 @@
  * IRQ subsystem internal functions and variables:
  */
 
-extern int noirqdebug;
-
 /* Set default functions for irq_chip structures: */
 extern void irq_chip_set_defaults(struct irq_chip *chip);
 
