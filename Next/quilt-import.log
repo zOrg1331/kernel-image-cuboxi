@@ -1,0 +1,330 @@
+Importing driver-core.current based on 2.6.35-rc3
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 7e27d6e778cd87b6f2415515d7127eba53fe5d02
+HEAD is now at 7e27d6e Linux 2.6.35-rc3
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+serial-cpm_uart-implement-the-cpm_uart_early_write-function-for-console-poll.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+   7e27d6e..05b4926  master     -> quilt/tty.current
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard 05b4926f971e9a7ee6e24240ec2858ebb54aebce
+HEAD is now at 05b4926 serial: cpm_uart: implement the cpm_uart_early_write() function for console poll
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-g_serial-don-t-set-low_latency-flag.patch
+usb-g_serial-fix-tty-cleanup-on-unload.patch
+usb-gadget-g_fs-possible-invalid-pointer-reference-bug-fixed.patch
+usb-xhci-fix-bug-in-link-trb-activation-change.patch
+usb-r8a66597-fix-failure-in-change-of-status.patch
+usb-musb-fix-a-bug-by-making-suspend-interrupt-available-in-device-mode.patch
+usb-otg-ulpi-bail-out-on-read-errors.patch
+usb-ehci-mxc-bail-out-on-transceiver-problems.patch
+usb-s3c2410-deactivate-endpoints-before-gadget-unbinding.patch
+usb-fix-oops-in-usb_sg_init.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + c447ee0...8f27ad4 master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard 8f27ad45a20369950b946d2bb7f68e56f2121d3d
+HEAD is now at 8f27ad4 USB: fix oops in usb_sg_init()
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-usbip-usbip_common-kill-rx-thread-on-tx-thread-creation-error.patch
+staging-batman-adv-return-efault-on-copy_to_user-errors.patch
+staging-batman-adv-fix-function-prototype.patch
+staging-mrst-touchscreen-fix-dereferencing-free-memory.patch
+staging-comedi-drivers-adl_pci9111-fix-ai-commands-in-trig_follow-case.patch
+staging-hv-fix-race-condition-on-vmbus-channel-initialization.patch
+staging-hv-fix-hv_utils-module-to-properly-autoload.patch
+staging-wlags49_h2-add-missing-linux-string.h-for-strlen.patch
+staging-wlags49_h2-fix-build-error-when-config_sysfs-is-not-set.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 72dfd71...8b503bf master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.35-rc3
+$ cd ../quilt-tmp
+$ git reset --hard 7e27d6e778cd87b6f2415515d7127eba53fe5d02
+HEAD is now at 7e27d6e Linux 2.6.35-rc3
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-fix-probability-test.patch
+i2c-dev-01-remove-unnecessary-kmalloc-casts.patch
+i2c-dev-02-use-memdup_user.patch
+i2c-support-custom-probe-function-01.patch
+i2c-support-custom-probe-function-02.patch
+i2c-uninline-adapter-mutex-operations.patch
+i2c-drop-dummy-variable.patch
+i2c-drop-preliminary-probability-checks.patch
+error: patch failed: drivers/i2c/i2c-core.c:1456
+error: drivers/i2c/i2c-core.c: patch does not apply
+
+Importing driver-core.current based on 2.6.35-rc3
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 7e27d6e778cd87b6f2415515d7127eba53fe5d02
+HEAD is now at 7e27d6e Linux 2.6.35-rc3
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+serial-cpm_uart-implement-the-cpm_uart_early_write-function-for-console-poll.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+ + 05b4926...f82f933 master     -> quilt/tty.current  (forced update)
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard f82f9332ae2f773899c670e4e7672383a05767d1
+HEAD is now at f82f933 serial: cpm_uart: implement the cpm_uart_early_write() function for console poll
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-g_serial-don-t-set-low_latency-flag.patch
+usb-g_serial-fix-tty-cleanup-on-unload.patch
+usb-gadget-g_fs-possible-invalid-pointer-reference-bug-fixed.patch
+usb-xhci-fix-bug-in-link-trb-activation-change.patch
+usb-r8a66597-fix-failure-in-change-of-status.patch
+usb-musb-fix-a-bug-by-making-suspend-interrupt-available-in-device-mode.patch
+usb-otg-ulpi-bail-out-on-read-errors.patch
+usb-ehci-mxc-bail-out-on-transceiver-problems.patch
+usb-s3c2410-deactivate-endpoints-before-gadget-unbinding.patch
+usb-fix-oops-in-usb_sg_init.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + 8f27ad4...da4a620 master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard da4a620c6d5592f689ed77fc8f51e78215b8f2d7
+HEAD is now at da4a620 USB: fix oops in usb_sg_init()
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-usbip-usbip_common-kill-rx-thread-on-tx-thread-creation-error.patch
+staging-batman-adv-return-efault-on-copy_to_user-errors.patch
+staging-batman-adv-fix-function-prototype.patch
+staging-mrst-touchscreen-fix-dereferencing-free-memory.patch
+staging-comedi-drivers-adl_pci9111-fix-ai-commands-in-trig_follow-case.patch
+staging-hv-fix-race-condition-on-vmbus-channel-initialization.patch
+staging-hv-fix-hv_utils-module-to-properly-autoload.patch
+staging-wlags49_h2-add-missing-linux-string.h-for-strlen.patch
+staging-wlags49_h2-fix-build-error-when-config_sysfs-is-not-set.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 8b503bf...0da5c25 master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.35-rc3
+$ cd ../quilt-tmp
+$ git reset --hard 7e27d6e778cd87b6f2415515d7127eba53fe5d02
+HEAD is now at 7e27d6e Linux 2.6.35-rc3
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-fix-probability-test.patch
+i2c-dev-01-remove-unnecessary-kmalloc-casts.patch
+i2c-dev-02-use-memdup_user.patch
+i2c-support-custom-probe-function-01.patch
+i2c-support-custom-probe-function-02.patch
+i2c-uninline-adapter-mutex-operations.patch
+i2c-drop-dummy-variable.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 7b69bbf...d2bb88a master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.35-rc3
+$ cd ../quilt-tmp
+$ git reset --hard 7e27d6e778cd87b6f2415515d7127eba53fe5d02
+HEAD is now at 7e27d6e Linux 2.6.35-rc3
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k10temp-refine-erratum-319-detection.patch
+hwmon-i5k_amb-fix-sysfs-attribute-for-lockdep.patch
+hwmon-k8temp-fix-temp-on-single-core.patch
+hwmon-ltc4245-expose-all-gpio-pins-as-analog-voltages.patch
+hwmon-emc1403-add-power-support.patch
+hwmon-lm75-add-suspend-and-resume.patch
+hwmon-it87-labels-for-internal-voltages.patch
+hwmon-asc7621-clean-up-and-improve-detect.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + b954e65...90dd1d6 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.34-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-rc3
+$ cd ../quilt-tmp
+$ git reset --hard 7e27d6e778cd87b6f2415515d7127eba53fe5d02
+HEAD is now at 7e27d6e Linux 2.6.35-rc3
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+module:initialize_dynamic_debug_later.patch
+virtio:return_enomem_on_out_of_memory.patch
+virtio:net_do_not_reschedule_rx_refill_forever.patch
+virtio:net_fix_oom_handling_on_tx.patch
+virtio:blk_support_barriers_without_flush_feature.patch
+virtio:net_implements_ethtool_ops_get_drvinfo.patch
+virtio:pci_disable_msi_at_startup.patch
+virtio:pci_disable_msi_at_startup-fix.patch
+module:unload_init_cleanup.patch
+module:refactor-load-module-1.patch
+module:refactor-load-module-2.patch
+module:refactor-load-module-3.patch
+module:refactor-load-module-4.patch
+module:refactor-load-module-5.patch
+module:reduce-stack-usage.patch
+module:load_info.patch
+module:extract-rewrite_section_header.patch
+module:fix-modversions.patch
+module:kallsyms-takes-info.patch
+module:layout_and_allocate.patch
+module:bunch-sysfs-setup.patch
+module:sysfs-no-CONFIG_SYSFS-compile-fix-and-cleanup.patch
+module:push-down-load_info.patch
+module:cleanup-args-usage.patch
+module:hoist-dynamic-debug.patch
+module:final-cleanup.patch
+misc:fix-email.patch
+kernel-params_c-check-null-for-non-bool.diff
+param:neaten-param.c-exports.patch
+param:param_ops.patch
+param:param_ops-for-hvc_iucv-driver.patch
+param:param_ops-modpost-complaint-silence.patch
+param:add-free-hook.patch
+param:use-free-hook-for-charp.patch
+param:params-are-const.patch
+param:kernel_param_lock.patch
+param:documentation.patch
+param:remove-useless-writable-charp.patch
+param:lock-charp-simple.patch
+param:lock-charp-myri10ge.patch
+param:lock-charp-if_sdio.patch
+param:ipmi_watchdog.patch
+param:cleanup-ide.patch
+param:cleanup-mptbase.patch
+param:acpi-use-ops.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 58f35b3...7264c3f master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.34
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+$ cd ../quilt-tmp
+$ git reset --hard 0da5c250bf7464b99ed603360c61a5c3b428b86b
+HEAD is now at 0da5c25 Staging: wlags49_h2: Fix build error when CONFIG_SYSFS is not set
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core
+hwmon-add-driver-for-smsc-emc2103-temperature-monitor-and-fan-controller.patch
+uio-remove-irqf_disabled-flag-from-uio_pdrv_genirq.c.patch
+uio-remove-irqf_disabled-from-uio_sercos3.c.patch
+uio-remove-irqf_disabled-flag-from-uio_cif.c.patch
+hotplug-support-kernel-hotplug-sysctl-variable-when-config_net.patch
+driver-core-internal-struct-dma_coherent_mem-change-type-of-a-member.patch
+driver-core-drop-__must_check-from-bus_for_each_drv.patch
+firmware-loader-use-statically-initialized-data-attribute.patch
+firmware-loader-embed-device-into-firmware_priv-structure.patch
+driver-core-use-kmemdup-in-platform_device_add_resources.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core
+From ../quilt-tmp
+ + 9f29468...95c6bf6 master     -> quilt/driver-core  (forced update)
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard 95c6bf6edc0caf51b00bb326aec1b52174048958
+HEAD is now at 95c6bf6 Driver core: use kmemdup in platform_device_add_resources
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+n_gsm.c-removed-duplicated-includes.patch
+serial-there-s-no-config-console.patch
+vt-clean-up-the-code-use-kernel-library.patch
+serial-add-uart_cap_efr-and-uart_cap_sleep-flags-to-16c950-uarts-definition.patch
+mrst_max3110-add-uart-driver-for-max3110-on-moorestown.patch
+max3110-sanity-check-a-register.patch
+serial-replace-open-coded-mutex-with-a-real-mutex-in-mrst_max3110.c.patch
+serial-fix-wakup-races-in-the-mrst_max3110-driver.patch
+tty-remove-hayes-esp-ioctls.patch
+tty-remove-remaining-hayes-esp-ioctls.patch
+stallion-prune-lock_kernel-calls.patch
+istallion-use-bit-ops-for-the-board-flags.patch
+riscom8-kill-use-of-lock_kernel.patch
+isicom-kill-off-the-bkl.patch
+rocket-kill-bkl.patch
+synclink-kill-the-big-kernel-lock.patch
+cyclades-kill-off-bkl-usage.patch
+epca-kill-the-big-kernel-lock.patch
+specialix-kill-the-bkl.patch
+tty-fix-the-digi-acceleport-driver-null-checks.patch
+synclink-reworking-locking-a-bit.patch
+tty-serial-fix-various-misuses-mishandlings-of-port-tty.patch
+tty-serial-fix-tty-back-references-in-termios.patch
+tty-serial-fix-tty-referencing-in-set_ldisc.patch
+vc-locking-clean-up.patch
+tty-make-vt-s-have-a-tty_port.patch
+tty-move-the-vt_tty-field-from-the-vc_data-into-the-standard-tty_port.patch
+serial-change-the-wait-for-carrier-locking.patch
+serial-add-port-helpers.patch
+serial-trim-locking-on-the-helpers.patch
+serial-use-block_til_ready-helper.patch
+tty-replace-bkl-with-a-new-tty_lock.patch
+tty-never-hold-btm-while-getting-tty_mutex.patch
+tty-fix-console_sem-lock-order.patch
+cdc-acm-remove-dead-code.patch
+tty-introduce-wait_event_interruptible_tty.patch
+tty-reorder-ldisc-locking.patch
+tty-untangle-locking-of-wait_until_sent.patch
+tty-remove-tty_lock_nested.patch
+tty-implement-btm-as-mutex-instead-of-bkl.patch
+tty-release-btm-while-sleeping-in-block_til_ready.patch
+8250-fix-set_ldisc-operation.patch
+tty-avoid-recursive-btm-in-pty_close.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + d5c2b78...6d67029 master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 6d67029ba82f94902dc007598979f46916993812
+HEAD is now at 6d67029 tty: avoid recursive BTM in pty_close
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-fix-failure-path-in-usb_add_hcd.patch
+usb-don-t-stop-root-hub-status-polls-too-soon.patch
+usb-add-check-to-detect-host-controller-hardware-removal.patch
+usb-uhci-acquire-spinlock-before-calling-start_rh.patch
+usb-speedtouch-fixed-brace-and-spacing-coding-style-issues.patch
+usb-speedtouch-fixed-more-brace-and-spacing-coding-style-issues.patch
+usb-xhci-remove-obsolete-debugging-printk.patch
+usb-iuu_phoenix-add-support-for-different-baud-rates.patch
+usb-ehci-make-config_usb_ehci_tt_newsched-default-to-y.patch
+usb-gadget-use-memdup_user.patch
+usb-documentation-usb-ehci.txt-checkpatch-cleanup.patch
+usb-documentation-usb-hotplug.txt-checkpatch-cleanup.patch
+usb-documentation-usb-linux.inf-checkpatch-cleanup.patch
+usb-core-driver-fix-coding-styles.patch
+usb-core-endpoint-fix-coding-styles.patch
+usb-otg.h-fix-the-mixup-in-parameters-order.patch
+usb-host-eliminate-null-dereference.patch
+usb-isd200.c-remove-unnecessary-kmalloc-cast.patch
+usb-throw-away-custom-hex-digit-methods.patch
+usb-uvc-move-constants-and-structures-definitions-to-linux-usb-video.h.patch
+usb-ehci-ehci-1.1-addendum-preparation.patch
+usb-ehci-ehci-1.1-addendum-basic-lpm-feature-support.patch
+usb-ehci-ehci-1.1-addendum-enable-per-port-change-detect-bits.patch
+usb-option-remove-duplicate-amoi_vendor_id.patch
+revert-usb-adding-support-for-htc-smartphones-to-ipaq.patch
+usb-gadget-langwell_udc.c-printk-needs-a-unsigned-long-long-cast-for-a-dma_t.patch
+usb-conexant-fixed-spacing-and-brace-coding-style-issues.patch
+usb-add-a-serial-number-parameter-to-g_file_storage-module.patch
+usb-atm-fixed-spacing-and-indentation-coding-style-issues.patch
+usb-bkl-remove-lock_kernel-in-usbfs-update_sb.patch
+usb-bkl-convert-usb_driver-ioctl-to-unlocked_ioctl.patch
+usb-bkl-remove-bkl-use-for-usb-serial-driver-probing.patch
+usb-bkl-remove-bkl-use-in-uhci-debug.patch
+usb-gadget-do-not-take-bkl-for-gadget-ops-ioctl.patch
+usb-mon-kill-bkl-usage.patch
+usb-gadget-g_mass_storage-static-data-instead-of-dynamic-allocation.patch
+usb-gadget-f_mass_storage-fsg_add-renamed-to-fsg_bind_config.patch
+usb-gadget-f_fs-functionfs_add-renamed-to-functionfs_bind_config.patch
+usb-gadget-composite-usb_string_ids_-functions-added.patch
+usb-gadget-f_fs-use-usb_string_ids_n.patch
+usb-gadget-f_mass_storage-dead-code-removed.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + bed54ce...db2701a master     -> quilt/usb  (forced update)
