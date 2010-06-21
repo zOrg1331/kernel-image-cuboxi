@@ -23,6 +23,8 @@ enum {
 
 	/* IRQ polling common parameters */
 	IRQ_POLL_INTV			= HZ / 100,	/* from the good ol' 100HZ tick */
+
+	IRQ_POLL_SLACK			= HZ / 250,	/* 1 tick slack w/ the popular 250HZ config */
 };
 
 int noirqdebug __read_mostly;
@@ -41,6 +43,38 @@ static void print_irq_handlers(struct irq_desc *desc)
 		printk("\n");
 		action = action->next;
 	}
+}
+
+static unsigned long irq_poll_slack(unsigned long intv)
+{
+	return IRQ_POLL_SLACK;
+}
+
+/**
+ * irq_schedule_poll - schedule IRQ poll
+ * @desc: IRQ desc to schedule poll for
+ * @intv: poll interval
+ *
+ * Schedules @desc->poll_timer.  If the timer is already scheduled,
+ * it's modified iff jiffies + @intv + slack is before the timer's
+ * expires.  poll_timers aren't taken offline behind this function's
+ * back and the users of this function are guaranteed that poll_irq()
+ * will be called at or before jiffies + @intv + slack.
+ *
+ * CONTEXT:
+ * desc->lock
+ */
+static void irq_schedule_poll(struct irq_desc *desc, unsigned long intv)
+{
+	unsigned long expires = jiffies + intv;
+	int slack = irq_poll_slack(intv);
+
+	if (timer_pending(&desc->poll_timer) &&
+	    time_before_eq(desc->poll_timer.expires, expires + slack))
+		return;
+
+	set_timer_slack(&desc->poll_timer, slack);
+	mod_timer(&desc->poll_timer, expires);
 }
 
 /*
@@ -207,7 +241,9 @@ void __note_interrupt(unsigned int irq, struct irq_desc *desc,
 		desc->depth++;
 		desc->chip->disable(irq);
 
-		mod_timer(&desc->poll_timer, jiffies + IRQ_POLL_INTV);
+		raw_spin_lock(&desc->lock);
+		irq_schedule_poll(desc, IRQ_POLL_INTV);
+		raw_spin_unlock(&desc->lock);
 	}
 	desc->irqs_unhandled = 0;
 }
@@ -221,9 +257,8 @@ void poll_irq(unsigned long arg)
 
 	raw_spin_lock_irq(&desc->lock);
 	try_one_irq(desc->irq, desc);
+	irq_schedule_poll(desc, IRQ_POLL_INTV);
 	raw_spin_unlock_irq(&desc->lock);
-
-	mod_timer(&desc->poll_timer, jiffies + IRQ_POLL_INTV);
 }
 
 void irq_poll_action_added(struct irq_desc *desc, struct irqaction *action)
@@ -238,10 +273,10 @@ void irq_poll_action_added(struct irq_desc *desc, struct irqaction *action)
 		__enable_irq(desc, desc->irq, false);
 	}
 
-	raw_spin_unlock_irqrestore(&desc->lock, flags);
-
 	if ((action->flags & IRQF_SHARED) && irqfixup >= IRQFIXUP_POLL)
-		mod_timer(&desc->poll_timer, jiffies + IRQ_POLL_INTV);
+		irq_schedule_poll(desc, IRQ_POLL_INTV);
+
+	raw_spin_unlock_irqrestore(&desc->lock, flags);
 }
 
 void irq_poll_action_removed(struct irq_desc *desc, struct irqaction *action)
