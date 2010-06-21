@@ -236,6 +236,23 @@ void v9fs_destroy_inode(struct inode *inode)
 #endif
 
 /**
+ * v9fs_get_fsgid_for_create - Helper function to get the gid for creating a
+ * new file system object. This checks the S_ISGID to determine the owning
+ * group of the new file system object.
+ */
+
+static gid_t v9fs_get_fsgid_for_create(struct inode *dir_inode)
+{
+	BUG_ON(dir_inode == NULL);
+
+	if (dir_inode->i_mode & S_ISGID) {
+		/* set_gid bit is set.*/
+		return dir_inode->i_gid;
+	}
+	return current_fsgid();
+}
+
+/**
  * v9fs_get_inode - helper function to setup an inode
  * @sb: superblock
  * @mode: mode to setup inode with
@@ -568,6 +585,23 @@ v9fs_create(struct v9fs_session_info *v9ses, struct inode *dir,
 		P9_DPRINTK(P9_DEBUG_VFS, "p9_client_walk failed %d\n", err);
 		fid = NULL;
 		goto error;
+	}
+
+	/* Server grabs uid information from the fid but we need to fix
+	 * gid as dotu doesn't support sending gid on the wire with Tcreate.
+	 * hardlink is an exception as it inherits all credentials.
+	 */
+	if (v9fs_proto_dotu(v9ses) && !(perm & P9_DMLINK)) {
+		struct p9_wstat wstat;
+
+		v9fs_blank_wstat(&wstat);
+		wstat.n_gid = v9fs_get_fsgid_for_create(dir);
+		err = p9_client_wstat(fid, &wstat);
+		if (err < 0) {
+			P9_DPRINTK(P9_DEBUG_VFS, "p9_client_wstat failed %d\n",
+					err);
+			goto error;
+		}
 	}
 
 	/* instantiate inode and assign the unopened fid to the dentry */
