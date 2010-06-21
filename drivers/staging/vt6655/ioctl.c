@@ -70,16 +70,16 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     SNodeList           sNodeList;
     PSBSSIDList         pList;
     PSNodeList          pNodeList;
-    UINT                cbListCount;
+    unsigned int cbListCount;
     PKnownBSS           pBSS;
     PKnownNodeDB        pNode;
-    UINT                ii, jj;
+    unsigned int ii, jj;
     SCmdLinkStatus      sLinkStatus;
     BYTE                abySuppRates[] = {WLAN_EID_SUPP_RATES, 4, 0x02, 0x04, 0x0B, 0x16};
     BYTE                abyNullAddr[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     DWORD               dwKeyIndex= 0;
     BYTE                abyScanSSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
-    LONG                ldBm;
+    long                ldBm;
 
     pReq->wResult = 0;
 
@@ -257,7 +257,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
                                     dwKeyIndex,
                                     sWEPCmd.auWepKeyLength[ii],
                                     NULL,
-                                    (PBYTE)&sWEPCmd.abyWepKey[ii][0],
+                                    (unsigned char *)&sWEPCmd.abyWepKey[ii][0],
                                     KEY_CTL_WEP,
                                     pDevice->PortOffset,
                                     pDevice->byLocalID);
@@ -341,7 +341,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     		    pList->sBSSIDList[ii].wCapInfo = pBSS->wCapInfo;
 //    		    pList->sBSSIDList[ii].uRSSI = pBSS->uRSSI;
     		    RFvRSSITodBm(pDevice, (BYTE)(pBSS->uRSSI), &ldBm);
-    		    pList->sBSSIDList[ii].uRSSI = (UINT)ldBm;
+    		    pList->sBSSIDList[ii].uRSSI = (unsigned int)ldBm;
     		    memcpy(pList->sBSSIDList[ii].abyBSSID, pBSS->abyBSSID, WLAN_BSSID_LEN);
     		    pItemSSID = (PWLAN_IE_SSID)pBSS->abySSID;
     		    memset(pList->sBSSIDList[ii].abySSID, 0, WLAN_SSID_MAXLEN + 1);
@@ -718,8 +718,8 @@ void
 vConfigWEPKey (
     PSDevice pDevice,
     DWORD    dwKeyIndex,
-    PBYTE    pbyKey,
-    ULONG    uKeyLength
+    unsigned char *pbyKey,
+    unsigned long uKeyLength
     )
 {
     int ii;
@@ -732,7 +732,7 @@ vConfigWEPKey (
     pDevice->auWepKeyLength[dwKeyIndex] = uKeyLength;
 
     MACvSetDefaultKeyEntry(pDevice->PortOffset, uKeyLength, dwKeyIndex,
-                           (PDWORD) &(pDevice->abyWepKey[dwKeyIndex][0]), pDevice->byLocalID);
+                           (unsigned long *) &(pDevice->abyWepKey[dwKeyIndex][0]), pDevice->byLocalID);
 
     if (pDevice->eEncryptionStatus < Ndis802_11EncryptionNotSupported) {
         for(ii=0; ii<MAX_GROUP_KEY; ii++) {

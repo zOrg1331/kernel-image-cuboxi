@@ -116,7 +116,7 @@ struct iw_statistics *iwctl_get_wireless_stats(struct net_device *dev)
 	pDevice->wstats.discard.nwid = 0;
 	pDevice->wstats.discard.code = 0;
 	pDevice->wstats.discard.fragment = 0;
-	pDevice->wstats.discard.retries = (U32)pDevice->scStatistic.dwTsrErr;
+	pDevice->wstats.discard.retries = (unsigned long)pDevice->scStatistic.dwTsrErr;
 	pDevice->wstats.discard.misc = 0;
 	pDevice->wstats.miss.beacon = 0;
 
@@ -706,7 +706,7 @@ if (pMgmt->eScanState ==  WMAC_IS_SCANNING) {
 			return rc;
 			}
 	//mike :add
-	 if ((IS_BROADCAST_ADDRESS(pMgmt->abyDesireBSSID)) ||
+	 if ((is_broadcast_ether_addr(pMgmt->abyDesireBSSID)) ||
 	     (memcmp(pMgmt->abyDesireBSSID, ZeroBSSID, 6) == 0)){
 	      PRINT_K("SIOCSIWAP:invalid desired BSSID return!\n");
                return rc;
@@ -714,10 +714,10 @@ if (pMgmt->eScanState ==  WMAC_IS_SCANNING) {
        //mike add: if desired AP is hidden ssid(there are two same BSSID in list),
        //                  then ignore,because you don't known which one to be connect with??
        	{
-           UINT            ii , uSameBssidNum=0;
+           unsigned int ii , uSameBssidNum=0;
                   for (ii = 0; ii < MAX_BSS_NUM; ii++) {
                      if (pMgmt->sBSSList[ii].bActive &&
-                        IS_ETH_ADDRESS_EQUAL(pMgmt->sBSSList[ii].abyBSSID,pMgmt->abyDesireBSSID)) {
+                        !compare_ether_addr(pMgmt->sBSSList[ii].abyBSSID, pMgmt->abyDesireBSSID)) {
                         uSameBssidNum++;
                      }
                   }
@@ -886,7 +886,7 @@ if (pMgmt->eScanState ==  WMAC_IS_SCANNING) {
         {
            PKnownBSS       pCurr = NULL;
            BYTE                   abyTmpDesireSSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
-	  UINT            ii , uSameBssidNum=0;
+	  unsigned int ii , uSameBssidNum=0;
 
 	  memcpy(abyTmpDesireSSID,pMgmt->abyDesireSSID,sizeof(abyTmpDesireSSID));
             pCurr = BSSpSearchBSSList(pDevice,
@@ -906,7 +906,7 @@ if (pMgmt->eScanState ==  WMAC_IS_SCANNING) {
                      //         by means of judging if there are two same BSSID exist in list ?
                   for (ii = 0; ii < MAX_BSS_NUM; ii++) {
                      if (pMgmt->sBSSList[ii].bActive &&
-                        IS_ETH_ADDRESS_EQUAL(pMgmt->sBSSList[ii].abyBSSID, pCurr->abyBSSID)) {
+                        !compare_ether_addr(pMgmt->sBSSList[ii].abyBSSID, pCurr->abyBSSID)) {
                         uSameBssidNum++;
                      }
                   }
@@ -1515,7 +1515,7 @@ int iwctl_giwencode(struct net_device *dev,
     PSMgmtObject        pMgmt = &(pDevice->sMgmtObj);
     int rc = 0;
     char abyKey[WLAN_WEP232_KEYLEN];
-	UINT index = (UINT)(wrq->flags & IW_ENCODE_INDEX);
+	unsigned int index = (unsigned int)(wrq->flags & IW_ENCODE_INDEX);
 	PSKeyItem   pKey = NULL;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO " SIOCGIWENCODE\n");
@@ -1584,7 +1584,7 @@ int iwctl_giwencode(struct net_device *dev,
 	PSMgmtObject		pMgmt = &(pDevice->sMgmtObj);
 	char abyKey[WLAN_WEP232_KEYLEN];
 
-	UINT index = (UINT)(wrq->flags & IW_ENCODE_INDEX);
+	unsigned int index = (unsigned int)(wrq->flags & IW_ENCODE_INDEX);
 	PSKeyItem	pKey = NULL;
 
 	DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO " SIOCGIWENCODE\n");
@@ -2096,7 +2096,7 @@ int iwctl_siwmlme(struct net_device *dev,
 	switch(mlme->cmd){
 	case IW_MLME_DEAUTH:
 		//this command seems to be not complete,please test it --einsnliu
-		//bScheduleCommand((void *) pDevice, WLAN_CMD_DEAUTH, (PBYTE)&reason);
+		//bScheduleCommand((void *) pDevice, WLAN_CMD_DEAUTH, (unsigned char *)&reason);
 		break;
 	case IW_MLME_DISASSOC:
 		if(pDevice->bLinkPass == TRUE){

@@ -351,15 +351,15 @@ spin_lock_irq(&pDevice->lock);
     }
 
    // spin_lock_irq(&pDevice->lock);
-    if (IS_BROADCAST_ADDRESS(&param->addr[0]) || (param->addr == NULL)) {
-        // If IS_BROADCAST_ADDRESS, set the key as every key entry's group key.
+    if (is_broadcast_ether_addr(&param->addr[0]) || (param->addr == NULL)) {
+        // If is_broadcast_ether_addr, set the key as every key entry's group key.
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Groupe Key Assign.\n");
 
         if ((KeybSetAllGroupKey(&(pDevice->sKey),
                             dwKeyIndex,
                             param->u.wpa_key.key_len,
                             (PQWORD) &(KeyRSC),
-                            (PBYTE)abyKey,
+                            (unsigned char *)abyKey,
                             byKeyDecMode,
                             pDevice->PortOffset,
                             pDevice->byLocalID) == TRUE) &&
@@ -367,7 +367,7 @@ spin_lock_irq(&pDevice->lock);
                             dwKeyIndex,
                             param->u.wpa_key.key_len,
                             (PQWORD) &(KeyRSC),
-                            (PBYTE)abyKey,
+                            (unsigned char *)abyKey,
                             byKeyDecMode,
                             pDevice->PortOffset,
                             pDevice->byLocalID) == TRUE) ) {
@@ -400,7 +400,7 @@ spin_lock_irq(&pDevice->lock);
                        dwKeyIndex,
                        param->u.wpa_key.key_len,
                        (PQWORD) &(KeyRSC),
-                       (PBYTE)abyKey,
+                       (unsigned char *)abyKey,
                         byKeyDecMode,
                         pDevice->PortOffset,
                         pDevice->byLocalID) == TRUE) {
@@ -408,7 +408,7 @@ spin_lock_irq(&pDevice->lock);
 
         } else {
             // Key Table Full
-            if (IS_ETH_ADDRESS_EQUAL(&param->addr[0], pDevice->abyBSSID)) {
+            if (!compare_ether_addr(&param->addr[0], pDevice->abyBSSID)) {
                 //DBG_PRN_WLAN03(("return NDIS_STATUS_INVALID_DATA -Key Table Full.2\n"));
                 //spin_unlock_irq(&pDevice->lock);
                 return -EINVAL;
@@ -613,13 +613,13 @@ static int wpa_get_scan(PSDevice pDevice,
     PSMgmtObject    pMgmt = pDevice->pMgmt;
     PWLAN_IE_SSID   pItemSSID;
     PKnownBSS pBSS;
-	PBYTE  pBuf;
+	unsigned char *pBuf;
 	int ret = 0;
 	u16 count = 0;
 	u16 ii, jj;
 #if 1
 
-    PBYTE ptempBSS;
+    unsigned char *ptempBSS;
 
 
 
@@ -713,7 +713,7 @@ static int wpa_get_scan(PSDevice pDevice,
                 scan_buf->rsn_ie_len = pBSS->wRSNLen;
                 memcpy(scan_buf->rsn_ie, pBSS->byRSNIE, pBSS->wRSNLen);
             }
-            scan_buf = (struct viawget_scan_result *)((PBYTE)scan_buf + sizeof(struct viawget_scan_result));
+            scan_buf = (struct viawget_scan_result *)((unsigned char *)scan_buf + sizeof(struct viawget_scan_result));
             jj ++;
         }
     }

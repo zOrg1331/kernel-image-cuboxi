@@ -82,7 +82,7 @@ static int          msglevel                =MSG_LEVEL_INFO;
 
 typedef struct tagSChannelTblElement {
     BYTE    byChannelNumber;
-    UINT    uFrequency;
+    unsigned int uFrequency;
     BOOL    bValid;
     BYTE    byMAP;
 }SChannelTblElement, *PSChannelTblElement;
@@ -427,8 +427,8 @@ void
 s_vCaculateOFDMRParameter(
     BYTE byRate,
     CARD_PHY_TYPE ePHYType,
-    PBYTE pbyTxRate,
-    PBYTE pbyRsvTime
+    unsigned char *pbyTxRate,
+    unsigned char *pbyRsvTime
     );
 
 
@@ -440,8 +440,7 @@ s_vCaculateOFDMRParameter(
 /*---------------------  Export function  -------------------------*/
 /************************************************************************
  * Country Channel Valid
- *  Input:  CountryCode, ChannelNum
- *          ChanneIndex is defined as VT3253 MAC channel:
+ *  Input:  ChannelIndex is defined as VT3253 MAC channel:
  *              1   = 2.4G channel 1
  *              2   = 2.4G channel 2
  *              ...
@@ -458,7 +457,7 @@ s_vCaculateOFDMRParameter(
  ************************************************************************/
 //2008-8-4 <add> by chester
 BOOL
-ChannelValid(UINT CountryCode, UINT ChannelIndex)
+ChannelValid(unsigned int ChannelIndex)
 {
     BOOL    bValid;
 
@@ -500,8 +499,8 @@ void
 s_vCaculateOFDMRParameter (
     BYTE byRate,
     CARD_PHY_TYPE ePHYType,
-    PBYTE pbyTxRate,
-    PBYTE pbyRsvTime
+    unsigned char *pbyTxRate,
+    unsigned char *pbyRsvTime
     )
 {
     switch (byRate) {
@@ -730,7 +729,7 @@ s_vSetRSPINF (PSDevice pDevice, CARD_PHY_TYPE ePHYType, void *pvSupportRateIEs, 
 /*---------------------  Export Functions  --------------------------*/
 BYTE CARDbyGetChannelMapping (void *pDeviceHandler, BYTE byChannelNumber, CARD_PHY_TYPE ePhyType)
 {
-    UINT        ii;
+    unsigned int ii;
 
     if ((ePhyType == PHY_TYPE_11B) || (ePhyType == PHY_TYPE_11G)) {
         return (byChannelNumber);
@@ -765,7 +764,7 @@ BYTE CARDbyGetChannelNumber (void *pDeviceHandler, BYTE byChannelIndex)
  * Return Value: TRUE if succeeded; FALSE if failed.
  *
  */
-BOOL CARDbSetChannel (void *pDeviceHandler, UINT uConnectionChannel)
+BOOL CARDbSetChannel (void *pDeviceHandler, unsigned int uConnectionChannel)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
     BOOL        bResult = TRUE;
@@ -853,7 +852,7 @@ BOOL CARDbSetChannel (void *pDeviceHandler, UINT uConnectionChannel)
  *
  */
 /*
-BOOL CARDbSendPacket (void *pDeviceHandler, void *pPacket, CARD_PKT_TYPE ePktType, UINT uLength)
+BOOL CARDbSendPacket (void *pDeviceHandler, void *pPacket, CARD_PKT_TYPE ePktType, unsigned int uLength)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
     if (ePktType == PKT_TYPE_802_11_MNG) {
@@ -1146,10 +1145,10 @@ BOOL CARDbUpdateTSF (void *pDeviceHandler, BYTE byRxRate, QWORD qwBSSTimestamp, 
 BOOL CARDbSetBeaconPeriod (void *pDeviceHandler, WORD wBeaconInterval)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
-    UINT        uBeaconInterval = 0;
-    UINT        uLowNextTBTT = 0;
-    UINT        uHighRemain = 0;
-    UINT        uLowRemain = 0;
+    unsigned int uBeaconInterval = 0;
+    unsigned int uLowNextTBTT = 0;
+    unsigned int uHighRemain = 0;
+    unsigned int uLowRemain = 0;
     QWORD       qwNextTBTT;
 
     HIDWORD(qwNextTBTT) = 0;
@@ -1297,7 +1296,7 @@ BOOL CARDbStartTxPacket (void *pDeviceHandler, CARD_PKT_TYPE ePktType)
  * Return Value: TRUE if success; FALSE if failed.
  *
  */
-BOOL CARDbSetBSSID(void *pDeviceHandler, PBYTE pbyBSSID, CARD_OP_MODE eOPMode)
+BOOL CARDbSetBSSID(void *pDeviceHandler, unsigned char *pbyBSSID, CARD_OP_MODE eOPMode)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
 
@@ -1319,7 +1318,7 @@ BOOL CARDbSetBSSID(void *pDeviceHandler, PBYTE pbyBSSID, CARD_OP_MODE eOPMode)
         pDevice->byRxMode &= ~RCR_BSSID;
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "wcmd: rx_mode = %x\n", pDevice->byRxMode );
     } else {
-        if (IS_NULL_ADDRESS(pDevice->abyBSSID) == FALSE) {
+        if (is_zero_ether_addr(pDevice->abyBSSID) == FALSE) {
             MACvRegBitsOn(pDevice->PortOffset, MAC_REG_RCR, RCR_BSSID);
             pDevice->bBSSIDFilter = TRUE;
             pDevice->byRxMode |= RCR_BSSID;
@@ -1397,7 +1396,7 @@ CARDbPowerDown(
     )
 {
     PSDevice        pDevice = (PSDevice)pDeviceHandler;
-    UINT            uIdx;
+    unsigned int uIdx;
 
     // check if already in Doze mode
     if (MACbIsRegBitsOn(pDevice->PortOffset, MAC_REG_PSCTL, PSCTL_PS))
@@ -1523,7 +1522,7 @@ MACvRegBitsOff(pDevice->PortOffset, MAC_REG_GPIOCTL0, LED_ACTSET); //LED issue
 
 
 
-BOOL CARDbRemoveKey (void *pDeviceHandler, PBYTE pbyBSSID)
+BOOL CARDbRemoveKey (void *pDeviceHandler, unsigned char *pbyBSSID)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
 
@@ -1551,14 +1550,14 @@ BOOL CARDbRemoveKey (void *pDeviceHandler, PBYTE pbyBSSID)
 BOOL
 CARDbAdd_PMKID_Candidate (
     void *pDeviceHandler,
-    PBYTE            pbyBSSID,
+    unsigned char *pbyBSSID,
     BOOL             bRSNCapExist,
     WORD             wRSNCap
     )
 {
     PSDevice            pDevice = (PSDevice) pDeviceHandler;
     PPMKID_CANDIDATE    pCandidateList;
-    UINT                ii = 0;
+    unsigned int ii = 0;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"bAdd_PMKID_Candidate START: (%d)\n", (int)pDevice->gsPMKIDCandidate.NumCandidates);
 
@@ -1615,7 +1614,7 @@ void CARDvInitChannelTable (void *pDeviceHandler)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
     BOOL        bMultiBand = FALSE;
-    UINT        ii;
+    unsigned int ii;
 
     for(ii=1;ii<=CARD_MAX_CHANNEL_TBL;ii++) {
         sChannelTbl[ii].bValid = FALSE;
@@ -1710,7 +1709,7 @@ BOOL
 CARDbStartMeasure (
     void *pDeviceHandler,
     void *pvMeasureEIDs,
-    UINT             uNumOfMeasureEIDs
+    unsigned int uNumOfMeasureEIDs
     )
 {
     PSDevice                pDevice = (PSDevice) pDeviceHandler;
@@ -1749,7 +1748,7 @@ CARDbStartMeasure (
         if (pDevice->byLocalID > REV_ID_VT3253_B1) {
             HIDWORD(qwStartTSF) = HIDWORD(*((PQWORD) (pDevice->pCurrMeasureEID->sReq.abyStartTime)));
             LODWORD(qwStartTSF) = LODWORD(*((PQWORD) (pDevice->pCurrMeasureEID->sReq.abyStartTime)));
-            wDuration = *((PWORD) (pDevice->pCurrMeasureEID->sReq.abyDuration));
+            wDuration = *((unsigned short *) (pDevice->pCurrMeasureEID->sReq.abyDuration));
             wDuration += 1; // 1 TU for channel switching
 
             if ((LODWORD(qwStartTSF) == 0) && (HIDWORD(qwStartTSF) == 0)) {
@@ -1887,7 +1886,7 @@ CARDbSetQuiet (
     )
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
-    UINT        ii = 0;
+    unsigned int ii = 0;
 
     if (bResetQuiet == TRUE) {
         MACvRegBitsOff(pDevice->PortOffset, MAC_REG_MSRCTL, (MSRCTL_QUIETTXCHK | MSRCTL_QUIETEN));
@@ -1938,9 +1937,9 @@ CARDbStartQuiet (
     )
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
-    UINT        ii = 0;
+    unsigned int ii = 0;
     DWORD       dwStartTime = 0xFFFFFFFF;
-    UINT        uCurrentQuietIndex = 0;
+    unsigned int uCurrentQuietIndex = 0;
     DWORD       dwNextTime = 0;
     DWORD       dwGap = 0;
     DWORD       dwDuration = 0;
@@ -2041,10 +2040,10 @@ CARDvSetCountryInfo (
     )
 {
     PSDevice            pDevice = (PSDevice) pDeviceHandler;
-    UINT                ii = 0;
-    UINT                uu = 0;
-    UINT                step = 0;
-    UINT                uNumOfCountryInfo = 0;
+    unsigned int ii = 0;
+    unsigned int uu = 0;
+    unsigned int step = 0;
+    unsigned int uNumOfCountryInfo = 0;
     BYTE                byCh = 0;
     PWLAN_IE_COUNTRY    pIE_Country = (PWLAN_IE_COUNTRY) pIE;
 
@@ -2096,7 +2095,7 @@ void
 CARDvSetPowerConstraint (
     void *pDeviceHandler,
     BYTE             byChannel,
-    I8               byPower
+    char byPower
     )
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
@@ -2130,8 +2129,8 @@ CARDvSetPowerConstraint (
 void
 CARDvGetPowerCapability (
     void *pDeviceHandler,
-    PBYTE           pbyMinPower,
-    PBYTE           pbyMaxPower
+    unsigned char *pbyMinPower,
+    unsigned char *pbyMaxPower
     )
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
@@ -2166,14 +2165,14 @@ CARDvGetPowerCapability (
 BYTE
 CARDbySetSupportChannels (
     void *pDeviceHandler,
-    PBYTE        pbyIEs
+    unsigned char *pbyIEs
     )
 {
     PSDevice            pDevice = (PSDevice) pDeviceHandler;
-    UINT                ii;
+    unsigned int ii;
     BYTE                byCount;
     PWLAN_IE_SUPP_CH    pIE = (PWLAN_IE_SUPP_CH) pbyIEs;
-    PBYTE               pbyChTupple;
+    unsigned char *pbyChTupple;
     BYTE                byLen = 0;
 
 
@@ -2254,7 +2253,7 @@ CARDbySetSupportChannels (
  * Return Value: none.
  *
 -*/
-I8
+char
 CARDbyGetTransmitPower (
     void *pDeviceHandler
     )
@@ -2267,8 +2266,8 @@ CARDbyGetTransmitPower (
 
 BOOL
 CARDbChannelGetList (
-     UINT       uCountryCodeIdx,
-    PBYTE      pbyChannelTable
+    unsigned int uCountryCodeIdx,
+    unsigned char *pbyChannelTable
     )
 {
     if (uCountryCodeIdx >= CCODE_MAX) {
@@ -2286,7 +2285,7 @@ CARDvSetCountryIE(
     )
 {
     PSDevice            pDevice = (PSDevice) pDeviceHandler;
-    UINT                ii;
+    unsigned int ii;
     PWLAN_IE_COUNTRY    pIECountry = (PWLAN_IE_COUNTRY) pIE;
 
     pIECountry->byElementID = WLAN_EID_COUNTRY;
@@ -2308,9 +2307,9 @@ CARDvSetCountryIE(
 BOOL
 CARDbGetChannelMapInfo(
     void *pDeviceHandler,
-    UINT         uChannelIndex,
-    PBYTE       pbyChannelNumber,
-    PBYTE       pbyMap
+    unsigned int uChannelIndex,
+    unsigned char *pbyChannelNumber,
+    unsigned char *pbyMap
     )
 {
 //    PSDevice            pDevice = (PSDevice) pDeviceHandler;
@@ -2327,7 +2326,7 @@ CARDbGetChannelMapInfo(
 void
 CARDvSetChannelMapInfo(
     void *pDeviceHandler,
-    UINT         uChannelIndex,
+    unsigned int uChannelIndex,
     BYTE         byMap
     )
 {
@@ -2346,7 +2345,7 @@ CARDvClearChannelMapInfo(
     )
 {
 //    PSDevice    pDevice = (PSDevice) pDeviceHandler;
-    UINT        ii = 0;
+    unsigned int ii = 0;
 
     for (ii = 1; ii <=  CB_MAX_CHANNEL; ii++) {
         sChannelTbl[ii].byMAP = 0;
@@ -2361,9 +2360,9 @@ CARDbyAutoChannelSelect(
     )
 {
 //    PSDevice        pDevice = (PSDevice) pDeviceHandler;
-    UINT            ii = 0;
+    unsigned int ii = 0;
     BYTE            byOptionChannel = 0;
-    INT             aiWeight[CB_MAX_CHANNEL_24G+1] = {-1000,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    int             aiWeight[CB_MAX_CHANNEL_24G+1] = {-1000,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
     if (ePHYType == PHY_TYPE_11A) {
         for(ii=CB_MAX_CHANNEL_24G+1;ii<=CB_MAX_CHANNEL;ii++) {
@@ -2426,7 +2425,7 @@ CARDvSafeResetTx (
     )
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
-    UINT        uu;
+    unsigned int uu;
     PSTxDesc    pCurrTD;
 
     // initialize TD index
@@ -2482,7 +2481,7 @@ CARDvSafeResetRx (
     )
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
-    UINT        uu;
+    unsigned int uu;
     PSRxDesc    pDesc;
 
 
@@ -2540,7 +2539,7 @@ CARDvSafeResetRx (
 WORD CARDwGetCCKControlRate(void *pDeviceHandler, WORD wRateIdx)
 {
     PSDevice    pDevice = (PSDevice) pDeviceHandler;
-    UINT ui = (UINT)wRateIdx;
+    unsigned int ui = (unsigned int) wRateIdx;
 
     while (ui > RATE_1M) {
         if (pDevice->wBasicRate & ((WORD)1 << ui)) {
@@ -2567,7 +2566,7 @@ WORD CARDwGetCCKControlRate(void *pDeviceHandler, WORD wRateIdx)
 WORD CARDwGetOFDMControlRate (void *pDeviceHandler, WORD wRateIdx)
 {
     PSDevice pDevice = (PSDevice) pDeviceHandler;
-    UINT ui = (UINT)wRateIdx;
+    unsigned int ui = (unsigned int) wRateIdx;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"BASIC RATE: %X\n", pDevice->wBasicRate);
 
@@ -3003,9 +3002,9 @@ BOOL CARDbGetCurrentTSF (DWORD_PTR dwIoBase, PQWORD pqwCurrTSF)
 QWORD CARDqGetNextTBTT (QWORD qwTSF, WORD wBeaconInterval)
 {
 
-    UINT    uLowNextTBTT;
-    UINT    uHighRemain, uLowRemain;
-    UINT    uBeaconInterval;
+    unsigned int uLowNextTBTT;
+    unsigned int uHighRemain, uLowRemain;
+    unsigned int uBeaconInterval;
 
     uBeaconInterval = wBeaconInterval * 1024;
     // Next TBTT = ((local_current_TSF / beacon_interval) + 1 ) * beacon_interval
@@ -3085,7 +3084,8 @@ void CARDvUpdateNextTBTT (DWORD_PTR dwIoBase, QWORD qwTSF, WORD wBeaconInterval)
     VNSvOutPortD(dwIoBase + MAC_REG_NEXTTBTT, LODWORD(qwTSF));
     VNSvOutPortD(dwIoBase + MAC_REG_NEXTTBTT + 4, HIDWORD(qwTSF));
     MACvRegBitsOn(dwIoBase, MAC_REG_TFTCTL, TFTCTL_TBTTSYNCEN);
-    DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Card:Update Next TBTT[%8xh:%8xh] \n",(UINT)HIDWORD(qwTSF), (UINT)LODWORD(qwTSF));
+    DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Card:Update Next TBTT[%8xh:%8xh] \n",
+		    (unsigned int) HIDWORD(qwTSF), (unsigned int) LODWORD(qwTSF));
 
     return;
 }

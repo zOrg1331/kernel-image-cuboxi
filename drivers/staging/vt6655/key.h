@@ -58,7 +58,7 @@
 typedef struct tagSKeyItem
 {
     BOOL        bKeyValid;
-    ULONG       uKeyLength;
+    unsigned long uKeyLength;
     BYTE        abyKey[MAX_KEY_LEN];
     QWORD       KeyRSC;
     DWORD       dwTSC47_16;
@@ -105,18 +105,18 @@ void KeyvInitTable(PSKeyManagement pTable, DWORD_PTR dwIoBase);
 
 BOOL KeybGetKey(
     PSKeyManagement pTable,
-    PBYTE           pbyBSSID,
+    unsigned char *pbyBSSID,
     DWORD           dwKeyIndex,
     PSKeyItem       *pKey
     );
 
 BOOL KeybSetKey(
     PSKeyManagement pTable,
-    PBYTE           pbyBSSID,
+    unsigned char *pbyBSSID,
     DWORD           dwKeyIndex,
-    ULONG           uKeyLength,
+    unsigned long uKeyLength,
     PQWORD          pKeyRSC,
-    PBYTE           pbyKey,
+    unsigned char *pbyKey,
     BYTE            byKeyDecMode,
     DWORD_PTR       dwIoBase,
     BYTE            byLocalID
@@ -125,9 +125,9 @@ BOOL KeybSetKey(
 BOOL KeybSetDefaultKey(
     PSKeyManagement pTable,
     DWORD           dwKeyIndex,
-    ULONG           uKeyLength,
+    unsigned long uKeyLength,
     PQWORD          pKeyRSC,
-    PBYTE           pbyKey,
+    unsigned char *pbyKey,
     BYTE            byKeyDecMode,
     DWORD_PTR       dwIoBase,
     BYTE            byLocalID
@@ -135,14 +135,14 @@ BOOL KeybSetDefaultKey(
 
 BOOL KeybRemoveKey(
     PSKeyManagement pTable,
-    PBYTE           pbyBSSID,
+    unsigned char *pbyBSSID,
     DWORD           dwKeyIndex,
     DWORD_PTR       dwIoBase
     );
 
 BOOL KeybGetTransmitKey(
     PSKeyManagement pTable,
-    PBYTE           pbyBSSID,
+    unsigned char *pbyBSSID,
     DWORD           dwKeyType,
     PSKeyItem       *pKey
     );
@@ -154,7 +154,7 @@ BOOL KeybCheckPairewiseKey(
 
 BOOL KeybRemoveAllKey(
     PSKeyManagement pTable,
-    PBYTE           pbyBSSID,
+    unsigned char *pbyBSSID,
     DWORD_PTR       dwIoBase
     );
 
@@ -172,9 +172,9 @@ void KeyvRemoveAllWEPKey(
 BOOL KeybSetAllGroupKey (
     PSKeyManagement pTable,
     DWORD           dwKeyIndex,
-    ULONG           uKeyLength,
+    unsigned long uKeyLength,
     PQWORD          pKeyRSC,
-    PBYTE           pbyKey,
+    unsigned char *pbyKey,
     BYTE            byKeyDecMode,
     DWORD_PTR       dwIoBase,
     BYTE            byLocalID

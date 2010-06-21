@@ -127,13 +127,13 @@ BOOL
 bScheduleCommand(
     void *hDeviceContext,
     CMD_CODE    eCommand,
-    PBYTE       pbyItem0
+    unsigned char *pbyItem0
     );
 
 void
 vCommandTimerWait(
     void *hDeviceContext,
-    UINT MSecond
+    unsigned int MSecond
     );
 #ifdef TxInSleep
 void

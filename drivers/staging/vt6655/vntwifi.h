@@ -145,7 +145,7 @@ VNTWIFIvSetIBSSParameter (
     void *pMgmtHandle,
     WORD  wBeaconPeriod,
     WORD  wATIMWindow,
-    UINT  uChannel
+    unsigned int uChannel
     );
 
 void
@@ -159,7 +159,7 @@ VNTWIFIpGetCurrentSSID(
     void *pMgmtHandle
     );
 
-UINT
+unsigned int
 VNTWIFIpGetCurrentChannel(
     void *pMgmtHandle
     );
@@ -229,21 +229,21 @@ VNTWIFIvGetNextBSS (
 void
 VNTWIFIvUpdateNodeTxCounter(
     void *pMgmtHandle,
-    PBYTE    pbyDestAddress,
+    unsigned char *pbyDestAddress,
     BOOL     bTxOk,
     WORD     wRate,
-    PBYTE    pbyTxFailCount
+    unsigned char *pbyTxFailCount
     );
 
 
 void
 VNTWIFIvGetTxRate(
     void *pMgmtHandle,
-    PBYTE    pbyDestAddress,
-    PWORD   pwTxDataRate,
-    PBYTE   pbyACKRate,
-    PBYTE   pbyCCKBasicRate,
-    PBYTE   pbyOFDMBasicRate
+    unsigned char *pbyDestAddress,
+    unsigned short *pwTxDataRate,
+    unsigned char *pbyACKRate,
+    unsigned char *pbyCCKBasicRate,
+    unsigned char *pbyOFDMBasicRate
     );
 /*
 BOOL
@@ -265,7 +265,7 @@ VNTWIFIbyGetKeyCypher(
 BOOL
 VNTWIFIbSetPMKIDCache (
     void *pMgmtObject,
-    ULONG ulCount,
+    unsigned long ulCount,
     void *pPMKIDInfo
     );
 
@@ -294,7 +294,7 @@ VNTWIFIbMeasureReport(
     BYTE  byReportMode,
     BYTE  byBasicMap,
     BYTE  byCCAFraction,
-    PBYTE pbyRPIs
+    unsigned char *pbyRPIs
     );
 
 BOOL
