@@ -67,12 +67,33 @@ enum {
 	WS_ONSTACK,
 };
 
+static inline void __bdi_work_init(struct bdi_work *work,
+				   struct wb_writeback_args *args,
+				   int on_stack)
+{
+	work->args = *args;
+	__set_bit(WS_INPROGRESS, &work->state);
+	if (on_stack) {
+		__set_bit(WS_ONSTACK, &work->state);
+		init_rcu_head_on_stack(&work->rcu_head);
+	}
+}
+
 static inline void bdi_work_init(struct bdi_work *work,
 				 struct wb_writeback_args *args)
 {
-	INIT_RCU_HEAD(&work->rcu_head);
-	work->args = *args;
-	__set_bit(WS_INPROGRESS, &work->state);
+	__bdi_work_init(work, args, false);
+}
+
+static inline void bdi_work_init_on_stack(struct bdi_work *work,
+					  struct wb_writeback_args *args)
+{
+	__bdi_work_init(work, args, true);
+}
+
+static inline void bdi_destroy_work_on_stack(struct bdi_work *work)
+{
+	destroy_rcu_head_on_stack(&work->rcu_head);
 }
 
 /**
@@ -190,11 +211,11 @@ static void bdi_queue_work_onstack(struct wb_writeback_args *args)
 {
 	struct bdi_work work;
 
-	bdi_work_init(&work, args);
-	__set_bit(WS_ONSTACK, &work.state);
+	bdi_work_init_on_stack(&work, args);
 
 	bdi_queue_work(args->sb->s_bdi, &work);
 	bdi_wait_on_work_done(&work);
+	bdi_destroy_work_on_stack(&work);
 }
 
 /**
