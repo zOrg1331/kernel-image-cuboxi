@@ -1196,8 +1196,7 @@ retry:
 		ret = PTR_ERR(handle);
 		goto out;
 	}
-	ret = block_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
-							ext3_get_block);
+	ret = __block_write_begin(page, pos, len, ext3_get_block);
 	if (ret)
 		goto write_begin_failed;
 
@@ -1782,6 +1781,17 @@ retry:
 	ret = blockdev_direct_IO(rw, iocb, inode, inode->i_sb->s_bdev, iov,
 				 offset, nr_segs,
 				 ext3_get_block, NULL);
+	/*
+	 * In case of error extending write may have instantiated a few
+	 * blocks outside i_size. Trim these off again.
+	 */
+	if (unlikely((rw & WRITE) && ret < 0)) {
+		loff_t isize = i_size_read(inode);
+		loff_t end = offset + iov_length(iov, nr_segs);
+
+		if (end > isize)
+			vmtruncate(inode, isize);
+	}
 	if (ret == -ENOSPC && ext3_should_retry_alloc(inode->i_sb, &retries))
 		goto retry;
 
@@ -3184,9 +3194,17 @@ int ext3_setattr(struct dentry *dentry, struct iattr *attr)
 		ext3_journal_stop(handle);
 	}
 
-	rc = inode_setattr(inode, attr);
+	if ((attr->ia_valid & ATTR_SIZE) &&
+	    attr->ia_size != i_size_read(inode)) {
+		rc = vmtruncate(inode, attr->ia_size);
+		if (rc)
+			goto err_out;
+	}
 
-	if (!rc && (ia_valid & ATTR_MODE))
+	setattr_copy(inode, attr);
+	mark_inode_dirty(inode);
+
+	if (ia_valid & ATTR_MODE)
 		rc = ext3_acl_chmod(inode);
 
 err_out:
