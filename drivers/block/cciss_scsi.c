@@ -93,8 +93,8 @@ static struct scsi_host_template cciss_driver_template = {
 
 #pragma pack(1)
 
-#define SCSI_PAD_32 0
-#define SCSI_PAD_64 0
+#define SCSI_PAD_32 8
+#define SCSI_PAD_64 8
 
 struct cciss_scsi_cmd_stack_elem_t {
 	CommandList_struct cmd;
@@ -861,6 +861,7 @@ cciss_scsi_detect(int ctlr)
 	sh->n_io_port = 0;	// I don't think we use these two...
 	sh->this_id = SELF_SCSI_ID;  
 	sh->sg_tablesize = hba[ctlr]->maxsgentries;
+	sh->max_cmd_len = MAX_COMMAND_SIZE;
 
 	((struct cciss_scsi_adapter_data_t *) 
 		hba[ctlr]->scsi_ctlr)->scsi_host = sh;
