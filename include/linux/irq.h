@@ -145,6 +145,17 @@ struct irq_chip {
 
 struct timer_rand_state;
 struct irq_2_iommu;
+
+/* spurious IRQ tracking and handling */
+struct irq_spr {
+	unsigned long		last_bad;	/* when was the last bad? */
+	unsigned long		period_start;	/* period start jiffies */
+	unsigned int		nr_samples;	/* nr of irqs in this period */
+	unsigned int		nr_bad;		/* nr of bad deliveries */
+	unsigned int		poll_cnt;	/* nr to poll once activated */
+	unsigned int		poll_rem;	/* how many polls are left? */
+};
+
 /**
  * struct irq_desc - interrupt descriptor
  * @irq:		interrupt number for this descriptor
@@ -161,15 +172,13 @@ struct irq_2_iommu;
  * @status:		status information
  * @depth:		disable-depth, for nested irq_disable() calls
  * @wake_depth:		enable depth, for multiple set_irq_wake() callers
- * @irq_count:		stats field to detect stalled irqs
- * @last_unhandled:	aging timer for unhandled count
- * @irqs_unhandled:	stats field for spurious unhandled interrupts
  * @lock:		locking for SMP
  * @affinity:		IRQ affinity on SMP
  * @node:		node index useful for balancing
  * @pending_mask:	pending rebalanced interrupts
  * @threads_active:	number of irqaction threads currently running
  * @wait_for_threads:	wait queue for sync_irq to wait for threaded handlers
+ * @spr:		data for spurious IRQ handling
  * @poll_timer:		timer for IRQ polling
  * @dir:		/proc/irq/ procfs entry
  * @name:		flow handler name for /proc/interrupts output
@@ -191,9 +200,6 @@ struct irq_desc {
 
 	unsigned int		depth;		/* nested irq disables */
 	unsigned int		wake_depth;	/* nested wake enables */
-	unsigned int		irq_count;	/* For detecting broken IRQs */
-	unsigned long		last_unhandled;	/* Aging timer for unhandled count */
-	unsigned int		irqs_unhandled;
 	raw_spinlock_t		lock;
 #ifdef CONFIG_SMP
 	cpumask_var_t		affinity;
@@ -206,6 +212,7 @@ struct irq_desc {
 	atomic_t		threads_active;
 	wait_queue_head_t       wait_for_threads;
 
+	struct irq_spr		spr;
 	struct timer_list	poll_timer;
 
 #ifdef CONFIG_PROC_FS

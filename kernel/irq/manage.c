@@ -801,10 +801,6 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 	new->irq = irq;
 	*old_ptr = new;
 
-	/* Reset broken irq detection when installing new handler */
-	desc->irq_count = 0;
-	desc->irqs_unhandled = 0;
-
 	raw_spin_unlock_irqrestore(&desc->lock, flags);
 
 	irq_poll_action_added(desc, new);

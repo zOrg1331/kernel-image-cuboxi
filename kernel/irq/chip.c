@@ -40,8 +40,6 @@ static void dynamic_irq_init_x(unsigned int irq, bool keep_chip_data)
 	if (!keep_chip_data)
 		desc->chip_data = NULL;
 	desc->action = NULL;
-	desc->irq_count = 0;
-	desc->irqs_unhandled = 0;
 #ifdef CONFIG_SMP
 	cpumask_setall(desc->affinity);
 #ifdef CONFIG_GENERIC_PENDING_IRQ
