@@ -88,6 +88,8 @@ enum {
 
 typedef irqreturn_t (*irq_handler_t)(int, void *);
 
+struct irq_expect;
+
 struct irq_watch {
 	irqreturn_t		last_ret;
 	unsigned int		flags;
@@ -109,6 +111,7 @@ struct irq_watch {
  * @thread:	thread pointer for threaded interrupts
  * @thread_flags:	flags related to @thread
  * @watch:	data for irq watching
+ * @expects:	data for irq expecting
  */
 struct irqaction {
 	irq_handler_t		handler;
@@ -122,6 +125,7 @@ struct irqaction {
 	struct task_struct	*thread;
 	unsigned long		thread_flags;
 	struct irq_watch	watch;
+	struct irq_expect	*expects;
 };
 
 extern irqreturn_t no_action(int cpl, void *dev_id);
@@ -194,6 +198,9 @@ devm_request_irq(struct device *dev, unsigned int irq, irq_handler_t handler,
 
 extern void devm_free_irq(struct device *dev, unsigned int irq, void *dev_id);
 
+extern struct irq_expect *init_irq_expect(unsigned int irq, void *dev_id);
+extern void expect_irq(struct irq_expect *exp);
+extern void unexpect_irq(struct irq_expect *exp, bool timedout);
 extern void watch_irq(unsigned int irq, void *dev_id);
 
 /*

@@ -72,6 +72,7 @@ typedef	void (*irq_flow_handler_t)(unsigned int irq,
 #define IRQ_SUSPENDED		0x04000000	/* IRQ has gone through suspend sequence */
 #define IRQ_ONESHOT		0x08000000	/* IRQ is not unmasked after hardirq */
 #define IRQ_NESTED_THREAD	0x10000000	/* IRQ is nested into another, no own handler thread */
+#define IRQ_IN_POLLING		0x20000000	/* IRQ polling in progress */
 #define IRQ_CHECK_WATCHES	0x40000000	/* IRQ watch enabled */
 
 #ifdef CONFIG_IRQ_PER_CPU
