@@ -33,10 +33,6 @@
 
 /******* Common definitions and typedefs ***********************************/
 
-#ifndef OUT
-#define OUT
-#endif
-
 #ifndef TxInSleep
 #define TxInSleep
 #endif
@@ -65,36 +61,12 @@ typedef int             BOOL;
 #define Calcu_LinkQual
 #endif
 
-#ifndef Calcu_LinkQual
-#define Calcu_LinkQual
-#endif
-
 /****** Simple typedefs  ***************************************************/
 
 /* These lines assume that your compiler's longs are 32 bits and
  * shorts are 16 bits. It is already assumed that chars are 8 bits,
  * but it doesn't matter if they're signed or unsigned.
  */
-
-typedef signed char             I8;     /* 8-bit signed integer */
-
-typedef unsigned char           U8;     /* 8-bit unsigned integer */
-typedef unsigned short          U16;    /* 16-bit unsigned integer */
-typedef unsigned long           U32;    /* 32-bit unsigned integer */
-
-
-typedef char            CHAR;
-typedef signed short    SHORT;
-typedef signed int      INT;
-typedef signed long     LONG;
-
-typedef unsigned char   UCHAR;
-typedef unsigned short  USHORT;
-typedef unsigned int    UINT;
-typedef unsigned long   ULONG;
-typedef unsigned long long	ULONGLONG; //64 bit
-
-
 
 typedef unsigned char   BYTE;           //  8-bit
 typedef unsigned short  WORD;           // 16-bit
@@ -119,12 +91,6 @@ typedef unsigned long   DWORD_PTR;      // 32-bit
 
 // boolean pointer
 typedef unsigned int *   PUINT;
-
-typedef BYTE *           PBYTE;
-
-typedef WORD *           PWORD;
-
-typedef DWORD *          PDWORD;
 
 typedef QWORD *          PQWORD;
 

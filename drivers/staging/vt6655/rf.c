@@ -911,7 +911,7 @@ BOOL    bResult = TRUE;
  * Return Value: None.
  *
  */
-BOOL RFvWriteWakeProgSyn (DWORD_PTR dwIoBase, BYTE byRFType, UINT uChannel)
+BOOL RFvWriteWakeProgSyn (DWORD_PTR dwIoBase, BYTE byRFType, unsigned int uChannel)
 {
     int   ii;
     BYTE  byInitCount = 0;
@@ -998,8 +998,8 @@ BOOL RFvWriteWakeProgSyn (DWORD_PTR dwIoBase, BYTE byRFType, UINT uChannel)
  */
 BOOL RFbSetPower (
     PSDevice  pDevice,
-    UINT      uRATE,
-    UINT      uCH
+    unsigned int uRATE,
+    unsigned int uCH
     )
 {
 BOOL    bResult = TRUE;
@@ -1138,7 +1138,7 @@ BYTE    byPwrdBm = 0;
 BOOL RFbRawSetPower (
     PSDevice  pDevice,
     BYTE      byPwr,
-    UINT      uRATE
+    unsigned int uRATE
     )
 {
 BOOL    bResult = TRUE;
@@ -1209,8 +1209,8 @@ RFvRSSITodBm (
     )
 {
     BYTE byIdx = (((byCurrRSSI & 0xC0) >> 6) & 0x03);
-    LONG b = (byCurrRSSI & 0x3F);
-    LONG a = 0;
+    long b = (byCurrRSSI & 0x3F);
+    long a = 0;
     BYTE abyAIROHARF[4] = {0, 18, 0, 40};
 
     switch (pDevice->byRFType) {

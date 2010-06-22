@@ -61,7 +61,7 @@
  * Return Value: Hash value
  *
  */
-BYTE ETHbyGetHashIndexByCrc32 (PBYTE pbyMultiAddr)
+BYTE ETHbyGetHashIndexByCrc32 (unsigned char *pbyMultiAddr)
 {
     int     ii;
     BYTE    byTmpHash;
@@ -96,12 +96,12 @@ BYTE ETHbyGetHashIndexByCrc32 (PBYTE pbyMultiAddr)
  * Return Value: TRUE if ok; FALSE if error.
  *
  */
-BOOL ETHbIsBufferCrc32Ok (PBYTE pbyBuffer, UINT cbFrameLength)
+BOOL ETHbIsBufferCrc32Ok (unsigned char *pbyBuffer, unsigned int cbFrameLength)
 {
     DWORD dwCRC;
 
     dwCRC = CRCdwGetCrc32(pbyBuffer, cbFrameLength - 4);
-    if (cpu_to_le32(*((PDWORD)(pbyBuffer + cbFrameLength - 4))) != dwCRC) {
+    if (cpu_to_le32(*((unsigned long *)(pbyBuffer + cbFrameLength - 4))) != dwCRC) {
         return FALSE;
     }
     return TRUE;

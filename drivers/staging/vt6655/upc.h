@@ -76,35 +76,35 @@
 
 
 #define VNSvInPortB(dwIOAddress, pbyData) {                     \
-	volatile BYTE* pbyAddr = ((PBYTE)(dwIOAddress));            \
+	volatile BYTE* pbyAddr = ((unsigned char *)(dwIOAddress));            \
 	*(pbyData) = readb(pbyAddr);                           \
 }
 
 
 #define VNSvInPortW(dwIOAddress, pwData) {                      \
-	volatile WORD* pwAddr = ((PWORD)(dwIOAddress));             \
+	volatile WORD* pwAddr = ((unsigned short *)(dwIOAddress));             \
 	*(pwData) = readw(pwAddr);                             \
 }
 
 #define VNSvInPortD(dwIOAddress, pdwData) {                     \
-	volatile DWORD* pdwAddr = ((PDWORD)(dwIOAddress));          \
+	volatile DWORD* pdwAddr = ((unsigned long *)(dwIOAddress));          \
 	*(pdwData) = readl(pdwAddr);                           \
 }
 
 
 #define VNSvOutPortB(dwIOAddress, byData) {                     \
-    volatile BYTE* pbyAddr = ((PBYTE)(dwIOAddress));            \
+    volatile BYTE* pbyAddr = ((unsigned char *)(dwIOAddress));            \
     writeb((BYTE)byData, pbyAddr);							\
 }
 
 
 #define VNSvOutPortW(dwIOAddress, wData) {                      \
-    volatile WORD* pwAddr = ((PWORD)(dwIOAddress));             \
+    volatile WORD* pwAddr = ((unsigned short *)(dwIOAddress));             \
     writew((WORD)wData, pwAddr);							\
 }
 
 #define VNSvOutPortD(dwIOAddress, dwData) {                     \
-    volatile DWORD* pdwAddr = ((PDWORD)(dwIOAddress));          \
+    volatile DWORD* pdwAddr = ((unsigned long *)(dwIOAddress));          \
     writel((DWORD)dwData, pdwAddr);					    \
 }
 
@@ -141,7 +141,7 @@
 
 #define PCAvDelayByIO(uDelayUnit) {             \
     BYTE    byData;                             \
-    ULONG   ii;                                 \
+    unsigned long ii;                           \
                                                 \
     if (uDelayUnit <= 50) {                     \
         udelay(uDelayUnit);                     \

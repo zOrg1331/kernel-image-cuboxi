@@ -714,37 +714,37 @@
 #define MACvGetCurrRx0DescAddr(dwIoBase, pdwCurrDescAddr)    \
 {                                                           \
     VNSvInPortD(dwIoBase + MAC_REG_RXDMAPTR0,               \
-                (PDWORD)pdwCurrDescAddr);                   \
+                (unsigned long *)pdwCurrDescAddr);          \
 }
 
 #define MACvGetCurrRx1DescAddr(dwIoBase, pdwCurrDescAddr)   \
 {                                                           \
     VNSvInPortD(dwIoBase + MAC_REG_RXDMAPTR1,               \
-                (PDWORD)pdwCurrDescAddr);                   \
+                (unsigned long *)pdwCurrDescAddr);          \
 }
 
 #define MACvGetCurrTx0DescAddr(dwIoBase, pdwCurrDescAddr)   \
 {                                                           \
     VNSvInPortD(dwIoBase + MAC_REG_TXDMAPTR0,               \
-                (PDWORD)pdwCurrDescAddr);                   \
+                (unsigned long *)pdwCurrDescAddr);          \
 }
 
 #define MACvGetCurrAC0DescAddr(dwIoBase, pdwCurrDescAddr)   \
 {                                                           \
     VNSvInPortD(dwIoBase + MAC_REG_AC0DMAPTR,               \
-                (PDWORD)pdwCurrDescAddr);                   \
+                (unsigned long *)pdwCurrDescAddr);          \
 }
 
 #define MACvGetCurrSyncDescAddr(dwIoBase, pdwCurrDescAddr)  \
 {                                                           \
     VNSvInPortD(dwIoBase + MAC_REG_SYNCDMAPTR,              \
-                (PDWORD)pdwCurrDescAddr);                   \
+                (unsigned long *)pdwCurrDescAddr);          \
 }
 
 #define MACvGetCurrATIMDescAddr(dwIoBase, pdwCurrDescAddr)  \
 {                                                           \
     VNSvInPortD(dwIoBase + MAC_REG_ATIMDMAPTR,              \
-                (PDWORD)pdwCurrDescAddr);                   \
+                (unsigned long *)pdwCurrDescAddr);          \
 }                                                           \
 
 // set the chip with current BCN tx descriptor address
@@ -765,7 +765,7 @@
 {                                                           \
     VNSvOutPortB(dwIoBase + MAC_REG_PAGE1SEL, 1);           \
     VNSvInPortB(dwIoBase + MAC_REG_BSSID0,                  \
-                (PBYTE)pbyEtherAddr);                       \
+                (unsigned char *)pbyEtherAddr);             \
     VNSvInPortB(dwIoBase + MAC_REG_BSSID0 + 1,              \
                 pbyEtherAddr + 1);                          \
     VNSvInPortB(dwIoBase + MAC_REG_BSSID0 + 2,              \
@@ -801,7 +801,7 @@
 {                                                           \
     VNSvOutPortB(dwIoBase + MAC_REG_PAGE1SEL, 1);           \
     VNSvInPortB(dwIoBase + MAC_REG_PAR0,                    \
-                (PBYTE)pbyEtherAddr);                       \
+                (unsigned char *)pbyEtherAddr);             \
     VNSvInPortB(dwIoBase + MAC_REG_PAR0 + 1,                \
                 pbyEtherAddr + 1);                          \
     VNSvInPortB(dwIoBase + MAC_REG_PAR0 + 2,                \
@@ -1075,41 +1075,41 @@
 /*---------------------  Export Functions  --------------------------*/
 
 extern WORD TxRate_iwconfig;//2008-5-8 <add> by chester
-void MACvReadAllRegs(DWORD_PTR dwIoBase, PBYTE pbyMacRegs);
+void MACvReadAllRegs(DWORD_PTR dwIoBase, unsigned char *pbyMacRegs);
 
 BOOL MACbIsRegBitsOn(DWORD_PTR dwIoBase, BYTE byRegOfs, BYTE byTestBits);
 BOOL MACbIsRegBitsOff(DWORD_PTR dwIoBase, BYTE byRegOfs, BYTE byTestBits);
 
 BOOL MACbIsIntDisable(DWORD_PTR dwIoBase);
 
-BYTE MACbyReadMultiAddr(DWORD_PTR dwIoBase, UINT uByteIdx);
-void MACvWriteMultiAddr(DWORD_PTR dwIoBase, UINT uByteIdx, BYTE byData);
+BYTE MACbyReadMultiAddr(DWORD_PTR dwIoBase, unsigned int uByteIdx);
+void MACvWriteMultiAddr(DWORD_PTR dwIoBase, unsigned int uByteIdx, BYTE byData);
 void MACvSetMultiAddrByHash(DWORD_PTR dwIoBase, BYTE byHashIdx);
 void MACvResetMultiAddrByHash(DWORD_PTR dwIoBase, BYTE byHashIdx);
 
 void MACvSetRxThreshold(DWORD_PTR dwIoBase, BYTE byThreshold);
-void MACvGetRxThreshold(DWORD_PTR dwIoBase, PBYTE pbyThreshold);
+void MACvGetRxThreshold(DWORD_PTR dwIoBase, unsigned char *pbyThreshold);
 
 void MACvSetTxThreshold(DWORD_PTR dwIoBase, BYTE byThreshold);
-void MACvGetTxThreshold(DWORD_PTR dwIoBase, PBYTE pbyThreshold);
+void MACvGetTxThreshold(DWORD_PTR dwIoBase, unsigned char *pbyThreshold);
 
 void MACvSetDmaLength(DWORD_PTR dwIoBase, BYTE byDmaLength);
-void MACvGetDmaLength(DWORD_PTR dwIoBase, PBYTE pbyDmaLength);
+void MACvGetDmaLength(DWORD_PTR dwIoBase, unsigned char *pbyDmaLength);
 
 void MACvSetShortRetryLimit(DWORD_PTR dwIoBase, BYTE byRetryLimit);
-void MACvGetShortRetryLimit(DWORD_PTR dwIoBase, PBYTE pbyRetryLimit);
+void MACvGetShortRetryLimit(DWORD_PTR dwIoBase, unsigned char *pbyRetryLimit);
 
 void MACvSetLongRetryLimit(DWORD_PTR dwIoBase, BYTE byRetryLimit);
-void MACvGetLongRetryLimit(DWORD_PTR dwIoBase, PBYTE pbyRetryLimit);
+void MACvGetLongRetryLimit(DWORD_PTR dwIoBase, unsigned char *pbyRetryLimit);
 
 void MACvSetLoopbackMode(DWORD_PTR dwIoBase, BYTE byLoopbackMode);
 BOOL MACbIsInLoopbackMode(DWORD_PTR dwIoBase);
 
 void MACvSetPacketFilter(DWORD_PTR dwIoBase, WORD wFilterType);
 
-void MACvSaveContext(DWORD_PTR dwIoBase, PBYTE pbyCxtBuf);
-void MACvRestoreContext(DWORD_PTR dwIoBase, PBYTE pbyCxtBuf);
-BOOL MACbCompareContext(DWORD_PTR dwIoBase, PBYTE pbyCxtBuf);
+void MACvSaveContext(DWORD_PTR dwIoBase, unsigned char *pbyCxtBuf);
+void MACvRestoreContext(DWORD_PTR dwIoBase, unsigned char *pbyCxtBuf);
+BOOL MACbCompareContext(DWORD_PTR dwIoBase, unsigned char *pbyCxtBuf);
 
 BOOL MACbSoftwareReset(DWORD_PTR dwIoBase);
 BOOL MACbSafeSoftwareReset(DWORD_PTR dwIoBase);
@@ -1125,13 +1125,13 @@ void MACvSetCurrTx0DescAddrEx(DWORD_PTR dwIoBase, DWORD dwCurrDescAddr);
 void MACvSetCurrAC0DescAddrEx(DWORD_PTR dwIoBase, DWORD dwCurrDescAddr);
 void MACvSetCurrSyncDescAddrEx(DWORD_PTR dwIoBase, DWORD dwCurrDescAddr);
 void MACvSetCurrATIMDescAddrEx(DWORD_PTR dwIoBase, DWORD dwCurrDescAddr);
-void MACvTimer0MicroSDelay(DWORD_PTR dwIoBase, UINT uDelay);
-void MACvOneShotTimer0MicroSec(DWORD_PTR dwIoBase, UINT uDelayTime);
-void MACvOneShotTimer1MicroSec(DWORD_PTR dwIoBase, UINT uDelayTime);
+void MACvTimer0MicroSDelay(DWORD_PTR dwIoBase, unsigned int uDelay);
+void MACvOneShotTimer0MicroSec(DWORD_PTR dwIoBase, unsigned int uDelayTime);
+void MACvOneShotTimer1MicroSec(DWORD_PTR dwIoBase, unsigned int uDelayTime);
 
 void MACvSetMISCFifo(DWORD_PTR dwIoBase, WORD wOffset, DWORD dwData);
 
-BOOL MACbTxDMAOff (DWORD_PTR dwIoBase, UINT idx);
+BOOL MACbTxDMAOff (DWORD_PTR dwIoBase, unsigned int idx);
 
 void MACvClearBusSusInd(DWORD_PTR dwIoBase);
 void MACvEnableBusSusEn(DWORD_PTR dwIoBase);
@@ -1139,13 +1139,16 @@ void MACvEnableBusSusEn(DWORD_PTR dwIoBase);
 BOOL MACbFlushSYNCFifo(DWORD_PTR dwIoBase);
 BOOL MACbPSWakeup(DWORD_PTR dwIoBase);
 
-void MACvSetKeyEntry(DWORD_PTR dwIoBase, WORD wKeyCtl, UINT uEntryIdx, UINT uKeyIdx, PBYTE pbyAddr, PDWORD pdwKey, BYTE byLocalID);
-void MACvDisableKeyEntry(DWORD_PTR dwIoBase, UINT uEntryIdx);
-void MACvSetDefaultKeyEntry(DWORD_PTR dwIoBase, UINT uKeyLen, UINT uKeyIdx, PDWORD pdwKey, BYTE byLocalID);
+void MACvSetKeyEntry(DWORD_PTR dwIoBase, WORD wKeyCtl, unsigned int uEntryIdx,
+		unsigned int uKeyIdx, unsigned char *pbyAddr, unsigned long *pdwKey, BYTE byLocalID);
+void MACvDisableKeyEntry(DWORD_PTR dwIoBase, unsigned int uEntryIdx);
+void MACvSetDefaultKeyEntry(DWORD_PTR dwIoBase, unsigned int uKeyLen,
+		unsigned int uKeyIdx, unsigned long *pdwKey, BYTE byLocalID);
 //void MACvEnableDefaultKey(DWORD_PTR dwIoBase, BYTE byLocalID);
 void MACvDisableDefaultKey(DWORD_PTR dwIoBase);
-void MACvSetDefaultTKIPKeyEntry(DWORD_PTR dwIoBase, UINT uKeyLen, UINT uKeyIdx, PDWORD pdwKey, BYTE byLocalID);
-void MACvSetDefaultKeyCtl(DWORD_PTR dwIoBase, WORD wKeyCtl, UINT uEntryIdx, BYTE byLocalID);
+void MACvSetDefaultTKIPKeyEntry(DWORD_PTR dwIoBase, unsigned int uKeyLen,
+		unsigned int uKeyIdx, unsigned long *pdwKey, BYTE byLocalID);
+void MACvSetDefaultKeyCtl(DWORD_PTR dwIoBase, WORD wKeyCtl, unsigned int uEntryIdx, BYTE byLocalID);
 
 #endif // __MAC_H__
 

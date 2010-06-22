@@ -1719,7 +1719,7 @@ const WORD awcFrameTime[MAX_RATE] =
 /*---------------------  Static Functions  --------------------------*/
 
 static
-ULONG
+unsigned long
 s_ulGetRatio(PSDevice pDevice);
 
 static
@@ -1776,19 +1776,19 @@ s_vChangeAntenna (
  * Return Value: FrameTime
  *
  */
-UINT
+unsigned int
 BBuGetFrameTime (
     BYTE byPreambleType,
     BYTE byPktType,
-    UINT cbFrameLength,
+    unsigned int cbFrameLength,
     WORD wRate
     )
 {
-    UINT uFrameTime;
-    UINT uPreamble;
-    UINT uTmp;
-    UINT uRateIdx = (UINT)wRate;
-    UINT uRate = 0;
+    unsigned int uFrameTime;
+    unsigned int uPreamble;
+    unsigned int uTmp;
+    unsigned int uRateIdx = (unsigned int) wRate;
+    unsigned int uRate = 0;
 
 
     if (uRateIdx > RATE_54M) {
@@ -1796,7 +1796,7 @@ BBuGetFrameTime (
         return 0;
     }
 
-    uRate = (UINT)awcFrameTime[uRateIdx];
+    uRate = (unsigned int) awcFrameTime[uRateIdx];
 
     if (uRateIdx <= 3) {          //CCK mode
 
@@ -1846,17 +1846,17 @@ BBuGetFrameTime (
 void
 BBvCaculateParameter (
     PSDevice pDevice,
-    UINT cbFrameLength,
+    unsigned int cbFrameLength,
     WORD wRate,
     BYTE byPacketType,
-    PWORD pwPhyLen,
-    PBYTE pbyPhySrv,
-    PBYTE pbyPhySgn
+    unsigned short *pwPhyLen,
+    unsigned char *pbyPhySrv,
+    unsigned char *pbyPhySgn
     )
 {
-    UINT cbBitCount;
-    UINT cbUsCount = 0;
-    UINT cbTmp;
+    unsigned int cbBitCount;
+    unsigned int cbUsCount = 0;
+    unsigned int cbTmp;
     BOOL bExtBit;
     BYTE byPreambleType = pDevice->byPreambleType;
     BOOL bCCK = pDevice->bCCK;
@@ -2015,7 +2015,7 @@ BBvCaculateParameter (
  * Return Value: TRUE if succeeded; FALSE if failed.
  *
  */
-BOOL BBbReadEmbeded (DWORD_PTR dwIoBase, BYTE byBBAddr, PBYTE pbyData)
+BOOL BBbReadEmbeded (DWORD_PTR dwIoBase, BYTE byBBAddr, unsigned char *pbyData)
 {
     WORD    ww;
     BYTE    byValue;
@@ -2321,7 +2321,7 @@ BOOL BBbVT3253Init (PSDevice pDevice)
  * Return Value: none
  *
  */
-void BBvReadAllRegs (DWORD_PTR dwIoBase, PBYTE pbyBBRegs)
+void BBvReadAllRegs (DWORD_PTR dwIoBase, unsigned char *pbyBBRegs)
 {
     int  ii;
     BYTE byBase = 1;
@@ -2651,12 +2651,12 @@ BBvExitDeepSleep (DWORD_PTR dwIoBase, BYTE byLocalID)
 
 
 static
-ULONG
+unsigned long
 s_ulGetRatio (PSDevice pDevice)
 {
-ULONG   ulRatio = 0;
-ULONG   ulMaxPacket;
-ULONG   ulPacketNum;
+unsigned long ulRatio = 0;
+unsigned long ulMaxPacket;
+unsigned long ulPacketNum;
 
     //This is a thousand-ratio
     ulMaxPacket = pDevice->uNumSQ3[RATE_54M];
@@ -2762,7 +2762,7 @@ ULONG   ulPacketNum;
 void
 BBvClearAntDivSQ3Value (PSDevice pDevice)
 {
-    UINT    ii;
+    unsigned int ii;
 
     pDevice->uDiversityCnt = 0;
     for (ii = 0; ii < MAX_RATE; ii++) {

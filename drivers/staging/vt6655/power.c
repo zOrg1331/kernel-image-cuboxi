@@ -191,7 +191,7 @@ PSbConsiderPowerDown(
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
     PSMgmtObject    pMgmt = pDevice->pMgmt;
-    UINT            uIdx;
+    unsigned int uIdx;
 
     // check if already in Doze mode
     if (MACbIsRegBitsOn(pDevice->PortOffset, MAC_REG_PSCTL, PSCTL_PS))
@@ -262,7 +262,7 @@ PSvSendPSPOLL(
 
     memset(pMgmt->pbyPSPacketPool, 0, sizeof(STxMgmtPacket) + WLAN_HDR_ADDR2_LEN);
     pTxPacket = (PSTxMgmtPacket)pMgmt->pbyPSPacketPool;
-    pTxPacket->p80211Header = (PUWLAN_80211HDR)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
+    pTxPacket->p80211Header = (PUWLAN_80211HDR)((unsigned char *)pTxPacket + sizeof(STxMgmtPacket));
     pTxPacket->p80211Header->sA2.wFrameCtl = cpu_to_le16(
          (
          WLAN_SET_FC_FTYPE(WLAN_TYPE_CTL) |
@@ -304,7 +304,7 @@ PSbSendNullPacket(
     PSDevice            pDevice = (PSDevice)hDeviceContext;
     PSTxMgmtPacket      pTxPacket = NULL;
     PSMgmtObject        pMgmt = pDevice->pMgmt;
-    UINT                uIdx;
+    unsigned int uIdx;
 
 
     if (pDevice->bLinkPass == FALSE) {
@@ -329,7 +329,7 @@ PSbSendNullPacket(
 
     memset(pMgmt->pbyPSPacketPool, 0, sizeof(STxMgmtPacket) + WLAN_NULLDATA_FR_MAXLEN);
     pTxPacket = (PSTxMgmtPacket)pMgmt->pbyPSPacketPool;
-    pTxPacket->p80211Header = (PUWLAN_80211HDR)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
+    pTxPacket->p80211Header = (PUWLAN_80211HDR)((unsigned char *)pTxPacket + sizeof(STxMgmtPacket));
 
     if (pDevice->bEnablePSMode) {
 

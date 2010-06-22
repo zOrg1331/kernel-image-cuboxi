@@ -133,7 +133,7 @@ void KeyvInitTable (PSKeyManagement pTable, DWORD_PTR dwIoBase)
  */
 BOOL KeybGetKey (
     PSKeyManagement pTable,
-    PBYTE           pbyBSSID,
+    unsigned char *pbyBSSID,
     DWORD           dwKeyIndex,
     PSKeyItem       *pKey
     )
@@ -145,7 +145,7 @@ BOOL KeybGetKey (
     *pKey = NULL;
     for (i=0;i<MAX_KEY_TABLE;i++) {
         if ((pTable->KeyTable[i].bInUse == TRUE) &&
-            IS_ETH_ADDRESS_EQUAL(pTable->KeyTable[i].abyBSSID,pbyBSSID)) {
+            !compare_ether_addr(pTable->KeyTable[i].abyBSSID, pbyBSSID)) {
             if (dwKeyIndex == 0xFFFFFFFF) {
                 if (pTable->KeyTable[i].PairwiseKey.bKeyValid == TRUE) {
                     *pKey = &(pTable->KeyTable[i].PairwiseKey);
@@ -191,20 +191,20 @@ BOOL KeybGetKey (
  */
 BOOL KeybSetKey (
     PSKeyManagement pTable,
-    PBYTE           pbyBSSID,
+    unsigned char *pbyBSSID,
     DWORD           dwKeyIndex,
-    ULONG           uKeyLength,
+    unsigned long uKeyLength,
     PQWORD          pKeyRSC,
-    PBYTE           pbyKey,
+    unsigned char *pbyKey,
     BYTE            byKeyDecMode,
     DWORD_PTR       dwIoBase,
     BYTE            byLocalID
     )
 {
     int         i,j;
-    UINT        ii;
+    unsigned int ii;
     PSKeyItem   pKey;
-    UINT        uKeyIdx;
+    unsigned int uKeyIdx;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Enter KeybSetKey: %lX\n", dwKeyIndex);
 
@@ -216,7 +216,7 @@ BOOL KeybSetKey (
             j = i;
         }
         if ((pTable->KeyTable[i].bInUse == TRUE) &&
-            IS_ETH_ADDRESS_EQUAL(pTable->KeyTable[i].abyBSSID,pbyBSSID)) {
+            !compare_ether_addr(pTable->KeyTable[i].abyBSSID, pbyBSSID)) {
             // found table already exist
             if ((dwKeyIndex & PAIRWISE_KEY) != 0) {
                 // Pairwise key
@@ -252,7 +252,7 @@ BOOL KeybSetKey (
                 if (uKeyLength == WLAN_WEP104_KEYLEN)
                     pKey->abyKey[15] |= 0x80;
             }
-            MACvSetKeyEntry(dwIoBase, pTable->KeyTable[i].wKeyCtl, i, uKeyIdx, pbyBSSID, (PDWORD)pKey->abyKey, byLocalID);
+            MACvSetKeyEntry(dwIoBase, pTable->KeyTable[i].wKeyCtl, i, uKeyIdx, pbyBSSID, (unsigned long *)pKey->abyKey, byLocalID);
 
             if ((dwKeyIndex & USE_KEYRSC) == 0) {
                 // RSC set by NIC
@@ -317,7 +317,7 @@ BOOL KeybSetKey (
             if (uKeyLength == WLAN_WEP104_KEYLEN)
                 pKey->abyKey[15] |= 0x80;
         }
-        MACvSetKeyEntry(dwIoBase, pTable->KeyTable[j].wKeyCtl, j, uKeyIdx, pbyBSSID, (PDWORD)pKey->abyKey, byLocalID);
+        MACvSetKeyEntry(dwIoBase, pTable->KeyTable[j].wKeyCtl, j, uKeyIdx, pbyBSSID, (unsigned long *)pKey->abyKey, byLocalID);
 
         if ((dwKeyIndex & USE_KEYRSC) == 0) {
             // RSC set by NIC
@@ -364,14 +364,14 @@ BOOL KeybSetKey (
  */
 BOOL KeybRemoveKey (
     PSKeyManagement pTable,
-    PBYTE           pbyBSSID,
+    unsigned char *pbyBSSID,
     DWORD           dwKeyIndex,
     DWORD_PTR       dwIoBase
     )
 {
     int  i;
 
-    if (IS_BROADCAST_ADDRESS(pbyBSSID)) {
+    if (is_broadcast_ether_addr(pbyBSSID)) {
         // dealte all key
         if ((dwKeyIndex & PAIRWISE_KEY) != 0) {
             for (i=0;i<MAX_KEY_TABLE;i++) {
@@ -398,7 +398,7 @@ BOOL KeybRemoveKey (
 
     for (i=0;i<MAX_KEY_TABLE;i++) {
         if ((pTable->KeyTable[i].bInUse == TRUE) &&
-            IS_ETH_ADDRESS_EQUAL(pTable->KeyTable[i].abyBSSID,pbyBSSID)) {
+            !compare_ether_addr(pTable->KeyTable[i].abyBSSID, pbyBSSID)) {
             if ((dwKeyIndex & PAIRWISE_KEY) != 0) {
                 pTable->KeyTable[i].PairwiseKey.bKeyValid = FALSE;
                 s_vCheckKeyTableValid(pTable, dwIoBase);
@@ -437,7 +437,7 @@ BOOL KeybRemoveKey (
  */
 BOOL KeybRemoveAllKey (
     PSKeyManagement pTable,
-    PBYTE           pbyBSSID,
+    unsigned char *pbyBSSID,
     DWORD_PTR       dwIoBase
     )
 {
@@ -445,7 +445,7 @@ BOOL KeybRemoveAllKey (
 
     for (i=0;i<MAX_KEY_TABLE;i++) {
         if ((pTable->KeyTable[i].bInUse == TRUE) &&
-            IS_ETH_ADDRESS_EQUAL(pTable->KeyTable[i].abyBSSID,pbyBSSID)) {
+            !compare_ether_addr(pTable->KeyTable[i].abyBSSID, pbyBSSID)) {
             pTable->KeyTable[i].PairwiseKey.bKeyValid = FALSE;
             for(u=0;u<MAX_GROUP_KEY;u++) {
                 pTable->KeyTable[i].GroupKey[u].bKeyValid = FALSE;
@@ -519,7 +519,7 @@ void KeyvRemoveAllWEPKey (
  */
 BOOL KeybGetTransmitKey (
     PSKeyManagement pTable,
-    PBYTE           pbyBSSID,
+    unsigned char *pbyBSSID,
     DWORD           dwKeyType,
     PSKeyItem       *pKey
     )
@@ -529,7 +529,7 @@ BOOL KeybGetTransmitKey (
     *pKey = NULL;
     for (i=0;i<MAX_KEY_TABLE;i++) {
         if ((pTable->KeyTable[i].bInUse == TRUE) &&
-            IS_ETH_ADDRESS_EQUAL(pTable->KeyTable[i].abyBSSID,pbyBSSID)) {
+            !compare_ether_addr(pTable->KeyTable[i].abyBSSID, pbyBSSID)) {
 
             if (dwKeyType == PAIRWISE_KEY) {
 
@@ -634,17 +634,17 @@ BOOL KeybCheckPairewiseKey (
 BOOL KeybSetDefaultKey (
     PSKeyManagement pTable,
     DWORD           dwKeyIndex,
-    ULONG           uKeyLength,
+    unsigned long uKeyLength,
     PQWORD          pKeyRSC,
-    PBYTE           pbyKey,
+    unsigned char *pbyKey,
     BYTE            byKeyDecMode,
     DWORD_PTR       dwIoBase,
     BYTE            byLocalID
     )
 {
-    UINT        ii;
+    unsigned int ii;
     PSKeyItem   pKey;
-    UINT        uKeyIdx;
+    unsigned int uKeyIdx;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Enter KeybSetDefaultKey: %1x, %d \n", (int)dwKeyIndex, (int)uKeyLength);
 
@@ -693,7 +693,7 @@ BOOL KeybSetDefaultKey (
         if (uKeyLength == WLAN_WEP104_KEYLEN)
             pKey->abyKey[15] |= 0x80;
     }
-    MACvSetKeyEntry(dwIoBase, pTable->KeyTable[MAX_KEY_TABLE-1].wKeyCtl, MAX_KEY_TABLE-1, uKeyIdx, pTable->KeyTable[MAX_KEY_TABLE-1].abyBSSID, (PDWORD)pKey->abyKey, byLocalID);
+    MACvSetKeyEntry(dwIoBase, pTable->KeyTable[MAX_KEY_TABLE-1].wKeyCtl, MAX_KEY_TABLE-1, uKeyIdx, pTable->KeyTable[MAX_KEY_TABLE-1].abyBSSID, (unsigned long *)pKey->abyKey, byLocalID);
 
     if ((dwKeyIndex & USE_KEYRSC) == 0) {
         // RSC set by NIC
@@ -741,18 +741,18 @@ BOOL KeybSetDefaultKey (
 BOOL KeybSetAllGroupKey (
     PSKeyManagement pTable,
     DWORD           dwKeyIndex,
-    ULONG           uKeyLength,
+    unsigned long uKeyLength,
     PQWORD          pKeyRSC,
-    PBYTE           pbyKey,
+    unsigned char *pbyKey,
     BYTE            byKeyDecMode,
     DWORD_PTR       dwIoBase,
     BYTE            byLocalID
     )
 {
     int         i;
-    UINT        ii;
+    unsigned int ii;
     PSKeyItem   pKey;
-    UINT        uKeyIdx;
+    unsigned int uKeyIdx;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Enter KeybSetAllGroupKey: %lX\n", dwKeyIndex);
 
@@ -792,7 +792,7 @@ BOOL KeybSetAllGroupKey (
                 if (uKeyLength == WLAN_WEP104_KEYLEN)
                     pKey->abyKey[15] |= 0x80;
             }
-            MACvSetKeyEntry(dwIoBase, pTable->KeyTable[i].wKeyCtl, i, uKeyIdx, pTable->KeyTable[i].abyBSSID, (PDWORD)pKey->abyKey, byLocalID);
+            MACvSetKeyEntry(dwIoBase, pTable->KeyTable[i].wKeyCtl, i, uKeyIdx, pTable->KeyTable[i].abyBSSID, (unsigned long *)pKey->abyKey, byLocalID);
 
             if ((dwKeyIndex & USE_KEYRSC) == 0) {
                 // RSC set by NIC

@@ -65,19 +65,19 @@ static int          msglevel                =MSG_LEVEL_INFO;
  * Return Value: TRUE if packet duplicate; otherwise FALSE
  *
  */
-BOOL ROUTEbRelay (PSDevice pDevice, PBYTE pbySkbData, UINT uDataLen, UINT uNodeIndex)
+BOOL ROUTEbRelay (PSDevice pDevice, unsigned char *pbySkbData, unsigned int uDataLen, unsigned int uNodeIndex)
 {
     PSMgmtObject    pMgmt = pDevice->pMgmt;
     PSTxDesc        pHeadTD, pLastTD;
-    UINT            cbFrameBodySize;
-    UINT            uMACfragNum;
+    unsigned int cbFrameBodySize;
+    unsigned int uMACfragNum;
     BYTE            byPktType;
     BOOL            bNeedEncryption = FALSE;
     SKeyItem        STempKey;
     PSKeyItem       pTransmitKey = NULL;
-    UINT            cbHeaderSize;
-    UINT            ii;
-    PBYTE           pbyBSSID;
+    unsigned int cbHeaderSize;
+    unsigned int ii;
+    unsigned char *pbyBSSID;
 
 
 
@@ -91,7 +91,7 @@ BOOL ROUTEbRelay (PSDevice pDevice, PBYTE pbySkbData, UINT uDataLen, UINT uNodeI
 
     pHeadTD->m_td1TD1.byTCR = (TCR_EDP|TCR_STP);
 
-    memcpy(pDevice->sTxEthHeader.abyDstAddr, (PBYTE)pbySkbData, ETH_HLEN);
+    memcpy(pDevice->sTxEthHeader.abyDstAddr, (unsigned char *)pbySkbData, ETH_HLEN);
 
     cbFrameBodySize = uDataLen - ETH_HLEN;
 

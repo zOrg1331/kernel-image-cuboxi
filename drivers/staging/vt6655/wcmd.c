@@ -77,7 +77,7 @@ PSTxMgmtPacket
 s_MgrMakeProbeRequest(
     PSDevice pDevice,
     PSMgmtObject pMgmt,
-    PBYTE pScanBSSID,
+    unsigned char *pScanBSSID,
     PWLAN_IE_SSID pSSID,
     PWLAN_IE_SUPP_RATES pCurrRates,
     PWLAN_IE_SUPP_RATES pCurrExtSuppRates
@@ -213,10 +213,10 @@ s_vProbeChannel(
                                                            //6M,   9M,   12M,  48M
     BYTE abyCurrSuppRatesA[] = {WLAN_EID_SUPP_RATES, 8, 0x0C, 0x12, 0x18, 0x24, 0x30, 0x48, 0x60, 0x6C};
     BYTE abyCurrSuppRatesB[] = {WLAN_EID_SUPP_RATES, 4, 0x02, 0x04, 0x0B, 0x16};
-    PBYTE           pbyRate;
+    unsigned char *pbyRate;
     PSTxMgmtPacket  pTxPacket;
     PSMgmtObject    pMgmt = pDevice->pMgmt;
-    UINT            ii;
+    unsigned int ii;
 
 
     if (pDevice->eCurrentPHYType == PHY_TYPE_11A) {
@@ -269,7 +269,7 @@ PSTxMgmtPacket
 s_MgrMakeProbeRequest(
     PSDevice pDevice,
     PSMgmtObject pMgmt,
-    PBYTE pScanBSSID,
+    unsigned char *pScanBSSID,
     PWLAN_IE_SSID pSSID,
     PWLAN_IE_SUPP_RATES pCurrRates,
     PWLAN_IE_SUPP_RATES pCurrExtSuppRates
@@ -282,8 +282,8 @@ s_MgrMakeProbeRequest(
 
     pTxPacket = (PSTxMgmtPacket)pMgmt->pbyMgmtPacketPool;
     memset(pTxPacket, 0, sizeof(STxMgmtPacket) + WLAN_PROBEREQ_FR_MAXLEN);
-    pTxPacket->p80211Header = (PUWLAN_80211HDR)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
-    sFrame.pBuf = (PBYTE)pTxPacket->p80211Header;
+    pTxPacket->p80211Header = (PUWLAN_80211HDR)((unsigned char *)pTxPacket + sizeof(STxMgmtPacket));
+    sFrame.pBuf = (unsigned char *)pTxPacket->p80211Header;
     sFrame.len = WLAN_PROBEREQ_FR_MAXLEN;
     vMgrEncodeProbeRequest(&sFrame);
     sFrame.pHdr->sA3.wFrameCtl = cpu_to_le16(
@@ -320,16 +320,16 @@ s_MgrMakeProbeRequest(
 void
 vCommandTimerWait(
     void *hDeviceContext,
-    UINT MSecond
+    unsigned int MSecond
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
 
     init_timer(&pDevice->sTimerCommand);
-    pDevice->sTimerCommand.data = (ULONG)pDevice;
+    pDevice->sTimerCommand.data = (unsigned long) pDevice;
     pDevice->sTimerCommand.function = (TimerFunction)vCommandTimer;
     // RUN_AT :1 msec ~= (HZ/1024)
-    pDevice->sTimerCommand.expires = (UINT)RUN_AT((MSecond * HZ) >> 10);
+    pDevice->sTimerCommand.expires = (unsigned int)RUN_AT((MSecond * HZ) >> 10);
     add_timer(&pDevice->sTimerCommand);
     return;
 }
@@ -347,7 +347,7 @@ vCommandTimer (
     PWLAN_IE_SSID   pItemSSID;
     PWLAN_IE_SSID   pItemSSIDCurr;
     CMD_STATUS      Status;
-    UINT            ii;
+    unsigned int ii;
     BYTE            byMask[8] = {1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80};
     struct sk_buff  *skb;
 
@@ -408,7 +408,7 @@ vCommandTimer (
 
             } else {
 //2008-8-4 <add> by chester
-                 if (!ChannelValid(pDevice->byZoneType, pMgmt->uScanChannel)) {
+		if (!ChannelValid(pMgmt->uScanChannel)) {
                     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Invalid channel pMgmt->uScanChannel = %d \n",pMgmt->uScanChannel);
                     s_bCommandComplete(pDevice);
                     return;
@@ -441,7 +441,7 @@ vCommandTimer (
       //          printk("chester-ch=%d\n",pMgmt->uScanChannel);
 	pMgmt->uScanChannel++;
 //2008-8-4 <modify> by chester
-	 if (!ChannelValid(pDevice->byZoneType, pMgmt->uScanChannel) &&
+		if (!ChannelValid(pMgmt->uScanChannel) &&
                         pMgmt->uScanChannel <= pDevice->byMaxChannel ){
                     pMgmt->uScanChannel=pDevice->byMaxChannel+1;
 		 pMgmt->eCommandState = WLAN_CMD_SCAN_END;
@@ -723,7 +723,7 @@ printk("chester-abyDesireSSID=%s\n",((PWLAN_IE_SSID)pMgmt->abyDesireSSID)->abySS
                      // printk("Re-initial TxDataTimer****\n");
 		    del_timer(&pDevice->sTimerTxData);
                       init_timer(&pDevice->sTimerTxData);
-                      pDevice->sTimerTxData.data = (ULONG)pDevice;
+                      pDevice->sTimerTxData.data = (unsigned long) pDevice;
                       pDevice->sTimerTxData.function = (TimerFunction)BSSvSecondTxData;
                       pDevice->sTimerTxData.expires = RUN_AT(10*HZ);      //10s callback
                       pDevice->fTxDataInSleep = FALSE;
@@ -982,7 +982,7 @@ s_bCommandComplete (
 BOOL bScheduleCommand (
     void *hDeviceContext,
     CMD_CODE    eCommand,
-    PBYTE       pbyItem0
+    unsigned char *pbyItem0
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
@@ -1014,7 +1014,7 @@ BOOL bScheduleCommand (
                 break;
 /*
             case WLAN_CMD_DEAUTH:
-                pDevice->eCmdQueue[pDevice->uCmdEnqueueIdx].wDeAuthenReason = *((PWORD)pbyItem0);
+                pDevice->eCmdQueue[pDevice->uCmdEnqueueIdx].wDeAuthenReason = *((unsigned short *)pbyItem0);
                 break;
 */
 
@@ -1065,8 +1065,8 @@ BOOL bClearBSSID_SCAN (
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
-    UINT            uCmdDequeueIdx = pDevice->uCmdDequeueIdx;
-    UINT            ii;
+    unsigned int uCmdDequeueIdx = pDevice->uCmdDequeueIdx;
+    unsigned int ii;
 
     if ((pDevice->cbFreeCmdQueue < CMD_Q_SIZE) && (uCmdDequeueIdx != pDevice->uCmdEnqueueIdx)) {
         for (ii = 0; ii < (CMD_Q_SIZE - pDevice->cbFreeCmdQueue); ii ++) {
@@ -1092,7 +1092,7 @@ vResetCommandTimer(
       del_timer(&pDevice->sTimerCommand);
   //init timer
       init_timer(&pDevice->sTimerCommand);
-    pDevice->sTimerCommand.data = (ULONG)pDevice;
+    pDevice->sTimerCommand.data = (unsigned long) pDevice;
     pDevice->sTimerCommand.function = (TimerFunction)vCommandTimer;
     pDevice->sTimerCommand.expires = RUN_AT(HZ);
     pDevice->cbFreeCmdQueue = CMD_Q_SIZE;
