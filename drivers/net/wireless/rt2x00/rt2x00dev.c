@@ -211,11 +211,6 @@ void rt2x00lib_txdone(struct queue_entry *entry,
 	bool success;
 
 	/*
-	 * Unmap the skb.
-	 */
-	rt2x00queue_unmap_skb(rt2x00dev, entry->skb);
-
-	/*
 	 * Remove L2 padding which was added during
 	 */
 	if (test_bit(DRIVER_REQUIRE_L2PAD, &rt2x00dev->flags))
@@ -224,7 +219,7 @@ void rt2x00lib_txdone(struct queue_entry *entry,
 	/*
 	 * If the IV/EIV data was stripped from the frame before it was
 	 * passed to the hardware, we should now reinsert it again because
-	 * mac80211 will expect the the same data to be present it the
+	 * mac80211 will expect the same data to be present it the
 	 * frame as it was passed to us.
 	 */
 	if (test_bit(CONFIG_SUPPORT_HW_CRYPTO, &rt2x00dev->flags))
@@ -241,8 +236,7 @@ void rt2x00lib_txdone(struct queue_entry *entry,
 	 */
 	success =
 	    test_bit(TXDONE_SUCCESS, &txdesc->flags) ||
-	    test_bit(TXDONE_UNKNOWN, &txdesc->flags) ||
-	    test_bit(TXDONE_FALLBACK, &txdesc->flags);
+	    test_bit(TXDONE_UNKNOWN, &txdesc->flags);
 
 	/*
 	 * Update TX statistics.
@@ -264,11 +258,22 @@ void rt2x00lib_txdone(struct queue_entry *entry,
 	/*
 	 * Frame was send with retries, hardware tried
 	 * different rates to send out the frame, at each
-	 * retry it lowered the rate 1 step.
+	 * retry it lowered the rate 1 step except when the
+	 * lowest rate was used.
 	 */
 	for (i = 0; i < retry_rates && i < IEEE80211_TX_MAX_RATES; i++) {
 		tx_info->status.rates[i].idx = rate_idx - i;
 		tx_info->status.rates[i].flags = rate_flags;
+
+		if (rate_idx - i == 0) {
+			/*
+			 * The lowest rate (index 0) was used until the
+			 * number of max retries was reached.
+			 */
+			tx_info->status.rates[i].count = retry_rates - i;
+			i++;
+			break;
+		}
 		tx_info->status.rates[i].count = 1;
 	}
 	if (i < (IEEE80211_TX_MAX_RATES - 1))
