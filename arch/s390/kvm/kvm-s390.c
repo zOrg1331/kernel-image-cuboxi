@@ -363,63 +363,49 @@ int kvm_arch_vcpu_runnable(struct kvm_vcpu *vcpu)
 
 static int kvm_arch_vcpu_ioctl_initial_reset(struct kvm_vcpu *vcpu)
 {
-	vcpu_load(vcpu);
 	kvm_s390_vcpu_initial_reset(vcpu);
-	vcpu_put(vcpu);
 	return 0;
 }
 
 int kvm_arch_vcpu_ioctl_set_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 {
-	vcpu_load(vcpu);
 	memcpy(&vcpu->arch.guest_gprs, &regs->gprs, sizeof(regs->gprs));
-	vcpu_put(vcpu);
 	return 0;
 }
 
 int kvm_arch_vcpu_ioctl_get_regs(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 {
-	vcpu_load(vcpu);
 	memcpy(&regs->gprs, &vcpu->arch.guest_gprs, sizeof(regs->gprs));
-	vcpu_put(vcpu);
 	return 0;
 }
 
 int kvm_arch_vcpu_ioctl_set_sregs(struct kvm_vcpu *vcpu,
 				  struct kvm_sregs *sregs)
 {
-	vcpu_load(vcpu);
 	memcpy(&vcpu->arch.guest_acrs, &sregs->acrs, sizeof(sregs->acrs));
 	memcpy(&vcpu->arch.sie_block->gcr, &sregs->crs, sizeof(sregs->crs));
-	vcpu_put(vcpu);
 	return 0;
 }
 
 int kvm_arch_vcpu_ioctl_get_sregs(struct kvm_vcpu *vcpu,
 				  struct kvm_sregs *sregs)
 {
-	vcpu_load(vcpu);
 	memcpy(&sregs->acrs, &vcpu->arch.guest_acrs, sizeof(sregs->acrs));
 	memcpy(&sregs->crs, &vcpu->arch.sie_block->gcr, sizeof(sregs->crs));
-	vcpu_put(vcpu);
 	return 0;
 }
 
 int kvm_arch_vcpu_ioctl_set_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 {
-	vcpu_load(vcpu);
 	memcpy(&vcpu->arch.guest_fpregs.fprs, &fpu->fprs, sizeof(fpu->fprs));
 	vcpu->arch.guest_fpregs.fpc = fpu->fpc;
-	vcpu_put(vcpu);
 	return 0;
 }
 
 int kvm_arch_vcpu_ioctl_get_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 {
-	vcpu_load(vcpu);
 	memcpy(&fpu->fprs, &vcpu->arch.guest_fpregs.fprs, sizeof(fpu->fprs));
 	fpu->fpc = vcpu->arch.guest_fpregs.fpc;
-	vcpu_put(vcpu);
 	return 0;
 }
 
@@ -427,14 +413,12 @@ static int kvm_arch_vcpu_ioctl_set_initial_psw(struct kvm_vcpu *vcpu, psw_t psw)
 {
 	int rc = 0;
 
-	vcpu_load(vcpu);
 	if (atomic_read(&vcpu->arch.sie_block->cpuflags) & CPUSTAT_RUNNING)
 		rc = -EBUSY;
 	else {
 		vcpu->run->psw_mask = psw.mask;
 		vcpu->run->psw_addr = psw.addr;
 	}
-	vcpu_put(vcpu);
 	return rc;
 }
 
@@ -497,8 +481,6 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run)
 {
 	int rc;
 	sigset_t sigsaved;
-
-	vcpu_load(vcpu);
 
 rerun_vcpu:
 	if (vcpu->requests)
@@ -568,8 +550,6 @@ rerun_vcpu:
 	if (vcpu->sigset_active)
 		sigprocmask(SIG_SETMASK, &sigsaved, NULL);
 
-	vcpu_put(vcpu);
-
 	vcpu->stat.exit_userspace++;
 	return rc;
 }
@@ -589,7 +569,7 @@ static int __guestcopy(struct kvm_vcpu *vcpu, u64 guestdest, const void *from,
  * KVM_S390_STORE_STATUS_NOADDR: -> 0x1200 on 64 bit
  * KVM_S390_STORE_STATUS_PREFIXED: -> prefix
  */
-int __kvm_s390_vcpu_store_status(struct kvm_vcpu *vcpu, unsigned long addr)
+static int kvm_s390_vcpu_store_status(struct kvm_vcpu *vcpu, unsigned long addr)
 {
 	const unsigned char archmode = 1;
 	int prefix;
@@ -651,45 +631,42 @@ int __kvm_s390_vcpu_store_status(struct kvm_vcpu *vcpu, unsigned long addr)
 	return 0;
 }
 
-static int kvm_s390_vcpu_store_status(struct kvm_vcpu *vcpu, unsigned long addr)
-{
-	int rc;
-
-	vcpu_load(vcpu);
-	rc = __kvm_s390_vcpu_store_status(vcpu, addr);
-	vcpu_put(vcpu);
-	return rc;
-}
-
 long kvm_arch_vcpu_ioctl(struct file *filp,
 			 unsigned int ioctl, unsigned long arg)
 {
 	struct kvm_vcpu *vcpu = filp->private_data;
 	void __user *argp = (void __user *)arg;
+	long r;
 
 	switch (ioctl) {
 	case KVM_S390_INTERRUPT: {
 		struct kvm_s390_interrupt s390int;
 
+		r = -EFAULT;
 		if (copy_from_user(&s390int, argp, sizeof(s390int)))
-			return -EFAULT;
-		return kvm_s390_inject_vcpu(vcpu, &s390int);
+			break;
+		r = kvm_s390_inject_vcpu(vcpu, &s390int);
+		break;
 	}
 	case KVM_S390_STORE_STATUS:
-		return kvm_s390_vcpu_store_status(vcpu, arg);
+		r = kvm_s390_vcpu_store_status(vcpu, arg);
+		break;
 	case KVM_S390_SET_INITIAL_PSW: {
 		psw_t psw;
 
+		r = -EFAULT;
 		if (copy_from_user(&psw, argp, sizeof(psw)))
-			return -EFAULT;
-		return kvm_arch_vcpu_ioctl_set_initial_psw(vcpu, psw);
+			break;
+		r = kvm_arch_vcpu_ioctl_set_initial_psw(vcpu, psw);
+		break;
 	}
 	case KVM_S390_INITIAL_RESET:
-		return kvm_arch_vcpu_ioctl_initial_reset(vcpu);
+		r = kvm_arch_vcpu_ioctl_initial_reset(vcpu);
+		break;
 	default:
-		;
+		r = -EINVAL;
 	}
-	return -EINVAL;
+	return r;
 }
 
 /* Section: memory related */
