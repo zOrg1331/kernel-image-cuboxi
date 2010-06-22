@@ -65,28 +65,21 @@ static void bdi_debug_init(void)
 static int bdi_debug_stats_show(struct seq_file *m, void *v)
 {
 	struct backing_dev_info *bdi = m->private;
-	struct bdi_writeback *wb;
+	struct bdi_writeback *wb = &bdi->wb;
 	unsigned long background_thresh;
 	unsigned long dirty_thresh;
 	unsigned long bdi_thresh;
 	unsigned long nr_dirty, nr_io, nr_more_io, nr_wb;
 	struct inode *inode;
 
-	/*
-	 * inode lock is enough here, the bdi->wb_list is protected by
-	 * RCU on the reader side
-	 */
 	nr_wb = nr_dirty = nr_io = nr_more_io = 0;
 	spin_lock(&inode_lock);
-	list_for_each_entry(wb, &bdi->wb_list, list) {
-		nr_wb++;
-		list_for_each_entry(inode, &wb->b_dirty, i_list)
-			nr_dirty++;
-		list_for_each_entry(inode, &wb->b_io, i_list)
-			nr_io++;
-		list_for_each_entry(inode, &wb->b_more_io, i_list)
-			nr_more_io++;
-	}
+	list_for_each_entry(inode, &wb->b_dirty, i_list)
+		nr_dirty++;
+	list_for_each_entry(inode, &wb->b_io, i_list)
+		nr_io++;
+	list_for_each_entry(inode, &wb->b_more_io, i_list)
+		nr_more_io++;
 	spin_unlock(&inode_lock);
 
 	get_dirty_limits(&background_thresh, &dirty_thresh, &bdi_thresh, bdi);
@@ -98,21 +91,16 @@ static int bdi_debug_stats_show(struct seq_file *m, void *v)
 		   "BdiDirtyThresh:   %8lu kB\n"
 		   "DirtyThresh:      %8lu kB\n"
 		   "BackgroundThresh: %8lu kB\n"
-		   "WritebackThreads: %8lu\n"
 		   "b_dirty:          %8lu\n"
 		   "b_io:             %8lu\n"
 		   "b_more_io:        %8lu\n"
 		   "bdi_list:         %8u\n"
-		   "state:            %8lx\n"
-		   "wb_mask:          %8lx\n"
-		   "wb_list:          %8u\n"
-		   "wb_cnt:           %8u\n",
+		   "state:            %8lx\n",
 		   (unsigned long) K(bdi_stat(bdi, BDI_WRITEBACK)),
 		   (unsigned long) K(bdi_stat(bdi, BDI_RECLAIMABLE)),
 		   K(bdi_thresh), K(dirty_thresh),
-		   K(background_thresh), nr_wb, nr_dirty, nr_io, nr_more_io,
-		   !list_empty(&bdi->bdi_list), bdi->state, bdi->wb_mask,
-		   !list_empty(&bdi->wb_list), bdi->wb_cnt);
+		   K(background_thresh), nr_dirty, nr_io, nr_more_io,
+		   !list_empty(&bdi->bdi_list), bdi->state);
 #undef K
 
 	return 0;
@@ -272,66 +260,6 @@ static void bdi_wb_init(struct bdi_writeback *wb, struct backing_dev_info *bdi)
 	INIT_LIST_HEAD(&wb->b_more_io);
 }
 
-static void bdi_task_init(struct backing_dev_info *bdi,
-			  struct bdi_writeback *wb)
-{
-	struct task_struct *tsk = current;
-
-	spin_lock(&bdi->wb_lock);
-	list_add_tail_rcu(&wb->list, &bdi->wb_list);
-	spin_unlock(&bdi->wb_lock);
-
-	tsk->flags |= PF_FLUSHER | PF_SWAPWRITE;
-	set_freezable();
-
-	/*
-	 * Our parent may run at a different priority, just set us to normal
-	 */
-	set_user_nice(tsk, 0);
-}
-
-static int bdi_start_fn(void *ptr)
-{
-	struct bdi_writeback *wb = ptr;
-	struct backing_dev_info *bdi = wb->bdi;
-	int ret;
-
-	/*
-	 * Add us to the active bdi_list
-	 */
-	spin_lock_bh(&bdi_lock);
-	list_add_rcu(&bdi->bdi_list, &bdi_list);
-	spin_unlock_bh(&bdi_lock);
-
-	bdi_task_init(bdi, wb);
-
-	/*
-	 * Clear pending bit and wakeup anybody waiting to tear us down
-	 */
-	clear_bit(BDI_pending, &bdi->state);
-	smp_mb__after_clear_bit();
-	wake_up_bit(&bdi->state, BDI_pending);
-
-	ret = bdi_writeback_task(wb);
-
-	/*
-	 * Remove us from the list
-	 */
-	spin_lock(&bdi->wb_lock);
-	list_del_rcu(&wb->list);
-	spin_unlock(&bdi->wb_lock);
-
-	/*
-	 * Flush any work that raced with us exiting. No new work
-	 * will be added, since this bdi isn't discoverable anymore.
-	 */
-	if (!list_empty(&bdi->work_list))
-		wb_do_writeback(wb, 1);
-
-	wb->task = NULL;
-	return ret;
-}
-
 int bdi_has_dirty_io(struct backing_dev_info *bdi)
 {
 	return wb_has_dirty_io(&bdi->wb);
@@ -340,14 +268,13 @@ int bdi_has_dirty_io(struct backing_dev_info *bdi)
 static void bdi_flush_io(struct backing_dev_info *bdi)
 {
 	struct writeback_control wbc = {
-		.bdi			= bdi,
 		.sync_mode		= WB_SYNC_NONE,
 		.older_than_this	= NULL,
 		.range_cyclic		= 1,
 		.nr_to_write		= 1024,
 	};
 
-	writeback_inodes_wbc(&wbc);
+	writeback_inodes_wb(&bdi->wb, &wbc);
 }
 
 /*
@@ -394,7 +321,13 @@ static int bdi_forker_task(void *ptr)
 {
 	struct bdi_writeback *me = ptr;
 
-	bdi_task_init(me->bdi, me);
+	current->flags |= PF_FLUSHER | PF_SWAPWRITE;
+	set_freezable();
+
+	/*
+	 * Our parent may run at a different priority, just set us to normal
+	 */
+	set_user_nice(current, 0);
 
 	for (;;) {
 		struct backing_dev_info *bdi, *tmp;
@@ -450,7 +383,7 @@ static int bdi_forker_task(void *ptr)
 		spin_unlock_bh(&bdi_lock);
 
 		wb = &bdi->wb;
-		wb->task = kthread_run(bdi_start_fn, wb, "flush-%s",
+		wb->task = kthread_run(bdi_writeback_thread, wb, "flush-%s",
 					dev_name(bdi->dev));
 		/*
 		 * If task creation fails, then readd the bdi to
@@ -601,8 +534,6 @@ EXPORT_SYMBOL(bdi_register_dev);
  */
 static void bdi_wb_shutdown(struct backing_dev_info *bdi)
 {
-	struct bdi_writeback *wb;
-
 	if (!bdi_cap_writeback_dirty(bdi))
 		return;
 
@@ -618,14 +549,14 @@ static void bdi_wb_shutdown(struct backing_dev_info *bdi)
 	bdi_remove_from_list(bdi);
 
 	/*
-	 * Finally, kill the kernel threads. We don't need to be RCU
+	 * Finally, kill the kernel thread. We don't need to be RCU
 	 * safe anymore, since the bdi is gone from visibility. Force
 	 * unfreeze of the thread before calling kthread_stop(), otherwise
 	 * it would never exet if it is currently stuck in the refrigerator.
 	 */
-	list_for_each_entry(wb, &bdi->wb_list, list) {
-		thaw_process(wb->task);
-		kthread_stop(wb->task);
+	if (bdi->wb.task) {
+		thaw_process(bdi->wb.task);
+		kthread_stop(bdi->wb.task);
 	}
 }
 
@@ -670,16 +601,9 @@ int bdi_init(struct backing_dev_info *bdi)
 	spin_lock_init(&bdi->wb_lock);
 	INIT_RCU_HEAD(&bdi->rcu_head);
 	INIT_LIST_HEAD(&bdi->bdi_list);
-	INIT_LIST_HEAD(&bdi->wb_list);
 	INIT_LIST_HEAD(&bdi->work_list);
 
 	bdi_wb_init(&bdi->wb, bdi);
-
-	/*
-	 * Just one thread support for now, hard code mask and count
-	 */
-	bdi->wb_mask = 1;
-	bdi->wb_cnt = 1;
 
 	for (i = 0; i < NR_BDI_STAT_ITEMS; i++) {
 		err = percpu_counter_init(&bdi->bdi_stat[i], 0);
