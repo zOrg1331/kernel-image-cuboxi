@@ -272,6 +272,7 @@ IPR_PCII_NO_HOST_RRQ | IPR_PCII_IOARRIN_LOST | IPR_PCII_MMIO_ERROR)
 
 #define IPR_UPROCI_RESET_ALERT			(0x80000000 >> 7)
 #define IPR_UPROCI_IO_DEBUG_ALERT			(0x80000000 >> 9)
+#define IPR_UPROCI_SIS64_START_BIST			(0x80000000 >> 23)
 
 #define IPR_LDUMP_MAX_LONG_ACK_DELAY_IN_USEC		200000	/* 200 ms */
 #define IPR_LDUMP_MAX_SHORT_ACK_DELAY_IN_USEC		200000	/* 200 ms */
@@ -996,7 +997,7 @@ struct ipr_hostrcb64_fabric_desc {
 	__be16 length;
 	u8 descriptor_id;
 
-	u8 reserved;
+	u8 reserved[2];
 	u8 path_state;
 
 	u8 reserved2[2];
@@ -1054,7 +1055,7 @@ struct ipr_hostrcb64_error {
 	__be64 fd_lun;
 	u8 fd_res_path[8];
 	__be64 time_stamp;
-	u8 reserved[2];
+	u8 reserved[16];
 	union {
 		struct ipr_hostrcb_type_ff_error type_ff_error;
 		struct ipr_hostrcb_type_12_error type_12_error;
@@ -1254,6 +1255,9 @@ struct ipr_interrupt_offsets {
 
 	unsigned long dump_addr_reg;
 	unsigned long dump_data_reg;
+
+#define IPR_ENDIAN_SWAP_KEY		0x000C0C00
+	unsigned long endian_swap_reg;
 };
 
 struct ipr_interrupts {
@@ -1279,6 +1283,8 @@ struct ipr_interrupts {
 
 	void __iomem *dump_addr_reg;
 	void __iomem *dump_data_reg;
+
+	void __iomem *endian_swap_reg;
 };
 
 struct ipr_chip_cfg_t {
@@ -1296,6 +1302,9 @@ struct ipr_chip_t {
 	u16 sis_type;
 #define IPR_SIS32			0x00
 #define IPR_SIS64			0x01
+	u16 bist_method;
+#define IPR_PCI_CFG			0x00
+#define IPR_MMIO			0x01
 	const struct ipr_chip_cfg_t *cfg;
 };
 
@@ -1684,8 +1693,9 @@ struct ipr_ucode_image_header {
 	if (ipr_is_device(hostrcb)) {					\
 		if ((hostrcb)->ioa_cfg->sis64) {			\
 			printk(KERN_ERR IPR_NAME ": %s: " fmt, 		\
-				ipr_format_resource_path(&hostrcb->hcam.u.error64.fd_res_path[0], \
-					&hostrcb->rp_buffer[0]),	\
+				ipr_format_res_path(hostrcb->hcam.u.error64.fd_res_path, \
+					hostrcb->rp_buffer,		\
+					sizeof(hostrcb->rp_buffer)),	\
 				__VA_ARGS__);				\
 		} else {						\
 			ipr_ra_err((hostrcb)->ioa_cfg,			\
@@ -1854,4 +1864,12 @@ static inline int ipr_sdt_is_fmt2(u32 sdt_word)
 	return 0;
 }
 
+#ifndef writeq
+static inline void writeq(u64 val, void __iomem *addr)
+{
+        writel(((u32) (val >> 32)), addr);
+        writel(((u32) (val)), (addr + 4));
+}
 #endif
+
+#endif /* _IPR_H */

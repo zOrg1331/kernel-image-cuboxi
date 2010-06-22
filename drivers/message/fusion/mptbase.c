@@ -1770,7 +1770,6 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
 	ioc->req_sz = MPT_DEFAULT_FRAME_SIZE;		/* avoid div by zero! */
 	ioc->reply_sz = MPT_REPLY_FRAME_SIZE;
 
-	ioc->pcidev = pdev;
 
 	spin_lock_init(&ioc->taskmgmt_lock);
 	mutex_init(&ioc->internal_cmds.mutex);
@@ -1913,6 +1912,9 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
 		ioc->msi_enable = 0;
 		break;
 	}
+
+	ioc->fw_events_off = 1;
+
 	if (ioc->errata_flag_1064)
 		pci_disable_io_access(pdev);
 
@@ -2051,7 +2053,6 @@ mpt_detach(struct pci_dev *pdev)
 
 	mpt_adapter_dispose(ioc);
 
-	pci_set_drvdata(pdev, NULL);
 }
 
 /**************************************************************************
@@ -6971,6 +6972,7 @@ mpt_SoftResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 
 	spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
 	if (ioc->taskmgmt_in_progress) {
+		ioc->ioc_reset_in_progress = 0;
 		spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
 		return -1;
 	}
