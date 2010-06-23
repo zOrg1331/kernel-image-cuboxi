@@ -38,6 +38,7 @@
 #include "device.h"
 #include "wmgr.h"
 #include "rxtx.h"
+#include "channel.h"
 
 /*---------------------  Static Definitions -------------------------*/
 static int          msglevel                =MSG_LEVEL_INFO;
@@ -97,7 +98,8 @@ typedef struct _WLAN_FRAME_TPCREP {
 /*---------------------  Static Variables  --------------------------*/
 
 /*---------------------  Static Functions  --------------------------*/
-static BOOL s_bRxMSRReq(PSMgmtObject pMgmt, PWLAN_FRAME_MSRREQ pMSRReq, UINT uLength)
+static BOOL s_bRxMSRReq(PSMgmtObject pMgmt, PWLAN_FRAME_MSRREQ pMSRReq,
+		unsigned int uLength)
 {
     size_t    uNumOfEIDs = 0;
     BOOL    bResult = TRUE;
@@ -124,9 +126,9 @@ static BOOL s_bRxTPCReq(PSMgmtObject pMgmt, PWLAN_FRAME_TPCREQ pTPCReq, BYTE byR
 
     pTxPacket = (PSTxMgmtPacket)pMgmt->pbyMgmtPacketPool;
     memset(pTxPacket, 0, sizeof(STxMgmtPacket) + WLAN_A3FR_MAXLEN);
-    pTxPacket->p80211Header = (PUWLAN_80211HDR)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
+    pTxPacket->p80211Header = (PUWLAN_80211HDR)((unsigned char *)pTxPacket + sizeof(STxMgmtPacket));
 
-    pFrame = (PWLAN_FRAME_TPCREP)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
+    pFrame = (PWLAN_FRAME_TPCREP)((unsigned char *)pTxPacket + sizeof(STxMgmtPacket));
 
     pFrame->Header.wFrameCtl = (   WLAN_SET_FC_FTYPE(WLAN_FTYPE_MGMT) |
                                     WLAN_SET_FC_FSTYPE(WLAN_FSTYPE_ACTION)
@@ -209,7 +211,7 @@ IEEE11hbMgrRxAction (
 {
     PSMgmtObject            pMgmt = (PSMgmtObject) pMgmtHandle;
     PWLAN_FRAME_ACTION      pAction = NULL;
-    UINT                    uLength = 0;
+    unsigned int uLength = 0;
     PWLAN_IE_CH_SW          pChannelSwitch = NULL;
 
 
@@ -244,7 +246,7 @@ IEEE11hbMgrRxAction (
                     // valid element id
                     CARDbChannelSwitch( pMgmt->pAdapter,
                                         pChannelSwitch->byMode,
-                                        CARDbyGetChannelMapping(pMgmt->pAdapter, pChannelSwitch->byChannel, pMgmt->eCurrentPHYMode),
+                                        get_channel_mapping(pMgmt->pAdapter, pChannelSwitch->byChannel, pMgmt->eCurrentPHYMode),
                                         pChannelSwitch->byCount
                                         );
                 }
@@ -275,7 +277,7 @@ BOOL IEEE11hbMSRRepTx (
 
     pTxPacket = (PSTxMgmtPacket)pMgmt->abyCurrentMSRRep;
     memset(pTxPacket, 0, sizeof(STxMgmtPacket) + WLAN_A3FR_MAXLEN);
-    pTxPacket->p80211Header = (PUWLAN_80211HDR)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
+    pTxPacket->p80211Header = (PUWLAN_80211HDR)((unsigned char *)pTxPacket + sizeof(STxMgmtPacket));
 
 
     pMSRRep->Header.wFrameCtl = (   WLAN_SET_FC_FTYPE(WLAN_FTYPE_MGMT) |

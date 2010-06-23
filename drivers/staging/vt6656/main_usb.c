@@ -407,8 +407,8 @@ static BOOL device_init_registers(PSDevice pDevice, DEVICE_INIT_TYPE InitType)
 
     sInitCmd.byInitClass = (BYTE)InitType;
     sInitCmd.bExistSWNetAddr = (BYTE) pDevice->bExistSWNetAddr;
-    for(ii=0;ii<6;ii++)
-        sInitCmd.bySWNetAddr[ii] = pDevice->abyCurrentNetAddr[ii];
+    for (ii = 0; ii < 6; ii++)
+	sInitCmd.bySWNetAddr[ii] = pDevice->abyCurrentNetAddr[ii];
     sInitCmd.byShortRetryLimit = pDevice->byShortRetryLimit;
     sInitCmd.byLongRetryLimit = pDevice->byLongRetryLimit;
 
@@ -487,10 +487,10 @@ static BOOL device_init_registers(PSDevice pDevice, DEVICE_INIT_TYPE InitType)
           if(((pDevice->abyEEPROM[EEP_OFS_ZONETYPE] == ZoneType_Japan) ||
 	        (pDevice->abyEEPROM[EEP_OFS_ZONETYPE] == ZoneType_Europe))&&
 	     (pDevice->byOriginalZonetype == ZoneType_USA)) {
-	    for(ii=11;ii<14;ii++) {
-                pDevice->abyCCKPwrTbl[ii] = pDevice->abyCCKPwrTbl[10];
-	       pDevice->abyOFDMPwrTbl[ii] = pDevice->abyOFDMPwrTbl[10];
-	    }
+		for (ii = 11; ii < 14; ii++) {
+			pDevice->abyCCKPwrTbl[ii] = pDevice->abyCCKPwrTbl[10];
+			pDevice->abyOFDMPwrTbl[ii] = pDevice->abyOFDMPwrTbl[10];
+		}
 	  }
 
         //{{ RobertYu: 20041124
@@ -718,33 +718,32 @@ static BOOL device_release_WPADEV(PSDevice pDevice)
 
 static int vt6656_suspend(struct usb_interface *intf, pm_message_t message)
 {
- PSDevice  pDevice = usb_get_intfdata(intf);
- struct net_device *dev = pDevice->dev;
+	PSDevice device = usb_get_intfdata(intf);
 
- printk("VNTWUSB Suspend Start======>\n");
-if(dev != NULL) {
-  if(pDevice->flags & DEVICE_FLAGS_OPENED)
-     device_close(dev);
-}
+	if (!device || !device->dev)
+		return -ENODEV;
 
- usb_put_dev(interface_to_usbdev(intf));
- return 0;
+	if (device->flags & DEVICE_FLAGS_OPENED)
+		device_close(device->dev);
+
+	usb_put_dev(interface_to_usbdev(intf));
+
+	return 0;
 }
 
 static int vt6656_resume(struct usb_interface *intf)
 {
- PSDevice  pDevice = usb_get_intfdata(intf);
- struct net_device *dev = pDevice->dev;
+	PSDevice device = usb_get_intfdata(intf);
 
- printk("VNTWUSB Resume Start======>\n");
- if(dev != NULL) {
-  usb_get_dev(interface_to_usbdev(intf));
-  if(!(pDevice->flags & DEVICE_FLAGS_OPENED)) {
-    if(device_open(dev)!=0)
-        printk("VNTWUSB Resume Start======>open fail\n");
-   }
- }
- return 0;
+	if (!device || !device->dev)
+		return -ENODEV;
+
+	usb_get_dev(interface_to_usbdev(intf));
+
+	if (!(device->flags & DEVICE_FLAGS_OPENED))
+		device_open(device->dev);
+
+	return 0;
 }
 
 #endif /* CONFIG_PM */
@@ -812,16 +811,6 @@ vt6656_probe(struct usb_interface *intf, const struct usb_device_id *id)
         return -ENODEV;
     }
 
-//2008-07-21-01<Add>by MikeLiu
-//register wpadev
-#if 0
-   if(wpa_set_wpadev(pDevice, 1)!=0) {
-     printk("Fail to Register WPADEV?\n");
-        unregister_netdev(pDevice->dev);
-        free_netdev(netdev);
-        kfree(pDevice);
-   }
-#endif
          usb_device_reset(pDevice);
 
 #ifdef SndEvt_ToAPI
@@ -1234,10 +1223,10 @@ device_release_WPADEV(pDevice);
         pMgmt->bShareKeyAlgorithm = FALSE;
         pDevice->bEncryptionEnable = FALSE;
         pDevice->eEncryptionStatus = Ndis802_11EncryptionDisabled;
-            spin_lock_irq(&pDevice->lock);
-            for(uu=0;uu<MAX_KEY_TABLE;uu++)
+	spin_lock_irq(&pDevice->lock);
+	for (uu = 0; uu < MAX_KEY_TABLE; uu++)
                 MACvDisableKeyEntry(pDevice,uu);
-            spin_unlock_irq(&pDevice->lock);
+	spin_unlock_irq(&pDevice->lock);
 
     if ((pDevice->flags & DEVICE_FLAGS_UNPLUG) == FALSE) {
         MACbShutdown(pDevice);
@@ -1447,12 +1436,12 @@ static int Config_FileGetParameter(unsigned char *string,
 	return FALSE;
 
 //check if current config line is marked by "#" ??
-for(ii=1;;ii++) {
-  if(memcmp(start_p-ii,"\n",1)==0)
-      break;
-  if(memcmp(start_p-ii,"#",1)==0)
-      return FALSE;
-}
+    for (ii = 1; ; ii++) {
+	if (memcmp(start_p - ii, "\n", 1) == 0)
+		break;
+	if (memcmp(start_p - ii, "#", 1) == 0)
+		return FALSE;
+    }
 
 //find target string end point
      end_p = kstrstr(start_p,"\n");

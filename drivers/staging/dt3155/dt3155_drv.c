@@ -97,9 +97,6 @@ int dt3155_errno = 0;
 /* wait queue for interrupts */
 wait_queue_head_t dt3155_read_wait_queue[MAXBOARDS];
 
-#define DT_3155_SUCCESS 0
-#define DT_3155_FAILURE -EIO
-
 /* set to dynamicaly allocate, but it is tunable: */
 /* insmod DT_3155 dt3155 dt3155_major=XX */
 int dt3155_major = 0;
@@ -521,6 +518,7 @@ static int dt3155_ioctl(struct inode *inode,
 			unsigned long arg)
 {
   int minor = MINOR(inode->i_rdev); /* What device are we ioctl()'ing? */
+  void __user *up = (void __user *)arg;
 
   if (minor >= MAXBOARDS || minor < 0)
     return -ENODEV;
@@ -547,7 +545,7 @@ static int dt3155_ioctl(struct inode *inode,
 
 	{
 	  struct dt3155_config tmp;
-	  if (copy_from_user((void *)&tmp, (void *) arg, sizeof(tmp)))
+	  if (copy_from_user(&tmp, up, sizeof(tmp)))
 	      return -EFAULT;
 	  /* check for valid settings */
 	  if (tmp.rows > DT3155_MAX_ROWS ||
@@ -565,7 +563,7 @@ static int dt3155_ioctl(struct inode *inode,
       }
     case DT3155_GET_CONFIG:
       {
-	if (copy_to_user((void *) arg, (void *) &dt3155_status[minor],
+	if (copy_to_user(up, &dt3155_status[minor],
 		     sizeof(struct dt3155_status)))
 	    return -EFAULT;
 	return 0;
@@ -586,7 +584,7 @@ static int dt3155_ioctl(struct inode *inode,
 	  return 0;
 
 	quick_stop(minor);
-	if (copy_to_user((void *) arg, (void *) &dt3155_status[minor],
+	if (copy_to_user(up, &dt3155_status[minor],
 		     sizeof(struct dt3155_status)))
 	    return -EFAULT;
 	return 0;
@@ -610,7 +608,7 @@ static int dt3155_ioctl(struct inode *inode,
 	  }
 
 	dt3155_init_isr(minor);
-	if (copy_to_user((void *) arg, (void *) &dt3155_status[minor],
+	if (copy_to_user(up, &dt3155_status[minor],
 		      sizeof(struct dt3155_status)))
 	    return -EFAULT;
 	return 0;
@@ -812,11 +810,11 @@ static ssize_t dt3155_read(struct file *filep, char __user *buf,
   /* make this an offset */
   offset = frame_info->addr - dt3155_status[minor].mem_addr;
 
-  put_user(offset, (unsigned int *) buf);
+  put_user(offset, (unsigned int __user *)buf);
   buf += sizeof(u32);
-  put_user(dt3155_status[minor].fbuffer.frame_count, (unsigned int *) buf);
+  put_user(dt3155_status[minor].fbuffer.frame_count, (unsigned int __user *)buf);
   buf += sizeof(u32);
-  put_user(dt3155_status[minor].state, (unsigned int *) buf);
+  put_user(dt3155_status[minor].state, (unsigned int __user *)buf);
   buf += sizeof(u32);
   if (copy_to_user(buf, frame_info, sizeof(*frame_info)))
       return -EFAULT;
@@ -941,11 +939,11 @@ static int find_PCI (void)
     }
   ndevices = pci_index;
 
-  return DT_3155_SUCCESS;
+  return 0;
 
 err:
   pci_dev_put(pci_dev);
-  return DT_3155_FAILURE;
+  return -EIO;
 }
 
 u32 allocatorAddr = 0;
@@ -999,7 +997,7 @@ int init_module(void)
   /* Now let's find the hardware.  find_PCI() will set ndevices to the
    * number of cards found in this machine. */
     {
-      if ((rcode = find_PCI()) !=  DT_3155_SUCCESS)
+      if ((rcode = find_PCI()) != 0)
 	{
 	  printk("DT3155 error: find_PCI() failed to find dt3155 board(s)\n");
 	  unregister_chrdev(dt3155_major, "dt3155");

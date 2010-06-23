@@ -60,11 +60,11 @@ RATEvParseMaxRate(
     PWLAN_IE_SUPP_RATES pItemRates,
     PWLAN_IE_SUPP_RATES pItemExtRates,
     BOOL bUpdateBasicRate,
-    PWORD pwMaxBasicRate,
-    PWORD pwMaxSuppRate,
-    PWORD pwSuppRate,
-    PBYTE pbyTopCCKRate,
-    PBYTE pbyTopOFDMRate
+    unsigned short *pwMaxBasicRate,
+    unsigned short *pwMaxSuppRate,
+    unsigned short *pwSuppRate,
+    unsigned char *pbyTopCCKRate,
+    unsigned char *pbyTopOFDMRate
     );
 
 void
@@ -77,7 +77,7 @@ BYTE
 RATEuSetIE(
     PWLAN_IE_SUPP_RATES pSrcRates,
     PWLAN_IE_SUPP_RATES pDstRates,
-    UINT                uRateLen
+    unsigned int uRateLen
     );
 
 WORD
