@@ -95,6 +95,7 @@ struct usb_hcd {
 #define HCD_FLAG_SAW_IRQ	0x00000002
 
 	unsigned		rh_registered:1;/* is root hub registered? */
+	unsigned		rh_pollable:1;	/* may we poll the root hub? */
 
 	/* The next flag is a stopgap, to be removed when all the HCDs
 	 * support the new root-hub polling mechanism. */
@@ -299,6 +300,10 @@ struct hc_driver {
 	int	(*update_hub_device)(struct usb_hcd *, struct usb_device *hdev,
 			struct usb_tt *tt, gfp_t mem_flags);
 	int	(*reset_device)(struct usb_hcd *, struct usb_device *);
+		/* Notifies the HCD after a device is connected and its
+		 * address is set
+		 */
+	int	(*update_device)(struct usb_hcd *, struct usb_device *);
 };
 
 extern int usb_hcd_link_urb_to_ep(struct usb_hcd *hcd, struct urb *urb);
