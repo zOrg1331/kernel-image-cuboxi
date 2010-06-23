@@ -181,7 +181,9 @@ skip_rds:
 
 	tx_ring = adapter->tx_ring;
 	vfree(tx_ring->cmd_buf_arr);
+	tx_ring->cmd_buf_arr = NULL;
 	kfree(adapter->tx_ring);
+	adapter->tx_ring = NULL;
 }
 
 int qlcnic_alloc_sw_resources(struct qlcnic_adapter *adapter)
@@ -413,7 +415,7 @@ int qlcnic_pinit_from_rom(struct qlcnic_adapter *adapter)
 
 	/* resetall */
 	qlcnic_rom_lock(adapter);
-	QLCWR32(adapter, QLCNIC_ROMUSB_GLB_SW_RESET, 0xffffffff);
+	QLCWR32(adapter, QLCNIC_ROMUSB_GLB_SW_RESET, 0xfeffffff);
 	qlcnic_rom_unlock(adapter);
 
 	if (qlcnic_rom_fast_read(adapter, 0, &n) != 0 || (n != 0xcafecafe) ||
@@ -520,17 +522,16 @@ qlcnic_setup_idc_param(struct qlcnic_adapter *adapter) {
 	int timeo;
 	u32 val;
 
-	val = QLCRD32(adapter, QLCNIC_CRB_DEV_PARTITION_INFO);
-	val = (val >> (adapter->portnum * 4)) & 0xf;
-
-	if ((val & 0x3) != 1) {
-		dev_err(&adapter->pdev->dev, "Not an Ethernet NIC func=%u\n",
-									val);
-		return -EIO;
+	if (adapter->fw_hal_version == QLCNIC_FW_BASE) {
+		val = QLCRD32(adapter, QLCNIC_CRB_DEV_PARTITION_INFO);
+		val = QLC_DEV_GET_DRV(val, adapter->portnum);
+		if ((val & 0x3) != QLCNIC_TYPE_NIC) {
+			dev_err(&adapter->pdev->dev,
+				"Not an Ethernet NIC func=%u\n", val);
+			return -EIO;
+		}
+		adapter->physical_port = (val >> 2);
 	}
-
-	adapter->physical_port = (val >> 2);
-
 	if (qlcnic_rom_fast_read(adapter, QLCNIC_ROM_DEV_INIT_TIMEOUT, &timeo))
 		timeo = 30;
 
@@ -544,15 +545,33 @@ qlcnic_setup_idc_param(struct qlcnic_adapter *adapter) {
 	return 0;
 }
 
+int
+qlcnic_check_flash_fw_ver(struct qlcnic_adapter *adapter)
+{
+	u32 ver = -1, min_ver;
+
+	qlcnic_rom_fast_read(adapter, QLCNIC_FW_VERSION_OFFSET, (int *)&ver);
+
+	ver = QLCNIC_DECODE_VERSION(ver);
+	min_ver = QLCNIC_MIN_FW_VERSION;
+
+	if (ver < min_ver) {
+		dev_err(&adapter->pdev->dev,
+			"firmware version %d.%d.%d unsupported."
+			"Min supported version %d.%d.%d\n",
+			_major(ver), _minor(ver), _build(ver),
+			_major(min_ver), _minor(min_ver), _build(min_ver));
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int
 qlcnic_has_mn(struct qlcnic_adapter *adapter)
 {
-	u32 capability, flashed_ver;
+	u32 capability;
 	capability = 0;
-
-	qlcnic_rom_fast_read(adapter,
-			QLCNIC_FW_VERSION_OFFSET, (int *)&flashed_ver);
-	flashed_ver = QLCNIC_DECODE_VERSION(flashed_ver);
 
 	capability = QLCRD32(adapter, QLCNIC_PEG_TUNE_CAPABILITY);
 	if (capability & QLCNIC_PEG_TUNE_MN_PRESENT)
@@ -1007,7 +1026,7 @@ static int
 qlcnic_validate_firmware(struct qlcnic_adapter *adapter)
 {
 	__le32 val;
-	u32 ver, min_ver, bios, min_size;
+	u32 ver, bios, min_size;
 	struct pci_dev *pdev = adapter->pdev;
 	const struct firmware *fw = adapter->fw;
 	u8 fw_type = adapter->fw_type;
@@ -1029,12 +1048,9 @@ qlcnic_validate_firmware(struct qlcnic_adapter *adapter)
 		return -EINVAL;
 
 	val = qlcnic_get_fw_version(adapter);
-
-	min_ver = QLCNIC_VERSION_CODE(4, 0, 216);
-
 	ver = QLCNIC_DECODE_VERSION(val);
 
-	if ((_major(ver) > _QLCNIC_LINUX_MAJOR) || (ver < min_ver)) {
+	if (ver < QLCNIC_MIN_FW_VERSION) {
 		dev_err(&pdev->dev,
 				"%s: firmware version %d.%d.%d unsupported\n",
 		fw_name[fw_type], _major(ver), _minor(ver), _build(ver));
@@ -1700,4 +1716,25 @@ qlcnic_process_rcv_ring_diag(struct qlcnic_host_sds_ring *sds_ring)
 
 	sds_ring->consumer = consumer;
 	writel(consumer, sds_ring->crb_sts_consumer);
+}
+
+void
+qlcnic_fetch_mac(struct qlcnic_adapter *adapter, u32 off1, u32 off2,
+			u8 alt_mac, u8 *mac)
+{
+	u32 mac_low, mac_high;
+	int i;
+
+	mac_low = QLCRD32(adapter, off1);
+	mac_high = QLCRD32(adapter, off2);
+
+	if (alt_mac) {
+		mac_low |= (mac_low >> 16) | (mac_high << 16);
+		mac_high >>= 16;
+	}
+
+	for (i = 0; i < 2; i++)
+		mac[i] = (u8)(mac_high >> ((1 - i) * 8));
+	for (i = 2; i < 6; i++)
+		mac[i] = (u8)(mac_low >> ((5 - i) * 8));
 }
