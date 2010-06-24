@@ -1914,12 +1914,12 @@ static void nilfs_segctor_complete_write(struct nilfs_sc_info *sci)
 			}
 		}
 
-		if (!NILFS_SEG_SIMPLEX(&segbuf->sb_sum)) {
-			if (NILFS_SEG_LOGBGN(&segbuf->sb_sum)) {
+		if (!nilfs_segbuf_simplex(segbuf)) {
+			if (segbuf->sb_sum.flags & NILFS_SS_LOGBGN) {
 				set_bit(NILFS_SC_UNCLOSED, &sci->sc_flags);
 				sci->sc_lseg_stime = jiffies;
 			}
-			if (NILFS_SEG_LOGEND(&segbuf->sb_sum))
+			if (segbuf->sb_sum.flags & NILFS_SS_LOGEND)
 				clear_bit(NILFS_SC_UNCLOSED, &sci->sc_flags);
 		}
 	}
@@ -2082,7 +2082,7 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int mode)
 
 		/* Avoid empty segment */
 		if (sci->sc_stage.scnt == NILFS_ST_DONE &&
-		    NILFS_SEG_EMPTY(&sci->sc_curseg->sb_sum)) {
+		    nilfs_segbuf_empty(sci->sc_curseg)) {
 			nilfs_segctor_abort_construction(sci, nilfs, 1);
 			goto out;
 		}
@@ -2408,6 +2408,7 @@ static int nilfs_segctor_construct(struct nilfs_sc_info *sci, int mode)
 {
 	struct nilfs_sb_info *sbi = sci->sc_sbi;
 	struct the_nilfs *nilfs = sbi->s_nilfs;
+	struct nilfs_super_block **sbp;
 	int err = 0;
 
 	nilfs_segctor_accept(sci);
@@ -2423,8 +2424,12 @@ static int nilfs_segctor_construct(struct nilfs_sc_info *sci, int mode)
 		if (test_bit(NILFS_SC_SUPER_ROOT, &sci->sc_flags) &&
 		    nilfs_discontinued(nilfs)) {
 			down_write(&nilfs->ns_sem);
-			err = nilfs_commit_super(
-				sbi, nilfs_altsb_need_update(nilfs));
+			err = -EIO;
+			sbp = nilfs_prepare_super(sbi);
+			if (likely(sbp)) {
+				nilfs_set_log_cursor(sbp[0], nilfs);
+				err = nilfs_commit_super(sbi, NILFS_SB_COMMIT);
+			}
 			up_write(&nilfs->ns_sem);
 		}
 	}

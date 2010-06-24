@@ -159,8 +159,7 @@ void put_nilfs(struct the_nilfs *nilfs)
 	kfree(nilfs);
 }
 
-static int nilfs_load_super_root(struct the_nilfs *nilfs,
-				 struct nilfs_sb_info *sbi, sector_t sr_block)
+static int nilfs_load_super_root(struct the_nilfs *nilfs, sector_t sr_block)
 {
 	struct buffer_head *bh_sr;
 	struct nilfs_super_root *raw_sr;
@@ -169,7 +168,7 @@ static int nilfs_load_super_root(struct the_nilfs *nilfs,
 	unsigned inode_size;
 	int err;
 
-	err = nilfs_read_super_root_block(sbi->s_super, sr_block, &bh_sr, 1);
+	err = nilfs_read_super_root_block(nilfs, sr_block, &bh_sr, 1);
 	if (unlikely(err))
 		return err;
 
@@ -262,6 +261,7 @@ int load_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi)
 	unsigned int s_flags = sbi->s_super->s_flags;
 	int really_read_only = bdev_read_only(nilfs->ns_bdev);
 	int valid_fs = nilfs_valid_fs(nilfs);
+	struct nilfs_super_block **sbp;
 	int err;
 
 	if (nilfs_loaded(nilfs)) {
@@ -285,13 +285,13 @@ int load_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi)
 
 	nilfs_init_recovery_info(&ri);
 
-	err = nilfs_search_super_root(nilfs, sbi, &ri);
+	err = nilfs_search_super_root(nilfs, &ri);
 	if (unlikely(err)) {
 		printk(KERN_ERR "NILFS: error searching super root.\n");
 		goto failed;
 	}
 
-	err = nilfs_load_super_root(nilfs, sbi, ri.ri_super_root);
+	err = nilfs_load_super_root(nilfs, ri.ri_super_root);
 	if (unlikely(err)) {
 		printk(KERN_ERR "NILFS: error loading super root.\n");
 		goto failed;
@@ -320,14 +320,20 @@ int load_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi)
 		goto failed_unload;
 	}
 
-	err = nilfs_recover_logical_segments(nilfs, sbi, &ri);
+	err = nilfs_salvage_orphan_logs(nilfs, sbi, &ri);
 	if (err)
 		goto failed_unload;
 
 	down_write(&nilfs->ns_sem);
-	nilfs->ns_mount_state |= NILFS_VALID_FS;
-	nilfs->ns_sbp[0]->s_state = cpu_to_le16(nilfs->ns_mount_state);
-	err = nilfs_commit_super(sbi, 1);
+	err = -EIO;
+	sbp = nilfs_prepare_super(sbi);
+	if (likely(sbp)) {
+		nilfs->ns_mount_state |= NILFS_VALID_FS;
+		/* set the flag only for newer super block */
+		sbp[0]->s_state = cpu_to_le16(nilfs->ns_mount_state);
+		nilfs_set_log_cursor(sbp[0], nilfs);
+		err = nilfs_commit_super(sbi, NILFS_SB_COMMIT);
+	}
 	up_write(&nilfs->ns_sem);
 
 	if (err) {
@@ -515,8 +521,8 @@ static int nilfs_load_super_block(struct the_nilfs *nilfs,
 		nilfs_swap_super_block(nilfs);
 	}
 
-	nilfs->ns_sbwtime[0] = le64_to_cpu(sbp[0]->s_wtime);
-	nilfs->ns_sbwtime[1] = valid[!swp] ? le64_to_cpu(sbp[1]->s_wtime) : 0;
+	nilfs->ns_sbwcount = 0;
+	nilfs->ns_sbwtime = le64_to_cpu(sbp[0]->s_wtime);
 	nilfs->ns_prot_seq = le64_to_cpu(sbp[valid[1] & !swp]->s_last_seq);
 	*sbpp = sbp[0];
 	return 0;
@@ -604,6 +610,7 @@ int init_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi, char *data)
 			   when reloading fails. */
 	}
 	nilfs->ns_blocksize_bits = sb->s_blocksize_bits;
+	nilfs->ns_blocksize = blocksize;
 
 	err = nilfs_store_disk_layout(nilfs, sbp);
 	if (err)
@@ -630,9 +637,6 @@ int init_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi, char *data)
 		err = -EINVAL;
 		goto failed_sbh;
 	}
-	/* Dummy values  */
-	nilfs->ns_free_segments_count =
-		nilfs->ns_nsegments - (nilfs->ns_segnum + 1);
 
 	/* Initialize gcinode cache */
 	err = nilfs_init_gccache(nilfs);
