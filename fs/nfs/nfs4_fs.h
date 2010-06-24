@@ -45,8 +45,27 @@ enum nfs4_client_state {
 	NFS4CLNT_RECLAIM_NOGRACE,
 	NFS4CLNT_DELEGRETURN,
 	NFS4CLNT_SESSION_RESET,
-	NFS4CLNT_SESSION_DRAINING,
 	NFS4CLNT_RECALL_SLOT,
+};
+
+enum nfs4_session_state {
+	NFS4_SESSION_INITING,
+	NFS4_SESSION_DRAINING,
+};
+
+struct nfs4_minor_version_ops {
+	u32	minor_version;
+
+	int	(*call_sync)(struct nfs_server *server,
+			struct rpc_message *msg,
+			struct nfs4_sequence_args *args,
+			struct nfs4_sequence_res *res,
+			int cache_reply);
+	int	(*validate_stateid)(struct nfs_delegation *,
+			const nfs4_stateid *);
+	const struct nfs4_state_recovery_ops *reboot_recovery_ops;
+	const struct nfs4_state_recovery_ops *nograce_recovery_ops;
+	const struct nfs4_state_maintenance_ops *state_renewal_ops;
 };
 
 /*
@@ -220,10 +239,13 @@ extern int nfs4_server_capabilities(struct nfs_server *server, struct nfs_fh *fh
 extern int nfs4_proc_fs_locations(struct inode *dir, const struct qstr *name,
 		struct nfs4_fs_locations *fs_locations, struct page *page);
 
-extern struct nfs4_state_recovery_ops *nfs4_reboot_recovery_ops[];
-extern struct nfs4_state_recovery_ops *nfs4_nograce_recovery_ops[];
 #if defined(CONFIG_NFS_V4_1)
-extern int nfs4_setup_sequence(struct nfs_client *clp,
+static inline struct nfs4_session *nfs4_get_session(const struct nfs_server *server)
+{
+	return server->nfs_client->cl_session;
+}
+
+extern int nfs4_setup_sequence(const struct nfs_server *server,
 		struct nfs4_sequence_args *args, struct nfs4_sequence_res *res,
 		int cache_reply, struct rpc_task *task);
 extern void nfs4_destroy_session(struct nfs4_session *session);
@@ -234,7 +256,12 @@ extern int nfs4_init_session(struct nfs_server *server);
 extern int nfs4_proc_get_lease_time(struct nfs_client *clp,
 		struct nfs_fsinfo *fsinfo);
 #else /* CONFIG_NFS_v4_1 */
-static inline int nfs4_setup_sequence(struct nfs_client *clp,
+static inline struct nfs4_session *nfs4_get_session(const struct nfs_server *server)
+{
+	return NULL;
+}
+
+static inline int nfs4_setup_sequence(const struct nfs_server *server,
 		struct nfs4_sequence_args *args, struct nfs4_sequence_res *res,
 		int cache_reply, struct rpc_task *task)
 {
@@ -247,7 +274,7 @@ static inline int nfs4_init_session(struct nfs_server *server)
 }
 #endif /* CONFIG_NFS_V4_1 */
 
-extern struct nfs4_state_maintenance_ops *nfs4_state_renewal_ops[];
+extern const struct nfs4_minor_version_ops *nfs_v4_minor_ops[];
 
 extern const u32 nfs4_fattr_bitmap[2];
 extern const u32 nfs4_statfs_bitmap[2];
