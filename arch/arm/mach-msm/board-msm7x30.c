@@ -55,7 +55,29 @@ static void msm7x30_init_uart2(void)
 }
 #endif
 
-static struct platform_device *devices[] __initdata = {
+/*
+ * Early devices are those which provide a system service which will be
+ * required by one or more of the function calls in msm7x30_init.
+ * These devices must be probed and online first in order for
+ * the init routine to run successfully.
+ */
+static struct platform_device *early_devices[] __initdata = {
+	&msm_gpio_devices[0],
+	&msm_gpio_devices[1],
+	&msm_gpio_devices[2],
+	&msm_gpio_devices[3],
+	&msm_gpio_devices[4],
+	&msm_gpio_devices[5],
+	&msm_gpio_devices[6],
+	&msm_gpio_devices[7],
+};
+
+/*
+ * Late devices are those which are dependent upon services initialized
+ * by msm7x30_init, or which simply have no dependents and can have
+ * their initialization deferred.
+ */
+static struct platform_device *late_devices[] __initdata = {
 #if defined(CONFIG_SERIAL_MSM) || defined(CONFIG_MSM_SERIAL_DEBUGGER)
         &msm_device_uart2,
 #endif
@@ -69,11 +91,11 @@ static void __init msm7x30_init_irq(void)
 
 static void __init msm7x30_init(void)
 {
-	platform_add_devices(devices, ARRAY_SIZE(devices));
+	platform_add_devices(early_devices, ARRAY_SIZE(early_devices));
 #ifdef CONFIG_SERIAL_MSM_CONSOLE
 	msm7x30_init_uart2();
 #endif
-
+	platform_add_devices(late_devices, ARRAY_SIZE(late_devices));
 }
 
 static void __init msm7x30_map_io(void)

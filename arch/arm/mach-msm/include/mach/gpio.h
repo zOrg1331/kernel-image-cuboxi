@@ -16,6 +16,8 @@
 #ifndef __ASM_ARCH_MSM_GPIO_H
 #define __ASM_ARCH_MSM_GPIO_H
 
+#define ARCH_NR_GPIOS 512
+
 #include <asm-generic/gpio.h>
 
 #define gpio_get_value  __gpio_get_value
