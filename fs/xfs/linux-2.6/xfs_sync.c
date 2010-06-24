@@ -274,7 +274,7 @@ xfs_sync_inode_attr(
 /*
  * Write out pagecache data for the whole filesystem.
  */
-int
+STATIC int
 xfs_sync_data(
 	struct xfs_mount	*mp,
 	int			flags)
@@ -295,7 +295,7 @@ xfs_sync_data(
 /*
  * Write out inode metadata (attributes) for the whole filesystem.
  */
-int
+STATIC int
 xfs_sync_attr(
 	struct xfs_mount	*mp,
 	int			flags)
