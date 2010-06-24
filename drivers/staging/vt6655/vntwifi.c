@@ -103,7 +103,7 @@ VNTWIFIvSetIBSSParameter (
     void *pMgmtHandle,
     WORD  wBeaconPeriod,
     WORD  wATIMWindow,
-    UINT  uChannel
+    unsigned int uChannel
     )
 {
     PSMgmtObject        pMgmt = (PSMgmtObject)pMgmtHandle;
@@ -150,7 +150,7 @@ VNTWIFIpGetCurrentSSID (
  * Return Value: current Channel.
  *
 -*/
-UINT
+unsigned int
 VNTWIFIpGetCurrentChannel (
     void *pMgmtHandle
     )
@@ -210,7 +210,7 @@ VNTWIFIbyGetMaxSupportRate (
 {
     BYTE    byMaxSupportRate = RATE_1M;
     BYTE    bySupportRate = RATE_1M;
-    UINT    ii = 0;
+    unsigned int ii = 0;
 
     if (pSupportRateIEs) {
         for (ii = 0; ii < pSupportRateIEs->len; ii++) {
@@ -257,7 +257,7 @@ VNTWIFIbyGetACKTxRate (
 {
     BYTE    byMaxAckRate;
     BYTE    byBasicRate;
-    UINT    ii;
+    unsigned int ii;
 
     if (byRxDataRate <= RATE_11M) {
         byMaxAckRate = RATE_1M;
@@ -431,10 +431,10 @@ VNTWIFIvQueryBSSList (
     void **pvFirstBSS
     )
 {
-    UINT            ii = 0;
+    unsigned int ii = 0;
     PSMgmtObject    pMgmt = (PSMgmtObject)pMgmtHandle;
     PKnownBSS       pBSS = NULL;
-    UINT            uCount = 0;
+    unsigned int uCount = 0;
 
     *pvFirstBSS = NULL;
 
@@ -497,15 +497,15 @@ VNTWIFIvGetNextBSS (
 void
 VNTWIFIvUpdateNodeTxCounter(
     void *pMgmtHandle,
-    PBYTE    pbyDestAddress,
+    unsigned char *pbyDestAddress,
     BOOL     bTxOk,
     WORD     wRate,
-    PBYTE    pbyTxFailCount
+    unsigned char *pbyTxFailCount
     )
 {
     PSMgmtObject    pMgmt = (PSMgmtObject)pMgmtHandle;
-    UINT            uNodeIndex = 0;
-    UINT            ii;
+    unsigned int uNodeIndex = 0;
+    unsigned int ii;
 
     if ((pMgmt->eCurrMode == WMAC_MODE_IBSS_STA) ||
         (pMgmt->eCurrMode == WMAC_MODE_ESS_AP)) {
@@ -532,15 +532,15 @@ VNTWIFIvUpdateNodeTxCounter(
 void
 VNTWIFIvGetTxRate(
     void *pMgmtHandle,
-    PBYTE    pbyDestAddress,
-    PWORD   pwTxDataRate,
-    PBYTE   pbyACKRate,
-    PBYTE   pbyCCKBasicRate,
-    PBYTE   pbyOFDMBasicRate
+    unsigned char *pbyDestAddress,
+    unsigned short *pwTxDataRate,
+    unsigned char *pbyACKRate,
+    unsigned char *pbyCCKBasicRate,
+    unsigned char *pbyOFDMBasicRate
     )
 {
     PSMgmtObject        pMgmt = (PSMgmtObject)pMgmtHandle;
-    UINT                uNodeIndex = 0;
+    unsigned int uNodeIndex = 0;
     WORD                wTxDataRate = RATE_1M;
     BYTE                byACKRate = RATE_1M;
     BYTE                byCCKBasicRate = RATE_1M;
@@ -626,7 +626,7 @@ VNTWIFIbInit(
 {
 
     PSMgmtObject        pMgmt = NULL;
-    UINT                ii;
+    unsigned int ii;
 
 
     pMgmt = (PSMgmtObject)kmalloc(sizeof(SMgmtObject), (int)GFP_ATOMIC);
@@ -665,7 +665,7 @@ VNTWIFIbInit(
 BOOL
 VNTWIFIbSetPMKIDCache (
     void *pMgmtObject,
-    ULONG ulCount,
+    unsigned long ulCount,
     void *pPMKIDInfo
     )
 {
@@ -721,11 +721,11 @@ VNTWIFIbMeasureReport(
     BYTE  byReportMode,
     BYTE  byBasicMap,
     BYTE  byCCAFraction,
-    PBYTE pbyRPIs
+    unsigned char *pbyRPIs
     )
 {
     PSMgmtObject    pMgmt = (PSMgmtObject) pMgmtObject;
-    PBYTE           pbyCurrentEID = (PBYTE) (pMgmt->pCurrMeasureEIDRep);
+    unsigned char *pbyCurrentEID = (unsigned char *) (pMgmt->pCurrMeasureEIDRep);
 
     //spin_lock_irq(&pDevice->lock);
     if ((pvMeasureEID != NULL) &&
@@ -800,7 +800,7 @@ VNTWIFIbRadarPresent(
         (byChannel == (BYTE) pMgmt->uCurrChannel) &&
         (pMgmt->bSwitchChannel != TRUE) &&
         (pMgmt->b11hEnable == TRUE)) {
-        if (IS_ETH_ADDRESS_EQUAL(pMgmt->abyIBSSDFSOwner, CARDpGetCurrentAddress(pMgmt->pAdapter))) {
+        if (!compare_ether_addr(pMgmt->abyIBSSDFSOwner, CARDpGetCurrentAddress(pMgmt->pAdapter))) {
             pMgmt->byNewChannel = CARDbyAutoChannelSelect(pMgmt->pAdapter,(BYTE) pMgmt->uCurrChannel);
             pMgmt->bSwitchChannel = TRUE;
         }

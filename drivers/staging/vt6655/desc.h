@@ -257,11 +257,11 @@ SRDES0;
 typedef struct tagRDES0 {
    volatile WORD    wResCount;
 	union {
-		volatile U16    f15Reserved;
+		volatile u16    f15Reserved;
 		struct {
-            volatile U8 f8Reserved1;
-			volatile U8 f1Owner:1;
-			volatile U8 f7Reserved:7;
+            volatile u8 f8Reserved1;
+			volatile u8 f1Owner:1;
+			volatile u8 f7Reserved:7;
 		} __attribute__ ((__packed__));
 	} __attribute__ ((__packed__));
 } __attribute__ ((__packed__))
@@ -291,11 +291,11 @@ SRDES1;
 typedef struct tagSRxDesc {
     volatile SRDES0 m_rd0RD0;
     volatile SRDES1 m_rd1RD1;
-    volatile U32    buff_addr;
-    volatile U32    next_desc;
+    volatile u32    buff_addr;
+    volatile u32    next_desc;
     struct tagSRxDesc   *next;//4 bytes
     volatile PDEVICE_RD_INFO    pRDInfo;//4 bytes
-    volatile U32    Reserved[2];//8 bytes
+    volatile u32    Reserved[2];//8 bytes
 } __attribute__ ((__packed__))
 SRxDesc, *PSRxDesc;
 typedef const SRxDesc *PCSRxDesc;
@@ -317,11 +317,11 @@ typedef struct tagTDES0 {
     volatile    BYTE    byTSR0;
     volatile    BYTE    byTSR1;
 	union {
-		volatile U16    f15Txtime;
+		volatile u16    f15Txtime;
 		struct {
-            volatile U8 f8Reserved1;
-			volatile U8 f1Owner:1;
-			volatile U8 f7Reserved:7;
+            volatile u8 f8Reserved1;
+			volatile u8 f1Owner:1;
+			volatile u8 f7Reserved:7;
 		} __attribute__ ((__packed__));
 	} __attribute__ ((__packed__));
 } __attribute__ ((__packed__))
@@ -350,7 +350,7 @@ STDES1;
 
 typedef struct tagDEVICE_TD_INFO{
     struct sk_buff*     skb;
-    PBYTE               buf;
+    unsigned char *buf;
     dma_addr_t          skb_dma;
     dma_addr_t          buf_dma;
     dma_addr_t          curr_desc;
@@ -378,11 +378,11 @@ static inline PDEVICE_TD_INFO alloc_td_info(void) {
 typedef struct tagSTxDesc {
     volatile    STDES0  m_td0TD0;
     volatile    STDES1  m_td1TD1;
-    volatile    U32    buff_addr;
-    volatile    U32    next_desc;
+    volatile    u32    buff_addr;
+    volatile    u32    next_desc;
     struct tagSTxDesc*  next; //4 bytes
     volatile    PDEVICE_TD_INFO pTDInfo;//4 bytes
-    volatile    U32    Reserved[2];//8 bytes
+    volatile    u32    Reserved[2];//8 bytes
 } __attribute__ ((__packed__))
 STxDesc, *PSTxDesc;
 typedef const STxDesc *PCSTxDesc;

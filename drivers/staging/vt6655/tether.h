@@ -29,7 +29,7 @@
 #ifndef __TETHER_H__
 #define __TETHER_H__
 
-#include <linux/if_ether.h>
+#include <linux/etherdevice.h>
 #include "ttype.h"
 
 /*---------------------  Export Definitions -------------------------*/
@@ -38,12 +38,6 @@
 //
 #define U_ETHER_ADDR_STR_LEN (ETH_ALEN * 2 + 1)
                                         // Ethernet address string length
-
-#define MIN_DATA_LEN        46          // min data length
-
-#define MIN_PACKET_LEN      (MIN_DATA_LEN + ETH_HLEN)
-                                        // 60
-                                        // min total packet length (tx)
 
 #define MAX_LOOKAHEAD_SIZE  ETH_FRAME_LEN
 
@@ -192,26 +186,6 @@ typedef struct tagS802_11Header {
 S802_11Header, *PS802_11Header;
 
 /*---------------------  Export Macros ------------------------------*/
-// Frame type macro
-
-#define IS_MULTICAST_ADDRESS(pbyEtherAddr)          \
-    ((*(PBYTE)(pbyEtherAddr) & 0x01) == 1)
-
-#define IS_BROADCAST_ADDRESS(pbyEtherAddr) (        \
-    (*(PDWORD)(pbyEtherAddr) == 0xFFFFFFFFL) &&     \
-    (*(PWORD)((PBYTE)(pbyEtherAddr) + 4) == 0xFFFF) \
-)
-
-#define IS_NULL_ADDRESS(pbyEtherAddr) (             \
-    (*(PDWORD)(pbyEtherAddr) == 0L) &&              \
-    (*(PWORD)((PBYTE)(pbyEtherAddr) + 4) == 0)      \
-)
-
-#define IS_ETH_ADDRESS_EQUAL(pbyAddr1, pbyAddr2) (  \
-    (*(PDWORD)(pbyAddr1) == *(PDWORD)(pbyAddr2)) && \
-    (*(PWORD)((PBYTE)(pbyAddr1) + 4) ==             \
-    *(PWORD)((PBYTE)(pbyAddr2) + 4))                \
-)
 
 /*---------------------  Export Classes  ----------------------------*/
 
@@ -219,9 +193,9 @@ S802_11Header, *PS802_11Header;
 
 /*---------------------  Export Functions  --------------------------*/
 
-BYTE ETHbyGetHashIndexByCrc32(PBYTE pbyMultiAddr);
-//BYTE ETHbyGetHashIndexByCrc(PBYTE pbyMultiAddr);
-BOOL ETHbIsBufferCrc32Ok(PBYTE pbyBuffer, UINT cbFrameLength);
+BYTE ETHbyGetHashIndexByCrc32(unsigned char *pbyMultiAddr);
+//BYTE ETHbyGetHashIndexByCrc(unsigned char *pbyMultiAddr);
+BOOL ETHbIsBufferCrc32Ok(unsigned char *pbyBuffer, unsigned int cbFrameLength);
 
 #endif // __TETHER_H__
 

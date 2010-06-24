@@ -76,17 +76,17 @@
 
 /*---------------------  Export Functions  --------------------------*/
 
-BOOL IFRFbWriteEmbeded(DWORD_PTR dwIoBase, DWORD dwData);
-BOOL RFbSelectChannel(DWORD_PTR dwIoBase, BYTE byRFType, BYTE byChannel);
+BOOL IFRFbWriteEmbeded(unsigned long dwIoBase, DWORD dwData);
+BOOL RFbSelectChannel(unsigned long dwIoBase, BYTE byRFType, BYTE byChannel);
 BOOL RFbInit (
     PSDevice  pDevice
     );
-BOOL RFvWriteWakeProgSyn(DWORD_PTR dwIoBase, BYTE byRFType, UINT uChannel);
-BOOL RFbSetPower(PSDevice pDevice, UINT uRATE, UINT uCH);
+BOOL RFvWriteWakeProgSyn(unsigned long dwIoBase, BYTE byRFType, unsigned int uChannel);
+BOOL RFbSetPower(PSDevice pDevice, unsigned int uRATE, unsigned int uCH);
 BOOL RFbRawSetPower(
     PSDevice  pDevice,
     BYTE      byPwr,
-    UINT      uRATE
+    unsigned int uRATE
     );
 
 void
@@ -97,7 +97,7 @@ RFvRSSITodBm(
     );
 
 //{{ RobertYu: 20050104
-BOOL RFbAL7230SelectChannelPostProcess(DWORD_PTR dwIoBase, BYTE byOldChannel, BYTE byNewChannel);
+BOOL RFbAL7230SelectChannelPostProcess(unsigned long dwIoBase, BYTE byOldChannel, BYTE byNewChannel);
 //}} RobertYu
 
 #endif // __RF_H__

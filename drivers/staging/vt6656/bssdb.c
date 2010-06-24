@@ -135,7 +135,7 @@ PKnownBSS BSSpSearchBSSList(void *hDeviceContext,
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"BSSpSearchBSSList BSSID[%02X %02X %02X-%02X %02X %02X]\n",
                             *pbyDesireBSSID,*(pbyDesireBSSID+1),*(pbyDesireBSSID+2),
                             *(pbyDesireBSSID+3),*(pbyDesireBSSID+4),*(pbyDesireBSSID+5));
-        if ((!IS_BROADCAST_ADDRESS(pbyDesireBSSID)) &&
+	if ((!is_broadcast_ether_addr(pbyDesireBSSID)) &&
 	     (memcmp(pbyDesireBSSID, ZeroBSSID, 6)!= 0)){
             pbyBSSID = pbyDesireBSSID;
         }
@@ -699,12 +699,14 @@ BOOL BSSbUpdateToBSSList(void *hDeviceContext,
         pBSSList->byRSSIStatCnt %= RSSI_STAT_COUNT;
         pBSSList->ldBmAverage[pBSSList->byRSSIStatCnt] = ldBm;
         ldBmSum = 0;
-        for(ii=0, jj=0;ii<RSSI_STAT_COUNT;ii++) {
-            if (pBSSList->ldBmAverage[ii] != 0) {
-                pBSSList->ldBmMAX = max(pBSSList->ldBmAverage[ii], ldBm);
-                ldBmSum += pBSSList->ldBmAverage[ii];
-                jj++;
-            }
+	for (ii = 0, jj = 0; ii < RSSI_STAT_COUNT; ii++) {
+		if (pBSSList->ldBmAverage[ii] != 0) {
+			pBSSList->ldBmMAX =
+				max(pBSSList->ldBmAverage[ii], ldBm);
+			ldBmSum +=
+				pBSSList->ldBmAverage[ii];
+			jj++;
+		}
         }
         pBSSList->ldBmAverRange = ldBmSum /jj;
     }
@@ -713,28 +715,6 @@ BOOL BSSbUpdateToBSSList(void *hDeviceContext,
     if (pBSSList->uIELength > WLAN_BEACON_FR_MAXLEN)
         pBSSList->uIELength = WLAN_BEACON_FR_MAXLEN;
     memcpy(pBSSList->abyIEs, pbyIEs, pBSSList->uIELength);
-
-//mike add: if  the AP in this pBSSList is hidden ssid and we can find two of them,
-//                  you need upgrade the other related pBSSList of which ssid is obvious,
-//                  for these two AP is the same one!!!!
-/********judge by:BSSID is the same,but ssid is different!*****************/
-#if 0
-   for (ii = 0; ii < MAX_BSS_NUM; ii++) {
-      if (IS_ETH_ADDRESS_EQUAL(pMgmt->sBSSList[ii].abyBSSID, pBSSList->abyBSSID)) {   //BSSID is the same!
-         if (memcmp(((PWLAN_IE_SSID)pMgmt->sBSSList[ii].abySSID)->abySSID,                  //ssid is different??
-		 	      ((PWLAN_IE_SSID)pBSSList->abySSID)->abySSID,
-		 	      ((PWLAN_IE_SSID)pBSSList->abySSID)->len) != 0) {
-                  //reserve temp
-               memset(abyTmpSSID,0,sizeof(abyTmpSSID));
-	      memcpy(abyTmpSSID,pMgmt->sBSSList[ii].abySSID,sizeof(abyTmpSSID));
-		  //upgrade the other one pBSSList
-	      memcpy(&(pMgmt->sBSSList[ii]),pBSSList,sizeof(KnownBSS));
-		  //recover ssid info
-	      memcpy(pMgmt->sBSSList[ii].abySSID,abyTmpSSID,sizeof(abyTmpSSID));
-           }
-       }
-    }
-#endif
 
     return TRUE;
 }
@@ -1422,21 +1402,25 @@ void BSSvUpdateNodeTxCounter(void *hDeviceContext,
                      (wRate < RATE_18M) ) {
                     pMgmt->sNodeDBTable[0].uTxFail[wRate]+=byTxRetry;
                 } else if (byFallBack == AUTO_FB_0) {
-                    for(ii=0;ii<byTxRetry;ii++) {
-                        if (ii < 5)
-                            wFallBackRate = awHWRetry0[wRate-RATE_18M][ii];
-                        else
-                            wFallBackRate = awHWRetry0[wRate-RATE_18M][4];
-                        pMgmt->sNodeDBTable[0].uTxFail[wFallBackRate]++;
-                    }
+			for (ii = 0; ii < byTxRetry; ii++) {
+				if (ii < 5)
+					wFallBackRate =
+						awHWRetry0[wRate-RATE_18M][ii];
+				else
+					wFallBackRate =
+						awHWRetry0[wRate-RATE_18M][4];
+				pMgmt->sNodeDBTable[0].uTxFail[wFallBackRate]++;
+			}
                 } else if (byFallBack == AUTO_FB_1) {
-                    for(ii=0;ii<byTxRetry;ii++) {
-                        if (ii < 5)
-                            wFallBackRate = awHWRetry1[wRate-RATE_18M][ii];
-                        else
-                            wFallBackRate = awHWRetry1[wRate-RATE_18M][4];
-                        pMgmt->sNodeDBTable[0].uTxFail[wFallBackRate]++;
-                    }
+			for (ii = 0; ii < byTxRetry; ii++) {
+				if (ii < 5)
+					wFallBackRate =
+						awHWRetry1[wRate-RATE_18M][ii];
+				else
+					wFallBackRate =
+						awHWRetry1[wRate-RATE_18M][4];
+				pMgmt->sNodeDBTable[0].uTxFail[wFallBackRate]++;
+			}
                 }
             }
         };
@@ -1476,21 +1460,23 @@ void BSSvUpdateNodeTxCounter(void *hDeviceContext,
                          (wRate < RATE_18M) ) {
                         pMgmt->sNodeDBTable[uNodeIndex].uTxFail[wRate]+=byTxRetry;
                     } else if (byFallBack == AUTO_FB_0) {
-                        for(ii=0;ii<byTxRetry;ii++) {
-                            if (ii < 5)
-                                wFallBackRate = awHWRetry0[wRate-RATE_18M][ii];
-                            else
-                                wFallBackRate = awHWRetry0[wRate-RATE_18M][4];
-                            pMgmt->sNodeDBTable[uNodeIndex].uTxFail[wFallBackRate]++;
+			for (ii = 0; ii < byTxRetry; ii++) {
+				if (ii < 5)
+					wFallBackRate =
+						awHWRetry0[wRate-RATE_18M][ii];
+				else
+					wFallBackRate =
+						awHWRetry0[wRate-RATE_18M][4];
+				pMgmt->sNodeDBTable[uNodeIndex].uTxFail[wFallBackRate]++;
                         }
                     } else if (byFallBack == AUTO_FB_1) {
-                        for(ii=0;ii<byTxRetry;ii++) {
-                            if (ii < 5)
+		      for (ii = 0; ii < byTxRetry; ii++) {
+			if (ii < 5)
                                 wFallBackRate = awHWRetry1[wRate-RATE_18M][ii];
-                            else
+			else
                                 wFallBackRate = awHWRetry1[wRate-RATE_18M][4];
-                            pMgmt->sNodeDBTable[uNodeIndex].uTxFail[wFallBackRate]++;
-                        }
+			pMgmt->sNodeDBTable[uNodeIndex].uTxFail[wFallBackRate]++;
+		      }
                     }
                 }
             };

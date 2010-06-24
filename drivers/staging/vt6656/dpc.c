@@ -460,7 +460,7 @@ RXbBulkInProcessData (
        }
     }
 
-    if (!IS_MULTICAST_ADDRESS(pMACHeader->abyAddr1) && !IS_BROADCAST_ADDRESS(pMACHeader->abyAddr1)) {
+    if (!is_multicast_ether_addr(pMACHeader->abyAddr1) && !is_broadcast_ether_addr(pMACHeader->abyAddr1)) {
         if ( WCTLbIsDuplicate(&(pDevice->sDupRxCache), (PS802_11Header) pbyFrame) ) {
             pDevice->s802_11Counter.FrameDuplicateCount++;
             return FALSE;
@@ -758,10 +758,11 @@ RXbBulkInProcessData (
         pMgmt->pCurrBSS->byRSSIStatCnt++;
         pMgmt->pCurrBSS->byRSSIStatCnt %= RSSI_STAT_COUNT;
         pMgmt->pCurrBSS->ldBmAverage[pMgmt->pCurrBSS->byRSSIStatCnt] = ldBm;
-        for(ii=0;ii<RSSI_STAT_COUNT;ii++) {
-            if (pMgmt->pCurrBSS->ldBmAverage[ii] != 0) {
-            pMgmt->pCurrBSS->ldBmMAX = max(pMgmt->pCurrBSS->ldBmAverage[ii], ldBm);
-            }
+	for (ii = 0; ii < RSSI_STAT_COUNT; ii++) {
+		if (pMgmt->pCurrBSS->ldBmAverage[ii] != 0) {
+			pMgmt->pCurrBSS->ldBmMAX =
+				max(pMgmt->pCurrBSS->ldBmAverage[ii], ldBm);
+		}
         }
     }
 */
@@ -1448,7 +1449,7 @@ static BOOL s_bAPModeRxData (
     if (FrameSize > CB_MAX_BUF_SIZE)
         return FALSE;
     // check DA
-    if(IS_MULTICAST_ADDRESS((PBYTE)(skb->data+cbHeaderOffset))) {
+    if (is_multicast_ether_addr((PBYTE)(skb->data+cbHeaderOffset))) {
        if (pMgmt->sNodeDBTable[0].bPSEnable) {
 
            skbcpy = dev_alloc_skb((int)pDevice->rx_buf_sz);

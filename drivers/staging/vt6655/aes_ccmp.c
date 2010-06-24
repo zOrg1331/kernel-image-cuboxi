@@ -112,9 +112,9 @@ BYTE dot3_table[256] = {
 
 void xor_128(BYTE *a, BYTE *b, BYTE *out)
 {
-PDWORD dwPtrA = (PDWORD) a;
-PDWORD dwPtrB = (PDWORD) b;
-PDWORD dwPtrOut =(PDWORD) out;
+unsigned long *dwPtrA = (unsigned long *) a;
+unsigned long *dwPtrB = (unsigned long *) b;
+unsigned long *dwPtrOut =(unsigned long *) out;
 
     (*dwPtrOut++) = (*dwPtrA++) ^ (*dwPtrB++);
     (*dwPtrOut++) = (*dwPtrA++) ^ (*dwPtrB++);
@@ -125,9 +125,9 @@ PDWORD dwPtrOut =(PDWORD) out;
 
 void xor_32(BYTE *a, BYTE *b, BYTE *out)
 {
-PDWORD dwPtrA = (PDWORD) a;
-PDWORD dwPtrB = (PDWORD) b;
-PDWORD dwPtrOut =(PDWORD) out;
+unsigned long *dwPtrA = (unsigned long *) a;
+unsigned long *dwPtrB = (unsigned long *) b;
+unsigned long *dwPtrOut =(unsigned long *) out;
 
     (*dwPtrOut++) = (*dwPtrA++) ^ (*dwPtrB++);
 }
@@ -243,7 +243,7 @@ BYTE abyRoundKey[16];
  * Return Value: MIC compare result
  *
  */
-BOOL AESbGenCCMP(PBYTE pbyRxKey, PBYTE pbyFrame, WORD wFrameSize)
+BOOL AESbGenCCMP(unsigned char *pbyRxKey, unsigned char *pbyFrame, WORD wFrameSize)
 {
 BYTE            abyNonce[13];
 BYTE            MIC_IV[16];
@@ -256,8 +256,8 @@ BYTE            abyPlainText[16];
 BYTE            abyLastCipher[16];
 
 PS802_11Header  pMACHeader = (PS802_11Header) pbyFrame;
-PBYTE           pbyIV;
-PBYTE           pbyPayload;
+unsigned char *pbyIV;
+unsigned char *pbyPayload;
 WORD            wHLen = 22;
 WORD            wPayloadSize = wFrameSize - 8 - 8 - 4 - WLAN_HDR_ADDR3_LEN;//8 is IV, 8 is MIC, 4 is CRC
 BOOL            bA4 = FALSE;
@@ -267,8 +267,8 @@ int             ii,jj,kk;
 
 
     pbyIV = pbyFrame + WLAN_HDR_ADDR3_LEN;
-    if ( WLAN_GET_FC_TODS(*(PWORD)pbyFrame) &&
-         WLAN_GET_FC_FROMDS(*(PWORD)pbyFrame) ) {
+    if ( WLAN_GET_FC_TODS(*(unsigned short *)pbyFrame) &&
+         WLAN_GET_FC_FROMDS(*(unsigned short *)pbyFrame) ) {
          bA4 = TRUE;
          pbyIV += 6;             // 6 is 802.11 address4
          wHLen += 6;

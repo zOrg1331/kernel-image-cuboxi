@@ -86,20 +86,19 @@ typedef enum _CARD_OP_MODE {
 
 /*---------------------  Export Functions  --------------------------*/
 
-BOOL ChannelValid(UINT CountryCode, UINT ChannelIndex);
 void CARDvSetRSPINF(void *pDeviceHandler, CARD_PHY_TYPE ePHYType);
 void vUpdateIFS(void *pDeviceHandler);
 void CARDvUpdateBasicTopRate(void *pDeviceHandler);
 BOOL CARDbAddBasicRate(void *pDeviceHandler, WORD wRateIdx);
 BOOL CARDbIsOFDMinBasicRate(void *pDeviceHandler);
-void CARDvSetLoopbackMode(DWORD_PTR dwIoBase, WORD wLoopbackMode);
+void CARDvSetLoopbackMode(unsigned long dwIoBase, WORD wLoopbackMode);
 BOOL CARDbSoftwareReset(void *pDeviceHandler);
-void CARDvSetFirstNextTBTT(DWORD_PTR dwIoBase, WORD wBeaconInterval);
-void CARDvUpdateNextTBTT(DWORD_PTR dwIoBase, QWORD qwTSF, WORD wBeaconInterval);
-BOOL CARDbGetCurrentTSF(DWORD_PTR dwIoBase, PQWORD pqwCurrTSF);
+void CARDvSetFirstNextTBTT(unsigned long dwIoBase, WORD wBeaconInterval);
+void CARDvUpdateNextTBTT(unsigned long dwIoBase, QWORD qwTSF, WORD wBeaconInterval);
+BOOL CARDbGetCurrentTSF(unsigned long dwIoBase, PQWORD pqwCurrTSF);
 QWORD CARDqGetNextTBTT(QWORD qwTSF, WORD wBeaconInterval);
 QWORD CARDqGetTSFOffset(BYTE byRxRate, QWORD qwTSF1, QWORD qwTSF2);
-BOOL CARDbSetTxPower(void *pDeviceHandler, ULONG ulTxPower);
+BOOL CARDbSetTxPower(void *pDeviceHandler, unsigned long ulTxPower);
 BYTE CARDbyGetPktType(void *pDeviceHandler);
 void CARDvSafeResetTx(void *pDeviceHandler);
 void CARDvSafeResetRx(void *pDeviceHandler);
@@ -107,8 +106,7 @@ void CARDvSafeResetRx(void *pDeviceHandler);
 //xxx
 BOOL CARDbRadioPowerOff(void *pDeviceHandler);
 BOOL CARDbRadioPowerOn(void *pDeviceHandler);
-BOOL CARDbSetChannel(void *pDeviceHandler, UINT uConnectionChannel);
-//BOOL CARDbSendPacket(void *pDeviceHandler, void *pPacket, CARD_PKT_TYPE ePktType, UINT uLength);
+//BOOL CARDbSendPacket(void *pDeviceHandler, void *pPacket, CARD_PKT_TYPE ePktType, unsigned int uLength);
 BOOL CARDbIsShortPreamble(void *pDeviceHandler);
 BOOL CARDbIsShorSlotTime(void *pDeviceHandler);
 BOOL CARDbSetPhyParameter(void *pDeviceHandler, CARD_PHY_TYPE ePHYType, WORD wCapInfo, BYTE byERPField, void *pvSupportRateIEs, void *pvExtSupportRateIEs);
@@ -116,7 +114,7 @@ BOOL CARDbUpdateTSF(void *pDeviceHandler, BYTE byRxRate, QWORD qwBSSTimestamp, Q
 BOOL CARDbStopTxPacket(void *pDeviceHandler, CARD_PKT_TYPE ePktType);
 BOOL CARDbStartTxPacket(void *pDeviceHandler, CARD_PKT_TYPE ePktType);
 BOOL CARDbSetBeaconPeriod(void *pDeviceHandler, WORD wBeaconInterval);
-BOOL CARDbSetBSSID(void *pDeviceHandler, PBYTE pbyBSSID, CARD_OP_MODE eOPMode);
+BOOL CARDbSetBSSID(void *pDeviceHandler, unsigned char *pbyBSSID, CARD_OP_MODE eOPMode);
 
 BOOL
 CARDbPowerDown(
@@ -129,12 +127,12 @@ BOOL CARDbSetTxDataRate(
     );
 
 
-BOOL CARDbRemoveKey (void *pDeviceHandler, PBYTE pbyBSSID);
+BOOL CARDbRemoveKey (void *pDeviceHandler, unsigned char *pbyBSSID);
 
 BOOL
 CARDbAdd_PMKID_Candidate (
     void *pDeviceHandler,
-    PBYTE            pbyBSSID,
+    unsigned char *pbyBSSID,
     BOOL             bRSNCapExist,
     WORD             wRSNCap
     );
@@ -144,15 +142,11 @@ CARDpGetCurrentAddress (
     void *pDeviceHandler
     );
 
-
-void CARDvInitChannelTable(void *pDeviceHandler);
-BYTE CARDbyGetChannelMapping(void *pDeviceHandler, BYTE byChannelNumber, CARD_PHY_TYPE ePhyType);
-
 BOOL
 CARDbStartMeasure (
     void *pDeviceHandler,
     void *pvMeasureEIDs,
-    UINT             uNumOfMeasureEIDs
+    unsigned int uNumOfMeasureEIDs
     );
 
 BOOL
@@ -179,76 +173,23 @@ CARDbStartQuiet (
     );
 
 void
-CARDvSetCountryInfo (
-    void *pDeviceHandler,
-    CARD_PHY_TYPE    ePHYType,
-    void *pIE
-    );
-
-void
 CARDvSetPowerConstraint (
     void *pDeviceHandler,
     BYTE             byChannel,
-    I8               byPower
+    char byPower
     );
 
 void
 CARDvGetPowerCapability (
     void *pDeviceHandler,
-    PBYTE           pbyMinPower,
-    PBYTE           pbyMaxPower
+    unsigned char *pbyMinPower,
+    unsigned char *pbyMaxPower
     );
 
-BYTE
-CARDbySetSupportChannels (
-    void *pDeviceHandler,
-    PBYTE        pbyIEs
-    );
-
-I8
+char
 CARDbyGetTransmitPower (
     void *pDeviceHandler
     );
-
-BOOL
-CARDbChannelGetList (
-     UINT       uCountryCodeIdx,
-    PBYTE      pbyChannelTable
-    );
-
-void
-CARDvSetCountryIE(
-    void *pDeviceHandler,
-    void *pIE
-    );
-
-BOOL
-CARDbGetChannelMapInfo(
-    void *pDeviceHandler,
-    UINT         uChannelIndex,
-    PBYTE       pbyChannelNumber,
-    PBYTE       pbyMap
-    );
-
-void
-CARDvSetChannelMapInfo(
-    void *pDeviceHandler,
-    UINT         uChannelIndex,
-    BYTE         byMap
-    );
-
-void
-CARDvClearChannelMapInfo(
-    void *pDeviceHandler
-    );
-
-BYTE
-CARDbyAutoChannelSelect(
-    void *pDeviceHandler,
-    CARD_PHY_TYPE   ePHYType
-    );
-
-BYTE CARDbyGetChannelNumber(void *pDeviceHandler, BYTE byChannelIndex);
 
 #endif // __CARD_H__
 
