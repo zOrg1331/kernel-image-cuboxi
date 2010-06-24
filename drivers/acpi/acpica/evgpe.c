@@ -54,7 +54,7 @@ static void ACPI_SYSTEM_XFACE acpi_ev_asynch_execute_gpe_method(void *context);
 
 /*******************************************************************************
  *
- * FUNCTION:    acpi_ev_update_gpe_enable_masks
+ * FUNCTION:    acpi_ev_update_gpe_enable_mask
  *
  * PARAMETERS:  gpe_event_info          - GPE to update
  *
@@ -66,7 +66,7 @@ static void ACPI_SYSTEM_XFACE acpi_ev_asynch_execute_gpe_method(void *context);
  ******************************************************************************/
 
 acpi_status
-acpi_ev_update_gpe_enable_masks(struct acpi_gpe_event_info *gpe_event_info)
+acpi_ev_update_gpe_enable_mask(struct acpi_gpe_event_info *gpe_event_info)
 {
 	struct acpi_gpe_register_info *gpe_register_info;
 	u32 register_bit;
@@ -81,19 +81,14 @@ acpi_ev_update_gpe_enable_masks(struct acpi_gpe_event_info *gpe_event_info)
 	register_bit = acpi_hw_gpe_register_bit(gpe_event_info,
 						gpe_register_info);
 
-	/* Clear the wake/run bits up front */
+	/* Clear the run bit up front */
 
-	ACPI_CLEAR_BIT(gpe_register_info->enable_for_wake, register_bit);
 	ACPI_CLEAR_BIT(gpe_register_info->enable_for_run, register_bit);
 
-	/* Set the mask bits only if there are references to this GPE */
+	/* Set the mask bit only if there are references to this GPE */
 
 	if (gpe_event_info->runtime_count) {
 		ACPI_SET_BIT(gpe_register_info->enable_for_run, register_bit);
-	}
-
-	if (gpe_event_info->wakeup_count) {
-		ACPI_SET_BIT(gpe_register_info->enable_for_wake, register_bit);
 	}
 
 	return_ACPI_STATUS(AE_OK);
