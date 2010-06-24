@@ -133,6 +133,12 @@ enum p9_msg_t {
 	P9_RSTATFS,
 	P9_TRENAME = 20,
 	P9_RRENAME,
+	P9_TGETATTR = 24,
+	P9_RGETATTR,
+	P9_TSETATTR = 26,
+	P9_RSETATTR,
+	P9_TREADDIR = 40,
+	P9_RREADDIR,
 	P9_TVERSION = 100,
 	P9_RVERSION,
 	P9_TAUTH = 102,
@@ -275,6 +281,9 @@ enum p9_qid_t {
 /* ample room for Twrite/Rread header */
 #define P9_IOHDRSZ	24
 
+/* Room for readdir header */
+#define P9_READDIRHDRSZ	24
+
 /**
  * struct p9_str - length prefixed string type
  * @len: length of the string
@@ -355,6 +364,50 @@ struct p9_wstat {
 	u32 n_uid;		/* 9p2000.u extensions */
 	u32 n_gid;		/* 9p2000.u extensions */
 	u32 n_muid;		/* 9p2000.u extensions */
+};
+
+struct p9_stat_dotl {
+	struct p9_qid qid;
+	u32 st_mode;
+	u64 st_nlink;
+	u32 st_uid;
+	u32 st_gid;
+	u64 st_rdev;
+	u64 st_size;
+	u64 st_blksize;
+	u64 st_blocks;
+	u64 st_atime_sec;
+	u64 st_atime_nsec;
+	u64 st_mtime_sec;
+	u64 st_mtime_nsec;
+	u64 st_ctime_sec;
+	u64 st_ctime_nsec;
+};
+
+/**
+ * struct p9_iattr_dotl - P9 inode attribute for setattr
+ * @valid: bitfield specifying which fields are valid
+ *         same as in struct iattr
+ * @mode: File permission bits
+ * @uid: user id of owner
+ * @gid: group id
+ * @size: File size
+ * @atime_sec: Last access time, seconds
+ * @atime_nsec: Last access time, nanoseconds
+ * @mtime_sec: Last modification time, seconds
+ * @mtime_nsec: Last modification time, nanoseconds
+ */
+
+struct p9_iattr_dotl {
+	u32 valid;
+	u32 mode;
+	u32 uid;
+	u32 gid;
+	u64 size;
+	u64 atime_sec;
+	u64 atime_nsec;
+	u64 mtime_sec;
+	u64 mtime_nsec;
 };
 
 /* Structures for Protocol Operations */
@@ -484,6 +537,18 @@ struct p9_twrite {
 struct p9_rwrite {
 	u32 count;
 };
+
+struct p9_treaddir {
+	u32 fid;
+	u64 offset;
+	u32 count;
+};
+
+struct p9_rreaddir {
+	u32 count;
+	u8 *data;
+};
+
 
 struct p9_tclunk {
 	u32 fid;
