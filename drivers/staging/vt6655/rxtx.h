@@ -42,9 +42,9 @@
 /*
 void vGenerateMACHeader(
     PSDevice pDevice,
-    DWORD dwTxBufferAddr,
-    PBYTE pbySkbData,
-    UINT cbPacketSize,
+    unsigned long dwTxBufferAddr,
+    unsigned char *pbySkbData,
+    unsigned int cbPacketSize,
     BOOL bDMA0Used,
     PUINT pcbHeadSize,
     PUINT pcbAppendPayload
@@ -52,8 +52,8 @@ void vGenerateMACHeader(
 
 void vProcessRxMACHeader (
     PSDevice pDevice,
-    DWORD dwRxBufferAddr,
-    UINT cbPacketSize,
+    unsigned long dwRxBufferAddr,
+    unsigned int cbPacketSize,
     BOOL bIsWEP,
     PUINT pcbHeadSize
     );
@@ -63,21 +63,21 @@ void vProcessRxMACHeader (
 void
 vGenerateMACHeader (
     PSDevice         pDevice,
-    PBYTE            pbyBufferAddr,
-    WORD             wDuration,
+    unsigned char *pbyBufferAddr,
+    unsigned short wDuration,
     PSEthernetHeader psEthHeader,
     BOOL             bNeedEncrypt,
-    WORD             wFragType,
-    UINT             uDMAIdx,
-    UINT             uFragIdx
+    unsigned short wFragType,
+    unsigned int uDMAIdx,
+    unsigned int uFragIdx
     );
 
 
-UINT
+unsigned int
 cbGetFragCount(
     PSDevice         pDevice,
     PSKeyItem        pTransmitKey,
-    UINT             cbFrameBodySize,
+    unsigned int	cbFrameBodySize,
     PSEthernetHeader psEthHeader
     );
 
@@ -85,22 +85,22 @@ cbGetFragCount(
 void
 vGenerateFIFOHeader (
     PSDevice         pDevice,
-    BYTE             byPktTyp,
-    PBYTE            pbyTxBufferAddr,
+    unsigned char byPktTyp,
+    unsigned char *pbyTxBufferAddr,
     BOOL             bNeedEncrypt,
-    UINT             cbPayloadSize,
-    UINT             uDMAIdx,
+    unsigned int	cbPayloadSize,
+    unsigned int	uDMAIdx,
     PSTxDesc         pHeadTD,
     PSEthernetHeader psEthHeader,
-    PBYTE            pPacket,
+    unsigned char *pPacket,
     PSKeyItem        pTransmitKey,
-    UINT             uNodeIndex,
+    unsigned int	uNodeIndex,
     PUINT            puMACfragNum,
     PUINT            pcbHeaderSize
     );
 
 
-void vDMA0_tx_80211(PSDevice  pDevice, struct sk_buff *skb, PBYTE pbMPDU, UINT cbMPDULen);
+void vDMA0_tx_80211(PSDevice  pDevice, struct sk_buff *skb, unsigned char *pbMPDU, unsigned int cbMPDULen);
 CMD_STATUS csMgmt_xmit(PSDevice pDevice, PSTxMgmtPacket pPacket);
 CMD_STATUS csBeacon_xmit(PSDevice pDevice, PSTxMgmtPacket pPacket);
 

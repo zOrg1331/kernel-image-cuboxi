@@ -353,9 +353,9 @@ void vMgrObjectInit(void *hDeviceContext)
     pMgmt->pbyPSPacketPool = &pMgmt->byPSPacketPool[0];
     pMgmt->pbyMgmtPacketPool = &pMgmt->byMgmtPacketPool[0];
     pMgmt->uCurrChannel = pDevice->uChannel;
-    for(ii=0;ii<WLAN_BSSID_LEN;ii++) {
-        pMgmt->abyDesireBSSID[ii] = 0xFF;
-    }
+    for (ii = 0; ii < WLAN_BSSID_LEN; ii++)
+	pMgmt->abyDesireBSSID[ii] = 0xFF;
+
     pMgmt->sAssocInfo.AssocInfo.Length = sizeof(NDIS_802_11_ASSOCIATION_INFORMATION);
     //memset(pMgmt->abyDesireSSID, 0, WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN +1);
     pMgmt->byCSSPK = KEY_CTL_NONE;
@@ -1705,7 +1705,8 @@ s_vMgrRxDeauthentication(
 	   pDevice->fWPA_Authened = FALSE;
             DBG_PRT(MSG_LEVEL_NOTICE, KERN_INFO  "AP deauthed me, reason=%d.\n", cpu_to_le16((*(sFrame.pwReason))));
             // TODO: update BSS list for specific BSSID if pre-authentication case
-            if (IS_ETH_ADDRESS_EQUAL(sFrame.pHdr->sA3.abyAddr3, pMgmt->abyCurrBSSID)) {
+	    if (!compare_ether_addr(sFrame.pHdr->sA3.abyAddr3,
+				    pMgmt->abyCurrBSSID)) {
                 if (pMgmt->eCurrState >= WMAC_STATE_AUTHPENDING) {
                     pMgmt->sNodeDBTable[0].bActive = FALSE;
                     pMgmt->eCurrMode = WMAC_MODE_STANDBY;
@@ -3099,12 +3100,6 @@ s_vMgrSynchBSS (
   PSMgmtObject  pMgmt = &(pDevice->sMgmtObj);
   /* unsigned int ii, uSameBssidNum=0; */
 
-        //  for (ii = 0; ii < MAX_BSS_NUM; ii++) {
-          //   if (pMgmt->sBSSList[ii].bActive &&
-            //      IS_ETH_ADDRESS_EQUAL(pMgmt->sBSSList[ii].abyBSSID, pCurr->abyBSSID)) {
-             //       uSameBssidNum++;
-               //   }
-           // }
   //   if( uSameBssidNum>=2) {	 //we only check AP in hidden sssid  mode
         if ((pMgmt->eAuthenMode == WMAC_AUTH_WPAPSK) ||           //networkmanager 0.7.0 does not give the pairwise-key selsection,
              (pMgmt->eAuthenMode == WMAC_AUTH_WPA2PSK)) {         // so we need re-selsect it according to real pairwise-key info.
@@ -4795,21 +4790,21 @@ s_bCipherMatch (
             byMulticastCipher = KEY_CTL_INVALID;
         }
 
-        // check Pairwise Key Cipher
-        for(i=0;i<pBSSNode->wCSSPKCount;i++) {
-            if ((pBSSNode->abyCSSPK[i] == WLAN_11i_CSS_WEP40) ||
-                (pBSSNode->abyCSSPK[i] == WLAN_11i_CSS_WEP104)) {
-                // this should not happen as defined 802.11i
-                byCipherMask |= 0x01;
-            } else if (pBSSNode->abyCSSPK[i] == WLAN_11i_CSS_TKIP) {
-                byCipherMask |= 0x02;
-            } else if (pBSSNode->abyCSSPK[i] == WLAN_11i_CSS_CCMP) {
-                byCipherMask |= 0x04;
-            } else if (pBSSNode->abyCSSPK[i] == WLAN_11i_CSS_USE_GROUP) {
-                // use group key only ignore all others
-                byCipherMask = 0;
-                i = pBSSNode->wCSSPKCount;
-            }
+	/* check Pairwise Key Cipher */
+	for (i = 0; i < pBSSNode->wCSSPKCount; i++) {
+		if ((pBSSNode->abyCSSPK[i] == WLAN_11i_CSS_WEP40) ||
+		    (pBSSNode->abyCSSPK[i] == WLAN_11i_CSS_WEP104)) {
+			/* this should not happen as defined 802.11i */
+			byCipherMask |= 0x01;
+		} else if (pBSSNode->abyCSSPK[i] == WLAN_11i_CSS_TKIP) {
+			byCipherMask |= 0x02;
+		} else if (pBSSNode->abyCSSPK[i] == WLAN_11i_CSS_CCMP) {
+			byCipherMask |= 0x04;
+		} else if (pBSSNode->abyCSSPK[i] == WLAN_11i_CSS_USE_GROUP) {
+			/* use group key only ignore all others */
+			byCipherMask = 0;
+			i = pBSSNode->wCSSPKCount;
+		}
         }
 
     } else if ((WLAN_GET_CAP_INFO_PRIVACY(pBSSNode->wCapInfo) != 0) &&
@@ -4828,17 +4823,17 @@ s_bCipherMatch (
             byMulticastCipher = KEY_CTL_INVALID;
         }
 
-        // check Pairwise Key Cipher
-        for(i=0;i<pBSSNode->wPKCount;i++) {
-            if (pBSSNode->abyPKType[i] == WPA_TKIP) {
-                byCipherMask |= 0x02;
-            } else if (pBSSNode->abyPKType[i] == WPA_AESCCMP) {
-                byCipherMask |= 0x04;
-            } else if (pBSSNode->abyPKType[i] == WPA_NONE) {
-                // use group key only ignore all others
-                byCipherMask = 0;
-                i = pBSSNode->wPKCount;
-            }
+	/* check Pairwise Key Cipher */
+	for (i = 0; i < pBSSNode->wPKCount; i++) {
+		if (pBSSNode->abyPKType[i] == WPA_TKIP) {
+			byCipherMask |= 0x02;
+		} else if (pBSSNode->abyPKType[i] == WPA_AESCCMP) {
+			byCipherMask |= 0x04;
+		} else if (pBSSNode->abyPKType[i] == WPA_NONE) {
+			/* use group key only ignore all others */
+			byCipherMask = 0;
+			i = pBSSNode->wPKCount;
+		}
         }
     }
 
