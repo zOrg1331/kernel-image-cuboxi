@@ -31,4 +31,7 @@ struct pdev_archdata {
 	u64 dma_mask;
 };
 
+/* Override the default bus_id behaviour for OF stuff */
+extern void of_device_make_bus_id(struct device *dev);
+
 #endif /* _ASM_POWERPC_DEVICE_H */
