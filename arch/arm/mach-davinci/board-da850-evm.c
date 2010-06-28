@@ -109,7 +109,7 @@ static struct platform_device da850_pm_device = {
  * to boot, using TI's tools to install the secondary boot loader
  * (UBL) and U-Boot.
  */
-struct mtd_partition da850_evm_nandflash_partition[] = {
+static struct mtd_partition da850_evm_nandflash_partition[] = {
 	{
 		.name		= "u-boot env",
 		.offset		= 0,
@@ -405,7 +405,7 @@ static int da850_lcd_hw_init(void)
 /* TPS65070 voltage regulator support */
 
 /* 3.3V */
-struct regulator_consumer_supply tps65070_dcdc1_consumers[] = {
+static struct regulator_consumer_supply tps65070_dcdc1_consumers[] = {
 	{
 		.supply = "usb0_vdda33",
 	},
@@ -415,7 +415,7 @@ struct regulator_consumer_supply tps65070_dcdc1_consumers[] = {
 };
 
 /* 3.3V or 1.8V */
-struct regulator_consumer_supply tps65070_dcdc2_consumers[] = {
+static struct regulator_consumer_supply tps65070_dcdc2_consumers[] = {
 	{
 		.supply = "dvdd3318_a",
 	},
@@ -428,14 +428,14 @@ struct regulator_consumer_supply tps65070_dcdc2_consumers[] = {
 };
 
 /* 1.2V */
-struct regulator_consumer_supply tps65070_dcdc3_consumers[] = {
+static struct regulator_consumer_supply tps65070_dcdc3_consumers[] = {
 	{
 		.supply = "cvdd",
 	},
 };
 
 /* 1.8V LDO */
-struct regulator_consumer_supply tps65070_ldo1_consumers[] = {
+static struct regulator_consumer_supply tps65070_ldo1_consumers[] = {
 	{
 		.supply = "sata_vddr",
 	},
@@ -451,7 +451,7 @@ struct regulator_consumer_supply tps65070_ldo1_consumers[] = {
 };
 
 /* 1.2V LDO */
-struct regulator_consumer_supply tps65070_ldo2_consumers[] = {
+static struct regulator_consumer_supply tps65070_ldo2_consumers[] = {
 	{
 		.supply = "sata_vdd",
 	},
@@ -469,7 +469,7 @@ struct regulator_consumer_supply tps65070_ldo2_consumers[] = {
 	},
 };
 
-struct regulator_init_data tps65070_regulator_data[] = {
+static struct regulator_init_data tps65070_regulator_data[] = {
 	/* dcdc1 */
 	{
 		.constraints = {
