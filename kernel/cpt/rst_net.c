@@ -709,15 +709,15 @@ static int rst_restore_snmp(struct cpt_context *ctx)
 	if (err <= 0)
 		goto out;
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-	err = rst_restore_snmp_stat(ctx, (void **)&ve->_ipv6_statistics,
+	err = rst_restore_snmp_stat(ctx, (void **)&net->mib.ipv6_statistics,
 			IPSTATS_MIB_MAX, &sec, endsec);
 	if (err <= 0)
 		goto out;
-	err = rst_restore_snmp_stat(ctx, (void **)&ve->_udp_stats_in6,
+	err = rst_restore_snmp_stat(ctx, (void **)&net->mib.udp_stats_in6,
 			UDP_MIB_MAX, &sec, endsec);
 	if (err <= 0)
 		goto out;
-	err = rst_restore_snmp_stat(ctx, (void **)&ve->_icmpv6_statistics,
+	err = rst_restore_snmp_stat(ctx, (void **)&net->mib.icmpv6_statistics,
 			ICMP6_MIB_MAX, &sec, endsec);
 #endif
 	if (err == 1)

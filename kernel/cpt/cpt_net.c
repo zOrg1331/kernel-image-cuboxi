@@ -617,11 +617,11 @@ static int cpt_dump_snmp(struct cpt_context *ctx)
 	cpt_dump_snmp_stat(ctx, (void **)&net->mib.icmpmsg_statistics,
 				ICMPMSG_MIB_MAX);
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-	cpt_dump_snmp_stat(ctx, (void **)&ve->_ipv6_statistics,
+	cpt_dump_snmp_stat(ctx, (void **)&net->mib.ipv6_statistics,
 				IPSTATS_MIB_MAX);
-	cpt_dump_snmp_stat(ctx, (void **)&ve->_udp_stats_in6,
+	cpt_dump_snmp_stat(ctx, (void **)&net->mib.udp_stats_in6,
 				UDP_MIB_MAX);
-	cpt_dump_snmp_stat(ctx, (void **)&ve->_icmpv6_statistics,
+	cpt_dump_snmp_stat(ctx, (void **)&net->mib.icmpv6_statistics,
 				ICMP6_MIB_MAX);
 #else
 	cpt_dump_snmp_stub(ctx);

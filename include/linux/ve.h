@@ -239,14 +239,6 @@ struct ve_struct {
 	struct ve_ipt_recent	*_ipt_recent;
 	struct ve_xt_hashlimit	*_xt_hashlimit;
 #endif /* CONFIG_VE_IPTABLES */
-
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-	struct ipstats_mib	*_ipv6_statistics[2];
-	struct icmpv6_mib	*_icmpv6_statistics[2];
-	struct icmpv6msg_mib	*_icmpv6msg_statistics[2];
-	struct udp_mib		*_udp_stats_in6[2];
-	struct udp_mib		*_udplite_stats_in6[2];
-#endif
 #endif
 	wait_queue_head_t	*_log_wait;
 	unsigned		*_log_start;
