@@ -73,7 +73,6 @@ enum {
  * @ns_last_seq: sequence value of the latest segment
  * @ns_last_cno: checkpoint number of the latest segment
  * @ns_prot_seq: least sequence number of segments which must not be reclaimed
- * @ns_free_segments_count: counter of free segments
  * @ns_segctor_sem: segment constructor semaphore
  * @ns_dat: DAT file inode
  * @ns_cpfile: checkpoint file inode
@@ -82,6 +81,7 @@ enum {
  * @ns_gc_inodes: dummy inodes to keep live blocks
  * @ns_gc_inodes_h: hash list to keep dummy inode holding live blocks
  * @ns_blocksize_bits: bit length of block size
+ * @ns_blocksize: block size
  * @ns_nsegments: number of segments in filesystem
  * @ns_blocks_per_segment: number of blocks per segment
  * @ns_r_segments_percentage: reserved segments percentage
@@ -149,7 +149,6 @@ struct the_nilfs {
 	u64			ns_last_seq;
 	__u64			ns_last_cno;
 	u64			ns_prot_seq;
-	unsigned long		ns_free_segments_count;
 
 	struct rw_semaphore	ns_segctor_sem;
 
@@ -168,6 +167,7 @@ struct the_nilfs {
 
 	/* Disk layout information (static) */
 	unsigned int		ns_blocksize_bits;
+	unsigned int		ns_blocksize;
 	unsigned long		ns_nsegments;
 	unsigned long		ns_blocks_per_segment;
 	unsigned long		ns_r_segments_percentage;
