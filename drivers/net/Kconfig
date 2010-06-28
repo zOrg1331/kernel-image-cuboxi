@@ -1659,6 +1659,7 @@ config R6040
 	depends on NET_PCI && PCI
 	select CRC32
 	select MII
+	select PHYLIB
 	help
 	  This is a driver for the R6040 Fast Ethernet MACs found in the
 	  the RDC R-321x System-on-chips.
@@ -2614,7 +2615,6 @@ config EHEA
 config ENIC
 	tristate "Cisco VIC Ethernet NIC Support"
 	depends on PCI && INET
-	select INET_LRO
 	help
 	  This enables the support for the Cisco VIC Ethernet card.
 
