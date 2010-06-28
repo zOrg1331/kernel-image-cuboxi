@@ -145,7 +145,9 @@ static void nfs4_end_drain_session(struct nfs_client *clp)
 	struct nfs4_session *ses = clp->cl_session;
 	int max_slots;
 
-	if (test_and_clear_bit(NFS4CLNT_SESSION_DRAINING, &clp->cl_state)) {
+	if (ses == NULL)
+		return;
+	if (test_and_clear_bit(NFS4_SESSION_DRAINING, &ses->session_state)) {
 		spin_lock(&ses->fc_slot_table.slot_tbl_lock);
 		max_slots = ses->fc_slot_table.max_slots;
 		while (max_slots--) {
@@ -167,7 +169,7 @@ static int nfs4_begin_drain_session(struct nfs_client *clp)
 	struct nfs4_slot_table *tbl = &ses->fc_slot_table;
 
 	spin_lock(&tbl->slot_tbl_lock);
-	set_bit(NFS4CLNT_SESSION_DRAINING, &clp->cl_state);
+	set_bit(NFS4_SESSION_DRAINING, &ses->session_state);
 	if (tbl->highest_used_slotid != -1) {
 		INIT_COMPLETION(ses->complete);
 		spin_unlock(&tbl->slot_tbl_lock);
@@ -1120,8 +1122,7 @@ static void nfs4_state_end_reclaim_reboot(struct nfs_client *clp)
 	if (!test_and_clear_bit(NFS4CLNT_RECLAIM_REBOOT, &clp->cl_state))
 		return;
 
-	nfs4_reclaim_complete(clp,
-		nfs4_reboot_recovery_ops[clp->cl_minorversion]);
+	nfs4_reclaim_complete(clp, clp->cl_mvops->reboot_recovery_ops);
 
 	for (pos = rb_first(&clp->cl_state_owners); pos != NULL; pos = rb_next(pos)) {
 		sp = rb_entry(pos, struct nfs4_state_owner, so_client_node);
@@ -1211,8 +1212,8 @@ restart:
 static int nfs4_check_lease(struct nfs_client *clp)
 {
 	struct rpc_cred *cred;
-	struct nfs4_state_maintenance_ops *ops =
-		nfs4_state_renewal_ops[clp->cl_minorversion];
+	const struct nfs4_state_maintenance_ops *ops =
+		clp->cl_mvops->state_renewal_ops;
 	int status = -NFS4ERR_EXPIRED;
 
 	/* Is the client already known to have an expired lease? */
@@ -1235,8 +1236,8 @@ out:
 static int nfs4_reclaim_lease(struct nfs_client *clp)
 {
 	struct rpc_cred *cred;
-	struct nfs4_state_recovery_ops *ops =
-		nfs4_reboot_recovery_ops[clp->cl_minorversion];
+	const struct nfs4_state_recovery_ops *ops =
+		clp->cl_mvops->reboot_recovery_ops;
 	int status = -ENOENT;
 
 	cred = ops->get_clid_cred(clp);
@@ -1444,7 +1445,7 @@ static void nfs4_state_manager(struct nfs_client *clp)
 		/* First recover reboot state... */
 		if (test_bit(NFS4CLNT_RECLAIM_REBOOT, &clp->cl_state)) {
 			status = nfs4_do_reclaim(clp,
-				nfs4_reboot_recovery_ops[clp->cl_minorversion]);
+				clp->cl_mvops->reboot_recovery_ops);
 			if (test_bit(NFS4CLNT_LEASE_EXPIRED, &clp->cl_state) ||
 			    test_bit(NFS4CLNT_SESSION_RESET, &clp->cl_state))
 				continue;
@@ -1458,7 +1459,7 @@ static void nfs4_state_manager(struct nfs_client *clp)
 		/* Now recover expired state... */
 		if (test_and_clear_bit(NFS4CLNT_RECLAIM_NOGRACE, &clp->cl_state)) {
 			status = nfs4_do_reclaim(clp,
-				nfs4_nograce_recovery_ops[clp->cl_minorversion]);
+				clp->cl_mvops->nograce_recovery_ops);
 			if (test_bit(NFS4CLNT_LEASE_EXPIRED, &clp->cl_state) ||
 			    test_bit(NFS4CLNT_SESSION_RESET, &clp->cl_state) ||
 			    test_bit(NFS4CLNT_RECLAIM_REBOOT, &clp->cl_state))
