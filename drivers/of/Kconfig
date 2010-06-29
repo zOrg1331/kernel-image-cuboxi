@@ -6,6 +6,14 @@ config OF_DYNAMIC
 	def_bool y
 	depends on OF && PPC_OF
 
+config OF_ADDRESS
+	def_bool y
+	depends on OF && !SPARC
+
+config OF_IRQ
+	def_bool y
+	depends on OF && !SPARC
+
 config OF_DEVICE
 	def_bool y
 	depends on OF && (SPARC || PPC_OF || MICROBLAZE)
@@ -18,7 +26,7 @@ config OF_GPIO
 
 config OF_I2C
 	def_tristate I2C
-	depends on (PPC_OF || MICROBLAZE) && I2C
+	depends on OF && !SPARC && I2C
 	help
 	  OpenFirmware I2C accessors
 
