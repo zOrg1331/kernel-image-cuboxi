@@ -146,7 +146,7 @@ static bool drm_fb_helper_connector_parse_command_line(struct drm_fb_helper_conn
 				cvt = 1;
 			break;
 		case 'R':
-			if (!cvt)
+			if (cvt)
 				rb = 1;
 			break;
 		case 'm':
@@ -241,18 +241,22 @@ static int drm_fb_helper_parse_command_line(struct drm_fb_helper *fb_helper)
 	return 0;
 }
 
-bool drm_fb_helper_force_kernel_mode(void)
+bool drm_fb_helper_force_kernel_mode_locked(void)
 {
 	int i = 0;
 	bool ret, error = false;
 	struct drm_fb_helper *helper;
-
-	if (list_empty(&kernel_fb_helper_list))
-		return false;
+	struct drm_mode_set *mode_set;
+	struct drm_crtc *crtc;
 
 	list_for_each_entry(helper, &kernel_fb_helper_list, kernel_fb_list) {
 		for (i = 0; i < helper->crtc_count; i++) {
-			struct drm_mode_set *mode_set = &helper->crtc_info[i].mode_set;
+			mode_set = &helper->crtc_info[i].mode_set;
+			crtc = helper->crtc_info[i].mode_set.crtc;
+
+			if (!crtc->enabled)
+				continue;
+
 			ret = drm_crtc_helper_set_config(mode_set);
 			if (ret)
 				error = true;
@@ -261,11 +265,37 @@ bool drm_fb_helper_force_kernel_mode(void)
 	return error;
 }
 
+bool drm_fb_helper_force_kernel_mode(void)
+{
+	bool ret;
+	struct drm_device *dev;
+	struct drm_fb_helper *helper;
+	struct drm_mode_set *mode_set;
+
+	if (list_empty(&kernel_fb_helper_list)) {
+		DRM_DEBUG_KMS("no fb helper list??\n");
+		return false;
+	}
+
+	/* Get the DRM device */
+	helper = list_first_entry(&kernel_fb_helper_list,
+				  struct drm_fb_helper,
+				  kernel_fb_list);
+	mode_set = &helper->crtc_info[0].mode_set;
+	dev = mode_set->crtc->dev;
+
+	mutex_lock(&dev->mode_config.mutex);
+	ret = drm_fb_helper_force_kernel_mode_locked();
+	mutex_unlock(&dev->mode_config.mutex);
+
+	return ret;
+}
+
 int drm_fb_helper_panic(struct notifier_block *n, unsigned long ununsed,
 			void *panic_str)
 {
 	printk(KERN_ERR "panic occurred, switching back to text console\n");
-	return drm_fb_helper_force_kernel_mode();
+	drm_fb_helper_force_kernel_mode_locked();
 	return 0;
 }
 EXPORT_SYMBOL(drm_fb_helper_panic);
@@ -1024,11 +1054,18 @@ static struct drm_display_mode *drm_pick_cmdline_mode(struct drm_fb_helper_conne
 	}
 
 create_mode:
-	mode = drm_cvt_mode(fb_helper_conn->connector->dev, cmdline_mode->xres,
-			    cmdline_mode->yres,
-			    cmdline_mode->refresh_specified ? cmdline_mode->refresh : 60,
-			    cmdline_mode->rb, cmdline_mode->interlace,
-			    cmdline_mode->margins);
+	if (cmdline_mode->cvt)
+		mode = drm_cvt_mode(fb_helper_conn->connector->dev,
+				    cmdline_mode->xres, cmdline_mode->yres,
+				    cmdline_mode->refresh_specified ? cmdline_mode->refresh : 60,
+				    cmdline_mode->rb, cmdline_mode->interlace,
+				    cmdline_mode->margins);
+	else
+		mode = drm_gtf_mode(fb_helper_conn->connector->dev,
+				    cmdline_mode->xres, cmdline_mode->yres,
+				    cmdline_mode->refresh_specified ? cmdline_mode->refresh : 60,
+				    cmdline_mode->interlace,
+				    cmdline_mode->margins);
 	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V);
 	list_add(&mode->head, &fb_helper_conn->connector->modes);
 	return mode;
