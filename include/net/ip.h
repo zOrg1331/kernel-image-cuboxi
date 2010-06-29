@@ -61,11 +61,14 @@ struct ipcm_cookie {
 struct ip_ra_chain {
 	struct ip_ra_chain	*next;
 	struct sock		*sk;
-	void			(*destructor)(struct sock *);
+	union {
+		void			(*destructor)(struct sock *);
+		struct sock		*saved_sk;
+	};
+	struct rcu_head		rcu;
 };
 
 extern struct ip_ra_chain *ip_ra_chain;
-extern rwlock_t ip_ra_lock;
 
 /* IP flags. */
 #define IP_CE		0x8000		/* Flag: "Congestion"		*/
@@ -175,7 +178,7 @@ extern struct ipv4_config ipv4_config;
 #define NET_ADD_STATS_USER(net, field, adnd) SNMP_ADD_STATS_USER((net)->mib.net_statistics, field, adnd)
 
 extern unsigned long snmp_fold_field(void __percpu *mib[], int offt);
-extern int snmp_mib_init(void __percpu *ptr[2], size_t mibsize);
+extern int snmp_mib_init(void __percpu *ptr[2], size_t mibsize, size_t align);
 extern void snmp_mib_free(void __percpu *ptr[2]);
 
 extern struct local_ports {
