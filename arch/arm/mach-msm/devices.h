@@ -17,6 +17,8 @@
 #define __ARCH_ARM_MACH_MSM_DEVICES_H
 
 #include "clock.h"
+#include "gpio_hw.h"
+#include "msm7200a-gpio.h"
 
 extern struct platform_device msm_device_uart1;
 extern struct platform_device msm_device_uart2;
@@ -43,5 +45,36 @@ extern unsigned msm_num_clocks_7x30;
 
 extern struct clk msm_clocks_8x50[];
 extern unsigned msm_num_clocks_8x50;
+
+#define MSM7200A_GPIO_PLATFORM_DATA(ix, begin, end, irq)		\
+	[ix] = {							\
+		.gpio_base		= begin,			\
+		.ngpio			= end - begin + 1,		\
+		.irq_base		= MSM_GPIO_TO_INT(begin),	\
+		.irq_summary		= irq,				\
+		.latch_level_irqs	= false,			\
+		.regs = {						\
+			.in		= GPIO_IN_ ## ix,		\
+			.out		= GPIO_OUT_ ## ix,		\
+			.oe		= GPIO_OE_ ## ix,		\
+			.int_status	= GPIO_INT_STATUS_ ## ix,	\
+			.int_clear	= GPIO_INT_CLEAR_ ## ix,	\
+			.int_en		= GPIO_INT_EN_ ## ix,		\
+			.int_edge	= GPIO_INT_EDGE_ ## ix,		\
+			.int_pos	= GPIO_INT_POS_ ## ix,		\
+		},							\
+	}
+
+#define MSM7200A_GPIO_DEVICE(ix, pdata)			\
+	{						\
+		.name		= "msm7200a-gpio",	\
+		.id		= ix,			\
+		.num_resources	= 0,			\
+		.dev = {				\
+			.platform_data = &pdata[ix],	\
+		},					\
+	}
+
+extern struct platform_device msm_gpio_devices[];
 
 #endif
