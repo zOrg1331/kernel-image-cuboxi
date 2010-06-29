@@ -1,0 +1,75 @@
+Importing driver-core.current based on 2.6.35-rc3
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.35-rc3-git1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard b4322e7057ca851b0a3e15f29e26806efeada100
+HEAD is now at b4322e7 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tj/percpu
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-fix-probability-test.patch
+i2c-mips-fix-error-return-codes-from-sibyte-i2c-bus-driver.patch
+i2c-dev-01-remove-unnecessary-kmalloc-casts.patch
+i2c-dev-02-use-memdup_user.patch
+i2c-support-custom-probe-function-01.patch
+i2c-support-custom-probe-function-02.patch
+i2c-uninline-adapter-mutex-operations.patch
+i2c-drop-dummy-variable.patch
+i2c-drop-preliminary-probability-checks.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + c982472...ca39bd3 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.35-rc3-git1
+$ cd ../quilt-tmp
+$ git reset --hard b4322e7057ca851b0a3e15f29e26806efeada100
+HEAD is now at b4322e7 Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tj/percpu
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k8temp-02-fix-temp-for-asb1-processors.patch
+hwmon-it87-fix-in7-on-IT8720F.patch
+hwmon-coretemp-01-skip-ht-dups.patch
+hwmon-coretemp-02-fix-label-on-smp.patch
+hwmon-ltc4245-expose-all-gpio-pins-as-analog-voltages.patch
+hwmon-emc1403-add-power-support.patch
+hwmon-lm75-add-suspend-and-resume.patch
+hwmon-it87-labels-for-internal-voltages.patch
+hwmon-asc7621-clean-up-and-improve-detect.patch
+hwmon-add-3-critical-limit-attributes-to-sysfs-interface.patch
+hwmon-add-4-current-alarm-beep-attributes-to-sysfs-interface.patch
+hwmon-fix-autoloading-of-fschmd-driver.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + ffa3472...e0279cd master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.35-rc3
+$ cd ../quilt-tmp
+$ git reset --hard 7e27d6e778cd87b6f2415515d7127eba53fe5d02
+HEAD is now at 7e27d6e Linux 2.6.35-rc3
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+aio-fix-subsys-comments.patch
+docs-vm-pagetypes-spello.patch
+docs-kbuild-make-examples-content.patch
+docs-kbuild-make-examples2.patch
+docs-kbuild-make-examples-content2.patch
+docs-kbuild-typos-wording.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+ + 968c3b4...9f064f7 master     -> quilt/kernel-doc  (forced update)
+Importing rr based on v2.6.35-rc3
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.35-rc3
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
