@@ -2110,6 +2110,9 @@ int iwl_mac_config(struct ieee80211_hw *hw, u32 changed)
 		iwl_set_flags_for_band(priv, conf->channel->band, priv->vif);
 		spin_unlock_irqrestore(&priv->lock, flags);
 
+		if (priv->cfg->ops->lib->update_bcast_station)
+			ret = priv->cfg->ops->lib->update_bcast_station(priv);
+
  set_ch_out:
 		/* The list of supported rates and rate mask can be different
 		 * for each band; since the band may have changed, reset
@@ -2842,6 +2845,7 @@ int iwl_pci_resume(struct pci_dev *pdev)
 {
 	struct iwl_priv *priv = pci_get_drvdata(pdev);
 	int ret;
+	bool hw_rfkill = false;
 
 	/*
 	 * We disable the RETRY_TIMEOUT register (0x41) to keep
@@ -2855,6 +2859,17 @@ int iwl_pci_resume(struct pci_dev *pdev)
 		return ret;
 	pci_restore_state(pdev);
 	iwl_enable_interrupts(priv);
+
+	if (!(iwl_read32(priv, CSR_GP_CNTRL) &
+				CSR_GP_CNTRL_REG_FLAG_HW_RF_KILL_SW))
+		hw_rfkill = true;
+
+	if (hw_rfkill)
+		set_bit(STATUS_RF_KILL_HW, &priv->status);
+	else
+		clear_bit(STATUS_RF_KILL_HW, &priv->status);
+
+	wiphy_rfkill_set_hw_state(priv->hw->wiphy, hw_rfkill);
 
 	return 0;
 }
