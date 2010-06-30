@@ -47,7 +47,7 @@
 
 /* Current ACPICA subsystem version in YYYYMMDD format */
 
-#define ACPI_CA_VERSION                 0x20100428
+#define ACPI_CA_VERSION                 0x20100528
 
 #include "actypes.h"
 #include "actbl.h"
@@ -282,13 +282,11 @@ acpi_status acpi_get_event_status(u32 event, acpi_event_status * event_status);
 /*
  * GPE Interfaces
  */
-acpi_status acpi_set_gpe(acpi_handle gpe_device, u32 gpe_number, u8 action);
+acpi_status acpi_gpe_wakeup(acpi_handle gpe_device, u32 gpe_number, u8 action);
 
-acpi_status
-acpi_enable_gpe(acpi_handle gpe_device, u32 gpe_number, u8 gpe_type);
+acpi_status acpi_enable_gpe(acpi_handle gpe_device, u32 gpe_number);
 
-acpi_status
-acpi_disable_gpe(acpi_handle gpe_device, u32 gpe_number, u8 gpe_type);
+acpi_status acpi_disable_gpe(acpi_handle gpe_device, u32 gpe_number);
 
 acpi_status acpi_clear_gpe(acpi_handle gpe_device, u32 gpe_number);
 
