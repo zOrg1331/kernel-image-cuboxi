@@ -55,14 +55,14 @@ static struct platform_driver kim_platform_driver = {
 		   },
 };
 
-#ifndef LEGACY_RFKILL_SUPPORT
 static ssize_t show_pid(struct device *dev, struct device_attribute
-			*attr, char *buf);
+		*attr, char *buf);
 static ssize_t store_pid(struct device *dev, struct device_attribute
-			 *devattr, char *buf, size_t count);
+		*devattr, char *buf, size_t count);
 static ssize_t show_list(struct device *dev, struct device_attribute
-			 *attr, char *buf);
-
+		*attr, char *buf);
+static ssize_t show_version(struct device *dev, struct device_attribute
+		*attr, char *buf);
 /* structures specific for sysfs entries */
 static struct kobj_attribute pid_attr =
 __ATTR(pid, 0644, (void *)show_pid, (void *)store_pid);
@@ -70,22 +70,25 @@ __ATTR(pid, 0644, (void *)show_pid, (void *)store_pid);
 static struct kobj_attribute list_protocols =
 __ATTR(protocols, 0444, (void *)show_list, NULL);
 
+static struct kobj_attribute chip_version =
+__ATTR(version, 0444, (void *)show_version, NULL);
+
 static struct attribute *uim_attrs[] = {
 	&pid_attr.attr,
 	/* add more debug sysfs entries */
 	&list_protocols.attr,
+	&chip_version.attr,
 	NULL,
 };
 
 static struct attribute_group uim_attr_grp = {
 	.attrs = uim_attrs,
 };
-#else
+
 static int kim_toggle_radio(void*, bool);
 static const struct rfkill_ops kim_rfkill_ops = {
 	.set_block = kim_toggle_radio,
 };
-#endif	/* LEGACY_RFKILL_SUPPORT */
 
 /* strings to be used for rfkill entries and by
  * ST Core to be used for sysfs debug entry
@@ -253,7 +256,8 @@ static long read_local_version(char *bts_scr_name)
 	}
 
 	version =
-	    MAKEWORD(kim_gdata->resp_buffer[13], kim_gdata->resp_buffer[14]);
+		MAKEWORD(kim_gdata->resp_buffer[13],
+				kim_gdata->resp_buffer[14]);
 	chip = (version & 0x7C00) >> 10;
 	min_ver = (version & 0x007F);
 	maj_ver = (version & 0x0380) >> 7;
@@ -262,6 +266,13 @@ static long read_local_version(char *bts_scr_name)
 		maj_ver |= 0x0008;
 
 	sprintf(bts_scr_name, "TIInit_%d.%d.%d.bts", chip, maj_ver, min_ver);
+
+	/* to be accessed later via sysfs entry */
+	kim_gdata->version.full = version;
+	kim_gdata->version.chip = chip;
+	kim_gdata->version.maj_ver = maj_ver;
+	kim_gdata->version.min_ver = min_ver;
+
 	pr_info("%s", bts_scr_name);
 	return ST_SUCCESS;
 }
@@ -436,13 +447,11 @@ long st_kim_start(void)
 	pr_info(" %s", __func__);
 
 	do {
-#ifdef LEGACY_RFKILL_SUPPORT
 		/* TODO: this is only because rfkill sub-system
 		 * doesn't send events to user-space if the state
 		 * isn't changed
 		 */
 		rfkill_set_hw_state(kim_gdata->rfkill[ST_BT], 1);
-#endif
 		/* Configure BT nShutdown to HIGH state */
 		gpio_set_value(kim_gdata->gpios[ST_BT], GPIO_LOW);
 		mdelay(5);	/* FIXME: a proper toggle */
@@ -450,7 +459,7 @@ long st_kim_start(void)
 		mdelay(100);
 		/* re-initialize the completion */
 		INIT_COMPLETION(kim_gdata->ldisc_installed);
-#ifndef LEGACY_RFKILL_SUPPORT
+#if 0 /* older way of signalling user-space UIM */
 		/* send signal to UIM */
 		err = kill_pid(find_get_pid(kim_gdata->uim_pid), SIGUSR2, 0);
 		if (err != 0) {
@@ -458,10 +467,9 @@ long st_kim_start(void)
 			err = ST_ERR_FAILURE;
 			continue;
 		}
-#else
+#endif
 		/* unblock and send event to UIM via /dev/rfkill */
 		rfkill_set_hw_state(kim_gdata->rfkill[ST_BT], 0);
-#endif
 		/* wait for ldisc to be installed */
 		err = wait_for_completion_timeout(&kim_gdata->ldisc_installed,
 				msecs_to_jiffies(LDISC_TIME));
@@ -491,17 +499,16 @@ long st_kim_stop(void)
 	long err = ST_SUCCESS;
 
 	INIT_COMPLETION(kim_gdata->ldisc_installed);
-#ifndef LEGACY_RFKILL_SUPPORT
+#if 0 /* older way of signalling user-space UIM */
 	/* send signal to UIM */
 	err = kill_pid(find_get_pid(kim_gdata->uim_pid), SIGUSR2, 1);
 	if (err != 0) {
 		pr_err("sending SIGUSR2 to uim failed %ld", err);
 		return ST_ERR_FAILURE;
 	}
-#else
+#endif
 	/* set BT rfkill to be blocked */
 	err = rfkill_set_hw_state(kim_gdata->rfkill[ST_BT], 1);
-#endif
 
 	/* wait for ldisc to be un-installed */
 	err = wait_for_completion_timeout(&kim_gdata->ldisc_installed,
@@ -522,8 +529,17 @@ long st_kim_stop(void)
 
 /**********************************************************************/
 /* functions called from subsystems */
+/* called when sysfs entry is read from */
 
-#ifndef LEGACY_RFKILL_SUPPORT
+static ssize_t show_version(struct device *dev, struct device_attribute
+		*attr, char *buf)
+{
+	sprintf(buf, "%04X %d.%d.%d", kim_gdata->version.full,
+			kim_gdata->version.chip, kim_gdata->version.maj_ver,
+			kim_gdata->version.min_ver);
+	return strlen(buf);
+}
+
 /* called when sysfs entry is written to */
 static ssize_t store_pid(struct device *dev, struct device_attribute
 			 *devattr, char *buf, size_t count)
@@ -551,8 +567,6 @@ static ssize_t show_list(struct device *dev, struct device_attribute
 	return strlen(buf);
 }
 
-#else /* LEGACY_RFKILL_SUPPORT */
-
 /* function called from rfkill subsystem, when someone from
  * user space would write 0/1 on the sysfs entry
  * /sys/class/rfkill/rfkill0,1,3/state
@@ -579,8 +593,6 @@ static int kim_toggle_radio(void *data, bool blocked)
 	}
 	return ST_SUCCESS;
 }
-
-#endif	/* LEGACY_RFKILL_SUPPORT */
 
 void st_kim_ref(struct st_data_s **core_data)
 {
@@ -639,30 +651,12 @@ static int kim_probe(struct platform_device *pdev)
 			return status;
 		}
 	}
-#ifndef LEGACY_RFKILL_SUPPORT
-	/* pdev to contain BT, FM and GPS enable/N-Shutdown GPIOs
-	 * execute request_gpio, set output direction
-	 */
-	kim_gdata->kim_kobj = kobject_create_and_add("uim", NULL);
-	/* create the sysfs entry for UIM to put in pid */
-	if (sysfs_create_group(kim_gdata->kim_kobj, &uim_attr_grp)) {
-		pr_err(" sysfs entry creation failed");
-		kobject_put(kim_gdata->kim_kobj);
-		/* free requested GPIOs and fail probe */
-		for (proto = ST_BT; proto < ST_MAX; proto++) {
-			if (gpios[proto] != -1)
-				gpio_free(gpios[proto]);
-		}
-		return -1;	/* fail insmod */
-	}
-	pr_info(" sysfs entry created ");
-#endif
 	/* get reference of pdev for request_firmware
 	 */
 	kim_gdata->kim_pdev = pdev;
 	init_completion(&kim_gdata->kim_rcvd);
 	init_completion(&kim_gdata->ldisc_installed);
-#ifdef LEGACY_RFKILL_SUPPORT
+
 	for (proto = 0; (proto < ST_MAX) && (gpios[proto] != -1); proto++) {
 		/* TODO: should all types be rfkill_type_bt ? */
 		kim_gdata->rf_protos[proto] = proto;
@@ -685,7 +679,12 @@ static int kim_probe(struct platform_device *pdev)
 		}
 		pr_info("rfkill entry created for %ld", gpios[proto]);
 	}
-#endif
+
+	if (sysfs_create_group(&pdev->dev.kobj, &uim_attr_grp)) {
+		pr_err(" sysfs entry creation failed");
+		return -1;
+	}
+	pr_info(" sysfs entries created ");
 	return ST_SUCCESS;
 }
 
@@ -701,18 +700,12 @@ static int kim_remove(struct platform_device *pdev)
 		 * nShutdown gpio from the system
 		 */
 		gpio_free(gpios[proto]);
-#ifdef LEGACY_RFKILL_SUPPORT
 		rfkill_unregister(kim_gdata->rfkill[proto]);
 		rfkill_destroy(kim_gdata->rfkill[proto]);
 		kim_gdata->rfkill[proto] = NULL;
-#endif
 	}
 	pr_info("kim: GPIO Freed");
-#ifndef LEGACY_RFKILL_SUPPORT
-	/* delete the sysfs entries */
-	sysfs_remove_group(kim_gdata->kim_kobj, &uim_attr_grp);
-	kobject_put(kim_gdata->kim_kobj);
-#endif
+	sysfs_remove_group(&pdev->dev.kobj, &uim_attr_grp);
 	kim_gdata->kim_pdev = NULL;
 	st_core_exit(kim_gdata->core_data);
 	return ST_SUCCESS;
