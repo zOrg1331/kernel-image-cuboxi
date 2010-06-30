@@ -1,0 +1,61 @@
+Importing driver-core.current based on 2.6.35-rc3
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.35-rc3-git1
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.35-rc3-git3
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 5904b3b81d25166e5e39b9727645bb47937618e3
+HEAD is now at 5904b3b Merge branch 'perf-fixes-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k8temp-02-fix-temp-for-asb1-processors.patch
+hwmon-it87-fix-in7-on-IT8720F.patch
+hwmon-coretemp-01-skip-ht-dups.patch
+hwmon-coretemp-02-fix-label-on-smp.patch
+hwmon-ltc4245-expose-all-gpio-pins-as-analog-voltages.patch
+hwmon-emc1403-add-power-support.patch
+hwmon-lm75-add-suspend-and-resume.patch
+hwmon-it87-labels-for-internal-voltages.patch
+hwmon-asc7621-clean-up-and-improve-detect.patch
+hwmon-add-3-critical-limit-attributes-to-sysfs-interface.patch
+hwmon-add-4-current-alarm-beep-attributes-to-sysfs-interface.patch
+hwmon-fix-autoloading-of-fschmd-driver.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + e0279cd...3e15ee4 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.35-rc3
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-rc3
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.35-rc3
+$ cd ../quilt-tmp
+$ git reset --hard 7e27d6e778cd87b6f2415515d7127eba53fe5d02
+HEAD is now at 7e27d6e Linux 2.6.35-rc3
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-ioctl-use-nonseekable_open.patch
+dm-crypt-use-kstrdup.patch
+dm-ioctl-remove-__dev_status-from-geometry-and-target-message.patch
+dm-ioctl-make-__dev_status-void.patch
+dm-ioctl-return-uevent-flag-after-rename.patch
+dm-snapshot-persistent-use-define-for-disk-header-chunk-size.patch
+dm-mpath-fix-NULL-pointer-dereference-when-path-parameters-missing.patch
+dm-linear-support-discard.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + ff1afd7...d134095 master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
