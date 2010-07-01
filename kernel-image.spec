@@ -1,6 +1,6 @@
-Name: kernel-image-rhel-smp
+Name: kernel-image-el-smp
 Version: 2.6.32
-Release: alt3
+Release: alt4
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -53,6 +53,8 @@ BuildRequires: kernel-source-%kernel_base_version = %kernel_extra_version_numeri
 BuildRequires: module-init-tools >= 3.1
 BuildRequires: lzma-utils
 Provides: kernel-modules-eeepc-%flavour
+Provides: kernel-image-rhel-smp = %version-%release
+Obsoletes: kernel-image-rhel-smp < %version-%release
 
 %if_enabled docs
 BuildRequires: xmlto transfig ghostscript
@@ -511,6 +513,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/ -name "*.o*" -delete
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Thu Jul 01 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt4
+- rhel6beta2
+- rename to el
+
 * Thu Jun 03 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt3
 - enable JFS
 - build docs as noarch
