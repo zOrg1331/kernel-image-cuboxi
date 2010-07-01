@@ -239,16 +239,15 @@ static void __init arm_bootmem_free(struct meminfo *mi)
 #ifndef CONFIG_SPARSEMEM
 int pfn_valid(unsigned long pfn)
 {
-	struct meminfo *mi = &meminfo;
-	unsigned int left = 0, right = mi->nr_banks;
+	struct lmb_region *mem = &lmb.memory;
+	unsigned int left = 0, right = mem->cnt;
 
 	do {
 		unsigned int mid = (right + left) / 2;
-		struct membank *bank = &mi->bank[mid];
 
-		if (pfn < bank_pfn_start(bank))
+		if (pfn < lmb_start_pfn(mem, mid))
 			right = mid;
-		else if (pfn >= bank_pfn_end(bank))
+		else if (pfn >= lmb_end_pfn(mem, mid))
 			left = mid + 1;
 		else
 			return 1;
