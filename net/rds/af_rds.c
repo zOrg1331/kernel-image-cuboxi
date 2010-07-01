@@ -407,8 +407,7 @@ static int __rds_create(struct socket *sock, struct sock *sk, int protocol)
 	return 0;
 }
 
-static int rds_create(struct net *net, struct socket *sock, int protocol,
-		      int kern)
+static int rds_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 

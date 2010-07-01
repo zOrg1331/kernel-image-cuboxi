@@ -12,8 +12,6 @@
  */
 
 #define KMSG_COMPONENT "tape"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
-
 #include <linux/module.h>
 #include <linux/init.h>	     // for kernel parameters
 #include <linux/kmod.h>	     // for requesting modules
@@ -581,8 +579,7 @@ tape_generic_probe(struct ccw_device *cdev)
 	device = tape_alloc_device();
 	if (IS_ERR(device))
 		return -ENODEV;
-	ccw_device_set_options(cdev, CCWDEV_DO_PATHGROUP |
-				     CCWDEV_DO_MULTIPATH);
+	ccw_device_set_options(cdev, CCWDEV_DO_PATHGROUP);
 	ret = sysfs_create_group(&cdev->dev.kobj, &tape_attr_group);
 	if (ret) {
 		tape_put_device(device);
@@ -667,7 +664,7 @@ tape_generic_remove(struct ccw_device *cdev)
 			tape_cleanup_device(device);
 	}
 
-	if (dev_get_drvdata(&cdev->dev)) {
+	if (!dev_get_drvdata(&cdev->dev)) {
 		sysfs_remove_group(&cdev->dev.kobj, &tape_attr_group);
 		dev_set_drvdata(&cdev->dev, tape_put_device(dev_get_drvdata(&cdev->dev)));
 	}

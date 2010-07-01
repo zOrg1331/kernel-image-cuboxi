@@ -655,9 +655,6 @@ static const char * const vmstat_text[] = {
 	"numa_local",
 	"numa_other",
 #endif
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	"nr_anon_transparent_hugepages",
-#endif
 
 #ifdef CONFIG_VM_EVENT_COUNTERS
 	"pgpgin",
@@ -686,9 +683,6 @@ static const char * const vmstat_text[] = {
 	"slabs_scanned",
 	"kswapd_steal",
 	"kswapd_inodesteal",
-	"kswapd_low_wmark_hit_quickly",
-	"kswapd_high_wmark_hit_quickly",
-	"kswapd_skip_congestion_wait",
 	"pageoutrun",
 	"allocstall",
 

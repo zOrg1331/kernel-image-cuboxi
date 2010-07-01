@@ -102,9 +102,6 @@ struct fs_struct;
 struct bts_context;
 struct perf_event_context;
 
-extern int exec_shield;
-extern int print_fatal_signals;
-
 /*
  * List of flags we want to share for kernel threads,
  * if only because they are not used by them anyway.
@@ -381,10 +378,6 @@ extern int sysctl_max_map_count;
 extern unsigned long
 arch_get_unmapped_area(struct file *, unsigned long, unsigned long,
 		       unsigned long, unsigned long);
-
-extern unsigned long
-arch_get_unmapped_exec_area(struct file *, unsigned long, unsigned long,
-		       unsigned long, unsigned long);
 extern unsigned long
 arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
 			  unsigned long len, unsigned long pgoff,
@@ -482,7 +475,6 @@ extern int get_dumpable(struct mm_struct *mm);
 #endif
 					/* leave room for more dump flags */
 #define MMF_VM_MERGEABLE	16	/* KSM may merge identical pages */
-#define MMF_VM_HUGEPAGE		17	/* set when VM_HUGEPAGE is set on vma */
 
 #define MMF_INIT_MASK		(MMF_DUMPABLE_MASK | MMF_DUMP_FILTER_MASK)
 
@@ -1301,9 +1293,9 @@ struct task_struct {
 	unsigned long stack_canary;
 #endif
 
-	/*
+	/* 
 	 * pointers to (original) parent process, youngest child, younger sibling,
-	 * older sibling, respectively.  (p->father can be replaced with
+	 * older sibling, respectively.  (p->father can be replaced with 
 	 * p->real_parent->pid)
 	 */
 	struct task_struct *real_parent; /* real parent process */
@@ -1400,11 +1392,6 @@ struct task_struct {
 	unsigned int sessionid;
 #endif
 	seccomp_t seccomp;
-
-#ifdef CONFIG_UTRACE
-	struct utrace *utrace;
-	unsigned long utrace_flags;
-#endif
 
 /* Thread group tracking */
    	u32 parent_exec_id;
@@ -2057,7 +2044,7 @@ static inline int dequeue_signal_lock(struct task_struct *tsk, sigset_t *mask, s
 	spin_unlock_irqrestore(&tsk->sighand->siglock, flags);
 
 	return ret;
-}
+}	
 
 extern void block_all_signals(int (*notifier)(void *priv), void *priv,
 			      sigset_t *mask);
@@ -2073,7 +2060,6 @@ extern int kill_pgrp(struct pid *pid, int sig, int priv);
 extern int kill_pid(struct pid *pid, int sig, int priv);
 extern int kill_proc_info(int, struct siginfo *, pid_t);
 extern int do_notify_parent(struct task_struct *, int);
-extern void do_notify_parent_cldstop(struct task_struct *, int);
 extern void __wake_up_parent(struct task_struct *p, struct task_struct *parent);
 extern void force_sig(int, struct task_struct *);
 extern void force_sig_specific(int, struct task_struct *);
@@ -2100,18 +2086,11 @@ static inline int is_si_special(const struct siginfo *info)
 	return info <= SEND_SIG_FORCED;
 }
 
-/*
- * True if we are on the alternate signal stack.
- */
+/* True if we are on the alternate signal stack.  */
+
 static inline int on_sig_stack(unsigned long sp)
 {
-#ifdef CONFIG_STACK_GROWSUP
-	return sp >= current->sas_ss_sp &&
-		sp - current->sas_ss_sp < current->sas_ss_size;
-#else
-	return sp > current->sas_ss_sp &&
-		sp - current->sas_ss_sp <= current->sas_ss_size;
-#endif
+	return (sp - current->sas_ss_sp < current->sas_ss_size);
 }
 
 static inline int sas_ss_flags(unsigned long sp)

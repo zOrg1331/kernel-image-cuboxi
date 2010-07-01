@@ -27,7 +27,6 @@
  *      Dave Airlie <airlied@linux.ie>
  *      Jesse Barnes <jesse.barnes@intel.com>
  */
-#include <linux/kernel.h>
 #include <linux/sysrq.h>
 #include <linux/fb.h>
 #include "drmP.h"
@@ -50,6 +49,21 @@ int drm_fb_helper_add_connector(struct drm_connector *connector)
 	return 0;
 }
 EXPORT_SYMBOL(drm_fb_helper_add_connector);
+
+static int my_atoi(const char *name)
+{
+	int val = 0;
+
+	for (;; name++) {
+		switch (*name) {
+		case '0' ... '9':
+			val = 10*val+(*name-'0');
+			break;
+		default:
+			return val;
+		}
+	}
+}
 
 /**
  * drm_fb_helper_connector_parse_command_line - parse command line for connector
@@ -97,7 +111,7 @@ static bool drm_fb_helper_connector_parse_command_line(struct drm_connector *con
 			namelen = i;
 			if (!refresh_specified && !bpp_specified &&
 			    !yres_specified) {
-				refresh = simple_strtol(&name[i+1], NULL, 10);
+				refresh = my_atoi(&name[i+1]);
 				refresh_specified = 1;
 				if (cvt || rb)
 					cvt = 0;
@@ -107,7 +121,7 @@ static bool drm_fb_helper_connector_parse_command_line(struct drm_connector *con
 		case '-':
 			namelen = i;
 			if (!bpp_specified && !yres_specified) {
-				bpp = simple_strtol(&name[i+1], NULL, 10);
+				bpp = my_atoi(&name[i+1]);
 				bpp_specified = 1;
 				if (cvt || rb)
 					cvt = 0;
@@ -116,7 +130,7 @@ static bool drm_fb_helper_connector_parse_command_line(struct drm_connector *con
 			break;
 		case 'x':
 			if (!yres_specified) {
-				yres = simple_strtol(&name[i+1], NULL, 10);
+				yres = my_atoi(&name[i+1]);
 				yres_specified = 1;
 			} else
 				goto done;
@@ -142,7 +156,7 @@ static bool drm_fb_helper_connector_parse_command_line(struct drm_connector *con
 			force = DRM_FORCE_ON;
 			break;
 		case 'D':
-			if ((connector->connector_type != DRM_MODE_CONNECTOR_DVII) &&
+			if ((connector->connector_type != DRM_MODE_CONNECTOR_DVII) ||
 			    (connector->connector_type != DRM_MODE_CONNECTOR_HDMIB))
 				force = DRM_FORCE_ON;
 			else
@@ -156,7 +170,7 @@ static bool drm_fb_helper_connector_parse_command_line(struct drm_connector *con
 		}
 	}
 	if (i < 0 && yres_specified) {
-		xres = simple_strtol(name, NULL, 10);
+		xres = my_atoi(name);
 		res_specified = 1;
 	}
 done:
@@ -359,9 +373,11 @@ static void drm_fb_helper_off(struct fb_info *info, int dpms_mode)
 					mutex_unlock(&dev->mode_config.mutex);
 				}
 			}
-			mutex_lock(&dev->mode_config.mutex);
-			crtc_funcs->dpms(crtc, DRM_MODE_DPMS_OFF);
-			mutex_unlock(&dev->mode_config.mutex);
+			if (dpms_mode == DRM_MODE_DPMS_OFF) {
+				mutex_lock(&dev->mode_config.mutex);
+				crtc_funcs->dpms(crtc, dpms_mode);
+				mutex_unlock(&dev->mode_config.mutex);
+			}
 		}
 	}
 }
@@ -369,23 +385,18 @@ static void drm_fb_helper_off(struct fb_info *info, int dpms_mode)
 int drm_fb_helper_blank(int blank, struct fb_info *info)
 {
 	switch (blank) {
-	/* Display: On; HSync: On, VSync: On */
 	case FB_BLANK_UNBLANK:
 		drm_fb_helper_on(info);
 		break;
-	/* Display: Off; HSync: On, VSync: On */
 	case FB_BLANK_NORMAL:
 		drm_fb_helper_off(info, DRM_MODE_DPMS_STANDBY);
 		break;
-	/* Display: Off; HSync: Off, VSync: On */
 	case FB_BLANK_HSYNC_SUSPEND:
 		drm_fb_helper_off(info, DRM_MODE_DPMS_STANDBY);
 		break;
-	/* Display: Off; HSync: On, VSync: Off */
 	case FB_BLANK_VSYNC_SUSPEND:
 		drm_fb_helper_off(info, DRM_MODE_DPMS_SUSPEND);
 		break;
-	/* Display: Off; HSync: Off, VSync: Off */
 	case FB_BLANK_POWERDOWN:
 		drm_fb_helper_off(info, DRM_MODE_DPMS_OFF);
 		break;
@@ -592,10 +603,11 @@ int drm_fb_helper_check_var(struct fb_var_screeninfo *var,
 		return -EINVAL;
 
 	/* Need to resize the fb object !!! */
-	if (var->bits_per_pixel > fb->bits_per_pixel || var->xres > fb->width || var->yres > fb->height) {
-		DRM_DEBUG("fb userspace requested width/height/bpp is greater than current fb "
-			  "object %dx%d-%d > %dx%d-%d\n", var->xres, var->yres, var->bits_per_pixel,
-			  fb->width, fb->height, fb->bits_per_pixel);
+	if (var->xres > fb->width || var->yres > fb->height) {
+		DRM_ERROR("Requested width/height is greater than current fb "
+			   "object %dx%d > %dx%d\n", var->xres, var->yres,
+			   fb->width, fb->height);
+		DRM_ERROR("Need resizing code.\n");
 		return -EINVAL;
 	}
 
@@ -680,7 +692,7 @@ int drm_fb_helper_set_par(struct fb_info *info)
 	int i;
 
 	if (var->pixclock != 0) {
-		DRM_ERROR("PIXEL CLOCK SET\n");
+		DRM_ERROR("PIXEL CLCOK SET\n");
 		return -EINVAL;
 	}
 
@@ -893,13 +905,8 @@ int drm_fb_helper_single_fb_probe(struct drm_device *dev,
 
 	if (new_fb) {
 		info->var.pixclock = 0;
-		ret = fb_alloc_cmap(&info->cmap, modeset->crtc->gamma_size, 0);
-		if (ret)
-			return ret;
-		if (register_framebuffer(info) < 0) {
-			fb_dealloc_cmap(&info->cmap);
+		if (register_framebuffer(info) < 0)
 			return -EINVAL;
-		}
 	} else {
 		drm_fb_helper_set_par(info);
 	}
@@ -929,7 +936,6 @@ void drm_fb_helper_free(struct drm_fb_helper *helper)
 		unregister_sysrq_key('v', &sysrq_drm_fb_helper_restore_op);
 	}
 	drm_fb_helper_crtc_free(helper);
-	fb_dealloc_cmap(&helper->fb->fbdev->cmap);
 }
 EXPORT_SYMBOL(drm_fb_helper_free);
 

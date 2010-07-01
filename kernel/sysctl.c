@@ -72,7 +72,6 @@ extern int sysctl_overcommit_ratio;
 extern int sysctl_panic_on_oom;
 extern int sysctl_oom_kill_allocating_task;
 extern int sysctl_oom_dump_tasks;
-extern int sysctl_would_have_oomkilled;
 extern int max_threads;
 extern int core_uses_pid;
 extern int suid_dumpable;
@@ -89,26 +88,6 @@ extern int sysctl_nr_open_min, sysctl_nr_open_max;
 #ifndef CONFIG_MMU
 extern int sysctl_nr_trim_pages;
 #endif
-
-int exec_shield = (1<<0);
-/* exec_shield is a bitmask:
- * 0: off; vdso at STACK_TOP, 1 page below TASK_SIZE
- * (1<<0) 1: on [also on if !=0]
- * (1<<1) 2: force noexecstack regardless of PT_GNU_STACK
- * The old settings
- * (1<<2) 4: vdso just below .text of main (unless too low)
- * (1<<3) 8: vdso just below .text of PT_INTERP (unless too low)
- * are ignored because the vdso is placed completely randomly
- */
-
-static int __init setup_exec_shield(char *str)
-{
-	get_option(&str, &exec_shield);
-
-	return 1;
-}
-__setup("exec-shield=", setup_exec_shield);
-
 #ifdef CONFIG_RCU_TORTURE_TEST
 extern int rcutorture_runnable;
 #endif /* #ifdef CONFIG_RCU_TORTURE_TEST */
@@ -424,14 +403,6 @@ static struct ctl_table kern_table[] = {
 		.ctl_name	= KERN_PANIC,
 		.procname	= "panic",
 		.data		= &panic_timeout,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
-	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "exec-shield",
-		.data		= &exec_shield,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
@@ -1102,14 +1073,6 @@ static struct ctl_table vm_table[] = {
 		.proc_handler	= &proc_dointvec,
 	},
 	{
-		.ctl_name	= CTL_UNNUMBERED,
-		.procname	= "would_have_oomkilled",
-		.data		= &sysctl_would_have_oomkilled,
-		.maxlen		= sizeof(sysctl_would_have_oomkilled),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
-	},
-	{
 		.ctl_name	= VM_OVERCOMMIT_RATIO,
 		.procname	= "overcommit_ratio",
 		.data		= &sysctl_overcommit_ratio,
@@ -1382,7 +1345,6 @@ static struct ctl_table vm_table[] = {
 		.strategy	= &sysctl_jiffies,
 	},
 #endif
-#ifdef CONFIG_MMU
 	{
 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "mmap_min_addr",
@@ -1391,7 +1353,6 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &mmap_min_addr_handler,
 	},
-#endif
 #ifdef CONFIG_NUMA
 	{
 		.ctl_name	= CTL_UNNUMBERED,
@@ -1644,8 +1605,7 @@ static struct ctl_table debug_table[] = {
 		.data		= &show_unhandled_signals,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
+		.proc_handler	= proc_dointvec
 	},
 #endif
 	{ .ctl_name = 0 }

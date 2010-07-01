@@ -621,8 +621,7 @@ out:
 	return sk;
 }
 
-static int unix_create(struct net *net, struct socket *sock, int protocol,
-		       int kern)
+static int unix_create(struct net *net, struct socket *sock, int protocol)
 {
 	if (protocol && protocol != PF_UNIX)
 		return -EPROTONOSUPPORT;

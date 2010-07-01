@@ -1117,7 +1117,7 @@ int cmd_annotate(int argc, const char **argv, const char *prefix __used)
 {
 	symbol__init();
 
-	page_size = sysconf(_SC_PAGESIZE);
+	page_size = getpagesize();
 
 	argc = parse_options(argc, argv, options, annotate_usage, 0);
 

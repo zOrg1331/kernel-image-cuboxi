@@ -263,10 +263,9 @@ static void bad_page(struct page *page)
 	printk(KERN_ALERT "BUG: Bad page state in process %s  pfn:%05lx\n",
 		current->comm, page_to_pfn(page));
 	printk(KERN_ALERT
-		"page:%p flags:%p count:%d mapcount:%d mapping:%p ",
+		"page:%p flags:%p count:%d mapcount:%d mapping:%p index:%lx\n",
 		page, (void *)page->flags, page_count(page),
-		page_mapcount(page), page->mapping);
-	printk(KERN_CONT "index:%lx (%s)\n", page->index, print_tainted());
+		page_mapcount(page), page->mapping, page->index);
 
 	dump_stack();
 out:
@@ -311,7 +310,6 @@ void prep_compound_page(struct page *page, unsigned long order)
 	}
 }
 
-/* update __split_huge_page_refcount if you change this function */
 static int destroy_compound_page(struct page *page, unsigned long order)
 {
 	int i;
@@ -488,6 +486,7 @@ static inline void __free_one_page(struct page *page,
 	zone->free_area[order].nr_free++;
 }
 
+#ifdef CONFIG_HAVE_MLOCKED_PAGE_BIT
 /*
  * free_page_mlock() -- clean up attempts to free and mlocked() page.
  * Page should not be on lru, so no need to fix that up.
@@ -498,6 +497,9 @@ static inline void free_page_mlock(struct page *page)
 	__dec_zone_page_state(page, NR_MLOCK);
 	__count_vm_event(UNEVICTABLE_MLOCKFREED);
 }
+#else
+static void free_page_mlock(struct page *page) { }
+#endif
 
 static inline int free_pages_check(struct page *page)
 {
@@ -585,8 +587,6 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 
 	kmemcheck_free_shadow(page, order);
 
-	if (PageAnon(page))
-		page->mapping = NULL;
 	for (i = 0 ; i < (1 << order) ; ++i)
 		bad += free_pages_check(page + i);
 	if (bad)
@@ -1762,11 +1762,7 @@ gfp_to_alloc_flags(gfp_t gfp_mask)
 	 */
 	alloc_flags |= (gfp_mask & __GFP_HIGH);
 
-	/*
-	 * Not worth trying to allocate harder for __GFP_NOMEMALLOC
-	 * even if it can't schedule.
-	 */
-	if (!wait && !(gfp_mask & __GFP_NOMEMALLOC)) {
+	if (!wait) {
 		alloc_flags |= ALLOC_HARDER;
 		/*
 		 * Ignore cpuset if GFP_ATOMIC (!wait) rather than fail alloc.
@@ -1822,8 +1818,7 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 		goto nopage;
 
 restart:
-	if (!(gfp_mask & __GFP_NO_KSWAPD))
-		wake_all_kswapd(order, zonelist, high_zoneidx);
+	wake_all_kswapd(order, zonelist, high_zoneidx);
 
 	/*
 	 * OK, we're below the kswapd watermark and have kicked background
@@ -5088,26 +5083,5 @@ __offline_isolated_pages(unsigned long start_pfn, unsigned long end_pfn)
 		pfn += (1 << order);
 	}
 	spin_unlock_irqrestore(&zone->lock, flags);
-}
-#endif
-
-#ifdef CONFIG_MEMORY_FAILURE
-bool is_free_buddy_page(struct page *page)
-{
-	struct zone *zone = page_zone(page);
-	unsigned long pfn = page_to_pfn(page);
-	unsigned long flags;
-	int order;
-
-	spin_lock_irqsave(&zone->lock, flags);
-	for (order = 0; order < MAX_ORDER; order++) {
-		struct page *page_head = page - (pfn & ((1 << order) - 1));
-
-		if (PageBuddy(page_head) && page_order(page_head) >= order)
-			break;
-	}
-	spin_unlock_irqrestore(&zone->lock, flags);
-
-	return order < MAX_ORDER;
 }
 #endif

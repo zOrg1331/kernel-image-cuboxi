@@ -675,8 +675,7 @@ char *dn_addr2asc(__u16 addr, char *buf)
 
 
 
-static int dn_create(struct net *net, struct socket *sock, int protocol,
-		     int kern)
+static int dn_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 

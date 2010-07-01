@@ -78,6 +78,11 @@ nfs4_callback_svc(void *vrqstp)
 
 	set_freezable();
 
+	/*
+	 * FIXME: do we really need to run this under the BKL? If so, please
+	 * add a comment about what it's intended to protect.
+	 */
+	lock_kernel();
 	while (!kthread_should_stop()) {
 		/*
 		 * Listen for a request on the socket
@@ -99,6 +104,7 @@ nfs4_callback_svc(void *vrqstp)
 		preverr = err;
 		svc_process(rqstp);
 	}
+	unlock_kernel();
 	return 0;
 }
 
@@ -118,6 +124,7 @@ nfs4_callback_up(struct svc_serv *serv)
 	dprintk("NFS: Callback listener port = %u (af %u)\n",
 			nfs_callback_tcpport, PF_INET);
 
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	ret = svc_create_xprt(serv, "tcp", PF_INET6,
 				nfs_callback_set_tcpport, SVC_SOCK_ANONYMOUS);
 	if (ret > 0) {
@@ -128,6 +135,7 @@ nfs4_callback_up(struct svc_serv *serv)
 		ret = 0;
 	else
 		goto out_err;
+#endif	/* defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE) */
 
 	return svc_prepare_thread(serv, &serv->sv_pools[0]);
 
@@ -152,6 +160,11 @@ nfs41_callback_svc(void *vrqstp)
 
 	set_freezable();
 
+	/*
+	 * FIXME: do we really need to run this under the BKL? If so, please
+	 * add a comment about what it's intended to protect.
+	 */
+	lock_kernel();
 	while (!kthread_should_stop()) {
 		prepare_to_wait(&serv->sv_cb_waitq, &wq, TASK_INTERRUPTIBLE);
 		spin_lock_bh(&serv->sv_cb_lock);
@@ -170,6 +183,7 @@ nfs41_callback_svc(void *vrqstp)
 		}
 		finish_wait(&serv->sv_cb_waitq, &wq);
 	}
+	unlock_kernel();
 	return 0;
 }
 
@@ -383,7 +397,6 @@ static int nfs_callback_authenticate(struct svc_rqst *rqstp)
  */
 static struct svc_version *nfs4_callback_version[] = {
 	[1] = &nfs4_callback_version1,
-	[4] = &nfs4_callback_version4,
 };
 
 static struct svc_stat nfs4_callback_stats;

@@ -940,16 +940,10 @@ EXPORT_SYMBOL(scsi_adjust_queue_depth);
  */
 int scsi_track_queue_full(struct scsi_device *sdev, int depth)
 {
-
-	/*
-	 * Don't let QUEUE_FULLs on the same
-	 * jiffies count, they could all be from
-	 * same event.
-	 */
-	if ((jiffies >> 4) == (sdev->last_queue_full_time >> 4))
+	if ((jiffies >> 4) == sdev->last_queue_full_time)
 		return 0;
 
-	sdev->last_queue_full_time = jiffies;
+	sdev->last_queue_full_time = (jiffies >> 4);
 	if (sdev->last_queue_full_depth != depth) {
 		sdev->last_queue_full_count = 1;
 		sdev->last_queue_full_depth = depth;

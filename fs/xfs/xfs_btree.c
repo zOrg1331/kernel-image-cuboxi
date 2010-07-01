@@ -39,7 +39,6 @@
 #include "xfs_btree_trace.h"
 #include "xfs_ialloc.h"
 #include "xfs_error.h"
-#include "xfs_trace.h"
 
 /*
  * Cursor allocation zone.
@@ -82,7 +81,7 @@ xfs_btree_check_lblock(
 			XFS_ERRTAG_BTREE_CHECK_LBLOCK,
 			XFS_RANDOM_BTREE_CHECK_LBLOCK))) {
 		if (bp)
-			trace_xfs_btree_corrupt(bp, _RET_IP_);
+			xfs_buftrace("LBTREE ERROR", bp);
 		XFS_ERROR_REPORT("xfs_btree_check_lblock", XFS_ERRLEVEL_LOW,
 				 mp);
 		return XFS_ERROR(EFSCORRUPTED);
@@ -120,7 +119,7 @@ xfs_btree_check_sblock(
 			XFS_ERRTAG_BTREE_CHECK_SBLOCK,
 			XFS_RANDOM_BTREE_CHECK_SBLOCK))) {
 		if (bp)
-			trace_xfs_btree_corrupt(bp, _RET_IP_);
+			xfs_buftrace("SBTREE ERROR", bp);
 		XFS_CORRUPTION_ERROR("xfs_btree_check_sblock",
 			XFS_ERRLEVEL_LOW, cur->bc_mp, block);
 		return XFS_ERROR(EFSCORRUPTED);

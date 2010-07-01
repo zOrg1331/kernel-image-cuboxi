@@ -389,10 +389,8 @@ struct sk_buff {
 #ifdef CONFIG_NETWORK_SECMARK
 	__u32			secmark;
 #endif
-	union {
-		__u32		mark;
-		__u32		dropcount;
-	};
+
+	__u32			mark;
 
 	__u16			vlan_tci;
 

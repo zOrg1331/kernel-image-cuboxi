@@ -16,6 +16,7 @@
 #include <linux/netdevice.h>
 
 #include "fsm.h"
+#include "cu3088.h"
 #include "ctcm_dbug.h"
 #include "ctcm_mpc.h"
 
@@ -64,23 +65,6 @@
 		if (do_debug_ccw) \
 			ctcmpc_dumpit(buf, len); \
 	} while (0)
-
-/**
- * Enum for classifying detected devices
- */
-enum ctcm_channel_types {
-	/* Device is not a channel  */
-	ctcm_channel_type_none,
-
-	/* Device is a CTC/A */
-	ctcm_channel_type_parallel,
-
-	/* Device is a FICON channel */
-	ctcm_channel_type_ficon,
-
-	/* Device is a ESCON channel */
-	ctcm_channel_type_escon
-};
 
 /*
  * CCW commands, used in this driver.
@@ -137,7 +121,7 @@ struct channel {
 	 * Type of this channel.
 	 * CTC/A or Escon for valid channels.
 	 */
-	enum ctcm_channel_types type;
+	enum channel_types type;
 	/*
 	 * Misc. flags. See CHANNEL_FLAGS_... below
 	 */

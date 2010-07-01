@@ -1017,14 +1017,7 @@ int shmem_unuse(swp_entry_t entry, struct page *page)
 			goto out;
 	}
 	mutex_unlock(&shmem_swaplist_mutex);
-	/*
-	 * Can some race bring us here?  We've been holding page lock,
-	 * so I think not; but would rather try again later than BUG()
-	 */
-	unlock_page(page);
-	page_cache_release(page);
-out:
-	return (found < 0) ? found : 0;
+out:	return found;	/* 0 or 1 or -ENOMEM */
 }
 
 /*
@@ -1087,7 +1080,7 @@ static int shmem_writepage(struct page *page, struct writeback_control *wbc)
 		else
 			inode = NULL;
 		spin_unlock(&info->lock);
-		swap_shmem_alloc(swap);
+		swap_duplicate(swap);
 		BUG_ON(page_mapped(page));
 		page_cache_release(page);	/* pagecache ref */
 		swap_writepage(page, wbc);

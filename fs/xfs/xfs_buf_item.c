@@ -29,7 +29,6 @@
 #include "xfs_buf_item.h"
 #include "xfs_trans_priv.h"
 #include "xfs_error.h"
-#include "xfs_trace.h"
 
 
 kmem_zone_t	*xfs_buf_item_zone;
@@ -165,7 +164,7 @@ xfs_buf_item_size(
 		 * is the buf log format structure with the
 		 * cancel flag in it.
 		 */
-		trace_xfs_buf_item_size_stale(bip);
+		xfs_buf_item_trace("SIZE STALE", bip);
 		ASSERT(bip->bli_format.blf_flags & XFS_BLI_CANCEL);
 		return 1;
 	}
@@ -207,7 +206,7 @@ xfs_buf_item_size(
 		}
 	}
 
-	trace_xfs_buf_item_size(bip);
+	xfs_buf_item_trace("SIZE NORM", bip);
 	return nvecs;
 }
 
@@ -260,7 +259,7 @@ xfs_buf_item_format(
 		 * is the buf log format structure with the
 		 * cancel flag in it.
 		 */
-		trace_xfs_buf_item_format_stale(bip);
+		xfs_buf_item_trace("FORMAT STALE", bip);
 		ASSERT(bip->bli_format.blf_flags & XFS_BLI_CANCEL);
 		bip->bli_format.blf_size = nvecs;
 		return;
@@ -336,7 +335,7 @@ xfs_buf_item_format(
 	/*
 	 * Check to make sure everything is consistent.
 	 */
-	trace_xfs_buf_item_format(bip);
+	xfs_buf_item_trace("FORMAT NORM", bip);
 	xfs_buf_item_log_check(bip);
 }
 
@@ -356,7 +355,8 @@ xfs_buf_item_pin(
 	ASSERT(atomic_read(&bip->bli_refcount) > 0);
 	ASSERT((bip->bli_flags & XFS_BLI_LOGGED) ||
 	       (bip->bli_flags & XFS_BLI_STALE));
-	trace_xfs_buf_item_pin(bip);
+	xfs_buf_item_trace("PIN", bip);
+	xfs_buftrace("XFS_PIN", bp);
 	xfs_bpin(bp);
 }
 
@@ -383,7 +383,8 @@ xfs_buf_item_unpin(
 	ASSERT(bp != NULL);
 	ASSERT(XFS_BUF_FSPRIVATE(bp, xfs_buf_log_item_t *) == bip);
 	ASSERT(atomic_read(&bip->bli_refcount) > 0);
-	trace_xfs_buf_item_unpin(bip);
+	xfs_buf_item_trace("UNPIN", bip);
+	xfs_buftrace("XFS_UNPIN", bp);
 
 	freed = atomic_dec_and_test(&bip->bli_refcount);
 	ailp = bip->bli_item.li_ailp;
@@ -394,8 +395,8 @@ xfs_buf_item_unpin(
 		ASSERT(!(XFS_BUF_ISDELAYWRITE(bp)));
 		ASSERT(XFS_BUF_ISSTALE(bp));
 		ASSERT(bip->bli_format.blf_flags & XFS_BLI_CANCEL);
-		trace_xfs_buf_item_unpin_stale(bip);
-
+		xfs_buf_item_trace("UNPIN STALE", bip);
+		xfs_buftrace("XFS_UNPIN STALE", bp);
 		/*
 		 * If we get called here because of an IO error, we may
 		 * or may not have the item on the AIL. xfs_trans_ail_delete()
@@ -439,8 +440,8 @@ xfs_buf_item_unpin_remove(
 	if ((atomic_read(&bip->bli_refcount) == 1) &&
 	    (bip->bli_flags & XFS_BLI_STALE)) {
 		ASSERT(XFS_BUF_VALUSEMA(bip->bli_buf) <= 0);
-		trace_xfs_buf_item_unpin_stale(bip);
-
+		xfs_buf_item_trace("UNPIN REMOVE", bip);
+		xfs_buftrace("XFS_UNPIN_REMOVE", bp);
 		/*
 		 * yes -- clear the xaction descriptor in-use flag
 		 * and free the chunk if required.  We can safely
@@ -494,7 +495,7 @@ xfs_buf_item_trylock(
 	XFS_BUF_HOLD(bp);
 
 	ASSERT(!(bip->bli_flags & XFS_BLI_STALE));
-	trace_xfs_buf_item_trylock(bip);
+	xfs_buf_item_trace("TRYLOCK SUCCESS", bip);
 	return XFS_ITEM_SUCCESS;
 }
 
@@ -523,6 +524,7 @@ xfs_buf_item_unlock(
 	uint		hold;
 
 	bp = bip->bli_buf;
+	xfs_buftrace("XFS_UNLOCK", bp);
 
 	/*
 	 * Clear the buffer's association with this transaction.
@@ -545,7 +547,7 @@ xfs_buf_item_unlock(
 	 */
 	if (bip->bli_flags & XFS_BLI_STALE) {
 		bip->bli_flags &= ~XFS_BLI_LOGGED;
-		trace_xfs_buf_item_unlock_stale(bip);
+		xfs_buf_item_trace("UNLOCK STALE", bip);
 		ASSERT(bip->bli_format.blf_flags & XFS_BLI_CANCEL);
 		if (!aborted)
 			return;
@@ -572,7 +574,7 @@ xfs_buf_item_unlock(
 	 * release the buffer at the end of this routine.
 	 */
 	hold = bip->bli_flags & XFS_BLI_HOLD;
-	trace_xfs_buf_item_unlock(bip);
+	xfs_buf_item_trace("UNLOCK", bip);
 
 	/*
 	 * If the buf item isn't tracking any data, free it.
@@ -616,8 +618,7 @@ xfs_buf_item_committed(
 	xfs_buf_log_item_t	*bip,
 	xfs_lsn_t		lsn)
 {
-	trace_xfs_buf_item_committed(bip);
-
+	xfs_buf_item_trace("COMMITTED", bip);
 	if ((bip->bli_flags & XFS_BLI_INODE_ALLOC_BUF) &&
 	    (bip->bli_item.li_lsn != 0)) {
 		return bip->bli_item.li_lsn;
@@ -639,7 +640,7 @@ xfs_buf_item_push(
 	xfs_buf_t	*bp;
 
 	ASSERT(!(bip->bli_flags & XFS_BLI_STALE));
-	trace_xfs_buf_item_push(bip);
+	xfs_buf_item_trace("PUSH", bip);
 
 	bp = bip->bli_buf;
 
@@ -737,6 +738,9 @@ xfs_buf_item_init(
 	bip->bli_format.blf_blkno = (__int64_t)XFS_BUF_ADDR(bp);
 	bip->bli_format.blf_len = (ushort)BTOBB(XFS_BUF_COUNT(bp));
 	bip->bli_format.blf_map_size = map_size;
+#ifdef XFS_BLI_TRACE
+	bip->bli_trace = ktrace_alloc(XFS_BLI_TRACE_SIZE, KM_NOFS);
+#endif
 
 #ifdef XFS_TRANS_DEBUG
 	/*
@@ -874,6 +878,9 @@ xfs_buf_item_free(
 	kmem_free(bip->bli_logged);
 #endif /* XFS_TRANS_DEBUG */
 
+#ifdef XFS_BLI_TRACE
+	ktrace_free(bip->bli_trace);
+#endif
 	kmem_zone_free(xfs_buf_item_zone, bip);
 }
 
@@ -890,8 +897,7 @@ xfs_buf_item_relse(
 {
 	xfs_buf_log_item_t	*bip;
 
-	trace_xfs_buf_item_relse(bp, _RET_IP_);
-
+	xfs_buftrace("XFS_RELSE", bp);
 	bip = XFS_BUF_FSPRIVATE(bp, xfs_buf_log_item_t*);
 	XFS_BUF_SET_FSPRIVATE(bp, bip->bli_item.li_bio_list);
 	if ((XFS_BUF_FSPRIVATE(bp, void *) == NULL) &&
@@ -988,7 +994,7 @@ xfs_buf_iodone_callbacks(
 		if (XFS_FORCED_SHUTDOWN(mp)) {
 			ASSERT(XFS_BUF_TARGET(bp) == mp->m_ddev_targp);
 			XFS_BUF_SUPER_STALE(bp);
-			trace_xfs_buf_item_iodone(bp, _RET_IP_);
+			xfs_buftrace("BUF_IODONE_CB", bp);
 			xfs_buf_do_callbacks(bp, lip);
 			XFS_BUF_SET_FSPRIVATE(bp, NULL);
 			XFS_BUF_CLR_IODONE_FUNC(bp);
@@ -1024,7 +1030,7 @@ xfs_buf_iodone_callbacks(
 				XFS_BUF_SET_START(bp);
 			}
 			ASSERT(XFS_BUF_IODONE_FUNC(bp));
-			trace_xfs_buf_item_iodone_async(bp, _RET_IP_);
+			xfs_buftrace("BUF_IODONE ASYNC", bp);
 			xfs_buf_relse(bp);
 		} else {
 			/*
@@ -1047,7 +1053,9 @@ xfs_buf_iodone_callbacks(
 		}
 		return;
 	}
-
+#ifdef XFSERRORDEBUG
+	xfs_buftrace("XFS BUFCB NOERR", bp);
+#endif
 	xfs_buf_do_callbacks(bp, lip);
 	XFS_BUF_SET_FSPRIVATE(bp, NULL);
 	XFS_BUF_CLR_IODONE_FUNC(bp);
@@ -1073,9 +1081,7 @@ xfs_buf_error_relse(
 	XFS_BUF_DONE(bp);
 	XFS_BUF_UNDELAYWRITE(bp);
 	XFS_BUF_ERROR(bp,0);
-
-	trace_xfs_buf_error_relse(bp, _RET_IP_);
-
+	xfs_buftrace("BUF_ERROR_RELSE", bp);
 	if (! XFS_FORCED_SHUTDOWN(mp))
 		xfs_force_shutdown(mp, SHUTDOWN_META_IO_ERROR);
 	/*
@@ -1122,3 +1128,34 @@ xfs_buf_iodone(
 	xfs_trans_ail_delete(ailp, (xfs_log_item_t *)bip);
 	xfs_buf_item_free(bip);
 }
+
+#if defined(XFS_BLI_TRACE)
+void
+xfs_buf_item_trace(
+	char			*id,
+	xfs_buf_log_item_t	*bip)
+{
+	xfs_buf_t		*bp;
+	ASSERT(bip->bli_trace != NULL);
+
+	bp = bip->bli_buf;
+	ktrace_enter(bip->bli_trace,
+		     (void *)id,
+		     (void *)bip->bli_buf,
+		     (void *)((unsigned long)bip->bli_flags),
+		     (void *)((unsigned long)bip->bli_recur),
+		     (void *)((unsigned long)atomic_read(&bip->bli_refcount)),
+		     (void *)((unsigned long)
+				(0xFFFFFFFF & XFS_BUF_ADDR(bp) >> 32)),
+		     (void *)((unsigned long)(0xFFFFFFFF & XFS_BUF_ADDR(bp))),
+		     (void *)((unsigned long)XFS_BUF_COUNT(bp)),
+		     (void *)((unsigned long)XFS_BUF_BFLAGS(bp)),
+		     XFS_BUF_FSPRIVATE(bp, void *),
+		     XFS_BUF_FSPRIVATE2(bp, void *),
+		     (void *)(unsigned long)XFS_BUF_ISPINNED(bp),
+		     (void *)XFS_BUF_IODONE_FUNC(bp),
+		     (void *)((unsigned long)(XFS_BUF_VALUSEMA(bp))),
+		     (void *)bip->bli_item.li_desc,
+		     (void *)((unsigned long)bip->bli_item.li_flags));
+}
+#endif /* XFS_BLI_TRACE */

@@ -425,8 +425,7 @@ static struct proto nr_proto = {
 	.obj_size = sizeof(struct nr_sock),
 };
 
-static int nr_create(struct net *net, struct socket *sock, int protocol,
-		     int kern)
+static int nr_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 	struct nr_sock *nr;
