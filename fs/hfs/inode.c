@@ -39,10 +39,19 @@ static int hfs_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata)
 {
+	int ret;
+
 	*pagep = NULL;
-	return cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
+	ret = cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
 				hfs_get_block,
 				&HFS_I(mapping->host)->phys_size);
+	if (unlikely(ret)) {
+		loff_t isize = mapping->host->i_size;
+		if (pos + len > isize)
+			vmtruncate(mapping->host, isize);
+	}
+
+	return ret;
 }
 
 static sector_t hfs_bmap(struct address_space *mapping, sector_t block)
@@ -112,9 +121,24 @@ static ssize_t hfs_direct_IO(int rw, struct kiocb *iocb,
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file->f_path.dentry->d_inode->i_mapping->host;
+	ssize_t ret;
 
-	return blockdev_direct_IO(rw, iocb, inode, inode->i_sb->s_bdev, iov,
+	ret = blockdev_direct_IO(rw, iocb, inode, inode->i_sb->s_bdev, iov,
 				  offset, nr_segs, hfs_get_block, NULL);
+
+	/*
+	 * In case of error extending write may have instantiated a few
+	 * blocks outside i_size. Trim these off again.
+	 */
+	if (unlikely((rw & WRITE) && ret < 0)) {
+		loff_t isize = i_size_read(inode);
+		loff_t end = offset + iov_length(iov, nr_segs);
+
+		if (end > isize)
+			vmtruncate(inode, isize);
+	}
+
+	return ret;
 }
 
 static int hfs_writepages(struct address_space *mapping,
@@ -588,10 +612,16 @@ int hfs_inode_setattr(struct dentry *dentry, struct iattr * attr)
 			attr->ia_mode = inode->i_mode & ~S_IWUGO;
 		attr->ia_mode &= S_ISDIR(inode->i_mode) ? ~hsb->s_dir_umask: ~hsb->s_file_umask;
 	}
-	error = inode_setattr(inode, attr);
-	if (error)
-		return error;
 
+	if ((attr->ia_valid & ATTR_SIZE) &&
+	    attr->ia_size != i_size_read(inode)) {
+		error = vmtruncate(inode, attr->ia_size);
+		if (error)
+			return error;
+	}
+
+	setattr_copy(inode, attr);
+	mark_inode_dirty(inode);
 	return 0;
 }
 
