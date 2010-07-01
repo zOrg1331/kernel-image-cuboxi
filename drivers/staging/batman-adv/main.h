@@ -27,7 +27,7 @@
 #define DRIVER_DESC   "B.A.T.M.A.N. advanced"
 #define DRIVER_DEVICE "batman-adv"
 
-#define SOURCE_VERSION "0.2.2-beta"
+#define SOURCE_VERSION "2010.0.0"
 
 
 /* B.A.T.M.A.N. parameters */
@@ -57,20 +57,27 @@
 #define LOG_BUF_LEN 8192	  /* has to be a power of 2 */
 #define ETH_STR_LEN 20
 
+#define VIS_INTERVAL 5000	/* 5 seconds */
+
+/* how much worse secondary interfaces may be to
+ * to be considered as bonding candidates */
+
+#define BONDING_TQ_THRESHOLD	50
+
 #define MAX_AGGREGATION_BYTES 512 /* should not be bigger than 512 bytes or
 				   * change the size of
 				   * forw_packet->direct_link_flags */
 #define MAX_AGGREGATION_MS 100
 
 #define RESET_PROTECTION_MS 30000
-#define EXPECTED_SEQNO_RANGE	4096
+#define EXPECTED_SEQNO_RANGE	65536
 /* don't reset again within 30 seconds */
 
 #define MODULE_INACTIVE 0
 #define MODULE_ACTIVE 1
 #define MODULE_DEACTIVATING 2
 
-#define BCAST_QUEUE_LEN 256
+#define BCAST_QUEUE_LEN		256
 #define BATMAN_QUEUE_LEN	256
 
 /*
@@ -117,6 +124,7 @@ extern int bat_debug_type(int type);
 #include <linux/slab.h>
 #include <net/sock.h>		/* struct sock */
 #include <linux/jiffies.h>
+#include <linux/seq_file.h>
 #include "types.h"
 
 #ifndef REVISION_VERSION
@@ -134,7 +142,6 @@ extern spinlock_t orig_hash_lock;
 extern spinlock_t forw_bat_list_lock;
 extern spinlock_t forw_bcast_list_lock;
 
-extern atomic_t vis_interval;
 extern atomic_t bcast_queue_left;
 extern atomic_t batman_queue_left;
 extern int16_t num_hna;
