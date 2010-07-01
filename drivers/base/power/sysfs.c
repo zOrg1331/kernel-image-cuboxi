@@ -73,6 +73,8 @@
  *	device are known to the PM core.  However, for some devices this
  *	attribute is set to "enabled" by bus type code or device drivers and in
  *	that cases it should be safe to leave the default value.
+ *
+ *	wakeup_count - Report the number of wakeup events related to the device
  */
 
 static const char enabled[] = "enabled";
@@ -143,6 +145,14 @@ wake_store(struct device * dev, struct device_attribute *attr,
 }
 
 static DEVICE_ATTR(wakeup, 0644, wake_show, wake_store);
+
+static ssize_t wakeup_count_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%lu\n", dev->power.wakeup_count);
+}
+
+static DEVICE_ATTR(wakeup_count, 0444, wakeup_count_show, NULL);
 
 #ifdef CONFIG_PM_ADVANCED_DEBUG
 #ifdef CONFIG_PM_RUNTIME
@@ -230,6 +240,7 @@ static struct attribute * power_attrs[] = {
 	&dev_attr_control.attr,
 #endif
 	&dev_attr_wakeup.attr,
+	&dev_attr_wakeup_count.attr,
 #ifdef CONFIG_PM_ADVANCED_DEBUG
 	&dev_attr_async.attr,
 #ifdef CONFIG_PM_RUNTIME
