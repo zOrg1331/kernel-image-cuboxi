@@ -87,6 +87,9 @@ struct inodes_stat_t {
  */
 #define FMODE_NOCMTIME		((__force fmode_t)2048)
 
+/* Expect random access pattern */
+#define FMODE_RANDOM		((__force fmode_t)4096)
+
 /*
  * The below are the various read and write types that we support. Some of
  * them include behavioral modifiers that send information down to the
@@ -129,7 +132,7 @@ struct inodes_stat_t {
  * WRITE_SYNC		Like WRITE_SYNC_PLUG, but also unplugs the device
  *			immediately after submission. The write equivalent
  *			of READ_SYNC.
- * WRITE_ODIRECT	Special case write for O_DIRECT only.
+ * WRITE_ODIRECT_PLUG	Special case write for O_DIRECT only.
  * SWRITE_SYNC
  * SWRITE_SYNC_PLUG	Like WRITE_SYNC/WRITE_SYNC_PLUG, but locks the buffer.
  *			See SWRITE.
@@ -151,7 +154,8 @@ struct inodes_stat_t {
 #define READ_META	(READ | (1 << BIO_RW_META))
 #define WRITE_SYNC_PLUG	(WRITE | (1 << BIO_RW_SYNCIO) | (1 << BIO_RW_NOIDLE))
 #define WRITE_SYNC	(WRITE_SYNC_PLUG | (1 << BIO_RW_UNPLUG))
-#define WRITE_ODIRECT	(WRITE | (1 << BIO_RW_SYNCIO) | (1 << BIO_RW_UNPLUG))
+#define WRITE_ODIRECT_PLUG	(WRITE | (1 << BIO_RW_SYNCIO))
+#define WRITE_META	(WRITE | (1 << BIO_RW_META))
 #define SWRITE_SYNC_PLUG	\
 			(SWRITE | (1 << BIO_RW_SYNCIO) | (1 << BIO_RW_NOIDLE))
 #define SWRITE_SYNC	(SWRITE_SYNC_PLUG | (1 << BIO_RW_UNPLUG))
@@ -304,6 +308,7 @@ struct inodes_stat_t {
 #define BLKIOOPT _IO(0x12,121)
 #define BLKALIGNOFF _IO(0x12,122)
 #define BLKPBSZGET _IO(0x12,123)
+#define BLKDISCARDZEROES _IO(0x12,124)
 
 #define BMAP_IOCTL 1		/* obsolete - kept for compatibility */
 #define FIBMAP	   _IO(0x00,1)	/* bmap access */
@@ -1307,6 +1312,8 @@ extern int send_sigurg(struct fown_struct *fown);
 #define MNT_FORCE	0x00000001	/* Attempt to forcibily umount */
 #define MNT_DETACH	0x00000002	/* Just detach from the tree */
 #define MNT_EXPIRE	0x00000004	/* Mark for expiry */
+#define UMOUNT_NOFOLLOW	0x00000008	/* Don't follow symlink on umount */
+#define UMOUNT_UNUSED	0x80000000	/* Flag guaranteed to be unused */
 
 extern struct list_head super_blocks;
 extern spinlock_t sb_lock;
@@ -1557,7 +1564,7 @@ struct super_operations {
 	void (*destroy_inode)(struct inode *);
 
    	void (*dirty_inode) (struct inode *);
-	int (*write_inode) (struct inode *, int);
+	int (*write_inode) (struct inode *, struct writeback_control *wbc);
 	void (*drop_inode) (struct inode *);
 	void (*delete_inode) (struct inode *);
 	void (*put_super) (struct super_block *);
@@ -2222,6 +2229,7 @@ extern int generic_segment_checks(const struct iovec *iov,
 /* fs/block_dev.c */
 extern ssize_t blkdev_aio_write(struct kiocb *iocb, const struct iovec *iov,
 				unsigned long nr_segs, loff_t pos);
+extern int blkdev_fsync(struct file *filp, struct dentry *dentry, int datasync);
 
 /* fs/splice.c */
 extern ssize_t generic_file_splice_read(struct file *, loff_t *,
@@ -2265,9 +2273,11 @@ ssize_t __blockdev_direct_IO(int rw, struct kiocb *iocb, struct inode *inode,
 	int lock_type);
 
 enum {
-	DIO_LOCKING = 1, /* need locking between buffered and direct access */
-	DIO_NO_LOCKING,  /* bdev; no locking at all between buffered/direct */
-	DIO_OWN_LOCKING, /* filesystem locks buffered and direct internally */
+	/* need locking between buffered and direct access */
+	DIO_LOCKING	= 0x01,
+
+	/* filesystem does not support filling holes */
+	DIO_SKIP_HOLES	= 0x02,
 };
 
 static inline ssize_t blockdev_direct_IO(int rw, struct kiocb *iocb,
@@ -2276,7 +2286,8 @@ static inline ssize_t blockdev_direct_IO(int rw, struct kiocb *iocb,
 	dio_iodone_t end_io)
 {
 	return __blockdev_direct_IO(rw, iocb, inode, bdev, iov, offset,
-				nr_segs, get_block, end_io, DIO_LOCKING);
+				    nr_segs, get_block, end_io,
+				    DIO_LOCKING | DIO_SKIP_HOLES);
 }
 
 static inline ssize_t blockdev_direct_IO_no_locking(int rw, struct kiocb *iocb,
@@ -2285,16 +2296,7 @@ static inline ssize_t blockdev_direct_IO_no_locking(int rw, struct kiocb *iocb,
 	dio_iodone_t end_io)
 {
 	return __blockdev_direct_IO(rw, iocb, inode, bdev, iov, offset,
-				nr_segs, get_block, end_io, DIO_NO_LOCKING);
-}
-
-static inline ssize_t blockdev_direct_IO_own_locking(int rw, struct kiocb *iocb,
-	struct inode *inode, struct block_device *bdev, const struct iovec *iov,
-	loff_t offset, unsigned long nr_segs, get_block_t get_block,
-	dio_iodone_t end_io)
-{
-	return __blockdev_direct_IO(rw, iocb, inode, bdev, iov, offset,
-				nr_segs, get_block, end_io, DIO_OWN_LOCKING);
+				nr_segs, get_block, end_io, 0);
 }
 #endif
 
@@ -2314,6 +2316,7 @@ extern const struct inode_operations page_symlink_inode_operations;
 extern int generic_readlink(struct dentry *, char __user *, int);
 extern void generic_fillattr(struct inode *, struct kstat *);
 extern int vfs_getattr(struct vfsmount *, struct dentry *, struct kstat *);
+void __inode_add_bytes(struct inode *inode, loff_t bytes);
 void inode_add_bytes(struct inode *inode, loff_t bytes);
 void inode_sub_bytes(struct inode *inode, loff_t bytes);
 loff_t inode_get_bytes(struct inode *inode);
@@ -2329,8 +2332,9 @@ extern int vfs_fstatat(int , char __user *, struct kstat *, int);
 extern int do_vfs_ioctl(struct file *filp, unsigned int fd, unsigned int cmd,
 		    unsigned long arg);
 extern int __generic_block_fiemap(struct inode *inode,
-				  struct fiemap_extent_info *fieinfo, u64 start,
-				  u64 len, get_block_t *get_block);
+				  struct fiemap_extent_info *fieinfo,
+				  loff_t start, loff_t len,
+				  get_block_t *get_block);
 extern int generic_block_fiemap(struct inode *inode,
 				struct fiemap_extent_info *fieinfo, u64 start,
 				u64 len, get_block_t *get_block);

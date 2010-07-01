@@ -1698,18 +1698,6 @@ static void e1000_setup_rctl(struct e1000_adapter *adapter)
 	rctl &= ~E1000_RCTL_SZ_4096;
 	rctl |= E1000_RCTL_BSEX;
 	switch (adapter->rx_buffer_len) {
-		case E1000_RXBUFFER_256:
-			rctl |= E1000_RCTL_SZ_256;
-			rctl &= ~E1000_RCTL_BSEX;
-			break;
-		case E1000_RXBUFFER_512:
-			rctl |= E1000_RCTL_SZ_512;
-			rctl &= ~E1000_RCTL_BSEX;
-			break;
-		case E1000_RXBUFFER_1024:
-			rctl |= E1000_RCTL_SZ_1024;
-			rctl &= ~E1000_RCTL_BSEX;
-			break;
 		case E1000_RXBUFFER_2048:
 		default:
 			rctl |= E1000_RCTL_SZ_2048;
@@ -1839,10 +1827,17 @@ void e1000_free_all_tx_resources(struct e1000_adapter *adapter)
 static void e1000_unmap_and_free_tx_resource(struct e1000_adapter *adapter,
 					     struct e1000_buffer *buffer_info)
 {
-	buffer_info->dma = 0;
+	if (buffer_info->dma) {
+		if (buffer_info->mapped_as_page)
+			pci_unmap_page(adapter->pdev, buffer_info->dma,
+				       buffer_info->length, PCI_DMA_TODEVICE);
+		else
+			pci_unmap_single(adapter->pdev,	buffer_info->dma,
+					 buffer_info->length,
+					 PCI_DMA_TODEVICE);
+		buffer_info->dma = 0;
+	}
 	if (buffer_info->skb) {
-		skb_dma_unmap(&adapter->pdev->dev, buffer_info->skb,
-		              DMA_TO_DEVICE);
 		dev_kfree_skb_any(buffer_info->skb);
 		buffer_info->skb = NULL;
 	}
@@ -2132,7 +2127,7 @@ static void e1000_set_rx_mode(struct net_device *netdev)
 			rctl |= E1000_RCTL_VFE;
 	}
 
-	if (netdev->uc.count > rar_entries - 1) {
+	if (netdev_uc_count(netdev) > rar_entries - 1) {
 		rctl |= E1000_RCTL_UPE;
 	} else if (!(netdev->flags & IFF_PROMISC)) {
 		rctl &= ~E1000_RCTL_UPE;
@@ -2155,7 +2150,7 @@ static void e1000_set_rx_mode(struct net_device *netdev)
 	 */
 	i = 1;
 	if (use_uc)
-		list_for_each_entry(ha, &netdev->uc.list, list) {
+		netdev_for_each_uc_addr(ha, netdev) {
 			if (i == rar_entries)
 				break;
 			e1000_rar_set(hw, ha->addr, i++);
@@ -2683,21 +2678,13 @@ static int e1000_tx_map(struct e1000_adapter *adapter,
 			unsigned int mss)
 {
 	struct e1000_hw *hw = &adapter->hw;
+	struct pci_dev *pdev = adapter->pdev;
 	struct e1000_buffer *buffer_info;
 	unsigned int len = skb_headlen(skb);
-	unsigned int offset, size, count = 0, i;
+	unsigned int offset = 0, size, count = 0, i;
 	unsigned int f;
-	dma_addr_t *map;
 
 	i = tx_ring->next_to_use;
-
-	if (skb_dma_map(&adapter->pdev->dev, skb, DMA_TO_DEVICE)) {
-		dev_err(&adapter->pdev->dev, "TX DMA map failed\n");
-		return 0;
-	}
-
-	map = skb_shinfo(skb)->dma_maps;
-	offset = 0;
 
 	while (len) {
 		buffer_info = &tx_ring->buffer_info[i];
@@ -2735,7 +2722,11 @@ static int e1000_tx_map(struct e1000_adapter *adapter,
 		buffer_info->length = size;
 		/* set time_stamp *before* dma to help avoid a possible race */
 		buffer_info->time_stamp = jiffies;
-		buffer_info->dma = skb_shinfo(skb)->dma_head + offset;
+		buffer_info->mapped_as_page = false;
+		buffer_info->dma = pci_map_single(pdev,	skb->data + offset,
+						  size,	PCI_DMA_TODEVICE);
+		if (pci_dma_mapping_error(pdev, buffer_info->dma))
+			goto dma_error;
 		buffer_info->next_to_watch = i;
 
 		len -= size;
@@ -2753,7 +2744,7 @@ static int e1000_tx_map(struct e1000_adapter *adapter,
 
 		frag = &skb_shinfo(skb)->frags[f];
 		len = frag->size;
-		offset = 0;
+		offset = frag->page_offset;
 
 		while (len) {
 			i++;
@@ -2777,7 +2768,12 @@ static int e1000_tx_map(struct e1000_adapter *adapter,
 
 			buffer_info->length = size;
 			buffer_info->time_stamp = jiffies;
-			buffer_info->dma = map[f] + offset;
+			buffer_info->mapped_as_page = true;
+			buffer_info->dma = pci_map_page(pdev, frag->page,
+							offset,	size,
+							PCI_DMA_TODEVICE);
+			if (pci_dma_mapping_error(pdev, buffer_info->dma))
+				goto dma_error;
 			buffer_info->next_to_watch = i;
 
 			len -= size;
@@ -2790,6 +2786,22 @@ static int e1000_tx_map(struct e1000_adapter *adapter,
 	tx_ring->buffer_info[first].next_to_watch = i;
 
 	return count;
+
+dma_error:
+	dev_err(&pdev->dev, "TX DMA map failed\n");
+	buffer_info->dma = 0;
+	count--;
+
+	while (count >= 0) {
+		count--;
+		i--;
+		if (i < 0)
+			i += tx_ring->count;
+		buffer_info = &tx_ring->buffer_info[i];
+		e1000_unmap_and_free_tx_resource(adapter, buffer_info);
+	}
+
+	return 0;
 }
 
 static void e1000_tx_queue(struct e1000_adapter *adapter,
@@ -3154,13 +3166,7 @@ static int e1000_change_mtu(struct net_device *netdev, int new_mtu)
 	 *  however with the new *_jumbo_rx* routines, jumbo receives will use
 	 *  fragmented skbs */
 
-	if (max_frame <= E1000_RXBUFFER_256)
-		adapter->rx_buffer_len = E1000_RXBUFFER_256;
-	else if (max_frame <= E1000_RXBUFFER_512)
-		adapter->rx_buffer_len = E1000_RXBUFFER_512;
-	else if (max_frame <= E1000_RXBUFFER_1024)
-		adapter->rx_buffer_len = E1000_RXBUFFER_1024;
-	else if (max_frame <= E1000_RXBUFFER_2048)
+	if (max_frame <= E1000_RXBUFFER_2048)
 		adapter->rx_buffer_len = E1000_RXBUFFER_2048;
 	else
 #if (PAGE_SIZE >= E1000_RXBUFFER_16384)
@@ -3827,13 +3833,22 @@ static bool e1000_clean_rx_irq(struct e1000_adapter *adapter,
 
 		length = le16_to_cpu(rx_desc->length);
 		/* !EOP means multiple descriptors were used to store a single
-		 * packet, also make sure the frame isn't just CRC only */
-		if (unlikely(!(status & E1000_RXD_STAT_EOP) || (length <= 4))) {
+		 * packet, if thats the case we need to toss it.  In fact, we
+		 * to toss every packet with the EOP bit clear and the next
+		 * frame that _does_ have the EOP bit set, as it is by
+		 * definition only a frame fragment
+		 */
+		if (unlikely(!(status & E1000_RXD_STAT_EOP)))
+			adapter->discarding = true;
+
+		if (adapter->discarding) {
 			/* All receives must fit into a single buffer */
 			E1000_DBG("%s: Receive packet consumed multiple"
 				  " buffers\n", netdev->name);
 			/* recycle */
 			buffer_info->skb = skb;
+			if (status & E1000_RXD_STAT_EOP)
+				adapter->discarding = false;
 			goto next_desc;
 		}
 

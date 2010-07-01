@@ -136,6 +136,11 @@ LIST_HEAD(amd_iommu_list);		/* list of all AMD IOMMUs in the
 					   system */
 
 /*
+ * Set to true if ACPI table parsing and hardware intialization went properly
+ */
+static bool amd_iommu_initialized;
+
+/*
  * Pointer to the device table which is shared by all AMD IOMMUs
  * it is indexed by the PCI device id or the HT unit id and contains
  * information about the domain the device belongs to as well as the
@@ -429,7 +434,7 @@ static u8 * __init alloc_command_buffer(struct amd_iommu *iommu)
 	if (cmd_buf == NULL)
 		return NULL;
 
-	iommu->cmd_buf_size = CMD_BUFFER_SIZE;
+	iommu->cmd_buf_size = CMD_BUFFER_SIZE | CMD_BUFFER_UNINITIALIZED;
 
 	return cmd_buf;
 }
@@ -465,12 +470,13 @@ static void iommu_enable_command_buffer(struct amd_iommu *iommu)
 		    &entry, sizeof(entry));
 
 	amd_iommu_reset_cmd_buffer(iommu);
+	iommu->cmd_buf_size &= ~(CMD_BUFFER_UNINITIALIZED);
 }
 
 static void __init free_command_buffer(struct amd_iommu *iommu)
 {
 	free_pages((unsigned long)iommu->cmd_buf,
-		   get_order(iommu->cmd_buf_size));
+		   get_order(iommu->cmd_buf_size & ~(CMD_BUFFER_UNINITIALIZED)));
 }
 
 /* allocates the memory where the IOMMU will log its events to */
@@ -913,6 +919,8 @@ static int __init init_iommu_all(struct acpi_table_header *table)
 	}
 	WARN_ON(p != end);
 
+	amd_iommu_initialized = true;
+
 	return 0;
 }
 
@@ -925,7 +933,7 @@ static int __init init_iommu_all(struct acpi_table_header *table)
  *
  ****************************************************************************/
 
-static int __init iommu_setup_msi(struct amd_iommu *iommu)
+static int iommu_setup_msi(struct amd_iommu *iommu)
 {
 	int r;
 
@@ -1263,6 +1271,9 @@ int __init amd_iommu_init(void)
 	if (acpi_table_parse("IVRS", init_iommu_all) != 0)
 		goto free;
 
+	if (!amd_iommu_initialized)
+		goto free;
+
 	if (acpi_table_parse("IVRS", init_memory_definitions) != 0)
 		goto free;
 
@@ -1274,12 +1285,19 @@ int __init amd_iommu_init(void)
 	if (ret)
 		goto free;
 
+	enable_iommus();
+
 	if (iommu_pass_through)
 		ret = amd_iommu_init_passthrough();
 	else
 		ret = amd_iommu_init_dma_ops();
+
 	if (ret)
-		goto free;
+		goto disable;
+
+	amd_iommu_init_api();
+
+	amd_iommu_init_notifier();
 
 	enable_iommus();
 
@@ -1300,6 +1318,8 @@ int __init amd_iommu_init(void)
 out:
 	return ret;
 
+disable:
+	disable_iommus();
 free:
 	free_pages((unsigned long)amd_iommu_pd_alloc_bitmap,
 		   get_order(MAX_DOMAIN_ID/8));
@@ -1345,6 +1365,9 @@ void __init amd_iommu_detect(void)
 	if (swiotlb || no_iommu || (iommu_detected && !gart_iommu_aperture))
 		return;
 
+	if (iommu_pass_through)
+		swiotlb_force = 1;
+
 	if (acpi_table_parse("IVRS", early_amd_iommu_detect) == 0) {
 		iommu_detected = 1;
 		amd_iommu_detected = 1;
@@ -1352,6 +1375,8 @@ void __init amd_iommu_detect(void)
 		gart_iommu_aperture_disabled = 1;
 		gart_iommu_aperture = 0;
 #endif
+		/* Make sure ACS will be enabled */
+		pci_request_acs();
 	}
 }
 

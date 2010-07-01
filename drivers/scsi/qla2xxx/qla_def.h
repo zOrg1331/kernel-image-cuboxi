@@ -31,7 +31,9 @@
 #include <scsi/scsi_device.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_transport_fc.h>
+#include <scsi/scsi_bsg_fc.h>
 
+#include "qla_bsg.h"
 #define QLA2XXX_DRIVER_NAME  "qla2xxx"
 
 /*
@@ -226,6 +228,27 @@ struct srb_logio {
 #define SRB_LOGIN_COND_PLOGI	BIT_1
 #define SRB_LOGIN_SKIP_PRLI	BIT_2
 	uint16_t flags;
+};
+
+struct srb_bsg_ctx {
+#define SRB_ELS_CMD_RPT 3
+#define SRB_ELS_CMD_HST 4
+#define SRB_CT_CMD 5
+	uint16_t type;
+};
+
+struct srb_bsg {
+	struct srb_bsg_ctx ctx;
+	struct fc_bsg_job *bsg_job;
+};
+
+struct msg_echo_lb {
+	dma_addr_t send_dma;
+	dma_addr_t rcv_dma;
+	uint16_t req_sg_cnt;
+	uint16_t rsp_sg_cnt;
+	uint16_t options;
+	uint32_t transfer_size;
 };
 
 /*
@@ -522,6 +545,8 @@ typedef struct {
 #define MBA_DISCARD_RND_FRAME	0x8048	/* discard RND frame due to error. */
 #define MBA_REJECTED_FCP_CMD	0x8049	/* rejected FCP_CMD. */
 
+/* ISP mailbox loopback echo diagnostic error code */
+#define MBS_LB_RESET	0x17
 /*
  * Firmware options 1, 2, 3.
  */
@@ -1555,6 +1580,8 @@ typedef struct fc_port {
 	uint16_t loop_id;
 	uint16_t old_loop_id;
 
+	uint8_t fcp_prio;
+
 	uint8_t fabric_port_name[WWN_SIZE];
 	uint16_t fp_speed;
 
@@ -1589,8 +1616,7 @@ typedef struct fc_port {
  */
 #define FCF_FABRIC_DEVICE	BIT_0
 #define FCF_LOGIN_NEEDED	BIT_1
-#define FCF_TAPE_PRESENT	BIT_2
-#define FCF_FCP2_DEVICE		BIT_3
+#define FCF_FCP2_DEVICE		BIT_2
 
 /* No loop ID flag. */
 #define FC_NO_LOOP_ID		0x1000
@@ -2123,6 +2149,7 @@ enum qla_work_type {
 	QLA_EVT_ASYNC_LOGIN_DONE,
 	QLA_EVT_ASYNC_LOGOUT,
 	QLA_EVT_ASYNC_LOGOUT_DONE,
+	QLA_EVT_UEVENT,
 };
 
 
@@ -2146,6 +2173,10 @@ struct qla_work_evt {
 #define QLA_LOGIO_LOGIN_RETRIED	BIT_0
 			u16 data[2];
 		} logio;
+		struct {
+			u32 code;
+#define QLA_UEVENT_CODE_FW_DUMP	0
+		} uevent;
 	} u;
 };
 
@@ -2229,6 +2260,13 @@ struct req_que {
 	int max_q_depth;
 };
 
+/* Place holder for FW buffer parameters */
+struct qlfc_fw {
+	void *fw_buf;
+	dma_addr_t fw_dma;
+	uint32_t len;
+};
+
 /*
  * Qlogic host adapter specific data structure.
 */
@@ -2254,12 +2292,16 @@ struct qla_hw_data {
 		uint32_t	disable_serdes		:1;
 		uint32_t	gpsc_supported		:1;
 		uint32_t	npiv_supported		:1;
+		uint32_t	pci_channel_io_perm_failure:1;
 		uint32_t	fce_enabled		:1;
 		uint32_t	fac_supported		:1;
 		uint32_t	chip_reset_done		:1;
 		uint32_t	port0			:1;
 		uint32_t	running_gold_fw		:1;
+		uint32_t	eeh_busy		:1;
 		uint32_t	cpu_affinity_enabled	:1;
+		uint32_t	disable_msix_handshake	:1;
+		uint32_t	fcp_prio_enabled	:1;
 	} flags;
 
 	/* This spinlock is used to protect "io transactions", you must
@@ -2382,6 +2424,7 @@ struct qla_hw_data {
 #define IS_QLA81XX(ha)		(IS_QLA8001(ha))
 #define IS_QLA2XXX_MIDTYPE(ha)	(IS_QLA24XX(ha) || IS_QLA84XX(ha) || \
 				IS_QLA25XX(ha) || IS_QLA81XX(ha))
+#define IS_MSIX_NACK_CAPABLE(ha) (IS_QLA81XX(ha))
 #define IS_NOPOLLING_TYPE(ha)	((IS_QLA25XX(ha) || IS_QLA81XX(ha)) && \
 				(ha)->flags.msix_enabled)
 #define IS_FAC_REQUIRED(ha)	(IS_QLA81XX(ha))
@@ -2435,11 +2478,11 @@ struct qla_hw_data {
 	dma_addr_t	edc_data_dma;
 	uint16_t	edc_data_len;
 
-#define XGMAC_DATA_SIZE	PAGE_SIZE
+#define XGMAC_DATA_SIZE	4096
 	void		*xgmac_data;
 	dma_addr_t	xgmac_data_dma;
 
-#define DCBX_TLV_DATA_SIZE PAGE_SIZE
+#define DCBX_TLV_DATA_SIZE 4096
 	void		*dcbx_tlv;
 	dma_addr_t	dcbx_tlv_dma;
 
@@ -2562,6 +2605,7 @@ struct qla_hw_data {
 	uint32_t        flt_region_nvram;
 	uint32_t        flt_region_npiv_conf;
 	uint32_t	flt_region_gold_fw;
+	uint32_t	flt_region_fcp_prio;
 
 	/* Needed for BEACON */
 	uint16_t        beacon_blink_led;
@@ -2589,6 +2633,10 @@ struct qla_hw_data {
 	struct qla_statistics qla_stats;
 	struct isp_operations *isp_ops;
 	struct workqueue_struct *wq;
+	struct qlfc_fw fw_buf;
+
+	/* FCP_CMND priority support */
+	struct qla_fcp_prio_cfg *fcp_prio_cfg;
 };
 
 /*
@@ -2760,5 +2808,4 @@ typedef struct scsi_qla_host {
 #include "qla_inline.h"
 
 #define CMD_SP(Cmnd)		((Cmnd)->SCp.ptr)
-
 #endif

@@ -1250,6 +1250,50 @@ static void iwl_irq_tasklet(struct iwl_priv *priv)
 
 }
 
+/* the threshold ratio of actual_ack_cnt to expected_ack_cnt in percent */
+#define ACK_CNT_RATIO (50)
+#define BA_TIMEOUT_CNT (5)
+#define BA_TIMEOUT_MAX (16)
+
+/**
+ * iwl_good_ack_health - checks for ACK count ratios, BA timeout retries.
+ *
+ * When the ACK count ratio is 0 and aggregated BA timeout retries exceeding
+ * the BA_TIMEOUT_MAX, reload firmware and bring system back to normal
+ * operation state.
+ */
+bool iwl_good_ack_health(struct iwl_priv *priv,
+				struct iwl_rx_packet *pkt)
+{
+	bool rc = true;
+	int actual_ack_cnt_delta, expected_ack_cnt_delta;
+	int ba_timeout_delta;
+
+	actual_ack_cnt_delta =
+		le32_to_cpu(pkt->u.stats.tx.actual_ack_cnt) -
+		le32_to_cpu(priv->statistics.tx.actual_ack_cnt);
+	expected_ack_cnt_delta =
+		le32_to_cpu(pkt->u.stats.tx.expected_ack_cnt) -
+		le32_to_cpu(priv->statistics.tx.expected_ack_cnt);
+	ba_timeout_delta =
+		le32_to_cpu(pkt->u.stats.tx.agg.ba_timeout) -
+		le32_to_cpu(priv->statistics.tx.agg.ba_timeout);
+	if ((priv->_agn.agg_tids_count > 0) &&
+	    (expected_ack_cnt_delta > 0) &&
+	    (((actual_ack_cnt_delta * 100) / expected_ack_cnt_delta)
+		< ACK_CNT_RATIO) &&
+	    (ba_timeout_delta > BA_TIMEOUT_CNT)) {
+		IWL_DEBUG_RADIO(priv, "actual_ack_cnt delta = %d,"
+				" expected_ack_cnt = %d\n",
+				actual_ack_cnt_delta, expected_ack_cnt_delta);
+		IWL_DEBUG_RADIO(priv, "agg ba_timeout delta = %d\n",
+				ba_timeout_delta);
+		if (!actual_ack_cnt_delta &&
+		    (ba_timeout_delta >= BA_TIMEOUT_MAX))
+			rc = false;
+	}
+	return rc;
+}
 
 /******************************************************************************
  *
@@ -1754,6 +1798,13 @@ static void iwl_alive_start(struct iwl_priv *priv)
 
 	/* After the ALIVE response, we can send host commands to the uCode */
 	set_bit(STATUS_ALIVE, &priv->status);
+
+	if (priv->cfg->ops->lib->recover_from_tx_stall) {
+		/* Enable timer to monitor the driver queues */
+		mod_timer(&priv->monitor_recover,
+			jiffies +
+			msecs_to_jiffies(priv->cfg->monitor_recover_period));
+	}
 
 	if (iwl_is_rfkill(priv))
 		return;
@@ -2552,10 +2603,21 @@ static int iwl_mac_ampdu_action(struct ieee80211_hw *hw,
 			return ret;
 	case IEEE80211_AMPDU_TX_START:
 		IWL_DEBUG_HT(priv, "start Tx\n");
-		return iwl_tx_agg_start(priv, sta->addr, tid, ssn);
+		ret = iwl_tx_agg_start(priv, sta->addr, tid, ssn);
+		if (ret == 0) {
+			priv->_agn.agg_tids_count++;
+			IWL_DEBUG_HT(priv, "priv->_agn.agg_tids_count = %u\n",
+				     priv->_agn.agg_tids_count);
+		}
+		return ret;
 	case IEEE80211_AMPDU_TX_STOP:
 		IWL_DEBUG_HT(priv, "stop Tx\n");
 		ret = iwl_tx_agg_stop(priv, sta->addr, tid);
+		if ((ret == 0) && (priv->_agn.agg_tids_count > 0)) {
+			priv->_agn.agg_tids_count--;
+			IWL_DEBUG_HT(priv, "priv->_agn.agg_tids_count = %u\n",
+				     priv->_agn.agg_tids_count);
+		}
 		if (test_bit(STATUS_EXIT_PENDING, &priv->status))
 			return 0;
 		else
@@ -2829,6 +2891,13 @@ static void iwl_setup_deferred_work(struct iwl_priv *priv)
 	priv->statistics_periodic.data = (unsigned long)priv;
 	priv->statistics_periodic.function = iwl_bg_statistics_periodic;
 
+	if (priv->cfg->ops->lib->recover_from_tx_stall) {
+		init_timer(&priv->monitor_recover);
+		priv->monitor_recover.data = (unsigned long)priv;
+		priv->monitor_recover.function =
+			priv->cfg->ops->lib->recover_from_tx_stall;
+	}
+
 	if (!priv->cfg->use_isr_legacy)
 		tasklet_init(&priv->irq_tasklet, (void (*)(unsigned long))
 			iwl_irq_tasklet, (unsigned long)priv);
@@ -2847,6 +2916,8 @@ static void iwl_cancel_deferred_work(struct iwl_priv *priv)
 	cancel_delayed_work(&priv->alive_start);
 	cancel_work_sync(&priv->beacon_update);
 	del_timer_sync(&priv->statistics_periodic);
+	if (priv->cfg->ops->lib->recover_from_tx_stall)
+		del_timer_sync(&priv->monitor_recover);
 }
 
 static struct attribute *iwl_sysfs_entries[] = {
@@ -2976,6 +3047,14 @@ static int iwl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 * we should init now
 	 */
 	spin_lock_init(&priv->reg_lock);
+
+	/*
+	 * stop and reset the on-board processor just in case it is in a
+	 * strange state ... like being left stranded by a primary kernel
+	 * and this is now the kdump kernel trying to start up
+	 */
+	iwl_write32(priv, CSR_RESET, CSR_RESET_REG_FLAG_NEVO_RESET);
+
 	iwl_hw_detect(priv);
 	IWL_INFO(priv, "Detected Intel Wireless WiFi Link %s REV=0x%X\n",
 		priv->cfg->name, priv->hw_rev);

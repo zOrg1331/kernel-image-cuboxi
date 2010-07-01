@@ -163,6 +163,7 @@ read the file /proc/PID/status:
   VmExe:        68 kB
   VmLib:      1412 kB
   VmPTE:        20 kb
+  VmSwap:        0 kB
   Threads:        1
   SigQ:   0/28578
   SigPnd: 0000000000000000
@@ -213,6 +214,7 @@ Table 1-2: Contents of the statm files (as of 2.6.30-rc7)
  VmExe                       size of text segment
  VmLib                       size of shared library code
  VmPTE                       size of page table entries
+ VmSwap                      size of swap usage (the number of referred swapents)
  Threads                     number of threads
  SigQ                        number of signals queued/max. number for queue
  SigPnd                      bitmap of pending signals for the thread
@@ -557,6 +559,10 @@ The contents of each smp_affinity file is the same by default:
 The default_smp_affinity mask applies to all non-active IRQs, which are the
 IRQs which have not yet been allocated/activated, and hence which lack a
 /proc/irq/[0-9]* directory.
+
+The node file on an SMP system shows the node to which the device using the IRQ
+reports itself as being attached.  This hardware locality information does not
+include information about any possible driver locality preference.
 
 prof_cpu_mask specifies which CPUs are to be profiled by the system wide
 profiler. Default value is ffffffff (all cpus).

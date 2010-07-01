@@ -364,16 +364,14 @@ static void __init setup_nr_cpu_ids(void)
 	nr_cpu_ids = find_last_bit(cpumask_bits(cpu_possible_mask),NR_CPUS) + 1;
 }
 
+#include <linux/ext3_fs_i.h>
+#include <linux/skbuff.h>
+#include <linux/sched.h>
+
 /* Called by boot processor to activate the rest. */
 static void __init smp_init(void)
 {
 	unsigned int cpu;
-
-	/*
-	 * Set up the current CPU as possible to migrate to.
-	 * The other ones will be done by cpu_up/cpu_down()
-	 */
-	set_cpu_active(smp_processor_id(), true);
 
 	/* FIXME: This should be done in userspace --RR */
 	for_each_present_cpu(cpu) {
@@ -386,6 +384,15 @@ static void __init smp_init(void)
 	/* Any cleanup work */
 	printk(KERN_INFO "Brought up %ld CPUs\n", (long)num_online_cpus());
 	smp_cpus_done(setup_max_cpus);
+
+	printk(KERN_DEBUG "sizeof(vma)=%u bytes\n", (unsigned int) sizeof(struct vm_area_struct));
+	printk(KERN_DEBUG "sizeof(page)=%u bytes\n", (unsigned int) sizeof(struct page));
+	printk(KERN_DEBUG "sizeof(inode)=%u bytes\n", (unsigned int) sizeof(struct inode));
+	printk(KERN_DEBUG "sizeof(dentry)=%u bytes\n", (unsigned int) sizeof(struct dentry));
+	printk(KERN_DEBUG "sizeof(ext3inode)=%u bytes\n", (unsigned int) sizeof(struct ext3_inode_info));
+	printk(KERN_DEBUG "sizeof(buffer_head)=%u bytes\n", (unsigned int) sizeof(struct buffer_head));
+	printk(KERN_DEBUG "sizeof(skbuff)=%u bytes\n", (unsigned int) sizeof(struct sk_buff));
+	printk(KERN_DEBUG "sizeof(task_struct)=%u bytes\n", (unsigned int) sizeof(struct task_struct));
 }
 
 #endif
@@ -486,6 +493,7 @@ static void __init boot_cpu_init(void)
 	int cpu = smp_processor_id();
 	/* Mark the boot cpu "present", "online" etc for SMP and UP case */
 	set_cpu_online(cpu, true);
+	set_cpu_active(cpu, true);
 	set_cpu_present(cpu, true);
 	set_cpu_possible(cpu, true);
 }
@@ -851,7 +859,7 @@ static int __init kernel_init(void * unused)
 	/*
 	 * init can allocate pages on any node
 	 */
-	set_mems_allowed(node_possible_map);
+	set_mems_allowed(node_states[N_HIGH_MEMORY]);
 	/*
 	 * init can run on any cpu.
 	 */

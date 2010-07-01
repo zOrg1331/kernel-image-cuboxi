@@ -536,6 +536,15 @@ void elv_merge_requests(struct request_queue *q, struct request *rq,
 	q->last_merge = rq;
 }
 
+void elv_bio_merged(struct request_queue *q, struct request *rq,
+			struct bio *bio)
+{
+	struct elevator_queue *e = q->elevator;
+
+	if (e->ops->elevator_bio_merged_fn)
+		e->ops->elevator_bio_merged_fn(q, rq, bio);
+}
+
 void elv_requeue_request(struct request_queue *q, struct request *rq)
 {
 	/*
@@ -918,6 +927,7 @@ int elv_register_queue(struct request_queue *q)
 	}
 	return error;
 }
+EXPORT_SYMBOL(elv_register_queue);
 
 static void __elv_unregister_queue(struct elevator_queue *e)
 {
@@ -930,6 +940,7 @@ void elv_unregister_queue(struct request_queue *q)
 	if (q)
 		__elv_unregister_queue(q->elevator);
 }
+EXPORT_SYMBOL(elv_unregister_queue);
 
 void elv_register(struct elevator_type *e)
 {
@@ -1083,7 +1094,7 @@ ssize_t elv_iosched_show(struct request_queue *q, char *name)
 	struct elevator_type *__e;
 	int len = 0;
 
-	if (!q->elevator)
+	if (!q->elevator || !blk_queue_stackable(q))
 		return sprintf(name, "none\n");
 
 	elv = e->elevator_type;
