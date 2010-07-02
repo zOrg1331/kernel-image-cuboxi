@@ -123,6 +123,10 @@ struct mapped_device {
 	unsigned long flags;
 
 	struct request_queue *queue;
+	unsigned type;
+	/* Protect queue and type against concurrent access. */
+	struct mutex type_lock;
+
 	struct gendisk *disk;
 	char name[16];
 
@@ -1194,6 +1198,44 @@ static int __clone_and_map_empty_barrier(struct clone_info *ci)
 	return 0;
 }
 
+/*
+ * Perform all io with a single clone.
+ */
+static void __clone_and_map_simple(struct clone_info *ci, struct dm_target *ti)
+{
+	struct bio *clone, *bio = ci->bio;
+	struct dm_target_io *tio;
+
+	tio = alloc_tio(ci, ti);
+	clone = clone_bio(bio, ci->sector, ci->idx,
+			  bio->bi_vcnt - ci->idx, ci->sector_count,
+			  ci->md->bs);
+	__map_bio(ti, clone, tio);
+	ci->sector_count = 0;
+}
+
+static int __clone_and_map_discard(struct clone_info *ci)
+{
+	struct dm_target *ti;
+	sector_t max;
+
+	ti = dm_table_find_target(ci->map, ci->sector);
+	if (!dm_target_is_valid(ti))
+		return -EIO;
+
+	max = max_io_len(ci->md, ci->sector, ti);
+
+	if (ci->sector_count > max)
+		/*
+		 * FIXME: Handle a discard that spans two or more targets.
+		 */
+		return -EOPNOTSUPP;
+
+	__clone_and_map_simple(ci, ti);
+
+	return 0;
+}
+
 static int __clone_and_map(struct clone_info *ci)
 {
 	struct bio *clone, *bio = ci->bio;
@@ -1204,27 +1246,21 @@ static int __clone_and_map(struct clone_info *ci)
 	if (unlikely(bio_empty_barrier(bio)))
 		return __clone_and_map_empty_barrier(ci);
 
+	if (unlikely(bio->bi_rw & REQ_DISCARD))
+		return __clone_and_map_discard(ci);
+
 	ti = dm_table_find_target(ci->map, ci->sector);
 	if (!dm_target_is_valid(ti))
 		return -EIO;
 
 	max = max_io_len(ci->md, ci->sector, ti);
 
-	/*
-	 * Allocate a target io object.
-	 */
-	tio = alloc_tio(ci, ti);
-
 	if (ci->sector_count <= max) {
 		/*
 		 * Optimise for the simple case where we can do all of
 		 * the remaining io with a single clone.
 		 */
-		clone = clone_bio(bio, ci->sector, ci->idx,
-				  bio->bi_vcnt - ci->idx, ci->sector_count,
-				  ci->md->bs);
-		__map_bio(ti, clone, tio);
-		ci->sector_count = 0;
+		__clone_and_map_simple(ci, ti);
 
 	} else if (to_sector(bio->bi_io_vec[ci->idx].bv_len) <= max) {
 		/*
@@ -1245,6 +1281,7 @@ static int __clone_and_map(struct clone_info *ci)
 			len += bv_len;
 		}
 
+		tio = alloc_tio(ci, ti);
 		clone = clone_bio(bio, ci->sector, ci->idx, i - ci->idx, len,
 				  ci->md->bs);
 		__map_bio(ti, clone, tio);
@@ -1268,12 +1305,11 @@ static int __clone_and_map(struct clone_info *ci)
 					return -EIO;
 
 				max = max_io_len(ci->md, ci->sector, ti);
-
-				tio = alloc_tio(ci, ti);
 			}
 
 			len = min(remaining, max);
 
+			tio = alloc_tio(ci, ti);
 			clone = split_bvec(bio, ci->sector, ci->idx,
 					   bv->bv_offset + offset, len,
 					   ci->md->bs);
@@ -1849,6 +1885,28 @@ static const struct block_device_operations dm_blk_dops;
 static void dm_wq_work(struct work_struct *work);
 static void dm_rq_barrier_work(struct work_struct *work);
 
+static void dm_init_md_queue(struct mapped_device *md)
+{
+	/*
+	 * Request-based dm devices cannot be stacked on top of bio-based dm
+	 * devices.  The type of this dm device has not been decided yet.
+	 * The type is decided at the first table loading time.
+	 * To prevent problematic device stacking, clear the queue flag
+	 * for request stacking support until then.
+	 *
+	 * This queue is new, so no concurrency on the queue_flags.
+	 */
+	queue_flag_clear_unlocked(QUEUE_FLAG_STACKABLE, md->queue);
+
+	md->queue->queuedata = md;
+	md->queue->backing_dev_info.congested_fn = dm_any_congested;
+	md->queue->backing_dev_info.congested_data = md;
+	blk_queue_make_request(md->queue, dm_request);
+	blk_queue_bounce_limit(md->queue, BLK_BOUNCE_ANY);
+	md->queue->unplug_fn = dm_unplug_all;
+	blk_queue_merge_bvec(md->queue, dm_merge_bvec);
+}
+
 /*
  * Allocate and initialise a blank device with a given minor.
  */
@@ -1874,8 +1932,10 @@ static struct mapped_device *alloc_dev(int minor)
 	if (r < 0)
 		goto bad_minor;
 
+	md->type = DM_TYPE_NONE;
 	init_rwsem(&md->io_lock);
 	mutex_init(&md->suspend_lock);
+	mutex_init(&md->type_lock);
 	spin_lock_init(&md->deferred_lock);
 	spin_lock_init(&md->barrier_error_lock);
 	rwlock_init(&md->map_lock);
@@ -1886,34 +1946,11 @@ static struct mapped_device *alloc_dev(int minor)
 	INIT_LIST_HEAD(&md->uevent_list);
 	spin_lock_init(&md->uevent_lock);
 
-	md->queue = blk_init_queue(dm_request_fn, NULL);
+	md->queue = blk_alloc_queue(GFP_KERNEL);
 	if (!md->queue)
 		goto bad_queue;
 
-	/*
-	 * Request-based dm devices cannot be stacked on top of bio-based dm
-	 * devices.  The type of this dm device has not been decided yet,
-	 * although we initialized the queue using blk_init_queue().
-	 * The type is decided at the first table loading time.
-	 * To prevent problematic device stacking, clear the queue flag
-	 * for request stacking support until then.
-	 *
-	 * This queue is new, so no concurrency on the queue_flags.
-	 */
-	queue_flag_clear_unlocked(QUEUE_FLAG_STACKABLE, md->queue);
-	md->saved_make_request_fn = md->queue->make_request_fn;
-	md->queue->queuedata = md;
-	md->queue->backing_dev_info.congested_fn = dm_any_congested;
-	md->queue->backing_dev_info.congested_data = md;
-	blk_queue_make_request(md->queue, dm_request);
-	blk_queue_bounce_limit(md->queue, BLK_BOUNCE_ANY);
-	md->queue->unplug_fn = dm_unplug_all;
-	blk_queue_merge_bvec(md->queue, dm_merge_bvec);
-	blk_queue_softirq_done(md->queue, dm_softirq_done);
-	blk_queue_prep_rq(md->queue, dm_prep_fn);
-	blk_queue_lld_busy(md->queue, dm_lld_busy);
-	blk_queue_ordered(md->queue, QUEUE_ORDERED_DRAIN_FLUSH,
-			  dm_rq_prepare_flush);
+	dm_init_md_queue(md);
 
 	md->disk = alloc_disk(1);
 	if (!md->disk)
@@ -2125,6 +2162,73 @@ int dm_create(int minor, struct mapped_device **result)
 	dm_sysfs_init(md);
 
 	*result = md;
+	return 0;
+}
+
+/*
+ * Functions to manage md->type.
+ * All are required to hold md->type_lock.
+ */
+void dm_lock_md_type(struct mapped_device *md)
+{
+	mutex_lock(&md->type_lock);
+}
+
+void dm_unlock_md_type(struct mapped_device *md)
+{
+	mutex_unlock(&md->type_lock);
+}
+
+void dm_set_md_type(struct mapped_device *md, unsigned type)
+{
+	md->type = type;
+}
+
+unsigned dm_get_md_type(struct mapped_device *md)
+{
+	return md->type;
+}
+
+/*
+ * Fully initialize a request-based queue (->elevator, ->request_fn, etc).
+ */
+static int dm_init_request_based_queue(struct mapped_device *md)
+{
+	struct request_queue *q = NULL;
+
+	if (md->queue->elevator)
+		return 1;
+
+	/* Fully initialize the queue */
+	q = blk_init_allocated_queue(md->queue, dm_request_fn, NULL);
+	if (!q)
+		return 0;
+
+	md->queue = q;
+	md->saved_make_request_fn = md->queue->make_request_fn;
+	dm_init_md_queue(md);
+	blk_queue_softirq_done(md->queue, dm_softirq_done);
+	blk_queue_prep_rq(md->queue, dm_prep_fn);
+	blk_queue_lld_busy(md->queue, dm_lld_busy);
+	blk_queue_ordered(md->queue, QUEUE_ORDERED_DRAIN_FLUSH,
+			  dm_rq_prepare_flush);
+
+	elv_register_queue(md->queue);
+
+	return 1;
+}
+
+/*
+ * Setup the DM device's queue based on md's type
+ */
+int dm_setup_md_queue(struct mapped_device *md)
+{
+	if ((dm_get_md_type(md) == DM_TYPE_REQUEST_BASED) &&
+	    !dm_init_request_based_queue(md)) {
+		DMWARN("Cannot initialize queue for request-based mapped device");
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
@@ -2400,13 +2504,6 @@ struct dm_table *dm_swap_table(struct mapped_device *md, struct dm_table *table)
 	r = dm_calculate_queue_limits(table, &limits);
 	if (r) {
 		map = ERR_PTR(r);
-		goto out;
-	}
-
-	/* cannot change the device type, once a table is bound */
-	if (md->map &&
-	    (dm_table_get_type(md->map) != dm_table_get_type(table))) {
-		DMWARN("can't change the device type after a table is bound");
 		goto out;
 	}
 
