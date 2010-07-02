@@ -47,7 +47,6 @@
 #define DRIVER_NAME	"mceusb"
 
 #define USB_BUFLEN	32	/* USB reception buffer length */
-#define IRBUF_SIZE	256	/* IR work buffer length */
 #define USB_CTRL_MSG_SZ	2	/* Size of usb ctrl msg on gen1 hw */
 #define MCE_G1_INIT_MSGS 40	/* Init messages on gen1 hw to throw out */
 
@@ -516,26 +515,22 @@ static void mce_sync_in(struct mceusb_dev *ir, unsigned char *data, int size)
 }
 
 /* Send data out the IR blaster port(s) */
-static int mceusb_tx_ir(void *priv, const char *buf, u32 n)
+static int mceusb_tx_ir(void *priv, int *txbuf, u32 n)
 {
 	struct mceusb_dev *ir = priv;
-	int i, count = 0, cmdcount = 0;
-	int wbuf[IRBUF_SIZE]; /* Workbuffer with values to tx */
-	unsigned char cmdbuf[MCE_CMDBUF_SIZE]; /* MCE command buffer */
-	unsigned long signal_duration = 0; /* Singnal length in us */
+	int i, ret = 0;
+	int count, cmdcount = 0;
+	unsigned char *cmdbuf; /* MCE command buffer */
+	long signal_duration = 0; /* Singnal length in us */
 	struct timeval start_time, end_time;
 
 	do_gettimeofday(&start_time);
 
-	if (n % sizeof(int))
-		return -EINVAL;
 	count = n / sizeof(int);
 
-	/* Check if command is within limits */
-	if (count > IRBUF_SIZE || count % 2 == 0)
-		return -EINVAL;
-	if (copy_from_user(wbuf, buf, n))
-		return -EFAULT;
+	cmdbuf = kzalloc(sizeof(int) * MCE_CMDBUF_SIZE, GFP_KERNEL);
+	if (!cmdbuf)
+		return -ENOMEM;
 
 	/* MCE tx init header */
 	cmdbuf[cmdcount++] = MCE_CONTROL_HEADER;
@@ -544,8 +539,8 @@ static int mceusb_tx_ir(void *priv, const char *buf, u32 n)
 
 	/* Generate mce packet data */
 	for (i = 0; (i < count) && (cmdcount < MCE_CMDBUF_SIZE); i++) {
-		signal_duration += wbuf[i];
-		wbuf[i] = wbuf[i] / MCE_TIME_UNIT;
+		signal_duration += txbuf[i];
+		txbuf[i] = txbuf[i] / MCE_TIME_UNIT;
 
 		do { /* loop to support long pulses/spaces > 127*50us=6.35ms */
 
@@ -558,13 +553,16 @@ static int mceusb_tx_ir(void *priv, const char *buf, u32 n)
 			/* Insert mce packet data */
 			if (cmdcount < MCE_CMDBUF_SIZE)
 				cmdbuf[cmdcount++] =
-					(wbuf[i] < MCE_PULSE_BIT ?
-					 wbuf[i] : MCE_MAX_PULSE_LENGTH) |
+					(txbuf[i] < MCE_PULSE_BIT ?
+					 txbuf[i] : MCE_MAX_PULSE_LENGTH) |
 					 (i & 1 ? 0x00 : MCE_PULSE_BIT);
-			else
-				return -EINVAL;
-		} while ((wbuf[i] > MCE_MAX_PULSE_LENGTH) &&
-			 (wbuf[i] -= MCE_MAX_PULSE_LENGTH));
+			else {
+				ret = -EINVAL;
+				goto out;
+			}
+
+		} while ((txbuf[i] > MCE_MAX_PULSE_LENGTH) &&
+			 (txbuf[i] -= MCE_MAX_PULSE_LENGTH));
 	}
 
 	/* Fix packet length in last header */
@@ -572,8 +570,10 @@ static int mceusb_tx_ir(void *priv, const char *buf, u32 n)
 		0x80 + (cmdcount - MCE_TX_HEADER_LENGTH) % MCE_CODE_LENGTH - 1;
 
 	/* Check if we have room for the empty packet at the end */
-	if (cmdcount >= MCE_CMDBUF_SIZE)
-		return -EINVAL;
+	if (cmdcount >= MCE_CMDBUF_SIZE) {
+		ret = -EINVAL;
+		goto out;
+	}
 
 	/* All mce commands end with an empty packet (0x80) */
 	cmdbuf[cmdcount++] = 0x80;
@@ -594,7 +594,9 @@ static int mceusb_tx_ir(void *priv, const char *buf, u32 n)
 	set_current_state(TASK_INTERRUPTIBLE);
 	schedule_timeout(usecs_to_jiffies(signal_duration));
 
-	return n;
+out:
+	kfree(cmdbuf);
+	return ret ? ret : n;
 }
 
 /* Sets active IR outputs -- mce devices typically (all?) have two */
@@ -843,6 +845,9 @@ static void mceusb_gen2_init(struct mceusb_dev *ir)
 
 	mce_sync_in(ir, NULL, maxp);
 	mce_sync_in(ir, NULL, maxp);
+
+	set_current_state(TASK_INTERRUPTIBLE);
+	schedule_timeout(msecs_to_jiffies(100));
 
 	/* device reset */
 	mce_async_out(ir, DEVICE_RESET, sizeof(DEVICE_RESET));
