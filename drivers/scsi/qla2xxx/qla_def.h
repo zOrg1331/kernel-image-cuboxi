@@ -202,6 +202,7 @@ struct sd_dif_tuple {
  * SCSI Request Block
  */
 typedef struct srb {
+	atomic_t ref_count;
 	struct fc_port *fcport;
 	uint32_t handle;
 
@@ -713,6 +714,8 @@ typedef struct {
 #define MBC_SEND_RNFT_ELS		0x5e	/* Send RNFT ELS request */
 #define MBC_GET_LINK_PRIV_STATS		0x6d	/* Get link & private data. */
 #define MBC_SET_VENDOR_ID		0x76	/* Set Vendor ID. */
+#define MBC_SET_PORT_CONFIG		0x122	/* Set port configuration */
+#define MBC_GET_PORT_CONFIG		0x123	/* Get port configuration */
 
 /* Firmware return data sizes */
 #define FCAL_MAP_SIZE	128
@@ -2410,6 +2413,7 @@ struct qla_hw_data {
 		uint32_t	cpu_affinity_enabled	:1;
 		uint32_t	disable_msix_handshake	:1;
 		uint32_t	fcp_prio_enabled	:1;
+		uint32_t	fw_hung	:1;
 	} flags;
 
 	/* This spinlock is used to protect "io transactions", you must
@@ -2630,6 +2634,8 @@ struct qla_hw_data {
 	struct mutex vport_lock;        /* Virtual port synchronization */
 	struct completion mbx_cmd_comp; /* Serialize mbx access */
 	struct completion mbx_intr_comp;  /* Used for completion notification */
+	struct completion dcbx_comp;	/* For set port config notification */
+	int notify_dcbx_comp;
 
 	/* Basic firmware related information. */
 	uint16_t	fw_major_version;
@@ -2783,6 +2789,9 @@ struct qla_hw_data {
 	uint16_t	gbl_dsd_avail;
 	struct list_head gbl_dsd_list;
 #define NUM_DSD_CHAIN 4096
+
+	uint8_t fw_type;
+	__le32 file_prd_off;	/* File firmware product offset */
 };
 
 /*
