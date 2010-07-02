@@ -1,0 +1,48 @@
+Importing driver-core.current based on 2.6.35-rc3
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.35-rc3-git4
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.35-rc3-git4
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 984bc9601f64fd341b8573021d7c999f1f1499a9
+HEAD is now at 984bc96 Merge branch 'for-linus' of git://git.kernel.dk/linux-2.6-block
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k8temp-02-fix-temp-for-asb1-processors.patch
+hwmon-it87-fix-in7-on-IT8720F.patch
+hwmon-coretemp-01-skip-ht-dups.patch
+hwmon-coretemp-02-fix-label-on-smp.patch
+hwmon-ltc4245-expose-all-gpio-pins-as-analog-voltages.patch
+hwmon-emc1403-add-power-support.patch
+hwmon-lm75-add-suspend-and-resume.patch
+hwmon-it87-labels-for-internal-voltages.patch
+hwmon-asc7621-clean-up-and-improve-detect.patch
+hwmon-add-3-critical-limit-attributes-to-sysfs-interface.patch
+hwmon-add-4-current-alarm-beep-attributes-to-sysfs-interface.patch
+hwmon-remove-in-fault-attribute-from-interface.patch
+hwmon-fix-autoloading-of-fschmd-driver.patch
+hwmon-add-driver-for-smsc-emc2103-temperature-monitor-and-fan-controller.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + c4cd16e...7c73bc5 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.35-rc3
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-rc3
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.35-rc3
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
