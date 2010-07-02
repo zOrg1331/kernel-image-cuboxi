@@ -1,9 +1,9 @@
 /*
+	Copyright (C) 2010 Ivo van Doorn <IvDoorn@gmail.com>
 	Copyright (C) 2009 Bartlomiej Zolnierkiewicz <bzolnier@gmail.com>
 	Copyright (C) 2009 Gertjan van Wingerde <gwingerde@gmail.com>
 
 	Based on the original rt2800pci.c and rt2800usb.c.
-	  Copyright (C) 2009 Ivo van Doorn <IvDoorn@gmail.com>
 	  Copyright (C) 2009 Alban Browaeys <prahal@yahoo.com>
 	  Copyright (C) 2009 Felix Fietkau <nbd@openwrt.org>
 	  Copyright (C) 2009 Luis Correia <luis.f.correia@gmail.com>
@@ -38,16 +38,8 @@
 #include <linux/slab.h>
 
 #include "rt2x00.h"
-#if defined(CONFIG_RT2X00_LIB_USB) || defined(CONFIG_RT2X00_LIB_USB_MODULE)
-#include "rt2x00usb.h"
-#endif
 #include "rt2800lib.h"
 #include "rt2800.h"
-#include "rt2800usb.h"
-
-MODULE_AUTHOR("Bartlomiej Zolnierkiewicz");
-MODULE_DESCRIPTION("rt2800 library");
-MODULE_LICENSE("GPL");
 
 /*
  * Register access.
@@ -282,9 +274,8 @@ int rt2800_wait_wpdma_ready(struct rt2x00_dev *rt2x00dev)
 }
 EXPORT_SYMBOL_GPL(rt2800_wait_wpdma_ready);
 
-void rt2800_write_txwi(struct sk_buff *skb, struct txentry_desc *txdesc)
+void rt2800_write_txwi(__le32 *txwi, struct txentry_desc *txdesc)
 {
-	__le32 *txwi = (__le32 *)(skb->data - TXWI_DESC_SIZE);
 	u32 word;
 
 	/*
@@ -379,6 +370,67 @@ void rt2800_process_rxwi(struct sk_buff *skb, struct rxdone_entry_desc *rxdesc)
 	skb_pull(skb, RXWI_DESC_SIZE);
 }
 EXPORT_SYMBOL_GPL(rt2800_process_rxwi);
+
+void rt2800_write_beacon(struct queue_entry *entry, struct txentry_desc *txdesc)
+{
+	struct rt2x00_dev *rt2x00dev = entry->queue->rt2x00dev;
+	struct skb_frame_desc *skbdesc = get_skb_frame_desc(entry->skb);
+	unsigned int beacon_base;
+	u32 reg;
+
+	/*
+	 * Disable beaconing while we are reloading the beacon data,
+	 * otherwise we might be sending out invalid data.
+	 */
+	rt2800_register_read(rt2x00dev, BCN_TIME_CFG, &reg);
+	rt2x00_set_field32(&reg, BCN_TIME_CFG_BEACON_GEN, 0);
+	rt2800_register_write(rt2x00dev, BCN_TIME_CFG, reg);
+
+	/*
+	 * Add space for the TXWI in front of the skb.
+	 */
+	skb_push(entry->skb, TXWI_DESC_SIZE);
+	memset(entry->skb, 0, TXWI_DESC_SIZE);
+
+	/*
+	 * Register descriptor details in skb frame descriptor.
+	 */
+	skbdesc->flags |= SKBDESC_DESC_IN_SKB;
+	skbdesc->desc = entry->skb->data;
+	skbdesc->desc_len = TXWI_DESC_SIZE;
+
+	/*
+	 * Add the TXWI for the beacon to the skb.
+	 */
+	rt2800_write_txwi((__le32 *)entry->skb->data, txdesc);
+
+	/*
+	 * Dump beacon to userspace through debugfs.
+	 */
+	rt2x00debug_dump_frame(rt2x00dev, DUMP_FRAME_BEACON, entry->skb);
+
+	/*
+	 * Write entire beacon with TXWI to register.
+	 */
+	beacon_base = HW_BEACON_OFFSET(entry->entry_idx);
+	rt2800_register_multiwrite(rt2x00dev, beacon_base,
+				   entry->skb->data, entry->skb->len);
+
+	/*
+	 * Enable beaconing again.
+	 */
+	rt2x00_set_field32(&reg, BCN_TIME_CFG_TSF_TICKING, 1);
+	rt2x00_set_field32(&reg, BCN_TIME_CFG_TBTT_ENABLE, 1);
+	rt2x00_set_field32(&reg, BCN_TIME_CFG_BEACON_GEN, 1);
+	rt2800_register_write(rt2x00dev, BCN_TIME_CFG, reg);
+
+	/*
+	 * Clean up beacon skb.
+	 */
+	dev_kfree_skb_any(entry->skb);
+	entry->skb = NULL;
+}
+EXPORT_SYMBOL(rt2800_write_beacon);
 
 #ifdef CONFIG_RT2X00_LIB_DEBUGFS
 const struct rt2x00debug rt2800_rt2x00debug = {
@@ -502,15 +554,28 @@ static void rt2800_config_wcid_attr(struct rt2x00_dev *rt2x00dev,
 
 	offset = MAC_WCID_ATTR_ENTRY(key->hw_key_idx);
 
-	rt2800_register_read(rt2x00dev, offset, &reg);
-	rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_KEYTAB,
-			   !!(key->flags & IEEE80211_KEY_FLAG_PAIRWISE));
-	rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_CIPHER,
-			   (crypto->cmd == SET_KEY) * crypto->cipher);
-	rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_BSS_IDX,
-			   (crypto->cmd == SET_KEY) * crypto->bssidx);
-	rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_RX_WIUDF, crypto->cipher);
-	rt2800_register_write(rt2x00dev, offset, reg);
+	if (crypto->cmd == SET_KEY) {
+		rt2800_register_read(rt2x00dev, offset, &reg);
+		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_KEYTAB,
+				   !!(key->flags & IEEE80211_KEY_FLAG_PAIRWISE));
+		/*
+		 * Both the cipher as the BSS Idx numbers are split in a main
+		 * value of 3 bits, and a extended field for adding one additional
+		 * bit to the value.
+		 */
+		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_CIPHER,
+				   (crypto->cipher & 0x7));
+		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_CIPHER_EXT,
+				   (crypto->cipher & 0x8) >> 3);
+		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_BSS_IDX,
+				   (crypto->bssidx & 0x7));
+		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_BSS_IDX_EXT,
+				   (crypto->bssidx & 0x8) >> 3);
+		rt2x00_set_field32(&reg, MAC_WCID_ATTRIBUTE_RX_WIUDF, crypto->cipher);
+		rt2800_register_write(rt2x00dev, offset, reg);
+	} else {
+		rt2800_register_write(rt2x00dev, offset, 0);
+	}
 
 	offset = MAC_IVEIV_ENTRY(key->hw_key_idx);
 
@@ -1023,7 +1088,7 @@ static void rt2800_config_txpower(struct rt2x00_dev *rt2x00dev,
 	u8 r1;
 
 	rt2800_bbp_read(rt2x00dev, 1, &r1);
-	rt2x00_set_field8(&reg, BBP1_TX_POWER, 0);
+	rt2x00_set_field8(&r1, BBP1_TX_POWER, 0);
 	rt2800_bbp_write(rt2x00dev, 1, r1);
 
 	rt2800_register_read(rt2x00dev, TX_PWR_CFG_0, &reg);
@@ -1212,6 +1277,7 @@ int rt2800_init_registers(struct rt2x00_dev *rt2x00dev)
 	u32 reg;
 	u16 eeprom;
 	unsigned int i;
+	int ret;
 
 	rt2800_register_read(rt2x00dev, WPDMA_GLO_CFG, &reg);
 	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_ENABLE_TX_DMA, 0);
@@ -1221,59 +1287,9 @@ int rt2800_init_registers(struct rt2x00_dev *rt2x00dev)
 	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_TX_WRITEBACK_DONE, 1);
 	rt2800_register_write(rt2x00dev, WPDMA_GLO_CFG, reg);
 
-	if (rt2x00_is_usb(rt2x00dev)) {
-		/*
-		 * Wait until BBP and RF are ready.
-		 */
-		for (i = 0; i < REGISTER_BUSY_COUNT; i++) {
-			rt2800_register_read(rt2x00dev, MAC_CSR0, &reg);
-			if (reg && reg != ~0)
-				break;
-			msleep(1);
-		}
-
-		if (i == REGISTER_BUSY_COUNT) {
-			ERROR(rt2x00dev, "Unstable hardware.\n");
-			return -EBUSY;
-		}
-
-		rt2800_register_read(rt2x00dev, PBF_SYS_CTRL, &reg);
-		rt2800_register_write(rt2x00dev, PBF_SYS_CTRL,
-				      reg & ~0x00002000);
-	} else if (rt2x00_is_pci(rt2x00dev) || rt2x00_is_soc(rt2x00dev)) {
-		/*
-		 * Reset DMA indexes
-		 */
-		rt2800_register_read(rt2x00dev, WPDMA_RST_IDX, &reg);
-		rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX0, 1);
-		rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX1, 1);
-		rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX2, 1);
-		rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX3, 1);
-		rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX4, 1);
-		rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX5, 1);
-		rt2x00_set_field32(&reg, WPDMA_RST_IDX_DRX_IDX0, 1);
-		rt2800_register_write(rt2x00dev, WPDMA_RST_IDX, reg);
-
-		rt2800_register_write(rt2x00dev, PBF_SYS_CTRL, 0x00000e1f);
-		rt2800_register_write(rt2x00dev, PBF_SYS_CTRL, 0x00000e00);
-
-		rt2800_register_write(rt2x00dev, PWR_PIN_CFG, 0x00000003);
-	}
-
-	rt2800_register_read(rt2x00dev, MAC_SYS_CTRL, &reg);
-	rt2x00_set_field32(&reg, MAC_SYS_CTRL_RESET_CSR, 1);
-	rt2x00_set_field32(&reg, MAC_SYS_CTRL_RESET_BBP, 1);
-	rt2800_register_write(rt2x00dev, MAC_SYS_CTRL, reg);
-
-	if (rt2x00_is_usb(rt2x00dev)) {
-		rt2800_register_write(rt2x00dev, USB_DMA_CFG, 0x00000000);
-#if defined(CONFIG_RT2X00_LIB_USB) || defined(CONFIG_RT2X00_LIB_USB_MODULE)
-		rt2x00usb_vendor_request_sw(rt2x00dev, USB_DEVICE_MODE, 0,
-					    USB_MODE_RESET, REGISTER_TIMEOUT);
-#endif
-	}
-
-	rt2800_register_write(rt2x00dev, MAC_SYS_CTRL, 0x00000000);
+	ret = rt2800_drv_init_registers(rt2x00dev);
+	if (ret)
+		return ret;
 
 	rt2800_register_read(rt2x00dev, BCN_OFFSET0, &reg);
 	rt2x00_set_field32(&reg, BCN_OFFSET0_BCN0, 0xe0); /* 0x3800 */
@@ -1328,7 +1344,6 @@ int rt2800_init_registers(struct rt2x00_dev *rt2x00dev)
 		} else {
 			rt2800_register_write(rt2x00dev, TX_SW_CFG2, 0x00000000);
 		}
-		rt2800_register_write(rt2x00dev, TX_SW_CFG2, reg);
 	} else if (rt2x00_rt(rt2x00dev, RT3070)) {
 		rt2800_register_write(rt2x00dev, TX_SW_CFG0, 0x00000400);
 
@@ -1339,6 +1354,10 @@ int rt2800_init_registers(struct rt2x00_dev *rt2x00dev)
 			rt2800_register_write(rt2x00dev, TX_SW_CFG1, 0x00080606);
 			rt2800_register_write(rt2x00dev, TX_SW_CFG2, 0x00000000);
 		}
+	} else if (rt2800_is_305x_soc(rt2x00dev)) {
+		rt2800_register_write(rt2x00dev, TX_SW_CFG0, 0x00000400);
+		rt2800_register_write(rt2x00dev, TX_SW_CFG1, 0x00000000);
+		rt2800_register_write(rt2x00dev, TX_SW_CFG2, 0x0000001f);
 	} else {
 		rt2800_register_write(rt2x00dev, TX_SW_CFG0, 0x00000000);
 		rt2800_register_write(rt2x00dev, TX_SW_CFG1, 0x00080606);
@@ -1560,9 +1579,9 @@ int rt2800_init_registers(struct rt2x00_dev *rt2x00dev)
 	rt2800_register_write(rt2x00dev, HW_BEACON_BASE7, 0);
 
 	if (rt2x00_is_usb(rt2x00dev)) {
-		rt2800_register_read(rt2x00dev, USB_CYC_CFG, &reg);
-		rt2x00_set_field32(&reg, USB_CYC_CFG_CLOCK_CYCLE, 30);
-		rt2800_register_write(rt2x00dev, USB_CYC_CFG, reg);
+		rt2800_register_read(rt2x00dev, US_CYC_CNT, &reg);
+		rt2x00_set_field32(&reg, US_CYC_CNT_CLOCK_CYCLE, 30);
+		rt2800_register_write(rt2x00dev, US_CYC_CNT, reg);
 	}
 
 	rt2800_register_read(rt2x00dev, HT_FBK_CFG0, &reg);
@@ -1706,8 +1725,7 @@ int rt2800_init_bbp(struct rt2x00_dev *rt2x00dev)
 	rt2800_bbp_write(rt2x00dev, 82, 0x62);
 	rt2800_bbp_write(rt2x00dev, 83, 0x6a);
 
-	if (rt2x00_rt_rev(rt2x00dev, RT2860, REV_RT2860D) ||
-	    rt2x00_rt_rev(rt2x00dev, RT2870, REV_RT2870D))
+	if (rt2x00_rt_rev(rt2x00dev, RT2860, REV_RT2860D))
 		rt2800_bbp_write(rt2x00dev, 84, 0x19);
 	else
 		rt2800_bbp_write(rt2x00dev, 84, 0x99);
@@ -2013,8 +2031,7 @@ int rt2800_init_rfcsr(struct rt2x00_dev *rt2x00dev)
 	if (rt2x00_rt_rev_lt(rt2x00dev, RT3071, REV_RT3071E) ||
 	    rt2x00_rt_rev_lt(rt2x00dev, RT3090, REV_RT3090E) ||
 	    rt2x00_rt_rev_lt(rt2x00dev, RT3390, REV_RT3390E)) {
-		rt2x00_eeprom_read(rt2x00dev, EEPROM_NIC, &eeprom);
-		if (rt2x00_get_field16(eeprom, EEPROM_NIC_EXTERNAL_LNA_BG))
+		if (test_bit(CONFIG_EXTERNAL_LNA_BG, &rt2x00dev->flags))
 			rt2x00_set_field8(&rfcsr, RFCSR17_R, 1);
 	}
 	rt2x00_eeprom_read(rt2x00dev, EEPROM_TXMIXER_GAIN_BG, &eeprom);
@@ -2147,7 +2164,6 @@ int rt2800_validate_eeprom(struct rt2x00_dev *rt2x00dev)
 		rt2x00_eeprom_write(rt2x00dev, EEPROM_ANTENNA, word);
 		EEPROM(rt2x00dev, "Antenna: 0x%04x\n", word);
 	} else if (rt2x00_rt(rt2x00dev, RT2860) ||
-		   rt2x00_rt(rt2x00dev, RT2870) ||
 		   rt2x00_rt(rt2x00dev, RT2872)) {
 		/*
 		 * There is a max of 2 RX streams for RT28x0 series
@@ -2251,7 +2267,6 @@ int rt2800_init_eeprom(struct rt2x00_dev *rt2x00dev)
 			value, rt2x00_get_field32(reg, MAC_CSR0_REVISION));
 
 	if (!rt2x00_rt(rt2x00dev, RT2860) &&
-	    !rt2x00_rt(rt2x00dev, RT2870) &&
 	    !rt2x00_rt(rt2x00dev, RT2872) &&
 	    !rt2x00_rt(rt2x00dev, RT2883) &&
 	    !rt2x00_rt(rt2x00dev, RT3070) &&
@@ -2491,6 +2506,18 @@ int rt2800_probe_hw_mode(struct rt2x00_dev *rt2x00dev)
 				rt2x00_eeprom_addr(rt2x00dev,
 						   EEPROM_MAC_ADDR_0));
 
+	/*
+	 * As rt2800 has a global fallback table we cannot specify
+	 * more then one tx rate per frame but since the hw will
+	 * try several rates (based on the fallback table) we should
+	 * still initialize max_rates to the maximum number of rates
+	 * we are going to try. Otherwise mac80211 will truncate our
+	 * reported tx rates and the rc algortihm will end up with
+	 * incorrect data.
+	 */
+	rt2x00dev->hw->max_rates = 7;
+	rt2x00dev->hw->max_rate_tries = 1;
+
 	rt2x00_eeprom_read(rt2x00dev, EEPROM_ANTENNA, &eeprom);
 
 	/*
@@ -2528,16 +2555,16 @@ int rt2800_probe_hw_mode(struct rt2x00_dev *rt2x00dev)
 	else
 		spec->ht.ht_supported = false;
 
-	/*
-	 * Don't set IEEE80211_HT_CAP_SUP_WIDTH_20_40 for now as it causes
-	 * reception problems with HT40 capable 11n APs
-	 */
 	spec->ht.cap =
+	    IEEE80211_HT_CAP_SUP_WIDTH_20_40 |
 	    IEEE80211_HT_CAP_GRN_FLD |
 	    IEEE80211_HT_CAP_SGI_20 |
 	    IEEE80211_HT_CAP_SGI_40 |
-	    IEEE80211_HT_CAP_TX_STBC |
 	    IEEE80211_HT_CAP_RX_STBC;
+
+	if (rt2x00_get_field16(eeprom, EEPROM_ANTENNA_TXPATH) >= 2)
+		spec->ht.cap |= IEEE80211_HT_CAP_TX_STBC;
+
 	spec->ht.ampdu_factor = 3;
 	spec->ht.ampdu_density = 4;
 	spec->ht.mcs.tx_params =
@@ -2743,3 +2770,8 @@ const struct ieee80211_ops rt2800_mac80211_ops = {
 	.rfkill_poll		= rt2x00mac_rfkill_poll,
 };
 EXPORT_SYMBOL_GPL(rt2800_mac80211_ops);
+
+MODULE_AUTHOR(DRV_PROJECT ", Bartlomiej Zolnierkiewicz");
+MODULE_VERSION(DRV_VERSION);
+MODULE_DESCRIPTION("Ralink RT2800 library");
+MODULE_LICENSE("GPL");
