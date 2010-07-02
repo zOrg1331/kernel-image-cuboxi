@@ -518,8 +518,13 @@ static void wmi_notify_debug(u32 value, void *context)
 {
 	struct acpi_buffer response = { ACPI_ALLOCATE_BUFFER, NULL };
 	union acpi_object *obj;
+	acpi_status status;
 
-	wmi_get_event_data(value, &response);
+	status = wmi_get_event_data(value, &response);
+	if (status != AE_OK) {
+		printk(KERN_INFO "wmi: bad event status 0x%x\n", status);
+		return;
+	}
 
 	obj = (union acpi_object *)response.pointer;
 
@@ -543,6 +548,7 @@ static void wmi_notify_debug(u32 value, void *context)
 	default:
 		printk("object type 0x%X\n", obj->type);
 	}
+	kfree(obj);
 }
 
 /**
@@ -827,8 +833,10 @@ static __init acpi_status parse_wdg(acpi_handle handle)
 	total = obj->buffer.length / sizeof(struct guid_block);
 
 	gblock = kmemdup(obj->buffer.pointer, obj->buffer.length, GFP_KERNEL);
-	if (!gblock)
-		return AE_NO_MEMORY;
+	if (!gblock) {
+		status = AE_NO_MEMORY;
+		goto out_free_pointer;
+	}
 
 	for (i = 0; i < total; i++) {
 		/*
@@ -848,8 +856,10 @@ static __init acpi_status parse_wdg(acpi_handle handle)
 			wmi_dump_wdg(&gblock[i]);
 
 		wblock = kzalloc(sizeof(struct wmi_block), GFP_KERNEL);
-		if (!wblock)
-			return AE_NO_MEMORY;
+		if (!wblock) {
+			status = AE_NO_MEMORY;
+			goto out_free_gblock;
+		}
 
 		wblock->gblock = gblock[i];
 		wblock->handle = handle;
@@ -860,8 +870,10 @@ static __init acpi_status parse_wdg(acpi_handle handle)
 		list_add_tail(&wblock->list, &wmi_blocks.list);
 	}
 
-	kfree(out.pointer);
+out_free_gblock:
 	kfree(gblock);
+out_free_pointer:
+	kfree(out.pointer);
 
 	return status;
 }
