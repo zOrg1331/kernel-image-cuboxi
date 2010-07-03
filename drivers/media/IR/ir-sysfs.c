@@ -93,6 +93,11 @@ static ssize_t show_protocols(struct device *d,
 	else if (allowed & IR_TYPE_SONY)
 		tmp += sprintf(tmp, "sony ");
 
+	if (allowed & enabled & IR_TYPE_LIRC)
+		tmp += sprintf(tmp, "[lirc] ");
+	else if (allowed & IR_TYPE_LIRC)
+		tmp += sprintf(tmp, "lirc ");
+
 	if (tmp != buf)
 		tmp--;
 	*tmp = '\n';
@@ -160,6 +165,9 @@ static ssize_t store_protocols(struct device *d,
 	} else if (!strncasecmp(tmp, "sony", 4)) {
 		tmp += 4;
 		mask = IR_TYPE_SONY;
+	} else if (!strncasecmp(tmp, "lirc", 4)) {
+		tmp += 4;
+		mask = IR_TYPE_LIRC;
 	} else {
 		IR_dprintk(1, "Unknown protocol\n");
 		return -EINVAL;
