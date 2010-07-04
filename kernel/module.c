@@ -114,7 +114,7 @@ struct load_info {
 	Elf_Ehdr *hdr;
 	unsigned long len;
 	Elf_Shdr *sechdrs;
-	char *secstrings, *args, *strtab;
+	char *secstrings, *strtab;
 	unsigned long *strmap;
 	unsigned long symoffs, stroffs;
 	struct {
@@ -2093,7 +2093,7 @@ static inline void kmemleak_load_module(const struct module *mod,
 }
 #endif
 
-/* Sets info->hdr, info->len and info->args. */
+/* Sets info->hdr and info->len. */
 static int copy_and_check(struct load_info *info,
 			  const void __user *umod, unsigned long len,
 			  const char __user *uargs)
@@ -2129,13 +2129,6 @@ static int copy_and_check(struct load_info *info,
 		goto free_hdr;
 	}
 
-	/* Now copy in args */
-	info->args = strndup_user(uargs, ~0UL >> 1);
-	if (IS_ERR(info->args)) {
-		err = PTR_ERR(info->args);
-		goto free_hdr;
-	}
-
 	info->hdr = hdr;
 	info->len = len;
 	return 0;
@@ -2147,7 +2140,6 @@ free_hdr:
 
 static void free_copy(struct load_info *info)
 {
-	kfree(info->args);
 	vfree(info->hdr);
 }
 
@@ -2465,7 +2457,7 @@ static struct module *layout_and_allocate(struct load_info *info)
 	err = module_frob_arch_sections(info->hdr, info->sechdrs,
 					info->secstrings, mod);
 	if (err < 0)
-		goto free_args;
+		goto out;
 
 	pcpusec = &info->sechdrs[info->index.pcpu];
 	if (pcpusec->sh_size) {
@@ -2473,7 +2465,7 @@ static struct module *layout_and_allocate(struct load_info *info)
 		err = percpu_modalloc(mod,
 				      pcpusec->sh_size, pcpusec->sh_addralign);
 		if (err)
-			goto free_args;
+			goto out;
 		pcpusec->sh_flags &= ~(unsigned long)SHF_ALLOC;
 	}
 
@@ -2504,8 +2496,7 @@ free_strmap:
 	kfree(info->strmap);
 free_percpu:
 	percpu_modfree(mod);
-free_args:
-	kfree(info->args);
+out:
 	return ERR_PTR(err);
 }
 
@@ -2591,7 +2582,12 @@ static noinline struct module *load_module(void __user *umod,
 
 	flush_module_icache(mod);
 
-	mod->args = info.args;
+	/* Now copy in args */
+	mod->args = strndup_user(uargs, ~0UL >> 1);
+	if (IS_ERR(mod->args)) {
+		err = PTR_ERR(mod->args);
+		goto free_arch_cleanup;
+	}
 
 	mod->state = MODULE_STATE_COMING;
 
@@ -2645,6 +2641,8 @@ static noinline struct module *load_module(void __user *umod,
  unlock:
 	mutex_unlock(&module_mutex);
 	synchronize_sched();
+	kfree(mod->args);
+ free_arch_cleanup:
 	module_arch_cleanup(mod);
  free_modinfo:
 	free_modinfo(mod);
