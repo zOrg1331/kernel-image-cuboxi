@@ -17,10 +17,12 @@
 #define IR_TYPE_RC6	(1  << 2)	/* Philips RC6 protocol */
 #define IR_TYPE_JVC	(1  << 3)	/* JVC protocol */
 #define IR_TYPE_SONY	(1  << 4)	/* Sony12/15/20 protocol */
+#define IR_TYPE_LIRC	(1  << 30)	/* Pass raw IR to lirc userspace */
 #define IR_TYPE_OTHER	(1u << 31)
 
 #define IR_TYPE_ALL (IR_TYPE_RC5 | IR_TYPE_NEC  | IR_TYPE_RC6  | \
-		     IR_TYPE_JVC | IR_TYPE_SONY | IR_TYPE_OTHER)
+		     IR_TYPE_JVC | IR_TYPE_SONY | IR_TYPE_LIRC | \
+		     IR_TYPE_OTHER)
 
 struct ir_scancode {
 	u32	scancode;
@@ -90,6 +92,7 @@ void rc_map_init(void);
 #define RC_MAP_KAIOMY                    "rc-kaiomy"
 #define RC_MAP_KWORLD_315U               "rc-kworld-315u"
 #define RC_MAP_KWORLD_PLUS_TV_ANALOG     "rc-kworld-plus-tv-analog"
+#define RC_MAP_LIRC                      "rc-lirc"
 #define RC_MAP_MANLI                     "rc-manli"
 #define RC_MAP_MSI_TVANYWHERE_PLUS       "rc-msi-tvanywhere-plus"
 #define RC_MAP_MSI_TVANYWHERE            "rc-msi-tvanywhere"

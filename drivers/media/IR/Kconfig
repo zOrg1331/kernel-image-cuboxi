@@ -8,6 +8,17 @@ config VIDEO_IR
 	depends on IR_CORE
 	default IR_CORE
 
+config LIRC
+	tristate
+	default y
+
+	---help---
+	   Enable this option to build the Linux Infrared Remote
+	   Control (LIRC) core device interface driver. The LIRC
+	   interface passes raw IR to and from userspace, where the
+	   LIRC daemon handles protocol decoding for IR reception ann
+	   encoding for IR transmitting (aka "blasting").
+
 source "drivers/media/IR/keymaps/Kconfig"
 
 config IR_NEC_DECODER
@@ -56,6 +67,16 @@ config IR_SONY_DECODER
 	---help---
 	   Enable this option if you have an infrared remote control which
 	   uses the Sony protocol, and you need software decoding support.
+
+config IR_LIRC_CODEC
+	tristate "Enable IR to LIRC bridge"
+	depends on IR_CORE
+	depends on LIRC
+	default y
+
+	---help---
+	   Enable this option to pass raw IR to and from userspace via
+	   the LIRC interface.
 
 config IR_IMON
 	tristate "SoundGraph iMON Receiver and Display"
