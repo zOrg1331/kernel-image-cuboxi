@@ -1480,10 +1480,9 @@ xfs_vm_direct_IO(
 	iocb->private = xfs_alloc_ioend(inode, rw == WRITE ?
 					IO_UNWRITTEN : IO_READ);
 
-	ret = blockdev_direct_IO_no_locking(rw, iocb, inode, bdev, iov,
-					    offset, nr_segs,
-					    xfs_get_blocks_direct,
-					    xfs_end_io_direct);
+	ret = __blockdev_direct_IO(rw, iocb, inode, bdev, iov, offset,
+				   nr_segs, xfs_get_blocks_direct,
+				   xfs_end_io_direct, NULL, 0);
 
 	if (unlikely(ret != -EIOCBQUEUED && iocb->private))
 		xfs_destroy_ioend(iocb->private);
@@ -1500,9 +1499,17 @@ xfs_vm_write_begin(
 	struct page		**pagep,
 	void			**fsdata)
 {
-	*pagep = NULL;
-	return block_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
-								xfs_get_blocks);
+	int			ret;
+
+	ret = block_write_begin(mapping, pos, len, flags, pagep,
+				xfs_get_blocks);
+	if (unlikely(ret)) {
+		loff_t isize = mapping->host->i_size;
+		if (pos + len > isize)
+			vmtruncate(mapping->host, isize);
+	}
+
+	return ret;
 }
 
 STATIC sector_t
