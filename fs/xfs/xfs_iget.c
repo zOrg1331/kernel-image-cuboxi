@@ -25,14 +25,10 @@
 #include "xfs_trans.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
-#include "xfs_dir2.h"
-#include "xfs_dmapi.h"
 #include "xfs_mount.h"
 #include "xfs_bmap_btree.h"
 #include "xfs_alloc_btree.h"
 #include "xfs_ialloc_btree.h"
-#include "xfs_dir2_sf.h"
-#include "xfs_attr_sf.h"
 #include "xfs_dinode.h"
 #include "xfs_inode.h"
 #include "xfs_btree.h"
@@ -212,7 +208,7 @@ xfs_iget_cache_hit(
 			ip->i_flags &= ~XFS_INEW;
 			ip->i_flags |= XFS_IRECLAIMABLE;
 			__xfs_inode_set_reclaim_tag(pag, ip);
-			trace_xfs_iget_reclaim(ip);
+			trace_xfs_iget_reclaim_fail(ip);
 			goto out_error;
 		}
 
@@ -227,6 +223,7 @@ xfs_iget_cache_hit(
 	} else {
 		/* If the VFS inode is being torn down, pause and try again. */
 		if (!igrab(inode)) {
+			trace_xfs_iget_skip(ip);
 			error = EAGAIN;
 			goto out_error;
 		}
@@ -234,6 +231,7 @@ xfs_iget_cache_hit(
 		/* We've got a live one. */
 		spin_unlock(&ip->i_flags_lock);
 		read_unlock(&pag->pag_ici_lock);
+		trace_xfs_iget_hit(ip);
 	}
 
 	if (lock_flags != 0)
@@ -242,7 +240,6 @@ xfs_iget_cache_hit(
 	xfs_iflags_clear(ip, XFS_ISTALE);
 	XFS_STATS_INC(xs_ig_found);
 
-	trace_xfs_iget_found(ip);
 	return 0;
 
 out_error:
@@ -259,7 +256,6 @@ xfs_iget_cache_miss(
 	xfs_trans_t		*tp,
 	xfs_ino_t		ino,
 	struct xfs_inode	**ipp,
-	xfs_daddr_t		bno,
 	int			flags,
 	int			lock_flags)
 {
@@ -272,11 +268,11 @@ xfs_iget_cache_miss(
 	if (!ip)
 		return ENOMEM;
 
-	error = xfs_iread(mp, tp, ip, bno, flags);
+	error = xfs_iread(mp, tp, ip, flags);
 	if (error)
 		goto out_destroy;
 
-	xfs_itrace_entry(ip);
+	trace_xfs_iget_miss(ip);
 
 	if ((ip->i_d.di_mode == 0) && !(flags & XFS_IGET_CREATE)) {
 		error = ENOENT;
@@ -322,7 +318,6 @@ xfs_iget_cache_miss(
 	write_unlock(&pag->pag_ici_lock);
 	radix_tree_preload_end();
 
-	trace_xfs_iget_alloc(ip);
 	*ipp = ip;
 	return 0;
 
@@ -358,8 +353,6 @@ out_destroy:
  *        within the file system for the inode being requested.
  * lock_flags -- flags indicating how to lock the inode.  See the comment
  *		 for xfs_ilock() for a list of valid values.
- * bno -- the block number starting the buffer containing the inode,
- *	  if known (as by bulkstat), else 0.
  */
 int
 xfs_iget(
@@ -368,8 +361,7 @@ xfs_iget(
 	xfs_ino_t	ino,
 	uint		flags,
 	uint		lock_flags,
-	xfs_inode_t	**ipp,
-	xfs_daddr_t	bno)
+	xfs_inode_t	**ipp)
 {
 	xfs_inode_t	*ip;
 	int		error;
@@ -397,7 +389,7 @@ again:
 		read_unlock(&pag->pag_ici_lock);
 		XFS_STATS_INC(xs_ig_missed);
 
-		error = xfs_iget_cache_miss(mp, pag, tp, ino, &ip, bno,
+		error = xfs_iget_cache_miss(mp, pag, tp, ino, &ip,
 							flags, lock_flags);
 		if (error)
 			goto out_error_or_again;
@@ -423,46 +415,6 @@ out_error_or_again:
 	}
 	xfs_perag_put(pag);
 	return error;
-}
-
-/*
- * Decrement reference count of an inode structure and unlock it.
- *
- * ip -- the inode being released
- * lock_flags -- this parameter indicates the inode's locks to be
- *       to be released.  See the comment on xfs_iunlock() for a list
- *	 of valid values.
- */
-void
-xfs_iput(xfs_inode_t	*ip,
-	 uint		lock_flags)
-{
-	xfs_itrace_entry(ip);
-	xfs_iunlock(ip, lock_flags);
-	IRELE(ip);
-}
-
-/*
- * Special iput for brand-new inodes that are still locked
- */
-void
-xfs_iput_new(
-	xfs_inode_t	*ip,
-	uint		lock_flags)
-{
-	struct inode	*inode = VFS_I(ip);
-
-	xfs_itrace_entry(ip);
-
-	if ((ip->i_d.di_mode == 0)) {
-		ASSERT(!xfs_iflags_test(ip, XFS_IRECLAIMABLE));
-		make_bad_inode(inode);
-	}
-	if (inode->i_state & I_NEW)
-		unlock_new_inode(inode);
-	if (lock_flags)
-		xfs_iunlock(ip, lock_flags);
-	IRELE(ip);
 }
 
 /*

@@ -27,13 +27,10 @@
 #include "xfs_trans_priv.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
-#include "xfs_dir2.h"
-#include "xfs_dmapi.h"
 #include "xfs_mount.h"
 #include "xfs_bmap_btree.h"
 #include "xfs_alloc_btree.h"
 #include "xfs_ialloc_btree.h"
-#include "xfs_dir2_sf.h"
 #include "xfs_attr_sf.h"
 #include "xfs_dinode.h"
 #include "xfs_inode.h"
@@ -44,7 +41,6 @@
 #include "xfs_alloc.h"
 #include "xfs_ialloc.h"
 #include "xfs_bmap.h"
-#include "xfs_rw.h"
 #include "xfs_error.h"
 #include "xfs_utils.h"
 #include "xfs_quota.h"
@@ -177,7 +173,7 @@ xfs_imap_to_bp(
 		if (unlikely(XFS_TEST_ERROR(!di_ok, mp,
 						XFS_ERRTAG_ITOBP_INOTOBP,
 						XFS_RANDOM_ITOBP_INOTOBP))) {
-			if (iget_flags & XFS_IGET_BULKSTAT) {
+			if (iget_flags & XFS_IGET_UNTRUSTED) {
 				xfs_trans_brelse(tp, bp);
 				return XFS_ERROR(EINVAL);
 			}
@@ -787,7 +783,6 @@ xfs_iread(
 	xfs_mount_t	*mp,
 	xfs_trans_t	*tp,
 	xfs_inode_t	*ip,
-	xfs_daddr_t	bno,
 	uint		iget_flags)
 {
 	xfs_buf_t	*bp;
@@ -797,11 +792,9 @@ xfs_iread(
 	/*
 	 * Fill in the location information in the in-core inode.
 	 */
-	ip->i_imap.im_blkno = bno;
 	error = xfs_imap(mp, tp, ip->i_ino, &ip->i_imap, iget_flags);
 	if (error)
 		return error;
-	ASSERT(bno == 0 || bno == ip->i_imap.im_blkno);
 
 	/*
 	 * Get pointers to the on-disk inode and the buffer containing it.
@@ -1229,7 +1222,7 @@ xfs_isize_check(
 				       (xfs_ufsize_t)XFS_MAXIOFFSET(mp)) -
 			  map_first),
 			 XFS_BMAPI_ENTIRE, NULL, 0, imaps, &nimaps,
-			 NULL, NULL))
+			 NULL))
 	    return;
 	ASSERT(nimaps == 1);
 	ASSERT(imaps[0].br_startblock == HOLESTARTBLOCK);
@@ -1463,7 +1456,7 @@ xfs_itruncate_finish(
 	ASSERT((*tp)->t_flags & XFS_TRANS_PERM_LOG_RES);
 	ASSERT(ip->i_transp == *tp);
 	ASSERT(ip->i_itemp != NULL);
-	ASSERT(ip->i_itemp->ili_flags & XFS_ILI_HOLD);
+	ASSERT(ip->i_itemp->ili_lock_flags == 0);
 
 
 	ntp = *tp;
@@ -1592,11 +1585,10 @@ xfs_itruncate_finish(
 		xfs_bmap_init(&free_list, &first_block);
 		error = xfs_bunmapi(ntp, ip,
 				    first_unmap_block, unmap_len,
-				    xfs_bmapi_aflag(fork) |
-				      (sync ? 0 : XFS_BMAPI_ASYNC),
+				    xfs_bmapi_aflag(fork),
 				    XFS_ITRUNC_MAX_EXTENTS,
 				    &first_block, &free_list,
-				    NULL, &done);
+				    &done);
 		if (error) {
 			/*
 			 * If the bunmapi call encounters an error,
@@ -1615,12 +1607,8 @@ xfs_itruncate_finish(
 		 */
 		error = xfs_bmap_finish(tp, &free_list, &committed);
 		ntp = *tp;
-		if (committed) {
-			/* link the inode into the next xact in the chain */
-			xfs_trans_ijoin(ntp, ip,
-					XFS_ILOCK_EXCL | XFS_IOLOCK_EXCL);
-			xfs_trans_ihold(ntp, ip);
-		}
+		if (committed)
+			xfs_trans_ijoin(ntp, ip);
 
 		if (error) {
 			/*
@@ -1649,9 +1637,7 @@ xfs_itruncate_finish(
 		error = xfs_trans_commit(*tp, 0);
 		*tp = ntp;
 
-		/* link the inode into the next transaction in the chain */
-		xfs_trans_ijoin(ntp, ip, XFS_ILOCK_EXCL | XFS_IOLOCK_EXCL);
-		xfs_trans_ihold(ntp, ip);
+		xfs_trans_ijoin(ntp, ip);
 
 		if (error)
 			return error;
@@ -1988,7 +1974,7 @@ xfs_ifree_cluster(
 			if (lip->li_type == XFS_LI_INODE) {
 				iip = (xfs_inode_log_item_t *)lip;
 				ASSERT(iip->ili_logged == 1);
-				lip->li_cb = (void(*)(xfs_buf_t*,xfs_log_item_t*)) xfs_istale_done;
+				lip->li_cb = xfs_istale_done;
 				xfs_trans_ail_copy_lsn(mp->m_ail,
 							&iip->ili_flush_lsn,
 							&iip->ili_item.li_lsn);
@@ -2058,9 +2044,8 @@ xfs_ifree_cluster(
 			xfs_trans_ail_copy_lsn(mp->m_ail, &iip->ili_flush_lsn,
 						&iip->ili_item.li_lsn);
 
-			xfs_buf_attach_iodone(bp,
-				(void(*)(xfs_buf_t*,xfs_log_item_t*))
-				xfs_istale_done, (xfs_log_item_t *)iip);
+			xfs_buf_attach_iodone(bp, xfs_istale_done,
+						  &iip->ili_item);
 
 			if (ip != free_ip)
 				xfs_iunlock(ip, XFS_ILOCK_EXCL);
@@ -3072,8 +3057,7 @@ xfs_iflush_int(
 		 * and unlock the inode's flush lock when the inode is
 		 * completely written to disk.
 		 */
-		xfs_buf_attach_iodone(bp, (void(*)(xfs_buf_t*,xfs_log_item_t*))
-				      xfs_iflush_done, (xfs_log_item_t *)iip);
+		xfs_buf_attach_iodone(bp, xfs_iflush_done, &iip->ili_item);
 
 		ASSERT(XFS_BUF_FSPRIVATE(bp, void *) != NULL);
 		ASSERT(XFS_BUF_IODONE_FUNC(bp) != NULL);

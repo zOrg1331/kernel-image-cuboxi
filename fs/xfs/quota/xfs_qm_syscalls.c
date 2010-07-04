@@ -26,25 +26,15 @@
 #include "xfs_trans.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
-#include "xfs_dir2.h"
 #include "xfs_alloc.h"
-#include "xfs_dmapi.h"
 #include "xfs_quota.h"
 #include "xfs_mount.h"
 #include "xfs_bmap_btree.h"
-#include "xfs_alloc_btree.h"
-#include "xfs_ialloc_btree.h"
-#include "xfs_dir2_sf.h"
-#include "xfs_attr_sf.h"
-#include "xfs_dinode.h"
 #include "xfs_inode.h"
-#include "xfs_ialloc.h"
 #include "xfs_itable.h"
 #include "xfs_bmap.h"
-#include "xfs_btree.h"
 #include "xfs_rtalloc.h"
 #include "xfs_error.h"
-#include "xfs_rw.h"
 #include "xfs_attr.h"
 #include "xfs_buf_item.h"
 #include "xfs_utils.h"
@@ -262,7 +252,7 @@ xfs_qm_scall_trunc_qfiles(
 	}
 
 	if ((flags & XFS_DQ_USER) && mp->m_sb.sb_uquotino != NULLFSINO) {
-		error = xfs_iget(mp, NULL, mp->m_sb.sb_uquotino, 0, 0, &qip, 0);
+		error = xfs_iget(mp, NULL, mp->m_sb.sb_uquotino, 0, 0, &qip);
 		if (!error) {
 			error = xfs_truncate_file(mp, qip);
 			IRELE(qip);
@@ -271,7 +261,7 @@ xfs_qm_scall_trunc_qfiles(
 
 	if ((flags & (XFS_DQ_GROUP|XFS_DQ_PROJ)) &&
 	    mp->m_sb.sb_gquotino != NULLFSINO) {
-		error2 = xfs_iget(mp, NULL, mp->m_sb.sb_gquotino, 0, 0, &qip, 0);
+		error2 = xfs_iget(mp, NULL, mp->m_sb.sb_gquotino, 0, 0, &qip);
 		if (!error2) {
 			error2 = xfs_truncate_file(mp, qip);
 			IRELE(qip);
@@ -417,12 +407,12 @@ xfs_qm_scall_getqstat(
 	}
 	if (!uip && mp->m_sb.sb_uquotino != NULLFSINO) {
 		if (xfs_iget(mp, NULL, mp->m_sb.sb_uquotino,
-					0, 0, &uip, 0) == 0)
+					0, 0, &uip) == 0)
 			tempuqip = B_TRUE;
 	}
 	if (!gip && mp->m_sb.sb_gquotino != NULLFSINO) {
 		if (xfs_iget(mp, NULL, mp->m_sb.sb_gquotino,
-					0, 0, &gip, 0) == 0)
+					0, 0, &gip) == 0)
 			tempgqip = B_TRUE;
 	}
 	if (uip) {
@@ -875,8 +865,9 @@ xfs_dqrele_inode(
 		xfs_qm_dqrele(ip->i_gdquot);
 		ip->i_gdquot = NULL;
 	}
-	xfs_iput(ip, XFS_ILOCK_EXCL);
+	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 
+	IRELE(ip);
 	return 0;
 }
 
@@ -1109,10 +1100,7 @@ xfs_qm_internalqcheck_adjust(
 	xfs_ino_t	ino,		/* inode number to get data for */
 	void		__user *buffer,	/* not used */
 	int		ubsize,		/* not used */
-	void		*private_data,	/* not used */
-	xfs_daddr_t	bno,		/* starting block of inode cluster */
 	int		*ubused,	/* not used */
-	void		*dip,		/* not used */
 	int		*res)		/* bulkstat result code */
 {
 	xfs_inode_t		*ip;
@@ -1134,7 +1122,7 @@ xfs_qm_internalqcheck_adjust(
 	ipreleased = B_FALSE;
  again:
 	lock_flags = XFS_ILOCK_SHARED;
-	if ((error = xfs_iget(mp, NULL, ino, 0, lock_flags, &ip, bno))) {
+	if ((error = xfs_iget(mp, NULL, ino, 0, lock_flags, &ip))) {
 		*res = BULKSTAT_RV_NOTHING;
 		return (error);
 	}
@@ -1146,7 +1134,8 @@ xfs_qm_internalqcheck_adjust(
 	 * of those now.
 	 */
 	if (! ipreleased) {
-		xfs_iput(ip, lock_flags);
+		xfs_iunlock(ip, lock_flags);
+		IRELE(ip);
 		ipreleased = B_TRUE;
 		goto again;
 	}
@@ -1163,7 +1152,8 @@ xfs_qm_internalqcheck_adjust(
 		ASSERT(gd);
 		xfs_qm_internalqcheck_dqadjust(ip, gd);
 	}
-	xfs_iput(ip, lock_flags);
+	xfs_iunlock(ip, lock_flags);
+	IRELE(ip);
 	*res = BULKSTAT_RV_DIDONE;
 	return (0);
 }
@@ -1205,15 +1195,15 @@ xfs_qm_internalqcheck(
 		 * Iterate thru all the inodes in the file system,
 		 * adjusting the corresponding dquot counters
 		 */
-		if ((error = xfs_bulkstat(mp, &lastino, &count,
-				 xfs_qm_internalqcheck_adjust, NULL,
-				 0, NULL, BULKSTAT_FG_IGET, &done))) {
+		error = xfs_bulkstat(mp, &lastino, &count,
+				 xfs_qm_internalqcheck_adjust,
+				 0, NULL, &done);
+		if (error) {
+			cmn_err(CE_DEBUG, "Bulkstat returned error 0x%x", error);
 			break;
 		}
-	} while (! done);
-	if (error) {
-		cmn_err(CE_DEBUG, "Bulkstat returned error 0x%x", error);
-	}
+	} while (!done);
+
 	cmn_err(CE_DEBUG, "Checking results against system dquots");
 	for (i = 0; i < qmtest_hashmask; i++) {
 		xfs_dqtest_t	*d, *n;
