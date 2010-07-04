@@ -49,11 +49,15 @@
 #include <mach/mmc.h>
 #include <mach/mxc_ehci.h>
 #include <mach/ulpi.h>
+#include <mach/imxfb.h>
 
 #include "devices.h"
 
 #define OTG_PHY_CS_GPIO (GPIO_PORTB + 23)
 #define USBH2_PHY_CS_GPIO (GPIO_PORTB + 24)
+#define SPI1_SS0 (GPIO_PORTD + 28)
+#define SPI1_SS1 (GPIO_PORTD + 27)
+#define SD2_CD (GPIO_PORTC + 29)
 
 static int pca100_pins[] = {
 	/* UART1 */
@@ -68,6 +72,7 @@ static int pca100_pins[] = {
 	PB7_PF_SD2_D3,
 	PB8_PF_SD2_CMD,
 	PB9_PF_SD2_CLK,
+	SD2_CD | GPIO_GPIO | GPIO_IN,
 	/* FEC */
 	PD0_AIN_FEC_TXD0,
 	PD1_AIN_FEC_TXD1,
@@ -131,6 +136,36 @@ static int pca100_pins[] = {
 	PD23_AF_USBH2_DATA2,
 	PD24_AF_USBH2_DATA1,
 	PD26_AF_USBH2_DATA5,
+	/* display */
+	PA5_PF_LSCLK,
+	PA6_PF_LD0,
+	PA7_PF_LD1,
+	PA8_PF_LD2,
+	PA9_PF_LD3,
+	PA10_PF_LD4,
+	PA11_PF_LD5,
+	PA12_PF_LD6,
+	PA13_PF_LD7,
+	PA14_PF_LD8,
+	PA15_PF_LD9,
+	PA16_PF_LD10,
+	PA17_PF_LD11,
+	PA18_PF_LD12,
+	PA19_PF_LD13,
+	PA20_PF_LD14,
+	PA21_PF_LD15,
+	PA22_PF_LD16,
+	PA23_PF_LD17,
+	PA26_PF_PS,
+	PA28_PF_HSYNC,
+	PA29_PF_VSYNC,
+	PA31_PF_OE_ACD,
+	/* LVDS Transceiver */
+	LVDS_PWR_DWN_GPIO | GPIO_GPIO | GPIO_IN,
+	/* free GPIO */
+	GPIO_PORTC | 31 | GPIO_GPIO | GPIO_IN, /* GPIO0_IRQ */
+	GPIO_PORTC | 25 | GPIO_GPIO | GPIO_IN, /* GPIO1_IRQ */
+	GPIO_PORTE | 5 | GPIO_GPIO | GPIO_IN, /* GPIO2_IRQ */
 };
 
 static struct imxuart_platform_data uart_pdata = {
@@ -189,7 +224,7 @@ static struct spi_board_info pca100_spi_board_info[] __initdata = {
 	},
 };
 
-static int pca100_spi_cs[] = {GPIO_PORTD + 28, GPIO_PORTD + 27};
+static int pca100_spi_cs[] = {SPI1_SS0, SPI1_SS1};
 
 static struct spi_imx_master pca100_spi_0_data = {
 	.chipselect	= pca100_spi_cs,
@@ -253,6 +288,7 @@ static struct imxmmc_platform_data sdhc_pdata = {
 	.exit = pca100_sdhc2_exit,
 };
 
+#if defined(CONFIG_USB_ULPI)
 static int otg_phy_init(struct platform_device *pdev)
 {
 	gpio_set_value(OTG_PHY_CS_GPIO, 0);
@@ -276,6 +312,7 @@ static struct mxc_usbh_platform_data usbh2_pdata = {
 	.portsc	= MXC_EHCI_MODE_ULPI,
 	.flags	= MXC_EHCI_INTERFACE_DIFF_UNI,
 };
+#endif
 
 static struct fsl_usb2_platform_data otg_device_pdata = {
 	.operating_mode = FSL_USB2_DR_DEVICE,
@@ -296,6 +333,45 @@ static int __init pca100_otg_mode(char *options)
 	return 0;
 }
 __setup("otg_mode=", pca100_otg_mode);
+
+/* framebuffer info */
+static struct imx_fb_videomode pca100_fb_modes[] = {
+	{
+		.mode = {
+			.name		= "EMERGING-ETV570G0DHU",
+			.refresh	= 60,
+			.xres		= 640,
+			.yres		= 480,
+			.pixclock	= 39722, /* in ps (25.175 MHz) */
+			.hsync_len	= 30,
+			.left_margin	= 114,
+			.right_margin	= 16,
+			.vsync_len	= 3,
+			.upper_margin	= 32,
+			.lower_margin	= 0,
+		},
+		/*
+		 * TFT
+		 * Pixel pol active high
+		 * HSYNC active low
+		 * VSYNC active low
+		 * use HSYNC for ACD count
+		 * line clock disable while idle
+		 * always enable line clock even if no data
+		 */
+		.pcr = 0xf0c08080,
+		.bpp = 16,
+	},
+};
+
+static struct imx_fb_platform_data pca100_fb_data = {
+	.mode = pca100_fb_modes,
+	.num_modes = ARRAY_SIZE(pca100_fb_modes),
+
+	.pwmr		= 0x00A903FF,
+	.lscr1		= 0x00120300,
+	.dmacr		= 0x00020010,
+};
 
 static void __init pca100_init(void)
 {
@@ -322,7 +398,6 @@ static void __init pca100_init(void)
 
 	mxc_register_device(&mxc_uart_device0, &uart_pdata);
 
-	mxc_gpio_mode(GPIO_PORTC | 29 | GPIO_GPIO | GPIO_IN);
 	mxc_register_device(&mxc_sdhc_device1, &sdhc_pdata);
 
 	mxc_register_device(&imx27_nand_device, &pca100_nand_board_info);
@@ -333,17 +408,9 @@ static void __init pca100_init(void)
 
 	mxc_register_device(&mxc_i2c_device1, &pca100_i2c_1_data);
 
-	mxc_gpio_mode(GPIO_PORTD | 28 | GPIO_GPIO | GPIO_OUT);
-	mxc_gpio_mode(GPIO_PORTD | 27 | GPIO_GPIO | GPIO_OUT);
-
-	/* GPIO0_IRQ */
-	mxc_gpio_mode(GPIO_PORTC | 31 | GPIO_GPIO | GPIO_IN);
-	/* GPIO1_IRQ */
-	mxc_gpio_mode(GPIO_PORTC | 25 | GPIO_GPIO | GPIO_IN);
-	/* GPIO2_IRQ */
-	mxc_gpio_mode(GPIO_PORTE | 5 | GPIO_GPIO | GPIO_IN);
-
 #if defined(CONFIG_SPI_IMX) || defined(CONFIG_SPI_IMX_MODULE)
+	mxc_gpio_mode(GPIO_PORTD | 28 | GPIO_GPIO | GPIO_IN);
+	mxc_gpio_mode(GPIO_PORTD | 27 | GPIO_GPIO | GPIO_IN);
 	spi_register_board_info(pca100_spi_board_info,
 				ARRAY_SIZE(pca100_spi_board_info));
 	mxc_register_device(&mxc_spi_device0, &pca100_spi_0_data);
@@ -371,6 +438,8 @@ static void __init pca100_init(void)
 		gpio_set_value(OTG_PHY_CS_GPIO, 0);
 		mxc_register_device(&mxc_otg_udc_device, &otg_device_pdata);
 	}
+
+	mxc_register_device(&mxc_fb_device, &pca100_fb_data);
 
 	platform_add_devices(platform_devices, ARRAY_SIZE(platform_devices));
 }

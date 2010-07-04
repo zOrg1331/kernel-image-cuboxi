@@ -1,6 +1,8 @@
 /*
- * Copyright 2004-2007 Freescale Semiconductor, Inc. All Rights Reserved.
- * Copyright 2008 Sascha Hauer, kernel@pengutronix.de
+ * Copyright (C) 2010 Eric Benard - eric@eukrea.com
+ *
+ * Based on board-pcm038.h which is :
+ * Copyright (C) 2008 Juergen Beisert (kernel@pengutronix.de)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -17,16 +19,22 @@
  * MA 02110-1301, USA.
  */
 
-#ifndef __ASM_ARCH_NAND_H
-#define __ASM_ARCH_NAND_H
+#ifndef __ASM_ARCH_MXC_BOARD_EUKREA_CPUIMX35_H__
+#define __ASM_ARCH_MXC_BOARD_EUKREA_CPUIMX35_H__
 
-#include <linux/mtd/partitions.h>
+#ifndef __ASSEMBLY__
+/*
+ * This CPU module needs a baseboard to work. After basic initializing
+ * its own devices, it calls baseboard's init function.
+ * TODO: Add your own baseboard init function and call it from
+ * inside eukrea_cpuimx25_init().
+ *
+ * This example here is for the development board. Refer
+ * eukrea_mbimx25-baseboard.c
+ */
 
-struct mxc_nand_platform_data {
-	int width;	/* data bus width in bytes */
-	int hw_ecc:1;	/* 0 if supress hardware ECC */
-	int flash_bbt:1; /* set to 1 to use a flash based bbt */
-	struct mtd_partition *parts;	/* partition table */
-	int nr_parts;			/* size of parts */
-};
-#endif /* __ASM_ARCH_NAND_H */
+extern void eukrea_mbimxsd_baseboard_init(void);
+
+#endif
+
+#endif /* __ASM_ARCH_MXC_BOARD_EUKREA_CPUIMX35_H__ */
