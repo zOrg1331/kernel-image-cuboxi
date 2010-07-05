@@ -277,11 +277,7 @@ int ir_register_class(struct input_dev *input_dev)
 	if (unlikely(devno < 0))
 		return devno;
 
-	if (ir_dev->props) {
-		if (ir_dev->props->driver_type == RC_DRIVER_SCANCODE)
-			ir_dev->dev.type = &rc_dev_type;
-	} else
-		ir_dev->dev.type = &ir_raw_dev_type;
+	ir_dev->dev.type = &rc_dev_type;
 	ir_dev->dev.class = &ir_input_class;
 	ir_dev->dev.parent = input_dev->dev.parent;
 	dev_set_name(&ir_dev->dev, "rc%d", devno);
