@@ -22,18 +22,17 @@ omnibook
 #virtualization drivers
 kqemu
 virtualbox
-virtualbox-addition
 kvm
 
 #other drivers
 subfs
-svgalib_helper
+# svgalib_helper
 etercifs
 
 #telephony drivers
-# dahdi
-# wanpipe
-# cronyx
+dahdi
+wanpipe
+cronyx
 
 #network block devices and cluster filesystems
 dst
