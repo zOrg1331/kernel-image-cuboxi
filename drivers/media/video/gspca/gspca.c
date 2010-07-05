@@ -294,19 +294,6 @@ static inline int gspca_input_connect(struct gspca_dev *dev)
 }
 #endif
 
-/* get the current input frame buffer */
-struct gspca_frame *gspca_get_i_frame(struct gspca_dev *gspca_dev)
-{
-	struct gspca_frame *frame;
-
-	frame = gspca_dev->cur_frame;
-	if ((frame->v4l2_buf.flags & BUF_ALL_FLAGS)
-				!= V4L2_BUF_FLAG_QUEUED)
-		return NULL;
-	return frame;
-}
-EXPORT_SYMBOL(gspca_get_i_frame);
-
 /*
  * fill a video frame from an URB and resubmit
  */
@@ -328,6 +315,8 @@ static void fill_frame(struct gspca_dev *gspca_dev,
 		urb->status = 0;
 		goto resubmit;
 	}
+	if (gspca_dev->image == NULL)
+		gspca_dev->last_packet_type = DISCARD_PACKET;
 	pkt_scan = gspca_dev->sd_desc->pkt_scan;
 	for (i = 0; i < urb->number_of_packets; i++) {
 
@@ -440,19 +429,16 @@ void gspca_frame_add(struct gspca_dev *gspca_dev,
 	PDEBUG(D_PACK, "add t:%d l:%d",	packet_type, len);
 
 	/* check the availability of the frame buffer */
-	frame = gspca_dev->cur_frame;
-	if ((frame->v4l2_buf.flags & BUF_ALL_FLAGS)
-					!= V4L2_BUF_FLAG_QUEUED) {
-		gspca_dev->last_packet_type = DISCARD_PACKET;
+	if (gspca_dev->image == NULL)
 		return;
-	}
 
-	/* when start of a new frame, if the current frame buffer
-	 * is not queued, discard the whole frame */
 	if (packet_type == FIRST_PACKET) {
-		frame->data_end = frame->data;
+		i = gspca_dev->fr_i;
+		j = gspca_dev->fr_queue[i];
+		frame = &gspca_dev->frame[j];
 		frame->v4l2_buf.timestamp = ktime_to_timeval(ktime_get());
 		frame->v4l2_buf.sequence = ++gspca_dev->sequence;
+		gspca_dev->image_len = 0;
 	} else if (gspca_dev->last_packet_type == DISCARD_PACKET) {
 		if (packet_type == LAST_PACKET)
 			gspca_dev->last_packet_type = packet_type;
@@ -461,26 +447,29 @@ void gspca_frame_add(struct gspca_dev *gspca_dev,
 
 	/* append the packet to the frame buffer */
 	if (len > 0) {
-		if (frame->data_end - frame->data + len
-						 > frame->v4l2_buf.length) {
-			PDEBUG(D_ERR|D_PACK, "frame overflow %zd > %d",
-				frame->data_end - frame->data + len,
-				frame->v4l2_buf.length);
+		if (gspca_dev->image_len + len > gspca_dev->frsz) {
+			PDEBUG(D_ERR|D_PACK, "frame overflow %d > %d",
+				gspca_dev->image_len + len,
+				gspca_dev->frsz);
 			packet_type = DISCARD_PACKET;
 		} else {
-			memcpy(frame->data_end, data, len);
-			frame->data_end += len;
+			memcpy(gspca_dev->image + gspca_dev->image_len,
+				data, len);
+			gspca_dev->image_len += len;
 		}
 	}
 	gspca_dev->last_packet_type = packet_type;
 
 	/* if last packet, wake up the application and advance in the queue */
 	if (packet_type == LAST_PACKET) {
-		frame->v4l2_buf.bytesused = frame->data_end - frame->data;
+		i = gspca_dev->fr_i;
+		j = gspca_dev->fr_queue[i];
+		frame = &gspca_dev->frame[j];
+		frame->v4l2_buf.bytesused = gspca_dev->image_len;
 		frame->v4l2_buf.flags &= ~V4L2_BUF_FLAG_QUEUED;
 		frame->v4l2_buf.flags |= V4L2_BUF_FLAG_DONE;
 		wake_up_interruptible(&gspca_dev->wq);	/* event = new frame */
-		i = (gspca_dev->fr_i + 1) % gspca_dev->nframes;
+		i = (i + 1) % gspca_dev->nframes;
 		gspca_dev->fr_i = i;
 		PDEBUG(D_FRAM, "frame complete len:%d q:%d i:%d o:%d",
 			frame->v4l2_buf.bytesused,
@@ -488,7 +477,13 @@ void gspca_frame_add(struct gspca_dev *gspca_dev,
 			i,
 			gspca_dev->fr_o);
 		j = gspca_dev->fr_queue[i];
-		gspca_dev->cur_frame = &gspca_dev->frame[j];
+		frame = &gspca_dev->frame[j];
+		if ((frame->v4l2_buf.flags & BUF_ALL_FLAGS)
+					== V4L2_BUF_FLAG_QUEUED) {
+			gspca_dev->image = frame->data;
+		} else {
+			gspca_dev->image = NULL;
+		}
 	}
 }
 EXPORT_SYMBOL(gspca_frame_add);
@@ -506,36 +501,6 @@ static int gspca_is_compressed(__u32 format)
 	return 0;
 }
 
-static void *rvmalloc(long size)
-{
-	void *mem;
-	unsigned long adr;
-
-	mem = vmalloc_32(size);
-	if (mem != NULL) {
-		adr = (unsigned long) mem;
-		while (size > 0) {
-			SetPageReserved(vmalloc_to_page((void *) adr));
-			adr += PAGE_SIZE;
-			size -= PAGE_SIZE;
-		}
-	}
-	return mem;
-}
-
-static void rvfree(void *mem, long size)
-{
-	unsigned long adr;
-
-	adr = (unsigned long) mem;
-	while (size > 0) {
-		ClearPageReserved(vmalloc_to_page((void *) adr));
-		adr += PAGE_SIZE;
-		size -= PAGE_SIZE;
-	}
-	vfree(mem);
-}
-
 static int frame_alloc(struct gspca_dev *gspca_dev,
 			unsigned int count)
 {
@@ -550,7 +515,7 @@ static int frame_alloc(struct gspca_dev *gspca_dev,
 	gspca_dev->frsz = frsz;
 	if (count > GSPCA_MAX_FRAMES)
 		count = GSPCA_MAX_FRAMES;
-	gspca_dev->frbuf = rvmalloc(frsz * count);
+	gspca_dev->frbuf = vmalloc_32(frsz * count);
 	if (!gspca_dev->frbuf) {
 		err("frame alloc failed");
 		return -ENOMEM;
@@ -565,12 +530,12 @@ static int frame_alloc(struct gspca_dev *gspca_dev,
 		frame->v4l2_buf.length = frsz;
 		frame->v4l2_buf.memory = gspca_dev->memory;
 		frame->v4l2_buf.sequence = 0;
-		frame->data = frame->data_end =
-					gspca_dev->frbuf + i * frsz;
+		frame->data = gspca_dev->frbuf + i * frsz;
 		frame->v4l2_buf.m.offset = i * frsz;
 	}
 	gspca_dev->fr_i = gspca_dev->fr_o = gspca_dev->fr_q = 0;
-	gspca_dev->cur_frame = &gspca_dev->frame[0];
+	gspca_dev->image = NULL;
+	gspca_dev->image_len = 0;
 	gspca_dev->last_packet_type = DISCARD_PACKET;
 	gspca_dev->sequence = 0;
 	return 0;
@@ -582,8 +547,7 @@ static void frame_free(struct gspca_dev *gspca_dev)
 
 	PDEBUG(D_STREAM, "frame free");
 	if (gspca_dev->frbuf != NULL) {
-		rvfree(gspca_dev->frbuf,
-			gspca_dev->nframes * gspca_dev->frsz);
+		vfree(gspca_dev->frbuf);
 		gspca_dev->frbuf = NULL;
 		for (i = 0; i < gspca_dev->nframes; i++)
 			gspca_dev->frame[i].data = NULL;
@@ -1755,49 +1719,6 @@ static int vidioc_s_parm(struct file *filp, void *priv,
 	return 0;
 }
 
-#ifdef CONFIG_VIDEO_V4L1_COMPAT
-static int vidiocgmbuf(struct file *file, void *priv,
-			struct video_mbuf *mbuf)
-{
-	struct gspca_dev *gspca_dev = file->private_data;
-	int i;
-
-	PDEBUG(D_STREAM, "cgmbuf");
-	if (gspca_dev->nframes == 0) {
-		int ret;
-
-		{
-			struct v4l2_format fmt;
-
-			fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-			i = gspca_dev->cam.nmodes - 1;	/* highest mode */
-			fmt.fmt.pix.width = gspca_dev->cam.cam_mode[i].width;
-			fmt.fmt.pix.height = gspca_dev->cam.cam_mode[i].height;
-			fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_BGR24;
-			ret = vidioc_s_fmt_vid_cap(file, priv, &fmt);
-			if (ret != 0)
-				return ret;
-		}
-		{
-			struct v4l2_requestbuffers rb;
-
-			memset(&rb, 0, sizeof rb);
-			rb.count = 4;
-			rb.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-			rb.memory = V4L2_MEMORY_MMAP;
-			ret = vidioc_reqbufs(file, priv, &rb);
-			if (ret != 0)
-				return ret;
-		}
-	}
-	mbuf->frames = gspca_dev->nframes;
-	mbuf->size = gspca_dev->frsz * gspca_dev->nframes;
-	for (i = 0; i < mbuf->frames; i++)
-		mbuf->offsets[i] = gspca_dev->frame[i].v4l2_buf.m.offset;
-	return 0;
-}
-#endif
-
 static int dev_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	struct gspca_dev *gspca_dev = file->private_data;
@@ -1838,12 +1759,7 @@ static int dev_mmap(struct file *file, struct vm_area_struct *vma)
 		ret = -EINVAL;
 		goto out;
 	}
-#ifdef CONFIG_VIDEO_V4L1_COMPAT
-	/* v4l1 maps all the buffers */
-	if (i != 0
-	    || size != frame->v4l2_buf.length * gspca_dev->nframes)
-#endif
-	    if (size != frame->v4l2_buf.length) {
+	if (size != frame->v4l2_buf.length) {
 		PDEBUG(D_STREAM, "mmap bad size");
 		ret = -EINVAL;
 		goto out;
@@ -2027,7 +1943,7 @@ static int vidioc_qbuf(struct file *file, void *priv,
 	i = gspca_dev->fr_q;
 	gspca_dev->fr_queue[i] = index;
 	if (gspca_dev->fr_i == i)
-		gspca_dev->cur_frame = frame;
+		gspca_dev->image = frame->data;
 	gspca_dev->fr_q = (i + 1) % gspca_dev->nframes;
 	PDEBUG(D_FRAM, "qbuf q:%d i:%d o:%d",
 		gspca_dev->fr_q,
@@ -2235,9 +2151,6 @@ static const struct v4l2_ioctl_ops dev_ioctl_ops = {
 	.vidioc_s_register	= vidioc_s_register,
 #endif
 	.vidioc_g_chip_ident	= vidioc_g_chip_ident,
-#ifdef CONFIG_VIDEO_V4L1_COMPAT
-	.vidiocgmbuf          = vidiocgmbuf,
-#endif
 };
 
 static struct video_device gspca_template = {
@@ -2253,30 +2166,17 @@ static struct video_device gspca_template = {
  * This function must be called by the sub-driver when it is
  * called for probing a new device.
  */
-int gspca_dev_probe(struct usb_interface *intf,
+int gspca_dev_probe2(struct usb_interface *intf,
 		const struct usb_device_id *id,
 		const struct sd_desc *sd_desc,
 		int dev_size,
 		struct module *module)
 {
-	struct usb_interface_descriptor *interface;
 	struct gspca_dev *gspca_dev;
 	struct usb_device *dev = interface_to_usbdev(intf);
 	int ret;
 
 	PDEBUG(D_PROBE, "probing %04x:%04x", id->idVendor, id->idProduct);
-
-	/* we don't handle multi-config cameras */
-	if (dev->descriptor.bNumConfigurations != 1) {
-		PDEBUG(D_ERR, "Too many config");
-		return -ENODEV;
-	}
-
-	/* the USB video interface must be the first one */
-	interface = &intf->cur_altsetting->desc;
-	if (dev->config->desc.bNumInterfaces != 1 &&
-	    interface->bInterfaceNumber != 0)
-		return -ENODEV;
 
 	/* create the device */
 	if (dev_size < sizeof *gspca_dev)
@@ -2293,7 +2193,7 @@ int gspca_dev_probe(struct usb_interface *intf,
 		goto out;
 	}
 	gspca_dev->dev = dev;
-	gspca_dev->iface = interface->bInterfaceNumber;
+	gspca_dev->iface = intf->cur_altsetting->desc.bInterfaceNumber;
 	gspca_dev->nbalt = intf->num_altsetting;
 	gspca_dev->sd_desc = sd_desc;
 	gspca_dev->nbufread = 2;
@@ -2344,6 +2244,35 @@ out:
 	kfree(gspca_dev->usb_buf);
 	kfree(gspca_dev);
 	return ret;
+}
+EXPORT_SYMBOL(gspca_dev_probe2);
+
+/* same function as the previous one, but check the interface */
+int gspca_dev_probe(struct usb_interface *intf,
+		const struct usb_device_id *id,
+		const struct sd_desc *sd_desc,
+		int dev_size,
+		struct module *module)
+{
+	struct usb_device *dev = interface_to_usbdev(intf);
+
+	/* we don't handle multi-config cameras */
+	if (dev->descriptor.bNumConfigurations != 1) {
+		PDEBUG(D_ERR, "%04x:%04x too many config",
+				id->idVendor, id->idProduct);
+		return -ENODEV;
+	}
+
+	/* the USB video interface must be the first one */
+	if (dev->config->desc.bNumInterfaces != 1
+	 && intf->cur_altsetting->desc.bInterfaceNumber != 0) {
+		PDEBUG(D_ERR, "%04x:%04x bad interface %d",
+				id->idVendor, id->idProduct,
+				intf->cur_altsetting->desc.bInterfaceNumber);
+		return -ENODEV;
+	}
+
+	return gspca_dev_probe2(intf, id, sd_desc, dev_size, module);
 }
 EXPORT_SYMBOL(gspca_dev_probe);
 
