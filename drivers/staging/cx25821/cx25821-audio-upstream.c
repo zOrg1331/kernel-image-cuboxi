@@ -570,15 +570,15 @@ int cx25821_audio_upstream_irq(struct cx25821_dev *dev, int chan_num,
 		spin_unlock(&dev->slock);
 	} else {
 		if (status & FLD_AUD_SRC_OF)
-			printk(KERN_WARN "%s: Audio Received Overflow Error Interrupt!\n",
+			printk(KERN_WARNING "%s: Audio Received Overflow Error Interrupt!\n",
 			       __func__);
 
 		if (status & FLD_AUD_SRC_SYNC)
-			printk(KERN_WARN "%s: Audio Received Sync Error Interrupt!\n",
+			printk(KERN_WARNING "%s: Audio Received Sync Error Interrupt!\n",
 			       __func__);
 
 		if (status & FLD_AUD_SRC_OPC_ERR)
-			printk(KERN_WARN "%s: Audio Received OpCode Error Interrupt!\n",
+			printk(KERN_WARNING "%s: Audio Received OpCode Error Interrupt!\n",
 			       __func__);
 
 		/* Read and write back the interrupt status register to clear
@@ -587,7 +587,7 @@ int cx25821_audio_upstream_irq(struct cx25821_dev *dev, int chan_num,
 	}
 
 	if (dev->_audiofile_status == END_OF_FILE) {
-		printk(KERN_WARN "cx25821: EOF Channel Audio Framecount = %d\n",
+		printk(KERN_WARNING "cx25821: EOF Channel Audio Framecount = %d\n",
 		       dev->_audioframe_count);
 		return -1;
 	}
@@ -728,7 +728,7 @@ int cx25821_audio_upstream_init(struct cx25821_dev *dev, int channel_select)
 	int str_length = 0;
 
 	if (dev->_audio_is_running) {
-		printk(KERN_WARN "Audio Channel is still running so return!\n");
+		printk(KERN_WARNING "Audio Channel is still running so return!\n");
 		return 0;
 	}
 
