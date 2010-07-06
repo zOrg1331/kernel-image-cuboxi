@@ -1,0 +1,57 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Fri, 29 Jan 2010 09:25:32 -0500
+Subject: [mm] add new vma_expandable helper function
+Message-id: <20100129092544.4587.83415.sendpatchset@dhcp-65-180.nay.redhat.com>
+Patchwork-id: 22988
+O-Subject: [PATCH RHEL5.5 3/12 BZ556710 CVE-2010-0291] do_mremap() untangling,
+	part 3
+Bugzilla: 556710
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+backport of upstream commit 1a0ef85f84feb13f07b604fcf5b90ef7c2b5c82f
+
+Subject: [PATCH] do_mremap() untangling, part 3
+
+Take the check for being able to expand vma in place into a separate
+helper.
+
+Acked-by: Russell King <rmk+kernel@arm.linux.org.uk>
+Acked-by: Hugh Dickins <hugh.dickins@tiscali.co.uk>
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+
+diff --git a/mm/mremap.c b/mm/mremap.c
+index b6f1a24..cdae1cf 100644
+--- a/mm/mremap.c
++++ b/mm/mremap.c
+@@ -349,6 +349,17 @@ out:
+ 	return ret;
+ }
+ 
++static int vma_expandable(struct vm_area_struct *vma, unsigned long delta)
++{
++	unsigned long max_addr = TASK_SIZE;
++	if (vma->vm_next)
++		max_addr = vma->vm_next->vm_start;
++	if (max_addr - vma->vm_end < delta)
++		return 0;
++	/* we need to do arch-specific checks here */
++	return 1;
++}
++
+ /*
+  * Expand (or shrink) an existing mapping, potentially moving it at the
+  * same time (controlled by the MREMAP_MAYMOVE flag and available VM space)
+@@ -413,11 +424,8 @@ unsigned long do_mremap(unsigned long addr,
+ 	/* old_len exactly to the end of the area..
+ 	 */
+ 	if (old_len == vma->vm_end - addr) {
+-		unsigned long max_addr = TASK_SIZE;
+-		if (vma->vm_next)
+-			max_addr = vma->vm_next->vm_start;
+ 		/* can we just expand the current mapping? */
+-		if (max_addr - addr >= new_len) {
++		if (vma_expandable(vma, new_len - old_len)) {
+ 			int pages = (new_len - old_len) >> PAGE_SHIFT;
+ 
+ 			vma_adjust(vma, vma->vm_start,

@@ -12,8 +12,8 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab069
-%define ovzrel 6
+%define ovzver 028stab070
+%define ovzrel 2
 
 %if !%{buildup}
 %define _without_up 1
@@ -138,7 +138,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define sublevel 18
 %define kversion 2.6.%{sublevel}
 %define rpmversion 2.6.%{sublevel}
-%define release 194.3.1%{?dist}%{?buildid}
+%define release 194.8.1%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -1070,6 +1070,7 @@ Patch20207: xen-vtd-ignore-unknown-dmar-entries.patch
 Patch20208: xen-vtd-fix-ioapic-pin-array.patch
 Patch20209: xen-iommu-clear-io-apic-pins-on-boot-and-shutdown.patch
 Patch20210: xen-arpl-on-mmio-area-crashes-the-guest.patch
+Patch20211: xen-set-hypervisor-present-cpuid-bit.patch
 # end of Xen patches
 
 Patch21007: linux-2.6-netlabel-error-checking-cleanups.patch
@@ -5103,6 +5104,59 @@ Patch25082: linux-2.6-net-bnx2-avoid-restarting-cnic-in-some-contexts.patch
 Patch25083: linux-2.6-mm-fix-boot-on-s390x-after-bootmem-overlap-patch.patch
 Patch25084: linux-2.6-cpu-fix-boot-crash-in-32-bit-install-on-amd-cpus.patch
 Patch25085: linux-2.6-net-bnx2-fix-lost-msi-x-problem-on-5709-nics.patch
+Patch25086: linux-2.6-fs-fix-kernel-oops-while-copying-from-ext3-to-gfs2.patch
+Patch25087: linux-2.6-nfs-fix-an-oops-when-truncating-a-file.patch
+Patch25088: linux-2.6-fs-vfs-fix-lookup_follow-on-automount-symlinks.patch
+Patch25089: linux-2.6-block-introduce-the-rq_is_sync-macro.patch
+Patch25090: linux-2.6-block-cfq-iosched-propagate-down-request-sync-flag.patch
+Patch25091: linux-2.6-block-cfq-iosched-fix-async-queue-behaviour.patch
+Patch25092: linux-2.6-block-cfq-iosched-async-queue-allocation-per-priority.patch
+Patch25093: linux-2.6-block-cfq-iosched-fix-ioprio_class_idle-accounting.patch
+Patch25094: linux-2.6-net-tipc-fix-various-oopses-in-uninitialized-code.patch
+Patch25095: linux-2.6-acpi-warn-on-hot-add-of-memory-exceeding-4g-boundary.patch
+Patch25096: linux-2.6-mm-move-locating-vma-code-and-checks-on-it.patch
+Patch25097: linux-2.6-mm-move-mremap_fixed-into-its-own-header.patch
+Patch25098: linux-2.6-mm-add-new-vma_expandable-helper-function.patch
+Patch25099: linux-2.6-mm-fix-checks-for-expand-in-place-mremap.patch
+Patch25100: linux-2.6-mm-fix-the-arch-checks-in-mremap_fixed-case.patch
+Patch25101: linux-2.6-mm-fix-pgoff-in-have-to-relocate-case-of-mremap.patch
+Patch25102: linux-2.6-mm-kill-ancient-cruft-in-s390-compat-mmap.patch
+Patch25103: linux-2.6-mm-unify-sys_mmap-functions.patch
+Patch25104: linux-2.6-mm-get-rid-of-open-coding-in-ia64_brk.patch
+Patch25105: linux-2.6-mm-take-arch_mmap_check-into-get_unmapped_area.patch
+Patch25106: linux-2.6-mm-switch-do_brk-to-get_unmapped_area.patch
+Patch25107: linux-2.6-mm-keep-get_unmapped_area_prot-functional.patch
+Patch25108: linux-2.6-acpi-fix-warn-on-unregister-in-power-meter-driver.patch
+Patch25109: linux-2.6-net-sctp-fix-skb_over_panic-w-too-many-unknown-params.patch
+Patch25110: linux-2.6-virtio-fix-gfp-flags-passed-by-virtio-balloon-driver.patch
+Patch25111: linux-2.6-net-e1000-fix-wol-init-when-wol-disabled-in-eeprom.patch
+Patch25112: linux-2.6-misc-futex-fix-fault-handling-in-futex_lock_pi.patch
+Patch25113: linux-2.6-misc-futex-handle-user-space-corruption-gracefully.patch
+Patch25114: linux-2.6-misc-futex-handle-futex-value-corruption-gracefully.patch
+Patch25115: linux-2.6-nfs-revert-retcode-check-in-nfs_revalidate_mapping.patch
+Patch25116: linux-2.6-net-sched-fix-sfq-qdisc-crash-w-limit-of-2-packets.patch
+Patch25117: linux-2.6-net-tg3-fix-intx-fallback-when-msi-fails.patch
+Patch25118: linux-2.6-net-bonding-fix-broken-multicast-with-round-robin-mode.patch
+Patch25119: linux-2.6-fs-remove-unneccessary-f_ep_lock-from-fasync_helper.patch
+Patch25120: linux-2.6-nfs-don-t-unhash-dentry-in-nfs_lookup_revalidate.patch
+Patch25121: linux-2.6-mm-fix-hugepage-corruption-using-vm-drop_caches.patch
+Patch25122: linux-2.6-net-neigh-fix-state-transitions-via-netlink-request.patch
+Patch25123: linux-2.6-x86_64-fix-time-drift-due-to-faulty-lost-tick-tracking.patch
+Patch25124: linux-2.6-net-implement-dev_disable_lro-api-for-rhel5.patch
+Patch25125: linux-2.6-net-bxn2x-add-dynamic-lro-disable-support.patch
+Patch25126: linux-2.6-net-cnic-fix-crash-during-bnx2x-mtu-change.patch
+Patch25127: linux-2.6-net-e1000-e1000e-implement-simple-interrupt-moderation.patch
+Patch25128: linux-2.6-net-tg3-fix-panic-in-tg3_interrupt.patch
+Patch25129: linux-2.6-net-sctp-file-must-be-valid-before-setting-timeout.patch
+Patch25130: linux-2.6-misc-keys-do-not-find-already-freed-keyrings.patch
+Patch25131: linux-2.6-mm-clear-page-errors-when-issuing-a-fresh-read-of-page.patch
+Patch25132: linux-2.6-fs-gfs2-fix-permissions-checking-for-setflags-ioctl.patch
+Patch25133: linux-2.6-x86-grab-atomic64-types-from-upstream.patch
+Patch25134: linux-2.6-misc-add-atomic64_cmpxcgh-to-x86_64-include-files.patch
+Patch25135: linux-2.6-virt-enable-pvclock-flags-in-vcpu_time_info-structure.patch
+Patch25136: linux-2.6-virt-add-a-global-synchronization-point-for-pvclock.patch
+Patch25137: linux-2.6-virt-don-t-compute-pvclock-adjustments-if-we-trust-tsc.patch
+Patch25138: linux-2.6-net-cnic-fix-bnx2x-panic-w-multiple-interfaces-enabled.patch
 
 Patch30000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch30001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -5162,6 +5216,7 @@ Patch90410: diff-gfs-rm-warn-20070720
 Patch90411: diff-gfs-rm-lockfs-support-20071129
 Patch90412: diff-gfs-force-localfloks-20080226
 Patch90413: diff-gfs-shut-up-debug-20080821
+Patch90414: diff-gfs-aio-pops
 
 # Patch90340: diff-dlm-fix-user-unlocking-20070829
 # Patch90341: diff-dlm-can-miss-clearing-resend-flag-20070829
@@ -5199,10 +5254,6 @@ Patch100025: diff-ms-alow-ve0-exceed-threads-max
 Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100028: diff-rh-bond802.3ad-slave-speed-20100421
-Patch100029: diff-cpt-restore-itimers-properly
-Patch100030: diff-ms-nfsd-report-v4-as-off
-Patch100031: diff-ve-nfsd-virt-raparm-hash
-Patch100032: diff-cfq-fix-requests-merging
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -10132,6 +10183,59 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch25083 -p1
 %patch25084 -p1
 %patch25085 -p1
+%patch25086 -p1
+%patch25087 -p1
+%patch25088 -p1
+%patch25089 -p1
+%patch25090 -p1
+%patch25091 -p1
+%patch25092 -p1
+%patch25093 -p1
+%patch25094 -p1
+%patch25095 -p1
+%patch25096 -p1
+%patch25097 -p1
+%patch25098 -p1
+%patch25099 -p1
+%patch25100 -p1
+%patch25101 -p1
+%patch25102 -p1
+%patch25103 -p1
+%patch25104 -p1
+%patch25105 -p1
+%patch25106 -p1
+%patch25107 -p1
+%patch25108 -p1
+%patch25109 -p1
+%patch25110 -p1
+%patch25111 -p1
+%patch25112 -p1
+%patch25113 -p1
+%patch25114 -p1
+%patch25115 -p1
+%patch25116 -p1
+%patch25117 -p1
+%patch25118 -p1
+%patch25119 -p1
+%patch25120 -p1
+%patch25121 -p1
+%patch25122 -p1
+%patch25123 -p1
+%patch25124 -p1
+%patch25125 -p1
+%patch25126 -p1
+%patch25127 -p1
+%patch25128 -p1
+%patch25129 -p1
+%patch25130 -p1
+%patch25131 -p1
+%patch25132 -p1
+%patch25133 -p1
+%patch25134 -p1
+%patch25135 -p1
+%patch25136 -p1
+%patch25137 -p1
+%patch25138 -p1
 
 %patch30000 -p1
 %patch30001 -p1
@@ -10180,6 +10284,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch90411 -p1
 %patch90412 -p1
 %patch90413 -p1
+%patch90414 -p1
 
 # %patch90340 -p1
 # %patch90341 -p1
@@ -10207,10 +10312,6 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100026 -p1
 %patch100027 -p1
 %patch100028 -p1
-%patch100029 -p1
-%patch100030 -p1
-%patch100031 -p1
-%patch100032 -p1
 
 %patch101000 -p1
 %patch101001 -p1
@@ -10555,6 +10656,7 @@ cd ../xen
 %patch20208 -p1
 %patch20209 -p1
 %patch20210 -p1
+%patch20211 -p1
 # end of necessary hypervisor patches
 %endif
 

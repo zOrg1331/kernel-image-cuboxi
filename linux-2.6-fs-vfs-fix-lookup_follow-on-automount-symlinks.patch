@@ -1,0 +1,72 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 23 Apr 2010 13:38:53 -0400
+Subject: [fs] vfs: fix LOOKUP_FOLLOW on automount symlinks
+Message-id: <1272029933-9767-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 24608
+O-Subject: [RHEL5 PATCH] BZ#567816: vfs: fix LOOKUP_FOLLOW on automount
+	"symlinks" (CVE-2010-1088)
+Bugzilla: 567816
+CVE: CVE-2010-1088
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+From: Al Viro <viro@ZenIV.linux.org.uk>
+
+(Backported from ac278a9c505092dd82077a2446af8f9fc0d9c095)
+
+    https://bugzilla.redhat.com/show_bug.cgi?id=567816
+
+When a NFS client crosses a mountpoint in the server's export tree, the
+kernel creates a "special" directory inode that has the follow_link op
+set and uses that to trigger a new submount. This helps prevent inode
+number collisions on a NFS mount by having the client's mount tree
+mirror the one the server has exported.
+
+This patch fixes a local DoS that can be exploited by an unprivileged
+user doing a specific sequence of operations on one of these inodes.
+While the patch and CVE are public, I've been asked not to disclose the
+reproducer. I tested with it myself however and verified that this does
+fix the problem.
+
+Original patch description follows:
+
+-------------------------[snip]-----------------------
+
+Make sure that automount "symlinks" are followed regardless of
+LOOKUP_FOLLOW; it should have no effect on them.
+
+Cc: stable@kernel.org
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+
+diff --git a/fs/namei.c b/fs/namei.c
+index 6ec2513..b50ccb9 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -811,6 +811,17 @@ fail:
+ }
+ 
+ /*
++ * This is a temporary kludge to deal with "automount" symlinks; proper
++ * solution is to trigger them on follow_mount(), so that do_lookup()
++ * would DTRT.  To be killed before 2.6.34-final.
++ */
++static inline int follow_on_final(struct inode *inode, unsigned lookup_flags)
++{
++	return inode && inode->i_op && unlikely(inode->i_op->follow_link) &&
++		((lookup_flags & LOOKUP_FOLLOW) || S_ISDIR(inode->i_mode));
++}
++
++/*
+  * Name resolution.
+  * This is the basic name resolution function, turning a pathname into
+  * the final dentry. We expect 'base' to be positive and a directory.
+@@ -954,8 +965,7 @@ last_component:
+ 		if (err)
+ 			break;
+ 		inode = next.dentry->d_inode;
+-		if ((lookup_flags & LOOKUP_FOLLOW)
+-		    && inode && inode->i_op && inode->i_op->follow_link) {
++		if (follow_on_final(inode, lookup_flags)) {
+ 			err = do_follow_link(&next, nd);
+ 			if (err)
+ 				goto return_err;
