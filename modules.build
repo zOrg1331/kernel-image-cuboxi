@@ -1,15 +1,15 @@
 #video drivers
 fglrx
-#nvidia
+nvidia
 
 #network card drivers
-#igb
+igb
 
 #wireless network card drivers
 #ndiswrapper
 #rt2860
 #rtl8187se
-#bcmwl
+bcmwl
 #madwifi-hal
 
 #vendor specific  hardware features drives
@@ -22,7 +22,7 @@ fglrx
 
 #other drivers
 #lirc
-#subfs
+subfs
 #svgalib_helper
 #etercifs
 
