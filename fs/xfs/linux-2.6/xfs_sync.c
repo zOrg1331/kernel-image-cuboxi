@@ -24,25 +24,14 @@
 #include "xfs_trans.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
-#include "xfs_dir2.h"
-#include "xfs_dmapi.h"
 #include "xfs_mount.h"
 #include "xfs_bmap_btree.h"
-#include "xfs_alloc_btree.h"
-#include "xfs_ialloc_btree.h"
-#include "xfs_btree.h"
-#include "xfs_dir2_sf.h"
-#include "xfs_attr_sf.h"
 #include "xfs_inode.h"
 #include "xfs_dinode.h"
 #include "xfs_error.h"
-#include "xfs_mru_cache.h"
 #include "xfs_filestream.h"
 #include "xfs_vnodeops.h"
-#include "xfs_utils.h"
-#include "xfs_buf_item.h"
 #include "xfs_inode_item.h"
-#include "xfs_rw.h"
 #include "xfs_quota.h"
 #include "xfs_trace.h"
 
@@ -285,7 +274,7 @@ xfs_sync_inode_attr(
 /*
  * Write out pagecache data for the whole filesystem.
  */
-int
+STATIC int
 xfs_sync_data(
 	struct xfs_mount	*mp,
 	int			flags)
@@ -306,7 +295,7 @@ xfs_sync_data(
 /*
  * Write out inode metadata (attributes) for the whole filesystem.
  */
-int
+STATIC int
 xfs_sync_attr(
 	struct xfs_mount	*mp,
 	int			flags)
@@ -339,8 +328,7 @@ xfs_commit_dummy_trans(
 
 	xfs_ilock(ip, XFS_ILOCK_EXCL);
 
-	xfs_trans_ijoin(tp, ip, XFS_ILOCK_EXCL);
-	xfs_trans_ihold(tp, ip);
+	xfs_trans_ijoin(tp, ip);
 	xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
 	error = xfs_trans_commit(tp, 0);
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
