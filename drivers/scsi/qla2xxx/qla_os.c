@@ -140,7 +140,7 @@ MODULE_PARM_DESC(ql2xetsenable,
 		"Enables firmware ETS burst."
 		"Default is 0 - skip ETS enablement.");
 
-int ql2xdbwr;
+int ql2xdbwr = 1;
 module_param(ql2xdbwr, int, S_IRUGO|S_IRUSR);
 MODULE_PARM_DESC(ql2xdbwr,
 	"Option to specify scheme for request queue posting\n"
@@ -517,6 +517,7 @@ qla2x00_get_new_sp(scsi_qla_host_t *vha, fc_port_t *fcport,
 	if (!sp)
 		return sp;
 
+	atomic_set(&sp->ref_count, 1);
 	sp->fcport = fcport;
 	sp->cmd = cmd;
 	sp->flags = 0;
@@ -797,6 +798,12 @@ qla2x00_wait_for_loop_ready(scsi_qla_host_t *vha)
 	return (return_status);
 }
 
+static void
+sp_get(struct srb *sp)
+{
+	atomic_inc(&sp->ref_count);
+}
+
 /**************************************************************************
 * qla2xxx_eh_abort
 *
@@ -825,6 +832,7 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 	struct qla_hw_data *ha = vha->hw;
 	struct req_que *req = vha->req;
 	srb_t *spt;
+	int got_ref = 0;
 
 	fc_block_scsi_eh(cmd);
 
@@ -856,6 +864,10 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 		DEBUG2(printk("%s(%ld): aborting sp %p from RISC."
 		" pid=%ld.\n", __func__, vha->host_no, sp, serial));
 
+		/* Get a reference to the sp and drop the lock.*/
+		sp_get(sp);
+		got_ref++;
+
 		spin_unlock_irqrestore(&ha->hardware_lock, flags);
 		if (ha->isp_ops->abort_command(sp)) {
 			DEBUG2(printk("%s(%ld): abort_command "
@@ -880,6 +892,9 @@ qla2xxx_eh_abort(struct scsi_cmnd *cmd)
 			ret = FAILED;
 		}
 	}
+
+	if (got_ref)
+		qla2x00_sp_compl(ha, sp);
 
 	qla_printk(KERN_INFO, ha,
 	    "scsi(%ld:%d:%d): Abort command issued -- %d %lx %x.\n",
@@ -1662,7 +1677,7 @@ static struct isp_operations qla81xx_isp_ops = {
 	.read_optrom		= qla25xx_read_optrom_data,
 	.write_optrom		= qla24xx_write_optrom_data,
 	.get_flash_version	= qla24xx_get_flash_version,
-	.start_scsi		= qla24xx_start_scsi,
+	.start_scsi		= qla24xx_dif_start_scsi,
 	.abort_isp		= qla2x00_abort_isp,
 };
 
@@ -2113,6 +2128,7 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	init_completion(&ha->mbx_cmd_comp);
 	complete(&ha->mbx_cmd_comp);
 	init_completion(&ha->mbx_intr_comp);
+	init_completion(&ha->dcbx_comp);
 
 	set_bit(0, (unsigned long *) ha->vp_idx_map);
 
@@ -2258,7 +2274,7 @@ skip_dpc:
 	DEBUG2(printk("DEBUG: detect hba %ld at address = %p\n",
 	    base_vha->host_no, ha));
 
-	if (IS_QLA25XX(ha) && ql2xenabledif) {
+	if ((IS_QLA25XX(ha) || IS_QLA81XX(ha)) && ql2xenabledif) {
 		if (ha->fw_attributes & BIT_4) {
 			base_vha->flags.difdix_supported = 1;
 			DEBUG18(qla_printk(KERN_INFO, ha,
@@ -2402,6 +2418,10 @@ qla2x00_remove_one(struct pci_dev *pdev)
 	scsi_host_put(base_vha->host);
 
 	if (IS_QLA82XX(ha)) {
+		qla82xx_idc_lock(ha);
+		qla82xx_clear_drv_active(ha);
+		qla82xx_idc_unlock(ha);
+
 		iounmap((device_reg_t __iomem *)ha->nx_pcibase);
 		if (!ql2xdbwr)
 			iounmap((device_reg_t __iomem *)ha->nxdb_wr_ptr);
@@ -3464,7 +3484,7 @@ qla2x00_sp_free_dma(srb_t *sp)
 }
 
 void
-qla2x00_sp_compl(struct qla_hw_data *ha, srb_t *sp)
+qla2x00_sp_final_compl(struct qla_hw_data *ha, srb_t *sp)
 {
 	struct scsi_cmnd *cmd = sp->cmd;
 
@@ -3483,6 +3503,20 @@ qla2x00_sp_compl(struct qla_hw_data *ha, srb_t *sp)
 
 	mempool_free(sp, ha->srb_mempool);
 	cmd->scsi_done(cmd);
+}
+
+void
+qla2x00_sp_compl(struct qla_hw_data *ha, srb_t *sp)
+{
+	if (atomic_read(&sp->ref_count) == 0) {
+		DEBUG2(qla_printk(KERN_WARNING, ha,
+		    "SP reference-count to ZERO -- sp=%p\n", sp));
+		DEBUG2(BUG());
+		return;
+	}
+	if (!atomic_dec_and_test(&sp->ref_count))
+		return;
+	qla2x00_sp_final_compl(ha, sp);
 }
 
 /**************************************************************************
