@@ -38,6 +38,9 @@ struct fw_packet;
 #define BROADCAST_CHANNEL_INITIAL	(1 << 31 | 31)
 #define BROADCAST_CHANNEL_VALID		(1 << 30)
 
+#define CSR_STATE_BIT_CMSTR	(1 << 8)
+#define CSR_STATE_BIT_ABDICATE	(1 << 10)
+
 struct fw_card_driver {
 	/*
 	 * Enable the given card with the given initial config rom.
@@ -75,7 +78,8 @@ struct fw_card_driver {
 	int (*enable_phys_dma)(struct fw_card *card,
 			       int node_id, int generation);
 
-	u32 (*get_cycle_time)(struct fw_card *card);
+	u32 (*read_csr)(struct fw_card *card, int csr_offset);
+	void (*write_csr)(struct fw_card *card, int csr_offset, u32 value);
 
 	struct fw_iso_context *
 	(*allocate_iso_context)(struct fw_card *card,
@@ -192,7 +196,7 @@ static inline void fw_node_put(struct fw_node *node)
 }
 
 void fw_core_handle_bus_reset(struct fw_card *card, int node_id,
-			      int generation, int self_id_count, u32 *self_ids);
+	int generation, int self_id_count, u32 *self_ids, bool bm_abdicate);
 void fw_destroy_nodes(struct fw_card *card);
 
 /*
@@ -218,6 +222,7 @@ static inline bool is_next_generation(int new_generation, int old_generation)
 
 void fw_core_handle_request(struct fw_card *card, struct fw_packet *request);
 void fw_core_handle_response(struct fw_card *card, struct fw_packet *packet);
+int fw_get_response_length(struct fw_request *request);
 void fw_fill_response(struct fw_packet *response, u32 *request_header,
 		      int rcode, void *payload, size_t length);
 void fw_send_phy_config(struct fw_card *card,
