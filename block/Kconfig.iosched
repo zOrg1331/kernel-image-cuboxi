@@ -36,7 +36,11 @@ config IOSCHED_CFQ
 config IOSCHED_BFQ
 	tristate "BFQ I/O scheduler"
 	depends on EXPERIMENTAL
+	#ifdef CONFIG_ZEN_DESKTOP
+	default y
+	#else
 	default n
+	#endif /* CONFIG_ZEN_DESKTOP */
 	---help---
 	  The BFQ I/O scheduler tries to distribute bandwidth among
 	  all processes according to their weights.
@@ -73,7 +77,11 @@ config DEBUG_CFQ_IOSCHED
 
 choice
 	prompt "Default I/O scheduler"
+	#ifdef CONFIG_ZEN_DESKTOP
+	default DEFAULT_BFQ
+	#else
 	default DEFAULT_CFQ
+	#endif /* CONFIG_ZEN_DESKTOP */
 	help
 	  Select the I/O scheduler which will be used by default for all
 	  block devices.
