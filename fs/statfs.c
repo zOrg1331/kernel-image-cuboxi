@@ -2,10 +2,39 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/file.h>
+#include <linux/mount.h>
 #include <linux/namei.h>
 #include <linux/statfs.h>
 #include <linux/security.h>
 #include <linux/uaccess.h>
+
+static int calculate_f_flags(struct vfsmount *mnt)
+{
+	struct super_block *sb = mnt->mnt_sb;
+	long flags = ST_VALID;
+
+	if (mnt->mnt_flags & MNT_READONLY)
+		flags |= ST_RDONLY;
+	if (mnt->mnt_flags & MNT_NOSUID)
+		flags |= ST_NOSUID;
+	if (mnt->mnt_flags & MNT_NODEV)
+		flags |= ST_NODEV;
+	if (mnt->mnt_flags & MNT_NOEXEC)
+		flags |= ST_NOEXEC;
+	if (mnt->mnt_flags & MNT_NOATIME)
+		flags |= ST_NOATIME;
+	if (mnt->mnt_flags & MNT_NODIRATIME)
+		flags |= ST_NODIRATIME;
+	if (mnt->mnt_flags & MNT_RELATIME)
+		flags |= ST_RELATIME;
+
+	if (sb->s_flags & MS_SYNCHRONOUS)
+		flags |= ST_SYNCHRONOUS;
+	if (sb->s_flags & MS_MANDLOCK)
+		flags |= ST_MANDLOCK;
+
+	return flags;
+}
 
 int statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf)
 {
@@ -26,7 +55,12 @@ int statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf)
 
 int vfs_statfs(struct path *path, struct kstatfs *buf)
 {
-	return statfs_by_dentry(path->dentry, buf);
+	int error;
+
+	error = statfs_by_dentry(path->dentry, buf);
+	if (!error)
+		buf->f_flags = calculate_f_flags(path->mnt);
+	return error;
 }
 EXPORT_SYMBOL(vfs_statfs);
 
@@ -69,6 +103,7 @@ static int do_statfs_native(struct path *path, struct statfs *buf)
 		buf->f_fsid = st.f_fsid;
 		buf->f_namelen = st.f_namelen;
 		buf->f_frsize = st.f_frsize;
+		buf->f_flags = st.f_flags;
 		memset(buf->f_spare, 0, sizeof(buf->f_spare));
 	}
 	return 0;
@@ -96,6 +131,7 @@ static int do_statfs64(struct path *path, struct statfs64 *buf)
 		buf->f_fsid = st.f_fsid;
 		buf->f_namelen = st.f_namelen;
 		buf->f_frsize = st.f_frsize;
+		buf->f_flags = st.f_flags;
 		memset(buf->f_spare, 0, sizeof(buf->f_spare));
 	}
 	return 0;
