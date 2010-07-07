@@ -52,7 +52,7 @@ static irqreturn_t powerbutton_irq(int irq, void *_pwr)
 	return IRQ_HANDLED;
 }
 
-static int __devinit twl4030_pwrbutton_probe(struct platform_device *pdev)
+static int __init twl4030_pwrbutton_probe(struct platform_device *pdev)
 {
 	struct input_dev *pwr;
 	int irq = platform_get_irq(pdev, 0);
@@ -107,7 +107,6 @@ static int __devexit twl4030_pwrbutton_remove(struct platform_device *pdev)
 }
 
 struct platform_driver twl4030_pwrbutton_driver = {
-	.probe		= twl4030_pwrbutton_probe,
 	.remove		= __devexit_p(twl4030_pwrbutton_remove),
 	.driver		= {
 		.name	= "twl4030_pwrbutton",
@@ -117,7 +116,8 @@ struct platform_driver twl4030_pwrbutton_driver = {
 
 static int __init twl4030_pwrbutton_init(void)
 {
-	return platform_driver_register(&twl4030_pwrbutton_driver);
+	return platform_driver_probe(&twl4030_pwrbutton_driver,
+			twl4030_pwrbutton_probe);
 }
 module_init(twl4030_pwrbutton_init);
 
