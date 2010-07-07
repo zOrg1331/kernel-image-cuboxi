@@ -32,11 +32,13 @@
 #define CSR_CYCLE_TIME			0x200
 #define CSR_BUS_TIME			0x204
 #define CSR_BUSY_TIMEOUT		0x210
+#define CSR_PRIORITY_BUDGET		0x218
 #define CSR_BUS_MANAGER_ID		0x21c
 #define CSR_BANDWIDTH_AVAILABLE		0x220
 #define CSR_CHANNELS_AVAILABLE		0x224
 #define CSR_CHANNELS_AVAILABLE_HI	0x224
 #define CSR_CHANNELS_AVAILABLE_LO	0x228
+#define CSR_MAINT_UTILITY		0x230
 #define CSR_BROADCAST_CHANNEL		0x234
 #define CSR_CONFIG_ROM			0x400
 #define CSR_CONFIG_ROM_END		0x800
@@ -89,6 +91,11 @@ struct fw_card {
 	struct list_head transaction_list;
 	unsigned long reset_jiffies;
 
+	u32 split_timeout_hi;
+	u32 split_timeout_lo;
+	unsigned int split_timeout_cycles;
+	unsigned int split_timeout_jiffies;
+
 	unsigned long long guid;
 	unsigned max_receive;
 	int link_speed;
@@ -112,10 +119,16 @@ struct fw_card {
 	int bm_retries;
 	int bm_generation;
 	__be32 bm_transaction_data[2];
+	bool bm_abdicate;
+
+	bool priority_budget_implemented;	/* controller feature */
+	bool broadcast_channel_auto_allocated;	/* controller feature */
 
 	bool broadcast_channel_allocated;
 	u32 broadcast_channel;
 	__be32 topology_map[(CSR_TOPOLOGY_MAP_END - CSR_TOPOLOGY_MAP) / 4];
+
+	__be32 maint_utility_register;
 };
 
 struct fw_attribute_group {
@@ -252,7 +265,7 @@ typedef void (*fw_transaction_callback_t)(struct fw_card *card, int rcode,
 typedef void (*fw_address_callback_t)(struct fw_card *card,
 				      struct fw_request *request,
 				      int tcode, int destination, int source,
-				      int generation, int speed,
+				      int generation,
 				      unsigned long long offset,
 				      void *data, size_t length,
 				      void *callback_data);
