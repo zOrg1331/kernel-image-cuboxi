@@ -1208,7 +1208,7 @@ qla24xx_84xx_fw_version_show(struct device *dev,
 	if (!IS_QLA84XX(ha))
 		return snprintf(buf, PAGE_SIZE, "\n");
 
-	if (ha->cs84xx && ha->cs84xx->op_fw_version == 0)
+	if (ha->cs84xx->op_fw_version == 0)
 		rval = qla84xx_verify_chip(vha, status);
 
 	if ((rval == QLA_SUCCESS) && (status[0] == 0))
@@ -1732,7 +1732,7 @@ qla24xx_vport_create(struct fc_vport *fc_vport, bool disable)
 			fc_vport_set_state(fc_vport, FC_VPORT_LINKDOWN);
 	}
 
-	if (IS_QLA25XX(ha) && ql2xenabledif) {
+	if ((IS_QLA25XX(ha) || IS_QLA81XX(ha)) && ql2xenabledif) {
 		if (ha->fw_attributes & BIT_4) {
 			vha->flags.difdix_supported = 1;
 			DEBUG18(qla_printk(KERN_INFO, ha,
