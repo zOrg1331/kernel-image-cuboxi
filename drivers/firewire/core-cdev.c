@@ -47,6 +47,12 @@
 
 #include "core.h"
 
+/*
+ * ABI version history is documented in linux/firewire-cdev.h.
+ */
+#define FW_CDEV_KERNEL_VERSION		4
+#define FW_CDEV_VERSION_EVENT_REQUEST2	4
+
 struct client {
 	u32 version;
 	struct fw_device *device;
@@ -107,6 +113,7 @@ struct outbound_transaction_resource {
 
 struct inbound_transaction_resource {
 	struct client_resource resource;
+	struct fw_card *card;
 	struct fw_request *request;
 	void *data;
 	size_t length;
@@ -171,7 +178,10 @@ struct outbound_transaction_event {
 
 struct inbound_transaction_event {
 	struct event event;
-	struct fw_cdev_event_request request;
+	union {
+		struct fw_cdev_event_request request;
+		struct fw_cdev_event_request2 request2;
+	} req;
 };
 
 struct iso_interrupt_event {
@@ -395,7 +405,7 @@ static int ioctl_get_info(struct client *client, union ioctl_arg *arg)
 	unsigned long ret = 0;
 
 	client->version = a->version;
-	a->version = FW_CDEV_VERSION;
+	a->version = FW_CDEV_KERNEL_VERSION;
 	a->card = client->device->card->index;
 
 	down_read(&fw_device_rwsem);
@@ -626,28 +636,33 @@ static void release_request(struct client *client,
 	if (is_fcp_request(r->request))
 		kfree(r->data);
 	else
-		fw_send_response(client->device->card, r->request,
-				 RCODE_CONFLICT_ERROR);
+		fw_send_response(r->card, r->request, RCODE_CONFLICT_ERROR);
+
+	fw_card_put(r->card);
 	kfree(r);
 }
 
 static void handle_request(struct fw_card *card, struct fw_request *request,
 			   int tcode, int destination, int source,
-			   int generation, int speed,
-			   unsigned long long offset,
+			   int generation, unsigned long long offset,
 			   void *payload, size_t length, void *callback_data)
 {
 	struct address_handler_resource *handler = callback_data;
 	struct inbound_transaction_resource *r;
 	struct inbound_transaction_event *e;
+	size_t event_size0;
 	void *fcp_frame = NULL;
 	int ret;
+
+	/* card may be different from handler->client->device->card */
+	fw_card_get(card);
 
 	r = kmalloc(sizeof(*r), GFP_ATOMIC);
 	e = kmalloc(sizeof(*e), GFP_ATOMIC);
 	if (r == NULL || e == NULL)
 		goto failed;
 
+	r->card    = card;
 	r->request = request;
 	r->data    = payload;
 	r->length  = length;
@@ -669,15 +684,37 @@ static void handle_request(struct fw_card *card, struct fw_request *request,
 	if (ret < 0)
 		goto failed;
 
-	e->request.type    = FW_CDEV_EVENT_REQUEST;
-	e->request.tcode   = tcode;
-	e->request.offset  = offset;
-	e->request.length  = length;
-	e->request.handle  = r->resource.handle;
-	e->request.closure = handler->closure;
+	if (handler->client->version < FW_CDEV_VERSION_EVENT_REQUEST2) {
+		struct fw_cdev_event_request *req = &e->req.request;
+
+		if (tcode & 0x10)
+			tcode = TCODE_LOCK_REQUEST;
+
+		req->type	= FW_CDEV_EVENT_REQUEST;
+		req->tcode	= tcode;
+		req->offset	= offset;
+		req->length	= length;
+		req->handle	= r->resource.handle;
+		req->closure	= handler->closure;
+		event_size0	= sizeof(*req);
+	} else {
+		struct fw_cdev_event_request2 *req = &e->req.request2;
+
+		req->type	= FW_CDEV_EVENT_REQUEST2;
+		req->tcode	= tcode;
+		req->offset	= offset;
+		req->source_node_id = source;
+		req->destination_node_id = destination;
+		req->card	= card->index;
+		req->generation	= generation;
+		req->length	= length;
+		req->handle	= r->resource.handle;
+		req->closure	= handler->closure;
+		event_size0	= sizeof(*req);
+	}
 
 	queue_event(handler->client, &e->event,
-		    &e->request, sizeof(e->request), r->data, length);
+		    &e->req, event_size0, r->data, length);
 	return;
 
  failed:
@@ -687,6 +724,8 @@ static void handle_request(struct fw_card *card, struct fw_request *request,
 
 	if (!is_fcp_request(request))
 		fw_send_response(card, request, RCODE_CONFLICT_ERROR);
+
+	fw_card_put(card);
 }
 
 static void release_address_handler(struct client *client,
@@ -757,15 +796,19 @@ static int ioctl_send_response(struct client *client, union ioctl_arg *arg)
 	if (is_fcp_request(r->request))
 		goto out;
 
-	if (a->length < r->length)
-		r->length = a->length;
-	if (copy_from_user(r->data, u64_to_uptr(a->data), r->length)) {
+	if (a->length != fw_get_response_length(r->request)) {
+		ret = -EINVAL;
+		kfree(r->request);
+		goto out;
+	}
+	if (copy_from_user(r->data, u64_to_uptr(a->data), a->length)) {
 		ret = -EFAULT;
 		kfree(r->request);
 		goto out;
 	}
-	fw_send_response(client->device->card, r->request, a->rcode);
+	fw_send_response(r->card, r->request, a->rcode);
  out:
+	fw_card_put(r->card);
 	kfree(r);
 
 	return ret;
@@ -845,7 +888,7 @@ static void iso_callback(struct fw_iso_context *context, u32 cycle,
 	struct client *client = data;
 	struct iso_interrupt_event *e;
 
-	e = kzalloc(sizeof(*e) + header_length, GFP_ATOMIC);
+	e = kmalloc(sizeof(*e) + header_length, GFP_ATOMIC);
 	if (e == NULL)
 		return;
 
@@ -862,10 +905,6 @@ static int ioctl_create_iso_context(struct client *client, union ioctl_arg *arg)
 {
 	struct fw_cdev_create_iso_context *a = &arg->create_iso_context;
 	struct fw_iso_context *context;
-
-	/* We only support one context at this time. */
-	if (client->iso_context != NULL)
-		return -EBUSY;
 
 	if (a->channel > 63)
 		return -EINVAL;
@@ -891,10 +930,17 @@ static int ioctl_create_iso_context(struct client *client, union ioctl_arg *arg)
 	if (IS_ERR(context))
 		return PTR_ERR(context);
 
+	/* We only support one context at this time. */
+	spin_lock_irq(&client->lock);
+	if (client->iso_context != NULL) {
+		spin_unlock_irq(&client->lock);
+		fw_iso_context_destroy(context);
+		return -EBUSY;
+	}
 	client->iso_closure = a->closure;
 	client->iso_context = context;
+	spin_unlock_irq(&client->lock);
 
-	/* We only support one context at this time. */
 	a->handle = 0;
 
 	return 0;
@@ -1042,7 +1088,7 @@ static int ioctl_get_cycle_timer2(struct client *client, union ioctl_arg *arg)
 
 	local_irq_disable();
 
-	cycle_time = card->driver->get_cycle_time(card);
+	cycle_time = card->driver->read_csr(card, CSR_CYCLE_TIME);
 
 	switch (a->clk_id) {
 	case CLOCK_REALTIME:      getnstimeofday(&ts);                   break;
