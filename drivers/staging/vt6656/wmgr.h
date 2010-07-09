@@ -82,7 +82,7 @@
 
 /*---------------------  Export Types  ------------------------------*/
 //mike define: make timer  to expire after desired times
-#define timer_expire(timer,next_tick)   mod_timer(&timer, RUN_AT(next_tick))
+#define timer_expire(timer, next_tick) mod_timer(&timer, RUN_AT(next_tick))
 
 typedef void (*TimerFunction)(unsigned long);
 
@@ -259,9 +259,7 @@ typedef struct tagSMgmtObject
     // Operation state variables
     WMAC_CURRENT_MODE       eCurrMode;   // MAC current connection mode
     WMAC_BSS_STATE          eCurrState;  // MAC current BSS state
-    #ifdef SndEvt_ToAPI
     WMAC_BSS_STATE          eLastState;  // MAC last BSS state
-    #endif
 
     PKnownBSS               pCurrBSS;
     BYTE                    byCSSGK;
@@ -343,11 +341,11 @@ typedef struct tagSMgmtObject
     BOOL                    bRxBeaconInTBTTWake;
     BYTE                    abyPSTxMap[MAX_NODE_NUM + 1];
 
-    // managment command related
+    // management command related
     unsigned int                    uCmdBusy;
     unsigned int                    uCmdHostAPBusy;
 
-    // managment packet pool
+    // management packet pool
     PBYTE                   pbyMgmtPacketPool;
     BYTE                    byMgmtPacketPool[sizeof(STxMgmtPacket) + WLAN_A3FR_MAXLEN];
 
