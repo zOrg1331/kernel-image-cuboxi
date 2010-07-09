@@ -208,13 +208,19 @@ static void allocate_broadcast_channel(struct fw_card *card, int generation)
 {
 	int channel, bandwidth = 0;
 
-	fw_iso_resource_manage(card, generation, 1ULL << 31, &channel,
-			       &bandwidth, true, card->bm_transaction_data);
-	if (channel == 31) {
+	if (!card->broadcast_channel_allocated) {
+		fw_iso_resource_manage(card, generation, 1ULL << 31,
+				       &channel, &bandwidth, true,
+				       card->bm_transaction_data);
+		if (channel != 31) {
+			fw_notify("failed to allocate broadcast channel\n");
+			return;
+		}
 		card->broadcast_channel_allocated = true;
-		device_for_each_child(card->device, (void *)(long)generation,
-				      fw_device_set_broadcast_channel);
 	}
+
+	device_for_each_child(card->device, (void *)(long)generation,
+			      fw_device_set_broadcast_channel);
 }
 
 static const char gap_count_table[] = {
@@ -233,18 +239,17 @@ static void fw_card_bm_work(struct work_struct *work)
 	struct fw_card *card = container_of(work, struct fw_card, work.work);
 	struct fw_device *root_device, *irm_device;
 	struct fw_node *root_node;
-	unsigned long flags;
-	int root_id, new_root_id, irm_id, local_id;
+	int root_id, new_root_id, irm_id, bm_id, local_id;
 	int gap_count, generation, grace, rcode;
 	bool do_reset = false;
 	bool root_device_is_running;
 	bool root_device_is_cmc;
 	bool irm_is_1394_1995_only;
 
-	spin_lock_irqsave(&card->lock, flags);
+	spin_lock_irq(&card->lock);
 
 	if (card->local_node == NULL) {
-		spin_unlock_irqrestore(&card->lock, flags);
+		spin_unlock_irq(&card->lock);
 		goto out_put_card;
 	}
 
@@ -267,7 +272,8 @@ static void fw_card_bm_work(struct work_struct *work)
 
 	grace = time_after(jiffies, card->reset_jiffies + DIV_ROUND_UP(HZ, 8));
 
-	if (is_next_generation(generation, card->bm_generation) ||
+	if ((is_next_generation(generation, card->bm_generation) &&
+	     !card->bm_abdicate) ||
 	    (card->bm_generation != generation && grace)) {
 		/*
 		 * This first step is to figure out who is IRM and
@@ -298,21 +304,26 @@ static void fw_card_bm_work(struct work_struct *work)
 		card->bm_transaction_data[0] = cpu_to_be32(0x3f);
 		card->bm_transaction_data[1] = cpu_to_be32(local_id);
 
-		spin_unlock_irqrestore(&card->lock, flags);
+		spin_unlock_irq(&card->lock);
 
 		rcode = fw_run_transaction(card, TCODE_LOCK_COMPARE_SWAP,
 				irm_id, generation, SCODE_100,
 				CSR_REGISTER_BASE + CSR_BUS_MANAGER_ID,
-				card->bm_transaction_data,
-				sizeof(card->bm_transaction_data));
+				card->bm_transaction_data, 8);
 
 		if (rcode == RCODE_GENERATION)
 			/* Another bus reset, BM work has been rescheduled. */
 			goto out;
 
-		if (rcode == RCODE_COMPLETE &&
-		    card->bm_transaction_data[0] != cpu_to_be32(0x3f)) {
+		bm_id = be32_to_cpu(card->bm_transaction_data[0]);
 
+		spin_lock_irq(&card->lock);
+		if (rcode == RCODE_COMPLETE && generation == card->generation)
+			card->bm_node_id =
+			    bm_id == 0x3f ? local_id : 0xffc0 | bm_id;
+		spin_unlock_irq(&card->lock);
+
+		if (rcode == RCODE_COMPLETE && bm_id != 0x3f) {
 			/* Somebody else is BM.  Only act as IRM. */
 			if (local_id == irm_id)
 				allocate_broadcast_channel(card, generation);
@@ -320,7 +331,17 @@ static void fw_card_bm_work(struct work_struct *work)
 			goto out;
 		}
 
-		spin_lock_irqsave(&card->lock, flags);
+		if (rcode == RCODE_SEND_ERROR) {
+			/*
+			 * We have been unable to send the lock request due to
+			 * some local problem.  Let's try again later and hope
+			 * that the problem has gone away by then.
+			 */
+			fw_schedule_bm_work(card, DIV_ROUND_UP(HZ, 8));
+			goto out;
+		}
+
+		spin_lock_irq(&card->lock);
 
 		if (rcode != RCODE_COMPLETE) {
 			/*
@@ -339,7 +360,7 @@ static void fw_card_bm_work(struct work_struct *work)
 		 * We weren't BM in the last generation, and the last
 		 * bus reset is less than 125ms ago.  Reschedule this job.
 		 */
-		spin_unlock_irqrestore(&card->lock, flags);
+		spin_unlock_irq(&card->lock);
 		fw_schedule_bm_work(card, DIV_ROUND_UP(HZ, 8));
 		goto out;
 	}
@@ -362,14 +383,12 @@ static void fw_card_bm_work(struct work_struct *work)
 		 * If we haven't probed this device yet, bail out now
 		 * and let's try again once that's done.
 		 */
-		spin_unlock_irqrestore(&card->lock, flags);
+		spin_unlock_irq(&card->lock);
 		goto out;
 	} else if (root_device_is_cmc) {
 		/*
-		 * FIXME: I suppose we should set the cmstr bit in the
-		 * STATE_CLEAR register of this node, as described in
-		 * 1394-1995, 8.4.2.6.  Also, send out a force root
-		 * packet for this node.
+		 * We will send out a force root packet for this
+		 * node as part of the gap count optimization.
 		 */
 		new_root_id = root_id;
 	} else {
@@ -402,7 +421,7 @@ static void fw_card_bm_work(struct work_struct *work)
 	    (card->gap_count != gap_count || new_root_id != root_id))
 		do_reset = true;
 
-	spin_unlock_irqrestore(&card->lock, flags);
+	spin_unlock_irq(&card->lock);
 
 	if (do_reset) {
 		fw_notify("phy config: card %d, new root=%x, gap_count=%d\n",
@@ -410,10 +429,24 @@ static void fw_card_bm_work(struct work_struct *work)
 		fw_send_phy_config(card, new_root_id, generation, gap_count);
 		fw_core_initiate_bus_reset(card, 1);
 		/* Will allocate broadcast channel after the reset. */
-	} else {
-		if (local_id == irm_id)
-			allocate_broadcast_channel(card, generation);
+		goto out;
 	}
+
+	if (root_device_is_cmc) {
+		/*
+		 * Make sure that the cycle master sends cycle start packets.
+		 */
+		card->bm_transaction_data[0] = cpu_to_be32(CSR_STATE_BIT_CMSTR);
+		rcode = fw_run_transaction(card, TCODE_WRITE_QUADLET_REQUEST,
+				root_id, generation, SCODE_100,
+				CSR_REGISTER_BASE + CSR_STATE_SET,
+				card->bm_transaction_data, 4);
+		if (rcode == RCODE_GENERATION)
+			goto out;
+	}
+
+	if (local_id == irm_id)
+		allocate_broadcast_channel(card, generation);
 
  out:
 	fw_node_put(root_node);
@@ -432,6 +465,10 @@ void fw_card_initialize(struct fw_card *card,
 	card->device = device;
 	card->current_tlabel = 0;
 	card->tlabel_mask = 0;
+	card->split_timeout_hi = 0;
+	card->split_timeout_lo = 800 << 19;
+	card->split_timeout_cycles = 800;
+	card->split_timeout_jiffies = DIV_ROUND_UP(HZ, 10);
 	card->color = 0;
 	card->broadcast_channel = BROADCAST_CHANNEL_INITIAL;
 
