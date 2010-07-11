@@ -1252,9 +1252,6 @@ static int ds_event(struct pcmcia_socket *skt, event_t event, int priority)
 		pcmcia_card_add(skt);
 		break;
 
-	case CS_EVENT_EJECTION_REQUEST:
-		break;
-
 	case CS_EVENT_PM_RESUME:
 		if (verify_cis_cache(skt) != 0) {
 			dev_dbg(&skt->dev, "cis mismatch - different card\n");
@@ -1272,9 +1269,6 @@ static int ds_event(struct pcmcia_socket *skt, event_t event, int priority)
 		}
 		break;
 
-	case CS_EVENT_PM_SUSPEND:
-	case CS_EVENT_RESET_PHYSICAL:
-	case CS_EVENT_CARD_RESET:
 	default:
 		break;
     }
