@@ -254,8 +254,7 @@ struct mceusb_dev {
 		u32 connected:1;
 		u32 tx_mask_inverted:1;
 		u32 microsoft_gen1:1;
-		u32 gen3:1;
-		u32 reserved:28;
+		u32 reserved:29;
 	} flags;
 
 	/* transmit support */
@@ -292,6 +291,7 @@ struct mceusb_dev {
 static char DEVICE_RESET[]	= {0x00, 0xff, 0xaa};
 static char GET_REVISION[]	= {0xff, 0x0b};
 static char GET_UNKNOWN[]	= {0xff, 0x18};
+static char GET_UNKNOWN2[]	= {0x9f, 0x05};
 static char GET_CARRIER_FREQ[]	= {0x9f, 0x07};
 static char GET_RX_TIMEOUT[]	= {0x9f, 0x0d};
 static char GET_TX_BITMASK[]	= {0x9f, 0x13};
@@ -765,50 +765,21 @@ static void mceusb_dev_recv(struct urb *urb, struct pt_regs *regs)
 
 static void mceusb_gen1_init(struct mceusb_dev *ir)
 {
-	int i, ret;
-	int partial = 0;
+	int ret;
+	int maxp = ir->len_in;
 	struct device *dev = ir->dev;
-	char *junk, *data;
-
-	junk = kmalloc(2 * USB_BUFLEN, GFP_KERNEL);
-	if (!junk) {
-		dev_err(dev, "%s: memory allocation failed!\n", __func__);
-		return;
-	}
+	char *data;
 
 	data = kzalloc(USB_CTRL_MSG_SZ, GFP_KERNEL);
 	if (!data) {
 		dev_err(dev, "%s: memory allocation failed!\n", __func__);
-		kfree(junk);
 		return;
 	}
 
 	/*
-	 * Clear off the first few messages. These look like calibration
-	 * or test data, I can't really tell. This also flushes in case
-	 * we have random ir data queued up.
-	 */
-	for (i = 0; i < MCE_G1_INIT_MSGS; i++)
-		usb_bulk_msg(ir->usbdev,
-			usb_rcvbulkpipe(ir->usbdev,
-				ir->usb_ep_in->bEndpointAddress),
-			junk, sizeof(junk), &partial, HZ * 10);
-
-	/* Get Status */
-	ret = usb_control_msg(ir->usbdev, usb_rcvctrlpipe(ir->usbdev, 0),
-			      USB_REQ_GET_STATUS, USB_DIR_IN,
-			      0, 0, data, USB_CTRL_MSG_SZ, HZ * 3);
-
-	/*    ret = usb_get_status( ir->usbdev, 0, 0, data ); */
-	dev_dbg(dev, "%s - ret = %d status = 0x%x 0x%x\n", __func__,
-		ret, data[0], data[1]);
-
-	/*
-	 * This is a strange one. They issue a set address to the device
+	 * This is a strange one. Windows issues a set address to the device
 	 * on the receive control pipe and expect a certain value pair back
 	 */
-	memset(data, 0, sizeof(data));
-
 	ret = usb_control_msg(ir->usbdev, usb_rcvctrlpipe(ir->usbdev, 0),
 			      USB_REQ_SET_ADDRESS, USB_TYPE_VENDOR, 0, 0,
 			      data, USB_CTRL_MSG_SZ, HZ * 3);
@@ -835,19 +806,20 @@ static void mceusb_gen1_init(struct mceusb_dev *ir)
 			      0x0000, 0x0100, NULL, 0, HZ * 3);
 	dev_dbg(dev, "%s - retC = %d\n", __func__, ret);
 
+	/* device reset */
+	mce_async_out(ir, DEVICE_RESET, sizeof(DEVICE_RESET));
+	mce_sync_in(ir, NULL, maxp);
+
+	/* get hw/sw revision? */
+	mce_async_out(ir, GET_REVISION, sizeof(GET_REVISION));
+	mce_sync_in(ir, NULL, maxp);
+
 	kfree(data);
-	kfree(junk);
 };
 
 static void mceusb_gen2_init(struct mceusb_dev *ir)
 {
 	int maxp = ir->len_in;
-
-	mce_sync_in(ir, NULL, maxp);
-	mce_sync_in(ir, NULL, maxp);
-
-	set_current_state(TASK_INTERRUPTIBLE);
-	schedule_timeout(msecs_to_jiffies(100));
 
 	/* device reset */
 	mce_async_out(ir, DEVICE_RESET, sizeof(DEVICE_RESET));
@@ -857,20 +829,16 @@ static void mceusb_gen2_init(struct mceusb_dev *ir)
 	mce_async_out(ir, GET_REVISION, sizeof(GET_REVISION));
 	mce_sync_in(ir, NULL, maxp);
 
-	/* unknown what this actually returns... */
+	/* unknown what the next two actually return... */
 	mce_async_out(ir, GET_UNKNOWN, sizeof(GET_UNKNOWN));
+	mce_sync_in(ir, NULL, maxp);
+	mce_async_out(ir, GET_UNKNOWN2, sizeof(GET_UNKNOWN2));
 	mce_sync_in(ir, NULL, maxp);
 }
 
-static void mceusb_gen3_init(struct mceusb_dev *ir)
+static void mceusb_get_parameters(struct mceusb_dev *ir)
 {
 	int maxp = ir->len_in;
-
-	mce_sync_in(ir, NULL, maxp);
-
-	/* device reset */
-	mce_async_out(ir, DEVICE_RESET, sizeof(DEVICE_RESET));
-	mce_sync_in(ir, NULL, maxp);
 
 	/* get the carrier and frequency */
 	mce_async_out(ir, GET_CARRIER_FREQ, sizeof(GET_CARRIER_FREQ));
@@ -974,8 +942,6 @@ static int __devinit mceusb_dev_probe(struct usb_interface *intf,
 
 	dev_dbg(&intf->dev, ": %s called\n", __func__);
 
-	usb_reset_device(dev);
-
 	config = dev->actconfig;
 	idesc  = intf->cur_altsetting;
 
@@ -1040,7 +1006,6 @@ static int __devinit mceusb_dev_probe(struct usb_interface *intf,
 	ir->usbdev = dev;
 	ir->dev = &intf->dev;
 	ir->len_in = maxp;
-	ir->flags.gen3 = is_gen3;
 	ir->flags.microsoft_gen1 = is_microsoft_gen1;
 	ir->flags.tx_mask_inverted = tx_mask_inverted;
 
@@ -1062,23 +1027,23 @@ static int __devinit mceusb_dev_probe(struct usb_interface *intf,
 	if (!ir->idev)
 		goto input_dev_fail;
 
-	/* inbound data */
+	/* flush buffers on the device */
+	mce_sync_in(ir, NULL, maxp);
+	mce_sync_in(ir, NULL, maxp);
+
+	/* wire up inbound data handler */
 	usb_fill_int_urb(ir->urb_in, dev, pipe, ir->buf_in,
 		maxp, (usb_complete_t) mceusb_dev_recv, ir, ep_in->bInterval);
 	ir->urb_in->transfer_dma = ir->dma_in;
 	ir->urb_in->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
 	/* initialize device */
-	if (ir->flags.gen3)
-		mceusb_gen3_init(ir);
-
-	else if (ir->flags.microsoft_gen1)
+	if (ir->flags.microsoft_gen1)
 		mceusb_gen1_init(ir);
-
-	else
+	else if (!is_gen3)
 		mceusb_gen2_init(ir);
 
-	mce_sync_in(ir, NULL, maxp);
+	mceusb_get_parameters(ir);
 
 	mceusb_set_tx_mask(ir, MCE_DEFAULT_TX_MASK);
 
