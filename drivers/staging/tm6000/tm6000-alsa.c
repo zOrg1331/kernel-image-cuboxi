@@ -16,6 +16,7 @@
 #include <linux/interrupt.h>
 #include <linux/usb.h>
 #include <linux/vmalloc.h>
+#include <linux/slab.h>
 
 #include <asm/delay.h>
 #include <sound/core.h>
