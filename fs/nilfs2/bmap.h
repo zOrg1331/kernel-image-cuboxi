@@ -32,11 +32,6 @@
 
 #define NILFS_BMAP_INVALID_PTR	0
 
-#define nilfs_bmap_dkey_to_key(dkey)	le64_to_cpu(dkey)
-#define nilfs_bmap_key_to_dkey(key)	cpu_to_le64(key)
-#define nilfs_bmap_dptr_to_ptr(dptr)	le64_to_cpu(dptr)
-#define nilfs_bmap_ptr_to_dptr(ptr)	cpu_to_le64(ptr)
-
 #define nilfs_bmap_keydiff_abs(diff)	((diff) < 0 ? -(diff) : (diff))
 
 
@@ -71,7 +66,7 @@ struct nilfs_bmap_operations {
 	int (*bop_delete)(struct nilfs_bmap *, __u64);
 	void (*bop_clear)(struct nilfs_bmap *);
 
-	int (*bop_propagate)(const struct nilfs_bmap *, struct buffer_head *);
+	int (*bop_propagate)(struct nilfs_bmap *, struct buffer_head *);
 	void (*bop_lookup_dirty_buffers)(struct nilfs_bmap *,
 					 struct list_head *);
 
@@ -222,6 +217,13 @@ static inline void nilfs_bmap_abort_end_ptr(struct nilfs_bmap *bmap,
 {
 	if (dat)
 		nilfs_dat_abort_end(dat, &req->bpr_req);
+}
+
+static inline void nilfs_bmap_set_target_v(struct nilfs_bmap *bmap, __u64 key,
+					   __u64 ptr)
+{
+	bmap->b_last_allocated_key = key;
+	bmap->b_last_allocated_ptr = ptr;
 }
 
 __u64 nilfs_bmap_data_get_key(const struct nilfs_bmap *,
