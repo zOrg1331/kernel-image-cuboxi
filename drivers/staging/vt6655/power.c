@@ -77,12 +77,12 @@ static int          msglevel                =MSG_LEVEL_INFO;
 void
 PSvEnablePowerSaving(
     void *hDeviceContext,
-    WORD wListenInterval
+    unsigned short wListenInterval
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
     PSMgmtObject    pMgmt = pDevice->pMgmt;
-    WORD            wAID = pMgmt->wCurrAID | BIT14 | BIT15;
+    unsigned short wAID = pMgmt->wCurrAID | BIT14 | BIT15;
 
     // set period of power up before TBTT
     VNSvOutPortW(pDevice->PortOffset + MAC_REG_PWBT, C_PWBT);
@@ -191,7 +191,7 @@ PSbConsiderPowerDown(
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
     PSMgmtObject    pMgmt = pDevice->pMgmt;
-    UINT            uIdx;
+    unsigned int uIdx;
 
     // check if already in Doze mode
     if (MACbIsRegBitsOn(pDevice->PortOffset, MAC_REG_PSCTL, PSCTL_PS))
@@ -262,7 +262,7 @@ PSvSendPSPOLL(
 
     memset(pMgmt->pbyPSPacketPool, 0, sizeof(STxMgmtPacket) + WLAN_HDR_ADDR2_LEN);
     pTxPacket = (PSTxMgmtPacket)pMgmt->pbyPSPacketPool;
-    pTxPacket->p80211Header = (PUWLAN_80211HDR)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
+    pTxPacket->p80211Header = (PUWLAN_80211HDR)((unsigned char *)pTxPacket + sizeof(STxMgmtPacket));
     pTxPacket->p80211Header->sA2.wFrameCtl = cpu_to_le16(
          (
          WLAN_SET_FC_FTYPE(WLAN_TYPE_CTL) |
@@ -304,7 +304,7 @@ PSbSendNullPacket(
     PSDevice            pDevice = (PSDevice)hDeviceContext;
     PSTxMgmtPacket      pTxPacket = NULL;
     PSMgmtObject        pMgmt = pDevice->pMgmt;
-    UINT                uIdx;
+    unsigned int uIdx;
 
 
     if (pDevice->bLinkPass == FALSE) {
@@ -329,7 +329,7 @@ PSbSendNullPacket(
 
     memset(pMgmt->pbyPSPacketPool, 0, sizeof(STxMgmtPacket) + WLAN_NULLDATA_FR_MAXLEN);
     pTxPacket = (PSTxMgmtPacket)pMgmt->pbyPSPacketPool;
-    pTxPacket->p80211Header = (PUWLAN_80211HDR)((PBYTE)pTxPacket + sizeof(STxMgmtPacket));
+    pTxPacket->p80211Header = (PUWLAN_80211HDR)((unsigned char *)pTxPacket + sizeof(STxMgmtPacket));
 
     if (pDevice->bEnablePSMode) {
 
@@ -350,7 +350,7 @@ PSbSendNullPacket(
     }
 
     if(pMgmt->eCurrMode != WMAC_MODE_IBSS_STA) {
-        pTxPacket->p80211Header->sA3.wFrameCtl |= cpu_to_le16((WORD)WLAN_SET_FC_TODS(1));
+        pTxPacket->p80211Header->sA3.wFrameCtl |= cpu_to_le16((unsigned short)WLAN_SET_FC_TODS(1));
     }
 
     memcpy(pTxPacket->p80211Header->sA3.abyAddr1, pMgmt->abyCurrBSSID, WLAN_ADDR_LEN);
