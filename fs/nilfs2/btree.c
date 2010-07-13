@@ -153,7 +153,7 @@ static inline int nilfs_btree_node_size(const struct nilfs_bmap *btree)
 
 static int nilfs_btree_nchildren_per_block(const struct nilfs_bmap *btree)
 {
-	return NILFS_BTREE_NODE_NCHILDREN_MAX(nilfs_btree_node_size(btree));
+	return btree->b_nchildren_per_block;
 }
 
 static inline __le64 *
@@ -2217,10 +2217,14 @@ static const struct nilfs_bmap_operations nilfs_btree_ops_gc = {
 int nilfs_btree_init(struct nilfs_bmap *bmap)
 {
 	bmap->b_ops = &nilfs_btree_ops;
+	bmap->b_nchildren_per_block =
+		NILFS_BTREE_NODE_NCHILDREN_MAX(nilfs_btree_node_size(bmap));
 	return 0;
 }
 
 void nilfs_btree_init_gc(struct nilfs_bmap *bmap)
 {
 	bmap->b_ops = &nilfs_btree_ops_gc;
+	bmap->b_nchildren_per_block =
+		NILFS_BTREE_NODE_NCHILDREN_MAX(nilfs_btree_node_size(bmap));
 }
