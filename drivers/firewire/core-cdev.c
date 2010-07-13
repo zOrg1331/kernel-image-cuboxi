@@ -18,6 +18,7 @@
  * Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
+#include <linux/bug.h>
 #include <linux/compat.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -564,6 +565,10 @@ static int init_request(struct client *client,
 	    (request->length > 4096 || request->length > 512 << speed))
 		return -EIO;
 
+	if (request->tcode == TCODE_WRITE_QUADLET_REQUEST &&
+	    request->length < 4)
+		return -EINVAL;
+
 	e = kmalloc(sizeof(*e) + request->length, GFP_KERNEL);
 	if (e == NULL)
 		return -ENOMEM;
@@ -816,8 +821,9 @@ static int ioctl_send_response(struct client *client, union ioctl_arg *arg)
 
 static int ioctl_initiate_bus_reset(struct client *client, union ioctl_arg *arg)
 {
-	return fw_core_initiate_bus_reset(client->device->card,
+	fw_schedule_bus_reset(client->device->card, true,
 			arg->initiate_bus_reset.type == FW_CDEV_SHORT_RESET);
+	return 0;
 }
 
 static void release_descriptor(struct client *client,
@@ -905,6 +911,9 @@ static int ioctl_create_iso_context(struct client *client, union ioctl_arg *arg)
 {
 	struct fw_cdev_create_iso_context *a = &arg->create_iso_context;
 	struct fw_iso_context *context;
+
+	BUILD_BUG_ON(FW_CDEV_ISO_CONTEXT_TRANSMIT != FW_ISO_CONTEXT_TRANSMIT ||
+		     FW_CDEV_ISO_CONTEXT_RECEIVE  != FW_ISO_CONTEXT_RECEIVE);
 
 	if (a->channel > 63)
 		return -EINVAL;
@@ -1056,6 +1065,13 @@ static int ioctl_queue_iso(struct client *client, union ioctl_arg *arg)
 static int ioctl_start_iso(struct client *client, union ioctl_arg *arg)
 {
 	struct fw_cdev_start_iso *a = &arg->start_iso;
+
+	BUILD_BUG_ON(
+	    FW_CDEV_ISO_CONTEXT_MATCH_TAG0 != FW_ISO_CONTEXT_MATCH_TAG0 ||
+	    FW_CDEV_ISO_CONTEXT_MATCH_TAG1 != FW_ISO_CONTEXT_MATCH_TAG1 ||
+	    FW_CDEV_ISO_CONTEXT_MATCH_TAG2 != FW_ISO_CONTEXT_MATCH_TAG2 ||
+	    FW_CDEV_ISO_CONTEXT_MATCH_TAG3 != FW_ISO_CONTEXT_MATCH_TAG3 ||
+	    FW_CDEV_ISO_CONTEXT_MATCH_ALL_TAGS != FW_ISO_CONTEXT_MATCH_ALL_TAGS);
 
 	if (client->iso_context == NULL || a->handle != 0)
 		return -EINVAL;
