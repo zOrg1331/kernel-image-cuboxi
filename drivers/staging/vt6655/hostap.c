@@ -215,7 +215,7 @@ int vt6655_hostap_set_hostapd(PSDevice pDevice, int val, int rtnl_locked)
 static int hostap_remove_sta(PSDevice pDevice,
 				     struct viawget_hostapd_param *param)
 {
-	UINT uNodeIndex;
+	unsigned int uNodeIndex;
 
 
     if (BSSDBbIsSTAInNodeDB(pDevice->pMgmt, param->sta_addr, &uNodeIndex)) {
@@ -244,7 +244,7 @@ static int hostap_add_sta(PSDevice pDevice,
 				  struct viawget_hostapd_param *param)
 {
     PSMgmtObject    pMgmt = pDevice->pMgmt;
-	UINT uNodeIndex;
+	unsigned int uNodeIndex;
 
 
     if (!BSSDBbIsSTAInNodeDB(pMgmt, param->sta_addr, &uNodeIndex)) {
@@ -267,7 +267,7 @@ static int hostap_add_sta(PSDevice pDevice,
     pMgmt->sNodeDBTable[uNodeIndex].bShortPreamble =
             WLAN_GET_CAP_INFO_SHORTPREAMBLE(pMgmt->sNodeDBTable[uNodeIndex].wCapInfo);
 
-    pMgmt->sNodeDBTable[uNodeIndex].wAID = (WORD)param->u.add_sta.aid;
+    pMgmt->sNodeDBTable[uNodeIndex].wAID = (unsigned short)param->u.add_sta.aid;
 
     pMgmt->sNodeDBTable[uNodeIndex].ulLastRxJiffer = jiffies;
 
@@ -304,7 +304,7 @@ static int hostap_get_info_sta(PSDevice pDevice,
 				       struct viawget_hostapd_param *param)
 {
     PSMgmtObject    pMgmt = pDevice->pMgmt;
-	UINT uNodeIndex;
+	unsigned int uNodeIndex;
 
     if (BSSDBbIsSTAInNodeDB(pMgmt, param->sta_addr, &uNodeIndex)) {
 	    param->u.get_info_sta.inactive_sec =
@@ -338,7 +338,7 @@ static int hostap_reset_txexc_sta(PSDevice pDevice,
 					  struct viawget_hostapd_param *param)
 {
     PSMgmtObject    pMgmt = pDevice->pMgmt;
-	UINT uNodeIndex;
+	unsigned int uNodeIndex;
 
     if (BSSDBbIsSTAInNodeDB(pMgmt, param->sta_addr, &uNodeIndex)) {
         pMgmt->sNodeDBTable[uNodeIndex].uTxAttempts = 0;
@@ -368,13 +368,13 @@ static int hostap_set_flags_sta(PSDevice pDevice,
 					struct viawget_hostapd_param *param)
 {
     PSMgmtObject    pMgmt = pDevice->pMgmt;
-	UINT uNodeIndex;
+	unsigned int uNodeIndex;
 
     if (BSSDBbIsSTAInNodeDB(pMgmt, param->sta_addr, &uNodeIndex)) {
 		pMgmt->sNodeDBTable[uNodeIndex].dwFlags |= param->u.set_flags_sta.flags_or;
 		pMgmt->sNodeDBTable[uNodeIndex].dwFlags &= param->u.set_flags_sta.flags_and;
 		DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO " dwFlags = %x \n",
-		            (UINT)pMgmt->sNodeDBTable[uNodeIndex].dwFlags);
+		            (unsigned int)pMgmt->sNodeDBTable[uNodeIndex].dwFlags);
 	}
 	else {
 	    return -ENOENT;
@@ -471,16 +471,16 @@ static int hostap_set_encryption(PSDevice pDevice,
 				       int param_len)
 {
     PSMgmtObject    pMgmt = pDevice->pMgmt;
-    DWORD   dwKeyIndex = 0;
-    BYTE    abyKey[MAX_KEY_LEN];
-    BYTE    abySeq[MAX_KEY_LEN];
+    unsigned long dwKeyIndex = 0;
+    unsigned char abyKey[MAX_KEY_LEN];
+    unsigned char abySeq[MAX_KEY_LEN];
     NDIS_802_11_KEY_RSC   KeyRSC;
-    BYTE    byKeyDecMode = KEY_CTL_WEP;
+    unsigned char byKeyDecMode = KEY_CTL_WEP;
 	int     ret = 0;
 	int     iNodeIndex = -1;
 	int     ii;
 	BOOL    bKeyTableFull = FALSE;
-	WORD    wKeyCtl = 0;
+	unsigned short wKeyCtl = 0;
 
 
 	param->u.crypt.err = 0;
@@ -553,9 +553,9 @@ static int hostap_set_encryption(PSDevice pDevice,
             param->u.crypt.key_len
            );
 
-    dwKeyIndex = (DWORD)(param->u.crypt.idx);
+    dwKeyIndex = (unsigned long)(param->u.crypt.idx);
     if (param->u.crypt.flags & HOSTAP_CRYPT_FLAG_SET_TX_KEY) {
-        pDevice->byKeyIndex = (BYTE)dwKeyIndex;
+        pDevice->byKeyIndex = (unsigned char)dwKeyIndex;
         pDevice->bTransmitKey = TRUE;
         dwKeyIndex |= (1 << 31);
     }
@@ -580,7 +580,7 @@ static int hostap_set_encryption(PSDevice pDevice,
                            dwKeyIndex & ~(USE_KEYRSC),
                            param->u.crypt.key_len,
                            (PQWORD) &(KeyRSC),
-                           (PBYTE)abyKey,
+                           (unsigned char *)abyKey,
                             KEY_CTL_WEP,
                             pDevice->PortOffset,
                             pDevice->byLocalID) == TRUE) {
@@ -649,7 +649,7 @@ static int hostap_set_encryption(PSDevice pDevice,
                        dwKeyIndex,
                        param->u.crypt.key_len,
                        (PQWORD) &(KeyRSC),
-                       (PBYTE)abyKey,
+                       (unsigned char *)abyKey,
                         byKeyDecMode,
                         pDevice->PortOffset,
                         pDevice->byLocalID) == TRUE) {
@@ -736,7 +736,7 @@ static int hostap_get_encryption(PSDevice pDevice,
 	DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "hostap_get_encryption: %d\n", iNodeIndex);
     memset(param->u.crypt.seq, 0, 8);
     for (ii = 0 ; ii < 8 ; ii++) {
-        param->u.crypt.seq[ii] = (BYTE)pMgmt->sNodeDBTable[iNodeIndex].KeyRSC >> (ii * 8);
+        param->u.crypt.seq[ii] = (unsigned char)pMgmt->sNodeDBTable[iNodeIndex].KeyRSC >> (ii * 8);
     }
 
 	return ret;

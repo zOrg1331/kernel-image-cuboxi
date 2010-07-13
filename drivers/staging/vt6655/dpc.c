@@ -66,7 +66,7 @@
 //static int          msglevel                =MSG_LEVEL_DEBUG;
 static int          msglevel                =MSG_LEVEL_INFO;
 
-const BYTE acbyRxRate[MAX_RATE] =
+const unsigned char acbyRxRate[MAX_RATE] =
 {2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108};
 
 
@@ -76,32 +76,22 @@ const BYTE acbyRxRate[MAX_RATE] =
 
 /*---------------------  Static Functions  --------------------------*/
 
-static BYTE s_byGetRateIdx(BYTE byRate);
+static unsigned char s_byGetRateIdx(unsigned char byRate);
 
 
-static
-void
-s_vGetDASA(
-    PBYTE pbyRxBufferAddr,
-    PUINT pcbHeaderSize,
-    PSEthernetHeader psEthHeader
-    );
+static void
+s_vGetDASA(unsigned char *pbyRxBufferAddr, unsigned int *pcbHeaderSize,
+		PSEthernetHeader psEthHeader);
 
-static
-void
-s_vProcessRxMACHeader (
-    PSDevice pDevice,
-    PBYTE pbyRxBufferAddr,
-    UINT cbPacketSize,
-    BOOL bIsWEP,
-    BOOL bExtIV,
-    PUINT pcbHeadSize
-    );
+static void
+s_vProcessRxMACHeader(PSDevice pDevice, unsigned char *pbyRxBufferAddr,
+		unsigned int cbPacketSize, BOOL bIsWEP, BOOL bExtIV,
+		unsigned int *pcbHeadSize);
 
 static BOOL s_bAPModeRxCtl(
     PSDevice pDevice,
-    PBYTE    pbyFrame,
-    INT      iSANodeIndex
+    unsigned char *pbyFrame,
+    int      iSANodeIndex
     );
 
 
@@ -109,37 +99,37 @@ static BOOL s_bAPModeRxCtl(
 static BOOL s_bAPModeRxData (
     PSDevice pDevice,
     struct sk_buff* skb,
-    UINT     FrameSize,
-    UINT     cbHeaderOffset,
-    INT      iSANodeIndex,
-    INT      iDANodeIndex
+    unsigned int FrameSize,
+    unsigned int cbHeaderOffset,
+    int      iSANodeIndex,
+    int      iDANodeIndex
     );
 
 
 static BOOL s_bHandleRxEncryption(
     PSDevice     pDevice,
-    PBYTE        pbyFrame,
-    UINT         FrameSize,
-    PBYTE        pbyRsr,
-    PBYTE       pbyNewRsr,
+    unsigned char *pbyFrame,
+    unsigned int FrameSize,
+    unsigned char *pbyRsr,
+    unsigned char *pbyNewRsr,
     PSKeyItem   *pKeyOut,
     int *       pbExtIV,
-    PWORD       pwRxTSC15_0,
-    PDWORD      pdwRxTSC47_16
+    unsigned short *pwRxTSC15_0,
+    unsigned long *pdwRxTSC47_16
     );
 
 static BOOL s_bHostWepRxEncryption(
 
     PSDevice     pDevice,
-    PBYTE        pbyFrame,
-    UINT         FrameSize,
-    PBYTE        pbyRsr,
+    unsigned char *pbyFrame,
+    unsigned int FrameSize,
+    unsigned char *pbyRsr,
     BOOL         bOnFly,
     PSKeyItem    pKey,
-    PBYTE       pbyNewRsr,
+    unsigned char *pbyNewRsr,
     int *       pbExtIV,
-    PWORD       pwRxTSC15_0,
-    PDWORD      pdwRxTSC47_16
+    unsigned short *pwRxTSC15_0,
+    unsigned long *pdwRxTSC47_16
 
     );
 
@@ -162,27 +152,21 @@ static BOOL s_bHostWepRxEncryption(
  * Return Value: None
  *
 -*/
-static
-void
-s_vProcessRxMACHeader (
-    PSDevice pDevice,
-    PBYTE pbyRxBufferAddr,
-    UINT cbPacketSize,
-    BOOL bIsWEP,
-    BOOL bExtIV,
-    PUINT pcbHeadSize
-    )
+static void
+s_vProcessRxMACHeader(PSDevice pDevice, unsigned char *pbyRxBufferAddr,
+		unsigned int cbPacketSize, BOOL bIsWEP, BOOL bExtIV,
+		unsigned int *pcbHeadSize)
 {
-    PBYTE           pbyRxBuffer;
-    UINT            cbHeaderSize = 0;
-    PWORD           pwType;
+    unsigned char *pbyRxBuffer;
+    unsigned int cbHeaderSize = 0;
+    unsigned short *pwType;
     PS802_11Header  pMACHeader;
     int             ii;
 
 
     pMACHeader = (PS802_11Header) (pbyRxBufferAddr + cbHeaderSize);
 
-    s_vGetDASA((PBYTE)pMACHeader, &cbHeaderSize, &pDevice->sRxEthHeader);
+    s_vGetDASA((unsigned char *)pMACHeader, &cbHeaderSize, &pDevice->sRxEthHeader);
 
     if (bIsWEP) {
         if (bExtIV) {
@@ -197,18 +181,18 @@ s_vProcessRxMACHeader (
         cbHeaderSize += WLAN_HDR_ADDR3_LEN;
     };
 
-    pbyRxBuffer = (PBYTE) (pbyRxBufferAddr + cbHeaderSize);
-    if (IS_ETH_ADDRESS_EQUAL(pbyRxBuffer, &pDevice->abySNAP_Bridgetunnel[0])) {
+    pbyRxBuffer = (unsigned char *) (pbyRxBufferAddr + cbHeaderSize);
+    if (!compare_ether_addr(pbyRxBuffer, &pDevice->abySNAP_Bridgetunnel[0])) {
         cbHeaderSize += 6;
     }
-    else if (IS_ETH_ADDRESS_EQUAL(pbyRxBuffer, &pDevice->abySNAP_RFC1042[0])) {
+    else if (!compare_ether_addr(pbyRxBuffer, &pDevice->abySNAP_RFC1042[0])) {
         cbHeaderSize += 6;
-        pwType = (PWORD) (pbyRxBufferAddr + cbHeaderSize);
+        pwType = (unsigned short *) (pbyRxBufferAddr + cbHeaderSize);
         if ((*pwType!= TYPE_PKT_IPX) && (*pwType != cpu_to_le16(0xF380))) {
         }
         else {
             cbHeaderSize -= 8;
-            pwType = (PWORD) (pbyRxBufferAddr + cbHeaderSize);
+            pwType = (unsigned short *) (pbyRxBufferAddr + cbHeaderSize);
             if (bIsWEP) {
                 if (bExtIV) {
                     *pwType = htons(cbPacketSize - WLAN_HDR_ADDR3_LEN - 8);    // 8 is IV&ExtIV
@@ -223,7 +207,7 @@ s_vProcessRxMACHeader (
     }
     else {
         cbHeaderSize -= 2;
-        pwType = (PWORD) (pbyRxBufferAddr + cbHeaderSize);
+        pwType = (unsigned short *) (pbyRxBufferAddr + cbHeaderSize);
         if (bIsWEP) {
             if (bExtIV) {
                 *pwType = htons(cbPacketSize - WLAN_HDR_ADDR3_LEN - 8);    // 8 is IV&ExtIV
@@ -237,7 +221,7 @@ s_vProcessRxMACHeader (
     }
 
     cbHeaderSize -= (ETH_ALEN * 2);
-    pbyRxBuffer = (PBYTE) (pbyRxBufferAddr + cbHeaderSize);
+    pbyRxBuffer = (unsigned char *) (pbyRxBufferAddr + cbHeaderSize);
     for(ii=0;ii<ETH_ALEN;ii++)
         *pbyRxBuffer++ = pDevice->sRxEthHeader.abyDstAddr[ii];
     for(ii=0;ii<ETH_ALEN;ii++)
@@ -249,9 +233,9 @@ s_vProcessRxMACHeader (
 
 
 
-static BYTE s_byGetRateIdx (BYTE byRate)
+static unsigned char s_byGetRateIdx (unsigned char byRate)
 {
-    BYTE    byRateIdx;
+    unsigned char byRateIdx;
 
     for (byRateIdx = 0; byRateIdx <MAX_RATE ; byRateIdx++) {
         if (acbyRxRate[byRateIdx%MAX_RATE] == byRate)
@@ -261,15 +245,11 @@ static BYTE s_byGetRateIdx (BYTE byRate)
 }
 
 
-static
-void
-s_vGetDASA (
-    PBYTE pbyRxBufferAddr,
-    PUINT pcbHeaderSize,
-    PSEthernetHeader psEthHeader
-    )
+static void
+s_vGetDASA(unsigned char *pbyRxBufferAddr, unsigned int *pcbHeaderSize,
+	PSEthernetHeader psEthHeader)
 {
-    UINT            cbHeaderSize = 0;
+    unsigned int cbHeaderSize = 0;
     PS802_11Header  pMACHeader;
     int             ii;
 
@@ -349,34 +329,34 @@ device_receive_frame (
     PSMgmtObject    pMgmt = pDevice->pMgmt;
     PSRxMgmtPacket  pRxPacket = &(pDevice->pMgmt->sRxPacket);
     PS802_11Header  p802_11Header;
-    PBYTE           pbyRsr;
-    PBYTE           pbyNewRsr;
-    PBYTE           pbyRSSI;
+    unsigned char *pbyRsr;
+    unsigned char *pbyNewRsr;
+    unsigned char *pbyRSSI;
     PQWORD          pqwTSFTime;
-    PWORD           pwFrameSize;
-    PBYTE           pbyFrame;
+    unsigned short *pwFrameSize;
+    unsigned char *pbyFrame;
     BOOL            bDeFragRx = FALSE;
     BOOL            bIsWEP = FALSE;
-    UINT            cbHeaderOffset;
-    UINT            FrameSize;
-    WORD            wEtherType = 0;
-    INT             iSANodeIndex = -1;
-    INT             iDANodeIndex = -1;
-    UINT            ii;
-    UINT            cbIVOffset;
+    unsigned int cbHeaderOffset;
+    unsigned int FrameSize;
+    unsigned short wEtherType = 0;
+    int             iSANodeIndex = -1;
+    int             iDANodeIndex = -1;
+    unsigned int ii;
+    unsigned int cbIVOffset;
     BOOL            bExtIV = FALSE;
-    PBYTE           pbyRxSts;
-    PBYTE           pbyRxRate;
-    PBYTE           pbySQ;
-    UINT            cbHeaderSize;
+    unsigned char *pbyRxSts;
+    unsigned char *pbyRxRate;
+    unsigned char *pbySQ;
+    unsigned int cbHeaderSize;
     PSKeyItem       pKey = NULL;
-    WORD            wRxTSC15_0 = 0;
-    DWORD           dwRxTSC47_16 = 0;
+    unsigned short wRxTSC15_0 = 0;
+    unsigned long dwRxTSC47_16 = 0;
     SKeyItem        STempKey;
     // 802.11h RPI
-    DWORD           dwDuration = 0;
-    LONG            ldBm = 0;
-    LONG            ldBmThreshold = 0;
+    unsigned long dwDuration = 0;
+    long            ldBm = 0;
+    long            ldBmThreshold = 0;
     PS802_11Header pMACHeader;
  BOOL            bRxeapol_key = FALSE;
 
@@ -391,7 +371,7 @@ device_receive_frame (
                      pDevice->rx_buf_sz, PCI_DMA_FROMDEVICE);
 #endif
 //PLICE_DEBUG<-
-    pwFrameSize = (PWORD)(skb->data + 2);
+    pwFrameSize = (unsigned short *)(skb->data + 2);
     FrameSize = cpu_to_le16(pCurrRD->m_rd1RD1.wReqCount) - cpu_to_le16(pCurrRD->m_rd0RD0.wResCount);
 
     // Max: 2312Payload + 30HD +4CRC + 2Padding + 4Len + 8TSF + 4RSR
@@ -402,14 +382,14 @@ device_receive_frame (
         return FALSE;
     }
 
-    pbyRxSts = (PBYTE) (skb->data);
-    pbyRxRate = (PBYTE) (skb->data + 1);
-    pbyRsr = (PBYTE) (skb->data + FrameSize - 1);
-    pbyRSSI = (PBYTE) (skb->data + FrameSize - 2);
-    pbyNewRsr = (PBYTE) (skb->data + FrameSize - 3);
-    pbySQ = (PBYTE) (skb->data + FrameSize - 4);
+    pbyRxSts = (unsigned char *) (skb->data);
+    pbyRxRate = (unsigned char *) (skb->data + 1);
+    pbyRsr = (unsigned char *) (skb->data + FrameSize - 1);
+    pbyRSSI = (unsigned char *) (skb->data + FrameSize - 2);
+    pbyNewRsr = (unsigned char *) (skb->data + FrameSize - 3);
+    pbySQ = (unsigned char *) (skb->data + FrameSize - 4);
     pqwTSFTime = (PQWORD) (skb->data + FrameSize - 12);
-    pbyFrame = (PBYTE)(skb->data + 4);
+    pbyFrame = (unsigned char *)(skb->data + 4);
 
     // get packet size
     FrameSize = cpu_to_le16(*pwFrameSize);
@@ -431,7 +411,7 @@ device_receive_frame (
 
 #endif
 
-  pMACHeader=(PS802_11Header)((PBYTE) (skb->data)+8);
+  pMACHeader=(PS802_11Header)((unsigned char *) (skb->data)+8);
 //PLICE_DEBUG<-
 	if (pDevice->bMeasureInProgress == TRUE) {
         if ((*pbyRsr & RSR_CRCOK) != 0) {
@@ -463,7 +443,7 @@ device_receive_frame (
         return FALSE;
     }
 
-    if (!IS_MULTICAST_ADDRESS(pbyFrame) && !IS_BROADCAST_ADDRESS(pbyFrame)) {
+    if (!is_multicast_ether_addr(pbyFrame)) {
         if (WCTLbIsDuplicate(&(pDevice->sDupRxCache), (PS802_11Header) (skb->data + 4))) {
             pDevice->s802_11Counter.FrameDuplicateCount++;
             return FALSE;
@@ -475,14 +455,14 @@ device_receive_frame (
     s_vGetDASA(skb->data+4, &cbHeaderSize, &pDevice->sRxEthHeader);
 
     // filter packet send from myself
-    if (IS_ETH_ADDRESS_EQUAL((PBYTE)&(pDevice->sRxEthHeader.abySrcAddr[0]), pDevice->abyCurrentNetAddr))
+    if (!compare_ether_addr((unsigned char *)&(pDevice->sRxEthHeader.abySrcAddr[0]), pDevice->abyCurrentNetAddr))
         return FALSE;
 
     if ((pMgmt->eCurrMode == WMAC_MODE_ESS_AP) || (pMgmt->eCurrMode == WMAC_MODE_IBSS_STA)) {
         if (IS_CTL_PSPOLL(pbyFrame) || !IS_TYPE_CONTROL(pbyFrame)) {
             p802_11Header = (PS802_11Header) (pbyFrame);
             // get SA NodeIndex
-            if (BSSDBbIsSTAInNodeDB(pMgmt, (PBYTE)(p802_11Header->abyAddr2), &iSANodeIndex)) {
+            if (BSSDBbIsSTAInNodeDB(pMgmt, (unsigned char *)(p802_11Header->abyAddr2), &iSANodeIndex)) {
                 pMgmt->sNodeDBTable[iSANodeIndex].ulLastRxJiffer = jiffies;
                 pMgmt->sNodeDBTable[iSANodeIndex].uInActiveCount = 0;
             }
@@ -594,8 +574,8 @@ device_receive_frame (
         // Handle Control & Manage Frame
 
         if (IS_TYPE_MGMT((skb->data+4))) {
-            PBYTE pbyData1;
-            PBYTE pbyData2;
+            unsigned char *pbyData1;
+            unsigned char *pbyData2;
 
             pRxPacket->p80211Header = (PUWLAN_80211HDR)(skb->data+4);
             pRxPacket->cbMPDULen = FrameSize;
@@ -684,8 +664,8 @@ device_receive_frame (
             }
    //mike add:station mode check eapol-key challenge--->
    	  {
-   	    BYTE  Protocol_Version;    //802.1x Authentication
-	    BYTE  Packet_Type;           //802.1x Authentication
+   	    unsigned char Protocol_Version;    //802.1x Authentication
+	    unsigned char Packet_Type;           //802.1x Authentication
               if (bIsWEP)
                   cbIVOffset = 8;
               else
@@ -753,7 +733,7 @@ device_receive_frame (
     // -----------------------------------------------
 
     if ((pMgmt->eCurrMode == WMAC_MODE_ESS_AP) && (pDevice->bEnable8021x == TRUE)){
-        BYTE    abyMacHdr[24];
+        unsigned char abyMacHdr[24];
 
         // Only 802.1x packet incoming allowed
         if (bIsWEP)
@@ -800,44 +780,44 @@ device_receive_frame (
     // Soft MIC
     if ((pKey != NULL) && (pKey->byCipherSuite == KEY_CTL_TKIP)) {
         if (bIsWEP) {
-            PDWORD          pdwMIC_L;
-            PDWORD          pdwMIC_R;
-            DWORD           dwMIC_Priority;
-            DWORD           dwMICKey0 = 0, dwMICKey1 = 0;
-            DWORD           dwLocalMIC_L = 0;
-            DWORD           dwLocalMIC_R = 0;
+            unsigned long *pdwMIC_L;
+            unsigned long *pdwMIC_R;
+            unsigned long dwMIC_Priority;
+            unsigned long dwMICKey0 = 0, dwMICKey1 = 0;
+            unsigned long dwLocalMIC_L = 0;
+            unsigned long dwLocalMIC_R = 0;
             viawget_wpa_header *wpahdr;
 
 
             if (pMgmt->eCurrMode == WMAC_MODE_ESS_AP) {
-                dwMICKey0 = cpu_to_le32(*(PDWORD)(&pKey->abyKey[24]));
-                dwMICKey1 = cpu_to_le32(*(PDWORD)(&pKey->abyKey[28]));
+                dwMICKey0 = cpu_to_le32(*(unsigned long *)(&pKey->abyKey[24]));
+                dwMICKey1 = cpu_to_le32(*(unsigned long *)(&pKey->abyKey[28]));
             }
             else {
                 if (pDevice->pMgmt->eAuthenMode == WMAC_AUTH_WPANONE) {
-                    dwMICKey0 = cpu_to_le32(*(PDWORD)(&pKey->abyKey[16]));
-                    dwMICKey1 = cpu_to_le32(*(PDWORD)(&pKey->abyKey[20]));
+                    dwMICKey0 = cpu_to_le32(*(unsigned long *)(&pKey->abyKey[16]));
+                    dwMICKey1 = cpu_to_le32(*(unsigned long *)(&pKey->abyKey[20]));
                 } else if ((pKey->dwKeyIndex & BIT28) == 0) {
-                    dwMICKey0 = cpu_to_le32(*(PDWORD)(&pKey->abyKey[16]));
-                    dwMICKey1 = cpu_to_le32(*(PDWORD)(&pKey->abyKey[20]));
+                    dwMICKey0 = cpu_to_le32(*(unsigned long *)(&pKey->abyKey[16]));
+                    dwMICKey1 = cpu_to_le32(*(unsigned long *)(&pKey->abyKey[20]));
                 } else {
-                    dwMICKey0 = cpu_to_le32(*(PDWORD)(&pKey->abyKey[24]));
-                    dwMICKey1 = cpu_to_le32(*(PDWORD)(&pKey->abyKey[28]));
+                    dwMICKey0 = cpu_to_le32(*(unsigned long *)(&pKey->abyKey[24]));
+                    dwMICKey1 = cpu_to_le32(*(unsigned long *)(&pKey->abyKey[28]));
                 }
             }
 
             MIC_vInit(dwMICKey0, dwMICKey1);
-            MIC_vAppend((PBYTE)&(pDevice->sRxEthHeader.abyDstAddr[0]), 12);
+            MIC_vAppend((unsigned char *)&(pDevice->sRxEthHeader.abyDstAddr[0]), 12);
             dwMIC_Priority = 0;
-            MIC_vAppend((PBYTE)&dwMIC_Priority, 4);
+            MIC_vAppend((unsigned char *)&dwMIC_Priority, 4);
             // 4 is Rcv buffer header, 24 is MAC Header, and 8 is IV and Ext IV.
-            MIC_vAppend((PBYTE)(skb->data + 4 + WLAN_HDR_ADDR3_LEN + 8),
+            MIC_vAppend((unsigned char *)(skb->data + 4 + WLAN_HDR_ADDR3_LEN + 8),
                         FrameSize - WLAN_HDR_ADDR3_LEN - 8);
             MIC_vGetMIC(&dwLocalMIC_L, &dwLocalMIC_R);
             MIC_vUnInit();
 
-            pdwMIC_L = (PDWORD)(skb->data + 4 + FrameSize);
-            pdwMIC_R = (PDWORD)(skb->data + 4 + FrameSize + 4);
+            pdwMIC_L = (unsigned long *)(skb->data + 4 + FrameSize);
+            pdwMIC_R = (unsigned long *)(skb->data + 4 + FrameSize + 4);
             //DBG_PRN_GRP12(("RxL: %lx, RxR: %lx\n", *pdwMIC_L, *pdwMIC_R));
             //DBG_PRN_GRP12(("LocalL: %lx, LocalR: %lx\n", dwLocalMIC_L, dwLocalMIC_R));
             //DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"dwMICKey0= %lx,dwMICKey1= %lx \n", dwMICKey0, dwMICKey1);
@@ -917,13 +897,13 @@ device_receive_frame (
     if ((pKey != NULL) && ((pKey->byCipherSuite == KEY_CTL_TKIP) ||
                            (pKey->byCipherSuite == KEY_CTL_CCMP))) {
         if (bIsWEP) {
-            WORD        wLocalTSC15_0 = 0;
-            DWORD       dwLocalTSC47_16 = 0;
-            ULONGLONG       RSC = 0;
+            unsigned short wLocalTSC15_0 = 0;
+            unsigned long dwLocalTSC47_16 = 0;
+            unsigned long long       RSC = 0;
             // endian issues
-            RSC = *((ULONGLONG *) &(pKey->KeyRSC));
-            wLocalTSC15_0 = (WORD) RSC;
-            dwLocalTSC47_16 = (DWORD) (RSC>>16);
+            RSC = *((unsigned long long *) &(pKey->KeyRSC));
+            wLocalTSC15_0 = (unsigned short) RSC;
+            dwLocalTSC47_16 = (unsigned long) (RSC>>16);
 
             RSC = dwRxTSC47_16;
             RSC <<= 16;
@@ -963,7 +943,7 @@ device_receive_frame (
     }
 
 
-    s_vProcessRxMACHeader(pDevice, (PBYTE)(skb->data+4), FrameSize, bIsWEP, bExtIV, &cbHeaderOffset);
+    s_vProcessRxMACHeader(pDevice, (unsigned char *)(skb->data+4), FrameSize, bIsWEP, bExtIV, &cbHeaderOffset);
     FrameSize -= cbHeaderOffset;
     cbHeaderOffset += 4;        // 4 is Rcv buffer header
 
@@ -1040,8 +1020,8 @@ device_receive_frame (
 
 static BOOL s_bAPModeRxCtl (
     PSDevice pDevice,
-    PBYTE    pbyFrame,
-    INT      iSANodeIndex
+    unsigned char *pbyFrame,
+    int      iSANodeIndex
     )
 {
     PS802_11Header      p802_11Header;
@@ -1063,7 +1043,7 @@ static BOOL s_bAPModeRxCtl (
                     // reason = (6) class 2 received from nonauth sta
                     vMgrDeAuthenBeginSta(pDevice,
                                          pMgmt,
-                                         (PBYTE)(p802_11Header->abyAddr2),
+                                         (unsigned char *)(p802_11Header->abyAddr2),
                                          (WLAN_MGMT_REASON_CLASS2_NONAUTH),
                                          &Status
                                          );
@@ -1075,7 +1055,7 @@ static BOOL s_bAPModeRxCtl (
                     // reason = (7) class 3 received from nonassoc sta
                     vMgrDisassocBeginSta(pDevice,
                                          pMgmt,
-                                         (PBYTE)(p802_11Header->abyAddr2),
+                                         (unsigned char *)(p802_11Header->abyAddr2),
                                          (WLAN_MGMT_REASON_CLASS3_NONASSOC),
                                          &Status
                                          );
@@ -1122,7 +1102,7 @@ static BOOL s_bAPModeRxCtl (
             else {
                   vMgrDeAuthenBeginSta(pDevice,
                                        pMgmt,
-                                       (PBYTE)(p802_11Header->abyAddr2),
+                                       (unsigned char *)(p802_11Header->abyAddr2),
                                        (WLAN_MGMT_REASON_CLASS2_NONAUTH),
                                        &Status
                                        );
@@ -1164,21 +1144,21 @@ static BOOL s_bAPModeRxCtl (
 
 static BOOL s_bHandleRxEncryption (
     PSDevice     pDevice,
-    PBYTE        pbyFrame,
-    UINT         FrameSize,
-    PBYTE        pbyRsr,
-    PBYTE       pbyNewRsr,
+    unsigned char *pbyFrame,
+    unsigned int FrameSize,
+    unsigned char *pbyRsr,
+    unsigned char *pbyNewRsr,
     PSKeyItem   *pKeyOut,
     int *       pbExtIV,
-    PWORD       pwRxTSC15_0,
-    PDWORD      pdwRxTSC47_16
+    unsigned short *pwRxTSC15_0,
+    unsigned long *pdwRxTSC47_16
     )
 {
-    UINT            PayloadLen = FrameSize;
-    PBYTE           pbyIV;
-    BYTE            byKeyIdx;
+    unsigned int PayloadLen = FrameSize;
+    unsigned char *pbyIV;
+    unsigned char byKeyIdx;
     PSKeyItem       pKey = NULL;
-    BYTE            byDecMode = KEY_CTL_WEP;
+    unsigned char byDecMode = KEY_CTL_WEP;
     PSMgmtObject    pMgmt = pDevice->pMgmt;
 
 
@@ -1186,8 +1166,8 @@ static BOOL s_bHandleRxEncryption (
     *pdwRxTSC47_16 = 0;
 
     pbyIV = pbyFrame + WLAN_HDR_ADDR3_LEN;
-    if ( WLAN_GET_FC_TODS(*(PWORD)pbyFrame) &&
-         WLAN_GET_FC_FROMDS(*(PWORD)pbyFrame) ) {
+    if ( WLAN_GET_FC_TODS(*(unsigned short *)pbyFrame) &&
+         WLAN_GET_FC_FROMDS(*(unsigned short *)pbyFrame) ) {
          pbyIV += 6;             // 6 is 802.11 address4
          PayloadLen -= 6;
     }
@@ -1275,12 +1255,12 @@ static BOOL s_bHandleRxEncryption (
         // TKIP/AES
 
         PayloadLen -= (WLAN_HDR_ADDR3_LEN + 8 + 4); // 24 is 802.11 header, 8 is IV&ExtIV, 4 is crc
-        *pdwRxTSC47_16 = cpu_to_le32(*(PDWORD)(pbyIV + 4));
+        *pdwRxTSC47_16 = cpu_to_le32(*(unsigned long *)(pbyIV + 4));
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"ExtIV: %lx\n",*pdwRxTSC47_16);
         if (byDecMode == KEY_CTL_TKIP) {
             *pwRxTSC15_0 = cpu_to_le16(MAKEWORD(*(pbyIV+2), *pbyIV));
         } else {
-            *pwRxTSC15_0 = cpu_to_le16(*(PWORD)pbyIV);
+            *pwRxTSC15_0 = cpu_to_le16(*(unsigned short *)pbyIV);
         }
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"TSC0_15: %x\n", *pwRxTSC15_0);
 
@@ -1310,21 +1290,21 @@ static BOOL s_bHandleRxEncryption (
 
 static BOOL s_bHostWepRxEncryption (
     PSDevice     pDevice,
-    PBYTE        pbyFrame,
-    UINT         FrameSize,
-    PBYTE        pbyRsr,
+    unsigned char *pbyFrame,
+    unsigned int FrameSize,
+    unsigned char *pbyRsr,
     BOOL         bOnFly,
     PSKeyItem    pKey,
-    PBYTE       pbyNewRsr,
+    unsigned char *pbyNewRsr,
     int *       pbExtIV,
-    PWORD       pwRxTSC15_0,
-    PDWORD      pdwRxTSC47_16
+    unsigned short *pwRxTSC15_0,
+    unsigned long *pdwRxTSC47_16
     )
 {
-    UINT            PayloadLen = FrameSize;
-    PBYTE           pbyIV;
-    BYTE            byKeyIdx;
-    BYTE            byDecMode = KEY_CTL_WEP;
+    unsigned int PayloadLen = FrameSize;
+    unsigned char *pbyIV;
+    unsigned char byKeyIdx;
+    unsigned char byDecMode = KEY_CTL_WEP;
     PS802_11Header  pMACHeader;
 
 
@@ -1333,8 +1313,8 @@ static BOOL s_bHostWepRxEncryption (
     *pdwRxTSC47_16 = 0;
 
     pbyIV = pbyFrame + WLAN_HDR_ADDR3_LEN;
-    if ( WLAN_GET_FC_TODS(*(PWORD)pbyFrame) &&
-         WLAN_GET_FC_FROMDS(*(PWORD)pbyFrame) ) {
+    if ( WLAN_GET_FC_TODS(*(unsigned short *)pbyFrame) &&
+         WLAN_GET_FC_FROMDS(*(unsigned short *)pbyFrame) ) {
          pbyIV += 6;             // 6 is 802.11 address4
          PayloadLen -= 6;
     }
@@ -1385,13 +1365,13 @@ static BOOL s_bHostWepRxEncryption (
         // TKIP/AES
 
         PayloadLen -= (WLAN_HDR_ADDR3_LEN + 8 + 4); // 24 is 802.11 header, 8 is IV&ExtIV, 4 is crc
-        *pdwRxTSC47_16 = cpu_to_le32(*(PDWORD)(pbyIV + 4));
+        *pdwRxTSC47_16 = cpu_to_le32(*(unsigned long *)(pbyIV + 4));
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"ExtIV: %lx\n",*pdwRxTSC47_16);
 
         if (byDecMode == KEY_CTL_TKIP) {
             *pwRxTSC15_0 = cpu_to_le16(MAKEWORD(*(pbyIV+2), *pbyIV));
         } else {
-            *pwRxTSC15_0 = cpu_to_le16(*(PWORD)pbyIV);
+            *pwRxTSC15_0 = cpu_to_le16(*(unsigned short *)pbyIV);
         }
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"TSC0_15: %x\n", *pwRxTSC15_0);
 
@@ -1442,17 +1422,17 @@ static BOOL s_bHostWepRxEncryption (
 static BOOL s_bAPModeRxData (
     PSDevice pDevice,
     struct sk_buff* skb,
-    UINT     FrameSize,
-    UINT     cbHeaderOffset,
-    INT      iSANodeIndex,
-    INT      iDANodeIndex
+    unsigned int FrameSize,
+    unsigned int cbHeaderOffset,
+    int      iSANodeIndex,
+    int      iDANodeIndex
     )
 {
     PSMgmtObject        pMgmt = pDevice->pMgmt;
     BOOL                bRelayAndForward = FALSE;
     BOOL                bRelayOnly = FALSE;
-    BYTE                byMask[8] = {1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80};
-    WORD                wAID;
+    unsigned char byMask[8] = {1, 2, 4, 8, 0x10, 0x20, 0x40, 0x80};
+    unsigned short wAID;
 
 
     struct sk_buff* skbcpy = NULL;
@@ -1460,7 +1440,7 @@ static BOOL s_bAPModeRxData (
     if (FrameSize > CB_MAX_BUF_SIZE)
         return FALSE;
     // check DA
-    if(IS_MULTICAST_ADDRESS((PBYTE)(skb->data+cbHeaderOffset))) {
+    if(is_multicast_ether_addr((unsigned char *)(skb->data+cbHeaderOffset))) {
        if (pMgmt->sNodeDBTable[0].bPSEnable) {
 
            skbcpy = dev_alloc_skb((int)pDevice->rx_buf_sz);
@@ -1486,7 +1466,7 @@ static BOOL s_bAPModeRxData (
     }
     else {
         // check if relay
-        if (BSSDBbIsSTAInNodeDB(pMgmt, (PBYTE)(skb->data+cbHeaderOffset), &iDANodeIndex)) {
+        if (BSSDBbIsSTAInNodeDB(pMgmt, (unsigned char *)(skb->data+cbHeaderOffset), &iDANodeIndex)) {
             if (pMgmt->sNodeDBTable[iDANodeIndex].eNodeState >= NODE_ASSOC) {
                 if (pMgmt->sNodeDBTable[iDANodeIndex].bPSEnable) {
                     // queue this skb until next PS tx, and then release.
@@ -1515,7 +1495,7 @@ static BOOL s_bAPModeRxData (
             iDANodeIndex = 0;
 
         if ((pDevice->uAssocCount > 1) && (iDANodeIndex >= 0)) {
-            ROUTEbRelay(pDevice, (PBYTE)(skb->data + cbHeaderOffset), FrameSize, (UINT)iDANodeIndex);
+            ROUTEbRelay(pDevice, (unsigned char *)(skb->data + cbHeaderOffset), FrameSize, (unsigned int)iDANodeIndex);
         }
 
         if (bRelayOnly)
