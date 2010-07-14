@@ -35,162 +35,6 @@
 #include "drm_sarea.h"
 #include "nouveau_drv.h"
 
-static struct mem_block *
-split_block(struct mem_block *p, uint64_t start, uint64_t size,
-	    struct drm_file *file_priv)
-{
-	/* Maybe cut off the start of an existing block */
-	if (start > p->start) {
-		struct mem_block *newblock =
-			kmalloc(sizeof(*newblock), GFP_KERNEL);
-		if (!newblock)
-			goto out;
-		newblock->start = start;
-		newblock->size = p->size - (start - p->start);
-		newblock->file_priv = NULL;
-		newblock->next = p->next;
-		newblock->prev = p;
-		p->next->prev = newblock;
-		p->next = newblock;
-		p->size -= newblock->size;
-		p = newblock;
-	}
-
-	/* Maybe cut off the end of an existing block */
-	if (size < p->size) {
-		struct mem_block *newblock =
-			kmalloc(sizeof(*newblock), GFP_KERNEL);
-		if (!newblock)
-			goto out;
-		newblock->start = start + size;
-		newblock->size = p->size - size;
-		newblock->file_priv = NULL;
-		newblock->next = p->next;
-		newblock->prev = p;
-		p->next->prev = newblock;
-		p->next = newblock;
-		p->size = size;
-	}
-
-out:
-	/* Our block is in the middle */
-	p->file_priv = file_priv;
-	return p;
-}
-
-struct mem_block *
-nouveau_mem_alloc_block(struct mem_block *heap, uint64_t size,
-			int align2, struct drm_file *file_priv, int tail)
-{
-	struct mem_block *p;
-	uint64_t mask = (1 << align2) - 1;
-
-	if (!heap)
-		return NULL;
-
-	if (tail) {
-		list_for_each_prev(p, heap) {
-			uint64_t start = ((p->start + p->size) - size) & ~mask;
-
-			if (p->file_priv == NULL && start >= p->start &&
-			    start + size <= p->start + p->size)
-				return split_block(p, start, size, file_priv);
-		}
-	} else {
-		list_for_each(p, heap) {
-			uint64_t start = (p->start + mask) & ~mask;
-
-			if (p->file_priv == NULL &&
-			    start + size <= p->start + p->size)
-				return split_block(p, start, size, file_priv);
-		}
-	}
-
-	return NULL;
-}
-
-void nouveau_mem_free_block(struct mem_block *p)
-{
-	p->file_priv = NULL;
-
-	/* Assumes a single contiguous range.  Needs a special file_priv in
-	 * 'heap' to stop it being subsumed.
-	 */
-	if (p->next->file_priv == NULL) {
-		struct mem_block *q = p->next;
-		p->size += q->size;
-		p->next = q->next;
-		p->next->prev = p;
-		kfree(q);
-	}
-
-	if (p->prev->file_priv == NULL) {
-		struct mem_block *q = p->prev;
-		q->size += p->size;
-		q->next = p->next;
-		q->next->prev = q;
-		kfree(p);
-	}
-}
-
-/* Initialize.  How to check for an uninitialized heap?
- */
-int nouveau_mem_init_heap(struct mem_block **heap, uint64_t start,
-			  uint64_t size)
-{
-	struct mem_block *blocks = kmalloc(sizeof(*blocks), GFP_KERNEL);
-
-	if (!blocks)
-		return -ENOMEM;
-
-	*heap = kmalloc(sizeof(**heap), GFP_KERNEL);
-	if (!*heap) {
-		kfree(blocks);
-		return -ENOMEM;
-	}
-
-	blocks->start = start;
-	blocks->size = size;
-	blocks->file_priv = NULL;
-	blocks->next = blocks->prev = *heap;
-
-	memset(*heap, 0, sizeof(**heap));
-	(*heap)->file_priv = (struct drm_file *) -1;
-	(*heap)->next = (*heap)->prev = blocks;
-	return 0;
-}
-
-/*
- * Free all blocks associated with the releasing file_priv
- */
-void nouveau_mem_release(struct drm_file *file_priv, struct mem_block *heap)
-{
-	struct mem_block *p;
-
-	if (!heap || !heap->next)
-		return;
-
-	list_for_each(p, heap) {
-		if (p->file_priv == file_priv)
-			p->file_priv = NULL;
-	}
-
-	/* Assumes a single contiguous range.  Needs a special file_priv in
-	 * 'heap' to stop it being subsumed.
-	 */
-	list_for_each(p, heap) {
-		while ((p->file_priv == NULL) &&
-					(p->next->file_priv == NULL) &&
-					(p->next != heap)) {
-			struct mem_block *q = p->next;
-			p->size += q->size;
-			p->next = q->next;
-			p->next->prev = p;
-			kfree(q);
-		}
-	}
-}
-
 /*
  * NV10-NV40 tiling helpers
  */
@@ -299,7 +143,6 @@ nv50_mem_vm_bind_linear(struct drm_device *dev, uint64_t virt, uint32_t size,
 		phys |= 0x30;
 	}
 
-	dev_priv->engine.instmem.prepare_access(dev, true);
 	while (size) {
 		unsigned offset_h = upper_32_bits(phys);
 		unsigned offset_l = lower_32_bits(phys);
@@ -331,36 +174,12 @@ nv50_mem_vm_bind_linear(struct drm_device *dev, uint64_t virt, uint32_t size,
 			}
 		}
 	}
-	dev_priv->engine.instmem.finish_access(dev);
+	dev_priv->engine.instmem.flush(dev);
 
-	nv_wr32(dev, 0x100c80, 0x00050001);
-	if (!nv_wait(0x100c80, 0x00000001, 0x00000000)) {
-		NV_ERROR(dev, "timeout: (0x100c80 & 1) == 0 (2)\n");
-		NV_ERROR(dev, "0x100c80 = 0x%08x\n", nv_rd32(dev, 0x100c80));
-		return -EBUSY;
-	}
-
-	nv_wr32(dev, 0x100c80, 0x00000001);
-	if (!nv_wait(0x100c80, 0x00000001, 0x00000000)) {
-		NV_ERROR(dev, "timeout: (0x100c80 & 1) == 0 (2)\n");
-		NV_ERROR(dev, "0x100c80 = 0x%08x\n", nv_rd32(dev, 0x100c80));
-		return -EBUSY;
-	}
-
-	nv_wr32(dev, 0x100c80, 0x00040001);
-	if (!nv_wait(0x100c80, 0x00000001, 0x00000000)) {
-		NV_ERROR(dev, "timeout: (0x100c80 & 1) == 0 (2)\n");
-		NV_ERROR(dev, "0x100c80 = 0x%08x\n", nv_rd32(dev, 0x100c80));
-		return -EBUSY;
-	}
-
-	nv_wr32(dev, 0x100c80, 0x00060001);
-	if (!nv_wait(0x100c80, 0x00000001, 0x00000000)) {
-		NV_ERROR(dev, "timeout: (0x100c80 & 1) == 0 (2)\n");
-		NV_ERROR(dev, "0x100c80 = 0x%08x\n", nv_rd32(dev, 0x100c80));
-		return -EBUSY;
-	}
-
+	nv50_vm_flush(dev, 5);
+	nv50_vm_flush(dev, 0);
+	nv50_vm_flush(dev, 4);
+	nv50_vm_flush(dev, 6);
 	return 0;
 }
 
@@ -374,7 +193,6 @@ nv50_mem_vm_unbind(struct drm_device *dev, uint64_t virt, uint32_t size)
 	virt -= dev_priv->vm_vram_base;
 	pages = (size >> 16) << 1;
 
-	dev_priv->engine.instmem.prepare_access(dev, true);
 	while (pages) {
 		pgt = dev_priv->vm_vram_pt[virt >> 29];
 		pte = (virt & 0x1ffe0000ULL) >> 15;
@@ -388,57 +206,19 @@ nv50_mem_vm_unbind(struct drm_device *dev, uint64_t virt, uint32_t size)
 		while (pte < end)
 			nv_wo32(dev, pgt, pte++, 0);
 	}
-	dev_priv->engine.instmem.finish_access(dev);
+	dev_priv->engine.instmem.flush(dev);
 
-	nv_wr32(dev, 0x100c80, 0x00050001);
-	if (!nv_wait(0x100c80, 0x00000001, 0x00000000)) {
-		NV_ERROR(dev, "timeout: (0x100c80 & 1) == 0 (2)\n");
-		NV_ERROR(dev, "0x100c80 = 0x%08x\n", nv_rd32(dev, 0x100c80));
-		return;
-	}
-
-	nv_wr32(dev, 0x100c80, 0x00000001);
-	if (!nv_wait(0x100c80, 0x00000001, 0x00000000)) {
-		NV_ERROR(dev, "timeout: (0x100c80 & 1) == 0 (2)\n");
-		NV_ERROR(dev, "0x100c80 = 0x%08x\n", nv_rd32(dev, 0x100c80));
-		return;
-	}
-
-	nv_wr32(dev, 0x100c80, 0x00040001);
-	if (!nv_wait(0x100c80, 0x00000001, 0x00000000)) {
-		NV_ERROR(dev, "timeout: (0x100c80 & 1) == 0 (2)\n");
-		NV_ERROR(dev, "0x100c80 = 0x%08x\n", nv_rd32(dev, 0x100c80));
-		return;
-	}
-
-	nv_wr32(dev, 0x100c80, 0x00060001);
-	if (!nv_wait(0x100c80, 0x00000001, 0x00000000)) {
-		NV_ERROR(dev, "timeout: (0x100c80 & 1) == 0 (2)\n");
-		NV_ERROR(dev, "0x100c80 = 0x%08x\n", nv_rd32(dev, 0x100c80));
-	}
+	nv50_vm_flush(dev, 5);
+	nv50_vm_flush(dev, 0);
+	nv50_vm_flush(dev, 4);
+	nv50_vm_flush(dev, 6);
 }
 
 /*
  * Cleanup everything
  */
-void nouveau_mem_takedown(struct mem_block **heap)
-{
-	struct mem_block *p;
-
-	if (!*heap)
-		return;
-
-	for (p = (*heap)->next; p != *heap;) {
-		struct mem_block *q = p;
-		p = p->next;
-		kfree(q);
-	}
-
-	kfree(*heap);
-	*heap = NULL;
-}
-
-void nouveau_mem_close(struct drm_device *dev)
+void
+nouveau_mem_close(struct drm_device *dev)
 {
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 
@@ -449,8 +229,7 @@ void nouveau_mem_close(struct drm_device *dev)
 
 	nouveau_ttm_global_release(dev_priv);
 
-	if (drm_core_has_AGP(dev) && dev->agp &&
-	    drm_core_check_feature(dev, DRIVER_MODESET)) {
+	if (drm_core_has_AGP(dev) && dev->agp) {
 		struct drm_agp_mem *entry, *tempe;
 
 		/* Remove AGP resources, but leave dev->agp
@@ -471,9 +250,10 @@ void nouveau_mem_close(struct drm_device *dev)
 	}
 
 	if (dev_priv->fb_mtrr) {
-		drm_mtrr_del(dev_priv->fb_mtrr, drm_get_resource_start(dev, 1),
-			     drm_get_resource_len(dev, 1), DRM_MTRR_WC);
-		dev_priv->fb_mtrr = 0;
+		drm_mtrr_del(dev_priv->fb_mtrr,
+			     pci_resource_start(dev->pdev, 1),
+			     pci_resource_len(dev->pdev, 1), DRM_MTRR_WC);
+		dev_priv->fb_mtrr = -1;
 	}
 }
 
@@ -536,12 +316,18 @@ nouveau_mem_detect(struct drm_device *dev)
 	} else
 	if (dev_priv->flags & (NV_NFORCE | NV_NFORCE2)) {
 		dev_priv->vram_size = nouveau_mem_detect_nforce(dev);
-	} else {
+	} else
+	if (dev_priv->card_type < NV_50) {
 		dev_priv->vram_size  = nv_rd32(dev, NV04_FIFO_DATA);
 		dev_priv->vram_size &= NV10_FIFO_DATA_RAM_AMOUNT_MB_MASK;
-		if (dev_priv->chipset == 0xaa || dev_priv->chipset == 0xac)
+	} else {
+		dev_priv->vram_size = nv_rd32(dev, NV04_FIFO_DATA);
+		dev_priv->vram_size |= (dev_priv->vram_size & 0xff) << 32;
+		dev_priv->vram_size &= 0xffffffff00ll;
+		if (dev_priv->chipset == 0xaa || dev_priv->chipset == 0xac) {
 			dev_priv->vram_sys_base = nv_rd32(dev, 0x100e10);
 			dev_priv->vram_sys_base <<= 12;
+		}
 	}
 
 	NV_INFO(dev, "Detected %dMiB VRAM\n", (int)(dev_priv->vram_size >> 20));
@@ -633,7 +419,7 @@ nouveau_mem_init(struct drm_device *dev)
 	struct ttm_bo_device *bdev = &dev_priv->ttm.bdev;
 	int ret, dma_bits = 32;
 
-	dev_priv->fb_phys = drm_get_resource_start(dev, 1);
+	dev_priv->fb_phys = pci_resource_start(dev->pdev, 1);
 	dev_priv->gart_info.type = NOUVEAU_GART_NONE;
 
 	if (dev_priv->card_type >= NV_50 &&
@@ -665,8 +451,9 @@ nouveau_mem_init(struct drm_device *dev)
 
 	dev_priv->fb_available_size = dev_priv->vram_size;
 	dev_priv->fb_mappable_pages = dev_priv->fb_available_size;
-	if (dev_priv->fb_mappable_pages > drm_get_resource_len(dev, 1))
-		dev_priv->fb_mappable_pages = drm_get_resource_len(dev, 1);
+	if (dev_priv->fb_mappable_pages > pci_resource_len(dev->pdev, 1))
+		dev_priv->fb_mappable_pages =
+			pci_resource_len(dev->pdev, 1);
 	dev_priv->fb_mappable_pages >>= PAGE_SHIFT;
 
 	/* remove reserved space at end of vram from available amount */
@@ -718,8 +505,8 @@ nouveau_mem_init(struct drm_device *dev)
 		return ret;
 	}
 
-	dev_priv->fb_mtrr = drm_mtrr_add(drm_get_resource_start(dev, 1),
-					 drm_get_resource_len(dev, 1),
+	dev_priv->fb_mtrr = drm_mtrr_add(pci_resource_start(dev->pdev, 1),
+					 pci_resource_len(dev->pdev, 1),
 					 DRM_MTRR_WC);
 
 	return 0;
