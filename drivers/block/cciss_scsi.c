@@ -93,8 +93,8 @@ static struct scsi_host_template cciss_driver_template = {
 
 #pragma pack(1)
 
-#define SCSI_PAD_32 0
-#define SCSI_PAD_64 0
+#define SCSI_PAD_32 8
+#define SCSI_PAD_64 8
 
 struct cciss_scsi_cmd_stack_elem_t {
 	CommandList_struct cmd;
