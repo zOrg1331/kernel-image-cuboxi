@@ -60,9 +60,8 @@ qla2x00_ctx_sp_timeout(unsigned long __data)
 	ctx = sp->ctx;
 	iocb = ctx->u.iocb_cmd;
 	iocb->timeout(sp);
-	spin_unlock_irqrestore(&ha->hardware_lock, flags);
-
 	iocb->free(sp);
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
 }
 
 void
@@ -122,7 +121,23 @@ done:
 
 /* Asynchronous Login/Logout Routines -------------------------------------- */
 
-#define ELS_TMO_2_RATOV(ha) ((ha)->r_a_tov / 10 * 2)
+static inline unsigned long
+qla2x00_get_async_timeout(struct scsi_qla_host *vha)
+{
+	unsigned long tmo;
+	struct qla_hw_data *ha = vha->hw;
+
+	/* Firmware should use switch negotiated r_a_tov for timeout. */
+	tmo = ha->r_a_tov / 10 * 2;
+	if (!IS_FWI2_CAPABLE(ha)) {
+		/*
+		 * Except for earlier ISPs where the timeout is seeded from the
+		 * initialization control block.
+		 */
+		tmo = ha->login_timeout;
+	}
+	return tmo;
+}
 
 static void
 qla2x00_async_iocb_timeout(srb_t *sp)
@@ -131,12 +146,22 @@ qla2x00_async_iocb_timeout(srb_t *sp)
 	struct srb_ctx *ctx = sp->ctx;
 
 	DEBUG2(printk(KERN_WARNING
-	    "scsi(%ld:%x): Async-%s timeout.\n",
-	    fcport->vha->host_no, sp->handle, ctx->name));
+		"scsi(%ld:%x): Async-%s timeout - portid=%02x%02x%02x.\n",
+		fcport->vha->host_no, sp->handle,
+		ctx->name, fcport->d_id.b.domain,
+		fcport->d_id.b.area, fcport->d_id.b.al_pa));
 
 	fcport->flags &= ~FCF_ASYNC_SENT;
-	if (ctx->type == SRB_LOGIN_CMD)
+	if (ctx->type == SRB_LOGIN_CMD) {
+		struct srb_iocb *lio = ctx->u.iocb_cmd;
 		qla2x00_post_async_logout_work(fcport->vha, fcport, NULL);
+		/* Retry as needed. */
+		lio->u.logio.data[0] = MBS_COMMAND_ERROR;
+		lio->u.logio.data[1] = lio->u.logio.flags & SRB_LOGIN_RETRIED ?
+			QLA_LOGIO_LOGIN_RETRIED : 0;
+		qla2x00_post_async_login_done_work(fcport->vha, fcport,
+			lio->u.logio.data);
+	}
 }
 
 static void
@@ -154,7 +179,6 @@ int
 qla2x00_async_login(struct scsi_qla_host *vha, fc_port_t *fcport,
     uint16_t *data)
 {
-	struct qla_hw_data *ha = vha->hw;
 	srb_t *sp;
 	struct srb_ctx *ctx;
 	struct srb_iocb *lio;
@@ -162,7 +186,7 @@ qla2x00_async_login(struct scsi_qla_host *vha, fc_port_t *fcport,
 
 	rval = QLA_FUNCTION_FAILED;
 	sp = qla2x00_get_ctx_sp(vha, fcport, sizeof(struct srb_ctx),
-	    ELS_TMO_2_RATOV(ha) + 2);
+	    qla2x00_get_async_timeout(vha) + 2);
 	if (!sp)
 		goto done;
 
@@ -206,7 +230,6 @@ qla2x00_async_logout_ctx_done(srb_t *sp)
 int
 qla2x00_async_logout(struct scsi_qla_host *vha, fc_port_t *fcport)
 {
-	struct qla_hw_data *ha = vha->hw;
 	srb_t *sp;
 	struct srb_ctx *ctx;
 	struct srb_iocb *lio;
@@ -214,7 +237,7 @@ qla2x00_async_logout(struct scsi_qla_host *vha, fc_port_t *fcport)
 
 	rval = QLA_FUNCTION_FAILED;
 	sp = qla2x00_get_ctx_sp(vha, fcport, sizeof(struct srb_ctx),
-	    ELS_TMO_2_RATOV(ha) + 2);
+	    qla2x00_get_async_timeout(vha) + 2);
 	if (!sp)
 		goto done;
 
@@ -255,7 +278,6 @@ int
 qla2x00_async_adisc(struct scsi_qla_host *vha, fc_port_t *fcport,
     uint16_t *data)
 {
-	struct qla_hw_data *ha = vha->hw;
 	srb_t *sp;
 	struct srb_ctx *ctx;
 	struct srb_iocb *lio;
@@ -263,7 +285,7 @@ qla2x00_async_adisc(struct scsi_qla_host *vha, fc_port_t *fcport,
 
 	rval = QLA_FUNCTION_FAILED;
 	sp = qla2x00_get_ctx_sp(vha, fcport, sizeof(struct srb_ctx),
-	    ELS_TMO_2_RATOV(ha) + 2);
+	    qla2x00_get_async_timeout(vha) + 2);
 	if (!sp)
 		goto done;
 
@@ -307,7 +329,6 @@ qla2x00_async_tm_cmd(fc_port_t *fcport, uint32_t flags, uint32_t lun,
 	uint32_t tag)
 {
 	struct scsi_qla_host *vha = fcport->vha;
-	struct qla_hw_data *ha = vha->hw;
 	srb_t *sp;
 	struct srb_ctx *ctx;
 	struct srb_iocb *tcf;
@@ -315,7 +336,7 @@ qla2x00_async_tm_cmd(fc_port_t *fcport, uint32_t flags, uint32_t lun,
 
 	rval = QLA_FUNCTION_FAILED;
 	sp = qla2x00_get_ctx_sp(vha, fcport, sizeof(struct srb_ctx),
-	    ELS_TMO_2_RATOV(ha) + 2);
+	    qla2x00_get_async_timeout(vha) + 2);
 	if (!sp)
 		goto done;
 
@@ -418,10 +439,11 @@ qla2x00_async_login_done(struct scsi_qla_host *vha, fc_port_t *fcport,
 		if (data[1] & QLA_LOGIO_LOGIN_RETRIED)
 			set_bit(RELOGIN_NEEDED, &vha->dpc_flags);
 		else
-			qla2x00_mark_device_lost(vha, fcport, 1, 0);
+			qla2x00_mark_device_lost(vha, fcport, 1, 1);
 		break;
 	case MBS_PORT_ID_USED:
 		fcport->loop_id = data[1];
+		qla2x00_post_async_logout_work(vha, fcport, NULL);
 		qla2x00_post_async_login_work(vha, fcport, NULL);
 		break;
 	case MBS_LOOP_ID_USED:
@@ -429,7 +451,7 @@ qla2x00_async_login_done(struct scsi_qla_host *vha, fc_port_t *fcport,
 		rval = qla2x00_find_new_loop_id(vha, fcport);
 		if (rval != QLA_SUCCESS) {
 			fcport->flags &= ~FCF_ASYNC_SENT;
-			qla2x00_mark_device_lost(vha, fcport, 1, 0);
+			qla2x00_mark_device_lost(vha, fcport, 1, 1);
 			break;
 		}
 		qla2x00_post_async_login_work(vha, fcport, NULL);
@@ -461,7 +483,7 @@ qla2x00_async_adisc_done(struct scsi_qla_host *vha, fc_port_t *fcport,
 	if (data[1] & QLA_LOGIO_LOGIN_RETRIED)
 		set_bit(RELOGIN_NEEDED, &vha->dpc_flags);
 	else
-		qla2x00_mark_device_lost(vha, fcport, 1, 0);
+		qla2x00_mark_device_lost(vha, fcport, 1, 1);
 
 	return;
 }
@@ -1454,6 +1476,8 @@ qla2x00_setup_chip(scsi_qla_host_t *vha)
 		rval = ha->isp_ops->load_risc(vha, &srisc_address);
 		if (rval == QLA_SUCCESS)
 			goto enable_82xx_npiv;
+		else
+			goto failed;
 	}
 
 	if (!IS_FWI2_CAPABLE(ha) && !IS_QLA2100(ha) && !IS_QLA2200(ha)) {
@@ -1960,7 +1984,8 @@ qla2x00_fw_ready(scsi_qla_host_t *vha)
 			}
 		} else {
 			/* Mailbox cmd failed. Timeout on min_wait. */
-			if (time_after_eq(jiffies, mtime))
+			if (time_after_eq(jiffies, mtime) ||
+			    (IS_QLA82XX(ha) && ha->flags.fw_hung))
 				break;
 		}
 
@@ -2396,7 +2421,7 @@ qla2x00_nvram_config(scsi_qla_host_t *vha)
 	ha->retry_count = nv->retry_count;
 
 	/* Set minimum login_timeout to 4 seconds. */
-	if (nv->login_timeout < ql2xlogintimeout)
+	if (nv->login_timeout != ql2xlogintimeout)
 		nv->login_timeout = ql2xlogintimeout;
 	if (nv->login_timeout < 4)
 		nv->login_timeout = 4;
@@ -2639,7 +2664,8 @@ qla2x00_configure_loop(scsi_qla_host_t *vha)
 			set_bit(LOCAL_LOOP_UPDATE, &vha->dpc_flags);
 		if (test_bit(RSCN_UPDATE, &save_flags)) {
 			set_bit(RSCN_UPDATE, &vha->dpc_flags);
-			vha->flags.rscn_queue_overflow = 1;
+			if (!IS_ALOGIO_CAPABLE(ha))
+				vha->flags.rscn_queue_overflow = 1;
 		}
 	}
 
@@ -3197,8 +3223,9 @@ qla2x00_find_all_fabric_devs(scsi_qla_host_t *vha,
 		if (qla2x00_is_reserved_id(vha, loop_id))
 			continue;
 
-		if (atomic_read(&vha->loop_down_timer) ||
-		    LOOP_TRANSITION(vha)) {
+		if (ha->current_topology == ISP_CFG_FL &&
+		    (atomic_read(&vha->loop_down_timer) ||
+		     LOOP_TRANSITION(vha))) {
 			atomic_set(&vha->loop_down_timer, 0);
 			set_bit(LOOP_RESYNC_NEEDED, &vha->dpc_flags);
 			set_bit(LOCAL_LOOP_UPDATE, &vha->dpc_flags);
