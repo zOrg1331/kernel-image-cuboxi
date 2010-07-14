@@ -40,7 +40,29 @@ static struct msm_gpio uart3_config_data[] = {
 	{ GPIO_CFG(87, 1, GPIO_OUTPUT,  GPIO_PULL_DOWN, GPIO_2MA), "UART2_Tx"},
 };
 
-static struct platform_device *devices[] __initdata = {
+/*
+ * Early devices are those which provide a system service which will be
+ * required by one or more of the function calls in qsd8x50_init.
+ * These devices must be probed and online first in order for
+ * the init routine to run successfully.
+ */
+static struct platform_device *early_devices[] __initdata = {
+	&msm_gpio_devices[0],
+	&msm_gpio_devices[1],
+	&msm_gpio_devices[2],
+	&msm_gpio_devices[3],
+	&msm_gpio_devices[4],
+	&msm_gpio_devices[5],
+	&msm_gpio_devices[6],
+	&msm_gpio_devices[7],
+};
+
+/*
+ * Late devices are those which are dependent upon services initialized
+ * by qsd8x50_init, or which simply have no dependents and can have
+ * their initialization deferred.
+ */
+static struct platform_device *late_devices[] __initdata = {
 	&msm_device_uart3,
 };
 
@@ -64,8 +86,9 @@ static void __init qsd8x50_init_irq(void)
 
 static void __init qsd8x50_init(void)
 {
+	platform_add_devices(early_devices, ARRAY_SIZE(early_devices));
 	msm8x50_init_uart3();
-	platform_add_devices(devices, ARRAY_SIZE(devices));
+	platform_add_devices(late_devices, ARRAY_SIZE(late_devices));
 }
 
 MACHINE_START(QSD8X50_SURF, "QCT QSD8X50 SURF")
