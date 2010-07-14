@@ -1,6 +1,6 @@
 Name: kernel-image-un-def-eeepc
 Version: 2.6.34
-Release: alt1
+Release: alt2
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -504,6 +504,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Jul 14 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.34-alt2
+- 2.6.34.1
+- BFQ added and set as default
+- aufs updated
+
 * Fri Jun 04 2010 Mykola Grechukh <gns@altlinux.ru> 1:2.6.34-alt1
 - 2.6.34
 
