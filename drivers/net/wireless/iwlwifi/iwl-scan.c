@@ -561,6 +561,11 @@ static void iwl_bg_start_internal_scan(struct work_struct *work)
 
 	mutex_lock(&priv->mutex);
 
+	if (priv->is_internal_short_scan == true) {
+		IWL_DEBUG_SCAN(priv, "Internal scan already in progress\n");
+		goto unlock;
+	}
+
 	if (!iwl_is_ready_rf(priv)) {
 		IWL_DEBUG_SCAN(priv, "not ready or exit pending\n");
 		goto unlock;
@@ -813,16 +818,29 @@ static void iwl_bg_request_scan(struct work_struct *data)
 			rate = IWL_RATE_1M_PLCP;
 			rate_flags = RATE_MCS_CCK_MSK;
 		}
-		scan->good_CRC_th = 0;
+		scan->good_CRC_th = IWL_GOOD_CRC_TH_DISABLED;
 	} else if (priv->scan_bands & BIT(IEEE80211_BAND_5GHZ)) {
 		band = IEEE80211_BAND_5GHZ;
 		rate = IWL_RATE_6M_PLCP;
 		/*
-		 * If active scaning is requested but a certain channel
-		 * is marked passive, we can do active scanning if we
-		 * detect transmissions.
+		 * If active scanning is requested but a certain channel is
+		 * marked passive, we can do active scanning if we detect
+		 * transmissions.
+		 *
+		 * There is an issue with some firmware versions that triggers
+		 * a sysassert on a "good CRC threshold" of zero (== disabled),
+		 * on a radar channel even though this means that we should NOT
+		 * send probes.
+		 *
+		 * The "good CRC threshold" is the number of frames that we
+		 * need to receive during our dwell time on a channel before
+		 * sending out probes -- setting this to a huge value will
+		 * mean we never reach it, but at the same time work around
+		 * the aforementioned issue. Thus use IWL_GOOD_CRC_TH_NEVER
+		 * here instead of IWL_GOOD_CRC_TH_DISABLED.
 		 */
-		scan->good_CRC_th = is_active ? IWL_GOOD_CRC_TH : 0;
+		scan->good_CRC_th = is_active ? IWL_GOOD_CRC_TH_DEFAULT :
+						IWL_GOOD_CRC_TH_NEVER;
 
 		/* Force use of chains B and C (0x6) for scan Rx for 4965
 		 * Avoid A (0x1) because of its off-channel reception on A-band.
@@ -945,17 +963,27 @@ void iwl_bg_scan_completed(struct work_struct *work)
 {
 	struct iwl_priv *priv =
 	    container_of(work, struct iwl_priv, scan_completed);
+	bool internal = false;
 
 	IWL_DEBUG_SCAN(priv, "SCAN complete scan\n");
 
 	cancel_delayed_work(&priv->scan_check);
 
-	if (!priv->is_internal_short_scan)
-		ieee80211_scan_completed(priv->hw, false);
-	else {
+	mutex_lock(&priv->mutex);
+	if (priv->is_internal_short_scan) {
 		priv->is_internal_short_scan = false;
 		IWL_DEBUG_SCAN(priv, "internal short scan completed\n");
+		internal = true;
 	}
+	mutex_unlock(&priv->mutex);
+
+	/*
+	 * Do not hold mutex here since this will cause mac80211 to call
+	 * into driver again into functions that will attempt to take
+	 * mutex.
+	 */
+	if (!internal)
+		ieee80211_scan_completed(priv->hw, false);
 
 	if (test_bit(STATUS_EXIT_PENDING, &priv->status))
 		return;

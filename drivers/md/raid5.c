@@ -1527,7 +1527,7 @@ static void raid5_end_read_request(struct bio * bi, int error)
 
 		clear_bit(R5_UPTODATE, &sh->dev[i].flags);
 		atomic_inc(&rdev->read_errors);
-		if (conf->mddev->degraded)
+		if (conf->mddev->degraded >= conf->max_degraded)
 			printk_rl(KERN_WARNING
 				  "raid5:%s: read error not correctable "
 				  "(sector %llu on %s).\n",
@@ -5087,7 +5087,9 @@ static int run(mddev_t *mddev)
 	}
 
 	/* Ok, everything is just fine now */
-	if (sysfs_create_group(&mddev->kobj, &raid5_attrs_group))
+	if (mddev->to_remove == &raid5_attrs_group)
+		mddev->to_remove = NULL;
+	else if (sysfs_create_group(&mddev->kobj, &raid5_attrs_group))
 		printk(KERN_WARNING
 		       "raid5: failed to create sysfs attributes for %s\n",
 		       mdname(mddev));
@@ -5134,7 +5136,8 @@ static int stop(mddev_t *mddev)
 	mddev->queue->backing_dev_info.congested_fn = NULL;
 	blk_sync_queue(mddev->queue); /* the unplug fn references 'conf'*/
 	free_conf(conf);
-	mddev->private = &raid5_attrs_group;
+	mddev->private = NULL;
+	mddev->to_remove = &raid5_attrs_group;
 	return 0;
 }
 

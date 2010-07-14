@@ -718,7 +718,7 @@ int __usb_get_extra_descriptor(char *buffer, unsigned size,
 EXPORT_SYMBOL_GPL(__usb_get_extra_descriptor);
 
 /**
- * usb_buffer_alloc - allocate dma-consistent buffer for URB_NO_xxx_DMA_MAP
+ * usb_alloc_coherent - allocate dma-consistent buffer for URB_NO_xxx_DMA_MAP
  * @dev: device the buffer will be used with
  * @size: requested buffer size
  * @mem_flags: affect whether allocation may block
@@ -737,30 +737,30 @@ EXPORT_SYMBOL_GPL(__usb_get_extra_descriptor);
  * architectures where CPU caches are not DMA-coherent.  On systems without
  * bus-snooping caches, these buffers are uncached.
  *
- * When the buffer is no longer used, free it with usb_buffer_free().
+ * When the buffer is no longer used, free it with usb_free_coherent().
  */
-void *usb_buffer_alloc(struct usb_device *dev, size_t size, gfp_t mem_flags,
-		       dma_addr_t *dma)
+void *usb_alloc_coherent(struct usb_device *dev, size_t size, gfp_t mem_flags,
+			 dma_addr_t *dma)
 {
 	if (!dev || !dev->bus)
 		return NULL;
 	return hcd_buffer_alloc(dev->bus, size, mem_flags, dma);
 }
-EXPORT_SYMBOL_GPL(usb_buffer_alloc);
+EXPORT_SYMBOL_GPL(usb_alloc_coherent);
 
 /**
- * usb_buffer_free - free memory allocated with usb_buffer_alloc()
+ * usb_free_coherent - free memory allocated with usb_alloc_coherent()
  * @dev: device the buffer was used with
  * @size: requested buffer size
  * @addr: CPU address of buffer
  * @dma: DMA address of buffer
  *
  * This reclaims an I/O buffer, letting it be reused.  The memory must have
- * been allocated using usb_buffer_alloc(), and the parameters must match
+ * been allocated using usb_alloc_coherent(), and the parameters must match
  * those provided in that allocation request.
  */
-void usb_buffer_free(struct usb_device *dev, size_t size, void *addr,
-		     dma_addr_t dma)
+void usb_free_coherent(struct usb_device *dev, size_t size, void *addr,
+		       dma_addr_t dma)
 {
 	if (!dev || !dev->bus)
 		return;
@@ -768,7 +768,7 @@ void usb_buffer_free(struct usb_device *dev, size_t size, void *addr,
 		return;
 	hcd_buffer_free(dev->bus, size, addr, dma);
 }
-EXPORT_SYMBOL_GPL(usb_buffer_free);
+EXPORT_SYMBOL_GPL(usb_free_coherent);
 
 /**
  * usb_buffer_map - create DMA mapping(s) for an urb
@@ -893,6 +893,7 @@ void usb_buffer_unmap(struct urb *urb)
 EXPORT_SYMBOL_GPL(usb_buffer_unmap);
 #endif  /*  0  */
 
+#if 0
 /**
  * usb_buffer_map_sg - create scatterlist DMA mapping(s) for an endpoint
  * @dev: device to which the scatterlist will be mapped
@@ -936,6 +937,7 @@ int usb_buffer_map_sg(const struct usb_device *dev, int is_in,
 			is_in ? DMA_FROM_DEVICE : DMA_TO_DEVICE) ? : -ENOMEM;
 }
 EXPORT_SYMBOL_GPL(usb_buffer_map_sg);
+#endif
 
 /* XXX DISABLED, no users currently.  If you wish to re-enable this
  * XXX please determine whether the sync is to transfer ownership of
@@ -972,6 +974,7 @@ void usb_buffer_dmasync_sg(const struct usb_device *dev, int is_in,
 EXPORT_SYMBOL_GPL(usb_buffer_dmasync_sg);
 #endif
 
+#if 0
 /**
  * usb_buffer_unmap_sg - free DMA mapping(s) for a scatterlist
  * @dev: device to which the scatterlist will be mapped
@@ -997,6 +1000,7 @@ void usb_buffer_unmap_sg(const struct usb_device *dev, int is_in,
 			is_in ? DMA_FROM_DEVICE : DMA_TO_DEVICE);
 }
 EXPORT_SYMBOL_GPL(usb_buffer_unmap_sg);
+#endif
 
 /* To disable USB, kernel command line is 'nousb' not 'usbcore.nousb' */
 #ifdef MODULE

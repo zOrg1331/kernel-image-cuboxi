@@ -682,6 +682,7 @@ static void pcmcia_requery(struct pcmcia_socket *s)
 		if (old_funcs != new_funcs) {
 			/* we need to re-start */
 			pcmcia_card_remove(s, NULL);
+			s->functions = 0;
 			pcmcia_card_add(s);
 		}
 	}
@@ -1283,6 +1284,7 @@ static int ds_event(struct pcmcia_socket *skt, event_t event, int priority)
 			destroy_cis_cache(skt);
 			kfree(skt->fake_cis);
 			skt->fake_cis = NULL;
+			s->functions = 0;
 			mutex_unlock(&s->ops_mutex);
 			/* now, add the new card */
 			ds_event(skt, CS_EVENT_CARD_INSERTION,

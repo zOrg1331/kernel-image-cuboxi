@@ -965,9 +965,18 @@ extern int usb_disabled(void);
 					 * needed */
 #define URB_FREE_BUFFER		0x0100	/* Free transfer buffer with the URB */
 
+/* The following flags are used internally by usbcore and HCDs */
 #define URB_DIR_IN		0x0200	/* Transfer from device to host */
 #define URB_DIR_OUT		0
 #define URB_DIR_MASK		URB_DIR_IN
+
+#define URB_DMA_MAP_SINGLE	0x00010000	/* Non-scatter-gather mapping */
+#define URB_DMA_MAP_PAGE	0x00020000	/* HCD-unsupported S-G */
+#define URB_DMA_MAP_SG		0x00040000	/* HCD-supported S-G */
+#define URB_MAP_LOCAL		0x00080000	/* HCD-local-memory mapping */
+#define URB_SETUP_MAP_SINGLE	0x00100000	/* Setup packet DMA mapped */
+#define URB_SETUP_MAP_LOCAL	0x00200000	/* HCD-local setup packet */
+#define URB_DMA_SG_COMBINED	0x00400000	/* S-G entries were combined */
 
 struct usb_iso_packet_descriptor {
 	unsigned int offset;
@@ -1085,7 +1094,7 @@ typedef void (*usb_complete_t)(struct urb *);
  * Alternatively, drivers may pass the URB_NO_xxx_DMA_MAP transfer flags,
  * which tell the host controller driver that no such mapping is needed since
  * the device driver is DMA-aware.  For example, a device driver might
- * allocate a DMA buffer with usb_buffer_alloc() or call usb_buffer_map().
+ * allocate a DMA buffer with usb_alloc_coherent() or call usb_buffer_map().
  * When these transfer flags are provided, host controller drivers will
  * attempt to use the dma addresses found in the transfer_dma and/or
  * setup_dma fields rather than determining a dma address themselves.
@@ -1366,10 +1375,22 @@ static inline int usb_urb_dir_out(struct urb *urb)
 	return (urb->transfer_flags & URB_DIR_MASK) == URB_DIR_OUT;
 }
 
-void *usb_buffer_alloc(struct usb_device *dev, size_t size,
+void *usb_alloc_coherent(struct usb_device *dev, size_t size,
 	gfp_t mem_flags, dma_addr_t *dma);
-void usb_buffer_free(struct usb_device *dev, size_t size,
+void usb_free_coherent(struct usb_device *dev, size_t size,
 	void *addr, dma_addr_t dma);
+
+/* Compatible macros while we switch over */
+static inline void *usb_buffer_alloc(struct usb_device *dev, size_t size,
+				     gfp_t mem_flags, dma_addr_t *dma)
+{
+	return usb_alloc_coherent(dev, size, mem_flags, dma);
+}
+static inline void usb_buffer_free(struct usb_device *dev, size_t size,
+				   void *addr, dma_addr_t dma)
+{
+	return usb_free_coherent(dev, size, addr, dma);
+}
 
 #if 0
 struct urb *usb_buffer_map(struct urb *urb);

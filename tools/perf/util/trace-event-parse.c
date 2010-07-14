@@ -40,7 +40,7 @@ int header_page_size_size;
 int header_page_data_offset;
 int header_page_data_size;
 
-int latency_format;
+bool latency_format;
 
 static char *input_buf;
 static unsigned long long input_buf_ptr;
@@ -1925,7 +1925,7 @@ void *raw_field_ptr(struct event *event, const char *name, void *data)
 	if (!field)
 		return NULL;
 
-	if (field->flags & FIELD_IS_STRING) {
+	if (field->flags & FIELD_IS_DYNAMIC) {
 		int offset;
 
 		offset = *(int *)(data + field->offset);

@@ -67,18 +67,28 @@ static struct usb_device_id ar9170_usb_ids[] = {
 	{ USB_DEVICE(0x0cf3, 0x1001) },
 	/* TP-Link TL-WN821N v2 */
 	{ USB_DEVICE(0x0cf3, 0x1002) },
+	/* 3Com Dual Band 802.11n USB Adapter */
+	{ USB_DEVICE(0x0cf3, 0x1010) },
+	/* H3C Dual Band 802.11n USB Adapter */
+	{ USB_DEVICE(0x0cf3, 0x1011) },
 	/* Cace Airpcap NX */
 	{ USB_DEVICE(0xcace, 0x0300) },
 	/* D-Link DWA 160 A1 */
 	{ USB_DEVICE(0x07d1, 0x3c10) },
 	/* D-Link DWA 160 A2 */
 	{ USB_DEVICE(0x07d1, 0x3a09) },
+	/* Netgear WNA1000 */
+	{ USB_DEVICE(0x0846, 0x9040) },
 	/* Netgear WNDA3100 */
 	{ USB_DEVICE(0x0846, 0x9010) },
 	/* Netgear WN111 v2 */
 	{ USB_DEVICE(0x0846, 0x9001) },
 	/* Zydas ZD1221 */
 	{ USB_DEVICE(0x0ace, 0x1221) },
+	/* Proxim ORiNOCO 802.11n USB */
+	{ USB_DEVICE(0x1435, 0x0804) },
+	/* WNC Generic 11n USB Dongle */
+	{ USB_DEVICE(0x1435, 0x0326) },
 	/* ZyXEL NWD271N */
 	{ USB_DEVICE(0x0586, 0x3417) },
 	/* Z-Com UB81 BG */
@@ -727,12 +737,16 @@ static void ar9170_usb_firmware_failed(struct ar9170_usb *aru)
 {
 	struct device *parent = aru->udev->dev.parent;
 
+	complete(&aru->firmware_loading_complete);
+
 	/* unbind anything failed */
 	if (parent)
 		down(&parent->sem);
 	device_release_driver(&aru->udev->dev);
 	if (parent)
 		up(&parent->sem);
+
+	usb_put_dev(aru->udev);
 }
 
 static void ar9170_usb_firmware_finish(const struct firmware *fw, void *context)
@@ -761,6 +775,8 @@ static void ar9170_usb_firmware_finish(const struct firmware *fw, void *context)
 	if (err)
 		goto err_unrx;
 
+	complete(&aru->firmware_loading_complete);
+	usb_put_dev(aru->udev);
 	return;
 
  err_unrx:
@@ -858,6 +874,7 @@ static int ar9170_usb_probe(struct usb_interface *intf,
 	init_usb_anchor(&aru->tx_pending);
 	init_usb_anchor(&aru->tx_submitted);
 	init_completion(&aru->cmd_wait);
+	init_completion(&aru->firmware_loading_complete);
 	spin_lock_init(&aru->tx_urb_lock);
 
 	aru->tx_pending_urbs = 0;
@@ -877,6 +894,7 @@ static int ar9170_usb_probe(struct usb_interface *intf,
 	if (err)
 		goto err_freehw;
 
+	usb_get_dev(aru->udev);
 	return request_firmware_nowait(THIS_MODULE, 1, "ar9170.fw",
 				       &aru->udev->dev, GFP_KERNEL, aru,
 				       ar9170_usb_firmware_step2);
@@ -896,6 +914,9 @@ static void ar9170_usb_disconnect(struct usb_interface *intf)
 		return;
 
 	aru->common.state = AR9170_IDLE;
+
+	wait_for_completion(&aru->firmware_loading_complete);
+
 	ar9170_unregister(&aru->common);
 	ar9170_usb_cancel_urbs(aru);
 

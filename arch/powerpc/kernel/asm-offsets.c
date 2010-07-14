@@ -133,7 +133,6 @@ int main(void)
 	DEFINE(PACAKMSR, offsetof(struct paca_struct, kernel_msr));
 	DEFINE(PACASOFTIRQEN, offsetof(struct paca_struct, soft_enabled));
 	DEFINE(PACAHARDIRQEN, offsetof(struct paca_struct, hard_enabled));
-	DEFINE(PACAPERFPEND, offsetof(struct paca_struct, perf_event_pending));
 	DEFINE(PACACONTEXTID, offsetof(struct paca_struct, context.id));
 #ifdef CONFIG_PPC_MM_SLICES
 	DEFINE(PACALOWSLICESPSIZE, offsetof(struct paca_struct,
@@ -447,6 +446,14 @@ int main(void)
 #ifdef CONFIG_44x
 	DEFINE(PGD_T_LOG2, PGD_T_LOG2);
 	DEFINE(PTE_T_LOG2, PTE_T_LOG2);
+#endif
+#ifdef CONFIG_FSL_BOOKE
+	DEFINE(TLBCAM_SIZE, sizeof(struct tlbcam));
+	DEFINE(TLBCAM_MAS0, offsetof(struct tlbcam, MAS0));
+	DEFINE(TLBCAM_MAS1, offsetof(struct tlbcam, MAS1));
+	DEFINE(TLBCAM_MAS2, offsetof(struct tlbcam, MAS2));
+	DEFINE(TLBCAM_MAS3, offsetof(struct tlbcam, MAS3));
+	DEFINE(TLBCAM_MAS7, offsetof(struct tlbcam, MAS7));
 #endif
 
 #ifdef CONFIG_KVM_EXIT_TIMING
