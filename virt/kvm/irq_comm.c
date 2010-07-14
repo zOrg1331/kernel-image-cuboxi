@@ -17,6 +17,7 @@
  * Authors:
  *   Yaozu (Eddie) Dong <Eddie.dong@intel.com>
  *
+ * Copyright 2010 Red Hat, Inc. and/or its affilates.
  */
 
 #include <linux/kvm_host.h>
@@ -99,7 +100,7 @@ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
 			if (r < 0)
 				r = 0;
 			r += kvm_apic_set_irq(vcpu, irq);
-		} else {
+		} else if (kvm_lapic_enabled(vcpu)) {
 			if (!lowest)
 				lowest = vcpu;
 			else if (kvm_apic_compare_prio(vcpu, lowest) < 0)
