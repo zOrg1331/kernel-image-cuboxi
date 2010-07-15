@@ -133,7 +133,8 @@ static int dump_registers(struct task_struct *tsk, struct cpt_context *ctx)
 		ri.cpt_debugreg[6] = tsk->thread.debugreg6;
 		ri.cpt_debugreg[7] = tsk->thread.debugreg7;
 		ri.cpt_fs = encode_segment(tsk->thread.fsindex);
-		ri.cpt_gs = encode_segment(tsk->thread.gsindex);
+		ri.cpt_gs = CPT_SEG_ZERO;
+		ri.cpt_ugs = encode_segment(tsk->thread.gsindex);
 
 		xlate_ptregs_64_to_32(&ri, task_pt_regs(tsk), tsk);
 
