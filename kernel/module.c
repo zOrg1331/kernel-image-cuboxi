@@ -1505,11 +1505,6 @@ static void mod_sysfs_fini(struct module *mod)
 
 #else /* !CONFIG_SYSFS */
 
-static int mod_sysfs_init(struct module *mod)
-{
-	return 0;
-}
-
 static int mod_sysfs_setup(struct module *mod,
 			   const struct load_info *info,
 			   struct kernel_param *kparam,
@@ -1522,13 +1517,17 @@ static void mod_sysfs_fini(struct module *mod)
 {
 }
 
+static void module_remove_modinfo_attrs(struct module *mod)
+{
+}
+
 static void del_usage_links(struct module *mod)
 {
 }
 
 #endif /* CONFIG_SYSFS */
 
-static void mod_kobject_remove(struct module *mod)
+static void mod_sysfs_teardown(struct module *mod)
 {
 	del_usage_links(mod);
 	module_remove_modinfo_attrs(mod);
@@ -1558,7 +1557,7 @@ static void free_module(struct module *mod)
 	mutex_lock(&module_mutex);
 	stop_machine(__unlink_module, mod, NULL);
 	mutex_unlock(&module_mutex);
-	mod_kobject_remove(mod);
+	mod_sysfs_teardown(mod);
 
 	/* Arch-specific cleanup. */
 	module_arch_cleanup(mod);
