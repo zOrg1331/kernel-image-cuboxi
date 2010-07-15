@@ -378,9 +378,7 @@ static int hook(void *arg)
 
 	if (ti->cpt_restart.fn != CPT_RBL_0) {
 		if (ti->cpt_restart.fn == CPT_RBL_NANOSLEEP
-#ifdef CONFIG_COMPAT
 		    || ti->cpt_restart.fn == CPT_RBL_COMPAT_NANOSLEEP
-#endif
 		    ) {
 			struct restart_block *rb;
 			ktime_t e;
@@ -398,10 +396,9 @@ static int hook(void *arg)
 			e = ktime_add(e, timespec_to_ktime(ctx->cpt_monotonic_time));
 
 			rb = &task_thread_info(current)->restart_block;
-			if (ti->cpt_restart.fn == CPT_RBL_NANOSLEEP)
-				rb->fn = hrtimer_nanosleep_restart;
+			rb->fn = hrtimer_nanosleep_restart;
 #ifdef CONFIG_COMPAT
-			else
+			if (ti->cpt_restart.fn == CPT_RBL_COMPAT_NANOSLEEP)
 				rb->fn = compat_nanosleep_restart;
 #endif
 			if (ctx->image_version >= CPT_VERSION_20) {
@@ -453,7 +450,7 @@ static int hook(void *arg)
 			rb->futex.time  = e.tv64;
 			rb->futex.flags = ti->cpt_restart.arg3;
 		} else
-			eprintk_ctx("unknown restart block\n");
+			eprintk_ctx("unknown restart block (%d)\n", ti->cpt_restart.fn);
 	}
 
 	if (thread_group_leader(current)) {
