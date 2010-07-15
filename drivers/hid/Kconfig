@@ -148,6 +148,12 @@ config HID_EGALAX
 	---help---
 	Support for the eGalax dual-touch panel.
 
+config HID_ELECOM
+	tristate "ELECOM"
+	depends on BT_HIDP
+	---help---
+	Support for the ELECOM BM084 (bluetooth mouse).
+
 config HID_EZKEY
 	tristate "Ezkey" if EMBEDDED
 	depends on USB_HID
@@ -417,10 +423,11 @@ config SMARTJOYPLUS_FF
 	enable force feedback support for it.
 
 config HID_TOPSEED
-	tristate "TopSeed Cyberlink remote control support"
+	tristate "TopSeed Cyberlink, BTC Emprex, Conceptronic remote control support"
 	depends on USB_HID
 	---help---
-	Say Y if you have a TopSeed Cyberlink or BTC Emprex remote control.
+	Say Y if you have a TopSeed Cyberlink or BTC Emprex or Conceptronic
+	CLLRCMCE remote control.
 
 config HID_THRUSTMASTER
 	tristate "ThrustMaster devices support"
