@@ -44,8 +44,6 @@ static unsigned long get_uart_rate(struct clk *clk);
 static int set_keytchclk_rate(struct clk *clk, unsigned long rate);
 static int set_div_rate(struct clk *clk, unsigned long rate);
 
-static struct clk dummy_apb_pclk;
-
 static struct clk clk_xtali = {
 	.rate		= EP93XX_EXT_CLK_RATE,
 };
@@ -179,7 +177,6 @@ static struct clk clk_m2m1 = {
 	{ .dev_id = dev, .con_id = con, .clk = ck }
 
 static struct clk_lookup clocks[] = {
-	INIT_CK(NULL,			"apb_pclk",	&dummy_apb_pclk),
 	INIT_CK(NULL,			"xtali",	&clk_xtali),
 	INIT_CK("apb:uart1",		NULL,		&clk_uart1),
 	INIT_CK("apb:uart2",		NULL,		&clk_uart2),
@@ -187,7 +184,7 @@ static struct clk_lookup clocks[] = {
 	INIT_CK(NULL,			"pll1",		&clk_pll1),
 	INIT_CK(NULL,			"fclk",		&clk_f),
 	INIT_CK(NULL,			"hclk",		&clk_h),
-	INIT_CK(NULL,			"pclk",		&clk_p),
+	INIT_CK(NULL,			"apb_pclk",	&clk_p),
 	INIT_CK(NULL,			"pll2",		&clk_pll2),
 	INIT_CK("ep93xx-ohci",		NULL,		&clk_usb_host),
 	INIT_CK("ep93xx-keypad",	NULL,		&clk_keypad),
