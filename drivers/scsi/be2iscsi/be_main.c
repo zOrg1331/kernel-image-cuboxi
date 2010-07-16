@@ -2750,6 +2750,7 @@ beiscsi_create_wrb_rings(struct beiscsi_hba *phba,
 		if (status != 0) {
 			shost_printk(KERN_ERR, phba->shost,
 				     "wrbq create failed.");
+			kfree(pwrb_arr);
 			return status;
 		}
 		phwi_ctrlr->wrb_context[i * 2].cid = phwi_context->be_wrbq[i].
@@ -3773,8 +3774,8 @@ static int __devinit beiscsi_dev_probe(struct pci_dev *pcidev,
 
 	ret = beiscsi_enable_pci(pcidev);
 	if (ret < 0) {
-		shost_printk(KERN_ERR, phba->shost, "beiscsi_dev_probe-"
-			     "Failed to enable pci device \n");
+		dev_err(&pcidev->dev, "beiscsi_dev_probe-"
+			" Failed to enable pci device\n");
 		return ret;
 	}
 
@@ -3955,7 +3956,7 @@ struct iscsi_transport beiscsi_iscsi_transport = {
 	.get_session_param = iscsi_session_get_param,
 	.get_host_param = beiscsi_get_host_param,
 	.start_conn = beiscsi_conn_start,
-	.stop_conn = beiscsi_conn_stop,
+	.stop_conn = iscsi_conn_stop,
 	.send_pdu = iscsi_conn_send_pdu,
 	.xmit_task = beiscsi_task_xmit,
 	.cleanup_task = beiscsi_cleanup_task,
