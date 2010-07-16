@@ -1,6 +1,7 @@
 /* 
    BlueZ - Bluetooth protocol stack for Linux
    Copyright (C) 2000-2001 Qualcomm Incorporated
+   Copyright (C) 2009-2010 Gustavo F. Padovan <gustavo@padovan.org>
 
    Written 2000,2001 by Maxim Krasnyansky <maxk@qualcomm.com>
 
@@ -287,6 +288,11 @@ struct l2cap_conn {
 	struct l2cap_chan_list chan_list;
 };
 
+struct sock_del_list {
+	struct sock *sk;
+	struct list_head list;
+};
+
 #define L2CAP_INFO_CL_MTU_REQ_SENT	0x01
 #define L2CAP_INFO_FEAT_MASK_REQ_SENT	0x04
 #define L2CAP_INFO_FEAT_MASK_REQ_DONE	0x08
@@ -353,7 +359,6 @@ struct l2cap_pinfo {
 
 	__le16		sport;
 
-	spinlock_t		send_lock;
 	struct timer_list	retrans_timer;
 	struct timer_list	monitor_timer;
 	struct timer_list	ack_timer;
