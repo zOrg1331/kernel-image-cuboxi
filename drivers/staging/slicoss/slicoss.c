@@ -452,7 +452,7 @@ static int __devinit slic_entry_probe(struct pci_dev *pcidev,
 
 	status = slic_card_init(card, adapter);
 
-	if (status != STATUS_SUCCESS) {
+	if (status != 0) {
 		card->state = CARD_FAIL;
 		adapter->state = ADAPT_FAIL;
 		adapter->linkstate = LINK_DOWN;
@@ -513,7 +513,7 @@ static int slic_entry_open(struct net_device *dev)
 	}
 	status = slic_if_init(adapter);
 
-	if (status != STATUS_SUCCESS) {
+	if (status != 0) {
 		if (adapter->activated) {
 			card->adapters_activated--;
 			slic_global.num_slic_ports_active--;
@@ -535,7 +535,7 @@ static int slic_entry_open(struct net_device *dev)
 		locked = 0;
 	}
 
-	return STATUS_SUCCESS;
+	return 0;
 }
 
 static void __devexit slic_entry_remove(struct pci_dev *pcidev)
@@ -628,7 +628,7 @@ static int slic_entry_halt(struct net_device *dev)
 
 	spin_unlock_irqrestore(&slic_global.driver_lock.lock,
 				slic_global.driver_lock.flags);
-	return STATUS_SUCCESS;
+	return 0;
 }
 
 static int slic_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
@@ -1206,7 +1206,7 @@ static void slic_link_event_handler(struct adapter *adapter)
 #else
 	Stop compilation;
 #endif
-	ASSERT((status == STATUS_SUCCESS) || (status == STATUS_PENDING));
+	ASSERT(status == 0);
 }
 
 static void slic_init_cleanup(struct adapter *adapter)
@@ -1265,7 +1265,7 @@ static int slic_mcast_add_list(struct adapter *adapter, char *address)
 	mlist = adapter->mcastaddrs;
 	while (mlist) {
 		if (!compare_ether_addr(mlist->address, address))
-			return STATUS_SUCCESS;
+			return 0;
 		mlist = mlist->next;
 	}
 
@@ -1279,7 +1279,7 @@ static int slic_mcast_add_list(struct adapter *adapter, char *address)
 	mcaddr->next = adapter->mcastaddrs;
 	adapter->mcastaddrs = mcaddr;
 
-	return STATUS_SUCCESS;
+	return 0;
 }
 
 /*
@@ -1365,7 +1365,7 @@ static void slic_mcast_set_bit(struct adapter *adapter, char *address)
 static void slic_mcast_set_list(struct net_device *dev)
 {
 	struct adapter *adapter = netdev_priv(dev);
-	int status = STATUS_SUCCESS;
+	int status = 0;
 	char *addresses;
 	struct netdev_hw_addr *ha;
 
@@ -1374,7 +1374,7 @@ static void slic_mcast_set_list(struct net_device *dev)
 	netdev_for_each_mc_addr(ha, dev) {
 		addresses = (char *) &ha->addr;
 		status = slic_mcast_add_list(adapter, addresses);
-		if (status != STATUS_SUCCESS)
+		if (status != 0)
 			break;
 		slic_mcast_set_bit(adapter, addresses);
 	}
@@ -1394,7 +1394,7 @@ static void slic_mcast_set_list(struct net_device *dev)
 		adapter->devflags_prev = dev->flags;
 		slic_config_set(adapter, true);
 	} else {
-		if (status == STATUS_SUCCESS)
+		if (status == 0)
 			slic_mcast_set_mask(adapter);
 	}
 	return;
@@ -1451,7 +1451,7 @@ static int slic_if_init(struct adapter *adapter)
 	struct net_device *dev = adapter->netdev;
 	__iomem struct slic_regs *slic_regs = adapter->slic_regs;
 	struct slic_shmem *pshmem;
-	int status = 0;
+	int rc;
 
 	ASSERT(card);
 
@@ -1459,7 +1459,8 @@ static int slic_if_init(struct adapter *adapter)
 	if (adapter->state != ADAPT_DOWN) {
 		dev_err(&dev->dev, "%s: adapter->state != ADAPT_DOWN\n",
 			__func__);
-		return -EIO;
+		rc = -EIO;
+		goto err;
 	}
 	ASSERT(adapter->linkstate == LINK_DOWN);
 
@@ -1475,22 +1476,22 @@ static int slic_if_init(struct adapter *adapter)
 		if (dev->flags & IFF_MULTICAST)
 			adapter->macopts |= MAC_MCAST;
 	}
-	status = slic_adapter_allocresources(adapter);
-	if (status != STATUS_SUCCESS) {
+	rc = slic_adapter_allocresources(adapter);
+	if (rc) {
 		dev_err(&dev->dev,
 			"%s: slic_adapter_allocresources FAILED %x\n",
-			__func__, status);
+			__func__, rc);
 		slic_adapter_freeresources(adapter);
-		return status;
+		goto err;
 	}
 
 	if (!adapter->queues_initialized) {
-		if (slic_rspqueue_init(adapter))
-			return -ENOMEM;
-		if (slic_cmdq_init(adapter))
-			return -ENOMEM;
-		if (slic_rcvqueue_init(adapter))
-			return -ENOMEM;
+		if ((rc = slic_rspqueue_init(adapter)))
+			goto err;
+		if ((rc = slic_cmdq_init(adapter)))
+			goto err;
+		if ((rc = slic_rcvqueue_init(adapter)))
+			goto err;
 		adapter->queues_initialized = 1;
 	}
 
@@ -1553,7 +1554,8 @@ static int slic_if_init(struct adapter *adapter)
 	slic_link_config(adapter, LINK_AUTOSPEED, LINK_AUTOD);
 	slic_link_event_handler(adapter);
 
-	return STATUS_SUCCESS;
+err:
+	return rc;
 }
 
 static void slic_unmap_mmio_space(struct adapter *adapter)
@@ -1587,7 +1589,7 @@ static int slic_adapter_allocresources(struct adapter *adapter)
 		}
 		adapter->intrregistered = 1;
 	}
-	return STATUS_SUCCESS;
+	return 0;
 }
 
 static void slic_config_pci(struct pci_dev *pcidev)
@@ -1967,7 +1969,7 @@ static int slic_card_download(struct adapter *adapter)
 	   and reach mainloop */
 	mdelay(20);
 
-	return STATUS_SUCCESS;
+	return 0;
 }
 
 MODULE_FIRMWARE("slicoss/oasisdownload.sys");
@@ -2027,7 +2029,7 @@ static int slic_card_init(struct sliccard *card, struct adapter *adapter)
 	/* Download the microcode */
 	status = slic_card_download(adapter);
 
-	if (status != STATUS_SUCCESS) {
+	if (status != 0) {
 		dev_err(&adapter->pcidev->dev,
 			"download failed bus %d slot %d\n",
 			adapter->busnumber, adapter->slotnumber);
@@ -2203,7 +2205,7 @@ static int slic_card_init(struct sliccard *card, struct adapter *adapter)
 	card->state = CARD_UP;
 	card->reset_in_progress = 0;
 
-	return STATUS_SUCCESS;
+	return 0;
 }
 
 static u32 slic_card_locate(struct adapter *adapter)
@@ -2267,7 +2269,7 @@ static u32 slic_card_locate(struct adapter *adapter)
 
 	ASSERT(card);
 	if (!card)
-		return STATUS_FAILURE;
+		return -ENXIO;
 	/* Put the adapter in the card's adapter list */
 	ASSERT(card->adapter[adapter->port] == NULL);
 	if (!card->adapter[adapter->port]) {
@@ -2637,7 +2639,7 @@ static int slic_upr_queue_request(struct adapter *adapter,
 	} else {
 		adapter->upr_list = upr;
 	}
-	return STATUS_SUCCESS;
+	return 0;
 }
 
 static int slic_upr_request(struct adapter *adapter,
@@ -2646,22 +2648,21 @@ static int slic_upr_request(struct adapter *adapter,
 		     u32 upr_data_h,
 		     u32 upr_buffer, u32 upr_buffer_h)
 {
-	int status;
+	int rc;
 
 	spin_lock_irqsave(&adapter->upr_lock.lock, adapter->upr_lock.flags);
-	status = slic_upr_queue_request(adapter,
+	rc = slic_upr_queue_request(adapter,
 					upr_request,
 					upr_data,
 					upr_data_h, upr_buffer, upr_buffer_h);
-	if (status != STATUS_SUCCESS) {
-		spin_unlock_irqrestore(&adapter->upr_lock.lock,
-					adapter->upr_lock.flags);
-		return status;
-	}
+	if (rc)
+		goto err_unlock_irq;
+
 	slic_upr_start(adapter);
+err_unlock_irq:
 	spin_unlock_irqrestore(&adapter->upr_lock.lock,
 				adapter->upr_lock.flags);
-	return STATUS_PENDING;
+	return rc;
 }
 
 static void slic_upr_request_complete(struct adapter *adapter, u32 isr)
@@ -3032,7 +3033,7 @@ static int slic_rspqueue_init(struct adapter *adapter)
 			dev_err(&adapter->pcidev->dev,
 				"pci_alloc_consistent failed\n");
 			slic_rspqueue_free(adapter);
-			return STATUS_FAILURE;
+			return -ENOMEM;
 		}
 #ifndef CONFIG_X86_64
 		ASSERT(((u32) rspq->vaddr[i] & 0xFFFFF000) ==
@@ -3056,7 +3057,7 @@ static int slic_rspqueue_init(struct adapter *adapter)
 	rspq->offset = 0;
 	rspq->pageindex = 0;
 	rspq->rspbuf = (struct slic_rspbuf *)rspq->vaddr[0];
-	return STATUS_SUCCESS;
+	return 0;
 }
 
 static void slic_rspqueue_free(struct adapter *adapter)
@@ -3180,13 +3181,13 @@ static int slic_cmdq_init(struct adapter *adapter)
 #endif
 		if (!pageaddr) {
 			slic_cmdq_free(adapter);
-			return STATUS_FAILURE;
+			return -ENOMEM;
 		}
 		slic_cmdq_addcmdpage(adapter, pageaddr);
 	}
 	adapter->slic_handle_ix = 1;
 
-	return STATUS_SUCCESS;
+	return 0;
 }
 
 static void slic_cmdq_free(struct adapter *adapter)
@@ -3407,9 +3408,9 @@ static int slic_rcvqueue_init(struct adapter *adapter)
 	}
 	if (rcvq->count < SLIC_RCVQ_MINENTRIES) {
 		slic_rcvqueue_free(adapter);
-		return STATUS_FAILURE;
+		return -ENOMEM;
 	}
-	return STATUS_SUCCESS;
+	return 0;
 }
 
 static void slic_rcvqueue_free(struct adapter *adapter)
