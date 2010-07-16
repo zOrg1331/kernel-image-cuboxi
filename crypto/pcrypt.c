@@ -143,10 +143,8 @@ static int pcrypt_aead_encrypt(struct aead_request *req)
 	aead_request_set_assoc(creq, req->assoc, req->assoclen);
 
 	err = pcrypt_do_parallel(padata, &ctx->cb_cpu, pcrypt_enc_padata);
-	if (err)
-		return err;
-	else
-		err = crypto_aead_encrypt(creq);
+	if (!err)
+		return -EINPROGRESS;
 
 	return err;
 }
@@ -187,10 +185,8 @@ static int pcrypt_aead_decrypt(struct aead_request *req)
 	aead_request_set_assoc(creq, req->assoc, req->assoclen);
 
 	err = pcrypt_do_parallel(padata, &ctx->cb_cpu, pcrypt_dec_padata);
-	if (err)
-		return err;
-	else
-		err = crypto_aead_decrypt(creq);
+	if (!err)
+		return -EINPROGRESS;
 
 	return err;
 }
@@ -233,10 +229,8 @@ static int pcrypt_aead_givencrypt(struct aead_givcrypt_request *req)
 	aead_givcrypt_set_giv(creq, req->giv, req->seq);
 
 	err = pcrypt_do_parallel(padata, &ctx->cb_cpu, pcrypt_enc_padata);
-	if (err)
-		return err;
-	else
-		err = crypto_aead_givencrypt(creq);
+	if (!err)
+		return -EINPROGRESS;
 
 	return err;
 }
@@ -385,6 +379,7 @@ static struct crypto_template pcrypt_tmpl = {
 
 static int __init pcrypt_init(void)
 {
+	int err = -ENOMEM;
 	encwq = create_workqueue("pencrypt");
 	if (!encwq)
 		goto err;
@@ -400,14 +395,22 @@ static int __init pcrypt_init(void)
 
 	pcrypt_dec_padata = padata_alloc(cpu_possible_mask, decwq);
 	if (!pcrypt_dec_padata)
-		goto err_free_padata;
+		goto err_free_enc_padata;
 
-	padata_start(pcrypt_enc_padata);
-	padata_start(pcrypt_dec_padata);
+	err = padata_start(pcrypt_enc_padata);
+	if (err)
+		goto err_free_dec_padata;
+
+	err = padata_start(pcrypt_dec_padata);
+	if (err)
+		goto err_free_dec_padata;
 
 	return crypto_register_template(&pcrypt_tmpl);
 
-err_free_padata:
+err_free_dec_padata:
+	padata_free(pcrypt_dec_padata);
+
+err_free_enc_padata:
 	padata_free(pcrypt_enc_padata);
 
 err_destroy_decwq:
@@ -417,7 +420,7 @@ err_destroy_encwq:
 	destroy_workqueue(encwq);
 
 err:
-	return -ENOMEM;
+	return err;
 }
 
 static void __exit pcrypt_exit(void)
