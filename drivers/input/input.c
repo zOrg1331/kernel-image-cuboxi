@@ -1850,7 +1850,7 @@ int input_register_device(struct input_dev *dev)
 			dev->getkeycodebig_from_scancode = input_default_getkeycode_from_scancode;
 	}
 
-	if (dev->setkeycode) {
+	if (!dev->setkeycode) {
 		if (!dev->setkeycodebig)
 			dev->setkeycodebig = input_default_setkeycode;
 	}
