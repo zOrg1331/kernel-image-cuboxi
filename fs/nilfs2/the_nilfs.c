@@ -644,6 +644,10 @@ int init_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi, char *data)
 		if (err)
 			goto out;
 
+		err = nilfs_check_feature_compatibility(sb, sbp);
+		if (err)
+			goto out;
+
 		blocksize = BLOCK_SIZE << le32_to_cpu(sbp->s_log_block_size);
 		if (sb->s_blocksize != blocksize &&
 		    !sb_set_blocksize(sb, blocksize)) {
@@ -666,6 +670,10 @@ int init_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi, char *data)
 		goto out;
 
 	err = nilfs_store_magic_and_option(sb, sbp, data);
+	if (err)
+		goto failed_sbh;
+
+	err = nilfs_check_feature_compatibility(sb, sbp);
 	if (err)
 		goto failed_sbh;
 
