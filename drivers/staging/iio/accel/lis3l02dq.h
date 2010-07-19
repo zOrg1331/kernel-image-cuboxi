@@ -150,7 +150,7 @@ Form of high byte dependant on justification set in ctrl reg */
  * struct lis3l02dq_state - device instance specific data
  * @us:			actual spi_device
  * @work_trigger_to_ring: bh for triggered event handling
- * @work_cont_thresh: CLEAN
+ * @work_thresh:	bh for threshold events
  * @inter:		used to check if new interrupt has been triggered
  * @last_timestamp:	passing timestamp from th to bh of interrupt handler
  * @indio_dev:		industrial I/O device structure
@@ -162,7 +162,7 @@ Form of high byte dependant on justification set in ctrl reg */
 struct lis3l02dq_state {
 	struct spi_device		*us;
 	struct work_struct		work_trigger_to_ring;
-	struct iio_work_cont		work_cont_thresh;
+	struct work_struct		work_thresh;
 	bool				inter;
 	s64				last_timestamp;
 	struct iio_dev			*indio_dev;
@@ -199,11 +199,13 @@ int lis3l02dq_initialize_ring(struct iio_ring_buffer *ring);
 void lis3l02dq_uninitialize_ring(struct iio_ring_buffer *ring);
 #else /* CONFIG_IIO_RING_BUFFER */
 
-static inline void lis3l02dq_remove_trigger(struct iio_dev *indio_dev) {};
+static inline void lis3l02dq_remove_trigger(struct iio_dev *indio_dev)
+{
+}
 static inline int lis3l02dq_probe_trigger(struct iio_dev *indio_dev)
 {
 	return 0;
-};
+}
 
 static inline ssize_t
 lis3l02dq_read_accel_from_ring(struct device *dev,
@@ -211,18 +213,21 @@ lis3l02dq_read_accel_from_ring(struct device *dev,
 			       char *buf)
 {
 	return 0;
-};
+}
 
 static int lis3l02dq_configure_ring(struct iio_dev *indio_dev)
 {
 	return 0;
-};
+}
 static inline void lis3l02dq_unconfigure_ring(struct iio_dev *indio_dev)
-{};
+{
+}
 static inline int lis3l02dq_initialize_ring(struct iio_ring_buffer *ring)
 {
 	return 0;
-};
-static inline void lis3l02dq_uninitialize_ring(struct iio_ring_buffer *ring) {};
+}
+static inline void lis3l02dq_uninitialize_ring(struct iio_ring_buffer *ring)
+{
+}
 #endif /* CONFIG_IIO_RING_BUFFER */
 #endif /* SPI_LIS3L02DQ_H_ */
