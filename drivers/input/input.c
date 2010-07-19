@@ -900,6 +900,7 @@ int input_set_keycode(struct input_dev *dev,
 		if (retval)
 			goto out;
 
+		old_keycode = kt_entry.keycode;
 		kt_entry.keycode = keycode;
 
 		retval = dev->setkeycodebig(dev, &kt_entry);
