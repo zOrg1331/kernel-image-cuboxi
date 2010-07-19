@@ -72,4 +72,12 @@ extern int serial8250_find_port(struct uart_port *p);
 extern int serial8250_find_port_for_earlycon(void);
 extern int setup_early_serial8250_console(char *cmdline);
 
+#ifdef CONFIG_SERIAL_8250_CUSTOM_CLOCK
+unsigned int serial8250_enable_clock(struct uart_port *port);
+unsigned int serial8250_disable_clock(struct uart_port *port);
+unsigned int serial8250_get_custom_clock(struct uart_port *port,
+		unsigned int baud);
+void serial8250_set_custom_clock(struct uart_port *port);
+#endif
+
 #endif

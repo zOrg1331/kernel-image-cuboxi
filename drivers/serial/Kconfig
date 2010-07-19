@@ -163,6 +163,25 @@ config SERIAL_8250_MANY_PORTS
 	  say N here to save some memory. You can also say Y if you have an
 	  "intelligent" multiport card such as Cyclades, Digiboards, etc.
 
+config SERIAL_8250_U6XXX
+	bool
+	depends on SERIAL_8250_EXTENDED && PLAT_U6XXX
+	default y
+
+config SERIAL_8250_CUSTOM_CLOCK
+	bool "Support serial ports with tunable input clock frequency"
+	depends on SERIAL_8250_EXTENDED && SERIAL_8250_U6XXX
+	default y
+	help
+	  Say Y here if your platform has specific registers to change UART clock frequency.
+
+config SERIAL_8250_CUSTOM_MAX_BAUDRATE
+	int "Maximal reachable baudrate"
+	depends on SERIAL_8250_CUSTOM_CLOCK
+	default "3250000"
+	help
+	  The value of the maximal reachable baudrate when tuning UART clock frequency (default value: 3.25MBds).
+
 #
 # Multi-port serial cards
 #
