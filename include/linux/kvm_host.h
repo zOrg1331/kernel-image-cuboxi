@@ -81,13 +81,14 @@ struct kvm_vcpu {
 	int vcpu_id;
 	struct mutex mutex;
 	int   cpu;
+	atomic_t guest_mode;
 	struct kvm_run *run;
 	unsigned long requests;
 	unsigned long guest_debug;
 	int srcu_idx;
 
 	int fpu_active;
-	int guest_fpu_loaded;
+	int guest_fpu_loaded, guest_xcr0_loaded;
 	wait_queue_head_t wq;
 	int sigset_active;
 	sigset_t sigset;
@@ -266,6 +267,7 @@ extern pfn_t bad_pfn;
 
 int is_error_page(struct page *page);
 int is_error_pfn(pfn_t pfn);
+int is_hwpoison_pfn(pfn_t pfn);
 int kvm_is_error_hva(unsigned long addr);
 int kvm_set_memory_region(struct kvm *kvm,
 			  struct kvm_userspace_memory_region *mem,
