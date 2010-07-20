@@ -716,18 +716,6 @@ void vRunCommand(void *hDeviceContext)
 	       return;
 	   }
 	          pDevice->byLinkWaitCount = 0;
-		 #if 0
-                     #ifdef WPA_SUPPLICANT_DRIVER_WEXT_SUPPORT
-                    // if(pDevice->bWPASuppWextEnabled == TRUE)
-                        {
-                  	union iwreq_data  wrqu;
-                  	memset(&wrqu, 0, sizeof (wrqu));
-                          wrqu.ap_addr.sa_family = ARPHRD_ETHER;
-                  	printk("wireless_send_event--->SIOCGIWAP(disassociated:AUTHENTICATE_WAIT_timeout)\n");
-                  	wireless_send_event(pDevice->dev, SIOCGIWAP, &wrqu, NULL);
-                       }
-                    #endif
-	         #endif
 
             s_bCommandComplete(pDevice);
             break;
@@ -754,8 +742,6 @@ void vRunCommand(void *hDeviceContext)
                     netif_wake_queue(pDevice->dev);
                 }
 
-	//2007-0115-07<Add>by MikeLiu
-	     #ifdef TxInSleep
 		 if(pDevice->IsTxDataTrigger != FALSE)   {    //TxDataTimer is not triggered at the first time
                      // printk("Re-initial TxDataTimer****\n");
 		    del_timer(&pDevice->sTimerTxData);
@@ -771,7 +757,6 @@ void vRunCommand(void *hDeviceContext)
 		 }
 		pDevice->IsTxDataTrigger = TRUE;
                 add_timer(&pDevice->sTimerTxData);
-             #endif
 
             }
 	   else if(pMgmt->eCurrState < WMAC_STATE_ASSOCPENDING) {
@@ -785,18 +770,6 @@ void vRunCommand(void *hDeviceContext)
 	       return;
 	   }
 	          pDevice->byLinkWaitCount = 0;
-		#if 0
-                     #ifdef WPA_SUPPLICANT_DRIVER_WEXT_SUPPORT
-                    // if(pDevice->bWPASuppWextEnabled == TRUE)
-                        {
-                  	union iwreq_data  wrqu;
-                  	memset(&wrqu, 0, sizeof (wrqu));
-                          wrqu.ap_addr.sa_family = ARPHRD_ETHER;
-                  	printk("wireless_send_event--->SIOCGIWAP(disassociated:ASSOCIATE_WAIT_timeout)\n");
-                  	wireless_send_event(pDevice->dev, SIOCGIWAP, &wrqu, NULL);
-                       }
-                    #endif
-		#endif
 
             s_bCommandComplete(pDevice);
             break;
@@ -1300,8 +1273,6 @@ void vResetCommandTimer(void *hDeviceContext)
     pDevice->bCmdClear = FALSE;
 }
 
-//2007-0115-08<Add>by MikeLiu
-#ifdef TxInSleep
 void BSSvSecondTxData(void *hDeviceContext)
 {
   PSDevice        pDevice = (PSDevice)hDeviceContext;
@@ -1337,5 +1308,3 @@ void BSSvSecondTxData(void *hDeviceContext)
   add_timer(&pDevice->sTimerTxData);
   return;
 }
-#endif
-

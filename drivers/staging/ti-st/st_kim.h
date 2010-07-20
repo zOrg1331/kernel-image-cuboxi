@@ -48,7 +48,16 @@
  * devices are created for the 3 gpios
  * that ST has requested
  */
-#define LEGACY_RFKILL_SUPPORT
+
+/* chip version storage
+ */
+struct chip_version {
+	unsigned short full;
+	unsigned short chip;
+	unsigned short min_ver;
+	unsigned short maj_ver;
+};
+
 /*
  * header file for ST provided by KIM
  */
@@ -60,20 +69,18 @@ struct kim_data_s {
 	char resp_buffer[30];
 	const struct firmware *fw_entry;
 	long gpios[ST_MAX];
-	struct kobject *kim_kobj;
 /* used by kim_int_recv to validate fw response */
 	unsigned long rx_state;
 	unsigned long rx_count;
 	struct sk_buff *rx_skb;
-#ifdef LEGACY_RFKILL_SUPPORT
 	struct rfkill *rfkill[ST_MAX];
 	enum proto_type rf_protos[ST_MAX];
-#endif
 	struct st_data_s *core_data;
+	struct chip_version version;
 };
 
-long st_kim_start(void);
-long st_kim_stop(void);
+long st_kim_start(void *);
+long st_kim_stop(void *);
 /*
  * called from st_tty_receive to authenticate fw_download
  */
@@ -81,7 +88,7 @@ void st_kim_recv(void *, const unsigned char *, long count);
 
 void st_kim_chip_toggle(enum proto_type, enum kim_gpio_state);
 
-void st_kim_complete(void);
+void st_kim_complete(void *);
 
 /* function called from ST KIM to ST Core, to
  * list out the protocols registered
