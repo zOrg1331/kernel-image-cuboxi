@@ -506,10 +506,10 @@ lpfc_link_state_store(struct device *dev, struct device_attribute *attr,
 
 	if ((strncmp(buf, "up", sizeof("up") - 1) == 0) &&
 			(phba->link_state == LPFC_LINK_DOWN))
-		status = phba->lpfc_hba_init_link(phba);
+		status = phba->lpfc_hba_init_link(phba, MBX_NOWAIT);
 	else if ((strncmp(buf, "down", sizeof("down") - 1) == 0) &&
 			(phba->link_state >= LPFC_LINK_UP))
-		status = phba->lpfc_hba_down_link(phba);
+		status = phba->lpfc_hba_down_link(phba, MBX_NOWAIT);
 
 	if (status == 0)
 		return strlen(buf);
@@ -864,7 +864,6 @@ lpfc_get_hba_info(struct lpfc_hba *phba,
 		  uint32_t *mrpi, uint32_t *arpi,
 		  uint32_t *mvpi, uint32_t *avpi)
 {
-	struct lpfc_sli *psli = &phba->sli;
 	struct lpfc_mbx_read_config *rd_config;
 	LPFC_MBOXQ_t *pmboxq;
 	MAILBOX_t *pmb;
@@ -893,8 +892,7 @@ lpfc_get_hba_info(struct lpfc_hba *phba,
 	pmb->mbxOwner = OWN_HOST;
 	pmboxq->context1 = NULL;
 
-	if ((phba->pport->fc_flag & FC_OFFLINE_MODE) ||
-		(!(psli->sli_flag & LPFC_SLI_ACTIVE)))
+	if (phba->pport->fc_flag & FC_OFFLINE_MODE)
 		rc = MBX_NOT_FINISHED;
 	else
 		rc = lpfc_sli_issue_mbox_wait(phba, pmboxq, phba->fc_ratov * 2);
@@ -1949,6 +1947,59 @@ static DEVICE_ATTR(lpfc_enable_npiv, S_IRUGO, lpfc_enable_npiv_show, NULL);
 LPFC_ATTR_R(suppress_link_up, LPFC_INITIALIZE_LINK, LPFC_INITIALIZE_LINK,
 		LPFC_DELAY_INIT_LINK_INDEFINITELY,
 		"Suppress Link Up at initialization");
+/*
+# lpfc_cnt: Number of IOCBs allocated for ELS, CT, and ABTS
+#       1 - (1024)
+#       2 - (2048)
+#       3 - (3072)
+#       4 - (4096)
+#       5 - (5120)
+*/
+static ssize_t
+lpfc_iocb_hw_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct Scsi_Host  *shost = class_to_shost(dev);
+	struct lpfc_hba   *phba = ((struct lpfc_vport *) shost->hostdata)->phba;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", phba->iocb_max);
+}
+
+static DEVICE_ATTR(iocb_hw, S_IRUGO,
+			 lpfc_iocb_hw_show, NULL);
+static ssize_t
+lpfc_txq_hw_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct Scsi_Host  *shost = class_to_shost(dev);
+	struct lpfc_hba   *phba = ((struct lpfc_vport *) shost->hostdata)->phba;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+		phba->sli.ring[LPFC_ELS_RING].txq_max);
+}
+
+static DEVICE_ATTR(txq_hw, S_IRUGO,
+			 lpfc_txq_hw_show, NULL);
+static ssize_t
+lpfc_txcmplq_hw_show(struct device *dev, struct device_attribute *attr,
+ char *buf)
+{
+	struct Scsi_Host  *shost = class_to_shost(dev);
+	struct lpfc_hba   *phba = ((struct lpfc_vport *) shost->hostdata)->phba;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+		phba->sli.ring[LPFC_ELS_RING].txcmplq_max);
+}
+
+static DEVICE_ATTR(txcmplq_hw, S_IRUGO,
+			 lpfc_txcmplq_hw_show, NULL);
+
+int lpfc_iocb_cnt = 2;
+module_param(lpfc_iocb_cnt, int, 1);
+MODULE_PARM_DESC(lpfc_iocb_cnt,
+	"Number of IOCBs alloc for ELS, CT, and ABTS: 1k to 5k IOCBs");
+lpfc_param_show(iocb_cnt);
+lpfc_param_init(iocb_cnt, 2, 1, 5);
+static DEVICE_ATTR(lpfc_iocb_cnt, S_IRUGO,
+			 lpfc_iocb_cnt_show, NULL);
 
 /*
 # lpfc_nodev_tmo: If set, it will hold all I/O errors on devices that disappear
@@ -2890,9 +2941,6 @@ lpfc_aer_support_store(struct device *dev, struct device_attribute *attr,
 	struct lpfc_hba *phba = vport->phba;
 	int val = 0, rc = -EINVAL;
 
-	/* AER not supported on OC devices yet */
-	if (phba->pci_dev_grp == LPFC_PCI_DEV_OC)
-		return -EPERM;
 	if (!isdigit(buf[0]))
 		return -EINVAL;
 	if (sscanf(buf, "%i", &val) != 1)
@@ -2965,12 +3013,6 @@ lpfc_param_show(aer_support)
 static int
 lpfc_aer_support_init(struct lpfc_hba *phba, int val)
 {
-	/* AER not supported on OC devices yet */
-	if (phba->pci_dev_grp == LPFC_PCI_DEV_OC) {
-		phba->cfg_aer_support = 0;
-		return -EPERM;
-	}
-
 	if (val == 0 || val == 1) {
 		phba->cfg_aer_support = val;
 		return 0;
@@ -3015,9 +3057,6 @@ lpfc_aer_cleanup_state(struct device *dev, struct device_attribute *attr,
 	struct lpfc_hba   *phba = vport->phba;
 	int val, rc = -1;
 
-	/* AER not supported on OC devices yet */
-	if (phba->pci_dev_grp == LPFC_PCI_DEV_OC)
-		return -EPERM;
 	if (!isdigit(buf[0]))
 		return -EINVAL;
 	if (sscanf(buf, "%i", &val) != 1)
@@ -3334,6 +3373,10 @@ struct device_attribute *lpfc_hba_attrs[] = {
 	&dev_attr_lpfc_aer_support,
 	&dev_attr_lpfc_aer_state_cleanup,
 	&dev_attr_lpfc_suppress_link_up,
+	&dev_attr_lpfc_iocb_cnt,
+	&dev_attr_iocb_hw,
+	&dev_attr_txq_hw,
+	&dev_attr_txcmplq_hw,
 	NULL,
 };
 
@@ -4042,8 +4085,7 @@ lpfc_get_stats(struct Scsi_Host *shost)
 	pmboxq->context1 = NULL;
 	pmboxq->vport = vport;
 
-	if ((vport->fc_flag & FC_OFFLINE_MODE) ||
-		(!(psli->sli_flag & LPFC_SLI_ACTIVE)))
+	if (vport->fc_flag & FC_OFFLINE_MODE)
 		rc = lpfc_sli_issue_mbox(phba, pmboxq, MBX_POLL);
 	else
 		rc = lpfc_sli_issue_mbox_wait(phba, pmboxq, phba->fc_ratov * 2);
@@ -4067,8 +4109,7 @@ lpfc_get_stats(struct Scsi_Host *shost)
 	pmboxq->context1 = NULL;
 	pmboxq->vport = vport;
 
-	if ((vport->fc_flag & FC_OFFLINE_MODE) ||
-	    (!(psli->sli_flag & LPFC_SLI_ACTIVE)))
+	if (vport->fc_flag & FC_OFFLINE_MODE)
 		rc = lpfc_sli_issue_mbox(phba, pmboxq, MBX_POLL);
 	else
 		rc = lpfc_sli_issue_mbox_wait(phba, pmboxq, phba->fc_ratov * 2);
@@ -4521,6 +4562,7 @@ lpfc_get_cfgparam(struct lpfc_hba *phba)
 	lpfc_hba_log_verbose_init(phba, lpfc_log_verbose);
 	lpfc_aer_support_init(phba, lpfc_aer_support);
 	lpfc_suppress_link_up_init(phba, lpfc_suppress_link_up);
+	lpfc_iocb_cnt_init(phba, lpfc_iocb_cnt);
 	return;
 }
 
