@@ -631,12 +631,14 @@ __SYSCALL(__NR_perf_event_open, sys_perf_event_open)
 __SYSCALL(__NR_accept4, sys_accept4)
 #define __NR_recvmmsg 243
 __SYSCALL(__NR_recvmmsg, sys_recvmmsg)
+#define __NR_prlimit64 244
+__SYSCALL(__NR_prlimit64, sys_prlimit64)
 
 /*
  * Architectures may provide up to 16 syscalls of their own
  * starting with this value.
  */
-#define __NR_arch_specific_syscall 244
+#define __NR_arch_specific_syscall 245
 
 #define __NR_wait4 260
 __SYSCALL(__NR_wait4, sys_wait4)
