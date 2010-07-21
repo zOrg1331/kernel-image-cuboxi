@@ -35,6 +35,7 @@
 #include <plat/adc-core.h>
 #include <plat/ata-core.h>
 #include <plat/iic-core.h>
+#include <plat/keypad-core.h>
 #include <plat/sdhci.h>
 
 /* Initial IO mappings */
@@ -78,12 +79,6 @@ static void s5pv210_idle(void)
 
 void __init s5pv210_map_io(void)
 {
-<<<<<<< HEAD:arch/arm/mach-s5pv210/cpu.c
-#ifdef CONFIG_S3C_DEV_ADC
-	s3c_device_adc.name	= "s3c64xx-adc";
-#endif
-=======
->>>>>>> 0113734... ARM: SAMSUNG: Implement set_name function for ADC devices:arch/arm/mach-s5pv210/cpu.c
 	iotable_init(s5pv210_iodesc, ARRAY_SIZE(s5pv210_iodesc));
 
 	/* initialise device information early */
@@ -91,16 +86,16 @@ void __init s5pv210_map_io(void)
 	s5pv210_default_sdhci1();
 	s5pv210_default_sdhci2();
 
-<<<<<<< HEAD:arch/arm/mach-s5pv210/cpu.c
-	s3c_cfcon_setname("s5pv210-pata");
-=======
 	s3c_adc_setname("s3c64xx-adc");
->>>>>>> 0113734... ARM: SAMSUNG: Implement set_name function for ADC devices:arch/arm/mach-s5pv210/cpu.c
+	s3c_cfcon_setname("s5pv210-pata");
 
 	/* the i2c devices are directly compatible with s3c2440 */
 	s3c_i2c0_setname("s3c2440-i2c");
 	s3c_i2c1_setname("s3c2440-i2c");
 	s3c_i2c2_setname("s3c2440-i2c");
+
+	/* Use s5pv210-keypad instead of samsung-keypad */
+	samsung_keypad_setname("s5pv210-keypad");
 }
 
 void __init s5pv210_init_clocks(int xtal)

@@ -37,6 +37,11 @@ config S5PV210_SETUP_FB_24BPP
 	help
           Common setup code for S5PV210 with an 24bpp RGB display helper.
 
+config S5PV210_SETUP_KEYPAD
+	bool
+	help
+	  Common setup code for keypad.
+
 config S5PV210_SETUP_SDHCI
         bool
         select S5PV210_SETUP_SDHCI_GPIO
@@ -98,8 +103,10 @@ config MACH_SMDKV210
 	select ARCH_SPARSEMEM_ENABLE
 	select SAMSUNG_DEV_ADC
 	select SAMSUNG_DEV_IDE
+	select SAMSUNG_DEV_KEYPAD
 	select SAMSUNG_DEV_TS
 	select S3C_DEV_WDT
+	select S5PV210_SETUP_KEYPAD
 	select HAVE_S3C2410_WATCHDOG
 	select S5PV210_SETUP_IDE
 	help
