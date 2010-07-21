@@ -41,6 +41,7 @@
 #include <linux/cdrom.h>
 #include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/scatterlist.h>
 
 #include <xen/xen.h>
@@ -286,7 +287,7 @@ static int blkif_queue_request(struct request *req)
 
 	ring_req->operation = rq_data_dir(req) ?
 		BLKIF_OP_WRITE : BLKIF_OP_READ;
-	if (blk_barrier_rq(req))
+	if (req->cmd_flags & REQ_HARDBARRIER)
 		ring_req->operation = BLKIF_OP_WRITE_BARRIER;
 
 	ring_req->nr_segments = blk_rq_map_sg(req->q, req, info->sg);
@@ -357,7 +358,7 @@ static void do_blkif_request(struct request_queue *rq)
 
 		blk_start_request(req);
 
-		if (!blk_fs_request(req)) {
+		if (req->cmd_type != REQ_TYPE_FS) {
 			__blk_end_request_all(req, -EIO);
 			continue;
 		}
@@ -421,8 +422,7 @@ static int xlvbd_barrier(struct blkfront_info *info)
 	int err;
 
 	err = blk_queue_ordered(info->rq,
-				info->feature_barrier ? QUEUE_ORDERED_DRAIN : QUEUE_ORDERED_NONE,
-				NULL);
+				info->feature_barrier ? QUEUE_ORDERED_DRAIN : QUEUE_ORDERED_NONE);
 
 	if (err)
 		return err;
@@ -1211,7 +1211,7 @@ static const struct block_device_operations xlvbd_block_fops =
 	.open = blkif_open,
 	.release = blkif_release,
 	.getgeo = blkif_getgeo,
-	.locked_ioctl = blkif_ioctl,
+	.ioctl = blkif_ioctl,
 };
 
 

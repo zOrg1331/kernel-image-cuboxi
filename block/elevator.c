@@ -79,8 +79,7 @@ int elv_rq_merge_ok(struct request *rq, struct bio *bio)
 	/*
 	 * Don't merge file system requests and discard requests
 	 */
-	if (bio_rw_flagged(bio, BIO_RW_DISCARD) !=
-	    bio_rw_flagged(rq->bio, BIO_RW_DISCARD))
+	if ((bio->bi_rw & REQ_DISCARD) != (rq->bio->bi_rw & REQ_DISCARD))
 		return 0;
 
 	/*
@@ -242,8 +241,10 @@ int elevator_init(struct request_queue *q, char *name)
 {
 	struct elevator_type *e = NULL;
 	struct elevator_queue *eq;
-	int ret = 0;
 	void *data;
+
+	if (unlikely(q->elevator))
+		return 0;
 
 	INIT_LIST_HEAD(&q->queue_head);
 	q->last_merge = NULL;
@@ -284,7 +285,7 @@ int elevator_init(struct request_queue *q, char *name)
 	}
 
 	elevator_attach(q, eq, data);
-	return ret;
+	return 0;
 }
 EXPORT_SYMBOL(elevator_init);
 
@@ -426,7 +427,8 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 	list_for_each_prev(entry, &q->queue_head) {
 		struct request *pos = list_entry_rq(entry);
 
-		if (blk_discard_rq(rq) != blk_discard_rq(pos))
+		if ((rq->cmd_flags & REQ_DISCARD) !=
+		    (pos->cmd_flags & REQ_DISCARD))
 			break;
 		if (rq_data_dir(rq) != rq_data_dir(pos))
 			break;
@@ -539,6 +541,15 @@ void elv_merge_requests(struct request_queue *q, struct request *rq,
 	q->last_merge = rq;
 }
 
+void elv_bio_merged(struct request_queue *q, struct request *rq,
+			struct bio *bio)
+{
+	struct elevator_queue *e = q->elevator;
+
+	if (e->ops->elevator_bio_merged_fn)
+		e->ops->elevator_bio_merged_fn(q, rq, bio);
+}
+
 void elv_requeue_request(struct request_queue *q, struct request *rq)
 {
 	/*
@@ -547,7 +558,7 @@ void elv_requeue_request(struct request_queue *q, struct request *rq)
 	 */
 	if (blk_account_rq(rq)) {
 		q->in_flight[rq_is_sync(rq)]--;
-		if (blk_sorted_rq(rq))
+		if (rq->cmd_flags & REQ_SORTED)
 			elv_deactivate_rq(q, rq);
 	}
 
@@ -633,7 +644,8 @@ void elv_insert(struct request_queue *q, struct request *rq, int where)
 		break;
 
 	case ELEVATOR_INSERT_SORT:
-		BUG_ON(!blk_fs_request(rq) && !blk_discard_rq(rq));
+		BUG_ON(rq->cmd_type != REQ_TYPE_FS &&
+		       !(rq->cmd_flags & REQ_DISCARD));
 		rq->cmd_flags |= REQ_SORTED;
 		q->nr_sorted++;
 		if (rq_mergeable(rq)) {
@@ -705,7 +717,7 @@ void __elv_add_request(struct request_queue *q, struct request *rq, int where,
 		/*
 		 * toggle ordered color
 		 */
-		if (blk_barrier_rq(rq))
+		if (rq->cmd_flags & REQ_HARDBARRIER)
 			q->ordcolor ^= 1;
 
 		/*
@@ -718,7 +730,8 @@ void __elv_add_request(struct request_queue *q, struct request *rq, int where,
 		 * this request is scheduling boundary, update
 		 * end_sector
 		 */
-		if (blk_fs_request(rq) || blk_discard_rq(rq)) {
+		if (rq->cmd_type == REQ_TYPE_FS ||
+		    (rq->cmd_flags & REQ_DISCARD)) {
 			q->end_sector = rq_end_sector(rq);
 			q->boundary_rq = rq;
 		}
@@ -832,7 +845,8 @@ void elv_completed_request(struct request_queue *q, struct request *rq)
 	 */
 	if (blk_account_rq(rq)) {
 		q->in_flight[rq_is_sync(rq)]--;
-		if (blk_sorted_rq(rq) && e->ops->elevator_completed_req_fn)
+		if ((rq->cmd_flags & REQ_SORTED) &&
+		    e->ops->elevator_completed_req_fn)
 			e->ops->elevator_completed_req_fn(q, rq);
 	}
 
@@ -921,6 +935,7 @@ int elv_register_queue(struct request_queue *q)
 	}
 	return error;
 }
+EXPORT_SYMBOL(elv_register_queue);
 
 static void __elv_unregister_queue(struct elevator_queue *e)
 {
@@ -933,6 +948,7 @@ void elv_unregister_queue(struct request_queue *q)
 	if (q)
 		__elv_unregister_queue(q->elevator);
 }
+EXPORT_SYMBOL(elv_unregister_queue);
 
 void elv_register(struct elevator_type *e)
 {
@@ -1086,7 +1102,7 @@ ssize_t elv_iosched_show(struct request_queue *q, char *name)
 	struct elevator_type *__e;
 	int len = 0;
 
-	if (!q->elevator)
+	if (!q->elevator || !blk_queue_stackable(q))
 		return sprintf(name, "none\n");
 
 	elv = e->elevator_type;
