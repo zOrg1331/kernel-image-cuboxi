@@ -131,6 +131,8 @@ struct conexant_spec {
 	unsigned int dc_enable;
 	unsigned int dc_input_bias; /* offset into cxt5066_olpc_dc_bias */
 	unsigned int mic_boost; /* offset into cxt5066_analog_mic_boost */
+
+	unsigned int beep_amp;
 };
 
 static int conexant_playback_pcm_open(struct hda_pcm_stream *hinfo,
@@ -515,6 +517,15 @@ static struct snd_kcontrol_new cxt_capture_mixers[] = {
 	{}
 };
 
+#ifdef CONFIG_SND_HDA_INPUT_BEEP
+/* additional beep mixers; the actual parameters are overwritten at build */
+static struct snd_kcontrol_new cxt_beep_mixer[] = {
+	HDA_CODEC_VOLUME_MONO("Beep Playback Volume", 0, 1, 0, HDA_OUTPUT),
+	HDA_CODEC_MUTE_BEEP_MONO("Beep Playback Switch", 0, 1, 0, HDA_OUTPUT),
+	{ } /* end */
+};
+#endif
+
 static const char *slave_vols[] = {
 	"Headphone Playback Volume",
 	"Speaker Playback Volume",
@@ -580,6 +591,23 @@ static int conexant_build_controls(struct hda_codec *codec)
 			return err;
 	}
 
+#ifdef CONFIG_SND_HDA_INPUT_BEEP
+	/* create beep controls if needed */
+	if (spec->beep_amp) {
+		struct snd_kcontrol_new *knew;
+		for (knew = cxt_beep_mixer; knew->name; knew++) {
+			struct snd_kcontrol *kctl;
+			kctl = snd_ctl_new1(knew, codec);
+			if (!kctl)
+				return -ENOMEM;
+			kctl->private_value = spec->beep_amp;
+			err = snd_hda_ctl_add(codec, 0, kctl);
+			if (err < 0)
+				return err;
+		}
+	}
+#endif
+
 	return 0;
 }
 
@@ -589,6 +617,13 @@ static struct hda_codec_ops conexant_patch_ops = {
 	.init = conexant_init,
 	.free = conexant_free,
 };
+
+#ifdef CONFIG_SND_HDA_INPUT_BEEP
+#define set_beep_amp(spec, nid, idx, dir) \
+	((spec)->beep_amp = HDA_COMPOSE_AMP_VAL(nid, 1, idx, dir))
+#else
+#define set_beep_amp(spec, nid, idx, dir) /* NOP */
+#endif
 
 /*
  * EAPD control
@@ -1130,9 +1165,10 @@ static int patch_cxt5045(struct hda_codec *codec)
 	spec->num_init_verbs = 1;
 	spec->init_verbs[0] = cxt5045_init_verbs;
 	spec->spdif_route = 0;
-	spec->num_channel_mode = ARRAY_SIZE(cxt5045_modes),
-	spec->channel_mode = cxt5045_modes,
+	spec->num_channel_mode = ARRAY_SIZE(cxt5045_modes);
+	spec->channel_mode = cxt5045_modes;
 
+	set_beep_amp(spec, 0x16, 0, 1);
 
 	codec->patch_ops = conexant_patch_ops;
 
@@ -1210,6 +1246,9 @@ static int patch_cxt5045(struct hda_codec *codec)
 					  (1 << AC_AMPCAP_MUTE_SHIFT));
 		break;
 	}
+
+	if (spec->beep_amp)
+		snd_hda_attach_beep_device(codec, spec->beep_amp);
 
 	return 0;
 }
@@ -1632,6 +1671,11 @@ static void cxt5051_update_speaker(struct hda_codec *codec)
 	pinctl = (!spec->hp_present && spec->cur_eapd) ? PIN_OUT : 0;
 	snd_hda_codec_write(codec, 0x1a, 0, AC_VERB_SET_PIN_WIDGET_CONTROL,
 			    pinctl);
+	/* on ideapad there is an aditional speaker (subwoofer) to mute */
+	if (spec->ideapad)
+		snd_hda_codec_write(codec, 0x1b, 0,
+				    AC_VERB_SET_PIN_WIDGET_CONTROL,
+				    pinctl);
 }
 
 /* turn on/off EAPD (+ mute HP) as a master switch */
@@ -1888,6 +1932,13 @@ static void cxt5051_init_mic_port(struct hda_codec *codec, hda_nid_t nid,
 #endif
 }
 
+static struct hda_verb cxt5051_ideapad_init_verbs[] = {
+	/* Subwoofer */
+	{0x1b, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT},
+	{0x1b, AC_VERB_SET_CONNECT_SEL, 0x00},
+	{ } /* end */
+};
+
 /* initialize jack-sensing, too */
 static int cxt5051_init(struct hda_codec *codec)
 {
@@ -1917,6 +1968,7 @@ enum {
 	CXT5051_LENOVO_X200,	/* Lenovo X200 laptop, also used for Advanced Mini Dock 250410 */
 	CXT5051_F700,       /* HP Compaq Presario F700 */
 	CXT5051_TOSHIBA,	/* Toshiba M300 & co */
+	CXT5051_IDEAPAD,	/* Lenovo IdeaPad Y430 */
 	CXT5051_MODELS
 };
 
@@ -1927,6 +1979,7 @@ static const char *cxt5051_models[CXT5051_MODELS] = {
 	[CXT5051_LENOVO_X200]	= "lenovo-x200",
 	[CXT5051_F700]          = "hp-700",
 	[CXT5051_TOSHIBA]	= "toshiba",
+	[CXT5051_IDEAPAD]	= "ideapad",
 };
 
 static struct snd_pci_quirk cxt5051_cfg_tbl[] = {
@@ -1938,6 +1991,7 @@ static struct snd_pci_quirk cxt5051_cfg_tbl[] = {
 		      CXT5051_LAPTOP),
 	SND_PCI_QUIRK(0x14f1, 0x5051, "HP Spartan 1.1", CXT5051_HP),
 	SND_PCI_QUIRK(0x17aa, 0x20f2, "Lenovo X200", CXT5051_LENOVO_X200),
+	SND_PCI_QUIRK(0x17aa, 0x3a0d, "Lenovo IdeaPad", CXT5051_IDEAPAD),
 	{}
 };
 
@@ -1972,6 +2026,8 @@ static int patch_cxt5051(struct hda_codec *codec)
 	spec->cur_adc = 0;
 	spec->cur_adc_idx = 0;
 
+	set_beep_amp(spec, 0x13, 0, HDA_OUTPUT);
+
 	codec->patch_ops.unsol_event = cxt5051_hp_unsol_event;
 
 	board_config = snd_hda_check_board_config(codec, CXT5051_MODELS,
@@ -1999,7 +2055,15 @@ static int patch_cxt5051(struct hda_codec *codec)
 		spec->mixers[0] = cxt5051_toshiba_mixers;
 		spec->auto_mic = AUTO_MIC_PORTB;
 		break;
+	case CXT5051_IDEAPAD:
+		spec->init_verbs[spec->num_init_verbs++] =
+			cxt5051_ideapad_init_verbs;
+		spec->ideapad = 1;
+		break;
 	}
+
+	if (spec->beep_amp)
+		snd_hda_attach_beep_device(codec, spec->beep_amp);
 
 	return 0;
 }
@@ -2616,7 +2680,6 @@ static struct snd_kcontrol_new cxt5066_vostro_mixers[] = {
 		.put = cxt5066_mic_boost_mux_enum_put,
 		.private_value = 0x23 | 0x100,
 	},
-	HDA_CODEC_VOLUME_MONO("Beep Playback Volume", 0x13, 1, 0x0, HDA_OUTPUT),
 	{}
 };
 
@@ -2977,8 +3040,10 @@ static struct snd_pci_quirk cxt5066_cfg_tbl[] = {
 	SND_PCI_QUIRK(0x17aa, 0x21b2, "Thinkpad X100e", CXT5066_IDEAPAD),
 	SND_PCI_QUIRK(0x17aa, 0x21b3, "Thinkpad Edge 13 (197)", CXT5066_IDEAPAD),
 	SND_PCI_QUIRK(0x17aa, 0x21b4, "Thinkpad Edge", CXT5066_IDEAPAD),
+ 	SND_PCI_QUIRK(0x17aa, 0x215e, "Lenovo Thinkpad", CXT5066_THINKPAD),
+ 	SND_PCI_QUIRK(0x17aa, 0x38af, "Lenovo G series", CXT5066_IDEAPAD),
+	SND_PCI_QUIRK(0x17aa, 0x3938, "Lenovo G series (AMD)", CXT5066_IDEAPAD),
 	SND_PCI_QUIRK(0x17aa, 0x3a0d, "ideapad", CXT5066_IDEAPAD),
-	SND_PCI_QUIRK(0x17aa, 0x215e, "Lenovo Thinkpad", CXT5066_THINKPAD),
 	{}
 };
 
@@ -3013,6 +3078,8 @@ static int patch_cxt5066(struct hda_codec *codec)
 	spec->channel_mode = cxt5066_modes;
 	spec->cur_adc = 0;
 	spec->cur_adc_idx = 0;
+
+	set_beep_amp(spec, 0x13, 0, HDA_OUTPUT);
 
 	board_config = snd_hda_check_board_config(codec, CXT5066_MODELS,
 						  cxt5066_models, cxt5066_cfg_tbl);
@@ -3062,7 +3129,6 @@ static int patch_cxt5066(struct hda_codec *codec)
 		spec->port_d_mode = 0;
 		spec->dell_vostro = 1;
 		spec->mic_boost = 3; /* default 30dB gain */
-		snd_hda_attach_beep_device(codec, 0x13);
 
 		/* no S/PDIF out */
 		spec->multiout.dig_out_nid = 0;
@@ -3103,6 +3169,9 @@ static int patch_cxt5066(struct hda_codec *codec)
 		spec->input_mux = NULL;
 		break;
 	}
+
+	if (spec->beep_amp)
+		snd_hda_attach_beep_device(codec, spec->beep_amp);
 
 	return 0;
 }
