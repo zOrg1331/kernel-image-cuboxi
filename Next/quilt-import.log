@@ -1,0 +1,44 @@
+Importing driver-core.current based on 2.6.35-rc4
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.35-rc5-git3
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard a9f7f2e74ae0e6a801a2433dc8e9124d73da0cb4
+HEAD is now at a9f7f2e Merge branch 'x86/kprobes' of git://git.kernel.org/pub/scm/linux/kernel/git/frob/linux-2.6-roland
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-dev-01-remove-unnecessary-kmalloc-casts.patch
+i2c-dev-02-use-memdup_user.patch
+i2c-support-custom-probe-function-01.patch
+i2c-support-custom-probe-function-02.patch
+i2c-uninline-adapter-mutex-operations.patch
+i2c-drop-dummy-variable.patch
+i2c-drop-preliminary-probability-checks.patch
+i2c-separate-userspace-list-mutex.patch
+i2c-multiplexing-core-support.patch
+i2c-multiplexed-i2c-bus-multiplexer-driver-pca954x.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 9e3c498...060991d master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.35-rc5-git3
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.35-rc3
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-rc5
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.35-rc3
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
