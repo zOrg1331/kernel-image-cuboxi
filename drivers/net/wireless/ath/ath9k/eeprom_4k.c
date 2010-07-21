@@ -249,6 +249,7 @@ static void ath9k_hw_get_4k_gain_boundaries_pdadcs(struct ath_hw *ah,
 	struct chan_centers centers;
 #define PD_GAIN_BOUNDARY_DEFAULT 58;
 
+	memset(&minPwrT4, 0, AR9287_NUM_PD_GAINS);
 	ath9k_hw_get_channel_centers(ah, chan, &centers);
 
 	for (numPiers = 0; numPiers < availPiers; numPiers++) {
@@ -1149,13 +1150,13 @@ static void ath9k_hw_4k_set_board_values(struct ath_hw *ah,
 	}
 }
 
-static u16 ath9k_hw_4k_get_eeprom_antenna_cfg(struct ath_hw *ah,
+static u32 ath9k_hw_4k_get_eeprom_antenna_cfg(struct ath_hw *ah,
 					      struct ath9k_channel *chan)
 {
 	struct ar5416_eeprom_4k *eep = &ah->eeprom.map4k;
 	struct modal_eep_4k_header *pModal = &eep->modalHeader;
 
-	return pModal->antCtrlCommon & 0xFFFF;
+	return pModal->antCtrlCommon;
 }
 
 static u8 ath9k_hw_4k_get_num_ant_config(struct ath_hw *ah,
