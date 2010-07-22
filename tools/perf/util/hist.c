@@ -70,6 +70,7 @@ struct hist_entry *__hists__add_entry(struct hists *self,
 			.map	= al->map,
 			.sym	= al->sym,
 		},
+		.cpu	= al->cpu,
 		.ip	= al->addr,
 		.level	= al->level,
 		.period	= period,
@@ -631,9 +632,14 @@ int hist_entry__fprintf(struct hist_entry *self, struct hists *pair_hists,
 			u64 session_total)
 {
 	char bf[512];
-	hist_entry__snprintf(self, bf, sizeof(bf), pair_hists,
-			     show_displacement, displacement,
-			     true, session_total);
+	int ret;
+
+	ret = hist_entry__snprintf(self, bf, sizeof(bf), pair_hists,
+				   show_displacement, displacement,
+				   true, session_total);
+	if (!ret)
+		return 0;
+
 	return fprintf(fp, "%s\n", bf);
 }
 
@@ -762,6 +768,7 @@ size_t hists__fprintf(struct hists *self, struct hists *pair,
 print_entries:
 	for (nd = rb_first(&self->entries); nd; nd = rb_next(nd)) {
 		struct hist_entry *h = rb_entry(nd, struct hist_entry, rb_node);
+		int cnt;
 
 		if (show_displacement) {
 			if (h->pair != NULL)
@@ -771,8 +778,13 @@ print_entries:
 				displacement = 0;
 			++position;
 		}
-		ret += hist_entry__fprintf(h, pair, show_displacement,
-					   displacement, fp, self->stats.total_period);
+		cnt = hist_entry__fprintf(h, pair, show_displacement,
+					  displacement, fp, self->stats.total_period);
+		/* Ignore those that didn't match the parent filter */
+		if (!cnt)
+			continue;
+
+		ret += cnt;
 
 		if (symbol_conf.use_callchain)
 			ret += hist_entry__fprintf_callchain(h, fp, self->stats.total_period);
@@ -1037,7 +1049,7 @@ fallback:
 		 dso, dso->long_name, sym, sym->name);
 
 	snprintf(command, sizeof(command),
-		 "objdump --start-address=0x%016Lx --stop-address=0x%016Lx -dS %s|grep -v %s|expand",
+		 "objdump --start-address=0x%016Lx --stop-address=0x%016Lx -dS -C %s|grep -v %s|expand",
 		 map__rip_2objdump(map, sym->start),
 		 map__rip_2objdump(map, sym->end),
 		 filename, filename);

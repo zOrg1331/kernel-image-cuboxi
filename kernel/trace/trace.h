@@ -9,10 +9,7 @@
 #include <linux/mmiotrace.h>
 #include <linux/tracepoint.h>
 #include <linux/ftrace.h>
-#include <trace/boot.h>
-#include <linux/kmemtrace.h>
 #include <linux/hw_breakpoint.h>
-
 #include <linux/trace_seq.h>
 #include <linux/ftrace_event.h>
 
@@ -29,26 +26,15 @@ enum trace_type {
 	TRACE_MMIO_RW,
 	TRACE_MMIO_MAP,
 	TRACE_BRANCH,
-	TRACE_BOOT_CALL,
-	TRACE_BOOT_RET,
 	TRACE_GRAPH_RET,
 	TRACE_GRAPH_ENT,
 	TRACE_USER_STACK,
-	TRACE_KMEM_ALLOC,
-	TRACE_KMEM_FREE,
 	TRACE_BLK,
 	TRACE_KSYM,
 
 	__TRACE_LAST_TYPE,
 };
 
-enum kmemtrace_type_id {
-	KMEMTRACE_TYPE_KMALLOC = 0,	/* kmalloc() or kfree(). */
-	KMEMTRACE_TYPE_CACHE,		/* kmem_cache_*(). */
-	KMEMTRACE_TYPE_PAGES,		/* __get_free_pages() and friends. */
-};
-
-extern struct tracer boot_tracer;
 
 #undef __field
 #define __field(type, item)		type	item;
@@ -209,17 +195,11 @@ extern void __ftrace_bad_type(void);
 			  TRACE_MMIO_RW);				\
 		IF_ASSIGN(var, ent, struct trace_mmiotrace_map,		\
 			  TRACE_MMIO_MAP);				\
-		IF_ASSIGN(var, ent, struct trace_boot_call, TRACE_BOOT_CALL);\
-		IF_ASSIGN(var, ent, struct trace_boot_ret, TRACE_BOOT_RET);\
 		IF_ASSIGN(var, ent, struct trace_branch, TRACE_BRANCH); \
 		IF_ASSIGN(var, ent, struct ftrace_graph_ent_entry,	\
 			  TRACE_GRAPH_ENT);		\
 		IF_ASSIGN(var, ent, struct ftrace_graph_ret_entry,	\
 			  TRACE_GRAPH_RET);		\
-		IF_ASSIGN(var, ent, struct kmemtrace_alloc_entry,	\
-			  TRACE_KMEM_ALLOC);	\
-		IF_ASSIGN(var, ent, struct kmemtrace_free_entry,	\
-			  TRACE_KMEM_FREE);	\
 		IF_ASSIGN(var, ent, struct ksym_trace_entry, TRACE_KSYM);\
 		__ftrace_bad_type();					\
 	} while (0)
@@ -628,54 +608,6 @@ enum trace_iterator_flags {
 
 extern struct tracer nop_trace;
 
-/**
- * ftrace_preempt_disable - disable preemption scheduler safe
- *
- * When tracing can happen inside the scheduler, there exists
- * cases that the tracing might happen before the need_resched
- * flag is checked. If this happens and the tracer calls
- * preempt_enable (after a disable), a schedule might take place
- * causing an infinite recursion.
- *
- * To prevent this, we read the need_resched flag before
- * disabling preemption. When we want to enable preemption we
- * check the flag, if it is set, then we call preempt_enable_no_resched.
- * Otherwise, we call preempt_enable.
- *
- * The rational for doing the above is that if need_resched is set
- * and we have yet to reschedule, we are either in an atomic location
- * (where we do not need to check for scheduling) or we are inside
- * the scheduler and do not want to resched.
- */
-static inline int ftrace_preempt_disable(void)
-{
-	int resched;
-
-	resched = need_resched();
-	preempt_disable_notrace();
-
-	return resched;
-}
-
-/**
- * ftrace_preempt_enable - enable preemption scheduler safe
- * @resched: the return value from ftrace_preempt_disable
- *
- * This is a scheduler safe way to enable preemption and not miss
- * any preemption checks. The disabled saved the state of preemption.
- * If resched is set, then we are either inside an atomic or
- * are inside the scheduler (we would have already scheduled
- * otherwise). In this case, we do not want to call normal
- * preempt_enable, but preempt_enable_no_resched instead.
- */
-static inline void ftrace_preempt_enable(int resched)
-{
-	if (resched)
-		preempt_enable_no_resched_notrace();
-	else
-		preempt_enable_notrace();
-}
-
 #ifdef CONFIG_BRANCH_TRACER
 extern int enable_branch_tracing(struct trace_array *tr);
 extern void disable_branch_tracing(void);
@@ -765,6 +697,8 @@ struct filter_pred {
 	int 			op;
 	int 			pop_n;
 };
+
+extern struct list_head ftrace_common_fields;
 
 extern enum regex_type
 filter_parse_regex(char *buff, int len, char **search, int *not);
