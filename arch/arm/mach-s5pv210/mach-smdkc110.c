@@ -25,18 +25,19 @@
 #include <plat/s5pv210.h>
 #include <plat/devs.h>
 #include <plat/cpu.h>
+#include <plat/ata.h>
 
 /* Following are default values for UCON, ULCON and UFCON UART registers */
-#define S5PV210_UCON_DEFAULT	(S3C2410_UCON_TXILEVEL |	\
+#define SMDKC110_UCON_DEFAULT	(S3C2410_UCON_TXILEVEL |	\
 				 S3C2410_UCON_RXILEVEL |	\
 				 S3C2410_UCON_TXIRQMODE |	\
 				 S3C2410_UCON_RXIRQMODE |	\
 				 S3C2410_UCON_RXFIFO_TOI |	\
 				 S3C2443_UCON_RXERR_IRQEN)
 
-#define S5PV210_ULCON_DEFAULT	S3C2410_LCON_CS8
+#define SMDKC110_ULCON_DEFAULT	S3C2410_LCON_CS8
 
-#define S5PV210_UFCON_DEFAULT	(S3C2410_UFCON_FIFOMODE |	\
+#define SMDKC110_UFCON_DEFAULT	(S3C2410_UFCON_FIFOMODE |	\
 				 S5PV210_UFCON_TXTRIG4 |	\
 				 S5PV210_UFCON_RXTRIG4)
 
@@ -44,36 +45,41 @@ static struct s3c2410_uartcfg smdkv210_uartcfgs[] __initdata = {
 	[0] = {
 		.hwport		= 0,
 		.flags		= 0,
-		.ucon		= S5PV210_UCON_DEFAULT,
-		.ulcon		= S5PV210_ULCON_DEFAULT,
-		.ufcon		= S5PV210_UFCON_DEFAULT,
+		.ucon		= SMDKC110_UCON_DEFAULT,
+		.ulcon		= SMDKC110_ULCON_DEFAULT,
+		.ufcon		= SMDKC110_UFCON_DEFAULT,
 	},
 	[1] = {
 		.hwport		= 1,
 		.flags		= 0,
-		.ucon		= S5PV210_UCON_DEFAULT,
-		.ulcon		= S5PV210_ULCON_DEFAULT,
-		.ufcon		= S5PV210_UFCON_DEFAULT,
+		.ucon		= SMDKC110_UCON_DEFAULT,
+		.ulcon		= SMDKC110_ULCON_DEFAULT,
+		.ufcon		= SMDKC110_UFCON_DEFAULT,
 	},
 	[2] = {
 		.hwport		= 2,
 		.flags		= 0,
-		.ucon		= S5PV210_UCON_DEFAULT,
-		.ulcon		= S5PV210_ULCON_DEFAULT,
-		.ufcon		= S5PV210_UFCON_DEFAULT,
+		.ucon		= SMDKC110_UCON_DEFAULT,
+		.ulcon		= SMDKC110_ULCON_DEFAULT,
+		.ufcon		= SMDKC110_UFCON_DEFAULT,
 	},
 	[3] = {
 		.hwport		= 3,
 		.flags		= 0,
-		.ucon		= S5PV210_UCON_DEFAULT,
-		.ulcon		= S5PV210_ULCON_DEFAULT,
-		.ufcon		= S5PV210_UFCON_DEFAULT,
+		.ucon		= SMDKC110_UCON_DEFAULT,
+		.ulcon		= SMDKC110_ULCON_DEFAULT,
+		.ufcon		= SMDKC110_UFCON_DEFAULT,
 	},
+};
+
+static struct s3c_ide_platdata smdkv210_ide_pdata __initdata = {
+	.setup_gpio	= s5pv210_ide_setup_gpio,
 };
 
 static struct platform_device *smdkc110_devices[] __initdata = {
 	&s5pv210_device_iis0,
 	&s5pv210_device_ac97,
+	&s3c_device_cfcon,
 	&s3c_device_wdt,
 };
 
@@ -86,6 +92,8 @@ static void __init smdkc110_map_io(void)
 
 static void __init smdkc110_machine_init(void)
 {
+	s3c_ide_set_platdata(&smdkv210_ide_pdata);
+
 	platform_add_devices(smdkc110_devices, ARRAY_SIZE(smdkc110_devices));
 }
 
