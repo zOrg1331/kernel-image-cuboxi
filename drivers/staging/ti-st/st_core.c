@@ -584,10 +584,11 @@ void kim_st_list_protocols(struct st_data_s *st_gdata, char *buf)
 	}
 	sprintf(buf, "%s\n", buf);
 #else /* limited info */
-	sprintf(buf, "BT=%c\nFM=%c\nGPS=%c\n",
-		st_gdata->list[ST_BT] != NULL ? 'R' : 'U',
-		st_gdata->list[ST_FM] != NULL ? 'R' : 'U',
-		st_gdata->list[ST_GPS] != NULL ? 'R' : 'U');
+	sprintf(buf, "[%d]\nBT=%c\nFM=%c\nGPS=%c\n",
+			st_gdata->protos_registered,
+			st_gdata->list[ST_BT] != NULL ? 'R' : 'U',
+			st_gdata->list[ST_FM] != NULL ? 'R' : 'U',
+			st_gdata->list[ST_GPS] != NULL ? 'R' : 'U');
 #endif
 	spin_unlock_irqrestore(&st_gdata->lock, flags);
 }
@@ -630,6 +631,7 @@ long st_register(struct st_proto_s *new_proto)
 		st_kim_chip_toggle(new_proto->type, KIM_GPIO_ACTIVE);
 
 		st_gdata->list[new_proto->type] = new_proto;
+		st_gdata->protos_registered++;
 		new_proto->write = st_write;
 
 		set_bit(ST_REG_PENDING, &st_gdata->st_state);
@@ -648,7 +650,7 @@ long st_register(struct st_proto_s *new_proto)
 		/* this may take a while to complete
 		 * since it involves BT fw download
 		 */
-		err = st_kim_start();
+		err = st_kim_start(st_gdata->kim_data);
 		if (err != ST_SUCCESS) {
 			clear_bit(ST_REG_IN_PROGRESS, &st_gdata->st_state);
 			if ((st_gdata->protos_registered != ST_EMPTY) &&
@@ -673,7 +675,6 @@ long st_register(struct st_proto_s *new_proto)
 		if ((st_gdata->protos_registered != ST_EMPTY) &&
 		    (test_bit(ST_REG_PENDING, &st_gdata->st_state))) {
 			pr_info(" call reg complete callback ");
-			st_gdata->protos_registered++;
 			st_reg_complete(st_gdata, ST_SUCCESS);
 		}
 		clear_bit(ST_REG_PENDING, &st_gdata->st_state);
@@ -689,6 +690,7 @@ long st_register(struct st_proto_s *new_proto)
 
 		spin_lock_irqsave(&st_gdata->lock, flags);
 		st_gdata->list[new_proto->type] = new_proto;
+		st_gdata->protos_registered++;
 		new_proto->write = st_write;
 		spin_unlock_irqrestore(&st_gdata->lock, flags);
 		return err;
@@ -712,6 +714,7 @@ long st_register(struct st_proto_s *new_proto)
 			break;
 		}
 		st_gdata->list[new_proto->type] = new_proto;
+		st_gdata->protos_registered++;
 		new_proto->write = st_write;
 
 		/* lock already held before entering else */
@@ -768,7 +771,7 @@ long st_unregister(enum proto_type type)
 		}
 
 		/* all protocols now unregistered */
-		st_kim_stop();
+		st_kim_stop(st_gdata->kim_data);
 		/* disable ST LL */
 		st_ll_disable(st_gdata);
 	}
@@ -855,7 +858,7 @@ static int st_tty_open(struct tty_struct *tty)
 	 * signal to UIM via KIM that -
 	 * installation of N_TI_WL ldisc is complete
 	 */
-	st_kim_complete();
+	st_kim_complete(st_gdata->kim_data);
 	pr_info("done %s", __func__);
 	return err;
 }
@@ -883,7 +886,7 @@ static void st_tty_close(struct tty_struct *tty)
 	 * signal to UIM via KIM that -
 	 * N_TI_WL ldisc is un-installed
 	 */
-	st_kim_complete();
+	st_kim_complete(st_gdata->kim_data);
 	st_gdata->tty = NULL;
 	/* Flush any pending characters in the driver and discipline. */
 	tty_ldisc_flush(tty);

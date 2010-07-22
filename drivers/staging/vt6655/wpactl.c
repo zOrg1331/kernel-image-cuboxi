@@ -203,12 +203,12 @@ int wpa_set_wpadev(PSDevice pDevice, int val)
 {
     struct viawget_wpa_param *param=ctx;
     PSMgmtObject pMgmt = pDevice->pMgmt;
-    DWORD   dwKeyIndex = 0;
-    BYTE    abyKey[MAX_KEY_LEN];
-    BYTE    abySeq[MAX_KEY_LEN];
+    unsigned long dwKeyIndex = 0;
+    unsigned char abyKey[MAX_KEY_LEN];
+    unsigned char abySeq[MAX_KEY_LEN];
     QWORD   KeyRSC;
 //    NDIS_802_11_KEY_RSC KeyRSC;
-    BYTE    byKeyDecMode = KEY_CTL_WEP;
+    unsigned char byKeyDecMode = KEY_CTL_WEP;
 	int ret = 0;
 	int uu, ii;
 
@@ -243,7 +243,7 @@ int wpa_set_wpadev(PSDevice pDevice, int val)
 spin_lock_irq(&pDevice->lock);
     	}
 
-    dwKeyIndex = (DWORD)(param->u.wpa_key.key_index);
+    dwKeyIndex = (unsigned long)(param->u.wpa_key.key_index);
 
 	if (param->u.wpa_key.alg_name == WPA_ALG_WEP) {
         if (dwKeyIndex > 3) {
@@ -251,7 +251,7 @@ spin_lock_irq(&pDevice->lock);
         }
         else {
             if (param->u.wpa_key.set_tx) {
-                pDevice->byKeyIndex = (BYTE)dwKeyIndex;
+                pDevice->byKeyIndex = (unsigned char)dwKeyIndex;
                 pDevice->bTransmitKey = TRUE;
 		        dwKeyIndex |= (1 << 31);
             }
@@ -351,15 +351,15 @@ spin_lock_irq(&pDevice->lock);
     }
 
    // spin_lock_irq(&pDevice->lock);
-    if (IS_BROADCAST_ADDRESS(&param->addr[0]) || (param->addr == NULL)) {
-        // If IS_BROADCAST_ADDRESS, set the key as every key entry's group key.
+    if (is_broadcast_ether_addr(&param->addr[0]) || (param->addr == NULL)) {
+        // If is_broadcast_ether_addr, set the key as every key entry's group key.
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Groupe Key Assign.\n");
 
         if ((KeybSetAllGroupKey(&(pDevice->sKey),
                             dwKeyIndex,
                             param->u.wpa_key.key_len,
                             (PQWORD) &(KeyRSC),
-                            (PBYTE)abyKey,
+                            (unsigned char *)abyKey,
                             byKeyDecMode,
                             pDevice->PortOffset,
                             pDevice->byLocalID) == TRUE) &&
@@ -367,7 +367,7 @@ spin_lock_irq(&pDevice->lock);
                             dwKeyIndex,
                             param->u.wpa_key.key_len,
                             (PQWORD) &(KeyRSC),
-                            (PBYTE)abyKey,
+                            (unsigned char *)abyKey,
                             byKeyDecMode,
                             pDevice->PortOffset,
                             pDevice->byLocalID) == TRUE) ) {
@@ -400,7 +400,7 @@ spin_lock_irq(&pDevice->lock);
                        dwKeyIndex,
                        param->u.wpa_key.key_len,
                        (PQWORD) &(KeyRSC),
-                       (PBYTE)abyKey,
+                       (unsigned char *)abyKey,
                         byKeyDecMode,
                         pDevice->PortOffset,
                         pDevice->byLocalID) == TRUE) {
@@ -408,7 +408,7 @@ spin_lock_irq(&pDevice->lock);
 
         } else {
             // Key Table Full
-            if (IS_ETH_ADDRESS_EQUAL(&param->addr[0], pDevice->abyBSSID)) {
+            if (!compare_ether_addr(&param->addr[0], pDevice->abyBSSID)) {
                 //DBG_PRN_WLAN03(("return NDIS_STATUS_INVALID_DATA -Key Table Full.2\n"));
                 //spin_unlock_irq(&pDevice->lock);
                 return -EINVAL;
@@ -422,7 +422,7 @@ spin_lock_irq(&pDevice->lock);
         }
     } // BSSID not 0xffffffffffff
     if ((ret == 0) && ((param->u.wpa_key.set_tx) != 0)) {
-        pDevice->byKeyIndex = (BYTE)param->u.wpa_key.key_index;
+        pDevice->byKeyIndex = (unsigned char)param->u.wpa_key.key_index;
         pDevice->bTransmitKey = TRUE;
     }
     pDevice->bEncryptionEnable = TRUE;
@@ -613,13 +613,13 @@ static int wpa_get_scan(PSDevice pDevice,
     PSMgmtObject    pMgmt = pDevice->pMgmt;
     PWLAN_IE_SSID   pItemSSID;
     PKnownBSS pBSS;
-	PBYTE  pBuf;
+	unsigned char *pBuf;
 	int ret = 0;
 	u16 count = 0;
 	u16 ii, jj;
 #if 1
 
-    PBYTE ptempBSS;
+    unsigned char *ptempBSS;
 
 
 
@@ -713,7 +713,7 @@ static int wpa_get_scan(PSDevice pDevice,
                 scan_buf->rsn_ie_len = pBSS->wRSNLen;
                 memcpy(scan_buf->rsn_ie, pBSS->byRSNIE, pBSS->wRSNLen);
             }
-            scan_buf = (struct viawget_scan_result *)((PBYTE)scan_buf + sizeof(struct viawget_scan_result));
+            scan_buf = (struct viawget_scan_result *)((unsigned char *)scan_buf + sizeof(struct viawget_scan_result));
             jj ++;
         }
     }
@@ -752,8 +752,8 @@ static int wpa_set_associate(PSDevice pDevice,
 {
     PSMgmtObject    pMgmt = pDevice->pMgmt;
     PWLAN_IE_SSID   pItemSSID;
-    BYTE    abyNullAddr[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    BYTE    abyWPAIE[64];
+    unsigned char abyNullAddr[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    unsigned char abyWPAIE[64];
     int ret = 0;
     BOOL bWepEnabled=FALSE;
 

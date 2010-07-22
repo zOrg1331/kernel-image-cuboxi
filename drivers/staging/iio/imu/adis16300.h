@@ -94,7 +94,6 @@
  * struct adis16300_state - device instance specific data
  * @us:			actual spi_device
  * @work_trigger_to_ring: bh for triggered event handling
- * @work_cont_thresh: CLEAN
  * @inter:		used to check if new interrupt has been triggered
  * @last_timestamp:	passing timestamp from th to bh of interrupt handler
  * @indio_dev:		industrial I/O device structure
@@ -106,7 +105,6 @@
 struct adis16300_state {
 	struct spi_device		*us;
 	struct work_struct		work_trigger_to_ring;
-	struct iio_work_cont		work_cont_thresh;
 	s64				last_timestamp;
 	struct iio_dev			*indio_dev;
 	struct iio_trigger		*trig;
@@ -115,13 +113,7 @@ struct adis16300_state {
 	struct mutex			buf_lock;
 };
 
-int adis16300_spi_read_burst(struct device *dev, u8 *rx);
-
 int adis16300_set_irq(struct device *dev, bool enable);
-
-int adis16300_reset(struct device *dev);
-
-int adis16300_check_status(struct device *dev);
 
 #ifdef CONFIG_IIO_RING_BUFFER
 /* At the moment triggers are only used for ring buffer

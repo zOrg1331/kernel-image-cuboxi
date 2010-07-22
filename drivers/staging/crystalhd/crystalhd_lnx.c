@@ -152,10 +152,8 @@ static int chd_dec_fetch_cdata(struct crystalhd_adp *adp, struct crystalhd_ioctl
 	if (rc) {
 		BCMLOG_ERR("failed to pull add_cdata sz:%x ua_off:%x\n",
 			   io->add_cdata_sz, (unsigned int)ua_off);
-		if (io->add_cdata) {
-			kfree(io->add_cdata);
-			io->add_cdata = NULL;
-		}
+		kfree(io->add_cdata);
+		io->add_cdata = NULL;
 		return -ENODATA;
 	}
 
@@ -273,7 +271,7 @@ static long chd_dec_ioctl(struct file *fd, unsigned int cmd, unsigned long ua)
 		return -EINVAL;
 	}
 
-	uc = (struct crystalhd_user *)fd->private_data;
+	uc = fd->private_data;
 	if (!uc) {
 		BCMLOG_ERR("Failed to get uc\n");
 		return -ENODATA;
@@ -334,7 +332,7 @@ static int chd_dec_close(struct inode *in, struct file *fd)
 		return -EINVAL;
 	}
 
-	uc = (struct crystalhd_user *)fd->private_data;
+	uc = fd->private_data;
 	if (!uc) {
 		BCMLOG_ERR("Failed to get uc\n");
 		return -ENODATA;
@@ -435,8 +433,7 @@ static void __devexit chd_dec_release_chdev(struct crystalhd_adp *adp)
 	/* Clear iodata pool.. */
 	do {
 		temp = chd_dec_alloc_iodata(adp, 0);
-		if (temp)
-			kfree(temp);
+		kfree(temp);
 	} while (temp);
 
 	crystalhd_delete_elem_pool(adp);
