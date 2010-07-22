@@ -11,6 +11,8 @@
  *
 */
 
+#include <mach/hardware.h>
+
 		.equ	io_virt, IO_BASE
 		.equ	io_phys, IO_START
 
