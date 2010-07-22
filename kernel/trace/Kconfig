@@ -194,15 +194,6 @@ config PREEMPT_TRACER
 	  enabled. This option and the irqs-off timing option can be
 	  used together or separately.)
 
-config SYSPROF_TRACER
-	bool "Sysprof Tracer"
-	depends on X86
-	select GENERIC_TRACER
-	select CONTEXT_SWITCH_TRACER
-	help
-	  This tracer provides the trace needed by the 'Sysprof' userspace
-	  tool.
-
 config SCHED_TRACER
 	bool "Scheduling Latency Tracer"
 	select GENERIC_TRACER
@@ -305,28 +296,6 @@ config BRANCH_TRACER
 	  histogram of the callers, but actually places the calling
 	  events into a running trace buffer to see when and where the
 	  events happened, as well as their results.
-
-	  Say N if unsure.
-
-config KSYM_TRACER
-	bool "Trace read and write access on kernel memory locations"
-	depends on HAVE_HW_BREAKPOINT
-	select TRACING
-	help
-	  This tracer helps find read and write operations on any given kernel
-	  symbol i.e. /proc/kallsyms.
-
-config PROFILE_KSYM_TRACER
-	bool "Profile all kernel memory accesses on 'watched' variables"
-	depends on KSYM_TRACER
-	help
-	  This tracer profiles kernel accesses on variables watched through the
-	  ksym tracer ftrace plugin. Depending upon the hardware, all read
-	  and write operations on kernel variables can be monitored for
-	  accesses.
-
-	  The results will be displayed in:
-	  /debugfs/tracing/profile_ksym
 
 	  Say N if unsure.
 
