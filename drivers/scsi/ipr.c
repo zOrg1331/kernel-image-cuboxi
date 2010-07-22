@@ -167,21 +167,22 @@ static const struct ipr_chip_cfg_t ipr_chip_cfg[] = {
 			.clr_uproc_interrupt_reg32 = 0x0002C,
 			.init_feedback_reg = 0x0005C,
 			.dump_addr_reg = 0x00064,
-			.dump_data_reg = 0x00068
+			.dump_data_reg = 0x00068,
+			.endian_swap_reg = 0x00084
 		}
 	},
 };
 
 static const struct ipr_chip_t ipr_chip[] = {
-	{ PCI_VENDOR_ID_MYLEX, PCI_DEVICE_ID_IBM_GEMSTONE, IPR_USE_LSI, IPR_SIS32, &ipr_chip_cfg[0] },
-	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_CITRINE, IPR_USE_LSI, IPR_SIS32, &ipr_chip_cfg[0] },
-	{ PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_OBSIDIAN, IPR_USE_LSI, IPR_SIS32, &ipr_chip_cfg[0] },
-	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_OBSIDIAN, IPR_USE_LSI, IPR_SIS32, &ipr_chip_cfg[0] },
-	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_OBSIDIAN_E, IPR_USE_MSI, IPR_SIS32, &ipr_chip_cfg[0] },
-	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_SNIPE, IPR_USE_LSI, IPR_SIS32, &ipr_chip_cfg[1] },
-	{ PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_SCAMP, IPR_USE_LSI, IPR_SIS32, &ipr_chip_cfg[1] },
-	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_CROC_FPGA_E2, IPR_USE_MSI, IPR_SIS64, &ipr_chip_cfg[2] },
-	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_CROC_ASIC_E2, IPR_USE_MSI, IPR_SIS64, &ipr_chip_cfg[2] }
+	{ PCI_VENDOR_ID_MYLEX, PCI_DEVICE_ID_IBM_GEMSTONE, IPR_USE_LSI, IPR_SIS32, IPR_PCI_CFG, &ipr_chip_cfg[0] },
+	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_CITRINE, IPR_USE_LSI, IPR_SIS32, IPR_PCI_CFG, &ipr_chip_cfg[0] },
+	{ PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_OBSIDIAN, IPR_USE_LSI, IPR_SIS32, IPR_PCI_CFG, &ipr_chip_cfg[0] },
+	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_OBSIDIAN, IPR_USE_LSI, IPR_SIS32, IPR_PCI_CFG, &ipr_chip_cfg[0] },
+	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_OBSIDIAN_E, IPR_USE_MSI, IPR_SIS32, IPR_PCI_CFG, &ipr_chip_cfg[0] },
+	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_SNIPE, IPR_USE_LSI, IPR_SIS32, IPR_PCI_CFG, &ipr_chip_cfg[1] },
+	{ PCI_VENDOR_ID_ADAPTEC2, PCI_DEVICE_ID_ADAPTEC2_SCAMP, IPR_USE_LSI, IPR_SIS32, IPR_PCI_CFG, &ipr_chip_cfg[1] },
+	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_CROC_FPGA_E2, IPR_USE_MSI, IPR_SIS64, IPR_MMIO, &ipr_chip_cfg[2] },
+	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_CROC_ASIC_E2, IPR_USE_MSI, IPR_SIS64, IPR_MMIO, &ipr_chip_cfg[2] }
 };
 
 static int ipr_max_bus_speeds [] = {
@@ -4352,8 +4353,6 @@ static int ipr_slave_configure(struct scsi_device *sdev)
 					     IPR_VSET_RW_TIMEOUT);
 			blk_queue_max_hw_sectors(sdev->request_queue, IPR_VSET_MAX_SECTORS);
 		}
-		if (ipr_is_vset_device(res) || ipr_is_scsi_disk(res))
-			sdev->allow_restart = 1;
 		if (ipr_is_gata(res) && res->sata_port)
 			ap = res->sata_port->ap;
 		spin_unlock_irqrestore(ioa_cfg->host->host_lock, lock_flags);
@@ -6770,7 +6769,8 @@ static int ipr_init_res_table(struct ipr_cmnd *ipr_cmd)
 			list_move_tail(&res->queue, &ioa_cfg->used_res_q);
 			ipr_init_res_entry(res, &cfgtew);
 			res->add_to_ml = 1;
-		}
+		} else if (res->sdev && (ipr_is_vset_device(res) || ipr_is_scsi_disk(res)))
+			res->sdev->allow_restart = 1;
 
 		if (found)
 			ipr_update_res_entry(res, &cfgtew);
@@ -7208,6 +7208,12 @@ static int ipr_reset_enable_ioa(struct ipr_cmnd *ipr_cmd)
 	ipr_init_ioa_mem(ioa_cfg);
 
 	ioa_cfg->allow_interrupts = 1;
+	if (ioa_cfg->sis64) {
+		/* Set the adapter to the correct endian mode. */
+		writel(IPR_ENDIAN_SWAP_KEY, ioa_cfg->regs.endian_swap_reg);
+		int_reg = readl(ioa_cfg->regs.endian_swap_reg);
+	}
+
 	int_reg = readl(ioa_cfg->regs.sense_interrupt_reg32);
 
 	if (int_reg & IPR_PCII_IOA_TRANS_TO_OPER) {
@@ -7365,6 +7371,7 @@ static void ipr_get_unit_check_buffer(struct ipr_ioa_cfg *ioa_cfg)
 static int ipr_reset_restore_cfg_space(struct ipr_cmnd *ipr_cmd)
 {
 	struct ipr_ioa_cfg *ioa_cfg = ipr_cmd->ioa_cfg;
+	volatile u32 int_reg;
 	int rc;
 
 	ENTER;
@@ -7382,6 +7389,12 @@ static int ipr_reset_restore_cfg_space(struct ipr_cmnd *ipr_cmd)
 	}
 
 	ipr_fail_all_ops(ioa_cfg);
+
+	if (ioa_cfg->sis64) {
+		/* Set the adapter to the correct endian mode. */
+		writel(IPR_ENDIAN_SWAP_KEY, ioa_cfg->regs.endian_swap_reg);
+		int_reg = readl(ioa_cfg->regs.endian_swap_reg);
+	}
 
 	if (ioa_cfg->ioa_unit_checked) {
 		ioa_cfg->ioa_unit_checked = 0;
@@ -7438,20 +7451,25 @@ static int ipr_reset_bist_done(struct ipr_cmnd *ipr_cmd)
 static int ipr_reset_start_bist(struct ipr_cmnd *ipr_cmd)
 {
 	struct ipr_ioa_cfg *ioa_cfg = ipr_cmd->ioa_cfg;
-	int rc;
+	int rc = PCIBIOS_SUCCESSFUL;
 
 	ENTER;
 	pci_block_user_cfg_access(ioa_cfg->pdev);
-	rc = pci_write_config_byte(ioa_cfg->pdev, PCI_BIST, PCI_BIST_START);
 
-	if (rc != PCIBIOS_SUCCESSFUL) {
-		pci_unblock_user_cfg_access(ipr_cmd->ioa_cfg->pdev);
-		ipr_cmd->s.ioasa.hdr.ioasc = cpu_to_be32(IPR_IOASC_PCI_ACCESS_ERROR);
-		rc = IPR_RC_JOB_CONTINUE;
-	} else {
+	if (ioa_cfg->ipr_chip->bist_method == IPR_MMIO)
+		writel(IPR_UPROCI_SIS64_START_BIST,
+		       ioa_cfg->regs.set_uproc_interrupt_reg32);
+	else
+		rc = pci_write_config_byte(ioa_cfg->pdev, PCI_BIST, PCI_BIST_START);
+
+	if (rc == PCIBIOS_SUCCESSFUL) {
 		ipr_cmd->job_step = ipr_reset_bist_done;
 		ipr_reset_start_timer(ipr_cmd, IPR_WAIT_FOR_BIST_TIMEOUT);
 		rc = IPR_RC_JOB_RETURN;
+	} else {
+		pci_unblock_user_cfg_access(ipr_cmd->ioa_cfg->pdev);
+		ipr_cmd->s.ioasa.hdr.ioasc = cpu_to_be32(IPR_IOASC_PCI_ACCESS_ERROR);
+		rc = IPR_RC_JOB_CONTINUE;
 	}
 
 	LEAVE;
@@ -7547,7 +7565,7 @@ static int ipr_reset_wait_to_start_bist(struct ipr_cmnd *ipr_cmd)
 }
 
 /**
- * ipr_reset_alert_part2 - Alert the adapter of a pending reset
+ * ipr_reset_alert - Alert the adapter of a pending reset
  * @ipr_cmd:	ipr command struct
  *
  * Description: This function alerts the adapter that it will be reset.
@@ -8318,6 +8336,7 @@ static void __devinit ipr_init_ioa_cfg(struct ipr_ioa_cfg *ioa_cfg,
 		t->init_feedback_reg = base + p->init_feedback_reg;
 		t->dump_addr_reg = base + p->dump_addr_reg;
 		t->dump_data_reg = base + p->dump_data_reg;
+		t->endian_swap_reg = base + p->endian_swap_reg;
 	}
 }
 
@@ -8872,6 +8891,8 @@ static struct pci_device_id ipr_pci_table[] __devinitdata = {
 	      IPR_USE_LONG_TRANSOP_TIMEOUT },
 	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_OBSIDIAN_E,
 	      PCI_VENDOR_ID_IBM, IPR_SUBS_DEV_ID_57B3, 0, 0, 0 },
+	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_OBSIDIAN_E,
+	      PCI_VENDOR_ID_IBM, IPR_SUBS_DEV_ID_57CC, 0, 0, 0 },
 	{ PCI_VENDOR_ID_IBM, PCI_DEVICE_ID_IBM_OBSIDIAN_E,
 	      PCI_VENDOR_ID_IBM, IPR_SUBS_DEV_ID_57B7, 0, 0,
 	      IPR_USE_LONG_TRANSOP_TIMEOUT | IPR_USE_PCI_WARM_RESET },
