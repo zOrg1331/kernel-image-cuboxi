@@ -20,7 +20,7 @@
 const struct of_device_id *of_match_device(const struct of_device_id *matches,
 					   const struct device *dev)
 {
-	if (!dev->of_node)
+	if ((!matches) || (!dev->of_node))
 		return NULL;
 	return of_match_node(matches, dev->of_node);
 }
@@ -68,10 +68,7 @@ static ssize_t name_show(struct device *dev,
 static ssize_t modalias_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
-	struct of_device *ofdev = to_of_device(dev);
-	ssize_t len = 0;
-
-	len = of_device_get_modalias(ofdev, buf, PAGE_SIZE - 2);
+	ssize_t len = of_device_get_modalias(dev, buf, PAGE_SIZE - 2);
 	buf[len] = '\n';
 	buf[len+1] = 0;
 	return len+1;
@@ -123,19 +120,18 @@ void of_device_unregister(struct of_device *ofdev)
 }
 EXPORT_SYMBOL(of_device_unregister);
 
-ssize_t of_device_get_modalias(struct of_device *ofdev,
-				char *str, ssize_t len)
+ssize_t of_device_get_modalias(struct device *dev, char *str, ssize_t len)
 {
 	const char *compat;
 	int cplen, i;
 	ssize_t tsize, csize, repend;
 
 	/* Name & Type */
-	csize = snprintf(str, len, "of:N%sT%s", ofdev->dev.of_node->name,
-			 ofdev->dev.of_node->type);
+	csize = snprintf(str, len, "of:N%sT%s", dev->of_node->name,
+			 dev->of_node->type);
 
 	/* Get compatible property if any */
-	compat = of_get_property(ofdev->dev.of_node, "compatible", &cplen);
+	compat = of_get_property(dev->of_node, "compatible", &cplen);
 	if (!compat)
 		return csize;
 
@@ -169,4 +165,52 @@ ssize_t of_device_get_modalias(struct of_device *ofdev,
 	}
 
 	return tsize;
+}
+
+/**
+ * of_device_uevent - Display OF related uevent information
+ */
+int of_device_uevent(struct device *dev, struct kobj_uevent_env *env)
+{
+	const char *compat;
+	int seen = 0, cplen, sl;
+
+	if ((!dev) || (!dev->of_node))
+		return -ENODEV;
+
+	if (add_uevent_var(env, "OF_NAME=%s", dev->of_node->name))
+		return -ENOMEM;
+
+	if (add_uevent_var(env, "OF_TYPE=%s", dev->of_node->type))
+		return -ENOMEM;
+
+	/* Since the compatible field can contain pretty much anything
+	 * it's not really legal to split it out with commas. We split it
+	 * up using a number of environment variables instead. */
+
+	compat = of_get_property(dev->of_node, "compatible", &cplen);
+	while (compat && *compat && cplen > 0) {
+		if (add_uevent_var(env, "OF_COMPATIBLE_%d=%s", seen, compat))
+			return -ENOMEM;
+
+		sl = strlen(compat) + 1;
+		compat += sl;
+		cplen -= sl;
+		seen++;
+	}
+
+	if (add_uevent_var(env, "OF_COMPATIBLE_N=%d", seen))
+		return -ENOMEM;
+
+	/* modalias is trickier, we add it in 2 steps */
+	if (add_uevent_var(env, "MODALIAS="))
+		return -ENOMEM;
+
+	sl = of_device_get_modalias(dev, &env->buf[env->buflen-1],
+				    sizeof(env->buf) - env->buflen);
+	if (sl >= (sizeof(env->buf) - env->buflen))
+		return -ENOMEM;
+	env->buflen += sl;
+
+	return 0;
 }
