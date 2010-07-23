@@ -1,5 +1,7 @@
 
 # Do not instrument the tracer itself:
+CFLAGS_trace_kdb.o += -O0
+CFLAGS_trace.o += -O0
 
 ifdef CONFIG_FUNCTION_TRACER
 ORIG_CFLAGS := $(KBUILD_CFLAGS)
@@ -57,5 +59,8 @@ obj-$(CONFIG_EVENT_TRACING) += trace_events_filter.o
 obj-$(CONFIG_KPROBE_EVENT) += trace_kprobe.o
 obj-$(CONFIG_KSYM_TRACER) += trace_ksym.o
 obj-$(CONFIG_EVENT_TRACING) += power-traces.o
+ifeq ($(CONFIG_TRACING),y)
+obj-$(CONFIG_KGDB_KDB) += trace_kdb.o
+endif
 
 libftrace-y := ftrace.o
