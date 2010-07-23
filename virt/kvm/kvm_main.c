@@ -5,6 +5,7 @@
  * machines without emulation or binary translation.
  *
  * Copyright (C) 2006 Qumranet, Inc.
+ * Copyright 2010 Red Hat, Inc. and/or its affilates.
  *
  * Authors:
  *   Avi Kivity   <avi@qumranet.com>
@@ -91,6 +92,9 @@ static void kvm_io_bus_destroy(struct kvm_io_bus *bus);
 static bool kvm_rebooting;
 
 static bool largepages_enabled = true;
+
+struct page *hwpoison_page;
+pfn_t hwpoison_pfn;
 
 inline int kvm_is_mmio_pfn(pfn_t pfn)
 {
@@ -596,7 +600,7 @@ int __kvm_set_memory_region(struct kvm *kvm,
 	/* Allocate if a slot is being created */
 #ifndef CONFIG_S390
 	if (npages && !new.rmap) {
-		new.rmap = vmalloc(npages * sizeof(struct page *));
+		new.rmap = vmalloc(npages * sizeof(*new.rmap));
 
 		if (!new.rmap)
 			goto out_free;
@@ -810,15 +814,21 @@ EXPORT_SYMBOL_GPL(kvm_disable_largepages);
 
 int is_error_page(struct page *page)
 {
-	return page == bad_page;
+	return page == bad_page || page == hwpoison_page;
 }
 EXPORT_SYMBOL_GPL(is_error_page);
 
 int is_error_pfn(pfn_t pfn)
 {
-	return pfn == bad_pfn;
+	return pfn == bad_pfn || pfn == hwpoison_pfn;
 }
 EXPORT_SYMBOL_GPL(is_error_pfn);
+
+int is_hwpoison_pfn(pfn_t pfn)
+{
+	return pfn == hwpoison_pfn;
+}
+EXPORT_SYMBOL_GPL(is_hwpoison_pfn);
 
 static inline unsigned long bad_hva(void)
 {
@@ -944,6 +954,11 @@ static pfn_t hva_to_pfn(struct kvm *kvm, unsigned long addr)
 
 	if (unlikely(npages != 1)) {
 		struct vm_area_struct *vma;
+
+		if (is_hwpoison_address(addr)) {
+			get_page(hwpoison_page);
+			return page_to_pfn(hwpoison_page);
+		}
 
 		down_read(&current->mm->mmap_sem);
 		vma = find_vma(current->mm, addr);
@@ -1378,6 +1393,18 @@ static long kvm_vcpu_ioctl(struct file *filp,
 
 	if (vcpu->kvm->mm != current->mm)
 		return -EIO;
+
+#if defined(CONFIG_S390) || defined(CONFIG_PPC)
+	/*
+	 * Special cases: vcpu ioctls that are asynchronous to vcpu execution,
+	 * so vcpu_load() would break it.
+	 */
+	if (ioctl == KVM_S390_INTERRUPT || ioctl == KVM_INTERRUPT)
+		return kvm_arch_vcpu_ioctl(filp, ioctl, arg);
+#endif
+
+
+	vcpu_load(vcpu);
 	switch (ioctl) {
 	case KVM_RUN:
 		r = -EINVAL;
@@ -1520,7 +1547,7 @@ out_free2:
 				goto out;
 			p = &sigset;
 		}
-		r = kvm_vcpu_ioctl_set_sigmask(vcpu, &sigset);
+		r = kvm_vcpu_ioctl_set_sigmask(vcpu, p);
 		break;
 	}
 	case KVM_GET_FPU: {
@@ -1555,6 +1582,7 @@ out_free2:
 		r = kvm_arch_vcpu_ioctl(filp, ioctl, arg);
 	}
 out:
+	vcpu_put(vcpu);
 	kfree(fpu);
 	kfree(kvm_sregs);
 	return r;
@@ -2197,6 +2225,15 @@ int kvm_init(void *opaque, unsigned vcpu_size, unsigned vcpu_align,
 
 	bad_pfn = page_to_pfn(bad_page);
 
+	hwpoison_page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+
+	if (hwpoison_page == NULL) {
+		r = -ENOMEM;
+		goto out_free_0;
+	}
+
+	hwpoison_pfn = page_to_pfn(hwpoison_page);
+
 	if (!zalloc_cpumask_var(&cpus_hardware_enabled, GFP_KERNEL)) {
 		r = -ENOMEM;
 		goto out_free_0;
@@ -2269,6 +2306,8 @@ out_free_1:
 out_free_0a:
 	free_cpumask_var(cpus_hardware_enabled);
 out_free_0:
+	if (hwpoison_page)
+		__free_page(hwpoison_page);
 	__free_page(bad_page);
 out:
 	kvm_arch_exit();
@@ -2290,6 +2329,7 @@ void kvm_exit(void)
 	kvm_arch_hardware_unsetup();
 	kvm_arch_exit();
 	free_cpumask_var(cpus_hardware_enabled);
+	__free_page(hwpoison_page);
 	__free_page(bad_page);
 }
 EXPORT_SYMBOL_GPL(kvm_exit);
