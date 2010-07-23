@@ -28,6 +28,12 @@ static inline bool is_quota_modification(struct inode *inode, struct iattr *ia)
 
 #if defined(CONFIG_QUOTA)
 
+#define quota_error(sb, fmt, args...) \
+	__quota_error((sb), __func__, fmt , ## args)
+
+extern void __quota_error(struct super_block *sb, const char *func,
+			 const char *fmt, ...);
+
 /*
  * declaration of quota_function calls in kernel.
  */
@@ -145,11 +151,6 @@ static inline bool sb_has_quota_active(struct super_block *sb, int type)
 	       !sb_has_quota_suspended(sb, type);
 }
 
-static inline unsigned sb_any_quota_active(struct super_block *sb)
-{
-	return sb_any_quota_loaded(sb) & ~sb_any_quota_suspended(sb);
-}
-
 /*
  * Operations supported for diskquotas.
  */
@@ -190,11 +191,6 @@ static inline int sb_any_quota_loaded(struct super_block *sb)
 }
 
 static inline int sb_has_quota_active(struct super_block *sb, int type)
-{
-	return 0;
-}
-
-static inline int sb_any_quota_active(struct super_block *sb)
 {
 	return 0;
 }
