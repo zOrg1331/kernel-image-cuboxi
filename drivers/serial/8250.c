@@ -199,10 +199,16 @@ static const struct serial8250_config uart_config[] = {
 	},
 	[PORT_16550A] = {
 		.name		= "16550A",
+#if defined(CONFIG_SERIAL_8250_U6XXX)
+		.fifo_size	= 64,
+		.tx_loadsz	= 64,
+		.flags		= UART_CAP_FIFO | UART_CAP_AFE,
+#else
 		.fifo_size	= 16,
 		.tx_loadsz	= 16,
-		.fcr		= UART_FCR_ENABLE_FIFO | UART_FCR_R_TRIG_10,
 		.flags		= UART_CAP_FIFO,
+#endif
+		.fcr		= UART_FCR_ENABLE_FIFO | UART_FCR_R_TRIG_10,
 	},
 	[PORT_CIRRUS] = {
 		.name		= "Cirrus",
@@ -241,7 +247,7 @@ static const struct serial8250_config uart_config[] = {
 		.fifo_size	= 128,
 		.tx_loadsz	= 128,
 		.fcr		= UART_FCR_ENABLE_FIFO | UART_FCR_R_TRIG_10,
-		.flags		= UART_CAP_FIFO,
+		.flags		= UART_CAP_FIFO | UART_CAP_EFR | UART_CAP_SLEEP,
 	},
 	[PORT_16654] = {
 		.name		= "ST16654",
@@ -2268,6 +2274,13 @@ serial8250_set_termios(struct uart_port *port, struct ktermios *termios,
 	/*
 	 * Ask the core to calculate the divisor for us.
 	 */
+#ifdef CONFIG_SERIAL_8250_CUSTOM_CLOCK
+	baud = uart_get_baud_rate(port, termios, old, 0,
+			CONFIG_SERIAL_8250_CUSTOM_MAX_BAUDRATE);
+	/* Calculate the new uart clock frequency if it is tunable */
+	port->uartclk = serial8250_get_custom_clock(port, baud);
+#endif
+
 	baud = uart_get_baud_rate(port, termios, old,
 				  port->uartclk / 16 / 0xffff,
 				  port->uartclk / 16);
@@ -2298,6 +2311,13 @@ serial8250_set_termios(struct uart_port *port, struct ktermios *termios,
 		up->mcr &= ~UART_MCR_AFE;
 		if (termios->c_cflag & CRTSCTS)
 			up->mcr |= UART_MCR_AFE;
+#if defined(CONFIG_SERIAL_8250_U6XXX)
+		/**
+		 * When AFE is active, let the HW handle the stop/restart TX
+		 * upon CTS change. It reacts much quicker than the SW driver.
+		 */
+		port->flags &= ~ASYNC_CTS_FLOW;
+#endif
 	}
 
 	/*
@@ -2383,6 +2403,10 @@ serial8250_set_termios(struct uart_port *port, struct ktermios *termios,
 		serial_outp(up, UART_LCR, cval | UART_LCR_DLAB);/* set DLAB */
 	}
 
+#ifdef CONFIG_SERIAL_8250_CUSTOM_CLOCK
+	/* set the new uart clock frequency if it is tunable */
+	serial8250_set_custom_clock(port);
+#endif
 	serial_dl_write(up, quot);
 
 	/*
@@ -2409,14 +2433,9 @@ serial8250_set_termios(struct uart_port *port, struct ktermios *termios,
 }
 
 static void
-serial8250_set_ldisc(struct uart_port *port)
+serial8250_set_ldisc(struct uart_port *port, int new)
 {
-	int line = port->line;
-
-	if (line >= port->state->port.tty->driver->num)
-		return;
-
-	if (port->state->port.tty->ldisc->ops->num == N_PPS) {
+	if (new == N_PPS) {
 		port->flags |= UPF_HARDPPS_CD;
 		serial8250_enable_ms(port);
 	} else
