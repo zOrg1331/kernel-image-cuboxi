@@ -9,8 +9,6 @@
 #include <linux/rbtree.h>
 #include <stdio.h>
 
-#define DEBUG_CACHE_DIR ".debug"
-
 #ifdef HAVE_CPLUS_DEMANGLE
 extern char *cplus_demangle(const char *, int);
 
@@ -73,6 +71,7 @@ struct symbol_conf {
 			full_paths,
 			show_cpu_utilization;
 	const char	*vmlinux_name,
+			*source_prefix,
 			*field_sep;
 	const char	*default_guest_vmlinux_name,
 			*default_guest_kallsyms,
@@ -112,7 +111,8 @@ struct addr_location {
 	u64	      addr;
 	char	      level;
 	bool	      filtered;
-	unsigned int  cpumode;
+	u8	      cpumode;
+	s32	      cpu;
 };
 
 enum dso_kernel_type {

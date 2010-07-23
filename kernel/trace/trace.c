@@ -1331,61 +1331,6 @@ static void __trace_userstack(struct trace_array *tr, unsigned long flags)
 
 #endif /* CONFIG_STACKTRACE */
 
-static void
-ftrace_trace_special(void *__tr,
-		     unsigned long arg1, unsigned long arg2, unsigned long arg3,
-		     int pc)
-{
-	struct ftrace_event_call *call = &event_special;
-	struct ring_buffer_event *event;
-	struct trace_array *tr = __tr;
-	struct ring_buffer *buffer = tr->buffer;
-	struct special_entry *entry;
-
-	event = trace_buffer_lock_reserve(buffer, TRACE_SPECIAL,
-					  sizeof(*entry), 0, pc);
-	if (!event)
-		return;
-	entry	= ring_buffer_event_data(event);
-	entry->arg1			= arg1;
-	entry->arg2			= arg2;
-	entry->arg3			= arg3;
-
-	if (!filter_check_discard(call, entry, buffer, event))
-		trace_buffer_unlock_commit(buffer, event, 0, pc);
-}
-
-void
-__trace_special(void *__tr, void *__data,
-		unsigned long arg1, unsigned long arg2, unsigned long arg3)
-{
-	ftrace_trace_special(__tr, arg1, arg2, arg3, preempt_count());
-}
-
-void
-ftrace_special(unsigned long arg1, unsigned long arg2, unsigned long arg3)
-{
-	struct trace_array *tr = &global_trace;
-	struct trace_array_cpu *data;
-	unsigned long flags;
-	int cpu;
-	int pc;
-
-	if (tracing_disabled)
-		return;
-
-	pc = preempt_count();
-	local_irq_save(flags);
-	cpu = raw_smp_processor_id();
-	data = tr->data[cpu];
-
-	if (likely(atomic_inc_return(&data->disabled) == 1))
-		ftrace_trace_special(tr, arg1, arg2, arg3, pc);
-
-	atomic_dec(&data->disabled);
-	local_irq_restore(flags);
-}
-
 /**
  * trace_vbprintk - write binary msg to tracing buffer
  *
@@ -1404,7 +1349,6 @@ int trace_vbprintk(unsigned long ip, const char *fmt, va_list args)
 	struct bprint_entry *entry;
 	unsigned long flags;
 	int disable;
-	int resched;
 	int cpu, len = 0, size, pc;
 
 	if (unlikely(tracing_selftest_running || tracing_disabled))
@@ -1414,7 +1358,7 @@ int trace_vbprintk(unsigned long ip, const char *fmt, va_list args)
 	pause_graph_tracing();
 
 	pc = preempt_count();
-	resched = ftrace_preempt_disable();
+	preempt_disable_notrace();
 	cpu = raw_smp_processor_id();
 	data = tr->data[cpu];
 
@@ -1452,7 +1396,7 @@ out_unlock:
 
 out:
 	atomic_dec_return(&data->disabled);
-	ftrace_preempt_enable(resched);
+	preempt_enable_notrace();
 	unpause_graph_tracing();
 
 	return len;
@@ -2394,6 +2338,7 @@ static const struct file_operations show_traces_fops = {
 	.open		= show_traces_open,
 	.read		= seq_read,
 	.release	= seq_release,
+	.llseek		= seq_lseek,
 };
 
 /*
@@ -2487,6 +2432,7 @@ static const struct file_operations tracing_cpumask_fops = {
 	.open		= tracing_open_generic,
 	.read		= tracing_cpumask_read,
 	.write		= tracing_cpumask_write,
+	.llseek		= generic_file_llseek,
 };
 
 static int tracing_trace_options_show(struct seq_file *m, void *v)
@@ -2653,6 +2599,7 @@ tracing_readme_read(struct file *filp, char __user *ubuf,
 static const struct file_operations tracing_readme_fops = {
 	.open		= tracing_open_generic,
 	.read		= tracing_readme_read,
+	.llseek		= generic_file_llseek,
 };
 
 static ssize_t
@@ -2703,6 +2650,7 @@ tracing_saved_cmdlines_read(struct file *file, char __user *ubuf,
 static const struct file_operations tracing_saved_cmdlines_fops = {
     .open       = tracing_open_generic,
     .read       = tracing_saved_cmdlines_read,
+    .llseek	= generic_file_llseek,
 };
 
 static ssize_t
@@ -3032,6 +2980,7 @@ static int tracing_open_pipe(struct inode *inode, struct file *filp)
 	if (iter->trace->pipe_open)
 		iter->trace->pipe_open(iter);
 
+	nonseekable_open(inode, filp);
 out:
 	mutex_unlock(&trace_types_lock);
 	return ret;
@@ -3590,18 +3539,21 @@ static const struct file_operations tracing_max_lat_fops = {
 	.open		= tracing_open_generic,
 	.read		= tracing_max_lat_read,
 	.write		= tracing_max_lat_write,
+	.llseek		= generic_file_llseek,
 };
 
 static const struct file_operations tracing_ctrl_fops = {
 	.open		= tracing_open_generic,
 	.read		= tracing_ctrl_read,
 	.write		= tracing_ctrl_write,
+	.llseek		= generic_file_llseek,
 };
 
 static const struct file_operations set_tracer_fops = {
 	.open		= tracing_open_generic,
 	.read		= tracing_set_trace_read,
 	.write		= tracing_set_trace_write,
+	.llseek		= generic_file_llseek,
 };
 
 static const struct file_operations tracing_pipe_fops = {
@@ -3610,17 +3562,20 @@ static const struct file_operations tracing_pipe_fops = {
 	.read		= tracing_read_pipe,
 	.splice_read	= tracing_splice_read_pipe,
 	.release	= tracing_release_pipe,
+	.llseek		= no_llseek,
 };
 
 static const struct file_operations tracing_entries_fops = {
 	.open		= tracing_open_generic,
 	.read		= tracing_entries_read,
 	.write		= tracing_entries_write,
+	.llseek		= generic_file_llseek,
 };
 
 static const struct file_operations tracing_mark_fops = {
 	.open		= tracing_open_generic,
 	.write		= tracing_mark_write,
+	.llseek		= generic_file_llseek,
 };
 
 static const struct file_operations trace_clock_fops = {
@@ -3926,6 +3881,7 @@ tracing_stats_read(struct file *filp, char __user *ubuf,
 static const struct file_operations tracing_stats_fops = {
 	.open		= tracing_open_generic,
 	.read		= tracing_stats_read,
+	.llseek		= generic_file_llseek,
 };
 
 #ifdef CONFIG_DYNAMIC_FTRACE
@@ -3962,6 +3918,7 @@ tracing_read_dyn_info(struct file *filp, char __user *ubuf,
 static const struct file_operations tracing_dyn_info_fops = {
 	.open		= tracing_open_generic,
 	.read		= tracing_read_dyn_info,
+	.llseek		= generic_file_llseek,
 };
 #endif
 
@@ -4115,6 +4072,7 @@ static const struct file_operations trace_options_fops = {
 	.open = tracing_open_generic,
 	.read = trace_options_read,
 	.write = trace_options_write,
+	.llseek	= generic_file_llseek,
 };
 
 static ssize_t
@@ -4166,6 +4124,7 @@ static const struct file_operations trace_options_core_fops = {
 	.open = tracing_open_generic,
 	.read = trace_options_core_read,
 	.write = trace_options_core_write,
+	.llseek = generic_file_llseek,
 };
 
 struct dentry *trace_create_file(const char *name,
@@ -4354,9 +4313,6 @@ static __init int tracer_init_debugfs(void)
 #ifdef CONFIG_DYNAMIC_FTRACE
 	trace_create_file("dyn_ftrace_total_info", 0444, d_tracer,
 			&ftrace_update_tot_cnt, &tracing_dyn_info_fops);
-#endif
-#ifdef CONFIG_SYSPROF_TRACER
-	init_tracer_sysprof_debugfs(d_tracer);
 #endif
 
 	create_trace_options_dir();
@@ -4597,9 +4553,6 @@ __init static int tracer_alloc_buffers(void)
 
 	register_tracer(&nop_trace);
 	current_trace = &nop_trace;
-#ifdef CONFIG_BOOT_TRACER
-	register_tracer(&boot_tracer);
-#endif
 	/* All seems OK, enable tracing */
 	tracing_disabled = 0;
 

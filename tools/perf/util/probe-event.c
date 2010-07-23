@@ -195,6 +195,65 @@ static int try_to_find_kprobe_trace_events(struct perf_probe_event *pev,
 	return ntevs;
 }
 
+/*
+ * Find a src file from a DWARF tag path. Prepend optional source path prefix
+ * and chop off leading directories that do not exist. Result is passed back as
+ * a newly allocated path on success.
+ * Return 0 if file was found and readable, -errno otherwise.
+ */
+static int get_real_path(const char *raw_path, const char *comp_dir,
+			 char **new_path)
+{
+	const char *prefix = symbol_conf.source_prefix;
+
+	if (!prefix) {
+		if (raw_path[0] != '/' && comp_dir)
+			/* If not an absolute path, try to use comp_dir */
+			prefix = comp_dir;
+		else {
+			if (access(raw_path, R_OK) == 0) {
+				*new_path = strdup(raw_path);
+				return 0;
+			} else
+				return -errno;
+		}
+	}
+
+	*new_path = malloc((strlen(prefix) + strlen(raw_path) + 2));
+	if (!*new_path)
+		return -ENOMEM;
+
+	for (;;) {
+		sprintf(*new_path, "%s/%s", prefix, raw_path);
+
+		if (access(*new_path, R_OK) == 0)
+			return 0;
+
+		if (!symbol_conf.source_prefix)
+			/* In case of searching comp_dir, don't retry */
+			return -errno;
+
+		switch (errno) {
+		case ENAMETOOLONG:
+		case ENOENT:
+		case EROFS:
+		case EFAULT:
+			raw_path = strchr(++raw_path, '/');
+			if (!raw_path) {
+				free(*new_path);
+				*new_path = NULL;
+				return -ENOENT;
+			}
+			continue;
+
+		default:
+			free(*new_path);
+			*new_path = NULL;
+			return -errno;
+		}
+	}
+}
+
 #define LINEBUF_SIZE 256
 #define NR_ADDITIONAL_LINES 2
 
@@ -244,6 +303,7 @@ int show_line_range(struct line_range *lr)
 	struct line_node *ln;
 	FILE *fp;
 	int fd, ret;
+	char *tmp;
 
 	/* Search a line range */
 	ret = init_vmlinux();
@@ -263,6 +323,15 @@ int show_line_range(struct line_range *lr)
 		return -ENOENT;
 	} else if (ret < 0) {
 		pr_warning("Debuginfo analysis failed. (%d)\n", ret);
+		return ret;
+	}
+
+	/* Convert source file path */
+	tmp = lr->path;
+	ret = get_real_path(tmp, lr->comp_dir, &lr->path);
+	free(tmp);	/* Free old path */
+	if (ret < 0) {
+		pr_warning("Failed to find source file. (%d)\n", ret);
 		return ret;
 	}
 
@@ -557,7 +626,7 @@ static int parse_perf_probe_point(char *arg, struct perf_probe_event *pev)
 /* Parse perf-probe event argument */
 static int parse_perf_probe_arg(char *str, struct perf_probe_arg *arg)
 {
-	char *tmp;
+	char *tmp, *goodname;
 	struct perf_probe_arg_field **fieldp;
 
 	pr_debug("parsing arg: %s into ", str);
@@ -580,7 +649,7 @@ static int parse_perf_probe_arg(char *str, struct perf_probe_arg *arg)
 		pr_debug("type:%s ", arg->type);
 	}
 
-	tmp = strpbrk(str, "-.");
+	tmp = strpbrk(str, "-.[");
 	if (!is_c_varname(str) || !tmp) {
 		/* A variable, register, symbol or special value */
 		arg->var = strdup(str);
@@ -590,10 +659,11 @@ static int parse_perf_probe_arg(char *str, struct perf_probe_arg *arg)
 		return 0;
 	}
 
-	/* Structure fields */
+	/* Structure fields or array element */
 	arg->var = strndup(str, tmp - str);
 	if (arg->var == NULL)
 		return -ENOMEM;
+	goodname = arg->var;
 	pr_debug("%s, ", arg->var);
 	fieldp = &arg->field;
 
@@ -601,22 +671,38 @@ static int parse_perf_probe_arg(char *str, struct perf_probe_arg *arg)
 		*fieldp = zalloc(sizeof(struct perf_probe_arg_field));
 		if (*fieldp == NULL)
 			return -ENOMEM;
-		if (*tmp == '.') {
-			str = tmp + 1;
-			(*fieldp)->ref = false;
-		} else if (tmp[1] == '>') {
-			str = tmp + 2;
+		if (*tmp == '[') {	/* Array */
+			str = tmp;
+			(*fieldp)->index = strtol(str + 1, &tmp, 0);
 			(*fieldp)->ref = true;
-		} else {
-			semantic_error("Argument parse error: %s\n", str);
-			return -EINVAL;
+			if (*tmp != ']' || tmp == str + 1) {
+				semantic_error("Array index must be a"
+						" number.\n");
+				return -EINVAL;
+			}
+			tmp++;
+			if (*tmp == '\0')
+				tmp = NULL;
+		} else {		/* Structure */
+			if (*tmp == '.') {
+				str = tmp + 1;
+				(*fieldp)->ref = false;
+			} else if (tmp[1] == '>') {
+				str = tmp + 2;
+				(*fieldp)->ref = true;
+			} else {
+				semantic_error("Argument parse error: %s\n",
+					       str);
+				return -EINVAL;
+			}
+			tmp = strpbrk(str, "-.[");
 		}
-
-		tmp = strpbrk(str, "-.");
 		if (tmp) {
 			(*fieldp)->name = strndup(str, tmp - str);
 			if ((*fieldp)->name == NULL)
 				return -ENOMEM;
+			if (*str != '[')
+				goodname = (*fieldp)->name;
 			pr_debug("%s(%d), ", (*fieldp)->name, (*fieldp)->ref);
 			fieldp = &(*fieldp)->next;
 		}
@@ -624,11 +710,13 @@ static int parse_perf_probe_arg(char *str, struct perf_probe_arg *arg)
 	(*fieldp)->name = strdup(str);
 	if ((*fieldp)->name == NULL)
 		return -ENOMEM;
+	if (*str != '[')
+		goodname = (*fieldp)->name;
 	pr_debug("%s(%d)\n", (*fieldp)->name, (*fieldp)->ref);
 
-	/* If no name is specified, set the last field name */
+	/* If no name is specified, set the last field name (not array index)*/
 	if (!arg->name) {
-		arg->name = strdup((*fieldp)->name);
+		arg->name = strdup(goodname);
 		if (arg->name == NULL)
 			return -ENOMEM;
 	}
@@ -776,8 +864,11 @@ int synthesize_perf_probe_arg(struct perf_probe_arg *pa, char *buf, size_t len)
 	len -= ret;
 
 	while (field) {
-		ret = e_snprintf(tmp, len, "%s%s", field->ref ? "->" : ".",
-				 field->name);
+		if (field->name[0] == '[')
+			ret = e_snprintf(tmp, len, "%s", field->name);
+		else
+			ret = e_snprintf(tmp, len, "%s%s",
+					 field->ref ? "->" : ".", field->name);
 		if (ret <= 0)
 			goto error;
 		tmp += ret;
@@ -904,6 +995,7 @@ out:
 static int synthesize_kprobe_trace_arg(struct kprobe_trace_arg *arg,
 				       char *buf, size_t buflen)
 {
+	struct kprobe_trace_arg_ref *ref = arg->ref;
 	int ret, depth = 0;
 	char *tmp = buf;
 
@@ -917,16 +1009,24 @@ static int synthesize_kprobe_trace_arg(struct kprobe_trace_arg *arg,
 	buf += ret;
 	buflen -= ret;
 
+	/* Special case: @XXX */
+	if (arg->value[0] == '@' && arg->ref)
+			ref = ref->next;
+
 	/* Dereferencing arguments */
-	if (arg->ref) {
-		depth = __synthesize_kprobe_trace_arg_ref(arg->ref, &buf,
+	if (ref) {
+		depth = __synthesize_kprobe_trace_arg_ref(ref, &buf,
 							  &buflen, 1);
 		if (depth < 0)
 			return depth;
 	}
 
 	/* Print argument value */
-	ret = e_snprintf(buf, buflen, "%s", arg->value);
+	if (arg->value[0] == '@' && arg->ref)
+		ret = e_snprintf(buf, buflen, "%s%+ld", arg->value,
+				 arg->ref->offset);
+	else
+		ret = e_snprintf(buf, buflen, "%s", arg->value);
 	if (ret < 0)
 		return ret;
 	buf += ret;
