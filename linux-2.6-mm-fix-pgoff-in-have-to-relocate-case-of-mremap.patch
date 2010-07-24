@@ -1,0 +1,33 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Fri, 29 Jan 2010 09:25:56 -0500
+Subject: [mm] fix pgoff in have to relocate case of mremap
+Message-id: <20100129092608.4587.87864.sendpatchset@dhcp-65-180.nay.redhat.com>
+Patchwork-id: 22991
+O-Subject: [PATCH RHEL5.5 6/12 BZ556710 CVE-2010-0291] fix pgoff in "have to
+	relocate" case of mremap()
+Bugzilla: 556710
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+backport of upstream commit 935874141df839c706cd6cdc438e85eb69d1525e
+
+Subject: [PATCH] fix pgoff in "have to relocate" case of mremap()
+
+Acked-by: Hugh Dickins <hugh.dickins@tiscali.co.uk>
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+
+diff --git a/mm/mremap.c b/mm/mremap.c
+index 75e9832..6230afd 100644
+--- a/mm/mremap.c
++++ b/mm/mremap.c
+@@ -478,7 +478,9 @@ unsigned long do_mremap(unsigned long addr,
+ 			map_flags |= MAP_SHARED;
+ 
+ 		new_addr = get_unmapped_area(vma->vm_file, 0, new_len,
+-					vma->vm_pgoff, map_flags);
++					vma->vm_pgoff +
++					((addr - vma->vm_start) >> PAGE_SHIFT),
++					map_flags);
+ 		if (new_addr & ~PAGE_MASK) {
+ 			ret = new_addr;
+ 			goto out;

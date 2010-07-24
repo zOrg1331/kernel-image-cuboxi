@@ -1,0 +1,54 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Fri, 12 Feb 2010 16:20:55 -0500
+Subject: [misc] futex: handle futex value corruption gracefully
+Message-id: <4B757FE7.1050604@redhat.com>
+Patchwork-id: 23254
+O-Subject: [RHEL5 PATCH 3/3] futex: Handle futex value corruption gracefully
+Bugzilla: 480396
+CVE: CVE-2010-0622
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=480396
+
+Description:
+This correct a bogus warning about what is in fact user space corruption.
+Return EINVAL instead and let user space deal with it.
+
+Upstream status:
+commit 59647b6ac3050dd964bc556fe6ef22f4db5b935c
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/kernel/futex.c b/kernel/futex.c
+index 53d0a14..5724b36 100644
+--- a/kernel/futex.c
++++ b/kernel/futex.c
+@@ -532,8 +532,25 @@ lookup_pi_state(u32 uval, struct futex_hash_bucket *hb, struct futex_q *me)
+ 				return -EINVAL;
+ 
+ 			WARN_ON(!atomic_read(&pi_state->refcount));
+-			WARN_ON(pid && pi_state->owner &&
+-				pi_state->owner->pid != pid);
++
++			/*
++			 * When pi_state->owner is NULL then the owner died
++			 * and another waiter is on the fly. pi_state->owner
++			 * is fixed up by the task which acquires
++			 * pi_state->rt_mutex.
++			 *
++			 * We do not check for pid == 0 which can happen when
++			 * the owner died and robust_list_exit() cleared the
++			 * TID.
++			 */
++			if (pid && pi_state->owner) {
++				/*
++				 * Bail out if user space manipulated the
++				 * futex value.
++				 */
++				if (pid != pi_state->owner->pid)
++					return -EINVAL;
++			}
+ 
+ 			atomic_inc(&pi_state->refcount);
+ 			me->pi_state = pi_state;
