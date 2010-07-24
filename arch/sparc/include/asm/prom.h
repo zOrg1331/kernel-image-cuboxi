@@ -43,6 +43,7 @@ extern int of_getintprop_default(struct device_node *np,
 extern int of_find_in_proplist(const char *list, const char *match, int len);
 #ifdef CONFIG_NUMA
 extern int of_node_to_nid(struct device_node *dp);
+#define of_node_to_nid of_node_to_nid
 #else
 #define of_node_to_nid(dp)	(-1)
 #endif
