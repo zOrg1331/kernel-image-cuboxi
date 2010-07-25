@@ -15,9 +15,9 @@
 #include <linux/sched.h>
 #include <linux/wait.h>
 #include <media/lirc.h>
+#include <media/lirc_dev.h>
 #include <media/ir-core.h>
 #include "ir-core-priv.h"
-#include "lirc_dev.h"
 
 #define LIRCBUF_SIZE 256
 
@@ -74,14 +74,9 @@ static ssize_t ir_lirc_transmit_ir(struct file *file, const char *buf,
 	if (count > LIRCBUF_SIZE || count % 2 == 0)
 		return -EINVAL;
 
-	txbuf = kzalloc(sizeof(int) * LIRCBUF_SIZE, GFP_KERNEL);
-	if (!txbuf)
-		return -ENOMEM;
-
-	if (copy_from_user(txbuf, buf, n)) {
-		ret = -EFAULT;
-		goto out;
-	}
+	txbuf = memdup_user(buf, n);
+	if (IS_ERR(txbuf))
+		return PTR_ERR(txbuf);
 
 	ir_dev = lirc->ir_dev;
 	if (!ir_dev) {
@@ -192,7 +187,7 @@ static int ir_lirc_register(struct input_dev *input_dev)
 		return rc;
 
 	rbuf = kzalloc(sizeof(struct lirc_buffer), GFP_KERNEL);
-	if (!drv)
+	if (!rbuf)
 		goto rbuf_alloc_failed;
 
 	rc = lirc_buffer_init(rbuf, sizeof(int), LIRCBUF_SIZE);

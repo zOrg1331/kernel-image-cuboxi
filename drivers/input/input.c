@@ -900,6 +900,7 @@ int input_set_keycode(struct input_dev *dev,
 		if (retval)
 			goto out;
 
+		old_keycode = kt_entry.keycode;
 		kt_entry.keycode = keycode;
 
 		retval = dev->setkeycodebig(dev, &kt_entry);
@@ -1850,7 +1851,7 @@ int input_register_device(struct input_dev *dev)
 			dev->getkeycodebig_from_scancode = input_default_getkeycode_from_scancode;
 	}
 
-	if (dev->setkeycode) {
+	if (!dev->setkeycode) {
 		if (!dev->setkeycodebig)
 			dev->setkeycodebig = input_default_setkeycode;
 	}
