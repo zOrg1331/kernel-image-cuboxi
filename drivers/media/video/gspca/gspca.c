@@ -201,7 +201,7 @@ static int alloc_and_submit_int_urb(struct gspca_dev *gspca_dev,
 
 	buffer_len = le16_to_cpu(ep->wMaxPacketSize);
 	interval = ep->bInterval;
-	PDEBUG(D_PROBE, "found int in endpoint: 0x%x, "
+	PDEBUG(D_CONF, "found int in endpoint: 0x%x, "
 		"buffer_len=%u, interval=%u",
 		ep->bEndpointAddress, buffer_len, interval);
 
@@ -226,7 +226,7 @@ static int alloc_and_submit_int_urb(struct gspca_dev *gspca_dev,
 	gspca_dev->int_urb = urb;
 	ret = usb_submit_urb(urb, GFP_KERNEL);
 	if (ret < 0) {
-		PDEBUG(D_ERR, "submit URB failed with error %i", ret);
+		PDEBUG(D_ERR, "submit int URB failed with error %i", ret);
 		goto error_submit;
 	}
 	return ret;
@@ -640,12 +640,16 @@ static struct usb_host_endpoint *get_ep(struct gspca_dev *gspca_dev)
 				   : USB_ENDPOINT_XFER_ISOC;
 	i = gspca_dev->alt;			/* previous alt setting */
 	if (gspca_dev->cam.reverse_alts) {
+		if (gspca_dev->audio)
+			i++;
 		while (++i < gspca_dev->nbalt) {
 			ep = alt_xfer(&intf->altsetting[i], xfer);
 			if (ep)
 				break;
 		}
 	} else {
+		if (gspca_dev->audio)
+			i--;
 		while (--i >= 0) {
 			ep = alt_xfer(&intf->altsetting[i], xfer);
 			if (ep)
@@ -1396,34 +1400,6 @@ static int vidioc_g_ctrl(struct file *file, void *priv,
 	return ret;
 }
 
-/*fixme: have an audio flag in gspca_dev?*/
-static int vidioc_s_audio(struct file *file, void *priv,
-			 struct v4l2_audio *audio)
-{
-	if (audio->index != 0)
-		return -EINVAL;
-	return 0;
-}
-
-static int vidioc_g_audio(struct file *file, void *priv,
-			 struct v4l2_audio *audio)
-{
-	strcpy(audio->name, "Microphone");
-	return 0;
-}
-
-static int vidioc_enumaudio(struct file *file, void *priv,
-			 struct v4l2_audio *audio)
-{
-	if (audio->index != 0)
-		return -EINVAL;
-
-	strcpy(audio->name, "Microphone");
-	audio->capability = 0;
-	audio->mode = 0;
-	return 0;
-}
-
 static int vidioc_querymenu(struct file *file, void *priv,
 			    struct v4l2_querymenu *qmenu)
 {
@@ -1467,7 +1443,8 @@ static int vidioc_reqbufs(struct file *file, void *priv,
 	struct gspca_dev *gspca_dev = priv;
 	int i, ret = 0, streaming;
 
-	switch (rb->memory) {
+	i = rb->memory;			/* (avoid compilation warning) */
+	switch (i) {
 	case GSPCA_MEMORY_READ:			/* (internal call) */
 	case V4L2_MEMORY_MMAP:
 	case V4L2_MEMORY_USERPTR:
@@ -2111,9 +2088,6 @@ static const struct v4l2_ioctl_ops dev_ioctl_ops = {
 	.vidioc_queryctrl	= vidioc_queryctrl,
 	.vidioc_g_ctrl		= vidioc_g_ctrl,
 	.vidioc_s_ctrl		= vidioc_s_ctrl,
-	.vidioc_g_audio		= vidioc_g_audio,
-	.vidioc_s_audio		= vidioc_s_audio,
-	.vidioc_enumaudio	= vidioc_enumaudio,
 	.vidioc_querymenu	= vidioc_querymenu,
 	.vidioc_enum_input	= vidioc_enum_input,
 	.vidioc_g_input		= vidioc_g_input,
@@ -2176,6 +2150,24 @@ int gspca_dev_probe2(struct usb_interface *intf,
 	gspca_dev->dev = dev;
 	gspca_dev->iface = intf->cur_altsetting->desc.bInterfaceNumber;
 	gspca_dev->nbalt = intf->num_altsetting;
+
+	/* check if any audio device */
+	if (dev->config->desc.bNumInterfaces != 1) {
+		int i;
+		struct usb_interface *intf2;
+
+		for (i = 0; i < dev->config->desc.bNumInterfaces; i++) {
+			intf2 = dev->config->interface[i];
+			if (intf2 != NULL
+			 && intf2->altsetting != NULL
+			 && intf2->altsetting->desc.bInterfaceClass ==
+					 USB_CLASS_AUDIO) {
+				gspca_dev->audio = 1;
+				break;
+			}
+		}
+	}
+
 	gspca_dev->sd_desc = sd_desc;
 	gspca_dev->nbufread = 2;
 	gspca_dev->empty_packet = -1;	/* don't check the empty packets */
@@ -2246,12 +2238,8 @@ int gspca_dev_probe(struct usb_interface *intf,
 
 	/* the USB video interface must be the first one */
 	if (dev->config->desc.bNumInterfaces != 1
-	 && intf->cur_altsetting->desc.bInterfaceNumber != 0) {
-		PDEBUG(D_ERR, "%04x:%04x bad interface %d",
-				id->idVendor, id->idProduct,
-				intf->cur_altsetting->desc.bInterfaceNumber);
+	 && intf->cur_altsetting->desc.bInterfaceNumber != 0)
 		return -ENODEV;
-	}
 
 	return gspca_dev_probe2(intf, id, sd_desc, dev_size, module);
 }
