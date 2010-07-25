@@ -122,7 +122,7 @@ index 5463266..d248ead 100644
  static long do_sys_truncate(const char __user *pathname, loff_t length)
  {
 diff --git a/fs/splice.c b/fs/splice.c
-index 9980ddf..d34b306 100644
+index e01a51e..4806358 100644
 --- a/fs/splice.c
 +++ b/fs/splice.c
 @@ -1128,6 +1128,7 @@ long do_splice_from(struct pipe_inode_info *pipe, struct file *out,

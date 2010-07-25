@@ -23,7 +23,7 @@ index 868d0cb..6e92c81 100644
  {
  	unsigned long hash;
 diff --git a/fs/splice.c b/fs/splice.c
-index 740e6b9..9980ddf 100644
+index efdbfec..e01a51e 100644
 --- a/fs/splice.c
 +++ b/fs/splice.c
 @@ -1104,8 +1104,8 @@ EXPORT_SYMBOL(generic_splice_sendpage);
