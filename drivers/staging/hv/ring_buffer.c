@@ -352,8 +352,6 @@ int RingBufferWrite(RING_BUFFER_INFO *OutRingInfo,
 	u64 prevIndices = 0;
 	unsigned long flags;
 
-	DPRINT_ENTER(VMBUS);
-
 	for_each_sg(sglist, sg, sgcount, i)
 	{
 		totalBytesToWrite += sg->length;
@@ -382,9 +380,6 @@ int RingBufferWrite(RING_BUFFER_INFO *OutRingInfo,
 			byteAvailToWrite);
 
 		spin_unlock_irqrestore(&OutRingInfo->ring_lock, flags);
-
-		DPRINT_EXIT(VMBUS);
-
 		return -1;
 	}
 
@@ -416,9 +411,6 @@ int RingBufferWrite(RING_BUFFER_INFO *OutRingInfo,
 	/* DumpRingInfo(OutRingInfo, "AFTER "); */
 
 	spin_unlock_irqrestore(&OutRingInfo->ring_lock, flags);
-
-	DPRINT_EXIT(VMBUS);
-
 	return 0;
 }
 

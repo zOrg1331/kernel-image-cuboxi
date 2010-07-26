@@ -70,16 +70,16 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     SNodeList           sNodeList;
     PSBSSIDList         pList;
     PSNodeList          pNodeList;
-    UINT                cbListCount;
+    unsigned int cbListCount;
     PKnownBSS           pBSS;
     PKnownNodeDB        pNode;
-    UINT                ii, jj;
+    unsigned int ii, jj;
     SCmdLinkStatus      sLinkStatus;
-    BYTE                abySuppRates[] = {WLAN_EID_SUPP_RATES, 4, 0x02, 0x04, 0x0B, 0x16};
-    BYTE                abyNullAddr[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    DWORD               dwKeyIndex= 0;
-    BYTE                abyScanSSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
-    LONG                ldBm;
+    unsigned char abySuppRates[] = {WLAN_EID_SUPP_RATES, 4, 0x02, 0x04, 0x0B, 0x16};
+    unsigned char abyNullAddr[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    unsigned long dwKeyIndex= 0;
+    unsigned char abyScanSSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
+    long                ldBm;
 
     pReq->wResult = 0;
 
@@ -147,7 +147,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
             }
 	else {
           ///////read zonetype
-	  BYTE                       zonetype=0;
+	  unsigned char zonetype=0;
 
 
            if(zonetype == 0x00)  { //USA
@@ -257,7 +257,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
                                     dwKeyIndex,
                                     sWEPCmd.auWepKeyLength[ii],
                                     NULL,
-                                    (PBYTE)&sWEPCmd.abyWepKey[ii][0],
+                                    (unsigned char *)&sWEPCmd.abyWepKey[ii][0],
                                     KEY_CTL_WEP,
                                     pDevice->PortOffset,
                                     pDevice->byLocalID);
@@ -340,8 +340,8 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     		    pList->sBSSIDList[ii].wBeaconInterval = pBSS->wBeaconInterval;
     		    pList->sBSSIDList[ii].wCapInfo = pBSS->wCapInfo;
 //    		    pList->sBSSIDList[ii].uRSSI = pBSS->uRSSI;
-    		    RFvRSSITodBm(pDevice, (BYTE)(pBSS->uRSSI), &ldBm);
-    		    pList->sBSSIDList[ii].uRSSI = (UINT)ldBm;
+    		    RFvRSSITodBm(pDevice, (unsigned char)(pBSS->uRSSI), &ldBm);
+    		    pList->sBSSIDList[ii].uRSSI = (unsigned int)ldBm;
     		    memcpy(pList->sBSSIDList[ii].abyBSSID, pBSS->abyBSSID, WLAN_BSSID_LEN);
     		    pItemSSID = (PWLAN_IE_SSID)pBSS->abySSID;
     		    memset(pList->sBSSIDList[ii].abySSID, 0, WLAN_SSID_MAXLEN + 1);
@@ -635,9 +635,9 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     		    pNodeList->sNodeList[jj].wAID = pNode->wAID;
     		    memcpy(pNodeList->sNodeList[jj].abyMACAddr, pNode->abyMACAddr, WLAN_ADDR_LEN);
     		    pNodeList->sNodeList[jj].wTxDataRate = pNode->wTxDataRate;
-    		    pNodeList->sNodeList[jj].wInActiveCount = (WORD)pNode->uInActiveCount;
-    		    pNodeList->sNodeList[jj].wEnQueueCnt = (WORD)pNode->wEnQueueCnt;
-    		    pNodeList->sNodeList[jj].wFlags = (WORD)pNode->dwFlags;
+    		    pNodeList->sNodeList[jj].wInActiveCount = (unsigned short)pNode->uInActiveCount;
+    		    pNodeList->sNodeList[jj].wEnQueueCnt = (unsigned short)pNode->wEnQueueCnt;
+    		    pNodeList->sNodeList[jj].wFlags = (unsigned short)pNode->dwFlags;
     		    pNodeList->sNodeList[jj].bPWBitOn = pNode->bPSEnable;
     		    pNodeList->sNodeList[jj].byKeyIndex = pNode->byKeyIndex;
     		    pNodeList->sNodeList[jj].wWepKeyLength = pNode->uWepKeyLength;
@@ -652,7 +652,7 @@ int private_ioctl(PSDevice pDevice, struct ifreq *rq) {
     		    pNodeList->sNodeList[jj].bIsInFallback = pNode->bIsInFallback;
     		    pNodeList->sNodeList[jj].uTxFailures = pNode->uTxFailures;
     		    pNodeList->sNodeList[jj].uTxAttempts = pNode->uTxAttempts;
-    		    pNodeList->sNodeList[jj].wFailureRatio = (WORD)pNode->uFailureRatio;
+    		    pNodeList->sNodeList[jj].wFailureRatio = (unsigned short)pNode->uFailureRatio;
     		    jj ++;
     		    if (jj >= pNodeList->uItem)
     		        break;
@@ -717,9 +717,9 @@ if(wpa_Result.authenticated==TRUE) {
 void
 vConfigWEPKey (
     PSDevice pDevice,
-    DWORD    dwKeyIndex,
-    PBYTE    pbyKey,
-    ULONG    uKeyLength
+    unsigned long dwKeyIndex,
+    unsigned char *pbyKey,
+    unsigned long uKeyLength
     )
 {
     int ii;
@@ -732,7 +732,7 @@ vConfigWEPKey (
     pDevice->auWepKeyLength[dwKeyIndex] = uKeyLength;
 
     MACvSetDefaultKeyEntry(pDevice->PortOffset, uKeyLength, dwKeyIndex,
-                           (PDWORD) &(pDevice->abyWepKey[dwKeyIndex][0]), pDevice->byLocalID);
+                           (unsigned long *) &(pDevice->abyWepKey[dwKeyIndex][0]), pDevice->byLocalID);
 
     if (pDevice->eEncryptionStatus < Ndis802_11EncryptionNotSupported) {
         for(ii=0; ii<MAX_GROUP_KEY; ii++) {
