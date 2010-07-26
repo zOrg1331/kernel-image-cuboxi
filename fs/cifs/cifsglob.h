@@ -391,6 +391,7 @@ struct cifsInodeInfo {
 	bool invalid_mapping:1;		/* pagecache is invalid */
 	u64  server_eof;		/* current file size on server */
 	u64  uniqueid;			/* server inode number */
+	u64  createtime;		/* creation time on server */
 #ifdef CONFIG_CIFS_FSCACHE
 	struct fscache_cookie *fscache;
 #endif
@@ -511,6 +512,7 @@ struct cifs_fattr {
 	u64		cf_uniqueid;
 	u64		cf_eof;
 	u64		cf_bytes;
+	u64		cf_createtime;
 	uid_t		cf_uid;
 	gid_t		cf_gid;
 	umode_t		cf_mode;
