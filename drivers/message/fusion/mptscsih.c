@@ -742,7 +742,9 @@ mptscsih_io_done(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_FRAME_HDR *mr)
 				if (ioc_status & MPI_IOCSTATUS_FLAG_LOG_INFO_AVAILABLE) {
 					if ((log_info & SAS_LOGINFO_MASK)
 					    == SAS_LOGINFO_NEXUS_LOSS) {
-						sc->result = (DID_BUS_BUSY << 16);
+						sc->result =
+							(DID_TRANSPORT_DISRUPTED
+							<< 16);
 						break;
 					}
 				}
@@ -1704,8 +1706,9 @@ mptscsih_IssueTaskMgmt(MPT_SCSI_HOST *hd, u8 type, u8 channel, u8 id, int lun,
 
 	CLEAR_MGMT_STATUS(ioc->taskmgmt_cmds.status)
 	if (issue_hard_reset) {
-		printk(MYIOC_s_WARN_FMT "Issuing Reset from %s!!\n",
-			ioc->name, __func__);
+		printk(MYIOC_s_WARN_FMT
+		       "Issuing Reset from %s!! doorbell=0x%08x\n",
+		       ioc->name, __func__, mpt_GetIocState(ioc, 0));
 		retval = mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
 		mpt_free_msg_frame(ioc, mf);
 	}
@@ -2132,6 +2135,8 @@ mptscsih_taskmgmt_complete(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf,
 		mpt_clear_taskmgmt_in_progress_flag(ioc);
 		ioc->taskmgmt_cmds.status &= ~MPT_MGMT_STATUS_PENDING;
 		complete(&ioc->taskmgmt_cmds.done);
+		if (ioc->bus_type == SAS)
+			ioc->schedule_target_reset(ioc);
 		return 1;
 	}
 	return 0;
@@ -2458,6 +2463,8 @@ mptscsih_slave_configure(struct scsi_device *sdev)
 		"tagged %d, simple %d, ordered %d\n",
 		ioc->name,sdev->tagged_supported, sdev->simple_tags,
 		sdev->ordered_tags));
+
+	blk_queue_dma_alignment (sdev->request_queue, 512 - 1);
 
 	return 0;
 }
@@ -3045,8 +3052,11 @@ mptscsih_do_cmd(MPT_SCSI_HOST *hd, INTERNAL_CMD *io)
 			goto out;
 		}
 		if (!timeleft) {
-			printk(MYIOC_s_WARN_FMT "Issuing Reset from %s!!\n",
-			    ioc->name, __func__);
+			printk(MYIOC_s_WARN_FMT
+			       "Issuing Reset from %s!! doorbell=0x%08xh"
+			       " cmd=0x%02x\n",
+			       ioc->name, __func__, mpt_GetIocState(ioc, 0),
+			       cmd);
 			mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
 			mpt_free_msg_frame(ioc, mf);
 		}
