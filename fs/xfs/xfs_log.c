@@ -24,8 +24,6 @@
 #include "xfs_trans.h"
 #include "xfs_sb.h"
 #include "xfs_ag.h"
-#include "xfs_dir2.h"
-#include "xfs_dmapi.h"
 #include "xfs_mount.h"
 #include "xfs_error.h"
 #include "xfs_log_priv.h"
@@ -35,8 +33,6 @@
 #include "xfs_ialloc_btree.h"
 #include "xfs_log_recover.h"
 #include "xfs_trans_priv.h"
-#include "xfs_dir2_sf.h"
-#include "xfs_attr_sf.h"
 #include "xfs_dinode.h"
 #include "xfs_inode.h"
 #include "xfs_rw.h"
@@ -337,7 +333,6 @@ xfs_log_reserve(
 	int			retval = 0;
 
 	ASSERT(client == XFS_TRANSACTION || client == XFS_LOG);
-	ASSERT((flags & XFS_LOG_NOSLEEP) == 0);
 
 	if (XLOG_FORCED_SHUTDOWN(log))
 		return XFS_ERROR(EIO);
@@ -552,7 +547,7 @@ xfs_log_unmount_write(xfs_mount_t *mp)
 				.magic = XLOG_UNMOUNT_TYPE,
 			};
 			struct xfs_log_iovec reg = {
-				.i_addr = (void *)&magic,
+				.i_addr = &magic,
 				.i_len = sizeof(magic),
 				.i_type = XLOG_REG_TYPE_UNMOUNT,
 			};
@@ -1428,11 +1423,8 @@ xlog_sync(xlog_t		*log,
 	XFS_BUF_BUSY(bp);
 	XFS_BUF_ASYNC(bp);
 	bp->b_flags |= XBF_LOG_BUFFER;
-	/*
-	 * Do an ordered write for the log block.
-	 * Its unnecessary to flush the first split block in the log wrap case.
-	 */
-	if (!split && (log->l_mp->m_flags & XFS_MOUNT_BARRIER))
+
+	if (log->l_mp->m_flags & XFS_MOUNT_BARRIER)
 		XFS_BUF_ORDERED(bp);
 
 	ASSERT(XFS_BUF_ADDR(bp) <= log->l_logBBsize-1);
