@@ -128,6 +128,7 @@ extern const struct file_operations fw_device_ops;
 
 void fw_device_cdev_update(struct fw_device *device);
 void fw_device_cdev_remove(struct fw_device *device);
+void fw_cdev_handle_phy_packet(struct fw_card *card, struct fw_packet *p);
 
 
 /* -device */
@@ -214,6 +215,7 @@ static inline bool is_next_generation(int new_generation, int old_generation)
 
 #define TCODE_IS_READ_REQUEST(tcode)	(((tcode) & ~1) == 4)
 #define TCODE_IS_BLOCK_PACKET(tcode)	(((tcode) &  1) != 0)
+#define TCODE_IS_LINK_INTERNAL(tcode)	((tcode) == 0xe)
 #define TCODE_IS_REQUEST(tcode)		(((tcode) &  2) == 0)
 #define TCODE_IS_RESPONSE(tcode)	(((tcode) &  2) != 0)
 #define TCODE_HAS_REQUEST_DATA(tcode)	(((tcode) & 12) != 4)
@@ -231,5 +233,10 @@ void fw_fill_response(struct fw_packet *response, u32 *request_header,
 #define FW_PHY_CONFIG_CURRENT_GAP_COUNT	-1
 void fw_send_phy_config(struct fw_card *card,
 			int node_id, int generation, int gap_count);
+
+static inline bool is_ping_packet(u32 *data)
+{
+	return (data[0] & 0xc0ffffff) == 0 && ~data[0] == data[1];
+}
 
 #endif /* _FIREWIRE_CORE_H */
