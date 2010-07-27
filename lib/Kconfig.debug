@@ -445,6 +445,16 @@ config RT_MUTEX_TESTER
 	help
 	  This option enables a rt-mutex tester.
 
+config TTY_MUTEX
+	bool "Use a mutex instead of BKL for TTY locking"
+	depends on EXPERIMENTAL && SMP
+	help
+	  The TTY subsystem traditionally depends on the big kernel lock
+	  for serialization. Saying Y here replaces the BKL with the Big
+	  TTY Mutex (BTM).
+	  Building a kernel without the BKL is only possible with TTY_MUTEX
+	  enabled.
+
 config DEBUG_SPINLOCK
 	bool "Spinlock and rw-lock debugging: basic checks"
 	depends on DEBUG_KERNEL
