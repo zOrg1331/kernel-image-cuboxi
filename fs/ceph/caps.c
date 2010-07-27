@@ -337,8 +337,7 @@ static struct ceph_cap *__get_cap_for_mds(struct ceph_inode_info *ci, int mds)
 }
 
 /*
- * Return id of any MDS with a cap, preferably FILE_WR|WRBUFFER|EXCL, else
- * -1.
+ * Return id of any MDS with a cap, preferably FILE_WR|BUFFER|EXCL, else -1.
  */
 static int __ceph_get_cap_mds(struct ceph_inode_info *ci, u32 *mseq)
 {
@@ -346,7 +345,7 @@ static int __ceph_get_cap_mds(struct ceph_inode_info *ci, u32 *mseq)
 	int mds = -1;
 	struct rb_node *p;
 
-	/* prefer mds with WR|WRBUFFER|EXCL caps */
+	/* prefer mds with WR|BUFFER|EXCL caps */
 	for (p = rb_first(&ci->i_caps); p; p = rb_next(p)) {
 		cap = rb_entry(p, struct ceph_cap, ci_node);
 		mds = cap->mds;
@@ -483,8 +482,8 @@ static void __check_cap_issue(struct ceph_inode_info *ci, struct ceph_cap *cap,
 	 * Each time we receive FILE_CACHE anew, we increment
 	 * i_rdcache_gen.
 	 */
-	if ((issued & CEPH_CAP_FILE_CACHE) &&
-	    (had & CEPH_CAP_FILE_CACHE) == 0)
+	if ((issued & (CEPH_CAP_FILE_CACHE|CEPH_CAP_FILE_LAZYIO)) &&
+	    (had & (CEPH_CAP_FILE_CACHE|CEPH_CAP_FILE_LAZYIO)) == 0)
 		ci->i_rdcache_gen++;
 
 	/*
@@ -831,7 +830,7 @@ int __ceph_caps_file_wanted(struct ceph_inode_info *ci)
 {
 	int want = 0;
 	int mode;
-	for (mode = 0; mode < 4; mode++)
+	for (mode = 0; mode < CEPH_FILE_MODE_NUM; mode++)
 		if (ci->i_nr_by_mode[mode])
 			want |= ceph_caps_for_mode(mode);
 	return want;
@@ -1347,7 +1346,7 @@ void __ceph_mark_dirty_caps(struct ceph_inode_info *ci, int mask)
  * Add dirty inode to the flushing list.  Assigned a seq number so we
  * can wait for caps to flush without starving.
  *
- * Called under i_lock.
+ * Called under i_lock, s_mutex
  */
 static int __mark_caps_flushing(struct inode *inode,
 				 struct ceph_mds_session *session)
@@ -1510,11 +1509,13 @@ retry_locked:
 	    ci->i_wrbuffer_ref == 0 &&               /* no dirty pages... */
 	    ci->i_rdcache_gen &&                     /* may have cached pages */
 	    (file_wanted == 0 ||                     /* no open files */
-	     (revoking & CEPH_CAP_FILE_CACHE)) &&     /*  or revoking cache */
+	     (revoking & (CEPH_CAP_FILE_CACHE|
+			  CEPH_CAP_FILE_LAZYIO))) && /*  or revoking cache */
 	    !tried_invalidate) {
 		dout("check_caps trying to invalidate on %p\n", inode);
 		if (try_nonblocking_invalidate(inode) < 0) {
-			if (revoking & CEPH_CAP_FILE_CACHE) {
+			if (revoking & (CEPH_CAP_FILE_CACHE|
+					CEPH_CAP_FILE_LAZYIO)) {
 				dout("check_caps queuing invalidate\n");
 				queue_invalidate = 1;
 				ci->i_rdcache_revoking = ci->i_rdcache_gen;
@@ -1880,8 +1881,16 @@ static void kick_flushing_capsnaps(struct ceph_mds_client *mdsc,
 			     cap, capsnap);
 			__ceph_flush_snaps(ci, &session);
 		} else {
+			struct rb_node *p;
+		
 			pr_err("%p auth cap %p not mds%d ???\n", inode,
 			       cap, session->s_mds);
+			for (p = rb_first(&ci->i_caps); p; p = rb_next(p)) {
+				struct ceph_cap *t =
+					rb_entry(p, struct ceph_cap, ci_node);
+				pr_info(" %p cap %p mds%d\n", inode, t,
+					t->session ? t->session->s_mds : -1);
+			}
 		}
 		spin_unlock(&inode->i_lock);
 	}
@@ -1916,8 +1925,15 @@ void ceph_kick_flushing_caps(struct ceph_mds_client *mdsc,
 				spin_unlock(&inode->i_lock);
 			}
 		} else {
+			struct rb_node *p;
 			pr_err("%p auth cap %p not mds%d ???\n", inode,
 			       cap, session->s_mds);
+			for (p = rb_first(&ci->i_caps); p; p = rb_next(p)) {
+				struct ceph_cap *t =
+					rb_entry(p, struct ceph_cap, ci_node);
+				pr_info(" %p cap %p mds%d\n", inode, t,
+					t->session ? t->session->s_mds : -1);
+			}
 			spin_unlock(&inode->i_lock);
 		}
 	}
@@ -2277,7 +2293,8 @@ static void handle_cap_grant(struct inode *inode, struct ceph_mds_caps *grant,
 	 * try to invalidate (once).  (If there are dirty buffers, we
 	 * will invalidate _after_ writeback.)
 	 */
-	if (((cap->issued & ~newcaps) & CEPH_CAP_FILE_CACHE) &&
+	if (((cap->issued & ~newcaps) & (CEPH_CAP_FILE_CACHE|
+					 CEPH_CAP_FILE_LAZYIO)) &&
 	    !ci->i_wrbuffer_ref) {
 		if (try_nonblocking_invalidate(inode) == 0) {
 			revoked_rdcache = 1;
@@ -2375,7 +2392,8 @@ static void handle_cap_grant(struct inode *inode, struct ceph_mds_caps *grant,
 			writeback = 1; /* will delay ack */
 		else if (dirty & ~newcaps)
 			check_caps = 1;  /* initiate writeback in check_caps */
-		else if (((used & ~newcaps) & CEPH_CAP_FILE_CACHE) == 0 ||
+		else if (((used & ~newcaps) & (CEPH_CAP_FILE_CACHE|
+					       CEPH_CAP_FILE_LAZYIO)) == 0 ||
 			   revoked_rdcache)
 			check_caps = 2;     /* send revoke ack in check_caps */
 		cap->issued = newcaps;
