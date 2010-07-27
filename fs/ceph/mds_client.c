@@ -2031,7 +2031,8 @@ static void handle_reply(struct ceph_mds_session *session, struct ceph_msg *msg)
 		list_add_tail(&req->r_unsafe_item, &req->r_session->s_unsafe);
 	}
 
-	dout("handle_reply tid %lld result %d\n", tid, result);
+	dout("handle_reply tid %lld result %d (%s)\n", tid, result,
+             (head->safe ? "safe" : "unsafe"));
 	rinfo = &req->r_reply_info;
 	err = parse_reply_info(msg, rinfo);
 	mutex_unlock(&mdsc->mutex);
