@@ -549,16 +549,6 @@ Who:	Avi Kivity <avi@redhat.com>
 
 ----------------------------
 
-What:	xtime, wall_to_monotonic
-When:	2.6.36+
-Files:	kernel/time/timekeeping.c include/linux/time.h
-Why:	Cleaning up timekeeping internal values. Please use
-	existing timekeeping accessor functions to access
-	the equivalent functionality.
-Who:	John Stultz <johnstul@us.ibm.com>
-
-----------------------------
-
 What:	KVM kernel-allocated memory slots
 When:	July 2010
 Why:	Since 2.6.25, kvm supports user-allocated memory slots, which are
@@ -647,3 +637,10 @@ Who:	Stefan Richter <stefanr@s5r6.in-berlin.de>
 
 ----------------------------
 
+What:	The acpi_sleep=s4_nonvs command line option
+When:	2.6.37
+Files:	arch/x86/kernel/acpi/sleep.c
+Why:	superseded by acpi_sleep=nonvs
+Who:	Rafael J. Wysocki <rjw@sisk.pl>
+
+----------------------------
