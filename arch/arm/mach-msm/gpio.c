@@ -71,15 +71,47 @@ void msm_gpios_disable(const struct msm_gpio *table, int size)
 }
 EXPORT_SYMBOL(msm_gpios_disable);
 
+int msm_gpios_request(const struct msm_gpio *table, int size)
+{
+	int i, result;
+
+	for (i = 0; i < size; ++i) {
+		result = gpio_request(GPIO_PIN(table[i].gpio_cfg),
+				      table[i].label);
+		if (result < 0)
+			goto err;
+	}
+
+	return 0;
+err:
+	msm_gpios_free(table, i);
+	return result;
+}
+EXPORT_SYMBOL(msm_gpios_request);
+
+void msm_gpios_free(const struct msm_gpio *table, int size)
+{
+	int i;
+
+	for (i = 0; i < size; ++i)
+		gpio_free(GPIO_PIN(table[i].gpio_cfg));
+}
+EXPORT_SYMBOL(msm_gpios_free);
+
 int msm_gpios_request_enable(const struct msm_gpio *table, int size)
 {
 	int rc = msm_gpios_enable(table, size);
+
+	if (rc == 0)
+		rc = msm_gpios_request(table, size);
+
 	return rc;
 }
 EXPORT_SYMBOL(msm_gpios_request_enable);
 
 void msm_gpios_disable_free(const struct msm_gpio *table, int size)
 {
+	msm_gpios_free(table, size);
 	msm_gpios_disable(table, size);
 }
 EXPORT_SYMBOL(msm_gpios_disable_free);
