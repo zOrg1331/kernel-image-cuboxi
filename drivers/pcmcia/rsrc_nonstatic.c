@@ -28,7 +28,6 @@
 
 #include <asm/irq.h>
 
-#include <pcmcia/cs_types.h>
 #include <pcmcia/ss.h>
 #include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
@@ -1055,8 +1054,6 @@ struct pccard_resource_ops pccard_nonstatic_ops = {
 	.validate_mem = pcmcia_nonstatic_validate_mem,
 	.find_io = nonstatic_find_io,
 	.find_mem = nonstatic_find_mem_region,
-	.add_io = adjust_io,
-	.add_mem = adjust_memory,
 	.init = nonstatic_init,
 	.exit = nonstatic_release_resource_db,
 };
@@ -1115,8 +1112,6 @@ static ssize_t store_io_db(struct device *dev,
 
 	mutex_lock(&s->ops_mutex);
 	ret = adjust_io(s, add, start_addr, end_addr);
-	if (!ret)
-		s->resource_setup_new = 1;
 	mutex_unlock(&s->ops_mutex);
 
 	return ret ? ret : count;
@@ -1183,8 +1178,6 @@ static ssize_t store_mem_db(struct device *dev,
 
 	mutex_lock(&s->ops_mutex);
 	ret = adjust_memory(s, add, start_addr, end_addr);
-	if (!ret)
-		s->resource_setup_new = 1;
 	mutex_unlock(&s->ops_mutex);
 
 	return ret ? ret : count;
