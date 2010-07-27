@@ -991,9 +991,6 @@ static int m2mtest_probe(struct platform_device *pdev)
 	q_data[V4L2_M2M_SRC].fmt = &formats[0];
 	q_data[V4L2_M2M_DST].fmt = &formats[0];
 
-	q_data[V4L2_M2M_SRC].fmt = &formats[0];
-	q_data[V4L2_M2M_DST].fmt = &formats[0];
-
 	return 0;
 
 err_m2m:
