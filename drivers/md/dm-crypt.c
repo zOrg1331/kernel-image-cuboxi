@@ -1168,12 +1168,11 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	if (ivmode && cc->iv_gen_ops) {
 		if (ivopts)
 			*(ivopts - 1) = ':';
-		cc->iv_mode = kmalloc(strlen(ivmode) + 1, GFP_KERNEL);
+		cc->iv_mode = kstrdup(ivmode, GFP_KERNEL);
 		if (!cc->iv_mode) {
 			ti->error = "Error kmallocing iv_mode string";
 			goto bad_ivmode_string;
 		}
-		strcpy(cc->iv_mode, ivmode);
 	} else
 		cc->iv_mode = NULL;
 
@@ -1255,7 +1254,7 @@ static int crypt_map(struct dm_target *ti, struct bio *bio,
 		return DM_MAPIO_REMAPPED;
 	}
 
-	io = crypt_io_alloc(ti, bio, bio->bi_sector - ti->begin);
+	io = crypt_io_alloc(ti, bio, dm_target_offset(ti, bio->bi_sector));
 
 	if (bio_data_dir(io->base_bio) == READ)
 		kcryptd_queue_io(io);
@@ -1378,7 +1377,7 @@ static int crypt_merge(struct dm_target *ti, struct bvec_merge_data *bvm,
 		return max_size;
 
 	bvm->bi_bdev = cc->dev->bdev;
-	bvm->bi_sector = cc->start + bvm->bi_sector - ti->begin;
+	bvm->bi_sector = cc->start + dm_target_offset(ti, bvm->bi_sector);
 
 	return min(max_size, q->merge_bvec_fn(q, bvm, biovec));
 }
