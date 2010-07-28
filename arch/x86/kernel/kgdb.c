@@ -572,10 +572,10 @@ static int __kgdb_notify(struct die_args *args, unsigned long cmd)
 	return NOTIFY_STOP;
 }
 
-#ifdef CONFIG_KGDB_LOW_LEVEL_TRAP
 int kgdb_ll_trap(int cmd, const char *str,
 		 struct pt_regs *regs, long err, int trap, int sig)
 {
+	unsigned long flags;
 	struct die_args args = {
 		.regs	= regs,
 		.str	= str,
@@ -588,9 +588,10 @@ int kgdb_ll_trap(int cmd, const char *str,
 	if (!kgdb_io_module_registered)
 		return NOTIFY_DONE;
 
+	local_irq_save(flags);
 	return __kgdb_notify(&args, cmd);
+	local_irq_restore(flags);
 }
-#endif /* CONFIG_KGDB_LOW_LEVEL_TRAP */
 
 static int
 kgdb_notify(struct notifier_block *self, unsigned long cmd, void *ptr)
@@ -625,6 +626,12 @@ int kgdb_arch_init(void)
 	return register_die_notifier(&kgdb_notifier);
 }
 
+static void kgdb_hw_overflow_handler(struct perf_event *event, int nmi,
+		struct perf_sample_data *data, struct pt_regs *regs)
+{
+	kgdb_ll_trap(DIE_DEBUG, "debug", regs, 0, 0, SIGTRAP);
+}
+
 void kgdb_arch_late(void)
 {
 	int i, cpu;
@@ -655,6 +662,7 @@ void kgdb_arch_late(void)
 		for_each_online_cpu(cpu) {
 			pevent = per_cpu_ptr(breakinfo[i].pev, cpu);
 			pevent[0]->hw.sample_period = 1;
+			pevent[0]->overflow_handler = kgdb_hw_overflow_handler;
 			if (pevent[0]->destroy != NULL) {
 				pevent[0]->destroy = NULL;
 				release_bp_slot(*pevent);
