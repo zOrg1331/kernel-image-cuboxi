@@ -24,6 +24,7 @@ export VARIANT
 # Platform configuration
 
 platform-$(CONFIG_XTENSA_PLATFORM_XT2000)	:= xt2000
+platform-$(CONFIG_XTENSA_PLATFORM_XTAVNET)	:= xtavnet
 platform-$(CONFIG_XTENSA_PLATFORM_ISS)		:= iss
 platform-$(CONFIG_XTENSA_PLATFORM_S6105)	:= s6105
 
@@ -34,6 +35,8 @@ export PLATFORM
 KBUILD_CFLAGS += -ffreestanding
 
 KBUILD_CFLAGS += -pipe -mlongcalls
+
+KBUILD_CFLAGS += $(call cc-option,-mforce-no-pic,)
 
 vardirs := $(patsubst %,arch/xtensa/variants/%/,$(variant-y))
 plfdirs := $(patsubst %,arch/xtensa/platforms/%/,$(platform-y))
@@ -59,7 +62,9 @@ ifneq ($(VARIANT),)
 
   ifneq ($(COMPILE_ARCH), xtensa)
     ifndef CROSS_COMPILE
-      CROSS_COMPILE = xtensa_$(VARIANT)-
+      CROSS_COMPILE := $(call cc-cross-prefix, xtensa_$(VARIANT)- \
+			 xtensa-linux-uclibc-  xtensa_$(VARIANT)-linux-uclibc- \
+			 xtensa-linux-gnu-     xtensa_$(VARIANT)-linux-gnu-)
     endif
   endif
 endif
