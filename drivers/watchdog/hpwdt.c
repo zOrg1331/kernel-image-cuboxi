@@ -659,6 +659,7 @@ static int __devinit hpwdt_init_one(struct pci_dev *dev,
 					const struct pci_device_id *ent)
 {
 	int retval;
+	char *buf;
 
 	/*
 	 * Check if we can do NMI sourcing or not
@@ -742,14 +743,17 @@ static int __devinit hpwdt_init_one(struct pci_dev *dev,
 		goto error_misc_register;
 	}
 
-	printk(KERN_INFO
-		"hp Watchdog Timer Driver: %s"
-		", timer margin: %d seconds (nowayout=%d)"
-		", allow kernel dump: %s (default = 0/OFF)"
-		", priority: %s (default = 0/LAST).\n",
-		HPWDT_VERSION, soft_margin, nowayout,
-		(allow_kdump == 0) ? "OFF" : "ON",
-		(priority == 0) ? "LAST" : "FIRST");
+	buf = kasprintf(GFP_KERNEL, "hp Watchdog Timer Driver: %s"
+			", timer margin: %d seconds (nowayout=%d)"
+			", allow kernel dump: %s (default = 0/OFF)"
+			", priority: %s (default = 0/LAST)",
+			HPWDT_VERSION, soft_margin, nowayout,
+			(allow_kdump == 0) ? "OFF" : "ON",
+			(priority == 0) ? "LAST" : "FIRST");
+	if (!buf)
+		goto error_nomem;
+	dev_info(&dev->dev, "%s.\n", buf);
+	kfree(buf);
 
 	return 0;
 
@@ -762,6 +766,7 @@ error_get_cru:
 	pci_iounmap(dev, pci_mem_addr);
 error_pci_iomap:
 	pci_disable_device(dev);
+error_nomem:
 	return retval;
 }
 
