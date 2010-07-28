@@ -73,12 +73,10 @@ static void pciback_disconnect(struct pciback_device *pdev)
 
 static void free_pdev(struct pciback_device *pdev)
 {
-	spin_lock(&pdev->dev_lock);
 	if (pdev->be_watching) {
 		unregister_xenbus_watch(&pdev->be_watch);
 		pdev->be_watching = 0;
 	}
-	spin_unlock(&pdev->dev_lock);
 
 	pciback_disconnect(pdev);
 
@@ -675,9 +673,7 @@ static int pciback_xenbus_probe(struct xenbus_device *dev,
 	if (err)
 		goto out;
 
-	spin_lock(&pdev->dev_lock);
 	pdev->be_watching = 1;
-	spin_unlock(&pdev->dev_lock);
 
 	/* We need to force a call to our callback here in case
 	 * xend already configured us!
