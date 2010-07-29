@@ -32,11 +32,13 @@
 #define CSR_CYCLE_TIME			0x200
 #define CSR_BUS_TIME			0x204
 #define CSR_BUSY_TIMEOUT		0x210
+#define CSR_PRIORITY_BUDGET		0x218
 #define CSR_BUS_MANAGER_ID		0x21c
 #define CSR_BANDWIDTH_AVAILABLE		0x220
 #define CSR_CHANNELS_AVAILABLE		0x224
 #define CSR_CHANNELS_AVAILABLE_HI	0x224
 #define CSR_CHANNELS_AVAILABLE_LO	0x228
+#define CSR_MAINT_UTILITY		0x230
 #define CSR_BROADCAST_CHANNEL		0x234
 #define CSR_CONFIG_ROM			0x400
 #define CSR_CONFIG_ROM_END		0x800
@@ -89,6 +91,11 @@ struct fw_card {
 	struct list_head transaction_list;
 	unsigned long reset_jiffies;
 
+	u32 split_timeout_hi;
+	u32 split_timeout_lo;
+	unsigned int split_timeout_cycles;
+	unsigned int split_timeout_jiffies;
+
 	unsigned long long guid;
 	unsigned max_receive;
 	int link_speed;
@@ -104,18 +111,28 @@ struct fw_card {
 	bool beta_repeaters_present;
 
 	int index;
-
 	struct list_head link;
 
-	/* Work struct for BM duties. */
-	struct delayed_work work;
+	struct list_head phy_receiver_list;
+
+	struct delayed_work br_work; /* bus reset job */
+	bool br_short;
+
+	struct delayed_work bm_work; /* bus manager job */
 	int bm_retries;
 	int bm_generation;
 	__be32 bm_transaction_data[2];
+	int bm_node_id;
+	bool bm_abdicate;
+
+	bool priority_budget_implemented;	/* controller feature */
+	bool broadcast_channel_auto_allocated;	/* controller feature */
 
 	bool broadcast_channel_allocated;
 	u32 broadcast_channel;
 	__be32 topology_map[(CSR_TOPOLOGY_MAP_END - CSR_TOPOLOGY_MAP) / 4];
+
+	__be32 maint_utility_register;
 };
 
 struct fw_attribute_group {
@@ -252,7 +269,7 @@ typedef void (*fw_transaction_callback_t)(struct fw_card *card, int rcode,
 typedef void (*fw_address_callback_t)(struct fw_card *card,
 				      struct fw_request *request,
 				      int tcode, int destination, int source,
-				      int generation, int speed,
+				      int generation,
 				      unsigned long long offset,
 				      void *data, size_t length,
 				      void *callback_data);
@@ -269,10 +286,10 @@ struct fw_packet {
 	u32 timestamp;
 
 	/*
-	 * This callback is called when the packet transmission has
-	 * completed; for successful transmission, the status code is
-	 * the ack received from the destination, otherwise it's a
-	 * negative errno: ENOMEM, ESTALE, ETIMEDOUT, ENODEV, EIO.
+	 * This callback is called when the packet transmission has completed.
+	 * For successful transmission, the status code is the ack received
+	 * from the destination.  Otherwise it is one of the juju-specific
+	 * rcodes:  RCODE_SEND_ERROR, _CANCELLED, _BUSY, _GENERATION, _NO_ACK.
 	 * The callback can be called from tasklet context and thus
 	 * must never block.
 	 */
