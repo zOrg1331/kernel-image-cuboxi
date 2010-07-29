@@ -181,6 +181,11 @@ int cx88_i2c_init(struct cx88_core *core, struct pci_dev *pci)
 	} else
 		printk("%s: i2c register FAILED\n", core->name);
 
+	return core->i2c_rc;
+}
+
+void cx88_i2c_init_ir(struct cx88_core *core)
+{
 	/* Instantiate the IR receiver device, if present */
 	if (0 == core->i2c_rc) {
 		struct i2c_board_info info;
@@ -196,7 +201,6 @@ int cx88_i2c_init(struct cx88_core *core, struct pci_dev *pci)
 		i2c_new_probed_device(&core->i2c_adap, &info, addr_list,
 				      i2c_probe_func_quick_read);
 	}
-	return core->i2c_rc;
 }
 
 /* ----------------------------------------------------------------------- */
