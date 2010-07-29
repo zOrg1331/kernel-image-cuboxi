@@ -33,8 +33,11 @@
 #include <plat/clock.h>
 #include <plat/s5pv210.h>
 #include <plat/adc-core.h>
+#include <plat/ata-core.h>
 #include <plat/iic-core.h>
+#include <plat/keypad-core.h>
 #include <plat/sdhci.h>
+#include <plat/reset.h>
 
 /* Initial IO mappings */
 
@@ -70,6 +73,11 @@ static void s5pv210_idle(void)
 	local_irq_enable();
 }
 
+static void s5pv210_sw_reset(void)
+{
+	__raw_writel(0x1, S5P_SWRESET);
+}
+
 /* s5pv210_map_io
  *
  * register the standard cpu IO areas
@@ -83,6 +91,9 @@ void __init s5pv210_map_io(void)
 	s5pv210_default_sdhci0();
 	s5pv210_default_sdhci1();
 	s5pv210_default_sdhci2();
+	s5pv210_default_sdhci3();
+
+	s3c_cfcon_setname("s5pv210-pata");
 
 	s3c_adc_setname("s3c64xx-adc");
 
@@ -90,6 +101,9 @@ void __init s5pv210_map_io(void)
 	s3c_i2c0_setname("s3c2440-i2c");
 	s3c_i2c1_setname("s3c2440-i2c");
 	s3c_i2c2_setname("s3c2440-i2c");
+
+	/* Use s5pv210-keypad instead of samsung-keypad */
+	samsung_keypad_setname("s5pv210-keypad");
 }
 
 void __init s5pv210_init_clocks(int xtal)
@@ -136,6 +150,9 @@ int __init s5pv210_init(void)
 
 	/* set idle function */
 	pm_idle = s5pv210_idle;
+
+	/* set sw_reset function */
+	s5p_reset_hook = s5pv210_sw_reset;
 
 	return sysdev_register(&s5pv210_sysdev);
 }
