@@ -510,13 +510,12 @@ void ath_deinit_leds(struct ath_softc *sc);
 #define SC_OP_BEACONS                BIT(1)
 #define SC_OP_RXAGGR                 BIT(2)
 #define SC_OP_TXAGGR                 BIT(3)
-#define SC_OP_FULL_RESET             BIT(4)
 #define SC_OP_PREAMBLE_SHORT         BIT(5)
 #define SC_OP_PROTECT_ENABLE         BIT(6)
 #define SC_OP_RXFLUSH                BIT(7)
 #define SC_OP_LED_ASSOCIATED         BIT(8)
 #define SC_OP_LED_ON                 BIT(9)
-#define SC_OP_SCANNING               BIT(10)
+#define SC_OP_OFFCHANNEL             BIT(10)
 #define SC_OP_TSF_RESET              BIT(11)
 #define SC_OP_BT_PRIORITY_DETECTED   BIT(12)
 #define SC_OP_BT_SCAN		     BIT(13)
@@ -609,6 +608,7 @@ struct ath_softc {
 struct ath_wiphy {
 	struct ath_softc *sc; /* shared for all virtual wiphys */
 	struct ieee80211_hw *hw;
+	struct ath9k_hw_cal_data caldata;
 	enum ath_wiphy_state {
 		ATH_WIPHY_INACTIVE,
 		ATH_WIPHY_ACTIVE,
@@ -687,7 +687,7 @@ bool ath9k_all_wiphys_idle(struct ath_softc *sc);
 void ath9k_set_wiphy_idle(struct ath_wiphy *aphy, bool idle);
 
 void ath_mac80211_stop_queue(struct ath_softc *sc, u16 skb_queue);
-void ath_mac80211_start_queue(struct ath_softc *sc, u16 skb_queue);
+bool ath_mac80211_start_queue(struct ath_softc *sc, u16 skb_queue);
 
 void ath_start_rfkill_poll(struct ath_softc *sc);
 extern void ath9k_rfkill_poll_state(struct ieee80211_hw *hw);

@@ -125,6 +125,7 @@ static int ath9k_htc_set_channel(struct ath9k_htc_priv *priv,
 	struct ieee80211_conf *conf = &common->hw->conf;
 	bool fastcc = true;
 	struct ieee80211_channel *channel = hw->conf.channel;
+	struct ath9k_hw_cal_data *caldata;
 	enum htc_phymode mode;
 	__be16 htc_mode;
 	u8 cmd_rsp;
@@ -149,7 +150,8 @@ static int ath9k_htc_set_channel(struct ath9k_htc_priv *priv,
 		  priv->ah->curchan->channel,
 		  channel->center_freq, conf_is_ht(conf), conf_is_ht40(conf));
 
-	ret = ath9k_hw_reset(ah, hchan, fastcc);
+	caldata = &priv->caldata[channel->hw_value];
+	ret = ath9k_hw_reset(ah, hchan, caldata, fastcc);
 	if (ret) {
 		ath_print(common, ATH_DBG_FATAL,
 			  "Unable to reset channel (%u Mhz) "
@@ -524,6 +526,9 @@ static ssize_t read_file_tgt_stats(struct file *file, char __user *user_buf,
 	len += snprintf(buf + len, sizeof(buf) - len,
 			"%19s : %10u\n", "TX Rate", priv->debug.txrate);
 
+	if (len > sizeof(buf))
+		len = sizeof(buf);
+
 	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
 }
 
@@ -569,6 +574,9 @@ static ssize_t read_file_xmit(struct file *file, char __user *user_buf,
 			"%20s : %10u\n", "VO queued",
 			priv->debug.tx_stats.queue_stats[WME_AC_VO]);
 
+	if (len > sizeof(buf))
+		len = sizeof(buf);
+
 	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
 }
 
@@ -594,6 +602,9 @@ static ssize_t read_file_recv(struct file *file, char __user *user_buf,
 	len += snprintf(buf + len, sizeof(buf) - len,
 			"%20s : %10u\n", "SKBs Dropped",
 			priv->debug.rx_stats.skb_dropped);
+
+	if (len > sizeof(buf))
+		len = sizeof(buf);
 
 	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
 }
@@ -1019,7 +1030,7 @@ static void ath9k_htc_radio_enable(struct ieee80211_hw *hw)
 		ah->curchan = ath9k_cmn_get_curchannel(hw, ah);
 
 	/* Reset the HW */
-	ret = ath9k_hw_reset(ah, ah->curchan, false);
+	ret = ath9k_hw_reset(ah, ah->curchan, ah->caldata, false);
 	if (ret) {
 		ath_print(common, ATH_DBG_FATAL,
 			  "Unable to reset hardware; reset status %d "
@@ -1082,7 +1093,7 @@ static void ath9k_htc_radio_disable(struct ieee80211_hw *hw)
 		ah->curchan = ath9k_cmn_get_curchannel(hw, ah);
 
 	/* Reset the HW */
-	ret = ath9k_hw_reset(ah, ah->curchan, false);
+	ret = ath9k_hw_reset(ah, ah->curchan, ah->caldata, false);
 	if (ret) {
 		ath_print(common, ATH_DBG_FATAL,
 			  "Unable to reset hardware; reset status %d "
@@ -1170,7 +1181,7 @@ static int ath9k_htc_start(struct ieee80211_hw *hw)
 	ath9k_hw_configpcipowersave(ah, 0, 0);
 
 	ath9k_hw_htc_resetinit(ah);
-	ret = ath9k_hw_reset(ah, init_channel, false);
+	ret = ath9k_hw_reset(ah, init_channel, ah->caldata, false);
 	if (ret) {
 		ath_print(common, ATH_DBG_FATAL,
 			  "Unable to reset hardware; reset status %d "
