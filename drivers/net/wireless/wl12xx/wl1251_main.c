@@ -124,15 +124,13 @@ static int wl1251_fetch_nvs(struct wl1251 *wl)
 	}
 
 	wl->nvs_len = fw->size;
-	wl->nvs = kmalloc(wl->nvs_len, GFP_KERNEL);
+	wl->nvs = kmemdup(fw->data, wl->nvs_len, GFP_KERNEL);
 
 	if (!wl->nvs) {
 		wl1251_error("could not allocate memory for the nvs file");
 		ret = -ENOMEM;
 		goto out;
 	}
-
-	memcpy(wl->nvs, fw->data, wl->nvs_len);
 
 	ret = 0;
 
@@ -1419,5 +1417,4 @@ EXPORT_SYMBOL_GPL(wl1251_free_hw);
 MODULE_DESCRIPTION("TI wl1251 Wireles LAN Driver Core");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Kalle Valo <kalle.valo@nokia.com>");
-MODULE_ALIAS("spi:wl1251");
 MODULE_FIRMWARE(WL1251_FW_NAME);
