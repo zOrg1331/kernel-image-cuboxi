@@ -70,6 +70,7 @@ struct hist_entry *__hists__add_entry(struct hists *self,
 			.map	= al->map,
 			.sym	= al->sym,
 		},
+		.cpu	= al->cpu,
 		.ip	= al->addr,
 		.level	= al->level,
 		.period	= period,
@@ -805,6 +806,21 @@ enum hist_filter {
 	HIST_FILTER__THREAD,
 };
 
+static void hists__remove_entry_filter(struct hists *self, struct hist_entry *h,
+				       enum hist_filter filter)
+{
+	h->filtered &= ~(1 << filter);
+	if (h->filtered)
+		return;
+
+	++self->nr_entries;
+	self->stats.total_period += h->period;
+	self->stats.nr_events[PERF_RECORD_SAMPLE] += h->nr_events;
+
+	if (h->ms.sym && self->max_sym_namelen < h->ms.sym->namelen)
+		self->max_sym_namelen = h->ms.sym->namelen;
+}
+
 void hists__filter_by_dso(struct hists *self, const struct dso *dso)
 {
 	struct rb_node *nd;
@@ -824,15 +840,7 @@ void hists__filter_by_dso(struct hists *self, const struct dso *dso)
 			continue;
 		}
 
-		h->filtered &= ~(1 << HIST_FILTER__DSO);
-		if (!h->filtered) {
-			++self->nr_entries;
-			self->stats.total_period += h->period;
-			self->stats.nr_events[PERF_RECORD_SAMPLE] += h->nr_events;
-			if (h->ms.sym &&
-			    self->max_sym_namelen < h->ms.sym->namelen)
-				self->max_sym_namelen = h->ms.sym->namelen;
-		}
+		hists__remove_entry_filter(self, h, HIST_FILTER__DSO);
 	}
 }
 
@@ -851,15 +859,8 @@ void hists__filter_by_thread(struct hists *self, const struct thread *thread)
 			h->filtered |= (1 << HIST_FILTER__THREAD);
 			continue;
 		}
-		h->filtered &= ~(1 << HIST_FILTER__THREAD);
-		if (!h->filtered) {
-			++self->nr_entries;
-			self->stats.total_period += h->period;
-			self->stats.nr_events[PERF_RECORD_SAMPLE] += h->nr_events;
-			if (h->ms.sym &&
-			    self->max_sym_namelen < h->ms.sym->namelen)
-				self->max_sym_namelen = h->ms.sym->namelen;
-		}
+
+		hists__remove_entry_filter(self, h, HIST_FILTER__THREAD);
 	}
 }
 
@@ -1052,7 +1053,7 @@ fallback:
 		 dso, dso->long_name, sym, sym->name);
 
 	snprintf(command, sizeof(command),
-		 "objdump --start-address=0x%016Lx --stop-address=0x%016Lx -dS %s|grep -v %s|expand",
+		 "objdump --start-address=0x%016Lx --stop-address=0x%016Lx -dS -C %s|grep -v %s|expand",
 		 map__rip_2objdump(map, sym->start),
 		 map__rip_2objdump(map, sym->end),
 		 filename, filename);

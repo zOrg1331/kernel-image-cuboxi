@@ -146,6 +146,9 @@ struct ftrace_event_class {
 	int			(*raw_init)(struct ftrace_event_call *);
 };
 
+extern int ftrace_event_reg(struct ftrace_event_call *event,
+			    enum trace_reg type);
+
 enum {
 	TRACE_EVENT_FL_ENABLED_BIT,
 	TRACE_EVENT_FL_FILTERED_BIT,
@@ -257,8 +260,7 @@ static inline void
 perf_trace_buf_submit(void *raw_data, int size, int rctx, u64 addr,
 		       u64 count, struct pt_regs *regs, void *head)
 {
-	perf_tp_event(addr, count, raw_data, size, regs, head);
-	perf_swevent_put_recursion_context(rctx);
+	perf_tp_event(addr, count, raw_data, size, regs, head, rctx);
 }
 #endif
 
