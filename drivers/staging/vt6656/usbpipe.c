@@ -381,29 +381,6 @@ PIPEnsInterruptRead(
     // Now that we have created the urb, we will send a
     // request to the USB device object.
     //
-#if 0            //reserve int URB submit
-	usb_fill_int_urb(pDevice->pInterruptURB,
-	                 pDevice->usb,
-	                 usb_rcvintpipe(pDevice->usb, 1),
-			 (void *) pDevice->intBuf.pDataBuf,
-	                 MAX_INTERRUPT_SIZE,
-	                 s_nsInterruptUsbIoCompleteRead,
-	                 pDevice,
-	                 pDevice->int_interval
-	                 );
-#else            //replace int URB submit by bulk transfer
-#ifndef Safe_Close
-	usb_fill_int_urb(pDevice->pInterruptURB,
-	                 pDevice->usb,
-	                 usb_rcvintpipe(pDevice->usb, 1),
-			 (void *) pDevice->intBuf.pDataBuf,
-	                 MAX_INTERRUPT_SIZE,
-	                 s_nsInterruptUsbIoCompleteRead,
-	                 pDevice,
-	                 pDevice->int_interval
-	                 );
-#else
-
     pDevice->pInterruptURB->interval = pDevice->int_interval;
 
 usb_fill_bulk_urb(pDevice->pInterruptURB,
@@ -413,8 +390,6 @@ usb_fill_bulk_urb(pDevice->pInterruptURB,
 		MAX_INTERRUPT_SIZE,
 		s_nsInterruptUsbIoCompleteRead,
 		pDevice);
-#endif
-#endif
 
 	ntStatus = usb_submit_urb(pDevice->pInterruptURB, GFP_ATOMIC);
 	if (ntStatus != 0) {
@@ -495,13 +470,6 @@ s_nsInterruptUsbIoCompleteRead(
 
 
     if (pDevice->fKillEventPollingThread != TRUE) {
-   #if 0               //reserve int URB submit
-	ntStatus = usb_submit_urb(urb, GFP_ATOMIC);
-	if (ntStatus != 0) {
-	    DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Re-Submit int URB failed %d\n", ntStatus);
-    }
-   #else                                                                                     //replace int URB submit by bulk transfer
-    #ifdef Safe_Close
        usb_fill_bulk_urb(pDevice->pInterruptURB,
 		      pDevice->usb,
 		      usb_rcvbulkpipe(pDevice->usb, 1),
@@ -514,11 +482,6 @@ s_nsInterruptUsbIoCompleteRead(
 	if (ntStatus != 0) {
 	    DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Submit int URB failed %d\n", ntStatus);
            }
-
-    #else
-        tasklet_schedule(&pDevice->EventWorkItem);
-    #endif
-#endif
     }
     //
     // We return STATUS_MORE_PROCESSING_REQUIRED so that the completion
@@ -628,9 +591,7 @@ s_nsBulkInUsbIoCompleteRead(
         pDevice->ulBulkInError++;
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"BULK In failed %d\n", status);
 
-     	#ifdef Calcu_LinkQual
            pDevice->scStatistic.RxFcsErrCnt ++;
-	#endif
 //todo...xxxxxx
 //        if (status == USBD_STATUS_CRC) {
 //            pDevice->ulBulkInContCRCError++;
@@ -644,9 +605,7 @@ s_nsBulkInUsbIoCompleteRead(
         pDevice->ulBulkInContCRCError = 0;
         pDevice->ulBulkInBytesRead += bytesRead;
 
-	#ifdef Calcu_LinkQual
            pDevice->scStatistic.RxOkCnt ++;
-	#endif
     }
 
 
@@ -803,10 +762,7 @@ s_nsBulkOutIoCompleteWrite(
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Write %d bytes\n",(int)ulBufLen);
         pDevice->ulBulkOutBytesWrite += ulBufLen;
         pDevice->ulBulkOutContCRCError = 0;
-	//2007-0115-06<Add>by MikeLiu
-           #ifdef TxInSleep
-             pDevice->nTxDataTimeCout = 0;
-           #endif
+	pDevice->nTxDataTimeCout = 0;
 
     } else {
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"BULK Out failed %d\n", status);

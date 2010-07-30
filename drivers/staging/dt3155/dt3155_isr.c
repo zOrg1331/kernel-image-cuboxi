@@ -59,156 +59,118 @@ Purpose: Buffer management routines, and other routines for the ISR
 #define UPPER_10_BITS   (0x3FF<<22)  /* Can't DMA accross a 4MB boundary!*/
 
 
-/* Pointer into global structure for handling buffers */
-struct dt3155_fbuffer *dt3155_fbuffer[MAXBOARDS] = {NULL
-#if MAXBOARDS == 2
-						      , NULL
-#endif
-};
-
 /******************************************************************************
  * Simple array based que struct
  *
  * Some handy functions using the buffering structure.
  *****************************************************************************/
 
-
 /***************************
  * are_empty_buffers
- * m is minor # of device
  ***************************/
-bool are_empty_buffers(int m)
+bool are_empty_buffers(struct dt3155_fbuffer *fb)
 {
-  return dt3155_fbuffer[m]->empty_len;
+	return fb->empty_len;
 }
 
 /**************************
  * push_empty
- * m is minor # of device
  *
  * This is slightly confusing.  The number empty_len is the literal #
  * of empty buffers.  After calling, empty_len-1 is the index into the
  * empty buffer stack.  So, if empty_len == 1, there is one empty buffer,
- * given by dt3155_fbuffer[m]->empty_buffers[0].
+ * given by fb->empty_buffers[0].
  * empty_buffers should never fill up, though this is not checked.
  **************************/
-void push_empty(int index, int m)
+void push_empty(struct dt3155_fbuffer *fb, int index)
 {
-  dt3155_fbuffer[m]->empty_buffers[dt3155_fbuffer[m]->empty_len] = index;
-  dt3155_fbuffer[m]->empty_len++;
+	fb->empty_buffers[fb->empty_len] = index;
+	fb->empty_len++;
 }
 
 /**************************
- * pop_empty(m)
- * m is minor # of device
+ * pop_empty
  **************************/
-int pop_empty(int m)
+int pop_empty(struct dt3155_fbuffer *fb)
 {
-  dt3155_fbuffer[m]->empty_len--;
-  return dt3155_fbuffer[m]->empty_buffers[dt3155_fbuffer[m]->empty_len];
+	fb->empty_len--;
+	return fb->empty_buffers[fb->empty_len];
 }
 
 /*************************
- * is_ready_buf_empty(m)
- * m is minor # of device
+ * is_ready_buf_empty
  *************************/
-bool is_ready_buf_empty(int m)
+bool is_ready_buf_empty(struct dt3155_fbuffer *fb)
 {
-  return ((dt3155_fbuffer[m]->ready_len) == 0);
+	return fb->ready_len == 0;
 }
 
 /*************************
- * is_ready_buf_full(m)
- * m is minor # of device
+ * is_ready_buf_full
+ *
  * this should *never* be true if there are any active, locked or empty
  * buffers, since it corresponds to nbuffers ready buffers!!
  * 7/31/02: total rewrite. --NJC
  *************************/
-bool is_ready_buf_full(int m)
+bool is_ready_buf_full(struct dt3155_fbuffer *fb)
 {
-  return dt3155_fbuffer[m]->ready_len == dt3155_fbuffer[m]->nbuffers;
+	return fb->ready_len == fb->nbuffers;
 }
 
 /*****************************************************
- * push_ready(m, buffer)
- * m is minor # of device
- *
+ * push_ready
  *****************************************************/
-void push_ready(int m, int index)
+void push_ready(struct dt3155_fbuffer *fb, int index)
 {
-  int head = dt3155_fbuffer[m]->ready_head;
+	int head = fb->ready_head;
 
-  dt3155_fbuffer[m]->ready_que[head] = index;
-  dt3155_fbuffer[m]->ready_head = ((head + 1) %
-				      (dt3155_fbuffer[m]->nbuffers));
-  dt3155_fbuffer[m]->ready_len++;
-
+	fb->ready_que[head] = index;
+	fb->ready_head = (head + 1) % fb->nbuffers;
+	fb->ready_len++;
 }
 
 /*****************************************************
- * get_tail()
- * m is minor # of device
+ * get_tail
  *
  * Simply comptutes the tail given the head and the length.
  *****************************************************/
-static int get_tail(int m)
+static int get_tail(struct dt3155_fbuffer *fb)
 {
-  return (dt3155_fbuffer[m]->ready_head -
-	   dt3155_fbuffer[m]->ready_len +
-	   dt3155_fbuffer[m]->nbuffers)%
-	  (dt3155_fbuffer[m]->nbuffers);
+	return (fb->ready_head - fb->ready_len + fb->nbuffers) % fb->nbuffers;
 }
 
-
-
 /*****************************************************
- * pop_ready()
- * m is minor # of device
+ * pop_ready
  *
  * This assumes that there is a ready buffer ready... should
  * be checked (e.g. with is_ready_buf_empty()  prior to call.
  *****************************************************/
-int pop_ready(int m)
+int pop_ready(struct dt3155_fbuffer *fb)
 {
-  int tail;
-  tail = get_tail(m);
-  dt3155_fbuffer[m]->ready_len--;
-  return dt3155_fbuffer[m]->ready_que[tail];
-}
+	int tail = get_tail(fb);
 
+	fb->ready_len--;
+	return fb->ready_que[tail];
+}
 
 /*****************************************************
  * printques
- * m is minor # of device
  *****************************************************/
-void printques(int m)
+void printques(struct dt3155_fbuffer *fb)
 {
-  int head = dt3155_fbuffer[m]->ready_head;
-  int tail;
-  int num = dt3155_fbuffer[m]->nbuffers;
-  int frame_index;
-  int index;
+	int i;
 
-  tail = get_tail(m);
+	printk(KERN_INFO "\n R:");
+	for (i = get_tail(fb); i != fb->ready_head; i++, i %= fb->nbuffers)
+		printk(" %d ", fb->ready_que[i]);
 
-  printk("\n R:");
-    for (index = tail; index != head; index++, index = index % (num)) {
-	frame_index = dt3155_fbuffer[m]->ready_que[index];
-	printk(" %d ", frame_index);
-    }
+	printk(KERN_INFO "\n E:");
+	for (i = 0; i < fb->empty_len; i++)
+		printk(" %d ", fb->empty_buffers[i]);
 
-  printk("\n E:");
-    for (index = 0; index < dt3155_fbuffer[m]->empty_len; index++) {
-	frame_index = dt3155_fbuffer[m]->empty_buffers[index];
-	printk(" %d ", frame_index);
-    }
+	printk(KERN_INFO "\n A: %d", fb->active_buf);
 
-  frame_index = dt3155_fbuffer[m]->active_buf;
-  printk("\n A: %d", frame_index);
-
-  frame_index = dt3155_fbuffer[m]->locked_buf;
-  printk("\n L: %d\n", frame_index);
-
+	printk(KERN_INFO "\n L: %d\n", fb->locked_buf);
 }
 
 /*****************************************************
@@ -218,7 +180,7 @@ void printques(int m)
  *  the start address up to the beginning of the
  *  next 4MB chunk (assuming bufsize < 4MB).
  *****************************************************/
-u32 adjust_4MB(u32 buf_addr, u32 bufsize)
+static u32 adjust_4MB(u32 buf_addr, u32 bufsize)
 {
     if (((buf_addr+bufsize) & UPPER_10_BITS) != (buf_addr & UPPER_10_BITS))
 	return (buf_addr+bufsize) & UPPER_10_BITS;
@@ -234,7 +196,7 @@ u32 adjust_4MB(u32 buf_addr, u32 bufsize)
  *  buffers.  If there is not enough free space
  *  try for less memory.
  *****************************************************/
-void allocate_buffers(u32 *buf_addr, u32* total_size_kbs,
+static void allocate_buffers(u32 *buf_addr, u32* total_size_kbs,
 		       u32 bufsize)
 {
   /* Compute the minimum amount of memory guaranteed to hold all
@@ -263,19 +225,21 @@ void allocate_buffers(u32 *buf_addr, u32* total_size_kbs,
 #endif
   size_kbs = full_size_kbs;
   *buf_addr = 0;
-  printk("DT3155: We would like to get: %d KB\n", full_size_kbs);
-  printk("DT3155: ...but need at least: %d KB\n", min_size_kbs);
-  printk("DT3155: ...the allocator has: %d KB\n", allocator_max);
+  printk(KERN_INFO "DT3155: We would like to get: %d KB\n", full_size_kbs);
+  printk(KERN_INFO "DT3155: ...but need at least: %d KB\n", min_size_kbs);
+  printk(KERN_INFO "DT3155: ...the allocator has: %d KB\n", allocator_max);
   size_kbs = (full_size_kbs <= allocator_max ? full_size_kbs : allocator_max);
     if (size_kbs > min_size_kbs) {
-	if ((*buf_addr = allocator_allocate_dma(size_kbs, GFP_KERNEL)) != 0) {
-		printk("DT3155:  Managed to allocate: %d KB\n", size_kbs);
+		*buf_addr = allocator_allocate_dma(size_kbs, GFP_KERNEL);
+	if (*buf_addr != 0) {
+		printk(KERN_INFO "DT3155:  Managed to allocate: %d KB\n",
+				size_kbs);
 		*total_size_kbs = size_kbs;
 		return;
 	}
     }
   /* If we got here, the allocation failed */
-  printk("DT3155: Allocator failed!\n");
+  printk(KERN_INFO "DT3155: Allocator failed!\n");
   *buf_addr = 0;
   *total_size_kbs = 0;
   return;
@@ -300,6 +264,7 @@ void allocate_buffers(u32 *buf_addr, u32* total_size_kbs,
 u32 dt3155_setup_buffers(u32 *allocatorAddr)
 
 {
+  struct dt3155_fbuffer *fb;
   u32 index;
   u32 rambuff_addr; /* start of allocation */
   u32 rambuff_size; /* total size allocated to driver */
@@ -308,25 +273,19 @@ u32 dt3155_setup_buffers(u32 *allocatorAddr)
   u32 rambuff_end;  /* end of rambuff */
   u32 numbufs;      /* number of useful buffers allocated (per device) */
   u32 bufsize      = DT3155_MAX_ROWS * DT3155_MAX_COLS;
-  int m;               /* minor # of device, looped for all devs */
+  int minor;
 
   /* zero the fbuffer status and address structure */
-    for (m = 0; m < ndevices; m++) {
-	dt3155_fbuffer[m] = &(dt3155_status[m].fbuffer);
-
-      /* Make sure the buffering variables are consistent */
-      {
-	u8 *ptr = (u8 *) dt3155_fbuffer[m];
-		for (index = 0; index < sizeof(struct dt3155_fbuffer); index++)
-			*(ptr++) = 0;
-      }
+    for (minor = 0; minor < ndevices; minor++) {
+	fb = &dt3155_status[minor].fbuffer;
+	memset(fb, 0, sizeof(*fb));
     }
 
   /* allocate a large contiguous chunk of RAM */
   allocate_buffers(&rambuff_addr, &rambuff_size, bufsize);
-  printk("DT3155: mem info\n");
-  printk("  - rambuf_addr = 0x%x\n", rambuff_addr);
-  printk("  - length (kb) = %u\n", rambuff_size);
+  printk(KERN_INFO "DT3155: mem info\n");
+  printk(KERN_INFO "  - rambuf_addr = 0x%x\n", rambuff_addr);
+  printk(KERN_INFO "  - length (kb) = %u\n", rambuff_size);
     if (rambuff_addr == 0) {
 	printk(KERN_INFO
 	    "DT3155: Error setup_buffers() allocator dma failed\n");
@@ -339,7 +298,8 @@ u32 dt3155_setup_buffers(u32 *allocatorAddr)
      are so we can give an equal number to each device */
   rambuff_acm = rambuff_addr;
     for (index = 0; index < MAXBUFFERS; index++) {
-	rambuff_acm = adjust_4MB(rambuff_acm, bufsize);/*avoid spanning 4MB bdry*/
+	/*avoid spanning 4MB bdry*/
+	rambuff_acm = adjust_4MB(rambuff_acm, bufsize);
 	if (rambuff_acm + bufsize > rambuff_end)
 		break;
 	rambuff_acm += bufsize;
@@ -347,7 +307,7 @@ u32 dt3155_setup_buffers(u32 *allocatorAddr)
   /* Following line is OK, will waste buffers if index
    * not evenly divisible by ndevices -NJC*/
   numbufs = index / ndevices;
-  printk("  - numbufs = %u\n", numbufs);
+  printk(KERN_INFO "  - numbufs = %u\n", numbufs);
     if (numbufs < 2) {
 	printk(KERN_INFO
 	"DT3155: Error setup_buffers() couldn't allocate 2 bufs/board\n");
@@ -357,46 +317,45 @@ u32 dt3155_setup_buffers(u32 *allocatorAddr)
   /* now that we have board memory we spit it up */
   /* between the boards and the buffers          */
     rambuff_acm = rambuff_addr;
-    for (m = 0; m < ndevices; m++) {
+    for (minor = 0; minor < ndevices; minor++) {
+	fb = &dt3155_status[minor].fbuffer;
 	rambuff_acm = adjust_4MB(rambuff_acm, bufsize);
 
 	/* Save the start of this boards buffer space (for mmap).  */
-	dt3155_status[m].mem_addr = rambuff_acm;
+	dt3155_status[minor].mem_addr = rambuff_acm;
 
 	for (index = 0; index < numbufs; index++) {
 		rambuff_acm = adjust_4MB(rambuff_acm, bufsize);
 		if (rambuff_acm + bufsize > rambuff_end) {
 			/* Should never happen */
-			printk("DT3155 PROGRAM ERROR (GCS)\n"
+			printk(KERN_INFO "DT3155 PROGRAM ERROR (GCS)\n"
 			"Error distributing allocated buffers\n");
 			return -ENOMEM;
 		}
 
-		dt3155_fbuffer[m]->frame_info[index].addr = rambuff_acm;
-		push_empty(index, m);
-		/* printk("  - Buffer : %lx\n",
-		* dt3155_fbuffer[m]->frame_info[index].addr);
-		*/
-		dt3155_fbuffer[m]->nbuffers += 1;
+		fb->frame_info[index].addr = rambuff_acm;
+		push_empty(fb, index);
+		/* printk("  - Buffer : %lx\n", fb->frame_info[index].addr); */
+		fb->nbuffers += 1;
 		rambuff_acm += bufsize;
 	}
 
 	/* Make sure there is an active buffer there. */
-	dt3155_fbuffer[m]->active_buf    = pop_empty(m);
-	dt3155_fbuffer[m]->even_happened = 0;
-	dt3155_fbuffer[m]->even_stopped  = 0;
+	fb->active_buf    = pop_empty(fb);
+	fb->even_happened = 0;
+	fb->even_stopped  = 0;
 
 	/* make sure there is no locked_buf JML 2/28/00 */
-	dt3155_fbuffer[m]->locked_buf = -1;
+	fb->locked_buf = -1;
 
-	dt3155_status[m].mem_size =
-	rambuff_acm - dt3155_status[m].mem_addr;
+	dt3155_status[minor].mem_size = rambuff_acm -
+					dt3155_status[minor].mem_addr;
 
 	/* setup the ready queue */
-	dt3155_fbuffer[m]->ready_head = 0;
-	dt3155_fbuffer[m]->ready_len = 0;
-	printk("Available buffers for device %d: %d\n",
-	    m, dt3155_fbuffer[m]->nbuffers);
+	fb->ready_head = 0;
+	fb->ready_len = 0;
+	printk(KERN_INFO "Available buffers for device %d: %d\n",
+	    minor, fb->nbuffers);
     }
 
     return 1;
@@ -407,103 +366,96 @@ u32 dt3155_setup_buffers(u32 *allocatorAddr)
  *
  * The internal function for releasing a locked buffer.
  * It assumes interrupts are turned off.
- *
- * m is minor number of device
  *****************************************************/
-static void internal_release_locked_buffer(int m)
+static void internal_release_locked_buffer(struct dt3155_fbuffer *fb)
 {
-  /* Pointer into global structure for handling buffers */
-    if (dt3155_fbuffer[m]->locked_buf >= 0) {
-	push_empty(dt3155_fbuffer[m]->locked_buf, m);
-	dt3155_fbuffer[m]->locked_buf = -1;
-    }
+	if (fb->locked_buf >= 0) {
+		push_empty(fb, fb->locked_buf);
+		fb->locked_buf = -1;
+	}
 }
 
-
 /*****************************************************
- * dt3155_release_locked_buffer()
- * m is minor # of device
+ * dt3155_release_locked_buffer
  *
  * The user function of the above.
- *
  *****************************************************/
-void dt3155_release_locked_buffer(int m)
+void dt3155_release_locked_buffer(struct dt3155_fbuffer *fb)
 {
 	unsigned long int flags;
+
 	local_save_flags(flags);
 	local_irq_disable();
-	internal_release_locked_buffer(m);
+	internal_release_locked_buffer(fb);
 	local_irq_restore(flags);
 }
 
-
 /*****************************************************
- * dt3155_flush()
- * m is minor # of device
- *
+ * dt3155_flush
  *****************************************************/
-int dt3155_flush(int m)
+int dt3155_flush(struct dt3155_fbuffer *fb)
 {
-  int index;
-  unsigned long int flags;
-  local_save_flags(flags);
-  local_irq_disable();
+	unsigned long int flags;
+	int index;
 
-  internal_release_locked_buffer(m);
-  dt3155_fbuffer[m]->empty_len = 0;
+	local_save_flags(flags);
+	local_irq_disable();
 
-    for (index = 0; index < dt3155_fbuffer[m]->nbuffers; index++)
-	push_empty(index,  m);
+	internal_release_locked_buffer(fb);
+	fb->empty_len = 0;
 
-  /* Make sure there is an active buffer there. */
-  dt3155_fbuffer[m]->active_buf = pop_empty(m);
+	for (index = 0; index < fb->nbuffers; index++)
+		push_empty(fb, index);
 
-  dt3155_fbuffer[m]->even_happened = 0;
-  dt3155_fbuffer[m]->even_stopped  = 0;
+	/* Make sure there is an active buffer there. */
+	fb->active_buf = pop_empty(fb);
 
-  /* setup the ready queue  */
-  dt3155_fbuffer[m]->ready_head = 0;
-  dt3155_fbuffer[m]->ready_len = 0;
+	fb->even_happened = 0;
+	fb->even_stopped  = 0;
 
-  local_irq_restore(flags);
+	/* setup the ready queue  */
+	fb->ready_head = 0;
+	fb->ready_len = 0;
 
-  return 0;
+	local_irq_restore(flags);
+
+	return 0;
 }
 
 /*****************************************************
- * dt3155_get_ready_buffer()
- * m is minor # of device
+ * dt3155_get_ready_buffer
  *
  * get_ready_buffer will grab the next chunk of data
  * if it is already there, otherwise it returns 0.
  * If the user has a buffer locked it will unlock
  * that buffer before returning the new one.
  *****************************************************/
-int dt3155_get_ready_buffer(int m)
+int dt3155_get_ready_buffer(struct dt3155_fbuffer *fb)
 {
-  int frame_index;
-  unsigned long int flags;
-  local_save_flags(flags);
-  local_irq_disable();
+	unsigned long int flags;
+	int frame_index;
+
+	local_save_flags(flags);
+	local_irq_disable();
 
 #ifdef DEBUG_QUES_A
-  printques(m);
+	printques(fb);
 #endif
 
-  internal_release_locked_buffer(m);
+	internal_release_locked_buffer(fb);
 
-    if (is_ready_buf_empty(m))
-	frame_index = -1;
-    else {
-	frame_index = pop_ready(m);
-	dt3155_fbuffer[m]->locked_buf = frame_index;
-    }
+	if (is_ready_buf_empty(fb)) {
+		frame_index = -1;
+	} else {
+		frame_index = pop_ready(fb);
+		fb->locked_buf = frame_index;
+	}
 
 #ifdef DEBUG_QUES_B
-  printques(m);
+	printques(fb);
 #endif
 
-  local_irq_restore(flags);
+	local_irq_restore(flags);
 
-  return frame_index;
+	return frame_index;
 }
