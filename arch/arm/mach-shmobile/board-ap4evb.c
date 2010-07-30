@@ -17,25 +17,44 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
+#include <linux/clk.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/platform_device.h>
 #include <linux/delay.h>
+#include <linux/mfd/sh_mobile_sdhi.h>
+#include <linux/mmc/host.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/physmap.h>
+#include <linux/mmc/host.h>
+#include <linux/mmc/sh_mmcif.h>
+#include <linux/i2c.h>
+#include <linux/i2c/tsc2007.h>
 #include <linux/io.h>
 #include <linux/smsc911x.h>
+#include <linux/sh_intc.h>
+#include <linux/sh_clk.h>
 #include <linux/gpio.h>
 #include <linux/input.h>
 #include <linux/input/sh_keysc.h>
+#include <linux/usb/r8a66597.h>
+
+#include <sound/sh_fsi.h>
+
+#include <video/sh_mobile_lcdc.h>
+#include <video/sh_mipi_dsi.h>
+
 #include <mach/common.h>
+#include <mach/irqs.h>
 #include <mach/sh7372.h>
+
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
+#include <asm/mach/time.h>
 
 /*
  * Address	Interface		BusWidth	note
@@ -80,12 +99,50 @@
  */
 
 /*
- * KEYSC
+ * LCD / IRQ / KEYSC / IrDA
  *
- * SW43		KEYSC
- * -------------------------
- * ON		enable
- * OFF		disable
+ * IRQ = IRQ26 (TS), IRQ27 (VIO), IRQ28 (TouchScreen)
+ * LCD = 2nd LCDC
+ *
+ * 		|		SW43			|
+ * SW3		|	ON		|	OFF	|
+ * -------------+-----------------------+---------------+
+ * ON		| KEY / IrDA		| LCD		|
+ * OFF		| KEY / IrDA / IRQ	| IRQ		|
+ */
+
+/*
+ * USB
+ *
+ * J7 : 1-2  MAX3355E VBUS
+ *      2-3  DC 5.0V
+ *
+ * S39: bit2: off
+ */
+
+/*
+ * FSI/FSMI
+ *
+ * SW41	:  ON : SH-Mobile AP4 Audio Mode
+ *	: OFF : Bluetooth Audio Mode
+ */
+
+/*
+ * MMC0/SDHI1 (CN7)
+ *
+ * J22 : select card voltage
+ *       1-2 pin : 1.8v
+ *       2-3 pin : 3.3v
+ *
+ *        SW1  |             SW33
+ *             | bit1 | bit2 | bit3 | bit4
+ * ------------+------+------+------+-------
+ * MMC0   OFF  |  OFF |  ON  |  ON  |  X
+ * SDHI1  OFF  |  ON  |   X  |  OFF | ON
+ *
+ * voltage lebel
+ * CN7 : 1.8v
+ * CN12: 3.3v
  */
 
 /* MTD */
@@ -148,7 +205,7 @@ static struct resource smc911x_resources[] = {
 		.end	= 0x16000000 - 1,
 		.flags	= IORESOURCE_MEM,
 	}, {
-		.start	= 6,
+		.start	= evt2irq(0x02c0) /* IRQ6A */,
 		.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_LOWLEVEL,
 	},
 };
@@ -191,7 +248,7 @@ static struct resource keysc_resources[] = {
 		.flags  = IORESOURCE_MEM,
 	},
 	[1] = {
-		.start  = 79,
+		.start  = evt2irq(0x0be0), /* KEYSC_KEY */
 		.flags  = IORESOURCE_IRQ,
 	},
 };
@@ -206,7 +263,52 @@ static struct platform_device keysc_device = {
 	},
 };
 
+/* SH_MMCIF */
+static struct resource sh_mmcif_resources[] = {
+	[0] = {
+		.name	= "SH_MMCIF",
+		.start	= 0xE6BD0000,
+		.end	= 0xE6BD00FF,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		/* MMC ERR */
+		.start	= evt2irq(0x1ac0),
+		.flags	= IORESOURCE_IRQ,
+	},
+	[2] = {
+		/* MMC NOR */
+		.start	= evt2irq(0x1ae0),
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct sh_mmcif_plat_data sh_mmcif_plat = {
+	.sup_pclk	= 0,
+	.ocr		= MMC_VDD_165_195 | MMC_VDD_32_33 | MMC_VDD_33_34,
+	.caps		= MMC_CAP_4_BIT_DATA |
+			  MMC_CAP_8_BIT_DATA |
+			  MMC_CAP_NEEDS_POLL,
+};
+
+static struct platform_device sh_mmcif_device = {
+	.name		= "sh_mmcif",
+	.id		= 0,
+	.dev		= {
+		.dma_mask		= NULL,
+		.coherent_dma_mask	= 0xffffffff,
+		.platform_data		= &sh_mmcif_plat,
+	},
+	.num_resources	= ARRAY_SIZE(sh_mmcif_resources),
+	.resource	= sh_mmcif_resources,
+};
+
 /* SDHI0 */
+static struct sh_mobile_sdhi_info sdhi0_info = {
+	.dma_slave_tx	= SHDMA_SLAVE_SDHI0_TX,
+	.dma_slave_rx	= SHDMA_SLAVE_SDHI0_RX,
+};
+
 static struct resource sdhi0_resources[] = {
 	[0] = {
 		.name	= "SDHI0",
@@ -215,7 +317,7 @@ static struct resource sdhi0_resources[] = {
 		.flags  = IORESOURCE_MEM,
 	},
 	[1] = {
-		.start  = 96,
+		.start  = evt2irq(0x0e00) /* SDHI0 */,
 		.flags  = IORESOURCE_IRQ,
 	},
 };
@@ -225,6 +327,206 @@ static struct platform_device sdhi0_device = {
 	.num_resources  = ARRAY_SIZE(sdhi0_resources),
 	.resource       = sdhi0_resources,
 	.id             = 0,
+	.dev	= {
+		.platform_data	= &sdhi0_info,
+	},
+};
+
+/* SDHI1 */
+static struct sh_mobile_sdhi_info sdhi1_info = {
+	.dma_slave_tx	= SHDMA_SLAVE_SDHI1_TX,
+	.dma_slave_rx	= SHDMA_SLAVE_SDHI1_RX,
+	.tmio_ocr_mask	= MMC_VDD_165_195,
+};
+
+static struct resource sdhi1_resources[] = {
+	[0] = {
+		.name	= "SDHI1",
+		.start  = 0xe6860000,
+		.end    = 0xe68601ff,
+		.flags  = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start  = evt2irq(0x0e80),
+		.flags  = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device sdhi1_device = {
+	.name           = "sh_mobile_sdhi",
+	.num_resources  = ARRAY_SIZE(sdhi1_resources),
+	.resource       = sdhi1_resources,
+	.id             = 1,
+	.dev	= {
+		.platform_data	= &sdhi1_info,
+	},
+};
+
+/* USB1 */
+static void usb1_host_port_power(int port, int power)
+{
+	if (!power) /* only power-on supported for now */
+		return;
+
+	/* set VBOUT/PWEN and EXTLP1 in DVSTCTR */
+	__raw_writew(__raw_readw(0xE68B0008) | 0x600, 0xE68B0008);
+}
+
+static struct r8a66597_platdata usb1_host_data = {
+	.on_chip	= 1,
+	.port_power	= usb1_host_port_power,
+};
+
+static struct resource usb1_host_resources[] = {
+	[0] = {
+		.name	= "USBHS",
+		.start	= 0xE68B0000,
+		.end	= 0xE68B00E6 - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start	= evt2irq(0x1ce0) /* USB1_USB1I0 */,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device usb1_host_device = {
+	.name	= "r8a66597_hcd",
+	.id	= 1,
+	.dev = {
+		.dma_mask		= NULL,         /*  not use dma */
+		.coherent_dma_mask	= 0xffffffff,
+		.platform_data		= &usb1_host_data,
+	},
+	.num_resources	= ARRAY_SIZE(usb1_host_resources),
+	.resource	= usb1_host_resources,
+};
+
+static struct sh_mobile_lcdc_info sh_mobile_lcdc_info = {
+	.clock_source = LCDC_CLK_PERIPHERAL, /* One of interface clocks */
+	.ch[0] = {
+		.chan = LCDC_CHAN_MAINLCD,
+		.bpp = 16,
+		.interface_type = RGB24,
+		.clock_divider = 1,
+		.flags = LCDC_FLAGS_DWPOL,
+		.lcd_cfg = {
+			.name = "R63302(QHD)",
+			.xres = 544,
+			.yres = 961,
+			.left_margin = 72,
+			.right_margin = 600,
+			.hsync_len = 16,
+			.upper_margin = 8,
+			.lower_margin = 8,
+			.vsync_len = 2,
+			.sync = FB_SYNC_VERT_HIGH_ACT | FB_SYNC_HOR_HIGH_ACT,
+		},
+		.lcd_size_cfg = {
+			.width = 44,
+			.height = 79,
+		},
+	}
+};
+
+static struct resource lcdc_resources[] = {
+	[0] = {
+		.name	= "LCDC",
+		.start	= 0xfe940000, /* P4-only space */
+		.end	= 0xfe943fff,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start	= intcs_evt2irq(0x580),
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device lcdc_device = {
+	.name		= "sh_mobile_lcdc_fb",
+	.num_resources	= ARRAY_SIZE(lcdc_resources),
+	.resource	= lcdc_resources,
+	.dev	= {
+		.platform_data	= &sh_mobile_lcdc_info,
+		.coherent_dma_mask = ~0,
+	},
+};
+
+static struct resource mipidsi0_resources[] = {
+	[0] = {
+		.start  = 0xffc60000,
+		.end    = 0xffc68fff,
+		.flags  = IORESOURCE_MEM,
+	},
+};
+
+static struct sh_mipi_dsi_info mipidsi0_info = {
+	.data_format	= MIPI_RGB888,
+	.lcd_chan	= &sh_mobile_lcdc_info.ch[0],
+};
+
+static struct platform_device mipidsi0_device = {
+	.name           = "sh-mipi-dsi",
+	.num_resources  = ARRAY_SIZE(mipidsi0_resources),
+	.resource       = mipidsi0_resources,
+	.id             = 0,
+	.dev	= {
+		.platform_data	= &mipidsi0_info,
+	},
+};
+
+/* FSI */
+#define IRQ_FSI		evt2irq(0x1840)
+#define FSIACKCR	0xE6150018
+static void fsiackcr_init(struct clk *clk)
+{
+	u32 status = __raw_readl(clk->enable_reg);
+
+	/* use external clock */
+	status &= ~0x000000ff;
+	status |= 0x00000080;
+	__raw_writel(status, clk->enable_reg);
+}
+
+static struct clk_ops fsiackcr_clk_ops = {
+	.init = fsiackcr_init,
+};
+
+static struct clk fsiackcr_clk = {
+	.ops		= &fsiackcr_clk_ops,
+	.enable_reg	= (void __iomem *)FSIACKCR,
+	.rate		= 0, /* unknown */
+};
+
+static struct sh_fsi_platform_info fsi_info = {
+	.porta_flags = SH_FSI_BRS_INV |
+		       SH_FSI_OUT_SLAVE_MODE |
+		       SH_FSI_IN_SLAVE_MODE |
+		       SH_FSI_OFMT(PCM) |
+		       SH_FSI_IFMT(PCM),
+};
+
+static struct resource fsi_resources[] = {
+	[0] = {
+		.name	= "FSI",
+		.start	= 0xFE3C0000,
+		.end	= 0xFE3C0400 - 1,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start  = IRQ_FSI,
+		.flags  = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device fsi_device = {
+	.name		= "sh_fsi2",
+	.id		= 0,
+	.num_resources	= ARRAY_SIZE(fsi_resources),
+	.resource	= fsi_resources,
+	.dev	= {
+		.platform_data	= &fsi_info,
+	},
 };
 
 static struct platform_device *ap4evb_devices[] __initdata = {
@@ -232,6 +534,38 @@ static struct platform_device *ap4evb_devices[] __initdata = {
 	&smc911x_device,
 	&keysc_device,
 	&sdhi0_device,
+	&sdhi1_device,
+	&usb1_host_device,
+	&lcdc_device,
+	&mipidsi0_device,
+	&fsi_device,
+	&sh_mmcif_device
+};
+
+/* TouchScreen (Needs SW3 set to OFF) */
+#define IRQ28	evt2irq(0x3380) /* IRQ28A */
+static struct tsc2007_platform_data tsc2007_info = {
+	.model			= 2007,
+	.x_plate_ohms		= 180,
+};
+
+/* I2C */
+static struct i2c_board_info i2c0_devices[] = {
+	{
+		I2C_BOARD_INFO("ak4643", 0x13),
+	},
+};
+
+static struct i2c_board_info i2c1_devices[] = {
+	{
+		I2C_BOARD_INFO("r2025sd", 0x32),
+	},
+	{
+		I2C_BOARD_INFO("tsc2007", 0x48),
+		.type		= "tsc2007",
+		.platform_data	= &tsc2007_info,
+		.irq		= IRQ28,
+	},
 };
 
 static struct map_desc ap4evb_io_desc[] __initdata = {
@@ -250,14 +584,71 @@ static void __init ap4evb_map_io(void)
 {
 	iotable_init(ap4evb_io_desc, ARRAY_SIZE(ap4evb_io_desc));
 
-	/* setup early devices, clocks and console here as well */
+	/* setup early devices and console here as well */
 	sh7372_add_early_devices();
-	sh7367_clock_init(); /* use g3 clocks for now */
 	shmobile_setup_console();
 }
 
+/* This function will disappear when we switch to (runtime) PM */
+static int __init ap4evb_init_display_clk(void)
+{
+	struct clk *lcdc_clk;
+	struct clk *dsitx_clk;
+	int ret;
+
+	lcdc_clk = clk_get(&lcdc_device.dev, "sh_mobile_lcdc_fb.0");
+	if (IS_ERR(lcdc_clk))
+		return PTR_ERR(lcdc_clk);
+
+	dsitx_clk = clk_get(&mipidsi0_device.dev, "sh-mipi-dsi.0");
+	if (IS_ERR(dsitx_clk)) {
+		ret = PTR_ERR(dsitx_clk);
+		goto eclkdsitxget;
+	}
+
+	ret = clk_enable(lcdc_clk);
+	if (ret < 0)
+		goto eclklcdcon;
+
+	ret = clk_enable(dsitx_clk);
+	if (ret < 0)
+		goto eclkdsitxon;
+
+	return 0;
+
+eclkdsitxon:
+	clk_disable(lcdc_clk);
+eclklcdcon:
+	clk_put(dsitx_clk);
+eclkdsitxget:
+	clk_put(lcdc_clk);
+
+	return ret;
+}
+
+device_initcall(ap4evb_init_display_clk);
+
+/*
+ * FIXME !!
+ *
+ * gpio_no_direction is quick_hack.
+ *
+ * current gpio frame work doesn't have
+ * the method to control only pull up/down/free.
+ * this function should be replaced by correct gpio function
+ */
+static void __init gpio_no_direction(u32 addr)
+{
+	__raw_writeb(0x00, addr);
+}
+
+#define GPIO_PORT9CR	0xE6051009
+#define GPIO_PORT10CR	0xE605100A
+
 static void __init ap4evb_init(void)
 {
+	struct clk *clk;
+
 	sh7372_pinmux_init();
 
 	/* enable SCIFA0 */
@@ -318,10 +709,96 @@ static void __init ap4evb_init(void)
 	gpio_request(GPIO_FN_SDHID0_1, NULL);
 	gpio_request(GPIO_FN_SDHID0_0, NULL);
 
+	/* enable TouchScreen */
+	gpio_request(GPIO_FN_IRQ28_123, NULL);
+	set_irq_type(IRQ28, IRQ_TYPE_LEVEL_LOW);
+
+	/* MMCIF */
+	gpio_request(GPIO_FN_MMCD0_0, NULL);
+	gpio_request(GPIO_FN_MMCD0_1, NULL);
+	gpio_request(GPIO_FN_MMCD0_2, NULL);
+	gpio_request(GPIO_FN_MMCD0_3, NULL);
+	gpio_request(GPIO_FN_MMCD0_4, NULL);
+	gpio_request(GPIO_FN_MMCD0_5, NULL);
+	gpio_request(GPIO_FN_MMCD0_6, NULL);
+	gpio_request(GPIO_FN_MMCD0_7, NULL);
+	gpio_request(GPIO_FN_MMCCMD0, NULL);
+	gpio_request(GPIO_FN_MMCCLK0, NULL);
+
+	/* USB enable */
+	gpio_request(GPIO_FN_VBUS0_1,    NULL);
+	gpio_request(GPIO_FN_IDIN_1_18,  NULL);
+	gpio_request(GPIO_FN_PWEN_1_115, NULL);
+	gpio_request(GPIO_FN_OVCN_1_114, NULL);
+	gpio_request(GPIO_FN_EXTLP_1,    NULL);
+	gpio_request(GPIO_FN_OVCN2_1,    NULL);
+
+	/* setup USB phy */
+	__raw_writew(0x8a0a, 0xE6058130);	/* USBCR2 */
+
+	/* enable FSI2 */
+	gpio_request(GPIO_FN_FSIAIBT,	NULL);
+	gpio_request(GPIO_FN_FSIAILR,	NULL);
+	gpio_request(GPIO_FN_FSIAISLD,	NULL);
+	gpio_request(GPIO_FN_FSIAOSLD,	NULL);
+	gpio_request(GPIO_PORT161,	NULL);
+	gpio_direction_output(GPIO_PORT161, 0); /* slave */
+
+	gpio_request(GPIO_PORT9, NULL);
+	gpio_request(GPIO_PORT10, NULL);
+	gpio_no_direction(GPIO_PORT9CR);  /* FSIAOBT needs no direction */
+	gpio_no_direction(GPIO_PORT10CR); /* FSIAOLR needs no direction */
+
+	/* set SPU2 clock to 119.6 MHz */
+	clk = clk_get(NULL, "spu_clk");
+	if (!IS_ERR(clk)) {
+		clk_set_rate(clk, clk_round_rate(clk, 119600000));
+		clk_put(clk);
+	}
+
+	/* change parent of FSI A */
+	clk = clk_get(NULL, "fsia_clk");
+	if (!IS_ERR(clk)) {
+		clk_register(&fsiackcr_clk);
+		clk_set_parent(clk, &fsiackcr_clk);
+		clk_put(clk);
+	}
+
+	/*
+	 * set irq priority, to avoid sound chopping
+	 * when NFS rootfs is used
+	 *  FSI(3) > SMSC911X(2)
+	 */
+	intc_set_priority(IRQ_FSI, 3);
+
+	i2c_register_board_info(0, i2c0_devices,
+				ARRAY_SIZE(i2c0_devices));
+
+	i2c_register_board_info(1, i2c1_devices,
+				ARRAY_SIZE(i2c1_devices));
+
+	/* SDHI1 */
+	gpio_request(GPIO_FN_SDHICMD1, NULL);
+	gpio_request(GPIO_FN_SDHICLK1, NULL);
+	gpio_request(GPIO_FN_SDHID1_3, NULL);
+	gpio_request(GPIO_FN_SDHID1_2, NULL);
+	gpio_request(GPIO_FN_SDHID1_1, NULL);
+	gpio_request(GPIO_FN_SDHID1_0, NULL);
+
 	sh7372_add_standard_devices();
 
 	platform_add_devices(ap4evb_devices, ARRAY_SIZE(ap4evb_devices));
 }
+
+static void __init ap4evb_timer_init(void)
+{
+	sh7372_clock_init();
+	shmobile_timer.init();
+}
+
+static struct sys_timer ap4evb_timer = {
+	.init		= ap4evb_timer_init,
+};
 
 MACHINE_START(AP4EVB, "ap4evb")
 	.phys_io	= 0xe6000000,
@@ -329,5 +806,5 @@ MACHINE_START(AP4EVB, "ap4evb")
 	.map_io		= ap4evb_map_io,
 	.init_irq	= sh7372_init_irq,
 	.init_machine	= ap4evb_init,
-	.timer		= &shmobile_timer,
+	.timer		= &ap4evb_timer,
 MACHINE_END
