@@ -54,8 +54,7 @@ static int nouveau_init_engine_ptrs(struct drm_device *dev)
 		engine->instmem.clear		= nv04_instmem_clear;
 		engine->instmem.bind		= nv04_instmem_bind;
 		engine->instmem.unbind		= nv04_instmem_unbind;
-		engine->instmem.prepare_access	= nv04_instmem_prepare_access;
-		engine->instmem.finish_access	= nv04_instmem_finish_access;
+		engine->instmem.flush		= nv04_instmem_flush;
 		engine->mc.init			= nv04_mc_init;
 		engine->mc.takedown		= nv04_mc_takedown;
 		engine->timer.init		= nv04_timer_init;
@@ -95,8 +94,7 @@ static int nouveau_init_engine_ptrs(struct drm_device *dev)
 		engine->instmem.clear		= nv04_instmem_clear;
 		engine->instmem.bind		= nv04_instmem_bind;
 		engine->instmem.unbind		= nv04_instmem_unbind;
-		engine->instmem.prepare_access	= nv04_instmem_prepare_access;
-		engine->instmem.finish_access	= nv04_instmem_finish_access;
+		engine->instmem.flush		= nv04_instmem_flush;
 		engine->mc.init			= nv04_mc_init;
 		engine->mc.takedown		= nv04_mc_takedown;
 		engine->timer.init		= nv04_timer_init;
@@ -138,8 +136,7 @@ static int nouveau_init_engine_ptrs(struct drm_device *dev)
 		engine->instmem.clear		= nv04_instmem_clear;
 		engine->instmem.bind		= nv04_instmem_bind;
 		engine->instmem.unbind		= nv04_instmem_unbind;
-		engine->instmem.prepare_access	= nv04_instmem_prepare_access;
-		engine->instmem.finish_access	= nv04_instmem_finish_access;
+		engine->instmem.flush		= nv04_instmem_flush;
 		engine->mc.init			= nv04_mc_init;
 		engine->mc.takedown		= nv04_mc_takedown;
 		engine->timer.init		= nv04_timer_init;
@@ -181,8 +178,7 @@ static int nouveau_init_engine_ptrs(struct drm_device *dev)
 		engine->instmem.clear		= nv04_instmem_clear;
 		engine->instmem.bind		= nv04_instmem_bind;
 		engine->instmem.unbind		= nv04_instmem_unbind;
-		engine->instmem.prepare_access	= nv04_instmem_prepare_access;
-		engine->instmem.finish_access	= nv04_instmem_finish_access;
+		engine->instmem.flush		= nv04_instmem_flush;
 		engine->mc.init			= nv04_mc_init;
 		engine->mc.takedown		= nv04_mc_takedown;
 		engine->timer.init		= nv04_timer_init;
@@ -225,8 +221,7 @@ static int nouveau_init_engine_ptrs(struct drm_device *dev)
 		engine->instmem.clear		= nv04_instmem_clear;
 		engine->instmem.bind		= nv04_instmem_bind;
 		engine->instmem.unbind		= nv04_instmem_unbind;
-		engine->instmem.prepare_access	= nv04_instmem_prepare_access;
-		engine->instmem.finish_access	= nv04_instmem_finish_access;
+		engine->instmem.flush		= nv04_instmem_flush;
 		engine->mc.init			= nv40_mc_init;
 		engine->mc.takedown		= nv40_mc_takedown;
 		engine->timer.init		= nv04_timer_init;
@@ -271,8 +266,7 @@ static int nouveau_init_engine_ptrs(struct drm_device *dev)
 		engine->instmem.clear		= nv50_instmem_clear;
 		engine->instmem.bind		= nv50_instmem_bind;
 		engine->instmem.unbind		= nv50_instmem_unbind;
-		engine->instmem.prepare_access	= nv50_instmem_prepare_access;
-		engine->instmem.finish_access	= nv50_instmem_finish_access;
+		engine->instmem.flush		= nv50_instmem_flush;
 		engine->mc.init			= nv50_mc_init;
 		engine->mc.takedown		= nv50_mc_takedown;
 		engine->timer.init		= nv04_timer_init;
@@ -407,11 +401,6 @@ nouveau_card_init(struct drm_device *dev)
 	struct nouveau_engine *engine;
 	int ret;
 
-	NV_DEBUG(dev, "prev state = %d\n", dev_priv->init_state);
-
-	if (dev_priv->init_state == NOUVEAU_CARD_INIT_DONE)
-		return 0;
-
 	vga_client_register(dev->pdev, dev, NULL, nouveau_vga_set_decode);
 	vga_switcheroo_register_client(dev->pdev, nouveau_switcheroo_set_state,
 				       nouveau_switcheroo_can_switch);
@@ -421,15 +410,12 @@ nouveau_card_init(struct drm_device *dev)
 	if (ret)
 		goto out;
 	engine = &dev_priv->engine;
-	dev_priv->init_state = NOUVEAU_CARD_INIT_FAILED;
 	spin_lock_init(&dev_priv->context_switch_lock);
 
 	/* Parse BIOS tables / Run init tables if card not POSTed */
-	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
-		ret = nouveau_bios_init(dev);
-		if (ret)
-			goto out;
-	}
+	ret = nouveau_bios_init(dev);
+	if (ret)
+		goto out;
 
 	ret = nouveau_mem_detect(dev);
 	if (ret)
@@ -485,12 +471,19 @@ nouveau_card_init(struct drm_device *dev)
 			goto out_graph;
 	}
 
+	if (dev_priv->card_type >= NV_50)
+		ret = nv50_display_create(dev);
+	else
+		ret = nv04_display_create(dev);
+	if (ret)
+		goto out_fifo;
+
 	/* this call irq_preinstall, register irq handler and
 	 * call irq_postinstall
 	 */
 	ret = drm_irq_install(dev);
 	if (ret)
-		goto out_fifo;
+		goto out_display;
 
 	ret = drm_vblank_init(dev, 0);
 	if (ret)
@@ -504,35 +497,21 @@ nouveau_card_init(struct drm_device *dev)
 			goto out_irq;
 	}
 
-	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
-		if (dev_priv->card_type >= NV_50)
-			ret = nv50_display_create(dev);
-		else
-			ret = nv04_display_create(dev);
-		if (ret)
-			goto out_channel;
-	}
-
 	ret = nouveau_backlight_init(dev);
 	if (ret)
 		NV_ERROR(dev, "Error %d registering backlight\n", ret);
 
-	dev_priv->init_state = NOUVEAU_CARD_INIT_DONE;
-
-	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
-		nouveau_fbcon_init(dev);
-		drm_kms_helper_poll_init(dev);
-	}
-
+	nouveau_fbcon_init(dev);
+	drm_kms_helper_poll_init(dev);
 	return 0;
 
-out_channel:
-	if (dev_priv->channel) {
-		nouveau_channel_free(dev_priv->channel);
-		dev_priv->channel = NULL;
-	}
 out_irq:
 	drm_irq_uninstall(dev);
+out_display:
+	if (dev_priv->card_type >= NV_50)
+		nv50_display_destroy(dev);
+	else
+		nv04_display_destroy(dev);
 out_fifo:
 	if (!nouveau_noaccel)
 		engine->fifo.takedown(dev);
@@ -566,45 +545,37 @@ static void nouveau_card_takedown(struct drm_device *dev)
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct nouveau_engine *engine = &dev_priv->engine;
 
-	NV_DEBUG(dev, "prev state = %d\n", dev_priv->init_state);
+	nouveau_backlight_exit(dev);
 
-	if (dev_priv->init_state != NOUVEAU_CARD_INIT_DOWN) {
-
-		nouveau_backlight_exit(dev);
-
-		if (dev_priv->channel) {
-			nouveau_channel_free(dev_priv->channel);
-			dev_priv->channel = NULL;
-		}
-
-		if (!nouveau_noaccel) {
-			engine->fifo.takedown(dev);
-			engine->graph.takedown(dev);
-		}
-		engine->fb.takedown(dev);
-		engine->timer.takedown(dev);
-		engine->mc.takedown(dev);
-
-		mutex_lock(&dev->struct_mutex);
-		ttm_bo_clean_mm(&dev_priv->ttm.bdev, TTM_PL_VRAM);
-		ttm_bo_clean_mm(&dev_priv->ttm.bdev, TTM_PL_TT);
-		mutex_unlock(&dev->struct_mutex);
-		nouveau_sgdma_takedown(dev);
-
-		nouveau_gpuobj_takedown(dev);
-		nouveau_mem_close(dev);
-		engine->instmem.takedown(dev);
-
-		if (drm_core_check_feature(dev, DRIVER_MODESET))
-			drm_irq_uninstall(dev);
-
-		nouveau_gpuobj_late_takedown(dev);
-		nouveau_bios_takedown(dev);
-
-		vga_client_register(dev->pdev, NULL, NULL, NULL);
-
-		dev_priv->init_state = NOUVEAU_CARD_INIT_DOWN;
+	if (dev_priv->channel) {
+		nouveau_channel_free(dev_priv->channel);
+		dev_priv->channel = NULL;
 	}
+
+	if (!nouveau_noaccel) {
+		engine->fifo.takedown(dev);
+		engine->graph.takedown(dev);
+	}
+	engine->fb.takedown(dev);
+	engine->timer.takedown(dev);
+	engine->mc.takedown(dev);
+
+	mutex_lock(&dev->struct_mutex);
+	ttm_bo_clean_mm(&dev_priv->ttm.bdev, TTM_PL_VRAM);
+	ttm_bo_clean_mm(&dev_priv->ttm.bdev, TTM_PL_TT);
+	mutex_unlock(&dev->struct_mutex);
+	nouveau_sgdma_takedown(dev);
+
+	nouveau_gpuobj_takedown(dev);
+	nouveau_mem_close(dev);
+	engine->instmem.takedown(dev);
+
+	drm_irq_uninstall(dev);
+
+	nouveau_gpuobj_late_takedown(dev);
+	nouveau_bios_takedown(dev);
+
+	vga_client_register(dev->pdev, NULL, NULL, NULL);
 }
 
 /* here a client dies, release the stuff that was allocated for its
@@ -691,6 +662,7 @@ int nouveau_load(struct drm_device *dev, unsigned long flags)
 	struct drm_nouveau_private *dev_priv;
 	uint32_t reg0;
 	resource_size_t mmio_start_offs;
+	int ret;
 
 	dev_priv = kzalloc(sizeof(*dev_priv), GFP_KERNEL);
 	if (!dev_priv)
@@ -699,7 +671,6 @@ int nouveau_load(struct drm_device *dev, unsigned long flags)
 	dev_priv->dev = dev;
 
 	dev_priv->flags = flags & NOUVEAU_FLAGS;
-	dev_priv->init_state = NOUVEAU_CARD_INIT_DOWN;
 
 	NV_DEBUG(dev, "vendor: 0x%X device: 0x%X class: 0x%X\n",
 		 dev->pci_vendor, dev->pci_device, dev->pdev->class);
@@ -773,11 +744,9 @@ int nouveau_load(struct drm_device *dev, unsigned long flags)
 	NV_INFO(dev, "Detected an NV%2x generation card (0x%08x)\n",
 		dev_priv->card_type, reg0);
 
-	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
-		int ret = nouveau_remove_conflicting_drivers(dev);
-		if (ret)
-			return ret;
-	}
+	ret = nouveau_remove_conflicting_drivers(dev);
+	if (ret)
+		return ret;
 
 	/* Map PRAMIN BAR, or on older cards, the aperture withing BAR0 */
 	if (dev_priv->card_type >= NV_40) {
@@ -812,46 +781,28 @@ int nouveau_load(struct drm_device *dev, unsigned long flags)
 		dev_priv->flags |= NV_NFORCE2;
 
 	/* For kernel modesetting, init card now and bring up fbcon */
-	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
-		int ret = nouveau_card_init(dev);
-		if (ret)
-			return ret;
-	}
+	ret = nouveau_card_init(dev);
+	if (ret)
+		return ret;
 
 	return 0;
 }
 
-static void nouveau_close(struct drm_device *dev)
-{
-	struct drm_nouveau_private *dev_priv = dev->dev_private;
-
-	/* In the case of an error dev_priv may not be allocated yet */
-	if (dev_priv)
-		nouveau_card_takedown(dev);
-}
-
-/* KMS: we need mmio at load time, not when the first drm client opens. */
 void nouveau_lastclose(struct drm_device *dev)
 {
-	if (drm_core_check_feature(dev, DRIVER_MODESET))
-		return;
-
-	nouveau_close(dev);
 }
 
 int nouveau_unload(struct drm_device *dev)
 {
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 
-	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
-		drm_kms_helper_poll_fini(dev);
-		nouveau_fbcon_fini(dev);
-		if (dev_priv->card_type >= NV_50)
-			nv50_display_destroy(dev);
-		else
-			nv04_display_destroy(dev);
-		nouveau_close(dev);
-	}
+	drm_kms_helper_poll_fini(dev);
+	nouveau_fbcon_fini(dev);
+	if (dev_priv->card_type >= NV_50)
+		nv50_display_destroy(dev);
+	else
+		nv04_display_destroy(dev);
+	nouveau_card_takedown(dev);
 
 	iounmap(dev_priv->mmio);
 	iounmap(dev_priv->ramin);
@@ -866,8 +817,6 @@ int nouveau_ioctl_getparam(struct drm_device *dev, void *data,
 {
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct drm_nouveau_getparam *getparam = data;
-
-	NOUVEAU_CHECK_INITIALISED_WITH_RETURN;
 
 	switch (getparam->param) {
 	case NOUVEAU_GETPARAM_CHIPSET_ID:
@@ -936,8 +885,6 @@ nouveau_ioctl_setparam(struct drm_device *dev, void *data,
 		       struct drm_file *file_priv)
 {
 	struct drm_nouveau_setparam *setparam = data;
-
-	NOUVEAU_CHECK_INITIALISED_WITH_RETURN;
 
 	switch (setparam->param) {
 	default:
