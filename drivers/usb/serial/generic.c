@@ -199,6 +199,9 @@ retry:
 	}
 	i = (int)find_first_bit(&port->write_urbs_free,
 						ARRAY_SIZE(port->write_urbs));
+	if (i == ARRAY_SIZE(port->write_urbs))
+		return 0;
+	clear_bit(i, &port->write_urbs_free);
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	urb = port->write_urbs[i];
@@ -213,9 +216,9 @@ retry:
 		dev_err(&port->dev, "%s - error submitting urb: %d\n",
 						__func__, result);
 		clear_bit_unlock(USB_SERIAL_WRITE_BUSY, &port->flags);
+		set_bit(i, &port->write_urbs_free);
 		return result;
 	}
-	clear_bit(i, &port->write_urbs_free);
 
 	spin_lock_irqsave(&port->lock, flags);
 	port->tx_bytes += count;
