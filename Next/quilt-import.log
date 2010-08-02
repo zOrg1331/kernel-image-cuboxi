@@ -1,0 +1,66 @@
+Importing driver-core.current based on 2.6.35-rc6-git2
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.35-rc5-git3
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.35-rc5-git3
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.35-rc3
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-rc6-19-g86c65a7
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.35-rc5-176-gcd5b8f8
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard cd5b8f8755a89a57fc8c408d284b8b613f090345
+HEAD is now at cd5b8f8 Merge branch 'urgent' of git://git.kernel.org/pub/scm/linux/kernel/git/brodo/pcmcia-2.6
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-mpath-fix-NULL-pointer-dereference-when-path-parameters-missing.patch
+dm-snapshot-iterate-origin-and-cow-devices.patch
+dm-snapshot-test-chunk-size-against-both-origin-and-snapshot.patch
+dm-ioctl-remove-__dev_status-from-geometry-and-target-message.patch
+dm-ioctl-make-__dev_status-void.patch
+dm-ioctl-return-uevent-flag-after-rename.patch
+dm-prevent-access-to-md-being-deleted.patch
+dm-ioctl-release-_hash_lock-between-devices-in-remove_all.patch
+dm-ioctl-use-nonseekable_open.patch
+dm-crypt-use-kstrdup.patch
+dm-snapshot-persistent-use-define-for-disk-header-chunk-size.patch
+dm-skip-second-flush-on-bio-unsupported-error.patch
+dm-ioctl-make-bio-or-request-based-device-type-immutable.patch
+dm-do-not-initialise-full-request-queue-when-bio-based.patch
+dm-snapshot-implement-merge.patch
+dm-ioctl-refactor-dm_table_complete.patch
+dm-rename-map_info-flush_request-to-target_request_nr.patch
+dm-linear-support-discard.patch
+dm-linear-support-discard-fixup.patch
+dm-use-common-__issue_target_request-for-flush-and-discard-support.patch
+dm-factor-out-max_io_len_target_boundary.patch
+dm-use-dm_target_offset-macro.patch
+dm-split-discard-requests-on-target-boundaries.patch
+dm-zero-silently-drop-discards.patch
+dm-delay-enable-discard-support.patch
+dm-error-return-error-for-discards.patch
+dm-stripe-move-sector-translation-to-a-function.patch
+dm-stripe-optimize-sector-division.patch
+dm-stripe-support-discards.patch
+dm-allow-autoloading-of-dm-mod.patch
+dm-crypt-simplify-crypt_config-destruction-logic.patch
+dm-crypt-simplify-crypt_ctr.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + 99d488c...460328b master     -> quilt/device-mapper  (forced update)
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
