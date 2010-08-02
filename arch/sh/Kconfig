@@ -23,6 +23,7 @@ config SUPERH
 	select HAVE_KERNEL_LZMA
 	select HAVE_KERNEL_LZO
 	select HAVE_SYSCALL_TRACEPOINTS
+	select HAVE_REGS_AND_STACK_ACCESS_API
 	select RTC_LIB
 	select GENERIC_ATOMIC64
 	help
@@ -572,7 +573,7 @@ config SH_CLK_CPG
 config SH_CLK_CPG_LEGACY
 	depends on SH_CLK_CPG
 	def_bool y if !CPU_SUBTYPE_SH7785 && !ARCH_SHMOBILE && \
-		      !CPU_SUBTYPE_SH7786
+		      !CPU_SUBTYPE_SH7786 && !CPU_SUBTYPE_SH7757
 
 config SH_CLK_MD
 	int "CPU Mode Pin Setting"
