@@ -18,6 +18,8 @@
  */
 #include <linux/types.h>
 #include <linux/of_fdt.h>
+#include <linux/of_address.h>
+#include <linux/of_irq.h>
 #include <linux/proc_fs.h>
 #include <linux/platform_device.h>
 #include <asm/irq.h>
@@ -43,10 +45,6 @@ extern void pci_create_OF_bus_map(void);
  * OF address retreival & translation
  */
 
-/* Translate an OF address block into a CPU physical address
- */
-extern u64 of_translate_address(struct device_node *np, const u32 *addr);
-
 /* Translate a DMA address from device space to CPU space */
 extern u64 of_translate_dma_address(struct device_node *dev,
 				    const u32 *in_addr);
@@ -68,14 +66,6 @@ static inline const u32 *of_get_pci_address(struct device_node *dev,
 }
 #endif /* CONFIG_PCI */
 
-/* Get an address as a resource. Note that if your address is
- * a PIO address, the conversion will fail if the physical address
- * can't be internally converted to an IO token with
- * pci_address_to_pio(), that is because it's either called to early
- * or it can't be matched to any host bridge IO space
- */
-extern int of_address_to_resource(struct device_node *dev, int index,
-				  struct resource *r);
 #ifdef CONFIG_PCI
 extern int of_pci_address_to_resource(struct device_node *dev, int bar,
 				      struct resource *r);
@@ -86,6 +76,15 @@ static inline int of_pci_address_to_resource(struct device_node *dev, int bar,
 	return -ENOSYS;
 }
 #endif /* CONFIG_PCI */
+
+#ifdef CONFIG_PCI
+extern unsigned long pci_address_to_pio(phys_addr_t address);
+#else
+static inline unsigned long pci_address_to_pio(phys_addr_t address)
+{
+	return (unsigned long)-1;
+}
+#endif	/* CONFIG_PCI */
 
 /* Parse the ibm,dma-window property of an OF node into the busno, phys and
  * size parameters.
@@ -104,69 +103,12 @@ struct device_node *of_find_next_cache_node(struct device_node *np);
 /* Get the MAC address */
 extern const void *of_get_mac_address(struct device_node *np);
 
-/*
- * OF interrupt mapping
- */
-
-/* This structure is returned when an interrupt is mapped. The controller
- * field needs to be put() after use
- */
-
-#define OF_MAX_IRQ_SPEC		 4 /* We handle specifiers of at most 4 cells */
-
-struct of_irq {
-	struct device_node *controller;	/* Interrupt controller node */
-	u32 size;			/* Specifier size */
-	u32 specifier[OF_MAX_IRQ_SPEC];	/* Specifier copy */
-};
-
-/**
- * of_irq_map_init - Initialize the irq remapper
- * @flags:	flags defining workarounds to enable
- *
- * Some machines have bugs in the device-tree which require certain workarounds
- * to be applied. Call this before any interrupt mapping attempts to enable
- * those workarounds.
- */
-#define OF_IMAP_OLDWORLD_MAC	0x00000001
-#define OF_IMAP_NO_PHANDLE	0x00000002
-
-extern void of_irq_map_init(unsigned int flags);
-
-/**
- * of_irq_map_raw - Low level interrupt tree parsing
- * @parent:	the device interrupt parent
- * @intspec:	interrupt specifier ("interrupts" property of the device)
- * @ointsize:   size of the passed in interrupt specifier
- * @addr:	address specifier (start of "reg" property of the device)
- * @out_irq:	structure of_irq filled by this function
- *
- * Returns 0 on success and a negative number on error
- *
- * This function is a low-level interrupt tree walking function. It
- * can be used to do a partial walk with synthetized reg and interrupts
- * properties, for example when resolving PCI interrupts when no device
- * node exist for the parent.
- *
- */
-
-extern int of_irq_map_raw(struct device_node *parent, const u32 *intspec,
-			  u32 ointsize, const u32 *addr,
-			  struct of_irq *out_irq);
-
-
-/**
- * of_irq_map_one - Resolve an interrupt for a device
- * @device:	the device whose interrupt is to be resolved
- * @index:     	index of the interrupt to resolve
- * @out_irq:	structure of_irq filled by this function
- *
- * This function resolves an interrupt, walking the tree, for a given
- * device-tree node. It's the high level pendant to of_irq_map_raw().
- * It also implements the workarounds for OldWolrd Macs.
- */
-extern int of_irq_map_one(struct device_node *device, int index,
-			  struct of_irq *out_irq);
+#ifdef CONFIG_NUMA
+extern int of_node_to_nid(struct device_node *device);
+#else
+static inline int of_node_to_nid(struct device_node *device) { return 0; }
+#endif
+#define of_node_to_nid of_node_to_nid
 
 /**
  * of_irq_map_pci - Resolve the interrupt for a PCI device
@@ -182,17 +124,7 @@ extern int of_irq_map_one(struct device_node *device, int index,
 struct pci_dev;
 extern int of_irq_map_pci(struct pci_dev *pdev, struct of_irq *out_irq);
 
-extern int of_irq_to_resource(struct device_node *dev, int index,
-			struct resource *r);
-
-/**
- * of_iomap - Maps the memory mapped IO for a given device_node
- * @device:	the device whose io range will be mapped
- * @index:	index of the io range
- *
- * Returns a pointer to the mapped memory
- */
-extern void __iomem *of_iomap(struct device_node *device, int index);
+extern void of_instantiate_rtc(void);
 
 #endif /* __KERNEL__ */
 #endif /* _POWERPC_PROM_H */
