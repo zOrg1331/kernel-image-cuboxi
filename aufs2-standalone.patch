@@ -1,4 +1,4 @@
-aufs2 standalone patch for linux-2.6.
+aufs2 standalone patch for linux-2.6.35
 
 diff --git a/fs/namei.c b/fs/namei.c
 index 6e92c81..334130e 100644
