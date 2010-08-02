@@ -75,15 +75,12 @@
 #define DEFINE_EVENT_PRINT(template, name, proto, args, print)	\
 	DEFINE_EVENT(template, name, PARAMS(proto), PARAMS(args))
 
-#undef __cpparg
-#define __cpparg(arg...) arg
-
 /* Callbacks are meaningless to ftrace. */
 #undef TRACE_EVENT_FN
 #define TRACE_EVENT_FN(name, proto, args, tstruct,			\
 		assign, print, reg, unreg)				\
-	TRACE_EVENT(name, __cpparg(proto), __cpparg(args),		\
-		__cpparg(tstruct), __cpparg(assign), __cpparg(print))	\
+	TRACE_EVENT(name, PARAMS(proto), PARAMS(args),			\
+		PARAMS(tstruct), PARAMS(assign), PARAMS(print))		\
 
 #include TRACE_INCLUDE(TRACE_INCLUDE_FILE)
 
@@ -145,7 +142,7 @@
  *	struct trace_seq *s = &iter->seq;
  *	struct ftrace_raw_<call> *field; <-- defined in stage 1
  *	struct trace_entry *entry;
- *	struct trace_seq *p;
+ *	struct trace_seq *p = &iter->tmp_seq;
  *	int ret;
  *
  *	entry = iter->ent;
@@ -157,12 +154,10 @@
  *
  *	field = (typeof(field))entry;
  *
- *	p = &get_cpu_var(ftrace_event_seq);
  *	trace_seq_init(p);
  *	ret = trace_seq_printf(s, "%s: ", <call>);
  *	if (ret)
  *		ret = trace_seq_printf(s, <TP_printk> "\n");
- *	put_cpu();
  *	if (!ret)
  *		return TRACE_TYPE_PARTIAL_LINE;
  *
@@ -216,7 +211,7 @@ ftrace_raw_output_##call(struct trace_iterator *iter, int flags,	\
 	struct trace_seq *s = &iter->seq;				\
 	struct ftrace_raw_##call *field;				\
 	struct trace_entry *entry;					\
-	struct trace_seq *p;						\
+	struct trace_seq *p = &iter->tmp_seq;				\
 	int ret;							\
 									\
 	event = container_of(trace_event, struct ftrace_event_call,	\
@@ -231,12 +226,10 @@ ftrace_raw_output_##call(struct trace_iterator *iter, int flags,	\
 									\
 	field = (typeof(field))entry;					\
 									\
-	p = &get_cpu_var(ftrace_event_seq);				\
 	trace_seq_init(p);						\
 	ret = trace_seq_printf(s, "%s: ", event->name);			\
 	if (ret)							\
 		ret = trace_seq_printf(s, print);			\
-	put_cpu();							\
 	if (!ret)							\
 		return TRACE_TYPE_PARTIAL_LINE;				\
 									\
@@ -255,7 +248,7 @@ ftrace_raw_output_##call(struct trace_iterator *iter, int flags,	\
 	struct trace_seq *s = &iter->seq;				\
 	struct ftrace_raw_##template *field;				\
 	struct trace_entry *entry;					\
-	struct trace_seq *p;						\
+	struct trace_seq *p = &iter->tmp_seq;				\
 	int ret;							\
 									\
 	entry = iter->ent;						\
@@ -267,12 +260,10 @@ ftrace_raw_output_##call(struct trace_iterator *iter, int flags,	\
 									\
 	field = (typeof(field))entry;					\
 									\
-	p = &get_cpu_var(ftrace_event_seq);				\
 	trace_seq_init(p);						\
 	ret = trace_seq_printf(s, "%s: ", #call);			\
 	if (ret)							\
 		ret = trace_seq_printf(s, print);			\
-	put_cpu();							\
 	if (!ret)							\
 		return TRACE_TYPE_PARTIAL_LINE;				\
 									\
