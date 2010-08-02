@@ -49,7 +49,6 @@ static int			group				=      0;
 static int			realtime_prio			=      0;
 static bool			raw_samples			=  false;
 static bool			system_wide			=  false;
-static int			profile_cpu			=     -1;
 static pid_t			target_pid			=     -1;
 static pid_t			target_tid			=     -1;
 static pid_t			*all_tids			=      NULL;
@@ -61,6 +60,7 @@ static bool			call_graph			=  false;
 static bool			inherit_stat			=  false;
 static bool			no_samples			=  false;
 static bool			sample_address			=  false;
+static bool			no_buildid			=  false;
 
 static long			samples				=      0;
 static u64			bytes_written			=      0;
@@ -74,6 +74,7 @@ static int			file_new			=      1;
 static off_t			post_processing_offset;
 
 static struct perf_session	*session;
+static const char		*cpu_list;
 
 struct mmap_data {
 	int			counter;
@@ -268,11 +269,16 @@ static void create_counter(int counter, int cpu)
 	if (inherit_stat)
 		attr->inherit_stat = 1;
 
-	if (sample_address)
+	if (sample_address) {
 		attr->sample_type	|= PERF_SAMPLE_ADDR;
+		attr->mmap_data = track;
+	}
 
 	if (call_graph)
 		attr->sample_type	|= PERF_SAMPLE_CALLCHAIN;
+
+	if (system_wide)
+		attr->sample_type	|= PERF_SAMPLE_CPU;
 
 	if (raw_samples) {
 		attr->sample_type	|= PERF_SAMPLE_TIME;
@@ -300,7 +306,7 @@ try_again:
 				die("Permission error - are you root?\n"
 					"\t Consider tweaking"
 					" /proc/sys/kernel/perf_event_paranoid.\n");
-			else if (err ==  ENODEV && profile_cpu != -1) {
+			else if (err ==  ENODEV && cpu_list) {
 				die("No such device - did you specify"
 					" an out-of-range profile CPU?\n");
 			}
@@ -439,8 +445,6 @@ static void atexit_header(void)
 static void event__synthesize_guest_os(struct machine *machine, void *data)
 {
 	int err;
-	char *guest_kallsyms;
-	char path[PATH_MAX];
 	struct perf_session *psession = data;
 
 	if (machine__is_host(machine))
@@ -459,13 +463,6 @@ static void event__synthesize_guest_os(struct machine *machine, void *data)
 	if (err < 0)
 		pr_err("Couldn't record guest kernel [%d]'s reference"
 		       " relocation symbol.\n", machine->pid);
-
-	if (machine__is_default_guest(machine))
-		guest_kallsyms = (char *) symbol_conf.default_guest_kallsyms;
-	else {
-		sprintf(path, "%s/proc/kallsyms", machine->root_dir);
-		guest_kallsyms = path;
-	}
 
 	/*
 	 * We use _stext for guest kernel because guest kernel's /proc/kallsyms
@@ -622,10 +619,15 @@ static int __cmd_record(int argc, const char **argv)
 		close(child_ready_pipe[0]);
 	}
 
-	if ((!system_wide && no_inherit) || profile_cpu != -1) {
-		open_counters(profile_cpu);
+	nr_cpus = read_cpu_map(cpu_list);
+	if (nr_cpus < 1) {
+		perror("failed to collect number of CPUs\n");
+		return -1;
+	}
+
+	if (!system_wide && no_inherit && !cpu_list) {
+		open_counters(-1);
 	} else {
-		nr_cpus = read_cpu_map();
 		for (i = 0; i < nr_cpus; i++)
 			open_counters(cpumap[i]);
 	}
@@ -704,7 +706,7 @@ static int __cmd_record(int argc, const char **argv)
 	if (perf_guest)
 		perf_session__process_machines(session, event__synthesize_guest_os);
 
-	if (!system_wide && profile_cpu == -1)
+	if (!system_wide)
 		event__synthesize_thread(target_tid, process_synthesized_event,
 					 session);
 	else
@@ -794,8 +796,8 @@ static const struct option options[] = {
 			    "system-wide collection from all CPUs"),
 	OPT_BOOLEAN('A', "append", &append_file,
 			    "append to the output file to do incremental profiling"),
-	OPT_INTEGER('C', "profile_cpu", &profile_cpu,
-			    "CPU to profile on"),
+	OPT_STRING('C', "cpu", &cpu_list, "cpu",
+		    "list of cpus to monitor"),
 	OPT_BOOLEAN('f', "force", &force,
 			"overwrite existing data file (deprecated)"),
 	OPT_U64('c', "count", &user_interval, "event period to sample"),
@@ -815,6 +817,8 @@ static const struct option options[] = {
 		    "Sample addresses"),
 	OPT_BOOLEAN('n', "no-samples", &no_samples,
 		    "don't sample"),
+	OPT_BOOLEAN('N', "no-buildid-cache", &no_buildid,
+		    "do not update the buildid cache"),
 	OPT_END()
 };
 
@@ -825,7 +829,7 @@ int cmd_record(int argc, const char **argv, const char *prefix __used)
 	argc = parse_options(argc, argv, options, record_usage,
 			    PARSE_OPT_STOP_AT_NON_OPTION);
 	if (!argc && target_pid == -1 && target_tid == -1 &&
-		!system_wide && profile_cpu == -1)
+		!system_wide && !cpu_list)
 		usage_with_options(record_usage, options);
 
 	if (force && append_file) {
@@ -839,6 +843,8 @@ int cmd_record(int argc, const char **argv, const char *prefix __used)
 	}
 
 	symbol__init();
+	if (no_buildid)
+		disable_buildid_cache();
 
 	if (!nr_counters) {
 		nr_counters	= 1;
