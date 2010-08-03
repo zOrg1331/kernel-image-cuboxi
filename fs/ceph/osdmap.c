@@ -417,6 +417,19 @@ static struct ceph_pg_pool_info *__lookup_pg_pool(struct rb_root *root, int id)
 	return NULL;
 }
 
+int ceph_pg_poolid_by_name(struct ceph_osdmap *map, const char *name)
+{
+	struct rb_node *rbp;
+
+	for (rbp = rb_first(&map->pg_pools); rbp; rbp = rb_next(rbp)) {
+		struct ceph_pg_pool_info *pi =
+			rb_entry(rbp, struct ceph_pg_pool_info, node);
+		if (pi->name && strcmp(pi->name, name) == 0)
+			return pi->id;
+	}
+	return -ENOENT;
+}
+
 static void __remove_pg_pool(struct rb_root *root, struct ceph_pg_pool_info *pi)
 {
 	rb_erase(&pi->node, root);
@@ -424,7 +437,7 @@ static void __remove_pg_pool(struct rb_root *root, struct ceph_pg_pool_info *pi)
 	kfree(pi);
 }
 
-void __decode_pool(void **p, struct ceph_pg_pool_info *pi)
+static void __decode_pool(void **p, struct ceph_pg_pool_info *pi)
 {
 	ceph_decode_copy(p, &pi->v, sizeof(pi->v));
 	calc_pg_masks(pi);
@@ -1026,8 +1039,9 @@ static int *calc_pg_raw(struct ceph_osdmap *osdmap, struct ceph_pg pgid,
 	ruleno = crush_find_rule(osdmap->crush, pool->v.crush_ruleset,
 				 pool->v.type, pool->v.size);
 	if (ruleno < 0) {
-		pr_err("no crush rule pool %d type %d size %d\n",
-		       poolid, pool->v.type, pool->v.size);
+		pr_err("no crush rule pool %d ruleset %d type %d size %d\n",
+		       poolid, pool->v.crush_ruleset, pool->v.type,
+		       pool->v.size);
 		return NULL;
 	}
 
