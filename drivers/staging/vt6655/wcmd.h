@@ -75,9 +75,9 @@ typedef enum tagCMD_STATUS {
 
 typedef struct tagCMD_ITEM {
     CMD_CODE eCmd;
-    BYTE     abyCmdDesireSSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
+    unsigned char abyCmdDesireSSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
     BOOL     bNeedRadioOFF;
-    WORD     wDeAuthenReason;
+    unsigned short wDeAuthenReason;
     BOOL     bRadioCmd;
     BOOL     bForceSCAN;
 } CMD_ITEM, *PCMD_ITEM;
@@ -127,13 +127,13 @@ BOOL
 bScheduleCommand(
     void *hDeviceContext,
     CMD_CODE    eCommand,
-    PBYTE       pbyItem0
+    unsigned char *pbyItem0
     );
 
 void
 vCommandTimerWait(
     void *hDeviceContext,
-    UINT MSecond
+    unsigned int MSecond
     );
 #ifdef TxInSleep
 void
