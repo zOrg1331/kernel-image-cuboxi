@@ -110,7 +110,7 @@ static struct platform_device da850_pm_device = {
  * to boot, using TI's tools to install the secondary boot loader
  * (UBL) and U-Boot.
  */
-struct mtd_partition da850_evm_nandflash_partition[] = {
+static struct mtd_partition da850_evm_nandflash_partition[] = {
 	{
 		.name		= "u-boot env",
 		.offset		= 0,
@@ -406,7 +406,7 @@ static int da850_lcd_hw_init(void)
 /* TPS65070 voltage regulator support */
 
 /* 3.3V */
-struct regulator_consumer_supply tps65070_dcdc1_consumers[] = {
+static struct regulator_consumer_supply tps65070_dcdc1_consumers[] = {
 	{
 		.supply = "usb0_vdda33",
 	},
@@ -416,7 +416,7 @@ struct regulator_consumer_supply tps65070_dcdc1_consumers[] = {
 };
 
 /* 3.3V or 1.8V */
-struct regulator_consumer_supply tps65070_dcdc2_consumers[] = {
+static struct regulator_consumer_supply tps65070_dcdc2_consumers[] = {
 	{
 		.supply = "dvdd3318_a",
 	},
@@ -429,14 +429,14 @@ struct regulator_consumer_supply tps65070_dcdc2_consumers[] = {
 };
 
 /* 1.2V */
-struct regulator_consumer_supply tps65070_dcdc3_consumers[] = {
+static struct regulator_consumer_supply tps65070_dcdc3_consumers[] = {
 	{
 		.supply = "cvdd",
 	},
 };
 
 /* 1.8V LDO */
-struct regulator_consumer_supply tps65070_ldo1_consumers[] = {
+static struct regulator_consumer_supply tps65070_ldo1_consumers[] = {
 	{
 		.supply = "sata_vddr",
 	},
@@ -452,7 +452,7 @@ struct regulator_consumer_supply tps65070_ldo1_consumers[] = {
 };
 
 /* 1.2V LDO */
-struct regulator_consumer_supply tps65070_ldo2_consumers[] = {
+static struct regulator_consumer_supply tps65070_ldo2_consumers[] = {
 	{
 		.supply = "sata_vdd",
 	},
@@ -475,7 +475,7 @@ static struct tps6507x_reg_platform_data tps6507x_platform_data = {
 	.defdcdc_default = true,
 };
 
-struct regulator_init_data tps65070_regulator_data[] = {
+static struct regulator_init_data tps65070_regulator_data[] = {
 	/* dcdc1 */
 	{
 		.constraints = {
@@ -637,6 +637,56 @@ static int __init da850_evm_config_emac(void)
 }
 device_initcall(da850_evm_config_emac);
 
+/*
+ * The following EDMA channels/slots are not being used by drivers (for
+ * example: Timer, GPIO, UART events etc) on da850/omap-l138 EVM, hence
+ * they are being reserved for codecs on the DSP side.
+ */
+static const s16 da850_dma0_rsv_chans[][2] = {
+	/* (offset, number) */
+	{ 8,  6},
+	{24,  4},
+	{30,  2},
+	{-1, -1}
+};
+
+static const s16 da850_dma0_rsv_slots[][2] = {
+	/* (offset, number) */
+	{ 8,  6},
+	{24,  4},
+	{30, 50},
+	{-1, -1}
+};
+
+static const s16 da850_dma1_rsv_chans[][2] = {
+	/* (offset, number) */
+	{ 0, 28},
+	{30,  2},
+	{-1, -1}
+};
+
+static const s16 da850_dma1_rsv_slots[][2] = {
+	/* (offset, number) */
+	{ 0, 28},
+	{30, 90},
+	{-1, -1}
+};
+
+static struct edma_rsv_info da850_edma_cc0_rsv = {
+	.rsv_chans	= da850_dma0_rsv_chans,
+	.rsv_slots	= da850_dma0_rsv_slots,
+};
+
+static struct edma_rsv_info da850_edma_cc1_rsv = {
+	.rsv_chans	= da850_dma1_rsv_chans,
+	.rsv_slots	= da850_dma1_rsv_slots,
+};
+
+static struct edma_rsv_info *da850_edma_rsv[2] = {
+	&da850_edma_cc0_rsv,
+	&da850_edma_cc1_rsv,
+};
+
 static __init void da850_evm_init(void)
 {
 	int ret;
@@ -646,7 +696,7 @@ static __init void da850_evm_init(void)
 		pr_warning("da850_evm_init: TPS65070 PMIC init failed: %d\n",
 				ret);
 
-	ret = da8xx_register_edma();
+	ret = da850_register_edma(da850_edma_rsv);
 	if (ret)
 		pr_warning("da850_evm_init: edma registration failed: %d\n",
 				ret);
