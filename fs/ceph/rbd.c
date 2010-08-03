@@ -1099,7 +1099,7 @@ static void rbd_rq_fn(struct request_queue *q)
 		dout("fetched request\n");
 
 		/* filter out block requests we don't understand */
-		if (!blk_fs_request(rq) && !blk_barrier_rq(rq)) {
+		if ((rq->cmd_type != REQ_TYPE_FS)) {
 			__blk_end_request_all(rq, 0);
 			goto next;
 		}
