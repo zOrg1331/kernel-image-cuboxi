@@ -2928,10 +2928,10 @@ static void e1000_configure_rx(struct e1000_adapter *adapter)
 			 * dropped transactions.
 			 */
 			pm_qos_update_request(
-				adapter->netdev->pm_qos_req, 55);
+				&adapter->netdev->pm_qos_req, 55);
 		} else {
 			pm_qos_update_request(
-				adapter->netdev->pm_qos_req,
+				&adapter->netdev->pm_qos_req,
 				PM_QOS_DEFAULT_VALUE);
 		}
 	}
@@ -3527,9 +3527,10 @@ static int e1000_open(struct net_device *netdev)
 
 	/* DMA latency requirement to workaround early-receive/jumbo issue */
 	if (adapter->flags & FLAG_HAS_ERT)
-		adapter->netdev->pm_qos_req =
-		                    pm_qos_add_request(PM_QOS_CPU_DMA_LATENCY,
-		                                       PM_QOS_DEFAULT_VALUE);
+		pm_qos_add_request(&adapter->netdev->pm_qos_req,
+				   PM_QOS_CPU_DMA_LATENCY,
+				   PM_QOS_DEFAULT_VALUE);
+
 
 	/*
 	 * before we allocate an interrupt, we must be ready to handle it.
@@ -3635,10 +3636,9 @@ static int e1000_close(struct net_device *netdev)
 	if (adapter->flags & FLAG_HAS_AMT)
 		e1000_release_hw_control(adapter);
 
-	if (adapter->flags & FLAG_HAS_ERT) {
-		pm_qos_remove_request(adapter->netdev->pm_qos_req);
-		adapter->netdev->pm_qos_req = NULL;
-	}
+	if (adapter->flags & FLAG_HAS_ERT)
+		pm_qos_remove_request(&adapter->netdev->pm_qos_req);
+
 
 	pm_runtime_put_sync(&pdev->dev);
 
