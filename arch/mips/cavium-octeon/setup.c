@@ -578,9 +578,6 @@ void __init prom_init(void)
 	}
 
 	if (strstr(arcs_cmdline, "console=") == NULL) {
-#ifdef CONFIG_GDB_CONSOLE
-		strcat(arcs_cmdline, " console=gdb");
-#else
 #ifdef CONFIG_CAVIUM_OCTEON_2ND_KERNEL
 		strcat(arcs_cmdline, " console=ttyS0,115200");
 #else
@@ -588,7 +585,6 @@ void __init prom_init(void)
 			strcat(arcs_cmdline, " console=ttyS1,115200");
 		else
 			strcat(arcs_cmdline, " console=ttyS0,115200");
-#endif
 #endif
 	}
 
@@ -598,13 +594,13 @@ void __init prom_init(void)
 		 * the filesystem. Also specify the calibration delay
 		 * to avoid calculating it every time.
 		 */
-		strcat(arcs_cmdline, " rw root=1f00"
-		       " lpj=60176 slram=root,0x40000000,+1073741824");
+		strcat(arcs_cmdline, " rw root=1f00 slram=root,0x40000000,+1073741824");
 	}
 
 	mips_hpt_frequency = octeon_get_clock_rate();
 
 	octeon_init_cvmcount();
+	octeon_setup_delays();
 
 	_machine_restart = octeon_restart;
 	_machine_halt = octeon_halt;
@@ -691,7 +687,10 @@ void __init plat_mem_setup(void)
 		      "cvmx_bootmem_phy_alloc\n");
 }
 
-
+/*
+ * Emit one character to the boot UART.  Exported for use by the
+ * watchdog timer.
+ */
 int prom_putchar(char c)
 {
 	uint64_t lsrval;
@@ -705,6 +704,7 @@ int prom_putchar(char c)
 	cvmx_write_csr(CVMX_MIO_UARTX_THR(octeon_uart), c & 0xffull);
 	return 1;
 }
+EXPORT_SYMBOL(prom_putchar);
 
 void prom_free_prom_memory(void)
 {
