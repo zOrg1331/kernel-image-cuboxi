@@ -49,6 +49,10 @@
 #define ROM_SIZE			0x10000
 #define HPWDT_VERSION			"1.1.1"
 
+#define SECS_TO_TICKS(secs) ((secs) * 1000 / 128)
+#define TICKS_TO_SECS(ticks) ((ticks) * 128 / 1000)
+#define HPWDT_MAX_TIMER	TICKS_TO_SECS(65535)
+
 struct bios32_service_dir {
 	u32 signature;
 	u32 entry_point;
@@ -246,8 +250,8 @@ static int __devinit cru_detect(unsigned long map_entry,
 			physical_bios_offset);
 		printk(KERN_DEBUG "hpwdt: CRU Length:         0x%lx\n",
 			cru_length);
-		printk(KERN_DEBUG "hpwdt: CRU Mapped Address: 0x%x\n",
-			(unsigned int)&cru_rom_addr);
+		printk(KERN_DEBUG "hpwdt: CRU Mapped Address: %p\n",
+			&cru_rom_addr);
 	}
 	iounmap(bios32_map);
 	return retval;
@@ -420,7 +424,7 @@ static int __devinit detect_cru_service(void)
  */
 static void hpwdt_start(void)
 {
-	reload = (soft_margin * 1000) / 128;
+	reload = SECS_TO_TICKS(soft_margin);
 	iowrite16(reload, hpwdt_timer_reg);
 	iowrite16(0x85, hpwdt_timer_con);
 }
@@ -439,10 +443,14 @@ static void hpwdt_ping(void)
 	iowrite16(reload, hpwdt_timer_reg);
 }
 
+static int hpwdt_time_left(void)
+{
+	return TICKS_TO_SECS(ioread16(hpwdt_timer_reg));
+}
+
 static int hpwdt_change_timer(int new_margin)
 {
-	/* Arbitrary, can't find the card's limits */
-	if (new_margin < 5 || new_margin > 600) {
+	if (new_margin < 1 || new_margin > HPWDT_MAX_TIMER) {
 		printk(KERN_WARNING
 			"hpwdt: New value passed in is invalid: %d seconds.\n",
 			new_margin);
@@ -453,7 +461,7 @@ static int hpwdt_change_timer(int new_margin)
 	printk(KERN_DEBUG
 		"hpwdt: New timer passed in is %d seconds.\n",
 		new_margin);
-	reload = (soft_margin * 1000) / 128;
+	reload = SECS_TO_TICKS(soft_margin);
 
 	return 0;
 }
@@ -578,6 +586,10 @@ static long hpwdt_ioctl(struct file *file, unsigned int cmd,
 	case WDIOC_GETSTATUS:
 	case WDIOC_GETBOOTSTATUS:
 		ret = put_user(0, p);
+		break;
+
+	case WDIOC_GETTIMELEFT:
+		ret = put_user(hpwdt_time_left(), p);
 		break;
 
 	case WDIOC_KEEPALIVE:
