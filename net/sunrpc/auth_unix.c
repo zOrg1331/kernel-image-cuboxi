@@ -207,7 +207,7 @@ int __init rpc_init_authunix(void)
 	return rpcauth_init_credcache(&unix_auth);
 }
 
-void __exit rpc_destroy_authunix(void)
+void rpc_destroy_authunix(void)
 {
 	rpcauth_destroy_credcache(&unix_auth);
 }
