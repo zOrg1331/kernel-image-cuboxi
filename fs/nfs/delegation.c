@@ -106,6 +106,7 @@ again:
 			continue;
 		if (memcmp(state->stateid.data, stateid->data, sizeof(state->stateid.data)) != 0)
 			continue;
+		clear_bit(NFS_DELEGATED_STATE, &state->flags);
 		get_nfs_open_context(ctx);
 		spin_unlock(&inode->i_lock);
 		err = nfs4_open_delegation_recall(ctx, state, stateid);
