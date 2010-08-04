@@ -205,10 +205,11 @@ static const struct file_operations irq_node_proc_fops = {
 static int irq_spurious_proc_show(struct seq_file *m, void *v)
 {
 	struct irq_desc *desc = irq_to_desc((long) m->private);
+	struct irq_spr *spr = &desc->spr;
 
 	seq_printf(m, "count %u\n" "unhandled %u\n" "last_unhandled %u ms\n",
-		   desc->irq_count, desc->irqs_unhandled,
-		   jiffies_to_msecs(desc->last_unhandled));
+		   spr->nr_samples, spr->nr_bad,
+		   jiffies_to_msecs(spr->last_bad));
 	return 0;
 }
 
