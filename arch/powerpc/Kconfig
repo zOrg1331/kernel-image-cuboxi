@@ -141,6 +141,7 @@ config PPC
 	select GENERIC_ATOMIC64 if PPC32
 	select HAVE_PERF_EVENTS
 	select HAVE_REGS_AND_STACK_ACCESS_API
+	select HAVE_HW_BREAKPOINT if PERF_EVENTS && PPC_BOOK3S_64
 
 config EARLY_PRINTK
 	bool
@@ -218,7 +219,7 @@ config ARCH_HIBERNATION_POSSIBLE
 config ARCH_SUSPEND_POSSIBLE
 	def_bool y
 	depends on ADB_PMU || PPC_EFIKA || PPC_LITE5200 || PPC_83xx || \
-		   PPC_85xx || PPC_86xx
+		   PPC_85xx || PPC_86xx || PPC_PSERIES
 
 config PPC_DCR_NATIVE
 	bool
@@ -668,7 +669,7 @@ config NEED_SG_DMA_LENGTH
 
 config GENERIC_ISA_DMA
 	bool
-	depends on PPC64 || POWER4 || 6xx && !CPM2
+	depends on ISA_DMA_API
 	default y
 
 config PPC_INDIRECT_PCI
