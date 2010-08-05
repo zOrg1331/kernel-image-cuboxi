@@ -796,6 +796,10 @@ static int sd_open(struct block_device *bdev, fmode_t mode)
 
 	sdev = sdkp->device;
 
+	retval = scsi_autopm_get_device(sdev);
+	if (retval)
+		goto error_autopm;
+
 	/*
 	 * If the device is in error recovery, wait until it is done.
 	 * If the device is offline, then disallow any access to it.
@@ -840,6 +844,8 @@ static int sd_open(struct block_device *bdev, fmode_t mode)
 	return 0;
 
 error_out:
+	scsi_autopm_put_device(sdev);
+error_autopm:
 	scsi_disk_put(sdkp);
 	return retval;	
 }
@@ -873,6 +879,8 @@ static int sd_release(struct gendisk *disk, fmode_t mode)
 	 * XXX and what if there are packets in flight and this close()
 	 * XXX is followed by a "rmmod sd_mod"?
 	 */
+
+	scsi_autopm_put_device(sdev);
 	scsi_disk_put(sdkp);
 	return 0;
 }
@@ -2273,7 +2281,6 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 	if (sdp->removable)
 		gd->flags |= GENHD_FL_REMOVABLE;
 
-	dev_set_drvdata(dev, sdkp);
 	add_disk(gd);
 	sd_dif_config_host(sdkp);
 
@@ -2281,6 +2288,7 @@ static void sd_probe_async(void *data, async_cookie_t cookie)
 
 	sd_printk(KERN_NOTICE, sdkp, "Attached SCSI %sdisk\n",
 		  sdp->removable ? "removable " : "");
+	scsi_autopm_put_device(sdp);
 	put_device(&sdkp->dev);
 }
 
@@ -2358,14 +2366,15 @@ static int sd_probe(struct device *dev)
 	}
 
 	device_initialize(&sdkp->dev);
-	sdkp->dev.parent = &sdp->sdev_gendev;
+	sdkp->dev.parent = dev;
 	sdkp->dev.class = &sd_disk_class;
-	dev_set_name(&sdkp->dev, dev_name(&sdp->sdev_gendev));
+	dev_set_name(&sdkp->dev, dev_name(dev));
 
 	if (device_add(&sdkp->dev))
 		goto out_free_index;
 
-	get_device(&sdp->sdev_gendev);
+	get_device(dev);
+	dev_set_drvdata(dev, sdkp);
 
 	get_device(&sdkp->dev);	/* prevent release before async_schedule */
 	async_schedule(sd_probe_async, sdkp);
@@ -2399,8 +2408,10 @@ static int sd_remove(struct device *dev)
 {
 	struct scsi_disk *sdkp;
 
-	async_synchronize_full();
 	sdkp = dev_get_drvdata(dev);
+	scsi_autopm_get_device(sdkp->device);
+
+	async_synchronize_full();
 	blk_queue_prep_rq(sdkp->device->request_queue, scsi_prep_fn);
 	blk_queue_unprep_rq(sdkp->device->request_queue, NULL);
 	device_del(&sdkp->dev);
