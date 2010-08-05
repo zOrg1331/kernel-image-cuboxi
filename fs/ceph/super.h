@@ -31,6 +31,12 @@
 #define CEPH_BLOCK         (1 << CEPH_BLOCK_SHIFT)
 
 /*
+ * Supported features
+ */
+#define CEPH_FEATURE_SUPPORTED CEPH_FEATURE_NOSRCADDR
+#define CEPH_FEATURE_REQUIRED  CEPH_FEATURE_NOSRCADDR
+
+/*
  * mount options
  */
 #define CEPH_OPT_FSID             (1<<0)
@@ -48,14 +54,11 @@
 #define ceph_test_opt(client, opt) \
 	(!!((client)->mount_args->flags & CEPH_OPT_##opt))
 
-
 struct ceph_mount_args {
 	int sb_flags;
 	int flags;
 	struct ceph_fsid fsid;
 	struct ceph_entity_addr my_addr;
-	int num_mon;
-	struct ceph_entity_addr *mon_addr;
 	int mount_timeout;
 	int osd_idle_ttl;
 	int osd_timeout;
@@ -67,9 +70,17 @@ struct ceph_mount_args {
 	int cap_release_safety;
 	int max_readdir;       /* max readdir result (entires) */
 	int max_readdir_bytes; /* max readdir result (bytes) */
+
+	/* any type that can't be simply compared or doesn't need
+	   need to be compared should go beyond this point,
+	   ceph_compare_mount_args() should be updated accordingly */
+	struct ceph_entity_addr *mon_addr; /* should be the first
+					      pointer type of args */
+	int num_mon;
 	char *snapdir_name;   /* default ".snap" */
 	char *name;
 	char *secret;
+	char *snap;	/* rbd snapshot */
 };
 
 /*
@@ -138,6 +149,8 @@ struct ceph_client {
 	int auth_err;
 
 	int min_caps;                  /* min caps i added */
+
+	int have_mdsc;
 
 	struct ceph_messenger *msgr;   /* messenger instance */
 	struct ceph_mon_client monc;
@@ -560,11 +573,13 @@ static inline int __ceph_caps_wanted(struct ceph_inode_info *ci)
 /* what the mds thinks we want */
 extern int __ceph_caps_mds_wanted(struct ceph_inode_info *ci);
 
-extern void ceph_caps_init(void);
-extern void ceph_caps_finalize(void);
-extern void ceph_adjust_min_caps(int delta);
-extern int ceph_reserve_caps(struct ceph_cap_reservation *ctx, int need);
-extern int ceph_unreserve_caps(struct ceph_cap_reservation *ctx);
+extern void ceph_caps_init(struct ceph_mds_client *mdsc);
+extern void ceph_caps_finalize(struct ceph_mds_client *mdsc);
+extern void ceph_adjust_min_caps(struct ceph_mds_client *mdsc, int delta);
+extern int ceph_reserve_caps(struct ceph_mds_client *mdsc,
+			     struct ceph_cap_reservation *ctx, int need);
+extern int ceph_unreserve_caps(struct ceph_mds_client *mdsc,
+			       struct ceph_cap_reservation *ctx);
 extern void ceph_reservation_status(struct ceph_client *client,
 				    int *total, int *avail, int *used,
 				    int *reserved, int *min);
@@ -737,13 +752,17 @@ extern struct kmem_cache *ceph_file_cachep;
 
 extern const char *ceph_msg_type_name(int type);
 extern int ceph_check_fsid(struct ceph_client *client, struct ceph_fsid *fsid);
-
-#define FSID_FORMAT "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-" \
-	"%02x%02x%02x%02x%02x%02x"
-#define PR_FSID(f) (f)->fsid[0], (f)->fsid[1], (f)->fsid[2], (f)->fsid[3], \
-		(f)->fsid[4], (f)->fsid[5], (f)->fsid[6], (f)->fsid[7],    \
-		(f)->fsid[8], (f)->fsid[9], (f)->fsid[10], (f)->fsid[11],  \
-		(f)->fsid[12], (f)->fsid[13], (f)->fsid[14], (f)->fsid[15]
+extern struct ceph_mount_args *parse_mount_args(int flags, char *options,
+						const char *dev_name,
+						const char **path);
+extern void ceph_destroy_mount_args(struct ceph_mount_args *args);
+extern int ceph_compare_mount_args(struct ceph_mount_args *new_args,
+			    struct ceph_client *client);
+extern struct ceph_client *ceph_create_client(struct ceph_mount_args *args,
+					      int need_mdsc);
+extern u64 ceph_client_id(struct ceph_client *client);
+extern void ceph_destroy_client(struct ceph_client *client);
+extern int ceph_open_session(struct ceph_client *client);
 
 /* inode.c */
 extern const struct inode_operations ceph_file_iops;
@@ -806,13 +825,16 @@ static inline void ceph_remove_cap(struct ceph_cap *cap)
 	__ceph_remove_cap(cap);
 	spin_unlock(&inode->i_lock);
 }
-extern void ceph_put_cap(struct ceph_cap *cap);
+extern void ceph_put_cap(struct ceph_mds_client *mdsc,
+			 struct ceph_cap *cap);
 
 extern void ceph_queue_caps_release(struct inode *inode);
 extern int ceph_write_inode(struct inode *inode, struct writeback_control *wbc);
 extern int ceph_fsync(struct file *file, int datasync);
 extern void ceph_kick_flushing_caps(struct ceph_mds_client *mdsc,
 				    struct ceph_mds_session *session);
+extern struct ceph_cap *ceph_get_cap_for_mds(struct ceph_inode_info *ci,
+					     int mds);
 extern int ceph_get_cap_mds(struct inode *inode);
 extern void ceph_get_cap_refs(struct ceph_inode_info *ci, int caps);
 extern void ceph_put_cap_refs(struct ceph_inode_info *ci, int had);
@@ -847,6 +869,13 @@ extern int ceph_mmap(struct file *file, struct vm_area_struct *vma);
 /* file.c */
 extern const struct file_operations ceph_file_fops;
 extern const struct address_space_operations ceph_aops;
+extern int ceph_copy_to_page_vector(struct page **pages,
+				    const char *data,
+				    loff_t off, size_t len);
+extern int ceph_copy_from_page_vector(struct page **pages,
+				    char *data,
+				    loff_t off, size_t len);
+extern struct page **ceph_alloc_page_vector(int num_pages, gfp_t flags);
 extern int ceph_open(struct inode *inode, struct file *file);
 extern struct dentry *ceph_lookup_open(struct inode *dir, struct dentry *dentry,
 				       struct nameidata *nd, int mode,
@@ -895,5 +924,10 @@ static inline struct inode *get_dentry_parent_inode(struct dentry *dentry)
 
 	return NULL;
 }
+
+#ifndef CONFIG_CEPH_RBD
+static inline int __init rbd_init(void) { return 0; }
+static inline void __exit rbd_exit(void) {}
+#endif
 
 #endif /* _FS_CEPH_SUPER_H */
