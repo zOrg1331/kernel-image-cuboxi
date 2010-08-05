@@ -492,7 +492,7 @@ config ACPI_TOSHIBA
 	depends on ACPI
 	depends on INPUT
 	depends on RFKILL || RFKILL = n
-	select INPUT_POLLDEV
+	select INPUT_SPARSEKMAP
 	select BACKLIGHT_CLASS_DEVICE
 	---help---
 	  This driver adds support for access to certain system settings
