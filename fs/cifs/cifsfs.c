@@ -934,15 +934,10 @@ init_cifs(void)
 	if (rc)
 		goto out_unregister_filesystem;
 #endif
-	rc = slow_work_register_user(THIS_MODULE);
-	if (rc)
-		goto out_unregister_key_type;
 
 	return 0;
 
- out_unregister_key_type:
 #ifdef CONFIG_CIFS_UPCALL
-	unregister_key_type(&cifs_spnego_key_type);
  out_unregister_filesystem:
 #endif
 	unregister_filesystem(&cifs_fs_type);
