@@ -753,6 +753,7 @@ struct ata_port {
 
 	struct irq_expect	*irq_expect;	/* for irq expecting */
 
+	struct mutex		scsi_scan_mutex;
 	struct delayed_work	hotplug_task;
 	struct work_struct	scsi_rescan_task;
 
