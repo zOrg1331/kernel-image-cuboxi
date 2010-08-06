@@ -319,8 +319,6 @@ C_ENTRY(_user_exception):
 	andi	r11, r11, _TIF_WORK_SYSCALL_MASK
 	beqi	r11, 4f
 
-	addik	r3, r0, -ENOSYS
-	swi	r3, r1, PTO + PT_R3
 	brlid	r15, do_syscall_trace_enter
 	addik	r5, r1, PTO + PT_R0
 
