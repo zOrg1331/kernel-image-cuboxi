@@ -62,6 +62,10 @@ config XEN_SYS_HYPERVISOR
 	 virtual environment, /sys/hypervisor will still be present,
 	 but will have no xen contents.
 
+config SWIOTLB_XEN
+	def_bool y
+	depends on SWIOTLB
+
 config XEN_PLATFORM_PCI
 	tristate "xen platform pci device driver"
 	depends on XEN_PVHVM
@@ -71,4 +75,5 @@ config XEN_PLATFORM_PCI
 	  initializing xenbus and grant_table when running in a Xen HVM
 	  domain. As a consequence this driver is required to run any Xen PV
 	  frontend on Xen HVM.
+
 endmenu
