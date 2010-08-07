@@ -751,6 +751,8 @@ struct ata_port {
 	struct ata_host		*host;
 	struct device 		*dev;
 
+	struct irq_expect	*irq_expect;	/* for irq expecting */
+
 	struct delayed_work	hotplug_task;
 	struct work_struct	scsi_rescan_task;
 
