@@ -40,8 +40,6 @@ static void dynamic_irq_init_x(unsigned int irq, bool keep_chip_data)
 	if (!keep_chip_data)
 		desc->chip_data = NULL;
 	desc->action = NULL;
-	desc->irq_count = 0;
-	desc->irqs_unhandled = 0;
 #ifdef CONFIG_SMP
 	cpumask_setall(desc->affinity);
 #ifdef CONFIG_GENERIC_PENDING_IRQ
@@ -406,8 +404,7 @@ void handle_nested_irq(unsigned int irq)
 	raw_spin_unlock_irq(&desc->lock);
 
 	action_ret = action->thread_fn(action->irq, action->dev_id);
-	if (!noirqdebug)
-		note_interrupt(irq, desc, action_ret);
+	note_interrupt(irq, desc, action_ret);
 
 	raw_spin_lock_irq(&desc->lock);
 	desc->status &= ~IRQ_INPROGRESS;
@@ -450,8 +447,7 @@ handle_simple_irq(unsigned int irq, struct irq_desc *desc)
 	raw_spin_unlock(&desc->lock);
 
 	action_ret = handle_IRQ_event(irq, action);
-	if (!noirqdebug)
-		note_interrupt(irq, desc, action_ret);
+	note_interrupt(irq, desc, action_ret);
 
 	raw_spin_lock(&desc->lock);
 	desc->status &= ~IRQ_INPROGRESS;
@@ -495,8 +491,7 @@ handle_level_irq(unsigned int irq, struct irq_desc *desc)
 	raw_spin_unlock(&desc->lock);
 
 	action_ret = handle_IRQ_event(irq, action);
-	if (!noirqdebug)
-		note_interrupt(irq, desc, action_ret);
+	note_interrupt(irq, desc, action_ret);
 
 	raw_spin_lock(&desc->lock);
 	desc->status &= ~IRQ_INPROGRESS;
@@ -548,8 +543,7 @@ handle_fasteoi_irq(unsigned int irq, struct irq_desc *desc)
 	raw_spin_unlock(&desc->lock);
 
 	action_ret = handle_IRQ_event(irq, action);
-	if (!noirqdebug)
-		note_interrupt(irq, desc, action_ret);
+	note_interrupt(irq, desc, action_ret);
 
 	raw_spin_lock(&desc->lock);
 	desc->status &= ~IRQ_INPROGRESS;
@@ -625,8 +619,7 @@ handle_edge_irq(unsigned int irq, struct irq_desc *desc)
 		desc->status &= ~IRQ_PENDING;
 		raw_spin_unlock(&desc->lock);
 		action_ret = handle_IRQ_event(irq, action);
-		if (!noirqdebug)
-			note_interrupt(irq, desc, action_ret);
+		note_interrupt(irq, desc, action_ret);
 		raw_spin_lock(&desc->lock);
 
 	} while ((desc->status & (IRQ_PENDING | IRQ_DISABLED)) == IRQ_PENDING);
@@ -654,8 +647,7 @@ handle_percpu_irq(unsigned int irq, struct irq_desc *desc)
 		desc->chip->ack(irq);
 
 	action_ret = handle_IRQ_event(irq, desc->action);
-	if (!noirqdebug)
-		note_interrupt(irq, desc, action_ret);
+	note_interrupt(irq, desc, action_ret);
 
 	if (desc->chip->eoi)
 		desc->chip->eoi(irq);
