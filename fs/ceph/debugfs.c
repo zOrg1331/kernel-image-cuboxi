@@ -361,8 +361,8 @@ int ceph_debugfs_client_init(struct ceph_client *client)
 	int ret = 0;
 	char name[80];
 
-	snprintf(name, sizeof(name), FSID_FORMAT ".client%lld",
-		 PR_FSID(&client->fsid), client->monc.auth->global_id);
+	snprintf(name, sizeof(name), "%pU.client%lld", &client->fsid,
+		 client->monc.auth->global_id);
 
 	client->debugfs_dir = debugfs_create_dir(name, ceph_debugfs_dir);
 	if (!client->debugfs_dir)
@@ -440,9 +440,14 @@ int ceph_debugfs_client_init(struct ceph_client *client)
 	if (!client->debugfs_congestion_kb)
 		goto out;
 
-	sprintf(name, "../../bdi/%s", dev_name(client->sb->s_bdi->dev));
-	client->debugfs_bdi = debugfs_create_symlink("bdi", client->debugfs_dir,
-						     name);
+	if (client->backing_dev_info.dev) {
+		sprintf(name, "../../bdi/%s",
+			dev_name(client->backing_dev_info.dev));
+		client->debugfs_bdi =
+			debugfs_create_symlink("bdi",
+					       client->debugfs_dir,
+					       name);
+	}
 
 	return 0;
 
