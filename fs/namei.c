@@ -282,8 +282,7 @@ int inode_permission(struct inode *inode, int mask)
 	if (retval)
 		return retval;
 
-	return security_inode_permission(inode,
-			mask & (MAY_READ|MAY_WRITE|MAY_EXEC|MAY_APPEND));
+	return security_inode_permission(inode, mask);
 }
 
 /**
@@ -1484,8 +1483,7 @@ static int handle_truncate(struct path *path)
 	 */
 	error = locks_verify_locked(inode);
 	if (!error)
-		error = security_path_truncate(path, 0,
-				       ATTR_MTIME|ATTR_CTIME|ATTR_OPEN);
+		error = security_path_truncate(path);
 	if (!error) {
 		error = do_truncate(path->dentry, 0,
 				    ATTR_MTIME|ATTR_CTIME|ATTR_OPEN,
@@ -2635,7 +2633,7 @@ int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 {
 	int error;
 	int is_dir = S_ISDIR(old_dentry->d_inode->i_mode);
-	const char *old_name;
+	const unsigned char *old_name;
 
 	if (old_dentry->d_inode == new_dentry->d_inode)
  		return 0;
