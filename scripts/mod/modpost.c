@@ -1258,8 +1258,6 @@ static void report_sec_mismatch(const char *modname,
 {
 	const char *from, *from_p;
 	const char *to, *to_p;
-	char *prl_from;
-	char *prl_to;
 
 	switch (from_is_func) {
 	case 0: from = "variable"; from_p = "";   break;
@@ -1283,21 +1281,16 @@ static void report_sec_mismatch(const char *modname,
 
 	switch (mismatch->mismatch) {
 	case TEXT_TO_ANY_INIT:
-		prl_from = sec2annotation(fromsec);
-		prl_to = sec2annotation(tosec);
 		fprintf(stderr,
 		"The function %s%s() references\n"
 		"the %s %s%s%s.\n"
 		"This is often because %s lacks a %s\n"
 		"annotation or the annotation of %s is wrong.\n",
-		prl_from, fromsym,
-		to, prl_to, tosym, to_p,
-		fromsym, prl_to, tosym);
-		free(prl_from);
-		free(prl_to);
+		sec2annotation(fromsec), fromsym,
+		to, sec2annotation(tosec), tosym, to_p,
+		fromsym, sec2annotation(tosec), tosym);
 		break;
 	case DATA_TO_ANY_INIT: {
-		prl_to = sec2annotation(tosec);
 		const char *const *s = mismatch->symbol_white_list;
 		fprintf(stderr,
 		"The variable %s references\n"
@@ -1305,24 +1298,20 @@ static void report_sec_mismatch(const char *modname,
 		"If the reference is valid then annotate the\n"
 		"variable with __init* or __refdata (see linux/init.h) "
 		"or name the variable:\n",
-		fromsym, to, prl_to, tosym, to_p);
+		fromsym, to, sec2annotation(tosec), tosym, to_p);
 		while (*s)
 			fprintf(stderr, "%s, ", *s++);
 		fprintf(stderr, "\n");
-		free(prl_to);
 		break;
 	}
 	case TEXT_TO_ANY_EXIT:
-		prl_to = sec2annotation(tosec);
 		fprintf(stderr,
 		"The function %s() references a %s in an exit section.\n"
 		"Often the %s %s%s has valid usage outside the exit section\n"
 		"and the fix is to remove the %sannotation of %s.\n",
-		fromsym, to, to, tosym, to_p, prl_to, tosym);
-		free(prl_to);
+		fromsym, to, to, tosym, to_p, sec2annotation(tosec), tosym);
 		break;
 	case DATA_TO_ANY_EXIT: {
-		prl_to = sec2annotation(tosec);
 		const char *const *s = mismatch->symbol_white_list;
 		fprintf(stderr,
 		"The variable %s references\n"
@@ -1330,31 +1319,24 @@ static void report_sec_mismatch(const char *modname,
 		"If the reference is valid then annotate the\n"
 		"variable with __exit* (see linux/init.h) or "
 		"name the variable:\n",
-		fromsym, to, prl_to, tosym, to_p);
+		fromsym, to, sec2annotation(tosec), tosym, to_p);
 		while (*s)
 			fprintf(stderr, "%s, ", *s++);
 		fprintf(stderr, "\n");
-		free(prl_to);
 		break;
 	}
 	case XXXINIT_TO_SOME_INIT:
 	case XXXEXIT_TO_SOME_EXIT:
-		prl_from = sec2annotation(fromsec);
-		prl_to = sec2annotation(tosec);
 		fprintf(stderr,
 		"The %s %s%s%s references\n"
 		"a %s %s%s%s.\n"
 		"If %s is only used by %s then\n"
 		"annotate %s with a matching annotation.\n",
-		from, prl_from, fromsym, from_p,
-		to, prl_to, tosym, to_p,
+		from, sec2annotation(fromsec), fromsym, from_p,
+		to, sec2annotation(tosec), tosym, to_p,
 		tosym, fromsym, tosym);
-		free(prl_from);
-		free(prl_to);
 		break;
 	case ANY_INIT_TO_ANY_EXIT:
-		prl_from = sec2annotation(fromsec);
-		prl_to = sec2annotation(tosec);
 		fprintf(stderr,
 		"The %s %s%s%s references\n"
 		"a %s %s%s%s.\n"
@@ -1363,15 +1345,11 @@ static void report_sec_mismatch(const char *modname,
 		"uses functionality in the exit path.\n"
 		"The fix is often to remove the %sannotation of\n"
 		"%s%s so it may be used outside an exit section.\n",
-		from, prl_from, fromsym, from_p,
-		to, prl_to, tosym, to_p,
+		from, sec2annotation(fromsec), fromsym, from_p,
+		to, sec2annotation(tosec), tosym, to_p,
 		sec2annotation(tosec), tosym, to_p);
-		free(prl_from);
-		free(prl_to);
 		break;
 	case ANY_EXIT_TO_ANY_INIT:
-		prl_from = sec2annotation(fromsec);
-		prl_to = sec2annotation(tosec);
 		fprintf(stderr,
 		"The %s %s%s%s references\n"
 		"a %s %s%s%s.\n"
@@ -1380,20 +1358,16 @@ static void report_sec_mismatch(const char *modname,
 		"uses functionality in the init path.\n"
 		"The fix is often to remove the %sannotation of\n"
 		"%s%s so it may be used outside an init section.\n",
-		from, prl_from, fromsym, from_p,
-		to, prl_to, tosym, to_p,
-		prl_to, tosym, to_p);
-		free(prl_from);
-		free(prl_to);
+		from, sec2annotation(fromsec), fromsym, from_p,
+		to, sec2annotation(tosec), tosym, to_p,
+		sec2annotation(tosec), tosym, to_p);
 		break;
 	case EXPORT_TO_INIT_EXIT:
-		prl_to = sec2annotation(tosec);
 		fprintf(stderr,
 		"The symbol %s is exported and annotated %s\n"
 		"Fix this by removing the %sannotation of %s "
 		"or drop the export.\n",
-		tosym, prl_to, prl_to, tosym);
-		free(prl_to);
+		tosym, sec2annotation(tosec), sec2annotation(tosec), tosym);
 		break;
 	}
 	fprintf(stderr, "\n");
