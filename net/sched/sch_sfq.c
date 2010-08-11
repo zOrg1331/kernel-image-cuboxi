@@ -334,7 +334,7 @@ sfq_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 	if (++sch->q.qlen <= q->limit) {
 		sch->bstats.bytes += qdisc_pkt_len(skb);
 		sch->bstats.packets++;
-		return 0;
+		return NET_XMIT_SUCCESS;
 	}
 
 	sfq_drop(sch);
@@ -519,6 +519,10 @@ static unsigned long sfq_bind(struct Qdisc *sch, unsigned long parent,
 	return 0;
 }
 
+static void sfq_put(struct Qdisc *q, unsigned long cl)
+{
+}
+
 static struct tcf_proto **sfq_find_tcf(struct Qdisc *sch, unsigned long cl)
 {
 	struct sfq_sched_data *q = qdisc_priv(sch);
@@ -572,8 +576,10 @@ static void sfq_walk(struct Qdisc *sch, struct qdisc_walker *arg)
 
 static const struct Qdisc_class_ops sfq_class_ops = {
 	.get		=	sfq_get,
+	.put		=	sfq_put,
 	.tcf_chain	=	sfq_find_tcf,
 	.bind_tcf	=	sfq_bind,
+	.unbind_tcf	=	sfq_put,
 	.dump		=	sfq_dump_class,
 	.dump_stats	=	sfq_dump_class_stats,
 	.walk		=	sfq_walk,
