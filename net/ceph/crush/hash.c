@@ -1,6 +1,6 @@
 
 #include <linux/types.h>
-#include "hash.h"
+#include <linux/ceph/crush/hash.h>
 
 /*
  * Robert Jenkins' function for mixing 32-bit values

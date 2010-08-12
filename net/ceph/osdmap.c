@@ -1,14 +1,15 @@
 
-#include "ceph_debug.h"
+#include <linux/ceph/ceph_debug.h>
 
+#include <linux/module.h>
 #include <linux/slab.h>
 #include <asm/div64.h>
 
-#include "super.h"
-#include "osdmap.h"
-#include "crush/hash.h"
-#include "crush/mapper.h"
-#include "decode.h"
+#include <linux/ceph/libceph.h>
+#include <linux/ceph/osdmap.h>
+#include <linux/ceph/decode.h>
+#include <linux/ceph/crush/hash.h>
+#include <linux/ceph/crush/mapper.h>
 
 char *ceph_osdmap_state_str(char *str, int len, int state)
 {
@@ -429,6 +430,7 @@ int ceph_pg_poolid_by_name(struct ceph_osdmap *map, const char *name)
 	}
 	return -ENOENT;
 }
+EXPORT_SYMBOL(ceph_pg_poolid_by_name);
 
 static void __remove_pg_pool(struct rb_root *root, struct ceph_pg_pool_info *pi)
 {
@@ -979,6 +981,7 @@ void ceph_calc_file_object_mapping(struct ceph_file_layout *layout,
 
 	dout(" obj extent %llu~%llu\n", *oxoff, *oxlen);
 }
+EXPORT_SYMBOL(ceph_calc_file_object_mapping);
 
 /*
  * calculate an object layout (i.e. pgid) from an oid,
@@ -1024,6 +1027,7 @@ int ceph_calc_object_layout(struct ceph_object_layout *ol,
 	ol->ol_stripe_unit = fl->fl_object_stripe_unit;
 	return 0;
 }
+EXPORT_SYMBOL(ceph_calc_object_layout);
 
 /*
  * Calculate raw osd vector for the given pgid.  Return pointer to osd
@@ -1121,3 +1125,4 @@ int ceph_calc_pg_primary(struct ceph_osdmap *osdmap, struct ceph_pg pgid)
 			return osds[i];
 	return -1;
 }
+EXPORT_SYMBOL(ceph_calc_pg_primary);

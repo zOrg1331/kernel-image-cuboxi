@@ -65,6 +65,9 @@ struct ceph_messenger {
 	 */
 	u32 global_seq;
 	spinlock_t global_seq_lock;
+
+	u32 supported_features;
+	u32 required_features;
 };
 
 /*
@@ -209,7 +212,7 @@ struct ceph_connection {
 };
 
 
-extern const char *pr_addr(const struct sockaddr_storage *ss);
+extern const char *ceph_pr_addr(const struct sockaddr_storage *ss);
 extern int ceph_parse_ips(const char *c, const char *end,
 			  struct ceph_entity_addr *addr,
 			  int max_count, int *count);
@@ -220,7 +223,8 @@ extern void ceph_msgr_exit(void);
 extern void ceph_msgr_flush(void);
 
 extern struct ceph_messenger *ceph_messenger_create(
-	struct ceph_entity_addr *myaddr);
+	struct ceph_entity_addr *myaddr,
+	u32 features, u32 required);
 extern void ceph_messenger_destroy(struct ceph_messenger *);
 
 extern void ceph_con_init(struct ceph_messenger *msgr,
