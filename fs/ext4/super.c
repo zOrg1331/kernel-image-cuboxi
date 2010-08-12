@@ -2706,15 +2706,13 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	 * Test whether we have more sectors than will fit in sector_t,
 	 * and whether the max offset is addressable by the page cache.
 	 */
-	if ((ext4_blocks_count(es) >
-	     (sector_t)(~0ULL) >> (sb->s_blocksize_bits - 9)) ||
-	    (ext4_blocks_count(es) >
-	     (pgoff_t)(~0ULL) >> (PAGE_CACHE_SHIFT - sb->s_blocksize_bits))) {
+	ret = generic_check_addressable(sb->s_blocksize_bits,
+					ext4_blocks_count(es));
+	if (ret) {
 		ext4_msg(sb, KERN_ERR, "filesystem"
 			 " too large to mount safely on this system");
 		if (sizeof(sector_t) < 8)
 			ext4_msg(sb, KERN_WARNING, "CONFIG_LBDAF not enabled");
-		ret = -EFBIG;
 		goto failed_mount;
 	}
 
@@ -3010,7 +3008,7 @@ no_journal:
 	ext4_ext_init(sb);
 	err = ext4_mb_init(sb, needs_recovery);
 	if (err) {
-		ext4_msg(sb, KERN_ERR, "failed to initalize mballoc (%d)",
+		ext4_msg(sb, KERN_ERR, "failed to initialize mballoc (%d)",
 			 err);
 		goto failed_mount4;
 	}
