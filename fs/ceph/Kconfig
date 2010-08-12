@@ -3,6 +3,8 @@ config CEPH_FS
 	depends on INET && EXPERIMENTAL
 	select LIBCRC32C
 	select CRYPTO_AES
+	select CEPH_LIB
+	default n
 	help
 	  Choose Y or M here to include support for mounting the
 	  experimental Ceph distributed file system.  Ceph is an extremely
@@ -19,7 +21,7 @@ config CEPH_FS_PRETTYDEBUG
 	default n
 	help
 	  If you say Y here, debug output will include a filename and
-	  line to aid debugging.  This icnreases kernel size and slows
+	  line to aid debugging.  This increases kernel size and slows
 	  execution slightly when debug call sites are enabled (e.g.,
 	  via CONFIG_DYNAMIC_DEBUG).
 

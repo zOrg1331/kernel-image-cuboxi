@@ -1,0 +1,15 @@
+config CEPH_LIB
+        tristate "Ceph core library (EXPERIMENTAL)"
+	depends on INET && EXPERIMENTAL
+	select LIBCRC32C
+	select CRYPTO_AES
+	default n
+	help
+	  Choose Y or M here to include cephlib, which provides the
+	  common functionality to both the Ceph filesystem and
+	  to the rados block device (rbd).
+
+	  More information at http://ceph.newdream.net/.
+
+	  If unsure, say N.
+

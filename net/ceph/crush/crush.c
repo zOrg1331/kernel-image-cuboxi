@@ -8,7 +8,7 @@
 # define BUG_ON(x) assert(!(x))
 #endif
 
-#include "crush.h"
+#include <linux/ceph/crush/crush.h>
 
 const char *crush_bucket_alg_name(int alg)
 {

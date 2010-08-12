@@ -1,5 +1,6 @@
-#include "ceph_debug.h"
+#include <linux/ceph/ceph_debug.h>
 
+#include <linux/module.h>
 #include <linux/err.h>
 #include <linux/highmem.h>
 #include <linux/mm.h>
@@ -10,12 +11,12 @@
 #include <linux/bio.h>
 #endif
 
-#include "super.h"
-#include "osd_client.h"
-#include "messenger.h"
-#include "decode.h"
-#include "auth.h"
-#include "pagelist.h"
+#include <linux/ceph/libceph.h>
+#include <linux/ceph/osd_client.h>
+#include <linux/ceph/messenger.h>
+#include <linux/ceph/decode.h>
+#include <linux/ceph/auth.h>
+#include <linux/ceph/pagelist.h>
 
 #define OSD_OP_FRONT_LEN	4096
 #define OSD_OPREPLY_FRONT_LEN	512
@@ -70,11 +71,14 @@ void ceph_calc_raw_layout(struct ceph_osd_client *osdc,
 		op->extent.length = objlen;
 	}
 	req->r_num_pages = calc_pages_for(off, *plen);
+	if (op->op == CEPH_OSD_OP_WRITE)
+		op->payload_len = *plen;
 
 	dout("calc_layout bno=%llx %llu~%llu (%d pages)\n",
 	     *bno, objoff, objlen, req->r_num_pages);
 
 }
+EXPORT_SYMBOL(ceph_calc_raw_layout);
 
 /*
  * Implement client access to distributed object storage cluster.
@@ -154,19 +158,7 @@ void ceph_osdc_release_request(struct kref *kref)
 	else
 		kfree(req);
 }
-
-static int op_needs_trail(int op)
-{
-	switch (op) {
-	case CEPH_OSD_OP_GETXATTR:
-	case CEPH_OSD_OP_SETXATTR:
-	case CEPH_OSD_OP_CMPXATTR:
-	case CEPH_OSD_OP_CALL:
-		return 1;
-	default:
-		return 0;
-	}
-}
+EXPORT_SYMBOL(ceph_osdc_release_request);
 
 static int get_num_ops(struct ceph_osd_req_op *ops, int *needs_trail)
 {
@@ -268,6 +260,7 @@ struct ceph_osd_request *ceph_osdc_alloc_request(struct ceph_osd_client *osdc,
 
 	return req;
 }
+EXPORT_SYMBOL(ceph_osdc_alloc_request);
 
 static void osd_req_encode_op(struct ceph_osd_request *req,
 			      struct ceph_osd_op *dst,
@@ -403,6 +396,7 @@ void ceph_osdc_build_request(struct ceph_osd_request *req,
 	msg->hdr.front_len = cpu_to_le32(msg_size);
 	return;
 }
+EXPORT_SYMBOL(ceph_osdc_build_request);
 
 /*
  * build new request AND message, calculate layout, and adjust file
@@ -460,6 +454,7 @@ struct ceph_osd_request *ceph_osdc_new_request(struct ceph_osd_client *osdc,
 
 	return req;
 }
+EXPORT_SYMBOL(ceph_osdc_new_request);
 
 /*
  * We keep osd requests in an rbtree, sorted by ->r_tid.
@@ -614,7 +609,7 @@ static void __move_osd_to_lru(struct ceph_osd_client *osdc,
 	dout("__move_osd_to_lru %p\n", osd);
 	BUG_ON(!list_empty(&osd->o_osd_lru));
 	list_add_tail(&osd->o_osd_lru, &osdc->osd_lru);
-	osd->lru_ttl = jiffies + osdc->client->mount_args->osd_idle_ttl * HZ;
+	osd->lru_ttl = jiffies + osdc->client->options->osd_idle_ttl * HZ;
 }
 
 static void __remove_osd_from_lru(struct ceph_osd *osd)
@@ -708,7 +703,7 @@ static struct ceph_osd *__lookup_osd(struct ceph_osd_client *osdc, int o)
 static void __schedule_osd_timeout(struct ceph_osd_client *osdc)
 {
 	schedule_delayed_work(&osdc->timeout_work,
-			osdc->client->mount_args->osd_keepalive_timeout * HZ);
+			osdc->client->options->osd_keepalive_timeout * HZ);
 }
 
 static void __cancel_osd_timeout(struct ceph_osd_client *osdc)
@@ -909,9 +904,9 @@ static void handle_timeout(struct work_struct *work)
 		container_of(work, struct ceph_osd_client, timeout_work.work);
 	struct ceph_osd_request *req, *last_req = NULL;
 	struct ceph_osd *osd;
-	unsigned long timeout = osdc->client->mount_args->osd_timeout * HZ;
+	unsigned long timeout = osdc->client->options->osd_timeout * HZ;
 	unsigned long keepalive =
-		osdc->client->mount_args->osd_keepalive_timeout * HZ;
+		osdc->client->options->osd_keepalive_timeout * HZ;
 	unsigned long last_stamp = 0;
 	struct rb_node *p;
 	struct list_head slow_osds;
@@ -998,7 +993,7 @@ static void handle_osds_timeout(struct work_struct *work)
 		container_of(work, struct ceph_osd_client,
 			     osds_timeout_work.work);
 	unsigned long delay =
-		osdc->client->mount_args->osd_idle_ttl * HZ >> 2;
+		osdc->client->options->osd_idle_ttl * HZ >> 2;
 
 	dout("osds timeout\n");
 	down_read(&osdc->map_sem);
@@ -1360,6 +1355,7 @@ int ceph_osdc_start_request(struct ceph_osd_client *osdc,
 	up_read(&osdc->map_sem);
 	return rc;
 }
+EXPORT_SYMBOL(ceph_osdc_start_request);
 
 /*
  * wait for a request to complete
@@ -1382,6 +1378,7 @@ int ceph_osdc_wait_request(struct ceph_osd_client *osdc,
 	dout("wait_request tid %llu result %d\n", req->r_tid, req->r_result);
 	return req->r_result;
 }
+EXPORT_SYMBOL(ceph_osdc_wait_request);
 
 /*
  * sync - wait for all in-flight requests to flush.  avoid starvation.
@@ -1415,6 +1412,7 @@ void ceph_osdc_sync(struct ceph_osd_client *osdc)
 	mutex_unlock(&osdc->request_mutex);
 	dout("sync done (thru tid %llu)\n", last_tid);
 }
+EXPORT_SYMBOL(ceph_osdc_sync);
 
 /*
  * init, shutdown
@@ -1440,7 +1438,7 @@ int ceph_osdc_init(struct ceph_osd_client *osdc, struct ceph_client *client)
 	INIT_DELAYED_WORK(&osdc->osds_timeout_work, handle_osds_timeout);
 
 	schedule_delayed_work(&osdc->osds_timeout_work,
-	   round_jiffies_relative(osdc->client->mount_args->osd_idle_ttl * HZ));
+	   round_jiffies_relative(osdc->client->options->osd_idle_ttl * HZ));
 
 	err = -ENOMEM;
 	osdc->req_mempool = mempool_create_kmalloc_pool(10,
@@ -1466,6 +1464,7 @@ out_mempool:
 out:
 	return err;
 }
+EXPORT_SYMBOL(ceph_osdc_init);
 
 void ceph_osdc_stop(struct ceph_osd_client *osdc)
 {
@@ -1480,6 +1479,7 @@ void ceph_osdc_stop(struct ceph_osd_client *osdc)
 	ceph_msgpool_destroy(&osdc->msgpool_op);
 	ceph_msgpool_destroy(&osdc->msgpool_op_reply);
 }
+EXPORT_SYMBOL(ceph_osdc_stop);
 
 /*
  * Read some contiguous pages.  If we cross a stripe boundary, shorten
@@ -1517,6 +1517,7 @@ int ceph_osdc_readpages(struct ceph_osd_client *osdc,
 	dout("readpages result %d\n", rc);
 	return rc;
 }
+EXPORT_SYMBOL(ceph_osdc_readpages);
 
 /*
  * do a synchronous write on N pages
@@ -1559,6 +1560,7 @@ int ceph_osdc_writepages(struct ceph_osd_client *osdc, struct ceph_vino vino,
 	dout("writepages result %d\n", rc);
 	return rc;
 }
+EXPORT_SYMBOL(ceph_osdc_writepages);
 
 /*
  * handle incoming message

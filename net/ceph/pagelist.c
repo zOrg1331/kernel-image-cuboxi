@@ -1,9 +1,9 @@
 
+#include <linux/module.h>
 #include <linux/gfp.h>
 #include <linux/pagemap.h>
 #include <linux/highmem.h>
-
-#include "pagelist.h"
+#include <linux/ceph/pagelist.h>
 
 int ceph_pagelist_release(struct ceph_pagelist *pl)
 {
@@ -17,6 +17,7 @@ int ceph_pagelist_release(struct ceph_pagelist *pl)
 	}
 	return 0;
 }
+EXPORT_SYMBOL(ceph_pagelist_release);
 
 static int ceph_pagelist_addpage(struct ceph_pagelist *pl)
 {
@@ -53,3 +54,4 @@ int ceph_pagelist_append(struct ceph_pagelist *pl, const void *buf, size_t len)
 	pl->room -= len;
 	return 0;
 }
+EXPORT_SYMBOL(ceph_pagelist_append);

@@ -1,5 +1,5 @@
 
-#include "types.h"
+#include <linux/ceph/types.h>
 
 /*
  * Robert Jenkin's hash function.
