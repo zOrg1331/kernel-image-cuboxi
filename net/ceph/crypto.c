@@ -1,13 +1,13 @@
 
-#include "ceph_debug.h"
+#include <linux/ceph/ceph_debug.h>
 
 #include <linux/err.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <crypto/hash.h>
 
+#include <linux/ceph/decode.h>
 #include "crypto.h"
-#include "decode.h"
 
 int ceph_crypto_key_encode(struct ceph_crypto_key *key, void **p, void *end)
 {

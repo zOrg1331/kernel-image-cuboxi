@@ -79,6 +79,7 @@ struct ceph_mon_client {
 	u64 last_tid;
 
 	/* mds/osd map */
+	int want_mdsmap;
 	int want_next_osdmap; /* 1 = want, 2 = want+asked */
 	u32 have_osdmap, have_mdsmap;
 

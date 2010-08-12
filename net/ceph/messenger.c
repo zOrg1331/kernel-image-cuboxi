@@ -1,4 +1,4 @@
-#include "ceph_debug.h"
+#include <linux/ceph/ceph_debug.h>
 
 #include <linux/crc32c.h>
 #include <linux/ctype.h>
@@ -13,10 +13,10 @@
 #include <linux/blkdev.h>
 #include <net/tcp.h>
 
-#include "super.h"
-#include "messenger.h"
-#include "decode.h"
-#include "pagelist.h"
+#include <linux/ceph/libceph.h>
+#include <linux/ceph/messenger.h>
+#include <linux/ceph/decode.h>
+#include <linux/ceph/pagelist.h>
 
 /*
  * Ceph uses the messenger to exchange ceph_msg messages with other
@@ -50,7 +50,7 @@ static char addr_str[MAX_ADDR_STR][MAX_ADDR_STR_LEN];
 static DEFINE_SPINLOCK(addr_str_lock);
 static int last_addr_str;
 
-const char *pr_addr(const struct sockaddr_storage *ss)
+const char *ceph_pr_addr(const struct sockaddr_storage *ss)
 {
 	int i;
 	char *s;
@@ -81,6 +81,7 @@ const char *pr_addr(const struct sockaddr_storage *ss)
 
 	return s;
 }
+EXPORT_SYMBOL(ceph_pr_addr);
 
 static void encode_my_addr(struct ceph_messenger *msgr)
 {
@@ -93,7 +94,7 @@ static void encode_my_addr(struct ceph_messenger *msgr)
  */
 struct workqueue_struct *ceph_msgr_wq;
 
-int __init ceph_msgr_init(void)
+int ceph_msgr_init(void)
 {
 	ceph_msgr_wq = create_workqueue("ceph-msgr");
 	if (IS_ERR(ceph_msgr_wq)) {
@@ -104,16 +105,19 @@ int __init ceph_msgr_init(void)
 	}
 	return 0;
 }
+EXPORT_SYMBOL(ceph_msgr_init);
 
 void ceph_msgr_exit(void)
 {
 	destroy_workqueue(ceph_msgr_wq);
 }
+EXPORT_SYMBOL(ceph_msgr_exit);
 
 void ceph_msgr_flush(void)
 {
 	flush_workqueue(ceph_msgr_wq);
 }
+EXPORT_SYMBOL(ceph_msgr_flush);
 
 
 /*
@@ -223,19 +227,19 @@ static struct socket *ceph_tcp_connect(struct ceph_connection *con)
 
 	set_sock_callbacks(sock, con);
 
-	dout("connect %s\n", pr_addr(&con->peer_addr.in_addr));
+	dout("connect %s\n", ceph_pr_addr(&con->peer_addr.in_addr));
 
 	ret = sock->ops->connect(sock, (struct sockaddr *)paddr, sizeof(*paddr),
 				 O_NONBLOCK);
 	if (ret == -EINPROGRESS) {
 		dout("connect %s EINPROGRESS sk_state = %u\n",
-		     pr_addr(&con->peer_addr.in_addr),
+		     ceph_pr_addr(&con->peer_addr.in_addr),
 		     sock->sk->sk_state);
 		ret = 0;
 	}
 	if (ret < 0) {
 		pr_err("connect %s error %d\n",
-		       pr_addr(&con->peer_addr.in_addr), ret);
+		       ceph_pr_addr(&con->peer_addr.in_addr), ret);
 		sock_release(sock);
 		con->sock = NULL;
 		con->error_msg = "connect error";
@@ -336,7 +340,8 @@ static void reset_connection(struct ceph_connection *con)
  */
 void ceph_con_close(struct ceph_connection *con)
 {
-	dout("con_close %p peer %s\n", con, pr_addr(&con->peer_addr.in_addr));
+	dout("con_close %p peer %s\n", con,
+	     ceph_pr_addr(&con->peer_addr.in_addr));
 	set_bit(CLOSED, &con->state);  /* in case there's queued work */
 	clear_bit(STANDBY, &con->state);  /* avoid connect_seq bump */
 	clear_bit(LOSSYTX, &con->state);  /* so we retry next connect */
@@ -349,19 +354,21 @@ void ceph_con_close(struct ceph_connection *con)
 	mutex_unlock(&con->mutex);
 	queue_con(con);
 }
+EXPORT_SYMBOL(ceph_con_close);
 
 /*
  * Reopen a closed connection, with a new peer address.
  */
 void ceph_con_open(struct ceph_connection *con, struct ceph_entity_addr *addr)
 {
-	dout("con_open %p %s\n", con, pr_addr(&addr->in_addr));
+	dout("con_open %p %s\n", con, ceph_pr_addr(&addr->in_addr));
 	set_bit(OPENING, &con->state);
 	clear_bit(CLOSED, &con->state);
 	memcpy(&con->peer_addr, addr, sizeof(*addr));
 	con->delay = 0;      /* reset backoff memory */
 	queue_con(con);
 }
+EXPORT_SYMBOL(ceph_con_open);
 
 /*
  * return true if this connection ever successfully opened
@@ -408,6 +415,7 @@ void ceph_con_init(struct ceph_messenger *msgr, struct ceph_connection *con)
 	INIT_LIST_HEAD(&con->out_sent);
 	INIT_DELAYED_WORK(&con->work, con_work);
 }
+EXPORT_SYMBOL(ceph_con_init);
 
 
 /*
@@ -652,7 +660,7 @@ static void prepare_write_connect(struct ceph_messenger *msgr,
 	dout("prepare_write_connect %p cseq=%d gseq=%d proto=%d\n", con,
 	     con->connect_seq, global_seq, proto);
 
-	con->out_connect.features = cpu_to_le64(CEPH_FEATURE_SUPPORTED);
+	con->out_connect.features = cpu_to_le64(msgr->supported_features);
 	con->out_connect.host_type = cpu_to_le32(CEPH_ENTITY_TYPE_CLIENT);
 	con->out_connect.connect_seq = cpu_to_le32(con->connect_seq);
 	con->out_connect.global_seq = cpu_to_le32(global_seq);
@@ -1013,7 +1021,7 @@ static int verify_hello(struct ceph_connection *con)
 {
 	if (memcmp(con->in_banner, CEPH_BANNER, strlen(CEPH_BANNER))) {
 		pr_err("connect to %s got bad banner\n",
-		       pr_addr(&con->peer_addr.in_addr));
+		       ceph_pr_addr(&con->peer_addr.in_addr));
 		con->error_msg = "protocol error, bad banner";
 		return -1;
 	}
@@ -1116,7 +1124,7 @@ int ceph_parse_ips(const char *c, const char *end,
 
 		addr_set_port(ss, port);
 
-		dout("parse_ips got %s\n", pr_addr(ss));
+		dout("parse_ips got %s\n", ceph_pr_addr(ss));
 
 		if (p == end)
 			break;
@@ -1136,6 +1144,7 @@ bad:
 	pr_err("parse_ips bad ip '%.*s'\n", (int)(end - c), c);
 	return -EINVAL;
 }
+EXPORT_SYMBOL(ceph_parse_ips);
 
 static int process_banner(struct ceph_connection *con)
 {
@@ -1157,9 +1166,9 @@ static int process_banner(struct ceph_connection *con)
 	    !(addr_is_blank(&con->actual_peer_addr.in_addr) &&
 	      con->actual_peer_addr.nonce == con->peer_addr.nonce)) {
 		pr_warning("wrong peer, want %s/%d, got %s/%d\n",
-			   pr_addr(&con->peer_addr.in_addr),
+			   ceph_pr_addr(&con->peer_addr.in_addr),
 			   (int)le32_to_cpu(con->peer_addr.nonce),
-			   pr_addr(&con->actual_peer_addr.in_addr),
+			   ceph_pr_addr(&con->actual_peer_addr.in_addr),
 			   (int)le32_to_cpu(con->actual_peer_addr.nonce));
 		con->error_msg = "wrong peer at address";
 		return -1;
@@ -1177,7 +1186,7 @@ static int process_banner(struct ceph_connection *con)
 		addr_set_port(&con->msgr->inst.addr.in_addr, port);
 		encode_my_addr(con->msgr);
 		dout("process_banner learned my addr is %s\n",
-		     pr_addr(&con->msgr->inst.addr.in_addr));
+		     ceph_pr_addr(&con->msgr->inst.addr.in_addr));
 	}
 
 	set_bit(NEGOTIATING, &con->state);
@@ -1198,8 +1207,8 @@ static void fail_protocol(struct ceph_connection *con)
 
 static int process_connect(struct ceph_connection *con)
 {
-	u64 sup_feat = CEPH_FEATURE_SUPPORTED;
-	u64 req_feat = CEPH_FEATURE_REQUIRED;
+	u64 sup_feat = con->msgr->supported_features;
+	u64 req_feat = con->msgr->required_features;
 	u64 server_feat = le64_to_cpu(con->in_reply.features);
 
 	dout("process_connect on %p tag %d\n", con, (int)con->in_tag);
@@ -1209,7 +1218,7 @@ static int process_connect(struct ceph_connection *con)
 		pr_err("%s%lld %s feature set mismatch,"
 		       " my %llx < server's %llx, missing %llx\n",
 		       ENTITY_NAME(con->peer_name),
-		       pr_addr(&con->peer_addr.in_addr),
+		       ceph_pr_addr(&con->peer_addr.in_addr),
 		       sup_feat, server_feat, server_feat & ~sup_feat);
 		con->error_msg = "missing required protocol features";
 		fail_protocol(con);
@@ -1219,7 +1228,7 @@ static int process_connect(struct ceph_connection *con)
 		pr_err("%s%lld %s protocol version mismatch,"
 		       " my %d != server's %d\n",
 		       ENTITY_NAME(con->peer_name),
-		       pr_addr(&con->peer_addr.in_addr),
+		       ceph_pr_addr(&con->peer_addr.in_addr),
 		       le32_to_cpu(con->out_connect.protocol_version),
 		       le32_to_cpu(con->in_reply.protocol_version));
 		con->error_msg = "protocol version mismatch";
@@ -1253,7 +1262,7 @@ static int process_connect(struct ceph_connection *con)
 		     le32_to_cpu(con->in_connect.connect_seq));
 		pr_err("%s%lld %s connection reset\n",
 		       ENTITY_NAME(con->peer_name),
-		       pr_addr(&con->peer_addr.in_addr));
+		       ceph_pr_addr(&con->peer_addr.in_addr));
 		reset_connection(con);
 		prepare_write_connect(con->msgr, con, 0);
 		prepare_read_connect(con);
@@ -1298,7 +1307,7 @@ static int process_connect(struct ceph_connection *con)
 			pr_err("%s%lld %s protocol feature mismatch,"
 			       " my required %llx > server's %llx, need %llx\n",
 			       ENTITY_NAME(con->peer_name),
-			       pr_addr(&con->peer_addr.in_addr),
+			       ceph_pr_addr(&con->peer_addr.in_addr),
 			       req_feat, server_feat, req_feat & ~server_feat);
 			con->error_msg = "missing required protocol features";
 			fail_protocol(con);
@@ -1525,7 +1534,7 @@ static int read_partial_message(struct ceph_connection *con)
 	if ((s64)seq - (s64)con->in_seq < 1) {
 		pr_info("skipping %s%lld %s seq %lld, expected %lld\n",
 			ENTITY_NAME(con->peer_name),
-			pr_addr(&con->peer_addr.in_addr),
+			ceph_pr_addr(&con->peer_addr.in_addr),
 			seq, con->in_seq + 1);
 		con->in_base_pos = -front_len - middle_len - data_len -
 			sizeof(m->footer);
@@ -2023,9 +2032,9 @@ out:
 static void ceph_fault(struct ceph_connection *con)
 {
 	pr_err("%s%lld %s %s\n", ENTITY_NAME(con->peer_name),
-	       pr_addr(&con->peer_addr.in_addr), con->error_msg);
+	       ceph_pr_addr(&con->peer_addr.in_addr), con->error_msg);
 	dout("fault %p state %lu to peer %s\n",
-	     con, con->state, pr_addr(&con->peer_addr.in_addr));
+	     con, con->state, ceph_pr_addr(&con->peer_addr.in_addr));
 
 	if (test_bit(LOSSYTX, &con->state)) {
 		dout("fault on LOSSYTX channel\n");
@@ -2085,13 +2094,18 @@ out:
 /*
  * create a new messenger instance
  */
-struct ceph_messenger *ceph_messenger_create(struct ceph_entity_addr *myaddr)
+struct ceph_messenger *ceph_messenger_create(struct ceph_entity_addr *myaddr,
+					     u32 supported_features,
+					     u32 required_features)
 {
 	struct ceph_messenger *msgr;
 
 	msgr = kzalloc(sizeof(*msgr), GFP_KERNEL);
 	if (msgr == NULL)
 		return ERR_PTR(-ENOMEM);
+
+	msgr->supported_features = supported_features;
+	msgr->required_features = required_features;
 
 	spin_lock_init(&msgr->global_seq_lock);
 
@@ -2115,6 +2129,7 @@ struct ceph_messenger *ceph_messenger_create(struct ceph_entity_addr *myaddr)
 	dout("messenger_create %p\n", msgr);
 	return msgr;
 }
+EXPORT_SYMBOL(ceph_messenger_create);
 
 void ceph_messenger_destroy(struct ceph_messenger *msgr)
 {
@@ -2124,6 +2139,7 @@ void ceph_messenger_destroy(struct ceph_messenger *msgr)
 	kfree(msgr);
 	dout("destroyed messenger %p\n", msgr);
 }
+EXPORT_SYMBOL(ceph_messenger_destroy);
 
 /*
  * Queue up an outgoing message on the given connection.
@@ -2160,6 +2176,7 @@ void ceph_con_send(struct ceph_connection *con, struct ceph_msg *msg)
 	if (test_and_set_bit(WRITE_PENDING, &con->state) == 0)
 		queue_con(con);
 }
+EXPORT_SYMBOL(ceph_con_send);
 
 /*
  * Revoke a message that was previously queued for send
@@ -2225,6 +2242,7 @@ void ceph_con_keepalive(struct ceph_connection *con)
 	    test_and_set_bit(WRITE_PENDING, &con->state) == 0)
 		queue_con(con);
 }
+EXPORT_SYMBOL(ceph_con_keepalive);
 
 
 /*
@@ -2299,6 +2317,7 @@ out:
 	pr_err("msg_new can't create type %d front %d\n", type, front_len);
 	return NULL;
 }
+EXPORT_SYMBOL(ceph_msg_new);
 
 /*
  * Allocate "middle" portion of a message, if it is needed and wasn't
@@ -2410,6 +2429,7 @@ void ceph_msg_last_put(struct kref *kref)
 	else
 		ceph_msg_kfree(m);
 }
+EXPORT_SYMBOL(ceph_msg_last_put);
 
 void ceph_msg_dump(struct ceph_msg *msg)
 {
@@ -2430,3 +2450,4 @@ void ceph_msg_dump(struct ceph_msg *msg)
 		       DUMP_PREFIX_OFFSET, 16, 1,
 		       &msg->footer, sizeof(msg->footer), true);
 }
+EXPORT_SYMBOL(ceph_msg_dump);

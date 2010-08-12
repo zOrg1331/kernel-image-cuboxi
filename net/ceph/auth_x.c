@@ -1,16 +1,17 @@
 
-#include "ceph_debug.h"
+#include <linux/ceph/ceph_debug.h>
 
 #include <linux/err.h>
 #include <linux/module.h>
 #include <linux/random.h>
 #include <linux/slab.h>
 
+#include <linux/ceph/decode.h>
+#include <linux/ceph/auth.h>
+
+#include "crypto.h"
 #include "auth_x.h"
 #include "auth_x_protocol.h"
-#include "crypto.h"
-#include "auth.h"
-#include "decode.h"
 
 #define TEMP_TICKET_BUF_LEN	256
 
