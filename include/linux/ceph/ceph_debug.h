@@ -3,7 +3,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#ifdef CONFIG_CEPH_FS_PRETTYDEBUG
+#ifdef CONFIG_CEPH_LIB_PRETTYDEBUG
 
 /*
  * wrap pr_debug to include a filename:lineno prefix on each line.

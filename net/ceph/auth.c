@@ -1,16 +1,16 @@
-#include "ceph_debug.h"
+#include <linux/ceph/ceph_debug.h>
 
 #include <linux/module.h>
 #include <linux/err.h>
 #include <linux/slab.h>
 
-#include "types.h"
+#include <linux/ceph/types.h>
+#include <linux/ceph/decode.h>
+#include <linux/ceph/libceph.h>
+#include <linux/ceph/messenger.h>
 #include "auth_none.h"
 #include "auth_x.h"
-#include "decode.h"
-#include "super.h"
 
-#include "messenger.h"
 
 /*
  * get protocol handler
