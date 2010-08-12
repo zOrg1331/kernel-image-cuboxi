@@ -1,7 +1,8 @@
 /*
  * Some non-inline ceph helpers
  */
-#include "types.h"
+#include <linux/module.h>
+#include <linux/ceph/types.h>
 
 /*
  * return true if @layout appears to be valid
@@ -52,6 +53,7 @@ int ceph_flags_to_mode(int flags)
 
 	return mode;
 }
+EXPORT_SYMBOL(ceph_flags_to_mode);
 
 int ceph_caps_for_mode(int mode)
 {
@@ -70,3 +72,4 @@ int ceph_caps_for_mode(int mode)
 
 	return caps;
 }
+EXPORT_SYMBOL(ceph_caps_for_mode);

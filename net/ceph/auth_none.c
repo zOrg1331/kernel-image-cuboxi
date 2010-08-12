@@ -1,14 +1,15 @@
 
-#include "ceph_debug.h"
+#include <linux/ceph/ceph_debug.h>
 
 #include <linux/err.h>
 #include <linux/module.h>
 #include <linux/random.h>
 #include <linux/slab.h>
 
+#include <linux/ceph/decode.h>
+#include <linux/ceph/auth.h>
+
 #include "auth_none.h"
-#include "auth.h"
-#include "decode.h"
 
 static void reset(struct ceph_auth_client *ac)
 {

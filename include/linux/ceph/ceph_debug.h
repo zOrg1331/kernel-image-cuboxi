@@ -3,7 +3,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#ifdef CONFIG_CEPH_FS_PRETTYDEBUG
+#ifdef CONFIG_CEPH_LIB_PRETTYDEBUG
 
 /*
  * wrap pr_debug to include a filename:lineno prefix on each line.
@@ -14,7 +14,8 @@
 # if defined(DEBUG) || defined(CONFIG_DYNAMIC_DEBUG)
 extern const char *ceph_file_part(const char *s, int len);
 #  define dout(fmt, ...)						\
-	pr_debug(" %12.12s:%-4d : " fmt,				\
+	pr_debug("%.*s %12.12s:%-4d : " fmt,				\
+		 8 - (int)sizeof(KBUILD_MODNAME), "    ",		\
 		 ceph_file_part(__FILE__, sizeof(__FILE__)),		\
 		 __LINE__, ##__VA_ARGS__)
 # else

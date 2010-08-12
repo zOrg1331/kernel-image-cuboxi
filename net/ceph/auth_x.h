@@ -3,8 +3,9 @@
 
 #include <linux/rbtree.h>
 
+#include <linux/ceph/auth.h>
+
 #include "crypto.h"
-#include "auth.h"
 #include "auth_x_protocol.h"
 
 /*

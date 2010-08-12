@@ -4,7 +4,7 @@
 #include <linux/rbtree.h>
 #include "types.h"
 #include "ceph_fs.h"
-#include "crush/crush.h"
+#include <linux/crush/crush.h>
 
 /*
  * The osd map describes the current membership of the osd cluster and

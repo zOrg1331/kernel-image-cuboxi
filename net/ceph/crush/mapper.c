@@ -18,8 +18,8 @@
 # define kfree(x) free(x)
 #endif
 
-#include "crush.h"
-#include "hash.h"
+#include <linux/crush/crush.h>
+#include <linux/crush/hash.h>
 
 /*
  * Implement the core CRUSH mapping algorithm.

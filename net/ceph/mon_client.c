@@ -1,14 +1,16 @@
-#include "ceph_debug.h"
+#include <linux/ceph/ceph_debug.h>
 
+#include <linux/module.h>
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/random.h>
 #include <linux/sched.h>
 
-#include "mon_client.h"
-#include "super.h"
-#include "auth.h"
-#include "decode.h"
+#include <linux/ceph/mon_client.h>
+#include <linux/ceph/libceph.h>
+#include <linux/ceph/decode.h>
+
+#include <linux/ceph/auth.h>
 
 /*
  * Interact with Ceph monitor cluster.  Handle requests for new map
@@ -74,7 +76,7 @@ struct ceph_monmap *ceph_monmap_decode(void *p, void *end)
 	     m->num_mon);
 	for (i = 0; i < m->num_mon; i++)
 		dout("monmap_decode  mon%d is %s\n", i,
-		     pr_addr(&m->mon_inst[i].addr.in_addr));
+		     ceph_pr_addr(&m->mon_inst[i].addr.in_addr));
 	return m;
 
 bad:
@@ -191,30 +193,33 @@ static void __send_subscribe(struct ceph_mon_client *monc)
 		struct ceph_msg *msg = monc->m_subscribe;
 		struct ceph_mon_subscribe_item *i;
 		void *p, *end;
+		int num;
 
 		p = msg->front.iov_base;
 		end = p + msg->front_max;
 
-		dout("__send_subscribe to 'mdsmap' %u+\n",
-		     (unsigned)monc->have_mdsmap);
+		num = 1 + !!monc->want_next_osdmap + !!monc->want_mdsmap;
+		ceph_encode_32(&p, num);
+
 		if (monc->want_next_osdmap) {
 			dout("__send_subscribe to 'osdmap' %u\n",
 			     (unsigned)monc->have_osdmap);
-			ceph_encode_32(&p, 3);
 			ceph_encode_string(&p, end, "osdmap", 6);
 			i = p;
 			i->have = cpu_to_le64(monc->have_osdmap);
 			i->onetime = 1;
 			p += sizeof(*i);
 			monc->want_next_osdmap = 2;  /* requested */
-		} else {
-			ceph_encode_32(&p, 2);
 		}
-		ceph_encode_string(&p, end, "mdsmap", 6);
-		i = p;
-		i->have = cpu_to_le64(monc->have_mdsmap);
-		i->onetime = 0;
-		p += sizeof(*i);
+		if (monc->want_mdsmap) {
+			dout("__send_subscribe to 'mdsmap' %u+\n",
+			     (unsigned)monc->have_mdsmap);
+			ceph_encode_string(&p, end, "mdsmap", 6);
+			i = p;
+			i->have = cpu_to_le64(monc->have_mdsmap);
+			i->onetime = 0;
+			p += sizeof(*i);
+		}
 		ceph_encode_string(&p, end, "monmap", 6);
 		i = p;
 		i->have = 0;
@@ -243,7 +248,8 @@ static void handle_subscribe_ack(struct ceph_mon_client *monc,
 	mutex_lock(&monc->mutex);
 	if (monc->hunting) {
 		pr_info("mon%d %s session established\n",
-			monc->cur_mon, pr_addr(&monc->con->peer_addr.in_addr));
+			monc->cur_mon,
+			ceph_pr_addr(&monc->con->peer_addr.in_addr));
 		monc->hunting = false;
 	}
 	dout("handle_subscribe_ack after %d seconds\n", seconds);
@@ -266,6 +272,7 @@ int ceph_monc_got_mdsmap(struct ceph_mon_client *monc, u32 got)
 	mutex_unlock(&monc->mutex);
 	return 0;
 }
+EXPORT_SYMBOL(ceph_monc_got_mdsmap);
 
 int ceph_monc_got_osdmap(struct ceph_mon_client *monc, u32 got)
 {
@@ -310,6 +317,7 @@ int ceph_monc_open_session(struct ceph_mon_client *monc)
 	mutex_unlock(&monc->mutex);
 	return 0;
 }
+EXPORT_SYMBOL(ceph_monc_open_session);
 
 /*
  * The monitor responds with mount ack indicate mount success.  The
@@ -540,6 +548,7 @@ out:
 	kref_put(&req->kref, release_generic_request);
 	return err;
 }
+EXPORT_SYMBOL(ceph_monc_do_statfs);
 
 /*
  * pool ops
@@ -651,6 +660,7 @@ int ceph_monc_create_snapid(struct ceph_mon_client *monc,
 				   pool, 0, (char *)snapid, sizeof(*snapid));
 
 }
+EXPORT_SYMBOL(ceph_monc_create_snapid);
 
 int ceph_monc_delete_snapid(struct ceph_mon_client *monc,
 			    u32 pool, u64 snapid)
@@ -708,9 +718,9 @@ static void delayed_work(struct work_struct *work)
  */
 static int build_initial_monmap(struct ceph_mon_client *monc)
 {
-	struct ceph_mount_args *args = monc->client->mount_args;
-	struct ceph_entity_addr *mon_addr = args->mon_addr;
-	int num_mon = args->num_mon;
+	struct ceph_options *opt = monc->client->options;
+	struct ceph_entity_addr *mon_addr = opt->mon_addr;
+	int num_mon = opt->num_mon;
 	int i;
 
 	/* build initial monmap */
@@ -728,11 +738,6 @@ static int build_initial_monmap(struct ceph_mon_client *monc)
 	}
 	monc->monmap->num_mon = num_mon;
 	monc->have_fsid = false;
-
-	/* release addr memory */
-	kfree(args->mon_addr);
-	args->mon_addr = NULL;
-	args->num_mon = 0;
 	return 0;
 }
 
@@ -753,8 +758,8 @@ int ceph_monc_init(struct ceph_mon_client *monc, struct ceph_client *cl)
 	monc->con = NULL;
 
 	/* authentication */
-	monc->auth = ceph_auth_init(cl->mount_args->name,
-				    cl->mount_args->secret);
+	monc->auth = ceph_auth_init(cl->options->name,
+				    cl->options->secret);
 	if (IS_ERR(monc->auth))
 		return PTR_ERR(monc->auth);
 	monc->auth->want_keys =
@@ -808,6 +813,7 @@ out_monmap:
 out:
 	return err;
 }
+EXPORT_SYMBOL(ceph_monc_init);
 
 void ceph_monc_stop(struct ceph_mon_client *monc)
 {
@@ -832,6 +838,7 @@ void ceph_monc_stop(struct ceph_mon_client *monc)
 
 	kfree(monc->monmap);
 }
+EXPORT_SYMBOL(ceph_monc_stop);
 
 static void handle_auth_reply(struct ceph_mon_client *monc,
 			      struct ceph_msg *msg)
@@ -889,6 +896,7 @@ int ceph_monc_validate_auth(struct ceph_mon_client *monc)
 	mutex_unlock(&monc->mutex);
 	return ret;
 }
+EXPORT_SYMBOL(ceph_monc_validate_auth);
 
 /*
  * handle incoming message
@@ -922,16 +930,16 @@ static void dispatch(struct ceph_connection *con, struct ceph_msg *msg)
 		ceph_monc_handle_map(monc, msg);
 		break;
 
-	case CEPH_MSG_MDS_MAP:
-		if (monc->client->have_mdsc)
-			ceph_mdsc_handle_map(&monc->client->mdsc, msg);
-		break;
-
 	case CEPH_MSG_OSD_MAP:
 		ceph_osdc_handle_map(&monc->client->osdc, msg);
 		break;
 
 	default:
+		/* can the chained handler handle it? */
+		if (monc->client->extra_mon_dispatch &&
+		    monc->client->extra_mon_dispatch(monc->client, msg) == 0)
+			break;
+			
 		pr_err("received unknown message type %d %s\n", type,
 		       ceph_msg_type_name(type));
 	}
@@ -995,7 +1003,7 @@ static void mon_fault(struct ceph_connection *con)
 	if (monc->con && !monc->hunting)
 		pr_info("mon%d %s session lost, "
 			"hunting for new mon\n", monc->cur_mon,
-			pr_addr(&monc->con->peer_addr.in_addr));
+			ceph_pr_addr(&monc->con->peer_addr.in_addr));
 
 	__close_session(monc);
 	if (!monc->hunting) {
