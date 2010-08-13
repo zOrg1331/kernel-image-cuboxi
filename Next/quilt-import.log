@@ -1,0 +1,101 @@
+Importing driver-core.current based on 2.6.35-git11
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 5af568cbd55f60b5a1d174f621b273e4f585dc35
+HEAD is now at 5af568c Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/viro/vfs-2.6
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core.current
+kobject-break-the-kobject-namespace-defs-into-their-own-header.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core.current
+From ../quilt-tmp
+   3d30701..4269792  master     -> quilt/driver-core.current
+Importing tty.current based on quilt/driver-core.current
+$ cd ../quilt-tmp
+$ git reset --hard 4269792148fffd85bf111884aa1490e9a5ab386c
+HEAD is now at 4269792 kobject: Break the kobject namespace defs into their own header
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+serial-print-early-console-device-address-in-hex.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+   3d30701..ca8d586  master     -> quilt/tty.current
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard ca8d5869a9a93f432e621a9e5efc4567682ea5f5
+HEAD is now at ca8d586 serial: print early console device address in hex
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-uvc_v4l2-cleanup-test-for-end-of-loop.patch
+usb-option-add-celot-ct-650.patch
+usb-isp1760-use-a-write-barrier-to-ensure-proper-ndelay-timing.patch
+usb-add-device-ids-for-igotu-to-navman.patch
+usb-serial-fix-leak-of-usb-serial-module-refrence-count.patch
+usb-pl2303-new-vendor-and-product-id.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+   3d30701..d7e64f2  master     -> quilt/usb.current
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard d7e64f2baed6f98c98e634f7c736ebab835bccd5
+HEAD is now at d7e64f2 USB: pl2303: New vendor and product id
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-spectra-removes-q-prepare_flush_fn-fix-build-breakage.patch
+staging-use-new-req_flush-flag-fix-build-breakage.patch
+staging-spectra-don-t-use-locked_ioctl-fix-build.patch
+staging-spectra-remove-duplicate-glob_version-definition.patch
+staging-spectra-removes-unused-variable.patch
+staging-spectra-initializa-lblk-variable.patch
+staging-spectra-removes-unused-functions.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+   3d30701..050457b  master     -> quilt/staging.current
+Importing i2c based on 2.6.35-git10
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.35-git10
+$ cd ../quilt-tmp
+$ git reset --hard 3d30701b58970425e1d45994d6cb82f828924fdd
+HEAD is now at 3d30701 Merge branch 'for-linus' of git://neil.brown.name/md
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-pc87360-fix-device-resource-declaration.patch
+hwmon-ltc4245-expose-all-gpio-pins-as-analog-voltages.patch
+hwmon-emc1403-add-power-support.patch
+hwmon-lm75-add-suspend-and-resume.patch
+hwmon-it87-labels-for-internal-voltages.patch
+hwmon-asc7621-clean-up-and-improve-detect.patch
+hwmon-add-3-critical-limit-attributes-to-sysfs-interface.patch
+hwmon-add-4-current-alarm-beep-attributes-to-sysfs-interface.patch
+hwmon-remove-in-fault-attribute-from-interface.patch
+hwmon-add-driver-for-smsc-emc2103-temperature-monitor-and-fan-controller.patch
+hwmon-w83627ehf-01-driver-cleanup.patch
+hwmon-w83627ehf-02-add-support-for-W83667HG-B.patch
+hwmon-pc87427-01-check-disabled-fans.patch
+hwmon-pc87427-02-minor-style-cleanups.patch
+hwmon-pc87427-03-add-manual-pwm-support.patch
+hwmon-pc87427-04-support-second-LD.patch
+hwmon-pc87427-05-add-temperature-support.patch
+hwmon-pc87427-06-refactor-device-removal.patch
+hwmon-pc87427-07-be-the-maintainer.patch
+hwmon-jc42-depends-on-i2c.patch
+hwmon-via-cputemp-remove-bogus-SHOW-global-variable.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 573e446...e9be8e0 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.35-rc3
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-rc6-19-g86c65a7
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.35-7500-g5af568c
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core 050457bb7d950090fdfd41afa66f07c944a8ffad
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty 050457bb7d950090fdfd41afa66f07c944a8ffad
+Importing usb based on quilt/tty
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb 050457bb7d950090fdfd41afa66f07c944a8ffad
