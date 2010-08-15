@@ -792,6 +792,7 @@ static const struct file_operations mousedev_fops = {
 	.open =		mousedev_open,
 	.release =	mousedev_release,
 	.fasync =	mousedev_fasync,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 static int mousedev_install_chrdev(struct mousedev *mousedev)

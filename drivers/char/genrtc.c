@@ -497,6 +497,7 @@ static const struct file_operations gen_rtc_fops = {
 	.unlocked_ioctl	= gen_rtc_unlocked_ioctl,
 	.open		= gen_rtc_open,
 	.release	= gen_rtc_release,
+	.llseek = noop_llseek,/* read uses no f_pos */
 };
 
 static struct miscdevice rtc_gen_dev =

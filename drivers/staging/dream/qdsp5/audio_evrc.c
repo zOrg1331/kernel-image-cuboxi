@@ -813,6 +813,7 @@ static struct file_operations audio_evrc_fops = {
 	.read = audevrc_read,
 	.write = audevrc_write,
 	.unlocked_ioctl = audevrc_ioctl,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 struct miscdevice audio_evrc_misc = {

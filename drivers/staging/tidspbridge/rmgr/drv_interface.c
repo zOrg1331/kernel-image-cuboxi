@@ -144,6 +144,7 @@ static const struct file_operations bridge_fops = {
 	.release = bridge_release,
 	.unlocked_ioctl = bridge_ioctl,
 	.mmap = bridge_mmap,
+	.llseek = noop_llseek,/* no read or write fn */
 };
 
 #ifdef CONFIG_PM
