@@ -457,6 +457,8 @@ static int usbfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct inode *inode;
 	struct dentry *root;
 
+	lock_kernel();
+
 	sb->s_blocksize = PAGE_CACHE_SIZE;
 	sb->s_blocksize_bits = PAGE_CACHE_SHIFT;
 	sb->s_magic = USBDEVICE_SUPER_MAGIC;
@@ -466,6 +468,7 @@ static int usbfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	if (!inode) {
 		dbg("%s: could not get inode!",__func__);
+		unlock_kernel();
 		return -ENOMEM;
 	}
 
@@ -473,9 +476,11 @@ static int usbfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (!root) {
 		dbg("%s: could not get root dentry!",__func__);
 		iput(inode);
+		unlock_kernel();
 		return -ENOMEM;
 	}
 	sb->s_root = root;
+	unlock_kernel();
 	return 0;
 }
 
