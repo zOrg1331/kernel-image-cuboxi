@@ -1652,16 +1652,7 @@ static int nfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		}
 	}
 
-	/*
-	 * ... prune child dentries and writebacks if needed.
-	 */
-	if (atomic_read(&old_dentry->d_count) > 1) {
-		if (S_ISREG(old_inode->i_mode))
-			nfs_wb_all(old_inode);
-		shrink_dcache_parent(old_dentry);
-	}
 	nfs_inode_return_delegation(old_inode);
-
 	if (new_inode != NULL)
 		nfs_inode_return_delegation(new_inode);
 
@@ -1710,7 +1701,7 @@ static void nfs_access_free_list(struct list_head *head)
 	}
 }
 
-int nfs_access_cache_shrinker(int nr_to_scan, gfp_t gfp_mask)
+int nfs_access_cache_shrinker(struct shrinker *shrink, int nr_to_scan, gfp_t gfp_mask)
 {
 	LIST_HEAD(head);
 	struct nfs_inode *nfsi;

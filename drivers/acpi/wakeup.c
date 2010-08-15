@@ -64,15 +64,13 @@ void acpi_enable_wakeup_device(u8 sleep_state)
 		struct acpi_device *dev =
 			container_of(node, struct acpi_device, wakeup_list);
 
-		if (!dev->wakeup.flags.valid)
-			continue;
-
-		if ((!dev->wakeup.state.enabled && !dev->wakeup.prepare_count)
+		if (!dev->wakeup.flags.valid
+		    || !(dev->wakeup.state.enabled || dev->wakeup.prepare_count)
 		    || sleep_state > (u32) dev->wakeup.sleep_state)
 			continue;
 
 		/* The wake-up power should have been enabled already. */
-		acpi_set_gpe(dev->wakeup.gpe_device, dev->wakeup.gpe_number,
+		acpi_gpe_wakeup(dev->wakeup.gpe_device, dev->wakeup.gpe_number,
 				ACPI_GPE_ENABLE);
 	}
 }
@@ -92,11 +90,16 @@ void acpi_disable_wakeup_device(u8 sleep_state)
 		struct acpi_device *dev =
 			container_of(node, struct acpi_device, wakeup_list);
 
-		if (!dev->wakeup.flags.valid || !dev->wakeup.state.enabled
+		if (!dev->wakeup.flags.valid
+		    || !(dev->wakeup.state.enabled || dev->wakeup.prepare_count)
 		    || (sleep_state > (u32) dev->wakeup.sleep_state))
 			continue;
 
-		acpi_disable_wakeup_device_power(dev);
+		acpi_gpe_wakeup(dev->wakeup.gpe_device, dev->wakeup.gpe_number,
+				ACPI_GPE_DISABLE);
+
+		if (dev->wakeup.state.enabled)
+			acpi_disable_wakeup_device_power(dev);
 	}
 }
 
@@ -109,13 +112,8 @@ int __init acpi_wakeup_device_init(void)
 		struct acpi_device *dev = container_of(node,
 						       struct acpi_device,
 						       wakeup_list);
-		/* In case user doesn't load button driver */
-		if (!dev->wakeup.flags.always_enabled ||
-		    dev->wakeup.state.enabled)
-			continue;
- 		acpi_enable_gpe(dev->wakeup.gpe_device, dev->wakeup.gpe_number,
- 				ACPI_GPE_TYPE_WAKE);
-		dev->wakeup.state.enabled = 1;
+		if (dev->wakeup.flags.always_enabled)
+			dev->wakeup.state.enabled = 1;
 	}
 	mutex_unlock(&acpi_device_lock);
 	return 0;
