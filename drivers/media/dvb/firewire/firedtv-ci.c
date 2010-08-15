@@ -220,6 +220,7 @@ static const struct file_operations fdtv_ca_fops = {
 	.open		= dvb_generic_open,
 	.release	= dvb_generic_release,
 	.poll		= fdtv_ca_io_poll,
+	.llseek = noop_llseek,/* no read or write fn */
 };
 
 static struct dvb_device fdtv_ca = {

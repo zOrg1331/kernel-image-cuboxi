@@ -793,6 +793,7 @@ static const struct file_operations ftrace_profile_fops = {
 	.open		= tracing_open_generic,
 	.read		= ftrace_profile_read,
 	.write		= ftrace_profile_write,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 /* used to initialize the real stat files */
@@ -2623,6 +2624,7 @@ static const struct file_operations ftrace_graph_fops = {
 	.read		= seq_read,
 	.write		= ftrace_graph_write,
 	.release	= ftrace_graph_release,
+	.llseek = seq_lseek,/* we have seq_read */
 };
 #endif /* CONFIG_FUNCTION_GRAPH_TRACER */
 

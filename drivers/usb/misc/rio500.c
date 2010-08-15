@@ -439,6 +439,7 @@ static const struct file_operations usb_rio_fops = {
 	.unlocked_ioctl = ioctl_rio,
 	.open =		open_rio,
 	.release =	close_rio,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 static struct usb_class_driver usb_rio_class = {

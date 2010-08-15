@@ -2398,6 +2398,7 @@ static const struct file_operations pmu_device_fops = {
 #endif
 	.open		= pmu_open,
 	.release	= pmu_release,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 static struct miscdevice pmu_device = {

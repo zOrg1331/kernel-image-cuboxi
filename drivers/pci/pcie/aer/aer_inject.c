@@ -472,6 +472,7 @@ static ssize_t aer_inject_write(struct file *filp, const char __user *ubuf,
 static const struct file_operations aer_inject_fops = {
 	.write = aer_inject_write,
 	.owner = THIS_MODULE,
+	.llseek = noop_llseek,/* write uses no f_pos */
 };
 
 static struct miscdevice aer_inject_device = {

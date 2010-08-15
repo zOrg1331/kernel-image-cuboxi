@@ -174,6 +174,7 @@ static const struct file_operations log_fops = {
 	.release        = log_release,
 	.read           = log_read,
 	.poll           = log_poll,
+	.llseek = noop_llseek,/* read uses no f_pos */
 };
 
 static int debug_log_setup(struct bat_priv *bat_priv)
