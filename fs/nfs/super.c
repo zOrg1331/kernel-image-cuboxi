@@ -2200,6 +2200,7 @@ static int nfs_get_sb(struct file_system_type *fs_type,
 	};
 	int error = -ENOMEM;
 
+	lock_kernel();
 	data = nfs_alloc_parsed_mount_data(3);
 	mntfh = nfs_alloc_fhandle();
 	if (data == NULL || mntfh == NULL)
@@ -2278,6 +2279,7 @@ out:
 out_free_fh:
 	nfs_free_fhandle(mntfh);
 	kfree(data);
+	unlock_kernel();
 	return error;
 
 out_err_nosb:
@@ -2334,6 +2336,8 @@ static int nfs_xdev_get_sb(struct file_system_type *fs_type, int flags,
 	};
 	int error;
 
+	lock_kernel();
+
 	dprintk("--> nfs_xdev_get_sb()\n");
 
 	/* create a new volume representation */
@@ -2388,12 +2392,14 @@ static int nfs_xdev_get_sb(struct file_system_type *fs_type, int flags,
 	security_sb_clone_mnt_opts(data->sb, s);
 
 	dprintk("<-- nfs_xdev_get_sb() = 0\n");
+	unlock_kernel();
 	return 0;
 
 out_err_nosb:
 	nfs_free_server(server);
 out_err_noserver:
 	dprintk("<-- nfs_xdev_get_sb() = %d [error]\n", error);
+	unlock_kernel();
 	return error;
 
 error_splat_super:
@@ -2402,6 +2408,7 @@ error_splat_super:
 error_splat_bdi:
 	deactivate_locked_super(s);
 	dprintk("<-- nfs_xdev_get_sb() = %d [splat]\n", error);
+	unlock_kernel();
 	return error;
 }
 
@@ -2585,6 +2592,7 @@ static int nfs4_remote_get_sb(struct file_system_type *fs_type,
 	};
 	int error = -ENOMEM;
 
+	lock_kernel();
 	mntfh = nfs_alloc_fhandle();
 	if (data == NULL || mntfh == NULL)
 		goto out_free_fh;
@@ -2644,6 +2652,7 @@ out:
 	security_free_mnt_opts(&data->lsm_opts);
 out_free_fh:
 	nfs_free_fhandle(mntfh);
+	unlock_kernel();
 	return error;
 
 out_free:
@@ -2852,6 +2861,7 @@ static int nfs4_get_sb(struct file_system_type *fs_type,
 	struct nfs_parsed_mount_data *data;
 	int error = -ENOMEM;
 
+	lock_kernel();
 	data = nfs_alloc_parsed_mount_data(4);
 	if (data == NULL)
 		goto out_free_data;
@@ -2872,6 +2882,7 @@ out_free_data:
 	kfree(data);
 	dprintk("<-- nfs4_get_sb() = %d%s\n", error,
 			error != 0 ? " [error]" : "");
+	unlock_kernel();
 	return error;
 }
 
@@ -2903,6 +2914,8 @@ static int nfs4_xdev_get_sb(struct file_system_type *fs_type, int flags,
 		.mntflags = flags,
 	};
 	int error;
+
+	lock_kernel();
 
 	dprintk("--> nfs4_xdev_get_sb()\n");
 
@@ -2957,12 +2970,14 @@ static int nfs4_xdev_get_sb(struct file_system_type *fs_type, int flags,
 	security_sb_clone_mnt_opts(data->sb, s);
 
 	dprintk("<-- nfs4_xdev_get_sb() = 0\n");
+	unlock_kernel();
 	return 0;
 
 out_err_nosb:
 	nfs_free_server(server);
 out_err_noserver:
 	dprintk("<-- nfs4_xdev_get_sb() = %d [error]\n", error);
+	unlock_kernel();
 	return error;
 
 error_splat_super:
@@ -2971,6 +2986,7 @@ error_splat_super:
 error_splat_bdi:
 	deactivate_locked_super(s);
 	dprintk("<-- nfs4_xdev_get_sb() = %d [splat]\n", error);
+	unlock_kernel();
 	return error;
 }
 
@@ -2988,6 +3004,8 @@ static int nfs4_remote_referral_get_sb(struct file_system_type *fs_type,
 		.mntflags = flags,
 	};
 	int error = -ENOMEM;
+
+	lock_kernel();
 
 	dprintk("--> nfs4_referral_get_sb()\n");
 
@@ -3047,6 +3065,7 @@ static int nfs4_remote_referral_get_sb(struct file_system_type *fs_type,
 
 	nfs_free_fhandle(mntfh);
 	dprintk("<-- nfs4_referral_get_sb() = 0\n");
+	unlock_kernel();
 	return 0;
 
 out_err_nosb:
@@ -3055,6 +3074,7 @@ out_err_noserver:
 	nfs_free_fhandle(mntfh);
 out_err_nofh:
 	dprintk("<-- nfs4_referral_get_sb() = %d [error]\n", error);
+	unlock_kernel();
 	return error;
 
 error_splat_super:
@@ -3064,6 +3084,7 @@ error_splat_bdi:
 	deactivate_locked_super(s);
 	nfs_free_fhandle(mntfh);
 	dprintk("<-- nfs4_referral_get_sb() = %d [splat]\n", error);
+	unlock_kernel();
 	return error;
 }
 
@@ -3078,6 +3099,8 @@ static int nfs4_referral_get_sb(struct file_system_type *fs_type,
 	char *export_path;
 	struct vfsmount *root_mnt;
 	int error;
+
+	lock_kernel();
 
 	dprintk("--> nfs4_referral_get_sb()\n");
 
@@ -3096,6 +3119,7 @@ static int nfs4_referral_get_sb(struct file_system_type *fs_type,
 out:
 	dprintk("<-- nfs4_referral_get_sb() = %d%s\n", error,
 			error != 0 ? " [error]" : "");
+	unlock_kernel();
 	return error;
 }
 
