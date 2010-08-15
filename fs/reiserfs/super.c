@@ -1628,6 +1628,8 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 	char *qf_names[MAXQUOTAS] = {};
 	unsigned int qfmt = 0;
 
+	lock_kernel();
+
 	save_mount_options(s, data);
 
 	sbi = kzalloc(sizeof(struct reiserfs_sb_info), GFP_KERNEL);
@@ -1886,6 +1888,7 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 
 	reiserfs_write_unlock(s);
 
+	unlock_kernel();
 	return (0);
 
 error:
@@ -1908,6 +1911,7 @@ error:
 	kfree(sbi);
 
 	s->s_fs_info = NULL;
+	unlock_kernel();
 	return errval;
 }
 

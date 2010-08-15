@@ -315,9 +315,13 @@ static int hfsplus_fill_super(struct super_block *sb, void *data, int silent)
 	struct nls_table *nls = NULL;
 	int err = -EINVAL;
 
+	lock_kernel();
+
 	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
-	if (!sbi)
+	if (!sbi) {
+		unlock_kernel();
 		return -ENOMEM;
+	}
 
 	sb->s_fs_info = sbi;
 	INIT_HLIST_HEAD(&sbi->rsrc_inodes);
@@ -462,11 +466,13 @@ static int hfsplus_fill_super(struct super_block *sb, void *data, int silent)
 out:
 	unload_nls(sbi->nls);
 	sbi->nls = nls;
+	unlock_kernel();
 	return 0;
 
 cleanup:
 	hfsplus_put_super(sb);
 	unload_nls(nls);
+	unlock_kernel();
 	return err;
 }
 
