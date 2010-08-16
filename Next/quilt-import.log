@@ -1,0 +1,30 @@
+Importing driver-core.current based on 2.6.35-git11
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.35-git16
+	quilt series is empty
+$ git update-ref refs/heads/quilt/i2c 5d7cb157025b3b4852f38e6e5e97d06ef12c1d78
+Importing jdelvare-hwmon based on 2.6.35-git16
+	quilt series is empty
+$ git update-ref refs/heads/quilt/jdelvare-hwmon 5d7cb157025b3b4852f38e6e5e97d06ef12c1d78
+Importing kernel-doc based on 2.6.35-rc3
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-7786-gad41a1e
+	quilt series is empty
+$ git update-ref refs/heads/quilt/rr ad41a1e0cab07c5125456e8d38e5b1ab148d04aa
+Importing device-mapper based on v2.6.35-7788-g320b2b8
+	quilt series is empty
+$ git update-ref refs/heads/quilt/device-mapper 320b2b8de12698082609ebbc1a17165727f4c893
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
