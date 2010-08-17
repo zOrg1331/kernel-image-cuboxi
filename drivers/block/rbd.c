@@ -223,6 +223,7 @@ static const struct block_device_operations rbd_bd_ops = {
 
 /*
  * Initialize an rbd client instance.
+ * We own *opt.
  */
 static struct rbd_client *rbd_client_create(struct ceph_options *opt)
 {
@@ -232,14 +233,14 @@ static struct rbd_client *rbd_client_create(struct ceph_options *opt)
 	dout("rbd_client_create\n");
 	rbdc = kmalloc(sizeof(struct rbd_client), GFP_KERNEL);
 	if (!rbdc)
-		goto out;
+		goto out_opt;
 
 	kref_init(&rbdc->kref);
 	INIT_LIST_HEAD(&rbdc->node);
 
 	rbdc->client = ceph_create_client(opt, rbdc);
 	if (IS_ERR(rbdc->client))
-		goto out_free;
+		goto out_rbdc;
 
 	ret = ceph_open_session(rbdc->client);
 	if (ret < 0)
@@ -254,9 +255,12 @@ static struct rbd_client *rbd_client_create(struct ceph_options *opt)
 
 out_err:
 	ceph_destroy_client(rbdc->client);
-out_free:
+	return ERR_PTR(ret);
+
+out_rbdc:
 	kfree(rbdc);
-out:
+out_opt:
+	ceph_destroy_options(opt);
 	return ERR_PTR(-ENOMEM);
 }
 
@@ -307,17 +311,12 @@ static int rbd_get_client(struct rbd_device *rbd_dev, const char *mon_addr,
 	spin_unlock(&node_lock);
 
 	rbdc = rbd_client_create(opt);
-	if (IS_ERR(rbdc)) {
-		ret = PTR_ERR(rbdc);
-		goto out_args;
-	}
+	if (IS_ERR(rbdc))
+		return PTR_ERR(rbdc);
+
 	rbd_dev->rbd_client = rbdc;
 	rbd_dev->client = rbdc->client;
 	return 0;
-
-out_args:
-	ceph_destroy_options(opt);
-	return ret;
 }
 
 /*
