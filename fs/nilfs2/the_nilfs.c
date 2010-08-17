@@ -467,8 +467,8 @@ static unsigned long long nilfs_max_size(unsigned int blkbits)
 static int nilfs_store_disk_layout(struct the_nilfs *nilfs,
 				   struct nilfs_super_block *sbp)
 {
-	if (le32_to_cpu(sbp->s_rev_level) != NILFS_CURRENT_REV) {
-		printk(KERN_ERR "NILFS: revision mismatch "
+	if (le32_to_cpu(sbp->s_rev_level) < NILFS_MIN_SUPP_REV) {
+		printk(KERN_ERR "NILFS: unsupported revision "
 		       "(superblock rev.=%d.%d, current rev.=%d.%d). "
 		       "Please check the version of mkfs.nilfs.\n",
 		       le32_to_cpu(sbp->s_rev_level),
@@ -608,11 +608,11 @@ static int nilfs_load_super_block(struct the_nilfs *nilfs,
 		return -EINVAL;
 	}
 
-	if (swp) {
+	if (!valid[!swp])
 		printk(KERN_WARNING "NILFS warning: broken superblock. "
 		       "using spare superblock.\n");
+	if (swp)
 		nilfs_swap_super_block(nilfs);
-	}
 
 	nilfs->ns_sbwcount = 0;
 	nilfs->ns_sbwtime = le64_to_cpu(sbp[0]->s_wtime);
