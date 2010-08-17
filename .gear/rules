@@ -21,6 +21,7 @@ copy: *.pl
 copy: *.sh
 copy: check-kabi
 copy: diff-backport-dm-delay-20070716
+copy: diff-cfq-iosched-zero-async-queue-after-put-20100817
 copy: diff-dm-limits-bounce_pfn-20071029
 copy: diff-drbd-compilation
 copy: diff-drbd-dont-use-connector
@@ -80,6 +81,7 @@ copy: diff-scsi-add-modalias-mainstream
 copy: diff-snd-hda-intel
 copy: diff-tossing-headers-around
 copy: diff-ve-moreleaks-20090829
+copy: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 copy: diff-xen-smpboot-ifdef-hotplug-20090306
 copy: find-provides
 copy: genkey
