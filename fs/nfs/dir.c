@@ -1107,7 +1107,7 @@ static int nfs_open_revalidate(struct dentry *dentry, struct nameidata *nd)
 		goto no_open_dput;
 	openflags = nd->intent.open.flags;
 	/* We cannot do exclusive creation on a positive dentry */
-	if ((openflags & (O_CREAT|O_EXCL)) == (O_CREAT|O_EXCL))
+	if (nd->flags & LOOKUP_EXCL)
 		goto no_open_dput;
 	/* We can't create new files, or truncate existing ones here */
 	openflags &= ~(O_CREAT|O_TRUNC);
