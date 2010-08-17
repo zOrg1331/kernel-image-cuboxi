@@ -56,7 +56,7 @@ static irqreturn_t nuc93x_timer_interrupt(int irq, void *dev_id)
 
 static struct irqaction nuc93x_timer_irq = {
 	.name		= "nuc93x Timer Tick",
-	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
+	.flags		= IRQF_DISABLED | IRQF_TIMER,
 	.handler	= nuc93x_timer_interrupt,
 };
 
