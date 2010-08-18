@@ -555,6 +555,7 @@ struct qlcnic_recv_context {
 #define QLCNIC_CDRP_CMD_GET_ESWITCH_STATUS	0x00000026
 #define QLCNIC_CDRP_CMD_SET_PORTMIRRORING	0x00000027
 #define QLCNIC_CDRP_CMD_CONFIGURE_ESWITCH	0x00000028
+#define QLCNIC_CDRP_CMD_GET_ESWITCH_STATS	0x0000002a
 
 #define QLCNIC_RCODE_SUCCESS		0
 #define QLCNIC_RCODE_TIMEOUT		17
@@ -893,6 +894,7 @@ struct qlcnic_mac_req {
 #define QLCNIC_MSI_ENABLED		0x02
 #define QLCNIC_MSIX_ENABLED		0x04
 #define QLCNIC_LRO_ENABLED		0x08
+#define QLCNIC_LRO_DISABLED		0x00
 #define QLCNIC_BRIDGE_ENABLED       	0X10
 #define QLCNIC_DIAG_ENABLED		0x20
 #define QLCNIC_ESWITCH_ENABLED		0x40
@@ -1126,6 +1128,31 @@ struct qlcnic_esw_func_cfg {
 	u8	reserved;
 };
 
+#define QLCNIC_STATS_VERSION		1
+#define QLCNIC_STATS_PORT		1
+#define QLCNIC_STATS_ESWITCH		2
+#define QLCNIC_QUERY_RX_COUNTER		0
+#define QLCNIC_QUERY_TX_COUNTER		1
+struct __qlcnic_esw_statistics {
+	__le16 context_id;
+	__le16 version;
+	__le16 size;
+	__le16 unused;
+	__le64 unicast_frames;
+	__le64 multicast_frames;
+	__le64 broadcast_frames;
+	__le64 dropped_frames;
+	__le64 errors;
+	__le64 local_frames;
+	__le64 numbytes;
+	__le64 rsvd[3];
+};
+
+struct qlcnic_esw_statistics {
+	struct __qlcnic_esw_statistics rx;
+	struct __qlcnic_esw_statistics tx;
+};
+
 int qlcnic_fw_cmd_query_phy(struct qlcnic_adapter *adapter, u32 reg, u32 *val);
 int qlcnic_fw_cmd_set_phy(struct qlcnic_adapter *adapter, u32 reg, u32 val);
 
@@ -1252,6 +1279,11 @@ int qlcnic_toggle_eswitch(struct qlcnic_adapter *, u8, u8);
 int qlcnic_config_switch_port(struct qlcnic_adapter *, u8, int, u8, u8,
 			u8, u8, u16);
 int qlcnic_config_port_mirroring(struct qlcnic_adapter *, u8, u8, u8);
+int qlcnic_get_port_stats(struct qlcnic_adapter *, const u8, const u8,
+					struct __qlcnic_esw_statistics *);
+int qlcnic_get_eswitch_stats(struct qlcnic_adapter *, const u8, u8,
+					struct __qlcnic_esw_statistics *);
+int qlcnic_clear_esw_stats(struct qlcnic_adapter *adapter, u8, u8, u8);
 extern int qlcnic_config_tso;
 
 /*
