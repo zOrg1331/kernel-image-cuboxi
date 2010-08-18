@@ -187,6 +187,9 @@ static int prepare_for_access_response(struct fsnotify_group *group,
 	if (!(event->mask & FAN_ALL_PERM_EVENTS))
 		return 0;
 
+	if (unlikely(atomic_read(&group->fanotify_data.bypass_perm)))
+		return 0;
+
 	re = kmem_cache_alloc(fanotify_response_event_cache, GFP_KERNEL);
 	if (!re)
 		return -ENOMEM;
@@ -364,9 +367,27 @@ static ssize_t fanotify_write(struct file *file, const char __user *buf, size_t 
 static int fanotify_release(struct inode *ignored, struct file *file)
 {
 	struct fsnotify_group *group = file->private_data;
+	struct fanotify_response_event *re, *lre;
 
 	pr_debug("%s: file=%p group=%p\n", __func__, file, group);
 
+#ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
+	atomic_inc(&group->fanotify_data.bypass_perm);
+
+	mutex_lock(&group->fanotify_data.access_mutex);
+	list_for_each_entry_safe(re, lre, &group->fanotify_data.access_list, list) {
+		pr_debug("%s: found group=%p re=%p event=%p\n", __func__, group,
+			 re, re->event);
+
+		list_del_init(&re->list);
+		re->event->response = FAN_ALLOW;
+
+		kmem_cache_free(fanotify_response_event_cache, re);
+	}
+	mutex_unlock(&group->fanotify_data.access_mutex);
+
+	wake_up(&group->fanotify_data.access_waitq);
+#endif
 	/* matches the fanotify_init->fsnotify_alloc_group */
 	fsnotify_put_group(group);
 
