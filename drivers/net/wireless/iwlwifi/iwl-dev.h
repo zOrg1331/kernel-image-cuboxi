@@ -47,6 +47,7 @@
 #include "iwl-led.h"
 #include "iwl-power.h"
 #include "iwl-agn-rs.h"
+#include "iwl-agn-tt.h"
 
 struct iwl_tx_queue;
 
@@ -420,7 +421,7 @@ struct iwl_tid_data {
 };
 
 struct iwl_hw_key {
-	enum ieee80211_key_alg alg;
+	u32 cipher;
 	int keylen;
 	u8 keyidx;
 	u8 key[32];
@@ -1109,6 +1110,9 @@ struct iwl_priv {
 	/* ucode beacon time */
 	u32 ucode_beacon_time;
 	int missed_beacon_threshold;
+
+	/* track IBSS manager (last beacon) status */
+	u32 ibss_manager;
 
 	/* storing the jiffies when the plcp error rate is received */
 	unsigned long plcp_jiffies;
