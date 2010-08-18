@@ -755,6 +755,7 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 		irq_chip_set_defaults(desc->chip);
 
 		init_waitqueue_head(&desc->wait_for_threads);
+		setup_timer(&desc->poll_timer, poll_irq, (unsigned long)desc);
 
 		/* Setup the type (level, edge polarity) if configured: */
 		if (new->flags & IRQF_TRIGGER_MASK) {
@@ -803,20 +804,9 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 	new->irq = irq;
 	*old_ptr = new;
 
-	/* Reset broken irq detection when installing new handler */
-	desc->irq_count = 0;
-	desc->irqs_unhandled = 0;
-
-	/*
-	 * Check whether we disabled the irq via the spurious handler
-	 * before. Reenable it and give it another chance.
-	 */
-	if (shared && (desc->status & IRQ_SPURIOUS_DISABLED)) {
-		desc->status &= ~IRQ_SPURIOUS_DISABLED;
-		__enable_irq(desc, irq, false);
-	}
-
 	raw_spin_unlock_irqrestore(&desc->lock, flags);
+
+	irq_poll_action_added(desc, new);
 
 	/*
 	 * Strictly no need to wake it up, but hung_task complains
@@ -932,6 +922,8 @@ static struct irqaction *__free_irq(unsigned int irq, void *dev_id)
 #endif
 
 	raw_spin_unlock_irqrestore(&desc->lock, flags);
+
+	irq_poll_action_removed(desc, action);
 
 	unregister_handler_proc(irq, action);
 
