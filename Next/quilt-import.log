@@ -1,0 +1,37 @@
+Importing driver-core.current based on 2.6.35-git11
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.36-rc1
+	quilt series is empty
+$ git update-ref refs/heads/quilt/i2c da5cabf80e2433131bf0ed8993abc0f7ea618c73
+Importing jdelvare-hwmon based on 2.6.36-rc1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard da5cabf80e2433131bf0ed8993abc0f7ea618c73
+HEAD is now at da5cabf Linux 2.6.36-rc1
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-coretemp-fix-warning.patch
+hwmon-ads7871-fix-ads7871_probe-error-path.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+   5d7cb15..85178ce  master     -> quilt/jdelvare-hwmon
+Importing kernel-doc based on 2.6.35
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-7786-gad41a1e
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.35-7788-g320b2b8
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
