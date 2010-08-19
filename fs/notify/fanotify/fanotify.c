@@ -92,6 +92,9 @@ static int fanotify_get_response_from_access(struct fsnotify_group *group,
 
 	pr_debug("%s: group=%p event=%p\n", __func__, group, event);
 
+	if (unlikely(atomic_read(&group->fanotify_data.bypass_perm)))
+		return 0;
+
 	wait_event(group->fanotify_data.access_waitq, event->response);
 
 	/* userspace responded, convert to something usable */
