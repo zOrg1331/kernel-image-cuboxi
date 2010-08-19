@@ -90,7 +90,7 @@
 #include "s2io.h"
 #include "s2io-regs.h"
 
-#define DRV_VERSION "2.0.26.26"
+#define DRV_VERSION "2.0.26.27"
 
 /* S2io Driver name & version. */
 static char s2io_driver_name[] = "Neterion";
@@ -5124,8 +5124,6 @@ static void s2io_set_multicast(struct net_device *dev)
 		/* Create the new Rx filter list and update the same in H/W. */
 		i = 0;
 		netdev_for_each_mc_addr(ha, dev) {
-			memcpy(sp->usr_addrs[i].addr, ha->addr,
-			       ETH_ALEN);
 			mac_addr = 0;
 			for (j = 0; j < ETH_ALEN; j++) {
 				mac_addr |= ha->addr[j];
