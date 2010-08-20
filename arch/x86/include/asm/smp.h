@@ -185,13 +185,14 @@ extern int safe_smp_processor_id(void);
 #ifdef CONFIG_X86_LOCAL_APIC
 
 #ifndef CONFIG_X86_64
+#ifndef CONFIG_XEN
 static inline int logical_smp_processor_id(void)
 {
 	/* we don't want to mark this access volatile - bad code generation */
 	return GET_APIC_LOGICAL_ID(apic_read(APIC_LDR));
 }
-
-#endif
+#endif /* CONFIG_XEN */
+#endif /* CONFIG_X86_64 */
 
 extern int hard_smp_processor_id(void);
 
