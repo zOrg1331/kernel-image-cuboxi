@@ -218,6 +218,7 @@ tapeblock_setup_device(struct tape_device * device)
 		return -ENOMEM;
 
 	elevator_exit(blkdat->request_queue->elevator);
+	blkdat->request_queue->elevator = NULL;
 	rc = elevator_init(blkdat->request_queue, "noop");
 	if (rc)
 		goto cleanup_queue;
