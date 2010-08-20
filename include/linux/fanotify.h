@@ -70,9 +70,9 @@
 struct fanotify_event_metadata {
 	__u32 event_len;
 	__u32 vers;
-	__s32 fd;
 	__u64 mask;
-	__s64 pid;
+	__s32 fd;
+	__s32 pid;
 } __attribute__ ((packed));
 
 struct fanotify_response {
