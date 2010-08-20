@@ -22,6 +22,7 @@
 #include <linux/types.h>
 #include <asm/irq.h>
 #include <asm/atomic.h>
+#include <linux/of_address.h>
 
 #define HAVE_ARCH_DEVTREE_FIXUPS
 
