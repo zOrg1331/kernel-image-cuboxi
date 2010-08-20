@@ -168,6 +168,7 @@ out:
 
 	kref_put(&iint->refcount, iint_free);
 }
+EXPORT_SYMBOL_GPL(ima_counts_get);
 
 /*
  * Decrement ima counts
