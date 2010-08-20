@@ -176,12 +176,6 @@ static int __devinit ads7871_probe(struct spi_device *spi)
 	if (status < 0)
 		goto error_free;
 
-	pdata->hwmon_dev = hwmon_device_register(&spi->dev);
-	if (IS_ERR(pdata->hwmon_dev)) {
-		err = PTR_ERR(pdata->hwmon_dev);
-		goto error_remove;
-	}
-
 	spi_set_drvdata(spi, pdata);
 
 	/* Configure the SPI bus */
@@ -201,6 +195,12 @@ static int __devinit ads7871_probe(struct spi_device *spi)
 	we need to make sure we really have a chip*/
 	if (val != ret) {
 		err = -ENODEV;
+		goto error_remove;
+	}
+
+	pdata->hwmon_dev = hwmon_device_register(&spi->dev);
+	if (IS_ERR(pdata->hwmon_dev)) {
+		err = PTR_ERR(pdata->hwmon_dev);
 		goto error_remove;
 	}
 
