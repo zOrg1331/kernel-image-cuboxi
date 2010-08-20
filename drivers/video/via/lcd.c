@@ -21,9 +21,15 @@
 #include <linux/via-core.h>
 #include <linux/via_i2c.h>
 #include "global.h"
-#include "lcdtbl.h"
 
 #define viafb_compact_res(x, y) (((x)<<16)|(y))
+
+/* CLE266 Software Power Sequence */
+/* {Mask}, {Data}, {Delay} */
+int PowerSequenceOn[3][3] = { {0x10, 0x08, 0x06}, {0x10, 0x08, 0x06},
+	{0x19, 0x1FE, 0x01} };
+int PowerSequenceOff[3][3] = { {0x06, 0x08, 0x10}, {0x00, 0x00, 0x00},
+	{0xD2, 0x19, 0x01} };
 
 static struct _lcd_scaling_factor lcd_scaling_factor = {
 	/* LCD Horizontal Scaling Factor Register */
@@ -42,7 +48,7 @@ static struct _lcd_scaling_factor lcd_scaling_factor_CLE = {
 
 static int check_lvds_chip(int device_id_subaddr, int device_id);
 static bool lvds_identify_integratedlvds(void);
-static void fp_id_to_vindex(int panel_id);
+static void __devinit fp_id_to_vindex(int panel_id);
 static int lvds_register_read(int index);
 static void load_lcd_scaling(int set_hres, int set_vres, int panel_hres,
 		      int panel_vres);
@@ -84,7 +90,7 @@ static int check_lvds_chip(int device_id_subaddr, int device_id)
 		return FAIL;
 }
 
-void viafb_init_lcd_size(void)
+void __devinit viafb_init_lcd_size(void)
 {
 	DEBUG_MSG(KERN_INFO "viafb_init_lcd_size()\n");
 
@@ -144,7 +150,7 @@ static bool lvds_identify_integratedlvds(void)
 	return true;
 }
 
-int viafb_lvds_trasmitter_identify(void)
+int __devinit viafb_lvds_trasmitter_identify(void)
 {
 	if (viafb_lvds_identify_vt1636(VIA_PORT_31)) {
 		viaparinfo->chip_info->lvds_chip_info.i2c_port = VIA_PORT_31;
@@ -185,7 +191,7 @@ int viafb_lvds_trasmitter_identify(void)
 	return FAIL;
 }
 
-static void fp_id_to_vindex(int panel_id)
+static void __devinit fp_id_to_vindex(int panel_id)
 {
 	DEBUG_MSG(KERN_INFO "fp_get_panel_id()\n");
 
@@ -655,9 +661,6 @@ void viafb_lcd_set_mode(struct crt_mode_table *mode_crt_table,
 	pll_D_N = viafb_get_clk_value(panel_crt_table[0].clk);
 	DEBUG_MSG(KERN_INFO "PLL=0x%x", pll_D_N);
 	viafb_set_vclock(pll_D_N, set_iga);
-
-	viafb_set_output_path(DEVICE_LCD, set_iga,
-		plvds_chip_info->output_interface);
 	lcd_patch_skew(plvds_setting_info, plvds_chip_info);
 
 	/* If K8M800, enable LCD Prefetch Mode. */
@@ -830,8 +833,36 @@ void viafb_lcd_disable(void)
 
 }
 
+static void set_lcd_output_path(int set_iga, int output_interface)
+{
+	switch (output_interface) {
+	case INTERFACE_DFP:
+		if ((UNICHROME_K8M890 == viaparinfo->chip_info->gfx_chip_name)
+		    || (UNICHROME_P4M890 ==
+		    viaparinfo->chip_info->gfx_chip_name))
+			viafb_write_reg_mask(CR97, VIACR, 0x84,
+				       BIT7 + BIT2 + BIT1 + BIT0);
+	case INTERFACE_DVP0:
+	case INTERFACE_DVP1:
+	case INTERFACE_DFP_HIGH:
+	case INTERFACE_DFP_LOW:
+		if (set_iga == IGA2)
+			viafb_write_reg(CR91, VIACR, 0x00);
+		break;
+	}
+}
+
 void viafb_lcd_enable(void)
 {
+	viafb_write_reg_mask(CR6B, VIACR, 0x00, BIT3);
+	viafb_write_reg_mask(CR6A, VIACR, 0x08, BIT3);
+	set_lcd_output_path(viaparinfo->lvds_setting_info->iga_path,
+		viaparinfo->chip_info->lvds_chip_info.output_interface);
+	if (viafb_LCD2_ON)
+		set_lcd_output_path(viaparinfo->lvds_setting_info2->iga_path,
+			viaparinfo->chip_info->
+			lvds_chip_info2.output_interface);
+
 	if (viaparinfo->chip_info->gfx_chip_name == UNICHROME_CLE266) {
 		/* DI1 pad on */
 		viafb_write_reg_mask(SR1E, VIASR, 0x30, 0x30);
@@ -993,7 +1024,7 @@ static void check_diport_of_integrated_lvds(
 		  plvds_chip_info->output_interface);
 }
 
-void viafb_init_lvds_output_interface(struct lvds_chip_information
+void __devinit viafb_init_lvds_output_interface(struct lvds_chip_information
 				*plvds_chip_info,
 				struct lvds_setting_information
 				*plvds_setting_info)
