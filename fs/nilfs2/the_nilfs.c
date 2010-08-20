@@ -467,8 +467,8 @@ static unsigned long long nilfs_max_size(unsigned int blkbits)
 static int nilfs_store_disk_layout(struct the_nilfs *nilfs,
 				   struct nilfs_super_block *sbp)
 {
-	if (le32_to_cpu(sbp->s_rev_level) != NILFS_CURRENT_REV) {
-		printk(KERN_ERR "NILFS: revision mismatch "
+	if (le32_to_cpu(sbp->s_rev_level) < NILFS_MIN_SUPP_REV) {
+		printk(KERN_ERR "NILFS: unsupported revision "
 		       "(superblock rev.=%d.%d, current rev.=%d.%d). "
 		       "Please check the version of mkfs.nilfs.\n",
 		       le32_to_cpu(sbp->s_rev_level),
@@ -775,6 +775,7 @@ int nilfs_discard_segments(struct the_nilfs *nilfs, __u64 *segnump,
 						   start * sects_per_block,
 						   nblocks * sects_per_block,
 						   GFP_NOFS,
+						   BLKDEV_IFL_WAIT |
 						   BLKDEV_IFL_BARRIER);
 			if (ret < 0)
 				return ret;
@@ -785,7 +786,8 @@ int nilfs_discard_segments(struct the_nilfs *nilfs, __u64 *segnump,
 		ret = blkdev_issue_discard(nilfs->ns_bdev,
 					   start * sects_per_block,
 					   nblocks * sects_per_block,
-					   GFP_NOFS, BLKDEV_IFL_BARRIER);
+					   GFP_NOFS,
+					  BLKDEV_IFL_WAIT | BLKDEV_IFL_BARRIER);
 	return ret;
 }
 
