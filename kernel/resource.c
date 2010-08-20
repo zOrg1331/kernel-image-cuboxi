@@ -274,7 +274,7 @@ int walk_system_ram_range(unsigned long start_pfn, unsigned long nr_pages,
 		void *arg, int (*func)(unsigned long, unsigned long, void *))
 {
 	struct resource res;
-	unsigned long pfn, end_pfn;
+	unsigned long pfn, len;
 	u64 orig_end;
 	int ret = -1;
 
@@ -284,10 +284,9 @@ int walk_system_ram_range(unsigned long start_pfn, unsigned long nr_pages,
 	orig_end = res.end;
 	while ((res.start < res.end) &&
 		(find_next_system_ram(&res, "System RAM") >= 0)) {
-		pfn = (res.start + PAGE_SIZE - 1) >> PAGE_SHIFT;
-		end_pfn = (res.end + 1) >> PAGE_SHIFT;
-		if (end_pfn > pfn)
-		    ret = (*func)(pfn, end_pfn - pfn, arg);
+		pfn = (unsigned long)(res.start >> PAGE_SHIFT);
+		len = (unsigned long)((res.end + 1 - res.start) >> PAGE_SHIFT);
+		ret = (*func)(pfn, len, arg);
 		if (ret)
 			break;
 		res.start = res.end + 1;
@@ -297,20 +296,6 @@ int walk_system_ram_range(unsigned long start_pfn, unsigned long nr_pages,
 }
 
 #endif
-
-static int __is_ram(unsigned long pfn, unsigned long nr_pages, void *arg)
-{
-	return 1;
-}
-/*
- * This generic page_is_ram() returns true if specified address is
- * registered as "System RAM" in iomem_resource list.
- */
-int __weak page_is_ram(unsigned long pfn)
-{
-	return walk_system_ram_range(pfn, 1, NULL, __is_ram) == 1;
-}
-EXPORT_SYMBOL_GPL(page_is_ram);
 
 /*
  * Find empty slot in the resource tree given range and alignment.

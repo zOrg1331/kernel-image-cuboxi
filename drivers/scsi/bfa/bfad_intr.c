@@ -23,14 +23,13 @@ BFA_TRC_FILE(LDRV, INTR);
 /**
  *  bfa_isr BFA driver interrupt functions
  */
-static int msix_disable_cb;
-static int msix_disable_ct;
-module_param(msix_disable_cb, int, S_IRUGO | S_IWUSR);
-module_param(msix_disable_ct, int, S_IRUGO | S_IWUSR);
+irqreturn_t bfad_intx(int irq, void *dev_id);
+static int msix_disable;
+module_param(msix_disable, int, S_IRUGO | S_IWUSR);
 /**
  * Line based interrupt handler.
  */
-static irqreturn_t
+irqreturn_t
 bfad_intx(int irq, void *dev_id)
 {
 	struct bfad_s         *bfad = dev_id;
@@ -143,7 +142,6 @@ bfad_setup_intr(struct bfad_s *bfad)
 	int error = 0;
 	u32 mask = 0, i, num_bit = 0, max_bit = 0;
 	struct msix_entry msix_entries[MAX_MSIX_ENTRY];
-	struct pci_dev *pdev = bfad->pcidev;
 
 	/* Call BFA to get the msix map for this PCI function.  */
 	bfa_msix_getvecs(&bfad->bfa, &mask, &num_bit, &max_bit);
@@ -151,9 +149,7 @@ bfad_setup_intr(struct bfad_s *bfad)
 	/* Set up the msix entry table */
 	bfad_init_msix_entry(bfad, msix_entries, mask, max_bit);
 
-	if ((pdev->device == BFA_PCI_DEVICE_ID_CT && !msix_disable_ct) ||
-	    (pdev->device != BFA_PCI_DEVICE_ID_CT && !msix_disable_cb)) {
-
+	if (!msix_disable) {
 		error = pci_enable_msix(bfad->pcidev, msix_entries, bfad->nvec);
 		if (error) {
 			/*

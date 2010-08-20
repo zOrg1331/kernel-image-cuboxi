@@ -104,10 +104,8 @@ static int __init cxgb3i_init_module(void)
 		return err;
 
 	err = cxgb3i_pdu_init();
-	if (err < 0) {
-		cxgb3i_iscsi_cleanup();
+	if (err < 0)
 		return err;
-	}
 
 	cxgb3_register_client(&t3c_client);
 

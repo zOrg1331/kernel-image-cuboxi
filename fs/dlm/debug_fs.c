@@ -256,7 +256,7 @@ static int print_format3_lock(struct seq_file *s, struct dlm_lkb *lkb,
 			lkb->lkb_status,
 			lkb->lkb_grmode,
 			lkb->lkb_rqmode,
-			lkb->lkb_bastmode,
+			lkb->lkb_highbast,
 			rsb_lookup,
 			lkb->lkb_wait_type,
 			lkb->lkb_lvbseq,
@@ -404,7 +404,7 @@ static void *table_seq_start(struct seq_file *seq, loff_t *pos)
 	if (bucket >= ls->ls_rsbtbl_size)
 		return NULL;
 
-	ri = kzalloc(sizeof(struct rsbtbl_iter), GFP_NOFS);
+	ri = kzalloc(sizeof(struct rsbtbl_iter), GFP_KERNEL);
 	if (!ri)
 		return NULL;
 	if (n == 0)

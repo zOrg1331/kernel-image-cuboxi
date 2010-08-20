@@ -21,7 +21,6 @@
 /**
  * Driver statistics
  */
-struct bfa_driver_stats_s {
 	u16    tm_io_abort;
     u16    tm_io_abort_comp;
     u16    tm_lun_reset;
@@ -35,7 +34,7 @@ struct bfa_driver_stats_s {
     u64    output_req;
     u64    input_words;
     u64    output_words;
-};
+} bfa_driver_stats_t;
 
 
 #endif /* __BFA_DEFS_DRIVER_H__ */

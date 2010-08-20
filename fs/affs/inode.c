@@ -166,7 +166,7 @@ bad_inode:
 }
 
 int
-affs_write_inode(struct inode *inode, struct writeback_control *wbc)
+affs_write_inode(struct inode *inode, int unused)
 {
 	struct super_block	*sb = inode->i_sb;
 	struct buffer_head	*bh;

@@ -1817,7 +1817,6 @@ static int e100_alloc_cbs(struct nic *nic)
 				  &nic->cbs_dma_addr);
 	if (!nic->cbs)
 		return -ENOMEM;
-	memset(nic->cbs, 0, count * sizeof(struct cb));
 
 	for (cb = nic->cbs, i = 0; i < count; cb++, i++) {
 		cb->next = (i + 1 < count) ? cb + 1 : nic->cbs;
@@ -1826,6 +1825,7 @@ static int e100_alloc_cbs(struct nic *nic)
 		cb->dma_addr = nic->cbs_dma_addr + i * sizeof(struct cb);
 		cb->link = cpu_to_le32(nic->cbs_dma_addr +
 			((i+1) % count) * sizeof(struct cb));
+		cb->skb = NULL;
 	}
 
 	nic->cb_to_use = nic->cb_to_send = nic->cb_to_clean = nic->cbs;
@@ -2843,7 +2843,7 @@ static int __devinit e100_probe(struct pci_dev *pdev,
 	}
 	nic->cbs_pool = pci_pool_create(netdev->name,
 			   nic->pdev,
-			   nic->params.cbs.max * sizeof(struct cb),
+			   nic->params.cbs.count * sizeof(struct cb),
 			   sizeof(u32),
 			   0);
 	DPRINTK(PROBE, INFO, "addr 0x%llx, irq %d, MAC addr %pM\n",

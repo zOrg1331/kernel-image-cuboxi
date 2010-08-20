@@ -38,7 +38,7 @@ static void random_recv_done(struct virtqueue *vq)
 	unsigned int len;
 
 	/* We can get spurious callbacks, e.g. shared IRQs + virtio_pci. */
-	if (!virtqueue_get_buf(vq, &len))
+	if (!vq->vq_ops->get_buf(vq, &len))
 		return;
 
 	data_left += len;
@@ -51,10 +51,9 @@ static void register_buffer(void)
 
 	sg_init_one(&sg, random_data+data_left, RANDOM_DATA_SIZE-data_left);
 	/* There should always be room for one buffer. */
-	if (virtqueue_add_buf(vq, &sg, 0, 1, random_data) < 0)
+	if (vq->vq_ops->add_buf(vq, &sg, 0, 1, random_data) < 0)
 		BUG();
-
-	virtqueue_kick(vq);
+	vq->vq_ops->kick(vq);
 }
 
 /* At least we don't udelay() in a loop like some other drivers. */

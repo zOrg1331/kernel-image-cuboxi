@@ -311,8 +311,6 @@ enum iscsi_param {
 	ISCSI_PARAM_IFACE_NAME,
 	ISCSI_PARAM_ISID,
 	ISCSI_PARAM_INITIATOR_NAME,
-
-	ISCSI_PARAM_TGT_RESET_TMO,
 	/* must always be last */
 	ISCSI_PARAM_MAX,
 };
@@ -352,7 +350,6 @@ enum iscsi_param {
 #define ISCSI_IFACE_NAME		(1ULL << ISCSI_PARAM_IFACE_NAME)
 #define ISCSI_ISID			(1ULL << ISCSI_PARAM_ISID)
 #define ISCSI_INITIATOR_NAME		(1ULL << ISCSI_PARAM_INITIATOR_NAME)
-#define ISCSI_TGT_RESET_TMO		(1ULL << ISCSI_PARAM_TGT_RESET_TMO)
 
 /* iSCSI HBA params */
 enum iscsi_host_param {

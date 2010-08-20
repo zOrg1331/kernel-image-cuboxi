@@ -417,7 +417,6 @@
 	ENTRY_COMP(pwritev)
 	ENTRY_COMP(rt_tgsigqueueinfo)
 	ENTRY_SAME(perf_event_open)
-	ENTRY_COMP(recvmmsg)
 
 	/* Nothing yet */
 

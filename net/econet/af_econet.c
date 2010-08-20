@@ -605,8 +605,7 @@ static struct proto econet_proto = {
  *	Create an Econet socket
  */
 
-static int econet_create(struct net *net, struct socket *sock, int protocol,
-			 int kern)
+static int econet_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 	struct econet_sock *eo;

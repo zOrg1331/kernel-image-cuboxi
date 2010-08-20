@@ -636,10 +636,6 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 		JBUFFER_TRACE(jh, "ph3: write metadata");
 		flags = jbd2_journal_write_metadata_buffer(commit_transaction,
 						      jh, &new_jh, blocknr);
-		if (flags < 0) {
-			jbd2_journal_abort(journal, flags);
-			continue;
-		}
 		set_bit(BH_JWrite, &jh2bh(new_jh)->b_state);
 		wbuf[bufs++] = jh2bh(new_jh);
 
@@ -927,12 +923,12 @@ restart_loop:
 		/* A buffer which has been freed while still being
 		 * journaled by a previous transaction may end up still
 		 * being dirty here, but we want to avoid writing back
-		 * that buffer in the future after the "add to orphan"
-		 * operation been committed,  That's not only a performance
-		 * gain, it also stops aliasing problems if the buffer is
-		 * left behind for writeback and gets reallocated for another
+		 * that buffer in the future now that the last use has
+		 * been committed.  That's not only a performance gain,
+		 * it also stops aliasing problems if the buffer is left
+		 * behind for writeback and gets reallocated for another
 		 * use in a different page. */
-		if (buffer_freed(bh) && !jh->b_next_transaction) {
+		if (buffer_freed(bh)) {
 			clear_buffer_freed(bh);
 			clear_buffer_jbddirty(bh);
 		}

@@ -91,6 +91,7 @@
 
 #define NUM_SEL_MNT_OPTS 5
 
+extern unsigned int policydb_loaded_version;
 extern int selinux_nlmsg_lookup(u16 sclass, u16 nlmsg_type, u32 *perm);
 extern struct security_operations *security_ops;
 
@@ -2365,8 +2366,7 @@ static void selinux_bprm_committing_creds(struct linux_binprm *bprm)
 			initrlim = init_task.signal->rlim + i;
 			rlim->rlim_cur = min(rlim->rlim_max, initrlim->rlim_cur);
 		}
-		update_rlimit_cpu(current,
-				current->signal->rlim[RLIMIT_CPU].rlim_cur);
+		update_rlimit_cpu(rlim->rlim_cur);
 	}
 }
 
@@ -3335,21 +3335,12 @@ static int selinux_kernel_create_files_as(struct cred *new, struct inode *inode)
 
 	if (ret == 0)
 		tsec->create_sid = isec->sid;
-	return ret;
+	return 0;
 }
 
-static int selinux_kernel_module_request(char *kmod_name)
+static int selinux_kernel_module_request(void)
 {
-	u32 sid;
-	struct common_audit_data ad;
-
-	sid = task_sid(current);
-
-	COMMON_AUDIT_DATA_INIT(&ad, KMOD);
-	ad.u.kmod_name = kmod_name;
-
-	return avc_has_perm(sid, SECINITSID_KERNEL, SECCLASS_SYSTEM,
-			    SYSTEM__MODULE_REQUEST, &ad);
+	return task_has_system(current, SYSTEM__MODULE_REQUEST);
 }
 
 static int selinux_task_setpgid(struct task_struct *p, pid_t pgid)
@@ -3399,17 +3390,16 @@ static int selinux_task_getioprio(struct task_struct *p)
 	return current_has_perm(p, PROCESS__GETSCHED);
 }
 
-static int selinux_task_setrlimit(struct task_struct *p, unsigned int resource,
-		struct rlimit *new_rlim)
+static int selinux_task_setrlimit(unsigned int resource, struct rlimit *new_rlim)
 {
-	struct rlimit *old_rlim = p->signal->rlim + resource;
+	struct rlimit *old_rlim = current->signal->rlim + resource;
 
 	/* Control the ability to change the hard limit (whether
 	   lowering or raising it), so that the hard limit can
 	   later be used as a safe reset point for the soft limit
 	   upon context transitions.  See selinux_bprm_committing_creds. */
 	if (old_rlim->rlim_max != new_rlim->rlim_max)
-		return current_has_perm(p, PROCESS__SETRLIMIT);
+		return current_has_perm(current, PROCESS__SETRLIMIT);
 
 	return 0;
 }
@@ -4724,7 +4714,10 @@ static int selinux_netlink_send(struct sock *sk, struct sk_buff *skb)
 	if (err)
 		return err;
 
-	return selinux_nlmsg_perm(sk, skb);
+	if (policydb_loaded_version >= POLICYDB_VERSION_NLCLASS)
+		err = selinux_nlmsg_perm(sk, skb);
+
+	return err;
 }
 
 static int selinux_netlink_recv(struct sk_buff *skb, int capability)
@@ -5837,11 +5830,11 @@ int selinux_disable(void)
 	selinux_disabled = 1;
 	selinux_enabled = 0;
 
-	/* Reset security_ops to the secondary module, dummy or capability. */
-	security_ops = secondary_ops;
-
 	/* Try to destroy the avc node cache */
 	avc_disable();
+
+	/* Reset security_ops to the secondary module, dummy or capability. */
+	security_ops = secondary_ops;
 
 	/* Unregister netfilter hooks. */
 	selinux_nf_ip_exit();

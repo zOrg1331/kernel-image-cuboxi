@@ -341,64 +341,6 @@ static inline int memory_probe_init(void)
 }
 #endif
 
-#ifdef CONFIG_MEMORY_FAILURE
-/*
- * Support for offlining pages of memory
- */
-
-/* Soft offline a page */
-static ssize_t
-store_soft_offline_page(struct class *class, const char *buf, size_t count)
-{
-	int ret;
-	u64 pfn;
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-	if (strict_strtoull(buf, 0, &pfn) < 0)
-		return -EINVAL;
-	pfn >>= PAGE_SHIFT;
-	if (!pfn_valid(pfn))
-		return -ENXIO;
-	ret = soft_offline_page(pfn_to_page(pfn), 0);
-	return ret == 0 ? count : ret;
-}
-
-/* Forcibly offline a page, including killing processes. */
-static ssize_t
-store_hard_offline_page(struct class *class, const char *buf, size_t count)
-{
-	int ret;
-	u64 pfn;
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-	if (strict_strtoull(buf, 0, &pfn) < 0)
-		return -EINVAL;
-	pfn >>= PAGE_SHIFT;
-	ret = __memory_failure(pfn, 0, 0);
-	return ret ? ret : count;
-}
-
-static CLASS_ATTR(soft_offline_page, 0644, NULL, store_soft_offline_page);
-static CLASS_ATTR(hard_offline_page, 0644, NULL, store_hard_offline_page);
-
-static __init int memory_fail_init(void)
-{
-	int err;
-
-	err = sysfs_create_file(&memory_sysdev_class.kset.kobj,
-				&class_attr_soft_offline_page.attr);
-	if (!err)
-		err = sysfs_create_file(&memory_sysdev_class.kset.kobj,
-				&class_attr_hard_offline_page.attr);
-	return err;
-}
-#else
-static inline int memory_fail_init(void)
-{
-	return 0;
-}
-#endif
-
 /*
  * Note that phys_device is optional.  It is here to allow for
  * differentiation between which *physical* devices each
@@ -485,41 +427,6 @@ int remove_memory_block(unsigned long node_id, struct mem_section *section,
 }
 
 /*
- * need an interface for the VM to mark sections on and offline when
- * hot-swapping memory.
- *
- * Returns 0 on success, or the failing pfn on failure.
- */
-u64 set_memory_state(unsigned long start_pfn, unsigned long nr_pages,
-		     unsigned long to_state, unsigned long from_state_req)
-{
-	struct mem_section *section;
-	struct memory_block *mem;
-	unsigned long start_sec, end_sec, i, current_pfn;
-	int ret = 0;
-
-	start_sec = pfn_to_section_nr(start_pfn);
-	end_sec = pfn_to_section_nr(start_pfn + nr_pages - 1);
-	for (i = start_sec; i <= end_sec; i++) {
-		if (valid_section_nr(i) && present_section_nr(i)) {
-			section = __nr_to_section(i);
-			mem = find_memory_block(section);
-			ret = memory_block_change_state(mem, to_state,
-							from_state_req);
-			if (ret) {
-				current_pfn = section_nr_to_pfn(start_sec);
-				printk(KERN_WARNING "memory (0x%0lx - 0x%0lx) "
-				       "online failed.", current_pfn,
-				       current_pfn + PAGES_PER_SECTION);
-				return current_pfn;
-			}
-		}
-	}
-	return 0;
-}
-EXPORT_SYMBOL(set_memory_state);
-
-/*
  * need an interface for the VM to add new memory regions,
  * but without onlining it.
  */
@@ -564,9 +471,6 @@ int __init memory_dev_init(void)
 	}
 
 	err = memory_probe_init();
-	if (!ret)
-		ret = err;
-	err = memory_fail_init();
 	if (!ret)
 		ret = err;
 	err = block_size_init();

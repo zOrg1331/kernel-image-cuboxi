@@ -634,7 +634,7 @@ static void qeth_l2_set_multicast_list(struct net_device *dev)
 	for (dm = dev->mc_list; dm; dm = dm->next)
 		qeth_l2_add_mc(card, dm->da_addr, 0);
 
-	netdev_for_each_uc_addr(ha, dev)
+	list_for_each_entry(ha, &dev->uc.list, list)
 		qeth_l2_add_mc(card, ha->addr, 1);
 
 	spin_unlock_bh(&card->mclock);
@@ -781,8 +781,7 @@ static void qeth_l2_qdio_input_handler(struct ccw_device *ccwdev,
 		index = i % QDIO_MAX_BUFFERS_PER_Q;
 		buffer = &card->qdio.in_q->bufs[index];
 		if (!(qdio_err &&
-		      qeth_check_qdio_errors(card, buffer->buffer, qdio_err,
-					     "qinerr")))
+		      qeth_check_qdio_errors(buffer->buffer, qdio_err, "qinerr")))
 			qeth_l2_process_inbound_buffer(card, buffer, index);
 		/* clear buffer and give back to hardware */
 		qeth_put_buffer_pool_entry(card, buffer->pool_entry);
@@ -936,28 +935,25 @@ static int __qeth_l2_set_online(struct ccwgroup_device *gdev, int recovery_mode)
 	enum qeth_card_states recover_flag;
 
 	BUG_ON(!card);
-	mutex_lock(&card->conf_mutex);
 	QETH_DBF_TEXT(SETUP, 2, "setonlin");
 	QETH_DBF_HEX(SETUP, 2, &card, sizeof(void *));
 
+	qeth_set_allowed_threads(card, QETH_RECOVER_THREAD, 1);
 	recover_flag = card->state;
 	rc = ccw_device_set_online(CARD_RDEV(card));
 	if (rc) {
 		QETH_DBF_TEXT_(SETUP, 2, "1err%d", rc);
-		rc = -EIO;
-		goto out;
+		return -EIO;
 	}
 	rc = ccw_device_set_online(CARD_WDEV(card));
 	if (rc) {
 		QETH_DBF_TEXT_(SETUP, 2, "1err%d", rc);
-		rc = -EIO;
-		goto out;
+		return -EIO;
 	}
 	rc = ccw_device_set_online(CARD_DDEV(card));
 	if (rc) {
 		QETH_DBF_TEXT_(SETUP, 2, "1err%d", rc);
-		rc = -EIO;
-		goto out;
+		return -EIO;
 	}
 
 	rc = qeth_core_hardsetup_card(card);
@@ -985,16 +981,14 @@ static int __qeth_l2_set_online(struct ccwgroup_device *gdev, int recovery_mode)
 			dev_warn(&card->gdev->dev,
 				"The LAN is offline\n");
 			card->lan_online = 0;
-			rc = 0;
-			goto out;
+			return 0;
 		}
 		goto out_remove;
 	} else
 		card->lan_online = 1;
 
 	if (card->info.type != QETH_CARD_TYPE_OSN) {
-		/* configure isolation level */
-		qeth_set_access_ctrl_online(card);
+		qeth_set_large_send(card, card->options.large_send);
 		qeth_l2_process_vlans(card, 0);
 	}
 
@@ -1023,9 +1017,7 @@ static int __qeth_l2_set_online(struct ccwgroup_device *gdev, int recovery_mode)
 	}
 	/* let user_space know that device is online */
 	kobject_uevent(&gdev->dev.kobj, KOBJ_CHANGE);
-out:
-	mutex_unlock(&card->conf_mutex);
-	return rc;
+	return 0;
 out_remove:
 	card->use_hard_stop = 1;
 	qeth_l2_stop_card(card, 0);
@@ -1036,7 +1028,6 @@ out_remove:
 		card->state = CARD_STATE_RECOVER;
 	else
 		card->state = CARD_STATE_DOWN;
-	mutex_unlock(&card->conf_mutex);
 	return -ENODEV;
 }
 
@@ -1052,7 +1043,6 @@ static int __qeth_l2_set_offline(struct ccwgroup_device *cgdev,
 	int rc = 0, rc2 = 0, rc3 = 0;
 	enum qeth_card_states recover_flag;
 
-	mutex_lock(&card->conf_mutex);
 	QETH_DBF_TEXT(SETUP, 3, "setoffl");
 	QETH_DBF_HEX(SETUP, 3, &card, sizeof(void *));
 
@@ -1071,7 +1061,6 @@ static int __qeth_l2_set_offline(struct ccwgroup_device *cgdev,
 		card->state = CARD_STATE_RECOVER;
 	/* let user_space know that device is offline */
 	kobject_uevent(&cgdev->dev.kobj, KOBJ_CHANGE);
-	mutex_unlock(&card->conf_mutex);
 	return 0;
 }
 

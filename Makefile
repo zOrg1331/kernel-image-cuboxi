@@ -16,12 +16,6 @@ NAME = Man-Eating Seals of Antiquity
 # o  print "Entering directory ...";
 MAKEFLAGS += -rR --no-print-directory
 
-# Avoid funny character set dependencies
-unexport LC_ALL
-LC_COLLATE=C
-LC_NUMERIC=C
-export LC_COLLATE LC_NUMERIC
-
 # We are using a recursive build, so we need to do a little thinking
 # to get the ordering right.
 #
@@ -710,10 +704,6 @@ quiet_cmd_vmlinux__ ?= LD      $@
       --start-group $(vmlinux-main) --end-group                  \
       $(filter-out $(vmlinux-lds) $(vmlinux-init) $(vmlinux-main) vmlinux.o FORCE ,$^)
 
-ifdef AFTER_LINK
-cmd_vmlinux__ += ; $(AFTER_LINK)
-endif
-
 # Generate new vmlinux version
 quiet_cmd_vmlinux_version = GEN     .version
       cmd_vmlinux_version = set -e;                     \
@@ -1225,7 +1215,6 @@ clean: archclean $(clean-dirs)
 	$(call cmd,rmfiles)
 	@find . $(RCS_FIND_IGNORE) \
 		\( -name '*.[oas]' -o -name '*.ko' -o -name '.*.cmd' \
-		-o -name '*.ko.*' \
 		-o -name '.*.d' -o -name '.*.tmp' -o -name '*.mod.c' \
 		-o -name '*.symtypes' -o -name 'modules.order' \
 		-o -name 'Module.markers' -o -name '.tmp_*.o.*' \
@@ -1433,7 +1422,6 @@ clean: $(clean-dirs)
 	$(call cmd,rmfiles)
 	@find $(KBUILD_EXTMOD) $(RCS_FIND_IGNORE) \
 		\( -name '*.[oas]' -o -name '*.ko' -o -name '.*.cmd' \
-		-o -name '*.ko.*' \
 		-o -name '.*.d' -o -name '.*.tmp' -o -name '*.mod.c' \
 		-o -name '*.gcno' \) -type f -print | xargs rm -f
 

@@ -236,20 +236,19 @@ xfs_trans_alloc(
 	uint		type)
 {
 	xfs_wait_for_freeze(mp, SB_FREEZE_TRANS);
-	return _xfs_trans_alloc(mp, type, KM_SLEEP);
+	return _xfs_trans_alloc(mp, type);
 }
 
 xfs_trans_t *
 _xfs_trans_alloc(
 	xfs_mount_t	*mp,
-	uint		type,
-	uint		memflags)
+	uint		type)
 {
 	xfs_trans_t	*tp;
 
 	atomic_inc(&mp->m_active_trans);
 
-	tp = kmem_zone_zalloc(xfs_trans_zone, memflags);
+	tp = kmem_zone_zalloc(xfs_trans_zone, KM_SLEEP);
 	tp->t_magic = XFS_TRANS_MAGIC;
 	tp->t_type = type;
 	tp->t_mountp = mp;
@@ -981,8 +980,9 @@ shut_us_down:
 	 */
 	if (sync) {
 		if (!error) {
-			error = _xfs_log_force_lsn(mp, commit_lsn,
-				      XFS_LOG_SYNC, log_flushed);
+			error = _xfs_log_force(mp, commit_lsn,
+				      XFS_LOG_FORCE | XFS_LOG_SYNC,
+				      log_flushed);
 		}
 		XFS_STATS_INC(xs_trans_sync);
 	} else {
@@ -1120,7 +1120,7 @@ xfs_trans_fill_vecs(
 	tp->t_header.th_num_items = nitems;
 	log_vector->i_addr = (xfs_caddr_t)&tp->t_header;
 	log_vector->i_len = sizeof(xfs_trans_header_t);
-	log_vector->i_type = XLOG_REG_TYPE_TRANSHDR;
+	XLOG_VEC_SET_TYPE(log_vector, XLOG_REG_TYPE_TRANSHDR);
 }
 
 

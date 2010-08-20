@@ -17,10 +17,8 @@
 #include <linux/init.h>
 #include <linux/highuid.h>
 #include <linux/vfs.h>
-#include <linux/writeback.h>
 
-static int minix_write_inode(struct inode *inode,
-		struct writeback_control *wbc);
+static int minix_write_inode(struct inode * inode, int wait);
 static int minix_statfs(struct dentry *dentry, struct kstatfs *buf);
 static int minix_remount (struct super_block * sb, int * flags, char * data);
 
@@ -554,7 +552,7 @@ static struct buffer_head * V2_minix_update_inode(struct inode * inode)
 	return bh;
 }
 
-static int minix_write_inode(struct inode *inode, struct writeback_control *wbc)
+static int minix_write_inode(struct inode *inode, int wait)
 {
 	int err = 0;
 	struct buffer_head *bh;
@@ -565,7 +563,7 @@ static int minix_write_inode(struct inode *inode, struct writeback_control *wbc)
 		bh = V2_minix_update_inode(inode);
 	if (!bh)
 		return -EIO;
-	if (wbc->sync_mode == WB_SYNC_ALL && buffer_dirty(bh)) {
+	if (wait && buffer_dirty(bh)) {
 		sync_dirty_buffer(bh);
 		if (buffer_req(bh) && !buffer_uptodate(bh)) {
 			printk("IO error syncing minix inode [%s:%08lx]\n",

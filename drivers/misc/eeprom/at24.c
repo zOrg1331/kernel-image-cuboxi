@@ -274,8 +274,7 @@ static ssize_t at24_read(struct at24_data *at24,
 	return retval;
 }
 
-static ssize_t at24_bin_read(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *attr,
+static ssize_t at24_bin_read(struct kobject *kobj, struct bin_attribute *attr,
 		char *buf, loff_t off, size_t count)
 {
 	struct at24_data *at24;
@@ -396,8 +395,7 @@ static ssize_t at24_write(struct at24_data *at24, const char *buf, loff_t off,
 	return retval;
 }
 
-static ssize_t at24_bin_write(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *attr,
+static ssize_t at24_bin_write(struct kobject *kobj, struct bin_attribute *attr,
 		char *buf, loff_t off, size_t count)
 {
 	struct at24_data *at24;

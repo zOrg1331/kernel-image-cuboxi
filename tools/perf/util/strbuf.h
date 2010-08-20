@@ -1,5 +1,5 @@
-#ifndef __PERF_STRBUF_H
-#define __PERF_STRBUF_H
+#ifndef STRBUF_H
+#define STRBUF_H
 
 /*
  * Strbuf's can be use in many ways: as a byte array, or to store arbitrary
@@ -134,4 +134,4 @@ extern int launch_editor(const char *path, struct strbuf *buffer, const char *co
 extern int strbuf_branchname(struct strbuf *sb, const char *name);
 extern int strbuf_check_branch_ref(struct strbuf *sb, const char *name);
 
-#endif /* __PERF_STRBUF_H */
+#endif /* STRBUF_H */

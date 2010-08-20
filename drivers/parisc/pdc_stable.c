@@ -779,9 +779,12 @@ static ssize_t pdcs_auto_write(struct kobject *kobj,
 	read_unlock(&pathentry->rw_lock);
 	
 	DPRINTK("%s: flags before: 0x%X\n", __func__, flags);
-
-	temp = skip_spaces(in);
-
+			
+	temp = in;
+	
+	while (*temp && isspace(*temp))
+		temp++;
+	
 	c = *temp++ - '0';
 	if ((c != 0) && (c != 1))
 		goto parse_error;

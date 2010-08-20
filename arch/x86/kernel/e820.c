@@ -517,18 +517,10 @@ u64 __init e820_remove_range(u64 start, u64 size, unsigned old_type,
 			     int checktype)
 {
 	int i;
-	u64 end;
 	u64 real_removed_size = 0;
 
 	if (size > (ULLONG_MAX - start))
 		size = ULLONG_MAX - start;
-
-	end = start + size;
-	printk(KERN_DEBUG "e820 remove range: %016Lx - %016Lx ",
-		       (unsigned long long) start,
-		       (unsigned long long) end);
-	e820_print_type(old_type);
-	printk(KERN_CONT "\n");
 
 	for (i = 0; i < e820.nr_map; i++) {
 		struct e820entry *ei = &e820.map[i];
@@ -1105,7 +1097,7 @@ u64 __init early_reserve_e820(u64 startt, u64 sizet, u64 align)
 
 #ifdef CONFIG_X86_32
 # ifdef CONFIG_X86_PAE
-#  define MAX_ARCH_PFN		(1ULL<<(34-PAGE_SHIFT))
+#  define MAX_ARCH_PFN		(1ULL<<(36-PAGE_SHIFT))
 # else
 #  define MAX_ARCH_PFN		(1ULL<<(32-PAGE_SHIFT))
 # endif

@@ -405,7 +405,7 @@ static int cap_kernel_create_files_as(struct cred *new, struct inode *inode)
 	return 0;
 }
 
-static int cap_kernel_module_request(char *kmod_name)
+static int cap_kernel_module_request(void)
 {
 	return 0;
 }
@@ -450,8 +450,7 @@ static int cap_task_getioprio(struct task_struct *p)
 	return 0;
 }
 
-static int cap_task_setrlimit(struct task_struct *p, unsigned int resource,
-		struct rlimit *new_rlim)
+static int cap_task_setrlimit(unsigned int resource, struct rlimit *new_rlim)
 {
 	return 0;
 }

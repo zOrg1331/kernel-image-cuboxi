@@ -123,7 +123,6 @@
 #include <linux/net_tstamp.h>
 #include <net/xfrm.h>
 #include <linux/ipsec.h>
-#include <net/cls_cgroup.h>
 
 #include <linux/filter.h>
 
@@ -218,11 +217,6 @@ __u32 sysctl_rmem_default __read_mostly = SK_RMEM_MAX;
 int sysctl_optmem_max __read_mostly = sizeof(unsigned long)*(2*UIO_MAXIOV+512);
 EXPORT_SYMBOL(sysctl_optmem_max);
 
-#if defined(CONFIG_CGROUPS) && !defined(CONFIG_NET_CLS_CGROUP)
-int net_cls_subsys_id = -1;
-EXPORT_SYMBOL_GPL(net_cls_subsys_id);
-#endif
-
 static int sock_set_timeout(long *timeo_p, char __user *optval, int optlen)
 {
 	struct timeval tv;
@@ -282,8 +276,6 @@ int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 {
 	int err = 0;
 	int skb_len;
-	unsigned long flags;
-	struct sk_buff_head *list = &sk->sk_receive_queue;
 
 	/* Cast sk->rcvbuf to unsigned... It's pointless, but reduces
 	   number of warnings when compiling with -W --ANK
@@ -313,10 +305,7 @@ int sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb)
 	 */
 	skb_len = skb->len;
 
-	spin_lock_irqsave(&list->lock, flags);
-	skb->dropcount = atomic_read(&sk->sk_drops);
-	__skb_queue_tail(list, skb);
-	spin_unlock_irqrestore(&list->lock, flags);
+	skb_queue_tail(&sk->sk_receive_queue, skb);
 
 	if (!sock_flag(sk, SOCK_DEAD))
 		sk->sk_data_ready(sk, skb_len);
@@ -713,12 +702,6 @@ set_rcvbuf:
 
 		/* We implement the SO_SNDLOWAT etc to
 		   not be settable (1003.1g 5.3) */
-	case SO_RXQ_OVFL:
-		if (valbool)
-			sock_set_flag(sk, SOCK_RXQ_OVFL);
-		else
-			sock_reset_flag(sk, SOCK_RXQ_OVFL);
-		break;
 	default:
 		ret = -ENOPROTOOPT;
 		break;
@@ -918,10 +901,6 @@ int sock_getsockopt(struct socket *sock, int level, int optname,
 		v.val = sk->sk_mark;
 		break;
 
-	case SO_RXQ_OVFL:
-		v.val = !!sock_flag(sk, SOCK_RXQ_OVFL);
-		break;
-
 	default:
 		return -ENOPROTOOPT;
 	}
@@ -1034,17 +1013,6 @@ static void sk_prot_free(struct proto *prot, struct sock *sk)
 	module_put(owner);
 }
 
-#ifdef CONFIG_CGROUPS
-void sock_update_classid(struct sock *sk)
-{
-	u32 classid = task_cls_classid(current);
-
-	if (classid && classid != sk->sk_classid)
-		sk->sk_classid = classid;
-}
-EXPORT_SYMBOL(sock_update_classid);
-#endif
-
 /**
  *	sk_alloc - All socket objects are allocated here
  *	@net: the applicable net namespace
@@ -1068,8 +1036,6 @@ struct sock *sk_alloc(struct net *net, int family, gfp_t priority,
 		sock_lock_init(sk);
 		sock_net_set(sk, get_net(net));
 		atomic_set(&sk->sk_wmem_alloc, 1);
-
-		sock_update_classid(sk);
 	}
 
 	return sk;
@@ -1215,10 +1181,6 @@ struct sock *sk_clone(const struct sock *sk, const gfp_t priority)
 
 		if (newsk->sk_prot->sockets_allocated)
 			percpu_counter_inc(newsk->sk_prot->sockets_allocated);
-
-		if (sock_flag(newsk, SOCK_TIMESTAMP) ||
-		    sock_flag(newsk, SOCK_TIMESTAMPING_RX_SOFTWARE))
-			net_enable_timestamp();
 	}
 out:
 	return newsk;

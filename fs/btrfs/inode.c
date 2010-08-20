@@ -3879,7 +3879,7 @@ err:
 	return ret;
 }
 
-int btrfs_write_inode(struct inode *inode, struct writeback_control *wbc)
+int btrfs_write_inode(struct inode *inode, int wait)
 {
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct btrfs_trans_handle *trans;
@@ -3888,7 +3888,7 @@ int btrfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 	if (root->fs_info->btree_inode == inode)
 		return 0;
 
-	if (wbc->sync_mode == WB_SYNC_ALL) {
+	if (wait) {
 		trans = btrfs_join_transaction(root, 1);
 		btrfs_set_trans_block_group(trans, inode);
 		ret = btrfs_commit_transaction(trans, root);

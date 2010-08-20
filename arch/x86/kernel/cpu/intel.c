@@ -12,6 +12,7 @@
 #include <asm/processor.h>
 #include <asm/pgtable.h>
 #include <asm/msr.h>
+#include <asm/ds.h>
 #include <asm/bugs.h>
 #include <asm/cpu.h>
 
@@ -69,8 +70,8 @@ static void __cpuinit early_init_intel(struct cpuinfo_x86 *c)
 	if (c->x86_power & (1 << 8)) {
 		set_cpu_cap(c, X86_FEATURE_CONSTANT_TSC);
 		set_cpu_cap(c, X86_FEATURE_NONSTOP_TSC);
-		if (!check_tsc_unstable())
-			sched_clock_stable = 1;
+		set_cpu_cap(c, X86_FEATURE_TSC_RELIABLE);
+		sched_clock_stable = 1;
 	}
 
 	/*
@@ -265,6 +266,8 @@ static void __cpuinit srat_detect_node(struct cpuinfo_x86 *c)
 	if (node == NUMA_NO_NODE || !node_online(node))
 		node = first_node(node_online_map);
 	numa_set_node(cpu, node);
+
+	printk(KERN_INFO "CPU %d/0x%x -> Node %d\n", cpu, apicid, node);
 #endif
 }
 
@@ -362,6 +365,7 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
 			set_cpu_cap(c, X86_FEATURE_BTS);
 		if (!(l1 & (1<<12)))
 			set_cpu_cap(c, X86_FEATURE_PEBS);
+		ds_init_intel(c);
 	}
 
 	if (c->x86 == 6 && c->x86_model == 29 && cpu_has_clflush)
