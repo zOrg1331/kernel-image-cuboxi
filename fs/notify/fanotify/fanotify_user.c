@@ -778,6 +778,8 @@ SYSCALL_ALIAS(sys_fanotify_mark, SyS_fanotify_mark);
  */
 static int __init fanotify_user_setup(void)
 {
+	BUILD_BUG_ON(sizeof(struct fanotify_event_metadata) !=
+		     sizeof(struct fan_event_meta_packed));
 	fanotify_mark_cache = KMEM_CACHE(fsnotify_mark, SLAB_PANIC);
 	fanotify_response_event_cache = KMEM_CACHE(fanotify_response_event,
 						   SLAB_PANIC);
