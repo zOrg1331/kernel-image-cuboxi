@@ -995,7 +995,6 @@ static int lvds_is_present_in_vbt(struct drm_device *dev)
 		if (p_child->device_type != DEVICE_TYPE_INT_LFP &&
 			p_child->device_type != DEVICE_TYPE_LFP)
 			continue;
-
 		/* The addin_offset should be checked. Only when it is
 		 * non-zero, it is regarded as present.
 		 */
