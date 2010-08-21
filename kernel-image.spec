@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.32
-Release: alt17
+Release: alt20
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -600,6 +600,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Sat Aug 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt20
+- 2.6.32.20
+- should fix local root
+
 * Thu Aug 05 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt17
 - 2.6.32.17
 
