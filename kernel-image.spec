@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.32
-Release: alt16
+Release: alt20
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -183,6 +183,28 @@ and to the kernel.  The first major use for the DRI is to create fast
 OpenGL implementations.
 
 These are modules for your ALT Linux system
+
+%package -n kernel-modules-drm-nouveau-%flavour
+Summary: The Direct Rendering Infrastructure modules for NVIDIA cards
+Group: System/Kernel and hardware
+Provides:  kernel-modules-drm-nouveau-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-drm-nouveau-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-drm-nouveau-%kversion-%flavour-%krelease > %version-%release
+Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-drm-nouveau-%flavour
+The Direct Rendering Infrastructure, also known as the DRI, is a framework
+for allowing direct access to graphics hardware in a safe and efficient
+manner.  It includes changes to the X server, to several client libraries,
+and to the kernel.  The first major use for the DRI is to create fast
+OpenGL implementations.
+
+These are modules for your ALT Linux system
+
 
 %package -n kernel-modules-kvm-%flavour
 Summary: Linux KVM (Kernel Virtual Machine) modules
@@ -476,11 +498,16 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-ide-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
-
 %post -n kernel-modules-drm-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
 %postun -n kernel-modules-drm-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-drm-nouveau-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-drm-nouveau-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
 %post -n kernel-modules-kvm-%flavour
@@ -551,6 +578,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
+%exclude %modules_dir/kernel/drivers/gpu/drm/nouveau
+
+%files -n kernel-modules-drm-nouveau-%flavour
+%modules_dir/kernel/drivers/gpu/drm/nouveau
 
 %files -n kernel-modules-kvm-%flavour
 %modules_dir/kernel/arch/x86/kvm
@@ -562,6 +593,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Mon Aug 23 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt20
+- 2.6.32.20
+- nouveau drm moved to subpackage
+
 * Tue Jul 06 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt16
 - 2.6.32.16
 
