@@ -718,8 +718,9 @@ enum {
 #define QLCNIC_DEV_FAILED		0x6
 #define QLCNIC_DEV_QUISCENT		0x7
 
-#define QLCNIC_DEV_NPAR_NOT_RDY	0
-#define QLCNIC_DEV_NPAR_RDY		1
+#define QLCNIC_DEV_NPAR_NON_OPER	0 /* NON Operational */
+#define QLCNIC_DEV_NPAR_OPER		1 /* NPAR Operational */
+#define QLCNIC_DEV_NPAR_OPER_TIMEO	30 /* Operational time out */
 
 #define QLC_DEV_CHECK_ACTIVE(VAL, FN)		((VAL) &= (1 << (FN * 4)))
 #define QLC_DEV_SET_REF_CNT(VAL, FN)		((VAL) |= (1 << (FN * 4)))
@@ -743,6 +744,11 @@ enum {
 
 #define FW_POLL_DELAY		(1 * HZ)
 #define FW_FAIL_THRESH		2
+
+#define QLCNIC_RESET_TIMEOUT_SECS	10
+#define QLCNIC_INIT_TIMEOUT_SECS	30
+#define QLCNIC_HEARTBEAT_PERIOD_MSECS	200
+#define QLCNIC_HEARTBEAT_RETRY_COUNT	30
 
 #define	ISR_MSI_INT_TRIGGER(FUNC) (QLCNIC_PCIX_PS_REG(PCIX_MSI_F(FUNC)))
 #define ISR_LEGACY_INT_TRIGGERED(VAL)	(((VAL) & 0x300) == 0x200)
@@ -770,12 +776,19 @@ struct qlcnic_legacy_intr_set {
 #define QLCNIC_DRV_OP_MODE	0x1b2170
 #define QLCNIC_MSIX_BASE	0x132110
 #define QLCNIC_MAX_PCI_FUNC	8
+#define QLCNIC_MAX_VLAN_FILTERS	64
 
 /* PCI function operational mode */
 enum {
 	QLCNIC_MGMT_FUNC	= 0,
 	QLCNIC_PRIV_FUNC	= 1,
 	QLCNIC_NON_PRIV_FUNC	= 2
+};
+
+enum {
+	QLCNIC_PORT_DEFAULTS	= 0,
+	QLCNIC_ADD_VLAN	= 1,
+	QLCNIC_DEL_VLAN	= 2
 };
 
 #define QLC_DEV_DRV_DEFAULT 0x11111111
