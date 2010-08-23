@@ -3865,8 +3865,11 @@ int mutex_spin_on_owner(struct mutex *lock, struct thread_info *owner)
 		/*
 		 * Owner changed, break to re-assess state.
 		 */
-		if (lock->owner != owner)
+		if (lock->owner != owner) {
+			if (lock->owner)
+				return 0;
 			break;
+		}
 
 		/*
 		 * Is that owner really running on that cpu?
