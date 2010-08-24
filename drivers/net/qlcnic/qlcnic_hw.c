@@ -297,8 +297,8 @@ qlcnic_pcie_sem_lock(struct qlcnic_adapter *adapter, int sem, u32 id_reg)
 			break;
 		if (++timeout >= QLCNIC_PCIE_SEM_TIMEOUT) {
 			dev_err(&adapter->pdev->dev,
-				"Failed to acquire sem=%d lock;reg_id=%d\n",
-				sem, id_reg);
+				"Failed to acquire sem=%d lock; holdby=%d\n",
+				sem, id_reg ? QLCRD32(adapter, id_reg) : -1);
 			return -EIO;
 		}
 		msleep(1);
@@ -1245,4 +1245,5 @@ void qlcnic_clear_ilb_mode(struct qlcnic_adapter *adapter)
 		mode = VPORT_MISS_MODE_ACCEPT_MULTI;
 
 	qlcnic_nic_set_promisc(adapter, mode);
+	msleep(1000);
 }
