@@ -27,6 +27,7 @@
 #include <linux/memory.h>
 #include <linux/math64.h>
 #include <linux/fault-inject.h>
+#include <linux/percpu.h>
 
 /*
  * Lock order:
@@ -2091,8 +2092,10 @@ init_kmem_cache_node(struct kmem_cache_node *n, struct kmem_cache *s)
 
 static inline int alloc_kmem_cache_cpus(struct kmem_cache *s)
 {
+#ifdef CONFIG_SMP
 	BUILD_BUG_ON(PERCPU_DYNAMIC_EARLY_SIZE <
 			SLUB_PAGE_SHIFT * sizeof(struct kmem_cache_cpu));
+#endif
 
 	s->cpu_slab = alloc_percpu(struct kmem_cache_cpu);
 
