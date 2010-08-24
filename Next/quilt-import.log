@@ -1,0 +1,134 @@
+Importing driver-core.current based on 2.6.36-rc2
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 76be97c1fc945db08aae1f1b746012662d643e97
+HEAD is now at 76be97c Linux 2.6.36-rc2
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core.current
+kobject-break-the-kobject-namespace-defs-into-their-own-header.patch
+firmware_class-fix-typo-in-error-path.patch
+kobject_uevent-fix-typo-in-comments.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core.current
+From ../quilt-tmp
+ + d124a57...58f999e master     -> quilt/driver-core.current  (forced update)
+Importing tty.current based on quilt/driver-core.current
+$ cd ../quilt-tmp
+$ git reset --hard 58f999eeb3b67bced2308b39334e050d16403e46
+HEAD is now at 58f999e kobject_uevent: fix typo in comments
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+serial-print-early-console-device-address-in-hex.patch
+ip2-remove-unneeded-null-check.patch
+ip2-return-efault-on-copy_to_user-errors.patch
+rocket-add-a-mutex_unlock.patch
+synclink-add-mutex_unlock-on-error-path.patch
+68328serial-check-return-value-of-copy_-_user-instead-of-access_ok.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+ + 44f9522...278d10f master     -> quilt/tty.current  (forced update)
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard 278d10f1e74d21d3ee6cb7287938ab1af4a3d425
+HEAD is now at 278d10f 68328serial: check return value of copy_*_user() instead of access_ok()
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-uvc_v4l2-cleanup-test-for-end-of-loop.patch
+usb-option-add-celot-ct-650.patch
+usb-isp1760-use-a-write-barrier-to-ensure-proper-ndelay-timing.patch
+usb-add-device-ids-for-igotu-to-navman.patch
+usb-serial-fix-leak-of-usb-serial-module-refrence-count.patch
+usb-pl2303-new-vendor-and-product-id.patch
+usb-cp210x-fix-break-on-off.patch
+usb-ftdi_sio-fix-endianess-of-max-packet-size.patch
+usb-io_ti-check-firmware-version-before-updating.patch
+usb-r8a66597-udc-return-enomem-if-kzalloc-fails.patch
+usb-ssu100-add-locking-for-port-private-data-in-ssu100.patch
+usb-ssu100-refine-process_packet-in-ssu100.patch
+usb-ssu100-remove-duplicate-defines-in-ssu100.patch
+usb-ssu100-add-register-parameter-to-ssu100_setregister.patch
+usb-ssu100-rework-logic-for-tiocmiwait.patch
+usb-serial-export-symbol-usb_serial_generic_disconnect.patch
+usb-ssu100-add-disconnect-function-for-ssu100.patch
+usb-ssu100-set-tty_flags-in-ssu100_process_packet.patch
+usb-gadget-fix-composite-kernel-doc-warnings.patch
+usb-gadget-return-enomem-on-memory-allocation.patch
+usb-otg-twl4030-fix-wrong-assumption-of-starting-state.patch
+usb-serial-io_ti.c-don-t-return-0-if-writing-the-download-record-failed.patch
+usb-ftdi_sio-add-id-for-ionics-plugcomputer.patch
+usb-xhci-remove-buggy-assignment-in-next_trb.patch
+usb-xhci-update-ring-dequeue-pointer-when-process-missed-tds.patch
+usb-iowarrior-fix-misuse-of-return-value-of-copy_to_user.patch
+usb-adutux-fix-misuse-of-return-value-of-copy_to_user.patch
+usb-ftdi_sio-add-product-id-for-lenz-li-usb.patch
+arm-imx-fix-build-failure-concerning-otg-ulpi.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + 1db1870...fa48a9c master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard fa48a9c4e7a3cc5cb14db5a1e56895a4d3679e22
+HEAD is now at fa48a9c ARM: imx: fix build failure concerning otg/ulpi
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-spectra-removes-q-prepare_flush_fn-fix-build-breakage.patch
+staging-use-new-req_flush-flag-fix-build-breakage.patch
+staging-spectra-don-t-use-locked_ioctl-fix-build.patch
+staging-spectra-remove-duplicate-glob_version-definition.patch
+staging-spectra-removes-unused-variable.patch
+staging-spectra-initializa-lblk-variable.patch
+staging-spectra-removes-unused-functions.patch
+staging-batman-adv-fix-merge-of-linus-tree.patch
+staging-batman-adv-unify-orig_hash_lock-spinlock-handling-to-avoid-deadlocks.patch
+staging-batman-adv-fix-batman-icmp-originating-from-secondary-interface.patch
+staging-batman-adv-always-reply-batman-icmp-packets-with-primary-mac.patch
+staging-batman-adv-fix-own-mac-address-detection.patch
+staging-batman-adv-create-batman_if-only-on-register-event.patch
+staging-batman-adv-don-t-use-net_dev-after-dev_put.patch
+staging-batman-adv-don-t-write-in-not-allocated-packet_buff.patch
+staging-sep-remove-driver.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 1b1a0c4...34d31af master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.36-rc2
+$ cd ../quilt-tmp
+$ git reset --hard 76be97c1fc945db08aae1f1b746012662d643e97
+HEAD is now at 76be97c Linux 2.6.36-rc2
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-simplify-i2c_parent_is_i2c_adapter.patch
+i2c-i2c_parent_is_i2c_adapter-returns-parent.patch
+i2c-remove-obsolete-cleanup-for-clientdata.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+   e36c886..a140a3d  master     -> quilt/i2c
+Importing jdelvare-hwmon based on 2.6.36-rc2
+$ cd ../quilt-tmp
+$ git reset --hard 76be97c1fc945db08aae1f1b746012662d643e97
+HEAD is now at 76be97c Linux 2.6.36-rc2
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-coretemp-fix-warning.patch
+hwmon-ads7871-fix-ads7871_probe-error-paths.patch
+hwmon-k8temp-01-differentiate-between-am2-and-asb1.patch
+maintainers-hwmon-coretemp-change-maintainers.patch
+hwmon-k8temp-02-remove-superfluous-cpu-family-check.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 4767b33...01a6f2b master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.35
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-7786-gad41a1e
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.36-rc1
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core 34d31af4c9a8558ace4dddfe4d6181f7a67fde85
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty 34d31af4c9a8558ace4dddfe4d6181f7a67fde85
+Importing usb based on quilt/tty
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb 34d31af4c9a8558ace4dddfe4d6181f7a67fde85
