@@ -66,14 +66,21 @@
 				 FAN_Q_OVERFLOW)
 
 #define FANOTIFY_METADATA_VERSION	1
-
+/*
+ * This structue must be naturally aligned so that a 32 bit userspace process
+ * will find the offsets the same as a 64bit process.  If there would be padding
+ * in the structure it must be added explictly by hand.  Please note that
+ * anything added to this structure must also be added to the fan_event_meta_packed
+ * struct, which is used to enforce the alignment and padding rules at build
+ * time.
+ */
 struct fanotify_event_metadata {
 	__u32 event_len;
 	__u32 vers;
-	__s32 fd;
 	__u64 mask;
-	__s64 pid;
-} __attribute__ ((packed));
+	__s32 fd;
+	__s32 pid;
+};
 
 struct fanotify_response {
 	__s32 fd;
@@ -96,10 +103,14 @@ struct fanotify_response {
 				(long)(meta)->event_len <= (long)(len))
 
 #ifdef __KERNEL__
-
-struct fanotify_wait {
-	struct fsnotify_event *event;
+/* see struct fanotify_event_metadata for the reason this exists */
+struct fan_event_meta_packed {
+	__u32 event_len;
+	__u32 vers;
+	__u64 mask;
 	__s32 fd;
-};
+	__s32 pid;
+} __attribute__ ((packed));
+
 #endif /* __KERNEL__ */
 #endif /* _LINUX_FANOTIFY_H */
