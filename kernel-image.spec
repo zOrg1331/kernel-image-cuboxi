@@ -1,6 +1,6 @@
 Name: kernel-image-el-smp
 Version: 2.6.32
-Release: alt5
+Release: alt6
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -17,7 +17,7 @@ Release: alt5
 
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.3
+%define kgcc_version	4.4
 
 # Enable/disable SGML docs formatting
 %def_enable docs
@@ -513,6 +513,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/ -name "*.o*" -delete
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Aug 25 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt6
+- build with gcc4.4
+
 * Fri Aug 20 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt5
 - 2.6.32-44.2.el6
 - fix CVE-2010-2240 kernel: mm: keep a guard page below (ALT #23912)
