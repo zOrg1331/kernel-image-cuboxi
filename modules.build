@@ -3,17 +3,17 @@ fglrx
 nvidia
 
 #network card drivers
-#igb
+igb
 
 #wireless network card drivers
-#ndiswrapper
+ndiswrapper
 #rt2860
 #rtl8187se
 bcmwl
 #madwifi-hal
 
 #vendor specific  hardware features drives
-#tp_smapi
+tp_smapi
 omnibook
 
 #virtualization drivers
@@ -21,7 +21,7 @@ virtualbox
 virtualbox-addition
 
 #other drivers
-#lirc
+lirc
 #subfs
 #svgalib_helper
 #etercifs
