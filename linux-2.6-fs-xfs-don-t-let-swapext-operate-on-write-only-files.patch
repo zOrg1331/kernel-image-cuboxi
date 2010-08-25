@@ -1,0 +1,55 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Mon, 12 Jul 2010 17:20:13 -0400
+Subject: [fs] xfs: don't let swapext operate on write-only files
+Message-id: <20100712172013.GD2648@psychotron.redhat.com>
+Patchwork-id: 26816
+O-Subject: [RHEL5.6 patch] BZ605161 xfs: prevent swapext from operating on
+	write-only files
+Bugzilla: 605161
+CVE: CVE-2010-2226
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+RH-Acked-by: Dave Chinner <dchinner@redhat.com>
+
+BZ605161
+https://bugzilla.redhat.com/show_bug.cgi?id=605161
+
+Description:
+This patch prevents user "foo" from using the SWAPEXT ioctl to swap
+a write-only file owned by user "bar" into a file owned by "foo" and
+subsequently reading it.  It does so by checking that the file
+descriptors passed to the ioctl are also opened for reading.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=1817176a86352f65210139d4c794ad2d19fc6b63
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2588697
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/xfs/xfs_dfrag.c b/fs/xfs/xfs_dfrag.c
+index 6df261f..2cd2468 100644
+--- a/fs/xfs/xfs_dfrag.c
++++ b/fs/xfs/xfs_dfrag.c
+@@ -62,7 +62,9 @@ xfs_swapext(
+ 		goto out;
+ 	}
+ 
+-	if (!(file->f_mode & FMODE_WRITE) || (file->f_flags & O_APPEND)) {
++	if (!(file->f_mode & FMODE_WRITE) ||
++	    !(file->f_mode & FMODE_READ) ||
++	    (file->f_flags & O_APPEND)) {
+ 		error = XFS_ERROR(EBADF);
+ 		goto out_put_file;
+ 	}
+@@ -74,6 +76,7 @@ xfs_swapext(
+ 	}
+ 
+ 	if (!(target_file->f_mode & FMODE_WRITE) ||
++	    !(target_file->f_mode & FMODE_READ) ||
+ 	    (target_file->f_flags & O_APPEND)) {
+ 		error = XFS_ERROR(EBADF);
+ 		goto out_put_target_file;

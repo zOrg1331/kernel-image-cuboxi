@@ -6,14 +6,14 @@
 %define buildxen 1
 %define buildopenafs 0
 
-%define builddebug 1
+%define builddebug 0
 %define builddoc 0
 %define buildkdump 0
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab070
-%define ovzrel 4
+%define ovzver 028stab071
+%define ovzrel 2
 
 %if !%{buildup}
 %define _without_up 1
@@ -138,7 +138,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define sublevel 18
 %define kversion 2.6.%{sublevel}
 %define rpmversion 2.6.%{sublevel}
-%define release 194.8.1%{?dist}%{?buildid}
+%define release 194.11.1%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -1071,6 +1071,7 @@ Patch20208: xen-vtd-fix-ioapic-pin-array.patch
 Patch20209: xen-iommu-clear-io-apic-pins-on-boot-and-shutdown.patch
 Patch20210: xen-arpl-on-mmio-area-crashes-the-guest.patch
 Patch20211: xen-set-hypervisor-present-cpuid-bit.patch
+Patch20212: xen-ia64-unset-be-from-the-task-psr.patch
 # end of Xen patches
 
 Patch21007: linux-2.6-netlabel-error-checking-cleanups.patch
@@ -5157,6 +5158,20 @@ Patch25135: linux-2.6-virt-enable-pvclock-flags-in-vcpu_time_info-structure.patc
 Patch25136: linux-2.6-virt-add-a-global-synchronization-point-for-pvclock.patch
 Patch25137: linux-2.6-virt-don-t-compute-pvclock-adjustments-if-we-trust-tsc.patch
 Patch25138: linux-2.6-net-cnic-fix-bnx2x-panic-w-multiple-interfaces-enabled.patch
+Patch25139: linux-2.6-pci-acpiphp-fix-missing-acpiphp_glue_exit.patch
+Patch25140: linux-2.6-fs-ext4-move_ext-can-t-overwrite-append-only-files.patch
+Patch25141: linux-2.6-net-cnic-fix-panic-when-nl-msg-rcvd-when-device-down.patch
+Patch25142: linux-2.6-net-tcp-fix-rcv-mss-estimate-for-lro.patch
+Patch25143: linux-2.6-net-bluetooth-fix-possible-bad-memory-access-via-sysfs.patch
+Patch25144: linux-2.6-fs-cifs-fix-kernel-bug-with-remote-os-2-server.patch
+Patch25145: linux-2.6-block-cfq-iosched-kill-cfq_exit_lock.patch
+Patch25146: linux-2.6-block-cfq-iosched-fix-bad-locking-in-changed_ioprio.patch
+Patch25147: linux-2.6-message-mptsas-fix-disk-add-failing-due-to-timeout.patch
+Patch25148: linux-2.6-security-keys-new-key-flag-for-add_key-from-userspace.patch
+Patch25149: linux-2.6-fs-cifs-reject-dns-upcall-add_key-req-from-userspace.patch
+Patch25150: linux-2.6-fs-nfs-fix-bug-in-nfsd4-read_buf.patch
+Patch25151: linux-2.6-fs-xfs-don-t-let-swapext-operate-on-write-only-files.patch
+Patch25152: linux-2.6-scsi-qla2xxx-update-firmware-to-version-5-03-02.patch
 
 Patch30000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch30001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -5238,12 +5253,10 @@ Patch91002: linux-hp-dmi-info-correct.patch
 Patch91003: diff-nfs-rpcsaddr
 
 # Bells and whistles
-Patch100000: diff-fs-fsync-enable-rh5-20080131
 Patch100001: diff-ms-devleak-dstdebug-20080504
 Patch100002: diff-ipv4-dumpbaddst-20080929
 Patch100003: diff-ipv4-reliable-dst-garbage-20080929
 Patch100004: diff-ve-moreleaks-20090829
-Patch100010: diff-ms-nfssync-20081118
 Patch100014: diff-ms-devleaktime-20081111
 Patch100016: diff-rh-cifs-disable-posix-extensons-by-default-20090304
 Patch100017: diff-ms-32bitHW-kernel-panic-string
@@ -5255,7 +5268,6 @@ Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100028: diff-rh-bond802.3ad-slave-speed-20100421
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
-Patch100030: diff-cfq-iosched-zero-async-queue-after-put-20100817
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -10238,6 +10250,20 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch25136 -p1
 %patch25137 -p1
 %patch25138 -p1
+%patch25139 -p1
+%patch25140 -p1
+%patch25141 -p1
+%patch25142 -p1
+%patch25143 -p1
+%patch25144 -p1
+%patch25145 -p1
+%patch25146 -p1
+%patch25147 -p1
+%patch25148 -p1
+%patch25149 -p1
+%patch25150 -p1
+%patch25151 -p1
+%patch25152 -p1
 
 %patch30000 -p1
 %patch30001 -p1
@@ -10298,12 +10324,10 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch91002 -p1
 %patch91003 -p1
 
-%patch100000 -p1
 %patch100001 -p1
 %patch100002 -p1
 %patch100003 -p1
 %patch100004 -p1
-%patch100010 -p1
 %patch100014 -p1
 %patch100016 -p1
 %patch100017 -p1
@@ -10315,7 +10339,6 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100027 -p1
 %patch100028 -p1
 %patch100029 -p1
-%patch100030 -p1
 
 %patch101000 -p1
 %patch101001 -p1
@@ -10661,6 +10684,7 @@ cd ../xen
 %patch20209 -p1
 %patch20210 -p1
 %patch20211 -p1
+%patch20212 -p1
 # end of necessary hypervisor patches
 %endif
 

@@ -1,0 +1,46 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Fri, 4 Jun 2010 07:50:02 -0400
+Subject: [net] tcp: fix rcv mss estimate for lro
+Message-id: <20100604095002.70026686@dhcp-lab-109.englab.brq.redhat.com>
+Patchwork-id: 25973
+O-Subject: [RHEL5 PATCH] TCP: Fix rcv mss estimate for LRO
+Bugzilla: 593801
+RH-Acked-by: Anton Arapov <Anton@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZ#593801
+
+Description (from upstream commit):
+    The receive MSS estimate is computed from the raw packet size.  This is
+    broken if the packet is GSO/LRO.  Fortunately the real MSS can be found
+    in gso_size so we simply need to use that if it is non-zero.
+
+    Real LRO NICs should of course set the gso_size field in future.
+
+Upstream:
+commit ff9b5e0f08cb650d113eef0c654f931c0a7ae730
+Author: Herbert Xu <herbert@gondor.apana.org.au>
+Date:   Thu Aug 31 15:11:02 2006 -0700
+
+    [TCP]: Fix rcv mss estimate for LRO
+
+Testing:
+Patch inclusion was suggested by customer, it fix perfomance issue for him.
+I run kernel with patch and don't see any regression.
+
+
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 4192b91..66a04c2 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -127,7 +127,7 @@ static void tcp_measure_rcv_mss(struct sock *sk,
+ 	/* skb->len may jitter because of SACKs, even if peer
+ 	 * sends good full-sized frames.
+ 	 */
+-	len = skb->len;
++	len = skb_shinfo(skb)->gso_size ?: skb->len;
+ 	if (len >= icsk->icsk_ack.rcv_mss) {
+ 		icsk->icsk_ack.rcv_mss = len;
+ 	} else {
