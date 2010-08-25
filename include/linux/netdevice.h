@@ -901,7 +901,7 @@ struct net_device {
 
 	unsigned int		flags;	/* interface flags (a la BSD)	*/
 	unsigned short		gflags;
-        unsigned short          priv_flags; /* Like 'flags' but invisible to userspace. */
+        unsigned int            priv_flags; /* Like 'flags' but invisible to userspace. */
 	unsigned short		padded;	/* How much padding added by alloc_netdev() */
 
 	unsigned char		operstate; /* RFC2863 operstate */
@@ -2191,7 +2191,7 @@ static inline int net_gso_ok(int features, int gso_type)
 static inline int skb_gso_ok(struct sk_buff *skb, int features)
 {
 	return net_gso_ok(features, skb_shinfo(skb)->gso_type) &&
-	       (!skb_has_frags(skb) || (features & NETIF_F_FRAGLIST));
+	       (!skb_has_frag_list(skb) || (features & NETIF_F_FRAGLIST));
 }
 
 static inline int netif_needs_gso(struct net_device *dev, struct sk_buff *skb)
