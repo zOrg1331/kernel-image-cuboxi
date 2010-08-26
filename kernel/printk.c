@@ -411,21 +411,7 @@ out:
 
 SYSCALL_DEFINE3(syslog, int, type, char __user *, buf, int, len)
 {
-	int retval;
-
-	if ((type == 2) || (type == 9)) {
-		/*
-		 * These operation can also be invoked through /proc/kmsg, but
-		 * you need to have an open file descriptor for that.  Make the
-		 * syslog system call also require the syslog open permission.
-		 */
-		retval = security_syslog(1);
-		if (retval)
-			goto out;
-	}
-	retval = do_syslog(type, buf, len);
-out:
-	return retval;
+	return do_syslog(type, buf, len, SYSLOG_FROM_CALL);
 }
 
 #ifdef	CONFIG_KGDB_KDB
