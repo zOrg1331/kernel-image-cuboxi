@@ -55,7 +55,6 @@ do {									\
 	 */								\
 	unsigned long ebx, ecx, edx, esi, edi;				\
 									\
-	perfctr_suspend_thread(&(prev)->thread);			\
 	asm volatile("pushfl\n\t"		/* save    flags */	\
 		     "pushl %%ebp\n\t"		/* save    EBP   */	\
 		     "movl %%esp,%[prev_sp]\n\t"	/* save    ESP   */ \
@@ -124,8 +123,7 @@ do {									\
 #endif	/* CC_STACKPROTECTOR */
 
 /* Save restore flags to clear handle leaking NT */
-#define switch_to(prev, next, last) do { \
-	perfctr_suspend_thread(&(prev)->thread); \
+#define switch_to(prev, next, last) \
 	asm volatile(SAVE_CONTEXT					  \
 	     "movq %%rsp,%P[threadrsp](%[prev])\n\t" /* save RSP */	  \
 	     "movq %P[threadrsp](%[next]),%%rsp\n\t" /* restore RSP */	  \
@@ -148,38 +146,10 @@ do {									\
 	       [thread_info] "i" (offsetof(struct task_struct, stack)),   \
 	       [current_task] "m" (per_cpu_var(current_task))		  \
 	       __switch_canary_iparam					  \
-	     : "memory", "cc" __EXTRA_CLOBBER); \
-} while (0)
+	     : "memory", "cc" __EXTRA_CLOBBER)
 #endif
 
 #ifdef __KERNEL__
-#define _set_base(addr, base) do { unsigned long __pr; \
-__asm__ __volatile__ ("movw %%dx,%1\n\t" \
-	"rorl $16,%%edx\n\t" \
-	"movb %%dl,%2\n\t" \
-	"movb %%dh,%3" \
-	:"=&d" (__pr) \
-	:"m" (*((addr)+2)), \
-	 "m" (*((addr)+4)), \
-	 "m" (*((addr)+7)), \
-	 "0" (base) \
-	); } while (0)
-
-#define _set_limit(addr, limit) do { unsigned long __lr; \
-__asm__ __volatile__ ("movw %%dx,%1\n\t" \
-	"rorl $16,%%edx\n\t" \
-	"movb %2,%%dh\n\t" \
-	"andb $0xf0,%%dh\n\t" \
-	"orb %%dh,%%dl\n\t" \
-	"movb %%dl,%2" \
-	:"=&d" (__lr) \
-	:"m" (*(addr)), \
-	 "m" (*((addr)+6)), \
-	 "0" (limit) \
-	); } while (0)
-
-#define set_base(ldt, base) _set_base(((char *)&(ldt)) , (base))
-#define set_limit(ldt, limit) _set_limit(((char *)&(ldt)) , ((limit)-1))
 
 extern void native_load_gs_index(unsigned);
 
@@ -479,7 +449,7 @@ void stop_this_cpu(void *dummy);
  *
  * (Could use an alternative three way for this if there was one.)
  */
-static inline void rdtsc_barrier(void)
+static __always_inline void rdtsc_barrier(void)
 {
 	alternative(ASM_NOP3, "mfence", X86_FEATURE_MFENCE_RDTSC);
 	alternative(ASM_NOP3, "lfence", X86_FEATURE_LFENCE_RDTSC);

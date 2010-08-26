@@ -64,10 +64,8 @@ static int debug;
 #define BT_IGNITIONPRO_ID	0x2000
 
 /* function prototypes */
-static int  omninet_open(struct tty_struct *tty, struct usb_serial_port *port,
-							struct file *filp);
-static void omninet_close(struct tty_struct *tty, struct usb_serial_port *port,
-							struct file *filp);
+static int  omninet_open(struct tty_struct *tty, struct usb_serial_port *port);
+static void omninet_close(struct usb_serial_port *port);
 static void omninet_read_bulk_callback(struct urb *urb);
 static void omninet_write_bulk_callback(struct urb *urb);
 static int  omninet_write(struct tty_struct *tty, struct usb_serial_port *port,
@@ -164,8 +162,7 @@ static int omninet_attach(struct usb_serial *serial)
 	return 0;
 }
 
-static int omninet_open(struct tty_struct *tty,
-			struct usb_serial_port *port, struct file *filp)
+static int omninet_open(struct tty_struct *tty, struct usb_serial_port *port)
 {
 	struct usb_serial	*serial = port->serial;
 	struct usb_serial_port	*wport;
@@ -191,8 +188,7 @@ static int omninet_open(struct tty_struct *tty,
 	return result;
 }
 
-static void omninet_close(struct tty_struct *tty,
-			struct usb_serial_port *port, struct file *filp)
+static void omninet_close(struct usb_serial_port *port)
 {
 	dbg("%s - port %d", __func__, port->number);
 	usb_kill_urb(port->read_urb);

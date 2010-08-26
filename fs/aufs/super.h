@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -56,26 +56,12 @@ struct au_wbr_mfs {
 	unsigned long long	mfsrr_watermark;
 };
 
-/* sbinfo status flags */
-/*
- * set true when refresh_dirs() failed at remount time.
- * then try refreshing dirs at access time again.
- * if it is false, refreshing dirs at access time is unnecesary
- */
-#define AuSi_FAILED_REFRESH_DIRS	1
-#define AuSi_MAINTAIN_PLINK		(1 << 1)	/* ioctl */
-#define au_ftest_si(sbinfo, name)	((sbinfo)->au_si_status & AuSi_##name)
-#define au_fset_si(sbinfo, name) \
-	{ (sbinfo)->au_si_status |= AuSi_##name; }
-#define au_fclr_si(sbinfo, name) \
-	{ (sbinfo)->au_si_status &= ~AuSi_##name; }
-
 struct au_branch;
 struct au_sbinfo {
 	/* nowait tasks in the system-wide workqueue */
 	struct au_nowait_tasks	si_nowait;
 
-	struct rw_semaphore	si_rwsem;
+	struct au_rwsem		si_rwsem;
 
 	/* branch management */
 	unsigned int		si_generation;
@@ -143,6 +129,8 @@ struct au_sbinfo {
 	/* pseudo_link list */
 	struct au_splhead	si_plink;
 	wait_queue_head_t	si_plink_wq;
+	spinlock_t		si_plink_maint_lock;
+	struct file		*si_plink_maint;
 
 	/*
 	 * sysfs and lifetime management.
@@ -162,13 +150,36 @@ struct au_sbinfo {
 	struct super_block	*si_sb;
 };
 
+/* sbinfo status flags */
+/*
+ * set true when refresh_dirs() failed at remount time.
+ * then try refreshing dirs at access time again.
+ * if it is false, refreshing dirs at access time is unnecesary
+ */
+#define AuSi_FAILED_REFRESH_DIRS	1
+static inline unsigned char au_do_ftest_si(struct au_sbinfo *sbi,
+					   unsigned int flag)
+{
+	AuRwMustAnyLock(&sbi->si_rwsem);
+	return sbi->au_si_status & flag;
+}
+#define au_ftest_si(sbinfo, name)	au_do_ftest_si(sbinfo, AuSi_##name)
+#define au_fset_si(sbinfo, name) do { \
+	AuRwMustWriteLock(&(sbinfo)->si_rwsem); \
+	(sbinfo)->au_si_status |= AuSi_##name; \
+} while (0)
+#define au_fclr_si(sbinfo, name) do { \
+	AuRwMustWriteLock(&(sbinfo)->si_rwsem); \
+	(sbinfo)->au_si_status &= ~AuSi_##name; \
+} while (0)
+
 /* ---------------------------------------------------------------------- */
 
 /* policy to select one among writable branches */
-#define AuWbrCopyup(sbinfo, args...) \
-	((sbinfo)->si_wbr_copyup_ops->copyup(args))
-#define AuWbrCreate(sbinfo, args...) \
-	((sbinfo)->si_wbr_create_ops->create(args))
+#define AuWbrCopyup(sbinfo, ...) \
+	((sbinfo)->si_wbr_copyup_ops->copyup(__VA_ARGS__))
+#define AuWbrCreate(sbinfo, ...) \
+	((sbinfo)->si_wbr_create_ops->create(__VA_ARGS__))
 
 /* flags for si_read_lock()/aufs_read_lock()/di_read_lock() */
 #define AuLock_DW		1		/* write-lock dentry */
@@ -235,36 +246,12 @@ static inline int au_busy_or_stale(void)
 	return -ESTALE;
 }
 #else
-static inline void au_export_init(struct super_block *sb)
-{
-	/* nothing */
-}
-
-static inline int au_test_nfsd(struct task_struct *tsk)
-{
-	return 0;
-}
-
-static inline int au_xigen_inc(struct inode *inode)
-{
-	return 0;
-}
-
-static inline int au_xigen_new(struct inode *inode)
-{
-	return 0;
-}
-
-static inline int au_xigen_set(struct super_block *sb, struct file *base)
-{
-	return 0;
-}
-
-static inline void au_xigen_clr(struct super_block *sb)
-{
-	/* empty */
-}
-
+AuStubVoid(au_export_init, struct super_block *sb)
+AuStubInt0(au_test_nfsd, struct task_struct *tsk)
+AuStubInt0(au_xigen_inc, struct inode *inode)
+AuStubInt0(au_xigen_new, struct inode *inode)
+AuStubInt0(au_xigen_set, struct super_block *sb, struct file *base)
+AuStubVoid(au_xigen_clr, struct super_block *sb)
 static inline int au_busy_or_stale(void)
 {
 	return -EBUSY;
@@ -275,6 +262,11 @@ static inline int au_busy_or_stale(void)
 
 static inline void dbgaufs_si_null(struct au_sbinfo *sbinfo)
 {
+	/*
+	 * This function is a dynamic '__init' fucntion actually,
+	 * so the tiny check for si_rwsem is unnecessary.
+	 */
+	/* AuRwMustWriteLock(&sbinfo->si_rwsem); */
 #ifdef CONFIG_DEBUG_FS
 	sbinfo->si_dbgaufs = NULL;
 	sbinfo->si_dbgaufs_xib = NULL;
@@ -294,6 +286,10 @@ static inline void dbgaufs_si_null(struct au_sbinfo *sbinfo)
 AuSimpleLockRwsemFuncs(si_noflush, struct super_block *sb,
 		       &au_sbi(sb)->si_rwsem);
 AuSimpleUnlockRwsemFuncs(si, struct super_block *sb, &au_sbi(sb)->si_rwsem);
+
+#define SiMustNoWaiters(sb)	AuRwMustNoWaiters(&au_sbi(sb)->si_rwsem)
+#define SiMustAnyLock(sb)	AuRwMustAnyLock(&au_sbi(sb)->si_rwsem)
+#define SiMustWriteLock(sb)	AuRwMustWriteLock(&au_sbi(sb)->si_rwsem)
 
 static inline void si_read_lock(struct super_block *sb, int flags)
 {
@@ -326,32 +322,38 @@ static inline int si_write_trylock(struct super_block *sb, int flags)
 
 static inline aufs_bindex_t au_sbend(struct super_block *sb)
 {
+	SiMustAnyLock(sb);
 	return au_sbi(sb)->si_bend;
 }
 
 static inline unsigned int au_mntflags(struct super_block *sb)
 {
+	SiMustAnyLock(sb);
 	return au_sbi(sb)->si_mntflags;
 }
 
 static inline unsigned int au_sigen(struct super_block *sb)
 {
+	SiMustAnyLock(sb);
 	return au_sbi(sb)->si_generation;
 }
 
 static inline struct au_branch *au_sbr(struct super_block *sb,
 				       aufs_bindex_t bindex)
 {
+	SiMustAnyLock(sb);
 	return au_sbi(sb)->si_branch[0 + bindex];
 }
 
 static inline void au_xino_brid_set(struct super_block *sb, aufs_bindex_t brid)
 {
+	SiMustWriteLock(sb);
 	au_sbi(sb)->si_xino_brid = brid;
 }
 
 static inline aufs_bindex_t au_xino_brid(struct super_block *sb)
 {
+	SiMustAnyLock(sb);
 	return au_sbi(sb)->si_xino_brid;
 }
 

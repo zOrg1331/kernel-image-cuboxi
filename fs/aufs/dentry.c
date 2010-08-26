@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -70,6 +70,7 @@ struct dentry *au_lkup_one(struct qstr *name, struct dentry *h_parent,
 		path_put(&h_nd.path);
 	}
 
+	AuTraceErrPtr(h_dentry);
 	return h_dentry;
 }
 
@@ -446,6 +447,8 @@ static void au_do_refresh_hdentry(struct au_hdentry *p, struct au_dinfo *dinfo,
 	struct super_block *sb;
 	aufs_bindex_t new_bindex, bindex, bend, bwh, bdiropq;
 
+	AuRwMustWriteLock(&dinfo->di_rwsem);
+
 	bend = dinfo->di_bend;
 	bwh = dinfo->di_bwh;
 	bdiropq = dinfo->di_bdiropq;
@@ -522,6 +525,8 @@ int au_refresh_hdentry(struct dentry *dentry, mode_t type)
 	struct au_dinfo *dinfo;
 	struct super_block *sb;
 	struct dentry *parent;
+
+	DiMustWriteLock(dentry);
 
 	sb = dentry->d_sb;
 	AuDebugOn(IS_ROOT(dentry));
@@ -833,7 +838,6 @@ static int aufs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
  out_dgrade:
 	di_downgrade_lock(dentry, AuLock_IR);
  out:
-	au_store_oflag(nd, inode);
 	aufs_read_unlock(dentry, AuLock_IR);
 	AuTraceErr(err);
 	valid = !err;
@@ -865,7 +869,7 @@ static void aufs_d_release(struct dentry *dentry)
 		}
 	}
 	kfree(dinfo->di_hdentry);
-	au_rwsem_destroy(&dinfo->di_rwsem);
+	AuRwDestroy(&dinfo->di_rwsem);
 	au_cache_free_dinfo(dinfo);
 	au_hin_di_reinit(dentry);
 }

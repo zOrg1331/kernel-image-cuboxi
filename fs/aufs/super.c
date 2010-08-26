@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -111,6 +111,8 @@ static void au_show_wbr_create(struct seq_file *m, int v,
 {
 	const char *pat;
 
+	AuRwMustAnyLock(&sbinfo->si_rwsem);
+
 	seq_printf(m, ",create=");
 	pat = au_optstr_wbr_create(v);
 	switch (v) {
@@ -152,6 +154,8 @@ static int au_show_xino(struct seq_file *seq, struct vfsmount *mnt)
 	struct qstr *name;
 	struct file *f;
 	struct dentry *d, *h_root;
+
+	AuRwMustAnyLock(&sbinfo->si_rwsem);
 
 	err = 0;
 	sb = mnt->mnt_sb;
@@ -262,9 +266,9 @@ static int aufs_show_options(struct seq_file *m, struct vfsmount *mnt)
 	si_read_unlock(sb);
 	return 0;
 
-#undef Deleted
 #undef AuBool
 #undef AuStr
+#undef AuUInt
 }
 
 /* ---------------------------------------------------------------------- */
@@ -347,7 +351,7 @@ static int aufs_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 	if (!err) {
 		buf->f_type = AUFS_SUPER_MAGIC;
-		buf->f_namelen -= AUFS_WH_PFX_LEN;
+		buf->f_namelen = AUFS_MAX_NAMELEN;
 		memset(&buf->f_fsid, 0, sizeof(buf->f_fsid));
 	}
 	/* buf->f_bsize = buf->f_blocks = buf->f_bfree = buf->f_bavail = -1; */
@@ -376,12 +380,12 @@ static void au_fsync_br(struct super_block *sb)
 		if (bdev_read_only(h_sb->s_bdev))
 			continue;
 
-		lockdep_off();
+		/* lockdep_off(); */
 		down_write(&h_sb->s_umount);
 		shrink_dcache_sb(h_sb);
-		fsync_super(h_sb);
+		sync_filesystem(h_sb);
 		up_write(&h_sb->s_umount);
-		lockdep_on();
+		/* lockdep_on(); */
 	}
 }
 
@@ -444,7 +448,8 @@ static int do_refresh(struct dentry *dentry, mode_t type,
 			au_reset_hinotify(inode, dir_flags);
 	}
 	if (unlikely(err))
-		AuErr("unrecoverable error %d, %.*s\n", err, AuDLNPair(dentry));
+		pr_err("unrecoverable error %d, %.*s\n",
+		       err, AuDLNPair(dentry));
 
 	di_read_unlock(parent, AuLock_IR);
 	dput(parent);
@@ -612,14 +617,15 @@ static void au_remount_refresh(struct super_block *sb, unsigned int flags)
 	err = refresh_dir(root, sigen);
 	if (unlikely(err)) {
 		au_fset_si(sbinfo, FAILED_REFRESH_DIRS);
-		AuWarn("Refreshing directories failed, ignored (%d)\n", err);
+		pr_warning("Refreshing directories failed, ignored (%d)\n",
+			   err);
 	}
 
 	if (au_ftest_opts(flags, REFRESH_NONDIR)) {
 		err = refresh_nondir(root, sigen, !err);
 		if (unlikely(err))
-			AuWarn("Refreshing non-directories failed, ignored"
-			       "(%d)\n", err);
+			pr_warning("Refreshing non-directories failed, ignored"
+				   "(%d)\n", err);
 	}
 
 	/* aufs_write_lock() calls ..._child() */
@@ -700,7 +706,7 @@ static int aufs_remount_fs(struct super_block *sb, int *flags, char *data)
 	return err;
 }
 
-static struct super_operations aufs_sop = {
+static const struct super_operations aufs_sop = {
 	.alloc_inode	= aufs_alloc_inode,
 	.destroy_inode	= aufs_destroy_inode,
 	.drop_inode	= generic_delete_inode,
@@ -764,7 +770,7 @@ static int aufs_fill_super(struct super_block *sb, void *raw_data,
 
 	if (unlikely(!arg || !*arg)) {
 		err = -EINVAL;
-		AuErr("no arg\n");
+		pr_err("no arg\n");
 		goto out;
 	}
 
@@ -808,20 +814,14 @@ static int aufs_fill_super(struct super_block *sb, void *raw_data,
 
 	/* lock vfs_inode first, then aufs. */
 	mutex_lock(&inode->i_mutex);
-	inode->i_op = &aufs_dir_iop;
-	inode->i_fop = &aufs_dir_fop;
 	aufs_write_lock(root);
 	err = au_opts_mount(sb, &opts);
 	au_opts_free(&opts);
-	if (unlikely(err))
-		goto out_unlock;
 	aufs_write_unlock(root);
 	mutex_unlock(&inode->i_mutex);
-	goto out_opts; /* success */
+	if (!err)
+		goto out_opts; /* success */
 
- out_unlock:
-	aufs_write_unlock(root);
-	mutex_unlock(&inode->i_mutex);
  out_root:
 	dput(root);
 	sb->s_root = NULL;

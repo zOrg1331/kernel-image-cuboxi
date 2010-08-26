@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,7 +25,6 @@
 
 static unsigned int calc_size(int nlen)
 {
-	BUILD_BUG_ON(sizeof(ino_t) != sizeof(long));
 	return ALIGN(sizeof(struct au_vdir_de) + nlen, sizeof(ino_t));
 }
 
@@ -55,6 +54,21 @@ static unsigned char *last_deblk(struct au_vdir *vdir)
 }
 
 /* ---------------------------------------------------------------------- */
+
+/* estimate the apropriate size for name hash table */
+unsigned int au_rdhash_est(loff_t sz)
+{
+	unsigned int n;
+
+	n = UINT_MAX;
+	sz >>= 10;
+	if (sz < n)
+		n = sz;
+	if (sz < AUFS_RDHASH_DEF)
+		n = AUFS_RDHASH_DEF;
+	/* pr_info("n %u\n", n); */
+	return n;
+}
 
 /*
  * the allocated memory has to be freed by
@@ -86,7 +100,7 @@ static void nhash_count(struct hlist_head *head)
 	n = 0;
 	hlist_for_each(pos, head)
 		n++;
-	AuInfo("%lu\n", n);
+	pr_info("%lu\n", n);
 #endif
 }
 
@@ -108,19 +122,22 @@ static void au_nhash_de_do_free(struct hlist_head *head)
 
 	hlist_for_each_entry_safe(tpos, pos, node, head, hash) {
 		/* hlist_del(pos); */
-		au_cache_free_dehstr(tpos);
+		au_cache_free_vdir_dehstr(tpos);
 	}
 }
 
 static void au_nhash_do_free(struct au_nhash *nhash,
 			     void (*free)(struct hlist_head *head))
 {
-	unsigned int u, n;
+	unsigned int n;
 	struct hlist_head *head;
 
 	n = nhash->nh_num;
+	if (!n)
+		return;
+
 	head = nhash->nh_head;
-	for (u = 0; u < n; u++) {
+	while (n-- > 0) {
 		nhash_count(head);
 		free(head++);
 	}
@@ -151,12 +168,10 @@ int au_nhash_test_longer_wh(struct au_nhash *whlist, aufs_bindex_t btgt,
 	num = 0;
 	n = whlist->nh_num;
 	head = whlist->nh_head;
-	for (u = 0; u < n; u++) {
+	for (u = 0; u < n; u++, head++)
 		hlist_for_each_entry(tpos, pos, head, wh_hash)
 			if (tpos->wh_bindex == btgt && ++num > limit)
 				return 1;
-		head++;
-	}
 	return 0;
 }
 
@@ -166,6 +181,8 @@ static struct hlist_head *au_name_hash(struct au_nhash *nhash,
 {
 	unsigned int v;
 	/* const unsigned int magic_bit = 12; */
+
+	AuDebugOn(!nhash->nh_num || !nhash->nh_head);
 
 	v = 0;
 	while (len--)
@@ -237,6 +254,8 @@ int au_nhash_append_wh(struct au_nhash *whlist, char *name, int nlen, ino_t ino,
 	struct au_vdir_wh *wh;
 
 	AuDbg("%.*s\n", nlen, name);
+	AuDebugOn(!whlist->nh_num || !whlist->nh_head);
+
 	err = -ENOMEM;
 	wh = kmalloc(sizeof(*wh) + nlen, GFP_NOFS);
 	if (unlikely(!wh))
@@ -313,7 +332,7 @@ static int append_de(struct au_vdir *vdir, char *name, int nlen, ino_t ino,
 	}
 
 	err = -ENOMEM;
-	dehstr = au_cache_alloc_dehstr();
+	dehstr = au_cache_alloc_vdir_dehstr();
 	if (unlikely(!dehstr))
 		goto out;
 
@@ -347,10 +366,14 @@ void au_vdir_free(struct au_vdir *vdir)
 	au_cache_free_vdir(vdir);
 }
 
-static struct au_vdir *alloc_vdir(struct super_block *sb)
+static struct au_vdir *alloc_vdir(struct file *file)
 {
 	struct au_vdir *vdir;
+	struct super_block *sb;
 	int err;
+
+	sb = file->f_dentry->d_sb;
+	SiMustAnyLock(sb);
 
 	err = -ENOMEM;
 	vdir = au_cache_alloc_vdir();
@@ -362,6 +385,11 @@ static struct au_vdir *alloc_vdir(struct super_block *sb)
 		goto out_free;
 
 	vdir->vd_deblk_sz = au_sbi(sb)->si_rdblk;
+	if (!vdir->vd_deblk_sz) {
+		/* estimate the apropriate size for deblk */
+		vdir->vd_deblk_sz = au_dir_size(file, /*dentry*/NULL);
+		/* pr_info("vd_deblk_sz %u\n", vdir->vd_deblk_sz); */
+	}
 	vdir->vd_nblk = 0;
 	vdir->vd_version = 0;
 	vdir->vd_jiffy = 0;
@@ -401,49 +429,6 @@ static int reinit_vdir(struct au_vdir *vdir)
 }
 
 /* ---------------------------------------------------------------------- */
-
-static int au_ino(struct super_block *sb, aufs_bindex_t bindex, ino_t h_ino,
-		  unsigned int d_type, ino_t *ino)
-{
-	int err;
-	struct mutex *mtx;
-	const int isdir = (d_type == DT_DIR);
-
-	/* prevent hardlinks from race condition */
-	mtx = NULL;
-	if (!isdir) {
-		mtx = &au_sbr(sb, bindex)->br_xino.xi_nondir_mtx;
-		mutex_lock(mtx);
-	}
-	err = au_xino_read(sb, bindex, h_ino, ino);
-	if (unlikely(err))
-		goto out;
-
-	if (!*ino) {
-		err = -EIO;
-		*ino = au_xino_new_ino(sb);
-		if (unlikely(!*ino))
-			goto out;
-		err = au_xino_write(sb, bindex, h_ino, *ino);
-		if (unlikely(err))
-			goto out;
-	}
-
- out:
-	if (!isdir)
-		mutex_unlock(mtx);
-	return err;
-}
-
-static int au_wh_ino(struct super_block *sb, aufs_bindex_t bindex, ino_t h_ino,
-		     unsigned int d_type, ino_t *ino)
-{
-#ifdef CONFIG_AUFS_SHWH
-	return au_ino(sb, bindex, h_ino, d_type, ino);
-#else
-	return 0;
-#endif
-}
 
 #define AuFillVdir_CALLED	1
 #define AuFillVdir_WHABLE	(1 << 1)
@@ -489,9 +474,12 @@ static int fillvdir(void *__arg, const char *__name, int nlen,
 
 		sb = arg->file->f_dentry->d_sb;
 		arg->err = au_ino(sb, arg->bindex, h_ino, d_type, &ino);
-		if (!arg->err)
+		if (!arg->err) {
+			if (unlikely(nlen > AUFS_MAX_NAMELEN))
+				d_type = DT_UNKNOWN;
 			arg->err = append_de(arg->vdir, name, nlen, ino,
 					     d_type, &arg->delist);
+		}
 	} else if (au_ftest_fillvdir(arg->flags, WHABLE)) {
 		name += AUFS_WH_PFX_LEN;
 		nlen -= AUFS_WH_PFX_LEN;
@@ -501,10 +489,13 @@ static int fillvdir(void *__arg, const char *__name, int nlen,
 		if (shwh)
 			arg->err = au_wh_ino(sb, arg->bindex, h_ino, d_type,
 					     &ino);
-		if (!arg->err)
+		if (!arg->err) {
+			if (nlen <= AUFS_MAX_NAMELEN + AUFS_WH_PFX_LEN)
+				d_type = DT_UNKNOWN;
 			arg->err = au_nhash_append_wh
 				(&arg->whlist, name, nlen, ino, d_type,
 				 arg->bindex, shwh);
+		}
 	}
 
  out:
@@ -572,7 +563,11 @@ static int au_do_read_vdir(struct fillvdir_arg *arg)
 
 	file = arg->file;
 	sb = file->f_dentry->d_sb;
+	SiMustAnyLock(sb);
+
 	rdhash = au_sbi(sb)->si_rdhash;
+	if (!rdhash)
+		rdhash = au_rdhash_est(au_dir_size(file, /*dentry*/NULL));
 	err = au_nhash_alloc(&arg->delist, rdhash, GFP_NOFS);
 	if (unlikely(err))
 		goto out;
@@ -638,13 +633,15 @@ static int read_vdir(struct file *file, int may_read)
 	err = 0;
 	inode = file->f_dentry->d_inode;
 	IMustLock(inode);
+	SiMustAnyLock(inode->i_sb);
+
 	allocated = NULL;
 	do_read = 0;
 	expire = au_sbi(inode->i_sb)->si_rdcache;
 	vdir = au_ivdir(inode);
 	if (!vdir) {
 		do_read = 1;
-		vdir = alloc_vdir(inode->i_sb);
+		vdir = alloc_vdir(file);
 		err = PTR_ERR(vdir);
 		if (IS_ERR(vdir))
 			goto out;
@@ -698,11 +695,16 @@ static int copy_vdir(struct au_vdir *tgt, struct au_vdir *src)
 		tgt->vd_deblk = p;
 	}
 
-	tgt->vd_nblk = src->vd_nblk;
-	tgt->vd_deblk_sz = deblk_sz;
+	if (tgt->vd_deblk_sz != deblk_sz) {
+		unsigned char *p;
+
+		tgt->vd_deblk_sz = deblk_sz;
+		p = krealloc(tgt->vd_deblk[0], deblk_sz, GFP_NOFS);
+		if (unlikely(!p))
+			goto out;
+		tgt->vd_deblk[0] = p;
+	}
 	memcpy(tgt->vd_deblk[0], src->vd_deblk[0], deblk_sz);
-	/* tgt->vd_last.i = 0; */
-	/* tgt->vd_last.p.deblk = tgt->vd_deblk[0]; */
 	tgt->vd_version = src->vd_version;
 	tgt->vd_jiffy = src->vd_jiffy;
 
@@ -712,7 +714,13 @@ static int copy_vdir(struct au_vdir *tgt, struct au_vdir *src)
 					    GFP_NOFS);
 		if (unlikely(!tgt->vd_deblk[ul]))
 			goto out;
+		tgt->vd_nblk++;
 	}
+	tgt->vd_nblk = n;
+	tgt->vd_last.ul = tgt->vd_last.ul;
+	tgt->vd_last.p.deblk = tgt->vd_deblk[tgt->vd_last.ul];
+	tgt->vd_last.p.deblk += src->vd_last.p.deblk
+		- src->vd_deblk[src->vd_last.ul];
 	/* smp_mb(); */
 	return 0; /* success */
 
@@ -735,7 +743,7 @@ int au_vdir_init(struct file *file)
 	allocated = NULL;
 	vdir_cache = au_fvdir_cache(file);
 	if (!vdir_cache) {
-		vdir_cache = alloc_vdir(file->f_dentry->d_sb);
+		vdir_cache = alloc_vdir(file);
 		err = PTR_ERR(vdir_cache);
 		if (IS_ERR(vdir_cache))
 			goto out;

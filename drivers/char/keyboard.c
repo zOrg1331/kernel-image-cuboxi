@@ -1123,8 +1123,6 @@ static int emulate_raw(struct vc_data *vc, unsigned int keycode,
 
 #define HW_RAW(dev)	0
 
-#warning "Cannot generate rawmode keyboard for your architecture yet."
-
 static int emulate_raw(struct vc_data *vc, unsigned int keycode, unsigned char up_flag)
 {
 	if (keycode > 127)
@@ -1179,15 +1177,6 @@ static void kbd_keycode(unsigned int keycode, int down, int hw_raw)
 		if (emulate_raw(vc, keycode, !down << 7))
 			if (keycode < BTN_MISC && printk_ratelimit())
 				printk(KERN_WARNING "keyboard.c: can't emulate rawmode for keycode %d\n", keycode);
-
-#ifdef CONFIG_BOOTSPLASH
-	/* This code has to be redone for some non-x86 platforms */
-	if (down == 1 && (keycode == 0x3c || keycode == 0x01)) {        /* F2 and ESC on PC keyboard */
-		extern int splash_verbose(void);
-		if (splash_verbose())
-			return;
-	}
-#endif
 
 #ifdef CONFIG_MAGIC_SYSRQ	       /* Handle the SysRq Hack */
 	if (keycode == KEY_SYSRQ && (sysrq_down || (down == 1 && sysrq_alt))) {
@@ -1260,7 +1249,7 @@ static void kbd_keycode(unsigned int keycode, int down, int hw_raw)
 
 	if (keycode >= NR_KEYS)
 		if (keycode >= KEY_BRL_DOT1 && keycode <= KEY_BRL_DOT8)
-			keysym = K(KT_BRL, keycode - KEY_BRL_DOT1 + 1);
+			keysym = U(K(KT_BRL, keycode - KEY_BRL_DOT1 + 1));
 		else
 			return;
 	else

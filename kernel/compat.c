@@ -494,29 +494,26 @@ asmlinkage long compat_sys_sched_getaffinity(compat_pid_t pid, unsigned int len,
 {
 	int ret;
 	cpumask_var_t mask;
-	unsigned long *k;
-	unsigned int min_length = cpumask_size();
 
-	if (nr_cpu_ids <= BITS_PER_COMPAT_LONG)
-		min_length = sizeof(compat_ulong_t);
-
-	if (len < min_length)
+	if ((len * BITS_PER_BYTE) < nr_cpu_ids)
+		return -EINVAL;
+	if (len & (sizeof(compat_ulong_t)-1))
 		return -EINVAL;
 
 	if (!alloc_cpumask_var(&mask, GFP_KERNEL))
 		return -ENOMEM;
 
 	ret = sched_getaffinity(pid, mask);
-	if (ret < 0)
-		goto out;
+	if (ret == 0) {
+		size_t retlen = min_t(size_t, len, cpumask_size());
 
-	k = cpumask_bits(mask);
-	ret = compat_put_bitmap(user_mask_ptr, k, min_length * 8);
-	if (ret == 0)
-		ret = min_length;
-
-out:
+		if (compat_put_bitmap(user_mask_ptr, cpumask_bits(mask), retlen * 8))
+			ret = -EFAULT;
+		else
+			ret = retlen;
+	}
 	free_cpumask_var(mask);
+
 	return ret;
 }
 
@@ -880,6 +877,17 @@ compat_sys_rt_sigtimedwait (compat_sigset_t __user *uthese,
 	}
 	return ret;
 
+}
+
+asmlinkage long
+compat_sys_rt_tgsigqueueinfo(compat_pid_t tgid, compat_pid_t pid, int sig,
+			     struct compat_siginfo __user *uinfo)
+{
+	siginfo_t info;
+
+	if (copy_siginfo_from_user32(&info, uinfo))
+		return -EFAULT;
+	return do_rt_tgsigqueueinfo(tgid, pid, sig, &info);
 }
 
 #ifdef __ARCH_WANT_COMPAT_SYS_TIME

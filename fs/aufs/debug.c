@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,9 +29,9 @@ MODULE_PARM_DESC(debug, "debug print");
 module_param_named(debug, aufs_debug, int, S_IRUGO | S_IWUSR | S_IWGRP);
 
 char *au_plevel = KERN_DEBUG;
-#define dpri(fmt, arg...) do { \
+#define dpri(fmt, ...) do { \
 	if (au_debug_test()) \
-		printk("%s" fmt, au_plevel, ##arg); \
+		printk("%s" fmt, au_plevel, ##__VA_ARGS__); \
 } while (0)
 
 /* ---------------------------------------------------------------------- */
@@ -188,7 +188,8 @@ static int do_pri_file(aufs_bindex_t bindex, struct file *file)
 	    && file->f_dentry
 	    && au_test_aufs(file->f_dentry->d_sb)
 	    && au_fi(file))
-		snprintf(a, sizeof(a), ", mmapped %d", au_test_mmapped(file));
+		snprintf(a, sizeof(a), ", mmapped %d",
+			 !!au_fi(file)->fi_h_vm_ops);
 	dpri("f%d: mode 0x%x, flags 0%o, cnt %ld, pos %llu%s\n",
 	     bindex, file->f_mode, file->f_flags, (long)file_count(file),
 	     file->f_pos, a);
@@ -402,6 +403,10 @@ void au_debug_sbinfo_init(struct au_sbinfo *sbinfo __maybe_unused)
 #ifdef AuForceHinotify
 	au_opt_set_udba(sbinfo->si_mntflags, UDBA_HINOTIFY);
 #endif
+#ifdef AuForceRd0
+	sbinfo->si_rdblk = 0;
+	sbinfo->si_rdhash = 0;
+#endif
 }
 
 int __init au_debug_init(void)
@@ -416,7 +421,7 @@ int __init au_debug_init(void)
 	AuDebugOn(destr.len < NAME_MAX);
 
 #ifdef CONFIG_4KSTACKS
-	AuWarn("CONFIG_4KSTACKS is defined.\n");
+	pr_warning("CONFIG_4KSTACKS is defined.\n");
 #endif
 
 #ifdef AuForceNoBrs

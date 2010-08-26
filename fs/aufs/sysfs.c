@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,6 +41,8 @@ struct attribute_group *sysaufs_attr_group = &sysaufs_attr_group_body;
 int sysaufs_si_xi_path(struct seq_file *seq, struct super_block *sb)
 {
 	int err;
+
+	SiMustAnyLock(sb);
 
 	err = 0;
 	if (au_opt_test(au_mntflags(sb), XINO)) {
@@ -97,7 +99,7 @@ static struct seq_file *au_seq(char *p, ssize_t len)
 
 /* todo: file size may exceed PAGE_SIZE */
 ssize_t sysaufs_si_show(struct kobject *kobj, struct attribute *attr,
-			 char *buf)
+			char *buf)
 {
 	ssize_t err;
 	long l;
@@ -110,12 +112,25 @@ ssize_t sysaufs_si_show(struct kobject *kobj, struct attribute *attr,
 
 	sbinfo = container_of(kobj, struct au_sbinfo, si_kobj);
 	sb = sbinfo->si_sb;
-	si_noflush_read_lock(sb);
+
+	/*
+	 * prevent a race condition between sysfs and aufs.
+	 * for instance, sysfs_file_read() calls sysfs_get_active_two() which
+	 * prohibits maintaining the sysfs entries.
+	 * hew we acquire read lock after sysfs_get_active_two().
+	 * on the other hand, the remount process may maintain the sysfs/aufs
+	 * entries after acquiring write lock.
+	 * it can cause a deadlock.
+	 * simply we gave up processing read here.
+	 */
+	err = -EBUSY;
+	if (unlikely(!si_noflush_read_trylock(sb)))
+		goto out;
 
 	seq = au_seq(buf, PAGE_SIZE);
 	err = PTR_ERR(seq);
 	if (IS_ERR(seq))
-		goto out;
+		goto out_unlock;
 
 	name = (void *)attr->name;
 	cattr = sysaufs_si_attrs;
@@ -150,8 +165,9 @@ ssize_t sysaufs_si_show(struct kobject *kobj, struct attribute *attr,
 			err = -EFBIG;
 	}
 	kfree(seq);
- out:
+ out_unlock:
 	si_read_unlock(sb);
+ out:
 	return err;
 }
 
@@ -203,6 +219,7 @@ void sysaufs_brs_add(struct super_block *sb, aufs_bindex_t bindex)
 			 "%d", bindex);
 		err = sysfs_create_file(kobj, &br->br_attr);
 		if (unlikely(err))
-			AuWarn("failed %s under sysfs(%d)\n", br->br_name, err);
+			pr_warning("failed %s under sysfs(%d)\n",
+				   br->br_name, err);
 	}
 }

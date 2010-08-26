@@ -49,7 +49,6 @@
 #include "xfs_utils.h"
 #include "xfs_dir2_trace.h"
 #include "xfs_quota.h"
-#include "xfs_acl.h"
 #include "xfs_filestream.h"
 #include "xfs_vnodeops.h"
 
@@ -341,6 +340,16 @@ xfs_iformat(
 			dip->di_forkoff);
 		XFS_CORRUPTION_ERROR("xfs_iformat(2)", XFS_ERRLEVEL_LOW,
 				     ip->i_mount, dip);
+		return XFS_ERROR(EFSCORRUPTED);
+	}
+
+	if (unlikely((ip->i_d.di_flags & XFS_DIFLAG_REALTIME) &&
+		     !ip->i_mount->m_rtdev_targp)) {
+		xfs_fs_repair_cmn_err(CE_WARN, ip->i_mount,
+			"corrupt dinode %Lu, has realtime flag set.",
+			ip->i_ino);
+		XFS_CORRUPTION_ERROR("xfs_iformat(realtime)",
+				     XFS_ERRLEVEL_LOW, ip->i_mount, dip);
 		return XFS_ERROR(EFSCORRUPTED);
 	}
 
@@ -642,7 +651,7 @@ xfs_iformat_btree(
 	return 0;
 }
 
-void
+STATIC void
 xfs_dinode_from_disk(
 	xfs_icdinode_t		*to,
 	xfs_dinode_t		*from)
@@ -1238,7 +1247,7 @@ xfs_isize_check(
  * In that case the pages will still be in memory, but the inode size
  * will never have been updated.
  */
-xfs_fsize_t
+STATIC xfs_fsize_t
 xfs_file_last_byte(
 	xfs_inode_t	*ip)
 {
@@ -2868,8 +2877,8 @@ xfs_iflush(
 	mp = ip->i_mount;
 
 	/*
-	 * If the inode isn't dirty, then just release the inode
-	 * flush lock and do nothing.
+	 * If the inode isn't dirty, then just release the inode flush lock and
+	 * do nothing.
 	 */
 	if (xfs_inode_clean(ip)) {
 		xfs_ifunlock(ip);
@@ -2893,6 +2902,19 @@ xfs_iflush(
 		return EAGAIN;
 	}
 	xfs_iunpin_wait(ip);
+
+	/*
+	 * For stale inodes we cannot rely on the backing buffer remaining
+	 * stale in cache for the remaining life of the stale inode and so
+	 * xfs_itobp() below may give us a buffer that no longer contains
+	 * inodes below. We have to check this after ensuring the inode is
+	 * unpinned so that it is safe to reclaim the stale inode after the
+	 * flush call.
+	 */
+	if (xfs_iflags_test(ip, XFS_ISTALE)) {
+		xfs_ifunlock(ip);
+		return 0;
+	}
 
 	/*
 	 * This may have been unpinned because the filesystem is shutting
@@ -3059,9 +3081,9 @@ xfs_iflush_int(
 	SYNCHRONIZE();
 
 	/*
-	 * Make sure to get the latest atime from the Linux inode.
+	 * Make sure to get the latest timestamps from the Linux inode.
 	 */
-	xfs_synchronize_atime(ip);
+	xfs_synchronize_times(ip);
 
 	if (XFS_TEST_ERROR(be16_to_cpu(dip->di_magic) != XFS_DINODE_MAGIC,
 			       mp, XFS_ERRTAG_IFLUSH_1, XFS_RANDOM_IFLUSH_1)) {
@@ -3828,7 +3850,7 @@ xfs_iext_inline_to_direct(
 /*
  * Resize an extent indirection array to new_size bytes.
  */
-void
+STATIC void
 xfs_iext_realloc_indirect(
 	xfs_ifork_t	*ifp,		/* inode fork pointer */
 	int		new_size)	/* new indirection array size */
@@ -3853,7 +3875,7 @@ xfs_iext_realloc_indirect(
 /*
  * Switch from indirection array to linear (direct) extent allocations.
  */
-void
+STATIC void
 xfs_iext_indirect_to_direct(
 	 xfs_ifork_t	*ifp)		/* inode fork pointer */
 {

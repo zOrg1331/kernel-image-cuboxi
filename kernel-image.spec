@@ -1,6 +1,6 @@
 Name: kernel-image-std-pae
-Version: 2.6.30
-Release: alt14
+Version: 2.6.32
+Release: alt20
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -24,7 +24,7 @@ epoch:1
 %def_disable docs
 
 #Remove oss
-%def_enable oss
+%def_disable oss
 ## Don't edit below this line ##################################
 %define kversion	%kernel_base_version%kernel_extra_version
 %define modules_dir	/lib/modules/%kversion-%flavour-%krelease
@@ -116,6 +116,29 @@ not work well.
 
 Install this package only if you really need it.
 
+%package -n kernel-modules-ide-%flavour
+Summary: IDE  driver modules (obsolete by PATA)
+Group: System/Kernel and hardware
+Provides:  kernel-modules-ide-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-ide-%flavour
+This package contains  IDE driver modules for the Linux kernel
+package %name-%version-%release.
+
+These drivers are declared obsolete by the kernel maintainers; PATA
+drivers should be used instead.  However, the older IDE drivers may be
+still useful for some hardware, if the corresponding PATA drivers do
+not work well.
+
+Install this package only if you really need it.
+
+
 %package -n kernel-modules-alsa-%flavour
 Summary: The Advanced Linux Sound Architecture modules
 Group: System/Kernel and hardware
@@ -163,6 +186,43 @@ OpenGL implementations.
 
 These are modules for your ALT Linux system
 
+%package -n kernel-modules-drm-nouveau-%flavour
+Summary: The Direct Rendering Infrastructure modules for NVIDIA cards
+Group: System/Kernel and hardware
+Provides:  kernel-modules-drm-nouveau-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-drm-nouveau-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-drm-nouveau-%kversion-%flavour-%krelease > %version-%release
+Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-drm-nouveau-%flavour
+The Direct Rendering Infrastructure, also known as the DRI, is a framework
+for allowing direct access to graphics hardware in a safe and efficient
+manner.  It includes changes to the X server, to several client libraries,
+and to the kernel.  The first major use for the DRI is to create fast
+OpenGL implementations.
+
+These are modules for your ALT Linux system
+
+
+%package -n kernel-modules-kvm-%flavour
+Summary: Linux KVM (Kernel Virtual Machine) modules
+Group: System/Kernel and hardware
+Provides:  kernel-modules-kvm-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-kvm-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-kvm-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-kvm-%flavour
+Linux kernel module for Kernel Virtual Machine virtualization
+environment.
+
 
 %package -n kernel-modules-v4l-%flavour
 Summary: Video4Linux driver modules (obsolete)
@@ -179,6 +239,22 @@ Requires(postun): %name = %version-%release
 
 %description -n kernel-modules-v4l-%flavour
 Video for linux drivers
+
+%package -n kernel-modules-staging-%flavour
+Summary:  Kernel modules under development
+Group: System/Kernel and hardware
+Provides:  kernel-modules-staging-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-staging-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-staging-%flavour
+Drivers and filesystems that are not ready to be merged into the main
+portion of the Linux kernel tree at this point in time for various
+technical reasons.
 
 %package -n kernel-headers-%flavour
 Summary: Header files for the Linux kernel
@@ -367,6 +443,7 @@ KbuildFiles="
 	scripts/gcc-version.sh
 	scripts/recordmcount.pl
 	scripts/gcc-x86_64-has-stack-protector.sh
+	scripts/module-common.lds
 
 
 	.config
@@ -417,10 +494,28 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-oss-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
+%post -n kernel-modules-ide-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-ide-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
 %post -n kernel-modules-drm-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
 %postun -n kernel-modules-drm-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-drm-nouveau-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-drm-nouveau-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-kvm-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-kvm-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
 %post -n kernel-modules-v4l-%flavour
@@ -448,15 +543,22 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/build
 %exclude %modules_dir/kernel/sound
 %exclude %modules_dir/kernel/drivers/media/
+%exclude %modules_dir/kernel/drivers/staging/
 %exclude %modules_dir/kernel/drivers/gpu/drm
+%exclude %modules_dir/kernel/arch/x86/kvm
+%exclude %modules_dir/kernel/drivers/ide/
+/lib/firmware/*
 %if_enabled oss
 # OSS drivers
 %exclude %modules_dir/kernel/sound/oss
-/lib/firmware/*
 
 %files -n kernel-modules-oss-%flavour
 %modules_dir/kernel/sound/oss
 %endif #oss
+
+%files -n kernel-modules-ide-%flavour
+%modules_dir/kernel/drivers/ide/
+
 %files -n kernel-headers-%flavour
 %kheaders_dir
 
@@ -472,17 +574,80 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 %files -n kernel-modules-alsa-%flavour
 %modules_dir/kernel/sound/
+%if_enabled oss
 %exclude %modules_dir/kernel/sound/oss
+%endif
 
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
+%exclude %modules_dir/kernel/drivers/gpu/drm/nouveau
+
+%files -n kernel-modules-drm-nouveau-%flavour
+%modules_dir/kernel/drivers/gpu/drm/nouveau
+
+%files -n kernel-modules-kvm-%flavour
+%modules_dir/kernel/arch/x86/kvm
 
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
 
+%files -n kernel-modules-staging-%flavour
+%modules_dir/kernel/drivers/staging/
+
 %changelog
+* Mon Aug 23 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt20
+- 2.6.32.20
+- nouveau drm moved to subpackage
+
+* Tue Jul 06 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt16
+- 2.6.32.16
+
+* Fri Jul 02 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt15.1
+- Add support for New Marvell Sky2 (Closes: #23672)
+
+* Tue Jun 22 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt15
+- 2.6.32.15
+- turn off latencytop support
+- turn off framepointers
+- add some drivers
+
+* Mon Apr 05 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt11
+- 2.6.32.11 
+
+* Thu Mar 25 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt10
+- 2.6.32.10 
+
+* Mon Mar 01 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt9
+- 2.6.32.9
+- set N in altN to last kernal version number
+- NETFLOW targert enabled
+- KMS on intel by default
+
+* Mon Jan 25 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt1
+- Build std-def based on un-def 
+- 2.6.32.7
+- on x86_64 turn on paravirt guest support
+- move IDE modules to separated subpackage(use PATA instead).
+- turn off OSS support and oss emulation 
+
+* Thu Jan 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt5
+- aufs updated
+
+* Fri Jan 15 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt4
+- bootsplash patch added
+
+* Wed Jan 13 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt3
+- kvm enabled
+- aufs enabled
+
+* Tue Jan 12 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt2
+- 2.6.32.3
+
+* Fri Dec 25 2009 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt1
+- try to run before of locomotive
+
 * Tue Oct 06 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt14
-- 2.6.30.9 
+- 2.6.30.9
 
 * Mon Sep 28 2009 Michail Yakushin <silicium@altlinux.ru> 1:2.6.30-alt13
 - 2.6.30.8

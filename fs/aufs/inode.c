@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@ struct inode *au_igrab(struct inode *inode)
 {
 	if (inode) {
 		AuDebugOn(!atomic_read(&inode->i_count));
-		atomic_inc(&inode->i_count);
+		atomic_inc_return(&inode->i_count);
 	}
 	return inode;
 }
@@ -48,6 +48,8 @@ int au_refresh_hinode_self(struct inode *inode, int do_attr)
 	struct au_hinode *p, *q, tmp;
 	struct super_block *sb;
 	struct au_iinfo *iinfo;
+
+	IiMustWriteLock(inode);
 
 	update = 0;
 	sb = inode->i_sb;
@@ -150,6 +152,7 @@ int au_refresh_hinode(struct inode *inode, struct dentry *dentry)
 	au_refresh_hinode_attr(inode, update && isdir);
 
  out:
+	AuTraceErr(err);
 	return err;
 }
 
@@ -163,6 +166,8 @@ static int set_inode(struct inode *inode, struct dentry *dentry)
 	struct dentry *h_dentry;
 	struct inode *h_inode;
 	struct au_iinfo *iinfo;
+
+	IiMustWriteLock(inode);
 
 	err = 0;
 	isdir = 0;
@@ -192,7 +197,7 @@ static int set_inode(struct inode *inode, struct dentry *dentry)
 	case S_IFSOCK:
 		btail = au_dbtail(dentry);
 		inode->i_op = &aufs_iop;
-		init_special_inode(inode, mode, h_inode->i_rdev);
+		au_init_special_fop(inode, mode, h_inode->i_rdev);
 		break;
 	default:
 		AuIOErr("Unknown file type 0%o\n", mode);
@@ -261,6 +266,39 @@ static int reval_inode(struct inode *inode, struct dentry *dentry, int *matched)
 	return err;
 }
 
+int au_ino(struct super_block *sb, aufs_bindex_t bindex, ino_t h_ino,
+	   unsigned int d_type, ino_t *ino)
+{
+	int err;
+	struct mutex *mtx;
+	const int isdir = (d_type == DT_DIR);
+
+	/* prevent hardlinks from race condition */
+	mtx = NULL;
+	if (!isdir) {
+		mtx = &au_sbr(sb, bindex)->br_xino.xi_nondir_mtx;
+		mutex_lock(mtx);
+	}
+	err = au_xino_read(sb, bindex, h_ino, ino);
+	if (unlikely(err))
+		goto out;
+
+	if (!*ino) {
+		err = -EIO;
+		*ino = au_xino_new_ino(sb);
+		if (unlikely(!*ino))
+			goto out;
+		err = au_xino_write(sb, bindex, h_ino, *ino);
+		if (unlikely(err))
+			goto out;
+	}
+
+ out:
+	if (!isdir)
+		mutex_unlock(mtx);
+	return err;
+}
+
 /* successful returns with iinfo write_locked */
 /* todo: return with unlocked? */
 struct inode *au_new_inode(struct dentry *dentry, int must_new)
@@ -299,13 +337,14 @@ struct inode *au_new_inode(struct dentry *dentry, int must_new)
 	if (inode->i_state & I_NEW) {
 		ii_write_lock_new_child(inode);
 		err = set_inode(inode, dentry);
-		unlock_new_inode(inode);
-		if (!err)
+		if (!err) {
+			unlock_new_inode(inode);
 			goto out; /* success */
+		}
 
-		iget_failed(inode);
 		ii_write_unlock(inode);
-		goto out_iput;
+		iget_failed(inode);
+		goto out_err;
 	} else if (!must_new) {
 		err = reval_inode(inode, dentry, &match);
 		if (!err)
@@ -315,12 +354,12 @@ struct inode *au_new_inode(struct dentry *dentry, int must_new)
 	}
 
 	if (unlikely(au_test_fs_unique_ino(h_dentry->d_inode)))
-		AuWarn1("Un-notified UDBA or repeatedly renamed dir,"
+		AuWarn1("Warning: Un-notified UDBA or repeatedly renamed dir,"
 			" b%d, %s, %.*s, hi%lu, i%lu.\n",
 			bstart, au_sbtype(h_dentry->d_sb), AuDLNPair(dentry),
 			(unsigned long)h_ino, (unsigned long)ino);
 	ino = 0;
-	err = au_xino_write0(sb, bstart, h_ino, 0);
+	err = au_xino_write(sb, bstart, h_ino, /*ino*/0);
 	if (!err) {
 		iput(inode);
 		goto new_ino;
@@ -328,6 +367,7 @@ struct inode *au_new_inode(struct dentry *dentry, int must_new)
 
  out_iput:
 	iput(inode);
+ out_err:
 	inode = ERR_PTR(err);
  out:
 	return inode;

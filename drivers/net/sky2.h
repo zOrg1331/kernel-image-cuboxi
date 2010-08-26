@@ -16,6 +16,13 @@ enum {
 	PCI_DEV_REG5    = 0x88,
 	PCI_CFG_REG_0	= 0x90,
 	PCI_CFG_REG_1	= 0x94,
+	
+	PSM_CONFIG_REG0  = 0x98,
+	PSM_CONFIG_REG1  = 0x9C,
+	PSM_CONFIG_REG2  = 0x160,
+	PSM_CONFIG_REG3  = 0x164,
+	PSM_CONFIG_REG4  = 0x168,
+
 };
 
 /* Yukon-2 */
@@ -145,6 +152,16 @@ enum pci_cfg_reg1 {
 					P_CF1_ENA_TXBMU_WR_IDLE,
 };
 
+/*	PSM_CONFIG_REG4				0x0168	PSM Config Register 4 */
+enum {
+						/* PHY Link Detect Timer */
+	PSM_CONFIG_REG4_TIMER_PHY_LINK_DETECT_MSK = 0xf<<4,
+	PSM_CONFIG_REG4_TIMER_PHY_LINK_DETECT_BASE = 4,
+
+	PSM_CONFIG_REG4_DEBUG_TIMER	    = 1<<1, /* Debug Timer */
+	PSM_CONFIG_REG4_RST_PHY_LINK_DETECT = 1<<0, /* Reset GPHY Link Detect */
+};
+
 
 #define PCI_STATUS_ERROR_BITS (PCI_STATUS_DETECTED_PARITY | \
 			       PCI_STATUS_SIG_SYSTEM_ERROR | \
@@ -155,7 +172,7 @@ enum pci_cfg_reg1 {
 enum csr_regs {
 	B0_RAP		= 0x0000,
 	B0_CTST		= 0x0004,
-	B0_Y2LED	= 0x0005,
+
 	B0_POWER_CTRL	= 0x0007,
 	B0_ISRC		= 0x0008,
 	B0_IMSK		= 0x000c,
@@ -196,6 +213,9 @@ enum csr_regs {
 	B2_I2C_DATA	= 0x0164,
 	B2_I2C_IRQ	= 0x0168,
 	B2_I2C_SW	= 0x016c,
+
+	Y2_PEX_PHY_DATA = 0x0170,
+        Y2_PEX_PHY_ADDR = 0x0172,
 
 	B3_RAM_ADDR	= 0x0180,
 	B3_RAM_DATA_LO	= 0x0184,
@@ -260,7 +280,7 @@ enum csr_regs {
 	Y2_CFG_AER      = 0x1d00,	/* PCI Advanced Error Report region */
 };
 
-/*	B0_CTST			16 bit	Control/Status register */
+/*	B0_CTST			24 bit	Control/Status register */
 enum {
 	Y2_VMAIN_AVAIL	= 1<<17,/* VMAIN available (YUKON-2 only) */
 	Y2_VAUX_AVAIL	= 1<<16,/* VAUX available (YUKON-2 only) */
@@ -281,13 +301,6 @@ enum {
 	CS_MRST_SET	= 1<<2,	/* Set Master reset	*/
 	CS_RST_CLR	= 1<<1,	/* Clear Software reset	*/
 	CS_RST_SET	= 1,	/* Set   Software reset	*/
-};
-
-/*	B0_LED			 8 Bit	LED register */
-enum {
-/* Bit  7.. 2:	reserved */
-	LED_STAT_ON	= 1<<1,	/* Status LED on	*/
-	LED_STAT_OFF	= 1,	/* Status LED off	*/
 };
 
 /*	B0_POWER_CTRL	 8 Bit	Power Control reg (YUKON only) */
@@ -323,6 +336,10 @@ enum {
 	Y2_IS_CHK_RX2	= 1<<10,	/* Descriptor error Rx 2 */
 	Y2_IS_CHK_TXS2	= 1<<9,		/* Descriptor error TXS 2 */
 	Y2_IS_CHK_TXA2	= 1<<8,		/* Descriptor error TXA 2 */
+
+ 	Y2_IS_PSM_ACK   = 1<<7,         /* PSM Acknowledge (Yukon-Optima only) */
+	Y2_IS_PTP_TIST  = 1<<6,         /* PTP Time Stamp (Yukon-Optima only) */
+	Y2_IS_PHY_QLNK  = 1<<5,         /* PHY Quick Link (Yukon-Optima only) */
 
 	Y2_IS_IRQ_PHY1	= 1<<4,		/* Interrupt from PHY 1 */
 	Y2_IS_IRQ_MAC1	= 1<<3,		/* Interrupt from MAC 1 */
@@ -442,6 +459,7 @@ enum {
  	CHIP_ID_YUKON_FE_P = 0xb8, /* YUKON-2 FE+ */
 	CHIP_ID_YUKON_SUPR = 0xb9, /* YUKON-2 Supreme */
 	CHIP_ID_YUKON_UL_2 = 0xba, /* YUKON-2 Ultra 2 */
+	CHIP_ID_YUKON_OPT  = 0xbc, /* YUKON-2 Optima */
 };
 enum yukon_ec_rev {
 	CHIP_REV_YU_EC_A1    = 0,  /* Chip Rev. for Yukon-EC A1/A0 */
@@ -518,6 +536,12 @@ enum {
 	TIM_T_ON	= 1<<2,	/* Test mode on */
 	TIM_T_OFF	= 1<<1,	/* Test mode off */
 	TIM_T_STEP	= 1<<0,	/* Test step */
+};
+
+/*	Y2_PEX_PHY_ADDR/DATA		PEX PHY address and data reg  (Yukon-2 only) */
+enum {
+	PEX_RD_ACCESS	= 1<<31, /* Access Mode Read = 1, Write = 0 */
+	PEX_DB_ACCESS	= 1<<30, /* Access to debug register */
 };
 
 /*	B3_RAM_ADDR		32 bit	RAM Address, to read or write */
@@ -1583,7 +1607,6 @@ enum {
 };
 
 #define GM_GPCR_SPEED_1000	(GM_GPCR_GIGS_ENA | GM_GPCR_SPEED_100)
-#define GM_GPCR_AU_ALL_DIS	(GM_GPCR_AU_DUP_DIS | GM_GPCR_AU_FCT_DIS|GM_GPCR_AU_SPD_DIS)
 
 /*	GM_TX_CTRL			16 bit r/w	Transmit Control Register */
 enum {
@@ -1985,6 +2008,9 @@ struct sky2_status_le {
 
 struct tx_ring_info {
 	struct sk_buff	*skb;
+	unsigned long flags;
+#define TX_MAP_SINGLE   0x0001
+#define TX_MAP_PAGE     000002
 	DECLARE_PCI_UNMAP_ADDR(mapaddr);
 	DECLARE_PCI_UNMAP_LEN(maplen);
 };
@@ -2012,12 +2038,14 @@ struct sky2_port {
 
 	struct tx_ring_info  *tx_ring;
 	struct sky2_tx_le    *tx_le;
+	u16		     tx_ring_size;
 	u16		     tx_cons;		/* next le to check */
 	u16		     tx_prod;		/* next le to use */
 	u16		     tx_next;		/* debug only */
 
 	u16		     tx_pending;
 	u16		     tx_last_mss;
+	u32		     tx_last_upper;
 	u32		     tx_tcpsum;
 
 	struct rx_ring_info  *rx_ring ____cacheline_aligned_in_smp;
@@ -2041,15 +2069,18 @@ struct sky2_port {
 		u8	fifo_lev;
 	} check;
 
-
 	dma_addr_t	     rx_le_map;
 	dma_addr_t	     tx_le_map;
+
 	u16		     advertising;	/* ADVERTISED_ bits */
-	u16		     speed;	/* SPEED_1000, SPEED_100, ... */
-	u8		     autoneg;	/* AUTONEG_ENABLE, AUTONEG_DISABLE */
-	u8		     duplex;	/* DUPLEX_HALF, DUPLEX_FULL */
-	u8		     rx_csum;
-	u8		     wol;
+	u16		     speed;		/* SPEED_1000, SPEED_100, ... */
+	u8		     wol;		/* WAKE_ bits */
+	u8		     duplex;		/* DUPLEX_HALF, DUPLEX_FULL */
+	u16		     flags;
+#define SKY2_FLAG_RX_CHECKSUM		0x0001
+#define SKY2_FLAG_AUTO_SPEED		0x0002
+#define SKY2_FLAG_AUTO_PAUSE		0x0004
+
  	enum flow_control    flow_mode;
  	enum flow_control    flow_status;
 
@@ -2085,6 +2116,8 @@ struct sky2_hw {
 	struct timer_list    watchdog_timer;
 	struct work_struct   restart_work;
 	wait_queue_head_t    msi_wait;
+
+	char		     irq_name[0];
 };
 
 static inline int sky2_is_copper(const struct sky2_hw *hw)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,26 +26,6 @@
 #include <linux/pagemap.h>
 #include "aufs.h"
 
-/*
- * a dirty trick for handling deny_write_access().
- * because FMODE_EXEC flag is not passed to f_op->open(),
- * set it to file->private_data temporary.
- */
-void au_store_oflag(struct nameidata *nd, struct inode *inode)
-{
-	if (nd
-	    /* && !(nd->flags & LOOKUP_CONTINUE) */
-	    && (nd->flags & LOOKUP_OPEN)
-	    && (nd->intent.open.flags & vfsub_fmode_to_uint(FMODE_EXEC))
-	    && inode
-	    && S_ISREG(inode->i_mode)) {
-		/* suppress a warning in lp64 */
-		unsigned long flags = nd->intent.open.flags;
-		nd->intent.open.file->private_data = (void *)flags;
-		/* smp_mb(); */
-	}
-}
-
 /* drop flags for writing */
 unsigned int au_file_roflags(unsigned int flags)
 {
@@ -63,12 +43,17 @@ struct file *au_h_open(struct dentry *dentry, aufs_bindex_t bindex, int flags,
 	struct inode *h_inode;
 	struct super_block *sb;
 	struct au_branch *br;
-	int err;
+	struct path h_path;
+	int err, exec_flag;
 
-	h_dentry = au_h_dptr(dentry, bindex);
-	h_inode = h_dentry->d_inode;
 	/* a race condition can happen between open and unlink/rmdir */
 	h_file = ERR_PTR(-ENOENT);
+	h_dentry = au_h_dptr(dentry, bindex);
+	if (au_test_nfsd(current) && !h_dentry)
+		goto out;
+	h_inode = h_dentry->d_inode;
+	if (au_test_nfsd(current) && !h_inode)
+		goto out;
 	if (unlikely((!d_unhashed(dentry) && d_unhashed(h_dentry))
 		     || !h_inode))
 		goto out;
@@ -76,22 +61,33 @@ struct file *au_h_open(struct dentry *dentry, aufs_bindex_t bindex, int flags,
 	sb = dentry->d_sb;
 	br = au_sbr(sb, bindex);
 	h_file = ERR_PTR(-EACCES);
-	if (file && (file->f_mode & FMODE_EXEC)
-	    && (br->br_mnt->mnt_flags & MNT_NOEXEC))
-		goto out;
+	exec_flag = flags & vfsub_fmode_to_uint(FMODE_EXEC);
+	if (exec_flag && (br->br_mnt->mnt_flags & MNT_NOEXEC))
+			goto out;
 
 	/* drop flags for writing */
 	if (au_test_ro(sb, bindex, dentry->d_inode))
 		flags = au_file_roflags(flags);
 	flags &= ~O_CREAT;
 	atomic_inc(&br->br_count);
-	h_file = dentry_open(dget(h_dentry), mntget(br->br_mnt), flags,
-			     current_cred());
+	h_path.dentry = h_dentry;
+	h_path.mnt = br->br_mnt;
+	if (!au_special_file(h_inode->i_mode))
+		h_file = vfsub_dentry_open(&h_path, flags);
+	else {
+		/* this block depends upon the configuration */
+		di_read_unlock(dentry, AuLock_IR);
+		fi_write_unlock(file);
+		si_read_unlock(sb);
+		h_file = vfsub_dentry_open(&h_path, flags);
+		si_noflush_read_lock(sb);
+		fi_write_lock(file);
+		di_read_lock_child(dentry, AuLock_IR);
+	}
 	if (IS_ERR(h_file))
 		goto out_br;
 
-	if (file && (file->f_mode & FMODE_EXEC)) {
-		h_file->f_mode |= FMODE_EXEC;
+	if (exec_flag) {
 		err = deny_write_access(h_file);
 		if (unlikely(err)) {
 			fput(h_file);
@@ -122,7 +118,7 @@ int au_do_open(struct file *file, int (*open)(struct file *file, int flags))
 		goto out;
 
 	di_read_lock_child(dentry, AuLock_IR);
-	err = open(file, file->f_flags);
+	err = open(file, vfsub_file_flags(file));
 	di_read_unlock(dentry, AuLock_IR);
 
 	fi_write_unlock(file);
@@ -141,6 +137,7 @@ int au_reopen_nondir(struct file *file)
 	struct file *h_file, *h_file_tmp;
 
 	dentry = file->f_dentry;
+	AuDebugOn(au_special_file(dentry->d_inode->i_mode));
 	bstart = au_dbstart(dentry);
 	h_file_tmp = NULL;
 	if (au_fbstart(file) == bstart) {
@@ -154,7 +151,8 @@ int au_reopen_nondir(struct file *file)
 	AuDebugOn(au_fbstart(file) < bstart
 		  || au_fi(file)->fi_hfile[0 + bstart].hf_file);
 
-	h_file = au_h_open(dentry, bstart, file->f_flags & ~O_TRUNC, file);
+	h_file = au_h_open(dentry, bstart, vfsub_file_flags(file) & ~O_TRUNC,
+			   file);
 	err = PTR_ERR(h_file);
 	if (IS_ERR(h_file))
 		goto out; /* todo: close all? */
@@ -189,6 +187,8 @@ static int au_reopen_wh(struct file *file, aufs_bindex_t btgt,
 	struct dentry *h_dentry;
 
 	dinfo = au_di(file->f_dentry);
+	AuRwMustWriteLock(&dinfo->di_rwsem);
+
 	bstart = dinfo->di_bstart;
 	dinfo->di_bstart = btgt;
 	h_dentry = dinfo->di_hdentry[0 + btgt].hd_dentry;
@@ -209,6 +209,7 @@ static int au_ready_to_write_wh(struct file *file, loff_t len,
 	struct super_block *sb;
 
 	dentry = file->f_dentry;
+	au_update_dbstart(dentry);
 	inode = dentry->d_inode;
 	hi_wh = au_hi_wh(inode, bcpup);
 	if (!hi_wh)
@@ -239,6 +240,7 @@ int au_ready_to_write(struct file *file, loff_t len, struct au_pin *pin)
 	sb = dentry->d_sb;
 	bstart = au_fbstart(file);
 	inode = dentry->d_inode;
+	AuDebugOn(au_special_file(inode->i_mode));
 	err = au_test_ro(sb, bstart, inode);
 	if (!err && (au_h_fptr(file, bstart)->f_mode & FMODE_WRITE)) {
 		err = au_pin(pin, dentry, bstart, AuOpt_UDBA_NONE, /*flags*/0);
@@ -311,6 +313,8 @@ static int au_file_refresh_by_inode(struct file *file, int *need_reopen)
 	struct inode *inode;
 	struct super_block *sb;
 
+	FiMustWriteLock(file);
+
 	err = 0;
 	finfo = au_fi(file);
 	dentry = file->f_dentry;
@@ -367,6 +371,8 @@ static void au_do_refresh_file(struct file *file)
 	struct au_hfile *p, tmp, *q;
 	struct au_finfo *finfo;
 	struct super_block *sb;
+
+	FiMustWriteLock(file);
 
 	sb = file->f_dentry->d_sb;
 	finfo = au_fi(file);
@@ -474,15 +480,18 @@ int au_reval_and_lock_fdi(struct file *file, int (*reopen)(struct file *file),
 	aufs_bindex_t bstart;
 	unsigned char pseudo_link;
 	struct dentry *dentry;
+	struct inode *inode;
 
 	err = 0;
 	dentry = file->f_dentry;
+	inode = dentry->d_inode;
+	AuDebugOn(au_special_file(inode->i_mode));
 	sigen = au_sigen(dentry->d_sb);
 	fi_write_lock(file);
 	figen = au_figen(file);
 	di_write_lock_child(dentry);
 	bstart = au_dbstart(dentry);
-	pseudo_link = (bstart != au_ibstart(dentry->d_inode));
+	pseudo_link = (bstart != au_ibstart(inode));
 	if (sigen == figen && !pseudo_link && au_fbstart(file) == bstart) {
 		if (!wlock) {
 			di_downgrade_lock(dentry, AuLock_IR);
@@ -493,12 +502,12 @@ int au_reval_and_lock_fdi(struct file *file, int (*reopen)(struct file *file),
 
 	AuDbg("sigen %d, figen %d\n", sigen, figen);
 	if (sigen != au_digen(dentry)
-	    || sigen != au_iigen(dentry->d_inode)) {
+	    || sigen != au_iigen(inode)) {
 		err = au_reval_dpath(dentry, sigen);
 		if (unlikely(err < 0))
 			goto out;
 		AuDebugOn(au_digen(dentry) != sigen
-			  || au_iigen(dentry->d_inode) != sigen);
+			  || au_iigen(inode) != sigen);
 	}
 
 	err = refresh_file(file, reopen);
@@ -551,18 +560,41 @@ static ssize_t aufs_direct_IO(int rw, struct kiocb *iocb,
 			      const struct iovec *iov, loff_t offset,
 			      unsigned long nr_segs)
 { AuUnsupport(); return 0; }
+static int aufs_get_xip_mem(struct address_space *mapping, pgoff_t pgoff,
+			    int create, void **kmem, unsigned long *pfn)
+{ AuUnsupport(); return 0; }
+static int aufs_migratepage(struct address_space *mapping, struct page *newpage,
+			    struct page *page)
+{ AuUnsupport(); return 0; }
+static int aufs_launder_page(struct page *page)
+{ AuUnsupport(); return 0; }
+static int aufs_is_partially_uptodate(struct page *page,
+				      read_descriptor_t *desc,
+				      unsigned long from)
+{ AuUnsupport(); return 0; }
+static int aufs_error_remove_page(struct address_space *mapping,
+				  struct page *page)
+{ AuUnsupport(); return 0; }
 #endif /* CONFIG_AUFS_DEBUG */
 
 struct address_space_operations aufs_aop = {
-	.readpage	= aufs_readpage,
+	.readpage		= aufs_readpage,
 #ifdef CONFIG_AUFS_DEBUG
-	.writepage	= aufs_writepage,
-	.sync_page	= aufs_sync_page,
-	.set_page_dirty	= aufs_set_page_dirty,
-	.write_begin	= aufs_write_begin,
-	.write_end	= aufs_write_end,
-	.invalidatepage	= aufs_invalidatepage,
-	.releasepage	= aufs_releasepage,
-	.direct_IO	= aufs_direct_IO,
+	.writepage		= aufs_writepage,
+	.sync_page		= aufs_sync_page,
+	/* no writepages, because of writepage */
+	.set_page_dirty		= aufs_set_page_dirty,
+	/* no readpages, because of readpage */
+	.write_begin		= aufs_write_begin,
+	.write_end		= aufs_write_end,
+	/* no bmap, no block device */
+	.invalidatepage		= aufs_invalidatepage,
+	.releasepage		= aufs_releasepage,
+	.direct_IO		= aufs_direct_IO,	/* todo */
+	.get_xip_mem		= aufs_get_xip_mem,	/* todo */
+	.migratepage		= aufs_migratepage,
+	.launder_page		= aufs_launder_page,
+	.is_partially_uptodate	= aufs_is_partially_uptodate,
+	.error_remove_page	= aufs_error_remove_page
 #endif /* CONFIG_AUFS_DEBUG */
 };

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2009 Junjiro R. Okajima
+ * Copyright (C) 2005-2010 Junjiro R. Okajima
  *
  * This program, aufs is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,6 +24,7 @@
 #include <linux/file.h>
 #include <linux/mnt_namespace.h>
 #include <linux/namei.h>
+#include <linux/nsproxy.h>
 #include <linux/random.h>
 #include "aufs.h"
 
@@ -100,13 +101,17 @@ int au_xigen_inc(struct inode *inode)
 
 	err = 0;
 	sb = inode->i_sb;
-	if (unlikely(!au_opt_test(au_mntflags(sb), XINO)))
+	sbinfo = au_sbi(sb);
+	/*
+	 * temporary workaround for escaping from SiMustAnyLock() in
+	 * au_mntflags(), since this function is called from au_iinfo_fin().
+	 */
+	if (unlikely(!au_opt_test(sbinfo->si_mntflags, XINO)))
 		goto out;
 
 	pos = inode->i_ino;
 	pos *= sizeof(igen);
 	igen = inode->i_generation + 1;
-	sbinfo = au_sbi(sb);
 	sz = xino_fwrite(sbinfo->si_xwrite, sbinfo->si_xigen, &igen,
 			 sizeof(igen), &pos);
 	if (sz == sizeof(igen))
@@ -136,6 +141,7 @@ int au_xigen_new(struct inode *inode)
 	if (inode->i_ino == AUFS_ROOT_INO)
 		goto out;
 	sb = inode->i_sb;
+	SiMustAnyLock(sb);
 	if (unlikely(!au_opt_test(au_mntflags(sb), XINO)))
 		goto out;
 
@@ -179,6 +185,8 @@ int au_xigen_set(struct super_block *sb, struct file *base)
 	struct au_sbinfo *sbinfo;
 	struct file *file;
 
+	SiMustWriteLock(sb);
+
 	sbinfo = au_sbi(sb);
 	file = au_xino_create2(base, sbinfo->si_xigen);
 	err = PTR_ERR(file);
@@ -196,6 +204,8 @@ int au_xigen_set(struct super_block *sb, struct file *base)
 void au_xigen_clr(struct super_block *sb)
 {
 	struct au_sbinfo *sbinfo;
+
+	SiMustWriteLock(sb);
 
 	sbinfo = au_sbi(sb);
 	if (sbinfo->si_xigen) {
@@ -337,8 +347,7 @@ static struct dentry *au_lkup_by_ino(struct path *path, ino_t ino,
 	parent = path->dentry;
 	if (nsi_lock)
 		si_read_unlock(parent->d_sb);
-	path_get(path);
-	file = dentry_open(parent, path->mnt, au_dir_roflags, current_cred());
+	file = vfsub_dentry_open(path, au_dir_roflags);
 	dentry = (void *)file;
 	if (IS_ERR(file))
 		goto out;
