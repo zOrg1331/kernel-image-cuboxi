@@ -136,6 +136,12 @@ struct iwl_temp_ops {
 	void (*set_calib_version)(struct iwl_priv *priv);
 };
 
+struct iwl_tt_ops {
+	bool (*lower_power_detection)(struct iwl_priv *priv);
+	u8 (*tt_power_mode)(struct iwl_priv *priv);
+	bool (*ct_kill_check)(struct iwl_priv *priv);
+};
+
 struct iwl_lib_ops {
 	/* set hw dependent parameters */
 	int (*set_hw_params)(struct iwl_priv *priv);
@@ -212,6 +218,9 @@ struct iwl_lib_ops {
 	void (*dev_txfifo_flush)(struct iwl_priv *priv, u16 flush_control);
 
 	struct iwl_debugfs_ops debugfs_ops;
+
+	/* thermal throttling */
+	struct iwl_tt_ops tt_ops;
 };
 
 struct iwl_led_ops {
@@ -269,6 +278,14 @@ struct iwl_mod_params {
  * @chain_noise_calib_by_driver: driver has the capability to perform
  *	chain noise calibration operation
  * @scan_antennas: available antenna for scan operation
+ * @advanced_bt_coexist: support advanced bt coexist
+ * @bt_init_traffic_load: specify initial bt traffic load
+ * @bt_prio_boost: default bt priority boost value
+ * @need_dc_calib: need to perform init dc calibration
+ * @bt_statistics: use BT version of statistics notification
+ * @agg_time_limit: maximum number of uSec in aggregation
+ * @ampdu_factor: Maximum A-MPDU length factor
+ * @ampdu_density: Minimum A-MPDU spacing
  *
  * We enable the driver to be backward compatible wrt API version. The
  * driver specifies which APIs it supports (with @ucode_api_max being the
@@ -337,8 +354,14 @@ struct iwl_cfg {
 	const bool chain_noise_calib_by_driver;
 	u8 scan_rx_antennas[IEEE80211_NUM_BANDS];
 	u8 scan_tx_antennas[IEEE80211_NUM_BANDS];
+	bool advanced_bt_coexist;
+	u8 bt_init_traffic_load;
+	u8 bt_prio_boost;
 	const bool need_dc_calib;
 	const bool bt_statistics;
+	u16 agg_time_limit;
+	u8 ampdu_factor;
+	u8 ampdu_density;
 };
 
 /***************************
@@ -347,10 +370,10 @@ struct iwl_cfg {
 
 struct ieee80211_hw *iwl_alloc_all(struct iwl_cfg *cfg,
 		struct ieee80211_ops *hw_ops);
-void iwl_hw_detect(struct iwl_priv *priv);
 void iwl_activate_qos(struct iwl_priv *priv);
 int iwl_mac_conf_tx(struct ieee80211_hw *hw, u16 queue,
 		    const struct ieee80211_tx_queue_params *params);
+int iwl_mac_tx_last_beacon(struct ieee80211_hw *hw);
 void iwl_set_rxon_hwcrypto(struct iwl_priv *priv, int hw_decrypt);
 int iwl_check_rxon_cmd(struct iwl_priv *priv);
 int iwl_full_rxon_required(struct iwl_priv *priv);
@@ -372,7 +395,6 @@ int iwl_set_decrypted_flag(struct iwl_priv *priv,
 			   u32 decrypt_res,
 			   struct ieee80211_rx_status *stats);
 void iwl_irq_handle_error(struct iwl_priv *priv);
-int iwl_set_hw_params(struct iwl_priv *priv);
 void iwl_post_associate(struct iwl_priv *priv, struct ieee80211_vif *vif);
 void iwl_bss_info_changed(struct ieee80211_hw *hw,
 				     struct ieee80211_vif *vif,
@@ -527,7 +549,6 @@ int iwl_scan_cancel_timeout(struct iwl_priv *priv, unsigned long ms);
 int iwl_mac_hw_scan(struct ieee80211_hw *hw,
 		    struct ieee80211_vif *vif,
 		    struct cfg80211_scan_request *req);
-void iwl_bg_start_internal_scan(struct work_struct *work);
 void iwl_internal_short_hw_scan(struct iwl_priv *priv);
 int iwl_force_reset(struct iwl_priv *priv, int mode, bool external);
 u16 iwl_fill_probe_req(struct iwl_priv *priv, struct ieee80211_mgmt *frame,
@@ -539,9 +560,6 @@ u16 iwl_get_active_dwell_time(struct iwl_priv *priv,
 u16 iwl_get_passive_dwell_time(struct iwl_priv *priv,
 			       enum ieee80211_band band,
 			       struct ieee80211_vif *vif);
-void iwl_bg_scan_check(struct work_struct *data);
-void iwl_bg_abort_scan(struct work_struct *work);
-void iwl_bg_scan_completed(struct work_struct *work);
 void iwl_setup_scan_deferred_work(struct iwl_priv *priv);
 
 /* For faster active scanning, scan will move to the next channel if fewer than
@@ -580,8 +598,6 @@ int iwl_send_cmd_pdu_async(struct iwl_priv *priv, u8 id, u16 len,
 
 int iwl_enqueue_hcmd(struct iwl_priv *priv, struct iwl_host_cmd *cmd);
 
-int iwl_send_card_state(struct iwl_priv *priv, u32 flags,
-			u8 meta_flag);
 
 /*****************************************************
  * PCI						     *
@@ -695,7 +711,6 @@ static inline int iwl_is_ready_rf(struct iwl_priv *priv)
 	return iwl_is_ready(priv);
 }
 
-extern void iwl_rf_kill_ct_config(struct iwl_priv *priv);
 extern void iwl_send_bt_config(struct iwl_priv *priv);
 extern int iwl_send_statistics_request(struct iwl_priv *priv,
 				       u8 flags, bool clear);
@@ -704,7 +719,7 @@ extern int iwl_send_lq_cmd(struct iwl_priv *priv,
 void iwl_apm_stop(struct iwl_priv *priv);
 int iwl_apm_init(struct iwl_priv *priv);
 
-void iwl_setup_rxon_timing(struct iwl_priv *priv, struct ieee80211_vif *vif);
+int iwl_send_rxon_timing(struct iwl_priv *priv, struct ieee80211_vif *vif);
 static inline int iwl_send_rxon_assoc(struct iwl_priv *priv)
 {
 	return priv->cfg->ops->hcmd->rxon_assoc(priv);
@@ -723,4 +738,8 @@ static inline const struct ieee80211_supported_band *iwl_get_hw_mode(
 {
 	return priv->hw->wiphy->bands[band];
 }
+
+extern bool bt_coex_active;
+extern bool bt_siso_mode;
+
 #endif /* __iwl_core_h__ */

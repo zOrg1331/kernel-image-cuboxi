@@ -47,6 +47,7 @@
 #include "iwl-led.h"
 #include "iwl-power.h"
 #include "iwl-agn-rs.h"
+#include "iwl-agn-tt.h"
 
 struct iwl_tx_queue;
 
@@ -420,7 +421,7 @@ struct iwl_tid_data {
 };
 
 struct iwl_hw_key {
-	enum ieee80211_key_alg alg;
+	u32 cipher;
 	int keylen;
 	u8 keyidx;
 	u8 key[32];
@@ -434,7 +435,13 @@ union iwl_ht_rate_supp {
 	};
 };
 
-#define CFG_HT_RX_AMPDU_FACTOR_DEF  (0x3)
+#define CFG_HT_RX_AMPDU_FACTOR_8K   (0x0)
+#define CFG_HT_RX_AMPDU_FACTOR_16K  (0x1)
+#define CFG_HT_RX_AMPDU_FACTOR_32K  (0x2)
+#define CFG_HT_RX_AMPDU_FACTOR_64K  (0x3)
+#define CFG_HT_RX_AMPDU_FACTOR_DEF  CFG_HT_RX_AMPDU_FACTOR_64K
+#define CFG_HT_RX_AMPDU_FACTOR_MAX  CFG_HT_RX_AMPDU_FACTOR_64K
+#define CFG_HT_RX_AMPDU_FACTOR_MIN  CFG_HT_RX_AMPDU_FACTOR_8K
 
 /*
  * Maximal MPDU density for TX aggregation
@@ -443,8 +450,13 @@ union iwl_ht_rate_supp {
  * 6 - 8us density
  * 7 - 16us density
  */
+#define CFG_HT_MPDU_DENSITY_2USEC   (0x4)
 #define CFG_HT_MPDU_DENSITY_4USEC   (0x5)
+#define CFG_HT_MPDU_DENSITY_8USEC   (0x6)
+#define CFG_HT_MPDU_DENSITY_16USEC  (0x7)
 #define CFG_HT_MPDU_DENSITY_DEF CFG_HT_MPDU_DENSITY_4USEC
+#define CFG_HT_MPDU_DENSITY_MAX CFG_HT_MPDU_DENSITY_16USEC
+#define CFG_HT_MPDU_DENSITY_MIN     (0x1)
 
 struct iwl_ht_config {
 	/* self configuration data */
@@ -1052,7 +1064,10 @@ struct iwl_event_log {
 #define IWL_DEF_MONITORING_PERIOD	(1000)
 #define IWL_LONG_MONITORING_PERIOD	(5000)
 #define IWL_ONE_HUNDRED_MSECS   (100)
-#define IWL_SIXTY_SECS          (60000)
+#define IWL_MAX_MONITORING_PERIOD	(60000)
+
+/* BT Antenna Coupling Threshold (dB) */
+#define IWL_BT_ANTENNA_COUPLING_THRESHOLD	(35)
 
 enum iwl_reset {
 	IWL_RF_RESET = 0,
@@ -1109,6 +1124,9 @@ struct iwl_priv {
 	/* ucode beacon time */
 	u32 ucode_beacon_time;
 	int missed_beacon_threshold;
+
+	/* track IBSS manager (last beacon) status */
+	u32 ibss_manager;
 
 	/* storing the jiffies when the plcp error rate is received */
 	unsigned long plcp_jiffies;
@@ -1348,6 +1366,23 @@ struct iwl_priv {
 #endif
 	};
 
+	/* bt coex */
+	u8 bt_status;
+	u8 bt_traffic_load, notif_bt_traffic_load;
+	bool bt_ch_announce;
+	bool bt_sco_active;
+	bool bt_full_concurrent;
+	bool bt_ant_couple_ok;
+	__le32 kill_ack_mask;
+	__le32 kill_cts_mask;
+	__le16 bt_valid;
+	u16 bt_on_thresh;
+	u16 bt_duration;
+	u16 dynamic_frag_thresh;
+	u16 dynamic_agg_thresh;
+	u8 bt_ci_compliance;
+	struct work_struct bt_traffic_change_work;
+
 	struct iwl_hw_params hw_params;
 
 	u32 inta_mask;
@@ -1366,6 +1401,8 @@ struct iwl_priv {
 	struct work_struct ct_exit;
 	struct work_struct start_internal_scan;
 	struct work_struct tx_flush;
+	struct work_struct bt_full_concurrency;
+	struct work_struct bt_runtime_config;
 
 	struct tasklet_struct irq_tasklet;
 

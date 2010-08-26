@@ -4,8 +4,6 @@
  * Copyright (c) 1998-2007 Texas Instruments Incorporated
  * Copyright (C) 2008 Nokia Corporation
  *
- * Contact: Kalle Valo <kalle.valo@nokia.com>
- *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * version 2 as published by the Free Software Foundation.
@@ -189,7 +187,7 @@ static int wl1251_tx_send_packet(struct wl1251 *wl, struct sk_buff *skb,
 	tx_hdr = (struct tx_double_buffer_desc *) skb->data;
 
 	if (control->control.hw_key &&
-	    control->control.hw_key->alg == ALG_TKIP) {
+	    control->control.hw_key->cipher == WLAN_CIPHER_SUITE_TKIP) {
 		int hdrlen;
 		__le16 fc;
 		u16 length;
@@ -399,7 +397,7 @@ static void wl1251_tx_packet_cb(struct wl1251 *wl,
 	 */
 	frame = skb_pull(skb, sizeof(struct tx_double_buffer_desc));
 	if (info->control.hw_key &&
-	    info->control.hw_key->alg == ALG_TKIP) {
+	    info->control.hw_key->cipher == WLAN_CIPHER_SUITE_TKIP) {
 		hdrlen = ieee80211_get_hdrlen_from_skb(skb);
 		memmove(frame + WL1251_TKIP_IV_SPACE, frame, hdrlen);
 		skb_pull(skb, WL1251_TKIP_IV_SPACE);
