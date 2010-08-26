@@ -1,0 +1,49 @@
+Importing driver-core.current based on 2.6.36-rc2
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.36-rc2-git3
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 502adf5778f4151dcba3f64dd6ed322151f3712c
+HEAD is now at 502adf5 Merge branch 'perf-fixes-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-simplify-i2c_parent_is_i2c_adapter.patch
+i2c-i2c_parent_is_i2c_adapter-returns-parent.patch
+i2c-remove-obsolete-cleanup-for-clientdata.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + a140a3d...947cfbc master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.36-rc2-git3
+$ cd ../quilt-tmp
+$ git reset --hard 502adf5778f4151dcba3f64dd6ed322151f3712c
+HEAD is now at 502adf5 Merge branch 'perf-fixes-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-coretemp-fix-warning.patch
+hwmon-ads7871-fix-ads7871_probe-error-paths.patch
+hwmon-k8temp-01-differentiate-between-am2-and-asb1.patch
+maintainers-hwmon-coretemp-change-maintainers.patch
+hwmon-k8temp-02-remove-superfluous-cpu-family-check.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 01a6f2b...e6112bf master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.35
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-7786-gad41a1e
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.36-rc1
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
