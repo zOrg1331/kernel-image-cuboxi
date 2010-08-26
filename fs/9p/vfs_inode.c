@@ -873,6 +873,8 @@ static int v9fs_vfs_mkdir_dotl(struct inode *dir, struct dentry *dentry,
 	v9ses = v9fs_inode2v9ses(dir);
 
 	mode |= S_IFDIR;
+	if (dir->i_mode & S_ISGID)
+		mode |= S_ISGID;
 	dir_dentry = v9fs_dentry_from_dir_inode(dir);
 	dfid = v9fs_fid_lookup(dir_dentry);
 	if (IS_ERR(dfid)) {
@@ -883,10 +885,6 @@ static int v9fs_vfs_mkdir_dotl(struct inode *dir, struct dentry *dentry,
 	}
 
 	gid = v9fs_get_fsgid_for_create(dir);
-	if (gid < 0) {
-		P9_DPRINTK(P9_DEBUG_VFS, "v9fs_get_fsgid_for_create failed\n");
-		goto error;
-	}
 
 	name = (char *) dentry->d_name.name;
 	err = p9_client_mkdir_dotl(dfid, name, mode, gid, &qid);
@@ -1611,11 +1609,6 @@ v9fs_vfs_symlink_dotl(struct inode *dir, struct dentry *dentry,
 
 	gid = v9fs_get_fsgid_for_create(dir);
 
-	if (gid < 0) {
-		P9_DPRINTK(P9_DEBUG_VFS, "v9fs_get_egid failed %d\n", gid);
-		goto error;
-	}
-
 	/* Server doesn't alter fid on TSYMLINK. Hence no need to clone it. */
 	err = p9_client_symlink(dfid, name, (char *)symname, gid, &qid);
 
@@ -1879,10 +1872,6 @@ v9fs_vfs_mknod_dotl(struct inode *dir, struct dentry *dentry, int mode,
 	}
 
 	gid = v9fs_get_fsgid_for_create(dir);
-	if (gid < 0) {
-		P9_DPRINTK(P9_DEBUG_VFS, "v9fs_get_fsgid_for_create failed\n");
-		goto error;
-	}
 
 	name = (char *) dentry->d_name.name;
 
