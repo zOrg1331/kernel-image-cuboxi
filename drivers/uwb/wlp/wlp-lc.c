@@ -40,9 +40,9 @@ void wlp_neighbor_init(struct wlp_neighbor_e *neighbor)
 int __wlp_alloc_device_info(struct wlp *wlp)
 {
 	struct device *dev = &wlp->rc->uwb_dev.dev;
-	BUG_ON(wlp->dev_info != NULL);
-	wlp->dev_info = kzalloc(sizeof(struct wlp_device_info), GFP_KERNEL);
-	if (wlp->dev_info == NULL) {
+	BUG_ON(wlp->wdi != NULL);
+	wlp->wdi = kzalloc(sizeof(struct wlp_device_info), GFP_KERNEL);
+	if (wlp->wdi == NULL) {
 		dev_err(dev, "WLP: Unable to allocate memory for "
 			"device information.\n");
 		return -ENOMEM;
@@ -59,7 +59,7 @@ int __wlp_alloc_device_info(struct wlp *wlp)
 static
 void __wlp_fill_device_info(struct wlp *wlp)
 {
-	wlp->fill_device_info(wlp, wlp->dev_info);
+	wlp->fill_device_info(wlp, wlp->wdi);
 }
 
 /**
@@ -539,8 +539,8 @@ void wlp_remove(struct wlp *wlp)
 	uwb_notifs_deregister(wlp->rc, &wlp->uwb_notifs_handler);
 	wlp_eda_release(&wlp->eda);
 	mutex_lock(&wlp->mutex);
-	if (wlp->dev_info != NULL)
-		kfree(wlp->dev_info);
+	if (wlp->wdi != NULL)
+		kfree(wlp->wdi);
 	mutex_unlock(&wlp->mutex);
 	wlp->rc = NULL;
 }
