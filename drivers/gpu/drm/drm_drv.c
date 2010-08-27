@@ -504,7 +504,13 @@ long drm_ioctl(struct file *filp,
 		} else
 			memset(kdata, 0, _IOC_SIZE(cmd));
 
-		retcode = func(dev, kdata, file_priv);
+		if (ioctl->flags & DRM_UNLOCKED)
+			retcode = func(dev, kdata, file_priv);
+		else {
+			lock_kernel();
+			retcode = func(dev, kdata, file_priv);
+			unlock_kernel();
+		}
 
 		if (cmd & IOC_OUT) {
 			if (copy_to_user((void __user *)arg, kdata,
