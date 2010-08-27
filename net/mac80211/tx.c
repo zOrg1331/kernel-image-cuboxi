@@ -351,8 +351,8 @@ static void purge_old_ps_buffers(struct ieee80211_local *local)
 
 	local->total_ps_buffered = total;
 #ifdef CONFIG_MAC80211_VERBOSE_PS_DEBUG
-	printk(KERN_DEBUG "%s: PS buffers full - purged %d frames\n",
-	       wiphy_name(local->hw.wiphy), purged);
+	wiphy_debug(local->hw.wiphy, "PS buffers full - purged %d frames\n",
+		    purged);
 #endif
 }
 
@@ -543,15 +543,16 @@ ieee80211_tx_h_select_key(struct ieee80211_tx_data *tx)
 		tx->key->tx_rx_count++;
 		/* TODO: add threshold stuff again */
 
-		switch (tx->key->conf.alg) {
-		case ALG_WEP:
+		switch (tx->key->conf.cipher) {
+		case WLAN_CIPHER_SUITE_WEP40:
+		case WLAN_CIPHER_SUITE_WEP104:
 			if (ieee80211_is_auth(hdr->frame_control))
 				break;
-		case ALG_TKIP:
+		case WLAN_CIPHER_SUITE_TKIP:
 			if (!ieee80211_is_data_present(hdr->frame_control))
 				tx->key = NULL;
 			break;
-		case ALG_CCMP:
+		case WLAN_CIPHER_SUITE_CCMP:
 			if (!ieee80211_is_data_present(hdr->frame_control) &&
 			    !ieee80211_use_mfp(hdr->frame_control, tx->sta,
 					       tx->skb))
@@ -561,7 +562,7 @@ ieee80211_tx_h_select_key(struct ieee80211_tx_data *tx)
 					   IEEE80211_KEY_FLAG_SW_MGMT) &&
 					ieee80211_is_mgmt(hdr->frame_control);
 			break;
-		case ALG_AES_CMAC:
+		case WLAN_CIPHER_SUITE_AES_CMAC:
 			if (!ieee80211_is_mgmt(hdr->frame_control))
 				tx->key = NULL;
 			break;
@@ -949,14 +950,15 @@ ieee80211_tx_h_encrypt(struct ieee80211_tx_data *tx)
 	if (!tx->key)
 		return TX_CONTINUE;
 
-	switch (tx->key->conf.alg) {
-	case ALG_WEP:
+	switch (tx->key->conf.cipher) {
+	case WLAN_CIPHER_SUITE_WEP40:
+	case WLAN_CIPHER_SUITE_WEP104:
 		return ieee80211_crypto_wep_encrypt(tx);
-	case ALG_TKIP:
+	case WLAN_CIPHER_SUITE_TKIP:
 		return ieee80211_crypto_tkip_encrypt(tx);
-	case ALG_CCMP:
+	case WLAN_CIPHER_SUITE_CCMP:
 		return ieee80211_crypto_ccmp_encrypt(tx);
-	case ALG_AES_CMAC:
+	case WLAN_CIPHER_SUITE_AES_CMAC:
 		return ieee80211_crypto_aes_cmac_encrypt(tx);
 	}
 
@@ -1511,8 +1513,8 @@ static int ieee80211_skb_resize(struct ieee80211_local *local,
 		I802_DEBUG_INC(local->tx_expand_skb_head);
 
 	if (pskb_expand_head(skb, head_need, tail_need, GFP_ATOMIC)) {
-		printk(KERN_DEBUG "%s: failed to reallocate TX buffer\n",
-		       wiphy_name(local->hw.wiphy));
+		wiphy_debug(local->hw.wiphy,
+			    "failed to reallocate TX buffer\n");
 		return -ENOMEM;
 	}
 
@@ -1699,7 +1701,7 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
 	u16 ethertype, hdrlen,  meshhdrlen = 0;
 	__le16 fc;
 	struct ieee80211_hdr hdr;
-	struct ieee80211s_hdr mesh_hdr;
+	struct ieee80211s_hdr mesh_hdr __maybe_unused;
 	const u8 *encaps_data;
 	int encaps_len, skip_header_bytes;
 	int nh_pos, h_pos;

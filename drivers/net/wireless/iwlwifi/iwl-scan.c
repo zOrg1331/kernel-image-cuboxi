@@ -206,7 +206,6 @@ static void iwl_rx_scan_results_notif(struct iwl_priv *priv,
 static void iwl_rx_scan_complete_notif(struct iwl_priv *priv,
 				       struct iwl_rx_mem_buffer *rxb)
 {
-#ifdef CONFIG_IWLWIFI_DEBUG
 	struct iwl_rx_packet *pkt = rxb_addr(rxb);
 	struct iwl_scancomplete_notification *scan_notif = (void *)pkt->u.raw;
 
@@ -214,7 +213,6 @@ static void iwl_rx_scan_complete_notif(struct iwl_priv *priv,
 		       scan_notif->scanned_channels,
 		       scan_notif->tsf_low,
 		       scan_notif->tsf_high, scan_notif->status);
-#endif
 
 	/* The HW is no longer scanning */
 	clear_bit(STATUS_SCAN_HW, &priv->status);
@@ -236,6 +234,26 @@ static void iwl_rx_scan_complete_notif(struct iwl_priv *priv,
 
 	clear_bit(STATUS_SCANNING, &priv->status);
 
+	if (priv->iw_mode != NL80211_IFTYPE_ADHOC &&
+	    priv->cfg->advanced_bt_coexist && priv->bt_status !=
+	    scan_notif->bt_status) {
+		if (scan_notif->bt_status) {
+			/* BT on */
+			if (!priv->bt_ch_announce)
+				priv->bt_traffic_load =
+					IWL_BT_COEX_TRAFFIC_LOAD_HIGH;
+			/*
+			 * otherwise, no traffic load information provided
+			 * no changes made
+			 */
+		} else {
+			/* BT off */
+			priv->bt_traffic_load =
+				IWL_BT_COEX_TRAFFIC_LOAD_NONE;
+		}
+		priv->bt_status = scan_notif->bt_status;
+		queue_work(priv->workqueue, &priv->bt_traffic_change_work);
+	}
 	queue_work(priv->workqueue, &priv->scan_completed);
 }
 
@@ -378,7 +396,7 @@ void iwl_internal_short_hw_scan(struct iwl_priv *priv)
 	queue_work(priv->workqueue, &priv->start_internal_scan);
 }
 
-void iwl_bg_start_internal_scan(struct work_struct *work)
+static void iwl_bg_start_internal_scan(struct work_struct *work)
 {
 	struct iwl_priv *priv =
 		container_of(work, struct iwl_priv, start_internal_scan);
@@ -418,9 +436,8 @@ void iwl_bg_start_internal_scan(struct work_struct *work)
  unlock:
 	mutex_unlock(&priv->mutex);
 }
-EXPORT_SYMBOL(iwl_bg_start_internal_scan);
 
-void iwl_bg_scan_check(struct work_struct *data)
+static void iwl_bg_scan_check(struct work_struct *data)
 {
 	struct iwl_priv *priv =
 	    container_of(data, struct iwl_priv, scan_check.work);
@@ -439,7 +456,6 @@ void iwl_bg_scan_check(struct work_struct *data)
 	}
 	mutex_unlock(&priv->mutex);
 }
-EXPORT_SYMBOL(iwl_bg_scan_check);
 
 /**
  * iwl_fill_probe_req - fill in all required fields and IE for probe request
@@ -489,7 +505,7 @@ u16 iwl_fill_probe_req(struct iwl_priv *priv, struct ieee80211_mgmt *frame,
 }
 EXPORT_SYMBOL(iwl_fill_probe_req);
 
-void iwl_bg_abort_scan(struct work_struct *work)
+static void iwl_bg_abort_scan(struct work_struct *work)
 {
 	struct iwl_priv *priv = container_of(work, struct iwl_priv, abort_scan);
 
@@ -504,13 +520,13 @@ void iwl_bg_abort_scan(struct work_struct *work)
 		iwl_send_scan_abort(priv);
 	mutex_unlock(&priv->mutex);
 }
-EXPORT_SYMBOL(iwl_bg_abort_scan);
 
-void iwl_bg_scan_completed(struct work_struct *work)
+static void iwl_bg_scan_completed(struct work_struct *work)
 {
 	struct iwl_priv *priv =
 	    container_of(work, struct iwl_priv, scan_completed);
 	bool internal = false;
+	bool scan_completed = false;
 
 	IWL_DEBUG_SCAN(priv, "SCAN complete scan\n");
 
@@ -521,7 +537,8 @@ void iwl_bg_scan_completed(struct work_struct *work)
 		priv->is_internal_short_scan = false;
 		IWL_DEBUG_SCAN(priv, "internal short scan completed\n");
 		internal = true;
-	} else {
+	} else if (priv->scan_request) {
+		scan_completed = true;
 		priv->scan_request = NULL;
 		priv->scan_vif = NULL;
 	}
@@ -552,10 +569,9 @@ void iwl_bg_scan_completed(struct work_struct *work)
 	 * into driver again into functions that will attempt to take
 	 * mutex.
 	 */
-	if (!internal)
+	if (scan_completed)
 		ieee80211_scan_completed(priv->hw, false);
 }
-EXPORT_SYMBOL(iwl_bg_scan_completed);
 
 void iwl_setup_scan_deferred_work(struct iwl_priv *priv)
 {
