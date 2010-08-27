@@ -1009,7 +1009,7 @@ config SENSORS_APPLESMC
 	  the awesome power of applesmc.
 
 config THINKPAD_EC
-	tristate
+	tristate "ThinkPad embedded controller"
 	depends on X86
 	  ---help---
 	  This is a low-level driver for accessing the ThinkPad H8S embedded
