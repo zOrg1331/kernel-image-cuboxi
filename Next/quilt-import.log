@@ -1,0 +1,59 @@
+Importing driver-core.current based on 2.6.36-rc2
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.36-rc2-git4
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard d4348c678977c7093438bbbf2067c49396ae941b
+HEAD is now at d4348c6 Merge branch 'perf-fixes-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-simplify-i2c_parent_is_i2c_adapter.patch
+i2c-i2c_parent_is_i2c_adapter-returns-parent.patch
+i2c-remove-obsolete-cleanup-for-clientdata.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 947cfbc...94caa3e master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.36-rc2-git4
+$ cd ../quilt-tmp
+$ git reset --hard d4348c678977c7093438bbbf2067c49396ae941b
+HEAD is now at d4348c6 Merge branch 'perf-fixes-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k8temp-02-remove-superfluous-cpu-family-check.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + e6112bf...2b60a0a master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.36-rc2
+$ cd ../quilt-tmp
+$ git reset --hard 76be97c1fc945db08aae1f1b746012662d643e97
+HEAD is now at 76be97c Linux 2.6.36-rc2
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+scr-kerndoc-attrib-nocase.patch
+docbook-warn-unused-docs-v2.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:92: space before tab in indent.
+        	if (strcmp(vec[i], FUNCTION))
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:93: space before tab in indent.
+        		continue;
+warning: 2 lines add whitespace errors.
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+   9fe6206..ad6163d  master     -> quilt/kernel-doc
+Importing rr based on v2.6.35-7786-gad41a1e
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.36-rc1
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
