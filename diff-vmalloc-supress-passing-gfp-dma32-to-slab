@@ -1,0 +1,16 @@
+diff --git a/mm/vmalloc.c b/mm/vmalloc.c
+index 8a6c894..b94fda8 100644
+--- a/mm/vmalloc.c
++++ b/mm/vmalloc.c
+@@ -501,7 +501,11 @@ void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
+ 		area->flags |= VM_VPAGES;
+ 	} else {
+ 		pages = kmalloc_node(array_size,
++#ifdef CONFIG_DMA_IS_DMA32
+ 				(gfp_mask & ~(__GFP_HIGHMEM | __GFP_ZERO)),
++#else
++				(gfp_mask & ~(__GFP_HIGHMEM | __GFP_ZERO | __GFP_DMA32)),
++#endif
+ 				node);
+ 	}
+ 	area->pages = pages;

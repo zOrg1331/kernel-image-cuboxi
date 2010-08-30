@@ -5,7 +5,7 @@
 %define with_headers   1
 %define with_openafs   0
 %define ovzver 028stab070
-%define ovzrel 2
+%define ovzrel 4
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -4914,6 +4914,8 @@ Patch100025: diff-ms-alow-ve0-exceed-threads-max
 Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100028: diff-rh-bond802.3ad-slave-speed-20100421
+Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
+Patch100030: diff-cfq-iosched-zero-async-queue-after-put-20100817
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -9696,6 +9698,8 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100026 -p1
 %patch100027 -p1
 %patch100028 -p1
+%patch100029 -p1
+%patch100030 -p1
 
 %patch101000 -p1
 %patch101001 -p1
