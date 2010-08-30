@@ -446,6 +446,7 @@ int load_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi)
 	nilfs_mdt_destroy(nilfs->ns_cpfile);
 	nilfs_mdt_destroy(nilfs->ns_sufile);
 	nilfs_mdt_destroy(nilfs->ns_dat);
+	nilfs_mdt_destroy(nilfs->ns_gc_dat);
 
  failed:
 	nilfs_clear_recovery_info(&ri);
@@ -467,8 +468,8 @@ static unsigned long long nilfs_max_size(unsigned int blkbits)
 static int nilfs_store_disk_layout(struct the_nilfs *nilfs,
 				   struct nilfs_super_block *sbp)
 {
-	if (le32_to_cpu(sbp->s_rev_level) != NILFS_CURRENT_REV) {
-		printk(KERN_ERR "NILFS: revision mismatch "
+	if (le32_to_cpu(sbp->s_rev_level) < NILFS_MIN_SUPP_REV) {
+		printk(KERN_ERR "NILFS: unsupported revision "
 		       "(superblock rev.=%d.%d, current rev.=%d.%d). "
 		       "Please check the version of mkfs.nilfs.\n",
 		       le32_to_cpu(sbp->s_rev_level),
