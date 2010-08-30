@@ -31,7 +31,7 @@ etercifs
 
 #telephony drivers
 dahdi
-wanpipe
+#wanpipe
 cronyx
 
 #network block devices and cluster filesystems
