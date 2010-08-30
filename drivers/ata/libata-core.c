@@ -68,7 +68,7 @@
 #include <linux/ratelimit.h>
 
 #include "libata.h"
-
+#include "libata-transport.h"
 
 /* debounce timing parameters in msecs { interval, duration, timeout } */
 const unsigned long sata_deb_timing_normal[]		= {   5,  100, 2000 };
@@ -1017,7 +1017,7 @@ const char *ata_mode_string(unsigned long xfer_mask)
 	return "<n/a>";
 }
 
-static const char *sata_spd_string(unsigned int spd)
+const char *sata_spd_string(unsigned int spd)
 {
 	static const char * const spd_str[] = {
 		"1.5 Gbps",
@@ -4943,8 +4943,13 @@ static void ata_verify_xfer(struct ata_queued_cmd *qc)
  *	ata_qc_complete - Complete an active ATA command
  *	@qc: Command to complete
  *
- *	Indicate to the mid and upper layers that an ATA
- *	command has completed, with either an ok or not-ok status.
+ *	Indicate to the mid and upper layers that an ATA command has
+ *	completed, with either an ok or not-ok status.
+ *
+ *	Refrain from calling this function multiple times when
+ *	successfully completing multiple NCQ commands.
+ *	ata_qc_complete_multiple() should be used instead, which will
+ *	properly update IRQ expect state.
  *
  *	LOCKING:
  *	spin_lock_irqsave(host lock)
@@ -5036,6 +5041,10 @@ void ata_qc_complete(struct ata_queued_cmd *qc)
  *	called from low-level driver's interrupt routine to complete
  *	requests normally.  ap->qc_active and @qc_active is compared
  *	and commands are completed accordingly.
+ *
+ *	Always use this function when completing multiple NCQ commands
+ *	from IRQ handlers instead of calling ata_qc_complete()
+ *	multiple times to keep IRQ expect status properly in sync.
  *
  *	LOCKING:
  *	spin_lock_irqsave(host lock)
@@ -5505,7 +5514,8 @@ void ata_link_init(struct ata_port *ap, struct ata_link *link, int pmp)
 	int i;
 
 	/* clear everything except for devices */
-	memset(link, 0, offsetof(struct ata_link, device[0]));
+	memset((void *)link + ATA_LINK_CLEAR_BEGIN, 0,
+	       ATA_LINK_CLEAR_END - ATA_LINK_CLEAR_BEGIN);
 
 	link->ap = ap;
 	link->pmp = pmp;
@@ -5579,7 +5589,7 @@ struct ata_port *ata_port_alloc(struct ata_host *host)
 	ap = kzalloc(sizeof(*ap), GFP_KERNEL);
 	if (!ap)
 		return NULL;
-
+	
 	ap->pflags |= ATA_PFLAG_INITIALIZING;
 	ap->lock = &host->lock;
 	ap->print_id = -1;
@@ -6081,9 +6091,18 @@ int ata_host_register(struct ata_host *host, struct scsi_host_template *sht)
 	for (i = 0; i < host->n_ports; i++)
 		host->ports[i]->print_id = ata_print_id++;
 
+	
+	/* Create associated sysfs transport objects  */
+	for (i = 0; i < host->n_ports; i++) {
+		rc = ata_tport_add(host->dev,host->ports[i]);
+		if (rc) {
+			goto err_tadd;
+		}
+	}
+
 	rc = ata_scsi_add_hosts(host, sht);
 	if (rc)
-		return rc;
+		goto err_tadd;
 
 	/* associate with ACPI nodes */
 	ata_acpi_associate(host);
@@ -6124,6 +6143,13 @@ int ata_host_register(struct ata_host *host, struct scsi_host_template *sht)
 	}
 
 	return 0;
+
+ err_tadd:
+	while (--i >= 0) {
+		ata_tport_delete(host->ports[i]);
+	}
+	return rc;
+
 }
 
 /**
@@ -6214,6 +6240,13 @@ static void ata_port_detach(struct ata_port *ap)
 	cancel_rearming_delayed_work(&ap->hotplug_task);
 
  skip_eh:
+	if (ap->pmp_link) {
+		int i;
+		for (i = 0; i < SATA_PMP_MAX_PORTS; i++)
+			ata_tlink_delete(&ap->pmp_link[i]);
+	}
+	ata_tport_delete(ap);
+
 	/* remove the associated SCSI host */
 	scsi_remove_host(ap->scsi_host);
 }
@@ -6530,7 +6563,7 @@ static void __init ata_parse_force_param(void)
 
 static int __init ata_init(void)
 {
-	int rc = -ENOMEM;
+	int rc;
 
 	ata_parse_force_param();
 
@@ -6540,12 +6573,25 @@ static int __init ata_init(void)
 		return rc;
 	}
 
+	libata_transport_init();
+	ata_scsi_transport_template = ata_attach_transport();
+	if (!ata_scsi_transport_template) {
+		ata_sff_exit();
+		rc = -ENOMEM;
+		goto err_out;
+	}		
+
 	printk(KERN_DEBUG "libata version " DRV_VERSION " loaded.\n");
 	return 0;
+
+err_out:
+	return rc;
 }
 
 static void __exit ata_exit(void)
 {
+	ata_release_transport(ata_scsi_transport_template);
+	libata_transport_exit();
 	ata_sff_exit();
 	kfree(ata_force_tbl);
 }
