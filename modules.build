@@ -3,7 +3,7 @@ fglrx
 nvidia
 
 #network card drivers
-igb
+#igb
 
 #wireless network card drivers
 ndiswrapper
