@@ -1,6 +1,6 @@
 Name: kernel-image-el-smp
 Version: 2.6.32
-Release: alt6
+Release: alt7
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -545,6 +545,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/ -name "*.o*" -delete
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Tue Aug 31 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt7
+- nouveau drm moved to subpackage
+
 * Wed Aug 25 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt6
 - build with gcc4.4
 
