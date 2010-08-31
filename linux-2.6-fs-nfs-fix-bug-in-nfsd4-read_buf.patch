@@ -1,0 +1,69 @@
+From: Jiri Olsa <jolsa@redhat.com>
+Date: Tue, 13 Jul 2010 12:47:55 -0400
+Subject: [fs] nfs: fix bug in nfsd4 read_buf
+Message-id: <1279025275-6967-1-git-send-email-jolsa@redhat.com>
+Patchwork-id: 26836
+O-Subject: [PATCH RHEL5] BZ 612035 - CVE-2010-2521 kernel: nfsd4: bug in read_buf
+Bugzilla: 612035
+CVE: CVE-2010-2521
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Bugzilla: 612035
+https://bugzilla.redhat.com/show_bug.cgi?id=612035
+
+Description:
+============
+When read_buf is called to move over to the next page in the pagelist
+of an NFSv4 request, it sets argp->end to essentially a random
+number, certainly not an address within the page which argp->p now
+points to.  So subsequent calls to READ_BUF will think there is much
+more than a page of spare space (the cast to u32 ensures an unsigned
+comparison) so we can expect to fall off the end of the second
+page.
+
+Upstream status:
+================
+- nfsd4: bug in read_buf
+  commit 2bc3c1179c781b359d4f2f3439cb3df72afc17fc
+  Author: Neil Brown <neilb@suse.de>
+
+Brew:
+=====
+https://brewweb.devel.redhat.com/taskinfo?taskID=2589512
+
+Tested:
+=======
+booted, exported nfs mount
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index 810d9ff..8786256 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -164,10 +164,10 @@ static u32 *read_buf(struct nfsd4_compoundargs *argp, int nbytes)
+ 	argp->p = page_address(argp->pagelist[0]);
+ 	argp->pagelist++;
+ 	if (argp->pagelen < PAGE_SIZE) {
+-		argp->end = p + (argp->pagelen>>2);
++		argp->end = argp->p + (argp->pagelen>>2);
+ 		argp->pagelen = 0;
+ 	} else {
+-		argp->end = p + (PAGE_SIZE>>2);
++		argp->end = argp->p + (PAGE_SIZE>>2);
+ 		argp->pagelen -= PAGE_SIZE;
+ 	}
+ 	memcpy(((char*)p)+avail, argp->p, (nbytes - avail));
+@@ -1033,10 +1033,10 @@ nfsd4_decode_compound(struct nfsd4_compoundargs *argp)
+ 			argp->p = page_address(argp->pagelist[0]);
+ 			argp->pagelist++;
+ 			if (argp->pagelen < PAGE_SIZE) {
+-				argp->end = p + (argp->pagelen>>2);
++				argp->end = argp->p + (argp->pagelen>>2);
+ 				argp->pagelen = 0;
+ 			} else {
+-				argp->end = p + (PAGE_SIZE>>2);
++				argp->end = argp->p + (PAGE_SIZE>>2);
+ 				argp->pagelen -= PAGE_SIZE;
+ 			}
+ 		}

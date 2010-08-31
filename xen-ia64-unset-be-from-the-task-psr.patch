@@ -1,0 +1,62 @@
+From: Andrew Jones <drjones@redhat.com>
+Date: Thu, 10 Jun 2010 15:01:23 -0400
+Subject: [xen] ia64: unset be from the task psr
+Message-id: <1276182083-20998-1-git-send-email-drjones@redhat.com>
+Patchwork-id: 26076
+O-Subject: [RHEL 5.6 PATCH] ia64-xen: unset be from the task psr
+Bugzilla: 587477
+CVE: CVE-2010-2070
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Alex Williamson <alex.williamson@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=586415
+
+A DoS is possible when an unprivileged task turns on BE by modifying
+the user mask of the PSR. This patch ensures that if we're not actually
+in BE mode then we unset the bit from the task's PSR. This is a backport
+of upstream changeset 16009:"[IA64] Make Big-Endian appliation run on
+top of dom0 and domU", and also of the two relevant BE checking lines
+from changeset 15768.
+
+brew:https://brewweb.devel.redhat.com/taskinfo?taskID=2509324
+Tested by me on both dom0 and domU.
+---
+ arch/ia64/xen/faults.c |    9 +++++++++
+ 1 files changed, 9 insertions(+), 0 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/ia64/xen/faults.c b/arch/ia64/xen/faults.c
+index ba0b927..d905cc9 100644
+--- a/arch/ia64/xen/faults.c
++++ b/arch/ia64/xen/faults.c
+@@ -93,6 +93,8 @@ void reflect_interruption(unsigned long isr, struct pt_regs *regs,
+ 	regs->cr_ipsr = (regs->cr_ipsr & ~DELIVER_PSR_CLR) | DELIVER_PSR_SET;
+ 	if (PSCB(v, dcr) & IA64_DCR_BE)
+ 		regs->cr_ipsr |= IA64_PSR_BE;
++	else
++		regs->cr_ipsr &= ~IA64_PSR_BE;
+ 
+ 	if (PSCB(v, hpsr_dfh))
+ 		regs->cr_ipsr |= IA64_PSR_DFH;  
+@@ -158,6 +160,8 @@ void reflect_event(void)
+ 	regs->cr_ipsr = (regs->cr_ipsr & ~DELIVER_PSR_CLR) | DELIVER_PSR_SET;
+ 	if (PSCB(v, dcr) & IA64_DCR_BE)
+ 		regs->cr_ipsr |= IA64_PSR_BE;
++	else
++		regs->cr_ipsr &= ~IA64_PSR_BE;
+ 
+ 	if (PSCB(v, hpsr_dfh))
+ 		regs->cr_ipsr |= IA64_PSR_DFH;
+@@ -272,6 +276,11 @@ void ia64_do_page_fault(unsigned long address, unsigned long isr,
+ 		regs->cr_ipsr =
+ 		    (regs->cr_ipsr & ~DELIVER_PSR_CLR) | DELIVER_PSR_SET;
+ 
++		if (PSCB(current, dcr) & IA64_DCR_BE)
++			regs->cr_ipsr |= IA64_PSR_BE;
++		else
++			regs->cr_ipsr &= ~IA64_PSR_BE;
++
+ 		if (PSCB(current, hpsr_dfh))
+ 			regs->cr_ipsr |= IA64_PSR_DFH;  
+ 		PSCB(current, vpsr_dfh) = 0;

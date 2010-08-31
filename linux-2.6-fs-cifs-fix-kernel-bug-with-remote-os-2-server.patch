@@ -1,0 +1,88 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 29 Jun 2010 19:07:21 -0400
+Subject: [fs] cifs: fix kernel BUG with remote OS/2 server
+Message-id: <1277838441-31170-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 26628
+O-Subject: [RHEL5.6 PATCH] BZ#608588: cifs: Fix a kernel BUG with remote OS/2
+	server (try #3)
+Bugzilla: 608588
+CVE: CVE-2010-2248
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+From: Suresh Jayaraman <sjayaraman@suse.de>
+
+The following patch went upstream a couple of months or so ago. With this bug,
+it's possible that a malicious server could crash a client that's writing to
+it, so it's a security issue.
+
+The problem is due to some nebulousness in the specs for CIFS. The SNIA CIFS
+spec states that a 16 bit word in the WRITE_ANDX response is "CountHigh" --
+the upper couple of bytes that indicates how much was written. The official MS
+document though says that this word is reserved and must be set to 0. Most
+servers do set this to 0, unless they allow very large writes, but some OS/2
+servers put garbage in here, and that confuses the Linux client. The fix is to
+mask off the high 16 bits whenever the response indicates that more was
+written than was requested.
+
+I've run this through the normal gamut of tests, but don't have access to any
+servers that behave this way so don't have a great way to verify the fix.
+Suresh apparently did so on a more recent kernel however.
+
+-------------------------------[snip]----------------------------
+
+While chasing a bug report involving a OS/2 server, I noticed the server sets
+pSMBr->CountHigh to a incorrect value even in case of normal writes. This
+results in 'nbytes' being computed wrongly and triggers a kernel BUG at
+mm/filemap.c.
+
+void iov_iter_advance(struct iov_iter *i, size_t bytes)
+{
+        BUG_ON(i->count < bytes);    <--- BUG here
+
+Why the server is setting 'CountHigh' is not clear but only does so after
+writing 64k bytes. Though this looks like the server bug, the client side
+crash may not be acceptable.
+
+The workaround is to mask off high 16 bits if the number of bytes written as
+returned by the server is greater than the bytes requested by the client as
+suggested by Jeff Layton.
+
+CC: Stable <stable@kernel.org>
+Reviewed-by: Jeff Layton <jlayton@samba.org>
+Signed-off-by: Suresh Jayaraman <sjayaraman@suse.de>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index f112010..3cb16b9 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -1588,6 +1588,14 @@ CIFSSMBWrite(const int xid, struct cifsTconInfo *tcon,
+ 		*nbytes = le16_to_cpu(pSMBr->CountHigh);
+ 		*nbytes = (*nbytes) << 16;
+ 		*nbytes += le16_to_cpu(pSMBr->Count);
++
++		/*
++		 * Mask off high 16 bits when bytes written as returned by the
++		 * server is greater than bytes requested by the client. Some
++		 * OS/2 servers are known to set incorrect CountHigh values.
++		 */
++		if (*nbytes > count)
++			*nbytes &= 0xFFFF;
+ 	}
+ 
+ 	cifs_buf_release(pSMB);
+@@ -1676,6 +1684,14 @@ CIFSSMBWrite2(const int xid, struct cifsTconInfo *tcon,
+ 		*nbytes = le16_to_cpu(pSMBr->CountHigh);
+ 		*nbytes = (*nbytes) << 16;
+ 		*nbytes += le16_to_cpu(pSMBr->Count);
++
++		/*
++		 * Mask off high 16 bits when bytes written as returned by the
++		 * server is greater than bytes requested by the client. OS/2
++		 * servers are known to set incorrect CountHigh values.
++		 */
++		if (*nbytes > count)
++			*nbytes &= 0xFFFF;
+ 	}
+ 
+ /*	cifs_small_buf_release(pSMB); */ /* Freed earlier now in SendReceive2 */
