@@ -233,8 +233,6 @@ static int iic_host_match(struct irq_host *h, struct device_node *node)
 				    "IBM,CBEA-Internal-Interrupt-Controller");
 }
 
-extern int noirqdebug;
-
 static void handle_iic_irq(unsigned int irq, struct irq_desc *desc)
 {
 	raw_spin_lock(&desc->lock);
@@ -267,8 +265,7 @@ static void handle_iic_irq(unsigned int irq, struct irq_desc *desc)
 		desc->status &= ~IRQ_PENDING;
 		raw_spin_unlock(&desc->lock);
 		action_ret = handle_IRQ_event(irq, action);
-		if (!noirqdebug)
-			note_interrupt(irq, desc, action_ret);
+		note_interrupt(irq, desc, action_ret);
 		raw_spin_lock(&desc->lock);
 
 	} while ((desc->status & (IRQ_PENDING | IRQ_DISABLED)) == IRQ_PENDING);
