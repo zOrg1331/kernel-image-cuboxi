@@ -255,7 +255,6 @@ struct kvm_mmu {
 };
 
 struct kvm_vcpu_arch {
-	u64 host_tsc;
 	/*
 	 * rip and regs accesses must go through
 	 * kvm_{register,rip}_{read,write} functions.
@@ -336,9 +335,12 @@ struct kvm_vcpu_arch {
 
 	gpa_t time;
 	struct pvclock_vcpu_time_info hv_clock;
-	unsigned int hv_clock_tsc_khz;
+	unsigned int hw_tsc_khz;
 	unsigned int time_offset;
 	struct page *time_page;
+	u64 last_host_tsc;
+	u64 last_guest_tsc;
+	u64 last_kernel_ns;
 
 	bool nmi_pending;
 	bool nmi_injected;
@@ -367,9 +369,9 @@ struct kvm_vcpu_arch {
 };
 
 struct kvm_arch {
-	unsigned int n_free_mmu_pages;
+	unsigned int n_used_mmu_pages;
 	unsigned int n_requested_mmu_pages;
-	unsigned int n_alloc_mmu_pages;
+	unsigned int n_max_mmu_pages;
 	atomic_t invlpg_counter;
 	struct hlist_head mmu_page_hash[KVM_NUM_MMU_PAGES];
 	/*
@@ -394,8 +396,11 @@ struct kvm_arch {
 	gpa_t ept_identity_map_addr;
 
 	unsigned long irq_sources_bitmap;
-	u64 vm_init_tsc;
 	s64 kvmclock_offset;
+	spinlock_t tsc_write_lock;
+	u64 last_tsc_nsec;
+	u64 last_tsc_offset;
+	u64 last_tsc_write;
 
 	struct kvm_xen_hvm_config xen_hvm_config;
 
@@ -517,10 +522,13 @@ struct kvm_x86_ops {
 	u64 (*get_mt_mask)(struct kvm_vcpu *vcpu, gfn_t gfn, bool is_mmio);
 	int (*get_lpage_level)(void);
 	bool (*rdtscp_supported)(void);
+	void (*adjust_tsc_offset)(struct kvm_vcpu *vcpu, s64 adjustment);
 
 	void (*set_supported_cpuid)(u32 func, struct kvm_cpuid_entry2 *entry);
 
 	bool (*has_wbinvd_exit)(void);
+
+	void (*write_tsc_offset)(struct kvm_vcpu *vcpu, u64 offset);
 
 	const struct trace_print_flags *exit_reasons_str;
 };
