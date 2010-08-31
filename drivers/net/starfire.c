@@ -2078,7 +2078,11 @@ static int __init starfire_init (void)
 	printk(KERN_INFO DRV_NAME ": polling (NAPI) enabled\n");
 #endif
 
-	BUILD_BUG_ON(sizeof(dma_addr_t) != sizeof(netdrv_addr_t));
+	/* we can do this test only at run-time... sigh */
+	if (sizeof(dma_addr_t) != sizeof(netdrv_addr_t)) {
+		printk("This driver has dma_addr_t issues, please send email to maintainer\n");
+		return -ENODEV;
+	}
 
 	return pci_register_driver(&starfire_driver);
 }
