@@ -1,0 +1,50 @@
+Importing driver-core.current based on 2.6.36-rc3
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core.current 2bfc96a127bc1cc94d26bfaa40159966064f9c8c
+Importing tty.current based on quilt/driver-core.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty.current 2bfc96a127bc1cc94d26bfaa40159966064f9c8c
+Importing usb.current based on quilt/tty.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb.current 2bfc96a127bc1cc94d26bfaa40159966064f9c8c
+Importing staging.current based on quilt/usb.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 2bfc96a127bc1cc94d26bfaa40159966064f9c8c
+HEAD is now at 2bfc96a Linux 2.6.36-rc3
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-hv-fix-missing-functions-for-net_device_ops.patch
+staging-hv-fixed-bounce-kmap-problem-by-using-correct-index.patch
+staging-hv-fixed-the-value-of-the-64bit-hole-inside-ring-buffer.patch
+staging-hv-increased-storvsc-ringbuffer-and-max_io_requests.patch
+staging-spectra-needs-linux-slab.h.patch
+staging-comedi-das08_cs.c-fix-io_req_t-conversion.patch
+staging-rt2870sta-add-more-device-ids-from-vendor-drivers.patch
+staging-zram-free-device-memory-when-init-fails.patch
+staging-spectra-depend-on-x86_mrst.patch
+staging-octeon-depends-on-netdevices.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 34d31af...3eea054 master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.36-rc2-git4
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.36-rc2-git4
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.36-rc2
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-7786-gad41a1e
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.36-rc1
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core 3eea054e9d01ed3737fe5e3e42d43fc40d717f0b
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty 3eea054e9d01ed3737fe5e3e42d43fc40d717f0b
+Importing usb based on quilt/tty
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb 3eea054e9d01ed3737fe5e3e42d43fc40d717f0b
