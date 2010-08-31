@@ -1080,7 +1080,6 @@ nogood:
 	ep->hcpriv = NULL;
 done:
 	spin_unlock_irqrestore (&ehci->lock, flags);
-	return;
 }
 
 static void
