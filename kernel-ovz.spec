@@ -38,7 +38,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt13.M51.9
+%define krelease alt13.M51.10
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -10334,6 +10334,20 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Tue Aug 31 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.10
+- Release of 2.6.18-194.11.1.el5 028stab071.2
+- RHSA-2010-0610:
+ * CVE-2010-1084: kernel: bluetooth: potential bad memory access with
+   sysfs files
+ * CVE-2010-2066: kernel: ext4: Make sure the MOVE_EXT ioctl can't
+   overwrite append-only files
+ * CVE-2010-2070: /kernel/security/CVE-2006-0742 test cause kernel-xen
+   panic on ia64
+ * CVE-2010-2226: kernel: xfs swapext ioctl minor security issue
+ * CVE-2010-2248: kernel: cifs: Fix a kernel BUG with remote OS/2 server
+ * CVE-2010-2521: kernel: nfsd4: bug in read_buf
+ * CVE-2010-2524: kernel: dns_resolver upcall security issue
+
 * Sat Jul 24 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.9
 - Release of 2.6.18-194.8.1.el5 028stab070.2
 
