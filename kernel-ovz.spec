@@ -13,7 +13,7 @@
 %define _without_kabichk 1
 
 %define ovzver 028stab071
-%define ovzrel 2
+%define ovzrel 3
 
 %if !%{buildup}
 %define _without_up 1
@@ -138,7 +138,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define sublevel 18
 %define kversion 2.6.%{sublevel}
 %define rpmversion 2.6.%{sublevel}
-%define release 194.11.1%{?dist}%{?buildid}
+%define release 194.11.3%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -5172,6 +5172,12 @@ Patch25149: linux-2.6-fs-cifs-reject-dns-upcall-add_key-req-from-userspace.patch
 Patch25150: linux-2.6-fs-nfs-fix-bug-in-nfsd4-read_buf.patch
 Patch25151: linux-2.6-fs-xfs-don-t-let-swapext-operate-on-write-only-files.patch
 Patch25152: linux-2.6-scsi-qla2xxx-update-firmware-to-version-5-03-02.patch
+Patch25153: linux-2.6-mm-keep-a-guard-page-below-a-grow-down-stack-segment.patch
+Patch25154: linux-2.6-mm-fix-missing-unmap-for-stack-guard-page-failure-case.patch
+Patch25155: linux-2.6-mm-fix-page-table-unmap-for-stack-guard-page-properly.patch
+Patch25156: linux-2.6-mm-fix-up-some-user-visible-effects-of-stack-guard-page.patch
+Patch25157: linux-2.6-mm-pass-correct-mm-when-growing-stack.patch
+Patch25158: linux-2.6-mm-accept-an-abutting-stack-segment.patch
 
 Patch30000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch30001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -5268,6 +5274,8 @@ Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100028: diff-rh-bond802.3ad-slave-speed-20100421
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
+Patch100034: diff-dcache-dput-fast-path-without-dcache-lock-20100706
+
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -10264,6 +10272,12 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch25150 -p1
 %patch25151 -p1
 %patch25152 -p1
+%patch25153 -p1
+%patch25154 -p1
+%patch25155 -p1
+%patch25156 -p1
+%patch25157 -p1
+%patch25158 -p1
 
 %patch30000 -p1
 %patch30001 -p1
@@ -10339,6 +10353,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100027 -p1
 %patch100028 -p1
 %patch100029 -p1
+%patch100034 -p1
 
 %patch101000 -p1
 %patch101001 -p1

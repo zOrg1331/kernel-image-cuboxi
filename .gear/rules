@@ -21,6 +21,7 @@ copy: *.pl
 copy: *.sh
 copy: check-kabi
 copy: diff-backport-dm-delay-20070716
+copy: diff-dcache-dput-fast-path-without-dcache-lock-20100706
 copy: diff-dm-limits-bounce_pfn-20071029
 copy: diff-drbd-compilation
 copy: diff-drbd-dont-use-connector
