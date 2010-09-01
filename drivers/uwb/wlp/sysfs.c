@@ -333,12 +333,12 @@ ssize_t wlp_dev_##type##_show(struct wlp *wlp, char *buf)		\
 {									\
 	ssize_t result = 0;						\
 	mutex_lock(&wlp->mutex);					\
-	if (wlp->dev_info == NULL) {					\
+	if (wlp->wdi == NULL) {						\
 		result = __wlp_setup_device_info(wlp);			\
 		if (result < 0)						\
 			goto out;					\
 	}								\
-	result = scnprintf(buf, PAGE_SIZE, "%s\n", wlp->dev_info->type);\
+	result = scnprintf(buf, PAGE_SIZE, "%s\n", wlp->wdi->type);	\
 out:									\
 	mutex_unlock(&wlp->mutex);					\
 	return result;							\
@@ -360,14 +360,14 @@ ssize_t wlp_dev_##type##_store(struct wlp *wlp, const char *buf, size_t size)\
 	ssize_t result;							\
 	char format[10];						\
 	mutex_lock(&wlp->mutex);					\
-	if (wlp->dev_info == NULL) {					\
+	if (wlp->wdi == NULL) {						\
 		result = __wlp_alloc_device_info(wlp);			\
 		if (result < 0)						\
 			goto out;					\
 	}								\
-	memset(wlp->dev_info->type, 0, sizeof(wlp->dev_info->type));	\
+	memset(wlp->wdi->type, 0, sizeof(wlp->wdi->type));		\
 	sprintf(format, "%%%uc", len);					\
-	result = sscanf(buf, format, wlp->dev_info->type);		\
+	result = sscanf(buf, format, wlp->wdi->type);			\
 out:									\
 	mutex_unlock(&wlp->mutex);					\
 	return result < 0 ? result : size;				\
@@ -409,13 +409,13 @@ ssize_t wlp_dev_prim_category_show(struct wlp *wlp, char *buf)
 {
 	ssize_t result = 0;
 	mutex_lock(&wlp->mutex);
-	if (wlp->dev_info == NULL) {
+	if (wlp->wdi == NULL) {
 		result = __wlp_setup_device_info(wlp);
 		if (result < 0)
 			goto out;
 	}
 	result = scnprintf(buf, PAGE_SIZE, "%s\n",
-		  wlp_dev_category_str(wlp->dev_info->prim_dev_type.category));
+		  wlp_dev_category_str(wlp->wdi->prim_dev_type.category));
 out:
 	mutex_unlock(&wlp->mutex);
 	return result;
@@ -428,7 +428,7 @@ ssize_t wlp_dev_prim_category_store(struct wlp *wlp, const char *buf,
 	ssize_t result;
 	u16 cat;
 	mutex_lock(&wlp->mutex);
-	if (wlp->dev_info == NULL) {
+	if (wlp->wdi == NULL) {
 		result = __wlp_alloc_device_info(wlp);
 		if (result < 0)
 			goto out;
@@ -436,7 +436,7 @@ ssize_t wlp_dev_prim_category_store(struct wlp *wlp, const char *buf,
 	result = sscanf(buf, "%hu", &cat);
 	if ((cat >= WLP_DEV_CAT_COMPUTER && cat <= WLP_DEV_CAT_TELEPHONE)
 	    || cat == WLP_DEV_CAT_OTHER)
-		wlp->dev_info->prim_dev_type.category = cat;
+		wlp->wdi->prim_dev_type.category = cat;
 	else
 		result = -EINVAL;
 out:
@@ -449,15 +449,15 @@ ssize_t wlp_dev_prim_OUI_show(struct wlp *wlp, char *buf)
 {
 	ssize_t result = 0;
 	mutex_lock(&wlp->mutex);
-	if (wlp->dev_info == NULL) {
+	if (wlp->wdi == NULL) {
 		result = __wlp_setup_device_info(wlp);
 		if (result < 0)
 			goto out;
 	}
 	result = scnprintf(buf, PAGE_SIZE, "%02x:%02x:%02x\n",
-			   wlp->dev_info->prim_dev_type.OUI[0],
-			   wlp->dev_info->prim_dev_type.OUI[1],
-			   wlp->dev_info->prim_dev_type.OUI[2]);
+			   wlp->wdi->prim_dev_type.OUI[0],
+			   wlp->wdi->prim_dev_type.OUI[1],
+			   wlp->wdi->prim_dev_type.OUI[2]);
 out:
 	mutex_unlock(&wlp->mutex);
 	return result;
@@ -469,7 +469,7 @@ ssize_t wlp_dev_prim_OUI_store(struct wlp *wlp, const char *buf, size_t size)
 	ssize_t result;
 	u8 OUI[3];
 	mutex_lock(&wlp->mutex);
-	if (wlp->dev_info == NULL) {
+	if (wlp->wdi == NULL) {
 		result = __wlp_alloc_device_info(wlp);
 		if (result < 0)
 			goto out;
@@ -480,7 +480,7 @@ ssize_t wlp_dev_prim_OUI_store(struct wlp *wlp, const char *buf, size_t size)
 		result = -EINVAL;
 		goto out;
 	} else
-		memcpy(wlp->dev_info->prim_dev_type.OUI, OUI, sizeof(OUI));
+		memcpy(wlp->wdi->prim_dev_type.OUI, OUI, sizeof(OUI));
 out:
 	mutex_unlock(&wlp->mutex);
 	return result < 0 ? result : size;
@@ -492,13 +492,13 @@ ssize_t wlp_dev_prim_OUI_sub_show(struct wlp *wlp, char *buf)
 {
 	ssize_t result = 0;
 	mutex_lock(&wlp->mutex);
-	if (wlp->dev_info == NULL) {
+	if (wlp->wdi == NULL) {
 		result = __wlp_setup_device_info(wlp);
 		if (result < 0)
 			goto out;
 	}
 	result = scnprintf(buf, PAGE_SIZE, "%u\n",
-			   wlp->dev_info->prim_dev_type.OUIsubdiv);
+			   wlp->wdi->prim_dev_type.OUIsubdiv);
 out:
 	mutex_unlock(&wlp->mutex);
 	return result;
@@ -512,14 +512,14 @@ ssize_t wlp_dev_prim_OUI_sub_store(struct wlp *wlp, const char *buf,
 	unsigned sub;
 	u8 max_sub = ~0;
 	mutex_lock(&wlp->mutex);
-	if (wlp->dev_info == NULL) {
+	if (wlp->wdi == NULL) {
 		result = __wlp_alloc_device_info(wlp);
 		if (result < 0)
 			goto out;
 	}
 	result = sscanf(buf, "%u", &sub);
 	if (sub <= max_sub)
-		wlp->dev_info->prim_dev_type.OUIsubdiv = sub;
+		wlp->wdi->prim_dev_type.OUIsubdiv = sub;
 	else
 		result = -EINVAL;
 out:
@@ -532,13 +532,13 @@ ssize_t wlp_dev_prim_subcat_show(struct wlp *wlp, char *buf)
 {
 	ssize_t result = 0;
 	mutex_lock(&wlp->mutex);
-	if (wlp->dev_info == NULL) {
+	if (wlp->wdi == NULL) {
 		result = __wlp_setup_device_info(wlp);
 		if (result < 0)
 			goto out;
 	}
 	result = scnprintf(buf, PAGE_SIZE, "%u\n",
-			   wlp->dev_info->prim_dev_type.subID);
+			   wlp->wdi->prim_dev_type.subID);
 out:
 	mutex_unlock(&wlp->mutex);
 	return result;
@@ -552,14 +552,14 @@ ssize_t wlp_dev_prim_subcat_store(struct wlp *wlp, const char *buf,
 	unsigned sub;
 	__le16 max_sub = ~0;
 	mutex_lock(&wlp->mutex);
-	if (wlp->dev_info == NULL) {
+	if (wlp->wdi == NULL) {
 		result = __wlp_alloc_device_info(wlp);
 		if (result < 0)
 			goto out;
 	}
 	result = sscanf(buf, "%u", &sub);
 	if (sub <= max_sub)
-		wlp->dev_info->prim_dev_type.subID = sub;
+		wlp->wdi->prim_dev_type.subID = sub;
 	else
 		result = -EINVAL;
 out:
