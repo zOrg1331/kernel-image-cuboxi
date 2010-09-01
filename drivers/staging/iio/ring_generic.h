@@ -52,8 +52,8 @@ int iio_push_or_escallate_ring_event(struct iio_ring_buffer *ring_buf,
  *			change.
  * @request_update:	if a parameter change has been marked, update underlying
  *			storage.
- * @get_bpd:		get current bytes per datum
- * @set_bpd:		set number of bytes per datum
+ * @get_bytes_per_datum:		get current bytes per datum
+ * @set_bytes_per_datum:		set number of bytes per datum
  * @get_length:		get number of datums in ring
  * @set_length:		set number of datums in ring
  * @is_enabled:		query if ring is currently being used
@@ -81,8 +81,8 @@ struct iio_ring_access_funcs {
 	int (*mark_param_change)(struct iio_ring_buffer *ring);
 	int (*request_update)(struct iio_ring_buffer *ring);
 
-	int (*get_bpd)(struct iio_ring_buffer *ring);
-	int (*set_bpd)(struct iio_ring_buffer *ring, size_t bpd);
+	int (*get_bytes_per_datum)(struct iio_ring_buffer *ring);
+	int (*set_bytes_per_datum)(struct iio_ring_buffer *ring, size_t bpd);
 	int (*get_length)(struct iio_ring_buffer *ring);
 	int (*set_length)(struct iio_ring_buffer *ring, int length);
 
@@ -99,9 +99,14 @@ struct iio_ring_access_funcs {
  * @id:			unique id number
  * @access_id:		device id number
  * @length:		[DEVICE] number of datums in ring
- * @bpd:		[DEVICE] size of individual datum including timestamp
+ * @bytes_per_datum	[DEVICE] size of individual datum including timestamp
  * @bpe:		[DEVICE] size of individual channel value
  * @loopcount:		[INTERN] number of times the ring has looped
+ * @scan_el_attrs:	[DRIVER] control of scan elements if that scan mode
+ *			control method is used
+ * @scan_count:	[INTERN] the number of elements in the current scan mode
+ * @scan_mask:		[INTERN] bitmask used in masking scan mode elements
+ * @scan_timestamp:	[INTERN] does the scan mode include a timestamp
  * @access_handler:	[INTERN] chrdev access handling
  * @ev_int:		[INTERN] chrdev interface for the event chrdev
  * @shared_ev_pointer:	[INTERN] the shared event pointer to allow escalation of
@@ -121,9 +126,13 @@ struct iio_ring_buffer {
 	int				id;
 	int				access_id;
 	int				length;
-	int				bpd;
+	int				bytes_per_datum;
 	int				bpe;
 	int				loopcount;
+	struct attribute_group		*scan_el_attrs;
+	int				scan_count;
+	u32				scan_mask;
+	bool				scan_timestamp;
 	struct iio_handler		access_handler;
 	struct iio_event_interface	ev_int;
 	struct iio_shared_ev_pointer	shared_ev_pointer;
@@ -146,7 +155,7 @@ void iio_ring_buffer_init(struct iio_ring_buffer *ring,
 static inline void __iio_update_ring_buffer(struct iio_ring_buffer *ring,
 					    int bytes_per_datum, int length)
 {
-	ring->bpd = bytes_per_datum;
+	ring->bytes_per_datum = bytes_per_datum;
 	ring->length = length;
 	ring->loopcount = 0;
 }
@@ -258,6 +267,97 @@ ssize_t iio_scan_el_ts_show(struct device *dev, struct device_attribute *attr,
 				   iio_scan_el_ts_store),	\
 	}
 
+/*
+ * These are mainly provided to allow for a change of implementation if a device
+ * has a large number of scan elements
+ */
+#define IIO_MAX_SCAN_LENGTH 31
+
+/* note 0 used as error indicator as it doesn't make sense. */
+static inline u32 iio_scan_mask_match(u32 *av_masks, u32 mask)
+{
+	while (*av_masks) {
+		if (!(~*av_masks & mask))
+			return *av_masks;
+		av_masks++;
+	}
+	return 0;
+}
+
+static inline int iio_scan_mask_query(struct iio_ring_buffer *ring, int bit)
+{
+	struct iio_dev *dev_info = ring->indio_dev;
+	u32 mask;
+
+	if (bit > IIO_MAX_SCAN_LENGTH)
+		return -EINVAL;
+
+	if (!ring->scan_mask)
+		return 0;
+
+	if (dev_info->available_scan_masks)
+		mask = iio_scan_mask_match(dev_info->available_scan_masks,
+					ring->scan_mask);
+	else
+		mask = ring->scan_mask;
+
+	if (!mask)
+		return -EINVAL;
+
+	return !!(mask & (1 << bit));
+};
+
+static inline int iio_scan_mask_set(struct iio_ring_buffer *ring, int bit)
+{
+	struct iio_dev *dev_info = ring->indio_dev;
+	u32 mask;
+	u32 trialmask = ring->scan_mask | (1 << bit);
+
+	if (bit > IIO_MAX_SCAN_LENGTH)
+		return -EINVAL;
+	if (dev_info->available_scan_masks) {
+		mask = iio_scan_mask_match(dev_info->available_scan_masks,
+					trialmask);
+		if (!mask)
+			return -EINVAL;
+	}
+	ring->scan_mask = trialmask;
+	ring->scan_count++;
+
+	return 0;
+};
+
+static inline int iio_scan_mask_clear(struct iio_ring_buffer *ring, int bit)
+{
+	if (bit > IIO_MAX_SCAN_LENGTH)
+		return -EINVAL;
+	ring->scan_mask &= ~(1 << bit);
+	ring->scan_count--;
+	return 0;
+};
+
+/**
+ * iio_scan_mask_count_to_right() - how many scan elements occur before here
+ * @dev_info: the iio_device whose scan mode we are querying
+ * @bit: which number scan element is this
+ **/
+static inline int iio_scan_mask_count_to_right(struct iio_ring_buffer *ring,
+						int bit)
+{
+	int count = 0;
+	int mask = (1 << bit);
+	if (bit > IIO_MAX_SCAN_LENGTH)
+		return -EINVAL;
+	while (mask) {
+		mask >>= 1;
+		if (mask & ring->scan_mask)
+			count++;
+	}
+
+	return count;
+}
+
+
 static inline void iio_put_ring_buffer(struct iio_ring_buffer *ring)
 {
 	put_device(&ring->dev);
@@ -277,7 +377,7 @@ ssize_t iio_write_ring_length(struct device *dev,
 			      struct device_attribute *attr,
 			      const char *buf,
 			      size_t len);
-ssize_t iio_read_ring_bps(struct device *dev,
+ssize_t iio_read_ring_bytes_per_datum(struct device *dev,
 			  struct device_attribute *attr,
 			  char *buf);
 ssize_t iio_store_ring_enable(struct device *dev,
@@ -290,9 +390,9 @@ ssize_t iio_show_ring_enable(struct device *dev,
 #define IIO_RING_LENGTH_ATTR DEVICE_ATTR(length, S_IRUGO | S_IWUSR,	\
 					 iio_read_ring_length,		\
 					 iio_write_ring_length)
-#define IIO_RING_BPS_ATTR DEVICE_ATTR(bps, S_IRUGO | S_IWUSR,	\
-				      iio_read_ring_bps, NULL)
-#define IIO_RING_ENABLE_ATTR DEVICE_ATTR(ring_enable, S_IRUGO | S_IWUSR, \
+#define IIO_RING_BYTES_PER_DATUM_ATTR DEVICE_ATTR(bytes_per_datum, S_IRUGO | S_IWUSR,	\
+				      iio_read_ring_bytes_per_datum, NULL)
+#define IIO_RING_ENABLE_ATTR DEVICE_ATTR(enable, S_IRUGO | S_IWUSR, \
 					 iio_show_ring_enable,		\
 					 iio_store_ring_enable)
 #else /* CONFIG_IIO_RING_BUFFER */
