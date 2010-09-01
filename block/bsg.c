@@ -1010,13 +1010,11 @@ int bsg_register_queue(struct request_queue *q, struct device *parent,
 	bcd = &q->bsg_dev;
 	memset(bcd, 0, sizeof(*bcd));
 
-	mutex_lock(&bsg_mutex);
-
 	ret = idr_pre_get(&bsg_minor_idr, GFP_KERNEL);
-	if (!ret) {
-		ret = -ENOMEM;
-		goto unlock;
-	}
+	if (!ret)
+		return -ENOMEM;
+
+	mutex_lock(&bsg_mutex);
 
 	ret = idr_get_new(&bsg_minor_idr, bcd, &minor);
 	if (ret < 0)
