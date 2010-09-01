@@ -99,7 +99,7 @@ static const u32 diag_registers[] = {
 	CRB_XG_STATE_P3,
 	CRB_FW_CAPABILITIES_1,
 	ISR_INT_STATE_REG,
-	QLCNIC_CRB_DEV_REF_COUNT,
+	QLCNIC_CRB_DRV_ACTIVE,
 	QLCNIC_CRB_DEV_STATE,
 	QLCNIC_CRB_DRV_STATE,
 	QLCNIC_CRB_DRV_SCRATCH,
@@ -747,6 +747,14 @@ qlcnic_diag_test(struct net_device *dev, struct ethtool_test *eth_test,
 {
 	memset(data, 0, sizeof(u64) * QLCNIC_TEST_LEN);
 
+	data[0] = qlcnic_reg_test(dev);
+	if (data[0])
+		eth_test->flags |= ETH_TEST_FL_FAILED;
+
+	data[1] = (u64) qlcnic_test_link(dev);
+	if (data[1])
+		eth_test->flags |= ETH_TEST_FL_FAILED;
+
 	if (eth_test->flags == ETH_TEST_FL_OFFLINE) {
 		data[2] = qlcnic_irq_test(dev);
 		if (data[2])
@@ -757,15 +765,6 @@ qlcnic_diag_test(struct net_device *dev, struct ethtool_test *eth_test,
 			eth_test->flags |= ETH_TEST_FL_FAILED;
 
 	}
-
-	data[0] = qlcnic_reg_test(dev);
-	if (data[0])
-		eth_test->flags |= ETH_TEST_FL_FAILED;
-
-	/* link test */
-	data[1] = (u64) qlcnic_test_link(dev);
-	if (data[1])
-		eth_test->flags |= ETH_TEST_FL_FAILED;
 }
 
 static void
@@ -805,6 +804,20 @@ qlcnic_get_ethtool_stats(struct net_device *dev,
 	}
 }
 
+static int qlcnic_set_tx_csum(struct net_device *dev, u32 data)
+{
+	struct qlcnic_adapter *adapter = netdev_priv(dev);
+
+	if ((adapter->flags & QLCNIC_ESWITCH_ENABLED))
+		return -EOPNOTSUPP;
+	if (data)
+		dev->features |= (NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM);
+	else
+		dev->features &= ~(NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM);
+
+	return 0;
+
+}
 static u32 qlcnic_get_tx_csum(struct net_device *dev)
 {
 	return dev->features & NETIF_F_IP_CSUM;
@@ -819,7 +832,23 @@ static u32 qlcnic_get_rx_csum(struct net_device *dev)
 static int qlcnic_set_rx_csum(struct net_device *dev, u32 data)
 {
 	struct qlcnic_adapter *adapter = netdev_priv(dev);
+
+	if ((adapter->flags & QLCNIC_ESWITCH_ENABLED))
+		return -EOPNOTSUPP;
+	if (!!data) {
+		adapter->rx_csum = !!data;
+		return 0;
+	}
+
+	if (adapter->flags & QLCNIC_LRO_ENABLED) {
+		if (qlcnic_config_hw_lro(adapter, QLCNIC_LRO_DISABLED))
+			return -EIO;
+
+		dev->features &= ~NETIF_F_LRO;
+		qlcnic_send_lro_cleanup(adapter);
+	}
 	adapter->rx_csum = !!data;
+	dev_info(&adapter->pdev->dev, "disabling LRO as rx_csum is off\n");
 	return 0;
 }
 
@@ -1002,6 +1031,15 @@ static int qlcnic_set_flags(struct net_device *netdev, u32 data)
 	if (!(adapter->capabilities & QLCNIC_FW_CAPABILITY_HW_LRO))
 		return -EINVAL;
 
+	if (!adapter->rx_csum) {
+		dev_info(&adapter->pdev->dev, "rx csum is off, "
+			"cannot toggle lro\n");
+		return -EINVAL;
+	}
+
+	if ((data & ETH_FLAG_LRO) && (adapter->flags & QLCNIC_LRO_ENABLED))
+		return 0;
+
 	if (data & ETH_FLAG_LRO) {
 		hw_lro = QLCNIC_LRO_ENABLED;
 		netdev->features |= NETIF_F_LRO;
@@ -1048,7 +1086,7 @@ const struct ethtool_ops qlcnic_ethtool_ops = {
 	.get_pauseparam = qlcnic_get_pauseparam,
 	.set_pauseparam = qlcnic_set_pauseparam,
 	.get_tx_csum = qlcnic_get_tx_csum,
-	.set_tx_csum = ethtool_op_set_tx_csum,
+	.set_tx_csum = qlcnic_set_tx_csum,
 	.set_sg = ethtool_op_set_sg,
 	.get_tso = qlcnic_get_tso,
 	.set_tso = qlcnic_set_tso,
