@@ -219,7 +219,9 @@ static ssize_t
 v9fs_file_write(struct file *filp, const char __user * data,
 		size_t count, loff_t * offset)
 {
-	int n, rsize, total = 0;
+	ssize_t retval;
+	size_t total = 0;
+	int n;
 	struct p9_fid *fid;
 	struct p9_client *clnt;
 	struct inode *inode = filp->f_path.dentry->d_inode;
@@ -232,14 +234,19 @@ v9fs_file_write(struct file *filp, const char __user * data,
 	fid = filp->private_data;
 	clnt = fid->clnt;
 
-	rsize = fid->iounit ? fid->iounit : clnt->msize - P9_IOHDRSZ;
+	retval = generic_write_checks(filp, &origin, &count, 0);
+	if (retval)
+		goto out;
+
+	retval = -EINVAL;
+	if ((ssize_t) count < 0)
+		goto out;
+	retval = 0;
+	if (!count)
+		goto out;
 
 	do {
-		if (count < rsize)
-			rsize = count;
-
-		n = p9_client_write(fid, NULL, data+total, origin+total,
-									rsize);
+		n = p9_client_write(fid, NULL, data+total, origin+total, count);
 		if (n <= 0)
 			break;
 		count -= n;
@@ -258,9 +265,11 @@ v9fs_file_write(struct file *filp, const char __user * data,
 	}
 
 	if (n < 0)
-		return n;
-
-	return total;
+		retval = n;
+	else
+		retval = total;
+out:
+	return retval;
 }
 
 static int v9fs_file_fsync(struct file *filp, int datasync)
