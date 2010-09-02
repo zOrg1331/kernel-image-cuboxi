@@ -13,7 +13,7 @@
 %define _without_kabichk 1
 
 %define ovzver 028stab071
-%define ovzrel 3
+%define ovzrel 4
 
 %if !%{buildup}
 %define _without_up 1
@@ -5275,6 +5275,8 @@ Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100028: diff-rh-bond802.3ad-slave-speed-20100421
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 Patch100034: diff-dcache-dput-fast-path-without-dcache-lock-20100706
+Patch100036: diff-ubc-debug-sock-orphan-acct
+Patch100037: diff-ve-vzevent-fix-reboot-detection
 
 
 # MAC HW hacks
@@ -10354,6 +10356,8 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100028 -p1
 %patch100029 -p1
 %patch100034 -p1
+%patch100036 -p1
+%patch100037 -p1
 
 %patch101000 -p1
 %patch101001 -p1

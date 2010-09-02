@@ -78,7 +78,9 @@ copy: diff-rh-hung-task-tunes-and-fixes
 copy: diff-scsi-add-modalias-mainstream
 copy: diff-snd-hda-intel
 copy: diff-tossing-headers-around
+copy: diff-ubc-debug-sock-orphan-acct
 copy: diff-ve-moreleaks-20090829
+copy: diff-ve-vzevent-fix-reboot-detection
 copy: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 copy: diff-xen-smpboot-ifdef-hotplug-20090306
 copy: find-provides
