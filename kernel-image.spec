@@ -365,27 +365,11 @@ install -Dp -m644 .config %buildroot/boot/config-$KernelVer
 
 make modules_install INSTALL_MOD_PATH=%buildroot INSTALL_FW_PATH=%buildroot/lib/firmware/$KernelVer
 
-
 mkdir -p %buildroot%kbuild_dir/arch/x86
 install -d %buildroot%kbuild_dir
 cp -a include %buildroot%kbuild_dir/include
 cp -a arch/x86/include %buildroot%kbuild_dir/arch/x86
 
-# remove asm-* include files for other architectures
-pushd %buildroot%kbuild_dir/include
-for dir in asm-*; do
-	[ "$dir" = "asm-generic" ] && continue
-	[ "$dir" = "asm-x86" ] && continue
-	rm -rf -- "$dir"
-done
-%ifarch x86_64
-ln -s asm-x86 asm-x86_64
-%else
-%ifarch i586
-ln -s asm-x86 asm-i386
-%endif
-%endif
-popd
 
 # drivers-headers install
 install -d %buildroot%kbuild_dir/drivers/scsi
@@ -474,7 +458,11 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 # Provide kernel headers for userspace
 make headers_install INSTALL_HDR_PATH=%buildroot%kheaders_dir
 
-
+#provide symlink to autoconf.h for back compat
+pushd %buildroot%old_kbuild_dir/include/linux
+ln -s ../generated/autoconf.h
+ln -s ../generated/utsrelease.h
+popd
 
 # install documentation
 %if_enabled docs
