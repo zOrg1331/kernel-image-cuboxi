@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.35
-Release: alt3
+Release: alt4
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -588,6 +588,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Thu Sep 02 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt4
+- 2.6.35.4
+
 * Thu Aug 26 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt3
 - 2.6.35.3: run, rabbit, run!
 
