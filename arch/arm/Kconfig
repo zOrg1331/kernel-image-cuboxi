@@ -1577,7 +1577,7 @@ config AUTO_ZRELADDR
 	  from start of memory.
 
 config ZRELADDR
-	hex "Physical address of the decompressed kernel image"
+	hex
 	depends on !AUTO_ZRELADDR
 	default 0x00008000 if ARCH_BCMRING ||\
 		ARCH_CNS3XXX ||\
