@@ -229,6 +229,7 @@ struct nilfs_super_block {
  */
 #define NILFS_CURRENT_REV	2	/* current major revision */
 #define NILFS_MINOR_REV		0	/* minor revision */
+#define NILFS_MIN_SUPP_REV	2	/* minimum supported revision */
 
 /*
  * Feature set definitions
@@ -268,6 +269,14 @@ struct nilfs_super_block {
 					   a partial segment */
 #define NILFS_MIN_NRSVSEGS	8	/* Minimum number of reserved
 					   segments */
+
+/*
+ * We call DAT, cpfile, and sufile root metadata files.  Inodes of
+ * these files are written in super root block instead of ifile, and
+ * garbage collector doesn't keep any past versions of these files.
+ */
+#define NILFS_ROOT_METADATA_FILE(ino) \
+	((ino) >= NILFS_DAT_INO && (ino) <= NILFS_SUFILE_INO)
 
 /*
  * bytes offset of secondary super block
