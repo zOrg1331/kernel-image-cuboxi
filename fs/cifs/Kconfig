@@ -2,6 +2,7 @@ config CIFS
 	tristate "CIFS support (advanced network filesystem, SMBFS successor)"
 	depends on INET
 	select NLS
+	select CRYPTO
 	select CRYPTO_MD5
 	select CRYPTO_ARC4
 	help
