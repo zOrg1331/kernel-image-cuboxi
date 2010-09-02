@@ -24,6 +24,7 @@
 #include <linux/err.h>
 #include <linux/slab.h>
 #include <linux/ctype.h>
+#include <linux/dynamic_debug.h>
 
 #if 0
 #define DEBUGP printk
@@ -175,9 +176,16 @@ int parse_args(const char *name,
 	       unsigned num,
 	       int (*unknown)(char *param, char *val))
 {
-	char *param, *val;
+	char *param, *val, ddebug[1024];
+	int i;
 
 	DEBUGP("Parsing ARGS: %s\n", args);
+
+	for (i = 0; i < num; i++) {
+		if (parameq("ddebug", params[i].name))
+			pr_warning("Module %s uses reserved keyword *ddebug* as"
+				   "parameter which will get ignored\n", name);
+	}
 
 	/* Chew leading spaces */
 	args = skip_spaces(args);
@@ -187,6 +195,13 @@ int parse_args(const char *name,
 		int irq_was_disabled;
 
 		args = next_arg(args, &param, &val);
+
+		if (parameq(param, "ddebug")) {
+			snprintf(ddebug, "module %s +p", name, 1024);
+			ddebug_exec_query(ddebug);
+			continue;
+		}
+
 		irq_was_disabled = irqs_disabled();
 		ret = parse_one(param, val, params, num, unknown);
 		if (irq_was_disabled && !irqs_disabled()) {
