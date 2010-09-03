@@ -25,15 +25,15 @@ static struct sock *vzev_sock;
 static char *action_to_string(int action)
 {
 	switch (action) {
-	case KOBJ_MOUNT:
+	case VE_EVENT_MOUNT:
 		return "ve-mount";
-	case KOBJ_UMOUNT:
+	case VE_EVENT_UMOUNT:
 		return "ve-umount";
-	case KOBJ_START:
+	case VE_EVENT_START:
 		return "ve-start";
-	case KOBJ_STOP:
+	case VE_EVENT_STOP:
 		return "ve-stop";
-	case KOBJ_REBOOT:
+	case VE_EVENT_REBOOT:
 		return "ve-reboot";
 	default:
 		return NULL;
@@ -94,18 +94,18 @@ static int ve_start(void *data)
 	struct ve_struct *ve;
 
 	ve = (struct ve_struct *)data;
-	vzevent_send(KOBJ_START, "%d", ve->veid);
+	vzevent_send(VE_EVENT_START, "%d", ve->veid);
 	return 0;
 }
 
 static void ve_stop(void *data)
 {
 	struct ve_struct *ve;
-	int event = KOBJ_STOP;
+	int event = VE_EVENT_STOP;
 
 	if (test_and_clear_bit(VE_REBOOT, &get_exec_env()->flags) &&
 		reboot_event)
-		event = KOBJ_REBOOT;
+		event = VE_EVENT_REBOOT;
 
 	ve = (struct ve_struct *)data;
 	vzevent_send(event, "%d", ve->veid);
