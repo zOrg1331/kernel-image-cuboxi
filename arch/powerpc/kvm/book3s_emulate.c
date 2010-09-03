@@ -73,8 +73,8 @@ int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
 		switch (get_xop(inst)) {
 		case OP_19_XOP_RFID:
 		case OP_19_XOP_RFI:
-			kvmppc_set_pc(vcpu, vcpu->arch.srr0);
-			kvmppc_set_msr(vcpu, vcpu->arch.srr1);
+			kvmppc_set_pc(vcpu, vcpu->arch.shared->srr0);
+			kvmppc_set_msr(vcpu, vcpu->arch.shared->srr1);
 			*advance = 0;
 			break;
 
@@ -86,14 +86,15 @@ int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
 	case 31:
 		switch (get_xop(inst)) {
 		case OP_31_XOP_MFMSR:
-			kvmppc_set_gpr(vcpu, get_rt(inst), vcpu->arch.msr);
+			kvmppc_set_gpr(vcpu, get_rt(inst),
+				       vcpu->arch.shared->msr);
 			break;
 		case OP_31_XOP_MTMSRD:
 		{
 			ulong rs = kvmppc_get_gpr(vcpu, get_rs(inst));
 			if (inst & 0x10000) {
-				vcpu->arch.msr &= ~(MSR_RI | MSR_EE);
-				vcpu->arch.msr |= rs & (MSR_RI | MSR_EE);
+				vcpu->arch.shared->msr &= ~(MSR_RI | MSR_EE);
+				vcpu->arch.shared->msr |= rs & (MSR_RI | MSR_EE);
 			} else
 				kvmppc_set_msr(vcpu, rs);
 			break;
@@ -204,14 +205,14 @@ int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
 				ra = kvmppc_get_gpr(vcpu, get_ra(inst));
 
 			addr = (ra + rb) & ~31ULL;
-			if (!(vcpu->arch.msr & MSR_SF))
+			if (!(vcpu->arch.shared->msr & MSR_SF))
 				addr &= 0xffffffff;
 			vaddr = addr;
 
 			r = kvmppc_st(vcpu, &addr, 32, zeros, true);
 			if ((r == -ENOENT) || (r == -EPERM)) {
 				*advance = 0;
-				vcpu->arch.dear = vaddr;
+				vcpu->arch.shared->dar = vaddr;
 				to_svcpu(vcpu)->fault_dar = vaddr;
 
 				dsisr = DSISR_ISSTORE;
@@ -220,7 +221,7 @@ int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
 				else if (r == -EPERM)
 					dsisr |= DSISR_PROTFAULT;
 
-				to_book3s(vcpu)->dsisr = dsisr;
+				vcpu->arch.shared->dsisr = dsisr;
 				to_svcpu(vcpu)->fault_dsisr = dsisr;
 
 				kvmppc_book3s_queue_irqprio(vcpu,
@@ -326,10 +327,10 @@ int kvmppc_core_emulate_mtspr(struct kvm_vcpu *vcpu, int sprn, int rs)
 		to_book3s(vcpu)->sdr1 = spr_val;
 		break;
 	case SPRN_DSISR:
-		to_book3s(vcpu)->dsisr = spr_val;
+		vcpu->arch.shared->dsisr = spr_val;
 		break;
 	case SPRN_DAR:
-		vcpu->arch.dear = spr_val;
+		vcpu->arch.shared->dar = spr_val;
 		break;
 	case SPRN_HIOR:
 		to_book3s(vcpu)->hior = spr_val;
@@ -439,10 +440,10 @@ int kvmppc_core_emulate_mfspr(struct kvm_vcpu *vcpu, int sprn, int rt)
 		kvmppc_set_gpr(vcpu, rt, to_book3s(vcpu)->sdr1);
 		break;
 	case SPRN_DSISR:
-		kvmppc_set_gpr(vcpu, rt, to_book3s(vcpu)->dsisr);
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.shared->dsisr);
 		break;
 	case SPRN_DAR:
-		kvmppc_set_gpr(vcpu, rt, vcpu->arch.dear);
+		kvmppc_set_gpr(vcpu, rt, vcpu->arch.shared->dar);
 		break;
 	case SPRN_HIOR:
 		kvmppc_set_gpr(vcpu, rt, to_book3s(vcpu)->hior);
