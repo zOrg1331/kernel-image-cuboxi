@@ -10,6 +10,10 @@
 #define NETLINK_UEVENT	31
 #define VZ_EVGRP_ALL	0x01
 
+static int reboot_event;
+module_param(reboot_event, int, 0644);
+MODULE_PARM_DESC(reboot_event, "Enable reboot events");
+
 /*
  * NOTE: the original idea was to send events via kobject_uevent(),
  * however, it turns out that it has negative consequences like
@@ -99,7 +103,8 @@ static void ve_stop(void *data)
 	struct ve_struct *ve;
 	int event = KOBJ_STOP;
 
-	if (test_and_clear_bit(VE_REBOOT, &get_exec_env()->flags))
+	if (test_and_clear_bit(VE_REBOOT, &get_exec_env()->flags) &&
+		reboot_event)
 		event = KOBJ_REBOOT;
 
 	ve = (struct ve_struct *)data;
