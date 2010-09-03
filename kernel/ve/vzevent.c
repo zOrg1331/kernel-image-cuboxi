@@ -41,6 +41,9 @@ static int do_vzevent_send(int event, char *msg, int len)
 	int alen;
 
 	action = action_to_string(event);
+	if (!action)
+		return -EINVAL;
+
 	alen = strlen(action);
 
 	skb = alloc_skb(len + 1 + alen, GFP_KERNEL);
