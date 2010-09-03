@@ -120,7 +120,7 @@ static struct ve_hook ve_start_stop_hook = {
 
 static int __init init_vzevent(void)
 {
-	vzev_sock = netlink_kernel_create(NETLINK_UEVENT, 0, NULL, THIS_MODULE);
+	vzev_sock = netlink_kernel_create(&init_net, NETLINK_UEVENT, 0, NULL, NULL, THIS_MODULE);
 	if (vzev_sock == NULL)
 		return -ENOMEM;
 	ve_hook_register(VE_SS_CHAIN, &ve_start_stop_hook);

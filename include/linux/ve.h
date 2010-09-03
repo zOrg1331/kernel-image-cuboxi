@@ -159,7 +159,7 @@ struct ve_struct {
 	int			is_running;
 	int			is_locked;
 	atomic_t		suspend;
-	unsigned int		flags;
+	unsigned long		flags;
 	/* see vzcalluser.h for VE_FEATURE_XXX definitions */
 	__u64			features;
 
