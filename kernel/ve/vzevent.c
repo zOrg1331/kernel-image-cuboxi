@@ -29,6 +29,8 @@ static char *action_to_string(int action)
 		return "ve-start";
 	case KOBJ_STOP:
 		return "ve-stop";
+	case KOBJ_REBOOT:
+		return "ve-reboot";
 	default:
 		return NULL;
 	}
@@ -95,9 +97,13 @@ static int ve_start(void *data)
 static void ve_stop(void *data)
 {
 	struct ve_struct *ve;
+	int event = KOBJ_STOP;
+
+	if (test_and_clear_bit(VE_REBOOT, &get_exec_env()->flags))
+		event = KOBJ_REBOOT;
 
 	ve = (struct ve_struct *)data;
-	vzevent_send(KOBJ_STOP, "%d", ve->veid);
+	vzevent_send(event, "%d", ve->veid);
 }
 
 static struct ve_hook ve_start_stop_hook = {

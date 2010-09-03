@@ -477,9 +477,11 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	if (!ve_is_super(get_exec_env()))
 		switch (cmd) {
 		case LINUX_REBOOT_CMD_RESTART:
+		case LINUX_REBOOT_CMD_RESTART2:
+			set_bit(VE_REBOOT, &get_exec_env()->flags);
+
 		case LINUX_REBOOT_CMD_HALT:
 		case LINUX_REBOOT_CMD_POWER_OFF:
-		case LINUX_REBOOT_CMD_RESTART2:
 			force_sig(SIGKILL,
 				get_exec_env()->ve_ns->pid_ns->child_reaper);
 

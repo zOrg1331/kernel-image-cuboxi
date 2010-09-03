@@ -55,6 +55,7 @@ enum kobject_action {
 	KOBJ_STOP,
 	KOBJ_ONLINE,
 	KOBJ_OFFLINE,
+	KOBJ_REBOOT,
 	KOBJ_MAX
 };
 
