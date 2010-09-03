@@ -320,7 +320,6 @@ static int send_packet(struct imon_context *context)
 	unsigned int pipe;
 	int interval = 0;
 	int retval = 0;
-	struct usb_ctrlrequest *control_req = NULL;
 
 	/* Check if we need to use control or interrupt urb */
 	pipe = usb_sndintpipe(context->usbdev,
@@ -354,8 +353,6 @@ static int send_packet(struct imon_context *context)
 		if (retval)
 			err("%s: packet tx failed (%d)", __func__, retval);
 	}
-
-	kfree(control_req);
 
 	return retval;
 }
@@ -599,7 +596,7 @@ static void imon_incoming_packet(struct imon_context *context,
 	struct device *dev = context->driver->dev;
 	int octet, bit;
 	unsigned char mask;
-	int i, chunk_num;
+	int i;
 
 	/*
 	 * just bail out if no listening IR client
@@ -658,7 +655,7 @@ static void imon_incoming_packet(struct imon_context *context,
 		}
 	}
 
-	if (chunk_num == 10) {
+	if (buf[7] == 10) {
 		if (context->rx.count) {
 			submit_data(context);
 			context->rx.count = 0;
