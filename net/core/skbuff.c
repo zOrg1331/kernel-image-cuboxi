@@ -340,7 +340,7 @@ static void skb_release_data(struct sk_buff *skb)
 				put_page(skb_shinfo(skb)->frags[i].page);
 		}
 
-		if (skb_has_frags(skb))
+		if (skb_has_frag_list(skb))
 			skb_drop_fraglist(skb);
 
 		kfree(skb->head);
@@ -685,16 +685,10 @@ static void copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 
 struct sk_buff *skb_copy(const struct sk_buff *skb, gfp_t gfp_mask)
 {
-	int headerlen = skb->data - skb->head;
-	/*
-	 *	Allocate the copy buffer
-	 */
-	struct sk_buff *n;
-#ifdef NET_SKBUFF_DATA_USES_OFFSET
-	n = alloc_skb(skb->end + skb->data_len, gfp_mask);
-#else
-	n = alloc_skb(skb->end - skb->head + skb->data_len, gfp_mask);
-#endif
+	int headerlen = skb_headroom(skb);
+	unsigned int size = (skb_end_pointer(skb) - skb->head) + skb->data_len;
+	struct sk_buff *n = alloc_skb(size, gfp_mask);
+
 	if (!n)
 		return NULL;
 
@@ -726,20 +720,14 @@ EXPORT_SYMBOL(skb_copy);
 
 struct sk_buff *pskb_copy(struct sk_buff *skb, gfp_t gfp_mask)
 {
-	/*
-	 *	Allocate the copy buffer
-	 */
-	struct sk_buff *n;
-#ifdef NET_SKBUFF_DATA_USES_OFFSET
-	n = alloc_skb(skb->end, gfp_mask);
-#else
-	n = alloc_skb(skb->end - skb->head, gfp_mask);
-#endif
+	unsigned int size = skb_end_pointer(skb) - skb->head;
+	struct sk_buff *n = alloc_skb(size, gfp_mask);
+
 	if (!n)
 		goto out;
 
 	/* Set the data pointer */
-	skb_reserve(n, skb->data - skb->head);
+	skb_reserve(n, skb_headroom(skb));
 	/* Set the tail pointer and length */
 	skb_put(n, skb_headlen(skb));
 	/* Copy the bytes */
@@ -759,7 +747,7 @@ struct sk_buff *pskb_copy(struct sk_buff *skb, gfp_t gfp_mask)
 		skb_shinfo(n)->nr_frags = i;
 	}
 
-	if (skb_has_frags(skb)) {
+	if (skb_has_frag_list(skb)) {
 		skb_shinfo(n)->frag_list = skb_shinfo(skb)->frag_list;
 		skb_clone_fraglist(n);
 	}
@@ -791,11 +779,7 @@ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
 {
 	int i;
 	u8 *data;
-#ifdef NET_SKBUFF_DATA_USES_OFFSET
-	int size = nhead + skb->end + ntail;
-#else
-	int size = nhead + (skb->end - skb->head) + ntail;
-#endif
+	int size = nhead + (skb_end_pointer(skb) - skb->head) + ntail;
 	long off;
 
 	BUG_ON(nhead < 0);
@@ -810,19 +794,18 @@ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
 		goto nodata;
 
 	/* Copy only real data... and, alas, header. This should be
-	 * optimized for the cases when header is void. */
-#ifdef NET_SKBUFF_DATA_USES_OFFSET
-	memcpy(data + nhead, skb->head, skb->tail);
-#else
-	memcpy(data + nhead, skb->head, skb->tail - skb->head);
-#endif
-	memcpy(data + size, skb_end_pointer(skb),
+	 * optimized for the cases when header is void.
+	 */
+	memcpy(data + nhead, skb->head, skb_tail_pointer(skb) - skb->head);
+
+	memcpy((struct skb_shared_info *)(data + size),
+	       skb_shinfo(skb),
 	       offsetof(struct skb_shared_info, frags[skb_shinfo(skb)->nr_frags]));
 
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++)
 		get_page(skb_shinfo(skb)->frags[i].page);
 
-	if (skb_has_frags(skb))
+	if (skb_has_frag_list(skb))
 		skb_clone_fraglist(skb);
 
 	skb_release_data(skb);
@@ -1099,7 +1082,7 @@ drop_pages:
 		for (; i < nfrags; i++)
 			put_page(skb_shinfo(skb)->frags[i].page);
 
-		if (skb_has_frags(skb))
+		if (skb_has_frag_list(skb))
 			skb_drop_fraglist(skb);
 		goto done;
 	}
@@ -1194,7 +1177,7 @@ unsigned char *__pskb_pull_tail(struct sk_buff *skb, int delta)
 	/* Optimization: no fragments, no reasons to preestimate
 	 * size of pulled pages. Superb.
 	 */
-	if (!skb_has_frags(skb))
+	if (!skb_has_frag_list(skb))
 		goto pull_pages;
 
 	/* Estimate size of pulled pages. */
@@ -2323,7 +2306,7 @@ next_skb:
 		st->frag_data = NULL;
 	}
 
-	if (st->root_skb == st->cur_skb && skb_has_frags(st->root_skb)) {
+	if (st->root_skb == st->cur_skb && skb_has_frag_list(st->root_skb)) {
 		st->cur_skb = skb_shinfo(st->root_skb)->frag_list;
 		st->frag_idx = 0;
 		goto next_skb;
@@ -2893,7 +2876,7 @@ int skb_cow_data(struct sk_buff *skb, int tailbits, struct sk_buff **trailer)
 		return -ENOMEM;
 
 	/* Easy case. Most of packets will go this way. */
-	if (!skb_has_frags(skb)) {
+	if (!skb_has_frag_list(skb)) {
 		/* A little of trouble, not enough of space for trailer.
 		 * This should not happen, when stack is tuned to generate
 		 * good frames. OK, on miss we reallocate and reserve even more
@@ -2928,7 +2911,7 @@ int skb_cow_data(struct sk_buff *skb, int tailbits, struct sk_buff **trailer)
 
 		if (skb1->next == NULL && tailbits) {
 			if (skb_shinfo(skb1)->nr_frags ||
-			    skb_has_frags(skb1) ||
+			    skb_has_frag_list(skb1) ||
 			    skb_tailroom(skb1) < tailbits)
 				ntail = tailbits + 128;
 		}
@@ -2937,7 +2920,7 @@ int skb_cow_data(struct sk_buff *skb, int tailbits, struct sk_buff **trailer)
 		    skb_cloned(skb1) ||
 		    ntail ||
 		    skb_shinfo(skb1)->nr_frags ||
-		    skb_has_frags(skb1)) {
+		    skb_has_frag_list(skb1)) {
 			struct sk_buff *skb2;
 
 			/* Fuck, we are miserable poor guys... */
@@ -3020,7 +3003,7 @@ void skb_tstamp_tx(struct sk_buff *orig_skb,
 	} else {
 		/*
 		 * no hardware time stamps available,
-		 * so keep the skb_shared_tx and only
+		 * so keep the shared tx_flags and only
 		 * store software time stamp
 		 */
 		skb->tstamp = ktime_get_real();
