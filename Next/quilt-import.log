@@ -1,0 +1,194 @@
+Importing driver-core.current based on 2.6.36-rc3
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 19c6f11091f56667fc2737bca3751f219268237d
+HEAD is now at 19c6f11 sysfs: checking for NULL instead of ERR_PTR
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+vt-fix-console-corruption-on-driver-hand-over.patch
+maintainers-orphan-isicom.patch
+serial-fix-port-type-conflict-between-ns16550a-u6_16550a.patch
+serial-bfin_sport_uart-restore-transmit-frame-sync-fix.patch
+tty-fix-tty_line-must-not-be-equal-to-number-of-allocated-tty-pointers-in-tty-driver.patch
+serial-amba-pl010-fix-set_ldisc.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+ + d42f861...5e75b9e master     -> quilt/tty.current  (forced update)
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard 5e75b9e39431b115200cc25bbb07eabaf77285d9
+HEAD is now at 5e75b9e serial: amba-pl010: fix set_ldisc
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-s3c-hsotg-remove-debug-define.patch
+usb-ehci-ppc-of-problems-in-unwind.patch
+usb-rndis-section-mismatch-fix.patch
+usb-fix-kernel-oops-with-g_ether-and-windows.patch
+usb-option-fix-incorrect-novatel-entries.patch
+usb-cp210x-add-new-device-id.patch
+usb-cp210x-add-b-g-h3000-link-cable-id.patch
+usb-cp210x-usb-driver-add-usb_device-for-pirelli-dp-l10-mobile.patch
+usb-allow-drivers-to-use-allocated-bandwidth-until-unbound.patch
+usb-ssu100-turn-off-debug-flag.patch
+usb-serial-mos7840-add-usb-id-to-support-the-b-b-electronics-usoptl4-2p.patch
+usb-cdc-acm-adding-second-acm-channel-support-for-various-nokia-and-one-samsung-phones.patch
+usb-serial-mos7840-add-usb-ids-to-support-more-b-b-usb-rs485-converters.patch
+usb-cxacru-use-a-bulk-int-urb-to-access-the-command-endpoint.patch
+usb-cdc-acm-add-pseudo-modem-without-at-command-capabilities.patch
+usb-cdc-acm-fixing-crash-when-acm-probing-interfaces-with-no-endpoint-descriptors.patch
+usb-ftdi_sio-added-custom-pids-for-chamsys-products.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + d35bc5c...1881507 master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard 1881507ece4aef0fc48901330a75d1b08e44cb22
+HEAD is now at 1881507 USB: ftdi_sio: Added custom PIDs for ChamSys products
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-hv-fix-missing-functions-for-net_device_ops.patch
+staging-hv-fixed-bounce-kmap-problem-by-using-correct-index.patch
+staging-hv-fixed-the-value-of-the-64bit-hole-inside-ring-buffer.patch
+staging-hv-increased-storvsc-ringbuffer-and-max_io_requests.patch
+staging-hv-fixed-lockup-problem-with-bounce_buffer-scatter-list.patch
+staging-spectra-needs-linux-slab.h.patch
+staging-comedi-das08_cs.c-fix-io_req_t-conversion.patch
+staging-rt2870sta-add-more-device-ids-from-vendor-drivers.patch
+staging-zram-free-device-memory-when-init-fails.patch
+staging-spectra-depend-on-x86_mrst.patch
+staging-octeon-depends-on-netdevices.patch
+staging-wlan-ng-explicitly-set-some-fields-in-cfg80211-interface.patch
+revert-staging-batman-adv-adding-netfilter-bridge-hooks.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 0e4c029...1c2a7ff master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.36-rc3
+$ cd ../quilt-tmp
+$ git reset --hard 2bfc96a127bc1cc94d26bfaa40159966064f9c8c
+HEAD is now at 2bfc96a Linux 2.6.36-rc3
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-simplify-i2c_parent_is_i2c_adapter.patch
+i2c-i2c_parent_is_i2c_adapter-returns-parent.patch
+i2c-remove-obsolete-cleanup-for-clientdata.patch
+i2c-fix-for-suspend-resume-issue.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + abc0bcf...0c75ef9 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.36-rc3
+$ cd ../quilt-tmp
+$ git reset --hard 2bfc96a127bc1cc94d26bfaa40159966064f9c8c
+HEAD is now at 2bfc96a Linux 2.6.36-rc3
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-lis3lv02d-prevent-NULL-pointer-dereference.patch
+hwmon-new-subsystem-maintainers.patch
+hwmon-f75375s-01-shift-control-mode-to-the-correct-bit-position.patch
+hwmon-f75375s-02-do-not-overwrite-values-read-from-registers.patch
+hwmon-k8temp-02-remove-superfluous-cpu-family-check.patch
+hwmon-add-tempx_emergency-attribute-to-sysfs-abi.patch
+hwmon-lm90-fix-checkpatch-errors.patch
+hwmon-lm75-01-make-the-writing-to-sysfs-more-robust.patch
+hwmon-lm75-02-trivial-changes-to-pacify-the-checkpatch.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 4b0e3bb...7be6ce6 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.36-rc2
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.35-7786-gad41a1e
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.36-rc1
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+$ cd ../quilt-tmp
+$ git reset --hard 1c2a7ff4cede90d96187f4a10acb5d25bf2a3121
+HEAD is now at 1c2a7ff Revert: "Staging: batman-adv: Adding netfilter-bridge hooks"
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core
+dynamic-debug-split-out-query-string-parsing-setup-from-proc_write.patch
+dynamic-debug-introduce-ddebug_query-boot-parameter.patch
+dynamic-debug-initialize-dynamic-debug-earlier-via-arch_initcall.patch
+dynamic-debug-introduce-global-fake-module-param-module.ddebug.patch
+driver-core-platform-use-drv-driver.bus-instead-of-assuming-platform_bus_type.patch
+uio-do-not-use-pci-resources-before-pci_enable_device.patch
+driver-core-platform_bus-allow-runtime-override-of-dev_pm_ops.patch
+add-packet-hub-driver-for-topcliff-platform-controller-hub.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:10: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+pch_phub-fix-build-warnings.patch
+driver-core-remove-config_sysfs_deprecated_v2-but-keep-it-for-block-devices.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core
+From ../quilt-tmp
+ + 4cb8788...40f1db2 master     -> quilt/driver-core  (forced update)
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard 40f1db2d4779a2c778e48fbae2a928f86dbda8ab
+HEAD is now at 40f1db2 driver core: remove CONFIG_SYSFS_DEPRECATED_V2 but keep it for block devices
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+tty-add-tty_struct-dev-pointer-to-corresponding-device-instance.patch
+serport-place-serport-serio-device-correctly-in-the-device-tree.patch
+serial-mfd-snprintf-returns-largish-values.patch
+serial-add-console_poll-support-for-uartlite.patch
+tty-remove-__gfp_nofail-from-tty_add_file.patch
+ioctl-use-asm-generic-ioctls-h-on-arm
+ioctl-use-asm-generic-ioctls-h-on-avr32
+ioctl-use-asm-generic-ioctls-h-on-cris
+ioctl-use-asm-generic-ioctls-h-on-frv
+ioctl-use-asm-generic-ioctls-h-on-h8300
+ioctl-use-asm-generic-ioctls-h-on-ia64
+ioctl-use-asm-generic-ioctls-h-on-m32r
+ioctl-use-asm-generic-ioctls-h-on-m68k
+ioctl-use-asm-generic-ioctls-h-on-mn10300
+ioctl-use-asm-generic-ioctls-h-on-s390
+serial-core-skip-call-set_termios-console_start-when-no_console_suspend.patch
+serial-core-restore-termios-settings-when-resume-console-ports.patch
+add-ttyprintk-driver.patch
+char-mxser-call-pci_disable_device-from-probe-remove.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + bb429ae...5afb896 master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 5afb8969d37df40ef3b8757096ef0673cd0fe2e3
+HEAD is now at 5afb896 Char: mxser, call pci_disable_device from probe/remove
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-add-intel-langwell-usb-otg-transceiver-driver.patch
+usb-langwell-usb-client-driver-code-cleanup.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:2109: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+usb-langwell-usb-client-endpoint-initialization.patch
+usb-langwell-usb-client-phy-low-power-mode-setting.patch
+usb-langwell-usb-client-remote-wakeup-support.patch
+usb-langwell-usb-client-driver-memory-handling.patch
+usb-gadget-dbgp-cleanup-remove-unneeded-check.patch
+usb-sam-ba-add-driver-for-atmel-sam-boot-assistant-sam-ba.patch
+usb-gadget-verify-vbus-current-before-setting-the-device-self-powered-bit.patch
+usb-core-update-comment-to-match-current-function-name.patch
+usb-gadget-g_multi-fixed-vendor-and-product-id.patch
+usb-gadget-g_ffs-fixed-vendor-and-product-id.patch
+usb-gadget-storage-remove-nofua-file-when-unbinding.patch
+usb-gadget-mass_storage-optional-scsi-write-fua-bit.patch
+usb-gadget-functionfs-code-cleanup.patch
+usb-gadget-composite-better-string-override-handling.patch
+usb-gadget-mass_storage-moved-strings-handling-code.patch
+usb-gadget-g_multi-moved-strings-handling-code-to-composite.patch
+usb-revert-usb-gadget-section-mismatch-warning-fixed.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_gadget_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_composite_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_configuration.patch
+init.h-add-some-more-documentation-to-__ref-tags.patch
+usb-gadget-amd5536udc.c-remove-double-test.patch
+usb-output-an-error-message-when-the-pipe-type-doesn-t-match-the-endpoint-type.patch
+usb-langwell-remove-unnecessary-return-s-from-void-functions.patch
+usb-g_file_storage-don-t-generate-automatic-serial-string.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 10face5...c2f1ceb master     -> quilt/usb  (forced update)
