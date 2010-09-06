@@ -10,4 +10,12 @@ static inline int vzevent_send(int msg, const char *attrs_fmt, ...)
 }
 #endif
 
+enum {
+	VE_EVENT_MOUNT,
+	VE_EVENT_UMOUNT,
+	VE_EVENT_START,
+	VE_EVENT_STOP,
+	VE_EVENT_REBOOT,
+};
+
 #endif /* __LINUX_VZ_EVENT_H__ */

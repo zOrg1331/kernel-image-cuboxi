@@ -10,6 +10,10 @@
 #define NETLINK_UEVENT	31
 #define VZ_EVGRP_ALL	0x01
 
+static int reboot_event;
+module_param(reboot_event, int, 0644);
+MODULE_PARM_DESC(reboot_event, "Enable reboot events");
+
 /*
  * NOTE: the original idea was to send events via kobject_uevent(),
  * however, it turns out that it has negative consequences like
@@ -21,14 +25,16 @@ static struct sock *vzev_sock;
 static char *action_to_string(int action)
 {
 	switch (action) {
-	case KOBJ_MOUNT:
+	case VE_EVENT_MOUNT:
 		return "ve-mount";
-	case KOBJ_UMOUNT:
+	case VE_EVENT_UMOUNT:
 		return "ve-umount";
-	case KOBJ_START:
+	case VE_EVENT_START:
 		return "ve-start";
-	case KOBJ_STOP:
+	case VE_EVENT_STOP:
 		return "ve-stop";
+	case VE_EVENT_REBOOT:
+		return "ve-reboot";
 	default:
 		return NULL;
 	}
@@ -41,6 +47,9 @@ static int do_vzevent_send(int event, char *msg, int len)
 	int alen;
 
 	action = action_to_string(event);
+	if (!action)
+		return -EINVAL;
+
 	alen = strlen(action);
 
 	skb = alloc_skb(len + 1 + alen, GFP_KERNEL);
@@ -85,16 +94,21 @@ static int ve_start(void *data)
 	struct ve_struct *ve;
 
 	ve = (struct ve_struct *)data;
-	vzevent_send(KOBJ_START, "%d", ve->veid);
+	vzevent_send(VE_EVENT_START, "%d", ve->veid);
 	return 0;
 }
 
 static void ve_stop(void *data)
 {
 	struct ve_struct *ve;
+	int event = VE_EVENT_STOP;
+
+	if (test_and_clear_bit(VE_REBOOT, &get_exec_env()->flags) &&
+		reboot_event)
+		event = VE_EVENT_REBOOT;
 
 	ve = (struct ve_struct *)data;
-	vzevent_send(KOBJ_STOP, "%d", ve->veid);
+	vzevent_send(event, "%d", ve->veid);
 }
 
 static struct ve_hook ve_start_stop_hook = {
@@ -106,7 +120,7 @@ static struct ve_hook ve_start_stop_hook = {
 
 static int __init init_vzevent(void)
 {
-	vzev_sock = netlink_kernel_create(NETLINK_UEVENT, 0, NULL, THIS_MODULE);
+	vzev_sock = netlink_kernel_create(&init_net, NETLINK_UEVENT, 0, NULL, NULL, THIS_MODULE);
 	if (vzev_sock == NULL)
 		return -ENOMEM;
 	ve_hook_register(VE_SS_CHAIN, &ve_start_stop_hook);
