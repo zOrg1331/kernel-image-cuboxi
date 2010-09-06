@@ -18,7 +18,7 @@
 
 Name: kernel-source-%kernel_version
 Version: %patch_level_numeric
-Release: alt1
+Release: alt0.M50P.1
 
 Summary: Linux kernel %kernel_fullversion sources
 License: GPL
@@ -51,6 +51,9 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 %kernel_src/kernel-source-%kernel_version.tar.bz2
 
 %changelog
+* Mon Sep 06 2010 Michail Yakushin <silicium@altlinux.ru> 1.0.0-alt0.M50P.1
+- build for p5
+
 * Thu Dec 03 2009 Valery Inozemtsev <shrek@altlinux.ru> 1.0.0-alt1
 - 2.6.32
 
