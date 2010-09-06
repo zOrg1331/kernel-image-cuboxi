@@ -216,12 +216,6 @@ static int i2c_device_pm_resume(struct device *dev)
 	else
 		ret = i2c_legacy_resume(dev);
 
-	if (!ret) {
-		pm_runtime_disable(dev);
-		pm_runtime_set_active(dev);
-		pm_runtime_enable(dev);
-	}
-
 	return ret;
 }
 
@@ -428,14 +422,14 @@ static int __i2c_check_addr_busy(struct device *dev, void *addrp)
 /* walk up mux tree */
 static int i2c_check_mux_parents(struct i2c_adapter *adapter, int addr)
 {
+	struct i2c_adapter *parent = i2c_parent_is_i2c_adapter(adapter);
 	int result;
 
 	result = device_for_each_child(&adapter->dev, &addr,
 					__i2c_check_addr_busy);
 
-	if (!result && i2c_parent_is_i2c_adapter(adapter))
-		result = i2c_check_mux_parents(
-				    to_i2c_adapter(adapter->dev.parent), addr);
+	if (!result && parent)
+		result = i2c_check_mux_parents(parent, addr);
 
 	return result;
 }
@@ -456,11 +450,11 @@ static int i2c_check_mux_children(struct device *dev, void *addrp)
 
 static int i2c_check_addr_busy(struct i2c_adapter *adapter, int addr)
 {
+	struct i2c_adapter *parent = i2c_parent_is_i2c_adapter(adapter);
 	int result = 0;
 
-	if (i2c_parent_is_i2c_adapter(adapter))
-		result = i2c_check_mux_parents(
-				    to_i2c_adapter(adapter->dev.parent), addr);
+	if (parent)
+		result = i2c_check_mux_parents(parent, addr);
 
 	if (!result)
 		result = device_for_each_child(&adapter->dev, &addr,
@@ -475,8 +469,10 @@ static int i2c_check_addr_busy(struct i2c_adapter *adapter, int addr)
  */
 void i2c_lock_adapter(struct i2c_adapter *adapter)
 {
-	if (i2c_parent_is_i2c_adapter(adapter))
-		i2c_lock_adapter(to_i2c_adapter(adapter->dev.parent));
+	struct i2c_adapter *parent = i2c_parent_is_i2c_adapter(adapter);
+
+	if (parent)
+		i2c_lock_adapter(parent);
 	else
 		rt_mutex_lock(&adapter->bus_lock);
 }
@@ -488,8 +484,10 @@ EXPORT_SYMBOL_GPL(i2c_lock_adapter);
  */
 static int i2c_trylock_adapter(struct i2c_adapter *adapter)
 {
-	if (i2c_parent_is_i2c_adapter(adapter))
-		return i2c_trylock_adapter(to_i2c_adapter(adapter->dev.parent));
+	struct i2c_adapter *parent = i2c_parent_is_i2c_adapter(adapter);
+
+	if (parent)
+		return i2c_trylock_adapter(parent);
 	else
 		return rt_mutex_trylock(&adapter->bus_lock);
 }
@@ -500,8 +498,10 @@ static int i2c_trylock_adapter(struct i2c_adapter *adapter)
  */
 void i2c_unlock_adapter(struct i2c_adapter *adapter)
 {
-	if (i2c_parent_is_i2c_adapter(adapter))
-		i2c_unlock_adapter(to_i2c_adapter(adapter->dev.parent));
+	struct i2c_adapter *parent = i2c_parent_is_i2c_adapter(adapter);
+
+	if (parent)
+		i2c_unlock_adapter(parent);
 	else
 		rt_mutex_unlock(&adapter->bus_lock);
 }
