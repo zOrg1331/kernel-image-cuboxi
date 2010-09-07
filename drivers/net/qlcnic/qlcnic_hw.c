@@ -297,8 +297,8 @@ qlcnic_pcie_sem_lock(struct qlcnic_adapter *adapter, int sem, u32 id_reg)
 			break;
 		if (++timeout >= QLCNIC_PCIE_SEM_TIMEOUT) {
 			dev_err(&adapter->pdev->dev,
-				"Failed to acquire sem=%d lock;reg_id=%d\n",
-				sem, id_reg);
+				"Failed to acquire sem=%d lock; holdby=%d\n",
+				sem, id_reg ? QLCRD32(adapter, id_reg) : -1);
 			return -EIO;
 		}
 		msleep(1);
@@ -375,7 +375,7 @@ qlcnic_send_cmd_descs(struct qlcnic_adapter *adapter,
 
 static int
 qlcnic_sre_macaddr_change(struct qlcnic_adapter *adapter, u8 *addr,
-				unsigned op)
+				u16 vlan_id, unsigned op)
 {
 	struct qlcnic_nic_req req;
 	struct qlcnic_mac_req *mac_req;
@@ -390,6 +390,8 @@ qlcnic_sre_macaddr_change(struct qlcnic_adapter *adapter, u8 *addr,
 	mac_req = (struct qlcnic_mac_req *)&req.words[0];
 	mac_req->op = op;
 	memcpy(mac_req->mac_addr, addr, 6);
+
+	req.words[1] = cpu_to_le64(vlan_id);
 
 	return qlcnic_send_cmd_descs(adapter, (struct cmd_desc_type0 *)&req, 1);
 }
@@ -415,7 +417,7 @@ static int qlcnic_nic_add_mac(struct qlcnic_adapter *adapter, u8 *addr)
 	memcpy(cur->mac_addr, addr, ETH_ALEN);
 
 	if (qlcnic_sre_macaddr_change(adapter,
-				cur->mac_addr, QLCNIC_MAC_ADD)) {
+				cur->mac_addr, 0, QLCNIC_MAC_ADD)) {
 		kfree(cur);
 		return -EIO;
 	}
@@ -485,9 +487,60 @@ void qlcnic_free_mac_list(struct qlcnic_adapter *adapter)
 	while (!list_empty(head)) {
 		cur = list_entry(head->next, struct qlcnic_mac_list_s, list);
 		qlcnic_sre_macaddr_change(adapter,
-				cur->mac_addr, QLCNIC_MAC_DEL);
+				cur->mac_addr, 0, QLCNIC_MAC_DEL);
 		list_del(&cur->list);
 		kfree(cur);
+	}
+}
+
+void qlcnic_prune_lb_filters(struct qlcnic_adapter *adapter)
+{
+	struct qlcnic_filter *tmp_fil;
+	struct hlist_node *tmp_hnode, *n;
+	struct hlist_head *head;
+	int i;
+
+	for (i = 0; i < adapter->fhash.fmax; i++) {
+		head = &(adapter->fhash.fhead[i]);
+
+		hlist_for_each_entry_safe(tmp_fil, tmp_hnode, n, head, fnode)
+		{
+			if (jiffies >
+				(QLCNIC_FILTER_AGE * HZ + tmp_fil->ftime)) {
+				qlcnic_sre_macaddr_change(adapter,
+					tmp_fil->faddr, tmp_fil->vlan_id,
+					tmp_fil->vlan_id ? QLCNIC_MAC_VLAN_DEL :
+					QLCNIC_MAC_DEL);
+				spin_lock_bh(&adapter->mac_learn_lock);
+				adapter->fhash.fnum--;
+				hlist_del(&tmp_fil->fnode);
+				spin_unlock_bh(&adapter->mac_learn_lock);
+				kfree(tmp_fil);
+			}
+		}
+	}
+}
+
+void qlcnic_delete_lb_filters(struct qlcnic_adapter *adapter)
+{
+	struct qlcnic_filter *tmp_fil;
+	struct hlist_node *tmp_hnode, *n;
+	struct hlist_head *head;
+	int i;
+
+	for (i = 0; i < adapter->fhash.fmax; i++) {
+		head = &(adapter->fhash.fhead[i]);
+
+		hlist_for_each_entry_safe(tmp_fil, tmp_hnode, n, head, fnode) {
+			qlcnic_sre_macaddr_change(adapter, tmp_fil->faddr,
+				tmp_fil->vlan_id, tmp_fil->vlan_id ?
+				QLCNIC_MAC_VLAN_DEL :  QLCNIC_MAC_DEL);
+			spin_lock_bh(&adapter->mac_learn_lock);
+			adapter->fhash.fnum--;
+			hlist_del(&tmp_fil->fnode);
+			spin_unlock_bh(&adapter->mac_learn_lock);
+			kfree(tmp_fil);
+		}
 	}
 }
 
@@ -713,19 +766,6 @@ int qlcnic_change_mtu(struct net_device *netdev, int mtu)
 		netdev->mtu = mtu;
 
 	return rc;
-}
-
-int qlcnic_get_mac_addr(struct qlcnic_adapter *adapter, u8 *mac)
-{
-	u32 crbaddr;
-	int pci_func = adapter->ahw.pci_func;
-
-	crbaddr = CRB_MAC_BLOCK_START +
-		(4 * ((pci_func/2) * 3)) + (4 * (pci_func & 1));
-
-	qlcnic_fetch_mac(adapter, crbaddr, crbaddr+4, pci_func & 1, mac);
-
-	return 0;
 }
 
 /*
@@ -1245,4 +1285,5 @@ void qlcnic_clear_ilb_mode(struct qlcnic_adapter *adapter)
 		mode = VPORT_MISS_MODE_ACCEPT_MULTI;
 
 	qlcnic_nic_set_promisc(adapter, mode);
+	msleep(1000);
 }
