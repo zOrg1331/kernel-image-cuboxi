@@ -2647,9 +2647,11 @@ S:	Maintained
 F:	drivers/media/video/gspca/
 
 HARDWARE MONITORING
+M:	Jean Delvare <khali@linux-fr.org>
+M:	Guenter Roeck <guenter.roeck@ericsson.com>
 L:	lm-sensors@lm-sensors.org
 W:	http://www.lm-sensors.org/
-S:	Orphan
+S:	Maintained
 F:	Documentation/hwmon/
 F:	drivers/hwmon/
 F:	include/linux/hwmon*.h
