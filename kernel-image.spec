@@ -1,6 +1,6 @@
 Name: kernel-image-std-pae
 Version: 2.6.32
-Release: alt21
+Release: alt20.M50P.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -595,6 +595,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Tue Aug 31 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt20.M50P.1
+- build for  p5 
+
 * Fri Aug 27 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt21
 - 2.6.32.21
 
