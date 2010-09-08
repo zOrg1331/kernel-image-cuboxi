@@ -1579,7 +1579,7 @@ intel_pipe_set_base(struct drm_crtc *crtc, int x, int y,
 		return ret;
 	}
 
-	ret = intel_pipe_set_base_atomic(crtc, crtc->fb, x, y);
+	ret = intel_pipe_set_base_atomic(crtc, crtc->fb, x, y, 0);
 	if (ret) {
 		i915_gem_object_unpin(obj);
 		mutex_unlock(&dev->struct_mutex);
