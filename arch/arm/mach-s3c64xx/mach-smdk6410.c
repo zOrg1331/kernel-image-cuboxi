@@ -69,6 +69,7 @@
 #include <plat/adc.h>
 #include <plat/ts.h>
 #include <plat/keypad.h>
+#include <plat/audio.h>
 
 #define UCON S3C2410_UCON_DEFAULT | S3C2410_UCON_UCLK
 #define ULCON S3C2410_LCON_CS8 | S3C2410_LCON_PNONE | S3C2410_LCON_STOPB
@@ -283,6 +284,7 @@ static struct platform_device *smdk6410_devices[] __initdata = {
 	&s3c_device_fb,
 	&s3c_device_ohci,
 	&s3c_device_usb_hsotg,
+	&s3c64xx_device_ac97,
 	&s3c64xx_device_iisv4,
 	&samsung_device_keypad,
 
@@ -698,6 +700,9 @@ static void __init smdk6410_machine_init(void)
 	i2c_register_board_info(1, i2c_devs1, ARRAY_SIZE(i2c_devs1));
 
 	s3c_ide_set_platdata(&smdk6410_ide_pdata);
+
+	/* Board defualt with CFG2.1 off */
+	s3c64xx_ac97_setup_gpio(S3C64XX_AC97_GPD);
 
 	platform_add_devices(smdk6410_devices, ARRAY_SIZE(smdk6410_devices));
 }
