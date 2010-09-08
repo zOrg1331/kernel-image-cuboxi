@@ -1154,7 +1154,7 @@ static int x86_pmu_handle_irq(struct pt_regs *regs)
 		/*
 		 * event overflow
 		 */
-		handled		= 1;
+		handled++;
 		data.period	= event->hw.last_period;
 
 		if (!x86_perf_event_set_period(event))
@@ -1200,12 +1200,20 @@ void perf_events_lapic_init(void)
 	apic_write(APIC_LVTPC, APIC_DM_NMI);
 }
 
+struct pmu_nmi_state {
+	unsigned int	marked;
+	int		handled;
+};
+
+static DEFINE_PER_CPU(struct pmu_nmi_state, pmu_nmi);
+
 static int __kprobes
 perf_event_nmi_handler(struct notifier_block *self,
 			 unsigned long cmd, void *__args)
 {
 	struct die_args *args = __args;
-	struct pt_regs *regs;
+	unsigned int this_nmi;
+	int handled;
 
 	if (!atomic_read(&active_events))
 		return NOTIFY_DONE;
@@ -1214,22 +1222,47 @@ perf_event_nmi_handler(struct notifier_block *self,
 	case DIE_NMI:
 	case DIE_NMI_IPI:
 		break;
-
+	case DIE_NMIUNKNOWN:
+		this_nmi = percpu_read(irq_stat.__nmi_count);
+		if (this_nmi != __get_cpu_var(pmu_nmi).marked)
+			/* let the kernel handle the unknown nmi */
+			return NOTIFY_DONE;
+		/*
+		 * This one is a PMU back-to-back nmi. Two events
+		 * trigger 'simultaneously' raising two back-to-back
+		 * NMIs. If the first NMI handles both, the latter
+		 * will be empty and daze the CPU. So, we drop it to
+		 * avoid false-positive 'unknown nmi' messages.
+		 */
+		return NOTIFY_STOP;
 	default:
 		return NOTIFY_DONE;
 	}
 
-	regs = args->regs;
-
 	apic_write(APIC_LVTPC, APIC_DM_NMI);
-	/*
-	 * Can't rely on the handled return value to say it was our NMI, two
-	 * events could trigger 'simultaneously' raising two back-to-back NMIs.
-	 *
-	 * If the first NMI handles both, the latter will be empty and daze
-	 * the CPU.
-	 */
-	x86_pmu.handle_irq(regs);
+
+	handled = x86_pmu.handle_irq(args->regs);
+	if (!handled)
+		return NOTIFY_DONE;
+
+	this_nmi = percpu_read(irq_stat.__nmi_count);
+	if ((handled > 1) ||
+		/* the next nmi could be a back-to-back nmi */
+	    ((__get_cpu_var(pmu_nmi).marked == this_nmi) &&
+	     (__get_cpu_var(pmu_nmi).handled > 1))) {
+		/*
+		 * We could have two subsequent back-to-back nmis: The
+		 * first handles more than one counter, the 2nd
+		 * handles only one counter and the 3rd handles no
+		 * counter.
+		 *
+		 * This is the 2nd nmi because the previous was
+		 * handling more than one counter. We will mark the
+		 * next (3rd) and then drop it if unhandled.
+		 */
+		__get_cpu_var(pmu_nmi).marked	= this_nmi + 1;
+		__get_cpu_var(pmu_nmi).handled	= handled;
+	}
 
 	return NOTIFY_STOP;
 }
@@ -1571,17 +1604,6 @@ const struct pmu *hw_perf_event_init(struct perf_event *event)
  * callchain support
  */
 
-static inline
-void callchain_store(struct perf_callchain_entry *entry, u64 ip)
-{
-	if (entry->nr < PERF_MAX_STACK_DEPTH)
-		entry->ip[entry->nr++] = ip;
-}
-
-static DEFINE_PER_CPU(struct perf_callchain_entry, pmc_irq_entry);
-static DEFINE_PER_CPU(struct perf_callchain_entry, pmc_nmi_entry);
-
-
 static void
 backtrace_warning_symbol(void *data, char *msg, unsigned long symbol)
 {
@@ -1602,7 +1624,7 @@ static void backtrace_address(void *data, unsigned long addr, int reliable)
 {
 	struct perf_callchain_entry *entry = data;
 
-	callchain_store(entry, addr);
+	perf_callchain_store(entry, addr);
 }
 
 static const struct stacktrace_ops backtrace_ops = {
@@ -1613,11 +1635,15 @@ static const struct stacktrace_ops backtrace_ops = {
 	.walk_stack		= print_context_stack_bp,
 };
 
-static void
-perf_callchain_kernel(struct pt_regs *regs, struct perf_callchain_entry *entry)
+void
+perf_callchain_kernel(struct perf_callchain_entry *entry, struct pt_regs *regs)
 {
-	callchain_store(entry, PERF_CONTEXT_KERNEL);
-	callchain_store(entry, regs->ip);
+	if (perf_guest_cbs && perf_guest_cbs->is_in_guest()) {
+		/* TODO: We don't support guest os callchain now */
+		return;
+	}
+
+	perf_callchain_store(entry, regs->ip);
 
 	dump_trace(NULL, regs, NULL, regs->bp, &backtrace_ops, entry);
 }
@@ -1646,7 +1672,7 @@ perf_callchain_user32(struct pt_regs *regs, struct perf_callchain_entry *entry)
 		if (fp < compat_ptr(regs->sp))
 			break;
 
-		callchain_store(entry, frame.return_address);
+		perf_callchain_store(entry, frame.return_address);
 		fp = compat_ptr(frame.next_frame);
 	}
 	return 1;
@@ -1659,19 +1685,20 @@ perf_callchain_user32(struct pt_regs *regs, struct perf_callchain_entry *entry)
 }
 #endif
 
-static void
-perf_callchain_user(struct pt_regs *regs, struct perf_callchain_entry *entry)
+void
+perf_callchain_user(struct perf_callchain_entry *entry, struct pt_regs *regs)
 {
 	struct stack_frame frame;
 	const void __user *fp;
 
-	if (!user_mode(regs))
-		regs = task_pt_regs(current);
+	if (perf_guest_cbs && perf_guest_cbs->is_in_guest()) {
+		/* TODO: We don't support guest os callchain now */
+		return;
+	}
 
 	fp = (void __user *)regs->bp;
 
-	callchain_store(entry, PERF_CONTEXT_USER);
-	callchain_store(entry, regs->ip);
+	perf_callchain_store(entry, regs->ip);
 
 	if (perf_callchain_user32(regs, entry))
 		return;
@@ -1688,50 +1715,9 @@ perf_callchain_user(struct pt_regs *regs, struct perf_callchain_entry *entry)
 		if ((unsigned long)fp < regs->sp)
 			break;
 
-		callchain_store(entry, frame.return_address);
+		perf_callchain_store(entry, frame.return_address);
 		fp = frame.next_frame;
 	}
-}
-
-static void
-perf_do_callchain(struct pt_regs *regs, struct perf_callchain_entry *entry)
-{
-	int is_user;
-
-	if (!regs)
-		return;
-
-	is_user = user_mode(regs);
-
-	if (is_user && current->state != TASK_RUNNING)
-		return;
-
-	if (!is_user)
-		perf_callchain_kernel(regs, entry);
-
-	if (current->mm)
-		perf_callchain_user(regs, entry);
-}
-
-struct perf_callchain_entry *perf_callchain(struct pt_regs *regs)
-{
-	struct perf_callchain_entry *entry;
-
-	if (perf_guest_cbs && perf_guest_cbs->is_in_guest()) {
-		/* TODO: We don't support guest os callchain now */
-		return NULL;
-	}
-
-	if (in_nmi())
-		entry = &__get_cpu_var(pmc_nmi_entry);
-	else
-		entry = &__get_cpu_var(pmc_irq_entry);
-
-	entry->nr = 0;
-
-	perf_do_callchain(regs, entry);
-
-	return entry;
 }
 
 unsigned long perf_instruction_pointer(struct pt_regs *regs)
