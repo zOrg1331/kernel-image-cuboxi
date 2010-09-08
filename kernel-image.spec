@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
-Version: 2.6.32
-Release: alt21.1
+Version: 2.6.35
+Release: alt4
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -202,10 +202,10 @@ for dir in asm-*; do
 	rm -rf -- "$dir"
 done
 %ifarch x86_64
-ln -s asm-x86 asm-x86_64
+ln -s asm-generic asm-x86_64
 %else
 %ifarch i586
-ln -s asm-x86 asm-i386
+ln -s asm-generic asm-i386
 %endif
 %endif
 popd
@@ -348,6 +348,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Wed Sep 08 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.35-alt4
+- 2.6.35.4
+
 * Wed Sep 01 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt21.1
 - enabled devtmpfs and automount at /dev
 
