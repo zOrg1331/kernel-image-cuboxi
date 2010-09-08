@@ -283,8 +283,11 @@ static void __ieee80211_wake_queue(struct ieee80211_hw *hw, int queue,
 
 	if (skb_queue_empty(&local->pending[queue])) {
 		rcu_read_lock();
-		list_for_each_entry_rcu(sdata, &local->interfaces, list)
-			netif_tx_wake_queue(netdev_get_tx_queue(sdata->dev, queue));
+		list_for_each_entry_rcu(sdata, &local->interfaces, list) {
+			if (test_bit(SDATA_STATE_OFFCHANNEL, &sdata->state))
+				continue;
+			netif_wake_subqueue(sdata->dev, queue);
+		}
 		rcu_read_unlock();
 	} else
 		tasklet_schedule(&local->tx_pending_tasklet);
@@ -323,7 +326,7 @@ static void __ieee80211_stop_queue(struct ieee80211_hw *hw, int queue,
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(sdata, &local->interfaces, list)
-		netif_tx_stop_queue(netdev_get_tx_queue(sdata->dev, queue));
+		netif_stop_subqueue(sdata->dev, queue);
 	rcu_read_unlock();
 }
 
@@ -471,7 +474,7 @@ void ieee80211_iterate_active_interfaces(
 
 	list_for_each_entry(sdata, &local->interfaces, list) {
 		switch (sdata->vif.type) {
-		case __NL80211_IFTYPE_AFTER_LAST:
+		case NUM_NL80211_IFTYPES:
 		case NL80211_IFTYPE_UNSPECIFIED:
 		case NL80211_IFTYPE_MONITOR:
 		case NL80211_IFTYPE_AP_VLAN:
@@ -505,7 +508,7 @@ void ieee80211_iterate_active_interfaces_atomic(
 
 	list_for_each_entry_rcu(sdata, &local->interfaces, list) {
 		switch (sdata->vif.type) {
-		case __NL80211_IFTYPE_AFTER_LAST:
+		case NUM_NL80211_IFTYPES:
 		case NL80211_IFTYPE_UNSPECIFIED:
 		case NL80211_IFTYPE_MONITOR:
 		case NL80211_IFTYPE_AP_VLAN:
@@ -1189,7 +1192,7 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 			/* ignore virtual */
 			break;
 		case NL80211_IFTYPE_UNSPECIFIED:
-		case __NL80211_IFTYPE_AFTER_LAST:
+		case NUM_NL80211_IFTYPES:
 			WARN_ON(1);
 			break;
 		}
@@ -1308,7 +1311,7 @@ void ieee80211_recalc_smps(struct ieee80211_local *local,
 	 */
 
 	list_for_each_entry(sdata, &local->interfaces, list) {
-		if (!netif_running(sdata->dev))
+		if (!ieee80211_sdata_running(sdata))
 			continue;
 		if (sdata->vif.type != NL80211_IFTYPE_STATION)
 			goto set;

@@ -470,7 +470,7 @@ ixgb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	adapter->part_num = ixgb_get_ee_pba_number(&adapter->hw);
 
 	init_timer(&adapter->watchdog_timer);
-	adapter->watchdog_timer.function = &ixgb_watchdog;
+	adapter->watchdog_timer.function = ixgb_watchdog;
 	adapter->watchdog_timer.data = (unsigned long)adapter;
 
 	INIT_WORK(&adapter->tx_timeout_task, ixgb_tx_timeout_task);
@@ -1905,7 +1905,7 @@ ixgb_rx_checksum(struct ixgb_adapter *adapter,
 	 */
 	if ((rx_desc->status & IXGB_RX_DESC_STATUS_IXSM) ||
 	   (!(rx_desc->status & IXGB_RX_DESC_STATUS_TCPCS))) {
-		skb->ip_summed = CHECKSUM_NONE;
+		skb_checksum_none_assert(skb);
 		return;
 	}
 
@@ -1913,7 +1913,7 @@ ixgb_rx_checksum(struct ixgb_adapter *adapter,
 	/* now look at the TCP checksum error bit */
 	if (rx_desc->errors & IXGB_RX_DESC_ERRORS_TCPE) {
 		/* let the stack verify checksum errors */
-		skb->ip_summed = CHECKSUM_NONE;
+		skb_checksum_none_assert(skb);
 		adapter->hw_csum_rx_error++;
 	} else {
 		/* TCP checksum is good */
