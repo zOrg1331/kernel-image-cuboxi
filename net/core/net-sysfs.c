@@ -515,7 +515,7 @@ static ssize_t rx_queue_attr_store(struct kobject *kobj, struct attribute *attr,
 	return attribute->store(queue, attribute, buf, count);
 }
 
-static struct sysfs_ops rx_queue_sysfs_ops = {
+static const struct sysfs_ops rx_queue_sysfs_ops = {
 	.show = rx_queue_attr_show,
 	.store = rx_queue_attr_store,
 };
@@ -789,12 +789,13 @@ static const void *net_netlink_ns(struct sock *sk)
 	return sock_net(sk);
 }
 
-static struct kobj_ns_type_operations net_ns_type_operations = {
+struct kobj_ns_type_operations net_ns_type_operations = {
 	.type = KOBJ_NS_TYPE_NET,
 	.current_ns = net_current_ns,
 	.netlink_ns = net_netlink_ns,
 	.initial_ns = net_initial_ns,
 };
+EXPORT_SYMBOL_GPL(net_ns_type_operations);
 
 static void net_kobj_ns_exit(struct net *net)
 {

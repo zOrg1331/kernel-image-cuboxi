@@ -3,8 +3,6 @@
  *
  * Copyright (C) 2008-2009 Nokia Corporation
  *
- * Contact: Kalle Valo <kalle.valo@nokia.com>
- *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * version 2 as published by the Free Software Foundation.
@@ -293,14 +291,14 @@ static void wl1251_irq_work(struct work_struct *work)
 			wl1251_tx_complete(wl);
 		}
 
-		if (intr & (WL1251_ACX_INTR_EVENT_A |
-			    WL1251_ACX_INTR_EVENT_B)) {
-			wl1251_debug(DEBUG_IRQ, "WL1251_ACX_INTR_EVENT (0x%x)",
-				     intr);
-			if (intr & WL1251_ACX_INTR_EVENT_A)
-				wl1251_event_handle(wl, 0);
-			else
-				wl1251_event_handle(wl, 1);
+		if (intr & WL1251_ACX_INTR_EVENT_A) {
+			wl1251_debug(DEBUG_IRQ, "WL1251_ACX_INTR_EVENT_A");
+			wl1251_event_handle(wl, 0);
+		}
+
+		if (intr & WL1251_ACX_INTR_EVENT_B) {
+			wl1251_debug(DEBUG_IRQ, "WL1251_ACX_INTR_EVENT_B");
+			wl1251_event_handle(wl, 1);
 		}
 
 		if (intr & WL1251_ACX_INTR_INIT_COMPLETE)
@@ -339,11 +337,9 @@ static int wl1251_join(struct wl1251 *wl, u8 bss_type, u8 channel,
 	if (ret < 0)
 		goto out;
 
-	/*
-	 * FIXME: we should wait for JOIN_EVENT_COMPLETE_ID but to simplify
-	 * locking we just sleep instead, for now
-	 */
-	msleep(10);
+	ret = wl1251_event_wait(wl, JOIN_EVENT_COMPLETE_ID, 100);
+	if (ret < 0)
+		wl1251_warning("join timeout");
 
 out:
 	return ret;
@@ -379,6 +375,7 @@ out:
 static int wl1251_op_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 {
 	struct wl1251 *wl = hw->priv;
+	unsigned long flags;
 
 	skb_queue_tail(&wl->tx_queue, skb);
 
@@ -393,16 +390,13 @@ static int wl1251_op_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 	 * The workqueue is slow to process the tx_queue and we need stop
 	 * the queue here, otherwise the queue will get too long.
 	 */
-	if (skb_queue_len(&wl->tx_queue) >= WL1251_TX_QUEUE_MAX_LENGTH) {
+	if (skb_queue_len(&wl->tx_queue) >= WL1251_TX_QUEUE_HIGH_WATERMARK) {
 		wl1251_debug(DEBUG_TX, "op_tx: tx_queue full, stop queues");
-		ieee80211_stop_queues(wl->hw);
 
-		/*
-		 * FIXME: this is racy, the variable is not properly
-		 * protected. Maybe fix this by removing the stupid
-		 * variable altogether and checking the real queue state?
-		 */
+		spin_lock_irqsave(&wl->wl_lock, flags);
+		ieee80211_stop_queues(wl->hw);
 		wl->tx_queue_stopped = true;
+		spin_unlock_irqrestore(&wl->wl_lock, flags);
 	}
 
 	return NETDEV_TX_OK;
@@ -471,9 +465,7 @@ static void wl1251_op_stop(struct ieee80211_hw *hw)
 	WARN_ON(wl->state != WL1251_STATE_ON);
 
 	if (wl->scanning) {
-		mutex_unlock(&wl->mutex);
 		ieee80211_scan_completed(wl->hw, true);
-		mutex_lock(&wl->mutex);
 		wl->scanning = false;
 	}
 
@@ -725,8 +717,9 @@ static int wl1251_set_key_type(struct wl1251 *wl,
 			       struct ieee80211_key_conf *mac80211_key,
 			       const u8 *addr)
 {
-	switch (mac80211_key->alg) {
-	case ALG_WEP:
+	switch (mac80211_key->cipher) {
+	case WLAN_CIPHER_SUITE_WEP40:
+	case WLAN_CIPHER_SUITE_WEP104:
 		if (is_broadcast_ether_addr(addr))
 			key->key_type = KEY_WEP_DEFAULT;
 		else
@@ -734,7 +727,7 @@ static int wl1251_set_key_type(struct wl1251 *wl,
 
 		mac80211_key->hw_key_idx = mac80211_key->keyidx;
 		break;
-	case ALG_TKIP:
+	case WLAN_CIPHER_SUITE_TKIP:
 		if (is_broadcast_ether_addr(addr))
 			key->key_type = KEY_TKIP_MIC_GROUP;
 		else
@@ -742,7 +735,7 @@ static int wl1251_set_key_type(struct wl1251 *wl,
 
 		mac80211_key->hw_key_idx = mac80211_key->keyidx;
 		break;
-	case ALG_CCMP:
+	case WLAN_CIPHER_SUITE_CCMP:
 		if (is_broadcast_ether_addr(addr))
 			key->key_type = KEY_AES_GROUP;
 		else
@@ -750,7 +743,7 @@ static int wl1251_set_key_type(struct wl1251 *wl,
 		mac80211_key->flags |= IEEE80211_KEY_FLAG_GENERATE_IV;
 		break;
 	default:
-		wl1251_error("Unknown key algo 0x%x", mac80211_key->alg);
+		wl1251_error("Unknown key cipher 0x%x", mac80211_key->cipher);
 		return -EOPNOTSUPP;
 	}
 
@@ -783,7 +776,7 @@ static int wl1251_op_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	wl1251_debug(DEBUG_CRYPT, "CMD: 0x%x", cmd);
 	wl1251_dump(DEBUG_CRYPT, "ADDR: ", addr, ETH_ALEN);
 	wl1251_debug(DEBUG_CRYPT, "Key: algo:0x%x, id:%d, len:%d flags 0x%x",
-		     key->alg, key->keyidx, key->keylen, key->flags);
+		     key->cipher, key->keyidx, key->keylen, key->flags);
 	wl1251_dump(DEBUG_CRYPT, "KEY: ", key->key, key->keylen);
 
 	if (is_zero_ether_addr(addr)) {
@@ -1438,5 +1431,5 @@ EXPORT_SYMBOL_GPL(wl1251_free_hw);
 
 MODULE_DESCRIPTION("TI wl1251 Wireles LAN Driver Core");
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Kalle Valo <kalle.valo@nokia.com>");
+MODULE_AUTHOR("Kalle Valo <kvalo@adurom.com>");
 MODULE_FIRMWARE(WL1251_FW_NAME);
