@@ -87,8 +87,8 @@ static struct the_nilfs *alloc_nilfs(struct block_device *bdev)
 	init_rwsem(&nilfs->ns_writer_sem);
 	INIT_LIST_HEAD(&nilfs->ns_list);
 	INIT_LIST_HEAD(&nilfs->ns_supers);
+	INIT_LIST_HEAD(&nilfs->ns_gc_inodes);
 	spin_lock_init(&nilfs->ns_last_segment_lock);
-	nilfs->ns_gc_inodes_h = NULL;
 	init_rwsem(&nilfs->ns_segctor_sem);
 
 	return nilfs;
@@ -164,7 +164,6 @@ void put_nilfs(struct the_nilfs *nilfs)
 		nilfs_mdt_destroy(nilfs->ns_gc_dat);
 	}
 	if (nilfs_init(nilfs)) {
-		nilfs_destroy_gccache(nilfs);
 		brelse(nilfs->ns_sbh[0]);
 		brelse(nilfs->ns_sbh[1]);
 	}
@@ -468,8 +467,8 @@ static unsigned long long nilfs_max_size(unsigned int blkbits)
 static int nilfs_store_disk_layout(struct the_nilfs *nilfs,
 				   struct nilfs_super_block *sbp)
 {
-	if (le32_to_cpu(sbp->s_rev_level) != NILFS_CURRENT_REV) {
-		printk(KERN_ERR "NILFS: revision mismatch "
+	if (le32_to_cpu(sbp->s_rev_level) < NILFS_MIN_SUPP_REV) {
+		printk(KERN_ERR "NILFS: unsupported revision "
 		       "(superblock rev.=%d.%d, current rev.=%d.%d). "
 		       "Please check the version of mkfs.nilfs.\n",
 		       le32_to_cpu(sbp->s_rev_level),
@@ -733,11 +732,6 @@ int init_nilfs(struct the_nilfs *nilfs, struct nilfs_sb_info *sbi, char *data)
 	nilfs->ns_bdi = bdi ? : &default_backing_dev_info;
 
 	err = nilfs_store_log_cursor(nilfs, sbp);
-	if (err)
-		goto failed_sbh;
-
-	/* Initialize gcinode cache */
-	err = nilfs_init_gccache(nilfs);
 	if (err)
 		goto failed_sbh;
 
