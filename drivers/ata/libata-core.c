@@ -4939,22 +4939,7 @@ static void ata_verify_xfer(struct ata_queued_cmd *qc)
 	dev->flags &= ~ATA_DFLAG_DUBIOUS_XFER;
 }
 
-/**
- *	ata_qc_complete - Complete an active ATA command
- *	@qc: Command to complete
- *
- *	Indicate to the mid and upper layers that an ATA command has
- *	completed, with either an ok or not-ok status.
- *
- *	Refrain from calling this function multiple times when
- *	successfully completing multiple NCQ commands.
- *	ata_qc_complete_multiple() should be used instead, which will
- *	properly update IRQ expect state.
- *
- *	LOCKING:
- *	spin_lock_irqsave(host lock)
- */
-void ata_qc_complete(struct ata_queued_cmd *qc)
+static void ata_qc_complete_raw(struct ata_queued_cmd *qc)
 {
 	struct ata_port *ap = qc->ap;
 
@@ -5033,6 +5018,27 @@ void ata_qc_complete(struct ata_queued_cmd *qc)
 }
 
 /**
+ *	ata_qc_complete - Complete an active ATA command
+ *	@qc: Command to complete
+ *
+ *	Indicate to the mid and upper layers that an ATA command has
+ *	completed, with either an ok or not-ok status.
+ *
+ *	Refrain from calling this function multiple times when
+ *	successfully completing multiple NCQ commands.
+ *	ata_qc_complete_multiple() should be used instead, which will
+ *	properly update IRQ expect state.
+ *
+ *	LOCKING:
+ *	spin_lock_irqsave(host lock)
+ */
+void ata_qc_complete(struct ata_queued_cmd *qc)
+{
+	unexpect_irq(qc->ap->irq_expect, false);
+	ata_qc_complete_raw(qc);
+}
+
+/**
  *	ata_qc_complete_multiple - Complete multiple qcs successfully
  *	@ap: port in question
  *	@qc_active: new qc_active mask
@@ -5057,6 +5063,8 @@ int ata_qc_complete_multiple(struct ata_port *ap, u32 qc_active)
 	int nr_done = 0;
 	u32 done_mask;
 
+	unexpect_irq(ap->irq_expect, false);
+
 	done_mask = ap->qc_active ^ qc_active;
 
 	if (unlikely(done_mask & qc_active)) {
@@ -5071,11 +5079,14 @@ int ata_qc_complete_multiple(struct ata_port *ap, u32 qc_active)
 
 		qc = ata_qc_from_tag(ap, tag);
 		if (qc) {
-			ata_qc_complete(qc);
+			ata_qc_complete_raw(qc);
 			nr_done++;
 		}
 		done_mask &= ~(1 << tag);
 	}
+
+	if (ap->qc_active)
+		expect_irq(ap->irq_expect);
 
 	return nr_done;
 }
@@ -5146,6 +5157,7 @@ void ata_qc_issue(struct ata_queued_cmd *qc)
 	qc->err_mask |= ap->ops->qc_issue(qc);
 	if (unlikely(qc->err_mask))
 		goto err;
+	expect_irq(ap->irq_expect);
 	return;
 
 sys_err:
@@ -6196,8 +6208,13 @@ int ata_host_activate(struct ata_host *host, int irq,
 	if (rc)
 		return rc;
 
-	for (i = 0; i < host->n_ports; i++)
-		ata_port_desc(host->ports[i], "irq %d", irq);
+	for (i = 0; i < host->n_ports; i++) {
+		struct ata_port *ap = host->ports[i];
+
+		if (!ata_port_is_dummy(ap))
+			ap->irq_expect = init_irq_expect(irq, host);
+		ata_port_desc(ap, "irq %d%s", irq, ap->irq_expect ? "+" : "");
+	}
 
 	rc = ata_host_register(host, sht);
 	/* if failed, just free the IRQ and leave ports alone */
