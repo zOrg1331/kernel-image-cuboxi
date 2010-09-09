@@ -1,7 +1,7 @@
 /*
  * drivers/sh/clk.c - SuperH clock framework
  *
- *  Copyright (C) 2005 - 2009  Paul Mundt
+ *  Copyright (C) 2005 - 2010  Paul Mundt
  *
  * This clock framework is derived from the OMAP version by:
  *
@@ -76,7 +76,8 @@ long clk_rate_table_round(struct clk *clk,
 	unsigned long highest, lowest;
 	int i;
 
-	highest = lowest = 0;
+	highest = 0;
+	lowest = ~0UL;
 
 	for (i = 0; freq_table[i].frequency != CPUFREQ_TABLE_END; i++) {
 		unsigned long freq = freq_table[i].frequency;
@@ -354,10 +355,10 @@ int clk_set_parent(struct clk *clk, struct clk *parent)
 			ret = clk_reparent(clk, parent);
 
 		if (ret == 0) {
-			pr_debug("clock: set parent of %s to %s (new rate %ld)\n",
-				 clk->name, clk->parent->name, clk->rate);
 			if (clk->ops->recalc)
 				clk->rate = clk->ops->recalc(clk);
+			pr_debug("clock: set parent of %s to %s (new rate %ld)\n",
+				 clk->name, clk->parent->name, clk->rate);
 			propagate_rate(clk);
 		}
 	} else
