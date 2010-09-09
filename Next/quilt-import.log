@@ -1,0 +1,142 @@
+Importing driver-core.current based on 2.6.36-rc3
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core.current 2bfc96a127bc1cc94d26bfaa40159966064f9c8c
+Importing tty.current based on quilt/driver-core.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 2bfc96a127bc1cc94d26bfaa40159966064f9c8c
+HEAD is now at 2bfc96a Linux 2.6.36-rc3
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty.current
+serial-amba-pl010-fix-set_ldisc.patch
+serial-mfd-fix-bug-in-serial_hsu_remove.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty.current
+From ../quilt-tmp
+ + 32546ee...58e3675 master     -> quilt/tty.current  (forced update)
+Importing usb.current based on quilt/tty.current
+$ cd ../quilt-tmp
+$ git reset --hard 58e3675bdf3031d453aed80e134927f91d0b9002
+HEAD is now at 58e3675 serial: mfd: fix bug in serial_hsu_remove()
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-musb_debugfs-don-t-use-the-struct-file-private_data-field-with-seq_files.patch
+usb-ehci-disable-langwell-penwell-lpm-capability.patch
+usb-otg-twl4030-fix-phy-initialization-v1.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + 38a18e4...96c5e8a master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard 96c5e8a21900dba9def0b98d4ef688633a4b053a
+HEAD is now at 96c5e8a USB: otg: twl4030: fix phy initialization(v1)
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+revert-staging-batman-adv-adding-netfilter-bridge-hooks.patch
+staging-vt6655-fix-buffer-overflow.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 7b57bce...ffff31e master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.36-rc3
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.36-rc3
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.36-rc2
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.36-rc3
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.36-rc1
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+$ cd ../quilt-tmp
+$ git reset --hard ffff31eb6b25a6656c91c64dba9e668e45980b27
+HEAD is now at ffff31e Staging: vt6655: fix buffer overflow
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core
+dynamic-debug-split-out-query-string-parsing-setup-from-proc_write.patch
+dynamic-debug-introduce-ddebug_query-boot-parameter.patch
+dynamic-debug-initialize-dynamic-debug-earlier-via-arch_initcall.patch
+dynamic-debug-introduce-global-fake-module-param-module.ddebug.patch
+driver-core-platform-use-drv-driver.bus-instead-of-assuming-platform_bus_type.patch
+uio-do-not-use-pci-resources-before-pci_enable_device.patch
+driver-core-platform_bus-allow-runtime-override-of-dev_pm_ops.patch
+add-packet-hub-driver-for-topcliff-platform-controller-hub.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:10: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+pch_phub-fix-build-warnings.patch
+driver-core-remove-config_sysfs_deprecated_v2-but-keep-it-for-block-devices.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core
+From ../quilt-tmp
+ + ae64982...e87e1a8 master     -> quilt/driver-core  (forced update)
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard e87e1a8a5b847e733e254a701c09bfbeebc80f99
+HEAD is now at e87e1a8 driver core: remove CONFIG_SYSFS_DEPRECATED_V2 but keep it for block devices
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+tty-add-tty_struct-dev-pointer-to-corresponding-device-instance.patch
+serport-place-serport-serio-device-correctly-in-the-device-tree.patch
+serial-mfd-snprintf-returns-largish-values.patch
+serial-add-console_poll-support-for-uartlite.patch
+tty-remove-__gfp_nofail-from-tty_add_file.patch
+ioctl-use-asm-generic-ioctls-h-on-arm
+ioctl-use-asm-generic-ioctls-h-on-avr32
+ioctl-use-asm-generic-ioctls-h-on-cris
+ioctl-use-asm-generic-ioctls-h-on-frv
+ioctl-use-asm-generic-ioctls-h-on-h8300
+ioctl-use-asm-generic-ioctls-h-on-ia64
+ioctl-use-asm-generic-ioctls-h-on-m32r
+ioctl-use-asm-generic-ioctls-h-on-m68k
+ioctl-use-asm-generic-ioctls-h-on-mn10300
+ioctl-use-asm-generic-ioctls-h-on-s390
+serial-core-skip-call-set_termios-console_start-when-no_console_suspend.patch
+serial-core-restore-termios-settings-when-resume-console-ports.patch
+add-ttyprintk-driver.patch
+char-mxser-call-pci_disable_device-from-probe-remove.patch
+tty_io-check-return-code-of-tty_register_device.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + 0fd1d30...2f72087 master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 2f7208730e18b5b2ac033285bd07dc004df3a11b
+HEAD is now at 2f72087 tty_io: check return code of tty_register_device
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-add-intel-langwell-usb-otg-transceiver-driver.patch
+usb-langwell-usb-client-driver-code-cleanup.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:2109: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+usb-langwell-usb-client-endpoint-initialization.patch
+usb-langwell-usb-client-phy-low-power-mode-setting.patch
+usb-langwell-usb-client-remote-wakeup-support.patch
+usb-langwell-usb-client-driver-memory-handling.patch
+usb-gadget-dbgp-cleanup-remove-unneeded-check.patch
+usb-sam-ba-add-driver-for-atmel-sam-boot-assistant-sam-ba.patch
+usb-gadget-verify-vbus-current-before-setting-the-device-self-powered-bit.patch
+usb-core-update-comment-to-match-current-function-name.patch
+usb-gadget-g_multi-fixed-vendor-and-product-id.patch
+usb-gadget-g_ffs-fixed-vendor-and-product-id.patch
+usb-gadget-storage-remove-nofua-file-when-unbinding.patch
+usb-gadget-mass_storage-optional-scsi-write-fua-bit.patch
+usb-gadget-functionfs-code-cleanup.patch
+usb-gadget-composite-better-string-override-handling.patch
+usb-gadget-mass_storage-moved-strings-handling-code.patch
+usb-gadget-g_multi-moved-strings-handling-code-to-composite.patch
+usb-revert-usb-gadget-section-mismatch-warning-fixed.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_gadget_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_composite_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_configuration.patch
+init.h-add-some-more-documentation-to-__ref-tags.patch
+usb-gadget-amd5536udc.c-remove-double-test.patch
+usb-output-an-error-message-when-the-pipe-type-doesn-t-match-the-endpoint-type.patch
+usb-langwell-remove-unnecessary-return-s-from-void-functions.patch
+usb-g_file_storage-don-t-generate-automatic-serial-string.patch
+usb-kconfig-fix-typos-in-usb_functionfs-description.patch
+usb-ehci-tdi-let-s-tdi_reset-set-host-mode.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + b46d464...f3c6aea master     -> quilt/usb  (forced update)
