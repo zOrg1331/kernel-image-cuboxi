@@ -704,7 +704,7 @@ void NICReadEEPROMParameters(struct rt_rtmp_adapter *pAd, u8 *mac_addr)
 	DBGPRINT(RT_DEBUG_TRACE,
 		 ("--> EEPROMAddressNum = %d\n", pAd->EEPROMAddressNum));
 
-	/* RT2860 MAC no longer auto load MAC address from E2PROM. Driver has to intialize */
+	/* RT2860 MAC no longer auto load MAC address from E2PROM. Driver has to initialize */
 	/* MAC address registers according to E2PROM setting */
 	if (mac_addr == NULL ||
 	    strlen((char *)mac_addr) != 17 ||
@@ -2507,7 +2507,7 @@ void UserCfgInit(struct rt_rtmp_adapter *pAd)
 	DBGPRINT(RT_DEBUG_TRACE, ("--> UserCfgInit\n"));
 
 	/* */
-	/*  part I. intialize common configuration */
+	/*  part I. initialize common configuration */
 	/* */
 #ifdef RTMP_MAC_USB
 	pAd->BulkOutReq = 0;
@@ -2646,7 +2646,7 @@ void UserCfgInit(struct rt_rtmp_adapter *pAd)
 	pAd->CommonCfg.BeaconPeriod = 100;	/* in mSec */
 
 	/* */
-	/* part II. intialize STA specific configuration */
+	/* part II. initialize STA specific configuration */
 	/* */
 	{
 		RX_FILTER_SET_FLAG(pAd, fRX_FILTER_ACCEPT_DIRECT);
@@ -3509,7 +3509,7 @@ int RtmpRaDevCtrlInit(struct rt_rtmp_adapter *pAd, IN RTMP_INF_TYPE infType)
 		 ("STA Driver version-%s\n", STA_DRIVER_VERSION));
 
 #ifdef RTMP_MAC_USB
-	init_MUTEX(&(pAd->UsbVendorReq_semaphore));
+	sema_init(&(pAd->UsbVendorReq_semaphore), 1);
 	os_alloc_mem(pAd, (u8 **) & pAd->UsbVendorReqBuf,
 		     MAX_PARAM_BUFFER_SIZE - 1);
 	if (pAd->UsbVendorReqBuf == NULL) {
