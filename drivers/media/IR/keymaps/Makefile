@@ -39,6 +39,7 @@ obj-$(CONFIG_RC_MAP) += rc-adstech-dvb-t-pci.o \
 			rc-kworld-315u.o \
 			rc-kworld-plus-tv-analog.o \
 			rc-lirc.o \
+			rc-lme2510.o \
 			rc-manli.o \
 			rc-msi-tvanywhere.o \
 			rc-msi-tvanywhere-plus.o \
@@ -62,6 +63,7 @@ obj-$(CONFIG_RC_MAP) += rc-adstech-dvb-t-pci.o \
 			rc-rc5-tv.o \
 			rc-rc6-mce.o \
 			rc-real-audio-220-32-keys.o \
+			rc-streamzap.o \
 			rc-tbs-nec.o \
 			rc-terratec-cinergy-xs.o \
 			rc-tevii-nec.o \
