@@ -78,7 +78,7 @@ static int stv0288_writeregI(struct stv0288_state *state, u8 reg, u8 data)
 	return (ret != 1) ? -EREMOTEIO : 0;
 }
 
-static int stv0288_write(struct dvb_frontend *fe, u8 *buf, int len)
+static int stv0288_write(struct dvb_frontend *fe, const u8 buf[], int len)
 {
 	struct stv0288_state *state = fe->demodulator_priv;
 
@@ -486,7 +486,7 @@ static int stv0288_set_frontend(struct dvb_frontend *fe,
 	tda[2] = 0x0; /* CFRL */
 	for (tm = -6; tm < 7;) {
 		/* Viterbi status */
-		if (stv0288_readreg(state, 0x24) & 0x80)
+		if (stv0288_readreg(state, 0x24) & 0x8)
 			break;
 
 		tda[2] += 40;
