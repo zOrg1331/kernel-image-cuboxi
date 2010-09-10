@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.35
-Release: alt5.1
+Release: alt5.1.gns1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -348,11 +348,17 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Sun Sep 26 2010 Mykola Grechukh <gns@altlinux.ru> 2.6.35-alt5.1.gns1
+- rebased on 2.6.35-alt5.1
+
 * Thu Sep 23 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.35-alt5.1
 - fixed CVE-2010-3301
 
 * Wed Sep 22 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.35-alt5
 - 2.6.35.5
+
+* Fri Sep 10 2010 Mykola Grechukh <gns@altlinux.ru> 2.6.35-alt4.gns1
+- squashfs-lzma
 
 * Wed Sep 08 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.35-alt4
 - 2.6.35.4
