@@ -1,5 +1,7 @@
 #
 # Automatically generated make config: don't edit
+# Linux kernel version: 2.6.35-un-def-alt4
+# Fri Sep 10 13:12:42 2010
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -58,6 +60,7 @@ CONFIG_X86_HT=y
 CONFIG_X86_TRAMPOLINE=y
 CONFIG_ARCH_HWEIGHT_CFLAGS="-fcall-saved-rdi -fcall-saved-rsi -fcall-saved-rdx -fcall-saved-rcx -fcall-saved-r8 -fcall-saved-r9 -fcall-saved-r10 -fcall-saved-r11"
 # CONFIG_KTIME_SCALAR is not set
+CONFIG_ARCH_CPU_PROBE_RELEASE=y
 CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
 CONFIG_CONSTRUCTORS=y
 
@@ -4647,8 +4650,8 @@ CONFIG_SENSORS_TSL2563=m
 #
 CONFIG_IIO_PERIODIC_RTC_TRIGGER=m
 CONFIG_IIO_GPIO_TRIGGER=m
-CONFIG_RAMZSWAP=m
-CONFIG_RAMZSWAP_STATS=y
+CONFIG_ZRAM=m
+CONFIG_ZRAM_STATS=y
 CONFIG_WLAGS49_H2=m
 CONFIG_WLAGS49_H25=m
 CONFIG_BATMAN_ADV=m
