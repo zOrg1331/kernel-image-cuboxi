@@ -356,7 +356,7 @@ static void ixgbevf_receive_skb(struct ixgbevf_q_vector *q_vector,
 static inline void ixgbevf_rx_checksum(struct ixgbevf_adapter *adapter,
 				       u32 status_err, struct sk_buff *skb)
 {
-	skb->ip_summed = CHECKSUM_NONE;
+	skb_checksum_none_assert(skb);
 
 	/* Rx csum disabled */
 	if (!(adapter->flags & IXGBE_FLAG_RX_CSUM_ENABLED))
@@ -3426,7 +3426,7 @@ static int __devinit ixgbevf_probe(struct pci_dev *pdev,
 	}
 
 	init_timer(&adapter->watchdog_timer);
-	adapter->watchdog_timer.function = &ixgbevf_watchdog;
+	adapter->watchdog_timer.function = ixgbevf_watchdog;
 	adapter->watchdog_timer.data = (unsigned long)adapter;
 
 	INIT_WORK(&adapter->reset_task, ixgbevf_reset_task);

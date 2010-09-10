@@ -365,11 +365,6 @@ static void be_rx_eqd_update(struct be_adapter *adapter)
 	rx_eq->cur_eqd = eqd;
 }
 
-static struct net_device_stats *be_get_stats(struct net_device *dev)
-{
-	return &dev->stats;
-}
-
 static u32 be_calc_rate(u64 bytes, unsigned long ticks)
 {
 	u64 rate = bytes;
@@ -1026,7 +1021,7 @@ static void be_rx_compl_process(struct be_adapter *adapter,
 	skb_fill_rx_data(adapter, skb, rxcp, num_rcvd);
 
 	if (do_pkt_csum(rxcp, adapter->rx_csum))
-		skb->ip_summed = CHECKSUM_NONE;
+		skb_checksum_none_assert(skb);
 	else
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 
@@ -2084,6 +2079,47 @@ static int be_setup_wol(struct be_adapter *adapter, bool enable)
 	return status;
 }
 
+/*
+ * Generate a seed MAC address from the PF MAC Address using jhash.
+ * MAC Address for VFs are assigned incrementally starting from the seed.
+ * These addresses are programmed in the ASIC by the PF and the VF driver
+ * queries for the MAC address during its probe.
+ */
+static inline int be_vf_eth_addr_config(struct be_adapter *adapter)
+{
+	u32 vf = 0;
+	int status;
+	u8 mac[ETH_ALEN];
+
+	be_vf_eth_addr_generate(adapter, mac);
+
+	for (vf = 0; vf < num_vfs; vf++) {
+		status = be_cmd_pmac_add(adapter, mac,
+					adapter->vf_cfg[vf].vf_if_handle,
+					&adapter->vf_cfg[vf].vf_pmac_id);
+		if (status)
+			dev_err(&adapter->pdev->dev,
+				"Mac address add failed for VF %d\n", vf);
+		else
+			memcpy(adapter->vf_cfg[vf].vf_mac_addr, mac, ETH_ALEN);
+
+		mac[5] += 1;
+	}
+	return status;
+}
+
+static inline void be_vf_eth_addr_rem(struct be_adapter *adapter)
+{
+	u32 vf;
+
+	for (vf = 0; vf < num_vfs; vf++) {
+		if (adapter->vf_cfg[vf].vf_pmac_id != BE_INVALID_PMAC_ID)
+			be_cmd_pmac_del(adapter,
+					adapter->vf_cfg[vf].vf_if_handle,
+					adapter->vf_cfg[vf].vf_pmac_id);
+	}
+}
+
 static int be_setup(struct be_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
@@ -2143,10 +2179,20 @@ static int be_setup(struct be_adapter *adapter)
 	if (status != 0)
 		goto rx_qs_destroy;
 
+	if (be_physfn(adapter)) {
+		status = be_vf_eth_addr_config(adapter);
+		if (status)
+			goto mcc_q_destroy;
+	}
+
 	adapter->link_speed = -1;
 
 	return 0;
 
+mcc_q_destroy:
+	if (be_physfn(adapter))
+		be_vf_eth_addr_rem(adapter);
+	be_mcc_queues_destroy(adapter);
 rx_qs_destroy:
 	be_rx_queues_destroy(adapter);
 tx_qs_destroy:
@@ -2163,6 +2209,9 @@ do_none:
 
 static int be_clear(struct be_adapter *adapter)
 {
+	if (be_physfn(adapter))
+		be_vf_eth_addr_rem(adapter);
+
 	be_mcc_queues_destroy(adapter);
 	be_rx_queues_destroy(adapter);
 	be_tx_queues_destroy(adapter);
@@ -2390,7 +2439,6 @@ static struct net_device_ops be_netdev_ops = {
 	.ndo_open		= be_open,
 	.ndo_stop		= be_close,
 	.ndo_start_xmit		= be_xmit,
-	.ndo_get_stats		= be_get_stats,
 	.ndo_set_rx_mode	= be_set_multicast_list,
 	.ndo_set_mac_address	= be_mac_addr_set,
 	.ndo_change_mtu		= be_change_mtu,
