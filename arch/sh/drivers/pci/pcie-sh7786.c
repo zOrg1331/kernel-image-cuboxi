@@ -51,6 +51,7 @@ static struct resource sh7786_pci0_resources[] = {
 		.name	= "PCIe0 MEM 2",
 		.start	= 0xfe100000,
 		.end	= 0xfe100000 + SZ_1M - 1,
+		.flags	= IORESOURCE_MEM,
 	},
 };
 
@@ -74,6 +75,7 @@ static struct resource sh7786_pci1_resources[] = {
 		.name	= "PCIe1 MEM 2",
 		.start	= 0xfe300000,
 		.end	= 0xfe300000 + SZ_1M - 1,
+		.flags	= IORESOURCE_MEM,
 	},
 };
 
@@ -82,6 +84,7 @@ static struct resource sh7786_pci2_resources[] = {
 		.name	= "PCIe2 IO",
 		.start	= 0xfc800000,
 		.end	= 0xfc800000 + SZ_4M - 1,
+		.flags	= IORESOURCE_IO,
 	}, {
 		.name	= "PCIe2 MEM 0",
 		.start	= 0x80000000,
@@ -96,6 +99,7 @@ static struct resource sh7786_pci2_resources[] = {
 		.name	= "PCIe2 MEM 2",
 		.start	= 0xfcd00000,
 		.end	= 0xfcd00000 + SZ_1M - 1,
+		.flags	= IORESOURCE_MEM,
 	},
 };
 
@@ -148,15 +152,10 @@ static int pci_wait_for_irq(struct pci_channel *chan, unsigned int mask)
 static void phy_write_reg(struct pci_channel *chan, unsigned int addr,
 			  unsigned int lane, unsigned int data)
 {
-	unsigned long phyaddr, ctrl;
+	unsigned long phyaddr;
 
 	phyaddr = (1 << BITS_CMD) + ((lane & 0xf) << BITS_LANE) +
 			((addr & 0xff) << BITS_ADR);
-
-	/* Enable clock */
-	ctrl = pci_read_reg(chan, SH4A_PCIEPHYCTLR);
-	ctrl |= (1 << BITS_CKE);
-	pci_write_reg(chan, ctrl, SH4A_PCIEPHYCTLR);
 
 	/* Set write data */
 	pci_write_reg(chan, data, SH4A_PCIEPHYDOUTR);
@@ -165,19 +164,21 @@ static void phy_write_reg(struct pci_channel *chan, unsigned int addr,
 	phy_wait_for_ack(chan);
 
 	/* Clear command */
+	pci_write_reg(chan, 0, SH4A_PCIEPHYDOUTR);
 	pci_write_reg(chan, 0, SH4A_PCIEPHYADRR);
 
 	phy_wait_for_ack(chan);
-
-	/* Disable clock */
-	ctrl = pci_read_reg(chan, SH4A_PCIEPHYCTLR);
-	ctrl &= ~(1 << BITS_CKE);
-	pci_write_reg(chan, ctrl, SH4A_PCIEPHYCTLR);
 }
 
 static int phy_init(struct pci_channel *chan)
 {
+	unsigned long ctrl;
 	unsigned int timeout = 100;
+
+	/* Enable clock */
+	ctrl = pci_read_reg(chan, SH4A_PCIEPHYCTLR);
+	ctrl |= (1 << BITS_CKE);
+	pci_write_reg(chan, ctrl, SH4A_PCIEPHYCTLR);
 
 	/* Initialize the phy */
 	phy_write_reg(chan, 0x60, 0xf, 0x004b008b);
@@ -187,9 +188,15 @@ static int phy_init(struct pci_channel *chan)
 	phy_write_reg(chan, 0x66, 0xf, 0x00000010);
 	phy_write_reg(chan, 0x74, 0xf, 0x0007001c);
 	phy_write_reg(chan, 0x79, 0xf, 0x01fc000d);
+	phy_write_reg(chan, 0xb0, 0xf, 0x00000610);
 
 	/* Deassert Standby */
-	phy_write_reg(chan, 0x67, 0xf, 0x00000400);
+	phy_write_reg(chan, 0x67, 0x1, 0x00000400);
+
+	/* Disable clock */
+	ctrl = pci_read_reg(chan, SH4A_PCIEPHYCTLR);
+	ctrl &= ~(1 << BITS_CKE);
+	pci_write_reg(chan, ctrl, SH4A_PCIEPHYCTLR);
 
 	while (timeout--) {
 		if (pci_read_reg(chan, SH4A_PCIEPHYSR))
@@ -201,16 +208,26 @@ static int phy_init(struct pci_channel *chan)
 	return -ETIMEDOUT;
 }
 
+static void pcie_reset(struct sh7786_pcie_port *port)
+{
+	struct pci_channel *chan = port->hose;
+
+	pci_write_reg(chan, 1, SH4A_PCIESRSTR);
+	pci_write_reg(chan, 0, SH4A_PCIETCTLR);
+	pci_write_reg(chan, 0, SH4A_PCIESRSTR);
+	pci_write_reg(chan, 0, SH4A_PCIETXVC0SR);
+}
+
 static int pcie_init(struct sh7786_pcie_port *port)
 {
 	struct pci_channel *chan = port->hose;
 	unsigned int data;
 	phys_addr_t memphys;
 	size_t memsize;
-	int ret, i;
+	int ret, i, win;
 
 	/* Begin initialization */
-	pci_write_reg(chan, 0, SH4A_PCIETCTLR);
+	pcie_reset(port);
 
 	/* Initialize as type1. */
 	data = pci_read_reg(chan, SH4A_PCIEPCICONF3);
@@ -287,6 +304,9 @@ static int pcie_init(struct sh7786_pcie_port *port)
 	__raw_writel(memphys, chan->reg_base + SH4A_PCIELAR0);
 	__raw_writel((memsize - SZ_256) | 1, chan->reg_base + SH4A_PCIELAMR0);
 
+	__raw_writel(memphys, chan->reg_base + SH4A_PCIEPCICONF4);
+	__raw_writel(0, chan->reg_base + SH4A_PCIEPCICONF5);
+
 	/* Finish initialization */
 	data = pci_read_reg(chan, SH4A_PCIETCTLR);
 	data |= 0x1;
@@ -321,13 +341,19 @@ static int pcie_init(struct sh7786_pcie_port *port)
 	printk(KERN_NOTICE "PCI: PCIe#%d link width %d\n",
 	       port->index, (data >> 20) & 0x3f);
 
-
-	for (i = 0; i < chan->nr_resources; i++) {
+	for (i = win = 0; i < chan->nr_resources; i++) {
 		struct resource *res = chan->resources + i;
 		resource_size_t size;
 		u32 enable_mask;
 
-		pci_write_reg(chan, 0x00000000, SH4A_PCIEPTCTLR(i));
+		/*
+		 * We can't use the 32-bit mode windows in legacy 29-bit
+		 * mode, so just skip them entirely.
+		 */
+		if ((res->flags & IORESOURCE_MEM_32BIT) && __in_29bit_mode())
+			continue;
+
+		pci_write_reg(chan, 0x00000000, SH4A_PCIEPTCTLR(win));
 
 		size = resource_size(res);
 
@@ -336,16 +362,18 @@ static int pcie_init(struct sh7786_pcie_port *port)
 		 * keeps things pretty simple.
 		 */
 		__raw_writel(((roundup_pow_of_two(size) / SZ_256K) - 1) << 18,
-			     chan->reg_base + SH4A_PCIEPAMR(i));
+			     chan->reg_base + SH4A_PCIEPAMR(win));
 
-		pci_write_reg(chan, 0x00000000, SH4A_PCIEPARH(i));
-		pci_write_reg(chan, 0x00000000, SH4A_PCIEPARL(i));
+		pci_write_reg(chan, res->start, SH4A_PCIEPARL(win));
+		pci_write_reg(chan, 0x00000000, SH4A_PCIEPARH(win));
 
 		enable_mask = MASK_PARE;
 		if (res->flags & IORESOURCE_IO)
 			enable_mask |= MASK_SPC;
 
-		pci_write_reg(chan, enable_mask, SH4A_PCIEPTCTLR(i));
+		pci_write_reg(chan, enable_mask, SH4A_PCIEPTCTLR(win));
+
+		win++;
 	}
 
 	return 0;
@@ -392,7 +420,7 @@ static int __init sh7786_pcie_init(void)
 {
 	int ret = 0, i;
 
-	printk(KERN_NOTICE "PCI: Starting intialization.\n");
+	printk(KERN_NOTICE "PCI: Starting initialization.\n");
 
 	sh7786_pcie_hwops = &sh7786_65nm_pcie_hwops;
 
