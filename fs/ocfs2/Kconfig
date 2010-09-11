@@ -1,5 +1,6 @@
 config OCFS2_FS
 	tristate "OCFS2 file system support"
+	depends on BKL # from pushdown, need to fix
 	depends on NET && SYSFS
 	select CONFIGFS_FS
 	select JBD2

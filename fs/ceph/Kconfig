@@ -1,6 +1,7 @@
 config CEPH_FS
         tristate "Ceph distributed file system (EXPERIMENTAL)"
 	depends on INET && EXPERIMENTAL
+	depends on BKL # need to fix
 	select LIBCRC32C
 	select CRYPTO_AES
 	help
