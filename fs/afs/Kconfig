@@ -1,6 +1,7 @@
 config AFS_FS
 	tristate "Andrew File System support (AFS) (EXPERIMENTAL)"
 	depends on INET && EXPERIMENTAL
+	depends on BKL # need to fix
 	select AF_RXRPC
 	select DNS_RESOLVER
 	help

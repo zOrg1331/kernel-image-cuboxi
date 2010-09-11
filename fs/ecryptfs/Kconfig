@@ -1,6 +1,7 @@
 config ECRYPT_FS
 	tristate "eCrypt filesystem layer support (EXPERIMENTAL)"
 	depends on EXPERIMENTAL && KEYS && CRYPTO
+	depends on BKL # need to fix
 	select CRYPTO_ECB
 	select CRYPTO_CBC
 	select CRYPTO_MD5
