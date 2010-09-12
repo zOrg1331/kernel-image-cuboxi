@@ -17,7 +17,6 @@
 #include <linux/slab.h>
 #include <linux/nls.h>
 #include <linux/ctype.h>
-#include <linux/smp_lock.h>
 #include <linux/statfs.h>
 #include <linux/cdrom.h>
 #include <linux/parser.h>
@@ -44,11 +43,11 @@ static void isofs_put_super(struct super_block *sb)
 	struct isofs_sb_info *sbi = ISOFS_SB(sb);
 
 #ifdef CONFIG_JOLIET
-	lock_kernel();
+	lock_super(sb);
 
 	unload_nls(sbi->s_nls_iocharset);
 
-	unlock_kernel();
+	unlock_super(sb);
 #endif
 
 	kfree(sbi);
@@ -571,13 +570,13 @@ static int isofs_fill_super(struct super_block *s, void *data, int silent)
 	int table, error = -EINVAL;
 	unsigned int vol_desc_start;
 
-	lock_kernel();
+	lock_super(s);
 
 	save_mount_options(s, data);
 
 	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 	if (!sbi) {
-		unlock_kernel();
+		unlock_super(s);
 		return -ENOMEM;
 	}
 	s->s_fs_info = sbi;
@@ -904,7 +903,7 @@ root_found:
 
 	kfree(opt.iocharset);
 
-	unlock_kernel();
+	unlock_super(s);
 	return 0;
 
 	/*
@@ -942,9 +941,9 @@ out_freebh:
 	brelse(bh);
 out_freesbi:
 	kfree(opt.iocharset);
+	unlock_super(s);
 	kfree(sbi);
 	s->s_fs_info = NULL;
-	unlock_kernel();
 	return error;
 }
 
@@ -982,8 +981,6 @@ int isofs_get_blocks(struct inode *inode, sector_t iblock_s,
 	long iblock = (long)iblock_s;
 	int section, rv, error;
 	struct iso_inode_info *ei = ISOFS_I(inode);
-
-	lock_kernel();
 
 	error = -EIO;
 	rv = 0;
@@ -1060,7 +1057,6 @@ int isofs_get_blocks(struct inode *inode, sector_t iblock_s,
 
 	error = 0;
 abort:
-	unlock_kernel();
 	return rv != 0 ? rv : error;
 }
 
