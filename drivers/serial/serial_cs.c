@@ -335,8 +335,6 @@ static int serial_probe(struct pcmcia_device *link)
 	info->p_dev = link;
 	link->priv = info;
 
-	link->resource[0]->flags |= IO_DATA_PATH_WIDTH_8;
-	link->resource[0]->end = 8;
 	link->conf.Attributes = CONF_ENABLE_IRQ;
 	if (do_sound) {
 		link->conf.Attributes |= CONF_ENABLE_SPKR;
@@ -466,7 +464,7 @@ static int simple_config(struct pcmcia_device *link)
 		unsigned int port = 0;
 		if ((link->resource[1]->end != 0) &&
 			(resource_size(link->resource[1]) == 8)) {
-			port = link->resource[1]->end;
+			port = link->resource[1]->start;
 			info->slave = 1;
 		} else if ((info->manfid == MANFID_OSITECH) &&
 			(resource_size(link->resource[0]) == 0x40)) {
@@ -478,6 +476,9 @@ static int simple_config(struct pcmcia_device *link)
 					    link->irq);
 		}
 	}
+
+	link->resource[0]->flags |= IO_DATA_PATH_WIDTH_8;
+	link->resource[0]->end = 8;
 
 	/* First pass: look for a config entry that looks normal.
 	 * Two tries: without IO aliases, then with aliases */
@@ -558,6 +559,7 @@ static int multi_config(struct pcmcia_device *link)
 	int i, base2 = 0;
 
 	/* First, look for a generic full-sized window */
+	link->resource[0]->flags |= IO_DATA_PATH_WIDTH_8;
 	link->resource[0]->end = info->multi * 8;
 	if (pcmcia_loop_config(link, multi_config_check, &base2)) {
 		/* If that didn't work, look for two windows */
