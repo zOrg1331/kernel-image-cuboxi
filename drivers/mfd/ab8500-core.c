@@ -379,6 +379,11 @@ static struct resource ab8500_rtc_resources[] = {
 };
 
 static struct mfd_cell ab8500_devs[] = {
+#ifdef CONFIG_DEBUG_FS
+	{
+		.name = "ab8500-debug",
+	},
+#endif
 	{
 		.name = "ab8500-gpadc",
 		.num_resources = ARRAY_SIZE(ab8500_gpadc_resources),
