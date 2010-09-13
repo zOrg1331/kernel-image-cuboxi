@@ -730,7 +730,10 @@ v9fs_vfs_create_dotl(struct inode *dir, struct dentry *dentry, int mode,
 		P9_DPRINTK(P9_DEBUG_VFS, "inode creation failed %d\n", err);
 		goto error;
 	}
-	dentry->d_op = &v9fs_cached_dentry_operations;
+	if (v9ses->cache)
+		dentry->d_op = &v9fs_cached_dentry_operations;
+	else
+		dentry->d_op = &v9fs_dentry_operations;
 	d_instantiate(dentry, inode);
 	err = v9fs_fid_add(dentry, fid);
 	if (err < 0)
@@ -873,6 +876,8 @@ static int v9fs_vfs_mkdir_dotl(struct inode *dir, struct dentry *dentry,
 	v9ses = v9fs_inode2v9ses(dir);
 
 	mode |= S_IFDIR;
+	if (dir->i_mode & S_ISGID)
+		mode |= S_ISGID;
 	dir_dentry = v9fs_dentry_from_dir_inode(dir);
 	dfid = v9fs_fid_lookup(dir_dentry);
 	if (IS_ERR(dfid)) {
@@ -883,10 +888,6 @@ static int v9fs_vfs_mkdir_dotl(struct inode *dir, struct dentry *dentry,
 	}
 
 	gid = v9fs_get_fsgid_for_create(dir);
-	if (gid < 0) {
-		P9_DPRINTK(P9_DEBUG_VFS, "v9fs_get_fsgid_for_create failed\n");
-		goto error;
-	}
 
 	name = (char *) dentry->d_name.name;
 	err = p9_client_mkdir_dotl(dfid, name, mode, gid, &qid);
@@ -1128,6 +1129,7 @@ v9fs_vfs_getattr(struct vfsmount *mnt, struct dentry *dentry,
 	v9fs_stat2inode(st, dentry->d_inode, dentry->d_inode->i_sb);
 		generic_fillattr(dentry->d_inode, stat);
 
+	p9stat_free(st);
 	kfree(st);
 	return 0;
 }
@@ -1489,6 +1491,7 @@ static int v9fs_readlink(struct dentry *dentry, char *buffer, int buflen)
 
 	retval = strnlen(buffer, buflen);
 done:
+	p9stat_free(st);
 	kfree(st);
 	return retval;
 }
@@ -1610,11 +1613,6 @@ v9fs_vfs_symlink_dotl(struct inode *dir, struct dentry *dentry,
 	}
 
 	gid = v9fs_get_fsgid_for_create(dir);
-
-	if (gid < 0) {
-		P9_DPRINTK(P9_DEBUG_VFS, "v9fs_get_egid failed %d\n", gid);
-		goto error;
-	}
 
 	/* Server doesn't alter fid on TSYMLINK. Hence no need to clone it. */
 	err = p9_client_symlink(dfid, name, (char *)symname, gid, &qid);
@@ -1879,10 +1877,6 @@ v9fs_vfs_mknod_dotl(struct inode *dir, struct dentry *dentry, int mode,
 	}
 
 	gid = v9fs_get_fsgid_for_create(dir);
-	if (gid < 0) {
-		P9_DPRINTK(P9_DEBUG_VFS, "v9fs_get_fsgid_for_create failed\n");
-		goto error;
-	}
 
 	name = (char *) dentry->d_name.name;
 
@@ -1942,7 +1936,7 @@ static const struct inode_operations v9fs_dir_inode_operations_dotu = {
 	.unlink = v9fs_vfs_unlink,
 	.mkdir = v9fs_vfs_mkdir,
 	.rmdir = v9fs_vfs_rmdir,
-	.mknod = v9fs_vfs_mknod_dotl,
+	.mknod = v9fs_vfs_mknod,
 	.rename = v9fs_vfs_rename,
 	.getattr = v9fs_vfs_getattr,
 	.setattr = v9fs_vfs_setattr,
