@@ -475,7 +475,8 @@ static void e1000_rx_checksum(struct e1000_adapter *adapter, u32 status_err,
 {
 	u16 status = (u16)status_err;
 	u8 errors = (u8)(status_err >> 24);
-	skb->ip_summed = CHECKSUM_NONE;
+
+	skb_checksum_none_assert(skb);
 
 	/* Ignore Checksum bit is set */
 	if (status & E1000_RXD_STAT_IXSM)
@@ -5745,11 +5746,11 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
 	}
 
 	init_timer(&adapter->watchdog_timer);
-	adapter->watchdog_timer.function = &e1000_watchdog;
+	adapter->watchdog_timer.function = e1000_watchdog;
 	adapter->watchdog_timer.data = (unsigned long) adapter;
 
 	init_timer(&adapter->phy_info_timer);
-	adapter->phy_info_timer.function = &e1000_update_phy_info;
+	adapter->phy_info_timer.function = e1000_update_phy_info;
 	adapter->phy_info_timer.data = (unsigned long) adapter;
 
 	INIT_WORK(&adapter->reset_task, e1000_reset_task);
