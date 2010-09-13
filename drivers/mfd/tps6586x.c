@@ -273,13 +273,19 @@ static int __devinit tps6586x_add_subdevs(struct tps6586x *tps6586x,
 		subdev = &pdata->subdevs[i];
 
 		pdev = platform_device_alloc(subdev->name, subdev->id);
+		if (!pdev) {
+			ret = -ENOMEM;
+			goto failed;
+		}
 
 		pdev->dev.parent = tps6586x->dev;
 		pdev->dev.platform_data = subdev->platform_data;
 
 		ret = platform_device_add(pdev);
-		if (ret)
+		if (ret) {
+			platform_device_put(pdev);
 			goto failed;
+		}
 	}
 	return 0;
 
@@ -338,6 +344,19 @@ err_add_devs:
 
 static int __devexit tps6586x_i2c_remove(struct i2c_client *client)
 {
+	struct tps6586x *tps6586x = i2c_get_clientdata(client);
+	struct tps6586x_platform_data *pdata = client->dev.platform_data;
+	int ret;
+
+	if (pdata->gpio_base) {
+		ret = gpiochip_remove(&tps6586x->gpio);
+		if (ret)
+			dev_err(&client->dev, "Can't remove gpio chip: %d\n",
+				ret);
+	}
+
+	tps6586x_remove_subdevs(tps6586x);
+	kfree(tps6586x);
 	return 0;
 }
 
