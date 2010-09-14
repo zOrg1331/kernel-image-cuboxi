@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.35
-Release: alt4
+Release: alt4.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -73,6 +73,7 @@ Requires: mkinitrd >= 1:2.9.9-alt1
 Requires: startup >= 0.8.3-alt1
 
 Provides: kernel = %kversion
+Provides: kernel-module-drbd83
 
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
@@ -588,6 +589,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Tue Sep 14 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt4.1
+- obsoleted RAMZSWAP changed to ZRAM from 2.6.36
+
 * Thu Sep 02 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt4
 - 2.6.35.4
 
