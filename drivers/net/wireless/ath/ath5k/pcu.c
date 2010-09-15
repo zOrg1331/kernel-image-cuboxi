@@ -137,11 +137,11 @@ void ath5k_hw_update_mib_counters(struct ath5k_hw *ah)
  * ath5k_hw_set_ack_bitrate - set bitrate for ACKs
  *
  * @ah: The &struct ath5k_hw
- * @high: Flag to determine if we want to use high transmition rate
+ * @high: Flag to determine if we want to use high transmission rate
  * for ACKs or not
  *
  * If high flag is set, we tell hw to use a set of control rates based on
- * the current transmition rate (check out control_rates array inside reset.c).
+ * the current transmission rate (check out control_rates array inside reset.c).
  * If not hw just uses the lowest rate available for the current modulation
  * scheme being used (1Mbit for CCK and 6Mbits for OFDM).
  */
@@ -308,27 +308,26 @@ int ath5k_hw_set_lladdr(struct ath5k_hw *ah, const u8 *mac)
 }
 
 /**
- * ath5k_hw_set_associd - Set BSSID for association
+ * ath5k_hw_set_bssid - Set current BSSID on hw
  *
  * @ah: The &struct ath5k_hw
- * @bssid: BSSID
- * @assoc_id: Assoc id
  *
- * Sets the BSSID which trigers the "SME Join" operation
+ * Sets the current BSSID and BSSID mask we have from the
+ * common struct into the hardware
  */
-void ath5k_hw_set_associd(struct ath5k_hw *ah)
+void ath5k_hw_set_bssid(struct ath5k_hw *ah)
 {
 	struct ath_common *common = ath5k_hw_common(ah);
 	u16 tim_offset = 0;
 
 	/*
-	 * Set simple BSSID mask on 5212
+	 * Set BSSID mask on 5212
 	 */
 	if (ah->ah_version == AR5K_AR5212)
 		ath_hw_setbssidmask(common);
 
 	/*
-	 * Set BSSID which triggers the "SME Join" operation
+	 * Set BSSID
 	 */
 	ath5k_hw_reg_write(ah,
 			   get_unaligned_le32(common->curbssid),
@@ -695,21 +694,18 @@ int ath5k_hw_reset_key(struct ath5k_hw *ah, u16 entry)
 static
 int ath5k_keycache_type(const struct ieee80211_key_conf *key)
 {
-	switch (key->alg) {
-	case ALG_TKIP:
+	switch (key->cipher) {
+	case WLAN_CIPHER_SUITE_TKIP:
 		return AR5K_KEYTABLE_TYPE_TKIP;
-	case ALG_CCMP:
+	case WLAN_CIPHER_SUITE_CCMP:
 		return AR5K_KEYTABLE_TYPE_CCM;
-	case ALG_WEP:
-		if (key->keylen == WLAN_KEY_LEN_WEP40)
-			return AR5K_KEYTABLE_TYPE_40;
-		else if (key->keylen == WLAN_KEY_LEN_WEP104)
-			return AR5K_KEYTABLE_TYPE_104;
-		return -EINVAL;
+	case WLAN_CIPHER_SUITE_WEP40:
+		return AR5K_KEYTABLE_TYPE_40;
+	case WLAN_CIPHER_SUITE_WEP104:
+		return AR5K_KEYTABLE_TYPE_104;
 	default:
 		return -EINVAL;
 	}
-	return -EINVAL;
 }
 
 /*
@@ -728,7 +724,7 @@ int ath5k_hw_set_key(struct ath5k_hw *ah, u16 entry,
 	bool is_tkip;
 	const u8 *key_ptr;
 
-	is_tkip = (key->alg == ALG_TKIP);
+	is_tkip = (key->cipher == WLAN_CIPHER_SUITE_TKIP);
 
 	/*
 	 * key->keylen comes in from mac80211 in bytes.
