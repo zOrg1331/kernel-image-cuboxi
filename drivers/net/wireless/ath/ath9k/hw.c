@@ -1258,11 +1258,13 @@ int ath9k_hw_reset(struct ath_hw *ah, struct ath9k_channel *chan,
 	    (chan->channel != ah->curchan->channel) &&
 	    ((chan->channelFlags & CHANNEL_ALL) ==
 	     (ah->curchan->channelFlags & CHANNEL_ALL)) &&
-	    !AR_SREV_9280(ah)) {
+	    (!AR_SREV_9280(ah) || AR_DEVID_7010(ah))) {
 
 		if (ath9k_hw_channel_change(ah, chan)) {
 			ath9k_hw_loadnf(ah, ah->curchan);
 			ath9k_hw_start_nfcal(ah, true);
+			if (AR_SREV_9271(ah))
+				ar9002_hw_load_ani_reg(ah, chan);
 			return 0;
 		}
 	}
@@ -1572,12 +1574,6 @@ bool ath9k_hw_set_keycache_entry(struct ath_hw *ah, u16 entry,
 		keyType = AR_KEYTABLE_TYPE_AES;
 		break;
 	case ATH9K_CIPHER_AES_CCM:
-		if (!(pCap->hw_caps & ATH9K_HW_CAP_CIPHER_AESCCM)) {
-			ath_print(common, ATH_DBG_ANY,
-				  "AES-CCM not supported by mac rev 0x%x\n",
-				  ah->hw_version.macRev);
-			return false;
-		}
 		keyType = AR_KEYTABLE_TYPE_CCM;
 		break;
 	case ATH9K_CIPHER_TKIP:
@@ -2056,6 +2052,7 @@ int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 	struct ath_btcoex_hw *btcoex_hw = &ah->btcoex_hw;
 
 	u16 capField = 0, eeval;
+	u8 ant_div_ctl1;
 
 	eeval = ah->eep_ops->get_eeprom(ah, EEP_REG_0);
 	regulatory->current_rd = eeval;
@@ -2140,23 +2137,10 @@ int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 	pCap->low_5ghz_chan = 4920;
 	pCap->high_5ghz_chan = 6100;
 
-	pCap->hw_caps &= ~ATH9K_HW_CAP_CIPHER_CKIP;
-	pCap->hw_caps |= ATH9K_HW_CAP_CIPHER_TKIP;
-	pCap->hw_caps |= ATH9K_HW_CAP_CIPHER_AESCCM;
-
-	pCap->hw_caps &= ~ATH9K_HW_CAP_MIC_CKIP;
-	pCap->hw_caps |= ATH9K_HW_CAP_MIC_TKIP;
-	pCap->hw_caps |= ATH9K_HW_CAP_MIC_AESCCM;
-
 	if (ah->config.ht_enable)
 		pCap->hw_caps |= ATH9K_HW_CAP_HT;
 	else
 		pCap->hw_caps &= ~ATH9K_HW_CAP_HT;
-
-	pCap->hw_caps |= ATH9K_HW_CAP_GTT;
-	pCap->hw_caps |= ATH9K_HW_CAP_VEOL;
-	pCap->hw_caps |= ATH9K_HW_CAP_BSSIDMASK;
-	pCap->hw_caps &= ~ATH9K_HW_CAP_MCAST_KEYSEARCH;
 
 	if (capField & AR_EEPROM_EEPCAP_MAXQCU)
 		pCap->total_queues =
@@ -2169,8 +2153,6 @@ int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 			1 << MS(capField, AR_EEPROM_EEPCAP_KC_ENTRIES);
 	else
 		pCap->keycache_size = AR_KEYTABLE_SIZE;
-
-	pCap->hw_caps |= ATH9K_HW_CAP_FASTCC;
 
 	if (AR_SREV_9285(ah) || AR_SREV_9271(ah))
 		pCap->tx_triglevel_max = MAX_TX_FIFO_THRESHOLD >> 1;
@@ -2279,6 +2261,14 @@ int ath9k_hw_fill_cap_info(struct ath_hw *ah)
 
 	if (AR_SREV_9287_10_OR_LATER(ah) || AR_SREV_9271(ah))
 		pCap->hw_caps |= ATH9K_HW_CAP_SGI_20;
+
+	if (AR_SREV_9285(ah))
+		if (ah->eep_ops->get_eeprom(ah, EEP_MODAL_VER) >= 3) {
+			ant_div_ctl1 =
+				ah->eep_ops->get_eeprom(ah, EEP_ANT_DIV_CTL1);
+			if ((ant_div_ctl1 & 0x1) && ((ant_div_ctl1 >> 3) & 0x1))
+				pCap->hw_caps |= ATH9K_HW_CAP_ANT_DIV_COMB;
+		}
 
 	return 0;
 }
