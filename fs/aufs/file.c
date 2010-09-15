@@ -377,7 +377,15 @@ static void au_do_refresh_file(struct file *file)
 	sb = file->f_dentry->d_sb;
 	finfo = au_fi(file);
 	p = finfo->fi_hfile + finfo->fi_bstart;
+	if(p==0)
+	{
+		BUG();
+	}
+	if(p->hf_br==0)
+		BUG();
 	brid = p->hf_br->br_id;
+	if(finfo==0)
+		BUG();
 	bend = finfo->fi_bend;
 	for (bindex = finfo->fi_bstart; bindex <= bend; bindex++, p++) {
 		if (!p->hf_file)
