@@ -35,7 +35,7 @@ config ISDN_CAPI_CAPI20
 
 config ISDN_CAPI_CAPIFS_BOOL
 	bool "CAPI2.0 filesystem support (DEPRECATED)"
-	depends on ISDN_CAPI_MIDDLEWARE && ISDN_CAPI_CAPI20
+	depends on ISDN_CAPI_MIDDLEWARE && ISDN_CAPI_CAPI20 && BKL
 	help
 	  This option provides a special file system, similar to /dev/pts with
 	  device nodes for the special ttys established by using the
