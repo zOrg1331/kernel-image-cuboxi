@@ -2786,6 +2786,7 @@ static ssize_t ray_cs_essid_proc_write(struct file *file,
 static const struct file_operations ray_cs_essid_proc_fops = {
 	.owner		= THIS_MODULE,
 	.write		= ray_cs_essid_proc_write,
+	.llseek = noop_llseek,/* write uses no f_pos */
 };
 
 static ssize_t int_proc_write(struct file *file, const char __user *buffer,
@@ -2819,6 +2820,7 @@ static ssize_t int_proc_write(struct file *file, const char __user *buffer,
 static const struct file_operations int_proc_fops = {
 	.owner		= THIS_MODULE,
 	.write		= int_proc_write,
+	.llseek = noop_llseek,/* write uses no f_pos */
 };
 #endif
 

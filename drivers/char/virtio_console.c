@@ -825,6 +825,7 @@ static const struct file_operations port_fops = {
 	.poll  = port_fops_poll,
 	.release = port_fops_release,
 	.fasync = port_fops_fasync,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 /*
@@ -1046,6 +1047,7 @@ static const struct file_operations port_debugfs_ops = {
 	.owner = THIS_MODULE,
 	.open  = debugfs_open,
 	.read  = debugfs_read,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static void set_console_size(struct port *port, u16 rows, u16 cols)
@@ -1625,6 +1627,7 @@ fail:
 
 static const struct file_operations portdev_fops = {
 	.owner = THIS_MODULE,
+	.llseek = noop_llseek,/* no read or write fn */
 };
 
 /*

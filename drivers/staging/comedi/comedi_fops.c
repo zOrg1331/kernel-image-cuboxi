@@ -1923,6 +1923,7 @@ const struct file_operations comedi_fops = {
 	.mmap = comedi_mmap,
 	.poll = comedi_poll,
 	.fasync = comedi_fasync,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 struct class *comedi_class;

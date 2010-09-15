@@ -1881,6 +1881,7 @@ static const struct file_operations cm4000_fops = {
 	.unlocked_ioctl	= cmm_ioctl,
 	.open	= cmm_open,
 	.release= cmm_close,
+	.llseek = no_llseek,/* open uses nonseekable */
 };
 
 static struct pcmcia_device_id cm4000_ids[] = {
