@@ -976,11 +976,18 @@ static inline void omap_hsmmc_reset_controller_fsm(struct omap_hsmmc_host *host,
 						   unsigned long bit)
 {
 	unsigned long i = 0;
+	unsigned long j = 0;
 	unsigned long limit = (loops_per_jiffy *
 				msecs_to_jiffies(MMC_TIMEOUT_MS));
 
 	OMAP_HSMMC_WRITE(host->base, SYSCTL,
 			 OMAP_HSMMC_READ(host->base, SYSCTL) | bit);
+
+	if (cpu_is_omap44xx() && bit == SRC) {
+		while ((!(OMAP_HSMMC_READ(host->base, SYSCTL) & bit))
+				&& (j++ < limit))
+			cpu_relax();
+	}
 
 	while ((OMAP_HSMMC_READ(host->base, SYSCTL) & bit) &&
 		(i++ < limit))
