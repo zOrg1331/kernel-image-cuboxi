@@ -212,20 +212,32 @@ tape_state_set(struct tape_device *device, enum tape_state newstate)
 void
 tape_med_state_set(struct tape_device *device, enum tape_medium_state newstate)
 {
+	static char env_state_loaded[] = "MEDIUM_STATE=LOADED";
+	static char env_state_unloaded[] = "MEDIUM_STATE=UNLOADED";
+	char *envp[] = { NULL, NULL };
+
 	if (device->medium_state == newstate)
 		return;
 	switch(newstate){
 	case MS_UNLOADED:
 		device->tape_generic_status |= GMT_DR_OPEN(~0);
-		if (device->medium_state == MS_LOADED)
+		if (device->medium_state == MS_LOADED) {
 			pr_info("%s: The tape cartridge has been successfully "
 				"unloaded\n", dev_name(&device->cdev->dev));
+			envp[0] = env_state_unloaded;
+			kobject_uevent_env(&device->cdev->dev.kobj,
+					   KOBJ_CHANGE, envp);
+		}
 		break;
 	case MS_LOADED:
 		device->tape_generic_status &= ~GMT_DR_OPEN(~0);
-		if (device->medium_state == MS_UNLOADED)
+		if (device->medium_state == MS_UNLOADED) {
 			pr_info("%s: A tape cartridge has been mounted\n",
 				dev_name(&device->cdev->dev));
+			envp[0] = env_state_loaded;
+			kobject_uevent_env(&device->cdev->dev.kobj,
+					   KOBJ_CHANGE, envp);
+		}
 		break;
 	default:
 		// print nothing
