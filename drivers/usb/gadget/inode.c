@@ -33,7 +33,6 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/poll.h>
-#include <linux/smp_lock.h>
 
 #include <linux/device.h>
 #include <linux/moduleparam.h>
@@ -2043,19 +2042,13 @@ gadgetfs_fill_super (struct super_block *sb, void *opts, int silent)
 	struct dentry	*d;
 	struct dev_data	*dev;
 
-	lock_kernel();
-
-	if (the_device) {
-		unlock_kernel();
+	if (the_device)
 		return -ESRCH;
-	}
 
 	/* fake probe to determine $CHIP */
 	(void) usb_gadget_register_driver (&probe_driver);
-	if (!CHIP) {
-		unlock_kernel();
+	if (!CHIP)
 		return -ENODEV;
-	}
 
 	/* superblock */
 	sb->s_blocksize = PAGE_CACHE_SIZE;
@@ -2092,7 +2085,6 @@ gadgetfs_fill_super (struct super_block *sb, void *opts, int silent)
 	 * from binding to a controller.
 	 */
 	the_device = dev;
-	unlock_kernel();
 	return 0;
 
 enomem3:
@@ -2102,7 +2094,6 @@ enomem2:
 enomem1:
 	iput (inode);
 enomem0:
-	unlock_kernel();
 	return -ENOMEM;
 }
 
