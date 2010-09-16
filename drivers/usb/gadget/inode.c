@@ -2041,13 +2041,19 @@ gadgetfs_fill_super (struct super_block *sb, void *opts, int silent)
 	struct dentry	*d;
 	struct dev_data	*dev;
 
-	if (the_device)
+	lock_kernel();
+
+	if (the_device) {
+		unlock_kernel();
 		return -ESRCH;
+	}
 
 	/* fake probe to determine $CHIP */
 	(void) usb_gadget_probe_driver(&probe_driver, gadgetfs_probe);
-	if (!CHIP)
+	if (!CHIP) {
+		unlock_kernel();
 		return -ENODEV;
+	}
 
 	/* superblock */
 	sb->s_blocksize = PAGE_CACHE_SIZE;
@@ -2084,6 +2090,7 @@ gadgetfs_fill_super (struct super_block *sb, void *opts, int silent)
 	 * from binding to a controller.
 	 */
 	the_device = dev;
+	unlock_kernel();
 	return 0;
 
 enomem3:
@@ -2093,6 +2100,7 @@ enomem2:
 enomem1:
 	iput (inode);
 enomem0:
+	unlock_kernel();
 	return -ENOMEM;
 }
 
