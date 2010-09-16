@@ -1,0 +1,216 @@
+Importing driver-core.current based on 2.6.36-rc4
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 7a6952a916225b7d92c69f0f6cd35e73fc5bd846
+HEAD is now at 7a6952a serial: mfd: fix bug in serial_hsu_remove()
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-musb_debugfs-don-t-use-the-struct-file-private_data-field-with-seq_files.patch
+usb-ehci-disable-langwell-penwell-lpm-capability.patch
+usb-otg-twl4030-fix-phy-initialization-v1.patch
+usb-serial-mos-prevent-reading-uninitialized.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + edff178...885ab67 master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard 885ab67d0e584325fa3ced6f522312e15192704b
+HEAD is now at 885ab67 USB: serial/mos*: prevent reading uninitialized stack memory
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+revert-staging-batman-adv-adding-netfilter-bridge-hooks.patch
+staging-vt6655-fix-buffer-overflow.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 1a87b8f...0ffdabd master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.36-rc4
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.36-rc4
+$ cd ../quilt-tmp
+$ git reset --hard 49553c2ef88749dd502687f4eb9c258bb10a4f44
+HEAD is now at 49553c2 Linux 2.6.36-rc4
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-lis3lv02d-prevent-NULL-pointer-dereference.patch
+hwmon-new-subsystem-maintainers.patch
+hwmon-f75375s-01-shift-control-mode-to-the-correct-bit-position.patch
+hwmon-f75375s-02-do-not-overwrite-values-read-from-registers.patch
+hwmon-emc1403-remove-unnecessary-hwmon_device_unregister.patch
+hwmon-k8temp-02-remove-superfluous-cpu-family-check.patch
+hwmon-add-tempx_emergency-attribute-to-sysfs-abi.patch
+hwmon-lm90-fix-checkpatch-errors.patch
+hwmon-lm75-01-make-the-writing-to-sysfs-more-robust.patch
+hwmon-lm75-02-trivial-changes-to-pacify-the-checkpatch.patch
+hwmon-s3c-hwmon-01-use-a-real-mutex.patch
+hwmon-s3c-hwmon-02-depend-on-s3c_adc.patch
+hwmon-w83627ehf-use-proper-exit-sequence.patch
+hwmon-w83795-01-new-driver.patch
+hwmon-w83795-02-misc-cleanups.patch
+hwmon-w83795-03-drop-duplicate-enum.patch
+hwmon-w83795-04-refactor-bank-selection.patch
+hwmon-w83795-05-improve-detection.patch
+hwmon-w83795-06-refactor-file-removal.patch
+hwmon-w83795-07-refactor-file-creation.patch
+hwmon-w83795-08-merge-file-creation-and-removal.patch
+hwmon-w83795-09-use-2D-arrays-for-attributes.patch
+hwmon-w83795-10-dedicated-arrays-for-pwm-attr.patch
+hwmon-w83795-11-move-target-speed-to-pwm.patch
+hwmon-w83795-12-add-const-markers.patch
+hwmon-w83795-13-conditional-start-mon.patch
+hwmon-w83795-14-fix-vin-gain.patch
+hwmon-w83795-15-cleanup-probe.patch
+hwmon-w83795-16-fix-fan-LSB-readings.patch
+hwmon-w83795-17-support-dynamic-limits-for-in0-2.patch
+hwmon-w83795-18-fix-PWM-duty-cycle-freq-attr.patch
+hwmon-w83795-19-rename-temp-files.patch
+hwmon-w83795-20-fix-handling-of-negative-temperatures.patch
+hwmon-w83795-21-report-peci-tbase.patch
+hwmon-w83795-22-rework-beep_enable.patch
+hwmon-w83795-23-avoid-reading-the-same-register-twice.patch
+hwmon-w83795-24-get-rid-of-VRLSB_SHIFT.patch
+hwmon-w83795-25-fix-parity-checks.patch
+hwmon-w83795-26-drop-REST_VLT-constants.patch
+hwmon-w83795-27-clean-up-num-constants.patch
+hwmon-w83795-28-clean-up-show-store-temp-mode.patch
+hwmon-w83795-29-dont-pre-read-regs-we-will-update.patch
+hwmon-w83795-30-improve-W83795_REG_PWM-efficiency.patch
+hwmon-w83795-31-pack-register-loops.patch
+hwmon-w83795-32-move-register-reads-to-functions.patch
+hwmon-w83795-33-delay-reading-limits.patch
+hwmon-w83795-34-delay-reading-pwm-config.patch
+hwmon-w83795-35-use-dev_get_drvdata-when-possible.patch
+hwmon-w83795-36-fix-in-min-max-LSB-readings.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 8623f3a...01fd9b6 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.36-rc2
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.36-rc3
+$ cd ../quilt-tmp
+$ git reset --hard 2bfc96a127bc1cc94d26bfaa40159966064f9c8c
+HEAD is now at 2bfc96a Linux 2.6.36-rc3
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+virtio:console_reset_vdev_before_removing_device.patch
+virtio:console_remove_control_vq_data_only_if_using_multiport_support.patch
+virtio:console_check_if_portdev_is_valid_in_send_control_msg.patch
+virtio:console_un_block_reads_on_chardev_close.patch
+virtio:console_unblock_poll_on_port_hot_unplug.patch
+virtio:console_make_read_return_enodev_on_hot_unplug.patch
+virtio:console_make_write_return_enodev_on_hot_unplug.patch
+virtio:console_remove_port_should_return_void.patch
+virtio:console_open_use_a_common_path_for_error_handling.patch
+virtio:console_add_a_list_of_portdevs_that_are_active.patch
+virtio:console_add_a_find_port_by_devt_function.patch
+virtio:console_use_cdev_alloc_instead_of_cdev_init.patch
+virtio:console_add_reference_counting_for_port_struct.patch
+virtio:console_reference_counting_portdev_structs_is_not_needed.patch
+virtio:console_send_sigio_to_processes_that_request_it_for_host_events.patch
+virtio:console_send_sigio_on_new_data_arrival_on_ports.patch
+virtio:console_send_sigio_in_case_of_port_unplug.patch
+virtio:blk_remove_bkl_leftovers.patch
+misc:_1_re_more_modaliases_patchtool.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 6626383...a619870 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.36-rc1
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+$ cd ../quilt-tmp
+$ git reset --hard 0ffdabd16f82137959539006f6b2f355bae4d121
+HEAD is now at 0ffdabd Staging: vt6655: fix buffer overflow
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core
+dynamic-debug-split-out-query-string-parsing-setup-from-proc_write.patch
+dynamic-debug-introduce-ddebug_query-boot-parameter.patch
+dynamic-debug-initialize-dynamic-debug-earlier-via-arch_initcall.patch
+driver-core-platform-use-drv-driver.bus-instead-of-assuming-platform_bus_type.patch
+uio-do-not-use-pci-resources-before-pci_enable_device.patch
+driver-core-platform_bus-allow-runtime-override-of-dev_pm_ops.patch
+add-packet-hub-driver-for-topcliff-platform-controller-hub.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:10: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+pch_phub-fix-build-warnings.patch
+driver-core-remove-config_sysfs_deprecated_v2-but-keep-it-for-block-devices.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core
+From ../quilt-tmp
+ + 9af6abd...5adb2db master     -> quilt/driver-core  (forced update)
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard 5adb2db73d5a1aee1825a69e629c33ca5f6d9afc
+HEAD is now at 5adb2db driver core: remove CONFIG_SYSFS_DEPRECATED_V2 but keep it for block devices
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+tty-add-tty_struct-dev-pointer-to-corresponding-device-instance.patch
+serport-place-serport-serio-device-correctly-in-the-device-tree.patch
+serial-mfd-snprintf-returns-largish-values.patch
+serial-add-console_poll-support-for-uartlite.patch
+tty-remove-__gfp_nofail-from-tty_add_file.patch
+ioctl-use-asm-generic-ioctls-h-on-arm
+ioctl-use-asm-generic-ioctls-h-on-avr32
+ioctl-use-asm-generic-ioctls-h-on-cris
+ioctl-use-asm-generic-ioctls-h-on-frv
+ioctl-use-asm-generic-ioctls-h-on-h8300
+ioctl-use-asm-generic-ioctls-h-on-ia64
+ioctl-use-asm-generic-ioctls-h-on-m32r
+ioctl-use-asm-generic-ioctls-h-on-m68k
+ioctl-use-asm-generic-ioctls-h-on-mn10300
+ioctl-use-asm-generic-ioctls-h-on-s390
+serial-core-skip-call-set_termios-console_start-when-no_console_suspend.patch
+serial-core-restore-termios-settings-when-resume-console-ports.patch
+add-ttyprintk-driver.patch
+char-mxser-call-pci_disable_device-from-probe-remove.patch
+tty_io-check-return-code-of-tty_register_device.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + 92f1f66...2194980 master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 219498005bdb793cde22bc2fb917d5aaa6c69299
+HEAD is now at 2194980 tty_io: check return code of tty_register_device
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-add-intel-langwell-usb-otg-transceiver-driver.patch
+usb-langwell-usb-client-driver-code-cleanup.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:2109: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+usb-langwell-usb-client-endpoint-initialization.patch
+usb-langwell-usb-client-phy-low-power-mode-setting.patch
+usb-langwell-usb-client-remote-wakeup-support.patch
+usb-langwell-usb-client-driver-memory-handling.patch
+usb-gadget-dbgp-cleanup-remove-unneeded-check.patch
+usb-sam-ba-add-driver-for-atmel-sam-boot-assistant-sam-ba.patch
+usb-gadget-verify-vbus-current-before-setting-the-device-self-powered-bit.patch
+usb-core-update-comment-to-match-current-function-name.patch
+usb-gadget-g_multi-fixed-vendor-and-product-id.patch
+usb-gadget-g_ffs-fixed-vendor-and-product-id.patch
+usb-gadget-storage-remove-nofua-file-when-unbinding.patch
+usb-gadget-mass_storage-optional-scsi-write-fua-bit.patch
+usb-gadget-functionfs-code-cleanup.patch
+usb-gadget-composite-better-string-override-handling.patch
+usb-gadget-mass_storage-moved-strings-handling-code.patch
+usb-gadget-g_multi-moved-strings-handling-code-to-composite.patch
+usb-revert-usb-gadget-section-mismatch-warning-fixed.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_gadget_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_composite_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_configuration.patch
+init.h-add-some-more-documentation-to-__ref-tags.patch
+usb-gadget-amd5536udc.c-remove-double-test.patch
+usb-output-an-error-message-when-the-pipe-type-doesn-t-match-the-endpoint-type.patch
+usb-langwell-remove-unnecessary-return-s-from-void-functions.patch
+usb-g_file_storage-don-t-generate-automatic-serial-string.patch
+usb-kconfig-fix-typos-in-usb_functionfs-description.patch
+usb-ehci-tdi-let-s-tdi_reset-set-host-mode.patch
+usb-gadget-rndis-fix-up-coding-style-issues-in-the-file.patch
+drivers-usb-ftdi-elan-sema.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + cf2231b...323e3c9 master     -> quilt/usb  (forced update)
