@@ -834,6 +834,7 @@ static int pipe_skb_send(struct sock *sk, struct sk_buff *skb)
 {
 	struct pep_sock *pn = pep_sk(sk);
 	struct pnpipehdr *ph;
+	int err;
 
 	if (pn_flow_safe(pn->tx_fc) &&
 	    !atomic_add_unless(&pn->tx_credits, -1, 0)) {
@@ -852,7 +853,10 @@ static int pipe_skb_send(struct sock *sk, struct sk_buff *skb)
 		ph->message_id = PNS_PIPE_DATA;
 	ph->pipe_handle = pn->pipe_handle;
 
-	return pn_skb_send(sk, skb, &pipe_srv);
+	err = pn_skb_send(sk, skb, &pipe_srv);
+	if (err && pn_flow_safe(pn->tx_fc))
+		atomic_inc(&pn->tx_credits);
+	return err;
 }
 
 static int pep_sendmsg(struct kiocb *iocb, struct sock *sk,
@@ -872,7 +876,7 @@ static int pep_sendmsg(struct kiocb *iocb, struct sock *sk,
 	skb = sock_alloc_send_skb(sk, MAX_PNPIPE_HEADER + len,
 					flags & MSG_DONTWAIT, &err);
 	if (!skb)
-		return -ENOBUFS;
+		return err;
 
 	skb_reserve(skb, MAX_PHONET_HEADER + 3);
 	err = memcpy_fromiovec(skb_put(skb, len), msg->msg_iov, len);

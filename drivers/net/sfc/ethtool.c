@@ -328,9 +328,10 @@ static int efx_fill_loopback_test(struct efx_nic *efx,
 				  unsigned int test_index,
 				  struct ethtool_string *strings, u64 *data)
 {
+	struct efx_channel *channel = efx_get_channel(efx, 0);
 	struct efx_tx_queue *tx_queue;
 
-	efx_for_each_channel_tx_queue(tx_queue, &efx->channel[0]) {
+	efx_for_each_channel_tx_queue(tx_queue, channel) {
 		efx_fill_test(test_index++, strings, data,
 			      &lb_tests->tx_sent[tx_queue->queue],
 			      EFX_TX_QUEUE_NAME(tx_queue),
@@ -673,15 +674,15 @@ static int efx_ethtool_get_coalesce(struct net_device *net_dev,
 				    struct ethtool_coalesce *coalesce)
 {
 	struct efx_nic *efx = netdev_priv(net_dev);
-	struct efx_tx_queue *tx_queue;
 	struct efx_channel *channel;
 
 	memset(coalesce, 0, sizeof(*coalesce));
 
 	/* Find lowest IRQ moderation across all used TX queues */
 	coalesce->tx_coalesce_usecs_irq = ~((u32) 0);
-	efx_for_each_tx_queue(tx_queue, efx) {
-		channel = tx_queue->channel;
+	efx_for_each_channel(channel, efx) {
+		if (!efx_channel_get_tx_queue(channel, 0))
+			continue;
 		if (channel->irq_moderation < coalesce->tx_coalesce_usecs_irq) {
 			if (channel->channel < efx->n_rx_channels)
 				coalesce->tx_coalesce_usecs_irq =
@@ -708,7 +709,6 @@ static int efx_ethtool_set_coalesce(struct net_device *net_dev,
 {
 	struct efx_nic *efx = netdev_priv(net_dev);
 	struct efx_channel *channel;
-	struct efx_tx_queue *tx_queue;
 	unsigned tx_usecs, rx_usecs, adaptive;
 
 	if (coalesce->use_adaptive_tx_coalesce)
@@ -725,8 +725,9 @@ static int efx_ethtool_set_coalesce(struct net_device *net_dev,
 	adaptive = coalesce->use_adaptive_rx_coalesce;
 
 	/* If the channel is shared only allow RX parameters to be set */
-	efx_for_each_tx_queue(tx_queue, efx) {
-		if ((tx_queue->channel->channel < efx->n_rx_channels) &&
+	efx_for_each_channel(channel, efx) {
+		if (efx_channel_get_rx_queue(channel) &&
+		    efx_channel_get_tx_queue(channel, 0) &&
 		    tx_usecs) {
 			netif_err(efx, drv, efx->net_dev, "Channel is shared. "
 				  "Only RX coalescing may be set\n");
@@ -739,6 +740,42 @@ static int efx_ethtool_set_coalesce(struct net_device *net_dev,
 		efx->type->push_irq_moderation(channel);
 
 	return 0;
+}
+
+static void efx_ethtool_get_ringparam(struct net_device *net_dev,
+				      struct ethtool_ringparam *ring)
+{
+	struct efx_nic *efx = netdev_priv(net_dev);
+
+	ring->rx_max_pending = EFX_MAX_DMAQ_SIZE;
+	ring->tx_max_pending = EFX_MAX_DMAQ_SIZE;
+	ring->rx_mini_max_pending = 0;
+	ring->rx_jumbo_max_pending = 0;
+	ring->rx_pending = efx->rxq_entries;
+	ring->tx_pending = efx->txq_entries;
+	ring->rx_mini_pending = 0;
+	ring->rx_jumbo_pending = 0;
+}
+
+static int efx_ethtool_set_ringparam(struct net_device *net_dev,
+				     struct ethtool_ringparam *ring)
+{
+	struct efx_nic *efx = netdev_priv(net_dev);
+
+	if (ring->rx_mini_pending || ring->rx_jumbo_pending ||
+	    ring->rx_pending > EFX_MAX_DMAQ_SIZE ||
+	    ring->tx_pending > EFX_MAX_DMAQ_SIZE)
+		return -EINVAL;
+
+	if (ring->rx_pending < EFX_MIN_RING_SIZE ||
+	    ring->tx_pending < EFX_MIN_RING_SIZE) {
+		netif_err(efx, drv, efx->net_dev,
+			  "TX and RX queues cannot be smaller than %ld\n",
+			  EFX_MIN_RING_SIZE);
+		return -EINVAL;
+	}
+
+	return efx_realloc_channels(efx, ring->rx_pending, ring->tx_pending);
 }
 
 static int efx_ethtool_set_pauseparam(struct net_device *net_dev,
@@ -971,6 +1008,8 @@ const struct ethtool_ops efx_ethtool_ops = {
 	.set_eeprom		= efx_ethtool_set_eeprom,
 	.get_coalesce		= efx_ethtool_get_coalesce,
 	.set_coalesce		= efx_ethtool_set_coalesce,
+	.get_ringparam		= efx_ethtool_get_ringparam,
+	.set_ringparam		= efx_ethtool_set_ringparam,
 	.get_pauseparam         = efx_ethtool_get_pauseparam,
 	.set_pauseparam         = efx_ethtool_set_pauseparam,
 	.get_rx_csum		= efx_ethtool_get_rx_csum,
