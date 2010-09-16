@@ -17,7 +17,6 @@
 #include <linux/init.h>
 #include <linux/ctype.h>
 #include <linux/sched.h>	/* current */
-#include <linux/smp_lock.h>	/* For lock_kernel() */
 
 #include "capifs.h"
 
@@ -100,8 +99,6 @@ capifs_fill_super(struct super_block *s, void *data, int silent)
 {
 	struct inode * inode;
 
-	lock_kernel();
-
 	s->s_blocksize = 1024;
 	s->s_blocksize_bits = 10;
 	s->s_magic = CAPIFS_SUPER_MAGIC;
@@ -119,15 +116,12 @@ capifs_fill_super(struct super_block *s, void *data, int silent)
 	inode->i_nlink = 2;
 
 	s->s_root = d_alloc_root(inode);
-	if (s->s_root) {
-		unlock_kernel();
+	if (s->s_root)
 		return 0;
-	}
 
 	printk("capifs: get root dentry failed\n");
 	iput(inode);
 fail:
-	unlock_kernel();
 	return -ENOMEM;
 }
 
