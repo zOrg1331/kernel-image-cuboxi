@@ -41,6 +41,7 @@
 #include <asm/dma.h>
 #include <asm/k8.h>
 #include <asm/x86_init.h>
+#include <asm/iommu_table.h>
 
 static unsigned long iommu_bus_base;	/* GART remapping area (physical) */
 static unsigned long iommu_size;	/* size of remapping area bytes */
@@ -601,7 +602,7 @@ static void gart_fixup_northbridges(struct sys_device *dev)
 		 * Don't enable translations just yet.  That is the next
 		 * step.  Restore the pre-suspend aperture settings.
 		 */
-		pci_write_config_dword(dev, AMD64_GARTAPERTURECTL, aperture_order << 1);
+		gart_set_size_and_enable(dev, aperture_order);
 		pci_write_config_dword(dev, AMD64_GARTAPERTUREBASE, aperture_alloc >> 25);
 	}
 }
@@ -896,3 +897,4 @@ void __init gart_parse_options(char *p)
 		}
 	}
 }
+IOMMU_INIT_POST(gart_iommu_hole_init);
