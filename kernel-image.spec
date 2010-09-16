@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.35
-Release: alt4.1
+Release: alt4.2
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -589,6 +589,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Thu Sep 16 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt4.2
+- CVE-2010-3301
+- mountpoint for cgroup in /sys
+
 * Tue Sep 14 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt4.1
 - obsoleted RAMZSWAP changed to ZRAM from 2.6.36
 
