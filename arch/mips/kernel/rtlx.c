@@ -468,7 +468,8 @@ static const struct file_operations rtlx_fops = {
 	.release = file_release,
 	.write =   file_write,
 	.read =    file_read,
-	.poll =    file_poll
+	.poll =    file_poll,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 static struct irqaction rtlx_irq = {

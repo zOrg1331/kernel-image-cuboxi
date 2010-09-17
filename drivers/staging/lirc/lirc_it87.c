@@ -342,6 +342,7 @@ static const struct file_operations lirc_fops = {
 	.unlocked_ioctl	= lirc_ioctl,
 	.open		= lirc_open,
 	.release	= lirc_close,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 static int set_use_inc(void *data)

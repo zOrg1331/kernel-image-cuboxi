@@ -373,6 +373,7 @@ static const struct file_operations gdth_fops = {
     .unlocked_ioctl   = gdth_unlocked_ioctl,
     .open    = gdth_open,
     .release = gdth_close,
+    .llseek = noop_llseek,/* no read or write fn */
 };
 
 #include "gdth_proc.h"

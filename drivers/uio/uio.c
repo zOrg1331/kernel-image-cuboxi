@@ -740,6 +740,7 @@ static const struct file_operations uio_fops = {
 	.mmap		= uio_mmap,
 	.poll		= uio_poll,
 	.fasync		= uio_fasync,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 static int uio_major_init(void)

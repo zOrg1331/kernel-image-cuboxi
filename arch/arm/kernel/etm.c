@@ -329,6 +329,7 @@ static const struct file_operations etb_fops = {
 	.read = etb_read,
 	.open = etb_open,
 	.release = etb_release,
+	.llseek = no_llseek,/* open uses nonseekable */
 };
 
 static struct miscdevice etb_miscdev = {

@@ -4429,21 +4429,24 @@ static const struct file_operations proc_statsdelta_ops = {
 	.owner		= THIS_MODULE,
 	.read		= proc_read,
 	.open		= proc_statsdelta_open,
-	.release	= proc_close
+	.release	= proc_close,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static const struct file_operations proc_stats_ops = {
 	.owner		= THIS_MODULE,
 	.read		= proc_read,
 	.open		= proc_stats_open,
-	.release	= proc_close
+	.release	= proc_close,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static const struct file_operations proc_status_ops = {
 	.owner		= THIS_MODULE,
 	.read		= proc_read,
 	.open		= proc_status_open,
-	.release	= proc_close
+	.release	= proc_close,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static const struct file_operations proc_SSID_ops = {
@@ -4451,7 +4454,8 @@ static const struct file_operations proc_SSID_ops = {
 	.read		= proc_read,
 	.write		= proc_write,
 	.open		= proc_SSID_open,
-	.release	= proc_close
+	.release	= proc_close,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static const struct file_operations proc_BSSList_ops = {
@@ -4459,7 +4463,8 @@ static const struct file_operations proc_BSSList_ops = {
 	.read		= proc_read,
 	.write		= proc_write,
 	.open		= proc_BSSList_open,
-	.release	= proc_close
+	.release	= proc_close,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static const struct file_operations proc_APList_ops = {
@@ -4467,7 +4472,8 @@ static const struct file_operations proc_APList_ops = {
 	.read		= proc_read,
 	.write		= proc_write,
 	.open		= proc_APList_open,
-	.release	= proc_close
+	.release	= proc_close,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static const struct file_operations proc_config_ops = {
@@ -4475,7 +4481,8 @@ static const struct file_operations proc_config_ops = {
 	.read		= proc_read,
 	.write		= proc_write,
 	.open		= proc_config_open,
-	.release	= proc_close
+	.release	= proc_close,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static const struct file_operations proc_wepkey_ops = {
@@ -4483,7 +4490,8 @@ static const struct file_operations proc_wepkey_ops = {
 	.read		= proc_read,
 	.write		= proc_write,
 	.open		= proc_wepkey_open,
-	.release	= proc_close
+	.release	= proc_close,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static struct proc_dir_entry *airo_entry;

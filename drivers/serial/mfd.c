@@ -233,12 +233,14 @@ static const struct file_operations port_regs_ops = {
 	.owner		= THIS_MODULE,
 	.open		= hsu_show_regs_open,
 	.read		= port_show_regs,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static const struct file_operations dma_regs_ops = {
 	.owner		= THIS_MODULE,
 	.open		= hsu_show_regs_open,
 	.read		= dma_show_regs,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static int hsu_debugfs_init(struct hsu_port *hsu)
