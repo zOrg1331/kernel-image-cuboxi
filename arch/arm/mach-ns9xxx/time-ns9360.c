@@ -121,7 +121,7 @@ static irqreturn_t ns9360_clockevent_handler(int irq, void *dev_id)
 
 static struct irqaction ns9360_clockevent_action = {
 	.name		= "ns9360-timer" __stringify(TIMER_CLOCKEVENT),
-	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
+	.flags		= IRQF_DISABLED | IRQF_TIMER,
 	.handler	= ns9360_clockevent_handler,
 };
 
