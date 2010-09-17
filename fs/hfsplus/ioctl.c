@@ -17,16 +17,17 @@
 #include <linux/mount.h>
 #include <linux/sched.h>
 #include <linux/xattr.h>
-#include <linux/smp_lock.h>
+#include <linux/mutex.h>
 #include <asm/uaccess.h>
 #include "hfsplus_fs.h"
 
+static DEFINE_MUTEX(hfsplus_mutex);
 long hfsplus_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct inode *inode = filp->f_path.dentry->d_inode;
 	unsigned int flags;
 
-	lock_kernel();
+	mutex_lock(&hfsplus_mutex);
 	switch (cmd) {
 	case HFSPLUS_IOC_EXT2_GETFLAGS:
 		flags = 0;
@@ -41,7 +42,7 @@ long hfsplus_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		int err = 0;
 		err = mnt_want_write(filp->f_path.mnt);
 		if (err) {
-			unlock_kernel();
+			mutex_unlock(&hfsplus_mutex);
 			return err;
 		}
 
@@ -89,11 +90,11 @@ long hfsplus_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		mark_inode_dirty(inode);
 setflags_out:
 		mnt_drop_write(filp->f_path.mnt);
-		unlock_kernel();
+		mutex_unlock(&hfsplus_mutex);
 		return err;
 	}
 	default:
-		unlock_kernel();
+		mutex_unlock(&hfsplus_mutex);
 		return -ENOTTY;
 	}
 }
