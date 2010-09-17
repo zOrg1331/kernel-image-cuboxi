@@ -1,6 +1,7 @@
 #video drivers
 fglrx
 nvidia
+psb
 
 #network card drivers
 igb
@@ -11,6 +12,7 @@ ndiswrapper
 #rtl8187se
 bcmwl
 #madwifi-hal
+rtl8192
 
 #vendor specific  hardware features drives
 tp_smapi
