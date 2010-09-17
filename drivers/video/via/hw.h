@@ -30,6 +30,15 @@
 #define viafb_write_reg(i, p, d)		via_write_reg(p, i, d)
 #define viafb_write_reg_mask(i, p, d, m)	via_write_reg_mask(p, i, d, m)
 
+/* VIA output devices */
+#define VIA_6C		0x00000001
+#define VIA_93		0x00000002
+#define VIA_96		0x00000004
+#define VIA_CRT		0x00000010
+#define VIA_DVP1	0x00000020
+#define VIA_LVDS1	0x00000040
+#define VIA_LVDS2	0x00000080
+
 /***************************************************
 * Definition IGA1 Design Method of CRTC Registers *
 ****************************************************/
@@ -881,9 +890,6 @@ extern int viafb_LCD_ON;
 extern int viafb_DVI_ON;
 extern int viafb_hotplug;
 
-void viafb_set_output_path(int device, int set_iga,
-	int output_interface);
-
 void viafb_fill_crtc_timing(struct crt_mode_table *crt_table,
 	struct VideoModeTable *video_mode, int bpp_byte, int set_iga);
 
@@ -908,8 +914,8 @@ int viafb_setmode(struct VideoModeTable *vmode_tbl, int video_bpp,
 	struct VideoModeTable *vmode_tbl1, int video_bpp1);
 void viafb_fill_var_timing_info(struct fb_var_screeninfo *var, int refresh,
 	struct VideoModeTable *vmode_tbl);
-void viafb_init_chip_info(int chip_type);
-void viafb_init_dac(int set_iga);
+void __devinit viafb_init_chip_info(int chip_type);
+void __devinit viafb_init_dac(int set_iga);
 int viafb_get_pixclock(int hres, int vres, int vmode_refresh);
 int viafb_get_refresh(int hres, int vres, u32 float_refresh);
 void viafb_update_device_setting(int hres, int vres, int bpp,
