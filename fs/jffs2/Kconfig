@@ -1,6 +1,7 @@
 config JFFS2_FS
 	tristate "Journalling Flash File System v2 (JFFS2) support"
 	select CRC32
+	depends on BKL # from pushdown, need to fix
 	depends on MTD
 	help
 	  JFFS2 is the second generation of the Journalling Flash File System
