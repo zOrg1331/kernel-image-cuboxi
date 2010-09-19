@@ -22,4 +22,19 @@ static inline int cache_ops_need_broadcast(void)
 }
 #endif
 
+/*
+ * Return true if we are running on a SMP platform
+ */
+static inline bool is_smp(void)
+{
+#ifndef CONFIG_SMP
+	return false;
+#elif defined(CONFIG_SMP_ON_UP)
+	extern unsigned int smp_on_up;
+	return !!smp_on_up;
+#else
+	return true;
+#endif
+}
+
 #endif
