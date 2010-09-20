@@ -1,6 +1,8 @@
- * Use hweight* for hamming weight calculation
- * Save/cache packets direktly as skb instead of using a normal memory region
-   and copying it in a skb using send_raw_packet and similar functions
+ * Rework usage of RCU
+    - don't leak pointers from rcu out of rcu critical area which may
+      get freed
+    - check were synchronize_rcu must be used
+    - go through Documentation/RCU/checklist.txt
  * Request a new review
  * Process the comments from the review
  * Move into mainline proper
