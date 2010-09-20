@@ -134,6 +134,8 @@ void iwlagn_rx_calib_complete(struct iwl_priv *priv,
 void iwlagn_init_alive_start(struct iwl_priv *priv);
 int iwlagn_alive_notify(struct iwl_priv *priv);
 int iwl_verify_ucode(struct iwl_priv *priv);
+void iwlagn_send_bt_env(struct iwl_priv *priv, u8 action, u8 type);
+void iwlagn_send_prio_tbl(struct iwl_priv *priv);
 
 /* lib */
 void iwl_check_abort_status(struct iwl_priv *priv,
@@ -217,7 +219,7 @@ void iwl_reply_statistics(struct iwl_priv *priv,
 			  struct iwl_rx_mem_buffer *rxb);
 
 /* scan */
-void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif);
+int iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif);
 
 /* station mgmt */
 int iwlagn_manage_ibss_station(struct iwl_priv *priv,
