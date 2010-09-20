@@ -337,10 +337,10 @@ nfs_xdr_createargs(struct rpc_rqst *req, __be32 *p, struct nfs_createargs *args)
 static int
 nfs_xdr_renameargs(struct rpc_rqst *req, __be32 *p, struct nfs_renameargs *args)
 {
-	p = xdr_encode_fhandle(p, args->fromfh);
-	p = xdr_encode_array(p, args->fromname, args->fromlen);
-	p = xdr_encode_fhandle(p, args->tofh);
-	p = xdr_encode_array(p, args->toname, args->tolen);
+	p = xdr_encode_fhandle(p, args->old_dir);
+	p = xdr_encode_array(p, args->old_name->name, args->old_name->len);
+	p = xdr_encode_fhandle(p, args->new_dir);
+	p = xdr_encode_array(p, args->new_name->name, args->new_name->len);
 	req->rq_slen = xdr_adjust_iovec(req->rq_svec, p);
 	return 0;
 }
@@ -596,7 +596,6 @@ nfs_xdr_readlinkres(struct rpc_rqst *req, __be32 *p, void *dummy)
 	struct kvec *iov = rcvbuf->head;
 	size_t hdrlen;
 	u32 len, recvd;
-	char	*kaddr;
 	int	status;
 
 	if ((status = ntohl(*p++)))
@@ -623,10 +622,7 @@ nfs_xdr_readlinkres(struct rpc_rqst *req, __be32 *p, void *dummy)
 		return -EIO;
 	}
 
-	/* NULL terminate the string we got */
-	kaddr = (char *)kmap_atomic(rcvbuf->pages[0], KM_USER0);
-	kaddr[len+rcvbuf->page_base] = '\0';
-	kunmap_atomic(kaddr, KM_USER0);
+	xdr_terminate_string(rcvbuf, len);
 	return 0;
 }
 

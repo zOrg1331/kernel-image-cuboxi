@@ -1998,120 +1998,17 @@ out:
 	return status;
 }
 
-static int nfs4_intent_set_file(struct nameidata *nd, struct path *path, struct nfs4_state *state, fmode_t fmode)
+static struct inode *
+nfs4_atomic_open(struct inode *dir, struct nfs_open_context *ctx, int open_flags, struct iattr *attr)
 {
-	struct file *filp;
-	int ret;
-
-	/* If the open_intent is for execute, we have an extra check to make */
-	if (fmode & FMODE_EXEC) {
-		ret = nfs_may_open(state->inode,
-				state->owner->so_cred,
-				nd->intent.open.flags);
-		if (ret < 0)
-			goto out_close;
-	}
-	filp = lookup_instantiate_filp(nd, path->dentry, NULL);
-	if (!IS_ERR(filp)) {
-		struct nfs_open_context *ctx;
-		ctx = nfs_file_open_context(filp);
-		ctx->state = state;
-		return 0;
-	}
-	ret = PTR_ERR(filp);
-out_close:
-	nfs4_close_sync(path, state, fmode & (FMODE_READ|FMODE_WRITE));
-	return ret;
-}
-
-struct dentry *
-nfs4_atomic_open(struct inode *dir, struct dentry *dentry, struct nameidata *nd)
-{
-	struct path path = {
-		.mnt = nd->path.mnt,
-		.dentry = dentry,
-	};
-	struct dentry *parent;
-	struct iattr attr;
-	struct rpc_cred *cred;
 	struct nfs4_state *state;
-	struct dentry *res;
-	int open_flags = nd->intent.open.flags;
-	fmode_t fmode = open_flags & (FMODE_READ | FMODE_WRITE | FMODE_EXEC);
 
-	if (nd->flags & LOOKUP_CREATE) {
-		attr.ia_mode = nd->intent.open.create_mode;
-		attr.ia_valid = ATTR_MODE;
-		if (!IS_POSIXACL(dir))
-			attr.ia_mode &= ~current_umask();
-	} else {
-		open_flags &= ~O_EXCL;
-		attr.ia_valid = 0;
-		BUG_ON(open_flags & O_CREAT);
-	}
-
-	cred = rpc_lookup_cred();
-	if (IS_ERR(cred))
-		return (struct dentry *)cred;
-	parent = dentry->d_parent;
 	/* Protect against concurrent sillydeletes */
-	nfs_block_sillyrename(parent);
-	state = nfs4_do_open(dir, &path, fmode, open_flags, &attr, cred);
-	put_rpccred(cred);
-	if (IS_ERR(state)) {
-		if (PTR_ERR(state) == -ENOENT) {
-			d_add(dentry, NULL);
-			nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
-		}
-		nfs_unblock_sillyrename(parent);
-		return (struct dentry *)state;
-	}
-	res = d_add_unique(dentry, igrab(state->inode));
-	if (res != NULL)
-		path.dentry = res;
-	nfs_set_verifier(path.dentry, nfs_save_change_attribute(dir));
-	nfs_unblock_sillyrename(parent);
-	nfs4_intent_set_file(nd, &path, state, fmode);
-	return res;
-}
-
-int
-nfs4_open_revalidate(struct inode *dir, struct dentry *dentry, int openflags, struct nameidata *nd)
-{
-	struct path path = {
-		.mnt = nd->path.mnt,
-		.dentry = dentry,
-	};
-	struct rpc_cred *cred;
-	struct nfs4_state *state;
-	fmode_t fmode = openflags & (FMODE_READ | FMODE_WRITE);
-
-	cred = rpc_lookup_cred();
-	if (IS_ERR(cred))
-		return PTR_ERR(cred);
-	state = nfs4_do_open(dir, &path, fmode, openflags, NULL, cred);
-	put_rpccred(cred);
-	if (IS_ERR(state)) {
-		switch (PTR_ERR(state)) {
-			case -EPERM:
-			case -EACCES:
-			case -EDQUOT:
-			case -ENOSPC:
-			case -EROFS:
-				return PTR_ERR(state);
-			default:
-				goto out_drop;
-		}
-	}
-	if (state->inode == dentry->d_inode) {
-		nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
-		nfs4_intent_set_file(nd, &path, state, fmode);
-		return 1;
-	}
-	nfs4_close_sync(&path, state, fmode);
-out_drop:
-	d_drop(dentry);
-	return 0;
+	state = nfs4_do_open(dir, &ctx->path, ctx->mode, open_flags, attr, ctx->cred);
+	if (IS_ERR(state))
+		return ERR_CAST(state);
+	ctx->state = state;
+	return igrab(state->inode);
 }
 
 static void nfs4_close_context(struct nfs_open_context *ctx, int is_sync)
@@ -2568,36 +2465,34 @@ static int nfs4_proc_readlink(struct inode *inode, struct page *page,
 
 static int
 nfs4_proc_create(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
-                 int flags, struct nameidata *nd)
+                 int flags, struct nfs_open_context *ctx)
 {
-	struct path path = {
-		.mnt = nd->path.mnt,
+	struct path my_path = {
 		.dentry = dentry,
 	};
+	struct path *path = &my_path;
 	struct nfs4_state *state;
-	struct rpc_cred *cred;
-	fmode_t fmode = flags & (FMODE_READ | FMODE_WRITE);
+	struct rpc_cred *cred = NULL;
+	fmode_t fmode = 0;
 	int status = 0;
 
-	cred = rpc_lookup_cred();
-	if (IS_ERR(cred)) {
-		status = PTR_ERR(cred);
-		goto out;
+	if (ctx != NULL) {
+		cred = ctx->cred;
+		path = &ctx->path;
+		fmode = ctx->mode;
 	}
-	state = nfs4_do_open(dir, &path, fmode, flags, sattr, cred);
+	state = nfs4_do_open(dir, path, fmode, flags, sattr, cred);
 	d_drop(dentry);
 	if (IS_ERR(state)) {
 		status = PTR_ERR(state);
-		goto out_putcred;
+		goto out;
 	}
 	d_add(dentry, igrab(state->inode));
 	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
-	if (status == 0 && (nd->flags & LOOKUP_OPEN) != 0)
-		status = nfs4_intent_set_file(nd, &path, state, fmode);
+	if (ctx != NULL)
+		ctx->state = state;
 	else
-		nfs4_close_sync(&path, state, fmode);
-out_putcred:
-	put_rpccred(cred);
+		nfs4_close_sync(path, state, fmode);
 out:
 	return status;
 }
@@ -2671,18 +2566,46 @@ static int nfs4_proc_unlink_done(struct rpc_task *task, struct inode *dir)
 	return 1;
 }
 
+static void nfs4_proc_rename_setup(struct rpc_message *msg, struct inode *dir)
+{
+	struct nfs_server *server = NFS_SERVER(dir);
+	struct nfs_renameargs *arg = msg->rpc_argp;
+	struct nfs_renameres *res = msg->rpc_resp;
+
+	msg->rpc_proc = &nfs4_procedures[NFSPROC4_CLNT_RENAME];
+	arg->bitmask = server->attr_bitmask;
+	res->server = server;
+}
+
+static int nfs4_proc_rename_done(struct rpc_task *task, struct inode *old_dir,
+				 struct inode *new_dir)
+{
+	struct nfs_renameres *res = task->tk_msg.rpc_resp;
+
+	if (!nfs4_sequence_done(task, &res->seq_res))
+		return 0;
+	if (nfs4_async_handle_error(task, res->server, NULL) == -EAGAIN)
+		return 0;
+
+	update_changeattr(old_dir, &res->old_cinfo);
+	nfs_post_op_update_inode(old_dir, res->old_fattr);
+	update_changeattr(new_dir, &res->new_cinfo);
+	nfs_post_op_update_inode(new_dir, res->new_fattr);
+	return 1;
+}
+
 static int _nfs4_proc_rename(struct inode *old_dir, struct qstr *old_name,
 		struct inode *new_dir, struct qstr *new_name)
 {
 	struct nfs_server *server = NFS_SERVER(old_dir);
-	struct nfs4_rename_arg arg = {
+	struct nfs_renameargs arg = {
 		.old_dir = NFS_FH(old_dir),
 		.new_dir = NFS_FH(new_dir),
 		.old_name = old_name,
 		.new_name = new_name,
 		.bitmask = server->attr_bitmask,
 	};
-	struct nfs4_rename_res res = {
+	struct nfs_renameres res = {
 		.server = server,
 	};
 	struct rpc_message msg = {
@@ -5443,6 +5366,8 @@ const struct nfs_rpc_ops nfs_v4_clientops = {
 	.unlink_setup	= nfs4_proc_unlink_setup,
 	.unlink_done	= nfs4_proc_unlink_done,
 	.rename		= nfs4_proc_rename,
+	.rename_setup	= nfs4_proc_rename_setup,
+	.rename_done	= nfs4_proc_rename_done,
 	.link		= nfs4_proc_link,
 	.symlink	= nfs4_proc_symlink,
 	.mkdir		= nfs4_proc_mkdir,
@@ -5463,6 +5388,7 @@ const struct nfs_rpc_ops nfs_v4_clientops = {
 	.lock		= nfs4_proc_lock,
 	.clear_acl_cache = nfs4_zap_acl_attr,
 	.close_context  = nfs4_close_context,
+	.open_context	= nfs4_atomic_open,
 };
 
 /*
