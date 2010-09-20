@@ -165,7 +165,7 @@ psx_client_can_cache:
 
 /* all arguments to this function must be checked for validity in caller */
 static inline int cifs_open_inode_helper(struct inode *inode,
-	struct cifsTconInfo *pTcon, int *oplock, FILE_ALL_INFO *buf,
+	struct cifsTconInfo *pTcon, __u32 oplock, FILE_ALL_INFO *buf,
 	char *full_path, int xid)
 {
 	struct cifsInodeInfo *pCifsInode = CIFS_I(inode);
@@ -207,11 +207,11 @@ client_can_cache:
 		rc = cifs_get_inode_info(&inode, full_path, buf, inode->i_sb,
 					 xid, NULL);
 
-	if ((*oplock & 0xF) == OPLOCK_EXCLUSIVE) {
+	if ((oplock & 0xF) == OPLOCK_EXCLUSIVE) {
 		pCifsInode->clientCanCacheAll = true;
 		pCifsInode->clientCanCacheRead = true;
 		cFYI(1, "Exclusive Oplock granted on inode %p", inode);
-	} else if ((*oplock & 0xF) == OPLOCK_READ)
+	} else if ((oplock & 0xF) == OPLOCK_READ)
 		pCifsInode->clientCanCacheRead = true;
 
 	return rc;
@@ -277,7 +277,7 @@ int cifs_open(struct inode *inode, struct file *file)
 
 			pCifsFile = cifs_new_fileinfo(inode, netfid, file,
 							file->f_path.mnt,
-							oflags);
+							oflags, oplock);
 			if (pCifsFile == NULL) {
 				CIFSSMBClose(xid, tcon, netfid);
 				rc = -ENOMEM;
@@ -365,12 +365,12 @@ int cifs_open(struct inode *inode, struct file *file)
 		goto out;
 	}
 
-	rc = cifs_open_inode_helper(inode, tcon, &oplock, buf, full_path, xid);
+	rc = cifs_open_inode_helper(inode, tcon, oplock, buf, full_path, xid);
 	if (rc != 0)
 		goto out;
 
 	pCifsFile = cifs_new_fileinfo(inode, netfid, file, file->f_path.mnt,
-					file->f_flags);
+					file->f_flags, oplock);
 	if (pCifsFile == NULL) {
 		rc = -ENOMEM;
 		goto out;
