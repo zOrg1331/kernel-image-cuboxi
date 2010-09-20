@@ -34,10 +34,10 @@
 #include <linux/mount.h>
 #include <linux/sched.h>
 
-#include "nfs4_fs.h"
 #include "delegation.h"
 #include "iostat.h"
 #include "internal.h"
+#include "fscache.h"
 
 /* #define NFS_DEBUG_VERBOSE 1 */
 
@@ -104,8 +104,9 @@ const struct inode_operations nfs3_dir_inode_operations = {
 #ifdef CONFIG_NFS_V4
 
 static struct dentry *nfs_atomic_lookup(struct inode *, struct dentry *, struct nameidata *);
+static int nfs_open_create(struct inode *dir, struct dentry *dentry, int mode, struct nameidata *nd);
 const struct inode_operations nfs4_dir_inode_operations = {
-	.create		= nfs_create,
+	.create		= nfs_open_create,
 	.lookup		= nfs_atomic_lookup,
 	.link		= nfs_link,
 	.unlink		= nfs_unlink,
@@ -1029,10 +1030,62 @@ static int is_atomic_open(struct nameidata *nd)
 	return 1;
 }
 
+static struct nfs_open_context *nameidata_to_nfs_open_context(struct dentry *dentry, struct nameidata *nd)
+{
+	struct path path = {
+		.mnt = nd->path.mnt,
+		.dentry = dentry,
+	};
+	struct nfs_open_context *ctx;
+	struct rpc_cred *cred;
+	fmode_t fmode = nd->intent.open.flags & (FMODE_READ | FMODE_WRITE | FMODE_EXEC);
+
+	cred = rpc_lookup_cred();
+	if (IS_ERR(cred))
+		return ERR_CAST(cred);
+	ctx = alloc_nfs_open_context(&path, cred, fmode);
+	put_rpccred(cred);
+	if (ctx == NULL)
+		return ERR_PTR(-ENOMEM);
+	return ctx;
+}
+
+static int do_open(struct inode *inode, struct file *filp)
+{
+	nfs_fscache_set_inode_cookie(inode, filp);
+	return 0;
+}
+
+static int nfs_intent_set_file(struct nameidata *nd, struct nfs_open_context *ctx)
+{
+	struct file *filp;
+	int ret = 0;
+
+	/* If the open_intent is for execute, we have an extra check to make */
+	if (ctx->mode & FMODE_EXEC) {
+		ret = nfs_may_open(ctx->path.dentry->d_inode,
+				ctx->cred,
+				nd->intent.open.flags);
+		if (ret < 0)
+			goto out;
+	}
+	filp = lookup_instantiate_filp(nd, ctx->path.dentry, do_open);
+	if (IS_ERR(filp))
+		ret = PTR_ERR(filp);
+	else
+		nfs_file_set_open_context(filp, ctx);
+out:
+	put_nfs_open_context(ctx);
+	return ret;
+}
+
 static struct dentry *nfs_atomic_lookup(struct inode *dir, struct dentry *dentry, struct nameidata *nd)
 {
+	struct nfs_open_context *ctx;
+	struct iattr attr;
 	struct dentry *res = NULL;
-	int error;
+	struct inode *inode;
+	int open_flags;
 
 	dfprintk(VFS, "NFS: atomic_lookup(%s/%ld), %s\n",
 			dir->i_sb->s_id, dir->i_ino, dentry->d_name.name);
@@ -1054,13 +1107,33 @@ static struct dentry *nfs_atomic_lookup(struct inode *dir, struct dentry *dentry
 		goto out;
 	}
 
+	ctx = nameidata_to_nfs_open_context(dentry, nd);
+	res = ERR_CAST(ctx);
+	if (IS_ERR(ctx))
+		goto out;
+
+	open_flags = nd->intent.open.flags;
+	if (nd->flags & LOOKUP_CREATE) {
+		attr.ia_mode = nd->intent.open.create_mode;
+		attr.ia_valid = ATTR_MODE;
+		if (!IS_POSIXACL(dir))
+			attr.ia_mode &= ~current_umask();
+	} else {
+		open_flags &= ~O_EXCL;
+		attr.ia_valid = 0;
+		BUG_ON(open_flags & O_CREAT);
+	}
+
 	/* Open the file on the server */
-	res = nfs4_atomic_open(dir, dentry, nd);
-	if (IS_ERR(res)) {
-		error = PTR_ERR(res);
-		switch (error) {
+	nfs_block_sillyrename(dentry->d_parent);
+	inode = NFS_PROTO(dir)->open_context(dir, ctx, open_flags, &attr);
+	if (IS_ERR(inode)) {
+		nfs_unblock_sillyrename(dentry->d_parent);
+		put_nfs_open_context(ctx);
+		switch (PTR_ERR(inode)) {
 			/* Make a negative dentry */
 			case -ENOENT:
+				d_add(dentry, NULL);
 				res = NULL;
 				goto out;
 			/* This turned out not to be a regular file */
@@ -1072,11 +1145,20 @@ static struct dentry *nfs_atomic_lookup(struct inode *dir, struct dentry *dentry
 					goto no_open;
 			/* case -EINVAL: */
 			default:
+				res = ERR_CAST(inode);
 				goto out;
 		}
-	} else if (res != NULL)
+	}
+	res = d_add_unique(dentry, inode);
+	if (res != NULL) {
+		dput(ctx->path.dentry);
+		ctx->path.dentry = dget(res);
 		dentry = res;
+	}
+	nfs_intent_set_file(nd, ctx);
+	nfs_unblock_sillyrename(dentry->d_parent);
 out:
+	nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
 	return res;
 no_open:
 	return nfs_lookup(dir, dentry, nd);
@@ -1087,12 +1169,15 @@ static int nfs_open_revalidate(struct dentry *dentry, struct nameidata *nd)
 	struct dentry *parent = NULL;
 	struct inode *inode = dentry->d_inode;
 	struct inode *dir;
+	struct nfs_open_context *ctx;
 	int openflags, ret = 0;
 
 	if (!is_atomic_open(nd) || d_mountpoint(dentry))
 		goto no_open;
+
 	parent = dget_parent(dentry);
 	dir = parent->d_inode;
+
 	/* We can't create new files in nfs_open_revalidate(), so we
 	 * optimize away revalidation of negative dentries.
 	 */
@@ -1112,22 +1197,88 @@ static int nfs_open_revalidate(struct dentry *dentry, struct nameidata *nd)
 	/* We can't create new files, or truncate existing ones here */
 	openflags &= ~(O_CREAT|O_EXCL|O_TRUNC);
 
+	ctx = nameidata_to_nfs_open_context(dentry, nd);
+	ret = PTR_ERR(ctx);
+	if (IS_ERR(ctx))
+		goto out;
 	/*
 	 * Note: we're not holding inode->i_mutex and so may be racing with
 	 * operations that change the directory. We therefore save the
 	 * change attribute *before* we do the RPC call.
 	 */
-	ret = nfs4_open_revalidate(dir, dentry, openflags, nd);
+	inode = NFS_PROTO(dir)->open_context(dir, ctx, openflags, NULL);
+	if (IS_ERR(inode)) {
+		ret = PTR_ERR(inode);
+		switch (ret) {
+		case -EPERM:
+		case -EACCES:
+		case -EDQUOT:
+		case -ENOSPC:
+		case -EROFS:
+			goto out_put_ctx;
+		default:
+			goto out_drop;
+		}
+	}
+	iput(inode);
+	if (inode == dentry->d_inode) {
+		nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
+		nfs_intent_set_file(nd, ctx);
+	} else
+		goto out_drop;
 out:
 	dput(parent);
-	if (!ret)
-		d_drop(dentry);
 	return ret;
+out_drop:
+	d_drop(dentry);
+	ret = 0;
+out_put_ctx:
+	put_nfs_open_context(ctx);
+	goto out;
+
 no_open_dput:
 	dput(parent);
 no_open:
 	return nfs_lookup_revalidate(dentry, nd);
 }
+
+static int nfs_open_create(struct inode *dir, struct dentry *dentry, int mode,
+		struct nameidata *nd)
+{
+	struct nfs_open_context *ctx = NULL;
+	struct iattr attr;
+	int error;
+	int open_flags = 0;
+
+	dfprintk(VFS, "NFS: create(%s/%ld), %s\n",
+			dir->i_sb->s_id, dir->i_ino, dentry->d_name.name);
+
+	attr.ia_mode = mode;
+	attr.ia_valid = ATTR_MODE;
+
+	if ((nd->flags & LOOKUP_CREATE) != 0) {
+		open_flags = nd->intent.open.flags;
+
+		ctx = nameidata_to_nfs_open_context(dentry, nd);
+		error = PTR_ERR(ctx);
+		if (IS_ERR(ctx))
+			goto out_err;
+	}
+
+	error = NFS_PROTO(dir)->create(dir, dentry, &attr, open_flags, ctx);
+	if (error != 0)
+		goto out_put_ctx;
+	if (ctx != NULL)
+		nfs_intent_set_file(nd, ctx);
+	return 0;
+out_put_ctx:
+	if (ctx != NULL)
+		put_nfs_open_context(ctx);
+out_err:
+	d_drop(dentry);
+	return error;
+}
+
 #endif /* CONFIG_NFSV4 */
 
 static struct dentry *nfs_readdir_lookup(nfs_readdir_descriptor_t *desc)
@@ -1258,7 +1409,6 @@ static int nfs_create(struct inode *dir, struct dentry *dentry, int mode,
 {
 	struct iattr attr;
 	int error;
-	int open_flags = 0;
 
 	dfprintk(VFS, "NFS: create(%s/%ld), %s\n",
 			dir->i_sb->s_id, dir->i_ino, dentry->d_name.name);
@@ -1266,10 +1416,7 @@ static int nfs_create(struct inode *dir, struct dentry *dentry, int mode,
 	attr.ia_mode = mode;
 	attr.ia_valid = ATTR_MODE;
 
-	if ((nd->flags & LOOKUP_CREATE) != 0)
-		open_flags = nd->intent.open.flags;
-
-	error = NFS_PROTO(dir)->create(dir, dentry, &attr, open_flags, nd);
+	error = NFS_PROTO(dir)->create(dir, dentry, &attr, 0, NULL);
 	if (error != 0)
 		goto out_err;
 	return 0;
@@ -1348,76 +1495,6 @@ static int nfs_rmdir(struct inode *dir, struct dentry *dentry)
 	else if (error == -ENOENT)
 		nfs_dentry_handle_enoent(dentry);
 
-	return error;
-}
-
-static int nfs_sillyrename(struct inode *dir, struct dentry *dentry)
-{
-	static unsigned int sillycounter;
-	const int      fileidsize  = sizeof(NFS_FILEID(dentry->d_inode))*2;
-	const int      countersize = sizeof(sillycounter)*2;
-	const int      slen        = sizeof(".nfs")+fileidsize+countersize-1;
-	char           silly[slen+1];
-	struct qstr    qsilly;
-	struct dentry *sdentry;
-	int            error = -EIO;
-
-	dfprintk(VFS, "NFS: silly-rename(%s/%s, ct=%d)\n",
-		dentry->d_parent->d_name.name, dentry->d_name.name, 
-		atomic_read(&dentry->d_count));
-	nfs_inc_stats(dir, NFSIOS_SILLYRENAME);
-
-	/*
-	 * We don't allow a dentry to be silly-renamed twice.
-	 */
-	error = -EBUSY;
-	if (dentry->d_flags & DCACHE_NFSFS_RENAMED)
-		goto out;
-
-	sprintf(silly, ".nfs%*.*Lx",
-		fileidsize, fileidsize,
-		(unsigned long long)NFS_FILEID(dentry->d_inode));
-
-	/* Return delegation in anticipation of the rename */
-	nfs_inode_return_delegation(dentry->d_inode);
-
-	sdentry = NULL;
-	do {
-		char *suffix = silly + slen - countersize;
-
-		dput(sdentry);
-		sillycounter++;
-		sprintf(suffix, "%*.*x", countersize, countersize, sillycounter);
-
-		dfprintk(VFS, "NFS: trying to rename %s to %s\n",
-				dentry->d_name.name, silly);
-		
-		sdentry = lookup_one_len(silly, dentry->d_parent, slen);
-		/*
-		 * N.B. Better to return EBUSY here ... it could be
-		 * dangerous to delete the file while it's in use.
-		 */
-		if (IS_ERR(sdentry))
-			goto out;
-	} while(sdentry->d_inode != NULL); /* need negative lookup */
-
-	qsilly.name = silly;
-	qsilly.len  = strlen(silly);
-	if (dentry->d_inode) {
-		error = NFS_PROTO(dir)->rename(dir, &dentry->d_name,
-				dir, &qsilly);
-		nfs_mark_for_revalidate(dentry->d_inode);
-	} else
-		error = NFS_PROTO(dir)->rename(dir, &dentry->d_name,
-				dir, &qsilly);
-	if (!error) {
-		nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
-		d_move(dentry, sdentry);
-		error = nfs_async_unlink(dir, dentry);
- 		/* If we return 0 we don't unlink */
-	}
-	dput(sdentry);
-out:
 	return error;
 }
 
