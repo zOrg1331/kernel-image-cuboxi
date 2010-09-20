@@ -100,6 +100,7 @@ static const struct file_operations rng_chrdev_ops = {
 	.owner		= THIS_MODULE,
 	.open		= rng_dev_open,
 	.read		= rng_dev_read,
+	.llseek = noop_llseek,/* read uses no f_pos */
 };
 
 /* rng_init shouldn't be called more than once at boot time */

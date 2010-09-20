@@ -235,6 +235,7 @@ static const struct file_operations pg_fops = {
 	.write = pg_write,
 	.open = pg_open,
 	.release = pg_release,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 static void pg_init_units(void)

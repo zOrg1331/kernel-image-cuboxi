@@ -258,6 +258,7 @@ const struct file_operations dac_audio_fops = {
       .unlocked_ioctl =	dac_audio_unlocked_ioctl,
       .open =		dac_audio_open,
       .release =	dac_audio_release,
+      .llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 static enum hrtimer_restart sh_dac_audio_timer(struct hrtimer *handle)

@@ -283,6 +283,7 @@ static const struct file_operations fops = {
 	.read = bat_socket_read,
 	.write = bat_socket_write,
 	.poll = bat_socket_poll,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 int bat_socket_setup(struct bat_priv *bat_priv)

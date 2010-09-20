@@ -271,6 +271,7 @@ static const struct file_operations fops_beacon = {
 	.write = write_file_beacon,
 	.open = ath5k_debugfs_open,
 	.owner = THIS_MODULE,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 
@@ -290,6 +291,7 @@ static const struct file_operations fops_reset = {
 	.write = write_file_reset,
 	.open = ath5k_debugfs_open,
 	.owner = THIS_MODULE,
+	.llseek = noop_llseek,/* write uses no f_pos */
 };
 
 
@@ -370,6 +372,7 @@ static const struct file_operations fops_debug = {
 	.write = write_file_debug,
 	.open = ath5k_debugfs_open,
 	.owner = THIS_MODULE,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 
@@ -481,6 +484,7 @@ static const struct file_operations fops_antenna = {
 	.write = write_file_antenna,
 	.open = ath5k_debugfs_open,
 	.owner = THIS_MODULE,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 
@@ -592,6 +596,7 @@ static const struct file_operations fops_frameerrors = {
 	.write = write_file_frameerrors,
 	.open = ath5k_debugfs_open,
 	.owner = THIS_MODULE,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 
@@ -749,6 +754,7 @@ static const struct file_operations fops_ani = {
 	.write = write_file_ani,
 	.open = ath5k_debugfs_open,
 	.owner = THIS_MODULE,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 
@@ -812,6 +818,7 @@ static const struct file_operations fops_queue = {
 	.write = write_file_queue,
 	.open = ath5k_debugfs_open,
 	.owner = THIS_MODULE,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 
