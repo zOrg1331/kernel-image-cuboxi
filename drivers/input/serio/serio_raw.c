@@ -243,6 +243,7 @@ static const struct file_operations serio_raw_fops = {
 	.write =	serio_raw_write,
 	.poll =		serio_raw_poll,
 	.fasync =	serio_raw_fasync,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 
