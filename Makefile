@@ -2,7 +2,7 @@ VERSION = 2
 PATCHLEVEL = 6
 SUBLEVEL = 32
 EXTRAVERSION = .22
-VZVERSION = dobrovolskiy
+VZVERSION = dyomin
 NAME = Man-Eating Seals of Antiquity
 
 # *DOCUMENTATION*
