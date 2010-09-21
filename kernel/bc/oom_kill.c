@@ -37,7 +37,6 @@ static void ub_clear_oom(void)
 	rcu_read_unlock();
 }
 
-/* Called with cpuset_lock held */
 int ub_oom_lock(void)
 {
 	int timeout;
@@ -63,11 +62,9 @@ int ub_oom_lock(void)
 		__set_current_state(TASK_UNINTERRUPTIBLE);
 		add_wait_queue(&oom_wq, &oom_w);
 		spin_unlock(&oom_lock);
-		cpuset_unlock();
 
 		timeout = schedule_timeout(timeout);
 
-		cpuset_lock();
 		spin_lock(&oom_lock);
 		remove_wait_queue(&oom_wq, &oom_w);
 	}
@@ -176,7 +173,6 @@ void ub_out_of_memory(struct user_beancounter *scope)
 	struct user_beancounter *ub;
 	struct task_struct *p;
 
-	cpuset_lock();
 	spin_lock(&oom_lock);
 	ub_clear_oom();
 	ub = get_beancounter(scope);
@@ -195,6 +191,5 @@ retry:
 unlock:
 	read_unlock(&tasklist_lock);
 	spin_unlock(&oom_lock);
-	cpuset_unlock();
 }
 EXPORT_SYMBOL(ub_out_of_memory);
