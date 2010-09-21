@@ -605,8 +605,8 @@ config SENSORS_LM90
 	  If you say yes here you get support for National Semiconductor LM90,
 	  LM86, LM89 and LM99, Analog Devices ADM1032 and ADT7461, Maxim
 	  MAX6646, MAX6647, MAX6648, MAX6649, MAX6657, MAX6658, MAX6659,
-	  MAX6680, MAX6681 and MAX6692, and Winbond/Nuvoton W83L771AWG/ASG
-	  sensor chips.
+	  MAX6680, MAX6681, MAX6692, MAX6695, MAX6696, and Winbond/Nuvoton
+	  W83L771AWG/ASG sensor chips.
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called lm90.
@@ -743,14 +743,14 @@ config SENSORS_SHT15
 	  will be called sht15.
 
 config SENSORS_S3C
-	tristate "S3C24XX/S3C64XX Inbuilt ADC"
-	depends on ARCH_S3C2410
+	tristate "Samsung built-in ADC"
+	depends on S3C_ADC
 	help
 	  If you say yes here you get support for the on-board ADCs of
-	  the Samsung S3C24XX or S3C64XX series of SoC
+	  the Samsung S3C24XX, S3C64XX and other series of SoC
 
 	  This driver can also be built as a module. If so, the module
-	  will be called s3c-hwmo.
+	  will be called s3c-hwmon.
 
 config SENSORS_S3C_RAW
 	bool "Include raw channel attributes in sysfs"
@@ -1010,6 +1010,16 @@ config SENSORS_W83793
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called w83793.
+
+config SENSORS_W83795
+	tristate "Winbond/Nuvoton W83795G/ADG"
+	depends on I2C && EXPERIMENTAL
+	help
+	  If you say yes here you get support for the Winbond W83795G and
+	  W83795ADG hardware monitoring chip.
+
+	  This driver can also be built as a module.  If so, the module
+	  will be called w83795.
 
 config SENSORS_W83L785TS
 	tristate "Winbond W83L785TS-S"
