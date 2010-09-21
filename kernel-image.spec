@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.35
-Release: alt4.2
+Release: alt5
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -589,6 +589,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Tue Sep 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt5
+- 2.6.35.5
+
 * Thu Sep 16 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt4.2
 - CVE-2010-3301
 - mountpoint for cgroup in /sys
