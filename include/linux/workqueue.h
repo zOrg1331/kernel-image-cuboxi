@@ -306,6 +306,24 @@ __alloc_workqueue_key(const char *name, unsigned int flags, int max_active,
 	__alloc_workqueue_key((name), (flags), (max_active), NULL, NULL)
 #endif
 
+/**
+ * alloc_ordered_workqueue - allocate an ordered workqueue
+ * @name: name of the workqueue
+ * @flags: WQ_* flags (only WQ_FREEZEABLE and WQ_RESCUER are meaningful)
+ *
+ * Allocate an ordered workqueue.  An ordered workqueue executes at
+ * most one work item at any given time in the queued order.  They are
+ * implemented as unbound workqueues with @max_active of one.
+ *
+ * RETURNS:
+ * Pointer to the allocated workqueue on success, %NULL on failure.
+ */
+static inline struct workqueue_struct *
+alloc_ordered_workqueue(const char *name, unsigned int flags)
+{
+	return alloc_workqueue(name, WQ_UNBOUND | flags, 1);
+}
+
 #define create_workqueue(name)					\
 	alloc_workqueue((name), WQ_RESCUER, 1)
 #define create_freezeable_workqueue(name)			\
@@ -325,7 +343,6 @@ extern int queue_delayed_work_on(int cpu, struct workqueue_struct *wq,
 
 extern void flush_workqueue(struct workqueue_struct *wq);
 extern void flush_scheduled_work(void);
-extern void flush_delayed_work(struct delayed_work *work);
 
 extern int schedule_work(struct work_struct *work);
 extern int schedule_work_on(int cpu, struct work_struct *work);
@@ -337,8 +354,13 @@ extern int keventd_up(void);
 
 int execute_in_process_context(work_func_t fn, struct execute_work *);
 
-extern int flush_work(struct work_struct *work);
-extern int cancel_work_sync(struct work_struct *work);
+extern bool flush_work(struct work_struct *work);
+extern bool flush_work_sync(struct work_struct *work);
+extern bool cancel_work_sync(struct work_struct *work);
+
+extern bool flush_delayed_work(struct delayed_work *dwork);
+extern bool flush_delayed_work_sync(struct delayed_work *work);
+extern bool cancel_delayed_work_sync(struct delayed_work *dwork);
 
 extern void workqueue_set_max_active(struct workqueue_struct *wq,
 				     int max_active);
@@ -352,9 +374,9 @@ extern unsigned int work_busy(struct work_struct *work);
  * it returns 1 and the work doesn't re-arm itself. Run flush_workqueue() or
  * cancel_work_sync() to wait on it.
  */
-static inline int cancel_delayed_work(struct delayed_work *work)
+static inline bool cancel_delayed_work(struct delayed_work *work)
 {
-	int ret;
+	bool ret;
 
 	ret = del_timer_sync(&work->timer);
 	if (ret)
@@ -367,17 +389,15 @@ static inline int cancel_delayed_work(struct delayed_work *work)
  * if it returns 0 the timer function may be running and the queueing is in
  * progress.
  */
-static inline int __cancel_delayed_work(struct delayed_work *work)
+static inline bool __cancel_delayed_work(struct delayed_work *work)
 {
-	int ret;
+	bool ret;
 
 	ret = del_timer(&work->timer);
 	if (ret)
 		work_clear_pending(&work->work);
 	return ret;
 }
-
-extern int cancel_delayed_work_sync(struct delayed_work *work);
 
 /* Obsolete. use cancel_delayed_work_sync() */
 static inline
