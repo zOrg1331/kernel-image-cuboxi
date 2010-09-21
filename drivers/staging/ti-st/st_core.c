@@ -28,17 +28,8 @@
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 #include <net/bluetooth/hci.h>
-#include "fm.h"
-/*
- * packet formats for fm and gps
- * #include "gps.h"
- */
-#include "st_core.h"
-#include "st_kim.h"
-#include "st_ll.h"
-#include "st.h"
+#include "ti_wilink_st.h"
 
-#define VERBOSE
 /* strings to be used for rfkill entries and by
  * ST Core to be used for sysfs debug entry
  */
@@ -581,7 +572,7 @@ long st_register(struct st_proto_s *new_proto)
 	long err = 0;
 	unsigned long flags = 0;
 
-	st_kim_ref(&st_gdata);
+	st_kim_ref(&st_gdata, 0);
 	pr_info("%s(%d) ", __func__, new_proto->type);
 	if (st_gdata == NULL || new_proto == NULL || new_proto->recv == NULL
 	    || new_proto->reg_complete_cb == NULL) {
@@ -686,9 +677,8 @@ long st_register(struct st_proto_s *new_proto)
 		default:
 			pr_err("%d protocol not supported",
 				   new_proto->type);
-			err = -EPROTONOSUPPORT;
-			/* something wrong */
-			break;
+			spin_unlock_irqrestore(&st_gdata->lock, flags);
+			return -EPROTONOSUPPORT;
 		}
 		st_gdata->list[new_proto->type] = new_proto;
 		st_gdata->protos_registered++;
@@ -713,7 +703,7 @@ long st_unregister(enum proto_type type)
 
 	pr_debug("%s: %d ", __func__, type);
 
-	st_kim_ref(&st_gdata);
+	st_kim_ref(&st_gdata, 0);
 	if (type < ST_BT || type >= ST_MAX) {
 		pr_err(" protocol %d not supported", type);
 		return -EPROTONOSUPPORT;
@@ -767,7 +757,7 @@ long st_write(struct sk_buff *skb)
 #endif
 	long len;
 
-	st_kim_ref(&st_gdata);
+	st_kim_ref(&st_gdata, 0);
 	if (unlikely(skb == NULL || st_gdata == NULL
 		|| st_gdata->tty == NULL)) {
 		pr_err("data/tty unavailable to perform write");
@@ -818,7 +808,7 @@ static int st_tty_open(struct tty_struct *tty)
 	struct st_data_s *st_gdata;
 	pr_info("%s ", __func__);
 
-	st_kim_ref(&st_gdata);
+	st_kim_ref(&st_gdata, 0);
 	st_gdata->tty = tty;
 	tty->disc_data = st_gdata;
 
