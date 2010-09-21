@@ -147,7 +147,6 @@ struct nilfs_super_root {
 #define NILFS_MOUNT_ERRORS_CONT		0x0010  /* Continue on errors */
 #define NILFS_MOUNT_ERRORS_RO		0x0020  /* Remount fs ro on errors */
 #define NILFS_MOUNT_ERRORS_PANIC	0x0040  /* Panic on errors */
-#define NILFS_MOUNT_SNAPSHOT		0x0080  /* Snapshot flag */
 #define NILFS_MOUNT_BARRIER		0x1000  /* Use block barriers */
 #define NILFS_MOUNT_STRICT_ORDER	0x2000  /* Apply strict in-order
 						   semantics also for data */
@@ -229,6 +228,7 @@ struct nilfs_super_block {
  */
 #define NILFS_CURRENT_REV	2	/* current major revision */
 #define NILFS_MINOR_REV		0	/* minor revision */
+#define NILFS_MIN_SUPP_REV	2	/* minimum supported revision */
 
 /*
  * Feature set definitions
@@ -268,6 +268,14 @@ struct nilfs_super_block {
 					   a partial segment */
 #define NILFS_MIN_NRSVSEGS	8	/* Minimum number of reserved
 					   segments */
+
+/*
+ * We call DAT, cpfile, and sufile root metadata files.  Inodes of
+ * these files are written in super root block instead of ifile, and
+ * garbage collector doesn't keep any past versions of these files.
+ */
+#define NILFS_ROOT_METADATA_FILE(ino) \
+	((ino) >= NILFS_DAT_INO && (ino) <= NILFS_SUFILE_INO)
 
 /*
  * bytes offset of secondary super block
