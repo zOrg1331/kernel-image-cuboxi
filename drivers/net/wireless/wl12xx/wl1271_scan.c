@@ -215,9 +215,7 @@ void wl1271_scan_stm(struct wl1271 *wl)
 		break;
 
 	case WL1271_SCAN_STATE_DONE:
-		mutex_unlock(&wl->mutex);
 		ieee80211_scan_completed(wl->hw, false);
-		mutex_lock(&wl->mutex);
 
 		kfree(wl->scan.scanned_ch);
 		wl->scan.scanned_ch = NULL;
@@ -248,7 +246,7 @@ int wl1271_scan(struct wl1271 *wl, const u8 *ssid, size_t ssid_len,
 
 	wl->scan.req = req;
 
-	wl->scan.scanned_ch = kzalloc(req->n_channels *
+	wl->scan.scanned_ch = kcalloc(req->n_channels,
 				      sizeof(*wl->scan.scanned_ch),
 				      GFP_KERNEL);
 	wl1271_scan_stm(wl);
