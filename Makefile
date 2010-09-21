@@ -2,7 +2,7 @@ VERSION = 2
 PATCHLEVEL = 6
 SUBLEVEL = 27
 EXTRAVERSION = .54
-VZVERSION = kuindzhi
+VZVERSION = levitan
 NAME = Trembling Tortoise
 
 # *DOCUMENTATION*
