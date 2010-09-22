@@ -1,6 +1,6 @@
 Name: kernel-image-el-smp
 Version: 2.6.32
-Release: alt8
+Release: alt9
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -546,6 +546,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/ -name "*.o*" -delete
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Wed Sep 22 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt9
+- silicium: fix bug in aufs patch
+
 * Fri Sep 17 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt8
 - CVE-2010-3301
 - build loop as module
