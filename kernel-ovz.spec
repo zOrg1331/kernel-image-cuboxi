@@ -38,7 +38,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt13.M51.12
+%define krelease alt13.M51.13
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -4934,6 +4934,7 @@ Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100028: diff-rh-bond802.3ad-slave-speed-20100421
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
+Patch100031: diff-ms-compat_alloc_user_space-exploit-20100917
 Patch100034: diff-dcache-dput-fast-path-without-dcache-lock-20100706
 Patch100036: diff-ubc-debug-sock-orphan-acct
 Patch100037: diff-ve-vzevent-fix-reboot-detection
@@ -9739,6 +9740,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100027 -p1
 %patch100028 -p1
 %patch100029 -p1
+%patch100031 -p1
 %patch100034 -p1
 %patch100036 -p1
 %patch100037 -p1
@@ -10353,6 +10355,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Wed Sep 22 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.13
+- Fix CVE-2010-3081
+
 * Mon Sep 06 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.12
 - Release of 2.6.18-194.11.3.el5 028stab071.4
 
