@@ -368,6 +368,7 @@ static int kbd_clear_keys_helper(struct input_handle *handle, void *data)
 {
 	unsigned int *keycode = data;
 	input_inject_event(handle, EV_KEY, *keycode, 0);
+	input_inject_event(handle, EV_SYN, SYN_REPORT, 0);
 	return 0;
 }
 
