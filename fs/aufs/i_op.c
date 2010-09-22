@@ -624,6 +624,9 @@ static int aufs_setattr(struct dentry *dentry, struct iattr *ia)
 	if (!err)
 		au_cpup_attr_changeable(inode);
 
+	if(file)
+		au_reopen_nondir(file);
+
  out_unlock:
 	mutex_unlock(&a->h_inode->i_mutex);
 	au_unpin(&a->pin);
