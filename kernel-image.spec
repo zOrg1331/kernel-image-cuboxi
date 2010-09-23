@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.32
-Release: alt21.1
+Release: alt22
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -348,6 +348,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Thu Sep 23 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt22
+- 2.6.32.22
+
 * Wed Sep 01 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.32-alt21.1
 - enabled devtmpfs and automount at /dev
 
