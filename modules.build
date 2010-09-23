@@ -1,5 +1,5 @@
 #video drivers
-fglrx
+#fglrx
 nvidia
 
 #network card drivers
