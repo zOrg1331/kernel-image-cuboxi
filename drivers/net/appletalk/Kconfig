@@ -3,6 +3,7 @@
 #
 config ATALK
 	tristate "Appletalk protocol support"
+	depends on BKL # used in net/appletalk/ddp.c, probably fixable
 	select LLC
 	---help---
 	  AppleTalk is the protocol that Apple computers can use to communicate

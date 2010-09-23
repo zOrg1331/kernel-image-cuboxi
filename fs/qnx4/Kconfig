@@ -1,5 +1,6 @@
 config QNX4FS_FS
 	tristate "QNX4 file system support (read only)"
+	depends on BKL # need to fix or will become BROKEN_ON_SMP
 	depends on BLOCK
 	help
 	  This is the file system used by the real-time operating systems
