@@ -1,0 +1,184 @@
+Importing driver-core.current based on 2.6.36-rc5
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core.current b30a3f6257ed2105259b404d419b4964e363928c
+Importing tty.current based on quilt/driver-core.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty.current b30a3f6257ed2105259b404d419b4964e363928c
+Importing usb.current based on quilt/tty.current
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard b30a3f6257ed2105259b404d419b4964e363928c
+HEAD is now at b30a3f6 Linux 2.6.36-rc5
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb.current
+usb-fix-bug-in-initialization-of-interface-minor-numbers.patch
+usb-musb-gadget-fix-kernel-panic-if-using-out-ep-with-fifo_txrx-style.patch
+usb-musb-gadget-fix-bulk-in-infinit-hangs-in-double-buffer-case.patch
+usb-musb-gadget-enable-autoclear-for-out-transfer-in-both-dma-0-and-dma-1.patch
+usb-musb-gadget-fix-dma-length-for-out-transfer.patch
+usb-musb-gadget-complete-request-only-if-data-is-transfered-over.patch
+usb-musb-gadget-fix-dma-length-in-txstate.patch
+usb-musb-host-issue-a-memory-barrier-before-starting-dma.patch
+usb-musb-gadget-restart-request-on-clearing-endpoint-halt.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb.current
+From ../quilt-tmp
+ + d63ab51...1ecb674 master     -> quilt/usb.current  (forced update)
+Importing staging.current based on quilt/usb.current
+$ cd ../quilt-tmp
+$ git reset --hard 1ecb6746d0d2c2ca69b7e2c74dde1f217f393e7a
+HEAD is now at 1ecb674 usb: musb: gadget: restart request on clearing endpoint halt
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/staging.current
+staging-ti-st-remove-st_get_plat_device.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/staging.current
+From ../quilt-tmp
+ + 49b9d76...759b9f0 master     -> quilt/staging.current  (forced update)
+Importing i2c based on 2.6.36-rc4-git3
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.36-rc4-git3
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.36-rc2
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.36-rc3
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.36-rc1
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+$ cd ../quilt-tmp
+$ git reset --hard 759b9f0fe0c5be0d9fa1b92e14e093961312f6ac
+HEAD is now at 759b9f0 Staging: ti-st: remove st_get_plat_device
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/driver-core
+dynamic-debug-split-out-query-string-parsing-setup-from-proc_write.patch
+dynamic-debug-introduce-ddebug_query-boot-parameter.patch
+dynamic-debug-initialize-dynamic-debug-earlier-via-arch_initcall.patch
+driver-core-platform-use-drv-driver.bus-instead-of-assuming-platform_bus_type.patch
+uio-do-not-use-pci-resources-before-pci_enable_device.patch
+driver-core-platform_bus-allow-runtime-override-of-dev_pm_ops.patch
+add-packet-hub-driver-for-topcliff-platform-controller-hub.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:10: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+pch_phub-fix-build-warnings.patch
+debugfs-mark-me-as-the-maintainer.patch
+base-platform-safe-handling-for-null-platform-data-and-resources.patch
+base-platform-simplifications-for-null-platform-data-resources-handling.patch
+driver-core-remove-config_sysfs_deprecated_v2-but-keep-it-for-block-devices.patch
+sysfs-allow-boot-time-switching-between-deprecated-and-modern-sysfs-layout.patch
+uio-fix-lack-of-locking-in-init_uio_class.patch
+uio-don-t-clear-driver-data.patch
+uio-cleanup-irq-handling.patch
+uio-support-2-minor_bits-minors.patch
+uio-statically-allocate-uio_class-and-use-class-.dev_attrs.patch
+fw_loader-fix-kconfig-dependency-warning-on-hotplug.patch
+sysfs-fail-bin-file-mmap-if-vma-close-is-implemented.patch
+sysfs-only-access-bin-file-vm_ops-with-the-active-lock.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/driver-core
+From ../quilt-tmp
+ + f1c4b76...9bac296 master     -> quilt/driver-core  (forced update)
+Importing tty based on quilt/driver-core
+$ cd ../quilt-tmp
+$ git reset --hard 9bac29610107646f2e951e8a0eb729ae5ea74716
+HEAD is now at 9bac296 sysfs: only access bin file vm_ops with the active lock
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/tty
+tty-add-tty_struct-dev-pointer-to-corresponding-device-instance.patch
+serport-place-serport-serio-device-correctly-in-the-device-tree.patch
+serial-mfd-snprintf-returns-largish-values.patch
+serial-add-console_poll-support-for-uartlite.patch
+tty-remove-__gfp_nofail-from-tty_add_file.patch
+ioctl-use-asm-generic-ioctls-h-on-arm
+ioctl-use-asm-generic-ioctls-h-on-avr32
+ioctl-use-asm-generic-ioctls-h-on-cris
+ioctl-use-asm-generic-ioctls-h-on-frv
+ioctl-use-asm-generic-ioctls-h-on-h8300
+ioctl-use-asm-generic-ioctls-h-on-ia64
+ioctl-use-asm-generic-ioctls-h-on-m32r
+ioctl-use-asm-generic-ioctls-h-on-m68k
+ioctl-use-asm-generic-ioctls-h-on-mn10300
+ioctl-use-asm-generic-ioctls-h-on-s390
+serial-core-skip-call-set_termios-console_start-when-no_console_suspend.patch
+serial-core-restore-termios-settings-when-resume-console-ports.patch
+add-ttyprintk-driver.patch
+char-mxser-call-pci_disable_device-from-probe-remove.patch
+tty_io-check-return-code-of-tty_register_device.patch
+serial-mrst_max3110-some-code-cleanup.patch
+serial-mrst_max3110-make-the-irq-option-runtime.patch
+serial-max3107-fix-memory-leaks-when-returning-on-error.patch
+tty-make-tiocgicount-a-handler.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:47: space before tab in indent.
+        	if (retval != -EINVAL)
+warning: 1 line adds whitespace errors.
+tty-convert-the-usb-drivers-to-the-new-icount-interface.patch
+tty-icount-changeover-for-other-main-devices.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/tty
+From ../quilt-tmp
+ + 067f140...157be28 master     -> quilt/tty  (forced update)
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 157be28e51ed476aa357c8718aaef4832f4da66b
+HEAD is now at 157be28 tty: icount changeover for other main devices
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-add-intel-langwell-usb-otg-transceiver-driver.patch
+usb-langwell-usb-client-driver-code-cleanup.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:2109: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+usb-langwell-usb-client-endpoint-initialization.patch
+usb-langwell-usb-client-phy-low-power-mode-setting.patch
+usb-langwell-usb-client-remote-wakeup-support.patch
+usb-langwell-usb-client-driver-memory-handling.patch
+usb-gadget-dbgp-cleanup-remove-unneeded-check.patch
+usb-sam-ba-add-driver-for-atmel-sam-boot-assistant-sam-ba.patch
+usb-gadget-verify-vbus-current-before-setting-the-device-self-powered-bit.patch
+usb-core-update-comment-to-match-current-function-name.patch
+usb-gadget-g_multi-fixed-vendor-and-product-id.patch
+usb-gadget-g_ffs-fixed-vendor-and-product-id.patch
+usb-gadget-storage-remove-nofua-file-when-unbinding.patch
+usb-gadget-mass_storage-optional-scsi-write-fua-bit.patch
+usb-gadget-functionfs-code-cleanup.patch
+usb-gadget-composite-better-string-override-handling.patch
+usb-gadget-mass_storage-moved-strings-handling-code.patch
+usb-gadget-g_multi-moved-strings-handling-code-to-composite.patch
+usb-revert-usb-gadget-section-mismatch-warning-fixed.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_gadget_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_composite_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_configuration.patch
+init.h-add-some-more-documentation-to-__ref-tags.patch
+usb-gadget-amd5536udc.c-remove-double-test.patch
+usb-output-an-error-message-when-the-pipe-type-doesn-t-match-the-endpoint-type.patch
+usb-langwell-remove-unnecessary-return-s-from-void-functions.patch
+usb-g_file_storage-don-t-generate-automatic-serial-string.patch
+usb-kconfig-fix-typos-in-usb_functionfs-description.patch
+usb-ehci-tdi-let-s-tdi_reset-set-host-mode.patch
+usb-gadget-rndis-fix-up-coding-style-issues-in-the-file.patch
+drivers-usb-ftdi-elan-sema.patch
+usb-otg-add-common-data-structure-for-intel-mid-platform-langwell-penwell.patch
+usb-otg-langwell-update-otg-kconfig-and-driver-version.patch
+usb-r8a66597-udc-initialize-uninitialized-variable-fix-compile-warning.patch
+usb-change-acm_iad_descriptor-bfunctionprotocol-to-usb_cdc_acm_proto_at_v25ter.patch
+usb-ohci-sm501-add-iounmap-on-error-path.patch
+ohci-work-around-for-nvidia-shutdown-problem.patch
+usb-gadget-composite-prevent-oops-for-non-standard-control-request.patch
+usb-isp1362-hcd-removes-config_usb_otg-dependent-code.patch
+usb-gadget-remove-pr_-level-uses-of-kern_-level.patch
+usb-option-add-more-zte-modem-usb-id-s.patch
+uwb-use-pm-format-to-print-mac-address.patch
+usb-teach-devices-file-about-wireless-and-superspeed-usb.patch
+usb-host-oxu210hp-hcd-use-static-const-char-const-where-possible.patch
+usb-ftdi_sio-add-pid-for-accesio-products.patch
+usb-omap-ohci-missing-driver-unregister-in-module-exit.patch
+usb-cp210x-add-renesas-rx-stick-device-id.patch
+usb-option-add-new-onda-vendor-id-and-product-id-for-onda-mt825up.patch
+usb-cdc.h-ncm-typo-and-style-fixes.patch
+revert-usb-ncm-added-ncm.h-with-auxiliary-definitions.patch
+usb-cdc.h-ncm-add-missed-constants-and-structures.patch
+usb-atmel_usba_udc-force-vbus_pin-at-einval-when-gpio_request-failled.patch
+usb-serial-enable-usb-autosuspend-by-default-on-qcserial.patch
+usb-ftdi_sio-revert-usb-ftdi_sio-fix-dtr-rts-line-modes.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 5bd46be...7a66361 master     -> quilt/usb  (forced update)
