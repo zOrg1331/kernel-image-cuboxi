@@ -30,6 +30,7 @@ static int my_open(struct inode *inode, struct file *file)
 
 static const struct file_operations mark_ops = {
 	.open = my_open,
+	.llseek = noop_llseek,/* no read or write fn */
 };
 
 static int __init sample_init(void)

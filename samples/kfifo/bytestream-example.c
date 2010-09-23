@@ -148,6 +148,7 @@ static const struct file_operations fifo_fops = {
 	.owner		= THIS_MODULE,
 	.read		= fifo_read,
 	.write		= fifo_write,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 static int __init example_init(void)

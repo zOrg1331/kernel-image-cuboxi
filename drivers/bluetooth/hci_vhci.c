@@ -282,6 +282,7 @@ static const struct file_operations vhci_fops = {
 	.poll		= vhci_poll,
 	.open		= vhci_open,
 	.release	= vhci_release,
+	.llseek = no_llseek,/* open uses nonseekable */
 };
 
 static struct miscdevice vhci_miscdev= {

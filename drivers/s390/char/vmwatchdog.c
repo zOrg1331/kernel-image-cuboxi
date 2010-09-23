@@ -297,6 +297,7 @@ static const struct file_operations vmwdt_fops = {
 	.unlocked_ioctl = &vmwdt_ioctl,
 	.write   = &vmwdt_write,
 	.owner   = THIS_MODULE,
+	.llseek = noop_llseek,/* no read or write fn */
 };
 
 static struct miscdevice vmwdt_dev = {

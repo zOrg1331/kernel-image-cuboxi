@@ -170,6 +170,7 @@ static const struct file_operations rng_chrdev_ops = {
 	.owner		= THIS_MODULE,
 	.open		= rng_dev_open,
 	.read		= rng_dev_read,
+	.llseek = noop_llseek,/* read uses no f_pos */
 };
 
 static struct miscdevice rng_miscdev = {
