@@ -39,7 +39,6 @@
 #include <dspbridge/dbc.h>
 
 /*  ----------------------------------- OS Adaptation Layer */
-#include <dspbridge/services.h>
 #include <dspbridge/clk.h>
 #include <dspbridge/sync.h>
 
@@ -54,7 +53,6 @@
 /*  ----------------------------------- This */
 #include <drv_interface.h>
 
-#include <dspbridge/cfg.h>
 #include <dspbridge/resourcecleanup.h>
 #include <dspbridge/chnl.h>
 #include <dspbridge/proc.h>
@@ -271,7 +269,6 @@ static int omap3_bridge_startup(struct platform_device *pdev)
 #endif
 
 	dsp_clk_init();
-	services_init();
 
 	drv_datap = kzalloc(sizeof(struct drv_data), GFP_KERNEL);
 	if (!drv_datap) {
@@ -328,7 +325,6 @@ err1:
 					CPUFREQ_TRANSITION_NOTIFIER);
 #endif
 	dsp_clk_exit();
-	services_exit();
 
 	return err;
 }
@@ -394,11 +390,14 @@ static int __devexit omap34_xx_bridge_remove(struct platform_device *pdev)
 	dev_t devno;
 	bool ret;
 	int status = 0;
-	void *hdrv_obj = NULL;
+	struct drv_data *drv_datap = dev_get_drvdata(bridge);
 
-	status = cfg_get_object((u32 *) &hdrv_obj, REG_DRV_OBJECT);
-	if (status)
+	/* Retrieve the Object handle from the driver data */
+	if (!drv_datap || !drv_datap->drv_object) {
+		status = -ENODATA;
+		pr_err("%s: Failed to retrieve the object handle\n", __func__);
 		goto func_cont;
+	}
 
 #ifdef CONFIG_TIDSPBRIDGE_DVFS
 	if (cpufreq_unregister_notifier(&iva_clk_notifier,
@@ -418,7 +417,6 @@ func_cont:
 	mem_ext_phys_pool_release();
 
 	dsp_clk_exit();
-	services_exit();
 
 	devno = MKDEV(driver_major, 0);
 	cdev_del(&bridge_cdev);
