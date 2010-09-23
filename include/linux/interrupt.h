@@ -48,9 +48,6 @@
  * IRQF_TIMER - Flag to mark this interrupt as timer interrupt
  * IRQF_PERCPU - Interrupt is per cpu
  * IRQF_NOBALANCING - Flag to exclude this interrupt from irq balancing
- * IRQF_IRQPOLL - Interrupt is used for polling (only the interrupt that is
- *                registered first in an shared interrupt is considered for
- *                performance reasons)
  * IRQF_ONESHOT - Interrupt is not reenabled after the hardirq handler finished.
  *                Used by threaded interrupts which need to keep the
  *                irq line disabled until the threaded handler has been run.
@@ -64,7 +61,6 @@
 #define __IRQF_TIMER		0x00000200
 #define IRQF_PERCPU		0x00000400
 #define IRQF_NOBALANCING	0x00000800
-#define IRQF_IRQPOLL		0x00001000
 #define IRQF_ONESHOT		0x00002000
 #define IRQF_NO_SUSPEND		0x00004000
 
@@ -98,6 +94,16 @@ enum {
 
 typedef irqreturn_t (*irq_handler_t)(int, void *);
 
+struct irq_expect;
+
+struct irq_watch {
+	irqreturn_t		last_ret;
+	unsigned int		flags;
+	unsigned long		started;
+	unsigned int		nr_samples;
+	unsigned int		nr_polled;
+};
+
 /**
  * struct irqaction - per interrupt action descriptor
  * @handler:	interrupt handler function
@@ -110,18 +116,22 @@ typedef irqreturn_t (*irq_handler_t)(int, void *);
  * @thread_fn:	interupt handler function for threaded interrupts
  * @thread:	thread pointer for threaded interrupts
  * @thread_flags:	flags related to @thread
+ * @watch:	data for irq watching
+ * @expects:	data for irq expecting
  */
 struct irqaction {
-	irq_handler_t handler;
-	unsigned long flags;
-	const char *name;
-	void *dev_id;
-	struct irqaction *next;
-	int irq;
-	struct proc_dir_entry *dir;
-	irq_handler_t thread_fn;
-	struct task_struct *thread;
-	unsigned long thread_flags;
+	irq_handler_t		handler;
+	unsigned long		flags;
+	const char		*name;
+	void			*dev_id;
+	struct irqaction	*next;
+	int			irq;
+	struct proc_dir_entry	*dir;
+	irq_handler_t		thread_fn;
+	struct task_struct	*thread;
+	unsigned long		thread_flags;
+	struct irq_watch	watch;
+	struct irq_expect	*expects;
 };
 
 extern irqreturn_t no_action(int cpl, void *dev_id);
@@ -193,6 +203,11 @@ devm_request_irq(struct device *dev, unsigned int irq, irq_handler_t handler,
 }
 
 extern void devm_free_irq(struct device *dev, unsigned int irq, void *dev_id);
+
+extern struct irq_expect *init_irq_expect(unsigned int irq, void *dev_id);
+extern void expect_irq(struct irq_expect *exp);
+extern void unexpect_irq(struct irq_expect *exp, bool timedout);
+extern void watch_irq(unsigned int irq, void *dev_id);
 
 /*
  * On lockdep we dont want to enable hardirqs in hardirq
