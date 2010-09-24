@@ -975,7 +975,7 @@ static enum finish_epoch drbd_flush_after_epoch(struct drbd_conf *mdev, struct d
 
 	if (mdev->write_ordering >= WO_bdev_flush && get_ldev(mdev)) {
 		rv = blkdev_issue_flush(mdev->ldev->backing_bdev, GFP_KERNEL,
-					NULL, BLKDEV_IFL_WAIT);
+					NULL);
 		if (rv) {
 			dev_err(DEV, "local disk flush failed with status %d\n", rv);
 			/* would rather check on EOPNOTSUPP, but that is not reliable.
@@ -2972,7 +2972,6 @@ static int receive_sizes(struct drbd_conf *mdev, struct p_header *h)
 	 * we still need to figure out whether we accept that. */
 	mdev->p_size = p_size;
 
-#define min_not_zero(l, r) (l == 0) ? r : ((r == 0) ? l : min(l, r))
 	if (get_ldev(mdev)) {
 		warn_if_differ_considerably(mdev, "lower level device sizes",
 			   p_size, drbd_get_max_capacity(mdev->ldev));
