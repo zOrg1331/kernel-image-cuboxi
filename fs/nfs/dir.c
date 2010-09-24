@@ -492,10 +492,6 @@ static inline
 int readdir_search_pagecache(nfs_readdir_descriptor_t *desc)
 {
 	int res = -EAGAIN;
-	desc->page_index = 0;
-
-	if (*desc->dir_cookie == 0)
-		desc->cache_entry_index = 0;
 
 	while (1) {
 		res = find_cache_page(desc);
@@ -590,6 +586,7 @@ int uncached_readdir(nfs_readdir_descriptor_t *desc, void *dirent,
 		goto out_release;
 	}
 
+	desc->page_index = 0;
 	desc->page = page;
 	status = nfs_do_filldir(desc, dirent, filldir);
 
@@ -654,6 +651,7 @@ static int nfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 		if (res == -ETOOSMALL && desc->plus) {
 			clear_bit(NFS_INO_ADVISE_RDPLUS, &NFS_I(inode)->flags);
 			nfs_zap_caches(inode);
+			desc->page_index = 0;
 			desc->plus = 0;
 			desc->eof = 0;
 			continue;
