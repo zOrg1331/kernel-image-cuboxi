@@ -841,6 +841,7 @@ static struct file_operations audio_amrnb_fops = {
 	.read = audamrnb_read,
 	.write = audamrnb_write,
 	.unlocked_ioctl = audamrnb_ioctl,
+	.llseek = noop_llseek,/* read and write both use no f_pos */
 };
 
 struct miscdevice audio_amrnb_misc = {

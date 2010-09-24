@@ -149,6 +149,7 @@ static const struct file_operations dccpprobe_fops = {
 	.owner	 = THIS_MODULE,
 	.open	 = dccpprobe_open,
 	.read    = dccpprobe_read,
+	.llseek = noop_llseek,/* read uses no f_pos */
 };
 
 static __init int dccpprobe_init(void)

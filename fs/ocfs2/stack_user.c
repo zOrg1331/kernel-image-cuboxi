@@ -628,6 +628,7 @@ static const struct file_operations ocfs2_control_fops = {
 	.read    = ocfs2_control_read,
 	.write   = ocfs2_control_write,
 	.owner   = THIS_MODULE,
+	.llseek = default_llseek,/* read accesses f_pos */
 };
 
 static struct miscdevice ocfs2_control_device = {
