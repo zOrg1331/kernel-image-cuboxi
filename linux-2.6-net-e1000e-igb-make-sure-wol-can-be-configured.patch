@@ -1,0 +1,50 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Wed, 22 Jul 2009 11:21:34 -0400
+Subject: [net] e1000e/igb: make sure wol can be configured
+Message-id: 20090722152134.GT11370@gospo.rdu.redhat.com
+O-Subject: [RHEL5.4 PATCH] e1000e/igb: make sure wol can be configured
+Bugzilla: 513032
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: John W. Linville <linville@redhat.com>
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+
+By taking some of the patches from upstream that control WOL in the
+driver, we missed out on some core parts that get things setup
+correctly.  This patch correctly sets a device's WOL capabilities so
+that calls to set them via ethtool don't fail because WOL isn't
+properly initialized.  This fixes that.
+
+This isn't needed upstream since the initialization is done elsewhere
+and I don't see us taking those patches.  Magically ixgbe works because
+of a bug (of sorts) upstream due to this call being added unnecessarily
+there.
+
+Verified on e1000e by me.
+
+This will resolve RHBZ 513032.
+
+diff --git a/drivers/net/e1000e/netdev.c b/drivers/net/e1000e/netdev.c
+index 06cccbc..c9d9c84 100644
+--- a/drivers/net/e1000e/netdev.c
++++ b/drivers/net/e1000e/netdev.c
+@@ -5169,6 +5169,7 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
+ 
+ 	/* initialize the wol settings based on the eeprom settings */
+ 	adapter->wol = adapter->eeprom_wol;
++	device_init_wakeup(&adapter->pdev->dev, adapter->wol);
+ 	device_set_wakeup_enable(&adapter->pdev->dev, adapter->wol);
+ 
+ 	/* save off EEPROM version number */
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index bfa80a2..c5075da 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -1368,6 +1368,7 @@ static int __devinit igb_probe(struct pci_dev *pdev,
+ 
+ 	/* initialize the wol settings based on the eeprom settings */
+ 	adapter->wol = adapter->eeprom_wol;
++	device_init_wakeup(&adapter->pdev->dev, adapter->wol);
+ 	device_set_wakeup_enable(&adapter->pdev->dev, adapter->wol);
+ 
+ 	/* reset the hardware with the new settings */

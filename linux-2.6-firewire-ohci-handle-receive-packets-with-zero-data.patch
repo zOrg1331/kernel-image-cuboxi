@@ -1,0 +1,54 @@
+From: Jay Fenlason <fenlason@redhat.com>
+Date: Tue, 15 Dec 2009 21:49:57 -0500
+Subject: [firewire] ohci: handle receive packets with zero data
+Message-id: <20091215214957.GA4145@redhat.com>
+Patchwork-id: 21987
+O-Subject: [RHEL 5.5 PATCH] bz#547242 - CVE-2009-4138 kernel: firewire: ohci:
+	handle receive packets with a data length of zero
+Bugzilla: 547242
+CVE: CVE-2009-4138
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+If the firewire modules are loaded (they're blacklisted by default on
+RHEL-5) and the machine has an OHCI-1.0 controller, or an OHCI-1.1
+controller that is using OHCI-1.0 mode because of hardware bugs,
+anyone who can open the /dev/fw* devices (root by default) can crash
+the machine with a null pointer dereference.  The attached patch fixes
+the issue.
+
+I tested this before I sent it upstream.  The upstream mainatiner has
+already asked Linus to pull it from
+git://git.kernel.org/pub/scm/linux/kernel/git/ieee1394/linux1394-2.6.git for-linus
+
+I'm not including the other half of the upstream patch because it is
+not needed to prevent the crash.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/firewire/fw-ohci.c b/drivers/firewire/fw-ohci.c
+index 4f1e32f..dd81fb4 100644
+--- a/drivers/firewire/fw-ohci.c
++++ b/drivers/firewire/fw-ohci.c
+@@ -2213,7 +2213,7 @@ ohci_queue_iso_receive_packet_per_buffer(struct fw_iso_context *base,
+ 					 unsigned long payload)
+ {
+ 	struct iso_context *ctx = container_of(base, struct iso_context, base);
+-	struct descriptor *d = NULL, *pd = NULL;
++	struct descriptor *d, *pd;
+ 	struct fw_iso_packet *p = packet;
+ 	dma_addr_t d_bus, page_bus;
+ 	u32 z, header_z, rest;
+@@ -2251,8 +2251,9 @@ ohci_queue_iso_receive_packet_per_buffer(struct fw_iso_context *base,
+ 		d->data_address = cpu_to_le32(d_bus + (z * sizeof(*d)));
+ 
+ 		rest = payload_per_buffer;
++		pd = d;
+ 		for (j = 1; j < z; j++) {
+-			pd = d + j;
++			pd++;
+ 			pd->control = cpu_to_le16(DESCRIPTOR_STATUS |
+ 						  DESCRIPTOR_INPUT_MORE);
+ 

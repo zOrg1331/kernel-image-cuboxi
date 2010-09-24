@@ -1,0 +1,769 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 14 Jul 2009 19:05:30 +0200
+Subject: [s390] zcrypt: request gets timed out under high load
+Message-id: 20090714170530.GC2417@blc4eb509856389.ibm.com
+O-Subject: [RHEL5 U4 PATCH 1/1] s390 - zcrypt: request gets timed out under high load
+Bugzilla: 511289
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+Problem: Under high load of crypto operations, the system becomes
+unresponsive and hangs.
+
+Solution: Apply several patches that have already been submitted
+upstream (for details, see below).
+
+Because this disables a s390 specific feature and causes a system hang we
+would like to request an exception for 5.4.
+
+Bugzilla
+=========
+
+BZ 511289
+https://bugzilla.redhat.com/show_bug.cgi?id=511289
+
+Upstream status of the patch:
+=============================
+
+The patch consists of several upstream patches that went
+into kernel version 2.6.21
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=cf352ce0b9104dc6a1c11df52db9f910f1f6cd2e
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=c6a48264739e3486f66e5b21a543c9573b713621
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=e675c0d2bf523a80098c843603ccc091d3720fb4
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=43a867a2d2a119c744bab6dc8d3e1da6809d7141
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	Hans
+
+diff --git a/drivers/s390/crypto/ap_bus.c b/drivers/s390/crypto/ap_bus.c
+index cc7b3db..222ec22 100644
+--- a/drivers/s390/crypto/ap_bus.c
++++ b/drivers/s390/crypto/ap_bus.c
+@@ -47,6 +47,7 @@ static void ap_poll_all(unsigned long);
+ static void ap_poll_timeout(unsigned long);
+ static int ap_poll_thread_start(void);
+ static void ap_poll_thread_stop(void);
++static void ap_request_timeout(unsigned long);
+ 
+ /**
+  * Module description.
+@@ -69,6 +70,8 @@ module_param_named(poll_thread, ap_thread_flag, int, 0000);
+ MODULE_PARM_DESC(poll_thread, "Turn on/off poll thread, default is 0 (off).");
+ 
+ static struct device *ap_root_device = NULL;
++static DEFINE_SPINLOCK(ap_device_lock);
++static LIST_HEAD(ap_device_list);
+ 
+ /**
+  * Workqueue & timer for bus rescan.
+@@ -210,6 +213,20 @@ static inline struct ap_queue_status ap_reset_queue(ap_qid_t qid)
+ 	return reg1;
+ }
+ 
++/**
++ * Handling of request timeouts
++ */
++static void ap_request_timeout(unsigned long data)
++{
++	struct ap_device *ap_dev = (struct ap_device *) data;
++
++	if (ap_dev->reset == AP_RESET_ARMED) {
++		ap_dev->reset = AP_RESET_DO;
++		if (ap_using_interrupts())
++			tasklet_schedule(&ap_tasklet);
++	}
++}
++
+ static void ap_reset_domain(void)
+ {
+ 	int i;
+@@ -262,6 +279,7 @@ int ap_send(ap_qid_t qid, unsigned long long psmid, void *msg, size_t length)
+ 	case AP_RESPONSE_NORMAL:
+ 		return 0;
+ 	case AP_RESPONSE_Q_FULL:
++	case AP_RESPONSE_RESET_IN_PROGRESS:
+ 		return -EBUSY;
+ 	default:	/* Device is gone. */
+ 		return -ENODEV;
+@@ -325,6 +343,8 @@ int ap_recv(ap_qid_t qid, unsigned long long *psmid, void *msg, size_t length)
+ 		if (status.queue_empty)
+ 			return -ENOENT;
+ 		return -EBUSY;
++	case AP_RESPONSE_RESET_IN_PROGRESS:
++		return -EBUSY;
+ 	default:
+ 		return -ENODEV;
+ 	}
+@@ -422,21 +442,11 @@ static int ap_query_queue(ap_qid_t qid, int *queue_depth, int *device_type)
+ 		default:
+ 			BUG();
+ 		}
+-		if (rc != -ENODEV && rc != -EBUSY)
++		if (rc != -EBUSY)
+ 			break;
+ 		if (i < AP_MAX_RESET - 1)
+ 			udelay(5);
+ 	}
+-	if (rc == 0 && ap_using_interrupts()) {
+-	rc = ap_queue_enable_interruption(qid, ap_interrupt_indicator);
+-	/* If interruption mode is supported by the machine,
+-	* but an AP can not be enabled for interruption then
+-	* the AP will be discarded.    */
+-	if (rc)
+-		printk(KERN_WARNING "Could not register adapter "
+-		       "interrupts for AP %d.\n ", AP_QID_DEVICE(qid));
+-	}
+-
+ 	return rc;
+ }
+ 
+@@ -463,21 +473,66 @@ static int ap_init_queue(ap_qid_t qid)
+ 			i = AP_MAX_RESET;	/* return with -ENODEV */
+ 			break;
+ 		case AP_RESPONSE_RESET_IN_PROGRESS:
++			rc = -EBUSY;
+ 		case AP_RESPONSE_BUSY:
+ 		default:
+ 			break;
+ 		}
+-		if (rc != -ENODEV)
++		if (rc != -ENODEV && rc != -EBUSY)
+ 			break;
+ 		if (i < AP_MAX_RESET - 1) {
+ 			udelay(5);
+ 			status = ap_test_queue(qid, &dummy, &dummy);
+ 		}
+ 	}
++	if (rc == 0 && ap_using_interrupts()) {
++	rc = ap_queue_enable_interruption(qid, ap_interrupt_indicator);
++	/* If interruption mode is supported by the machine,
++	* but an AP can not be enabled for interruption then
++	* the AP will be discarded.    */
++	if (rc)
++		printk(KERN_WARNING "Could not register adapter "
++		       "interrupts for AP %d.\n ", AP_QID_DEVICE(qid));
++	}
++
+ 	return rc;
+ }
+ 
+ /**
++ * Arm request timeout if a AP device was idle and a new request is submitted.
++ */
++static void ap_increase_queue_count(struct ap_device *ap_dev)
++{
++	int timeout = ap_dev->drv->request_timeout;
++
++	ap_dev->queue_count++;
++	if (ap_dev->queue_count == 1) {
++		mod_timer(&ap_dev->timeout, jiffies + timeout);
++		ap_dev->reset = AP_RESET_ARMED;
++	}
++}
++
++/**
++ * AP device is still alive, re-schedule request timeout if there are still
++ * pending requests.
++ */
++static void ap_decrease_queue_count(struct ap_device *ap_dev)
++{
++	int timeout = ap_dev->drv->request_timeout;
++
++	ap_dev->queue_count--;
++	if (ap_dev->queue_count > 0)
++		mod_timer(&ap_dev->timeout, jiffies + timeout);
++	else
++		/**
++		 * The timeout timer should to be disabled now - since
++		 * del_timer_sync() is very expensive, we just tell via the
++		 * reset flag to ignore the pending timeout timer.
++		 */
++		ap_dev->reset = AP_RESET_IGNORE;
++}
++
++/**
+  * AP device related attributes.
+  */
+ static ssize_t ap_hwtype_show(struct device *dev,
+@@ -596,6 +651,9 @@ static int ap_device_probe(struct device *dev)
+ 	int rc;
+ 
+ 	ap_dev->drv = ap_drv;
++	spin_lock_bh(&ap_device_lock);
++	list_add(&ap_dev->list, &ap_device_list);
++	spin_unlock_bh(&ap_device_lock);
+ 	rc = ap_drv->probe ? ap_drv->probe(ap_dev) : -ENODEV;
+ 	return rc;
+ }
+@@ -634,8 +692,15 @@ static int ap_device_remove(struct device *dev)
+ 	struct ap_driver *ap_drv = ap_dev->drv;
+ 
+ 	ap_flush_queue(ap_dev);
++	del_timer_sync(&ap_dev->timeout);
++	spin_lock_bh(&ap_device_lock);
++	list_del_init(&ap_dev->list);
++	spin_unlock_bh(&ap_device_lock);
+ 	if (ap_drv->remove)
+ 		ap_drv->remove(ap_dev);
++	spin_lock_bh(&ap_dev->lock);
++	atomic_sub(ap_dev->queue_count, &ap_poll_requests);
++	spin_unlock_bh(&ap_dev->lock);
+ 	return 0;
+ }
+ 
+@@ -903,12 +968,22 @@ static void ap_scan_bus(void *data)
+ 				      (void *)(unsigned long)qid,
+ 				      __ap_scan_bus);
+ 		rc = ap_query_queue(qid, &queue_depth, &device_type);
+-		if (dev && rc) {
+-			put_device(dev);
+-			device_unregister(dev);
+-			continue;
+-		}
+ 		if (dev) {
++			if (rc == -EBUSY) {
++				set_current_state(TASK_UNINTERRUPTIBLE);
++				schedule_timeout(AP_RESET_TIMEOUT);
++				rc = ap_query_queue(qid, &queue_depth,
++						    &device_type);
++			}
++			ap_dev = to_ap_dev(dev);
++			spin_lock_bh(&ap_dev->lock);
++			if (rc || ap_dev->unregistered) {
++				spin_unlock_bh(&ap_dev->lock);
++				device_unregister(dev);
++				put_device(dev);
++				continue;
++			}
++			spin_unlock_bh(&ap_dev->lock);
+ 			put_device(dev);
+ 			continue;
+ 		}
+@@ -926,6 +1001,9 @@ static void ap_scan_bus(void *data)
+ 		spin_lock_init(&ap_dev->lock);
+ 		INIT_LIST_HEAD(&ap_dev->pendingq);
+ 		INIT_LIST_HEAD(&ap_dev->requestq);
++		INIT_LIST_HEAD(&ap_dev->list);
++		setup_timer(&ap_dev->timeout, ap_request_timeout,
++			    (unsigned long) ap_dev);
+ 		if (device_type == 0)
+ 			ap_probe_device_type(ap_dev);
+ 		else
+@@ -993,7 +1071,7 @@ static inline int ap_poll_read(struct ap_device *ap_dev, unsigned long *flags)
+ 	switch (status.response_code) {
+ 	case AP_RESPONSE_NORMAL:
+ 		atomic_dec(&ap_poll_requests);
+-		ap_dev->queue_count--;
++		ap_decrease_queue_count(ap_dev);
+ 		list_for_each_entry(ap_msg, &ap_dev->pendingq, list) {
+ 			if (ap_msg->psmid != ap_dev->reply->psmid)
+ 				continue;
+@@ -1008,6 +1086,7 @@ static inline int ap_poll_read(struct ap_device *ap_dev, unsigned long *flags)
+ 	case AP_RESPONSE_NO_PENDING_REPLY:
+ 		if (status.queue_empty) {
+ 			/* The card shouldn't forget requests but who knows. */
++			atomic_sub(ap_dev->queue_count, &ap_poll_requests);
+ 			ap_dev->queue_count = 0;
+ 			list_splice_init(&ap_dev->pendingq, &ap_dev->requestq);
+ 			ap_dev->requestq_count += ap_dev->pendingq_count;
+@@ -1043,7 +1122,7 @@ static inline int ap_poll_write(struct ap_device *ap_dev, unsigned long *flags)
+ 	switch (status.response_code) {
+ 	case AP_RESPONSE_NORMAL:
+ 		atomic_inc(&ap_poll_requests);
+-		ap_dev->queue_count++;
++		ap_increase_queue_count(ap_dev);
+ 		list_move_tail(&ap_msg->list, &ap_dev->pendingq);
+ 		ap_dev->requestq_count--;
+ 		ap_dev->pendingq_count++;
+@@ -1053,6 +1132,7 @@ static inline int ap_poll_write(struct ap_device *ap_dev, unsigned long *flags)
+ 		*flags |= 2;
+ 		break;
+ 	case AP_RESPONSE_Q_FULL:
++	case AP_RESPONSE_RESET_IN_PROGRESS:
+ 		*flags |= 2;
+ 		break;
+ 	case AP_RESPONSE_MESSAGE_TOO_BIG:
+@@ -1099,10 +1179,11 @@ static int __ap_queue_message(struct ap_device *ap_dev, struct ap_message *ap_ms
+ 			list_add_tail(&ap_msg->list, &ap_dev->pendingq);
+ 			atomic_inc(&ap_poll_requests);
+ 			ap_dev->pendingq_count++;
+-			ap_dev->queue_count++;
++			ap_increase_queue_count(ap_dev);
+ 			ap_dev->total_request_count++;
+ 			break;
+ 		case AP_RESPONSE_Q_FULL:
++		case AP_RESPONSE_RESET_IN_PROGRESS:
+ 			list_add_tail(&ap_msg->list, &ap_dev->requestq);
+ 			ap_dev->requestq_count++;
+ 			ap_dev->total_request_count++;
+@@ -1141,7 +1222,7 @@ void ap_queue_message(struct ap_device *ap_dev, struct ap_message *ap_msg)
+ 			ap_dev->unregistered = 1;
+ 	} else {
+ 		ap_dev->drv->receive(ap_dev, ap_msg, ERR_PTR(-ENODEV));
+-		rc = 0;
++		rc = -ENODEV;
+ 	}
+ 	spin_unlock_bh(&ap_dev->lock);
+ 	if (rc == -ENODEV)
+@@ -1185,36 +1266,56 @@ static void ap_poll_timeout(unsigned long unused)
+ }
+ 
+ /**
++ * Reset a not responding AP device and move all requests from the
++ * pending queue to the request queue.
++ */
++static void ap_reset(struct ap_device *ap_dev)
++{
++	int rc;
++
++	ap_dev->reset = AP_RESET_IGNORE;
++	atomic_sub(ap_dev->queue_count, &ap_poll_requests);
++	ap_dev->queue_count = 0;
++	list_splice_init(&ap_dev->pendingq, &ap_dev->requestq);
++	ap_dev->requestq_count += ap_dev->pendingq_count;
++	ap_dev->pendingq_count = 0;
++	rc = ap_init_queue(ap_dev->qid);
++	if (rc == -ENODEV)
++		ap_dev->unregistered = 1;
++}
++
++/**
+  * Poll all AP devices on the bus in a round robin fashion. Continue
+  * polling until bit 2^0 of the control flags is not set. If bit 2^1
+  * of the control flags has been set arm the poll timer.
+  */
+-static int __ap_poll_all(struct device *dev, void *data)
++static int __ap_poll_all(struct ap_device *ap_dev, unsigned long *flags)
+ {
+-	struct ap_device *ap_dev = to_ap_dev(dev);
+-	int rc;
+-
+ 	spin_lock(&ap_dev->lock);
+ 	if (!ap_dev->unregistered) {
+-		rc = ap_poll_queue(to_ap_dev(dev), (unsigned long *) data);
+-		if (rc)
++		if (ap_poll_queue(ap_dev, flags))
+ 			ap_dev->unregistered = 1;
+-	} else
+-		rc = 0;
++		if (ap_dev->reset == AP_RESET_DO)
++			ap_reset(ap_dev);
++	}
+ 	spin_unlock(&ap_dev->lock);
+-	if (rc)
+-		device_unregister(&ap_dev->device);
+ 	return 0;
+ }
+ 
+ static void ap_poll_all(unsigned long dummy)
+ {
+ 	unsigned long flags;
++	struct ap_device *ap_dev;
++
+ 	if (ap_using_interrupts())
+ 		xchg((u8 *)ap_interrupt_indicator, 0);
+ 	do {
+ 		flags = 0;
+-		bus_for_each_dev(&ap_bus_type, NULL, &flags, __ap_poll_all);
++                spin_lock(&ap_device_lock);
++                list_for_each_entry(ap_dev, &ap_device_list, list) {
++                        __ap_poll_all(ap_dev, &flags);
++		}
++                spin_unlock(&ap_device_lock);
+ 	} while (flags & 1);
+ 	if (flags & 2)
+ 		ap_schedule_poll_timer();
+@@ -1232,6 +1333,7 @@ static int ap_poll_thread(void *data)
+ 	DECLARE_WAITQUEUE(wait, current);
+ 	unsigned long flags;
+ 	int requests;
++	struct ap_device *ap_dev;
+ 
+ 	set_user_nice(current, 19);
+ 	while (1) {
+@@ -1249,10 +1351,12 @@ static int ap_poll_thread(void *data)
+ 		set_current_state(TASK_RUNNING);
+ 		remove_wait_queue(&ap_poll_wait, &wait);
+ 
+-		local_bh_disable();
+ 		flags = 0;
+-		bus_for_each_dev(&ap_bus_type, NULL, &flags, __ap_poll_all);
+-		local_bh_enable();
++		spin_lock_bh(&ap_device_lock);
++		list_for_each_entry(ap_dev, &ap_device_list, list) {
++			__ap_poll_all(ap_dev, &flags);
++		}
++		spin_unlock_bh(&ap_device_lock);
+ 	}
+ 	set_current_state(TASK_RUNNING);
+ 	remove_wait_queue(&ap_poll_wait, &wait);
+diff --git a/drivers/s390/crypto/ap_bus.h b/drivers/s390/crypto/ap_bus.h
+index 07f355e..d369fa5 100644
+--- a/drivers/s390/crypto/ap_bus.h
++++ b/drivers/s390/crypto/ap_bus.h
+@@ -34,6 +34,7 @@
+ #define AP_DEVICES 64		/* Number of AP devices. */
+ #define AP_DOMAINS 16		/* Number of AP domains. */
+ #define AP_MAX_RESET 90		/* Maximum number of resets. */
++#define AP_RESET_TIMEOUT (HZ/2)	/* Time in ticks for reset timeouts. */
+ #define AP_CONFIG_TIME 30	/* Time in seconds between AP bus rescans. */
+ #define AP_POLL_TIME 1		/* Time in ticks between receive polls. */
+ 
+@@ -98,6 +99,13 @@ struct ap_queue_status {
+ #define AP_DEVICE_TYPE_CEX2A2	8
+ #define AP_DEVICE_TYPE_CEX2C2	9
+ 
++/**
++ * AP reset flag states
++ */
++#define AP_RESET_IGNORE	0	/* request timeout will be ignored */
++#define AP_RESET_ARMED	1	/* request timeout timer is active */
++#define AP_RESET_DO	2	/* AP reset required */
++
+ struct ap_device;
+ struct ap_message;
+ 
+@@ -110,6 +118,7 @@ struct ap_driver {
+ 	/* receive is called from tasklet context */
+ 	void (*receive)(struct ap_device *, struct ap_message *,
+ 			struct ap_message *);
++	int request_timeout;		/* request timeout in jiffies */
+ };
+ 
+ #define to_ap_drv(x) container_of((x), struct ap_driver, driver)
+@@ -121,11 +130,14 @@ struct ap_device {
+ 	struct device device;
+ 	struct ap_driver *drv;		/* Pointer to AP device driver. */
+ 	spinlock_t lock;		/* Per device lock. */
++	struct list_head list;		/* private list of all AP devices. */
+ 
+ 	ap_qid_t qid;			/* AP queue id. */
+ 	int queue_depth;		/* AP queue depth.*/
+ 	int device_type;		/* AP device type. */
+ 	int unregistered;		/* marks AP device as unregistered */
++	struct timer_list timeout;	/* Timer for request timeouts. */
++	int reset;			/* Reset required after req. timeout. */
+ 
+ 	int queue_count;		/* # messages currently on AP queue. */
+ 
+diff --git a/drivers/s390/crypto/zcrypt_api.c b/drivers/s390/crypto/zcrypt_api.c
+index 2747993..95719b5 100644
+--- a/drivers/s390/crypto/zcrypt_api.c
++++ b/drivers/s390/crypto/zcrypt_api.c
+@@ -320,14 +320,14 @@ static long zcrypt_rsa_modexpo(struct ica_rsa_modexpo *mex)
+ 		get_device(&zdev->ap_dev->device);
+ 		zdev->request_count++;
+ 		__zcrypt_decrease_preference(zdev);
+-		spin_unlock_bh(&zcrypt_device_lock);
+ 		if (try_module_get(zdev->ap_dev->drv->driver.owner)) {
++			spin_unlock_bh(&zcrypt_device_lock);
+ 			rc = zdev->ops->rsa_modexpo(zdev, mex);
++			spin_lock_bh(&zcrypt_device_lock);
+ 			module_put(zdev->ap_dev->drv->driver.owner);
+ 		}
+ 		else
+ 			rc = -EAGAIN;
+-		spin_lock_bh(&zcrypt_device_lock);
+ 		zdev->request_count--;
+ 		__zcrypt_increase_preference(zdev);
+ 		put_device(&zdev->ap_dev->device);
+@@ -395,14 +395,14 @@ static long zcrypt_rsa_crt(struct ica_rsa_modexpo_crt *crt)
+ 		get_device(&zdev->ap_dev->device);
+ 		zdev->request_count++;
+ 		__zcrypt_decrease_preference(zdev);
+-		spin_unlock_bh(&zcrypt_device_lock);
+ 		if (try_module_get(zdev->ap_dev->drv->driver.owner)) {
++			spin_unlock_bh(&zcrypt_device_lock);
+ 			rc = zdev->ops->rsa_modexpo_crt(zdev, crt);
++			spin_lock_bh(&zcrypt_device_lock);
+ 			module_put(zdev->ap_dev->drv->driver.owner);
+ 		}
+ 		else
+ 			rc = -EAGAIN;
+-		spin_lock_bh(&zcrypt_device_lock);
+ 		zdev->request_count--;
+ 		__zcrypt_increase_preference(zdev);
+ 		put_device(&zdev->ap_dev->device);
+@@ -430,14 +430,14 @@ static long zcrypt_send_cprb(struct ica_xcRB *xcRB)
+ 		get_device(&zdev->ap_dev->device);
+ 		zdev->request_count++;
+ 		__zcrypt_decrease_preference(zdev);
+-		spin_unlock_bh(&zcrypt_device_lock);
+ 		if (try_module_get(zdev->ap_dev->drv->driver.owner)) {
++			spin_unlock_bh(&zcrypt_device_lock);
+ 			rc = zdev->ops->send_cprb(zdev, xcRB);
++			spin_lock_bh(&zcrypt_device_lock);
+ 			module_put(zdev->ap_dev->drv->driver.owner);
+ 		}
+ 		else
+ 			rc = -EAGAIN;
+-		spin_lock_bh(&zcrypt_device_lock);
+ 		zdev->request_count--;
+ 		__zcrypt_increase_preference(zdev);
+ 		put_device(&zdev->ap_dev->device);
+diff --git a/drivers/s390/crypto/zcrypt_cex2a.c b/drivers/s390/crypto/zcrypt_cex2a.c
+index fbff462..2c6d66b 100644
+--- a/drivers/s390/crypto/zcrypt_cex2a.c
++++ b/drivers/s390/crypto/zcrypt_cex2a.c
+@@ -71,6 +71,7 @@ static struct ap_driver zcrypt_cex2a_driver = {
+ 	.remove = zcrypt_cex2a_remove,
+ 	.receive = zcrypt_cex2a_receive,
+ 	.ids = zcrypt_cex2a_ids,
++	.request_timeout = CEX2A_CLEANUP_TIME,
+ };
+ 
+ /**
+@@ -307,18 +308,13 @@ static long zcrypt_cex2a_modexpo(struct zcrypt_device *zdev,
+ 		goto out_free;
+ 	init_completion(&work);
+ 	ap_queue_message(zdev->ap_dev, &ap_msg);
+-	rc = wait_for_completion_interruptible_timeout(
+-				&work, CEX2A_CLEANUP_TIME);
+-	if (rc > 0)
++	rc = wait_for_completion_interruptible(&work);
++	if (rc == 0)
+ 		rc = convert_response(zdev, &ap_msg, mex->outputdata,
+ 				      mex->outputdatalength);
+-	else {
+-		/* Signal pending or message timed out. */
++	else
++		/* Signal pending. */
+ 		ap_cancel_message(zdev->ap_dev, &ap_msg);
+-		if (rc == 0)
+-			/* Message timed out. */
+-			rc = -ETIME;
+-	}
+ out_free:
+ 	kfree(ap_msg.message);
+ 	return rc;
+@@ -349,18 +345,13 @@ static long zcrypt_cex2a_modexpo_crt(struct zcrypt_device *zdev,
+ 		goto out_free;
+ 	init_completion(&work);
+ 	ap_queue_message(zdev->ap_dev, &ap_msg);
+-	rc = wait_for_completion_interruptible_timeout(
+-				&work, CEX2A_CLEANUP_TIME);
+-	if (rc > 0)
++	rc = wait_for_completion_interruptible(&work);
++	if (rc == 0)
+ 		rc = convert_response(zdev, &ap_msg, crt->outputdata,
+ 				      crt->outputdatalength);
+-	else {
+-		/* Signal pending or message timed out. */
++	else
++		/* Signal pending. */
+ 		ap_cancel_message(zdev->ap_dev, &ap_msg);
+-		if (rc == 0)
+-			/* Message timed out. */
+-			rc = -ETIME;
+-	}
+ out_free:
+ 	kfree(ap_msg.message);
+ 	return rc;
+diff --git a/drivers/s390/crypto/zcrypt_pcica.c b/drivers/s390/crypto/zcrypt_pcica.c
+index b6a4ecd..c36896a 100644
+--- a/drivers/s390/crypto/zcrypt_pcica.c
++++ b/drivers/s390/crypto/zcrypt_pcica.c
+@@ -70,6 +70,7 @@ static struct ap_driver zcrypt_pcica_driver = {
+ 	.remove = zcrypt_pcica_remove,
+ 	.receive = zcrypt_pcica_receive,
+ 	.ids = zcrypt_pcica_ids,
++	.request_timeout = PCICA_CLEANUP_TIME,
+ };
+ 
+ /**
+@@ -290,18 +291,13 @@ static long zcrypt_pcica_modexpo(struct zcrypt_device *zdev,
+ 		goto out_free;
+ 	init_completion(&work);
+ 	ap_queue_message(zdev->ap_dev, &ap_msg);
+-	rc = wait_for_completion_interruptible_timeout(
+-				&work, PCICA_CLEANUP_TIME);
+-	if (rc > 0)
++	rc = wait_for_completion_interruptible(&work);
++	if (rc == 0)
+ 		rc = convert_response(zdev, &ap_msg, mex->outputdata,
+ 				      mex->outputdatalength);
+-	else {
+-		/* Signal pending or message timed out. */
++	else
++		/* Signal pending. */
+ 		ap_cancel_message(zdev->ap_dev, &ap_msg);
+-		if (rc == 0)
+-			/* Message timed out. */
+-			rc = -ETIME;
+-	}
+ out_free:
+ 	kfree(ap_msg.message);
+ 	return rc;
+@@ -332,18 +328,13 @@ static long zcrypt_pcica_modexpo_crt(struct zcrypt_device *zdev,
+ 		goto out_free;
+ 	init_completion(&work);
+ 	ap_queue_message(zdev->ap_dev, &ap_msg);
+-	rc = wait_for_completion_interruptible_timeout(
+-				&work, PCICA_CLEANUP_TIME);
+-	if (rc > 0)
++	rc = wait_for_completion_interruptible(&work);
++	if (rc == 0)
+ 		rc = convert_response(zdev, &ap_msg, crt->outputdata,
+ 				      crt->outputdatalength);
+-	else {
+-		/* Signal pending or message timed out. */
++	else
++		/* Signal pending. */
+ 		ap_cancel_message(zdev->ap_dev, &ap_msg);
+-		if (rc == 0)
+-			/* Message timed out. */
+-			rc = -ETIME;
+-	}
+ out_free:
+ 	kfree(ap_msg.message);
+ 	return rc;
+diff --git a/drivers/s390/crypto/zcrypt_pcicc.c b/drivers/s390/crypto/zcrypt_pcicc.c
+index f295a40..d6d59bf 100644
+--- a/drivers/s390/crypto/zcrypt_pcicc.c
++++ b/drivers/s390/crypto/zcrypt_pcicc.c
+@@ -82,6 +82,7 @@ static struct ap_driver zcrypt_pcicc_driver = {
+ 	.remove = zcrypt_pcicc_remove,
+ 	.receive = zcrypt_pcicc_receive,
+ 	.ids = zcrypt_pcicc_ids,
++	.request_timeout = PCICC_CLEANUP_TIME,
+ };
+ 
+ /**
+@@ -501,18 +502,13 @@ static long zcrypt_pcicc_modexpo(struct zcrypt_device *zdev,
+ 		goto out_free;
+ 	init_completion(&work);
+ 	ap_queue_message(zdev->ap_dev, &ap_msg);
+-	rc = wait_for_completion_interruptible_timeout(
+-				&work, PCICC_CLEANUP_TIME);
+-	if (rc > 0)
++	rc = wait_for_completion_interruptible(&work);
++	if (rc == 0)
+ 		rc = convert_response(zdev, &ap_msg, mex->outputdata,
+ 				      mex->outputdatalength);
+-	else {
+-		/* Signal pending or message timed out. */
++	else
++		/* Signal pending. */
+ 		ap_cancel_message(zdev->ap_dev, &ap_msg);
+-		if (rc == 0)
+-			/* Message timed out. */
+-			rc = -ETIME;
+-	}
+ out_free:
+ 	free_page((unsigned long) ap_msg.message);
+ 	return rc;
+@@ -544,18 +540,13 @@ static long zcrypt_pcicc_modexpo_crt(struct zcrypt_device *zdev,
+ 		goto out_free;
+ 	init_completion(&work);
+ 	ap_queue_message(zdev->ap_dev, &ap_msg);
+-	rc = wait_for_completion_interruptible_timeout(
+-				&work, PCICC_CLEANUP_TIME);
+-	if (rc > 0)
++	rc = wait_for_completion_interruptible(&work);
++	if (rc == 0)
+ 		rc = convert_response(zdev, &ap_msg, crt->outputdata,
+ 				      crt->outputdatalength);
+-	else {
+-		/* Signal pending or message timed out. */
++	else
++		/* Signal pending. */
+ 		ap_cancel_message(zdev->ap_dev, &ap_msg);
+-		if (rc == 0)
+-			/* Message timed out. */
+-			rc = -ETIME;
+-	}
+ out_free:
+ 	free_page((unsigned long) ap_msg.message);
+ 	return rc;
+diff --git a/drivers/s390/crypto/zcrypt_pcixcc.c b/drivers/s390/crypto/zcrypt_pcixcc.c
+index 8c8d6e5..aed6e95 100644
+--- a/drivers/s390/crypto/zcrypt_pcixcc.c
++++ b/drivers/s390/crypto/zcrypt_pcixcc.c
+@@ -94,6 +94,7 @@ static struct ap_driver zcrypt_pcixcc_driver = {
+ 	.remove = zcrypt_pcixcc_remove,
+ 	.receive = zcrypt_pcixcc_receive,
+ 	.ids = zcrypt_pcixcc_ids,
++	.request_timeout = PCIXCC_CLEANUP_TIME,
+ };
+ 
+ /**
+@@ -736,18 +737,13 @@ static long zcrypt_pcixcc_modexpo(struct zcrypt_device *zdev,
+ 		goto out_free;
+ 	init_completion(&resp_type.work);
+ 	ap_queue_message(zdev->ap_dev, &ap_msg);
+-	rc = wait_for_completion_interruptible_timeout(
+-				&resp_type.work, PCIXCC_CLEANUP_TIME);
+-	if (rc > 0)
++	rc = wait_for_completion_interruptible(&resp_type.work);
++	if (rc == 0)
+ 		rc = convert_response_ica(zdev, &ap_msg, mex->outputdata,
+ 					  mex->outputdatalength);
+-	else {
+-		/* Signal pending or message timed out. */
++	else
++		/* Signal pending. */
+ 		ap_cancel_message(zdev->ap_dev, &ap_msg);
+-		if (rc == 0)
+-			/* Message timed out. */
+-			rc = -ETIME;
+-	}
+ out_free:
+ 	free_page((unsigned long) ap_msg.message);
+ 	return rc;
+@@ -780,18 +776,13 @@ static long zcrypt_pcixcc_modexpo_crt(struct zcrypt_device *zdev,
+ 		goto out_free;
+ 	init_completion(&resp_type.work);
+ 	ap_queue_message(zdev->ap_dev, &ap_msg);
+-	rc = wait_for_completion_interruptible_timeout(
+-				&resp_type.work, PCIXCC_CLEANUP_TIME);
+-	if (rc > 0)
++	rc = wait_for_completion_interruptible(&resp_type.work);
++	if (rc == 0)
+ 		rc = convert_response_ica(zdev, &ap_msg, crt->outputdata,
+ 					  crt->outputdatalength);
+-	else {
+-		/* Signal pending or message timed out. */
++	else
++		/* Signal pending. */
+ 		ap_cancel_message(zdev->ap_dev, &ap_msg);
+-		if (rc == 0)
+-			/* Message timed out. */
+-			rc = -ETIME;
+-	}
+ out_free:
+ 	free_page((unsigned long) ap_msg.message);
+ 	return rc;
+@@ -823,17 +814,12 @@ long zcrypt_pcixcc_send_cprb(struct zcrypt_device *zdev, struct ica_xcRB *xcRB)
+ 		goto out_free;
+ 	init_completion(&resp_type.work);
+ 	ap_queue_message(zdev->ap_dev, &ap_msg);
+-	rc = wait_for_completion_interruptible_timeout(
+-				&resp_type.work, PCIXCC_CLEANUP_TIME);
+-	if (rc > 0)
++	rc = wait_for_completion_interruptible(&resp_type.work);
++	if (rc == 0)
+ 		rc = convert_response_xcrb(zdev, &ap_msg, xcRB);
+-	else {
+-		/* Signal pending or message timed out. */
++	else
++		/* Signal pending. */
+ 		ap_cancel_message(zdev->ap_dev, &ap_msg);
+-		if (rc == 0)
+-			/* Message timed out. */
+-			rc = -ETIME;
+-	}
+ out_free:
+ 	memset(ap_msg.message, 0x0, ap_msg.length);
+ 	kfree(ap_msg.message);

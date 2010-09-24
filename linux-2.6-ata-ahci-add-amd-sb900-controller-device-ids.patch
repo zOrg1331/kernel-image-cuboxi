@@ -1,0 +1,128 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Thu, 22 Oct 2009 11:41:29 -0500
+Subject: [ata] ahci: add AMD SB900 controller device IDs
+Message-id: 20091022164129.GB5961@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.5 PATCH] ahci: add AMD Hudson-2 SATA/IDE controller device IDs
+Bugzilla: 515114
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+This is for BZ 515114 and has been tested successfully
+by AMD. This is Shane Huang's RHEL 5.5 backport of these 2
+upstream commits:
+
+commit e2dd90b1ad4c61ecb52f2424049d91ce6ccc1f17
+Author: Shane Huang <shane.huang@amd.com>
+Date:   Wed Jul 29 11:34:49 2009 +0800
+
+    ahci: Add AMD SB900 SATA/IDE controller device IDs
+
+commit 5deab536654f95345ea11e8ec6ed5c778df348b5
+Author: Shane Huang <shane.huang@amd.com>
+Date:   Tue Oct 13 11:14:00 2009 +0800
+
+    ahci / atiixp / pci quirks: rename AMD SB900 into Hudson-2
+
+Please review and ACK.
+
+Thanks,
+David
+
+ From: Shane Huang <shane.huang@amd.com>
+
+ drivers/ata/ahci.c        |   11 +++++++++--
+ drivers/ata/pata_atiixp.c |    1 +
+ drivers/ide/pci/atiixp.c  |    1 +
+ drivers/pci/quirks.c      |    3 ++-
+ include/linux/pci_ids.h   |    3 ++-
+ 5 files changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
+index 495094a..81a0c69 100644
+--- a/drivers/ata/ahci.c
++++ b/drivers/ata/ahci.c
+@@ -502,6 +502,12 @@ static const struct pci_device_id ahci_pci_tbl[] = {
+ 	{ PCI_VDEVICE(ATI, 0x4394), board_ahci_sb700 }, /* ATI SB700/800 */
+ 	{ PCI_VDEVICE(ATI, 0x4395), board_ahci_sb700 }, /* ATI SB700/800 */
+ 
++	/* AMD */
++	{ PCI_VDEVICE(AMD, 0x7800), board_ahci }, /* AMD Hudson-2 */
++	/* AMD is using RAID class only for ahci controllers */
++	{ PCI_VENDOR_ID_AMD, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,
++	  PCI_CLASS_STORAGE_RAID << 8, 0xffffff, board_ahci },
++
+ 	/* VIA */
+ 	{ PCI_VDEVICE(VIA, 0x3349), board_ahci_vt8251 }, /* VIA VT8251 */
+ 	{ PCI_VDEVICE(VIA, 0x6287), board_ahci_vt8251 }, /* VIA VT8251 */
+@@ -2286,8 +2292,9 @@ static int ahci_pci_device_resume(struct pci_dev *pdev)
+ 	struct ata_host *host = dev_get_drvdata(&pdev->dev);
+ 	int rc;
+ 
+-	if (pdev->vendor == PCI_VENDOR_ID_ATI &&
+-	    (pdev->device == 0x4380 || pdev->device == 0x4390)) {
++	if ((pdev->vendor == PCI_VENDOR_ID_AMD && pdev->device == 0x7800) ||
++	    (pdev->vendor == PCI_VENDOR_ID_ATI &&
++	     (pdev->device == 0x4380 || pdev->device == 0x4390))) {
+ 		u8 tmp;
+ 		pci_read_config_byte(pdev, PCI_CLASS_DEVICE, &tmp);
+ 		if (tmp == 0x01) {
+diff --git a/drivers/ata/pata_atiixp.c b/drivers/ata/pata_atiixp.c
+index d7de7ba..85c42b5 100644
+--- a/drivers/ata/pata_atiixp.c
++++ b/drivers/ata/pata_atiixp.c
+@@ -252,6 +252,7 @@ static const struct pci_device_id atiixp[] = {
+ 	{ PCI_VDEVICE(ATI, PCI_DEVICE_ID_ATI_IXP400_IDE), },
+ 	{ PCI_VDEVICE(ATI, PCI_DEVICE_ID_ATI_IXP600_IDE), },
+ 	{ PCI_VDEVICE(ATI, PCI_DEVICE_ID_ATI_IXP700_IDE), },
++	{ PCI_VDEVICE(AMD, PCI_DEVICE_ID_AMD_HUDSON2_IDE), },
+ 
+ 	{ },
+ };
+diff --git a/drivers/ide/pci/atiixp.c b/drivers/ide/pci/atiixp.c
+index 3055b18..09817ce 100644
+--- a/drivers/ide/pci/atiixp.c
++++ b/drivers/ide/pci/atiixp.c
+@@ -364,6 +364,7 @@ static struct pci_device_id atiixp_pci_tbl[] = {
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP400_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 1},
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP700_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
++	{ PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_HUDSON2_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+ 	{ 0, },
+ };
+ MODULE_DEVICE_TABLE(pci, atiixp_pci_tbl);
+diff --git a/drivers/pci/quirks.c b/drivers/pci/quirks.c
+index e7e211e..1364cca 100644
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -920,7 +920,7 @@ DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	PCI_DEVICE_ID_INTEL_82454NX,	quirk_
+ 
+ static void __devinit quirk_amd_ide_mode(struct pci_dev *pdev)
+ {
+-	/* set sb600/sb700/sb800 sata to ahci mode */
++	/* set SBX00/Hudson-2 SATA in IDE mode to AHCI mode */
+ 	u8 tmp;
+  
+ 	pci_read_config_byte(pdev, PCI_CLASS_DEVICE, &tmp);
+@@ -938,6 +938,7 @@ static void __devinit quirk_amd_ide_mode(struct pci_dev *pdev)
+ 
+ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_SATA, quirk_amd_ide_mode);
+ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP700_SATA, quirk_amd_ide_mode);
++DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_HUDSON2_SATA_IDE, quirk_amd_ide_mode);
+ 
+ /*
+  *	Serverworks CSB5 IDE does not fully support native mode
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 1dd6633..93a983e 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -524,9 +524,10 @@
+ #define PCI_DEVICE_ID_AMD_CS5536_UDC    0x2096
+ #define PCI_DEVICE_ID_AMD_CS5536_UOC    0x2097
+ #define PCI_DEVICE_ID_AMD_CS5536_IDE    0x209A
+-
+ #define PCI_DEVICE_ID_AMD_LX_VIDEO  0x2081
+ #define PCI_DEVICE_ID_AMD_LX_AES    0x2082
++#define PCI_DEVICE_ID_AMD_HUDSON2_IDE		0x780c
++#define PCI_DEVICE_ID_AMD_HUDSON2_SATA_IDE	0x7800
+ 
+ #define PCI_VENDOR_ID_TRIDENT		0x1023
+ #define PCI_DEVICE_ID_TRIDENT_4DWAVE_DX	0x2000

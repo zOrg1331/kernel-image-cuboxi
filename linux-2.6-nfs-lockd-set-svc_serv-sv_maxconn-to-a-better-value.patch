@@ -1,0 +1,52 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 15 Dec 2008 13:35:06 -0500
+Subject: [nfs] lockd: set svc_serv->sv_maxconn to a better value
+Message-id: 1229366106-23523-3-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.4 PATCH 2/2] BZ#468092: lockd: set svc_serv->sv_maxconn to a more reasonable value
+Bugzilla: 468092
+
+The default method for calculating the number of connections allowed
+per RPC service arbitrarily limits single-threaded services to 80
+connections. This is too low for services like lockd and artificially
+limits the number of TCP clients that it can support.
+
+Have lockd set a default sv_maxconn value to 1024 (which is the typical
+default value for RLIMIT_NOFILE). Also add a module parameter to allow an
+admin to set this to an arbitrary value.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Acked-by: Neil Brown <neilb@suse.de>
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+
+diff --git a/fs/lockd/svc.c b/fs/lockd/svc.c
+index be186f4..7a5709b 100644
+--- a/fs/lockd/svc.c
++++ b/fs/lockd/svc.c
+@@ -59,6 +59,9 @@ unsigned long			nlmsvc_timeout;
+ static DECLARE_COMPLETION(lockd_start_done);
+ static DECLARE_WAIT_QUEUE_HEAD(lockd_exit);
+ 
++/* RLIM_NOFILE defaults to 1024. That seems like a reasonable default here. */
++static unsigned int		nlm_max_connections = 1024;
++
+ /*
+  * These can be set at insmod time (useful for NFS as root filesystem),
+  * and also changed through the sysctl interface.  -- Jamie Lokier, Aug 2003
+@@ -154,6 +157,9 @@ lockd(struct svc_rqst *rqstp)
+ 	while ((nlmsvc_users || !signalled()) && nlmsvc_pid == current->pid) {
+ 		long timeout = MAX_SCHEDULE_TIMEOUT;
+ 
++		/* update sv_maxconn if it has changed */
++		rqstp->rq_server->sv_maxconn = nlm_max_connections;
++
+ 		if (signalled()) {
+ 			flush_signals(current);
+ 			if (nlmsvc_ops) {
+@@ -514,6 +520,7 @@ module_param_call(nlm_udpport, param_set_port, param_get_int,
+ 		  &nlm_udpport, 0644);
+ module_param_call(nlm_tcpport, param_set_port, param_get_int,
+ 		  &nlm_tcpport, 0644);
++module_param(nlm_max_connections, uint, 0644);
+ 
+ /*
+  * Initialising and terminating the module.

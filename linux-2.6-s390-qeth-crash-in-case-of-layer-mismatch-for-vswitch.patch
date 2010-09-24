@@ -1,0 +1,73 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 20 Jan 2009 16:58:46 +0100
+Subject: [s390] qeth: crash in case of layer mismatch for VSWITCH
+Message-id: 20090120155846.GE21694@redhat.com
+O-Subject: [RHEL5 U4 PATCH 5/8] s390 - qeth: avoid crash in case of layer mismatch for VSWITCH
+Bugzilla: 476205
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+For z/VM GuestLAN or VSWITCH devices the transport layer is
+configured in z/VM. The layer2 attribute of a participating Linux
+device has to match the z/VM definition. In case of a mismatch
+Linux currently crashes in qeth recovery due to a reference to the
+not yet existing net_device.
+Solution: add a check for existence of net_device and add a message
+pointing to the mismatch of layer definitions in Linux and z/VM.
+
+Bugzilla
+=========
+
+BZ 476205
+https://bugzilla.redhat.com/show_bug.cgi?id=476205
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of git commit
+fc9c24603c4b93d84160e14c0a98a754d4328d15
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 791c771..0abc754 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -975,9 +975,11 @@ qeth_recover(void *ptr)
+ 		PRINT_INFO("Device %s successfully recovered!\n",
+ 			   CARD_BUS_ID(card));
+ 	else {
+-		rtnl_lock();
+-		dev_close(card->dev);
+-		rtnl_unlock();
++		if (card->dev) {
++			rtnl_lock();
++			dev_close(card->dev);
++			rtnl_unlock();
++		}
+ 		PRINT_INFO("Device %s could not be recovered!\n",
+ 			   CARD_BUS_ID(card));
+ 	}
+@@ -1725,6 +1727,10 @@ qeth_send_control_data_cb(struct qeth_channel *channel,
+ 	card = CARD_FROM_CDEV(channel->ccwdev);
+ 	if (qeth_check_idx_response(iob->data)) {
+ 		qeth_clear_ipacmd_list(card);
++		if (((iob->data[2] & 0xc0) == 0xc0) && iob->data[4] == 0xf6)
++			PRINT_ERR("The qeth device %s is not configured "
++				"for the OSI layer required by z/VM\n",
++				CARD_BUS_ID(card));
+ 		qeth_schedule_recovery(card);
+ 		goto out;
+ 	}

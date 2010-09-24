@@ -1,0 +1,27 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 16 Feb 2010 19:38:18 -0500
+Subject: lpfc: Update lpfc version for 8.2.0.63.3p driver release
+Message-id: <20100216193738.8604.79750.sendpatchset@localhost.localdomain>
+Patchwork-id: 23297
+O-Subject: [RHEL5.5 7/7] lpfc: Update lpfc version for 8.2.0.63.3p driver release
+Bugzilla: 564506
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Update lpfc version for 8.2.0.63.3p driver release
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+index 3ab8d6f..fd3fbc2 100644
+--- a/drivers/scsi/lpfc/lpfc_version.h
++++ b/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.2.0.63.2p"
++#define LPFC_DRIVER_VERSION "8.2.0.63.3p"
+ 
+ #define LPFC_DRIVER_NAME		"lpfc"
+ #define LPFC_SP_DRIVER_HANDLER_NAME	"lpfc:sp"

@@ -1,0 +1,145 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Wed, 20 May 2009 14:15:51 -0400
+Subject: [net] avoid extra wakeups in wait_for_packet
+Message-id: 20090520181551.GD25710@hmsreliant.think-freely.org
+O-Subject: [RHEL 5.4 PATCH]: net: avoid extra wakeups in wait_for_packet()
+Bugzilla: 497897
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Hey all-
+	This is a backport of upstream commit
+bf368e4e70cd4e0f880923c44e95a4273d725ab4
+It improves performance by avoiding the needless waking up of threads blocked in
+wait_for_packet.  Resolves bz 497897
+
+Neil
+
+diff --git a/include/linux/wait.h b/include/linux/wait.h
+index 2e079bf..6014bda 100644
+--- a/include/linux/wait.h
++++ b/include/linux/wait.h
+@@ -142,8 +142,6 @@ static inline void __remove_wait_queue(wait_queue_head_t *head,
+ }
+ 
+ void FASTCALL(__wake_up(wait_queue_head_t *q, unsigned int mode, int nr, void *key));
+-extern void FASTCALL(__wake_up_locked(wait_queue_head_t *q, unsigned int mode));
+-extern void FASTCALL(__wake_up_sync(wait_queue_head_t *q, unsigned int mode, int nr));
+ void FASTCALL(__wake_up_bit(wait_queue_head_t *, void *, int));
+ int FASTCALL(__wait_on_bit(wait_queue_head_t *, struct wait_bit_queue *, int (*)(void *), unsigned));
+ int FASTCALL(__wait_on_bit_lock(wait_queue_head_t *, struct wait_bit_queue *, int (*)(void *), unsigned));
+@@ -151,6 +149,11 @@ void FASTCALL(wake_up_bit(void *, int));
+ int FASTCALL(out_of_line_wait_on_bit(void *, int, int (*)(void *), unsigned));
+ int FASTCALL(out_of_line_wait_on_bit_lock(void *, int, int (*)(void *), unsigned));
+ wait_queue_head_t *FASTCALL(bit_waitqueue(void *, int));
++void __wake_up_locked_key(wait_queue_head_t *q, unsigned int mode, void *key);
++void __wake_up_sync_key(wait_queue_head_t *q, unsigned int mode, int nr,
++			void *key);
++void __wake_up_locked(wait_queue_head_t *q, unsigned int mode);
++void __wake_up_sync(wait_queue_head_t *q, unsigned int mode, int nr);
+ 
+ #define wake_up(x)			__wake_up(x, TASK_UNINTERRUPTIBLE | TASK_INTERRUPTIBLE, 1, NULL)
+ #define wake_up_nr(x, nr)		__wake_up(x, TASK_UNINTERRUPTIBLE | TASK_INTERRUPTIBLE, nr, NULL)
+@@ -161,6 +164,15 @@ wait_queue_head_t *FASTCALL(bit_waitqueue(void *, int));
+ #define	wake_up_locked(x)		__wake_up_locked((x), TASK_UNINTERRUPTIBLE | TASK_INTERRUPTIBLE)
+ #define wake_up_interruptible_sync(x)   __wake_up_sync((x),TASK_INTERRUPTIBLE, 1)
+ 
++#define wake_up_poll(x, m)                            \
++	__wake_up(x, TASK_NORMAL, 1, (void *) (m))
++#define wake_up_locked_poll(x, m)                             \
++	__wake_up_locked_key((x), TASK_NORMAL, (void *) (m))
++#define wake_up_interruptible_poll(x, m)                      \
++	__wake_up(x, TASK_INTERRUPTIBLE, 1, (void *) (m))
++#define wake_up_interruptible_sync_poll(x, m)                         \
++	__wake_up_sync_key((x), TASK_INTERRUPTIBLE, 1, (void *) (m))
++
+ #define __wait_event(wq, condition) 					\
+ do {									\
+ 	DEFINE_WAIT(__wait);						\
+diff --git a/kernel/sched.c b/kernel/sched.c
+index 9921513..fa71407 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -3823,11 +3823,17 @@ void fastcall __wake_up_locked(wait_queue_head_t *q, unsigned int mode)
+ 	__wake_up_common(q, mode, 1, 0, NULL);
+ }
+ 
++void __wake_up_locked_key(wait_queue_head_t *q, unsigned int mode, void *key)
++{
++	__wake_up_common(q, mode, 1, 0, key);
++}
++
+ /**
+- * __wake_up_sync - wake up threads blocked on a waitqueue.
++ * __wake_up_sync_key - wake up threads blocked on a waitqueue.
+  * @q: the waitqueue
+  * @mode: which threads
+  * @nr_exclusive: how many wake-one or wake-many threads to wake up
++ * @key: opaque value to be passed to wakeup targets
+  *
+  * The sync wakeup differs that the waker knows that it will schedule
+  * away soon, so while the target thread will be woken up, it will not
+@@ -3836,8 +3842,8 @@ void fastcall __wake_up_locked(wait_queue_head_t *q, unsigned int mode)
+  *
+  * On UP it can prevent extra preemption.
+  */
+-void fastcall
+-__wake_up_sync(wait_queue_head_t *q, unsigned int mode, int nr_exclusive)
++void __wake_up_sync_key(wait_queue_head_t *q, unsigned int mode,
++			int nr_exclusive, void *key)
+ {
+ 	unsigned long flags;
+ 	int sync = 1;
+@@ -3849,9 +3855,18 @@ __wake_up_sync(wait_queue_head_t *q, unsigned int mode, int nr_exclusive)
+ 		sync = 0;
+ 
+ 	spin_lock_irqsave(&q->lock, flags);
+-	__wake_up_common(q, mode, nr_exclusive, sync, NULL);
++	__wake_up_common(q, mode, nr_exclusive, sync, key);
+ 	spin_unlock_irqrestore(&q->lock, flags);
+ }
++EXPORT_SYMBOL_GPL(__wake_up_sync_key);
++
++/*
++ * __wake_up_sync - see __wake_up_sync_key()
++ */
++void __wake_up_sync(wait_queue_head_t *q, unsigned int mode, int nr_exclusive)
++{
++	__wake_up_sync_key(q, mode, nr_exclusive, NULL);
++}
+ EXPORT_SYMBOL_GPL(__wake_up_sync);	/* For internal use only */
+ 
+ void fastcall complete(struct completion *x)
+diff --git a/net/core/sock.c b/net/core/sock.c
+index 418c6cd..35f0085 100644
+--- a/net/core/sock.c
++++ b/net/core/sock.c
+@@ -1521,7 +1521,7 @@ static void sock_def_error_report(struct sock *sk)
+ {
+ 	read_lock(&sk->sk_callback_lock);
+ 	if (sk->sk_sleep && waitqueue_active(sk->sk_sleep))
+-		wake_up_interruptible(sk->sk_sleep);
++		wake_up_interruptible_poll(sk->sk_sleep, POLLERR);
+ 	sk_wake_async(sk,0,POLL_ERR); 
+ 	read_unlock(&sk->sk_callback_lock);
+ }
+@@ -1530,7 +1530,8 @@ static void sock_def_readable(struct sock *sk, int len)
+ {
+ 	read_lock(&sk->sk_callback_lock);
+ 	if (sk->sk_sleep && waitqueue_active(sk->sk_sleep))
+-		wake_up_interruptible(sk->sk_sleep);
++		wake_up_interruptible_sync_poll(sk->sk_sleep, POLLIN |
++					POLLRDNORM | POLLRDBAND);
+ 	sk_wake_async(sk,1,POLL_IN);
+ 	read_unlock(&sk->sk_callback_lock);
+ }
+@@ -1544,8 +1545,8 @@ static void sock_def_write_space(struct sock *sk)
+ 	 */
+ 	if((atomic_read(&sk->sk_wmem_alloc) << 1) <= sk->sk_sndbuf) {
+ 		if (sk->sk_sleep && waitqueue_active(sk->sk_sleep))
+-			wake_up_interruptible(sk->sk_sleep);
+-
++			wake_up_interruptible_sync_poll(sk->sk_sleep, POLLOUT |
++					POLLWRNORM | POLLWRBAND);
+ 		/* Should agree with poll, otherwise some programs break */
+ 		if (sock_writeable(sk))
+ 			sk_wake_async(sk, 2, POLL_OUT);

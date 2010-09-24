@@ -1,0 +1,984 @@
+From: john cooper <john.cooper@redhat.com>
+Date: Sat, 4 Apr 2009 16:28:58 -0400
+Subject: [mm] mmu-notifier: optimized ability to admin host pages
+Message-id: 49D7C30A.3050809@redhat.com
+O-Subject: [RHEL5.4 PATCH] implement mmu_notifier mechanism V3, [3/5] BZ#485718
+Bugzilla: 485718
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+BZ#485718  https://bugzilla.redhat.com/show_bug.cgi?id=485718
+
+This mechanism provides an optimized ability for KVM to
+administer host pages used by a guest in shadow mmu
+translations (shadow pte, shadow tlb).  These shadow
+translations may be traversed asynchronously via an
+mmu during guest mode execution, causing a race to
+exist between this asynchronous access and (for example)
+the host attempting to swap out the associated guest page.
+Without such visibility into host vm operations this race
+is sub-optimally addressed via guest page pinning and
+map/unmap of shadow translations.
+
+See the description of the API introduced by this patch
+which annotates the definitiopn of 'struct mmu_notifier_ops'
+in include/linux/mmu_notifier.h for detail.
+
+diff --git a/include/linux/mmu_notifier.h b/include/linux/mmu_notifier.h
+new file mode 100644
+index 0000000..fecf0ad
+--- /dev/null
++++ b/include/linux/mmu_notifier.h
+@@ -0,0 +1,279 @@
++#ifndef _LINUX_MMU_NOTIFIER_H
++#define _LINUX_MMU_NOTIFIER_H
++
++#include <linux/list.h>
++#include <linux/spinlock.h>
++#include <linux/sched.h>
++
++struct mmu_notifier;
++struct mmu_notifier_ops;
++
++#ifdef CONFIG_MMU_NOTIFIER
++
++/*
++ * The mmu notifier_mm structure is allocated and installed in
++ * mm->mmu_notifier_mm inside the mm_take_all_locks() protected
++ * critical section and it's released only when mm_count reaches zero
++ * in mmdrop().
++ */
++struct mmu_notifier_mm {
++	/* all mmu notifiers registerd in this mm are queued in this list */
++	struct hlist_head list;
++	/* to serialize the list modifications and hlist_unhashed */
++	spinlock_t lock;
++};
++
++struct mmu_notifier_ops {
++	/*
++	 * Called either by mmu_notifier_unregister or when the mm is
++	 * being destroyed by exit_mmap, always before all pages are
++	 * freed. This can run concurrently with other mmu notifier
++	 * methods (the ones invoked outside the mm context) and it
++	 * should tear down all secondary mmu mappings and freeze the
++	 * secondary mmu. If this method isn't implemented you've to
++	 * be sure that nothing could possibly write to the pages
++	 * through the secondary mmu by the time the last thread with
++	 * tsk->mm == mm exits.
++	 *
++	 * As side note: the pages freed after ->release returns could
++	 * be immediately reallocated by the gart at an alias physical
++	 * address with a different cache model, so if ->release isn't
++	 * implemented because all _software_ driven memory accesses
++	 * through the secondary mmu are terminated by the time the
++	 * last thread of this mm quits, you've also to be sure that
++	 * speculative _hardware_ operations can't allocate dirty
++	 * cachelines in the cpu that could not be snooped and made
++	 * coherent with the other read and write operations happening
++	 * through the gart alias address, so leading to memory
++	 * corruption.
++	 */
++	void (*release)(struct mmu_notifier *mn,
++			struct mm_struct *mm);
++
++	/*
++	 * clear_flush_young is called after the VM is
++	 * test-and-clearing the young/accessed bitflag in the
++	 * pte. This way the VM will provide proper aging to the
++	 * accesses to the page through the secondary MMUs and not
++	 * only to the ones through the Linux pte.
++	 */
++	int (*clear_flush_young)(struct mmu_notifier *mn,
++				 struct mm_struct *mm,
++				 unsigned long address);
++
++	/*
++	 * Before this is invoked any secondary MMU is still ok to
++	 * read/write to the page previously pointed to by the Linux
++	 * pte because the page hasn't been freed yet and it won't be
++	 * freed until this returns. If required set_page_dirty has to
++	 * be called internally to this method.
++	 */
++	void (*invalidate_page)(struct mmu_notifier *mn,
++				struct mm_struct *mm,
++				unsigned long address);
++
++	/*
++	 * invalidate_range_start() and invalidate_range_end() must be
++	 * paired and are called only when the mmap_sem and/or the
++	 * locks protecting the reverse maps are held. The subsystem
++	 * must guarantee that no additional references are taken to
++	 * the pages in the range established between the call to
++	 * invalidate_range_start() and the matching call to
++	 * invalidate_range_end().
++	 *
++	 * Invalidation of multiple concurrent ranges may be
++	 * optionally permitted by the driver. Either way the
++	 * establishment of sptes is forbidden in the range passed to
++	 * invalidate_range_begin/end for the whole duration of the
++	 * invalidate_range_begin/end critical section.
++	 *
++	 * invalidate_range_start() is called when all pages in the
++	 * range are still mapped and have at least a refcount of one.
++	 *
++	 * invalidate_range_end() is called when all pages in the
++	 * range have been unmapped and the pages have been freed by
++	 * the VM.
++	 *
++	 * The VM will remove the page table entries and potentially
++	 * the page between invalidate_range_start() and
++	 * invalidate_range_end(). If the page must not be freed
++	 * because of pending I/O or other circumstances then the
++	 * invalidate_range_start() callback (or the initial mapping
++	 * by the driver) must make sure that the refcount is kept
++	 * elevated.
++	 *
++	 * If the driver increases the refcount when the pages are
++	 * initially mapped into an address space then either
++	 * invalidate_range_start() or invalidate_range_end() may
++	 * decrease the refcount. If the refcount is decreased on
++	 * invalidate_range_start() then the VM can free pages as page
++	 * table entries are removed.  If the refcount is only
++	 * droppped on invalidate_range_end() then the driver itself
++	 * will drop the last refcount but it must take care to flush
++	 * any secondary tlb before doing the final free on the
++	 * page. Pages will no longer be referenced by the linux
++	 * address space but may still be referenced by sptes until
++	 * the last refcount is dropped.
++	 */
++	void (*invalidate_range_start)(struct mmu_notifier *mn,
++				       struct mm_struct *mm,
++				       unsigned long start, unsigned long end);
++	void (*invalidate_range_end)(struct mmu_notifier *mn,
++				     struct mm_struct *mm,
++				     unsigned long start, unsigned long end);
++};
++
++/*
++ * The notifier chains are protected by mmap_sem and/or the reverse map
++ * semaphores. Notifier chains are only changed when all reverse maps and
++ * the mmap_sem locks are taken.
++ *
++ * Therefore notifier chains can only be traversed when either
++ *
++ * 1. mmap_sem is held.
++ * 2. One of the reverse map locks is held (i_mmap_lock or anon_vma->lock).
++ * 3. No other concurrent thread can access the list (release)
++ */
++struct mmu_notifier {
++	struct hlist_node hlist;
++	const struct mmu_notifier_ops *ops;
++};
++
++static inline int mm_has_notifiers(struct mm_struct *mm)
++{
++	return unlikely(mm->mmu_notifier_mm);
++}
++
++extern int mmu_notifier_register(struct mmu_notifier *mn,
++				 struct mm_struct *mm);
++extern int __mmu_notifier_register(struct mmu_notifier *mn,
++				   struct mm_struct *mm);
++extern void mmu_notifier_unregister(struct mmu_notifier *mn,
++				    struct mm_struct *mm);
++extern void __mmu_notifier_mm_destroy(struct mm_struct *mm);
++extern void __mmu_notifier_release(struct mm_struct *mm);
++extern int __mmu_notifier_clear_flush_young(struct mm_struct *mm,
++					  unsigned long address);
++extern void __mmu_notifier_invalidate_page(struct mm_struct *mm,
++					  unsigned long address);
++extern void __mmu_notifier_invalidate_range_start(struct mm_struct *mm,
++				  unsigned long start, unsigned long end);
++extern void __mmu_notifier_invalidate_range_end(struct mm_struct *mm,
++				  unsigned long start, unsigned long end);
++
++static inline void mmu_notifier_release(struct mm_struct *mm)
++{
++	if (mm_has_notifiers(mm))
++		__mmu_notifier_release(mm);
++}
++
++static inline int mmu_notifier_clear_flush_young(struct mm_struct *mm,
++					  unsigned long address)
++{
++	if (mm_has_notifiers(mm))
++		return __mmu_notifier_clear_flush_young(mm, address);
++	return 0;
++}
++
++static inline void mmu_notifier_invalidate_page(struct mm_struct *mm,
++					  unsigned long address)
++{
++	if (mm_has_notifiers(mm))
++		__mmu_notifier_invalidate_page(mm, address);
++}
++
++static inline void mmu_notifier_invalidate_range_start(struct mm_struct *mm,
++				  unsigned long start, unsigned long end)
++{
++	if (mm_has_notifiers(mm))
++		__mmu_notifier_invalidate_range_start(mm, start, end);
++}
++
++static inline void mmu_notifier_invalidate_range_end(struct mm_struct *mm,
++				  unsigned long start, unsigned long end)
++{
++	if (mm_has_notifiers(mm))
++		__mmu_notifier_invalidate_range_end(mm, start, end);
++}
++
++static inline void mmu_notifier_mm_init(struct mm_struct *mm)
++{
++	mm->mmu_notifier_mm = NULL;
++}
++
++static inline void mmu_notifier_mm_destroy(struct mm_struct *mm)
++{
++	if (mm_has_notifiers(mm))
++		__mmu_notifier_mm_destroy(mm);
++}
++
++/*
++ * These two macros will sometime replace ptep_clear_flush.
++ * ptep_clear_flush is impleemnted as macro itself, so this also is
++ * implemented as a macro until ptep_clear_flush will converted to an
++ * inline function, to diminish the risk of compilation failure. The
++ * invalidate_page method over time can be moved outside the PT lock
++ * and these two macros can be later removed.
++ */
++#define ptep_clear_flush_notify(__vma, __address, __ptep)		\
++({									\
++	pte_t __pte;							\
++	struct vm_area_struct *___vma = __vma;				\
++	unsigned long ___address = __address;				\
++	__pte = ptep_clear_flush(___vma, ___address, __ptep);		\
++	mmu_notifier_invalidate_page(___vma->vm_mm, ___address);	\
++	__pte;								\
++})
++
++#define ptep_clear_flush_young_notify(__vma, __address, __ptep)		\
++({									\
++	int __young;							\
++	struct vm_area_struct *___vma = __vma;				\
++	unsigned long ___address = __address;				\
++	__young = ptep_clear_flush_young(___vma, ___address, __ptep);	\
++	__young |= mmu_notifier_clear_flush_young(___vma->vm_mm,	\
++						  ___address);		\
++	__young;							\
++})
++
++#else /* CONFIG_MMU_NOTIFIER */
++
++static inline void mmu_notifier_release(struct mm_struct *mm)
++{
++}
++
++static inline int mmu_notifier_clear_flush_young(struct mm_struct *mm,
++					  unsigned long address)
++{
++	return 0;
++}
++
++static inline void mmu_notifier_invalidate_page(struct mm_struct *mm,
++					  unsigned long address)
++{
++}
++
++static inline void mmu_notifier_invalidate_range_start(struct mm_struct *mm,
++				  unsigned long start, unsigned long end)
++{
++}
++
++static inline void mmu_notifier_invalidate_range_end(struct mm_struct *mm,
++				  unsigned long start, unsigned long end)
++{
++}
++
++static inline void mmu_notifier_mm_init(struct mm_struct *mm)
++{
++}
++
++static inline void mmu_notifier_mm_destroy(struct mm_struct *mm)
++{
++}
++
++#define ptep_clear_flush_young_notify ptep_clear_flush_young
++#define ptep_clear_flush_notify ptep_clear_flush
++
++#endif /* CONFIG_MMU_NOTIFIER */
++
++#endif /* _LINUX_MMU_NOTIFIER_H */
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index ce00fe8..267ddcb 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -67,6 +67,7 @@ struct sched_param {
+ #include <linux/fs_struct.h>
+ #include <linux/compiler.h>
+ #include <linux/completion.h>
++#include <linux/cpumask.h>
+ #include <linux/pid.h>
+ #include <linux/percpu.h>
+ #include <linux/topology.h>
+@@ -393,6 +394,9 @@ struct mm_struct {
+ 	/* aio bits */
+ 	rwlock_t		ioctx_list_lock;
+ 	struct kioctx		*ioctx_list;
++#ifdef CONFIG_MMU_NOTIFIER
++	struct mmu_notifier_mm *mmu_notifier_mm;
++#endif
+ };
+ 
+ struct sighand_struct {
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 6a953e9..f0f3640 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -26,6 +26,7 @@
+ #include <linux/key.h>
+ #include <linux/binfmts.h>
+ #include <linux/mman.h>
++#include <linux/mmu_notifier.h>
+ #include <linux/fs.h>
+ #include <linux/capability.h>
+ #include <linux/cpu.h>
+@@ -460,6 +461,7 @@ static struct mm_struct * mm_init(struct mm_struct * mm)
+ 
+ 	if (likely(!mm_alloc_pgd(mm))) {
+ 		mm->def_flags = 0;
++		mmu_notifier_mm_init(mm);
+ 		return mm;
+ 	}
+ 
+@@ -496,6 +498,7 @@ void fastcall __mmdrop(struct mm_struct *mm)
+ 	free_mm_flags(mm);
+ 	mm_free_pgd(mm);
+ 	destroy_context(mm);
++	mmu_notifier_mm_destroy(mm);
+ 	free_mm(mm);
+ }
+ 
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 59d3216..2047f46 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -158,3 +158,6 @@ config RESOURCES_64BIT
+ 	default 64BIT
+ 	help
+ 	  This option allows memory and IO resources to be 64 bit.
++
++config MMU_NOTIFIER
++	bool
+diff --git a/mm/Makefile b/mm/Makefile
+index 9dd824c..8a8b863 100644
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -19,6 +19,7 @@ obj-$(CONFIG_SPARSEMEM)	+= sparse.o
+ obj-$(CONFIG_SHMEM) += shmem.o
+ obj-$(CONFIG_TINY_SHMEM) += tiny-shmem.o
+ obj-$(CONFIG_SLOB) += slob.o
++obj-$(CONFIG_MMU_NOTIFIER) += mmu_notifier.o
+ obj-$(CONFIG_SLAB) += slab.o
+ obj-$(CONFIG_MEMORY_HOTPLUG) += memory_hotplug.o
+ obj-$(CONFIG_FS_XIP) += filemap_xip.o
+diff --git a/mm/filemap_xip.c b/mm/filemap_xip.c
+index a83cc14..8dc00e6 100644
+--- a/mm/filemap_xip.c
++++ b/mm/filemap_xip.c
+@@ -13,6 +13,7 @@
+ #include <linux/module.h>
+ #include <linux/uio.h>
+ #include <linux/rmap.h>
++#include <linux/mmu_notifier.h>
+ #include <linux/uaccess.h>
+ #include <asm/tlbflush.h>
+ 
+@@ -188,7 +189,7 @@ __xip_unmap (struct address_space * mapping,
+ 		if (pte) {
+ 			/* Nuke the page table entry. */
+ 			flush_cache_page(vma, address, pte_pfn(*pte));
+-			pteval = ptep_clear_flush(vma, address, pte);
++			pteval = ptep_clear_flush_notify(vma, address, pte);
+ 			page_remove_rmap(page);
+ 			dec_mm_counter(mm, file_rss);
+ 			BUG_ON(pte_dirty(pteval));
+diff --git a/mm/fremap.c b/mm/fremap.c
+index 487d524..8f37a25 100644
+--- a/mm/fremap.c
++++ b/mm/fremap.c
+@@ -15,6 +15,7 @@
+ #include <linux/rmap.h>
+ #include <linux/module.h>
+ #include <linux/syscalls.h>
++#include <linux/mmu_notifier.h>
+ 
+ #include <asm/mmu_context.h>
+ #include <asm/cacheflush.h>
+@@ -212,9 +213,11 @@ asmlinkage long sys_remap_file_pages(unsigned long start, unsigned long size,
+ 			spin_unlock(&mapping->i_mmap_lock);
+ 		}
+ 
++		mmu_notifier_invalidate_range_start(mm, start, start + size);
+ 		err = vma->vm_ops->populate(vma, start, size,
+ 					    vma->vm_page_prot,
+ 					    pgoff, flags & MAP_NONBLOCK);
++		mmu_notifier_invalidate_range_end(mm, start, start + size);
+ 
+ 		/*
+ 		 * We can't clear VM_NONLINEAR because we'd have to do
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 56794fd..c38767f 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -9,6 +9,7 @@
+ #include <linux/mm.h>
+ #include <linux/sysctl.h>
+ #include <linux/highmem.h>
++#include <linux/mmu_notifier.h>
+ #include <linux/nodemask.h>
+ #include <linux/pagemap.h>
+ #include <linux/mempolicy.h>
+@@ -445,6 +446,7 @@ void __unmap_hugepage_range(struct vm_area_struct *vma, unsigned long start,
+ 	BUG_ON(start & ~HPAGE_MASK);
+ 	BUG_ON(end & ~HPAGE_MASK);
+ 
++	mmu_notifier_invalidate_range_start(mm, start, end);
+ 	spin_lock(&mm->page_table_lock);
+ 	for (address = start; address < end; address += HPAGE_SIZE) {
+ 		ptep = huge_pte_offset(mm, address);
+@@ -463,6 +465,7 @@ void __unmap_hugepage_range(struct vm_area_struct *vma, unsigned long start,
+ 	}
+ 	spin_unlock(&mm->page_table_lock);
+ 	flush_tlb_range(vma, start, end);
++	mmu_notifier_invalidate_range_end(mm, start, end);
+ }
+ 
+ void unmap_hugepage_range(struct vm_area_struct *vma, unsigned long start,
+diff --git a/mm/memory.c b/mm/memory.c
+index 5233ed2..7c07d55 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -50,6 +50,7 @@
+ #include <linux/delayacct.h>
+ #include <linux/init.h>
+ #include <linux/writeback.h>
++#include <linux/mmu_notifier.h>
+ 
+ #include <asm/pgalloc.h>
+ #include <asm/uaccess.h>
+@@ -668,6 +669,7 @@ int copy_page_range(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+ 	unsigned long next;
+ 	unsigned long addr = src_vma->vm_start;
+ 	unsigned long end = src_vma->vm_end;
++	int ret;
+ 
+ 	/*
+ 	 * Don't copy ptes where a page fault will fill them correctly.
+@@ -684,17 +686,33 @@ int copy_page_range(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+ 		return copy_hugetlb_page_range(dst_mm, src_mm,
+ 					       dst_vma, src_vma);
+ 
++	/*
++	 * We need to invalidate the secondary MMU mappings only when
++	 * there could be a permission downgrade on the ptes of the
++	 * parent mm. And a permission downgrade will only happen if
++	 * is_cow_mapping() returns true.
++	 */
++	if (is_cow_mapping(src_vma->vm_flags))
++		mmu_notifier_invalidate_range_start(src_mm, addr, end);
++
++	ret = 0;
+ 	dst_pgd = pgd_offset(dst_mm, addr);
+ 	src_pgd = pgd_offset(src_mm, addr);
+ 	do {
+ 		next = pgd_addr_end(addr, end);
+ 		if (pgd_none_or_clear_bad(src_pgd))
+ 			continue;
+-		if (copy_pud_range(dst_mm, src_mm, dst_pgd, src_pgd,
+-				   dst_vma, src_vma, addr, next))
+-			return -ENOMEM;
++		if (unlikely(copy_pud_range(dst_mm, src_mm, dst_pgd, src_pgd,
++				   dst_vma, src_vma, addr, next))) {
++			ret = -ENOMEM;
++			break;
++		}
+ 	} while (dst_pgd++, src_pgd++, addr = next, addr != end);
+-	return 0;
++
++	if (is_cow_mapping(src_vma->vm_flags))
++		mmu_notifier_invalidate_range_end(src_mm,
++						src_vma->vm_start, end);
++	return ret;
+ }
+ 
+ static unsigned long zap_pte_range(struct mmu_gather *tlb,
+@@ -904,7 +922,9 @@ unsigned long unmap_vmas(struct mmu_gather **tlbp,
+ 	unsigned long start = start_addr;
+ 	spinlock_t *i_mmap_lock = details? details->i_mmap_lock: NULL;
+ 	int fullmm = (*tlbp)->fullmm;
++	struct mm_struct *mm = vma->vm_mm;
+ 
++	mmu_notifier_invalidate_range_start(mm, start_addr, end_addr);
+ 	for ( ; vma && vma->vm_start < end_addr; vma = vma->vm_next) {
+ 		unsigned long end;
+ 
+@@ -955,6 +975,7 @@ unsigned long unmap_vmas(struct mmu_gather **tlbp,
+ 		}
+ 	}
+ out:
++	mmu_notifier_invalidate_range_end(mm, start_addr, end_addr);
+ 	return start;	/* which is now the end (or restart) address */
+ }
+ 
+@@ -1639,10 +1660,11 @@ int apply_to_page_range(struct mm_struct *mm, unsigned long addr,
+ {
+ 	pgd_t *pgd;
+ 	unsigned long next;
+-	unsigned long end = addr + size;
++	unsigned long start = addr, end = addr + size;
+ 	int err;
+ 
+ 	BUG_ON(addr >= end);
++	mmu_notifier_invalidate_range_start(mm, start, end);
+ 	pgd = pgd_offset(mm, addr);
+ 	do {
+ 		next = pgd_addr_end(addr, end);
+@@ -1650,6 +1672,7 @@ int apply_to_page_range(struct mm_struct *mm, unsigned long addr,
+ 		if (err)
+ 			break;
+ 	} while (pgd++, addr = next, addr != end);
++	mmu_notifier_invalidate_range_end(mm, start, end);
+ 	return err;
+ }
+ EXPORT_SYMBOL_GPL(apply_to_page_range);
+@@ -1941,7 +1964,7 @@ gotten:
+ 		 * seen in the presence of one thread doing SMC and another
+ 		 * thread doing COW.
+ 		 */
+-		ptep_clear_flush(vma, address, page_table);
++		ptep_clear_flush_notify(vma, address, page_table);
+ 		set_pte_at(mm, address, page_table, entry);
+ 		update_mmu_cache(vma, address, entry);
+ 		lru_cache_add_active(new_page);
+diff --git a/mm/mmap.c b/mm/mmap.c
+index 634fa18..821587c 100644
+--- a/mm/mmap.c
++++ b/mm/mmap.c
+@@ -25,6 +25,7 @@
+ #include <linux/mount.h>
+ #include <linux/mempolicy.h>
+ #include <linux/rmap.h>
++#include <linux/mmu_notifier.h>
+ #include <linux/random.h>
+ 
+ #include <asm/uaccess.h>
+@@ -2085,6 +2086,7 @@ void exit_mmap(struct mm_struct *mm)
+ #ifdef arch_exit_mmap
+ 	arch_exit_mmap(mm);
+ #endif
++	mmu_notifier_release(mm);
+ 
+ 	lru_add_drain();
+ 	flush_cache_mm(mm);
+diff --git a/mm/mmu_notifier.c b/mm/mmu_notifier.c
+new file mode 100644
+index 0000000..599576f
+--- /dev/null
++++ b/mm/mmu_notifier.c
+@@ -0,0 +1,277 @@
++/*
++ *  linux/mm/mmu_notifier.c
++ *
++ *  Copyright (C) 2008  Qumranet, Inc.
++ *  Copyright (C) 2008  SGI
++ *             Christoph Lameter <clameter@sgi.com>
++ *
++ *  This work is licensed under the terms of the GNU GPL, version 2. See
++ *  the COPYING file in the top-level directory.
++ */
++
++#include <linux/list.h>
++#include <linux/mmu_notifier.h>
++#include <linux/module.h>
++#include <linux/mm.h>
++#include <linux/err.h>
++#include <linux/rcupdate.h>
++#include <linux/sched.h>
++
++/*
++ * This function can't run concurrently against mmu_notifier_register
++ * because mm->mm_users > 0 during mmu_notifier_register and exit_mmap
++ * runs with mm_users == 0. Other tasks may still invoke mmu notifiers
++ * in parallel despite there being no task using this mm any more,
++ * through the vmas outside of the exit_mmap context, such as with
++ * vmtruncate. This serializes against mmu_notifier_unregister with
++ * the mmu_notifier_mm->lock in addition to RCU and it serializes
++ * against the other mmu notifiers with RCU. struct mmu_notifier_mm
++ * can't go away from under us as exit_mmap holds an mm_count pin
++ * itself.
++ */
++void __mmu_notifier_release(struct mm_struct *mm)
++{
++	struct mmu_notifier *mn;
++
++	spin_lock(&mm->mmu_notifier_mm->lock);
++	while (unlikely(!hlist_empty(&mm->mmu_notifier_mm->list))) {
++		mn = hlist_entry(mm->mmu_notifier_mm->list.first,
++				 struct mmu_notifier,
++				 hlist);
++		/*
++		 * We arrived before mmu_notifier_unregister so
++		 * mmu_notifier_unregister will do nothing other than
++		 * to wait ->release to finish and
++		 * mmu_notifier_unregister to return.
++		 */
++		hlist_del_init_rcu(&mn->hlist);
++		/*
++		 * RCU here will block mmu_notifier_unregister until
++		 * ->release returns.
++		 */
++		rcu_read_lock();
++		spin_unlock(&mm->mmu_notifier_mm->lock);
++		/*
++		 * if ->release runs before mmu_notifier_unregister it
++		 * must be handled as it's the only way for the driver
++		 * to flush all existing sptes and stop the driver
++		 * from establishing any more sptes before all the
++		 * pages in the mm are freed.
++		 */
++		if (mn->ops->release)
++			mn->ops->release(mn, mm);
++		rcu_read_unlock();
++		spin_lock(&mm->mmu_notifier_mm->lock);
++	}
++	spin_unlock(&mm->mmu_notifier_mm->lock);
++
++	/*
++	 * synchronize_rcu here prevents mmu_notifier_release to
++	 * return to exit_mmap (which would proceed freeing all pages
++	 * in the mm) until the ->release method returns, if it was
++	 * invoked by mmu_notifier_unregister.
++	 *
++	 * The mmu_notifier_mm can't go away from under us because one
++	 * mm_count is hold by exit_mmap.
++	 */
++	synchronize_rcu();
++}
++
++/*
++ * If no young bitflag is supported by the hardware, ->clear_flush_young can
++ * unmap the address and return 1 or 0 depending if the mapping previously
++ * existed or not.
++ */
++int __mmu_notifier_clear_flush_young(struct mm_struct *mm,
++					unsigned long address)
++{
++	struct mmu_notifier *mn;
++	struct hlist_node *n;
++	int young = 0;
++
++	rcu_read_lock();
++	hlist_for_each_entry_rcu(mn, n, &mm->mmu_notifier_mm->list, hlist) {
++		if (mn->ops->clear_flush_young)
++			young |= mn->ops->clear_flush_young(mn, mm, address);
++	}
++	rcu_read_unlock();
++
++	return young;
++}
++
++void __mmu_notifier_invalidate_page(struct mm_struct *mm,
++					  unsigned long address)
++{
++	struct mmu_notifier *mn;
++	struct hlist_node *n;
++
++	rcu_read_lock();
++	hlist_for_each_entry_rcu(mn, n, &mm->mmu_notifier_mm->list, hlist) {
++		if (mn->ops->invalidate_page)
++			mn->ops->invalidate_page(mn, mm, address);
++	}
++	rcu_read_unlock();
++}
++
++void __mmu_notifier_invalidate_range_start(struct mm_struct *mm,
++				  unsigned long start, unsigned long end)
++{
++	struct mmu_notifier *mn;
++	struct hlist_node *n;
++
++	rcu_read_lock();
++	hlist_for_each_entry_rcu(mn, n, &mm->mmu_notifier_mm->list, hlist) {
++		if (mn->ops->invalidate_range_start)
++			mn->ops->invalidate_range_start(mn, mm, start, end);
++	}
++	rcu_read_unlock();
++}
++
++void __mmu_notifier_invalidate_range_end(struct mm_struct *mm,
++				  unsigned long start, unsigned long end)
++{
++	struct mmu_notifier *mn;
++	struct hlist_node *n;
++
++	rcu_read_lock();
++	hlist_for_each_entry_rcu(mn, n, &mm->mmu_notifier_mm->list, hlist) {
++		if (mn->ops->invalidate_range_end)
++			mn->ops->invalidate_range_end(mn, mm, start, end);
++	}
++	rcu_read_unlock();
++}
++
++static int do_mmu_notifier_register(struct mmu_notifier *mn,
++				    struct mm_struct *mm,
++				    int take_mmap_sem)
++{
++	struct mmu_notifier_mm *mmu_notifier_mm;
++	int ret;
++
++	BUG_ON(atomic_read(&mm->mm_users) <= 0);
++
++	ret = -ENOMEM;
++	mmu_notifier_mm = kmalloc(sizeof(struct mmu_notifier_mm), GFP_KERNEL);
++	if (unlikely(!mmu_notifier_mm))
++		goto out;
++
++	if (take_mmap_sem)
++		down_write(&mm->mmap_sem);
++	ret = mm_take_all_locks(mm);
++	if (unlikely(ret))
++		goto out_cleanup;
++
++	if (!mm_has_notifiers(mm)) {
++		INIT_HLIST_HEAD(&mmu_notifier_mm->list);
++		spin_lock_init(&mmu_notifier_mm->lock);
++		mm->mmu_notifier_mm = mmu_notifier_mm;
++		mmu_notifier_mm = NULL;
++	}
++	atomic_inc(&mm->mm_count);
++
++	/*
++	 * Serialize the update against mmu_notifier_unregister. A
++	 * side note: mmu_notifier_release can't run concurrently with
++	 * us because we hold the mm_users pin (either implicitly as
++	 * current->mm or explicitly with get_task_mm() or similar).
++	 * We can't race against any other mmu notifier method either
++	 * thanks to mm_take_all_locks().
++	 */
++	spin_lock(&mm->mmu_notifier_mm->lock);
++	hlist_add_head(&mn->hlist, &mm->mmu_notifier_mm->list);
++	spin_unlock(&mm->mmu_notifier_mm->lock);
++
++	mm_drop_all_locks(mm);
++out_cleanup:
++	if (take_mmap_sem)
++		up_write(&mm->mmap_sem);
++	/* kfree() does nothing if mmu_notifier_mm is NULL */
++	kfree(mmu_notifier_mm);
++out:
++	BUG_ON(atomic_read(&mm->mm_users) <= 0);
++	return ret;
++}
++
++/*
++ * Must not hold mmap_sem nor any other VM related lock when calling
++ * this registration function. Must also ensure mm_users can't go down
++ * to zero while this runs to avoid races with mmu_notifier_release,
++ * so mm has to be current->mm or the mm should be pinned safely such
++ * as with get_task_mm(). If the mm is not current->mm, the mm_users
++ * pin should be released by calling mmput after mmu_notifier_register
++ * returns. mmu_notifier_unregister must be always called to
++ * unregister the notifier. mm_count is automatically pinned to allow
++ * mmu_notifier_unregister to safely run at any time later, before or
++ * after exit_mmap. ->release will always be called before exit_mmap
++ * frees the pages.
++ */
++int mmu_notifier_register(struct mmu_notifier *mn, struct mm_struct *mm)
++{
++	return do_mmu_notifier_register(mn, mm, 1);
++}
++EXPORT_SYMBOL_GPL(mmu_notifier_register);
++
++/*
++ * Same as mmu_notifier_register but here the caller must hold the
++ * mmap_sem in write mode.
++ */
++int __mmu_notifier_register(struct mmu_notifier *mn, struct mm_struct *mm)
++{
++	return do_mmu_notifier_register(mn, mm, 0);
++}
++EXPORT_SYMBOL_GPL(__mmu_notifier_register);
++
++/* this is called after the last mmu_notifier_unregister() returned */
++void __mmu_notifier_mm_destroy(struct mm_struct *mm)
++{
++	BUG_ON(!hlist_empty(&mm->mmu_notifier_mm->list));
++	kfree(mm->mmu_notifier_mm);
++	mm->mmu_notifier_mm = LIST_POISON1; /* debug */
++}
++
++/*
++ * This releases the mm_count pin automatically and frees the mm
++ * structure if it was the last user of it. It serializes against
++ * running mmu notifiers with RCU and against mmu_notifier_unregister
++ * with the unregister lock + RCU. All sptes must be dropped before
++ * calling mmu_notifier_unregister. ->release or any other notifier
++ * method may be invoked concurrently with mmu_notifier_unregister,
++ * and only after mmu_notifier_unregister returned we're guaranteed
++ * that ->release or any other method can't run anymore.
++ */
++void mmu_notifier_unregister(struct mmu_notifier *mn, struct mm_struct *mm)
++{
++	BUG_ON(atomic_read(&mm->mm_count) <= 0);
++
++	spin_lock(&mm->mmu_notifier_mm->lock);
++	if (!hlist_unhashed(&mn->hlist)) {
++		hlist_del_rcu(&mn->hlist);
++
++		/*
++		 * RCU here will force exit_mmap to wait ->release to finish
++		 * before freeing the pages.
++		 */
++		rcu_read_lock();
++		spin_unlock(&mm->mmu_notifier_mm->lock);
++		/*
++		 * exit_mmap will block in mmu_notifier_release to
++		 * guarantee ->release is called before freeing the
++		 * pages.
++		 */
++		if (mn->ops->release)
++			mn->ops->release(mn, mm);
++		rcu_read_unlock();
++	} else
++		spin_unlock(&mm->mmu_notifier_mm->lock);
++
++	/*
++	 * Wait any running method to finish, of course including
++	 * ->release if it was run by mmu_notifier_relase instead of us.
++	 */
++	synchronize_rcu();
++
++	BUG_ON(atomic_read(&mm->mm_count) <= 0);
++
++	mmdrop(mm);
++}
++EXPORT_SYMBOL_GPL(mmu_notifier_unregister);
+diff --git a/mm/mprotect.c b/mm/mprotect.c
+index 6751990..629d6e8 100644
+--- a/mm/mprotect.c
++++ b/mm/mprotect.c
+@@ -21,6 +21,7 @@
+ #include <linux/syscalls.h>
+ #include <linux/swap.h>
+ #include <linux/swapops.h>
++#include <linux/mmu_notifier.h>
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+ #include <asm/pgalloc.h>
+@@ -204,10 +205,12 @@ success:
+ 		dirty_accountable = 1;
+ 	}
+ 
++	mmu_notifier_invalidate_range_start(mm, start, end);
+ 	if (is_vm_hugetlb_page(vma))
+ 		hugetlb_change_protection(vma, start, end, vma->vm_page_prot);
+ 	else
+ 		change_protection(vma, start, end, vma->vm_page_prot, dirty_accountable);
++	mmu_notifier_invalidate_range_end(mm, start, end);
+ 	vm_stat_account(mm, oldflags, vma->vm_file, -nrpages);
+ 	vm_stat_account(mm, newflags, vma->vm_file, nrpages);
+ 	return 0;
+diff --git a/mm/mremap.c b/mm/mremap.c
+index 1771e78..459890e 100644
+--- a/mm/mremap.c
++++ b/mm/mremap.c
+@@ -18,6 +18,7 @@
+ #include <linux/highmem.h>
+ #include <linux/security.h>
+ #include <linux/syscalls.h>
++#include <linux/mmu_notifier.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/cacheflush.h>
+@@ -74,7 +75,11 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
+ 	struct mm_struct *mm = vma->vm_mm;
+ 	pte_t *old_pte, *new_pte, pte;
+ 	spinlock_t *old_ptl, *new_ptl;
++	unsigned long old_start;
+ 
++	old_start = old_addr;
++	mmu_notifier_invalidate_range_start(vma->vm_mm,
++					    old_start, old_end);
+ 	if (vma->vm_file) {
+ 		/*
+ 		 * Subtle point from Rajesh Venkatasubramanian: before
+@@ -115,6 +120,7 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
+ 	pte_unmap_unlock(old_pte - 1, old_ptl);
+ 	if (mapping)
+ 		spin_unlock(&mapping->i_mmap_lock);
++	mmu_notifier_invalidate_range_end(vma->vm_mm, old_start, old_end);
+ }
+ 
+ #define LATENCY_LIMIT	(64 * PAGE_SIZE)
+diff --git a/mm/rmap.c b/mm/rmap.c
+index 887c3df..0673a13 100644
+--- a/mm/rmap.c
++++ b/mm/rmap.c
+@@ -53,6 +53,7 @@
+ #include <linux/rmap.h>
+ #include <linux/rcupdate.h>
+ #include <linux/module.h>
++#include <linux/mmu_notifier.h>
+ 
+ #include <asm/tlbflush.h>
+ 
+@@ -306,7 +307,7 @@ static int page_referenced_one(struct page *page,
+ 	if (!pte)
+ 		goto out;
+ 
+-	if (ptep_clear_flush_young(vma, address, pte))
++	if (ptep_clear_flush_young_notify(vma, address, pte))
+ 		referenced++;
+ 
+ 	/* Pretend the page is referenced if the task has the
+@@ -454,7 +455,7 @@ static int page_mkclean_one(struct page *page, struct vm_area_struct *vma)
+ 		pte_t entry;
+ 
+ 		flush_cache_page(vma, address, pte_pfn(*pte));
+-		entry = ptep_clear_flush(vma, address, pte);
++		entry = ptep_clear_flush_notify(vma, address, pte);
+ 		entry = pte_wrprotect(entry);
+ 		entry = pte_mkclean(entry);
+ 		set_pte_at(mm, address, pte, entry);
+@@ -636,14 +637,14 @@ static int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
+ 	 * skipped over this mm) then we should reactivate it.
+ 	 */
+ 	if (!migration && ((vma->vm_flags & VM_LOCKED) ||
+-			(ptep_clear_flush_young(vma, address, pte)))) {
++			(ptep_clear_flush_young_notify(vma, address, pte)))) {
+ 		ret = SWAP_FAIL;
+ 		goto out_unmap;
+ 	}
+ 
+ 	/* Nuke the page table entry. */
+ 	flush_cache_page(vma, address, page_to_pfn(page));
+-	pteval = ptep_clear_flush(vma, address, pte);
++	pteval = ptep_clear_flush_notify(vma, address, pte);
+ 
+ 	/* Move the dirty bit to the physical page now the pte is gone. */
+ 	if (pte_dirty(pteval))
+@@ -768,12 +769,12 @@ static void try_to_unmap_cluster(unsigned long cursor,
+ 		page = vm_normal_page(vma, address, *pte);
+ 		BUG_ON(!page || PageAnon(page));
+ 
+-		if (ptep_clear_flush_young(vma, address, pte))
++		if (ptep_clear_flush_young_notify(vma, address, pte))
+ 			continue;
+ 
+ 		/* Nuke the page table entry. */
+ 		flush_cache_page(vma, address, pte_pfn(*pte));
+-		pteval = ptep_clear_flush(vma, address, pte);
++		pteval = ptep_clear_flush_notify(vma, address, pte);
+ 
+ 		/* If nonlinear, store the file page offset in the pte. */
+ 		if (page->index != linear_page_index(vma, address))

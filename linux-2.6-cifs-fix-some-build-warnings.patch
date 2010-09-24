@@ -1,0 +1,50 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 16 Nov 2009 14:22:50 -0500
+Subject: [cifs] fix some build warnings
+Message-id: <1258381372-19132-5-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21379
+O-Subject: [RHEL5.5 PATCH 4/6] BZ#513410: cifs: remove some build warnings
+Bugzilla: 513410
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Steve French <sfrench@us.ibm.com>
+
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index 5c87bc9..fe8946f 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -2301,6 +2301,7 @@ cleanup_volume_info(struct smb_vol **pvolume_info)
+ 	return;
+ }
+ 
++#ifdef CONFIG_CIFS_DFS_UPCALL
+ /* build_path_to_root returns full path to root when
+  * we do not have an exiting connection (tcon) */
+ static char *
+@@ -2330,6 +2331,7 @@ build_unc_path_to_root(const struct smb_vol *volume_info,
+ 	full_path[unc_len + cifs_sb->prepathlen] = 0; /* add trailing null */
+ 	return full_path;
+ }
++#endif
+ 
+ int
+ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+@@ -2342,12 +2344,12 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 	struct cifsTconInfo *tcon = NULL;
+ 	struct TCP_Server_Info *srvTcp = NULL;
+ 	char   *full_path;
++	char *mount_data = mount_data_global;
++#ifdef CONFIG_CIFS_DFS_UPCALL
+ 	struct dfs_info3_param *referrals = NULL;
+ 	unsigned int num_referrals = 0;
+-
+-	char *mount_data = mount_data_global;
+-
+ try_mount_again:
++#endif
+ 	full_path = NULL;
+ 
+ 	xid = GetXid();

@@ -1,0 +1,184 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 18 Nov 2009 14:29:07 -0500
+Subject: [ppc] fix compile warnings in eeh code
+Message-id: <20091118142827.8557.72565.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 21414
+O-Subject: [RHEL5 PATCH]: ppc64/powerpc: fix compile in eeh code
+Bugzilla: 538407
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+My RHEL5 commit b421ee2a793b891ce195c979fd329e3d4e30d510 erroneously changed
+some powerpc functions to return int.  My scripts failed and I missed the
+resulting compile wreckage.
+
+Revert these changes.
+
+Successfully compiled on pp64.
+
+[root@ibm-js12-vios-01-lp2 kernel]# make -j5
+CHK     include/linux/version.h
+CHK     include/linux/utsrelease.h
+CHK     include/linux/compile.h
+CC      arch/powerpc/platforms/pseries/eeh_driver.o
+LD      arch/powerpc/platforms/pseries/built-in.o
+LD      arch/powerpc/platforms/built-in.o
+GEN     .version
+CHK     include/linux/compile.h
+UPD     include/linux/compile.h
+CC      init/version.o
+LD      init/built-in.o
+
+Resolves BZ 538407.
+
+diff --git a/arch/powerpc/platforms/pseries/eeh_driver.c b/arch/powerpc/platforms/pseries/eeh_driver.c
+index 80f93ca..56096eb 100644
+--- a/arch/powerpc/platforms/pseries/eeh_driver.c
++++ b/arch/powerpc/platforms/pseries/eeh_driver.c
+@@ -119,7 +119,7 @@ static void eeh_enable_irq(struct pci_dev *dev)
+  * passed back in "userdata".
+  */
+ 
+-static int eeh_report_error(struct pci_dev *dev, void *userdata)
++static void eeh_report_error(struct pci_dev *dev, void *userdata)
+ {
+ 	enum pci_ers_result rc, *res = userdata;
+ 	struct pci_driver *driver = dev->driver;
+@@ -127,21 +127,19 @@ static int eeh_report_error(struct pci_dev *dev, void *userdata)
+ 	dev->error_state = pci_channel_io_frozen;
+ 
+ 	if (!driver)
+-		return 0;
++		return;
+ 
+ 	eeh_disable_irq(dev);
+ 
+ 	if (!driver->err_handler ||
+ 	    !driver->err_handler->error_detected)
+-		return 0;
++		return;
+ 
+ 	rc = driver->err_handler->error_detected (dev, pci_channel_io_frozen);
+ 
+ 	/* A driver that needs a reset trumps all others */
+ 	if (rc == PCI_ERS_RESULT_NEED_RESET) *res = rc;
+ 	if (*res == PCI_ERS_RESULT_NONE) *res = rc;
+-
+-	return 0;
+ }
+ 
+ /**
+@@ -152,7 +150,7 @@ static int eeh_report_error(struct pci_dev *dev, void *userdata)
+  * Cumulative response passed back in "userdata".
+  */
+ 
+-static int eeh_report_mmio_enabled(struct pci_dev *dev, void *userdata)
++static void eeh_report_mmio_enabled(struct pci_dev *dev, void *userdata)
+ {
+ 	enum pci_ers_result rc, *res = userdata;
+ 	struct pci_driver *driver = dev->driver;
+@@ -160,28 +158,26 @@ static int eeh_report_mmio_enabled(struct pci_dev *dev, void *userdata)
+ 	if (!driver ||
+ 	    !driver->err_handler ||
+ 	    !driver->err_handler->mmio_enabled)
+-		return 0;
++		return;
+ 
+ 	rc = driver->err_handler->mmio_enabled (dev);
+ 
+ 	/* A driver that needs a reset trumps all others */
+ 	if (rc == PCI_ERS_RESULT_NEED_RESET) *res = rc;
+ 	if (*res == PCI_ERS_RESULT_NONE) *res = rc;
+-
+-	return 0;
+ }
+ 
+ /**
+  * eeh_report_reset - tell device that slot has been reset
+  */
+ 
+-static int eeh_report_reset(struct pci_dev *dev, void *userdata)
++static void eeh_report_reset(struct pci_dev *dev, void *userdata)
+ {
+ 	enum pci_ers_result rc, *res = userdata;
+ 	struct pci_driver *driver = dev->driver;
+ 
+ 	if (!driver)
+-		return 0;
++		return;
+ 
+ 	dev->error_state = pci_channel_io_normal;
+ 
+@@ -189,39 +185,35 @@ static int eeh_report_reset(struct pci_dev *dev, void *userdata)
+ 
+ 	if (!driver->err_handler ||
+ 	    !driver->err_handler->slot_reset)
+-		return 0;
++		return;
+ 
+ 	rc = driver->err_handler->slot_reset(dev);
+ 	if ((*res == PCI_ERS_RESULT_NONE) ||
+ 	    (*res == PCI_ERS_RESULT_RECOVERED)) *res = rc;
+ 	if (*res == PCI_ERS_RESULT_DISCONNECT &&
+ 	     rc == PCI_ERS_RESULT_NEED_RESET) *res = rc;
+-
+-	return 0;
+ }
+ 
+ /**
+  * eeh_report_resume - tell device to resume normal operations
+  */
+ 
+-static int eeh_report_resume(struct pci_dev *dev, void *userdata)
++static void eeh_report_resume(struct pci_dev *dev, void *userdata)
+ {
+ 	struct pci_driver *driver = dev->driver;
+ 
+ 	dev->error_state = pci_channel_io_normal;
+ 
+ 	if (!driver)
+-		return 0;
++		return;
+ 
+ 	eeh_enable_irq(dev);
+ 
+ 	if (!driver->err_handler ||
+ 	    !driver->err_handler->resume)
+-		return 0;
++		return;
+ 
+ 	driver->err_handler->resume(dev);
+-
+-	return 0;
+ }
+ 
+ /**
+@@ -231,24 +223,22 @@ static int eeh_report_resume(struct pci_dev *dev, void *userdata)
+  * dead, and that no further recovery attempts will be made on it.
+  */
+ 
+-static int eeh_report_failure(struct pci_dev *dev, void *userdata)
++static void eeh_report_failure(struct pci_dev *dev, void *userdata)
+ {
+ 	struct pci_driver *driver = dev->driver;
+ 
+ 	dev->error_state = pci_channel_io_perm_failure;
+ 
+ 	if (!driver)
+-		return 0;
++		return;
+ 
+ 	eeh_disable_irq(dev);
+ 
+ 	if (!driver->err_handler ||
+ 	    !driver->err_handler->error_detected)
+-		return 0;
++		return;
+ 
+ 	driver->err_handler->error_detected(dev, pci_channel_io_perm_failure);
+-
+-	return 0;
+ }
+ 
+ /* ------------------------------------------------------- */

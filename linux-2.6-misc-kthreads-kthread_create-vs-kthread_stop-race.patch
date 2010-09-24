@@ -1,0 +1,48 @@
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Mon, 24 Aug 2009 12:08:10 +0200
+Subject: [misc] kthreads: kthread_create vs kthread_stop() race
+Message-id: 20090824100810.GA5281@redhat.com
+O-Subject: [RHEL-5 PATCH] BZ#440273 kthreads: fix kthread_create() vs kthread_stop() race
+Bugzilla: 440273
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+Addresses https://bugzilla.redhat.com/show_bug.cgi?id=440273, but the
+bug can lead to other misc problems.
+
+Upstream status: the bug should be fixed "by accident" in 2.6.31 during
+rewrite of create/stop code. All released kernels have the same bug, I'll
+send this fix to -stable.
+
+Credits to Robert Peterson. He blaimed kthread.c from the very beginning.
+But, despite my promise, I forgot to inspect the old implementation until
+he did a lot of testing and reminded me. This led to huge delay in fixing
+this bug.
+
+kthread_stop() does put_task_struct(k) before it clears kthread_stop_info.k.
+This means another kthread_create() can re-use this task_struct, but the
+new kthread can still see kthread_should_stop() == T and exit even without
+calling threadfn().
+
+Reported-by: Robert Peterson <rpeterso@redhat.com>
+Tested-by: Robert Peterson <rpeterso@redhat.com>
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+
+diff --git a/kernel/kthread.c b/kernel/kthread.c
+index cb4af43..26c46a0 100644
+--- a/kernel/kthread.c
++++ b/kernel/kthread.c
+@@ -240,12 +240,12 @@ int kthread_stop(struct task_struct *k)
+ 	/* Now set kthread_should_stop() to true, and wake it up. */
+ 	kthread_stop_info.k = k;
+ 	wake_up_process(k);
+-	put_task_struct(k);
+ 
+ 	/* Once it dies, reset stop ptr, gather result and we're done. */
+ 	wait_for_completion(&kthread_stop_info.done);
+ 	kthread_stop_info.k = NULL;
+ 	ret = kthread_stop_info.err;
++	put_task_struct(k);
+ 	mutex_unlock(&kthread_stop_lock);
+ 
+ 	return ret;

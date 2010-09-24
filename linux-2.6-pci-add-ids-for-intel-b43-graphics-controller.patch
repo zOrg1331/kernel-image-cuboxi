@@ -1,0 +1,138 @@
+From: John Villalovos <jvillalo@redhat.com>
+Date: Thu, 29 Oct 2009 17:28:18 -0400
+Subject: [pci] add ids for intel b43 graphics controller
+Message-id: <20091029172817.GA4017@linuxjohn.usersys.redhat.com>
+Patchwork-id: 21251
+O-Subject: [RHEL 5.5 BZ523637] Update PCI.IDS for Intel B43 Graphics controller
+Bugzilla: 523637
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+Update PCI.IDS for Intel B43 Graphics controller:
+https://bugzilla.redhat.com/show_bug.cgi?id=523637
+
+This patch adds support for the B43 graphics controller and also adds some
+missing support for the G41 graphics controller that was previously missed.
+
+Backport of the following commits:
+    Upstream commit 72021788678523047161e97b3dfed695e802a5fd
+    Upstream Author: Zhenyu Wang <zhenyu.z.wang@intel.com>
+    Date:   Mon Nov 17 13:58:11 2008 +0800
+
+	drm/i915: add support for G41 chipset
+
+	This had been delayed for some time due to failure to work on the one piece
+	of G41 hardware we had, and lack of success reports from anybody else.
+	Current hardware appears to be OK.
+
+    Upstream commit 7839c5d5519b6d9e2ccf3cdbf1c39e3817ad0835
+    Upstream Author: Fabian Henze <hoacha@quantentunnel.de>
+    Date:   Tue Sep 8 00:59:59 2009 +0800
+
+	drm/i915: add B43 chipset support
+
+    Upstream commit 38d8a95621b20ed7868e232a35a26ee61bdcae6f
+    Upstream Author: Fabian Henze <hoacha@quantentunnel.de>
+    Date:   Tue Sep 8 00:59:58 2009 +0800
+
+	agp/intel: Add B43 chipset support
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2046937
+
+RHTS test pass:
+http://rhts.redhat.com/cgi-bin/rhts/jobs.cgi?id=95671
+
+Tested at Intel sucessfully
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/char/agp/intel-agp.c b/drivers/char/agp/intel-agp.c
+index e2db05d..1634257 100644
+--- a/drivers/char/agp/intel-agp.c
++++ b/drivers/char/agp/intel-agp.c
+@@ -40,6 +40,8 @@
+ #define PCI_DEVICE_ID_INTEL_G45_IG          0x2E22
+ #define PCI_DEVICE_ID_INTEL_G41_HB          0x2E30
+ #define PCI_DEVICE_ID_INTEL_G41_IG          0x2E32
++#define PCI_DEVICE_ID_INTEL_B43_HB          0x2E40
++#define PCI_DEVICE_ID_INTEL_B43_IG          0x2E42
+ #define PCI_DEVICE_ID_INTEL_IRONLAKE_D_HB	    0x0040
+ #define PCI_DEVICE_ID_INTEL_IRONLAKE_D_IG	    0x0042
+ #define PCI_DEVICE_ID_INTEL_IRONLAKE_M_HB	    0x0044
+@@ -71,6 +73,7 @@
+ 		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_G45_HB || \
+ 		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_GM45_HB || \
+ 		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_G41_HB || \
++		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_B43_HB || \
+ 		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_IRONLAKE_D_HB || \
+ 		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_IRONLAKE_M_HB || \
+ 		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_IRONLAKE_MA_HB || \
+@@ -1009,6 +1012,7 @@ static void intel_i965_get_gtt_range(int *gtt_offset, int *gtt_size)
+ 	case PCI_DEVICE_ID_INTEL_Q45_HB:
+ 	case PCI_DEVICE_ID_INTEL_G45_HB:
+ 	case PCI_DEVICE_ID_INTEL_G41_HB:
++	case PCI_DEVICE_ID_INTEL_B43_HB:
+ 	case PCI_DEVICE_ID_INTEL_IRONLAKE_D_HB:
+ 	case PCI_DEVICE_ID_INTEL_IRONLAKE_M_HB:
+ 	case PCI_DEVICE_ID_INTEL_IRONLAKE_MA_HB:
+@@ -2127,6 +2131,13 @@ static int __devinit agp_intel_probe(struct pci_dev *pdev,
+ 		} else
+ 			bridge->driver = NULL;
+ 		break;
++	case PCI_DEVICE_ID_INTEL_B43_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_B43_IG)) {
++			bridge->driver = &intel_i965_driver;
++			name = "B43";
++		} else
++			bridge->driver = NULL;
++		break;
+ 	case PCI_DEVICE_ID_INTEL_IRONLAKE_D_HB:
+ 		if (find_i830(PCI_DEVICE_ID_INTEL_IRONLAKE_D_IG)) {
+ 			bridge->driver = &intel_i965_driver;
+@@ -2325,6 +2336,7 @@ static struct pci_device_id agp_intel_pci_table[] = {
+ 	ID(PCI_DEVICE_ID_INTEL_Q45_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_G45_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_G41_HB),
++	ID(PCI_DEVICE_ID_INTEL_B43_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_IRONLAKE_D_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_IRONLAKE_M_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_IRONLAKE_MA_HB),
+diff --git a/drivers/char/drm/drm_pciids.h b/drivers/char/drm/drm_pciids.h
+index aad17c9..1a22cdc 100644
+--- a/drivers/char/drm/drm_pciids.h
++++ b/drivers/char/drm/drm_pciids.h
+@@ -392,6 +392,8 @@
+ 	{0x8086, 0x2e02, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
+ 	{0x8086, 0x2e12, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
+ 	{0x8086, 0x2e22, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x2e32, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x2e42, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
+ 	{0x8086, 0x29C2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+ 	{0x8086, 0x29B2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+ 	{0x8086, 0x29D2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+diff --git a/drivers/char/drm/i915_dma.c b/drivers/char/drm/i915_dma.c
+index 94aa7d0..aeb1c75 100644
+--- a/drivers/char/drm/i915_dma.c
++++ b/drivers/char/drm/i915_dma.c
+@@ -41,6 +41,8 @@
+ 			dev->pdev->device == 0x2e02 || \
+ 			dev->pdev->device == 0x2e12 || \
+ 			dev->pdev->device == 0x2e22 || \
++			dev->pdev->device == 0x2e32 || \
++			dev->pdev->device == 0x2e42 || \
+ 			dev->pdev->device == 0x0042 || \
+ 			dev->pdev->device == 0x0046)
+ 
+@@ -52,7 +54,9 @@
+ 
+ #define IS_G4X(dev)	(dev->pdev->device == 0x2e02 || \
+ 			 dev->pdev->device == 0x2e12 || \
+-			 dev->pdev->device == 0x2e22)
++			 dev->pdev->device == 0x2e22 || \
++			 dev->pdev->device == 0x2e32 || \
++			 dev->pdev->device == 0x2e42)
+ 
+ #define IS_IRONLAKE_D(dev)	((dev)->pdev->device == 0x0042)
+ #define IS_IRONLAKE_M(dev)	((dev)->pdev->device == 0x0046)

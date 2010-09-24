@@ -1,0 +1,68 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 26 Feb 2009 18:01:06 +0100
+Subject: [s390] dasd: fix waitqueue for sleep_on_immediatly
+Message-id: 20090226170106.GC17830@redhat.com
+O-Subject: Re: [RHEL5 U4 PATCH 1/1] s390 - dasd: fix waitqueue for sleep_on_immediatly
+Bugzilla: 480161
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+Description: dasd fix waitqueue for sleep_on_immediatly
+
+Currently tools like tunedasd -S will hang
+The problem is caused by the fact that the callback_data
+for dasd_sleep_on_immediatly contains the wrong waitqueue
+
+Chaining the waitqueue to generic_waitqueue fixes the problem.
+
+Bugzilla
+=========
+
+BZ 480161
+https://bugzilla.redhat.com/show_bug.cgi?id=480161
+
+Upstream status of the patch:
+=============================
+
+The fix is upstream as of git commit
+c80ee724966a8ce9a68020d9095233fb1c6f57e8
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=c80ee724966a8ce9a68020d9095233fb1c6f57e8
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+        --Hans
+
+diff --git a/drivers/s390/block/dasd.c b/drivers/s390/block/dasd.c
+index 72d837f..6414a4c 100644
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -1656,7 +1656,6 @@ _dasd_term_running_cqr(struct dasd_device *device)
+ int
+ dasd_sleep_on_immediatly(struct dasd_ccw_req * cqr)
+ {
+-	wait_queue_head_t wait_q;
+ 	struct dasd_device *device;
+ 	int rc;
+ 
+@@ -1668,9 +1667,8 @@ dasd_sleep_on_immediatly(struct dasd_ccw_req * cqr)
+ 		return rc;
+ 	}
+ 
+-	init_waitqueue_head (&wait_q);
+ 	cqr->callback = dasd_wakeup_cb;
+-	cqr->callback_data = (void *) &wait_q;
++	cqr->callback_data = (void *) &generic_waitq;
+ 	cqr->status = DASD_CQR_QUEUED;
+ 	list_add(&cqr->list, &device->ccw_queue);
+ 

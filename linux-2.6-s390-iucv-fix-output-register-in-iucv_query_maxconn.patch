@@ -1,0 +1,58 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 22 Sep 2009 22:14:57 +0200
+Subject: [s390] iucv: fix output register in iucv_query_maxconn
+Message-id: 20090922201457.GD32244@blc4eb509856389.ibm.com
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - iucv: use correct output register in iucv_query_maxconn()
+Bugzilla: 524251
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+
+Description
+===========
+When querying the maximum number of iucv connections, the
+wrong output register is used.
+
+As result, kernel messages are logged reporting that the
+iucv "pathid" is greater than "max_connections".
+
+To solve this problem, use the correct output register when
+querying the maximum number of IUCV connections.
+
+Bugzilla
+========
+
+BZ 524251
+https://bugzilla.redhat.com/show_bug.cgi?id=524251
+
+Upstream status of the patch
+============================
+
+The patch will be upstream as of kernel version 2.6.32
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=b29e4da41eb1114080b06dce31326d5a0e96a15
+
+Test status
+===========
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	Hans
+
+diff --git a/net/iucv/iucv.c b/net/iucv/iucv.c
+index b14e081..516acd2 100644
+--- a/net/iucv/iucv.c
++++ b/net/iucv/iucv.c
+@@ -332,7 +332,7 @@ static int iucv_query_maxconn(void)
+ 		"	srl	%0,28\n"
+ 		: "=d" (ccode), "+d" (reg0), "+d" (reg1) : : "cc");
+ 	if (ccode == 0)
+-		iucv_max_pathid = reg0;
++		iucv_max_pathid = reg1;
+ 	kfree(param);
+ 	return ccode ? -EPERM : 0;
+ }

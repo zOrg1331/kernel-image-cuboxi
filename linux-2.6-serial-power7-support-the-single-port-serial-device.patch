@@ -1,0 +1,95 @@
+From: Kevin Monroe <kmonroe@redhat.com>
+Date: Fri, 30 Oct 2009 17:07:09 -0400
+Subject: [serial] power7: support the single-port serial device
+Message-id: 4AEB557D.2050902@redhat.com
+O-Subject: Re: [PATCH RHEL5.5 BZ525812] Support the single-port serial device on IBM Power 7 hardware
+Bugzilla: 525812
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+>> RHBZ#:
+>> ======
+>> https://bugzilla.redhat.com/show_bug.cgi?id=525812
+>>
+>> Description:
+>> ============
+>> The serial card on IBM Power 7 HV4 systems only has one port. This design
+>> requires kernel changes in order to detect and present the single-port
+>> configuation properly. Without this fix, the kernel thinks it has two ports,
+>> which confuses userland setup and admin tools as well.
+>>
+>> The patch needed is a simple change to the 8250 driver. The patch is submitted
+>> upstreams and is expected to be included in 2.6.33.
+>>
+>> RHEL Version Found:
+>> ===================
+>> RHEL 5.5
+>>
+>> kABI Status:
+>> ============
+>> No symbols were harmed.
+>>
+>> Brew:
+>> =====
+>> Built on all platforms:
+>> https://brewweb.devel.redhat.com/taskinfo?taskID=2053923
+>>
+>> Upstream Status:
+>> ================
+>> This patch has been submitted upstream and is expected in 2.6.33. LKML:
+>> http://lkml.org/lkml/2009/10/13/572
+>>
+>> Test Status:
+>> ============
+>> Device functions as expected with this patch to the 8250 driver.
+>>
+
+diff --git a/drivers/serial/8250_pci.c b/drivers/serial/8250_pci.c
+index cca3d60..de8d420 100644
+--- a/drivers/serial/8250_pci.c
++++ b/drivers/serial/8250_pci.c
+@@ -1015,6 +1015,7 @@ enum pci_board_num_t {
+ 	pbn_exar_XR17C152,
+ 	pbn_exar_XR17C154,
+ 	pbn_exar_XR17C158,
++	pbn_exar_ibm_saturn,
+ };
+ 
+ /*
+@@ -1536,6 +1537,12 @@ static struct pciserial_board pci_boards[] __devinitdata = {
+ 		.base_baud	= 921600,
+ 		.uart_offset	= 0x200,
+ 	},
++	[pbn_exar_ibm_saturn] = {
++		.flags		= FL_BASE0,
++		.num_ports	= 1,
++		.base_baud	= 921600,
++		.uart_offset	= 0x200,
++	},
+ };
+ 
+ /*
+@@ -1943,6 +1950,10 @@ static struct pci_device_id serial_pci_tbl[] = {
+ 		PCI_SUBDEVICE_ID_CONNECT_TECH_PCI_UART_8_232, 0, 0,
+ 		pbn_b0_8_1843200_200 },
+ 	{	PCI_VENDOR_ID_EXAR, PCI_DEVICE_ID_EXAR_XR17C152,
++		PCI_SUBVENDOR_ID_IBM,
++		PCI_SUBDEVICE_ID_IBM_SATURN_SERIAL_ONE_PORT, 0, 0,
++		pbn_exar_ibm_saturn },
++	{	PCI_VENDOR_ID_EXAR, PCI_DEVICE_ID_EXAR_XR17C152,
+ 		PCI_SUBVENDOR_ID_CONNECT_TECH,
+ 		PCI_SUBDEVICE_ID_CONNECT_TECH_PCI_UART_1_1, 0, 0,
+ 		pbn_b0_2_1843200_200 },
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 93a983e..06e43c1 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -470,6 +470,8 @@
+ #define PCI_DEVICE_ID_IBM_ICOM_V2_ONE_PORT_RVX_ONE_PORT_MDM	0x0251
+ #define PCI_DEVICE_ID_IBM_ICOM_FOUR_PORT_MODEL	0x252
+ #define PCI_DEVICE_ID_IBM_ICOM_V2_ONE_PORT_RVX_ONE_PORT_MDM_PCIE	0x0361
++#define PCI_SUBVENDOR_ID_IBM				0x1014
++#define PCI_SUBDEVICE_ID_IBM_SATURN_SERIAL_ONE_PORT	0x03d4
+ 
+ #define PCI_VENDOR_ID_UNISYS		0x1018
+ #define PCI_DEVICE_ID_UNISYS_DMA_DIRECTOR 0x001C

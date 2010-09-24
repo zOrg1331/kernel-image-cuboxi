@@ -1,0 +1,81 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Tue, 24 Nov 2009 10:04:31 -0500
+Subject: [s390] kernel: fix single stepping on svc0
+Message-id: <20091124100431.GA31573@redhat.com>
+Patchwork-id: 21473
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - kernel: fix single stepping on svc0
+Bugzilla: 540527
+RH-Acked-by: Jon Masters <jcm@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+===========
+If a system call number > 256 is single stepped or svc 0
+is single stepped the system call is not executed.
+
+The per svc handling uses register 1 for the thread pointer
+before calling the core system call handler.  The problem is,
+that the core system call handler still needs the old content
+of register r1 in case of an svc 0 instruction.
+Since r1 contains a high value (pointer) the system call
+returns ENOSYS.
+
+The solution is to use the unused register r8 instead of r1
+for the scvper helper function.
+
+Bugzilla
+========
+BZ 540527
+https://bugzilla.redhat.com/show_bug.cgi?id=540527
+
+Upstream status of the patch
+============================
+The patch is upstream as of kernel version 2.6.32
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=bcc6525fb23d2cec7ffdf908d98826a66823bcb2
+
+Test status
+===========
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/arch/s390/kernel/entry.S b/arch/s390/kernel/entry.S
+index 35a1aa1..520a112 100644
+--- a/arch/s390/kernel/entry.S
++++ b/arch/s390/kernel/entry.S
+@@ -529,10 +529,10 @@ pgm_no_vtime3:
+ #endif
+ 	lh	%r7,0x8a		# get svc number from lowcore
+ 	l	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
+-	l	%r1,__TI_task(%r9)
+-	mvc	__THREAD_per+__PER_atmid(2,%r1),__LC_PER_ATMID
+-	mvc	__THREAD_per+__PER_address(4,%r1),__LC_PER_ADDRESS
+-	mvc	__THREAD_per+__PER_access_id(1,%r1),__LC_PER_ACCESS_ID
++	l	%r8,__TI_task(%r9)
++	mvc	__THREAD_per+__PER_atmid(2,%r8),__LC_PER_ATMID
++	mvc	__THREAD_per+__PER_address(4,%r8),__LC_PER_ADDRESS
++	mvc	__THREAD_per+__PER_access_id(1,%r8),__LC_PER_ACCESS_ID
+ 	oi	__TI_flags+3(%r9),_TIF_SINGLE_STEP # set TIF_SINGLE_STEP
+ 	TRACE_IRQS_ON
+ 	stosm	__SF_EMPTY(%r15),0x03	# reenable interrupts
+diff --git a/arch/s390/kernel/entry64.S b/arch/s390/kernel/entry64.S
+index 082b6cd..f1438fd 100644
+--- a/arch/s390/kernel/entry64.S
++++ b/arch/s390/kernel/entry64.S
+@@ -546,10 +546,10 @@ pgm_no_vtime3:
+ #endif
+ 	llgh    %r7,__LC_SVC_INT_CODE	# get svc number from lowcore
+ 	lg	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
+-	lg	%r1,__TI_task(%r9)
+-	mvc	__THREAD_per+__PER_atmid(2,%r1),__LC_PER_ATMID
+-	mvc	__THREAD_per+__PER_address(8,%r1),__LC_PER_ADDRESS
+-	mvc	__THREAD_per+__PER_access_id(1,%r1),__LC_PER_ACCESS_ID
++	lg	%r8,__TI_task(%r9)
++	mvc	__THREAD_per+__PER_atmid(2,%r8),__LC_PER_ATMID
++	mvc	__THREAD_per+__PER_address(8,%r8),__LC_PER_ADDRESS
++	mvc	__THREAD_per+__PER_access_id(1,%r8),__LC_PER_ACCESS_ID
+ 	oi	__TI_flags+7(%r9),_TIF_SINGLE_STEP # set TIF_SINGLE_STEP
+ 	TRACE_IRQS_ON
+ 	stosm	__SF_EMPTY(%r15),0x03	# reenable interrupts

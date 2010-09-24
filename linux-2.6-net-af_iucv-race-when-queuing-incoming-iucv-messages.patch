@@ -1,0 +1,86 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 7 May 2009 18:21:01 +0200
+Subject: [net] af_iucv: race when queuing incoming iucv messages
+Message-id: 20090507162101.GB5241@redhat.com
+O-Subject: [RHEL5 U4 PATCH 1/1] s390 - af_iucv: Fix race when queuing incoming iucv messages
+Bugzilla: 499626
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Description
+============
+
+AF_IUCV runs into a race when queuing incoming iucv messages
+and receiving the resulting backlog.
+
+If the Linux system is under pressure (high load or steal time),
+the message queue grows up, but messages are not received and queued
+onto the backlog queue. In that case, applications do not
+receive any data with recvmsg() even if AF_IUCV puts incoming
+messages onto the message queue.
+
+The race can be avoided if the message queue spinlock in the
+message_pending callback is spreaded across the entire callback
+function.
+
+Bugzilla
+=========
+
+BZ 499626
+https://bugzilla.redhat.com/show_bug.cgi?id=499626
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=3fa6b5adbe46b3d665267dee0f879858ab464f44
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/net/iucv/af_iucv.c b/net/iucv/af_iucv.c
+index 1b789b9..18a809b 100644
+--- a/net/iucv/af_iucv.c
++++ b/net/iucv/af_iucv.c
+@@ -1110,6 +1110,8 @@ static void iucv_callback_rx(struct iucv_path *path, struct iucv_message *msg)
+ 	if (sk->sk_shutdown & RCV_SHUTDOWN)
+ 		return;
+ 
++	spin_lock(&iucv->message_q.lock);
++
+ 	if (!list_empty(&iucv->message_q.list) ||
+ 	    !skb_queue_empty(&iucv->backlog_skb_q))
+ 		goto save_message;
+@@ -1123,11 +1125,8 @@ static void iucv_callback_rx(struct iucv_path *path, struct iucv_message *msg)
+ 	if (!skb)
+ 		goto save_message;
+ 
+-	spin_lock(&iucv->message_q.lock);
+ 	iucv_process_message(sk, skb, path, msg);
+-	spin_unlock(&iucv->message_q.lock);
+-
+-	return;
++	goto out_unlock;
+ 
+ save_message:
+ 	save_msg = kzalloc(sizeof(struct sock_msg_q), GFP_ATOMIC | GFP_DMA);
+@@ -1136,8 +1135,9 @@ save_message:
+ 	save_msg->path = path;
+ 	save_msg->msg = *msg;
+ 
+-	spin_lock(&iucv->message_q.lock);
+ 	list_add_tail(&save_msg->list, &iucv->message_q.list);
++
++out_unlock:
+ 	spin_unlock(&iucv->message_q.lock);
+ }
+ 

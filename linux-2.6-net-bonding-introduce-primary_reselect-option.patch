@@ -1,0 +1,320 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 8 Oct 2009 13:05:53 -0400
+Subject: [net] bonding: introduce primary_reselect option
+Message-id: <20091008130552.GI3255@psychotron.lab.eng.brq.redhat.com>
+Patchwork-id: 21066
+O-Subject: [RHEL5.5 patch 2/2] BZ471532 net: bonding: introduce
+	primary_reselect option
+Bugzilla: 471532
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+Description:
+In some cases there is not desirable to switch back to primary interface when
+it's link recovers and rather stay with currently active one. We need to avoid
+packetloss as much as we can in some cases. This is solved by introducing
+primary_reselect option. Note that enslaved primary slave is set as current
+active no matter what.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/davem/net-next-2.6.git;a=commitdiff;h=a549952ad323d68daf5b50bf716db895479af84c
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/Documentation/networking/bonding.txt b/Documentation/networking/bonding.txt
+index 772074b..3af144b 100644
+--- a/Documentation/networking/bonding.txt
++++ b/Documentation/networking/bonding.txt
+@@ -523,6 +523,44 @@ primary
+ 
+ 	The primary option is only valid for active-backup mode.
+ 
++primary_reselect
++
++	Specifies the reselection policy for the primary slave.  This
++	affects how the primary slave is chosen to become the active slave
++	when failure of the active slave or recovery of the primary slave
++	occurs.  This option is designed to prevent flip-flopping between
++	the primary slave and other slaves.  Possible values are:
++
++	always or 0 (default)
++
++		The primary slave becomes the active slave whenever it
++		comes back up.
++
++	better or 1
++
++		The primary slave becomes the active slave when it comes
++		back up, if the speed and duplex of the primary slave is
++		better than the speed and duplex of the current active
++		slave.
++
++	failure or 2
++
++		The primary slave becomes the active slave only if the
++		current active slave fails and the primary slave is up.
++
++	The primary_reselect setting is ignored in two cases:
++
++		If no slaves are active, the first slave to recover is
++		made the active slave.
++
++		When initially enslaved, the primary slave is always made
++		the active slave.
++
++	Changing the primary_reselect policy via sysfs will cause an
++	immediate selection of the best active slave according to the new
++	policy.  This may or may not result in a change of the active
++	slave, depending upon the circumstances.
++
+ updelay
+ 
+ 	Specifies the time, in milliseconds, to wait before enabling a
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 61c74bf..23f2617 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -95,6 +95,7 @@ static int updelay	= 0;
+ static int downdelay	= 0;
+ static int use_carrier	= 1;
+ static char *mode	= NULL;
++static char *primary_reselect = 0;
+ static char *primary	= NULL;
+ static char *lacp_rate	= NULL;
+ static char *xmit_hash_policy = NULL;
+@@ -127,6 +128,14 @@ MODULE_PARM_DESC(mode, "Mode of operation : 0 for balance-rr, "
+ 		       "6 for balance-alb");
+ module_param(primary, charp, 0);
+ MODULE_PARM_DESC(primary, "Primary network device to use");
++module_param(primary_reselect, charp, 0);
++MODULE_PARM_DESC(primary_reselect, "Reselect primary slave "
++				   "once it comes up; "
++				   "0 for always (default), "
++				   "1 for only if speed of primary is "
++				   "better, "
++				   "2 for only on active slave "
++				   "failure");
+ module_param(lacp_rate, charp, 0);
+ MODULE_PARM_DESC(lacp_rate, "LACPDU tx rate to request from 802.3ad partner "
+ 			    "(slow/fast)");
+@@ -200,6 +209,13 @@ struct bond_parm_tbl fail_over_mac_tbl[] = {
+ {	NULL,			-1},
+ };
+ 
++struct bond_parm_tbl pri_reselect_tbl[] = {
++{       "always",		BOND_PRI_RESELECT_ALWAYS},
++{       "better",		BOND_PRI_RESELECT_BETTER},
++{       "failure",		BOND_PRI_RESELECT_FAILURE},
++{       NULL,			-1},
++};
++
+ /*-------------------------- Forward declarations ---------------------------*/
+ 
+ static void bond_send_gratuitous_arp(struct bonding *bond);
+@@ -1089,6 +1105,25 @@ out:
+ 
+ }
+ 
++static bool bond_should_change_active(struct bonding *bond)
++{
++	struct slave *prim = bond->primary_slave;
++	struct slave *curr = bond->curr_active_slave;
++
++	if (!prim || !curr || curr->link != BOND_LINK_UP)
++		return true;
++	if (bond->force_primary) {
++		bond->force_primary = false;
++		return true;
++	}
++	if (bond->params.primary_reselect == BOND_PRI_RESELECT_BETTER &&
++	    (prim->speed < curr->speed ||
++	     (prim->speed == curr->speed && prim->duplex <= curr->duplex)))
++		return false;
++	if (bond->params.primary_reselect == BOND_PRI_RESELECT_FAILURE)
++		return false;
++	return true;
++}
+ 
+ /**
+  * find_best_interface - select the best available slave to be the active one
+@@ -1114,7 +1149,8 @@ static struct slave *bond_find_best_slave(struct bonding *bond)
+ 	}
+ 
+ 	if ((bond->primary_slave) &&
+-	    bond->primary_slave->link == BOND_LINK_UP) {
++	    bond->primary_slave->link == BOND_LINK_UP &&
++	    bond_should_change_active(bond)) {
+ 		new_active = bond->primary_slave;
+ 	}
+ 
+@@ -1704,6 +1740,7 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
+ 		/* if there is a primary slave, remember it */
+ 		if (strcmp(bond->params.primary, new_slave->dev->name) == 0) {
+ 			bond->primary_slave = new_slave;
++			bond->force_primary = true;
+ 		}
+ 	}
+ 
+@@ -3271,11 +3308,14 @@ static void bond_info_show_master(struct seq_file *seq)
+ 	}
+ 
+ 	if (USES_PRIMARY(bond->params.mode)) {
+-		seq_printf(seq, "Primary Slave: %s\n",
++		seq_printf(seq, "Primary Slave: %s",
+ 			   (bond->primary_slave) ?
+ 			   bond->primary_slave->dev->name : "None");
++		if (bond->primary_slave)
++			seq_printf(seq, " (primary_reselect %s)",
++		   pri_reselect_tbl[bond->params.primary_reselect].modename);
+ 
+-		seq_printf(seq, "Currently Active Slave: %s\n",
++		seq_printf(seq, "\nCurrently Active Slave: %s\n",
+ 			   (curr) ? curr->dev->name : "None");
+ 	}
+ 
+@@ -4710,7 +4750,7 @@ int bond_parse_parm(const char *buf, struct bond_parm_tbl *tbl)
+ 
+ static int bond_check_params(struct bond_params *params)
+ {
+-	int arp_validate_value, fail_over_mac_value;
++	int arp_validate_value, fail_over_mac_value, primary_reselect_value;
+ 
+ 	/*
+ 	 * Convert string parameters.
+@@ -4992,6 +5032,20 @@ static int bond_check_params(struct bond_params *params)
+ 		primary = NULL;
+ 	}
+ 
++	if (primary && primary_reselect) {
++		primary_reselect_value = bond_parse_parm(primary_reselect,
++							 pri_reselect_tbl);
++		if (primary_reselect_value == -1) {
++			printk(KERN_ERR DRV_NAME
++			       ": Error: Invalid primary_reselect \"%s\"\n",
++			       primary_reselect ==
++					NULL ? "NULL" : primary_reselect);
++			return -EINVAL;
++		}
++	} else {
++		primary_reselect_value = BOND_PRI_RESELECT_ALWAYS;
++	}
++
+ 	if (fail_over_mac) {
+ 		fail_over_mac_value = bond_parse_parm(fail_over_mac,
+ 						      fail_over_mac_tbl);
+@@ -5023,6 +5077,7 @@ static int bond_check_params(struct bond_params *params)
+ 	params->use_carrier = use_carrier;
+ 	params->lacp_fast = lacp_fast;
+ 	params->primary[0] = 0;
++	params->primary_reselect = primary_reselect_value;
+ 	params->fail_over_mac = fail_over_mac_value;
+ 
+ 	if (primary) {
+diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
+index 3958e07..53c833f 100644
+--- a/drivers/net/bonding/bond_sysfs.c
++++ b/drivers/net/bonding/bond_sysfs.c
+@@ -1144,6 +1144,54 @@ out:
+ static CLASS_DEVICE_ATTR(primary, S_IRUGO | S_IWUSR, bonding_show_primary, bonding_store_primary);
+ 
+ /*
++ * Show and set the primary_reselect flag.
++ */
++static ssize_t bonding_show_primary_reselect(struct class_device *cd,
++					     char *buf)
++{
++	struct bonding *bond = to_bond(cd);
++
++	return sprintf(buf, "%s %d\n",
++		       pri_reselect_tbl[bond->params.primary_reselect].modename,
++		       bond->params.primary_reselect);
++}
++
++static ssize_t bonding_store_primary_reselect(struct class_device *cd,
++					      const char *buf, size_t count)
++{
++	int new_value, ret = count;
++	struct bonding *bond = to_bond(cd);
++
++	rtnl_lock();
++
++	new_value = bond_parse_parm(buf, pri_reselect_tbl);
++	if (new_value < 0)  {
++		printk(KERN_ERR DRV_NAME
++		       ": %s: Ignoring invalid primary_reselect value %.*s.\n",
++		       bond->dev->name,
++		       (int) strlen(buf) - 1, buf);
++		ret = -EINVAL;
++		goto out;
++	}
++
++	bond->params.primary_reselect = new_value;
++	printk(KERN_INFO DRV_NAME
++	       ": %s: setting primary_reselect to %s (%d).\n",
++	       bond->dev->name, pri_reselect_tbl[new_value].modename,
++	       new_value);
++
++	read_lock(&bond->lock);
++	write_lock_bh(&bond->curr_slave_lock);
++	bond_select_active_slave(bond);
++	write_unlock_bh(&bond->curr_slave_lock);
++	read_unlock(&bond->lock);
++out:
++	rtnl_unlock();
++	return ret;
++}
++static CLASS_DEVICE_ATTR(primary_reselect, S_IRUGO | S_IWUSR, bonding_show_primary_reselect, bonding_store_primary_reselect);
++
++/*
+  * Show and set the use_carrier flag.
+  */
+ static ssize_t bonding_show_carrier(struct class_device *cd, char *buf)
+@@ -1407,6 +1455,7 @@ static struct attribute *per_bond_attrs[] = {
+ 	&class_device_attr_xmit_hash_policy.attr,
+ 	&class_device_attr_miimon.attr,
+ 	&class_device_attr_primary.attr,
++	&class_device_attr_primary_reselect.attr,
+ 	&class_device_attr_use_carrier.attr,
+ 	&class_device_attr_active_slave.attr,
+ 	&class_device_attr_mii_status.attr,
+diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
+index 027dc08..913380e 100644
+--- a/drivers/net/bonding/bonding.h
++++ b/drivers/net/bonding/bonding.h
+@@ -138,6 +138,7 @@ struct bond_params {
+ 	int downdelay;
+ 	int lacp_fast;
+ 	char primary[IFNAMSIZ];
++	int primary_reselect;
+ 	__be32 arp_targets[BOND_MAX_ARP_TARGETS];
+ };
+ 
+@@ -202,6 +203,7 @@ struct bonding {
+ 	struct   slave *curr_active_slave;
+ 	struct   slave *current_arp_slave;
+ 	struct   slave *primary_slave;
++	bool     force_primary;
+ 	s32      slave_cnt; /* never change this value outside the attach/detach wrappers */
+ 	rwlock_t lock;
+ 	rwlock_t curr_slave_lock;
+@@ -264,6 +266,10 @@ static inline struct bonding *bond_get_bond_by_slave(struct slave *slave)
+ 	return (struct bonding *)slave->dev->master->priv;
+ }
+ 
++#define BOND_PRI_RESELECT_ALWAYS	0
++#define BOND_PRI_RESELECT_BETTER	1
++#define BOND_PRI_RESELECT_FAILURE	2
++
+ #define BOND_FOM_NONE			0
+ #define BOND_FOM_ACTIVE			1
+ #define BOND_FOM_FOLLOW			2
+@@ -356,6 +362,7 @@ extern struct bond_parm_tbl bond_mode_tbl[];
+ extern struct bond_parm_tbl xmit_hashtype_tbl[];
+ extern struct bond_parm_tbl arp_validate_tbl[];
+ extern struct bond_parm_tbl fail_over_mac_tbl[];
++extern struct bond_parm_tbl pri_reselect_tbl[];
+ 
+ #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+ void bond_send_unsolicited_na(struct bonding *bond);

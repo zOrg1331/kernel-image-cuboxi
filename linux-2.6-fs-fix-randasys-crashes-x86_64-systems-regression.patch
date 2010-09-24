@@ -1,0 +1,88 @@
+From: Peter Bogdanovic <pbogdano@redhat.com>
+Date: Thu, 18 Feb 2010 00:42:33 -0500
+Subject: [fs] fix randasys crashes x86_64 systems regression
+Message-id: <20100218003505.12757.68204.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 23324
+O-Subject: [PATCH RHEL5.5 1/1 BZ563857] "randasys" crashes x86_64 systems
+	regression
+Bugzilla: 562857
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=562857
+
+Description:
+===========
+Fix to the anon_inode_getfd
+
+The problem is that 'fput' call is at the goto's and both the goto labels
+are called before the dentry was initialized in the code. This patch
+fixes it and is baseded on the flow of anon_inode_getfd in the current
+mainline kernel. Patch uses the dput instead of the fput.  Other
+functionality of the anon_inode_getfd remains the same.
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+https://brewweb.devel.redhat.com/taskinfo?taskID=2265510
+
+Upstream Status:
+================
+Yes.
+
+Test Status:
+============
+Tested by Pavan Naregundi, pavan.naregundi@in.ibm.com, using the LTP
+Pounder randasys tests.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/anon_inodes.c b/fs/anon_inodes.c
+index 65ccc4c..cfd663d 100644
+--- a/fs/anon_inodes.c
++++ b/fs/anon_inodes.c
+@@ -78,13 +78,10 @@ int anon_inode_getfd(const char *name, const struct file_operations *fops,
+ 
+ 	if (IS_ERR(anon_inode_inode))
+ 		return -ENODEV;
+-	file = get_empty_filp();
+-	if (!file)
+-		return -ENFILE;
+ 
+ 	error = get_unused_fd();
+ 	if (error < 0)
+-		goto err_put_filp;
++		return error;
+ 	fd = error;
+ 
+ 	/*
+@@ -111,6 +108,11 @@ int anon_inode_getfd(const char *name, const struct file_operations *fops,
+ 	dentry->d_flags &= ~DCACHE_UNHASHED;
+ 	d_instantiate(dentry, anon_inode_inode);
+ 
++	error = -ENFILE;
++	file = get_empty_filp();
++	if (!file)
++		goto err_dput;
++
+ 	file->f_vfsmnt = mntget(anon_inode_mnt);
+ 	file->f_dentry = dentry;
+ 	file->f_mapping = anon_inode_inode->i_mapping;
+@@ -126,10 +128,10 @@ int anon_inode_getfd(const char *name, const struct file_operations *fops,
+ 
+ 	return fd;
+ 
++err_dput:
++	dput(dentry);
+ err_put_unused_fd:
+ 	put_unused_fd(fd);
+-err_put_filp:
+-	fput(file);
+ 	return error;
+ }
+ EXPORT_SYMBOL_GPL(anon_inode_getfd);

@@ -1,0 +1,102 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Tue, 10 Mar 2009 10:57:40 +0100
+Subject: [net] ipv6: check outgoing interface in all cases
+Message-id: 20090310095739.GH3468@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.4 patch] BZ486215 net: ipv6: Check outgoing interface even if source address is unspecified.
+Bugzilla: 486215
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+BZ486215
+https://bugzilla.redhat.com/show_bug.cgi?id=486215
+
+Description:
+The outgoing interface index (ipi6_ifindex) in IPV6_PKTINFO
+ancillary data, is not checked if the source address (ipi6_addr)
+is unspecified.  If the ipi6_ifindex is the not-exist interface,
+it should be fail.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=187e38384c4abfbbb1b880fab234d16c2df23a25
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1719872
+
+Test:
+Booted on x86_64 and tested with reproducer.
+
+Jirka
+
+diff --git a/net/ipv6/datagram.c b/net/ipv6/datagram.c
+index 621e8c8..dc01dff 100644
+--- a/net/ipv6/datagram.c
++++ b/net/ipv6/datagram.c
+@@ -505,7 +505,6 @@ int datagram_send_ctl(struct msghdr *msg, struct flowi *fl,
+ 
+ 	for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
+ 		int addr_type;
+-		struct net_device *dev = NULL;
+ 
+ 		if (!CMSG_OK(msg, cmsg)) {
+ 			err = -EINVAL;
+@@ -518,6 +517,9 @@ int datagram_send_ctl(struct msghdr *msg, struct flowi *fl,
+ 		switch (cmsg->cmsg_type) {
+  		case IPV6_PKTINFO:
+  		case IPV6_2292PKTINFO:
++		{
++			struct net_device *dev = NULL;
++
+  			if (cmsg->cmsg_len < CMSG_LEN(sizeof(struct in6_pktinfo))) {
+ 				err = -EINVAL;
+ 				goto exit_f;
+@@ -531,32 +533,30 @@ int datagram_send_ctl(struct msghdr *msg, struct flowi *fl,
+ 				fl->oif = src_info->ipi6_ifindex;
+ 			}
+ 
+-			addr_type = ipv6_addr_type(&src_info->ipi6_addr);
++			addr_type = __ipv6_addr_type(&src_info->ipi6_addr);
++
++			if (fl->oif) {
++				 dev = dev_get_by_index(fl->oif);
++				 if (!dev)
++					 return -ENODEV;
++			} else if (addr_type & IPV6_ADDR_LINKLOCAL)
++				return -EINVAL;
++			if (addr_type != IPV6_ADDR_ANY) {
++				 int strict = __ipv6_addr_src_scope(addr_type) <= IPV6_ADDR_SCOPE_LINKLOCAL;
++				if (!ipv6_chk_addr(&src_info->ipi6_addr,
++						   strict ? dev : NULL, 0))
++					err = -EINVAL;
++				else
++					ipv6_addr_copy(&fl->fl6_src, &src_info->ipi6_addr);
++			 }
+ 
+-			if (addr_type == IPV6_ADDR_ANY)
+-				break;
+-			
+-			if (addr_type & IPV6_ADDR_LINKLOCAL) {
+-				if (!src_info->ipi6_ifindex)
+-					return -EINVAL;
+-				else {
+-					dev = dev_get_by_index(src_info->ipi6_ifindex);
+-					if (!dev)
+-						return -ENODEV;
+-				}
+-			}
+-			if (!ipv6_chk_addr(&src_info->ipi6_addr, dev, 0)) {
+-				if (dev)
+-					dev_put(dev);
+-				err = -EINVAL;
+-				goto exit_f;
+-			}
+ 			if (dev)
+ 				dev_put(dev);
+ 
+-			ipv6_addr_copy(&fl->fl6_src, &src_info->ipi6_addr);
++			if (err)
++				goto exit_f;
+ 			break;
+-
++		}
+ 		case IPV6_FLOWINFO:
+                         if (cmsg->cmsg_len < CMSG_LEN(4)) {
+ 				err = -EINVAL;

@@ -1,0 +1,190 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 18 Sep 2009 07:17:48 -0400
+Subject: [nfs] knfsd: fix NFSv4 O_EXCL creates
+Message-id: 1253272668-18713-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ#522163: knfsd: fix NFSv4 O_EXCL creates
+Bugzilla: 524521
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+CVE: CVE-2009-3286
+
+(Posting this as a 5.5 patch, but it may also be a z-stream candidate)
+
+This patch fixes a regression that appeared in the 5.4 kernel with
+O_EXCL creates over NFSv4. In 5.4 we added a patch that made it so that
+when the owner portion of the permission bits are cleared, then the
+server will deny access to the file. This exposed some existing bugs in
+the NFSv4 server code.
+
+When a file is created with O_EXCL permissions, the kernel first tries
+to create the file with all of the mode bits cleared, and then has the
+client set the attribute fields that hold the verifier. The existing
+server code does a redundant open permission check after creating the
+file and that usually fails now. That causes the operation to return an
+error and the file is left sitting on the server in the state it was in
+just after the vfs_create returned.
+
+It would always fail for an unprivileged user but for another bug...the
+verfier for exclusive creates is stored as a union with the file
+attributes for non-exclusive creates. When the server does the actual
+vfs_create of the file it fetches the ia_mode field from the attributes
+portion of the union.
+
+Unfortunately, it does this even for exclusive creates. This means that
+it "casts" a portion of the verifier as the mode used for the create.
+These modes are often non-sensical, but due to the first bug the files
+will end up staying that way after the server returns an error on the
+create back to the client.
+
+In addition to being a bug, this may also be a marginal security issue.
+Given enough attempts, it's not hard to imagine a lingering file from a
+failed create that is world-writeable but only setuid execute as the
+user who is attempting these creates. Fortunately, root is not
+susceptible to this bug so a setuid root file shouldn't be possible.
+It might be possible to exploit this to gain access as another user
+though.
+
+The following patch is a straight backport of two patches from upstream
+to remove the redundant open permissions check when a file is created.
+It also adds a delta to separate the verifer and attribute union into
+separate fields in order to ensure to make sure that files are created
+with sane modes. I cherry picked that delta from a recent NFSv4.1 patch
+that made this change upstream. I believe that inadvertantly fixed this
+bug there.
+
+Upstream commit ID's:
+
+af85852de0b32d92b14295aa6f5ba3a9ad044cf6
+81ac95c5569d7a60ab5db6c1ccec56c12b3ebcb5
+79fb54abd285b442e1f30f851902f3ddf58e7704
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/nfsd/nfs3proc.c b/fs/nfsd/nfs3proc.c
+index 7d47c16..ebb0464 100644
+--- a/fs/nfsd/nfs3proc.c
++++ b/fs/nfsd/nfs3proc.c
+@@ -256,7 +256,7 @@ nfsd3_proc_create(struct svc_rqst *rqstp, struct nfsd3_createargs *argp,
+ 	/* Now create the file and set attributes */
+ 	nfserr = nfsd_create_v3(rqstp, dirfhp, argp->name, argp->len,
+ 				attr, newfhp,
+-				argp->createmode, argp->verf, NULL);
++				argp->createmode, argp->verf, NULL, NULL);
+ 
+ 	RETURN_STATUS(nfserr);
+ }
+diff --git a/fs/nfsd/nfs4proc.c b/fs/nfsd/nfs4proc.c
+index 3740220..0d4e647 100644
+--- a/fs/nfsd/nfs4proc.c
++++ b/fs/nfsd/nfs4proc.c
+@@ -95,6 +95,7 @@ do_open_lookup(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nfsd4_o
+ {
+ 	struct svc_fh resfh;
+ 	int status;
++	int created = 0;
+ 
+ 	fh_init(&resfh, NFS4_FHSIZE);
+ 	open->op_truncate = 0;
+@@ -108,7 +109,7 @@ do_open_lookup(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nfsd4_o
+ 					open->op_fname.len, &open->op_iattr,
+ 					&resfh, open->op_createmode,
+ 					(u32 *)open->op_verf.data,
+-					&open->op_truncate);
++					&open->op_truncate, &created);
+ 
+ 		/* If we ever decide to use different attrs to store the
+ 		 * verifier in nfsd_create_v3, then we'll need to change this
+@@ -121,21 +122,21 @@ do_open_lookup(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nfsd4_o
+ 				     open->op_fname.data, open->op_fname.len, &resfh);
+ 		fh_unlock(current_fh);
+ 	}
++	if (status)
++		goto out;
+ 
+-	if (!status) {
+-		set_change_info(&open->op_cinfo, current_fh);
++	set_change_info(&open->op_cinfo, current_fh);
+ 
+-		/* set reply cache */
+-		fh_dup2(current_fh, &resfh);
+-		open->op_stateowner->so_replay.rp_openfh_len =
+-			resfh.fh_handle.fh_size;
+-		memcpy(open->op_stateowner->so_replay.rp_openfh,
+-				&resfh.fh_handle.fh_base,
+-				resfh.fh_handle.fh_size);
++	/* set reply cache */
++	fh_dup2(current_fh, &resfh);
++	open->op_stateowner->so_replay.rp_openfh_len = resfh.fh_handle.fh_size;
++	memcpy(open->op_stateowner->so_replay.rp_openfh,
++			&resfh.fh_handle.fh_base, resfh.fh_handle.fh_size);
+ 
++	if (!created)
+ 		status = do_open_permission(rqstp, current_fh, open, MAY_NOP);
+-	}
+ 
++out:
+ 	fh_put(&resfh);
+ 	return status;
+ }
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 5290248..773b280 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1241,7 +1241,7 @@ int
+ nfsd_create_v3(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 		char *fname, int flen, struct iattr *iap,
+ 		struct svc_fh *resfhp, int createmode, u32 *verifier,
+-	        int *truncp)
++	        int *truncp, int *created)
+ {
+ 	struct dentry	*dentry, *dchild = NULL;
+ 	struct inode	*dirp;
+@@ -1330,6 +1330,8 @@ nfsd_create_v3(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	err = vfs_create(dirp, dchild, iap->ia_mode, NULL);
+ 	if (err < 0)
+ 		goto out_nfserr;
++	if (created)
++		*created = 1;
+ 
+ 	if (EX_ISSYNC(fhp->fh_export)) {
+ 		err = nfserrno(nfsd_sync_dir(dentry));
+diff --git a/include/linux/nfsd/nfsd.h b/include/linux/nfsd/nfsd.h
+index fb65b20..c04fb25 100644
+--- a/include/linux/nfsd/nfsd.h
++++ b/include/linux/nfsd/nfsd.h
+@@ -92,7 +92,7 @@ int		nfsd_access(struct svc_rqst *, struct svc_fh *, u32 *, u32 *);
+ int		nfsd_create_v3(struct svc_rqst *, struct svc_fh *,
+ 				char *name, int len, struct iattr *attrs,
+ 				struct svc_fh *res, int createmode,
+-				u32 *verifier, int *truncp);
++				u32 *verifier, int *truncp, int *created);
+ int		nfsd_commit(struct svc_rqst *, struct svc_fh *,
+ 				loff_t, unsigned long);
+ #endif /* CONFIG_NFSD_V3 */
+diff --git a/include/linux/nfsd/xdr4.h b/include/linux/nfsd/xdr4.h
+index f894f04..0426106 100644
+--- a/include/linux/nfsd/xdr4.h
++++ b/include/linux/nfsd/xdr4.h
+@@ -201,10 +201,8 @@ struct nfsd4_open {
+ 	u32		op_create;     	    /* request */
+ 	u32		op_createmode;      /* request */
+ 	u32		op_bmval[2];        /* request */
+-	union {                             /* request */
+-		struct iattr	iattr;                      /* UNCHECKED4,GUARDED4 */
+-		nfs4_verifier	verf;                                /* EXCLUSIVE4 */
+-	} u;
++	struct iattr	iattr;              /* UNCHECKED4,GUARDED4 */
++	nfs4_verifier	verf;               /* EXCLUSIVE4 */
+ 	clientid_t	op_clientid;        /* request */
+ 	struct xdr_netobj op_owner;           /* request */
+ 	u32		op_seqid;           /* request */
+@@ -218,8 +216,8 @@ struct nfsd4_open {
+ 	struct nfs4_stateowner *op_stateowner; /* used during processing */
+ 	struct nfs4_acl *op_acl;
+ };
+-#define op_iattr	u.iattr
+-#define op_verf		u.verf
++#define op_iattr	iattr
++#define op_verf		verf
+ 
+ struct nfsd4_open_confirm {
+ 	stateid_t	oc_req_stateid		/* request */;

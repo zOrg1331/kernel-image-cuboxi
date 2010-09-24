@@ -1,0 +1,342 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Wed, 24 Feb 2010 14:28:45 -0500
+Subject: [net] tg3: fix 5717 and 57765 asic revs panic under load
+Message-id: <20100224142845.GL24578@gospo.rdu.redhat.com>
+Patchwork-id: 23418
+O-Subject: Re: [RHEL5.5 PATCH v2] Fix tg3 5717 and 57765 asic revs can panic
+	under load
+Bugzilla: 565964
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+bz565964
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=565964
+tg3: 5717 and 57765 asic revs can panic under load
+
+Description of problem:
+Broadcom just recently posted three patches upstream that fix
+the support of 5717 and 57765.  More specifically, it is
+possible for one MSI-X vector to receive enough traffic that
+it will overwrite data needed by another MSI-X vector's
+receive path.
+
+Solution:
+The three upstream patches are:
+Patch 1: Give MSI-X vec 1 rx backlog space
+
+RSS ring 1 is responsible for submitting new rx buffers to
+the hardware on behalf of all the other RSS rx return rings.
+Up until now this ring submitted its new rx buffers to the producer ring
+directly. The following patch will require that
+this ring have a place to put backlogged rx packets. As a consequence, it
+can no longer submit new buffers to the producer ring.
+
+This patch adds code to allocate an extra shadow producer ring for this
+RSS ring and adds RSS ring 1 to the list of rings needing buffer
+transfers.
+
+patch 2: Prevent rx producer ring overruns
+
+When operating in RSS mode, it is possible for one rx return ring to
+submit enough rx buffers back to the hardware such that it inadvertently
+overwrites data needed by another rx return ring.
+This patch addresses the problem by looking for non-NULL skb pointers
+in the rx_[std|jmb]_buffers rings that parallel the rx producer rings.
+
+patch 3: Unwedge stuck MSI-X vectors
+
+The previous patch changed the code so that new rx buffer submissions
+to the hardware stall if a new submission would overwrite data needed
+by an unserviced rx packet.  On very busy 5717 and 57765 asic rev
+devices, there is a corner case where the hardware will fail to assert
+an MSI-X interrupt for rx traffic.  If that vector's interrupt never
+has another reason to assert, any rx buffers held will never be
+serviced.  If the buffers are never serviced and the hardware consumes
+all the available rx packets for other rx rings, deadlock will result.
+
+The most reliable and least intrusive way to work around the problem is
+to detect the case where new submissions would overwrite existing data
+and force all rx interrupt vectors to fire.
+
+Upstream status:
+The following upstream patches from Matt Carlson, the
+Broadcom tg3 maintainer, are included:
+  commit: e4af1af900328e4aa71cd5df75bb22669ab11522
+  commit: e92967bfb1f4fa7da7c425df9239c4bb615dec30
+  commit: f89f38b8ec3171664314669a1396ab70b43e8961
+
+Brew:
+Successfully built in Brew for all architectures
+(task 2263880).
+
+Testing:
+I have run Connectathon successfully with the x86_64
+debug kernel on RHTS systems with the following tg3 NICs.
+  5722, 5761, 5721, 5755, 5704, 5755, 5764, 5703a, 5721,
+  5703x, 5764, 5715, 5704.
+
+Acks would be appreciated. Thanks.
+
+
+diff --git a/drivers/net/tg3.c b/drivers/net/tg3.c
+index 85896ae..939bdd7 100644
+--- a/drivers/net/tg3.c
++++ b/drivers/net/tg3.c
+@@ -634,7 +634,6 @@ static void tg3_disable_ints(struct tg3 *tp)
+ static void tg3_enable_ints(struct tg3 *tp)
+ {
+ 	int i;
+-	u32 coal_now = 0;
+ 
+ 	tp->irq_sync = 0;
+ 	wmb();
+@@ -642,13 +641,14 @@ static void tg3_enable_ints(struct tg3 *tp)
+ 	tw32(TG3PCI_MISC_HOST_CTRL,
+ 	     (tp->misc_host_ctrl & ~MISC_HOST_CTRL_MASK_PCI_INT));
+ 
++	tp->coal_now = tp->coalesce_mode | HOSTCC_MODE_ENABLE;
+ 	for (i = 0; i < tp->irq_cnt; i++) {
+ 		struct tg3_napi *tnapi = &tp->napi[i];
+ 		tw32_mailbox_f(tnapi->int_mbox, tnapi->last_tag << 24);
+ 		if (tp->tg3_flags2 & TG3_FLG2_1SHOT_MSI)
+ 			tw32_mailbox_f(tnapi->int_mbox, tnapi->last_tag << 24);
+ 
+-		coal_now |= tnapi->coal_now;
++		tp->coal_now |= tnapi->coal_now;
+ 	}
+ 
+ 	/* Force an initial interrupt */
+@@ -656,8 +656,9 @@ static void tg3_enable_ints(struct tg3 *tp)
+ 	    (tp->napi[0].hw_status->status & SD_STATUS_UPDATED))
+ 		tw32(GRC_LOCAL_CTRL, tp->grc_local_ctrl | GRC_LCLCTRL_SETINT);
+ 	else
+-		tw32(HOSTCC_MODE, tp->coalesce_mode |
+-		     HOSTCC_MODE_ENABLE | coal_now);
++		tw32(HOSTCC_MODE, tp->coal_now);
++
++	tp->coal_now &= ~(tp->napi[0].coal_now | tp->napi[1].coal_now);
+ }
+ 
+ static inline unsigned int tg3_has_work(struct tg3_napi *tnapi)
+@@ -4220,6 +4221,12 @@ static void tg3_recycle_rx(struct tg3_napi *tnapi,
+ 			   pci_unmap_addr(src_map, mapping));
+ 	dest_desc->addr_hi = src_desc->addr_hi;
+ 	dest_desc->addr_lo = src_desc->addr_lo;
++
++	/* Ensure that the update to the skb happens after the physical
++	 * addresses have been transferred to the new BD location.
++	 */
++	smp_wmb();
++
+ 	src_map->skb = NULL;
+ }
+ 
+@@ -4409,7 +4416,7 @@ next_pkt_nopost:
+ 	tw32_rx_mbox(tnapi->consmbox, sw_idx);
+ 
+ 	/* Refill RX ring(s). */
+-	if (!(tp->tg3_flags3 & TG3_FLG3_ENABLE_RSS) || tnapi == &tp->napi[1]) {
++	if (!(tp->tg3_flags3 & TG3_FLG3_ENABLE_RSS)) {
+ 		/* Some platforms need to sync memory here */
+ 		wmb();
+ 
+@@ -4435,18 +4442,19 @@ next_pkt_nopost:
+ 		tpr->rx_std_prod_idx = std_prod_idx % TG3_RX_RING_SIZE;
+ 		tpr->rx_jmb_prod_idx = jmb_prod_idx % TG3_RX_JUMBO_RING_SIZE;
+ 
+-		netif_rx_schedule(tp->napi[0].dummy_netdev);
++		if (tnapi != &tp->napi[1])
++			netif_rx_schedule(tp->napi[1].dummy_netdev);
+ 	}
+ 
+ 	return received;
+ }
+ 
+-static void tg3_rx_prodring_xfer(struct tg3 *tp,
+-				 struct tg3_rx_prodring_set *dpr,
+-				 struct tg3_rx_prodring_set *spr)
++static int tg3_rx_prodring_xfer(struct tg3 *tp,
++				struct tg3_rx_prodring_set *dpr,
++				struct tg3_rx_prodring_set *spr)
+ {
+ 	u32 si, di, cpycnt, src_prod_idx;
+-	int i;
++	int i, err = 0;
+ 
+ 	while (1) {
+ 		src_prod_idx = spr->rx_std_prod_idx;
+@@ -4469,6 +4477,23 @@ static void tg3_rx_prodring_xfer(struct tg3 *tp,
+ 		si = spr->rx_std_cons_idx;
+ 		di = dpr->rx_std_prod_idx;
+ 
++		for (i = di; i < di + cpycnt; i++) {
++			if (dpr->rx_std_buffers[i].skb) {
++				cpycnt = i - di;
++				err = -ENOSPC;
++				break;
++			}
++		}
++
++		if (!cpycnt)
++			break;
++
++		/* Ensure that updates to the rx_std_buffers ring and the
++		 * shadowed hardware producer ring from tg3_recycle_skb() are
++		 * ordered correctly WRT the skb check above.
++		 */
++		smp_rmb();
++
+ 		memcpy(&dpr->rx_std_buffers[di],
+ 		       &spr->rx_std_buffers[si],
+ 		       cpycnt * sizeof(struct ring_info));
+@@ -4509,6 +4534,23 @@ static void tg3_rx_prodring_xfer(struct tg3 *tp,
+ 		si = spr->rx_jmb_cons_idx;
+ 		di = dpr->rx_jmb_prod_idx;
+ 
++		for (i = di; i < di + cpycnt; i++) {
++			if (dpr->rx_jmb_buffers[i].skb) {
++				cpycnt = i - di;
++				err = -ENOSPC;
++				break;
++			}
++		}
++
++		if (!cpycnt)
++			break;
++
++		/* Ensure that updates to the rx_jmb_buffers ring and the
++		 * shadowed hardware producer ring from tg3_recycle_skb() are
++		 * ordered correctly WRT the skb check above.
++		 */
++		smp_rmb();
++
+ 		memcpy(&dpr->rx_jmb_buffers[di],
+ 		       &spr->rx_jmb_buffers[si],
+ 		       cpycnt * sizeof(struct ring_info));
+@@ -4526,6 +4568,8 @@ static void tg3_rx_prodring_xfer(struct tg3 *tp,
+ 		dpr->rx_jmb_prod_idx = (dpr->rx_jmb_prod_idx + cpycnt) %
+ 				       TG3_RX_JUMBO_RING_SIZE;
+ 	}
++
++	return err;
+ }
+ 
+ static int tg3_poll(struct net_device *netdev, int *budget)
+@@ -4591,27 +4635,29 @@ static int tg3_poll(struct net_device *netdev, int *budget)
+ 		sblk->status &= ~SD_STATUS_UPDATED;
+ 
+ 	if ((tp->tg3_flags3 & TG3_FLG3_ENABLE_RSS) && tnapi == &tp->napi[1]) {
+-		int i;
+-		u32 std_prod_idx = tp->prodring[0].rx_std_prod_idx;
+-		u32 jmb_prod_idx = tp->prodring[0].rx_jmb_prod_idx;
++		struct tg3_rx_prodring_set *dpr = &tp->prodring[0];
++		int i, err = 0;
++		u32 std_prod_idx = dpr->rx_std_prod_idx;
++		u32 jmb_prod_idx = dpr->rx_jmb_prod_idx;
+ 
+-		for (i = 2; i < tp->irq_cnt; i++)
+-			tg3_rx_prodring_xfer(tp, tnapi->prodring,
+-					     tp->napi[i].prodring);
++		for (i = 1; i < tp->irq_cnt; i++)
++			err |= tg3_rx_prodring_xfer(tp, dpr,
++						    tp->napi[i].prodring);
+ 
+ 		wmb();
+ 
+-		if (std_prod_idx != tp->prodring[0].rx_std_prod_idx) {
+-			u32 mbox = TG3_RX_STD_PROD_IDX_REG; 
+-			tw32_rx_mbox(mbox, tp->prodring[0].rx_std_prod_idx);
+-		}
++		if (std_prod_idx != dpr->rx_std_prod_idx)
++			tw32_rx_mbox(TG3_RX_STD_PROD_IDX_REG,
++				     dpr->rx_std_prod_idx);
+ 
+-		if (jmb_prod_idx != tp->prodring[0].rx_jmb_prod_idx) {
+-			u32 mbox = TG3_RX_JMB_PROD_IDX_REG;
+-			tw32_rx_mbox(mbox, tp->prodring[0].rx_jmb_prod_idx);
+-		}
++		if (jmb_prod_idx != dpr->rx_jmb_prod_idx)
++			tw32_rx_mbox(TG3_RX_JMB_PROD_IDX_REG,
++				     dpr->rx_jmb_prod_idx);
+ 
+ 		mmiowb();
++
++		if (err)
++			tw32_f(HOSTCC_MODE, tp->coal_now);
+ 	}
+ 
+ 	/* if no more work, tell net stack and NIC we're done */
+@@ -5695,8 +5741,7 @@ static void tg3_free_rings(struct tg3 *tp)
+ 			dev_kfree_skb_any(skb);
+ 		}
+ 
+-		if (tp->irq_cnt == 1 || j != tp->irq_cnt - 1)
+-			tg3_rx_prodring_free(tp, &tp->prodring[j]);
++		tg3_rx_prodring_free(tp, &tp->prodring[j]);
+ 	}
+ }
+ 
+@@ -5732,9 +5777,10 @@ static int tg3_init_rings(struct tg3 *tp)
+ 		if (tnapi->rx_rcb)
+ 			memset(tnapi->rx_rcb, 0, TG3_RX_RCB_RING_BYTES(tp));
+ 
+-		if ((tp->irq_cnt == 1 || i != tp->irq_cnt - 1) &&
+-			tg3_rx_prodring_alloc(tp, &tp->prodring[i]))
++		if (tg3_rx_prodring_alloc(tp, &tp->prodring[i])) {
++			tg3_free_rings(tp);
+ 			return -ENOMEM;
++		}
+ 	}
+ 
+ 	return 0;
+@@ -5781,7 +5827,7 @@ static void tg3_free_consistent(struct tg3 *tp)
+ 		tp->hw_stats = NULL;
+ 	}
+ 
+-	for (i = 0; i < (tp->irq_cnt == 1 ? 1 : tp->irq_cnt - 1); i++)
++	for (i = 0; i < tp->irq_cnt; i++)
+ 		tg3_rx_prodring_fini(tp, &tp->prodring[i]);
+ }
+ 
+@@ -5793,7 +5839,7 @@ static int tg3_alloc_consistent(struct tg3 *tp)
+ {
+ 	int i;
+ 
+-	for (i = 0; i < (tp->irq_cnt == 1 ? 1 : tp->irq_cnt - 1); i++) {
++	for (i = 0; i < tp->irq_cnt; i++) {
+ 		if (tg3_rx_prodring_init(tp, &tp->prodring[i]))
+ 			goto err_out;
+ 	}
+@@ -5853,10 +5899,7 @@ static int tg3_alloc_consistent(struct tg3 *tp)
+ 			break;
+ 		}
+ 
+-		if (tp->irq_cnt == 1)
+-			tnapi->prodring = &tp->prodring[0];
+-		else if (i)
+-			tnapi->prodring = &tp->prodring[i - 1];
++		tnapi->prodring = &tp->prodring[i];
+ 
+ 		/*
+ 		 * If multivector RSS is enabled, vector 0 does not handle
+diff --git a/drivers/net/tg3.h b/drivers/net/tg3.h
+index bef5d16..3b89445 100644
+--- a/drivers/net/tg3.h
++++ b/drivers/net/tg3.h
+@@ -2740,6 +2740,7 @@ struct tg3 {
+ 	struct net_device		*dev;
+ 	struct pci_dev			*pdev;
+ 
++	u32				coal_now;
+ 	u32				msg_enable;
+ 
+ 	/* begin "tx thread" cacheline section */
+@@ -2759,7 +2760,7 @@ struct tg3 {
+ 	struct vlan_group		*vlgrp;
+ #endif
+ 
+-	struct tg3_rx_prodring_set	prodring[TG3_IRQ_MAX_VECS - 1];
++	struct tg3_rx_prodring_set	prodring[TG3_IRQ_MAX_VECS];
+ 
+ 
+ 	/* begin "everything else" cacheline(s) section */

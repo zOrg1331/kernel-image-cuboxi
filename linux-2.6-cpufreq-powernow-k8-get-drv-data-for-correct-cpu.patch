@@ -1,0 +1,52 @@
+From: Alex Chiang <achiang@redhat.com>
+Date: Wed, 23 Sep 2009 21:03:41 -0400
+Subject: [cpufreq] powernow-k8: get drv data for correct cpu
+Message-id: <20090923210341.GD30562@algore>
+Patchwork-id: 20948
+O-Subject: [RHEL 5.5 BZ523505 Patch 3/5] [CPUFREQ] powernow-k8: get drv data
+	for correct CPU
+Bugzilla: 523505
+RH-Acked-by: Dave Jones <davej@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Backport of:
+
+    commit e15bc4559b397a611441a135b1f5992f07d0f436
+    Author: Naga Chumbalkar <nagananda.chumbalkar@hp.com>
+    Date:   Thu Jun 11 15:26:54 2009 +0000
+
+	[CPUFREQ] powernow-k8: get drv data for correct CPU
+
+	Make powernowk8_get() similar to powernowk8_target() and
+	powernowk8_verify() in the way it obtains "powernow_data"
+	for a given CPU.
+
+	Cc: Andreas Herrmann <andreas.herrmann3@amd.com>
+	Cc: Langsdorf, Mark <mark.langsdorf@amd.com>
+	Cc: Thomas Renninger <trenn@suse.de>
+
+	Signed-off-by: Naga Chumbalkar <nagananda.chumbalkar@hp.com>
+	Reviewed-by: Andreas Herrmann <andreas.herrmann3@amd.com>
+	Tested-by: Andreas Herrmann <andreas.herrmann3@amd.com>
+	Acked-by: Langsdorf, Mark <mark.langsdorf@amd.com>
+	Signed-off-by: Thomas Renninger <trenn@suse.de>
+	Signed-off-by: Dave Jones <davej@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+index 57cd0a3..9e9e30f 100644
+--- a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
++++ b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+@@ -1366,12 +1366,10 @@ static int __devexit powernowk8_cpu_exit (struct cpufreq_policy *pol)
+ 
+ static unsigned int powernowk8_get (unsigned int cpu)
+ {
+-	struct powernow_k8_data *data;
++	struct powernow_k8_data *data = per_cpu(powernow_data, cpu);
+ 	cpumask_t oldmask = current->cpus_allowed;
+ 	unsigned int khz = 0;
+ 
+-	data = per_cpu(powernow_data, first_cpu(cpu_core_map[cpu]));
+-
+ 	if (!data)
+ 		return -EINVAL;
+ 

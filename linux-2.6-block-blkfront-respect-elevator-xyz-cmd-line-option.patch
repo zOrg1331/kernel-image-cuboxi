@@ -1,0 +1,72 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Mon, 12 Oct 2009 10:58:37 +0200
+Subject: [block] blkfront: respect elevator=xyz cmd line option
+Message-id: 1255337917-14250-1-git-send-email-pbonzini@redhat.com
+O-Subject: [RHEL 5.5 PATCH v2] blkfront: always respect the elevator=xyz command line option
+Bugzilla: 498461
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+Bugzilla: 498461
+
+Upstream: posted, but they will remove the elevator_init call altogether
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2023994
+
+In the Bugzilla, the customer noticed that CFQ has better performance
+in their environment than the no-op scheduler that is forced by the
+blkfront driver.  The customer then asked for us to allow the I/O
+scheduler to be changed on the kernel commandline, using "elevator=cfq".
+
+While one could argue that the driver's behavior is expected (after all
+"elevator=cfq" is the default and should not have any effect), the
+do-what-I-mean behavior requested by the customer is logical and this
+is what the patch implements.
+
+The patch does not change the default scheduler.  It just makes the
+existing knob affect blkfront.
+
+Cc: Jeff Moyer <jmoyer@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+diff --git a/block/elevator.c b/block/elevator.c
+index d56ceae..1e85609 100644
+--- a/block/elevator.c
++++ b/block/elevator.c
+@@ -133,7 +133,8 @@ static void elevator_attach(request_queue_t *q, struct elevator_queue *eq,
+ 	eq->elevator_data = data;
+ }
+ 
+-static char chosen_elevator[16];
++char chosen_elevator[16];
++EXPORT_SYMBOL_GPL(chosen_elevator);
+ 
+ static int __init elevator_setup(char *str)
+ {
+diff --git a/drivers/xen/blkfront/vbd.c b/drivers/xen/blkfront/vbd.c
+index 36d8d0f..a1f1bff 100644
+--- a/drivers/xen/blkfront/vbd.c
++++ b/drivers/xen/blkfront/vbd.c
+@@ -207,6 +207,8 @@ xlbd_put_major_info(struct xlbd_major_info *mi)
+ 	/* XXX: release major if 0 */
+ }
+ 
++extern char chosen_elevator[];
++
+ static int
+ xlvbd_init_blk_queue(struct gendisk *gd, u16 sector_size)
+ {
+@@ -216,7 +218,10 @@ xlvbd_init_blk_queue(struct gendisk *gd, u16 sector_size)
+ 	if (rq == NULL)
+ 		return -1;
+ 
+-	elevator_init(rq, "noop");
++	/* Always respect the user's explicitly chosen elevator, but otherwise
++	   pick a different default than CONFIG_DEFAULT_IOSCHED.  */
++	if (!*chosen_elevator)
++		elevator_init(rq, "noop");
+ 
+ 	/* Hard sector size and max sectors impersonate the equiv. hardware. */
+ 	blk_queue_hardsect_size(rq, sector_size);

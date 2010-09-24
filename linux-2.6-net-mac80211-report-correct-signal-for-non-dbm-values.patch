@@ -1,0 +1,37 @@
+From: John Linville <linville@redhat.com>
+Date: Wed, 9 Dec 2009 18:36:15 -0500
+Subject: [net] mac80211: report correct signal for non-dBm values
+Message-id: <20091209183614.GD10026@redhat.com>
+Patchwork-id: 21829
+O-Subject: [RHEL5.5 PATCH] mac80211: report correct signal for non-dBm signal
+	values
+Bugzilla: 545899
+
+Another one-liner...without this rtl8180 always reports 0 signal.
+
+BZ545899
+
+Upstream patch (adjusted to apply to rhel5.5 w/o an offset):
+
+wireless: correctly report signal value for IEEE80211_HW_SIGNAL_UNSPEC
+
+This part was missed in "cfg80211: implement get_wireless_stats",
+probably because sta_set_sinfo already existed and was only handling
+dBm signals.
+
+Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+diff --git a/net/mac80211/cfg.c b/net/mac80211/cfg.c
+index 5fdff6e..dbee85a 100644
+--- a/net/mac80211/cfg.c
++++ b/net/mac80211/cfg.c
+@@ -344,7 +344,8 @@ static void sta_set_sinfo(struct sta_info *sta, struct station_info *sinfo)
+ 	sinfo->rx_packets = sta->rx_packets;
+ 	sinfo->tx_packets = sta->tx_packets;
+ 
+-	if (sta->local->hw.flags & IEEE80211_HW_SIGNAL_DBM) {
++	if ((sta->local->hw.flags & IEEE80211_HW_SIGNAL_DBM) ||
++	    (sta->local->hw.flags & IEEE80211_HW_SIGNAL_UNSPEC)) {
+ 		sinfo->filled |= STATION_INFO_SIGNAL;
+ 		sinfo->signal = (s8)sta->last_signal;
+ 	}

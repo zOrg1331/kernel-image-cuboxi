@@ -1,0 +1,29 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 4 Jan 2010 22:51:28 -0500
+Subject: [scsi] lpfc: Update to 8.2.0.60 driver release
+Message-id: <20100104225135.24386.31305.sendpatchset@localhost.localdomain>
+Patchwork-id: 22294
+O-Subject: [RHEL5.5 PATCH 2/18] Update lpfc version for 8.2.0.60 driver release
+Bugzilla: 549763
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=549763
+
+Update lpfc version for 8.2.0.60 driver release
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+index 38a4095..d5aab43 100644
+--- a/drivers/scsi/lpfc/lpfc_version.h
++++ b/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.2.0.59"
++#define LPFC_DRIVER_VERSION "8.2.0.60"
+ 
+ #define LPFC_DRIVER_NAME		"lpfc"
+ #define LPFC_SP_DRIVER_HANDLER_NAME	"lpfc:sp"

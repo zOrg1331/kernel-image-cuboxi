@@ -1,0 +1,158 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Fri, 24 Apr 2009 16:19:14 -0400
+Subject: [md] bitmap merge feature
+Message-id: 7B276F2E-F822-4268-95B5-30300A26F063@redhat.com
+O-Subject: [Patch RHEL5.4] md: bitmap merge feature
+Bugzilla: 481226
+
+Steeleye has request this feature as it enables some advanced recovery
+operations in their md software raid cluster failover software.  Patch
+was originally submitted upstream by Steeleye and accepted, this is
+just a backport of that patch.  Review was fine, but testing will have
+to wait until my md box is back up.  It's been brew built as well.
+
+Link to brew build:
+
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1777124
+
+commit fa5bbff6479ed49dca5e108c444b504579ecc783
+Author: Doug Ledford <dledford@redhat.com>
+Date:   Fri Apr 24 10:40:13 2009 -0400
+
+    [md bitmap] Allow bitmaps to be dirtied by user space
+
+    We use bitmaps (on manually created arrays, not on anaconda created arrays)
+    to tell which parts of the array are dirty.  This greatly reduces resync
+    time for the array.  In the event a machine went down uncleanly and we
+    want to bring it up on another machine in the cluster, allow us to manually
+    mark bits in the bitmap dirty to ensure they are resynced on the machine
+    bringing the array back up.
+
+    Submitted by Paul Clements at Steeleye for support of their cluster setups.
+    Reviewed and approved by me.
+
+    Bugzilla 481226
+
+    Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/Documentation/md.txt b/Documentation/md.txt
+index 0668f9d..084ecf4 100644
+--- a/Documentation/md.txt
++++ b/Documentation/md.txt
+@@ -410,6 +410,15 @@ also have
+       than sectors, this my be larger than the number of actual errors
+       by a factor of the number of sectors in a page.
+ 
++   bitmap_set_bits
++      If the array has a write-intent bitmap, then writing to this
++      attribute can set bits in the bitmap, indicating that a resync
++      would need to check the corresponding blocks. Either individual
++      numbers or start-end pairs can be written.  Multiple numbers
++      can be separated by a space.
++      Note that the numbers are 'bit' numbers, not 'block' numbers.
++      They should be scaled by the bitmap_chunksize.
++
+ Each active md device may also have attributes specific to the
+ personality module that manages it.
+ These are specific to the implementation of the module and could
+diff --git a/drivers/md/bitmap.c b/drivers/md/bitmap.c
+index f4e368e..d743f19 100644
+--- a/drivers/md/bitmap.c
++++ b/drivers/md/bitmap.c
+@@ -617,6 +617,7 @@ static inline unsigned long file_page_offset(unsigned long chunk)
+ static inline struct page *filemap_get_page(struct bitmap *bitmap,
+ 					unsigned long chunk)
+ {
++	if (file_page_index(chunk) >= bitmap->file_pages) return NULL;
+ 	return bitmap->filemap[file_page_index(chunk) - file_page_index(0)];
+ }
+ 
+@@ -743,6 +744,7 @@ static void bitmap_file_set_bit(struct bitmap *bitmap, sector_t block)
+ 	}
+ 
+ 	page = filemap_get_page(bitmap, chunk);
++	if (!page) return;
+ 	bit = file_page_offset(chunk);
+ 
+  	/* set the bit */
+@@ -1327,6 +1329,18 @@ static void bitmap_set_memory_bits(struct bitmap *bitmap, sector_t offset, int n
+ 
+ }
+ 
++/* dirty the memory and file bits for bitmap chunks "s" to "e" */
++void bitmap_dirty_bits(struct bitmap *bitmap, unsigned long s, unsigned long e)
++{
++	unsigned long chunk;
++
++	for (chunk = s; chunk <= e; chunk++) {
++		sector_t sec = chunk << CHUNK_BLOCK_SHIFT(bitmap);
++		bitmap_set_memory_bits(bitmap, sec, 1);
++		bitmap_file_set_bit(bitmap, sec);
++	}
++}
++
+ /*
+  * flush out any pending updates
+  */
+diff --git a/drivers/md/md.c b/drivers/md/md.c
+index 72d3b87..0a8d76c 100644
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -2549,6 +2549,36 @@ static struct md_sysfs_entry md_new_device =
+ __ATTR(new_dev, S_IWUSR, null_show, new_dev_store);
+ 
+ static ssize_t
++bitmap_store(mddev_t *mddev, const char *buf, size_t len)
++{
++	char *end;
++	unsigned long chunk, end_chunk;
++
++	if (!mddev->bitmap)
++		goto out;
++	/* buf should be <chunk> <chunk> ... or <chunk>-<chunk> ... (range) */
++	while (*buf) {
++		chunk = end_chunk = simple_strtoul(buf, &end, 0);
++		if (buf == end) break;
++		if (*end == '-') { /* range */
++			buf = end + 1;
++			end_chunk = simple_strtoul(buf, &end, 0);
++			if (buf == end) break;
++		}
++		if (*end && !isspace(*end)) break;
++		bitmap_dirty_bits(mddev->bitmap, chunk, end_chunk);
++		buf = end;
++		while (isspace(*buf)) buf++;
++	}
++	bitmap_unplug(mddev->bitmap); /* flush the bits to disk */
++out:
++	return len;
++}
++
++static struct md_sysfs_entry md_bitmap =
++__ATTR(bitmap_set_bits, S_IWUSR, null_show, bitmap_store);
++
++static ssize_t
+ size_show(mddev_t *mddev, char *page)
+ {
+ 	return sprintf(page, "%llu\n", (unsigned long long)mddev->size);
+@@ -2868,6 +2898,7 @@ static struct attribute *md_redundancy_attrs[] = {
+ 	&md_sync_completed.attr,
+ 	&md_suspend_lo.attr,
+ 	&md_suspend_hi.attr,
++	&md_bitmap.attr,
+ 	NULL,
+ };
+ static struct attribute_group md_redundancy_group = {
+diff --git a/include/linux/raid/bitmap.h b/include/linux/raid/bitmap.h
+index 63df898..84d8877 100644
+--- a/include/linux/raid/bitmap.h
++++ b/include/linux/raid/bitmap.h
+@@ -265,6 +265,8 @@ int bitmap_update_sb(struct bitmap *bitmap);
+ int  bitmap_setallbits(struct bitmap *bitmap);
+ void bitmap_write_all(struct bitmap *bitmap);
+ 
++void bitmap_dirty_bits(struct bitmap *bitmap, unsigned long s, unsigned long e);
++
+ /* these are exported */
+ int bitmap_startwrite(struct bitmap *bitmap, sector_t offset,
+ 			unsigned long sectors, int behind);

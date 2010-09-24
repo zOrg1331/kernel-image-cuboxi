@@ -1,0 +1,144 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Fri, 20 Mar 2009 17:33:40 +0100
+Subject: [mm] xen: 'ptwr_emulate' messages when booting PV guest
+Message-id: 49C3C564.7080200@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Fix "ptwr_emulate" messages when booting i386 PV guest
+Bugzilla: 490567
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+
+All,
+     Attached is a patch to fix a minor issue when booting an i386 PV guest.
+Every time you boot this type of guest, you get the following message in the
+hypervisor logs:
+
+(XEN) mm.c:3335:d1 ptwr_emulate: fixing up invalid PAE PTE 00000000d6d8f025
+
+What's going on is that while the guest is setting up it's fixmaps, it is doing
+so via a straight set_pte() call.  In turn this first writes the high half of
+the PAE PTE, then writes the low half; unfortunately the hypervisor expects it
+to be done in the opposite order.  Luckily, the hypervisor has code to deal with
+this situation, and fixes it up, but also prints the error message.  The
+solution comes from upstream linux-2.6.18-xen.hg c/s 214; instead of doing a
+set_pte (which does a trap-n-emulate), we do an explicit hypercall to set the
+PTE instead.  This neatly sidesteps the issue, and gets rid of the warning on boot.
+     Tested by me on an i686 guest; before the patch, I would see the above HV
+message on every i686 boot, and after the patch, I no longer see the message.
+     This should resolve BZ 490567.  Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/i386/mm/pgtable-xen.c b/arch/i386/mm/pgtable-xen.c
+index 9d8e4cb..77638c8 100644
+--- a/arch/i386/mm/pgtable-xen.c
++++ b/arch/i386/mm/pgtable-xen.c
+@@ -75,81 +75,6 @@ void show_mem(void)
+ }
+ 
+ /*
+- * Associate a virtual page frame with a given physical page frame 
+- * and protection flags for that frame.
+- */ 
+-static void set_pte_pfn(unsigned long vaddr, unsigned long pfn, pgprot_t flags)
+-{
+-	pgd_t *pgd;
+-	pud_t *pud;
+-	pmd_t *pmd;
+-	pte_t *pte;
+-
+-	pgd = swapper_pg_dir + pgd_index(vaddr);
+-	if (pgd_none(*pgd)) {
+-		BUG();
+-		return;
+-	}
+-	pud = pud_offset(pgd, vaddr);
+-	if (pud_none(*pud)) {
+-		BUG();
+-		return;
+-	}
+-	pmd = pmd_offset(pud, vaddr);
+-	if (pmd_none(*pmd)) {
+-		BUG();
+-		return;
+-	}
+-	pte = pte_offset_kernel(pmd, vaddr);
+-	/* <pfn,flags> stored as-is, to permit clearing entries */
+-	set_pte(pte, pfn_pte(pfn, flags));
+-
+-	/*
+-	 * It's enough to flush this one mapping.
+-	 * (PGE mappings get flushed as well)
+-	 */
+-	__flush_tlb_one(vaddr);
+-}
+-
+-/*
+- * Associate a virtual page frame with a given physical page frame 
+- * and protection flags for that frame.
+- */ 
+-static void set_pte_pfn_ma(unsigned long vaddr, unsigned long pfn,
+-			   pgprot_t flags)
+-{
+-	pgd_t *pgd;
+-	pud_t *pud;
+-	pmd_t *pmd;
+-	pte_t *pte;
+-
+-	pgd = swapper_pg_dir + pgd_index(vaddr);
+-	if (pgd_none(*pgd)) {
+-		BUG();
+-		return;
+-	}
+-	pud = pud_offset(pgd, vaddr);
+-	if (pud_none(*pud)) {
+-		BUG();
+-		return;
+-	}
+-	pmd = pmd_offset(pud, vaddr);
+-	if (pmd_none(*pmd)) {
+-		BUG();
+-		return;
+-	}
+-	pte = pte_offset_kernel(pmd, vaddr);
+-	/* <pfn,flags> stored as-is, to permit clearing entries */
+-	set_pte(pte, pfn_pte_ma(pfn, flags));
+-
+-	/*
+-	 * It's enough to flush this one mapping.
+-	 * (PGE mappings get flushed as well)
+-	 */
+-	__flush_tlb_one(vaddr);
+-}
+-
+-/*
+  * Associate a large virtual page frame with a given physical page frame 
+  * and protection flags for that frame. pfn is for the base of the page,
+  * vaddr is what the page gets mapped to - both must be properly aligned. 
+@@ -191,6 +116,7 @@ EXPORT_SYMBOL(__FIXADDR_TOP);
+ void __set_fixmap (enum fixed_addresses idx, maddr_t phys, pgprot_t flags)
+ {
+ 	unsigned long address = __fix_to_virt(idx);
++	pte_t pte;
+ 
+ 	if (idx >= __end_of_fixed_addresses) {
+ 		BUG();
+@@ -201,12 +127,15 @@ void __set_fixmap (enum fixed_addresses idx, maddr_t phys, pgprot_t flags)
+ #ifdef CONFIG_X86_F00F_BUG
+ 	case FIX_F00F_IDT:
+ #endif
+-		set_pte_pfn(address, phys >> PAGE_SHIFT, flags);
++		pte = pfn_pte(phys >> PAGE_SHIFT, flags);
+ 		break;
+ 	default:
+-		set_pte_pfn_ma(address, phys >> PAGE_SHIFT, flags);
++		pte = pfn_pte_ma(phys >> PAGE_SHIFT, flags);
+ 		break;
+ 	}
++	if (HYPERVISOR_update_va_mapping(address, pte,
++					 UVMF_INVLPG|UVMF_ALL))
++		BUG();
+ 	nr_fixmaps++;
+ }
+ 

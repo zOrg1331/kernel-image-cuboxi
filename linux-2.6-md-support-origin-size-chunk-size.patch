@@ -1,0 +1,48 @@
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Thu, 3 Dec 2009 01:06:40 -0500
+Subject: [md] support origin size < chunk size
+Message-id: <Pine.LNX.4.64.0912022000100.22439@hs20-bc2-1.build.redhat.com>
+Patchwork-id: 21660
+O-Subject: [RHEL5.5 PATCH] bz502965: support origin size < chunk size
+Bugzilla: 502965
+RH-Acked-by: Mike Snitzer <snitzer@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+Hi
+
+This is the fix for bug 502965 --- on too small device sizes, the hash
+size was calculated as zero and attempting to allocate zero-sized memory
+resulted in false "Cannot allocate memory" message.
+
+Set the minimum hash size to 64.
+
+Note, that the snapshot must have at least two chunks (that is design
+thing), so snapshot smaller than 8k still can't be created. But origin
+with 1k works now.
+
+Upstream status: queued for the next kernel, at
+ftp://sources.redhat.com/pub/dm/patches/2.6-unstable/editing/patches/dm-snapshot-cope-with-chunk-size-larger-than-origin.patch
+
+Testing: I created a volume group with 1k extent size. I created a logical
+volume with 1k size and took snapshot of it. Before the patch, it didn't
+work and it gave "device-mapper: table: 253:5: snapshot: Unable to
+allocate hash table space" message. After the patch, it works.
+
+Mikulas
+
+
+diff --git a/drivers/md/dm-snap.c b/drivers/md/dm-snap.c
+index b03941a..1c74841 100644
+--- a/drivers/md/dm-snap.c
++++ b/drivers/md/dm-snap.c
+@@ -486,6 +486,9 @@ static int init_hash_tables(struct dm_snapshot *s)
+ 	hash_size = min(origin_dev_size, cow_dev_size) >> s->chunk_shift;
+ 	hash_size = min(hash_size, max_buckets);
+ 
++	if (hash_size < 64)
++		hash_size = 64;
++
+ 	/* Round it down to a power of 2 */
+ 	hash_size = round_down(hash_size);
+ 	if (init_exception_table(&s->complete, hash_size,

@@ -1,0 +1,54 @@
+From: Don Dugger <ddugger@redhat.com>
+Date: Tue, 23 Feb 2010 20:31:37 -0500
+Subject: [xen] vtd: ignore unknown DMAR entries
+Message-id: <201002232031.o1NKVbTv008403@sobek.n0ano.com>
+Patchwork-id: 23412
+O-Subject: [RHEL 5.5 PATCH V2] BZ 563900: xen: Ignore unknown DMAR entries
+Bugzilla: 563900
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+Currently the system fails the VTd initialization when it encounters an
+unknown DMAR entry which is a little excessive.  This simple one line change
+causes the system to print out a warning message and then continue when
+it encounters an unknown entry.
+
+This fix is required in order to enable VTd on a Tylersburg-EX system.
+The more complete fix is to backport 2 upstream changesets (19810 and
+19929) but that is too invasive for 5.5, those changes will be targeted
+for RHEL 5.6.
+
+Upstream Status - NA (see above)
+
+Brew build - http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2276748
+
+Testing - Tested on my Tylersberg-EP system (which doesn't have the unknown
+DMAR entry) and the system works fine, including VTd assignment to an
+HVM guest.  More testing will be available tomorrow from the PRC team
+but I wanted to get the patch out as soon as possible.
+
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+---
+ drivers/passthrough/vtd/dmar.c |    5 ++++-
+ 1 files changed, 4 insertions(+), 1 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/passthrough/vtd/dmar.c b/drivers/passthrough/vtd/dmar.c
+index 63e4e0b..f3f2c5f 100644
+--- a/drivers/passthrough/vtd/dmar.c
++++ b/drivers/passthrough/vtd/dmar.c
+@@ -486,8 +486,11 @@ static int __init acpi_parse_dmar(unsigned long phys_addr,
+             ret = acpi_parse_one_atsr(entry_header);
+             break;
+         default:
++	    /*
++	     *  Don't panic on an unknown table, just print a warning
++	     *    and continue
++	     */
+             dprintk(XENLOG_WARNING VTDPREFIX, "Unknown DMAR structure type\n");
+-            ret = -EINVAL;
+             break;
+         }
+         if ( ret )

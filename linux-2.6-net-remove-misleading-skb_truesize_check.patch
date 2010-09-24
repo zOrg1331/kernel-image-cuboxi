@@ -1,0 +1,65 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Thu, 16 Apr 2009 11:47:04 +0200
+Subject: [net] remove misleading skb_truesize_check
+Message-id: 20090416094704.GA7982@plip.localdomain
+O-Subject: [RHEL5.4 PATCH] net: Remove misleading skb_truesize_check() (bz474883)
+Bugzilla: 474883
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Customers have reported truesize assertions in combination with
+openvpn or other applications which use tun interfaces. The
+asserations can be especially easly triggered if the physical
+interface is put in promiscious mode. The assertions are all
+false-positives so it is best to follow upstream and remove the
+misleading skb_truesize_check() code.
+
+Upstream commit 92a0acce186cde8ead56c6915d9479773673ea1a
+
+The upstream version also removes skb_truesize_bug() which
+this patch does not in order to preserve ABI.
+
+Fixes BZ474883. Please ACK.
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index aaf1bb7..56a9f81 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -386,12 +386,6 @@ extern void	      skb_under_panic(struct sk_buff *skb, int len,
+ 				      void *here);
+ extern void	      skb_truesize_bug(struct sk_buff *skb);
+ 
+-static inline void skb_truesize_check(struct sk_buff *skb)
+-{
+-	if (unlikely((int)skb->truesize < sizeof(struct sk_buff) + skb->len))
+-		skb_truesize_bug(skb);
+-}
+-
+ extern int skb_append_datato_frags(struct sock *sk, struct sk_buff *skb,
+ 			int getfrag(void *from, char *to, int offset,
+ 			int len,int odd, struct sk_buff *skb),
+diff --git a/include/net/sock.h b/include/net/sock.h
+index befc79c..c74d782 100644
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -742,7 +742,6 @@ static inline void sk_mem_uncharge(struct sock *sk, int size)
+ 
+ static inline void sk_wmem_free_skb(struct sock *sk, struct sk_buff *skb)
+ {
+-	skb_truesize_check(skb);
+ 	sock_set_flag(sk, SOCK_QUEUE_SHRUNK);
+ 	sk->sk_wmem_queued -= skb->truesize;
+ 	sk_mem_uncharge(sk, skb->truesize);
+diff --git a/net/core/sock.c b/net/core/sock.c
+index 078a24b..4bb1732 100644
+--- a/net/core/sock.c
++++ b/net/core/sock.c
+@@ -1033,7 +1033,6 @@ void sock_rfree(struct sk_buff *skb)
+ {
+ 	struct sock *sk = skb->sk;
+ 
+-	skb_truesize_check(skb);
+ 	atomic_sub(skb->truesize, &sk->sk_rmem_alloc);
+ 	sk_mem_uncharge(skb->sk, skb->truesize);
+ }

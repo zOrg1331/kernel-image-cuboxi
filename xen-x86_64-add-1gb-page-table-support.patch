@@ -1,0 +1,362 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Tue, 5 May 2009 10:46:30 -0400
+Subject: [xen] x86_64: add 1GB page table support
+Message-id: 4A005146.9020308@redhat.com
+O-Subject: Re: [RHEL5.4 Xen PATCH] Add 1GB page table support
+Bugzilla: 251982
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Resolves BZ 251982
+
+This patch adds the 1GB host page table support to Xen.   There is significant performance
+benefit to the 1GB page table feature in Xen due to the following.
+1) reducing TLB misses
+2) reducing Nested Page Table walk
+
+This is the kernel patch and there is a user space patch for xen tools as well.
+
+Testing done with Shanghai quad core system, which has this feature enabled.  Applications
+with large memory footprint such as Oracle will see significant benefits.  We are expecting
+3% - 5% on top on 2MB super page support which gave us a 12.5% performance improvement
+in RHEL5.3.  Note BZ comment #17 from Shak.  Sanjay Rao is running Oracle TPCC tests to
+confirm this.
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1772002
+
+Upstream link:
+http://thread.gmane.org/gmane.comp.emulators.xen.devel/63300/focus=63376
+
+I've had some discussions with Chris Lalancette who has reviewed the patch and suggested
+disabling the feature by default.  I actually agree with him, and added the hap_1gb option
+to the hypervisor.   The feature can be enabled with hap_1gb=1 at the kernel command line
+prompt.
+
+The patch has been brew built and care taken to fix compilation issues with different paging
+modes.
+
+Note: The RHEL patch based on 3.1.2 is totally different from the upstream patch.
+
+diff --git a/arch/x86/hvm/svm/svm.c b/arch/x86/hvm/svm/svm.c
+index 9eb3f52..5533871 100644
+--- a/arch/x86/hvm/svm/svm.c
++++ b/arch/x86/hvm/svm/svm.c
+@@ -1046,8 +1046,9 @@ int start_svm(struct cpuinfo_x86 *c)
+         return 1;
+ 
+     setup_vmcb_dump();
+-
+     svm_function_table.hap_supported = (cpuid_edx(0x8000000A) & 1);
++    svm_function_table.hap_1gb_pgtb =
++	(CONFIG_PAGING_LEVELS == 4) ? (cpuid_edx(0x80000001) & 0x04000000) : 0;
+ 
+     hvm_enable(&svm_function_table);
+ 
+diff --git a/arch/x86/hvm/vmx/vmx.c b/arch/x86/hvm/vmx/vmx.c
+index 13a4462..1e60e4d 100644
+--- a/arch/x86/hvm/vmx/vmx.c
++++ b/arch/x86/hvm/vmx/vmx.c
+@@ -1433,6 +1433,7 @@ int start_vmx(void)
+     }
+ 
+     vmx_function_table.hap_supported = cpu_has_vmx_ept;
++    vmx_function_table.hap_1gb_pgtb = 0;
+ 
+     ept_sync_all();
+ 
+diff --git a/arch/x86/mm/p2m.c b/arch/x86/mm/p2m.c
+index bfc0648..dd45d70 100644
+--- a/arch/x86/mm/p2m.c
++++ b/arch/x86/mm/p2m.c
+@@ -34,6 +34,9 @@
+ #define P2M_AUDIT     0
+ #define P2M_DEBUGGING 1
+ 
++static int opt_hap_1gb = 0;
++boolean_param("hap_1gb", opt_hap_1gb);
++
+ /*
+  * The P2M lock.  This protects all updates to the p2m table.
+  * Updates are expected to be safe against concurrent reads, 
+@@ -145,10 +148,8 @@ p2m_next_level(struct domain *d, mfn_t *table_mfn, void **table,
+         list_add_tail(&pg->list, &d->arch.p2m.pages);
+         pg->u.inuse.type_info = type | 1 | PGT_validated;
+         pg->count_info = 1;
+-
+         new_entry = l1e_from_pfn(mfn_x(page_to_mfn(pg)),
+                                  __PAGE_HYPERVISOR|_PAGE_USER);
+-
+         switch ( type ) {
+         case PGT_l3_page_table:
+             paging_write_p2m_entry(d, gfn, 
+@@ -172,6 +173,34 @@ p2m_next_level(struct domain *d, mfn_t *table_mfn, void **table,
+         }
+     }
+ 
++    /* split 1GB pages into 2MB pages */
++    if ( type == PGT_l2_page_table && (l1e_get_flags(*p2m_entry) & _PAGE_PSE) )
++    {
++        unsigned long flags, pfn;
++        struct page_info *pg = d->arch.p2m.alloc_page(d);
++        if ( pg == NULL )
++            return 0;
++        list_add_tail(&pg->list, &d->arch.p2m.pages);
++        pg->u.inuse.type_info = PGT_l1_page_table | 1| PGT_validated;
++        pg->count_info = 1;
++
++        flags = l1e_get_flags(*p2m_entry);
++        pfn = l1e_get_pfn(*p2m_entry);
++
++        l1_entry = map_domain_page(mfn_x(page_to_mfn(pg)));
++        for ( i = 0; i < L2_PAGETABLE_ENTRIES; i++ )
++        {
++            new_entry = l1e_from_pfn(pfn + (i * L1_PAGETABLE_ENTRIES), flags);
++            paging_write_p2m_entry(d, gfn, l1_entry+i, *table_mfn, new_entry,
++                                   2);
++        }
++        unmap_domain_page(l1_entry);
++        new_entry = l1e_from_pfn(mfn_x(page_to_mfn(pg)),
++                                 __PAGE_HYPERVISOR|_PAGE_USER);
++        paging_write_p2m_entry(d, gfn,
++                               p2m_entry, *table_mfn, new_entry, 3);
++    }
++
+     /* split single large page into 4KB page in P2M table */
+     if ( type == PGT_l1_page_table && (l1e_get_flags(*p2m_entry) & _PAGE_PSE) )
+     {
+@@ -229,6 +258,9 @@ p2m_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn,
+     l2_pgentry_t l2e_content;
+     p2m_type_t p2mt = p2m_flags_to_type(l1e_flags);
+     int rv=0;
++#if CONFIG_PAGING_LEVELS >= 3
++    l3_pgentry_t l3e_content;
++#endif
+ 
+ #if CONFIG_PAGING_LEVELS >= 4
+     if ( !p2m_next_level(d, &table_mfn, &table, &gfn_remainder, gfn,
+@@ -237,19 +269,42 @@ p2m_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn,
+         goto out;
+ #endif
+ #if CONFIG_PAGING_LEVELS >= 3
+-    /*
++    /* Try to allocate 1GB page table if this feature is supported.
+      * When using PAE Xen, we only allow 33 bits of pseudo-physical
+      * address in translated guests (i.e. 8 GBytes).  This restriction
+      * comes from wanting to map the P2M table into the 16MB RO_MPT hole
+      * in Xen's address space for translated PV guests.
+      * When using AMD's NPT on PAE Xen, we are restricted to 4GB.
+      */
+-    if ( !p2m_next_level(d, &table_mfn, &table, &gfn_remainder, gfn,
+-                         L3_PAGETABLE_SHIFT - PAGE_SHIFT,
+-                         ((CONFIG_PAGING_LEVELS == 3)
+-                          ? (hvm_funcs.hap_supported ? 4 : 8)
+-                          : L3_PAGETABLE_ENTRIES),
+-                         PGT_l2_page_table) )
++    if ( order == 18 ) /* 1GB page */
++    {
++        p2m_entry = p2m_find_entry(table, &gfn_remainder, gfn,
++                                   L3_PAGETABLE_SHIFT - PAGE_SHIFT,
++                                   L3_PAGETABLE_ENTRIES);
++        ASSERT(p2m_entry);
++        if ( (l1e_get_flags(*p2m_entry) & _PAGE_PRESENT) &&
++             !(l1e_get_flags(*p2m_entry) & _PAGE_PSE) )
++        {
++            P2M_ERROR("configure P2M table L3 entry with large page\n");
++            domain_crash(d);
++            goto out;
++        }
++
++        if ( mfn_valid(mfn) )
++            l3e_content = l3e_from_pfn(mfn_x(mfn),
++                                       __PAGE_HYPERVISOR|_PAGE_USER|_PAGE_PSE);
++        else
++            l3e_content = l3e_empty();
++
++        entry_content.l1 = l3e_content.l3;
++        paging_write_p2m_entry(d, gfn, p2m_entry, table_mfn, entry_content, 3);
++    }
++    else if ( !p2m_next_level(d, &table_mfn, &table, &gfn_remainder, gfn,
++                              L3_PAGETABLE_SHIFT - PAGE_SHIFT,
++                              ((CONFIG_PAGING_LEVELS == 3)
++                               ? (hvm_funcs.hap_supported ? 4 : 8)
++                               : L3_PAGETABLE_ENTRIES),
++                              PGT_l2_page_table) )
+         goto out;
+ #endif
+     
+@@ -272,7 +327,7 @@ p2m_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn,
+         /* level 1 entry */
+         paging_write_p2m_entry(d, gfn, p2m_entry, table_mfn, entry_content, 1);
+     }
+-    else
++    else if ( order == 9 )
+     {
+         p2m_entry = p2m_find_entry(table, &gfn_remainder, gfn,
+                                    L2_PAGETABLE_SHIFT - PAGE_SHIFT,
+@@ -356,7 +411,10 @@ int set_p2m_entry(struct domain *d, unsigned long gfn, mfn_t mfn,
+ 
+     while ( todo )
+     {
+-        order = (((gfn | mfn_x(mfn) | todo) & ((1ul << 9) - 1)) == 0) ? 9 : 0;
++        /* decide which page mode to use */
++        order = ( (((gfn | mfn_x(mfn) | todo) & ((1ul << 18) - 1)) == 0) &&
++                  hap_1gb_pgtb(d) && opt_hap_1gb ) ? 18 :
++            (((gfn | mfn_x(mfn) | todo) & ((1ul << 9) - 1)) == 0) ? 9 : 0;
+         rc = d->arch.p2m.set_entry(d, gfn, mfn, order, l1e_flags);
+         gfn += 1ul << order;
+         if ( mfn_x(mfn) != INVALID_MFN )
+@@ -528,6 +586,14 @@ p2m_gfn_to_mfn(struct domain *d, unsigned long gpfn)
+             unmap_domain_page(l3e);
+             return _mfn(INVALID_MFN);
+         }
++        else if ( (l3e_get_flags(*l3e) & _PAGE_PSE) )
++        {
++            mfn = _mfn(l3e_get_pfn(*l3e) +
++                       l2_table_offset(addr) * L2_PAGETABLE_ENTRIES +
++                       l1_table_offset(addr));
++            unmap_domain_page(l3e);
++            return mfn_valid(mfn) ? mfn : _mfn(INVALID_MFN);
++        }
+         mfn = _mfn(l3e_get_pfn(*l3e));
+         unmap_domain_page(l3e);
+     }
+@@ -693,6 +759,30 @@ static void audit_p2m(struct domain *d)
+                     gfn += 1 << (L3_PAGETABLE_SHIFT - PAGE_SHIFT);
+                     continue;
+                 }
++
++                /* check for super page */
++                if ( l3e_get_flags(l3e[i3]) & _PAGE_PSE )
++                {
++                    mfn = l3e_get_pfn(l3e[i3]);
++                    ASSERT(mfn_valid(_mfn(mfn)));
++                    /* we have to cover 512x512 4K pages */
++                    for ( i2 = 0;
++                          i2 < (L2_PAGETABLE_ENTRIES * L1_PAGETABLE_ENTRIES);
++                          i2++)
++                    {
++                        m2pfn = get_gpfn_from_mfn(mfn+i2);
++                        if ( m2pfn != (gfn + i2) )
++                        {
++                            pmbad++;
++                            P2M_PRINTK("mismatch: gfn %#lx -> mfn %#lx"
++                                       " -> gfn %#lx\n", gfn+i2, mfn+i2,
++                                       m2pfn);
++                            BUG();
++                        }
++                    }
++                    gfn += 1 << (L3_PAGETABLE_SHIFT - PAGE_SHIFT);
++                    continue;
++                }
+                 l2e = map_domain_page(mfn_x(_mfn(l3e_get_pfn(l3e[i3]))));
+ #endif /* all levels... */
+                 for ( i2 = 0; i2 < L2_PAGETABLE_ENTRIES; i2++ )
+@@ -913,6 +1003,7 @@ void p2m_set_flags_global(struct domain *d, u32 l1e_flags)
+ #if CONFIG_PAGING_LEVELS >= 3
+     l3_pgentry_t *l3e;
+     int i3;
++    mfn_t l3mfn;
+ #if CONFIG_PAGING_LEVELS == 4
+     l4_pgentry_t *l4e;
+     int i4;
+@@ -930,8 +1021,10 @@ void p2m_set_flags_global(struct domain *d, u32 l1e_flags)
+ #if CONFIG_PAGING_LEVELS == 4
+     l4e = map_domain_page(mfn_x(pagetable_get_mfn(d->arch.phys_table)));
+ #elif CONFIG_PAGING_LEVELS == 3
++    l3mfn = _mfn(mfn_x(pagetable_get_mfn(d->arch.phys_table)));
+     l3e = map_domain_page(mfn_x(pagetable_get_mfn(d->arch.phys_table)));
+ #else /* CONFIG_PAGING_LEVELS == 2 */
++    l2mfn = _mfn(mfn_x(pagetable_get_mfn(d->arch.phys_table)));
+     l2e = map_domain_page(mfn_x(pagetable_get_mfn(d->arch.phys_table)));
+ #endif
+ 
+@@ -943,6 +1036,7 @@ void p2m_set_flags_global(struct domain *d, u32 l1e_flags)
+ 	{
+ 	    continue;
+ 	}
++        l3mfn = _mfn(l4e_get_pfn(l4e[i4]));
+ 	l3e = map_domain_page(l4e_get_pfn(l4e[i4]));
+ #endif /* now at levels 3 or 4... */
+ 	for ( i3 = 0; 
+@@ -953,6 +1047,18 @@ void p2m_set_flags_global(struct domain *d, u32 l1e_flags)
+ 	    {
+ 		continue;
+ 	    }
++	    if ( (l3e_get_flags(l3e[i3]) & _PAGE_PSE) )
++	    {
++		flags = l3e_get_flags(l3e[i3]);
++		mfn = l3e_get_pfn(l3e[i3]);
++		gfn = get_gpfn_from_mfn(mfn);
++		flags = l1e_flags;
++		l1e_content = l1e_from_pfn(mfn, flags | _PAGE_PSE);
++		paging_write_p2m_entry(d, gfn, (l1_pgentry_t *)&l3e[i3],
++				       l3mfn, l1e_content, 3);
++		continue;
++	    }
++
+             l2mfn = _mfn(l3e_get_pfn(l3e[i3]));
+ 	    l2e = map_domain_page(l3e_get_pfn(l3e[i3]));
+ #endif /* all levels... */
+diff --git a/include/asm-x86/hvm/hvm.h b/include/asm-x86/hvm/hvm.h
+index 6d78b57..a9f1235 100644
+--- a/include/asm-x86/hvm/hvm.h
++++ b/include/asm-x86/hvm/hvm.h
+@@ -66,6 +66,9 @@ struct hvm_function_table {
+     /* Support Hardware-Assisted Paging? */
+     int hap_supported;
+ 
++    /* Support 1GB host page table? */
++    int hap_1gb_pgtb;
++
+     /*
+      *  Disable HVM functionality
+      */
+diff --git a/include/asm-x86/p2m.h b/include/asm-x86/p2m.h
+index f554bdc..0fc42ef 100644
+--- a/include/asm-x86/p2m.h
++++ b/include/asm-x86/p2m.h
+@@ -120,6 +120,9 @@ static inline mfn_t p2m_gfn_to_mfn_fast(unsigned long gfn)
+     l2_pgentry_t l2e = l2e_empty();
+     int ret;
+     paddr_t addr = ((paddr_t)gfn) << PAGE_SHIFT;
++#if CONFIG_PAGING_LEVELS >= 4
++    l3_pgentry_t l3e = l3e_empty();
++#endif
+ 
+     if ( gfn > current->domain->arch.p2m.max_mapped_pfn )
+         return _mfn(INVALID_MFN);
+@@ -128,6 +131,21 @@ static inline mfn_t p2m_gfn_to_mfn_fast(unsigned long gfn)
+     ASSERT(gfn < (RO_MPT_VIRT_END - RO_MPT_VIRT_START) / sizeof(l1_pgentry_t));
+ 
+ 
++#if CONFIG_PAGING_LEVELS >= 4
++    /* check whether 1GB is available or not */
++    ret = __copy_from_user(&l3e,
++                           &__linear_l2_table[l2_linear_offset(RO_MPT_VIRT_START) + l3_linear_offset(addr)],
++                           sizeof(l3e));
++    if ( (ret == 0) && (l3e_get_flags(l3e) & _PAGE_PRESENT) &&
++         (l3e_get_flags(l3e) & _PAGE_PSE) )
++    {
++	return _mfn(l3e_get_pfn(l3e) +
++		    l2_table_offset(addr) * L1_PAGETABLE_ENTRIES +
++		    l1_table_offset(addr));
++    }
++#endif
++
++    /* check 2MB entry */
+     ret = __copy_from_user(&l2e,
+                            &__linear_l1_table[l1_linear_offset(RO_MPT_VIRT_START) + l2_linear_offset(addr)],
+                            sizeof(l2e));
+diff --git a/include/asm-x86/paging.h b/include/asm-x86/paging.h
+index fdbdd8d..70af94d 100644
+--- a/include/asm-x86/paging.h
++++ b/include/asm-x86/paging.h
+@@ -37,6 +37,7 @@
+  * Macros to tell which paging mode a domain is in */
+ 
+ #define hap_enabled(d) (hvm_funcs.hap_supported && is_hvm_domain(d))
++#define hap_1gb_pgtb(d) (hvm_funcs.hap_1gb_pgtb && is_hvm_domain(d))
+ 
+ #define PG_SH_shift    20
+ #define PG_HAP_shift   21

@@ -1,0 +1,71 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Thu, 25 Feb 2010 16:44:45 -0500
+Subject: [net] e1000e: disable NFS filtering capabilites in ICH hw
+Message-id: <20100225164445.GB24578@gospo.rdu.redhat.com>
+Patchwork-id: 23436
+O-Subject: [PATCH RHEL5.5] e1000e: disable NFS filtering capabilites in ICH
+	hardware
+Bugzilla: 558809
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+For quite a while we have been tracking down a problem found when
+running the connectathon test on some Intel reference designs.  We were
+able to narrow this down to a specific set of commands when running the
+NFSv2 portion of the test that would result in skb_shared_info
+corruption that was pointed out when running the -debug variant of the
+kernel.
+
+It turns out that ICH-based e1000e hardware has some NFS filtering
+capability that doesn't quite work as expected.  After I looked at the
+Programmer's Guide from Intel, it was clear we could disable this
+feature.  Since disabling it we are not seeing any skb_shared_info
+corruption.
+
+This patch has not been posted upstream, but I am working with Intel to
+have this done shortly.
+
+The fix has been verified by Neil Horman and Intel.
+
+This will resolve RHBZ 558809.
+
+
+diff --git a/drivers/net/e1000e/defines.h b/drivers/net/e1000e/defines.h
+index 1190167..a468447 100644
+--- a/drivers/net/e1000e/defines.h
++++ b/drivers/net/e1000e/defines.h
+@@ -320,6 +320,8 @@
+ #define E1000_RXCSUM_IPPCSE    0x00001000   /* IP payload checksum enable */
+ 
+ /* Header split receive */
++#define E1000_RFCTL_NFSW_DIS            0x00000040
++#define E1000_RFCTL_NFSR_DIS            0x00000080
+ #define E1000_RFCTL_ACK_DIS             0x00001000
+ #define E1000_RFCTL_EXTEN               0x00008000
+ #define E1000_RFCTL_IPV6_EX_DIS         0x00010000
+diff --git a/drivers/net/e1000e/netdev.c b/drivers/net/e1000e/netdev.c
+index f911baa..e7b2eb3 100644
+--- a/drivers/net/e1000e/netdev.c
++++ b/drivers/net/e1000e/netdev.c
+@@ -2441,6 +2441,18 @@ static void e1000_setup_rctl(struct e1000_adapter *adapter)
+ 		ew32(PSRCTL, psrctl);
+ 	}
+ 
++	/*
++	 * Disable hardware filtering/packet split for NFS write request
++	 * headers and NFS read reply headers on ICH platforms due to
++	 * possible skb_shared_info corruption with some MTUs.
++	 */
++	if (adapter->flags & FLAG_IS_ICH) {
++		rfctl = er32(RFCTL);
++		rfctl |= (E1000_RFCTL_NFSW_DIS |
++			  E1000_RFCTL_NFSR_DIS);
++		ew32(RFCTL, rfctl);
++	}
++
+ 	ew32(RCTL, rctl);
+ 	/* just started the receive unit, no need to restart */
+ 	adapter->flags &= ~FLAG_RX_RESTART_NOW;

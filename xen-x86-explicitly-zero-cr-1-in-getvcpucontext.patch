@@ -1,0 +1,36 @@
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Thu, 7 May 2009 08:53:40 -0400
+Subject: [xen] x86: explicitly zero CR[1] in getvcpucontext
+Message-id: 428609086.152711241700820558.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com
+O-Subject: [RHEL 5.4 PATCH] BZ494876 Explicitly zero CR[1] in getvcpucontext
+Bugzilla: 494876
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+This mainstream patch backport as mentioned in
+
+https://bugzilla.redhat.com/show_bug.cgi?id=494876
+
+Recently BZ 499598 ( https://bugzilla.redhat.com/show_bug.cgi?id=499598 ) was raised, that can be fixed by this patch. During iteration test described in BZ 499598, test failed after few iterations. After patch was applied, iteration was finished without fail. This was caused wrong value of ctrlreg[1] field, that was not set to 0 in case of null pagetable.
+
+--
+Miroslav Rezanina
+Software Engineer - Virtualization Team - XEN kernel
+
+diff --git a/arch/x86/domctl.c b/arch/x86/domctl.c
+index 412b26e..e24bfe1 100644
+--- a/arch/x86/domctl.c
++++ b/arch/x86/domctl.c
+@@ -762,9 +762,9 @@ void arch_get_info_guest(struct vcpu *v, vcpu_guest_context_u c)
+             c.nat->ctrlreg[3] = xen_pfn_to_cr3(
+                 pagetable_get_pfn(v->arch.guest_table));
+ #ifdef __x86_64__
+-            if ( !pagetable_is_null(v->arch.guest_table_user) )
+-                c.nat->ctrlreg[1] = xen_pfn_to_cr3(
+-                    pagetable_get_pfn(v->arch.guest_table_user));
++            c.nat->ctrlreg[1] =
++                pagetable_is_null(v->arch.guest_table_user) ? 0
++                : xen_pfn_to_cr3(pagetable_get_pfn(v->arch.guest_table_user));
+ #endif
+         }
+ #ifdef CONFIG_COMPAT

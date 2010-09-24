@@ -1,0 +1,296 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Fri, 30 Apr 2010 07:59:15 -0400
+Subject: [net] implement dev_disable_lro api for RHEL5
+Message-id: <20100430075914.GA2664@dhcp-lab-161.englab.brq.redhat.com>
+Patchwork-id: 24700
+O-Subject: [RHEL5.6 PATCH v3] implement dev_disable_lro api for RHEL5 (bz 582367)
+Bugzilla: 582367
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+This patch implements a very rough backport of upstream commit
+0187bdfb05674147774ca79a79942537f3ad54bd
+
+It would create ABI issues for RHEL5, so rather than use the ethtol
+get/set_flags methods (which don't exist in RHEL5), we use a privately
+maintained method list, and add a registration api call.
+
+v1 -> v2
+- fix kABI issue
+v2 -> v3
+- call inet_forward_change() with rtnl lock
+- change print messages
+
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index 41d52e4..eb52d84 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -675,6 +675,8 @@ struct packet_type {
+ 	struct list_head	list;
+ };
+ 
++typedef int (*lro_func_t)(struct net_device *);
++
+ #include <linux/interrupt.h>
+ #include <linux/notifier.h>
+ 
+@@ -699,6 +701,9 @@ extern struct net_device	*__dev_get_by_name(const char *name);
+ extern int		dev_alloc_name(struct net_device *dev, const char *name);
+ extern int		dev_open(struct net_device *dev);
+ extern int		dev_close(struct net_device *dev);
++extern void		dev_disable_lro(struct net_device *dev);
++extern int 	register_lro_netdev(struct net_device *dev, lro_func_t func);
++extern void 	unregister_lro_netdev(struct net_device *dev);
+ extern int		dev_queue_xmit(struct sk_buff *skb);
+ extern int		register_netdevice(struct net_device *dev);
+ extern int		unregister_netdevice(struct net_device *dev);
+diff --git a/net/bridge/br_if.c b/net/bridge/br_if.c
+index 2fba454..4135bc0 100644
+--- a/net/bridge/br_if.c
++++ b/net/bridge/br_if.c
+@@ -407,6 +407,7 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
+ 		goto err2;
+ 
+ 	rcu_assign_pointer(dev->br_port, p);
++	dev_disable_lro(dev);
+ 	dev_set_promiscuity(dev, 1);
+ 
+ 	list_add_rcu(&p->list, &br->port_list);
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 7003c23..898b6db 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -90,6 +90,9 @@
+ #include <linux/if_ether.h>
+ #include <linux/netdevice.h>
+ #include <linux/etherdevice.h>
++#ifndef __GENKSYMS__
++#include <linux/ethtool.h>
++#endif
+ #include <linux/notifier.h>
+ #include <linux/skbuff.h>
+ #include <net/sock.h>
+@@ -3328,6 +3331,119 @@ static int dev_new_index(void)
+ 	}
+ }
+ 
++
++struct netdev_lro_entry {
++	struct list_head list;
++	struct net_device *dev;
++	lro_func_t func;
++};
++
++static LIST_HEAD(lro_list);
++static DEFINE_SPINLOCK(lro_list_lock);
++
++struct netdev_lro_entry *find_lro_entry(struct net_device *dev)
++{
++	struct netdev_lro_entry *entry;
++	unsigned long flags;
++
++	spin_lock_irqsave(&lro_list_lock, flags);
++
++	list_for_each_entry(entry, &lro_list, list) {
++		if (entry->dev == dev) {
++			dev_hold(dev);
++			goto out;
++		}
++	}
++	entry = NULL;
++out:
++	spin_unlock_irqrestore(&lro_list_lock, flags);
++
++	return entry;
++}
++
++/**
++ *	dev_disable_lro - disable Large Receive Offload on a device
++ *	@dev: device
++ *
++ *	Disable Large Receive Offload (LRO) on a net device.  Must be
++ *	called under RTNL.  This is needed if received packets may be
++ *	forwarded to another interface.
++ */
++void dev_disable_lro(struct net_device *dev)
++{
++	struct netdev_lro_entry *entry;
++	int rc;
++
++	entry = find_lro_entry(dev);
++	if (entry) {
++		rc = entry->func(dev);
++		dev_put(dev);
++		if (rc)
++			printk(KERN_WARNING "Failed to disable lro on %s\n", dev->name);
++		else
++			printk(KERN_INFO "Disabled lro on %s\n", dev->name);
++	}
++}
++EXPORT_SYMBOL(dev_disable_lro);
++
++/**
++ *	register_lro_netdev - register a driver with the lro_disable routine
++ *	@dev: The device being registered
++ *	@func: The function to call when disabling lro
++ *
++ *	Adds a netdevice to the list of registered lro using devices
++ *	and associates it with a function to call disabling that device
++ */
++int register_lro_netdev(struct net_device *dev, lro_func_t func)
++{
++	struct netdev_lro_entry *entry;
++	unsigned long flags;
++
++	if (find_lro_entry(dev) != NULL) {
++		/*
++		 * already registered
++		 */
++		dev_put(dev);
++		return -EEXIST;
++	}
++
++	entry = kmalloc(sizeof(struct netdev_lro_entry), GFP_KERNEL);
++	if (!entry)
++		return -ENOMEM;
++
++	entry->dev = dev;
++	entry->func = func;
++
++	spin_lock_irqsave(&lro_list_lock, flags);
++	list_add(&entry->list, &lro_list);
++	spin_unlock_irqrestore(&lro_list_lock, flags);
++	return 0;
++}
++EXPORT_SYMBOL(register_lro_netdev);
++
++/**
++ *	unregister_lro_netdev - register a driver with the lro_disable routine
++ *	@dev: The device being unregistered
++ *
++ *	Removes a netdevice from the list of registered lro using devices
++ */
++void unregister_lro_netdev(struct net_device *dev)
++{
++	struct netdev_lro_entry *entry;
++	unsigned long flags;
++
++	entry = find_lro_entry(dev);
++	if (entry) {
++		spin_lock_irqsave(&lro_list_lock, flags);
++		list_del(&entry->list);
++		spin_unlock_irqrestore(&lro_list_lock, flags);
++		dev_put(dev);
++		kfree(entry);
++	}
++	return;
++}
++EXPORT_SYMBOL(unregister_lro_netdev);
++
+ static int dev_boot_phase = 1;
+ 
+ /* Delayed registration/unregisteration */
+diff --git a/net/ipv4/devinet.c b/net/ipv4/devinet.c
+index 11b394d..7cd5900 100644
+--- a/net/ipv4/devinet.c
++++ b/net/ipv4/devinet.c
+@@ -149,6 +149,8 @@ struct in_device *inetdev_init(struct net_device *dev)
+ 	in_dev->dev = dev;
+ 	if ((in_dev->arp_parms = neigh_parms_alloc(dev, &arp_tbl)) == NULL)
+ 		goto out_kfree;
++	if (in_dev->cnf.forwarding)
++		dev_disable_lro(dev);
+ 	/* Reference in_dev->dev */
+ 	dev_hold(dev);
+ #ifdef CONFIG_SYSCTL
+@@ -1170,6 +1172,8 @@ void inet_forward_change(void)
+ 	read_lock(&dev_base_lock);
+ 	for (dev = dev_base; dev; dev = dev->next) {
+ 		struct in_device *in_dev;
++		if (on)
++			dev_disable_lro(dev);
+ 		rcu_read_lock();
+ 		in_dev = __in_dev_get_rcu(dev);
+ 		if (in_dev)
+@@ -1177,8 +1181,6 @@ void inet_forward_change(void)
+ 		rcu_read_unlock();
+ 	}
+ 	read_unlock(&dev_base_lock);
+-
+-	rt_cache_flush(0);
+ }
+ 
+ static int devinet_sysctl_forward(ctl_table *ctl, int write,
+@@ -1190,10 +1192,19 @@ static int devinet_sysctl_forward(ctl_table *ctl, int write,
+ 	int ret = proc_dointvec(ctl, write, filp, buffer, lenp, ppos);
+ 
+ 	if (write && *valp != val) {
+-		if (valp == &ipv4_devconf.forwarding)
+-			inet_forward_change();
+-		else if (valp != &ipv4_devconf_dflt.forwarding)
++		if (valp != &ipv4_devconf_dflt.forwarding) {
++			rtnl_lock();
++			if (valp == &ipv4_devconf.forwarding) {
++				inet_forward_change();
++			} else if (*valp) {
++				struct ipv4_devconf *cnf = ctl->extra1;
++				struct in_device *idev =
++					container_of(cnf, struct in_device, cnf);
++				dev_disable_lro(idev->dev);
++			}
++			rtnl_unlock();
+ 			rt_cache_flush(0);
++		}
+ 	}
+ 
+ 	return ret;
+diff --git a/net/ipv4/sysctl_net_ipv4.c b/net/ipv4/sysctl_net_ipv4.c
+index 1b19654..8c93708 100644
+--- a/net/ipv4/sysctl_net_ipv4.c
++++ b/net/ipv4/sysctl_net_ipv4.c
+@@ -44,8 +44,12 @@ int ipv4_sysctl_forward(ctl_table *ctl, int write, struct file * filp,
+ 
+ 	ret = proc_dointvec(ctl, write, filp, buffer, lenp, ppos);
+ 
+-	if (write && ipv4_devconf.forwarding != val)
++	if (write && ipv4_devconf.forwarding != val) {
++		rtnl_lock();
+ 		inet_forward_change();
++		rtnl_unlock();
++		rt_cache_flush(0);
++	}
+ 
+ 	return ret;
+ }
+@@ -88,7 +92,10 @@ static int ipv4_sysctl_forward_strategy(ctl_table *table,
+ 	}
+ 
+ 	*valp = new;
++	rtnl_lock();
+ 	inet_forward_change();
++	rtnl_unlock();
++	rt_cache_flush(0);
+ 	return 1;
+ }
+ 
+diff --git a/net/ipv6/addrconf.c b/net/ipv6/addrconf.c
+index 6b99ed5..7490e97 100644
+--- a/net/ipv6/addrconf.c
++++ b/net/ipv6/addrconf.c
+@@ -382,6 +382,8 @@ static struct inet6_dev * ipv6_add_dev(struct net_device *dev)
+ 		kfree(ndev);
+ 		return NULL;
+ 	}
++	if (ndev->cnf.forwarding)
++		dev_disable_lro(dev);
+ 	/* We refer to the device */
+ 	dev_hold(dev);
+ 
+@@ -481,6 +483,8 @@ static void dev_forward_change(struct inet6_dev *idev)
+ 	if (!idev)
+ 		return;
+ 	dev = idev->dev;
++	if (idev->cnf.forwarding)
++		dev_disable_lro(dev);
+ 	if (dev && (dev->flags & IFF_MULTICAST)) {
+ 		ipv6_addr_all_routers(&addr);
+ 	

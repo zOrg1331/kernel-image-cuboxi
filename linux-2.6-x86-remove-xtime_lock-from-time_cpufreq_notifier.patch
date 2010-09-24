@@ -1,0 +1,49 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 19 May 2009 14:52:58 -0400
+Subject: [x86] remove xtime_lock from time_cpufreq_notifier
+Message-id: 20090519185255.27282.57848.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH][BZ501178] i386: remove xtime_lock from time_cpufreq_notifier()
+Bugzilla: 501178
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+Prarit spotted that we still have an xtime_lock recursion in the cpufreq
+code on i386.
+
+Fix this by simply removing the xtime_lock from the cpufreq code as it
+doesn't appear to be needed anymore.
+
+Upstream: df3624aa293dfa2d46089747d919711089a702eb
+
+Signed-off-by: Peter Zijlstra <pzijlstr@redhat.com>
+
+diff --git a/arch/i386/kernel/tsc.c b/arch/i386/kernel/tsc.c
+index 254fdfb..05ee347 100644
+--- a/arch/i386/kernel/tsc.c
++++ b/arch/i386/kernel/tsc.c
+@@ -308,13 +308,10 @@ time_cpufreq_notifier(struct notifier_block *nb, unsigned long val, void *data)
+ {
+ 	struct cpufreq_freqs *freq = data;
+ 
+-	if (val != CPUFREQ_RESUMECHANGE && val != CPUFREQ_SUSPENDCHANGE)
+-		write_seqlock_irq(&xtime_lock);
+-
+ 	if (!ref_freq) {
+ 		if (!freq->old){
+ 			ref_freq = freq->new;
+-			goto end;
++			return 0;
+ 		}
+ 		ref_freq = freq->old;
+ 		loops_per_jiffy_ref = cpu_data[freq->cpu].loops_per_jiffy;
+@@ -346,9 +343,6 @@ time_cpufreq_notifier(struct notifier_block *nb, unsigned long val, void *data)
+ 			}
+ 		}
+ 	}
+-end:
+-	if (val != CPUFREQ_RESUMECHANGE && val != CPUFREQ_SUSPENDCHANGE)
+-		write_sequnlock_irq(&xtime_lock);
+ 
+ 	return 0;
+ }

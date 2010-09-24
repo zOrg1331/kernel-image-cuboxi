@@ -1,0 +1,64 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Wed, 27 May 2009 20:48:02 -0400
+Subject: [x86] fix mcp55 apic routing
+Message-id: 20090528004802.GD19076@localhost.localdomain
+O-Subject: [RHEL 5.5 PATCH] i386: fix mcp55 apic routing (bz 473404)
+Bugzilla: 473404
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+A few days ago, I posted a bug fix for apic interrupt routing using mcp55, and
+it was astutely pointed out that I probably need the same fix for x86 (since the
+prior pach was for x86_64).  This patch applies on top of the former patch and
+fixes the use of mcp55 with kdump on x86 code.  Verified by me.  Fixes bz 473404
+
+Neil
+
+diff --git a/arch/i386/kernel/crash.c b/arch/i386/kernel/crash.c
+index 26554bf..a203412 100644
+--- a/arch/i386/kernel/crash.c
++++ b/arch/i386/kernel/crash.c
+@@ -24,6 +24,7 @@
+ #include <asm/apic.h>
+ #include <mach_ipi.h>
+ #include <linux/kvm_para.h>
++#include <linux/pci.h>
+ 
+ 
+ /* This keeps a track of which one is crashing cpu. */
+@@ -158,6 +159,8 @@ static void nmi_shootdown_cpus(void)
+ #endif
+ #endif /* CONFIG_XEN */
+ 
++extern struct pci_dev *mcp55_rewrite;
++
+ void machine_crash_shutdown(struct pt_regs *regs)
+ {
+ #ifndef CONFIG_XEN
+@@ -182,6 +185,25 @@ void machine_crash_shutdown(struct pt_regs *regs)
+ #if defined(CONFIG_X86_IO_APIC)
+ 	disable_IO_APIC();
+ #endif
++	if (crashing_cpu && mcp55_rewrite) {
++		u32 cfg;
++		printk(KERN_CRIT "REWRITING MCP55 CFG REG\n");
++		/*
++		 * We have a mcp55 chip on board which has been 
++		 * flagged as only sending legacy interrupts
++		 * to the BSP, and we are crashing on an AP
++		 * This is obviously bad, and we need to 
++		 * fix it up.  To do this we write to the 
++		 * flagged device, to the register at offset 0x74
++		 * and we make sure that bit 2 and bit 15 are clear
++		 * This forces legacy interrupts to be broadcast
++		 * to all cpus
++		 */
++		pci_read_config_dword(mcp55_rewrite, 0x74, &cfg);
++		cfg &= ~((1 << 2) | (1 << 15));
++		printk(KERN_CRIT "CFG = %x\n", cfg);
++		pci_write_config_dword(mcp55_rewrite, 0x74, cfg);
++	}
+ #endif /* CONFIG_XEN */
+ 	crash_save_self(regs);
+ }

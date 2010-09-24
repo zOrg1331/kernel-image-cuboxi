@@ -1,0 +1,61 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Mon, 1 Jun 2009 16:39:34 -0400
+Subject: [net] igb and igbvf: return from napi poll correctly
+Message-id: 20090601203933.GF14548@shell.devel.redhat.com
+O-Subject: [RHEL5.4 PATCH] igb and igbvf: return from napi poll correctly
+Bugzilla: 503215
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Testing revealed that there was a problem with my igb/igbvf backport for
+5.4.  Since I wasn't properly tracking the amount of work done, NAPI
+wasn't stopping at the correct time and throughput was awful (read:
+unpredictable).  Chris Wright brought this to my attention and I quickly
+realized the problem.  I also fixed-up igbvf as well.
+
+Chris was able to verify both drivers and I was able to verify igb.
+
+This will resolve RHBZ 503215.
+
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index 3e22826..405906d 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -3972,11 +3972,11 @@ static int igb_poll(struct net_device *netdev, int *budget)
+ 
+ 	if (rx_ring->buddy) {
+ 		if (!igb_clean_tx_irq(rx_ring->buddy))
+-			work_done = work_done;
++			work_done = work_to_do;
+ 	}
+ 
+ 	/* If not enough Rx work done, exit the polling mode */
+-	if ((work_done < *budget) || !netif_running(real_netdev)) {
++	if ((work_done < work_to_do) || !netif_running(real_netdev)) {
+ quit_polling:
+ 		netif_rx_complete(netdev);
+ 		igb_rx_irq_enable(rx_ring);
+diff --git a/drivers/net/igbvf/netdev.c b/drivers/net/igbvf/netdev.c
+index a516893..669d49f 100644
+--- a/drivers/net/igbvf/netdev.c
++++ b/drivers/net/igbvf/netdev.c
+@@ -1180,15 +1180,16 @@ static int igbvf_poll(struct net_device *poll_dev, int *budget)
+ {
+ 	struct igbvf_adapter *adapter = netdev_priv(poll_dev);
+ 	struct e1000_hw *hw = &adapter->hw;
++	int work_to_do = min(*budget, poll_dev->quota);
+ 	int work_done = 0;
+ 
+-	igbvf_clean_rx_irq(adapter, &work_done, *budget);
++	igbvf_clean_rx_irq(adapter, &work_done, work_to_do);
+ 
+ 	*budget -= work_done;
+ 	poll_dev->quota -= work_done;
+ 
+ 	/* If not enough Rx work done, exit the polling mode */
+-	if (work_done < *budget) {
++	if (work_done < work_to_do) {
+ 		netif_rx_complete(poll_dev);
+ 
+ 		if (adapter->itr_setting & 3)

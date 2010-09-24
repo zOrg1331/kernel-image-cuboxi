@@ -1,0 +1,65 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Tue, 10 Mar 2009 10:59:18 +0100
+Subject: [net] ipv6: disallow IPPROTO_IPV6-level IPV6_CHECKSUM
+Message-id: 20090310095917.GJ3468@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.4 patch] BZ486204 net: ipv6: RAW: Disallow IPPROTO_IPV6-level IPV6_CHECKSUM socket option on ICMPv6 sockets.
+Bugzilla: 486204
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+BZ486204
+https://bugzilla.redhat.com/show_bug.cgi?id=486204
+
+Description:
+RFC3542 tells that IPV6_CHECKSUM socket option in the IPPROTO_IPV6
+level is not allowed on ICMPv6 sockets.  IPPROTO_RAW level
+IPV6_CHECKSUM socket option (a Linux extension) is still allowed.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=1a98d05f59704d60be85b03f727964e15c77224c
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1719994
+
+Test:
+Booted on x86_64 and tested with reproducer.
+
+Jirka
+
+diff --git a/net/ipv6/raw.c b/net/ipv6/raw.c
+index 5411a56..7f83f47 100644
+--- a/net/ipv6/raw.c
++++ b/net/ipv6/raw.c
+@@ -875,6 +875,19 @@ static int do_rawv6_setsockopt(struct sock *sk, int level, int optname,
+ 
+ 	switch (optname) {
+ 		case IPV6_CHECKSUM:
++			if (inet_sk(sk)->num == IPPROTO_ICMPV6 &&
++			    level == IPPROTO_IPV6) {
++				/*
++				 * RFC3542 tells that IPV6_CHECKSUM socket
++				 * option in the IPPROTO_IPV6 level is not
++				 * allowed on ICMPv6 sockets.
++				 * If you want to set it, use IPPROTO_RAW
++				 * level IPV6_CHECKSUM socket option
++				 * (Linux extension).
++				 */
++				return -EINVAL;
++			}
++
+ 			/* You may get strange result with a positive odd offset;
+ 			   RFC2292bis agrees with me. */
+ 			if (val > 0 && (val&1))
+@@ -949,6 +962,11 @@ static int do_rawv6_getsockopt(struct sock *sk, int level, int optname,
+ 
+ 	switch (optname) {
+ 	case IPV6_CHECKSUM:
++		/*
++		 * We allow getsockopt() for IPPROTO_IPV6-level
++		 * IPV6_CHECKSUM socket option on ICMPv6 sockets
++		 * since RFC3542 is silent about it.
++		 */
+ 		if (rp->checksum == 0)
+ 			val = -1;
+ 		else

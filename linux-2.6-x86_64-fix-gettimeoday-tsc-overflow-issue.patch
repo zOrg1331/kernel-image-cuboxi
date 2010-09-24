@@ -1,0 +1,189 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 13 Mar 2009 09:11:50 -0400
+Subject: [x86_64] fix gettimeoday TSC overflow issue
+Message-id: 49BA5B96.5000905@redhat.com
+O-Subject: Re: [RHEL5 PATCH]: Fix gettimeoday() TSC overflow issue
+Bugzilla: 467942
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+It is possible to overflow gettimeofday() when NTP is active.  adjtimex() can
+result in a time correction such that the corrected time + current time is
+greater than the next time read from gettimeofday() -- ie) time seemingly goes
+backwards.
+
+To fix this, I have used the upstream model of setting the TSC shift (ie,
+NS_SCALE) to 22 and modified the code to look for a potential overflow.
+
+This code is not upstream has significantly different code and uses only the
+clocksource functions.  Upstream does not suffer from this problem.
+
+I also looked at callers of this code to make sure that the increased shift
+does not cause any data struct overflow problems.
+
+Extensively tested on many many RHTS systems for weeks.  Both long
+(48 hour tests) and short (5-30 minute) tests were done -- no regressions
+were seen.
+
+This patch has also been tested by the customer and fixes their problem.
+
+Resolves BZ 467942.
+
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index 2d34020..24eb09d 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -75,6 +75,7 @@ static int notsc __initdata = 0;
+ #define NSEC_PER_REAL_TICK (NSEC_PER_SEC / REAL_HZ)
+ 
+ #define NS_SCALE	10 /* 2^10, carefully chosen */
++#define NS_SCALE_22	22 /* 2^22, carefully chosen */
+ #define US_SCALE	32 /* 2^32, arbitralrily chosen */
+ 
+ unsigned int cpu_khz;					/* TSC clocks / usec, not used here */
+@@ -113,7 +114,7 @@ static inline long do_gettimeoffset_tsc(void)
+ 	t = get_cycles_sync();
+ 	if (t < vxtime.last_tsc) 
+ 		t = vxtime.last_tsc; /* hack */
+-	x = ((t - vxtime.last_tsc) * vxtime.tsc_quot) >> NS_SCALE;
++	x = ((t - vxtime.last_tsc) * vxtime.tsc_quot) >> NS_SCALE_22;
+ 	return x;
+ }
+ 
+@@ -369,6 +370,10 @@ void main_timer_handler(struct pt_regs *regs)
+ 	unsigned long tsc;
+ 	int delay = 0, offset = 0, lost = 0, i;
+ 
++	/* for re-calculate offset */
++	long last_tsc_quot = vxtime.tsc_quot;
++	unsigned long last_tsc = vxtime.last_tsc;
++
+ /*
+  * Here we are in the timer irq handler. We have irqs locally disabled (so we
+  * don't need spin_lock_irqsave()) but we don't know if the timer_bh is running
+@@ -421,7 +426,8 @@ void main_timer_handler(struct pt_regs *regs)
+ #endif
+ 	} else {
+ 		offset = (((tsc - vxtime.last_tsc) *
+-			   vxtime.tsc_quot) >> NS_SCALE) - NSEC_PER_REAL_TICK;
++			   vxtime.tsc_quot) >> NS_SCALE_22) -
++			 NSEC_PER_REAL_TICK;
+ 
+ 		if (offset < 0)
+ 			offset = 0;
+@@ -435,12 +441,8 @@ void main_timer_handler(struct pt_regs *regs)
+ 		/* FIXME: 1000 or 1000000? */
+ 		monotonic_base += (tsc - vxtime.last_tsc) * 1000000 / cpu_khz;
+ 
+-		vxtime.last_tsc = tsc - vxtime.quot * delay / vxtime.tsc_quot;
+-
+-		if ((((tsc - vxtime.last_tsc) *
+-		      vxtime.tsc_quot) >> NS_SCALE) < offset)
+-			vxtime.last_tsc = tsc -
+-				(((long) offset << NS_SCALE) / vxtime.tsc_quot) - 1;
++		vxtime.last_tsc = tsc - vxtime.quot * delay /
++				  (vxtime.tsc_quot >> (NS_SCALE_22 - NS_SCALE));
+ 	}
+ 	/* SCALE: We expect tick_divider - 1 lost, ie 0 for normal behaviour */
+ 	if (lost > (int)tick_divider - 1)  {
+@@ -472,6 +474,15 @@ void main_timer_handler(struct pt_regs *regs)
+ #endif
+ 	}
+ 
++	/* re-calculate vxtime.last_tsc */
++	if (vxtime.mode != VXTIME_HPET && vxtime.mode != VXTIME_PMTMR) {
++		if (tsc > (last_tsc + cpu_khz)) {
++			vxtime.last_tsc = vxtime.last_tsc -
++			                  (tsc - last_tsc -
++					   (cpu_khz * ( lost + 1 ))) *
++			                  last_tsc_quot / vxtime.tsc_quot;
++		}
++	}
+ /*
+  * If we have an externally synchronized Linux clock, then update CMOS clock
+  * accordingly every ~11 minutes. set_rtc_mmss() will be called in the jiffy
+@@ -507,12 +518,12 @@ static unsigned int cyc2ns_scale __read_mostly;
+ 
+ static inline void set_cyc2ns_scale(unsigned long cpu_khz)
+ {
+-	cyc2ns_scale = (NSEC_PER_MSEC << NS_SCALE) / cpu_khz;
++	cyc2ns_scale = (NSEC_PER_MSEC << NS_SCALE_22) / cpu_khz;
+ }
+ 
+ static inline unsigned long long cycles_2_ns(unsigned long long cyc)
+ {
+-	return (cyc * cyc2ns_scale) >> NS_SCALE;
++	return (cyc * cyc2ns_scale) >> NS_SCALE_22;
+ }
+ 
+ unsigned long long sched_clock(void)
+@@ -718,7 +729,8 @@ static int time_cpufreq_notifier(struct notifier_block *nb, unsigned long val,
+ 
+ 		tsc_khz = cpufreq_scale(tsc_khz_ref, ref_freq, freq->new);
+ 		if (!(freq->flags & CPUFREQ_CONST_LOOPS))
+-			vxtime.tsc_quot = (NSEC_PER_MSEC << NS_SCALE) / cpu_khz;
++			vxtime.tsc_quot = (NSEC_PER_MSEC << NS_SCALE_22) /
++					  cpu_khz;
+ 	}
+ 	
+ 	set_cyc2ns_scale(tsc_khz_ref);
+@@ -1024,7 +1036,7 @@ void __init time_init(void)
+ 
+ 	vxtime.mode = VXTIME_TSC;
+ 	vxtime.quot = (NSEC_PER_SEC << NS_SCALE) / vxtime_hz;
+-	vxtime.tsc_quot = (NSEC_PER_MSEC << NS_SCALE) / cpu_khz;
++	vxtime.tsc_quot = (NSEC_PER_MSEC << NS_SCALE_22) / cpu_khz;
+ 	vxtime.last_tsc = get_cycles_sync();
+ 	setup_irq(0, &irq0);
+ 
+@@ -1112,7 +1124,7 @@ void time_init_gtod(void)
+ 	printk(KERN_INFO "time.c: Detected %d.%03d MHz processor.\n", 
+ 		cpu_khz / 1000, cpu_khz % 1000);
+ 	vxtime.quot = (NSEC_PER_SEC << NS_SCALE) / vxtime_hz;
+-	vxtime.tsc_quot = (NSEC_PER_MSEC << NS_SCALE) / cpu_khz;
++	vxtime.tsc_quot = (NSEC_PER_MSEC << NS_SCALE_22) / cpu_khz;
+ 	vxtime.last_tsc = get_cycles_sync();
+ 
+ 	set_cyc2ns_scale(cpu_khz);
+diff --git a/arch/x86_64/kernel/vsyscall.c b/arch/x86_64/kernel/vsyscall.c
+index 69719d6..7928f57 100644
+--- a/arch/x86_64/kernel/vsyscall.c
++++ b/arch/x86_64/kernel/vsyscall.c
+@@ -53,6 +53,8 @@ int __vgetcpu_mode __section_vgetcpu_mode;
+ 	  ((v - fix_to_virt(VSYSCALL_FIRST_PAGE)) + __pa_symbol(&__vsyscall_0)); })
+ 
+ #define NS_SCALE	10 /* 2^10, carefully chosen */
++#define NS_SCALE_22	22 /* 2^22, carefully chosen */
++
+ 
+ static __always_inline void timeval_normalize(struct timeval * tv)
+ {
+@@ -82,7 +84,7 @@ static __always_inline void do_vgettimeofday(struct timeval * tv)
+ 			if (t < __vxtime.last_tsc)
+ 				t = __vxtime.last_tsc;
+ 			nsec += ((t - __vxtime.last_tsc) *
+-				 __vxtime.tsc_quot) >> NS_SCALE;
++				 __vxtime.tsc_quot) >> NS_SCALE_22;
+ 		} else {
+ 			nsec += ((readl((void *)fix_to_virt(VSYSCALL_HPET) +
+ 					0xf0) -
+diff --git a/kernel/timer.c b/kernel/timer.c
+index 0e831b5..44ef106 100644
+--- a/kernel/timer.c
++++ b/kernel/timer.c
+@@ -1294,6 +1294,15 @@ static void update_wall_time(void)
+ 	xtime.tv_nsec = (s64)clock->xtime_nsec >> clock->shift;
+ 	clock->xtime_nsec -= (s64)xtime.tv_nsec << clock->shift;
+ 
++#ifdef CONFIG_X86_64
++#define NS_SCALE_22	22 /* 2^22, carefully chosen */
++	/* re-calculate vxtime.tsc_quot */
++	vxtime.tsc_quot = (NSEC_PER_MSEC << NS_SCALE_22) / cpu_khz *
++                          (((s64)clock->xtime_interval +
++			    (s64)clock->xtime_nsec) >>
++			   clock->shift) / NSEC_PER_MSEC;
++#endif
++
+ 	/* check to see if there is a new clocksource to use */
+ 	if (change_clocksource()) {
+ 		clock->error = 0;

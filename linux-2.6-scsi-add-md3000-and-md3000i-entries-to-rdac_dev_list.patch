@@ -1,0 +1,68 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Thu, 23 Apr 2009 13:58:20 -0400
+Subject: [scsi] add md3000 and md3000i entries to rdac_dev_list
+Message-id: 49F0AC3C.30203@redhat.com
+O-Subject: [RHEL5.4 PATCH] add md3000 and md3000i entries to rdac_dev_list
+Bugzilla: 487293
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+bz487293
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=487293
+Missing DELL MD3000i storage into scsi_dh_rdac kernel module
+  device list
+
+Description of problem:
+Neither the Dell PowerVault MD3000 or MD3000i are supported by RHEL-5.
+When these devices are used, the following is displayed in the logs:
+  device-mapper: multipath: Cannot failover device because scsi_dh_rdac
+was not loaded.
+  kernel: device-mapper: multipath: Failing path 8:16.
+  kernel: device-mapper: multipath: Could not failover device. Error 15.
+
+Note: The Dell TAM is aware of a number of customers affected by this
+problem.
+
+Solution:
+Add MD3000 and MD3000i entries to the rdac_dev_list array.
+
+Upstream status:
+The upstream commit is:
+650849d71ca05d55a1553fe42fb21af9dce5612b
+by Yanqing Liu <yanqing_liu@dell.com>
+
+scsi_dh: add Dell product information into rdac device handler
+  [SCSI] scsi_dh: add Dell product information into rdac device handler
+  Add Dell Powervault storage arrays into device list of rdac device
+   handler.
+
+Brew:
+Successfully built in Brew (task_1773119)
+
+Testing:
+Vinnie Valdez, the Red Hat engineer who works on HA clusters as part of
+ClusterSuite/GFS at the Dell Austin facility, successfully tested this
+patch.
+
+With the patch, the following log message was found in lieu of the error
+message:
+device-mapper: multipath: Using scsi_dh module scsi_dh_rdac for
+failover/failback and device management.
+ multipathd: mpath1: load table [0 104857600 multipath 0 1 rdac 2 1
+round-robin 0 1 1 8:16 1000 round-robin 0 1 1 8:32 1000]
+
+Acks would be appreciated. Thanks.
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index 3cdd97a..7fa7f51 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -595,6 +595,8 @@ const struct scsi_dh_devlist rdac_dev_list[] = {
+ 	{"STK", "OPENstorage D280"},
+ 	{"SUN", "CSM200_R"},
+ 	{"SUN", "LCSM100_F"},
++	{"DELL", "MD3000"},
++	{"DELL", "MD3000i"},
+ 	{NULL, NULL},
+ };
+ 

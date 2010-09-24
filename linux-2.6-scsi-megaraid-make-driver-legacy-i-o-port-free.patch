@@ -1,0 +1,81 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Wed, 2 Dec 2009 14:35:50 -0500
+Subject: [scsi] megaraid: make driver legacy I/O port free
+Message-id: <4B167B46.8080602@redhat.com>
+Patchwork-id: 21650
+O-Subject: Re: [RHEL5.5 1/2] bz515863 megaraid: make driver legacy I/O port free
+Bugzilla: 515863
+
+This is for bz#515863
+
+This patch comes from Fujitsu:
+"Our system cannot use all the PCI devices because of the shortage of I/O
+port resources.
+
+It is mandatory for all PCI device drivers to enable the devices by using
+pci_enable_device() which enables all regions probed by the device's BARs.
+pci_enable_device() returns an error if it fails to enable regions probed by
+BARs.
+
+On the large servers, I/O port resource may not be assigned to all the PCI
+devices since it is limited (to 64KB on Intel Architecture[1]) and it may
+also be fragmented (I/O base register of PCI-to-PCI bridge will usually be
+aligned to a 4KB boundary[2]).
+If no I/O port resource is assigned to devices, those devices do not work.
+This is what happened on our systems."
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/scsi/megaraid/megaraid_sas.c b/drivers/scsi/megaraid/megaraid_sas.c
+index 9d283d9..e48d37b 100644
+--- a/drivers/scsi/megaraid/megaraid_sas.c
++++ b/drivers/scsi/megaraid/megaraid_sas.c
+@@ -2695,7 +2695,9 @@ static int megasas_init_mfi(struct megasas_instance *instance)
+ 		instance->base_addr = pci_resource_start(instance->pdev, 0);
+ 	}
+ 
+-	if (pci_request_regions(instance->pdev, "megasas: LSI")) {
++	if (pci_request_selected_regions(instance->pdev,
++					 pci_select_bars(instance->pdev, IORESOURCE_MEM),
++					 "megasas: LSI")) {
+ 		printk(KERN_DEBUG "megasas: IO memory region busy!\n");
+ 		return -EBUSY;
+ 	}
+@@ -2844,7 +2846,8 @@ static int megasas_init_mfi(struct megasas_instance *instance)
+ 	iounmap(instance->reg_set);
+ 
+       fail_ioremap:
+-	pci_release_regions(instance->pdev);
++	pci_release_selected_regions(instance->pdev,
++				     pci_select_bars(instance->pdev, IORESOURCE_MEM));
+ 
+ 	return -EINVAL;
+ }
+@@ -2864,7 +2867,8 @@ static void megasas_release_mfi(struct megasas_instance *instance)
+ 
+ 	iounmap(instance->reg_set);
+ 
+-	pci_release_regions(instance->pdev);
++	pci_release_selected_regions(instance->pdev,
++				     pci_select_bars(instance->pdev, IORESOURCE_MEM));
+ }
+ 
+ /**
+@@ -3172,7 +3176,7 @@ megasas_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	/*
+ 	 * PCI prepping: enable device set bus mastering and dma mask
+ 	 */
+-	rval = pci_enable_device(pdev);
++	rval = pci_enable_device_mem(pdev);
+ 
+ 	if (rval) {
+ 		return rval;
+@@ -3470,7 +3474,7 @@ megasas_resume(struct pci_dev *pdev)
+ 	/*
+ 	 * PCI prepping: enable device set bus mastering and dma mask
+ 	 */
+-	rval = pci_enable_device(pdev);
++	rval = pci_enable_device_mem(pdev);
+ 
+ 	if (rval) {
+ 		printk(KERN_INFO "megasas: Enable device failed\n");

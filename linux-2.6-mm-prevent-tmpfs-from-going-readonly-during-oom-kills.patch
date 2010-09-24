@@ -1,0 +1,39 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Tue, 29 Sep 2009 15:50:26 -0400
+Subject: [mm] prevent tmpfs from going readonly during oom kills
+Message-id: <1254239426.3219.15.camel@dhcp-100-19-198.bos.redhat.com>
+Patchwork-id: 20984
+O-Subject: [RHEL5-U5 Patch] Prevent the tmpfs filesystem from going to
+	readonly mode during OOM kills
+Bugzilla: 497257
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Back In RHEL5-02 I changed __alloc_pages() so it would not call
+try_to_free_pages() if the process was being OOM killed in
+linux-2.6-mm-oom-prevent-from-killing-several-processes.patch.
+
+If a process calls __alloc_pages() with __GFP_NOFAIL we cant bail
+and return NULL because thing like tmpfs filesystem going to readonly
+mode can occur.
+
+The following upstream patch fixed this problem by not bailing out of
+__alloc_pages when the process is being OOM killed if __GFP_NOFAIL was
+passed in.
+
+Fixes BZ 497257
+
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index cddb8ce..fd53e96 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -1015,7 +1015,7 @@ nofail_alloc:
+ 		goto nopage;
+ 
+ rebalance:
+-	if (test_thread_flag(TIF_MEMDIE) || would_oom_kill)
++	if (test_thread_flag(TIF_MEMDIE) && !(gfp_mask & __GFP_NOFAIL) || would_oom_kill)
+ 		goto nopage;
+ 	cond_resched();
+ 

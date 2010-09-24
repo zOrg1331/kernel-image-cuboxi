@@ -1,0 +1,57 @@
+From: Andrew Jones <drjones@redhat.com>
+Date: Fri, 18 Dec 2009 08:32:22 -0500
+Subject: [xen] mask AMD's Node ID MSR
+Message-id: <023eb183576eefe8b1594844dfc1f6c3bd1cabf9.1261125004.git.drjones@redhat.com>
+Patchwork-id: 22106
+O-Subject: [RHEL5.5 PATCH] [xen] mask AMD's Node ID MSR
+Bugzilla: 547518
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Resolves BZ 547518, HVM guest crash on boot in identify_cpu. The crash
+is the guest applying extended topology information, if M-C is detected.
+This patch hides these details from guest by masking the cpuid that
+advertises support for the Node ID MSR, which is used to detect support
+for multi-node.
+
+Upstream Xen doesn't need this patch since it applies a whitelist for
+the HVM guest's cpuid policy.
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2158090
+
+Tested on amd-dinar-03.lab.bos.redhat.com. With this patched hypervisor
+I can boot -182 HVM guests.
+---
+ arch/x86/hvm/svm/svm.c       |    3 +++
+ include/asm-x86/cpufeature.h |    1 +
+ 2 files changed, 4 insertions(+), 0 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/hvm/svm/svm.c b/arch/x86/hvm/svm/svm.c
+index 5533871..ae48421 100644
+--- a/arch/x86/hvm/svm/svm.c
++++ b/arch/x86/hvm/svm/svm.c
+@@ -1131,6 +1131,9 @@ static void svm_vmexit_do_cpuid(struct vmcb_struct *vmcb,
+         clear_bit(X86_FEATURE_3DNOWEXT & 31, &edx);
+         /* no FFXSR instructions feature. */
+         clear_bit(X86_FEATURE_FFXSR & 31, &edx);
++
++	/* no NodeIDMSR */
++	clear_bit(X86_FEATURE_NODEID_MSR & 31, &ecx);
+     }
+     else if ( input == 0x80000007 || input == 0x8000000A )
+     {
+diff --git a/include/asm-x86/cpufeature.h b/include/asm-x86/cpufeature.h
+index f5b4c34..847e5b6 100644
+--- a/include/asm-x86/cpufeature.h
++++ b/include/asm-x86/cpufeature.h
+@@ -113,6 +113,7 @@
+ #define X86_FEATURE_WDT		(6*32+ 13) /* Watchdog Timer */
+ #define X86_FEATURE_IBS		(6*32+ 10) /* Instruction Based Sampling */
+ #define X86_FEATURE_SSE5	(6*32+ 11) /* AMD Streaming SIMD Extensions-5 */
++#define X86_FEATURE_NODEID_MSR	(6*32+19) /* NodeId MSR */
+ #define X86_FEATURE_FFXSR       (6*32+25) /* FFXSR instruction optimizations */
+ 
+ #define cpu_has(c, bit)		test_bit(bit, (c)->x86_capability)

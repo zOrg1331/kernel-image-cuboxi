@@ -1,0 +1,64 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 3 Nov 2009 11:36:46 -0500
+Subject: [block] cfq-iosched: don't delay queue kick for merged req
+Message-id: 1257266206-24003-13-git-send-email-jmoyer@redhat.com
+O-Subject: [PATCH 12/12] cfq-iosched: don't delay queue kick for a merged request
+Bugzilla: 456181 448130 427709
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+commit d6ceb25e8d8bccf826848c2621a50d02c0a7f4ae
+Author: Jens Axboe <jens.axboe@oracle.com>
+Date:   Tue Apr 14 14:18:16 2009 +0200
+
+    cfq-iosched: don't delay queue kick for a merged request
+
+    "Zhang, Yanmin" <yanmin_zhang@linux.intel.com> reports that commit
+    b029195dda0129b427c6e579a3bb3ae752da3a93 introduced a regression
+    of about 50% with sequential threaded read workloads. The test
+    case is:
+
+    tiotest -k0 -k1 -k3 -f 80 -t 32
+
+    which starts 32 threads each reading a 80MB file. Twiddle the kick
+    queue logic so that we do start IO immediately, if it appears to be
+    a fully merged request. We can't really detect that, so just check
+    if the request is bigger than a page or not. The assumption is that
+    since single bio issues will first queue a single request with just
+    one page attached and then later do merges on that, if we already
+    have more than a page worth of data in the request, then the request
+    is most likely good to go.
+
+    Verified that this doesn't cause a regression with the test case that
+
+    commit b029195dda0129b427c6e579a3bb3ae752da3a93 was fixing. It does not,
+    we still see maximum sized requests for the queue-then-merge cases.
+
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index b95f605..cfe37b4 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -2106,10 +2106,17 @@ cfq_crq_enqueued(struct cfq_data *cfqd, struct cfq_queue *cfqq,
+ 		 * Remember that we saw a request from this process, but
+ 		 * don't start queuing just yet. Otherwise we risk seeing lots
+ 		 * of tiny requests, because we disrupt the normal plugging
+-		 * and merging.
++		 * and merging. If the request is already larger than a single
++		 * page, let it rip immediately. For that case we assume that
++		 * merging is already done.
+ 		 */
+-		if (cfq_cfqq_wait_request(cfqq))
++		if (cfq_cfqq_wait_request(cfqq)) {
++			if (crq->request->data_len > PAGE_CACHE_SIZE) {
++				del_timer(&cfqd->idle_slice_timer);
++				cfq_start_queueing(cfqd, cfqq);
++			}
+ 			cfq_mark_cfqq_must_dispatch(cfqq);
++		}
+ 	} else if (cfq_should_preempt(cfqd, cfqq, crq)) {
+ 		/*
+ 		 * not the active queue - expire current slice if it is

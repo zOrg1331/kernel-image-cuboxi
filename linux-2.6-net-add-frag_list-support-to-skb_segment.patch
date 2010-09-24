@@ -1,0 +1,197 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Wed, 27 May 2009 15:31:14 +1000
+Subject: [net] add frag_list support to skb_segment
+Message-id: E1M9BjO-0002BI-41@gondolin.me.apana.org.au
+O-Subject: [PATCH 9/17] net: Add frag_list support to skb_segment
+Bugzilla: 499347
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+RHEL5 bugzilla #499347
+
+net: Add frag_list support to skb_segment
+
+This patch adds limited support for handling frag_list packets in
+skb_segment.  The intention is to support GRO (Generic Receive Offload)
+packets which will be constructed by chaining normal packets using
+frag_list.
+
+As such we require all frag_list members terminate on exact MSS
+boundaries.  This is checked using BUG_ON.
+
+As there should only be one producer in the kernel of such packets,
+namely GRO, this requirement should not be difficult to maintain.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index e09013f..975369d 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -1928,8 +1928,9 @@ struct sk_buff *skb_segment(struct sk_buff *skb, int features)
+ {
+ 	struct sk_buff *segs = NULL;
+ 	struct sk_buff *tail = NULL;
++	struct sk_buff *fskb = skb_shinfo(skb)->frag_list;
+ 	unsigned int mss = skb_shinfo(skb)->gso_size;
+-	unsigned int doffset = skb->data - skb->mac.raw;
++	unsigned int doffset = skb->data - skb_mac_header(skb);
+ 	unsigned int offset = doffset;
+ 	unsigned int headroom;
+ 	unsigned int len;
+@@ -1947,7 +1948,6 @@ struct sk_buff *skb_segment(struct sk_buff *skb, int features)
+ 		struct sk_buff *nskb;
+ 		skb_frag_t *frag;
+ 		int hsize;
+-		int k;
+ 		int size;
+ 
+ 		len = skb->len - offset;
+@@ -1960,9 +1960,36 @@ struct sk_buff *skb_segment(struct sk_buff *skb, int features)
+ 		if (hsize > len || !sg)
+ 			hsize = len;
+ 
+-		nskb = alloc_skb(hsize + doffset + headroom, GFP_ATOMIC);
+-		if (unlikely(!nskb))
+-			goto err;
++		if (!hsize && i >= nfrags) {
++			BUG_ON(fskb->len != len);
++
++			pos += len;
++			nskb = skb_clone(fskb, GFP_ATOMIC);
++			fskb = fskb->next;
++
++			if (unlikely(!nskb))
++				goto err;
++
++			hsize = skb_end_pointer(nskb) - nskb->head;
++			if (skb_cow_head(nskb, doffset + headroom)) {
++				kfree_skb(nskb);
++				goto err;
++			}
++
++			nskb->truesize += skb_end_pointer(nskb) - nskb->head -
++					  hsize;
++			skb_release_head_state(nskb);
++			__skb_push(nskb, doffset);
++		} else {
++			nskb = alloc_skb(hsize + doffset + headroom,
++					 GFP_ATOMIC);
++
++			if (unlikely(!nskb))
++				goto err;
++
++			skb_reserve(nskb, headroom);
++			__skb_put(nskb, doffset);
++		}
+ 
+ 		if (segs)
+ 			tail->next = nskb;
+@@ -1970,21 +1997,19 @@ struct sk_buff *skb_segment(struct sk_buff *skb, int features)
+ 			segs = nskb;
+ 		tail = nskb;
+ 
+-		nskb->dev = skb->dev;
+-		nskb->priority = skb->priority;
+-		nskb->protocol = skb->protocol;
+-		nskb->dst = dst_clone(skb->dst);
+-		memcpy(nskb->cb, skb->cb, sizeof(skb->cb));
+-		nskb->pkt_type = skb->pkt_type;
++		__copy_skb_header(nskb, skb);
+ 		nskb->mac_len = skb->mac_len;
+ 
+-		skb_reserve(nskb, headroom);
+-		nskb->mac.raw = nskb->data;
+-		nskb->nh.raw = nskb->data + skb->mac_len;
+-		nskb->h.raw = nskb->nh.raw + (skb->h.raw - skb->nh.raw);
+-		memcpy(skb_put(nskb, doffset), skb->data, doffset);
++		skb_reset_mac_header(nskb);
++		skb_set_network_header(nskb, skb->mac_len);
++		nskb->h.raw = (nskb->nh.raw + skb_network_header_len(skb));
++		skb_copy_from_linear_data(skb, nskb->data, doffset);
++
++		if (fskb != skb_shinfo(skb)->frag_list)
++			continue;
+ 
+ 		if (!sg) {
++			nskb->ip_summed = CHECKSUM_NONE;
+ 			nskb->csum = skb_copy_and_csum_bits(skb, offset,
+ 							    skb_put(nskb, len),
+ 							    len, 0);
+@@ -1992,15 +2017,11 @@ struct sk_buff *skb_segment(struct sk_buff *skb, int features)
+ 		}
+ 
+ 		frag = skb_shinfo(nskb)->frags;
+-		k = 0;
+ 
+-		nskb->ip_summed = CHECKSUM_HW;
+-		nskb->csum = skb->csum;
+-		memcpy(skb_put(nskb, hsize), skb->data + offset, hsize);
+-
+-		while (pos < offset + len) {
+-			BUG_ON(i >= nfrags);
++		skb_copy_from_linear_data_offset(skb, offset,
++						 skb_put(nskb, hsize), hsize);
+ 
++		while (pos < offset + len && i < nfrags) {
+ 			*frag = skb_shinfo(skb)->frags[i];
+ 			get_page(frag->page);
+ 			size = frag->size;
+@@ -2010,20 +2031,39 @@ struct sk_buff *skb_segment(struct sk_buff *skb, int features)
+ 				frag->size -= offset - pos;
+ 			}
+ 
+-			k++;
++			skb_shinfo(nskb)->nr_frags++;
+ 
+ 			if (pos + size <= offset + len) {
+ 				i++;
+ 				pos += size;
+ 			} else {
+ 				frag->size -= pos + size - (offset + len);
+-				break;
++				goto skip_fraglist;
+ 			}
+ 
+ 			frag++;
+ 		}
+ 
+-		skb_shinfo(nskb)->nr_frags = k;
++		if (pos < offset + len) {
++			struct sk_buff *fskb2 = fskb;
++
++			BUG_ON(pos + fskb->len != offset + len);
++
++			pos += fskb->len;
++			fskb = fskb->next;
++
++			if (fskb2->next) {
++				fskb2 = skb_clone(fskb2, GFP_ATOMIC);
++				if (!fskb2)
++					goto err;
++			} else
++				skb_get(fskb2);
++
++			BUG_ON(skb_shinfo(nskb)->frag_list);
++			skb_shinfo(nskb)->frag_list = fskb2;
++		}
++
++skip_fraglist:
+ 		nskb->data_len = len - hsize;
+ 		nskb->len += nskb->data_len;
+ 		nskb->truesize += nskb->data_len;
+@@ -2034,11 +2074,10 @@ struct sk_buff *skb_segment(struct sk_buff *skb, int features)
+ err:
+ 	while ((skb = segs)) {
+ 		segs = skb->next;
+-		kfree(skb);
++		kfree_skb(skb);
+ 	}
+ 	return ERR_PTR(err);
+ }
+-
+ EXPORT_SYMBOL_GPL(skb_segment);
+ 
+ void __init skb_init(void)

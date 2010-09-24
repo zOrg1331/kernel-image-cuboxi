@@ -1,0 +1,110 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 5 Mar 2009 14:25:51 +0100
+Subject: [x86] use [ml]fence to synchronize rdtsc
+Message-id: 49AFD2DF.2060003@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Use [ml]fence to synchronize rdtsc
+Bugzilla: 448588
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Vitaly Mayatskikh <vmayatsk@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+All,
+     There have been a series of patches committed to the mainline kernel
+recently that address a performance issue for gettimeofday when running on
+hypervisors that enable hardware assisted virtualization.  The non-ideal
+performance occurs because a CPUID instruction is used to serialize the pipeline
+before RDTSC, and when using hardware virtualization, CPUID always exits to the
+hypervisor.
+
+The code in question also exists in the RHEL 5.2 64-bit kernel (see
+get_cycles_sync in include/asm-x86_64/timex.h).
+
+The fix is to use MFENCE/LFENCE instead of CPUID.  Here are links to relevant
+patches by Andi Kleen which are now in upstream linux:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=de4218634e3df6d73a3e6cdfdf3a17fa3bc7e013
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=707fa8ed923b1b6a3d7af0d386b0b3abad28ed19
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=fde1b3fa947c2512e3715962ebb1d3a6a9b9bb7d
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=6d63de8dbcda98511206897562ecfcdacf18f523
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=f06e4ec1c15691b0cfd2397ae32214fa36c90d71
+
+Tested successfully by the reporter, and basic smoke testing done by me.  This
+should resolve BZ 448588.  Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index 478f8a2..7026c5e 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -907,6 +907,7 @@ static void __init init_amd(struct cpuinfo_x86 *c)
+ 	/* Family 10 doesn't support C states in MWAIT so don't use it */
+ 	if (c->x86 == 0x10 && !force_mwait)
+ 		clear_bit(X86_FEATURE_MWAIT, &c->x86_capability);
++	set_bit(X86_FEATURE_MFENCE_RDTSC, &c->x86_capability);
+ }
+ 
+ static void __cpuinit detect_ht(struct cpuinfo_x86 *c)
+@@ -1033,10 +1034,7 @@ static void __cpuinit init_intel(struct cpuinfo_x86 *c)
+ 		set_bit(X86_FEATURE_NONSTOP_TSC, &c->x86_capability);
+ 	}
+ 
+-	if (c->x86 == 15)
+-		set_bit(X86_FEATURE_SYNC_RDTSC, &c->x86_capability);
+-	else
+-		clear_bit(X86_FEATURE_SYNC_RDTSC, &c->x86_capability);
++	set_bit(X86_FEATURE_LFENCE_RDTSC, &c->x86_capability);
+  	c->x86_max_cores = intel_num_cpu_cores(c);
+ 
+ 	srat_detect_node();
+diff --git a/include/asm-x86_64/cpufeature.h b/include/asm-x86_64/cpufeature.h
+index 310a86f..4bc8331 100644
+--- a/include/asm-x86_64/cpufeature.h
++++ b/include/asm-x86_64/cpufeature.h
+@@ -69,6 +69,8 @@
+ #define X86_FEATURE_UP		(3*32+8) /* SMP kernel running on UP */
+ #define X86_FEATURE_ARCH_PERFMON (3*32+9) /* Intel Architectural PerfMon */
+ #define X86_FEATURE_IDA		(3*32+16) /* Intel Dynamic Acceleration */
++#define X86_FEATURE_MFENCE_RDTSC (3*32+17) /* Mfence synchronizes RDTSC */
++#define X86_FEATURE_LFENCE_RDTSC (3*32+18) /* Lfence synchronizes RDTSC */
+ #define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
+diff --git a/include/asm-x86_64/timex.h b/include/asm-x86_64/timex.h
+index b9e5320..4f5a33f 100644
+--- a/include/asm-x86_64/timex.h
++++ b/include/asm-x86_64/timex.h
+@@ -26,16 +26,26 @@ static inline cycles_t get_cycles (void)
+ 	return ret;
+ }
+ 
++/*
++ * Stop RDTSC speculation. This is needed when you need to use RDTSC
++ * (or get_cycles or vread that possibly accesses the TSC) in a defined
++ * code region.
++ */
++static inline void rdtsc_barrier(void)
++{
++	alternative(ASM_NOP3, "mfence", X86_FEATURE_MFENCE_RDTSC);
++	alternative(ASM_NOP3, "lfence", X86_FEATURE_LFENCE_RDTSC);
++}
++
+ /* Like get_cycles, but make sure the CPU is synchronized. */
+ static __always_inline cycles_t get_cycles_sync(void)
+ {
+ 	unsigned long long ret;
+-	unsigned eax;
+-	/* Don't do an additional sync on CPUs where we know
+-	   RDTSC is already synchronous. */
+-	alternative_io("cpuid", ASM_NOP2, X86_FEATURE_SYNC_RDTSC,
+-			  "=a" (eax), "0" (1) : "ebx","ecx","edx","memory");
++
++	rdtsc_barrier();
+ 	rdtscll(ret);
++	rdtsc_barrier();
++
+ 	return ret;
+ }
+ 

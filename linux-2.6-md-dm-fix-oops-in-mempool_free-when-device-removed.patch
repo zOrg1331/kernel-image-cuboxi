@@ -1,0 +1,131 @@
+From: Milan Broz <mbroz@redhat.com>
+Date: Tue, 14 Apr 2009 15:39:46 +0200
+Subject: [md] dm: fix OOps in mempool_free when device removed
+Message-id: 49E49222.3020401@redhat.com
+O-Subject: [RHEL 5.4 PATCH] dm: Fix OOps in mempool_free when device removed
+Bugzilla: 495230
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+RHEL5.4 device mapper: Fix OOps in mempool_free when device removed
+Resolves: rhbz#495230
+
+Patch is upstream, commit b35f8caa0890169000fec22902290d9a15274cbd
+
+When a table is being replaced, it waits for I/O to complete
+before destroying the mempool, but the endio function doesn't
+call mempool_free() until after completing the bio.
+
+Fix it by swapping the order of those two operations.
+
+Patch compiled and tested.
+
+diff --git a/drivers/md/dm-crypt.c b/drivers/md/dm-crypt.c
+index cddd5d4..b2d4188 100644
+--- a/drivers/md/dm-crypt.c
++++ b/drivers/md/dm-crypt.c
+@@ -410,7 +410,8 @@ static void crypt_free_buffer_pages(struct crypt_config *cc,
+  */
+ static void dec_pending(struct crypt_io *io, int error)
+ {
+-	struct crypt_config *cc = (struct crypt_config *) io->target->private;
++	struct crypt_config *cc = io->target->private;
++	struct bio *base_bio = io->base_bio;
+ 
+ 	if (error < 0)
+ 		io->error = error;
+@@ -418,9 +419,10 @@ static void dec_pending(struct crypt_io *io, int error)
+ 	if (!atomic_dec_and_test(&io->pending))
+ 		return;
+ 
+-	bio_endio(io->base_bio, io->base_bio->bi_size, io->error);
+-
++	error = io->error;
+ 	mempool_free(io, cc->io_pool);
++
++	bio_endio(base_bio, base_bio->bi_size, error);
+ }
+ 
+ /*
+diff --git a/drivers/md/dm.c b/drivers/md/dm.c
+index 46bb24e..94dc422 100644
+--- a/drivers/md/dm.c
++++ b/drivers/md/dm.c
+@@ -474,9 +474,12 @@ static int __noflush_suspending(struct mapped_device *md)
+ static void dec_pending(struct dm_io *io, int error)
+ {
+ 	unsigned long flags;
++	int io_error;
++	struct bio *bio;
++	struct mapped_device *md = io->md;
+ 
+ 	/* Push-back supersedes any I/O errors */
+-	if (error && !(io->error > 0 && __noflush_suspending(io->md)))
++	if (error && !(io->error > 0 && __noflush_suspending(md)))
+ 		io->error = error;
+ 
+ 	if (atomic_dec_and_test(&io->io_count)) {
+@@ -487,26 +490,29 @@ static void dec_pending(struct dm_io *io, int error)
+ 			 * suspend queue merges the pushback list.
+ 			 */
+ 			spin_lock_irqsave(&io->md->pushback_lock, flags);
+-			if (__noflush_suspending(io->md))
+-				bio_list_add(&io->md->pushback, io->bio);
++			if (__noflush_suspending(md))
++				bio_list_add(&md->pushback, io->bio);
+ 			else
+ 				/* noflush suspend was interrupted. */
+ 				io->error = -EIO;
+-			spin_unlock_irqrestore(&io->md->pushback_lock, flags);
++			spin_unlock_irqrestore(&md->pushback_lock, flags);
+ 		}
+ 
+ 		if (end_io_acct(io))
+ 			/* nudge anyone waiting on suspend queue */
+-			wake_up(&io->md->wait);
++			wake_up(&md->wait);
++
++		io_error = io->error;
++		bio = io->bio;
++
++		free_io(md, io);
+ 
+-		if (io->error != DM_ENDIO_REQUEUE) {
+-			blk_add_trace_bio(io->md->queue, io->bio,
++		if (io_error != DM_ENDIO_REQUEUE) {
++			blk_add_trace_bio(md->queue, bio,
+ 					  BLK_TA_COMPLETE);
+ 
+-			bio_endio(io->bio, io->bio->bi_size, io->error);
++			bio_endio(bio, bio->bi_size, io_error);
+ 		}
+-
+-		free_io(io->md, io);
+ 	}
+ }
+ 
+@@ -514,6 +520,7 @@ static int clone_endio(struct bio *bio, unsigned int done, int error)
+ {
+ 	int r = 0;
+ 	struct target_io *tio = bio->bi_private;
++	struct dm_io *io = tio->io;
+ 	struct mapped_device *md = tio->io->md;
+ 	dm_endio_fn endio = tio->ti->type->end_io;
+ 
+@@ -540,15 +547,14 @@ static int clone_endio(struct bio *bio, unsigned int done, int error)
+ 		}
+ 	}
+ 
+-	dec_pending(tio->io, error);
+-
+ 	/*
+ 	 * Store md for cleanup instead of tio which is about to get freed.
+ 	 */
+ 	bio->bi_private = md->bs;
+ 
+-	bio_put(bio);
+ 	free_tio(md, tio);
++	bio_put(bio);
++	dec_pending(io, error);
+ 	return r;
+ }
+ 

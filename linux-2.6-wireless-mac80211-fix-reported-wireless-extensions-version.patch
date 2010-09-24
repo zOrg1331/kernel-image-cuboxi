@@ -1,0 +1,37 @@
+From: John Linville <linville@redhat.com>
+Date: Fri, 24 Jul 2009 18:40:29 -0400
+Subject: [wireless] mac80211: fix reported wireless extensions version
+Message-id: <20090724184028.GB25186@redhat.com>
+Patchwork-id: 20624
+O-Subject: [PATCH RHEL5.5] mac80211: claim wireless extensions version 20
+	instead of 21
+Bugzilla: 513430
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+The mac80211 component in rhel5 postdates the wireless extensions code
+there.  Consequently, the backport claims a later we_version_source
+value.  This is actually a long-lived oversight and WE20 is actually
+implemented, but the mismatch causes the wireless_tools component
+to spit-out a scary warning when those tools (iwconfig, iwlist,
+etc) are run.  This patch bumps the claimed version downward to
+match what the kernel's WIRELESS_EXT definition says (and what the
+wireless_tools expect).
+
+Fixes bugzilla #513430
+
+diff --git a/net/mac80211/wext.c b/net/mac80211/wext.c
+index e840421..ff2a640 100644
+--- a/net/mac80211/wext.c
++++ b/net/mac80211/wext.c
+@@ -161,7 +161,7 @@ static int ieee80211_ioctl_giwrange(struct net_device *dev,
+ 	memset(range, 0, sizeof(struct iw_range));
+ 
+ 	range->we_version_compiled = WIRELESS_EXT;
+-	range->we_version_source = 21;
++	range->we_version_source = 20;
+ 	range->retry_capa = IW_RETRY_LIMIT;
+ 	range->retry_flags = IW_RETRY_LIMIT;
+ 	range->min_retry = 0;

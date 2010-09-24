@@ -1,0 +1,93 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 5 Mar 2009 14:18:53 +0100
+Subject: [xen] fix crash when modprobe xen-vnif in a KVM guest
+Message-id: 49AFD13D.8080407@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Fix crash when modprobe xen-vnif in a KVM guest
+Bugzilla: 487691
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+All,
+     When you attempt to modprobe the xen-vnif driver on a machine not
+supporting Xen (either bare-metal, or under KVM hypervisor, etc), the modprobe
+fails with ENODEV.  This is the right behavior.  However, if you then shut down
+the machine, you get an OOPs on shutdown.  This is because the xen-vnif init()
+routine wasn't properly unregistering notifiers on failure, leading to the OOPs.
+ The solution is to unregister the notifiers on failure, which prevents the
+OOPs.  This patch is a backport of xen-unstable c/s 14622 and linux-2.6.18-hg
+c/s 803, and fixes the problem for me in testing.  This should solve BZ 487691.
+ Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/drivers/xen/netfront/netfront.c b/drivers/xen/netfront/netfront.c
+index 4df5cca..f037811 100644
+--- a/drivers/xen/netfront/netfront.c
++++ b/drivers/xen/netfront/netfront.c
+@@ -2130,6 +2130,8 @@ static struct notifier_block notifier_netdev = {
+ 
+ static int __init netif_init(void)
+ {
++	int err;
++
+ 	if (!is_running_on_xen())
+ 		return -ENODEV;
+ 
+@@ -2151,7 +2153,12 @@ static int __init netif_init(void)
+ 	(void)register_inetaddr_notifier(&notifier_inetdev);
+ 	(void)register_netdevice_notifier(&notifier_netdev);
+ 
+-	return xenbus_register_frontend(&netfront);
++	err = xenbus_register_frontend(&netfront);
++	if (err) {
++		unregister_netdevice_notifier(&notifier_netdev);
++		unregister_inetaddr_notifier(&notifier_inetdev);
++	}
++	return err;
+ }
+ module_init(netif_init);
+ 
+diff --git a/drivers/xen/xenbus/xenbus_probe.c b/drivers/xen/xenbus/xenbus_probe.c
+index d4c28dd..4e3f730 100644
+--- a/drivers/xen/xenbus/xenbus_probe.c
++++ b/drivers/xen/xenbus/xenbus_probe.c
+@@ -667,10 +667,17 @@ static int xenbus_probe_node(struct xen_bus_type *bus,
+ 	if (err)
+ 		goto fail;
+ 
+-	device_create_file(&xendev->dev, &dev_attr_nodename);
+-	device_create_file(&xendev->dev, &dev_attr_devtype);
++	err = device_create_file(&xendev->dev, &dev_attr_nodename);
++	if (err)
++		goto unregister;
++	err = device_create_file(&xendev->dev, &dev_attr_devtype);
++	if (err)
++		goto unregister;
+ 
+ 	return 0;
++unregister:
++	device_remove_file(&xendev->dev, &dev_attr_nodename);
++	device_remove_file(&xendev->dev, &dev_attr_devtype);
+ fail:
+ 	kfree(xendev);
+ 	return err;
+@@ -1173,7 +1180,15 @@ static int __init xenbus_probe_init(void)
+ 	}
+ 
+ 	/* Register ourselves with the kernel device subsystem */
+-	device_register(&xenbus_frontend.dev);
++	if (!xenbus_frontend.error) {
++		xenbus_frontend.error = device_register(&xenbus_frontend.dev);
++		if (xenbus_frontend.error) {
++			bus_unregister(&xenbus_frontend.bus);
++			printk(KERN_WARNING
++			       "XENBUS: Error registering frontend device: %i\n",
++			       xenbus_frontend.error);
++		}
++	}
+ #ifdef CONFIG_XEN
+ 	device_register(&xenbus_backend.dev);
+ #endif

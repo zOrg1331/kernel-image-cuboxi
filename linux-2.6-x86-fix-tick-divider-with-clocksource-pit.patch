@@ -1,0 +1,46 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 23 Apr 2009 14:17:27 +0200
+Subject: [x86] fix tick divider with clocksource=pit
+Message-id: 49F05C57.8060806@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Fix tick divider with clocksource=pit
+Bugzilla: 427588
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+All,
+     The attached patch addresses BZ 427588.  Currently, if you use the tick
+divider (say, divider=10), and also specify clocksource=pit, the resulting boot
+will be unstable and have serious clock drift problems.
+     The problem is a mis-match in the way the PIT code is calculating the
+counter value.  It first reads the value out of the PIT, and then, in order to
+detect PIT underflows, checks to see if this value is greater than the last read
+value.  However, when using the tick divider, this check will erroneously fire,
+causing time to "jump" ahead sporadically.  The fix is to change the check so
+that it only fires when it is really supposed to.  A nice feature of this change
+is that in the non-divided case, the check is exactly the same.
+
+Tested by me to resolve the specific scenario mentioned in the bugzilla.
+Additionally, this patch has been in the virttest kernels for some time, and has
+been tested on dom0 Xen kernels, paravirt Xen kernels, fully virtualized Xen
+guests, and bare-metal i386 kernels without any problems observed.
+
+Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/i386/kernel/i8253.c b/arch/i386/kernel/i8253.c
+index 631422e..1bb1406 100644
+--- a/arch/i386/kernel/i8253.c
++++ b/arch/i386/kernel/i8253.c
+@@ -86,7 +86,7 @@ static cycle_t pit_read(void)
+ 	 * Previous attempts to handle these cases intelligently were
+ 	 * buggy, so we just do the simple thing now.
+ 	 */
+-	if (count > old_count && jifs == old_jifs) {
++	if (count > old_count && (jifs - old_jifs) < tick_divider) {
+ 		count = old_count;
+ 	}
+ 	old_count = count;

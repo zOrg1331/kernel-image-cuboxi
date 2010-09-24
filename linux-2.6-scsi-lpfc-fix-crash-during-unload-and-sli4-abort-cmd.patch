@@ -1,0 +1,41 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 4 Jan 2010 22:51:48 -0500
+Subject: [scsi] lpfc: Fix crash during unload and sli4 abort cmd
+Message-id: <20100104225155.24386.35280.sendpatchset@localhost.localdomain>
+Patchwork-id: 22297
+O-Subject: [RHEL5.5 PATCH 5/18] Fix bug with driver crashing during unload and
+	sli4 aborting a ct cmd. (CR: 96598)
+Bugzilla: 549763
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=549763
+
+Fix bug with driver crashing during unload and sli4 aborting a ct cmd. (CR: 96598)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_ioctl.c b/drivers/scsi/lpfc/lpfc_ioctl.c
+index 3e4b588..880afc5 100644
+--- a/drivers/scsi/lpfc/lpfc_ioctl.c
++++ b/drivers/scsi/lpfc/lpfc_ioctl.c
+@@ -1887,7 +1887,8 @@ lpfcdfc_ct_unsol_event(struct lpfc_hba * phba,
+ 	struct lpfc_dmabuf *bdeBuf2 = piocbq->context3;
+ 	struct lpfc_hbq_entry *hbqe;
+ 
+-	BUG_ON(&dfchba->node == &lpfcdfc_hosts);
++	if (&dfchba->node == &lpfcdfc_hosts)
++		return;
+ 	INIT_LIST_HEAD(&head);
+ 	list_add_tail(&head, &piocbq->list);
+ 
+@@ -2089,7 +2090,8 @@ lpfcdfc_sli4_ct_unsol_abort(struct lpfc_hba *phba,
+ 	int idx;
+ 
+ 	dfchba = lpfcdfc_host_from_hba(phba);
+-	BUG_ON(&dfchba->node == &lpfcdfc_hosts);
++	if (&dfchba->node == &lpfcdfc_hosts)
++		return;
+ 
+ 	if (piocbq->iocb.ulpBdeCount == 0 ||
+ 	    piocbq->iocb.un.cont64[0].tus.f.bdeSize == 0)

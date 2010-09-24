@@ -1,0 +1,98 @@
+From: Steve Best <sbest@redhat.com>
+Date: Thu, 4 Feb 2010 22:11:09 -0500
+Subject: [net] cxgb3: add memory barriers
+Message-id: <20100204220400.11927.32233.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 23135
+O-Subject: [PATCH RHEL5.5 BZ561957] cxgb3: add memory barriers
+Bugzilla: 561957
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=561957
+
+Description:
+============
+Add memory barriers to fix crashes observed on newest PowerPC platforms.
+The HW and driver state of the receive rings were getting out of sync.
+
+RHEL Version Found:
+===================
+RHEL 5.5
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2242234
+
+Upstream Status:
+================
+http://lkml.indiana.edu/hypermail/linux/kernel/1002.0/00312.html
+upstream accepted here
+http://patchwork.ozlabs.org/patch/44225/
+
+Test Status:
+============
+Tested by IBM test team using HTX
+---Steps to Reproduce---
+(1)Set up HTX on both of lpars on P7.
+(2)Set up HTX stress level to 5, then start HTX runs.
+(3)After about 10 hours, one of system hits EEH error.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/cxgb3/sge.c b/drivers/net/cxgb3/sge.c
+index 6d8a3bd..8a38915 100644
+--- a/drivers/net/cxgb3/sge.c
++++ b/drivers/net/cxgb3/sge.c
+@@ -480,6 +480,7 @@ static inline void ring_fl_db(struct adapter *adap, struct sge_fl *q)
+ {
+ 	if (q->pend_cred >= q->credits / 4) {
+ 		q->pend_cred = 0;
++		wmb();
+ 		t3_write_reg(adap, A_SG_KDOORBELL, V_EGRCNTX(q->cntxt_id));
+ 	}
+ }
+@@ -2281,11 +2282,14 @@ static int process_responses(struct adapter *adap, struct sge_qset *qs,
+ 	while (likely(budget_left && is_new_response(r, q))) {
+ 		int packet_complete, eth, ethpad = 2, lro = qs->lro_enabled;
+ 		struct sk_buff *skb = NULL;
+-		u32 len, flags = ntohl(r->flags);
+-		__be32 rss_hi = *(const __be32 *)r,
+-		       rss_lo = r->rss_hdr.rss_hash_val;
++		u32 len, flags;
++		__be32 rss_hi, rss_lo;
+ 
++		rmb();
+ 		eth = r->rss_hdr.opcode == CPL_RX_PKT;
++		rss_hi = *(const __be32 *)r,
++		rss_lo = r->rss_hdr.rss_hash_val;
++		flags = ntohl(r->flags);
+ 
+ 		if (unlikely(flags & F_RSPD_ASYNC_NOTIF)) {
+ 			skb = alloc_skb(AN_PKT_SIZE, GFP_ATOMIC);
+@@ -2500,7 +2504,10 @@ static int process_pure_responses(struct adapter *adap, struct sge_qset *qs,
+ 			refill_rspq(adap, q, q->credits);
+ 			q->credits = 0;
+ 		}
+-	} while (is_new_response(r, q) && is_pure_response(r));
++		if (!is_new_response(r, q))
++			break;
++		rmb();
++	} while (is_new_response(r, q));
+ 
+ 	if (sleeping)
+ 		check_ring_db(adap, qs, sleeping);
+@@ -2534,6 +2541,7 @@ static inline int handle_responses(struct adapter *adap, struct sge_rspq *q)
+ 
+ 	if (!is_new_response(r, q))
+ 		return -1;
++	rmb();
+ 	if (is_pure_response(r) && process_pure_responses(adap, qs, r) == 0) {
+ 		t3_write_reg(adap, A_SG_GTS, V_RSPQ(q->cntxt_id) |
+ 			     V_NEWTIMER(q->holdoff_tmr) | V_NEWINDEX(q->cidx));

@@ -1,0 +1,178 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 22 Feb 2010 14:04:45 -0500
+Subject: [i386] mce: avoid deadlocks during MCE broadcasts
+Message-id: <20100222140445.5120.40303.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 23393
+O-Subject: [RHEL5 PATCH]: i386: Avoid deadlocks during MCE broadcasts
+Bugzilla: 562862
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+When a fatal machine check occurs the handler can call from
+any context. This lead to WARN_ONs in the console code
+when it was not done with a proper console lock.
+The WARN_ON is harmless, but confuses the users and leads
+to support calls.  So it's better to avoid it.
+
+Another problem is that when a machine check occurs
+on Intel CPUs it is broadcasted to all CPUs which then
+tend to call panic in parallel when they see a fatal event.
+This is a bigger problem on CPUs with SMT support like
+Nehalem because there at least two CPU threads see the
+same set of machine check registers. When panic is entered
+from multiple CPUs in parallel it tends to deadlock
+and not properly reboot the system, making it harder
+to recover.
+
+And a third problem was that the machine check handler
+was executed with interrupts on, which means that the CPU
+going through the handler first would stop the others
+before they could finish printing their full machine
+check informatgion.
+
+- Change the mce handler to a interrupt gate to run
+with interrupts off.
+- Move the WARN_CONSOLE_LOCKED() in do_unblank_screen() into
+the oops_in_progress check too
+- Add a new mce_panic function that is called from all the 32bit
+machine check handlers and that sets oops_in_progress
+- Also add a simple synchronization mechanism in mce_panic that makes sure
+the panic code is only entered from one CPU and only enables
+interrupts after it's done.
+
+Tested using Andi's old Nehalem error injector, which creates bogus ECC errors
+in memory.
+
+Successfully compiled by me.
+
+Resolves BZ 562862.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/mcheck/k7.c b/arch/i386/kernel/cpu/mcheck/k7.c
+index 3325e24..f9b2995 100644
+--- a/arch/i386/kernel/cpu/mcheck/k7.c
++++ b/arch/i386/kernel/cpu/mcheck/k7.c
+@@ -57,9 +57,9 @@ static fastcall void k7_machine_check(struct pt_regs * regs, long error_code)
+ 	}
+ 
+ 	if (recover&2)
+-		panic ("CPU context corrupt");
++		mce_panic ("CPU context corrupt");
+ 	if (recover&1)
+-		panic ("Unable to continue");
++		mce_panic ("Unable to continue");
+ 	printk (KERN_EMERG "Attempting to continue.\n");
+ 	mcgstl &= ~(1<<2);
+ 	wrmsr (MSR_IA32_MCG_STATUS,mcgstl, mcgsth);
+diff --git a/arch/i386/kernel/cpu/mcheck/mce.c b/arch/i386/kernel/cpu/mcheck/mce.c
+index d3a1647..8e4a4a7 100644
+--- a/arch/i386/kernel/cpu/mcheck/mce.c
++++ b/arch/i386/kernel/cpu/mcheck/mce.c
+@@ -59,6 +59,33 @@ void mcheck_init(struct cpuinfo_x86 *c)
+ 	}
+ }
+ 
++void mce_panic(char *msg)
++{
++	static atomic_t mce_entry = ATOMIC_INIT(0);
++	/*
++	 * Machine check panics often come up from multiple CPUs in parallel.
++	 * panic doesn't handle that well and deadlocks, so synchronize here.
++	 */
++	int first = atomic_add_return(1, &mce_entry) == 1;
++
++	if (!first) {
++		/*
++		 * Enable interrupts so that smp_stop_cpus() can interrupts us,
++		 * but prevent scheduling in case someone compiles this
++		 * preemptible.
++		 * Then wait for the other panic to shut us down.
++		 */
++		preempt_disable();
++		local_irq_enable();
++		printk("CPU %d: MCE PANIC: %s\n", smp_processor_id(), msg);
++		for (;;)
++			cpu_relax();
++	}
++
++	oops_in_progress = 1;
++	panic(msg);
++}
++
+ static int __init mcheck_disable(char *str)
+ {
+ 	mce_disabled = 1;
+diff --git a/arch/i386/kernel/cpu/mcheck/mce.h b/arch/i386/kernel/cpu/mcheck/mce.h
+index 84fd4cf..1a46310 100644
+--- a/arch/i386/kernel/cpu/mcheck/mce.h
++++ b/arch/i386/kernel/cpu/mcheck/mce.h
+@@ -12,3 +12,5 @@ extern fastcall void (*machine_check_vector)(struct pt_regs *, long error_code);
+ extern int mce_disabled;
+ extern int nr_mce_banks;
+ 
++void mce_panic(char *msg);
++
+diff --git a/arch/i386/kernel/cpu/mcheck/p4.c b/arch/i386/kernel/cpu/mcheck/p4.c
+index e37f8ad..b63c55a 100644
+--- a/arch/i386/kernel/cpu/mcheck/p4.c
++++ b/arch/i386/kernel/cpu/mcheck/p4.c
+@@ -195,9 +195,9 @@ static fastcall void intel_machine_check(struct pt_regs * regs, long error_code)
+ 	}
+ 
+ 	if (recover & 2)
+-		panic ("CPU context corrupt");
++		mce_panic ("CPU context corrupt");
+ 	if (recover & 1)
+-		panic ("Unable to continue");
++		mce_panic ("Unable to continue");
+ 
+ 	printk(KERN_EMERG "Attempting to continue.\n");
+ 	/* 
+diff --git a/arch/i386/kernel/cpu/mcheck/p6.c b/arch/i386/kernel/cpu/mcheck/p6.c
+index deeae42..62e8b59 100644
+--- a/arch/i386/kernel/cpu/mcheck/p6.c
++++ b/arch/i386/kernel/cpu/mcheck/p6.c
+@@ -52,9 +52,9 @@ static fastcall void intel_machine_check(struct pt_regs * regs, long error_code)
+ 	}
+ 
+ 	if (recover & 2)
+-		panic ("CPU context corrupt");
++		mce_panic ("CPU context corrupt");
+ 	if (recover & 1)
+-		panic ("Unable to continue");
++		mce_panic ("Unable to continue");
+ 
+ 	printk (KERN_EMERG "Attempting to continue.\n");
+ 	/* 
+diff --git a/arch/i386/kernel/traps.c b/arch/i386/kernel/traps.c
+index f2ffcd1..8b4b64e 100644
+--- a/arch/i386/kernel/traps.c
++++ b/arch/i386/kernel/traps.c
+@@ -1304,7 +1304,7 @@ void __init trap_init(void)
+ 	set_trap_gate(16,&coprocessor_error);
+ 	set_trap_gate(17,&alignment_check);
+ #ifdef CONFIG_X86_MCE
+-	set_trap_gate(18,&machine_check);
++	set_intr_gate(18,&machine_check);
+ #endif
+ 	set_trap_gate(19,&simd_coprocessor_error);
+ 
+diff --git a/drivers/char/vt.c b/drivers/char/vt.c
+index 6ff0a56..3b730a4 100644
+--- a/drivers/char/vt.c
++++ b/drivers/char/vt.c
+@@ -3356,10 +3356,10 @@ void do_unblank_screen(int leaving_gfx)
+ 	 * context for the sake of the low level drivers, except in the special
+ 	 * case of oops_in_progress
+ 	 */
+-	if (!oops_in_progress)
++	if (!oops_in_progress) {
+ 		might_sleep();
+-
+-	WARN_CONSOLE_UNLOCKED();
++		WARN_CONSOLE_UNLOCKED();
++	}
+ 
+ 	ignore_poke = 0;
+ 	if (!console_blanked)

@@ -1,0 +1,54 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 12 Aug 2009 10:26:11 -0400
+Subject: [x86_64] vsmp: fix bit-wise operator and compile issue
+Message-id: 20090812142341.3951.65428.sendpatchset@prarit.bos.redhat.com
+O-Subject: [PATCH] Fix bit-wise operator and compile issue in VSMP code
+Bugzilla: 515408
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+Fix a typo in initial VSMP code patch.
+
+Also fix a compile issue with VSMP code.
+
+Resolves BZ 515408.
+
+Successfully compiled by me.
+
+diff --git a/arch/x86_64/kernel/vsmp.c b/arch/x86_64/kernel/vsmp.c
+index 475c670..cf48a64 100644
+--- a/arch/x86_64/kernel/vsmp.c
++++ b/arch/x86_64/kernel/vsmp.c
+@@ -26,7 +26,7 @@ int is_vsmp_box(void)
+ 
+ 	/* Check if we are running on a ScaleMP vSMP box */
+ 	if (read_pci_config(0, 0x1f, 0, PCI_VENDOR_ID) ==
+-	     (PCI_VENDOR_ID_SCALEMP || (PCI_DEVICE_ID_SCALEMP_VSMP_CTL << 16)))
++	     (PCI_VENDOR_ID_SCALEMP | (PCI_DEVICE_ID_SCALEMP_VSMP_CTL << 16)))
+ 		vsmp = 1;
+ 
+ 	return vsmp;
+diff --git a/include/asm-x86_64/apic.h b/include/asm-x86_64/apic.h
+index 2a26391..984159a 100644
+--- a/include/asm-x86_64/apic.h
++++ b/include/asm-x86_64/apic.h
+@@ -104,6 +104,7 @@ void smp_send_timer_broadcast_ipi(void);
+ void switch_APIC_timer_to_ipi(void *cpumask);
+ void switch_ipi_to_APIC_timer(void *cpumask);
+ #define ARCH_APICTIMER_STOPS_ON_C3	1
++#ifndef CONFIG_X86_VSMP
+ static int inline is_vsmp_box(void)
+ {
+ 	return 0;
+@@ -111,7 +112,9 @@ static int inline is_vsmp_box(void)
+ #else
+ extern int is_vsmp_box(void);
+ #endif
+-
++#else
++extern int is_vsmp_box(void);
++#endif
+ #endif /* CONFIG_X86_LOCAL_APIC */
+ 
+ extern unsigned boot_cpu_id;

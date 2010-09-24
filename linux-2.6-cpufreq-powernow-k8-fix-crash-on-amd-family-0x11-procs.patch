@@ -1,0 +1,111 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Wed, 20 Jan 2010 16:30:42 -0500
+Subject: [cpufreq] powernow-k8: fix crash on AMD family 0x11 procs
+Message-id: <20100120163406.8231.85909.sendpatchset@localhost.localdomain>
+Patchwork-id: 22679
+O-Subject: [RHEL5 PATCH] Fix for Powernow-k8 crash on AMD family 0x11 processors
+Bugzilla: 555180
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Anton Arapov <Anton@redhat.com>
+
+Resolves BZ 555180
+
+A workaround for AMD CPU family 11h erratum 311 might cause that the P-state
+status Register shows a "current P-state" which is larger than the "current
+P-state limit" in P-state Current Limit Register. For the wrong P-state value
+there is no ACPI _PSS object defined and powernow-k8/cpufreq can't determine
+the proper CPU frequency for that state.  As a consequence this can cause a
+panic during boot.
+
+HP/Compaq 6735b laptop was affected and the issue is now fixed.
+
+Upstream patches:
+
+http://git.kernel.org/?p=linux/kernel/git/davej/cpufreq.git;a=commit;h=a266d9f1253a38ec2d5655ebcd6846298b0554f4
+
+These patches are needed to fix incorrect value reported in
+cpuinfo_cur_freq:
+
+[PATCH 0/2] powernow-k8: fix incorrect value reported in
+cpuinfo_cur_freq
+http://lkml.indiana.edu/hypermail/linux/kernel/0906.1/02241.html
+
+[PATCH 1/2] powernow-k8: read P-state from HW
+http://lkml.indiana.edu/hypermail/linux/kernel/0906.1/02242.html
+
+[PATCH 2/2] powernow-k8: get drv data for correct CPU
+http://lkml.indiana.edu/hypermail/linux/kernel/0906.1/02246.html
+
+Testing:
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2203740
+
+Testing:
+Successfully tested overnight on HP 6735b laptop, with over 200
+reboots with no issues recorded.  Both 64-bit and 32-bit tested.
+
+Please review and ACK
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+index 6f55c00..5ed35db 100644
+--- a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
++++ b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+@@ -131,6 +131,14 @@ static int query_current_values_with_pending_wait(struct powernow_k8_data *data)
+ 		rdmsr(MSR_PSTATE_STATUS, lo, hi);
+ 		i = lo & HW_PSTATE_MASK;
+ 		data->currpstate = i;
++
++		/*
++		 * a workaround for family 11h erratum 311 might cause
++		 * an "out-of-range Pstate if the core is in Pstate-0
++		 */
++		if ((boot_cpu_data.x86 == 0x11) && (i >= data->numps))
++ 			data->currpstate = HW_PSTATE_0;
++
+ 		return 0;
+ 	}
+ 	do {
+@@ -1261,6 +1269,7 @@ static int __cpuinit powernowk8_cpu_init(struct cpufreq_policy *pol)
+ 	}
+ 
+ 	data->cpu = pol->cpu;
++	data->currpstate = HW_PSTATE_INVALID;
+ 
+ 	if (powernow_k8_cpu_init_acpi(data)) {
+ 		/*
+diff --git a/arch/i386/kernel/cpu/cpufreq/powernow-k8.h b/arch/i386/kernel/cpu/cpufreq/powernow-k8.h
+index 7528192..cb1a869 100644
+--- a/arch/i386/kernel/cpu/cpufreq/powernow-k8.h
++++ b/arch/i386/kernel/cpu/cpufreq/powernow-k8.h
+@@ -5,6 +5,18 @@
+  *  http://www.gnu.org/licenses/gpl.html
+  */
+ 
++enum pstate {
++	HW_PSTATE_INVALID = 0xff,
++	HW_PSTATE_0 = 0,
++	HW_PSTATE_1 = 1,
++	HW_PSTATE_2 = 2,
++	HW_PSTATE_3 = 3,
++	HW_PSTATE_4 = 4,
++	HW_PSTATE_5 = 5,
++	HW_PSTATE_6 = 6,
++	HW_PSTATE_7 = 7,
++};
++
+ struct powernow_k8_data {
+ 	unsigned int cpu;
+ 
+@@ -23,7 +35,9 @@ struct powernow_k8_data {
+         u32 exttype; /* extended interface = 1 */
+ 
+ 	/* keep track of the current fid / vid or pstate */
+-	u32 currvid, currfid, currpstate;
++	u32 currvid;
++	u32 currfid;
++	enum pstate currpstate;
+ 
+ 	/* the powernow_table includes all frequency and vid/fid pairings:
+ 	 * fid are the lower 8 bits of the index, vid are the upper 8 bits.

@@ -1,0 +1,316 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Wed, 3 Feb 2010 20:45:13 -0500
+Subject: [misc] EDAC driver fix for non-MMCONFIG systems
+Message-id: <4B69E059.7050309@redhat.com>
+Patchwork-id: 23120
+O-Subject: Re: [RHEL5.5 PATCH] EDAC driver fix for non-MMCONFIG systems
+Bugzilla: 550123
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Resolved BZ 550123
+
+x86: add PCI extended config space access for AMD F10h
+
+This patch implements PCI extended configuration space access for
+AMD's Barcelona and later CPUs. It extends the method using CF8/CFC IO
+addresses. An x86 capability bit has been introduced that is set for
+CPUs supporting PCI extended config space accesses.
+
+(backport of upstream commit id:
+831d991821daedd4839073dbca55514432ef1768)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/amd.c b/arch/i386/kernel/cpu/amd.c
+index c201a15..2b8c150 100644
+--- a/arch/i386/kernel/cpu/amd.c
++++ b/arch/i386/kernel/cpu/amd.c
+@@ -1,6 +1,7 @@
+ #include <linux/init.h>
+ #include <linux/bitops.h>
+ #include <linux/mm.h>
++#include <linux/setup.h>
+ #include <asm/io.h>
+ #include <asm/processor.h>
+ #include <asm/pci-direct.h>
+@@ -312,6 +313,9 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
+ 
+ 	if ((c->x86 == 0x10 || c->x86 == 0x11) && !force_mwait)
+ 		clear_bit(X86_FEATURE_MWAIT, &c->x86_capability);
++
++	if (c->x86 >= 0x10)
++		amd_enable_pci_ext_cfg(c);
+ }
+ 
+ static unsigned int __cpuinit amd_size_cache(struct cpuinfo_x86 * c, unsigned int size)
+diff --git a/arch/i386/pci/common.c b/arch/i386/pci/common.c
+index 5961dc6..9004085 100644
+--- a/arch/i386/pci/common.c
++++ b/arch/i386/pci/common.c
+@@ -26,6 +26,7 @@ int pcibios_last_bus = -1;
+ unsigned long pirq_table_addr;
+ struct pci_bus *pci_root_bus;
+ struct pci_raw_ops *raw_pci_ops;
++struct pci_raw_ops *raw_pci_ext_ops;
+ 
+ #ifdef CONFIG_X86
+ int pci_noseg = 0;
+@@ -33,16 +34,28 @@ int pci_noseg = 0;
+ 
+ struct pci_sysdata pci_default_sysdata = { .node = -1 };
+ 
+-static int pci_read(struct pci_bus *bus, unsigned int devfn, int where, int size, u32 *value)
++static int pci_read(struct pci_bus *bus, unsigned int devfn, int reg, int size,
++		    u32 *value)
+ {
+-	return raw_pci_ops->read(pci_domain_nr(bus), bus->number,
+-				 devfn, where, size, value);
++	if (raw_pci_ops && (reg < 256 || (pci_probe & PCI_USING_MMCONF)))
++		return raw_pci_ops->read(pci_domain_nr(bus), bus->number, devfn,
++					 reg, size, value);
++	if (raw_pci_ext_ops)
++		return raw_pci_ext_ops->read(pci_domain_nr(bus), bus->number,
++					     devfn, reg, size, value);
++	return -EINVAL;
+ }
+ 
+-static int pci_write(struct pci_bus *bus, unsigned int devfn, int where, int size, u32 value)
++static int pci_write(struct pci_bus *bus, unsigned int devfn, int reg, int size,
++		     u32 value)
+ {
+-	return raw_pci_ops->write(pci_domain_nr(bus), bus->number,
+-				  devfn, where, size, value);
++	if (raw_pci_ops && (reg < 256 || (pci_probe & PCI_USING_MMCONF)))
++		return raw_pci_ops->write(pci_domain_nr(bus), bus->number,
++					  devfn, reg, size, value);
++	if (raw_pci_ext_ops)
++		return raw_pci_ext_ops->write(pci_domain_nr(bus), bus->number,
++					      devfn, reg, size, value);
++	return -EINVAL;
+ }
+ 
+ struct pci_ops pci_root_ops = {
+diff --git a/arch/i386/pci/direct.c b/arch/i386/pci/direct.c
+index 5d81fb5..79aced0 100644
+--- a/arch/i386/pci/direct.c
++++ b/arch/i386/pci/direct.c
+@@ -8,18 +8,21 @@
+ #include "pci.h"
+ 
+ /*
+- * Functions for accessing PCI configuration space with type 1 accesses
++ * Functions for accessing PCI base (first 256 bytes) and extended
++ * (4096 bytes per PCI function) configuration space with type 1
++ * accesses.
+  */
+ 
+ #define PCI_CONF1_ADDRESS(bus, devfn, reg) \
+-	(0x80000000 | (bus << 16) | (devfn << 8) | (reg & ~3))
++	(0x80000000 | ((reg & 0xF00) << 16) | (bus << 16) \
++	| (devfn << 8) | (reg & 0xFC))
+ 
+ int pci_conf1_read(unsigned int seg, unsigned int bus,
+ 			  unsigned int devfn, int reg, int len, u32 *value)
+ {
+ 	unsigned long flags;
+ 
+-	if ((bus > 255) || (devfn > 255) || (reg > 255)) {
++	if ((bus > 255) || (devfn > 255) || (reg > 4095)) {
+ 		*value = -1;
+ 		return -EINVAL;
+ 	}
+@@ -50,7 +53,7 @@ int pci_conf1_write(unsigned int seg, unsigned int bus,
+ {
+ 	unsigned long flags;
+ 
+-	if ((bus > 255) || (devfn > 255) || (reg > 255)) 
++	if ((bus > 255) || (devfn > 255) || (reg > 4095))
+ 		return -EINVAL;
+ 
+ 	spin_lock_irqsave(&pci_config_lock, flags);
+@@ -267,6 +270,12 @@ void __init pci_direct_init(void)
+ 	if (pci_check_type1()) {
+ 		printk(KERN_INFO "PCI: Using configuration type 1\n");
+ 		raw_pci_ops = &pci_direct_conf1;
++
++		if (!raw_pci_ext_ops && cpu_has_pci_ext_cfg) {
++			printk(KERN_INFO "PCI: Using configuration type 1 "
++					"for extended access\n");
++			raw_pci_ext_ops = &pci_direct_conf1;
++		}
+ 		return;
+ 	}
+ 	release_resource(region);
+diff --git a/arch/x86_64/kernel/setup-xen.c b/arch/x86_64/kernel/setup-xen.c
+index debea88..666ecd7 100644
+--- a/arch/x86_64/kernel/setup-xen.c
++++ b/arch/x86_64/kernel/setup-xen.c
+@@ -45,6 +45,7 @@
+ #include <linux/dmi.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/ctype.h>
++#include <linux/setup.h>
+ 
+ #include <asm/mtrr.h>
+ #include <asm/uaccess.h>
+@@ -1191,6 +1192,9 @@ static void __init init_amd(struct cpuinfo_x86 *c)
+ 
+ 	/* Fix cpuid4 emulation for more */
+ 	num_cache_leaves = 3;
++
++	if (c->x86 >= 0x10)
++		amd_enable_pci_ext_cfg(c);
+ }
+ 
+ static void __cpuinit detect_ht(struct cpuinfo_x86 *c)
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index ad74550..13fc8ea 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -46,6 +46,7 @@
+ #include <linux/dma-mapping.h>
+ #include <linux/ctype.h>
+ #include <linux/efi.h>
++#include <linux/setup.h>
+ 
+ #include <asm/mtrr.h>
+ #include <asm/uaccess.h>
+@@ -980,6 +981,9 @@ static void __init init_amd(struct cpuinfo_x86 *c)
+ 	if (c->x86 == 0x10 && !force_mwait)
+ 		clear_bit(X86_FEATURE_MWAIT, &c->x86_capability);
+ 	set_bit(X86_FEATURE_MFENCE_RDTSC, &c->x86_capability);
++
++	if (c->x86 >= 0x10)
++		amd_enable_pci_ext_cfg(c);
+ }
+ 
+ static void __cpuinit detect_ht(struct cpuinfo_x86 *c)
+diff --git a/drivers/edac/amd64_edac.c b/drivers/edac/amd64_edac.c
+index 7bf5921..d13ab75 100644
+--- a/drivers/edac/amd64_edac.c
++++ b/drivers/edac/amd64_edac.c
+@@ -2613,7 +2613,7 @@ static int amd64_init_2nd_stage(struct amd64_pvt *pvt)
+ {
+        int node_id = pvt->mc_node_id;
+        struct mem_ctl_info *mci;
+-       int ret;
++	int ret = -ENODEV;
+ 
+        amd64_read_mc_registers(pvt);
+ 
+diff --git a/include/asm-i386/cpufeature.h b/include/asm-i386/cpufeature.h
+index 0202008..52f50f5 100644
+--- a/include/asm-i386/cpufeature.h
++++ b/include/asm-i386/cpufeature.h
+@@ -76,6 +76,7 @@
+ #define X86_FEATURE_IDA		(3*32+16) /* Intel Dynamic Acceleration */
+ #define X86_FEATURE_MFENCE_RDTSC (3*32+17) /* Mfence synchronizes RDTSC */
+ #define X86_FEATURE_LFENCE_RDTSC (3*32+18) /* Lfence synchronizes RDTSC */
++#define X86_FEATURE_PCI_EXT_CFG	(3*32+19) /* PCI extended cfg access */
+ #define X86_FEATURE_TSC_RELIABLE (3*32+23) /* TSC is known to be reliable */
+ #define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
+ #define X86_FEATURE_ARAT	(3*32+25) /* Always Running APIC Timer */
+@@ -162,6 +163,7 @@
+ #define cpu_has_hypervisor	boot_cpu_has(X86_FEATURE_HYPERVISOR)
+ #define cpu_has_xmm4_1		boot_cpu_has(X86_FEATURE_XMM4_1)
+ #define cpu_has_xmm4_2		boot_cpu_has(X86_FEATURE_XMM4_2)
++#define cpu_has_pci_ext_cfg	boot_cpu_has(X86_FEATURE_PCI_EXT_CFG)
+ 
+ #endif /* __ASM_I386_CPUFEATURE_H */
+ 
+diff --git a/include/asm-i386/msr.h b/include/asm-i386/msr.h
+index 9cb6ecc..a57ec13 100644
+--- a/include/asm-i386/msr.h
++++ b/include/asm-i386/msr.h
+@@ -251,6 +251,9 @@ static inline void wrmsrl (unsigned long msr, unsigned long long val)
+ #define MSR_K7_FID_VID_CTL		0xC0010041
+ #define MSR_K7_FID_VID_STATUS		0xC0010042
+ 
++#define ENABLE_CF8_EXT_CFG		(1ULL << 46)
++#define MSR_K8_NB_CFG			0xc001001f
++
+ /* extended feature register */
+ #define MSR_EFER 			0xc0000080
+ 
+diff --git a/include/asm-x86_64/cpufeature.h b/include/asm-x86_64/cpufeature.h
+index e07bb14..dc2973f 100644
+--- a/include/asm-x86_64/cpufeature.h
++++ b/include/asm-x86_64/cpufeature.h
+@@ -71,6 +71,7 @@
+ #define X86_FEATURE_IDA		(3*32+16) /* Intel Dynamic Acceleration */
+ #define X86_FEATURE_MFENCE_RDTSC (3*32+17) /* Mfence synchronizes RDTSC */
+ #define X86_FEATURE_LFENCE_RDTSC (3*32+18) /* Lfence synchronizes RDTSC */
++#define X86_FEATURE_PCI_EXT_CFG	(3*32+19) /* PCI extended cfg access */
+ #define X86_FEATURE_TSC_RELIABLE (3*32+23) /* TSC is known to be reliable */
+ #define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
+ #define X86_FEATURE_ARAT	(3*32+25) /* Always Running APIC Timer */
+@@ -144,5 +145,6 @@
+ #define cpu_has_hypervisor	boot_cpu_has(X86_FEATURE_HYPERVISOR)
+ #define cpu_has_xmm4_1		boot_cpu_has(X86_FEATURE_XMM4_1)
+ #define cpu_has_xmm4_2		boot_cpu_has(X86_FEATURE_XMM4_2)
++#define cpu_has_pci_ext_cfg	boot_cpu_has(X86_FEATURE_PCI_EXT_CFG)
+ 
+ #endif /* __ASM_X8664_CPUFEATURE_H */
+diff --git a/include/asm-x86_64/mach-xen/asm/msr.h b/include/asm-x86_64/mach-xen/asm/msr.h
+index 4b44263..88817f4 100644
+--- a/include/asm-x86_64/mach-xen/asm/msr.h
++++ b/include/asm-x86_64/mach-xen/asm/msr.h
+@@ -161,6 +161,8 @@ static inline unsigned int cpuid_edx(unsigned int op)
+ #define MSR_FS_BASE 0xc0000100		/* 64bit GS base */
+ #define MSR_GS_BASE 0xc0000101		/* 64bit FS base */
+ #define MSR_KERNEL_GS_BASE  0xc0000102	/* SwapGS GS shadow (or USER_GS from kernel) */ 
++#define ENABLE_CF8_EXT_CFG	(1ULL << 46)
++#define MSR_K8_NB_CFG	0xc001001f
+ /* EFER bits: */ 
+ #define _EFER_SCE 0  /* SYSCALL/SYSRET */
+ #define _EFER_LME 8  /* Long mode enable */
+diff --git a/include/asm-x86_64/msr.h b/include/asm-x86_64/msr.h
+index 7de513d..00c24e7 100644
+--- a/include/asm-x86_64/msr.h
++++ b/include/asm-x86_64/msr.h
+@@ -187,6 +187,9 @@ static inline void wrmsr_on_cpu(unsigned int cpu, u32 msr_no, u32 l, u32 h)
+ #define MSR_FS_BASE 0xc0000100		/* 64bit GS base */
+ #define MSR_GS_BASE 0xc0000101		/* 64bit FS base */
+ #define MSR_KERNEL_GS_BASE  0xc0000102	/* SwapGS GS shadow (or USER_GS from kernel) */ 
++
++#define ENABLE_CF8_EXT_CFG      (1ULL << 46)
++#define MSR_K8_NB_CFG 0xc001001f
+ /* EFER bits: */ 
+ #define _EFER_SCE 0  /* SYSCALL/SYSRET */
+ #define _EFER_LME 8  /* Long mode enable */
+diff --git a/include/linux/pci.h b/include/linux/pci.h
+index e72580f..4963e53 100644
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -338,6 +338,7 @@ struct pci_raw_ops {
+ };
+ 
+ extern struct pci_raw_ops *raw_pci_ops;
++extern struct pci_raw_ops *raw_pci_ext_ops;
+ 
+ #ifdef CONFIG_64BIT
+ struct pci_bus_region {
+diff --git a/include/linux/setup.h b/include/linux/setup.h
+new file mode 100644
+index 0000000..a82ab71
+--- /dev/null
++++ b/include/linux/setup.h
+@@ -0,0 +1,16 @@
++#ifndef _LINUX_SETUP_H
++#define _LINUX_SETUP_H */
++
++static inline void __cpuinit amd_enable_pci_ext_cfg(struct cpuinfo_x86 *c)
++{
++	u64 reg;
++	rdmsrl(MSR_K8_NB_CFG, reg);
++	if (!(reg & ENABLE_CF8_EXT_CFG)) {
++		reg |= ENABLE_CF8_EXT_CFG;
++		wrmsrl(MSR_K8_NB_CFG, reg);
++	}
++	set_bit(X86_FEATURE_PCI_EXT_CFG, &c->x86_capability);
++}
++
++#endif  /* _LINUX_SETUP_H */
++

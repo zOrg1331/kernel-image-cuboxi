@@ -1,0 +1,130 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 12 Mar 2009 18:09:10 +0100
+Subject: [net] rtnetlink: fix sending message when replace route
+Message-id: 20090312170909.GB20153@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.4 patch] BZ462725 rtnetlink: Fix sending netlink message when replace route.
+Bugzilla: 462725
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+BZ462725
+https://bugzilla.redhat.com/show_bug.cgi?id=462725
+
+Description:
+When you replace route via ip r r command the netlink multicast message is
+not send. This patch corrects it. NL message is sent with NLM_F_REPLACE
+flag.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=b8f558313506b5bc435f2e031f3bec4b1725098e
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1723577
+
+Test:
+Booted and tested on x86_64. Behaves in the same way as upstream.
+
+Jirka
+
+diff --git a/net/ipv4/fib_hash.c b/net/ipv4/fib_hash.c
+index b5bee1a..2cd2b74 100644
+--- a/net/ipv4/fib_hash.c
++++ b/net/ipv4/fib_hash.c
+@@ -460,6 +460,8 @@ fn_hash_insert(struct fib_table *tb, struct rtmsg *r, struct kern_rta *rta,
+ 			fib_release_info(fi_drop);
+ 			if (state & FA_S_ACCESSED)
+ 				rt_cache_flush(-1);
++			rtmsg_fib(RTM_NEWROUTE, key, fa, z,
++				  tb->tb_id, n, req, NLM_F_REPLACE);
+ 			return 0;
+ 		}
+ 
+@@ -526,7 +528,7 @@ fn_hash_insert(struct fib_table *tb, struct rtmsg *r, struct kern_rta *rta,
+ 		fz->fz_nent++;
+ 	rt_cache_flush(-1);
+ 
+-	rtmsg_fib(RTM_NEWROUTE, key, new_fa, z, tb->tb_id, n, req);
++	rtmsg_fib(RTM_NEWROUTE, key, new_fa, z, tb->tb_id, n, req, 0);
+ 	return 0;
+ 
+ out_free_new_fa:
+@@ -596,7 +598,7 @@ fn_hash_delete(struct fib_table *tb, struct rtmsg *r, struct kern_rta *rta,
+ 		int kill_fn;
+ 
+ 		fa = fa_to_delete;
+-		rtmsg_fib(RTM_DELROUTE, key, fa, z, tb->tb_id, n, req);
++		rtmsg_fib(RTM_DELROUTE, key, fa, z, tb->tb_id, n, req, 0);
+ 
+ 		kill_fn = 0;
+ 		write_lock_bh(&fib_hash_lock);
+diff --git a/net/ipv4/fib_lookup.h b/net/ipv4/fib_lookup.h
+index ddd5249..1357716 100644
+--- a/net/ipv4/fib_lookup.h
++++ b/net/ipv4/fib_lookup.h
+@@ -35,7 +35,8 @@ extern int fib_dump_info(struct sk_buff *skb, u32 pid, u32 seq, int event,
+ 			 unsigned int);
+ extern void rtmsg_fib(int event, u32 key, struct fib_alias *fa,
+ 		      int z, u32 tb_id,
+-		      struct nlmsghdr *n, struct netlink_skb_parms *req);
++		      struct nlmsghdr *n, struct netlink_skb_parms *req,
++		      unsigned int nlm_flags);
+ extern struct fib_alias *fib_find_alias(struct list_head *fah,
+ 					u8 tos, u32 prio);
+ extern int fib_detect_death(struct fib_info *fi, int order,
+diff --git a/net/ipv4/fib_semantics.c b/net/ipv4/fib_semantics.c
+index 9c32c1a..95519ca 100644
+--- a/net/ipv4/fib_semantics.c
++++ b/net/ipv4/fib_semantics.c
+@@ -274,7 +274,8 @@ int ip_fib_check_default(u32 gw, struct net_device *dev)
+ 
+ void rtmsg_fib(int event, u32 key, struct fib_alias *fa,
+ 	       int z, u32 tb_id,
+-	       struct nlmsghdr *n, struct netlink_skb_parms *req)
++	       struct nlmsghdr *n, struct netlink_skb_parms *req,
++	       unsigned int nlm_flags)
+ {
+ 	struct sk_buff *skb;
+ 	u32 pid = req ? req->pid : n->nlmsg_pid;
+@@ -287,7 +288,7 @@ void rtmsg_fib(int event, u32 key, struct fib_alias *fa,
+ 	if (fib_dump_info(skb, pid, n->nlmsg_seq, event, tb_id,
+ 			  fa->fa_type, fa->fa_scope, &key, z,
+ 			  fa->fa_tos,
+-			  fa->fa_info, 0) < 0) {
++			  fa->fa_info, nlm_flags) < 0) {
+ 		kfree_skb(skb);
+ 		return;
+ 	}
+diff --git a/net/ipv4/fib_trie.c b/net/ipv4/fib_trie.c
+index 2a580eb..73bc23c 100644
+--- a/net/ipv4/fib_trie.c
++++ b/net/ipv4/fib_trie.c
+@@ -1211,6 +1211,8 @@ fn_trie_insert(struct fib_table *tb, struct rtmsg *r, struct kern_rta *rta,
+ 			fib_release_info(fi_drop);
+ 			if (state & FA_S_ACCESSED)
+ 				rt_cache_flush(-1);
++			rtmsg_fib(RTM_NEWROUTE, htonl(key), new_fa, plen,
++				  tb->tb_id, nlhdr, req, NLM_F_REPLACE);
+ 
+ 			goto succeeded;
+ 		}
+@@ -1262,7 +1264,8 @@ fn_trie_insert(struct fib_table *tb, struct rtmsg *r, struct kern_rta *rta,
+ 			  (fa ? &fa->fa_list : fa_head));
+ 
+ 	rt_cache_flush(-1);
+-	rtmsg_fib(RTM_NEWROUTE, htonl(key), new_fa, plen, tb->tb_id, nlhdr, req);
++	rtmsg_fib(RTM_NEWROUTE, htonl(key), new_fa, plen,
++		  tb->tb_id, nlhdr, req, 0);
+ succeeded:
+ 	return 0;
+ 
+@@ -1614,7 +1617,8 @@ fn_trie_delete(struct fib_table *tb, struct rtmsg *r, struct kern_rta *rta,
+ 		return -ESRCH;
+ 
+ 	fa = fa_to_delete;
+-	rtmsg_fib(RTM_DELROUTE, htonl(key), fa, plen, tb->tb_id, nlhdr, req);
++	rtmsg_fib(RTM_DELROUTE, htonl(key), fa, plen,
++		  tb->tb_id, nlhdr, req, 0);
+ 
+ 	l = fib_find_node(t, key);
+ 	li = find_leaf_info(l, plen);

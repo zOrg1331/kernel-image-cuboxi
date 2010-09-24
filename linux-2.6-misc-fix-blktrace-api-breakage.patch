@@ -1,0 +1,47 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Mon, 4 May 2009 10:35:54 +0200
+Subject: [misc] fix blktrace api breakage
+Message-id: 20090504103554.26b015ad@smtp.corp.redhat.com
+O-Subject: Re: [RHEL5 U4 PATCH 1/3] FEAT: s390 : Add FCP performance data collection
+Bugzilla: 475334
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+I know I'm late to the game on this one, but doesn't this break the API?
+ Don't we need __BLK_TA_ABORT in there too to keep the enum consistent
+w/ upstream and userspace* ?
+
+Upstream kernel is:
+
+enum blktrace_act {
+...
+        __BLK_TA_SPLIT,                 /* bio was split */
+        __BLK_TA_BOUNCE,                /* bio was bounced */
+        __BLK_TA_REMAP,                 /* bio was remapped */
+-->     __BLK_TA_ABORT,                 /* request aborted */
+        __BLK_TA_DRV_DATA,              /* driver-specific binary data */
+};
+
+On Mon, 20 Apr 2009 13:42:59 -0400
+Don Zickus <dzickus@redhat.com> wrote:
+
+Hi Don,
+
+a refreshed version is attached to this mail. Sorry for the delay. We
+recently had a couple of public holidays in Germany.
+
+Cheers,
+
+	--Hans
+
+diff --git a/include/linux/blktrace_api.h b/include/linux/blktrace_api.h
+index 0d2cd38..d419568 100644
+--- a/include/linux/blktrace_api.h
++++ b/include/linux/blktrace_api.h
+@@ -47,6 +47,7 @@ enum blktrace_act {
+ 	__BLK_TA_SPLIT,			/* bio was split */
+ 	__BLK_TA_BOUNCE,		/* bio was bounced */
+ 	__BLK_TA_REMAP,			/* bio was remapped */
++	__BLK_TA_ABORT,			/* request aborted */
+ 	__BLK_TA_DRV_DATA,		/* driver-specific binary data */
+ };
+ 

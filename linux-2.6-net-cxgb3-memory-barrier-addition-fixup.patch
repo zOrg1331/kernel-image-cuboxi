@@ -1,0 +1,64 @@
+From: Steve Best <sbest@redhat.com>
+Date: Tue, 16 Feb 2010 20:58:47 -0500
+Subject: [net] cxgb3: memory barrier addition fixup
+Message-id: <20100216205121.1429.49312.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 23299
+O-Subject: [PATCH RHEL5.5 BZ561957 v2] cxgb3: add memory barriers
+Bugzilla: 561957
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=561957
+
+Description:
+============
+Add memory barriers to fix crashes observed on newest PowerPC platforms.
+The HW and driver state of the receive rings were getting out of sync.
+
+V2 - fix issue David pointed out.
+     while should be for is_pure_response not is_new_response
+     now patch matches upstream
+
+RHEL Version Found:
+===================
+RHEL 5.5
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+https://brewweb.devel.redhat.com/taskinfo?taskID=2257797
+
+Upstream Status:
+================
+http://lkml.indiana.edu/hypermail/linux/kernel/1002.0/00312.html
+upstream accepted here
+http://patchwork.ozlabs.org/patch/44225/
+
+Test Status:
+============
+Tested by IBM test team using HTX
+---Steps to Reproduce---
+(1)Set up HTX on both of lpars on P7.
+(2)Set up HTX stress level to 5, then start HTX runs.
+(3)After about 10 hours, one of system hits EEH error.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/cxgb3/sge.c b/drivers/net/cxgb3/sge.c
+index 8a38915..4d44cec 100644
+--- a/drivers/net/cxgb3/sge.c
++++ b/drivers/net/cxgb3/sge.c
+@@ -2507,7 +2507,7 @@ static int process_pure_responses(struct adapter *adap, struct sge_qset *qs,
+ 		if (!is_new_response(r, q))
+ 			break;
+ 		rmb();
+-	} while (is_new_response(r, q));
++	} while (is_pure_response(r));
+ 
+ 	if (sleeping)
+ 		check_ring_db(adap, qs, sleeping);

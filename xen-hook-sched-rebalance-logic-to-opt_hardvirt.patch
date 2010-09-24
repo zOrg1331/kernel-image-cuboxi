@@ -1,0 +1,42 @@
+From: Christopher Lalancette <clalance@redhat.com>
+Date: Wed, 4 Nov 2009 08:11:42 -0500
+Subject: [xen] hook sched rebalance logic to opt_hardvirt
+Message-id: <4AF1373E.9000909@redhat.com>
+Patchwork-id: 21308
+O-Subject: [RHEL5.5 PATCH 3/3]: Hook the rebalance logic to opt_hardvirt
+Bugzilla: 529271
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+In Xen, load balancing among physical CPUs is accomplished by the current CPU
+"stealing" work from other CPUs in the system that have higher priority tasks to
+run.  In order to steal work, the current CPU needs to take the lock on the
+remote CPUs runqueue.  In order to avoid deadlocks, the current CPU tries to
+take the remote CPUs runqueue lock using spin_trylock(), and if it fails, it
+just goes on with life (it will try again the next time it load balances).
+
+The hard-virt patches that went into RHEL-5.4, however, changed this somewhat.
+If the current CPU fails to get the lock on *any* of the other runqueues in the
+system, it goes back and tries to rebalance from everything.  This is very
+pessimistic, and with large numbers of CPUs causes all kinds of havoc.  Since
+this is a feature only one customer is really interested in, hook it to the
+opt_hardvirt option so it's off by default.  Only users who shoot themselves in
+the foot by turning on hardvirt will have this scalability problem.
+
+This solves BZ 529271
+
+diff --git a/common/sched_credit.c b/common/sched_credit.c
+index c3a98bf..eeabb5a 100644
+--- a/common/sched_credit.c
++++ b/common/sched_credit.c
+@@ -1503,7 +1503,7 @@ csched_load_balance(int cpu, struct csched_vcpu *snext, int credit)
+             return speer;
+     }
+ 
+-    if ( lock_failure_flag && snext->pri == CSCHED_PRI_IDLE && repeat_count > 1 )
++    if ( opt_hardvirt && lock_failure_flag && snext->pri == CSCHED_PRI_IDLE && repeat_count > 1 )
+     {
+         lock_failure_flag = 0;
+         repeat_count--;

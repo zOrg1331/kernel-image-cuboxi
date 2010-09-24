@@ -1,0 +1,74 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 7 Aug 2008 13:17:09 +0200
+Subject: [s390] ipl: file boot then boot from alt dev won't work
+Message-id: 20080807111709.GC6319@redhat.com
+O-Subject: [RHEL5 U3 PATCH 3/5] s390 - kernel: Reboot from alternate device does not work when booting from file
+Bugzilla: 458115
+RH-Acked-by: Jarod Wilson <jwilson@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+During startup we check if diag308 works using diag 308 subcode 6,
+which stores the actual ipl information. This fails with rc = 0x102, if
+the system has been ipled from the HMC using load from CD or load from
+file.
+
+In the case of rc = 0x102 we have to assume that diag 308 is working,
+since it still can be used to ipl from an alternative device.
+
+Bugzilla
+=========
+
+BZ 458115
+https://bugzilla.redhat.com/show_bug.cgi?id=458115
+
+Upstream status of the patch:
+=============================
+Patch is contained in linux-2.6 as of git commit
+3a95e8eb34f595a0144adb6e5513d456319bd8a5
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	-Hans
+
+diff --git a/arch/s390/kernel/ipl.c b/arch/s390/kernel/ipl.c
+index a06f364..55b0a0d 100644
+--- a/arch/s390/kernel/ipl.c
++++ b/arch/s390/kernel/ipl.c
+@@ -821,11 +821,13 @@ static int __init ipl_init(void)
+ static void __init reipl_probe(void)
+ {
+ 	void *buffer;
++	int rc;
+ 
+ 	buffer = (void *) get_zeroed_page(GFP_KERNEL);
+ 	if (!buffer)
+ 		return;
+-	if (diag308(DIAG308_STORE, buffer) == DIAG308_RC_OK)
++	rc = diag308(DIAG308_STORE, buffer);
++	if ((rc == DIAG308_RC_OK) || (rc == DIAG308_RC_NOCONFIG))
+ 		diag308_set_works = 1;
+ 	free_page((unsigned long)buffer);
+ }
+diff --git a/include/asm-s390/ipl.h b/include/asm-s390/ipl.h
+index 452a50d..c0241d9 100644
+--- a/include/asm-s390/ipl.h
++++ b/include/asm-s390/ipl.h
+@@ -139,6 +139,7 @@ enum diag308_opt {
+ 
+ enum diag308_rc {
+ 	DIAG308_RC_OK	= 1,
++	DIAG308_RC_NOCONFIG = 0x0102,
+ };
+ 
+ extern int diag308(unsigned long subcode, void *addr);

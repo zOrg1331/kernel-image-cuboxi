@@ -1,0 +1,198 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Mon, 23 Mar 2009 10:23:31 -0600
+Subject: [xen] MSI support interface
+Message-id: 200903231623.n2NGNVDX022139@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 18/21 V2] xen: MSI support interface
+Bugzilla: 484227
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+
+Add msi specific MAP_PIRQ_TYPE_MSI for map_pirq hypercall so that dom0 can
+map MSI as pirq for itself or the guests.
+
+Upstream status: Accepted (CS 17533, 17535)
+
+Signed-off-by: Qing He <qing.he@intel.com>
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/arch/x86/irq.c b/arch/x86/irq.c
+index 3744c0a..afdcf86 100644
+--- a/arch/x86/irq.c
++++ b/arch/x86/irq.c
+@@ -15,6 +15,7 @@
+ #include <xen/keyhandler.h>
+ #include <xen/compat.h>
+ #include <xen/iocap.h>
++#include <asm/msi.h>
+ #include <asm/current.h>
+ #include <public/physdev.h>
+ 
+@@ -433,6 +434,13 @@ int pirq_acktype(struct domain *d, int irq)
+         return ACKTYPE_NONE;
+ 
+     /*
++     * MSIs are treated as edge-triggered interrupts, except
++     * when there is no proper way to mask them.
++     */
++    if ( desc->handler == &pci_msi_type )
++        return msi_maskable_irq(desc->msi_desc) ? ACKTYPE_NONE : ACKTYPE_EOI;
++
++    /*
+      * Level-triggered IO-APIC interrupts need to be acknowledged on the CPU
+      * on which they were received. This is because we tickle the LAPIC to EOI.
+      */
+@@ -760,6 +768,8 @@ int map_domain_pirq(
+     int old_vector, old_pirq;
+     irq_desc_t *desc;
+     unsigned long flags;
++    struct msi_desc *msi_desc;
++    struct pci_dev *pdev = NULL;
+ 
+     ASSERT(spin_is_locked(&pcidevs_lock));
+     ASSERT(spin_is_locked(&d->event_lock));
+@@ -795,7 +805,26 @@ int map_domain_pirq(
+ 
+     desc = &irq_desc[vector];
+ 
+-    if ( type == MAP_PIRQ_TYPE_GSI )
++    if ( type == MAP_PIRQ_TYPE_MSI )
++    {
++        struct msi_info *msi = (struct msi_info *)data;
++
++        pdev = pci_get_pdev(msi->bus, msi->devfn);
++        ret = pci_enable_msi(msi, &msi_desc);
++        if ( ret )
++            goto done;
++
++        spin_lock_irqsave(&desc->lock, flags);
++
++        if ( desc->handler != &no_irq_type )
++            dprintk(XENLOG_G_ERR, "dom%d: vector %d in use\n",
++              d->domain_id, vector);
++        desc->handler = &pci_msi_type;
++        d->arch.pirq_vector[pirq] = vector;
++        d->arch.vector_pirq[vector] = pirq;
++        setup_msi_irq(pdev, msi_desc);
++        spin_unlock_irqrestore(&desc->lock, flags);
++    } else
+     {
+         spin_lock_irqsave(&desc->lock, flags);
+         d->arch.pirq_vector[pirq] = vector;
+@@ -803,6 +832,7 @@ int map_domain_pirq(
+         spin_unlock_irqrestore(&desc->lock, flags);
+     }
+ 
++ done:
+     return ret;
+ }
+ 
+@@ -813,6 +843,7 @@ int unmap_domain_pirq(struct domain *d, int pirq)
+     irq_desc_t *desc;
+     int vector, ret = 0;
+     bool_t forced_unbind;
++    struct msi_desc *msi_desc = NULL;
+ 
+     if ( (pirq < 0) || (pirq >= NR_IRQS) )
+         return -EINVAL;
+@@ -839,10 +870,19 @@ int unmap_domain_pirq(struct domain *d, int pirq)
+ 
+     desc = &irq_desc[vector];
+ 
++    if ( (msi_desc = desc->msi_desc) != NULL )
++        pci_disable_msi(msi_desc);
++
+     spin_lock_irqsave(&desc->lock, flags);
+ 
+     BUG_ON(vector != d->arch.pirq_vector[pirq]);
+ 
++    if ( msi_desc )
++        teardown_msi_vector(vector);
++
++    if ( desc->handler == &pci_msi_type )
++        desc->handler = &no_irq_type;
++
+     if ( !forced_unbind )
+     {
+         d->arch.pirq_vector[pirq] = 0;
+@@ -855,6 +895,11 @@ int unmap_domain_pirq(struct domain *d, int pirq)
+     }
+ 
+     spin_unlock_irqrestore(&desc->lock, flags);
++    if (msi_desc)
++    {
++        msi_free_vector(msi_desc);
++        free_irq_vector(vector);
++    }
+ 
+     ret = irq_deny_access(d, pirq);
+     if ( ret )
+diff --git a/arch/x86/physdev.c b/arch/x86/physdev.c
+index a62cfdf..88cc9dd 100644
+--- a/arch/x86/physdev.c
++++ b/arch/x86/physdev.c
+@@ -8,6 +8,7 @@
+ #include <xen/guest_access.h>
+ #include <xen/iocap.h>
+ #include <asm/current.h>
++#include <asm/msi.h>
+ #include <asm/hypercall.h>
+ #include <public/xen.h>
+ #include <public/physdev.h>
+@@ -28,6 +29,7 @@ static int physdev_map_pirq(struct physdev_map_pirq *map)
+ {
+     struct domain *d;
+     int vector, pirq, ret = 0;
++    struct msi_info _msi;
+     void *map_data = NULL;
+ 
+     if ( !IS_PRIV(current->domain) )
+@@ -68,6 +70,27 @@ static int physdev_map_pirq(struct physdev_map_pirq *map)
+             }
+             break;
+ 
++        case MAP_PIRQ_TYPE_MSI:
++            vector = map->index;
++            if ( vector == -1 )
++                vector = assign_irq_vector(AUTO_ASSIGN);
++
++            if ( vector < 0 || vector >= NR_VECTORS )
++            {
++                dprintk(XENLOG_G_ERR, "dom%d: map irq with wrong vector %d\n",
++                        d->domain_id, vector);
++                ret = -EINVAL;
++                goto free_domain;
++            }
++
++            _msi.bus = map->bus;
++            _msi.devfn = map->devfn;
++            _msi.entry_nr = map->entry_nr;
++            _msi.table_base = map->table_base;
++            _msi.vector = vector;
++            map_data = &_msi;
++            break;
++
+         default:
+             dprintk(XENLOG_G_ERR, "dom%d: wrong map_pirq type %x\n",
+                     d->domain_id, map->type);
+@@ -124,6 +147,8 @@ static int physdev_map_pirq(struct physdev_map_pirq *map)
+ done:
+     spin_unlock(&d->event_lock);
+     spin_unlock(&pcidevs_lock);
++    if ( (ret != 0) && (map->type == MAP_PIRQ_TYPE_MSI) && (map->index == -1) )
++        free_irq_vector(vector);
+ free_domain:
+     rcu_unlock_domain(d);
+     return ret;
+diff --git a/include/public/physdev.h b/include/public/physdev.h
+index 2428540..a710907 100644
+--- a/include/public/physdev.h
++++ b/include/public/physdev.h
+@@ -118,7 +118,7 @@ struct physdev_irq {
+ typedef struct physdev_irq physdev_irq_t;
+ DEFINE_XEN_GUEST_HANDLE(physdev_irq_t);
+  
+-//#define MAP_PIRQ_TYPE_MSI               0x0
++#define MAP_PIRQ_TYPE_MSI               0x0
+ #define MAP_PIRQ_TYPE_GSI               0x1
+ #define MAP_PIRQ_TYPE_UNKNOWN           0x2
+ 

@@ -1,0 +1,28 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Tue, 26 Jan 2010 12:07:27 -0500
+Subject: r8169: add missing hunk from frame length filtering fix
+Bugzilla: 552438
+
+There was a chunk missing from commit cf315a07499ec33769efd0a1af01b6c725a7f48d,
+which led to non-functional r8169 devices in kernel 2.6.18-185.el5. The chunk
+was in the original patch, but was accidentally omitted rebasing the patch
+following an unrelated r8169 driver update.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/r8169.c b/drivers/net/r8169.c
+index a4cd069..534c667 100644
+--- a/drivers/net/r8169.c
++++ b/drivers/net/r8169.c
+@@ -3255,9 +3255,9 @@ static void __devexit rtl8169_remove_one(struct pci_dev *pdev)
+ }
+ 
+ static void rtl8169_set_rxbufsize(struct rtl8169_private *tp,
+-				  struct net_device *dev)
++				  unsigned int mtu)
+ {
+-	unsigned int max_frame = dev->mtu + VLAN_ETH_HLEN + ETH_FCS_LEN;
++	unsigned int max_frame = mtu + VLAN_ETH_HLEN + ETH_FCS_LEN;
+ 
+ 	if (max_frame != 16383)
+ 		printk(KERN_WARNING "WARNING! Changing of MTU on this NIC "

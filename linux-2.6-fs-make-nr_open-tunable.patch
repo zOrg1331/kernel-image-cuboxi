@@ -1,0 +1,304 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Wed, 18 Nov 2009 19:45:25 -0500
+Subject: [fs] make NR_OPEN tunable
+Message-id: <4B044ED5.6030401@redhat.com>
+Patchwork-id: 21422
+O-Subject: [PATCH RHEL5.5 V2] make NR_OPEN tunable
+Bugzilla: 507159
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+This is for bug #507159,
+Cannot increase open file limit greater then 1024 * 1024 (1048576)
+
+It is a pretty trivial backport of the following upstream commits,
+which replace the macro NR_OPEN with a tunable sysctl and fix
+the resulting bugs....
+
+V2 includes Al Viro's upstream fixes, which I inexcusably missed...
+
+Al, thanks for catching that, hopefully I've got it fixed up properly
+for the RHEL5 kernel.  If there are more subtle unfixed bugs or issues
+unfixed upstream with this whole sysctl, please let me know,
+ maybe it's worth pushing back...
+
+Thanks,
+-Eric
+
+From: Eric Dumazet <dada1@cosmosbay.com>
+Date: Wed, 6 Feb 2008 09:37:16 +0000 (-0800)
+Subject: get rid of NR_OPEN and introduce a sysctl_nr_open
+X-Git-Tag: v2.6.25-rc1~713
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=9cfe015aa424b3c003baba3841a60dd9b5ad319b
+
+get rid of NR_OPEN and introduce a sysctl_nr_open
+
+NR_OPEN (historically set to 1024*1024) actually forbids processes to open
+more than 1024*1024 handles.
+
+Unfortunatly some production servers hit the not so 'ridiculously high
+value' of 1024*1024 file descriptors per process.
+
+Changing NR_OPEN is not considered safe because of vmalloc space potential
+exhaust.
+
+This patch introduces a new sysctl (/proc/sys/fs/nr_open) wich defaults to
+1024*1024, so that admins can decide to change this limit if their workload
+needs it.
+
+[akpm@linux-foundation.org: export it for sparc64]
+Signed-off-by: Eric Dumazet <dada1@cosmosbay.com>
+Cc: Alan Cox <alan@lxorguk.ukuu.org.uk>
+Cc: Richard Henderson <rth@twiddle.net>
+Cc: Ivan Kokshaysky <ink@jurassic.park.msu.ru>
+Cc: "David S. Miller" <davem@davemloft.net>
+Cc: Ralf Baechle <ralf@linux-mips.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/Documentation/filesystems/proc.txt b/Documentation/filesystems/proc.txt
+index 92ec0c7..f64e23d 100644
+--- a/Documentation/filesystems/proc.txt
++++ b/Documentation/filesystems/proc.txt
+@@ -908,6 +908,14 @@ nr_inodes
+ Denotes the  number  of  inodes the system has allocated. This number will
+ grow and shrink dynamically.
+ 
++nr_open
++-------
++
++Denotes the maximum number of file-handles a process can
++allocate. Default value is 1024*1024 (1048576) which should be
++enough for most machines. Actual limit depends on RLIMIT_NOFILE
++resource limit.
++
+ nr_free_inodes
+ --------------
+ 
+diff --git a/Documentation/sysctl/fs.txt b/Documentation/sysctl/fs.txt
+index 6920aa8..f2d15d9 100644
+--- a/Documentation/sysctl/fs.txt
++++ b/Documentation/sysctl/fs.txt
+@@ -23,6 +23,7 @@ Currently, these files are in /proc/sys/fs:
+ - inode-max
+ - inode-nr
+ - inode-state
++- nr_open
+ - overflowuid
+ - overflowgid
+ - suid_dumpable
+@@ -94,6 +95,15 @@ reported with printk, look for "VFS: file-max limit <number>
+ reached".
+ ==============================================================
+ 
++nr_open:
++
++This denotes the maximum number of file-handles a process can
++allocate. Default value is 1024*1024 (1048576) which should be
++enough for most machines. Actual limit depends on RLIMIT_NOFILE
++resource limit.
++
++==============================================================
++
+ inode-max, inode-nr & inode-state:
+ 
+ As with file handles, the kernel allocates the inode structures
+diff --git a/arch/alpha/kernel/osf_sys.c b/arch/alpha/kernel/osf_sys.c
+index ff094cd..9bb5b9c 100644
+--- a/arch/alpha/kernel/osf_sys.c
++++ b/arch/alpha/kernel/osf_sys.c
+@@ -432,7 +432,7 @@ sys_getpagesize(void)
+ asmlinkage unsigned long
+ sys_getdtablesize(void)
+ {
+-	return NR_OPEN;
++	return sysctl_nr_open;
+ }
+ 
+ /*
+diff --git a/arch/mips/kernel/sysirix.c b/arch/mips/kernel/sysirix.c
+index b818c4e..b15618d 100644
+--- a/arch/mips/kernel/sysirix.c
++++ b/arch/mips/kernel/sysirix.c
+@@ -356,7 +356,7 @@ asmlinkage int irix_syssgi(struct pt_regs *regs)
+ 			retval = NGROUPS_MAX;
+ 			goto out;
+ 		case 5:
+-			retval = NR_OPEN;
++			retval = sysctl_nr_open;
+ 			goto out;
+ 		case 6:
+ 			retval = 1;
+diff --git a/arch/sparc64/kernel/sparc64_ksyms.c b/arch/sparc64/kernel/sparc64_ksyms.c
+index beffc82..fffe1ac 100644
+--- a/arch/sparc64/kernel/sparc64_ksyms.c
++++ b/arch/sparc64/kernel/sparc64_ksyms.c
+@@ -283,6 +283,7 @@ EXPORT_SYMBOL(sys_getpid);
+ EXPORT_SYMBOL(sys_geteuid);
+ EXPORT_SYMBOL(sys_getuid);
+ EXPORT_SYMBOL(sys_getegid);
++EXPORT_SYMBOL(sysctl_nr_open);
+ EXPORT_SYMBOL(sys_getgid);
+ EXPORT_SYMBOL(svr4_getcontext);
+ EXPORT_SYMBOL(svr4_setcontext);
+diff --git a/arch/sparc64/solaris/fs.c b/arch/sparc64/solaris/fs.c
+index 12a940c..7a66a13 100644
+--- a/arch/sparc64/solaris/fs.c
++++ b/arch/sparc64/solaris/fs.c
+@@ -624,7 +624,7 @@ asmlinkage int solaris_ulimit(int cmd, int val)
+ 	case 3: /* UL_GMEMLIM */
+ 		return current->signal->rlim[RLIMIT_DATA].rlim_cur;
+ 	case 4: /* UL_GDESLIM */
+-		return NR_OPEN;
++		return sysctl_nr_open;
+ 	}
+ 	return -EINVAL;
+ }
+diff --git a/arch/sparc64/solaris/timod.c b/arch/sparc64/solaris/timod.c
+index b84e545..a161004 100644
+--- a/arch/sparc64/solaris/timod.c
++++ b/arch/sparc64/solaris/timod.c
+@@ -859,7 +859,8 @@ asmlinkage int solaris_getmsg(unsigned int fd, u32 arg1, u32 arg2, u32 arg3)
+ 
+ 	SOLD("entry");
+ 	lock_kernel();
+-	if(fd >= NR_OPEN) goto out;
++	if (fd >= sysctl_nr_open)
++		goto out;
+ 
+ 	fdt = files_fdtable(current->files);
+ 	filp = fdt->fd[fd];
+@@ -927,7 +928,8 @@ asmlinkage int solaris_putmsg(unsigned int fd, u32 arg1, u32 arg2, u32 arg3)
+ 
+ 	SOLD("entry");
+ 	lock_kernel();
+-	if(fd >= NR_OPEN) goto out;
++	if (fd >= sysctl_nr_open)
++		goto out;
+ 
+ 	fdt = files_fdtable(current->files);
+ 	filp = fdt->fd[fd];
+diff --git a/fs/file.c b/fs/file.c
+index b3c6b82..5417550 100644
+--- a/fs/file.c
++++ b/fs/file.c
+@@ -25,6 +25,8 @@ struct fdtable_defer {
+ 	struct fdtable *next;
+ };
+ 
++int sysctl_nr_open __read_mostly = 1024*1024;
++
+ /*
+  * We use this list to defer free fdtables that have vmalloced
+  * sets/arrays. By keeping a per-cpu list, we avoid having to embed
+@@ -241,8 +243,16 @@ static struct fdtable *alloc_fdtable(int nr)
+   		goto out;
+ 
+ 	nfds = max_t(int, 8 * L1_CACHE_BYTES, roundup_pow_of_two(nr + 1));
+-	if (nfds > NR_OPEN)
+-		nfds = NR_OPEN;
++	/*
++	 * Note that this can drive nfds *below* what we had passed if sysctl_nr_open
++	 * had been set lower between the check in expand_files() and here.  Deal
++	 * with that in caller, it's cheaper that way.
++	 *
++	 * We make sure that nfds remains a multiple of BITS_PER_LONG - otherwise
++	 * bitmaps handling below becomes unpleasant, to put it mildly...
++	 */
++	if (unlikely(nfds > sysctl_nr_open))
++		nfds = ((sysctl_nr_open - 1) | (BITS_PER_LONG - 1)) + 1;
+ 
+   	new_openset = alloc_fdset(nfds);
+   	new_execset = alloc_fdset(nfds);
+@@ -267,8 +277,8 @@ static struct fdtable *alloc_fdtable(int nr)
+ 			nfds = PAGE_SIZE / sizeof(struct file *);
+ 		else {
+ 			nfds = nfds * 2;
+-			if (nfds > NR_OPEN)
+-				nfds = NR_OPEN;
++			if (nfds > sysctl_nr_open)
++				nfds = sysctl_nr_open;
+   		}
+ 	} while (nfds <= nr);
+ 	new_fds = alloc_fd_array(nfds);
+@@ -311,6 +321,15 @@ static int expand_fdtable(struct files_struct *files, int nr)
+ 	}
+ 
+ 	spin_lock(&files->file_lock);
++	/*
++	 * extremely unlikely race - sysctl_nr_open decreased between the check in
++	 * caller and alloc_fdtable().  Cheaper to catch it here...
++	 */
++	if (unlikely(nfdt->max_fds <= nr)) {
++		__free_fdtable(nfdt);
++		kfree(nfdt);
++		return -EMFILE;
++	}
+ 	fdt = files_fdtable(files);
+ 	/*
+ 	 * Check again since another task may have expanded the
+@@ -343,8 +362,8 @@ int expand_files(struct files_struct *files, int nr)
+ 
+ 	fdt = files_fdtable(files);
+ 	if (nr >= fdt->max_fdset || nr >= fdt->max_fds) {
+-		if (fdt->max_fdset >= NR_OPEN ||
+-			fdt->max_fds >= NR_OPEN || nr >= NR_OPEN) {
++		if (fdt->max_fdset >= sysctl_nr_open ||
++			fdt->max_fds >= sysctl_nr_open || nr >= sysctl_nr_open) {
+ 			err = -EMFILE;
+ 			goto out;
+ 		}
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index f3c8e98..bae2f3d 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -21,7 +21,7 @@
+ 
+ /* Fixed constants first: */
+ #undef NR_OPEN
+-#define NR_OPEN (1024*1024)	/* Absolute upper limit on fd num */
++extern int sysctl_nr_open;
+ #define INR_OPEN 1024		/* Initial setting for nfile rlimits */
+ 
+ #define BLOCK_SIZE_BITS 10
+diff --git a/kernel/sys.c b/kernel/sys.c
+index cb1d0e5..6f7d3f1 100644
+--- a/kernel/sys.c
++++ b/kernel/sys.c
+@@ -1801,7 +1801,7 @@ asmlinkage long sys_setrlimit(unsigned int resource, struct rlimit __user *rlim)
+ 	if ((new_rlim.rlim_max > old_rlim->rlim_max) &&
+ 	    !capable(CAP_SYS_RESOURCE))
+ 		return -EPERM;
+-	if (resource == RLIMIT_NOFILE && new_rlim.rlim_max > NR_OPEN)
++	if (resource == RLIMIT_NOFILE && new_rlim.rlim_max > sysctl_nr_open)
+ 		return -EPERM;
+ 
+ 	retval = security_task_setrlimit(resource, &new_rlim);
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index c86f264..25e37bf 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -228,6 +228,9 @@ static void register_proc_table(ctl_table *, struct proc_dir_entry *, void *);
+ static void unregister_proc_table(ctl_table *, struct proc_dir_entry *);
+ #endif
+ 
++/* Something that isn't CTL_ANY, CTL_NONE or a value that may clash. */
++#define CTL_UNNUMBERED          -2
++
+ /* The default sysctl tables: */
+ 
+ static ctl_table root_table[] = {
+@@ -1234,6 +1237,14 @@ static ctl_table fs_table[] = {
+ 		.proc_handler	= &proc_dointvec,
+ 	},
+ 	{
++		.ctl_name	= CTL_UNNUMBERED,
++		.procname	= "nr_open",
++		.data		= &sysctl_nr_open,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
+ 		.ctl_name	= FS_DENTRY,
+ 		.procname	= "dentry-state",
+ 		.data		= &dentry_stat,

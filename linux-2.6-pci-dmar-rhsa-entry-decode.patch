@@ -1,0 +1,93 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Tue, 1 Dec 2009 23:43:33 -0500
+Subject: [pci] dmar: rhsa entry decode
+Message-id: <4B15AA25.70304@redhat.com>
+Patchwork-id: 21635
+O-Subject: [RHEL5.5 PATCH V2] 7/9: intel-iommu: rhsa entry decode
+Bugzilla: 516811 518103
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+V2: pulled in include/acpi/actbl1.h patch hunk from 1/9,
+     which belonged in this patch.
+
+BZ 516727
+
+Trivial backport of
+   intel-iommu: Decode (and ignore) RHSA entries
+   commit 17b6097753e926ca546189463070a7e94e7ea9fa
+
+Not much to test; just see pretty print out
+vs unknown data structure output.
+
+Keeps code in synch for future patches from upstream.
+
+Please review and ACK.
+
+- Don
+>From 6c67e9337657190044dff9706c09c09c94158209 Mon Sep 17 00:00:00 2001
+From: Donald Dutile <ddutile@redhat.com>
+Date: Fri, 20 Nov 2009 14:17:00 -0500
+Subject: [PATCH 7/9] intel-iommu: rhsa entry decode
+
+Backport of following commits:
+    intel-iommu: Decode (and ignore) RHSA entries
+    commit 17b6097753e926ca546189463070a7e94e7ea9fa
+
+    intel-iommu: Make "Unknown DMAR structure" message more informative
+    commit 4de75cf9391b538bbfe7dc0a9782f1ebe8e242ad
+
+diff --git a/drivers/pci/dmar.c b/drivers/pci/dmar.c
+index dda81f4..aa96ce2 100644
+--- a/drivers/pci/dmar.c
++++ b/drivers/pci/dmar.c
+@@ -346,6 +346,7 @@ dmar_table_print_dmar_entry(struct acpi_dmar_header *header)
+ 	struct acpi_dmar_hardware_unit *drhd;
+ 	struct acpi_dmar_reserved_memory *rmrr;
+ 	struct acpi_dmar_atsr *atsr;
++	struct acpi_dmar_rhsa *rhsa;
+ 
+ 	switch (header->type) {
+ 	case ACPI_DMAR_TYPE_HARDWARE_UNIT:
+@@ -367,6 +368,12 @@ dmar_table_print_dmar_entry(struct acpi_dmar_header *header)
+ 		atsr = container_of(header, struct acpi_dmar_atsr, header);
+ 		printk(KERN_INFO PREFIX "ATSR flags: %#x\n", atsr->flags);
+ 		break;
++	case ACPI_DMAR_HARDWARE_AFFINITY:
++		rhsa = container_of(header, struct acpi_dmar_rhsa, header);
++		printk(KERN_INFO PREFIX "RHSA base: %#016Lx proximity domain: %#x\n",
++		       (unsigned long long)rhsa->base_address,
++		       rhsa->proximity_domain);
++		break;
+ 	}
+ }
+ 
+@@ -434,9 +441,13 @@ parse_dmar_table(void)
+ 			ret = dmar_parse_one_atsr(entry_header);
+ #endif
+ 			break;
++		case ACPI_DMAR_HARDWARE_AFFINITY:
++			/* We don't do anything with RHSA (yet?) */
++			break;
+ 		default:
+ 			printk(KERN_WARNING PREFIX
+-				"Unknown DMAR structure type\n");
++				"Unknown DMAR structure type %d\n",
++				entry_header->type);
+ 			ret = 0; /* for forward compatibility */
+ 			break;
+ 		}
+diff --git a/include/acpi/actbl1.h b/include/acpi/actbl1.h
+index f1d473b..5a1d8c8 100644
+--- a/include/acpi/actbl1.h
++++ b/include/acpi/actbl1.h
+@@ -245,7 +245,8 @@ enum acpi_dmar_type {
+ 	ACPI_DMAR_TYPE_HARDWARE_UNIT = 0,
+ 	ACPI_DMAR_TYPE_RESERVED_MEMORY = 1,
+ 	ACPI_DMAR_TYPE_ATSR = 2,
+-	ACPI_DMAR_TYPE_RESERVED = 3	/* 3 and greater are reserved */
++	ACPI_DMAR_HARDWARE_AFFINITY = 3,
++	ACPI_DMAR_TYPE_RESERVED = 4	/* 4 and greater are reserved */
+ };
+ 
+ struct acpi_dmar_device_scope {

@@ -1,0 +1,162 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 13 Apr 2009 11:06:04 -0400
+Subject: [fs] nfs: convert to new aops
+Message-id: 1239635165-16102-3-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.4 PATCH 2/3] BZ#476224: nfs: convert to new aops
+Bugzilla: 476224
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Nick Piggin <npiggin@suse.de>
+
+Backported from 4899f9c852564ce7b6d0ca932ac6674bf471fd28
+
+This patch converts NFS to use the new address_space_operations that
+Josef's patchset for BZ#445433 introduce. While the old address space
+ops basically work, those patches will cause those codepaths to incur a
+greater performance penalty. To avoid this, we'll want to convert
+filesystems to use the new aops.
+
+Tested by me using the usual gamut of connectathon, fsstress, fsx, etc.
+in a kernel with Josef's patchset for BZ#445433. Obviously, this patch
+shouldn't be applied until Josef's patches are committed.
+
+diff --git a/fs/nfs/file.c b/fs/nfs/file.c
+index 38bb21a..a63e4ee 100644
+--- a/fs/nfs/file.c
++++ b/fs/nfs/file.c
+@@ -296,27 +296,50 @@ nfs_fsync(struct file *file, struct dentry *dentry, int datasync)
+ }
+ 
+ /*
+- * This does the "real" work of the write. The generic routine has
+- * allocated the page, locked it, done all the page alignment stuff
+- * calculations etc. Now we should just copy the data from user
+- * space and write it back to the real medium..
++ * This does the "real" work of the write. We must allocate and lock the
++ * page to be sent back to the generic routine, which then copies the
++ * data from user space.
+  *
+  * If the writer ends up delaying the write, the writer needs to
+  * increment the page use counts until he is done with the page.
+  */
+-static int nfs_prepare_write(struct file *file, struct page *page, unsigned offset, unsigned to)
++static int nfs_write_begin(struct file *file, struct address_space *mapping,
++			loff_t pos, unsigned len, unsigned flags,
++			struct page **pagep, void **fsdata)
+ {
+-	return nfs_flush_incompatible(file, page);
++	int ret;
++	pgoff_t index;
++	struct page *page;
++	index = pos >> PAGE_CACHE_SHIFT;
++
++	page = grab_cache_page_write_begin(mapping, index, flags);
++	if (!page)
++		return -ENOMEM;
++	*pagep = page;
++
++	ret = nfs_flush_incompatible(file, page);
++	if (ret) {
++		unlock_page(page);
++		page_cache_release(page);
++	}
++	return ret;
+ }
+ 
+-static int nfs_commit_write(struct file *file, struct page *page, unsigned offset, unsigned to)
++static int nfs_write_end(struct file *file, struct address_space *mapping,
++			loff_t pos, unsigned len, unsigned copied,
++			struct page *page, void *fsdata)
+ {
+-	long status;
++	unsigned offset = pos & (PAGE_CACHE_SIZE - 1);
++	int status;
+ 
+ 	lock_kernel();
+-	status = nfs_updatepage(file, page, offset, to-offset);
++	status = nfs_updatepage(file, page, offset, copied);
+ 	unlock_kernel();
+-	return status;
++
++	unlock_page(page);
++	page_cache_release(page);
++
++	return status < 0 ? status : copied;
+ }
+ 
+ static void nfs_invalidate_page(struct page *page, unsigned long offset)
+@@ -362,22 +385,22 @@ static int nfs_release_page(struct page *page, gfp_t gfp)
+  * fscache, we have to override extra address space ops to prevent fs/buffer.c
+  * from getting confused, even though we may not have asked its opinion
+  */
+-const struct address_space_operations nfs_file_aops = {
+-	.readpage = nfs_readpage,
+-	.readpages = nfs_readpages,
+-	.set_page_dirty = __set_page_dirty_nobuffers,
+-	.writepage = nfs_writepage,
+-	.writepages = nfs_writepages,
+-	.prepare_write = nfs_prepare_write,
+-	.commit_write = nfs_commit_write,
+-	.invalidatepage = nfs_invalidate_page,
+-	.releasepage = nfs_release_page,
++const struct address_space_operations_ext nfs_file_aops = {
++	.orig_aops.readpage = nfs_readpage,
++	.orig_aops.readpages = nfs_readpages,
++	.orig_aops.set_page_dirty = __set_page_dirty_nobuffers,
++	.orig_aops.writepage = nfs_writepage,
++	.orig_aops.writepages = nfs_writepages,
++	.orig_aops.invalidatepage = nfs_invalidate_page,
++	.orig_aops.releasepage = nfs_release_page,
+ #ifdef CONFIG_NFS_DIRECTIO
+-	.direct_IO = nfs_direct_IO,
++	.orig_aops.direct_IO = nfs_direct_IO,
+ #endif
+ #ifdef CONFIG_NFS_FSCACHE
+-	.sync_page	= block_sync_page,
++	.orig_aops.sync_page = block_sync_page,
+ #endif
++	.write_begin = nfs_write_begin,
++	.write_end = nfs_write_end,
+ };
+ 
+ /* 
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index 33c1a52..6df2d14 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -271,7 +271,7 @@ nfs_fhget(struct super_block *sb, struct nfs_fh *fh, struct nfs_fattr *fattr)
+ 		inode->i_op = NFS_SB(sb)->nfs_client->rpc_ops->file_inode_ops;
+ 		if (S_ISREG(inode->i_mode)) {
+ 			inode->i_fop = &nfs_file_operations;
+-			inode->i_data.a_ops = &nfs_file_aops;
++			inode->i_data.a_ops = (struct address_space_operations *) &nfs_file_aops;
+ 			inode->i_data.backing_dev_info = &NFS_SB(sb)->backing_dev_info;
+ 		} else if (S_ISDIR(inode->i_mode)) {
+ 			inode->i_op = NFS_SB(sb)->nfs_client->rpc_ops->dir_inode_ops;
+diff --git a/fs/nfs/super.c b/fs/nfs/super.c
+index 82d4ad1..7e113ae 100644
+--- a/fs/nfs/super.c
++++ b/fs/nfs/super.c
+@@ -562,7 +562,7 @@ static inline void nfs_initialise_sb(struct super_block *sb)
+ 
+ 	sb->s_magic = NFS_SUPER_MAGIC;
+ 
+-	sb->s_flags |= MS_NO_LEASES;
++	sb->s_flags |= (MS_NO_LEASES|MS_HAS_NEW_AOPS);
+ 
+ 	/* We probably want something more informative here */
+ 	snprintf(sb->s_id, sizeof(sb->s_id),
+diff --git a/include/linux/nfs_fs.h b/include/linux/nfs_fs.h
+index 67413ce..be3ec3e 100644
+--- a/include/linux/nfs_fs.h
++++ b/include/linux/nfs_fs.h
+@@ -357,7 +357,7 @@ extern struct inode_operations nfs_file_inode_operations;
+ extern struct inode_operations nfs3_file_inode_operations;
+ #endif /* CONFIG_NFS_V3 */
+ extern const struct file_operations nfs_file_operations;
+-extern const struct address_space_operations nfs_file_aops;
++extern const struct address_space_operations_ext nfs_file_aops;
+ 
+ static inline struct rpc_cred *nfs_file_cred(struct file *file)
+ {

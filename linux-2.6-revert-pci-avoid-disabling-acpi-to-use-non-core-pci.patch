@@ -1,0 +1,50 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Fri, 18 Dec 2009 21:58:05 -0500
+Subject: Revert: [pci] avoid disabling acpi to use non-core PCI
+Message-id: <4B2BFAED.9000907@redhat.com>
+Patchwork-id: 22192
+O-Subject: [RHEL 5.5 PATCH] BZ#547898: Don't call pcibios_fixup_peer_bridges()
+	when last_bus=255
+Bugzilla: 504330 547898
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+This patch reverts a patch originally posted for BZ#504330
+
+With a few systems, the BIOS doesn't provide a MMCFG table that it is
+recognized by RHEL.
+
+On those systems, kernel reports:
+
+PCI: BIOS Bug: MCFG area at e0000000 is not E820-reserved
+PCI: Not using MMCONFIG.
+
+and runs the legacy PCI brobing code. Unfortunately, on some AMD machines,
+this causes the machine to not being able to allocate all needed PCI
+resources, causing a machine hang during the boot.
+
+As the BZ#504330 is meant to allow accessing the Nehalem non-core registers,
+needed for i7core_edac module, and this module weren't added on RHEL 5 yet,
+the better is to simply revert this patch for now, and work on a solution
+that won't break on those machines.
+
+
+diff --git a/arch/i386/pci/legacy.c b/arch/i386/pci/legacy.c
+index 1f19682..eca0178 100644
+--- a/arch/i386/pci/legacy.c
++++ b/arch/i386/pci/legacy.c
+@@ -41,14 +41,13 @@ static int __init pci_legacy_init(void)
+ 	}
+ 
+ 	if (pcibios_scanned++)
+-		goto end;
++		return 0;
+ 
+ 	printk("PCI: Probing PCI hardware\n");
+ 	pci_root_bus = pcibios_scan_root(0);
+ 	if (pci_root_bus)
+ 		pci_bus_add_devices(pci_root_bus);
+ 
+-end:
+ 	pcibios_fixup_peer_bridges();
+ 
+ 	return 0;

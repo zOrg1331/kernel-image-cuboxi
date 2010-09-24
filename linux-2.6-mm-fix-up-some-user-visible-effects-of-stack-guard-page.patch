@@ -1,0 +1,59 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 19 Aug 2010 11:28:36 -0400
+Subject: [mm] fix up some user-visible effects of stack guard page
+Message-id: <1282217317-11853-5-git-send-email-jpirko@redhat.com>
+Patchwork-id: 27713
+O-Subject: [PATCH RHEL5.6 4/5] mm: fix up some user-visible effects of the stack
+	guard page
+Bugzilla: 607858
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+This commit makes the stack guard page somewhat less visible to user
+    space. It does this by:
+
+     - not showing the guard page in /proc/<pid>/maps
+
+       It looks like lvm-tools will actually read /proc/self/maps to figure
+       out where all its mappings are, and effectively do a specialized
+       "mlockall()" in user space.  By not showing the guard page as part of
+       the mapping (by just adding PAGE_SIZE to the start for grows-up
+       pages), lvm-tools ends up not being aware of it.
+
+    It would perhaps be nice to show the guard page specially in
+    /proc/<pid>/maps (or at least mark grow-down segments some way), but
+    let's not open ourselves up to more breakage by user space from programs
+    that depends on the exact deails of the 'maps' file.
+
+    Special thanks to Henrique de Moraes Holschuh for diving into lvm-tools
+    source code to see what was going on with the whole new warning.
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+index d055df3..707cb78 100644
+--- a/fs/proc/task_mmu.c
++++ b/fs/proc/task_mmu.c
+@@ -170,6 +170,7 @@ static int show_map_internal(struct seq_file *m, void *v, struct mem_size_stats
+ 	struct file *file = vma->vm_file;
+ 	int flags = vma->vm_flags;
+ 	unsigned long ino = 0;
++	unsigned long start;
+ 	dev_t dev = 0;
+ 	int len;
+ 
+@@ -179,8 +180,13 @@ static int show_map_internal(struct seq_file *m, void *v, struct mem_size_stats
+ 		ino = inode->i_ino;
+ 	}
+ 
++	/* We don't show the stack guard page in /proc/maps */
++	start = vma->vm_start;
++	if (vma->vm_flags & VM_GROWSDOWN)
++		start += PAGE_SIZE;
++
+ 	seq_printf(m, "%08lx-%08lx %c%c%c%c %08lx %02x:%02x %lu %n",
+-			vma->vm_start,
++			start,
+ 			vma->vm_end,
+ 			flags & VM_READ ? 'r' : '-',
+ 			flags & VM_WRITE ? 'w' : '-',

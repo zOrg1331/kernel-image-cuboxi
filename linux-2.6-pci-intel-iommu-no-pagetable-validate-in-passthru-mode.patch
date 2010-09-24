@@ -1,0 +1,288 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Fri, 4 Dec 2009 20:11:28 -0500
+Subject: [pci] intel-iommu: no pagetable validate in passthru mode
+Message-id: <4B196CF0.9080905@redhat.com>
+Patchwork-id: 21691
+O-Subject: [RHEL5.5 PATCH V3] 9/9: intel-iommu: bios workarounds and hotplug
+	gfx fix
+Bugzilla: 518103
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BZ 518103.
+
+Don Dutile wrote:
+>
+> V2: no change.
+>
+> I found this bug while testing a Tylersburg from RHTS
+> that had a unique IOMMU definition that we hadn't seen before.
+>
+> Chris Wright & I beleive it hasn't been seen upstream before
+> due to its unique IOMMU setup (& single, RC-device attachment).
+>
+> Chris posted this patch upstream.
+> I've tested it per the list of tests in 0/9.
+>
+> Additionally, I am running one more test to force
+> sw-based pass-through (since it's a hw-based pass-through iommu)
+> on this Tylersburg machine to see if
+> it'll work on this odd configuration.
+> I'll report back on those results later.
+>
+The attachment contains the breath of this update,
+but basically, 4 more fixes were added to 2.6.32,
+that didn't make the 2.6.32 cutoff, but expected to get into 2.6.32-stable.
+These 5 patches are rolled up into a single patch in F13/rawhide right now.
+Chris Wright pointed these out in 4/9 of the patch set.
+
+I applied the 4 patches to 9/9 since 9/9 had the 5th patch
+in the set of patches that are staged in iommu-2.6.32.git.
+
+The original 9/9 patch is the 5th patch in this bag of workarounds.
+
+Backport of following patches in iommu-2.6.32-git
+that didn't make final 2.6.32, but are in F13, a
+roll-up of these 5 commits, and should be taken in RHEL5
+to avoid 'complications' in less-than-stellar BIOS's on
+large vendor machines.
+
+(1) intel-iommu: Detect DMAR in hyperspace at probe time.
+    -- commit a37809d8f650bbd35cf483655e68b39c5ccabf8a
+    Many BIOSes will lie to us about the existence of an IOMMU, and claim
+    that there is one at an address which actually returns all 0xFF.
+    We need to detect this early, so that we know we don't have a viable
+    IOMMU and can set up swiotlb before it's too late.
+
+(2) intel-iommu: Apply BIOS sanity checks for interrupt remapping too.
+    -- commit abc36906a2b2aa6830c49018d9f8d29888fc9d08
+    The BIOS errors where an IOMMU is reported either at zero or a bogus
+    address are causing problems even when the IOMMU is disabled -- because
+    interrupt remapping uses the same hardware. Ensure that the checks get
+    applied for the interrupt remapping initialisation too.
+
+(3) intel-iommu: Check for an RMRR which ends before it starts.
+    -- commit d396c9d66e5e92fa9fb82e8bf672f8d57fec11c7
+    Some HP BIOSes report an RMRR region (a region which needs a 1:1 mapping
+    in the IOMMU for a given device) which has an end address lower than its
+    start address. Detect that and warn, rather than triggering the
+    BUG() in dma_pte_clear_range().
+
+(4) intel-iommu: Fix oops with intel_iommu=igfx_off
+    -- commit df593c5baac5f895a691b2405b4f4d2c5d008140
+    The hotplug notifier will call find_domain() to see if the device in
+    question has been assigned an IOMMU domain. However, this should never
+    be called for devices with a "dummy" domain, such as graphics devices
+    when intel_iommu=igfx_off is set and the corresponding IOMMU isn't even
+    initialised. If you do that, it'll oops as it dereferences the (-1)
+    pointer.
+    The notifier function should check iommu_no_mapping() for the
+    device before doing anything else.
+(5) intel-iommu: ignore page table validation in pass through mode
+    -- commit 9fe259dfaf774e7746c9ffd9641831b6c8ac3917
+    Original 9/9 version of this patch that was posted.
+    Finally made it into iommu-2.6.32 tree.
+    We are seeing a bug when booting w/ iommu=pt with current upstream
+    The issue is specific to this loop during identity map initialization
+    of each device:
+    domain_context_mapping_one(si_domain, ..., CONTEXT_TT_PASS_THROUGH)
+    ...
+	/* Skip top levels of page tables for
+	 * iommu which has less agaw than default.
+	 */
+	for (agaw = domain->agaw; agaw != iommu->agaw; agaw--) {
+		pgd = phys_to_virt(dma_pte_addr(pgd));
+		if (!dma_pte_present(pgd)) {      <------ failing here
+			spin_unlock_irqrestore(&iommu->lock, flags);
+		return -ENOMEM;
+	}
+    This box has 2 iommu's in it.  The catchall iommu has MGAW == 48, and
+    SAGAW == 4.  The other iommu has MGAW == 39, SAGAW == 2.
+    The device that's failing the above pgd test is the only device connected
+    to the non-catchall iommu, which has a smaller address width than the
+    domain default.  This test is not necessary since the context is in PT
+    mode and the ASR is ignored.
+
+diff --git a/drivers/pci/dmar.c b/drivers/pci/dmar.c
+index 228198c..77073be 100644
+--- a/drivers/pci/dmar.c
++++ b/drivers/pci/dmar.c
+@@ -566,6 +566,8 @@ int __init dmar_table_init(void)
+ 	return 0;
+ }
+ 
++static int bios_warned;
++
+ int __init check_zero_address(void)
+ {
+ 	struct acpi_table_dmar *dmar;
+@@ -585,6 +587,9 @@ int __init check_zero_address(void)
+ 		}
+ 
+ 		if (entry_header->type == ACPI_DMAR_TYPE_HARDWARE_UNIT) {
++			void __iomem *addr;
++			u64 cap, ecap;
++
+ 			drhd = (void *)entry_header;
+ 
+ 			if (!drhd->address) {
+@@ -595,17 +600,41 @@ int __init check_zero_address(void)
+ 					dmi_get_system_info(DMI_BIOS_VENDOR),
+ 					dmi_get_system_info(DMI_BIOS_VERSION),
+ 					dmi_get_system_info(DMI_PRODUCT_VERSION));
+-#ifdef CONFIG_DMAR
+-				dmar_disabled = 1;
+-#endif
+-				return 0;
++				bios_warned = 1;
++				goto failed;
++			}
++
++			addr = early_ioremap(drhd->address, VTD_PAGE_SIZE);
++			if (!addr ) {
++				printk("IOMMU: can't validate: %llx\n", drhd->address);
++				goto failed;
++			}
++			cap = dmar_readq(addr + DMAR_CAP_REG);
++			ecap = dmar_readq(addr + DMAR_ECAP_REG);
++			early_iounmap(addr, VTD_PAGE_SIZE);
++			if (cap == (uint64_t)-1 && ecap == (uint64_t)-1) {
++				/* Promote an attitude of violence to a BIOS engineer today */
++				printk(KERN_WARNING PREFIX 
++				       "Your BIOS is broken; DMAR reported at address %llx returns all ones!\n"
++				       "BIOS vendor: %s; Ver: %s; Product Version: %s\n",
++				       drhd->address,
++				       dmi_get_system_info(DMI_BIOS_VENDOR),
++				       dmi_get_system_info(DMI_BIOS_VERSION),
++				       dmi_get_system_info(DMI_PRODUCT_VERSION));
++				bios_warned = 1;
++				goto failed;
+ 			}
+-			break;
+ 		}
+ 
+ 		entry_header = ((void *)entry_header + entry_header->length);
+ 	}
+ 	return 1;
++
++failed:
++#ifdef CONFIG_DMAR
++	dmar_disabled = 1;
++#endif
++	return 0;
+ }
+ 
+ void __init detect_intel_iommu(void)
+@@ -649,6 +678,19 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
+ 	int agaw = 0;
+ 	int msagaw = 0;
+ 
++	if (!drhd->reg_base_addr) {
++		if (!bios_warned) {
++			printk(KERN_WARNING PREFIX
++				"Your BIOS is broken; DMAR reported at address zero!\n"
++				"BIOS vendor: %s; Ver: %s; Product Version: %s\n",
++				dmi_get_system_info(DMI_BIOS_VENDOR),
++				dmi_get_system_info(DMI_BIOS_VERSION),
++				dmi_get_system_info(DMI_PRODUCT_VERSION));
++			bios_warned = 1;
++		}
++		return -EINVAL;
++	}
++
+ 	iommu = kzalloc(sizeof(*iommu), GFP_KERNEL);
+ 	if (!iommu)
+ 		return -ENOMEM;
+@@ -665,14 +707,17 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
+ 	iommu->ecap = dmar_readq(iommu->reg + DMAR_ECAP_REG);
+ 
+ 	if (iommu->cap == (uint64_t)-1 && iommu->ecap == (uint64_t)-1) {
+-		/* Promote an attitude of violence to a BIOS engineer today */
+-		printk(KERN_WARNING PREFIX
+-		     "Your BIOS is broken; DMAR reported at address %llx returns all ones!\n"
+-		     "BIOS vendor: %s; Ver: %s; Product Version: %s\n",
+-		     drhd->reg_base_addr,
+-		     dmi_get_system_info(DMI_BIOS_VENDOR),
+-		     dmi_get_system_info(DMI_BIOS_VERSION),
+-		     dmi_get_system_info(DMI_PRODUCT_VERSION));
++		if (!bios_warned) {
++			/* Promote an attitude of violence to a BIOS engineer today */
++			printk(KERN_WARNING PREFIX
++				"Your BIOS is broken; DMAR reported at address %llx returns all ones!\n"
++				"BIOS vendor: %s; Ver: %s; Product Version: %s\n",
++				drhd->reg_base_addr,
++				dmi_get_system_info(DMI_BIOS_VENDOR),
++				dmi_get_system_info(DMI_BIOS_VERSION),
++				dmi_get_system_info(DMI_PRODUCT_VERSION));
++			bios_warned = 1;
++		}
+ 		goto err_unmap;
+ 	}
+ 
+diff --git a/drivers/pci/intel-iommu.c b/drivers/pci/intel-iommu.c
+index 69622a0..fabe6dc 100644
+--- a/drivers/pci/intel-iommu.c
++++ b/drivers/pci/intel-iommu.c
+@@ -1518,12 +1518,15 @@ static int domain_context_mapping_one(struct dmar_domain *domain, int segment,
+ 
+ 		/* Skip top levels of page tables for
+ 		 * iommu which has less agaw than default.
++		 * Unnecessary for PT mode.
+ 		 */
+-		for (agaw = domain->agaw; agaw != iommu->agaw; agaw--) {
+-			pgd = phys_to_virt(dma_pte_addr(pgd));
+-			if (!dma_pte_present(pgd)) {
+-				spin_unlock_irqrestore(&iommu->lock, flags);
+-				return -ENOMEM;
++		if (translation != CONTEXT_TT_PASS_THROUGH) {
++			for (agaw = domain->agaw; agaw != iommu->agaw; agaw--) {
++				pgd = phys_to_virt(dma_pte_addr(pgd));
++				if (!dma_pte_present(pgd)) {
++					spin_unlock_irqrestore(&iommu->lock, flags);
++					return -ENOMEM;
++				}
+ 			}
+ 		}
+ 	}
+@@ -1991,14 +1994,25 @@ static int iommu_prepare_identity_map(struct pci_dev *pdev,
+ 	       "IOMMU: Setting identity map for device %s [0x%Lx - 0x%Lx]\n",
+ 	       pci_name(pdev), start, end);
+ 
++	if (end < start) {
++		printk(KERN_WARNING "IOMMU: Your BIOS is broken;"
++			"RMRR ends before it starts!\n"
++			"BIOS vendor: %s; Ver: %s; Product Version: %s\n",
++			dmi_get_system_info(DMI_BIOS_VENDOR),
++			dmi_get_system_info(DMI_BIOS_VENDOR),
++			dmi_get_system_info(DMI_PRODUCT_VERSION));
++		ret = -EIO;
++		goto error;
++	}
++
+ 	if (end >> agaw_to_width(domain->agaw)) {
+ 		printk(KERN_WARNING "IOMMU: Your BIOS is broken;"
+-		     "RMRR exceeds permitted address width (%d bits)\n"
+-		     "BIOS vendor: %s; Ver: %s; Product Version: %s\n",
+-		     agaw_to_width(domain->agaw),
+-		     dmi_get_system_info(DMI_BIOS_VENDOR),
+-		     dmi_get_system_info(DMI_BIOS_VERSION),
+-		     dmi_get_system_info(DMI_PRODUCT_VERSION));
++			"RMRR exceeds permitted address width (%d bits)\n"
++			"BIOS vendor: %s; Ver: %s; Product Version: %s\n",
++			agaw_to_width(domain->agaw),
++			dmi_get_system_info(DMI_BIOS_VENDOR),
++			dmi_get_system_info(DMI_BIOS_VERSION),
++			dmi_get_system_info(DMI_PRODUCT_VERSION));
+ 		ret = -EIO;
+ 		goto error;
+ 	}
+@@ -3241,6 +3255,9 @@ static int device_notifier(struct notifier_block *nb,
+ 	struct pci_dev *pdev = to_pci_dev(dev);
+ 	struct dmar_domain *domain;
+ 
++	if (iommu_no_mapping(dev))
++		return 0;
++
+ 	domain = find_domain(pdev);
+ 	if (!domain)
+ 		return 0;

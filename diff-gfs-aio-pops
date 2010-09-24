@@ -1,0 +1,127 @@
+X-Account-Key: account4
+X-UIDL: c2d1f0a61785f58c
+X-Mozilla-Status: 0001
+X-Mozilla-Status2: 00000000
+X-Mozilla-Keys:                                                                                 
+Received: from relay.parallels.com (relay.parallels.com [195.214.232.42])
+	by relay.sw.ru (8.13.4/8.13.4) with ESMTP id o1GCfUaJ007553
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <xemul@sw.ru>; Tue, 16 Feb 2010 15:41:31 +0300 (MSK)
+Received: from mx1.parallels.com ([64.131.89.18])
+	by relay.parallels.com with esmtps (TLSv1:AES256-SHA:256)
+	(Exim 4.71)
+	(envelope-from <kuznet@ms2.inr.ac.ru>)
+	id 1NhMk5-0002f7-O1
+	for xemul@sw.ru; Tue, 16 Feb 2010 15:41:30 +0300
+Received: from minus.inr.ac.ru ([194.67.69.97] helo=ms2.inr.ac.ru)
+	by mx1.parallels.com with smtp (Exim 4.71)
+	(envelope-from <kuznet@ms2.inr.ac.ru>)
+	id 1NhMjz-0000tu-Rt; Tue, 16 Feb 2010 07:41:25 -0500
+DomainKey-Signature: a=rsa-sha1; q=dns; c=nofws;
+  s=s1024; d=ms2.inr.ac.ru;
+  b=liAA13kokxH4f7MDaJ8hDhIZO0PrXRkJHzjkecNZX4ZrB1gFaFMqF0hr+LjhTyNPF1HmxUi6MO9UBoazt8J1k/jh/xyqPc4uGxiOCzcfuUbfQ+H4Kvfgnw0jHJbVCtOpFAQWcyYNvAkSlDFADJK4lzn2TLNIy3RES6zWUNm5U0s=;
+Received: (from kuznet@localhost) envelope-from=kuznet by ms2.inr.ac.ru (8.6.13/ANK) id PAA17910; Tue, 16 Feb 2010 15:41:27 +0300
+Date: Tue, 16 Feb 2010 15:41:27 +0300
+From: Alexey Kuznetsov <kuznet@ms2.inr.ac.ru>
+To: xemul@parallels.com, dev@parallels.com
+Subject: [PATCH 2/3] adding AIO PREADV/PWRITEV to VZ specific components
+Message-ID: <20100216124127.GA17499@ms2.inr.ac.ru>
+Mime-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+User-Agent: Mutt/1.5.6i
+X-DrWeb-Spam-Score: -30
+
+[PATCH] adding AIO PREADV/PWRITEV
+
+Update aio_read/aio_write calling conventions in components,
+which are not present in mainstream kernels.
+
+It is necessary to comment on strut for gfs. The construction
+
++	if (nr_segs != 1)
++	    return -EINVAL;
+
+does not look right, is it? It took some time to "invent" this. :-)
+(The "invention" is not original, mainstream nfs is fixed in the same way)
+The observation is that aio_read/aio_write methods with nr_segs != 1
+are used only from new AIO interfaces. If we do not add special
+readv/writev methods, readv/writev fall back to read/write.
+So that nothing really changes for GFS.
+
+Note for future: in newer kernels logic has changed, readv/writev
+are decoded using aio_read/aio_writev (like it always was done
+for plain read/write). This would mean severe trouble for gfs.
+
+Signed-off-by: Alexey Kuznetsov <kuznet@parallels.com>
+
+
+diff -urp ../../orig2/vzkernel-2.6.18-028stab065_16/linux-2.6.18.x86_64/fs/gfs/ops_file.c linux-2.6.18.x86_64/fs/gfs/ops_file.c
+--- ../../orig2/vzkernel-2.6.18-028stab065_16/linux-2.6.18.x86_64/fs/gfs/ops_file.c	2010-02-11 20:29:13.000000000 +0300
++++ linux-2.6.18.x86_64/fs/gfs/ops_file.c	2010-02-16 14:23:28.000000000 +0300
+@@ -445,12 +445,16 @@ gfs_read(struct file *file, char *buf, s
+  * 	(struct kiocb *iocb, char __user *buf, size_t count, loff_t pos)
+  */
+ static ssize_t
+-gfs_aio_read(struct kiocb *iocb, char __user *buf, size_t count, loff_t pos)
++gfs_aio_read(struct kiocb *iocb, const struct iovec *iov,
++	     unsigned long nr_segs, loff_t pos)
+ {
+ 	struct file *filp = iocb->ki_filp;
+ 
++	if (nr_segs != 1)
++	    return -EINVAL;
++
+ 	BUG_ON(iocb->ki_pos != pos);
+-	return(__gfs_read(filp, buf, count, &iocb->ki_pos, iocb));
++	return(__gfs_read(filp, iov[0].iov_base, iov[0].iov_len, &iocb->ki_pos, iocb));
+ }
+ 
+ /**
+@@ -563,7 +567,7 @@ do_write_direct_alloc(struct file *file,
+ 	if (!iocb)
+ 		count = generic_file_write_nolock(file, &local_iov, 1, offset);
+ 	else {
+-		count = generic_file_aio_write_nolock(iocb, &local_iov, 1, offset);
++		count = generic_file_aio_write_nolock(iocb, &local_iov, 1, iocb->ki_pos);
+ 	}
+ 	if (count < 0) {
+ 		error = count;
+@@ -745,7 +749,7 @@ do_write_direct(struct file *file, char 
+ 			generic_file_write_nolock(file, &local_iov, 1, offset);
+ 		else {
+ 			count = 
+-			generic_file_aio_write_nolock(iocb, &local_iov, 1, offset);
++			generic_file_aio_write_nolock(iocb, &local_iov, 1, iocb->ki_pos);
+ 		}
+ 		gfs_glock_dq_uninit(&t_gh);
+ 	}
+@@ -878,7 +882,7 @@ do_do_write_buf(struct file *file, char 
+ 			count = generic_file_write_nolock(file, &local_iov, 1, offset);
+ 		} else {
+ 			count = generic_file_aio_write_nolock(iocb, 
+-				&local_iov, 1, offset);
++				&local_iov, 1, iocb->ki_pos);
+ 			if (count == -EIOCBQUEUED)
+ 				count = wait_on_sync_kiocb(iocb);
+ 		}
+@@ -1057,13 +1061,16 @@ gfs_write(struct file *file, const char 
+ }
+ 
+ static ssize_t
+-gfs_aio_write(struct kiocb *iocb, const char __user *buf, size_t size, loff_t pos)
++gfs_aio_write(struct kiocb *iocb, const struct iovec *iov, unsigned long nr_segs, loff_t pos)
+ {
+ 	struct file *file = iocb->ki_filp;
+ 
+ 	BUG_ON(iocb->ki_pos != pos);
+ 
+-	return(__gfs_write(file, buf, size, &iocb->ki_pos, iocb));
++	if (nr_segs != 1)
++	    return -EINVAL;
++
++	return(__gfs_write(file, iov[0].iov_base, iov[0].iov_len, &iocb->ki_pos, iocb));
+ }
+ 
+ /**
+

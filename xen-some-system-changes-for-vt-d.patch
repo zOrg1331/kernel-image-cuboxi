@@ -1,0 +1,152 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Mon, 23 Mar 2009 10:22:56 -0600
+Subject: [xen] some system changes for VT-d
+Message-id: 200903231622.n2NGMucj022036@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 3/21 V2] some system changes for VT-d
+Bugzilla: 484227
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+add VT-d structures in acpi for parse VT-d info from acpi table,
+define VT-d register range in fixmap, and implement clflush
+
+Upstream Status: Accepted (CS 15883, 15904)
+
+BZ: 484227
+
+Signed-off-by: Weidong Han <weidong.han@intel.com>
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/acpi/tables.c b/drivers/acpi/tables.c
+index dc7e7e8..b2d1d89 100644
+--- a/drivers/acpi/tables.c
++++ b/drivers/acpi/tables.c
+@@ -59,6 +59,7 @@ static char *acpi_table_signatures[ACPI_TABLE_COUNT] = {
+ 	[ACPI_SPMI] = "SPMI",
+ 	[ACPI_HPET] = "HPET",
+ 	[ACPI_MCFG] = "MCFG",
++	[ACPI_DMAR] = "DMAR",
+ };
+ 
+ static char *mps_inti_flags_polarity[] = { "dfl", "high", "res", "low" };
+diff --git a/include/asm-x86/fixmap.h b/include/asm-x86/fixmap.h
+index 8444e21..b6408da 100644
+--- a/include/asm-x86/fixmap.h
++++ b/include/asm-x86/fixmap.h
+@@ -17,6 +17,7 @@
+ #include <asm/acpi.h>
+ #include <asm/page.h>
+ #include <xen/kexec.h>
++#include <xen/iommu.h>
+ 
+ /*
+  * Here we define all the compile-time 'special' virtual
+@@ -40,6 +41,8 @@ enum fixed_addresses {
+     FIX_KEXEC_BASE_0,
+     FIX_KEXEC_BASE_END = FIX_KEXEC_BASE_0 \
+       + ((KEXEC_XEN_NO_PAGES >> 1) * KEXEC_IMAGE_NR) - 1,
++    FIX_IOMMU_REGS_BASE_0,
++    FIX_IOMMU_REGS_END = FIX_IOMMU_REGS_BASE_0 + MAX_IOMMUS-1,
+     __end_of_fixed_addresses
+ };
+ 
+diff --git a/include/asm-x86/system.h b/include/asm-x86/system.h
+index cd29753..d84f6e0 100644
+--- a/include/asm-x86/system.h
++++ b/include/asm-x86/system.h
+@@ -14,6 +14,9 @@
+ #define wbinvd() \
+ 	__asm__ __volatile__ ("wbinvd": : :"memory");
+ 
++#define clflush(a) \
++	__asm__ __volatile__ ("clflush (%0)": :"r"(a));
++
+ #define nop() __asm__ __volatile__ ("nop")
+ 
+ #define xchg(ptr,v) ((__typeof__(*(ptr)))__xchg((unsigned long)(v),(ptr),sizeof(*(ptr))))
+diff --git a/include/xen/acpi.h b/include/xen/acpi.h
+index 4df2fcb..813849b 100644
+--- a/include/xen/acpi.h
++++ b/include/xen/acpi.h
+@@ -367,9 +367,80 @@ enum acpi_table_id {
+ 	ACPI_SPMI,
+ 	ACPI_HPET,
+ 	ACPI_MCFG,
++	ACPI_DMAR,
+ 	ACPI_TABLE_COUNT
+ };
+ 
++/* DMA Remapping Reporting Table (DMAR) */
++
++#define DMAR_FLAGS_INTR_REMAP 0x1       /* intr remap supported */
++struct acpi_table_dmar {
++	struct acpi_table_header	header;
++	u8				haw;	/* Host address Width */
++	u8				flags;
++	u8				reserved[10];
++} __attribute__ ((packed));
++
++struct acpi_dmar_entry_header {
++	u16	type;
++	u16	length;
++} __attribute__((packed));
++
++enum acpi_dmar_entry_type {
++	ACPI_DMAR_DRHD = 0,
++	ACPI_DMAR_RMRR,
++	ACPI_DMAR_ATSR,
++	ACPI_DMAR_ENTRY_COUNT
++};
++
++#define DRHD_FLAGS_INCLUDE_ALL	0x1       /* drhd remaps remaining devices */
++struct acpi_table_drhd {
++	struct	acpi_dmar_entry_header header;
++	u8	flags;
++	u8	reserved;
++	u16	segment;
++	u64	address; /* register base address for this drhd */
++} __attribute__ ((packed));
++
++struct acpi_table_rmrr {
++	struct	acpi_dmar_entry_header header;
++	u16	reserved;
++       u16     segment;
++	u64	base_address;
++	u64	end_address;
++} __attribute__ ((packed));
++
++struct acpi_table_atsr {
++        struct  acpi_dmar_entry_header header;
++        u8      flags;
++        u8      reserved;
++        u16     segment;
++} __attribute__ ((packed));
++
++enum acpi_dev_scope_type {
++	ACPI_DEV_ENDPOINT=0x01,	/* PCI Endpoing device */
++	ACPI_DEV_P2PBRIDGE,	/* PCI-PCI Bridge */
++	ACPI_DEV_IOAPIC,	/* IOAPIC device*/
++	ACPI_DEV_MSI_HPET,	/* MSI capable HPET*/
++	ACPI_DEV_ENTRY_COUNT
++};
++
++struct acpi_dev_scope {
++	u8	dev_type;
++	u8	length;
++	u8	reserved[2];
++	u8	enum_id;
++	u8	start_bus;
++} __attribute__((packed));
++
++struct acpi_pci_path {
++	u8	dev;
++	u8	fn;
++} __attribute__((packed));
++
++typedef int (*acpi_dmar_entry_handler) (struct acpi_dmar_entry_header *header, const unsigned long end);
++
++
+ typedef int (*acpi_table_handler) (unsigned long phys_addr, unsigned long size);
+ 
+ extern acpi_table_handler acpi_table_ops[ACPI_TABLE_COUNT];

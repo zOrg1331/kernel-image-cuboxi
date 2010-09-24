@@ -1,0 +1,360 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Wed, 27 May 2009 16:34:05 -0500
+Subject: [net] add cnic support to bnx2
+Message-id: 1243460050-16253-1-git-send-email-mchristi@redhat.com
+O-Subject: [PATCH 1/6] RHEL 5.4: add cnic (bnx2i iscsi) support to bnx2
+Bugzilla: 441979
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 441979.
+
+Add interface and functions to support a new CNIC driver to drive
+the hardware for iSCSI offload.
+
+The upstream version of this patch has been ackd
+http://marc.info/?l=linux-netdev&m=124082705613349&w=2
+but it has not gone in yet because of dependencies on
+other patches that should be going in soon (this should
+all go in 2.6.31 when that feature window opens).
+
+I have done some basic testing by using it as the default nic
+and running some netperfs and running software iscsi over it.
+
+Broadcom had done and will be doing the majority of the testing.
+
+diff --git a/drivers/net/bnx2.c b/drivers/net/bnx2.c
+index 0067e8c..9ca4bcb 100644
+--- a/drivers/net/bnx2.c
++++ b/drivers/net/bnx2.c
+@@ -48,6 +48,10 @@
+ #include <linux/cache.h>
+ #include <linux/zlib.h>
+ 
++#if defined(CONFIG_CNIC) || defined(CONFIG_CNIC_MODULE)
++#define BCM_CNIC 1
++#include "cnic_if.h"
++#endif
+ #include "bnx2.h"
+ #include "bnx2_fw.h"
+ #include "bnx2_fw2.h"
+@@ -316,6 +320,158 @@ bnx2_ctx_wr(struct bnx2 *bp, u32 cid_addr, u32 offset, u32 val)
+ 	spin_unlock_bh(&bp->indirect_lock);
+ }
+ 
++#ifdef BCM_CNIC
++static int
++bnx2_drv_ctl(struct net_device *dev, struct drv_ctl_info *info)
++{
++	struct bnx2 *bp = netdev_priv(dev);
++	struct drv_ctl_io *io = &info->data.io;
++
++	switch (info->cmd) {
++	case DRV_CTL_IO_WR_CMD:
++		bnx2_reg_wr_ind(bp, io->offset, io->data);
++		break;
++	case DRV_CTL_IO_RD_CMD:
++		io->data = bnx2_reg_rd_ind(bp, io->offset);
++		break;
++	case DRV_CTL_CTX_WR_CMD:
++		bnx2_ctx_wr(bp, io->cid_addr, io->offset, io->data);
++		break;
++	default:
++		return -EINVAL;
++	}
++	return 0;
++}
++
++static void bnx2_setup_cnic_irq_info(struct bnx2 *bp)
++{
++	struct cnic_eth_dev *cp = &bp->cnic_eth_dev;
++	struct bnx2_napi *bnapi = &bp->bnx2_napi[0];
++	int sb_id;
++
++	if (bp->flags & BNX2_FLAG_USING_MSIX) {
++		cp->drv_state |= CNIC_DRV_STATE_USING_MSIX;
++		bnapi->cnic_present = 0;
++		sb_id = bp->irq_nvecs;
++		cp->irq_arr[0].irq_flags |= CNIC_IRQ_FL_MSIX;
++	} else {
++		cp->drv_state &= ~CNIC_DRV_STATE_USING_MSIX;
++		bnapi->cnic_tag = bnapi->last_status_idx;
++		bnapi->cnic_present = 1;
++		sb_id = 0;
++		cp->irq_arr[0].irq_flags &= ~CNIC_IRQ_FL_MSIX;
++	}
++
++	cp->irq_arr[0].vector = bp->irq_tbl[sb_id].vector;
++	cp->irq_arr[0].status_blk = (void *)
++		((unsigned long) bnapi->status_blk.msi +
++		(BNX2_SBLK_MSIX_ALIGN_SIZE * sb_id));
++	cp->irq_arr[0].status_blk_num = sb_id;
++	cp->num_irq = 1;
++}
++
++static int bnx2_register_cnic(struct net_device *dev, struct cnic_ops *ops,
++			      void *data)
++{
++	struct bnx2 *bp = netdev_priv(dev);
++	struct cnic_eth_dev *cp = &bp->cnic_eth_dev;
++
++	if (ops == NULL)
++		return -EINVAL;
++
++	if (cp->drv_state & CNIC_DRV_STATE_REGD)
++		return -EBUSY;
++
++	bp->cnic_data = data;
++	rcu_assign_pointer(bp->cnic_ops, ops);
++
++	cp->num_irq = 0;
++	cp->drv_state = CNIC_DRV_STATE_REGD;
++
++	bnx2_setup_cnic_irq_info(bp);
++
++	return 0;
++}
++
++static int bnx2_unregister_cnic(struct net_device *dev)
++{
++	struct bnx2 *bp = netdev_priv(dev);
++	struct bnx2_napi *bnapi = &bp->bnx2_napi[0];
++	struct cnic_eth_dev *cp = &bp->cnic_eth_dev;
++
++	cp->drv_state = 0;
++	bnapi->cnic_present = 0;
++	rcu_assign_pointer(bp->cnic_ops, NULL);
++	synchronize_rcu();
++	return 0;
++}
++
++struct cnic_eth_dev *bnx2_cnic_probe(struct net_device *dev)
++{
++	struct bnx2 *bp = netdev_priv(dev);
++	struct cnic_eth_dev *cp = &bp->cnic_eth_dev;
++
++	cp->drv_owner = THIS_MODULE;
++	cp->chip_id = bp->chip_id;
++	cp->pdev = bp->pdev;
++	cp->io_base = bp->regview;
++	cp->drv_ctl = bnx2_drv_ctl;
++	cp->drv_register_cnic = bnx2_register_cnic;
++	cp->drv_unregister_cnic = bnx2_unregister_cnic;
++
++	return cp;
++}
++EXPORT_SYMBOL(bnx2_cnic_probe);
++
++static void
++bnx2_cnic_stop(struct bnx2 *bp)
++{
++	struct cnic_ops *c_ops;
++	struct cnic_ctl_info info;
++
++	rcu_read_lock();
++	c_ops = rcu_dereference(bp->cnic_ops);
++	if (c_ops) {
++		info.cmd = CNIC_CTL_STOP_CMD;
++		c_ops->cnic_ctl(bp->cnic_data, &info);
++	}
++	rcu_read_unlock();
++}
++
++static void
++bnx2_cnic_start(struct bnx2 *bp)
++{
++	struct cnic_ops *c_ops;
++	struct cnic_ctl_info info;
++
++	rcu_read_lock();
++	c_ops = rcu_dereference(bp->cnic_ops);
++	if (c_ops) {
++		if (!(bp->flags & BNX2_FLAG_USING_MSIX)) {
++			struct bnx2_napi *bnapi = &bp->bnx2_napi[0];
++
++			bnapi->cnic_tag = bnapi->last_status_idx;
++		}
++		info.cmd = CNIC_CTL_START_CMD;
++		c_ops->cnic_ctl(bp->cnic_data, &info);
++	}
++	rcu_read_unlock();
++}
++
++#else
++
++static void
++bnx2_cnic_stop(struct bnx2 *bp)
++{
++}
++
++static void
++bnx2_cnic_start(struct bnx2 *bp)
++{
++}
++
++#endif
++
+ static int
+ bnx2_read_phy(struct bnx2 *bp, u32 reg, u32 *val)
+ {
+@@ -489,6 +645,7 @@ bnx2_napi_enable(struct bnx2 *bp)
+ static void
+ bnx2_netif_stop(struct bnx2 *bp)
+ {
++	bnx2_cnic_stop(bp);
+ 	bnx2_disable_int_sync(bp);
+ 	if (netif_running(bp->dev)) {
+ 		bnx2_napi_disable(bp);
+@@ -505,6 +662,7 @@ bnx2_netif_start(struct bnx2 *bp)
+ 			netif_wake_queue(bp->dev);
+ 			bnx2_napi_enable(bp);
+ 			bnx2_enable_int(bp);
++			bnx2_cnic_start(bp);
+ 		}
+ 	}
+ }
+@@ -3158,6 +3316,11 @@ bnx2_has_work(struct bnx2_napi *bnapi)
+ 	if (bnx2_has_fast_work(bnapi))
+ 		return 1;
+ 
++#ifdef BCM_CNIC
++	if (bnapi->cnic_present && (bnapi->cnic_tag != sblk->status_idx))
++		return 1;
++#endif
++
+ 	if ((sblk->status_attn_bits & STATUS_ATTN_EVENTS) !=
+ 	    (sblk->status_attn_bits_ack & STATUS_ATTN_EVENTS))
+ 		return 1;
+@@ -3187,6 +3350,23 @@ bnx2_chk_missed_msi(struct bnx2 *bp)
+ 	bp->idle_chk_status_idx = bnapi->last_status_idx;
+ }
+ 
++#ifdef BCM_CNIC
++static void bnx2_poll_cnic(struct bnx2 *bp, struct bnx2_napi *bnapi)
++{
++	struct cnic_ops *c_ops;
++
++	if (!bnapi->cnic_present)
++		return;
++
++	rcu_read_lock();
++	c_ops = rcu_dereference(bp->cnic_ops);
++	if (c_ops)
++		bnapi->cnic_tag = c_ops->cnic_handler(bp->cnic_data,
++						      bnapi->status_blk.msi);
++	rcu_read_unlock();
++}
++#endif
++
+ static void bnx2_poll_link(struct bnx2 *bp, struct bnx2_napi *bnapi)
+ {
+ 	struct status_block *sblk = bnapi->status_blk.msi;
+@@ -3261,6 +3441,10 @@ static int bnx2_poll(struct net_device *dev, int *budget)
+ 
+ 		work_done = bnx2_poll_work(bp, bnapi, work_done, *budget);
+ 
++#ifdef BCM_CNIC
++		bnx2_poll_cnic(bp, bnapi);
++#endif
++
+ 		/* bnapi->last_status_idx is used below to tell the hw how
+ 		 * much work has been processed, so we must read it before
+ 		 * checking for more work.
+@@ -4636,8 +4820,11 @@ bnx2_init_chip(struct bnx2 *bp)
+ 	val = REG_RD(bp, BNX2_MQ_CONFIG);
+ 	val &= ~BNX2_MQ_CONFIG_KNL_BYP_BLK_SIZE;
+ 	val |= BNX2_MQ_CONFIG_KNL_BYP_BLK_SIZE_256;
+-	if (CHIP_ID(bp) == CHIP_ID_5709_A0 || CHIP_ID(bp) == CHIP_ID_5709_A1)
+-		val |= BNX2_MQ_CONFIG_HALT_DIS;
++	if (CHIP_NUM(bp) == CHIP_NUM_5709) {
++		val |= BNX2_MQ_CONFIG_BIN_MQ_MODE;
++		if (CHIP_REV(bp) == CHIP_REV_Ax)
++			val |= BNX2_MQ_CONFIG_HALT_DIS;
++	}
+ 
+ 	REG_WR(bp, BNX2_MQ_CONFIG, val);
+ 
+@@ -5947,7 +6134,7 @@ static void
+ bnx2_setup_int_mode(struct bnx2 *bp, int dis_msi)
+ {
+ 	int cpus = num_online_cpus();
+-	int msix_vecs = min(cpus + 1, RX_MAX_RSS_RINGS);
++	int msix_vecs = min(cpus + 1, RX_MAX_RINGS);
+ 
+ 	bp->irq_tbl[0].handler = bnx2_interrupt;
+ 	strcpy(bp->irq_tbl[0].name, bp->dev->name);
+@@ -7532,7 +7719,7 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
+ 	INIT_WORK(&bp->reset_task, bnx2_reset_task, bp);
+ 
+ 	dev->base_addr = dev->mem_start = pci_resource_start(pdev, 0);
+-	mem_len = MB_GET_CID_ADDR(TX_TSS_CID + 1);
++	mem_len = MB_GET_CID_ADDR(TX_TSS_CID + TX_MAX_TSS_RINGS + 1);
+ 	dev->mem_end = dev->mem_start + mem_len;
+ 	dev->irq = pdev->irq;
+ 
+diff --git a/drivers/net/bnx2.h b/drivers/net/bnx2.h
+index cdcbb68..2650627 100644
+--- a/drivers/net/bnx2.h
++++ b/drivers/net/bnx2.h
+@@ -361,6 +361,9 @@ struct l2_fhdr {
+ #define BNX2_L2CTX_CTX_TYPE_CTX_BD_CHN_TYPE_VALUE	 (1<<28)
+ 
+ #define BNX2_L2CTX_HOST_BDIDX				0x00000004
++#define BNX2_L2CTX_STATUSB_NUM_SHIFT			 16
++#define BNX2_L2CTX_STATUSB_NUM(sb_id)			 \
++	(((sb_id) > 0) ? (((sb_id) + 7) << BNX2_L2CTX_STATUSB_NUM_SHIFT) : 0)
+ #define BNX2_L2CTX_HOST_BSEQ				0x00000008
+ #define BNX2_L2CTX_NX_BSEQ				0x0000000c
+ #define BNX2_L2CTX_NX_BDHADDR_HI			0x00000010
+@@ -5900,6 +5903,7 @@ struct l2_fhdr {
+ #define BNX2_RXP_FTQ_CTL_CUR_DEPTH			 (0x3ffL<<22)
+ 
+ #define BNX2_RXP_SCRATCH				0x000e0000
++#define BNX2_RXP_SCRATCH_RXP_FLOOD			 0x000e0024
+ #define BNX2_RXP_SCRATCH_RSS_TBL_SZ			 0x000e0038
+ #define BNX2_RXP_SCRATCH_RSS_TBL			 0x000e003c
+ #define BNX2_RXP_SCRATCH_RSS_TBL_MAX_ENTRIES		 128
+@@ -6528,6 +6532,9 @@ struct l2_fhdr {
+ #define RX_CID		0
+ #define RX_RSS_CID	4
+ #define RX_MAX_RSS_RINGS	7
++#define RX_MAX_RINGS		(RX_MAX_RSS_RINGS + 1)
++#define TX_MAX_TSS_RINGS	7
++#define TX_MAX_RINGS		(TX_MAX_TSS_RINGS + 1)
+ 
+ #define MB_TX_CID_ADDR	MB_GET_CID_ADDR(TX_CID)
+ #define MB_RX_CID_ADDR	MB_GET_CID_ADDR(RX_CID)
+@@ -6667,6 +6674,11 @@ struct bnx2_napi {
+ 	u32 			last_status_idx;
+ 	u32			int_num;
+ 
++#ifdef BCM_CNIC
++	u32			cnic_tag;
++	int			cnic_present;
++#endif
++
+ 	struct bnx2_rx_ring_info	rx_ring;
+ 	struct bnx2_tx_ring_info	tx_ring;
+ };
+@@ -6717,6 +6729,10 @@ struct bnx2 {
+ 	int		tx_ring_size;
+ 	u32		tx_wake_thresh;
+ 
++#ifdef BCM_CNIC
++	struct cnic_ops		*cnic_ops;
++	void			*cnic_data;
++#endif
+ 	/* End of fields used in the performance code paths. */
+ 
+ 	unsigned int		current_interval;
+@@ -6881,6 +6897,10 @@ struct bnx2 {
+ 
+ 	u32			idle_chk_status_idx;
+ 
++#ifdef BCM_CNIC
++	struct cnic_eth_dev	cnic_eth_dev;
++#endif
++
+ };
+ 
+ #define REG_RD(bp, offset)					\

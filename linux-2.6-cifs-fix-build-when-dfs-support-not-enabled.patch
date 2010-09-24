@@ -1,0 +1,37 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 16 Nov 2009 14:22:49 -0500
+Subject: [cifs] fix build when dfs support not enabled
+Message-id: <1258381372-19132-4-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21380
+O-Subject: [RHEL5.5 PATCH 3/6] BZ#513410: cifs: Fix build break from recent DFS
+	patch when DFS support not enabled
+Bugzilla: 513410
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Steve French <sfrench@us.ibm.com>
+
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index 57714aa..5c87bc9 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -2593,6 +2593,7 @@ remote_path_check:
+ 
+ 	/* get referral if needed */
+ 	if (rc == -EREMOTE) {
++#ifdef CONFIG_CIFS_DFS_UPCALL
+ 		/* convert forward to back slashes in prepath here if needed */
+ 		if ((cifs_sb->mnt_cifs_flags & CIFS_MOUNT_POSIX_PATHS) == 0)
+ 			convert_delimiter(cifs_sb->prepath,
+@@ -2628,6 +2629,9 @@ remote_path_check:
+ 			kfree(full_path);
+ 			goto try_mount_again;
+ 		}
++#else /* No DFS support, return error on mount */
++		rc = -EOPNOTSUPP;
++#endif
+ 	}
+ 
+ mount_fail_check:

@@ -1,0 +1,56 @@
+From: John Villalovos <jvillalo@redhat.com>
+Date: Tue, 26 Jan 2010 20:20:42 -0500
+Subject: [misc] support Nehalem-EX processors in Oprofile
+Message-id: <20100126202041.GA29103@linuxjohn.usersys.redhat.com>
+Patchwork-id: 22910
+O-Subject: [RHEL5.5 BZ521992 Version 2] Support Nehalem-EX processors in Oprofile
+Bugzilla: 521992
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+RH-Acked-by: Bob Picco <bpicco@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Add support for Nehalem-EX processor in oprofile i386/x86_64 module
+https://bugzilla.redhat.com/show_bug.cgi?id=521992
+
+A simple one line addition to add support for the Nehalem-EX processor.
+Nehalem-EX processors have a CPUID of 06:2E:xx (aka 06:46:xx in decimal)
+
+Backport from oprofile kernel tree and has been submitted for 2.6.33 by
+oprofile kernel maintainer:
+    http://lkml.org/lkml/2010/1/25/200
+    $ git clone git://git.kernel.org/pub/scm/linux/kernel/git/rric/oprofile.git urgent
+    http://git.kernel.org/?p=linux/kernel/git/rric/oprofile.git;a=commitdiff;h=e83e452b0692c9c13372540deb88a77d4ae2553d
+
+    Upstream commit e83e452b0692c9c13372540deb88a77d4ae2553d
+    Upstream Author: Andi Kleen <andi@firstfloor.org>
+    Upstream Date:   Thu Jan 21 23:26:27 2010 +0100
+
+    oprofile/x86: add Xeon 7500 series support
+
+    Add Xeon 7500 series support to oprofile.
+
+    Straight forward: it's the same as Core i7, so just detect
+    the model number. No user space changes needed.
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2227428
+
+This has been tested on a beta Nehalem-EX platform by Will Cohen and
+myself.  Will ran an oprofile test suite pass and everything ran
+successfully.  I did some more smoke testing.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/oprofile/nmi_int.c b/arch/i386/oprofile/nmi_int.c
+index 6e49343..0ebe4cf 100644
+--- a/arch/i386/oprofile/nmi_int.c
++++ b/arch/i386/oprofile/nmi_int.c
+@@ -446,6 +446,7 @@ static int __init ppro_init(char **cpu_type)
+ 	case 15: case 23:
+ 		*cpu_type = "i386/core_2";
+ 		break;
++	case 0x2e:
+ 	case 26:
+ 		arch_perfmon_setup_counters();
+ 		*cpu_type = "i386/core_i7";

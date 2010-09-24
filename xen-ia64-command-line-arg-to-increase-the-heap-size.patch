@@ -1,0 +1,63 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Wed, 30 Sep 2009 15:22:41 +0200
+Subject: [xen] ia64: command-line arg to increase the heap size
+Message-id: 1254316961-31834-1-git-send-email-pbonzini@redhat.com
+O-Subject: [RHEL5.5 PATCH v3] xen: add command-line argument increasing the xen heap size on ia64 (BZ521865)
+Bugzilla: 521865
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Bugzilla: 521865
+
+Upstream: related to c/s 19109, 19129 and 19130
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2009109
+
+The bug is that the amount of memory needed in the Xen heap, for a 128GB
+ia64 machine, exceeds the amount of memory that is allocated at startup.
+
+Upstream is growing the heap dynamically, which is quite an invasive
+change.
+
+In order to keep the size static, I tried determining the heap size based
+on the amount of available memory, but there is a chicken-and-egg problem:
+it is not possible to call efi_memmap_walk before the heap is initialized,
+and efi_memmap_walk is required to find out how much memory we have.
+
+Therefore, I added the same "xenheap_megabytes=nnn" hypervisor command-line
+option that is present for other architectures.  Given the current size of
+64 MB is okay for a 64 GB machine, the release notes can suggest a value
+equal to the number of gigabytes of available RAM.
+
+The patch was tested by me on hp-rx8640-03.rhts.bos.redhat.com and it
+fixes the problem.
+
+Please review and ack.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+diff --git a/arch/ia64/xen/xensetup.c b/arch/ia64/xen/xensetup.c
+index 9fa7e4d..7f8a4af 100644
+--- a/arch/ia64/xen/xensetup.c
++++ b/arch/ia64/xen/xensetup.c
+@@ -81,8 +81,10 @@ boolean_param("xencons_poll", opt_xencons_poll);
+  * elilo chooses 256M as alignment when relocating, alignment issue
+  * on IPF can be addressed.
+  */
+-unsigned int opt_xenheap_megabytes = XENHEAP_DEFAULT_MB;
+-unsigned long xenheap_size = XENHEAP_DEFAULT_SIZE;
++static unsigned int opt_xenheap_megabytes = XENHEAP_DEFAULT_MB;
++integer_param("xenheap_megabytes", opt_xenheap_megabytes);
++
++unsigned long xenheap_size;
+ extern long running_on_sim;
+ unsigned long xen_pstart;
+ void *xen_heap_start __read_mostly;
+@@ -304,6 +306,7 @@ void start_kernel(void)
+ 
+     printk("Xen command line: %s\n", saved_command_line);
+     /* xenheap should be in same TR-covered range with xen image */
++    xenheap_size = opt_xenheap_megabytes << 20;
+     xenheap_phys_end = xen_pstart + xenheap_size;
+     printk("xen image pstart: 0x%lx, xenheap pend: 0x%lx\n",
+            xen_pstart, xenheap_phys_end);

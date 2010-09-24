@@ -1,0 +1,90 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Thu, 27 May 2010 22:07:30 -0400
+Subject: [net] tg3: fix panic in tg3_interrupt
+Message-id: <4BFEED22.2040003@redhat.com>
+Patchwork-id: 25840
+O-Subject: [RHEL5.6 PATCH] Provide tg3_interrupt() with correct value to avoid
+	panic
+Bugzilla: 569106
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+bz569106
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=569106
+netconsole fails with tg3
+
+Description of problem:
+After installing RHEVH, registering RHEVH to RHEVM, and
+starting netconsole on a system with a tg3 NIC, tg3 causes
+a kdump with the following backtrace:
+
+crash> bt
+PID: 22442  TASK: ffff81020e766100  CPU: 1   COMMAND: "modprobe"
+#0 [ffff8102072ffb50] crash_kexec at ffffffff800ae9d8
+#1 [ffff8102072ffc10] __die at ffffffff80066157
+#2 [ffff8102072ffc50] do_page_fault at ffffffff80067dd7
+#3 [ffff8102072ffd40] error_exit at ffffffff8005ede9
+   [exception RIP: tg3_interrupt+15]
+   RIP: ffffffff882c4e3a  RSP: ffff8102072ffdf8  RFLAGS: 00010046
+   RAX: 0000000000000000  RBX: 0000000000000000  RCX: 0000000000000001
+   RDX: 0000000000000000  RSI: ffff8102298ba000  RDI: 000000000000009a
+   RBP: ffff8102298ba000   R8: 00000000e22cbc42   R9: 0000000000000000
+   R10: 0000000000000000  R11: 0000000000000000  R12: 0000000000000000
+   R13: ffff810229ea61c0  R14: 0000000000000000  R15: 0000000018700580
+   ORIG_RAX: ffffffffffffffff  CS: 0010  SS: 0018
+#4 [ffff8102072ffe10] tg3_poll_controller at ffffffff882c82e4
+#5 [ffff8102072ffe30] netpoll_poll at ffffffff8023a842
+#6 [ffff8102072ffe90] netpoll_send_skb at ffffffff8023ac56
+#7 [ffff8102072ffec0] write_msg at ffffffff885b30d0
+#8 [ffff8102072ffef0] __call_console_drivers at ffffffff80092c53
+#9 [ffff8102072fff10] release_console_sem at ffffffff80017203
+#10 [ffff8102072fff40] init_module at ffffffff885b307c
+#11 [ffff8102072fff50] sys_init_module at ffffffff800a7e4d
+#12 [ffff8102072fff80] tracesys at ffffffff8005e28d (via system_call)
+   RIP: 00002b2fc3a7317a  RSP: 00007fffc4b9fad8  RFLAGS: 00000206
+   RAX: ffffffffffffffda  RBX: ffffffff8005e28d  RCX: ffffffffffffffff
+   RDX: 00000000186f64c0  RSI: 0000000000009800  RDI: 0000000018700580
+   RBP: 00000000186f63f8   R8: 00002b2fc3cf66e0   R9: 0000000018709d80
+   R10: 00000000186f64c0  R11: 0000000000000206  R12: 0000000000000000
+   R13: 00000000186f63e0  R14: 0000000000000000  R15: 0000000018700580
+   ORIG_RAX: 00000000000000af  CS: 0033  SS: 002b
+crash> crash> exit
+
+Solution:
+The wrong value is given to tg3_interrupt() by tg3_poll_controller().
+
+Note: Since there might be a z-stream resulting from this, I am posting
+this patch separate from a general "update tg3" patch.
+
+Upstream status:
+fe234f0e5cbb880792d2d1ac0743cf8c07e9dde3
+
+Brew:
+Successfully built in Brew for all architectures
+(task 2476974).
+
+Testing:
+The bug reporter tested rpms with the above fix and reported
+there problem was resolved.
+
+I also sanity tested successfully with RHTS.
+
+Acks would be appreciated. Thanks.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/tg3.c b/drivers/net/tg3.c
+index f4768c7..c5f8763 100644
+--- a/drivers/net/tg3.c
++++ b/drivers/net/tg3.c
+@@ -4896,7 +4896,7 @@ static void tg3_poll_controller(struct net_device *dev)
+ 	struct tg3 *tp = netdev_priv(dev);
+ 
+ 	for (i = 0; i < tp->irq_cnt; i++)
+-		tg3_interrupt(tp->napi[i].irq_vec, dev, NULL);
++		tg3_interrupt(tp->napi[i].irq_vec, &tp->napi[i], NULL);
+ }
+ #endif
+ 

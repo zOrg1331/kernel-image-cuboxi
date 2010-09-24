@@ -1,0 +1,242 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Thu, 16 Apr 2009 19:24:06 +0200
+Subject: [net] add DSCP netfilter target
+Message-id: 20090416172406.GA13688@plip.localdomain
+O-Subject: [RHEL5.4 PATCH] net: add DSCP netfilter target (bz481652)
+Bugzilla: 481652
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Hey all
+
+This patch adds the netfilter target DSCP which allows the
+manipulation of the DSCP field for both, IPv4 and IPv6 packets.
+
+Fixes BZ481652. Please ACK
+
+diff --git a/include/linux/netfilter/Kbuild b/include/linux/netfilter/Kbuild
+index 9a285ce..5c4374a 100644
+--- a/include/linux/netfilter/Kbuild
++++ b/include/linux/netfilter/Kbuild
+@@ -29,6 +29,8 @@ header-y += xt_tcpmss.h
+ header-y += xt_tcpudp.h
+ header-y += xt_SECMARK.h
+ header-y += xt_CONNSECMARK.h
++header-y += xt_DSCP.h
++header-y += xt_dscp.h
+ 
+ unifdef-y += nf_conntrack_common.h
+ unifdef-y += nf_conntrack_ftp.h
+diff --git a/include/linux/netfilter/xt_DSCP.h b/include/linux/netfilter/xt_DSCP.h
+new file mode 100644
+index 0000000..80bd325
+--- /dev/null
++++ b/include/linux/netfilter/xt_DSCP.h
+@@ -0,0 +1,21 @@
++/* x_tables module for setting the IPv4/IPv6 DSCP field
++ *
++ * (C) 2002 Harald Welte <laforge@gnumonks.org>
++ * based on ipt_FTOS.c (C) 2000 by Matthew G. Marsh <mgm@paktronix.com>
++ * This software is distributed under GNU GPL v2, 1991
++ *
++ * See RFC2474 for a description of the DSCP field within the IP Header.
++ *
++ * xt_DSCP.h,v 1.7 2002/03/14 12:03:13 laforge Exp
++*/
++#ifndef _XT_DSCP_TARGET_H
++#define _XT_DSCP_TARGET_H
++
++#include <linux/netfilter/xt_dscp.h>
++
++/* target info */
++struct xt_DSCP_info {
++	u_int8_t dscp;
++};
++
++#endif /* _XT_DSCP_TARGET_H */
+diff --git a/include/linux/netfilter/xt_dscp.h b/include/linux/netfilter/xt_dscp.h
+new file mode 100644
+index 0000000..bf88360
+--- /dev/null
++++ b/include/linux/netfilter/xt_dscp.h
+@@ -0,0 +1,17 @@
++/* x_tables module for matching the IPv4/IPv6 DSCP field
++ *
++ * (C) 2002 Harald Welte <laforge@gnumonks.org>
++ * This software is distributed under GNU GPL v2, 1991
++ *
++ * See RFC2474 for a description of the DSCP field within the IP Header.
++ *
++ * xt_dscp.h,v 1.3 2002/08/05 19:00:21 laforge Exp
++*/
++#ifndef _XT_DSCP_H
++#define _XT_DSCP_H
++
++#define XT_DSCP_MASK	0xfc	/* 11111100 */
++#define XT_DSCP_SHIFT	2
++#define XT_DSCP_MAX	0x3f	/* 00111111 */
++
++#endif /* _XT_DSCP_H */
+diff --git a/net/netfilter/Kconfig b/net/netfilter/Kconfig
+index 71a532d..15116c7 100644
+--- a/net/netfilter/Kconfig
++++ b/net/netfilter/Kconfig
+@@ -206,6 +206,17 @@ config NETFILTER_XT_TARGET_CONNSECMARK
+ 
+ 	  To compile it as a module, choose M here.  If unsure, say N.
+ 
++config NETFILTER_XT_TARGET_DSCP
++	tristate '"DSCP" target support'
++	depends on IP_NF_MANGLE || IP6_NF_MANGLE
++	help
++	  This option adds a `DSCP' target, which allows you to manipulate
++	  the IPv4/IPv6 header DSCP field (differentiated services codepoint).
++
++	  The DSCP field can have any value between 0x0 and 0x3f inclusive.
++
++	  To compile it as a module, choose M here.  If unsure, say N.
++
+ config NETFILTER_XT_MATCH_COMMENT
+ 	tristate  '"comment" match support'
+ 	depends on NETFILTER_XTABLES
+diff --git a/net/netfilter/Makefile b/net/netfilter/Makefile
+index 82054a4..7ff9b05 100644
+--- a/net/netfilter/Makefile
++++ b/net/netfilter/Makefile
+@@ -30,6 +30,7 @@ obj-$(CONFIG_NETFILTER_XT_TARGET_NFQUEUE) += xt_NFQUEUE.o
+ obj-$(CONFIG_NETFILTER_XT_TARGET_NOTRACK) += xt_NOTRACK.o
+ obj-$(CONFIG_NETFILTER_XT_TARGET_SECMARK) += xt_SECMARK.o
+ obj-$(CONFIG_NETFILTER_XT_TARGET_CONNSECMARK) += xt_CONNSECMARK.o
++obj-$(CONFIG_NETFILTER_XT_TARGET_DSCP) += xt_DSCP.o
+ 
+ # matches
+ obj-$(CONFIG_NETFILTER_XT_MATCH_COMMENT) += xt_comment.o
+diff --git a/net/netfilter/xt_DSCP.c b/net/netfilter/xt_DSCP.c
+new file mode 100644
+index 0000000..9410cc6
+--- /dev/null
++++ b/net/netfilter/xt_DSCP.c
+@@ -0,0 +1,123 @@
++/* x_tables module for setting the IPv4/IPv6 DSCP field, Version 1.8
++ *
++ * (C) 2002 by Harald Welte <laforge@netfilter.org>
++ * based on ipt_FTOS.c (C) 2000 by Matthew G. Marsh <mgm@paktronix.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * See RFC2474 for a description of the DSCP field within the IP Header.
++*/
++
++#include <linux/module.h>
++#include <linux/skbuff.h>
++#include <linux/ip.h>
++#include <linux/ipv6.h>
++#include <net/dsfield.h>
++
++#include <linux/netfilter/x_tables.h>
++#include <linux/netfilter/xt_DSCP.h>
++
++MODULE_AUTHOR("Harald Welte <laforge@netfilter.org>");
++MODULE_DESCRIPTION("Xtables: DSCP field modification");
++MODULE_LICENSE("GPL");
++MODULE_ALIAS("ipt_DSCP");
++MODULE_ALIAS("ip6t_DSCP");
++
++static unsigned int
++dscp_tg(struct sk_buff **pskb, const struct net_device *in,
++       const struct net_device *out, unsigned int hooknum,
++       const struct xt_target *target, const void *targinfo,
++       void *userinfo)
++{
++	const struct xt_DSCP_info *dinfo = targinfo;
++	u_int8_t dscp = ipv4_get_dsfield(ip_hdr(*pskb)) >> XT_DSCP_SHIFT;
++
++	if (dscp != dinfo->dscp) {
++		if (!skb_make_writable(pskb, sizeof(struct iphdr)))
++			return NF_DROP;
++
++		ipv4_change_dsfield(ip_hdr(*pskb), (__u8)(~XT_DSCP_MASK),
++				    dinfo->dscp << XT_DSCP_SHIFT);
++
++	}
++	return XT_CONTINUE;
++}
++
++static unsigned int
++dscp_tg6(struct sk_buff **pskb, const struct net_device *in,
++	 const struct net_device *out, unsigned int hooknum,
++	 const struct xt_target *target, const void *targinfo,
++	 void *userinfo)
++{
++	const struct xt_DSCP_info *dinfo = targinfo;
++	u_int8_t dscp = ipv6_get_dsfield(ipv6_hdr(*pskb)) >> XT_DSCP_SHIFT;
++
++	if (dscp != dinfo->dscp) {
++		if (!skb_make_writable(pskb, sizeof(struct ipv6hdr)))
++			return NF_DROP;
++
++		ipv6_change_dsfield(ipv6_hdr(*pskb), (__u8)(~XT_DSCP_MASK),
++				    dinfo->dscp << XT_DSCP_SHIFT);
++	}
++	return XT_CONTINUE;
++}
++
++static int dscp_tg_check(const char *tablename, const void *inf,
++			 const struct xt_target *target, void *targetinfo,
++			 unsigned int targetinfosize, unsigned int hook_mask)
++{
++	const struct xt_DSCP_info *info = targetinfo;
++
++	if (info->dscp > XT_DSCP_MAX) {
++		printk(KERN_WARNING "DSCP: dscp %x out of range\n", info->dscp);
++		return 0;
++	}
++
++	return 1;
++}
++
++static struct xt_target dscp_reg __read_mostly = {
++	.name		= "DSCP",
++	.family		= AF_INET,
++	.checkentry	= dscp_tg_check,
++	.target		= dscp_tg,
++	.targetsize	= sizeof(struct xt_DSCP_info),
++	.table		= "mangle",
++	.me		= THIS_MODULE,
++};
++
++static struct xt_target dscp6_reg __read_mostly = {
++	.name		= "DSCP",
++	.family		= AF_INET6,
++	.checkentry	= dscp_tg_check,
++	.target		= dscp_tg6,
++	.targetsize	= sizeof(struct xt_DSCP_info),
++	.table		= "mangle",
++	.me		= THIS_MODULE,
++};
++
++static int __init dscp_tg_init(void)
++{
++	int ret;
++
++	ret = xt_register_target(&dscp_reg);
++	if (ret)
++		return ret;
++
++	ret = xt_register_target(&dscp6_reg);
++	if (ret)
++		xt_unregister_target(&dscp_reg);
++
++	return ret;
++}
++
++static void __exit dscp_tg_exit(void)
++{
++	xt_unregister_target(&dscp6_reg);
++	xt_unregister_target(&dscp_reg);
++}
++
++module_init(dscp_tg_init);
++module_exit(dscp_tg_exit);

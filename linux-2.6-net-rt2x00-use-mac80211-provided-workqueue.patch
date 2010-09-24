@@ -1,0 +1,132 @@
+From: John W. Linville <linville@redhat.com>
+Date: Tue, 30 Jun 2009 14:44:35 -0400
+Subject: [net] rt2x00: use mac80211-provided workqueue
+Message-id: 20090630184435.GL24066@redhat.com
+O-Subject: [PATCH RHEL5.4] rt2x00: use mac80211-provided workqueue to avoid fatal exception
+Bugzilla: 506845
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+QA found that pulling an rt73usb device caused a fatal exception!
+
+BZ506845
+
+Back-port of the following upstream commit...
+
+commit 8e260c22238dd8b57aefb1f5e4bd114486a9c17d
+Author: Ivo van Doorn <ivdoorn@gmail.com>
+Date:   Fri Jul 4 13:41:31 2008 +0200
+
+    rt2x00: Use ieee80211_hw->workqueue again
+
+    Remove the rt2x00 singlethreaded workqueue and move
+    the link tuner and packet filter scheduled work to
+    the ieee80211_hw->workqueue again.
+    The only exception is the interface scheduled work
+    handler which uses the mac80211 interface iterator
+    under the RTNL lock. This work needs to be handled
+    on the kernel workqueue to prevent lockdep issues.
+
+    Signed-off-by: Ivo van Doorn <IvDoorn@gmail.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+
+Tested by Zack Cerza on 32- and 64-bit machines with acceptable results
+(i.e. the panic was averted).
+
+diff --git a/drivers/net/wireless/rt2x00/rt2x00.h b/drivers/net/wireless/rt2x00/rt2x00.h
+index 631ae01..2bd9153 100644
+--- a/drivers/net/wireless/rt2x00/rt2x00.h
++++ b/drivers/net/wireless/rt2x00/rt2x00.h
+@@ -820,8 +820,10 @@ struct rt2x00_dev {
+ 
+ 	/*
+ 	 * Scheduled work.
++	 * NOTE: intf_work will use ieee80211_iterate_active_interfaces()
++	 * which means it cannot be placed on the hw->workqueue
++	 * due to RTNL locking requirements.
+ 	 */
+-	struct workqueue_struct *workqueue;
+ 	struct work_struct intf_work;
+ 	struct work_struct filter_work;
+ 
+diff --git a/drivers/net/wireless/rt2x00/rt2x00dev.c b/drivers/net/wireless/rt2x00/rt2x00dev.c
+index a6ac62f..6ea437d 100644
+--- a/drivers/net/wireless/rt2x00/rt2x00dev.c
++++ b/drivers/net/wireless/rt2x00/rt2x00dev.c
+@@ -75,7 +75,7 @@ static void rt2x00lib_start_link_tuner(struct rt2x00_dev *rt2x00dev)
+ 
+ 	rt2x00lib_reset_link_tuner(rt2x00dev);
+ 
+-	queue_delayed_work(rt2x00dev->workqueue,
++	queue_delayed_work(rt2x00dev->hw->workqueue,
+ 			   &rt2x00dev->link.work, LINK_TUNE_INTERVAL);
+ }
+ 
+@@ -396,7 +396,7 @@ static void rt2x00lib_link_tuner(void *r)
+ 	 * Increase tuner counter, and reschedule the next link tuner run.
+ 	 */
+ 	rt2x00dev->link.count++;
+-	queue_delayed_work(rt2x00dev->workqueue,
++	queue_delayed_work(rt2x00dev->hw->workqueue,
+ 			   &rt2x00dev->link.work, LINK_TUNE_INTERVAL);
+ }
+ 
+@@ -492,7 +492,7 @@ void rt2x00lib_beacondone(struct rt2x00_dev *rt2x00dev)
+ 						   rt2x00lib_beacondone_iter,
+ 						   rt2x00dev);
+ 
+-	queue_work(rt2x00dev->workqueue, &rt2x00dev->intf_work);
++	schedule_work(&rt2x00dev->intf_work);
+ }
+ EXPORT_SYMBOL_GPL(rt2x00lib_beacondone);
+ 
+@@ -1135,10 +1135,6 @@ int rt2x00lib_probe_dev(struct rt2x00_dev *rt2x00dev)
+ 	/*
+ 	 * Initialize configuration work.
+ 	 */
+-	rt2x00dev->workqueue = create_singlethread_workqueue("rt2x00lib");
+-	if (!rt2x00dev->workqueue)
+-		goto exit;
+-
+ 	INIT_WORK(&rt2x00dev->intf_work, rt2x00lib_intf_scheduled, rt2x00dev);
+ 	INIT_WORK(&rt2x00dev->filter_work, rt2x00lib_packetfilter_scheduled,
+ 		  rt2x00dev);
+@@ -1200,15 +1196,6 @@ void rt2x00lib_remove_dev(struct rt2x00_dev *rt2x00dev)
+ 	rt2x00leds_unregister(rt2x00dev);
+ 
+ 	/*
+-	 * Stop all queued work. Note that most tasks will already be halted
+-	 * during rt2x00lib_disable_radio() and rt2x00lib_uninitialize().
+-	 */
+-	if (rt2x00dev->workqueue) {
+-		flush_workqueue(rt2x00dev->workqueue);
+-		destroy_workqueue(rt2x00dev->workqueue);
+-	}
+-
+-	/*
+ 	 * Free ieee80211_hw memory.
+ 	 */
+ 	rt2x00lib_remove_hw(rt2x00dev);
+diff --git a/drivers/net/wireless/rt2x00/rt2x00mac.c b/drivers/net/wireless/rt2x00/rt2x00mac.c
+index 9cb023e..802ddba 100644
+--- a/drivers/net/wireless/rt2x00/rt2x00mac.c
++++ b/drivers/net/wireless/rt2x00/rt2x00mac.c
+@@ -428,7 +428,7 @@ void rt2x00mac_configure_filter(struct ieee80211_hw *hw,
+ 	if (!test_bit(DRIVER_REQUIRE_SCHEDULED, &rt2x00dev->flags))
+ 		rt2x00dev->ops->lib->config_filter(rt2x00dev, *total_flags);
+ 	else
+-		queue_work(rt2x00dev->workqueue, &rt2x00dev->filter_work);
++		queue_work(rt2x00dev->hw->workqueue, &rt2x00dev->filter_work);
+ }
+ EXPORT_SYMBOL_GPL(rt2x00mac_configure_filter);
+ 
+@@ -509,7 +509,7 @@ void rt2x00mac_bss_info_changed(struct ieee80211_hw *hw,
+ 	memcpy(&intf->conf, bss_conf, sizeof(*bss_conf));
+ 	if (delayed) {
+ 		intf->delayed_flags |= delayed;
+-		queue_work(rt2x00dev->workqueue, &rt2x00dev->intf_work);
++		schedule_work(&rt2x00dev->intf_work);
+ 	}
+ 	spin_unlock(&intf->lock);
+ }

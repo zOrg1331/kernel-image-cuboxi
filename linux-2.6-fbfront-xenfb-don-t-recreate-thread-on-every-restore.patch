@@ -1,0 +1,56 @@
+From: Christopher Lalancette <clalance@redhat.com>
+Date: Fri, 4 Dec 2009 08:33:30 -0500
+Subject: [fbfront] xenfb: don't recreate thread on every restore
+Message-id: <4B18C95A.9080008@redhat.com>
+Patchwork-id: 21676
+O-Subject: [RHEL5.5 Xen PATCH v2]: Don't recreate xenfb thread on every restore
+Bugzilla: 541325
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+All,
+     In 5.4, we re-arranged a bit of the logic in the paravirtualized
+xenfb code to avoid some races.  Unfortunately, that re-arrangement
+caused another bug.  On every save/restore cycle, a PV guest will create
+a new xenfb thread.  While everything still works with the new
+thread, it's an obvious resource leak and will eventually lead to running
+out of PID's in the guest.  The attached patch is a simple fix that will
+only create the xenfb thread the first time the backend connects, and
+will just re-use that thread from then on.
+     This patch has recently been accepted into the upstream
+linux-2.6.18-xen.hg tree as c/s 958.  Upstream LKML uses a completely
+different mechanism to do screen updates, so is immune to this particular
+problem.
+     I tested this by doing save/restore testing in a RHEL-5 guest.
+Before the patch, every save/restore cycle would create a new xenfb
+thread.  After the patch, we keep re-using the same xenfb thread.  I
+additionally made sure that I would still get screen updates after
+the restore, and it seems like everything is working properly.
+     This should resolve BZ 541325.  Please review and ACK.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/xen/fbfront/xenfb.c b/drivers/xen/fbfront/xenfb.c
+index a4508ee..cca2eb3 100644
+--- a/drivers/xen/fbfront/xenfb.c
++++ b/drivers/xen/fbfront/xenfb.c
+@@ -645,11 +645,13 @@ static void xenfb_backend_changed(struct xenbus_device *dev,
+ 		if (val)
+ 			info->update_wanted = 1;
+ 
+-		info->kthread = kthread_run(xenfb_thread, info, "xenfb thread");
+-		if (IS_ERR(info->kthread)) {
+-			info->kthread = NULL;
+-			xenbus_dev_fatal(dev, PTR_ERR(info->kthread),
+-					"xenfb_thread");
++		if (!info->kthread) {
++			info->kthread = kthread_run(xenfb_thread, info, "xenfb thread");
++			if (IS_ERR(info->kthread)) {
++				info->kthread = NULL;
++				xenbus_dev_fatal(dev, PTR_ERR(info->kthread),
++						 "xenfb_thread");
++			}
+ 		}
+ 		break;
+ 

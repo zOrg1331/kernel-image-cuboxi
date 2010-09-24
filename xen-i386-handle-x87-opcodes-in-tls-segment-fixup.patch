@@ -1,0 +1,143 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Thu, 13 Aug 2009 18:00:27 +0200
+Subject: [xen] i386: handle x87 opcodes in TLS segment fixup
+Message-id: 1250179227-23431-4-git-send-email-pbonzini@redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ510225: xen i386: handle x87 opcodes in TLS segment fixup
+Bugzilla: 510225
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/attachment.cgi?bugid=510225
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1927355
+
+Upstream: http://xenbits.xensource.com/xen-unstable.hg?rev/19985
+
+Xen includes special code to handle the way TLS segments are accessed
+on i386 (32-bit only, that is).  These use very large offsets that are
+meant to wrap around the 4GB address space.  However, under Xen these
+offsets trap because they go beyond the segment limit that is set up to
+protect the hypervisor.
+
+Therefore, when Xen detects such a fault it applies a cunning trick
+(flipping the segment from grows-up to grows-down) that lets the
+instruction execute again without faults.  However, so far Xen did
+this successfully for integer code; this patch is needed so that
+the TLS fixup code supports x87 opcodes.
+
+The interesting part is that Xen does not need to know the semantics
+of the instruction, but only the memory address it accesses.  In fact,
+all the patch has to do is to teach Xen the format of the opcodes and
+provide a table saying which x87 opcodes have a memory operand.
+
+Tested by me on the simple C testcase in the Bugzilla.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+diff --git a/arch/x86/x86_32/seg_fixup.c b/arch/x86/x86_32/seg_fixup.c
+index 583fe0d..8077261 100644
+--- a/arch/x86/x86_32/seg_fixup.c
++++ b/arch/x86/x86_32/seg_fixup.c
+@@ -42,7 +42,7 @@
+ #define O  OPCODE_BYTE
+ #define M  HAS_MODRM
+ 
+-static const unsigned char insn_decode[256] = {
++static const u8 insn_decode[256] = {
+     /* 0x00 - 0x0F */
+     O|M, O|M, O|M, O|M, X, X, X, X,
+     O|M, O|M, O|M, O|M, X, X, X, X,
+@@ -93,7 +93,18 @@ static const unsigned char insn_decode[256] = {
+     X, X, X, X, X, X, O|M, O|M
+ };
+ 
+-static const unsigned char twobyte_decode[256] = {
++static const u8 float_decode[64] = {
++    O|M, O|M, O|M, O|M, O|M, O|M, O|M, O|M, /* 0xD8 */
++    O|M, X, O|M, O|M, O|M, O|M, O|M, O|M, /* 0xD9 */
++    O|M, O|M, O|M, O|M, O|M, O|M, O|M, O|M, /* 0xDA */
++    O|M, X, O|M, O|M, X, O|M, X, O|M, /* 0xDB */
++    O|M, O|M, O|M, O|M, O|M, O|M, O|M, O|M, /* 0xDC */
++    O|M, O|M, O|M, O|M, O|M, X, O|M, O|M, /* 0xDD */
++    O|M, O|M, O|M, O|M, O|M, O|M, O|M, O|M, /* 0xDE */
++    O|M, X, O|M, O|M, O|M, O|M, O|M, O|M, /* 0xDF */
++};
++
++static const u8 twobyte_decode[256] = {
+     /* 0x00 - 0x0F */
+     X, X, X, X, X, X, X, X,
+     X, X, X, X, X, X, X, X,
+@@ -322,7 +333,8 @@ int gpf_emulate_4gb(struct cpu_user_regs *regs)
+     s32            disp32 = 0;
+     u8            *eip;         /* ptr to instruction start */
+     u8            *pb, b;       /* ptr into instr. / current instr. byte */
+-    int            gs_override = 0, scale = 0, twobyte = 0;
++    int            gs_override = 0, scale = 0, opcode = -1;
++    const u8      *table = insn_decode;
+ 
+     /* WARNING: We only work for ring-3 segments. */
+     if ( unlikely(vm86_mode(regs)) || unlikely(!ring_3(regs)) )
+@@ -353,8 +365,11 @@ int gpf_emulate_4gb(struct cpu_user_regs *regs)
+             goto fail;
+         }
+ 
+-        if ( twobyte )
++        if ( opcode != -1 )
++        {
++            opcode = (opcode << 8) | b;
+             break;
++        }
+ 
+         switch ( b )
+         {
+@@ -375,8 +390,29 @@ int gpf_emulate_4gb(struct cpu_user_regs *regs)
+             gs_override = 1;
+             break;
+         case 0x0f: /* Not really a prefix byte */
+-            twobyte = 1;
++            table = twobyte_decode;
++            opcode = b;
+             break;
++        case 0xd8: /* Math coprocessor instructions.  */
++        case 0xd9:
++        case 0xda:
++        case 0xdb:
++        case 0xdc:
++        case 0xdd:
++        case 0xde:
++        case 0xdf:
++            /* Float opcodes have a secondary opcode in the modrm byte.  */
++            table = float_decode;
++            if ( get_user(modrm, pb + 1) )
++            {
++                dprintk(XENLOG_DEBUG, "Fault while extracting modrm byte\n");
++                goto page_fault;
++            }
++
++            opcode = (b << 8) | modrm;
++            b = ((b & 7) << 3) + ((modrm >> 3) & 7);
++            goto done_prefix;
++
+         default: /* Not a prefix byte */
+             goto done_prefix;
+         }
+@@ -389,13 +425,16 @@ int gpf_emulate_4gb(struct cpu_user_regs *regs)
+         goto fail;
+     }
+ 
+-    decode = (!twobyte ? insn_decode : twobyte_decode)[b];
++    decode = table[b];
+     pb++;
+ 
+     if ( !(decode & OPCODE_BYTE) )
+     {
+-        dprintk(XENLOG_DEBUG, "Unsupported %sopcode %02x\n",
+-                twobyte ? "two byte " : "", b);
++        if (opcode == -1)
++            dprintk(XENLOG_DEBUG, "Unsupported opcode %02x\n", b);
++        else
++            dprintk(XENLOG_DEBUG, "Unsupported opcode %02x %02x\n",
++                    opcode >> 8, opcode & 255);
+         goto fail;
+     }
+ 

@@ -1,0 +1,61 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Wed, 3 Feb 2010 08:36:35 -0500
+Subject: [s390] zcrypt: Do not remove coprocessor on error 8/72
+Message-id: <20100203083635.GA13758@redhat.com>
+Patchwork-id: 23109
+O-Subject: [RHEL5.6 PATCH 1/1] [s390] zcrypt: Do not remove coprocessor in
+	case of error 8/72
+Bugzilla: 561067
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Description
+-----------
+In a case where the number of the input data is bigger than the
+modulus of the key, the coprocessor adapters will report an
+rc=8 reason=72 error.  This case is not caught yet, thus the
+adapter will be taken offline.
+
+To prevent this, return an -EINVAL instead.
+
+Bugzilla
+--------
+BZ 561067
+https://bugzilla.redhat.com/show_bug.cgi?id=561067
+
+Upstream status of the patch
+----------------------------
+The patch will be upstream as of kernel version 2.6.33
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=19b123ebacacdce5e75045bfe82122b01c821a5b
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+
+diff --git a/drivers/s390/crypto/zcrypt_pcicc.c b/drivers/s390/crypto/zcrypt_pcicc.c
+index d6d59bf..cdcab54 100644
+--- a/drivers/s390/crypto/zcrypt_pcicc.c
++++ b/drivers/s390/crypto/zcrypt_pcicc.c
+@@ -379,6 +379,8 @@ static int convert_type86(struct zcrypt_device *zdev,
+ 			zdev->max_mod_size = PCICC_MAX_MOD_SIZE_OLD;
+ 			return -EAGAIN;
+ 		}
++		if (service_rc == 8 && service_rs == 72)
++			return -EINVAL;
+ 		PRINTK("Unknown service rc/rs (PCICC): %d/%d\n",
+ 		       service_rc, service_rs);
+ 		zdev->online = 0;
+diff --git a/drivers/s390/crypto/zcrypt_pcixcc.c b/drivers/s390/crypto/zcrypt_pcixcc.c
+index aed6e95..faf1ea8 100644
+--- a/drivers/s390/crypto/zcrypt_pcixcc.c
++++ b/drivers/s390/crypto/zcrypt_pcixcc.c
+@@ -490,6 +490,8 @@ static int convert_type86_ica(struct zcrypt_device *zdev,
+ 			zdev->min_mod_size = PCIXCC_MIN_MOD_SIZE_OLD;
+ 			return -EAGAIN;
+ 		}
++		if (service_rc == 8 && service_rs == 72)
++			return -EINVAL;
+ 		PRINTK("Unknown service rc/rs (PCIXCC/CEX2C): %d/%d\n",
+ 		       service_rc, service_rs);
+ 		zdev->online = 0;

@@ -1,0 +1,71 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Thu, 6 Aug 2009 16:58:55 +0200
+Subject: [misc] information leak in sigaltstack
+Message-id: 87k51h9efk.wl%vmayatsk@redhat.com
+O-Subject: [RHEL-5.5 patch] bz515397 kernel: information leak in sigaltstack
+Bugzilla: 515396
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Oleg Nesterov <oleg@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=515397
+
+Description:
+============
+do_sigaltstack() uses copy_to_user() to copy stack_t structure
+(created on the stack) to user space. Due to structure alignment
+there's random bytes in the hole between members of stack_t, they go
+to userspace as well.
+
+This patch copies all required fields one-by-one with help of
+put_user().
+
+Upstream status:
+================
+commit 0083fc2c50e6c5127c2802ad323adf8143ab7856
+
+Test status:
+============
+Tested with reproducer from https://bugzilla.redhat.com/show_bug.cgi?id=515392#c2
+Patched kernel prevents leaks of stack garbage to userspace.
+
+diff --git a/kernel/signal.c b/kernel/signal.c
+index 493b8d2..da9b46f 100644
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -2171,11 +2171,9 @@ do_sigaltstack (const stack_t __user *uss, stack_t __user *uoss, unsigned long s
+ 	stack_t oss;
+ 	int error;
+ 
+-	if (uoss) {
+-		oss.ss_sp = (void __user *) current->sas_ss_sp;
+-		oss.ss_size = current->sas_ss_size;
+-		oss.ss_flags = sas_ss_flags(sp);
+-	}
++	oss.ss_sp = (void __user *) current->sas_ss_sp;
++	oss.ss_size = current->sas_ss_size;
++	oss.ss_flags = sas_ss_flags(sp);
+ 
+ 	if (uss) {
+ 		void __user *ss_sp;
+@@ -2218,13 +2216,16 @@ do_sigaltstack (const stack_t __user *uss, stack_t __user *uoss, unsigned long s
+ 		current->sas_ss_size = ss_size;
+ 	}
+ 
++	error = 0;
+ 	if (uoss) {
+ 		error = -EFAULT;
+-		if (copy_to_user(uoss, &oss, sizeof(oss)))
++		if (!access_ok(VERIFY_WRITE, uoss, sizeof(*uoss)))
+ 			goto out;
++		error = __put_user(oss.ss_sp, &uoss->ss_sp) |
++			__put_user(oss.ss_size, &uoss->ss_size) |
++			__put_user(oss.ss_flags, &uoss->ss_flags);
+ 	}
+ 
+-	error = 0;
+ out:
+ 	return error;
+ }

@@ -1,0 +1,45 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Wed, 22 Apr 2009 10:11:55 -0400
+Subject: [ia64] altix: performance degradation in PCI mode
+Message-id: 49EF25AB.4000201@redhat.com
+O-Subject: [RHEL5.4 PATCH] Performance Degradation in PCI mode: SGI Altix only
+Bugzilla: 497136
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+This is BZ#497136 which pertains only to SGI Altix only.
+
+A customer notice a performance degradation caused by
+commit 83821d3f558dc651e555d62182ed0c95651f41a6
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=83821d3f558dc651e555d62182ed0c95651f41a6
+
+The fix is now upstream
+
+commit c63c58056e268b0d6bd6994b69030c144567990d
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=c63c58056e268b0d6bd6994b69030c144567990d
+
+The patch has been tested against 2.6.18-140 by me on a
+couple of Altix systems.
+
+Please ACK.
+
+diff --git a/arch/ia64/sn/pci/pcibr/pcibr_dma.c b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+index a86c7b9..792e74d 100644
+--- a/arch/ia64/sn/pci/pcibr/pcibr_dma.c
++++ b/arch/ia64/sn/pci/pcibr/pcibr_dma.c
+@@ -131,11 +131,10 @@ pcibr_dmatrans_direct64(struct pcidev_info * info, u64 paddr,
+ 	if (SN_DMA_ADDRTYPE(dma_flags) == SN_DMA_ADDR_PHYS)
+ 		pci_addr = IS_PIC_SOFT(pcibus_info) ?
+ 				PHYS_TO_DMA(paddr) :
+-		    		PHYS_TO_TIODMA(paddr) | dma_attributes;
++				PHYS_TO_TIODMA(paddr);
+ 	else
+-		pci_addr = IS_PIC_SOFT(pcibus_info) ?
+-				paddr :
+-				paddr | dma_attributes;
++		pci_addr = paddr;
++	pci_addr |= dma_attributes;
+ 
+ 	/* Handle Bus mode */
+ 	if (IS_PCIX(pcibus_info))

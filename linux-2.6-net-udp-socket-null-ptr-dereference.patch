@@ -1,0 +1,58 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Tue, 18 Aug 2009 19:11:42 +0200
+Subject: [net] udp: socket NULL ptr dereference
+Message-id: 87tz05gi7l.wl%vmayatsk@redhat.com
+O-Subject: [kernel team] [RHEL-5.4 patch] bz518043 CVE-2009-2698 udp socket NULL ptr dereference
+Bugzilla: 518043
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+CVE: CVE-2009-2698
+
+https://bugzilla.redhat.com/show_bug.cgi?id=518043
+
+Description:
+============
+UDP tracks corking status through the pending variable.  The IP layer
+also tracks it through the socket write queue.  It is possible for the
+two to get out of sync when MSG_PROBE is used. When attacker also uses
+MSG_MORE flag, next sendto() will kill the kernel, because struct
+rtable was used without being initialized.
+
+This patch changes UDP to check the write queue to ensure that the two
+stay in sync.
+
+Upstream status:
+================
+commit 1e0c14f49d6b393179f423abbac47f85618d3d46
+
+Test status:
+============
+Tested with reproducer from https://bugzilla.redhat.com/show_bug.cgi?id=518034#c2
+Patched kernel survives.
+
+diff --git a/net/ipv4/udp.c b/net/ipv4/udp.c
+index 2b9f07d..d9f6108 100644
+--- a/net/ipv4/udp.c
++++ b/net/ipv4/udp.c
+@@ -672,6 +672,8 @@ do_append_data:
+ 		udp_flush_pending_frames(sk);
+ 	else if (!corkreq)
+ 		err = udp_push_pending_frames(sk, up);
++	else if (unlikely(skb_queue_empty(&sk->sk_write_queue)))
++		up->pending = 0;
+ 	release_sock(sk);
+ 
+ out:
+diff --git a/net/ipv6/udp.c b/net/ipv6/udp.c
+index f76f0a2..36d0301 100644
+--- a/net/ipv6/udp.c
++++ b/net/ipv6/udp.c
+@@ -882,6 +882,8 @@ do_append_data:
+ 		udp_v6_flush_pending_frames(sk);
+ 	else if (!corkreq)
+ 		err = udp_v6_push_pending_frames(sk, up);
++	else if (unlikely(skb_queue_empty(&sk->sk_write_queue)))
++		up->pending = 0;
+ 
+ 	if (dst) {
+ 		if (connected) {

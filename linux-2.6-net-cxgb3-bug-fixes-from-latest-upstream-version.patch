@@ -1,0 +1,367 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Sat, 22 Aug 2009 13:00:38 -0400
+Subject: [net] cxgb3: bug fixes from latest upstream version
+Message-id: <E3E4C6A0-595A-44C8-B33B-5D28FAE55128@redhat.com>
+Patchwork-id: 20776
+O-Subject: [Patch RHEL5] cxgb3 driver fixes
+Bugzilla: 510818
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+This is for bugzilla 510818.  This a smash up of 8 upstream cxgb3
+driver fixes that was just a little too late for rhel5.4.  Tested by
+Chelsio and confirmed to solve the problems (detailed info in the bug
+report), built and lightly tested by me, and built through brew.
+
+https://brewweb.devel.redhat.com/taskinfo?taskID=1940489
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+ drivers/net/cxgb3/adapter.h    |    8 +++
+ drivers/net/cxgb3/ael1002.c    |  112 +++++++++++++++++++++++++++------------
+ drivers/net/cxgb3/aq100x.c     |    7 +--
+ drivers/net/cxgb3/cxgb3_main.c |   30 ++++++++++-
+ drivers/net/cxgb3/t3_hw.c      |    2 +
+ drivers/net/cxgb3/xgmac.c      |   11 ++--
+ 6 files changed, 125 insertions(+), 45 deletions(-)
+
+diff --git a/drivers/net/cxgb3/adapter.h b/drivers/net/cxgb3/adapter.h
+index faea261..73fa98a 100644
+--- a/drivers/net/cxgb3/adapter.h
++++ b/drivers/net/cxgb3/adapter.h
+@@ -286,6 +286,14 @@ static inline struct port_info *adap2pinfo(struct adapter *adap, int idx)
+  */
+ #define dev2qset(netdev) ((netdev)->atalk_ptr)
+ 
++static inline int phy2portid(struct cphy *phy)
++{
++	struct adapter *adap = phy->adapter;
++	struct port_info *port0 = adap2pinfo(adap, 0);
++
++	return &port0->phy == phy ? 0 : 1;
++}
++
+ #define OFFLOAD_DEVMAP_BIT 15
+ 
+ #define tdev2adap(d) container_of(d, struct adapter, tdev)
+diff --git a/drivers/net/cxgb3/ael1002.c b/drivers/net/cxgb3/ael1002.c
+index e1d133b..899da03 100644
+--- a/drivers/net/cxgb3/ael1002.c
++++ b/drivers/net/cxgb3/ael1002.c
+@@ -226,12 +226,6 @@ static int ael1006_reset(struct cphy *phy, int wait)
+ 	return t3_phy_reset(phy, MDIO_DEV_PMA_PMD, wait);
+ }
+ 
+-static int ael1006_power_down(struct cphy *phy, int enable)
+-{
+-	return t3_mdio_change_bits(phy, MDIO_DEV_PMA_PMD, MII_BMCR,
+-				   BMCR_PDOWN, enable ? BMCR_PDOWN : 0);
+-}
+-
+ static struct cphy_ops ael1006_ops = {
+ 	.reset = ael1006_reset,
+ 	.intr_enable = t3_phy_lasi_intr_enable,
+@@ -239,7 +233,7 @@ static struct cphy_ops ael1006_ops = {
+ 	.intr_clear = t3_phy_lasi_intr_clear,
+ 	.intr_handler = t3_phy_lasi_intr_handler,
+ 	.get_link_status = get_link_status_r,
+-	.power_down = ael1006_power_down,
++	.power_down = ael1002_power_down,
+ };
+ 
+ int t3_ael1006_phy_prep(struct cphy *phy, struct adapter *adapter,
+@@ -1648,9 +1642,39 @@ static int ael2020_get_module_type(struct cphy *phy, int delay_ms)
+  */
+ static int ael2020_intr_enable(struct cphy *phy)
+ {
+-	int err = mdio_write(phy, MDIO_DEV_PMA_PMD, AEL2020_GPIO_CTRL,
+-			     0x2 << (AEL2020_GPIO_MODDET*4));
+-	return err ? err : t3_phy_lasi_intr_enable(phy);
++	struct reg_val regs[] = {
++		/* output Module's Loss Of Signal (LOS) to LED */
++		{ MDIO_DEV_PMA_PMD, AEL2020_GPIO_CFG+AEL2020_GPIO_LSTAT,
++			0xffff, 0x4 },
++		{ MDIO_DEV_PMA_PMD, AEL2020_GPIO_CTRL,
++			0xffff, 0x8 << (AEL2020_GPIO_LSTAT*4) },
++
++		 /* enable module detect status change interrupts */
++		{ MDIO_DEV_PMA_PMD, AEL2020_GPIO_CTRL,
++			0xffff, 0x2 << (AEL2020_GPIO_MODDET*4) },
++
++		/* end */
++		{ 0, 0, 0, 0 }
++	};
++	int err, link_ok = 0;
++
++	/* set up "link status" LED and enable module change interrupts */
++	err = set_phy_regs(phy, regs);
++	if (err)
++		return err;
++
++	err = get_link_status_r(phy, &link_ok, NULL, NULL, NULL);
++	if (err)
++		return err;
++	if (link_ok)
++		t3_link_changed(phy->adapter,
++				phy2portid(phy));
++
++	err = t3_phy_lasi_intr_enable(phy);
++	if (err)
++		return err;
++
++	return 0;
+ }
+ 
+ /*
+@@ -1658,9 +1682,26 @@ static int ael2020_intr_enable(struct cphy *phy)
+  */
+ static int ael2020_intr_disable(struct cphy *phy)
+ {
+-	int err = mdio_write(phy, MDIO_DEV_PMA_PMD, AEL2020_GPIO_CTRL,
+-			     0x1 << (AEL2020_GPIO_MODDET*4));
+-	return err ? err : t3_phy_lasi_intr_disable(phy);
++	struct reg_val regs[] = {
++		/* reset "link status" LED to "off" */
++		{ MDIO_DEV_PMA_PMD, AEL2020_GPIO_CTRL,
++			0xffff, 0xb << (AEL2020_GPIO_LSTAT*4) },
++
++		/* disable module detect status change interrupts */
++		{ MDIO_DEV_PMA_PMD, AEL2020_GPIO_CTRL,
++			0xffff, 0x1 << (AEL2020_GPIO_MODDET*4) },
++
++		/* end */
++		{ 0, 0, 0, 0 }
++	};
++	int err;
++
++	/* turn off "link status" LED and disable module change interrupts */
++	err = set_phy_regs(phy, regs);
++	if (err)
++		return err;
++
++	return t3_phy_lasi_intr_disable(phy);
+ }
+ 
+ /*
+@@ -1678,31 +1719,26 @@ static int ael2020_intr_clear(struct cphy *phy)
+ 	return err ? err : t3_phy_lasi_intr_clear(phy);
+ }
+ 
++static struct reg_val ael2020_reset_regs[] = {
++	/* Erratum #2: CDRLOL asserted, causing PMA link down status */
++	{ MDIO_DEV_PMA_PMD, 0xc003, 0xffff, 0x3101 },
++
++	/* force XAUI to send LF when RX_LOS is asserted */
++	{ MDIO_DEV_PMA_PMD, 0xcd40, 0xffff, 0x0001 },
++
++	/* allow writes to transceiver module EEPROM on i2c bus */
++	{ MDIO_DEV_PMA_PMD, 0xff02, 0xffff, 0x0023 },
++	{ MDIO_DEV_PMA_PMD, 0xff03, 0xffff, 0x0000 },
++	{ MDIO_DEV_PMA_PMD, 0xff04, 0xffff, 0x0000 },
++
++	/* end */
++	{ 0, 0, 0, 0 }
++};
+ /*
+  * Reset the PHY and put it into a canonical operating state.
+  */
+ static int ael2020_reset(struct cphy *phy, int wait)
+ {
+-	static struct reg_val regs0[] = {
+-		/* Erratum #2: CDRLOL asserted, causing PMA link down status */
+-		{ MDIO_DEV_PMA_PMD, 0xc003, 0xffff, 0x3101 },
+-
+-		/* force XAUI to send LF when RX_LOS is asserted */
+-		{ MDIO_DEV_PMA_PMD, 0xcd40, 0xffff, 0x0001 },
+-
+-		/* RX_LOS pin is active high */
+-		{ MDIO_DEV_PMA_PMD, AEL_OPT_SETTINGS,
+-			0x0020, 0x0020 },
+-
+-		/* output Module's Loss Of Signal (LOS) to LED */
+-		{ MDIO_DEV_PMA_PMD, AEL2020_GPIO_CFG+AEL2020_GPIO_LSTAT,
+-			0xffff, 0x0004 },
+-		{ MDIO_DEV_PMA_PMD, AEL2020_GPIO_CTRL,
+-			0xffff, 0x8 << (AEL2020_GPIO_LSTAT*4) },
+-
+-		/* end */
+-		{ 0, 0, 0, 0 }
+-	};
+ 	int err;
+ 	unsigned int lasi_ctrl;
+ 
+@@ -1718,7 +1754,7 @@ static int ael2020_reset(struct cphy *phy, int wait)
+ 
+ 	/* basic initialization for all module types */
+ 	phy->priv = edc_none;
+-	err = set_phy_regs(phy, regs0);
++	err = set_phy_regs(phy, ael2020_reset_regs);
+ 	if (err)
+ 		return err;
+ 
+@@ -1795,10 +1831,16 @@ static struct cphy_ops ael2020_ops = {
+ int t3_ael2020_phy_prep(struct cphy *phy, struct adapter *adapter, int phy_addr,
+ 			const struct mdio_ops *mdio_ops)
+ {
++	int err;
++
+ 	cphy_init(phy, adapter, phy_addr, &ael2020_ops, mdio_ops,
+ 		  SUPPORTED_10000baseT_Full | SUPPORTED_AUI | SUPPORTED_FIBRE |
+ 		  SUPPORTED_IRQ, "10GBASE-R");
+ 	msleep(125);
++
++	err = set_phy_regs(phy, ael2020_reset_regs);
++	if (err)
++		return err;
+ 	return 0;
+ }
+ 
+@@ -1834,7 +1876,7 @@ static struct cphy_ops qt2045_ops = {
+ 	.intr_clear = t3_phy_lasi_intr_clear,
+ 	.intr_handler = t3_phy_lasi_intr_handler,
+ 	.get_link_status = get_link_status_x,
+-	.power_down = ael1006_power_down,
++	.power_down = ael1002_power_down,
+ };
+ 
+ int t3_qt2045_phy_prep(struct cphy *phy, struct adapter *adapter,
+diff --git a/drivers/net/cxgb3/aq100x.c b/drivers/net/cxgb3/aq100x.c
+index 64a2c1f..b0efd8e 100644
+--- a/drivers/net/cxgb3/aq100x.c
++++ b/drivers/net/cxgb3/aq100x.c
+@@ -263,7 +263,8 @@ int t3_aq100x_phy_prep(struct cphy *phy, struct adapter *adapter, int phy_addr,
+ 
+ 	cphy_init(phy, adapter, phy_addr, &aq100x_ops, mdio_ops,
+ 		  SUPPORTED_1000baseT_Full | SUPPORTED_10000baseT_Full |
+-		  SUPPORTED_Autoneg | SUPPORTED_AUI, "1000/10GBASE-T");
++		  SUPPORTED_TP | SUPPORTED_Autoneg | SUPPORTED_AUI,
++		  "1000/10GBASE-T");
+ 
+ 	/*
+ 	 * The PHY has been out of reset ever since the system powered up.  So
+@@ -308,11 +309,9 @@ int t3_aq100x_phy_prep(struct cphy *phy, struct adapter *adapter, int phy_addr,
+ 
+ 	/* Firmware version check. */
+ 	(void) mdio_read(phy, MDIO_DEV_VEND1, AQ_FW_VERSION, &v);
+-	if (v != 30) {
++	if (v != 0x101)
+ 		CH_WARN(adapter, "PHY%d: unsupported firmware %d\n",
+ 			phy_addr, v);
+-		return (0); /* allow t3_prep_adapter to succeed */
+-	}
+ 
+ 	/*
+ 	 * The PHY should start in really-low-power mode.  Prepare it for normal
+diff --git a/drivers/net/cxgb3/cxgb3_main.c b/drivers/net/cxgb3/cxgb3_main.c
+index 3517f93..03a5913 100644
+--- a/drivers/net/cxgb3/cxgb3_main.c
++++ b/drivers/net/cxgb3/cxgb3_main.c
+@@ -175,6 +175,23 @@ static void link_report(struct net_device *dev)
+ 	}
+ }
+ 
++static void enable_tx_fifo_drain(struct adapter *adapter,
++				 struct port_info *pi)
++{
++	t3_set_reg_field(adapter, A_XGM_TXFIFO_CFG + pi->mac.offset, 0,
++			 F_ENDROPPKT);
++	t3_write_reg(adapter, A_XGM_RX_CTRL + pi->mac.offset, 0);
++	t3_write_reg(adapter, A_XGM_TX_CTRL + pi->mac.offset, F_TXEN);
++	t3_write_reg(adapter, A_XGM_RX_CTRL + pi->mac.offset, F_RXEN);
++}
++
++static void disable_tx_fifo_drain(struct adapter *adapter,
++				  struct port_info *pi)
++{
++	t3_set_reg_field(adapter, A_XGM_TXFIFO_CFG + pi->mac.offset,
++			 F_ENDROPPKT, 0);
++}
++
+ void t3_os_link_fault(struct adapter *adap, int port_id, int state)
+ {
+ 	struct net_device *dev = adap->port[port_id];
+@@ -188,6 +205,8 @@ void t3_os_link_fault(struct adapter *adap, int port_id, int state)
+ 
+ 		netif_carrier_on(dev);
+ 
++		disable_tx_fifo_drain(adap, pi);
++
+ 		/* Clear local faults */
+ 		t3_xgm_intr_disable(adap, pi->port_id);
+ 		t3_read_reg(adap, A_XGM_INT_STATUS +
+@@ -203,9 +222,12 @@ void t3_os_link_fault(struct adapter *adap, int port_id, int state)
+ 		t3_xgm_intr_enable(adap, pi->port_id);
+ 
+ 		t3_mac_enable(mac, MAC_DIRECTION_TX);
+-	} else
++	} else {
+ 		netif_carrier_off(dev);
+ 
++		/* Flush TX FIFO */
++		enable_tx_fifo_drain(adap, pi);
++	}
+ 	link_report(dev);
+ }
+ 
+@@ -235,6 +257,8 @@ void t3_os_link_changed(struct adapter *adapter, int port_id, int link_stat,
+ 
+ 	if (link_stat != netif_carrier_ok(dev)) {
+ 		if (link_stat) {
++			disable_tx_fifo_drain(adapter, pi);
++
+ 			t3_mac_enable(mac, MAC_DIRECTION_RX);
+ 
+ 			/* Clear local faults */
+@@ -266,6 +290,9 @@ void t3_os_link_changed(struct adapter *adapter, int port_id, int link_stat,
+ 			t3_read_reg(adapter, A_XGM_INT_STATUS + pi->mac.offset);
+ 			t3_mac_disable(mac, MAC_DIRECTION_RX);
+ 			t3_link_start(&pi->phy, mac, &pi->link_config);
++
++			/* Flush TX FIFO */
++			enable_tx_fifo_drain(adapter, pi);
+ 		}
+ 
+ 		link_report(dev);
+@@ -441,6 +468,7 @@ static int init_tp_parity(struct adapter *adap)
+ 		memset(req, 0, sizeof(*req));
+ 		req->wr.wr_hi = htonl(V_WR_OP(FW_WROPCODE_FORWARD));
+ 		OPCODE_TID(req) = htonl(MK_OPCODE_TID(CPL_SMT_WRITE_REQ, i));
++		req->mtu_idx = NMTUS - 1;
+ 		req->iff = i;
+ 		t3_mgmt_tx(adap, skb);
+ 	}
+diff --git a/drivers/net/cxgb3/t3_hw.c b/drivers/net/cxgb3/t3_hw.c
+index dc412fc..d84af30 100644
+--- a/drivers/net/cxgb3/t3_hw.c
++++ b/drivers/net/cxgb3/t3_hw.c
+@@ -3670,6 +3670,8 @@ static void mc7_prep(struct adapter *adapter, struct mc7 *mc7,
+ void mac_prep(struct cmac *mac, struct adapter *adapter, int index)
+ {
+ 	mac->adapter = adapter;
++	if (!adapter->params.vpd.xauicfg[1])
++		index = 0;
+ 	mac->offset = (XGMAC0_1_BASE_ADDR - XGMAC0_0_BASE_ADDR) * index;
+ 	mac->nucast = 1;
+ 
+diff --git a/drivers/net/cxgb3/xgmac.c b/drivers/net/cxgb3/xgmac.c
+index f87f943..0109ee4 100644
+--- a/drivers/net/cxgb3/xgmac.c
++++ b/drivers/net/cxgb3/xgmac.c
+@@ -447,11 +447,12 @@ int t3_mac_set_speed_duplex_fc(struct cmac *mac, int speed, int duplex, int fc)
+ 
+ 	val = t3_read_reg(adap, A_XGM_RXFIFO_CFG + oft);
+ 	val &= ~V_RXFIFOPAUSEHWM(M_RXFIFOPAUSEHWM);
+-	if (fc & PAUSE_TX)
+-		val |= V_RXFIFOPAUSEHWM(rx_fifo_hwm(
+-						t3_read_reg(adap,
+-						A_XGM_RX_MAX_PKT_SIZE
+-						+ oft)) / 8);
++	if (fc & PAUSE_TX) {
++		u32 rx_max_pkt_size =
++		    G_RXMAXPKTSIZE(t3_read_reg(adap,
++					       A_XGM_RX_MAX_PKT_SIZE + oft));
++		val |= V_RXFIFOPAUSEHWM(rx_fifo_hwm(rx_max_pkt_size) / 8);
++	}
+ 	t3_write_reg(adap, A_XGM_RXFIFO_CFG + oft, val);
+ 
+ 	t3_set_reg_field(adap, A_XGM_TX_CFG + oft, F_TXPAUSEEN,

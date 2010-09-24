@@ -1,0 +1,85 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Wed, 18 Nov 2009 14:04:24 -0500
+Subject: [net] qlge: fix crash with kvm guest device passthru
+Message-id: <20091118140423.18027.42665.sendpatchset@file.bos.redhat.com>
+Patchwork-id: 21413
+O-Subject: [rhel 5.5 patch] qlge - crashes RHEL5.4 KVM guest when using Device
+	Assignment
+Bugzilla: 507689
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+BZ 507689
+
+qlge - fix for KVM device pass thru.
+
+This patch fixes a crash that was occuring in an error path when
+being used in pass-thru mode for a KVM guest.
+
+The fix is to initialize a couple of pointers a few lines earlier.
+Tested at QLogic.
+
+
+diff --git a/drivers/net/qlge/qlge.h b/drivers/net/qlge/qlge.h
+index cb85fbb..9e64f6f 100644
+--- a/drivers/net/qlge/qlge.h
++++ b/drivers/net/qlge/qlge.h
+@@ -17,9 +17,9 @@
+  */
+ #define DRV_NAME	"qlge"
+ #define DRV_STRING	"QLogic 10 Gigabit PCI-E Ethernet Driver "
+-#define DRV_VERSION	"1.00.00.21"
+-#define DIS_VERSION	"2.6.16-2.6.18-p21"
+-#define REL_DATE	"090812"
++#define DRV_VERSION	"1.00.00.22"
++#define DIS_VERSION	"2.6.16-2.6.18-p22"
++#define REL_DATE	"090819"
+ 
+ #define PFX "qlge: "
+ #define QPRINTK(qdev, nlevel, klevel, fmt, args...) \
+diff --git a/drivers/net/qlge/qlge_main.c b/drivers/net/qlge/qlge_main.c
+index 3a2e108..274440f 100644
+--- a/drivers/net/qlge/qlge_main.c
++++ b/drivers/net/qlge/qlge_main.c
+@@ -4169,11 +4169,14 @@ static int __devinit ql_init_device(struct pci_dev *pdev,
+ 		return err;
+ 	}
+ 
++	qdev->ndev = ndev;
++	qdev->pdev = pdev;
++	pci_set_drvdata(pdev, ndev);
+ 	pos = pci_find_capability(pdev, PCI_CAP_ID_EXP);
+ 	if (pos <= 0) {
+ 		dev_err(&pdev->dev, PFX "Cannot find PCI Express capability, "
+ 			"aborting.\n");
+-		goto err_out;
++		return pos;
+ 	} else {
+ 		pci_read_config_word(pdev, pos + PCI_EXP_DEVCTL, &val16);
+ 		val16 &= ~PCI_EXP_DEVCTL_NOSNOOP_EN;
+@@ -4197,7 +4200,7 @@ static int __devinit ql_init_device(struct pci_dev *pdev,
+ 	err = pci_request_regions(pdev, DRV_NAME);
+ 	if (err) {
+ 		dev_err(&pdev->dev, "PCI region request failed.\n");
+-		goto err_out;
++		return err;
+ 	}
+ 
+ 	if (!pci_set_dma_mask(pdev, DMA_64BIT_MASK)) {
+@@ -4216,7 +4219,6 @@ static int __devinit ql_init_device(struct pci_dev *pdev,
+ 
+ 	pci_set_master(pdev);
+ 	pci_save_state(pdev);
+-	pci_set_drvdata(pdev, ndev);
+ 	qdev->reg_base =
+ 		ioremap_nocache(pci_resource_start(pdev, 1),
+ 				pci_resource_len(pdev, 1));
+@@ -4235,8 +4237,6 @@ static int __devinit ql_init_device(struct pci_dev *pdev,
+ 		err = -ENOMEM;
+ 		goto err_out;
+ 	}
+-	qdev->ndev = ndev;
+-	qdev->pdev = pdev;
+ 
+ 	err = ql_get_board_info(qdev);
+ 	if (err) {

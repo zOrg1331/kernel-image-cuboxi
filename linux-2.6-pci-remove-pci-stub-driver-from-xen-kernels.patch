@@ -1,0 +1,74 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Fri, 15 May 2009 11:51:18 -0400
+Subject: [pci] remove pci-stub driver from -xen kernels
+Message-id: 4A0D8F76.50902@redhat.com
+O-Subject: [RHEL5.4 PATCH] Remove pci-stub driver from -xen kernels
+Bugzilla: 500568
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+BZ 500568
+
+ From the BZ:
+
+The latest kernel-xen has the newly backported pci-stub driver built-in to the
+kernel by default.
+
+This causes a problem in handling of PCI passthrough to guest VMs, because
+libvirt sees that pci-stub is present and uses that.  XenD in RHEL-5, however,
+*requires* that pciback is used and cannot work with pci-stub. It is not even
+possible to workaround this by blacklisting the pci-stub because it was
+compiled into the kernel, not built as a module.
+
+We need to turn off pci-stub for kernel-xen builds, and only have it in
+bare-metal builds for use with KVM
+
+Removed pci-stub driver from -xen kernel by:
+(a) setting CONFIG_PCI_STUB=n in generic-xen config file
+(b) setting drivers/pci/Kconfig for PCI_STUB to depend on !XEN
+(c) adding ifndef XEN endif around pci-stub inclusion in drivers/pci/Makefile
+
+/me puts sledgehammer away.
+
+Simple build testing:
+Local build of config files in RHEL5 git tree (make rh-configs-prep)
+showed that CONFIG_PCI_STUB=y no longer in -xen config files.
+scan of non-xen-kernel config files showed CONFIG_PCI_STUB=y still there.
+Rebuilt the x86-64 xen kernel to ensure it built correctly w/o pci-stub.o
+Rebuilt the x86_64 non-xen kernel to ensure pci-stub was included in it.
+
+Please review & ack.
+
+- Don
+
+ps -- danpb: if you can test the patch with the tool set you
+       filed the bz under, that'd be appreciated.
+
+diff --git a/drivers/pci/Kconfig b/drivers/pci/Kconfig
+index bc6a162..45fd204 100644
+--- a/drivers/pci/Kconfig
++++ b/drivers/pci/Kconfig
+@@ -29,7 +29,7 @@ config PCI_DEBUG
+ 
+ config PCI_STUB
+ 	tristate "PCI Stub driver"
+-	depends on PCI
++	depends on PCI && !XEN
+ 	help
+ 	  Say Y or M here if you want be able to reserve a PCI device
+ 	  when it is going to be assigned to a guest operating system.
+diff --git a/drivers/pci/Makefile b/drivers/pci/Makefile
+index 4d24d84..c16fa95 100644
+--- a/drivers/pci/Makefile
++++ b/drivers/pci/Makefile
+@@ -49,7 +49,9 @@ ifndef CONFIG_X86
+ obj-y += syscall.o
+ endif
+ 
++ifndef CONFIG_XEN
+ obj-$(CONFIG_PCI_STUB) += pci-stub.o
++endif
+ 
+ ifeq ($(CONFIG_PCI_DEBUG),y)
+ EXTRA_CFLAGS += -DDEBUG

@@ -1,0 +1,60 @@
+From: Jiri Olsa <jolsa@redhat.com>
+Date: Wed, 8 Apr 2009 15:57:02 +0200
+Subject: [net] fixed tcp_ack to properly clear ->icsk_probes_out
+Message-id: 20090408135702.GA32047@jolsa.englab.brq.redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ494427 net - fixed tcp_ack() to properly clear ->icsk_probes_out
+Bugzilla: 494427
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Bugzilla: 494427
+https://bugzilla.redhat.com/show_bug.cgi?id=494427
+
+Description:
+============
+
+This is based upon an excellent bug report from Eric Dumazet in
+"git.kernel.org"
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=4b53fb67e385b856a991d402096379dab462170a
+
+tcp_ack() should clear ->icsk_probes_out even if there are packets
+outstanding.  Otherwise if we get a sequence of ACKs while we do have
+packets outstanding over and over again, we'll never clear the
+probes_out value and eventually think the connection is too sick and
+we'll reset it.
+
+Upstream status:
+================
+
+commit 4b53fb67e385b856a991d402096379dab462170a
+Author: David S. Miller <davem@davemloft.net>
+
+Test status of the patch:
+=========================
+
+succesfully reproduced/tested with the test program from the upstream patch
+- compiled/attached to the bug (x86_64 arch)
+
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 46b12a6..a5cb1fd 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -2558,6 +2558,7 @@ static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
+ 	 * log. Something worked...
+ 	 */
+ 	sk->sk_err_soft = 0;
++	icsk->icsk_probes_out = 0;
+ 	tp->rcv_tstamp = tcp_time_stamp;
+ 	prior_packets = tp->packets_out;
+ 	if (!prior_packets)
+@@ -2587,8 +2588,6 @@ static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
+ 	return 1;
+ 
+ no_queue:
+-	icsk->icsk_probes_out = 0;
+-
+ 	/* If this ack opens up a zero window, clear backoff.  It was
+ 	 * being used to time the probes, and is probably far higher than
+ 	 * it needs to be for normal retransmission.

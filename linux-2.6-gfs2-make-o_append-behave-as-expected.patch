@@ -1,0 +1,50 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Tue, 8 Dec 2009 13:51:47 -0500
+Subject: [gfs2] make O_APPEND behave as expected
+Message-id: <1260280307.6052.1059.camel@localhost.localdomain>
+Patchwork-id: 21743
+O-Subject: [RHEL 5.5] GFS2: Make O_APPEND behave as expected (bz #544342)
+Bugzilla: 544342
+RH-Acked-by: Abhijith Das <adas@redhat.com>
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+
+When we call generic_write_checks() it can update the file position if
+the file has been opened O_APPEND. We need to refresh the file
+position just before we do that, otherwise we can land up writing in
+the wrong place (if there has been a write from another node in the
+mean time).
+
+Of course there is still a race, but providing the writers take care
+to use some form of advisory locking, this will now behave as expected.
+
+The fixes bz #544342 and has been verified to fix the issue. There is a similar
+(but slightly different due to other changes in this area) patch queued for
+upstream inclusion.
+
+Steve.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/fs/gfs2/ops_file.c b/fs/gfs2/ops_file.c
+index 8ece581..3b8d44e 100644
+--- a/fs/gfs2/ops_file.c
++++ b/fs/gfs2/ops_file.c
+@@ -983,6 +983,18 @@ __gfs2_file_aio_write_nolock(struct kiocb *iocb, const struct iovec *iov,
+ 	current->backing_dev_info = mapping->backing_dev_info;
+ 	written = 0;
+ 
++	if (file->f_flags & O_APPEND) {
++		struct dentry *dentry = file->f_dentry;
++		struct gfs2_inode *ip = GFS2_I(dentry->d_inode);
++		struct gfs2_holder gh;
++		ssize_t ret;
++
++		ret = gfs2_glock_nq_init(ip->i_gl, LM_ST_SHARED, 0, &gh);
++		if (ret)
++			return ret;
++		gfs2_glock_dq_uninit(&gh);
++	}
++
+ 	err = generic_write_checks(file, &pos, &count, S_ISBLK(inode->i_mode));
+ 	if (err)
+ 		goto out;

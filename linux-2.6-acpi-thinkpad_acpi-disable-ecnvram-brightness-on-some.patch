@@ -1,0 +1,55 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Tue, 3 Nov 2009 14:17:52 -0500
+Subject: [acpi] thinkpad_acpi: disable ecnvram brightness on some
+Message-id: 1257275872-15570-1-git-send-email-mjg@redhat.com
+O-Subject: [PATCH] thinkpad_acpi: Disable ecnvram brightness control on Intel-based IBM machines
+Bugzilla: 522745
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Some Intel-based Thinkpads made by IBM need to use the nvram approach to
+storing brightness, rather than the hybrid nvram/EC approach used by
+default. This is a simplication of the upstream code in commit
+59fe4fe34d7afdf63208124f313be9056feaa2f4 . Bugzilla #522745.
+
+diff --git a/drivers/acpi/thinkpad_acpi.c b/drivers/acpi/thinkpad_acpi.c
+index eba93c5..a1bf850 100644
+--- a/drivers/acpi/thinkpad_acpi.c
++++ b/drivers/acpi/thinkpad_acpi.c
+@@ -4310,6 +4310,20 @@ static int __init brightness_check_levels(void)
+ 	return (ACPI_SUCCESS(status) && found_node != NULL);
+ }
+ 
++static int __init brightness_mode_quirk(void)
++{
++	switch (thinkpad_id.bios_model) {
++	case 0x5531:
++	case 0x5631:
++	case 0x5731:
++	case 0x3037:
++	case 0x3437:
++	case 0x3537:
++		return 1;
++	}
++	return 0;
++}
++
+ static int __init brightness_init(struct ibm_init_struct *iibm)
+ {
+ 	int b;
+@@ -4328,8 +4342,12 @@ static int __init brightness_init(struct ibm_init_struct *iibm)
+ 	if (!brightness_mode) {
+ 		if (thinkpad_id.vendor == PCI_VENDOR_ID_LENOVO)
+ 			brightness_mode = 2;
+-		else
+-			brightness_mode = 3;
++		else {
++			if (brightness_mode_quirk())
++				brightness_mode = 2;
++			else
++				brightness_mode = 3;
++		}
+ 
+ 		dbg_printk(TPACPI_DBG_INIT, "selected brightness_mode=%d\n",
+ 			brightness_mode);

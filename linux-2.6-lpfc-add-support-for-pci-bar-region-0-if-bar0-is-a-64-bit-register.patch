@@ -1,0 +1,65 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 16 Feb 2010 19:37:43 -0500
+Subject: lpfc: Add support for PCI BAR region 0 if BAR0 is a 64 bit register
+Message-id: <20100216193703.8604.35330.sendpatchset@localhost.localdomain>
+Patchwork-id: 23291
+O-Subject: [RHEL5.5 1/7] lpfc: Add support for PCI BAR region 0 if BAR0 is a 64
+	bit register
+Bugzilla: 564506
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=564506
+
+Add support for PCI BAR region 0 if BAR0 is a 64 bit register
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_hw4.h b/drivers/scsi/lpfc/lpfc_hw4.h
+index 970e743..034b497 100644
+--- a/drivers/scsi/lpfc/lpfc_hw4.h
++++ b/drivers/scsi/lpfc/lpfc_hw4.h
+@@ -79,10 +79,6 @@ struct lpfc_sli_intf {
+ #define LPFC_SLI_INTF_VALID		6
+ };
+ 
+-#define LPFC_SLI4_BAR0		1
+-#define LPFC_SLI4_BAR1		2
+-#define LPFC_SLI4_BAR2		4
+-
+ #define LPFC_SLI4_MBX_EMBED	true
+ #define LPFC_SLI4_MBX_NEMBED	false
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 9793f71..948eb49 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -6052,16 +6052,20 @@ lpfc_sli4_pci_mem_setup(struct lpfc_hba *phba)
+ 
+ 	/* Get the bus address of SLI4 device Bar0, Bar1, and Bar2 and the
+ 	 * number of bytes required by each mapping. They are actually
+-	 * mapping to the PCI BAR regions 1, 2, and 4 by the SLI4 device.
++	 * mapping to the PCI BAR regions 0 or 1, 2, and 4 by the SLI4 device.
+ 	 */
+-	phba->pci_bar0_map = pci_resource_start(pdev, LPFC_SLI4_BAR0);
+-	bar0map_len = pci_resource_len(pdev, LPFC_SLI4_BAR0);
+-
+-	phba->pci_bar1_map = pci_resource_start(pdev, LPFC_SLI4_BAR1);
+-	bar1map_len = pci_resource_len(pdev, LPFC_SLI4_BAR1);
++	if (pci_resource_start(pdev, 0)) {
++		phba->pci_bar0_map = pci_resource_start(pdev, 0);
++		bar0map_len = pci_resource_len(pdev, 0);
++	} else {
++		phba->pci_bar0_map = pci_resource_start(pdev, 1);
++		bar0map_len = pci_resource_len(pdev, 1);
++	}
++	phba->pci_bar1_map = pci_resource_start(pdev, 2);
++	bar1map_len = pci_resource_len(pdev, 2);
+ 
+-	phba->pci_bar2_map = pci_resource_start(pdev, LPFC_SLI4_BAR2);
+-	bar2map_len = pci_resource_len(pdev, LPFC_SLI4_BAR2);
++	phba->pci_bar2_map = pci_resource_start(pdev, 4);
++	bar2map_len = pci_resource_len(pdev, 4);
+ 
+ 	/* Map SLI4 PCI Config Space Register base to a kernel virtual addr */
+ 	phba->sli4_hba.conf_regs_memmap_p =

@@ -1,0 +1,130 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 26 Oct 2009 15:54:16 -0400
+Subject: [cifs] protect GlobalOplock_Q with its own spinlock
+Message-id: <1256572464-27293-2-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21211
+O-Subject: [RHEL5.5 PATCH 1/9] BZ#531005: cifs: protect GlobalOplock_Q with its
+	own spinlock
+Bugzilla: 531005
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+Right now, the GlobalOplock_Q is protected by the GlobalMid_Lock. That
+lock is also used for completely unrelated purposes (mostly for managing
+the global mid queue). Give the list its own dedicated spinlock
+(cifs_oplock_lock) and rename the list to cifs_oplock_list to
+eliminate the camel-case.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/cifs/cifsfs.c b/fs/cifs/cifsfs.c
+index 68ae5d8..1238996 100644
+--- a/fs/cifs/cifsfs.c
++++ b/fs/cifs/cifsfs.c
+@@ -1113,19 +1113,19 @@ static int cifs_oplock_thread(void *dummyarg)
+ 			continue;
+ #endif
+ 
+-		spin_lock(&GlobalMid_Lock);
+-		if (list_empty(&GlobalOplock_Q)) {
+-			spin_unlock(&GlobalMid_Lock);
++		spin_lock(&cifs_oplock_lock);
++		if (list_empty(&cifs_oplock_list)) {
++			spin_unlock(&cifs_oplock_lock);
+ 			set_current_state(TASK_INTERRUPTIBLE);
+ 			schedule_timeout(39*HZ);
+ 		} else {
+-			oplock_item = list_entry(GlobalOplock_Q.next,
++			oplock_item = list_entry(cifs_oplock_list.next,
+ 						struct oplock_q_entry, qhead);
+ 			cFYI(1, ("found oplock item to write out"));
+ 			pTcon = oplock_item->tcon;
+ 			inode = oplock_item->pinode;
+ 			netfid = oplock_item->netfid;
+-			spin_unlock(&GlobalMid_Lock);
++			spin_unlock(&cifs_oplock_lock);
+ 			DeleteOplockQEntry(oplock_item);
+ 			/* can not grab inode sem here since it would
+ 				deadlock when oplock received on delete
+@@ -1176,7 +1176,7 @@ init_cifs(void)
+ 	int rc = 0;
+ 	cifs_proc_init();
+ 	INIT_LIST_HEAD(&cifs_tcp_ses_list);
+-	INIT_LIST_HEAD(&GlobalOplock_Q);
++	INIT_LIST_HEAD(&cifs_oplock_list);
+ #ifdef CONFIG_CIFS_EXPERIMENTAL
+ 	INIT_LIST_HEAD(&GlobalDnotifyReqList);
+ 	INIT_LIST_HEAD(&GlobalDnotifyRsp_Q);
+@@ -1205,6 +1205,7 @@ init_cifs(void)
+ 	rwlock_init(&GlobalSMBSeslock);
+ 	rwlock_init(&cifs_tcp_ses_lock);
+ 	spin_lock_init(&GlobalMid_Lock);
++	spin_lock_init(&cifs_oplock_lock);
+ 
+ 	if (cifs_max_pending < 2) {
+ 		cifs_max_pending = 2;
+diff --git a/fs/cifs/cifsglob.h b/fs/cifs/cifsglob.h
+index 47f9e06..a2bf6aa 100644
+--- a/fs/cifs/cifsglob.h
++++ b/fs/cifs/cifsglob.h
+@@ -654,7 +654,11 @@ GLOBAL_EXTERN rwlock_t		cifs_tcp_ses_lock;
+  */
+ GLOBAL_EXTERN rwlock_t GlobalSMBSeslock;
+ 
+-GLOBAL_EXTERN struct list_head GlobalOplock_Q;
++/* Global list of oplocks */
++GLOBAL_EXTERN struct list_head cifs_oplock_list;
++
++/* Protects the cifs_oplock_list */
++GLOBAL_EXTERN spinlock_t cifs_oplock_lock;
+ 
+ /* Outstanding dir notify requests */
+ GLOBAL_EXTERN struct list_head GlobalDnotifyReqList;
+diff --git a/fs/cifs/transport.c b/fs/cifs/transport.c
+index 551c8f7..9bc5df1 100644
+--- a/fs/cifs/transport.c
++++ b/fs/cifs/transport.c
+@@ -135,20 +135,19 @@ AllocOplockQEntry(struct inode *pinode, __u16 fid, struct cifsTconInfo *tcon)
+ 		temp->pinode = pinode;
+ 		temp->tcon = tcon;
+ 		temp->netfid = fid;
+-		spin_lock(&GlobalMid_Lock);
+-		list_add_tail(&temp->qhead, &GlobalOplock_Q);
+-		spin_unlock(&GlobalMid_Lock);
++		spin_lock(&cifs_oplock_lock);
++		list_add_tail(&temp->qhead, &cifs_oplock_list);
++		spin_unlock(&cifs_oplock_lock);
+ 	}
+ 	return temp;
+-
+ }
+ 
+ void DeleteOplockQEntry(struct oplock_q_entry *oplockEntry)
+ {
+-	spin_lock(&GlobalMid_Lock);
++	spin_lock(&cifs_oplock_lock);
+     /* should we check if list empty first? */
+ 	list_del(&oplockEntry->qhead);
+-	spin_unlock(&GlobalMid_Lock);
++	spin_unlock(&cifs_oplock_lock);
+ 	kmem_cache_free(cifs_oplock_cachep, oplockEntry);
+ }
+ 
+@@ -160,14 +159,14 @@ void DeleteTconOplockQEntries(struct cifsTconInfo *tcon)
+ 	if (tcon == NULL)
+ 		return;
+ 
+-	spin_lock(&GlobalMid_Lock);
+-	list_for_each_entry(temp, &GlobalOplock_Q, qhead) {
++	spin_lock(&cifs_oplock_lock);
++	list_for_each_entry(temp, &cifs_oplock_list, qhead) {
+ 		if ((temp->tcon) && (temp->tcon == tcon)) {
+ 			list_del(&temp->qhead);
+ 			kmem_cache_free(cifs_oplock_cachep, temp);
+ 		}
+ 	}
+-	spin_unlock(&GlobalMid_Lock);
++	spin_unlock(&cifs_oplock_lock);
+ }
+ 
+ static int

@@ -1,0 +1,77 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Wed, 4 Mar 2009 11:46:25 +0100
+Subject: [misc] IO accounting: tgid accounting
+Message-id: 49AE5C01.1000303@redhat.com
+O-Subject: Re: [RHEL5.4 Patch 07/12] IO accounting: tgid accounting
+Bugzilla: 461636
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+IO accounting: tgid accounting
+
+bz461636
+
+Update the tgid accouting statistics.
+
+It's part of upstream patch 297c5d92634c809cef23d73e7b2556f2528ff7e2
+
+diff --git a/kernel/exit.c b/kernel/exit.c
+index 6878408..a292420 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -39,6 +39,7 @@
+ #include <linux/pipe_fs_i.h>
+ #include <linux/audit.h> /* for audit_free() */
+ #include <linux/resource.h>
++#include <linux/task_io_accounting_ops.h>
+ #include <trace/sched.h>
+ 
+ #include <asm/uaccess.h>
+@@ -111,6 +112,21 @@ static void __exit_signal(struct task_struct *tsk)
+ 		sig->maj_flt += tsk->maj_flt;
+ 		sig->nvcsw += tsk->nvcsw;
+ 		sig->nivcsw += tsk->nivcsw;
++		{
++			struct signal_struct_aux *aux;
++			aux = signal_aux(sig);
++			aux->rchar += tsk->rchar;
++			aux->wchar += tsk->wchar;
++			aux->syscr += tsk->syscr;
++			aux->syscw += tsk->syscw;
++#ifdef CONFIG_TASK_IO_ACCOUNTING
++			aux->ioac.read_bytes += task_aux(tsk)->ioac.read_bytes;
++			aux->ioac.write_bytes +=
++				task_aux(tsk)->ioac.write_bytes;
++			aux->ioac.cancelled_write_bytes +=
++				task_aux(tsk)->ioac.cancelled_write_bytes;
++#endif /* CONFIG_TASK_IO_ACCOUNTING */
++		}
+ 		sig->sched_time += tsk->sched_time;
+ 		sig = NULL; /* Marker for below. */
+ 	}
+@@ -1167,6 +1183,26 @@ static int wait_task_zombie(struct task_struct *p, int noreap,
+ 			p->nvcsw + sig->nvcsw + sig->cnvcsw;
+ 		psig->cnivcsw +=
+ 			p->nivcsw + sig->nivcsw + sig->cnivcsw;
++		{
++			struct signal_struct_aux *aux, *paux;
++			aux = signal_aux(sig);
++			paux = signal_aux(psig);
++			paux->rchar += p->rchar + aux->rchar;
++			paux->wchar += p->wchar + aux->wchar;
++			paux->syscr += p->syscr + aux->syscr;
++			paux->syscw += p->syscw + aux->syscw;
++#ifdef CONFIG_TASK_IO_ACCOUNTING
++			paux->ioac.read_bytes +=
++				task_aux(p)->ioac.read_bytes +
++				aux->ioac.read_bytes;
++			paux->ioac.write_bytes +=
++				task_aux(p)->ioac.write_bytes +
++				aux->ioac.write_bytes;
++			paux->ioac.cancelled_write_bytes +=
++				task_aux(p)->ioac.cancelled_write_bytes +
++				aux->ioac.cancelled_write_bytes;
++#endif /* CONFIG_TASK_IO_ACCOUNTING */
++		}
+ 		spin_unlock_irq(&p->parent->sighand->siglock);
+ 	}
+ 

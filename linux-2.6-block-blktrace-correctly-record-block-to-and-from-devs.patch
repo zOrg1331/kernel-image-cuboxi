@@ -1,0 +1,62 @@
+From: Jason Baron <jbaron@redhat.com>
+Date: Mon, 26 Oct 2009 20:12:53 -0400
+Subject: [block] blktrace: correctly record block to and from devs
+Message-id: <20091026201253.GB2641@redhat.com>
+Patchwork-id: 21235
+O-Subject: Re: [PATCH RHEL5.5 1/2] correctly record block 'to' and 'from'
+	devices (repost)
+Bugzilla: 515551
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+On Wed, Oct 21, 2009 at 04:32:18PM -0400, Jason Baron wrote:
+>
+> Record the correct 'to' and 'from' device number for block remap operation.
+>
+
+Jeff Moyer pointed out that the upstream blktrace userspace, places the
+device 'from' field *before* the device 'to' field in the remap
+structure. Thus, in order to make sure this fix also works with upstream
+blktrace packages, we should match that ordering in the kernel.
+
+Note that this also means that even if we do not apply the userspace
+blktrace patch, we will get correct blktrace output for remap.
+
+This patch replaces the previous kernel piece posted for this issue.
+Resolves bz #515551.
+
+thanks,
+
+-Jason
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/block/blktrace.c b/block/blktrace.c
+index 13f17ec..f7dc5c6 100644
+--- a/block/blktrace.c
++++ b/block/blktrace.c
+@@ -802,7 +802,8 @@ void blk_add_trace_remap(struct request_queue *q, struct bio *bio,
+ 	if (likely(!bt))
+ 		return;
+ 
+-	r.device = cpu_to_be32(dev);
++	r.device_from = cpu_to_be32(dev);
++	r.device_to = cpu_to_be32(bio->bi_bdev->bd_dev);
+ 	r.sector = cpu_to_be64(to);
+ 
+ 	__blk_add_trace(bt, from, bio->bi_size, bio->bi_rw, BLK_TA_REMAP,
+diff --git a/include/linux/blktrace_api.h b/include/linux/blktrace_api.h
+index c173e38..394dd22 100644
+--- a/include/linux/blktrace_api.h
++++ b/include/linux/blktrace_api.h
+@@ -95,8 +95,8 @@ struct blk_io_trace {
+  * The remap event
+  */
+ struct blk_io_trace_remap {
+-	__be32 device;
+-	u32 __pad;
++	__be32 device_from;
++	u32 device_to;
+ 	__be64 sector;
+ };
+ 

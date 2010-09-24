@@ -1,0 +1,96 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Tue, 1 Dec 2009 19:33:19 -0500
+Subject: [infiniband] null out skb pointers on error
+Message-id: <1259696003-21028-5-git-send-email-dledford@redhat.com>
+Patchwork-id: 21588
+O-Subject: [Patch RHEL5.5] [ipoib] Null out skb pointers on error
+Bugzilla: 531784
+
+LLNL was chasing down a very hard to track oops in the kernel and found
+that some of the skb pointers were getting reused incorrectly.  The attached
+patch solved their problem.
+
+Resolves bz531784
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/infiniband/ulp/ipoib/ipoib_cm.c b/drivers/infiniband/ulp/ipoib/ipoib_cm.c
+index 3092521..7ac607c 100644
+--- a/drivers/infiniband/ulp/ipoib/ipoib_cm.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_cm.c
+@@ -202,6 +202,7 @@ static void ipoib_cm_free_rx_ring(struct net_device *dev,
+ 			ipoib_cm_dma_unmap_rx(priv, IPOIB_CM_RX_SG - 1,
+ 					      rx_ring[i].mapping);
+ 			dev_kfree_skb_any(rx_ring[i].skb);
++			rx_ring[i].skb = NULL;
+ 		}
+ 
+ 	vfree(rx_ring);
+@@ -738,6 +739,7 @@ void ipoib_cm_send(struct net_device *dev, struct sk_buff *skb, struct ipoib_cm_
+ 	if (unlikely(ib_dma_mapping_error(priv->ca, addr))) {
+ 		++priv->stats.tx_errors;
+ 		dev_kfree_skb_any(skb);
++		tx_req->skb = NULL;
+ 		return;
+ 	}
+ 
+@@ -749,6 +751,7 @@ void ipoib_cm_send(struct net_device *dev, struct sk_buff *skb, struct ipoib_cm_
+ 		++priv->stats.tx_errors;
+ 		ib_dma_unmap_single(priv->ca, addr, skb->len, DMA_TO_DEVICE);
+ 		dev_kfree_skb_any(skb);
++		tx_req->skb = NULL;
+ 	} else {
+ 		dev->trans_start = jiffies;
+ 		++tx->tx_head;
+@@ -787,6 +790,7 @@ void ipoib_cm_handle_tx_wc(struct net_device *dev, struct ib_wc *wc)
+ 	priv->stats.tx_bytes += tx_req->skb->len;
+ 
+ 	dev_kfree_skb_any(tx_req->skb);
++	tx_req->skb = NULL;
+ 
+ 	netif_tx_lock(dev);
+ 
+@@ -1181,6 +1185,7 @@ timeout:
+ 		ib_dma_unmap_single(priv->ca, tx_req->mapping, tx_req->skb->len,
+ 				    DMA_TO_DEVICE);
+ 		dev_kfree_skb_any(tx_req->skb);
++		tx_req->skb = NULL;
+ 		++p->tx_tail;
+ 		netif_tx_lock_bh(p->dev);
+ 		if (unlikely(--priv->tx_outstanding == ipoib_sendq_size >> 1) &&
+diff --git a/drivers/infiniband/ulp/ipoib/ipoib_ib.c b/drivers/infiniband/ulp/ipoib/ipoib_ib.c
+index 2bef008..477b067 100644
+--- a/drivers/infiniband/ulp/ipoib/ipoib_ib.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_ib.c
+@@ -384,6 +384,7 @@ static void ipoib_ib_handle_tx_wc(struct net_device *dev, struct ib_wc *wc)
+ 	priv->stats.tx_bytes += tx_req->skb->len;
+ 
+ 	dev_kfree_skb_any(tx_req->skb);
++	tx_req->skb = NULL;
+ 
+ 	++priv->tx_tail;
+ 	if (unlikely(--priv->tx_outstanding == ipoib_sendq_size >> 1) &&
+@@ -576,6 +577,7 @@ void ipoib_send(struct net_device *dev, struct sk_buff *skb,
+ 	if (unlikely(ipoib_dma_map_tx(priv->ca, tx_req))) {
+ 		++priv->stats.tx_errors;
+ 		dev_kfree_skb_any(skb);
++		tx_req->skb = NULL;
+ 		return;
+ 	}
+ 
+@@ -598,6 +600,7 @@ void ipoib_send(struct net_device *dev, struct sk_buff *skb,
+ 		--priv->tx_outstanding;
+ 		ipoib_dma_unmap_tx(priv->ca, tx_req);
+ 		dev_kfree_skb_any(skb);
++		tx_req->skb = NULL;
+ 		if (netif_queue_stopped(dev))
+ 			netif_wake_queue(dev);
+ 	} else {
+@@ -861,6 +864,7 @@ int ipoib_ib_dev_stop(struct net_device *dev, int flush)
+ 							(ipoib_sendq_size - 1)];
+ 				ipoib_dma_unmap_tx(priv->ca, tx_req);
+ 				dev_kfree_skb_any(tx_req->skb);
++				tx_req->skb = NULL;
+ 				++priv->tx_tail;
+ 				--priv->tx_outstanding;
+ 			}

@@ -1,0 +1,38 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 1 Dec 2009 21:06:36 -0500
+Subject: [fs] eventfd: clean compile when CONFIG_EVENTFD=n
+Message-id: <1259701600-23508-9-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21619
+O-Subject: [RHEL5 PATCH 08/12 v2] eventfd: clean compile when CONFIG_EVENTFD=n
+Bugzilla: 493101
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Fixes bug 493101.
+
+commit d2fd89962cd5de6b1fb9c1c789b56bc16f58f121
+Author: Randy Dunlap <randy.dunlap@oracle.com>
+Date:   Wed Jun 27 14:09:48 2007 -0700
+
+    eventfd: clean compile when CONFIG_EVENTFD=n
+
+    Fix gcc warning and add parameter checking when CONFIG_EVENTFD=n:
+
+    fs/aio.c: In function 'aio_complete':
+    fs/aio.c:955: warning: statement with no effect
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/include/linux/eventfd.h b/include/linux/eventfd.h
+index 0d6ecc6..b489fc6 100644
+--- a/include/linux/eventfd.h
++++ b/include/linux/eventfd.h
+@@ -19,7 +19,8 @@ int eventfd_signal(struct file *file, int n);
+ #else /* CONFIG_EVENTFD */
+ 
+ #define eventfd_fget(fd) ERR_PTR(-ENOSYS)
+-#define eventfd_signal(f, n) 0
++static inline int eventfd_signal(struct file *file, int n)
++{ return 0; }
+ 
+ #endif /* CONFIG_EVENTFD */
+ 

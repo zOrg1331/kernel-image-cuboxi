@@ -1,0 +1,47 @@
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Wed, 2 Dec 2009 05:09:30 -0500
+Subject: [md] fix data corruption with different chunksizes
+Message-id: <Pine.LNX.4.64.0912020006560.11782@hs20-bc2-1.build.redhat.com>
+Patchwork-id: 21641
+O-Subject: [RHEL5.5 PATCH] bz210490: fix data corruption with different
+	chunksizes
+Bugzilla: 210490
+RH-Acked-by: Jonathan E Brassow <jbrassow@redhat.com>
+
+Hi
+
+This patch fixes data corruption with multiple snapshots with different
+chunksizes. The patch is simple, it just sorts snapshots according to the
+chunk size.
+
+Upstream status: in 2.6.32-rc6, 6d45d93ead319423099b82a4efd775bc0f159121
+
+Testing: the race is non-reproducible, so I ran only a simple test
+involving multiple snapshots to make sure that it didn't break anything.
+
+
+diff --git a/drivers/md/dm-snap.c b/drivers/md/dm-snap.c
+index 1d240dd..0c58db2 100644
+--- a/drivers/md/dm-snap.c
++++ b/drivers/md/dm-snap.c
+@@ -228,6 +228,7 @@ static void __insert_origin(struct origin *o)
+  */
+ static int register_snapshot(struct dm_snapshot *snap)
+ {
++	struct dm_snapshot *l;
+ 	struct origin *o;
+ 	struct block_device *bdev = snap->origin->bdev;
+ 
+@@ -249,7 +250,11 @@ static int register_snapshot(struct dm_snapshot *snap)
+ 		__insert_origin(o);
+ 	}
+ 
+-	list_add_tail(&snap->list, &o->snapshots);
++	/* Sort the list according to chunk size, largest-first smallest-last */
++	list_for_each_entry(l, &o->snapshots, list)
++		if (l->chunk_size < snap->chunk_size)
++			break;
++	list_add_tail(&snap->list, &l->list);
+ 
+ 	up_write(&_origins_lock);
+ 	return 0;

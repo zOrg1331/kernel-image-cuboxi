@@ -1,3 +1,4 @@
+bzip2: patch-2.6.18.4
 copy: *.diff
 copy: Module.kabi_*
 copy: *.mk

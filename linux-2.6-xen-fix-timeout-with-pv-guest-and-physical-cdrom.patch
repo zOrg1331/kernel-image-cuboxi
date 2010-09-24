@@ -1,0 +1,72 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Thu, 13 Aug 2009 18:00:24 +0200
+Subject: [xen] fix timeout with PV guest and physical CDROM
+Message-id: 1250179227-23431-1-git-send-email-pbonzini@redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ506899: fix timeout with PV guest and physical CDROM
+Bugzilla: 506899
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/attachment.cgi?bugid=506899
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1927355
+
+Upstream: http://xenbits.xensource.com/linux-2.6.18-xen.hg?rev=909
+
+Specifying a physical CDROM in the configuration of a PV guest, like
+
+    disk = ['tap:aio:/....,xvda,w', 'phy:/dev/cdrom,hdc:cdrom,r' ]
+
+will cause the 300 seconds timeout to occur if there is no physical CDROM
+in the tray.  The bug is due to the device being Closed (as shown by the
+timeout message) but not ready.  The configuration is quite bogus, but
+this is a regression and the fix is easy and safe: only check is_ready
+for connected devices.
+
+Tested by me.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+diff --git a/drivers/xen/xenbus/xenbus_probe.c b/drivers/xen/xenbus/xenbus_probe.c
+index cb98b21..ba02690 100644
+--- a/drivers/xen/xenbus/xenbus_probe.c
++++ b/drivers/xen/xenbus/xenbus_probe.c
+@@ -1222,7 +1222,7 @@ int xenbus_init(void)
+ }
+ #endif
+ 
+-static int is_disconnected_device(struct device *dev, void *data)
++static int is_device_connecting(struct device *dev, void *data)
+ {
+ 	struct xenbus_device *xendev = to_xenbus_device(dev);
+ 	struct device_driver *drv = data;
+@@ -1241,16 +1241,17 @@ static int is_disconnected_device(struct device *dev, void *data)
+ 
+ 	xendrv = to_xenbus_driver(dev->driver);
+ 	return (xendev->state < XenbusStateConnected ||
+-		(xendrv->is_ready && !xendrv->is_ready(xendev)));
++		(xendev->state == XenbusStateConnected &&
++		 xendrv->is_ready && !xendrv->is_ready(xendev)));
+ }
+ 
+-static int exists_disconnected_device(struct device_driver *drv)
++static int exists_connecting_device(struct device_driver *drv)
+ {
+         if (xenbus_frontend.error)
+                 return xenbus_frontend.error;
+ 
+ 	return bus_for_each_dev(&xenbus_frontend.bus, NULL, drv,
+-				is_disconnected_device);
++				is_device_connecting);
+ }
+ 
+ static int print_device_status(struct device *dev, void *data)
+@@ -1304,7 +1305,7 @@ static void wait_for_devices(struct xenbus_driver *xendrv)
+ 	if (!ready_to_wait_for_devices || !is_running_on_xen())
+ 		return;
+ 
+-	while (exists_disconnected_device(drv)) {
++	while (exists_connecting_device(drv)) {
+ 		if (time_after(jiffies, start + (seconds_waited+5)*HZ)) {
+ 			if (!seconds_waited)
+ 				printk(KERN_WARNING "XENBUS: Waiting for "

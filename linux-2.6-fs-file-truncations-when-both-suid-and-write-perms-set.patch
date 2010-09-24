@@ -1,0 +1,110 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Thu, 24 Sep 2009 06:59:02 -0400
+Subject: [fs] file truncations when both suid and write perms set
+Message-id: 20090924110136.4972.18547.sendpatchset@localhost.localdomain
+O-Subject: [PATCH RHEL5.x] fix file truncations when both suid and write permissions set
+Bugzilla: 486975
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+BZ:
+https://bugzilla.redhat.com/show_bug.cgi?id=486975
+
+Description:
+When suid is set and the non-owner user has write permission,
+any writing into this file should be allowed and suid should be
+removed after that.
+
+However, current kernel only allows writing without truncations,
+when we do truncations on that file, we get EPERM. This is a bug.
+
+Steps to reproduce this bug:
+
+% ls -l rootdir/file1
+-rwsrwsrwx 1 root root 3 Jun 25 15:42 rootdir/file1
+% echo h > rootdir/file1
+zsh: operation not permitted: rootdir/file1
+% ls -l rootdir/file1
+-rwsrwsrwx 1 root root 3 Jun 25 15:42 rootdir/file1
+% echo h >> rootdir/file1
+% ls -l rootdir/file1
+-rwxrwxrwx 1 root root 5 Jun 25 16:34 rootdir/file1
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2003283
+
+KABI:
+No harm.
+
+Upstream status:
+Commit  939a9421eb53d3ea83188ae13802779041caefdb and
+bc6a6008e5e3c7a30191a7f19ab19e85b14b1705.
+
+Test status:
+I have tested it on x86_64, it fixes the problem.
+
+Signed-off-by: WANG Cong <amwang@redhat.com>
+
+--
+
+diff --git a/fs/open.c b/fs/open.c
+index 29b1947..c4e6a09 100644
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -201,7 +201,7 @@ out:
+ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
+ 	struct file *filp)
+ {
+-	int err;
++	int ret;
+ 	struct iattr newattrs;
+ 
+ 	/* Not pretty: "inode->i_size" shouldn't really be signed. But it is. */
+@@ -216,12 +216,14 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
+ 	}
+ 
+ 	/* Remove suid/sgid on truncate too */
+-	newattrs.ia_valid |= should_remove_suid(dentry);
++	ret = should_remove_suid(dentry);
++	if (ret)
++		newattrs.ia_valid |= ret | ATTR_FORCE;
+ 
+ 	mutex_lock(&dentry->d_inode->i_mutex);
+-	err = notify_change(dentry, &newattrs);
++	ret = notify_change(dentry, &newattrs);
+ 	mutex_unlock(&dentry->d_inode->i_mutex);
+-	return err;
++	return ret;
+ }
+ 
+ static long do_sys_truncate(const char __user * path, loff_t length)
+diff --git a/security/selinux/hooks.c b/security/selinux/hooks.c
+index b20d2d1..2af7bca 100644
+--- a/security/selinux/hooks.c
++++ b/security/selinux/hooks.c
+@@ -2375,16 +2375,22 @@ static int selinux_inode_permission(struct inode *inode, int mask,
+ static int selinux_inode_setattr(struct dentry *dentry, struct iattr *iattr)
+ {
+ 	int rc;
++	unsigned int ia_valid = iattr->ia_valid;
+ 
+ 	rc = secondary_ops->inode_setattr(dentry, iattr);
+ 	if (rc)
+ 		return rc;
+ 
+-	if (iattr->ia_valid & ATTR_FORCE)
+-		return 0;
++	/* ATTR_FORCE is just used for ATTR_KILL_S[UG]ID. */
++	if (ia_valid & ATTR_FORCE) {
++		ia_valid &= ~(ATTR_KILL_SUID | ATTR_KILL_SGID | ATTR_MODE |
++				ATTR_FORCE);
++		if (!ia_valid)
++			return 0;
++	}
+ 
+-	if (iattr->ia_valid & (ATTR_MODE | ATTR_UID | ATTR_GID |
+-			       ATTR_ATIME_SET | ATTR_MTIME_SET))
++	if (ia_valid & (ATTR_MODE | ATTR_UID | ATTR_GID |
++			ATTR_ATIME_SET | ATTR_MTIME_SET))
+ 		return dentry_has_perm(current, NULL, dentry, FILE__SETATTR);
+ 
+ 	return dentry_has_perm(current, NULL, dentry, FILE__WRITE);

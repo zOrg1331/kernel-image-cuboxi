@@ -1,0 +1,88 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 10 Nov 2009 19:55:12 -0500
+Subject: [gfs2] drop rindex glock on grows
+Message-id: <20091110195512.GD6831@ether.msp.redhat.com>
+Patchwork-id: 21356
+O-Subject: [RHEL5.5 PATCH] BZ482756 GFS2: drop rindex glock on grows
+Bugzilla: 482756
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+
+When a gfs2 filesystem is grown, it needs to rebuild the rindex list to be able
+to use the new space.  This is supposed to happen when the rindex glock is
+dropped, but the code to do it is in meta_go_inval() instead of
+inode_go_inval(), and is never called. Also, on a single-node setup, there is
+never any reason to drop the rindex glock, so gfs2 never invalidates the
+rindex. This patch moves the rindex invalidating code to inode_go_inval, and
+makes gfs2 automatically drop the rindex glock after filesystem grows, so it
+can refresh the rindex list.
+
+This patch has been submitted upstream, and tested in single-node and cluster
+mode on my x86_64 cluster.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+
+diff --git a/fs/gfs2/glops.c b/fs/gfs2/glops.c
+index 7db872a..45151d4 100644
+--- a/fs/gfs2/glops.c
++++ b/fs/gfs2/glops.c
+@@ -152,9 +152,7 @@ static void meta_go_inval(struct gfs2_glock *gl, int flags)
+ 		return;
+ 
+ 	gfs2_meta_inval(gl);
+-	if (gl->gl_object == GFS2_I(gl->gl_sbd->sd_rindex))
+-		gl->gl_sbd->sd_rindex_uptodate = 0;
+-	else if (gl->gl_ops == &gfs2_rgrp_glops && gl->gl_object) {
++	if (gl->gl_ops == &gfs2_rgrp_glops && gl->gl_object) {
+ 		struct gfs2_rgrpd *rgd = (struct gfs2_rgrpd *)gl->gl_object;
+ 
+ 		rgd->rd_flags &= ~GFS2_RDF_UPTODATE;
+@@ -217,6 +215,8 @@ static void inode_go_inval(struct gfs2_glock *gl, int flags)
+ 			set_bit(GIF_INVALID, &ip->i_flags);
+ 	}
+ 
++	if (gl->gl_object == GFS2_I(gl->gl_sbd->sd_rindex))
++		gl->gl_sbd->sd_rindex_uptodate = 0;
+ 	if (ip && S_ISREG(ip->i_inode.i_mode))
+ 		truncate_inode_pages(ip->i_inode.i_mapping, 0);
+ }
+diff --git a/fs/gfs2/ops_address.c b/fs/gfs2/ops_address.c
+index 81c5393..28ab192 100644
+--- a/fs/gfs2/ops_address.c
++++ b/fs/gfs2/ops_address.c
+@@ -877,8 +877,10 @@ static int gfs2_stuffed_write_end(struct inode *inode, struct buffer_head *dibh,
+ 		mark_inode_dirty(inode);
+ 	}
+ 
+-	if (inode == sdp->sd_rindex)
++	if (inode == sdp->sd_rindex){
+ 		adjust_fs_space(inode);
++		ip->i_gh.gh_flags |= GL_NOCACHE;
++	}
+ 
+ 	brelse(dibh);
+ 	gfs2_trans_end(sdp);
+@@ -947,8 +949,10 @@ int gfs2_write_end(struct file *file, struct address_space *mapping,
+ 		mark_inode_dirty(inode);
+ 	}
+ 
+-	if (inode == sdp->sd_rindex)
++	if (inode == sdp->sd_rindex) {
+ 		adjust_fs_space(inode);
++		ip->i_gh.gh_flags |= GL_NOCACHE;
++	}
+ 
+ 	brelse(dibh);
+ 	gfs2_trans_end(sdp);
+@@ -1088,8 +1092,10 @@ static int gfs2_commit_write(struct file *file, struct page *page,
+ 		di->di_size = cpu_to_be64(inode->i_size);
+ 	}
+ 
+-	if (inode == sdp->sd_rindex)
++	if (inode == sdp->sd_rindex) {
+ 		adjust_fs_space(inode);
++		ip->i_gh.gh_flags |= GL_NOCACHE;
++	}
+ 
+ 	brelse(dibh);
+ 	gfs2_trans_end(sdp);

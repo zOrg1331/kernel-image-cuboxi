@@ -1,0 +1,46 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Thu, 2 Apr 2009 08:46:10 -0600
+Subject: [pci] enhance pci_ari_enabled
+Message-id: 200904021446.n32EkA2Q017128@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 7/17] BZ493152: Backport: PCI: enhance pci_ari_enabled()
+Bugzilla: 493152
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+Upstream status: commit 6a49d8120021897e139641062236215aac5d220e
+    Author: Yu Zhao <yu.zhao@intel.com>
+    Date:   Sat Nov 22 02:38:21 2008 +0800
+
+    PCI: enhance pci_ari_enabled()
+
+    Change parameter of pci_ari_enabled() from 'pci_dev' to 'pci_bus'.
+
+    ARI forwarding on the bridge mostly concerns the subordinate devices
+    rather than the bridge itself. So this change will make the function
+    easier to use.
+
+    Signed-off-by: Yu Zhao <yu.zhao@intel.com>
+    Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index 13e86ca..2f41a9d 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -104,11 +104,11 @@ extern int __pci_read_base(struct pci_dev *dev, enum pci_bar_type type,
+ extern void pci_enable_ari(struct pci_dev *dev);
+ /**
+  * pci_ari_enabled - query ARI forwarding status
+- * @dev: the PCI device
++ * @bus: the PCI bus
+  *
+  * Returns 1 if ARI forwarding is enabled, or 0 if not enabled;
+  */
+-static inline int pci_ari_enabled(struct pci_dev *dev)
++static inline int pci_ari_enabled(struct pci_bus *bus)
+ {
+-	return dev->ari_enabled;
++	return bus->self && bus->self->ari_enabled;
+ }

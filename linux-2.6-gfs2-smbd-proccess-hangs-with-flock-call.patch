@@ -1,0 +1,35 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Tue, 9 Jun 2009 17:54:05 -0500
+Subject: [gfs2] smbd proccess hangs with flock call
+Message-id: 4A2EE80D.8000208@redhat.com
+O-Subject: [RHEL 5.5 PATCH][GFS2] - Bug 502531 - GFS2: smbd proccess hangs with flock() call.
+Bugzilla: 502531
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+GFS2's flock behavior is undefined (probably erroneous) with
+LOCK_MAND+(LOCK_READ or LOCK_WRITE) causing smbd to hang. This triggers
+when the inode in question doesn't have the proper S_ISGID and S_IXGRP
+mode settings.
+
+This patch removes the check against S_ISGID and S_IXGRP bits of the
+inode->i_mode and
+directly checks for LOCK_MAND in fl->fl_type.
+
+Signed-off-by: Abhijith Das <adas@redhat.com>
+
+diff --git a/fs/gfs2/ops_file.c b/fs/gfs2/ops_file.c
+index 2add8e2..8ece581 100644
+--- a/fs/gfs2/ops_file.c
++++ b/fs/gfs2/ops_file.c
+@@ -792,8 +792,8 @@ static int gfs2_flock(struct file *file, int cmd, struct file_lock *fl)
+ 
+ 	if (!(fl->fl_flags & FL_FLOCK))
+ 		return -ENOLCK;
+-	if ((ip->i_inode.i_mode & (S_ISGID | S_IXGRP)) == S_ISGID)
+-		return -ENOLCK;
++	if (fl->fl_type & LOCK_MAND)
++		return -EOPNOTSUPP;
+ 
+ 	if (fl->fl_type == F_UNLCK) {
+ 		do_unflock(file, fl);

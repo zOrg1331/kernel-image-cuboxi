@@ -1,0 +1,40 @@
+diff -up ./kernel/hung_task.c.hungtsk ./kernel/hung_task.c
+--- ./kernel/hung_task.c.hungtsk	2010-04-09 13:50:55.000000000 +0400
++++ ./kernel/hung_task.c	2010-04-14 19:58:31.000000000 +0400
+@@ -27,12 +27,12 @@ unsigned long __read_mostly sysctl_hung_
+  * is disabled during the critical section. It also controls the size of
+  * the RCU grace period. So it needs to be upper-bound.
+  */
+-#define HUNG_TASK_BATCHING 1024
++#define HUNG_TASK_BATCHING 512
+ 
+ /*
+  * Zero means infinite timeout - no checking done:
+  */
+-unsigned long __read_mostly sysctl_hung_task_timeout_secs = 120;
++unsigned long __read_mostly sysctl_hung_task_timeout_secs = 300;
+ 
+ unsigned long __read_mostly sysctl_hung_task_warnings = 10;
+ 
+@@ -142,17 +142,19 @@ static void check_hung_uninterruptible_t
+ 		return;
+ 
+ 	rcu_read_lock();
+-	do_each_thread(g, t) {
++	do_each_thread_all(g, t) {
+ 		if (!--max_count)
+ 			goto unlock;
+ 		if (!--batch_count) {
+ 			batch_count = HUNG_TASK_BATCHING;
+ 			rcu_lock_break(g, t);
++			if (t->exit_state || g->exit_state)
++				goto unlock;
+ 		}
+ 		/* use "==" to skip the TASK_KILLABLE tasks waiting on NFS */
+ 		if (t->state == TASK_UNINTERRUPTIBLE)
+ 			check_hung_task(t, timeout);
+-	} while_each_thread(g, t);
++	} while_each_thread_all(g, t);
+  unlock:
+ 	rcu_read_unlock();
+ }

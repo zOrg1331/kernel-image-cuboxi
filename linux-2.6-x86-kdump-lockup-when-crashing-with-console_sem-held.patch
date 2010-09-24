@@ -1,0 +1,76 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Fri, 17 Oct 2008 11:18:52 -0400
+Subject: [x86] kdump: lockup when crashing with console_sem held
+Message-id: 20081017151852.GP3178@hmsendeavour.rdu.redhat.com
+O-Subject: Re: [RHEL 5.4 PATCH] fix lockup in kdump when crashing with console_sem held (bz 456934)
+Bugzilla: 456934
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+On Fri, Oct 17, 2008 at 11:17:36AM -0400, Neil Horman wrote:
+> Hey-
+> 	NEC reported a bug in which they were able to hang a crashing kernel
+> prior to kdump starting a second kernel if they timed a pressing of the nmi
+> button on their i386 systems just right.  We analyzed the problem to be in the
+> die_nmi function.  On i386 we bust spinlocks while in that function (which lest
+> us print to the console regardless of the state of the console_sem). We only
+> call crash_kexec after we call call bust_spinlocks again, re-enabling
+> console_sem functionality.  Teh pracitcal offshot of this is that if we oops
+> while the console_sem is held, kexec will deadlock if it tries to print anyting
+> during shutdown (which it invariably does).  The simple fix is to keep the
+> console_sem busted until after we call crash_kexec in die_nmi.  This brings us
+> into line with how x86_64 handles the situation.  It still needs to go upstream,
+> but I'll send it there shortly.
+>
+> Regards
+> Neil
+>
+
+Helps if I attach the patch :)
+
+diff --git a/arch/i386/kernel/traps-xen.c b/arch/i386/kernel/traps-xen.c
+index 3613af6..446f37a 100644
+--- a/arch/i386/kernel/traps-xen.c
++++ b/arch/i386/kernel/traps-xen.c
+@@ -771,8 +771,6 @@ void die_nmi (struct pt_regs *regs, const char *msg)
+ 	show_registers(regs);
+ 	printk(KERN_EMERG "console shuts up ...\n");
+ 	console_silent();
+-	spin_unlock(&nmi_print_lock);
+-	bust_spinlocks(0);
+ 
+ 	/* If we are in kernel we are probably nested up pretty bad
+ 	 * and might aswell get out now while we still can.
+@@ -782,6 +780,9 @@ void die_nmi (struct pt_regs *regs, const char *msg)
+ 		crash_kexec(regs);
+ 	}
+ 
++	bust_spinlocks(0);
++	spin_unlock(&nmi_print_lock);
++
+ 	do_exit(SIGSEGV);
+ }
+ 
+diff --git a/arch/i386/kernel/traps.c b/arch/i386/kernel/traps.c
+index e0ab3a1..f2ffcd1 100644
+--- a/arch/i386/kernel/traps.c
++++ b/arch/i386/kernel/traps.c
+@@ -794,8 +794,6 @@ void die_nmi (struct pt_regs *regs, const char *msg)
+ 		smp_processor_id(), regs->eip);
+ 	show_registers(regs);
+ 	console_silent();
+-	spin_unlock(&nmi_print_lock);
+-	bust_spinlocks(0);
+ 
+ 	/* If we are in kernel we are probably nested up pretty bad
+ 	 * and might aswell get out now while we still can.
+@@ -805,6 +803,9 @@ void die_nmi (struct pt_regs *regs, const char *msg)
+ 		crash_kexec(regs);
+ 	}
+ 
++	bust_spinlocks(0);
++	spin_unlock(&nmi_print_lock);
++
+ 	do_exit(SIGSEGV);
+ }
+ 

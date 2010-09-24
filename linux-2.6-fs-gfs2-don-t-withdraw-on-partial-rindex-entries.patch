@@ -1,0 +1,41 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 2 Feb 2010 03:48:40 -0500
+Subject: [fs] gfs2: don't withdraw on partial rindex entries
+Message-id: <20100202034840.GM17440@ether.msp.redhat.com>
+Patchwork-id: 23084
+O-Subject: [RHEL5.5 PATCH V3] BZ553447 GFS2: Don't withdraw on partial rindex
+	entries
+Bugzilla: 553447
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+
+Since gfs2 writes the rindex file a block at a time, and releases the
+exclusive lock after each block, it is possible that another process
+will grab the lock in the middle of the write.  Since rindex entries are
+not an even divisor of blocks, that other process may see partial
+entries.  On grows, this is fine.  The process can simply ignore the the
+partial entires. Previously, the code withdrew when it saw partial
+entries. Now it simply calculates the number of whole entries, and
+ignores the partitial entries.
+
+This patch is already upstream.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index 43805af..9940ca3 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -586,11 +586,7 @@ static int gfs2_ri_update(struct gfs2_inode *ip)
+ 	u64 rgrp_count = ip->i_disksize;
+ 	int error;
+ 
+-	if (do_div(rgrp_count, sizeof(struct gfs2_rindex))) {
+-		gfs2_consist_inode(ip);
+-		return -EIO;
+-	}
+-
++	do_div(rgrp_count, sizeof(struct gfs2_rindex));
+ 	clear_rgrpdi(sdp);
+ 
+ 	file_ra_state_init(&ra_state, inode->i_mapping);

@@ -1,0 +1,39 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 26 Oct 2009 15:54:20 -0400
+Subject: [cifs] remove cifsInodeInfo.oplockPending flag
+Message-id: <1256572464-27293-6-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21215
+O-Subject: [RHEL5.5 PATCH 5/9] BZ#531005: cifs: remove
+	cifsInodeInfo.oplockPending flag
+Bugzilla: 531005
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+It's set on oplock break but nothing ever looks at it.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/cifs/cifsglob.h b/fs/cifs/cifsglob.h
+index 9cee987..bd1e0c0 100644
+--- a/fs/cifs/cifsglob.h
++++ b/fs/cifs/cifsglob.h
+@@ -393,7 +393,6 @@ struct cifsInodeInfo {
+ 	unsigned long time;	/* jiffies of last update/check of inode */
+ 	bool clientCanCacheRead:1;	/* read oplock */
+ 	bool clientCanCacheAll:1;	/* read and writebehind oplock */
+-	bool oplockPending:1;
+ 	bool delete_pending:1;		/* DELETE_ON_CLOSE is set */
+ 	u64  server_eof;		/* current file size on server */
+ 	struct inode vfs_inode;
+diff --git a/fs/cifs/misc.c b/fs/cifs/misc.c
+index 7dd16a6..2ed92d0 100644
+--- a/fs/cifs/misc.c
++++ b/fs/cifs/misc.c
+@@ -601,7 +601,6 @@ is_valid_oplock_break(struct smb_hdr *buf, struct TCP_Server_Info *srv)
+ 				pCifsInode->clientCanCacheAll = false;
+ 				if (pSMB->OplockLevel == 0)
+ 					pCifsInode->clientCanCacheRead = false;
+-				pCifsInode->oplockPending = true;
+ 				AllocOplockQEntry(netfile->pInode,
+ 						  netfile->netfid, tcon);
+ 				cFYI(1, ("about to wake up oplock thread"));

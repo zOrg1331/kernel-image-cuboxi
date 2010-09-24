@@ -1,0 +1,476 @@
+From: Bob Peterson <rpeterso@redhat.com>
+Date: Fri, 20 Feb 2009 13:40:19 -0500
+Subject: [gfs2] parsing of remount arguments incorrect
+Message-id: 822485349.234801235155219665.JavaMail.root@zmail02.collab.prod.int.phx2.redhat.com
+O-Subject: Re: [RHEL5.4 PATCH - Take 2] bz 479401 - GFS2: Parsing of remount arguments incorrect
+Bugzilla: 479401
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+Hi,
+
+This patch is revised to implement Steve's suggestion.. That is,
+to move match_strlcpy to lib/parser.c where it belongs upstream.
+
+Original comment:
+This is a RHEL5 port of an upstream patch that fixes some of gfs2's
+mount option parsing code.  It was (re-)tested on system roth-01.
+
+Regards,
+
+Bob Peterson
+Red Hat GFS/GFS2
+--
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+
+diff --git a/fs/gfs2/mount.c b/fs/gfs2/mount.c
+index df48333..9b53ca5 100644
+--- a/fs/gfs2/mount.c
++++ b/fs/gfs2/mount.c
+@@ -17,7 +17,7 @@
+ 
+ #include "gfs2.h"
+ #include "incore.h"
+-#include "mount.h"
++#include "super.h"
+ #include "sys.h"
+ #include "util.h"
+ 
+@@ -79,110 +79,46 @@ static match_table_t tokens = {
+  * Return: errno
+  */
+ 
+-int gfs2_mount_args(struct gfs2_sbd *sdp, char *data_arg, int remount)
++int gfs2_mount_args(struct gfs2_sbd *sdp, struct gfs2_args *args, char *options)
+ {
+-	struct gfs2_args *args = &sdp->sd_args;
+-	char *data = data_arg;
+-	char *options, *o, *v;
+-	int error = 0;
+-
+-	if (!remount) {
+-		/*  If someone preloaded options, use those instead  */
+-		spin_lock(&gfs2_sys_margs_lock);
+-		if (gfs2_sys_margs) {
+-			data = gfs2_sys_margs;
+-			gfs2_sys_margs = NULL;
+-		}
+-		spin_unlock(&gfs2_sys_margs_lock);
+-
+-		/*  Set some defaults  */
+-		args->ar_num_glockd = GFS2_GLOCKD_DEFAULT;
+-		args->ar_quota = GFS2_QUOTA_DEFAULT;
+-		args->ar_data = GFS2_DATA_DEFAULT;
+-	}
++	char *o;
++	int token;
++	substring_t tmp[MAX_OPT_ARGS];
+ 
+ 	/* Split the options into tokens with the "," character and
+ 	   process them */
+ 
+-	for (options = data; (o = strsep(&options, ",")); ) {
+-		int token, option;
+-		substring_t tmp[MAX_OPT_ARGS];
+-
+-		if (!*o)
++	while(1) {
++		o = strsep(&options, ",");
++		if (o == NULL)
++			break;
++		if (*o == '\0')
+ 			continue;
+ 
+ 		token = match_token(o, tokens, tmp);
+ 		switch (token) {
+ 		case Opt_lockproto:
+-			v = match_strdup(&tmp[0]);
+-			if (!v) {
+-				fs_info(sdp, "no memory for lockproto\n");
+-				error = -ENOMEM;
+-				goto out_error;
+-			}
+-
+-			if (remount && strcmp(v, args->ar_lockproto)) {
+-				kfree(v);
+-				goto cant_remount;
+-			}
+-			
+-			strncpy(args->ar_lockproto, v, GFS2_LOCKNAME_LEN);
+-			args->ar_lockproto[GFS2_LOCKNAME_LEN - 1] = 0;
+-			kfree(v);
++			match_strlcpy(args->ar_lockproto, &tmp[0],
++				      GFS2_LOCKNAME_LEN);
+ 			break;
+ 		case Opt_locktable:
+-			v = match_strdup(&tmp[0]);
+-			if (!v) {
+-				fs_info(sdp, "no memory for locktable\n");
+-				error = -ENOMEM;
+-				goto out_error;
+-			}
+-
+-			if (remount && strcmp(v, args->ar_locktable)) {
+-				kfree(v);
+-				goto cant_remount;
+-			}
+-
+-			strncpy(args->ar_locktable, v, GFS2_LOCKNAME_LEN);
+-			args->ar_locktable[GFS2_LOCKNAME_LEN - 1]  = 0;
+-			kfree(v);
++			match_strlcpy(args->ar_locktable, &tmp[0],
++				      GFS2_LOCKNAME_LEN);
+ 			break;
+ 		case Opt_hostdata:
+-			v = match_strdup(&tmp[0]);
+-			if (!v) {
+-				fs_info(sdp, "no memory for hostdata\n");
+-				error = -ENOMEM;
+-				goto out_error;
+-			}
+-
+-			if (remount && strcmp(v, args->ar_hostdata)) {
+-				kfree(v);
+-				goto cant_remount;
+-			}
+-
+-			strncpy(args->ar_hostdata, v, GFS2_LOCKNAME_LEN);
+-			args->ar_hostdata[GFS2_LOCKNAME_LEN - 1] = 0;
+-			kfree(v);
++			match_strlcpy(args->ar_hostdata, &tmp[0],
++				      GFS2_LOCKNAME_LEN);
+ 			break;
+ 		case Opt_spectator:
+-			if (remount && !args->ar_spectator)
+-				goto cant_remount;
+ 			args->ar_spectator = 1;
+-			sdp->sd_vfs->s_flags |= MS_RDONLY;
+ 			break;
+ 		case Opt_ignore_local_fs:
+-			if (remount && !args->ar_ignore_local_fs)
+-				goto cant_remount;
+ 			args->ar_ignore_local_fs = 1;
+ 			break;
+ 		case Opt_localflocks:
+-			if (remount && !args->ar_localflocks)
+-				goto cant_remount;
+ 			args->ar_localflocks = 1;
+ 			break;
+ 		case Opt_localcaching:
+-			if (remount && !args->ar_localcaching)
+-				goto cant_remount;
+ 			args->ar_localcaching = 1;
+ 			break;
+ 		case Opt_debug:
+@@ -192,33 +128,15 @@ int gfs2_mount_args(struct gfs2_sbd *sdp, char *data_arg, int remount)
+ 			args->ar_debug = 0;
+ 			break;
+ 		case Opt_upgrade:
+-			if (remount && !args->ar_upgrade)
+-				goto cant_remount;
+ 			args->ar_upgrade = 1;
+ 			break;
+-		case Opt_num_glockd:
+-			if ((error = match_int(&tmp[0], &option))) {
+-				fs_info(sdp, "problem getting num_glockd\n");
+-				goto out_error;
+-			}
+-
+-			if (remount && option != args->ar_num_glockd)
+-				goto cant_remount;
+-			if (!option || option > GFS2_GLOCKD_MAX) {
+-				fs_info(sdp, "0 < num_glockd <= %u  (not %u)\n",
+-				        GFS2_GLOCKD_MAX, option);
+-				error = -EINVAL;
+-				goto out_error;
+-			}
+-			args->ar_num_glockd = option;
++		case Opt_num_glockd: /* Ignored */
+ 			break;
+ 		case Opt_acl:
+ 			args->ar_posix_acl = 1;
+-			sdp->sd_vfs->s_flags |= MS_POSIXACL;
+ 			break;
+ 		case Opt_noacl:
+ 			args->ar_posix_acl = 0;
+-			sdp->sd_vfs->s_flags &= ~MS_POSIXACL;
+ 			break;
+ 		case Opt_quota_off:
+ 			args->ar_quota = GFS2_QUOTA_OFF;
+@@ -242,29 +160,15 @@ int gfs2_mount_args(struct gfs2_sbd *sdp, char *data_arg, int remount)
+ 			args->ar_data = GFS2_DATA_ORDERED;
+ 			break;
+ 		case Opt_meta:
+-			if (remount && args->ar_meta != 1)
+-				goto cant_remount;
+ 			args->ar_meta = 1;
+ 			break;
+ 		case Opt_err:
+ 		default:
+-			fs_info(sdp, "unknown option: %s\n", o);
+-			error = -EINVAL;
+-			goto out_error;
++			fs_info(sdp, "invalid mount option: %s\n", o);
++			return -EINVAL;
+ 		}
+ 	}
+ 
+-out_error:
+-	if (error)
+-		fs_info(sdp, "invalid mount option(s)\n");
+-
+-	if (data != data_arg)
+-		kfree(data);
+-
+-	return error;
+-
+-cant_remount:
+-	fs_info(sdp, "can't remount with option %s\n", o);
+-	return -EINVAL;
++	return 0;
+ }
+ 
+diff --git a/fs/gfs2/mount.h b/fs/gfs2/mount.h
+index 401288a..e69de29 100644
+--- a/fs/gfs2/mount.h
++++ b/fs/gfs2/mount.h
+@@ -1,17 +0,0 @@
+-/*
+- * Copyright (C) Sistina Software, Inc.  1997-2003 All rights reserved.
+- * Copyright (C) 2004-2006 Red Hat, Inc.  All rights reserved.
+- *
+- * This copyrighted material is made available to anyone wishing to use,
+- * modify, copy, or redistribute it subject to the terms and conditions
+- * of the GNU General Public License version 2.
+- */
+-
+-#ifndef __MOUNT_DOT_H__
+-#define __MOUNT_DOT_H__
+-
+-struct gfs2_sbd;
+-
+-int gfs2_mount_args(struct gfs2_sbd *sdp, char *data_arg, int remount);
+-
+-#endif /* __MOUNT_DOT_H__ */
+diff --git a/fs/gfs2/ops_fstype.c b/fs/gfs2/ops_fstype.c
+index eaf887b..5d276e3 100644
+--- a/fs/gfs2/ops_fstype.c
++++ b/fs/gfs2/ops_fstype.c
+@@ -27,7 +27,6 @@
+ #include "glops.h"
+ #include "inode.h"
+ #include "lm.h"
+-#include "mount.h"
+ #include "ops_fstype.h"
+ #include "ops_super.h"
+ #include "recovery.h"
+@@ -1010,12 +1009,20 @@ static int fill_super(struct super_block *sb, void *data, int silent)
+ 		return -ENOMEM;
+ 	}
+ 
+-	error = gfs2_mount_args(sdp, (char *)data, 0);
++	sdp->sd_args.ar_quota = GFS2_QUOTA_DEFAULT;
++	sdp->sd_args.ar_data = GFS2_DATA_DEFAULT;
++
++	error = gfs2_mount_args(sdp, &sdp->sd_args, data);
+ 	if (error) {
+ 		printk(KERN_WARNING "GFS2: can't parse mount arguments\n");
+ 		goto fail;
+ 	}
+ 
++	if (sdp->sd_args.ar_spectator)
++                sb->s_flags |= MS_RDONLY;
++	if (sdp->sd_args.ar_posix_acl)
++		sb->s_flags |= MS_POSIXACL;
++
+ 	sb->s_magic = GFS2_MAGIC;
+ 	sb->s_op = &gfs2_super_ops;
+ 	sb->s_export_op = &gfs2_export_ops;
+diff --git a/fs/gfs2/ops_super.c b/fs/gfs2/ops_super.c
+index 90ce859..cb6ada2 100644
+--- a/fs/gfs2/ops_super.c
++++ b/fs/gfs2/ops_super.c
+@@ -28,7 +28,6 @@
+ #include "inode.h"
+ #include "lm.h"
+ #include "log.h"
+-#include "mount.h"
+ #include "ops_super.h"
+ #include "quota.h"
+ #include "recovery.h"
+@@ -42,6 +41,8 @@
+ #include "bmap.h"
+ #include "meta_io.h"
+ 
++#define args_neq(a1, a2, x) ((a1)->ar_##x != (a2)->ar_##x)
++
+ /**
+  * gfs2_write_inode - Make sure the inode is stable on the disk
+  * @inode: The inode
+@@ -305,28 +306,47 @@ static int gfs2_statfs(struct dentry *dentry, struct kstatfs *buf)
+ static int gfs2_remount_fs(struct super_block *sb, int *flags, char *data)
+ {
+ 	struct gfs2_sbd *sdp = sb->s_fs_info;
++	struct gfs2_args args = sdp->sd_args; /* Default to current settings */
+ 	int error;
+ 
+-	error = gfs2_mount_args(sdp, data, 1);
++	error = gfs2_mount_args(sdp, &args, data);
+ 	if (error)
+ 		return error;
+ 
++	/* Not allowed to change locking details */
++	if (strcmp(args.ar_lockproto, sdp->sd_args.ar_lockproto) ||
++	    strcmp(args.ar_locktable, sdp->sd_args.ar_locktable) ||
++	    strcmp(args.ar_hostdata, sdp->sd_args.ar_hostdata))
++		return -EINVAL;
++
++	/* Some flags must not be changed */
++	if (args_neq(&args, &sdp->sd_args, spectator) ||
++	    args_neq(&args, &sdp->sd_args, ignore_local_fs) ||
++	    args_neq(&args, &sdp->sd_args, localflocks) ||
++	    args_neq(&args, &sdp->sd_args, localcaching) ||
++	    args_neq(&args, &sdp->sd_args, meta))
++		return -EINVAL;
++
+ 	if (sdp->sd_args.ar_spectator)
+ 		*flags |= MS_RDONLY;
+-	else {
+-		if (*flags & MS_RDONLY) {
+-			if (!(sb->s_flags & MS_RDONLY))
+-				error = gfs2_make_fs_ro(sdp);
+-		} else if (!(*flags & MS_RDONLY) &&
+-			   (sb->s_flags & MS_RDONLY)) {
++
++	if ((sb->s_flags ^ *flags) & MS_RDONLY) {
++		if (*flags & MS_RDONLY)
++			error = gfs2_make_fs_ro(sdp);
++		else
+ 			error = gfs2_make_fs_rw(sdp);
+-		}
++		if (error)
++			return error;
+ 	}
+ 
++	sdp->sd_args = args;
++	if (sdp->sd_args.ar_posix_acl)
++		sb->s_flags |= MS_POSIXACL;
++	else
++		sb->s_flags &= ~MS_POSIXACL;
+         /* Indicate support for setlease fop */
+         *flags |= MS_HAS_SETLEASE;
+-
+-	return error;
++	return 0;
+ }
+ 
+ /**
+diff --git a/fs/gfs2/super.h b/fs/gfs2/super.h
+index 100066e..4e57310 100644
+--- a/fs/gfs2/super.h
++++ b/fs/gfs2/super.h
+@@ -21,28 +21,30 @@ static inline unsigned int gfs2_jindex_size(struct gfs2_sbd *sdp)
+ 	return x;
+ }
+ 
+-int gfs2_jindex_hold(struct gfs2_sbd *sdp, struct gfs2_holder *ji_gh);
+-void gfs2_jindex_free(struct gfs2_sbd *sdp);
++extern int gfs2_jindex_hold(struct gfs2_sbd *sdp, struct gfs2_holder *ji_gh);
++extern void gfs2_jindex_free(struct gfs2_sbd *sdp);
+ 
+-struct gfs2_jdesc *gfs2_jdesc_find(struct gfs2_sbd *sdp, unsigned int jid);
+-void gfs2_jdesc_make_dirty(struct gfs2_sbd *sdp, unsigned int jid);
+-struct gfs2_jdesc *gfs2_jdesc_find_dirty(struct gfs2_sbd *sdp);
+-int gfs2_jdesc_check(struct gfs2_jdesc *jd);
++extern int gfs2_mount_args(struct gfs2_sbd *sdp, struct gfs2_args *args, char *data);
+ 
+-int gfs2_lookup_in_master_dir(struct gfs2_sbd *sdp, char *filename,
+-			      struct gfs2_inode **ipp);
++extern struct gfs2_jdesc *gfs2_jdesc_find(struct gfs2_sbd *sdp, unsigned int jid);
++extern void gfs2_jdesc_make_dirty(struct gfs2_sbd *sdp, unsigned int jid);
++extern struct gfs2_jdesc *gfs2_jdesc_find_dirty(struct gfs2_sbd *sdp);
++extern int gfs2_jdesc_check(struct gfs2_jdesc *jd);
+ 
+-int gfs2_make_fs_rw(struct gfs2_sbd *sdp);
++extern int gfs2_lookup_in_master_dir(struct gfs2_sbd *sdp, char *filename,
++				     struct gfs2_inode **ipp);
+ 
+-int gfs2_statfs_init(struct gfs2_sbd *sdp);
+-void gfs2_statfs_change(struct gfs2_sbd *sdp,
++extern int gfs2_make_fs_rw(struct gfs2_sbd *sdp);
++
++extern int gfs2_statfs_init(struct gfs2_sbd *sdp);
++extern void gfs2_statfs_change(struct gfs2_sbd *sdp,
+ 			s64 total, s64 free, s64 dinodes);
+-int gfs2_statfs_sync(struct gfs2_sbd *sdp);
+-int gfs2_statfs_i(struct gfs2_sbd *sdp, struct gfs2_statfs_change_host *sc);
+-int gfs2_statfs_slow(struct gfs2_sbd *sdp, struct gfs2_statfs_change_host *sc);
++extern int gfs2_statfs_sync(struct gfs2_sbd *sdp);
++extern int gfs2_statfs_i(struct gfs2_sbd *sdp, struct gfs2_statfs_change_host *sc);
++extern int gfs2_statfs_slow(struct gfs2_sbd *sdp, struct gfs2_statfs_change_host *sc);
+ 
+-int gfs2_freeze_fs(struct gfs2_sbd *sdp);
+-void gfs2_unfreeze_fs(struct gfs2_sbd *sdp);
++extern int gfs2_freeze_fs(struct gfs2_sbd *sdp);
++extern void gfs2_unfreeze_fs(struct gfs2_sbd *sdp);
+ 
+ #endif /* __SUPER_DOT_H__ */
+ 
+diff --git a/include/linux/parser.h b/include/linux/parser.h
+index fa33328..9dd7b37 100644
+--- a/include/linux/parser.h
++++ b/include/linux/parser.h
+@@ -7,6 +7,7 @@
+  * parsing is required.
+  */
+ 
++#include <linux/types.h>
+ 
+ /* associates an integer enumerator with a pattern string. */
+ struct match_token {
+@@ -29,5 +30,6 @@ int match_token(char *, match_table_t table, substring_t args[]);
+ int match_int(substring_t *, int *result);
+ int match_octal(substring_t *, int *result);
+ int match_hex(substring_t *, int *result);
++size_t match_strlcpy(char *, const substring_t *, size_t);
+ void match_strcpy(char *, substring_t *);
+ char *match_strdup(substring_t *);
+diff --git a/lib/parser.c b/lib/parser.c
+index 7ad2a48..cfa02e4 100644
+--- a/lib/parser.c
++++ b/lib/parser.c
+@@ -182,6 +182,28 @@ int match_hex(substring_t *s, int *result)
+ }
+ 
+ /**
++ * match_strlcpy: - Copy the characters from a substring_t to a sized buffer
++ * @dest: where to copy to
++ * @src: &substring_t to copy
++ * @size: size of destination buffer
++ *
++ * Description: Copy the characters in &substring_t @src to the
++ * c-style string @dest.  Copy no more than @size - 1 characters, plus
++ * the terminating NUL.  Return length of @src.
++ */
++size_t match_strlcpy(char *dest, const substring_t *src, size_t size)
++{
++	size_t ret = src->to - src->from;
++
++	if (size) {
++		size_t len = ret >= size ? size - 1 : ret;
++		memcpy(dest, src->from, len);
++		dest[len] = '\0';
++	}
++	return ret;
++}
++
++/**
+  * match_strcpy: - copies the characters from a substring_t to a string
+  * @to: string to copy characters to.
+  * @s: &substring_t to copy
+@@ -216,5 +238,6 @@ EXPORT_SYMBOL(match_token);
+ EXPORT_SYMBOL(match_int);
+ EXPORT_SYMBOL(match_octal);
+ EXPORT_SYMBOL(match_hex);
++EXPORT_SYMBOL(match_strlcpy);
+ EXPORT_SYMBOL(match_strcpy);
+ EXPORT_SYMBOL(match_strdup);

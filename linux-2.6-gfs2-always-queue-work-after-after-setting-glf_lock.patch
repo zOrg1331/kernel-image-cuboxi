@@ -1,0 +1,76 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 22 Jun 2009 19:56:21 -0500
+Subject: [gfs2] always queue work after after setting GLF_LOCK
+Message-id: 20090623005621.GE3172@ether.msp.redhat.com
+O-Subject: [RHEL-5.4 PATCH] BZ#506140 gfs2: Always queue work after after setting GLF_LOCK
+Bugzilla: 506140
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+When GFS2 decides whether to remove a glock from its cache, it locks the
+GLF_LOCK gl_flags bit.  GFS2 assumes that any process who locks this bit
+will either process the outstanding work on the glock, or schedule the
+glock_workqueue to do it later.  This wasn't happening for glocks that
+were getting checked, but weren't getting remove from the cache, causing
+gfs2 to hang with processes waiting to acquire locks, but nothing
+scheduled to actually grant them the lock.This patch fixes this.
+
+It is a trivial RHEL5 port of a fix that is scheduled to go upstream.
+However, since Steve Whitehouse is on vacation, it is not actually
+upstream yet.
+
+This patch has been tested on the BIGI performance test bed, and fixes
+that filesystem hang that was being seen with specsfs.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index 60b60a5..cbeb0c1 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -1420,7 +1420,6 @@ static int gfs2_shrink_glock_memory(int nr, gfp_t gfp_mask)
+ 	struct gfs2_glock *gl;
+ 	int may_demote;
+ 	int nr_skipped = 0;
+-	int got_ref = 0;
+ 	LIST_HEAD(skipped);
+ 
+ 	if (nr == 0)
+@@ -1438,7 +1437,6 @@ static int gfs2_shrink_glock_memory(int nr, gfp_t gfp_mask)
+ 		/* Test for being demotable */
+ 		if (!test_and_set_bit(GLF_LOCK, &gl->gl_flags)) {
+ 			gfs2_glock_hold(gl);
+-			got_ref = 1;
+ 			spin_unlock(&lru_lock);
+ 			spin_lock(&gl->gl_spin);
+ 			may_demote = demote_ok(gl);
+@@ -1447,25 +1445,14 @@ static int gfs2_shrink_glock_memory(int nr, gfp_t gfp_mask)
+ 			if (may_demote) {
+ 				handle_callback(gl, LM_ST_UNLOCKED, 0);
+ 				nr--;
+-				if (queue_delayed_work(glock_workqueue, &gl->gl_work, 0) == 0)
+-					gfs2_glock_put(gl);
+-				got_ref = 0;
+ 			}
++			if (queue_delayed_work(glock_workqueue, &gl->gl_work, 0) == 0)
++				gfs2_glock_put(gl);
+ 			spin_lock(&lru_lock);
+-			if (may_demote)
+-				continue;
+-		}
+-		if (list_empty(&gl->gl_lru) &&
+-		    (atomic_read(&gl->gl_ref) <= (2 + got_ref))) {
+-			nr_skipped++;
+-			list_add(&gl->gl_lru, &skipped);
+-		}
+-		if (got_ref) {
+-			spin_unlock(&lru_lock);
+-			gfs2_glock_put(gl);
+-			spin_lock(&lru_lock);
+-			got_ref = 0;
++			continue;
+ 		}
++		nr_skipped++;
++		list_add(&gl->gl_lru, &skipped);
+ 	}
+ 	list_splice(&skipped, &lru_list);
+ 	atomic_add(nr_skipped, &lru_count);

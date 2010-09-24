@@ -1,0 +1,86 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Thu, 12 Mar 2009 13:09:58 +0100
+Subject: [ide] increase timeouts in wait_drive_not_busy
+Message-id: 20090312130958.0cdff6a2@dhcp-lab-109.englab.brq.redhat.com
+O-Subject: [RHEL5.4 PATCH] BZ464039: Timeouts in wait_drive_not_busy with TEAC DV-W28ECW and similar
+Bugzilla: 464039
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+BZ#464039
+=========
+https://bugzilla.redhat.com/show_bug.cgi?id=464039
+
+Description:
+============
+Some TEAC drives take a long time to return to non-Busy status
+following an IDENTIFY command (>=6ms), causing following messages to be
+logged:
+
+08:20:36 hex kernel: hda: irq timeout: status=0xd0 { Busy }
+08:20:36 hex kernel: hda: irq timeout: error=0x00
+08:20:36 hex kernel: hda: ATAPI reset complete
+08:20:36 hex kernel: VFS: busy inodes on changed media
+
+Patch increase timeout to 10ms and change the logic a bit
+to fix never called printk statement.
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+====
+https://brewweb.devel.redhat.com/taskinfo?taskID=1722443
+
+Upstream Status:
+===============
+This patch is a backport of changes from:
+
+b42fa133110fa952299fa76cbe91226c14838261
+f54feafa6d47d0aa1a96adefdc763b708b02f94f
+
+Test Status:
+============
+That the patch fix bug was already tested by IT:
+https://enterprise.redhat.com/issue-tracker/?module=issues&action=view&tid=197920
+
+I tested it against other breakage, just reading
+cat /proc/ide/driver/identify and doing other
+operations on cd.
+
+diff --git a/drivers/ide/ide-taskfile.c b/drivers/ide/ide-taskfile.c
+index 97a9244..480bf23 100644
+--- a/drivers/ide/ide-taskfile.c
++++ b/drivers/ide/ide-taskfile.c
+@@ -238,18 +238,21 @@ EXPORT_SYMBOL(task_no_data_intr);
+ static u8 wait_drive_not_busy(ide_drive_t *drive)
+ {
+ 	ide_hwif_t *hwif = HWIF(drive);
+-	int retries = 100;
++	int retries;
+ 	u8 stat;
+ 
+ 	/*
+-	 * Last sector was transfered, wait until drive is ready.
+-	 * This can take up to 10 usec, but we will wait max 1 ms
+-	 * (drive_cmd_intr() waits that long).
++	 * Last sector was transfered, wait until device is ready.  This can
++	 * take up to 6 ms on some ATAPI devices, so we will wait max 10 ms.
+ 	 */
+-	while (((stat = hwif->INB(IDE_STATUS_REG)) & BUSY_STAT) && retries--)
+-		udelay(10);
++	for (retries = 0; retries < 1000; retries++) {
++		if ((stat = hwif->INB(IDE_STATUS_REG)) & BUSY_STAT)
++			udelay(10);
++		else
++			break;
++	}
+ 
+-	if (!retries)
++	if (stat & BUSY_STAT)
+ 		printk(KERN_ERR "%s: drive still BUSY!\n", drive->name);
+ 
+ 	return stat;

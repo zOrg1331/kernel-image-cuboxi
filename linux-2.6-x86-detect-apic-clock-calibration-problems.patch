@@ -1,0 +1,420 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 20 Aug 2009 08:16:18 -0400
+Subject: [x86] detect APIC clock calibration problems
+Message-id: 4A8D3E92.8080408@redhat.com
+O-Subject: Re: [RHEL5.5 PATCH]: Detect APIC clock calibration problems
+Bugzilla: 503957
+
+commit 79792ece139c499d9a9133138851401f0c4faa64
+Author: Prarit Bhargava <prarit@redhat.com>
+Date:   Wed Jul 1 08:42:54 2009 -0400
+
+    Fix APIC calibrations.  In the past it has been noted
+    that extraneous events (SMI or other interrupt floods) can
+    effect the APIC timer calibration.
+
+    This patch introduces checks to see if a flood has occurred
+    and if it has, return an error warning to the console.  Note
+    that the boot continues (as it has in the past) -- only a
+    warning is output.
+
+    Successfully tested by me.
+
+    Resolves BZ 503957.
+
+New patch for RHEL5.5.
+
+The customer reviewed my previous patch and pointed out a glaringly obvious
+error in the 32-bit code.
+
+Reworked the patch so the i386 code now does a calibration similar to that
+of x86_64.  Unfortunately this causes a lot of code change, but it was the
+only way to resolve the SMI calibration issue in 32-bit.  The x86_64 code has
+remained the same.
+
+Difference in calibration values is minimal -- the old calibration yielded
+a bus clock speed of 332.0498 MHz.  The new calibration returns a result of
+332.0512 Mhz on a tested system.  Results across various systems returned
+similar results.
+
+Compiled and tested across various x86 32 and 64 bit systems.
+
+Resolves BZ 503957.
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 1760931..43512d0 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -266,6 +266,10 @@ running once the system is up.
+ 			Change the amount of debugging information output
+ 			when initialising the APIC and IO-APIC components.
+ 
++	apiccalibrationiters=
++			[APIC,i386, x86_64] Number of iterations during APIC
++			calibration.  Default is 10.
++
+ 	apm=		[APM] Advanced Power Management
+ 			See header of arch/i386/kernel/apm.c.
+ 
+diff --git a/arch/i386/kernel/apic.c b/arch/i386/kernel/apic.c
+index 2ffaa50..5dc606e 100644
+--- a/arch/i386/kernel/apic.c
++++ b/arch/i386/kernel/apic.c
+@@ -1007,6 +1007,28 @@ static void __devinit setup_APIC_timer(unsigned int clocks)
+ 	local_irq_restore(flags);
+ }
+ 
++int apic_calibration_iters __initdata = 10;
++#define MAX_DIFFERENCE 1000ULL
++
++static inline int __init
++__read_tsc_and_apic(unsigned long long *tsc, long *apic)
++{
++	unsigned long long tsc0, tsc1, diff;
++	int i = 0;
++
++	do {
++		rdtsc_barrier();
++		rdtscll(tsc0);
++		*apic = apic_read(APIC_TMCCT);
++		rdtsc_barrier();
++		rdtscll(tsc1);
++		diff = tsc1 - tsc0;
++	} while (diff > MAX_DIFFERENCE && ++i < apic_calibration_iters);
++
++	*tsc = tsc0 + (diff >> 1);
++	return diff > MAX_DIFFERENCE ? -EIO : 0;
++}
++
+ /*
+  * In this function we calibrate APIC bus clocks to the external
+  * timer. Unfortunately we cannot use jiffies and the timer irq
+@@ -1020,12 +1042,15 @@ static void __devinit setup_APIC_timer(unsigned int clocks)
+  * APIC irq that way.
+  */
+ 
++#define TICK_COUNT 100000000
++
+ static int __init calibrate_APIC_clock(void)
+ {
+ 	unsigned long long t1 = 0, t2 = 0;
+ 	long tt1, tt2;
+ 	long result;
+-	int i;
++	long long result2;
++	int i, err = 0, err_start = 0;
+ 	const int LOOPS = REAL_HZ/10;
+ 
+ 	apic_printk(APIC_VERBOSE, "calibrating APIC timer ...\n");
+@@ -1048,50 +1073,78 @@ static int __init calibrate_APIC_clock(void)
+ 	/*
+ 	 * We wrapped around just now. Let's start:
+ 	 */
+-	if (cpu_has_tsc)
+-		rdtscll(t1);
+-	tt1 = apic_read(APIC_TMCCT);
++	if (!cpu_has_tsc) {
++		/*
++		 * these systems are so old that it is unlikely that SMI
++		 * is even implemented.  Use the old calibration method.
++		 */
++		tt1 = apic_read(APIC_TMCCT);
+ 
+-	/*
+-	 * Let's wait LOOPS wraprounds:
+-	 */
+-	for (i = 0; i < LOOPS; i++)
+-		wait_timer_tick();
++		/*
++		 * Let's wait LOOPS wraprounds:
++		 */
++		for (i = 0; i < LOOPS; i++)
++			wait_timer_tick();
+ 
+-	tt2 = apic_read(APIC_TMCCT);
+-	if (cpu_has_tsc)
+-		rdtscll(t2);
++		tt2 = apic_read(APIC_TMCCT);
+ 
+-	/*
+-	 * The APIC bus clock counter is 32 bits only, it
+-	 * might have overflown, but note that we use signed
+-	 * longs, thus no extra care needed.
+-	 *
+-	 * underflown to be exact, as the timer counts down ;)
+-	 */
++		/*
++		 * The APIC bus clock counter is 32 bits only, it
++		 * might have overflown, but note that we use signed
++		 * longs, thus no extra care needed.
++		 *
++		 * underflown to be exact, as the timer counts down ;)
++		 */
++
++		result = (tt1-tt2)*APIC_DIVISOR/LOOPS;
++
++		apic_printk(APIC_VERBOSE, "..... host bus clock speed is "
++			    "%ld.%04ld MHz.\n",
++			    result/(1000000/REAL_HZ),
++			    result%(1000000/REAL_HZ));
++	} else {
++		err_start = __read_tsc_and_apic(&t1, &tt1);
+ 
+-	result = (tt1-tt2)*APIC_DIVISOR/LOOPS;
++		do {
++			err = __read_tsc_and_apic(&t2, &tt2);
++		} while ((t2 - t1) < TICK_COUNT &&
++			 (tt1 - tt2) < TICK_COUNT);
+ 
+-	if (cpu_has_tsc)
++		if (err_start || err)
++			printk(KERN_CRIT "WARNING calibrate_APIC_clock: "
++			       "the APIC timer calibration may be wrong.\n");
++
++		result2 = (tt1 - tt2) * 1000LL * tsc_khz * APIC_DIVISOR;
++		do_div(result2, (t2 - t1));
++		result = (long)result2 / REAL_HZ;
++
++		/* this is an informational message.*/
+ 		apic_printk(APIC_VERBOSE, "..... CPU clock speed is "
+-			"%ld.%04ld MHz.\n",
+-			((long)(t2-t1)/LOOPS)/(1000000/REAL_HZ),
+-			((long)(t2-t1)/LOOPS)%(1000000/REAL_HZ));
++			    "%ld.%04ld MHz.\n",
++			    ((long)cpu_khz/REAL_HZ),
++			    ((long)cpu_khz%REAL_HZ));
+ 
+-	apic_printk(APIC_VERBOSE, "..... host bus clock speed is "
+-		"%ld.%04ld MHz.\n",
+-		result/(1000000/REAL_HZ),
+-		result%(1000000/REAL_HZ));
++		apic_printk(APIC_VERBOSE, "..... host bus clock speed is "
++			    "%ld.%04ld MHz.\n",
++			    result/REAL_HZ, result%REAL_HZ);
++	}
+ 
+ 	return result;
+ }
+ 
++static __init int setup_apiccalibrationiters(char *str)
++{
++	get_option(&str, &apic_calibration_iters);
++	return 1;
++}
++__setup("apiccalibrationiters=", setup_apiccalibrationiters);
++
+ static unsigned int calibration_result;
+ 
+ void __init setup_boot_APIC_clock(void)
+ {
+ 	unsigned long flags;
+-	apic_printk(APIC_VERBOSE, "Using local APIC timer interrupts.\n");
++	printk("Using local APIC timer interrupts.\n");
+ 	using_apic_timer = 1;
+ 
+ 	local_irq_save(flags);
+diff --git a/arch/x86_64/kernel/apic.c b/arch/x86_64/kernel/apic.c
+index 343dbbb..940f365 100644
+--- a/arch/x86_64/kernel/apic.c
++++ b/arch/x86_64/kernel/apic.c
+@@ -41,6 +41,7 @@
+ int apic_verbosity;
+ int apic_runs_main_timer;
+ int apic_calibrate_pmtmr __initdata;
++int apic_calibration_iters __initdata = 10;
+ 
+ int disable_apic_timer __initdata;
+ 
+@@ -761,6 +762,33 @@ static void setup_APIC_timer(unsigned int clocks)
+ 	local_irq_restore(flags);
+ }
+ 
++ /*
++ * Helper function for calibrate_APIC_clock(): Make sure that
++ * APIC TMCTT and TSC are read at the same time, to reasonable
++ * accuracy. On any sane system, the retry loop won't need more
++ * than a single retry, given that the rdtsc/apic_read/rdtsc
++ * sequence won't take more than a few cycles.
++ */
++#define MAX_DIFFERENCE 1000UL
++static inline int __init
++__read_tsc_and_apic(unsigned long *tsc, unsigned int *apic)
++{
++	unsigned long tsc0, tsc1, diff;
++	int i = 0;
++
++	do {
++		rdtsc_barrier();
++		rdtscll(tsc0);
++		*apic = apic_read(APIC_TMCCT);
++		rdtsc_barrier();
++		rdtscll(tsc1);
++		diff = tsc1 - tsc0;
++	} while (diff > MAX_DIFFERENCE && ++i < apic_calibration_iters);
++
++	*tsc = tsc0 + (diff >> 1);
++	return diff > MAX_DIFFERENCE ? -EIO : 0;
++}
++
+ /*
+  * In this function we calibrate APIC bus clocks to the external
+  * timer. Unfortunately we cannot use jiffies and the timer irq
+@@ -778,8 +806,9 @@ static void setup_APIC_timer(unsigned int clocks)
+ 
+ static int __init calibrate_APIC_clock(void)
+ {
+-	int apic, apic_start, tsc, tsc_start;
+-	int result;
++	unsigned int apic, apic_start;
++	unsigned long tsc, tsc_start;
++	int result, err_start, err;
+ 	/*
+ 	 * Put whatever arbitrary (but long enough) timeout
+ 	 * value into the APIC clock, we just want to get the
+@@ -787,28 +816,30 @@ static int __init calibrate_APIC_clock(void)
+ 	 */
+ 	__setup_APIC_LVTT(0xffffffff);
+ 
+-	apic_start = apic_read(APIC_TMCCT);
+ #ifdef CONFIG_X86_PM_TIMER
+ 	if (apic_calibrate_pmtmr && pmtmr_ioport) {
+-		pmtimer_wait(5000);  /* 5ms wait */
+-		apic = apic_read(APIC_TMCCT);
+-		result = (apic_start - apic) * 1000L / 5;
++		int tries = apic_calibration_iters;
++		result = pmtimer_calibrate_apic(5000, &tries) * 1000L / 5;
++		if (!tries)
++			printk(KERN_CRIT "WARNING calibrate_APIC_clock: "
++			       "the APIC timer calibration may be wrong.\n");
+ 	} else
+ #endif
+ 	{
+-		rdtscl(tsc_start);
++		err_start = __read_tsc_and_apic(&tsc_start, &apic_start);
+ 
+ 		do {
+-			apic = apic_read(APIC_TMCCT);
+-			rdtscl(tsc);
++			err = __read_tsc_and_apic(&tsc, &apic);
+ 		} while ((tsc - tsc_start) < TICK_COUNT &&
+-				(apic - apic_start) < TICK_COUNT);
++				(apic_start - apic) < TICK_COUNT);
++
++		if (err_start || err)
++			printk(KERN_CRIT "WARNING calibrate_APIC_clock: "
++			       "the APIC timer calibration may be wrong.\n");
+ 
+ 		result = (apic_start - apic) * 1000L * tsc_khz /
+ 					(tsc - tsc_start);
+ 	}
+-	printk("result %d\n", result);
+-
+ 
+ 	printk(KERN_INFO "Detected %d.%03d MHz APIC timer.\n",
+ 		result / 1000 / 1000, result / 1000 % 1000);
+@@ -1205,6 +1236,13 @@ static __init int setup_apicpmtimer(char *s)
+ }
+ __setup("apicpmtimer", setup_apicpmtimer);
+ 
++static __init int setup_apiccalibrationiters(char *str)
++{
++	get_option(&str, &apic_calibration_iters);
++	return 1;
++}
++__setup("apiccalibrationiters=", setup_apiccalibrationiters);
++
+ /* dummy parsing: see setup.c */
+ 
+ __setup("disableapic", setup_disableapic); 
+diff --git a/arch/x86_64/kernel/pmtimer.c b/arch/x86_64/kernel/pmtimer.c
+index b9712ce..c234193 100644
+--- a/arch/x86_64/kernel/pmtimer.c
++++ b/arch/x86_64/kernel/pmtimer.c
+@@ -23,6 +23,8 @@
+ #include <asm/proto.h>
+ #include <asm/msr.h>
+ #include <asm/vsyscall.h>
++#include <asm/apicdef.h>
++#include <asm/apic.h>
+ 
+ /* The I/O port the PMTMR resides at.
+  * The location is detected during setup_arch(),
+@@ -101,6 +103,30 @@ void pmtimer_wait(unsigned us)
+ 	} while (cyc2us(b - a) < us);
+ }
+ 
++int pmtimer_calibrate_apic(unsigned us, int *tries)
++{
++	u32 a, b;
++	unsigned int apic = 0, apic_start = 0;
++
++	while(*tries) {
++		apic_start = apic_read(APIC_TMCCT);
++		a = pmtimer_wait_tick();
++		do {
++			b = inl(pmtmr_ioport);
++			cpu_relax();
++		} while (cyc2us(b - a) < us);
++		apic = apic_read(APIC_TMCCT);
++		b = inl(pmtmr_ioport);
++
++		/* if wait is longer that ~10% of expected time, try again */
++		if ((cyc2us(b - a)) < (us + (us >> 3)))
++			break;
++		(*tries)--;
++	}
++
++	return (apic_start - apic);
++}
++
+ void pmtimer_resume(void)
+ {
+ 	last_pmtmr_tick = inl(pmtmr_ioport);
+diff --git a/include/asm-i386/cpufeature.h b/include/asm-i386/cpufeature.h
+index ab09612..6c0e3b2 100644
+--- a/include/asm-i386/cpufeature.h
++++ b/include/asm-i386/cpufeature.h
+@@ -74,6 +74,8 @@
+ #define X86_FEATURE_FXSAVE_LEAK (3*32+10) /* FXSAVE leaks FOP/FIP/FOP */
+ #define X86_FEATURE_ARCH_PERFMON (3*32+11) /* Intel Architectural PerfMon */
+ #define X86_FEATURE_IDA		(3*32+16) /* Intel Dynamic Acceleration */
++#define X86_FEATURE_MFENCE_RDTSC (3*32+17) /* Mfence synchronizes RDTSC */
++#define X86_FEATURE_LFENCE_RDTSC (3*32+18) /* Lfence synchronizes RDTSC */
+ #define X86_FEATURE_TSC_RELIABLE (3*32+23) /* TSC is known to be reliable */
+ #define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
+ 
+diff --git a/include/asm-i386/timex.h b/include/asm-i386/timex.h
+index 3666044..4ff5937 100644
+--- a/include/asm-i386/timex.h
++++ b/include/asm-i386/timex.h
+@@ -15,6 +15,18 @@
+ #  define CLOCK_TICK_RATE 1193182 /* Underlying HZ */
+ #endif
+ 
++/*
++ * Stop RDTSC speculation. This is needed when you need to use RDTSC
++ * (or get_cycles or vread that possibly accesses the TSC) in a defined
++ * code region.
++ *
++ * (Could use an alternative three way for this if there was one.)
++ */
++static inline void rdtsc_barrier(void)
++{
++	alternative(ASM_NOP3, "mfence", X86_FEATURE_MFENCE_RDTSC);
++	alternative(ASM_NOP3, "lfence", X86_FEATURE_LFENCE_RDTSC);
++}
+ 
+ extern int read_current_timer(unsigned long *timer_value);
+ #define ARCH_HAS_READ_CURRENT_TIMER	1
+diff --git a/include/asm-x86_64/proto.h b/include/asm-x86_64/proto.h
+index 3f4c262..b625442 100644
+--- a/include/asm-x86_64/proto.h
++++ b/include/asm-x86_64/proto.h
+@@ -39,6 +39,7 @@ extern void ia32_syscall(void);
+ extern int pmtimer_mark_offset(void);
+ extern void pmtimer_resume(void);
+ extern void pmtimer_wait(unsigned);
++extern int pmtimer_calibrate_apic(unsigned, int *tries);
+ extern long do_gettimeoffset_pm(void);
+ #ifdef CONFIG_X86_PM_TIMER
+ extern u32 pmtmr_ioport;

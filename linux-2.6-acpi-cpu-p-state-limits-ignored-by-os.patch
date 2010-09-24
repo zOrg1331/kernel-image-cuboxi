@@ -1,0 +1,133 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Tue, 7 Apr 2009 11:48:31 +0200
+Subject: [acpi] CPU P-state limits ignored by OS
+Message-id: 20090407114831.40bdb2db@dhcp-lab-109.englab.brq.redhat.com
+O-Subject: [RHEL5.4 PATCH] BZ494288: CPU P-state limits (via acpi _ppc) ignored by OS
+Bugzilla: 494288
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+BZ#494288
+=========
+https://bugzilla.redhat.com/show_bug.cgi?id=494288
+
+Description:
+============
+Avoid wiping out pr->performance during preregistering.
+
+When cpufreq driver call acpi_processor_preregister_performance(), function will
+clean up pr->performance even if there is possibly already registered other
+cpufreq driver. With no pr->performance other cpufreq driver is unable to limit
+P-stats when BIOS ask for it. The patch fix this problem. It also remove double
+checks in P domain basic validity code and move these checks to function where
+_PSD data is captured.
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+====
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1751995
+
+Upstream Status:
+===============
+Merged in commit:
+e1eb47797ac0773cb3efe7495e14fc26e18a23c2
+
+Test Status:
+============
+Bug is not reproductable on RHEL5. I tested the patch only to see, if it not
+cause any other problems.
+
+diff --git a/drivers/acpi/processor_perflib.c b/drivers/acpi/processor_perflib.c
+index 473a5b7..38430d8 100644
+--- a/drivers/acpi/processor_perflib.c
++++ b/drivers/acpi/processor_perflib.c
+@@ -610,6 +610,14 @@ static int acpi_processor_get_psd(struct acpi_processor	*pr)
+ 		goto end;
+ 	}
+ 
++	if (pdomain->coord_type != DOMAIN_COORD_TYPE_SW_ALL &&
++	    pdomain->coord_type != DOMAIN_COORD_TYPE_SW_ANY &&
++	    pdomain->coord_type != DOMAIN_COORD_TYPE_HW_ALL) {
++		ACPI_DEBUG_PRINT((ACPI_DB_ERROR "Invalid _PSD:coord_type\n"));
++		result = -EFAULT;
++		goto end;
++	}
++
+ end:
+ 	kfree(buffer.pointer);
+ 	return result;
+@@ -629,9 +637,10 @@ int acpi_processor_preregister_performance(
+ 
+ 	mutex_lock(&performance_mutex);
+ 
+-	retval = 0;
+-
+-	/* Call _PSD for all CPUs */
++	/*
++	 * Check if another driver has already registered, and abort before
++	 * changing pr->performance if it has. Check input data as well.
++	 */
+ 	for_each_possible_cpu(i) {
+ 		pr = processors[i];
+ 		if (!pr) {
+@@ -641,13 +650,20 @@ int acpi_processor_preregister_performance(
+ 
+ 		if (pr->performance) {
+ 			retval = -EBUSY;
+-			continue;
++			goto err_out;
+ 		}
+ 
+ 		if (!performance || !performance[i]) {
+ 			retval = -EINVAL;
+-			continue;
++			goto err_out;
+ 		}
++	}
++
++	/* Call _PSD for all CPUs */
++	for_each_possible_cpu(i) {
++		pr = processors[i];
++		if (!pr)
++			continue;
+ 
+ 		pr->performance = performance[i];
+ 		cpu_set(i, pr->performance->shared_cpu_map);
+@@ -663,26 +679,6 @@ int acpi_processor_preregister_performance(
+ 	 * Now that we have _PSD data from all CPUs, lets setup P-state 
+ 	 * domain info.
+ 	 */
+-	for_each_possible_cpu(i) {
+-		pr = processors[i];
+-		if (!pr)
+-			continue;
+-
+-		/* Basic validity check for domain info */
+-		pdomain = &(pr->performance->domain_info);
+-		if ((pdomain->revision != ACPI_PSD_REV0_REVISION) ||
+-		    (pdomain->num_entries != ACPI_PSD_REV0_ENTRIES)) {
+-			retval = -EINVAL;
+-			goto err_ret;
+-		}
+-		if (pdomain->coord_type != DOMAIN_COORD_TYPE_SW_ALL &&
+-		    pdomain->coord_type != DOMAIN_COORD_TYPE_SW_ANY &&
+-		    pdomain->coord_type != DOMAIN_COORD_TYPE_HW_ALL) {
+-			retval = -EINVAL;
+-			goto err_ret;
+-		}
+-	}
+-
+ 	cpus_clear(covered_cpus);
+ 	for_each_possible_cpu(i) {
+ 		pr = processors[i];
+@@ -771,6 +767,7 @@ err_ret:
+ 		pr->performance = NULL; /* Will be set for real in register */
+ 	}
+ 
++err_out:
+ 	mutex_unlock(&performance_mutex);
+ 	return retval;
+ }

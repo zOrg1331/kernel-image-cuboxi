@@ -1,0 +1,51 @@
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Wed, 2 Dec 2009 05:26:53 -0500
+Subject: [md] lock snapshot while reading status
+Message-id: <Pine.LNX.4.64.0912020023020.11782@hs20-bc2-1.build.redhat.com>
+Patchwork-id: 21642
+O-Subject: [RHEL5.5 PATCH] bz543307: lock snapshot while reading status
+Bugzilla: 543307
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+Hi
+
+This patch fixes a race condition --- used chunk count is being read
+without holding the lock, thus invalid intermediate value can be read.
+
+Upstream status: 2.6.32-rc6, 4c6fff445d7aa753957856278d4d93bcad6e2c14
+
+Unlike in upstream code, only STATUSTYPE_INFO branch is locked. It is
+because:
+- STATUSTYPE_TABLE is static and doesn't change (so it's ok to not lock
+it)
+- userspace asks for STATUSTYPE_TABLE while suspended, creating a possible
+race
+A patch to lock only STATUSTYPE_INFO and not lock STATUSTYPE_TABLE is
+already pending upstream acceptance.
+
+Testing: the race is nonreproducible (it was found during code review), so
+I only tested basic snapshot functionality with this patch applied.
+
+Mikulas
+
+
+diff --git a/drivers/md/dm-snap.c b/drivers/md/dm-snap.c
+index 0c58db2..b03941a 100644
+--- a/drivers/md/dm-snap.c
++++ b/drivers/md/dm-snap.c
+@@ -1154,6 +1154,7 @@ static int snapshot_status(struct dm_target *ti, status_type_t type,
+ 
+ 	switch (type) {
+ 	case STATUSTYPE_INFO:
++		down_write(&snap->lock);
+ 		if (!snap->valid)
+ 			snprintf(result, maxlen, "Invalid");
+ 		else {
+@@ -1169,6 +1170,7 @@ static int snapshot_status(struct dm_target *ti, status_type_t type,
+ 			else
+ 				snprintf(result, maxlen, "Unknown");
+ 		}
++		up_write(&snap->lock);
+ 		break;
+ 
+ 	case STATUSTYPE_TABLE:

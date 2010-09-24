@@ -1,0 +1,199 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Fri, 18 Sep 2009 01:26:44 -0400
+Subject: [x86] finish sysdata conversion
+Message-id: 20090918052703.27603.88351.sendpatchset@danny
+O-Subject: [PATCH RHEL5.5] finish i386 and x86-64 sysdata conversion
+Bugzilla: 519633
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=519633
+
+Description:
+Reading /sys/class/pci_bus/0000:ff/cpuaffinity (using cat or a similar
+function) will cause the kernel to crash and the system to reboot.
+
+After crash analysis, we know pci_bus->sysdata is NULL, then trying to
+visit pci_bus->sysdata->node, panic results.
+
+sysdata changed by recent commit [x86] PCI domain support (103d69a0).
+It is no longer just an integer containing the node, it is now a structure
+containing the node and other data. However, it seems that we do not
+always initialise this sysdata before we probe the device. then we may get
+a NULL sysdata(pci_scan_bus with NULL sysdata).
+
+Later commit in upstream has finished i386 and x86-64 sysdata conversion,
+which will initialise sysdata well. Thus sysdata will not be NULL anymore.
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/stable/linux-2.6.23.y.git;a=commit;h=73c59afc65cfa50c3362b9ce1ec151a79c41dd8e
+
+KABI:
+no harm
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1991444
+
+Test status:
+Customer tested my test rpm and they are no longer seeing the panic.
+
+diff --git a/arch/i386/pci/common.c b/arch/i386/pci/common.c
+index 8373c7e..2007535 100644
+--- a/arch/i386/pci/common.c
++++ b/arch/i386/pci/common.c
+@@ -526,3 +526,26 @@ void pcibios_disable_device (struct pci_dev *dev)
+ 	if (pcibios_disable_irq)
+ 		pcibios_disable_irq(dev);
+ }
++
++struct pci_bus *pci_scan_bus_with_sysdata(int busno)
++{
++	struct pci_bus *bus = NULL;
++	struct pci_sysdata *sd;
++
++	/*
++	 * Allocate per-root-bus (not per bus) arch-specific data.
++	 * TODO: leak; this memory is never freed.
++	 * It's arguable whether it's worth the trouble to care.
++	 */
++	sd = kzalloc(sizeof(*sd), GFP_KERNEL);
++	if (!sd) {
++		printk(KERN_ERR "PCI: OOM, skipping PCI bus %02x\n", busno);
++		return NULL;
++	}
++	sd->node = -1;
++	bus = pci_scan_bus(busno, &pci_root_ops, sd);
++	if (!bus)
++		kfree(sd);
++
++	return bus;
++}
+diff --git a/arch/i386/pci/fixup.c b/arch/i386/pci/fixup.c
+index cb0cbb8..3cb56c5 100644
+--- a/arch/i386/pci/fixup.c
++++ b/arch/i386/pci/fixup.c
+@@ -25,9 +25,9 @@ static void __devinit pci_fixup_i450nx(struct pci_dev *d)
+ 		pci_read_config_byte(d, reg++, &subb);
+ 		DBG("i450NX PXB %d: %02x/%02x/%02x\n", pxb, busno, suba, subb);
+ 		if (busno)
+-			pci_scan_bus(busno, &pci_root_ops, NULL);	/* Bus A */
++			pci_scan_bus_with_sysdata(busno);	/* Bus A */
+ 		if (suba < subb)
+-			pci_scan_bus(suba+1, &pci_root_ops, NULL);	/* Bus B */
++			pci_scan_bus_with_sysdata(suba+1);	/* Bus B */
+ 	}
+ 	pcibios_last_bus = -1;
+ }
+@@ -42,7 +42,7 @@ static void __devinit pci_fixup_i450gx(struct pci_dev *d)
+ 	u8 busno;
+ 	pci_read_config_byte(d, 0x4a, &busno);
+ 	printk(KERN_INFO "PCI: i440KX/GX host bridge %s: secondary bus %02x\n", pci_name(d), busno);
+-	pci_scan_bus(busno, &pci_root_ops, NULL);
++	pci_scan_bus_with_sysdata(busno);
+ 	pcibios_last_bus = -1;
+ }
+ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82454GX, pci_fixup_i450gx);
+diff --git a/arch/i386/pci/irq.c b/arch/i386/pci/irq.c
+index d4b19d2..d6f81e4 100644
+--- a/arch/i386/pci/irq.c
++++ b/arch/i386/pci/irq.c
+@@ -138,8 +138,9 @@ static void __init pirq_peer_trick(void)
+ 	for(i = 1; i < 256; i++) {
+ 		if (!busmap[i] || pci_find_bus(0, i))
+ 			continue;
+-		if (pci_scan_bus(i, &pci_root_ops, NULL))
+-			printk(KERN_INFO "PCI: Discovered primary peer bus %02x [IRQ]\n", i);
++		if (pci_scan_bus_with_sysdata(i))
++			printk(KERN_INFO "PCI: Discovered primary peer "
++			       "bus %02x [IRQ]\n", i);
+ 	}
+ 	pcibios_last_bus = -1;
+ }
+diff --git a/arch/i386/pci/legacy.c b/arch/i386/pci/legacy.c
+index 273384f..c6920aa 100644
+--- a/arch/i386/pci/legacy.c
++++ b/arch/i386/pci/legacy.c
+@@ -19,11 +19,6 @@ static void __devinit pcibios_fixup_peer_bridges(void)
+ 
+ 	for (n=0; n <= pcibios_last_bus; n++) {
+ 		u32 l;
+-		struct pci_sysdata *sd;
+-
+-		sd = kzalloc(sizeof(&sd), GFP_KERNEL);
+-		if (!sd)
+-			panic("Cannot allocate PCI domain sysdata");
+ 		if (pci_find_bus(0, n))
+ 			continue;
+ 		for (devfn = 0; devfn < 256; devfn += 8) {
+@@ -31,8 +26,7 @@ static void __devinit pcibios_fixup_peer_bridges(void)
+ 			    l != 0x0000 && l != 0xffff) {
+ 				DBG("Found device at %02x:%02x [%04x]\n", n, devfn, l);
+ 				printk(KERN_INFO "PCI: Discovered peer bus %02x\n", n);
+-				if (!pci_scan_bus(n, &pci_root_ops, sd))
+-					kfree(sd);
++				pci_scan_bus_with_sysdata(n);
+ 				break;
+ 			}
+ 		}
+diff --git a/arch/i386/pci/numa.c b/arch/i386/pci/numa.c
+index adbe17a..f5f165f 100644
+--- a/arch/i386/pci/numa.c
++++ b/arch/i386/pci/numa.c
+@@ -96,10 +96,14 @@ static void __devinit pci_fixup_i450nx(struct pci_dev *d)
+ 		pci_read_config_byte(d, reg++, &suba);
+ 		pci_read_config_byte(d, reg++, &subb);
+ 		DBG("i450NX PXB %d: %02x/%02x/%02x\n", pxb, busno, suba, subb);
+-		if (busno)
+-			pci_scan_bus(QUADLOCAL2BUS(quad,busno), &pci_root_ops, NULL);	/* Bus A */
+-		if (suba < subb)
+-			pci_scan_bus(QUADLOCAL2BUS(quad,suba+1), &pci_root_ops, NULL);	/* Bus B */
++		if (busno) {
++			/* Bus A */
++			pci_scan_bus_with_sysdata(QUADLOCAL2BUS(quad, busno));
++		}
++		if (suba < subb) {
++			/* Bus B */
++			pci_scan_bus_with_sysdata(QUADLOCAL2BUS(quad, suba+1));
++		}
+ 	}
+ 	pcibios_last_bus = -1;
+ }
+@@ -123,8 +127,7 @@ static int __init pci_numa_init(void)
+ 				continue;
+ 			printk("Scanning PCI bus %d for quad %d\n", 
+ 				QUADLOCAL2BUS(quad,0), quad);
+-			pci_scan_bus(QUADLOCAL2BUS(quad,0), 
+-				&pci_root_ops, NULL);
++			pci_scan_bus_with_sysdata(QUADLOCAL2BUS(quad, 0));
+ 		}
+ 	return 0;
+ }
+diff --git a/arch/i386/pci/pci.h b/arch/i386/pci/pci.h
+index 2c3ac48..c82a035 100644
+--- a/arch/i386/pci/pci.h
++++ b/arch/i386/pci/pci.h
+@@ -101,6 +101,8 @@ extern void pci_pcbios_init(void);
+ extern void pci_mmcfg_init(void);
+ extern void pcibios_sort(void);
+ 
++/* scan a bus after allocating a pci_sysdata for it */
++extern struct pci_bus *pci_scan_bus_with_sysdata(int busno);
+ 
+ /*
+  * AMD Fam10h CPUs are buggy, and cannot access MMIO config space
+diff --git a/arch/i386/pci/visws.c b/arch/i386/pci/visws.c
+index f1b486d..8ecb1c7 100644
+--- a/arch/i386/pci/visws.c
++++ b/arch/i386/pci/visws.c
+@@ -101,8 +101,8 @@ static int __init pcibios_init(void)
+ 		"bridge B (PIIX4) bus: %u\n", pci_bus1, pci_bus0);
+ 
+ 	raw_pci_ops = &pci_direct_conf1;
+-	pci_scan_bus(pci_bus0, &pci_root_ops, NULL);
+-	pci_scan_bus(pci_bus1, &pci_root_ops, NULL);
++	pci_scan_bus_with_sysdata(pci_bus0);
++	pci_scan_bus_with_sysdata(pci_bus1);
+ 	pci_fixup_irqs(visws_swizzle, visws_map_irq);
+ 	pcibios_resource_survey();
+ 	return 0;

@@ -1,0 +1,46 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Mon, 14 Dec 2009 09:25:11 -0500
+Subject: [fs] respect flag in do_coredump
+Message-id: <20091214092506.3341.1237.sendpatchset@dhcp-65-180.nay.redhat.com>
+Patchwork-id: 21914
+O-Subject: [PATCH RHEL5.5] CVE-2009-4036: use flag in do_coredump()
+Bugzilla: 544189
+CVE: CVE-2009-4036
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=544189
+
+Description:
+In do_coredump() the flag variable is set but isn't used during the filp_open()
+call.  This leaves a re-write attack vulnerability exposed.
+
+This issue did not affect the versions of Linux kernel as shipped with Red Hat
+Enterprise Linux 5 when it was first reported back in 2006 with CVE-2006-6304.
+However, the issue was introduced last July 2008 with a patch for "[misc] pipe
+support to /proc/sys/net/core_pattern". It was assigned as CVE-2009-4036, and
+only affected our kernel.
+
+Upstream status:
+commit 6d4df6
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2149236
+
+diff --git a/fs/exec.c b/fs/exec.c
+index 2af9026..c6b2570 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -1774,7 +1774,8 @@ int do_coredump(long signr, int exit_code, struct pt_regs * regs)
+ 		}
+ 	} else if (core_limit >= binfmt->min_coredump)
+ 		file = filp_open(corename,
+-				 O_CREAT | 2 | O_NOFOLLOW | O_LARGEFILE, 0600);
++				 O_CREAT | 2 | O_NOFOLLOW | O_LARGEFILE | flag,
++				 0600);
+ 
+ end_open:
+ 	cprm.file = file;

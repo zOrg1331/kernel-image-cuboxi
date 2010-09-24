@@ -1,0 +1,148 @@
+From: Dave Airlie <airlied@redhat.com>
+Date: Wed, 16 Dec 2009 22:52:04 -0500
+Subject: intel agp/drm: add IRONLAKE support to AGP/DRM drivers.
+Message-id: <1261003924.3446.2.camel@localhost>
+Patchwork-id: 22012
+O-Subject: [Patch RHEL5.5] intel agp/drm: add IRONLAKE support to AGP/DRM
+	drivers.
+Bugzilla: 547908
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Anton Arapov <Anton@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+(I know we missed the freeze trying to get an exception for this)
+
+Bugzilla: #547908
+
+Patch supplied by Kristian Høgsberg @ Intel, modified slightly
+by Dave Airlie to use IRONLAKE name and MC2 host bridge support.
+
+This is required for the X.org driver support.
+
+diff --git a/drivers/char/agp/intel-agp.c b/drivers/char/agp/intel-agp.c
+index 9e4e7f3..e2db05d 100644
+--- a/drivers/char/agp/intel-agp.c
++++ b/drivers/char/agp/intel-agp.c
+@@ -40,6 +40,12 @@
+ #define PCI_DEVICE_ID_INTEL_G45_IG          0x2E22
+ #define PCI_DEVICE_ID_INTEL_G41_HB          0x2E30
+ #define PCI_DEVICE_ID_INTEL_G41_IG          0x2E32
++#define PCI_DEVICE_ID_INTEL_IRONLAKE_D_HB	    0x0040
++#define PCI_DEVICE_ID_INTEL_IRONLAKE_D_IG	    0x0042
++#define PCI_DEVICE_ID_INTEL_IRONLAKE_M_HB	    0x0044
++#define PCI_DEVICE_ID_INTEL_IRONLAKE_MA_HB	    0x0062
++#define PCI_DEVICE_ID_INTEL_IRONLAKE_MC2_HB	    0x006a
++#define PCI_DEVICE_ID_INTEL_IRONLAKE_M_IG	    0x0046
+ 
+ /* cover 915 and 945 variants */
+ #define IS_I915 (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_E7221_HB || \
+@@ -64,7 +70,11 @@
+ 		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_Q45_HB || \
+ 		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_G45_HB || \
+ 		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_GM45_HB || \
+-		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_G41_HB)
++		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_G41_HB || \
++		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_IRONLAKE_D_HB || \
++		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_IRONLAKE_M_HB || \
++		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_IRONLAKE_MA_HB || \
++		agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_IRONLAKE_MC2_HB)
+ 
+ /* Intel 815 register */
+ #define INTEL_815_APCONT	0x51
+@@ -999,6 +1009,10 @@ static void intel_i965_get_gtt_range(int *gtt_offset, int *gtt_size)
+ 	case PCI_DEVICE_ID_INTEL_Q45_HB:
+ 	case PCI_DEVICE_ID_INTEL_G45_HB:
+ 	case PCI_DEVICE_ID_INTEL_G41_HB:
++	case PCI_DEVICE_ID_INTEL_IRONLAKE_D_HB:
++	case PCI_DEVICE_ID_INTEL_IRONLAKE_M_HB:
++	case PCI_DEVICE_ID_INTEL_IRONLAKE_MA_HB:
++	case PCI_DEVICE_ID_INTEL_IRONLAKE_MC2_HB:
+ 		*gtt_offset = *gtt_size = MB(2);
+ 		break;
+ 	default:
+@@ -2113,6 +2127,34 @@ static int __devinit agp_intel_probe(struct pci_dev *pdev,
+ 		} else
+ 			bridge->driver = NULL;
+ 		break;
++	case PCI_DEVICE_ID_INTEL_IRONLAKE_D_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_IRONLAKE_D_IG)) {
++			bridge->driver = &intel_i965_driver;
++			name = "IRONLAKE/D";
++		} else
++			bridge->driver = NULL;
++		break;
++	case PCI_DEVICE_ID_INTEL_IRONLAKE_M_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_IRONLAKE_M_IG)) {
++			bridge->driver = &intel_i965_driver;
++			name = "IRONLAKE/M";
++		} else
++			bridge->driver = NULL;
++		break;
++	case PCI_DEVICE_ID_INTEL_IRONLAKE_MA_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_IRONLAKE_M_IG)) {
++			bridge->driver = &intel_i965_driver;
++			name = "IRONLAKE/MA";
++		} else
++			bridge->driver = NULL;
++		break;
++	case PCI_DEVICE_ID_INTEL_IRONLAKE_MC2_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_IRONLAKE_M_IG)) {
++			bridge->driver = &intel_i965_driver;
++			name = "IRONLAKE/MC2";
++		} else
++			bridge->driver = NULL;
++		break;
+ 	default:
+ 		if (cap_ptr)
+ 			printk(KERN_WARNING PFX "Unsupported Intel chipset (device id: %04x)\n",
+@@ -2283,6 +2325,10 @@ static struct pci_device_id agp_intel_pci_table[] = {
+ 	ID(PCI_DEVICE_ID_INTEL_Q45_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_G45_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_G41_HB),
++	ID(PCI_DEVICE_ID_INTEL_IRONLAKE_D_HB),
++	ID(PCI_DEVICE_ID_INTEL_IRONLAKE_M_HB),
++	ID(PCI_DEVICE_ID_INTEL_IRONLAKE_MA_HB),
++	ID(PCI_DEVICE_ID_INTEL_IRONLAKE_MC2_HB),
+ 	{ }
+ };
+ 
+diff --git a/drivers/char/drm/drm_pciids.h b/drivers/char/drm/drm_pciids.h
+index 4cb940e..aad17c9 100644
+--- a/drivers/char/drm/drm_pciids.h
++++ b/drivers/char/drm/drm_pciids.h
+@@ -395,5 +395,7 @@
+ 	{0x8086, 0x29C2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+ 	{0x8086, 0x29B2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+ 	{0x8086, 0x29D2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
++	{0x8086, 0x0042, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x0046, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
+ 	{0, 0, 0}
+ 
+diff --git a/drivers/char/drm/i915_dma.c b/drivers/char/drm/i915_dma.c
+index 38c5812..94aa7d0 100644
+--- a/drivers/char/drm/i915_dma.c
++++ b/drivers/char/drm/i915_dma.c
+@@ -40,7 +40,9 @@
+ 			dev->pdev->device == 0x2A42 || \
+ 			dev->pdev->device == 0x2e02 || \
+ 			dev->pdev->device == 0x2e12 || \
+-			dev->pdev->device == 0x2e22)
++			dev->pdev->device == 0x2e22 || \
++			dev->pdev->device == 0x0042 || \
++			dev->pdev->device == 0x0046)
+ 
+ #define IS_G33(dev)    (dev->pdev->device == 0x29C2 || \
+ 			dev->pdev->device == 0x29B2 || \
+@@ -52,7 +54,11 @@
+ 			 dev->pdev->device == 0x2e12 || \
+ 			 dev->pdev->device == 0x2e22)
+ 
+-#define I915_NEED_GFX_HWS(dev) (IS_G33(dev) || IS_IGD(dev) || IS_G4X(dev))
++#define IS_IRONLAKE_D(dev)	((dev)->pdev->device == 0x0042)
++#define IS_IRONLAKE_M(dev)	((dev)->pdev->device == 0x0046)
++#define IS_IRONLAKE(dev)	(IS_IRONLAKE_D(dev) || IS_IRONLAKE_M(dev))
++
++#define I915_NEED_GFX_HWS(dev) (IS_G33(dev) || IS_IGD(dev) || IS_G4X(dev) || IS_IRONLAKE(dev))
+ 
+ /* Really want an OS-independent resettable timer.  Would like to have
+  * this loop run for (eg) 3 sec, but have the timer reset every time

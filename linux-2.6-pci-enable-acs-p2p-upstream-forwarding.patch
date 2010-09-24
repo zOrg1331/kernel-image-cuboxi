@@ -1,0 +1,281 @@
+From: Chris Wright <chrisw@redhat.com>
+Date: Sat, 12 Dec 2009 05:43:41 -0500
+Subject: [pci] enable acs p2p upstream forwarding
+Message-id: <20091212054341.GI12350@x200.localdomain>
+Patchwork-id: 21910
+O-Subject: [RHEL5.5 PATCH] PCI: enable ACS P2P Upstream Forwarding
+Bugzilla: 518305
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=518305
+
+This is a backport of the following commits pending in the upstream
+pci tree:
+
+http://git.kernel.org/?p=linux/kernel/git/jbarnes/pci-2.6.git;a=commitdiff;h=5d990b627537e59a3a2f039ff588a4750e9c1a6a
+http://git.kernel.org/?p=linux/kernel/git/jbarnes/pci-2.6.git;a=commitdiff;h=df0e97c6f1f2fdca686036998fe816cefd8e27d7
+http://git.kernel.org/?p=linux/kernel/git/jbarnes/pci-2.6.git;a=commitdiff;h=ae21ee65e8bc228416bbcc8a1da01c56a847a60c
+
+It's mostly a straight forward backport.  Only noticeable divergence
+from upstream is the Xen bit.  In RHEL 5 we request ACS to be enabled
+from drivers/xen/core/pci.c when it hooks into the PCI layer for dom0.
+
+This is only relevant for x86_64 bare metal and 32 and 64-bit x86 Xen
+dom0, basically environments where we have an IOMMU and expect to do PCI
+device assignment.  I have tested on x86_64 bare metal (AMD and Intel,
+w/ and w/out IOMMU) and 32 and 64-bit Xen dom0 (needs kernel cmdline arg
+of pci_pt_e820_access=on just like SR-IOV does for MMCONFIG PCIe access).
+
+ACS is enabled on x86_64 w/ AMD or Intel IOMMU enabled or in 32 and
+64-bit x86 Xen dom0, and shows up like this (lspci diff):
+
+-               ACSCtl: SrcValid- TransBlk- ReqRedir- CmpltRedir- UpstreamFwd- EgressCtrl- DirectTrans-
++               ACSCtl: SrcValid+ TransBlk- ReqRedir+ CmpltRedir+ UpstreamFwd+ EgressCtrl- DirectTrans-
+
+Brew build:
+
+https://brewweb.devel.redhat.com/taskinfo?taskID=2148141
+
+Here are the relevant upstream commit logs:
+
+    commit 5d990b627537e59a3a2f039ff588a4750e9c1a6a
+    Author: Chris Wright <chrisw@sous-sol.org>
+    Date:   Fri Dec 4 12:15:21 2009 -0800
+
+    PCI: add pci_request_acs
+
+    Commit ae21ee65e8bc228416bbcc8a1da01c56a847a60c "PCI: acs p2p upsteram
+    forwarding enabling" doesn't actually enable ACS.
+
+    Add a function to pci core to allow an IOMMU to request that ACS
+    be enabled.  The existing mechanism of using iommu_found() in the pci
+    core to know when ACS should be enabled doesn't actually work due to
+    initialization order;  iommu has only been detected not initialized.
+
+    Have Intel and AMD IOMMUs request ACS, and Xen does as well during early
+    init of dom0.
+
+    Cc: Allen Kay <allen.m.kay@intel.com>
+    Cc: David Woodhouse <dwmw2@infradead.org>
+    Cc: Jeremy Fitzhardinge <jeremy@goop.org>
+    Cc: Joerg Roedel <joerg.roedel@amd.com>
+    Signed-off-by: Chris Wright <chrisw@sous-sol.org>
+    Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+
+    commit df0e97c6f1f2fdca686036998fe816cefd8e27d7
+    Author: Allen Kay <allen.m.kay@intel.com>
+    Date:   Wed Oct 7 10:27:51 2009 -0700
+
+    PCI: add xen dom0 checking before ACS initialization
+
+    This patch is predicated on Jeremy's patch in include/xen/xen.h.  It'll
+    prevent ACS init unless the platform has both an IOMMU and we're running
+    as dom0.
+
+    Signed-off-by: Allen Kay <allen.m.kay@intel.com>
+    Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+
+    commit ae21ee65e8bc228416bbcc8a1da01c56a847a60c
+    Author: Allen Kay <allen.m.kay@intel.com>
+    Date:   Wed Oct 7 10:27:17 2009 -0700
+
+    PCI: acs p2p upsteram forwarding enabling
+
+    Note: dom0 checking in v4 has been separated out into 2/2.
+
+    This patch enables P2P upstream forwarding in ACS capable PCIe switches.
+    It solves two potential problems in virtualization environment where a PCIe
+    device is assigned to a guest domain using a HW iommu such as VT-d:
+
+    1) Unintentional failure caused by guest physical address programmed
+       into the device's DMA that happens to match the memory address range
+       of other downstream ports in the same PCIe switch.  This causes the PCI
+       transaction to go to the matching downstream port instead of go to the
+       root complex to get translated by VT-d as it should be.
+
+    2) Malicious guest software intentionally attacks another downstream
+       PCIe device by programming the DMA address into the assigned device
+       that matches memory address range of the downstream PCIe port.
+
+    We are in process of implementing device filtering software in KVM/XEN
+    management software to allow device assignment of PCIe devices behind a PCIe
+    switch only if it has ACS capability and with the P2P upstream forwarding bits
+    enabled.  This patch is intended to work for both KVM and Xen environments.
+
+    Signed-off-by: Allen Kay <allen.m.kay@intel.com>
+    Reviewed-by: Mathew Wilcox <willy@linux.intel.com>
+    Reviewed-by: Chris Wright <chris@sous-sol.org>
+    Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+
+Signed-off-by: Chris Wright <chrisw@redhat.com>
+
+diff --git a/arch/x86_64/kernel/amd_iommu_init.c b/arch/x86_64/kernel/amd_iommu_init.c
+index 043efd1..595ac5c 100644
+--- a/arch/x86_64/kernel/amd_iommu_init.c
++++ b/arch/x86_64/kernel/amd_iommu_init.c
+@@ -1181,6 +1181,8 @@ void __init amd_iommu_detect(void)
+ 		iommu_aperture_disabled = 1;
+ 		iommu_aperture = 0;
+ #endif
++		/* Make sure ACS will be enabled */
++		pci_request_acs();
+ 	}
+ }
+ 
+diff --git a/drivers/pci/dmar.c b/drivers/pci/dmar.c
+index 77073be..c1bf2db 100644
+--- a/drivers/pci/dmar.c
++++ b/drivers/pci/dmar.c
+@@ -661,8 +661,11 @@ void __init detect_intel_iommu(void)
+ #endif
+ #ifdef CONFIG_DMAR
+ 		if (ret && !no_iommu && !iommu_detected && !swiotlb &&
+-		    !dmar_disabled)
++		    !dmar_disabled) {
+ 			iommu_detected = 1;
++			/* Make sure ACS will be enabled */
++			pci_request_acs();
++		}
+ #endif
+ 	}
+ 	dmar_tbl = NULL;
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 3ced3f8..6ec14fc 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -1015,6 +1015,54 @@ void pci_enable_ari(struct pci_dev *dev)
+ 	bridge->ari_enabled = 1;
+ }
+ 
++static int pci_acs_enable;
++
++/**
++ * pci_request_acs - ask for ACS to be enabled if supported
++ */
++void pci_request_acs(void)
++{
++	pci_acs_enable = 1;
++}
++
++/**
++ * pci_enable_acs - enable ACS if hardware support it
++ * @dev: the PCI device
++ */
++void pci_enable_acs(struct pci_dev *dev)
++{
++	int pos;
++	u16 cap;
++	u16 ctrl;
++
++	if (!pci_acs_enable)
++		return;
++
++	if (!dev->is_pcie)
++		return;
++
++	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ACS);
++	if (!pos)
++		return;
++
++	pci_read_config_word(dev, pos + PCI_ACS_CAP, &cap);
++	pci_read_config_word(dev, pos + PCI_ACS_CTRL, &ctrl);
++
++	/* Source Validation */
++	ctrl |= (cap & PCI_ACS_SV);
++
++	/* P2P Request Redirect */
++	ctrl |= (cap & PCI_ACS_RR);
++
++	/* P2P Completion Redirect */
++	ctrl |= (cap & PCI_ACS_CR);
++
++	/* Upstream Forwarding */
++	ctrl |= (cap & PCI_ACS_UF);
++
++	pci_write_config_word(dev, pos + PCI_ACS_CTRL, ctrl);
++}
++
+ int
+ pci_get_interrupt_pin(struct pci_dev *dev, struct pci_dev **bridge)
+ {
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index b594290..0bf784e 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -209,3 +209,5 @@ static inline int pci_ats_enabled(struct pci_dev *dev)
+ }
+ #endif /* CONFIG_PCI_IOV */
+ struct pci_dev *pci_find_upstream_pcie_bridge(struct pci_dev *pdev);
++
++extern void pci_enable_acs(struct pci_dev *dev);
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index 5588fb2..c61bbff 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -933,6 +933,9 @@ void __devinit pci_device_add(struct pci_dev *dev, struct pci_bus *bus)
+ 	/* Single Root I/O Virtualization */
+ 	pci_iov_init(dev);
+ 
++	/* Enable ACS P2P upstream forwarding */
++	pci_enable_acs(dev);
++
+ 	/*
+ 	 * Add the device to our list of discovered devices
+ 	 * and the bus list for fixup functions, etc.
+diff --git a/drivers/xen/core/pci.c b/drivers/xen/core/pci.c
+index 0c3b241..9cea0a5 100644
+--- a/drivers/xen/core/pci.c
++++ b/drivers/xen/core/pci.c
+@@ -55,6 +55,11 @@ static int __init hook_pci_bus(void)
+ 	pci_bus_remove = pci_bus_type.remove;
+ 	pci_bus_type.remove = pci_bus_remove_wrapper;
+ 
++#ifndef __ia64__
++	/* Make sure ACS will be enabled */
++	pci_request_acs();
++#endif
++
+ 	return 0;
+ }
+ 
+diff --git a/include/linux/pci.h b/include/linux/pci.h
+index 6ee67f9..e72580f 100644
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -964,5 +964,7 @@ static inline void pci_disable_sriov(struct pci_dev *dev)
+ }
+ #endif
+ 
++void pci_request_acs(void);
++
+ #endif /* __KERNEL__ */
+ #endif /* LINUX_PCI_H */
+diff --git a/include/linux/pci_regs.h b/include/linux/pci_regs.h
+index 3742fcb..2092b3e 100644
+--- a/include/linux/pci_regs.h
++++ b/include/linux/pci_regs.h
+@@ -430,6 +430,7 @@
+ #define PCI_EXT_CAP_ID_VC	2
+ #define PCI_EXT_CAP_ID_DSN	3
+ #define PCI_EXT_CAP_ID_PWR	4
++#define PCI_EXT_CAP_ID_ACS	13
+ #define PCI_EXT_CAP_ID_ARI	14
+ #define PCI_EXT_CAP_ID_ATS	15
+ #define PCI_EXT_CAP_ID_SRIOV	16
+@@ -590,4 +591,16 @@
+ #define  PCI_SRIOV_VFM_MO	0x2	/* Active.MigrateOut */
+ #define  PCI_SRIOV_VFM_AV	0x3	/* Active.Available */
+ 
++/* Access Control Service */
++#define PCI_ACS_CAP		0x04	/* ACS Capability Register */
++#define  PCI_ACS_SV		0x01	/* Source Validation */
++#define  PCI_ACS_TB		0x02	/* Translation Blocking */
++#define  PCI_ACS_RR		0x04	/* P2P Request Redirect */
++#define  PCI_ACS_CR		0x08	/* P2P Completion Redirect */
++#define  PCI_ACS_UF		0x10	/* Upstream Forwarding */
++#define  PCI_ACS_EC		0x20	/* P2P Egress Control */
++#define  PCI_ACS_DT		0x40	/* Direct Translated P2P */
++#define PCI_ACS_CTRL		0x06	/* ACS Control Register */
++#define PCI_ACS_EGRESS_CTL_V	0x08	/* ACS Egress Control Vector */
++
+ #endif /* LINUX_PCI_REGS_H */

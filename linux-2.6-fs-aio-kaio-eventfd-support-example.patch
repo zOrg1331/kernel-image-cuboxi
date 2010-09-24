@@ -1,0 +1,264 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 1 Dec 2009 21:06:31 -0500
+Subject: [fs] aio: KAIO eventfd support example
+Message-id: <1259701600-23508-4-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21613
+O-Subject: [RHEL5 PATCH 03/12 v2] signal/timer/event: KAIO eventfd support
+	example
+Bugzilla: 493101
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Fixes bug 493101.
+
+commit 9c3060bedd84144653a2ad7bea32389f65598d40
+Author: Davide Libenzi <davidel@xmailserver.org>
+Date:   Thu May 10 22:23:21 2007 -0700
+
+    signal/timer/event: KAIO eventfd support example
+
+    This is an example about how to add eventfd support to the current KAIO code
+    in order to enable KAIO to post readiness events to a pollable fd (hence
+    compatible with POSIX select/poll).  The KAIO code simply signals the eventf
+    fd when events are ready, and this triggers a POLLIN in the fd.  This patch
+    uses a reserved for future use member of the struct iocb to pass an eventfd
+    file descriptor, that KAIO will use to post events every time a request
+    completes.  At that point, an aio_getevents() will return the completed resu
+    to a struct io_event.  I made a quick test program to verify the patch, and
+    runs fine here:
+
+    http://www.xmailserver.org/eventfd-aio-test.c
+
+    The test program uses poll(2), but it'd, of course, work with select and epo
+    too.
+
+    This can allow to schedule both block I/O and other poll-able devices
+    requests, and wait for results using select/poll/epoll.  In a typical
+    scenario, an application would submit KAIO request using aio_submit(), and
+    will also use epoll_ctl() on the whole other class of devices (that with the
+    addition of signals, timers and user events, now it's pretty much complete),
+    and then would:
+
+        epoll_wait(...);
+        for_each_event {
+                if (curr_event_is_kaiofd) {
+                        aio_getevents();
+                        dispatch_aio_events();
+                } else {
+                        dispatch_epoll_event();
+                }
+        }
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/fs/aio.c b/fs/aio.c
+index 0a3efb7..fe01818 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -34,6 +34,7 @@
+ #include <linux/mempool.h>
+ #include <linux/hash.h>
+ #endif
++#include <linux/eventfd.h>
+ 
+ #include <asm/kmap_types.h>
+ #include <asm/uaccess.h>
+@@ -81,6 +82,91 @@ mempool_t *abe_pool;
+ static void aio_kick_handler(void *);
+ static void aio_queue_work(struct kioctx *);
+ 
++/*
++ * Instead of adding a ki_eventfd member to the struct kiocb (which would
++ * break kabi), the following code creates a lookaside hash table indexed
++ * by struct kiocb.  Stored in each entry is the eventfd file pointer.
++ */
++#define KIOCB_HASH_BITS	5
++#define KIOCB_HASH_SIZE	(1<<KIOCB_HASH_BITS)
++
++static DEFINE_SPINLOCK(kiocb_list_lock);
++static struct hlist_head kiocb_list[KIOCB_HASH_SIZE];
++
++struct kiocb_hash_entry {
++	struct hlist_node list;
++	struct kiocb *kiocb;
++	struct file *filp;
++};
++
++static inline struct hlist_head *aio_kiocb_hash(struct kiocb *kiocb)
++{
++	return &kiocb_list[hash_ptr(kiocb, KIOCB_HASH_BITS)];
++}
++
++static struct kiocb_hash_entry *kiocb_hash_lookup(struct kiocb *kiocb)
++{
++	struct kiocb_hash_entry *hashent;
++	struct hlist_node *pos;
++	struct hlist_head *bucket = aio_kiocb_hash(kiocb);
++
++	hlist_for_each_entry(hashent, pos, bucket, list) {
++		if (hashent->kiocb == kiocb)
++			return hashent;
++	}
++	return NULL;
++}
++
++static void aio_eventfd_fput(struct kiocb *kiocb)
++{
++	unsigned long flags;
++	struct kiocb_hash_entry *kh;
++
++	/*
++	 * It is often the case that there is no eventfd associated with
++	 * a particular request.
++	 */
++	spin_lock_irqsave(&kiocb_list_lock, flags);
++	kh = kiocb_hash_lookup(kiocb);
++	if (!kh) {
++		spin_unlock_irqrestore(&kiocb_list_lock, flags);
++		return;
++	}
++	hlist_del(&kh->list);
++	spin_unlock_irqrestore(&kiocb_list_lock, flags);
++
++	fput(kh->filp);
++	kfree(kh);
++}
++
++static void aio_eventfd_signal(struct kiocb *kiocb)
++{
++	unsigned long flags;
++	struct kiocb_hash_entry *kh;
++
++	spin_lock_irqsave(&kiocb_list_lock, flags);
++	kh = kiocb_hash_lookup(kiocb);
++	spin_unlock_irqrestore(&kiocb_list_lock, flags);
++	if (!kh)
++		return;
++
++	eventfd_signal(kh->filp, 1);
++}
++
++static int aio_hash_kiocb(struct kiocb *kiocb, struct file *filp)
++{
++	unsigned long flags;
++	struct kiocb_hash_entry *kh = kmalloc(sizeof(*kh), GFP_KERNEL);
++	if (!kh)
++		return -ENOMEM;
++	kh->kiocb = kiocb;
++	kh->filp = filp;
++	spin_lock_irqsave(&kiocb_list_lock, flags);
++	hlist_add_head(&kh->list, aio_kiocb_hash(kiocb));
++	spin_unlock_irqrestore(&kiocb_list_lock, flags);
++	return 0;
++}
++
+ /* aio_setup
+  *	Creates the slab caches used by the aio routines, panic on
+  *	failure as this is done early during the boot sequence.
+@@ -484,6 +570,7 @@ static inline void really_put_req(struct kioctx *ctx, struct kiocb *req)
+ {
+ 	assert_spin_locked(&ctx->ctx_lock);
+ 
++	aio_eventfd_fput(req);
+ 	if (req->ki_dtor)
+ 		req->ki_dtor(req);
+ 	kmem_cache_free(kiocb_cachep, req);
+@@ -979,6 +1066,13 @@ int fastcall aio_complete(struct kiocb *iocb, long res, long res2)
+ 		return 1;
+ 	}
+ 
++	/*
++	 * Check if the user asked us to deliver the result through an
++	 * eventfd. The eventfd_signal() function is safe to be called
++	 * from IRQ context.
++	 */
++	aio_eventfd_signal(iocb);
++
+ 	info = &ctx->ring_info;
+ 
+ 	/* add a completion event to the ring buffer.
+@@ -1478,6 +1572,20 @@ static ssize_t aio_setup_iocb(struct kiocb *kiocb)
+ 	return 0;
+ }
+ 
++static int aio_eventfd_fget(struct kiocb *kiocb, int resfd)
++{
++	int ret;
++	struct file *filp = eventfd_fget(resfd);
++	if (IS_ERR(filp))
++		return PTR_ERR(filp);
++
++	ret = aio_hash_kiocb(kiocb, filp);
++	if (ret)
++		fput(filp);
++
++	return ret;
++}
++
+ /*
+  * aio_wake_function:
+  * 	wait queue callback function for aio notification,
+@@ -1550,8 +1658,7 @@ int fastcall io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+ 	ssize_t ret;
+ 
+ 	/* enforce forwards compatibility on users */
+-	if (unlikely(iocb->aio_reserved1 || iocb->aio_reserved2 ||
+-		     iocb->aio_reserved3)) {
++	if (unlikely(iocb->aio_reserved1 || iocb->aio_reserved2)) {
+ 		pr_debug("EINVAL: io_submit: reserve field set\n");
+ 		return -EINVAL;
+ 	}
+@@ -1576,6 +1683,18 @@ int fastcall io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+ 		return -EAGAIN;
+ 	}
+ 
++	if (iocb->aio_flags & IOCB_FLAG_RESFD) {
++		/*
++		 * If the IOCB_FLAG_RESFD flag of aio_flags is set, get an
++		 * instance of the file* now. The file descriptor must be
++		 * an eventfd() fd, and will be signaled for each completed
++		 * event using the eventfd_signal() function.
++		 */
++		ret = aio_eventfd_fget(req, (int) iocb->aio_resfd);
++		if (unlikely(ret))
++			goto out_put_req;
++	}
++
+ 	req->ki_filp = file;
+ 	ret = put_user(req->ki_key, &user_iocb->aio_key);
+ 	if (unlikely(ret)) {
+diff --git a/include/linux/aio_abi.h b/include/linux/aio_abi.h
+index 30fdcc8..914fe82 100644
+--- a/include/linux/aio_abi.h
++++ b/include/linux/aio_abi.h
+@@ -43,6 +43,14 @@ enum {
+ 	IOCB_CMD_NOOP = 6,
+ };
+ 
++/*
++ * Valid flags for the "aio_flags" member of the "struct iocb".
++ *
++ * IOCB_FLAG_RESFD - Set if the "aio_resfd" member of the "struct iocb"
++ *                   is valid.
++ */
++#define IOCB_FLAG_RESFD		(1 << 0)
++
+ /* read() from /dev/aio returns these structures. */
+ struct io_event {
+ 	__u64		data;		/* the data field from the iocb */
+@@ -82,7 +90,15 @@ struct iocb {
+ 
+ 	/* extra parameters */
+ 	__u64	aio_reserved2;	/* TODO: use this for a (struct sigevent *) */
+-	__u64	aio_reserved3;
++
++	/* flags for the "struct iocb" */
++	__u32	aio_flags;
++
++	/*
++	 * if the IOCB_FLAG_RESFD flag of "aio_flags" is set, this is an
++	 * eventfd to signal AIO readiness to
++	 */
++	__u32	aio_resfd;
+ }; /* 64 bytes */
+ 
+ #undef IFBIG

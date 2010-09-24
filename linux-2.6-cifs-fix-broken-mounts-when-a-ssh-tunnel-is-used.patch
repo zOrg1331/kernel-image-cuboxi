@@ -1,0 +1,125 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 19 Nov 2009 14:38:35 -0500
+Subject: [cifs] fix broken mounts when a SSH tunnel is used
+Message-id: <1258641517-20756-9-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21434
+O-Subject: [RHEL5.5 PATCH 08/10] BZ#500838: cifs: fix broken mounts when a SSH
+	tunnel is used (try #4)
+Bugzilla: 500838
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Suresh Jayaraman <sjayaraman@suse.de>
+
+(Upstream commit bdb97adcdf0993adbd2eef44b4533620d43792de)
+
+One more try..
+
+It seems there is a regression that got introduced while Jeff fixed
+all the mount/umount races. While attempting to find whether a tcp
+session is already existing, we were not checking whether the "port"
+used are the same. When a second mount is attempted with a different
+"port=" option, it is being ignored. Because of this the cifs mounts
+that uses a SSH tunnel appears to be broken.
+
+Steps to reproduce:
+
+1. create 2 shares
+# SSH Tunnel a SMB session
+2. ssh -f -L 6111:127.0.0.1:445 root@localhost "sleep 86400"
+3. ssh -f -L 6222:127.0.0.1:445 root@localhost "sleep 86400"
+4. tcpdump -i lo 6111 &
+5. mkdir -p /mnt/mnt1
+6. mkdir -p /mnt/mnt2
+7. mount.cifs //localhost/a /mnt/mnt1 -o username=guest,ip=127.0.0.1,port=6111
+#(shows tcpdump activity on port 6111)
+8. mount.cifs //localhost/b /mnt/mnt2 -o username=guest,ip=127.0.0.1,port=6222
+#(shows tcpdump activity only on port 6111 and not on 6222
+
+Fix by adding a check to compare the port _only_ if the user tries to
+override the tcp port with "port=" option, before deciding that an
+existing tcp session is found. Also, clean up a bit by replacing
+if-else if by a switch statment while at it as suggested by Jeff.
+
+Reviewed-by: Jeff Layton <jlayton@redhat.com>
+Reviewed-by: Shirish Pargaonkar <shirishp@us.ibm.com>
+Signed-off-by: Suresh Jayaraman <sjayaraman@suse.de>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index e949b4e..e80f2e4 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -1428,7 +1428,7 @@ cifs_parse_mount_options(char *options, const char *devname,
+ }
+ 
+ static struct TCP_Server_Info *
+-cifs_find_tcp_session(struct sockaddr_storage *addr)
++cifs_find_tcp_session(struct sockaddr_storage *addr, unsigned short int port)
+ {
+ 	struct list_head *tmp;
+ 	struct TCP_Server_Info *server;
+@@ -1448,14 +1448,35 @@ cifs_find_tcp_session(struct sockaddr_storage *addr)
+ 		if (server->tcpStatus == CifsNew)
+ 			continue;
+ 
+-		if (addr->ss_family == AF_INET &&
+-		    (addr4->sin_addr.s_addr !=
+-		     server->addr.sockAddr.sin_addr.s_addr))
+-			continue;
+-		else if (addr->ss_family == AF_INET6 &&
+-			 !ipv6_addr_equal(&server->addr.sockAddr6.sin6_addr,
+-					  &addr6->sin6_addr))
+-			continue;
++		switch (addr->ss_family) {
++		case AF_INET:
++			if (addr4->sin_addr.s_addr ==
++			    server->addr.sockAddr.sin_addr.s_addr) {
++				addr4->sin_port = htons(port);
++				/* user overrode default port? */
++				if (addr4->sin_port) {
++					if (addr4->sin_port !=
++					    server->addr.sockAddr.sin_port)
++						continue;
++				}
++				break;
++			} else
++				continue;
++
++		case AF_INET6:
++			if (ipv6_addr_equal(&addr6->sin6_addr,
++			    &server->addr.sockAddr6.sin6_addr)) {
++				addr6->sin6_port = htons(port);
++				/* user overrode default port? */
++				if (addr6->sin6_port) {
++					if (addr6->sin6_port !=
++					   server->addr.sockAddr6.sin6_port)
++						continue;
++				}
++				break;
++			} else
++				continue;
++		}
+ 
+ 		++server->srv_count;
+ 		write_unlock(&cifs_tcp_ses_lock);
+@@ -1537,7 +1558,7 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
+ 	}
+ 
+ 	/* see if we already have a matching tcp_ses */
+-	tcp_ses = cifs_find_tcp_session(&addr);
++	tcp_ses = cifs_find_tcp_session(&addr, volume_info->port);
+ 	if (tcp_ses)
+ 		return tcp_ses;
+ 
+@@ -2697,9 +2718,9 @@ CIFSTCon(unsigned int xid, struct cifsSesInfo *ses,
+ 		return -EIO;
+ 
+ 	smb_buffer = cifs_buf_get();
+-	if (smb_buffer == NULL) {
++	if (smb_buffer == NULL)
+ 		return -ENOMEM;
+-	}
++
+ 	smb_buffer_response = smb_buffer;
+ 
+ 	header_assemble(smb_buffer, SMB_COM_TREE_CONNECT_ANDX,

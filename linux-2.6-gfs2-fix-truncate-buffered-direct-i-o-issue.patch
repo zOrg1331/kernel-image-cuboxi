@@ -1,0 +1,28 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Wed, 10 Jun 2009 15:23:33 +0100
+Subject: [gfs2] fix truncate buffered/direct I/O issue
+Message-id: 1244643813.3355.20.camel@localhost.localdomain
+O-Subject: [RHEL 5.4] Fix truncate buffered/direct I/O issue (bz #504676) #2
+Bugzilla: 504676
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+This (updated) patch fixes bz #504676
+
+The fix is identical to the upstream patch modulo the context
+and fixes a place where we were not marking a buffer dirty
+which could result in it not being written if accessed via
+O_DIRECT later.
+
+diff --git a/fs/gfs2/bmap.c b/fs/gfs2/bmap.c
+index c628832..58a21a2 100644
+--- a/fs/gfs2/bmap.c
++++ b/fs/gfs2/bmap.c
+@@ -898,7 +898,7 @@ static int gfs2_block_truncate_page(struct address_space *mapping)
+ 	memset(kaddr + offset, 0, length);
+ 	flush_dcache_page(page);
+ 	kunmap_atomic(kaddr, KM_USER0);
+-
++	mark_buffer_dirty(bh);
+ unlock:
+ 	unlock_page(page);
+ 	page_cache_release(page);

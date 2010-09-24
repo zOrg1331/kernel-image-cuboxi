@@ -1,0 +1,68 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Wed, 23 Dec 2009 16:41:51 -0500
+Subject: scsi: fix duplicate libiscsi symbol and kabi warnings
+Message-id: <20091223164151.GA9151@redhat.com>
+Patchwork-id: 22273
+O-Subject: [RHEL5.5 PATCH] scsi: fix duplicate libiscsi symbol and kabi warnings
+Bugzilla:
+
+On Tue, Dec 22, 2009 at 08:18:56PM -0600, Mike Christie wrote:
+> Jarod Wilson wrote:
+> >On Mon, Dec 21, 2009 at 03:34:02PM -0500, Jarod Wilson wrote:
+> >>[RHEL5.5 PATCH] scsi: fix duplicate libiscsi symbol warnings
+> >>
+> >>When libiscsi2 support was added to the RHEL5 kernel, there were
+> >>some changes made to the existing libiscsi code, to add foo*iscsi1
+> >>bits here and there. For the most part, nothing actually requests
+> >>any of them that way, so far as I can see, and all the stuff using
+> >>libiscsi2 requests *iscsi2 explicitly. At present, the changes
+> >>made to the libisci1 bits result in build warnings about duplicate
+> >>symbols in libiscsi.ko and libiscsi1.ko. I believe the simple fix
+> >>is to only build libiscsi.ko, but I could be missing something...
+> >>Also, why this didn't start showing up until very recently is
+> >>currently beyond me, since the patch that created the dupes looks
+> >>like it was in 5.4...
+> >>
+> >>Anyhow, this patch is a more complete version of what I posted
+> >>in reply to the kvm/iscsi kabi patch submitted by jcm, which
+> >>further reduces unnecessary duplication.
+> >
+> >Bah. Self-NAK. Local git tree build was okay, rpm build blew up due to
+> >missing symbols that are on the whitelist. Looks like the original version
+> >that only drops the duplicate libiscsi1.ko actually works though, at least
+> >from an "it builds, and the dupe warnings are gone" standpoint.
+> >
+>
+> ACK if this is ok. There is nothing in RHEL or in upstream that uses
+> liiscsi1. It is only KABId due to me not understanding the process
+> at the time and not requesting for it to be dropped from the KABI.
+>
+> There was actually one driver using the scsi_transport_iscsi1
+> symbols. It was a brodacom distributed bnx2i driver. We merged the
+> bnx2i driver in 5.4, so people just use that now. And, Broadcom now
+> only supports the bnx2i driver we ship so there is no point in
+> keeping the scsi_transport_iscsi1.
+
+Dropping scsi_transport_iscsi1 looks a bit more involved than I'm prepared
+to handle at the moment, since it would require quite a bit of code
+shuffle (but maybe its just a matter of reverting key chunks of the patch
+that added *iscsi1 bits in the first place). The following patch resolves
+both the duplicate symbol build warnings and the kabi symbol move warnings.
+It merges my v2 patch with the necessary bits of Jon's kvm kabi rfc patch
+that included these symbol moves and a bit more.
+
+
+diff --git a/drivers/scsi/Makefile b/drivers/scsi/Makefile
+index de72583..05e4bd8 100644
+--- a/drivers/scsi/Makefile
++++ b/drivers/scsi/Makefile
+@@ -40,8 +40,7 @@ obj-y				+= device_handler/
+ obj-$(CONFIG_LIBFC)		+= libfc/
+ obj-$(CONFIG_FCOE)		+= fcoe/
+ obj-$(CONFIG_FCOE_FNIC)		+= fnic/
+-obj-$(CONFIG_LIBISCSI1)		+= libiscsi1.o
+-libiscsi1-objs			:= libiscsi.o
++obj-$(CONFIG_LIBISCSI1)		+= libiscsi.o
+ obj-$(CONFIG_ISCSI_TCP) 	+= libiscsi2.o	libiscsi_tcp.o iscsi_tcp.o
+ obj-$(CONFIG_INFINIBAND_ISER) 	+= libiscsi2.o
+ obj-$(CONFIG_SCSI_AMIGA7XX)	+= amiga7xx.o	53c7xx.o

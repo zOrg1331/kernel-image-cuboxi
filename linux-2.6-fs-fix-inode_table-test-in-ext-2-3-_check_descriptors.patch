@@ -1,0 +1,83 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 8 Oct 2009 19:32:24 -0400
+Subject: [fs] fix inode_table test in ext{2,3}_check_descriptors
+Message-id: <4ACE3E48.3060608@redhat.com>
+Patchwork-id: 21071
+O-Subject: [PATCH RHEL5.5] fix inode_table test in ext234_check_descriptors
+Bugzilla: 504797
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+This is for
+Bug 504797 - [RHEL5.4-PreAlpha]: Incorrect group file descriptor tests cause mount failure in some cases
+
+It's a pretty simple backport of an upstream commit I did way
+back when.
+
+ext4 is omitted from this patch because that fix already got picked
+up in all the ext4 backporting that's gone on.
+
+ext2 changes in the backport are slightly different because we never
+fixed up ext2 16T mounts in RHEL5; we only put forth that effort for ext3.
+
+Thanks,
+-Eric
+
+commit 780dcdb21170ae8ad3faa640ede249261f216a8c
+Author: Eric Sandeen <sandeen@redhat.com>
+Date:   Thu Jul 26 10:41:11 2007 -0700
+
+    fix inode_table test in ext234_check_descriptors
+
+    ext[234]_check_descriptors sanity checks block group descriptor geometry at
+    mount time, testing whether the block bitmap, inode bitmap, and inode table
+    reside wholly within the blockgroup.  However, the inode table test is off
+    by one so that if the last block in the inode table resides on the last
+    block of the block group, the test incorrectly fails.  This is because it
+    tests the last block as (start + length) rather than (start + length - 1).
+
+    This can be seen by trying to mount a filesystem made such as:
+
+     mkfs.ext2 -F -b 1024 -m 0 -g 256 -N 3744 fsfile 1024
+
+    which yields:
+
+     EXT2-fs error (device loop0): ext2_check_descriptors: Inode table for group 0 not in group (block 101)!
+     EXT2-fs: group descriptors corrupted!
+
+    There is a similar bug in e2fsprogs, patch already sent for that.
+
+    (I wonder if inside(), outside(), and/or in_range() should someday be
+    used in this and other tests throughout the ext filesystems...)
+
+    Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+    Cc: <linux-ext4@vger.kernel.org>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/ext2/super.c b/fs/ext2/super.c
+index 7e6ca41..b83f4ed 100644
+--- a/fs/ext2/super.c
++++ b/fs/ext2/super.c
+@@ -572,7 +572,7 @@ static int ext2_check_descriptors (struct super_block * sb)
+ 			return 0;
+ 		}
+ 		if (le32_to_cpu(gdp->bg_inode_table) < block ||
+-		    le32_to_cpu(gdp->bg_inode_table) + sbi->s_itb_per_group >=
++		    le32_to_cpu(gdp->bg_inode_table) + sbi->s_itb_per_group - 1 >=
+ 		    block + EXT2_BLOCKS_PER_GROUP(sb))
+ 		{
+ 			ext2_error (sb, "ext2_check_descriptors",
+diff --git a/fs/ext3/super.c b/fs/ext3/super.c
+index e11ce0e..d42bbb1 100644
+--- a/fs/ext3/super.c
++++ b/fs/ext3/super.c
+@@ -1219,7 +1219,7 @@ static int ext3_check_descriptors (struct super_block * sb)
+ 			return 0;
+ 		}
+ 		if (le32_to_cpu(gdp->bg_inode_table) < first_block ||
+-		    le32_to_cpu(gdp->bg_inode_table) + sbi->s_itb_per_group >
++		    le32_to_cpu(gdp->bg_inode_table) + sbi->s_itb_per_group - 1 >
+ 		    last_block)
+ 		{
+ 			ext3_error (sb, "ext3_check_descriptors",

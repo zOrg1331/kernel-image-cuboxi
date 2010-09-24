@@ -1,0 +1,34 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 6 Oct 2009 12:14:52 -0400
+Subject: [pci] pci_dev->is_enabled must be set
+Message-id: 20091006161321.32715.98237.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH] pci_dev->is_enabled must be set
+Bugzilla: 527496
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+My patch for 442007 removed the setting of dev->is_enabled.
+
+This could cause some suspend/resumes to fail.  A problem has not been seen,
+but the code should be fixed for correctness.
+
+One-line patch resolves the issue.
+
+Successfully compiled by me.
+
+Resolves BZ 527496.
+
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 042dcfa..3ccf357 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -710,6 +710,8 @@ static int __pci_enable_device_flags(struct pci_dev *dev,
+ 	if (dev->is_enabled)
+ 		return 0;		/* already enabled */
+ 
++	dev->is_enabled = 1;
++
+ 	for (i = 0; i < DEVICE_COUNT_RESOURCE; i++)
+ 		if (dev->resource[i].flags & flags)
+ 			bars |= (1 << i);

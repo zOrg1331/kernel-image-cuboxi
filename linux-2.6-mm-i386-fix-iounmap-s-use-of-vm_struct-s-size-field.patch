@@ -1,0 +1,81 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Mon, 8 Feb 2010 02:29:54 -0500
+Subject: [mm] i386: fix iounmap's use of vm_struct's size field
+Message-id: <20100208023005.3937.22652.sendpatchset@danny>
+Patchwork-id: 23173
+O-Subject: [PATCH RHEL5.5 BZ549465] i386: fix iounmap's use of vm_struct's size
+	field
+Bugzilla: 549465
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+backport of
+
+commit 9585116ba09f1d8c52d0a1346e20bb9d443e9c02
+Author: Jeremy Fitzhardinge <jeremy@goop.org>
+Date:   Sat Jul 21 17:11:35 2007 +0200
+
+    i386: fix iounmap's use of vm_struct's size field
+
+    get_vm_area always returns an area with an adjacent guard page.  That guard
+    page is included in vm_struct.size.  iounmap uses vm_struct.size to
+    determine how much address space needs to have change_page_attr applied to
+    it, which will BUG if applied to the guard page.
+
+    This patch adds a helper function - get_vm_area_size() in linux/vmalloc.h -
+    to return the actual size of a vm area, and uses it to make iounmap do the
+    right thing.  There are probably other places which should be using
+    get_vm_area_size().
+
+    Thanks to Dave Young <hidave.darkstar@gmail.com> for debugging the
+    problem.
+
+    [ Andi, it wasn't clear to me whether x86_64 needs the same fix. ]
+
+    Signed-off-by: Jeremy Fitzhardinge <jeremy@xensource.com>
+    Cc: Dave Young <hidave.darkstar@gmail.com>
+    Cc: Chuck Ebbert <cebbert@redhat.com>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Andi Kleen <ak@suse.de>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+Brew build is available at:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2244593
+
+Nvidia send the specific machine to Joe Kachuck <jkachuck@redhat.com>, and Joe
+confirmed this patch fixes the kernel hang during loading Nvidia driver on some
+i386 platform
+
+Resolves bz549465
+
+diff --git a/arch/i386/mm/ioremap.c b/arch/i386/mm/ioremap.c
+index 247fde7..2e786b2 100644
+--- a/arch/i386/mm/ioremap.c
++++ b/arch/i386/mm/ioremap.c
+@@ -268,7 +268,7 @@ void iounmap(volatile void __iomem *addr)
+ 	/* Reset the direct mapping. Can block */
+ 	if ((p->flags >> 20) && p->phys_addr < virt_to_phys(high_memory) - 1) {
+ 		change_page_attr(virt_to_page(__va(p->phys_addr)),
+-				 p->size >> PAGE_SHIFT,
++				 get_vm_area_size(p) >> PAGE_SHIFT,
+ 				 PAGE_KERNEL);
+ 		global_flush_tlb();
+ 	} 
+diff --git a/include/linux/vmalloc.h b/include/linux/vmalloc.h
+index 71b6363..9c7114b 100644
+--- a/include/linux/vmalloc.h
++++ b/include/linux/vmalloc.h
+@@ -58,6 +58,13 @@ extern int remap_vmalloc_range(struct vm_area_struct *vma, void *addr,
+ /*
+  *	Lowlevel-APIs (not for driver use!)
+  */
++
++static inline size_t get_vm_area_size(const struct vm_struct *area) 
++{ 
++	/* return actual size without guard page */ 
++	return area->size - PAGE_SIZE; 
++}
++
+ extern struct vm_struct *get_vm_area(unsigned long size, unsigned long flags);
+ extern struct vm_struct *__get_vm_area(unsigned long size, unsigned long flags,
+ 					unsigned long start, unsigned long end);

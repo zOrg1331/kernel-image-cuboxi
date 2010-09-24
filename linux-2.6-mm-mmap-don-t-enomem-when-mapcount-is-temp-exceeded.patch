@@ -1,0 +1,148 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Mon, 25 Jan 2010 09:54:46 -0500
+Subject: [mm] mmap: don't ENOMEM when mapcount is temp exceeded
+Message-id: <4B5D6A66.6060009@redhat.com>
+Patchwork-id: 22791
+O-Subject: Re: [PATCH RHEL5.5] mmap: don't return ENOMEM when
+	mapcount	is	temporarily exceeded in munmap()
+Bugzilla: 552648
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+On 01/22/2010 10:08 PM, Dean Nelson wrote:
+> On 01/21/2010 12:21 AM, Danny Feng wrote:
+>> RHBZ:
+>> https://bugzilla.redhat.com/show_bug.cgi?id=552648
+>>
+>> Description:
+>>    The munmap() fails with ENOMEM if
+>>
+>>      - the number of VMAs equals the limit - 1, and
+>>      - it does not unmap a whole VMA but a part of a VMA.
+>>
+>>    In that case, the number of VMAs temporarily reaches the limit during
+>>    munmap() and it backs to below the limit at the end of munmap().
+>> So it
+>>    should not fail.
+>>
+>> Upstream status:
+>> commit 659ace5
+>>
+>> KABI:
+>> no harm
+>>
+>> Brew build:
+>> https://brewweb.devel.redhat.com/taskinfo?taskID=2209769
+>>
+>> Test status:
+>> The reproducer exits normally with the patch applied on IA64 and
+>> x86_64 machine.
+>> ---
+>> diff --git a/mm/mmap.c b/mm/mmap.c
+>> index d80fa9d..c67e206 100644
+>> --- a/mm/mmap.c
+>> +++ b/mm/mmap.c
+> <snip>
+>> @@ -1883,6 +1880,19 @@ int split_vma(struct mm_struct * mm, struct
+>> vm_area_struct * vma,
+>>       return 0;
+>>   }
+>>
+>> +/*
+>> + * Split a vma into two pieces at address 'addr', a new vma is
+>> allocated
+>> + * either for the first part or the tail.
+>> + */
+>> +int split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
+>> +         unsigned long addr, int new_below)
+>
+> Upstream commit has an additional space preceding "unsigned..." so
+> that it lines up under "struct..." of the line preceding it.
+
+oops, attach the updated patch, thanks ;-)
+
+>
+> Otherwise, the patch looks good.
+>
+> Acked-by: Dean Nelson <dnelson@redhat.com>
+>
+>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/mm/mmap.c b/mm/mmap.c
+index d80fa9d..7d9196b 100644
+--- a/mm/mmap.c
++++ b/mm/mmap.c
+@@ -1828,10 +1828,10 @@ detach_vmas_to_be_unmapped(struct mm_struct *mm, struct vm_area_struct *vma,
+ }
+ 
+ /*
+- * Split a vma into two pieces at address 'addr', a new vma is allocated
+- * either for the first part or the the tail.
++ * __split_vma() bypasses sysctl_max_map_count checking.  We use this on the
++ * munmap path where it doesn't make sense to fail.
+  */
+-int split_vma(struct mm_struct * mm, struct vm_area_struct * vma,
++static int __split_vma(struct mm_struct * mm, struct vm_area_struct * vma,
+ 	      unsigned long addr, int new_below)
+ {
+ 	struct mempolicy *pol;
+@@ -1840,9 +1840,6 @@ int split_vma(struct mm_struct * mm, struct vm_area_struct * vma,
+ 	if (is_vm_hugetlb_page(vma) && (addr & ~HPAGE_MASK))
+ 		return -EINVAL;
+ 
+-	if (mm->map_count >= sysctl_max_map_count)
+-		return -ENOMEM;
+-
+ 	new = kmem_cache_alloc(vm_area_cachep, SLAB_KERNEL);
+ 	if (!new)
+ 		return -ENOMEM;
+@@ -1883,6 +1880,19 @@ int split_vma(struct mm_struct * mm, struct vm_area_struct * vma,
+ 	return 0;
+ }
+ 
++/*
++ * Split a vma into two pieces at address 'addr', a new vma is allocated
++ * either for the first part or the tail.
++ */
++int split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
++	      unsigned long addr, int new_below)
++{
++	if (mm->map_count >= sysctl_max_map_count)
++		return -ENOMEM;
++
++	return __split_vma(mm, vma, addr, new_below);
++}
++
+ /* Munmap is split into 2 main parts -- this part which finds
+  * what needs doing, and the areas themselves, which do the
+  * work.  This now handles partial unmappings.
+@@ -1918,7 +1928,17 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
+ 	 * places tmp vma above, and higher split_vma places tmp vma below.
+ 	 */
+ 	if (start > vma->vm_start) {
+-		int error = split_vma(mm, vma, start, 0);
++		int error;
++
++		/*
++		 * Make sure that map_count on return from munmap() will
++		 * not exceed its limit; but let map_count go just above
++		 * its limit temporarily, to help free resources as expected.
++		 */
++		if (end < vma->vm_end && mm->map_count >= sysctl_max_map_count)
++			return -ENOMEM;
++
++		error = __split_vma(mm, vma, start, 0);
+ 		if (error)
+ 			return error;
+ 		prev = vma;
+@@ -1927,7 +1947,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
+ 	/* Does it split the last one? */
+ 	last = find_vma(mm, end);
+ 	if (last && end > last->vm_start) {
+-		int error = split_vma(mm, last, end, 1);
++		int error = __split_vma(mm, last, end, 1);
+ 		if (error)
+ 			return error;
+ 	}

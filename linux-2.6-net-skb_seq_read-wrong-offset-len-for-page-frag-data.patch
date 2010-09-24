@@ -1,0 +1,42 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Mon, 8 Jun 2009 10:35:28 -0500
+Subject: [net] skb_seq_read: wrong offset/len for page frag data
+Message-id: 1244475328-8044-1-git-send-email-mchristi@redhat.com
+O-Subject: [PATCH] RHEL 5.4: net: fix skb_seq_read returning wrong offset/length for page frag data
+Bugzilla: 501308
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 501308.
+
+>From the upstream commit in the net git tree:
+http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.git;a=commitdiff;h=995b337952cdf7e05d288eede580257b632a8343
+
+When called with a consumed value that is less than skb_headlen(skb)
+bytes into a page frag, skb_seq_read() incorrectly returns an
+offset/length relative to skb->data. Ensure that data which should come
+from a page frag does.
+
+Testing:
+The problem was found and fixed by Dell/Equallogic. They verified the fix
+with our kernel, and did minimal regression testing.
+
+I did not have a bnx2x card, so I just did iscsi IO tests with other drivers
+I have here (e1000, ixgbe, cxgb3 and bnx2) to check for regessions with
+that code path.
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 6bd609d..8113351 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -1715,7 +1715,7 @@ unsigned int skb_seq_read(unsigned int consumed, const u8 **data,
+ next_skb:
+ 	block_limit = skb_headlen(st->cur_skb) + st->stepped_offset;
+ 
+-	if (abs_offset < block_limit) {
++	if (abs_offset < block_limit && !st->frag_data) {
+ 		*data = st->cur_skb->data + (abs_offset - st->stepped_offset);
+ 		return block_limit - abs_offset;
+ 	}

@@ -1,0 +1,42 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Wed, 6 May 2009 13:59:15 +0100
+Subject: [gfs2] fix glock ref count issue
+Message-id: 1241614755.29604.225.camel@localhost.localdomain
+O-Subject: [RHEL 5.4] Fix glock ref count issue (bz #485098)
+Bugzilla: 485098
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Hi,
+
+This patch fixes an issue introduced by the recent scand & glockd
+removal patch which can occur from time to time when the system is under
+memory pressure. It fixes #485098 and has been tested by QE with their
+memory pressure test. This patch is also upstream.
+
+Steve.
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index dce3ff7..60b60a5 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -251,10 +251,10 @@ int gfs2_glock_put(struct gfs2_glock *gl)
+ 		rv = 1;
+ 		goto out;
+ 	}
+-	write_unlock(gl_lock_addr(gl->gl_hash));
+ 	/* 1 for being hashed, 1 for having state != LM_ST_UNLOCKED */
+ 	if (atomic_read(&gl->gl_ref) == 2)
+ 		gfs2_glock_schedule_for_reclaim(gl);
++	write_unlock(gl_lock_addr(gl->gl_hash));
+ out:
+ 	return rv;
+ }
+@@ -1449,6 +1449,7 @@ static int gfs2_shrink_glock_memory(int nr, gfp_t gfp_mask)
+ 				nr--;
+ 				if (queue_delayed_work(glock_workqueue, &gl->gl_work, 0) == 0)
+ 					gfs2_glock_put(gl);
++				got_ref = 0;
+ 			}
+ 			spin_lock(&lru_lock);
+ 			if (may_demote)

@@ -1,0 +1,139 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 30 Sep 2009 17:11:39 -0400
+Subject: [scsi] scsi_dh_rdac: collect rdac debug info during init
+Message-id: 20090930210537.22936.70063.sendpatchset@localhost.localdomain
+O-Subject: [LSI 5.5 feat 6/7] scsi_dh_rdac: changes to collect the rdac debug information during the initialization
+Bugzilla: 524335
+
+https://bugzilla.redhat.com/show_bug.cgi?id=524335
+
+>From patchwork Fri Sep  4 03:42:21 2009
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Subject: [2/3,
+	RESUBMIT] scsi_dh_rdac: changes to collect the rdac debug information
+	during the initialization
+Date: Fri, 04 Sep 2009 03:42:21 -0000
+From: Moger, Babu <Babu.Moger@lsi.com>
+X-Patchwork-Id: 45507
+
+Adding the code to read the debug information during initialization. This patch collects the information about storage and controllers during rdac_activate.
+
+Signed-off-by: Babu Moger <babu.moger@lsi.com>
+Reviewed-by: Vijay Chauhan <vijay.chauhan@lsi.com>
+Reviewed-by: Bob Stankey <Robert.stankey@lsi.com>
+Acked-by: Chandra Seetharaman <sekharan@us.ibm.com>
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index 8d69084..c0b6870 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -115,6 +115,7 @@ struct c9_inquiry {
+ 
+ #define SUBSYS_ID_LEN	16
+ #define SLOT_ID_LEN	2
++#define ARRAY_LABEL_LEN	31
+ 
+ struct c4_inquiry {
+ 	u8	peripheral_info;
+@@ -138,6 +139,8 @@ struct rdac_controller {
+ 		struct rdac_pg_legacy legacy;
+ 		struct rdac_pg_expanded expanded;
+ 	} mode_select;
++	u8	index;
++	u8	array_name[ARRAY_LABEL_LEN];
+ };
+ struct c8_inquiry {
+ 	u8	peripheral_info;
+@@ -307,7 +310,8 @@ static void release_controller(struct kref *kref)
+ 	kfree(ctlr);
+ }
+ 
+-static struct rdac_controller *get_controller(u8 *subsys_id, u8 *slot_id)
++static struct rdac_controller *get_controller(u8 *subsys_id, u8 *slot_id,
++						char *array_name)
+ {
+ 	struct rdac_controller *ctlr, *tmp;
+ 
+@@ -328,6 +332,14 @@ static struct rdac_controller *get_controller(u8 *subsys_id, u8 *slot_id)
+ 	/* initialize fields of controller */
+ 	memcpy(ctlr->subsys_id, subsys_id, SUBSYS_ID_LEN);
+ 	memcpy(ctlr->slot_id, slot_id, SLOT_ID_LEN);
++	memcpy(ctlr->array_name, array_name, ARRAY_LABEL_LEN);
++
++	/* update the controller index */
++	if (slot_id[1] == 0x31)
++		ctlr->index = 0;
++	else
++		ctlr->index = 1;
++
+ 	kref_init(&ctlr->kref);
+ 	ctlr->use_ms10 = -1;
+ 	list_add(&ctlr->node, &ctlr_list);
+@@ -367,9 +379,10 @@ done:
+ 	return err;
+ }
+ 
+-static int get_lun(struct scsi_device *sdev, struct rdac_dh_data *h)
++static int get_lun_info(struct scsi_device *sdev, struct rdac_dh_data *h,
++			char *array_name)
+ {
+-	int err;
++	int err, i;
+ 	struct c8_inquiry *inqp;
+ 
+ 	err = submit_inquiry(sdev, 0xC8, sizeof(struct c8_inquiry), h);
+@@ -381,6 +394,11 @@ static int get_lun(struct scsi_device *sdev, struct rdac_dh_data *h)
+ 		    inqp->page_id[2] != 'i' || inqp->page_id[3] != 'd')
+ 			return SCSI_DH_NOSYS;
+ 		h->lun = inqp->lun[7]; /* Uses only the last byte */
++
++		for (i = 0; i < ARRAY_LABEL_LEN-1; ++i)
++			*(array_name+i) = inqp->array_user_label[(2*i)+1];
++
++		*(array_name+ARRAY_LABEL_LEN-1) = '\0';
+ 	}
+ 	return err;
+ }
+@@ -413,7 +431,7 @@ static int check_ownership(struct scsi_device *sdev, struct rdac_dh_data *h)
+ }
+ 
+ static int initialize_controller(struct scsi_device *sdev,
+-				 struct rdac_dh_data *h)
++				 struct rdac_dh_data *h, char *array_name)
+ {
+ 	int err;
+ 	struct c4_inquiry *inqp;
+@@ -421,7 +439,8 @@ static int initialize_controller(struct scsi_device *sdev,
+ 	err = submit_inquiry(sdev, 0xC4, sizeof(struct c4_inquiry), h);
+ 	if (err == SCSI_DH_OK) {
+ 		inqp = &h->inq.c4;
+-		h->ctlr = get_controller(inqp->subsys_id, inqp->slot_id);
++		h->ctlr = get_controller(inqp->subsys_id, inqp->slot_id,
++					array_name);
+ 		if (!h->ctlr)
+ 			err = SCSI_DH_RES_TEMP_UNAVAIL;
+ 	}
+@@ -656,6 +675,7 @@ static int rdac_bus_attach(struct scsi_device *sdev)
+ 	struct rdac_dh_data *h;
+ 	unsigned long flags;
+ 	int err;
++	char array_name[ARRAY_LABEL_LEN];
+ 
+ 	scsi_dh_data = kzalloc(sizeof(struct scsi_device_handler *)
+ 				+ sizeof(*h) , GFP_KERNEL);
+@@ -669,11 +689,11 @@ static int rdac_bus_attach(struct scsi_device *sdev)
+ 	h->lun = UNINITIALIZED_LUN;
+ 	h->state = RDAC_STATE_ACTIVE;
+ 
+-	err = get_lun(sdev, h);
++	err = get_lun_info(sdev, h, array_name);
+ 	if (err != SCSI_DH_OK)
+ 		goto failed;
+ 
+-	err = initialize_controller(sdev, h);
++	err = initialize_controller(sdev, h, array_name);
+ 	if (err != SCSI_DH_OK)
+ 		goto failed;
+ 

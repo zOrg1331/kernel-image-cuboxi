@@ -1,0 +1,64 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 30 Oct 2009 13:16:22 -0400
+Subject: [nfsd] don't allow setting ctime over v4
+Message-id: <1256908582-2474-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21263
+O-Subject: [RHEL5.5 PATCH] BZ#497909: nfsd: don't allow setting ctime over v4
+Bugzilla: 497909
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: J. Bruce Fields <bfields@citi.umich.edu>
+
+(Upstream commit e36cd4a2873c398ba188f16e4087cce7f00a1506)
+
+The NFSv4 server in RHEL5 allows a client to set the ctime over NFSv4.
+This shouldn't be allowed according to the RFC. Tested with the
+customer-provided reproducer.
+
+Original patch description follows:
+
+	Presumably this is left over from earlier drafts of v4, which listed
+	TIME_METADATA as writeable.  It's read-only in rfc 3530, and shouldn't
+	be modifiable anyway.
+
+	Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index 13123a7..597245c 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -363,20 +363,6 @@ nfsd4_decode_fattr(struct nfsd4_compoundargs *argp, u32 *bmval, struct iattr *ia
+ 			goto xdr_error;
+ 		}
+ 	}
+-	if (bmval[1] & FATTR4_WORD1_TIME_METADATA) {
+-		/* We require the high 32 bits of 'seconds' to be 0, and we ignore
+-		   all 32 bits of 'nseconds'. */
+-		READ_BUF(12);
+-		len += 12;
+-		READ32(dummy32);
+-		if (dummy32)
+-			return nfserr_inval;
+-		READ32(iattr->ia_ctime.tv_sec);
+-		READ32(iattr->ia_ctime.tv_nsec);
+-		if (iattr->ia_ctime.tv_nsec >= (u32)1000000000)
+-			return nfserr_inval;
+-		iattr->ia_valid |= ATTR_CTIME;
+-	}
+ 	if (bmval[1] & FATTR4_WORD1_TIME_MODIFY_SET) {
+ 		READ_BUF(4);
+ 		len += 4;
+diff --git a/include/linux/nfsd/nfsd.h b/include/linux/nfsd/nfsd.h
+index c04fb25..ff1b586 100644
+--- a/include/linux/nfsd/nfsd.h
++++ b/include/linux/nfsd/nfsd.h
+@@ -333,7 +333,7 @@ static inline int is_fsid(struct svc_fh *fh, struct knfsd_fh *reffh)
+ (FATTR4_WORD0_SIZE              | FATTR4_WORD0_ACL                                         )
+ #define NFSD_WRITEABLE_ATTRS_WORD1                                                          \
+ (FATTR4_WORD1_MODE              | FATTR4_WORD1_OWNER         | FATTR4_WORD1_OWNER_GROUP     \
+- | FATTR4_WORD1_TIME_ACCESS_SET | FATTR4_WORD1_TIME_METADATA | FATTR4_WORD1_TIME_MODIFY_SET)
++ | FATTR4_WORD1_TIME_ACCESS_SET | FATTR4_WORD1_TIME_MODIFY_SET)
+ 
+ #endif /* CONFIG_NFSD_V4 */
+ 

@@ -1,0 +1,123 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Thu, 22 Oct 2009 10:51:09 -0400
+Subject: [i2c] include support for Hudson-2 SMBus controller
+Message-id: <20091022125109.0d7f0a0d@dhcp-lab-109.englab.brq.redhat.com>
+Patchwork-id: 21185
+O-Subject: [RHEL5.5 PATCH] BZ515125: Include support for Hudson-2 SMBus
+	controller
+Bugzilla: 515125
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+
+From: Crane Cai <crane.cai@amd.com>
+
+BZ#515125
+https://bugzilla.redhat.com/show_bug.cgi?id=515125
+
+Description:
+Enable Hudson-2 (formerly SB900) SMBus controller.
+
+Upstream Status of the patch:
+
+commit 76b3e28fa728bb68895cbd8375f5ce233bd891de
+Author: Crane Cai <crane.cai@amd.com>
+Date:   Fri Sep 18 22:45:50 2009 +0200
+
+    i2c-piix4: Add AMD SB900 SMBus device ID
+
+There is second patch with the name change, currently it is in I2C
+maintainer quilt tree:
+From: Crane Cai <crane.cai@amd.com>
+Subject: i2c-piix4: Modify code name SB900 to Hudson-2
+ftp://ftp.kernel.org/pub/linux/kernel/people/jdelvare/linux-2.6/jdelvare-i2c/i2c-piix4-modify-code-name-sb900-to-hudson-2.patch
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2034673
+
+Test Status:
+Patch mainly was tested by AMD. I try to tested patch against regression
+on machine with Broadcom BCM5785 chipset which belongs to i2c-pii4. I just
+load/unload module, I did not test any workloads on i2c bus.
+
+
+diff --git a/Documentation/i2c/busses/i2c-piix4 b/Documentation/i2c/busses/i2c-piix4
+index 84ac81d..e080ff8 100644
+--- a/Documentation/i2c/busses/i2c-piix4
++++ b/Documentation/i2c/busses/i2c-piix4
+@@ -8,6 +8,8 @@ Supported adapters:
+     Datasheet: Only available via NDA from ServerWorks
+   * ATI IXP200, IXP300, IXP400, SB600, SB700 and SB800 southbridges
+     Datasheet: Not publicly available
++  * AMD Hudson-2
++    Datasheet: Not publicly available
+   * Standard Microsystems (SMSC) SLC90E66 (Victory66) southbridge
+     Datasheet: Publicly available at the SMSC website http://www.smsc.com
+ 
+diff --git a/drivers/i2c/busses/Kconfig b/drivers/i2c/busses/Kconfig
+index f1bb8f2..55e3c43 100644
+--- a/drivers/i2c/busses/Kconfig
++++ b/drivers/i2c/busses/Kconfig
+@@ -167,7 +167,7 @@ config I2C_PXA_SLAVE
+ 	  I2C bus.
+ 
+ config I2C_PIIX4
+-	tristate "Intel PIIX4 and compatible (ATI/Serverworks/Broadcom/SMSC)"
++	tristate "Intel PIIX4 and compatible (ATI/AMD/Serverworks/Broadcom/SMSC)"
+ 	depends on I2C && PCI
+ 	help
+ 	  If you say yes to this option, support will be included for the Intel
+@@ -182,6 +182,7 @@ config I2C_PIIX4
+ 	    ATI SB600
+ 	    ATI SB700
+ 	    ATI SB800
++	    AMD Hudson-2
+ 	    Serverworks OSB4
+ 	    Serverworks CSB5
+ 	    Serverworks CSB6
+diff --git a/drivers/i2c/busses/i2c-piix4.c b/drivers/i2c/busses/i2c-piix4.c
+index a0a5c2c..9154b48 100644
+--- a/drivers/i2c/busses/i2c-piix4.c
++++ b/drivers/i2c/busses/i2c-piix4.c
+@@ -24,6 +24,7 @@
+ 	Intel PIIX4, 440MX
+ 	Serverworks OSB4, CSB5, CSB6, HT-1000, HT-1100
+ 	ATI IXP200, IXP300, IXP400, SB600, SB700, SB800
++	AMD Hudson-2
+ 	SMSC Victory66
+ 
+    Note: we assume there can only be one device, with one SMBus interface.
+@@ -460,6 +461,8 @@ static struct pci_device_id piix4_ids[] = {
+ 	  .driver_data = 0 },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_SBX00_SMBUS),
+ 	  .driver_data = 0 },
++	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_HUDSON2_SMBUS),
++	  .driver_data = 0 },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_OSB4),
+ 	  .driver_data = 0 },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_CSB5),
+@@ -484,9 +487,10 @@ static int __devinit piix4_probe(struct pci_dev *dev,
+ {
+ 	int retval;
+ 
+-	if ((dev->vendor == PCI_VENDOR_ID_ATI) &&
+-	    (dev->device == PCI_DEVICE_ID_ATI_SBX00_SMBUS) &&
+-	    (dev->revision >= 0x40))
++	if ((dev->vendor == PCI_VENDOR_ID_ATI &&
++	     dev->device == PCI_DEVICE_ID_ATI_SBX00_SMBUS &&
++	     dev->revision >= 0x40) ||
++	    dev->vendor == PCI_VENDOR_ID_AMD)
+ 		/* base address location etc changed in SB800 */
+ 		retval = piix4_setup_sb800(dev, id);
+ 	else
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 06e43c1..15ecf54 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -518,6 +518,7 @@
+ #define PCI_DEVICE_ID_AMD_8131_BRIDGE	0x7450
+ #define PCI_DEVICE_ID_AMD_8131_APIC	0x7451
+ #define PCI_DEVICE_ID_AMD_8132_BRIDGE	0x7458
++#define PCI_DEVICE_ID_AMD_HUDSON2_SMBUS	0x780b
+ #define PCI_DEVICE_ID_AMD_CS5536_ISA    0x2090
+ #define PCI_DEVICE_ID_AMD_CS5536_FLASH  0x2091
+ #define PCI_DEVICE_ID_AMD_CS5536_AUDIO  0x2093

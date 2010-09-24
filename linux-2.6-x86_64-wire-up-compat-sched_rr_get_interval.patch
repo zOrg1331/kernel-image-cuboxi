@@ -1,0 +1,62 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Thu, 21 Jan 2010 11:05:38 -0500
+Subject: [x86_64] wire up compat sched_rr_get_interval
+Message-id: <20100121110632.3386.15481.sendpatchset@dhcp-65-180.nay.redhat.com>
+Patchwork-id: 22689
+O-Subject: [PATCH RHEL5.5] x86-64: wire up compat sched_rr_get_interval(2)
+Bugzilla: 557092
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=557092
+
+Description:
+  There is a user data corruption because of a system call in the 32-bit
+compatibility mode on the x86_64 system.
+
+  If a program that calls sched_rr_get_interval() was compiled on x86 and is
+executed on x86_64, the user stack will be destroyed.
+
+  The kernel fills the data beyond the end of timespec structure because the
+size of the structure is different between x86 and x86_64.
+
+Upstream status:
+commit a9bc3bf swithes to sys32_sched_rr_get_interval in x86_64 32bit compat
+syscall entry.
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2216763
+
+KABI:
+no harm
+
+Test status:
+The reproducer works with the patch applied.
+
+diff --git a/arch/x86_64/ia32/ia32entry-xen.S b/arch/x86_64/ia32/ia32entry-xen.S
+index 14cca33..1f5d8ee 100644
+--- a/arch/x86_64/ia32/ia32entry-xen.S
++++ b/arch/x86_64/ia32/ia32entry-xen.S
+@@ -599,7 +599,7 @@ ia32_sys_call_table:
+ 	.quad sys_sched_yield
+ 	.quad sys_sched_get_priority_max
+ 	.quad sys_sched_get_priority_min  /* 160 */
+-	.quad sys_sched_rr_get_interval
++	.quad sys32_sched_rr_get_interval
+ 	.quad compat_sys_nanosleep
+ 	.quad sys_mremap
+ 	.quad sys_setresuid16
+diff --git a/arch/x86_64/ia32/ia32entry.S b/arch/x86_64/ia32/ia32entry.S
+index ebfc581..175ac6b 100644
+--- a/arch/x86_64/ia32/ia32entry.S
++++ b/arch/x86_64/ia32/ia32entry.S
+@@ -566,7 +566,7 @@ ia32_sys_call_table:
+ 	.quad sys_sched_yield
+ 	.quad sys_sched_get_priority_max
+ 	.quad sys_sched_get_priority_min  /* 160 */
+-	.quad sys_sched_rr_get_interval
++	.quad sys32_sched_rr_get_interval
+ 	.quad compat_sys_nanosleep
+ 	.quad sys_mremap
+ 	.quad sys_setresuid16

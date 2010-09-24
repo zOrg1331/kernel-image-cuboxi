@@ -1,0 +1,121 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Wed, 26 Aug 2009 12:40:46 +0200
+Subject: [fs] sanitize invalid partition table entries
+Message-id: 4A95112E.10105@redhat.com
+O-Subject: [RHEL 5.5 PATCH #2] sanitize invalid partition table entries
+Bugzilla: 481658
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Repost with issues addressed that Danny mentioned.
+Thanks Danny! :)
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=481658
+
+Description:
+Upstream added a couple of extra checks to fs/partitions/check.c.
+
+commit ac0d86f5809598ddcd6bfa0ea8245ccc910e9eac
+Author: Kay Sievers <kay.sievers@vrfy.org>
+Date:   Wed Oct 15 22:04:21 2008 -0700
+
+    block: sanitize invalid partition table entries
+
+    We currently follow blindly what the partition table lies about the
+    disk, and let the kernel create block devices which can not be accessed.
+    Trying to identify the device leads to kernel logs full of:
+      sdb: rw=0, want=73392, limit=28800
+      attempt to access beyond end of device
+
+    Here is an example of a broken partition table, where sda2 starts
+    behind the end of the disk, and sdb3 is larger than the entire disk:
+      Disk /dev/sdb: 14 MB, 14745600 bytes
+      1 heads, 29 sectors/track, 993 cylinders, total 28800 sectors
+         Device Boot      Start         End      Blocks   Id  System
+      /dev/sdb1              29        7800        3886   83  Linux
+      /dev/sdb2           37801       45601        3900+  83  Linux
+      /dev/sdb3           15602       73402       28900+  83  Linux
+      /dev/sdb4           23403       28796        2697   83  Linux
+
+    The kernel creates these completely invalid devices, which can not be
+    accessed, or may lead to other unpredictable failures:
+      grep . /sys/class/block/sdb*/{start,size}
+      /sys/class/block/sdb/size:28800
+      /sys/class/block/sdb1/start:29
+      /sys/class/block/sdb1/size:7772
+      /sys/class/block/sdb2/start:37801
+      /sys/class/block/sdb2/size:7801
+      /sys/class/block/sdb3/start:15602
+      /sys/class/block/sdb3/size:57801
+      /sys/class/block/sdb4/start:23403
+      /sys/class/block/sdb4/size:5394
+
+    With this patch, we ignore partitions which start behind the end of the disk,
+    and limit partitions to the end of the disk if they pretend to be larger:
+      grep . /sys/class/block/sdb*/{start,size}
+      /sys/class/block/sdb/size:28800
+      /sys/class/block/sdb1/start:29
+      /sys/class/block/sdb1/size:7772
+      /sys/class/block/sdb3/start:15602
+      /sys/class/block/sdb3/size:13198
+      /sys/class/block/sdb4/start:23403
+      /sys/class/block/sdb4/size:5394
+
+    These warnings are printed to the kernel log:
+      sdb: p2 ignored, start 37801 is behind the end of the disk
+      sdb: p3 size 57801 limited to end of disk
+
+    Signed-off-by: Kay Sievers <kay.sievers@vrfy.org>
+    Cc: Herton Ronaldo Krzesinski <herton@mandriva.com.br>
+    Cc: Jens Axboe <jens.axboe@oracle.com>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+Patch has been backported to RHEL 5.
+
+Upstream Status:
+http://git.kernel.org/linus/ac0d86f5809598ddcd6bfa0ea8245ccc910e9eac
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1942609
+
+Test Status:
+Patch verified with kernel from brew build on a fresh RHEL5 with fake
+partition table. No access beyond end of device messages appear in the
+kernel log after accessing the fake partition. No other unwanted
+behaviors observed.
+
+  Stefan
+
+diff --git a/fs/partitions/check.c b/fs/partitions/check.c
+index c343118..5fd7868 100644
+--- a/fs/partitions/check.c
++++ b/fs/partitions/check.c
+@@ -505,9 +505,23 @@ int rescan_partitions(struct gendisk *disk, struct block_device *bdev)
+ 		sector_t from = state->parts[p].from;
+ 		if (!size)
+ 			continue;
++		if (from >= get_capacity(disk)) {
++			printk(KERN_WARNING
++			       "%s: p%d ignored, start %llu is behind the end of the disk\n",
++			       disk->disk_name, p, (unsigned long long) from);
++			continue;
++		}
+ 		if (from + size > get_capacity(disk)) {
+-			printk(" %s: p%d exceeds device capacity\n",
+-				disk->disk_name, p);
++			/*
++			 * we can not ignore partitions of broken tables
++			 * created by for example camera firmware, but we
++			 * limit them to the end of the disk to avoid
++			 * creating invalid block devices
++			 */
++			printk(KERN_WARNING
++			       "%s: p%d size %llu limited to end of disk\n",
++			       disk->disk_name, p, (unsigned long long) size);
++			size = get_capacity(disk) - from;
+ 		}
+ 		add_partition(disk, p, from, size);
+ #ifdef CONFIG_BLK_DEV_MD

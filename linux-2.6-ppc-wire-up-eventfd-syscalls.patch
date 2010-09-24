@@ -1,0 +1,65 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 1 Dec 2009 21:06:33 -0500
+Subject: [ppc] wire up eventfd syscalls
+Message-id: <1259701600-23508-6-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21611
+O-Subject: [RHEL5 PATCH 05/12 v2] [POWERPC] Wire up some more syscalls
+Bugzilla: 493101
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+This is a roll-up of two commits:
+
+commit 3692b9444b15ad12e5ec56ec77b1009bb75f8d42
+Author: Stephen Rothwell <sfr@canb.auug.org.au>
+Date:   Mon May 14 13:50:33 2007 +1000
+
+    [POWERPC] Wire up some more syscalls
+
+    signalfd, timerfd and eventfd
+
+commit f2205fbb5a8933514fd343cc329df631802b4543
+Author: Patrick Mansfield <patmans@us.ibm.com>
+Date:   Sun Nov 4 04:42:03 2007 +1100
+
+    [POWERPC] Change fallocate to match unistd.h on powerpc
+
+    Fix the fallocate system call on powerpc to match its unistd.h.
+
+    This implies none of these system calls are currently working with the
+    unistd.h sys call values:
+        fallocate
+        signalfd
+        timerfd
+        eventfd
+        sync_file_range2
+
+Fixes bug 493101.
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/include/asm-powerpc/systbl.h b/include/asm-powerpc/systbl.h
+index f83bf6a..7f0738c 100644
+--- a/include/asm-powerpc/systbl.h
++++ b/include/asm-powerpc/systbl.h
+@@ -310,7 +310,7 @@ SYSCALL(ni_syscall)
+ SYSCALL(ni_syscall)
+ SYSCALL(ni_syscall)
+ SYSCALL(ni_syscall)
+-SYSCALL(ni_syscall)
++SYSCALL_SPU(eventfd)
+ SYSCALL(ni_syscall)
+ COMPAT_SYS(fallocate)
+ SYSCALL(subpage_prot)
+diff --git a/include/asm-powerpc/unistd.h b/include/asm-powerpc/unistd.h
+index f790bf6..3e69db5 100644
+--- a/include/asm-powerpc/unistd.h
++++ b/include/asm-powerpc/unistd.h
+@@ -329,7 +329,7 @@
+ /* #define __NR_utimensat	304 */
+ /* #define __NR_signalfd	305 */
+ /* #define __NR_timerfd_create	306 */
+-/* #define __NR_eventfd		307 */
++#define __NR_eventfd		307
+ /* #define __NR_sync_file_range2 308 */
+ #define __NR_fallocate		309
+ 

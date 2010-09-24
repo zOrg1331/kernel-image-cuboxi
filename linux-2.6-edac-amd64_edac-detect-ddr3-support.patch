@@ -1,0 +1,51 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Tue, 17 Nov 2009 18:12:43 -0500
+Subject: [edac] amd64_edac: detect ddr3 support
+Message-id: <20091117181529.4748.62123.sendpatchset@localhost.localdomain>
+Patchwork-id: 21401
+O-Subject: [RHEL5.5 PATCH 3/5] Detect DDR3 support
+Bugzilla: 479070
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+Resolves BZ 479070
+
+This patch detects the DDR3 memory size.
+
+diff --git a/drivers/edac/amd64_edac.c b/drivers/edac/amd64_edac.c
+index 66fc4f9..7da9e45 100644
+--- a/drivers/edac/amd64_edac.c
++++ b/drivers/edac/amd64_edac.c
+@@ -920,14 +920,17 @@ static enum mem_type amd64_determine_memory_type(struct amd64_pvt *pvt)
+        enum mem_type type;
+ 
+        if (boot_cpu_data.x86 >= 0x10 || pvt->ext_model >= K8_REV_F) {
+-               /* Rev F and later */
+-               type = (pvt->dclr0 & BIT(16)) ? MEM_DDR2 : MEM_RDDR2;
++		if (pvt->dchr0 & DDR3_MODE)
++			type = (pvt->dclr0 & BIT(16)) ?	MEM_DDR3 : MEM_RDDR3;
++		else
++			type = (pvt->dclr0 & BIT(16)) ? MEM_DDR2 : MEM_RDDR2;
+        } else {
+-               /* Rev E and earlier */
+                type = (pvt->dclr0 & BIT(18)) ? MEM_DDR : MEM_RDDR;
+        }
+ 
+        debugf1("  Memory type is: %s\n",
++		(type == MEM_DDR3) ? "MEM_DDR3" :
++		(type == MEM_RDDR3) ? "MEM_RDDR3" :
+                (type == MEM_DDR2) ? "MEM_DDR2" :
+                (type == MEM_RDDR2) ? "MEM_RDDR2" :
+                (type == MEM_DDR) ? "MEM_DDR" : "MEM_RDDR");
+diff --git a/drivers/edac/edac_mc.h b/drivers/edac/edac_mc.h
+index 0d3552d..1c3f443 100644
+--- a/drivers/edac/edac_mc.h
++++ b/drivers/edac/edac_mc.h
+@@ -128,6 +128,8 @@ enum mem_type {
+ 	MEM_FB_DDR2,		/* fully buffered DDR2 */
+ 	MEM_RDDR2,		/* Registered DDR2 RAM */
+ 	MEM_XDR,                /* Rambus XDR */
++	MEM_DDR3,		/* Unbuffered DDR3 RAM */
++	MEM_RDDR3,		/* Registered DDR3 RAM */
+ };
+ 
+ #define MEM_FLAG_EMPTY		BIT(MEM_EMPTY)

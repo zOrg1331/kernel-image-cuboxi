@@ -1,0 +1,45 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Wed, 22 Apr 2009 15:19:04 +0300
+Subject: [scsi] cciss: change in discovering memory bar
+Message-id: 49EF0B38.9030109@redhat.com
+O-Subject: [RHEL5.4 PATCH3/4] cciss change in discovering memory bar
+Bugzilla: 474392
+
+Upstream in e143858104e318263689c551543dfc3f186cea12
+
+HP: Change the way we discover the first memory BAR
+Add a method for discovering the first memory BAR.  All Smart Array
+controllers to date have always had the the memory BAR as the first BAR.
+A new controller to be released later this year breaks that model.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 6deb939..9b1a175 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -3315,12 +3315,21 @@ static int cciss_pci_init(ctlr_info_t *c, struct pci_dev *pdev)
+  */
+ 	cciss_interrupt_mode(c, pdev, board_id);
+ 
+-	/*
+-	 * Memory base addr is first addr , the second points to the config
+-	 *   table
+-	 */
++	/* find the memory BAR */
++	for (i=0; i < DEVICE_COUNT_RESOURCE; i++) {
++		if (pci_resource_flags(pdev, i) & IORESOURCE_MEM)
++			break;
++	}
++	if (i == DEVICE_COUNT_RESOURCE) {
++		printk(KERN_WARNING "cciss: No memory BAR found\n");
++		err = - ENODEV;
++		goto err_out_free_res;
++	}
++
++	c->paddr = pci_resource_start(pdev, i); /* addressing mode bits
++						 * already removed
++						 */
+ 
+-	c->paddr = pci_resource_start(pdev, 0);	/* addressing mode bits already removed */
+ #ifdef CCISS_DEBUG
+ 	printk("address 0 = %x\n", c->paddr);
+ #endif				/* CCISS_DEBUG */

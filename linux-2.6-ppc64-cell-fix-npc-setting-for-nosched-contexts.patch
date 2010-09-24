@@ -1,0 +1,88 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Thu, 8 Jan 2009 11:46:19 -0500
+Subject: [ppc64] cell: fix npc setting for NOSCHED contexts
+Message-id: 20090108164521.29017.96385.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ467344] Fix npc setting for NOSCHED contexts
+Bugzilla: 467344
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=467344
+
+Description:
+===========
+Currently, spu_run ignores the npc argument for contexts created with
+SPU_CREATE_NOSCHED. While this is correct for isolated contexts,
+there's no need to enforce the npc restriction on non-isolated NOSCHED
+contexts.
+
+This means that NOSCHED contexts can only ever run with an entry point
+of 0x0.
+
+This change to spu_run_init allows setting of the npc (and, while we're
+at it, the privcntl) for non-isolated NOSCHED contexts. This allows
+us to run NOSCHED contexts from any entry point.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1642053
+
+Upstream Status:
+================
+commit d9dd421fd6ed17af55d27c8d93a9f561be0ff50f
+
+Test Status:
+============
+Run the testcase binary given in the Bugzilla.  Without the patch the testcase
+fails, but doesn't with the patch applied.
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/platforms/cell/spufs/run.c b/arch/powerpc/platforms/cell/spufs/run.c
+index 395da1a..ffa18ad 100644
+--- a/arch/powerpc/platforms/cell/spufs/run.c
++++ b/arch/powerpc/platforms/cell/spufs/run.c
+@@ -203,11 +203,6 @@ static int spu_run_init(struct spu_context *ctx, u32 *npc)
+ 			(SPU_RUNCNTL_RUNNABLE | SPU_RUNCNTL_ISOLATE);
+ 		if (runcntl == 0)
+ 			runcntl = SPU_RUNCNTL_RUNNABLE;
+-	}
+-
+-	if (ctx->flags & SPU_CREATE_NOSCHED) {
+-		spuctx_switch_state(ctx, SPU_UTIL_USER);
+-		ctx->ops->runcntl_write(ctx, runcntl);
+ 	} else {
+ 		unsigned long privcntl;
+ 
+@@ -216,9 +211,15 @@ static int spu_run_init(struct spu_context *ctx, u32 *npc)
+ 		else
+ 			privcntl = SPU_PRIVCNTL_MODE_NORMAL;
+ 
+-		ctx->ops->npc_write(ctx, *npc);
+ 		ctx->ops->privcntl_write(ctx, privcntl);
+-		ctx->ops->runcntl_write(ctx, runcntl);
++		ctx->ops->npc_write(ctx, *npc);
++	}
++
++	ctx->ops->runcntl_write(ctx, runcntl);
++
++	if (ctx->flags & SPU_CREATE_NOSCHED) {
++		spuctx_switch_state(ctx, SPU_UTIL_USER);
++	} else {
+ 
+ 		if (ctx->state == SPU_STATE_SAVED) {
+ 			ret = spu_activate(ctx, 0);

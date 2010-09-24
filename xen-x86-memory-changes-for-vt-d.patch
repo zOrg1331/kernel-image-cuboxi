@@ -1,0 +1,367 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Mon, 23 Mar 2009 10:23:04 -0600
+Subject: [xen] x86: memory changes for VT-d
+Message-id: 200903231623.n2NGN49Z022065@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 7/21 V2] memory changes for VT-d
+Bugzilla: 484227
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+
+map memory for VT-d page table, map mmio of assigned device in p2m/ept table,
+and set UC of these mmio pages.
+
+Also take care to set UC in shadow page tables.
+
+Upstream Status: Accepted (CS 15916, 17529, 17645, 15843, 16152).
+
+BZ: 484227
+
+Signed-off-by: Weidong Han <weidong.han@intel.com>
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/arch/x86/cpu/common.c b/arch/x86/cpu/common.c
+index bbda900..268bcc2 100644
+--- a/arch/x86/cpu/common.c
++++ b/arch/x86/cpu/common.c
+@@ -23,6 +23,12 @@ static int disable_x86_serial_nr __devinitdata = 0;
+ 
+ struct cpu_dev * cpu_devs[X86_VENDOR_NUM] = {};
+ 
++/*
++ * Default host IA32_CR_PAT value to cover all memory types.
++ * BIOS usually sets it to 0x07040600070406.
++ */
++u64 host_pat = 0x050100070406;
++
+ static void default_init(struct cpuinfo_x86 * c)
+ {
+ 	/* Not much we can do here... */
+@@ -557,6 +563,9 @@ void __devinit cpu_init(void)
+ 	}
+ 	printk(KERN_INFO "Initializing CPU#%d\n", cpu);
+ 
++    if (cpu_has_pat)
++        wrmsrl(MSR_IA32_CR_PAT, host_pat);
++
+ 	if (cpu_has_vme || cpu_has_tsc || cpu_has_de)
+ 		clear_in_cr4(X86_CR4_VME|X86_CR4_PVI|X86_CR4_TSD|X86_CR4_DE);
+ 
+diff --git a/arch/x86/mm/p2m-ept.c b/arch/x86/mm/p2m-ept.c
+index 0feb30a..ac9df26 100644
+--- a/arch/x86/mm/p2m-ept.c
++++ b/arch/x86/mm/p2m-ept.c
+@@ -23,6 +23,7 @@
+ #include <asm/types.h>
+ #include <asm/domain.h>
+ #include <asm/hvm/vmx/vmx.h>
++#include <xen/iocap.h>
+ 
+ #if 1 /* XEN_VERSION == 3 && XEN_SUBVERSION < 2 */
+ 
+@@ -45,6 +46,10 @@ compat_ept_set_entry(struct domain *d, unsigned long gfn,
+   mfn_t mfn, int order, u32 l1e_flags)
+ {
+     p2m_type_t t = ept_flags_to_p2m_type(l1e_flags);
++    if ( t == p2m_ram_rw &&
++         iomem_access_permitted(d, mfn_x(mfn), mfn_x(mfn)) )
++        t = p2m_mmio_direct;
++
+     return ept_set_entry(d, gfn, mfn, order, t);
+ }
+ 
+@@ -72,8 +77,11 @@ static void ept_p2m_type_to_flags(ept_entry_t *entry, p2m_type_t type)
+     switch(type)
+     {
+         case p2m_ram_rw:
++             entry->r = entry->w = entry->x = 1;
++            return;
+         case p2m_mmio_direct:
+              entry->r = entry->w = entry->x = 1;
++             entry->emt = 0x8;
+             return;
+         case p2m_ram_logdirty:
+         case p2m_ram_ro:
+@@ -193,13 +201,16 @@ ept_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn,
+ 
+     if ( ret != GUEST_TABLE_SPLIT_PAGE )
+     {
+-        if ( mfn_valid(mfn_x(mfn)) )
++        if ( mfn_valid(mfn_x(mfn)) || (p2mt == p2m_mmio_direct) )
+         {
+             /* Track the highest gfn for which we have ever had a valid mapping */
+             if ( gfn > d->arch.p2m.max_mapped_pfn )
+                 d->arch.p2m.max_mapped_pfn = gfn;
+ 
+-            ept_entry->emt = EPT_DEFAULT_MT;
++            if ( p2mt == p2m_mmio_direct )
++                ept_entry->emt = 0x8;
++            else
++                ept_entry->emt = EPT_DEFAULT_MT;
+             ept_entry->sp_avail = walk_level ? 1 : 0;
+ 
+             if ( ret == GUEST_TABLE_SUPER_PAGE )
+@@ -278,6 +289,32 @@ ept_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn,
+  out:
+     unmap_domain_page(table);
+     ept_sync_domain(d);
++
++    /* support pci pass-through */
++    if ( iommu_enabled )
++    {
++        if ( p2mt == p2m_ram_rw )
++        {
++            if ( order == EPT_TABLE_ORDER )
++            {
++                for ( i = 0; i < ( 1 << order ); i++ )
++                    iommu_map_page(d, gfn-offset+i, mfn_x(mfn)-offset+i);
++            }
++            else if ( !order )
++                iommu_map_page(d, gfn, mfn_x(mfn));
++        }
++        else
++        {
++            if ( order == EPT_TABLE_ORDER )
++            {
++                for ( i = 0; i < ( 1 << order ); i++ )
++                    iommu_unmap_page(d, gfn-offset+i);
++            }
++            else if ( !order )
++                iommu_unmap_page(d, gfn);
++        }
++    }
++
+     return rv;
+ }
+ 
+diff --git a/arch/x86/mm/p2m.c b/arch/x86/mm/p2m.c
+index 6f9e1d1..bfc0648 100644
+--- a/arch/x86/mm/p2m.c
++++ b/arch/x86/mm/p2m.c
+@@ -28,6 +28,7 @@
+ #include <asm/paging.h>
+ #include <asm/p2m.h>
+ #include <asm/hvm/vmx/vmx.h> /* ept_p2m_init() */
++#include <xen/iommu.h>
+ 
+ /* Debugging and auditing of the P2M code? */
+ #define P2M_AUDIT     0
+@@ -226,6 +227,7 @@ p2m_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn,
+     l1_pgentry_t *p2m_entry;
+     l1_pgentry_t entry_content;
+     l2_pgentry_t l2e_content;
++    p2m_type_t p2mt = p2m_flags_to_type(l1e_flags);
+     int rv=0;
+ 
+ #if CONFIG_PAGING_LEVELS >= 4
+@@ -262,7 +264,7 @@ p2m_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn,
+                                    0, L1_PAGETABLE_ENTRIES);
+         ASSERT(p2m_entry);
+         
+-        if ( mfn_valid(mfn) )
++        if ( mfn_valid(mfn) || p2mt == p2m_mmio_direct )
+             entry_content = l1e_from_pfn(mfn_x(mfn), l1e_flags);
+         else
+             entry_content = l1e_empty();
+@@ -298,7 +300,18 @@ p2m_set_entry(struct domain *d, unsigned long gfn, mfn_t mfn,
+     /* Track the highest gfn for which we have ever had a valid mapping */
+     if ( mfn_valid(mfn) && (gfn > d->arch.p2m.max_mapped_pfn) ) 
+         d->arch.p2m.max_mapped_pfn = gfn + (1UL << order) - 1;
+-
++ 
++     if ( iommu_enabled )
++     {
++         int i;
++         if ( p2mt == p2m_ram_rw )
++             for ( i = 0; i < (1UL << order); i++ )
++                 iommu_map_page(d, gfn+i, mfn_x(mfn)+i );
++         else
++             for ( i = 0; i < (1UL << order); i++ )
++                 iommu_unmap_page(d, gfn+i);
++     }
++ 
+     /* Success */
+     rv = 1;
+  
+@@ -1017,6 +1030,49 @@ int p2m_set_flags(struct domain *d, paddr_t gpa, u32 l1e_flags)
+     return 1;
+ }
+ 
++int set_mmio_p2m_entry(struct domain *d, unsigned long gfn, mfn_t mfn)
++{
++    int rc = 0;
++    unsigned long omfn;
++
++    if ( !paging_mode_translate(d) )
++        return 0;
++
++    omfn = gmfn_to_mfn(d, gfn);
++    if ( INVALID_MFN != omfn )
++    {
++        ASSERT(mfn_valid(_mfn(omfn)));
++        set_gpfn_from_mfn(omfn, INVALID_M2P_ENTRY);
++    }
++
++    rc = set_p2m_entry(d, gfn, mfn, 0, p2m_type_to_flags(p2m_mmio_direct));
++    if ( 0 == rc )
++        gdprintk(XENLOG_ERR,
++            "set_mmio_p2m_entry: set_p2m_entry failed! mfn=%08lx\n",
++            gmfn_to_mfn(d, gfn));
++    return rc;
++}
++
++int clear_mmio_p2m_entry(struct domain *d, unsigned long gfn)
++{
++    int rc = 0;
++    unsigned long mfn;
++
++    if ( !paging_mode_translate(d) )
++        return 0;
++
++    mfn = gmfn_to_mfn(d, gfn);
++    if ( INVALID_MFN == mfn )
++    {
++        gdprintk(XENLOG_ERR,
++            "clear_mmio_p2m_entry: gfn_to_mfn failed! gfn=%08lx\n", gfn);
++        return 0;
++    }
++    rc = set_p2m_entry(d, gfn, _mfn(INVALID_MFN), 0, 0);
++
++    return rc;
++}
++
+ /*
+  * Local variables:
+  * mode: C
+diff --git a/arch/x86/mm/shadow/multi.c b/arch/x86/mm/shadow/multi.c
+index 271d124..2c2f98b 100644
+--- a/arch/x86/mm/shadow/multi.c
++++ b/arch/x86/mm/shadow/multi.c
+@@ -35,6 +35,7 @@
+ #include <asm/hvm/hvm.h>
+ #include "private.h"
+ #include "types.h"
++#include <xen/iocap.h>
+ 
+ /* THINGS TO DO LATER:
+  * 
+@@ -654,7 +655,8 @@ _sh_propagate(struct vcpu *v,
+         goto done;
+     }
+ 
+-    if ( level == 1 && mmio )
++    if ( level == 1 && mmio &&
++         !iomem_access_permitted(d, mfn_x(target_mfn), mfn_x(target_mfn)) )
+     {
+         /* Guest l1e maps MMIO space */
+         *sp = sh_l1e_mmio(guest_l1e_get_gfn(*gp), gflags);
+@@ -667,7 +669,8 @@ _sh_propagate(struct vcpu *v,
+     // case of a prefetch, an invalid mfn means that we can not usefully
+     // shadow anything, and so we return early.
+     //
+-    if ( !mfn_valid(target_mfn) )
++    if ( !mfn_valid(target_mfn) &&
++         !iomem_access_permitted(d, mfn_x(target_mfn), mfn_x(target_mfn)) )
+     {
+         ASSERT((ft == ft_prefetch));
+         *sp = shadow_l1e_empty();
+@@ -750,6 +753,10 @@ _sh_propagate(struct vcpu *v,
+         sflags |= _PAGE_USER;
+     }
+ 
++    /* MMIO addresses should never be cached */
++    if ( iomem_access_permitted(d, mfn_x(target_mfn), mfn_x(target_mfn)) )
++        sflags |= _PAGE_PCD;
++
+     *sp = shadow_l1e_from_mfn(target_mfn, sflags);
+  done:
+     SHADOW_DEBUG(PROPAGATE,
+diff --git a/include/asm-x86/cpufeature.h b/include/asm-x86/cpufeature.h
+index c8b511f..130a7f7 100644
+--- a/include/asm-x86/cpufeature.h
++++ b/include/asm-x86/cpufeature.h
+@@ -105,6 +105,7 @@
+ #define cpu_has_tsc		boot_cpu_has(X86_FEATURE_TSC)
+ #define cpu_has_pae		boot_cpu_has(X86_FEATURE_PAE)
+ #define cpu_has_pge		boot_cpu_has(X86_FEATURE_PGE)
++#define cpu_has_pat		boot_cpu_has(X86_FEATURE_PAT)
+ #define cpu_has_apic		boot_cpu_has(X86_FEATURE_APIC)
+ #define cpu_has_sep		boot_cpu_has(X86_FEATURE_SEP)
+ #define cpu_has_mtrr		boot_cpu_has(X86_FEATURE_MTRR)
+@@ -129,6 +130,7 @@
+ #define cpu_has_tsc		1
+ #define cpu_has_pae		1
+ #define cpu_has_pge		1
++#define cpu_has_pat		1
+ #define cpu_has_apic		boot_cpu_has(X86_FEATURE_APIC)
+ #define cpu_has_sep		0
+ #define cpu_has_mtrr		1
+diff --git a/include/asm-x86/msr.h b/include/asm-x86/msr.h
+index 3d85857..eaca741 100644
+--- a/include/asm-x86/msr.h
++++ b/include/asm-x86/msr.h
+@@ -216,6 +216,8 @@ static inline void write_efer(u64 val)
+ #define MSR_IA32_LASTINTFROMIP		0x1dd
+ #define MSR_IA32_LASTINTTOIP		0x1de
+ 
++#define MSR_IA32_CR_PAT             0x00000277
++
+ #define MSR_IA32_MC0_CTL		0x400
+ #define MSR_IA32_MC0_STATUS		0x401
+ #define MSR_IA32_MC0_ADDR		0x402
+diff --git a/include/asm-x86/p2m.h b/include/asm-x86/p2m.h
+index 71035d0..f554bdc 100644
+--- a/include/asm-x86/p2m.h
++++ b/include/asm-x86/p2m.h
+@@ -61,11 +61,40 @@ typedef enum {
+ #define p2m_is_readonly(_t) (p2m_to_mask(_t) & P2M_RO_TYPES)
+ #define p2m_is_valid(_t) (p2m_to_mask(_t) & (P2M_RAM_TYPES | P2M_MMIO_TYPES))
+ 
++/* PTE flags for the various types of p2m entry */
++#define P2M_BASE_FLAGS \
++        (_PAGE_PRESENT | _PAGE_USER | _PAGE_DIRTY | _PAGE_ACCESSED)
++
+ /* Extract the type from the PTE flags that store it */
+ static inline p2m_type_t p2m_flags_to_type(unsigned long flags)
+ {
+-    /* Type is stored in the "available" bits, 9, 10 and 11 */
+-    return (flags >> 9) & 0x7;
++    if ( (flags & _PAGE_RW) && (flags & _PAGE_PCD) )
++        return p2m_mmio_direct;
++    else if ( flags & _PAGE_RW )
++        return p2m_ram_rw;
++    else if ( paging_mode_log_dirty(current->domain) )
++        return p2m_ram_logdirty;
++    else
++        return p2m_invalid;
++}
++
++static inline unsigned long p2m_type_to_flags(p2m_type_t t)
++{
++    unsigned long flags = 0;
++    switch(t)
++    {
++    case p2m_ram_rw:
++        return flags | P2M_BASE_FLAGS | _PAGE_RW;
++    case p2m_mmio_direct:
++        return flags | P2M_BASE_FLAGS | _PAGE_RW | _PAGE_PCD;
++    case p2m_ram_logdirty:
++    case p2m_ram_ro:
++    case p2m_mmio_dm:
++        return flags | P2M_BASE_FLAGS;
++    case p2m_invalid:
++    default:
++        return flags;
++    }
+ }
+ 
+ #endif
+@@ -172,6 +201,9 @@ gl1e_to_ml1e(struct domain *d, l1_pgentry_t l1e)
+ }
+ 
+ 
++/* Set mmio addresses in the p2m table (for pass-through) */
++int set_mmio_p2m_entry(struct domain *d, unsigned long gfn, mfn_t mfn);
++int clear_mmio_p2m_entry(struct domain *d, unsigned long gfn);
+ 
+ /* Init the datastructures for later use by the p2m code */
+ void p2m_init(struct domain *d);

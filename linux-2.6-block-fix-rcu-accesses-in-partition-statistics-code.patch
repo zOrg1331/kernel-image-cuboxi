@@ -1,0 +1,125 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Tue, 27 Oct 2009 17:04:59 -0400
+Subject: [block] fix rcu accesses in partition statistics code
+Message-id: <4AE7283B.7030007@redhat.com>
+Patchwork-id: 21241
+O-Subject: [RHEL5.5 PATCH V3] BZ493517: fix RCU accesses in partition statistics
+	code
+Bugzilla: 493517
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=493517
+
+Description:
+We need to protect reads of pointers for struct partstats (see
+genhd.c:free_partstats) and struct hd_struct (field part of
+gendisk structure).
+The rcu_read_lock applies because we do not modify said pointers,
+only struct contents.
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1925898
+
+Test status:
+The issue is not easy to reproduce. Nonetheless, a patched kernel
+had successfully run the reproducer for more than a night.
+
+Upstream status:
+Part of the code comes from e71bf0d0ee89e51b92776391c5634938236977d5
+That patch was already partially backported for BZ495866.
+
+Regards,
+Jerome
+
+
+diff --git a/block/ll_rw_blk.c b/block/ll_rw_blk.c
+index 65950e9..4dfcb52 100644
+--- a/block/ll_rw_blk.c
++++ b/block/ll_rw_blk.c
+@@ -2689,13 +2689,16 @@ static void drive_stat_acct(struct request *rq, int nr_sectors, int new_io)
+ 	if (!new_io) {
+ 		__all_stat_inc(rq->rq_disk, merges[rw], rq->sector);
+ 	} else {
+-		struct hd_struct *part = get_part(rq->rq_disk, rq->sector);
++		struct hd_struct *part;
++		rcu_read_lock();
++		part = get_part(rq->rq_disk, rq->sector);
+ 		disk_round_stats(rq->rq_disk);
+ 		rq->rq_disk->in_flight++;
+ 		if (part) {
+ 			part_round_stats(part);
+ 			get_partstats(part)->in_flight++;
+ 		}
++		rcu_read_unlock();
+ 	}
+ }
+ 
+@@ -2864,14 +2867,17 @@ EXPORT_SYMBOL(blk_congestion_wait);
+ static void blk_account_io_merge(struct request *req)
+ {
+ 	if (blk_do_io_stat(req)) {
+-		struct hd_struct *part
+-			= get_part(req->rq_disk, req->sector);
++		struct hd_struct *part;
++
+ 		disk_round_stats(req->rq_disk);
+ 		req->rq_disk->in_flight--;
++		rcu_read_lock();
++		part = get_part(req->rq_disk, req->sector);
+ 		if (part) {
+ 			part_round_stats(part);
+ 			get_partstats(part)->in_flight--;
+ 		}
++		rcu_read_unlock();
+ 	}
+ }
+ 
+@@ -3396,16 +3402,19 @@ static void blk_account_io_done(struct request *req)
+ 		unsigned long duration = jiffies - req->start_time;
+ 		const int rw = rq_data_dir(req);
+ 		struct gendisk *disk = req->rq_disk;
+-		struct hd_struct *part = get_part(disk, req->sector);
++		struct hd_struct *part;
+ 
+ 		__all_stat_inc(disk, ios[rw], req->sector);
+ 		__all_stat_add(disk, ticks[rw], duration, req->sector);
+ 		disk_round_stats(disk);
+ 		disk->in_flight--;
++		rcu_read_lock();
++		part = get_part(disk, req->sector);
+ 		if (part) {
+ 			part_round_stats(part);
+ 			get_partstats(part)->in_flight--;
+ 		}
++		rcu_read_unlock();
+ 	}
+ }
+ 
+diff --git a/fs/partitions/check.c b/fs/partitions/check.c
+index 5fd7868..570261f 100644
+--- a/fs/partitions/check.c
++++ b/fs/partitions/check.c
+@@ -252,10 +252,10 @@ static ssize_t part_size_read(struct hd_struct * p, char *page)
+ }
+ static ssize_t part_stats_read(struct hd_struct *p, char *page)
+ {
+-	preempt_disable();
++	ssize_t res;
++	rcu_read_lock();
+ 	part_round_stats(p);
+-	preempt_enable();
+-	return sprintf(page,
++	res = sprintf(page,
+ 		"%8lu %8lu %8llu %8u "
+ 		"%8lu %8lu %8llu %8u "
+ 		"%8u %8u %8u"
+@@ -271,6 +271,8 @@ static ssize_t part_stats_read(struct hd_struct *p, char *page)
+ 		get_partstats(p)->in_flight,
+ 		jiffies_to_msecs(part_stat_read(p, io_ticks)),
+ 		jiffies_to_msecs(part_stat_read(p, time_in_queue)));
++	rcu_read_unlock();
++	return res;
+ }
+ static struct part_attribute part_attr_uevent = {
+ 	.attr = {.name = "uevent", .mode = S_IWUSR },

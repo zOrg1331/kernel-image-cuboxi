@@ -1,0 +1,103 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 10 Dec 2009 14:24:55 -0500
+Subject: [pci] implement public pci_ioremap_bar function
+Message-id: <20091210142141.21976.42962.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 21842
+O-Subject: [RHEL5 PATCH]: Implement public pci_ioremap_bar() function
+Bugzilla: 546244
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+jwilson noticed that pci_ioremap_bar is implemented by 4 patches in the
+queue and is currently privately implmented in the vxge driver.
+
+I'm pushing pci_ioremap_bar to drivers/pci/pci.c where it belongs.
+
+Successfully compiled by me.
+
+Resolves BZ 546244.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/net/vxge/vxge-compat.h b/drivers/net/vxge/vxge-compat.h
+index d0d3269..24e7611 100644
+--- a/drivers/net/vxge/vxge-compat.h
++++ b/drivers/net/vxge/vxge-compat.h
+@@ -3,19 +3,6 @@
+ 
+ #include <linux/if_vlan.h>
+ 
+-static inline void __iomem *pci_ioremap_bar(struct pci_dev *pdev, int bar)
+-{
+-	/*
+-	 * Make sure the BAR is actually a memory resource, not an IO resource
+-	 */
+-	if (!(pci_resource_flags(pdev, bar) & IORESOURCE_MEM)) {
+-		WARN_ON(1);
+-		return NULL;
+-	}
+-	return ioremap_nocache(pci_resource_start(pdev, bar),
+-			       pci_resource_len(pdev, bar));
+-}
+-
+ static inline int vxge_pci_dma_mapping_error(struct pci_dev *pdev,
+ 					     dma_addr_t dma_addr)
+ {
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 25610bd..01dbf5e 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -45,29 +45,19 @@ pci_bus_max_busnr(struct pci_bus* bus)
+ }
+ EXPORT_SYMBOL_GPL(pci_bus_max_busnr);
+ 
+-#if 0
+-/**
+- * pci_max_busnr - returns maximum PCI bus number
+- *
+- * Returns the highest PCI bus number present in the system global list of
+- * PCI buses.
+- */
+-unsigned char __devinit
+-pci_max_busnr(void)
++void __iomem *pci_ioremap_bar(struct pci_dev *pdev, int bar)
+ {
+-	struct pci_bus *bus = NULL;
+-	unsigned char max, n;
+-
+-	max = 0;
+-	while ((bus = pci_find_next_bus(bus)) != NULL) {
+-		n = pci_bus_max_busnr(bus);
+-		if(n > max)
+-			max = n;
++	/*
++	 * Make sure the BAR is actually a memory resource, not an IO resource
++	 */
++	if (!(pci_resource_flags(pdev, bar) & IORESOURCE_MEM)) {
++		WARN_ON(1);
++		return NULL;
+ 	}
+-	return max;
++	return ioremap_nocache(pci_resource_start(pdev, bar),
++			       pci_resource_len(pdev, bar));
+ }
+-
+-#endif  /*  0  */
++EXPORT_SYMBOL_GPL(pci_ioremap_bar);
+ 
+ #define PCI_FIND_CAP_TTL	48
+ 
+diff --git a/include/linux/pci.h b/include/linux/pci.h
+index 0c1c803..7a7f154 100644
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -947,6 +947,8 @@ extern int pci_pci_problems;
+ 
+ int pci_ext_cfg_avail(struct pci_dev *dev);
+ 
++void __iomem *pci_ioremap_bar(struct pci_dev *pdev, int bar);
++
+ #ifdef CONFIG_PCI_IOV
+ extern int pci_enable_sriov(struct pci_dev *dev, int nr_virtfn);
+ extern void pci_disable_sriov(struct pci_dev *dev);

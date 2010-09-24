@@ -1,0 +1,71 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 28 May 2009 11:55:39 -0400
+Subject: [acpi] check _PSS frequency to prevent cpufreq crash
+Message-id: 20090528155536.11866.55913.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH]: ACPI: sanity check _PSS frequency to prevent cpufreq crash
+Bugzilla: 500311
+RH-Acked-by: Matthew Garrett <mjg@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Bogus values in the _PSS ACPI struct leads to a panic in the CPU frequency
+code.
+
+Backport the following patch in order to resolve the issue.
+
+From: Len Brown <len.brown@intel.com>
+Date: Tue, 26 May 2009 15:11:06 -0400
+Subject: [PATCH] ACPI: sanity check _PSS frequency to prevent cpufreq crash
+X-Patchwork-Hint: ignore
+
+When BIOS SETUP is changed to disable EIST, some BIOS
+hand the OS an un-initialized _PSS:
+
+        Name (_PSS, Package (0x06)
+        {
+            Package (0x06)
+            {
+                0x80000000,	// frequency [MHz]
+                0x80000000,	// power [mW]
+                0x80000000,	// latency [us]
+                0x80000000,	// BM latency [us]
+                0x80000000,	// control
+                0x80000000	// status
+            },
+	    ...
+
+These are outrageous values for frequency,
+power and latency, raising the question where to draw
+the line between legal and illegal.  We tend to survive
+garbage in the power and latency fields, but we can BUG_ON
+when garbage is in the frequency field.
+
+Cpufreq multiplies the frequency by 1000 and stores it in a u32 KHz.
+So disregard a _PSS with a frequency so large
+that it can't be represented by cpufreq.
+
+Successfully tested by BZ reporter.  Successfully compiled by me.
+
+Resolves BZ 500311.
+
+diff --git a/drivers/acpi/processor_perflib.c b/drivers/acpi/processor_perflib.c
+index 38430d8..84789ea 100644
+--- a/drivers/acpi/processor_perflib.c
++++ b/drivers/acpi/processor_perflib.c
+@@ -307,9 +307,15 @@ static int acpi_processor_get_performance_states(struct acpi_processor *pr)
+ 				  (u32) px->bus_master_latency,
+ 				  (u32) px->control, (u32) px->status));
+ 
+-		if (!px->core_frequency) {
++		/*
++ 		 * Check that ACPI's u64 MHz will be valid as u32 KHz in cpufreq
++		 */
++		if (!px->core_frequency ||
++		    ((u32)(px->core_frequency * 1000) !=
++		     (px->core_frequency * 1000))) {
+ 			printk(KERN_ERR PREFIX
+-				    "Invalid _PSS data: freq is zero\n");
++			       "Invalid BIOS _PSS frequency: 0x%llx MHz\n",
++			       px->core_frequency);
+ 			result = -EFAULT;
+ 			kfree(pr->performance->states);
+ 			goto end;

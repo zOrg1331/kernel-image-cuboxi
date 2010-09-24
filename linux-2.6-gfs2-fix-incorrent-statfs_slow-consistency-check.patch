@@ -1,0 +1,54 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Fri, 10 Jul 2009 14:38:25 -0500
+Subject: [gfs2] fix incorrent statfs_slow consistency check
+Message-id: 20090710193825.GR3172@ether.msp.redhat.com
+O-Subject: [RHEL-5.4 PATCH] BZ#505171 gfs2: Fix incorrent statfs_slow consistency check
+Bugzilla: 505171
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Since both linked and unlinked inodes are counted by rgd->rd_dinodes, It
+makes no sense to count them with the used data blocks (first check that
+I changed), it makes sense to count them with the linked inodes (second
+check), and it makes no sense to care if there are more unlinked inodes
+than linked ones. This patch fixes these errors the the statfs_slow
+consistency checking code.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index 4a87882..d868f7c 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -276,27 +276,19 @@ void gfs2_rgrp_verify(struct gfs2_rgrpd *rgd)
+ 	}
+ 
+ 	tmp = rgd->rd_data - rgd->rd_free - rgd->rd_dinodes;
+-	if (count[1] + count[2] != tmp) {
++	if (count[1] != tmp) {
+ 		if (gfs2_consist_rgrpd(rgd))
+ 			fs_err(sdp, "used data mismatch:  %u != %u\n",
+ 			       count[1], tmp);
+ 		return;
+ 	}
+ 
+-	if (count[3] != rgd->rd_dinodes) {
++	if (count[2] + count[3] != rgd->rd_dinodes) {
+ 		if (gfs2_consist_rgrpd(rgd))
+ 			fs_err(sdp, "used metadata mismatch:  %u != %u\n",
+-			       count[3], rgd->rd_dinodes);
++			       count[2] + count[3], rgd->rd_dinodes);
+ 		return;
+ 	}
+-
+-	if (count[2] > count[3]) {
+-		if (gfs2_consist_rgrpd(rgd))
+-			fs_err(sdp, "unlinked inodes > inodes:  %u\n",
+-			       count[2]);
+-		return;
+-	}
+-
+ }
+ 
+ static inline int rgrp_contains_block(struct gfs2_rgrpd *rgd, u64 block)

@@ -1,0 +1,40 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Wed, 23 Dec 2009 10:04:49 -0500
+Subject: [misc] khungtaskd: set PF_NOFREEZE flag to fix suspend
+Message-id: <20091223100756.4643.29619.sendpatchset@localhost.localdomain>
+Patchwork-id: 22269
+O-Subject: [PATCH RHEL5] khungtaskd: set PF_NOFREEZE flag by itself
+Bugzilla: 550014
+RH-Acked-by: Matthew Garrett <mjg@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+BZ:
+https://bugzilla.redhat.com/show_bug.cgi?id=550014
+
+Description:
+In RHEL5 kernel, kthread_run() will not set PF_NOFREEZE
+for us, we have to set this flag by our own.
+
+Fixes a suspend hang witnessed on some systems.
+
+Upstream status:
+Upstream doesn't need this.
+
+Signed-off-by: WANG Cong <amwang@redhat.com>
+
+
+diff --git a/kernel/hung_task.c b/kernel/hung_task.c
+index 0d5a150..0fc6038 100644
+--- a/kernel/hung_task.c
++++ b/kernel/hung_task.c
+@@ -189,6 +189,10 @@ int proc_dohung_task_timeout_secs(struct ctl_table *table, int write,
+ static int watchdog(void *dummy)
+ {
+ 	set_user_nice(current, 0);
++	/*
++	 * kthread_run() doesn't help us here.
++	 */
++	current->flags |= PF_NOFREEZE;
+ 
+ 	for ( ; ; ) {
+ 		unsigned long timeout = sysctl_hung_task_timeout_secs;

@@ -1,0 +1,68 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 1 Dec 2009 23:24:14 -0500
+Subject: [md] raid5: mark cancelled readahead bios with -EIO
+Message-id: <4B15A59E.6040602@redhat.com>
+Patchwork-id: 21627
+O-Subject: [PATCH RHEL5.5] md raid5: mark cancelled readahead bios with -EIO
+	error
+Bugzilla: 512552
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+
+This is for bug
+512552 - Can't write to XFS mount during raid5 resync
+
+and is a backport of upstream commit:
+
+From: NeilBrown <neilb@suse.de>
+Date: Sun, 10 Dec 2006 10:20:51 +0000 (-0800)
+Subject: [PATCH] md: return a non-zero error to bi_end_io as appropriate in raid5
+X-Git-Tag: v2.6.20-rc1~15^2~56
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=c2b00852fbae4f8c45c2651530ded3bd01bde814
+
+[PATCH] md: return a non-zero error to bi_end_io as appropriate in raid5
+
+Currently raid5 depends on clearing the BIO_UPTODATE flag to signal an error
+to higher levels.  While this should be sufficient, it is safer to explicitly
+set the error code as well - less room for confusion.
+
+Signed-off-by: Neil Brown <neilb@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+diff --git a/drivers/md/raid5.c b/drivers/md/raid5.c
+index c544680..53c3faa 100644
+--- a/drivers/md/raid5.c
++++ b/drivers/md/raid5.c
+@@ -1868,7 +1868,9 @@ static void handle_stripe5(struct stripe_head *sh)
+ 		return_bi = bi->bi_next;
+ 		bi->bi_next = NULL;
+ 		bi->bi_size = 0;
+-		bi->bi_end_io(bi, bytes, 0);
++		bi->bi_end_io(bi, bytes,
++			      test_bit(BIO_UPTODATE, &bi->bi_flags)
++			        ? 0 : -EIO);
+ 	}
+ 	for (i=disks; i-- ;) {
+ 		int rw;
+@@ -2421,7 +2423,9 @@ static void handle_stripe6(struct stripe_head *sh, struct page *tmp_page)
+ 		return_bi = bi->bi_next;
+ 		bi->bi_next = NULL;
+ 		bi->bi_size = 0;
+-		bi->bi_end_io(bi, bytes, 0);
++		bi->bi_end_io(bi, bytes,
++			      test_bit(BIO_UPTODATE, &bi->bi_flags)
++			        ? 0 : -EIO);
+ 	}
+ 	for (i=disks; i-- ;) {
+ 		int rw;
+@@ -2724,7 +2728,9 @@ static int make_request(request_queue_t *q, struct bio * bi)
+ 		if ( rw == WRITE )
+ 			md_write_end(mddev);
+ 		bi->bi_size = 0;
+-		bi->bi_end_io(bi, bytes, 0);
++		bi->bi_end_io(bi, bytes,
++			      test_bit(BIO_UPTODATE, &bi->bi_flags)
++			        ? 0 : -EIO);
+ 	}
+ 	return 0;
+ }

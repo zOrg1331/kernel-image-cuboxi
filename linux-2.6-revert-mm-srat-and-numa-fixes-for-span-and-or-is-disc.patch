@@ -1,0 +1,273 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Fri, 8 Jan 2010 19:13:12 -0500
+Subject: Revert: [mm] SRAT and NUMA fixes for span and/or is disc
+Message-id: <1262977992.20582.89.camel@dhcp-100-19-198.bos.redhat.com>
+Patchwork-id: 22359
+O-Subject: [RHEL5-U5 Patch] Revert patch to prevent NUMA from being disabled
+	on Intel systems when node memory range spans other nodes and/or is
+	discontiguous.
+Bugzilla: 474097
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Back on 11/5 I posted a patch to fix the SRAT not properly being
+built and therefore NUMA was being disabled when node memory range
+spans other nodes and/or is discontiguous.  This was an upstream
+packport from Intel that we found out the hard way can not be included
+in RHEL5 because it disables NUMA on systems with small holes in large
+amounts of RAM.
+
+----------------------------------------------------------------
+Some Intel systems have NUMA nodes with memory ranges that are
+discontiguous and/or span other nodes.  Even though a pfn is valid
+and between a node's start and end pfns, it may not reside on that
+node.
+
+For example, If the physical address layout on a two node system with
+16 GB memory is something like:
+
+    node 0: 0-4GB, 8-12GB
+    node 1: 4-8GB, 12-16GB
+
+Currently the RHEL5 kernel fails to detect this NUMA topology and
+disables NUMA altogether.  The attached patch fixes this problem.
+------------------------------------------------------------------
+
+This patch works by passing the entire SRAT table instead of the
+nodes[] array to compute_hash_shift(), which it calls
+populate_memnodemap() to initialize the memnodemap[] array.  Since
+the SRAT table has more entries that are smaller than the nodes[]
+array, each memnodemap[] array entry represents a much smaller
+piece of memory.  Since the memnodemap[NODEMAPSIZE] array is statically
+allocated(#define NODEMAPSIZE 0x4fff), populate_memnodemap() fails
+once the amount of RAM exceeds the size of the smallest SRAT table
+entry times NODEMAPSIZE.  This results in disabling NUMA on machines
+with large amounts or RAM that have small holes in RAM.
+
+First of all, changing the memnodemap[] array is potential kABI
+breaker but it doesnt appear to be in the whitelist:
+
+--------------------------------------------------------------------
+EXPORT_SYMBOL(memnode);
+
+/* Should really switch to dynamic allocation at some point */
+#define NODEMAPSIZE 0x4fff
+
+/* Simple perfect hash to map physical addresses to node numbers */
+struct memnode {
+        int shift;
+        u8 map[NODEMAPSIZE];
+} ____cacheline_aligned;
+extern struct memnode memnode;
+#define memnode_shift memnode.shift
+#define memnodemap memnode.map
+--------------------------------------------------------------------
+
+If were were to increase NODEMAPSIZE so we could support 1TB of RAM
+with a hole as small as 1MB we would have to increase NODEMAPSIZE
+from the existing ~20k(0x4fff) to 1M(1MB * 1M entries = 1TB).  This
+would be a real problem on many smaller memory machines.
+
+Also, the upstream kernel fixes this problem by dynamically allocating
+the memnodemap[] array after calculating its size.  This however
+requires backporting the e820 reserve_early() code since the bootmem
+allocator requires the memnodemap[] array be set up before it can be
+used.  This also breaks the kABI!!!
+
+At this point we have no choice but to revert
+linux-2.6-mm-srat-and-numa-fixes-for-span-and-or-is-discontig-mem.patch.
+This means we will continue to disable NUMA on Intel systems when the
+node memory range spans other nodes and/or is discontiguous.
+
+The attached patch fixes this problem by reverting
+linux-2.6-mm-srat-and-numa-fixes-for-span-and-or-is-discontig-mem.patch
+but that removes BZ/Feature Request BZ474097
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/Kconfig b/arch/x86_64/Kconfig
+index dc98732..383172c 100644
+--- a/arch/x86_64/Kconfig
++++ b/arch/x86_64/Kconfig
+@@ -360,15 +360,6 @@ config X86_64_ACPI_NUMA
+        help
+ 	 Enable ACPI SRAT based node topology detection.
+ 
+-# Some NUMA nodes have memory ranges that span
+-# other nodes.  Even though a pfn is valid and
+-# between a node's start and end pfns, it may not
+-# reside on that node.  See memmap_init_zone()
+-# for details.
+-config NODES_SPAN_OTHER_NODES
+-	def_bool y
+-	depends on X86_64_ACPI_NUMA
+-
+ config NUMA_EMU
+ 	bool "NUMA emulation"
+ 	depends on NUMA
+diff --git a/arch/x86_64/mm/k8topology.c b/arch/x86_64/mm/k8topology.c
+index d32e4e6..7c45c2d 100644
+--- a/arch/x86_64/mm/k8topology.c
++++ b/arch/x86_64/mm/k8topology.c
+@@ -155,7 +155,7 @@ int __init k8_scan_nodes(unsigned long start, unsigned long end)
+ 	if (!found)
+ 		return -1; 
+ 
+-	memnode_shift = compute_hash_shift(nodes, 8, NULL);
++	memnode_shift = compute_hash_shift(nodes, 8);
+ 	if (memnode_shift < 0) { 
+ 		printk(KERN_ERR "No NUMA node hash function found. Contact maintainer\n"); 
+ 		return -1; 
+diff --git a/arch/x86_64/mm/numa.c b/arch/x86_64/mm/numa.c
+index bfbfe25..b2fac14 100644
+--- a/arch/x86_64/mm/numa.c
++++ b/arch/x86_64/mm/numa.c
+@@ -46,8 +46,7 @@ int numa_off __initdata;
+  * -1 if node overlap or lost ram (shift too big)
+  */
+ static int __init
+-populate_memnodemap(const struct bootnode *nodes,
+-		     int numnodes, int shift, int *nodeids)
++populate_memnodemap(const struct bootnode *nodes, int numnodes, int shift)
+ {
+ 	int i; 
+ 	int res = -1;
+@@ -66,11 +65,7 @@ populate_memnodemap(const struct bootnode *nodes,
+ 		do {
+ 			if (memnodemap[addr >> shift] != 0xff)
+ 				return -1;
+-			if (!nodeids)
+-				memnodemap[addr >> shift] = i;
+-			else
+-				memnodemap[addr >> shift] = nodeids[i];
+-
++			memnodemap[addr >> shift] = i;
+                        addr += (1UL << shift);
+ 		} while (addr < end);
+ 		res = 1;
+@@ -78,18 +73,17 @@ populate_memnodemap(const struct bootnode *nodes,
+ 	return res;
+ }
+ 
+-int __init compute_hash_shift(struct bootnode *nodes, int numnodes,
+-			      int *nodeids)
++int __init compute_hash_shift(struct bootnode *nodes, int numnodes)
+ {
+ 	int shift = 20;
+ 
+-	while (populate_memnodemap(nodes, numnodes, shift + 1, nodeids) >= 0)
++	while (populate_memnodemap(nodes, numnodes, shift + 1) >= 0)
+ 		shift++;
+ 
+ 	printk(KERN_DEBUG "NUMA: Using %d for the hash shift.\n",
+ 		shift);
+ 
+-	if (populate_memnodemap(nodes, numnodes, shift, nodeids) != 1) {
++	if (populate_memnodemap(nodes, numnodes, shift) != 1) {
+ 		printk(KERN_INFO
+ 	"Your memory is not aligned you need to rebuild your kernel "
+ 	"with a bigger NODEMAPSIZE shift=%d\n",
+@@ -259,7 +253,7 @@ static int numa_emulation(unsigned long start_pfn, unsigned long end_pfn)
+  		       (nodes[i].end - nodes[i].start) >> 20);
+ 		node_set_online(i);
+  	}
+- 	memnode_shift = compute_hash_shift(nodes, numa_fake, NULL);
++ 	memnode_shift = compute_hash_shift(nodes, numa_fake);
+  	if (memnode_shift < 0) {
+  		memnode_shift = 0;
+  		printk(KERN_ERR "No NUMA hash function found. Emulation disabled.\n");
+diff --git a/arch/x86_64/mm/srat.c b/arch/x86_64/mm/srat.c
+index 2a5ac61..371241a 100644
+--- a/arch/x86_64/mm/srat.c
++++ b/arch/x86_64/mm/srat.c
+@@ -29,10 +29,6 @@ static struct bootnode nodes_add[MAX_NUMNODES];
+ static int found_add_area __initdata;
+ int hotadd_percent __initdata = 0;
+ 
+-static int num_node_memblks __initdata;
+-static struct bootnode node_memblk_range[NR_NODE_MEMBLKS] __initdata;
+-static int memblk_nodeid[NR_NODE_MEMBLKS] __initdata;
+-
+ /* Too small nodes confuse the VM badly. Usually they result
+    from BIOS bugs. */
+ #define NODE_MIN_SIZE (4*1024*1024)
+@@ -42,17 +38,17 @@ static __init int setup_node(int pxm)
+ 	return acpi_map_pxm_to_node(pxm);
+ }
+ 
+-static __init int conflicting_memblks(unsigned long start, unsigned long end)
++static __init int conflicting_nodes(unsigned long start, unsigned long end)
+ {
+ 	int i;
+-	for (i = 0; i < num_node_memblks; i++) {
+-		struct bootnode *nd = &node_memblk_range[i];
++	for_each_node_mask(i, nodes_parsed) {
++		struct bootnode *nd = &nodes[i];
+ 		if (nd->start == nd->end)
+ 			continue;
+ 		if (nd->end > start && nd->start < end)
+-			return memblk_nodeid[i];
++			return i;
+ 		if (nd->end == end && nd->start == start)
+-			return memblk_nodeid[i];
++			return i;
+ 	}
+ 	return -1;
+ }
+@@ -277,7 +273,7 @@ acpi_numa_memory_affinity_init(struct acpi_table_memory_affinity *ma)
+ 		bad_srat();
+ 		return;
+ 	}
+-	i = conflicting_memblks(start, end);
++	i = conflicting_nodes(start, end);
+ 	if (i == node) {
+ 		printk(KERN_WARNING
+ 		"SRAT: Warning: PXM %d (%lx-%lx) overlaps with itself (%Lx-%Lx)\n",
+@@ -302,8 +298,8 @@ acpi_numa_memory_affinity_init(struct acpi_table_memory_affinity *ma)
+ 			nd->end = end;
+ 	}
+ 
+-	printk(KERN_INFO "SRAT: Node %u PXM %u %lx-%lx\n", node, pxm,
+-	       start, end);
++	printk(KERN_INFO "SRAT: Node %u PXM %u %Lx-%Lx\n", node, pxm,
++	       nd->start, nd->end);
+ 
+  	if (ma->flags.hot_pluggable && (reserve_hotadd(node, start, end) < 0)) {
+ 		/* Ignore hotadd region. Undo damage */
+@@ -312,11 +308,6 @@ acpi_numa_memory_affinity_init(struct acpi_table_memory_affinity *ma)
+ 		if ((nd->start | nd->end) == 0)
+ 			node_clear(node, nodes_parsed);
+ 	}
+-
+-	node_memblk_range[num_node_memblks].start = start;
+-	node_memblk_range[num_node_memblks].end = end;
+-	memblk_nodeid[num_node_memblks] = node;
+-	num_node_memblks++;
+ }
+ 
+ /* Sanity check to catch more bad SRATs (they are amazingly common).
+@@ -382,8 +373,7 @@ int __init acpi_scan_nodes(unsigned long start, unsigned long end)
+ 		return -1;
+ 	}
+ 
+-	memnode_shift = compute_hash_shift(node_memblk_range, num_node_memblks,
+-					   memblk_nodeid);
++	memnode_shift = compute_hash_shift(nodes, MAX_NUMNODES);
+ 	if (memnode_shift < 0) {
+ 		printk(KERN_ERR
+ 		     "SRAT: No NUMA node hash function found. Contact maintainer\n");
+diff --git a/include/asm-x86_64/numa.h b/include/asm-x86_64/numa.h
+index 91caf37..933ff11 100644
+--- a/include/asm-x86_64/numa.h
++++ b/include/asm-x86_64/numa.h
+@@ -7,8 +7,7 @@ struct bootnode {
+ 	u64 start,end; 
+ };
+ 
+-extern int compute_hash_shift(struct bootnode *nodes, int numblks,
+-			      int *nodeids);
++extern int compute_hash_shift(struct bootnode *nodes, int numnodes);
+ 
+ #define ZONE_ALIGN (1UL << (MAX_ORDER+PAGE_SHIFT))
+ 

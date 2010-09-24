@@ -1,0 +1,101 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Thu, 25 Feb 2010 01:50:31 -0500
+Subject: [net] ixgbe: stop unmapping DMA buffers too early
+Message-id: <20100225015031.GX24578@gospo.rdu.redhat.com>
+Patchwork-id: 23424
+O-Subject: [PATCH RHEL5.5] ixgbe: stop unmapping DMA buffers too early
+Bugzilla: 568153
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: John Linville <linville@redhat.com>
+
+This is a not-yet-upstream patch that should resolve issues related to
+early calls to pci_unmap_single when using RSC (receive-side coalescing)
+on 82599 devices.  For a device that supports RSC, the driver will take
+multiple rx buffers and copy them into a single, chained skb and pass
+that skb up the stack.  Because the hardware may still have some writing
+to do in the DMA area associated with the first skb in the chain, we
+need to wait to unmap it until all buffers associated with that skb are
+collected and unmapped.
+
+This patch came from Intel has plans to post it as it appears here 'in
+the next few days' as of 24 Feb.
+
+This has been verified by Intel, Chris Wright, Mark Wagner and me.
+
+This will resolve RHBZ 568153.
+
+
+diff --git a/drivers/net/ixgbe/ixgbe_main.c b/drivers/net/ixgbe/ixgbe_main.c
+index 1f76a12..7e52edb 100644
+--- a/drivers/net/ixgbe/ixgbe_main.c
++++ b/drivers/net/ixgbe/ixgbe_main.c
+@@ -821,6 +821,12 @@ static inline struct sk_buff *ixgbe_transform_rsc_queue(struct sk_buff *skb,
+ 	return skb;
+ }
+ 
++struct ixgbe_rsc_cb {
++	dma_addr_t dma;
++};
++
++#define IXGBE_RSC_CB(skb) ((struct ixgbe_rsc_cb *)(skb)->cb)
++
+ static bool ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
+                                struct ixgbe_ring *rx_ring,
+                                int *work_done, int work_to_do)
+@@ -869,9 +875,21 @@ static bool ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
+ 		rx_buffer_info->skb = NULL;
+ 
+ 		if (rx_buffer_info->dma) {
+-			pci_unmap_single(pdev, rx_buffer_info->dma,
+-			                 rx_ring->rx_buf_len,
+-			                 PCI_DMA_FROMDEVICE);
++			if ((adapter->flags2 & IXGBE_FLAG2_RSC_ENABLED) &&
++			    (!(staterr & IXGBE_RXD_STAT_EOP)) &&
++				 (!(skb->prev)))
++				/*
++				 * When HWRSC is enabled, delay unmapping
++				 * of the first packet. It carries the
++				 * header information, HW may still
++				 * access the header after the writeback.
++				 * Only unmap it when EOP is reached
++				 */
++				IXGBE_RSC_CB(skb)->dma = rx_buffer_info->dma;
++			else
++				pci_unmap_single(pdev, rx_buffer_info->dma,
++				                 rx_ring->rx_buf_len,
++				                 PCI_DMA_FROMDEVICE);
+ 			rx_buffer_info->dma = 0;
+ 			skb_put(skb, len);
+ 		}
+@@ -917,10 +935,17 @@ static bool ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
+ 
+ 		if (staterr & IXGBE_RXD_STAT_EOP) {
+ 			if (skb->prev)
+-				skb = ixgbe_transform_rsc_queue(skb, &(rx_ring->rsc_count));
++				skb = ixgbe_transform_rsc_queue(skb,
++						&(rx_ring->rsc_count));
+ 			if (adapter->flags2 & IXGBE_FLAG2_RSC_ENABLED) {
++				if (IXGBE_RSC_CB(skb)->dma)
++					pci_unmap_single(pdev,
++							 IXGBE_RSC_CB(skb)->dma,
++							 rx_ring->rx_buf_len,
++							 PCI_DMA_FROMDEVICE);
+ 				if (rx_ring->flags & IXGBE_RING_RX_PS_ENABLED)
+-					rx_ring->rsc_count += skb_shinfo(skb)->nr_frags;
++					rx_ring->rsc_count +=
++						skb_shinfo(skb)->nr_frags;
+ 				else
+ 					rx_ring->rsc_count++;
+ 				rx_ring->rsc_flush++;
+@@ -3133,6 +3158,10 @@ static void ixgbe_clean_rx_ring(struct ixgbe_adapter *adapter,
+ 			rx_buffer_info->skb = NULL;
+ 			do {
+ 				struct sk_buff *this = skb;
++				if (IXGBE_RSC_CB(this)->dma)
++					pci_unmap_single(pdev, IXGBE_RSC_CB(this)->dma,
++					                 rx_ring->rx_buf_len,
++					                 PCI_DMA_FROMDEVICE);
+ 				skb = skb->prev;
+ 				dev_kfree_skb(this);
+ 			} while (skb);

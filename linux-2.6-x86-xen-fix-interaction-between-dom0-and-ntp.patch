@@ -1,0 +1,63 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Wed, 8 Apr 2009 15:51:02 -0400
+Subject: [x86] xen: fix interaction between dom0 and NTP
+Message-id: 20090408155102.2b22900c@cuia.bos.redhat.com
+O-Subject: [PATCH RHEL5.4] Fix interaction between dom0 and NTP (bz 494879)
+Bugzilla: 494879
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+The kernel xen time code used to call ntp_clear() (indicating that
+the system lost NTP sync) any time the NTP code set the HV clock.
+
+Oops.
+
+Doing that only from do_settimeofday() fixes things.
+
+Fixes bug 494879 and looks like it should help fix several
+other Xen PV timer bugs. Only compile tested by me because
+the fix is blindingly obvious after inspecting the code.
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1237377065 0
+# Node ID c0f2f398aa3cab195b632531447e95110e9d8282
+# Parent  c1f0373ff44ea3f9ba3845e05faf3d27d7d52731
+x86: Fix interaction of NTP and dom0->xen time updates
+
+Don't discard NTP sync when updating Xen wallclock time from dom0,
+as that's almost the first thing we do when we become synced.
+Move the call to ntp_clear() into do_settimeofday(), which is the
+only caller of __update_wallclock() that looks like it should break
+NTP sync.
+
+This fixes the timer chain that sets Xen's wallclock every minute when
+dom0 is NTP synced, which in turn greatly improves wallclock accuracy
+in PV domU.
+
+Signed-off-by: Tim Deegan <Tim.Deegan@citrix.com>
+
+diff --git a/arch/i386/kernel/time-xen.c b/arch/i386/kernel/time-xen.c
+index 6f23a83..8809ff8 100644
+--- a/arch/i386/kernel/time-xen.c
++++ b/arch/i386/kernel/time-xen.c
+@@ -282,8 +282,6 @@ static void __update_wallclock(time_t sec, long nsec)
+ 
+ 	set_normalized_timespec(&xtime, xtime_sec, xtime_nsec);
+ 	set_normalized_timespec(&wall_to_monotonic, wtm_sec, wtm_nsec);
+-
+-	ntp_clear();
+ }
+ 
+ static void update_wallclock(void)
+@@ -499,6 +497,7 @@ int do_settimeofday(struct timespec *tv)
+ 		__normalize_time(&sec, &nsec);
+ 		__update_wallclock(sec, nsec);
+ 	}
++	ntp_clear();
+ 
+ 	/* Reset monotonic gettimeofday() timeval. */
+ 	spin_lock(&monotonic_lock);

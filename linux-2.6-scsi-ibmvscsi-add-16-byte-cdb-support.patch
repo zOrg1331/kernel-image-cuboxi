@@ -1,0 +1,73 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Mon, 15 Jun 2009 12:24:46 -0400
+Subject: [scsi] ibmvscsi: add 16 byte CDB support
+Message-id: 20090615162127.7734.77541.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ502944]ibmvscsi: Add 16 byte CDB support
+Bugzilla: 502944
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=502944
+
+Description:
+===========
+Adds support for 16 byte command descriptor blocks (CDBs) to the ibmvscsi
+driver.
+
+RHEL Version Found:
+================
+RHEL 5.4 KOTD (-150.el5)
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1844511
+
+Upstream Status:
+================
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=fbc56f0801f58041a4372a030933bac076b46aad
+
+Test Status:
+============
+Without this patch a PPC LPAR could not see the complete 10TB LUN:
+
+sdb : very big device. try to use READ CAPACITY(16).
+sdb : READ CAPACITY(16) failed.
+sdb : status=0, message=00, host=5, driver=00
+sdb : use 0xffffffff as device size
+SCSI device sdb: 4294967296 512-byte hdwr sectors (2199023 MB)
+
+[root@kent-p1 ~]# cat /proc/partitions
+major minor  #blocks  name
+...
+8    16 2147483648 sdb
+
+With this patch applied the complete 10TB LUN is seen:
+
+sdb : very big device. try to use READ CAPACITY(16).
+SCSI device sdb: 20504608768 512-byte hdwr sectors (10498360 MB)
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/drivers/scsi/ibmvscsi/ibmvscsi.c b/drivers/scsi/ibmvscsi/ibmvscsi.c
+index 93f7e65..0270ac6 100644
+--- a/drivers/scsi/ibmvscsi/ibmvscsi.c
++++ b/drivers/scsi/ibmvscsi/ibmvscsi.c
+@@ -1686,6 +1686,7 @@ static int ibmvscsi_probe(struct vio_dev *vdev, const struct vio_device_id *id)
+ 	host->max_lun = 8;
+ 	host->max_id = max_id;
+ 	host->max_channel = max_channel;
++	host->max_cmd_len = 16;
+ 
+ 	if (scsi_add_host(hostdata->host, hostdata->dev))
+ 		goto add_host_failed;

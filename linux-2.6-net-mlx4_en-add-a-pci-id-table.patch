@@ -1,0 +1,45 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Tue, 1 Dec 2009 19:33:20 -0500
+Subject: [net] mlx4_en: add a pci id table
+Message-id: <1259696003-21028-6-git-send-email-dledford@redhat.com>
+Patchwork-id: 21589
+O-Subject: [Patch RHEL5.5] [mlx4_en] Add a pci id table
+Bugzilla: 508770
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+The mlx4_core driver already has the pci id table and is the module that
+correctly inits any hardware, however, by adding a table to mlx4_en, we can
+cause it to get automatically loaded as well so that the ethernet functions
+are live without special modprobe files or anaconda hacks.
+
+Partially resolves bz508770
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/net/mlx4/en_main.c b/drivers/net/mlx4/en_main.c
+index 1bf6be2..ad12e6f 100644
+--- a/drivers/net/mlx4/en_main.c
++++ b/drivers/net/mlx4/en_main.c
+@@ -250,6 +250,22 @@ static struct mlx4_interface mlx4_en_interface = {
+ 	.query  = mlx4_en_query
+ };
+ 
++static struct pci_device_id mlx4_en_pci_table[] = {
++	{ PCI_VDEVICE(MELLANOX, 0x6340) }, /* ConnectX VPI - IB SDR / 10GigE */
++	{ PCI_VDEVICE(MELLANOX, 0x634a) }, /* ConnectX VPI PCIe 2.0 2.5GT/s - IB DDR / 10GigE */
++	{ PCI_VDEVICE(MELLANOX, 0x6732) }, /* ConnectX VPI PCIe 2.0 5GT/s - IB DDR / 10GigE */
++	{ PCI_VDEVICE(MELLANOX, 0x673c) }, /* ConnectX VPI PCIe 2.0 5GT/s - IB QDR / 10GigE */
++	{ PCI_VDEVICE(MELLANOX, 0x6368) }, /* ConnectX EN 10GigE, PCIe 2.0 2.5GT/s */
++	{ PCI_VDEVICE(MELLANOX, 0x6750) }, /* ConnectX EN 10GigE, PCIe 2.0 5GT/s */
++	{ PCI_VDEVICE(MELLANOX, 0x6372) }, /* ConnectX EN 10GBASE-T 10GigE */
++	{ PCI_VDEVICE(MELLANOX, 0x675a) }, /* ConnectX EN 10GBASE-T 10GigE, PCIe 2.0  */
++	{ PCI_VDEVICE(MELLANOX, 0x6764) }, /* ConnectX EN 10GigE, PCIe 2.0 5GT/s */
++	{ 0, }
++};
++
++MODULE_DEVICE_TABLE(pci, mlx4_en_pci_table);
++
++
+ static int __init mlx4_en_init(void)
+ {
+ 	return mlx4_register_interface(&mlx4_en_interface);

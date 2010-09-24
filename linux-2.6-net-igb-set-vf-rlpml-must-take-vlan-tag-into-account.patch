@@ -1,0 +1,108 @@
+From: Don Dugger <ddugger@redhat.com>
+Date: Tue, 10 Nov 2009 23:01:30 -0500
+Subject: [net] igb: set vf rlpml must take vlan tag into account
+Message-id: <200911102301.nAAN1UKD021209@sobek.n0ano.com>
+Patchwork-id: 21357
+O-Subject: [RHEL5.5 PATCH] BZ 515602: igb: set vf rlpml wasn't taking vlan tag
+	into account
+Bugzilla: 515602
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+This patch updates things so that vlan tags are taken into account when
+setting the receive large packet maximum length.  This allows the VF driver
+to correctly receive full sized frames when vlans are enabled.
+
+Upstream status: Posted to the netdev mailing list
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2071114
+Testing: This has been tested by the bug reporter and this patch solves
+the problem.
+
+Signed-off-by: Alexander Duyck <alexander.h.duyck@intel.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+
+diff --git a/drivers/net/igb/igb.h b/drivers/net/igb/igb.h
+index 418875f..5627c3e 100644
+--- a/drivers/net/igb/igb.h
++++ b/drivers/net/igb/igb.h
+@@ -66,6 +66,7 @@ struct vf_data_storage {
+ 	unsigned char vf_mac_addresses[ETH_ALEN];
+ 	u16 vf_mc_hashes[IGB_MAX_VF_MC_ENTRIES];
+ 	u16 num_vf_mc_hashes;
++	u16 vlans_enabled;
+ 	bool clear_to_send;
+ };
+ 
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index 68e3101..78945c3 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -3613,6 +3613,8 @@ static void igb_clear_vf_vfta(struct igb_adapter *adapter, u32 vf)
+ 
+ 		wr32(E1000_VLVF(i), reg);
+ 	}
++
++	adapter->vf_data[vf].vlans_enabled = 0;
+ }
+ 
+ static s32 igb_vlvf_set(struct igb_adapter *adapter, u32 vid, bool add, u32 vf)
+@@ -3661,6 +3663,22 @@ static s32 igb_vlvf_set(struct igb_adapter *adapter, u32 vid, bool add, u32 vf)
+ 			reg |= vid;
+ 
+ 			wr32(E1000_VLVF(i), reg);
++
++			/* do not modify RLPML for PF devices */
++			if (vf >= adapter->vfs_allocated_count)
++				return 0;
++
++			if (!adapter->vf_data[vf].vlans_enabled) {
++				u32 size;
++				reg = rd32(E1000_VMOLR(vf));
++				size = reg & E1000_VMOLR_RLPML_MASK;
++				size += 4;
++				reg &= ~E1000_VMOLR_RLPML_MASK;
++				reg |= size;
++				wr32(E1000_VMOLR(vf), reg);
++			}
++			adapter->vf_data[vf].vlans_enabled++;
++
+ 			return 0;
+ 		}
+ 	} else {
+@@ -3673,6 +3691,21 @@ static s32 igb_vlvf_set(struct igb_adapter *adapter, u32 vid, bool add, u32 vf)
+ 				igb_vfta_set(hw, vid, false);
+ 			}
+ 			wr32(E1000_VLVF(i), reg);
++
++			/* do not modify RLPML for PF devices */
++			if (vf >= adapter->vfs_allocated_count)
++				return 0;
++
++			adapter->vf_data[vf].vlans_enabled--;
++			if (!adapter->vf_data[vf].vlans_enabled) {
++				u32 size;
++				reg = rd32(E1000_VMOLR(vf));
++				size = reg & E1000_VMOLR_RLPML_MASK;
++				size -= 4;
++				reg &= ~E1000_VMOLR_RLPML_MASK;
++				reg |= size;
++				wr32(E1000_VMOLR(vf), reg);
++			}
+ 			return 0;
+ 		}
+ 	}
+@@ -4855,6 +4888,12 @@ static inline int igb_set_vf_rlpml(struct igb_adapter *adapter, int size,
+ 	struct e1000_hw *hw = &adapter->hw;
+ 	u32 vmolr;
+ 
++	/* if it isn't the PF check to see if VFs are enabled and
++	 * increase the size to support vlan tags */
++	if (vfn < adapter->vfs_allocated_count &&
++	    adapter->vf_data[vfn].vlans_enabled)
++		size += VLAN_TAG_SIZE;
++
+ 	vmolr = rd32(E1000_VMOLR(vfn));
+ 	vmolr &= ~E1000_VMOLR_RLPML_MASK;
+ 	vmolr |= size | E1000_VMOLR_LPE;

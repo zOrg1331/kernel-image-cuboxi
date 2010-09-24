@@ -1,0 +1,95 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Fri, 30 Oct 2009 15:22:38 -0400
+Subject: [net] augment raw_send_hdrinc to validate ihl in user hdr
+Message-id: <20091030152238.GA5302@hmsreliant.think-freely.org>
+Patchwork-id: 21275
+O-Subject: [5.5 PATCH] raw: Augment raw_send_hdrinc to validate ihl in user
+	provided ip header (bz 500924)
+Bugzilla: 500924
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Hey all-
+	This is a backport of upstream commit
+55888dfb6ba7e318bb3d6a44d25009906206bf6a from the net-next tree:
+
+A series of oopses was reported recently.  Apparently when using AF_RAW
+sockets to send data to peers that were reachable via ipsec encapsulation,
+people could panic or BUG halt their systems.
+
+I've tracked the problem down to user space sending an invalid ip header over an
+AF_RAW socket with IP_HDRINCL set to 1.
+
+Basically what happens is that userspace sends down an ip frame that includes
+only the header (no data), but sets the ip header ihl value to a large number,
+one that is larger than the total amount of data passed to the sendmsg call.  In
+raw_send_hdrincl, we allocate an skb based on the size of the data in the msghdr
+that was passed in, but assume the data is all valid.  Later during ipsec
+encapsulation, xfrm4_tranport_output moves the entire frame back in the skbuff
+to provide headroom for the ipsec headers.  During this operation, the
+skb->transport_header is repointed to a spot computed by
+skb->network_header + the ip header length (ihl).  Since so little data was
+passed in relative to the value of ihl provided by the raw socket, we point
+transport header to an unknown location, resulting in various crashes.
+
+This fix for this is pretty straightforward, simply validate the value of of
+iph->ihl when sending over a raw socket.  If (iph->ihl*4U) > user data buffer
+size, drop the frame and return -EINVAL.  I just confirmed this fixes the
+reported crashes.
+
+satisfies bz 500924
+
+Neil
+
+diff --git a/net/ipv4/raw.c b/net/ipv4/raw.c
+index bb1b802..bf368fb 100644
+--- a/net/ipv4/raw.c
++++ b/net/ipv4/raw.c
+@@ -271,6 +271,7 @@ static int raw_send_hdrinc(struct sock *sk, void *from, size_t length,
+ 	struct iphdr *iph;
+ 	struct sk_buff *skb;
+ 	int err;
++	unsigned int iphlen;
+ 
+ 	if (length > rt->u.dst.dev->mtu) {
+ 		ip_local_error(sk, EMSGSIZE, rt->rt_dst, inet->dport,
+@@ -296,12 +297,25 @@ static int raw_send_hdrinc(struct sock *sk, void *from, size_t length,
+ 	skb->ip_summed = CHECKSUM_NONE;
+ 
+ 	skb->h.raw = skb->nh.raw;
+-	err = memcpy_fromiovecend((void *)iph, from, 0, length);
+-	if (err)
+-		goto error_fault;
+ 
+-	/* We don't modify invalid header */
+-	if (length >= sizeof(*iph) && iph->ihl * 4U <= length) {
++	err = -EFAULT;
++	if (memcpy_fromiovecend((void *)iph, from, 0, length))
++		goto error_free;
++
++	iphlen = iph->ihl * 4;
++
++	/*
++	 * We don't want to modify the ip header, but we do need to 
++	 * be sure that it won't cause problems later along the network
++	 * stack.  Specifically we want to make sure that iph->ihl is a 
++	 * sane value.  If ihl points beyond the length of the buffer passed
++	 * in, reject the frame as invalid
++	 */
++	err = -EINVAL;
++	if (iphlen > length)
++		goto error_free; 
++   
++	if (iphlen >= sizeof(*iph)) {
+ 		if (!iph->saddr)
+ 			iph->saddr = rt->rt_src;
+ 		iph->check   = 0;
+@@ -324,8 +338,7 @@ static int raw_send_hdrinc(struct sock *sk, void *from, size_t length,
+ out:
+ 	return 0;
+ 
+-error_fault:
+-	err = -EFAULT;
++error_free:
+ 	kfree_skb(skb);
+ error:
+ 	IP_INC_STATS(IPSTATS_MIB_OUTDISCARDS);

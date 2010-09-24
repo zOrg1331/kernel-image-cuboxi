@@ -1,0 +1,119 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Tue, 12 Jan 2010 05:46:54 -0500
+Subject: [net] fixup problems with vlans and bonding
+Message-id: <20100112054653.GR10827@gospo.rdu.redhat.com>
+Patchwork-id: 22425
+O-Subject: [RHEL5.5 PATCH] net: fixup problems with vlans and bonding
+Bugzilla: 526976
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: John Linville <linville@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+The following RHEL5 patch:
+
+	commit 0ee654bf5e4713688d1bdf7f3d39e30883dd39bc
+	Author: Andy Gospodarek <gospo@redhat.com>
+	Date:   Mon Nov 30 20:22:51 2009 -0500
+
+	    [net] bonding: allow arp_ip_targets on separate vlan from bond device
+
+created some problems with bonding and vlans as well as created some
+undesirable behavior when trying to capture frames when using bonding.
+Though it was a reasonable backport of the code posted upsream, that code
+was not accepted and the following two patches were instead:
+
+	commit ca8d9ea30bc79b2965a1d169dcb2f48f02af4d2d
+	Author: Andy Gospodarek <andy@greyhouse.net>
+
+	    fix bonding: allow arp_ip_targets on separate vlans to use arp validation
+
+	commit 1f3c8804acba841b5573b953f5560d2683d2db0d
+	Author: Andy Gospodarek <andy@greyhouse.net>
+
+	    bonding: allow arp_ip_targets on separate vlans to use arp validation
+
+I have verified this bug fixes the original request in RHBZ 526976 and
+also fixes the problems introduced by the original patch.
+
+
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index f708fd7..d4d7815 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -2778,8 +2778,16 @@ static int bond_arp_rcv(struct sk_buff *skb, struct net_device *dev, struct pack
+ 	unsigned char *arp_ptr;
+ 	__be32 sip, tip;
+ 
+-	while (dev->priv_flags & IFF_802_1Q_VLAN)
++	if (dev->priv_flags & IFF_802_1Q_VLAN) {
++		/*
++		 * When using VLANS and bonding, dev and oriv_dev may be
++		 * incorrect if the physical interface supports VLAN
++		 * acceleration.  With this change ARP validation now
++		 * works for hosts only reachable on the VLAN interface.
++		 */
+ 		dev = VLAN_DEV_INFO(dev)->real_dev;
++		orig_dev = skb->input_dev;
++	}
+ 
+ 	if (!(dev->priv_flags & IFF_BONDING) || !(dev->flags & IFF_MASTER))
+ 		goto out;
+diff --git a/net/core/dev.c b/net/core/dev.c
+index e9a472f..7003c23 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -1876,6 +1876,7 @@ int netif_receive_skb(struct sk_buff *skb)
+ 	struct packet_type *ptype, *pt_prev;
+ 	struct net_device *orig_dev;
+ 	struct net_device *null_or_orig;
++	struct net_device *null_or_bond;
+ 	int ret = NET_RX_DROP;
+ 	unsigned short type;
+ 
+@@ -1892,8 +1893,8 @@ int netif_receive_skb(struct sk_buff *skb)
+ 		skb->input_dev = skb->dev;
+ 
+ 	null_or_orig = NULL;
+-	orig_dev = skb->input_dev;
+-	if (orig_dev->master && !(skb->dev->priv_flags & IFF_802_1Q_VLAN)) {
++	orig_dev = skb->dev;
++	if (orig_dev->master) {
+ 		if (skb_bond_should_drop(skb))
+ 			null_or_orig = orig_dev; /* deliver only exact match */
+ 		else
+@@ -1964,11 +1965,32 @@ ncls:
+ 
+ 	skb_orphan(skb);
+ 
++	/* Due to kABI constraints, we have to diverge from upstream.
++	 * The code upstream checks to see if this is a vlan device
++	 * and then looks to see if the real_dev has the bonding flags
++	 * set.  If it does, null_or_bond becomes the bonding device.
++	 * Since we cannot check for real_dev, we will look at input_dev
++	 * and determine if input-dev->master is set.  This would also
++	 * indicate bonding was used.
++	 *
++	 * For hw-accelerated vlan devices this will be fine, as
++	 * input_dev is now set to the true input dev.
++	 *
++	 * For legacy devices this will be fine as well since input_dev
++	 * is set above when the tagged frame first runs through
++	 * netif_receive_skb.
++	 */
++	null_or_bond = NULL;
++	if ((skb->dev->priv_flags & IFF_802_1Q_VLAN) &&
++		(skb->input_dev->master)) {
++		null_or_bond = skb->input_dev->master;
++	}
++
+ 	type = skb->protocol;
+ 	list_for_each_entry_rcu(ptype, &ptype_base[ntohs(type)&15], list) {
+-		if (ptype->type == type &&
+-		    (ptype->dev == null_or_orig || ptype->dev == skb->dev ||
+-		     ptype->dev == orig_dev || ptype->dev == orig_dev->master)) {
++		if (ptype->type == type && (ptype->dev == null_or_orig ||
++		    ptype->dev == skb->dev || ptype->dev == orig_dev ||
++		    ptype->dev == null_or_bond)) {
+ 			if (pt_prev) 
+ 				ret = deliver_skb(skb, pt_prev, orig_dev);
+ 			pt_prev = ptype;

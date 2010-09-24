@@ -1,0 +1,1034 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Mon, 30 Nov 2009 07:49:33 -0500
+Subject: [net] bnx2x: add mdio support
+Message-id: <1259567375-3357-4-git-send-email-sgruszka@redhat.com>
+Patchwork-id: 21538
+O-Subject: [RHEL5.5 PATCH 3/5] bnx2x: add MDIO support
+Bugzilla: 515716 522600
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+BZ#515716
+BZ#522600
+
+Upstream:
+
+    commit cdea52128f6099e8f84459823c45790a78264022
+    Author: Eilon Greenstein <eilong@broadcom.com>
+    Date:   Wed Aug 12 08:23:14 2009 +0000
+
+        bnx2x: Removing old PHY FW upgrade code
+
+    commit f57a60256d02daba1316c98da472f02cd98a58d3
+    Author: Eilon Greenstein <eilong@broadcom.com>
+    Date:   Wed Aug 12 08:23:11 2009 +0000
+
+        bnx2x: Supporting PHY FW upgrade
+
+    commit 01cd452846c98609dd3efbee0deea050e6706f02
+    Author: Eilon Greenstein <eilong@broadcom.com>
+    Date:   Wed Aug 12 08:23:08 2009 +0000
+
+        bnx2x: MDC/MDIO CL45 IOCTLs
+
+diff --git a/drivers/net/bnx2x.h b/drivers/net/bnx2x.h
+index a3eb3eb..639af50 100644
+--- a/drivers/net/bnx2x.h
++++ b/drivers/net/bnx2x.h
+@@ -30,10 +30,12 @@
+ #define BNX2X_NEW_NAPI
+ 
+ 
++
+ #include "bnx2x_reg.h"
+ #include "bnx2x_fw_defs.h"
+ #include "bnx2x_hsi.h"
+ #include "bnx2x_link.h"
++#include "bnx2x_compat.h"
+ 
+ /* error/debug prints */
+ 
+@@ -905,6 +907,7 @@ struct bnx2x {
+ 
+ 	struct link_params	link_params;
+ 	struct link_vars	link_vars;
++	struct mdio_if_info	mdio;
+ 
+ 	struct bnx2x_common	common;
+ 	struct bnx2x_port	port;
+diff --git a/drivers/net/bnx2x_compat.h b/drivers/net/bnx2x_compat.h
+new file mode 100644
+index 0000000..db8c2ba
+--- /dev/null
++++ b/drivers/net/bnx2x_compat.h
+@@ -0,0 +1,158 @@
++#ifndef __BNX2X_COMPAT_H__
++#define __BNX2X_COMPAT_H__
++
++/* Taken from drivers/net/mdio.c */
++#include <linux/mii.h>
++
++/* MDIO Manageable Devices (MMDs). */
++#define MDIO_MMD_AN		7	/* Auto-Negotiation */
++
++/* Generic MDIO registers. */
++#define MDIO_AN_ADVERTISE	16	/* AN advertising (base page) */
++#define MDIO_AN_LPA		19	/* AN LP abilities (base page) */
++
++/* Device present registers. */
++#define MDIO_DEVS_PRESENT(devad)	(1 << (devad))
++#define MDIO_DEVS_AN			MDIO_DEVS_PRESENT(MDIO_MMD_AN)
++
++/**
++ * struct mdio_if_info - Ethernet controller MDIO interface
++ * @prtad: PRTAD of the PHY (%MDIO_PRTAD_NONE if not present/unknown)
++ * @mmds: Mask of MMDs expected to be present in the PHY.  This must be
++ *	non-zero unless @prtad = %MDIO_PRTAD_NONE.
++ * @mode_support: MDIO modes supported.  If %MDIO_SUPPORTS_C22 is set then
++ *	MII register access will be passed through with @devad =
++ *	%MDIO_DEVAD_NONE.  If %MDIO_EMULATE_C22 is set then access to
++ *	commonly used clause 22 registers will be translated into
++ *	clause 45 registers.
++ * @dev: Net device structure
++ * @mdio_read: Register read function; returns value or negative error code
++ * @mdio_write: Register write function; returns 0 or negative error code
++ */
++struct mdio_if_info {
++	int prtad;
++	u32 __bitwise mmds;
++	unsigned mode_support;
++
++	struct net_device *dev;
++	int (*mdio_read)(struct net_device *dev, int prtad, int devad,
++			 u16 addr);
++	int (*mdio_write)(struct net_device *dev, int prtad, int devad,
++			  u16 addr, u16 val);
++};
++
++#define MDIO_PRTAD_NONE			(-1)
++#define MDIO_DEVAD_NONE			(-1)
++#define MDIO_EMULATE_C22		4
++
++/* Mapping between MDIO PRTAD/DEVAD and mii_ioctl_data::phy_id */
++
++#define MDIO_PHY_ID_C45			0x8000
++#define MDIO_PHY_ID_PRTAD		0x03e0
++#define MDIO_PHY_ID_DEVAD		0x001f
++#define MDIO_PHY_ID_C45_MASK						\
++	(MDIO_PHY_ID_C45 | MDIO_PHY_ID_PRTAD | MDIO_PHY_ID_DEVAD)
++
++static inline int mdio_phy_id_is_c45(int phy_id)
++{
++	return (phy_id & MDIO_PHY_ID_C45) && !(phy_id & ~MDIO_PHY_ID_C45_MASK);
++}
++
++static inline __u16 mdio_phy_id_prtad(int phy_id)
++{
++	return (phy_id & MDIO_PHY_ID_PRTAD) >> 5;
++}
++
++static inline __u16 mdio_phy_id_devad(int phy_id)
++{
++	return phy_id & MDIO_PHY_ID_DEVAD;
++}
++
++#define MDIO_SUPPORTS_C22		1
++#define MDIO_SUPPORTS_C45		2
++
++/**
++ * mdio_mii_ioctl - MII ioctl interface for MDIO (clause 22 or 45) PHYs
++ * @mdio: MDIO interface
++ * @mii_data: MII ioctl data structure
++ * @cmd: MII ioctl command
++ *
++ * Returns 0 on success, negative on error.
++ */
++static inline int mdio_mii_ioctl(const struct mdio_if_info *mdio,
++				 struct mii_ioctl_data *mii_data, int cmd)
++{
++	int prtad, devad;
++	u16 addr = mii_data->reg_num;
++
++	/* Validate/convert cmd to one of SIOC{G,S}MIIREG */
++	switch (cmd) {
++	case SIOCGMIIPHY:
++		if (mdio->prtad == MDIO_PRTAD_NONE)
++			return -EOPNOTSUPP;
++		mii_data->phy_id = mdio->prtad;
++		cmd = SIOCGMIIREG;
++		break;
++	case SIOCGMIIREG:
++		break;
++	case SIOCSMIIREG:
++		if (!capable(CAP_NET_ADMIN))
++			return -EPERM;
++		break;
++	default:
++		return -EOPNOTSUPP;
++	}
++
++	/* Validate/convert phy_id */
++	if ((mdio->mode_support & MDIO_SUPPORTS_C45) &&
++	    mdio_phy_id_is_c45(mii_data->phy_id)) {
++		prtad = mdio_phy_id_prtad(mii_data->phy_id);
++		devad = mdio_phy_id_devad(mii_data->phy_id);
++	} else if ((mdio->mode_support & MDIO_SUPPORTS_C22) &&
++		   mii_data->phy_id < 0x20) {
++		prtad = mii_data->phy_id;
++		devad = MDIO_DEVAD_NONE;
++		addr &= 0x1f;
++	} else if ((mdio->mode_support & MDIO_EMULATE_C22) &&
++		   mdio->prtad != MDIO_PRTAD_NONE &&
++		   mii_data->phy_id == mdio->prtad) {
++		/* Remap commonly-used MII registers. */
++		prtad = mdio->prtad;
++		switch (addr) {
++		case MII_BMCR:
++		case MII_BMSR:
++		case MII_PHYSID1:
++		case MII_PHYSID2:
++			devad = __ffs(mdio->mmds);
++			break;
++		case MII_ADVERTISE:
++		case MII_LPA:
++			if (!(mdio->mmds & MDIO_DEVS_AN))
++				return -EINVAL;
++			devad = MDIO_MMD_AN;
++			if (addr == MII_ADVERTISE)
++				addr = MDIO_AN_ADVERTISE;
++			else
++				addr = MDIO_AN_LPA;
++			break;
++		default:
++			return -EINVAL;
++		}
++	} else {
++		return -EINVAL;
++	}
++
++	if (cmd == SIOCGMIIREG) {
++		int rc = mdio->mdio_read(mdio->dev, prtad, devad, addr);
++		if (rc < 0)
++			return rc;
++		mii_data->val_out = rc;
++		return 0;
++	} else {
++		return mdio->mdio_write(mdio->dev, prtad, devad, addr,
++					mii_data->val_in);
++	}
++}
++
++#endif /* __BNX2X_COMPAT_H__ */
++
+diff --git a/drivers/net/bnx2x_link.c b/drivers/net/bnx2x_link.c
+index b3d4d94..bb5b873 100644
+--- a/drivers/net/bnx2x_link.c
++++ b/drivers/net/bnx2x_link.c
+@@ -1995,7 +1995,7 @@ static u8 bnx2x_emac_program(struct link_params *params,
+ /*****************************************************************************/
+ /*      		     External Phy section       		     */
+ /*****************************************************************************/
+-static void bnx2x_hw_reset(struct bnx2x *bp, u8 port)
++void bnx2x_ext_phy_hw_reset(struct bnx2x *bp, u8 port)
+ {
+ 	bnx2x_set_gpio(bp, MISC_REGISTERS_GPIO_1,
+ 		       MISC_REGISTERS_GPIO_OUTPUT_LOW, port);
+@@ -2033,7 +2033,7 @@ static void bnx2x_ext_phy_reset(struct link_params *params,
+ 					  params->port);
+ 
+ 			/* HW reset */
+-			bnx2x_hw_reset(bp, params->port);
++			bnx2x_ext_phy_hw_reset(bp, params->port);
+ 
+ 			bnx2x_cl45_write(bp, params->port,
+ 				       ext_phy_type,
+@@ -2103,8 +2103,7 @@ static void bnx2x_ext_phy_reset(struct link_params *params,
+ 					  params->port);
+ 
+ 			/* HW reset */
+-			bnx2x_hw_reset(bp, params->port);
+-
++			bnx2x_ext_phy_hw_reset(bp, params->port);
+ 			break;
+ 
+ 		case PORT_HW_CFG_XGXS_EXT_PHY_TYPE_BCM8481:
+@@ -2114,7 +2113,7 @@ static void bnx2x_ext_phy_reset(struct link_params *params,
+ 					  params->port);
+ 
+ 			/* HW reset */
+-			bnx2x_hw_reset(bp, params->port);
++			bnx2x_ext_phy_hw_reset(bp, params->port);
+ 
+ 			bnx2x_cl45_write(bp, params->port,
+ 				       ext_phy_type,
+@@ -2142,7 +2141,7 @@ static void bnx2x_ext_phy_reset(struct link_params *params,
+ 
+ 		case PORT_HW_CFG_SERDES_EXT_PHY_TYPE_BCM5482:
+ 			DP(NETIF_MSG_LINK, "SerDes 5482\n");
+-			bnx2x_hw_reset(bp, params->port);
++			bnx2x_ext_phy_hw_reset(bp, params->port);
+ 			break;
+ 
+ 		default:
+@@ -5438,59 +5437,6 @@ static u8 bnx2x_format_ver(u32 num, u8 *str, u16 len)
+ 	return 0;
+ }
+ 
+-
+-static void bnx2x_turn_on_ef(struct bnx2x *bp, u8 port, u8 ext_phy_addr,
+-			   u32 ext_phy_type)
+-{
+-	u32 cnt = 0;
+-	u16 ctrl = 0;
+-	/* Enable EMAC0 in to enable MDIO */
+-	REG_WR(bp, GRCBASE_MISC + MISC_REGISTERS_RESET_REG_2_SET,
+-	       (MISC_REGISTERS_RESET_REG_2_RST_EMAC0_HARD_CORE << port));
+-	msleep(5);
+-
+-	/* take ext phy out of reset */
+-	bnx2x_set_gpio(bp,
+-			  MISC_REGISTERS_GPIO_2,
+-			  MISC_REGISTERS_GPIO_HIGH,
+-			  port);
+-
+-	bnx2x_set_gpio(bp,
+-			  MISC_REGISTERS_GPIO_1,
+-			  MISC_REGISTERS_GPIO_HIGH,
+-			  port);
+-
+-	/* wait for 5ms */
+-	msleep(5);
+-
+-	for (cnt = 0; cnt < 1000; cnt++) {
+-		msleep(1);
+-		bnx2x_cl45_read(bp, port,
+-			      ext_phy_type,
+-			      ext_phy_addr,
+-			      MDIO_PMA_DEVAD,
+-			      MDIO_PMA_REG_CTRL,
+-			      &ctrl);
+-		if (!(ctrl & (1<<15))) {
+-			DP(NETIF_MSG_LINK, "Reset completed\n\n");
+-				break;
+-		}
+-	}
+-}
+-
+-static void bnx2x_turn_off_sf(struct bnx2x *bp, u8 port)
+-{
+-	/* put sf to reset */
+-	bnx2x_set_gpio(bp,
+-			  MISC_REGISTERS_GPIO_1,
+-			  MISC_REGISTERS_GPIO_LOW,
+-			  port);
+-	bnx2x_set_gpio(bp,
+-			  MISC_REGISTERS_GPIO_2,
+-			  MISC_REGISTERS_GPIO_LOW,
+-			  port);
+-}
+-
+ u8 bnx2x_get_ext_phy_fw_version(struct link_params *params, u8 driver_loaded,
+ 			      u8 *version, u16 len)
+ {
+@@ -6536,7 +6482,7 @@ static u8 bnx2x_8727_common_init_phy(struct bnx2x *bp, u32 shmem_base)
+ 	swap_val = REG_RD(bp,  NIG_REG_PORT_SWAP);
+ 	swap_override = REG_RD(bp,  NIG_REG_STRAP_OVERRIDE);
+ 
+-	bnx2x_hw_reset(bp, 1 ^ (swap_val && swap_override));
++	bnx2x_ext_phy_hw_reset(bp, 1 ^ (swap_val && swap_override));
+ 	msleep(5);
+ 
+ 	if (swap_val && swap_override)
+@@ -6609,7 +6555,7 @@ static u8 bnx2x_8726_common_init_phy(struct bnx2x *bp, u32 shmem_base)
+ 		(1<<(MISC_REGISTERS_GPIO_3 + MISC_REGISTERS_GPIO_PORT_SHIFT)));
+ 	REG_WR(bp, MISC_REG_GPIO_EVENT_EN, val);
+ 
+-	bnx2x_hw_reset(bp, 1);
++	bnx2x_ext_phy_hw_reset(bp, 1);
+ 	msleep(5);
+ 	for (port = 0; port < PORT_MAX; port++) {
+ 		/* Extract the ext phy address for the port */
+@@ -6673,9 +6619,7 @@ u8 bnx2x_common_init_phy(struct bnx2x *bp, u32 shmem_base)
+ 	return rc;
+ }
+ 
+-
+-
+-static void bnx2x_sfx7101_sp_sw_reset(struct bnx2x *bp, u8 port, u8 phy_addr)
++void bnx2x_sfx7101_sp_sw_reset(struct bnx2x *bp, u8 port, u8 phy_addr)
+ {
+ 	u16 val, cnt;
+ 
+@@ -6705,377 +6649,3 @@ static void bnx2x_sfx7101_sp_sw_reset(struct bnx2x *bp, u8 port, u8 phy_addr)
+ 			break;
+ 	}
+ }
+-#define RESERVED_SIZE 256
+-/* max application is 160K bytes - data at end of RAM */
+-#define MAX_APP_SIZE (160*1024 - RESERVED_SIZE)
+-
+-/* Header is 14 bytes */
+-#define HEADER_SIZE 14
+-#define DATA_OFFSET HEADER_SIZE
+-
+-#define SPI_START_TRANSFER(bp, port, ext_phy_addr) \
+-	bnx2x_cl45_write(bp, port, PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101, \
+-			ext_phy_addr, \
+-			MDIO_PCS_DEVAD, \
+-			MDIO_PCS_REG_7101_SPI_CTRL_ADDR, 1)
+-
+-/* Programs an image to DSP's flash via the SPI port*/
+-static u8 bnx2x_sfx7101_flash_download(struct bnx2x *bp, u8 port,
+-				     u8 ext_phy_addr,
+-				     char data[], u32 size)
+-{
+-	const u16 num_trans = size/4; /* 4 bytes can be sent at a time */
+-	/* Doesn't include last trans!*/
+-	const u16 last_trans_size = size%4; /* Num bytes on last trans */
+-	u16 trans_cnt, byte_cnt;
+-	u32 data_index;
+-	u16 tmp;
+-	u16 code_started = 0;
+-	u16 image_revision1, image_revision2;
+-	u16 cnt;
+-
+-	DP(NETIF_MSG_LINK, "bnx2x_sfx7101_flash_download file_size=%d\n", size);
+-	/* Going to flash*/
+-	if ((size-HEADER_SIZE) > MAX_APP_SIZE) {
+-		/* This very often will be the case, because the image is built
+-		with 160Kbytes size whereas the total image size must actually
+-		be 160Kbytes-RESERVED_SIZE */
+-		DP(NETIF_MSG_LINK, "Warning, file size was %d bytes "
+-			 "truncated to %d bytes\n", size, MAX_APP_SIZE);
+-		size = MAX_APP_SIZE+HEADER_SIZE;
+-	}
+-	DP(NETIF_MSG_LINK, "File version is %c%c\n", data[0x14e], data[0x14f]);
+-	DP(NETIF_MSG_LINK, "  	      %c%c\n", data[0x150], data[0x151]);
+-	/* Put the DSP in download mode by setting FLASH_CFG[2] to 1
+-	   and issuing a reset.*/
+-
+-	bnx2x_set_gpio(bp, MISC_REGISTERS_GPIO_0,
+-			  MISC_REGISTERS_GPIO_HIGH, port);
+-
+-	bnx2x_sfx7101_sp_sw_reset(bp, port, ext_phy_addr);
+-
+-	/* wait 0.5 sec */
+-	for (cnt = 0; cnt < 100; cnt++)
+-		msleep(5);
+-
+-	/* Make sure we can access the DSP
+-	   And it's in the correct mode (waiting for download) */
+-
+-	bnx2x_cl45_read(bp, port,
+-		      PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		      ext_phy_addr,
+-		      MDIO_PCS_DEVAD,
+-		      MDIO_PCS_REG_7101_DSP_ACCESS, &tmp);
+-
+-	if (tmp != 0x000A) {
+-		DP(NETIF_MSG_LINK, "DSP is not in waiting on download mode. "
+-			 "Expected 0x000A, read 0x%04X\n", tmp);
+-		DP(NETIF_MSG_LINK, "Download failed\n");
+-		return -EINVAL;
+-	}
+-
+-	/* Mux the SPI interface away from the internal processor */
+-	bnx2x_cl45_write(bp, port,
+-		       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		       ext_phy_addr,
+-		       MDIO_PCS_DEVAD,
+-		       MDIO_PCS_REG_7101_SPI_MUX, 1);
+-
+-	/* Reset the SPI port */
+-	bnx2x_cl45_write(bp, port,
+-		       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		       ext_phy_addr,
+-		       MDIO_PCS_DEVAD,
+-		       MDIO_PCS_REG_7101_SPI_CTRL_ADDR, 0);
+-	bnx2x_cl45_write(bp, port,
+-		       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		       ext_phy_addr,
+-		       MDIO_PCS_DEVAD,
+-		       MDIO_PCS_REG_7101_SPI_CTRL_ADDR,
+-		       (1<<MDIO_PCS_REG_7101_SPI_RESET_BIT));
+-	bnx2x_cl45_write(bp, port,
+-		       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		       ext_phy_addr,
+-		       MDIO_PCS_DEVAD,
+-		       MDIO_PCS_REG_7101_SPI_CTRL_ADDR, 0);
+-
+-	/* Erase the flash */
+-	bnx2x_cl45_write(bp, port,
+-		       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		       ext_phy_addr,
+-		       MDIO_PCS_DEVAD,
+-		       MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-		       MDIO_PCS_REG_7101_SPI_FIFO_ADDR_WRITE_ENABLE_CMD);
+-
+-	bnx2x_cl45_write(bp, port,
+-		       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		       ext_phy_addr,
+-		       MDIO_PCS_DEVAD,
+-		       MDIO_PCS_REG_7101_SPI_BYTES_TO_TRANSFER_ADDR,
+-		       1);
+-
+-	SPI_START_TRANSFER(bp, port, ext_phy_addr);
+-	bnx2x_cl45_write(bp, port,
+-		       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		       ext_phy_addr,
+-		       MDIO_PCS_DEVAD,
+-		       MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-		       MDIO_PCS_REG_7101_SPI_FIFO_ADDR_BULK_ERASE_CMD);
+-
+-	bnx2x_cl45_write(bp, port,
+-		       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		       ext_phy_addr,
+-		       MDIO_PCS_DEVAD,
+-		       MDIO_PCS_REG_7101_SPI_BYTES_TO_TRANSFER_ADDR,
+-		       1);
+-	SPI_START_TRANSFER(bp, port, ext_phy_addr);
+-
+-	/* Wait 10 seconds, the maximum time for the erase to complete */
+-	DP(NETIF_MSG_LINK, "Erasing flash, this takes 10 seconds...\n");
+-	for (cnt = 0; cnt < 1000; cnt++)
+-		msleep(10);
+-
+-	DP(NETIF_MSG_LINK, "Downloading flash, please wait...\n");
+-	data_index = 0;
+-	for (trans_cnt = 0; trans_cnt < num_trans; trans_cnt++) {
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			     ext_phy_addr,
+-			     MDIO_PCS_DEVAD,
+-			     MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-			     MDIO_PCS_REG_7101_SPI_FIFO_ADDR_WRITE_ENABLE_CMD);
+-
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_BYTES_TO_TRANSFER_ADDR,
+-			       1);
+-		SPI_START_TRANSFER(bp, port, ext_phy_addr);
+-
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-			     MDIO_PCS_REG_7101_SPI_FIFO_ADDR_PAGE_PROGRAM_CMD);
+-
+-		/* Bits 23-16 of address */
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-			       (data_index>>16));
+-		/* Bits 15-8 of address */
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-			       (data_index>>8));
+-
+-		/* Bits 7-0 of address */
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-			       ((u16)data_index));
+-
+-		byte_cnt = 0;
+-		while (byte_cnt < 4 && data_index < size) {
+-			bnx2x_cl45_write(bp, port,
+-				       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-				       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-			       data[data_index++]);
+-			byte_cnt++;
+-		}
+-
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_BYTES_TO_TRANSFER_ADDR,
+-			       byte_cnt+4);
+-
+-		SPI_START_TRANSFER(bp, port, ext_phy_addr);
+-		msleep(5); /* Wait 5 ms minimum between transs */
+-
+-		/* Let the user know something's going on.*/
+-		/* a pacifier ever 4K */
+-		if ((data_index % 1023) == 0)
+-			DP(NETIF_MSG_LINK, "Download %d%%\n", data_index/size);
+-	}
+-
+-	DP(NETIF_MSG_LINK, "\n");
+-	/* Transfer the last block if there is data remaining */
+-	if (last_trans_size) {
+-		bnx2x_cl45_write(bp, port,
+-			PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			ext_phy_addr,
+-			MDIO_PCS_DEVAD,
+-			MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-			MDIO_PCS_REG_7101_SPI_FIFO_ADDR_WRITE_ENABLE_CMD);
+-
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_BYTES_TO_TRANSFER_ADDR,
+-			       1);
+-
+-		SPI_START_TRANSFER(bp, port, ext_phy_addr);
+-
+-		bnx2x_cl45_write(bp, port,
+-			     PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			     ext_phy_addr,
+-			     MDIO_PCS_DEVAD,
+-			     MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-			     MDIO_PCS_REG_7101_SPI_FIFO_ADDR_PAGE_PROGRAM_CMD);
+-
+-		/* Bits 23-16 of address */
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-			       (data_index>>16));
+-		/* Bits 15-8 of address */
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-			       (data_index>>8));
+-
+-		/* Bits 7-0 of address */
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-			       ((u16)data_index));
+-
+-		byte_cnt = 0;
+-		while (byte_cnt < last_trans_size && data_index < size) {
+-			/* Bits 7-0 of address */
+-			bnx2x_cl45_write(bp, port,
+-				PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-				ext_phy_addr,
+-				MDIO_PCS_DEVAD,
+-				MDIO_PCS_REG_7101_SPI_FIFO_ADDR,
+-				data[data_index++]);
+-			byte_cnt++;
+-		}
+-
+-		bnx2x_cl45_write(bp, port,
+-			       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-			       ext_phy_addr,
+-			       MDIO_PCS_DEVAD,
+-			       MDIO_PCS_REG_7101_SPI_BYTES_TO_TRANSFER_ADDR,
+-			       byte_cnt+4);
+-
+-		SPI_START_TRANSFER(bp, port, ext_phy_addr);
+-	}
+-
+-	/* DSP Remove Download Mode */
+-	bnx2x_set_gpio(bp, MISC_REGISTERS_GPIO_0,
+-			  MISC_REGISTERS_GPIO_LOW, port);
+-
+-	bnx2x_sfx7101_sp_sw_reset(bp, port, ext_phy_addr);
+-
+-	/* wait 0.5 sec to allow it to run */
+-	for (cnt = 0; cnt < 100; cnt++)
+-		msleep(5);
+-
+-	bnx2x_hw_reset(bp, port);
+-
+-	for (cnt = 0; cnt < 100; cnt++)
+-		msleep(5);
+-
+-	/* Check that the code is started. In case the download
+-	checksum failed, the code won't be started. */
+-	bnx2x_cl45_read(bp, port,
+-		      PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		      ext_phy_addr,
+-		      MDIO_PCS_DEVAD,
+-		      MDIO_PCS_REG_7101_DSP_ACCESS,
+-		      &tmp);
+-
+-	code_started = (tmp & (1<<4));
+-	if (!code_started) {
+-		DP(NETIF_MSG_LINK, "Download failed. Please check file.\n");
+-		return -EINVAL;
+-	}
+-
+-	/* Verify that the file revision is now equal to the image
+-	revision within the DSP */
+-	bnx2x_cl45_read(bp, port,
+-		      PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		      ext_phy_addr,
+-		      MDIO_PMA_DEVAD,
+-		      MDIO_PMA_REG_7101_VER1,
+-		      &image_revision1);
+-
+-	bnx2x_cl45_read(bp, port,
+-		      PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101,
+-		      ext_phy_addr,
+-		      MDIO_PMA_DEVAD,
+-		      MDIO_PMA_REG_7101_VER2,
+-		      &image_revision2);
+-
+-	if (data[0x14e] != (image_revision2&0xFF) ||
+-	    data[0x14f] != ((image_revision2&0xFF00)>>8) ||
+-	    data[0x150] != (image_revision1&0xFF) ||
+-	    data[0x151] != ((image_revision1&0xFF00)>>8)) {
+-		DP(NETIF_MSG_LINK, "Download failed.\n");
+-		return -EINVAL;
+-	}
+-	DP(NETIF_MSG_LINK, "Download %d%%\n", data_index/size);
+-	return 0;
+-}
+-
+-u8 bnx2x_flash_download(struct bnx2x *bp, u8 port, u32 ext_phy_config,
+-		      u8 driver_loaded, char data[], u32 size)
+-{
+-	u8 rc = 0;
+-	u32 ext_phy_type;
+-	u8 ext_phy_addr;
+-	ext_phy_addr = ((ext_phy_config &
+-			PORT_HW_CFG_XGXS_EXT_PHY_ADDR_MASK) >>
+-			PORT_HW_CFG_XGXS_EXT_PHY_ADDR_SHIFT);
+-
+-	ext_phy_type = XGXS_EXT_PHY_TYPE(ext_phy_config);
+-
+-	switch (ext_phy_type) {
+-	case PORT_HW_CFG_XGXS_EXT_PHY_TYPE_BCM8072:
+-	case PORT_HW_CFG_XGXS_EXT_PHY_TYPE_BCM8073:
+-	case PORT_HW_CFG_XGXS_EXT_PHY_TYPE_BCM8705:
+-	case PORT_HW_CFG_XGXS_EXT_PHY_TYPE_BCM8706:
+-		DP(NETIF_MSG_LINK,
+-			"Flash download not supported for this ext phy\n");
+-		rc = -EINVAL;
+-		break;
+-	case PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101:
+-		/* Take ext phy out of reset */
+-		if (!driver_loaded)
+-			bnx2x_turn_on_ef(bp, port, ext_phy_addr, ext_phy_type);
+-		rc = bnx2x_sfx7101_flash_download(bp, port, ext_phy_addr,
+-						data, size);
+-		if (!driver_loaded)
+-			bnx2x_turn_off_sf(bp, port);
+-		break;
+-	case PORT_HW_CFG_XGXS_EXT_PHY_TYPE_DIRECT:
+-	case PORT_HW_CFG_XGXS_EXT_PHY_TYPE_FAILURE:
+-	case PORT_HW_CFG_XGXS_EXT_PHY_TYPE_NOT_CONN:
+-	default:
+-		DP(NETIF_MSG_LINK, "Invalid ext phy type\n");
+-		rc = -EINVAL;
+-		break;
+-	}
+-	return rc;
+-}
+-
+diff --git a/drivers/net/bnx2x_link.h b/drivers/net/bnx2x_link.h
+index eb898f3..f3e2522 100644
+--- a/drivers/net/bnx2x_link.h
++++ b/drivers/net/bnx2x_link.h
+@@ -185,8 +185,6 @@ u8 bnx2x_set_led(struct bnx2x *bp, u8 port, u8 mode, u32 speed,
+ 
+ u8 bnx2x_override_led_value(struct bnx2x *bp, u8 port, u32 led_idx, u32 value);
+ 
+-u8 bnx2x_flash_download(struct bnx2x *bp, u8 port, u32 ext_phy_config,
+-		      u8 driver_loaded, char data[], u32 size);
+ /* bnx2x_handle_module_detect_int should be called upon module detection
+    interrupt */
+ void bnx2x_handle_module_detect_int(struct link_params *params);
+@@ -198,6 +196,10 @@ u8 bnx2x_test_link(struct link_params *input, struct link_vars *vars);
+ /* One-time initialization for external phy after power up */
+ u8 bnx2x_common_init_phy(struct bnx2x *bp, u32 shmem_base);
+ 
++/* Reset the external PHY using GPIO */
++void bnx2x_ext_phy_hw_reset(struct bnx2x *bp, u8 port);
++
++void bnx2x_sfx7101_sp_sw_reset(struct bnx2x *bp, u8 port, u8 phy_addr);
+ 
+ u8 bnx2x_read_sfp_module_eeprom(struct link_params *params, u16 addr,
+ 			      u8 byte_cnt, u8 *o_buf);
+diff --git a/drivers/net/bnx2x_main.c b/drivers/net/bnx2x_main.c
+index d0c95aa..74ec7a1 100644
+--- a/drivers/net/bnx2x_main.c
++++ b/drivers/net/bnx2x_main.c
+@@ -8534,6 +8534,7 @@ static void __devinit bnx2x_get_port_hwinfo(struct bnx2x *bp)
+ 	u32 val, val2;
+ 	u32 config;
+ 	u16 i;
++	u32 ext_phy_type;
+ 
+ 	bp->link_params.bp = bp;
+ 	bp->link_params.port = port;
+@@ -8593,6 +8594,21 @@ static void __devinit bnx2x_get_port_hwinfo(struct bnx2x *bp)
+ 
+ 	bnx2x_link_settings_requested(bp);
+ 
++	/*
++	 * If connected directly, work with the internal PHY, otherwise, work
++	 * with the external PHY
++	 */
++	ext_phy_type = XGXS_EXT_PHY_TYPE(bp->link_params.ext_phy_config);
++	if (ext_phy_type == PORT_HW_CFG_XGXS_EXT_PHY_TYPE_DIRECT)
++		bp->mdio.prtad = bp->link_params.phy_addr;
++
++	else if ((ext_phy_type != PORT_HW_CFG_XGXS_EXT_PHY_TYPE_FAILURE) &&
++		 (ext_phy_type != PORT_HW_CFG_XGXS_EXT_PHY_TYPE_NOT_CONN))
++		bp->mdio.prtad =
++			(bp->link_params.ext_phy_config &
++			 PORT_HW_CFG_XGXS_EXT_PHY_ADDR_MASK) >>
++				PORT_HW_CFG_XGXS_EXT_PHY_ADDR_SHIFT;
++
+ 	val2 = SHMEM_RD(bp, dev_info.port_hw_config[port].mac_upper);
+ 	val = SHMEM_RD(bp, dev_info.port_hw_config[port].mac_lower);
+ 	bp->dev->dev_addr[0] = (u8)(val2 >> 8 & 0xff);
+@@ -8826,7 +8842,7 @@ static int bnx2x_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
+ 	} else
+ 		cmd->port = PORT_TP;
+ 
+-	cmd->phy_address = bp->port.phy_addr;
++	cmd->phy_address = bp->mdio.prtad;
+ 	cmd->transceiver = XCVR_INTERNAL;
+ 
+ 	if (bp->link_params.req_line_speed == SPEED_AUTO_NEG)
+@@ -9375,7 +9391,7 @@ static int bnx2x_get_eeprom(struct net_device *dev,
+ 			    struct ethtool_eeprom *eeprom, u8 *eebuf)
+ {
+ 	struct bnx2x *bp = netdev_priv(dev);
+-	int rc;
++	int rc = 0;
+ 
+ 	if (!netif_running(dev))
+ 		return -EAGAIN;
+@@ -9545,7 +9561,8 @@ static int bnx2x_set_eeprom(struct net_device *dev,
+ 			    struct ethtool_eeprom *eeprom, u8 *eebuf)
+ {
+ 	struct bnx2x *bp = netdev_priv(dev);
+-	int rc;
++	int port = BP_PORT(bp);
++	int rc = 0;
+ 
+ 	if (!netif_running(dev))
+ 		return -EAGAIN;
+@@ -9557,27 +9574,62 @@ static int bnx2x_set_eeprom(struct net_device *dev,
+ 
+ 	/* parameters already validated in ethtool_set_eeprom */
+ 
+-	/* If the magic number is PHY (0x00504859) upgrade the PHY FW */
+-	if (eeprom->magic == 0x00504859)
+-		if (bp->port.pmf) {
++	/* PHY eeprom can be accessed only by the PMF */
++	if ((eeprom->magic >= 0x50485900) && (eeprom->magic <= 0x504859FF) &&
++	    !bp->port.pmf)
++		return -EINVAL;
++
++	if (eeprom->magic == 0x50485950) {
++		/* 'PHYP' (0x50485950): prepare phy for FW upgrade */
++		bnx2x_stats_handle(bp, STATS_EVENT_STOP);
++
++		bnx2x_acquire_phy_lock(bp);
++		rc |= bnx2x_link_reset(&bp->link_params,
++				       &bp->link_vars, 0);
++		if (XGXS_EXT_PHY_TYPE(bp->link_params.ext_phy_config) ==
++					PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101)
++			bnx2x_set_gpio(bp, MISC_REGISTERS_GPIO_0,
++				       MISC_REGISTERS_GPIO_HIGH, port);
++		bnx2x_release_phy_lock(bp);
++		bnx2x_link_report(bp);
+ 
++	} else if (eeprom->magic == 0x50485952) {
++		/* 'PHYR' (0x50485952): re-init link after FW upgrade */
++		if ((bp->state == BNX2X_STATE_OPEN) ||
++		    (bp->state == BNX2X_STATE_DISABLED)) {
+ 			bnx2x_acquire_phy_lock(bp);
+-			rc = bnx2x_flash_download(bp, BP_PORT(bp),
+-					     bp->link_params.ext_phy_config,
+-					     (bp->state != BNX2X_STATE_CLOSED),
+-					     eebuf, eeprom->len);
+-			if ((bp->state == BNX2X_STATE_OPEN) ||
+-			    (bp->state == BNX2X_STATE_DISABLED)) {
+-				rc |= bnx2x_link_reset(&bp->link_params,
+-						       &bp->link_vars, 1);
+-				rc |= bnx2x_phy_init(&bp->link_params,
+-						     &bp->link_vars);
+-			}
++			rc |= bnx2x_link_reset(&bp->link_params,
++					       &bp->link_vars, 1);
++
++			rc |= bnx2x_phy_init(&bp->link_params,
++					     &bp->link_vars);
+ 			bnx2x_release_phy_lock(bp);
++			bnx2x_calc_fc_adv(bp);
++		}
++	} else if (eeprom->magic == 0x53985943) {
++		/* 'PHYC' (0x53985943): PHY FW upgrade completed */
++		if (XGXS_EXT_PHY_TYPE(bp->link_params.ext_phy_config) ==
++				       PORT_HW_CFG_XGXS_EXT_PHY_TYPE_SFX7101) {
++			u8 ext_phy_addr =
++				(bp->link_params.ext_phy_config &
++				 PORT_HW_CFG_XGXS_EXT_PHY_ADDR_MASK) >>
++					PORT_HW_CFG_XGXS_EXT_PHY_ADDR_SHIFT;
++
++			/* DSP Remove Download Mode */
++			bnx2x_set_gpio(bp, MISC_REGISTERS_GPIO_0,
++				       MISC_REGISTERS_GPIO_LOW, port);
+ 
+-		} else /* Only the PMF can access the PHY */
+-			return -EINVAL;
+-	else
++			bnx2x_acquire_phy_lock(bp);
++
++			bnx2x_sfx7101_sp_sw_reset(bp, port, ext_phy_addr);
++
++			/* wait 0.5 sec to allow it to run */
++			msleep(500);
++			bnx2x_ext_phy_hw_reset(bp, port);
++			msleep(500);
++			bnx2x_release_phy_lock(bp);
++		}
++	} else
+ 		rc = bnx2x_nvram_write(bp, eeprom->offset, eebuf, eeprom->len);
+ 
+ 	return rc;
+@@ -11374,54 +11426,77 @@ static int bnx2x_change_mac_addr(struct net_device *dev, void *p)
+ }
+ 
+ /* called with rtnl_lock */
+-static int bnx2x_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
++static int bnx2x_mdio_read(struct net_device *netdev, int prtad,
++			   int devad, u16 addr)
+ {
+-	struct mii_ioctl_data *data = if_mii(ifr);
+-	struct bnx2x *bp = netdev_priv(dev);
+-	int port = BP_PORT(bp);
+-	int err;
++	struct bnx2x *bp = netdev_priv(netdev);
++	u16 value;
++	int rc;
++	u32 phy_type = XGXS_EXT_PHY_TYPE(bp->link_params.ext_phy_config);
++
++	DP(NETIF_MSG_LINK, "mdio_read: prtad 0x%x, devad 0x%x, addr 0x%x\n",
++	   prtad, devad, addr);
++
++	if (prtad != bp->mdio.prtad) {
++		DP(NETIF_MSG_LINK, "prtad missmatch (cmd:0x%x != bp:0x%x)\n",
++		   prtad, bp->mdio.prtad);
++		return -EINVAL;
++	}
+ 
+-	switch (cmd) {
+-	case SIOCGMIIPHY:
+-		data->phy_id = bp->port.phy_addr;
++	/* The HW expects different devad if CL22 is used */
++	devad = (devad == MDIO_DEVAD_NONE) ? DEFAULT_PHY_DEV_ADDR : devad;
++
++	bnx2x_acquire_phy_lock(bp);
++	rc = bnx2x_cl45_read(bp, BP_PORT(bp), phy_type, prtad,
++			     devad, addr, &value);
++	bnx2x_release_phy_lock(bp);
++	DP(NETIF_MSG_LINK, "mdio_read_val 0x%x rc = 0x%x\n", value, rc);
+ 
+-		/* fallthrough */
++	if (!rc)
++		rc = value;
++	return rc;
++}
+ 
+-	case SIOCGMIIREG: {
+-		u16 mii_regval;
++/* called with rtnl_lock */
++static int bnx2x_mdio_write(struct net_device *netdev, int prtad, int devad,
++			    u16 addr, u16 value)
++{
++	struct bnx2x *bp = netdev_priv(netdev);
++	u32 ext_phy_type = XGXS_EXT_PHY_TYPE(bp->link_params.ext_phy_config);
++	int rc;
+ 
+-		if (!netif_running(dev))
+-			return -EAGAIN;
++	DP(NETIF_MSG_LINK, "mdio_write: prtad 0x%x, devad 0x%x, addr 0x%x,"
++			   " value 0x%x\n", prtad, devad, addr, value);
+ 
+-		mutex_lock(&bp->port.phy_mutex);
+-		err = bnx2x_cl45_read(bp, port, 0, bp->port.phy_addr,
+-				      DEFAULT_PHY_DEV_ADDR,
+-				      (data->reg_num & 0x1f), &mii_regval);
+-		data->val_out = mii_regval;
+-		mutex_unlock(&bp->port.phy_mutex);
+-		return err;
++	if (prtad != bp->mdio.prtad) {
++		DP(NETIF_MSG_LINK, "prtad missmatch (cmd:0x%x != bp:0x%x)\n",
++		   prtad, bp->mdio.prtad);
++		return -EINVAL;
+ 	}
+ 
+-	case SIOCSMIIREG:
+-		if (!capable(CAP_NET_ADMIN))
+-			return -EPERM;
++	/* The HW expects different devad if CL22 is used */
++	devad = (devad == MDIO_DEVAD_NONE) ? DEFAULT_PHY_DEV_ADDR : devad;
+ 
+-		if (!netif_running(dev))
+-			return -EAGAIN;
++	bnx2x_acquire_phy_lock(bp);
++	rc = bnx2x_cl45_write(bp, BP_PORT(bp), ext_phy_type, prtad,
++			      devad, addr, value);
++	bnx2x_release_phy_lock(bp);
++	return rc;
++}
+ 
+-		mutex_lock(&bp->port.phy_mutex);
+-		err = bnx2x_cl45_write(bp, port, 0, bp->port.phy_addr,
+-				       DEFAULT_PHY_DEV_ADDR,
+-				       (data->reg_num & 0x1f), data->val_in);
+-		mutex_unlock(&bp->port.phy_mutex);
+-		return err;
++/* called with rtnl_lock */
++static int bnx2x_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
++{
++	struct bnx2x *bp = netdev_priv(dev);
++	struct mii_ioctl_data *mdio = if_mii(ifr);
+ 
+-	default:
+-		/* do nothing */
+-		break;
+-	}
++	DP(NETIF_MSG_LINK, "ioctl: phy id 0x%x, reg 0x%x, val_in 0x%x\n",
++	   mdio->phy_id, mdio->reg_num, mdio->val_in);
+ 
+-	return -EOPNOTSUPP;
++	if (!netif_running(dev))
++		return -EAGAIN;
++
++	return mdio_mii_ioctl(&bp->mdio, mdio, cmd);
+ }
+ 
+ /* called with rtnl_lock */
+@@ -11644,6 +11719,14 @@ static int __devinit bnx2x_init_dev(struct pci_dev *pdev,
+ 	dev->features |= (NETIF_F_TSO | NETIF_F_TSO_ECN);
+ 	dev->features |= NETIF_F_TSO6;
+ 
++	/* get_port_hwinfo() will set prtad and mmds properly */
++	bp->mdio.prtad = MDIO_PRTAD_NONE;
++	bp->mdio.mmds = 0;
++	bp->mdio.mode_support = MDIO_SUPPORTS_C45 | MDIO_EMULATE_C22;
++	bp->mdio.dev = dev;
++	bp->mdio.mdio_read = bnx2x_mdio_read;
++	bp->mdio.mdio_write = bnx2x_mdio_write;
++
+ 	return 0;
+ 
+ err_out_unmap:

@@ -1,0 +1,222 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Mon, 9 Nov 2009 23:18:50 -0500
+Subject: [aio] implement request batching
+Message-id: <x49bpjbffs5.fsf@segfault.boston.devel.redhat.com>
+Patchwork-id: 21340
+O-Subject: [RHEL 5 PATCH] aio: Implement request batching
+Bugzilla: 532769
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Hi,
+
+This is a backport of my upstream work to batch together AIO requests in
+order to achieve better request merging and hence better disk throughput:
+
+commit cfb1e33eed48165763edc7a4a067cf5f74898d0b
+Author: Jeff Moyer <jmoyer@redhat.com>
+Date:   Fri Oct 2 18:57:36 2009 -0400
+
+    aio: implement request batching
+
+    Hi,
+
+    Some workloads issue batches of small I/O, and the performance is
+    poor due to the call to blk_run_address_space for every single iocb.
+    Nathan Roberts pointed this out, and suggested that by deferring
+    this call until all I/Os in the iocb array are submitted to the
+    block layer, we can realize some impressive performance gains (up to
+    30% for sequential 4k reads in batches of 16).
+
+(Note, this is queued in Jens' block tree for 2.6.33)
+
+I tested this code on RHEL 5 against some internal SATA disks.  The
+test was conducted using the veritable aio-stress utility, using an I/O
+depth of 128 with a batch count of 16.  Record sizes are 4k.  There was
+no noticable difference in throughput, since the internal disks
+subsystem is so slow.  Unfortunately, I don't have a RHEL 5 box hooked
+up to decent storage to give this a good beating right now.  I posted
+results for upstream kernels, and was also able to get some nice results
+from the RHEL 4 version of this patch:
+
+vanilla:  79.34MB/s
+patched: 137.87MB/s
+
+This fixes bug 532769.  Brew builds are available here for testing:
+  http://download.devel.redhat.com/brewroot/scratch/jmoyer/task_2068499/
+Comments, as always, are appreciated.
+
+Cheers,
+Jeff
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/fs/aio.c b/fs/aio.c
+index 7c07b3e..0a3efb7 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -29,6 +29,11 @@
+ #include <linux/highmem.h>
+ #include <linux/workqueue.h>
+ #include <linux/security.h>
++#ifndef __GENKSYMS__
++#include <linux/blkdev.h>
++#include <linux/mempool.h>
++#include <linux/hash.h>
++#endif
+ 
+ #include <asm/kmap_types.h>
+ #include <asm/uaccess.h>
+@@ -58,6 +63,21 @@ static DECLARE_WORK(fput_work, aio_fput_routine, NULL);
+ static DEFINE_SPINLOCK(fput_lock);
+ static LIST_HEAD(fput_head);
+ 
++/*
++ * TODO: If we want to be clever, we could determine the size of the
++ * hash based on the nr of iocbs passed to io_submit.  This would mean
++ * a switch from the on-stack allocation, and a method to determine
++ * optimal hash size based on number of elements.   -JEM
++ */
++#define AIO_BATCH_HASH_BITS	3 /* allocated on-stack, so don't go crazy */
++#define AIO_BATCH_HASH_SIZE	(1 << AIO_BATCH_HASH_BITS)
++struct aio_batch_entry {
++	struct hlist_node list;
++	struct address_space *mapping;
++};
++mempool_t *abe_pool;
++ 
++
+ static void aio_kick_handler(void *);
+ static void aio_queue_work(struct kioctx *);
+ 
+@@ -73,6 +93,8 @@ static int __init aio_setup(void)
+ 				0, SLAB_HWCACHE_ALIGN|SLAB_PANIC, NULL, NULL);
+ 
+ 	aio_wq = create_workqueue("aio");
++	abe_pool = mempool_create_kmalloc_pool(1, sizeof(struct aio_batch_entry));
++	BUG_ON(!abe_pool);
+ 
+ 	pr_debug("aio_setup: sizeof(struct page) = %d\n", (int)sizeof(struct page));
+ 
+@@ -1484,8 +1506,44 @@ static int aio_wake_function(wait_queue_t *wait, unsigned mode,
+ 	return 1;
+ }
+ 
++static void aio_batch_add(struct address_space *mapping,
++			  struct hlist_head *batch_hash)
++{
++	struct aio_batch_entry *abe;
++	struct hlist_node *pos;
++	unsigned bucket;
++
++	bucket = hash_ptr(mapping, AIO_BATCH_HASH_BITS);
++	hlist_for_each_entry(abe, pos, &batch_hash[bucket], list) {
++		if (abe->mapping == mapping)
++			return;
++	}
++
++	abe = mempool_alloc(abe_pool, GFP_KERNEL);
++	BUG_ON(!igrab(mapping->host));
++	abe->mapping = mapping;
++	hlist_add_head(&abe->list, &batch_hash[bucket]);
++	return;
++}
++
++static void aio_batch_free(struct hlist_head *batch_hash)
++{
++	struct aio_batch_entry *abe;
++	struct hlist_node *pos, *n;
++	int i;
++
++	for (i = 0; i < AIO_BATCH_HASH_SIZE; i++) {
++		hlist_for_each_entry_safe(abe, pos, n, &batch_hash[i], list) {
++			blk_run_address_space(abe->mapping);
++			iput(abe->mapping->host);
++			hlist_del(&abe->list);
++			mempool_free(abe, abe_pool);
++		}
++	}
++}
++
+ int fastcall io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+-			 struct iocb *iocb)
++			struct iocb *iocb, struct hlist_head *batch_hash)
+ {
+ 	struct kiocb *req;
+ 	struct file *file;
+@@ -1549,6 +1607,8 @@ int fastcall io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+ 			;
+ 	}
+ 	spin_unlock_irq(&ctx->ctx_lock);
++	aio_batch_add(file->f_mapping, batch_hash);
++
+ 	aio_put_req(req);	/* drop extra ref to req */
+ 	return 0;
+ 
+@@ -1576,6 +1636,7 @@ asmlinkage long sys_io_submit(aio_context_t ctx_id, long nr,
+ 	struct kioctx *ctx;
+ 	long ret = 0;
+ 	int i;
++	struct hlist_head batch_hash[AIO_BATCH_HASH_SIZE] = { { 0, }, };
+ 
+ 	if (unlikely(nr < 0))
+ 		return -EINVAL;
+@@ -1607,10 +1668,11 @@ asmlinkage long sys_io_submit(aio_context_t ctx_id, long nr,
+ 			break;
+ 		}
+ 
+-		ret = io_submit_one(ctx, user_iocb, &tmp);
++		ret = io_submit_one(ctx, user_iocb, &tmp, batch_hash);
+ 		if (ret)
+ 			break;
+ 	}
++	aio_batch_free(batch_hash);
+ 
+ 	put_ioctx(ctx);
+ 	return i ? i : ret;
+diff --git a/fs/direct-io.c b/fs/direct-io.c
+index 9f53c68..01f0592 100644
+--- a/fs/direct-io.c
++++ b/fs/direct-io.c
+@@ -1041,9 +1041,6 @@ direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode,
+ 	if (dio->bio)
+ 		dio_bio_submit(dio);
+ 
+-	/* All IO is now issued, send it on its way */
+-	blk_run_address_space(inode->i_mapping);
+-
+ 	/*
+ 	 * It is possible that, we return short IO due to end of file.
+ 	 * In that case, we need to release all the pages we got hold on.
+@@ -1070,8 +1067,11 @@ direct_io_worker(int rw, struct kiocb *iocb, struct inode *inode,
+ 	    ((rw & READ) || (dio->result == dio->size)))
+ 		ret = -EIOCBQUEUED;
+ 
+-	if (ret != -EIOCBQUEUED)
++	if (ret != -EIOCBQUEUED) {
++		/* All IO is now issued, send it on its way */
++		blk_run_address_space(inode->i_mapping);
+ 		dio_await_completion(dio);
++	}
+ 
+ 	/*
+ 	 * Sync will always be dropping the final ref and completing the
+diff --git a/include/linux/aio.h b/include/linux/aio.h
+index 00c8efa..653758a 100644
+--- a/include/linux/aio.h
++++ b/include/linux/aio.h
+@@ -205,12 +205,13 @@ struct mm_struct;
+ extern void FASTCALL(exit_aio(struct mm_struct *mm));
+ extern struct kioctx *lookup_ioctx(unsigned long ctx_id);
+ extern int FASTCALL(io_submit_one(struct kioctx *ctx,
+-			struct iocb __user *user_iocb, struct iocb *iocb));
++			struct iocb __user *user_iocb, struct iocb *iocb,
++			struct hlist_head *batch_hash));
+ 
+ /* semi private, but used by the 32bit emulations: */
+ struct kioctx *lookup_ioctx(unsigned long ctx_id);
+ int FASTCALL(io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+-				  struct iocb *iocb));
++			   struct iocb *iocb, struct hlist_head *batch_hash));
+ 
+ #define get_ioctx(kioctx) do {						\
+ 	BUG_ON(unlikely(atomic_read(&(kioctx)->users) <= 0));		\

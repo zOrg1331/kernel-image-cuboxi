@@ -1,0 +1,66 @@
+From: John W. Linville <linville@redhat.com>
+Date: Thu, 9 Apr 2009 14:25:19 -0400
+Subject: [wireless] iwlagn: make swcrypto/swcrypto50=1 default
+Message-id: 20090409182519.GC12721@redhat.com
+O-Subject: [RHEL5 PATCH] iwlagn: make swcrypto=1 and swcrypto50=1 default
+Bugzilla: 474699
+
+The hardware-accelerated cryptography in the iwlagn driver is a
+bit flaky.  Having some version skew between the iwlwifi drivers and
+mac80211 in rhel5 probably exacerbates this situation.  Anyway, there
+is a bug somewhere that interferes with making WEP connections after
+having successfully made a WPA connection using iwlagn in RHEL5 _if_
+you are using hardware-accelerated crypto.
+
+Obviously I want to fix that issue.  Still, the performance advantage
+is minimal on modern machines and software cryptography has always
+seemed to be more stable/reliable with mac80211.  And FWIW, software
+crypto is already the default for iwl3945.  This patch makes it the
+default for iwlagn (both iwl4965 and iwl5000) as well.
+
+BZ474699
+
+Tested by me with positive results.
+
+diff --git a/drivers/net/wireless/iwlwifi/iwl-4965.c b/drivers/net/wireless/iwlwifi/iwl-4965.c
+index aa829f7..52a6aaa 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-4965.c
++++ b/drivers/net/wireless/iwlwifi/iwl-4965.c
+@@ -63,6 +63,7 @@ static struct iwl_mod_params iwl4965_mod_params = {
+ 	.enable_qos = 1,
+ 	.amsdu_size_8K = 1,
+ 	.restart_fw = 1,
++	.sw_crypto = 1,
+ 	/* the rest are 0 by default */
+ };
+ 
+@@ -2395,7 +2396,7 @@ MODULE_PARM_DESC(antenna, "select antenna (1=Main, 2=Aux, default 0 [both])");
+ module_param_named(disable, iwl4965_mod_params.disable, int, 0444);
+ MODULE_PARM_DESC(disable, "manually disable the radio (default 0 [radio on])");
+ module_param_named(swcrypto, iwl4965_mod_params.sw_crypto, int, 0444);
+-MODULE_PARM_DESC(swcrypto, "using crypto in software (default 0 [hardware])");
++MODULE_PARM_DESC(swcrypto, "using crypto in software (default 1 [software])");
+ module_param_named(debug, iwl4965_mod_params.debug, int, 0444);
+ MODULE_PARM_DESC(debug, "debug output mask");
+ module_param_named(
+diff --git a/drivers/net/wireless/iwlwifi/iwl-5000.c b/drivers/net/wireless/iwlwifi/iwl-5000.c
+index c4e451b..08f9827 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-5000.c
++++ b/drivers/net/wireless/iwlwifi/iwl-5000.c
+@@ -1520,6 +1520,7 @@ static struct iwl_mod_params iwl50_mod_params = {
+ 	.enable_qos = 1,
+ 	.amsdu_size_8K = 1,
+ 	.restart_fw = 1,
++	.sw_crypto = 1,
+ 	/* the rest are 0 by default */
+ };
+ 
+@@ -1574,7 +1575,7 @@ MODULE_PARM_DESC(disable50,
+ 		  "manually disable the 50XX radio (default 0 [radio on])");
+ module_param_named(swcrypto50, iwl50_mod_params.sw_crypto, bool, 0444);
+ MODULE_PARM_DESC(swcrypto50,
+-		  "using software crypto engine (default 0 [hardware])\n");
++		  "using software crypto engine (default 1 [software])\n");
+ module_param_named(debug50, iwl50_mod_params.debug, int, 0444);
+ MODULE_PARM_DESC(debug50, "50XX debug output mask");
+ module_param_named(queues_num50, iwl50_mod_params.num_of_queues, int, 0444);

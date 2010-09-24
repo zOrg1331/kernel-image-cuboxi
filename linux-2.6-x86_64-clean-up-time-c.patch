@@ -1,0 +1,205 @@
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Date: Thu, 7 May 2009 15:59:39 +0200
+Subject: [x86_64] clean up time.c
+Message-id: 20090507140138.078170000@chello.nl
+O-Subject: [PATCH 1/5] RHEL-5: x86_64: clean up time.c
+Bugzilla: 297731
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+CVE: CVE-2007-3719
+
+Lots of open-coded cycles_2_ns usage and xtime_lock entanglements
+
+Signed-off-by: Peter Zijlstra <pzijlstr@redhat.com>
+CC: Chris Lalancette <clalance@redhat.com>
+CC: Prarit Bhargava <prarit@redhat.com>
+CC: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index ed66286..897d5a8 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -296,6 +296,12 @@ static void set_rtc_mmss(unsigned long nowtime)
+ 	spin_unlock(&rtc_lock);
+ }
+ 
++static inline unsigned long long cycles_2_ns(unsigned long long cyc)
++{
++	return (cyc * cyc2ns_scale) >> NS_SCALE;
++}
++
++#define __cycles_2_ns(c) cycles_2_ns(c)
+ 
+ /* monotonic_clock(): returns # of nanoseconds passed since time_init()
+  *		Note: This function is required to return accurate
+@@ -325,34 +331,12 @@ unsigned long long monotonic_clock(void)
+ 			base = monotonic_base;
+ 		} while (read_seqretry(&xtime_lock, seq));
+ 		this_offset = get_cycles_sync();
+-		/* FIXME: 1000 or 1000000? */
+-		offset = (this_offset - last_offset)*1000 / cpu_khz;
++		offset = cycles_2_ns(this_offset - last_offset);
+ 	}
+ 	return base + offset;
+ }
+ EXPORT_SYMBOL(monotonic_clock);
+ 
+-static void do_timer_jiffy(struct pt_regs *regs)
+-{
+-	do_timer(regs);
+-#ifndef CONFIG_SMP
+-	update_process_times(user_mode(regs), regs);
+-#endif
+-
+-	/*
+-	 * In the SMP case we use the local APIC timer interrupt to do the profiling,
+-	 * except when we simulate SMP mode on a uniprocessor system, in that case we
+-	 * have to call the local interrupt handler.
+-	 */
+-
+-#ifndef CONFIG_X86_LOCAL_APIC
+-	profile_tick(CPU_PROFILING, regs);
+-#else
+-	if (!using_apic_timer)
+-		smp_local_timer_interrupt(regs);
+-#endif
+-}
+-
+ static noinline void handle_lost_ticks(int lost, struct pt_regs *regs)
+ {
+ 	static long lost_count;
+@@ -390,10 +374,10 @@ static noinline void handle_lost_ticks(int lost, struct pt_regs *regs)
+ #endif
+ }
+ 
+-static void do_timer_account_lost_ticks(struct pt_regs *regs)
++static int do_timer_account_lost_ticks(struct pt_regs *regs)
+ {
+ 	unsigned long tsc;
+-	int delay = 0, offset = 0, lost = 0, i;
++	int delay = 0, offset = 0, lost = 0;
+ 
+ 	if (vxtime.hpet_address)
+ 		offset = hpet_readl(HPET_COUNTER);
+@@ -449,8 +433,7 @@ static void do_timer_account_lost_ticks(struct pt_regs *regs)
+ 			offset -= NSEC_PER_REAL_TICK;
+ 		}
+ 
+-		/* FIXME: 1000 or 1000000? */
+-		monotonic_base += (tsc - vxtime.last_tsc) * 1000000 / cpu_khz;
++		monotonic_base += __cycles_2_ns(tsc - vxtime.last_tsc);
+ 
+ 		vxtime.last_tsc = tsc - vxtime.quot * delay / vxtime.tsc_quot;
+ 
+@@ -465,24 +448,24 @@ static void do_timer_account_lost_ticks(struct pt_regs *regs)
+ 		jiffies += (u64)lost - (tick_divider - 1);
+ 	}
+ 
+-	/* Do the timer stuff */
+-	for (i = 0; i < tick_divider; i++)
+-		do_timer_jiffy(regs);
++	/* XXX: should we not account the same number of jiffies we added above? */
++
++	return 1;
+ }
+ 
+ /*
+  * Measure time based on the TSC, rather than counting interrupts.
+  */
+-static void do_timer_tsc_timekeeping(struct pt_regs *regs)
++static int do_timer_tsc_timekeeping(struct pt_regs *regs)
+ {
+-	int i;
++	int i, missed_ticks = 0;
+ 	cycles_t tsc, tsc_accounted, tsc_not_accounted;
+ 
+ 	tsc = get_cycles_sync();
+ 	tsc_accounted = vxtime.last_tsc;
+ 
+ 	if (unlikely(tsc < tsc_accounted))
+-		return;
++		return missed_ticks;
+ 
+ 	tsc_not_accounted = tsc - tsc_accounted;
+ 
+@@ -493,20 +476,21 @@ static void do_timer_tsc_timekeeping(struct pt_regs *regs)
+ 	}
+ 
+ 	while (tsc_not_accounted >= cycles_per_tick) {
+-		for (i = 0; i < tick_divider; i++)
+-			do_timer_jiffy(regs);
+ 		tsc_not_accounted -= cycles_per_tick;
+ 		tsc_accounted += cycles_per_tick;
++		missed_ticks++;
+ 	}
+ 
+-	monotonic_base += ((tsc_accounted - vxtime.last_tsc) *
+-					1000000 / cpu_khz);
++	monotonic_base += __cycles_2_ns(tsc_accounted - vxtime.last_tsc);
+ 	vxtime.last_tsc = tsc_accounted;
++
++	return missed_ticks;
+ }
+ 
+ void main_timer_handler(struct pt_regs *regs)
+ {
+ 	static unsigned long rtc_update = 0;
++	int i, missed_ticks = 0;
+ 
+ /*
+  * Here we are in the timer irq handler. We have irqs locally disabled (so we
+@@ -518,9 +502,9 @@ void main_timer_handler(struct pt_regs *regs)
+ 	write_seqlock(&xtime_lock);
+ 
+ 	if (timekeeping_use_tsc > 0)
+-		do_timer_tsc_timekeeping(regs);
++		missed_ticks = do_timer_tsc_timekeeping(regs);
+ 	else
+-		do_timer_account_lost_ticks(regs);
++		missed_ticks = do_timer_account_lost_ticks(regs);
+ 
+ /*
+  * If we have an externally synchronized Linux clock, then update CMOS clock
+@@ -535,9 +519,31 @@ void main_timer_handler(struct pt_regs *regs)
+ 		set_rtc_mmss(xtime.tv_sec);
+ 		rtc_update = xtime.tv_sec + 660;
+ 	}
++
++	for (i = 0; i < missed_ticks * tick_divider; i++)
++		do_timer(regs);
+  
+ 	write_sequnlock(&xtime_lock);
+ 
++	for (i = 0; i < missed_ticks * tick_divider; i++) {
++#ifndef CONFIG_SMP
++		update_process_times(user_mode(regs), regs);
++#endif
++
++		/*
++		 * In the SMP case we use the local APIC timer interrupt to do the profiling,
++		 * except when we simulate SMP mode on a uniprocessor system, in that case we
++		 * have to call the local interrupt handler.
++		 */
++
++#ifndef CONFIG_X86_LOCAL_APIC
++		profile_tick(CPU_PROFILING, regs);
++#else
++		if (!using_apic_timer)
++			smp_local_timer_interrupt(regs);
++#endif
++	}
++
+ 	leap_second_message();
+ }
+ 
+@@ -560,11 +566,6 @@ static inline void set_cyc2ns_scale(unsigned long cpu_khz)
+ 	cyc2ns_scale = (NSEC_PER_MSEC << NS_SCALE) / cpu_khz;
+ }
+ 
+-static inline unsigned long long cycles_2_ns(unsigned long long cyc)
+-{
+-	return (cyc * cyc2ns_scale) >> NS_SCALE;
+-}
+-
+ unsigned long long sched_clock(void)
+ {
+ 	unsigned long a = 0;

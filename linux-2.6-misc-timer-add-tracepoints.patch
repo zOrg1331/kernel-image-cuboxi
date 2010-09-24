@@ -1,0 +1,105 @@
+From: Jason Baron <jbaron@redhat.com>
+Date: Fri, 4 Dec 2009 15:58:58 -0500
+Subject: [misc] timer: add tracepoints
+Message-id: <20091204155857.GA30969@redhat.com>
+Patchwork-id: 21687
+O-Subject: [RHEL5.5 PATCH] tracepoint: add timer tracepoints
+Bugzilla: 534178
+
+hi,
+
+In addition to the itimer tracepoints, these additional timer
+tracepoints were also requested by Fujitsu for RHEL5.5 inclusion. These
+are taken directly from upstream. I've done basic sanity testing using
+Systemtap, and verified the build with a brew build. Applies on top of
+the 'itimer' tracepoints previously posted. BZ #534178.
+
+thanks,
+
+-Jason
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/include/trace/timer.h b/include/trace/timer.h
+index d1699d6..3bcd065 100644
+--- a/include/trace/timer.h
++++ b/include/trace/timer.h
+@@ -10,6 +10,21 @@ DEFINE_TRACE(itimer_state,
+ DEFINE_TRACE(itimer_expire,
+ 	TPPROTO(int which, struct signal_struct *sig, cputime_t now),
+ 	TPARGS(which, sig, now));
++DEFINE_TRACE(timer_expire_entry,
++	TPPROTO(struct timer_list *timer),
++	TPARGS(timer));
++DEFINE_TRACE(timer_expire_exit,
++	TPPROTO(struct timer_list *timer),
++	TPARGS(timer));
++DEFINE_TRACE(timer_init,
++	TPPROTO(struct timer_list *timer),
++	TPARGS(timer));
++DEFINE_TRACE(timer_start,
++	TPPROTO(struct timer_list *timer, unsigned long expires),
++	TPARGS(timer, expires));
++DEFINE_TRACE(timer_cancel,
++	TPPROTO(struct timer_list *timer),
++	TPARGS(timer));
+ 
+ 
+ #endif
+diff --git a/kernel/timer.c b/kernel/timer.c
+index 0e831b5..9fd8718 100644
+--- a/kernel/timer.c
++++ b/kernel/timer.c
+@@ -42,6 +42,8 @@
+ #include <asm/timex.h>
+ #include <asm/io.h>
+ 
++#include <trace/timer.h>
++
+ #ifdef CONFIG_TIME_INTERPOLATION
+ static void time_interpolator_update(long delta_nsec);
+ #else
+@@ -277,6 +279,7 @@ static void internal_add_timer(tvec_base_t *base, struct timer_list *timer)
+  */
+ void fastcall init_timer(struct timer_list *timer)
+ {
++	trace_timer_init(timer);
+ 	timer->entry.next = NULL;
+ 	timer->base = __raw_get_cpu_var(tvec_bases);
+ }
+@@ -287,6 +290,8 @@ static inline void detach_timer(struct timer_list *timer,
+ {
+ 	struct list_head *entry = &timer->entry;
+ 
++	trace_timer_cancel(timer);
++
+ 	__list_del(entry->prev, entry->next);
+ 	if (clear_pending)
+ 		entry->next = NULL;
+@@ -338,6 +343,8 @@ int __mod_timer(struct timer_list *timer, unsigned long expires)
+ 		ret = 1;
+ 	}
+ 
++	trace_timer_start(timer, expires);
++
+ 	new_base = __get_cpu_var(tvec_bases);
+ 
+ 	if (base != new_base) {
+@@ -382,6 +389,7 @@ void add_timer_on(struct timer_list *timer, int cpu)
+   	BUG_ON(timer_pending(timer) || !timer->function);
+ 	spin_lock_irqsave(&base->lock, flags);
+ 	timer->base = base;
++	trace_timer_start(timer, timer->expires);
+ 	internal_add_timer(base, timer);
+ 	spin_unlock_irqrestore(&base->lock, flags);
+ }
+@@ -575,7 +583,9 @@ static inline void __run_timers(tvec_base_t *base)
+ 			spin_unlock_irq(&base->lock);
+ 			{
+ 				int preempt_count = preempt_count();
++				trace_timer_expire_entry(timer);
+ 				fn(data);
++				trace_timer_expire_exit(timer);
+ 				if (preempt_count != preempt_count()) {
+ 					printk(KERN_WARNING "huh, entered %p "
+ 					       "with preempt_count %08x, exited"

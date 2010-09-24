@@ -1,0 +1,122 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 25 Jan 2010 22:17:10 -0500
+Subject: [scsi] qla2xxx: add AER support
+Message-id: <20100125221648.5812.60916.sendpatchset@localhost.localdomain>
+Patchwork-id: 22869
+O-Subject: [RHEL5.5 PATCH V3] qla2xxx: RHEL5.5 - Updated qla2xxx driver to
+	include AER
+Bugzilla: 513927
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Description:
+
+   Re-post of the AER patch submitted by Marcus Barrow on 12/1/09.
+   This update incorporates the feedback from rhkl review.
+
+   Testing:
+      Tested at qlogic.  AER log is attached to bugzilla.
+
+   Upstream status:
+      Confirmed patch is upstream in scsi-misc.
+
+	From cd3a6aaf1bc9baa02c4713d81f0dce184cc3542a Mon Sep 17 00:00:00 2001
+	From: Lalit Chandivade <lalit.chandivade@qlogic.com>
+	Date: Thu, 17 Dec 2009 07:45:48 +0530
+	Subject: [PATCH] Enable AER support.
+
+	Signed-off-by: Lalit Chandivade <lalit.chandivade@qlogic.com>
+
+   Brew Build:
+      https://brewweb.devel.redhat.com/taskinfo?taskID=2222134
+
+
+diff --git a/drivers/scsi/qla2xxx/qla_def.h b/drivers/scsi/qla2xxx/qla_def.h
+index f5745d7..20870bf 100644
+--- a/drivers/scsi/qla2xxx/qla_def.h
++++ b/drivers/scsi/qla2xxx/qla_def.h
+@@ -23,6 +23,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/workqueue.h>
+ #include <linux/firmware.h>
++#include <linux/aer.h>
+ #include <linux/mutex.h>
+ #include <asm/semaphore.h>
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_isr.c b/drivers/scsi/qla2xxx/qla_isr.c
+index 1adab17..0c1f8e2 100644
+--- a/drivers/scsi/qla2xxx/qla_isr.c
++++ b/drivers/scsi/qla2xxx/qla_isr.c
+@@ -2032,8 +2032,9 @@ qla2x00_free_irqs(scsi_qla_host_t *ha)
+ 
+ 	if (ha->flags.msix_enabled)
+ 		qla24xx_disable_msix(ha);
+-	else if (ha->flags.inta_enabled) {
++	else if (ha->flags.msi_enabled) {
+ 		free_irq(ha->host->irq, ha);
+ 		pci_disable_msi(ha->pdev);
+-	}
++	} else
++		free_irq(ha->host->irq, ha);
+ }
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index e2d6be5..a32e394 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -1810,6 +1810,8 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	sprintf(ha->host_str, "%s_%ld", QLA2XXX_DRIVER_NAME, ha->host_no);
+ 	ha->parent = NULL;
+ 
++	pci_enable_pcie_error_reporting(pdev);
++
+ 	/* Set ISP-type information. */
+ 	qla2x00_set_isp_flags(ha);
+ 
+@@ -2148,6 +2150,8 @@ qla2x00_remove_one(struct pci_dev *pdev)
+ 
+ 	scsi_host_put(ha->host);
+ 
++	pci_disable_pcie_error_reporting(pdev);
++
+ 	pci_disable_device(pdev);
+ 	pci_set_drvdata(pdev, NULL);
+ }
+@@ -3267,6 +3271,7 @@ qla2xxx_pci_error_detected(struct pci_dev *pdev, pci_channel_state_t state)
+ 		return PCI_ERS_RESULT_CAN_RECOVER;
+ 	case pci_channel_io_frozen:
+ 		ha->flags.eeh_busy = 1;
++		qla2x00_free_irqs(ha);
+ 		pci_disable_device(pdev);
+ 		return PCI_ERS_RESULT_NEED_RESET;
+ 	case pci_channel_io_perm_failure:
+@@ -3322,6 +3327,12 @@ qla2xxx_pci_slot_reset(struct pci_dev *pdev)
+ 
+ 	qla_printk(KERN_WARNING, ha, "slot_reset\n");
+ 
++	/* Workaround: qla2xxx driver which access hardware earlier
++	 * needs error state to be pci_channel_io_online.
++	 * Otherwise mailbox command timesout.
++	 */
++	pdev->error_state = pci_channel_io_normal;
++
+ 	pci_restore_state(pdev);
+ 
+ #ifdef QL_DEBUG_LEVEL_17
+@@ -3347,6 +3358,9 @@ qla2xxx_pci_slot_reset(struct pci_dev *pdev)
+ 		return ret;
+ 	}
+ 
++	if (qla2x00_request_irqs(ha))
++		return ret;
++
+ 	if (ha->isp_ops->pci_config(ha))
+ 		return ret;
+ 
+@@ -3372,6 +3386,8 @@ qla2xxx_pci_slot_reset(struct pci_dev *pdev)
+ 		ret =  PCI_ERS_RESULT_RECOVERED;
+ 	clear_bit(ABORT_ISP_ACTIVE, &ha->dpc_flags);
+ 
++	pci_cleanup_aer_uncorrect_error_status(pdev);
++
+ 	qla_printk(KERN_WARNING, ha, "slot_reset-return:ret=%x\n",ret);
+ 
+ 	return ret;

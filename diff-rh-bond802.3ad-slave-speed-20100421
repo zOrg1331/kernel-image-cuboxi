@@ -1,0 +1,43 @@
+* diff-rh-bond802.3ad-slave-speed-20100421
+Patch from RH bug# 567604,
+fixes the bonding 802.3ad problems with link detection.
+
+https://bugzilla.sw.ru/show_bug.cgi?id=473302
+
+--- a/drivers/net/bonding/bond_main.c
++++ a/drivers/net/bonding/bond_main.c
+@@ -3604,11 +3604,29 @@ static int bond_slave_netdev_event(unsigned long event, struct net_device *slave
+ 		}
+ 		break;
+ 	case NETDEV_CHANGE:
+-		/*
+-		 * TODO: is this what we get if somebody
+-		 * sets up a hierarchical bond, then rmmod's
+-		 * one of the slave bonding devices?
+-		 */
++		if ((bond->params.mode == BOND_MODE_8023AD) ||
++		    (bond->params.mode == BOND_MODE_TLB) ||
++		    (bond->params.mode == BOND_MODE_ALB)) {
++			struct slave *slave;
++
++			slave = bond_get_slave_by_dev(bond, slave_dev);
++			if (slave) {
++				u16 old_speed = slave->speed;
++				u16 old_duplex = slave->duplex;
++
++				bond_update_speed_duplex(slave);
++
++				if ((bond->params.mode == BOND_MODE_TLB) ||
++				    (bond->params.mode == BOND_MODE_ALB))
++					break;
++
++				if (old_speed != slave->speed)
++					bond_3ad_adapter_speed_changed(slave);
++				if (old_duplex != slave->duplex)
++					bond_3ad_adapter_duplex_changed(slave);
++			}
++		}
++
+ 		break;
+ 	case NETDEV_DOWN:
+ 		/*

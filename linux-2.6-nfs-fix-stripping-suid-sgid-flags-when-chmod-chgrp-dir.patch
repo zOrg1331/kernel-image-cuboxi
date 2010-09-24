@@ -1,0 +1,86 @@
+From: Peter Staubach <staubach@redhat.com>
+Date: Mon, 1 Jun 2009 11:40:13 -0400
+Subject: [nfs] fix stripping SUID/SGID flags when chmod/chgrp dir
+Message-id: 4A23F65D.5060108@redhat.com
+O-Subject: [PATCH RHEL-5.5] BZ485099 Inconsistent behaviour in stripping SUID/SGID flags when chmod/chgrp directories
+Bugzilla: 485099
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+Hi.
+
+Attached is a patch to address bz485099, "Inconsistent behaviour
+in stripping SUID/SGID flags when chmod/chgrp directories".  This
+bugzilla describe the situation that the NFS server does not
+handle change owner requests in the same fashion as do local file
+systems such as ext3.
+
+File systems such as ext3 handle requests to change the owner of
+a regular file by ensuring that the setuid and/or setgid bits are
+cleared appropriately.  Leaving the bits set may allow a security
+breach.  The setuid and setgid bits are left alone when an attempt
+is made to change the ownership of any other file type, ie.
+directories, symbolic links, etc.
+
+The NFS server was unilaterally turning off the setuid and setgid
+bits on all change owner requests.  This made the semantics
+visible through an NFS client different than they would be locally.
+
+This was addressed by checking the file type before arranging to
+have the setuid and setgid bits cleared.
+
+Also, support was added so that setting the mode at the same time
+as changing the owner would not allow the NFS client to end up
+with a file, changed in ownership, but retaining the setuid or
+setgid bit set.
+
+A tiny bit of cleanup was done while I was checking the mode
+handling in the routine to ensure that it was correct.
+
+    Thanx...
+
+       ps
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 773b280..b19a125 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -268,7 +268,6 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
+ 	struct inode	*inode;
+ 	int		accmode = MAY_SATTR;
+ 	int		ftype = 0;
+-	int		imode;
+ 	int		err;
+ 	int		size_change = 0;
+ 
+@@ -354,16 +353,26 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
+ 		DQUOT_INIT(inode);
+ 	}
+ 
+-	imode = inode->i_mode;
++	/* sanitize the mode change */
+ 	if (iap->ia_valid & ATTR_MODE) {
+ 		iap->ia_mode &= S_IALLUGO;
+-		imode = iap->ia_mode |= (imode & ~S_IALLUGO);
++		iap->ia_mode |= (inode->i_mode & ~S_IALLUGO);
+ 	}
+ 
+ 	/* Revoke setuid/setgid bit on chown/chgrp */
+-	if (((iap->ia_valid & ATTR_UID) && iap->ia_uid != inode->i_uid) ||
+-	    ((iap->ia_valid & ATTR_GID) && iap->ia_gid != inode->i_gid))
+-		iap->ia_valid |= (ATTR_KILL_SGID | ATTR_KILL_SUID);
++	if (!S_ISDIR(inode->i_mode) &&
++	   (((iap->ia_valid & ATTR_UID) && iap->ia_uid != inode->i_uid) ||
++	    ((iap->ia_valid & ATTR_GID) && iap->ia_gid != inode->i_gid))) {
++		if (iap->ia_valid & ATTR_MODE) {
++			/* we're setting mode too, just clear the s*id bits */
++			iap->ia_mode &= ~S_ISUID;
++			if (iap->ia_mode & S_IXGRP)
++				iap->ia_mode &= ~S_ISGID;
++		} else {
++			/* set ATTR_KILL_* bits and let VFS handle it */
++			iap->ia_valid |= (ATTR_KILL_SGID | ATTR_KILL_SUID);
++		}
++	}
+ 
+ 	/* Change the attributes. */
+ 

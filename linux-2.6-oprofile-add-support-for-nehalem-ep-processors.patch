@@ -1,0 +1,172 @@
+From: John Villalovos <jvillalo@redhat.com>
+Date: Tue, 22 Dec 2009 20:30:27 -0500
+Subject: Oprofile: Add support for Nehalem-EP processors
+Message-id: <20091222203027.GA3530@linuxjohn.usersys.redhat.com>
+Patchwork-id: 22266
+O-Subject: [RHEL 5.5 BZ498624] Oprofile: Add support for Nehalem-EP processors
+Bugzilla: 498624
+
+Add kernel support for using Nehalem-EP processors with oprofile:
+https://bugzilla.redhat.com/show_bug.cgi?id=498624
+
+This patch adds support to the kernel so that oprofile can work with Nehalem-EP
+processors and Atom processors.
+Nehalem-EP processors are:  CPU Family: 6, CPU Model: 26
+Atom processors are:	    CPU Family: 6, CPU Model: 28
+
+The oprofile userspace BZ that depends on this patch:
+https://bugzilla.redhat.com/show_bug.cgi?id=498619
+
+A listing of Nehalem-EP processors can be found here:
+http://ark.intel.com/ProductCollection.aspx?codeName=33163
+
+Atom Processors here:
+http://processorfinder.intel.com/List.aspx?ParentRadio=All&ProcFam=3008&SearchKey=
+
+Also this patch adds the ability to specify the following kernel command line
+parameter:
+    oprofile.cpu_type=arch_perfmon
+
+This will enable a user to force the use of the 'arch_perfmon' type for CPUs
+which support arch_perfmon.  For example if you did have a Nehalem-EP
+processor, you could force it to use arch_perfmon rather than the Nehalem-EP
+performance counters.
+
+All code changes for this patch are isolated to the oprofile kernel module, and
+will have no affect on any system unless they load the oprofile module.  This
+usually only happens if they run the oprofile userspace tool.
+
+Testing:
+I have tested this on a Nehalem-EP system, the oprofile kernel module now
+reports "i386/core_i7" as the cpu_type.
+
+I have also tested the usage of the kernel command line parameter to force
+usage of arch_perfmon, and that works as expected.
+
+Will Cohen has also done testing with this kernel and has reported success.
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2165196
+
+Backport of commit 8d7ff4f2a0b22b7d6d7bc3982257d1dadea22824
+Upstream Author: Robert Richter <robert.richter@amd.com>
+Upstream Date:   Tue Jun 23 11:48:14 2009 +0200
+
+    x86/oprofile: rename kernel parameter for architectural perfmon to arch_perfmon
+
+    The short name of the achitecture is 'arch_perfmon'. This patch
+    changes the kernel parameter to use this name.
+
+Backport of commit 7e4e0bd50e80df2fe5501f48f872448376cdd997
+Upstream Author: Robert Richter <robert.richter@amd.com>
+Upstream Date:   Wed May 6 12:10:23 2009 +0200
+
+    oprofile: introduce module_param oprofile.cpu_type
+
+    This patch removes module_param oprofile.force_arch_perfmon and
+    introduces oprofile.cpu_type=archperfmon instead. This new parameter
+    can be reused for other models and architectures.
+
+    Currently only archperfmon is supported.
+
+Backport of commit 1dcdb5a9e7c235e6e80f1f4d5b8247b3e5347e48
+Upstream Author: Andi Kleen <andi@firstfloor.org>
+Upstream Date:   Mon Apr 27 17:44:11 2009 +0200
+
+    oprofile: re-add force_arch_perfmon option
+
+    This re-adds the force_arch_perfmon option that was in the original
+    arch perfmon patchkit. Originally this was rejected in favour
+    of a generalized perfmon=name option, but it turned out implementing
+    the later in a reliable way is hard (and it would have been easy
+    to crash the kernel if a user gets it wrong)
+
+    But now Atom and Core i7 support being readded a user would
+    need to update their oprofile userland to beyond 0.9.4 to use oprofile again
+    on Atom or Core i7.
+
+    To avoid this problem readd the force_arch_perfmon option.
+
+Backport of commit 6adf406f0a0eaf37251018d15f51e93f5b538ee6
+Upstream Author: Andi Kleen <andi@firstfloor.org>
+Upstream Date:   Mon Apr 27 17:44:13 2009 +0200
+
+    oprofile: add support for Core i7 and Atom
+
+    The registers are about the same as other Family 6 CPUs
+    so we only need to add detection.
+
+    I'm not completely happy with calling Nehalem Core i7 because
+    there will be undoubtedly other Nehalem based CPUs
+    in the future with different marketing names, but it's
+    the best we got for now.
+
+    Requires updated oprofile userland for the new event files.
+
+    If you don't want to update right now you can also use
+    oprofile.force_arch_perfmon=1 (added in the next patch) with 0.9.4
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 1be8288..f9e5c88 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -1250,6 +1250,14 @@ running once the system is up.
+ 	oprofile.timer=	[HW]
+ 			Use timer interrupt instead of performance counters
+ 
++	oprofile.cpu_type=	Force an oprofile cpu type
++			This might be useful if you have an older oprofile
++			userland or if you want common events.
++			Format: { arch_perfmon }
++			arch_perfmon: [X86] Force use of architectural
++				perfmon on Intel CPUs instead of the
++				CPU specific event set.
++
+ 	optcd=		[HW,CD]
+ 			Format: <io>
+ 
+diff --git a/arch/i386/oprofile/nmi_int.c b/arch/i386/oprofile/nmi_int.c
+index 588800e..6e49343 100644
+--- a/arch/i386/oprofile/nmi_int.c
++++ b/arch/i386/oprofile/nmi_int.c
+@@ -405,11 +405,25 @@ static int __init p4_init(char ** cpu_type)
+ 	return 0;
+ }
+ 
++static int force_arch_perfmon;
++static int force_cpu_type(const char *str, struct kernel_param *kp)
++{
++	if (!strcmp(str, "arch_perfmon")) {
++		force_arch_perfmon = 1;
++		printk(KERN_INFO "oprofile: forcing architectural perfmon\n");
++	}
++
++	return 0;
++}
++module_param_call(cpu_type, force_cpu_type, NULL, NULL, 0);
+ 
+ static int __init ppro_init(char **cpu_type)
+ {
+ 	__u8 cpu_model = boot_cpu_data.x86_model;
+ 
++	if (force_arch_perfmon && cpu_has_arch_perfmon)
++		return 0;
++
+ 	switch (cpu_model) {
+ 	case 0 ... 2:
+ 		*cpu_type = "i386/ppro";
+@@ -433,7 +447,11 @@ static int __init ppro_init(char **cpu_type)
+ 		*cpu_type = "i386/core_2";
+ 		break;
+ 	case 26:
+-		*cpu_type = "i386/core_2";
++		arch_perfmon_setup_counters();
++		*cpu_type = "i386/core_i7";
++		break;
++	case 28:
++		*cpu_type = "i386/atom";
+ 		break;
+ 	default:
+ 		/* Unknown */

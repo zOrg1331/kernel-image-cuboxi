@@ -1,0 +1,891 @@
+From: Rob Evers <revers@redhat.com>
+Date: Thu, 25 Jun 2009 15:28:03 -0400
+Subject: [scsi] lpfc: update to version 8.2.0.46
+Message-id: 20090625192352.15255.13183.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.4 PATCH 1/1] lpfc: Update from version 8.2.0.45 to version 8.2.0.46
+Bugzilla: 506792
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=506792
+
+Description:
+
+    Update lpfc from 8.2.0.45 to 8.2.0.46
+
+    * Changed version number to 8.2.0.46
+    * Remove always true conditional in lpfc_sli_read_serdes_param()
+    * Update resume_rpi mailbox data structure to match spec
+    * Rework/cleanup EH entry points to be consistent with upstream
+      implementation
+    * Fixed lpfcdfc_host leak when lpfc_pci_remove_one_s4 called or init error
+      occurs
+    * Use PCI config space register to determine SLI rev of HBA
+    * Fixed crash when sending CT commands from libdfc
+    * Fixed mailbox timeout during HBA reset
+    * Fixed SLI4 HBAs not accessible from /dev/lpfcdfc
+    * Show persistent link down state in link_state sysfs attribute
+    * Fix for firmware dump failure (CR 90533)
+
+Upstream Status:
+
+    Mostly bug fixes.
+    One section is synchronizing with upstream for EH entry points.
+
+Testing:
+
+    Brew-built across all architectures
+    Loaded driver on ia64 (this testing helped resolve bz506968).
+    Currently running overnight dt testing on an FC lpfc adapter.
+
+--
+
+diff --git a/drivers/scsi/lpfc/lpfc_attr.c b/drivers/scsi/lpfc/lpfc_attr.c
+index 37bae16..6e62128 100644
+--- a/drivers/scsi/lpfc/lpfc_attr.c
++++ b/drivers/scsi/lpfc/lpfc_attr.c
+@@ -344,7 +344,12 @@ lpfc_state_show(struct class_device *cdev, char *buf)
+ 	case LPFC_INIT_MBX_CMDS:
+ 	case LPFC_LINK_DOWN:
+ 	case LPFC_HBA_ERROR:
+-		len += snprintf(buf + len, PAGE_SIZE-len, "Link Down\n");
++		if (phba->hba_flag & LINK_DISABLED)
++			len += snprintf(buf + len, PAGE_SIZE-len,
++				"Link Down - User disabled\n");
++		else
++			len += snprintf(buf + len, PAGE_SIZE-len,
++				"Link Down\n");
+ 		break;
+ 	case LPFC_LINK_UP:
+ 	case LPFC_CLEAR_LA:
+diff --git a/drivers/scsi/lpfc/lpfc_hw4.h b/drivers/scsi/lpfc/lpfc_hw4.h
+index 4dae439..1cb37e0 100644
+--- a/drivers/scsi/lpfc/lpfc_hw4.h
++++ b/drivers/scsi/lpfc/lpfc_hw4.h
+@@ -54,6 +54,31 @@ struct dma_address {
+ 	uint32_t addr_hi;
+ };
+ 
++#define LPFC_SLIREV_CONF_WORD	0x58
++struct lpfc_sli_intf {
++	uint32_t word0;
++#define lpfc_sli_intf_iftype_MASK 	0x00000007
++#define lpfc_sli_intf_iftype_SHIFT	0
++#define lpfc_sli_intf_iftype_WORD	word0
++#define lpfc_sli_intf_rev_MASK 		0x0000000f
++#define lpfc_sli_intf_rev_SHIFT		4
++#define lpfc_sli_intf_rev_WORD		word0
++#define LPFC_SLIREV_CONF_SLI4	4
++#define lpfc_sli_intf_family_MASK 	0x000000ff
++#define lpfc_sli_intf_family_SHIFT	8
++#define lpfc_sli_intf_family_WORD	word0
++#define lpfc_sli_intf_feat1_MASK 	0x000000ff
++#define lpfc_sli_intf_feat1_SHIFT	16
++#define lpfc_sli_intf_feat1_WORD	word0
++#define lpfc_sli_intf_feat2_MASK 	0x0000001f
++#define lpfc_sli_intf_feat2_SHIFT	24
++#define lpfc_sli_intf_feat2_WORD	word0
++#define lpfc_sli_intf_valid_MASK 	0x00000007
++#define lpfc_sli_intf_valid_SHIFT	29
++#define lpfc_sli_intf_valid_WORD	word0
++#define LPFC_SLI_INTF_VALID		6
++};
++
+ #define LPFC_SLI4_BAR0		1
+ #define LPFC_SLI4_BAR1		2
+ #define LPFC_SLI4_BAR2		4
+@@ -1413,20 +1438,17 @@ struct lpfc_mbx_unreg_vfi {
+ 
+ struct lpfc_mbx_resume_rpi {
+ 	uint32_t word1;
+-#define lpfc_resume_rpi_rpi_SHIFT	0
+-#define lpfc_resume_rpi_rpi_MASK	0x0000FFFF
+-#define lpfc_resume_rpi_rpi_WORD	word1
++#define lpfc_resume_rpi_index_SHIFT	0
++#define lpfc_resume_rpi_index_MASK	0x0000FFFF
++#define lpfc_resume_rpi_index_WORD	word1
++#define lpfc_resume_rpi_ii_SHIFT	30
++#define lpfc_resume_rpi_ii_MASK		0x00000003
++#define lpfc_resume_rpi_ii_WORD		word1
++#define RESUME_INDEX_RPI		0
++#define RESUME_INDEX_VPI		1
++#define RESUME_INDEX_VFI		2
++#define RESUME_INDEX_FCFI		3
+ 	uint32_t event_tag;
+-	uint32_t word3_rsvd;
+-	uint32_t word4_rsvd;
+-	uint32_t word5_rsvd;
+-	uint32_t word6;
+-#define lpfc_resume_rpi_vpi_SHIFT	0
+-#define lpfc_resume_rpi_vpi_MASK	0x0000FFFF
+-#define lpfc_resume_rpi_vpi_WORD	word6
+-#define lpfc_resume_rpi_vfi_SHIFT	16
+-#define lpfc_resume_rpi_vfi_MASK	0x0000FFFF
+-#define lpfc_resume_rpi_vfi_WORD	word6
+ };
+ 
+ #define REG_FCF_INVALID_QID	0xFFFF
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 6d598ec..abfac84 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -461,6 +461,9 @@ lpfc_config_port_post(struct lpfc_hba *phba)
+ 
+ 	phba->lmt = mb->un.varRdConfig.lmt;
+ 
++	/* Check if the port is disabled */
++	lpfc_sli_read_serdes_param(phba);
++
+ 	/* Get the default values for Model Name and Description */
+ 	lpfc_get_hba_model_desc(phba, phba->ModelName, phba->ModelDesc);
+ 
+@@ -564,9 +567,6 @@ lpfc_config_port_post(struct lpfc_hba *phba)
+ 		}
+ 	}
+ 
+-	/* Check if the port is disabled */
+-	lpfc_sli_read_serdes_param(phba);
+-
+ 	if (phba->hba_flag & LINK_DISABLED) {
+ 		lpfc_printf_log(phba,
+ 			KERN_ERR, LOG_INIT,
+@@ -6873,7 +6873,8 @@ lpfc_pci_probe_one_s3(struct pci_dev *pdev, const struct pci_device_id *pid)
+ 
+ 	/* Confiugre sysfs attributes */
+ 	vport = phba->pport;
+-	phba->dfc_host = lpfcdfc_host_add(pdev, lpfc_shost_from_vport(vport), phba);
++	phba->dfc_host = lpfcdfc_host_add(pdev, lpfc_shost_from_vport(vport),
++					phba);
+ 	if (!phba->dfc_host) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
+ 				"1201 Failed to allocate dfc_host \n");
+@@ -6884,7 +6885,7 @@ lpfc_pci_probe_one_s3(struct pci_dev *pdev, const struct pci_device_id *pid)
+ 	if (lpfc_alloc_sysfs_attr(vport)) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+ 				"1476 Failed to allocate sysfs attr\n");
+-		goto out_destroy_shost;
++		goto out_destroy_lpfcdfc_host;
+ 	}
+ 
+ 	/* Now, trying to enable interrupt and bring up the device */
+@@ -6942,6 +6943,8 @@ out_remove_device:
+ 	lpfc_unset_hba(phba);
+ out_free_sysfs_attr:
+ 	lpfc_free_sysfs_attr(vport);
++out_destroy_lpfcdfc_host:
++	lpfcdfc_host_del(phba->dfc_host);
+ out_destroy_shost:
+ 	lpfc_destroy_shost(phba);
+ out_unset_driver_resource:
+@@ -7432,11 +7435,19 @@ lpfc_pci_probe_one_s4(struct pci_dev *pdev, const struct pci_device_id *pid)
+ 
+ 	/* Configure sysfs attributes */
+ 	vport = phba->pport;
++	phba->dfc_host = lpfcdfc_host_add(pdev, lpfc_shost_from_vport(vport),
++		 phba);
++	if (!phba->dfc_host) {
++		lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
++				"1262 Failed to allocate dfc_host \n");
++		error = -ENOMEM;
++		goto out_destroy_shost;
++	}
+ 	error = lpfc_alloc_sysfs_attr(vport);
+ 	if (error) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+ 				"1416 Failed to allocate sysfs attr\n");
+-		goto out_destroy_shost;
++		goto out_destroy_lpfcdfc_host;
+ 	}
+ 
+ 	/* Now, trying to enable interrupt and bring up the device */
+@@ -7492,6 +7503,8 @@ out_disable_intr:
+ 	lpfc_sli4_disable_intr(phba);
+ out_free_sysfs_attr:
+ 	lpfc_free_sysfs_attr(vport);
++out_destroy_lpfcdfc_host:
++	lpfcdfc_host_del(phba->dfc_host);
+ out_destroy_shost:
+ 	lpfc_destroy_shost(phba);
+ out_unset_driver_resource:
+@@ -7527,6 +7540,9 @@ lpfc_pci_remove_one_s4(struct pci_dev *pdev)
+ 	struct lpfc_hba *phba = vport->phba;
+ 	int i;
+ 
++	lpfcdfc_host_del(phba->dfc_host);
++	phba->dfc_host = NULL;
++
+ 	/* Mark the device unloading flag */
+ 	spin_lock_irq(&phba->hbalock);
+ 	vport->load_flag |= FC_UNLOADING;
+@@ -7775,7 +7791,7 @@ static int __devinit
+ lpfc_pci_probe_one(struct pci_dev *pdev, const struct pci_device_id *pid)
+ {
+ 	int rc;
+-	uint16_t dev_id;
++	struct lpfc_sli_intf intf;
+ 
+ 	/*
+ 	 * Check if FC controller is excluded from binding to lpfc driver.
+@@ -7788,17 +7804,16 @@ lpfc_pci_probe_one(struct pci_dev *pdev, const struct pci_device_id *pid)
+ 		return -EPERM;
+ 	}
+ 
+-	if (pci_read_config_word(pdev, PCI_DEVICE_ID, &dev_id))
++	if (pci_read_config_dword(pdev, LPFC_SLIREV_CONF_WORD,
++		(uint32_t *) &intf))
+ 		return -ENODEV;
+ 
+-	switch (dev_id) {
+-	case PCI_DEVICE_ID_TIGERSHARK:
++	if ((bf_get(lpfc_sli_intf_valid, &intf) == LPFC_SLI_INTF_VALID) &&
++		(bf_get(lpfc_sli_intf_rev, &intf) == LPFC_SLIREV_CONF_SLI4))
+ 		rc = lpfc_pci_probe_one_s4(pdev, pid);
+-		break;
+-	default:
++	else
+ 		rc = lpfc_pci_probe_one_s3(pdev, pid);
+-		break;
+-	}
++
+ 	return rc;
+ }
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_ioctl.c b/drivers/scsi/lpfc/lpfc_ioctl.c
+index 289c918..76e216e 100644
+--- a/drivers/scsi/lpfc/lpfc_ioctl.c
++++ b/drivers/scsi/lpfc/lpfc_ioctl.c
+@@ -749,6 +749,7 @@ lpfc_ioctl_send_mgmt_cmd(struct lpfc_hba * phba,
+ 	cmdiocbq->vport = phba->pport;
+ 	cmdiocbq->context1 = NULL;
+ 	cmdiocbq->context2 = NULL;
++	cmdiocbq->context3 = bmp;
+ 	cmdiocbq->iocb_flag |= LPFC_IO_LIBDFC;
+ 
+ 	if (cip->lpfc_flag == 0 )
+diff --git a/drivers/scsi/lpfc/lpfc_mbox.c b/drivers/scsi/lpfc/lpfc_mbox.c
+index 5433762..9e222ef 100644
+--- a/drivers/scsi/lpfc/lpfc_mbox.c
++++ b/drivers/scsi/lpfc/lpfc_mbox.c
+@@ -2027,9 +2027,7 @@ lpfc_resume_rpi(struct lpfcMboxq *mbox, struct lpfc_nodelist *ndlp)
+ 	memset(mbox, 0, sizeof(*mbox));
+ 	resume_rpi = &mbox->u.mqe.un.resume_rpi;
+ 	bf_set(lpfc_mqe_command, &mbox->u.mqe, MBX_RESUME_RPI);
+-	bf_set(lpfc_resume_rpi_rpi, resume_rpi, ndlp->nlp_rpi);
+-	bf_set(lpfc_resume_rpi_vpi, resume_rpi,
+-	       ndlp->vport->vpi + ndlp->vport->phba->vpi_base);
+-	bf_set(lpfc_resume_rpi_vfi, resume_rpi,
+-	       ndlp->vport->vfi + ndlp->vport->phba->vfi_base);
++	bf_set(lpfc_resume_rpi_index, resume_rpi, ndlp->nlp_rpi);
++	bf_set(lpfc_resume_rpi_ii, resume_rpi, RESUME_INDEX_RPI);
++	resume_rpi->event_tag = ndlp->phba->fc_eventTag;
+ }
+diff --git a/drivers/scsi/lpfc/lpfc_scsi.c b/drivers/scsi/lpfc/lpfc_scsi.c
+index 7d173dc..57fd297 100644
+--- a/drivers/scsi/lpfc/lpfc_scsi.c
++++ b/drivers/scsi/lpfc/lpfc_scsi.c
+@@ -1914,72 +1914,6 @@ lpfc_tskmgmt_def_cmpl(struct lpfc_hba *phba,
+ }
+ 
+ /**
+- * lpfc_scsi_tgt_reset - Target reset handler
+- * @lpfc_cmd: Pointer to lpfc_scsi_buf data structure
+- * @vport: The virtual port for which this call is being executed.
+- * @tgt_id: Target ID.
+- * @lun: Lun number.
+- * @rdata: Pointer to lpfc_rport_data.
+- *
+- * This routine issues a TARGET RESET iocb to reset a target with @tgt_id ID.
+- *
+- * Return Code:
+- *   0x2003 - Error
+- *   0x2002 - Success.
+- **/
+-static int
+-lpfc_scsi_tgt_reset(struct lpfc_scsi_buf *lpfc_cmd, struct lpfc_vport *vport,
+-		    unsigned  tgt_id, unsigned int lun,
+-		    struct lpfc_rport_data *rdata)
+-{
+-	struct lpfc_hba   *phba = vport->phba;
+-	struct lpfc_iocbq *iocbq;
+-	struct lpfc_iocbq *iocbqrsp;
+-	int ret;
+-	int status;
+-
+-	if (!rdata->pnode || !NLP_CHK_NODE_ACT(rdata->pnode))
+-		return FAILED;
+-
+-	lpfc_cmd->rdata = rdata;
+-	status = lpfc_scsi_prep_task_mgmt_cmd(vport, lpfc_cmd, lun,
+-					   FCP_TARGET_RESET);
+-	if (!status)
+-		return FAILED;
+-
+-	iocbq = &lpfc_cmd->cur_iocbq;
+-	iocbqrsp = lpfc_sli_get_iocbq(phba);
+-
+-	if (!iocbqrsp)
+-		return FAILED;
+-
+-	/* Issue Target Reset to TGT <num> */
+-	lpfc_printf_vlog(vport, KERN_INFO, LOG_FCP,
+-			 "0702 Issue Target Reset to TGT %d Data: x%x x%x\n",
+-			 tgt_id, rdata->pnode->nlp_rpi, rdata->pnode->nlp_flag);
+-	status = lpfc_sli_issue_iocb_wait(phba, LPFC_FCP_RING,
+-					  iocbq, iocbqrsp, lpfc_cmd->timeout);
+-	if (status != IOCB_SUCCESS) {
+-		if (status == IOCB_TIMEDOUT) {
+-			iocbq->iocb_cmpl = lpfc_tskmgmt_def_cmpl;
+-			ret = TIMEOUT_ERROR;
+-		} else
+-			ret = FAILED;
+-		lpfc_cmd->status = IOSTAT_DRIVER_REJECT;
+-	} else {
+-		ret = SUCCESS;
+-		lpfc_cmd->result = iocbqrsp->iocb.un.ulpWord[4];
+-		lpfc_cmd->status = iocbqrsp->iocb.ulpStatus;
+-		if (lpfc_cmd->status == IOSTAT_LOCAL_REJECT &&
+-			(lpfc_cmd->result & IOERR_DRVR_MASK))
+-				lpfc_cmd->status = IOSTAT_DRIVER_REJECT;
+-	}
+-
+-	lpfc_sli_release_iocbq(phba, iocbqrsp);
+-	return ret;
+-}
+-
+-/**
+  * lpfc_info - Info entry point of scsi_host_template data structure
+  * @host: The scsi host for which this call is being executed.
+  *
+@@ -2315,156 +2249,275 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
+ 	return ret;
+ }
+ 
++static char *
++lpfc_taskmgmt_name(uint8_t task_mgmt_cmd)
++{
++	switch (task_mgmt_cmd) {
++	case FCP_ABORT_TASK_SET:
++		return "ABORT_TASK_SET";
++	case FCP_CLEAR_TASK_SET:
++		return "FCP_CLEAR_TASK_SET";
++	case FCP_BUS_RESET:
++		return "FCP_BUS_RESET";
++	case FCP_LUN_RESET:
++		return "FCP_LUN_RESET";
++	case FCP_TARGET_RESET:
++		return "FCP_TARGET_RESET";
++	case FCP_CLEAR_ACA:
++		return "FCP_CLEAR_ACA";
++	case FCP_TERMINATE_TASK:
++		return "FCP_TERMINATE_TASK";
++	default:
++		return "unknown";
++	}
++}
++
+ /**
+- * lpfc_device_reset_handler - scsi_host_template eh_device_reset entry point
+- * @cmnd: Pointer to scsi_cmnd data structure.
++ * lpfc_send_taskmgmt - Generic SCSI Task Mgmt Handler
++ * @vport: The virtual port for which this call is being executed.
++ * @rdata: Pointer to remote port local data
++ * @tgt_id: Target ID of remote device.
++ * @lun_id: Lun number for the TMF
++ * @task_mgmt_cmd: type of TMF to send
+  *
+- * This routine does a device reset by sending a TARGET_RESET task management
+- * command.
++ * This routine builds and sends a TMF (SCSI Task Mgmt Function) to
++ * a remote port.
+  *
+- * Return code :
+- *  0x2003 - Error
+- *  0x2002 - Success
++ * Return Code:
++ *   0x2003 - Error
++ *   0x2002 - Success.
+  **/
+ static int
+-lpfc_device_reset_handler(struct scsi_cmnd *cmnd)
++lpfc_send_taskmgmt(struct lpfc_vport *vport, struct lpfc_rport_data *rdata,
++		    unsigned  tgt_id, unsigned int lun_id,
++		    uint8_t task_mgmt_cmd)
+ {
+-	struct Scsi_Host  *shost = cmnd->device->host;
+-	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
+ 	struct lpfc_hba   *phba = vport->phba;
+ 	struct lpfc_scsi_buf *lpfc_cmd;
+-	struct lpfc_iocbq *iocbq, *iocbqrsp;
+-	struct lpfc_rport_data *rdata = cmnd->device->hostdata;
+-	struct lpfc_nodelist *pnode = rdata->pnode;
+-	unsigned long later;
+-	int ret = SUCCESS;
++	struct lpfc_iocbq *iocbq;
++	struct lpfc_iocbq *iocbqrsp;
++	int ret;
+ 	int status;
+-	int cnt;
+-	struct lpfc_scsi_event_header scsi_event;
+ 
+-	lpfc_block_error_handler(cmnd);
+-	/*
+-	 * If target is not in a MAPPED state, delay the reset until
+-	 * target is rediscovered or devloss timeout expires.
+-	 */
+-	later = msecs_to_jiffies(2 * vport->cfg_devloss_tmo * 1000) + jiffies;
+-	while (time_after(later, jiffies)) {
+-		if (!pnode || !NLP_CHK_NODE_ACT(pnode))
+-			return FAILED;
+-		if (pnode->nlp_state == NLP_STE_MAPPED_NODE)
+-			break;
+-		schedule_timeout_uninterruptible(msecs_to_jiffies(500));
+-		rdata = cmnd->device->hostdata;
+-		if (!rdata)
+-			break;
+-		pnode = rdata->pnode;
+-	}
+-
+-	scsi_event.event_type = FC_REG_SCSI_EVENT;
+-	scsi_event.subcategory = LPFC_EVENT_TGTRESET;
+-	scsi_event.lun = 0;
+-	memcpy(scsi_event.wwpn, &pnode->nlp_portname, sizeof(struct lpfc_name));
+-	memcpy(scsi_event.wwnn, &pnode->nlp_nodename, sizeof(struct lpfc_name));
+-
+-	fc_host_post_vendor_event(shost,
+-		fc_get_event_number(),
+-		sizeof(scsi_event),
+-		(char *)&scsi_event,
+-		LPFC_NL_VENDOR_ID);
+-
+-	if (!rdata || pnode->nlp_state != NLP_STE_MAPPED_NODE) {
+-		lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
+-				 "0721 LUN Reset rport "
+-				 "failure: msec x%x rdata x%p\n",
+-				 jiffies_to_msecs(jiffies - later), rdata);
++	if (!rdata->pnode || !NLP_CHK_NODE_ACT(rdata->pnode))
+ 		return FAILED;
+-	}
++
+ 	lpfc_cmd = lpfc_get_scsi_buf(phba);
+ 	if (lpfc_cmd == NULL)
+ 		return FAILED;
+ 	lpfc_cmd->timeout = 60;
+ 	lpfc_cmd->rdata = rdata;
+ 
+-	status = lpfc_scsi_prep_task_mgmt_cmd(vport, lpfc_cmd,
+-					      cmnd->device->lun,
+-					      FCP_TARGET_RESET);
++	status = lpfc_scsi_prep_task_mgmt_cmd(vport, lpfc_cmd, lun_id,
++					   task_mgmt_cmd);
+ 	if (!status) {
+ 		lpfc_release_scsi_buf(phba, lpfc_cmd);
+ 		return FAILED;
+ 	}
+-	iocbq = &lpfc_cmd->cur_iocbq;
+ 
+-	/* get a buffer for this IOCB command response */
++	iocbq = &lpfc_cmd->cur_iocbq;
+ 	iocbqrsp = lpfc_sli_get_iocbq(phba);
+ 	if (iocbqrsp == NULL) {
+ 		lpfc_release_scsi_buf(phba, lpfc_cmd);
+ 		return FAILED;
+ 	}
++
+ 	lpfc_printf_vlog(vport, KERN_INFO, LOG_FCP,
+-			 "0703 Issue target reset to TGT %d LUN %d "
+-			 "rpi x%x nlp_flag x%x\n", cmnd->device->id,
+-			 cmnd->device->lun, pnode->nlp_rpi, pnode->nlp_flag);
++			 "0702 Issue %s to TGT %d LUN %d "
++			 "rpi x%x nlp_flag x%x\n",
++			 lpfc_taskmgmt_name(task_mgmt_cmd), tgt_id, lun_id,
++			 rdata->pnode->nlp_rpi, rdata->pnode->nlp_flag);
++
+ 	status = lpfc_sli_issue_iocb_wait(phba, LPFC_FCP_RING,
+ 					  iocbq, iocbqrsp, lpfc_cmd->timeout);
+-	if (status == IOCB_TIMEDOUT) {
+-		iocbq->iocb_cmpl = lpfc_tskmgmt_def_cmpl;
+-		ret = TIMEOUT_ERROR;
+-	} else {
+-		if (status != IOCB_SUCCESS)
++	if (status != IOCB_SUCCESS) {
++		if (status == IOCB_TIMEDOUT) {
++			iocbq->iocb_cmpl = lpfc_tskmgmt_def_cmpl;
++			ret = TIMEOUT_ERROR;
++		} else
+ 			ret = FAILED;
+-		lpfc_release_scsi_buf(phba, lpfc_cmd);
+-	}
+-	lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
+-			 "0713 SCSI layer issued device reset (%d, %d) "
+-			 "return x%x status x%x result x%x\n",
+-			 cmnd->device->id, cmnd->device->lun, ret,
+-			 iocbqrsp->iocb.ulpStatus,
++		lpfc_cmd->status = IOSTAT_DRIVER_REJECT;
++		lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
++			 "0727 TMF %s to TGT %d LUN %d failed (%d, %d)\n",
++			 lpfc_taskmgmt_name(task_mgmt_cmd),
++			 tgt_id, lun_id, iocbqrsp->iocb.ulpStatus,
+ 			 iocbqrsp->iocb.un.ulpWord[4]);
++	} else
++		ret = SUCCESS;
++
+ 	lpfc_sli_release_iocbq(phba, iocbqrsp);
+-	cnt = lpfc_sli_sum_iocb(vport, cmnd->device->id, cmnd->device->lun,
+-				LPFC_CTX_TGT);
++
++	if (ret != TIMEOUT_ERROR)
++		lpfc_release_scsi_buf(phba, lpfc_cmd);
++
++	return ret;
++}
++
++/**
++ * lpfc_chk_tgt_mapped -
++ * @vport: The virtual port to check on
++ * @cmnd: Pointer to scsi_cmnd data structure.
++ *
++ * This routine delays until the scsi target (aka rport) for the
++ * command exists (is present and logged in) or we declare it non-existent.
++ *
++ * Return code :
++ *  0x2003 - Error
++ *  0x2002 - Success
++ **/
++static int
++lpfc_chk_tgt_mapped(struct lpfc_vport *vport, struct scsi_cmnd *cmnd)
++{
++	struct lpfc_rport_data *rdata = cmnd->device->hostdata;
++	struct lpfc_nodelist *pnode = rdata->pnode;
++	unsigned long later;
++
++	/*
++	 * If target is not in a MAPPED state, delay until
++	 * target is rediscovered or devloss timeout expires.
++	 */
++	later = msecs_to_jiffies(2 * vport->cfg_devloss_tmo * 1000) + jiffies;
++	while (time_after(later, jiffies)) {
++		if (!pnode || !NLP_CHK_NODE_ACT(pnode))
++			return FAILED;
++		if (pnode->nlp_state == NLP_STE_MAPPED_NODE)
++			return SUCCESS;
++		schedule_timeout_uninterruptible(msecs_to_jiffies(500));
++		rdata = cmnd->device->hostdata;
++		if (!rdata)
++			return FAILED;
++		pnode = rdata->pnode;
++	}
++	if (!pnode || !NLP_CHK_NODE_ACT(pnode) ||
++	    (pnode->nlp_state != NLP_STE_MAPPED_NODE))
++		return FAILED;
++	return SUCCESS;
++}
++
++/**
++ * lpfc_reset_flush_io_context -
++ * @vport: The virtual port (scsi_host) for the flush context
++ * @tgt_id: If aborting by Target contect - specifies the target id
++ * @lun_id: If aborting by Lun context - specifies the lun id
++ * @context: specifies the context level to flush at.
++ *
++ * After a reset condition via TMF, we need to flush orphaned i/o
++ * contexts from the adapter. This routine aborts any contexts
++ * outstanding, then waits for their completions. The wait is
++ * bounded by devloss_tmo though.
++ *
++ * Return code :
++ *  0x2003 - Error
++ *  0x2002 - Success
++ **/
++static int
++lpfc_reset_flush_io_context(struct lpfc_vport *vport, uint16_t tgt_id,
++			uint64_t lun_id, lpfc_ctx_cmd context)
++{
++	struct lpfc_hba   *phba = vport->phba;
++	unsigned long later;
++	int cnt;
++
++	cnt = lpfc_sli_sum_iocb(vport, tgt_id, lun_id, context);
+ 	if (cnt)
+ 		lpfc_sli_abort_iocb(vport, &phba->sli.ring[phba->sli.fcp_ring],
+-				    cmnd->device->id, cmnd->device->lun,
+-				    LPFC_CTX_TGT);
++				    tgt_id, lun_id, context);
+ 	later = msecs_to_jiffies(2 * vport->cfg_devloss_tmo * 1000) + jiffies;
+ 	while (time_after(later, jiffies) && cnt) {
+ 		schedule_timeout_uninterruptible(msecs_to_jiffies(20));
+-		cnt = lpfc_sli_sum_iocb(vport, cmnd->device->id,
+-					cmnd->device->lun, LPFC_CTX_TGT);
++		cnt = lpfc_sli_sum_iocb(vport, tgt_id, lun_id, context);
+ 	}
+ 	if (cnt) {
+ 		lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
+-				 "0719 device reset I/O flush failure: "
+-				 "cnt x%x\n", cnt);
+-		ret = FAILED;
++			"0724 I/O flush failure for context %s : cnt x%x\n",
++			((context == LPFC_CTX_LUN) ? "LUN" :
++			 ((context == LPFC_CTX_TGT) ? "TGT" :
++			  ((context == LPFC_CTX_HOST) ? "HOST" : "Unknown"))),
++			cnt);
++		return FAILED;
+ 	}
+-	return ret;
++	return SUCCESS;
++}
++
++/**
++ * lpfc_device_reset_handler - scsi_host_template eh_device_reset entry point
++ * @cmnd: Pointer to scsi_cmnd data structure.
++ *
++ * This routine does a device reset by sending a LUN_RESET task management
++ * command.
++ *
++ * Return code :
++ *  0x2003 - Error
++ *  0x2002 - Success
++ **/
++static int
++lpfc_device_reset_handler(struct scsi_cmnd *cmnd)
++{
++	struct Scsi_Host  *shost = cmnd->device->host;
++	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
++	struct lpfc_rport_data *rdata = cmnd->device->hostdata;
++	struct lpfc_nodelist *pnode = rdata->pnode;
++	unsigned tgt_id = cmnd->device->id;
++	unsigned int lun_id = cmnd->device->lun;
++	struct lpfc_scsi_event_header scsi_event;
++	int status;
++
++	lpfc_block_error_handler(cmnd);
++
++	status = lpfc_chk_tgt_mapped(vport, cmnd);
++	if (status == FAILED) {
++		lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
++			"0721 Device Reset rport failure: rdata x%p\n", rdata);
++		return FAILED;
++	}
++
++	scsi_event.event_type = FC_REG_SCSI_EVENT;
++	scsi_event.subcategory = LPFC_EVENT_LUNRESET;
++	scsi_event.lun = lun_id;
++	memcpy(scsi_event.wwpn, &pnode->nlp_portname, sizeof(struct lpfc_name));
++	memcpy(scsi_event.wwnn, &pnode->nlp_nodename, sizeof(struct lpfc_name));
++
++	fc_host_post_vendor_event(shost, fc_get_event_number(),
++		sizeof(scsi_event), (char *)&scsi_event, LPFC_NL_VENDOR_ID);
++
++	status = lpfc_send_taskmgmt(vport, rdata, tgt_id, lun_id,
++						FCP_LUN_RESET);
++
++	lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
++			 "0713 SCSI layer issued Device Reset (%d, %d) "
++			 "return x%x\n", tgt_id, lun_id, status);
++
++	/*
++	 * We have to clean up i/o as : they may be orphaned by the TMF;
++	 * or if the TMF failed, they may be in an indeterminate state.
++	 * So, continue on.
++	 * We will report success if all the i/o aborts successfully.
++	 */
++	status = lpfc_reset_flush_io_context(vport, tgt_id, lun_id,
++						LPFC_CTX_LUN);
++	return status;
+ }
+ 
+ /**
+  * lpfc_bus_reset_handler - scsi_host_template eh_bus_reset_handler entry point
+  * @cmnd: Pointer to scsi_cmnd data structure.
+  *
+- * This routine does target reset to all target on @cmnd->device->host.
++ * This routine does target reset to all targets on @cmnd->device->host.
++ * This emulates Parallel SCSI Bus Reset Semantics.
+  *
+- * Return Code:
+- *   0x2003 - Error
+- *   0x2002 - Success
++ * Return code :
++ *  0x2003 - Error
++ *  0x2002 - Success
+  **/
+ static int
+ lpfc_bus_reset_handler(struct scsi_cmnd *cmnd)
+ {
+ 	struct Scsi_Host  *shost = cmnd->device->host;
+ 	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
+-	struct lpfc_hba   *phba = vport->phba;
+ 	struct lpfc_nodelist *ndlp = NULL;
++	struct lpfc_scsi_event_header scsi_event;
+ 	int match;
+ 	int ret = SUCCESS, status, i;
+-	int cnt;
+-	struct lpfc_scsi_buf * lpfc_cmd;
+-	unsigned long later;
+-	struct lpfc_scsi_event_header scsi_event;
+ 
+ 	scsi_event.event_type = FC_REG_SCSI_EVENT;
+ 	scsi_event.subcategory = LPFC_EVENT_BUSRESET;
+@@ -2472,13 +2525,11 @@ lpfc_bus_reset_handler(struct scsi_cmnd *cmnd)
+ 	memcpy(scsi_event.wwpn, &vport->fc_portname, sizeof(struct lpfc_name));
+ 	memcpy(scsi_event.wwnn, &vport->fc_nodename, sizeof(struct lpfc_name));
+ 
+-	fc_host_post_vendor_event(shost,
+-		fc_get_event_number(),
+-		sizeof(scsi_event),
+-		(char *)&scsi_event,
+-		LPFC_NL_VENDOR_ID);
++	fc_host_post_vendor_event(shost, fc_get_event_number(),
++		sizeof(scsi_event), (char *)&scsi_event, LPFC_NL_VENDOR_ID);
+ 
+ 	lpfc_block_error_handler(cmnd);
++
+ 	/*
+ 	 * Since the driver manages a single bus device, reset all
+ 	 * targets known to the driver.  Should any target reset
+@@ -2501,16 +2552,11 @@ lpfc_bus_reset_handler(struct scsi_cmnd *cmnd)
+ 		spin_unlock_irq(shost->host_lock);
+ 		if (!match)
+ 			continue;
+-		lpfc_cmd = lpfc_get_scsi_buf(phba);
+-		if (lpfc_cmd) {
+-			lpfc_cmd->timeout = 60;
+-			status = lpfc_scsi_tgt_reset(lpfc_cmd, vport, i,
+-						     cmnd->device->lun,
+-						     ndlp->rport->dd_data);
+-			if (status != TIMEOUT_ERROR)
+-				lpfc_release_scsi_buf(phba, lpfc_cmd);
+-		}
+-		if (!lpfc_cmd || status != SUCCESS) {
++
++		status = lpfc_send_taskmgmt(vport, ndlp->rport->dd_data,
++					i, 0, FCP_TARGET_RESET);
++
++		if (status != SUCCESS) {
+ 			lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
+ 					 "0700 Bus Reset on target %d failed\n",
+ 					 i);
+@@ -2518,25 +2564,16 @@ lpfc_bus_reset_handler(struct scsi_cmnd *cmnd)
+ 		}
+ 	}
+ 	/*
+-	 * All outstanding txcmplq I/Os should have been aborted by
+-	 * the targets.  Unfortunately, some targets do not abide by
+-	 * this forcing the driver to double check.
++	 * We have to clean up i/o as : they may be orphaned by the TMFs
++	 * above; or if any of the TMFs failed, they may be in an
++	 * indeterminate state.
++	 * We will report success if all the i/o aborts successfully.
+ 	 */
+-	cnt = lpfc_sli_sum_iocb(vport, 0, 0, LPFC_CTX_HOST);
+-	if (cnt)
+-		lpfc_sli_abort_iocb(vport, &phba->sli.ring[phba->sli.fcp_ring],
+-				    0, 0, LPFC_CTX_HOST);
+-	later = msecs_to_jiffies(2 * vport->cfg_devloss_tmo * 1000) + jiffies;
+-	while (time_after(later, jiffies) && cnt) {
+-		schedule_timeout_uninterruptible(msecs_to_jiffies(20));
+-		cnt = lpfc_sli_sum_iocb(vport, 0, 0, LPFC_CTX_HOST);
+-	}
+-	if (cnt) {
+-		lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
+-				 "0715 Bus Reset I/O flush failure: "
+-				 "cnt x%x left x%x\n", cnt, i);
++
++	status = lpfc_reset_flush_io_context(vport, 0, 0, LPFC_CTX_HOST);
++	if (status != SUCCESS)
+ 		ret = FAILED;
+-	}
++
+ 	lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
+ 			 "0714 SCSI layer issued Bus Reset Data: x%x\n", ret);
+ 	return ret;
+@@ -2669,7 +2706,7 @@ struct scsi_host_template lpfc_template = {
+ 	.info			= lpfc_info,
+ 	.queuecommand		= lpfc_queuecommand,
+ 	.eh_abort_handler	= lpfc_abort_handler,
+-	.eh_device_reset_handler= lpfc_device_reset_handler,
++	.eh_device_reset_handler = lpfc_device_reset_handler,
+ 	.eh_bus_reset_handler	= lpfc_bus_reset_handler,
+ 	.slave_alloc		= lpfc_slave_alloc,
+ 	.slave_configure	= lpfc_slave_configure,
+@@ -2688,7 +2725,7 @@ struct scsi_host_template lpfc_vport_template = {
+ 	.info			= lpfc_info,
+ 	.queuecommand		= lpfc_queuecommand,
+ 	.eh_abort_handler	= lpfc_abort_handler,
+-	.eh_device_reset_handler= lpfc_device_reset_handler,
++	.eh_device_reset_handler = lpfc_device_reset_handler,
+ 	.eh_bus_reset_handler	= lpfc_bus_reset_handler,
+ 	.slave_alloc		= lpfc_slave_alloc,
+ 	.slave_configure	= lpfc_slave_configure,
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 222858c..d15f2dc 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -4725,13 +4725,13 @@ lpfc_sli_issue_mbox_s3(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmbox,
+ 
+ 	spin_lock_irqsave(&phba->hbalock, drvr_flag);
+ 	if (!pmbox) {
++		phba->sli.sli_flag &= ~LPFC_SLI_MBOX_ACTIVE;
+ 		/* processing mbox queue from intr_handler */
+ 		if (unlikely(psli->sli_flag & LPFC_SLI_ASYNC_MBX_BLK)) {
+ 			spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
+ 			return MBX_SUCCESS;
+ 		}
+ 		processing_queue = 1;
+-		phba->sli.sli_flag &= ~LPFC_SLI_MBOX_ACTIVE;
+ 		pmbox = lpfc_mbox_get(phba);
+ 		if (!pmbox) {
+ 			spin_unlock_irqrestore(&phba->hbalock, drvr_flag);
+@@ -5828,6 +5828,8 @@ lpfc_sli4_bpl2sgl(struct lpfc_hba *phba, struct lpfc_iocbq *piocbq,
+ 		 * have not been byteswapped yet so there is no
+ 		 * need to swap them back.
+ 		 */
++		if (!piocbq->context3)
++			return xritag;
+ 		bpl  = (struct ulp_bde64 *)
+ 			((struct lpfc_dmabuf *)piocbq->context3)->virt;
+ 
+@@ -11681,7 +11683,6 @@ lpfc_sli4_read_fcf_record(struct lpfc_hba *phba, uint16_t fcf_index)
+  * decide if the used disaled the port. If the TLC indicates the
+  * port is disabled, the hba_flag is set accordingly.
+  **/
+-
+ void
+ lpfc_sli_read_serdes_param(struct lpfc_hba *phba)
+ {
+@@ -11702,7 +11703,7 @@ lpfc_sli_read_serdes_param(struct lpfc_hba *phba)
+ 
+ 	lpfc_dump_serdes_param(phba, pmb);
+ 
+-	rc = lpfc_sli_issue_mbox_wait(phba, pmb, LPFC_MBOX_TMO);
++	rc = lpfc_sli_issue_mbox(phba, pmb, MBX_POLL);
+ 
+ 	if ((rc != MBX_SUCCESS) || mb->mbxStatus) {
+ 		lpfc_printf_log(phba, KERN_WARNING, LOG_INIT,
+@@ -11713,7 +11714,6 @@ lpfc_sli_read_serdes_param(struct lpfc_hba *phba)
+ 		goto out;
+ 	}
+ 
+-
+ 	serdes_param = (uint8_t *)mb + DMP_RSP_OFFSET;
+ 
+ 	/* Swap the byte ordering to match with Firmware endianess */
+@@ -11735,7 +11735,6 @@ lpfc_sli_read_serdes_param(struct lpfc_hba *phba)
+ 		break;
+ 	}
+ out:
+-	if (rc != MBX_TIMEOUT)
+-		mempool_free(pmb, phba->mbox_mem_pool);
++	mempool_free(pmb, phba->mbox_mem_pool);
+ 	return;
+ }
+diff --git a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+index 97f011b..d48d66b 100644
+--- a/drivers/scsi/lpfc/lpfc_version.h
++++ b/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.2.0.45"
++#define LPFC_DRIVER_VERSION "8.2.0.46"
+ 
+ #define LPFC_DRIVER_NAME		"lpfc"
+ #define LPFC_SP_DRIVER_HANDLER_NAME	"lpfc:sp"

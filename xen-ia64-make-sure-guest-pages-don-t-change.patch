@@ -1,0 +1,71 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Fri, 13 Mar 2009 09:55:14 +0100
+Subject: [xen] ia64: make sure guest pages don't change
+Message-id: 49BA1F72.3050609@redhat.com
+O-Subject: [RHEL5.4 PATCH 2/3]: Make sure guest pages don't change
+Bugzilla: 477098
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+IA64: fix efi_emulate_set_virtual_address_map()
+
+get_page() before touching guest pages.
+Otherwise pages may be freed during those operations.
+
+xen-unstable c/s 18981
+
+Fixes BZ 477098
+
+diff --git a/arch/ia64/xen/fw_emul.c b/arch/ia64/xen/fw_emul.c
+index ceaa07e..25debc9 100644
+--- a/arch/ia64/xen/fw_emul.c
++++ b/arch/ia64/xen/fw_emul.c
+@@ -1182,6 +1182,10 @@ efi_emulate_set_virtual_address_map(
+ 	efi_desc_size = sizeof(efi_memory_desc_t);
+ 
+ 	for (p = efi_map_start; p < efi_map_end; p += efi_desc_size) {
++		struct page_info *efi_runtime_page = NULL;
++		struct page_info *fpswa_inf_page = NULL;
++		struct page_info *fw_table_page = NULL;
++		
+ 		if (copy_from_user(&entry, p, sizeof(efi_memory_desc_t))) {
+ 			printk ("efi_emulate_set_virtual_address_map: copy_from_user() fault. addr=0x%p\n", p);
+ 			return EFI_UNSUPPORTED;
+@@ -1191,6 +1195,27 @@ efi_emulate_set_virtual_address_map(
+                 if (md->type != EFI_PAL_CODE)
+                         continue;
+ 
++		/* get pages to prevend them from being freed 
++		 * during touching them.
++		 * those entres are in [FW_TABLES_BASE_PADDR, ...]
++		 * see dom_fw.h for its layout.
++		 */
++		efi_runtime_page = virt_to_page(efi_runtime);
++		fpswa_inf_page = virt_to_page(fpswa_inf);
++		fw_table_page = virt_to_page(
++			domain_mpa_to_imva(d, FW_TABLES_BASE_PADDR));
++		if (get_page(efi_runtime_page, d) == 0)
++			return EFI_INVALID_PARAMETER;
++		if (get_page(fpswa_inf_page, d) == 0) {
++			put_page(efi_runtime_page);
++			return EFI_INVALID_PARAMETER;
++		}
++		if (get_page(fw_table_page, d) == 0) {
++			put_page(fpswa_inf_page);
++			put_page(efi_runtime_page);
++			return EFI_INVALID_PARAMETER;
++		}
++
+ #define EFI_HYPERCALL_PATCH_TO_VIRT(tgt,call) \
+ 	do { \
+ 		vfn = (unsigned long *) domain_mpa_to_imva(d, tgt); \
+@@ -1213,6 +1238,10 @@ efi_emulate_set_virtual_address_map(
+ 		*vfn++ = FW_HYPERCALL_FPSWA_PATCH_INDEX * 16UL + md->virt_addr;
+ 		*vfn   = 0;
+ 		fpswa_inf->fpswa = (void *) (FW_HYPERCALL_FPSWA_ENTRY_INDEX * 16UL + md->virt_addr);
++
++		put_page(fw_table_page);
++		put_page(fpswa_inf_page);
++		put_page(efi_runtime_page);
+ 		break;
+ 	}
+ 

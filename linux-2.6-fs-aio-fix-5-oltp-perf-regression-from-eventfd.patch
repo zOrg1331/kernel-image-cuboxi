@@ -1,0 +1,143 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Mon, 11 Jan 2010 19:39:08 -0500
+Subject: [fs] aio: fix .5% OLTP perf regression from eventfd
+Message-id: <x49vdf8qvmr.fsf@segfault.boston.devel.redhat.com>
+Patchwork-id: 22406
+O-Subject: [RHEL 5.5 patch] aio: fix .5% OLTP performance regression introduced
+	by the eventfd patch set
+Bugzilla: 548565
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Hi,
+
+The 2 locks and 2 hash table lookups in the iocb completion path added
+0.5% to OLTP-like workloads on large systems.  Use a ki_flags bit in
+the iocb to determine if the lookup is necessary.
+
+This patch was verified by Intel to resolve the performance regression:
+
+  Sorry for the delay. We tested your new kernel. It recovers the 0.5%
+  regression for our OLTP setup. I think you fixed the regression
+
+  Linux OLTP Performance summary
+  Kernel#            Speedup(x)   Intr/s  CtxSw/s us%     sys%    idle%   iowait%
+  2.6.18-175.el5        1.000   145612  185752  68      27      1       4
+  175.el5.bz493101.3    0.994   144088  184642  68      28      1       4
+  175.el5.bz493101.4    1.000   146568  185664  68      27      1       4
+
+  Server configurations:
+  NHM-EP 2.93GHz+turbo 2 sockets/8 cores/16 threads
+  72GB memory.  4 LSI 3801SAS + 2 QLA2300, 192 SSDs+ 28 spindles log
+
+  -Chinang
+
+This resolves bug 548565.  Comments, as always, are appreciated.
+
+Cheers,
+Jeff
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+
+diff --git a/fs/aio.c b/fs/aio.c
+index 7917d3b..583c4f2 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -125,8 +125,6 @@ static struct file *aio_eventfp_lookup(struct kiocb *kiocb)
+ 	spin_lock_irqsave(&kiocb_list_lock, flags);
+ 	kh = kiocb_hash_lookup(kiocb);
+ 	spin_unlock_irqrestore(&kiocb_list_lock, flags);
+-	if (!kh)
+-		return NULL;
+ 	return kh->filp;
+ }
+ 
+@@ -135,6 +133,7 @@ static void aio_eventfd_unhash(struct kiocb *kiocb)
+ 	struct kiocb_hash_entry *kh;
+ 	unsigned long flags;
+ 
++	kiocbClearRESFD(kiocb);
+ 	spin_lock_irqsave(&kiocb_list_lock, flags);
+ 	kh = kiocb_hash_lookup(kiocb);
+ 	hlist_del(&kh->list);
+@@ -151,12 +150,12 @@ static void aio_eventfd_fput(struct kiocb *kiocb)
+ 	 * It is often the case that there is no eventfd associated with
+ 	 * a particular request.
+ 	 */
++	if (!kiocbIsRESFD(kiocb))
++		return;
++
++	kiocbClearRESFD(kiocb);
+ 	spin_lock_irqsave(&kiocb_list_lock, flags);
+ 	kh = kiocb_hash_lookup(kiocb);
+-	if (!kh) {
+-		spin_unlock_irqrestore(&kiocb_list_lock, flags);
+-		return;
+-	}
+ 	hlist_del(&kh->list);
+ 	spin_unlock_irqrestore(&kiocb_list_lock, flags);
+ 
+@@ -168,11 +167,12 @@ static void aio_eventfd_signal(struct kiocb *kiocb)
+ {
+ 	struct kiocb_hash_entry *kh;
+ 
++	if (!kiocbIsRESFD(kiocb))
++		return;
++
+ 	spin_lock(&kiocb_list_lock);
+ 	kh = kiocb_hash_lookup(kiocb);
+ 	spin_unlock(&kiocb_list_lock);
+-	if (!kh)
+-		return;
+ 
+ 	eventfd_signal(kh->filp, 1);
+ }
+@@ -661,7 +661,8 @@ static int __aio_put_req(struct kioctx *ctx, struct kiocb *req)
+ 		schedule_putreq++;
+ 	else
+ 		req->ki_filp = NULL;
+-	if ((eventfp = aio_eventfp_lookup(req))) {
++	if (kiocbIsRESFD(req)) {
++		eventfp = aio_eventfp_lookup(req);
+ 		if (unlikely(atomic_dec_and_test(&eventfp->f_count)))
+ 			schedule_putreq++;
+ 		else
+@@ -1734,6 +1735,7 @@ int fastcall io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+ 		ret = aio_eventfd_fget(req, (int) iocb->aio_resfd);
+ 		if (unlikely(ret))
+ 			goto out_put_req;
++		kiocbSetRESFD(req);
+ 	}
+ 
+ 	req->ki_filp = file;
+diff --git a/include/linux/aio.h b/include/linux/aio.h
+index 653758a..2d44b0a 100644
+--- a/include/linux/aio.h
++++ b/include/linux/aio.h
+@@ -32,21 +32,26 @@ struct kioctx;
+ /* #define KIF_LOCKED		0 */
+ #define KIF_KICKED		1
+ #define KIF_CANCELLED		2
++#define KIF_RESFD		31
+ 
+ #define kiocbTryLock(iocb)	test_and_set_bit(KIF_LOCKED, &(iocb)->ki_flags)
+ #define kiocbTryKick(iocb)	test_and_set_bit(KIF_KICKED, &(iocb)->ki_flags)
++#define kiocbTryRESFD(iocb)	test_and_set_bit(KIF_RESFD, &(iocb)->ki_flags)
+ 
+ #define kiocbSetLocked(iocb)	set_bit(KIF_LOCKED, &(iocb)->ki_flags)
+ #define kiocbSetKicked(iocb)	set_bit(KIF_KICKED, &(iocb)->ki_flags)
+ #define kiocbSetCancelled(iocb)	set_bit(KIF_CANCELLED, &(iocb)->ki_flags)
++#define kiocbSetRESFD(iocb)	set_bit(KIF_RESFD, &(iocb)->ki_flags)
+ 
+ #define kiocbClearLocked(iocb)	clear_bit(KIF_LOCKED, &(iocb)->ki_flags)
+ #define kiocbClearKicked(iocb)	clear_bit(KIF_KICKED, &(iocb)->ki_flags)
+ #define kiocbClearCancelled(iocb)	clear_bit(KIF_CANCELLED, &(iocb)->ki_flags)
++#define kiocbClearRESFD(iocb)	clear_bit(KIF_RESFD, &(iocb)->ki_flags)
+ 
+ #define kiocbIsLocked(iocb)	test_bit(KIF_LOCKED, &(iocb)->ki_flags)
+ #define kiocbIsKicked(iocb)	test_bit(KIF_KICKED, &(iocb)->ki_flags)
+ #define kiocbIsCancelled(iocb)	test_bit(KIF_CANCELLED, &(iocb)->ki_flags)
++#define kiocbIsRESFD(iocb)	test_bit(KIF_RESFD, &(iocb)->ki_flags)
+ 
+ /* is there a better place to document function pointer methods? */
+ /**

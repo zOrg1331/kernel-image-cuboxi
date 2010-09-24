@@ -1,0 +1,243 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 20 Jan 2009 16:57:30 +0100
+Subject: [s390] dasd: dasd_device_from_cdev called from interrupt
+Message-id: 20090120155730.GA21694@redhat.com
+O-Subject: [RHEL5 U4 PATCH 1/8] s390 - dasd: dasd_device_from_cdev called from interrupt.
+Bugzilla: 474806
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+Symptom: Deadlock after state change pending interrupt.
+The dasd_device_from_cdev function needs to access the
+dasd_devmap structure of the device in order to find
+the dasd_device structure associated with the ccw device.
+The access to the dasd_devmap structures is protected by
+the dasd_devmap_lock, but that is acquired without
+protecting against interrupts.
+Solution: Make dasd_device_from_cdev independent from the dasd_devmap
+structures. To do so let the driver_data of the ccw device
+point to the dasd_device structure and use the ccw device
+lock to protect accesses to it.
+
+Bugzilla
+=========
+
+BZ 474806
+https://bugzilla.redhat.com/show_bug.cgi?id=474806
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=a00bfd7147c0c5c04a59f7adcb0e6d8948b90a6e
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/drivers/s390/block/dasd.c b/drivers/s390/block/dasd.c
+index d83c1e1..72d837f 100644
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -185,7 +185,7 @@ dasd_state_known_to_basic(struct dasd_device * device)
+ 	device->debug_area = debug_register(device->cdev->dev.bus_id, 1, 2,
+ 					    8 * sizeof (long));
+ 	debug_register_view(device->debug_area, &debug_sprintf_view);
+-	debug_set_level(device->debug_area, DBF_EMERG);
++	debug_set_level(device->debug_area, DBF_WARNING);
+ 	DBF_DEV_EVENT(DBF_EMERG, device, "%s", "debug area created");
+ 
+ 	device->state = DASD_STATE_BASIC;
+@@ -899,7 +899,7 @@ dasd_handle_killed_request(struct ccw_device *cdev, unsigned long intparm)
+ 
+ 	device = (struct dasd_device *) cqr->device;
+ 	if (device == NULL ||
+-	    device != dasd_device_from_cdev(cdev) ||
++	    device != dasd_device_from_cdev_locked(cdev) ||
+ 	    strncmp(device->discipline->ebcname, (char *) &cqr->magic, 4)) {
+ 		MESSAGE(KERN_DEBUG, "invalid device in request: bus_id %s",
+ 			cdev->dev.bus_id);
+@@ -975,7 +975,7 @@ dasd_int_handler(struct ccw_device *cdev, unsigned long intparm,
+ 	/* first of all check for state change pending interrupt */
+ 	mask = DEV_STAT_ATTENTION | DEV_STAT_DEV_END | DEV_STAT_UNIT_EXCEP;
+ 	if ((irb->scsw.dstat & mask) == mask) {
+-		device = dasd_device_from_cdev(cdev);
++		device = dasd_device_from_cdev_locked(cdev);
+ 		if (!IS_ERR(device)) {
+ 			dasd_handle_state_change_pending(device);
+ 			dasd_put_device(device);
+@@ -2191,7 +2191,7 @@ dasd_init(void)
+ 		goto failed;
+ 	}
+ 	debug_register_view(dasd_debug_area, &debug_sprintf_view);
+-	debug_set_level(dasd_debug_area, DBF_EMERG);
++	debug_set_level(dasd_debug_area, DBF_WARNING);
+ 
+ 	DBF_EVENT(DBF_EMERG, "%s", "debug area created");
+ 
+diff --git a/drivers/s390/block/dasd_devmap.c b/drivers/s390/block/dasd_devmap.c
+index 27f2e0a..293ef05 100644
+--- a/drivers/s390/block/dasd_devmap.c
++++ b/drivers/s390/block/dasd_devmap.c
+@@ -525,17 +525,17 @@ dasd_create_device(struct ccw_device *cdev)
+ {
+ 	struct dasd_devmap *devmap;
+ 	struct dasd_device *device;
++	unsigned long flags;
+ 	int rc;
+ 
+ 	devmap = dasd_devmap_from_cdev(cdev);
+ 	if (IS_ERR(devmap))
+ 		return (void *) devmap;
+-	cdev->dev.driver_data = devmap;
+ 
+ 	device = dasd_alloc_device();
+ 	if (IS_ERR(device))
+ 		return device;
+-	atomic_set(&device->ref_count, 2);
++	atomic_set(&device->ref_count, 3);
+ 
+ 	spin_lock(&dasd_devmap_lock);
+ 	if (!devmap->device) {
+@@ -554,6 +554,11 @@ dasd_create_device(struct ccw_device *cdev)
+ 		dasd_free_device(device);
+ 		return ERR_PTR(rc);
+ 	}
++
++	spin_lock_irqsave(get_ccwdev_lock(cdev), flags);
++	cdev->dev.driver_data = device;
++	spin_unlock_irqrestore(get_ccwdev_lock(cdev), flags);
++
+ 	return device;
+ }
+ 
+@@ -571,6 +576,7 @@ dasd_delete_device(struct dasd_device *device)
+ {
+ 	struct ccw_device *cdev;
+ 	struct dasd_devmap *devmap;
++	unsigned long flags;
+ 
+ 	/* First remove device pointer from devmap. */
+ 	devmap = dasd_find_busid(device->cdev->dev.bus_id);
+@@ -584,9 +590,16 @@ dasd_delete_device(struct dasd_device *device)
+ 	devmap->device = NULL;
+ 	spin_unlock(&dasd_devmap_lock);
+ 
+-	/* Drop ref_count by 2, one for the devmap reference and
+-	 * one for the passed reference. */
+-	atomic_sub(2, &device->ref_count);
++	/* Disconnect dasd_device structure from ccw_device structure. */
++	spin_lock_irqsave(get_ccwdev_lock(device->cdev), flags);
++	device->cdev->dev.driver_data = NULL;
++	spin_unlock_irqrestore(get_ccwdev_lock(device->cdev), flags);
++
++	/*
++	 * Drop ref_count by 3, one for the devmap reference, one for
++	 * the cdev reference and one for the passed reference.
++	 */
++	atomic_sub(3, &device->ref_count);
+ 
+ 	/* Wait for reference counter to drop to zero. */
+ 	wait_event(dasd_delete_wq, atomic_read(&device->ref_count) == 0);
+@@ -595,9 +608,6 @@ dasd_delete_device(struct dasd_device *device)
+ 	cdev = device->cdev;
+ 	device->cdev = NULL;
+ 
+-	/* Disconnect dasd_devmap structure from ccw_device structure. */
+-	cdev->dev.driver_data = NULL;
+-
+ 	/* Put ccw_device structure. */
+ 	put_device(&cdev->dev);
+ 
+@@ -617,21 +627,32 @@ dasd_put_device_wake(struct dasd_device *device)
+ 
+ /*
+  * Return dasd_device structure associated with cdev.
++ * This function needs to be called with the ccw device
++ * lock held. It can be used from interrupt context.
++ */
++struct dasd_device *
++dasd_device_from_cdev_locked(struct ccw_device *cdev)
++{
++	struct dasd_device *device = cdev->dev.driver_data;
++
++	if (!device)
++		return ERR_PTR(-ENODEV);
++	dasd_get_device(device);
++	return device;
++}
++
++/*
++ * Return dasd_device structure associated with cdev.
+  */
+ struct dasd_device *
+ dasd_device_from_cdev(struct ccw_device *cdev)
+ {
+-	struct dasd_devmap *devmap;
+ 	struct dasd_device *device;
++	unsigned long flags;
+ 
+-	device = ERR_PTR(-ENODEV);
+-	spin_lock(&dasd_devmap_lock);
+-	devmap = cdev->dev.driver_data;
+-	if (devmap && devmap->device) {
+-		device = devmap->device;
+-		dasd_get_device(device);
+-	}
+-	spin_unlock(&dasd_devmap_lock);
++	spin_lock_irqsave(get_ccwdev_lock(cdev), flags);
++	device = dasd_device_from_cdev_locked(cdev);
++	spin_unlock_irqrestore(get_ccwdev_lock(cdev), flags);
+ 	return device;
+ }
+ 
+@@ -779,16 +800,17 @@ static ssize_t
+ dasd_discipline_show(struct device *dev, struct device_attribute *attr,
+ 		     char *buf)
+ {
+-	struct dasd_devmap *devmap;
+-	char *dname;
++	struct dasd_device *device;
++	ssize_t len;
+ 
+-	spin_lock(&dasd_devmap_lock);
+-	dname = "none";
+-	devmap = dev->driver_data;
+-	if (devmap && devmap->device && devmap->device->discipline)
+-		dname = devmap->device->discipline->name;
+-	spin_unlock(&dasd_devmap_lock);
+-	return snprintf(buf, PAGE_SIZE, "%s\n", dname);
++	device = dasd_device_from_cdev(to_ccwdev(dev));
++	if (!IS_ERR(device) && device->discipline) {
++		len = snprintf(buf, PAGE_SIZE, "%s\n",
++			       device->discipline->name);
++		dasd_put_device(device);
++	} else
++		len = snprintf(buf, PAGE_SIZE, "none\n");
++	return len;
+ }
+ 
+ static DEVICE_ATTR(discipline, 0444, dasd_discipline_show, NULL);
+diff --git a/drivers/s390/block/dasd_int.h b/drivers/s390/block/dasd_int.h
+index 8be1e9f..c676c9c 100644
+--- a/drivers/s390/block/dasd_int.h
++++ b/drivers/s390/block/dasd_int.h
+@@ -536,6 +536,7 @@ int dasd_add_sysfs_files(struct ccw_device *);
+ void dasd_remove_sysfs_files(struct ccw_device *);
+ 
+ struct dasd_device *dasd_device_from_cdev(struct ccw_device *);
++struct dasd_device *dasd_device_from_cdev_locked(struct ccw_device *);
+ struct dasd_device *dasd_device_from_devindex(int);
+ 
+ int dasd_parse(void);

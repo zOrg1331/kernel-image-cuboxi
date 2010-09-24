@@ -1,0 +1,81 @@
+From: Tony Camuso <tcamuso@redhat.com>
+Date: Sat, 14 Nov 2009 16:10:53 -0500
+Subject: [ipmi] fix ipmi_si modprobe hang
+Message-id: <20091114161036.20396.38471.sendpatchset@dhcp-100-2-186.bos.redhat.com>
+Patchwork-id: 21375
+O-Subject: [RHEL5.5 PATCH 1/1]PCI: IPMI fix ipmi_si modprobe hang
+Bugzilla: 507402
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BUGZILLA
+    ========
+    Bug 507402 - FEAT: RHEL 5.5: Add HP ipmi message handling to RHEL 5
+    Comment #8
+    https://bugzilla.redhat.com/show_bug.cgi?id=507402#c8
+
+    DESCRIPTION
+    ===========
+    ipmi: fix ipmi_si modprobe hang
+    Instead of queuing IPMB messages before channel initialization, just
+    throw them away.  Nobody will be listening for them at this point,
+    anyway, and they will clog up the queue and nothing will be delivered
+    if we queue them.
+
+    Also set the current channel to the number of channels, as this value
+    is used to tell if the channel information has been initialized.
+
+    UPSTREAM STATUS
+    ===============
+    commit 9a2845c453d170e4e9b1437fa671dbf39b0e7bd8
+    Author: Corey Minyard <cminyard@mvista.com>
+    Date:   Wed May 20 13:36:17 2009 -0500
+
+    TESTING
+    =======
+    Tested by me for regression and functionality. Was unable to cause the
+    hang with this patch.
+
+    BREW
+    ====
+    https://brewweb.devel.redhat.com/taskinfo?taskID=2077036
+
+    STAT
+    ====
+     drivers/char/ipmi/ipmi_msghandler.c |   13 +++++++------
+     1 files changed, 7 insertions(+), 6 deletions(-)
+
+    Signed-off-by: Tony Camuso <tcamuso@redhat.com>
+
+diff --git a/drivers/char/ipmi/ipmi_msghandler.c b/drivers/char/ipmi/ipmi_msghandler.c
+index b9cf9a4..b9ea8b4 100644
+--- a/drivers/char/ipmi/ipmi_msghandler.c
++++ b/drivers/char/ipmi/ipmi_msghandler.c
+@@ -2745,6 +2745,7 @@ int ipmi_register_smi(struct ipmi_smi_handlers *handlers,
+ 		/* Assume a single IPMB channel at zero. */
+ 		intf->channels[0].medium = IPMI_CHANNEL_MEDIUM_IPMB;
+ 		intf->channels[0].protocol = IPMI_CHANNEL_PROTOCOL_IPMB;
++		intf->curr_channel = IPMI_MAX_CHANNELS;
+ 	}
+ 
+ 	if (rv == 0)
+@@ -3533,13 +3534,13 @@ static int handle_new_recv_msg(ipmi_smi_t          intf,
+ 		}
+ 
+ 		/*
+-		** We need to make sure the channels have been initialized.
+-		** The channel_handler routine will set the "curr_channel"
+-		** equal to or greater than IPMI_MAX_CHANNELS when all the
+-		** channels for this interface have been initialized.
+-		*/
++		 * We need to make sure the channels have been initialized.
++		 * The channel_handler routine will set the "curr_channel"
++		 * equal to or greater than IPMI_MAX_CHANNELS when all the
++		 * channels for this interface have been initialized.
++		 */
+ 		if (intf->curr_channel < IPMI_MAX_CHANNELS) {
+-			requeue = 1;     /* Just put the message back for now */
++			requeue = 0; /* Throw the message away */
+ 			goto out;
+ 		}
+ 

@@ -1,0 +1,66 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Mon, 15 Mar 2010 23:15:56 -0400
+Subject: [block] cfq-iosched: fix sequential read perf regression
+Message-id: <x49y6htxjkj.fsf@segfault.boston.devel.redhat.com>
+Patchwork-id: 23589
+O-Subject: [RHEL 5.5 PATCH] cfq-iosched: fix 15% sequential read performance
+	regression
+Bugzilla: 571818
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+Hi,
+
+I translated a field in the upstream request structure improperly when
+backporting a patch.  The field was request->__data_len.  Upstream, this
+is filled in for normal I/O (reads, writes) to reflect the size of the
+request in bytes.  In RHEL 5, I mistakenly used request->data_len in
+place of __data_len.  That field, unfortunately, is used for packet
+commands and is thus zero for all normal I/O.  The result of this is
+that, instead of unplugging the request queue when a request is enqueued
+that is larger than a page, we wait around for more data to be merged.
+On smaller/cheaper/slower hardware, this is actually a good thing (which
+is why I missed the regression), as cheaper storage can't handle high
+IOPS.  However, on larger/faster storage, the added latency in sending a
+request down to the storage actually causes a significant performance
+drop, of roughly 15%.
+
+That patch was originally backported as a part of the close cooperator
+work, which was aimed at improving cfq's behaviour for interleaving
+sequential I/O between multiple processes (which happens for software
+such as dump(8), nfsd, scst, etc).  So, I verified that, with the
+corrected patch in place, the dump(8) workload still performs well.
+
+Reviews, as always, are appreciated, especially this late in the game.
+This addresses bug 571818.
+
+Cheers,
+Jeff
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index ab0badf..24d1875 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -303,6 +303,11 @@ static inline int cfq_bio_sync(struct bio *bio)
+ 	return 0;
+ }
+ 
++static inline unsigned int crq_bytes(struct cfq_rq *crq)
++{
++	return crq->request->nr_sectors << 9;
++}
++
+ /*
+  * lots of deadline iosched dupes, can be abstracted later...
+  */
+@@ -2090,7 +2095,7 @@ cfq_crq_enqueued(struct cfq_data *cfqd, struct cfq_queue *cfqq,
+ 		 * idle timer unplug to continue working.
+ 		 */
+ 		if (cfq_cfqq_wait_request(cfqq)) {
+-			if (crq->request->data_len > PAGE_CACHE_SIZE ||
++			if (crq_bytes(crq) > PAGE_CACHE_SIZE ||
+ 			    cfqd->busy_queues > 1) {
+ 				del_timer(&cfqd->idle_slice_timer);
+ 				cfq_start_queueing(cfqd, cfqq);

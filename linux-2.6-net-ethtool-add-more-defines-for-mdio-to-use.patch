@@ -1,0 +1,51 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Mon, 30 Nov 2009 18:27:22 -0500
+Subject: [net] ethtool: add more defines for mdio to use
+Message-id: <20091130182722.11132.55710.stgit@localhost.localdomain>
+Patchwork-id: 21546
+O-Subject: [RHEL5.5 PATCH 2/5] ethtool.h: add more defines for mdio to use
+Bugzilla: 448856
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: John Linville <linville@redhat.com>
+
+part of:
+https://bugzilla.redhat.com/show_bug.cgi?id=448856
+
+All defines taken from upstream.
+
+diff --git a/include/linux/ethtool.h b/include/linux/ethtool.h
+index 0f64eec..b262166 100644
+--- a/include/linux/ethtool.h
++++ b/include/linux/ethtool.h
+@@ -437,6 +437,11 @@ struct ethtool_ops {
+ #define SUPPORTED_Pause			(1 << 13)
+ #define SUPPORTED_Asym_Pause		(1 << 14)
+ #define SUPPORTED_2500baseX_Full	(1 << 15)
++#define SUPPORTED_Backplane		(1 << 16)
++#define SUPPORTED_1000baseKX_Full	(1 << 17)
++#define SUPPORTED_10000baseKX4_Full	(1 << 18)
++#define SUPPORTED_10000baseKR_Full	(1 << 19)
++#define SUPPORTED_10000baseR_FEC	(1 << 20)
+ 
+ /* Indicates what features are advertised by the interface. */
+ #define ADVERTISED_10baseT_Half		(1 << 0)
+@@ -455,6 +460,11 @@ struct ethtool_ops {
+ #define ADVERTISED_Pause		(1 << 13)
+ #define ADVERTISED_Asym_Pause		(1 << 14)
+ #define ADVERTISED_2500baseX_Full	(1 << 15)
++#define ADVERTISED_Backplane		(1 << 16)
++#define ADVERTISED_1000baseKX_Full	(1 << 17)
++#define ADVERTISED_10000baseKX4_Full	(1 << 18)
++#define ADVERTISED_10000baseKR_Full	(1 << 19)
++#define ADVERTISED_10000baseR_FEC	(1 << 20)
+ 
+ /* The following are all involved in forcing a particular link
+  * mode for the device for setting things.  When getting the
+@@ -479,6 +489,7 @@ struct ethtool_ops {
+ #define PORT_MII		0x02
+ #define PORT_FIBRE		0x03
+ #define PORT_BNC		0x04
++#define PORT_OTHER		0xff
+ 
+ /* Which transceiver to use. */
+ #define XCVR_INTERNAL		0x00

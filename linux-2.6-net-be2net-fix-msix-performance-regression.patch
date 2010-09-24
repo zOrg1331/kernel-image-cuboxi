@@ -1,0 +1,70 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Fri, 10 Jul 2009 14:56:54 -0400
+Subject: [net] be2net: fix msix performance regression
+Message-id: 20090710185654.GX20245@gospo.rdu.redhat.com
+O-Subject: [RHEL5.4 PATCH] be2net: fix msix performance regression
+Bugzilla: 510008
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+This should be the final patch needed to resolve be2net problems on 5.4.
+This is the description of the problem and solution from the vendor:
+
+"This patch fixes a problem where with MSIX where we may return without
+clearing interrupt which will cause us to return to ISR bringing
+performance down due to too many interrupts.
+
+"This bug was introduced as part of the changes to fix for 508839.  This
+problem does not exist in the upstream driver and hence will not be
+submitted to upstream."
+
+This will resolve RHBZ 510008.
+
+diff --git a/drivers/net/benet/be_main.c b/drivers/net/benet/be_main.c
+index 4e99887..5c9be2b 100644
+--- a/drivers/net/benet/be_main.c
++++ b/drivers/net/benet/be_main.c
+@@ -1233,6 +1233,9 @@ static irqreturn_t be_msix(int irq, void *dev)
+ 	struct be_eq_obj *eq_obj = &adapter->be_eq;
+ 	struct be_eq_entry *entry = queue_tail_node(&eq_obj->q);
+ 
++	/* Clear the interrupt */
++	be_eq_notify(&adapter->ctrl, eq_obj->q.id, false, true, 0);
++
+ 	if (entry->evt)
+ 		compat_napi_schedule(&adapter->napi);
+ 
+@@ -1276,12 +1279,8 @@ int be_poll_rx(struct be_adapter *adapter, int budget)
+ 	if (atomic_read(&adapter->rx_obj.q.used) < RX_FRAGS_REFILL_WM)
+ 		be_post_rx_frags(adapter);
+ 
+-	if (work) {
+-		if (work < budget)
+-			be_cq_notify(&adapter->ctrl, rx_cq->id, true, work);
+-		else
+-			be_cq_notify(&adapter->ctrl, rx_cq->id, false, work);
+-	}
++	if (work)
++		be_cq_notify(&adapter->ctrl, rx_cq->id, true, work);
+ 
+ 	return work;
+ }
+@@ -1337,13 +1336,13 @@ int be_poll(struct napi_struct *napi, int budget)
+ 	be_process_mcc(&adapter->ctrl);
+ 
+ 	/* All consumed */
+-	if (rx_work < budget)
++	if (rx_work < budget) {
+ 		compat_napi_complete(napi);
++		be_eq_notify(ctrl, eq_obj->q.id, true, false, num);
++	} else
++		be_eq_notify(ctrl, eq_obj->q.id, false, false, num);
+ 
+ 	drvr_stats(adapter)->be_num_events += num;
+-	if (num)
+-		be_eq_notify(ctrl, eq_obj->q.id, true, true, num);
+-
+ 	return rx_work;
+ }
+ 

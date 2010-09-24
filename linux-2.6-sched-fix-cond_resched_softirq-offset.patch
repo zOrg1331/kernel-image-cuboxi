@@ -1,0 +1,128 @@
+From: Jesse Larrew <jlarrew@redhat.com>
+Date: Wed, 3 Jun 2009 15:52:04 -0400
+Subject: [sched] fix cond_resched_softirq() offset
+Message-id: 20090603194854.27279.10170.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 BZ496935] umount stalls machine.
+Bugzilla: 496935
+RH-Acked-by: Peter Zijlstra <pzijlstr@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=496935
+
+Description:
+===========
+This is a bug fix for RHEL 5.3 on all archs.
+
+Attempting to umount a filesystem with >20 million files results in a
+softlock oops and stalls the machine. This occurs because the umount
+process does not relinquish the cpu even though cond_reschedule_lock()
+is called. The reason that cond_reschedule_lock() does not schedule out
+the process is because the call to resched_legal(1) always fails.
+
+The solution from upstream is to remove the __resched_legal() check: it
+is conceptually broken. The biggest problem it had is that it can mask
+buggy cond_resched() calls. A cond_resched() call is only legal if we
+are not in an atomic context, with two narrow exceptions:
+
+ 1) if the system is booting
+ 2) a reacquire_kernel_lock() down() done while PREEMPT_ACTIVE is set
+
+However, __resched_legal() hid this and just silently returned whenever
+these primitives were called from invalid contexts. (The same goes for
+cond_resched_locked() and cond_resched_softirq()). Furthermore, the
+__legal_resched(0) call was buggy in that it caused unnecessarily long
+softirq latencies via cond_resched_softirq() (which is only called from
+softirq-off sections, hence the code did nothing.) The fix is to
+resurrect the efficiency of the might_sleep checks and to
+only allow the narrow exceptions.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1824336
+
+Upstream Status:
+================
+committed upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=9414232fa0cc28e2f51b8c76d260f2748f7953fc
+
+Test Status:
+============
+This can be reproduced by mounting a filesystem (e.g. to /mnt)
+containing more than 20 million files and running the following commands:
+
+du -s /mnt
+umount /mnt
+
+The system becomes unresponsive for a couple of seconds, and a softlock
+oops message is seen on the console. With this patch applied, no oops
+occurs. This has been verified by Ramachandra Pai <linuxram@us.ibm.com>.
+
+===============================================================
+
+Jesse Larrew
+IBM Onsite Partner
+978-392-3183
+jlarrew@redhat.com
+
+Proposed Patch:
+===============
+This patch is based on kernel-2.6.18-151.el5.
+
+diff --git a/kernel/sched.c b/kernel/sched.c
+index 9921513..267715b 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -4776,15 +4776,6 @@ asmlinkage long sys_sched_yield(void)
+ 	return 0;
+ }
+ 
+-static inline int __resched_legal(int expected_preempt_count)
+-{
+-	if (unlikely(preempt_count() != expected_preempt_count))
+-		return 0;
+-	if (unlikely(system_state != SYSTEM_RUNNING))
+-		return 0;
+-	return 1;
+-}
+-
+ static void __cond_resched(void)
+ {
+ #ifdef CONFIG_DEBUG_SPINLOCK_SLEEP
+@@ -4804,7 +4795,8 @@ static void __cond_resched(void)
+ 
+ int __sched cond_resched(void)
+ {
+-	if (need_resched() && __resched_legal(0)) {
++	if (need_resched() && !(preempt_count() & PREEMPT_ACTIVE) &&
++					system_state == SYSTEM_RUNNING) {
+ 		__cond_resched();
+ 		return 1;
+ 	}
+@@ -4830,7 +4822,7 @@ int cond_resched_lock(spinlock_t *lock)
+ 		ret = 1;
+ 		spin_lock(lock);
+ 	}
+-	if (need_resched() && __resched_legal(1)) {
++	if (need_resched() && system_state == SYSTEM_RUNNING) {
+ 		spin_release(&lock->dep_map, 1, _THIS_IP_);
+ 		_raw_spin_unlock(lock);
+ 		preempt_enable_no_resched();
+@@ -4846,7 +4838,7 @@ int __sched cond_resched_softirq(void)
+ {
+ 	BUG_ON(!in_softirq());
+ 
+-	if (need_resched() && __resched_legal(0)) {
++	if (need_resched() && system_state == SYSTEM_RUNNING) {
+ 		raw_local_irq_disable();
+ 		_local_bh_enable();
+ 		raw_local_irq_enable();

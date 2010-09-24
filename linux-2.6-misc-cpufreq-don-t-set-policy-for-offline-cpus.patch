@@ -1,0 +1,36 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 3 Aug 2009 11:07:27 -0400
+Subject: [misc] cpufreq: don't set policy for offline cpus
+Message-id: 20090803150609.27487.32103.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL 5.5 PATCH] cpufreq: Don't set policy for offline cpus
+Bugzilla: 511211
+RH-Acked-by: Matthew Garrett <mjg@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+
+Suspend/Resume fails on multi socket, multi core systems because the cpufreq
+code erroneously sets the per_cpu policy_cpu value when a logical cpu is
+offline.
+
+This most notably results in missing sysfs files that are used to set the
+cpu frequencies of the various cpus.
+
+An example of this problem can be seen in the BZ.  I've also pushed this
+upstream to the cpufreq list and will update the BZ with links to the
+thread.
+
+Resolves BZ 511211.
+
+diff --git a/drivers/cpufreq/cpufreq.c b/drivers/cpufreq/cpufreq.c
+index 25cdd2c..a6199fe 100644
+--- a/drivers/cpufreq/cpufreq.c
++++ b/drivers/cpufreq/cpufreq.c
+@@ -801,6 +801,8 @@ static int cpufreq_add_dev (struct sys_device * sys_dev)
+ 
+ 	spin_lock_irqsave(&cpufreq_driver_lock, flags);
+ 	for_each_cpu_mask(j, policy->cpus) {
++		if (!cpu_online(j))
++			continue;
+ 		cpufreq_cpu_data[j] = policy;
+ 		per_cpu(policy_cpu, j) = policy->cpu;
+ 	}

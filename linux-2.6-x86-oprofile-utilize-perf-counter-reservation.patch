@@ -1,0 +1,647 @@
+From: John Villalovos <jvillalo@redhat.com>
+Date: Wed, 16 Sep 2009 13:53:50 -0400
+Subject: [x86] oprofile: utilize perf counter reservation
+Message-id: 20090916175350.GA5238@linuxjohn.usersys.redhat.com
+O-Subject: [RHEL 5.5 BZ523479 Patch 1/3] Support arch perfmon in oprofile
+Bugzilla: 523479
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+[RHEL 5.5 BZ523479 Patch 1/3] Support arch perfmon in oprofile
+https://bugzilla.redhat.com/show_bug.cgi?id=523479
+
+This first patch set is backporting the use of the perf counter reservation
+system into the oprofile driver.  This is the only place that touches
+op_model_athlon.c and the op_model_p4.c code.  I backported this because it
+made it much easier to do the other backport code.  Another benefit is that we
+could relatively easily make it so that you can run NMI watchdog and oprofile
+at the same time.
+
+commit 6f6123a2391b94c69b96fa1411aae97391092d8b
+Author: John L. Villalovos <jvillalo@redhat.com>
+Date:   Tue Sep 15 13:20:07 2009 -0400
+
+    Backport of commit cb9c448c661d40ce2efbce8e9c19cc4d420d8ccc
+        Upstream Author: Don Zickus <dzickus@redhat.com>
+        Upstream Date:   Tue Sep 26 10:52:26 2006 +0200
+
+        [PATCH] i386: Utilize performance counter reservation framework in oprofile
+
+        Incorporates the new performance counter reservation system in oprofile.
+        Also cleans up a lot of the initialization code.  The code original zero'd
+        out every register associated with performance counters regardless if those
+        registers were used or not.  This causes issues with the nmi watchdog.
+        Now oprofile tries to reserve registers and gives up if it can't get them.
+
+diff --git a/arch/i386/oprofile/nmi_int.c b/arch/i386/oprofile/nmi_int.c
+index 93ef62b..6889f03 100644
+--- a/arch/i386/oprofile/nmi_int.c
++++ b/arch/i386/oprofile/nmi_int.c
+@@ -100,15 +100,19 @@ static void nmi_cpu_save_registers(struct op_msrs * msrs)
+ 	unsigned int i;
+ 
+ 	for (i = 0; i < nr_ctrs; ++i) {
+-		rdmsr(counters[i].addr,
+-			counters[i].saved.low,
+-			counters[i].saved.high);
++		if (counters[i].addr){
++			rdmsr(counters[i].addr,
++				counters[i].saved.low,
++				counters[i].saved.high);
++		}
+ 	}
+- 
++
+ 	for (i = 0; i < nr_ctrls; ++i) {
+-		rdmsr(controls[i].addr,
+-			controls[i].saved.low,
+-			controls[i].saved.high);
++		if (controls[i].addr){
++			rdmsr(controls[i].addr,
++				controls[i].saved.low,
++				controls[i].saved.high);
++		}
+ 	}
+ }
+ 
+@@ -212,15 +216,19 @@ static void nmi_restore_registers(struct op_msrs * msrs)
+ 	unsigned int i;
+ 
+ 	for (i = 0; i < nr_ctrls; ++i) {
+-		wrmsr(controls[i].addr,
+-			controls[i].saved.low,
+-			controls[i].saved.high);
++		if (controls[i].addr){
++			wrmsr(controls[i].addr,
++				controls[i].saved.low,
++				controls[i].saved.high);
++		}
+ 	}
+  
+ 	for (i = 0; i < nr_ctrs; ++i) {
+-		wrmsr(counters[i].addr,
+-			counters[i].saved.low,
+-			counters[i].saved.high);
++		if (counters[i].addr){
++			wrmsr(counters[i].addr,
++				counters[i].saved.low,
++				counters[i].saved.high);
++		}
+ 	}
+ }
+  
+@@ -241,6 +249,7 @@ static void nmi_cpu_shutdown(void * dummy)
+ 	apic_write(APIC_LVTPC, saved_lvtpc[cpu]);
+ 	apic_write(APIC_LVTERR, v);
+ 	nmi_restore_registers(msrs);
++	model->shutdown(msrs);
+ }
+ 
+  
+@@ -295,7 +304,15 @@ static int nmi_create_files(struct super_block * sb, struct dentry * root)
+ 	
+ 	for (i = 0; i < model->num_counters; ++i) {
+ 		char buf[4];
+- 
++
++		/* quick little hack to _not_ expose a counter if it is not
++		 * available for use.  This should protect userspace app.
++		 * NOTE:  assumes 1:1 mapping here (that counters are organized
++		 *        sequentially in their struct assignment).
++		 */
++		if (unlikely(!avail_to_resrv_perfctr_nmi_bit(i)))
++			continue;
++
+ 		snprintf(buf,  sizeof(buf), "%d", i);
+ 		dir = oprofilefs_mkdir(sb, root, buf);
+ 		oprofilefs_create_ulong(sb, dir, "enabled", &counter_config[i].enabled); 
+diff --git a/arch/i386/oprofile/op_model_athlon.c b/arch/i386/oprofile/op_model_athlon.c
+index d4f8db0..d3cd3cf 100644
+--- a/arch/i386/oprofile/op_model_athlon.c
++++ b/arch/i386/oprofile/op_model_athlon.c
+@@ -25,10 +25,12 @@
+ #define NUM_COUNTERS 4
+ #define NUM_CONTROLS 4
+ 
++#define CTR_IS_RESERVED(msrs,c) (msrs->counters[(c)].addr ? 1 : 0)
+ #define CTR_READ(l,h,msrs,c) do {rdmsr(msrs->counters[(c)].addr, (l), (h));} while (0)
+ #define CTR_WRITE(l,msrs,c) do {wrmsr(msrs->counters[(c)].addr, -(unsigned int)(l), -1);} while (0)
+ #define CTR_OVERFLOWED(n) (!((n) & (1U<<31)))
+ 
++#define CTRL_IS_RESERVED(msrs,c) (msrs->controls[(c)].addr ? 1 : 0)
+ #define CTRL_READ(l,h,msrs,c) do {rdmsr(msrs->controls[(c)].addr, (l), (h));} while (0)
+ #define CTRL_WRITE(l,h,msrs,c) do {wrmsr(msrs->controls[(c)].addr, (l), (h));} while (0)
+ #define CTRL_SET_ACTIVE(n) (n |= (1<<22))
+@@ -124,15 +126,21 @@ static int Extended_PCI_Enabled = 0;
+  
+ static void athlon_fill_in_addresses(struct op_msrs * const msrs)
+ {
+-	msrs->counters[0].addr = MSR_K7_PERFCTR0;
+-	msrs->counters[1].addr = MSR_K7_PERFCTR1;
+-	msrs->counters[2].addr = MSR_K7_PERFCTR2;
+-	msrs->counters[3].addr = MSR_K7_PERFCTR3;
+-
+-	msrs->controls[0].addr = MSR_K7_EVNTSEL0;
+-	msrs->controls[1].addr = MSR_K7_EVNTSEL1;
+-	msrs->controls[2].addr = MSR_K7_EVNTSEL2;
+-	msrs->controls[3].addr = MSR_K7_EVNTSEL3;
++	int i;
++
++	for (i=0; i < NUM_COUNTERS; i++) {
++		if (reserve_perfctr_nmi(MSR_K7_PERFCTR0 + i))
++			msrs->counters[i].addr = MSR_K7_PERFCTR0 + i;
++		else
++			msrs->counters[i].addr = 0;
++	}
++
++	for (i=0; i < NUM_CONTROLS; i++) {
++		if (reserve_evntsel_nmi(MSR_K7_EVNTSEL0 + i))
++			msrs->controls[i].addr = MSR_K7_EVNTSEL0 + i;
++		else
++			msrs->controls[i].addr = 0;
++	}
+ }
+ 
+  
+@@ -143,20 +151,24 @@ static void athlon_setup_ctrs(struct op_msrs const * const msrs)
+  
+ 	/* clear all counters */
+ 	for (i = 0 ; i < NUM_CONTROLS; ++i) {
++		if (unlikely(!CTRL_IS_RESERVED(msrs,i)))
++			continue;
+ 		CTRL_READ(low, high, msrs, i);
+ 		CTRL_CLEAR_LO(low);
+ 		CTRL_CLEAR_HI(high);
+ 		CTRL_WRITE(low, high, msrs, i);
+ 	}
+-	
++
+ 	/* avoid a false detection of ctr overflows in NMI handler */
+ 	for (i = 0; i < NUM_COUNTERS; ++i) {
++		if (unlikely(!CTR_IS_RESERVED(msrs,i)))
++			continue;
+ 		CTR_WRITE(1, msrs, i);
+ 	}
+ 
+ 	/* enable active counters */
+ 	for (i = 0; i < NUM_COUNTERS; ++i) {
+-		if (counter_config[i].enabled) {
++		if ((counter_config[i].enabled) && (CTR_IS_RESERVED(msrs,i))) {
+ 			reset_value[i] = counter_config[i].count;
+ 
+ 			CTR_WRITE(counter_config[i].count, msrs, i);
+@@ -189,6 +201,8 @@ static int athlon_check_ctrs(struct pt_regs * const regs,
+ 	struct ibs_op_sample ibs_op;
+ 
+ 	for (i = 0 ; i < NUM_COUNTERS; ++i) {
++		if (!reset_value[i])
++			continue;
+ 		CTR_READ(low, high, msrs, i);
+ 		if (CTR_OVERFLOWED(low)) {
+ 			oprofile_add_sample(regs, i);
+@@ -291,6 +305,8 @@ static void athlon_stop(struct op_msrs const * const msrs)
+ 	/* Subtle: stop on all counters to avoid race with
+ 	 * setting our pm callback */
+ 	for (i = 0 ; i < NUM_COUNTERS ; ++i) {
++		if (!reset_value[i])
++			continue;
+ 		CTRL_READ(low, high, msrs, i);
+ 		CTRL_SET_INACTIVE(low);
+ 		CTRL_WRITE(low, high, msrs, i);
+@@ -438,6 +454,20 @@ void clear_ibs_nmi(void)
+ 	Disable_Extended_PCI_Config();
+ }
+ 
++static void athlon_shutdown(struct op_msrs const * const msrs)
++{
++	int i;
++
++	for (i = 0 ; i < NUM_COUNTERS ; ++i) {
++		if (CTR_IS_RESERVED(msrs,i))
++			release_perfctr_nmi(MSR_K7_PERFCTR0 + i);
++	}
++	for (i = 0 ; i < NUM_CONTROLS ; ++i) {
++		if (CTRL_IS_RESERVED(msrs,i))
++			release_evntsel_nmi(MSR_K7_EVNTSEL0 + i);
++	}
++}
++
+ struct op_x86_model_spec const op_athlon_spec = {
+ 	.num_counters = NUM_COUNTERS,
+ 	.num_controls = NUM_CONTROLS,
+@@ -445,5 +475,6 @@ struct op_x86_model_spec const op_athlon_spec = {
+ 	.setup_ctrs = &athlon_setup_ctrs,
+ 	.check_ctrs = &athlon_check_ctrs,
+ 	.start = &athlon_start,
+-	.stop = &athlon_stop
++	.stop = &athlon_stop,
++	.shutdown = &athlon_shutdown
+ };
+diff --git a/arch/i386/oprofile/op_model_p4.c b/arch/i386/oprofile/op_model_p4.c
+index 7c61d35..4792592 100644
+--- a/arch/i386/oprofile/op_model_p4.c
++++ b/arch/i386/oprofile/op_model_p4.c
+@@ -32,7 +32,7 @@
+ #define NUM_CONTROLS_HT2 (NUM_ESCRS_HT2 + NUM_CCCRS_HT2)
+ 
+ static unsigned int num_counters = NUM_COUNTERS_NON_HT;
+-
++static unsigned int num_controls = NUM_CONTROLS_NON_HT;
+ 
+ /* this has to be checked dynamically since the
+    hyper-threadedness of a chip is discovered at
+@@ -40,8 +40,10 @@ static unsigned int num_counters = NUM_COUNTERS_NON_HT;
+ static inline void setup_num_counters(void)
+ {
+ #ifdef CONFIG_SMP
+-	if (smp_num_siblings == 2)
++	if (smp_num_siblings == 2){
+ 		num_counters = NUM_COUNTERS_HT2;
++		num_controls = NUM_CONTROLS_HT2;
++	}
+ #endif
+ }
+ 
+@@ -97,15 +99,6 @@ static struct p4_counter_binding p4_counters [NUM_COUNTERS_NON_HT] = {
+ 
+ #define NUM_UNUSED_CCCRS	NUM_CCCRS_NON_HT - NUM_COUNTERS_NON_HT
+ 
+-/* All cccr we don't use. */
+-static int p4_unused_cccr[NUM_UNUSED_CCCRS] = {
+-	MSR_P4_BPU_CCCR1,	MSR_P4_BPU_CCCR3,
+-	MSR_P4_MS_CCCR1,	MSR_P4_MS_CCCR3,
+-	MSR_P4_FLAME_CCCR1,	MSR_P4_FLAME_CCCR3,
+-	MSR_P4_IQ_CCCR0,	MSR_P4_IQ_CCCR1,
+-	MSR_P4_IQ_CCCR2,	MSR_P4_IQ_CCCR3
+-};
+-
+ /* p4 event codes in libop/op_event.h are indices into this table. */
+ 
+ static struct p4_event_binding p4_events[NUM_EVENTS] = {
+@@ -372,6 +365,8 @@ static struct p4_event_binding p4_events[NUM_EVENTS] = {
+ #define CCCR_OVF_P(cccr) ((cccr) & (1U<<31))
+ #define CCCR_CLEAR_OVF(cccr) ((cccr) &= (~(1U<<31)))
+ 
++#define CTRL_IS_RESERVED(msrs,c) (msrs->controls[(c)].addr ? 1 : 0)
++#define CTR_IS_RESERVED(msrs,c) (msrs->counters[(c)].addr ? 1 : 0)
+ #define CTR_READ(l,h,i) do {rdmsr(p4_counters[(i)].counter_address, (l), (h));} while (0)
+ #define CTR_WRITE(l,i) do {wrmsr(p4_counters[(i)].counter_address, -(u32)(l), -1);} while (0)
+ #define CTR_OVERFLOW_P(ctr) (!((ctr) & 0x80000000))
+@@ -401,29 +396,34 @@ static unsigned long reset_value[NUM_COUNTERS_NON_HT];
+ static void p4_fill_in_addresses(struct op_msrs * const msrs)
+ {
+ 	unsigned int i; 
+-	unsigned int addr, stag;
++	unsigned int addr, cccraddr, stag;
+ 
+ 	setup_num_counters();
+ 	stag = get_stagger();
+ 
+-	/* the counter registers we pay attention to */
++	/* initialize some registers */
+ 	for (i = 0; i < num_counters; ++i) {
+-		msrs->counters[i].addr = 
+-			p4_counters[VIRT_CTR(stag, i)].counter_address;
++		msrs->counters[i].addr = 0;
+ 	}
+-
+-	/* FIXME: bad feeling, we don't save the 10 counters we don't use. */
+-
+-	/* 18 CCCR registers */
+-	for (i = 0, addr = MSR_P4_BPU_CCCR0 + stag;
+-	     addr <= MSR_P4_IQ_CCCR5; ++i, addr += addr_increment()) {
+-		msrs->controls[i].addr = addr;
++	for (i = 0; i < num_controls; ++i) {
++		msrs->controls[i].addr = 0;
+ 	}
+ 	
++	/* the counter & cccr registers we pay attention to */
++	for (i = 0; i < num_counters; ++i) {
++		addr = p4_counters[VIRT_CTR(stag, i)].counter_address;
++		cccraddr = p4_counters[VIRT_CTR(stag, i)].cccr_address;
++		if (reserve_perfctr_nmi(addr)){
++			msrs->counters[i].addr = addr;
++			msrs->controls[i].addr = cccraddr;
++		}
++	}
++
+ 	/* 43 ESCR registers in three or four discontiguous group */
+ 	for (addr = MSR_P4_BSU_ESCR0 + stag;
+ 	     addr < MSR_P4_IQ_ESCR0; ++i, addr += addr_increment()) {
+-		msrs->controls[i].addr = addr;
++		if (reserve_evntsel_nmi(addr))
++			msrs->controls[i].addr = addr;
+ 	}
+ 
+ 	/* no IQ_ESCR0/1 on some models, we save a seconde time BSU_ESCR0/1
+@@ -431,47 +431,57 @@ static void p4_fill_in_addresses(struct op_msrs * const msrs)
+ 	if (boot_cpu_data.x86_model >= 0x3) {
+ 		for (addr = MSR_P4_BSU_ESCR0 + stag;
+ 		     addr <= MSR_P4_BSU_ESCR1; ++i, addr += addr_increment()) {
+-			msrs->controls[i].addr = addr;
++			if (reserve_evntsel_nmi(addr))
++				msrs->controls[i].addr = addr;
+ 		}
+ 	} else {
+ 		for (addr = MSR_P4_IQ_ESCR0 + stag;
+ 		     addr <= MSR_P4_IQ_ESCR1; ++i, addr += addr_increment()) {
+-			msrs->controls[i].addr = addr;
++			if (reserve_evntsel_nmi(addr))
++				msrs->controls[i].addr = addr;
+ 		}
+ 	}
+ 
+ 	for (addr = MSR_P4_RAT_ESCR0 + stag;
+ 	     addr <= MSR_P4_SSU_ESCR0; ++i, addr += addr_increment()) {
+-		msrs->controls[i].addr = addr;
++		if (reserve_evntsel_nmi(addr))
++			msrs->controls[i].addr = addr;
+ 	}
+ 	
+ 	for (addr = MSR_P4_MS_ESCR0 + stag;
+ 	     addr <= MSR_P4_TC_ESCR1; ++i, addr += addr_increment()) { 
+-		msrs->controls[i].addr = addr;
++		if (reserve_evntsel_nmi(addr))
++			msrs->controls[i].addr = addr;
+ 	}
+ 	
+ 	for (addr = MSR_P4_IX_ESCR0 + stag;
+ 	     addr <= MSR_P4_CRU_ESCR3; ++i, addr += addr_increment()) { 
+-		msrs->controls[i].addr = addr;
++		if (reserve_evntsel_nmi(addr))
++			msrs->controls[i].addr = addr;
+ 	}
+ 
+ 	/* there are 2 remaining non-contiguously located ESCRs */
+ 
+ 	if (num_counters == NUM_COUNTERS_NON_HT) {		
+ 		/* standard non-HT CPUs handle both remaining ESCRs*/
+-		msrs->controls[i++].addr = MSR_P4_CRU_ESCR5;
+-		msrs->controls[i++].addr = MSR_P4_CRU_ESCR4;
++		if (reserve_evntsel_nmi(MSR_P4_CRU_ESCR5))
++			msrs->controls[i++].addr = MSR_P4_CRU_ESCR5;
++		if (reserve_evntsel_nmi(MSR_P4_CRU_ESCR4))
++			msrs->controls[i++].addr = MSR_P4_CRU_ESCR4;
+ 
+ 	} else if (stag == 0) {
+ 		/* HT CPUs give the first remainder to the even thread, as
+ 		   the 32nd control register */
+-		msrs->controls[i++].addr = MSR_P4_CRU_ESCR4;
++		if (reserve_evntsel_nmi(MSR_P4_CRU_ESCR4))
++			msrs->controls[i++].addr = MSR_P4_CRU_ESCR4;
+ 
+ 	} else {
+ 		/* and two copies of the second to the odd thread,
+ 		   for the 22st and 23nd control registers */
+-		msrs->controls[i++].addr = MSR_P4_CRU_ESCR5;
+-		msrs->controls[i++].addr = MSR_P4_CRU_ESCR5;
++		if (reserve_evntsel_nmi(MSR_P4_CRU_ESCR5)) {
++			msrs->controls[i++].addr = MSR_P4_CRU_ESCR5;
++			msrs->controls[i++].addr = MSR_P4_CRU_ESCR5;
++		}
+ 	}
+ }
+ 
+@@ -544,7 +554,6 @@ static void p4_setup_ctrs(struct op_msrs const * const msrs)
+ {
+ 	unsigned int i;
+ 	unsigned int low, high;
+-	unsigned int addr;
+ 	unsigned int stag;
+ 
+ 	stag = get_stagger();
+@@ -557,59 +566,24 @@ static void p4_setup_ctrs(struct op_msrs const * const msrs)
+ 
+ 	/* clear the cccrs we will use */
+ 	for (i = 0 ; i < num_counters ; i++) {
++		if (unlikely(!CTRL_IS_RESERVED(msrs,i)))
++			continue;
+ 		rdmsr(p4_counters[VIRT_CTR(stag, i)].cccr_address, low, high);
+ 		CCCR_CLEAR(low);
+ 		CCCR_SET_REQUIRED_BITS(low);
+ 		wrmsr(p4_counters[VIRT_CTR(stag, i)].cccr_address, low, high);
+ 	}
+ 
+-	/* clear cccrs outside our concern */
+-	for (i = stag ; i < NUM_UNUSED_CCCRS ; i += addr_increment()) {
+-		rdmsr(p4_unused_cccr[i], low, high);
+-		CCCR_CLEAR(low);
+-		CCCR_SET_REQUIRED_BITS(low);
+-		wrmsr(p4_unused_cccr[i], low, high);
+-	}
+-
+ 	/* clear all escrs (including those outside our concern) */
+-	for (addr = MSR_P4_BSU_ESCR0 + stag;
+-	     addr <  MSR_P4_IQ_ESCR0; addr += addr_increment()) {
+-		wrmsr(addr, 0, 0);
+-	}
+-
+-	/* On older models clear also MSR_P4_IQ_ESCR0/1 */
+-	if (boot_cpu_data.x86_model < 0x3) {
+-		wrmsr(MSR_P4_IQ_ESCR0, 0, 0);
+-		wrmsr(MSR_P4_IQ_ESCR1, 0, 0);
+-	}
+-
+-	for (addr = MSR_P4_RAT_ESCR0 + stag;
+-	     addr <= MSR_P4_SSU_ESCR0; ++i, addr += addr_increment()) {
+-		wrmsr(addr, 0, 0);
+-	}
+-	
+-	for (addr = MSR_P4_MS_ESCR0 + stag;
+-	     addr <= MSR_P4_TC_ESCR1; addr += addr_increment()){ 
+-		wrmsr(addr, 0, 0);
+-	}
+-	
+-	for (addr = MSR_P4_IX_ESCR0 + stag;
+-	     addr <= MSR_P4_CRU_ESCR3; addr += addr_increment()){ 
+-		wrmsr(addr, 0, 0);
++	for (i = num_counters; i < num_controls; i++) {
++		if (unlikely(!CTRL_IS_RESERVED(msrs,i)))
++			continue;
++		wrmsr(msrs->controls[i].addr, 0, 0);
+ 	}
+ 
+-	if (num_counters == NUM_COUNTERS_NON_HT) {		
+-		wrmsr(MSR_P4_CRU_ESCR4, 0, 0);
+-		wrmsr(MSR_P4_CRU_ESCR5, 0, 0);
+-	} else if (stag == 0) {
+-		wrmsr(MSR_P4_CRU_ESCR4, 0, 0);
+-	} else {
+-		wrmsr(MSR_P4_CRU_ESCR5, 0, 0);
+-	}		
+-	
+ 	/* setup all counters */
+ 	for (i = 0 ; i < num_counters ; ++i) {
+-		if (counter_config[i].enabled) {
++		if ((counter_config[i].enabled) && (CTRL_IS_RESERVED(msrs,i))) {
+ 			reset_value[i] = counter_config[i].count;
+ 			pmc_setup_one_p4_counter(i);
+ 			CTR_WRITE(counter_config[i].count, VIRT_CTR(stag, i));
+@@ -696,12 +670,32 @@ static void p4_stop(struct op_msrs const * const msrs)
+ 	stag = get_stagger();
+ 
+ 	for (i = 0; i < num_counters; ++i) {
++		if (!reset_value[i])
++			continue;
+ 		CCCR_READ(low, high, VIRT_CTR(stag, i));
+ 		CCCR_SET_DISABLE(low);
+ 		CCCR_WRITE(low, high, VIRT_CTR(stag, i));
+ 	}
+ }
+ 
++static void p4_shutdown(struct op_msrs const * const msrs)
++{
++	int i;
++
++	for (i = 0 ; i < num_counters ; ++i) {
++		if (CTR_IS_RESERVED(msrs,i))
++			release_perfctr_nmi(msrs->counters[i].addr);
++	}
++	/* some of the control registers are specially reserved in
++	 * conjunction with the counter registers (hence the starting offset).
++	 * This saves a few bits.
++	 */
++	for (i = num_counters ; i < num_controls ; ++i) {
++		if (CTRL_IS_RESERVED(msrs,i))
++			release_evntsel_nmi(msrs->controls[i].addr);
++	}
++}
++
+ 
+ #ifdef CONFIG_SMP
+ struct op_x86_model_spec const op_p4_ht2_spec = {
+@@ -711,7 +705,8 @@ struct op_x86_model_spec const op_p4_ht2_spec = {
+ 	.setup_ctrs = &p4_setup_ctrs,
+ 	.check_ctrs = &p4_check_ctrs,
+ 	.start = &p4_start,
+-	.stop = &p4_stop
++	.stop = &p4_stop,
++	.shutdown = &p4_shutdown
+ };
+ #endif
+ 
+@@ -722,5 +717,6 @@ struct op_x86_model_spec const op_p4_spec = {
+ 	.setup_ctrs = &p4_setup_ctrs,
+ 	.check_ctrs = &p4_check_ctrs,
+ 	.start = &p4_start,
+-	.stop = &p4_stop
++	.stop = &p4_stop,
++	.shutdown = &p4_shutdown
+ };
+diff --git a/arch/i386/oprofile/op_model_ppro.c b/arch/i386/oprofile/op_model_ppro.c
+index daf581e..5e3d7df 100644
+--- a/arch/i386/oprofile/op_model_ppro.c
++++ b/arch/i386/oprofile/op_model_ppro.c
+@@ -22,10 +22,12 @@
+ #define NUM_COUNTERS 2
+ #define NUM_CONTROLS 2
+ 
++#define CTR_IS_RESERVED(msrs,c) (msrs->counters[(c)].addr ? 1 : 0)
+ #define CTR_READ(l,h,msrs,c) do {rdmsr(msrs->counters[(c)].addr, (l), (h));} while (0)
+ #define CTR_32BIT_WRITE(l,msrs,c) do {wrmsr(msrs->counters[(c)].addr, -(u32)(l), 0);} while (0)
+ #define CTR_OVERFLOWED(n) (!((n) & (1U<<31)))
+ 
++#define CTRL_IS_RESERVED(msrs,c) (msrs->controls[(c)].addr ? 1 : 0)
+ #define CTRL_READ(l,h,msrs,c) do {rdmsr((msrs->controls[(c)].addr), (l), (h));} while (0)
+ #define CTRL_WRITE(l,h,msrs,c) do {wrmsr((msrs->controls[(c)].addr), (l), (h));} while (0)
+ #define CTRL_SET_ACTIVE(n) (n |= (1<<22))
+@@ -41,11 +43,21 @@ static unsigned long reset_value[NUM_COUNTERS];
+  
+ static void ppro_fill_in_addresses(struct op_msrs * const msrs)
+ {
+-	msrs->counters[0].addr = MSR_P6_PERFCTR0;
+-	msrs->counters[1].addr = MSR_P6_PERFCTR1;
++	int i;
++
++	for (i=0; i < NUM_COUNTERS; i++) {
++		if (reserve_perfctr_nmi(MSR_P6_PERFCTR0 + i))
++			msrs->counters[i].addr = MSR_P6_PERFCTR0 + i;
++		else
++			msrs->counters[i].addr = 0;
++	}
+ 	
+-	msrs->controls[0].addr = MSR_P6_EVNTSEL0;
+-	msrs->controls[1].addr = MSR_P6_EVNTSEL1;
++	for (i=0; i < NUM_CONTROLS; i++) {
++		if (reserve_evntsel_nmi(MSR_P6_EVNTSEL0 + i))
++			msrs->controls[i].addr = MSR_P6_EVNTSEL0 + i;
++		else
++			msrs->controls[i].addr = 0;
++	}
+ }
+ 
+ 
+@@ -56,6 +68,8 @@ static void ppro_setup_ctrs(struct op_msrs const * const msrs)
+ 
+ 	/* clear all counters */
+ 	for (i = 0 ; i < NUM_CONTROLS; ++i) {
++		if (unlikely(!CTRL_IS_RESERVED(msrs,i)))
++			continue;
+ 		CTRL_READ(low, high, msrs, i);
+ 		CTRL_CLEAR(low);
+ 		CTRL_WRITE(low, high, msrs, i);
+@@ -63,12 +77,14 @@ static void ppro_setup_ctrs(struct op_msrs const * const msrs)
+ 	
+ 	/* avoid a false detection of ctr overflows in NMI handler */
+ 	for (i = 0; i < NUM_COUNTERS; ++i) {
++		if (unlikely(!CTR_IS_RESERVED(msrs,i)))
++			continue;
+ 		CTR_32BIT_WRITE(1, msrs, i);
+ 	}
+ 
+ 	/* enable active counters */
+ 	for (i = 0; i < NUM_COUNTERS; ++i) {
+-		if (counter_config[i].enabled) {
++		if ((counter_config[i].enabled) && (CTR_IS_RESERVED(msrs,i))) {
+ 			reset_value[i] = counter_config[i].count;
+ 
+ 			CTR_32BIT_WRITE(counter_config[i].count, msrs, i);
+@@ -81,6 +97,8 @@ static void ppro_setup_ctrs(struct op_msrs const * const msrs)
+ 			CTRL_SET_UM(low, counter_config[i].unit_mask);
+ 			CTRL_SET_EVENT(low, counter_config[i].event);
+ 			CTRL_WRITE(low, high, msrs, i);
++		} else {
++			reset_value[i] = 0;
+ 		}
+ 	}
+ }
+@@ -146,6 +164,19 @@ static void ppro_stop(struct op_msrs const * const msrs)
+ 	}
+ }
+ 
++static void ppro_shutdown(struct op_msrs const * const msrs)
++{
++	int i;
++
++	for (i = 0 ; i < NUM_COUNTERS ; ++i) {
++		if (CTR_IS_RESERVED(msrs,i))
++			release_perfctr_nmi(MSR_P6_PERFCTR0 + i);
++	}
++	for (i = 0 ; i < NUM_CONTROLS ; ++i) {
++		if (CTRL_IS_RESERVED(msrs,i))
++			release_evntsel_nmi(MSR_P6_EVNTSEL0 + i);
++	}
++}
+ 
+ struct op_x86_model_spec const op_ppro_spec = {
+ 	.num_counters = NUM_COUNTERS,
+@@ -154,5 +185,6 @@ struct op_x86_model_spec const op_ppro_spec = {
+ 	.setup_ctrs = &ppro_setup_ctrs,
+ 	.check_ctrs = &ppro_check_ctrs,
+ 	.start = &ppro_start,
+-	.stop = &ppro_stop
++	.stop = &ppro_stop,
++	.shutdown = &ppro_shutdown
+ };
+diff --git a/arch/i386/oprofile/op_x86_model.h b/arch/i386/oprofile/op_x86_model.h
+index 4b70531..82b1019 100644
+--- a/arch/i386/oprofile/op_x86_model.h
++++ b/arch/i386/oprofile/op_x86_model.h
+@@ -72,6 +72,7 @@ struct op_x86_model_spec {
+ 		struct op_msrs const * const msrs);
+ 	void (*start)(struct op_msrs const * const msrs);
+ 	void (*stop)(struct op_msrs const * const msrs);
++	void (*shutdown)(struct op_msrs const * const msrs);
+ };
+ 
+ extern struct op_x86_model_spec const op_ppro_spec;
