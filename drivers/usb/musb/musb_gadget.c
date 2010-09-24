@@ -1214,8 +1214,6 @@ static int musb_gadget_queue(struct usb_ep *ep, struct usb_request *req,
 
 	if (is_dma_capable() && musb_ep->dma)
 		map_dma_buffer(request, musb);
-	else if (!req->buf)
-		return -ENODATA;
 	else
 		request->mapped = 0;
 
