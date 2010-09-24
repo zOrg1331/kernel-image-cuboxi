@@ -4859,11 +4859,6 @@ Patch60009: diff-tossing-headers-around
 
 Patch70003: diff-scsi-add-modalias-mainstream
 
-# DRBD
-Patch90000: patch-linux-2.6.18-rhel5-drbd-8.3.4
-Patch90001: diff-drbd-compilation
-Patch90002: diff-drbd-dont-use-connector
-
 # Areca
 # replaced with linux-2.6-scsi-add-kernel-support-for-areca-raid-controller.patch
 # Patch90200: linux-2.6.18-arcmsr-1.20.0X.14.devel.patch
@@ -9684,10 +9679,6 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 
 %patch70003 -p1
 
-%patch90000 -p1
-%patch90001 -p1
-%patch90002 -p1
-
 %patch90210 -p1
 %patch90211 -p1
 %patch90212 -p1
@@ -10355,6 +10346,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Fri Sep 24 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M40.1
+- Merge with 5.1
+
 * Wed Sep 22 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.13
 - Fix CVE-2010-3081
 
