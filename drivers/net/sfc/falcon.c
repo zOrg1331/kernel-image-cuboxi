@@ -159,7 +159,6 @@ irqreturn_t falcon_legacy_interrupt_a1(int irq, void *dev_id)
 {
 	struct efx_nic *efx = dev_id;
 	efx_oword_t *int_ker = efx->irq_status.addr;
-	struct efx_channel *channel;
 	int syserr;
 	int queues;
 
@@ -194,15 +193,10 @@ irqreturn_t falcon_legacy_interrupt_a1(int irq, void *dev_id)
 	wmb(); /* Ensure the vector is cleared before interrupt ack */
 	falcon_irq_ack_a1(efx);
 
-	/* Schedule processing of any interrupting queues */
-	channel = &efx->channel[0];
-	while (queues) {
-		if (queues & 0x01)
-			efx_schedule_channel(channel);
-		channel++;
-		queues >>= 1;
-	}
-
+	if (queues & 1)
+		efx_schedule_channel(efx_get_channel(efx, 0));
+	if (queues & 2)
+		efx_schedule_channel(efx_get_channel(efx, 1));
 	return IRQ_HANDLED;
 }
 /**************************************************************************
@@ -1880,7 +1874,7 @@ struct efx_nic_type falcon_b0_nic_type = {
 				   * channels */
 	.tx_dc_base = 0x130000,
 	.rx_dc_base = 0x100000,
-	.offload_features = NETIF_F_IP_CSUM | NETIF_F_RXHASH,
+	.offload_features = NETIF_F_IP_CSUM | NETIF_F_RXHASH | NETIF_F_NTUPLE,
 	.reset_world_flags = ETH_RESET_IRQ,
 };
 

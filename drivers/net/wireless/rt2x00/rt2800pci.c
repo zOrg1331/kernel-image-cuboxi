@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2009 Ivo van Doorn <IvDoorn@gmail.com>
+	Copyright (C) 2009 - 2010 Ivo van Doorn <IvDoorn@gmail.com>
 	Copyright (C) 2009 Alban Browaeys <prahal@yahoo.com>
 	Copyright (C) 2009 Felix Fietkau <nbd@openwrt.org>
 	Copyright (C) 2009 Luis Correia <luis.f.correia@gmail.com>
@@ -196,8 +196,6 @@ static int rt2800pci_write_firmware(struct rt2x00_dev *rt2x00dev,
 {
 	u32 reg;
 
-	rt2800_register_write(rt2x00dev, AUTOWAKEUP_CFG, 0x00000000);
-
 	/*
 	 * enable Host program ram write selection
 	 */
@@ -344,24 +342,24 @@ static void rt2800pci_toggle_irq(struct rt2x00_dev *rt2x00dev,
 	}
 
 	rt2800_register_read(rt2x00dev, INT_MASK_CSR, &reg);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_RXDELAYINT, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_TXDELAYINT, mask);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_RXDELAYINT, 0);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_TXDELAYINT, 0);
 	rt2x00_set_field32(&reg, INT_MASK_CSR_RX_DONE, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_AC0_DMA_DONE, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_AC1_DMA_DONE, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_AC2_DMA_DONE, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_AC3_DMA_DONE, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_HCCA_DMA_DONE, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_MGMT_DMA_DONE, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_MCU_COMMAND, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_RXTX_COHERENT, mask);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_AC0_DMA_DONE, 0);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_AC1_DMA_DONE, 0);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_AC2_DMA_DONE, 0);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_AC3_DMA_DONE, 0);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_HCCA_DMA_DONE, 0);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_MGMT_DMA_DONE, 0);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_MCU_COMMAND, 0);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_RXTX_COHERENT, 0);
 	rt2x00_set_field32(&reg, INT_MASK_CSR_TBTT, mask);
 	rt2x00_set_field32(&reg, INT_MASK_CSR_PRE_TBTT, mask);
 	rt2x00_set_field32(&reg, INT_MASK_CSR_TX_FIFO_STATUS, mask);
 	rt2x00_set_field32(&reg, INT_MASK_CSR_AUTO_WAKEUP, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_GPTIMER, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_RX_COHERENT, mask);
-	rt2x00_set_field32(&reg, INT_MASK_CSR_TX_COHERENT, mask);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_GPTIMER, 0);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_RX_COHERENT, 0);
+	rt2x00_set_field32(&reg, INT_MASK_CSR_TX_COHERENT, 0);
 	rt2800_register_write(rt2x00dev, INT_MASK_CSR, reg);
 }
 
@@ -399,78 +397,18 @@ static int rt2800pci_init_registers(struct rt2x00_dev *rt2x00dev)
 
 static int rt2800pci_enable_radio(struct rt2x00_dev *rt2x00dev)
 {
-	u32 reg;
-	u16 word;
-
-	/*
-	 * Initialize all registers.
-	 */
 	if (unlikely(rt2800_wait_wpdma_ready(rt2x00dev) ||
-		     rt2800pci_init_queues(rt2x00dev) ||
-		     rt2800_init_registers(rt2x00dev) ||
-		     rt2800_wait_wpdma_ready(rt2x00dev) ||
-		     rt2800_init_bbp(rt2x00dev) ||
-		     rt2800_init_rfcsr(rt2x00dev)))
+		     rt2800pci_init_queues(rt2x00dev)))
 		return -EIO;
 
-	/*
-	 * Send signal to firmware during boot time.
-	 */
-	rt2800_mcu_request(rt2x00dev, MCU_BOOT_SIGNAL, 0, 0, 0);
-
-	/*
-	 * Enable RX.
-	 */
-	rt2800_register_read(rt2x00dev, MAC_SYS_CTRL, &reg);
-	rt2x00_set_field32(&reg, MAC_SYS_CTRL_ENABLE_TX, 1);
-	rt2x00_set_field32(&reg, MAC_SYS_CTRL_ENABLE_RX, 0);
-	rt2800_register_write(rt2x00dev, MAC_SYS_CTRL, reg);
-
-	rt2800_register_read(rt2x00dev, WPDMA_GLO_CFG, &reg);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_ENABLE_TX_DMA, 1);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_ENABLE_RX_DMA, 1);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_WP_DMA_BURST_SIZE, 2);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_TX_WRITEBACK_DONE, 1);
-	rt2800_register_write(rt2x00dev, WPDMA_GLO_CFG, reg);
-
-	rt2800_register_read(rt2x00dev, MAC_SYS_CTRL, &reg);
-	rt2x00_set_field32(&reg, MAC_SYS_CTRL_ENABLE_TX, 1);
-	rt2x00_set_field32(&reg, MAC_SYS_CTRL_ENABLE_RX, 1);
-	rt2800_register_write(rt2x00dev, MAC_SYS_CTRL, reg);
-
-	/*
-	 * Initialize LED control
-	 */
-	rt2x00_eeprom_read(rt2x00dev, EEPROM_LED1, &word);
-	rt2800_mcu_request(rt2x00dev, MCU_LED_1, 0xff,
-			      word & 0xff, (word >> 8) & 0xff);
-
-	rt2x00_eeprom_read(rt2x00dev, EEPROM_LED2, &word);
-	rt2800_mcu_request(rt2x00dev, MCU_LED_2, 0xff,
-			      word & 0xff, (word >> 8) & 0xff);
-
-	rt2x00_eeprom_read(rt2x00dev, EEPROM_LED3, &word);
-	rt2800_mcu_request(rt2x00dev, MCU_LED_3, 0xff,
-			      word & 0xff, (word >> 8) & 0xff);
-
-	return 0;
+	return rt2800_enable_radio(rt2x00dev);
 }
 
 static void rt2800pci_disable_radio(struct rt2x00_dev *rt2x00dev)
 {
 	u32 reg;
 
-	rt2800_register_read(rt2x00dev, WPDMA_GLO_CFG, &reg);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_ENABLE_TX_DMA, 0);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_TX_DMA_BUSY, 0);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_ENABLE_RX_DMA, 0);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_RX_DMA_BUSY, 0);
-	rt2x00_set_field32(&reg, WPDMA_GLO_CFG_TX_WRITEBACK_DONE, 1);
-	rt2800_register_write(rt2x00dev, WPDMA_GLO_CFG, reg);
-
-	rt2800_register_write(rt2x00dev, MAC_SYS_CTRL, 0);
-	rt2800_register_write(rt2x00dev, PWR_PIN_CFG, 0);
-	rt2800_register_write(rt2x00dev, TX_PIN_CFG, 0);
+	rt2800_disable_radio(rt2x00dev);
 
 	rt2800_register_write(rt2x00dev, PBF_SYS_CTRL, 0x00001280);
 
@@ -486,9 +424,6 @@ static void rt2800pci_disable_radio(struct rt2x00_dev *rt2x00dev)
 
 	rt2800_register_write(rt2x00dev, PBF_SYS_CTRL, 0x00000e1f);
 	rt2800_register_write(rt2x00dev, PBF_SYS_CTRL, 0x00000e00);
-
-	/* Wait for DMA, ignore error */
-	rt2800_wait_wpdma_ready(rt2x00dev);
 }
 
 static int rt2800pci_set_state(struct rt2x00_dev *rt2x00dev,
@@ -566,21 +501,16 @@ static int rt2800pci_set_device_state(struct rt2x00_dev *rt2x00dev,
 /*
  * TX descriptor initialization
  */
-static void rt2800pci_write_tx_data(struct queue_entry* entry,
-				    struct txentry_desc *txdesc)
+static __le32 *rt2800pci_get_txwi(struct queue_entry *entry)
 {
-	__le32 *txwi = (__le32 *) entry->skb->data;
-
-	rt2800_write_txwi(txwi, txdesc);
+	return (__le32 *) entry->skb->data;
 }
 
-
-static void rt2800pci_write_tx_desc(struct rt2x00_dev *rt2x00dev,
-				    struct sk_buff *skb,
+static void rt2800pci_write_tx_desc(struct queue_entry *entry,
 				    struct txentry_desc *txdesc)
 {
-	struct skb_frame_desc *skbdesc = get_skb_frame_desc(skb);
-	struct queue_entry_priv_pci *entry_priv = skbdesc->entry->priv_data;
+	struct skb_frame_desc *skbdesc = get_skb_frame_desc(entry->skb);
+	struct queue_entry_priv_pci *entry_priv = entry->priv_data;
 	__le32 *txd = entry_priv->desc;
 	u32 word;
 
@@ -600,7 +530,7 @@ static void rt2800pci_write_tx_desc(struct rt2x00_dev *rt2x00dev,
 	rt2x00_desc_write(txd, 0, word);
 
 	rt2x00_desc_read(txd, 1, &word);
-	rt2x00_set_field32(&word, TXD_W1_SD_LEN1, skb->len);
+	rt2x00_set_field32(&word, TXD_W1_SD_LEN1, entry->skb->len);
 	rt2x00_set_field32(&word, TXD_W1_LAST_SEC1,
 			   !test_bit(ENTRY_TXD_MORE_FRAG, &txdesc->flags));
 	rt2x00_set_field32(&word, TXD_W1_BURST,
@@ -631,41 +561,35 @@ static void rt2800pci_write_tx_desc(struct rt2x00_dev *rt2x00dev,
 /*
  * TX data initialization
  */
-static void rt2800pci_kick_tx_queue(struct rt2x00_dev *rt2x00dev,
-				    const enum data_queue_qid queue_idx)
+static void rt2800pci_kick_tx_queue(struct data_queue *queue)
 {
-	struct data_queue *queue;
-	unsigned int idx, qidx = 0;
+	struct rt2x00_dev *rt2x00dev = queue->rt2x00dev;
+	struct queue_entry *entry = rt2x00queue_get_entry(queue, Q_INDEX);
+	unsigned int qidx = 0;
 
-	if (queue_idx > QID_HCCA && queue_idx != QID_MGMT)
-		return;
-
-	queue = rt2x00queue_get_queue(rt2x00dev, queue_idx);
-	idx = queue->index[Q_INDEX];
-
-	if (queue_idx == QID_MGMT)
+	if (queue->qid == QID_MGMT)
 		qidx = 5;
 	else
-		qidx = queue_idx;
+		qidx = queue->qid;
 
-	rt2800_register_write(rt2x00dev, TX_CTX_IDX(qidx), idx);
+	rt2800_register_write(rt2x00dev, TX_CTX_IDX(qidx), entry->entry_idx);
 }
 
-static void rt2800pci_kill_tx_queue(struct rt2x00_dev *rt2x00dev,
-				    const enum data_queue_qid qid)
+static void rt2800pci_kill_tx_queue(struct data_queue *queue)
 {
+	struct rt2x00_dev *rt2x00dev = queue->rt2x00dev;
 	u32 reg;
 
-	if (qid == QID_BEACON) {
+	if (queue->qid == QID_BEACON) {
 		rt2800_register_write(rt2x00dev, BCN_TIME_CFG, 0);
 		return;
 	}
 
 	rt2800_register_read(rt2x00dev, WPDMA_RST_IDX, &reg);
-	rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX0, (qid == QID_AC_BE));
-	rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX1, (qid == QID_AC_BK));
-	rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX2, (qid == QID_AC_VI));
-	rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX3, (qid == QID_AC_VO));
+	rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX0, (queue->qid == QID_AC_BE));
+	rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX1, (queue->qid == QID_AC_BK));
+	rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX2, (queue->qid == QID_AC_VI));
+	rt2x00_set_field32(&reg, WPDMA_RST_IDX_DTX_IDX3, (queue->qid == QID_AC_VO));
 	rt2800_register_write(rt2x00dev, WPDMA_RST_IDX, reg);
 }
 
@@ -728,110 +652,6 @@ static void rt2800pci_fill_rxdone(struct queue_entry *entry,
 /*
  * Interrupt functions.
  */
-static void rt2800pci_txdone(struct rt2x00_dev *rt2x00dev)
-{
-	struct data_queue *queue;
-	struct queue_entry *entry;
-	__le32 *txwi;
-	struct txdone_entry_desc txdesc;
-	u32 word;
-	u32 reg;
-	int wcid, ack, pid, tx_wcid, tx_ack, tx_pid;
-	u16 mcs, real_mcs;
-	int i;
-
-	/*
-	 * TX_STA_FIFO is a stack of X entries, hence read TX_STA_FIFO
-	 * at most X times and also stop processing once the TX_STA_FIFO_VALID
-	 * flag is not set anymore.
-	 *
-	 * The legacy drivers use X=TX_RING_SIZE but state in a comment
-	 * that the TX_STA_FIFO stack has a size of 16. We stick to our
-	 * tx ring size for now.
-	 */
-	for (i = 0; i < TX_ENTRIES; i++) {
-		rt2800_register_read(rt2x00dev, TX_STA_FIFO, &reg);
-		if (!rt2x00_get_field32(reg, TX_STA_FIFO_VALID))
-			break;
-
-		wcid    = rt2x00_get_field32(reg, TX_STA_FIFO_WCID);
-		ack     = rt2x00_get_field32(reg, TX_STA_FIFO_TX_ACK_REQUIRED);
-		pid     = rt2x00_get_field32(reg, TX_STA_FIFO_PID_TYPE);
-
-		/*
-		 * Skip this entry when it contains an invalid
-		 * queue identication number.
-		 */
-		if (pid <= 0 || pid > QID_RX)
-			continue;
-
-		queue = rt2x00queue_get_queue(rt2x00dev, pid - 1);
-		if (unlikely(!queue))
-			continue;
-
-		/*
-		 * Inside each queue, we process each entry in a chronological
-		 * order. We first check that the queue is not empty.
-		 */
-		if (rt2x00queue_empty(queue))
-			continue;
-		entry = rt2x00queue_get_entry(queue, Q_INDEX_DONE);
-
-		/* Check if we got a match by looking at WCID/ACK/PID
-		 * fields */
-		txwi = (__le32 *) entry->skb->data;
-
-		rt2x00_desc_read(txwi, 1, &word);
-		tx_wcid = rt2x00_get_field32(word, TXWI_W1_WIRELESS_CLI_ID);
-		tx_ack  = rt2x00_get_field32(word, TXWI_W1_ACK);
-		tx_pid  = rt2x00_get_field32(word, TXWI_W1_PACKETID);
-
-		if ((wcid != tx_wcid) || (ack != tx_ack) || (pid != tx_pid))
-			WARNING(rt2x00dev, "invalid TX_STA_FIFO content\n");
-
-		/*
-		 * Obtain the status about this packet.
-		 */
-		txdesc.flags = 0;
-		rt2x00_desc_read(txwi, 0, &word);
-		mcs = rt2x00_get_field32(word, TXWI_W0_MCS);
-		real_mcs = rt2x00_get_field32(reg, TX_STA_FIFO_MCS);
-
-		/*
-		 * Ralink has a retry mechanism using a global fallback
-		 * table. We setup this fallback table to try the immediate
-		 * lower rate for all rates. In the TX_STA_FIFO, the MCS field
-		 * always contains the MCS used for the last transmission, be
-		 * it successful or not.
-		 */
-		if (rt2x00_get_field32(reg, TX_STA_FIFO_TX_SUCCESS)) {
-			/*
-			 * Transmission succeeded. The number of retries is
-			 * mcs - real_mcs
-			 */
-			__set_bit(TXDONE_SUCCESS, &txdesc.flags);
-			txdesc.retry = ((mcs > real_mcs) ? mcs - real_mcs : 0);
-		} else {
-			/*
-			 * Transmission failed. The number of retries is
-			 * always 7 in this case (for a total number of 8
-			 * frames sent).
-			 */
-			__set_bit(TXDONE_FAILURE, &txdesc.flags);
-			txdesc.retry = 7;
-		}
-
-		/*
-		 * the frame was retried at least once
-		 * -> hw used fallback rates
-		 */
-		if (txdesc.retry)
-			__set_bit(TXDONE_FALLBACK, &txdesc.flags);
-
-		rt2x00lib_txdone(entry, &txdesc);
-	}
-}
-
 static void rt2800pci_wakeup(struct rt2x00_dev *rt2x00dev)
 {
 	struct ieee80211_conf conf = { .flags = 0 };
@@ -867,7 +687,7 @@ static irqreturn_t rt2800pci_interrupt_thread(int irq, void *dev_instance)
 	 * 4 - Tx done interrupt.
 	 */
 	if (rt2x00_get_field32(reg, INT_SOURCE_CSR_TX_FIFO_STATUS))
-		rt2800pci_txdone(rt2x00dev);
+		rt2800_txdone(rt2x00dev);
 
 	/*
 	 * 5 - Auto wakeup interrupt.
@@ -1011,6 +831,7 @@ static const struct rt2800_ops rt2800pci_rt2800_ops = {
 	.regbusy_read		= rt2x00pci_regbusy_read,
 	.drv_write_firmware	= rt2800pci_write_firmware,
 	.drv_init_registers	= rt2800pci_init_registers,
+	.drv_get_txwi		= rt2800pci_get_txwi,
 };
 
 static const struct rt2x00lib_ops rt2800pci_rt2x00_ops = {
@@ -1030,7 +851,7 @@ static const struct rt2x00lib_ops rt2800pci_rt2x00_ops = {
 	.reset_tuner		= rt2800_reset_tuner,
 	.link_tuner		= rt2800_link_tuner,
 	.write_tx_desc		= rt2800pci_write_tx_desc,
-	.write_tx_data		= rt2800pci_write_tx_data,
+	.write_tx_data		= rt2800_write_tx_data,
 	.write_beacon		= rt2800_write_beacon,
 	.kick_tx_queue		= rt2800pci_kick_tx_queue,
 	.kill_tx_queue		= rt2800pci_kill_tx_queue,

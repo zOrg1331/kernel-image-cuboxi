@@ -467,8 +467,7 @@ static ssize_t iwl_dbgfs_channels_read(struct file *file, char __user *user_buf,
 		for (i = 0; i < supp_band->n_channels; i++)
 			pos += scnprintf(buf + pos, bufsz - pos,
 					"%d: %ddBm: BSS%s%s, %s.\n",
-					ieee80211_frequency_to_channel(
-					channels[i].center_freq),
+					channels[i].hw_value,
 					channels[i].max_power,
 					channels[i].flags & IEEE80211_CHAN_RADAR ?
 					" (IEEE 802.11h required)" : "",
@@ -491,8 +490,7 @@ static ssize_t iwl_dbgfs_channels_read(struct file *file, char __user *user_buf,
 		for (i = 0; i < supp_band->n_channels; i++)
 			pos += scnprintf(buf + pos, bufsz - pos,
 					"%d: %ddBm: BSS%s%s, %s.\n",
-					ieee80211_frequency_to_channel(
-					channels[i].center_freq),
+					channels[i].hw_value,
 					channels[i].max_power,
 					channels[i].flags & IEEE80211_CHAN_RADAR ?
 					" (IEEE 802.11h required)" : "",
@@ -577,10 +575,10 @@ static ssize_t iwl_dbgfs_interrupt_read(struct file *file,
 		priv->isr_stats.hw);
 	pos += scnprintf(buf + pos, bufsz - pos, "SW Error:\t\t\t %u\n",
 		priv->isr_stats.sw);
-	if (priv->isr_stats.sw > 0) {
+	if (priv->isr_stats.sw || priv->isr_stats.hw) {
 		pos += scnprintf(buf + pos, bufsz - pos,
 			"\tLast Restarting Code:  0x%X\n",
-			priv->isr_stats.sw_err);
+			priv->isr_stats.err_code);
 	}
 #ifdef CONFIG_IWLWIFI_DEBUG
 	pos += scnprintf(buf + pos, bufsz - pos, "Frame transmitted:\t\t %u\n",
@@ -645,19 +643,25 @@ static ssize_t iwl_dbgfs_qos_read(struct file *file, char __user *user_buf,
 				       size_t count, loff_t *ppos)
 {
 	struct iwl_priv *priv = file->private_data;
+	struct iwl_rxon_context *ctx;
 	int pos = 0, i;
-	char buf[256];
+	char buf[256 * NUM_IWL_RXON_CTX];
 	const size_t bufsz = sizeof(buf);
 
-	for (i = 0; i < AC_NUM; i++) {
-		pos += scnprintf(buf + pos, bufsz - pos,
-			"\tcw_min\tcw_max\taifsn\ttxop\n");
-		pos += scnprintf(buf + pos, bufsz - pos,
+	for_each_context(priv, ctx) {
+		pos += scnprintf(buf + pos, bufsz - pos, "context %d:\n",
+				 ctx->ctxid);
+		for (i = 0; i < AC_NUM; i++) {
+			pos += scnprintf(buf + pos, bufsz - pos,
+				"\tcw_min\tcw_max\taifsn\ttxop\n");
+			pos += scnprintf(buf + pos, bufsz - pos,
 				"AC[%d]\t%u\t%u\t%u\t%u\n", i,
-				priv->qos_data.def_qos_parm.ac[i].cw_min,
-				priv->qos_data.def_qos_parm.ac[i].cw_max,
-				priv->qos_data.def_qos_parm.ac[i].aifsn,
-				priv->qos_data.def_qos_parm.ac[i].edca_txop);
+				ctx->qos_data.def_qos_parm.ac[i].cw_min,
+				ctx->qos_data.def_qos_parm.ac[i].cw_max,
+				ctx->qos_data.def_qos_parm.ac[i].aifsn,
+				ctx->qos_data.def_qos_parm.ac[i].edca_txop);
+		}
+		pos += scnprintf(buf + pos, bufsz - pos, "\n");
 	}
 	return simple_read_from_buffer(user_buf, count, ppos, buf, pos);
 }
@@ -732,7 +736,7 @@ static ssize_t iwl_dbgfs_disable_ht40_write(struct file *file,
 		return -EFAULT;
 	if (sscanf(buf, "%d", &ht40) != 1)
 		return -EFAULT;
-	if (!iwl_is_associated(priv))
+	if (!iwl_is_any_associated(priv))
 		priv->disable_ht40 = ht40 ? true : false;
 	else {
 		IWL_ERR(priv, "Sta associated with AP - "
@@ -1321,7 +1325,8 @@ static ssize_t iwl_dbgfs_rxon_flags_read(struct file *file,
 	int len = 0;
 	char buf[20];
 
-	len = sprintf(buf, "0x%04X\n", le32_to_cpu(priv->active_rxon.flags));
+	len = sprintf(buf, "0x%04X\n",
+		le32_to_cpu(priv->contexts[IWL_RXON_CTX_BSS].active.flags));
 	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
 }
 
@@ -1334,7 +1339,7 @@ static ssize_t iwl_dbgfs_rxon_filter_flags_read(struct file *file,
 	char buf[20];
 
 	len = sprintf(buf, "0x%04X\n",
-		      le32_to_cpu(priv->active_rxon.filter_flags));
+		le32_to_cpu(priv->contexts[IWL_RXON_CTX_BSS].active.filter_flags));
 	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
 }
 
@@ -1529,6 +1534,126 @@ static ssize_t iwl_dbgfs_ucode_bt_stats_read(struct file *file,
 			user_buf, count, ppos);
 }
 
+static ssize_t iwl_dbgfs_monitor_period_write(struct file *file,
+					const char __user *user_buf,
+					size_t count, loff_t *ppos) {
+
+	struct iwl_priv *priv = file->private_data;
+	char buf[8];
+	int buf_size;
+	int period;
+
+	memset(buf, 0, sizeof(buf));
+	buf_size = min(count, sizeof(buf) -  1);
+	if (copy_from_user(buf, user_buf, buf_size))
+		return -EFAULT;
+	if (sscanf(buf, "%d", &period) != 1)
+		return -EINVAL;
+	if (period < 0 || period > IWL_MAX_MONITORING_PERIOD)
+		priv->cfg->monitor_recover_period = IWL_DEF_MONITORING_PERIOD;
+	else
+		priv->cfg->monitor_recover_period = period;
+
+	if (priv->cfg->monitor_recover_period)
+		mod_timer(&priv->monitor_recover, jiffies + msecs_to_jiffies(
+			  priv->cfg->monitor_recover_period));
+	else
+		del_timer_sync(&priv->monitor_recover);
+	return count;
+}
+
+static ssize_t iwl_dbgfs_bt_traffic_read(struct file *file,
+					char __user *user_buf,
+					size_t count, loff_t *ppos) {
+
+	struct iwl_priv *priv = (struct iwl_priv *)file->private_data;
+	int pos = 0;
+	char buf[200];
+	const size_t bufsz = sizeof(buf);
+	ssize_t ret;
+
+	pos += scnprintf(buf + pos, bufsz - pos, "BT in %s mode\n",
+		priv->bt_full_concurrent ? "full concurrency" : "3-wire");
+	pos += scnprintf(buf + pos, bufsz - pos, "BT status: %s, "
+			 "last traffic notif: %d\n",
+		priv->bt_status ? "On" : "Off", priv->notif_bt_traffic_load);
+	pos += scnprintf(buf + pos, bufsz - pos, "ch_announcement: %d, "
+			 "sco_active: %d, kill_ack_mask: %x, "
+			 "kill_cts_mask: %x\n",
+		priv->bt_ch_announce, priv->bt_sco_active,
+		priv->kill_ack_mask, priv->kill_cts_mask);
+
+	pos += scnprintf(buf + pos, bufsz - pos, "bluetooth traffic load: ");
+	switch (priv->bt_traffic_load) {
+	case IWL_BT_COEX_TRAFFIC_LOAD_CONTINUOUS:
+		pos += scnprintf(buf + pos, bufsz - pos, "Continuous\n");
+		break;
+	case IWL_BT_COEX_TRAFFIC_LOAD_HIGH:
+		pos += scnprintf(buf + pos, bufsz - pos, "High\n");
+		break;
+	case IWL_BT_COEX_TRAFFIC_LOAD_LOW:
+		pos += scnprintf(buf + pos, bufsz - pos, "Low\n");
+		break;
+	case IWL_BT_COEX_TRAFFIC_LOAD_NONE:
+	default:
+		pos += scnprintf(buf + pos, bufsz - pos, "None\n");
+		break;
+	}
+
+	ret = simple_read_from_buffer(user_buf, count, ppos, buf, pos);
+	return ret;
+}
+
+static ssize_t iwl_dbgfs_protection_mode_read(struct file *file,
+					char __user *user_buf,
+					size_t count, loff_t *ppos)
+{
+	struct iwl_priv *priv = (struct iwl_priv *)file->private_data;
+
+	int pos = 0;
+	char buf[40];
+	const size_t bufsz = sizeof(buf);
+
+	pos += scnprintf(buf + pos, bufsz - pos, "use %s for aggregation\n",
+			 (priv->cfg->use_rts_for_aggregation) ? "rts/cts" :
+			 "cts-to-self");
+	return simple_read_from_buffer(user_buf, count, ppos, buf, pos);
+}
+
+static ssize_t iwl_dbgfs_protection_mode_write(struct file *file,
+					const char __user *user_buf,
+					size_t count, loff_t *ppos) {
+
+	struct iwl_priv *priv = file->private_data;
+	char buf[8];
+	int buf_size;
+	int rts;
+
+	memset(buf, 0, sizeof(buf));
+	buf_size = min(count, sizeof(buf) -  1);
+	if (copy_from_user(buf, user_buf, buf_size))
+		return -EFAULT;
+	if (sscanf(buf, "%d", &rts) != 1)
+		return -EINVAL;
+	if (rts)
+		priv->cfg->use_rts_for_aggregation = true;
+	else
+		priv->cfg->use_rts_for_aggregation = false;
+	return count;
+}
+
+static ssize_t iwl_dbgfs_reply_tx_error_read(struct file *file,
+					char __user *user_buf,
+					size_t count, loff_t *ppos)
+{
+	struct iwl_priv *priv = file->private_data;
+
+	if (priv->cfg->ops->lib->debugfs_ops.reply_tx_error)
+		return priv->cfg->ops->lib->debugfs_ops.reply_tx_error(
+			file, user_buf, count, ppos);
+	else
+		return -ENODATA;
+}
 DEBUGFS_READ_FILE_OPS(rx_statistics);
 DEBUGFS_READ_FILE_OPS(tx_statistics);
 DEBUGFS_READ_WRITE_FILE_OPS(traffic_log);
@@ -1552,6 +1677,10 @@ DEBUGFS_READ_FILE_OPS(rxon_flags);
 DEBUGFS_READ_FILE_OPS(rxon_filter_flags);
 DEBUGFS_WRITE_FILE_OPS(txfifo_flush);
 DEBUGFS_READ_FILE_OPS(ucode_bt_stats);
+DEBUGFS_WRITE_FILE_OPS(monitor_period);
+DEBUGFS_READ_FILE_OPS(bt_traffic);
+DEBUGFS_READ_WRITE_FILE_OPS(protection_mode);
+DEBUGFS_READ_FILE_OPS(reply_tx_error);
 
 /*
  * Create the debugfs files and directories
@@ -1612,6 +1741,7 @@ int iwl_dbgfs_register(struct iwl_priv *priv, const char *name)
 	DEBUGFS_ADD_FILE(ucode_general_stats, dir_debug, S_IRUSR);
 	if (priv->cfg->ops->lib->dev_txfifo_flush)
 		DEBUGFS_ADD_FILE(txfifo_flush, dir_debug, S_IWUSR);
+	DEBUGFS_ADD_FILE(protection_mode, dir_debug, S_IWUSR | S_IRUSR);
 
 	if (priv->cfg->sensitivity_calib_by_driver)
 		DEBUGFS_ADD_FILE(sensitivity, dir_debug, S_IRUSR);
@@ -1621,8 +1751,12 @@ int iwl_dbgfs_register(struct iwl_priv *priv, const char *name)
 		DEBUGFS_ADD_FILE(ucode_tracing, dir_debug, S_IWUSR | S_IRUSR);
 	if (priv->cfg->bt_statistics)
 		DEBUGFS_ADD_FILE(ucode_bt_stats, dir_debug, S_IRUSR);
+	DEBUGFS_ADD_FILE(reply_tx_error, dir_debug, S_IRUSR);
 	DEBUGFS_ADD_FILE(rxon_flags, dir_debug, S_IWUSR);
 	DEBUGFS_ADD_FILE(rxon_filter_flags, dir_debug, S_IWUSR);
+	DEBUGFS_ADD_FILE(monitor_period, dir_debug, S_IWUSR);
+	if (priv->cfg->advanced_bt_coexist)
+		DEBUGFS_ADD_FILE(bt_traffic, dir_debug, S_IRUSR);
 	if (priv->cfg->sensitivity_calib_by_driver)
 		DEBUGFS_ADD_BOOL(disable_sensitivity, dir_rf,
 				 &priv->disable_sens_cal);
