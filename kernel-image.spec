@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.35
-Release: alt5
+Release: alt5.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -589,6 +589,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Fri Sep 24 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt5.1
+- aufs2 included
+- CONFIG_DEVTMPFS enabled
+
 * Tue Sep 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt5
 - 2.6.35.5
 
