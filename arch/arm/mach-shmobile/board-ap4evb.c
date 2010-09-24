@@ -375,10 +375,40 @@ static struct platform_device usb1_host_device = {
 	.resource	= usb1_host_resources,
 };
 
+const static struct fb_videomode ap4evb_lcdc_modes[] = {
+	{
+#ifdef CONFIG_AP4EVB_QHD
+		.name		= "R63302(QHD)",
+		.xres		= 544,
+		.yres		= 961,
+		.left_margin	= 72,
+		.right_margin	= 600,
+		.hsync_len	= 16,
+		.upper_margin	= 8,
+		.lower_margin	= 8,
+		.vsync_len	= 2,
+		.sync		= FB_SYNC_VERT_HIGH_ACT | FB_SYNC_HOR_HIGH_ACT,
+#else
+		.name		= "WVGA Panel",
+		.xres		= 800,
+		.yres		= 480,
+		.left_margin	= 220,
+		.right_margin	= 110,
+		.hsync_len	= 70,
+		.upper_margin	= 20,
+		.lower_margin	= 5,
+		.vsync_len	= 5,
+		.sync		= 0,
+#endif
+	},
+};
+
 static struct sh_mobile_lcdc_info lcdc_info = {
 	.ch[0] = {
 		.chan = LCDC_CHAN_MAINLCD,
 		.bpp = 16,
+		.lcd_cfg = ap4evb_lcdc_modes,
+		.num_cfg = ARRAY_SIZE(ap4evb_lcdc_modes),
 	}
 };
 
@@ -569,6 +599,60 @@ static struct platform_device fsi_device = {
 	},
 };
 
+/*
+ * If left and right margins are not multiples of 8,
+ * LDHAJR will be adjusted accordingly by the LCDC
+ * driver. Until we start using EDID, these values
+ * might have to be adjusted for different monitors.
+ */
+const static struct fb_videomode ap4evb_hdmi_modes[] = {
+	{
+		.name = "HDMI 720p",
+		.xres = 1280,
+		.yres = 720,
+
+		.left_margin = 200,
+		.right_margin = 88,
+		.hsync_len = 48,
+
+		.upper_margin = 20,
+		.lower_margin = 5,
+		.vsync_len = 5,
+
+		.pixclock = 13468,
+		.sync = FB_SYNC_VERT_HIGH_ACT | FB_SYNC_HOR_HIGH_ACT,
+	}, {
+		.name = "1280x1024",
+		.xres = 1280,
+		.yres = 1024,
+
+		.left_margin = 144,
+		.right_margin = 48,
+		.hsync_len = 64,
+
+		.upper_margin = 35,
+		.lower_margin = 5,
+		.vsync_len = 3,
+
+		.pixclock = 9800,
+		.sync = FB_SYNC_VERT_HIGH_ACT | FB_SYNC_HOR_HIGH_ACT,
+	}, {
+		.name = "HDMI 480p",
+		.xres = 720,
+		.yres = 480,
+
+		.left_margin = 36,
+		.right_margin = 18,
+		.hsync_len = 68,
+
+		.upper_margin = 36,
+		.lower_margin = 3,
+		.vsync_len = 6,
+		.pixclock = 37037,
+		.sync = FB_SYNC_VERT_HIGH_ACT | FB_SYNC_HOR_HIGH_ACT,
+	},
+};
+
 static struct sh_mobile_lcdc_info sh_mobile_lcdc1_info = {
 	.clock_source = LCDC_CLK_EXTERNAL,
 	.ch[0] = {
@@ -577,26 +661,8 @@ static struct sh_mobile_lcdc_info sh_mobile_lcdc1_info = {
 		.interface_type = RGB24,
 		.clock_divider = 1,
 		.flags = LCDC_FLAGS_DWPOL,
-		.lcd_cfg = {
-			.name = "HDMI",
-			/* So far only 720p is supported */
-			.xres = 1280,
-			.yres = 720,
-			/*
-			 * If left and right margins are not multiples of 8,
-			 * LDHAJR will be adjusted accordingly by the LCDC
-			 * driver. Until we start using EDID, these values
-			 * might have to be adjusted for different monitors.
-			 */
-			.left_margin = 200,
-			.right_margin = 88,
-			.hsync_len = 48,
-			.upper_margin = 20,
-			.lower_margin = 5,
-			.vsync_len = 5,
-			.pixclock = 13468,
-			.sync = FB_SYNC_VERT_HIGH_ACT | FB_SYNC_HOR_HIGH_ACT,
-		},
+		.lcd_cfg = ap4evb_hdmi_modes,
+		.num_cfg = ARRAY_SIZE(ap4evb_hdmi_modes),
 	}
 };
 
@@ -756,7 +822,6 @@ device_initcall(hdmi_init_pm_clock);
  * FIXME !!
  *
  * gpio_no_direction
- * gpio_pull_up
  * are quick_hack.
  *
  * current gpio frame work doesn't have
@@ -768,49 +833,37 @@ static void __init gpio_no_direction(u32 addr)
 	__raw_writeb(0x00, addr);
 }
 
-static void __init gpio_pull_up(u32 addr)
-{
-	u8 data = __raw_readb(addr);
-
-	data &= 0x0F;
-	data |= 0xC0;
-	__raw_writeb(data, addr);
-}
-
 /* TouchScreen */
+#ifdef CONFIG_AP4EVB_QHD
+# define GPIO_TSC_IRQ	GPIO_FN_IRQ28_123
+# define GPIO_TSC_PORT	GPIO_PORT123
+#else /* WVGA */
+# define GPIO_TSC_IRQ	GPIO_FN_IRQ7_40
+# define GPIO_TSC_PORT	GPIO_PORT40
+#endif
+
 #define IRQ28	evt2irq(0x3380) /* IRQ28A */
 #define IRQ7	evt2irq(0x02e0) /* IRQ7A */
 static int ts_get_pendown_state(void)
 {
-	int val1, val2;
+	int val;
 
-	gpio_free(GPIO_FN_IRQ28_123);
-	gpio_free(GPIO_FN_IRQ7_40);
+	gpio_free(GPIO_TSC_IRQ);
 
-	gpio_request(GPIO_PORT123, NULL);
-	gpio_request(GPIO_PORT40, NULL);
+	gpio_request(GPIO_TSC_PORT, NULL);
 
-	gpio_direction_input(GPIO_PORT123);
-	gpio_direction_input(GPIO_PORT40);
+	gpio_direction_input(GPIO_TSC_PORT);
 
-	val1 = gpio_get_value(GPIO_PORT123);
-	val2 = gpio_get_value(GPIO_PORT40);
+	val = gpio_get_value(GPIO_TSC_PORT);
 
-	gpio_request(GPIO_FN_IRQ28_123, NULL);	/* for QHD */
-	gpio_request(GPIO_FN_IRQ7_40, NULL);	/* for WVGA */
+	gpio_request(GPIO_TSC_IRQ, NULL);
 
-	return val1 ^ val2;
+	return !val;
 }
 
-#define PORT40CR	0xE6051028
-#define PORT123CR	0xE605007B
 static int ts_init(void)
 {
-	gpio_request(GPIO_FN_IRQ28_123, NULL);	/* for QHD */
-	gpio_request(GPIO_FN_IRQ7_40, NULL);	/* for WVGA */
-
-	gpio_pull_up(PORT40CR);
-	gpio_pull_up(PORT123CR);
+	gpio_request(GPIO_TSC_IRQ, NULL);
 
 	return 0;
 }
@@ -977,8 +1030,10 @@ static void __init ap4evb_init(void)
 				ARRAY_SIZE(i2c1_devices));
 
 #ifdef CONFIG_AP4EVB_QHD
+
 	/*
-	 * QHD
+	 * For QHD Panel (MIPI-DSI, CONFIG_AP4EVB_QHD=y) and
+	 * IRQ28 for Touch Panel, set dip switches S3, S43 as OFF, ON.
 	 */
 
 	/* enable KEYSC */
@@ -1004,17 +1059,6 @@ static void __init ap4evb_init(void)
 	lcdc_info.ch[0].interface_type		= RGB24;
 	lcdc_info.ch[0].clock_divider		= 1;
 	lcdc_info.ch[0].flags			= LCDC_FLAGS_DWPOL;
-	lcdc_info.ch[0].lcd_cfg.name		= "R63302(QHD)";
-	lcdc_info.ch[0].lcd_cfg.xres		= 544;
-	lcdc_info.ch[0].lcd_cfg.yres		= 961;
-	lcdc_info.ch[0].lcd_cfg.left_margin	= 72;
-	lcdc_info.ch[0].lcd_cfg.right_margin	= 600;
-	lcdc_info.ch[0].lcd_cfg.hsync_len	= 16;
-	lcdc_info.ch[0].lcd_cfg.upper_margin	= 8;
-	lcdc_info.ch[0].lcd_cfg.lower_margin	= 8;
-	lcdc_info.ch[0].lcd_cfg.vsync_len	= 2;
-	lcdc_info.ch[0].lcd_cfg.sync		= FB_SYNC_VERT_HIGH_ACT |
-						  FB_SYNC_HOR_HIGH_ACT;
 	lcdc_info.ch[0].lcd_size_cfg.width	= 44;
 	lcdc_info.ch[0].lcd_size_cfg.height	= 79;
 
@@ -1022,8 +1066,10 @@ static void __init ap4evb_init(void)
 
 #else
 	/*
-	 * WVGA
+	 * For WVGA Panel (18-bit RGB, CONFIG_AP4EVB_WVGA=y) and
+	 * IRQ7 for Touch Panel, set dip switches S3, S43 to ON, OFF.
 	 */
+
 	gpio_request(GPIO_FN_LCDD17,   NULL);
 	gpio_request(GPIO_FN_LCDD16,   NULL);
 	gpio_request(GPIO_FN_LCDD15,   NULL);
@@ -1055,16 +1101,6 @@ static void __init ap4evb_init(void)
 	lcdc_info.ch[0].interface_type		= RGB18;
 	lcdc_info.ch[0].clock_divider		= 2;
 	lcdc_info.ch[0].flags			= 0;
-	lcdc_info.ch[0].lcd_cfg.name		= "WVGA Panel";
-	lcdc_info.ch[0].lcd_cfg.xres		= 800;
-	lcdc_info.ch[0].lcd_cfg.yres		= 480;
-	lcdc_info.ch[0].lcd_cfg.left_margin	= 220;
-	lcdc_info.ch[0].lcd_cfg.right_margin	= 110;
-	lcdc_info.ch[0].lcd_cfg.hsync_len	= 70;
-	lcdc_info.ch[0].lcd_cfg.upper_margin	= 20;
-	lcdc_info.ch[0].lcd_cfg.lower_margin	= 5;
-	lcdc_info.ch[0].lcd_cfg.vsync_len	= 5;
-	lcdc_info.ch[0].lcd_cfg.sync		= 0;
 	lcdc_info.ch[0].lcd_size_cfg.width	= 152;
 	lcdc_info.ch[0].lcd_size_cfg.height	= 91;
 
