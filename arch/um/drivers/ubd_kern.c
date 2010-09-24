@@ -1099,7 +1099,7 @@ static int ubd_open(struct block_device *bdev, fmode_t mode)
 	struct ubd *ubd_dev = disk->private_data;
 	int err = 0;
 
-	lock_kernel();
+	mutex_lock(&ubd_mutex);
 	if(ubd_dev->count == 0){
 		err = ubd_open_dev(ubd_dev);
 		if(err){
@@ -1118,7 +1118,7 @@ static int ubd_open(struct block_device *bdev, fmode_t mode)
 	        err = -EROFS;
 	}*/
 out:
-	unlock_kernel();
+	mutex_unlock(&ubd_mutex);
 	return err;
 }
 
@@ -1126,10 +1126,10 @@ static int ubd_release(struct gendisk *disk, fmode_t mode)
 {
 	struct ubd *ubd_dev = disk->private_data;
 
-	lock_kernel();
+	mutex_lock(&ubd_mutex);
 	if(--ubd_dev->count == 0)
 		ubd_close_dev(ubd_dev);
-	unlock_kernel();
+	mutex_unlock(&ubd_mutex);
 	return 0;
 }
 
