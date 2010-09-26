@@ -492,7 +492,9 @@ exit:
 static void coretemp_device_remove(unsigned int cpu)
 {
 	struct pdev_entry *p;
+#ifdef CONFIG_SMP
 	unsigned int i;
+#endif
 
 	mutex_lock(&pdev_list_mutex);
 	list_for_each_entry(p, &pdev_list, list) {
@@ -503,9 +505,11 @@ static void coretemp_device_remove(unsigned int cpu)
 		list_del(&p->list);
 		mutex_unlock(&pdev_list_mutex);
 		kfree(p);
+#ifdef CONFIG_SMP
 		for_each_cpu(i, cpu_sibling_mask(cpu))
 			if (i != cpu && !coretemp_device_add(i))
 				break;
+#endif
 		return;
 	}
 	mutex_unlock(&pdev_list_mutex);
