@@ -1,4 +1,4 @@
-Name: kernel-image-std-ng
+Name: kernel-image-std-ng-eeepc
 Version: 2.6.35
 Release: alt5.1.gns1
 
