@@ -186,6 +186,7 @@ static const struct file_operations qp_debugfs_fops = {
 	.open    = qp_open,
 	.release = qp_release,
 	.read    = qp_read,
+	.llseek  = default_llseek,
 };
 
 static int setup_debugfs(struct c4iw_dev *devp)
