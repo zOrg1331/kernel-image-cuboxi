@@ -500,7 +500,7 @@ u64 gfs2_ri_total(struct gfs2_sbd *sdp)
 	for (rgrps = 0;; rgrps++) {
 		loff_t pos = rgrps * sizeof(struct gfs2_rindex);
 
-		if (pos + sizeof(struct gfs2_rindex) >= ip->i_disksize)
+		if (pos + sizeof(struct gfs2_rindex) >= i_size_read(inode))
 			break;
 		error = gfs2_internal_read(ip, &ra_state, buf, &pos,
 					   sizeof(struct gfs2_rindex));
@@ -588,7 +588,9 @@ static int gfs2_ri_update(struct gfs2_inode *ip)
 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
 	struct inode *inode = &ip->i_inode;
 	struct file_ra_state ra_state;
-	u64 rgrp_count = ip->i_disksize;
+	u64 rgrp_count = i_size_read(inode);
+	struct gfs2_rgrpd *rgd;
+	unsigned int max_data = 0;
 	int error;
 
 	do_div(rgrp_count, sizeof(struct gfs2_rindex));
@@ -603,6 +605,10 @@ static int gfs2_ri_update(struct gfs2_inode *ip)
 		}
 	}
 
+	list_for_each_entry(rgd, &sdp->sd_rindex_list, rd_list)
+		if (rgd->rd_data > max_data)
+			max_data = rgd->rd_data;
+	sdp->sd_max_rg_data = max_data;
 	sdp->sd_rindex_uptodate = 1;
 	return 0;
 }
@@ -622,13 +628,15 @@ static int gfs2_ri_update_special(struct gfs2_inode *ip)
 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
 	struct inode *inode = &ip->i_inode;
 	struct file_ra_state ra_state;
+	struct gfs2_rgrpd *rgd;
+	unsigned int max_data = 0;
 	int error;
 
 	file_ra_state_init(&ra_state, inode->i_mapping);
 	for (sdp->sd_rgrps = 0;; sdp->sd_rgrps++) {
 		/* Ignore partials */
 		if ((sdp->sd_rgrps + 1) * sizeof(struct gfs2_rindex) >
-		    ip->i_disksize)
+		    i_size_read(inode))
 			break;
 		error = read_rindex_entry(ip, &ra_state);
 		if (error) {
@@ -636,6 +644,10 @@ static int gfs2_ri_update_special(struct gfs2_inode *ip)
 			return error;
 		}
 	}
+	list_for_each_entry(rgd, &sdp->sd_rindex_list, rd_list)
+		if (rgd->rd_data > max_data)
+			max_data = rgd->rd_data;
+	sdp->sd_max_rg_data = max_data;
 
 	sdp->sd_rindex_uptodate = 1;
 	return 0;
@@ -1496,10 +1508,18 @@ int gfs2_alloc_block(struct gfs2_inode *ip, u64 *bn, unsigned int *n)
 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
 	struct buffer_head *dibh;
 	struct gfs2_alloc *al = ip->i_alloc;
-	struct gfs2_rgrpd *rgd = al->al_rgd;
+	struct gfs2_rgrpd *rgd;
 	u32 goal, blk;
 	u64 block;
 	int error;
+
+	/* Only happens if there is a bug in gfs2, return something distinctive
+	 * to ensure that it is noticed.
+	 */
+	if (al == NULL)
+		return -ECANCELED;
+
+	rgd = al->al_rgd;
 
 	if (rgrp_contains_block(rgd, ip->i_goal))
 		goal = ip->i_goal - rgd->rd_data0;
