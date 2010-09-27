@@ -54,10 +54,9 @@ struct serio {
 #define to_serio_port(d)	container_of(d, struct serio, dev)
 
 struct serio_driver {
-	void *private;
-	char *description;
+	const char *description;
 
-	struct serio_device_id *id_table;
+	const struct serio_device_id *id_table;
 	bool manual_bind;
 
 	void (*write_wakeup)(struct serio *);
