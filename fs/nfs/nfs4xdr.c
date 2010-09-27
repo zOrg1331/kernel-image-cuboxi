@@ -4225,7 +4225,7 @@ static int decode_readdir(struct xdr_stream *xdr, struct rpc_rqst *req, struct n
 		pglen = recvd;
 	xdr_read_pages(xdr, pglen);
 
-	BUG_ON(pglen + readdir->pgbase > PAGE_CACHE_SIZE * NFS_MAX_READDIR_PAGES);
+	BUG_ON(pglen + readdir->pgbase > PAGE_CACHE_SIZE);
 	kaddr = p = kmap_atomic(page, KM_USER0);
 	end = p + ((pglen + readdir->pgbase) >> 2);
 	entry = p;

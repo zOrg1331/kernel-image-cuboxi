@@ -327,7 +327,7 @@ out:
 
 /* Fill a page with xdr information before transferring to the cache page */
 static
-int nfs_readdir_xdr_filler(struct page **pages, nfs_readdir_descriptor_t *desc,
+int nfs_readdir_xdr_filler(struct page *xdr_page, nfs_readdir_descriptor_t *desc,
 			struct nfs_entry *entry, struct file *file, struct inode *inode)
 {
 	struct rpc_cred	*cred = nfs_file_cred(file);
@@ -337,7 +337,7 @@ int nfs_readdir_xdr_filler(struct page **pages, nfs_readdir_descriptor_t *desc,
  again:
 	timestamp = jiffies;
 	gencount = nfs_inc_attr_generation_counter();
-	error = NFS_PROTO(inode)->readdir(file->f_path.dentry, cred, entry->cookie, pages,
+	error = NFS_PROTO(inode)->readdir(file->f_path.dentry, cred, entry->cookie, xdr_page,
 					  NFS_SERVER(inode)->dtsize, desc->plus);
 	if (error < 0) {
 		/* We requested READDIRPLUS, but the server doesn't grok it */
@@ -438,63 +438,22 @@ out:
 /* Perform conversion from xdr to cache array */
 static
 void nfs_readdir_page_filler(nfs_readdir_descriptor_t *desc, struct nfs_entry *entry,
-				void *xdr_page, struct page *page)
+				struct page *xdr_page, struct page *page)
 {
-	__be32 *ptr = xdr_page;
+	__be32 *ptr = kmap(xdr_page);
 	while (xdr_decode(desc, entry, &ptr) == 0) {
 		if (nfs_readdir_add_to_array(entry, page) == -1)
 			break;
 		if (desc->plus == 1)
 			nfs_prime_dcache(desc->file->f_path.dentry, entry);
 	}
-}
-
-static
-void nfs_readdir_free_pagearray(struct page **pages, unsigned int npages)
-{
-	unsigned int i;
-	for (i = 0; i < npages; i++)
-		put_page(pages[i]);
-}
-
-static
-void nfs_readdir_free_large_page(void *ptr, struct page **pages,
-		unsigned int npages)
-{
-	vm_unmap_ram(ptr, npages);
-	nfs_readdir_free_pagearray(pages, npages);
-}
-
-/*
- * nfs_readdir_large_page will allocate pages that must be freed with a call
- * to nfs_readdir_free_large_page
- */
-static
-void *nfs_readdir_large_page(struct page **pages, unsigned int npages)
-{
-	void *ptr;
-	unsigned int i;
-
-	for (i = 0; i < npages; i++) {
-		struct page *page = alloc_page(GFP_KERNEL);
-		if (page == NULL)
-			goto out_freepages;
-		pages[i] = page;
-	}
-
-	ptr = vm_map_ram(pages, NFS_MAX_READDIR_PAGES, 0, PAGE_KERNEL);
-	if (!IS_ERR_OR_NULL(ptr))
-		return ptr;
-out_freepages:
-	nfs_readdir_free_pagearray(pages, i);
-	return NULL;
+	kunmap(xdr_page);
 }
 
 static
 int nfs_readdir_xdr_to_array(nfs_readdir_descriptor_t *desc, struct page *page, struct inode *inode)
 {
-	struct page *pages[NFS_MAX_READDIR_PAGES];
-	void *pages_ptr = NULL;
+	struct page *xdr_page;
 	struct nfs_entry entry;
 	struct file	*file = desc->file;
 	struct nfs_cache_array *array;
@@ -512,17 +471,17 @@ int nfs_readdir_xdr_to_array(nfs_readdir_descriptor_t *desc, struct page *page, 
 	memset(array, 0, sizeof(struct nfs_cache_array));
 	array->eof_index = -1;
 
-	pages_ptr = nfs_readdir_large_page(pages, ARRAY_SIZE(pages));
-	if (!pages_ptr)
+	xdr_page = alloc_page(GFP_KERNEL);
+	if (!xdr_page)
 		goto out_release_array;
 	do {
-		status = nfs_readdir_xdr_filler(pages, desc, &entry, file, inode);
+		status = nfs_readdir_xdr_filler(xdr_page, desc, &entry, file, inode);
 		if (status < 0)
 			break;
-		nfs_readdir_page_filler(desc, &entry, pages_ptr, page);
+		nfs_readdir_page_filler(desc, &entry, xdr_page, page);
 	} while (array->eof_index < 0 && array->size < MAX_READDIR_ARRAY);
 
-	nfs_readdir_free_large_page(pages_ptr, pages, ARRAY_SIZE(pages));
+	put_page(xdr_page);
 out_release_array:
 	nfs_readdir_release_array(page);
 out:
