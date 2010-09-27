@@ -3,6 +3,7 @@
 #
 config NCP_FS
 	tristate "NCP file system support (to mount NetWare volumes)"
+	depends on BKL
 	depends on IPX!=n || INET
 	help
 	  NCP (NetWare Core Protocol) is a protocol that runs over IPX and is
