@@ -272,7 +272,7 @@ extern int mmc_assume_removable;
 
 static inline int mmc_card_is_removable(struct mmc_host *host)
 {
-	return (!(host->caps & MMC_CAP_NONREMOVABLE) && mmc_assume_removable);
+	return !(host->caps & MMC_CAP_NONREMOVABLE) && mmc_assume_removable;
 }
 
 #endif
