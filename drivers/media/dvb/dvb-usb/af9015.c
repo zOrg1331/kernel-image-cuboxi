@@ -31,6 +31,7 @@
 #include "tda18271.h"
 #include "mxl5005s.h"
 #include "mc44s803.h"
+#include "tda18218.h"
 
 static int dvb_usb_af9015_debug;
 module_param_named(debug, dvb_usb_af9015_debug, int, 0644);
@@ -992,6 +993,7 @@ static int af9015_read_config(struct usb_device *udev)
 		case AF9013_TUNER_MT2060_2:
 		case AF9013_TUNER_TDA18271:
 		case AF9013_TUNER_QT1010A:
+		case AF9013_TUNER_TDA18218:
 			af9015_af9013_config[i].rf_spec_inv = 1;
 			break;
 		case AF9013_TUNER_MXL5003D:
@@ -1003,9 +1005,6 @@ static int af9015_read_config(struct usb_device *udev)
 			af9015_af9013_config[i].gpio[1] = AF9013_GPIO_LO;
 			af9015_af9013_config[i].rf_spec_inv = 1;
 			break;
-		case AF9013_TUNER_TDA18218:
-			warn("tuner NXP TDA18218 not supported yet");
-			return -ENODEV;
 		default:
 			warn("tuner id:%d not supported, please report!", val);
 			return -ENODEV;
@@ -1208,6 +1207,11 @@ static struct mc44s803_config af9015_mc44s803_config = {
 	.dig_out = 1,
 };
 
+static struct tda18218_config af9015_tda18218_config = {
+	.i2c_address = 0xc0,
+	.i2c_wr_max = 21, /* max wr bytes AF9015 I2C adap can handle at once */
+};
+
 static int af9015_tuner_attach(struct dvb_usb_adapter *adap)
 {
 	struct af9015_state *state = adap->dev->priv;
@@ -1237,6 +1241,10 @@ static int af9015_tuner_attach(struct dvb_usb_adapter *adap)
 	case AF9013_TUNER_TDA18271:
 		ret = dvb_attach(tda18271_attach, adap->fe, 0xc0, i2c_adap,
 			&af9015_tda18271_config) == NULL ? -ENODEV : 0;
+		break;
+	case AF9013_TUNER_TDA18218:
+		ret = dvb_attach(tda18218_attach, adap->fe, i2c_adap,
+			&af9015_tda18218_config) == NULL ? -ENODEV : 0;
 		break;
 	case AF9013_TUNER_MXL5003D:
 		ret = dvb_attach(mxl5005s_attach, adap->fe, i2c_adap,
@@ -1300,6 +1308,7 @@ static struct usb_device_id af9015_usb_table[] = {
 /* 30 */{USB_DEVICE(USB_VID_KWORLD_2,  USB_PID_KWORLD_UB383_T)},
 	{USB_DEVICE(USB_VID_KWORLD_2,  USB_PID_KWORLD_395U_4)},
 	{USB_DEVICE(USB_VID_AVERMEDIA, USB_PID_AVERMEDIA_A815M)},
+	{USB_DEVICE(USB_VID_TERRATEC,  USB_PID_TERRATEC_CINERGY_T_STICK_RC)},
 	{0},
 };
 MODULE_DEVICE_TABLE(usb, af9015_usb_table);
@@ -1627,6 +1636,24 @@ static struct dvb_usb_device_properties af9015_properties[] = {
 			{
 				.name = "AverMedia AVerTV Volar M (A815Mac)",
 				.cold_ids = {&af9015_usb_table[32], NULL},
+				.warm_ids = {NULL},
+			},
+		},
+
+		.identify_state = af9015_identify_state,
+
+		.rc.legacy = {
+			.rc_query         = af9015_rc_query,
+			.rc_interval      = 150,
+		},
+
+		.i2c_algo = &af9015_i2c_algo,
+
+		.num_device_descs = 1, /* max 9 */
+		.devices = {
+			{
+				.name = "TerraTec Cinergy T Stick RC",
+				.cold_ids = {&af9015_usb_table[33], NULL},
 				.warm_ids = {NULL},
 			},
 		}
