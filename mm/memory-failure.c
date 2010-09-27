@@ -183,10 +183,11 @@ EXPORT_SYMBOL_GPL(hwpoison_filter);
  * signal.
  */
 static int kill_proc_ao(struct task_struct *t, unsigned long addr, int trapno,
-			unsigned long pfn)
+			unsigned long pfn, struct page *page)
 {
 	struct siginfo si;
 	int ret;
+	unsigned order;
 
 	printk(KERN_ERR
 		"MCE %#lx: Killing %s:%d early due to hardware memory corruption\n",
@@ -198,7 +199,8 @@ static int kill_proc_ao(struct task_struct *t, unsigned long addr, int trapno,
 #ifdef __ARCH_SI_TRAPNO
 	si.si_trapno = trapno;
 #endif
-	si.si_addr_lsb = PAGE_SHIFT;
+	order = PageCompound(page) ? huge_page_order(page) : PAGE_SHIFT;
+	si.si_addr_lsb = order;
 	/*
 	 * Don't use force here, it's convenient if the signal
 	 * can be temporarily blocked.
@@ -327,7 +329,7 @@ static void add_to_kill(struct task_struct *tsk, struct page *p,
  * wrong earlier.
  */
 static void kill_procs_ao(struct list_head *to_kill, int doit, int trapno,
-			  int fail, unsigned long pfn)
+			  int fail, struct page *page, unsigned long pfn)
 {
 	struct to_kill *tk, *next;
 
@@ -341,7 +343,8 @@ static void kill_procs_ao(struct list_head *to_kill, int doit, int trapno,
 			if (fail || tk->addr_valid == 0) {
 				printk(KERN_ERR
 		"MCE %#lx: forcibly killing %s:%d because of failure to unmap corrupted page\n",
-					pfn, tk->tsk->comm, tk->tsk->pid);
+					pfn,	
+					tk->tsk->comm, tk->tsk->pid);
 				force_sig(SIGKILL, tk->tsk);
 			}
 
@@ -352,7 +355,7 @@ static void kill_procs_ao(struct list_head *to_kill, int doit, int trapno,
 			 * process anyways.
 			 */
 			else if (kill_proc_ao(tk->tsk, tk->addr, trapno,
-					      pfn) < 0)
+					      pfn, page) < 0)
 				printk(KERN_ERR
 		"MCE %#lx: Cannot send advisory machine check signal to %s:%d\n",
 					pfn, tk->tsk->comm, tk->tsk->pid);
@@ -928,7 +931,7 @@ static int hwpoison_user_mappings(struct page *p, unsigned long pfn,
 	 * any accesses to the poisoned memory.
 	 */
 	kill_procs_ao(&tokill, !!PageDirty(hpage), trapno,
-		      ret != SWAP_SUCCESS, pfn);
+		      ret != SWAP_SUCCESS, p, pfn);
 
 	return ret;
 }
