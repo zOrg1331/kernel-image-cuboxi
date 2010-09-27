@@ -379,6 +379,8 @@ static int __init pcc_cpufreq_do_osc(acpi_handle *handle)
 	if (!(supported & 0x1))
 		return -ENODEV;
 
+	return ret;
+
 out_free:
 	kfree(output.pointer);
 	return ret;
