@@ -731,7 +731,7 @@ int evergreen_cp_resume(struct radeon_device *rdev)
 
 	/* Set ring buffer size */
 	rb_bufsz = drm_order(rdev->cp.ring_size / 8);
-	tmp = RB_NO_UPDATE | (drm_order(RADEON_GPU_PAGE_SIZE/8) << 8) | rb_bufsz;
+	tmp = (drm_order(RADEON_GPU_PAGE_SIZE/8) << 8) | rb_bufsz;
 #ifdef __BIG_ENDIAN
 	tmp |= BUF_SWAP_32BIT;
 #endif
@@ -745,8 +745,19 @@ int evergreen_cp_resume(struct radeon_device *rdev)
 	WREG32(CP_RB_CNTL, tmp | RB_RPTR_WR_ENA);
 	WREG32(CP_RB_RPTR_WR, 0);
 	WREG32(CP_RB_WPTR, 0);
-	WREG32(CP_RB_RPTR_ADDR, rdev->cp.gpu_addr & 0xFFFFFFFF);
-	WREG32(CP_RB_RPTR_ADDR_HI, upper_32_bits(rdev->cp.gpu_addr));
+
+	/* set the wb address wether it's enabled or not */
+	WREG32(CP_RB_RPTR_ADDR, (rdev->wb.gpu_addr + RADEON_WB_CP_RPTR_OFFSET) & 0xFFFFFFFC);
+	WREG32(CP_RB_RPTR_ADDR_HI, upper_32_bits(rdev->wb.gpu_addr + RADEON_WB_CP_RPTR_OFFSET) & 0xFF);
+	WREG32(SCRATCH_ADDR, ((rdev->wb.gpu_addr + RADEON_WB_SCRATCH_OFFSET) >> 8) & 0xFFFFFFFF);
+
+	if (rdev->wb.enabled)
+		WREG32(SCRATCH_UMSK, 0xff);
+	else {
+		tmp |= RB_NO_UPDATE;
+		WREG32(SCRATCH_UMSK, 0);
+	}
+
 	mdelay(1);
 	WREG32(CP_RB_CNTL, tmp);
 
@@ -1583,6 +1594,7 @@ int evergreen_irq_set(struct radeon_device *rdev)
 	if (rdev->irq.sw_int) {
 		DRM_DEBUG("evergreen_irq_set: sw int\n");
 		cp_int_cntl |= RB_INT_ENABLE;
+		cp_int_cntl |= TIME_STAMP_INT_ENABLE;
 	}
 	if (rdev->irq.crtc_vblank_int[0]) {
 		DRM_DEBUG("evergreen_irq_set: vblank 0\n");
@@ -1759,8 +1771,10 @@ static inline u32 evergreen_get_ih_wptr(struct radeon_device *rdev)
 {
 	u32 wptr, tmp;
 
-	/* XXX use writeback */
-	wptr = RREG32(IH_RB_WPTR);
+	if (rdev->wb.enabled)
+		wptr = rdev->wb.wb[R600_WB_IH_WPTR_OFFSET/4];
+	else
+		wptr = RREG32(IH_RB_WPTR);
 
 	if (wptr & RB_OVERFLOW) {
 		/* When a ring buffer overflow happen start parsing interrupt
@@ -1999,6 +2013,7 @@ restart_ih:
 			break;
 		case 181: /* CP EOP event */
 			DRM_DEBUG("IH: CP EOP\n");
+			radeon_fence_process(rdev);
 			break;
 		case 233: /* GUI IDLE */
 			DRM_DEBUG("IH: CP EOP\n");
@@ -2068,6 +2083,11 @@ static int evergreen_startup(struct radeon_device *rdev)
 	}
 #endif
 
+	/* allocate wb buffer */
+	r = radeon_wb_init(rdev);
+	if (r)
+		return r;
+
 	/* Enable IRQ */
 	r = r600_irq_init(rdev);
 	if (r) {
@@ -2086,8 +2106,6 @@ static int evergreen_startup(struct radeon_device *rdev)
 	r = evergreen_cp_resume(rdev);
 	if (r)
 		return r;
-	/* write back buffer are not vital so don't worry about failure */
-	r600_wb_enable(rdev);
 
 	return 0;
 }
@@ -2128,7 +2146,7 @@ int evergreen_suspend(struct radeon_device *rdev)
 	r700_cp_stop(rdev);
 	rdev->cp.ready = false;
 	evergreen_irq_suspend(rdev);
-	r600_wb_disable(rdev);
+	radeon_wb_disable(rdev);
 	evergreen_pcie_gart_disable(rdev);
 #if 0
 	/* unpin shaders bo */
@@ -2245,8 +2263,8 @@ int evergreen_init(struct radeon_device *rdev)
 	if (r) {
 		dev_err(rdev->dev, "disabling GPU acceleration\n");
 		r700_cp_fini(rdev);
-		r600_wb_fini(rdev);
 		r600_irq_fini(rdev);
+		radeon_wb_fini(rdev);
 		radeon_irq_kms_fini(rdev);
 		evergreen_pcie_gart_fini(rdev);
 		rdev->accel_working = false;
@@ -2270,8 +2288,8 @@ void evergreen_fini(struct radeon_device *rdev)
 {
 	/*r600_blit_fini(rdev);*/
 	r700_cp_fini(rdev);
-	r600_wb_fini(rdev);
 	r600_irq_fini(rdev);
+	radeon_wb_fini(rdev);
 	radeon_irq_kms_fini(rdev);
 	evergreen_pcie_gart_fini(rdev);
 	radeon_gem_fini(rdev);
