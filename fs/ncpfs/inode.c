@@ -445,10 +445,14 @@ static int ncp_fill_super(struct super_block *sb, void *raw_data, int silent)
 #endif
 	struct ncp_entry_info finfo;
 
+	lock_kernel();
+
 	data.wdog_pid = NULL;
 	server = kzalloc(sizeof(struct ncp_server), GFP_KERNEL);
-	if (!server)
+	if (!server) {
+		unlock_kernel();
 		return -ENOMEM;
+	}
 	sb->s_fs_info = server;
 
 	error = -EFAULT;
@@ -700,6 +704,7 @@ static int ncp_fill_super(struct super_block *sb, void *raw_data, int silent)
         if (!sb->s_root)
 		goto out_no_root;
 	sb->s_root->d_op = &ncp_root_dentry_operations;
+	unlock_kernel();
 	return 0;
 
 out_no_root:
@@ -736,6 +741,7 @@ out:
 	put_pid(data.wdog_pid);
 	sb->s_fs_info = NULL;
 	kfree(server);
+	unlock_kernel();
 	return error;
 }
 
