@@ -774,10 +774,10 @@ void page_move_anon_rmap(struct page *page,
 }
 
 /**
- * __page_set_anon_rmap - set up new anonymous rmap
- * @page:	Page to add to rmap	
- * @vma:	VM area to add page to.
- * @address:	User virtual address of the mapping	
+ * __page_set_anon_rmap - setup new anonymous rmap
+ * @page:	the page to add the mapping to
+ * @vma:	the vm area in which the mapping is added
+ * @address:	the user virtual address mapped
  * @exclusive:	the page is exclusively owned by the current process
  */
 static void __page_set_anon_rmap(struct page *page,
@@ -787,16 +787,25 @@ static void __page_set_anon_rmap(struct page *page,
 
 	BUG_ON(!anon_vma);
 
-	if (PageAnon(page))
-		return;
-
 	/*
 	 * If the page isn't exclusively mapped into this vma,
 	 * we must use the _oldest_ possible anon_vma for the
 	 * page mapping!
 	 */
-	if (!exclusive)
+	if (!exclusive) {
+		if (PageAnon(page))
+			return;
 		anon_vma = anon_vma->root;
+	} else {
+		/*
+		 * In this case, swapped-out-but-not-discarded swap-cache
+		 * is remapped. So, no need to update page->mapping here.
+		 * We convice anon_vma poitned by page->mapping is not obsolete
+		 * because vma->anon_vma is necessary to be a family of it.
+		 */
+		if (PageAnon(page))
+			return;
+	}
 
 	anon_vma = (void *) anon_vma + PAGE_MAPPING_ANON;
 	page->mapping = (struct address_space *) anon_vma;
