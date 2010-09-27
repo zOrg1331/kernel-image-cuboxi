@@ -312,6 +312,7 @@ static const struct {
 	{ ATH5K_DEBUG_DUMP_TX,	"dumptx",	"print transmit skb content" },
 	{ ATH5K_DEBUG_DUMPBANDS, "dumpbands",	"dump bands" },
 	{ ATH5K_DEBUG_ANI,	"ani",		"adaptive noise immunity" },
+	{ ATH5K_DEBUG_DESC,	"desc",		"descriptor chains" },
 	{ ATH5K_DEBUG_ANY,	"all",		"show all debug levels" },
 };
 
@@ -762,7 +763,7 @@ static ssize_t read_file_queue(struct file *file, char __user *user_buf,
 
 	struct ath5k_txq *txq;
 	struct ath5k_buf *bf, *bf0;
-	int i, n = 0;
+	int i, n;
 
 	len += snprintf(buf+len, sizeof(buf)-len,
 			"available txbuffers: %d\n", sc->txbuf_len);
@@ -776,9 +777,16 @@ static ssize_t read_file_queue(struct file *file, char __user *user_buf,
 		if (!txq->setup)
 			continue;
 
+		n = 0;
+		spin_lock_bh(&txq->lock);
 		list_for_each_entry_safe(bf, bf0, &txq->q, list)
 			n++;
-		len += snprintf(buf+len, sizeof(buf)-len, "  len: %d\n", n);
+		spin_unlock_bh(&txq->lock);
+
+		len += snprintf(buf+len, sizeof(buf)-len,
+				"  len: %d bufs: %d\n", txq->txq_len, n);
+		len += snprintf(buf+len, sizeof(buf)-len,
+				"  stuck: %d\n", txq->txq_stuck);
 	}
 
 	if (len > sizeof(buf))
@@ -955,7 +963,7 @@ ath5k_debug_printrxbuffs(struct ath5k_softc *sc, struct ath5k_hw *ah)
 	struct ath5k_rx_status rs = {};
 	int status;
 
-	if (likely(!(sc->debug.level & ATH5K_DEBUG_RESET)))
+	if (likely(!(sc->debug.level & ATH5K_DEBUG_DESC)))
 		return;
 
 	printk(KERN_DEBUG "rxdp %x, rxlink %p\n",
@@ -997,7 +1005,7 @@ ath5k_debug_printtxbuf(struct ath5k_softc *sc, struct ath5k_buf *bf)
 	struct ath5k_tx_status ts = {};
 	int done;
 
-	if (likely(!(sc->debug.level & ATH5K_DEBUG_RESET)))
+	if (likely(!(sc->debug.level & ATH5K_DEBUG_DESC)))
 		return;
 
 	done = sc->ah->ah_proc_tx_desc(sc->ah, bf->desc, &ts);

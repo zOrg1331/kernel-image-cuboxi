@@ -49,10 +49,11 @@ void bnx2x_link_set(struct bnx2x *bp);
  * Query link status
  *
  * @param bp
+ * @param is_serdes
  *
  * @return 0 - link is UP
  */
-u8 bnx2x_link_test(struct bnx2x *bp);
+u8 bnx2x_link_test(struct bnx2x *bp, u8 is_serdes);
 
 /**
  * Handles link status change
@@ -113,6 +114,15 @@ void bnx2x_int_enable(struct bnx2x *bp);
  * @param disable_hw if true, disable HW interrupts.
  */
 void bnx2x_int_disable_sync(struct bnx2x *bp, int disable_hw);
+
+/**
+ * Loads device firmware
+ *
+ * @param bp
+ *
+ * @return int
+ */
+int bnx2x_init_firmware(struct bnx2x *bp);
 
 /**
  * Init HW blocks according to current initialization stage:

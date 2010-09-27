@@ -1811,7 +1811,7 @@ static void atl1_rx_checksum(struct atl1_adapter *adapter,
 	 * the higher layers and let it be sorted out there.
 	 */
 
-	skb->ip_summed = CHECKSUM_NONE;
+	skb_checksum_none_assert(skb);
 
 	if (unlikely(rrd->pkt_flg & PACKET_FLAG_ERR)) {
 		if (rrd->err_flg & (ERR_FLAG_CRC | ERR_FLAG_TRUNC |
@@ -3043,7 +3043,7 @@ static int __devinit atl1_probe(struct pci_dev *pdev,
 	netif_carrier_off(netdev);
 	netif_stop_queue(netdev);
 
-	setup_timer(&adapter->phy_config_timer, &atl1_phy_config,
+	setup_timer(&adapter->phy_config_timer, atl1_phy_config,
 		    (unsigned long)adapter);
 	adapter->phy_timer_pending = false;
 

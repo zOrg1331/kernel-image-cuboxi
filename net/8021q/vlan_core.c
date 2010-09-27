@@ -27,7 +27,7 @@ int __vlan_hwaccel_rx(struct sk_buff *skb, struct vlan_group *grp,
 	else if (vlan_id)
 		goto drop;
 
-	return (polling ? netif_receive_skb(skb) : netif_rx(skb));
+	return polling ? netif_receive_skb(skb) : netif_rx(skb);
 
 drop:
 	dev_kfree_skb_any(skb);
@@ -35,12 +35,12 @@ drop:
 }
 EXPORT_SYMBOL(__vlan_hwaccel_rx);
 
-int vlan_hwaccel_do_receive(struct sk_buff *skb)
+void vlan_hwaccel_do_receive(struct sk_buff *skb)
 {
 	struct net_device *dev = skb->dev;
 	struct vlan_rx_stats     *rx_stats;
 
-	skb->dev = vlan_dev_info(dev)->real_dev;
+	skb->dev = vlan_dev_real_dev(dev);
 	netif_nit_deliver(skb);
 
 	skb->dev = dev;
@@ -69,7 +69,6 @@ int vlan_hwaccel_do_receive(struct sk_buff *skb)
 		break;
 	}
 	u64_stats_update_end(&rx_stats->syncp);
-	return 0;
 }
 
 struct net_device *vlan_dev_real_dev(const struct net_device *dev)
@@ -106,9 +105,12 @@ vlan_gro_common(struct napi_struct *napi, struct vlan_group *grp,
 		goto drop;
 
 	for (p = napi->gro_list; p; p = p->next) {
-		NAPI_GRO_CB(p)->same_flow =
-			p->dev == skb->dev && !compare_ether_header(
-				skb_mac_header(p), skb_gro_mac_header(skb));
+		unsigned long diffs;
+
+		diffs = (unsigned long)p->dev ^ (unsigned long)skb->dev;
+		diffs |= compare_ether_header(skb_mac_header(p),
+					      skb_gro_mac_header(skb));
+		NAPI_GRO_CB(p)->same_flow = !diffs;
 		NAPI_GRO_CB(p)->flush = 0;
 	}
 

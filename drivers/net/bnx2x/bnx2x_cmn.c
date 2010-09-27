@@ -20,6 +20,7 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <net/ip6_checksum.h>
+#include <linux/firmware.h>
 #include "bnx2x_cmn.h"
 
 #ifdef BCM_VLAN
@@ -622,7 +623,7 @@ reuse_rx:
 			/* Set Toeplitz hash for a none-LRO skb */
 			bnx2x_set_skb_rxhash(bp, cqe, skb);
 
-			skb->ip_summed = CHECKSUM_NONE;
+			skb_checksum_none_assert(skb);
 			if (bp->rx_csum) {
 				if (likely(BNX2X_RX_CSUM_OK(cqe)))
 					skb->ip_summed = CHECKSUM_UNNECESSARY;
@@ -780,6 +781,10 @@ void bnx2x_init_rx_rings(struct bnx2x *bp)
 					      ETH_MAX_AGGREGATION_QUEUES_E1H;
 	u16 ring_prod, cqe_ring_prod;
 	int i, j;
+	int rx_ring_size = bp->rx_ring_size ? bp->rx_ring_size :
+					      MAX_RX_AVAIL/bp->num_queues;
+
+	rx_ring_size = max_t(int, MIN_RX_AVAIL, rx_ring_size);
 
 	bp->rx_buf_size = bp->dev->mtu + ETH_OVREHEAD + BNX2X_RX_ALIGN;
 	DP(NETIF_MSG_IFUP,
@@ -882,7 +887,7 @@ void bnx2x_init_rx_rings(struct bnx2x *bp)
 		/* Allocate BDs and initialize BD ring */
 		fp->rx_comp_cons = 0;
 		cqe_ring_prod = ring_prod = 0;
-		for (i = 0; i < bp->rx_ring_size; i++) {
+		for (i = 0; i < rx_ring_size; i++) {
 			if (bnx2x_alloc_rx_skb(bp, fp, ring_prod) < 0) {
 				BNX2X_ERR("was only able to allocate "
 					  "%d rx skbs on queue[%d]\n", i, j);
@@ -1206,11 +1211,26 @@ static int bnx2x_set_num_queues(struct bnx2x *bp)
 	return rc;
 }
 
+static void bnx2x_release_firmware(struct bnx2x *bp)
+{
+	kfree(bp->init_ops_offsets);
+	kfree(bp->init_ops);
+	kfree(bp->init_data);
+	release_firmware(bp->firmware);
+}
+
 /* must be called with rtnl_lock */
 int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 {
 	u32 load_code;
 	int i, rc;
+
+	/* Set init arrays */
+	rc = bnx2x_init_firmware(bp);
+	if (rc) {
+		BNX2X_ERR("Error loading firmware\n");
+		return rc;
+	}
 
 #ifdef BNX2X_STOP_ON_ERROR
 	if (unlikely(bp->panic))
@@ -1267,7 +1287,7 @@ int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 	   common blocks should be initialized, otherwise - not
 	*/
 	if (!BP_NOMCP(bp)) {
-		load_code = bnx2x_fw_command(bp, DRV_MSG_CODE_LOAD_REQ);
+		load_code = bnx2x_fw_command(bp, DRV_MSG_CODE_LOAD_REQ, 0);
 		if (!load_code) {
 			BNX2X_ERR("MCP response failure, aborting\n");
 			rc = -EBUSY;
@@ -1306,9 +1326,9 @@ int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 	rc = bnx2x_init_hw(bp, load_code);
 	if (rc) {
 		BNX2X_ERR("HW init failed, aborting\n");
-		bnx2x_fw_command(bp, DRV_MSG_CODE_LOAD_DONE);
-		bnx2x_fw_command(bp, DRV_MSG_CODE_UNLOAD_REQ_WOL_MCP);
-		bnx2x_fw_command(bp, DRV_MSG_CODE_UNLOAD_DONE);
+		bnx2x_fw_command(bp, DRV_MSG_CODE_LOAD_DONE, 0);
+		bnx2x_fw_command(bp, DRV_MSG_CODE_UNLOAD_REQ_WOL_MCP, 0);
+		bnx2x_fw_command(bp, DRV_MSG_CODE_UNLOAD_DONE, 0);
 		goto load_error2;
 	}
 
@@ -1323,7 +1343,7 @@ int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 
 	/* Send LOAD_DONE command to MCP */
 	if (!BP_NOMCP(bp)) {
-		load_code = bnx2x_fw_command(bp, DRV_MSG_CODE_LOAD_DONE);
+		load_code = bnx2x_fw_command(bp, DRV_MSG_CODE_LOAD_DONE, 0);
 		if (!load_code) {
 			BNX2X_ERR("MCP response failure, aborting\n");
 			rc = -EBUSY;
@@ -1427,6 +1447,8 @@ int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 #endif
 	bnx2x_inc_load_cnt(bp);
 
+	bnx2x_release_firmware(bp);
+
 	return 0;
 
 #ifdef BCM_CNIC
@@ -1437,8 +1459,8 @@ load_error4:
 load_error3:
 	bnx2x_int_disable_sync(bp, 1);
 	if (!BP_NOMCP(bp)) {
-		bnx2x_fw_command(bp, DRV_MSG_CODE_UNLOAD_REQ_WOL_MCP);
-		bnx2x_fw_command(bp, DRV_MSG_CODE_UNLOAD_DONE);
+		bnx2x_fw_command(bp, DRV_MSG_CODE_UNLOAD_REQ_WOL_MCP, 0);
+		bnx2x_fw_command(bp, DRV_MSG_CODE_UNLOAD_DONE, 0);
 	}
 	bp->port.pmf = 0;
 	/* Free SKBs, SGEs, TPA pool and driver internals */
@@ -1453,6 +1475,8 @@ load_error1:
 	for_each_queue(bp, i)
 		netif_napi_del(&bnx2x_fp(bp, i, napi));
 	bnx2x_free_mem(bp);
+
+	bnx2x_release_firmware(bp);
 
 	return rc;
 }

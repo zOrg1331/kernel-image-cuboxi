@@ -183,7 +183,14 @@ int cfg80211_validate_key_settings(struct cfg80211_registered_device *rdev,
 			return -EINVAL;
 		break;
 	default:
-		return -EINVAL;
+		/*
+		 * We don't know anything about this algorithm,
+		 * allow using it -- but the driver must check
+		 * all parameters! We still check below whether
+		 * or not the driver supports this algorithm,
+		 * of course.
+		 */
+		break;
 	}
 
 	if (params->seq) {
@@ -221,7 +228,7 @@ const unsigned char bridge_tunnel_header[] __aligned(2) =
 	{ 0xaa, 0xaa, 0x03, 0x00, 0x00, 0xf8 };
 EXPORT_SYMBOL(bridge_tunnel_header);
 
-unsigned int ieee80211_hdrlen(__le16 fc)
+unsigned int __attribute_const__ ieee80211_hdrlen(__le16 fc)
 {
 	unsigned int hdrlen = 24;
 
@@ -319,7 +326,8 @@ int ieee80211_data_to_8023(struct sk_buff *skb, const u8 *addr,
 		cpu_to_le16(IEEE80211_FCTL_TODS | IEEE80211_FCTL_FROMDS)) {
 	case cpu_to_le16(IEEE80211_FCTL_TODS):
 		if (unlikely(iftype != NL80211_IFTYPE_AP &&
-			     iftype != NL80211_IFTYPE_AP_VLAN))
+			     iftype != NL80211_IFTYPE_AP_VLAN &&
+			     iftype != NL80211_IFTYPE_P2P_GO))
 			return -1;
 		break;
 	case cpu_to_le16(IEEE80211_FCTL_TODS | IEEE80211_FCTL_FROMDS):
@@ -347,7 +355,8 @@ int ieee80211_data_to_8023(struct sk_buff *skb, const u8 *addr,
 		break;
 	case cpu_to_le16(IEEE80211_FCTL_FROMDS):
 		if ((iftype != NL80211_IFTYPE_STATION &&
-		    iftype != NL80211_IFTYPE_MESH_POINT) ||
+		     iftype != NL80211_IFTYPE_P2P_CLIENT &&
+		     iftype != NL80211_IFTYPE_MESH_POINT) ||
 		    (is_multicast_ether_addr(dst) &&
 		     !compare_ether_addr(src, addr)))
 			return -1;
@@ -424,6 +433,7 @@ int ieee80211_data_from_8023(struct sk_buff *skb, const u8 *addr,
 	switch (iftype) {
 	case NL80211_IFTYPE_AP:
 	case NL80211_IFTYPE_AP_VLAN:
+	case NL80211_IFTYPE_P2P_GO:
 		fc |= cpu_to_le16(IEEE80211_FCTL_FROMDS);
 		/* DA BSSID SA */
 		memcpy(hdr.addr1, skb->data, ETH_ALEN);
@@ -432,6 +442,7 @@ int ieee80211_data_from_8023(struct sk_buff *skb, const u8 *addr,
 		hdrlen = 24;
 		break;
 	case NL80211_IFTYPE_STATION:
+	case NL80211_IFTYPE_P2P_CLIENT:
 		fc |= cpu_to_le16(IEEE80211_FCTL_TODS);
 		/* BSSID SA DA */
 		memcpy(hdr.addr1, bssid, ETH_ALEN);
@@ -771,7 +782,9 @@ int cfg80211_change_iface(struct cfg80211_registered_device *rdev,
 
 	/* if it's part of a bridge, reject changing type to station/ibss */
 	if ((dev->priv_flags & IFF_BRIDGE_PORT) &&
-	    (ntype == NL80211_IFTYPE_ADHOC || ntype == NL80211_IFTYPE_STATION))
+	    (ntype == NL80211_IFTYPE_ADHOC ||
+	     ntype == NL80211_IFTYPE_STATION ||
+	     ntype == NL80211_IFTYPE_P2P_CLIENT))
 		return -EBUSY;
 
 	if (ntype != otype) {
@@ -782,6 +795,7 @@ int cfg80211_change_iface(struct cfg80211_registered_device *rdev,
 			cfg80211_leave_ibss(rdev, dev, false);
 			break;
 		case NL80211_IFTYPE_STATION:
+		case NL80211_IFTYPE_P2P_CLIENT:
 			cfg80211_disconnect(rdev, dev,
 					    WLAN_REASON_DEAUTH_LEAVING, true);
 			break;
@@ -810,9 +824,11 @@ int cfg80211_change_iface(struct cfg80211_registered_device *rdev,
 			if (dev->ieee80211_ptr->use_4addr)
 				break;
 			/* fall through */
+		case NL80211_IFTYPE_P2P_CLIENT:
 		case NL80211_IFTYPE_ADHOC:
 			dev->priv_flags |= IFF_DONT_BRIDGE;
 			break;
+		case NL80211_IFTYPE_P2P_GO:
 		case NL80211_IFTYPE_AP:
 		case NL80211_IFTYPE_AP_VLAN:
 		case NL80211_IFTYPE_WDS:
@@ -823,7 +839,7 @@ int cfg80211_change_iface(struct cfg80211_registered_device *rdev,
 			/* monitor can't bridge anyway */
 			break;
 		case NL80211_IFTYPE_UNSPECIFIED:
-		case __NL80211_IFTYPE_AFTER_LAST:
+		case NUM_NL80211_IFTYPES:
 			/* not happening */
 			break;
 		}

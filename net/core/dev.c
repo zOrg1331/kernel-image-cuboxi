@@ -129,6 +129,7 @@
 #include <linux/random.h>
 #include <trace/events/napi.h>
 #include <linux/pci.h>
+#include <linux/inetdevice.h>
 
 #include "net-sysfs.h"
 
@@ -371,6 +372,14 @@ static inline void netdev_set_addr_lockdep_class(struct net_device *dev)
  *							--ANK (980803)
  */
 
+static inline struct list_head *ptype_head(const struct packet_type *pt)
+{
+	if (pt->type == htons(ETH_P_ALL))
+		return &ptype_all;
+	else
+		return &ptype_base[ntohs(pt->type) & PTYPE_HASH_MASK];
+}
+
 /**
  *	dev_add_pack - add packet handler
  *	@pt: packet type declaration
@@ -386,16 +395,11 @@ static inline void netdev_set_addr_lockdep_class(struct net_device *dev)
 
 void dev_add_pack(struct packet_type *pt)
 {
-	int hash;
+	struct list_head *head = ptype_head(pt);
 
-	spin_lock_bh(&ptype_lock);
-	if (pt->type == htons(ETH_P_ALL))
-		list_add_rcu(&pt->list, &ptype_all);
-	else {
-		hash = ntohs(pt->type) & PTYPE_HASH_MASK;
-		list_add_rcu(&pt->list, &ptype_base[hash]);
-	}
-	spin_unlock_bh(&ptype_lock);
+	spin_lock(&ptype_lock);
+	list_add_rcu(&pt->list, head);
+	spin_unlock(&ptype_lock);
 }
 EXPORT_SYMBOL(dev_add_pack);
 
@@ -414,15 +418,10 @@ EXPORT_SYMBOL(dev_add_pack);
  */
 void __dev_remove_pack(struct packet_type *pt)
 {
-	struct list_head *head;
+	struct list_head *head = ptype_head(pt);
 	struct packet_type *pt1;
 
-	spin_lock_bh(&ptype_lock);
-
-	if (pt->type == htons(ETH_P_ALL))
-		head = &ptype_all;
-	else
-		head = &ptype_base[ntohs(pt->type) & PTYPE_HASH_MASK];
+	spin_lock(&ptype_lock);
 
 	list_for_each_entry(pt1, head, list) {
 		if (pt == pt1) {
@@ -433,7 +432,7 @@ void __dev_remove_pack(struct packet_type *pt)
 
 	printk(KERN_WARNING "dev_remove_pack: %p not found.\n", pt);
 out:
-	spin_unlock_bh(&ptype_lock);
+	spin_unlock(&ptype_lock);
 }
 EXPORT_SYMBOL(__dev_remove_pack);
 
@@ -1902,14 +1901,14 @@ static int dev_gso_segment(struct sk_buff *skb)
 
 /*
  * Try to orphan skb early, right before transmission by the device.
- * We cannot orphan skb if tx timestamp is requested, since
- * drivers need to call skb_tstamp_tx() to send the timestamp.
+ * We cannot orphan skb if tx timestamp is requested or the sk-reference
+ * is needed on driver level for other reasons, e.g. see net/can/raw.c
  */
 static inline void skb_orphan_try(struct sk_buff *skb)
 {
 	struct sock *sk = skb->sk;
 
-	if (sk && !skb_tx(skb)->flags) {
+	if (sk && !skb_shinfo(skb)->tx_flags) {
 		/* skb_tx_hash() wont be able to get sk.
 		 * We copy sk_hash into skb->rxhash
 		 */
@@ -1930,7 +1929,7 @@ static inline int skb_needs_linearize(struct sk_buff *skb,
 				      struct net_device *dev)
 {
 	return skb_is_nonlinear(skb) &&
-	       ((skb_has_frags(skb) && !(dev->features & NETIF_F_FRAGLIST)) ||
+	       ((skb_has_frag_list(skb) && !(dev->features & NETIF_F_FRAGLIST)) ||
 	        (skb_shinfo(skb)->nr_frags && (!(dev->features & NETIF_F_SG) ||
 					      illegal_highdma(dev, skb))));
 }
@@ -2259,6 +2258,77 @@ static inline void ____napi_schedule(struct softnet_data *sd,
 	__raise_softirq_irqoff(NET_RX_SOFTIRQ);
 }
 
+/*
+ * __skb_get_rxhash: calculate a flow hash based on src/dst addresses
+ * and src/dst port numbers. Returns a non-zero hash number on success
+ * and 0 on failure.
+ */
+__u32 __skb_get_rxhash(struct sk_buff *skb)
+{
+	int nhoff, hash = 0, poff;
+	struct ipv6hdr *ip6;
+	struct iphdr *ip;
+	u8 ip_proto;
+	u32 addr1, addr2, ihl;
+	union {
+		u32 v32;
+		u16 v16[2];
+	} ports;
+
+	nhoff = skb_network_offset(skb);
+
+	switch (skb->protocol) {
+	case __constant_htons(ETH_P_IP):
+		if (!pskb_may_pull(skb, sizeof(*ip) + nhoff))
+			goto done;
+
+		ip = (struct iphdr *) (skb->data + nhoff);
+		if (ip->frag_off & htons(IP_MF | IP_OFFSET))
+			ip_proto = 0;
+		else
+			ip_proto = ip->protocol;
+		addr1 = (__force u32) ip->saddr;
+		addr2 = (__force u32) ip->daddr;
+		ihl = ip->ihl;
+		break;
+	case __constant_htons(ETH_P_IPV6):
+		if (!pskb_may_pull(skb, sizeof(*ip6) + nhoff))
+			goto done;
+
+		ip6 = (struct ipv6hdr *) (skb->data + nhoff);
+		ip_proto = ip6->nexthdr;
+		addr1 = (__force u32) ip6->saddr.s6_addr32[3];
+		addr2 = (__force u32) ip6->daddr.s6_addr32[3];
+		ihl = (40 >> 2);
+		break;
+	default:
+		goto done;
+	}
+
+	ports.v32 = 0;
+	poff = proto_ports_offset(ip_proto);
+	if (poff >= 0) {
+		nhoff += ihl * 4 + poff;
+		if (pskb_may_pull(skb, nhoff + 4)) {
+			ports.v32 = * (__force u32 *) (skb->data + nhoff);
+			if (ports.v16[1] < ports.v16[0])
+				swap(ports.v16[0], ports.v16[1]);
+		}
+	}
+
+	/* get a consistent hash (same value on both flow directions) */
+	if (addr2 < addr1)
+		swap(addr1, addr2);
+
+	hash = jhash_3words(addr1, addr2, ports.v32, hashrnd);
+	if (!hash)
+		hash = 1;
+
+done:
+	return hash;
+}
+EXPORT_SYMBOL(__skb_get_rxhash);
+
 #ifdef CONFIG_RPS
 
 /* One global table that all flow-based protocols share. */
@@ -2273,20 +2343,12 @@ EXPORT_SYMBOL(rps_sock_flow_table);
 static int get_rps_cpu(struct net_device *dev, struct sk_buff *skb,
 		       struct rps_dev_flow **rflowp)
 {
-	struct ipv6hdr *ip6;
-	struct iphdr *ip;
 	struct netdev_rx_queue *rxqueue;
-	struct rps_map *map;
+	struct rps_map *map = NULL;
 	struct rps_dev_flow_table *flow_table;
 	struct rps_sock_flow_table *sock_flow_table;
 	int cpu = -1;
-	u8 ip_proto;
 	u16 tcpu;
-	u32 addr1, addr2, ihl;
-	union {
-		u32 v32;
-		u16 v16[2];
-	} ports;
 
 	if (skb_rx_queue_recorded(skb)) {
 		u16 index = skb_get_rx_queue(skb);
@@ -2300,63 +2362,22 @@ static int get_rps_cpu(struct net_device *dev, struct sk_buff *skb,
 	} else
 		rxqueue = dev->_rx;
 
-	if (!rxqueue->rps_map && !rxqueue->rps_flow_table)
-		goto done;
-
-	if (skb->rxhash)
-		goto got_hash; /* Skip hash computation on packet header */
-
-	switch (skb->protocol) {
-	case __constant_htons(ETH_P_IP):
-		if (!pskb_may_pull(skb, sizeof(*ip)))
+	if (rxqueue->rps_map) {
+		map = rcu_dereference(rxqueue->rps_map);
+		if (map && map->len == 1) {
+			tcpu = map->cpus[0];
+			if (cpu_online(tcpu))
+				cpu = tcpu;
 			goto done;
-
-		ip = (struct iphdr *) skb->data;
-		ip_proto = ip->protocol;
-		addr1 = (__force u32) ip->saddr;
-		addr2 = (__force u32) ip->daddr;
-		ihl = ip->ihl;
-		break;
-	case __constant_htons(ETH_P_IPV6):
-		if (!pskb_may_pull(skb, sizeof(*ip6)))
-			goto done;
-
-		ip6 = (struct ipv6hdr *) skb->data;
-		ip_proto = ip6->nexthdr;
-		addr1 = (__force u32) ip6->saddr.s6_addr32[3];
-		addr2 = (__force u32) ip6->daddr.s6_addr32[3];
-		ihl = (40 >> 2);
-		break;
-	default:
-		goto done;
-	}
-	switch (ip_proto) {
-	case IPPROTO_TCP:
-	case IPPROTO_UDP:
-	case IPPROTO_DCCP:
-	case IPPROTO_ESP:
-	case IPPROTO_AH:
-	case IPPROTO_SCTP:
-	case IPPROTO_UDPLITE:
-		if (pskb_may_pull(skb, (ihl * 4) + 4)) {
-			ports.v32 = * (__force u32 *) (skb->data + (ihl * 4));
-			if (ports.v16[1] < ports.v16[0])
-				swap(ports.v16[0], ports.v16[1]);
-			break;
 		}
-	default:
-		ports.v32 = 0;
-		break;
+	} else if (!rxqueue->rps_flow_table) {
+		goto done;
 	}
 
-	/* get a consistent hash (same value on both flow directions) */
-	if (addr2 < addr1)
-		swap(addr1, addr2);
-	skb->rxhash = jhash_3words(addr1, addr2, ports.v32, hashrnd);
-	if (!skb->rxhash)
-		skb->rxhash = 1;
+	skb_reset_network_header(skb);
+	if (!skb_get_rxhash(skb))
+		goto done;
 
-got_hash:
 	flow_table = rcu_dereference(rxqueue->rps_flow_table);
 	sock_flow_table = rcu_dereference(rps_sock_flow_table);
 	if (flow_table && sock_flow_table) {
@@ -2396,7 +2417,6 @@ got_hash:
 		}
 	}
 
-	map = rcu_dereference(rxqueue->rps_map);
 	if (map) {
 		tcpu = map->cpus[((u64) skb->rxhash * map->len) >> 32];
 
@@ -2828,8 +2848,8 @@ static int __netif_receive_skb(struct sk_buff *skb)
 	if (!netdev_tstamp_prequeue)
 		net_timestamp_check(skb);
 
-	if (vlan_tx_tag_present(skb) && vlan_hwaccel_do_receive(skb))
-		return NET_RX_SUCCESS;
+	if (vlan_tx_tag_present(skb))
+		vlan_hwaccel_do_receive(skb);
 
 	/* if we've gotten here through NAPI, check netpoll */
 	if (netpoll_receive_skb(skb))
@@ -3050,7 +3070,7 @@ out:
 	return netif_receive_skb(skb);
 }
 
-static void napi_gro_flush(struct napi_struct *napi)
+inline void napi_gro_flush(struct napi_struct *napi)
 {
 	struct sk_buff *skb, *next;
 
@@ -3063,6 +3083,7 @@ static void napi_gro_flush(struct napi_struct *napi)
 	napi->gro_count = 0;
 	napi->gro_list = NULL;
 }
+EXPORT_SYMBOL(napi_gro_flush);
 
 enum gro_result dev_gro_receive(struct napi_struct *napi, struct sk_buff *skb)
 {
@@ -3077,7 +3098,7 @@ enum gro_result dev_gro_receive(struct napi_struct *napi, struct sk_buff *skb)
 	if (!(skb->dev->features & NETIF_F_GRO) || netpoll_rx_on(skb))
 		goto normal;
 
-	if (skb_is_gso(skb) || skb_has_frags(skb))
+	if (skb_is_gso(skb) || skb_has_frag_list(skb))
 		goto normal;
 
 	rcu_read_lock();
@@ -3156,16 +3177,18 @@ normal:
 }
 EXPORT_SYMBOL(dev_gro_receive);
 
-static gro_result_t
+static inline gro_result_t
 __napi_gro_receive(struct napi_struct *napi, struct sk_buff *skb)
 {
 	struct sk_buff *p;
 
 	for (p = napi->gro_list; p; p = p->next) {
-		NAPI_GRO_CB(p)->same_flow =
-			(p->dev == skb->dev) &&
-			!compare_ether_header(skb_mac_header(p),
+		unsigned long diffs;
+
+		diffs = (unsigned long)p->dev ^ (unsigned long)skb->dev;
+		diffs |= compare_ether_header(skb_mac_header(p),
 					      skb_gro_mac_header(skb));
+		NAPI_GRO_CB(p)->same_flow = !diffs;
 		NAPI_GRO_CB(p)->flush = 0;
 	}
 
@@ -5035,6 +5058,11 @@ int register_netdevice(struct net_device *dev)
 	if (dev->features & NETIF_F_SG)
 		dev->features |= NETIF_F_GSO;
 
+	/* Enable GRO for vlans by default if dev->features has GRO also.
+	 * vlan_dev_init() will do the dev->features check.
+	 */
+	dev->vlan_features |= NETIF_F_GRO;
+
 	ret = call_netdevice_notifiers(NETDEV_POST_INIT, dev);
 	ret = notifier_to_errno(ret);
 	if (ret)
@@ -5264,7 +5292,7 @@ void netdev_run_todo(void)
 
 		/* paranoia */
 		BUG_ON(atomic_read(&dev->refcnt));
-		WARN_ON(dev->ip_ptr);
+		WARN_ON(rcu_dereference_raw(dev->ip_ptr));
 		WARN_ON(dev->ip6_ptr);
 		WARN_ON(dev->dn_ptr);
 
@@ -5658,6 +5686,10 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
 
 	/* Notify protocols, that we are about to destroy
 	   this device. They should clean all the things.
+
+	   Note that dev->reg_state stays at NETREG_REGISTERED.
+	   This is wanted because this way 8021q and macvlan know
+	   the device is just moving and can keep their slaves up.
 	*/
 	call_netdevice_notifiers(NETDEV_UNREGISTER, dev);
 	call_netdevice_notifiers(NETDEV_UNREGISTER_BATCH, dev);
