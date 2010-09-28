@@ -28,7 +28,6 @@
 #include <linux/mount.h>
 #include <linux/namei.h>
 #include <linux/crc32.h>
-#include <linux/smp_lock.h>
 
 struct file_system_type reiserfs_fs_type;
 
@@ -1885,7 +1884,6 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 	spin_lock_init(&sbi->bitmap_lock);
 
 	reiserfs_write_unlock(s);
-
 	return (0);
 
 error:
