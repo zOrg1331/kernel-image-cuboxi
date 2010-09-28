@@ -19,33 +19,6 @@
 #include "rate.h"
 #include "mesh.h"
 
-static bool nl80211_type_check(enum nl80211_iftype type)
-{
-	switch (type) {
-	case NL80211_IFTYPE_ADHOC:
-	case NL80211_IFTYPE_STATION:
-	case NL80211_IFTYPE_MONITOR:
-#ifdef CONFIG_MAC80211_MESH
-	case NL80211_IFTYPE_MESH_POINT:
-#endif
-	case NL80211_IFTYPE_AP:
-	case NL80211_IFTYPE_AP_VLAN:
-	case NL80211_IFTYPE_WDS:
-		return true;
-	default:
-		return false;
-	}
-}
-
-static bool nl80211_params_check(enum nl80211_iftype type,
-				 struct vif_params *params)
-{
-	if (!nl80211_type_check(type))
-		return false;
-
-	return true;
-}
-
 static int ieee80211_add_iface(struct wiphy *wiphy, char *name,
 			       enum nl80211_iftype type, u32 *flags,
 			       struct vif_params *params)
@@ -54,9 +27,6 @@ static int ieee80211_add_iface(struct wiphy *wiphy, char *name,
 	struct net_device *dev;
 	struct ieee80211_sub_if_data *sdata;
 	int err;
-
-	if (!nl80211_params_check(type, params))
-		return -EINVAL;
 
 	err = ieee80211_if_add(local, name, &dev, type, params);
 	if (err || type != NL80211_IFTYPE_MONITOR || !flags)
@@ -81,12 +51,6 @@ static int ieee80211_change_iface(struct wiphy *wiphy,
 {
 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 	int ret;
-
-	if (ieee80211_sdata_running(sdata))
-		return -EBUSY;
-
-	if (!nl80211_params_check(type, params))
-		return -EINVAL;
 
 	ret = ieee80211_if_change_type(sdata, type);
 	if (ret)
@@ -114,44 +78,30 @@ static int ieee80211_add_key(struct wiphy *wiphy, struct net_device *dev,
 			     u8 key_idx, const u8 *mac_addr,
 			     struct key_params *params)
 {
-	struct ieee80211_sub_if_data *sdata;
+	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 	struct sta_info *sta = NULL;
-	enum ieee80211_key_alg alg;
 	struct ieee80211_key *key;
 	int err;
 
-	if (!netif_running(dev))
+	if (!ieee80211_sdata_running(sdata))
 		return -ENETDOWN;
 
-	sdata = IEEE80211_DEV_TO_SUB_IF(dev);
-
+	/* reject WEP and TKIP keys if WEP failed to initialize */
 	switch (params->cipher) {
 	case WLAN_CIPHER_SUITE_WEP40:
-	case WLAN_CIPHER_SUITE_WEP104:
-		alg = ALG_WEP;
-		break;
 	case WLAN_CIPHER_SUITE_TKIP:
-		alg = ALG_TKIP;
-		break;
-	case WLAN_CIPHER_SUITE_CCMP:
-		alg = ALG_CCMP;
-		break;
-	case WLAN_CIPHER_SUITE_AES_CMAC:
-		alg = ALG_AES_CMAC;
+	case WLAN_CIPHER_SUITE_WEP104:
+		if (IS_ERR(sdata->local->wep_tx_tfm))
+			return -EINVAL;
 		break;
 	default:
-		return -EINVAL;
+		break;
 	}
 
-	/* reject WEP and TKIP keys if WEP failed to initialize */
-	if ((alg == ALG_WEP || alg == ALG_TKIP) &&
-	    IS_ERR(sdata->local->wep_tx_tfm))
-		return -EINVAL;
-
-	key = ieee80211_key_alloc(alg, key_idx, params->key_len, params->key,
-				  params->seq_len, params->seq);
-	if (!key)
-		return -ENOMEM;
+	key = ieee80211_key_alloc(params->cipher, key_idx, params->key_len,
+				  params->key, params->seq_len, params->seq);
+	if (IS_ERR(key))
+		return PTR_ERR(key);
 
 	mutex_lock(&sdata->local->sta_mtx);
 
@@ -164,9 +114,10 @@ static int ieee80211_add_key(struct wiphy *wiphy, struct net_device *dev,
 		}
 	}
 
-	ieee80211_key_link(key, sdata, sta);
+	err = ieee80211_key_link(key, sdata, sta);
+	if (err)
+		ieee80211_key_free(sdata->local, key);
 
-	err = 0;
  out_unlock:
 	mutex_unlock(&sdata->local->sta_mtx);
 
@@ -247,10 +198,10 @@ static int ieee80211_get_key(struct wiphy *wiphy, struct net_device *dev,
 
 	memset(&params, 0, sizeof(params));
 
-	switch (key->conf.alg) {
-	case ALG_TKIP:
-		params.cipher = WLAN_CIPHER_SUITE_TKIP;
+	params.cipher = key->conf.cipher;
 
+	switch (key->conf.cipher) {
+	case WLAN_CIPHER_SUITE_TKIP:
 		iv32 = key->u.tkip.tx.iv32;
 		iv16 = key->u.tkip.tx.iv16;
 
@@ -268,8 +219,7 @@ static int ieee80211_get_key(struct wiphy *wiphy, struct net_device *dev,
 		params.seq = seq;
 		params.seq_len = 6;
 		break;
-	case ALG_CCMP:
-		params.cipher = WLAN_CIPHER_SUITE_CCMP;
+	case WLAN_CIPHER_SUITE_CCMP:
 		seq[0] = key->u.ccmp.tx_pn[5];
 		seq[1] = key->u.ccmp.tx_pn[4];
 		seq[2] = key->u.ccmp.tx_pn[3];
@@ -279,14 +229,7 @@ static int ieee80211_get_key(struct wiphy *wiphy, struct net_device *dev,
 		params.seq = seq;
 		params.seq_len = 6;
 		break;
-	case ALG_WEP:
-		if (key->conf.keylen == 5)
-			params.cipher = WLAN_CIPHER_SUITE_WEP40;
-		else
-			params.cipher = WLAN_CIPHER_SUITE_WEP104;
-		break;
-	case ALG_AES_CMAC:
-		params.cipher = WLAN_CIPHER_SUITE_AES_CMAC;
+	case WLAN_CIPHER_SUITE_AES_CMAC:
 		seq[0] = key->u.aes_cmac.tx_pn[5];
 		seq[1] = key->u.aes_cmac.tx_pn[4];
 		seq[2] = key->u.aes_cmac.tx_pn[3];
@@ -634,6 +577,7 @@ static void sta_apply_parameters(struct ieee80211_local *local,
 				 struct sta_info *sta,
 				 struct station_parameters *params)
 {
+	unsigned long flags;
 	u32 rates;
 	int i, j;
 	struct ieee80211_supported_band *sband;
@@ -642,7 +586,7 @@ static void sta_apply_parameters(struct ieee80211_local *local,
 
 	sband = local->hw.wiphy->bands[local->oper_channel->band];
 
-	spin_lock_bh(&sta->lock);
+	spin_lock_irqsave(&sta->flaglock, flags);
 	mask = params->sta_flags_mask;
 	set = params->sta_flags_set;
 
@@ -669,7 +613,7 @@ static void sta_apply_parameters(struct ieee80211_local *local,
 		if (set & BIT(NL80211_STA_FLAG_MFP))
 			sta->flags |= WLAN_STA_MFP;
 	}
-	spin_unlock_bh(&sta->lock);
+	spin_unlock_irqrestore(&sta->flaglock, flags);
 
 	/*
 	 * cfg80211 validates this (1-2007) and allows setting the AID
@@ -1143,9 +1087,9 @@ static int ieee80211_set_txq_params(struct wiphy *wiphy,
 	p.uapsd = false;
 
 	if (drv_conf_tx(local, params->queue, &p)) {
-		printk(KERN_DEBUG "%s: failed to set TX queue "
-		       "parameters for queue %d\n",
-		       wiphy_name(local->hw.wiphy), params->queue);
+		wiphy_debug(local->hw.wiphy,
+			    "failed to set TX queue parameters for queue %d\n",
+			    params->queue);
 		return -EINVAL;
 	}
 
@@ -1207,15 +1151,26 @@ static int ieee80211_scan(struct wiphy *wiphy,
 			  struct net_device *dev,
 			  struct cfg80211_scan_request *req)
 {
-	struct ieee80211_sub_if_data *sdata;
+	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 
-	sdata = IEEE80211_DEV_TO_SUB_IF(dev);
-
-	if (sdata->vif.type != NL80211_IFTYPE_STATION &&
-	    sdata->vif.type != NL80211_IFTYPE_ADHOC &&
-	    sdata->vif.type != NL80211_IFTYPE_MESH_POINT &&
-	    (sdata->vif.type != NL80211_IFTYPE_AP || sdata->u.ap.beacon))
+	switch (ieee80211_vif_type_p2p(&sdata->vif)) {
+	case NL80211_IFTYPE_STATION:
+	case NL80211_IFTYPE_ADHOC:
+	case NL80211_IFTYPE_MESH_POINT:
+	case NL80211_IFTYPE_P2P_CLIENT:
+		break;
+	case NL80211_IFTYPE_P2P_GO:
+		if (sdata->local->ops->hw_scan)
+			break;
+		/* FIXME: implement NoA while scanning in software */
 		return -EOPNOTSUPP;
+	case NL80211_IFTYPE_AP:
+		if (sdata->u.ap.beacon)
+			return -EOPNOTSUPP;
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
 
 	return ieee80211_request_scan(sdata, req);
 }
@@ -1541,11 +1496,11 @@ static int ieee80211_cancel_remain_on_channel(struct wiphy *wiphy,
 	return ieee80211_wk_cancel_remain_on_channel(sdata, cookie);
 }
 
-static int ieee80211_action(struct wiphy *wiphy, struct net_device *dev,
-			    struct ieee80211_channel *chan,
-			    enum nl80211_channel_type channel_type,
-			    bool channel_type_valid,
-			    const u8 *buf, size_t len, u64 *cookie)
+static int ieee80211_mgmt_tx(struct wiphy *wiphy, struct net_device *dev,
+			     struct ieee80211_channel *chan,
+			     enum nl80211_channel_type channel_type,
+			     bool channel_type_valid,
+			     const u8 *buf, size_t len, u64 *cookie)
 {
 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 	struct ieee80211_local *local = sdata->local;
@@ -1575,8 +1530,6 @@ static int ieee80211_action(struct wiphy *wiphy, struct net_device *dev,
 			return -ENOLINK;
 		break;
 	case NL80211_IFTYPE_STATION:
-		if (!(sdata->u.mgd.flags & IEEE80211_STA_MFP_ENABLED))
-			flags |= IEEE80211_TX_INTFL_DONT_ENCRYPT;
 		break;
 	default:
 		return -EOPNOTSUPP;
@@ -1647,6 +1600,6 @@ struct cfg80211_ops mac80211_config_ops = {
 	.set_bitrate_mask = ieee80211_set_bitrate_mask,
 	.remain_on_channel = ieee80211_remain_on_channel,
 	.cancel_remain_on_channel = ieee80211_cancel_remain_on_channel,
-	.action = ieee80211_action,
+	.mgmt_tx = ieee80211_mgmt_tx,
 	.set_cqm_rssi_config = ieee80211_set_cqm_rssi_config,
 };

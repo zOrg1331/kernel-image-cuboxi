@@ -805,25 +805,12 @@ void tcp_update_metrics(struct sock *sk)
 	}
 }
 
-/* Numbers are taken from RFC3390.
- *
- * John Heffner states:
- *
- *	The RFC specifies a window of no more than 4380 bytes
- *	unless 2*MSS > 4380.  Reading the pseudocode in the RFC
- *	is a bit misleading because they use a clamp at 4380 bytes
- *	rather than use a multiplier in the relevant range.
- */
 __u32 tcp_init_cwnd(struct tcp_sock *tp, struct dst_entry *dst)
 {
 	__u32 cwnd = (dst ? dst_metric(dst, RTAX_INITCWND) : 0);
 
-	if (!cwnd) {
-		if (tp->mss_cache > 1460)
-			cwnd = 2;
-		else
-			cwnd = (tp->mss_cache > 1095) ? 3 : 4;
-	}
+	if (!cwnd)
+		cwnd = rfc3390_bytes_to_packets(tp->mss_cache);
 	return min_t(__u32, cwnd, tp->snd_cwnd_clamp);
 }
 
@@ -2314,7 +2301,7 @@ static inline int tcp_dupack_heuristics(struct tcp_sock *tp)
 
 static inline int tcp_skb_timedout(struct sock *sk, struct sk_buff *skb)
 {
-	return (tcp_time_stamp - TCP_SKB_CB(skb)->when > inet_csk(sk)->icsk_rto);
+	return tcp_time_stamp - TCP_SKB_CB(skb)->when > inet_csk(sk)->icsk_rto;
 }
 
 static inline int tcp_head_timedout(struct sock *sk)
@@ -3411,8 +3398,8 @@ static void tcp_ack_probe(struct sock *sk)
 
 static inline int tcp_ack_is_dubious(const struct sock *sk, const int flag)
 {
-	return (!(flag & FLAG_NOT_DUP) || (flag & FLAG_CA_ALERT) ||
-		inet_csk(sk)->icsk_ca_state != TCP_CA_Open);
+	return !(flag & FLAG_NOT_DUP) || (flag & FLAG_CA_ALERT) ||
+		inet_csk(sk)->icsk_ca_state != TCP_CA_Open;
 }
 
 static inline int tcp_may_raise_cwnd(const struct sock *sk, const int flag)
@@ -3429,9 +3416,9 @@ static inline int tcp_may_update_window(const struct tcp_sock *tp,
 					const u32 ack, const u32 ack_seq,
 					const u32 nwin)
 {
-	return (after(ack, tp->snd_una) ||
+	return	after(ack, tp->snd_una) ||
 		after(ack_seq, tp->snd_wl1) ||
-		(ack_seq == tp->snd_wl1 && nwin > tp->snd_wnd));
+		(ack_seq == tp->snd_wl1 && nwin > tp->snd_wnd);
 }
 
 /* Update our send window.

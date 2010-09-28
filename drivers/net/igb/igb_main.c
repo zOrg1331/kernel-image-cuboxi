@@ -71,6 +71,8 @@ static DEFINE_PCI_DEVICE_TABLE(igb_pci_tbl) = {
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82580_SERDES), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82580_SGMII), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82580_COPPER_DUAL), board_82575 },
+	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_DH89XXCC_SGMII), board_82575 },
+	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_DH89XXCC_SERDES), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82576), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82576_NS), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82576_NS_SERDES), board_82575 },
@@ -1856,8 +1858,10 @@ static int __devinit igb_probe(struct pci_dev *pdev,
 	netdev->vlan_features |= NETIF_F_IPV6_CSUM;
 	netdev->vlan_features |= NETIF_F_SG;
 
-	if (pci_using_dac)
+	if (pci_using_dac) {
 		netdev->features |= NETIF_F_HIGHDMA;
+		netdev->vlan_features |= NETIF_F_HIGHDMA;
+	}
 
 	if (hw->mac.type >= e1000_82576)
 		netdev->features |= NETIF_F_SCTP_CSUM;
@@ -1888,9 +1892,9 @@ static int __devinit igb_probe(struct pci_dev *pdev,
 		goto err_eeprom;
 	}
 
-	setup_timer(&adapter->watchdog_timer, &igb_watchdog,
+	setup_timer(&adapter->watchdog_timer, igb_watchdog,
 	            (unsigned long) adapter);
-	setup_timer(&adapter->phy_info_timer, &igb_update_phy_info,
+	setup_timer(&adapter->phy_info_timer, igb_update_phy_info,
 	            (unsigned long) adapter);
 
 	INIT_WORK(&adapter->reset_task, igb_reset_task);
@@ -3954,7 +3958,7 @@ static inline int igb_tx_map_adv(struct igb_ring *tx_ring, struct sk_buff *skb,
 	}
 
 	tx_ring->buffer_info[i].skb = skb;
-	tx_ring->buffer_info[i].shtx = skb_shinfo(skb)->tx_flags;
+	tx_ring->buffer_info[i].tx_flags = skb_shinfo(skb)->tx_flags;
 	/* multiply data chunks by size of headers */
 	tx_ring->buffer_info[i].bytecount = ((gso_segs - 1) * hlen) + skb->len;
 	tx_ring->buffer_info[i].gso_segs = gso_segs;
@@ -4088,7 +4092,6 @@ netdev_tx_t igb_xmit_frame_ring_adv(struct sk_buff *skb,
 	u32 tx_flags = 0;
 	u16 first;
 	u8 hdr_len = 0;
-	union skb_shared_tx *shtx = skb_tx(skb);
 
 	/* need: 1 descriptor per page,
 	 *       + 2 desc gap to keep tail from touching head,
@@ -4100,8 +4103,8 @@ netdev_tx_t igb_xmit_frame_ring_adv(struct sk_buff *skb,
 		return NETDEV_TX_BUSY;
 	}
 
-	if (unlikely(shtx->hardware)) {
-		shtx->in_progress = 1;
+	if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP)) {
+		skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
 		tx_flags |= IGB_TX_FLAGS_TSTAMP;
 	}
 
@@ -4660,12 +4663,13 @@ static int igb_set_vf_promisc(struct igb_adapter *adapter, u32 *msgbuf, u32 vf)
 	u32 vmolr = rd32(E1000_VMOLR(vf));
 	struct vf_data_storage *vf_data = &adapter->vf_data[vf];
 
-	vf_data->flags |= ~(IGB_VF_FLAG_UNI_PROMISC |
+	vf_data->flags &= ~(IGB_VF_FLAG_UNI_PROMISC |
 	                    IGB_VF_FLAG_MULTI_PROMISC);
 	vmolr &= ~(E1000_VMOLR_ROPE | E1000_VMOLR_ROMPE | E1000_VMOLR_MPME);
 
 	if (*msgbuf & E1000_VF_SET_PROMISC_MULTICAST) {
 		vmolr |= E1000_VMOLR_MPME;
+		vf_data->flags |= IGB_VF_FLAG_MULTI_PROMISC;
 		*msgbuf &= ~E1000_VF_SET_PROMISC_MULTICAST;
 	} else {
 		/*
@@ -5319,7 +5323,7 @@ static void igb_tx_hwtstamp(struct igb_q_vector *q_vector, struct igb_buffer *bu
 	u64 regval;
 
 	/* if skb does not support hw timestamp or TX stamp not valid exit */
-	if (likely(!buffer_info->shtx.hardware) ||
+	if (likely(!(buffer_info->tx_flags & SKBTX_HW_TSTAMP)) ||
 	    !(rd32(E1000_TSYNCTXCTL) & E1000_TSYNCTXCTL_VALID))
 		return;
 
@@ -5431,7 +5435,7 @@ static bool igb_clean_tx_irq(struct igb_q_vector *q_vector)
 	tx_ring->total_packets += total_packets;
 	tx_ring->tx_stats.bytes += total_bytes;
 	tx_ring->tx_stats.packets += total_packets;
-	return (count < tx_ring->count);
+	return count < tx_ring->count;
 }
 
 /**
@@ -5456,7 +5460,7 @@ static void igb_receive_skb(struct igb_q_vector *q_vector,
 static inline void igb_rx_checksum_adv(struct igb_ring *ring,
 				       u32 status_err, struct sk_buff *skb)
 {
-	skb->ip_summed = CHECKSUM_NONE;
+	skb_checksum_none_assert(skb);
 
 	/* Ignore Checksum bit is set or checksum is disabled through ethtool */
 	if (!(ring->flags & IGB_RING_FLAG_RX_CSUM) ||
@@ -5500,7 +5504,7 @@ static void igb_rx_hwtstamp(struct igb_q_vector *q_vector, u32 staterr,
 	 * values must belong to this one here and therefore we don't need to
 	 * compare any of the additional attributes stored for it.
 	 *
-	 * If nothing went wrong, then it should have a skb_shared_tx that we
+	 * If nothing went wrong, then it should have a shared tx_flags that we
 	 * can turn into a skb_shared_hwtstamps.
 	 */
 	if (staterr & E1000_RXDADV_STAT_TSIP) {

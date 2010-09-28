@@ -50,12 +50,6 @@ struct ieee80211_local;
  * increased memory use (about 2 kB of RAM per entry). */
 #define IEEE80211_FRAGMENT_MAX 4
 
-/*
- * Time after which we ignore scan results and no longer report/use
- * them in any way.
- */
-#define IEEE80211_SCAN_RESULT_EXPIRE (10 * HZ)
-
 #define TU_TO_EXP_TIME(x)	(jiffies + usecs_to_jiffies((x) * 1024))
 
 #define IEEE80211_DEFAULT_UAPSD_QUEUES \
@@ -170,6 +164,7 @@ typedef unsigned __bitwise__ ieee80211_rx_result;
 #define IEEE80211_RX_RA_MATCH		BIT(1)
 #define IEEE80211_RX_AMSDU		BIT(2)
 #define IEEE80211_RX_FRAGMENTED		BIT(3)
+#define IEEE80211_MALFORMED_ACTION_FRM	BIT(4)
 /* only add flags here that do not change with subframes of an aMPDU */
 
 struct ieee80211_rx_data {
@@ -343,7 +338,10 @@ struct ieee80211_if_managed {
 	unsigned long timers_running; /* used for quiesce/restart */
 	bool powersave; /* powersave requested for this iface */
 	enum ieee80211_smps_mode req_smps, /* requested smps mode */
-				 ap_smps; /* smps mode AP thinks we're in */
+				 ap_smps, /* smps mode AP thinks we're in */
+				 driver_smps_mode; /* smps mode request */
+
+	struct work_struct request_smps_work;
 
 	unsigned int flags;
 
@@ -369,6 +367,13 @@ struct ieee80211_if_managed {
 	 * divided by 16 to get the actual value.
 	 */
 	int ave_beacon_signal;
+
+	/*
+	 * Number of Beacon frames used in ave_beacon_signal. This can be used
+	 * to avoid generating less reliable cqm events that would be based
+	 * only on couple of received frames.
+	 */
+	unsigned int count_beacon_signal;
 
 	/*
 	 * Last Beacon frame signal strength average (ave_beacon_signal / 16)
@@ -474,6 +479,19 @@ enum ieee80211_sub_if_data_flags {
 	IEEE80211_SDATA_DONT_BRIDGE_PACKETS	= BIT(3),
 };
 
+/**
+ * enum ieee80211_sdata_state_bits - virtual interface state bits
+ * @SDATA_STATE_RUNNING: virtual interface is up & running; this
+ *	mirrors netif_running() but is separate for interface type
+ *	change handling while the interface is up
+ * @SDATA_STATE_OFFCHANNEL: This interface is currently in offchannel
+ *	mode, so queues are stopped
+ */
+enum ieee80211_sdata_state_bits {
+	SDATA_STATE_RUNNING,
+	SDATA_STATE_OFFCHANNEL,
+};
+
 struct ieee80211_sub_if_data {
 	struct list_head list;
 
@@ -487,6 +505,8 @@ struct ieee80211_sub_if_data {
 
 	unsigned int flags;
 
+	unsigned long state;
+
 	int drop_unencrypted;
 
 	char name[IFNAMSIZ];
@@ -496,6 +516,9 @@ struct ieee80211_sub_if_data {
 	 * vif.bss_info.ht_operation_mode) is valid.
 	 */
 	bool ht_opmode_valid;
+
+	/* to detect idle changes */
+	bool old_idle;
 
 	/* Fragment table for host-based reassembly */
 	struct ieee80211_fragment_entry	fragments[IEEE80211_FRAGMENT_MAX];
@@ -508,6 +531,8 @@ struct ieee80211_sub_if_data {
 	struct ieee80211_key *default_mgmt_key;
 
 	u16 sequence_number;
+	__be16 control_port_protocol;
+	bool control_port_no_encrypt;
 
 	struct work_struct work;
 	struct sk_buff_head skb_queue;
@@ -595,11 +620,17 @@ enum queue_stop_reason {
  *	determine if we are on the operating channel or not
  * @SCAN_OFF_CHANNEL: We're off our operating channel for scanning,
  *	gets only set in conjunction with SCAN_SW_SCANNING
+ * @SCAN_COMPLETED: Set for our scan work function when the driver reported
+ *	that the scan completed.
+ * @SCAN_ABORTED: Set for our scan work function when the driver reported
+ *	a scan complete for an aborted scan.
  */
 enum {
 	SCAN_SW_SCANNING,
 	SCAN_HW_SCANNING,
 	SCAN_OFF_CHANNEL,
+	SCAN_COMPLETED,
+	SCAN_ABORTED,
 };
 
 /**
@@ -634,7 +665,6 @@ struct ieee80211_local {
 	/*
 	 * work stuff, potentially off-channel (in the future)
 	 */
-	struct mutex work_mtx;
 	struct list_head work_list;
 	struct timer_list work_timer;
 	struct work_struct work_work;
@@ -655,6 +685,8 @@ struct ieee80211_local {
 	/* number of interfaces with corresponding FIF_ flags */
 	int fif_fcsfail, fif_plcpfail, fif_control, fif_other_bss, fif_pspoll;
 	unsigned int filter_flags; /* FIF_* */
+
+	bool wiphy_ciphers_allocated;
 
 	/* protects the aggregated multicast list and filter calls */
 	spinlock_t filter_lock;
@@ -746,9 +778,10 @@ struct ieee80211_local {
 	 */
 	struct mutex key_mtx;
 
+	/* mutex for scan and work locking */
+	struct mutex mtx;
 
 	/* Scanning and BSS list */
-	struct mutex scan_mtx;
 	unsigned long scanning;
 	struct cfg80211_ssid scan_ssid;
 	struct cfg80211_scan_request *int_scan_req;
@@ -870,6 +903,11 @@ struct ieee80211_local {
 		struct dentry *keys;
 	} debugfs;
 #endif
+
+	/* dummy netdev for use w/ NAPI */
+	struct net_device napi_dev;
+
+	struct napi_struct napi;
 };
 
 static inline struct ieee80211_sub_if_data *
@@ -1003,6 +1041,8 @@ void ieee80211_sta_restart(struct ieee80211_sub_if_data *sdata);
 void ieee80211_sta_work(struct ieee80211_sub_if_data *sdata);
 void ieee80211_sta_rx_queued_mgmt(struct ieee80211_sub_if_data *sdata,
 				  struct sk_buff *skb);
+void ieee80211_sta_reset_beacon_monitor(struct ieee80211_sub_if_data *sdata);
+void ieee80211_sta_reset_conn_monitor(struct ieee80211_sub_if_data *sdata);
 
 /* IBSS code */
 void ieee80211_ibss_notify_scan_completed(struct ieee80211_local *local);
@@ -1071,7 +1111,7 @@ void ieee80211_recalc_idle(struct ieee80211_local *local);
 
 static inline bool ieee80211_sdata_running(struct ieee80211_sub_if_data *sdata)
 {
-	return netif_running(sdata->dev);
+	return test_bit(SDATA_STATE_RUNNING, &sdata->state);
 }
 
 /* tx handling */
@@ -1105,6 +1145,7 @@ void ieee80211_send_delba(struct ieee80211_sub_if_data *sdata,
 int ieee80211_send_smps_action(struct ieee80211_sub_if_data *sdata,
 			       enum ieee80211_smps_mode smps, const u8 *da,
 			       const u8 *bssid);
+void ieee80211_request_smps_work(struct work_struct *work);
 
 void ___ieee80211_stop_rx_ba_session(struct sta_info *sta, u16 tid,
 				     u16 initiator, u16 reason);
@@ -1131,6 +1172,7 @@ void ieee80211_start_tx_ba_cb(struct ieee80211_vif *vif, u8 *ra, u16 tid);
 void ieee80211_stop_tx_ba_cb(struct ieee80211_vif *vif, u8 *ra, u8 tid);
 void ieee80211_ba_session_work(struct work_struct *work);
 void ieee80211_tx_ba_session_handle_start(struct sta_info *sta, int tid);
+void ieee80211_release_reorder_timeout(struct sta_info *sta, int tid);
 
 /* Spectrum management */
 void ieee80211_process_measurement_req(struct ieee80211_sub_if_data *sdata,
@@ -1146,6 +1188,12 @@ int __ieee80211_suspend(struct ieee80211_hw *hw);
 
 static inline int __ieee80211_resume(struct ieee80211_hw *hw)
 {
+	struct ieee80211_local *local = hw_to_local(hw);
+
+	WARN(test_bit(SCAN_HW_SCANNING, &local->scanning),
+		"%s: resume with hardware scan still in progress\n",
+		wiphy_name(hw->wiphy));
+
 	return ieee80211_reconfig(hw_to_local(hw));
 }
 #else

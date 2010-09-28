@@ -237,23 +237,22 @@ void tipc_node_link_down(struct tipc_node *n_ptr, struct link *l_ptr)
 
 int tipc_node_has_active_links(struct tipc_node *n_ptr)
 {
-	return (n_ptr &&
-		((n_ptr->active_links[0]) || (n_ptr->active_links[1])));
+	return n_ptr->active_links[0] != NULL;
 }
 
 int tipc_node_has_redundant_links(struct tipc_node *n_ptr)
 {
-	return (n_ptr->working_links > 1);
+	return n_ptr->working_links > 1;
 }
 
 static int tipc_node_has_active_routes(struct tipc_node *n_ptr)
 {
-	return (n_ptr && (n_ptr->last_router >= 0));
+	return n_ptr && (n_ptr->last_router >= 0);
 }
 
 int tipc_node_is_up(struct tipc_node *n_ptr)
 {
-	return (tipc_node_has_active_links(n_ptr) || tipc_node_has_active_routes(n_ptr));
+	return tipc_node_has_active_links(n_ptr) || tipc_node_has_active_routes(n_ptr);
 }
 
 struct tipc_node *tipc_node_attach_link(struct link *l_ptr)
@@ -384,6 +383,20 @@ static void node_established_contact(struct tipc_node *n_ptr)
 				  tipc_highest_allowed_slave);
 }
 
+static void node_cleanup_finished(unsigned long node_addr)
+{
+	struct tipc_node *n_ptr;
+
+	read_lock_bh(&tipc_net_lock);
+	n_ptr = tipc_node_find(node_addr);
+	if (n_ptr) {
+		tipc_node_lock(n_ptr);
+		n_ptr->cleanup_required = 0;
+		tipc_node_unlock(n_ptr);
+	}
+	read_unlock_bh(&tipc_net_lock);
+}
+
 static void node_lost_contact(struct tipc_node *n_ptr)
 {
 	struct cluster *c_ptr;
@@ -458,6 +471,11 @@ static void node_lost_contact(struct tipc_node *n_ptr)
 		tipc_k_signal((Handler)ns->handle_node_down,
 			      (unsigned long)ns->usr_handle);
 	}
+
+	/* Prevent re-contact with node until all cleanup is done */
+
+	n_ptr->cleanup_required = 1;
+	tipc_k_signal((Handler)node_cleanup_finished, n_ptr->addr);
 }
 
 /**

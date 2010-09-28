@@ -1555,12 +1555,12 @@ static irqreturn_t myri10ge_intr(int irq, void *arg)
 	 * valid  since MSI-X irqs are not shared */
 	if ((mgp->dev->real_num_tx_queues == 1) && (ss != mgp->ss)) {
 		napi_schedule(&ss->napi);
-		return (IRQ_HANDLED);
+		return IRQ_HANDLED;
 	}
 
 	/* make sure it is our IRQ, and that the DMA has finished */
 	if (unlikely(!stats->valid))
-		return (IRQ_NONE);
+		return IRQ_NONE;
 
 	/* low bit indicates receives are present, so schedule
 	 * napi poll handler */
@@ -1599,7 +1599,7 @@ static irqreturn_t myri10ge_intr(int irq, void *arg)
 		myri10ge_check_statblock(mgp);
 
 	put_be32(htonl(3), ss->irq_claim + 1);
-	return (IRQ_HANDLED);
+	return IRQ_HANDLED;
 }
 
 static int
@@ -3753,8 +3753,8 @@ static void myri10ge_probe_slices(struct myri10ge_priv *mgp)
 	 * slices. We give up on MSI-X if we can only get a single
 	 * vector. */
 
-	mgp->msix_vectors = kzalloc(mgp->num_slices *
-				    sizeof(*mgp->msix_vectors), GFP_KERNEL);
+	mgp->msix_vectors = kcalloc(mgp->num_slices, sizeof(*mgp->msix_vectors),
+				    GFP_KERNEL);
 	if (mgp->msix_vectors == NULL)
 		goto disable_msix;
 	for (i = 0; i < mgp->num_slices; i++) {

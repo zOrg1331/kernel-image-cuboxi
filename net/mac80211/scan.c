@@ -248,14 +248,12 @@ static bool ieee80211_prep_hw_scan(struct ieee80211_local *local)
 	return true;
 }
 
-void ieee80211_scan_completed(struct ieee80211_hw *hw, bool aborted)
+static void __ieee80211_scan_completed(struct ieee80211_hw *hw, bool aborted)
 {
 	struct ieee80211_local *local = hw_to_local(hw);
 	bool was_hw_scan;
 
-	trace_api_scan_completed(local, aborted);
-
-	mutex_lock(&local->scan_mtx);
+	mutex_lock(&local->mtx);
 
 	/*
 	 * It's ok to abort a not-yet-running scan (that
@@ -267,7 +265,7 @@ void ieee80211_scan_completed(struct ieee80211_hw *hw, bool aborted)
 		aborted = true;
 
 	if (WARN_ON(!local->scan_req)) {
-		mutex_unlock(&local->scan_mtx);
+		mutex_unlock(&local->mtx);
 		return;
 	}
 
@@ -275,7 +273,7 @@ void ieee80211_scan_completed(struct ieee80211_hw *hw, bool aborted)
 	if (was_hw_scan && !aborted && ieee80211_prep_hw_scan(local)) {
 		ieee80211_queue_delayed_work(&local->hw,
 					     &local->scan_work, 0);
-		mutex_unlock(&local->scan_mtx);
+		mutex_unlock(&local->mtx);
 		return;
 	}
 
@@ -291,7 +289,7 @@ void ieee80211_scan_completed(struct ieee80211_hw *hw, bool aborted)
 	local->scan_channel = NULL;
 
 	/* we only have to protect scan_req and hw/sw scan */
-	mutex_unlock(&local->scan_mtx);
+	mutex_unlock(&local->mtx);
 
 	ieee80211_hw_config(local, IEEE80211_CONF_CHANGE_CHANNEL);
 	if (was_hw_scan)
@@ -304,11 +302,25 @@ void ieee80211_scan_completed(struct ieee80211_hw *hw, bool aborted)
 	ieee80211_offchannel_return(local, true);
 
  done:
+	mutex_lock(&local->mtx);
 	ieee80211_recalc_idle(local);
+	mutex_unlock(&local->mtx);
 	ieee80211_mlme_notify_scan_completed(local);
 	ieee80211_ibss_notify_scan_completed(local);
 	ieee80211_mesh_notify_scan_completed(local);
 	ieee80211_queue_work(&local->hw, &local->work_work);
+}
+
+void ieee80211_scan_completed(struct ieee80211_hw *hw, bool aborted)
+{
+	struct ieee80211_local *local = hw_to_local(hw);
+
+	trace_api_scan_completed(local, aborted);
+
+	set_bit(SCAN_COMPLETED, &local->scanning);
+	if (aborted)
+		set_bit(SCAN_ABORTED, &local->scanning);
+	ieee80211_queue_delayed_work(&local->hw, &local->scan_work, 0);
 }
 EXPORT_SYMBOL(ieee80211_scan_completed);
 
@@ -447,7 +459,7 @@ static int ieee80211_scan_state_decision(struct ieee80211_local *local,
 
 	/* if no more bands/channels left, complete scan and advance to the idle state */
 	if (local->scan_channel_idx >= local->scan_req->n_channels) {
-		ieee80211_scan_completed(&local->hw, false);
+		__ieee80211_scan_completed(&local->hw, false);
 		return 1;
 	}
 
@@ -639,17 +651,25 @@ void ieee80211_scan_work(struct work_struct *work)
 	struct ieee80211_sub_if_data *sdata = local->scan_sdata;
 	unsigned long next_delay = 0;
 
-	mutex_lock(&local->scan_mtx);
+	if (test_and_clear_bit(SCAN_COMPLETED, &local->scanning)) {
+		bool aborted;
+
+		aborted = test_and_clear_bit(SCAN_ABORTED, &local->scanning);
+		__ieee80211_scan_completed(&local->hw, aborted);
+		return;
+	}
+
+	mutex_lock(&local->mtx);
 	if (!sdata || !local->scan_req) {
-		mutex_unlock(&local->scan_mtx);
+		mutex_unlock(&local->mtx);
 		return;
 	}
 
 	if (local->hw_scan_req) {
 		int rc = drv_hw_scan(local, sdata, local->hw_scan_req);
-		mutex_unlock(&local->scan_mtx);
+		mutex_unlock(&local->mtx);
 		if (rc)
-			ieee80211_scan_completed(&local->hw, true);
+			__ieee80211_scan_completed(&local->hw, true);
 		return;
 	}
 
@@ -661,20 +681,20 @@ void ieee80211_scan_work(struct work_struct *work)
 		local->scan_sdata = NULL;
 
 		rc = __ieee80211_start_scan(sdata, req);
-		mutex_unlock(&local->scan_mtx);
+		mutex_unlock(&local->mtx);
 
 		if (rc)
-			ieee80211_scan_completed(&local->hw, true);
+			__ieee80211_scan_completed(&local->hw, true);
 		return;
 	}
 
-	mutex_unlock(&local->scan_mtx);
+	mutex_unlock(&local->mtx);
 
 	/*
 	 * Avoid re-scheduling when the sdata is going away.
 	 */
 	if (!ieee80211_sdata_running(sdata)) {
-		ieee80211_scan_completed(&local->hw, true);
+		__ieee80211_scan_completed(&local->hw, true);
 		return;
 	}
 
@@ -711,9 +731,9 @@ int ieee80211_request_scan(struct ieee80211_sub_if_data *sdata,
 {
 	int res;
 
-	mutex_lock(&sdata->local->scan_mtx);
+	mutex_lock(&sdata->local->mtx);
 	res = __ieee80211_start_scan(sdata, req);
-	mutex_unlock(&sdata->local->scan_mtx);
+	mutex_unlock(&sdata->local->mtx);
 
 	return res;
 }
@@ -726,7 +746,7 @@ int ieee80211_request_internal_scan(struct ieee80211_sub_if_data *sdata,
 	int ret = -EBUSY;
 	enum ieee80211_band band;
 
-	mutex_lock(&local->scan_mtx);
+	mutex_lock(&local->mtx);
 
 	/* busy scanning */
 	if (local->scan_req)
@@ -761,7 +781,7 @@ int ieee80211_request_internal_scan(struct ieee80211_sub_if_data *sdata,
 
 	ret = __ieee80211_start_scan(sdata, sdata->local->int_scan_req);
  unlock:
-	mutex_unlock(&local->scan_mtx);
+	mutex_unlock(&local->mtx);
 	return ret;
 }
 
@@ -775,11 +795,11 @@ void ieee80211_scan_cancel(struct ieee80211_local *local)
 	 * Only call this function when a scan can't be
 	 * queued -- mostly at suspend under RTNL.
 	 */
-	mutex_lock(&local->scan_mtx);
+	mutex_lock(&local->mtx);
 	abortscan = test_bit(SCAN_SW_SCANNING, &local->scanning) ||
 		    (!local->scanning && local->scan_req);
-	mutex_unlock(&local->scan_mtx);
+	mutex_unlock(&local->mtx);
 
 	if (abortscan)
-		ieee80211_scan_completed(&local->hw, true);
+		__ieee80211_scan_completed(&local->hw, true);
 }
