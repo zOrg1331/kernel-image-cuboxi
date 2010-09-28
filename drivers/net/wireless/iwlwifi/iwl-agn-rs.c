@@ -3125,6 +3125,7 @@ static const struct file_operations rs_sta_dbgfs_scale_table_ops = {
 	.write = rs_sta_dbgfs_scale_table_write,
 	.read = rs_sta_dbgfs_scale_table_read,
 	.open = open_file_generic,
+	.llseek = default_llseek,
 };
 static ssize_t rs_sta_dbgfs_stats_table_read(struct file *file,
 			char __user *user_buf, size_t count, loff_t *ppos)
@@ -3167,6 +3168,7 @@ static ssize_t rs_sta_dbgfs_stats_table_read(struct file *file,
 static const struct file_operations rs_sta_dbgfs_stats_table_ops = {
 	.read = rs_sta_dbgfs_stats_table_read,
 	.open = open_file_generic,
+	.llseek = default_llseek,
 };
 
 static ssize_t rs_sta_dbgfs_rate_scale_data_read(struct file *file,
@@ -3198,6 +3200,7 @@ static ssize_t rs_sta_dbgfs_rate_scale_data_read(struct file *file,
 static const struct file_operations rs_sta_dbgfs_rate_scale_data_ops = {
 	.read = rs_sta_dbgfs_rate_scale_data_read,
 	.open = open_file_generic,
+	.llseek = default_llseek,
 };
 
 static void rs_add_debugfs(void *priv, void *priv_sta,
