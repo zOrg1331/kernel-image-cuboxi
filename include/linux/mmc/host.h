@@ -162,8 +162,7 @@ struct mmc_host {
 
 	/* host specific block data */
 	unsigned int		max_seg_size;	/* see blk_queue_max_segment_size */
-	unsigned short		max_hw_segs;	/* see blk_queue_max_hw_segments */
-	unsigned short		max_phys_segs;	/* see blk_queue_max_phys_segments */
+	unsigned short		max_segs;	/* see blk_queue_max_segments */
 	unsigned short		unused;
 	unsigned int		max_req_size;	/* maximum number of bytes in one req */
 	unsigned int		max_blk_size;	/* maximum size of one mmc block */
@@ -266,6 +265,14 @@ static inline void mmc_set_disable_delay(struct mmc_host *host,
 					 unsigned int disable_delay)
 {
 	host->disable_delay = disable_delay;
+}
+
+/* Module parameter */
+extern int mmc_assume_removable;
+
+static inline int mmc_card_is_removable(struct mmc_host *host)
+{
+	return !(host->caps & MMC_CAP_NONREMOVABLE) && mmc_assume_removable;
 }
 
 #endif
