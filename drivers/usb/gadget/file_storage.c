@@ -400,9 +400,9 @@ MODULE_PARM_DESC(buflen, "I/O buffer size");
 
 #ifdef CONFIG_USB_FILE_STORAGE_TEST
 
-#define transport_is_bbb()	(mod_data.transport_type == USB_PR_BULK)
-#define transport_is_cbi()	(mod_data.transport_type == USB_PR_CBI)
-#define protocol_is_scsi()	(mod_data.protocol_type == USB_SC_SCSI)
+#define transport_is_bbb()	(mod_data.transport_type == US_PR_BULK)
+#define transport_is_cbi()	(mod_data.transport_type == US_PR_CBI)
+#define protocol_is_scsi()	(mod_data.protocol_type == US_SC_SCSI)
 
 #else
 
@@ -2183,18 +2183,18 @@ static int send_status(struct fsg_dev *fsg)
 		start_transfer(fsg, fsg->bulk_in, bh->inreq,
 				&bh->inreq_busy, &bh->state);
 
-	} else if (mod_data.transport_type == USB_PR_CB) {
+	} else if (mod_data.transport_type == US_PR_CB) {
 
 		/* Control-Bulk transport has no status phase! */
 		return 0;
 
-	} else {			// USB_PR_CBI
+	} else {			// US_PR_CBI
 		struct interrupt_data	*buf = bh->buf;
 
 		/* Store and send the Interrupt data.  UFI sends the ASC
 		 * and ASCQ bytes.  Everything else sends a Type (which
 		 * is always 0) and the status Value. */
-		if (mod_data.protocol_type == USB_SC_UFI) {
+		if (mod_data.protocol_type == US_SC_UFI) {
 			buf->bType = ASC(sd);
 			buf->bValue = ASCQ(sd);
 		} else {
@@ -2236,7 +2236,7 @@ static int check_command(struct fsg_dev *fsg, int cmnd_size,
 
 	/* There's some disagreement as to whether RBC pads commands or not.
 	 * We'll play it safe and accept either form. */
-	else if (mod_data.protocol_type == USB_SC_RBC) {
+	else if (mod_data.protocol_type == US_SC_RBC) {
 		if (fsg->cmnd_size == 12)
 			cmnd_size = 12;
 
@@ -2707,7 +2707,7 @@ static int get_next_command(struct fsg_dev *fsg)
 		rc = received_cbw(fsg, bh);
 		bh->state = BUF_STATE_EMPTY;
 
-	} else {		// USB_PR_CB or USB_PR_CBI
+	} else {		// US_PR_CB or US_PR_CBI
 
 		/* Wait for the next command to arrive */
 		while (fsg->cbbuf_cmnd_size == 0) {
@@ -3213,9 +3213,9 @@ static int __init check_parameters(struct fsg_dev *fsg)
 	int	gcnum;
 
 	/* Store the default values */
-	mod_data.transport_type = USB_PR_BULK;
+	mod_data.transport_type = US_PR_BULK;
 	mod_data.transport_name = "Bulk-only";
-	mod_data.protocol_type = USB_SC_SCSI;
+	mod_data.protocol_type = US_SC_SCSI;
 	mod_data.protocol_name = "Transparent SCSI";
 
 	/* Some peripheral controllers are known not to be able to
@@ -3242,10 +3242,10 @@ static int __init check_parameters(struct fsg_dev *fsg)
 	if (strnicmp(mod_data.transport_parm, "BBB", 10) == 0) {
 		;		// Use default setting
 	} else if (strnicmp(mod_data.transport_parm, "CB", 10) == 0) {
-		mod_data.transport_type = USB_PR_CB;
+		mod_data.transport_type = US_PR_CB;
 		mod_data.transport_name = "Control-Bulk";
 	} else if (strnicmp(mod_data.transport_parm, "CBI", 10) == 0) {
-		mod_data.transport_type = USB_PR_CBI;
+		mod_data.transport_type = US_PR_CBI;
 		mod_data.transport_name = "Control-Bulk-Interrupt";
 	} else {
 		ERROR(fsg, "invalid transport: %s\n", mod_data.transport_parm);
@@ -3253,28 +3253,28 @@ static int __init check_parameters(struct fsg_dev *fsg)
 	}
 
 	if (strnicmp(mod_data.protocol_parm, "SCSI", 10) == 0 ||
-			prot == USB_SC_SCSI) {
+			prot == US_SC_SCSI) {
 		;		// Use default setting
 	} else if (strnicmp(mod_data.protocol_parm, "RBC", 10) == 0 ||
-			prot == USB_SC_RBC) {
-		mod_data.protocol_type = USB_SC_RBC;
+			prot == US_SC_RBC) {
+		mod_data.protocol_type = US_SC_RBC;
 		mod_data.protocol_name = "RBC";
 	} else if (strnicmp(mod_data.protocol_parm, "8020", 4) == 0 ||
 			strnicmp(mod_data.protocol_parm, "ATAPI", 10) == 0 ||
-			prot == USB_SC_8020) {
-		mod_data.protocol_type = USB_SC_8020;
+			prot == US_SC_8020) {
+		mod_data.protocol_type = US_SC_8020;
 		mod_data.protocol_name = "8020i (ATAPI)";
 	} else if (strnicmp(mod_data.protocol_parm, "QIC", 3) == 0 ||
-			prot == USB_SC_QIC) {
-		mod_data.protocol_type = USB_SC_QIC;
+			prot == US_SC_QIC) {
+		mod_data.protocol_type = US_SC_QIC;
 		mod_data.protocol_name = "QIC-157";
 	} else if (strnicmp(mod_data.protocol_parm, "UFI", 10) == 0 ||
-			prot == USB_SC_UFI) {
-		mod_data.protocol_type = USB_SC_UFI;
+			prot == US_SC_UFI) {
+		mod_data.protocol_type = US_SC_UFI;
 		mod_data.protocol_name = "UFI";
 	} else if (strnicmp(mod_data.protocol_parm, "8070", 4) == 0 ||
-			prot == USB_SC_8070) {
-		mod_data.protocol_type = USB_SC_8070;
+			prot == US_SC_8070) {
+		mod_data.protocol_type = US_SC_8070;
 		mod_data.protocol_name = "8070i";
 	} else {
 		ERROR(fsg, "invalid protocol: %s\n", mod_data.protocol_parm);
@@ -3312,8 +3312,8 @@ static int __init check_parameters(struct fsg_dev *fsg)
 			}
 		}
 		if (len > 126 ||
-		    (mod_data.transport_type == USB_PR_BULK && len < 12) ||
-		    (mod_data.transport_type != USB_PR_BULK && len > 12)) {
+		    (mod_data.transport_type == US_PR_BULK && len < 12) ||
+		    (mod_data.transport_type != US_PR_BULK && len > 12)) {
 			WARNING(fsg, "Invalid serial string length!\n");
 			goto no_serial;
 		}
