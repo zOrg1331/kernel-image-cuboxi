@@ -732,6 +732,7 @@ config ARCH_S5PV310
 	select CPU_V7
 	select GENERIC_GPIO
 	select HAVE_CLK
+	select ARCH_HAS_CPUFREQ
 	select GENERIC_CLOCKEVENTS
 	help
 	  Samsung S5PV310 series based systems
