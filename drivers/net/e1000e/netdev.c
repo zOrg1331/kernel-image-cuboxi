@@ -475,7 +475,8 @@ static void e1000_rx_checksum(struct e1000_adapter *adapter, u32 status_err,
 {
 	u16 status = (u16)status_err;
 	u8 errors = (u8)(status_err >> 24);
-	skb->ip_summed = CHECKSUM_NONE;
+
+	skb_checksum_none_assert(skb);
 
 	/* Ignore Checksum bit is set */
 	if (status & E1000_RXD_STAT_IXSM)
@@ -1052,7 +1053,7 @@ static bool e1000_clean_tx_irq(struct e1000_adapter *adapter)
 	adapter->total_tx_packets += total_tx_packets;
 	netdev->stats.tx_bytes += total_tx_bytes;
 	netdev->stats.tx_packets += total_tx_packets;
-	return (count < tx_ring->count);
+	return count < tx_ring->count;
 }
 
 /**
@@ -3411,22 +3412,16 @@ static int e1000_test_msi_interrupt(struct e1000_adapter *adapter)
 
 	if (adapter->flags & FLAG_MSI_TEST_FAILED) {
 		adapter->int_mode = E1000E_INT_MODE_LEGACY;
-		err = -EIO;
-		e_info("MSI interrupt test failed!\n");
-	}
+		e_info("MSI interrupt test failed, using legacy interrupt.\n");
+	} else
+		e_dbg("MSI interrupt test succeeded!\n");
 
 	free_irq(adapter->pdev->irq, netdev);
 	pci_disable_msi(adapter->pdev);
 
-	if (err == -EIO)
-		goto msi_test_failed;
-
-	/* okay so the test worked, restore settings */
-	e_dbg("MSI interrupt test succeeded!\n");
 msi_test_failed:
 	e1000e_set_interrupt_capability(adapter);
-	e1000_request_irq(adapter);
-	return err;
+	return e1000_request_irq(adapter);
 }
 
 /**
@@ -3457,21 +3452,6 @@ static int e1000_test_msi(struct e1000_adapter *adapter)
 		pci_cmd |= PCI_COMMAND_SERR;
 		pci_write_config_word(adapter->pdev, PCI_COMMAND, pci_cmd);
 	}
-
-	/* success ! */
-	if (!err)
-		return 0;
-
-	/* EIO means MSI test failed */
-	if (err != -EIO)
-		return err;
-
-	/* back to INTx mode */
-	e_warn("MSI interrupt test failed, using legacy interrupt.\n");
-
-	e1000_free_irq(adapter);
-
-	err = e1000_request_irq(adapter);
 
 	return err;
 }
@@ -5712,8 +5692,10 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
 	netdev->vlan_features |= NETIF_F_HW_CSUM;
 	netdev->vlan_features |= NETIF_F_SG;
 
-	if (pci_using_dac)
+	if (pci_using_dac) {
 		netdev->features |= NETIF_F_HIGHDMA;
+		netdev->vlan_features |= NETIF_F_HIGHDMA;
+	}
 
 	if (e1000e_enable_mng_pass_thru(&adapter->hw))
 		adapter->flags |= FLAG_MNG_PT_ENABLED;
@@ -5754,11 +5736,11 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
 	}
 
 	init_timer(&adapter->watchdog_timer);
-	adapter->watchdog_timer.function = &e1000_watchdog;
+	adapter->watchdog_timer.function = e1000_watchdog;
 	adapter->watchdog_timer.data = (unsigned long) adapter;
 
 	init_timer(&adapter->phy_info_timer);
-	adapter->phy_info_timer.function = &e1000_update_phy_info;
+	adapter->phy_info_timer.function = e1000_update_phy_info;
 	adapter->phy_info_timer.data = (unsigned long) adapter;
 
 	INIT_WORK(&adapter->reset_task, e1000_reset_task);

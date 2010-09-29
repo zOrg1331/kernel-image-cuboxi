@@ -239,13 +239,13 @@ int tipc_link_is_up(struct link *l_ptr)
 {
 	if (!l_ptr)
 		return 0;
-	return (link_working_working(l_ptr) || link_working_unknown(l_ptr));
+	return link_working_working(l_ptr) || link_working_unknown(l_ptr);
 }
 
 int tipc_link_is_active(struct link *l_ptr)
 {
-	return ((l_ptr->owner->active_links[0] == l_ptr) ||
-		(l_ptr->owner->active_links[1] == l_ptr));
+	return	(l_ptr->owner->active_links[0] == l_ptr) ||
+		(l_ptr->owner->active_links[1] == l_ptr);
 }
 
 /**
@@ -1802,6 +1802,15 @@ static int link_recv_buf_validate(struct sk_buff *buf)
 	return pskb_may_pull(buf, hdr_size);
 }
 
+/**
+ * tipc_recv_msg - process TIPC messages arriving from off-node
+ * @head: pointer to message buffer chain
+ * @tb_ptr: pointer to bearer message arrived on
+ *
+ * Invoked with no locks held.  Bearer pointer must point to a valid bearer
+ * structure (i.e. cannot be NULL), but bearer can be inactive.
+ */
+
 void tipc_recv_msg(struct sk_buff *head, struct tipc_bearer *tb_ptr)
 {
 	read_lock_bh(&tipc_net_lock);
@@ -1818,6 +1827,11 @@ void tipc_recv_msg(struct sk_buff *head, struct tipc_bearer *tb_ptr)
 		int type;
 
 		head = head->next;
+
+		/* Ensure bearer is still enabled */
+
+		if (unlikely(!b_ptr->active))
+			goto cont;
 
 		/* Ensure message is well-formed */
 
@@ -1855,12 +1869,21 @@ void tipc_recv_msg(struct sk_buff *head, struct tipc_bearer *tb_ptr)
 				goto cont;
 		}
 
-		/* Locate unicast link endpoint that should handle message */
+		/* Locate neighboring node that sent message */
 
 		n_ptr = tipc_node_find(msg_prevnode(msg));
 		if (unlikely(!n_ptr))
 			goto cont;
 		tipc_node_lock(n_ptr);
+
+		/* Don't talk to neighbor during cleanup after last session */
+
+		if (n_ptr->cleanup_required) {
+			tipc_node_unlock(n_ptr);
+			goto cont;
+		}
+
+		/* Locate unicast link endpoint that should handle message */
 
 		l_ptr = n_ptr->links[b_ptr->identity];
 		if (unlikely(!l_ptr)) {

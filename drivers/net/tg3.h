@@ -1302,7 +1302,11 @@
 #define  RDMAC_STATUS_FIFOURUN		 0x00000080
 #define  RDMAC_STATUS_FIFOOREAD		 0x00000100
 #define  RDMAC_STATUS_LNGREAD		 0x00000200
-/* 0x4808 --> 0x4c00 unused */
+/* 0x4808 --> 0x4900 unused */
+
+#define TG3_RDMA_RSRVCTRL_REG		0x00004900
+#define TG3_RDMA_RSRVCTRL_FIFO_OFLW_FIX	 0x00000004
+/* 0x4904 --> 0x4c00 unused */
 
 /* Write DMA control registers */
 #define WDMAC_MODE			0x00004c00
@@ -2176,7 +2180,7 @@
 #define TG3_APE_HOST_SEG_SIG		0x4200
 #define  APE_HOST_SEG_SIG_MAGIC		 0x484f5354
 #define TG3_APE_HOST_SEG_LEN		0x4204
-#define  APE_HOST_SEG_LEN_MAGIC		 0x0000001c
+#define  APE_HOST_SEG_LEN_MAGIC		 0x00000020
 #define TG3_APE_HOST_INIT_COUNT		0x4208
 #define TG3_APE_HOST_DRIVER_ID		0x420c
 #define  APE_HOST_DRIVER_ID_LINUX	 0xf0000000
@@ -2188,6 +2192,12 @@
 #define  APE_HOST_HEARTBEAT_INT_DISABLE	 0
 #define  APE_HOST_HEARTBEAT_INT_5SEC	 5000
 #define TG3_APE_HOST_HEARTBEAT_COUNT	0x4218
+#define TG3_APE_HOST_DRVR_STATE		0x421c
+#define TG3_APE_HOST_DRVR_STATE_START	 0x00000001
+#define TG3_APE_HOST_DRVR_STATE_UNLOAD	 0x00000002
+#define TG3_APE_HOST_DRVR_STATE_WOL	 0x00000003
+#define TG3_APE_HOST_WOL_SPEED		0x4224
+#define TG3_APE_HOST_WOL_SPEED_AUTO	 0x00008000
 
 #define TG3_APE_EVENT_STATUS		0x4300
 
@@ -2649,7 +2659,8 @@ struct tg3_rx_prodring_set {
 	dma_addr_t			rx_jmb_mapping;
 };
 
-#define TG3_IRQ_MAX_VECS 5
+#define TG3_IRQ_MAX_VECS_RSS		5
+#define TG3_IRQ_MAX_VECS		TG3_IRQ_MAX_VECS_RSS
 
 struct tg3_napi {
 	struct napi_struct		napi	____cacheline_aligned;
@@ -2668,7 +2679,7 @@ struct tg3_napi {
 	u32				consmbox;
 	u32				rx_rcb_ptr;
 	u16				*rx_rcb_prod_idx;
-	struct tg3_rx_prodring_set	*prodring;
+	struct tg3_rx_prodring_set	prodring;
 
 	struct tg3_rx_buffer_desc	*rx_rcb;
 	struct tg3_tx_buffer_desc	*tx_ring;
@@ -2754,8 +2765,6 @@ struct tg3 {
 #if TG3_VLAN_TAG_USED
 	struct vlan_group		*vlgrp;
 #endif
-
-	struct tg3_rx_prodring_set	prodring[TG3_IRQ_MAX_VECS];
 
 
 	/* begin "everything else" cacheline(s) section */
@@ -2850,6 +2859,7 @@ struct tg3 {
 #define TG3_FLG3_USE_JUMBO_BDFLAG	0x00400000
 #define TG3_FLG3_L1PLLPD_EN		0x00800000
 #define TG3_FLG3_5717_PLUS		0x01000000
+#define TG3_FLG3_APE_HAS_NCSI		0x02000000
 
 	struct timer_list		timer;
 	u16				timer_counter;
