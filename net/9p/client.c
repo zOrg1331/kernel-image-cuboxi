@@ -450,30 +450,41 @@ static int p9_check_errors(struct p9_client *c, struct p9_req_t *req)
 		return err;
 	}
 
-	if (type == P9_RERROR) {
+	if (type == P9_RERROR || type == P9_RLERROR) {
 		int ecode;
-		char *ename;
 
-		err = p9pdu_readf(req->rc, c->proto_version, "s?d",
-							&ename, &ecode);
-		if (err) {
-			P9_DPRINTK(P9_DEBUG_ERROR, "couldn't parse error%d\n",
-									err);
-			return err;
-		}
+		if (!p9_is_proto_dotl(c)) {
+			char *ename;
 
-		if (p9_is_proto_dotu(c) ||
-			p9_is_proto_dotl(c))
+			err = p9pdu_readf(req->rc, c->proto_version, "s?d",
+								&ename, &ecode);
+			if (err)
+				goto out_err;
+
+			if (p9_is_proto_dotu(c))
+				err = -ecode;
+
+			if (!err || !IS_ERR_VALUE(err)) {
+				err = p9_errstr2errno(ename, strlen(ename));
+
+				P9_DPRINTK(P9_DEBUG_9P, "<<< RERROR (%d) %s\n", -ecode, ename);
+
+				kfree(ename);
+			}
+		} else {
+			err = p9pdu_readf(req->rc, c->proto_version, "d", &ecode);
 			err = -ecode;
 
-		if (!err || !IS_ERR_VALUE(err))
-			err = p9_errstr2errno(ename, strlen(ename));
+			P9_DPRINTK(P9_DEBUG_9P, "<<< RLERROR (%d)\n", -ecode);
+		}
 
-		P9_DPRINTK(P9_DEBUG_9P, "<<< RERROR (%d) %s\n", -ecode, ename);
-
-		kfree(ename);
 	} else
 		err = 0;
+
+	return err;
+
+out_err:
+	P9_DPRINTK(P9_DEBUG_ERROR, "couldn't parse error%d\n", err);
 
 	return err;
 }
@@ -1205,6 +1216,12 @@ int p9_client_clunk(struct p9_fid *fid)
 	int err;
 	struct p9_client *clnt;
 	struct p9_req_t *req;
+
+	if (!fid) {
+		P9_EPRINTK(KERN_WARNING, "Trying to clunk with NULL fid\n");
+		dump_stack();
+		return 0;
+	}
 
 	P9_DPRINTK(P9_DEBUG_9P, ">>> TCLUNK fid %d\n", fid->fid);
 	err = 0;
