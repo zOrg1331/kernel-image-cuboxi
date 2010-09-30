@@ -112,7 +112,11 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_47x)
 	clrrwi	r4,r3,12	/* get an EPN for the hashing with V = 0 */
 	ori	r4,r4,PPC47x_TLBE_SIZE
 	tlbwe   r4,r7,0		/* write it */
+	mfspr	r8,SPRN_CCR2_476
+	rlwinm	r9,r8,0,~CCR2_476_DSTI
+	mtspr	SPRN_CCR2_476,r9
 	isync
+	mtspr	SPRN_CCR2_476,r8
 	wrtee	r10
 	blr
 #else /* CONFIG_PPC_47x */
@@ -180,7 +184,11 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_47x)
 	lwz	r8,0(r10)	/* Load boltmap entry */
 	addi	r10,r10,4	/* Next word */
 	b	1b		/* Then loop */
-1:	isync			/* Sync shadows */
+1:	mfspr	r9,SPRN_CCR2_476
+	rlwinm	r10,r9,0,~CCR2_476_DSTI
+	mtspr	SPRN_CCR2_476,r10
+	isync			/* Sync shadows */
+	mtspr	SPRN_CCR2_476,r9
 	wrtee	r11
 #else /* CONFIG_PPC_47x */
 1:	trap
@@ -203,7 +211,11 @@ _GLOBAL(_tlbivax_bcast)
 	isync
 /*	tlbivax	0,r3 - use .long to avoid binutils deps */
 	.long 0x7c000624 | (r3 << 11)
+	mfspr	r8,SPRN_CCR2_476
+	rlwinm	r9,r8,0,~CCR2_476_DSTI
+	mtspr	SPRN_CCR2_476,r9
 	isync
+	mtspr	SPRN_CCR2_476,r8
 	eieio
 	tlbsync
 	sync
