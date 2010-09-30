@@ -1,0 +1,113 @@
+Importing driver-core.current based on 2.6.36-rc5
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.36-rc6
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 899611ee7d373e5eeda08e9a8632684e1ebbbf00
+HEAD is now at 899611e Linux 2.6.36-rc6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-remove-obsolete-cleanup-for-clientdata.patch
+i2c-fix-for-suspend-resume-issue.patch
+i2c-pca-fix-waitforcompletion-return-value.patch
+i2c-fix-checks-which-cause-legacy-suspend-to-never-get-called.patch
+i2c-simplify-i2c_parent_is_i2c_adapter.patch
+i2c-i2c_parent_is_i2c_adapter-returns-parent.patch
+i2c-stop-including-linux-i2c-id-h.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 0ac0b61...8511dce master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.36-rc4-git3
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.36-rc2
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.36-rc3
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.36-rc1
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+$ cd ../quilt-tmp
+$ git reset --hard 8701cc951fac3216049878564dc85fc21935b34d
+HEAD is now at 8701cc9 tty: Add a new file /proc/tty/consoles
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-add-intel-langwell-usb-otg-transceiver-driver.patch
+usb-langwell-usb-client-driver-code-cleanup.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:2109: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+usb-langwell-usb-client-endpoint-initialization.patch
+usb-langwell-usb-client-phy-low-power-mode-setting.patch
+usb-langwell-usb-client-remote-wakeup-support.patch
+usb-langwell-usb-client-driver-memory-handling.patch
+usb-gadget-dbgp-cleanup-remove-unneeded-check.patch
+usb-sam-ba-add-driver-for-atmel-sam-boot-assistant-sam-ba.patch
+usb-gadget-verify-vbus-current-before-setting-the-device-self-powered-bit.patch
+usb-core-update-comment-to-match-current-function-name.patch
+usb-gadget-g_multi-fixed-vendor-and-product-id.patch
+usb-gadget-g_ffs-fixed-vendor-and-product-id.patch
+usb-gadget-storage-remove-nofua-file-when-unbinding.patch
+usb-gadget-mass_storage-optional-scsi-write-fua-bit.patch
+usb-gadget-functionfs-code-cleanup.patch
+usb-gadget-composite-better-string-override-handling.patch
+usb-gadget-mass_storage-moved-strings-handling-code.patch
+usb-gadget-g_multi-moved-strings-handling-code-to-composite.patch
+usb-revert-usb-gadget-section-mismatch-warning-fixed.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_gadget_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_composite_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_configuration.patch
+init.h-add-some-more-documentation-to-__ref-tags.patch
+usb-gadget-amd5536udc.c-remove-double-test.patch
+usb-output-an-error-message-when-the-pipe-type-doesn-t-match-the-endpoint-type.patch
+usb-langwell-remove-unnecessary-return-s-from-void-functions.patch
+usb-g_file_storage-don-t-generate-automatic-serial-string.patch
+usb-kconfig-fix-typos-in-usb_functionfs-description.patch
+usb-ehci-tdi-let-s-tdi_reset-set-host-mode.patch
+usb-gadget-rndis-fix-up-coding-style-issues-in-the-file.patch
+drivers-usb-ftdi-elan-sema.patch
+usb-otg-add-common-data-structure-for-intel-mid-platform-langwell-penwell.patch
+usb-otg-langwell-update-otg-kconfig-and-driver-version.patch
+usb-r8a66597-udc-initialize-uninitialized-variable-fix-compile-warning.patch
+usb-change-acm_iad_descriptor-bfunctionprotocol-to-usb_cdc_acm_proto_at_v25ter.patch
+usb-ohci-sm501-add-iounmap-on-error-path.patch
+ohci-work-around-for-nvidia-shutdown-problem.patch
+usb-gadget-composite-prevent-oops-for-non-standard-control-request.patch
+usb-isp1362-hcd-removes-config_usb_otg-dependent-code.patch
+usb-gadget-remove-pr_-level-uses-of-kern_-level.patch
+usb-option-add-more-zte-modem-usb-id-s.patch
+uwb-use-pm-format-to-print-mac-address.patch
+usb-teach-devices-file-about-wireless-and-superspeed-usb.patch
+usb-host-oxu210hp-hcd-use-static-const-char-const-where-possible.patch
+usb-ftdi_sio-add-pid-for-accesio-products.patch
+usb-omap-ohci-missing-driver-unregister-in-module-exit.patch
+usb-cp210x-add-renesas-rx-stick-device-id.patch
+usb-option-add-new-onda-vendor-id-and-product-id-for-onda-mt825up.patch
+usb-cdc.h-ncm-typo-and-style-fixes.patch
+revert-usb-ncm-added-ncm.h-with-auxiliary-definitions.patch
+usb-cdc.h-ncm-add-missed-constants-and-structures.patch
+usb-atmel_usba_udc-force-vbus_pin-at-einval-when-gpio_request-failled.patch
+usb-serial-enable-usb-autosuspend-by-default-on-qcserial.patch
+usb-ftdi_sio-revert-usb-ftdi_sio-fix-dtr-rts-line-modes.patch
+usb-cdc.h-ncm-fix-one-more-typo.patch
+usb-qcserial-enable-diagnostics-monitor-and-gps-ports-on-gobi-2000.patch
+usb-move-usb-storage-definitions-to-their-own-header-file.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:8: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+usb-add-uas-driver.patch
+usb-gadget-file_storage-reuse-definitions-from-a-header-file.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 08c4b64...548da81 master     -> quilt/usb  (forced update)
