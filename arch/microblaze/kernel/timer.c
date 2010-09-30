@@ -258,12 +258,10 @@ void __init time_init(void)
 				0
 			};
 #endif
-	char *timer_list[] = {
-				"xlnx,xps-timer-1.00.a",
-				"xlnx,opb-timer-1.00.b",
-				"xlnx,opb-timer-1.00.a",
-				NULL
-			};
+	const char * const timer_list[] = {
+		"xlnx,xps-timer-1.00.a",
+		NULL
+	};
 
 	for (i = 0; timer_list[i] != NULL; i++) {
 		timer = of_find_compatible_node(NULL, NULL, timer_list[i]);
@@ -272,13 +270,15 @@ void __init time_init(void)
 	}
 	BUG_ON(!timer);
 
-	timer_baseaddr = *(int *) of_get_property(timer, "reg", NULL);
+	timer_baseaddr = be32_to_cpup((int *) of_get_property(timer,
+								"reg", NULL));
 	timer_baseaddr = (unsigned long) ioremap(timer_baseaddr, PAGE_SIZE);
-	irq = *(int *) of_get_property(timer, "interrupts", NULL);
+	irq = be32_to_cpup((int *) of_get_property(timer, "interrupts", NULL));
 	timer_num =
-		*(int *) of_get_property(timer, "xlnx,one-timer-only", NULL);
+		be32_to_cpup((int *) of_get_property(timer,
+						"xlnx,one-timer-only", NULL));
 	if (timer_num) {
-		printk(KERN_EMERG "Please enable two timers in HW\n");
+		eprintk(KERN_EMERG "Please enable two timers in HW\n");
 		BUG();
 	}
 
