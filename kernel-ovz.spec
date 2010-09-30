@@ -4965,16 +4965,7 @@ Patch99999: linux-kernel-test.patch
 # ALT-specific patches
 Patch200000: our_kernel.patch
 
-# Patches from Solar Designer
-# Patch210000: linux-2.6.18-128.2.1.el5.028stab064.4-128.4.1-qnd1.diff
-# Patch210001: build-fixes.diff
-# Patch210002: build-hostname.diff
-# Patch210003: clear_child_tid-128.4.1.diff
-# Patch210004: md-boot-degraded-2.6.18.diff
-# Patch210005: md-null-deref-128.4.1.diff
-# Patch210006: parisc-eisa_eeprom.diff
-# Patch210007: sigaltstack.diff
-# Patch210008: tmpfs-size.diff
+Patch200100: linux-2.6-scsi-3w-9xxx-update-to-version-2-26-08-006.patch
 
 # END OF PATCH DEFINITIONS
 
@@ -9777,6 +9768,7 @@ perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 
 # ALT-specific patch
 %patch200000 -p1
+%patch200100 -p1
 
 # %patch210000 -p1
 # %patch210001 -p1
