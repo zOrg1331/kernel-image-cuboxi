@@ -38,7 +38,7 @@
 #
 %define sublevel 18
 %define kversion 2.6.%sublevel
-%define krelease alt13.M51.13
+%define krelease alt13.M51.14
 %define xen_hv_cset 15502
 
 %define flavour         %( s='%name'; printf %%s "${s#kernel-image-}" )
@@ -10347,6 +10347,9 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 %endif
 
 %changelog
+* Thu Sep 30 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.14
+- Update 3w-9xxx to 26-08-006 (ALT #24189)
+
 * Wed Sep 22 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.18-alt13.M51.13
 - Fix CVE-2010-3081
 
