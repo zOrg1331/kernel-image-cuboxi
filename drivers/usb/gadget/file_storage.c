@@ -89,6 +89,7 @@
  *				Required if "removable" is not set, names of
  *					the files or block devices used for
  *					backing storage
+ *	serial=HHHH...		Required serial number (string of hex chars)
  *	ro=b[,b...]		Default false, booleans for read-only access
  *	removable		Default false, boolean for removable media
  *	luns=N			Default N = number of filenames, number of
@@ -108,12 +109,11 @@
  *	vendor=0xVVVV		Default 0x0525 (NetChip), USB Vendor ID
  *	product=0xPPPP		Default 0xa4a5 (FSG), USB Product ID
  *	release=0xRRRR		Override the USB release number (bcdDevice)
- *	serial=HHHH...		Override serial number (string of hex chars)
  *	buflen=N		Default N=16384, buffer size used (will be
  *					rounded down to a multiple of
  *					PAGE_CACHE_SIZE)
  *
- * If CONFIG_USB_FILE_STORAGE_TEST is not set, only the "file", "ro",
+ * If CONFIG_USB_FILE_STORAGE_TEST is not set, only the "file", "serial", "ro",
  * "removable", "luns", "nofua", "stall", and "cdrom" options are available;
  * default values are used for everything else.
  *
@@ -273,13 +273,10 @@
 
 #define DRIVER_DESC		"File-backed Storage Gadget"
 #define DRIVER_NAME		"g_file_storage"
-/* DRIVER_VERSION must be at least 6 characters long, as it is used
- * to generate a fallback serial number. */
-#define DRIVER_VERSION		"20 November 2008"
+#define DRIVER_VERSION		"1 September 2010"
 
 static       char fsg_string_manufacturer[64];
 static const char fsg_string_product[] = DRIVER_DESC;
-static       char fsg_string_serial[13];
 static const char fsg_string_config[] = "Self-powered";
 static const char fsg_string_interface[] = "Mass Storage";
 
@@ -305,6 +302,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 static struct {
 	char		*file[FSG_MAX_LUNS];
+	char		*serial;
 	int		ro[FSG_MAX_LUNS];
 	int		nofua[FSG_MAX_LUNS];
 	unsigned int	num_filenames;
@@ -321,7 +319,6 @@ static struct {
 	unsigned short	vendor;
 	unsigned short	product;
 	unsigned short	release;
-	char		*serial;
 	unsigned int	buflen;
 
 	int		transport_type;
@@ -346,6 +343,9 @@ module_param_array_named(file, mod_data.file, charp, &mod_data.num_filenames,
 		S_IRUGO);
 MODULE_PARM_DESC(file, "names of backing files or devices");
 
+module_param_named(serial, mod_data.serial, charp, S_IRUGO);
+MODULE_PARM_DESC(serial, "USB serial number");
+
 module_param_array_named(ro, mod_data.ro, bool, &mod_data.num_ros, S_IRUGO);
 MODULE_PARM_DESC(ro, "true to force read-only");
 
@@ -364,9 +364,6 @@ MODULE_PARM_DESC(stall, "false to prevent bulk stalls");
 
 module_param_named(cdrom, mod_data.cdrom, bool, S_IRUGO);
 MODULE_PARM_DESC(cdrom, "true to emulate cdrom instead of disk");
-
-module_param_named(serial, mod_data.serial, charp, S_IRUGO);
-MODULE_PARM_DESC(serial, "USB serial number");
 
 /* In the non-TEST version, only the module parameters listed above
  * are available. */
@@ -403,9 +400,9 @@ MODULE_PARM_DESC(buflen, "I/O buffer size");
 
 #ifdef CONFIG_USB_FILE_STORAGE_TEST
 
-#define transport_is_bbb()	(mod_data.transport_type == USB_PR_BULK)
-#define transport_is_cbi()	(mod_data.transport_type == USB_PR_CBI)
-#define protocol_is_scsi()	(mod_data.protocol_type == USB_SC_SCSI)
+#define transport_is_bbb()	(mod_data.transport_type == US_PR_BULK)
+#define transport_is_cbi()	(mod_data.transport_type == US_PR_CBI)
+#define protocol_is_scsi()	(mod_data.protocol_type == US_SC_SCSI)
 
 #else
 
@@ -2186,18 +2183,18 @@ static int send_status(struct fsg_dev *fsg)
 		start_transfer(fsg, fsg->bulk_in, bh->inreq,
 				&bh->inreq_busy, &bh->state);
 
-	} else if (mod_data.transport_type == USB_PR_CB) {
+	} else if (mod_data.transport_type == US_PR_CB) {
 
 		/* Control-Bulk transport has no status phase! */
 		return 0;
 
-	} else {			// USB_PR_CBI
+	} else {			// US_PR_CBI
 		struct interrupt_data	*buf = bh->buf;
 
 		/* Store and send the Interrupt data.  UFI sends the ASC
 		 * and ASCQ bytes.  Everything else sends a Type (which
 		 * is always 0) and the status Value. */
-		if (mod_data.protocol_type == USB_SC_UFI) {
+		if (mod_data.protocol_type == US_SC_UFI) {
 			buf->bType = ASC(sd);
 			buf->bValue = ASCQ(sd);
 		} else {
@@ -2239,7 +2236,7 @@ static int check_command(struct fsg_dev *fsg, int cmnd_size,
 
 	/* There's some disagreement as to whether RBC pads commands or not.
 	 * We'll play it safe and accept either form. */
-	else if (mod_data.protocol_type == USB_SC_RBC) {
+	else if (mod_data.protocol_type == US_SC_RBC) {
 		if (fsg->cmnd_size == 12)
 			cmnd_size = 12;
 
@@ -2710,7 +2707,7 @@ static int get_next_command(struct fsg_dev *fsg)
 		rc = received_cbw(fsg, bh);
 		bh->state = BUF_STATE_EMPTY;
 
-	} else {		// USB_PR_CB or USB_PR_CBI
+	} else {		// US_PR_CB or US_PR_CBI
 
 		/* Wait for the next command to arrive */
 		while (fsg->cbbuf_cmnd_size == 0) {
@@ -3178,6 +3175,7 @@ static void /* __init_or_exit */ fsg_unbind(struct usb_gadget *gadget)
 	for (i = 0; i < fsg->nluns; ++i) {
 		curlun = &fsg->luns[i];
 		if (curlun->registered) {
+			device_remove_file(&curlun->dev, &dev_attr_nofua);
 			device_remove_file(&curlun->dev, &dev_attr_ro);
 			device_remove_file(&curlun->dev, &dev_attr_file);
 			fsg_lun_close(curlun);
@@ -3213,12 +3211,11 @@ static int __init check_parameters(struct fsg_dev *fsg)
 {
 	int	prot;
 	int	gcnum;
-	int	i;
 
 	/* Store the default values */
-	mod_data.transport_type = USB_PR_BULK;
+	mod_data.transport_type = US_PR_BULK;
 	mod_data.transport_name = "Bulk-only";
-	mod_data.protocol_type = USB_SC_SCSI;
+	mod_data.protocol_type = US_SC_SCSI;
 	mod_data.protocol_name = "Transparent SCSI";
 
 	/* Some peripheral controllers are known not to be able to
@@ -3245,10 +3242,10 @@ static int __init check_parameters(struct fsg_dev *fsg)
 	if (strnicmp(mod_data.transport_parm, "BBB", 10) == 0) {
 		;		// Use default setting
 	} else if (strnicmp(mod_data.transport_parm, "CB", 10) == 0) {
-		mod_data.transport_type = USB_PR_CB;
+		mod_data.transport_type = US_PR_CB;
 		mod_data.transport_name = "Control-Bulk";
 	} else if (strnicmp(mod_data.transport_parm, "CBI", 10) == 0) {
-		mod_data.transport_type = USB_PR_CBI;
+		mod_data.transport_type = US_PR_CBI;
 		mod_data.transport_name = "Control-Bulk-Interrupt";
 	} else {
 		ERROR(fsg, "invalid transport: %s\n", mod_data.transport_parm);
@@ -3256,28 +3253,28 @@ static int __init check_parameters(struct fsg_dev *fsg)
 	}
 
 	if (strnicmp(mod_data.protocol_parm, "SCSI", 10) == 0 ||
-			prot == USB_SC_SCSI) {
+			prot == US_SC_SCSI) {
 		;		// Use default setting
 	} else if (strnicmp(mod_data.protocol_parm, "RBC", 10) == 0 ||
-			prot == USB_SC_RBC) {
-		mod_data.protocol_type = USB_SC_RBC;
+			prot == US_SC_RBC) {
+		mod_data.protocol_type = US_SC_RBC;
 		mod_data.protocol_name = "RBC";
 	} else if (strnicmp(mod_data.protocol_parm, "8020", 4) == 0 ||
 			strnicmp(mod_data.protocol_parm, "ATAPI", 10) == 0 ||
-			prot == USB_SC_8020) {
-		mod_data.protocol_type = USB_SC_8020;
+			prot == US_SC_8020) {
+		mod_data.protocol_type = US_SC_8020;
 		mod_data.protocol_name = "8020i (ATAPI)";
 	} else if (strnicmp(mod_data.protocol_parm, "QIC", 3) == 0 ||
-			prot == USB_SC_QIC) {
-		mod_data.protocol_type = USB_SC_QIC;
+			prot == US_SC_QIC) {
+		mod_data.protocol_type = US_SC_QIC;
 		mod_data.protocol_name = "QIC-157";
 	} else if (strnicmp(mod_data.protocol_parm, "UFI", 10) == 0 ||
-			prot == USB_SC_UFI) {
-		mod_data.protocol_type = USB_SC_UFI;
+			prot == US_SC_UFI) {
+		mod_data.protocol_type = US_SC_UFI;
 		mod_data.protocol_name = "UFI";
 	} else if (strnicmp(mod_data.protocol_parm, "8070", 4) == 0 ||
-			prot == USB_SC_8070) {
-		mod_data.protocol_type = USB_SC_8070;
+			prot == US_SC_8070) {
+		mod_data.protocol_type = US_SC_8070;
 		mod_data.protocol_name = "8070i";
 	} else {
 		ERROR(fsg, "invalid protocol: %s\n", mod_data.protocol_parm);
@@ -3309,45 +3306,29 @@ static int __init check_parameters(struct fsg_dev *fsg)
 			if ((*ch < '0' || *ch > '9') &&
 			    (*ch < 'A' || *ch > 'F')) { /* not uppercase hex */
 				WARNING(fsg,
-					"Invalid serial string character: %c; "
-					"Failing back to default\n",
+					"Invalid serial string character: %c\n",
 					*ch);
-				goto fill_serial;
+				goto no_serial;
 			}
 		}
 		if (len > 126 ||
-		    (mod_data.transport_type == USB_PR_BULK && len < 12) ||
-		    (mod_data.transport_type != USB_PR_BULK && len > 12)) {
-			WARNING(fsg,
-				"Invalid serial string length; "
-				"Failing back to default\n");
-			goto fill_serial;
+		    (mod_data.transport_type == US_PR_BULK && len < 12) ||
+		    (mod_data.transport_type != US_PR_BULK && len > 12)) {
+			WARNING(fsg, "Invalid serial string length!\n");
+			goto no_serial;
 		}
 		fsg_strings[FSG_STRING_SERIAL - 1].s = mod_data.serial;
 	} else {
-		WARNING(fsg,
-			"Userspace failed to provide serial number; "
-			"Failing back to default\n");
-fill_serial:
-		/* Serial number not specified or invalid, make our own.
-		 * We just encode it from the driver version string,
-		 * 12 characters to comply with both CB[I] and BBB spec.
-		 * Warning : Two devices running the same kernel will have
-		 * the same fallback serial number. */
-		for (i = 0; i < 12; i += 2) {
-			unsigned char	c = DRIVER_VERSION[i / 2];
-
-			if (!c)
-				break;
-			sprintf(&fsg_string_serial[i], "%02X", c);
-		}
+		WARNING(fsg, "No serial-number string provided!\n");
+ no_serial:
+		device_desc.iSerialNumber = 0;
 	}
 
 	return 0;
 }
 
 
-static int __ref fsg_bind(struct usb_gadget *gadget)
+static int __init fsg_bind(struct usb_gadget *gadget)
 {
 	struct fsg_dev		*fsg = the_fsg;
 	int			rc;
@@ -3607,7 +3588,6 @@ static struct usb_gadget_driver		fsg_driver = {
 	.speed		= USB_SPEED_FULL,
 #endif
 	.function	= (char *) fsg_string_product,
-	.bind		= fsg_bind,
 	.unbind		= fsg_unbind,
 	.disconnect	= fsg_disconnect,
 	.setup		= fsg_setup,
@@ -3649,7 +3629,7 @@ static int __init fsg_init(void)
 	if ((rc = fsg_alloc()) != 0)
 		return rc;
 	fsg = the_fsg;
-	if ((rc = usb_gadget_register_driver(&fsg_driver)) != 0)
+	if ((rc = usb_gadget_probe_driver(&fsg_driver, fsg_bind)) != 0)
 		kref_put(&fsg->ref, fsg_release);
 	return rc;
 }
