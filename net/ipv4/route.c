@@ -1268,18 +1268,11 @@ skip_hashing:
 
 void rt_bind_peer(struct rtable *rt, int create)
 {
-	static DEFINE_SPINLOCK(rt_peer_lock);
 	struct inet_peer *peer;
 
 	peer = inet_getpeer(rt->rt_dst, create);
 
-	spin_lock_bh(&rt_peer_lock);
-	if (rt->peer == NULL) {
-		rt->peer = peer;
-		peer = NULL;
-	}
-	spin_unlock_bh(&rt_peer_lock);
-	if (peer)
+	if (peer && cmpxchg(&rt->peer, NULL, peer) != NULL)
 		inet_putpeer(peer);
 }
 
@@ -2586,7 +2579,7 @@ static int ip_route_output_slow(struct net *net, struct rtable **rp,
 			goto out;
 
 		/* RACE: Check return value of inet_select_addr instead. */
-		if (__in_dev_get_rtnl(dev_out) == NULL) {
+		if (rcu_dereference_raw(dev_out->ip_ptr) == NULL) {
 			dev_put(dev_out);
 			goto out;	/* Wrong error code */
 		}
@@ -2798,7 +2791,7 @@ static int ipv4_dst_blackhole(struct net *net, struct rtable **rp, struct flowi 
 
 	dst_release(&(*rp)->dst);
 	*rp = rt;
-	return (rt ? 0 : -ENOMEM);
+	return rt ? 0 : -ENOMEM;
 }
 
 int ip_route_output_flow(struct net *net, struct rtable **rp, struct flowi *flp,
