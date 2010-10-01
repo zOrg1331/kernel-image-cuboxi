@@ -69,12 +69,21 @@
 #define MX25_INT_KPP		24
 #define MX25_INT_DRYICE		25
 #define MX25_INT_UART2		32
-#define MX25_INT_NANDFC		33
+#define MX25_INT_NFC		33
 #define MX25_INT_LCDC		39
 #define MX25_INT_UART5		40
 #define MX25_INT_CAN1		43
 #define MX25_INT_CAN2		44
 #define MX25_INT_UART1		45
 #define MX25_INT_FEC		57
+
+#define MX25_DMA_REQ_SSI2_RX1	22
+#define MX25_DMA_REQ_SSI2_TX1	23
+#define MX25_DMA_REQ_SSI2_RX0	24
+#define MX25_DMA_REQ_SSI2_TX0	25
+#define MX25_DMA_REQ_SSI1_RX1	26
+#define MX25_DMA_REQ_SSI1_TX1	27
+#define MX25_DMA_REQ_SSI1_RX0	28
+#define MX25_DMA_REQ_SSI1_TX0	29
 
 #endif /* ifndef __MACH_MX25_H__ */
