@@ -106,7 +106,6 @@ struct msi_desc;
  * @bus_sync_unlock:	function to sync and unlock slow bus (i2c) chips
  *
  * @release:		release function solely used by UML
- * @typename:		obsoleted by name, kept as migration helper
  */
 struct irq_chip {
 	const char	*name;
@@ -135,11 +134,6 @@ struct irq_chip {
 #ifdef CONFIG_IRQ_RELEASE_METHOD
 	void		(*release)(unsigned int irq, void *dev_id);
 #endif
-	/*
-	 * For compatibility, ->typename is copied into ->name.
-	 * Will disappear.
-	 */
-	const char	*typename;
 };
 
 struct timer_rand_state;
@@ -439,12 +433,12 @@ extern int set_irq_msi(unsigned int irq, struct msi_desc *entry);
 static inline bool alloc_desc_masks(struct irq_desc *desc, int node,
 							bool boot)
 {
+#ifdef CONFIG_CPUMASK_OFFSTACK
 	gfp_t gfp = GFP_ATOMIC;
 
 	if (boot)
 		gfp = GFP_NOWAIT;
 
-#ifdef CONFIG_CPUMASK_OFFSTACK
 	if (!alloc_cpumask_var_node(&desc->affinity, gfp, node))
 		return false;
 

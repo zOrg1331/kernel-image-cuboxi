@@ -545,7 +545,7 @@ void __cpuinit cpu_detect(struct cpuinfo_x86 *c)
 	}
 }
 
-static void __cpuinit get_cpu_cap(struct cpuinfo_x86 *c)
+void __cpuinit get_cpu_cap(struct cpuinfo_x86 *c)
 {
 	u32 tfms, xlvl;
 	u32 ebx;
@@ -665,7 +665,7 @@ static void __init early_identify_cpu(struct cpuinfo_x86 *c)
 		this_cpu->c_early_init(c);
 
 #ifdef CONFIG_SMP
-	c->cpu_index = boot_cpu_id;
+	c->cpu_index = 0;
 #endif
 	filter_cpuid_features(c, false);
 }
@@ -1263,13 +1263,6 @@ void __cpuinit cpu_init(void)
 
 	clear_all_debug_regs();
 	dbg_restore_debug_regs();
-
-	/*
-	 * Force FPU initialization:
-	 */
-	current_thread_info()->status = 0;
-	clear_used_math();
-	mxcsr_feature_mask_init();
 
 	fpu_init();
 	xsave_init();
