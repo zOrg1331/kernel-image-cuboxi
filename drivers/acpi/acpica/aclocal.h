@@ -916,8 +916,13 @@ struct acpi_bit_register_info {
 
 struct acpi_interface_info {
 	char *name;
+	struct acpi_interface_info *next;
+	u8 flags;
 	u8 value;
 };
+
+#define ACPI_OSI_INVALID                0x01
+#define ACPI_OSI_DYNAMIC                0x02
 
 struct acpi_port_info {
 	char *name;
@@ -998,7 +1003,7 @@ struct acpi_port_info {
 struct acpi_db_method_info {
 	acpi_handle main_thread_gate;
 	acpi_handle thread_complete_gate;
-	u32 *threads;
+	acpi_thread_id *threads;
 	u32 num_threads;
 	u32 num_created;
 	u32 num_completed;
