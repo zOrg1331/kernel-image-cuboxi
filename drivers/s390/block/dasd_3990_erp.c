@@ -2199,7 +2199,7 @@ dasd_3990_erp_inspect_32(struct dasd_ccw_req * erp, char *sense)
 
 /*
  *****************************************************************************
- * main ERP control fuctions (24 and 32 byte sense)
+ * main ERP control functions (24 and 32 byte sense)
  *****************************************************************************
  */
 
