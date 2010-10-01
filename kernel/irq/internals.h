@@ -2,8 +2,6 @@
  * IRQ subsystem internal functions and variables:
  */
 
-extern int noirqdebug;
-
 /* Set default functions for irq_chip structures: */
 extern void irq_chip_set_defaults(struct irq_chip *chip);
 
@@ -40,6 +38,12 @@ extern int irq_select_affinity_usr(unsigned int irq);
 
 extern void irq_set_thread_affinity(struct irq_desc *desc);
 
+extern void poll_irq(unsigned long arg);
+extern void irq_poll_action_added(struct irq_desc *desc,
+				  struct irqaction *action);
+extern void irq_poll_action_removed(struct irq_desc *desc,
+				    struct irqaction *action);
+
 /* Inline functions for support of irq chips on slow busses */
 static inline void chip_bus_lock(unsigned int irq, struct irq_desc *desc)
 {
@@ -64,7 +68,7 @@ static inline void chip_bus_sync_unlock(unsigned int irq, struct irq_desc *desc)
 static inline void print_irq_desc(unsigned int irq, struct irq_desc *desc)
 {
 	printk("irq %d, desc: %p, depth: %d, count: %d, unhandled: %d\n",
-		irq, desc, desc->depth, desc->irq_count, desc->irqs_unhandled);
+		irq, desc, desc->depth, desc->spr.nr_samples, desc->spr.nr_bad);
 	printk("->handle_irq():  %p, ", desc->handle_irq);
 	print_symbol("%s\n", (unsigned long)desc->handle_irq);
 	printk("->chip(): %p, ", desc->chip);
