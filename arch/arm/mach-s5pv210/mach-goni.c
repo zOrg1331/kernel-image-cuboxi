@@ -16,6 +16,7 @@
 #include <linux/i2c.h>
 #include <linux/i2c-gpio.h>
 #include <linux/mfd/max8998.h>
+#include <linux/regulator/fixed.h>
 #include <linux/gpio_keys.h>
 #include <linux/input.h>
 #include <linux/gpio.h>
@@ -35,7 +36,9 @@
 #include <plat/devs.h>
 #include <plat/cpu.h>
 #include <plat/fb.h>
+#include <plat/keypad.h>
 #include <plat/sdhci.h>
+#include <plat/clock.h>
 
 /* Following are default values for UCON, ULCON and UFCON UART registers */
 #define GONI_UCON_DEFAULT	(S3C2410_UCON_TXILEVEL |	\
@@ -87,13 +90,12 @@ static struct s3c2410_uartcfg goni_uartcfgs[] __initdata = {
 /* Frame Buffer */
 static struct s3c_fb_pd_win goni_fb_win0 = {
 	.win_mode = {
-		.pixclock = 1000000000000ULL / ((16+16+2+480)*(28+3+2+800)*55),
 		.left_margin	= 16,
 		.right_margin	= 16,
-		.upper_margin	= 3,
+		.upper_margin	= 2,
 		.lower_margin	= 28,
 		.hsync_len	= 2,
-		.vsync_len	= 2,
+		.vsync_len	= 1,
 		.xres		= 480,
 		.yres		= 800,
 		.refresh	= 55,
@@ -111,8 +113,34 @@ static struct s3c_fb_platdata goni_lcd_pdata __initdata = {
 	.setup_gpio	= s5pv210_fb_gpio_setup_24bpp,
 };
 
+/* KEYPAD */
+static uint32_t keymap[] __initdata = {
+	/* KEY(row, col, keycode) */
+	KEY(0, 1, KEY_MENU),		/* Send */
+	KEY(0, 2, KEY_BACK),		/* End */
+	KEY(1, 1, KEY_CONFIG),		/* Half shot */
+	KEY(1, 2, KEY_VOLUMEUP),
+	KEY(2, 1, KEY_CAMERA),		/* Full shot */
+	KEY(2, 2, KEY_VOLUMEDOWN),
+};
+
+static struct matrix_keymap_data keymap_data __initdata = {
+	.keymap		= keymap,
+	.keymap_size	= ARRAY_SIZE(keymap),
+};
+
+static struct samsung_keypad_platdata keypad_data __initdata = {
+	.keymap_data	= &keymap_data,
+	.rows		= 3,
+	.cols		= 3,
+};
+
 /* MAX8998 regulators */
 #if defined(CONFIG_REGULATOR_MAX8998) || defined(CONFIG_REGULATOR_MAX8998_MODULE)
+
+static struct regulator_consumer_supply goni_ldo5_consumers[] = {
+	REGULATOR_SUPPLY("vmmc", "s3c-sdhci.0"),
+};
 
 static struct regulator_init_data goni_ldo2_data = {
 	.constraints	= {
@@ -153,6 +181,8 @@ static struct regulator_init_data goni_ldo5_data = {
 		.max_uV		= 2800000,
 		.apply_uV	= 1,
 	},
+	.num_consumer_supplies = ARRAY_SIZE(goni_ldo5_consumers),
+	.consumer_supplies = goni_ldo5_consumers,
 };
 
 static struct regulator_init_data goni_ldo6_data = {
@@ -444,11 +474,37 @@ static struct s3c_sdhci_platdata goni_hsmmc2_data __initdata = {
 	.ext_cd_gpio_invert	= 1,
 };
 
+static struct regulator_consumer_supply mmc2_supplies[] = {
+	REGULATOR_SUPPLY("vmmc", "s3c-sdhci.2"),
+};
+
+static struct regulator_init_data mmc2_fixed_voltage_init_data = {
+	.constraints		= {
+		.name		= "V_TF_2.8V",
+		.valid_ops_mask	= REGULATOR_CHANGE_STATUS,
+	},
+	.num_consumer_supplies	= ARRAY_SIZE(mmc2_supplies),
+	.consumer_supplies	= mmc2_supplies,
+};
+
+static struct fixed_voltage_config mmc2_fixed_voltage_config = {
+	.supply_name		= "EXT_FLASH_EN",
+	.microvolts		= 2800000,
+	.gpio			= GONI_EXT_FLASH_EN,
+	.enable_high		= true,
+	.init_data		= &mmc2_fixed_voltage_init_data,
+};
+
+static struct platform_device mmc2_fixed_voltage = {
+	.name		= "reg-fixed-voltage",
+	.id		= 2,
+	.dev		= {
+		.platform_data	= &mmc2_fixed_voltage_config,
+	},
+};
+
 static void goni_setup_sdhci(void)
 {
-	gpio_request(GONI_EXT_FLASH_EN, "FLASH_EN");
-	gpio_direction_output(GONI_EXT_FLASH_EN, 1);
-
 	s3c_sdhci0_set_platdata(&goni_hsmmc0_data);
 	s3c_sdhci1_set_platdata(&goni_hsmmc1_data);
 	s3c_sdhci2_set_platdata(&goni_hsmmc2_data);
@@ -456,8 +512,9 @@ static void goni_setup_sdhci(void)
 
 static struct platform_device *goni_devices[] __initdata = {
 	&s3c_device_fb,
-	&s5pc110_device_onenand,
+	&s5p_device_onenand,
 	&goni_i2c_gpio_pmic,
+	&mmc2_fixed_voltage,
 	&goni_device_gpiokeys,
 	&s5p_device_fimc0,
 	&s5p_device_fimc1,
@@ -465,6 +522,8 @@ static struct platform_device *goni_devices[] __initdata = {
 	&s3c_device_hsmmc0,
 	&s3c_device_hsmmc1,
 	&s3c_device_hsmmc2,
+	&s3c_device_usb_hsotg,
+	&samsung_device_keypad,
 };
 
 static void __init goni_map_io(void)
@@ -485,6 +544,11 @@ static void __init goni_machine_init(void)
 
 	/* FB */
 	s3c_fb_set_platdata(&goni_lcd_pdata);
+
+	/* KEYPAD */
+	samsung_keypad_set_platdata(&keypad_data);
+
+	clk_xusbxti.rate = 24000000;
 
 	platform_add_devices(goni_devices, ARRAY_SIZE(goni_devices));
 }
