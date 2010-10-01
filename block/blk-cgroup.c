@@ -124,7 +124,8 @@ blkio_update_group_weight(struct blkio_group *blkg, unsigned int weight)
 		if (blkiop->plid != blkg->plid)
 			continue;
 		if (blkiop->ops.blkio_update_group_weight_fn)
-			blkiop->ops.blkio_update_group_weight_fn(blkg, weight);
+			blkiop->ops.blkio_update_group_weight_fn(blkg->key,
+							blkg, weight);
 	}
 }
 
@@ -141,11 +142,13 @@ static inline void blkio_update_group_bps(struct blkio_group *blkg, u64 bps,
 
 		if (fileid == BLKIO_THROTL_read_bps_device
 		    && blkiop->ops.blkio_update_group_read_bps_fn)
-			blkiop->ops.blkio_update_group_read_bps_fn(blkg, bps);
+			blkiop->ops.blkio_update_group_read_bps_fn(blkg->key,
+								blkg, bps);
 
 		if (fileid == BLKIO_THROTL_write_bps_device
 		    && blkiop->ops.blkio_update_group_write_bps_fn)
-			blkiop->ops.blkio_update_group_write_bps_fn(blkg, bps);
+			blkiop->ops.blkio_update_group_write_bps_fn(blkg->key,
+								blkg, bps);
 	}
 }
 
@@ -162,11 +165,13 @@ static inline void blkio_update_group_iops(struct blkio_group *blkg,
 
 		if (fileid == BLKIO_THROTL_read_iops_device
 		    && blkiop->ops.blkio_update_group_read_iops_fn)
-			blkiop->ops.blkio_update_group_read_iops_fn(blkg, iops);
+			blkiop->ops.blkio_update_group_read_iops_fn(blkg->key,
+								blkg, iops);
 
 		if (fileid == BLKIO_THROTL_write_iops_device
 		    && blkiop->ops.blkio_update_group_write_iops_fn)
-			blkiop->ops.blkio_update_group_write_iops_fn(blkg,iops);
+			blkiop->ops.blkio_update_group_write_iops_fn(blkg->key,
+								blkg,iops);
 	}
 }
 
@@ -1242,6 +1247,59 @@ struct cftype blkio_files[] = {
 		.write_u64 = blkiocg_file_write_u64,
 	},
 	{
+		.name = "time",
+		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
+				BLKIO_PROP_time),
+		.read_map = blkiocg_file_read_map,
+	},
+	{
+		.name = "sectors",
+		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
+				BLKIO_PROP_sectors),
+		.read_map = blkiocg_file_read_map,
+	},
+	{
+		.name = "io_service_bytes",
+		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
+				BLKIO_PROP_io_service_bytes),
+		.read_map = blkiocg_file_read_map,
+	},
+	{
+		.name = "io_serviced",
+		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
+				BLKIO_PROP_io_serviced),
+		.read_map = blkiocg_file_read_map,
+	},
+	{
+		.name = "io_service_time",
+		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
+				BLKIO_PROP_io_service_time),
+		.read_map = blkiocg_file_read_map,
+	},
+	{
+		.name = "io_wait_time",
+		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
+				BLKIO_PROP_io_wait_time),
+		.read_map = blkiocg_file_read_map,
+	},
+	{
+		.name = "io_merged",
+		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
+				BLKIO_PROP_io_merged),
+		.read_map = blkiocg_file_read_map,
+	},
+	{
+		.name = "io_queued",
+		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
+				BLKIO_PROP_io_queued),
+		.read_map = blkiocg_file_read_map,
+	},
+	{
+		.name = "reset_stats",
+		.write_u64 = blkiocg_reset_stats,
+	},
+#ifdef CONFIG_BLK_DEV_THROTTLING
+	{
 		.name = "throttle.read_bps_device",
 		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_THROTL,
 				BLKIO_THROTL_read_bps_device),
@@ -1277,33 +1335,9 @@ struct cftype blkio_files[] = {
 		.max_write_len = 256,
 	},
 	{
-		.name = "time",
-		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
-				BLKIO_PROP_time),
-		.read_map = blkiocg_file_read_map,
-	},
-	{
-		.name = "sectors",
-		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
-				BLKIO_PROP_sectors),
-		.read_map = blkiocg_file_read_map,
-	},
-	{
-		.name = "io_service_bytes",
-		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
-				BLKIO_PROP_io_service_bytes),
-		.read_map = blkiocg_file_read_map,
-	},
-	{
 		.name = "throttle.io_service_bytes",
 		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_THROTL,
 				BLKIO_THROTL_io_service_bytes),
-		.read_map = blkiocg_file_read_map,
-	},
-	{
-		.name = "io_serviced",
-		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
-				BLKIO_PROP_io_serviced),
 		.read_map = blkiocg_file_read_map,
 	},
 	{
@@ -1312,34 +1346,8 @@ struct cftype blkio_files[] = {
 				BLKIO_THROTL_io_serviced),
 		.read_map = blkiocg_file_read_map,
 	},
-	{
-		.name = "io_service_time",
-		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
-				BLKIO_PROP_io_service_time),
-		.read_map = blkiocg_file_read_map,
-	},
-	{
-		.name = "io_wait_time",
-		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
-				BLKIO_PROP_io_wait_time),
-		.read_map = blkiocg_file_read_map,
-	},
-	{
-		.name = "io_merged",
-		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
-				BLKIO_PROP_io_merged),
-		.read_map = blkiocg_file_read_map,
-	},
-	{
-		.name = "io_queued",
-		.private = BLKIOFILE_PRIVATE(BLKIO_POLICY_PROP,
-				BLKIO_PROP_io_queued),
-		.read_map = blkiocg_file_read_map,
-	},
-	{
-		.name = "reset_stats",
-		.write_u64 = blkiocg_reset_stats,
-	},
+#endif /* CONFIG_BLK_DEV_THROTTLING */
+
 #ifdef CONFIG_DEBUG_BLK_CGROUP
 	{
 		.name = "avg_queue_size",
@@ -1408,13 +1416,14 @@ static void blkiocg_destroy(struct cgroup_subsys *subsys, struct cgroup *cgroup)
 		/*
 		 * This blkio_group is being unlinked as associated cgroup is
 		 * going away. Let all the IO controlling policies know about
-		 * this event. Currently this is static call to one io
-		 * controlling policy. Once we have more policies in place, we
-		 * need some dynamic registration of callback function.
+		 * this event.
 		 */
 		spin_lock(&blkio_list_lock);
-		list_for_each_entry(blkiop, &blkio_list, list)
+		list_for_each_entry(blkiop, &blkio_list, list) {
+			if (blkiop->plid != blkg->plid)
+				continue;
 			blkiop->ops.blkio_unlink_group_fn(key, blkg);
+		}
 		spin_unlock(&blkio_list_lock);
 	} while (1);
 
