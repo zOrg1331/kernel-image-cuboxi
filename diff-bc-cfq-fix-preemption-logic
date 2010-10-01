@@ -1,0 +1,38 @@
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 6977c43..38be84b 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -2049,7 +2049,7 @@ cfq_should_preempt(struct cfq_data *cfqd, struct cfq_queue *new_cfqq,
+ 	if (new_cfqq->slice_left < cfqd->cfq_slice_idle)
+ 		return 0;
+ 	if (new_cfqq->cfq_bc != cfqq->cfq_bc &&
+-			!bc_allow_preempt(cfqd, cfqq->cfq_bc))
++			!bc_allow_preempt(cfqd, new_cfqq->cfq_bc))
+ 		return 0;
+ 	if (cfq_crq_is_sync(crq) && !cfq_cfqq_sync(cfqq))
+ 		return 1;
+diff --git a/kernel/ub/io_prio.c b/kernel/ub/io_prio.c
+index 7cad2e5..49c8c98 100644
+--- a/kernel/ub/io_prio.c
++++ b/kernel/ub/io_prio.c
+@@ -316,13 +316,11 @@ int bc_allow_preempt(struct cfq_data *cfqd, struct cfq_bc_data *new)
+ 	cur_ioprio = cur->ub_iopriv->ioprio;
+ 	new_ioprio = new->ub_iopriv->ioprio;
+ 
+-	if (new_ioprio < cur_ioprio)
+-		return 0;
+-
+ 	delta = (now - cfqd->slice_begin) * bc_ioprio_ratio[cur_ioprio];
+-	slice = cfqd->cfq_ub_slice * bc_ioprio_ratio[new_ioprio];
+-	/* allow preempting only if new have at least slice size / 2 gap */
+-	if (cmp_iotime(cur->iotime + delta, new->iotime + slice / 2) < 0)
++	slice = cfqd->cfq_ub_slice * bc_ioprio_ratio[new_ioprio] *
++		(UB_IOPRIO_MAX + cur_ioprio - new_ioprio) / (UB_IOPRIO_MAX * 2);
++	/* allow preempting only if new have iotime gap */
++	if (cmp_iotime(cur->iotime + delta, new->iotime + slice) < 0)
+ 		return 0;
+ 
+ 	return 1;
+
+
+

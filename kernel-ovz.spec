@@ -12,8 +12,8 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab071
-%define ovzrel 4
+%define ovzver 028stab070
+%define ovzrel 7
 
 %if !%{buildup}
 %define _without_up 1
@@ -138,7 +138,7 @@ Summary: Virtuozzo Linux kernel (the core of the Linux operating system)
 %define sublevel 18
 %define kversion 2.6.%{sublevel}
 %define rpmversion 2.6.%{sublevel}
-%define release 194.11.3%{?dist}%{?buildid}
+%define release 194.17.1%{?dist}%{?buildid}
 %define signmodules 0
 %define xen_hv_cset 15502
 %define xen_abi_ver 3.1
@@ -1072,6 +1072,8 @@ Patch20209: xen-iommu-clear-io-apic-pins-on-boot-and-shutdown.patch
 Patch20210: xen-arpl-on-mmio-area-crashes-the-guest.patch
 Patch20211: xen-set-hypervisor-present-cpuid-bit.patch
 Patch20212: xen-ia64-unset-be-from-the-task-psr.patch
+Patch20213: xen-bring-back-vmxe-svme-flags.patch
+Patch20214: xen-fix-guest-crash-on-non-ept-machine-may-crash-host.patch
 # end of Xen patches
 
 Patch21007: linux-2.6-netlabel-error-checking-cleanups.patch
@@ -5172,12 +5174,34 @@ Patch25149: linux-2.6-fs-cifs-reject-dns-upcall-add_key-req-from-userspace.patch
 Patch25150: linux-2.6-fs-nfs-fix-bug-in-nfsd4-read_buf.patch
 Patch25151: linux-2.6-fs-xfs-don-t-let-swapext-operate-on-write-only-files.patch
 Patch25152: linux-2.6-scsi-qla2xxx-update-firmware-to-version-5-03-02.patch
-Patch25153: linux-2.6-mm-keep-a-guard-page-below-a-grow-down-stack-segment.patch
-Patch25154: linux-2.6-mm-fix-missing-unmap-for-stack-guard-page-failure-case.patch
-Patch25155: linux-2.6-mm-fix-page-table-unmap-for-stack-guard-page-properly.patch
-Patch25156: linux-2.6-mm-fix-up-some-user-visible-effects-of-stack-guard-page.patch
-Patch25157: linux-2.6-mm-pass-correct-mm-when-growing-stack.patch
-Patch25158: linux-2.6-mm-accept-an-abutting-stack-segment.patch
+Patch25153: linux-2.6-fs-gfs2-fix-rename-causing-kernel-oops.patch
+Patch25154: linux-2.6-scsi-ips-driver-sleeps-while-holding-spin_lock.patch
+Patch25155: linux-2.6-fs-ecryptfs-fix-ecryptfs_uid_hash-buffer-overflow.patch
+Patch25156: linux-2.6-pci-msi-add-option-for-lockless-interrupt-mode.patch
+Patch25157: linux-2.6-mm-keep-a-guard-page-below-a-grow-down-stack-segment.patch
+Patch25158: linux-2.6-mm-fix-missing-unmap-for-stack-guard-page-failure-case.patch
+Patch25159: linux-2.6-mm-fix-page-table-unmap-for-stack-guard-page-properly.patch
+Patch25160: linux-2.6-mm-fix-up-some-user-visible-effects-of-stack-guard-page.patch
+Patch25161: linux-2.6-mm-pass-correct-mm-when-growing-stack.patch
+Patch25162: linux-2.6-mm-accept-an-abutting-stack-segment.patch
+Patch25163: linux-2.6-net-sctp-fix-length-checks.patch
+Patch25164: linux-2.6-net-bonding-check-if-clients-mac-addr-has-changed.patch
+Patch25165: linux-2.6-mm-add-option-to-skip-zero_page-mmap-of-dev-zero.patch
+Patch25166: linux-2.6-fs-ext4-consolidate-in_range-definitions.patch
+Patch25167: linux-2.6-fs-xfs-always-use-iget-in-bulkstat.patch
+Patch25168: linux-2.6-fs-xfs-validate-untrusted-inode-numbers-during-lookup.patch
+Patch25169: linux-2.6-fs-xfs-rename-xfs_iget_bulkstat-to-xfs_iget_untrusted.patch
+Patch25170: linux-2.6-usb-fix-usbfs-information-leak.patch
+Patch25171: linux-2.6-net-sched-fix-some-kernel-memory-leaks.patch
+Patch25172: linux-2.6-fs-xfs-fix-untrusted-inode-number-lookup.patch
+Patch25173: linux-2.6-s390-dasd-allocate-fallback-cqr-for-reserve-release.patch
+Patch25174: linux-2.6-s390-dasd-force-online-does-not-work.patch
+Patch25175: linux-2.6-net-cxgb3-add-define-for-fatal-parity-error-bit.patch
+Patch25176: linux-2.6-net-cxgb3-clear-fatal-parity-error-register-on-init.patch
+Patch25177: linux-2.6-net-cxgb3-get-fatal-parity-error-status-on-interrupt.patch
+Patch25178: linux-2.6-net-cxgb3-don-t-flush-workqueue-if-called-from-wq.patch
+Patch25179: linux-2.6-fs-xfs-fix-missing-untrusted-inode-lookup-tag.patch
+Patch25180: linux-2.6-misc-make-compat_alloc_user_space-incorporate-the-access_ok.patch
 
 Patch30000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch30001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -5259,10 +5283,12 @@ Patch91002: linux-hp-dmi-info-correct.patch
 Patch91003: diff-nfs-rpcsaddr
 
 # Bells and whistles
+Patch100000: diff-fs-fsync-enable-rh5-20080131
 Patch100001: diff-ms-devleak-dstdebug-20080504
 Patch100002: diff-ipv4-dumpbaddst-20080929
 Patch100003: diff-ipv4-reliable-dst-garbage-20080929
 Patch100004: diff-ve-moreleaks-20090829
+Patch100010: diff-ms-nfssync-20081118
 Patch100014: diff-ms-devleaktime-20081111
 Patch100016: diff-rh-cifs-disable-posix-extensons-by-default-20090304
 Patch100017: diff-ms-32bitHW-kernel-panic-string
@@ -5274,10 +5300,11 @@ Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100028: diff-rh-bond802.3ad-slave-speed-20100421
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
-Patch100034: diff-dcache-dput-fast-path-without-dcache-lock-20100706
-Patch100036: diff-ubc-debug-sock-orphan-acct
-Patch100037: diff-ve-vzevent-fix-reboot-detection
-
+Patch100030: diff-cfq-iosched-zero-async-queue-after-put-20100817
+Patch100032: diff-bc-cfq-fix-preemption-logic
+Patch100033: diff-ve-net-ipforward-lro-fix-oops
+Patch100034: diff-venet-stat-tx_dropped-account-20100910
+Patch100035: diff-ve-vzevent-fix-reboot-detection
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -10280,6 +10307,28 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch25156 -p1
 %patch25157 -p1
 %patch25158 -p1
+%patch25159 -p1
+%patch25160 -p1
+%patch25161 -p1
+%patch25162 -p1
+%patch25163 -p1
+%patch25164 -p1
+%patch25165 -p1
+%patch25166 -p1
+%patch25167 -p1
+%patch25168 -p1
+%patch25169 -p1
+%patch25170 -p1
+%patch25171 -p1
+%patch25172 -p1
+%patch25173 -p1
+%patch25174 -p1
+%patch25175 -p1
+%patch25176 -p1
+%patch25177 -p1
+%patch25178 -p1
+%patch25179 -p1
+%patch25180 -p1
 
 %patch30000 -p1
 %patch30001 -p1
@@ -10340,10 +10389,12 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch91002 -p1
 %patch91003 -p1
 
+%patch100000 -p1
 %patch100001 -p1
 %patch100002 -p1
 %patch100003 -p1
 %patch100004 -p1
+%patch100010 -p1
 %patch100014 -p1
 %patch100016 -p1
 %patch100017 -p1
@@ -10355,9 +10406,11 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100027 -p1
 %patch100028 -p1
 %patch100029 -p1
+%patch100030 -p1
+%patch100032 -p1
+%patch100033 -p1
 %patch100034 -p1
-%patch100036 -p1
-%patch100037 -p1
+%patch100035 -p1
 
 %patch101000 -p1
 %patch101001 -p1
@@ -10704,6 +10757,8 @@ cd ../xen
 %patch20210 -p1
 %patch20211 -p1
 %patch20212 -p1
+%patch20213 -p1
+%patch20214 -p1
 # end of necessary hypervisor patches
 %endif
 

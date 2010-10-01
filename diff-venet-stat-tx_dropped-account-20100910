@@ -1,0 +1,13 @@
+venet driver should provide correct tx_dropped stat via get_stats()
+
+Signed-off-by: Konstantin Khorenko <khorenko@openvz.org>
+--- ./drivers/net/venet_core.c.tx	2010-08-16 13:51:15.000000000 +0400
++++ ./drivers/net/venet_core.c	2010-09-10 11:56:43.000000000 +0400
+@@ -405,6 +405,7 @@ static struct net_device_stats *get_stat
+ 		stats->stats.tx_bytes   += dev_stats->tx_bytes;
+ 		stats->stats.rx_packets += dev_stats->rx_packets;
+ 		stats->stats.tx_packets += dev_stats->tx_packets;
++		stats->stats.tx_dropped += dev_stats->tx_dropped;
+ 	}
+ 
+ 	return &stats->stats;

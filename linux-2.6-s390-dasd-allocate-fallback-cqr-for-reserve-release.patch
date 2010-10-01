@@ -1,0 +1,219 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Wed, 4 Aug 2010 10:02:59 -0400
+Subject: [s390] dasd: allocate fallback cqr for reserve/release
+Message-id: <1280916181-27024-7-git-send-email-brueckner@redhat.com>
+Patchwork-id: 27375
+O-Subject: [RHEL5.6 PATCH 6/8] [s390x] dasd: allocate fallback cqr for
+	reserve/release
+Bugzilla: 619465
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+-----------
+DASD reserve/release ioctls fail with return code ENOMEM
+
+The DASD reserve and release ioctls use the preallocated
+memory pool of the respective device to build their CCW
+requests. However, when the device is busy, the pool may
+already be empty and the ioctl fails.
+Usually this can be recovered by calling the ioctl again,
+but in a situation in which we need to issue an unconditional
+reserve to make a device operational again, this would be
+not recoverable.
+
+To avoid a failure due to lack of memory, preallocate enough
+memory for a single reserve/release request, which can be
+used if normal allocation fails.
+
+Bugzilla
+--------
+BZ 619465
+https://bugzilla.redhat.com/show_bug.cgi?id=619465
+
+Upstream status of the patch
+----------------------------
+The patch will be sent upstream for inclustion into the next kernel
+release.
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+diff --git a/drivers/s390/block/dasd_eckd.c b/drivers/s390/block/dasd_eckd.c
+index 877d62f..7aa2077 100644
+--- a/drivers/s390/block/dasd_eckd.c
++++ b/drivers/s390/block/dasd_eckd.c
+@@ -18,6 +18,7 @@
+ #include <linux/bio.h>
+ #include <linux/module.h>
+ #include <linux/init.h>
++#include <linux/mutex.h>
+ 
+ #include <asm/debug.h>
+ #include <asm/idals.h>
+@@ -91,6 +92,14 @@ MODULE_DEVICE_TABLE(ccw, dasd_eckd_ids);
+ 
+ static struct ccw_driver dasd_eckd_driver; /* see below */
+ 
++/* emergency request for reserve/release */
++static struct {
++	struct dasd_ccw_req cqr;
++	struct ccw1 ccw;
++	char data[32];
++} *dasd_reserve_req;
++static DEFINE_MUTEX(dasd_reserve_mutex);
++
+ /* initial attempt at a probe function. this can be simplified once
+  * the other detection code is gone */
+ static int
+@@ -1521,16 +1530,25 @@ dasd_eckd_release(struct dasd_device *device)
+ {
+ 	struct dasd_ccw_req *cqr;
+ 	int rc;
++	int useglobal;
+ 
+ 	if (!capable(CAP_SYS_ADMIN))
+ 		return -EACCES;
+ 
++	useglobal = 0;
+ 	cqr = dasd_smalloc_request(dasd_eckd_discipline.name,
+ 				   1, 32, device);
+ 	if (IS_ERR(cqr)) {
+-		DEV_MESSAGE(KERN_WARNING, device, "%s",
+-			    "Could not allocate initialization request");
+-		return PTR_ERR(cqr);
++		mutex_lock(&dasd_reserve_mutex);
++		useglobal = 1;
++		cqr = &dasd_reserve_req->cqr;
++		memset(cqr, 0, sizeof(*cqr));
++		memset(&dasd_reserve_req->ccw, 0,
++		       sizeof(dasd_reserve_req->ccw));
++		cqr->cpaddr = &dasd_reserve_req->ccw;
++		cqr->data = &dasd_reserve_req->data;
++		strncpy((char *) &cqr->magic, dasd_eckd_discipline.name, 4);
++		ASCEBC((char *) &cqr->magic, 4);
+ 	}
+ 	cqr->cpaddr->cmd_code = DASD_ECKD_CCW_RELEASE;
+         cqr->cpaddr->flags |= CCW_FLAG_SLI;
+@@ -1546,7 +1564,10 @@ dasd_eckd_release(struct dasd_device *device)
+ 
+ 	rc = dasd_sleep_on_immediatly(cqr);
+ 
+-	dasd_sfree_request(cqr, cqr->device);
++	if (useglobal)
++		mutex_unlock(&dasd_reserve_mutex);
++	else
++		dasd_sfree_request(cqr, cqr->device);
+ 	return rc;
+ }
+ 
+@@ -1561,16 +1582,25 @@ dasd_eckd_reserve(struct dasd_device *device)
+ {
+ 	struct dasd_ccw_req *cqr;
+ 	int rc;
++	int useglobal;
+ 
+ 	if (!capable(CAP_SYS_ADMIN))
+ 		return -EACCES;
+ 
++	useglobal = 0;
+ 	cqr = dasd_smalloc_request(dasd_eckd_discipline.name,
+ 				   1, 32, device);
+ 	if (IS_ERR(cqr)) {
+-		DEV_MESSAGE(KERN_WARNING, device, "%s",
+-			    "Could not allocate initialization request");
+-		return PTR_ERR(cqr);
++		mutex_lock(&dasd_reserve_mutex);
++		useglobal = 1;
++		cqr = &dasd_reserve_req->cqr;
++		memset(cqr, 0, sizeof(*cqr));
++		memset(&dasd_reserve_req->ccw, 0,
++		       sizeof(dasd_reserve_req->ccw));
++		cqr->cpaddr = &dasd_reserve_req->ccw;
++		cqr->data = &dasd_reserve_req->data;
++		strncpy((char *) &cqr->magic, dasd_eckd_discipline.name, 4);
++		ASCEBC((char *) &cqr->magic, 4);
+ 	}
+ 	cqr->cpaddr->cmd_code = DASD_ECKD_CCW_RESERVE;
+         cqr->cpaddr->flags |= CCW_FLAG_SLI;
+@@ -1586,7 +1616,10 @@ dasd_eckd_reserve(struct dasd_device *device)
+ 
+ 	rc = dasd_sleep_on_immediatly(cqr);
+ 
+-	dasd_sfree_request(cqr, cqr->device);
++	if (useglobal)
++		mutex_unlock(&dasd_reserve_mutex);
++	else
++		dasd_sfree_request(cqr, cqr->device);
+ 	return rc;
+ }
+ 
+@@ -1600,16 +1633,25 @@ dasd_eckd_steal_lock(struct dasd_device *device)
+ {
+ 	struct dasd_ccw_req *cqr;
+ 	int rc;
++	int useglobal;
+ 
+ 	if (!capable(CAP_SYS_ADMIN))
+ 		return -EACCES;
+ 
++	useglobal = 0;
+ 	cqr = dasd_smalloc_request(dasd_eckd_discipline.name,
+ 				   1, 32, device);
+ 	if (IS_ERR(cqr)) {
+-		DEV_MESSAGE(KERN_WARNING, device, "%s",
+-			    "Could not allocate initialization request");
+-		return PTR_ERR(cqr);
++		mutex_lock(&dasd_reserve_mutex);
++		useglobal = 1;
++		cqr = &dasd_reserve_req->cqr;
++		memset(cqr, 0, sizeof(*cqr));
++		memset(&dasd_reserve_req->ccw, 0,
++		       sizeof(dasd_reserve_req->ccw));
++		cqr->cpaddr = &dasd_reserve_req->ccw;
++		cqr->data = &dasd_reserve_req->data;
++		strncpy((char *) &cqr->magic, dasd_eckd_discipline.name, 4);
++		ASCEBC((char *) &cqr->magic, 4);
+ 	}
+ 	cqr->cpaddr->cmd_code = DASD_ECKD_CCW_SLCK;
+         cqr->cpaddr->flags |= CCW_FLAG_SLI;
+@@ -1625,7 +1667,10 @@ dasd_eckd_steal_lock(struct dasd_device *device)
+ 
+ 	rc = dasd_sleep_on_immediatly(cqr);
+ 
+-	dasd_sfree_request(cqr, cqr->device);
++	if (useglobal)
++		mutex_unlock(&dasd_reserve_mutex);
++	else
++		dasd_sfree_request(cqr, cqr->device);
+ 	return rc;
+ }
+ 
+@@ -2030,14 +2075,25 @@ static struct dasd_discipline dasd_eckd_discipline = {
+ static int __init
+ dasd_eckd_init(void)
+ {
++	int ret;
++
+ 	ASCEBC(dasd_eckd_discipline.ebcname, 4);
+-	return ccw_driver_register(&dasd_eckd_driver);
++	dasd_reserve_req = kmalloc(sizeof(*dasd_reserve_req),
++				   GFP_KERNEL | GFP_DMA);
++	if (!dasd_reserve_req)
++		return -ENOMEM;
++	ret = ccw_driver_register(&dasd_eckd_driver);
++	if (ret)
++		kfree(dasd_reserve_req);
++	return ret;
++
+ }
+ 
+ static void __exit
+ dasd_eckd_cleanup(void)
+ {
+ 	ccw_driver_unregister(&dasd_eckd_driver);
++	kfree(dasd_reserve_req);
+ }
+ 
+ module_init(dasd_eckd_init);

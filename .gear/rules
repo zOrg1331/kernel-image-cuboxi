@@ -21,12 +21,14 @@ copy: *.pl
 copy: *.sh
 copy: check-kabi
 copy: diff-backport-dm-delay-20070716
-copy: diff-dcache-dput-fast-path-without-dcache-lock-20100706
+copy: diff-bc-cfq-fix-preemption-logic
+copy: diff-cfq-iosched-zero-async-queue-after-put-20100817
 copy: diff-dm-limits-bounce_pfn-20071029
 copy: diff-drbd-compilation
 copy: diff-drbd-dont-use-connector
 copy: diff-drv-e1000-depends-e1000e-20080718
 copy: diff-drv-e1000-select-e1000e
+copy: diff-fs-fsync-enable-rh5-20080131
 copy: diff-gfs-aio-pops
 copy: diff-gfs-aops-fix-20070516
 copy: diff-gfs-bh-leak-fix-20070716
@@ -57,6 +59,7 @@ copy: diff-ms-devleak-dstdebug-20080504
 copy: diff-ms-devleaktime-20081111
 copy: diff-ms-ext4-nodelalloc-by-default
 copy: diff-ms-mmap-min-addr
+copy: diff-ms-nfssync-20081118
 copy: diff-ms-reboot-via-pci-port-cf9-20090922
 copy: diff-ms-splice-access-20080211
 copy: diff-nbd-compile-fixes
@@ -78,9 +81,10 @@ copy: diff-rh-hung-task-tunes-and-fixes
 copy: diff-scsi-add-modalias-mainstream
 copy: diff-snd-hda-intel
 copy: diff-tossing-headers-around
-copy: diff-ubc-debug-sock-orphan-acct
 copy: diff-ve-moreleaks-20090829
+copy: diff-ve-net-ipforward-lro-fix-oops
 copy: diff-ve-vzevent-fix-reboot-detection
+copy: diff-venet-stat-tx_dropped-account-20100910
 copy: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 copy: diff-xen-smpboot-ifdef-hotplug-20090306
 copy: find-provides
@@ -97,5 +101,5 @@ copy: kabi_whitelist_x86_64
 copy: kabi_whitelist_x86_64xen
 copy: kabitool
 tar.bz2: linux name=linux-2.6.18
-copy: patch-028stab071-core
+copy: patch-028stab070-core
 tar.gz: xen name=xen-15502 base= suffix=.tar.bz2

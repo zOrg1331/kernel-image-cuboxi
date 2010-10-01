@@ -1,0 +1,84 @@
+From: Robert S Peterson <rpeterso@redhat.com>
+Date: Thu, 15 Jul 2010 14:12:41 -0400
+Subject: [fs] gfs2: fix rename causing kernel oops
+Message-id: <1024058150.442981279203161397.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 26903
+O-Subject: [PATCH RHEL5.6] bz 602025 - GFS2: rename causes kernel Oops
+Bugzilla: 602025
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Abhijith Das <adas@redhat.com>
+
+Hi,
+
+This patch fixes a kernel Oops in the GFS2 rename code.
+
+The problem was in the way the gfs2 directory code was trying
+to re-use sentinel directory entries.
+
+In the failing case, gfs2's rename function was renaming a
+file to another name that had the same non-trivial length.
+The file being renamed happened to be the first directory
+entry on the leaf block.
+
+First, the rename code (gfs2_rename in ops_inode.c) found the
+original directory entry and decided it could do its job by
+simply replacing the directory entry with another.  Therefore
+it determined correctly that no block allocations were needed.
+
+Next, the rename code deleted the old directory entry prior to
+replacing it with the new name.  Therefore, the soon-to-be
+replaced directory entry was temporarily made into a directory
+entry "sentinel" or a place holder at the start of a leaf block.
+
+Lastly, it went to re-add the replacement directory entry in
+that leaf block.  However, when gfs2_dirent_find_space was
+looking for space in the leaf block, it used the wrong value
+for the sentinel.  That threw off its calculations so later
+it decides it can't really re-use the sentinel and therefore
+must allocate a new leaf block.  But because it previously decided
+to re-use the directory entry, it didn't waste the time to
+grab a new block allocation for the inode.  Therefore, the
+inode's i_alloc pointer was still NULL and it crashes trying to
+reference it.
+
+In the case of sentinel directory entries, the entire dirent is
+reused, not just the "free space" portion of it, and therefore
+the function gfs2_dirent_find_space should use the value 0
+rather than GFS2_DIRENT_SIZE(0) for the actual dirent size.
+
+Fixing this calculation enables the reproducer programs to work
+properly.
+
+The patch is now upstream in the -nmw git repository in kernel.org
+and requested to be in the base.  It was tested on system
+roth-01 with two different reproducer programs and fixes the
+problem.  As an added measure, the fsck.gfs2 program was also run
+to verify there was no unexpected file system corruption.
+I also tested the RHEL6 crosswrite on roth-08, but I'm still
+waiting for the proper ACK flags before I ship that one.
+
+Regards,
+
+Bob Peterson
+Red Hat GFS
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+ fs/gfs2/dir.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/gfs2/dir.c b/fs/gfs2/dir.c
+index f9cb6a9..47e98b4 100644
+--- a/fs/gfs2/dir.c
++++ b/fs/gfs2/dir.c
+@@ -393,7 +393,7 @@ static int gfs2_dirent_find_space(const struct gfs2_dirent *dent,
+ 	unsigned totlen = be16_to_cpu(dent->de_rec_len);
+ 
+ 	if (gfs2_dirent_sentinel(dent))
+-		actual = GFS2_DIRENT_SIZE(0);
++		actual = 0;
+ 	if (totlen - actual >= required)
+ 		return 1;
+ 	return 0;
