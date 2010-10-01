@@ -55,7 +55,7 @@
 extern u8 acpi_gbl_permanent_mmap;
 
 /*
- * Globals that are publically available, allowing for
+ * Globals that are publicly available, allowing for
  * run time configuration
  */
 extern u32 acpi_dbg_level;
@@ -307,6 +307,8 @@ acpi_install_gpe_block(acpi_handle gpe_device,
 		       u32 register_count, u32 interrupt_number);
 
 acpi_status acpi_remove_gpe_block(acpi_handle gpe_device);
+
+acpi_status acpi_update_gpes(void);
 
 /*
  * Resource interfaces
