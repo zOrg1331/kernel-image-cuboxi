@@ -18,6 +18,8 @@ obj-y				+= cpu.o
 obj-y				+= clock.o
 obj-y				+= irq.o
 obj-$(CONFIG_S5P_EXT_INT)	+= irq-eint.o
+obj-$(CONFIG_PM)		+= pm.o
+obj-$(CONFIG_PM)		+= irq-pm.o
 
 # devices
 
