@@ -275,7 +275,7 @@ static irqreturn_t bcmring_timer_interrupt(int irq, void *dev_id)
 
 static struct irqaction bcmring_timer_irq = {
 	.name = "bcmring Timer Tick",
-	.flags = IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
+	.flags = IRQF_DISABLED | IRQF_TIMER,
 	.handler = bcmring_timer_interrupt,
 };
 

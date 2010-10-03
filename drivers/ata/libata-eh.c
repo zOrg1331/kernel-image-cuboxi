@@ -661,8 +661,10 @@ void ata_scsi_error(struct Scsi_Host *host)
 		 * handler doesn't diddle with those qcs.  This must
 		 * be done atomically w.r.t. setting QCFLAG_FAILED.
 		 */
-		if (nr_timedout)
+		if (nr_timedout) {
+			unexpect_irq(ap->irq_expect, true);
 			__ata_port_freeze(ap);
+		}
 
 		spin_unlock_irqrestore(ap->lock, flags);
 
