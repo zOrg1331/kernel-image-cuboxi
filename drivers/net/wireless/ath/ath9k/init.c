@@ -33,7 +33,7 @@ int modparam_nohwcrypt;
 module_param_named(nohwcrypt, modparam_nohwcrypt, int, 0444);
 MODULE_PARM_DESC(nohwcrypt, "Disable hardware encryption");
 
-int led_blink = 1;
+int led_blink;
 module_param_named(blink, led_blink, int, 0444);
 MODULE_PARM_DESC(blink, "Enable LED blink on activity");
 
@@ -211,7 +211,7 @@ static void setup_ht_cap(struct ath_softc *sc,
 	else
 		max_streams = 2;
 
-	if (AR_SREV_9280_10_OR_LATER(ah)) {
+	if (AR_SREV_9280_20_OR_LATER(ah)) {
 		if (max_streams >= 2)
 			ht_info->cap |= IEEE80211_HT_CAP_TX_STBC;
 		ht_info->cap |= (1 << IEEE80211_HT_CAP_RX_STBC_SHIFT);
@@ -381,7 +381,7 @@ static void ath9k_init_crypto(struct ath_softc *sc)
 	 * reset the contents on initial power up.
 	 */
 	for (i = 0; i < common->keymax; i++)
-		ath9k_hw_keyreset(sc->sc_ah, (u16) i);
+		ath_hw_keyreset(common, (u16) i);
 
 	/*
 	 * Check whether the separate key cache entries
@@ -389,8 +389,8 @@ static void ath9k_init_crypto(struct ath_softc *sc)
 	 * With split mic keys the number of stations is limited
 	 * to 27 otherwise 59.
 	 */
-	if (!(sc->sc_ah->misc_mode & AR_PCU_MIC_NEW_LOC_ENA))
-		common->splitmic = 1;
+	if (sc->sc_ah->misc_mode & AR_PCU_MIC_NEW_LOC_ENA)
+		common->crypt_caps |= ATH_CRYPT_CAP_MIC_COMBINED;
 }
 
 static int ath9k_init_btcoex(struct ath_softc *sc)
@@ -522,8 +522,7 @@ static void ath9k_init_misc(struct ath_softc *sc)
 	ath9k_hw_set_diversity(sc->sc_ah, true);
 	sc->rx.defant = ath9k_hw_getdefantenna(sc->sc_ah);
 
-	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_BSSIDMASK)
-		memcpy(common->bssidmask, ath_bcast_mac, ETH_ALEN);
+	memcpy(common->bssidmask, ath_bcast_mac, ETH_ALEN);
 
 	sc->beacon.slottime = ATH9K_SLOT_TIME_9;
 
@@ -531,6 +530,9 @@ static void ath9k_init_misc(struct ath_softc *sc)
 		sc->beacon.bslot[i] = NULL;
 		sc->beacon.bslot_aphy[i] = NULL;
 	}
+
+	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_ANT_DIV_COMB)
+		sc->ant_comb.count = ATH_ANT_DIV_COMB_INIT_COUNT;
 }
 
 static int ath9k_init_softc(u16 devid, struct ath_softc *sc, u16 subsysid,
@@ -641,7 +643,8 @@ void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 		BIT(NL80211_IFTYPE_ADHOC) |
 		BIT(NL80211_IFTYPE_MESH_POINT);
 
-	hw->wiphy->flags &= ~WIPHY_FLAG_PS_ON_BY_DEFAULT;
+	if (AR_SREV_5416(sc->sc_ah))
+		hw->wiphy->flags &= ~WIPHY_FLAG_PS_ON_BY_DEFAULT;
 
 	hw->queues = 4;
 	hw->max_rates = 4;
@@ -651,7 +654,9 @@ void ath9k_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 	hw->sta_data_size = sizeof(struct ath_node);
 	hw->vif_data_size = sizeof(struct ath_vif);
 
+#ifdef CONFIG_ATH9K_RATE_CONTROL
 	hw->rate_control_algorithm = "ath9k_rate_control";
+#endif
 
 	if (test_bit(ATH9K_MODE_11G, sc->sc_ah->caps.wireless_modes))
 		hw->wiphy->bands[IEEE80211_BAND_2GHZ] =

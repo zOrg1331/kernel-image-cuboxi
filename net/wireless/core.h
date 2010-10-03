@@ -95,7 +95,10 @@ extern struct mutex cfg80211_mutex;
 extern struct list_head cfg80211_rdev_list;
 extern int cfg80211_rdev_list_generation;
 
-#define assert_cfg80211_lock() WARN_ON(!mutex_is_locked(&cfg80211_mutex))
+static inline void assert_cfg80211_lock(void)
+{
+	lockdep_assert_held(&cfg80211_mutex);
+}
 
 /*
  * You can use this to mark a wiphy_idx as not having an associated wiphy.
@@ -202,8 +205,8 @@ static inline void wdev_unlock(struct wireless_dev *wdev)
 	mutex_unlock(&wdev->mtx);
 }
 
-#define ASSERT_RDEV_LOCK(rdev) WARN_ON(!mutex_is_locked(&(rdev)->mtx));
-#define ASSERT_WDEV_LOCK(wdev) WARN_ON(!mutex_is_locked(&(wdev)->mtx));
+#define ASSERT_RDEV_LOCK(rdev) lockdep_assert_held(&(rdev)->mtx)
+#define ASSERT_WDEV_LOCK(wdev) lockdep_assert_held(&(wdev)->mtx)
 
 enum cfg80211_event_type {
 	EVENT_CONNECT_RESULT,
@@ -331,16 +334,17 @@ void __cfg80211_connect_result(struct net_device *dev, const u8 *bssid,
 			       const u8 *resp_ie, size_t resp_ie_len,
 			       u16 status, bool wextev,
 			       struct cfg80211_bss *bss);
-int cfg80211_mlme_register_action(struct wireless_dev *wdev, u32 snd_pid,
-				  const u8 *match_data, int match_len);
-void cfg80211_mlme_unregister_actions(struct wireless_dev *wdev, u32 nlpid);
-void cfg80211_mlme_purge_actions(struct wireless_dev *wdev);
-int cfg80211_mlme_action(struct cfg80211_registered_device *rdev,
-			 struct net_device *dev,
-			 struct ieee80211_channel *chan,
-			 enum nl80211_channel_type channel_type,
-			 bool channel_type_valid,
-			 const u8 *buf, size_t len, u64 *cookie);
+int cfg80211_mlme_register_mgmt(struct wireless_dev *wdev, u32 snd_pid,
+				u16 frame_type, const u8 *match_data,
+				int match_len);
+void cfg80211_mlme_unregister_socket(struct wireless_dev *wdev, u32 nlpid);
+void cfg80211_mlme_purge_registrations(struct wireless_dev *wdev);
+int cfg80211_mlme_mgmt_tx(struct cfg80211_registered_device *rdev,
+			  struct net_device *dev,
+			  struct ieee80211_channel *chan,
+			  enum nl80211_channel_type channel_type,
+			  bool channel_type_valid,
+			  const u8 *buf, size_t len, u64 *cookie);
 
 /* SME */
 int __cfg80211_connect(struct cfg80211_registered_device *rdev,
