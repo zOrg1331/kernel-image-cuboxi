@@ -118,7 +118,7 @@ capifs_fill_super(struct super_block *s, void *data, int silent)
 	s->s_root = d_alloc_root(inode);
 	if (s->s_root)
 		return 0;
-	
+
 	printk("capifs: get root dentry failed\n");
 	iput(inode);
 fail:
