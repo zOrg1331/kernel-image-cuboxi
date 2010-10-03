@@ -72,7 +72,7 @@
 #include <linux/edac.h>
 #include <asm/msr.h>
 #include "edac_core.h"
-#include "edac_mce_amd.h"
+#include "mce_amd.h"
 
 #define amd64_printk(level, fmt, arg...) \
 	edac_printk(level, "amd64", fmt, ##arg)
@@ -486,7 +486,7 @@ extern const char *ext_msgs[32];
 extern const char *htlink_msgs[8];
 
 #ifdef CONFIG_EDAC_DEBUG
-#define NUM_DBG_ATTRS 9
+#define NUM_DBG_ATTRS 5
 #else
 #define NUM_DBG_ATTRS 0
 #endif
