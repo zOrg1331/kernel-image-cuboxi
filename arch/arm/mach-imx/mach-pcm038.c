@@ -43,7 +43,7 @@
 #include "devices-imx27.h"
 #include "devices.h"
 
-static int pcm038_pins[] = {
+static const int pcm038_pins[] __initconst = {
 	/* UART1 */
 	PE12_PF_UART1_TXD,
 	PE13_PF_UART1_RXD,
@@ -257,7 +257,7 @@ static struct regulator_init_data cam_data = {
 	.consumer_supplies = cam_consumers,
 };
 
-struct mc13783_regulator_init_data pcm038_regulators[] = {
+static struct mc13783_regulator_init_data pcm038_regulators[] = {
 	{
 		.id = MC13783_REGU_VCAM,
 		.init_data = &cam_data,
@@ -309,7 +309,7 @@ static void __init pcm038_init(void)
 	i2c_register_board_info(1, pcm038_i2c_devices,
 				ARRAY_SIZE(pcm038_i2c_devices));
 
-	imx27_add_i2c_imx1(&pcm038_i2c1_data);
+	imx27_add_imx_i2c(1, &pcm038_i2c1_data);
 
 	/* PE18 for user-LED D40 */
 	mxc_gpio_mode(GPIO_PORTE | 18 | GPIO_GPIO | GPIO_OUT);
