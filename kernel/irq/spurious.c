@@ -878,7 +878,7 @@ void poll_irq(unsigned long arg)
 		return;
 
 	/* need to do locking dance for chip_bus_lock() to reenable IRQ */
-	chip_bus_lock(desc->irq_data.irq, desc);
+	chip_bus_lock(desc);
 	raw_spin_lock_irq(&desc->lock);
 
 	/* make sure we haven't raced with anyone inbetween */
@@ -890,7 +890,7 @@ void poll_irq(unsigned long arg)
 	}
 
 	raw_spin_unlock_irq(&desc->lock);
-	chip_bus_sync_unlock(desc->irq_data.irq, desc);
+	chip_bus_sync_unlock(desc);
 }
 
 void irq_poll_action_added(struct irq_desc *desc, struct irqaction *action)
