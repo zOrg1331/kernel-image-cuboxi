@@ -49,10 +49,11 @@ void bnx2x_link_set(struct bnx2x *bp);
  * Query link status
  *
  * @param bp
+ * @param is_serdes
  *
  * @return 0 - link is UP
  */
-u8 bnx2x_link_test(struct bnx2x *bp);
+u8 bnx2x_link_test(struct bnx2x *bp, u8 is_serdes);
 
 /**
  * Handles link status change
@@ -113,6 +114,15 @@ void bnx2x_int_enable(struct bnx2x *bp);
  * @param disable_hw if true, disable HW interrupts.
  */
 void bnx2x_int_disable_sync(struct bnx2x *bp, int disable_hw);
+
+/**
+ * Loads device firmware
+ *
+ * @param bp
+ *
+ * @return int
+ */
+int bnx2x_init_firmware(struct bnx2x *bp);
 
 /**
  * Init HW blocks according to current initialization stage:
@@ -389,7 +399,7 @@ static inline int bnx2x_has_tx_work_unload(struct bnx2x_fastpath *fp)
 {
 	/* Tell compiler that consumer and producer can change */
 	barrier();
-	return (fp->tx_pkt_prod != fp->tx_pkt_cons);
+	return fp->tx_pkt_prod != fp->tx_pkt_cons;
 }
 
 static inline u16 bnx2x_tx_avail(struct bnx2x_fastpath *fp)
@@ -622,7 +632,7 @@ static inline int bnx2x_has_rx_work(struct bnx2x_fastpath *fp)
 	rx_cons_sb = le16_to_cpu(*fp->rx_cons_sb);
 	if ((rx_cons_sb & MAX_RCQ_DESC_CNT) == MAX_RCQ_DESC_CNT)
 		rx_cons_sb++;
-	return (fp->rx_comp_cons != rx_cons_sb);
+	return fp->rx_comp_cons != rx_cons_sb;
 }
 
 /* HW Lock for shared dual port PHYs */

@@ -1076,7 +1076,12 @@ static int rtl8169_rx_vlan_skb(struct rtl8169_private *tp, struct RxDesc *desc,
 	int ret;
 
 	if (vlgrp && (opts2 & RxVlanTag)) {
-		__vlan_hwaccel_rx(skb, vlgrp, swab16(opts2 & 0xffff), polling);
+		u16 vtag = swab16(opts2 & 0xffff);
+
+		if (likely(polling))
+			vlan_gro_receive(&tp->napi, vlgrp, vtag, skb);
+		else
+			__vlan_hwaccel_rx(skb, vlgrp, vtag, polling);
 		ret = 0;
 	} else
 		ret = -1;
@@ -3186,6 +3191,7 @@ rtl8169_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 #ifdef CONFIG_R8169_VLAN
 	dev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
 #endif
+	dev->features |= NETIF_F_GRO;
 
 	tp->intr_mask = 0xffff;
 	tp->align = cfg->align;
@@ -4450,9 +4456,8 @@ static inline int rtl8169_fragmented_frame(u32 status)
 	return (status & (FirstFrag | LastFrag)) != (FirstFrag | LastFrag);
 }
 
-static inline void rtl8169_rx_csum(struct sk_buff *skb, struct RxDesc *desc)
+static inline void rtl8169_rx_csum(struct sk_buff *skb, u32 opts1)
 {
-	u32 opts1 = le32_to_cpu(desc->opts1);
 	u32 status = opts1 & RxProtoMask;
 
 	if (((status == RxProtoTCP) && !(opts1 & TCPFail)) ||
@@ -4460,7 +4465,7 @@ static inline void rtl8169_rx_csum(struct sk_buff *skb, struct RxDesc *desc)
 	    ((status == RxProtoIP) && !(opts1 & IPFail)))
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 	else
-		skb->ip_summed = CHECKSUM_NONE;
+		skb_checksum_none_assert(skb);
 }
 
 static inline bool rtl8169_try_rx_copy(struct sk_buff **sk_buff,
@@ -4546,8 +4551,6 @@ static int rtl8169_rx_interrupt(struct net_device *dev,
 				continue;
 			}
 
-			rtl8169_rx_csum(skb, desc);
-
 			if (rtl8169_try_rx_copy(&skb, tp, pkt_size, addr)) {
 				pci_dma_sync_single_for_device(pdev, addr,
 					pkt_size, PCI_DMA_FROMDEVICE);
@@ -4558,12 +4561,13 @@ static int rtl8169_rx_interrupt(struct net_device *dev,
 				tp->Rx_skbuff[entry] = NULL;
 			}
 
+			rtl8169_rx_csum(skb, status);
 			skb_put(skb, pkt_size);
 			skb->protocol = eth_type_trans(skb, dev);
 
 			if (rtl8169_rx_vlan_skb(tp, desc, skb, polling) < 0) {
 				if (likely(polling))
-					netif_receive_skb(skb);
+					napi_gro_receive(&tp->napi, skb);
 				else
 					netif_rx(skb);
 			}

@@ -147,35 +147,40 @@ static void fib_flush(struct net *net)
 		rt_cache_flush(net, -1);
 }
 
-/*
- *	Find the first device with a given source address.
+/**
+ * __ip_dev_find - find the first device with a given source address.
+ * @net: the net namespace
+ * @addr: the source address
+ * @devref: if true, take a reference on the found device
+ *
+ * If a caller uses devref=false, it should be protected by RCU
  */
-
-struct net_device * ip_dev_find(struct net *net, __be32 addr)
+struct net_device *__ip_dev_find(struct net *net, __be32 addr, bool devref)
 {
-	struct flowi fl = { .nl_u = { .ip4_u = { .daddr = addr } } };
-	struct fib_result res;
+	struct flowi fl = {
+		.nl_u = {
+			.ip4_u = {
+				.daddr = addr
+			}
+		},
+		.flags = FLOWI_FLAG_MATCH_ANY_IIF
+	};
+	struct fib_result res = { 0 };
 	struct net_device *dev = NULL;
-	struct fib_table *local_table;
 
-#ifdef CONFIG_IP_MULTIPLE_TABLES
-	res.r = NULL;
-#endif
-
-	local_table = fib_get_table(net, RT_TABLE_LOCAL);
-	if (!local_table || fib_table_lookup(local_table, &fl, &res))
+	if (fib_lookup(net, &fl, &res))
 		return NULL;
 	if (res.type != RTN_LOCAL)
 		goto out;
 	dev = FIB_RES_DEV(res);
 
-	if (dev)
+	if (dev && devref)
 		dev_hold(dev);
 out:
 	fib_res_put(&res);
 	return dev;
 }
-EXPORT_SYMBOL(ip_dev_find);
+EXPORT_SYMBOL(__ip_dev_find);
 
 /*
  * Find address type as if only "dev" was present in the system. If
