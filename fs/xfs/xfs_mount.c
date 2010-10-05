@@ -199,6 +199,8 @@ xfs_uuid_unmount(
 
 /*
  * Reference counting access wrappers to the perag structures.
+ * Because we never free per-ag structures, the only thing we
+ * have to protect against changes is the tree structure itself.
  */
 struct xfs_perag *
 xfs_perag_get(struct xfs_mount *mp, xfs_agnumber_t agno)
@@ -206,16 +208,40 @@ xfs_perag_get(struct xfs_mount *mp, xfs_agnumber_t agno)
 	struct xfs_perag	*pag;
 	int			ref = 0;
 
-	spin_lock(&mp->m_perag_lock);
+	rcu_read_lock();
 	pag = radix_tree_lookup(&mp->m_perag_tree, agno);
 	if (pag) {
 		ASSERT(atomic_read(&pag->pag_ref) >= 0);
-		/* catch leaks in the positive direction during testing */
-		ASSERT(atomic_read(&pag->pag_ref) < 1000);
 		ref = atomic_inc_return(&pag->pag_ref);
 	}
-	spin_unlock(&mp->m_perag_lock);
+	rcu_read_unlock();
 	trace_xfs_perag_get(mp, agno, ref, _RET_IP_);
+	return pag;
+}
+
+/*
+ * search from @first to find the next perag with the given tag set.
+ */
+struct xfs_perag *
+xfs_perag_get_tag(
+	struct xfs_mount	*mp,
+	xfs_agnumber_t		first,
+	int			tag)
+{
+	struct xfs_perag	*pag;
+	int			found;
+	int			ref;
+
+	rcu_read_lock();
+	found = radix_tree_gang_lookup_tag(&mp->m_perag_tree,
+					(void **)&pag, first, 1, tag);
+	if (found <= 0) {
+		rcu_read_unlock();
+		return NULL;
+	}
+	ref = atomic_inc_return(&pag->pag_ref);
+	rcu_read_unlock();
+	trace_xfs_perag_get_tag(mp, pag->pag_agno, ref, _RET_IP_);
 	return pag;
 }
 
@@ -229,10 +255,18 @@ xfs_perag_put(struct xfs_perag *pag)
 	trace_xfs_perag_put(pag->pag_mount, pag->pag_agno, ref, _RET_IP_);
 }
 
+STATIC void
+__xfs_free_perag(
+	struct rcu_head	*head)
+{
+	struct xfs_perag *pag = container_of(head, struct xfs_perag, rcu_head);
+
+	ASSERT(atomic_read(&pag->pag_ref) == 0);
+	kmem_free(pag);
+}
+
 /*
- * Free up the resources associated with a mount structure.  Assume that
- * the structure was initially zeroed, so we can tell which fields got
- * initialized.
+ * Free up the per-ag resources associated with the mount structure.
  */
 STATIC void
 xfs_free_perag(
@@ -244,10 +278,9 @@ xfs_free_perag(
 	for (agno = 0; agno < mp->m_sb.sb_agcount; agno++) {
 		spin_lock(&mp->m_perag_lock);
 		pag = radix_tree_delete(&mp->m_perag_tree, agno);
-		ASSERT(pag);
-		ASSERT(atomic_read(&pag->pag_ref) == 0);
 		spin_unlock(&mp->m_perag_lock);
-		kmem_free(pag);
+		ASSERT(pag);
+		call_rcu(&pag->rcu_head, __xfs_free_perag);
 	}
 }
 
@@ -444,7 +477,10 @@ xfs_initialize_perag(
 		pag->pag_agno = index;
 		pag->pag_mount = mp;
 		rwlock_init(&pag->pag_ici_lock);
+		mutex_init(&pag->pag_ici_reclaim_lock);
 		INIT_RADIX_TREE(&pag->pag_ici_root, GFP_ATOMIC);
+		spin_lock_init(&pag->pag_buf_lock);
+		pag->pag_buf_tree = RB_ROOT;
 
 		if (radix_tree_preload(GFP_NOFS))
 			goto out_unwind;
@@ -639,7 +675,6 @@ int
 xfs_readsb(xfs_mount_t *mp, int flags)
 {
 	unsigned int	sector_size;
-	unsigned int	extra_flags;
 	xfs_buf_t	*bp;
 	int		error;
 
@@ -652,28 +687,24 @@ xfs_readsb(xfs_mount_t *mp, int flags)
 	 * access to the superblock.
 	 */
 	sector_size = xfs_getsize_buftarg(mp->m_ddev_targp);
-	extra_flags = XBF_LOCK | XBF_FS_MANAGED | XBF_MAPPED;
 
-	bp = xfs_buf_read(mp->m_ddev_targp, XFS_SB_DADDR, BTOBB(sector_size),
-			  extra_flags);
-	if (!bp || XFS_BUF_ISERROR(bp)) {
-		xfs_fs_mount_cmn_err(flags, "SB read failed");
-		error = bp ? XFS_BUF_GETERROR(bp) : ENOMEM;
-		goto fail;
+reread:
+	bp = xfs_buf_read_uncached(mp, mp->m_ddev_targp,
+					XFS_SB_DADDR, sector_size, 0);
+	if (!bp) {
+		xfs_fs_mount_cmn_err(flags, "SB buffer read failed");
+		return EIO;
 	}
-	ASSERT(XFS_BUF_ISBUSY(bp));
-	ASSERT(XFS_BUF_VALUSEMA(bp) <= 0);
 
 	/*
 	 * Initialize the mount structure from the superblock.
 	 * But first do some basic consistency checking.
 	 */
 	xfs_sb_from_disk(&mp->m_sb, XFS_BUF_TO_SBP(bp));
-
 	error = xfs_mount_validate_sb(mp, &(mp->m_sb), flags);
 	if (error) {
 		xfs_fs_mount_cmn_err(flags, "SB validate failed");
-		goto fail;
+		goto release_buf;
 	}
 
 	/*
@@ -684,7 +715,7 @@ xfs_readsb(xfs_mount_t *mp, int flags)
 			"device supports only %u byte sectors (not %u)",
 			sector_size, mp->m_sb.sb_sectsize);
 		error = ENOSYS;
-		goto fail;
+		goto release_buf;
 	}
 
 	/*
@@ -692,33 +723,20 @@ xfs_readsb(xfs_mount_t *mp, int flags)
 	 * re-read the superblock so the buffer is correctly sized.
 	 */
 	if (sector_size < mp->m_sb.sb_sectsize) {
-		XFS_BUF_UNMANAGE(bp);
 		xfs_buf_relse(bp);
 		sector_size = mp->m_sb.sb_sectsize;
-		bp = xfs_buf_read(mp->m_ddev_targp, XFS_SB_DADDR,
-				  BTOBB(sector_size), extra_flags);
-		if (!bp || XFS_BUF_ISERROR(bp)) {
-			xfs_fs_mount_cmn_err(flags, "SB re-read failed");
-			error = bp ? XFS_BUF_GETERROR(bp) : ENOMEM;
-			goto fail;
-		}
-		ASSERT(XFS_BUF_ISBUSY(bp));
-		ASSERT(XFS_BUF_VALUSEMA(bp) <= 0);
+		goto reread;
 	}
 
 	/* Initialize per-cpu counters */
 	xfs_icsb_reinit_counters(mp);
 
 	mp->m_sb_bp = bp;
-	xfs_buf_relse(bp);
-	ASSERT(XFS_BUF_VALUSEMA(bp) > 0);
+	xfs_buf_unlock(bp);
 	return 0;
 
- fail:
-	if (bp) {
-		XFS_BUF_UNMANAGE(bp);
-		xfs_buf_relse(bp);
-	}
+release_buf:
+	xfs_buf_relse(bp);
 	return error;
 }
 
@@ -991,42 +1009,35 @@ xfs_check_sizes(xfs_mount_t *mp)
 {
 	xfs_buf_t	*bp;
 	xfs_daddr_t	d;
-	int		error;
 
 	d = (xfs_daddr_t)XFS_FSB_TO_BB(mp, mp->m_sb.sb_dblocks);
 	if (XFS_BB_TO_FSB(mp, d) != mp->m_sb.sb_dblocks) {
-		cmn_err(CE_WARN, "XFS: size check 1 failed");
+		cmn_err(CE_WARN, "XFS: filesystem size mismatch detected");
 		return XFS_ERROR(EFBIG);
 	}
-	error = xfs_read_buf(mp, mp->m_ddev_targp,
-			     d - XFS_FSS_TO_BB(mp, 1),
-			     XFS_FSS_TO_BB(mp, 1), 0, &bp);
-	if (!error) {
-		xfs_buf_relse(bp);
-	} else {
-		cmn_err(CE_WARN, "XFS: size check 2 failed");
-		if (error == ENOSPC)
-			error = XFS_ERROR(EFBIG);
-		return error;
+	bp = xfs_buf_read_uncached(mp, mp->m_ddev_targp,
+					d - XFS_FSS_TO_BB(mp, 1),
+					BBTOB(XFS_FSS_TO_BB(mp, 1)), 0);
+	if (!bp) {
+		cmn_err(CE_WARN, "XFS: last sector read failed");
+		return EIO;
 	}
+	xfs_buf_relse(bp);
 
 	if (mp->m_logdev_targp != mp->m_ddev_targp) {
 		d = (xfs_daddr_t)XFS_FSB_TO_BB(mp, mp->m_sb.sb_logblocks);
 		if (XFS_BB_TO_FSB(mp, d) != mp->m_sb.sb_logblocks) {
-			cmn_err(CE_WARN, "XFS: size check 3 failed");
+			cmn_err(CE_WARN, "XFS: log size mismatch detected");
 			return XFS_ERROR(EFBIG);
 		}
-		error = xfs_read_buf(mp, mp->m_logdev_targp,
-				     d - XFS_FSB_TO_BB(mp, 1),
-				     XFS_FSB_TO_BB(mp, 1), 0, &bp);
-		if (!error) {
-			xfs_buf_relse(bp);
-		} else {
-			cmn_err(CE_WARN, "XFS: size check 3 failed");
-			if (error == ENOSPC)
-				error = XFS_ERROR(EFBIG);
-			return error;
+		bp = xfs_buf_read_uncached(mp, mp->m_logdev_targp,
+					d - XFS_FSB_TO_BB(mp, 1),
+					XFS_FSB_TO_B(mp, 1), 0);
+		if (!bp) {
+			cmn_err(CE_WARN, "XFS: log device read failed");
+			return EIO;
 		}
+		xfs_buf_relse(bp);
 	}
 	return 0;
 }
@@ -1998,18 +2009,13 @@ xfs_getsb(
  */
 void
 xfs_freesb(
-	xfs_mount_t	*mp)
+	struct xfs_mount	*mp)
 {
-	xfs_buf_t	*bp;
+	struct xfs_buf		*bp = mp->m_sb_bp;
 
-	/*
-	 * Use xfs_getsb() so that the buffer will be locked
-	 * when we call xfs_buf_relse().
-	 */
-	bp = xfs_getsb(mp, 0);
-	XFS_BUF_UNMANAGE(bp);
-	xfs_buf_relse(bp);
+	xfs_buf_lock(bp);
 	mp->m_sb_bp = NULL;
+	xfs_buf_relse(bp);
 }
 
 /*
