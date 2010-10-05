@@ -566,6 +566,57 @@ static const unsigned char sysrq_xlate[KEY_MAX + 1] =
 static bool sysrq_down;
 static int sysrq_alt_use;
 static int sysrq_alt;
+static bool sysrq_kbd_triggered;
+
+/*
+ * This function was a copy of input_pass_event but modified to allow
+ * by-passing a specific filter, to allow for injected events without
+ * filter recursion.
+ */
+static void input_pass_event_ignore(struct input_dev *dev,
+			     unsigned int type, unsigned int code, int value,
+			     struct input_handle *ignore_handle)
+{
+	struct input_handler *handler;
+	struct input_handle *handle;
+
+	rcu_read_lock();
+
+	handle = rcu_dereference(dev->grab);
+	if (handle)
+		handle->handler->event(handle, type, code, value);
+	else {
+		bool filtered = false;
+
+		list_for_each_entry_rcu(handle, &dev->h_list, d_node) {
+			if (!handle->open || handle == ignore_handle)
+				continue;
+			handler = handle->handler;
+			if (!handler->filter) {
+				if (filtered)
+					break;
+
+				handler->event(handle, type, code, value);
+
+			} else if (handler->filter(handle, type, code, value))
+				filtered = true;
+		}
+	}
+
+	rcu_read_unlock();
+}
+
+/*
+ * Pass along alt-print_screen, if there was no sysrq processing by
+ * sending a key press down and then passing the key up event.
+ */
+static void simulate_alt_sysrq(struct input_handle *handle)
+{
+	input_pass_event_ignore(handle->dev, EV_KEY, KEY_SYSRQ, 1, handle);
+	input_pass_event_ignore(handle->dev, EV_SYN, SYN_REPORT, 0, handle);
+	input_pass_event_ignore(handle->dev, EV_KEY, KEY_SYSRQ, 0, handle);
+	input_pass_event_ignore(handle->dev, EV_SYN, SYN_REPORT, 0, handle);
+}
 
 static bool sysrq_filter(struct input_handle *handle, unsigned int type,
 		         unsigned int code, int value)
@@ -580,9 +631,11 @@ static bool sysrq_filter(struct input_handle *handle, unsigned int type,
 		if (value)
 			sysrq_alt = code;
 		else {
-			if (sysrq_down && code == sysrq_alt_use)
+			if (sysrq_down && code == sysrq_alt_use) {
 				sysrq_down = false;
-
+				if (!sysrq_kbd_triggered)
+					simulate_alt_sysrq(handle);
+			}
 			sysrq_alt = 0;
 		}
 		break;
@@ -590,13 +643,18 @@ static bool sysrq_filter(struct input_handle *handle, unsigned int type,
 	case KEY_SYSRQ:
 		if (value == 1 && sysrq_alt) {
 			sysrq_down = true;
+			sysrq_kbd_triggered = false;
 			sysrq_alt_use = sysrq_alt;
 		}
 		break;
 
 	default:
-		if (sysrq_down && value && value != 2)
+		if (sysrq_down && value && value != 2 && !sysrq_kbd_triggered) {
+			sysrq_kbd_triggered = true;
 			__handle_sysrq(sysrq_xlate[code], true);
+			/* Clear any handled keys from being flagged as a repeated stroke */
+			__clear_bit(code, handle->dev->key);
+		}
 		break;
 	}
 
