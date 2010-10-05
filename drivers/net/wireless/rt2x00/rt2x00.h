@@ -1,5 +1,6 @@
 /*
-	Copyright (C) 2004 - 2009 Ivo van Doorn <IvDoorn@gmail.com>
+	Copyright (C) 2010 Willow Garage <http://www.willowgarage.com>
+	Copyright (C) 2004 - 2010 Ivo van Doorn <IvDoorn@gmail.com>
 	Copyright (C) 2004 - 2009 Gertjan van Wingerde <gwingerde@gmail.com>
 	<http://rt2x00.serialmonkey.com>
 
@@ -212,8 +213,9 @@ struct channel_info {
 	unsigned int flags;
 #define GEOGRAPHY_ALLOWED	0x00000001
 
-	short tx_power1;
-	short tx_power2;
+	short max_power;
+	short default_power1;
+	short default_power2;
 };
 
 /*
@@ -558,18 +560,15 @@ struct rt2x00lib_ops {
 	/*
 	 * TX control handlers
 	 */
-	void (*write_tx_desc) (struct rt2x00_dev *rt2x00dev,
-			       struct sk_buff *skb,
+	void (*write_tx_desc) (struct queue_entry *entry,
 			       struct txentry_desc *txdesc);
 	void (*write_tx_data) (struct queue_entry *entry,
 			       struct txentry_desc *txdesc);
 	void (*write_beacon) (struct queue_entry *entry,
 			      struct txentry_desc *txdesc);
 	int (*get_tx_data_len) (struct queue_entry *entry);
-	void (*kick_tx_queue) (struct rt2x00_dev *rt2x00dev,
-			       const enum data_queue_qid queue);
-	void (*kill_tx_queue) (struct rt2x00_dev *rt2x00dev,
-			       const enum data_queue_qid queue);
+	void (*kick_tx_queue) (struct data_queue *queue);
+	void (*kill_tx_queue) (struct data_queue *queue);
 
 	/*
 	 * RX control handlers
@@ -597,7 +596,8 @@ struct rt2x00lib_ops {
 #define CONFIG_UPDATE_BSSID		( 1 << 3 )
 
 	void (*config_erp) (struct rt2x00_dev *rt2x00dev,
-			    struct rt2x00lib_erp *erp);
+			    struct rt2x00lib_erp *erp,
+			    u32 changed);
 	void (*config_ant) (struct rt2x00_dev *rt2x00dev,
 			    struct antenna_setup *ant);
 	void (*config) (struct rt2x00_dev *rt2x00dev,
@@ -698,6 +698,7 @@ struct rt2x00_dev {
 	struct ieee80211_hw *hw;
 	struct ieee80211_supported_band bands[IEEE80211_NUM_BANDS];
 	enum ieee80211_band curr_band;
+	int curr_freq;
 
 	/*
 	 * If enabled, the debugfs interface structures
@@ -850,17 +851,18 @@ struct rt2x00_dev {
 	struct ieee80211_low_level_stats low_level_stats;
 
 	/*
-	 * RX configuration information.
-	 */
-	struct ieee80211_rx_status rx_status;
-
-	/*
 	 * Scheduled work.
 	 * NOTE: intf_work will use ieee80211_iterate_active_interfaces()
 	 * which means it cannot be placed on the hw->workqueue
 	 * due to RTNL locking requirements.
 	 */
 	struct work_struct intf_work;
+
+	/**
+	 * Scheduled work for TX/RX done handling (USB devices)
+	 */
+	struct work_struct rxdone_work;
+	struct work_struct txdone_work;
 
 	/*
 	 * Data queue arrays for RX, TX and Beacon.
@@ -1069,8 +1071,10 @@ static inline void rt2x00debug_dump_frame(struct rt2x00_dev *rt2x00dev,
  */
 void rt2x00lib_beacondone(struct rt2x00_dev *rt2x00dev);
 void rt2x00lib_pretbtt(struct rt2x00_dev *rt2x00dev);
+void rt2x00lib_dmadone(struct queue_entry *entry);
 void rt2x00lib_txdone(struct queue_entry *entry,
 		      struct txdone_entry_desc *txdesc);
+void rt2x00lib_txdone_noinfo(struct queue_entry *entry, u32 status);
 void rt2x00lib_rxdone(struct rt2x00_dev *rt2x00dev,
 		      struct queue_entry *entry);
 

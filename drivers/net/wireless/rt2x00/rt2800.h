@@ -639,6 +639,18 @@
 #define LED_CFG_LED_POLAR		FIELD32(0x40000000)
 
 /*
+ * AMPDU_BA_WINSIZE: Force BlockAck window size
+ * FORCE_WINSIZE_ENABLE:
+ *   0: Disable forcing of BlockAck window size
+ *   1: Enable forcing of BlockAck window size, overwrites values BlockAck
+ *      window size values in the TXWI
+ * FORCE_WINSIZE: BlockAck window size
+ */
+#define AMPDU_BA_WINSIZE		0x1040
+#define AMPDU_BA_WINSIZE_FORCE_WINSIZE_ENABLE FIELD32(0x00000020)
+#define AMPDU_BA_WINSIZE_FORCE_WINSIZE	FIELD32(0x0000001f)
+
+/*
  * XIFS_TIME_CFG: MAC timing
  * CCKM_SIFS_TIME: unit 1us. Applied after CCK RX/TX
  * OFDM_SIFS_TIME: unit 1us. Applied after OFDM RX/TX
@@ -1318,7 +1330,25 @@
 #define TX_STA_CNT2_TX_UNDER_FLOW_COUNT	FIELD32(0xffff0000)
 
 /*
- * TX_STA_FIFO: TX Result for specific PID status fifo register
+ * TX_STA_FIFO: TX Result for specific PID status fifo register.
+ *
+ * This register is implemented as FIFO with 16 entries in the HW. Each
+ * register read fetches the next tx result. If the FIFO is full because
+ * it wasn't read fast enough after the according interrupt (TX_FIFO_STATUS)
+ * triggered, the hw seems to simply drop further tx results.
+ *
+ * VALID: 1: this tx result is valid
+ *        0: no valid tx result -> driver should stop reading
+ * PID_TYPE: The PID latched from the PID field in the TXWI, can be used
+ *           to match a frame with its tx result (even though the PID is
+ *           only 4 bits wide).
+ * TX_SUCCESS: Indicates tx success (1) or failure (0)
+ * TX_AGGRE: Indicates if the frame was part of an aggregate (1) or not (0)
+ * TX_ACK_REQUIRED: Indicates if the frame needed to get ack'ed (1) or not (0)
+ * WCID: The wireless client ID.
+ * MCS: The tx rate used during the last transmission of this frame, be it
+ *      successful or not.
+ * PHYMODE: The phymode used for the transmission.
  */
 #define TX_STA_FIFO			0x1718
 #define TX_STA_FIFO_VALID		FIELD32(0x00000001)
@@ -1841,6 +1871,13 @@ struct mac_iveiv_entry {
 #define EEPROM_RSSI_A2_LNA_A2		FIELD16(0xff00)
 
 /*
+ * EEPROM Maximum TX power values
+ */
+#define EEPROM_MAX_TX_POWER		0x0027
+#define EEPROM_MAX_TX_POWER_24GHZ	FIELD16(0x00ff)
+#define EEPROM_MAX_TX_POWER_5GHZ	FIELD16(0xff00)
+
+/*
  * EEPROM TXpower delta: 20MHZ AND 40 MHZ use different power.
  *	This is delta in 40MHZ.
  * VALUE: Tx Power dalta value (MAX=4)
@@ -1928,6 +1965,8 @@ struct mac_iveiv_entry {
  * TX_OP: 0:HT TXOP rule , 1:PIFS TX ,2:Backoff, 3:sifs
  * BW: Channel bandwidth 20MHz or 40 MHz
  * STBC: 1: STBC support MCS =0-7, 2,3 : RESERVED
+ * AMPDU: 1: this frame is eligible for AMPDU aggregation, the hw will
+ *        aggregate consecutive frames with the same RA and QoS TID.
  */
 #define TXWI_W0_FRAG			FIELD32(0x00000001)
 #define TXWI_W0_MIMO_PS			FIELD32(0x00000002)
@@ -1945,6 +1984,15 @@ struct mac_iveiv_entry {
 
 /*
  * Word1
+ * ACK: 0: No Ack needed, 1: Ack needed
+ * NSEQ: 0: Don't assign hw sequence number, 1: Assign hw sequence number
+ * BW_WIN_SIZE: BA windows size of the recipient
+ * WIRELESS_CLI_ID: Client ID for WCID table access
+ * MPDU_TOTAL_BYTE_COUNT: Length of 802.11 frame
+ * PACKETID: Will be latched into the TX_STA_FIFO register once the according
+ *           frame was processed. If multiple frames are aggregated together
+ *           (AMPDU==1) the reported tx status will always contain the packet
+ *           id of the first frame. 0: Don't report tx status for this frame.
  */
 #define TXWI_W1_ACK			FIELD32(0x00000001)
 #define TXWI_W1_NSEQ			FIELD32(0x00000002)
