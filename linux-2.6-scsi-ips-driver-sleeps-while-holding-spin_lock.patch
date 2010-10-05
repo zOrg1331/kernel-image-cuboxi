@@ -1,0 +1,235 @@
+From: Steve Best <sbest@redhat.com>
+Date: Fri, 30 Jul 2010 18:57:36 -0400
+Subject: [scsi] ips driver sleeps while holding spin_lock
+Message-id: <20100730184630.1139.8578.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 27264
+O-Subject: [PATCH RHEL5.6 BZ616961] ips driver sleeps while holding spin_lock
+Bugzilla: 616961
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=619961
+
+Description:
+============
+Don't sleep when we could be holding a spin_lock
+
+The attached patch reverts the msleep() calls to MDELAY() calls.  MDELAY is a
+macro which calls mdelay() and also touches the soft lockup timer to keep the
+soft lockup watchdog working during these delays.
+
+The functions which call msleep() will be called with spin_locks held during
+reset. This can result in deadlocks when an interrupt or other thread attempts
+to acquire the spin_lock.
+
+Also, a secondary change was made to convert the spin_lock IPS_(UN)LOCK*
+locking macros to use the _irqsave/_irqrestore variants.  The spin_lock is
+acquired in the interrupt handler so users of the spin_lock need to disable
+interrupts to prevent a possible deadlock with the interrupt handler as well.
+
+The initialization/reset code for the driver gets called under a spin_lock when
+the scsi layer issues a reset request because commands aren't completing.  This
+can cause a deadlock when msleep() is called by the hardware reset logic since
+the scsi error handling thread then sleeps while holding a spin_lock and
+interrupts from the hardware are still enabled.
+
+Changes are from the mainline kernel which also reverted the msleep calls.
+
+RHEL Version Found:
+===================
+RHEL 5.4
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2641534
+
+Upstream:
+=========
+Most of the patch was from upstream. commit id
+bf4713418b9d8543e7b64bf6c742f1959828033e, which is a reversion
+of what was done in 15084a4a63bc300c18b28a8a9afac870c552abce because
+of this problem.
+
+Test Status:
+============
+
+David Jeffery gave the customer a kernel with this patch and
+changes were tested by the customer who had been experiencing the bug.
+Using a kernel with the patch built into it, the customer reported they were no
+longer experiencing the deadlock.  For some reason, their serveraid adapter
+regularly stops responding and needs a reset for the system to keep running.
+
+===============================================================
+Steve Best
+IBM on-site partner
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/ips.c b/drivers/scsi/ips.c
+index 3c63928..700cb3f 100644
+--- a/drivers/scsi/ips.c
++++ b/drivers/scsi/ips.c
+@@ -226,8 +226,8 @@ module_param(ips, charp, 0);
+ #define __devexit_p(x) x
+ #endif
+ #else
+-#define IPS_LOCK_SAVE(lock,flags) do{spin_lock(lock);(void)flags;}while(0)
+-#define IPS_UNLOCK_RESTORE(lock,flags) do{spin_unlock(lock);(void)flags;}while(0)
++#define IPS_LOCK_SAVE(lock,flags) do{spin_lock_irqsave(lock, flags);}while(0)
++#define IPS_UNLOCK_RESTORE(lock,flags) do{spin_unlock_irqrestore(lock, flags);}while(0)
+ #endif
+ 
+ #define IPS_DMA_DIR(scb) ((!scb->scsi_cmd || ips_is_passthru(scb->scsi_cmd) || \
+@@ -5014,7 +5014,7 @@ ips_init_copperhead(ips_ha_t * ha)
+ 				break;
+ 
+ 			/* Delay for 1 Second */
+-			msleep(IPS_ONE_SEC);
++			MDELAY(IPS_ONE_SEC);
+ 		}
+ 
+ 		if (j >= 45)
+@@ -5040,7 +5040,7 @@ ips_init_copperhead(ips_ha_t * ha)
+ 				break;
+ 
+ 			/* Delay for 1 Second */
+-			msleep(IPS_ONE_SEC);
++			MDELAY(IPS_ONE_SEC);
+ 		}
+ 
+ 		if (j >= 240)
+@@ -5058,7 +5058,7 @@ ips_init_copperhead(ips_ha_t * ha)
+ 			break;
+ 
+ 		/* Delay for 1 Second */
+-		msleep(IPS_ONE_SEC);
++		MDELAY(IPS_ONE_SEC);
+ 	}
+ 
+ 	if (i >= 240)
+@@ -5108,7 +5108,7 @@ ips_init_copperhead_memio(ips_ha_t * ha)
+ 				break;
+ 
+ 			/* Delay for 1 Second */
+-			msleep(IPS_ONE_SEC);
++			MDELAY(IPS_ONE_SEC);
+ 		}
+ 
+ 		if (j >= 45)
+@@ -5134,7 +5134,7 @@ ips_init_copperhead_memio(ips_ha_t * ha)
+ 				break;
+ 
+ 			/* Delay for 1 Second */
+-			msleep(IPS_ONE_SEC);
++			MDELAY(IPS_ONE_SEC);
+ 		}
+ 
+ 		if (j >= 240)
+@@ -5152,7 +5152,7 @@ ips_init_copperhead_memio(ips_ha_t * ha)
+ 			break;
+ 
+ 		/* Delay for 1 Second */
+-		msleep(IPS_ONE_SEC);
++		MDELAY(IPS_ONE_SEC);
+ 	}
+ 
+ 	if (i >= 240)
+@@ -5204,7 +5204,7 @@ ips_init_morpheus(ips_ha_t * ha)
+ 			break;
+ 
+ 		/* Delay for 1 Second */
+-		msleep(IPS_ONE_SEC);
++		MDELAY(IPS_ONE_SEC);
+ 	}
+ 
+ 	if (i >= 45) {
+@@ -5230,7 +5230,7 @@ ips_init_morpheus(ips_ha_t * ha)
+ 			if (Post != 0x4F00)
+ 				break;
+ 			/* Delay for 1 Second */
+-			msleep(IPS_ONE_SEC);
++			MDELAY(IPS_ONE_SEC);
+ 		}
+ 
+ 		if (i >= 120) {
+@@ -5260,7 +5260,7 @@ ips_init_morpheus(ips_ha_t * ha)
+ 			break;
+ 
+ 		/* Delay for 1 Second */
+-		msleep(IPS_ONE_SEC);
++		MDELAY(IPS_ONE_SEC);
+ 	}
+ 
+ 	if (i >= 240) {
+@@ -5320,12 +5320,12 @@ ips_reset_copperhead(ips_ha_t * ha)
+ 		outb(IPS_BIT_RST, ha->io_addr + IPS_REG_SCPR);
+ 
+ 		/* Delay for 1 Second */
+-		msleep(IPS_ONE_SEC);
++		MDELAY(IPS_ONE_SEC);
+ 
+ 		outb(0, ha->io_addr + IPS_REG_SCPR);
+ 
+ 		/* Delay for 1 Second */
+-		msleep(IPS_ONE_SEC);
++		MDELAY(IPS_ONE_SEC);
+ 
+ 		if ((*ha->func.init) (ha))
+ 			break;
+@@ -5365,12 +5365,12 @@ ips_reset_copperhead_memio(ips_ha_t * ha)
+ 		writeb(IPS_BIT_RST, ha->mem_ptr + IPS_REG_SCPR);
+ 
+ 		/* Delay for 1 Second */
+-		msleep(IPS_ONE_SEC);
++		MDELAY(IPS_ONE_SEC);
+ 
+ 		writeb(0, ha->mem_ptr + IPS_REG_SCPR);
+ 
+ 		/* Delay for 1 Second */
+-		msleep(IPS_ONE_SEC);
++		MDELAY(IPS_ONE_SEC);
+ 
+ 		if ((*ha->func.init) (ha))
+ 			break;
+@@ -5411,7 +5411,7 @@ ips_reset_morpheus(ips_ha_t * ha)
+ 		writel(0x80000000, ha->mem_ptr + IPS_REG_I960_IDR);
+ 
+ 		/* Delay for 5 Seconds */
+-		msleep(5 * IPS_ONE_SEC);
++		MDELAY(5 * IPS_ONE_SEC);
+ 
+ 		/* Do a PCI config read to wait for adapter */
+ 		pci_read_config_byte(ha->pcidev, 4, &junk);
+diff --git a/drivers/scsi/ips.h b/drivers/scsi/ips.h
+index f46c382..14b4449 100644
+--- a/drivers/scsi/ips.h
++++ b/drivers/scsi/ips.h
+@@ -50,7 +50,7 @@
+ #ifndef _IPS_H_
+    #define _IPS_H_
+ 
+-#include <linux/version.h>
++#include <linux/nmi.h>
+    #include <asm/uaccess.h>
+    #include <asm/io.h>
+ 
+@@ -116,9 +116,12 @@
+             dev_printk(level , &((pcidev)->dev) , format , ## arg)
+    #endif
+ 
+-   #ifndef MDELAY
+-      #define MDELAY mdelay
+-   #endif
++   #define MDELAY(n) \
++	do {                            \
++		mdelay(n);              \
++		touch_nmi_watchdog();   \
++	} while (0)
++
+ 
+    #ifndef min
+       #define min(x,y) ((x) < (y) ? x : y)

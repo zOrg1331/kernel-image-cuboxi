@@ -1,0 +1,30 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Fri, 3 Sep 2010 21:20:17 -0400
+Subject: [net] cxgb3: add define for fatal parity error bit
+Message-id: <ecda5edcb7e68007e3f935f47618f4b81668c740.1283548506.git.dledford@redhat.com>
+Patchwork-id: 28138
+O-Subject: [Patch RHEL5.6 1/4] cxgb3: Add define for fatal parity error bit
+	manipulation
+Bugzilla: 630124
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Related: bz630124
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/net/cxgb3/regs.h b/drivers/net/cxgb3/regs.h
+index 1b5327b..f3788e3 100644
+--- a/drivers/net/cxgb3/regs.h
++++ b/drivers/net/cxgb3/regs.h
+@@ -1981,6 +1981,10 @@
+ 
+ #define A_PL_RST 0x6f0
+ 
++#define S_FATALPERREN    4
++#define V_FATALPERREN(x) ((x) << S_FATALPERREN)
++#define F_FATALPERREN    V_FATALPERREN(1U)
++
+ #define S_CRSTWRM    1
+ #define V_CRSTWRM(x) ((x) << S_CRSTWRM)
+ #define F_CRSTWRM    V_CRSTWRM(1U)

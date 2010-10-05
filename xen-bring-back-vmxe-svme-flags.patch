@@ -1,0 +1,46 @@
+From: Andrew Jones <drjones@redhat.com>
+Date: Thu, 20 May 2010 14:54:17 -0400
+Subject: [xen] bring back VMXE/SVME flags
+Message-id: <1274367257-3803-1-git-send-email-drjones@redhat.com>
+Patchwork-id: 25440
+O-Subject: [RHEL5.6 PATCH v2] [xen] bring back VMXE/SVME flags
+Bugzilla: 570091
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=570091
+
+As work for 5.5 we masked out a bunch more cpuid flags, one of which was
+vmxe. This has caused some confusion since many people are used to
+looking in /proc/cpuinfo for vmx in order to detect if the hardware is
+capable of virtualization. To avoid the confusion, we'll bring it back.
+It does, however, open a door for a guest admin to shoot themselves in
+the foot (i.e. attempt to load the KVM module on a Xen guest, which will
+crash the guest). The svm flag for AMD machines is also brought back.
+---
+ arch/x86/traps.c |    2 --
+ 1 files changed, 0 insertions(+), 2 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/traps.c b/arch/x86/traps.c
+index a638e70..b15163e 100644
+--- a/arch/x86/traps.c
++++ b/arch/x86/traps.c
+@@ -632,7 +632,6 @@ static int emulate_forced_invalid_op(struct cpu_user_regs *regs)
+         clear_bit(X86_FEATURE_DTES64 % 32, &c);
+         clear_bit(X86_FEATURE_MWAIT % 32, &c);
+         clear_bit(X86_FEATURE_DSCPL % 32, &c);
+-        clear_bit(X86_FEATURE_VMXE % 32, &c);
+         clear_bit(X86_FEATURE_SMXE % 32, &c);
+         clear_bit(X86_FEATURE_TM2 % 32, &c);
+         if ( is_pv_32bit_vcpu(current) )
+@@ -654,7 +653,6 @@ static int emulate_forced_invalid_op(struct cpu_user_regs *regs)
+         clear_bit(X86_FEATURE_PAGE1GB % 32, &d);
+         clear_bit(X86_FEATURE_RDTSCP % 32, &d);
+ 
+-        clear_bit(X86_FEATURE_SVME % 32, &c);
+         clear_bit(X86_FEATURE_OSVW % 32, &c);
+         clear_bit(X86_FEATURE_IBS % 32, &c);
+         clear_bit(X86_FEATURE_SKINIT % 32, &c);

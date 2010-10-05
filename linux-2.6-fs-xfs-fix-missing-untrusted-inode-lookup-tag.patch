@@ -1,0 +1,79 @@
+From: Dave Chinner <dchinner@redhat.com>
+Date: Mon, 13 Sep 2010 06:01:36 -0400
+Subject: [fs] xfs: fix missing untrusted inode lookup tag
+Message-id: <1284357696-14857-1-git-send-email-dchinner@redhat.com>
+Patchwork-id: 28217
+O-Subject: [RHEL5.6 PATCH] xfs: fix missing untrusted inode lookup tag
+Bugzilla: 607032
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+RH-Acked-by: Christoph Hellwig <chellwig@redhat.com>
+
+Upstream commit: None - fixes a bug introduced during backporting.
+RH BZ: 633178
+
+When backporting upstream commit 7124fe0a5b619d65b739477b3b55a20bf805b06d
+("xfs: validate untrusted inode numbers during lookup") , I missed
+the fact that RHEL5 kernels do not have the same handle lookup path as
+they do in RHEL6. Hence open-by-handle inodes were not being validated at
+all, and as such passing or failing the stale handle test case was very
+much down to timing of operations. Hence on some machines it would pass,
+on some machines it would fail, and the xfs_dump code would almost never
+fail.
+
+Add the correct XFS_IGET_UNTRUSTED flag to the handle xfs_iget call and
+ensure the correct errors are reported back to userspace/NFS when an
+EINVAL is returned.
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+
+diff --git a/fs/xfs/linux-2.6/xfs_export.c b/fs/xfs/linux-2.6/xfs_export.c
+index 8f0586f..82d5664 100644
+--- a/fs/xfs/linux-2.6/xfs_export.c
++++ b/fs/xfs/linux-2.6/xfs_export.c
+@@ -156,8 +156,18 @@ xfs_fs_get_dentry(
+ 	 */
+ 	error = xfs_iget(mp, NULL, xfid->fid_ino, XFS_IGET_UNTRUSTED,
+ 					XFS_ILOCK_SHARED, &ip, 0);
+-	if (error)
++	if (error) {
++		/*
++		 * EINVAL means the inode cluster doesn't exist anymore.
++		 * This implies the filehandle is stale, so we should
++		 * translate it here.
++		 * We don't use ESTALE directly down the chain to not
++		 * confuse applications using bulkstat that expect EINVAL.
++		 */
++		if (error == EINVAL)
++			error = ESTALE;
+ 		return ERR_PTR(-error);
++	}
+ 	if (!ip)
+ 		return ERR_PTR(-EIO) ;
+ 
+diff --git a/fs/xfs/linux-2.6/xfs_ioctl.c b/fs/xfs/linux-2.6/xfs_ioctl.c
+index f59330d..e76644f 100644
+--- a/fs/xfs/linux-2.6/xfs_ioctl.c
++++ b/fs/xfs/linux-2.6/xfs_ioctl.c
+@@ -231,9 +231,20 @@ xfs_vget_fsop_handlereq(
+ 	/*
+ 	 * Get the XFS inode, building a Linux inode to go with it.
+ 	 */
+-	error = xfs_iget(mp, NULL, ino, 0, XFS_ILOCK_SHARED, &ip, 0);
+-	if (error)
++	error = xfs_iget(mp, NULL, ino, XFS_IGET_UNTRUSTED,
++				XFS_ILOCK_SHARED, &ip, 0);
++	if (error) {
++		/*
++		 * EINVAL means the inode cluster doesn't exist anymore.
++		 * This implies the filehandle is stale, so we should
++		 * translate it here.
++		 * We don't use ENOENT directly down the chain to not
++		 * confuse applications using bulkstat that expect EINVAL.
++		 */
++		if (error == EINVAL)
++			error = ENOENT;
+ 		return error;
++	}
+ 	if (ip == NULL)
+ 		return XFS_ERROR(EIO);
+ 	if (ip->i_d.di_gen != igen) {

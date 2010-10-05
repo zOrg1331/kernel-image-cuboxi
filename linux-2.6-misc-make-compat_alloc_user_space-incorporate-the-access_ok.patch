@@ -1,0 +1,178 @@
+From: Don Howard <dhoward@redhat.com>
+Date: Fri, 17 Sep 2010 03:17:00 -0000
+Subject: make compat_alloc_user_space() incorporate the access_ok()
+Message-ID: <alpine.LRH.2.00.1009161310420.13835@localhost.localdomain>
+Patchwork-Id: 28276
+O-Subject: [PATCH RHEL5.6 BZ634464] [compat] make compat_alloc_user_space()
+	incorporate the access_ok() 
+Bugzilla: 634464
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+
+
+An exploit for this issue was made public yesterday - this is urgently 
+needed for 5.5/5.4/5.3 zstreams.  Please review.
+
+
+Backport of upstream commit:
+
+commit c41d68a513c71e35a14f66d71782d27a79a81ea6
+Author: H. Peter Anvin <hpa@linux.intel.com>
+Date:   Tue Sep 7 16:16:18 2010 -0700
+
+    compat: Make compat_alloc_user_space() incorporate the access_ok()
+    
+    compat_alloc_user_space() expects the caller to independently call
+    access_ok() to verify the returned area.  A missing call could
+    introduce problems on some architectures.
+    
+    This patch incorporates the access_ok() check into
+    compat_alloc_user_space() and also adds a sanity check on the length.
+    The existing compat_alloc_user_space() implementations are renamed
+    arch_compat_alloc_user_space() and are used as part of the
+    implementation of the new global function.
+    
+    This patch assumes NULL will cause __get_user()/__put_user() to either
+    fail or access userspace on all architectures.  This should be
+    followed by checking the return value of compat_access_user_space()
+    for NULL in the callers, at which time the access_ok() in the callers
+    can also be removed.
+    
+    Reported-by: Ben Hawkes <hawkes@sota.gen.nz>
+    Signed-off-by: H. Peter Anvin <hpa@linux.intel.com>
+    Acked-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+    Acked-by: Chris Metcalf <cmetcalf@tilera.com>
+    Acked-by: David S. Miller <davem@davemloft.net>
+    Acked-by: Ingo Molnar <mingo@elte.hu>
+    Acked-by: Thomas Gleixner <tglx@linutronix.de>
+    Acked-by: Tony Luck <tony.luck@intel.com>
+    Cc: Andrew Morton <akpm@linux-foundation.org>
+    Cc: Arnd Bergmann <arnd@arndb.de>
+    Cc: Fenghua Yu <fenghua.yu@intel.com>
+    Cc: H. Peter Anvin <hpa@zytor.com>
+    Cc: Heiko Carstens <heiko.carstens@de.ibm.com>
+    Cc: Helge Deller <deller@gmx.de>
+    Cc: James Bottomley <jejb@parisc-linux.org>
+    Cc: Kyle McMartin <kyle@mcmartin.ca>
+    Cc: Martin Schwidefsky <schwidefsky@de.ibm.com>
+    Cc: Paul Mackerras <paulus@samba.org>
+    Cc: Ralf Baechle <ralf@linux-mips.org>
+    Cc: <stable@kernel.org>
+
+
+
+Addresses bz 634464, CVE-2010-3081
+Scratch build is in brew now: 
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2767588
+I will submit an rhts job when the above completes.
+
+---
+-Don
+dhoward@redhat.com
+
+diff --git a/include/asm-ia64/compat.h b/include/asm-ia64/compat.h
+index 40d01d8..f5ad6a0 100644
+--- a/include/asm-ia64/compat.h
++++ b/include/asm-ia64/compat.h
+@@ -196,7 +196,7 @@ ptr_to_compat(void __user *uptr)
+ }
+ 
+ static __inline__ void __user *
+-compat_alloc_user_space (long len)
++arch_compat_alloc_user_space (long len)
+ {
+ 	struct pt_regs *regs = task_pt_regs(current);
+ 	return (void __user *) (((regs->r12 & 0xffffffff) & -16) - len);
+diff --git a/include/asm-powerpc/compat.h b/include/asm-powerpc/compat.h
+index aacaabd..7d48f86 100644
+--- a/include/asm-powerpc/compat.h
++++ b/include/asm-powerpc/compat.h
+@@ -131,7 +131,7 @@ static inline compat_uptr_t ptr_to_compat(void __user *uptr)
+ 	return (u32)(unsigned long)uptr;
+ }
+ 
+-static inline void __user *compat_alloc_user_space(long len)
++static inline void __user *arch_compat_alloc_user_space(long len)
+ {
+ 	struct pt_regs *regs = current->thread.regs;
+ 	unsigned long usp = regs->gpr[1];
+diff --git a/include/asm-s390/compat.h b/include/asm-s390/compat.h
+index 356a0b1..adbdb0a 100644
+--- a/include/asm-s390/compat.h
++++ b/include/asm-s390/compat.h
+@@ -133,7 +133,7 @@ static inline compat_uptr_t ptr_to_compat(void __user *uptr)
+ 	return (u32)(unsigned long)uptr;
+ }
+ 
+-static inline void __user *compat_alloc_user_space(long len)
++static inline void __user *arch_compat_alloc_user_space(long len)
+ {
+ 	unsigned long stack;
+ 
+diff --git a/include/asm-x86_64/compat.h b/include/asm-x86_64/compat.h
+index b37ab82..8db7242 100644
+--- a/include/asm-x86_64/compat.h
++++ b/include/asm-x86_64/compat.h
+@@ -196,7 +196,7 @@ static inline compat_uptr_t ptr_to_compat(void __user *uptr)
+ 	return (u32)(unsigned long)uptr;
+ }
+ 
+-static __inline__ void __user *compat_alloc_user_space(long len)
++static __inline__ void __user *arch_compat_alloc_user_space(long len)
+ {
+ 	struct pt_regs *regs = task_pt_regs(current);
+ 	return (void __user *)regs->rsp - len; 
+diff --git a/include/linux/compat.h b/include/linux/compat.h
+index eaa41d6..414b35a 100644
+--- a/include/linux/compat.h
++++ b/include/linux/compat.h
+@@ -235,6 +235,8 @@ static inline int compat_timespec_compare(struct compat_timespec *lhs,
+ asmlinkage long compat_sys_adjtimex(struct compat_timex __user *utp);
+ 
+ extern int compat_printk(const char *fmt, ...);
++extern void __user *compat_alloc_user_space(unsigned long len);
++
+ 
+ #endif /* CONFIG_COMPAT */
+ #endif /* _LINUX_COMPAT_H */
+diff --git a/kernel/compat.c b/kernel/compat.c
+index 126dee9..9cfbb04 100644
+--- a/kernel/compat.c
++++ b/kernel/compat.c
+@@ -950,3 +950,24 @@ asmlinkage long compat_sys_move_pages(pid_t pid, unsigned long nr_pages,
+ 	return sys_move_pages(pid, nr_pages, pages, nodes, status, flags);
+ }
+ #endif
++
++/*
++ * Allocate user-space memory for the duration of a single system call,
++ * in order to marshall parameters inside a compat thunk.
++ */
++void __user *compat_alloc_user_space(unsigned long len)
++{
++	void __user *ptr;
++
++	/* If len would occupy more than half of the entire compat space... */
++	if (unlikely(len > (((compat_uptr_t)~0) >> 1)))
++		return NULL;
++
++	ptr = arch_compat_alloc_user_space(len);
++
++	if (unlikely(!access_ok(VERIFY_WRITE, ptr, len)))
++		return NULL;
++
++	return ptr;
++}
++EXPORT_SYMBOL(compat_alloc_user_space);
+diff --git a/kernel/compat.c b/kernel/compat.c
+index 9cfbb04..95e3a94 100644
+--- a/kernel/compat.c
++++ b/kernel/compat.c
+@@ -24,6 +24,7 @@
+ #include <linux/migrate.h>
+ 
+ #include <asm/uaccess.h>
++#include <linux/module.h>
+ 
+ int get_compat_timespec(struct timespec *ts, const struct compat_timespec __user *cts)
+ {

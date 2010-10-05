@@ -1,0 +1,74 @@
+From: Dave Chinner <dchinner@redhat.com>
+Date: Mon, 23 Aug 2010 11:15:02 -0400
+Subject: [fs] xfs: fix untrusted inode number lookup
+Message-id: <1282562102-25467-1-git-send-email-dchinner@redhat.com>
+Patchwork-id: 27770
+O-Subject: [RHEL5.6 PATCH] xfs: fix untrusted inode number lookup
+Bugzilla: 624862
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+Upstream Commit: None yet
+RH BZ: 624860
+
+Commit 7124fe0a5b619d65b739477b3b55a20bf805b06d ("xfs: validate untrusted inode
+numbers during lookup") changes the inode lookup code to do btree lookups for
+untrusted inode numbers. This change made an invalid assumption about the
+alignment of inodes and hence incorrectly calculated the first inode in the
+cluster. As a result, some inode numbers were being incorrectly considered
+invalid when they were actually valid.
+
+The issue was not picked up by the xfstests suite because it always runs fsr
+and dump (the two utilities that utilise the bulkstat interface) on cache hot
+inodes and hence the lookup code in the cold cache path was not sufficiently
+exercised to uncover this intermittent problem.
+
+Fix the issue by relaxing the btree lookup criteria and then checking if the
+record returned contains the inode number we are lookup for. If it we get an
+incorrect record, then the inode number is invalid.
+
+Signed-off-by: Dave Chinner <dchinner@redhat.com>
+
+diff --git a/fs/xfs/xfs_ialloc.c b/fs/xfs/xfs_ialloc.c
+index 049ba18..da3de55 100644
+--- a/fs/xfs/xfs_ialloc.c
++++ b/fs/xfs/xfs_ialloc.c
+@@ -1173,7 +1173,6 @@ xfs_imap_lookup(
+ 	xfs_inofree_t		chunk_free;	/* mask of free inodes in chunk */
+ 	struct xfs_btree_cur	*cur;
+ 	struct xfs_buf		*agbp;
+-	xfs_agino_t		startino;
+ 	int			error;
+ 	int			i;
+ 
+@@ -1189,14 +1188,14 @@ xfs_imap_lookup(
+ 	}
+ 
+ 	/*
+-	 * derive and lookup the exact inode record for the given agino. If the
+-	 * record cannot be found, then it's an invalid inode number and we
+-	 * should abort.
++	 * Lookup the inode record for the given agino. If the record cannot be
++	 * found, then it's an invalid inode number and we should abort. Once
++	 * we have a record, we need to ensure it contains the inode number
++	 * we are looking up.
+ 	 */
+ 	cur = xfs_btree_init_cursor(mp, tp, agbp, agno, XFS_BTNUM_INO,
+ 			(xfs_inode_t *)0, 0);
+-	startino = agino & ~(XFS_IALLOC_INODES(mp) - 1);
+-	error = xfs_inobt_lookup_eq(cur, startino, 0, 0, &i);
++	error = xfs_inobt_lookup_le(cur, agino, 0, 0, &i);
+ 	if (!error) {
+ 		if (i)
+ 			error = xfs_inobt_get_rec(cur, &chunk_agino, &chunk_cnt,
+@@ -1210,6 +1209,11 @@ xfs_imap_lookup(
+ 	if (error)
+ 		return error;
+ 
++	/* check that the returned record contains the required inode */
++	if (chunk_agino > agino ||
++	    chunk_agino + XFS_IALLOC_INODES(mp) <= agino)
++		return EINVAL;
++
+ 	/* for untrusted inodes check it is allocated first */
+ 	if ((flags & XFS_IGET_UNTRUSTED) &&
+ 	    (chunk_free & XFS_INOBT_MASK(agino - chunk_agino)))
