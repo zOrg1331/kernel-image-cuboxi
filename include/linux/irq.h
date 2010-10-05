@@ -21,6 +21,7 @@
 #include <linux/irqreturn.h>
 #include <linux/irqnr.h>
 #include <linux/errno.h>
+#include <linux/timer.h>
 #include <linux/topology.h>
 #include <linux/wait.h>
 
@@ -71,6 +72,8 @@ typedef	void (*irq_flow_handler_t)(unsigned int irq,
 #define IRQ_SUSPENDED		0x04000000	/* IRQ has gone through suspend sequence */
 #define IRQ_ONESHOT		0x08000000	/* IRQ is not unmasked after hardirq */
 #define IRQ_NESTED_THREAD	0x10000000	/* IRQ is nested into another, no own handler thread */
+#define IRQ_IN_POLLING		0x20000000	/* IRQ polling in progress */
+#define IRQ_CHECK_WATCHES	0x40000000	/* IRQ watch enabled */
 
 #ifdef CONFIG_IRQ_PER_CPU
 # define CHECK_IRQ_PER_CPU(var) ((var) & IRQ_PER_CPU)
@@ -204,6 +207,17 @@ struct irq_chip {
 
 struct timer_rand_state;
 struct irq_2_iommu;
+
+/* spurious IRQ tracking and handling */
+struct irq_spr {
+	unsigned long		last_bad;	/* when was the last bad? */
+	unsigned long		period_start;	/* period start jiffies */
+	unsigned int		nr_samples;	/* nr of irqs in this period */
+	unsigned int		nr_bad;		/* nr of bad deliveries */
+	unsigned int		poll_cnt;	/* nr to poll once activated */
+	unsigned int		poll_rem;	/* how many polls are left? */
+};
+
 /**
  * struct irq_desc - interrupt descriptor
  * @irq_data:		per irq and chip data passed down to chip functions
@@ -214,13 +228,12 @@ struct irq_2_iommu;
  * @status:		status information
  * @depth:		disable-depth, for nested irq_disable() calls
  * @wake_depth:		enable depth, for multiple set_irq_wake() callers
- * @irq_count:		stats field to detect stalled irqs
- * @last_unhandled:	aging timer for unhandled count
- * @irqs_unhandled:	stats field for spurious unhandled interrupts
  * @lock:		locking for SMP
  * @pending_mask:	pending rebalanced interrupts
  * @threads_active:	number of irqaction threads currently running
  * @wait_for_threads:	wait queue for sync_irq to wait for threaded handlers
+ * @spr:		data for spurious IRQ handling
+ * @poll_timer:		timer for IRQ polling
  * @dir:		/proc/irq/ procfs entry
  * @name:		flow handler name for /proc/interrupts output
  */
@@ -261,9 +274,6 @@ struct irq_desc {
 
 	unsigned int		depth;		/* nested irq disables */
 	unsigned int		wake_depth;	/* nested wake enables */
-	unsigned int		irq_count;	/* For detecting broken IRQs */
-	unsigned long		last_unhandled;	/* Aging timer for unhandled count */
-	unsigned int		irqs_unhandled;
 	raw_spinlock_t		lock;
 #ifdef CONFIG_SMP
 	const struct cpumask	*affinity_hint;
@@ -273,6 +283,11 @@ struct irq_desc {
 #endif
 	atomic_t		threads_active;
 	wait_queue_head_t       wait_for_threads;
+
+	struct irq_spr		spr;
+	struct timer_list	poll_timer;
+	bool			poll_warned;
+
 #ifdef CONFIG_PROC_FS
 	struct proc_dir_entry	*dir;
 #endif
@@ -394,8 +409,17 @@ static inline void generic_handle_irq(unsigned int irq)
 }
 
 /* Handling of unhandled and spurious interrupts: */
-extern void note_interrupt(unsigned int irq, struct irq_desc *desc,
-			   irqreturn_t action_ret);
+extern void __note_interrupt(unsigned int irq, struct irq_desc *desc,
+			     irqreturn_t action_ret);
+
+static inline void note_interrupt(unsigned int irq, struct irq_desc *desc,
+				  irqreturn_t action_ret)
+{
+	extern int noirqdebug;
+
+	if (!noirqdebug)
+		__note_interrupt(irq, desc, action_ret);
+}
 
 /* Resending of interrupts :*/
 void check_irq_resend(struct irq_desc *desc, unsigned int irq);
