@@ -19,7 +19,9 @@
  */
 
 #define pr_fmt(fmt) "(stll) :" fmt
-#include "st_ll.h"
+#include <linux/skbuff.h>
+#include <linux/module.h>
+#include <linux/ti_wilink_st.h>
 
 /**********************************************************************/
 /* internal functions */

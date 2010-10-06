@@ -28,15 +28,7 @@
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 #include <net/bluetooth/hci.h>
-#include "fm.h"
-/*
- * packet formats for fm and gps
- * #include "gps.h"
- */
-#include "st_core.h"
-#include "st_kim.h"
-#include "st_ll.h"
-#include "st.h"
+#include <linux/ti_wilink_st.h>
 
 /* strings to be used for rfkill entries and by
  * ST Core to be used for sysfs debug entry
@@ -685,9 +677,8 @@ long st_register(struct st_proto_s *new_proto)
 		default:
 			pr_err("%d protocol not supported",
 				   new_proto->type);
-			err = -EPROTONOSUPPORT;
-			/* something wrong */
-			break;
+			spin_unlock_irqrestore(&st_gdata->lock, flags);
+			return -EPROTONOSUPPORT;
 		}
 		st_gdata->list[new_proto->type] = new_proto;
 		st_gdata->protos_registered++;

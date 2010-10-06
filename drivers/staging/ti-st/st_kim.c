@@ -28,14 +28,15 @@
 #include <linux/gpio.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
-
 #include <linux/sched.h>
+#include <linux/rfkill.h>
 
-#include "st_kim.h"
 /* understand BT events for fw response */
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 #include <net/bluetooth/hci.h>
+
+#include <linux/ti_wilink_st.h>
 
 
 static int kim_probe(struct platform_device *pdev);
@@ -638,7 +639,14 @@ static int kim_probe(struct platform_device *pdev)
 	long *gpios = pdev->dev.platform_data;
 	struct kim_data_s	*kim_gdata;
 
-	st_kim_devices[pdev->id] = pdev;
+	if ((pdev->id != -1) && (pdev->id < MAX_ST_DEVICES)) {
+		/* multiple devices could exist */
+		st_kim_devices[pdev->id] = pdev;
+	} else {
+		/* platform's sure about existance of 1 device */
+		st_kim_devices[0] = pdev;
+	}
+
 	kim_gdata = kzalloc(sizeof(struct kim_data_s), GFP_ATOMIC);
 	if (!kim_gdata) {
 		pr_err("no mem to allocate");
