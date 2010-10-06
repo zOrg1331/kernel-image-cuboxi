@@ -46,6 +46,181 @@ static inline u32 iwlagn_get_scd_ssn(struct iwl5000_tx_resp *tx_resp)
 			    tx_resp->frame_count) & MAX_SN;
 }
 
+static void iwlagn_count_tx_err_status(struct iwl_priv *priv, u16 status)
+{
+	status &= TX_STATUS_MSK;
+
+	switch (status) {
+	case TX_STATUS_POSTPONE_DELAY:
+		priv->_agn.reply_tx_stats.pp_delay++;
+		break;
+	case TX_STATUS_POSTPONE_FEW_BYTES:
+		priv->_agn.reply_tx_stats.pp_few_bytes++;
+		break;
+	case TX_STATUS_POSTPONE_BT_PRIO:
+		priv->_agn.reply_tx_stats.pp_bt_prio++;
+		break;
+	case TX_STATUS_POSTPONE_QUIET_PERIOD:
+		priv->_agn.reply_tx_stats.pp_quiet_period++;
+		break;
+	case TX_STATUS_POSTPONE_CALC_TTAK:
+		priv->_agn.reply_tx_stats.pp_calc_ttak++;
+		break;
+	case TX_STATUS_FAIL_INTERNAL_CROSSED_RETRY:
+		priv->_agn.reply_tx_stats.int_crossed_retry++;
+		break;
+	case TX_STATUS_FAIL_SHORT_LIMIT:
+		priv->_agn.reply_tx_stats.short_limit++;
+		break;
+	case TX_STATUS_FAIL_LONG_LIMIT:
+		priv->_agn.reply_tx_stats.long_limit++;
+		break;
+	case TX_STATUS_FAIL_FIFO_UNDERRUN:
+		priv->_agn.reply_tx_stats.fifo_underrun++;
+		break;
+	case TX_STATUS_FAIL_DRAIN_FLOW:
+		priv->_agn.reply_tx_stats.drain_flow++;
+		break;
+	case TX_STATUS_FAIL_RFKILL_FLUSH:
+		priv->_agn.reply_tx_stats.rfkill_flush++;
+		break;
+	case TX_STATUS_FAIL_LIFE_EXPIRE:
+		priv->_agn.reply_tx_stats.life_expire++;
+		break;
+	case TX_STATUS_FAIL_DEST_PS:
+		priv->_agn.reply_tx_stats.dest_ps++;
+		break;
+	case TX_STATUS_FAIL_HOST_ABORTED:
+		priv->_agn.reply_tx_stats.host_abort++;
+		break;
+	case TX_STATUS_FAIL_BT_RETRY:
+		priv->_agn.reply_tx_stats.bt_retry++;
+		break;
+	case TX_STATUS_FAIL_STA_INVALID:
+		priv->_agn.reply_tx_stats.sta_invalid++;
+		break;
+	case TX_STATUS_FAIL_FRAG_DROPPED:
+		priv->_agn.reply_tx_stats.frag_drop++;
+		break;
+	case TX_STATUS_FAIL_TID_DISABLE:
+		priv->_agn.reply_tx_stats.tid_disable++;
+		break;
+	case TX_STATUS_FAIL_FIFO_FLUSHED:
+		priv->_agn.reply_tx_stats.fifo_flush++;
+		break;
+	case TX_STATUS_FAIL_INSUFFICIENT_CF_POLL:
+		priv->_agn.reply_tx_stats.insuff_cf_poll++;
+		break;
+	case TX_STATUS_FAIL_PASSIVE_NO_RX:
+		priv->_agn.reply_tx_stats.fail_hw_drop++;
+		break;
+	case TX_STATUS_FAIL_NO_BEACON_ON_RADAR:
+		priv->_agn.reply_tx_stats.sta_color_mismatch++;
+		break;
+	default:
+		priv->_agn.reply_tx_stats.unknown++;
+		break;
+	}
+}
+
+static void iwlagn_count_agg_tx_err_status(struct iwl_priv *priv, u16 status)
+{
+	status &= AGG_TX_STATUS_MSK;
+
+	switch (status) {
+	case AGG_TX_STATE_UNDERRUN_MSK:
+		priv->_agn.reply_agg_tx_stats.underrun++;
+		break;
+	case AGG_TX_STATE_BT_PRIO_MSK:
+		priv->_agn.reply_agg_tx_stats.bt_prio++;
+		break;
+	case AGG_TX_STATE_FEW_BYTES_MSK:
+		priv->_agn.reply_agg_tx_stats.few_bytes++;
+		break;
+	case AGG_TX_STATE_ABORT_MSK:
+		priv->_agn.reply_agg_tx_stats.abort++;
+		break;
+	case AGG_TX_STATE_LAST_SENT_TTL_MSK:
+		priv->_agn.reply_agg_tx_stats.last_sent_ttl++;
+		break;
+	case AGG_TX_STATE_LAST_SENT_TRY_CNT_MSK:
+		priv->_agn.reply_agg_tx_stats.last_sent_try++;
+		break;
+	case AGG_TX_STATE_LAST_SENT_BT_KILL_MSK:
+		priv->_agn.reply_agg_tx_stats.last_sent_bt_kill++;
+		break;
+	case AGG_TX_STATE_SCD_QUERY_MSK:
+		priv->_agn.reply_agg_tx_stats.scd_query++;
+		break;
+	case AGG_TX_STATE_TEST_BAD_CRC32_MSK:
+		priv->_agn.reply_agg_tx_stats.bad_crc32++;
+		break;
+	case AGG_TX_STATE_RESPONSE_MSK:
+		priv->_agn.reply_agg_tx_stats.response++;
+		break;
+	case AGG_TX_STATE_DUMP_TX_MSK:
+		priv->_agn.reply_agg_tx_stats.dump_tx++;
+		break;
+	case AGG_TX_STATE_DELAY_TX_MSK:
+		priv->_agn.reply_agg_tx_stats.delay_tx++;
+		break;
+	default:
+		priv->_agn.reply_agg_tx_stats.unknown++;
+		break;
+	}
+}
+
+static void iwlagn_set_tx_status(struct iwl_priv *priv,
+				 struct ieee80211_tx_info *info,
+				 struct iwl5000_tx_resp *tx_resp,
+				 int txq_id, bool is_agg)
+{
+	u16  status = le16_to_cpu(tx_resp->status.status);
+
+	info->status.rates[0].count = tx_resp->failure_frame + 1;
+	if (is_agg)
+		info->flags &= ~IEEE80211_TX_CTL_AMPDU;
+	info->flags |= iwl_tx_status_to_mac80211(status);
+	iwlagn_hwrate_to_tx_control(priv, le32_to_cpu(tx_resp->rate_n_flags),
+				    info);
+	if (!iwl_is_tx_success(status))
+		iwlagn_count_tx_err_status(priv, status);
+
+	IWL_DEBUG_TX_REPLY(priv, "TXQ %d status %s (0x%08x) rate_n_flags "
+			   "0x%x retries %d\n",
+			   txq_id,
+			   iwl_get_tx_fail_reason(status), status,
+			   le32_to_cpu(tx_resp->rate_n_flags),
+			   tx_resp->failure_frame);
+}
+
+#ifdef CONFIG_IWLWIFI_DEBUG
+#define AGG_TX_STATE_FAIL(x) case AGG_TX_STATE_ ## x: return #x
+
+const char *iwl_get_agg_tx_fail_reason(u16 status)
+{
+	status &= AGG_TX_STATUS_MSK;
+	switch (status) {
+	case AGG_TX_STATE_TRANSMITTED:
+		return "SUCCESS";
+		AGG_TX_STATE_FAIL(UNDERRUN_MSK);
+		AGG_TX_STATE_FAIL(BT_PRIO_MSK);
+		AGG_TX_STATE_FAIL(FEW_BYTES_MSK);
+		AGG_TX_STATE_FAIL(ABORT_MSK);
+		AGG_TX_STATE_FAIL(LAST_SENT_TTL_MSK);
+		AGG_TX_STATE_FAIL(LAST_SENT_TRY_CNT_MSK);
+		AGG_TX_STATE_FAIL(LAST_SENT_BT_KILL_MSK);
+		AGG_TX_STATE_FAIL(SCD_QUERY_MSK);
+		AGG_TX_STATE_FAIL(TEST_BAD_CRC32_MSK);
+		AGG_TX_STATE_FAIL(RESPONSE_MSK);
+		AGG_TX_STATE_FAIL(DUMP_TX_MSK);
+		AGG_TX_STATE_FAIL(DELAY_TX_MSK);
+	}
+
+	return "UNKNOWN";
+}
+#endif /* CONFIG_IWLWIFI_DEBUG */
+
 static int iwlagn_tx_status_reply_tx(struct iwl_priv *priv,
 				      struct iwl_ht_agg *agg,
 				      struct iwl5000_tx_resp *tx_resp,
@@ -53,9 +228,7 @@ static int iwlagn_tx_status_reply_tx(struct iwl_priv *priv,
 {
 	u16 status;
 	struct agg_tx_status *frame_status = &tx_resp->status;
-	struct ieee80211_tx_info *info = NULL;
 	struct ieee80211_hdr *hdr = NULL;
-	u32 rate_n_flags = le32_to_cpu(tx_resp->rate_n_flags);
 	int i, sh, idx;
 	u16 seq;
 
@@ -64,31 +237,20 @@ static int iwlagn_tx_status_reply_tx(struct iwl_priv *priv,
 
 	agg->frame_count = tx_resp->frame_count;
 	agg->start_idx = start_idx;
-	agg->rate_n_flags = rate_n_flags;
+	agg->rate_n_flags = le32_to_cpu(tx_resp->rate_n_flags);
 	agg->bitmap = 0;
 
 	/* # frames attempted by Tx command */
 	if (agg->frame_count == 1) {
 		/* Only one frame was attempted; no block-ack will arrive */
-		status = le16_to_cpu(frame_status[0].status);
 		idx = start_idx;
 
-		/* FIXME: code repetition */
 		IWL_DEBUG_TX_REPLY(priv, "FrameCnt = %d, StartIdx=%d idx=%d\n",
 				   agg->frame_count, agg->start_idx, idx);
-
-		info = IEEE80211_SKB_CB(priv->txq[txq_id].txb[idx].skb);
-		info->status.rates[0].count = tx_resp->failure_frame + 1;
-		info->flags &= ~IEEE80211_TX_CTL_AMPDU;
-		info->flags |= iwl_tx_status_to_mac80211(status);
-		iwlagn_hwrate_to_tx_control(priv, rate_n_flags, info);
-
-		/* FIXME: code repetition end */
-
-		IWL_DEBUG_TX_REPLY(priv, "1 Frame 0x%x failure :%d\n",
-				    status & 0xff, tx_resp->failure_frame);
-		IWL_DEBUG_TX_REPLY(priv, "Rate Info rate_n_flags=%x\n", rate_n_flags);
-
+		iwlagn_set_tx_status(priv,
+				     IEEE80211_SKB_CB(
+					priv->txq[txq_id].txb[idx].skb),
+				     tx_resp, txq_id, true);
 		agg->wait_for_ba = 0;
 	} else {
 		/* Two or more frames were attempted; expect block-ack */
@@ -109,12 +271,20 @@ static int iwlagn_tx_status_reply_tx(struct iwl_priv *priv,
 			idx = SEQ_TO_INDEX(seq);
 			txq_id = SEQ_TO_QUEUE(seq);
 
+			if (status & AGG_TX_STATUS_MSK)
+				iwlagn_count_agg_tx_err_status(priv, status);
+
 			if (status & (AGG_TX_STATE_FEW_BYTES_MSK |
 				      AGG_TX_STATE_ABORT_MSK))
 				continue;
 
 			IWL_DEBUG_TX_REPLY(priv, "FrameCnt = %d, txq_id=%d idx=%d\n",
 					   agg->frame_count, txq_id, idx);
+			IWL_DEBUG_TX_REPLY(priv, "status %s (0x%08x), "
+					   "try-count (0x%08x)\n",
+					   iwl_get_agg_tx_fail_reason(status),
+					   status & AGG_TX_STATUS_MSK,
+					   status & AGG_TX_TRY_MSK);
 
 			hdr = iwl_tx_queue_get_hdr(priv, txq_id, idx);
 			if (!hdr) {
@@ -247,7 +417,14 @@ static void iwlagn_rx_reply_tx(struct iwl_priv *priv,
 		struct iwl_ht_agg *agg;
 
 		agg = &priv->stations[sta_id].tid[tid].agg;
-
+		/*
+		 * If the BT kill count is non-zero, we'll get this
+		 * notification again.
+		 */
+		if (tx_resp->bt_kill_count && tx_resp->frame_count == 1 &&
+		    priv->cfg->advanced_bt_coexist) {
+			IWL_WARN(priv, "receive reply tx with bt_kill\n");
+		}
 		iwlagn_tx_status_reply_tx(priv, agg, tx_resp, txq_id, index);
 
 		/* check if BAR is needed */
@@ -274,20 +451,7 @@ static void iwlagn_rx_reply_tx(struct iwl_priv *priv,
 		}
 	} else {
 		BUG_ON(txq_id != txq->swq_id);
-
-		info->status.rates[0].count = tx_resp->failure_frame + 1;
-		info->flags |= iwl_tx_status_to_mac80211(status);
-		iwlagn_hwrate_to_tx_control(priv,
-					le32_to_cpu(tx_resp->rate_n_flags),
-					info);
-
-		IWL_DEBUG_TX_REPLY(priv, "TXQ %d status %s (0x%08x) rate_n_flags "
-				   "0x%x retries %d\n",
-				   txq_id,
-				   iwl_get_tx_fail_reason(status), status,
-				   le32_to_cpu(tx_resp->rate_n_flags),
-				   tx_resp->failure_frame);
-
+		iwlagn_set_tx_status(priv, info, tx_resp, txq_id, false);
 		freed = iwlagn_tx_queue_reclaim(priv, txq_id, index);
 		iwl_free_tfds_in_queue(priv, sta_id, tid, freed);
 
@@ -1098,7 +1262,7 @@ static int iwl_get_channels_for_scan(struct iwl_priv *priv,
 		if (chan->band != band)
 			continue;
 
-		channel = ieee80211_frequency_to_channel(chan->center_freq);
+		channel = chan->hw_value;
 		scan_ch->channel = cpu_to_le16(channel);
 
 		ch_info = iwl_get_channel_info(priv, band, channel);
@@ -1147,7 +1311,7 @@ static int iwl_get_channels_for_scan(struct iwl_priv *priv,
 	return added;
 }
 
-void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
+int iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 {
 	struct iwl_host_cmd cmd = {
 		.id = REPLY_SCAN_CMD,
@@ -1155,7 +1319,7 @@ void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 		.flags = CMD_SIZE_HUGE,
 	};
 	struct iwl_scan_cmd *scan;
-	struct ieee80211_conf *conf = NULL;
+	struct iwl_rxon_context *ctx = &priv->contexts[IWL_RXON_CTX_BSS];
 	u32 rate_flags = 0;
 	u16 cmd_len;
 	u16 rx_chain = 0;
@@ -1167,48 +1331,12 @@ void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 	int  chan_mod;
 	u8 active_chains;
 	u8 scan_tx_antennas = priv->hw_params.valid_tx_ant;
+	int ret;
 
-	conf = ieee80211_get_hw_conf(priv->hw);
+	lockdep_assert_held(&priv->mutex);
 
-	cancel_delayed_work(&priv->scan_check);
-
-	if (!iwl_is_ready(priv)) {
-		IWL_WARN(priv, "request scan called when driver not ready.\n");
-		goto done;
-	}
-
-	/* Make sure the scan wasn't canceled before this queued work
-	 * was given the chance to run... */
-	if (!test_bit(STATUS_SCANNING, &priv->status))
-		goto done;
-
-	/* This should never be called or scheduled if there is currently
-	 * a scan active in the hardware. */
-	if (test_bit(STATUS_SCAN_HW, &priv->status)) {
-		IWL_DEBUG_INFO(priv, "Multiple concurrent scan requests in parallel. "
-			       "Ignoring second request.\n");
-		goto done;
-	}
-
-	if (test_bit(STATUS_EXIT_PENDING, &priv->status)) {
-		IWL_DEBUG_SCAN(priv, "Aborting scan due to device shutdown\n");
-		goto done;
-	}
-
-	if (test_bit(STATUS_SCAN_ABORTING, &priv->status)) {
-		IWL_DEBUG_HC(priv, "Scan request while abort pending.  Queuing.\n");
-		goto done;
-	}
-
-	if (iwl_is_rfkill(priv)) {
-		IWL_DEBUG_HC(priv, "Aborting scan due to RF Kill activation\n");
-		goto done;
-	}
-
-	if (!test_bit(STATUS_READY, &priv->status)) {
-		IWL_DEBUG_HC(priv, "Scan request while uninitialized.  Queuing.\n");
-		goto done;
-	}
+	if (vif)
+		ctx = iwl_rxon_ctx_from_vif(vif);
 
 	if (!priv->scan_cmd) {
 		priv->scan_cmd = kmalloc(sizeof(struct iwl_scan_cmd) +
@@ -1216,7 +1344,7 @@ void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 		if (!priv->scan_cmd) {
 			IWL_DEBUG_SCAN(priv,
 				       "fail to allocate memory for scan\n");
-			goto done;
+			return -ENOMEM;
 		}
 	}
 	scan = priv->scan_cmd;
@@ -1225,7 +1353,7 @@ void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 	scan->quiet_plcp_th = IWL_PLCP_QUIET_THRESH;
 	scan->quiet_time = IWL_ACTIVE_QUIET_TIME;
 
-	if (iwl_is_associated(priv)) {
+	if (iwl_is_any_associated(priv)) {
 		u16 interval = 0;
 		u32 extra;
 		u32 suspend_time = 100;
@@ -1276,13 +1404,15 @@ void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 		IWL_DEBUG_SCAN(priv, "Start passive scan.\n");
 
 	scan->tx_cmd.tx_flags = TX_CMD_FLG_SEQ_CTL_MSK;
-	scan->tx_cmd.sta_id = priv->hw_params.bcast_sta_id;
+	scan->tx_cmd.sta_id = ctx->bcast_sta_id;
 	scan->tx_cmd.stop_time.life_time = TX_CMD_LIFE_TIME_INFINITE;
 
 	switch (priv->scan_band) {
 	case IEEE80211_BAND_2GHZ:
 		scan->flags = RXON_FLG_BAND_24G_MSK | RXON_FLG_AUTO_DETECT_MSK;
-		chan_mod = le32_to_cpu(priv->active_rxon.flags & RXON_FLG_CHANNEL_MODE_MSK)
+		chan_mod = le32_to_cpu(
+			priv->contexts[IWL_RXON_CTX_BSS].active.flags &
+						RXON_FLG_CHANNEL_MODE_MSK)
 				       >> RXON_FLG_CHANNEL_MODE_POS;
 		if (chan_mod == CHANNEL_MODE_PURE_40) {
 			rate = IWL_RATE_6M_PLCP;
@@ -1290,6 +1420,12 @@ void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 			rate = IWL_RATE_1M_PLCP;
 			rate_flags = RATE_MCS_CCK_MSK;
 		}
+		/*
+		 * Internal scans are passive, so we can indiscriminately set
+		 * the BT ignore flag on 2.4 GHz since it applies to TX only.
+		 */
+		if (priv->cfg->advanced_bt_coexist)
+			scan->tx_cmd.tx_flags |= TX_CMD_FLG_IGNORE_BT;
 		scan->good_CRC_th = IWL_GOOD_CRC_TH_DISABLED;
 		break;
 	case IEEE80211_BAND_5GHZ:
@@ -1315,8 +1451,8 @@ void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 						IWL_GOOD_CRC_TH_NEVER;
 		break;
 	default:
-		IWL_WARN(priv, "Invalid scan band count\n");
-		goto done;
+		IWL_WARN(priv, "Invalid scan band\n");
+		return -EIO;
 	}
 
 	band = priv->scan_band;
@@ -1326,6 +1462,12 @@ void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 
 	if (priv->cfg->scan_tx_antennas[band])
 		scan_tx_antennas = priv->cfg->scan_tx_antennas[band];
+
+	if (priv->cfg->advanced_bt_coexist && priv->bt_full_concurrent) {
+		/* operated as 1x1 in full concurrency mode */
+		scan_tx_antennas =
+			first_antenna(priv->cfg->scan_tx_antennas[band]);
+	}
 
 	priv->scan_tx_ant[band] = iwl_toggle_tx_ant(priv, priv->scan_tx_ant[band],
 						    scan_tx_antennas);
@@ -1345,6 +1487,11 @@ void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 
 		rx_ant = first_antenna(active_chains);
 	}
+	if (priv->cfg->advanced_bt_coexist && priv->bt_full_concurrent) {
+		/* operated as 1x1 in full concurrency mode */
+		rx_ant = first_antenna(rx_ant);
+	}
+
 	/* MIMO is not used here, but value is required */
 	rx_chain |= priv->hw_params.valid_rx_ant << RXON_RX_CHAIN_VALID_POS;
 	rx_chain |= rx_ant << RXON_RX_CHAIN_FORCE_MIMO_SEL_POS;
@@ -1385,7 +1532,7 @@ void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 	}
 	if (scan->channel_count == 0) {
 		IWL_DEBUG_SCAN(priv, "channel count %d\n", scan->channel_count);
-		goto done;
+		return -EIO;
 	}
 
 	cmd.len += le16_to_cpu(scan->tx_cmd.len) +
@@ -1393,25 +1540,21 @@ void iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 	cmd.data = scan;
 	scan->len = cpu_to_le16(cmd.len);
 
+	if (priv->cfg->ops->hcmd->set_pan_params) {
+		ret = priv->cfg->ops->hcmd->set_pan_params(priv);
+		if (ret)
+			return ret;
+	}
+
 	set_bit(STATUS_SCAN_HW, &priv->status);
-	if (iwl_send_cmd_sync(priv, &cmd))
-		goto done;
+	ret = iwl_send_cmd_sync(priv, &cmd);
+	if (ret) {
+		clear_bit(STATUS_SCAN_HW, &priv->status);
+		if (priv->cfg->ops->hcmd->set_pan_params)
+			priv->cfg->ops->hcmd->set_pan_params(priv);
+	}
 
-	queue_delayed_work(priv->workqueue, &priv->scan_check,
-			   IWL_SCAN_CHECK_WATCHDOG);
-
-	return;
-
- done:
-	/* Cannot perform scan. Make sure we clear scanning
-	* bits from status so next scan request can be performed.
-	* If we don't clear scanning status bit here all next scan
-	* will fail
-	*/
-	clear_bit(STATUS_SCAN_HW, &priv->status);
-	clear_bit(STATUS_SCANNING, &priv->status);
-	/* inform mac80211 scan aborted */
-	queue_work(priv->workqueue, &priv->abort_scan);
+	return ret;
 }
 
 int iwlagn_manage_ibss_station(struct iwl_priv *priv,
@@ -1420,7 +1563,8 @@ int iwlagn_manage_ibss_station(struct iwl_priv *priv,
 	struct iwl_vif_priv *vif_priv = (void *)vif->drv_priv;
 
 	if (add)
-		return iwl_add_bssid_station(priv, vif->bss_conf.bssid, true,
+		return iwl_add_bssid_station(priv, vif_priv->ctx,
+					     vif->bss_conf.bssid, true,
 					     &vif_priv->ibss_bssid_sta_id);
 	return iwl_remove_station(priv, vif_priv->ibss_bssid_sta_id,
 				  vif->bss_conf.bssid);
@@ -1453,7 +1597,7 @@ int iwlagn_wait_tx_queue_empty(struct iwl_priv *priv)
 
 	/* waiting for all the tx frames complete might take a while */
 	for (cnt = 0; cnt < priv->hw_params.max_txq_num; cnt++) {
-		if (cnt == IWL_CMD_QUEUE_NUM)
+		if (cnt == priv->cmd_queue)
 			continue;
 		txq = &priv->txq[cnt];
 		q = &txq->q;
@@ -1517,4 +1661,380 @@ void iwlagn_dev_txfifo_flush(struct iwl_priv *priv, u16 flush_control)
 done:
 	ieee80211_wake_queues(priv->hw);
 	mutex_unlock(&priv->mutex);
+}
+
+/*
+ * BT coex
+ */
+/*
+ * Macros to access the lookup table.
+ *
+ * The lookup table has 7 inputs: bt3_prio, bt3_txrx, bt_rf_act, wifi_req,
+* wifi_prio, wifi_txrx and wifi_sh_ant_req.
+ *
+ * It has three outputs: WLAN_ACTIVE, WLAN_KILL and ANT_SWITCH
+ *
+ * The format is that "registers" 8 through 11 contain the WLAN_ACTIVE bits
+ * one after another in 32-bit registers, and "registers" 0 through 7 contain
+ * the WLAN_KILL and ANT_SWITCH bits interleaved (in that order).
+ *
+ * These macros encode that format.
+ */
+#define LUT_VALUE(bt3_prio, bt3_txrx, bt_rf_act, wifi_req, wifi_prio, \
+		  wifi_txrx, wifi_sh_ant_req) \
+	(bt3_prio | (bt3_txrx << 1) | (bt_rf_act << 2) | (wifi_req << 3) | \
+	(wifi_prio << 4) | (wifi_txrx << 5) | (wifi_sh_ant_req << 6))
+
+#define LUT_PTA_WLAN_ACTIVE_OP(lut, op, val) \
+	lut[8 + ((val) >> 5)] op (cpu_to_le32(BIT((val) & 0x1f)))
+#define LUT_TEST_PTA_WLAN_ACTIVE(lut, bt3_prio, bt3_txrx, bt_rf_act, wifi_req, \
+				 wifi_prio, wifi_txrx, wifi_sh_ant_req) \
+	(!!(LUT_PTA_WLAN_ACTIVE_OP(lut, &, LUT_VALUE(bt3_prio, bt3_txrx, \
+				   bt_rf_act, wifi_req, wifi_prio, wifi_txrx, \
+				   wifi_sh_ant_req))))
+#define LUT_SET_PTA_WLAN_ACTIVE(lut, bt3_prio, bt3_txrx, bt_rf_act, wifi_req, \
+				wifi_prio, wifi_txrx, wifi_sh_ant_req) \
+	LUT_PTA_WLAN_ACTIVE_OP(lut, |=, LUT_VALUE(bt3_prio, bt3_txrx, \
+			       bt_rf_act, wifi_req, wifi_prio, wifi_txrx, \
+			       wifi_sh_ant_req))
+#define LUT_CLEAR_PTA_WLAN_ACTIVE(lut, bt3_prio, bt3_txrx, bt_rf_act, \
+				  wifi_req, wifi_prio, wifi_txrx, \
+				  wifi_sh_ant_req) \
+	LUT_PTA_WLAN_ACTIVE_OP(lut, &= ~, LUT_VALUE(bt3_prio, bt3_txrx, \
+			       bt_rf_act, wifi_req, wifi_prio, wifi_txrx, \
+			       wifi_sh_ant_req))
+
+#define LUT_WLAN_KILL_OP(lut, op, val) \
+	lut[(val) >> 4] op (cpu_to_le32(BIT(((val) << 1) & 0x1e)))
+#define LUT_TEST_WLAN_KILL(lut, bt3_prio, bt3_txrx, bt_rf_act, wifi_req, \
+			   wifi_prio, wifi_txrx, wifi_sh_ant_req) \
+	(!!(LUT_WLAN_KILL_OP(lut, &, LUT_VALUE(bt3_prio, bt3_txrx, bt_rf_act, \
+			     wifi_req, wifi_prio, wifi_txrx, wifi_sh_ant_req))))
+#define LUT_SET_WLAN_KILL(lut, bt3_prio, bt3_txrx, bt_rf_act, wifi_req, \
+			  wifi_prio, wifi_txrx, wifi_sh_ant_req) \
+	LUT_WLAN_KILL_OP(lut, |=, LUT_VALUE(bt3_prio, bt3_txrx, bt_rf_act, \
+			 wifi_req, wifi_prio, wifi_txrx, wifi_sh_ant_req))
+#define LUT_CLEAR_WLAN_KILL(lut, bt3_prio, bt3_txrx, bt_rf_act, wifi_req, \
+			    wifi_prio, wifi_txrx, wifi_sh_ant_req) \
+	LUT_WLAN_KILL_OP(lut, &= ~, LUT_VALUE(bt3_prio, bt3_txrx, bt_rf_act, \
+			 wifi_req, wifi_prio, wifi_txrx, wifi_sh_ant_req))
+
+#define LUT_ANT_SWITCH_OP(lut, op, val) \
+	lut[(val) >> 4] op (cpu_to_le32(BIT((((val) << 1) & 0x1e) + 1)))
+#define LUT_TEST_ANT_SWITCH(lut, bt3_prio, bt3_txrx, bt_rf_act, wifi_req, \
+			    wifi_prio, wifi_txrx, wifi_sh_ant_req) \
+	(!!(LUT_ANT_SWITCH_OP(lut, &, LUT_VALUE(bt3_prio, bt3_txrx, bt_rf_act, \
+			      wifi_req, wifi_prio, wifi_txrx, \
+			      wifi_sh_ant_req))))
+#define LUT_SET_ANT_SWITCH(lut, bt3_prio, bt3_txrx, bt_rf_act, wifi_req, \
+			   wifi_prio, wifi_txrx, wifi_sh_ant_req) \
+	LUT_ANT_SWITCH_OP(lut, |=, LUT_VALUE(bt3_prio, bt3_txrx, bt_rf_act, \
+			  wifi_req, wifi_prio, wifi_txrx, wifi_sh_ant_req))
+#define LUT_CLEAR_ANT_SWITCH(lut, bt3_prio, bt3_txrx, bt_rf_act, wifi_req, \
+			     wifi_prio, wifi_txrx, wifi_sh_ant_req) \
+	LUT_ANT_SWITCH_OP(lut, &= ~, LUT_VALUE(bt3_prio, bt3_txrx, bt_rf_act, \
+			  wifi_req, wifi_prio, wifi_txrx, wifi_sh_ant_req))
+
+static const __le32 iwlagn_def_3w_lookup[12] = {
+	cpu_to_le32(0xaaaaaaaa),
+	cpu_to_le32(0xaaaaaaaa),
+	cpu_to_le32(0xaeaaaaaa),
+	cpu_to_le32(0xaaaaaaaa),
+	cpu_to_le32(0xcc00ff28),
+	cpu_to_le32(0x0000aaaa),
+	cpu_to_le32(0xcc00aaaa),
+	cpu_to_le32(0x0000aaaa),
+	cpu_to_le32(0xc0004000),
+	cpu_to_le32(0x00004000),
+	cpu_to_le32(0xf0005000),
+	cpu_to_le32(0xf0004000),
+};
+
+static const __le32 iwlagn_concurrent_lookup[12] = {
+	cpu_to_le32(0xaaaaaaaa),
+	cpu_to_le32(0xaaaaaaaa),
+	cpu_to_le32(0xaaaaaaaa),
+	cpu_to_le32(0xaaaaaaaa),
+	cpu_to_le32(0xaaaaaaaa),
+	cpu_to_le32(0xaaaaaaaa),
+	cpu_to_le32(0xaaaaaaaa),
+	cpu_to_le32(0xaaaaaaaa),
+	cpu_to_le32(0x00000000),
+	cpu_to_le32(0x00000000),
+	cpu_to_le32(0x00000000),
+	cpu_to_le32(0x00000000),
+};
+
+void iwlagn_send_advance_bt_config(struct iwl_priv *priv)
+{
+	struct iwlagn_bt_cmd bt_cmd = {
+		.max_kill = IWLAGN_BT_MAX_KILL_DEFAULT,
+		.bt3_timer_t7_value = IWLAGN_BT3_T7_DEFAULT,
+		.bt3_prio_sample_time = IWLAGN_BT3_PRIO_SAMPLE_DEFAULT,
+		.bt3_timer_t2_value = IWLAGN_BT3_T2_DEFAULT,
+	};
+
+	BUILD_BUG_ON(sizeof(iwlagn_def_3w_lookup) !=
+			sizeof(bt_cmd.bt3_lookup_table));
+
+	bt_cmd.prio_boost = priv->cfg->bt_prio_boost;
+	bt_cmd.kill_ack_mask = priv->kill_ack_mask;
+	bt_cmd.kill_cts_mask = priv->kill_cts_mask;
+	bt_cmd.valid = priv->bt_valid;
+	bt_cmd.tx_prio_boost = 0;
+	bt_cmd.rx_prio_boost = 0;
+
+	/*
+	 * Configure BT coex mode to "no coexistence" when the
+	 * user disabled BT coexistence, we have no interface
+	 * (might be in monitor mode), or the interface is in
+	 * IBSS mode (no proper uCode support for coex then).
+	 */
+	if (!bt_coex_active || priv->iw_mode == NL80211_IFTYPE_ADHOC) {
+		bt_cmd.flags = 0;
+	} else {
+		bt_cmd.flags = IWLAGN_BT_FLAG_COEX_MODE_3W <<
+					IWLAGN_BT_FLAG_COEX_MODE_SHIFT;
+		if (priv->bt_ch_announce)
+			bt_cmd.flags |= IWLAGN_BT_FLAG_CHANNEL_INHIBITION;
+		IWL_DEBUG_INFO(priv, "BT coex flag: 0X%x\n", bt_cmd.flags);
+	}
+	if (priv->bt_full_concurrent)
+		memcpy(bt_cmd.bt3_lookup_table, iwlagn_concurrent_lookup,
+			sizeof(iwlagn_concurrent_lookup));
+	else
+		memcpy(bt_cmd.bt3_lookup_table, iwlagn_def_3w_lookup,
+			sizeof(iwlagn_def_3w_lookup));
+
+	IWL_DEBUG_INFO(priv, "BT coex %s in %s mode\n",
+		       bt_cmd.flags ? "active" : "disabled",
+		       priv->bt_full_concurrent ?
+		       "full concurrency" : "3-wire");
+
+	if (iwl_send_cmd_pdu(priv, REPLY_BT_CONFIG, sizeof(bt_cmd), &bt_cmd))
+		IWL_ERR(priv, "failed to send BT Coex Config\n");
+
+	/*
+	 * When we are doing a restart, need to also reconfigure BT
+	 * SCO to the device. If not doing a restart, bt_sco_active
+	 * will always be false, so there's no need to have an extra
+	 * variable to check for it.
+	 */
+	if (priv->bt_sco_active) {
+		struct iwlagn_bt_sco_cmd sco_cmd = { .flags = 0 };
+
+		if (priv->bt_sco_active)
+			sco_cmd.flags |= IWLAGN_BT_SCO_ACTIVE;
+		if (iwl_send_cmd_pdu(priv, REPLY_BT_COEX_SCO,
+				     sizeof(sco_cmd), &sco_cmd))
+			IWL_ERR(priv, "failed to send BT SCO command\n");
+	}
+}
+
+static void iwlagn_bt_traffic_change_work(struct work_struct *work)
+{
+	struct iwl_priv *priv =
+		container_of(work, struct iwl_priv, bt_traffic_change_work);
+	struct iwl_rxon_context *ctx;
+	int smps_request = -1;
+
+	IWL_DEBUG_INFO(priv, "BT traffic load changes: %d\n",
+		       priv->bt_traffic_load);
+
+	switch (priv->bt_traffic_load) {
+	case IWL_BT_COEX_TRAFFIC_LOAD_NONE:
+		smps_request = IEEE80211_SMPS_AUTOMATIC;
+		break;
+	case IWL_BT_COEX_TRAFFIC_LOAD_LOW:
+		smps_request = IEEE80211_SMPS_DYNAMIC;
+		break;
+	case IWL_BT_COEX_TRAFFIC_LOAD_HIGH:
+	case IWL_BT_COEX_TRAFFIC_LOAD_CONTINUOUS:
+		smps_request = IEEE80211_SMPS_STATIC;
+		break;
+	default:
+		IWL_ERR(priv, "Invalid BT traffic load: %d\n",
+			priv->bt_traffic_load);
+		break;
+	}
+
+	mutex_lock(&priv->mutex);
+
+	if (priv->cfg->ops->lib->update_chain_flags)
+		priv->cfg->ops->lib->update_chain_flags(priv);
+
+	if (smps_request != -1) {
+		for_each_context(priv, ctx) {
+			if (ctx->vif && ctx->vif->type == NL80211_IFTYPE_STATION)
+				ieee80211_request_smps(ctx->vif, smps_request);
+		}
+	}
+
+	mutex_unlock(&priv->mutex);
+}
+
+static void iwlagn_print_uartmsg(struct iwl_priv *priv,
+				struct iwl_bt_uart_msg *uart_msg)
+{
+	IWL_DEBUG_NOTIF(priv, "Message Type = 0x%X, SSN = 0x%X, "
+			"Update Req = 0x%X",
+		(BT_UART_MSG_FRAME1MSGTYPE_MSK & uart_msg->frame1) >>
+			BT_UART_MSG_FRAME1MSGTYPE_POS,
+		(BT_UART_MSG_FRAME1SSN_MSK & uart_msg->frame1) >>
+			BT_UART_MSG_FRAME1SSN_POS,
+		(BT_UART_MSG_FRAME1UPDATEREQ_MSK & uart_msg->frame1) >>
+			BT_UART_MSG_FRAME1UPDATEREQ_POS);
+
+	IWL_DEBUG_NOTIF(priv, "Open connections = 0x%X, Traffic load = 0x%X, "
+			"Chl_SeqN = 0x%X, In band = 0x%X",
+		(BT_UART_MSG_FRAME2OPENCONNECTIONS_MSK & uart_msg->frame2) >>
+			BT_UART_MSG_FRAME2OPENCONNECTIONS_POS,
+		(BT_UART_MSG_FRAME2TRAFFICLOAD_MSK & uart_msg->frame2) >>
+			BT_UART_MSG_FRAME2TRAFFICLOAD_POS,
+		(BT_UART_MSG_FRAME2CHLSEQN_MSK & uart_msg->frame2) >>
+			BT_UART_MSG_FRAME2CHLSEQN_POS,
+		(BT_UART_MSG_FRAME2INBAND_MSK & uart_msg->frame2) >>
+			BT_UART_MSG_FRAME2INBAND_POS);
+
+	IWL_DEBUG_NOTIF(priv, "SCO/eSCO = 0x%X, Sniff = 0x%X, A2DP = 0x%X, "
+			"ACL = 0x%X, Master = 0x%X, OBEX = 0x%X",
+		(BT_UART_MSG_FRAME3SCOESCO_MSK & uart_msg->frame3) >>
+			BT_UART_MSG_FRAME3SCOESCO_POS,
+		(BT_UART_MSG_FRAME3SNIFF_MSK & uart_msg->frame3) >>
+			BT_UART_MSG_FRAME3SNIFF_POS,
+		(BT_UART_MSG_FRAME3A2DP_MSK & uart_msg->frame3) >>
+			BT_UART_MSG_FRAME3A2DP_POS,
+		(BT_UART_MSG_FRAME3ACL_MSK & uart_msg->frame3) >>
+			BT_UART_MSG_FRAME3ACL_POS,
+		(BT_UART_MSG_FRAME3MASTER_MSK & uart_msg->frame3) >>
+			BT_UART_MSG_FRAME3MASTER_POS,
+		(BT_UART_MSG_FRAME3OBEX_MSK & uart_msg->frame3) >>
+			BT_UART_MSG_FRAME3OBEX_POS);
+
+	IWL_DEBUG_NOTIF(priv, "Idle duration = 0x%X",
+		(BT_UART_MSG_FRAME4IDLEDURATION_MSK & uart_msg->frame4) >>
+			BT_UART_MSG_FRAME4IDLEDURATION_POS);
+
+	IWL_DEBUG_NOTIF(priv, "Tx Activity = 0x%X, Rx Activity = 0x%X, "
+			"eSCO Retransmissions = 0x%X",
+		(BT_UART_MSG_FRAME5TXACTIVITY_MSK & uart_msg->frame5) >>
+			BT_UART_MSG_FRAME5TXACTIVITY_POS,
+		(BT_UART_MSG_FRAME5RXACTIVITY_MSK & uart_msg->frame5) >>
+			BT_UART_MSG_FRAME5RXACTIVITY_POS,
+		(BT_UART_MSG_FRAME5ESCORETRANSMIT_MSK & uart_msg->frame5) >>
+			BT_UART_MSG_FRAME5ESCORETRANSMIT_POS);
+
+	IWL_DEBUG_NOTIF(priv, "Sniff Interval = 0x%X, Discoverable = 0x%X",
+		(BT_UART_MSG_FRAME6SNIFFINTERVAL_MSK & uart_msg->frame6) >>
+			BT_UART_MSG_FRAME6SNIFFINTERVAL_POS,
+		(BT_UART_MSG_FRAME6DISCOVERABLE_MSK & uart_msg->frame6) >>
+			BT_UART_MSG_FRAME6DISCOVERABLE_POS);
+
+	IWL_DEBUG_NOTIF(priv, "Sniff Activity = 0x%X, Inquiry/Page SR Mode = "
+			"0x%X, Connectable = 0x%X",
+		(BT_UART_MSG_FRAME7SNIFFACTIVITY_MSK & uart_msg->frame7) >>
+			BT_UART_MSG_FRAME7SNIFFACTIVITY_POS,
+		(BT_UART_MSG_FRAME7INQUIRYPAGESRMODE_MSK & uart_msg->frame7) >>
+			BT_UART_MSG_FRAME7INQUIRYPAGESRMODE_POS,
+		(BT_UART_MSG_FRAME7CONNECTABLE_MSK & uart_msg->frame7) >>
+			BT_UART_MSG_FRAME7CONNECTABLE_POS);
+}
+
+static void iwlagn_set_kill_ack_msk(struct iwl_priv *priv,
+				     struct iwl_bt_uart_msg *uart_msg)
+{
+	u8 kill_ack_msk;
+	__le32 bt_kill_ack_msg[2] = {
+			cpu_to_le32(0xFFFFFFF), cpu_to_le32(0xFFFFFC00) };
+
+	kill_ack_msk = (((BT_UART_MSG_FRAME3A2DP_MSK |
+			BT_UART_MSG_FRAME3SNIFF_MSK |
+			BT_UART_MSG_FRAME3SCOESCO_MSK) &
+			uart_msg->frame3) == 0) ? 1 : 0;
+	if (priv->kill_ack_mask != bt_kill_ack_msg[kill_ack_msk]) {
+		priv->bt_valid |= IWLAGN_BT_VALID_KILL_ACK_MASK;
+		priv->kill_ack_mask = bt_kill_ack_msg[kill_ack_msk];
+		/* schedule to send runtime bt_config */
+		queue_work(priv->workqueue, &priv->bt_runtime_config);
+	}
+
+}
+
+void iwlagn_bt_coex_profile_notif(struct iwl_priv *priv,
+					     struct iwl_rx_mem_buffer *rxb)
+{
+	unsigned long flags;
+	struct iwl_rx_packet *pkt = rxb_addr(rxb);
+	struct iwl_bt_coex_profile_notif *coex = &pkt->u.bt_coex_profile_notif;
+	struct iwlagn_bt_sco_cmd sco_cmd = { .flags = 0 };
+	struct iwl_bt_uart_msg *uart_msg = &coex->last_bt_uart_msg;
+	u8 last_traffic_load;
+
+	IWL_DEBUG_NOTIF(priv, "BT Coex notification:\n");
+	IWL_DEBUG_NOTIF(priv, "    status: %d\n", coex->bt_status);
+	IWL_DEBUG_NOTIF(priv, "    traffic load: %d\n", coex->bt_traffic_load);
+	IWL_DEBUG_NOTIF(priv, "    CI compliance: %d\n",
+			coex->bt_ci_compliance);
+	iwlagn_print_uartmsg(priv, uart_msg);
+
+	last_traffic_load = priv->notif_bt_traffic_load;
+	priv->notif_bt_traffic_load = coex->bt_traffic_load;
+	if (priv->iw_mode != NL80211_IFTYPE_ADHOC) {
+		if (priv->bt_status != coex->bt_status ||
+		    last_traffic_load != coex->bt_traffic_load) {
+			if (coex->bt_status) {
+				/* BT on */
+				if (!priv->bt_ch_announce)
+					priv->bt_traffic_load =
+						IWL_BT_COEX_TRAFFIC_LOAD_HIGH;
+				else
+					priv->bt_traffic_load =
+						coex->bt_traffic_load;
+			} else {
+				/* BT off */
+				priv->bt_traffic_load =
+					IWL_BT_COEX_TRAFFIC_LOAD_NONE;
+			}
+			priv->bt_status = coex->bt_status;
+			queue_work(priv->workqueue,
+				   &priv->bt_traffic_change_work);
+		}
+		if (priv->bt_sco_active !=
+		    (uart_msg->frame3 & BT_UART_MSG_FRAME3SCOESCO_MSK)) {
+			priv->bt_sco_active = uart_msg->frame3 &
+				BT_UART_MSG_FRAME3SCOESCO_MSK;
+			if (priv->bt_sco_active)
+				sco_cmd.flags |= IWLAGN_BT_SCO_ACTIVE;
+			iwl_send_cmd_pdu_async(priv, REPLY_BT_COEX_SCO,
+				       sizeof(sco_cmd), &sco_cmd, NULL);
+		}
+	}
+
+	iwlagn_set_kill_ack_msk(priv, uart_msg);
+
+	/* FIXME: based on notification, adjust the prio_boost */
+
+	spin_lock_irqsave(&priv->lock, flags);
+	priv->bt_ci_compliance = coex->bt_ci_compliance;
+	spin_unlock_irqrestore(&priv->lock, flags);
+}
+
+void iwlagn_bt_rx_handler_setup(struct iwl_priv *priv)
+{
+	iwlagn_rx_handler_setup(priv);
+	priv->rx_handlers[REPLY_BT_COEX_PROFILE_NOTIF] =
+		iwlagn_bt_coex_profile_notif;
+}
+
+void iwlagn_bt_setup_deferred_work(struct iwl_priv *priv)
+{
+	iwlagn_setup_deferred_work(priv);
+
+	INIT_WORK(&priv->bt_traffic_change_work,
+		  iwlagn_bt_traffic_change_work);
+}
+
+void iwlagn_bt_cancel_deferred_work(struct iwl_priv *priv)
+{
+	cancel_work_sync(&priv->bt_traffic_change_work);
 }
