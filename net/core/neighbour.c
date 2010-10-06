@@ -122,7 +122,7 @@ static void neigh_cleanup_and_release(struct neighbour *neigh)
 
 unsigned long neigh_rand_reach_time(unsigned long base)
 {
-	return (base ? (net_random() % base) + (base >> 1) : 0);
+	return base ? (net_random() % base) + (base >> 1) : 0;
 }
 EXPORT_SYMBOL(neigh_rand_reach_time);
 
@@ -766,9 +766,9 @@ next_elt:
 static __inline__ int neigh_max_probes(struct neighbour *n)
 {
 	struct neigh_parms *p = n->parms;
-	return (n->nud_state & NUD_PROBE ?
+	return (n->nud_state & NUD_PROBE) ?
 		p->ucast_probes :
-		p->ucast_probes + p->app_probes + p->mcast_probes);
+		p->ucast_probes + p->app_probes + p->mcast_probes;
 }
 
 static void neigh_invalidate(struct neighbour *neigh)
@@ -1210,7 +1210,9 @@ int neigh_resolve_output(struct sk_buff *skb)
 	if (!neigh_event_send(neigh, skb)) {
 		int err;
 		struct net_device *dev = neigh->dev;
-		if (dev->header_ops->cache && !dst->hh) {
+		if (dev->header_ops->cache &&
+		    !dst->hh &&
+		    !(dst->flags & DST_NOCACHE)) {
 			write_lock_bh(&neigh->lock);
 			if (!dst->hh)
 				neigh_hh_init(neigh, dst, dst->ops->protocol);

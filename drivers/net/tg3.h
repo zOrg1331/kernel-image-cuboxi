@@ -26,6 +26,7 @@
 #define TG3_RX_INTERNAL_RING_SZ_5906	32
 
 #define RX_STD_MAX_SIZE_5705		512
+#define RX_STD_MAX_SIZE_5717		2048
 #define RX_JUMBO_MAX_SIZE		0xdeadbeef /* XXX */
 
 /* First 256 bytes are a mirror of PCI config space. */
@@ -46,7 +47,6 @@
 #define  TG3PCI_DEVICE_TIGON3_5785_F	 0x16a0 /* 10/100 only */
 #define  TG3PCI_DEVICE_TIGON3_5717	 0x1655
 #define  TG3PCI_DEVICE_TIGON3_5718	 0x1656
-#define  TG3PCI_DEVICE_TIGON3_5724	 0x165c
 #define  TG3PCI_DEVICE_TIGON3_57781	 0x16b1
 #define  TG3PCI_DEVICE_TIGON3_57785	 0x16b5
 #define  TG3PCI_DEVICE_TIGON3_57761	 0x16b0
@@ -973,6 +973,7 @@
 #define  RCVDBDI_MODE_JUMBOBD_NEEDED	 0x00000004
 #define  RCVDBDI_MODE_FRM_TOO_BIG	 0x00000008
 #define  RCVDBDI_MODE_INV_RING_SZ	 0x00000010
+#define  RCVDBDI_MODE_LRG_RING_SZ	 0x00010000
 #define RCVDBDI_STATUS			0x00002404
 #define  RCVDBDI_STATUS_JUMBOBD_NEEDED	 0x00000004
 #define  RCVDBDI_STATUS_FRM_TOO_BIG	 0x00000008
@@ -1225,6 +1226,7 @@
 #define  BUFMGR_MODE_ATTN_ENABLE	 0x00000004
 #define  BUFMGR_MODE_BM_TEST		 0x00000008
 #define  BUFMGR_MODE_MBLOW_ATTN_ENAB	 0x00000010
+#define  BUFMGR_MODE_NO_TX_UNDERRUN	 0x80000000
 #define BUFMGR_STATUS			0x00004404
 #define  BUFMGR_STATUS_ERROR		 0x00000004
 #define  BUFMGR_STATUS_MBLOW		 0x00000010
@@ -1302,7 +1304,16 @@
 #define  RDMAC_STATUS_FIFOURUN		 0x00000080
 #define  RDMAC_STATUS_FIFOOREAD		 0x00000100
 #define  RDMAC_STATUS_LNGREAD		 0x00000200
-/* 0x4808 --> 0x4c00 unused */
+/* 0x4808 --> 0x4900 unused */
+
+#define TG3_RDMA_RSRVCTRL_REG		0x00004900
+#define TG3_RDMA_RSRVCTRL_FIFO_OFLW_FIX	 0x00000004
+/* 0x4904 --> 0x4910 unused */
+
+#define TG3_LSO_RD_DMA_CRPTEN_CTRL	0x00004910
+#define TG3_LSO_RD_DMA_CRPTEN_CTRL_BLEN_BD_4K	 0x00030000
+#define TG3_LSO_RD_DMA_CRPTEN_CTRL_BLEN_LSO_4K	 0x000c0000
+/* 0x4914 --> 0x4c00 unused */
 
 /* Write DMA control registers */
 #define WDMAC_MODE			0x00004c00
@@ -2176,7 +2187,7 @@
 #define TG3_APE_HOST_SEG_SIG		0x4200
 #define  APE_HOST_SEG_SIG_MAGIC		 0x484f5354
 #define TG3_APE_HOST_SEG_LEN		0x4204
-#define  APE_HOST_SEG_LEN_MAGIC		 0x0000001c
+#define  APE_HOST_SEG_LEN_MAGIC		 0x00000020
 #define TG3_APE_HOST_INIT_COUNT		0x4208
 #define TG3_APE_HOST_DRIVER_ID		0x420c
 #define  APE_HOST_DRIVER_ID_LINUX	 0xf0000000
@@ -2188,6 +2199,12 @@
 #define  APE_HOST_HEARTBEAT_INT_DISABLE	 0
 #define  APE_HOST_HEARTBEAT_INT_5SEC	 5000
 #define TG3_APE_HOST_HEARTBEAT_COUNT	0x4218
+#define TG3_APE_HOST_DRVR_STATE		0x421c
+#define TG3_APE_HOST_DRVR_STATE_START	 0x00000001
+#define TG3_APE_HOST_DRVR_STATE_UNLOAD	 0x00000002
+#define TG3_APE_HOST_DRVR_STATE_WOL	 0x00000003
+#define TG3_APE_HOST_WOL_SPEED		0x4224
+#define TG3_APE_HOST_WOL_SPEED_AUTO	 0x00008000
 
 #define TG3_APE_EVENT_STATUS		0x4300
 
@@ -2649,7 +2666,8 @@ struct tg3_rx_prodring_set {
 	dma_addr_t			rx_jmb_mapping;
 };
 
-#define TG3_IRQ_MAX_VECS 5
+#define TG3_IRQ_MAX_VECS_RSS		5
+#define TG3_IRQ_MAX_VECS		TG3_IRQ_MAX_VECS_RSS
 
 struct tg3_napi {
 	struct napi_struct		napi	____cacheline_aligned;
@@ -2668,7 +2686,7 @@ struct tg3_napi {
 	u32				consmbox;
 	u32				rx_rcb_ptr;
 	u16				*rx_rcb_prod_idx;
-	struct tg3_rx_prodring_set	*prodring;
+	struct tg3_rx_prodring_set	prodring;
 
 	struct tg3_rx_buffer_desc	*rx_rcb;
 	struct tg3_tx_buffer_desc	*tx_ring;
@@ -2746,6 +2764,9 @@ struct tg3 {
 	void				(*write32_rx_mbox) (struct tg3 *, u32,
 							    u32);
 	u32				rx_copy_thresh;
+	u32				rx_std_ring_mask;
+	u32				rx_jmb_ring_mask;
+	u32				rx_ret_ring_mask;
 	u32				rx_pending;
 	u32				rx_jumbo_pending;
 	u32				rx_std_max_post;
@@ -2754,8 +2775,6 @@ struct tg3 {
 #if TG3_VLAN_TAG_USED
 	struct vlan_group		*vlgrp;
 #endif
-
-	struct tg3_rx_prodring_set	prodring[TG3_IRQ_MAX_VECS];
 
 
 	/* begin "everything else" cacheline(s) section */
@@ -2850,6 +2869,7 @@ struct tg3 {
 #define TG3_FLG3_USE_JUMBO_BDFLAG	0x00400000
 #define TG3_FLG3_L1PLLPD_EN		0x00800000
 #define TG3_FLG3_5717_PLUS		0x01000000
+#define TG3_FLG3_APE_HAS_NCSI		0x02000000
 
 	struct timer_list		timer;
 	u16				timer_counter;

@@ -180,7 +180,7 @@ static void ehea_update_firmware_handles(void)
 			 num_portres * EHEA_NUM_PORTRES_FW_HANDLES;
 
 	if (num_fw_handles) {
-		arr = kzalloc(num_fw_handles * sizeof(*arr), GFP_KERNEL);
+		arr = kcalloc(num_fw_handles, sizeof(*arr), GFP_KERNEL);
 		if (!arr)
 			goto out;  /* Keep the existing array */
 	} else
@@ -265,7 +265,7 @@ static void ehea_update_bcmc_registrations(void)
 		}
 
 	if (num_registrations) {
-		arr = kzalloc(num_registrations * sizeof(*arr), GFP_ATOMIC);
+		arr = kcalloc(num_registrations, sizeof(*arr), GFP_ATOMIC);
 		if (!arr)
 			goto out;  /* Keep the existing array */
 	} else
@@ -818,8 +818,6 @@ static void check_sqs(struct ehea_port *port)
 			}
 		}
 	}
-
-	return;
 }
 
 
@@ -3721,7 +3719,7 @@ int __init ehea_module_init(void)
 	if (ret)
 		ehea_info("failed registering memory remove notifier");
 
-	ret = crash_shutdown_register(&ehea_crash_handler);
+	ret = crash_shutdown_register(ehea_crash_handler);
 	if (ret)
 		ehea_info("failed registering crash handler");
 
@@ -3746,7 +3744,7 @@ out3:
 out2:
 	unregister_memory_notifier(&ehea_mem_nb);
 	unregister_reboot_notifier(&ehea_reboot_nb);
-	crash_shutdown_unregister(&ehea_crash_handler);
+	crash_shutdown_unregister(ehea_crash_handler);
 out:
 	return ret;
 }
@@ -3759,7 +3757,7 @@ static void __exit ehea_module_exit(void)
 	driver_remove_file(&ehea_driver.driver, &driver_attr_capabilities);
 	ibmebus_unregister_driver(&ehea_driver);
 	unregister_reboot_notifier(&ehea_reboot_nb);
-	ret = crash_shutdown_unregister(&ehea_crash_handler);
+	ret = crash_shutdown_unregister(ehea_crash_handler);
 	if (ret)
 		ehea_info("failed unregistering crash handler");
 	unregister_memory_notifier(&ehea_mem_nb);
