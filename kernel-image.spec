@@ -592,7 +592,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Tue Oct 05 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt7
 - 2.6.35.7
 - aufs2 really included (closes #24137)
-- NETFLOW included (closes #24223)
 
 * Mon Sep 27 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt6
 - 2.6.35.6
