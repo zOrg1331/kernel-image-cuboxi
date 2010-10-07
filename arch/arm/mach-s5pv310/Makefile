@@ -14,6 +14,7 @@ obj-				:=
 
 obj-$(CONFIG_CPU_S5PV310)	+= cpu.o init.o clock.o irq-combiner.o
 obj-$(CONFIG_CPU_S5PV310)	+= setup-i2c0.o time.o
+obj-$(CONFIG_CPU_FREQ)		+= cpufreq.o
 
 obj-$(CONFIG_SMP)		+= platsmp.o headsmp.o
 obj-$(CONFIG_LOCAL_TIMERS)	+= localtimer.o
@@ -21,6 +22,7 @@ obj-$(CONFIG_HOTPLUG_CPU)	+= hotplug.o
 
 # machine support
 
+obj-$(CONFIG_MACH_SMDKC210)	+= mach-smdkc210.o
 obj-$(CONFIG_MACH_SMDKV310)	+= mach-smdkv310.o
 obj-$(CONFIG_MACH_UNIVERSAL_C210)	+= mach-universal_c210.o
 
