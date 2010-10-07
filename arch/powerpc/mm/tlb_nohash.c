@@ -36,6 +36,7 @@
 #include <linux/spinlock.h>
 #include <linux/memblock.h>
 
+#include <asm/mmu_context.h>
 #include <asm/tlbflush.h>
 #include <asm/tlb.h>
 #include <asm/code-patching.h>
@@ -117,7 +118,7 @@ unsigned long linear_map_top;	/* Top of linear mapping */
 /*
  * These are the base non-SMP variants of page and mm flushing
  */
-void local_flush_tlb_mm(struct mm_struct *mm)
+void __local_flush_tlb_mm(struct mm_struct *mm)
 {
 	unsigned int pid;
 
@@ -126,6 +127,14 @@ void local_flush_tlb_mm(struct mm_struct *mm)
 	if (pid != MMU_NO_CONTEXT)
 		_tlbil_pid(pid);
 	preempt_enable();
+}
+
+void local_flush_tlb_mm(struct mm_struct *mm)
+{
+	if (tlb_lazy_flush)
+		lazy_flush_context(mm);
+	else
+		__local_flush_tlb_mm(mm);
 }
 EXPORT_SYMBOL(local_flush_tlb_mm);
 
@@ -166,13 +175,19 @@ struct tlb_flush_param {
 	unsigned int pid;
 	unsigned int tsize;
 	unsigned int ind;
+	struct mm_struct *mm;
 };
 
 static void do_flush_tlb_mm_ipi(void *param)
 {
 	struct tlb_flush_param *p = param;
 
-	_tlbil_pid(p ? p->pid : 0);
+	if (tlb_lazy_flush && p) {
+		flush_recycled_contexts(smp_processor_id());
+		if (current->active_mm == p->mm)
+			set_context(p->pid, p->mm->pgd);
+	} else
+		_tlbil_pid(p ? p->pid : 0);
 }
 
 static void do_flush_tlb_page_ipi(void *param)
@@ -207,13 +222,18 @@ void flush_tlb_mm(struct mm_struct *mm)
 	pid = mm->context.id;
 	if (unlikely(pid == MMU_NO_CONTEXT))
 		goto no_context;
+	if (tlb_lazy_flush) {
+		lazy_flush_context(mm);
+		pid = mm->context.id;
+	}
 	if (!mm_is_core_local(mm)) {
-		struct tlb_flush_param p = { .pid = pid };
+		struct tlb_flush_param p = { .pid = pid, .mm = mm };
 		/* Ignores smp_processor_id() even if set. */
 		smp_call_function_many(mm_cpumask(mm),
 				       do_flush_tlb_mm_ipi, &p, 1);
 	}
-	_tlbil_pid(pid);
+	if (!tlb_lazy_flush)
+		_tlbil_pid(pid);
  no_context:
 	preempt_enable();
 }
