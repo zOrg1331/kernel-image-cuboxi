@@ -63,7 +63,7 @@ static void videobuf_vm_close(struct vm_area_struct *vma)
 		struct videobuf_dma_contig_memory *mem;
 
 		dev_dbg(q->dev, "munmap %p q=%p\n", map, q);
-		mutex_lock(&q->vb_lock);
+		videobuf_queue_lock(q);
 
 		/* We need first to cancel streams, before unmapping */
 		if (q->streaming)
@@ -103,7 +103,7 @@ static void videobuf_vm_close(struct vm_area_struct *vma)
 
 		kfree(map);
 
-		mutex_unlock(&q->vb_lock);
+		videobuf_queue_unlock(q);
 	}
 }
 
@@ -349,10 +349,11 @@ void videobuf_queue_dma_contig_init(struct videobuf_queue *q,
 				    enum v4l2_buf_type type,
 				    enum v4l2_field field,
 				    unsigned int msize,
-				    void *priv)
+				    void *priv,
+				    struct mutex *ext_lock)
 {
 	videobuf_queue_core_init(q, ops, dev, irqlock, type, field, msize,
-				 priv, &qops);
+				 priv, &qops, ext_lock);
 }
 EXPORT_SYMBOL_GPL(videobuf_queue_dma_contig_init);
 

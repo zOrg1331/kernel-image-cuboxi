@@ -304,6 +304,14 @@ static int copy_streams(u8 *data, unsigned long len,
 					memcpy (&voutp[pos], ptr, cpysize);
 				break;
 			case TM6000_URB_MSG_AUDIO:
+				/* Need some code to copy audio buffer */
+				if (dev->fourcc == V4L2_PIX_FMT_YUYV) {
+					/* Swap word bytes */
+					int i;
+
+					for (i = 0; i < cpysize; i += 2)
+						swab16s((u16 *)(ptr + i));
+				}
 				tm6000_call_fillbuf(dev, TM6000_AUDIO, ptr, cpysize);
 				break;
 			case TM6000_URB_MSG_VBI:
@@ -1300,7 +1308,7 @@ static int tm6000_open(struct file *file)
 			NULL, &dev->slock,
 			fh->type,
 			V4L2_FIELD_INTERLACED,
-			sizeof(struct tm6000_buffer),fh);
+			sizeof(struct tm6000_buffer), fh, NULL);
 
 	return 0;
 }
