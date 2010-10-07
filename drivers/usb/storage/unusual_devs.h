@@ -877,7 +877,8 @@ UNUSUAL_DEV(  0x071b, 0x3203, 0x0000, 0x0000,
 		"RockChip",
 		"MP3",
 		US_SC_DEVICE, US_PR_DEVICE, NULL,
-		US_FL_NO_WP_DETECT | US_FL_MAX_SECTORS_64),
+		US_FL_NO_WP_DETECT | US_FL_MAX_SECTORS_64 |
+		US_FL_NO_READ_CAPACITY_16),
 
 /* Reported by Jean-Baptiste Onofre <jb@nanthrax.net>
  * Support the following product :
@@ -1858,6 +1859,11 @@ UNUSUAL_DEV( 0x1908, 0x1320, 0x0000, 0x0000,
 		"Photo Frame",
 		US_SC_DEVICE, US_PR_DEVICE, NULL,
 		US_FL_BAD_SENSE ),
+UNUSUAL_DEV( 0x1908, 0x3335, 0x0200, 0x0200,
+		"BUILDWIN",
+		"Photo Frame",
+		US_SC_DEVICE, US_PR_DEVICE, NULL,
+		US_FL_NO_READ_DISC_INFO ),
 
 UNUSUAL_DEV( 0x2116, 0x0320, 0x0001, 0x0001,
 		"ST",
