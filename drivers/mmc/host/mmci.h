@@ -133,13 +133,6 @@
 	MCI_DATATIMEOUTMASK|MCI_TXUNDERRUNMASK|MCI_RXOVERRUNMASK|	\
 	MCI_CMDRESPENDMASK|MCI_CMDSENTMASK|MCI_DATABLOCKENDMASK)
 
-/*
- * The size of the FIFO in bytes.
- */
-#define MCI_FIFOSIZE	(16*4)
-	
-#define MCI_FIFOHALFSIZE (MCI_FIFOSIZE / 2)
-
 #define NR_SG		16
 
 struct clk;
@@ -154,6 +147,7 @@ struct mmci_host {
 	struct clk		*clk;
 	int			gpio_cd;
 	int			gpio_wp;
+	int			gpio_cd_irq;
 
 	unsigned int		data_xfered;
 
