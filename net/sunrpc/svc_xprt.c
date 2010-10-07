@@ -128,9 +128,9 @@ static void svc_xprt_free(struct kref *kref)
 	struct svc_xprt *xprt =
 		container_of(kref, struct svc_xprt, xpt_ref);
 	struct module *owner = xprt->xpt_class->xcl_owner;
-	if (test_bit(XPT_CACHE_AUTH, &xprt->xpt_flags) &&
-	    xprt->xpt_auth_cache != NULL)
-		svcauth_unix_info_release(xprt->xpt_auth_cache);
+	if (test_bit(XPT_CACHE_AUTH, &xprt->xpt_flags))
+		svcauth_unix_info_release(xprt);
+	put_net(xprt->xpt_net);
 	xprt->xpt_ops->xpo_free(xprt);
 	module_put(owner);
 }
@@ -156,15 +156,18 @@ void svc_xprt_init(struct svc_xprt_class *xcl, struct svc_xprt *xprt,
 	INIT_LIST_HEAD(&xprt->xpt_list);
 	INIT_LIST_HEAD(&xprt->xpt_ready);
 	INIT_LIST_HEAD(&xprt->xpt_deferred);
+	INIT_LIST_HEAD(&xprt->xpt_users);
 	mutex_init(&xprt->xpt_mutex);
 	spin_lock_init(&xprt->xpt_lock);
 	set_bit(XPT_BUSY, &xprt->xpt_flags);
 	rpc_init_wait_queue(&xprt->xpt_bc_pending, "xpt_bc_pending");
+	xprt->xpt_net = get_net(&init_net);
 }
 EXPORT_SYMBOL_GPL(svc_xprt_init);
 
 static struct svc_xprt *__svc_xpo_create(struct svc_xprt_class *xcl,
 					 struct svc_serv *serv,
+					 struct net *net,
 					 const int family,
 					 const unsigned short port,
 					 int flags)
@@ -199,12 +202,12 @@ static struct svc_xprt *__svc_xpo_create(struct svc_xprt_class *xcl,
 		return ERR_PTR(-EAFNOSUPPORT);
 	}
 
-	return xcl->xcl_ops->xpo_create(serv, sap, len, flags);
+	return xcl->xcl_ops->xpo_create(serv, net, sap, len, flags);
 }
 
 int svc_create_xprt(struct svc_serv *serv, const char *xprt_name,
-		    const int family, const unsigned short port,
-		    int flags)
+		    struct net *net, const int family,
+		    const unsigned short port, int flags)
 {
 	struct svc_xprt_class *xcl;
 
@@ -220,7 +223,7 @@ int svc_create_xprt(struct svc_serv *serv, const char *xprt_name,
 			goto err;
 
 		spin_unlock(&svc_xprt_class_lock);
-		newxprt = __svc_xpo_create(xcl, serv, family, port, flags);
+		newxprt = __svc_xpo_create(xcl, serv, net, family, port, flags);
 		if (IS_ERR(newxprt)) {
 			module_put(xcl->xcl_owner);
 			return PTR_ERR(newxprt);
@@ -651,6 +654,11 @@ int svc_recv(struct svc_rqst *rqstp, long timeout)
 	if (signalled() || kthread_should_stop())
 		return -EINTR;
 
+	/* Normally we will wait up to 5 seconds for any required
+	 * cache information to be provided.
+	 */
+	rqstp->rq_chandle.thread_wait = 5*HZ;
+
 	spin_lock_bh(&pool->sp_lock);
 	xprt = svc_xprt_dequeue(pool);
 	if (xprt) {
@@ -658,6 +666,12 @@ int svc_recv(struct svc_rqst *rqstp, long timeout)
 		svc_xprt_get(xprt);
 		rqstp->rq_reserved = serv->sv_max_mesg;
 		atomic_add(rqstp->rq_reserved, &xprt->xpt_reserved);
+
+		/* As there is a shortage of threads and this request
+		 * had to be queued, don't allow the thread to wait so
+		 * long for cache updates.
+		 */
+		rqstp->rq_chandle.thread_wait = 1*HZ;
 	} else {
 		/* No data pending. Go to sleep */
 		svc_thread_enqueue(pool, rqstp);
@@ -868,6 +882,19 @@ static void svc_age_temp_xprts(unsigned long closure)
 	mod_timer(&serv->sv_temptimer, jiffies + svc_conn_age_period * HZ);
 }
 
+static void call_xpt_users(struct svc_xprt *xprt)
+{
+	struct svc_xpt_user *u;
+
+	spin_lock(&xprt->xpt_lock);
+	while (!list_empty(&xprt->xpt_users)) {
+		u = list_first_entry(&xprt->xpt_users, struct svc_xpt_user, list);
+		list_del(&u->list);
+		u->callback(u);
+	}
+	spin_unlock(&xprt->xpt_lock);
+}
+
 /*
  * Remove a dead transport
  */
@@ -900,6 +927,7 @@ void svc_delete_xprt(struct svc_xprt *xprt)
 	while ((dr = svc_deferred_dequeue(xprt)) != NULL)
 		kfree(dr);
 
+	call_xpt_users(xprt);
 	svc_xprt_put(xprt);
 }
 
