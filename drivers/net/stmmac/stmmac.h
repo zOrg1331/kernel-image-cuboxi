@@ -21,6 +21,7 @@
 *******************************************************************************/
 
 #define DRV_MODULE_VERSION	"Apr_2010"
+#include <linux/platform_device.h>
 #include <linux/stmmac.h>
 
 #include "common.h"
@@ -50,10 +51,10 @@ struct stmmac_priv {
 	int is_gmac;
 	dma_addr_t dma_rx_phy;
 	unsigned int dma_rx_size;
-	int rx_csum;
 	unsigned int dma_buf_sz;
 	struct device *device;
 	struct mac_device_info *hw;
+	void __iomem *ioaddr;
 
 	struct stmmac_extra_stats xstats;
 	struct napi_struct napi;
@@ -65,7 +66,7 @@ struct stmmac_priv {
 	int phy_mask;
 	int (*phy_reset) (void *priv);
 	void (*fix_mac_speed) (void *priv, unsigned int speed);
-	void (*bus_setup)(unsigned long ioaddr);
+	void (*bus_setup)(void __iomem *ioaddr);
 	void *bsp_priv;
 
 	int phy_irq;
@@ -76,6 +77,7 @@ struct stmmac_priv {
 	unsigned int flow_ctrl;
 	unsigned int pause;
 	struct mii_bus *mii;
+	int mii_clk_csr;
 
 	u32 msg_enable;
 	spinlock_t lock;
@@ -89,6 +91,9 @@ struct stmmac_priv {
 	struct vlan_group *vlgrp;
 #endif
 	int enh_desc;
+	int rx_coe;
+	int bugged_jumbo;
+	int no_csum_insertion;
 };
 
 #ifdef CONFIG_STM_DRIVERS

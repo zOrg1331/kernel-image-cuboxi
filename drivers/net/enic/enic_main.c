@@ -911,7 +911,9 @@ static int enic_set_mac_address_dynamic(struct net_device *netdev, void *p)
 
 static int enic_set_mac_address(struct net_device *netdev, void *p)
 {
-	return -EOPNOTSUPP;
+	struct sockaddr *saddr = p;
+
+	return enic_set_mac_addr(netdev, (char *)saddr->sa_data);
 }
 
 static int enic_dev_packet_filter(struct enic *enic, int directed,
@@ -1970,7 +1972,7 @@ static int enic_dev_hang_notify(struct enic *enic)
 	return err;
 }
 
-int enic_dev_set_ig_vlan_rewrite_mode(struct enic *enic)
+static int enic_dev_set_ig_vlan_rewrite_mode(struct enic *enic)
 {
 	int err;
 
@@ -2145,25 +2147,14 @@ static const struct net_device_ops enic_netdev_ops = {
 #endif
 };
 
-void enic_dev_deinit(struct enic *enic)
+static void enic_dev_deinit(struct enic *enic)
 {
 	netif_napi_del(&enic->napi);
 	enic_free_vnic_resources(enic);
 	enic_clear_intr_mode(enic);
 }
 
-static int enic_dev_stats_clear(struct enic *enic)
-{
-	int err;
-
-	spin_lock(&enic->devcmd_lock);
-	err = vnic_dev_stats_clear(enic->vdev);
-	spin_unlock(&enic->devcmd_lock);
-
-	return err;
-}
-
-int enic_dev_init(struct enic *enic)
+static int enic_dev_init(struct enic *enic)
 {
 	struct device *dev = enic_get_dev(enic);
 	struct net_device *netdev = enic->netdev;
@@ -2204,10 +2195,6 @@ int enic_dev_init(struct enic *enic)
 	}
 
 	enic_init_vnic_resources(enic);
-
-	/* Clear LIF stats
-	 */
-	enic_dev_stats_clear(enic);
 
 	err = enic_set_rq_alloc_buf(enic);
 	if (err) {
