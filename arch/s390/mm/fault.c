@@ -52,6 +52,19 @@
 #define VM_FAULT_BADMAP		0x020000
 #define VM_FAULT_BADACCESS	0x040000
 
+static unsigned long store_indication;
+
+void fault_init(void)
+{
+	unsigned long long facility_list[2];
+
+	if (stfle(facility_list, 2) < 2)
+		return;
+	if ((facility_list[0] & (1ULL << 61)) &&
+	    (facility_list[1] & (1ULL << 52)))
+		store_indication = 0xc00;
+}
+
 static inline int notify_page_fault(struct pt_regs *regs)
 {
 	int ret = 0;
@@ -199,14 +212,21 @@ static noinline void do_sigbus(struct pt_regs *regs, long int_code,
 			       unsigned long trans_exc_code)
 {
 	struct task_struct *tsk = current;
+	unsigned long address;
+	struct siginfo si;
 
 	/*
 	 * Send a sigbus, regardless of whether we were in kernel
 	 * or user mode.
 	 */
-	tsk->thread.prot_addr = trans_exc_code & __FAIL_ADDR_MASK;
+	address = trans_exc_code & __FAIL_ADDR_MASK;
+	tsk->thread.prot_addr = address;
 	tsk->thread.trap_no = int_code;
-	force_sig(SIGBUS, tsk);
+	si.si_signo = SIGBUS;
+	si.si_errno = 0;
+	si.si_code = BUS_ADRERR;
+	si.si_addr = (void __user *) address;
+	force_sig_info(SIGBUS, &si, tsk);
 }
 
 #ifdef CONFIG_S390_EXEC_PROTECT
@@ -266,10 +286,11 @@ static noinline void do_fault_error(struct pt_regs *regs, long int_code,
 		if (fault & VM_FAULT_OOM)
 			pagefault_out_of_memory();
 		else if (fault & VM_FAULT_SIGBUS) {
-			do_sigbus(regs, int_code, trans_exc_code);
 			/* Kernel mode? Handle exceptions or die */
 			if (!(regs->psw.mask & PSW_MASK_PSTATE))
 				do_no_context(regs, int_code, trans_exc_code);
+			else
+				do_sigbus(regs, int_code, trans_exc_code);
 		} else
 			BUG();
 		break;
@@ -294,7 +315,7 @@ static inline int do_exception(struct pt_regs *regs, int access,
 	struct mm_struct *mm;
 	struct vm_area_struct *vma;
 	unsigned long address;
-	int fault;
+	int fault, write;
 
 	if (notify_page_fault(regs))
 		return 0;
@@ -348,8 +369,10 @@ static inline int do_exception(struct pt_regs *regs, int access,
 	 * make sure we exit gracefully rather than endlessly redo
 	 * the fault.
 	 */
-	fault = handle_mm_fault(mm, vma, address,
-				(access == VM_WRITE) ? FAULT_FLAG_WRITE : 0);
+	write = (access == VM_WRITE ||
+		 (trans_exc_code & store_indication) == 0x400) ?
+		FAULT_FLAG_WRITE : 0;
+	fault = handle_mm_fault(mm, vma, address, write);
 	if (unlikely(fault & VM_FAULT_ERROR))
 		goto out_up;
 
