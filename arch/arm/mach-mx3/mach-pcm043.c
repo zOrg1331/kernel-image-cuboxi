@@ -42,7 +42,6 @@
 #include <mach/mxc_ehci.h>
 #include <mach/ulpi.h>
 #include <mach/audmux.h>
-#include <mach/ssi.h>
 
 #include "devices-imx35.h"
 #include "devices.h"
@@ -141,7 +140,6 @@ static struct i2c_board_info pcm043_i2c_devices[] = {
 
 static struct platform_device *devices[] __initdata = {
 	&pcm043_flash,
-	&mxc_fec_device,
 	&imx_wdt_device0,
 };
 
@@ -293,7 +291,7 @@ err1:
 	mdelay(1);
 }
 
-static struct imx_ssi_platform_data pcm043_ssi_pdata = {
+static const struct imx_ssi_platform_data pcm043_ssi_pdata __initconst = {
 	.ac97_reset = pcm043_ac97_cold_reset,
 	.ac97_warm_reset = pcm043_ac97_warm_reset,
 	.flags = IMX_SSI_USE_AC97,
@@ -357,11 +355,12 @@ static void __init mxc_board_init(void)
 			MXC_AUDMUX_V2_PTCR_TCLKDIR, /* clock is output */
 			MXC_AUDMUX_V2_PDCR_RXDSEL(3));
 
+	imx35_add_fec(NULL);
 	platform_add_devices(devices, ARRAY_SIZE(devices));
 
 	imx35_add_imx_uart0(&uart_pdata);
 	imx35_add_mxc_nand(&pcm037_nand_board_info);
-	mxc_register_device(&imx_ssi_device0, &pcm043_ssi_pdata);
+	imx35_add_imx_ssi(0, &pcm043_ssi_pdata);
 
 	imx35_add_imx_uart1(&uart_pdata);
 
