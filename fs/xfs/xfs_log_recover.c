@@ -107,7 +107,8 @@ xlog_get_bp(
 		nbblks += log->l_sectBBsize;
 	nbblks = round_up(nbblks, log->l_sectBBsize);
 
-	return xfs_buf_get_noaddr(BBTOB(nbblks), log->l_mp->m_logdev_targp);
+	return xfs_buf_get_uncached(log->l_mp->m_logdev_targp,
+					BBTOB(nbblks), 0);
 }
 
 STATIC void
@@ -321,10 +322,11 @@ xlog_recover_iodone(
 		 * this during recovery. One strike!
 		 */
 		xfs_ioerror_alert("xlog_recover_iodone",
-				  bp->b_mount, bp, XFS_BUF_ADDR(bp));
-		xfs_force_shutdown(bp->b_mount, SHUTDOWN_META_IO_ERROR);
+					bp->b_target->bt_mount, bp,
+					XFS_BUF_ADDR(bp));
+		xfs_force_shutdown(bp->b_target->bt_mount,
+					SHUTDOWN_META_IO_ERROR);
 	}
-	bp->b_mount = NULL;
 	XFS_BUF_CLR_IODONE_FUNC(bp);
 	xfs_biodone(bp);
 }
@@ -2275,8 +2277,7 @@ xlog_recover_do_buffer_trans(
 		XFS_BUF_STALE(bp);
 		error = xfs_bwrite(mp, bp);
 	} else {
-		ASSERT(bp->b_mount == NULL || bp->b_mount == mp);
-		bp->b_mount = mp;
+		ASSERT(bp->b_target->bt_mount == mp);
 		XFS_BUF_SET_IODONE_FUNC(bp, xlog_recover_iodone);
 		xfs_bdwrite(mp, bp);
 	}
@@ -2540,8 +2541,7 @@ xlog_recover_do_inode_trans(
 	}
 
 write_inode_buffer:
-	ASSERT(bp->b_mount == NULL || bp->b_mount == mp);
-	bp->b_mount = mp;
+	ASSERT(bp->b_target->bt_mount == mp);
 	XFS_BUF_SET_IODONE_FUNC(bp, xlog_recover_iodone);
 	xfs_bdwrite(mp, bp);
 error:
@@ -2678,8 +2678,7 @@ xlog_recover_do_dquot_trans(
 	memcpy(ddq, recddq, item->ri_buf[1].i_len);
 
 	ASSERT(dq_f->qlf_size == 2);
-	ASSERT(bp->b_mount == NULL || bp->b_mount == mp);
-	bp->b_mount = mp;
+	ASSERT(bp->b_target->bt_mount == mp);
 	XFS_BUF_SET_IODONE_FUNC(bp, xlog_recover_iodone);
 	xfs_bdwrite(mp, bp);
 
