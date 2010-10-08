@@ -505,7 +505,6 @@ static void __vcpu_clear(void *arg)
 		vmcs_clear(vmx->vmcs);
 	if (per_cpu(current_vmcs, cpu) == vmx->vmcs)
 		per_cpu(current_vmcs, cpu) = NULL;
-	rdtscll(vmx->vcpu.arch.host_tsc);
 	list_del(&vmx->local_vcpus_link);
 	vmx->vcpu.cpu = -1;
 	vmx->launched = 0;
@@ -706,11 +705,10 @@ static void reload_tss(void)
 	/*
 	 * VT restores TR but not its size.  Useless.
 	 */
-	struct desc_ptr gdt;
+	struct desc_ptr *gdt = &__get_cpu_var(host_gdt);
 	struct desc_struct *descs;
 
-	native_store_gdt(&gdt);
-	descs = (void *)gdt.address;
+	descs = (void *)gdt->address;
 	descs[GDT_ENTRY_TSS].type = 9; /* available TSS */
 	load_TR_desc();
 }
@@ -753,7 +751,7 @@ static bool update_transition_efer(struct vcpu_vmx *vmx, int efer_offset)
 
 static unsigned long segment_base(u16 selector)
 {
-	struct desc_ptr gdt;
+	struct desc_ptr *gdt = &__get_cpu_var(host_gdt);
 	struct desc_struct *d;
 	unsigned long table_base;
 	unsigned long v;
@@ -761,8 +759,7 @@ static unsigned long segment_base(u16 selector)
 	if (!(selector & ~3))
 		return 0;
 
-	native_store_gdt(&gdt);
-	table_base = gdt.address;
+	table_base = gdt->address;
 
 	if (selector & 4) {           /* from ldt */
 		u16 ldt_selector = kvm_read_ldt();
@@ -889,7 +886,6 @@ static void vmx_load_host_state(struct vcpu_vmx *vmx)
 static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
-	u64 tsc_this, delta, new_offset;
 	u64 phys_addr = __pa(per_cpu(vmxarea, cpu));
 
 	if (!vmm_exclusive)
@@ -903,37 +899,24 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 	}
 
 	if (vcpu->cpu != cpu) {
-		struct desc_ptr dt;
+		struct desc_ptr *gdt = &__get_cpu_var(host_gdt);
 		unsigned long sysenter_esp;
 
-		kvm_migrate_timers(vcpu);
 		kvm_make_request(KVM_REQ_TLB_FLUSH, vcpu);
 		local_irq_disable();
 		list_add(&vmx->local_vcpus_link,
 			 &per_cpu(vcpus_on_cpu, cpu));
 		local_irq_enable();
 
-		vcpu->cpu = cpu;
 		/*
 		 * Linux uses per-cpu TSS and GDT, so set these when switching
 		 * processors.
 		 */
 		vmcs_writel(HOST_TR_BASE, kvm_read_tr_base()); /* 22.2.4 */
-		native_store_gdt(&dt);
-		vmcs_writel(HOST_GDTR_BASE, dt.address);   /* 22.2.4 */
+		vmcs_writel(HOST_GDTR_BASE, gdt->address);   /* 22.2.4 */
 
 		rdmsrl(MSR_IA32_SYSENTER_ESP, sysenter_esp);
 		vmcs_writel(HOST_IA32_SYSENTER_ESP, sysenter_esp); /* 22.2.3 */
-
-		/*
-		 * Make sure the time stamp counter is monotonous.
-		 */
-		rdtscll(tsc_this);
-		if (tsc_this < vcpu->arch.host_tsc) {
-			delta = vcpu->arch.host_tsc - tsc_this;
-			new_offset = vmcs_read64(TSC_OFFSET) + delta;
-			vmcs_write64(TSC_OFFSET, new_offset);
-		}
 	}
 }
 
@@ -1155,12 +1138,17 @@ static u64 guest_read_tsc(void)
 }
 
 /*
- * writes 'guest_tsc' into guest's timestamp counter "register"
- * guest_tsc = host_tsc + tsc_offset ==> tsc_offset = guest_tsc - host_tsc
+ * writes 'offset' into guest's timestamp counter offset register
  */
-static void guest_write_tsc(u64 guest_tsc, u64 host_tsc)
+static void vmx_write_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 {
-	vmcs_write64(TSC_OFFSET, guest_tsc - host_tsc);
+	vmcs_write64(TSC_OFFSET, offset);
+}
+
+static void vmx_adjust_tsc_offset(struct kvm_vcpu *vcpu, s64 adjustment)
+{
+	u64 offset = vmcs_read64(TSC_OFFSET);
+	vmcs_write64(TSC_OFFSET, offset + adjustment);
 }
 
 /*
@@ -1233,7 +1221,6 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, u32 msr_index, u64 data)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	struct shared_msr_entry *msr;
-	u64 host_tsc;
 	int ret = 0;
 
 	switch (msr_index) {
@@ -1263,8 +1250,7 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, u32 msr_index, u64 data)
 		vmcs_writel(GUEST_SYSENTER_ESP, data);
 		break;
 	case MSR_IA32_TSC:
-		rdtscll(host_tsc);
-		guest_write_tsc(data, host_tsc);
+		kvm_write_tsc(vcpu, data);
 		break;
 	case MSR_IA32_CR_PAT:
 		if (vmcs_config.vmentry_ctrl & VM_ENTRY_LOAD_IA32_PAT) {
@@ -1862,20 +1848,20 @@ static void ept_load_pdptrs(struct kvm_vcpu *vcpu)
 		return;
 
 	if (is_paging(vcpu) && is_pae(vcpu) && !is_long_mode(vcpu)) {
-		vmcs_write64(GUEST_PDPTR0, vcpu->arch.pdptrs[0]);
-		vmcs_write64(GUEST_PDPTR1, vcpu->arch.pdptrs[1]);
-		vmcs_write64(GUEST_PDPTR2, vcpu->arch.pdptrs[2]);
-		vmcs_write64(GUEST_PDPTR3, vcpu->arch.pdptrs[3]);
+		vmcs_write64(GUEST_PDPTR0, vcpu->arch.mmu.pdptrs[0]);
+		vmcs_write64(GUEST_PDPTR1, vcpu->arch.mmu.pdptrs[1]);
+		vmcs_write64(GUEST_PDPTR2, vcpu->arch.mmu.pdptrs[2]);
+		vmcs_write64(GUEST_PDPTR3, vcpu->arch.mmu.pdptrs[3]);
 	}
 }
 
 static void ept_save_pdptrs(struct kvm_vcpu *vcpu)
 {
 	if (is_paging(vcpu) && is_pae(vcpu) && !is_long_mode(vcpu)) {
-		vcpu->arch.pdptrs[0] = vmcs_read64(GUEST_PDPTR0);
-		vcpu->arch.pdptrs[1] = vmcs_read64(GUEST_PDPTR1);
-		vcpu->arch.pdptrs[2] = vmcs_read64(GUEST_PDPTR2);
-		vcpu->arch.pdptrs[3] = vmcs_read64(GUEST_PDPTR3);
+		vcpu->arch.mmu.pdptrs[0] = vmcs_read64(GUEST_PDPTR0);
+		vcpu->arch.mmu.pdptrs[1] = vmcs_read64(GUEST_PDPTR1);
+		vcpu->arch.mmu.pdptrs[2] = vmcs_read64(GUEST_PDPTR2);
+		vcpu->arch.mmu.pdptrs[3] = vmcs_read64(GUEST_PDPTR3);
 	}
 
 	__set_bit(VCPU_EXREG_PDPTR,
@@ -2521,7 +2507,7 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 {
 	u32 host_sysenter_cs, msr_low, msr_high;
 	u32 junk;
-	u64 host_pat, tsc_this, tsc_base;
+	u64 host_pat;
 	unsigned long a;
 	struct desc_ptr dt;
 	int i;
@@ -2662,12 +2648,7 @@ static int vmx_vcpu_setup(struct vcpu_vmx *vmx)
 		vmx->vcpu.arch.cr4_guest_owned_bits |= X86_CR4_PGE;
 	vmcs_writel(CR4_GUEST_HOST_MASK, ~vmx->vcpu.arch.cr4_guest_owned_bits);
 
-	tsc_base = vmx->vcpu.kvm->arch.vm_init_tsc;
-	rdtscll(tsc_this);
-	if (tsc_this < vmx->vcpu.kvm->arch.vm_init_tsc)
-		tsc_base = tsc_this;
-
-	guest_write_tsc(0, tsc_base);
+	kvm_write_tsc(&vmx->vcpu, 0);
 
 	return 0;
 }
@@ -4125,6 +4106,7 @@ static struct kvm_vcpu *vmx_create_vcpu(struct kvm *kvm, unsigned int id)
 
 	cpu = get_cpu();
 	vmx_vcpu_load(&vmx->vcpu, cpu);
+	vmx->vcpu.cpu = cpu;
 	err = vmx_vcpu_setup(vmx);
 	vmx_vcpu_put(&vmx->vcpu);
 	put_cpu();
@@ -4362,6 +4344,11 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.set_supported_cpuid = vmx_set_supported_cpuid,
 
 	.has_wbinvd_exit = cpu_has_vmx_wbinvd_exit,
+
+	.write_tsc_offset = vmx_write_tsc_offset,
+	.adjust_tsc_offset = vmx_adjust_tsc_offset,
+
+	.set_tdp_cr3 = vmx_set_cr3,
 };
 
 static int __init vmx_init(void)
