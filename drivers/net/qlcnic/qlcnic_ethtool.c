@@ -99,7 +99,7 @@ static const u32 diag_registers[] = {
 	CRB_XG_STATE_P3,
 	CRB_FW_CAPABILITIES_1,
 	ISR_INT_STATE_REG,
-	QLCNIC_CRB_DEV_REF_COUNT,
+	QLCNIC_CRB_DRV_ACTIVE,
 	QLCNIC_CRB_DEV_STATE,
 	QLCNIC_CRB_DRV_STATE,
 	QLCNIC_CRB_DRV_SCRATCH,
@@ -115,9 +115,13 @@ static const u32 diag_registers[] = {
 	-1
 };
 
+#define QLCNIC_MGMT_API_VERSION	2
+#define QLCNIC_DEV_INFO_SIZE	1
+#define QLCNIC_ETHTOOL_REGS_VER	2
 static int qlcnic_get_regs_len(struct net_device *dev)
 {
-	return sizeof(diag_registers) + QLCNIC_RING_REGS_LEN;
+	return sizeof(diag_registers) + QLCNIC_RING_REGS_LEN +
+				QLCNIC_DEV_INFO_SIZE + 1;
 }
 
 static int qlcnic_get_eeprom_len(struct net_device *dev)
@@ -339,14 +343,17 @@ qlcnic_get_regs(struct net_device *dev, struct ethtool_regs *regs, void *p)
 	struct qlcnic_recv_context *recv_ctx = &adapter->recv_ctx;
 	struct qlcnic_host_sds_ring *sds_ring;
 	u32 *regs_buff = p;
-	int ring, i = 0;
+	int ring, i = 0, j = 0;
 
 	memset(p, 0, qlcnic_get_regs_len(dev));
-	regs->version = (1 << 24) | (adapter->ahw.revision_id << 16) |
-	    (adapter->pdev)->device;
+	regs->version = (QLCNIC_ETHTOOL_REGS_VER << 24) |
+		(adapter->ahw.revision_id << 16) | (adapter->pdev)->device;
 
-	for (i = 0; diag_registers[i] != -1; i++)
-		regs_buff[i] = QLCRD32(adapter, diag_registers[i]);
+	regs_buff[0] = (0xcafe0000 | (QLCNIC_DEV_INFO_SIZE & 0xffff));
+	regs_buff[1] = QLCNIC_MGMT_API_VERSION;
+
+	for (i = QLCNIC_DEV_INFO_SIZE + 1; diag_registers[j] != -1; j++, i++)
+		regs_buff[i] = QLCRD32(adapter, diag_registers[j]);
 
 	if (!test_bit(__QLCNIC_DEV_UP, &adapter->state))
 		return;
@@ -629,6 +636,8 @@ static int qlcnic_get_sset_count(struct net_device *dev, int sset)
 }
 
 #define QLC_ILB_PKT_SIZE 64
+#define QLC_NUM_ILB_PKT	16
+#define QLC_ILB_MAX_RCV_LOOP 10
 
 static void qlcnic_create_loopback_buff(unsigned char *data)
 {
@@ -650,24 +659,34 @@ static int qlcnic_do_ilb_test(struct qlcnic_adapter *adapter)
 	struct qlcnic_recv_context *recv_ctx = &adapter->recv_ctx;
 	struct qlcnic_host_sds_ring *sds_ring = &recv_ctx->sds_rings[0];
 	struct sk_buff *skb;
-	int i;
+	int i, loop, cnt = 0;
 
-	for (i = 0; i < 16; i++) {
+	for (i = 0; i < QLC_NUM_ILB_PKT; i++) {
 		skb = dev_alloc_skb(QLC_ILB_PKT_SIZE);
 		qlcnic_create_loopback_buff(skb->data);
 		skb_put(skb, QLC_ILB_PKT_SIZE);
 
 		adapter->diag_cnt = 0;
-
 		qlcnic_xmit_frame(skb, adapter->netdev);
 
-		msleep(5);
-
-		qlcnic_process_rcv_ring_diag(sds_ring);
+		loop = 0;
+		do {
+			msleep(1);
+			qlcnic_process_rcv_ring_diag(sds_ring);
+		} while (loop++ < QLC_ILB_MAX_RCV_LOOP &&
+			 !adapter->diag_cnt);
 
 		dev_kfree_skb_any(skb);
+
 		if (!adapter->diag_cnt)
-			return -1;
+			dev_warn(&adapter->pdev->dev, "ILB Test: %dth packet"
+				" not recevied\n", i + 1);
+		else
+			cnt++;
+	}
+	if (cnt != i) {
+		dev_warn(&adapter->pdev->dev, "ILB Test failed\n");
+		return -1;
 	}
 	return 0;
 }
@@ -747,6 +766,14 @@ qlcnic_diag_test(struct net_device *dev, struct ethtool_test *eth_test,
 {
 	memset(data, 0, sizeof(u64) * QLCNIC_TEST_LEN);
 
+	data[0] = qlcnic_reg_test(dev);
+	if (data[0])
+		eth_test->flags |= ETH_TEST_FL_FAILED;
+
+	data[1] = (u64) qlcnic_test_link(dev);
+	if (data[1])
+		eth_test->flags |= ETH_TEST_FL_FAILED;
+
 	if (eth_test->flags == ETH_TEST_FL_OFFLINE) {
 		data[2] = qlcnic_irq_test(dev);
 		if (data[2])
@@ -757,15 +784,6 @@ qlcnic_diag_test(struct net_device *dev, struct ethtool_test *eth_test,
 			eth_test->flags |= ETH_TEST_FL_FAILED;
 
 	}
-
-	data[0] = qlcnic_reg_test(dev);
-	if (data[0])
-		eth_test->flags |= ETH_TEST_FL_FAILED;
-
-	/* link test */
-	data[1] = (u64) qlcnic_test_link(dev);
-	if (data[1])
-		eth_test->flags |= ETH_TEST_FL_FAILED;
 }
 
 static void
@@ -805,6 +823,20 @@ qlcnic_get_ethtool_stats(struct net_device *dev,
 	}
 }
 
+static int qlcnic_set_tx_csum(struct net_device *dev, u32 data)
+{
+	struct qlcnic_adapter *adapter = netdev_priv(dev);
+
+	if ((adapter->flags & QLCNIC_ESWITCH_ENABLED))
+		return -EOPNOTSUPP;
+	if (data)
+		dev->features |= (NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM);
+	else
+		dev->features &= ~(NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM);
+
+	return 0;
+
+}
 static u32 qlcnic_get_tx_csum(struct net_device *dev)
 {
 	return dev->features & NETIF_F_IP_CSUM;
@@ -819,7 +851,23 @@ static u32 qlcnic_get_rx_csum(struct net_device *dev)
 static int qlcnic_set_rx_csum(struct net_device *dev, u32 data)
 {
 	struct qlcnic_adapter *adapter = netdev_priv(dev);
+
+	if ((adapter->flags & QLCNIC_ESWITCH_ENABLED))
+		return -EOPNOTSUPP;
+	if (!!data) {
+		adapter->rx_csum = !!data;
+		return 0;
+	}
+
+	if (adapter->flags & QLCNIC_LRO_ENABLED) {
+		if (qlcnic_config_hw_lro(adapter, QLCNIC_LRO_DISABLED))
+			return -EIO;
+
+		dev->features &= ~NETIF_F_LRO;
+		qlcnic_send_lro_cleanup(adapter);
+	}
 	adapter->rx_csum = !!data;
+	dev_info(&adapter->pdev->dev, "disabling LRO as rx_csum is off\n");
 	return 0;
 }
 
@@ -1002,6 +1050,15 @@ static int qlcnic_set_flags(struct net_device *netdev, u32 data)
 	if (!(adapter->capabilities & QLCNIC_FW_CAPABILITY_HW_LRO))
 		return -EINVAL;
 
+	if (!adapter->rx_csum) {
+		dev_info(&adapter->pdev->dev, "rx csum is off, "
+			"cannot toggle lro\n");
+		return -EINVAL;
+	}
+
+	if ((data & ETH_FLAG_LRO) && (adapter->flags & QLCNIC_LRO_ENABLED))
+		return 0;
+
 	if (data & ETH_FLAG_LRO) {
 		hw_lro = QLCNIC_LRO_ENABLED;
 		netdev->features |= NETIF_F_LRO;
@@ -1048,7 +1105,7 @@ const struct ethtool_ops qlcnic_ethtool_ops = {
 	.get_pauseparam = qlcnic_get_pauseparam,
 	.set_pauseparam = qlcnic_set_pauseparam,
 	.get_tx_csum = qlcnic_get_tx_csum,
-	.set_tx_csum = ethtool_op_set_tx_csum,
+	.set_tx_csum = qlcnic_set_tx_csum,
 	.set_sg = ethtool_op_set_sg,
 	.get_tso = qlcnic_get_tso,
 	.set_tso = qlcnic_set_tso,
