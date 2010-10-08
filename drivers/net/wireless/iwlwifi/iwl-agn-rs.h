@@ -432,6 +432,8 @@ struct iwl_lq_sta {
 	u32 last_rate_n_flags;
 	/* packets destined for this STA are aggregated */
 	u8 is_agg;
+	/* BT traffic this sta was last updated in */
+	u8 last_bt_traffic;
 };
 
 static inline u8 num_of_ant(u8 mask)
@@ -450,15 +452,6 @@ static inline u8 first_antenna(u8 mask)
 	return ANT_C;
 }
 
-
-static inline u8 iwl_get_prev_ieee_rate(u8 rate_index)
-{
-	u8 rate = iwl_rates[rate_index].prev_ieee;
-
-	if (rate == IWL_RATE_INVALID)
-		rate = rate_index;
-	return rate;
-}
 
 static inline u8 iwl3945_get_prev_ieee_rate(u8 rate_index)
 {
