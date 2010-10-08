@@ -1,10 +1,8 @@
 /*
- * arch/arm/plat-nomadik/include/plat/ste_dma40.h
- *
- * Copyright (C) ST-Ericsson 2007-2010
+ * Copyright (C) ST-Ericsson SA 2007-2010
+ * Author: Per Friden <per.friden@stericsson.com> for ST-Ericsson
+ * Author: Jonas Aaberg <jonas.aberg@stericsson.com> for ST-Ericsson
  * License terms: GNU General Public License (GPL) version 2
- * Author: Per Friden <per.friden@stericsson.com>
- * Author: Jonas Aaberg <jonas.aberg@stericsson.com>
  */
 
 
@@ -73,6 +71,9 @@
 #define STEDMA40_PSIZE_LOG_8  STEDMA40_PSIZE_PHY_8
 #define STEDMA40_PSIZE_LOG_16 STEDMA40_PSIZE_PHY_16
 
+/* Maximum number of possible physical channels */
+#define STEDMA40_MAX_PHYS 32
+
 enum stedma40_flow_ctrl {
 	STEDMA40_NO_FLOW_CTRL,
 	STEDMA40_FLOW_CTRL,
@@ -90,20 +91,28 @@ enum stedma40_periph_data_width {
 	STEDMA40_DOUBLEWORD_WIDTH = STEDMA40_ESIZE_64_BIT
 };
 
+enum stedma40_xfer_dir {
+	STEDMA40_MEM_TO_MEM = 1,
+	STEDMA40_MEM_TO_PERIPH,
+	STEDMA40_PERIPH_TO_MEM,
+	STEDMA40_PERIPH_TO_PERIPH
+};
+
+
+/**
+ * struct stedma40_chan_cfg - dst/src channel configuration
+ *
+ * @endianess: Endianess of the src/dst hardware
+ * @data_width: Data width of the src/dst hardware
+ * @p_size: Burst size
+ * @flow_ctrl: Flow control on/off.
+ */
 struct stedma40_half_channel_info {
 	enum stedma40_endianess endianess;
 	enum stedma40_periph_data_width data_width;
 	int psize;
 	enum stedma40_flow_ctrl flow_ctrl;
 };
-
-enum stedma40_xfer_dir {
-	STEDMA40_MEM_TO_MEM,
-	STEDMA40_MEM_TO_PERIPH,
-	STEDMA40_PERIPH_TO_MEM,
-	STEDMA40_PERIPH_TO_PERIPH
-};
-
 
 /**
  * struct stedma40_chan_cfg - Structure to be filled by client drivers.
@@ -147,7 +156,6 @@ struct stedma40_chan_cfg {
  * @memcpy_len: length of memcpy
  * @memcpy_conf_phy: default configuration of physical channel memcpy
  * @memcpy_conf_log: default configuration of logical channel memcpy
- * @llis_per_log: number of max linked list items per logical channel
  * @disabled_channels: A vector, ending with -1, that marks physical channels
  * that are for different reasons not available for the driver.
  */
@@ -159,8 +167,7 @@ struct stedma40_platform_data {
 	u32				 memcpy_len;
 	struct stedma40_chan_cfg	*memcpy_conf_phy;
 	struct stedma40_chan_cfg	*memcpy_conf_log;
-	unsigned int			 llis_per_log;
-	int				 disabled_channels[8];
+	int				 disabled_channels[STEDMA40_MAX_PHYS];
 };
 
 /**
