@@ -477,7 +477,7 @@ static int scsi_setup_discard_cmnd(struct scsi_device *sdp, struct request *rq)
 
 static int scsi_setup_flush_cmnd(struct scsi_device *sdp, struct request *rq)
 {
-	rq->timeout = SD_TIMEOUT;
+	rq->timeout = SD_FLUSH_TIMEOUT;
 	rq->retries = SD_MAX_RETRIES;
 	rq->cmd[0] = SYNCHRONIZE_CACHE;
 	rq->cmd_len = 10;
@@ -1072,7 +1072,7 @@ static int sd_sync_cache(struct scsi_disk *sdkp)
 		 * flush everything.
 		 */
 		res = scsi_execute_req(sdp, cmd, DMA_NONE, NULL, 0, &sshdr,
-				       SD_TIMEOUT, SD_MAX_RETRIES, NULL);
+				       SD_FLUSH_TIMEOUT, SD_MAX_RETRIES, NULL);
 		if (res == 0)
 			break;
 	}
@@ -2039,13 +2039,23 @@ static void sd_read_block_limits(struct scsi_disk *sdkp)
 		lba_count = get_unaligned_be32(&buffer[20]);
 		desc_count = get_unaligned_be32(&buffer[24]);
 
-		if (lba_count) {
-			q->limits.max_discard_sectors =
-				lba_count * sector_sz >> 9;
-
-			if (desc_count)
+		if (lba_count && desc_count) {
+			if (sdkp->tpvpd && !sdkp->tpu)
+				sdkp->unmap = 0;
+			else
 				sdkp->unmap = 1;
 		}
+
+		if (sdkp->tpvpd && !sdkp->tpu && !sdkp->tpws) {
+			sd_printk(KERN_ERR, sdkp, "Thin provisioning is " \
+				  "enabled but neither TPU, nor TPWS are " \
+				  "set. Disabling discard!\n");
+			goto out;
+		}
+
+		if (lba_count)
+			q->limits.max_discard_sectors =
+				lba_count * sector_sz >> 9;
 
 		granularity = get_unaligned_be32(&buffer[28]);
 
@@ -2082,6 +2092,31 @@ static void sd_read_block_characteristics(struct scsi_disk *sdkp)
 
 	if (rot == 1)
 		queue_flag_set_unlocked(QUEUE_FLAG_NONROT, sdkp->disk->queue);
+
+ out:
+	kfree(buffer);
+}
+
+/**
+ * sd_read_thin_provisioning - Query thin provisioning VPD page
+ * @disk: disk to query
+ */
+static void sd_read_thin_provisioning(struct scsi_disk *sdkp)
+{
+	unsigned char *buffer;
+	const int vpd_len = 8;
+
+	if (sdkp->thin_provisioning == 0)
+		return;
+
+	buffer = kmalloc(vpd_len, GFP_KERNEL);
+
+	if (!buffer || scsi_get_vpd_page(sdkp->device, 0xb2, buffer, vpd_len))
+		goto out;
+
+	sdkp->tpvpd = 1;
+	sdkp->tpu   = (buffer[5] >> 7) & 1;	/* UNMAP */
+	sdkp->tpws  = (buffer[5] >> 6) & 1;	/* WRITE SAME(16) with UNMAP */
 
  out:
 	kfree(buffer);
@@ -2138,6 +2173,7 @@ static int sd_revalidate_disk(struct gendisk *disk)
 		sd_read_capacity(sdkp, buffer);
 
 		if (sd_try_extended_inquiry(sdp)) {
+			sd_read_thin_provisioning(sdkp);
 			sd_read_block_limits(sdkp);
 			sd_read_block_characteristics(sdkp);
 		}
