@@ -336,6 +336,10 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 			map_key_clear(BTN_STYLUS);
 			break;
 
+		case 0x46: /* TabletPick */
+			map_key_clear(BTN_STYLUS2);
+			break;
+
 		default:  goto unknown;
 		}
 		break;
@@ -658,6 +662,9 @@ void hidinput_hid_event(struct hid_device *hid, struct hid_field *field, struct 
 void hidinput_report_event(struct hid_device *hid, struct hid_report *report)
 {
 	struct hid_input *hidinput;
+
+	if (hid->quirks & HID_QUIRK_NO_INPUT_SYNC)
+		return;
 
 	list_for_each_entry(hidinput, &hid->inputs, list)
 		input_sync(hidinput->input);
