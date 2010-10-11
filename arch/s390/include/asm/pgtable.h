@@ -38,6 +38,7 @@
 extern pgd_t swapper_pg_dir[] __attribute__ ((aligned (4096)));
 extern void paging_init(void);
 extern void vmem_map_init(void);
+extern void fault_init(void);
 
 /*
  * The S390 doesn't have any external MMU info: the kernel page
@@ -46,11 +47,27 @@ extern void vmem_map_init(void);
 #define update_mmu_cache(vma, address, ptep)     do { } while (0)
 
 /*
- * ZERO_PAGE is a global shared page that is always zero: used
+ * ZERO_PAGE is a global shared page that is always zero; used
  * for zero-mapped memory areas etc..
  */
-extern char empty_zero_page[PAGE_SIZE];
-#define ZERO_PAGE(vaddr) (virt_to_page(empty_zero_page))
+
+extern unsigned long empty_zero_page;
+extern unsigned long zero_page_mask;
+
+#define ZERO_PAGE(vaddr) \
+	(virt_to_page((void *)(empty_zero_page + \
+	 (((unsigned long)(vaddr)) &zero_page_mask))))
+
+#define is_zero_pfn is_zero_pfn
+static inline int is_zero_pfn(unsigned long pfn)
+{
+	extern unsigned long zero_pfn;
+	unsigned long offset_from_zero_pfn = pfn - zero_pfn;
+	return offset_from_zero_pfn <= (zero_page_mask >> PAGE_SHIFT);
+}
+
+#define my_zero_pfn(addr)	page_to_pfn(ZERO_PAGE(addr))
+
 #endif /* !__ASSEMBLY__ */
 
 /*
@@ -300,6 +317,7 @@ extern unsigned long VMALLOC_START;
 
 /* Bits in the segment table entry */
 #define _SEGMENT_ENTRY_ORIGIN	0x7fffffc0UL	/* page table origin	    */
+#define _SEGMENT_ENTRY_RO	0x200	/* page protection bit		    */
 #define _SEGMENT_ENTRY_INV	0x20	/* invalid segment table entry	    */
 #define _SEGMENT_ENTRY_COMMON	0x10	/* common segment bit		    */
 #define _SEGMENT_ENTRY_PTL	0x0f	/* page table length		    */
@@ -572,7 +590,7 @@ static inline void rcp_unlock(pte_t *ptep)
 }
 
 /* forward declaration for SetPageUptodate in page-flags.h*/
-static inline void page_clear_dirty(struct page *page);
+static inline void page_clear_dirty(struct page *page, int mapped);
 #include <linux/page-flags.h>
 
 static inline void ptep_rcp_copy(pte_t *ptep)
@@ -782,7 +800,7 @@ static inline int kvm_s390_test_and_clear_page_dirty(struct mm_struct *mm,
 	}
 	dirty = test_and_clear_bit_simple(KVM_UD_BIT, pgste);
 	if (skey & _PAGE_CHANGED)
-		page_clear_dirty(page);
+		page_clear_dirty(page, 1);
 	rcp_unlock(ptep);
 	return dirty;
 }
@@ -957,9 +975,9 @@ static inline int page_test_dirty(struct page *page)
 }
 
 #define __HAVE_ARCH_PAGE_CLEAR_DIRTY
-static inline void page_clear_dirty(struct page *page)
+static inline void page_clear_dirty(struct page *page, int mapped)
 {
-	page_set_storage_key(page_to_phys(page), PAGE_DEFAULT_KEY);
+	page_set_storage_key(page_to_phys(page), PAGE_DEFAULT_KEY, mapped);
 }
 
 /*
