@@ -60,6 +60,12 @@ static inline int ext4_begin_ordered_truncate(struct inode *inode,
 }
 
 static void ext4_invalidatepage(struct page *page, unsigned long offset);
+static int noalloc_get_block_write(struct inode *inode, sector_t iblock,
+				   struct buffer_head *bh_result, int create);
+static int ext4_set_bh_endio(struct buffer_head *bh, struct inode *inode);
+static void ext4_end_io_buffer_write(struct buffer_head *bh, int uptodate);
+static int __ext4_journalled_writepage(struct page *page, unsigned int len);
+static int ext4_bh_delay_or_unwritten(handle_t *handle, struct buffer_head *bh);
 
 /*
  * Test whether an inode is a fast symlink.
@@ -1207,8 +1213,10 @@ static pgoff_t ext4_num_dirty_pages(struct inode *inode, pgoff_t idx,
 				break;
 			idx++;
 			num++;
-			if (num >= max_pages)
+			if (num >= max_pages) {
+				done = 1;
 				break;
+			}
 		}
 		pagevec_release(&pvec);
 	}
@@ -1995,14 +2003,19 @@ static void ext4_da_page_release_reservation(struct page *page,
  *
  * As pages are already locked by write_cache_pages(), we can't use it
  */
-static int mpage_da_submit_io(struct mpage_da_data *mpd)
+static int mpage_da_submit_io(struct mpage_da_data *mpd,
+			      struct ext4_map_blocks *map)
 {
-	long pages_skipped;
 	struct pagevec pvec;
 	unsigned long index, end;
 	int ret = 0, err, nr_pages, i;
 	struct inode *inode = mpd->inode;
 	struct address_space *mapping = inode->i_mapping;
+	loff_t size = i_size_read(inode);
+	unsigned int len, block_start;
+	struct buffer_head *bh, *page_bufs = NULL;
+	int journal_data = ext4_should_journal_data(inode);
+	sector_t pblock, cur_logical;
 
 	BUG_ON(mpd->next_page <= mpd->first_page);
 	/*
@@ -2025,23 +2038,85 @@ static int mpage_da_submit_io(struct mpage_da_data *mpd)
 			index = page->index;
 			if (index > end)
 				break;
+			if (map) {
+				cur_logical = index << (PAGE_CACHE_SHIFT -
+							inode->i_blkbits);
+				pblock = map->m_pblk + (cur_logical -
+							map->m_lblk);
+			}
 			index++;
 
 			BUG_ON(!PageLocked(page));
 			BUG_ON(PageWriteback(page));
 
-			pages_skipped = mpd->wbc->pages_skipped;
-			err = mapping->a_ops->writepage(page, mpd->wbc);
-			if (!err && (pages_skipped == mpd->wbc->pages_skipped))
-				/*
-				 * have successfully written the page
-				 * without skipping the same
-				 */
+			if (index == size >> PAGE_CACHE_SHIFT)
+				len = size & ~PAGE_CACHE_MASK;
+			else
+				len = PAGE_CACHE_SIZE;
+
+			/*
+			 * If the page does not have buffers (for
+			 * whatever reason), try to create them using
+			 * block_prepare_write.  If this fails,
+			 * redirty the page and move on.
+			 */
+			if (!page_has_buffers(page) &&
+			    block_prepare_write(page, 0, len,
+						noalloc_get_block_write)) {
+			redirty_page:
+				redirty_page_for_writepage(mpd->wbc, page);
+				unlock_page(page);
+				continue;
+			}
+
+			bh = page_bufs = page_buffers(page);
+			block_start = 0;
+			do {
+				if (!bh)
+					goto redirty_page;
+				if (map && (cur_logical >= map->m_lblk) &&
+				    (cur_logical <= (map->m_lblk +
+						     (map->m_len - 1)))) {
+					if (buffer_delay(bh)) {
+						clear_buffer_delay(bh);
+						bh->b_blocknr = pblock;
+					} 
+					if (buffer_unwritten(bh) || 
+					    buffer_mapped(bh))
+						BUG_ON(bh->b_blocknr != pblock);
+					if (map->m_flags & EXT4_MAP_UNINIT)
+						set_buffer_uninit(bh);
+					clear_buffer_unwritten(bh);
+					cur_logical++;
+					pblock++;
+				}
+						
+				/* redirty page if block allocation undone */
+				if (buffer_delay(bh) || buffer_unwritten(bh))
+					goto redirty_page;
+				bh = bh->b_this_page;
+				block_start += bh->b_size;
+			} while ((bh != page_bufs) && (block_start < len));
+
+			/* mark the buffer_heads as dirty and uptodate */
+			block_commit_write(page, 0, len);
+
+			if (journal_data && PageChecked(page))
+				err = __ext4_journalled_writepage(page, len);
+			else if (buffer_uninit(page_bufs)) {
+				ext4_set_bh_endio(page_bufs, inode);
+				err = block_write_full_page_endio(page,
+					noalloc_get_block_write,
+					mpd->wbc, ext4_end_io_buffer_write);
+			} else
+				err = block_write_full_page(page,
+					    noalloc_get_block_write, mpd->wbc);
+
+			if (!err)
 				mpd->pages_written++;
 			/*
 			 * In error case, we have to continue because
 			 * remaining pages are still locked
-			 * XXX: unlock and re-dirty them?
 			 */
 			if (ret == 0)
 				ret = err;
@@ -2050,91 +2125,6 @@ static int mpage_da_submit_io(struct mpage_da_data *mpd)
 	}
 	return ret;
 }
-
-/*
- * mpage_put_bnr_to_bhs - walk blocks and assign them actual numbers
- *
- * the function goes through all passed space and put actual disk
- * block numbers into buffer heads, dropping BH_Delay and BH_Unwritten
- */
-static void mpage_put_bnr_to_bhs(struct mpage_da_data *mpd,
-				 struct ext4_map_blocks *map)
-{
-	struct inode *inode = mpd->inode;
-	struct address_space *mapping = inode->i_mapping;
-	int blocks = map->m_len;
-	sector_t pblock = map->m_pblk, cur_logical;
-	struct buffer_head *head, *bh;
-	pgoff_t index, end;
-	struct pagevec pvec;
-	int nr_pages, i;
-
-	index = map->m_lblk >> (PAGE_CACHE_SHIFT - inode->i_blkbits);
-	end = (map->m_lblk + blocks - 1) >> (PAGE_CACHE_SHIFT - inode->i_blkbits);
-	cur_logical = index << (PAGE_CACHE_SHIFT - inode->i_blkbits);
-
-	pagevec_init(&pvec, 0);
-
-	while (index <= end) {
-		/* XXX: optimize tail */
-		nr_pages = pagevec_lookup(&pvec, mapping, index, PAGEVEC_SIZE);
-		if (nr_pages == 0)
-			break;
-		for (i = 0; i < nr_pages; i++) {
-			struct page *page = pvec.pages[i];
-
-			index = page->index;
-			if (index > end)
-				break;
-			index++;
-
-			BUG_ON(!PageLocked(page));
-			BUG_ON(PageWriteback(page));
-			BUG_ON(!page_has_buffers(page));
-
-			bh = page_buffers(page);
-			head = bh;
-
-			/* skip blocks out of the range */
-			do {
-				if (cur_logical >= map->m_lblk)
-					break;
-				cur_logical++;
-			} while ((bh = bh->b_this_page) != head);
-
-			do {
-				if (cur_logical >= map->m_lblk + blocks)
-					break;
-
-				if (buffer_delay(bh) || buffer_unwritten(bh)) {
-
-					BUG_ON(bh->b_bdev != inode->i_sb->s_bdev);
-
-					if (buffer_delay(bh)) {
-						clear_buffer_delay(bh);
-						bh->b_blocknr = pblock;
-					} else {
-						/*
-						 * unwritten already should have
-						 * blocknr assigned. Verify that
-						 */
-						clear_buffer_unwritten(bh);
-						BUG_ON(bh->b_blocknr != pblock);
-					}
-
-				} else if (buffer_mapped(bh))
-					BUG_ON(bh->b_blocknr != pblock);
-
-				if (map->m_flags & EXT4_MAP_UNINIT)
-					set_buffer_uninit(bh);
-				cur_logical++;
-				pblock++;
-			} while ((bh = bh->b_this_page) != head);
-		}
-		pagevec_release(&pvec);
-	}
-}
-
 
 static void ext4_da_block_invalidatepages(struct mpage_da_data *mpd,
 					sector_t logical, long blk_cnt)
@@ -2187,35 +2177,32 @@ static void ext4_print_free_blocks(struct inode *inode)
 }
 
 /*
- * mpage_da_map_blocks - go through given space
+ * mpage_da_map_and_submit - go through given space, map them 
+ *       if necessary, and then submit them for I/O
  *
  * @mpd - bh describing space
  *
  * The function skips space we know is already mapped to disk blocks.
  *
  */
-static int mpage_da_map_blocks(struct mpage_da_data *mpd)
+static void mpage_da_map_and_submit(struct mpage_da_data *mpd)
 {
 	int err, blks, get_blocks_flags;
-	struct ext4_map_blocks map;
+	struct ext4_map_blocks map, *mapp = NULL;
 	sector_t next = mpd->b_blocknr;
 	unsigned max_blocks = mpd->b_size >> mpd->inode->i_blkbits;
 	loff_t disksize = EXT4_I(mpd->inode)->i_disksize;
 	handle_t *handle = NULL;
 
 	/*
-	 * We consider only non-mapped and non-allocated blocks
+	 * If the blocks are mapped already, or we couldn't accumulate
+	 * any blocks, then proceed immediately to the submission stage.
 	 */
-	if ((mpd->b_state  & (1 << BH_Mapped)) &&
-		!(mpd->b_state & (1 << BH_Delay)) &&
-		!(mpd->b_state & (1 << BH_Unwritten)))
-		return 0;
-
-	/*
-	 * If we didn't accumulate anything to write simply return
-	 */
-	if (!mpd->b_size)
-		return 0;
+	if ((mpd->b_size == 0) ||
+	    ((mpd->b_state  & (1 << BH_Mapped)) &&
+	     !(mpd->b_state & (1 << BH_Delay)) &&
+	     !(mpd->b_state & (1 << BH_Unwritten))))
+		goto submit_io;
 
 	handle = ext4_journal_current_handle();
 	BUG_ON(!handle);
@@ -2252,17 +2239,18 @@ static int mpage_da_map_blocks(struct mpage_da_data *mpd)
 
 		err = blks;
 		/*
-		 * If get block returns with error we simply
-		 * return. Later writepage will redirty the page and
-		 * writepages will find the dirty page again
+		 * If get block returns EAGAIN or ENOSPC and there
+		 * appears to be free blocks we will call
+		 * ext4_writepage() for all of the pages which will
+		 * just redirty the pages.
 		 */
 		if (err == -EAGAIN)
-			return 0;
+			goto submit_io;
 
 		if (err == -ENOSPC &&
 		    ext4_count_free_blocks(sb)) {
 			mpd->retval = err;
-			return 0;
+			goto submit_io;
 		}
 
 		/*
@@ -2287,10 +2275,11 @@ static int mpage_da_map_blocks(struct mpage_da_data *mpd)
 		/* invalidate all the pages */
 		ext4_da_block_invalidatepages(mpd, next,
 				mpd->b_size >> mpd->inode->i_blkbits);
-		return err;
+		return;
 	}
 	BUG_ON(blks == 0);
 
+	mapp = &map;
 	if (map.m_flags & EXT4_MAP_NEW) {
 		struct block_device *bdev = mpd->inode->i_sb->s_bdev;
 		int i;
@@ -2299,18 +2288,11 @@ static int mpage_da_map_blocks(struct mpage_da_data *mpd)
 			unmap_underlying_metadata(bdev, map.m_pblk + i);
 	}
 
-	/*
-	 * If blocks are delayed marked, we need to
-	 * put actual blocknr and drop delayed bit
-	 */
-	if ((mpd->b_state & (1 << BH_Delay)) ||
-	    (mpd->b_state & (1 << BH_Unwritten)))
-		mpage_put_bnr_to_bhs(mpd, &map);
-
 	if (ext4_should_order_data(mpd->inode)) {
 		err = ext4_jbd2_file_inode(handle, mpd->inode);
 		if (err)
-			return err;
+			/* This only happens if the journal is aborted */
+			return;
 	}
 
 	/*
@@ -2321,10 +2303,13 @@ static int mpage_da_map_blocks(struct mpage_da_data *mpd)
 		disksize = i_size_read(mpd->inode);
 	if (disksize > EXT4_I(mpd->inode)->i_disksize) {
 		ext4_update_i_disksize(mpd->inode, disksize);
-		return ext4_mark_inode_dirty(handle, mpd->inode);
+		err = ext4_mark_inode_dirty(handle, mpd->inode);
+		/* XXX not sure what our error handling straegy is here */
 	}
 
-	return 0;
+submit_io:
+	mpage_da_submit_io(mpd, mapp);
+	mpd->io_done = 1;
 }
 
 #define BH_FLAGS ((1 << BH_Uptodate) | (1 << BH_Mapped) | \
@@ -2401,9 +2386,7 @@ flush_it:
 	 * We couldn't merge the block to our extent, so we
 	 * need to flush current  extent and start new one
 	 */
-	if (mpage_da_map_blocks(mpd) == 0)
-		mpage_da_submit_io(mpd);
-	mpd->io_done = 1;
+	mpage_da_map_and_submit(mpd);
 	return;
 }
 
@@ -2435,15 +2418,13 @@ static int __mpage_da_writepage(struct page *page,
 	if (mpd->next_page != page->index) {
 		/*
 		 * Nope, we can't. So, we map non-allocated blocks
-		 * and start IO on them using writepage()
+		 * and start IO on them
 		 */
 		if (mpd->next_page != mpd->first_page) {
-			if (mpage_da_map_blocks(mpd) == 0)
-				mpage_da_submit_io(mpd);
+			mpage_da_map_and_submit(mpd);
 			/*
 			 * skip rest of the page in the page_vec
 			 */
-			mpd->io_done = 1;
 			redirty_page_for_writepage(wbc, page);
 			unlock_page(page);
 			return MPAGE_DA_EXTENT_TAIL;
@@ -2623,6 +2604,7 @@ static int __ext4_journalled_writepage(struct page *page,
 	int ret = 0;
 	int err;
 
+	ClearPageChecked(page);
 	page_bufs = page_buffers(page);
 	BUG_ON(!page_bufs);
 	walk_page_buffers(handle, page_bufs, 0, len, NULL, bget_one);
@@ -2713,71 +2695,43 @@ static int ext4_writepage(struct page *page,
 	else
 		len = PAGE_CACHE_SIZE;
 
-	if (page_has_buffers(page)) {
-		page_bufs = page_buffers(page);
-		if (walk_page_buffers(NULL, page_bufs, 0, len, NULL,
-					ext4_bh_delay_or_unwritten)) {
-			/*
-			 * We don't want to do  block allocation
-			 * So redirty the page and return
-			 * We may reach here when we do a journal commit
-			 * via journal_submit_inode_data_buffers.
-			 * If we don't have mapping block we just ignore
-			 * them. We can also reach here via shrink_page_list
-			 */
-			redirty_page_for_writepage(wbc, page);
-			unlock_page(page);
-			return 0;
-		}
-	} else {
+	/*
+	 * If the page does not have buffers (for whatever reason),
+	 * try to create them using block_prepare_write.  If this
+	 * fails, redirty the page and move on.
+	 */
+	if (!page_has_buffers(page) &&
+	    block_prepare_write(page, 0, len, noalloc_get_block_write)) {
+	redirty_page:
+		redirty_page_for_writepage(wbc, page);
+		unlock_page(page);
+		return 0;
+	}
+	page_bufs = page_buffers(page);
+	if (walk_page_buffers(NULL, page_bufs, 0, len, NULL,
+			      ext4_bh_delay_or_unwritten)) {
 		/*
-		 * The test for page_has_buffers() is subtle:
-		 * We know the page is dirty but it lost buffers. That means
-		 * that at some moment in time after write_begin()/write_end()
-		 * has been called all buffers have been clean and thus they
-		 * must have been written at least once. So they are all
-		 * mapped and we can happily proceed with mapping them
-		 * and writing the page.
-		 *
-		 * Try to initialize the buffer_heads and check whether
-		 * all are mapped and non delay. We don't want to
-		 * do block allocation here.
+		 * We don't want to do block allocation So redirty the
+		 * page and return We may reach here when we do a
+		 * journal commit via
+		 * journal_submit_inode_data_buffers.  If we don't
+		 * have mapping block we just ignore them. We can also
+		 * reach here via shrink_page_list
 		 */
-		ret = block_prepare_write(page, 0, len,
-					  noalloc_get_block_write);
-		if (!ret) {
-			page_bufs = page_buffers(page);
-			/* check whether all are mapped and non delay */
-			if (walk_page_buffers(NULL, page_bufs, 0, len, NULL,
-						ext4_bh_delay_or_unwritten)) {
-				redirty_page_for_writepage(wbc, page);
-				unlock_page(page);
-				return 0;
-			}
-		} else {
-			/*
-			 * We can't do block allocation here
-			 * so just redity the page and unlock
-			 * and return
-			 */
-			redirty_page_for_writepage(wbc, page);
-			unlock_page(page);
-			return 0;
-		}
-		/* now mark the buffer_heads as dirty and uptodate */
-		block_commit_write(page, 0, len);
+		goto redirty_page;
 	}
 
-	if (PageChecked(page) && ext4_should_journal_data(inode)) {
+	/* now mark the buffer_heads as dirty and uptodate */
+	block_commit_write(page, 0, len);
+
+	if (PageChecked(page) && ext4_should_journal_data(inode))
 		/*
 		 * It's mmapped pagecache.  Add buffers and journal it.  There
 		 * doesn't seem much point in redirtying the page here.
 		 */
-		ClearPageChecked(page);
 		return __ext4_journalled_writepage(page, len);
-	}
 
-	if (page_bufs && buffer_uninit(page_bufs)) {
+	if (buffer_uninit(page_bufs)) {
 		ext4_set_bh_endio(page_bufs, inode);
 		ret = block_write_full_page_endio(page, noalloc_get_block_write,
 					    wbc, ext4_end_io_buffer_write);
@@ -3002,9 +2956,12 @@ static int ext4_da_writepages(struct address_space *mapping,
 	 * sbi->max_writeback_mb_bump whichever is smaller.
 	 */
 	max_pages = sbi->s_max_writeback_mb_bump << (20 - PAGE_CACHE_SHIFT);
-	if (!range_cyclic && range_whole)
-		desired_nr_to_write = wbc->nr_to_write * 8;
-	else
+	if (!range_cyclic && range_whole) {
+		if (wbc->nr_to_write == LONG_MAX)
+			desired_nr_to_write = wbc->nr_to_write;
+		else
+			desired_nr_to_write = wbc->nr_to_write * 8;
+	} else
 		desired_nr_to_write = ext4_num_dirty_pages(inode, index,
 							   max_pages);
 	if (desired_nr_to_write > max_pages)
@@ -3066,9 +3023,7 @@ retry:
 		 * them for I/O.
 		 */
 		if (!mpd.io_done && mpd.next_page != mpd.first_page) {
-			if (mpage_da_map_blocks(&mpd) == 0)
-				mpage_da_submit_io(&mpd);
-			mpd.io_done = 1;
+			mpage_da_map_and_submit(&mpd);
 			ret = MPAGE_DA_EXTENT_TAIL;
 		}
 		trace_ext4_da_write_pages(inode, &mpd);
@@ -3845,14 +3800,14 @@ out:
 	}
 	wq = EXT4_SB(io_end->inode->i_sb)->dio_unwritten_wq;
 
-	/* queue the work to convert unwritten extents to written */
-	queue_work(wq, &io_end->work);
-
 	/* Add the io_end to per-inode completed aio dio list*/
 	ei = EXT4_I(io_end->inode);
 	spin_lock_irqsave(&ei->i_completed_io_lock, flags);
 	list_add_tail(&io_end->list, &ei->i_completed_io_list);
 	spin_unlock_irqrestore(&ei->i_completed_io_lock, flags);
+
+	/* queue the work to convert unwritten extents to written */
+	queue_work(wq, &io_end->work);
 	iocb->private = NULL;
 }
 
