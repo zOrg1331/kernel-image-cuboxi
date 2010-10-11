@@ -9,15 +9,38 @@
  *
  */
 
+#include <asm/mmu.h>
 #include <asm/reg.h>
 #include <asm/ppc_asm.h>
 
 	.text
 
+#ifdef CONFIG_PPC_47x
+
+#define LOAD_CLEAR_CCR2_DSTI(REG1, REG2)	\
+BEGIN_MMU_FTR_SECTION				\
+	mfspr REG1,SPRN_CCR2_476;		\
+	rlwinm	REG2,REG1,0,~CCR2_476_DSTI;	\
+	mtspr	SPRN_CCR2_476,REG2;		\
+END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_47x)
+
+#define RESTORE_CCR2_DSTI(REG)			\
+BEGIN_MMU_FTR_SECTION				\
+	mtspr	SPRN_CCR2_476,REG;		\
+END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_47x)
+
+#else	/* CONFIG_PPC_47x */
+
+#define LOAD_CLEAR_CCR2_DSTI(REG1, REG2)
+#define RESTORE_CCR2_DSTI(REG)
+
+#endif	/* CONFIG_PPC_47x */
+
 /*
  * Do an IO access in AS1
  */
 _GLOBAL(as1_readb)
+	LOAD_CLEAR_CCR2_DSTI(r8, r9)
 	mfmsr	r7
 	ori	r0,r7,MSR_DS
 	sync
@@ -29,9 +52,11 @@ _GLOBAL(as1_readb)
 	mtmsr	r7
 	sync
 	isync
+	RESTORE_CCR2_DSTI(r8)
 	blr
 
 _GLOBAL(as1_writeb)
+	LOAD_CLEAR_CCR2_DSTI(r8, r9)
 	mfmsr	r7
 	ori	r0,r7,MSR_DS
 	sync
@@ -43,4 +68,5 @@ _GLOBAL(as1_writeb)
 	mtmsr	r7
 	sync
 	isync
+	RESTORE_CCR2_DSTI(r8)
 	blr

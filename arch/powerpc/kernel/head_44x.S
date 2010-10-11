@@ -38,6 +38,7 @@
 #include <asm/ppc_asm.h>
 #include <asm/asm-offsets.h>
 #include <asm/synch.h>
+#include <asm/bug.h>
 #include "head_booke.h"
 
 
@@ -703,7 +704,22 @@ _GLOBAL(set_context)
 	stw	r4, 0x4(r5)
 #endif
 	mtspr	SPRN_PID,r3
+BEGIN_MMU_FTR_SECTION
+	b	1f
+END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_47x)
 	isync			/* Force context change */
+	blr
+1:
+#ifdef CONFIG_PPC_47x
+	mfspr	r10,SPRN_CCR2_476
+	rlwinm	r11,r10,0,~CCR2_476_DSTI
+	mtspr	SPRN_CCR2_476,r11
+	isync			/* Force context change */
+	mtspr	SPRN_CCR2_476,r10
+#else /* CONFIG_PPC_47x */
+2:	trap
+	EMIT_BUG_ENTRY 2b,__FILE__,__LINE__,0;
+#endif /* CONFIG_PPC_47x */
 	blr
 
 /*
@@ -860,6 +876,15 @@ skpinv:	addi	r4,r4,1				/* Increment */
 	/* Force context change */
 	isync
 #endif /* CONFIG_PPC_EARLY_DEBUG_44x */
+
+BEGIN_MMU_FTR_SECTION
+	mfspr   r3,SPRN_CCR2_476
+	/* With CCR2(DSTI) set, isync does not invalidate the shadow TLB */
+	oris	r3,r3,CCR2_476_DSTI@h
+	rlwinm	r3,r3,0,~CCR2_476_DSTI
+	mtspr   SPRN_CCR2_476,r3
+	isync
+END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_47x)
 
 	/* Establish the interrupt vector offsets */
 	SET_IVOR(0,  CriticalInput);
