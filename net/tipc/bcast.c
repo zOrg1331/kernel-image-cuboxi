@@ -143,6 +143,19 @@ static void bcbuf_decr_acks(struct sk_buff *buf)
 }
 
 
+static void bclink_set_last_sent(void)
+{
+	if (bcl->next_out)
+		bcl->fsm_msg_cnt = mod(buf_seqno(bcl->next_out) - 1);
+	else
+		bcl->fsm_msg_cnt = mod(bcl->next_out_no - 1);
+}
+
+u32 tipc_bclink_get_last_sent(void)
+{
+	return bcl->fsm_msg_cnt;
+}
+
 /**
  * bclink_set_gap - set gap according to contents of current deferred pkt queue
  *
@@ -171,7 +184,7 @@ static void bclink_set_gap(struct tipc_node *n_ptr)
 
 static int bclink_ack_allowed(u32 n)
 {
-	return((n % TIPC_MIN_LINK_WIN) == tipc_own_tag);
+	return (n % TIPC_MIN_LINK_WIN) == tipc_own_tag;
 }
 
 
@@ -237,8 +250,10 @@ void tipc_bclink_acknowledge(struct tipc_node *n_ptr, u32 acked)
 
 	/* Try resolving broadcast link congestion, if necessary */
 
-	if (unlikely(bcl->next_out))
+	if (unlikely(bcl->next_out)) {
 		tipc_link_push_queue(bcl);
+		bclink_set_last_sent();
+	}
 	if (unlikely(released && !list_empty(&bcl->waiting_ports)))
 		tipc_link_wakeup_ports(bcl, 0);
 	spin_unlock_bh(&bc_lock);
@@ -395,7 +410,7 @@ int tipc_bclink_send_msg(struct sk_buff *buf)
 	if (unlikely(res == -ELINKCONG))
 		buf_discard(buf);
 	else
-		bcl->stats.sent_info++;
+		bclink_set_last_sent();
 
 	if (bcl->out_queue_size > bcl->stats.max_queue_sz)
 		bcl->stats.max_queue_sz = bcl->out_queue_size;
@@ -529,15 +544,6 @@ receive:
 	tipc_node_unlock(node);
 }
 
-u32 tipc_bclink_get_last_sent(void)
-{
-	u32 last_sent = mod(bcl->next_out_no - 1);
-
-	if (bcl->next_out)
-		last_sent = mod(buf_seqno(bcl->next_out) - 1);
-	return last_sent;
-}
-
 u32 tipc_bclink_acks_missing(struct tipc_node *n_ptr)
 {
 	return (n_ptr->bclink.supported &&
@@ -570,6 +576,7 @@ static int tipc_bcbearer_send(struct sk_buff *buf,
 		msg = buf_msg(buf);
 		msg_set_non_seq(msg, 1);
 		msg_set_mc_netid(msg, tipc_net_id);
+		bcl->stats.sent_info++;
 	}
 
 	/* Send buffer over bearers until all targets reached */
@@ -609,11 +616,13 @@ static int tipc_bcbearer_send(struct sk_buff *buf,
 		bcbearer->remains = bcbearer->remains_new;
 	}
 
-	/* Unable to reach all targets */
+	/*
+	 * Unable to reach all targets (indicate success, since currently
+	 * there isn't code in place to properly block & unblock the
+	 * pseudo-bearer used by the broadcast link)
+	 */
 
-	bcbearer->bearer.publ.blocked = 1;
-	bcl->stats.bearer_congs++;
-	return 1;
+	return TIPC_OK;
 }
 
 /**

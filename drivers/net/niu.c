@@ -283,7 +283,7 @@ static int niu_enable_interrupts(struct niu *np, int on)
 
 static u32 phy_encode(u32 type, int port)
 {
-	return (type << (port * 2));
+	return type << (port * 2);
 }
 
 static u32 phy_decode(u32 val, int port)
@@ -3043,8 +3043,7 @@ static int tcam_flush_all(struct niu *np)
 
 static u64 hash_addr_regval(unsigned long index, unsigned long num_entries)
 {
-	return ((u64)index | (num_entries == 1 ?
-			      HASH_TBL_ADDR_AUTOINC : 0));
+	return (u64)index | (num_entries == 1 ? HASH_TBL_ADDR_AUTOINC : 0);
 }
 
 #if 0
@@ -3276,7 +3275,7 @@ static u16 tcam_get_index(struct niu *np, u16 idx)
 	/* One entry reserved for IP fragment rule */
 	if (idx >= (np->clas.tcam_sz - 1))
 		idx = 0;
-	return (np->clas.tcam_top + ((idx+1) * np->parent->num_ports));
+	return np->clas.tcam_top + ((idx+1) * np->parent->num_ports);
 }
 
 static u16 tcam_get_size(struct niu *np)
@@ -3313,7 +3312,7 @@ static unsigned int niu_hash_rxaddr(struct rx_ring_info *rp, u64 a)
 	a >>= PAGE_SHIFT;
 	a ^= (a >> ilog2(MAX_RBR_RING_SIZE));
 
-	return (a & (MAX_RBR_RING_SIZE - 1));
+	return a & (MAX_RBR_RING_SIZE - 1);
 }
 
 static struct page *niu_find_rxpage(struct rx_ring_info *rp, u64 addr,
@@ -3484,7 +3483,7 @@ static int niu_process_rx_pkt(struct napi_struct *napi, struct niu *np,
 				     RCR_ENTRY_ERROR)))
 				skb->ip_summed = CHECKSUM_UNNECESSARY;
 			else
-				skb->ip_summed = CHECKSUM_NONE;
+				skb_checksum_none_assert(skb);
 		} else if (!(val & RCR_ENTRY_MULTI))
 			append_size = len - skb->len;
 
@@ -4502,9 +4501,10 @@ static int niu_alloc_channels(struct niu *np)
 	np->num_rx_rings = parent->rxchan_per_port[port];
 	np->num_tx_rings = parent->txchan_per_port[port];
 
-	np->dev->real_num_tx_queues = np->num_tx_rings;
+	netif_set_real_num_rx_queues(np->dev, np->num_rx_rings);
+	netif_set_real_num_tx_queues(np->dev, np->num_tx_rings);
 
-	np->rx_rings = kzalloc(np->num_rx_rings * sizeof(struct rx_ring_info),
+	np->rx_rings = kcalloc(np->num_rx_rings, sizeof(struct rx_ring_info),
 			       GFP_KERNEL);
 	err = -ENOMEM;
 	if (!np->rx_rings)
@@ -4538,7 +4538,7 @@ static int niu_alloc_channels(struct niu *np)
 			return err;
 	}
 
-	np->tx_rings = kzalloc(np->num_tx_rings * sizeof(struct tx_ring_info),
+	np->tx_rings = kcalloc(np->num_tx_rings, sizeof(struct tx_ring_info),
 			       GFP_KERNEL);
 	err = -ENOMEM;
 	if (!np->tx_rings)
@@ -7462,9 +7462,11 @@ static int niu_add_ethtool_tcam_entry(struct niu *np,
 	if (fsp->flow_type == IP_USER_FLOW) {
 		int i;
 		int add_usr_cls = 0;
-		int ipv6 = 0;
 		struct ethtool_usrip4_spec *uspec = &fsp->h_u.usr_ip4_spec;
 		struct ethtool_usrip4_spec *umask = &fsp->m_u.usr_ip4_spec;
+
+		if (uspec->ip_ver != ETH_RX_NFC_IP4)
+			return -EINVAL;
 
 		niu_lock_parent(np, flags);
 
@@ -7494,9 +7496,7 @@ static int niu_add_ethtool_tcam_entry(struct niu *np,
 				default:
 					break;
 				}
-				if (uspec->ip_ver == ETH_RX_NFC_IP6)
-					ipv6 = 1;
-				ret = tcam_user_ip_class_set(np, class, ipv6,
+				ret = tcam_user_ip_class_set(np, class, 0,
 							     uspec->proto,
 							     uspec->tos,
 							     umask->tos);
@@ -7553,16 +7553,7 @@ static int niu_add_ethtool_tcam_entry(struct niu *np,
 		ret = -EINVAL;
 		goto out;
 	case IP_USER_FLOW:
-		if (fsp->h_u.usr_ip4_spec.ip_ver == ETH_RX_NFC_IP4) {
-			niu_get_tcamkey_from_ip4fs(fsp, tp, l2_rdc_table,
-						   class);
-		} else {
-			/* Not yet implemented */
-			netdev_info(np->dev, "niu%d: In %s(): usr flow for IPv6 not implemented\n",
-				    parent->index, __func__);
-			ret = -EINVAL;
-			goto out;
-		}
+		niu_get_tcamkey_from_ip4fs(fsp, tp, l2_rdc_table, class);
 		break;
 	default:
 		netdev_info(np->dev, "niu%d: In %s(): Unknown flow type %d\n",
@@ -7805,11 +7796,11 @@ static int niu_get_sset_count(struct net_device *dev, int stringset)
 	if (stringset != ETH_SS_STATS)
 		return -EINVAL;
 
-	return ((np->flags & NIU_FLAGS_XMAC ?
+	return (np->flags & NIU_FLAGS_XMAC ?
 		 NUM_XMAC_STAT_KEYS :
 		 NUM_BMAC_STAT_KEYS) +
 		(np->num_rx_rings * NUM_RXCHAN_STAT_KEYS) +
-		(np->num_tx_rings * NUM_TXCHAN_STAT_KEYS));
+		(np->num_tx_rings * NUM_TXCHAN_STAT_KEYS);
 }
 
 static void niu_get_ethtool_stats(struct net_device *dev,
