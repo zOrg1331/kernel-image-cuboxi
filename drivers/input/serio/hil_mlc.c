@@ -1010,5 +1010,8 @@ static void __exit hil_mlc_exit(void)
 	tasklet_kill(&hil_mlcs_tasklet);
 }
 
+
+MODULE_DEVICE_TABLE(serio, hil_mlc_serio_id);
+
 module_init(hil_mlc_init);
 module_exit(hil_mlc_exit);
