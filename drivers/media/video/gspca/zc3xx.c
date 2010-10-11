@@ -21,9 +21,7 @@
 
 #define MODULE_NAME "zc3xx"
 
-#ifdef CONFIG_INPUT
 #include <linux/input.h>
-#endif
 #include "gspca.h"
 #include "jpeg.h"
 
@@ -5698,7 +5696,7 @@ static u8 reg_r_i(struct gspca_dev *gspca_dev,
 			index, gspca_dev->usb_buf, 1,
 			500);
 	if (ret < 0) {
-		PDEBUG(D_ERR, "reg_r_i err %d", ret);
+		err("reg_r_i err %d", ret);
 		gspca_dev->usb_err = ret;
 		return 0;
 	}
@@ -5730,7 +5728,7 @@ static void reg_w_i(struct gspca_dev *gspca_dev,
 			value, index, NULL, 0,
 			500);
 	if (ret < 0) {
-		PDEBUG(D_ERR, "reg_w_i err %d", ret);
+		err("reg_w_i err %d", ret);
 		gspca_dev->usb_err = ret;
 	}
 }
@@ -6503,8 +6501,7 @@ static int sd_init(struct gspca_dev *gspca_dev)
 				PDEBUG(D_PROBE, "Sensor Tas5130 (VF0250)");
 				break;
 			default:
-				PDEBUG(D_PROBE,
-					"Unknown sensor - set to TAS5130C");
+				warn("Unknown sensor - set to TAS5130C");
 				sd->sensor = SENSOR_TAS5130C;
 			}
 			break;
@@ -6610,7 +6607,7 @@ static int sd_init(struct gspca_dev *gspca_dev)
 			sd->sensor = SENSOR_OV7620;	/* same sensor (?) */
 			break;
 		default:
-			PDEBUG(D_ERR|D_PROBE, "Unknown sensor %04x", sensor);
+			err("Unknown sensor %04x", sensor);
 			return -EINVAL;
 		}
 	}
@@ -7007,7 +7004,7 @@ static int sd_get_jcomp(struct gspca_dev *gspca_dev,
 	return 0;
 }
 
-#ifdef CONFIG_INPUT
+#if defined(CONFIG_INPUT) || defined(CONFIG_INPUT_MODULE)
 static int sd_int_pkt_scan(struct gspca_dev *gspca_dev,
 			u8 *data,		/* interrupt packet data */
 			int len)		/* interrput packet length */
@@ -7035,7 +7032,7 @@ static const struct sd_desc sd_desc = {
 	.querymenu = sd_querymenu,
 	.get_jcomp = sd_get_jcomp,
 	.set_jcomp = sd_set_jcomp,
-#ifdef CONFIG_INPUT
+#if defined(CONFIG_INPUT) || defined(CONFIG_INPUT_MODULE)
 	.int_pkt_scan = sd_int_pkt_scan,
 #endif
 };
@@ -7120,18 +7117,12 @@ static struct usb_driver sd_driver = {
 
 static int __init sd_mod_init(void)
 {
-	int ret;
-	ret = usb_register(&sd_driver);
-	if (ret < 0)
-		return ret;
-	PDEBUG(D_PROBE, "registered");
-	return 0;
+	return usb_register(&sd_driver);
 }
 
 static void __exit sd_mod_exit(void)
 {
 	usb_deregister(&sd_driver);
-	PDEBUG(D_PROBE, "deregistered");
 }
 
 module_init(sd_mod_init);

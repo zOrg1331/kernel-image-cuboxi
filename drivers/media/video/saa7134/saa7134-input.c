@@ -429,7 +429,7 @@ static void saa7134_input_timer(unsigned long data)
 	mod_timer(&ir->timer, jiffies + msecs_to_jiffies(ir->polling));
 }
 
-void ir_raw_decode_timer_end(unsigned long data)
+static void ir_raw_decode_timer_end(unsigned long data)
 {
 	struct saa7134_dev *dev = (struct saa7134_dev *)data;
 	struct card_ir *ir = dev->remote;
@@ -550,7 +550,7 @@ static void saa7134_ir_close(void *priv)
 }
 
 
-int saa7134_ir_change_protocol(void *priv, u64 ir_type)
+static int saa7134_ir_change_protocol(void *priv, u64 ir_type)
 {
 	struct saa7134_dev *dev = priv;
 	struct card_ir *ir = dev->remote;
@@ -959,6 +959,11 @@ void saa7134_probe_i2c_ir(struct saa7134_dev *dev)
 		dev->init_data.name = "MSI TV@nywhere Plus";
 		dev->init_data.get_key = get_key_msi_tvanywhere_plus;
 		dev->init_data.ir_codes = RC_MAP_MSI_TVANYWHERE_PLUS;
+		/*
+		 * MSI TV@nyware Plus requires more frequent polling
+		 * otherwise it will miss some keypresses
+		 */
+		dev->init_data.polling_interval = 50;
 		info.addr = 0x30;
 		/* MSI TV@nywhere Plus controller doesn't seem to
 		   respond to probes unless we read something from
