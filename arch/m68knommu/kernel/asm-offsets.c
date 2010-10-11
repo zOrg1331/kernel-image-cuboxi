@@ -68,8 +68,6 @@ int main(void)
 
 	DEFINE(PT_PTRACED, PT_PTRACED);
 
-	DEFINE(THREAD_SIZE, THREAD_SIZE);
-
 	/* Offsets in thread_info structure */
 	DEFINE(TI_FLAGS, offsetof(struct thread_info, flags));
 	DEFINE(TI_PREEMPTCOUNT, offsetof(struct thread_info, preempt_count));
