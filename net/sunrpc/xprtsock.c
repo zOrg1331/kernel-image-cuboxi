@@ -774,8 +774,7 @@ static void xs_destroy(struct rpc_xprt *xprt)
 
 	xs_close(xprt);
 	xs_free_peer_addresses(xprt);
-	kfree(xprt->slot);
-	kfree(xprt);
+	xprt_free(xprt);
 	module_put(THIS_MODULE);
 }
 
@@ -1681,7 +1680,7 @@ static void xs_udp_connect_worker4(struct work_struct *work)
 	/* Start by resetting any existing state */
 	xs_reset_transport(transport);
 
-	err = sock_create_kern(PF_INET, SOCK_DGRAM, IPPROTO_UDP, &sock);
+	err = __sock_create(xprt->xprt_net, PF_INET, SOCK_DGRAM, IPPROTO_UDP, &sock, 1);
 	if (err < 0) {
 		dprintk("RPC:       can't create UDP transport socket (%d).\n", -err);
 		goto out;
@@ -1726,7 +1725,7 @@ static void xs_udp_connect_worker6(struct work_struct *work)
 	/* Start by resetting any existing state */
 	xs_reset_transport(transport);
 
-	err = sock_create_kern(PF_INET6, SOCK_DGRAM, IPPROTO_UDP, &sock);
+	err = __sock_create(xprt->xprt_net, PF_INET6, SOCK_DGRAM, IPPROTO_UDP, &sock, 1);
 	if (err < 0) {
 		dprintk("RPC:       can't create UDP transport socket (%d).\n", -err);
 		goto out;
@@ -1932,7 +1931,7 @@ static struct socket *xs_create_tcp_sock4(struct rpc_xprt *xprt,
 	int err;
 
 	/* start from scratch */
-	err = sock_create_kern(PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock);
+	err = __sock_create(xprt->xprt_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, &sock, 1);
 	if (err < 0) {
 		dprintk("RPC:       can't create TCP transport socket (%d).\n",
 				-err);
@@ -1971,7 +1970,7 @@ static struct socket *xs_create_tcp_sock6(struct rpc_xprt *xprt,
 	int err;
 
 	/* start from scratch */
-	err = sock_create_kern(PF_INET6, SOCK_STREAM, IPPROTO_TCP, &sock);
+	err = __sock_create(xprt->xprt_net, PF_INET6, SOCK_STREAM, IPPROTO_TCP, &sock, 1);
 	if (err < 0) {
 		dprintk("RPC:       can't create TCP transport socket (%d).\n",
 				-err);
@@ -2273,23 +2272,14 @@ static struct rpc_xprt *xs_setup_xprt(struct xprt_create *args,
 		return ERR_PTR(-EBADF);
 	}
 
-	new = kzalloc(sizeof(*new), GFP_KERNEL);
-	if (new == NULL) {
+	xprt = xprt_alloc(args->net, sizeof(*new), slot_table_size);
+	if (xprt == NULL) {
 		dprintk("RPC:       xs_setup_xprt: couldn't allocate "
 				"rpc_xprt\n");
 		return ERR_PTR(-ENOMEM);
 	}
-	xprt = &new->xprt;
 
-	xprt->max_reqs = slot_table_size;
-	xprt->slot = kcalloc(xprt->max_reqs, sizeof(struct rpc_rqst), GFP_KERNEL);
-	if (xprt->slot == NULL) {
-		kfree(xprt);
-		dprintk("RPC:       xs_setup_xprt: couldn't allocate slot "
-				"table\n");
-		return ERR_PTR(-ENOMEM);
-	}
-
+	new = container_of(xprt, struct sock_xprt, xprt);
 	memcpy(&xprt->addr, args->dstaddr, args->addrlen);
 	xprt->addrlen = args->addrlen;
 	if (args->srcaddr)
@@ -2371,8 +2361,7 @@ static struct rpc_xprt *xs_setup_udp(struct xprt_create *args)
 		return xprt;
 	ret = ERR_PTR(-EINVAL);
 out_err:
-	kfree(xprt->slot);
-	kfree(xprt);
+	xprt_free(xprt);
 	return ret;
 }
 
@@ -2447,8 +2436,7 @@ static struct rpc_xprt *xs_setup_tcp(struct xprt_create *args)
 		return xprt;
 	ret = ERR_PTR(-EINVAL);
 out_err:
-	kfree(xprt->slot);
-	kfree(xprt);
+	xprt_free(xprt);
 	return ret;
 }
 
@@ -2528,8 +2516,7 @@ static struct rpc_xprt *xs_setup_bc_tcp(struct xprt_create *args)
 		return xprt;
 	ret = ERR_PTR(-EINVAL);
 out_err:
-	kfree(xprt->slot);
-	kfree(xprt);
+	xprt_free(xprt);
 	return ret;
 }
 
