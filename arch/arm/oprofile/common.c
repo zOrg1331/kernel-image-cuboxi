@@ -89,28 +89,28 @@ static void op_perf_setup(void)
 
 static int op_create_counter(int cpu, int event)
 {
-	int ret = 0;
 	struct perf_event *pevent;
 
-	if (!counter_config[event].enabled || (perf_events[cpu][event] != NULL))
-		return ret;
+	if (!counter_config[event].enabled || perf_events[cpu][event])
+		return 0;
 
 	pevent = perf_event_create_kernel_counter(&counter_config[event].attr,
 						  cpu, NULL,
 						  op_overflow_handler);
 
-	if (IS_ERR(pevent)) {
-		ret = PTR_ERR(pevent);
-	} else if (pevent->state != PERF_EVENT_STATE_ACTIVE) {
+	if (IS_ERR(pevent))
+		return PTR_ERR(pevent);
+
+	if (pevent->state != PERF_EVENT_STATE_ACTIVE) {
 		perf_event_release_kernel(pevent);
 		pr_warning("oprofile: failed to enable event %d "
 				"on CPU %d\n", event, cpu);
-		ret = -EBUSY;
-	} else {
-		perf_events[cpu][event] = pevent;
+		return -EBUSY;
 	}
 
-	return ret;
+	perf_events[cpu][event] = pevent;
+
+	return 0;
 }
 
 static void op_destroy_counter(int cpu, int event)
@@ -135,11 +135,10 @@ static int op_perf_start(void)
 		for (event = 0; event < perf_num_counters; ++event) {
 			ret = op_create_counter(cpu, event);
 			if (ret)
-				goto out;
+				return ret;
 		}
 	}
 
-out:
 	return ret;
 }
 
@@ -263,7 +262,7 @@ static int __init init_driverfs(void)
 
 	ret = platform_driver_register(&oprofile_driver);
 	if (ret)
-		goto out;
+		return ret;
 
 	oprofile_pdev =	platform_device_register_simple(
 				oprofile_driver.driver.name, 0, NULL, 0);
@@ -272,11 +271,10 @@ static int __init init_driverfs(void)
 		platform_driver_unregister(&oprofile_driver);
 	}
 
-out:
 	return ret;
 }
 
-static void  exit_driverfs(void)
+static void __exit exit_driverfs(void)
 {
 	platform_device_unregister(oprofile_pdev);
 	platform_driver_unregister(&oprofile_driver);
@@ -348,9 +346,34 @@ static void arm_backtrace(struct pt_regs * const regs, unsigned int depth)
 		tail = user_backtrace(tail);
 }
 
+void oprofile_arch_exit(void)
+{
+	int cpu, id;
+	struct perf_event *event;
+
+	for_each_possible_cpu(cpu) {
+		for (id = 0; id < perf_num_counters; ++id) {
+			event = perf_events[cpu][id];
+			if (event)
+				perf_event_release_kernel(event);
+		}
+
+		kfree(perf_events[cpu]);
+	}
+
+	kfree(counter_config);
+	exit_driverfs();
+}
+
 int __init oprofile_arch_init(struct oprofile_operations *ops)
 {
 	int cpu, ret = 0;
+
+	ret = init_driverfs();
+	if (ret)
+		return ret;
+
+	memset(&perf_events, 0, sizeof(perf_events));
 
 	perf_num_counters = armpmu_get_max_events();
 
@@ -360,14 +383,9 @@ int __init oprofile_arch_init(struct oprofile_operations *ops)
 	if (!counter_config) {
 		pr_info("oprofile: failed to allocate %d "
 				"counters\n", perf_num_counters);
-		return -ENOMEM;
-	}
-
-	ret = init_driverfs();
-	if (ret) {
-		kfree(counter_config);
-		counter_config = NULL;
-		return ret;
+		ret = -ENOMEM;
+		perf_num_counters = 0;
+		goto out;
 	}
 
 	for_each_possible_cpu(cpu) {
@@ -376,9 +394,8 @@ int __init oprofile_arch_init(struct oprofile_operations *ops)
 		if (!perf_events[cpu]) {
 			pr_info("oprofile: failed to allocate %d perf events "
 					"for cpu %d\n", perf_num_counters, cpu);
-			while (--cpu >= 0)
-				kfree(perf_events[cpu]);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto out;
 		}
 	}
 
@@ -395,35 +412,18 @@ int __init oprofile_arch_init(struct oprofile_operations *ops)
 	else
 		pr_info("oprofile: using %s\n", ops->cpu_type);
 
+out:
+	if (ret)
+		oprofile_arch_exit();
+
 	return ret;
 }
 
-void oprofile_arch_exit(void)
-{
-	int cpu, id;
-	struct perf_event *event;
-
-	if (*perf_events) {
-		for_each_possible_cpu(cpu) {
-			for (id = 0; id < perf_num_counters; ++id) {
-				event = perf_events[cpu][id];
-				if (event != NULL)
-					perf_event_release_kernel(event);
-			}
-			kfree(perf_events[cpu]);
-		}
-	}
-
-	if (counter_config) {
-		kfree(counter_config);
-		exit_driverfs();
-	}
-}
 #else
 int __init oprofile_arch_init(struct oprofile_operations *ops)
 {
 	pr_info("oprofile: hardware counters not available\n");
 	return -ENODEV;
 }
-void oprofile_arch_exit(void) {}
+void __exit oprofile_arch_exit(void) {}
 #endif /* CONFIG_HW_PERF_EVENTS */
