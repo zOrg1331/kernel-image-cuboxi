@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2009 Nokia Corporation
  *
- * Contact: Kalle Valo <kalle.valo@nokia.com>
+ * Contact: Luciano Coelho <luciano.coelho@nokia.com>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -21,14 +21,31 @@
  *
  */
 
-#ifndef _LINUX_SPI_WL12XX_H
-#define _LINUX_SPI_WL12XX_H
+#ifndef _LINUX_WL12XX_H
+#define _LINUX_WL12XX_H
 
 struct wl12xx_platform_data {
 	void (*set_power)(bool enable);
 	/* SDIO only: IRQ number if WLAN_IRQ line is used, 0 for SDIO IRQs */
 	int irq;
 	bool use_eeprom;
+	int board_ref_clock;
 };
+
+#ifdef CONFIG_WL12XX_PLATFORM_DATA
+
+int wl12xx_set_platform_data(const struct wl12xx_platform_data *data);
+
+#else
+
+static inline
+int wl12xx_set_platform_data(const struct wl12xx_platform_data *data)
+{
+	return -ENOSYS;
+}
+
+#endif
+
+const struct wl12xx_platform_data *wl12xx_get_platform_data(void);
 
 #endif

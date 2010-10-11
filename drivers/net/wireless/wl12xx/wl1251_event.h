@@ -4,8 +4,6 @@
  * Copyright (c) 1998-2007 Texas Instruments Incorporated
  * Copyright (C) 2008 Nokia Corporation
  *
- * Contact: Kalle Valo <kalle.valo@nokia.com>
- *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * version 2 as published by the Free Software Foundation.
@@ -117,5 +115,6 @@ struct event_mailbox {
 int wl1251_event_unmask(struct wl1251 *wl);
 void wl1251_event_mbox_config(struct wl1251 *wl);
 int wl1251_event_handle(struct wl1251 *wl, u8 mbox);
+int wl1251_event_wait(struct wl1251 *wl, u32 mask, int timeout_ms);
 
 #endif
