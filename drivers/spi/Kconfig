@@ -314,6 +314,13 @@ config SPI_STMP3XXX
 	help
 	  SPI driver for Freescale STMP37xx/378x SoC SSP interface
 
+config SPI_TOPCLIFF_PCH
+	tristate "Topcliff PCH SPI Controller"
+	depends on PCI
+	help
+	  SPI driver for the Topcliff PCH (Platform Controller Hub) SPI bus
+	  used in some x86 embedded processors.
+
 config SPI_TXX9
 	tristate "Toshiba TXx9 SPI controller"
 	depends on GENERIC_GPIO && CPU_TX49XX

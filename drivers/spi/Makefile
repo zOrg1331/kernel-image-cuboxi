@@ -2,9 +2,7 @@
 # Makefile for kernel SPI drivers.
 #
 
-ifeq ($(CONFIG_SPI_DEBUG),y)
-EXTRA_CFLAGS += -DDEBUG
-endif
+ccflags-$(CONFIG_SPI_DEBUG) := -DDEBUG
 
 # small core, mostly translating board-specific
 # config declarations into driver model code
@@ -39,6 +37,7 @@ obj-$(CONFIG_SPI_PPC4xx)		+= spi_ppc4xx.o
 obj-$(CONFIG_SPI_S3C24XX_GPIO)		+= spi_s3c24xx_gpio.o
 obj-$(CONFIG_SPI_S3C24XX)		+= spi_s3c24xx_hw.o
 obj-$(CONFIG_SPI_S3C64XX)		+= spi_s3c64xx.o
+obj-$(CONFIG_SPI_TOPCLIFF_PCH)		+= spi_topcliff_pch.o
 obj-$(CONFIG_SPI_TXX9)			+= spi_txx9.o
 obj-$(CONFIG_SPI_XILINX)		+= xilinx_spi.o
 obj-$(CONFIG_SPI_XILINX_OF)		+= xilinx_spi_of.o
