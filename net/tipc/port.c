@@ -588,19 +588,10 @@ void tipc_port_recv_proto_msg(struct sk_buff *buf)
 	if (!p_ptr) {
 		err = TIPC_ERR_NO_PORT;
 	} else if (p_ptr->publ.connected) {
-		if (port_peernode(p_ptr) != msg_orignode(msg))
+		if ((port_peernode(p_ptr) != msg_orignode(msg)) ||
+		    (port_peerport(p_ptr) != msg_origport(msg))) {
 			err = TIPC_ERR_NO_PORT;
-		if (port_peerport(p_ptr) != msg_origport(msg))
-			err = TIPC_ERR_NO_PORT;
-		if (!err && msg_routed(msg)) {
-			u32 seqno = msg_transp_seqno(msg);
-			u32 myno =  ++p_ptr->last_in_seqno;
-			if (seqno != myno) {
-				err = TIPC_ERR_NO_PORT;
-				abort_buf = port_build_self_abort_msg(p_ptr, err);
-			}
-		}
-		if (msg_type(msg) == CONN_ACK) {
+		} else if (msg_type(msg) == CONN_ACK) {
 			int wakeup = tipc_port_congested(p_ptr) &&
 				     p_ptr->publ.congested &&
 				     p_ptr->wakeup;
@@ -1473,7 +1464,7 @@ int tipc_forward2name(u32 ref,
 	msg_set_destnode(msg, destnode);
 	msg_set_destport(msg, destport);
 
-	if (likely(destport || destnode)) {
+	if (likely(destport)) {
 		p_ptr->sent++;
 		if (likely(destnode == tipc_own_addr))
 			return tipc_port_recv_sections(p_ptr, num_sect, msg_sect);
@@ -1551,7 +1542,7 @@ int tipc_forward_buf2name(u32 ref,
 	skb_push(buf, LONG_H_SIZE);
 	skb_copy_to_linear_data(buf, msg, LONG_H_SIZE);
 	msg_dbg(buf_msg(buf),"PREP:");
-	if (likely(destport || destnode)) {
+	if (likely(destport)) {
 		p_ptr->sent++;
 		if (destnode == tipc_own_addr)
 			return tipc_port_recv_msg(buf);
