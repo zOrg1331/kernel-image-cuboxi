@@ -114,6 +114,7 @@ int olpc_ec_cmd(unsigned char cmd, unsigned char *inbuf, size_t inlen,
 	unsigned long flags;
 	int ret = -EIO;
 	int i;
+	int restarts = 0;
 
 	spin_lock_irqsave(&ec_lock, flags);
 
@@ -169,7 +170,9 @@ restart:
 			if (wait_on_obf(0x6c, 1)) {
 				printk(KERN_ERR "olpc-ec:  timeout waiting for"
 						" EC to provide data!\n");
-				goto restart;
+				if (restarts++ < 10)
+					goto restart;
+				goto err;
 			}
 			outbuf[i] = inb(0x68);
 			pr_devel("olpc-ec:  received 0x%x\n", outbuf[i]);
@@ -183,8 +186,21 @@ err:
 }
 EXPORT_SYMBOL_GPL(olpc_ec_cmd);
 
-#ifdef CONFIG_OLPC_OPENFIRMWARE
-static void __init platform_detect(void)
+static bool __init check_ofw_architecture(void)
+{
+	size_t propsize;
+	char olpc_arch[5];
+	const void *args[] = { NULL, "architecture", olpc_arch, (void *)5 };
+	void *res[] = { &propsize };
+
+	if (olpc_ofw("getprop", args, res)) {
+		printk(KERN_ERR "ofw: getprop call failed!\n");
+		return false;
+	}
+	return propsize == 5 && strncmp("OLPC", olpc_arch, 5) == 0;
+}
+
+static u32 __init get_board_revision(void)
 {
 	size_t propsize;
 	__be32 rev;
@@ -193,45 +209,26 @@ static void __init platform_detect(void)
 
 	if (olpc_ofw("getprop", args, res) || propsize != 4) {
 		printk(KERN_ERR "ofw: getprop call failed!\n");
-		rev = cpu_to_be32(0);
+		return cpu_to_be32(0);
 	}
-	olpc_platform_info.boardrev = be32_to_cpu(rev);
+	return be32_to_cpu(rev);
 }
-#else
-static void __init platform_detect(void)
+
+static bool __init platform_detect(void)
 {
-	/* stopgap until OFW support is added to the kernel */
-	olpc_platform_info.boardrev = olpc_board(0xc2);
+	if (!check_ofw_architecture())
+		return false;
+	olpc_platform_info.flags |= OLPC_F_PRESENT;
+	olpc_platform_info.boardrev = get_board_revision();
+	return true;
 }
-#endif
 
 static int __init olpc_init(void)
 {
-	unsigned char *romsig;
-
-	/* The ioremap check is dangerous; limit what we run it on */
-	if (!is_geode() || cs5535_has_vsa2())
+	if (!olpc_ofw_present() || !platform_detect())
 		return 0;
 
 	spin_lock_init(&ec_lock);
-
-	romsig = ioremap(0xffffffc0, 16);
-	if (!romsig)
-		return 0;
-
-	if (strncmp(romsig, "CL1   Q", 7))
-		goto unmap;
-	if (strncmp(romsig+6, romsig+13, 3)) {
-		printk(KERN_INFO "OLPC BIOS signature looks invalid.  "
-				"Assuming not OLPC\n");
-		goto unmap;
-	}
-
-	printk(KERN_INFO "OLPC board with OpenFirmware %.16s\n", romsig);
-	olpc_platform_info.flags |= OLPC_F_PRESENT;
-
-	/* get the platform revision */
-	platform_detect();
 
 	/* assume B1 and above models always have a DCON */
 	if (olpc_board_at_least(olpc_board(0xb1)))
@@ -254,8 +251,6 @@ static int __init olpc_init(void)
 			olpc_platform_info.boardrev >> 4,
 			olpc_platform_info.ecver);
 
-unmap:
-	iounmap(romsig);
 	return 0;
 }
 
