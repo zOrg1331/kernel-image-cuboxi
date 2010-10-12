@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.35
-Release: alt7
+Release: alt7.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -589,6 +589,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Tue Oct 12 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt7.1
+- CVE-2010-2962 fixed
+- netflow added (closes #24244)
+
 * Tue Oct 05 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt7
 - 2.6.35.7
 - aufs2 really included (closes #24137)
