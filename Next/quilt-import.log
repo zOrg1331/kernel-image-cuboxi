@@ -1,0 +1,156 @@
+Importing driver-core.current based on 2.6.36-rc7
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.36-rc7-git1
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.36-rc7-git1
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.36-rc2
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.36-rc6-119-g3c06806
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.36-rc1
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard f00b99c13524ce57ada036b044aada30a5f0440b
+HEAD is now at f00b99c serial: imx serial driver: fix resume
+$ git quiltimport --author Greg KH <greg@kroah.com> --patches ../quilt/usb
+usb-add-intel-langwell-usb-otg-transceiver-driver.patch
+usb-langwell-usb-client-driver-code-cleanup.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:2109: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+usb-langwell-usb-client-endpoint-initialization.patch
+usb-langwell-usb-client-phy-low-power-mode-setting.patch
+usb-langwell-usb-client-remote-wakeup-support.patch
+usb-langwell-usb-client-driver-memory-handling.patch
+usb-gadget-dbgp-cleanup-remove-unneeded-check.patch
+usb-sam-ba-add-driver-for-atmel-sam-boot-assistant-sam-ba.patch
+usb-gadget-verify-vbus-current-before-setting-the-device-self-powered-bit.patch
+usb-core-update-comment-to-match-current-function-name.patch
+usb-gadget-g_multi-fixed-vendor-and-product-id.patch
+usb-gadget-g_ffs-fixed-vendor-and-product-id.patch
+usb-gadget-storage-remove-nofua-file-when-unbinding.patch
+usb-gadget-mass_storage-optional-scsi-write-fua-bit.patch
+usb-gadget-functionfs-code-cleanup.patch
+usb-gadget-composite-better-string-override-handling.patch
+usb-gadget-mass_storage-moved-strings-handling-code.patch
+usb-gadget-g_multi-moved-strings-handling-code-to-composite.patch
+usb-revert-usb-gadget-section-mismatch-warning-fixed.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_gadget_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_composite_driver.patch
+usb-gadget-don-t-save-bind-callback-in-struct-usb_configuration.patch
+init.h-add-some-more-documentation-to-__ref-tags.patch
+usb-gadget-amd5536udc.c-remove-double-test.patch
+usb-output-an-error-message-when-the-pipe-type-doesn-t-match-the-endpoint-type.patch
+usb-langwell-remove-unnecessary-return-s-from-void-functions.patch
+usb-g_file_storage-don-t-generate-automatic-serial-string.patch
+usb-kconfig-fix-typos-in-usb_functionfs-description.patch
+usb-ehci-tdi-let-s-tdi_reset-set-host-mode.patch
+usb-gadget-rndis-fix-up-coding-style-issues-in-the-file.patch
+drivers-usb-ftdi-elan-sema.patch
+usb-otg-add-common-data-structure-for-intel-mid-platform-langwell-penwell.patch
+usb-otg-langwell-update-otg-kconfig-and-driver-version.patch
+usb-r8a66597-udc-initialize-uninitialized-variable-fix-compile-warning.patch
+usb-change-acm_iad_descriptor-bfunctionprotocol-to-usb_cdc_acm_proto_at_v25ter.patch
+usb-ohci-sm501-add-iounmap-on-error-path.patch
+ohci-work-around-for-nvidia-shutdown-problem.patch
+usb-gadget-composite-prevent-oops-for-non-standard-control-request.patch
+usb-isp1362-hcd-removes-config_usb_otg-dependent-code.patch
+usb-gadget-remove-pr_-level-uses-of-kern_-level.patch
+usb-option-add-more-zte-modem-usb-id-s.patch
+uwb-use-pm-format-to-print-mac-address.patch
+usb-teach-devices-file-about-wireless-and-superspeed-usb.patch
+usb-host-oxu210hp-hcd-use-static-const-char-const-where-possible.patch
+usb-ftdi_sio-add-pid-for-accesio-products.patch
+usb-omap-ohci-missing-driver-unregister-in-module-exit.patch
+usb-cp210x-add-renesas-rx-stick-device-id.patch
+usb-option-add-new-onda-vendor-id-and-product-id-for-onda-mt825up.patch
+usb-cdc.h-ncm-typo-and-style-fixes.patch
+revert-usb-ncm-added-ncm.h-with-auxiliary-definitions.patch
+usb-cdc.h-ncm-add-missed-constants-and-structures.patch
+usb-atmel_usba_udc-force-vbus_pin-at-einval-when-gpio_request-failled.patch
+usb-serial-enable-usb-autosuspend-by-default-on-qcserial.patch
+usb-ftdi_sio-revert-usb-ftdi_sio-fix-dtr-rts-line-modes.patch
+usb-cdc.h-ncm-fix-one-more-typo.patch
+usb-qcserial-enable-diagnostics-monitor-and-gps-ports-on-gobi-2000.patch
+usb-storage-use-usb_-prefix-instead-of-us_-prefix.patch
+usb-move-usb-storage-definitions-to-their-own-header-file.patch
+usb-add-uas-driver.patch
+usb-gadget-file_storage-reuse-definitions-from-a-header-file.patch
+usb-driver-for-meywa-denki-kayac-yurex.patch
+/home/sfr/kernels/next/quilt-tmp/.git/rebase-apply/patch:33: new blank line at EOF.
++
+warning: 1 line adds whitespace errors.
+usb-yurex-assign-a-real-minor-number-to-the-driver.patch
+usb-yurex-fix-memory-leak-and-corrupted-messages.patch
+usb-musb-make-dbg-calls-actually-depend-on-config_usb_musb_debug.patch
+usb-musb-introduce-da8xx-omap-l1x-glue-layer.patch
+usb-musb-support-iso-high-bandwidth-for-gadget-mode.patch
+usb-musb-musbhsdma-increase-max_len-to-1mb.patch
+usb-musb-host-unmap-the-buffer-for-pio-data-transfers.patch
+usb-musb-change-to-direct-addr-in-context-save-restore.patch
+usb-musb-host-support-dma-transfers-greater-than-max-channel-length.patch
+usb-musb-suppress-warning-about-unused-flags.patch
+usb-musb-gadget-kill-unreachable-code-in-musb_g_rx.patch
+usb-musb-ignore-spurious-sessreq-interrupts.patch
+usb-musb-gadget-fix-zlp-sending-in-musb_g_tx-v1.patch
+usb-musb-gadget-only-enable-autoclear-in-double-buffered-case.patch
+usb-change-to-new-flag-variable.patch
+usb-cdc-acm-fix-code-indentation.patch
+usb-add-more-empty-functions-in-otg.h.patch
+usb-add-pid-for-ftdi-based-opendcc-hardware.patch
+usb-add-platform-glue-driver-for-fsl-usb-dr-controller.patch
+usb-add-usb-ehci-support-for-mpc5121-soc.patch
+usb-musb-fix-kernel-warning-oops-when-unloading-module-in-otg-mode.patch
+usb-musb-blackfin-call-usb_nop_xceiv_unregister-in-musb_platform_exit.patch
+usb-musb-blackfin-call-gpio_free-on-error-path-in-musb_platform_init.patch
+usb-uhci-add-native-scatter-gather-support-v1.patch
+usb-langwell_udc-fix-big-file-transfer-issue.patch
+usb-langwell_udc-cancel-pending-requests-when-controller-is-suspended.patch
+usb-disable-endpoints-after-unbinding-interfaces-not-before.patch
+usb-usbtest-fix-coding-style.patch
+usb-usbtest-ensure-correct-isoc-data-length.patch
+usb-imx21-hcd-remove-unused-variable.patch
+usb-imx21-hcd-refactor-hardware-data-memory-management.patch
+usb-imx21-hcd-fix-isochronous-endpoint-idle.patch
+usb-introduce-unmap_urb_setup_for_dma.patch
+usb-imx21-hcd-accept-arbitary-transfer-buffer-alignement.patch
+usb-gadget-goku_udc-fix-error-path.patch
+scsi-sr-add-no_read_disc_info-scsi_device-flag.patch
+usb-storage-add-new-no_read_disc_info-quirk.patch
+scsi-sd-add-a-no_read_capacity_16-scsi_device-flag.patch
+usb-storage-add-new-no_read_capacity_16-quirk.patch
+usb-do-not-print-eshutdown-message-if-usb-at-otg-device-mode.patch
+usb-cp210x-add-wago-750-923-service-cable-device-id.patch
+usb-core-endpoint-fix-error-path.patch
+usb-gadget-dummy_hcd-fix-error-path.patch
+usb-makefile-cleanup.patch
+usb-gadget-storage-reuse-definitions-from-scsi.h-header-file.patch
+usb-usb3.0-ch9-definitions.patch
+usb-ftdi_sio-new-vid-pids-for-various-papouch-devices.patch
+usb-visor-fix-initialisation-of-ux50-th55-devices.patch
+usb-iowarrior-don-t-trust-report_size-for-buffer-size.patch
+usb-ftdi_sio-set-device-latency-timeout-at-port-probe.patch
+usb-opticon-fix-long-standing-bugs-in-opticon-driver.patch
+usb-opticon-add-opticon-opn2001-write-support.patch
+usb-opticon-whitespace-fixes-in-opticon-driver.patch
+usb-otg-ulpi-improve-ulpi-phy-detection.patch
+usb-otg-ulpi-extend-id-s-table.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/usb
+From ../quilt-tmp
+ + 9f6ae9d...9dc24ca master     -> quilt/usb  (forced update)
