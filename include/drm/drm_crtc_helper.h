@@ -39,11 +39,6 @@
 
 #include <linux/fb.h>
 
-enum mode_set_atomic {
-	LEAVE_ATOMIC_MODE_SET,
-	ENTER_ATOMIC_MODE_SET,
-};
-
 struct drm_crtc_helper_funcs {
 	/*
 	 * Control power levels on the CRTC.  If the mode passed in is
@@ -67,7 +62,7 @@ struct drm_crtc_helper_funcs {
 			     struct drm_framebuffer *old_fb);
 	int (*mode_set_base_atomic)(struct drm_crtc *crtc,
 				    struct drm_framebuffer *fb, int x, int y,
-				    enum mode_set_atomic);
+				    int is_enter);
 
 	/* reload the current crtc LUT */
 	void (*load_lut)(struct drm_crtc *crtc);
