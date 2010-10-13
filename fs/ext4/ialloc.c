@@ -1238,7 +1238,6 @@ extern int ext4_init_inode_table(struct super_block *sb, ext4_group_t group,
 	handle_t *handle;
 	ext4_fsblk_t blk;
 	int num, ret = 0, used_blks = 0;
-	unsigned long flags = BLKDEV_IFL_WAIT;
 
 	/* This should not happen, but just to be sure check this */
 	if (sb->s_flags & MS_RDONLY) {
@@ -1303,9 +1302,7 @@ extern int ext4_init_inode_table(struct super_block *sb, ext4_group_t group,
 
 	ext4_debug("going to zero out inode table in group %d\n",
 		   group);
-	if (barrier)
-		flags |= BLKDEV_IFL_BARRIER;
-	ret = sb_issue_zeroout(sb, blk, num, GFP_NOFS, flags);
+	ret = sb_issue_zeroout(sb, blk, num, GFP_NOFS);
 	if (ret < 0)
 		goto err_out;
 
