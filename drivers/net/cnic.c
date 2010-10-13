@@ -242,14 +242,14 @@ static int cnic_in_use(struct cnic_sock *csk)
 	return test_bit(SK_F_INUSE, &csk->flags);
 }
 
-static void cnic_kwq_completion(struct cnic_dev *dev, u32 count)
+static void cnic_spq_completion(struct cnic_dev *dev, int cmd, u32 count)
 {
 	struct cnic_local *cp = dev->cnic_priv;
 	struct cnic_eth_dev *ethdev = cp->ethdev;
 	struct drv_ctl_info info;
 
-	info.cmd = DRV_CTL_COMPLETION_CMD;
-	info.data.comp.comp_count = count;
+	info.cmd = cmd;
+	info.data.credit.credit_count = count;
 	ethdev->drv_ctl(dev->netdev, &info);
 }
 
@@ -942,7 +942,7 @@ static int cnic_alloc_uio(struct cnic_dev *dev) {
 	} else if (test_bit(CNIC_F_BNX2X_CLASS, &dev->flags)) {
 		uinfo->mem[1].addr = (unsigned long) cp->bnx2x_def_status_blk &
 			PAGE_MASK;
-		uinfo->mem[1].size = sizeof(struct host_def_status_block);
+		uinfo->mem[1].size = sizeof(*cp->bnx2x_def_status_blk);
 
 		uinfo->name = "bnx2x_cnic";
 	}
@@ -1022,7 +1022,7 @@ static int cnic_alloc_bnx2x_context(struct cnic_dev *dev)
 	if (blks > cp->ethdev->ctx_tbl_len)
 		return -ENOMEM;
 
-	cp->ctx_arr = kzalloc(blks * sizeof(struct cnic_ctx), GFP_KERNEL);
+	cp->ctx_arr = kcalloc(blks, sizeof(struct cnic_ctx), GFP_KERNEL);
 	if (cp->ctx_arr == NULL)
 		return -ENOMEM;
 
@@ -1062,6 +1062,8 @@ static int cnic_alloc_bnx2x_resc(struct cnic_dev *dev)
 	u32 start_cid = ethdev->starting_cid;
 	int i, j, n, ret, pages;
 	struct cnic_dma *kwq_16_dma = &cp->kwq_16_data_info;
+
+	cp->iro_arr = ethdev->iro_arr;
 
 	cp->max_cid_space = MAX_ISCSI_TBL_SZ;
 	cp->iscsi_start_cid = start_cid;
@@ -1126,8 +1128,6 @@ static int cnic_alloc_bnx2x_resc(struct cnic_dev *dev)
 		goto error;
 
 	cp->bnx2x_def_status_blk = cp->ethdev->irq_arr[1].status_blk;
-
-	memset(cp->status_blk.bnx2x, 0, sizeof(*cp->status_blk.bnx2x));
 
 	cp->l2_rx_ring_size = 15;
 
@@ -1209,9 +1209,9 @@ static int cnic_submit_kwqe_16(struct cnic_dev *dev, u32 cmd, u32 cid,
 
 	kwqe.hdr.conn_and_cmd_data =
 		cpu_to_le32(((cmd << SPE_HDR_CMD_ID_SHIFT) |
-			     BNX2X_HW_CID(cid, cp->func)));
+			     BNX2X_HW_CID(cp, cid)));
 	kwqe.hdr.type = cpu_to_le16(type);
-	kwqe.hdr.reserved = 0;
+	kwqe.hdr.reserved1 = 0;
 	kwqe.data.phy_address.lo = cpu_to_le32(l5_data->phy_address.lo);
 	kwqe.data.phy_address.hi = cpu_to_le32(l5_data->phy_address.hi);
 
@@ -1246,8 +1246,8 @@ static int cnic_bnx2x_iscsi_init1(struct cnic_dev *dev, struct kwqe *kwqe)
 {
 	struct cnic_local *cp = dev->cnic_priv;
 	struct iscsi_kwqe_init1 *req1 = (struct iscsi_kwqe_init1 *) kwqe;
-	int func = cp->func, pages;
-	int hq_bds;
+	int hq_bds, pages;
+	u32 pfid = cp->pfid;
 
 	cp->num_iscsi_tasks = req1->num_tasks_per_conn;
 	cp->num_ccells = req1->num_ccells_per_conn;
@@ -1264,60 +1264,60 @@ static int cnic_bnx2x_iscsi_init1(struct cnic_dev *dev, struct kwqe *kwqe)
 		return 0;
 
 	/* init Tstorm RAM */
-	CNIC_WR16(dev, BAR_TSTRORM_INTMEM + TSTORM_ISCSI_RQ_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_TSTRORM_INTMEM + TSTORM_ISCSI_RQ_SIZE_OFFSET(pfid),
 		  req1->rq_num_wqes);
-	CNIC_WR16(dev, BAR_TSTRORM_INTMEM + TSTORM_ISCSI_PAGE_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_TSTRORM_INTMEM + TSTORM_ISCSI_PAGE_SIZE_OFFSET(pfid),
 		  PAGE_SIZE);
 	CNIC_WR8(dev, BAR_TSTRORM_INTMEM +
-		 TSTORM_ISCSI_PAGE_SIZE_LOG_OFFSET(func), PAGE_SHIFT);
+		 TSTORM_ISCSI_PAGE_SIZE_LOG_OFFSET(pfid), PAGE_SHIFT);
 	CNIC_WR16(dev, BAR_TSTRORM_INTMEM +
-		  TSTORM_ISCSI_NUM_OF_TASKS_OFFSET(func),
+		  TSTORM_ISCSI_NUM_OF_TASKS_OFFSET(pfid),
 		  req1->num_tasks_per_conn);
 
 	/* init Ustorm RAM */
 	CNIC_WR16(dev, BAR_USTRORM_INTMEM +
-		  USTORM_ISCSI_RQ_BUFFER_SIZE_OFFSET(func),
+		  USTORM_ISCSI_RQ_BUFFER_SIZE_OFFSET(pfid),
 		  req1->rq_buffer_size);
-	CNIC_WR16(dev, BAR_USTRORM_INTMEM + USTORM_ISCSI_PAGE_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_USTRORM_INTMEM + USTORM_ISCSI_PAGE_SIZE_OFFSET(pfid),
 		  PAGE_SIZE);
 	CNIC_WR8(dev, BAR_USTRORM_INTMEM +
-		 USTORM_ISCSI_PAGE_SIZE_LOG_OFFSET(func), PAGE_SHIFT);
+		 USTORM_ISCSI_PAGE_SIZE_LOG_OFFSET(pfid), PAGE_SHIFT);
 	CNIC_WR16(dev, BAR_USTRORM_INTMEM +
-		  USTORM_ISCSI_NUM_OF_TASKS_OFFSET(func),
+		  USTORM_ISCSI_NUM_OF_TASKS_OFFSET(pfid),
 		  req1->num_tasks_per_conn);
-	CNIC_WR16(dev, BAR_USTRORM_INTMEM + USTORM_ISCSI_RQ_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_USTRORM_INTMEM + USTORM_ISCSI_RQ_SIZE_OFFSET(pfid),
 		  req1->rq_num_wqes);
-	CNIC_WR16(dev, BAR_USTRORM_INTMEM + USTORM_ISCSI_CQ_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_USTRORM_INTMEM + USTORM_ISCSI_CQ_SIZE_OFFSET(pfid),
 		  req1->cq_num_wqes);
-	CNIC_WR16(dev, BAR_USTRORM_INTMEM + USTORM_ISCSI_R2TQ_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_USTRORM_INTMEM + USTORM_ISCSI_R2TQ_SIZE_OFFSET(pfid),
 		  cp->num_iscsi_tasks * BNX2X_ISCSI_MAX_PENDING_R2TS);
 
 	/* init Xstorm RAM */
-	CNIC_WR16(dev, BAR_XSTRORM_INTMEM + XSTORM_ISCSI_PAGE_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_XSTRORM_INTMEM + XSTORM_ISCSI_PAGE_SIZE_OFFSET(pfid),
 		  PAGE_SIZE);
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_PAGE_SIZE_LOG_OFFSET(func), PAGE_SHIFT);
+		 XSTORM_ISCSI_PAGE_SIZE_LOG_OFFSET(pfid), PAGE_SHIFT);
 	CNIC_WR16(dev, BAR_XSTRORM_INTMEM +
-		  XSTORM_ISCSI_NUM_OF_TASKS_OFFSET(func),
+		  XSTORM_ISCSI_NUM_OF_TASKS_OFFSET(pfid),
 		  req1->num_tasks_per_conn);
-	CNIC_WR16(dev, BAR_XSTRORM_INTMEM + XSTORM_ISCSI_HQ_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_XSTRORM_INTMEM + XSTORM_ISCSI_HQ_SIZE_OFFSET(pfid),
 		  hq_bds);
-	CNIC_WR16(dev, BAR_XSTRORM_INTMEM + XSTORM_ISCSI_SQ_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_XSTRORM_INTMEM + XSTORM_ISCSI_SQ_SIZE_OFFSET(pfid),
 		  req1->num_tasks_per_conn);
-	CNIC_WR16(dev, BAR_XSTRORM_INTMEM + XSTORM_ISCSI_R2TQ_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_XSTRORM_INTMEM + XSTORM_ISCSI_R2TQ_SIZE_OFFSET(pfid),
 		  cp->num_iscsi_tasks * BNX2X_ISCSI_MAX_PENDING_R2TS);
 
 	/* init Cstorm RAM */
-	CNIC_WR16(dev, BAR_CSTRORM_INTMEM + CSTORM_ISCSI_PAGE_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_CSTRORM_INTMEM + CSTORM_ISCSI_PAGE_SIZE_OFFSET(pfid),
 		  PAGE_SIZE);
 	CNIC_WR8(dev, BAR_CSTRORM_INTMEM +
-		 CSTORM_ISCSI_PAGE_SIZE_LOG_OFFSET(func), PAGE_SHIFT);
+		 CSTORM_ISCSI_PAGE_SIZE_LOG_OFFSET(pfid), PAGE_SHIFT);
 	CNIC_WR16(dev, BAR_CSTRORM_INTMEM +
-		  CSTORM_ISCSI_NUM_OF_TASKS_OFFSET(func),
+		  CSTORM_ISCSI_NUM_OF_TASKS_OFFSET(pfid),
 		  req1->num_tasks_per_conn);
-	CNIC_WR16(dev, BAR_CSTRORM_INTMEM + CSTORM_ISCSI_CQ_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_CSTRORM_INTMEM + CSTORM_ISCSI_CQ_SIZE_OFFSET(pfid),
 		  req1->cq_num_wqes);
-	CNIC_WR16(dev, BAR_CSTRORM_INTMEM + CSTORM_ISCSI_HQ_SIZE_OFFSET(func),
+	CNIC_WR16(dev, BAR_CSTRORM_INTMEM + CSTORM_ISCSI_HQ_SIZE_OFFSET(pfid),
 		  hq_bds);
 
 	return 0;
@@ -1327,7 +1327,7 @@ static int cnic_bnx2x_iscsi_init2(struct cnic_dev *dev, struct kwqe *kwqe)
 {
 	struct iscsi_kwqe_init2 *req2 = (struct iscsi_kwqe_init2 *) kwqe;
 	struct cnic_local *cp = dev->cnic_priv;
-	int func = cp->func;
+	u32 pfid = cp->pfid;
 	struct iscsi_kcqe kcqe;
 	struct kcqe *cqes[1];
 
@@ -1339,21 +1339,21 @@ static int cnic_bnx2x_iscsi_init2(struct cnic_dev *dev, struct kwqe *kwqe)
 	}
 
 	CNIC_WR(dev, BAR_TSTRORM_INTMEM +
-		TSTORM_ISCSI_ERROR_BITMAP_OFFSET(func), req2->error_bit_map[0]);
+		TSTORM_ISCSI_ERROR_BITMAP_OFFSET(pfid), req2->error_bit_map[0]);
 	CNIC_WR(dev, BAR_TSTRORM_INTMEM +
-		TSTORM_ISCSI_ERROR_BITMAP_OFFSET(func) + 4,
+		TSTORM_ISCSI_ERROR_BITMAP_OFFSET(pfid) + 4,
 		req2->error_bit_map[1]);
 
 	CNIC_WR16(dev, BAR_USTRORM_INTMEM +
-		  USTORM_ISCSI_CQ_SQN_SIZE_OFFSET(func), req2->max_cq_sqn);
+		  USTORM_ISCSI_CQ_SQN_SIZE_OFFSET(pfid), req2->max_cq_sqn);
 	CNIC_WR(dev, BAR_USTRORM_INTMEM +
-		USTORM_ISCSI_ERROR_BITMAP_OFFSET(func), req2->error_bit_map[0]);
+		USTORM_ISCSI_ERROR_BITMAP_OFFSET(pfid), req2->error_bit_map[0]);
 	CNIC_WR(dev, BAR_USTRORM_INTMEM +
-		USTORM_ISCSI_ERROR_BITMAP_OFFSET(func) + 4,
+		USTORM_ISCSI_ERROR_BITMAP_OFFSET(pfid) + 4,
 		req2->error_bit_map[1]);
 
 	CNIC_WR16(dev, BAR_CSTRORM_INTMEM +
-		  CSTORM_ISCSI_CQ_SQN_SIZE_OFFSET(func), req2->max_cq_sqn);
+		  CSTORM_ISCSI_CQ_SQN_SIZE_OFFSET(pfid), req2->max_cq_sqn);
 
 	kcqe.completion_status = ISCSI_KCQE_COMPLETION_STATUS_SUCCESS;
 
@@ -1461,7 +1461,7 @@ static int cnic_setup_bnx2x_ctx(struct cnic_dev *dev, struct kwqe *wqes[],
 	struct cnic_context *ctx = &cp->ctx_tbl[req1->iscsi_conn_id];
 	struct cnic_iscsi *iscsi = ctx->proto.iscsi;
 	u32 cid = ctx->cid;
-	u32 hw_cid = BNX2X_HW_CID(cid, cp->func);
+	u32 hw_cid = BNX2X_HW_CID(cp, cid);
 	struct iscsi_context *ictx;
 	struct regpair context_addr;
 	int i, j, n = 2, n_max;
@@ -1527,8 +1527,10 @@ static int cnic_setup_bnx2x_ctx(struct cnic_dev *dev, struct kwqe *wqes[],
 	ictx->tstorm_st_context.tcp.cwnd = 0x5A8;
 	ictx->tstorm_st_context.tcp.flags2 |=
 		TSTORM_TCP_ST_CONTEXT_SECTION_DA_EN;
+	ictx->tstorm_st_context.tcp.ooo_support_mode =
+		TCP_TSTORM_OOO_DROP_AND_PROC_ACK;
 
-	ictx->timers_context.flags |= ISCSI_TIMERS_BLOCK_CONTEXT_CONN_VALID_FLG;
+	ictx->timers_context.flags |= TIMERS_BLOCK_CONTEXT_CONN_VALID_FLG;
 
 	ictx->ustorm_st_context.ring.rq.pbl_base.lo =
 		req2->rq_page_table_addr_lo;
@@ -1673,8 +1675,7 @@ static int cnic_bnx2x_iscsi_ofld1(struct cnic_dev *dev, struct kwqe *wqes[],
 	}
 
 	kcqe.completion_status = ISCSI_KCQE_COMPLETION_STATUS_SUCCESS;
-	kcqe.iscsi_conn_context_id = BNX2X_HW_CID(cp->ctx_tbl[l5_cid].cid,
-						  cp->func);
+	kcqe.iscsi_conn_context_id = BNX2X_HW_CID(cp, cp->ctx_tbl[l5_cid].cid);
 
 done:
 	cqes[0] = (struct kcqe *) &kcqe;
@@ -1718,6 +1719,7 @@ static int cnic_bnx2x_iscsi_destroy(struct cnic_dev *dev, struct kwqe *kwqe)
 	int ret = 0;
 	struct iscsi_kcqe kcqe;
 	struct kcqe *cqes[1];
+	u32 hw_cid, type;
 
 	if (!(ctx->ctx_flags & CTX_FL_OFFLD_START))
 		goto skip_cfc_delete;
@@ -1728,11 +1730,15 @@ static int cnic_bnx2x_iscsi_destroy(struct cnic_dev *dev, struct kwqe *kwqe)
 	init_waitqueue_head(&ctx->waitq);
 	ctx->wait_cond = 0;
 	memset(&l5_data, 0, sizeof(l5_data));
-	ret = cnic_submit_kwqe_16(dev, RAMROD_CMD_ID_ETH_CFC_DEL,
-				  req->context_id,
-				  ETH_CONNECTION_TYPE |
-				  (1 << SPE_HDR_COMMON_RAMROD_SHIFT),
-				  &l5_data);
+	hw_cid = BNX2X_HW_CID(cp, ctx->cid);
+	type = (NONE_CONNECTION_TYPE << SPE_HDR_CONN_TYPE_SHIFT)
+		& SPE_HDR_CONN_TYPE;
+	type |= ((cp->pfid << SPE_HDR_FUNCTION_ID_SHIFT) &
+		 SPE_HDR_FUNCTION_ID);
+
+	ret = cnic_submit_kwqe_16(dev, RAMROD_CMD_ID_COMMON_CFC_DEL,
+				  hw_cid, type, &l5_data);
+
 	if (ret == 0)
 		wait_event(ctx->waitq, ctx->wait_cond);
 
@@ -1805,37 +1811,37 @@ static void cnic_init_storm_conn_bufs(struct cnic_dev *dev,
 static void cnic_init_bnx2x_mac(struct cnic_dev *dev)
 {
 	struct cnic_local *cp = dev->cnic_priv;
-	int func = CNIC_FUNC(cp);
+	u32 pfid = cp->pfid;
 	u8 *mac = dev->mac_addr;
 
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_LOCAL_MAC_ADDR0_OFFSET(func), mac[0]);
+		 XSTORM_ISCSI_LOCAL_MAC_ADDR0_OFFSET(pfid), mac[0]);
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_LOCAL_MAC_ADDR1_OFFSET(func), mac[1]);
+		 XSTORM_ISCSI_LOCAL_MAC_ADDR1_OFFSET(pfid), mac[1]);
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_LOCAL_MAC_ADDR2_OFFSET(func), mac[2]);
+		 XSTORM_ISCSI_LOCAL_MAC_ADDR2_OFFSET(pfid), mac[2]);
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_LOCAL_MAC_ADDR3_OFFSET(func), mac[3]);
+		 XSTORM_ISCSI_LOCAL_MAC_ADDR3_OFFSET(pfid), mac[3]);
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_LOCAL_MAC_ADDR4_OFFSET(func), mac[4]);
+		 XSTORM_ISCSI_LOCAL_MAC_ADDR4_OFFSET(pfid), mac[4]);
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_LOCAL_MAC_ADDR5_OFFSET(func), mac[5]);
+		 XSTORM_ISCSI_LOCAL_MAC_ADDR5_OFFSET(pfid), mac[5]);
 
 	CNIC_WR8(dev, BAR_TSTRORM_INTMEM +
-		 TSTORM_ISCSI_TCP_VARS_LSB_LOCAL_MAC_ADDR_OFFSET(func), mac[5]);
+		 TSTORM_ISCSI_TCP_VARS_LSB_LOCAL_MAC_ADDR_OFFSET(pfid), mac[5]);
 	CNIC_WR8(dev, BAR_TSTRORM_INTMEM +
-		 TSTORM_ISCSI_TCP_VARS_LSB_LOCAL_MAC_ADDR_OFFSET(func) + 1,
+		 TSTORM_ISCSI_TCP_VARS_LSB_LOCAL_MAC_ADDR_OFFSET(pfid) + 1,
 		 mac[4]);
 	CNIC_WR8(dev, BAR_TSTRORM_INTMEM +
-		 TSTORM_ISCSI_TCP_VARS_MSB_LOCAL_MAC_ADDR_OFFSET(func), mac[3]);
+		 TSTORM_ISCSI_TCP_VARS_MSB_LOCAL_MAC_ADDR_OFFSET(pfid), mac[3]);
 	CNIC_WR8(dev, BAR_TSTRORM_INTMEM +
-		 TSTORM_ISCSI_TCP_VARS_MSB_LOCAL_MAC_ADDR_OFFSET(func) + 1,
+		 TSTORM_ISCSI_TCP_VARS_MSB_LOCAL_MAC_ADDR_OFFSET(pfid) + 1,
 		 mac[2]);
 	CNIC_WR8(dev, BAR_TSTRORM_INTMEM +
-		 TSTORM_ISCSI_TCP_VARS_MSB_LOCAL_MAC_ADDR_OFFSET(func) + 2,
+		 TSTORM_ISCSI_TCP_VARS_MSB_LOCAL_MAC_ADDR_OFFSET(pfid) + 2,
 		 mac[1]);
 	CNIC_WR8(dev, BAR_TSTRORM_INTMEM +
-		 TSTORM_ISCSI_TCP_VARS_MSB_LOCAL_MAC_ADDR_OFFSET(func) + 3,
+		 TSTORM_ISCSI_TCP_VARS_MSB_LOCAL_MAC_ADDR_OFFSET(pfid) + 3,
 		 mac[0]);
 }
 
@@ -1851,10 +1857,10 @@ static void cnic_bnx2x_set_tcp_timestamp(struct cnic_dev *dev, int tcp_ts)
 	}
 
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_TCP_VARS_FLAGS_OFFSET(cp->func), xstorm_flags);
+		 XSTORM_ISCSI_TCP_VARS_FLAGS_OFFSET(cp->pfid), xstorm_flags);
 
 	CNIC_WR16(dev, BAR_TSTRORM_INTMEM +
-		  TSTORM_ISCSI_TCP_VARS_FLAGS_OFFSET(cp->func), tstorm_flags);
+		  TSTORM_ISCSI_TCP_VARS_FLAGS_OFFSET(cp->pfid), tstorm_flags);
 }
 
 static int cnic_bnx2x_connect(struct cnic_dev *dev, struct kwqe *wqes[],
@@ -1929,7 +1935,7 @@ static int cnic_bnx2x_connect(struct cnic_dev *dev, struct kwqe *wqes[],
 	cnic_init_storm_conn_bufs(dev, kwqe1, kwqe3, conn_buf);
 
 	CNIC_WR16(dev, BAR_XSTRORM_INTMEM +
-		  XSTORM_ISCSI_LOCAL_VLAN_OFFSET(cp->func), csk->vlan_id);
+		  XSTORM_ISCSI_LOCAL_VLAN_OFFSET(cp->pfid), csk->vlan_id);
 
 	cnic_bnx2x_set_tcp_timestamp(dev,
 		kwqe1->tcp_flags & L4_KWQ_CONNECT_REQ1_TIME_STAMP);
@@ -2063,7 +2069,7 @@ static int cnic_submit_bnx2x_kwqes(struct cnic_dev *dev, struct kwqe *wqes[],
 static void service_kcqes(struct cnic_dev *dev, int num_cqes)
 {
 	struct cnic_local *cp = dev->cnic_priv;
-	int i, j;
+	int i, j, comp = 0;
 
 	i = 0;
 	j = 1;
@@ -2074,7 +2080,7 @@ static void service_kcqes(struct cnic_dev *dev, int num_cqes)
 		u32 kcqe_layer = kcqe_op_flag & KCQE_FLAGS_LAYER_MASK;
 
 		if (unlikely(kcqe_op_flag & KCQE_RAMROD_COMPLETION))
-			cnic_kwq_completion(dev, 1);
+			comp++;
 
 		while (j < num_cqes) {
 			u32 next_op = cp->completed_kcq[i + j]->kcqe_op_flag;
@@ -2083,7 +2089,7 @@ static void service_kcqes(struct cnic_dev *dev, int num_cqes)
 				break;
 
 			if (unlikely(next_op & KCQE_RAMROD_COMPLETION))
-				cnic_kwq_completion(dev, 1);
+				comp++;
 			j++;
 		}
 
@@ -2113,6 +2119,8 @@ end:
 		i += j;
 		j = 1;
 	}
+	if (unlikely(comp))
+		cnic_spq_completion(dev, DRV_CTL_RET_L5_SPQ_CREDIT_CMD, comp);
 }
 
 static u16 cnic_bnx2_next_idx(u16 idx)
@@ -2203,13 +2211,14 @@ static int cnic_l2_completion(struct cnic_local *cp)
 
 static void cnic_chk_pkt_rings(struct cnic_local *cp)
 {
-	u16 rx_cons = *cp->rx_cons_ptr;
-	u16 tx_cons = *cp->tx_cons_ptr;
+	u16 rx_cons, tx_cons;
 	int comp = 0;
 
-	if (!test_bit(CNIC_F_CNIC_UP, &cp->dev->flags))
+	if (!test_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags))
 		return;
 
+	rx_cons = *cp->rx_cons_ptr;
+	tx_cons = *cp->tx_cons_ptr;
 	if (cp->tx_cons != tx_cons || cp->rx_cons != rx_cons) {
 		if (test_bit(CNIC_LCL_FL_L2_WAIT, &cp->cnic_local_flags))
 			comp = cnic_l2_completion(cp);
@@ -2322,7 +2331,7 @@ static void cnic_ack_bnx2x_msix(struct cnic_dev *dev)
 {
 	struct cnic_local *cp = dev->cnic_priv;
 
-	cnic_ack_bnx2x_int(dev, cp->status_blk_num, CSTORM_ID, 0,
+	cnic_ack_bnx2x_int(dev, cp->bnx2x_igu_sb_id, CSTORM_ID, 0,
 			   IGU_INT_DISABLE, 0);
 }
 
@@ -2357,7 +2366,7 @@ static void cnic_service_bnx2x_bh(unsigned long data)
 	status_idx = cnic_service_bnx2x_kcq(dev, &cp->kcq1);
 
 	CNIC_WR16(dev, cp->kcq1.io_addr, cp->kcq1.sw_prod_idx + MAX_KCQ_IDX);
-	cnic_ack_bnx2x_int(dev, cp->status_blk_num, CSTORM_ID,
+	cnic_ack_bnx2x_int(dev, cp->bnx2x_igu_sb_id, USTORM_ID,
 			   status_idx, IGU_INT_ENABLE, 1);
 }
 
@@ -3284,30 +3293,31 @@ static void cnic_cm_stop_bnx2x_hw(struct cnic_dev *dev)
 static int cnic_cm_init_bnx2x_hw(struct cnic_dev *dev)
 {
 	struct cnic_local *cp = dev->cnic_priv;
-	int func = CNIC_FUNC(cp);
+	u32 pfid = cp->pfid;
+	u32 port = CNIC_PORT(cp);
 
 	cnic_init_bnx2x_mac(dev);
 	cnic_bnx2x_set_tcp_timestamp(dev, 1);
 
 	CNIC_WR16(dev, BAR_XSTRORM_INTMEM +
-		  XSTORM_ISCSI_LOCAL_VLAN_OFFSET(func), 0);
+		  XSTORM_ISCSI_LOCAL_VLAN_OFFSET(pfid), 0);
 
 	CNIC_WR(dev, BAR_XSTRORM_INTMEM +
-		XSTORM_TCP_GLOBAL_DEL_ACK_COUNTER_ENABLED_OFFSET(func), 1);
+		XSTORM_TCP_GLOBAL_DEL_ACK_COUNTER_ENABLED_OFFSET(port), 1);
 	CNIC_WR(dev, BAR_XSTRORM_INTMEM +
-		XSTORM_TCP_GLOBAL_DEL_ACK_COUNTER_MAX_COUNT_OFFSET(func),
+		XSTORM_TCP_GLOBAL_DEL_ACK_COUNTER_MAX_COUNT_OFFSET(port),
 		DEF_MAX_DA_COUNT);
 
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_TCP_VARS_TTL_OFFSET(func), DEF_TTL);
+		 XSTORM_ISCSI_TCP_VARS_TTL_OFFSET(pfid), DEF_TTL);
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_TCP_VARS_TOS_OFFSET(func), DEF_TOS);
+		 XSTORM_ISCSI_TCP_VARS_TOS_OFFSET(pfid), DEF_TOS);
 	CNIC_WR8(dev, BAR_XSTRORM_INTMEM +
-		 XSTORM_ISCSI_TCP_VARS_ADV_WND_SCL_OFFSET(func), 2);
+		 XSTORM_ISCSI_TCP_VARS_ADV_WND_SCL_OFFSET(pfid), 2);
 	CNIC_WR(dev, BAR_XSTRORM_INTMEM +
-		XSTORM_TCP_TX_SWS_TIMER_VAL_OFFSET(func), DEF_SWS_TIMER);
+		XSTORM_TCP_TX_SWS_TIMER_VAL_OFFSET(pfid), DEF_SWS_TIMER);
 
-	CNIC_WR(dev, BAR_TSTRORM_INTMEM + TSTORM_TCP_MAX_CWND_OFFSET(func),
+	CNIC_WR(dev, BAR_TSTRORM_INTMEM + TSTORM_TCP_MAX_CWND_OFFSET(pfid),
 		DEF_MAX_CWND);
 	return 0;
 }
@@ -3859,33 +3869,48 @@ static int cnic_init_bnx2x_irq(struct cnic_dev *dev)
 	return err;
 }
 
+static inline void cnic_storm_memset_hc_disable(struct cnic_dev *dev,
+						u16 sb_id, u8 sb_index,
+						u8 disable)
+{
+
+	u32 addr = BAR_CSTRORM_INTMEM +
+			CSTORM_STATUS_BLOCK_DATA_OFFSET(sb_id) +
+			offsetof(struct hc_status_block_data_e1x, index_data) +
+			sizeof(struct hc_index_data)*sb_index +
+			offsetof(struct hc_index_data, flags);
+	u16 flags = CNIC_RD16(dev, addr);
+	/* clear and set */
+	flags &= ~HC_INDEX_DATA_HC_ENABLED;
+	flags |= (((~disable) << HC_INDEX_DATA_HC_ENABLED_SHIFT) &
+		  HC_INDEX_DATA_HC_ENABLED);
+	CNIC_WR16(dev, addr, flags);
+}
+
 static void cnic_enable_bnx2x_int(struct cnic_dev *dev)
 {
 	struct cnic_local *cp = dev->cnic_priv;
 	u8 sb_id = cp->status_blk_num;
-	int port = CNIC_PORT(cp);
 
 	CNIC_WR8(dev, BAR_CSTRORM_INTMEM +
-		 CSTORM_SB_HC_TIMEOUT_C_OFFSET(port, sb_id,
-					       HC_INDEX_C_ISCSI_EQ_CONS),
-		 64 / 12);
-	CNIC_WR16(dev, BAR_CSTRORM_INTMEM +
-		  CSTORM_SB_HC_DISABLE_C_OFFSET(port, sb_id,
-						HC_INDEX_C_ISCSI_EQ_CONS), 0);
+			CSTORM_STATUS_BLOCK_DATA_OFFSET(sb_id) +
+			offsetof(struct hc_status_block_data_e1x, index_data) +
+			sizeof(struct hc_index_data)*HC_INDEX_ISCSI_EQ_CONS +
+			offsetof(struct hc_index_data, timeout), 64 / 12);
+	cnic_storm_memset_hc_disable(dev, sb_id, HC_INDEX_ISCSI_EQ_CONS, 0);
 }
 
 static void cnic_disable_bnx2x_int_sync(struct cnic_dev *dev)
 {
 }
 
-static void cnic_init_bnx2x_tx_ring(struct cnic_dev *dev)
+static void cnic_init_bnx2x_tx_ring(struct cnic_dev *dev,
+				    struct client_init_ramrod_data *data)
 {
 	struct cnic_local *cp = dev->cnic_priv;
 	union eth_tx_bd_types *txbd = (union eth_tx_bd_types *) cp->l2_ring;
-	struct eth_context *context;
-	struct regpair context_addr;
-	dma_addr_t buf_map;
-	int func = CNIC_FUNC(cp);
+	dma_addr_t buf_map, ring_map = cp->l2_ring_map;
+	struct host_sp_status_block *sb = cp->bnx2x_def_status_blk;
 	int port = CNIC_PORT(cp);
 	int i;
 	int cli = BNX2X_ISCSI_CL_ID(CNIC_E1HVN(cp));
@@ -3910,33 +3935,23 @@ static void cnic_init_bnx2x_tx_ring(struct cnic_dev *dev)
 		start_bd->general_data |= (1 << ETH_TX_START_BD_HDR_NBDS_SHIFT);
 
 	}
-	context = cnic_get_bnx2x_ctx(dev, BNX2X_ISCSI_L2_CID, 1, &context_addr);
 
-	val = (u64) cp->l2_ring_map >> 32;
+	val = (u64) ring_map >> 32;
 	txbd->next_bd.addr_hi = cpu_to_le32(val);
 
-	context->xstorm_st_context.tx_bd_page_base_hi = val;
+	data->tx.tx_bd_page_base.hi = cpu_to_le32(val);
 
-	val = (u64) cp->l2_ring_map & 0xffffffff;
+	val = (u64) ring_map & 0xffffffff;
 	txbd->next_bd.addr_lo = cpu_to_le32(val);
 
-	context->xstorm_st_context.tx_bd_page_base_lo = val;
+	data->tx.tx_bd_page_base.lo = cpu_to_le32(val);
 
-	context->cstorm_st_context.sb_index_number =
-		HC_INDEX_DEF_C_ETH_ISCSI_CQ_CONS;
-	context->cstorm_st_context.status_block_id = BNX2X_DEF_SB_ID;
-
-	if (cli < MAX_X_STAT_COUNTER_ID)
-		context->xstorm_st_context.statistics_data = cli |
-				XSTORM_ETH_ST_CONTEXT_STATISTICS_ENABLE;
-
-	context->xstorm_ag_context.cdu_reserved =
-		CDU_RSRVD_VALUE_TYPE_A(BNX2X_HW_CID(BNX2X_ISCSI_L2_CID, func),
-					CDU_REGION_NUMBER_XCM_AG,
-					ETH_CONNECTION_TYPE);
+	/* Other ramrod params */
+	data->tx.tx_sb_index_number = HC_SP_INDEX_ETH_ISCSI_CQ_CONS;
+	data->tx.tx_status_block_id = BNX2X_DEF_SB_ID;
 
 	/* reset xstorm per client statistics */
-	if (cli < MAX_X_STAT_COUNTER_ID) {
+	if (cli < MAX_STAT_COUNTER_ID) {
 		val = BAR_XSTRORM_INTMEM +
 		      XSTORM_PER_COUNTER_ID_STATS_OFFSET(port, cli);
 		for (i = 0; i < sizeof(struct xstorm_per_client_stats) / 4; i++)
@@ -3944,25 +3959,31 @@ static void cnic_init_bnx2x_tx_ring(struct cnic_dev *dev)
 	}
 
 	cp->tx_cons_ptr =
-		&cp->bnx2x_def_status_blk->c_def_status_block.index_values[
-			HC_INDEX_DEF_C_ETH_ISCSI_CQ_CONS];
+		&sb->sp_sb.index_values[HC_SP_INDEX_ETH_ISCSI_CQ_CONS];
 }
 
-static void cnic_init_bnx2x_rx_ring(struct cnic_dev *dev)
+static void cnic_init_bnx2x_rx_ring(struct cnic_dev *dev,
+				    struct client_init_ramrod_data *data)
 {
 	struct cnic_local *cp = dev->cnic_priv;
 	struct eth_rx_bd *rxbd = (struct eth_rx_bd *) (cp->l2_ring +
 				BCM_PAGE_SIZE);
 	struct eth_rx_cqe_next_page *rxcqe = (struct eth_rx_cqe_next_page *)
 				(cp->l2_ring + (2 * BCM_PAGE_SIZE));
-	struct eth_context *context;
-	struct regpair context_addr;
+	struct host_sp_status_block *sb = cp->bnx2x_def_status_blk;
 	int i;
 	int port = CNIC_PORT(cp);
-	int func = CNIC_FUNC(cp);
 	int cli = BNX2X_ISCSI_CL_ID(CNIC_E1HVN(cp));
+	int cl_qzone_id = BNX2X_CL_QZONE_ID(cp, cli);
 	u32 val;
-	struct tstorm_eth_client_config tstorm_client = {0};
+	dma_addr_t ring_map = cp->l2_ring_map;
+
+	/* General data */
+	data->general.client_id = cli;
+	data->general.statistics_en_flg = 1;
+	data->general.statistics_counter_id = cli;
+	data->general.activate_flg = 1;
+	data->general.sp_client_id = cli;
 
 	for (i = 0; i < BNX2X_MAX_RX_DESC_CNT; i++, rxbd++) {
 		dma_addr_t buf_map;
@@ -3972,83 +3993,42 @@ static void cnic_init_bnx2x_rx_ring(struct cnic_dev *dev)
 		rxbd->addr_hi = cpu_to_le32((u64) buf_map >> 32);
 		rxbd->addr_lo = cpu_to_le32(buf_map & 0xffffffff);
 	}
-	context = cnic_get_bnx2x_ctx(dev, BNX2X_ISCSI_L2_CID, 0, &context_addr);
 
-	val = (u64) (cp->l2_ring_map + BCM_PAGE_SIZE) >> 32;
+	val = (u64) (ring_map + BCM_PAGE_SIZE) >> 32;
 	rxbd->addr_hi = cpu_to_le32(val);
+	data->rx.bd_page_base.hi = cpu_to_le32(val);
 
-	context->ustorm_st_context.common.bd_page_base_hi = val;
-
-	val = (u64) (cp->l2_ring_map + BCM_PAGE_SIZE) & 0xffffffff;
+	val = (u64) (ring_map + BCM_PAGE_SIZE) & 0xffffffff;
 	rxbd->addr_lo = cpu_to_le32(val);
-
-	context->ustorm_st_context.common.bd_page_base_lo = val;
-
-	context->ustorm_st_context.common.sb_index_numbers =
-						BNX2X_ISCSI_RX_SB_INDEX_NUM;
-	context->ustorm_st_context.common.clientId = cli;
-	context->ustorm_st_context.common.status_block_id = BNX2X_DEF_SB_ID;
-	if (cli < MAX_U_STAT_COUNTER_ID) {
-		context->ustorm_st_context.common.flags =
-			USTORM_ETH_ST_CONTEXT_CONFIG_ENABLE_STATISTICS;
-		context->ustorm_st_context.common.statistics_counter_id = cli;
-	}
-	context->ustorm_st_context.common.mc_alignment_log_size = 0;
-	context->ustorm_st_context.common.bd_buff_size =
-						cp->l2_single_buf_size;
-
-	context->ustorm_ag_context.cdu_usage =
-		CDU_RSRVD_VALUE_TYPE_A(BNX2X_HW_CID(BNX2X_ISCSI_L2_CID, func),
-					CDU_REGION_NUMBER_UCM_AG,
-					ETH_CONNECTION_TYPE);
+	data->rx.bd_page_base.lo = cpu_to_le32(val);
 
 	rxcqe += BNX2X_MAX_RCQ_DESC_CNT;
-	val = (u64) (cp->l2_ring_map + (2 * BCM_PAGE_SIZE)) >> 32;
+	val = (u64) (ring_map + (2 * BCM_PAGE_SIZE)) >> 32;
 	rxcqe->addr_hi = cpu_to_le32(val);
+	data->rx.cqe_page_base.hi = cpu_to_le32(val);
 
-	CNIC_WR(dev, BAR_USTRORM_INTMEM +
-		USTORM_CQE_PAGE_BASE_OFFSET(port, cli) + 4, val);
-
-	CNIC_WR(dev, BAR_USTRORM_INTMEM +
-		USTORM_CQE_PAGE_NEXT_OFFSET(port, cli) + 4, val);
-
-	val = (u64) (cp->l2_ring_map + (2 * BCM_PAGE_SIZE)) & 0xffffffff;
+	val = (u64) (ring_map + (2 * BCM_PAGE_SIZE)) & 0xffffffff;
 	rxcqe->addr_lo = cpu_to_le32(val);
+	data->rx.cqe_page_base.lo = cpu_to_le32(val);
 
-	CNIC_WR(dev, BAR_USTRORM_INTMEM +
-		USTORM_CQE_PAGE_BASE_OFFSET(port, cli), val);
+	/* Other ramrod params */
+	data->rx.client_qzone_id = cl_qzone_id;
+	data->rx.rx_sb_index_number = HC_SP_INDEX_ETH_ISCSI_RX_CQ_CONS;
+	data->rx.status_block_id = BNX2X_DEF_SB_ID;
 
-	CNIC_WR(dev, BAR_USTRORM_INTMEM +
-		USTORM_CQE_PAGE_NEXT_OFFSET(port, cli), val);
+	data->rx.cache_line_alignment_log_size = L1_CACHE_SHIFT;
+	data->rx.bd_buff_size =	cpu_to_le16(cp->l2_single_buf_size);
 
-	/* client tstorm info */
-	tstorm_client.mtu = cp->l2_single_buf_size - 14;
-	tstorm_client.config_flags = TSTORM_ETH_CLIENT_CONFIG_E1HOV_REM_ENABLE;
+	data->rx.mtu = cpu_to_le16(cp->l2_single_buf_size - 14);
+	data->rx.outer_vlan_removal_enable_flg = 1;
 
-	if (cli < MAX_T_STAT_COUNTER_ID) {
-		tstorm_client.config_flags |=
-				TSTORM_ETH_CLIENT_CONFIG_STATSITICS_ENABLE;
-		tstorm_client.statistics_counter_id = cli;
-	}
-
-	CNIC_WR(dev, BAR_TSTRORM_INTMEM +
-		   TSTORM_CLIENT_CONFIG_OFFSET(port, cli),
-		   ((u32 *)&tstorm_client)[0]);
-	CNIC_WR(dev, BAR_TSTRORM_INTMEM +
-		   TSTORM_CLIENT_CONFIG_OFFSET(port, cli) + 4,
-		   ((u32 *)&tstorm_client)[1]);
-
-	/* reset tstorm per client statistics */
-	if (cli < MAX_T_STAT_COUNTER_ID) {
-
+	/* reset tstorm and ustorm per client statistics */
+	if (cli < MAX_STAT_COUNTER_ID) {
 		val = BAR_TSTRORM_INTMEM +
 		      TSTORM_PER_COUNTER_ID_STATS_OFFSET(port, cli);
 		for (i = 0; i < sizeof(struct tstorm_per_client_stats) / 4; i++)
 			CNIC_WR(dev, val + i * 4, 0);
-	}
 
-	/* reset ustorm per client statistics */
-	if (cli < MAX_U_STAT_COUNTER_ID) {
 		val = BAR_USTRORM_INTMEM +
 		      USTORM_PER_COUNTER_ID_STATS_OFFSET(port, cli);
 		for (i = 0; i < sizeof(struct ustorm_per_client_stats) / 4; i++)
@@ -4056,8 +4036,7 @@ static void cnic_init_bnx2x_rx_ring(struct cnic_dev *dev)
 	}
 
 	cp->rx_cons_ptr =
-		&cp->bnx2x_def_status_blk->u_def_status_block.index_values[
-			HC_INDEX_DEF_U_ETH_ISCSI_RX_CQ_CONS];
+		&sb->sp_sb.index_values[HC_SP_INDEX_ETH_ISCSI_RX_CQ_CONS];
 }
 
 static void cnic_get_bnx2x_iscsi_info(struct cnic_dev *dev)
@@ -4068,7 +4047,7 @@ static void cnic_get_bnx2x_iscsi_info(struct cnic_dev *dev)
 
 	dev->max_iscsi_conn = 0;
 	base = CNIC_RD(dev, MISC_REG_SHARED_MEM_ADDR);
-	if (base < 0xa0000 || base >= 0xc0000)
+	if (base == 0)
 		return;
 
 	addr = BNX2X_SHMEM_ADDR(base,
@@ -4105,14 +4084,19 @@ static void cnic_get_bnx2x_iscsi_info(struct cnic_dev *dev)
 	}
 	if (BNX2X_CHIP_IS_E1H(cp->chip_id)) {
 		int func = CNIC_FUNC(cp);
+		u32 mf_cfg_addr;
 
-		addr = BNX2X_SHMEM_ADDR(base,
-				mf_cfg.func_mf_config[func].e1hov_tag);
+		mf_cfg_addr = base + BNX2X_SHMEM_MF_BLK_OFFSET;
+
+		addr = mf_cfg_addr +
+			offsetof(struct mf_cfg, func_mf_config[func].e1hov_tag);
+
 		val = CNIC_RD(dev, addr);
 		val &= FUNC_MF_CFG_E1HOV_TAG_MASK;
 		if (val != FUNC_MF_CFG_E1HOV_TAG_DEFAULT) {
-			addr = BNX2X_SHMEM_ADDR(base,
-				mf_cfg.func_mf_config[func].config);
+			addr = mf_cfg_addr +
+				offsetof(struct mf_cfg,
+					 func_mf_config[func].config);
 			val = CNIC_RD(dev, addr);
 			val &= FUNC_MF_CFG_PROTOCOL_MASK;
 			if (val != FUNC_MF_CFG_PROTOCOL_ISCSI)
@@ -4124,10 +4108,13 @@ static void cnic_get_bnx2x_iscsi_info(struct cnic_dev *dev)
 static int cnic_start_bnx2x_hw(struct cnic_dev *dev)
 {
 	struct cnic_local *cp = dev->cnic_priv;
+	struct cnic_eth_dev *ethdev = cp->ethdev;
 	int func = CNIC_FUNC(cp), ret, i;
-	int port = CNIC_PORT(cp);
-	u16 eq_idx;
-	u8 sb_id = cp->status_blk_num;
+	u32 pfid;
+	struct host_hc_status_block_e1x *sb = cp->status_blk.gen;
+
+	cp->pfid = func;
+	pfid = cp->pfid;
 
 	ret = cnic_init_id_tbl(&cp->cid_tbl, MAX_ISCSI_TBL_SZ,
 			       cp->iscsi_start_cid);
@@ -4135,86 +4122,86 @@ static int cnic_start_bnx2x_hw(struct cnic_dev *dev)
 	if (ret)
 		return -ENOMEM;
 
+	cp->bnx2x_igu_sb_id = ethdev->irq_arr[0].status_blk_num2;
+
 	cp->kcq1.io_addr = BAR_CSTRORM_INTMEM +
-			  CSTORM_ISCSI_EQ_PROD_OFFSET(func, 0);
+			  CSTORM_ISCSI_EQ_PROD_OFFSET(pfid, 0);
 	cp->kcq1.sw_prod_idx = 0;
 
 	cp->kcq1.hw_prod_idx_ptr =
-		&cp->status_blk.bnx2x->c_status_block.index_values[
-			HC_INDEX_C_ISCSI_EQ_CONS];
+		&sb->sb.index_values[HC_INDEX_ISCSI_EQ_CONS];
 	cp->kcq1.status_idx_ptr =
-		&cp->status_blk.bnx2x->c_status_block.status_block_index;
+		&sb->sb.running_index[SM_RX_ID];
 
 	cnic_get_bnx2x_iscsi_info(dev);
 
 	/* Only 1 EQ */
 	CNIC_WR16(dev, cp->kcq1.io_addr, MAX_KCQ_IDX);
 	CNIC_WR(dev, BAR_CSTRORM_INTMEM +
-		CSTORM_ISCSI_EQ_CONS_OFFSET(func, 0), 0);
+		CSTORM_ISCSI_EQ_CONS_OFFSET(pfid, 0), 0);
 	CNIC_WR(dev, BAR_CSTRORM_INTMEM +
-		CSTORM_ISCSI_EQ_NEXT_PAGE_ADDR_OFFSET(func, 0),
+		CSTORM_ISCSI_EQ_NEXT_PAGE_ADDR_OFFSET(pfid, 0),
 		cp->kcq1.dma.pg_map_arr[1] & 0xffffffff);
 	CNIC_WR(dev, BAR_CSTRORM_INTMEM +
-		CSTORM_ISCSI_EQ_NEXT_PAGE_ADDR_OFFSET(func, 0) + 4,
+		CSTORM_ISCSI_EQ_NEXT_PAGE_ADDR_OFFSET(pfid, 0) + 4,
 		(u64) cp->kcq1.dma.pg_map_arr[1] >> 32);
 	CNIC_WR(dev, BAR_CSTRORM_INTMEM +
-		CSTORM_ISCSI_EQ_NEXT_EQE_ADDR_OFFSET(func, 0),
+		CSTORM_ISCSI_EQ_NEXT_EQE_ADDR_OFFSET(pfid, 0),
 		cp->kcq1.dma.pg_map_arr[0] & 0xffffffff);
 	CNIC_WR(dev, BAR_CSTRORM_INTMEM +
-		CSTORM_ISCSI_EQ_NEXT_EQE_ADDR_OFFSET(func, 0) + 4,
+		CSTORM_ISCSI_EQ_NEXT_EQE_ADDR_OFFSET(pfid, 0) + 4,
 		(u64) cp->kcq1.dma.pg_map_arr[0] >> 32);
 	CNIC_WR8(dev, BAR_CSTRORM_INTMEM +
-		CSTORM_ISCSI_EQ_NEXT_PAGE_ADDR_VALID_OFFSET(func, 0), 1);
+		CSTORM_ISCSI_EQ_NEXT_PAGE_ADDR_VALID_OFFSET(pfid, 0), 1);
 	CNIC_WR16(dev, BAR_CSTRORM_INTMEM +
-		CSTORM_ISCSI_EQ_SB_NUM_OFFSET(func, 0), cp->status_blk_num);
+		CSTORM_ISCSI_EQ_SB_NUM_OFFSET(pfid, 0), cp->status_blk_num);
 	CNIC_WR8(dev, BAR_CSTRORM_INTMEM +
-		CSTORM_ISCSI_EQ_SB_INDEX_OFFSET(func, 0),
-		HC_INDEX_C_ISCSI_EQ_CONS);
+		CSTORM_ISCSI_EQ_SB_INDEX_OFFSET(pfid, 0),
+		HC_INDEX_ISCSI_EQ_CONS);
 
 	for (i = 0; i < cp->conn_buf_info.num_pages; i++) {
 		CNIC_WR(dev, BAR_TSTRORM_INTMEM +
-			TSTORM_ISCSI_CONN_BUF_PBL_OFFSET(func, i),
+			TSTORM_ISCSI_CONN_BUF_PBL_OFFSET(pfid, i),
 			cp->conn_buf_info.pgtbl[2 * i]);
 		CNIC_WR(dev, BAR_TSTRORM_INTMEM +
-			TSTORM_ISCSI_CONN_BUF_PBL_OFFSET(func, i) + 4,
+			TSTORM_ISCSI_CONN_BUF_PBL_OFFSET(pfid, i) + 4,
 			cp->conn_buf_info.pgtbl[(2 * i) + 1]);
 	}
 
 	CNIC_WR(dev, BAR_USTRORM_INTMEM +
-		USTORM_ISCSI_GLOBAL_BUF_PHYS_ADDR_OFFSET(func),
+		USTORM_ISCSI_GLOBAL_BUF_PHYS_ADDR_OFFSET(pfid),
 		cp->gbl_buf_info.pg_map_arr[0] & 0xffffffff);
 	CNIC_WR(dev, BAR_USTRORM_INTMEM +
-		USTORM_ISCSI_GLOBAL_BUF_PHYS_ADDR_OFFSET(func) + 4,
+		USTORM_ISCSI_GLOBAL_BUF_PHYS_ADDR_OFFSET(pfid) + 4,
 		(u64) cp->gbl_buf_info.pg_map_arr[0] >> 32);
+
+	CNIC_WR(dev, BAR_TSTRORM_INTMEM +
+		TSTORM_ISCSI_TCP_LOCAL_ADV_WND_OFFSET(pfid), DEF_RCV_BUF);
 
 	cnic_setup_bnx2x_context(dev);
 
-	eq_idx = CNIC_RD16(dev, BAR_CSTRORM_INTMEM +
-			   CSTORM_SB_HOST_STATUS_BLOCK_C_OFFSET(port, sb_id) +
-			   offsetof(struct cstorm_status_block_c,
-				    index_values[HC_INDEX_C_ISCSI_EQ_CONS]));
-	if (eq_idx != 0) {
-		netdev_err(dev->netdev, "EQ cons index %x != 0\n", eq_idx);
-		return -EBUSY;
-	}
 	ret = cnic_init_bnx2x_irq(dev);
 	if (ret)
 		return ret;
-
-	cnic_init_bnx2x_tx_ring(dev);
-	cnic_init_bnx2x_rx_ring(dev);
 
 	return 0;
 }
 
 static void cnic_init_rings(struct cnic_dev *dev)
 {
+	struct cnic_local *cp = dev->cnic_priv;
+
+	if (test_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags))
+		return;
+
 	if (test_bit(CNIC_F_BNX2_CLASS, &dev->flags)) {
 		cnic_init_bnx2_tx_ring(dev);
 		cnic_init_bnx2_rx_ring(dev);
+		set_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags);
 	} else if (test_bit(CNIC_F_BNX2X_CLASS, &dev->flags)) {
-		struct cnic_local *cp = dev->cnic_priv;
 		u32 cli = BNX2X_ISCSI_CL_ID(CNIC_E1HVN(cp));
+		u32 cl_qzone_id, type;
+		struct client_init_ramrod_data *data;
 		union l5cm_specific_data l5_data;
 		struct ustorm_eth_rx_producers rx_prods = {0};
 		u32 off, i;
@@ -4223,21 +4210,36 @@ static void cnic_init_rings(struct cnic_dev *dev)
 		rx_prods.cqe_prod = BNX2X_MAX_RCQ_DESC_CNT;
 		barrier();
 
+		cl_qzone_id = BNX2X_CL_QZONE_ID(cp, cli);
+
 		off = BAR_USTRORM_INTMEM +
-			USTORM_RX_PRODS_OFFSET(CNIC_PORT(cp), cli);
+			 USTORM_RX_PRODS_E1X_OFFSET(CNIC_PORT(cp), cli);
 
 		for (i = 0; i < sizeof(struct ustorm_eth_rx_producers) / 4; i++)
 			CNIC_WR(dev, off + i * 4, ((u32 *) &rx_prods)[i]);
 
 		set_bit(CNIC_LCL_FL_L2_WAIT, &cp->cnic_local_flags);
 
-		cnic_init_bnx2x_tx_ring(dev);
-		cnic_init_bnx2x_rx_ring(dev);
+		data = cp->l2_buf;
 
-		l5_data.phy_address.lo = cli;
-		l5_data.phy_address.hi = 0;
+		memset(data, 0, sizeof(*data));
+
+		cnic_init_bnx2x_tx_ring(dev, data);
+		cnic_init_bnx2x_rx_ring(dev, data);
+
+		l5_data.phy_address.lo = cp->l2_buf_map & 0xffffffff;
+		l5_data.phy_address.hi = (u64) cp->l2_buf_map >> 32;
+
+		type = (ETH_CONNECTION_TYPE << SPE_HDR_CONN_TYPE_SHIFT)
+			& SPE_HDR_CONN_TYPE;
+		type |= ((cp->pfid << SPE_HDR_FUNCTION_ID_SHIFT) &
+			SPE_HDR_FUNCTION_ID);
+
+		set_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags);
+
 		cnic_submit_kwqe_16(dev, RAMROD_CMD_ID_ETH_CLIENT_SETUP,
-			BNX2X_ISCSI_L2_CID, ETH_CONNECTION_TYPE, &l5_data);
+			BNX2X_ISCSI_L2_CID, type, &l5_data);
+
 		i = 0;
 		while (test_bit(CNIC_LCL_FL_L2_WAIT, &cp->cnic_local_flags) &&
 		       ++i < 10)
@@ -4246,13 +4248,18 @@ static void cnic_init_rings(struct cnic_dev *dev)
 		if (test_bit(CNIC_LCL_FL_L2_WAIT, &cp->cnic_local_flags))
 			netdev_err(dev->netdev,
 				"iSCSI CLIENT_SETUP did not complete\n");
-		cnic_kwq_completion(dev, 1);
+		cnic_spq_completion(dev, DRV_CTL_RET_L2_SPQ_CREDIT_CMD, 1);
 		cnic_ring_ctl(dev, BNX2X_ISCSI_L2_CID, cli, 1);
 	}
 }
 
 static void cnic_shutdown_rings(struct cnic_dev *dev)
 {
+	struct cnic_local *cp = dev->cnic_priv;
+
+	if (!test_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags))
+		return;
+
 	if (test_bit(CNIC_F_BNX2_CLASS, &dev->flags)) {
 		cnic_shutdown_bnx2_rx_ring(dev);
 	} else if (test_bit(CNIC_F_BNX2X_CLASS, &dev->flags)) {
@@ -4260,6 +4267,7 @@ static void cnic_shutdown_rings(struct cnic_dev *dev)
 		u32 cli = BNX2X_ISCSI_CL_ID(CNIC_E1HVN(cp));
 		union l5cm_specific_data l5_data;
 		int i;
+		u32 type;
 
 		cnic_ring_ctl(dev, BNX2X_ISCSI_L2_CID, cli, 0);
 
@@ -4277,14 +4285,18 @@ static void cnic_shutdown_rings(struct cnic_dev *dev)
 		if (test_bit(CNIC_LCL_FL_L2_WAIT, &cp->cnic_local_flags))
 			netdev_err(dev->netdev,
 				"iSCSI CLIENT_HALT did not complete\n");
-		cnic_kwq_completion(dev, 1);
+		cnic_spq_completion(dev, DRV_CTL_RET_L2_SPQ_CREDIT_CMD, 1);
 
 		memset(&l5_data, 0, sizeof(l5_data));
-		cnic_submit_kwqe_16(dev, RAMROD_CMD_ID_ETH_CFC_DEL,
-			BNX2X_ISCSI_L2_CID, ETH_CONNECTION_TYPE |
-			(1 << SPE_HDR_COMMON_RAMROD_SHIFT), &l5_data);
+		type = (NONE_CONNECTION_TYPE << SPE_HDR_CONN_TYPE_SHIFT)
+			& SPE_HDR_CONN_TYPE;
+		type |= ((cp->pfid << SPE_HDR_FUNCTION_ID_SHIFT) &
+			 SPE_HDR_FUNCTION_ID);
+		cnic_submit_kwqe_16(dev, RAMROD_CMD_ID_COMMON_CFC_DEL,
+			BNX2X_ISCSI_L2_CID, type, &l5_data);
 		msleep(10);
 	}
+	clear_bit(CNIC_LCL_FL_RINGS_INITED, &cp->cnic_local_flags);
 }
 
 static int cnic_register_netdev(struct cnic_dev *dev)
@@ -4379,17 +4391,11 @@ static void cnic_stop_bnx2_hw(struct cnic_dev *dev)
 static void cnic_stop_bnx2x_hw(struct cnic_dev *dev)
 {
 	struct cnic_local *cp = dev->cnic_priv;
-	u8 sb_id = cp->status_blk_num;
-	int port = CNIC_PORT(cp);
 
 	cnic_free_irq(dev);
-	CNIC_WR16(dev, BAR_CSTRORM_INTMEM +
-		  CSTORM_SB_HOST_STATUS_BLOCK_C_OFFSET(port, sb_id) +
-		  offsetof(struct cstorm_status_block_c,
-			   index_values[HC_INDEX_C_ISCSI_EQ_CONS]),
-		  0);
+	*cp->kcq1.hw_prod_idx_ptr = 0;
 	CNIC_WR(dev, BAR_CSTRORM_INTMEM +
-		CSTORM_ISCSI_EQ_CONS_OFFSET(cp->func, 0), 0);
+		CSTORM_ISCSI_EQ_CONS_OFFSET(cp->pfid, 0), 0);
 	CNIC_WR16(dev, cp->kcq1.io_addr, 0);
 	cnic_free_resc(dev);
 }
