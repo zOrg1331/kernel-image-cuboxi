@@ -242,6 +242,34 @@ static int drm_fb_helper_parse_command_line(struct drm_fb_helper *fb_helper)
 	return 0;
 }
 
+static void drm_fb_helper_save_lut_atomic(struct drm_crtc *crtc, struct drm_fb_helper *helper)
+{
+	int size;
+	uint16_t *r_base, *g_base, *b_base;
+	int i;
+
+	size = crtc->gamma_size * (sizeof(uint16_t));
+	r_base = crtc->gamma_store;
+	g_base = r_base + size;
+	b_base = g_base + size;
+
+	for (i = 0; i < crtc->gamma_size; i++)
+		helper->funcs->gamma_get(crtc, &r_base[i], &g_base[i], &b_base[i], i);
+}
+
+static void drm_fb_helper_restore_lut_atomic(struct drm_crtc *crtc)
+{
+	int size;
+	uint16_t *r_base, *g_base, *b_base;
+
+	size = crtc->gamma_size * (sizeof(uint16_t));
+	r_base = crtc->gamma_store;
+	g_base = r_base + size;
+	b_base = g_base + size;
+
+	crtc->funcs->gamma_set(crtc, r_base, g_base, b_base, 0, size);
+}
+
 int drm_fb_helper_debug_enter(struct fb_info *info)
 {
 	struct drm_fb_helper *helper = info->par;
@@ -260,10 +288,13 @@ int drm_fb_helper_debug_enter(struct fb_info *info)
 				continue;
 
 			funcs =	mode_set->crtc->helper_private;
+
+			drm_fb_helper_save_lut_atomic(mode_set->crtc, helper);
 			funcs->mode_set_base_atomic(mode_set->crtc,
 						    mode_set->fb,
 						    mode_set->x,
-						    mode_set->y);
+						    mode_set->y,
+						    ENTER_ATOMIC_MODE_SET);
 
 		}
 	}
@@ -308,8 +339,9 @@ int drm_fb_helper_debug_leave(struct fb_info *info)
 			continue;
 		}
 
+		drm_fb_helper_restore_lut_atomic(mode_set->crtc);
 		funcs->mode_set_base_atomic(mode_set->crtc, fb, crtc->x,
-					    crtc->y);
+					    crtc->y, LEAVE_ATOMIC_MODE_SET);
 	}
 
 	return 0;

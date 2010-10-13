@@ -1458,7 +1458,7 @@ intel_pin_and_fence_fb_obj(struct drm_device *dev, struct drm_gem_object *obj)
 /* Assume fb object is pinned & idle & fenced and just update base pointers */
 static int
 intel_pipe_set_base_atomic(struct drm_crtc *crtc, struct drm_framebuffer *fb,
-			   int x, int y)
+			   int x, int y, enum mode_set_atomic state)
 {
 	struct drm_device *dev = crtc->dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
@@ -1593,7 +1593,8 @@ intel_pipe_set_base(struct drm_crtc *crtc, int x, int y,
 		return ret;
 	}
 
-	ret = intel_pipe_set_base_atomic(crtc, crtc->fb, x, y);
+	ret = intel_pipe_set_base_atomic(crtc, crtc->fb, x, y,
+					 LEAVE_ATOMIC_MODE_SET);
 	if (ret) {
 		i915_gem_object_unpin(obj);
 		mutex_unlock(&dev->struct_mutex);

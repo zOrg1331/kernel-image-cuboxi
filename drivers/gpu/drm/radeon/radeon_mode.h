@@ -35,6 +35,7 @@
 #include <drm_edid.h>
 #include <drm_dp_helper.h>
 #include <drm_fixed.h>
+#include <drm_crtc_helper.h>
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
 
@@ -513,6 +514,10 @@ extern void radeon_encoder_set_active_device(struct drm_encoder *encoder);
 extern void radeon_crtc_load_lut(struct drm_crtc *crtc);
 extern int atombios_crtc_set_base(struct drm_crtc *crtc, int x, int y,
 				   struct drm_framebuffer *old_fb);
+extern int atombios_crtc_set_base_atomic(struct drm_crtc *crtc,
+					 struct drm_framebuffer *fb,
+					 int x, int y,
+					 enum mode_set_atomic state);
 extern int atombios_crtc_mode_set(struct drm_crtc *crtc,
 				   struct drm_display_mode *mode,
 				   struct drm_display_mode *adjusted_mode,
@@ -522,7 +527,13 @@ extern void atombios_crtc_dpms(struct drm_crtc *crtc, int mode);
 
 extern int radeon_crtc_set_base(struct drm_crtc *crtc, int x, int y,
 				 struct drm_framebuffer *old_fb);
-
+extern int radeon_crtc_set_base_atomic(struct drm_crtc *crtc,
+				       struct drm_framebuffer *fb,
+				       int x, int y,
+				       enum mode_set_atomic state);
+extern int radeon_crtc_do_set_base(struct drm_crtc *crtc,
+				   struct drm_framebuffer *fb,
+				   int x, int y, int atomic);
 extern int radeon_crtc_cursor_set(struct drm_crtc *crtc,
 				  struct drm_file *file_priv,
 				  uint32_t handle,
