@@ -46,7 +46,9 @@ do_trace:
 	movel	#-ENOSYS,%sp@(PT_OFF_D0) /* needed for strace*/
 	subql	#4,%sp
 	SAVE_SWITCH_STACK
+	clrl	%sp@-
 	jbsr	syscall_trace
+	addql	#4,%sp
 	RESTORE_SWITCH_STACK
 	addql	#4,%sp
 	movel	%sp@(PT_OFF_ORIG_D0),%d1
@@ -60,7 +62,9 @@ do_trace:
 1:	movel	%d0,%sp@(PT_OFF_D0)	/* save the return value */
 	subql	#4,%sp			/* dummy return address */
 	SAVE_SWITCH_STACK
+	movel	#1, %sp@-
 	jbsr	syscall_trace
+	addql	#4,%sp
 
 ret_from_signal:
 	RESTORE_SWITCH_STACK
