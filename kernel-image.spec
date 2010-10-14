@@ -1,6 +1,6 @@
-Name: kernel-image-un-def
+Name: kernel-image-std-def
 Version: 2.6.35
-Release: alt7.1
+Release: alt7
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -18,7 +18,7 @@ epoch:1
 
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.3
+%define kgcc_version	4.4
 
 # Enable/disable SGML docs formatting
 %def_enable docs
@@ -73,7 +73,6 @@ Requires: mkinitrd >= 1:2.9.9-alt1
 Requires: startup >= 0.8.3-alt1
 
 Provides: kernel = %kversion
-Provides: kernel-module-drbd83
 
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
@@ -87,10 +86,11 @@ Most hardware drivers for this kernel are built as modules.  Some of
 these drivers are built separately from the kernel; they are available
 in separate packages (kernel-modules-*-%flavour).
 
-The "un" variant of kernel packages is a low latency desktop oriented
-2.6.x kernel which should support wide range of hardware,
-but it is not 'official' ALT Linux kernel and you can use it for you
-own risk.
+The "std" variant of kernel packages is a generic 2.6.x kernel which
+should support wide range of hardware, but does not contain patches
+which are useful only for some special applications (and may have
+undesirable side effects in other cases).  This is the default 2.6.x
+kernel variant for ALT Linux distributions.
 
 %package -n kernel-image-domU-%flavour
 Summary: Uncompressed linux kernel for XEN domU boot 
@@ -103,6 +103,52 @@ Most XEN virtualization system versions can not boot lzma-compressed
 kernel images. This is an optional package with uncompressed linux
 kernel image for this special case. If you do not know what is it XEN
 it seems that you do not need this package.
+ 
+
+%package -n kernel-modules-oss-%flavour
+Summary: OSS sound driver modules (obsolete)
+Group: System/Kernel and hardware
+Provides:  kernel-modules-oss-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-oss-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-oss-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-oss-%flavour
+This package contains OSS sound driver modules for the Linux kernel
+package %name-%version-%release.
+
+These drivers are declared obsolete by the kernel maintainers; ALSA
+drivers should be used instead.  However, the older OSS drivers may be
+still useful for some hardware, if the corresponding ALSA drivers do
+not work well.
+
+Install this package only if you really need it.
+
+%package -n kernel-modules-ide-%flavour
+Summary: IDE  driver modules (obsolete by PATA)
+Group: System/Kernel and hardware
+Provides:  kernel-modules-ide-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease > %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-ide-%flavour
+This package contains  IDE driver modules for the Linux kernel
+package %name-%version-%release.
+
+These drivers are declared obsolete by the kernel maintainers; PATA
+drivers should be used instead.  However, the older IDE drivers may be
+still useful for some hardware, if the corresponding PATA drivers do
+not work well.
+
+Install this package only if you really need it.
+
 
 %package -n kernel-modules-alsa-%flavour
 Summary: The Advanced Linux Sound Architecture modules
@@ -163,15 +209,6 @@ Prereq: module-init-tools >= 3.1
 Prereq: %name = %version-%release
 Requires(postun): %name = %version-%release
 
-%description -n kernel-modules-drm-nouveau-%flavour
-The Direct Rendering Infrastructure, also known as the DRI, is a framework
-for allowing direct access to graphics hardware in a safe and efficient
-manner.  It includes changes to the X server, to several client libraries,
-and to the kernel.  The first major use for the DRI is to create fast
-OpenGL implementations.
-
-These are modules for your ALT Linux system
-
 %package -n kernel-modules-drm-radeon-%flavour
 Summary: The Direct Rendering Infrastructure modules for ATI cards
 Group: System/Kernel and hardware
@@ -193,27 +230,15 @@ OpenGL implementations.
 
 These are modules for your ALT Linux system
 
-%package -n kernel-modules-ide-%flavour
-Summary: IDE  driver modules (obsolete by PATA)
-Group: System/Kernel and hardware
-Provides:  kernel-modules-ide-%kversion-%flavour-%krelease = %version-%release
-Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease < %version-%release
-Conflicts: kernel-modules-ide-%kversion-%flavour-%krelease > %version-%release
-Prereq: coreutils
-Prereq: module-init-tools >= 3.1
-Prereq: %name = %version-%release
-Requires(postun): %name = %version-%release
+%description -n kernel-modules-drm-nouveau-%flavour
+The Direct Rendering Infrastructure, also known as the DRI, is a framework
+for allowing direct access to graphics hardware in a safe and efficient
+manner.  It includes changes to the X server, to several client libraries,
+and to the kernel.  The first major use for the DRI is to create fast
+OpenGL implementations.
 
-%description -n kernel-modules-ide-%flavour
-This package contains  IDE driver modules for the Linux kernel
-package %name-%version-%release.
+These are modules for your ALT Linux system
 
-These drivers are declared obsolete by the kernel maintainers; PATA
-drivers should be used instead.  However, the older IDE drivers may be
-still useful for some hardware, if the corresponding PATA drivers do
-not work well.
-
-Install this package only if you really need it.
 
 %package -n kernel-modules-kvm-%flavour
 Summary: Linux KVM (Kernel Virtual Machine) modules
@@ -366,11 +391,11 @@ install -Dp -m644 .config %buildroot/boot/config-$KernelVer
 
 make modules_install INSTALL_MOD_PATH=%buildroot INSTALL_FW_PATH=%buildroot/lib/firmware/$KernelVer
 
+
 mkdir -p %buildroot%kbuild_dir/arch/x86
 install -d %buildroot%kbuild_dir
 cp -a include %buildroot%kbuild_dir/include
 cp -a arch/x86/include %buildroot%kbuild_dir/arch/x86
-
 
 # drivers-headers install
 install -d %buildroot%kbuild_dir/drivers/scsi
@@ -465,6 +490,8 @@ ln -s ../generated/autoconf.h
 ln -s ../generated/utsrelease.h
 popd
 
+
+
 # install documentation
 %if_enabled docs
 install -d %buildroot%_docdir/kernel-doc-%base_flavour-%version/
@@ -473,11 +500,22 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
 
-%post
 %post_kernel_image %kversion-%flavour-%krelease
 
 %preun
 %preun_kernel_image %kversion-%flavour-%krelease
+
+%post -n kernel-modules-oss-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-oss-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
+%post -n kernel-modules-ide-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-ide-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
 
 %post -n kernel-modules-drm-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
@@ -497,12 +535,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-drm-radeon-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
-%post -n kernel-modules-ide-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
-%postun -n kernel-modules-ide-%flavour
-%postun_kernel_modules %kversion-%flavour-%krelease
-
 %post -n kernel-modules-kvm-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
@@ -515,17 +547,18 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-v4l-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
+%post -n kernel-modules-alsa-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
 %post -n kernel-modules-staging-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
 %postun -n kernel-modules-staging-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
-%post -n kernel-modules-alsa-%flavour
-%post_kernel_modules %kversion-%flavour-%krelease
-
 %postun -n kernel-modules-alsa-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
+
 %post -n kernel-headers-%flavour
 %post_kernel_headers %kversion-%flavour-%krelease
 
@@ -542,15 +575,27 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/media/
 %exclude %modules_dir/kernel/drivers/staging/
 %exclude %modules_dir/kernel/drivers/gpu/drm
-%exclude %modules_dir/kernel/drivers/ide/
 %exclude %modules_dir/kernel/arch/x86/kvm
+%exclude %modules_dir/kernel/drivers/ide/
 /lib/firmware/*
+%if_enabled oss
+# OSS drivers
+%exclude %modules_dir/kernel/sound/oss
+
+%files -n kernel-modules-oss-%flavour
+%modules_dir/kernel/sound/oss
+%endif #oss
 
 %files -n kernel-image-domU-%flavour
 /boot/vmlinux-%kversion-%flavour-%krelease
 
+%files -n kernel-modules-ide-%flavour
+%modules_dir/kernel/drivers/ide/
+
+
 %files -n kernel-headers-%flavour
 %kheaders_dir
+
 
 %files -n kernel-headers-modules-%flavour
 %kbuild_dir
@@ -564,20 +609,19 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 %files -n kernel-modules-alsa-%flavour
 %modules_dir/kernel/sound/
+%if_enabled oss
+%exclude %modules_dir/kernel/sound/oss
+%endif
 
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
 %exclude %modules_dir/kernel/drivers/gpu/drm/nouveau
-%exclude %modules_dir/kernel/drivers/gpu/drm/radeon
 
 %files -n kernel-modules-drm-nouveau-%flavour
 %modules_dir/kernel/drivers/gpu/drm/nouveau
 
 %files -n kernel-modules-drm-radeon-%flavour
 %modules_dir/kernel/drivers/gpu/drm/radeon
-
-%files -n kernel-modules-ide-%flavour
-%modules_dir/kernel/drivers/ide/
 
 %files -n kernel-modules-kvm-%flavour
 %modules_dir/kernel/arch/x86/kvm
@@ -589,93 +633,52 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
-* Tue Oct 12 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt7.1
-- CVE-2010-2962 fixed
-- netflow added (closes #24244)
-
-* Tue Oct 05 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt7
+* Thu Oct 14 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt7
 - 2.6.35.7
-- aufs2 really included (closes #24137)
+- Add  xen domU kernel
+- move drm radeon to separated package
 
-* Mon Sep 27 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt6
-- 2.6.35.6
-- aufs2 included
-- CONFIG_DEVTMPFS enabled
-- legacy BSD ptys turned off
-
-* Tue Sep 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt5
-- 2.6.35.5
-
-* Thu Sep 16 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt4.2
-- CVE-2010-3301
+* Fri Sep 17 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt21.1
+- fix CVE-2010-3301
 - mountpoint for cgroup in /sys
 
-* Tue Sep 14 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt4.1
-- obsoleted RAMZSWAP changed to ZRAM from 2.6.36
+* Fri Aug 27 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt21
+- 2.6.32.21
 
-* Thu Sep 02 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt4
-- 2.6.35.4
-
-* Thu Aug 26 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt3
-- 2.6.35.3: run, rabbit, run!
-
-* Sat Aug 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt20
+* Mon Aug 23 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt20
 - 2.6.32.20
-- should fix local root
+- nouveau drm moved to subpackage
 
-* Thu Aug 05 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt17
-- 2.6.32.17
-
-* Tue Jul 06 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt16
+* Tue Jul 06 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt16
 - 2.6.32.16
-- Resume on intel should be fixed:
-  see https://bugzilla.kernel.org/show_bug.cgi?id=13811
 
-* Tue Jun 01 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt15
+* Fri Jul 02 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt15.1
+- Add support for New Marvell Sky2 (Closes: #23672)
+
+* Tue Jun 22 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt15
 - 2.6.32.15
+- turn off latencytop support
+- turn off framepointers
+- add some drivers
 
-* Thu May 27 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt14
-- 2.6.32.14
+* Mon Apr 05 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt11
+- 2.6.32.11 
 
-* Thu May 13 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt13
-- 2.6.32.13
+* Thu Mar 25 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt10
+- 2.6.32.10 
 
-* Mon Apr 26 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt12
-- 2.6.32.12
-
-* Fri Apr 02 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt11
-- 2.6.32.11
-
-* Mon Mar 15 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt10
-- 2.6.32.10
-- drm-next merged
-
-* Tue Feb 23 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt9
+* Mon Mar 01 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt9
 - 2.6.32.9
-- NETFLOW activated
+- set N in altN to last kernal version number
+- NETFLOW targert enabled
+- KMS on intel by default
 
-* Tue Feb 16 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt8.1
-- kms enabled by default
-- radeon and nouveau drm separated to subpackages
-- netfilter: add NETFLOW target
-
-* Tue Feb 09 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt8
-- 2.6.32.8
-- ide separated to subpackage
-- additional -domU package with uncompressed vmlinux
-- CONFIG_CGROUP_MEM_RES_CTLR enabled
-
-* Thu Jan 28 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt7
+* Mon Jan 25 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt1
+- Build std-def based on un-def 
 - 2.6.32.7
-- OSS disabled
-- preemption enabled
-
-* Mon Jan 25 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt6
-- 2.6.32.6
-- move aufs to module
-- merge feat-gpu-drm-intel-kms-overlay from shrek@
-- staging modules are separated to subpackage
-- paravirtualization enabled
+- on x86_64 turn on paravirt guest support
+- move IDE modules to separated subpackage(use PATA instead).
+- turn off OSS support and oss emulation 
 
 * Thu Jan 21 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.32-alt5
 - aufs updated
