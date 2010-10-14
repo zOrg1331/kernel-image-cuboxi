@@ -29,7 +29,6 @@
 #include <linux/kdev_t.h>
 #include <linux/blkdev.h>
 #include <linux/mutex.h>
-#include <linux/smp_lock.h>
 #include <linux/scatterlist.h>
 #include <linux/string_helpers.h>
 
@@ -49,6 +48,7 @@ MODULE_ALIAS("mmc:block");
 #endif
 #define MODULE_PARAM_PREFIX "mmcblk."
 
+static DEFINE_MUTEX(block_mutex);
 
 /*
  * The defaults come from config options but can be overriden by module
@@ -123,7 +123,7 @@ static int mmc_blk_open(struct block_device *bdev, fmode_t mode)
 	struct mmc_blk_data *md = mmc_blk_get(bdev->bd_disk);
 	int ret = -ENXIO;
 
-	lock_kernel();
+	mutex_lock(&block_mutex);
 	if (md) {
 		if (md->usage == 2)
 			check_disk_change(bdev);
@@ -134,7 +134,7 @@ static int mmc_blk_open(struct block_device *bdev, fmode_t mode)
 			ret = -EROFS;
 		}
 	}
-	unlock_kernel();
+	mutex_unlock(&block_mutex);
 
 	return ret;
 }
@@ -143,9 +143,9 @@ static int mmc_blk_release(struct gendisk *disk, fmode_t mode)
 {
 	struct mmc_blk_data *md = disk->private_data;
 
-	lock_kernel();
+	mutex_lock(&block_mutex);
 	mmc_blk_put(md);
-	unlock_kernel();
+	mutex_unlock(&block_mutex);
 	return 0;
 }
 
