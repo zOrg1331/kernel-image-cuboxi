@@ -292,7 +292,7 @@ int wl1271_scan(struct wl1271 *wl, const u8 *ssid, size_t ssid_len,
 
 	wl->scan.req = req;
 
-	wl->scan.scanned_ch = kzalloc(req->n_channels *
+	wl->scan.scanned_ch = kcalloc(req->n_channels,
 				      sizeof(*wl->scan.scanned_ch),
 				      GFP_KERNEL);
 	/* we assume failure so that timeout scenarios are handled correctly */
