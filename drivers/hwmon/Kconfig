@@ -249,32 +249,6 @@ config SENSORS_K10TEMP
 	  This driver can also be built as a module.  If so, the module
 	  will be called k10temp.
 
-config SENSORS_AMS
-	tristate "Apple Motion Sensor driver"
-	depends on PPC_PMAC && !PPC64 && INPUT && ((ADB_PMU && I2C = y) || (ADB_PMU && !I2C) || I2C) && EXPERIMENTAL
-	select INPUT_POLLDEV
-	help
-	  Support for the motion sensor included in PowerBooks. Includes
-	  implementations for PMU and I2C.
-
-	  This driver can also be built as a module. If so, the module
-	  will be called ams.
-
-config SENSORS_AMS_PMU
-	bool "PMU variant"
-	depends on SENSORS_AMS && ADB_PMU
-	default y
-	help
-	  PMU variant of motion sensor, found in late 2005 PowerBooks.
-
-config SENSORS_AMS_I2C
-	bool "I2C variant"
-	depends on SENSORS_AMS && I2C
-	default y
-	help
-	  I2C variant of motion sensor, found in early 2005 PowerBooks and
-	  iBooks.
-
 config SENSORS_ASB100
 	tristate "Asus ASB100 Bach"
 	depends on X86 && I2C && EXPERIMENTAL
@@ -605,8 +579,8 @@ config SENSORS_LM90
 	  If you say yes here you get support for National Semiconductor LM90,
 	  LM86, LM89 and LM99, Analog Devices ADM1032 and ADT7461, Maxim
 	  MAX6646, MAX6647, MAX6648, MAX6649, MAX6657, MAX6658, MAX6659,
-	  MAX6680, MAX6681 and MAX6692, and Winbond/Nuvoton W83L771AWG/ASG
-	  sensor chips.
+	  MAX6680, MAX6681, MAX6692, MAX6695, MAX6696, and Winbond/Nuvoton
+	  W83L771AWG/ASG sensor chips.
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called lm90.
@@ -743,14 +717,14 @@ config SENSORS_SHT15
 	  will be called sht15.
 
 config SENSORS_S3C
-	tristate "S3C24XX/S3C64XX Inbuilt ADC"
-	depends on ARCH_S3C2410
+	tristate "Samsung built-in ADC"
+	depends on S3C_ADC
 	help
 	  If you say yes here you get support for the on-board ADCs of
-	  the Samsung S3C24XX or S3C64XX series of SoC
+	  the Samsung S3C24XX, S3C64XX and other series of SoC
 
 	  This driver can also be built as a module. If so, the module
-	  will be called s3c-hwmo.
+	  will be called s3c-hwmon.
 
 config SENSORS_S3C_RAW
 	bool "Include raw channel attributes in sysfs"
@@ -1011,6 +985,16 @@ config SENSORS_W83793
 	  This driver can also be built as a module.  If so, the module
 	  will be called w83793.
 
+config SENSORS_W83795
+	tristate "Winbond/Nuvoton W83795G/ADG"
+	depends on I2C && EXPERIMENTAL
+	help
+	  If you say yes here you get support for the Winbond W83795G and
+	  W83795ADG hardware monitoring chip.
+
+	  This driver can also be built as a module.  If so, the module
+	  will be called w83795.
+
 config SENSORS_W83L785TS
 	tristate "Winbond W83L785TS-S"
 	depends on I2C && EXPERIMENTAL
@@ -1087,26 +1071,6 @@ config SENSORS_ULTRA45
 	help
 	  This driver provides support for the Ultra45 workstation environmental
 	  sensors.
-
-config SENSORS_HDAPS
-	tristate "IBM Hard Drive Active Protection System (hdaps)"
-	depends on INPUT && X86
-	select INPUT_POLLDEV
-	default n
-	help
-	  This driver provides support for the IBM Hard Drive Active Protection
-	  System (hdaps), which provides an accelerometer and other misc. data.
-	  ThinkPads starting with the R50, T41, and X40 are supported.  The
-	  accelerometer data is readable via sysfs.
-
-	  This driver also provides an absolute input class device, allowing
-	  the laptop to act as a pinball machine-esque joystick.
-
-	  If your ThinkPad is not recognized by the driver, please update to latest
-	  BIOS. This is especially the case for some R52 ThinkPads.
-
-	  Say Y here if you have an applicable laptop and want to experience
-	  the awesome power of hdaps.
 
 config SENSORS_LIS3_SPI
 	tristate "STMicroeletronics LIS3LV02Dx three-axis digital accelerometer (SPI)"
