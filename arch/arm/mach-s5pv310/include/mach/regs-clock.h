@@ -157,4 +157,8 @@
 #define S5P_CLKDIV_BUS_GPLR_SHIFT	(4)
 #define S5P_CLKDIV_BUS_GPLR_MASK	(0x7 << S5P_CLKDIV_BUS_GPLR_SHIFT)
 
+/* Compatibility defines */
+
+#define S5P_EPLL_CON			S5P_EPLL_CON0
+
 #endif /* __ASM_ARCH_REGS_CLOCK_H */
