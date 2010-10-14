@@ -144,6 +144,13 @@ static int vmw_fb_check_var(struct fb_var_screeninfo *var,
 		return -EINVAL;
 	}
 
+	if (!vmw_kms_validate_mode_vram(vmw_priv,
+					info->fix.line_length,
+					var->yoffset + var->yres)) {
+		DRM_ERROR("Requested geom can not fit in framebuffer\n");
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
@@ -204,6 +211,9 @@ static void vmw_fb_dirty_flush(struct vmw_fb_par *par)
 		uint32_t header;
 		SVGAFifoCmdUpdate body;
 	} *cmd;
+
+	if (vmw_priv->suspended)
+		return;
 
 	spin_lock_irqsave(&par->dirty.lock, flags);
 	if (!par->dirty.active) {
@@ -602,6 +612,7 @@ int vmw_dmabuf_to_start_of_vram(struct vmw_private *vmw_priv,
 {
 	struct ttm_buffer_object *bo = &vmw_bo->base;
 	struct ttm_placement ne_placement = vmw_vram_ne_placement;
+	struct drm_mm_node *mm_node;
 	int ret = 0;
 
 	ne_placement.lpfn = bo->num_pages;
@@ -615,8 +626,9 @@ int vmw_dmabuf_to_start_of_vram(struct vmw_private *vmw_priv,
 	if (unlikely(ret != 0))
 		goto err_unlock;
 
+	mm_node = bo->mem.mm_node;
 	if (bo->mem.mem_type == TTM_PL_VRAM &&
-	    bo->mem.mm_node->start < bo->num_pages)
+	    mm_node->start < bo->num_pages)
 		(void) ttm_bo_validate(bo, &vmw_sys_placement, false,
 				       false, false);
 
