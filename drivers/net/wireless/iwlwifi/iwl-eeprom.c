@@ -214,7 +214,7 @@ static const struct iwl_txpwr_section enhinfo[] = {
  *
 ******************************************************************************/
 
-int iwlcore_eeprom_verify_signature(struct iwl_priv *priv)
+static int iwl_eeprom_verify_signature(struct iwl_priv *priv)
 {
 	u32 gp = iwl_read32(priv, CSR_EEPROM_GP) & CSR_EEPROM_GP_VALID_MSK;
 	int ret = 0;
@@ -246,7 +246,6 @@ int iwlcore_eeprom_verify_signature(struct iwl_priv *priv)
 	}
 	return ret;
 }
-EXPORT_SYMBOL(iwlcore_eeprom_verify_signature);
 
 static void iwl_set_otp_access(struct iwl_priv *priv, enum iwl_access_mode mode)
 {
@@ -332,7 +331,7 @@ EXPORT_SYMBOL(iwlcore_eeprom_release_semaphore);
 
 const u8 *iwlcore_eeprom_query_addr(const struct iwl_priv *priv, size_t offset)
 {
-	BUG_ON(offset >= priv->cfg->eeprom_size);
+	BUG_ON(offset >= priv->cfg->base_params->eeprom_size);
 	return &priv->eeprom[offset];
 }
 EXPORT_SYMBOL(iwlcore_eeprom_query_addr);
@@ -364,7 +363,7 @@ static int iwl_init_otp_access(struct iwl_priv *priv)
 		 * CSR auto clock gate disable bit -
 		 * this is only applicable for HW with OTP shadow RAM
 		 */
-		if (priv->cfg->shadow_ram_support)
+		if (priv->cfg->base_params->shadow_ram_support)
 			iwl_set_bit(priv, CSR_DBG_LINK_PWR_MGMT_REG,
 				CSR_RESET_LINK_PWR_MGMT_DISABLED);
 	}
@@ -484,7 +483,7 @@ static int iwl_find_otp_image(struct iwl_priv *priv,
 		}
 		/* more in the link list, continue */
 		usedblocks++;
-	} while (usedblocks <= priv->cfg->max_ll_items);
+	} while (usedblocks <= priv->cfg->base_params->max_ll_items);
 
 	/* OTP has no valid blocks */
 	IWL_DEBUG_INFO(priv, "OTP has no valid blocks\n");
@@ -512,8 +511,8 @@ int iwl_eeprom_init(struct iwl_priv *priv)
 	if (priv->nvm_device_type == -ENOENT)
 		return -ENOENT;
 	/* allocate eeprom */
-	IWL_DEBUG_INFO(priv, "NVM size = %d\n", priv->cfg->eeprom_size);
-	sz = priv->cfg->eeprom_size;
+	sz = priv->cfg->base_params->eeprom_size;
+	IWL_DEBUG_INFO(priv, "NVM size = %d\n", sz);
 	priv->eeprom = kzalloc(sz, GFP_KERNEL);
 	if (!priv->eeprom) {
 		ret = -ENOMEM;
@@ -523,7 +522,7 @@ int iwl_eeprom_init(struct iwl_priv *priv)
 
 	priv->cfg->ops->lib->apm_ops.init(priv);
 
-	ret = priv->cfg->ops->lib->eeprom_ops.verify_signature(priv);
+	ret = iwl_eeprom_verify_signature(priv);
 	if (ret < 0) {
 		IWL_ERR(priv, "EEPROM not found, EEPROM_GP=0x%08x\n", gp);
 		ret = -ENOENT;
@@ -554,7 +553,7 @@ int iwl_eeprom_init(struct iwl_priv *priv)
 			     CSR_OTP_GP_REG_ECC_CORR_STATUS_MSK |
 			     CSR_OTP_GP_REG_ECC_UNCORR_STATUS_MSK);
 		/* traversing the linked list if no shadow ram supported */
-		if (!priv->cfg->shadow_ram_support) {
+		if (!priv->cfg->base_params->shadow_ram_support) {
 			if (iwl_find_otp_image(priv, &validblockaddr)) {
 				ret = -ENOENT;
 				goto done;
@@ -604,7 +603,7 @@ err:
 	if (ret)
 		iwl_eeprom_free(priv);
 	/* Reset chip to save power until we load uCode during "up". */
-	priv->cfg->ops->lib->apm_ops.stop(priv);
+	iwl_apm_stop(priv);
 alloc_err:
 	return ret;
 }
