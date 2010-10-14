@@ -1,10 +1,8 @@
 /*
- * arch/arm/plat-nomadik/include/plat/ste_dma40.h
- *
- * Copyright (C) ST-Ericsson 2007-2010
+ * Copyright (C) ST-Ericsson SA 2007-2010
+ * Author: Per Forlin <per.forlin@stericsson.com> for ST-Ericsson
+ * Author: Jonas Aaberg <jonas.aberg@stericsson.com> for ST-Ericsson
  * License terms: GNU General Public License (GPL) version 2
- * Author: Per Friden <per.friden@stericsson.com>
- * Author: Jonas Aaberg <jonas.aberg@stericsson.com>
  */
 
 
@@ -73,6 +71,9 @@
 #define STEDMA40_PSIZE_LOG_8  STEDMA40_PSIZE_PHY_8
 #define STEDMA40_PSIZE_LOG_16 STEDMA40_PSIZE_PHY_16
 
+/* Maximum number of possible physical channels */
+#define STEDMA40_MAX_PHYS 32
+
 enum stedma40_flow_ctrl {
 	STEDMA40_NO_FLOW_CTRL,
 	STEDMA40_FLOW_CTRL,
@@ -90,20 +91,28 @@ enum stedma40_periph_data_width {
 	STEDMA40_DOUBLEWORD_WIDTH = STEDMA40_ESIZE_64_BIT
 };
 
+enum stedma40_xfer_dir {
+	STEDMA40_MEM_TO_MEM = 1,
+	STEDMA40_MEM_TO_PERIPH,
+	STEDMA40_PERIPH_TO_MEM,
+	STEDMA40_PERIPH_TO_PERIPH
+};
+
+
+/**
+ * struct stedma40_chan_cfg - dst/src channel configuration
+ *
+ * @endianess: Endianess of the src/dst hardware
+ * @data_width: Data width of the src/dst hardware
+ * @p_size: Burst size
+ * @flow_ctrl: Flow control on/off.
+ */
 struct stedma40_half_channel_info {
 	enum stedma40_endianess endianess;
 	enum stedma40_periph_data_width data_width;
 	int psize;
 	enum stedma40_flow_ctrl flow_ctrl;
 };
-
-enum stedma40_xfer_dir {
-	STEDMA40_MEM_TO_MEM,
-	STEDMA40_MEM_TO_PERIPH,
-	STEDMA40_PERIPH_TO_MEM,
-	STEDMA40_PERIPH_TO_PERIPH
-};
-
 
 /**
  * struct stedma40_chan_cfg - Structure to be filled by client drivers.
@@ -114,10 +123,6 @@ enum stedma40_xfer_dir {
  * @dst_dev_type: Dst device type
  * @src_info: Parameters for dst half channel
  * @dst_info: Parameters for dst half channel
- * @pre_transfer_data: Data to be passed on to the pre_transfer() function.
- * @pre_transfer: Callback used if needed before preparation of transfer.
- * Only called if device is set. size of bytes to transfer
- * (in case of multiple element transfer size is size of the first element).
  *
  *
  * This structure has to be filled by the client drivers.
@@ -131,10 +136,6 @@ struct stedma40_chan_cfg {
 	int					 dst_dev_type;
 	struct stedma40_half_channel_info	 src_info;
 	struct stedma40_half_channel_info	 dst_info;
-	void					*pre_transfer_data;
-	int (*pre_transfer)			(struct dma_chan *chan,
-						 void *data,
-						 int size);
 };
 
 /**
@@ -147,7 +148,6 @@ struct stedma40_chan_cfg {
  * @memcpy_len: length of memcpy
  * @memcpy_conf_phy: default configuration of physical channel memcpy
  * @memcpy_conf_log: default configuration of logical channel memcpy
- * @llis_per_log: number of max linked list items per logical channel
  * @disabled_channels: A vector, ending with -1, that marks physical channels
  * that are for different reasons not available for the driver.
  */
@@ -159,23 +159,10 @@ struct stedma40_platform_data {
 	u32				 memcpy_len;
 	struct stedma40_chan_cfg	*memcpy_conf_phy;
 	struct stedma40_chan_cfg	*memcpy_conf_log;
-	unsigned int			 llis_per_log;
-	int				 disabled_channels[8];
+	int				 disabled_channels[STEDMA40_MAX_PHYS];
 };
 
-/**
- * setdma40_set_psize() - Used for changing the package size of an
- * already configured dma channel.
- *
- * @chan: dmaengine handle
- * @src_psize: new package side for src. (STEDMA40_PSIZE*)
- * @src_psize: new package side for dst. (STEDMA40_PSIZE*)
- *
- * returns 0 on ok, otherwise negative error number.
- */
-int stedma40_set_psize(struct dma_chan *chan,
-		       int src_psize,
-		       int dst_psize);
+#ifdef CONFIG_STE_DMA40
 
 /**
  * stedma40_filter() - Provides stedma40_chan_cfg to the
@@ -237,5 +224,22 @@ dma_async_tx_descriptor *stedma40_slave_mem(struct dma_chan *chan,
 	return chan->device->device_prep_slave_sg(chan, &sg, 1,
 						  direction, flags);
 }
+
+#else
+static inline bool stedma40_filter(struct dma_chan *chan, void *data)
+{
+	return false;
+}
+
+static inline struct
+dma_async_tx_descriptor *stedma40_slave_mem(struct dma_chan *chan,
+					    dma_addr_t addr,
+					    unsigned int size,
+					    enum dma_data_direction direction,
+					    unsigned long flags)
+{
+	return NULL;
+}
+#endif
 
 #endif
