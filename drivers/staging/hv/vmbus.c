@@ -61,14 +61,6 @@ static void VmbusGetChannelOffers(void)
 }
 
 /*
- * VmbusGetChannelInterface - Get the channel interface
- */
-static void VmbusGetChannelInterface(struct vmbus_channel_interface *Interface)
-{
-	GetChannelInterface(Interface);
-}
-
-/*
  * VmbusGetChannelInfo - Get the device info for the specified device object
  */
 static void VmbusGetChannelInfo(struct hv_device *DeviceObject,
@@ -263,10 +255,10 @@ int VmbusInitialize(struct hv_driver *drv)
 			VMBUS_REVISION_NUMBER);
 	DPRINT_INFO(VMBUS, "+++++++ Vmbus using SINT %d +++++++",
 			VMBUS_MESSAGE_SINT);
-	DPRINT_DBG(VMBUS, "sizeof(VMBUS_CHANNEL_PACKET_PAGE_BUFFER)=%zd, "
+	DPRINT_DBG(VMBUS, "sizeof(vmbus_channel_packet_page_buffer)=%zd, "
 			"sizeof(VMBUS_CHANNEL_PACKET_MULITPAGE_BUFFER)=%zd",
-			sizeof(struct VMBUS_CHANNEL_PACKET_PAGE_BUFFER),
-			sizeof(struct VMBUS_CHANNEL_PACKET_MULITPAGE_BUFFER));
+			sizeof(struct vmbus_channel_packet_page_buffer),
+			sizeof(struct vmbus_channel_packet_multipage_buffer));
 
 	drv->name = gDriverName;
 	memcpy(&drv->deviceType, &gVmbusDeviceType, sizeof(struct hv_guid));
@@ -279,7 +271,6 @@ int VmbusInitialize(struct hv_driver *drv)
 	driver->OnMsgDpc		= VmbusOnMsgDPC;
 	driver->OnEventDpc		= VmbusOnEventDPC;
 	driver->GetChannelOffers	= VmbusGetChannelOffers;
-	driver->GetChannelInterface	= VmbusGetChannelInterface;
 	driver->GetChannelInfo		= VmbusGetChannelInfo;
 
 	/* Hypervisor initialization...setup hypercall page..etc */
