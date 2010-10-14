@@ -913,47 +913,47 @@ radeon_combios_get_tv_info(struct radeon_device *rdev)
 			switch (RBIOS8(tv_info + 7) & 0xf) {
 			case 1:
 				tv_std = TV_STD_NTSC;
-				DRM_INFO("Default TV standard: NTSC\n");
+				DRM_DEBUG_KMS("Default TV standard: NTSC\n");
 				break;
 			case 2:
 				tv_std = TV_STD_PAL;
-				DRM_INFO("Default TV standard: PAL\n");
+				DRM_DEBUG_KMS("Default TV standard: PAL\n");
 				break;
 			case 3:
 				tv_std = TV_STD_PAL_M;
-				DRM_INFO("Default TV standard: PAL-M\n");
+				DRM_DEBUG_KMS("Default TV standard: PAL-M\n");
 				break;
 			case 4:
 				tv_std = TV_STD_PAL_60;
-				DRM_INFO("Default TV standard: PAL-60\n");
+				DRM_DEBUG_KMS("Default TV standard: PAL-60\n");
 				break;
 			case 5:
 				tv_std = TV_STD_NTSC_J;
-				DRM_INFO("Default TV standard: NTSC-J\n");
+				DRM_DEBUG_KMS("Default TV standard: NTSC-J\n");
 				break;
 			case 6:
 				tv_std = TV_STD_SCART_PAL;
-				DRM_INFO("Default TV standard: SCART-PAL\n");
+				DRM_DEBUG_KMS("Default TV standard: SCART-PAL\n");
 				break;
 			default:
 				tv_std = TV_STD_NTSC;
-				DRM_INFO
+				DRM_DEBUG_KMS
 				    ("Unknown TV standard; defaulting to NTSC\n");
 				break;
 			}
 
 			switch ((RBIOS8(tv_info + 9) >> 2) & 0x3) {
 			case 0:
-				DRM_INFO("29.498928713 MHz TV ref clk\n");
+				DRM_DEBUG_KMS("29.498928713 MHz TV ref clk\n");
 				break;
 			case 1:
-				DRM_INFO("28.636360000 MHz TV ref clk\n");
+				DRM_DEBUG_KMS("28.636360000 MHz TV ref clk\n");
 				break;
 			case 2:
-				DRM_INFO("14.318180000 MHz TV ref clk\n");
+				DRM_DEBUG_KMS("14.318180000 MHz TV ref clk\n");
 				break;
 			case 3:
-				DRM_INFO("27.000000000 MHz TV ref clk\n");
+				DRM_DEBUG_KMS("27.000000000 MHz TV ref clk\n");
 				break;
 			default:
 				break;
@@ -1324,7 +1324,7 @@ bool radeon_legacy_get_tmds_info_from_combios(struct radeon_encoder *encoder,
 
 	if (tmds_info) {
 		ver = RBIOS8(tmds_info);
-		DRM_INFO("DFP table revision: %d\n", ver);
+		DRM_DEBUG_KMS("DFP table revision: %d\n", ver);
 		if (ver == 3) {
 			n = RBIOS8(tmds_info + 5) + 1;
 			if (n > 4)
@@ -1408,7 +1408,7 @@ bool radeon_legacy_get_ext_tmds_info_from_combios(struct radeon_encoder *encoder
 		offset = combios_get_table_offset(dev, COMBIOS_EXT_TMDS_INFO_TABLE);
 		if (offset) {
 			ver = RBIOS8(offset);
-			DRM_INFO("External TMDS Table revision: %d\n", ver);
+			DRM_DEBUG_KMS("External TMDS Table revision: %d\n", ver);
 			tmds->slave_addr = RBIOS8(offset + 4 + 2);
 			tmds->slave_addr >>= 1; /* 7 bit addressing */
 			gpio = RBIOS8(offset + 4 + 3);
@@ -1485,6 +1485,11 @@ bool radeon_get_legacy_connector_info_from_table(struct drm_device *dev)
 			/* PowerMac8,1 ? */
 			/* imac g5 isight */
 			rdev->mode_info.connector_table = CT_IMAC_G5_ISIGHT;
+		} else if ((rdev->pdev->device == 0x4a48) &&
+			   (rdev->pdev->subsystem_vendor == 0x1002) &&
+			   (rdev->pdev->subsystem_device == 0x4a48)) {
+			/* Mac X800 */
+			rdev->mode_info.connector_table = CT_MAC_X800;
 		} else
 #endif /* CONFIG_PPC_PMAC */
 #ifdef CONFIG_PPC64
@@ -1959,6 +1964,48 @@ bool radeon_get_legacy_connector_info_from_table(struct drm_device *dev)
 		radeon_add_legacy_connector(dev, 1, ATOM_DEVICE_CRT2_SUPPORT,
 					    DRM_MODE_CONNECTOR_VGA, &ddc_i2c,
 					    CONNECTOR_OBJECT_ID_VGA,
+					    &hpd);
+		break;
+	case CT_MAC_X800:
+		DRM_INFO("Connector Table: %d (mac x800)\n",
+			 rdev->mode_info.connector_table);
+		/* DVI - primary dac, internal tmds */
+		ddc_i2c = combios_setup_i2c_bus(rdev, DDC_DVI, 0, 0);
+		hpd.hpd = RADEON_HPD_1; /* ??? */
+		radeon_add_legacy_encoder(dev,
+					  radeon_get_encoder_enum(dev,
+								  ATOM_DEVICE_DFP1_SUPPORT,
+								  0),
+					  ATOM_DEVICE_DFP1_SUPPORT);
+		radeon_add_legacy_encoder(dev,
+					  radeon_get_encoder_enum(dev,
+								  ATOM_DEVICE_CRT1_SUPPORT,
+								  1),
+					  ATOM_DEVICE_CRT1_SUPPORT);
+		radeon_add_legacy_connector(dev, 0,
+					    ATOM_DEVICE_DFP1_SUPPORT |
+					    ATOM_DEVICE_CRT1_SUPPORT,
+					    DRM_MODE_CONNECTOR_DVII, &ddc_i2c,
+					    CONNECTOR_OBJECT_ID_SINGLE_LINK_DVI_I,
+					    &hpd);
+		/* DVI - tv dac, dvo */
+		ddc_i2c = combios_setup_i2c_bus(rdev, DDC_MONID, 0, 0);
+		hpd.hpd = RADEON_HPD_2; /* ??? */
+		radeon_add_legacy_encoder(dev,
+					  radeon_get_encoder_enum(dev,
+								  ATOM_DEVICE_DFP2_SUPPORT,
+								  0),
+					  ATOM_DEVICE_DFP2_SUPPORT);
+		radeon_add_legacy_encoder(dev,
+					  radeon_get_encoder_enum(dev,
+								  ATOM_DEVICE_CRT2_SUPPORT,
+								  2),
+					  ATOM_DEVICE_CRT2_SUPPORT);
+		radeon_add_legacy_connector(dev, 1,
+					    ATOM_DEVICE_DFP2_SUPPORT |
+					    ATOM_DEVICE_CRT2_SUPPORT,
+					    DRM_MODE_CONNECTOR_DVII, &ddc_i2c,
+					    CONNECTOR_OBJECT_ID_DUAL_LINK_DVI_I,
 					    &hpd);
 		break;
 	default:
