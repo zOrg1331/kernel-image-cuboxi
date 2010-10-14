@@ -25,6 +25,14 @@
 #ifdef CONFIG_PPC_MMU_NOHASH
 
 /*
+ * Lazy tlb flush
+ */
+extern int tlb_lazy_flush;
+extern void flush_recycled_contexts(int);
+void lazy_flush_context(struct mm_struct *mm);
+void __local_flush_tlb_mm(struct mm_struct *mm);
+
+/*
  * On 40x and 8xx, we directly inline tlbia and tlbivax
  */
 #if defined(CONFIG_40x) || defined(CONFIG_8xx)
