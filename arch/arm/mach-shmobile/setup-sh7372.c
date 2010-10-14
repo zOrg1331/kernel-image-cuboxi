@@ -158,7 +158,6 @@ static struct sh_timer_config cmt10_platform_data = {
 	.name = "CMT10",
 	.channel_offset = 0x10,
 	.timer_bit = 0,
-	.clk = "cmt1",
 	.clockevent_rating = 125,
 	.clocksource_rating = 125,
 };
@@ -419,14 +418,14 @@ static struct resource sh7372_dmae0_resources[] = {
 	},
 	{
 		/* DMA error IRQ */
-		.start	= 246,
-		.end	= 246,
+		.start	= evt2irq(0x20c0),
+		.end	= evt2irq(0x20c0),
 		.flags	= IORESOURCE_IRQ,
 	},
 	{
 		/* IRQ for channels 0-5 */
-		.start	= 240,
-		.end	= 245,
+		.start	= evt2irq(0x2000),
+		.end	= evt2irq(0x20a0),
 		.flags	= IORESOURCE_IRQ,
 	},
 };
@@ -447,14 +446,14 @@ static struct resource sh7372_dmae1_resources[] = {
 	},
 	{
 		/* DMA error IRQ */
-		.start	= 254,
-		.end	= 254,
+		.start	= evt2irq(0x21c0),
+		.end	= evt2irq(0x21c0),
 		.flags	= IORESOURCE_IRQ,
 	},
 	{
 		/* IRQ for channels 0-5 */
-		.start	= 248,
-		.end	= 253,
+		.start	= evt2irq(0x2100),
+		.end	= evt2irq(0x21a0),
 		.flags	= IORESOURCE_IRQ,
 	},
 };
@@ -475,14 +474,14 @@ static struct resource sh7372_dmae2_resources[] = {
 	},
 	{
 		/* DMA error IRQ */
-		.start	= 262,
-		.end	= 262,
+		.start	= evt2irq(0x22c0),
+		.end	= evt2irq(0x22c0),
 		.flags	= IORESOURCE_IRQ,
 	},
 	{
 		/* IRQ for channels 0-5 */
-		.start	= 256,
-		.end	= 261,
+		.start	= evt2irq(0x2200),
+		.end	= evt2irq(0x22a0),
 		.flags	= IORESOURCE_IRQ,
 	},
 };
@@ -526,6 +525,9 @@ static struct platform_device *sh7372_early_devices[] __initdata = {
 	&scif5_device,
 	&scif6_device,
 	&cmt10_device,
+};
+
+static struct platform_device *sh7372_late_devices[] __initdata = {
 	&iic0_device,
 	&iic1_device,
 	&dma0_device,
@@ -537,6 +539,9 @@ void __init sh7372_add_standard_devices(void)
 {
 	platform_add_devices(sh7372_early_devices,
 			    ARRAY_SIZE(sh7372_early_devices));
+
+	platform_add_devices(sh7372_late_devices,
+			    ARRAY_SIZE(sh7372_late_devices));
 }
 
 void __init sh7372_add_early_devices(void)
