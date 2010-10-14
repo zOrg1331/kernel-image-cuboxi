@@ -637,6 +637,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - 2.6.35.7
 - Add  xen domU kernel
 - move drm radeon to separated package
+- turn off CONFIG_X86_PPRO_FENCE
 
 * Fri Sep 17 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt21.1
 - fix CVE-2010-3301
