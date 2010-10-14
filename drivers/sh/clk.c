@@ -1,7 +1,7 @@
 /*
  * drivers/sh/clk.c - SuperH clock framework
  *
- *  Copyright (C) 2005 - 2009  Paul Mundt
+ *  Copyright (C) 2005 - 2010  Paul Mundt
  *
  * This clock framework is derived from the OMAP version by:
  *
@@ -14,6 +14,8 @@
  * License.  See the file "COPYING" in the main directory of this archive
  * for more details.
  */
+#define pr_fmt(fmt) "clock: " fmt
+
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -76,7 +78,8 @@ long clk_rate_table_round(struct clk *clk,
 	unsigned long highest, lowest;
 	int i;
 
-	highest = lowest = 0;
+	highest = 0;
+	lowest = ~0UL;
 
 	for (i = 0; freq_table[i].frequency != CPUFREQ_TABLE_END; i++) {
 		unsigned long freq = freq_table[i].frequency;
@@ -160,8 +163,8 @@ void propagate_rate(struct clk *tclk)
 
 static void __clk_disable(struct clk *clk)
 {
-	if (WARN(!clk->usecount, "Trying to disable clock %s with 0 usecount\n",
-		 clk->name))
+	if (WARN(!clk->usecount, "Trying to disable clock %p with 0 usecount\n",
+		 clk))
 		return;
 
 	if (!(--clk->usecount)) {
@@ -354,10 +357,10 @@ int clk_set_parent(struct clk *clk, struct clk *parent)
 			ret = clk_reparent(clk, parent);
 
 		if (ret == 0) {
-			pr_debug("clock: set parent of %s to %s (new rate %ld)\n",
-				 clk->name, clk->parent->name, clk->rate);
 			if (clk->ops->recalc)
 				clk->rate = clk->ops->recalc(clk);
+			pr_debug("set parent of %p to %p (new rate %ld)\n",
+				 clk, clk->parent, clk->rate);
 			propagate_rate(clk);
 		}
 	} else
@@ -469,9 +472,7 @@ static int clk_debugfs_register_one(struct clk *c)
 	char s[255];
 	char *p = s;
 
-	p += sprintf(p, "%s", c->name);
-	if (c->id >= 0)
-		sprintf(p, ":%d", c->id);
+	p += sprintf(p, "%p", c);
 	d = debugfs_create_dir(s, pa ? pa->dentry : clk_debugfs_root);
 	if (!d)
 		return -ENOMEM;
@@ -513,7 +514,7 @@ static int clk_debugfs_register(struct clk *c)
 			return err;
 	}
 
-	if (!c->dentry && c->name) {
+	if (!c->dentry) {
 		err = clk_debugfs_register_one(c);
 		if (err)
 			return err;
