@@ -70,6 +70,11 @@ void perf_pmu_disable(struct pmu *pmu)
 		pmu->pmu_disable(pmu);
 }
 
+extern __weak const char *perf_pmu_name(void)
+{
+	return "pmu";
+}
+
 void perf_pmu_enable(struct pmu *pmu)
 {
 	int *count = this_cpu_ptr(pmu->pmu_disable_count);
