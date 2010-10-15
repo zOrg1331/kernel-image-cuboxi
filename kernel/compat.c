@@ -1157,4 +1157,4 @@ void __user *compat_alloc_user_space(unsigned long len)
 
 	return ptr;
 }
-EXPORT_SYMBOL_GPL(compat_alloc_user_space);
+EXPORT_SYMBOL(compat_alloc_user_space);
