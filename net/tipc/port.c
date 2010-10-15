@@ -588,19 +588,10 @@ void tipc_port_recv_proto_msg(struct sk_buff *buf)
 	if (!p_ptr) {
 		err = TIPC_ERR_NO_PORT;
 	} else if (p_ptr->publ.connected) {
-		if (port_peernode(p_ptr) != msg_orignode(msg))
+		if ((port_peernode(p_ptr) != msg_orignode(msg)) ||
+		    (port_peerport(p_ptr) != msg_origport(msg))) {
 			err = TIPC_ERR_NO_PORT;
-		if (port_peerport(p_ptr) != msg_origport(msg))
-			err = TIPC_ERR_NO_PORT;
-		if (!err && msg_routed(msg)) {
-			u32 seqno = msg_transp_seqno(msg);
-			u32 myno =  ++p_ptr->last_in_seqno;
-			if (seqno != myno) {
-				err = TIPC_ERR_NO_PORT;
-				abort_buf = port_build_self_abort_msg(p_ptr, err);
-			}
-		}
-		if (msg_type(msg) == CONN_ACK) {
+		} else if (msg_type(msg) == CONN_ACK) {
 			int wakeup = tipc_port_congested(p_ptr) &&
 				     p_ptr->publ.congested &&
 				     p_ptr->wakeup;
@@ -718,50 +709,6 @@ struct sk_buff *tipc_port_get_ports(void)
 
 	return buf;
 }
-
-#if 0
-
-#define MAX_PORT_STATS 2000
-
-struct sk_buff *port_show_stats(const void *req_tlv_area, int req_tlv_space)
-{
-	u32 ref;
-	struct port *p_ptr;
-	struct sk_buff *buf;
-	struct tlv_desc *rep_tlv;
-	struct print_buf pb;
-	int str_len;
-
-	if (!TLV_CHECK(req_tlv_area, req_tlv_space, TIPC_TLV_PORT_REF))
-		return cfg_reply_error_string(TIPC_CFG_TLV_ERROR);
-
-	ref = *(u32 *)TLV_DATA(req_tlv_area);
-	ref = ntohl(ref);
-
-	p_ptr = tipc_port_lock(ref);
-	if (!p_ptr)
-		return cfg_reply_error_string("port not found");
-
-	buf = tipc_cfg_reply_alloc(TLV_SPACE(MAX_PORT_STATS));
-	if (!buf) {
-		tipc_port_unlock(p_ptr);
-		return NULL;
-	}
-	rep_tlv = (struct tlv_desc *)buf->data;
-
-	tipc_printbuf_init(&pb, TLV_DATA(rep_tlv), MAX_PORT_STATS);
-	port_print(p_ptr, &pb, 1);
-	/* NEED TO FILL IN ADDITIONAL PORT STATISTICS HERE */
-	tipc_port_unlock(p_ptr);
-	str_len = tipc_printbuf_validate(&pb);
-
-	skb_put(buf, TLV_SPACE(str_len));
-	TLV_SET(rep_tlv, TIPC_TLV_ULTRA_STRING, NULL, str_len);
-
-	return buf;
-}
-
-#endif
 
 void tipc_port_reinit(void)
 {
@@ -1473,7 +1420,7 @@ int tipc_forward2name(u32 ref,
 	msg_set_destnode(msg, destnode);
 	msg_set_destport(msg, destport);
 
-	if (likely(destport || destnode)) {
+	if (likely(destport)) {
 		p_ptr->sent++;
 		if (likely(destnode == tipc_own_addr))
 			return tipc_port_recv_sections(p_ptr, num_sect, msg_sect);
@@ -1551,7 +1498,7 @@ int tipc_forward_buf2name(u32 ref,
 	skb_push(buf, LONG_H_SIZE);
 	skb_copy_to_linear_data(buf, msg, LONG_H_SIZE);
 	msg_dbg(buf_msg(buf),"PREP:");
-	if (likely(destport || destnode)) {
+	if (likely(destport)) {
 		p_ptr->sent++;
 		if (destnode == tipc_own_addr)
 			return tipc_port_recv_msg(buf);
