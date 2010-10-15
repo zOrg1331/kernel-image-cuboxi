@@ -88,7 +88,6 @@ earlier 3Com products.
 #include <linux/bitops.h>
 #include <linux/mii.h>
 
-#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/cisreg.h>
 #include <pcmcia/ciscode.h>
@@ -280,24 +279,14 @@ static int tc574_probe(struct pcmcia_device *link)
 	spin_lock_init(&lp->window_lock);
 	link->resource[0]->end = 32;
 	link->resource[0]->flags |= IO_DATA_PATH_WIDTH_16;
-	link->conf.Attributes = CONF_ENABLE_IRQ;
-	link->conf.IntType = INT_MEMORY_AND_IO;
-	link->conf.ConfigIndex = 1;
+	link->config_flags |= CONF_ENABLE_IRQ;
+	link->config_index = 1;
 
 	dev->netdev_ops = &el3_netdev_ops;
 	dev->watchdog_timeo = TX_TIMEOUT;
 
 	return tc574_config(link);
-} /* tc574_attach */
-
-/*
-
-	This deletes a driver "instance".  The device is de-registered
-	with Card Services.  If it has been released, all local data
-	structures are freed.  Otherwise, the structures will be freed
-	when the device is released.
-
-*/
+}
 
 static void tc574_detach(struct pcmcia_device *link)
 {
@@ -311,12 +300,6 @@ static void tc574_detach(struct pcmcia_device *link)
 
 	free_netdev(dev);
 } /* tc574_detach */
-
-/*
-	tc574_config() is scheduled to run after a CARD_INSERTION event
-	is received, to configure the PCMCIA socket, and to make the
-	ethernet device available to the system.
-*/
 
 static const char *ram_split[] = {"5:3", "3:1", "1:1", "3:5"};
 
@@ -351,7 +334,7 @@ static int tc574_config(struct pcmcia_device *link)
 	if (ret)
 		goto failed;
 
-	ret = pcmcia_request_configuration(link, &link->conf);
+	ret = pcmcia_enable_device(link);
 	if (ret)
 		goto failed;
 
@@ -461,12 +444,6 @@ failed:
 	return -ENODEV;
 
 } /* tc574_config */
-
-/*
-	After a card is removed, tc574_release() will unregister the net
-	device, and release the PCMCIA configuration.  If the device is
-	still open, this will be postponed until it is closed.
-*/
 
 static void tc574_release(struct pcmcia_device *link)
 {
@@ -1182,9 +1159,7 @@ MODULE_DEVICE_TABLE(pcmcia, tc574_ids);
 
 static struct pcmcia_driver tc574_driver = {
 	.owner		= THIS_MODULE,
-	.drv		= {
-		.name	= "3c574_cs",
-	},
+	.name		= "3c574_cs",
 	.probe		= tc574_probe,
 	.remove		= tc574_detach,
 	.id_table       = tc574_ids,
