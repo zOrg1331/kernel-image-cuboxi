@@ -1102,7 +1102,7 @@ static void create_done(struct exofs_io_state *ios, void *p)
 
 	set_obj_created(oi);
 
-	atomic_dec(&inode->i_count);
+	iput(inode);
 	wake_up(&oi->i_wq);
 }
 
@@ -1163,7 +1163,7 @@ struct inode *exofs_new_inode(struct inode *dir, int mode)
 	ios->cred = oi->i_cred;
 	ret = exofs_sbi_create(ios);
 	if (ret) {
-		atomic_dec(&inode->i_count);
+		iput(inode);
 		exofs_put_io_state(ios);
 		return ERR_PTR(ret);
 	}
