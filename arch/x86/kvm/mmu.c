@@ -2569,7 +2569,7 @@ static gpa_t nonpaging_gva_to_gpa_nested(struct kvm_vcpu *vcpu, gva_t vaddr,
 }
 
 static int nonpaging_page_fault(struct kvm_vcpu *vcpu, gva_t gva,
-				u32 error_code)
+				u32 error_code, bool no_apf)
 {
 	gfn_t gfn;
 	int r;
@@ -2605,8 +2605,8 @@ static bool can_do_async_pf(struct kvm_vcpu *vcpu)
 	return kvm_x86_ops->interrupt_allowed(vcpu);
 }
 
-static bool try_async_pf(struct kvm_vcpu *vcpu, gfn_t gfn, gva_t gva,
-			 pfn_t *pfn)
+static bool try_async_pf(struct kvm_vcpu *vcpu, bool no_apf, gfn_t gfn,
+			 gva_t gva, pfn_t *pfn)
 {
 	bool async;
 
@@ -2617,7 +2617,7 @@ static bool try_async_pf(struct kvm_vcpu *vcpu, gfn_t gfn, gva_t gva,
 
 	put_page(pfn_to_page(*pfn));
 
-	if (can_do_async_pf(vcpu)) {
+	if (!no_apf && can_do_async_pf(vcpu)) {
 		trace_kvm_try_async_get_page(async, *pfn);
 		if (kvm_find_async_pf_gfn(vcpu, gfn)) {
 			trace_kvm_async_pf_doublefault(gva, gfn);
@@ -2632,8 +2632,8 @@ static bool try_async_pf(struct kvm_vcpu *vcpu, gfn_t gfn, gva_t gva,
 	return false;
 }
 
-static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa,
-				u32 error_code)
+static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa, u32 error_code,
+			  bool no_apf)
 {
 	pfn_t pfn;
 	int r;
@@ -2655,7 +2655,7 @@ static int tdp_page_fault(struct kvm_vcpu *vcpu, gva_t gpa,
 	mmu_seq = vcpu->kvm->mmu_notifier_seq;
 	smp_rmb();
 
-	if (try_async_pf(vcpu, gfn, gpa, &pfn))
+	if (try_async_pf(vcpu, no_apf, gfn, gpa, &pfn))
 		return 0;
 
 	/* mmio */
@@ -3318,7 +3318,7 @@ int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gva_t cr2, u32 error_code)
 	int r;
 	enum emulation_result er;
 
-	r = vcpu->arch.mmu.page_fault(vcpu, cr2, error_code);
+	r = vcpu->arch.mmu.page_fault(vcpu, cr2, error_code, false);
 	if (r < 0)
 		goto out;
 
