@@ -43,10 +43,12 @@ badsys:
 	jra	ret_from_exception
 
 do_trace:
-	movel	#-ENOSYS,%sp@(PT_OFF_D0)	/* needed for strace*/
+	movel	#-ENOSYS,%sp@(PT_OFF_D0) /* needed for strace*/
 	subql	#4,%sp
 	SAVE_SWITCH_STACK
+	clrl	%sp@-
 	jbsr	syscall_trace
+	addql	#4,%sp
 	RESTORE_SWITCH_STACK
 	addql	#4,%sp
 	movel	%sp@(PT_OFF_ORIG_D0),%d1
@@ -57,10 +59,12 @@ do_trace:
 	lea	sys_call_table, %a0
 	jbsr	%a0@(%d1)
 
-1:	movel	%d0,%sp@(PT_OFF_D0)		/* save the return value */
+1:	movel	%d0,%sp@(PT_OFF_D0)	/* save the return value */
 	subql	#4,%sp			/* dummy return address */
 	SAVE_SWITCH_STACK
+	movel	#1, %sp@-
 	jbsr	syscall_trace
+	addql	#4,%sp
 
 ret_from_signal:
 	RESTORE_SWITCH_STACK
@@ -71,16 +75,16 @@ ENTRY(system_call)
 	SAVE_ALL
 
 	/* save top of frame*/
-	pea     %sp@
-	jbsr    set_esp0
-	addql   #4,%sp
+	pea	%sp@
+	jbsr	set_esp0
+	addql	#4,%sp
 
 	movel	%sp@(PT_OFF_ORIG_D0),%d0
 
 	movel	%sp,%d1			/* get thread_info pointer */
 	andl	#-THREAD_SIZE,%d1
 	movel	%d1,%a2
-	btst    #TIF_SYSCALL_TRACE,%a2@(TI_FLAGS)
+	btst	#(TIF_SYSCALL_TRACE%8),%a2@(TI_FLAGS+(31-TIF_SYSCALL_TRACE)/8)
 	jne	do_trace
 	cmpl	#NR_syscalls,%d0
 	jcc	badsys
@@ -88,10 +92,10 @@ ENTRY(system_call)
 	lea	sys_call_table,%a0
 	movel	%a0@(%d0), %a0
 	jbsr	%a0@
-	movel	%d0,%sp@(PT_OFF_D0)		/* save the return value*/
+	movel	%d0,%sp@(PT_OFF_D0)	/* save the return value*/
 
 ret_from_exception:
-	btst	#5,%sp@(PT_OFF_SR)		/* check if returning to kernel*/
+	btst	#5,%sp@(PT_OFF_SR)	/* check if returning to kernel*/
 	jeq	Luser_return		/* if so, skip resched, signals*/
 
 Lkernel_return:
@@ -133,7 +137,7 @@ Lreturn:
  */
 inthandler1:
 	SAVE_ALL
-	movew	%sp@(PT_OFF_VECTOR), %d0
+	movew	%sp@(PT_OFF_FORMATVEC), %d0
 	and	#0x3ff, %d0
 
 	movel	%sp,%sp@-
@@ -144,7 +148,7 @@ inthandler1:
 
 inthandler2:
 	SAVE_ALL
-	movew	%sp@(PT_OFF_VECTOR), %d0
+	movew	%sp@(PT_OFF_FORMATVEC), %d0
 	and	#0x3ff, %d0
 
 	movel	%sp,%sp@-
@@ -155,7 +159,7 @@ inthandler2:
 
 inthandler3:
 	SAVE_ALL
-	movew	%sp@(PT_OFF_VECTOR), %d0
+	movew	%sp@(PT_OFF_FORMATVEC), %d0
 	and	#0x3ff, %d0
 
 	movel	%sp,%sp@-
@@ -166,7 +170,7 @@ inthandler3:
 
 inthandler4:
 	SAVE_ALL
-	movew	%sp@(PT_OFF_VECTOR), %d0
+	movew	%sp@(PT_OFF_FORMATVEC), %d0
 	and	#0x3ff, %d0
 
 	movel	%sp,%sp@-
@@ -177,7 +181,7 @@ inthandler4:
 
 inthandler5:
 	SAVE_ALL
-	movew	%sp@(PT_OFF_VECTOR), %d0
+	movew	%sp@(PT_OFF_FORMATVEC), %d0
 	and	#0x3ff, %d0
 
 	movel	%sp,%sp@-
@@ -188,7 +192,7 @@ inthandler5:
 
 inthandler6:
 	SAVE_ALL
-	movew	%sp@(PT_OFF_VECTOR), %d0
+	movew	%sp@(PT_OFF_FORMATVEC), %d0
 	and	#0x3ff, %d0
 
 	movel	%sp,%sp@-
@@ -199,7 +203,7 @@ inthandler6:
 
 inthandler7:
 	SAVE_ALL
-	movew	%sp@(PT_OFF_VECTOR), %d0
+	movew	%sp@(PT_OFF_FORMATVEC), %d0
 	and	#0x3ff, %d0
 
 	movel	%sp,%sp@-
@@ -210,7 +214,7 @@ inthandler7:
 
 inthandler:
 	SAVE_ALL
-	movew	%sp@(PT_OFF_VECTOR), %d0
+	movew	%sp@(PT_OFF_FORMATVEC), %d0
 	and	#0x3ff, %d0
 
 	movel	%sp,%sp@-
