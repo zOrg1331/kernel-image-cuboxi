@@ -517,7 +517,7 @@ static unsigned int ssi_pins[] = {
 
 static void mxc_init_audio(void)
 {
-	mxc_register_device(&imx_ssi_device0, NULL);
+	imx31_add_imx_ssi(0, NULL);
 	mxc_iomux_setup_multiple_pins(ssi_pins, ARRAY_SIZE(ssi_pins), "ssi");
 }
 
@@ -574,8 +574,6 @@ static struct sys_timer mx31ads_timer = {
  */
 MACHINE_START(MX31ADS, "Freescale MX31ADS")
 	/* Maintainer: Freescale Semiconductor, Inc. */
-	.phys_io	= MX31_AIPS1_BASE_ADDR,
-	.io_pg_offst	= (MX31_AIPS1_BASE_ADDR_VIRT >> 18) & 0xfffc,
 	.boot_params    = MX3x_PHYS_OFFSET + 0x100,
 	.map_io         = mx31ads_map_io,
 	.init_irq       = mx31ads_init_irq,
