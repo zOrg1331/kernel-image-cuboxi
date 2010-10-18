@@ -17,8 +17,6 @@ config MIPS
 	select HAVE_DMA_ATTRS
 	select HAVE_DMA_API_DEBUG
 
-mainmenu "Linux/MIPS Kernel Configuration"
-
 menu "Machine selection"
 
 config ZONE_DMA
