@@ -539,7 +539,7 @@ config VIDEO_VIU
 config VIDEO_VIVI
 	tristate "Virtual Video Driver"
 	depends on VIDEO_DEV && VIDEO_V4L2 && !SPARC32 && !SPARC64
-	depends on (FRAMEBUFFER_CONSOLE || STI_CONSOLE) && FONTS
+	depends on FRAMEBUFFER_CONSOLE || STI_CONSOLE
 	select FONT_8x16
 	select VIDEOBUF_VMALLOC
 	default n
@@ -706,6 +706,12 @@ config VIDEO_CAFE_CCIC
 	  CMOS camera controller.  This is the controller found on first-
 	  generation OLPC systems.
 
+config VIDEO_SR030PC30
+	tristate "SR030PC30 VGA camera sensor support"
+	depends on I2C && VIDEO_V4L2
+	---help---
+	  This driver supports SR030PC30 VGA camera from Siliconfile
+
 config SOC_CAMERA
 	tristate "SoC camera support"
 	depends on VIDEO_V4L2 && HAS_DMA && I2C
@@ -714,6 +720,12 @@ config SOC_CAMERA
 	  SoC Camera is a common API to several cameras, not connecting
 	  over a bus like PCI or USB. For example some i2c camera connected
 	  directly to the data bus of an SoC.
+
+config SOC_CAMERA_IMX074
+	tristate "imx074 support"
+	depends on SOC_CAMERA && I2C
+	help
+	  This driver supports IMX074 cameras from Sony
 
 config SOC_CAMERA_MT9M001
 	tristate "mt9m001 support"
@@ -766,6 +778,12 @@ config SOC_CAMERA_PLATFORM
 	depends on SOC_CAMERA
 	help
 	  This is a generic SoC camera platform driver, useful for testing
+
+config SOC_CAMERA_OV6650
+	tristate "ov6650 sensor support"
+	depends on SOC_CAMERA && I2C
+	---help---
+	  This is a V4L2 SoC camera driver for the OmniVision OV6650 sensor
 
 config SOC_CAMERA_OV772X
 	tristate "ov772x camera support"
@@ -821,6 +839,14 @@ config VIDEO_SH_MOBILE_CEU
 	select VIDEOBUF_DMA_CONTIG
 	---help---
 	  This is a v4l2 driver for the SuperH Mobile CEU Interface
+
+config VIDEO_OMAP1
+	tristate "OMAP1 Camera Interface driver"
+	depends on VIDEO_DEV && ARCH_OMAP1 && SOC_CAMERA
+	select VIDEOBUF_DMA_CONTIG
+	select VIDEOBUF_DMA_SG
+	---help---
+	  This is a v4l2 driver for the TI OMAP1 camera interface
 
 config VIDEO_OMAP2
 	tristate "OMAP2 Camera Capture Interface driver"

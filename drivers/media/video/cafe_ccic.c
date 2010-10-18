@@ -363,7 +363,6 @@ static int cafe_smbus_write_data(struct cafe_camera *cam,
 {
 	unsigned int rval;
 	unsigned long flags;
-	DEFINE_WAIT(the_wait);
 
 	spin_lock_irqsave(&cam->dev_lock, flags);
 	rval = TWSIC0_EN | ((addr << TWSIC0_SID_SHIFT) & TWSIC0_SID);
@@ -378,28 +377,27 @@ static int cafe_smbus_write_data(struct cafe_camera *cam,
 	cafe_reg_write(cam, REG_TWSIC1, rval);
 	spin_unlock_irqrestore(&cam->dev_lock, flags);
 
-	/*
-	 * Time to wait for the write to complete.  THIS IS A RACY
-	 * WAY TO DO IT, but the sad fact is that reading the TWSIC1
-	 * register too quickly after starting the operation sends
-	 * the device into a place that may be kinder and better, but
-	 * which is absolutely useless for controlling the sensor.  In
-	 * practice we have plenty of time to get into our sleep state
-	 * before the interrupt hits, and the worst case is that we
-	 * time out and then see that things completed, so this seems
-	 * the best way for now.
+	/* Unfortunately, reading TWSIC1 too soon after sending a command
+	 * causes the device to die.
+	 * Use a busy-wait because we often send a large quantity of small
+	 * commands at-once; using msleep() would cause a lot of context
+	 * switches which take longer than 2ms, resulting in a noticable
+	 * boot-time and capture-start delays.
 	 */
-	do {
-		prepare_to_wait(&cam->smbus_wait, &the_wait,
-				TASK_UNINTERRUPTIBLE);
-		schedule_timeout(1); /* even 1 jiffy is too long */
-		finish_wait(&cam->smbus_wait, &the_wait);
-	} while (!cafe_smbus_write_done(cam));
+	mdelay(2);
 
-#ifdef IF_THE_CAFE_HARDWARE_WORKED_RIGHT
+	/*
+	 * Another sad fact is that sometimes, commands silently complete but
+	 * cafe_smbus_write_done() never becomes aware of this.
+	 * This happens at random and appears to possible occur with any
+	 * command.
+	 * We don't understand why this is. We work around this issue
+	 * with the timeout in the wait below, assuming that all commands
+	 * complete within the timeout.
+	 */
 	wait_event_timeout(cam->smbus_wait, cafe_smbus_write_done(cam),
 			CAFE_SMBUS_TIMEOUT);
-#endif
+
 	spin_lock_irqsave(&cam->dev_lock, flags);
 	rval = cafe_reg_read(cam, REG_TWSIC1);
 	spin_unlock_irqrestore(&cam->dev_lock, flags);
@@ -1712,6 +1710,30 @@ static int cafe_vidioc_g_chip_ident(struct file *file, void *priv,
 	return sensor_call(cam, core, g_chip_ident, chip);
 }
 
+static int cafe_vidioc_enum_framesizes(struct file *filp, void *priv,
+		struct v4l2_frmsizeenum *sizes)
+{
+	struct cafe_camera *cam = priv;
+	int ret;
+
+	mutex_lock(&cam->s_mutex);
+	ret = sensor_call(cam, video, enum_framesizes, sizes);
+	mutex_unlock(&cam->s_mutex);
+	return ret;
+}
+
+static int cafe_vidioc_enum_frameintervals(struct file *filp, void *priv,
+		struct v4l2_frmivalenum *interval)
+{
+	struct cafe_camera *cam = priv;
+	int ret;
+
+	mutex_lock(&cam->s_mutex);
+	ret = sensor_call(cam, video, enum_frameintervals, interval);
+	mutex_unlock(&cam->s_mutex);
+	return ret;
+}
+
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 static int cafe_vidioc_g_register(struct file *file, void *priv,
 		struct v4l2_dbg_register *reg)
@@ -1775,6 +1797,8 @@ static const struct v4l2_ioctl_ops cafe_v4l_ioctl_ops = {
 	.vidioc_s_ctrl		= cafe_vidioc_s_ctrl,
 	.vidioc_g_parm		= cafe_vidioc_g_parm,
 	.vidioc_s_parm		= cafe_vidioc_s_parm,
+	.vidioc_enum_framesizes = cafe_vidioc_enum_framesizes,
+	.vidioc_enum_frameintervals = cafe_vidioc_enum_frameintervals,
 	.vidioc_g_chip_ident    = cafe_vidioc_g_chip_ident,
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	.vidioc_g_register 	= cafe_vidioc_g_register,
