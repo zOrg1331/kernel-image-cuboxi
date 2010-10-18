@@ -367,8 +367,8 @@ static int get_nr_hw_irqs(void)
 
 static int find_unbound_irq(void)
 {
-	int irq;
-	struct irq_desc *desc;
+	struct irq_data *data;
+	int irq, res;
 	int start = get_nr_hw_irqs();
 
 	if (start == nr_irqs)
@@ -376,26 +376,25 @@ static int find_unbound_irq(void)
 
 	/* nr_irqs is a magic value. Must not use it.*/
 	for (irq = nr_irqs-1; irq > start; irq--) {
-		desc = irq_to_desc(irq);
+		data = irq_get_irq_data(irq);
 		/* only 0->15 have init'd desc; handle irq > 16 */
-		if (desc == NULL)
+		if (!data)
 			break;
-		if (desc->chip == &no_irq_chip)
+		if (data->chip == &no_irq_chip)
 			break;
-		if (desc->chip != &xen_dynamic_chip)
+		if (data->chip != &xen_dynamic_chip)
 			continue;
 		if (irq_info[irq].type == IRQT_UNBOUND)
-			break;
+			return irq;
 	}
 
 	if (irq == start)
 		goto no_irqs;
 
-	desc = irq_to_desc_alloc_node(irq, 0);
-	if (WARN_ON(desc == NULL))
-		return -1;
+	res = irq_alloc_desc_at(irq, 0);
 
-	dynamic_irq_init_keep_chip_data(irq);
+	if (WARN_ON(res != irq))
+		return -1;
 
 	return irq;
 
@@ -603,7 +602,7 @@ int xen_allocate_pirq(unsigned gsi, int shareable, char *name)
 	 * this in the priv domain. */
 	if (xen_initial_domain() &&
 	    HYPERVISOR_physdev_op(PHYSDEVOP_alloc_irq_vector, &irq_op)) {
-		dynamic_irq_cleanup(irq);
+		irq_free_desc(irq);
 		irq = -ENOSPC;
 		goto out;
 	}
@@ -630,7 +629,7 @@ int xen_destroy_irq(int irq)
 
 	irq_info[irq] = mk_unbound_info();
 
-	dynamic_irq_cleanup(irq);
+	irq_free_desc(irq);
 
 out:
 	spin_unlock(&irq_mapping_update_lock);
@@ -776,7 +775,7 @@ static void unbind_from_irq(unsigned int irq)
 	if (irq_info[irq].type != IRQT_UNBOUND) {
 		irq_info[irq] = mk_unbound_info();
 
-		dynamic_irq_cleanup(irq);
+		irq_free_desc(irq);
 	}
 
 	spin_unlock(&irq_mapping_update_lock);
