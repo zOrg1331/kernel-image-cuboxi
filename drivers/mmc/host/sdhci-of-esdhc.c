@@ -18,7 +18,7 @@
 #include <linux/mmc/host.h>
 #include "sdhci-of.h"
 #include "sdhci.h"
-#include "sdhci-esdhc.c"
+#include "sdhci-esdhc.h"
 
 static u16 esdhc_readw(struct sdhci_host *host, int reg)
 {
