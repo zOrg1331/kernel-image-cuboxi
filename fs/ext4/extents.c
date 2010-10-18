@@ -2545,8 +2545,7 @@ static int ext4_ext_zeroout(struct inode *inode, struct ext4_extent *ex)
 	ee_len    = ext4_ext_get_actual_len(ex);
 	ee_pblock = ext_pblock(ex);
 
-	ret = sb_issue_zeroout(inode->i_sb, ee_pblock, ee_len,
-			       GFP_NOFS, BLKDEV_IFL_WAIT);
+	ret = sb_issue_zeroout(inode->i_sb, ee_pblock, ee_len, GFP_NOFS);
 	if (ret > 0)
 		ret = 0;
 
