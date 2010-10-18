@@ -3538,7 +3538,7 @@ static int setup_msi_irq(struct pci_dev *dev, struct msi_desc *msidesc, int irq)
 	return 0;
 }
 
-int arch_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
+int native_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 {
 	unsigned int irq;
 	int ret, sub_handle;
@@ -3599,7 +3599,7 @@ error:
 	return ret;
 }
 
-void arch_teardown_msi_irq(unsigned int irq)
+void native_teardown_msi_irq(unsigned int irq)
 {
 	destroy_irq(irq);
 }
@@ -3865,6 +3865,11 @@ void __init probe_nr_irqs_gsi(void)
 		nr_irqs_gsi = nr;
 
 	printk(KERN_DEBUG "nr_irqs_gsi: %d\n", nr_irqs_gsi);
+}
+
+int get_nr_irqs_gsi(void)
+{
+	return nr_irqs_gsi;
 }
 
 #ifdef CONFIG_SPARSE_IRQ
