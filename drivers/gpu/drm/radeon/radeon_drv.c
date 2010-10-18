@@ -93,7 +93,6 @@ int radeon_benchmarking = 0;
 int radeon_testing = 0;
 int radeon_connector_table = 0;
 int radeon_tv = 1;
-int radeon_new_pll = -1;
 int radeon_audio = 1;
 int radeon_disp_priority = 0;
 int radeon_hw_i2c = 0;
@@ -130,9 +129,6 @@ module_param_named(connector_table, radeon_connector_table, int, 0444);
 
 MODULE_PARM_DESC(tv, "TV enable (0 = disable)");
 module_param_named(tv, radeon_tv, int, 0444);
-
-MODULE_PARM_DESC(new_pll, "Select new PLL code");
-module_param_named(new_pll, radeon_new_pll, int, 0444);
 
 MODULE_PARM_DESC(audio, "Audio enable (0 = disable)");
 module_param_named(audio, radeon_audio, int, 0444);
@@ -203,8 +199,6 @@ static struct drm_driver driver_old = {
 	.irq_uninstall = radeon_driver_irq_uninstall,
 	.irq_handler = radeon_driver_irq_handler,
 	.reclaim_buffers = drm_core_reclaim_buffers,
-	.get_map_ofs = drm_core_get_map_ofs,
-	.get_reg_ofs = drm_core_get_reg_ofs,
 	.ioctls = radeon_ioctls,
 	.dma_ioctl = radeon_cp_buffers,
 	.fops = {
@@ -290,8 +284,6 @@ static struct drm_driver kms_driver = {
 	.irq_uninstall = radeon_driver_irq_uninstall_kms,
 	.irq_handler = radeon_driver_irq_handler_kms,
 	.reclaim_buffers = drm_core_reclaim_buffers,
-	.get_map_ofs = drm_core_get_map_ofs,
-	.get_reg_ofs = drm_core_get_reg_ofs,
 	.ioctls = radeon_ioctls_kms,
 	.gem_init_object = radeon_gem_object_init,
 	.gem_free_object = radeon_gem_object_free,
