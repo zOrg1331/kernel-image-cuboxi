@@ -31,6 +31,8 @@
 #include "tda18271.h"
 #include "mxl5005s.h"
 #include "mc44s803.h"
+#include "tda18218.h"
+#include "mxl5007t.h"
 
 static int dvb_usb_af9015_debug;
 module_param_named(debug, dvb_usb_af9015_debug, int, 0644);
@@ -494,7 +496,8 @@ static int af9015_copy_firmware(struct dvb_usb_device *d)
 	/* wait 2nd demodulator ready */
 	msleep(100);
 
-	ret = af9015_read_reg_i2c(d, 0x3a, 0x98be, &val);
+	ret = af9015_read_reg_i2c(d,
+		af9015_af9013_config[1].demod_address, 0x98be, &val);
 	if (ret)
 		goto error;
 	else
@@ -597,47 +600,12 @@ free:
 	return ret;
 }
 
-static int af9015_download_ir_table(struct dvb_usb_device *d)
-{
-	int i, packets = 0, ret;
-	u16 addr = 0x9a56; /* ir-table start address */
-	struct req_t req = {WRITE_MEMORY, 0, 0, 0, 0, 1, NULL};
-	u8 *data = NULL;
-	deb_info("%s:\n", __func__);
-
-	data = af9015_config.ir_table;
-	packets = af9015_config.ir_table_size;
-
-	/* no remote */
-	if (!packets)
-		goto exit;
-
-	/* load remote ir-table */
-	for (i = 0; i < packets; i++) {
-		req.addr = addr + i;
-		req.data = &data[i];
-		ret = af9015_ctrl_msg(d, &req);
-		if (ret) {
-			err("ir-table download failed at packet %d with " \
-				"code %d", i, ret);
-			return ret;
-		}
-	}
-
-exit:
-	return 0;
-}
-
 static int af9015_init(struct dvb_usb_device *d)
 {
 	int ret;
 	deb_info("%s:\n", __func__);
 
 	ret = af9015_init_endpoint(d);
-	if (ret)
-		goto error;
-
-	ret = af9015_download_ir_table(d);
 	if (ret)
 		goto error;
 
@@ -737,8 +705,6 @@ struct af9015_setup {
 	unsigned int id;
 	struct ir_scancode *rc_key_map;
 	unsigned int rc_key_map_size;
-	u8 *ir_table;
-	unsigned int ir_table_size;
 };
 
 static const struct af9015_setup *af9015_setup_match(unsigned int id,
@@ -751,54 +717,40 @@ static const struct af9015_setup *af9015_setup_match(unsigned int id,
 }
 
 static const struct af9015_setup af9015_setup_modparam[] = {
-	{ AF9015_REMOTE_A_LINK_DTU_M,
-		ir_codes_af9015_table_a_link, ARRAY_SIZE(ir_codes_af9015_table_a_link),
-		af9015_ir_table_a_link, ARRAY_SIZE(af9015_ir_table_a_link) },
-	{ AF9015_REMOTE_MSI_DIGIVOX_MINI_II_V3,
-		ir_codes_af9015_table_msi, ARRAY_SIZE(ir_codes_af9015_table_msi),
-		af9015_ir_table_msi, ARRAY_SIZE(af9015_ir_table_msi) },
-	{ AF9015_REMOTE_MYGICTV_U718,
-		ir_codes_af9015_table_mygictv, ARRAY_SIZE(ir_codes_af9015_table_mygictv),
-		af9015_ir_table_mygictv, ARRAY_SIZE(af9015_ir_table_mygictv) },
-	{ AF9015_REMOTE_DIGITTRADE_DVB_T,
-		ir_codes_af9015_table_digittrade, ARRAY_SIZE(ir_codes_af9015_table_digittrade),
-		af9015_ir_table_digittrade, ARRAY_SIZE(af9015_ir_table_digittrade) },
-	{ AF9015_REMOTE_AVERMEDIA_KS,
-		ir_codes_af9015_table_avermedia, ARRAY_SIZE(ir_codes_af9015_table_avermedia),
-		af9015_ir_table_avermedia_ks, ARRAY_SIZE(af9015_ir_table_avermedia_ks) },
+	{ AF9015_REMOTE_A_LINK_DTU_M, af9015_rc_a_link,
+		ARRAY_SIZE(af9015_rc_a_link) },
+	{ AF9015_REMOTE_MSI_DIGIVOX_MINI_II_V3, af9015_rc_msi,
+		ARRAY_SIZE(af9015_rc_msi) },
+	{ AF9015_REMOTE_MYGICTV_U718, af9015_rc_mygictv,
+		ARRAY_SIZE(af9015_rc_mygictv) },
+	{ AF9015_REMOTE_DIGITTRADE_DVB_T, af9015_rc_digittrade,
+		ARRAY_SIZE(af9015_rc_digittrade) },
+	{ AF9015_REMOTE_AVERMEDIA_KS, af9015_rc_avermedia_ks,
+		ARRAY_SIZE(af9015_rc_avermedia_ks) },
 	{ }
 };
 
 /* don't add new entries here anymore, use hashes instead */
 static const struct af9015_setup af9015_setup_usbids[] = {
-	{ USB_VID_LEADTEK,
-		ir_codes_af9015_table_leadtek, ARRAY_SIZE(ir_codes_af9015_table_leadtek),
-		af9015_ir_table_leadtek, ARRAY_SIZE(af9015_ir_table_leadtek) },
-	{ USB_VID_VISIONPLUS,
-		ir_codes_af9015_table_twinhan, ARRAY_SIZE(ir_codes_af9015_table_twinhan),
-		af9015_ir_table_twinhan, ARRAY_SIZE(af9015_ir_table_twinhan) },
-	{ USB_VID_KWORLD_2, /* TODO: use correct rc keys */
-		ir_codes_af9015_table_twinhan, ARRAY_SIZE(ir_codes_af9015_table_twinhan),
-		af9015_ir_table_kworld, ARRAY_SIZE(af9015_ir_table_kworld) },
-	{ USB_VID_AVERMEDIA,
-		ir_codes_af9015_table_avermedia, ARRAY_SIZE(ir_codes_af9015_table_avermedia),
-		af9015_ir_table_avermedia, ARRAY_SIZE(af9015_ir_table_avermedia) },
-	{ USB_VID_MSI_2,
-		ir_codes_af9015_table_msi_digivox_iii, ARRAY_SIZE(ir_codes_af9015_table_msi_digivox_iii),
-		af9015_ir_table_msi_digivox_iii, ARRAY_SIZE(af9015_ir_table_msi_digivox_iii) },
+	{ USB_VID_LEADTEK, af9015_rc_leadtek,
+		ARRAY_SIZE(af9015_rc_leadtek) },
+	{ USB_VID_VISIONPLUS, af9015_rc_twinhan,
+		ARRAY_SIZE(af9015_rc_twinhan) },
+	{ USB_VID_KWORLD_2, af9015_rc_kworld,
+		ARRAY_SIZE(af9015_rc_kworld) },
+	{ USB_VID_AVERMEDIA, af9015_rc_avermedia,
+		ARRAY_SIZE(af9015_rc_avermedia) },
+	{ USB_VID_MSI_2, af9015_rc_msi_digivox_iii,
+		ARRAY_SIZE(af9015_rc_msi_digivox_iii) },
+	{ USB_VID_TERRATEC, af9015_rc_terratec,
+		ARRAY_SIZE(af9015_rc_terratec) },
 	{ }
 };
 
 static const struct af9015_setup af9015_setup_hashes[] = {
-	{ 0xb8feb708,
-		ir_codes_af9015_table_msi, ARRAY_SIZE(ir_codes_af9015_table_msi),
-		af9015_ir_table_msi, ARRAY_SIZE(af9015_ir_table_msi) },
-	{ 0xa3703d00,
-		ir_codes_af9015_table_a_link, ARRAY_SIZE(ir_codes_af9015_table_a_link),
-		af9015_ir_table_a_link, ARRAY_SIZE(af9015_ir_table_a_link) },
-	{ 0x9b7dc64e,
-		ir_codes_af9015_table_mygictv, ARRAY_SIZE(ir_codes_af9015_table_mygictv),
-		af9015_ir_table_mygictv, ARRAY_SIZE(af9015_ir_table_mygictv) },
+	{ 0xb8feb708, af9015_rc_msi, ARRAY_SIZE(af9015_rc_msi) },
+	{ 0xa3703d00, af9015_rc_a_link, ARRAY_SIZE(af9015_rc_a_link) },
+	{ 0x9b7dc64e, af9015_rc_mygictv, ARRAY_SIZE(af9015_rc_mygictv) },
 	{ }
 };
 
@@ -836,11 +788,8 @@ static void af9015_set_remote_config(struct usb_device *udev,
 			} else if (udev->descriptor.idProduct ==
 				cpu_to_le16(USB_PID_TREKSTOR_DVBT)) {
 				table = &(const struct af9015_setup){ 0,
-					ir_codes_af9015_table_trekstor,
-					ARRAY_SIZE(ir_codes_af9015_table_trekstor),
-					af9015_ir_table_trekstor,
-					ARRAY_SIZE(af9015_ir_table_trekstor)
-				};
+					af9015_rc_trekstor,
+					ARRAY_SIZE(af9015_rc_trekstor) };
 			}
 		} else if (!table)
 			table = af9015_setup_match(vendor, af9015_setup_usbids);
@@ -849,8 +798,6 @@ static void af9015_set_remote_config(struct usb_device *udev,
 	if (table) {
 		props->rc.legacy.rc_key_map = table->rc_key_map;
 		props->rc.legacy.rc_key_map_size = table->rc_key_map_size;
-		af9015_config.ir_table = table->ir_table;
-		af9015_config.ir_table_size = table->ir_table_size;
 	}
 }
 
@@ -992,20 +939,19 @@ static int af9015_read_config(struct usb_device *udev)
 		case AF9013_TUNER_MT2060_2:
 		case AF9013_TUNER_TDA18271:
 		case AF9013_TUNER_QT1010A:
+		case AF9013_TUNER_TDA18218:
 			af9015_af9013_config[i].rf_spec_inv = 1;
 			break;
 		case AF9013_TUNER_MXL5003D:
 		case AF9013_TUNER_MXL5005D:
 		case AF9013_TUNER_MXL5005R:
+		case AF9013_TUNER_MXL5007T:
 			af9015_af9013_config[i].rf_spec_inv = 0;
 			break;
 		case AF9013_TUNER_MC44S803:
 			af9015_af9013_config[i].gpio[1] = AF9013_GPIO_LO;
 			af9015_af9013_config[i].rf_spec_inv = 1;
 			break;
-		case AF9013_TUNER_TDA18218:
-			warn("tuner NXP TDA18218 not supported yet");
-			return -ENODEV;
 		default:
 			warn("tuner id:%d not supported, please report!", val);
 			return -ENODEV;
@@ -1061,34 +1007,66 @@ static int af9015_identify_state(struct usb_device *udev,
 
 static int af9015_rc_query(struct dvb_usb_device *d, u32 *event, int *state)
 {
-	u8 buf[8];
-	struct req_t req = {GET_IR_CODE, 0, 0, 0, 0, sizeof(buf), buf};
-	struct ir_scancode *keymap = d->props.rc.legacy.rc_key_map;
-	int i, ret;
+	struct af9015_state *priv = d->priv;
+	int ret;
+	u8 ircode[5], repeat;
 
-	memset(buf, 0, sizeof(buf));
-
-	ret = af9015_ctrl_msg(d, &req);
+	/* read registers needed to detect remote controller code */
+	ret = af9015_read_reg(d, 0x98df, &repeat);
 	if (ret)
-		return ret;
+		goto error;
 
-	*event = 0;
-	*state = REMOTE_NO_KEY_PRESSED;
+	ret = af9015_read_reg(d, 0x98e7, &ircode[3]);
+	if (ret)
+		goto error;
 
-	for (i = 0; i < d->props.rc.legacy.rc_key_map_size; i++) {
-		if (!buf[1] && rc5_custom(&keymap[i]) == buf[0] &&
-		    rc5_data(&keymap[i]) == buf[2]) {
-			*event = keymap[i].keycode;
-			*state = REMOTE_KEY_PRESSED;
-			break;
-		}
+	ret = af9015_read_reg(d, 0x98e8, &ircode[4]);
+	if (ret)
+		goto error;
+
+	if (ircode[3] || ircode[4]) {
+		deb_rc("%s: key pressed\n", __func__);
+		ircode[0] = 1; /* DVB_USB_RC_NEC_KEY_PRESSED */
+
+		/* read 1st address byte */
+		ret = af9015_read_reg(d, 0x98e5, &ircode[1]);
+		if (ret)
+			goto error;
+
+		/* clean data bytes from mem */
+		ret = af9015_write_reg(d, 0x98e7, 0);
+		if (ret)
+			goto error;
+
+		ret = af9015_write_reg(d, 0x98e8, 0);
+		if (ret)
+			goto error;
+
+		/* FIXME: Hack to pass checksum on the custom field for the
+		   remote controllers using NEC extended address.
+		   That must done since dvb_usb_nec_rc_key_to_event()
+		   does not support NEC extended address format. */
+		ircode[2] = ~ircode[1];
+	} else if (priv->rc_repeat != repeat) {
+		deb_rc("%s: key repeated\n", __func__);
+		ircode[0] = 2; /* DVB_USB_RC_NEC_KEY_REPEATED */
+	} else {
+		deb_rc("%s: no key press\n", __func__);
+		ircode[0] = 0; /* DVB_USB_RC_NEC_EMPTY */
 	}
-	if (!buf[1])
-		deb_rc("%s: %02x %02x %02x %02x %02x %02x %02x %02x\n",
-			__func__, buf[0], buf[1], buf[2], buf[3], buf[4],
-			buf[5], buf[6], buf[7]);
 
-	return 0;
+	priv->rc_repeat = repeat;
+
+	deb_rc("%s: ", __func__);
+	debug_dump(ircode, sizeof(ircode), deb_rc);
+
+	dvb_usb_nec_rc_key_to_event(d, ircode, event, state);
+
+error:
+	if (ret)
+		err("%s: failed:%d", __func__, ret);
+
+	return ret;
 }
 
 /* init 2nd I2C adapter */
@@ -1208,6 +1186,16 @@ static struct mc44s803_config af9015_mc44s803_config = {
 	.dig_out = 1,
 };
 
+static struct tda18218_config af9015_tda18218_config = {
+	.i2c_address = 0xc0,
+	.i2c_wr_max = 21, /* max wr bytes AF9015 I2C adap can handle at once */
+};
+
+static struct mxl5007t_config af9015_mxl5007t_config = {
+	.xtal_freq_hz = MxL_XTAL_24_MHZ,
+	.if_freq_hz = MxL_IF_4_57_MHZ,
+};
+
 static int af9015_tuner_attach(struct dvb_usb_adapter *adap)
 {
 	struct af9015_state *state = adap->dev->priv;
@@ -1238,6 +1226,10 @@ static int af9015_tuner_attach(struct dvb_usb_adapter *adap)
 		ret = dvb_attach(tda18271_attach, adap->fe, 0xc0, i2c_adap,
 			&af9015_tda18271_config) == NULL ? -ENODEV : 0;
 		break;
+	case AF9013_TUNER_TDA18218:
+		ret = dvb_attach(tda18218_attach, adap->fe, i2c_adap,
+			&af9015_tda18218_config) == NULL ? -ENODEV : 0;
+		break;
 	case AF9013_TUNER_MXL5003D:
 		ret = dvb_attach(mxl5005s_attach, adap->fe, i2c_adap,
 			&af9015_mxl5003_config) == NULL ? -ENODEV : 0;
@@ -1254,6 +1246,10 @@ static int af9015_tuner_attach(struct dvb_usb_adapter *adap)
 	case AF9013_TUNER_MC44S803:
 		ret = dvb_attach(mc44s803_attach, adap->fe, i2c_adap,
 			&af9015_mc44s803_config) == NULL ? -ENODEV : 0;
+		break;
+	case AF9013_TUNER_MXL5007T:
+		ret = dvb_attach(mxl5007t_attach, adap->fe, i2c_adap,
+			0xc0, &af9015_mxl5007t_config) == NULL ? -ENODEV : 0;
 		break;
 	case AF9013_TUNER_UNKNOWN:
 	default:
@@ -1300,10 +1296,14 @@ static struct usb_device_id af9015_usb_table[] = {
 /* 30 */{USB_DEVICE(USB_VID_KWORLD_2,  USB_PID_KWORLD_UB383_T)},
 	{USB_DEVICE(USB_VID_KWORLD_2,  USB_PID_KWORLD_395U_4)},
 	{USB_DEVICE(USB_VID_AVERMEDIA, USB_PID_AVERMEDIA_A815M)},
+	{USB_DEVICE(USB_VID_TERRATEC,  USB_PID_TERRATEC_CINERGY_T_STICK_RC)},
+	{USB_DEVICE(USB_VID_TERRATEC,
+		USB_PID_TERRATEC_CINERGY_T_STICK_DUAL_RC)},
 	{0},
 };
 MODULE_DEVICE_TABLE(usb, af9015_usb_table);
 
+#define AF9015_RC_INTERVAL 500
 static struct dvb_usb_device_properties af9015_properties[] = {
 	{
 		.caps = DVB_USB_IS_AN_I2C_ADAPTER,
@@ -1356,12 +1356,12 @@ static struct dvb_usb_device_properties af9015_properties[] = {
 
 		.rc.legacy = {
 			.rc_query         = af9015_rc_query,
-			.rc_interval      = 150,
+			.rc_interval      = AF9015_RC_INTERVAL,
 		},
 
 		.i2c_algo = &af9015_i2c_algo,
 
-		.num_device_descs = 9, /* max 9 */
+		.num_device_descs = 11, /* check max from dvb-usb.h */
 		.devices = {
 			{
 				.name = "Afatech AF9015 DVB-T USB2.0 stick",
@@ -1411,6 +1411,16 @@ static struct dvb_usb_device_properties af9015_properties[] = {
 			{
 				.name = "AVerMedia AVerTV DVB-T Volar X",
 				.cold_ids = {&af9015_usb_table[9], NULL},
+				.warm_ids = {NULL},
+			},
+			{
+				.name = "TerraTec Cinergy T Stick RC",
+				.cold_ids = {&af9015_usb_table[33], NULL},
+				.warm_ids = {NULL},
+			},
+			{
+				.name = "TerraTec Cinergy T Stick Dual RC",
+				.cold_ids = {&af9015_usb_table[34], NULL},
 				.warm_ids = {NULL},
 			},
 		}
@@ -1465,12 +1475,12 @@ static struct dvb_usb_device_properties af9015_properties[] = {
 
 		.rc.legacy = {
 			.rc_query         = af9015_rc_query,
-			.rc_interval      = 150,
+			.rc_interval      = AF9015_RC_INTERVAL,
 		},
 
 		.i2c_algo = &af9015_i2c_algo,
 
-		.num_device_descs = 9, /* max 9 */
+		.num_device_descs = 9, /* check max from dvb-usb.h */
 		.devices = {
 			{
 				.name = "Xtensions XD-380",
@@ -1574,12 +1584,12 @@ static struct dvb_usb_device_properties af9015_properties[] = {
 
 		.rc.legacy = {
 			.rc_query         = af9015_rc_query,
-			.rc_interval      = 150,
+			.rc_interval      = AF9015_RC_INTERVAL,
 		},
 
 		.i2c_algo = &af9015_i2c_algo,
 
-		.num_device_descs = 9, /* max 9 */
+		.num_device_descs = 9, /* check max from dvb-usb.h */
 		.devices = {
 			{
 				.name = "AverMedia AVerTV Volar GPS 805 (A805)",

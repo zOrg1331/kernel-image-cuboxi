@@ -230,7 +230,7 @@ static void free_buffer(struct videobuf_queue *vq, struct videobuf_buffer *vb)
 	BUG_ON(in_interrupt());
 
 	/* Wait until this buffer is no longer in STATE_QUEUED or STATE_ACTIVE */
-	videobuf_waiton(vb, 0, 0);
+	videobuf_waiton(vq, vb, 0, 0);
 	videobuf_dma_contig_free(vq, vb);
 	vb->state = VIDEOBUF_NEEDS_INIT;
 }
@@ -1189,7 +1189,8 @@ static int sh_vou_open(struct file *file)
 				       vou_dev->v4l2_dev.dev, &vou_dev->lock,
 				       V4L2_BUF_TYPE_VIDEO_OUTPUT,
 				       V4L2_FIELD_NONE,
-				       sizeof(struct videobuf_buffer), vdev);
+				       sizeof(struct videobuf_buffer), vdev,
+				       NULL);
 
 	return 0;
 }
