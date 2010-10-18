@@ -578,7 +578,7 @@ is_valid_oplock_break(struct smb_hdr *buf, struct TCP_Server_Info *srv)
 				}
 
 				cFYI(1, "file id match, oplock break");
-				pCifsInode = CIFS_I(netfile->pInode);
+				pCifsInode = CIFS_I(netfile->dentry->d_inode);
 				pCifsInode->clientCanCacheAll = false;
 				if (pSMB->OplockLevel == 0)
 					pCifsInode->clientCanCacheRead = false;
@@ -729,6 +729,6 @@ cifs_autodisable_serverino(struct cifs_sb_info *cifs_sb)
 			   "properly. Hardlinks will not be recognized on this "
 			   "mount. Consider mounting with the \"noserverino\" "
 			   "option to silence this message.",
-			   cifs_sb->tcon->treeName);
+			   cifs_sb_master_tcon(cifs_sb)->treeName);
 	}
 }
