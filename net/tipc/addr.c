@@ -41,6 +41,11 @@
 #include "cluster.h"
 #include "net.h"
 
+u32 tipc_get_addr(void)
+{
+	return tipc_own_addr;
+}
+
 /**
  * tipc_addr_domain_valid - validates a network domain address
  *
