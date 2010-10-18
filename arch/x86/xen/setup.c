@@ -8,6 +8,7 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/pm.h>
+#include <linux/memblock.h>
 
 #include <asm/elf.h>
 #include <asm/vdso.h>
@@ -60,7 +61,7 @@ static __init void xen_add_extra_mem(unsigned long pages)
 	e820_add_region(extra_start, size, E820_RAM);
 	sanitize_e820_map(e820.map, ARRAY_SIZE(e820.map), &e820.nr_map);
 
-	reserve_early(extra_start, extra_start + size, "XEN EXTRA");
+	memblock_x86_reserve_range(extra_start, extra_start + size, "XEN EXTRA");
 
 	xen_extra_mem_size += size;
 
@@ -208,7 +209,7 @@ char * __init xen_memory_setup(void)
 	 *  - xen_start_info
 	 * See comment above "struct start_info" in <xen/interface/xen.h>
 	 */
-	reserve_early(__pa(xen_start_info->mfn_list),
+	memblock_x86_reserve_range(__pa(xen_start_info->mfn_list),
 		      __pa(xen_start_info->pt_base),
 			"XEN START INFO");
 
