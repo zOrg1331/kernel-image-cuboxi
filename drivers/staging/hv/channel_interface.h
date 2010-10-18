@@ -27,9 +27,7 @@
 
 #include "vmbus_api.h"
 
-void GetChannelInterface(struct vmbus_channel_interface *ChannelInterface);
-
-void GetChannelInfo(struct hv_device *Device,
-		    struct hv_device_info *DeviceInfo);
+void get_channel_info(struct hv_device *device,
+		    struct hv_device_info *info);
 
 #endif /* _CHANNEL_INTERFACE_H_ */
