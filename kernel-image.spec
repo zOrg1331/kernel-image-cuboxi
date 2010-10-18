@@ -73,6 +73,7 @@ Requires: mkinitrd >= 1:2.9.9-alt1
 Requires: startup >= 0.8.3-alt1
 
 Provides: kernel = %kversion
+Provides: kernel-module-drbd83
 
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
@@ -640,6 +641,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - Add  xen domU kernel
 - move drm radeon to separated package
 - turn off CONFIG_X86_PPRO_FENCE
+- move DRBD support to this package
 
 * Fri Sep 17 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt21.1
 - fix CVE-2010-3301
