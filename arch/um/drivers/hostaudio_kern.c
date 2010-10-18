@@ -198,9 +198,9 @@ static int hostaudio_open(struct inode *inode, struct file *file)
 		w = 1;
 
 	kparam_block_sysfs_write(dsp);
-	lock_kernel();
+	mutex_lock(&hostaudio_mutex);
 	ret = os_open_file(dsp, of_set_rw(OPENFLAGS(), r, w), 0);
-	unlock_kernel();
+	mutex_unlock(&hostaudio_mutex);
 	kparam_unblock_sysfs_write(dsp);
 
 	if (ret < 0) {
@@ -259,9 +259,9 @@ static int hostmixer_open_mixdev(struct inode *inode, struct file *file)
 		w = 1;
 
 	kparam_block_sysfs_write(mixer);
-	lock_kernel();
+	mutex_lock(&hostaudio_mutex);
 	ret = os_open_file(mixer, of_set_rw(OPENFLAGS(), r, w), 0);
-	unlock_kernel();
+	mutex_unlock(&hostaudio_mutex);
 	kparam_unblock_sysfs_write(mixer);
 
 	if (ret < 0) {
