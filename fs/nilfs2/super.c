@@ -45,7 +45,6 @@
 #include <linux/parser.h>
 #include <linux/random.h>
 #include <linux/crc32.h>
-#include <linux/smp_lock.h>
 #include <linux/vfs.h>
 #include <linux/writeback.h>
 #include <linux/kobject.h>
@@ -337,8 +336,6 @@ static void nilfs_put_super(struct super_block *sb)
 	struct nilfs_sb_info *sbi = NILFS_SB(sb);
 	struct the_nilfs *nilfs = sbi->s_nilfs;
 
-	lock_kernel();
-
 	nilfs_detach_segment_constructor(sbi);
 
 	if (!(sb->s_flags & MS_RDONLY)) {
@@ -355,8 +352,6 @@ static void nilfs_put_super(struct super_block *sb)
 	sbi->s_super = NULL;
 	sb->s_fs_info = NULL;
 	kfree(sbi);
-
-	unlock_kernel();
 }
 
 static int nilfs_sync_fs(struct super_block *sb, int wait)
@@ -1010,8 +1005,6 @@ static int nilfs_remount(struct super_block *sb, int *flags, char *data)
 	struct nilfs_mount_options old_opts;
 	int err;
 
-	lock_kernel();
-
 	old_sb_flags = sb->s_flags;
 	old_opts.mount_opt = sbi->s_mount_opt;
 
@@ -1078,13 +1071,11 @@ static int nilfs_remount(struct super_block *sb, int *flags, char *data)
 		up_write(&nilfs->ns_sem);
 	}
  out:
-	unlock_kernel();
 	return 0;
 
  restore_opts:
 	sb->s_flags = old_sb_flags;
 	sbi->s_mount_opt = old_opts.mount_opt;
-	unlock_kernel();
 	return err;
 }
 
