@@ -2104,6 +2104,18 @@ static const struct cx88_board cx88_boards[] = {
 		} },
 		.mpeg           = CX88_MPEG_DVB,
 	},
+	[CX88_BOARD_TWINHAN_VP1027_DVBS] = {
+		.name		= "Twinhan VP-1027 DVB-S",
+		.tuner_type     = TUNER_ABSENT,
+		.radio_type     = UNSET,
+		.tuner_addr     = ADDR_UNSET,
+		.radio_addr     = ADDR_UNSET,
+		.input          = {{
+		       .type   = CX88_VMUX_DVB,
+		       .vmux   = 0,
+		} },
+		.mpeg           = CX88_MPEG_DVB,
+	},
 };
 
 /* ------------------------------------------------------------------ */
@@ -2576,6 +2588,10 @@ static const struct cx88_subid cx88_subids[] = {
 		.subvendor = 0xb034,
 		.subdevice = 0x3034,
 		.card      = CX88_BOARD_PROF_7301,
+	}, {
+		.subvendor = 0x1822,
+		.subdevice = 0x0023,
+		.card      = CX88_BOARD_TWINHAN_VP1027_DVBS,
 	},
 };
 
@@ -2673,10 +2689,10 @@ static void hauppauge_eeprom(struct cx88_core *core, u8 *eeprom_data)
 /* ----------------------------------------------------------------------- */
 /* some GDI (was: Modular Technology) specific stuff                       */
 
-static struct {
+static const struct {
 	int  id;
 	int  fm;
-	char *name;
+	const char *name;
 } gdi_tuner[] = {
 	[ 0x01 ] = { .id   = TUNER_ABSENT,
 		     .name = "NTSC_M" },
@@ -2710,7 +2726,7 @@ static struct {
 
 static void gdi_eeprom(struct cx88_core *core, u8 *eeprom_data)
 {
-	char *name = (eeprom_data[0x0d] < ARRAY_SIZE(gdi_tuner))
+	const char *name = (eeprom_data[0x0d] < ARRAY_SIZE(gdi_tuner))
 		? gdi_tuner[eeprom_data[0x0d]].name : NULL;
 
 	info_printk(core, "GDI: tuner=%s\n", name ? name : "unknown");
@@ -3069,6 +3085,13 @@ static void cx88_card_setup_pre_i2c(struct cx88_core *core)
 		mdelay(50);
 		cx_set(MO_GP1_IO, 0x10);
 		mdelay(50);
+		break;
+
+	case CX88_BOARD_TWINHAN_VP1027_DVBS:
+		cx_write(MO_GP0_IO, 0x00003230);
+		cx_write(MO_GP0_IO, 0x00003210);
+		msleep(1);
+		cx_write(MO_GP0_IO, 0x00001230);
 		break;
 	}
 }

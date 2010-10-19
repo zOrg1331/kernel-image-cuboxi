@@ -304,6 +304,14 @@ static int copy_streams(u8 *data, unsigned long len,
 					memcpy (&voutp[pos], ptr, cpysize);
 				break;
 			case TM6000_URB_MSG_AUDIO:
+				/* Need some code to copy audio buffer */
+				if (dev->fourcc == V4L2_PIX_FMT_YUYV) {
+					/* Swap word bytes */
+					int i;
+
+					for (i = 0; i < cpysize; i += 2)
+						swab16s((u16 *)(ptr + i));
+				}
 				tm6000_call_fillbuf(dev, TM6000_AUDIO, ptr, cpysize);
 				break;
 			case TM6000_URB_MSG_VBI:
@@ -1007,7 +1015,7 @@ static int vidioc_s_std (struct file *file, void *priv, v4l2_std_id *norm)
 	struct tm6000_fh   *fh=priv;
 	struct tm6000_core *dev = fh->dev;
 
-	rc=tm6000_set_standard (dev, norm);
+	rc = tm6000_init_analog_mode(dev);
 
 	fh->width  = dev->width;
 	fh->height = dev->height;
@@ -1284,23 +1292,23 @@ static int tm6000_open(struct file *file)
 				"active=%d\n",list_empty(&dev->vidq.active));
 
 	/* initialize hardware on analog mode */
-	if (dev->mode!=TM6000_MODE_ANALOG) {
-		rc=tm6000_init_analog_mode (dev);
-		if (rc<0)
-			return rc;
+	rc = tm6000_init_analog_mode(dev);
+	if (rc < 0)
+		return rc;
 
+	if (dev->mode != TM6000_MODE_ANALOG) {
 		/* Put all controls at a sane state */
 		for (i = 0; i < ARRAY_SIZE(tm6000_qctrl); i++)
-			qctl_regs[i] =tm6000_qctrl[i].default_value;
+			qctl_regs[i] = tm6000_qctrl[i].default_value;
 
-		dev->mode=TM6000_MODE_ANALOG;
+		dev->mode = TM6000_MODE_ANALOG;
 	}
 
 	videobuf_queue_vmalloc_init(&fh->vb_vidq, &tm6000_video_qops,
 			NULL, &dev->slock,
 			fh->type,
 			V4L2_FIELD_INTERLACED,
-			sizeof(struct tm6000_buffer),fh);
+			sizeof(struct tm6000_buffer), fh, NULL);
 
 	return 0;
 }
