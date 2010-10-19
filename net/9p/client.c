@@ -1314,6 +1314,11 @@ p9_client_read(struct p9_fid *fid, char *data, char __user *udata, u64 offset,
 	rsize = fid->iounit;
 	if (!rsize || rsize > clnt->msize-P9_IOHDRSZ)
 		rsize = clnt->msize - P9_IOHDRSZ;
+	/*
+	 * A read with NULL user buffer cause EFAULT error
+	 */
+	if (!data && !udata)
+		return -EFAULT;
 
 	if (count < rsize)
 		rsize = count;
@@ -1334,16 +1339,13 @@ p9_client_read(struct p9_fid *fid, char *data, char __user *udata, u64 offset,
 
 	if (data) {
 		memmove(data, dataptr, count);
-	}
-
-	if (udata) {
+	} else {
 		err = copy_to_user(udata, dataptr, count);
 		if (err) {
 			err = -EFAULT;
 			goto free_and_error;
 		}
 	}
-
 	p9_free_req(clnt, req);
 	return count;
 
