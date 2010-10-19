@@ -1207,8 +1207,10 @@ static pgoff_t ext4_num_dirty_pages(struct inode *inode, pgoff_t idx,
 				break;
 			idx++;
 			num++;
-			if (num >= max_pages)
+			if (num >= max_pages) {
+				done = 1;
 				break;
+			}
 		}
 		pagevec_release(&pvec);
 	}
@@ -2103,7 +2105,7 @@ static void mpage_put_bnr_to_bhs(struct mpage_da_data *mpd,
 			} while ((bh = bh->b_this_page) != head);
 
 			do {
-				if (cur_logical >= map->m_lblk + blocks)
+				if (cur_logical > map->m_lblk + (blocks - 1))
 					break;
 
 				if (buffer_delay(bh) || buffer_unwritten(bh)) {
@@ -3002,9 +3004,12 @@ static int ext4_da_writepages(struct address_space *mapping,
 	 * sbi->max_writeback_mb_bump whichever is smaller.
 	 */
 	max_pages = sbi->s_max_writeback_mb_bump << (20 - PAGE_CACHE_SHIFT);
-	if (!range_cyclic && range_whole)
-		desired_nr_to_write = wbc->nr_to_write * 8;
-	else
+	if (!range_cyclic && range_whole) {
+		if (wbc->nr_to_write == LONG_MAX)
+			desired_nr_to_write = wbc->nr_to_write;
+		else
+			desired_nr_to_write = wbc->nr_to_write * 8;
+	} else
 		desired_nr_to_write = ext4_num_dirty_pages(inode, index,
 							   max_pages);
 	if (desired_nr_to_write > max_pages)
@@ -3845,14 +3850,14 @@ out:
 	}
 	wq = EXT4_SB(io_end->inode->i_sb)->dio_unwritten_wq;
 
-	/* queue the work to convert unwritten extents to written */
-	queue_work(wq, &io_end->work);
-
 	/* Add the io_end to per-inode completed aio dio list*/
 	ei = EXT4_I(io_end->inode);
 	spin_lock_irqsave(&ei->i_completed_io_lock, flags);
 	list_add_tail(&io_end->list, &ei->i_completed_io_list);
 	spin_unlock_irqrestore(&ei->i_completed_io_lock, flags);
+
+	/* queue the work to convert unwritten extents to written */
+	queue_work(wq, &io_end->work);
 	iocb->private = NULL;
 }
 
