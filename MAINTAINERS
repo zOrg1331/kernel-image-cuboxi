@@ -3239,6 +3239,12 @@ F:	drivers/net/irda/
 F:	include/net/irda/
 F:	net/irda/
 
+IRQ SUBSYSTEM
+M:	Thomas Gleixner <tglx@linutronix.de>
+S:	Maintained
+T:	git git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip.git irq/core
+F:	kernel/irq/
+
 ISAPNP
 M:	Jaroslav Kysela <perex@perex.cz>
 S:	Maintained
@@ -6521,6 +6527,20 @@ L:	platform-driver-x86@vger.kernel.org
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/mjg59/platform-drivers-x86.git
 S:	Maintained
 F:	drivers/platform/x86
+
+XEN PCI SUBSYSTEM
+M:	Konrad Rzeszutek Wilk <konrad.wilk@oracle.com>
+L:	xen-devel@lists.xensource.com
+S:	Supported
+F:	arch/x86/pci/*xen*
+F:	drivers/pci/*xen*
+
+XEN SWIOTLB SUBSYSTEM
+M:	Konrad Rzeszutek Wilk <konrad.wilk@oracle.com>
+L:	xen-devel@lists.xensource.com
+S:	Supported
+F:	arch/x86/xen/*swiotlb*
+F:	drivers/xen/*swiotlb*
 
 XEN HYPERVISOR INTERFACE
 M:	Jeremy Fitzhardinge <jeremy@xensource.com>
