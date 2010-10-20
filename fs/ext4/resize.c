@@ -229,7 +229,7 @@ static int setup_new_group_blocks(struct super_block *sb,
 	ext4_debug("clear inode table blocks %#04llx -> %#04llx\n",
 			block, sbi->s_itb_per_group);
 	err = sb_issue_zeroout(sb, gdblocks + start + 1, reserved_gdb,
-			       GFP_NOFS, BLKDEV_IFL_WAIT);
+			       GFP_NOFS);
 	if (err)
 		goto exit_bh;
 
@@ -244,8 +244,7 @@ static int setup_new_group_blocks(struct super_block *sb,
 	block = input->inode_table;
 	ext4_debug("clear inode table blocks %#04llx -> %#04llx\n",
 			block, sbi->s_itb_per_group);
-	err = sb_issue_zeroout(sb, block, sbi->s_itb_per_group,
-			       GFP_NOFS, BLKDEV_IFL_WAIT);
+	err = sb_issue_zeroout(sb, block, sbi->s_itb_per_group, GFP_NOFS);
 	if (err)
 		goto exit_bh;
 
