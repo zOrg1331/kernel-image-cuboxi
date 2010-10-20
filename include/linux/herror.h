@@ -1,10 +1,22 @@
 #ifndef LINUX_HERROR_H
 #define LINUX_HERROR_H
 
+#include <linux/ioctl.h>
+#include <linux/herror_record.h>
+
+struct herr_persist_buffer {
+	void __user *buf;
+	unsigned int buf_size;
+};
+
+#define HERR_PERSIST_PEEK	_IOW('H', 1, struct herr_persist_buffer)
+#define HERR_PERSIST_CLEAR	_IOW('H', 2, u64)
+
+#ifdef __KERNEL__
+
 #include <linux/types.h>
 #include <linux/list.h>
 #include <linux/device.h>
-#include <linux/herror_record.h>
 
 /*
  * Hardware error reporting
@@ -66,4 +78,38 @@ static inline void herr_dev_put(struct herr_dev *dev)
 
 int herr_dev_register(struct herr_dev *dev);
 void herr_dev_unregister(struct herr_dev *dev);
+
+
+/*
+ * Simple Persistent Storage
+ */
+
+struct herr_persist;
+/* Put an error record into simple persistent storage */
+int herr_persist_in(const struct herr_record *ercd);
+/* Save all error records not yet consumed in persistent storage */
+void herr_persist_all_records(void);
+
+/*
+ * Simple Persistent Storage Provider Management
+ */
+struct herr_persist {
+	struct list_head list;
+	char *name;
+	unsigned int read_done:1;
+	/* Put an error record into storage, must be NMI-safe */
+	int (*in)(const struct herr_record *ercd);
+	/*
+	 * Read out an error record from storage to user space, don't
+	 * remove it, the HERR_RCD_PERSIST must be set in record flags
+	 */
+	ssize_t (*peek_user)(u64 *record_id, char __user *ubuf, size_t usize);
+	/* Clear an error record */
+	int (*clear)(u64 record_id);
+};
+
+/* Register (un-register) simple persistent storage provider */
+int herr_persist_register(struct herr_persist *persist);
+void herr_persist_unregister(struct herr_persist *persist);
+#endif
 #endif

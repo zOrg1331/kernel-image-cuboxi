@@ -43,9 +43,9 @@
 #include <linux/llalloc.h>
 #include <linux/herror.h>
 
-#define HERR_NOTIFY_BIT			0
+#include "herr-internal.h"
 
-static unsigned long herr_flags;
+unsigned long herr_flags;
 
 /*
  * Record list management and error reporting
@@ -524,6 +524,7 @@ static ssize_t herr_mix_read(struct file *filp, char __user *ubuf,
 {
 	int rc;
 	static DEFINE_MUTEX(read_mutex);
+	u64 record_id;
 
 	if (*off != 0)
 		return -EINVAL;
@@ -531,7 +532,14 @@ static ssize_t herr_mix_read(struct file *filp, char __user *ubuf,
 	rc = mutex_lock_interruptible(&read_mutex);
 	if (rc)
 		return rc;
+	rc = herr_persist_peek_user(&record_id, ubuf, usize);
+	if (rc > 0) {
+		herr_persist_clear(record_id);
+		goto out;
+	}
+
 	rc = herr_rcd_lists_read(ubuf, usize, &read_mutex);
+out:
 	mutex_unlock(&read_mutex);
 
 	return rc;
@@ -540,15 +548,40 @@ static ssize_t herr_mix_read(struct file *filp, char __user *ubuf,
 static unsigned int herr_mix_poll(struct file *file, poll_table *wait)
 {
 	poll_wait(file, &herr_mix_wait, wait);
-	if (!herr_rcd_lists_is_empty())
+	if (!herr_rcd_lists_is_empty() || !herr_persist_read_done())
 		return POLLIN | POLLRDNORM;
 	return 0;
+}
+
+static long herr_mix_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
+{
+	void __user *p = (void __user *)arg;
+	int rc;
+	u64 record_id;
+	struct herr_persist_buffer buf;
+
+	switch (cmd) {
+	case HERR_PERSIST_PEEK:
+		rc = copy_from_user(&buf, p, sizeof(buf));
+		if (rc)
+			return -EFAULT;
+		return herr_persist_peek_user(&record_id, buf.buf,
+					      buf.buf_size);
+	case HERR_PERSIST_CLEAR:
+		rc = copy_from_user(&record_id, p, sizeof(record_id));
+		if (rc)
+			return -EFAULT;
+		return herr_persist_clear(record_id);
+	default:
+		return -ENOTTY;
+	}
 }
 
 static const struct file_operations herr_mix_dev_fops = {
 	.owner		= THIS_MODULE,
 	.read		= herr_mix_read,
 	.poll		= herr_mix_poll,
+	.unlocked_ioctl	= herr_mix_ioctl,
 };
 
 static int __init herr_mix_dev_init(void)
