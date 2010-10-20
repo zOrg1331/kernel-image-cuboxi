@@ -62,6 +62,7 @@
 #include "reg.h"
 #include "debug.h"
 #include "ani.h"
+#include "../debug.h"
 
 static int modparam_nohwcrypt;
 module_param_named(nohwcrypt, modparam_nohwcrypt, bool, S_IRUGO);
@@ -517,12 +518,14 @@ struct ath_vif_iter_data {
 	bool		need_set_hw_addr;
 	bool		found_active;
 	bool		any_assoc;
+	enum nl80211_iftype opmode;
 };
 
 static void ath_vif_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
 {
 	struct ath_vif_iter_data *iter_data = data;
 	int i;
+	struct ath5k_vif *avf = (void *)vif->drv_priv;
 
 	if (iter_data->hw_macaddr)
 		for (i = 0; i < ETH_ALEN; i++)
@@ -539,13 +542,32 @@ static void ath_vif_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
 			iter_data->need_set_hw_addr = false;
 
 	if (!iter_data->any_assoc) {
-		struct ath5k_vif *avf = (void *)vif->drv_priv;
 		if (avf->assoc)
 			iter_data->any_assoc = true;
 	}
+
+	/* Calculate combined mode - when APs are active, operate in AP mode.
+	 * Otherwise use the mode of the new interface. This can currently
+	 * only deal with combinations of APs and STAs. Only one ad-hoc
+	 * interfaces is allowed above.
+	 */
+	if (avf->opmode == NL80211_IFTYPE_AP)
+		iter_data->opmode = NL80211_IFTYPE_AP;
+	else
+		if (iter_data->opmode == NL80211_IFTYPE_UNSPECIFIED)
+			iter_data->opmode = avf->opmode;
 }
 
-void ath5k_update_bssid_mask(struct ath5k_softc *sc, struct ieee80211_vif *vif)
+static void ath_do_set_opmode(struct ath5k_softc *sc)
+{
+	struct ath5k_hw *ah = sc->ah;
+	ath5k_hw_set_opmode(ah, sc->opmode);
+	ATH5K_DBG(sc, ATH5K_DEBUG_MODE, "mode setup opmode %d (%s)\n",
+		  sc->opmode, ath_opmode_to_string(sc->opmode));
+}
+
+void ath5k_update_bssid_mask_and_opmode(struct ath5k_softc *sc,
+					struct ieee80211_vif *vif)
 {
 	struct ath_common *common = ath5k_hw_common(sc->ah);
 	struct ath_vif_iter_data iter_data;
@@ -558,6 +580,7 @@ void ath5k_update_bssid_mask(struct ath5k_softc *sc, struct ieee80211_vif *vif)
 	memset(&iter_data.mask, 0xff, ETH_ALEN);
 	iter_data.found_active = false;
 	iter_data.need_set_hw_addr = true;
+	iter_data.opmode = NL80211_IFTYPE_UNSPECIFIED;
 
 	if (vif)
 		ath_vif_iter(&iter_data, vif->addr, vif);
@@ -567,10 +590,18 @@ void ath5k_update_bssid_mask(struct ath5k_softc *sc, struct ieee80211_vif *vif)
 						   &iter_data);
 	memcpy(sc->bssidmask, iter_data.mask, ETH_ALEN);
 
+	sc->opmode = iter_data.opmode;
+	if (sc->opmode == NL80211_IFTYPE_UNSPECIFIED)
+		/* Nothing active, default to station mode */
+		sc->opmode = NL80211_IFTYPE_STATION;
+
+	ath_do_set_opmode(sc);
+
 	if (iter_data.need_set_hw_addr && iter_data.found_active)
 		ath5k_hw_set_lladdr(sc->ah, iter_data.active_mac);
 
-	ath5k_hw_set_bssid_mask(sc->ah, sc->bssidmask);
+	if (ath5k_hw_hasbssidmask(sc->ah))
+		ath5k_hw_set_bssid_mask(sc->ah, sc->bssidmask);
 }
 
 static void
@@ -582,15 +613,9 @@ ath5k_mode_setup(struct ath5k_softc *sc, struct ieee80211_vif *vif)
 	/* configure rx filter */
 	rfilt = sc->filter_flags;
 	ath5k_hw_set_rx_filter(ah, rfilt);
-
-	if (ath5k_hw_hasbssidmask(ah))
-		ath5k_update_bssid_mask(sc, vif);
-
-	/* configure operational mode */
-	ath5k_hw_set_opmode(ah, sc->opmode);
-
-	ATH5K_DBG(sc, ATH5K_DEBUG_MODE, "mode setup opmode %d\n", sc->opmode);
 	ATH5K_DBG(sc, ATH5K_DEBUG_MODE, "RX filter 0x%x\n", rfilt);
+
+	ath5k_update_bssid_mask_and_opmode(sc, vif);
 }
 
 static inline int
@@ -2688,7 +2713,7 @@ ath5k_attach(struct pci_dev *pdev, struct ieee80211_hw *hw)
 	SET_IEEE80211_PERM_ADDR(hw, mac);
 	memcpy(&sc->lladdr, mac, ETH_ALEN);
 	/* All MAC address bits matter for ACKs */
-	ath5k_update_bssid_mask(sc, NULL);
+	ath5k_update_bssid_mask_and_opmode(sc, NULL);
 
 	regulatory->current_rd = ah->ah_capabilities.cap_eeprom.ee_regdomain;
 	ret = ath_regd_init(regulatory, hw->wiphy, ath5k_reg_notifier);
@@ -2786,7 +2811,6 @@ static int ath5k_add_interface(struct ieee80211_hw *hw,
 {
 	struct ath5k_softc *sc = hw->priv;
 	int ret;
-	struct ath5k_hw *ah = sc->ah;
 	struct ath5k_vif *avf = (void *)vif->drv_priv;
 
 	mutex_lock(&sc->lock);
@@ -2850,18 +2874,6 @@ static int ath5k_add_interface(struct ieee80211_hw *hw,
 			sc->num_adhoc_vifs++;
 	}
 
-	/* Set combined mode - when APs are configured, operate in AP mode.
-	 * Otherwise use the mode of the new interface. This can currently
-	 * only deal with combinations of APs and STAs. Only one ad-hoc
-	 * interfaces is allowed above.
-	 */
-	if (sc->num_ap_vifs)
-		sc->opmode = NL80211_IFTYPE_AP;
-	else
-		sc->opmode = vif->type;
-
-	ath5k_hw_set_opmode(ah, sc->opmode);
-
 	/* Any MAC address is fine, all others are included through the
 	 * filter.
 	 */
@@ -2905,7 +2917,7 @@ ath5k_remove_interface(struct ieee80211_hw *hw,
 	else if (avf->opmode == NL80211_IFTYPE_ADHOC)
 		sc->num_adhoc_vifs--;
 
-	ath5k_update_bssid_mask(sc, NULL);
+	ath5k_update_bssid_mask_and_opmode(sc, NULL);
 	mutex_unlock(&sc->lock);
 }
 
@@ -3194,13 +3206,31 @@ static int ath5k_get_survey(struct ieee80211_hw *hw, int idx,
 {
 	struct ath5k_softc *sc = hw->priv;
 	struct ieee80211_conf *conf = &hw->conf;
+	struct ath_common *common = ath5k_hw_common(sc->ah);
+	struct ath_cycle_counters *cc = &common->cc_survey;
+	unsigned int div = common->clockrate * 1000;
 
-	 if (idx != 0)
+	if (idx != 0)
 		return -ENOENT;
 
 	survey->channel = conf->channel;
 	survey->filled = SURVEY_INFO_NOISE_DBM;
 	survey->noise = sc->ah->ah_noise_floor;
+
+	spin_lock_bh(&common->cc_lock);
+	ath_hw_cycle_counters_update(common);
+	if (cc->cycles > 0) {
+		survey->filled |= SURVEY_INFO_CHANNEL_TIME |
+			SURVEY_INFO_CHANNEL_TIME_BUSY |
+			SURVEY_INFO_CHANNEL_TIME_RX |
+			SURVEY_INFO_CHANNEL_TIME_TX;
+		survey->channel_time += cc->cycles / div;
+		survey->channel_time_busy += cc->rx_busy / div;
+		survey->channel_time_rx += cc->rx_frame / div;
+		survey->channel_time_tx += cc->tx_frame / div;
+	}
+	memset(cc, 0, sizeof(*cc));
+	spin_unlock_bh(&common->cc_lock);
 
 	return 0;
 }
@@ -3529,8 +3559,6 @@ ath5k_pci_probe(struct pci_dev *pdev,
 	sc->hw = hw;
 	sc->pdev = pdev;
 
-	ath5k_debug_init_device(sc);
-
 	/*
 	 * Mark the device as detached to avoid processing
 	 * interrupts until setup is complete.
@@ -3570,6 +3598,7 @@ ath5k_pci_probe(struct pci_dev *pdev,
 	common->ah = sc->ah;
 	common->hw = hw;
 	common->cachelsz = csz << 2; /* convert to bytes */
+	spin_lock_init(&common->cc_lock);
 
 	/* Initialize device */
 	ret = ath5k_hw_attach(sc);
@@ -3638,6 +3667,7 @@ ath5k_pci_probe(struct pci_dev *pdev,
 		}
 	}
 
+	ath5k_debug_init_device(sc);
 
 	/* ready to process interrupts */
 	__clear_bit(ATH_STAT_INVALID, sc->status);
@@ -3724,8 +3754,6 @@ init_ath5k_pci(void)
 {
 	int ret;
 
-	ath5k_debug_init();
-
 	ret = pci_register_driver(&ath5k_pci_driver);
 	if (ret) {
 		printk(KERN_ERR "ath5k_pci: can't register pci driver\n");
@@ -3739,8 +3767,6 @@ static void __exit
 exit_ath5k_pci(void)
 {
 	pci_unregister_driver(&ath5k_pci_driver);
-
-	ath5k_debug_finish();
 }
 
 module_init(init_ath5k_pci);
