@@ -33,6 +33,7 @@
 #include <linux/uaccess.h>
 #include <linux/cper.h>
 #include <linux/nmi.h>
+#include <linux/herror.h>
 #include <linux/hardirq.h>
 #include <acpi/apei.h>
 
@@ -87,6 +88,12 @@ static struct erst_erange {
  * Address Range too.
  */
 static DEFINE_SPINLOCK(erst_lock);
+
+static void *erst_buf;
+static unsigned int erst_buf_len;
+
+/* Prevent erst_buf from being accessed simultaneously */
+static DEFINE_MUTEX(erst_buf_mutex);
 
 static inline int erst_errno(int command_status)
 {
@@ -774,6 +781,12 @@ static int __erst_write_to_nvram(const struct cper_record_header *record)
 	return -ENOSYS;
 }
 
+static int __erst_write_herr_record_to_nvram(const struct herr_record *ercd)
+{
+	/* do not print message, because printk is not safe for NMI */
+	return -ENOSYS;
+}
+
 static int __erst_read_to_erange_from_nvram(u64 record_id, u64 *offset)
 {
 	pr_unimpl_nvram();
@@ -910,6 +923,156 @@ out:
 }
 EXPORT_SYMBOL_GPL(erst_clear);
 
+#define CPER_CREATOR_ERST						\
+	UUID_LE(0xEACBBA0C, 0x803A, 0x4096, 0xB1, 0x1D, 0xC3, 0xC7,	\
+		0x6E, 0xE7, 0x94, 0xF9)
+
+#define CPER_SEC_HERR_RECORD						\
+	UUID_LE(0x633AB656, 0x6703, 0x11DF, 0x87, 0xCF, 0x00, 0x19,	\
+		0xD1, 0x2A, 0x29, 0xEF)
+
+static ssize_t erst_herr_record_to_cper(struct cper_record_header *crcd,
+					size_t buf_size,
+					const struct herr_record *ercd)
+{
+	struct cper_section_descriptor *csec;
+	unsigned int crcd_len;
+	void *csec_data;
+
+	crcd_len = sizeof(*crcd) + sizeof(*csec) + ercd->length;
+	if (crcd_len > buf_size)
+		return crcd_len;
+
+	memset(crcd, 0, crcd_len);
+	memcpy(crcd->signature, CPER_SIG_RECORD, CPER_SIG_SIZE);
+	crcd->revision = CPER_RECORD_REV;
+	crcd->signature_end = CPER_SIG_END;
+	crcd->error_severity = herr_severity_to_cper(ercd->severity);
+	/* timestamp, platform_id, partition_id is invalid */
+	crcd->validation_bits = 0;
+	crcd->creator_id = CPER_CREATOR_ERST;
+	crcd->section_count = 1;
+	crcd->record_length = crcd_len;
+	crcd->record_id = ercd->id;
+
+	csec = (struct cper_section_descriptor *)(crcd + 1);
+	csec_data = csec + 1;
+
+	csec->section_length = ercd->length;
+	csec->revision = CPER_SEC_REV;
+	csec->section_type = CPER_SEC_HERR_RECORD;
+	csec->section_severity = crcd->error_severity;
+	csec->section_offset = (void *)csec_data - (void *)crcd;
+
+	memcpy(csec_data, ercd, ercd->length);
+
+	return crcd_len;
+}
+
+static int erst_write_herr_record(const struct herr_record *ercd)
+{
+	struct cper_record_header *crcd;
+	ssize_t crcd_len;
+	unsigned long flags;
+	int rc;
+
+	if (!spin_trylock_irqsave(&erst_lock, flags))
+		return -EBUSY;
+
+	if (erst_erange.attr & ERST_RANGE_NVRAM) {
+		rc = __erst_write_herr_record_to_nvram(ercd);
+		goto out;
+	}
+
+	rc = -EINVAL;
+	crcd_len = erst_herr_record_to_cper(erst_erange.vaddr,
+					    erst_erange.size, ercd);
+	if (crcd_len > erst_erange.size)
+		goto out;
+	crcd = erst_erange.vaddr;
+	/* signature for serialization system */
+	memcpy(&crcd->persistence_information, "ER", 2);
+	rc = __erst_write_to_storage(0);
+out:
+	spin_unlock_irqrestore(&erst_lock, flags);
+
+	return rc;
+}
+
+static ssize_t erst_persist_peek_user(u64 *record_id, char __user *ubuf,
+				      size_t usize)
+{
+	int rc, pos;
+	ssize_t len, clen;
+	u64 id;
+	struct cper_record_header *crcd;
+	struct cper_section_descriptor *csec;
+	struct herr_record *ercd;
+
+	if (mutex_lock_interruptible(&erst_buf_mutex) != 0)
+		return -EINTR;
+	erst_get_record_id_begin(&pos);
+retry_next:
+	len = 0;
+	rc = erst_get_record_id_next(&pos, &id);
+	if (rc)
+		goto out;
+	/* no more record */
+	if (id == APEI_ERST_INVALID_RECORD_ID)
+		goto out;
+retry:
+	rc = clen = erst_read(id, erst_buf, erst_buf_len);
+	/* someone else has cleared the record, try next one */
+	if (rc == -ENOENT)
+		goto retry_next;
+	else if (rc < 0)
+		goto out;
+	else if (clen > erst_buf_len) {
+		void *p;
+		rc = -ENOMEM;
+		p = kmalloc(clen, GFP_KERNEL);
+		if (!p)
+			goto out;
+		kfree(erst_buf);
+		erst_buf = p;
+		erst_buf_len = clen;
+		goto retry;
+	}
+
+	crcd = erst_buf;
+	csec = (struct cper_section_descriptor *)(crcd + 1);
+	if (crcd->section_count != 1 ||
+	    uuid_le_cmp(crcd->creator_id, CPER_CREATOR_ERST) ||
+	    uuid_le_cmp(csec->section_type, CPER_SEC_HERR_RECORD))
+		goto retry_next;
+
+	ercd = (struct herr_record *)(csec + 1);
+	len = ercd->length;
+
+	rc = -EINVAL;
+	if (len > usize)
+		goto out;
+
+	ercd->flags |= HERR_RCD_PREV | HERR_RCD_PERSIST;
+
+	rc = -EFAULT;
+	if (copy_to_user(ubuf, ercd, len))
+		goto out;
+	*record_id = id;
+	rc = 0;
+out:
+	erst_get_record_id_end();
+	mutex_unlock(&erst_buf_mutex);
+	return rc ? rc : len;
+}
+
+static struct herr_persist erst_persist = {
+	.name		= "ERST",
+	.in		= erst_write_herr_record,
+	.peek_user	= erst_persist_peek_user,
+	.clear		= erst_clear,
+};
+
 static int __init setup_erst_disable(char *str)
 {
 	erst_disable = 1;
@@ -1007,11 +1170,17 @@ static int __init erst_init(void)
 	if (!erst_erange.vaddr)
 		goto err_release_erange;
 
+	rc = herr_persist_register(&erst_persist);
+	if (rc)
+		goto err_unmap_erange;
+
 	pr_info(ERST_PFX
 	"Error Record Serialization Table (ERST) support is initialized.\n");
 
 	return 0;
 
+err_unmap_erange:
+	iounmap(erst_erange.vaddr);
 err_release_erange:
 	release_mem_region(erst_erange.base, erst_erange.size);
 err_unmap_reg:

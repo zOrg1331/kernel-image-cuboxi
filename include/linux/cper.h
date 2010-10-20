@@ -309,6 +309,7 @@ struct cper_sec_mem_err {
 /* Reset to default packing */
 #pragma pack()
 
+int herr_severity_to_cper(int herr_severity);
 u64 cper_next_record_id(void);
 
 #endif

@@ -29,6 +29,25 @@
 #include <linux/time.h>
 #include <linux/cper.h>
 #include <linux/acpi.h>
+#include <linux/herror_record.h>
+
+int herr_severity_to_cper(int herr_severity)
+{
+	switch (herr_severity) {
+	case HERR_SEV_NONE:
+		return CPER_SEV_INFORMATIONAL;
+	case HERR_SEV_CORRECTED:
+		return CPER_SEV_CORRECTED;
+	case HERR_SEV_RECOVERABLE:
+		return CPER_SEV_RECOVERABLE;
+	case HERR_SEV_FATAL:
+		return CPER_SEV_FATAL;
+	default:
+		BUG();
+		return CPER_SEV_FATAL;
+	}
+}
+EXPORT_SYMBOL_GPL(herr_severity_to_cper);
 
 /*
  * CPER record ID need to be unique even after reboot, because record
