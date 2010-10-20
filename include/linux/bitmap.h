@@ -44,6 +44,8 @@
  * bitmap_weight(src, nbits)			Hamming Weight: number set bits
  * bitmap_set(dst, pos, nbits)			Set specified bit area
  * bitmap_clear(dst, pos, nbits)		Clear specified bit area
+ * bitmap_set_ll(dst, pos, nbits)		Set specified bit area, lock-less version
+ * bitmap_clear_ll(dst, pos, nbits)		Clear specified bit area, lock-less version
  * bitmap_find_next_zero_area(buf, len, pos, n, mask)	Find bit free area
  * bitmap_shift_right(dst, src, n, nbits)	*dst = *src >> n
  * bitmap_shift_left(dst, src, n, nbits)	*dst = *src << n
@@ -113,6 +115,8 @@ extern int __bitmap_weight(const unsigned long *bitmap, int bits);
 
 extern void bitmap_set(unsigned long *map, int i, int len);
 extern void bitmap_clear(unsigned long *map, int start, int nr);
+extern int bitmap_set_ll(unsigned long *map, int i, int len);
+extern int bitmap_clear_ll(unsigned long *map, int start, int nr);
 extern unsigned long bitmap_find_next_zero_area(unsigned long *map,
 					 unsigned long size,
 					 unsigned long start,
