@@ -213,4 +213,7 @@ config LRU_CACHE
 config LLIST
 	bool
 
+config LLALLOC
+	bool
+
 endmenu

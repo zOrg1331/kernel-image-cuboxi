@@ -107,6 +107,7 @@ obj-$(CONFIG_GENERIC_ATOMIC64) += atomic64.o
 obj-$(CONFIG_ATOMIC64_SELFTEST) += atomic64_test.o
 
 obj-$(CONFIG_LLIST) += llist.o
+obj-$(CONFIG_LLALLOC) += llalloc.o
 
 hostprogs-y	:= gen_crc32table
 clean-files	:= crc32table.h
