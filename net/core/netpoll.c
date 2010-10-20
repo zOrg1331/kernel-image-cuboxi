@@ -156,8 +156,15 @@ static void poll_napi(struct net_device *dev)
 {
 	struct napi_struct *napi;
 	int budget = 16;
+	struct softnet_data *sd = &__get_cpu_var(softnet_data);
+	struct list_head *nlist;
 
-	list_for_each_entry(napi, &dev->napi_list, dev_list) {
+	if (dev->flags & IFF_MASTER)
+		nlist = &sd->poll_list;
+	else
+		nlist = &dev->napi_list;
+
+	list_for_each_entry(napi, nlist, dev_list) {
 		if (napi->poll_owner != smp_processor_id() &&
 		    spin_trylock(&napi->poll_lock)) {
 			budget = poll_one_napi(dev->npinfo, napi, budget);
@@ -288,11 +295,11 @@ static int netpoll_owner_active(struct net_device *dev)
 	return 0;
 }
 
-void netpoll_send_skb(struct netpoll *np, struct sk_buff *skb)
+void netpoll_send_skb_on_dev(struct netpoll *np, struct sk_buff *skb,
+			     struct net_device *dev)
 {
 	int status = NETDEV_TX_BUSY;
 	unsigned long tries;
-	struct net_device *dev = np->dev;
 	const struct net_device_ops *ops = dev->netdev_ops;
 	/* It is up to the caller to keep npinfo alive. */
 	struct netpoll_info *npinfo = np->dev->npinfo;
@@ -346,7 +353,7 @@ void netpoll_send_skb(struct netpoll *np, struct sk_buff *skb)
 		schedule_delayed_work(&npinfo->tx_work,0);
 	}
 }
-EXPORT_SYMBOL(netpoll_send_skb);
+EXPORT_SYMBOL(netpoll_send_skb_on_dev);
 
 void netpoll_send_udp(struct netpoll *np, const char *msg, int len)
 {

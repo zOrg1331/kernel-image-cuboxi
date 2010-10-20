@@ -178,25 +178,9 @@ int cfg80211_dev_rename(struct cfg80211_registered_device *rdev,
 			char *newname)
 {
 	struct cfg80211_registered_device *rdev2;
-	int wiphy_idx, taken = -1, result, digits;
+	int result;
 
 	assert_cfg80211_lock();
-
-	/* prohibit calling the thing phy%d when %d is not its number */
-	sscanf(newname, PHY_NAME "%d%n", &wiphy_idx, &taken);
-	if (taken == strlen(newname) && wiphy_idx != rdev->wiphy_idx) {
-		/* count number of places needed to print wiphy_idx */
-		digits = 1;
-		while (wiphy_idx /= 10)
-			digits++;
-		/*
-		 * deny the name if it is phy<idx> where <idx> is printed
-		 * without leading zeroes. taken == strlen(newname) here
-		 */
-		if (taken == strlen(PHY_NAME) + digits)
-			return -EINVAL;
-	}
-
 
 	/* Ignore nop renames */
 	if (strcmp(newname, dev_name(&rdev->wiphy.dev)) == 0)
@@ -205,7 +189,7 @@ int cfg80211_dev_rename(struct cfg80211_registered_device *rdev,
 	/* Ensure another device does not already have this name. */
 	list_for_each_entry(rdev2, &cfg80211_rdev_list, list)
 		if (strcmp(newname, dev_name(&rdev2->wiphy.dev)) == 0)
-			return -EINVAL;
+			return -EEXIST;
 
 	result = device_rename(&rdev->wiphy.dev, newname);
 	if (result)
@@ -253,11 +237,16 @@ int cfg80211_switch_netns(struct cfg80211_registered_device *rdev,
 			WARN_ON(err);
 			wdev->netdev->features |= NETIF_F_NETNS_LOCAL;
 		}
+
+		return err;
 	}
 
 	wiphy_net_set(&rdev->wiphy, net);
 
-	return err;
+	err = device_rename(&rdev->wiphy.dev, dev_name(&rdev->wiphy.dev));
+	WARN_ON(err);
+
+	return 0;
 }
 
 static void cfg80211_rfkill_poll(struct rfkill *rfkill, void *data)
@@ -315,9 +304,11 @@ static void cfg80211_event_work(struct work_struct *work)
 struct wiphy *wiphy_new(const struct cfg80211_ops *ops, int sizeof_priv)
 {
 	static int wiphy_counter;
-
-	struct cfg80211_registered_device *rdev;
+	int i;
+	struct cfg80211_registered_device *rdev, *rdev2;
 	int alloc_size;
+	char nname[IFNAMSIZ + 1];
+	bool found = false;
 
 	WARN_ON(ops->add_key && (!ops->del_key || !ops->set_default_key));
 	WARN_ON(ops->auth && (!ops->assoc || !ops->deauth || !ops->disassoc));
@@ -341,16 +332,36 @@ struct wiphy *wiphy_new(const struct cfg80211_ops *ops, int sizeof_priv)
 
 	if (unlikely(!wiphy_idx_valid(rdev->wiphy_idx))) {
 		wiphy_counter--;
+		goto too_many_devs;
+	}
+
+	/* 64k wiphy devices is enough for anyone! */
+	for (i = 0; i < 0xFFFF; i++) {
+		found = false;
+		snprintf(nname, sizeof(nname)-1, PHY_NAME "%d", i);
+		nname[sizeof(nname)-1] = 0;
+		list_for_each_entry(rdev2, &cfg80211_rdev_list, list)
+			if (strcmp(nname, dev_name(&rdev2->wiphy.dev)) == 0) {
+				found = true;
+				break;
+			}
+
+		if (!found)
+			break;
+	}
+
+	if (unlikely(found)) {
+too_many_devs:
 		mutex_unlock(&cfg80211_mutex);
-		/* ugh, wrapped! */
+		/* ugh, too many devices already! */
 		kfree(rdev);
 		return NULL;
 	}
 
-	mutex_unlock(&cfg80211_mutex);
-
 	/* give it a proper name */
-	dev_set_name(&rdev->wiphy.dev, PHY_NAME "%d", rdev->wiphy_idx);
+	dev_set_name(&rdev->wiphy.dev, "%s", nname);
+
+	mutex_unlock(&cfg80211_mutex);
 
 	mutex_init(&rdev->mtx);
 	mutex_init(&rdev->devlist_mtx);
@@ -428,7 +439,7 @@ int wiphy_register(struct wiphy *wiphy)
 
 	/* sanity check ifmodes */
 	WARN_ON(!ifmodes);
-	ifmodes &= ((1 << __NL80211_IFTYPE_AFTER_LAST) - 1) & ~1;
+	ifmodes &= ((1 << NUM_NL80211_IFTYPES) - 1) & ~1;
 	if (WARN_ON(ifmodes != wiphy->interface_modes))
 		wiphy->interface_modes = ifmodes;
 
@@ -683,8 +694,8 @@ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
 		INIT_WORK(&wdev->cleanup_work, wdev_cleanup_work);
 		INIT_LIST_HEAD(&wdev->event_list);
 		spin_lock_init(&wdev->event_lock);
-		INIT_LIST_HEAD(&wdev->action_registrations);
-		spin_lock_init(&wdev->action_registrations_lock);
+		INIT_LIST_HEAD(&wdev->mgmt_registrations);
+		spin_lock_init(&wdev->mgmt_registrations_lock);
 
 		mutex_lock(&rdev->devlist_mtx);
 		list_add_rcu(&wdev->list, &rdev->netdev_list);
@@ -724,6 +735,7 @@ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
 			dev->ethtool_ops = &cfg80211_ethtool_ops;
 
 		if ((wdev->iftype == NL80211_IFTYPE_STATION ||
+		     wdev->iftype == NL80211_IFTYPE_P2P_CLIENT ||
 		     wdev->iftype == NL80211_IFTYPE_ADHOC) && !wdev->use_4addr)
 			dev->priv_flags |= IFF_DONT_BRIDGE;
 		break;
@@ -732,6 +744,7 @@ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
 		case NL80211_IFTYPE_ADHOC:
 			cfg80211_leave_ibss(rdev, dev, true);
 			break;
+		case NL80211_IFTYPE_P2P_CLIENT:
 		case NL80211_IFTYPE_STATION:
 			wdev_lock(wdev);
 #ifdef CONFIG_CFG80211_WEXT
@@ -804,7 +817,7 @@ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
 			sysfs_remove_link(&dev->dev.kobj, "phy80211");
 			list_del_rcu(&wdev->list);
 			rdev->devlist_generation++;
-			cfg80211_mlme_purge_actions(wdev);
+			cfg80211_mlme_purge_registrations(wdev);
 #ifdef CONFIG_CFG80211_WEXT
 			kfree(wdev->wext.keys);
 #endif
@@ -910,52 +923,3 @@ static void __exit cfg80211_exit(void)
 	destroy_workqueue(cfg80211_wq);
 }
 module_exit(cfg80211_exit);
-
-static int ___wiphy_printk(const char *level, const struct wiphy *wiphy,
-			   struct va_format *vaf)
-{
-	if (!wiphy)
-		return printk("%s(NULL wiphy *): %pV", level, vaf);
-
-	return printk("%s%s: %pV", level, wiphy_name(wiphy), vaf);
-}
-
-int __wiphy_printk(const char *level, const struct wiphy *wiphy,
-		   const char *fmt, ...)
-{
-	struct va_format vaf;
-	va_list args;
-	int r;
-
-	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	r = ___wiphy_printk(level, wiphy, &vaf);
-	va_end(args);
-
-	return r;
-}
-EXPORT_SYMBOL(__wiphy_printk);
-
-#define define_wiphy_printk_level(func, kern_level)		\
-int func(const struct wiphy *wiphy, const char *fmt, ...)	\
-{								\
-	struct va_format vaf;					\
-	va_list args;						\
-	int r;							\
-								\
-	va_start(args, fmt);					\
-								\
-	vaf.fmt = fmt;						\
-	vaf.va = &args;						\
-								\
-	r = ___wiphy_printk(kern_level, wiphy, &vaf);		\
-	va_end(args);						\
-								\
-	return r;						\
-}								\
-EXPORT_SYMBOL(func);
-
-define_wiphy_printk_level(wiphy_debug, KERN_DEBUG);
