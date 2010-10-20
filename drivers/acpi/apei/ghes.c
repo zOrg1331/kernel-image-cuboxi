@@ -43,6 +43,7 @@
 #include <linux/kdebug.h>
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
+#include <linux/herror.h>
 #include <acpi/apei.h>
 #include <acpi/atomicio.h>
 #include <acpi/hed.h>
@@ -74,6 +75,7 @@ struct ghes {
 	struct list_head list;
 	u64 buffer_paddr;
 	unsigned long flags;
+	struct herr_dev *herr_dev;
 };
 
 /*
@@ -238,9 +240,38 @@ static void ghes_clear_estatus(struct ghes *ghes)
 	ghes->flags &= ~GHES_TO_CLEAR;
 }
 
+static void ghes_report(struct ghes *ghes)
+{
+	struct herr_record *ercd;
+	struct herr_section *esec;
+	struct acpi_hest_generic_status *estatus;
+	unsigned int estatus_len, ercd_alloc_flags = 0;
+	int ghes_sev;
+
+	ghes_sev = ghes_severity(ghes->estatus->error_severity);
+	if (ghes_sev >= GHES_SEV_PANIC)
+		ercd_alloc_flags |= HERR_ALLOC_NO_BURST_CONTROL;
+	estatus_len = apei_estatus_len(ghes->estatus);
+	ercd = herr_record_alloc(HERR_RECORD_LEN_ROUND1(estatus_len),
+				 ghes->herr_dev, ercd_alloc_flags);
+	if (!ercd)
+		return;
+
+	ercd->severity = cper_severity_to_herr(ghes->estatus->error_severity);
+
+	esec = herr_first_sec(ercd);
+	esec->length = HERR_SEC_LEN_ROUND(estatus_len);
+	esec->flags = 0;
+	esec->type = HERR_TYPE_GESR;
+
+	estatus = herr_sec_data(esec);
+	memcpy(estatus, ghes->estatus, estatus_len);
+	herr_record_report(ercd, ghes->herr_dev);
+}
+
 static void ghes_do_proc(struct ghes *ghes)
 {
-	int sev, processed = 0;
+	int sev;
 	struct acpi_hest_generic_data *gdata;
 
 	sev = ghes_severity(ghes->estatus->error_severity);
@@ -251,15 +282,9 @@ static void ghes_do_proc(struct ghes *ghes)
 			apei_mce_report_mem_error(
 				sev == GHES_SEV_CORRECTED,
 				(struct cper_sec_mem_err *)(gdata+1));
-			processed = 1;
 		}
 #endif
 	}
-
-	if (!processed && printk_ratelimit())
-		pr_warning(GHES_PFX
-		"Unknown error record from generic hardware error source: %d\n",
-			   ghes->generic->header.source_id);
 }
 
 static int ghes_proc(struct ghes *ghes)
@@ -269,7 +294,9 @@ static int ghes_proc(struct ghes *ghes)
 	rc = ghes_read_estatus(ghes, 0);
 	if (rc)
 		goto out;
+	ghes_report(ghes);
 	ghes_do_proc(ghes);
+	herr_notify();
 
 out:
 	ghes_clear_estatus(ghes);
@@ -300,41 +327,15 @@ static int __devinit ghes_probe(struct platform_device *ghes_dev)
 {
 	struct acpi_hest_generic *generic;
 	struct ghes *ghes = NULL;
-	int rc = -EINVAL;
+	int rc;
 
+	rc = -ENODEV;
 	generic = *(struct acpi_hest_generic **)ghes_dev->dev.platform_data;
 	if (!generic->enabled)
-		return -ENODEV;
+		goto err;
 
-	if (generic->error_block_length <
-	    sizeof(struct acpi_hest_generic_status)) {
-		pr_warning(FW_BUG GHES_PFX
-"Invalid error block length: %u for generic hardware error source: %d\n",
-			   generic->error_block_length,
-			   generic->header.source_id);
-		goto err;
-	}
-	if (generic->records_to_preallocate == 0) {
-		pr_warning(FW_BUG GHES_PFX
-"Invalid records to preallocate: %u for generic hardware error source: %d\n",
-			   generic->records_to_preallocate,
-			   generic->header.source_id);
-		goto err;
-	}
-	ghes = ghes_new(generic);
-	if (IS_ERR(ghes)) {
-		rc = PTR_ERR(ghes);
-		ghes = NULL;
-		goto err;
-	}
-	if (generic->notify.type == ACPI_HEST_NOTIFY_SCI) {
-		mutex_lock(&ghes_list_mutex);
-		if (list_empty(&ghes_sci))
-			register_acpi_hed_notifier(&ghes_notifier_sci);
-		list_add_rcu(&ghes->list, &ghes_sci);
-		mutex_unlock(&ghes_list_mutex);
-	} else {
-		unsigned char *notify = NULL;
+	if (generic->notify.type != ACPI_HEST_NOTIFY_SCI) {
+		char *notify = NULL;
 
 		switch (generic->notify.type) {
 		case ACPI_HEST_NOTIFY_POLLED:
@@ -357,8 +358,45 @@ static int __devinit ghes_probe(struct platform_device *ghes_dev)
 "Unknown notification type: %u for generic hardware error source: %d\n",
 			generic->notify.type, generic->header.source_id);
 		}
-		rc = -ENODEV;
 		goto err;
+	}
+
+	rc = -EIO;
+	if (generic->error_block_length <
+	    sizeof(struct acpi_hest_generic_status)) {
+		pr_warning(FW_BUG GHES_PFX
+"Invalid error block length: %u for generic hardware error source: %d\n",
+			   generic->error_block_length,
+			   generic->header.source_id);
+		goto err;
+	}
+	ghes = ghes_new(generic);
+	if (IS_ERR(ghes)) {
+		rc = PTR_ERR(ghes);
+		ghes = NULL;
+		goto err;
+	}
+	rc = -ENOMEM;
+	ghes->herr_dev = herr_dev_alloc();
+	if (!ghes->herr_dev)
+		goto err;
+	ghes->herr_dev->name = dev_name(&ghes_dev->dev);
+	ghes->herr_dev->dev.parent = &ghes_dev->dev;
+	rc = herr_dev_register(ghes->herr_dev);
+	if (rc) {
+		herr_dev_free(ghes->herr_dev);
+		goto err;
+	}
+	switch (generic->notify.type) {
+	case ACPI_HEST_NOTIFY_SCI:
+		mutex_lock(&ghes_list_mutex);
+		if (list_empty(&ghes_sci))
+			register_acpi_hed_notifier(&ghes_notifier_sci);
+		list_add_rcu(&ghes->list, &ghes_sci);
+		mutex_unlock(&ghes_list_mutex);
+		break;
+	default:
+		BUG();
 	}
 	platform_set_drvdata(ghes_dev, ghes);
 
@@ -386,13 +424,14 @@ static int __devexit ghes_remove(struct platform_device *ghes_dev)
 		if (list_empty(&ghes_sci))
 			unregister_acpi_hed_notifier(&ghes_notifier_sci);
 		mutex_unlock(&ghes_list_mutex);
+		synchronize_rcu();
 		break;
 	default:
 		BUG();
 		break;
 	}
 
-	synchronize_rcu();
+	herr_dev_unregister(ghes->herr_dev);
 	ghes_fini(ghes);
 	kfree(ghes);
 

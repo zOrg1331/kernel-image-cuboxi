@@ -49,6 +49,24 @@ int herr_severity_to_cper(int herr_severity)
 }
 EXPORT_SYMBOL_GPL(herr_severity_to_cper);
 
+int cper_severity_to_herr(int cper_severity)
+{
+	switch (cper_severity) {
+	case CPER_SEV_INFORMATIONAL:
+		return HERR_SEV_NONE;
+	case CPER_SEV_CORRECTED:
+		return HERR_SEV_CORRECTED;
+	case CPER_SEV_RECOVERABLE:
+		return HERR_SEV_RECOVERABLE;
+	case CPER_SEV_FATAL:
+		return HERR_SEV_FATAL;
+	default:
+		/* Unknown, default to fatal */
+		return HERR_SEV_FATAL;
+	}
+}
+EXPORT_SYMBOL_GPL(cper_severity_to_herr);
+
 /*
  * CPER record ID need to be unique even after reboot, because record
  * ID is used as index for ERST storage, while CPER records from
