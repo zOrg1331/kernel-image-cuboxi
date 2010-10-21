@@ -1,5 +1,5 @@
-%define original_kernel_version	2.6.34
-%define kernel_version		2.6.34
+%define original_kernel_version	2.6.36
+%define kernel_version		2.6.36
 %define patch_level		%nil
 
 %define testing			0
@@ -51,6 +51,9 @@ tar --owner=root --group=root --mode=u+w,go-w,go+rX -cjf \
 %kernel_src/kernel-source-%kernel_version.tar.bz2
 
 %changelog
+* Thu Oct 21 2010 Valery Inozemtsev <shrek@altlinux.ru> 1.0.0-alt1
+- 2.6.36
+
 * Mon May 17 2010 Valery Inozemtsev <shrek@altlinux.ru> 1.0.0-alt1
 - 2.6.34
 
