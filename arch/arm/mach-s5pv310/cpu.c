@@ -19,6 +19,7 @@
 #include <plat/cpu.h>
 #include <plat/clock.h>
 #include <plat/s5pv310.h>
+#include <plat/sdhci.h>
 
 #include <mach/regs-irq.h>
 
@@ -56,9 +57,19 @@ static struct map_desc s5pv310_iodesc[] __initdata = {
 		.length		= SZ_4K,
 		.type		= MT_DEVICE,
 	}, {
-		.virtual	= (unsigned long)S5P_VA_GPIO,
+		.virtual	= (unsigned long)S5P_VA_GPIO1,
 		.pfn		= __phys_to_pfn(S5PV310_PA_GPIO1),
 		.length		= SZ_4K,
+		.type		= MT_DEVICE,
+	}, {
+		.virtual	= (unsigned long)S5P_VA_GPIO2,
+		.pfn		= __phys_to_pfn(S5PV310_PA_GPIO2),
+		.length		= SZ_4K,
+		.type		= MT_DEVICE,
+	}, {
+		.virtual	= (unsigned long)S5P_VA_GPIO3,
+		.pfn		= __phys_to_pfn(S5PV310_PA_GPIO3),
+		.length		= SZ_256,
 		.type		= MT_DEVICE,
 	}, {
 		.virtual	= (unsigned long)S3C_VA_UART,
@@ -83,6 +94,12 @@ static void s5pv310_idle(void)
 void __init s5pv310_map_io(void)
 {
 	iotable_init(s5pv310_iodesc, ARRAY_SIZE(s5pv310_iodesc));
+
+	/* initialize device information early */
+	s5pv310_default_sdhci0();
+	s5pv310_default_sdhci1();
+	s5pv310_default_sdhci2();
+	s5pv310_default_sdhci3();
 }
 
 void __init s5pv310_init_clocks(int xtal)
