@@ -588,3 +588,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-modules-staging-%flavour
 %modules_dir/kernel/drivers/staging/
 %endif # staging
+
+%changelog
+* Tue Oct 19 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt1
+- Build for Sysiphus
