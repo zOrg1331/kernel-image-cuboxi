@@ -95,7 +95,6 @@ struct hv_device_info {
  * @RecvPacketRaw:     Receive Raw packet
  * @EstablishGpadl:    Set up GPADL for ringbuffer
  * @TeardownGpadl:     Teardown GPADL for ringbuffer
- * @GetInfo:   Get info about the channel
  *
  * This structure contains function pointer to control vmbus channel
  * behavior. None of these functions is externally callable, but they
@@ -126,8 +125,10 @@ struct vmbus_channel_interface {
 	int (*EstablishGpadl)(struct hv_device *dev, void *buf, u32 buflen,
 			      u32 *GpadlHandle);
 	int (*TeardownGpadl)(struct hv_device *device, u32 GpadlHandle);
-	void (*GetInfo)(struct hv_device *dev, struct hv_device_info *devinfo);
 };
+
+extern const struct vmbus_channel_interface vmbus_ops;
+
 
 /* Base driver object */
 struct hv_driver {
@@ -182,10 +183,6 @@ struct vmbus_driver {
 	void (*OnMsgDpc)(struct hv_driver *driver);
 	void (*OnEventDpc)(struct hv_driver *driver);
 	void (*GetChannelOffers)(void);
-
-	void (*GetChannelInterface)(struct vmbus_channel_interface *i);
-	void (*GetChannelInfo)(struct hv_device *dev,
-			       struct hv_device_info *devinfo);
 };
 
 int VmbusInitialize(struct hv_driver *drv);
