@@ -161,6 +161,9 @@ static struct file_operations fops = {
 	.write		= lirc_dev_fop_write,
 	.poll		= lirc_dev_fop_poll,
 	.unlocked_ioctl	= lirc_dev_fop_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl	= lirc_dev_fop_ioctl,
+#endif
 	.open		= lirc_dev_fop_open,
 	.release	= lirc_dev_fop_close,
 };
@@ -359,19 +362,23 @@ int lirc_unregister_driver(int minor)
 	struct irctl *ir;
 
 	if (minor < 0 || minor >= MAX_IRCTL_DEVICES) {
-		printk(KERN_ERR "lirc_dev: lirc_unregister_driver: "
-		       "\"minor (%d)\" must be between 0 and %d!\n",
-		       minor, MAX_IRCTL_DEVICES-1);
+		printk(KERN_ERR "lirc_dev: %s: minor (%d) must be between "
+		       "0 and %d!\n", __func__, minor, MAX_IRCTL_DEVICES-1);
 		return -EBADRQC;
 	}
 
 	ir = irctls[minor];
+	if (!ir) {
+		printk(KERN_ERR "lirc_dev: %s: failed to get irctl struct "
+		       "for minor %d!\n", __func__, minor);
+		return -ENOENT;
+	}
 
 	mutex_lock(&lirc_dev_lock);
 
 	if (ir->d.minor != minor) {
-		printk(KERN_ERR "lirc_dev: lirc_unregister_driver: "
-		       "minor (%d) device not registered!", minor);
+		printk(KERN_ERR "lirc_dev: %s: minor (%d) device not "
+		       "registered!\n", __func__, minor);
 		mutex_unlock(&lirc_dev_lock);
 		return -ENOENT;
 	}
@@ -519,9 +526,14 @@ EXPORT_SYMBOL(lirc_dev_fop_poll);
 
 long lirc_dev_fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	unsigned long mode;
+	__u32 mode;
 	int result = 0;
 	struct irctl *ir = file->private_data;
+
+	if (!ir) {
+		printk(KERN_ERR "lirc_dev: %s: no irctl found!\n", __func__);
+		return -ENODEV;
+	}
 
 	dev_dbg(ir->d.dev, LOGHEAD "ioctl called (0x%x)\n",
 		ir->d.name, ir->d.minor, cmd);
@@ -536,7 +548,7 @@ long lirc_dev_fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 	case LIRC_GET_FEATURES:
-		result = put_user(ir->d.features, (unsigned long *)arg);
+		result = put_user(ir->d.features, (__u32 *)arg);
 		break;
 	case LIRC_GET_REC_MODE:
 		if (!(ir->d.features & LIRC_CAN_REC_MASK)) {
@@ -546,7 +558,7 @@ long lirc_dev_fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 		result = put_user(LIRC_REC2MODE
 				  (ir->d.features & LIRC_CAN_REC_MASK),
-				  (unsigned long *)arg);
+				  (__u32 *)arg);
 		break;
 	case LIRC_SET_REC_MODE:
 		if (!(ir->d.features & LIRC_CAN_REC_MASK)) {
@@ -554,7 +566,7 @@ long lirc_dev_fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			break;
 		}
 
-		result = get_user(mode, (unsigned long *)arg);
+		result = get_user(mode, (__u32 *)arg);
 		if (!result && !(LIRC_MODE2REC(mode) & ir->d.features))
 			result = -EINVAL;
 		/*
@@ -563,7 +575,7 @@ long lirc_dev_fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		 */
 		break;
 	case LIRC_GET_LENGTH:
-		result = put_user(ir->d.code_length, (unsigned long *)arg);
+		result = put_user(ir->d.code_length, (__u32 *)arg);
 		break;
 	case LIRC_GET_MIN_TIMEOUT:
 		if (!(ir->d.features & LIRC_CAN_SET_REC_TIMEOUT) ||
@@ -572,7 +584,7 @@ long lirc_dev_fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			break;
 		}
 
-		result = put_user(ir->d.min_timeout, (unsigned long *)arg);
+		result = put_user(ir->d.min_timeout, (__u32 *)arg);
 		break;
 	case LIRC_GET_MAX_TIMEOUT:
 		if (!(ir->d.features & LIRC_CAN_SET_REC_TIMEOUT) ||
@@ -581,7 +593,7 @@ long lirc_dev_fop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			break;
 		}
 
-		result = put_user(ir->d.max_timeout, (unsigned long *)arg);
+		result = put_user(ir->d.max_timeout, (__u32 *)arg);
 		break;
 	default:
 		result = -EINVAL;
