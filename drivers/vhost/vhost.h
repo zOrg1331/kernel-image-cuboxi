@@ -104,7 +104,7 @@ struct vhost_virtqueue {
 	 * vhost_work execution acts instead of rcu_read_lock() and the end of
 	 * vhost_work execution acts instead of rcu_read_lock().
 	 * Writers use virtqueue mutex. */
-	void *private_data;
+	void __rcu *private_data;
 	/* Log write descriptors */
 	void __user *log_base;
 	struct vhost_log *log;
@@ -114,7 +114,7 @@ struct vhost_dev {
 	/* Readers use RCU to access memory table pointer
 	 * log base pointer and features.
 	 * Writers use mutex below.*/
-	struct vhost_memory *memory;
+	struct vhost_memory __rcu *memory;
 	struct mm_struct *mm;
 	struct mutex mutex;
 	unsigned acked_features;
@@ -171,7 +171,11 @@ enum {
 
 static inline int vhost_has_feature(struct vhost_dev *dev, int bit)
 {
-	unsigned acked_features = rcu_dereference(dev->acked_features);
+	unsigned acked_features;
+
+	acked_features =
+		rcu_dereference_index_check(dev->acked_features,
+					    lockdep_is_held(&dev->mutex));
 	return acked_features & (1 << bit);
 }
 
