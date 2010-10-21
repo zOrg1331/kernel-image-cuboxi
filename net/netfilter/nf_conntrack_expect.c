@@ -305,7 +305,7 @@ void nf_ct_expect_put(struct nf_conntrack_expect *exp)
 }
 EXPORT_SYMBOL_GPL(nf_ct_expect_put);
 
-static void nf_ct_expect_insert(struct nf_conntrack_expect *exp)
+void nf_ct_expect_insert(struct nf_conntrack_expect *exp)
 {
 	struct nf_conn_help *master_help = nfct_help(exp->master);
 	struct net *net = nf_ct_exp_net(exp);
@@ -329,6 +329,7 @@ static void nf_ct_expect_insert(struct nf_conntrack_expect *exp)
 	atomic_inc(&exp->use);
 	NF_CT_STAT_INC(net, expect_create);
 }
+EXPORT_SYMBOL_GPL(nf_ct_expect_insert);
 
 /* Race with expectations being used means we could have none to find; OK. */
 static void evict_oldest_expect(struct nf_conn *master,

@@ -53,6 +53,10 @@
 #include <linux/nfs_xdr.h>
 #include <linux/magic.h>
 #include <linux/parser.h>
+#include <linux/ve_proto.h>
+#include <linux/vzcalluser.h>
+#include <linux/ve_nfs.h>
+#include <linux/writeback.h>
 
 #include <asm/system.h>
 #include <asm/uaccess.h>
@@ -175,14 +179,16 @@ static const match_table_t nfs_mount_option_tokens = {
 };
 
 enum {
-	Opt_xprt_udp, Opt_xprt_tcp, Opt_xprt_rdma,
+	Opt_xprt_udp, Opt_xprt_udp6, Opt_xprt_tcp, Opt_xprt_tcp6, Opt_xprt_rdma,
 
 	Opt_xprt_err
 };
 
 static const match_table_t nfs_xprt_protocol_tokens = {
 	{ Opt_xprt_udp, "udp" },
+	{ Opt_xprt_udp6, "udp6" },
 	{ Opt_xprt_tcp, "tcp" },
+	{ Opt_xprt_tcp6, "tcp6" },
 	{ Opt_xprt_rdma, "rdma" },
 
 	{ Opt_xprt_err, NULL }
@@ -249,7 +255,8 @@ static struct file_system_type nfs_fs_type = {
 	.name		= "nfs",
 	.get_sb		= nfs_get_sb,
 	.kill_sb	= nfs_kill_super,
-	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|
+			  FS_BINARY_MOUNTDATA|FS_VIRTUALIZED,
 };
 
 struct file_system_type nfs_xdev_fs_type = {
@@ -257,7 +264,8 @@ struct file_system_type nfs_xdev_fs_type = {
 	.name		= "nfs",
 	.get_sb		= nfs_xdev_get_sb,
 	.kill_sb	= nfs_kill_super,
-	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|FS_BINARY_MOUNTDATA,
+	.fs_flags	= FS_RENAME_DOES_D_MOVE|FS_REVAL_DOT|
+			  FS_BINARY_MOUNTDATA|FS_VIRTUALIZED,
 };
 
 static const struct super_operations nfs_sops = {
@@ -347,6 +355,119 @@ static struct shrinker acl_shrinker = {
 	.seeks		= DEFAULT_SEEKS,
 };
 
+#ifdef CONFIG_VE
+static int ve_nfs_start(void *data)
+{
+	return 0;
+}
+
+inline int is_nfs_automount(struct vfsmount *mnt)
+{
+	struct vfsmount *submnt;
+
+	spin_lock(&vfsmount_lock);
+	list_for_each_entry(submnt, &nfs_automount_list, mnt_expire) {
+		if (mnt == submnt) {
+			spin_unlock(&vfsmount_lock);
+			return 1;
+		}
+	}
+	spin_unlock(&vfsmount_lock);
+
+	return 0;
+}
+EXPORT_SYMBOL(is_nfs_automount);
+
+int ve_nfs_sync(struct ve_struct *env)
+{
+	struct super_block *sb;
+	int ret = 0;
+
+	spin_lock(&sb_lock);
+rescan:
+	list_for_each_entry(sb, &nfs_fs_type.fs_supers, s_instances) {
+		sb->s_count++;
+		spin_unlock(&sb_lock);
+
+		down_read(&sb->s_umount);
+		if (sb->s_root) {
+			struct rpc_clnt *clnt = NFS_SB(sb)->client;
+			struct ve_struct *owner_env = clnt->cl_xprt->owner_env;
+			if (ve_accessible_strict(owner_env, env)  &&
+				!clnt->cl_broken)
+				ret = sync_filesystem(sb);
+				if (ret < 0) {
+					up_read(&sb->s_umount);
+					put_super(sb);
+					return ret;
+				}
+		}
+		up_read(&sb->s_umount);
+
+		spin_lock(&sb_lock);
+
+		/* This logic is taken from sync_inodes()  */
+		if (__put_super_and_need_restart(sb))
+			goto rescan;
+	}
+
+	spin_unlock(&sb_lock);
+	return ret;
+}
+EXPORT_SYMBOL(ve_nfs_sync);
+
+static void ve_nfs_stop(void *data)
+{
+	struct ve_struct *ve;
+	struct super_block *sb;
+
+	flush_scheduled_work();
+
+	ve = (struct ve_struct *)data;
+	/* Basically, on a valid stop we can be here iff NFS was mounted
+	   read-only. In such a case client force-stop is not a problem.
+	   If we are here and NFS is read-write, we are in a FORCE stop, so
+	   force the client to stop.
+	   Lock daemon is already dead.
+	   Only superblock client remains. Den */
+restart:
+	spin_lock(&sb_lock);
+	list_for_each_entry(sb, &nfs_fs_type.fs_supers, s_instances) {
+		struct rpc_clnt *clnt;
+		struct rpc_xprt *xprt;
+
+		clnt = NFS_SB(sb)->client;
+		if (!ve_accessible_strict(clnt->cl_xprt->owner_env, ve) ||
+			clnt->cl_broken)
+			continue;
+
+		xprt = clnt->cl_xprt;
+		clnt->cl_broken = 1;
+		rpc_killall_tasks(clnt);
+		xprt_get(xprt);
+		spin_unlock(&sb_lock);
+
+		xprt_disconnect_done(xprt);
+		xprt->ops->close(xprt);
+		xprt_put(xprt);
+
+		goto restart;
+	}
+	spin_unlock(&sb_lock);
+
+	umount_ve_fs_type(&nfs_fs_type, ve->veid);
+
+	flush_scheduled_work();
+}
+
+static struct ve_hook nfs_hook = {
+	.init	  = ve_nfs_start,
+	.fini	  = ve_nfs_stop,
+	.owner	  = THIS_MODULE,
+	.priority = HOOK_PRIO_NET_POST,
+};
+#endif
+
 /*
  * Register the NFS filesystems
  */
@@ -367,6 +488,7 @@ int __init register_nfs_fs(void)
 		goto error_2;
 #endif
 	register_shrinker(&acl_shrinker);
+	ve_hook_register(VE_INIT_EXIT_CHAIN, &nfs_hook);
 	return 0;
 
 #ifdef CONFIG_NFS_V4
@@ -385,6 +507,7 @@ error_0:
 void __exit unregister_nfs_fs(void)
 {
 	unregister_shrinker(&acl_shrinker);
+	ve_hook_unregister(&nfs_hook);
 #ifdef CONFIG_NFS_V4
 	unregister_filesystem(&nfs4_fs_type);
 #endif
@@ -492,6 +615,45 @@ static const char *nfs_pseudoflavour_to_name(rpc_authflavor_t flavour)
 	return sec_flavours[i].str;
 }
 
+static void nfs_show_mountd_netid(struct seq_file *m, struct nfs_server *nfss,
+				  int showdefaults)
+{
+	struct sockaddr *sap = (struct sockaddr *) &nfss->mountd_address;
+
+	seq_printf(m, ",mountproto=");
+	switch (sap->sa_family) {
+	case AF_INET:
+		switch (nfss->mountd_protocol) {
+		case IPPROTO_UDP:
+			seq_printf(m, RPCBIND_NETID_UDP);
+			break;
+		case IPPROTO_TCP:
+			seq_printf(m, RPCBIND_NETID_TCP);
+			break;
+		default:
+			if (showdefaults)
+				seq_printf(m, "auto");
+		}
+		break;
+	case AF_INET6:
+		switch (nfss->mountd_protocol) {
+		case IPPROTO_UDP:
+			seq_printf(m, RPCBIND_NETID_UDP6);
+			break;
+		case IPPROTO_TCP:
+			seq_printf(m, RPCBIND_NETID_TCP6);
+			break;
+		default:
+			if (showdefaults)
+				seq_printf(m, "auto");
+		}
+		break;
+	default:
+		if (showdefaults)
+			seq_printf(m, "auto");
+	}
+}
+
 static void nfs_show_mountd_options(struct seq_file *m, struct nfs_server *nfss,
 				    int showdefaults)
 {
@@ -518,17 +680,7 @@ static void nfs_show_mountd_options(struct seq_file *m, struct nfs_server *nfss,
 	if (nfss->mountd_port || showdefaults)
 		seq_printf(m, ",mountport=%u", nfss->mountd_port);
 
-	switch (nfss->mountd_protocol) {
-	case IPPROTO_UDP:
-		seq_printf(m, ",mountproto=udp");
-		break;
-	case IPPROTO_TCP:
-		seq_printf(m, ",mountproto=tcp");
-		break;
-	default:
-		if (showdefaults)
-			seq_printf(m, ",mountproto=auto");
-	}
+	nfs_show_mountd_netid(m, nfss, showdefaults);
 }
 
 /*
@@ -578,7 +730,7 @@ static void nfs_show_mount_options(struct seq_file *m, struct nfs_server *nfss,
 			seq_puts(m, nfs_infop->nostr);
 	}
 	seq_printf(m, ",proto=%s",
-		   rpc_peeraddr2str(nfss->client, RPC_DISPLAY_PROTO));
+		   rpc_peeraddr2str(nfss->client, RPC_DISPLAY_NETID));
 	if (version == 4) {
 		if (nfss->port != NFS_PORT)
 			seq_printf(m, ",port=%u", nfss->port);
@@ -887,6 +1039,8 @@ static int nfs_parse_mount_options(char *raw,
 {
 	char *p, *string, *secdata;
 	int rc, sloppy = 0, invalid_option = 0;
+	unsigned short protofamily = AF_UNSPEC;
+	unsigned short mountfamily = AF_UNSPEC;
 
 	if (!raw) {
 		dfprintk(MOUNT, "NFS: mount options string was NULL.\n");
@@ -1232,12 +1386,17 @@ static int nfs_parse_mount_options(char *raw,
 			token = match_token(string,
 					    nfs_xprt_protocol_tokens, args);
 
+			protofamily = AF_INET;
 			switch (token) {
+			case Opt_xprt_udp6:
+				protofamily = AF_INET6;
 			case Opt_xprt_udp:
 				mnt->flags &= ~NFS_MOUNT_TCP;
 				mnt->nfs_server.protocol = XPRT_TRANSPORT_UDP;
 				kfree(string);
 				break;
+			case Opt_xprt_tcp6:
+				protofamily = AF_INET6;
 			case Opt_xprt_tcp:
 				mnt->flags |= NFS_MOUNT_TCP;
 				mnt->nfs_server.protocol = XPRT_TRANSPORT_TCP;
@@ -1265,10 +1424,15 @@ static int nfs_parse_mount_options(char *raw,
 					    nfs_xprt_protocol_tokens, args);
 			kfree(string);
 
+			mountfamily = AF_INET;
 			switch (token) {
+			case Opt_xprt_udp6:
+				mountfamily = AF_INET6;
 			case Opt_xprt_udp:
 				mnt->mount_server.protocol = XPRT_TRANSPORT_UDP;
 				break;
+			case Opt_xprt_tcp6:
+				mountfamily = AF_INET6;
 			case Opt_xprt_tcp:
 				mnt->mount_server.protocol = XPRT_TRANSPORT_TCP;
 				break;
@@ -1367,8 +1531,33 @@ static int nfs_parse_mount_options(char *raw,
 	if (!sloppy && invalid_option)
 		return 0;
 
+	/*
+	 * verify that any proto=/mountproto= options match the address
+	 * familiies in the addr=/mountaddr= options.
+	 */
+	if (protofamily != AF_UNSPEC &&
+	    protofamily != mnt->nfs_server.address.ss_family)
+		goto out_proto_mismatch;
+
+	if (mountfamily != AF_UNSPEC) {
+		if (mnt->mount_server.addrlen) {
+			if (mountfamily != mnt->mount_server.address.ss_family)
+				goto out_mountproto_mismatch;
+		} else {
+			if (mountfamily != mnt->nfs_server.address.ss_family)
+				goto out_mountproto_mismatch;
+		}
+	}
+
 	return 1;
 
+out_mountproto_mismatch:
+	printk(KERN_INFO "NFS: mount server address does not match mountproto= "
+			 "option\n");
+	return 0;
+out_proto_mismatch:
+	printk(KERN_INFO "NFS: server address does not match proto= option\n");
+	return 0;
 out_invalid_address:
 	printk(KERN_INFO "NFS: bad IP address specified: %s\n", p);
 	return 0;
@@ -1793,6 +1982,11 @@ static int nfs_validate_mount_data(void *options,
 		goto out_v3_not_compiled;
 #endif /* !CONFIG_NFS_V3 */
 
+	if (!(args->flags & NFS_MOUNT_VER3)) {
+		printk("NFSv2 is broken and not supported\n");
+		return -EPROTONOSUPPORT;
+	}
+
 	return 0;
 
 out_no_data:
@@ -2078,6 +2272,10 @@ static int nfs_compare_super(struct super_block *sb, void *data)
 	struct nfs_server *server = sb_mntdata->server, *old = NFS_SB(sb);
 	int mntflags = sb_mntdata->mntflags;
 
+	if (!ve_accessible_strict(old->client->cl_xprt->owner_env,
+				  get_exec_env()))
+		return 0;
+
 	if (!nfs_compare_super_address(old, server))
 		return 0;
 	/* Note: NFS_MOUNT_UNSHARED == NFS4_MOUNT_UNSHARED */
@@ -2106,6 +2304,11 @@ static int nfs_get_sb(struct file_system_type *fs_type,
 		.mntflags = flags,
 	};
 	int error = -ENOMEM;
+	struct ve_struct *ve;
+
+	ve = get_exec_env();
+	if (!(ve->features & VE_FEATURE_NFS))
+		return -ENODEV;
 
 	data = nfs_alloc_parsed_mount_data(3);
 	mntfh = kzalloc(sizeof(*mntfh), GFP_KERNEL);
@@ -2226,6 +2429,11 @@ static int nfs_xdev_get_sb(struct file_system_type *fs_type, int flags,
 		.mntflags = flags,
 	};
 	int error;
+	struct ve_struct *ve;
+
+	ve = get_exec_env();
+	if (!(ve->features & VE_FEATURE_NFS))
+		return -ENODEV;
 
 	dprintk("--> nfs_xdev_get_sb()\n");
 

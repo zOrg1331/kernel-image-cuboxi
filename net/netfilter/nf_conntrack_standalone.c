@@ -29,6 +29,10 @@
 
 MODULE_LICENSE("GPL");
 
+int ip_conntrack_disable_ve0 = 0;
+module_param(ip_conntrack_disable_ve0, int, 0440);
+EXPORT_SYMBOL(ip_conntrack_disable_ve0);
+
 #ifdef CONFIG_PROC_FS
 int
 print_tuple(struct seq_file *s, const struct nf_conntrack_tuple *tuple,

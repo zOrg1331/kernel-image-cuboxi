@@ -1211,7 +1211,7 @@ unsigned long do_mmap_pgoff(struct file *file,
 	region->vm_flags = vm_flags;
 	region->vm_pgoff = pgoff;
 
-	INIT_LIST_HEAD(&vma->anon_vma_node);
+	INIT_LIST_HEAD(&vma->anon_vma_chain);
 	vma->vm_flags = vm_flags;
 	vma->vm_pgoff = pgoff;
 
@@ -1462,6 +1462,7 @@ int split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 	add_vma_to_mm(mm, new);
 	return 0;
 }
+EXPORT_SYMBOL(split_vma);
 
 /*
  * shrink a VMA by removing the specified chunk from either the beginning or

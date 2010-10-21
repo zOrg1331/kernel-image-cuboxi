@@ -219,7 +219,7 @@ struct perf_event_attr {
 #define PERF_EVENT_IOC_DISABLE		_IO ('$', 1)
 #define PERF_EVENT_IOC_REFRESH		_IO ('$', 2)
 #define PERF_EVENT_IOC_RESET		_IO ('$', 3)
-#define PERF_EVENT_IOC_PERIOD		_IOW('$', 4, u64)
+#define PERF_EVENT_IOC_PERIOD		_IOW('$', 4, __u64)
 #define PERF_EVENT_IOC_SET_OUTPUT	_IO ('$', 5)
 
 enum perf_event_ioc_flags {
@@ -543,6 +543,12 @@ struct perf_pending_entry {
 	void (*func)(struct perf_pending_entry *);
 };
 
+struct perf_sample_data;
+
+typedef void (*perf_overflow_handler_t)(struct perf_event *, int,
+					struct perf_sample_data *,
+					struct pt_regs *regs);
+
 /**
  * struct perf_event - performance event kernel representation:
  */
@@ -633,6 +639,8 @@ struct perf_event {
 
 	struct pid_namespace		*ns;
 	u64				id;
+
+	perf_overflow_handler_t         overflow_handler;
 #endif
 };
 
@@ -738,6 +746,14 @@ extern int hw_perf_group_sched_in(struct perf_event *group_leader,
 	       struct perf_cpu_context *cpuctx,
 	       struct perf_event_context *ctx, int cpu);
 extern void perf_event_update_userpage(struct perf_event *event);
+extern int perf_event_release_kernel(struct perf_event *event);
+extern struct perf_event *
+perf_event_create_kernel_counter(struct perf_event_attr *attr,
+				int cpu,
+				pid_t pid,
+				perf_overflow_handler_t callback);
+extern u64 perf_event_read_value(struct perf_event *event,
+				u64 *enabled, u64 *running);
 
 struct perf_sample_data {
 	u64				type;

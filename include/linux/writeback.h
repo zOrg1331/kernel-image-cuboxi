@@ -31,6 +31,8 @@ struct writeback_control {
 					   queue */
 	struct super_block *sb;		/* if !NULL, only write inodes from
 					   this super_block */
+	struct user_beancounter *ub;	/* if !NULL, only write indes dirtied by
+					   this user_beancounter */
 	enum writeback_sync_modes sync_mode;
 	unsigned long *older_than_this;	/* If !NULL, only write back inodes
 					   older than this */
@@ -69,10 +71,13 @@ struct writeback_control {
 struct bdi_writeback;
 int inode_wait(void *);
 void writeback_inodes_sb(struct super_block *);
+void writeback_inodes_sb_ub(struct super_block *, struct user_beancounter *ub);
+int writeback_inodes_sb_if_idle(struct super_block *);
 void sync_inodes_sb(struct super_block *);
+void sync_inodes_sb_ub(struct super_block *, struct user_beancounter *ub);
 void writeback_inodes_wbc(struct writeback_control *wbc);
 long wb_do_writeback(struct bdi_writeback *wb, int force_wait);
-void wakeup_flusher_threads(long nr_pages);
+void wakeup_flusher_threads(struct user_beancounter *, long nr_pages);
 
 /* writeback.h requires fs.h; it, too, is not included from here. */
 static inline void wait_on_inode(struct inode *inode)

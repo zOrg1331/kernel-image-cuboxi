@@ -161,6 +161,9 @@ static inline int hlt_works(int cpu)
 
 #define cache_line_size()	(boot_cpu_data.x86_cache_alignment)
 
+#define __HAVE_ARCH_ALIGN_STACK
+extern unsigned long arch_align_stack(unsigned long sp);
+
 extern void cpu_detect(struct cpuinfo_x86 *c);
 
 extern struct pt_regs *idle_regs(struct pt_regs *);
@@ -180,7 +183,7 @@ static inline void native_cpuid(unsigned int *eax, unsigned int *ebx,
 				unsigned int *ecx, unsigned int *edx)
 {
 	/* ecx is often an input as well as an output. */
-	asm("cpuid"
+	asm volatile("cpuid"
 	    : "=a" (*eax),
 	      "=b" (*ebx),
 	      "=c" (*ecx),
@@ -974,8 +977,7 @@ extern unsigned long thread_saved_pc(struct task_struct *tsk);
 /* This decides where the kernel will search for a free chunk of vm
  * space during mmap's.
  */
-#define IA32_PAGE_OFFSET	((current->personality & ADDR_LIMIT_3GB) ? \
-					0xc0000000 : 0xFFFFe000)
+#define IA32_PAGE_OFFSET 0xc0000000
 
 #define TASK_SIZE		(test_thread_flag(TIF_IA32) ? \
 					IA32_PAGE_OFFSET : TASK_SIZE_MAX)

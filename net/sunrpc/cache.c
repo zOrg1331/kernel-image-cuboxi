@@ -34,6 +34,8 @@
 #include <linux/sunrpc/stats.h>
 #include <linux/sunrpc/rpc_pipe_fs.h>
 
+#include <linux/ve_nfs.h>
+
 #define	 RPCDBG_FACILITY RPCDBG_CACHE
 
 static int cache_defer_req(struct cache_req *req, struct cache_head *item);
@@ -304,6 +306,34 @@ static int current_index;
 
 static void do_cache_clean(struct work_struct *work);
 static DECLARE_DELAYED_WORK(cache_cleaner, do_cache_clean);
+
+struct cache_detail *cache_alloc(struct cache_detail *orig, int hsize)
+{
+	struct cache_detail *n;
+	struct cache_head **table;
+
+	n = kmemdup(orig, sizeof(struct cache_detail), GFP_KERNEL);
+	if (n == NULL)
+		return NULL;
+
+	table = kzalloc(hsize * sizeof(struct cache_head *), GFP_KERNEL);
+	if (table == NULL) {
+		kfree(n);
+		return NULL;
+	}
+
+	n->hash_table = table;
+	return n;
+}
+EXPORT_SYMBOL(cache_alloc);
+
+void cache_free(struct cache_detail *cd)
+{
+	cache_unregister(cd);
+	kfree(cd->hash_table);
+	kfree(cd);
+}
+EXPORT_SYMBOL(cache_free);
 
 static void sunrpc_init_cache_detail(struct cache_detail *cd)
 {
@@ -1234,8 +1264,10 @@ static int content_open(struct inode *inode, struct file *file,
 	if (!cd || !try_module_get(cd->owner))
 		return -EACCES;
 	han = __seq_open_private(file, &cache_content_op, sizeof(*han));
-	if (han == NULL)
+	if (han == NULL) {
+		module_put(cd->owner);
 		return -ENOMEM;
+	}
 
 	han->cd = cd;
 	return 0;

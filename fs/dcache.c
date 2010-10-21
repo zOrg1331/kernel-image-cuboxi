@@ -33,6 +33,8 @@
 #include <linux/bootmem.h>
 #include <linux/fs_struct.h>
 #include <linux/hardirq.h>
+#include <bc/beancounter.h>
+#include <bc/dcache.h>
 #include "internal.h"
 
 int sysctl_vfs_cache_pressure __read_mostly = 100;
@@ -43,9 +45,7 @@ __cacheline_aligned_in_smp DEFINE_SEQLOCK(rename_lock);
 
 EXPORT_SYMBOL(dcache_lock);
 
-static struct kmem_cache *dentry_cache __read_mostly;
-
-#define DNAME_INLINE_LEN (sizeof(struct dentry)-offsetof(struct dentry,d_iname))
+struct kmem_cache *dentry_cache __read_mostly;
 
 /*
  * This is the single most critical data structure when it comes
@@ -87,6 +87,10 @@ static void d_callback(struct rcu_head *head)
  */
 static void d_free(struct dentry *dentry)
 {
+	ub_dcache_uncharge(dentry->d_ub, dentry->d_name.len);
+	if (dentry->d_flags & DCACHE_BCTOP)
+		put_beancounter(dentry->d_ub);
+
 	if (dentry->d_op && dentry->d_op->d_release)
 		dentry->d_op->d_release(dentry);
 	/* if dentry was never inserted into hash, immediate free is OK */
@@ -129,6 +133,8 @@ static void dentry_lru_add(struct dentry *dentry)
 {
 	list_add(&dentry->d_lru, &dentry->d_sb->s_dentry_lru);
 	dentry->d_sb->s_nr_dentry_unused++;
+	list_add(&dentry->d_bclru, &dentry->d_ub->ub_dentry_lru);
+	dentry->d_ub->ub_dentry_unused++;
 	dentry_stat.nr_unused++;
 }
 
@@ -136,6 +142,8 @@ static void dentry_lru_add_tail(struct dentry *dentry)
 {
 	list_add_tail(&dentry->d_lru, &dentry->d_sb->s_dentry_lru);
 	dentry->d_sb->s_nr_dentry_unused++;
+	list_add_tail(&dentry->d_bclru, &dentry->d_ub->ub_dentry_lru);
+	dentry->d_ub->ub_dentry_unused++;
 	dentry_stat.nr_unused++;
 }
 
@@ -144,6 +152,8 @@ static void dentry_lru_del(struct dentry *dentry)
 	if (!list_empty(&dentry->d_lru)) {
 		list_del(&dentry->d_lru);
 		dentry->d_sb->s_nr_dentry_unused--;
+		list_del(&dentry->d_bclru);
+		dentry->d_ub->ub_dentry_unused--;
 		dentry_stat.nr_unused--;
 	}
 }
@@ -153,6 +163,8 @@ static void dentry_lru_del_init(struct dentry *dentry)
 	if (likely(!list_empty(&dentry->d_lru))) {
 		list_del_init(&dentry->d_lru);
 		dentry->d_sb->s_nr_dentry_unused--;
+		list_del(&dentry->d_bclru);
+		dentry->d_ub->ub_dentry_unused--;
 		dentry_stat.nr_unused--;
 	}
 }
@@ -441,6 +453,65 @@ static void prune_one_dentry(struct dentry * dentry)
 		dentry = d_kill(dentry);
 		spin_lock(&dcache_lock);
 	}
+}
+
+int shrink_dcache_ub(struct user_beancounter *ub, long count_orig)
+{
+	LIST_HEAD(referenced);
+	LIST_HEAD(tmp);
+	struct dentry *dentry;
+	int did_progress = 0, count;
+
+	spin_lock(&dcache_lock);
+again:
+	count = count_orig;
+	while (!list_empty(&ub->ub_dentry_lru)) {
+		dentry = list_entry(ub->ub_dentry_lru.prev,
+				struct dentry, d_bclru);
+
+		spin_lock(&dentry->d_lock);
+		if (dentry->d_flags & DCACHE_REFERENCED) {
+			dentry->d_flags &= ~DCACHE_REFERENCED;
+			list_move(&dentry->d_bclru, &referenced);
+			spin_unlock(&dentry->d_lock);
+		} else {
+			list_move_tail(&dentry->d_bclru, &tmp);
+			spin_unlock(&dentry->d_lock);
+			count--;
+			if (!count)
+				break;
+		}
+		cond_resched_lock(&dcache_lock);
+	}
+
+	while (!list_empty(&tmp)) {
+		dentry = list_entry(tmp.prev, struct dentry, d_bclru);
+		dentry_lru_del_init(dentry);
+		spin_lock(&dentry->d_lock);
+		/*
+		 * We found an inuse dentry which was not removed from
+		 * the LRU because of laziness during lookup.  Do not free
+		 * it - just keep it off the LRU list.
+		 */
+		if (atomic_read(&dentry->d_count)) {
+			spin_unlock(&dentry->d_lock);
+			continue;
+		}
+
+		did_progress = 1;
+		prune_one_dentry(dentry);
+		/* dentry->d_lock was dropped in prune_one_dentry() */
+		cond_resched_lock(&dcache_lock);
+	}
+
+	if (!list_empty(&referenced)) {
+		list_splice_init(&referenced, &ub->ub_dentry_lru);
+		if (!did_progress)
+			goto again;
+	}
+	spin_unlock(&dcache_lock);
+
+	return did_progress;
 }
 
 /*
@@ -891,12 +962,18 @@ void shrink_dcache_parent(struct dentry * parent)
  */
 static int shrink_dcache_memory(int nr, gfp_t gfp_mask)
 {
+	int res = -1;
+
+	KSTAT_PERF_ENTER(shrink_dcache)
 	if (nr) {
 		if (!(gfp_mask & __GFP_FS))
-			return -1;
+			goto out;
 		prune_dcache(nr);
 	}
-	return (dentry_stat.nr_unused / 100) * sysctl_vfs_cache_pressure;
+	res = (dentry_stat.nr_unused / 100) * sysctl_vfs_cache_pressure;
+out:
+	KSTAT_PERF_LEAVE(shrink_dcache)
+	return res;
 }
 
 static struct shrinker dcache_shrinker = {
@@ -917,15 +994,27 @@ static struct shrinker dcache_shrinker = {
 struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 {
 	struct dentry *dentry;
+	struct user_beancounter *ub = NULL;
 	char *dname;
 
-	dentry = kmem_cache_alloc(dentry_cache, GFP_KERNEL);
-	if (!dentry)
+	if (parent)
+		ub = parent->d_ub;
+	else
+		ub = top_beancounter(get_exec_ub());
+
+	if (ub_dcache_charge(ub, name->len))
 		return NULL;
+
+	dentry = kmem_cache_alloc(dentry_cache, GFP_KERNEL);
+	if (!dentry) {
+		ub_dcache_uncharge(ub, name->len);
+		return NULL;
+	}
 
 	if (name->len > DNAME_INLINE_LEN-1) {
 		dname = kmalloc(name->len + 1, GFP_KERNEL);
 		if (!dname) {
+			ub_dcache_uncharge(ub, name->len);
 			kmem_cache_free(dentry_cache, dentry); 
 			return NULL;
 		}
@@ -948,8 +1037,10 @@ struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 	dentry->d_op = NULL;
 	dentry->d_fsdata = NULL;
 	dentry->d_mounted = 0;
+	dentry->d_ub = ub;
 	INIT_HLIST_NODE(&dentry->d_hash);
 	INIT_LIST_HEAD(&dentry->d_lru);
+	INIT_LIST_HEAD(&dentry->d_bclru);
 	INIT_LIST_HEAD(&dentry->d_subdirs);
 	INIT_LIST_HEAD(&dentry->d_alias);
 
@@ -957,6 +1048,8 @@ struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 		dentry->d_parent = dget(parent);
 		dentry->d_sb = parent->d_sb;
 	} else {
+		get_beancounter(ub);
+		dentry->d_flags |= DCACHE_BCTOP;
 		INIT_LIST_HEAD(&dentry->d_u.d_child);
 	}
 
@@ -1884,6 +1977,16 @@ static int prepend_name(char **buffer, int *buflen, struct qstr *name)
 }
 
 /**
+ * d_root_check - checks if dentry is accessible from current's fs root
+ * @dentry: dentry to be verified
+ * @vfsmnt: vfsmnt to which the dentry belongs
+ */
+int d_root_check(struct path *path)
+{
+	return PTR_ERR(d_path(path, NULL, 0));
+}
+
+/**
  * __d_path - return the path of a dentry
  * @path: the dentry/vfsmount to report
  * @root: root vfsmnt/dentry (may be modified by this function)
@@ -1908,18 +2011,21 @@ char *__d_path(const struct path *path, struct path *root,
 	struct vfsmount *vfsmnt = path->mnt;
 	char *end = buffer + buflen;
 	char *retval;
+	int deleted;
+	struct vfsmount *oldmnt = vfsmnt;
 
 	spin_lock(&vfsmount_lock);
-	prepend(&end, &buflen, "\0", 1);
-	if (d_unlinked(dentry) &&
-		(prepend(&end, &buflen, " (deleted)", 10) != 0))
+	if (buffer) {
+		prepend(&end, &buflen, "\0", 1);
+		if (buflen < 1)
 			goto Elong;
+	}
+	deleted = (!IS_ROOT(dentry) && d_unhashed(dentry));
 
-	if (buflen < 1)
-		goto Elong;
 	/* Get '/' right */
 	retval = end-1;
-	*retval = '/';
+	if (buffer)
+		*retval = '/';
 
 	for (;;) {
 		struct dentry * parent;
@@ -1937,20 +2043,43 @@ char *__d_path(const struct path *path, struct path *root,
 		}
 		parent = dentry->d_parent;
 		prefetch(parent);
-		if ((prepend_name(&end, &buflen, &dentry->d_name) != 0) ||
-		    (prepend(&end, &buflen, "/", 1) != 0))
+		if (buffer && ((prepend_name(&end, &buflen, &dentry->d_name) != 0) ||
+		    (prepend(&end, &buflen, "/", 1) != 0)))
 			goto Elong;
 		retval = end;
 		dentry = parent;
 	}
 
 out:
+	if (deleted && buffer &&
+			prepend(&end, &buflen, " (deleted)", 10) != 0)
+		goto Elong;
+out_err:
 	spin_unlock(&vfsmount_lock);
-	return retval;
+	return buffer ? retval : NULL;
 
 global_root:
+	/*
+	 * We traversed the tree upward and reached a root, but the given
+	 * lookup terminal point wasn't encountered.  It means either that the
+	 * dentry is out of our scope or belongs to an abstract space like
+	 * sock_mnt or pipe_mnt.  Check for it.
+	 *
+	 * There are different options to check it.
+	 * We may assume that any dentry tree is unreachable unless it's
+	 * connected to `root' (defined as fs root of init aka child reaper)
+	 * and expose all paths that are not connected to it.
+	 * The other option is to allow exposing of known abstract spaces
+	 * explicitly and hide the path information for other cases.
+	 * This approach is more safe, let's take it.  2001/04/22  SAW
+	 */
+	if (!(oldmnt->mnt_sb->s_flags & MS_NOUSER)) {
+		retval = ERR_PTR(-EINVAL);
+		goto out_err;
+	}
+
 	retval += 1;	/* hit the slash */
-	if (prepend_name(&retval, &buflen, &dentry->d_name) != 0)
+	if (buffer && prepend_name(&retval, &buflen, &dentry->d_name) != 0)
 		goto Elong;
 	root->mnt = vfsmnt;
 	root->dentry = dentry;
@@ -1958,8 +2087,9 @@ global_root:
 
 Elong:
 	retval = ERR_PTR(-ENAMETOOLONG);
-	goto out;
+	goto out_err;
 }
+EXPORT_SYMBOL(__d_path);
 
 /**
  * d_path - return the path of a dentry
@@ -1989,8 +2119,11 @@ char *d_path(const struct path *path, char *buf, int buflen)
 	 * thus don't need to be hashed.  They also don't need a name until a
 	 * user wants to identify the object in /proc/pid/fd/.  The little hack
 	 * below allows us to generate a name for these objects on demand:
+	 *
+	 * pipefs and socketfs methods assume valid buffer, d_root_check()
+	 * supplies NULL one for access checks.
 	 */
-	if (path->dentry->d_op && path->dentry->d_op->d_dname)
+	if (buf && path->dentry->d_op && path->dentry->d_op->d_dname)
 		return path->dentry->d_op->d_dname(path->dentry, buf, buflen);
 
 	read_lock(&current->fs->lock);

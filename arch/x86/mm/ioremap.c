@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/mmiotrace.h>
+#include <linux/mm.h>
 
 #include <asm/cacheflush.h>
 #include <asm/e820.h>
@@ -60,6 +61,7 @@ int page_is_ram(unsigned long pagenr)
 	}
 	return 0;
 }
+EXPORT_SYMBOL_GPL(page_is_ram);
 
 /*
  * Fix up the linear direct mapping of the kernel to avoid cache attribute

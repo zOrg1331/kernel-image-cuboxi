@@ -34,6 +34,7 @@
 #include <linux/syscalls.h>
 #include <linux/buffer_head.h>
 #include <linux/pagevec.h>
+#include <trace/events/kmem.h>
 
 /*
  * After a CPU has dirtied this many pages, balance_dirty_pages_ratelimited
@@ -490,6 +491,7 @@ static void balance_dirty_pages(struct address_space *mapping,
 	unsigned long bdi_thresh;
 	unsigned long pages_written = 0;
 	unsigned long pause = 1;
+	struct user_beancounter *ub = get_io_ub();
 
 	struct backing_dev_info *bdi = mapping->backing_dev_info;
 
@@ -501,6 +503,18 @@ static void balance_dirty_pages(struct address_space *mapping,
 			.nr_to_write	= write_chunk,
 			.range_cyclic	= 1,
 		};
+
+		if (ub_dirty_limits(&dirty_thresh, ub)) {
+			bdi_nr_reclaimable = bdi_nr_writeback = 0;
+			bdi_thresh = background_thresh = ULONG_MAX;
+			nr_reclaimable = ub_dirty_pages(ub);
+			if (nr_reclaimable > dirty_thresh) {
+				wbc.ub = ub;
+				writeback_inodes_wbc(&wbc);
+				pages_written += write_chunk - wbc.nr_to_write;
+				goto done;
+			}
+		}
 
 		get_dirty_limits(&background_thresh, &dirty_thresh,
 				&bdi_thresh, bdi);
@@ -563,6 +577,8 @@ static void balance_dirty_pages(struct address_space *mapping,
 
 		if (bdi_nr_reclaimable + bdi_nr_writeback <= bdi_thresh)
 			break;
+
+done:
 		if (pages_written >= write_chunk)
 			break;		/* We've done our duty */
 
@@ -578,6 +594,7 @@ static void balance_dirty_pages(struct address_space *mapping,
 			pause = HZ / 10;
 	}
 
+	if(pages_written) trace_mm_balancedirty_writeout(pages_written);
 	if (bdi_nr_reclaimable + bdi_nr_writeback < bdi_thresh &&
 			bdi->dirty_exceeded)
 		bdi->dirty_exceeded = 0;
@@ -597,7 +614,7 @@ static void balance_dirty_pages(struct address_space *mapping,
 	    (!laptop_mode && ((global_page_state(NR_FILE_DIRTY)
 			       + global_page_state(NR_UNSTABLE_NFS))
 					  > background_thresh)))
-		bdi_start_writeback(bdi, NULL, 0);
+		bdi_start_writeback(bdi, NULL, NULL, 0);
 }
 
 void set_page_dirty_balance(struct page *page, int page_mkwrite)
@@ -699,7 +716,7 @@ int dirty_writeback_centisecs_handler(ctl_table *table, int write,
 
 static void do_laptop_sync(struct work_struct *work)
 {
-	wakeup_flusher_threads(0);
+	wakeup_flusher_threads(NULL, 0);
 	kfree(work);
 }
 
@@ -1093,7 +1110,7 @@ void account_page_dirtied(struct page *page, struct address_space *mapping)
 		__inc_zone_page_state(page, NR_FILE_DIRTY);
 		__inc_bdi_stat(mapping->backing_dev_info, BDI_RECLAIMABLE);
 		task_dirty_inc(current);
-		task_io_account_write(PAGE_CACHE_SIZE);
+		task_io_account_dirty(PAGE_CACHE_SIZE);
 	}
 }
 
@@ -1129,6 +1146,11 @@ int __set_page_dirty_nobuffers(struct page *page)
 			account_page_dirtied(page, mapping);
 			radix_tree_tag_set(&mapping->page_tree,
 				page_index(page), PAGECACHE_TAG_DIRTY);
+			if (mapping_cap_account_dirty(mapping) &&
+					!radix_tree_prev_tag_get(
+						&mapping->page_tree,
+						PAGECACHE_TAG_DIRTY))
+				ub_io_account_dirty(mapping, 1);
 		}
 		spin_unlock_irq(&mapping->tree_lock);
 		if (mapping->host) {
@@ -1183,6 +1205,18 @@ int set_page_dirty(struct page *page)
 	return 0;
 }
 EXPORT_SYMBOL(set_page_dirty);
+
+int set_page_dirty_mm(struct page *page, struct mm_struct *mm)
+{
+	struct user_beancounter *old_ub;
+	int ret;
+
+	old_ub = set_exec_ub(mm_ub(mm));
+	ret = set_page_dirty(page);
+	(void)set_exec_ub(old_ub);
+	return ret;
+}
+EXPORT_SYMBOL(set_page_dirty_mm);
 
 /*
  * set_page_dirty() is racy if the caller has no reference against
@@ -1323,10 +1357,16 @@ int test_set_page_writeback(struct page *page)
 			if (bdi_cap_account_writeback(bdi))
 				__inc_bdi_stat(bdi, BDI_WRITEBACK);
 		}
-		if (!PageDirty(page))
+		if (!PageDirty(page)) {
 			radix_tree_tag_clear(&mapping->page_tree,
 						page_index(page),
 						PAGECACHE_TAG_DIRTY);
+			if (mapping_cap_account_dirty(mapping) &&
+					radix_tree_prev_tag_get(
+						&mapping->page_tree,
+						PAGECACHE_TAG_DIRTY))
+				ub_io_account_clean(mapping, 1, 0);
+		}
 		spin_unlock_irqrestore(&mapping->tree_lock, flags);
 	} else {
 		ret = TestSetPageWriteback(page);

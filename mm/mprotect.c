@@ -26,8 +26,15 @@
 #include <linux/perf_event.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
+#include <asm/pgalloc.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
+
+#include <bc/vmpages.h>
+
+#ifndef arch_remove_exec_range
+#define arch_remove_exec_range(mm, limit)      do { ; } while (0)
+#endif
 
 #ifndef pgprot_modify
 static inline pgprot_t pgprot_modify(pgprot_t oldprot, pgprot_t newprot)
@@ -89,6 +96,7 @@ static inline void change_pmd_range(struct mm_struct *mm, pud_t *pud,
 	pmd = pmd_offset(pud, addr);
 	do {
 		next = pmd_addr_end(addr, end);
+		split_huge_page_mm(mm, addr, pmd);
 		if (pmd_none_or_clear_bad(pmd))
 			continue;
 		change_pte_range(mm, pmd, addr, next, newprot, dirty_accountable);
@@ -139,15 +147,23 @@ mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
 	struct mm_struct *mm = vma->vm_mm;
 	unsigned long oldflags = vma->vm_flags;
 	long nrpages = (end - start) >> PAGE_SHIFT;
-	unsigned long charged = 0;
+	unsigned long charged = 0, old_end = vma->vm_end;
 	pgoff_t pgoff;
 	int error;
+	unsigned long ch_size;
+	int ch_dir;
 	int dirty_accountable = 0;
 
 	if (newflags == oldflags) {
 		*pprev = vma;
 		return 0;
 	}
+
+	error = -ENOMEM;
+	ch_size = nrpages - pages_in_vma_range(vma, start, end);
+	ch_dir = ub_protected_charge(mm, ch_size, newflags, vma);
+	if (ch_dir == PRIVVM_ERROR)
+		goto fail_ch;
 
 	/*
 	 * If we make a private mapping writable we increase our commit;
@@ -160,7 +176,7 @@ mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
 						VM_SHARED|VM_NORESERVE))) {
 			charged = nrpages;
 			if (security_vm_enough_memory(charged))
-				return -ENOMEM;
+				goto fail_sec;
 			newflags |= VM_ACCOUNT;
 		}
 	}
@@ -201,8 +217,13 @@ success:
 
 	if (vma_wants_writenotify(vma)) {
 		vma->vm_page_prot = vm_get_page_prot(newflags & ~VM_SHARED);
-		dirty_accountable = 1;
+		if (!vma->vm_file ||
+		    !test_bit(AS_CHECKPOINT, &vma->vm_file->f_mapping->flags))
+			dirty_accountable = 1;
 	}
+
+	if (oldflags & VM_EXEC)
+		arch_remove_exec_range(current->mm, old_end);
 
 	mmu_notifier_invalidate_range_start(mm, start, end);
 	if (is_vm_hugetlb_page(vma))
@@ -212,10 +233,16 @@ success:
 	mmu_notifier_invalidate_range_end(mm, start, end);
 	vm_stat_account(mm, oldflags, vma->vm_file, -nrpages);
 	vm_stat_account(mm, newflags, vma->vm_file, nrpages);
+	if (ch_dir == PRIVVM_TO_SHARED)
+		__ub_unused_privvm_dec(mm, ch_size);
 	return 0;
 
 fail:
 	vm_unacct_memory(charged);
+fail_sec:
+	if (ch_dir == PRIVVM_TO_PRIVATE)
+		__ub_unused_privvm_dec(mm, ch_size);
+fail_ch:
 	return error;
 }
 
@@ -318,3 +345,4 @@ out:
 	up_write(&current->mm->mmap_sem);
 	return error;
 }
+EXPORT_SYMBOL(sys_mprotect);

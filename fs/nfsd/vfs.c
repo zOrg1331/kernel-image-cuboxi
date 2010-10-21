@@ -1,7 +1,5 @@
 #define MSNFS	/* HACK HACK */
 /*
- * linux/fs/nfsd/vfs.c
- *
  * File operations used by nfsd. Some of these have been ripped from
  * other parts of the kernel because they weren't exported, others
  * are partial duplicates with added or changed functionality.
@@ -16,48 +14,32 @@
  * Zerocpy NFS support (C) 2002 Hirokazu Takahashi <taka@valinux.co.jp>
  */
 
-#include <linux/string.h>
-#include <linux/time.h>
-#include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/file.h>
-#include <linux/mount.h>
-#include <linux/major.h>
 #include <linux/splice.h>
-#include <linux/proc_fs.h>
-#include <linux/stat.h>
 #include <linux/fcntl.h>
-#include <linux/net.h>
-#include <linux/unistd.h>
-#include <linux/slab.h>
-#include <linux/pagemap.h>
-#include <linux/in.h>
-#include <linux/module.h>
 #include <linux/namei.h>
-#include <linux/vfs.h>
 #include <linux/delay.h>
-#include <linux/sunrpc/svc.h>
-#include <linux/nfsd/nfsd.h>
-#ifdef CONFIG_NFSD_V3
-#include <linux/nfs3.h>
-#include <linux/nfsd/xdr3.h>
-#endif /* CONFIG_NFSD_V3 */
-#include <linux/nfsd/nfsfh.h>
 #include <linux/quotaops.h>
 #include <linux/fsnotify.h>
-#include <linux/posix_acl.h>
 #include <linux/posix_acl_xattr.h>
 #include <linux/xattr.h>
-#ifdef CONFIG_NFSD_V4
-#include <linux/nfs4.h>
-#include <linux/nfs4_acl.h>
-#include <linux/nfsd_idmap.h>
-#include <linux/security.h>
-#endif /* CONFIG_NFSD_V4 */
 #include <linux/jhash.h>
 #include <linux/ima.h>
-
+#include <linux/vzquota.h>
 #include <asm/uaccess.h>
+
+#ifdef CONFIG_NFSD_V3
+#include "xdr3.h"
+#endif /* CONFIG_NFSD_V3 */
+
+#ifdef CONFIG_NFSD_V4
+#include <linux/nfs4_acl.h>
+#include <linux/nfsd_idmap.h>
+#endif /* CONFIG_NFSD_V4 */
+
+#include "nfsd.h"
+#include "vfs.h"
 
 #define NFSDDBG_FACILITY		NFSDDBG_FILEOP
 
@@ -87,13 +69,12 @@ struct raparm_hbucket {
 #define RAPARM_HASH_BITS	4
 #define RAPARM_HASH_SIZE	(1<<RAPARM_HASH_BITS)
 #define RAPARM_HASH_MASK	(RAPARM_HASH_SIZE-1)
-static struct raparm_hbucket	raparm_hash[RAPARM_HASH_SIZE];
 
-static inline int
-nfsd_v4client(struct svc_rqst *rq)
-{
-    return rq->rq_prog == NFS_PROGRAM && rq->rq_vers == 4;
-}
+#ifndef CONFIG_VE
+#define raparm_hash	((struct raparm_hbucket *)&get_exec_env()->nfsd_data->raparm_mem)
+#else
+static struct raparm_hbucket	raparm_hash[RAPARM_HASH_SIZE];
+#endif
 
 /* 
  * Called from nfsd_lookup and encode_dirent. Check if we have crossed 
@@ -116,8 +97,16 @@ nfsd_cross_mnt(struct svc_rqst *rqstp, struct dentry **dpp,
 
 	exp2 = rqst_exp_get_by_name(rqstp, &path);
 	if (IS_ERR(exp2)) {
-		if (PTR_ERR(exp2) != -ENOENT)
-			err = PTR_ERR(exp2);
+		err = PTR_ERR(exp2);
+		/*
+		 * We normally allow NFS clients to continue
+		 * "underneath" a mountpoint that is not exported.
+		 * The exception is V4ROOT, where no traversal is ever
+		 * allowed without an explicit export of the new
+		 * directory.
+		 */
+		if (err == -ENOENT && !(exp->ex_flags & NFSEXP_V4ROOT))
+			err = 0;
 		path_put(&path);
 		goto out;
 	}
@@ -139,6 +128,53 @@ nfsd_cross_mnt(struct svc_rqst *rqstp, struct dentry **dpp,
 	exp_put(exp2);
 out:
 	return err;
+}
+
+static void follow_to_parent(struct path *path)
+{
+	struct dentry *dp;
+
+	while (path->dentry == path->mnt->mnt_root && follow_up(path))
+		;
+	dp = dget_parent(path->dentry);
+	dput(path->dentry);
+	path->dentry = dp;
+}
+
+static int nfsd_lookup_parent(struct svc_rqst *rqstp, struct dentry *dparent, struct svc_export **exp, struct dentry **dentryp)
+{
+	struct svc_export *exp2;
+	struct path path = {.mnt = mntget((*exp)->ex_path.mnt),
+			    .dentry = dget(dparent)};
+
+	follow_to_parent(&path);
+
+	exp2 = rqst_exp_parent(rqstp, &path);
+	if (PTR_ERR(exp2) == -ENOENT) {
+		*dentryp = dget(dparent);
+	} else if (IS_ERR(exp2)) {
+		path_put(&path);
+		return PTR_ERR(exp2);
+	} else {
+		*dentryp = dget(path.dentry);
+		exp_put(*exp);
+		*exp = exp2;
+	}
+	path_put(&path);
+	return 0;
+}
+
+/*
+ * For nfsd purposes, we treat V4ROOT exports as though there was an
+ * export at *every* directory.
+ */
+int nfsd_mountpoint(struct dentry *dentry, struct svc_export *exp)
+{
+	if (d_mountpoint(dentry))
+		return 1;
+	if (!(exp->ex_flags & NFSEXP_V4ROOT))
+		return 0;
+	return dentry->d_inode != NULL;
 }
 
 __be32
@@ -169,35 +205,13 @@ nfsd_lookup_dentry(struct svc_rqst *rqstp, struct svc_fh *fhp,
 			dentry = dget(dparent);
 		else if (dparent != exp->ex_path.dentry)
 			dentry = dget_parent(dparent);
-		else if (!EX_NOHIDE(exp))
+		else if (!EX_NOHIDE(exp) && !nfsd_v4client(rqstp))
 			dentry = dget(dparent); /* .. == . just like at / */
 		else {
 			/* checking mountpoint crossing is very different when stepping up */
-			struct svc_export *exp2 = NULL;
-			struct dentry *dp;
-			struct path path = {.mnt = mntget(exp->ex_path.mnt),
-					    .dentry = dget(dparent)};
-
-			while (path.dentry == path.mnt->mnt_root &&
-			       follow_up(&path))
-				;
-			dp = dget_parent(path.dentry);
-			dput(path.dentry);
-			path.dentry = dp;
-
-			exp2 = rqst_exp_parent(rqstp, &path);
-			if (PTR_ERR(exp2) == -ENOENT) {
-				dentry = dget(dparent);
-			} else if (IS_ERR(exp2)) {
-				host_err = PTR_ERR(exp2);
-				path_put(&path);
+			host_err = nfsd_lookup_parent(rqstp, dparent, &exp, &dentry);
+			if (host_err)
 				goto out_nfserr;
-			} else {
-				dentry = dget(path.dentry);
-				exp_put(exp);
-				exp = exp2;
-			}
-			path_put(&path);
 		}
 	} else {
 		fh_lock(fhp);
@@ -208,7 +222,7 @@ nfsd_lookup_dentry(struct svc_rqst *rqstp, struct svc_fh *fhp,
 		/*
 		 * check if we have crossed a mount point ...
 		 */
-		if (d_mountpoint(dentry)) {
+		if (nfsd_mountpoint(dentry, exp)) {
 			if ((host_err = nfsd_cross_mnt(rqstp, &dentry, &exp))) {
 				dput(dentry);
 				goto out_nfserr;
@@ -369,6 +383,7 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
 			put_write_access(inode);
 			goto out_nfserr;
 		}
+		vzquota_cur_qmblk_set(fhp->fh_export->ex_path.dentry->d_inode);
 		vfs_dq_init(inode);
 	}
 
@@ -738,6 +753,7 @@ nfsd_open(struct svc_rqst *rqstp, struct svc_fh *fhp, int type,
 		else
 			flags = O_WRONLY|O_LARGEFILE;
 
+		vzquota_cur_qmblk_set(fhp->fh_export->ex_path.dentry->d_inode);
 		vfs_dq_init(inode);
 	}
 	*filp = dentry_open(dget(dentry), mntget(fhp->fh_export->ex_path.mnt),
@@ -763,43 +779,25 @@ nfsd_close(struct file *filp)
 }
 
 /*
- * Sync a file
- * As this calls fsync (not fdatasync) there is no need for a write_inode
- * after it.
+ * Sync a directory to disk.
+ *
+ * We can't just call vfs_fsync because our requirements are slightly odd:
+ *
+ *  a) we do not have a file struct available
+ *  b) we expect to have i_mutex already held by the caller
  */
-static inline int nfsd_dosync(struct file *filp, struct dentry *dp,
-			      const struct file_operations *fop)
-{
-	struct inode *inode = dp->d_inode;
-	int (*fsync) (struct file *, struct dentry *, int);
-	int err;
-
-	err = filemap_fdatawrite(inode->i_mapping);
-	if (err == 0 && fop && (fsync = fop->fsync))
-		err = fsync(filp, dp, 0);
-	if (err == 0)
-		err = filemap_fdatawait(inode->i_mapping);
-
-	return err;
-}
-
-static int
-nfsd_sync(struct file *filp)
-{
-        int err;
-	struct inode *inode = filp->f_path.dentry->d_inode;
-	dprintk("nfsd: sync file %s\n", filp->f_path.dentry->d_name.name);
-	mutex_lock(&inode->i_mutex);
-	err=nfsd_dosync(filp, filp->f_path.dentry, filp->f_op);
-	mutex_unlock(&inode->i_mutex);
-
-	return err;
-}
-
 int
-nfsd_sync_dir(struct dentry *dp)
+nfsd_sync_dir(struct dentry *dentry)
 {
-	return nfsd_dosync(NULL, dp, dp->d_inode->i_fop);
+	struct inode *inode = dentry->d_inode;
+	int error;
+
+	WARN_ON(!mutex_is_locked(&inode->i_mutex));
+
+	error = filemap_write_and_wait(inode->i_mapping);
+	if (!error && inode->i_fop->fsync)
+		error = inode->i_fop->fsync(NULL, dentry, 0);
+	return error;
 }
 
 /*
@@ -914,6 +912,7 @@ nfsd_vfs_read(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
 	mm_segment_t	oldfs;
 	__be32		err;
 	int		host_err;
+	dev_t		ex_dev;
 
 	err = nfserr_perm;
 	inode = file->f_path.dentry->d_inode;
@@ -922,7 +921,9 @@ nfsd_vfs_read(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
 		goto out;
 
 	/* Get readahead parameters */
-	ra = nfsd_get_raparms(inode->i_sb->s_dev, inode->i_ino);
+	BUG_ON(file->f_vfsmnt != fhp->fh_export->ex_path.mnt);
+	ex_dev = exp_get_dev(fhp->fh_export);
+	ra = nfsd_get_raparms(ex_dev, inode->i_ino);
 
 	if (ra && ra->p_set)
 		file->f_ra = ra->p_ra;
@@ -989,15 +990,18 @@ static void kill_suid(struct dentry *dentry)
  * better tool (separate unstable writes and commits) for solving this
  * problem.
  */
-static int wait_for_concurrent_writes(struct file *file)
+static int wait_for_concurrent_writes(struct file *file, struct svc_export *exp)
 {
 	struct inode *inode = file->f_path.dentry->d_inode;
 	static ino_t last_ino;
 	static dev_t last_dev;
 	int err = 0;
+	dev_t		ex_dev;
 
+	BUG_ON(file->f_vfsmnt != exp->ex_path.mnt);
+	ex_dev = exp_get_dev(exp);
 	if (atomic_read(&inode->i_writecount) > 1
-	    || (last_ino == inode->i_ino && last_dev == inode->i_sb->s_dev)) {
+	    || (last_ino == inode->i_ino && last_dev == ex_dev)) {
 		dprintk("nfsd: write defer %d\n", task_pid_nr(current));
 		msleep(10);
 		dprintk("nfsd: write resume %d\n", task_pid_nr(current));
@@ -1005,10 +1009,10 @@ static int wait_for_concurrent_writes(struct file *file)
 
 	if (inode->i_state & I_DIRTY) {
 		dprintk("nfsd: write sync %d\n", task_pid_nr(current));
-		err = nfsd_sync(file);
+		err = vfs_fsync(file, file->f_path.dentry, 0);
 	}
 	last_ino = inode->i_ino;
-	last_dev = inode->i_sb->s_dev;
+	last_dev = ex_dev;
 	return err;
 }
 
@@ -1076,7 +1080,7 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct file *file,
 		kill_suid(dentry);
 
 	if (stable && use_wgather)
-		host_err = wait_for_concurrent_writes(file);
+		host_err = wait_for_concurrent_writes(file, exp);
 
 out_nfserr:
 	dprintk("nfsd: write complete host_err=%d\n", host_err);
@@ -1174,7 +1178,7 @@ nfsd_commit(struct svc_rqst *rqstp, struct svc_fh *fhp,
 		return err;
 	if (EX_ISSYNC(fhp->fh_export)) {
 		if (file->f_op && file->f_op->fsync) {
-			err = nfserrno(nfsd_sync(file));
+			err = nfserrno(vfs_fsync(file, file->f_path.dentry, 0));
 		} else {
 			err = nfserr_notsupp;
 		}
@@ -2159,6 +2163,7 @@ nfsd_racache_init(int cache_size)
 	int	nperbucket;
 	struct raparms **raparm = NULL;
 
+	BUILD_BUG_ON(sizeof(struct raparm_hbucket) * RAPARM_HASH_SIZE > VE_RAPARM_SIZE);
 
 	if (raparm_hash[0].pb_head)
 		return 0;
@@ -2174,7 +2179,7 @@ nfsd_racache_init(int cache_size)
 
 		raparm = &raparm_hash[i].pb_head;
 		for (j = 0; j < nperbucket; j++) {
-			*raparm = kzalloc(sizeof(struct raparms), GFP_KERNEL);
+			*raparm = kzalloc(sizeof(struct raparms), GFP_KERNEL_UBC);
 			if (!*raparm)
 				goto out_nomem;
 			raparm = &(*raparm)->p_next;

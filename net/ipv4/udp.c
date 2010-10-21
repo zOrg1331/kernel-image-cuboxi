@@ -138,6 +138,7 @@ static int udp_lib_lport_inuse(struct net *net, __u16 num,
 		    sk2 != sk					&&
 		    (bitmap || sk2->sk_hash == num)		&&
 		    (!sk2->sk_reuse || !sk->sk_reuse)		&&
+		    sk->sk_reuse != 2 &&
 		    (!sk2->sk_bound_dev_if || !sk->sk_bound_dev_if
 			|| sk2->sk_bound_dev_if == sk->sk_bound_dev_if) &&
 		    (*saddr_comp)(sk, sk2)) {
@@ -982,7 +983,7 @@ try_again:
 		UDP_INC_STATS_USER(sock_net(sk),
 				UDP_MIB_INDATAGRAMS, is_udplite);
 
-	sock_recv_timestamp(msg, sk, skb);
+	sock_recv_ts_and_drops(msg, sk, skb);
 
 	/* Copy the address. */
 	if (sin) {

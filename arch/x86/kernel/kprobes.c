@@ -48,6 +48,7 @@
 #include <linux/preempt.h>
 #include <linux/module.h>
 #include <linux/kdebug.h>
+#include <linux/mm.h>
 
 #include <asm/cacheflush.h>
 #include <asm/desc.h>

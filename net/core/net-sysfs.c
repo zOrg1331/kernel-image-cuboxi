@@ -130,6 +130,44 @@ static ssize_t show_carrier(struct device *dev,
 	return -EINVAL;
 }
 
+static ssize_t show_speed(struct device *dev,
+			  struct device_attribute *attr, char *buf)
+{
+	struct net_device *netdev = to_net_dev(dev);
+	int ret = -EINVAL;
+
+	if (!rtnl_trylock())
+		return restart_syscall();
+
+	if (netif_running(netdev) && netdev->ethtool_ops->get_settings) {
+		struct ethtool_cmd cmd = { ETHTOOL_GSET };
+
+		if (!netdev->ethtool_ops->get_settings(netdev, &cmd))
+			ret = sprintf(buf, fmt_dec, ethtool_cmd_speed(&cmd));
+	}
+	rtnl_unlock();
+	return ret;
+}
+
+static ssize_t show_duplex(struct device *dev,
+			   struct device_attribute *attr, char *buf)
+{
+	struct net_device *netdev = to_net_dev(dev);
+	int ret = -EINVAL;
+
+	if (!rtnl_trylock())
+		return restart_syscall();
+
+	if (netif_running(netdev) && netdev->ethtool_ops->get_settings) {
+		struct ethtool_cmd cmd = { ETHTOOL_GSET };
+
+		if (!netdev->ethtool_ops->get_settings(netdev, &cmd))
+			ret = sprintf(buf, "%s\n", cmd.duplex ? "full" : "half");
+	}
+	rtnl_unlock();
+	return ret;
+}
+
 static ssize_t show_dormant(struct device *dev,
 			    struct device_attribute *attr, char *buf)
 {
@@ -259,6 +297,8 @@ static struct device_attribute net_class_attributes[] = {
 	__ATTR(address, S_IRUGO, show_address, NULL),
 	__ATTR(broadcast, S_IRUGO, show_broadcast, NULL),
 	__ATTR(carrier, S_IRUGO, show_carrier, NULL),
+	__ATTR(speed, S_IRUGO, show_speed, NULL),
+	__ATTR(duplex, S_IRUGO, show_duplex, NULL),
 	__ATTR(dormant, S_IRUGO, show_dormant, NULL),
 	__ATTR(operstate, S_IRUGO, show_operstate, NULL),
 	__ATTR(mtu, S_IRUGO | S_IWUSR, show_mtu, store_mtu),
@@ -267,6 +307,27 @@ static struct device_attribute net_class_attributes[] = {
 	       store_tx_queue_len),
 	{}
 };
+
+#ifdef CONFIG_VE
+struct device_attribute ve_net_class_attributes[] = {
+	__ATTR(addr_len, S_IRUGO, show_addr_len, NULL),
+	__ATTR(iflink, S_IRUGO, show_iflink, NULL),
+	__ATTR(ifindex, S_IRUGO, show_ifindex, NULL),
+	__ATTR(features, S_IRUGO, show_features, NULL),
+	__ATTR(type, S_IRUGO, show_type, NULL),
+	__ATTR(link_mode, S_IRUGO, show_link_mode, NULL),
+	__ATTR(address, S_IRUGO, show_address, NULL),
+	__ATTR(broadcast, S_IRUGO, show_broadcast, NULL),
+	__ATTR(carrier, S_IRUGO, show_carrier, NULL),
+	__ATTR(dormant, S_IRUGO, show_dormant, NULL),
+	__ATTR(operstate, S_IRUGO, show_operstate, NULL),
+	__ATTR(mtu, S_IRUGO, show_mtu, NULL),
+	__ATTR(flags, S_IRUGO, show_flags, NULL),
+	__ATTR(tx_queue_len, S_IRUGO, show_tx_queue_len, NULL),
+	{}
+};
+EXPORT_SYMBOL(ve_net_class_attributes);
+#endif
 
 /* Show a given an attribute in the statistics group */
 static ssize_t netstat_show(const struct device *d,
@@ -461,7 +522,7 @@ static void netdev_release(struct device *d)
 	kfree((char *)dev - dev->padded);
 }
 
-static struct class net_class = {
+struct class net_class = {
 	.name = "net",
 	.dev_release = netdev_release,
 #ifdef CONFIG_SYSFS
@@ -471,6 +532,13 @@ static struct class net_class = {
 	.dev_uevent = netdev_uevent,
 #endif
 };
+EXPORT_SYMBOL(net_class);
+
+#ifndef CONFIG_VE
+#define visible_net_class net_class
+#else
+#define visible_net_class (*get_exec_env()->net_class)
+#endif
 
 /* Delete sysfs entries but hold kobject reference until after all
  * netdev references are gone.
@@ -481,9 +549,6 @@ void netdev_unregister_kobject(struct net_device * net)
 
 	kobject_get(&dev->kobj);
 
-	if (dev_net(net) != &init_net)
-		return;
-
 	device_del(dev);
 }
 
@@ -493,7 +558,7 @@ int netdev_register_kobject(struct net_device *net)
 	struct device *dev = &(net->dev);
 	const struct attribute_group **groups = net->sysfs_groups;
 
-	dev->class = &net_class;
+	dev->class = &visible_net_class;
 	dev->platform_data = net;
 	dev->groups = groups;
 
@@ -507,9 +572,6 @@ int netdev_register_kobject(struct net_device *net)
 		*groups++ = &wireless_group;
 #endif
 #endif /* CONFIG_SYSFS */
-
-	if (dev_net(net) != &init_net)
-		return 0;
 
 	return device_add(dev);
 }
@@ -533,7 +595,15 @@ void netdev_initialize_kobject(struct net_device *net)
 	device_initialize(device);
 }
 
+void prepare_sysfs_netdev(void)
+{
+#ifdef CONFIG_VE
+	get_ve0()->net_class = &net_class;
+#endif
+}
+
 int netdev_kobject_init(void)
 {
+	prepare_sysfs_netdev();
 	return class_register(&net_class);
 }

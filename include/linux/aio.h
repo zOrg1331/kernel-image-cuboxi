@@ -204,10 +204,16 @@ struct kioctx {
 	struct rcu_head		rcu_head;
 };
 
+extern spinlock_t aio_nr_lock;
+extern unsigned long aio_nr;
+extern struct kmem_cache	*kioctx_cachep;
+
 /* prototypes */
 extern unsigned aio_max_size;
 
 #ifdef CONFIG_AIO
+extern void aio_kick_handler(struct work_struct *);
+extern void wait_for_all_aios(struct kioctx *ctx);
 extern ssize_t wait_on_sync_kiocb(struct kiocb *iocb);
 extern int aio_put_req(struct kiocb *iocb);
 extern void kick_iocb(struct kiocb *iocb);
@@ -215,6 +221,9 @@ extern int aio_complete(struct kiocb *iocb, long res, long res2);
 struct mm_struct;
 extern void exit_aio(struct mm_struct *mm);
 #else
+static void wait_for_all_aios(struct kioctx *ctx) { }
+static void aio_kick_handler(struct work_struct *) { }
+static void wait_for_all_aios(struct kioctx *ctx) { }
 static inline ssize_t wait_on_sync_kiocb(struct kiocb *iocb) { return 0; }
 static inline int aio_put_req(struct kiocb *iocb) { return 0; }
 static inline void kick_iocb(struct kiocb *iocb) { }

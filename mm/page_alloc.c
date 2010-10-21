@@ -16,6 +16,7 @@
 
 #include <linux/stddef.h>
 #include <linux/mm.h>
+#include <linux/mmgang.h>
 #include <linux/swap.h>
 #include <linux/interrupt.h>
 #include <linux/pagemap.h>
@@ -53,6 +54,9 @@
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
 #include "internal.h"
+
+#include <bc/kmem.h>
+#include <bc/io_acct.h>
 
 /*
  * Array of node states.
@@ -263,9 +267,10 @@ static void bad_page(struct page *page)
 	printk(KERN_ALERT "BUG: Bad page state in process %s  pfn:%05lx\n",
 		current->comm, page_to_pfn(page));
 	printk(KERN_ALERT
-		"page:%p flags:%p count:%d mapcount:%d mapping:%p index:%lx\n",
+		"page:%p flags:%p count:%d mapcount:%d mapping:%p ",
 		page, (void *)page->flags, page_count(page),
-		page_mapcount(page), page->mapping, page->index);
+		page_mapcount(page), page->mapping);
+	printk(KERN_CONT "index:%lx (%s)\n", page->index, print_tainted());
 
 	dump_stack();
 out:
@@ -310,6 +315,7 @@ void prep_compound_page(struct page *page, unsigned long order)
 	}
 }
 
+/* update __split_huge_page_refcount if you change this function */
 static int destroy_compound_page(struct page *page, unsigned long order)
 {
 	int i;
@@ -481,12 +487,12 @@ static inline void __free_one_page(struct page *page,
 		order++;
 	}
 	set_page_order(page, order);
+	gang_add_free_page(page);
 	list_add(&page->lru,
 		&zone->free_area[order].free_list[migratetype]);
 	zone->free_area[order].nr_free++;
 }
 
-#ifdef CONFIG_HAVE_MLOCKED_PAGE_BIT
 /*
  * free_page_mlock() -- clean up attempts to free and mlocked() page.
  * Page should not be on lru, so no need to fix that up.
@@ -497,9 +503,6 @@ static inline void free_page_mlock(struct page *page)
 	__dec_zone_page_state(page, NR_MLOCK);
 	__count_vm_event(UNEVICTABLE_MLOCKFREED);
 }
-#else
-static void free_page_mlock(struct page *page) { }
-#endif
 
 static inline int free_pages_check(struct page *page)
 {
@@ -587,6 +590,8 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 
 	kmemcheck_free_shadow(page, order);
 
+	if (PageAnon(page))
+		page->mapping = NULL;
 	for (i = 0 ; i < (1 << order) ; ++i)
 		bad += free_pages_check(page + i);
 	if (bad)
@@ -600,6 +605,7 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 	arch_free_page(page, order);
 	kernel_map_pages(page, 1 << order, 0);
 
+	ub_page_uncharge(page, order);
 	local_irq_save(flags);
 	if (unlikely(wasMlocked))
 		free_page_mlock(page);
@@ -663,6 +669,7 @@ static inline void expand(struct zone *zone, struct page *page,
 		high--;
 		size >>= 1;
 		VM_BUG_ON(bad_range(zone, &page[size]));
+		gang_add_free_page(&page[size]);
 		list_add(&page[size].lru, &area->free_list[migratetype]);
 		area->nr_free++;
 		set_page_order(&page[size], high);
@@ -1101,6 +1108,7 @@ static void free_hot_cold_page(struct page *page, int cold)
 	pcp = &zone_pcp(zone, get_cpu())->pcp;
 	migratetype = get_pageblock_migratetype(page);
 	set_page_private(page, migratetype);
+	ub_page_uncharge(page, 0);
 	local_irq_save(flags);
 	if (unlikely(wasMlocked))
 		free_page_mlock(page);
@@ -1121,6 +1129,7 @@ static void free_hot_cold_page(struct page *page, int cold)
 		migratetype = MIGRATE_MOVABLE;
 	}
 
+	gang_add_free_page(page);
 	if (cold)
 		list_add_tail(&page->lru, &pcp->lists[migratetype]);
 	else
@@ -1762,7 +1771,11 @@ gfp_to_alloc_flags(gfp_t gfp_mask)
 	 */
 	alloc_flags |= (gfp_mask & __GFP_HIGH);
 
-	if (!wait) {
+	/*
+	 * Not worth trying to allocate harder for __GFP_NOMEMALLOC
+	 * even if it can't schedule.
+	 */
+	if (!wait && !(gfp_mask & __GFP_NOMEMALLOC)) {
 		alloc_flags |= ALLOC_HARDER;
 		/*
 		 * Ignore cpuset if GFP_ATOMIC (!wait) rather than fail alloc.
@@ -1781,6 +1794,8 @@ gfp_to_alloc_flags(gfp_t gfp_mask)
 
 	return alloc_flags;
 }
+
+int alloc_fail_warn;
 
 static inline struct page *
 __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
@@ -1818,7 +1833,8 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
 		goto nopage;
 
 restart:
-	wake_all_kswapd(order, zonelist, high_zoneidx);
+	if (!(gfp_mask & __GFP_NO_KSWAPD))
+		wake_all_kswapd(order, zonelist, high_zoneidx);
 
 	/*
 	 * OK, we're below the kswapd watermark and have kicked background
@@ -1903,7 +1919,7 @@ rebalance:
 	}
 
 nopage:
-	if (!(gfp_mask & __GFP_NOWARN) && printk_ratelimit()) {
+	if (alloc_fail_warn && !(gfp_mask & __GFP_NOWARN) && printk_ratelimit()) {
 		printk(KERN_WARNING "%s: page allocation failure."
 			" order:%d, mode:0x%x\n",
 			p->comm, order, gfp_mask);
@@ -1918,6 +1934,29 @@ got_pg:
 
 }
 
+extern unsigned long cycles_per_jiffy;
+static void __alloc_collect_stats(gfp_t gfp_mask, unsigned int order,
+		struct page *page, cycles_t time)
+{
+#ifdef CONFIG_VE
+	int ind, cpu;
+
+	time = (jiffies - time) * cycles_per_jiffy;
+	if (!(gfp_mask & __GFP_WAIT))
+		ind = 0;
+	else if (!(gfp_mask & __GFP_HIGHMEM))
+		ind = (order > 0 ? 2 : 1);
+	else
+		ind = (order > 0 ? 4 : 3);
+
+	cpu = get_cpu();
+	KSTAT_LAT_PCPU_ADD(&kstat_glob.alloc_lat[ind], cpu, time);
+	if (!page)
+		kstat_glob.alloc_fails[cpu][ind]++;
+	put_cpu();
+#endif
+}
+
 /*
  * This is the 'heart' of the zoned buddy allocator.
  */
@@ -1929,6 +1968,7 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 	struct zone *preferred_zone;
 	struct page *page;
 	int migratetype = allocflags_to_migratetype(gfp_mask);
+	cycles_t start;
 
 	gfp_mask &= gfp_allowed_mask;
 
@@ -1952,6 +1992,7 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 	if (!preferred_zone)
 		return NULL;
 
+	start = jiffies;
 	/* First allocation attempt */
 	page = get_page_from_freelist(gfp_mask|__GFP_HARDWALL, nodemask, order,
 			zonelist, high_zoneidx, ALLOC_WMARK_LOW|ALLOC_CPUSET,
@@ -1960,6 +2001,14 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
 		page = __alloc_pages_slowpath(gfp_mask, order,
 				zonelist, high_zoneidx, nodemask,
 				preferred_zone, migratetype);
+
+	__alloc_collect_stats(gfp_mask, order, page, start);
+	if (page && (gfp_mask & __GFP_UBC) &&
+			ub_page_charge(page, order, get_exec_ub(),
+				(gfp_mask & __GFP_SOFT_UBC) ? UB_SOFT : UB_HARD)) {
+		__free_pages(page, order);
+		page = NULL;
+	}
 
 	trace_mm_page_alloc(page, order, gfp_mask, migratetype);
 	return page;
@@ -3785,9 +3834,14 @@ static void __paginginit free_area_init_core(struct pglist_data *pgdat,
 	init_waitqueue_head(&pgdat->kswapd_wait);
 	pgdat->kswapd_max_order = 0;
 	pgdat_page_cgroup_init(pgdat);
-	
+
+#ifdef CONFIG_MEMORY_GANGS
+	init_gang_set.gangs[nid] = pgdat->init_gangs;
+#endif
+
 	for (j = 0; j < MAX_NR_ZONES; j++) {
 		struct zone *zone = pgdat->node_zones + j;
+		struct gang *gang;
 		unsigned long size, realsize, memmap_pages;
 		enum lru_list l;
 
@@ -3834,17 +3888,25 @@ static void __paginginit free_area_init_core(struct pglist_data *pgdat,
 #endif
 		zone->name = zone_names[j];
 		spin_lock_init(&zone->lock);
-		spin_lock_init(&zone->lru_lock);
+		spin_lock_init(&zone->stat_lock);
 		zone_seqlock_init(zone);
 		zone->zone_pgdat = pgdat;
 
 		zone->prev_priority = DEF_PRIORITY;
 
+#ifdef CONFIG_MEMORY_GANGS
+		spin_lock_init(&zone->gangs_lock);
+		zone->nr_gangs = 0;
+		INIT_LIST_HEAD(&zone->gangs);
+		INIT_LIST_HEAD(&zone->gangs_rr);
+#endif
+		gang = zone_init_gang(zone);
+		setup_zone_gang(&init_gang_set, zone, gang);
+		add_zone_gang(zone, gang);
+
 		zone_pcp_init(zone);
-		for_each_lru(l) {
-			INIT_LIST_HEAD(&zone->lru[l].list);
+		for_each_lru(l)
 			zone->reclaim_stat.nr_saved_scan[l] = 0;
-		}
 		zone->reclaim_stat.recent_rotated[0] = 0;
 		zone->reclaim_stat.recent_rotated[1] = 0;
 		zone->reclaim_stat.recent_scanned[0] = 0;
@@ -5083,5 +5145,26 @@ __offline_isolated_pages(unsigned long start_pfn, unsigned long end_pfn)
 		pfn += (1 << order);
 	}
 	spin_unlock_irqrestore(&zone->lock, flags);
+}
+#endif
+
+#ifdef CONFIG_MEMORY_FAILURE
+bool is_free_buddy_page(struct page *page)
+{
+	struct zone *zone = page_zone(page);
+	unsigned long pfn = page_to_pfn(page);
+	unsigned long flags;
+	int order;
+
+	spin_lock_irqsave(&zone->lock, flags);
+	for (order = 0; order < MAX_ORDER; order++) {
+		struct page *page_head = page - (pfn & ((1 << order) - 1));
+
+		if (PageBuddy(page_head) && page_order(page_head) >= order)
+			break;
+	}
+	spin_unlock_irqrestore(&zone->lock, flags);
+
+	return order < MAX_ORDER;
 }
 #endif

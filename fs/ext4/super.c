@@ -39,6 +39,8 @@
 #include <linux/ctype.h>
 #include <linux/log2.h>
 #include <linux/crc16.h>
+#include <linux/vzquota.h>
+#include <linux/virtinfo.h>
 #include <asm/uaccess.h>
 
 #include "ext4.h"
@@ -603,10 +605,6 @@ static void ext4_put_super(struct super_block *sb)
 	if (sb->s_dirt)
 		ext4_commit_super(sb, 1);
 
-	ext4_release_system_zone(sb);
-	ext4_mb_release(sb);
-	ext4_ext_release(sb);
-	ext4_xattr_put_super(sb);
 	if (sbi->s_journal) {
 		err = jbd2_journal_destroy(sbi->s_journal);
 		sbi->s_journal = NULL;
@@ -614,6 +612,12 @@ static void ext4_put_super(struct super_block *sb)
 			ext4_abort(sb, __func__,
 				   "Couldn't clean up the journal");
 	}
+
+	ext4_release_system_zone(sb);
+	ext4_mb_release(sb);
+	ext4_ext_release(sb);
+	ext4_xattr_put_super(sb);
+
 	if (!(sb->s_flags & MS_RDONLY)) {
 		EXT4_CLEAR_INCOMPAT_FEATURE(sb, EXT4_FEATURE_INCOMPAT_RECOVER);
 		es->s_state = cpu_to_le16(sbi->s_mount_state);
@@ -702,8 +706,13 @@ static struct inode *ext4_alloc_inode(struct super_block *sb)
 	ei->i_allocated_meta_blocks = 0;
 	ei->i_delalloc_reserved_flag = 0;
 	spin_lock_init(&(ei->i_block_reservation_lock));
+#ifdef CONFIG_QUOTA
+	ei->i_reserved_quota = 0;
+#endif
 	INIT_LIST_HEAD(&ei->i_aio_dio_complete_list);
 	ei->cur_aio_dio = NULL;
+	ei->i_sync_tid = 0;
+	ei->i_datasync_tid = 0;
 
 	return &ei->vfs_inode;
 }
@@ -765,9 +774,22 @@ static inline void ext4_show_quota_options(struct seq_file *seq,
 #if defined(CONFIG_QUOTA)
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 
-	if (sbi->s_jquota_fmt)
-		seq_printf(seq, ",jqfmt=%s",
-		(sbi->s_jquota_fmt == QFMT_VFS_OLD) ? "vfsold" : "vfsv0");
+	if (sbi->s_jquota_fmt) {
+		char *fmtname = "";
+
+		switch (sbi->s_jquota_fmt) {
+		case QFMT_VFS_OLD:
+			fmtname = "vfsold";
+			break;
+		case QFMT_VFS_V0:
+			fmtname = "vfsv0";
+			break;
+		case QFMT_VFS_V1:
+			fmtname = "vfsv1";
+			break;
+		}
+		seq_printf(seq, ",jqfmt=%s", fmtname);
+	}
 
 	if (sbi->s_qf_names[USRQUOTA])
 		seq_printf(seq, ",usrjquota=%s", sbi->s_qf_names[USRQUOTA]);
@@ -899,6 +921,12 @@ static int ext4_show_options(struct seq_file *seq, struct vfsmount *vfs)
 	if (test_opt(sb, NO_AUTO_DA_ALLOC))
 		seq_puts(seq, ",noauto_da_alloc");
 
+	if (test_opt(sb, DISCARD))
+		seq_puts(seq, ",discard");
+
+	if (test_opt(sb, NOLOAD))
+		seq_puts(seq, ",norecovery");
+
 	ext4_show_quota_options(seq, sb);
 
 	return 0;
@@ -981,8 +1009,12 @@ static int ext4_quota_on(struct super_block *sb, int type, int format_id,
 static int ext4_quota_on_mount(struct super_block *sb, int type);
 static ssize_t ext4_quota_read(struct super_block *sb, int type, char *data,
 			       size_t len, loff_t off);
+static ssize_t ext4_quota_read_ino(struct super_block *sb, struct inode *inode,
+				char *data, size_t len, loff_t off);
 static ssize_t ext4_quota_write(struct super_block *sb, int type,
 				const char *data, size_t len, loff_t off);
+static ssize_t ext4_quota_write_ino_nojournal(struct super_block *sb, struct inode *ino,
+		const char *data, size_t len, loff_t off, int journal_quota);
 
 static const struct dquot_operations ext4_quota_operations = {
 	.initialize	= dquot_initialize,
@@ -991,7 +1023,9 @@ static const struct dquot_operations ext4_quota_operations = {
 	.reserve_space	= dquot_reserve_space,
 	.claim_space	= dquot_claim_space,
 	.release_rsv	= dquot_release_reserved_space,
+#ifdef CONFIG_QUOTA
 	.get_reserved_space = ext4_get_reserved_space,
+#endif
 	.alloc_inode	= dquot_alloc_inode,
 	.free_space	= dquot_free_space,
 	.free_inode	= dquot_free_inode,
@@ -1032,7 +1066,9 @@ static const struct super_operations ext4_sops = {
 	.show_options	= ext4_show_options,
 #ifdef CONFIG_QUOTA
 	.quota_read	= ext4_quota_read,
+	.quota_read_ino = ext4_quota_read_ino,
 	.quota_write	= ext4_quota_write,
+	.quota_write_ino = ext4_quota_write_ino_nojournal,
 #endif
 	.bdev_try_to_free_page = bdev_try_to_free_page,
 };
@@ -1074,12 +1110,13 @@ enum {
 	Opt_abort, Opt_data_journal, Opt_data_ordered, Opt_data_writeback,
 	Opt_data_err_abort, Opt_data_err_ignore,
 	Opt_usrjquota, Opt_grpjquota, Opt_offusrjquota, Opt_offgrpjquota,
-	Opt_jqfmt_vfsold, Opt_jqfmt_vfsv0, Opt_quota, Opt_noquota,
-	Opt_ignore, Opt_barrier, Opt_nobarrier, Opt_err, Opt_resize,
-	Opt_usrquota, Opt_grpquota, Opt_i_version,
+	Opt_jqfmt_vfsold, Opt_jqfmt_vfsv0, Opt_jqfmt_vfsv1, Opt_quota,
+	Opt_noquota, Opt_ignore, Opt_barrier, Opt_nobarrier, Opt_err,
+	Opt_resize, Opt_usrquota, Opt_grpquota, Opt_i_version,
 	Opt_stripe, Opt_delalloc, Opt_nodelalloc,
 	Opt_block_validity, Opt_noblock_validity,
-	Opt_inode_readahead_blks, Opt_journal_ioprio
+	Opt_inode_readahead_blks, Opt_journal_ioprio,
+	Opt_discard, Opt_nodiscard,
 };
 
 static const match_table_t tokens = {
@@ -1104,6 +1141,7 @@ static const match_table_t tokens = {
 	{Opt_acl, "acl"},
 	{Opt_noacl, "noacl"},
 	{Opt_noload, "noload"},
+	{Opt_noload, "norecovery"},
 	{Opt_nobh, "nobh"},
 	{Opt_bh, "bh"},
 	{Opt_commit, "commit=%u"},
@@ -1125,6 +1163,7 @@ static const match_table_t tokens = {
 	{Opt_grpjquota, "grpjquota=%s"},
 	{Opt_jqfmt_vfsold, "jqfmt=vfsold"},
 	{Opt_jqfmt_vfsv0, "jqfmt=vfsv0"},
+	{Opt_jqfmt_vfsv1, "jqfmt=vfsv1"},
 	{Opt_grpquota, "grpquota"},
 	{Opt_noquota, "noquota"},
 	{Opt_quota, "quota"},
@@ -1144,6 +1183,8 @@ static const match_table_t tokens = {
 	{Opt_auto_da_alloc, "auto_da_alloc=%u"},
 	{Opt_auto_da_alloc, "auto_da_alloc"},
 	{Opt_noauto_da_alloc, "noauto_da_alloc"},
+	{Opt_discard, "discard"},
+	{Opt_nodiscard, "nodiscard"},
 	{Opt_err, NULL},
 };
 
@@ -1425,6 +1466,9 @@ clear_qf_name:
 			goto set_qf_format;
 		case Opt_jqfmt_vfsv0:
 			qfmt = QFMT_VFS_V0;
+			goto set_qf_format;
+		case Opt_jqfmt_vfsv1:
+			qfmt = QFMT_VFS_V1;
 set_qf_format:
 			if (sb_any_quota_loaded(sb) &&
 			    sbi->s_jquota_fmt != qfmt) {
@@ -1467,6 +1511,7 @@ set_qf_format:
 		case Opt_offgrpjquota:
 		case Opt_jqfmt_vfsold:
 		case Opt_jqfmt_vfsv0:
+		case Opt_jqfmt_vfsv1:
 			ext4_msg(sb, KERN_ERR,
 				"journaled quota options not supported");
 			break;
@@ -1564,6 +1609,12 @@ set_qf_format:
 				clear_opt(sbi->s_mount_opt, NO_AUTO_DA_ALLOC);
 			else
 				set_opt(sbi->s_mount_opt,NO_AUTO_DA_ALLOC);
+			break;
+		case Opt_discard:
+			set_opt(sbi->s_mount_opt, DISCARD);
+			break;
+		case Opt_nodiscard:
+			clear_opt(sbi->s_mount_opt, DISCARD);
 			break;
 		default:
 			ext4_msg(sb, KERN_ERR,
@@ -1673,13 +1724,13 @@ static int ext4_fill_flex_info(struct super_block *sb)
 	size_t size;
 	int i;
 
-	if (!sbi->s_es->s_log_groups_per_flex) {
+	sbi->s_log_groups_per_flex = sbi->s_es->s_log_groups_per_flex;
+	groups_per_flex = 1 << sbi->s_log_groups_per_flex;
+
+	if (groups_per_flex < 2) {
 		sbi->s_log_groups_per_flex = 0;
 		return 1;
 	}
-
-	sbi->s_log_groups_per_flex = sbi->s_es->s_log_groups_per_flex;
-	groups_per_flex = 1 << sbi->s_log_groups_per_flex;
 
 	/* We allocate both existing and potentially added groups */
 	flex_group_count = ((sbi->s_groups_count + groups_per_flex - 1) +
@@ -1846,6 +1897,7 @@ static void ext4_orphan_cleanup(struct super_block *sb,
 #ifdef CONFIG_QUOTA
 	int i;
 #endif
+	struct virt_info_orphan vi;
 	if (!es->s_last_orphan) {
 		jbd_debug(4, "no orphan inodes to clean up\n");
 		return;
@@ -1884,8 +1936,10 @@ static void ext4_orphan_cleanup(struct super_block *sb,
 		}
 	}
 #endif
+	vi.super = sb;
 
 	while (es->s_last_orphan) {
+		int ret;
 		struct inode *inode;
 
 		inode = ext4_orphan_get(sb, le32_to_cpu(es->s_last_orphan));
@@ -1895,6 +1949,14 @@ static void ext4_orphan_cleanup(struct super_block *sb,
 		}
 
 		list_add(&EXT4_I(inode)->i_orphan, &EXT4_SB(sb)->s_orphan);
+		vi.cookie = EXT4_I(inode)->i_dq_cookie;
+		ret = virtinfo_notifier_call(VITYPE_QUOTA, VIRTINFO_ORPHAN_CLEAN, &vi);
+		if (ret != NOTIFY_OK)
+			printk(KERN_ERR "BUG: Quota files for %d are broken: %s\n", vi.cookie,
+					ret == NOTIFY_BAD ?
+						"error starting orphan cleanup" :
+						"no quota engine running");
+
 		vfs_dq_init(inode);
 		if (inode->i_nlink) {
 			ext4_msg(sb, KERN_DEBUG,
@@ -1929,6 +1991,8 @@ static void ext4_orphan_cleanup(struct super_block *sb,
 		if (sb_dqopt(sb)->files[i])
 			vfs_quota_off(sb, i, 0);
 	}
+
+	virtinfo_notifier_call(VITYPE_QUOTA, VIRTINFO_ORPHAN_DONE, &vi);
 #endif
 	sb->s_flags = s_flags; /* Restore MS_RDONLY status */
 }
@@ -2426,10 +2490,10 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	set_opt(sbi->s_mount_opt, BARRIER);
 
 	/*
-	 * enable delayed allocation by default
-	 * Use -o nodelalloc to turn it off
+	 * disable delayed allocation by default
+	 * Use -o delalloc to turn it on
 	 */
-	set_opt(sbi->s_mount_opt, DELALLOC);
+	clear_opt(sbi->s_mount_opt, DELALLOC);
 
 	if (!parse_options((char *) data, sb, &journal_devnum,
 			   &journal_ioprio, NULL, 0))
@@ -3668,13 +3732,11 @@ static int ext4_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_blocks = ext4_blocks_count(es) - sbi->s_overhead_last;
 	buf->f_bfree = percpu_counter_sum_positive(&sbi->s_freeblocks_counter) -
 		       percpu_counter_sum_positive(&sbi->s_dirtyblocks_counter);
-	ext4_free_blocks_count_set(es, buf->f_bfree);
 	buf->f_bavail = buf->f_bfree - ext4_r_blocks_count(es);
 	if (buf->f_bfree < ext4_r_blocks_count(es))
 		buf->f_bavail = 0;
 	buf->f_files = le32_to_cpu(es->s_inodes_count);
 	buf->f_ffree = percpu_counter_sum_positive(&sbi->s_freeinodes_counter);
-	es->s_free_inodes_count = cpu_to_le32(buf->f_ffree);
 	buf->f_namelen = EXT4_NAME_LEN;
 	fsid = le64_to_cpup((void *)es->s_uuid) ^
 	       le64_to_cpup((void *)es->s_uuid + sizeof(u64));
@@ -3857,6 +3919,13 @@ static ssize_t ext4_quota_read(struct super_block *sb, int type, char *data,
 			       size_t len, loff_t off)
 {
 	struct inode *inode = sb_dqopt(sb)->files[type];
+
+	return ext4_quota_read_ino(sb, inode, data, len, off);
+}
+
+static ssize_t ext4_quota_read_ino(struct super_block *sb, struct inode *inode,
+		char *data, size_t len, loff_t off)
+{
 	ext4_lblk_t blk = off >> EXT4_BLOCK_SIZE_BITS(sb);
 	int err = 0;
 	int offset = off & (sb->s_blocksize - 1);
@@ -3891,15 +3960,13 @@ static ssize_t ext4_quota_read(struct super_block *sb, int type, char *data,
 
 /* Write to quotafile (we know the transaction is already started and has
  * enough credits) */
-static ssize_t ext4_quota_write(struct super_block *sb, int type,
-				const char *data, size_t len, loff_t off)
+static ssize_t ext4_quota_write_ino(struct super_block *sb, struct inode *inode,
+		const char *data, size_t len, loff_t off, int journal_quota)
 {
-	struct inode *inode = sb_dqopt(sb)->files[type];
 	ext4_lblk_t blk = off >> EXT4_BLOCK_SIZE_BITS(sb);
 	int err = 0;
 	int offset = off & (sb->s_blocksize - 1);
 	int tocopy;
-	int journal_quota = EXT4_SB(sb)->s_qf_names[type] != NULL;
 	size_t towrite = len;
 	struct buffer_head *bh;
 	handle_t *handle = journal_current_handle();
@@ -3958,6 +4025,31 @@ out:
 	return len - towrite;
 }
 
+static ssize_t ext4_quota_write(struct super_block *sb, int type,
+				const char *data, size_t len, loff_t off)
+{
+	struct inode *inode = sb_dqopt(sb)->files[type];
+	int journal_quota = EXT4_SB(sb)->s_qf_names[type] != NULL;
+
+	return ext4_quota_write_ino(sb, inode, data, len, off, journal_quota);
+}
+
+static ssize_t ext4_quota_write_ino_nojournal(struct super_block *sb, struct inode *inode,
+		const char *data, size_t len, loff_t off, int journal_quota)
+{
+	int ret, err;
+	handle_t *handle;
+
+	handle = ext4_journal_start(sb->s_root->d_inode, 2);
+	if (IS_ERR(handle))
+		return PTR_ERR(handle);
+
+	ret = ext4_quota_write_ino(sb, inode, data, len, off, journal_quota);
+	err = ext4_journal_stop(handle);
+	if (!ret)
+		ret = err;
+	return ret;
+}
 #endif
 
 static int ext4_get_sb(struct file_system_type *fs_type, int flags,

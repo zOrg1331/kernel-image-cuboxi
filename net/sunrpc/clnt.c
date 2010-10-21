@@ -33,6 +33,9 @@
 #include <linux/utsname.h>
 #include <linux/workqueue.h>
 #include <linux/in6.h>
+#include <linux/ve_proto.h>
+#include <linux/ve_nfs.h>
+#include <linux/vzcalluser.h>
 
 #include <linux/sunrpc/clnt.h>
 #include <linux/sunrpc/rpc_pipe_fs.h>
@@ -79,7 +82,7 @@ static void	call_connect_status(struct rpc_task *task);
 
 static __be32	*rpc_encode_header(struct rpc_task *task);
 static __be32	*rpc_verify_header(struct rpc_task *task);
-static int	rpc_ping(struct rpc_clnt *clnt, int flags);
+static int	rpc_ping(struct rpc_clnt *clnt);
 
 static void rpc_register_client(struct rpc_clnt *clnt)
 {
@@ -93,6 +96,39 @@ static void rpc_unregister_client(struct rpc_clnt *clnt)
 	spin_lock(&rpc_client_lock);
 	list_del(&clnt->cl_clients);
 	spin_unlock(&rpc_client_lock);
+}
+
+/*
+ * Grand abort timeout (stop the client if occures)
+ */
+int xprt_abort_timeout = RPC_MAX_ABORT_TIMEOUT;
+EXPORT_SYMBOL(xprt_abort_timeout);
+
+static int rpc_abort_hard(struct rpc_task *task)
+{
+	struct rpc_clnt *clnt;
+	clnt = task->tk_client;
+
+	if (clnt->cl_pr_time == 0) {
+		clnt->cl_pr_time = jiffies;
+		return 0;
+	}
+	if (xprt_abort_timeout == RPC_MAX_ABORT_TIMEOUT)
+		return 0;
+	if (time_before(jiffies, clnt->cl_pr_time + xprt_abort_timeout * HZ))
+		return 0;
+
+	printk(KERN_ERR "CT#%u: RPC client %p (server %s) is marked 'broken'. "
+		"Unmount/mount to get it working again.\n",
+		get_exec_env()->veid, clnt, clnt->cl_server);
+	clnt->cl_broken = 1;
+	rpc_killall_tasks(clnt);
+	return -ETIMEDOUT;
+}
+
+static void rpc_abort_clear(struct rpc_task *task)
+{
+	task->tk_client->cl_pr_time = 0;
 }
 
 static int
@@ -200,6 +236,7 @@ static struct rpc_clnt * rpc_new_client(const struct rpc_create_args *args, stru
 	clnt->cl_vers     = version->number;
 	clnt->cl_stats    = program->stats;
 	clnt->cl_metrics  = rpc_alloc_iostats(clnt);
+	clnt->cl_broken = 0;
 	err = -ENOMEM;
 	if (clnt->cl_metrics == NULL)
 		goto out_no_stats;
@@ -336,11 +373,13 @@ struct rpc_clnt *rpc_create(struct rpc_create_args *args)
 		xprt->resvport = 0;
 
 	clnt = rpc_new_client(args, xprt);
-	if (IS_ERR(clnt))
+	if (IS_ERR(clnt)) {
+		put_ve(xprt->owner_env);
 		return clnt;
+	}
 
 	if (!(args->flags & RPC_CLNT_CREATE_NOPING)) {
-		int err = rpc_ping(clnt, RPC_TASK_SOFT);
+		int err = rpc_ping(clnt);
 		if (err != 0) {
 			rpc_shutdown_client(clnt);
 			return ERR_PTR(err);
@@ -528,7 +567,7 @@ struct rpc_clnt *rpc_bind_new_program(struct rpc_clnt *old,
 	clnt->cl_prog     = program->number;
 	clnt->cl_vers     = version->number;
 	clnt->cl_stats    = program->stats;
-	err = rpc_ping(clnt, RPC_TASK_SOFT);
+	err = rpc_ping(clnt);
 	if (err != 0) {
 		rpc_shutdown_client(clnt);
 		clnt = ERR_PTR(err);
@@ -557,6 +596,9 @@ static const struct rpc_call_ops rpc_default_ops = {
 struct rpc_task *rpc_run_task(const struct rpc_task_setup *task_setup_data)
 {
 	struct rpc_task *task, *ret;
+
+	if (task_setup_data->rpc_client->cl_broken)
+		return ERR_PTR(-EIO);
 
 	task = rpc_new_task(task_setup_data);
 	if (task == NULL) {
@@ -1034,6 +1076,7 @@ call_bind_status(struct rpc_task *task)
 
 	if (task->tk_status >= 0) {
 		dprint_status(task);
+		rpc_abort_clear(task);
 		task->tk_status = 0;
 		task->tk_action = call_connect;
 		return;
@@ -1057,10 +1100,14 @@ call_bind_status(struct rpc_task *task)
 	case -ETIMEDOUT:
 		dprintk("RPC: %5u rpcbind request timed out\n",
 				task->tk_pid);
+		if (rpc_abort_hard(task)) {
+			status = -EIO;
+			break;
+		}
 		goto retry_timeout;
 	case -EPFNOSUPPORT:
 		/* server doesn't support any rpcbind version we know of */
-		dprintk("RPC: %5u remote rpcbind service unavailable\n",
+		dprintk("RPC: %5u unrecognized remote rpcbind service\n",
 				task->tk_pid);
 		break;
 	case -EPROTONOSUPPORT:
@@ -1069,6 +1116,21 @@ call_bind_status(struct rpc_task *task)
 		task->tk_status = 0;
 		task->tk_action = call_bind;
 		return;
+	case -ECONNREFUSED:		/* connection problems */
+	case -ECONNRESET:
+	case -ENOTCONN:
+	case -EHOSTDOWN:
+	case -EHOSTUNREACH:
+	case -ENETUNREACH:
+	case -EPIPE:
+		dprintk("RPC: %5u remote rpcbind unreachable: %d\n",
+				task->tk_pid, task->tk_status);
+		if (!RPC_IS_SOFTCONN(task)) {
+			rpc_delay(task, 5*HZ);
+			goto retry_timeout;
+		}
+		status = task->tk_status;
+		break;
 	default:
 		dprintk("RPC: %5u unrecognized rpcbind error (%d)\n",
 				task->tk_pid, -task->tk_status);
@@ -1114,7 +1176,8 @@ call_connect_status(struct rpc_task *task)
 	dprint_status(task);
 
 	task->tk_status = 0;
-	if (status >= 0 || status == -EAGAIN) {
+	if (status >= 0 ||
+			(status == -EAGAIN && !rpc_abort_hard(task))) {
 		clnt->cl_stats->netreconn++;
 		task->tk_action = call_transmit;
 		return;
@@ -1180,11 +1243,25 @@ static void
 call_transmit_status(struct rpc_task *task)
 {
 	task->tk_action = call_status;
+
+	/*
+	 * Common case: success.  Force the compiler to put this
+	 * test first.
+	 */
+	if (task->tk_status == 0) {
+		xprt_end_transmit(task);
+		rpc_task_force_reencode(task);
+		return;
+	}
+
 	switch (task->tk_status) {
 	case -EAGAIN:
 		break;
 	default:
+		dprint_status(task);
 		xprt_end_transmit(task);
+		rpc_task_force_reencode(task);
+		break;
 		/*
 		 * Special cases: if we've been waiting on the
 		 * socket's write_space() callback, or if the
@@ -1192,11 +1269,16 @@ call_transmit_status(struct rpc_task *task)
 		 * then hold onto the transport lock.
 		 */
 	case -ECONNREFUSED:
-	case -ECONNRESET:
-	case -ENOTCONN:
 	case -EHOSTDOWN:
 	case -EHOSTUNREACH:
 	case -ENETUNREACH:
+		if (RPC_IS_SOFTCONN(task)) {
+			xprt_end_transmit(task);
+			rpc_exit(task, task->tk_status);
+			break;
+		}
+	case -ECONNRESET:
+	case -ENOTCONN:
 	case -EPIPE:
 		rpc_task_force_reencode(task);
 	}
@@ -1322,8 +1404,8 @@ call_status(struct rpc_task *task)
 		break;
 	default:
 		if (clnt->cl_chatty)
-			printk("%s: RPC call returned error %d\n",
-			       clnt->cl_protname, -status);
+			printk("ct%d %s: RPC call returned error %d\n",
+			       get_exec_env()->veid, clnt->cl_protname, -status);
 		rpc_exit(task, status);
 	}
 }
@@ -1346,10 +1428,14 @@ call_timeout(struct rpc_task *task)
 	dprintk("RPC: %5u call_timeout (major)\n", task->tk_pid);
 	task->tk_timeouts++;
 
-	if (RPC_IS_SOFT(task)) {
+	if (RPC_IS_SOFTCONN(task)) {
+		rpc_exit(task, -ETIMEDOUT);
+		return;
+	}
+	if (RPC_IS_SOFT(task) || rpc_abort_hard(task)) {
 		if (clnt->cl_chatty)
-			printk(KERN_NOTICE "%s: server %s not responding, timed out\n",
-				clnt->cl_protname, clnt->cl_server);
+			printk(KERN_NOTICE "ct%d %s: server %s not responding, timed out\n",
+				get_exec_env()->veid, clnt->cl_protname, clnt->cl_server);
 		rpc_exit(task, -EIO);
 		return;
 	}
@@ -1357,8 +1443,8 @@ call_timeout(struct rpc_task *task)
 	if (!(task->tk_flags & RPC_CALL_MAJORSEEN)) {
 		task->tk_flags |= RPC_CALL_MAJORSEEN;
 		if (clnt->cl_chatty)
-			printk(KERN_NOTICE "%s: server %s not responding, still trying\n",
-			clnt->cl_protname, clnt->cl_server);
+			printk(KERN_NOTICE "ct%d %s: server %s not responding, still trying\n",
+			get_exec_env()->veid, clnt->cl_protname, clnt->cl_server);
 	}
 	rpc_force_rebind(clnt);
 	/*
@@ -1389,11 +1475,12 @@ call_decode(struct rpc_task *task)
 
 	if (task->tk_flags & RPC_CALL_MAJORSEEN) {
 		if (clnt->cl_chatty)
-			printk(KERN_NOTICE "%s: server %s OK\n",
-				clnt->cl_protname, clnt->cl_server);
+			printk(KERN_NOTICE "ct%d %s: server %s OK\n",
+				get_exec_env()->veid, clnt->cl_protname, clnt->cl_server);
 		task->tk_flags &= ~RPC_CALL_MAJORSEEN;
 	}
 
+	rpc_abort_clear(task);
 	/*
 	 * Ensure that we see all writes made by xprt_complete_rqst()
 	 * before it changed req->rq_reply_bytes_recvd.
@@ -1406,7 +1493,7 @@ call_decode(struct rpc_task *task)
 				sizeof(req->rq_rcv_buf)) != 0);
 
 	if (req->rq_rcv_buf.len < 12) {
-		if (!RPC_IS_SOFT(task)) {
+		if (!RPC_IS_SOFT(task) && !rpc_abort_hard(task)) {
 			task->tk_action = call_bind;
 			clnt->cl_stats->rpcretrans++;
 			goto out_retry;
@@ -1675,14 +1762,14 @@ static struct rpc_procinfo rpcproc_null = {
 	.p_decode = rpcproc_decode_null,
 };
 
-static int rpc_ping(struct rpc_clnt *clnt, int flags)
+static int rpc_ping(struct rpc_clnt *clnt)
 {
 	struct rpc_message msg = {
 		.rpc_proc = &rpcproc_null,
 	};
 	int err;
 	msg.rpc_cred = authnull_ops.lookup_cred(NULL, NULL, 0);
-	err = rpc_call_sync(clnt, &msg, flags);
+	err = rpc_call_sync(clnt, &msg, RPC_TASK_SOFT | RPC_TASK_SOFTCONN);
 	put_rpccred(msg.rpc_cred);
 	return err;
 }
@@ -1752,5 +1839,112 @@ void rpc_show_tasks(void)
 		spin_unlock(&clnt->cl_lock);
 	}
 	spin_unlock(&rpc_client_lock);
+}
+#endif
+
+#ifdef CONFIG_VE
+static int ve_sunrpc_start(void *data)
+{
+	struct ve_struct *ve = data;
+	int err;
+
+	if (!(ve->features & (VE_FEATURE_NFS | VE_FEATURE_NFSD)))
+		return 0;
+
+	err = -ENOMEM;
+	ve->rpc_data = kzalloc(sizeof(struct ve_rpc_data), GFP_KERNEL);
+	if (ve->rpc_data == NULL)
+		goto err_rd;
+
+	rpc_proc_init();
+	if (proc_net_rpc == NULL)
+		goto err_proc;
+
+	err = ve_ip_map_init();
+	if (err)
+		goto err_map;
+	
+	err = register_rpc_pipefs();
+	if (err)
+		goto err_pipefs;
+
+	return 0;
+
+err_pipefs:
+	ve_ip_map_exit();
+err_map:
+	rpc_proc_exit();
+err_proc:
+	kfree(ve->rpc_data);
+err_rd:
+	return err;
+}
+
+extern void cleanup_rpcb_clnt(void);
+void ve_sunrpc_stop(void *data)
+{
+	struct ve_struct *ve = (struct ve_struct *)data;
+	struct rpc_clnt *clnt;
+	struct rpc_task	*rovr;
+
+	dprintk("RPC:       killing all tasks for VE %d\n", ve->veid);
+
+	spin_lock(&rpc_client_lock);
+	list_for_each_entry(clnt, &all_clients, cl_clients) {
+		if (clnt->cl_xprt->owner_env != ve)
+			continue;
+
+		spin_lock(&clnt->cl_lock);
+		list_for_each_entry(rovr, &clnt->cl_tasks, tk_task) {
+			if (!RPC_IS_ACTIVATED(rovr))
+				continue;
+			printk(KERN_WARNING "RPC: Killing task %d client %p\n",
+			       rovr->tk_pid, clnt);
+
+			rovr->tk_flags |= RPC_TASK_KILLED;
+			rpc_exit(rovr, -EIO);
+			 rpc_wake_up_queued_task(rovr->tk_waitqueue, rovr);
+		}
+		schedule_work(&clnt->cl_xprt->task_cleanup);
+		spin_unlock(&clnt->cl_lock);
+	}
+	spin_unlock(&rpc_client_lock);
+
+	flush_scheduled_work();
+
+	if (ve->rpc_data == NULL)
+		return;
+
+	cleanup_rpcb_clnt();
+	unregister_rpc_pipefs();
+	ve_ip_map_exit();
+	rpc_proc_exit();
+	kfree(ve->rpc_data);
+	ve->rpc_data = NULL;
+}
+
+static struct ve_hook sunrpc_hook = {
+	.init	  = ve_sunrpc_start,
+	.fini	  = ve_sunrpc_stop,
+	.owner	  = THIS_MODULE,
+	.priority = HOOK_PRIO_NET_PRE,
+};
+
+void ve_sunrpc_hook_register(void)
+{
+	ve_hook_register(VE_SS_CHAIN, &sunrpc_hook);
+}
+
+void ve_sunrpc_hook_unregister(void)
+{
+	ve_hook_unregister(&sunrpc_hook);
+}
+#else
+void ve_sunrpc_hook_register(void)
+{
+}
+
+void ve_sunrpc_hook_unregister(void)
+{
 }
 #endif

@@ -26,6 +26,7 @@
 #include <linux/file.h>
 #include <linux/fdtable.h>
 #include <linux/mm.h>
+#include <linux/virtinfo.h>
 #include <linux/stat.h>
 #include <linux/fcntl.h>
 #include <linux/smp_lock.h>
@@ -62,12 +63,16 @@
 #include <asm/tlb.h>
 #include "internal.h"
 
+#include <bc/vmpages.h>
+
 int core_uses_pid;
 char core_pattern[CORENAME_MAX_SIZE] = "core";
 unsigned int core_pipe_limit;
 int suid_dumpable = 0;
 
 /* The maximal length of core_pattern is also specified in sysctl.c */
+
+int sysctl_at_vsyscall;
 
 static LIST_HEAD(formats);
 static DEFINE_RWLOCK(binfmt_lock);
@@ -230,9 +235,14 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 	struct vm_area_struct *vma = NULL;
 	struct mm_struct *mm = bprm->mm;
 
+	err = -ENOMEM;
+	if (ub_memory_charge(mm, PAGE_SIZE, VM_STACK_FLAGS | mm->def_flags,
+				NULL, UB_SOFT))
+		goto err_charge;
+
 	bprm->vma = vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
 	if (!vma)
-		return -ENOMEM;
+		goto err_alloc;
 
 	down_write(&mm->mmap_sem);
 	vma->vm_mm = mm;
@@ -247,6 +257,7 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 	vma->vm_start = vma->vm_end - PAGE_SIZE;
 	vma->vm_flags = VM_STACK_FLAGS;
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+	INIT_LIST_HEAD(&vma->anon_vma_chain);
 	err = insert_vm_struct(mm, vma);
 	if (err)
 		goto err;
@@ -259,6 +270,9 @@ err:
 	up_write(&mm->mmap_sem);
 	bprm->vma = NULL;
 	kmem_cache_free(vm_area_cachep, vma);
+err_alloc:
+	ub_memory_uncharge(mm, PAGE_SIZE, VM_STACK_FLAGS | mm->def_flags, NULL);
+err_charge:
 	return err;
 }
 
@@ -517,7 +531,8 @@ static int shift_arg_pages(struct vm_area_struct *vma, unsigned long shift)
 	/*
 	 * cover the whole range: [new_start, old_end)
 	 */
-	vma_adjust(vma, new_start, old_end, vma->vm_pgoff, NULL);
+	if (vma_adjust(vma, new_start, old_end, vma->vm_pgoff, NULL))
+		return -ENOMEM;
 
 	/*
 	 * move the page tables downwards, on failure we rely on
@@ -548,7 +563,7 @@ static int shift_arg_pages(struct vm_area_struct *vma, unsigned long shift)
 	tlb_finish_mmu(tlb, new_end, old_end);
 
 	/*
-	 * shrink the vma to just the new range.
+	 * Shrink the vma to just the new range.  Always succeeds.
 	 */
 	vma_adjust(vma, new_start, new_end, vma->vm_pgoff, NULL);
 
@@ -695,10 +710,11 @@ int kernel_read(struct file *file, loff_t offset,
 
 EXPORT_SYMBOL(kernel_read);
 
-static int exec_mmap(struct mm_struct *mm)
+static int exec_mmap(struct linux_binprm *bprm)
 {
 	struct task_struct *tsk;
-	struct mm_struct * old_mm, *active_mm;
+	struct mm_struct *old_mm, *active_mm, *mm;
+	int ret;
 
 	/* Notify parent that we're no longer interested in the old VM */
 	tsk = current;
@@ -718,6 +734,10 @@ static int exec_mmap(struct mm_struct *mm)
 			return -EINTR;
 		}
 	}
+
+	ret = 0;
+	mm = bprm->mm;
+	mm->vps_dumpable = 1;
 	task_lock(tsk);
 	active_mm = tsk->active_mm;
 	tsk->mm = mm;
@@ -725,15 +745,25 @@ static int exec_mmap(struct mm_struct *mm)
 	activate_mm(active_mm, mm);
 	task_unlock(tsk);
 	arch_pick_mmap_layout(mm);
+	bprm->mm = NULL;		/* We're using it now */
+
+#ifdef CONFIG_VZ_GENCALLS
+	if (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_EXECMMAP,
+				bprm) & NOTIFY_FAIL) {
+		/* similar to binfmt_elf */
+		send_sig(SIGKILL, current, 0);
+		ret = -ENOMEM;
+	}
+#endif
 	if (old_mm) {
 		up_read(&old_mm->mmap_sem);
 		BUG_ON(active_mm != old_mm);
 		mm_update_next_owner(old_mm);
 		mmput(old_mm);
-		return 0;
+		return ret;
 	}
 	mmdrop(active_mm);
-	return 0;
+	return ret;
 }
 
 /*
@@ -828,6 +858,12 @@ static int de_thread(struct task_struct *tsk)
 		transfer_pid(leader, tsk, PIDTYPE_PGID);
 		transfer_pid(leader, tsk, PIDTYPE_SID);
 		list_replace_rcu(&leader->tasks, &tsk->tasks);
+#ifdef CONFIG_VE
+		list_replace_rcu(&leader->ve_task_info.vetask_list,
+				&tsk->ve_task_info.vetask_list);
+		list_replace(&leader->ve_task_info.aux_list,
+			     &tsk->ve_task_info.aux_list);
+#endif
 
 		tsk->group_leader = tsk;
 		leader->group_leader = tsk;
@@ -948,11 +984,9 @@ int flush_old_exec(struct linux_binprm * bprm)
 	/*
 	 * Release all of the old mmap stuff
 	 */
-	retval = exec_mmap(bprm->mm);
+	retval = exec_mmap(bprm);
 	if (retval)
 		goto out;
-
-	bprm->mm = NULL;		/* We're using it now */
 
 	/* This is the point of no return */
 	current->sas_ss_sp = current->sas_ss_size = 0;
@@ -1293,6 +1327,10 @@ int do_execve(char * filename,
 	bool clear_in_exec;
 	int retval;
 
+	retval = virtinfo_gencall(VIRTINFO_DOEXECVE, NULL);
+	if (retval)
+		return retval;
+
 	retval = unshare_files(&displaced);
 	if (retval)
 		goto out_ret;
@@ -1546,7 +1584,7 @@ static int zap_process(struct task_struct *start)
 			signal_wake_up(t, 1);
 			nr++;
 		}
-	} while_each_thread(start, t);
+	} while_each_thread_ve(start, t);
 
 	return nr;
 }
@@ -1601,7 +1639,7 @@ static inline int zap_threads(struct task_struct *tsk, struct mm_struct *mm,
 	 *	next_thread().
 	 */
 	rcu_read_lock();
-	for_each_process(g) {
+	for_each_process_ve(g) {
 		if (g == tsk->group_leader)
 			continue;
 		if (g->flags & PF_KTHREAD)
@@ -1616,7 +1654,7 @@ static inline int zap_threads(struct task_struct *tsk, struct mm_struct *mm,
 				}
 				break;
 			}
-		} while_each_thread(g, p);
+		} while_each_thread_ve(g, p);
 	}
 	rcu_read_unlock();
 done:
@@ -1784,7 +1822,7 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 	/*
 	 * If another thread got here first, or we are not dumpable, bail out.
 	 */
-	if (mm->core_state || !get_dumpable(mm)) {
+	if (mm->core_state || !get_dumpable(mm) || mm->vps_dumpable != 1) {
 		up_write(&mm->mmap_sem);
 		put_cred(cred);
 		goto fail;

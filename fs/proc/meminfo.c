@@ -10,6 +10,7 @@
 #include <linux/seq_file.h>
 #include <linux/swap.h>
 #include <linux/vmstat.h>
+#include <linux/virtinfo.h>
 #include <asm/atomic.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
@@ -19,9 +20,28 @@ void __attribute__((weak)) arch_report_meminfo(struct seq_file *m)
 {
 }
 
+#define K(x) ((x) << (PAGE_SHIFT - 10))
+
+static int meminfo_proc_show_mi(struct seq_file *m, struct meminfo *mi)
+{
+	seq_printf(m,
+		"MemTotal:       %8lu kB\n"
+		"MemFree:        %8lu kB\n"
+		"SwapTotal:      %8lu kB\n"
+		"SwapFree:       %8lu kB\n",
+		K(mi->si.totalram),
+		K(mi->si.freeram),
+		K(mi->si.totalswap),
+		K(mi->si.freeswap));
+
+	return 0;
+}
+
 static int meminfo_proc_show(struct seq_file *m, void *v)
 {
+	int ret;
 	struct sysinfo i;
+	struct meminfo mi;
 	unsigned long committed;
 	unsigned long allowed;
 	struct vmalloc_info vmi;
@@ -29,12 +49,19 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	unsigned long pages[NR_LRU_LISTS];
 	int lru;
 
+	si_meminfo(&i);
+	si_swapinfo(&i);
+	mi.si = i;
+
+	ret = virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_MEMINFO, &mi);
+	if (ret & NOTIFY_FAIL)
+		return 0;
+	if (ret & NOTIFY_OK)
+		return meminfo_proc_show_mi(m, &mi);
+
 /*
  * display in kilobytes.
  */
-#define K(x) ((x) << (PAGE_SHIFT - 10))
-	si_meminfo(&i);
-	si_swapinfo(&i);
 	committed = percpu_counter_read_positive(&vm_committed_as);
 	allowed = ((totalram_pages - hugetlb_total_pages())
 		* sysctl_overcommit_ratio / 100) + total_swap_pages;
@@ -101,6 +128,9 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 #ifdef CONFIG_MEMORY_FAILURE
 		"HardwareCorrupted: %5lu kB\n"
 #endif
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+		"AnonHugePages:  %8lu kB\n"
+#endif
 		,
 		K(i.totalram),
 		K(i.freeram),
@@ -151,6 +181,10 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 #ifdef CONFIG_MEMORY_FAILURE
 		,atomic_long_read(&mce_bad_pages) << (PAGE_SHIFT - 10)
 #endif
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+		,K(global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
+		   HPAGE_PMD_NR)
+#endif
 		);
 
 	hugetlb_report_meminfo(m);
@@ -175,7 +209,7 @@ static const struct file_operations meminfo_proc_fops = {
 
 static int __init proc_meminfo_init(void)
 {
-	proc_create("meminfo", 0, NULL, &meminfo_proc_fops);
+	proc_create("meminfo", 0, &glob_proc_root, &meminfo_proc_fops);
 	return 0;
 }
 module_init(proc_meminfo_init);

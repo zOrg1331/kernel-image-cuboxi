@@ -34,7 +34,12 @@
 extern char uevent_helper[];
 
 /* counter to tag the uevent, read only except for the kobject core */
+#ifdef CONFIG_VE
+#define ve_uevent_seqnum	(get_exec_env()->_uevent_seqnum)
+#else
+#define ve_uevent_seqnum uevent_seqnum
 extern u64 uevent_seqnum;
+#endif
 
 /*
  * The actions here must match the index to the string array
@@ -51,6 +56,8 @@ enum kobject_action {
 	KOBJ_REMOVE,
 	KOBJ_CHANGE,
 	KOBJ_MOVE,
+	KOBJ_START,
+	KOBJ_STOP,
 	KOBJ_ONLINE,
 	KOBJ_OFFLINE,
 	KOBJ_MAX

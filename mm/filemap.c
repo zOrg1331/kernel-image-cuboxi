@@ -34,7 +34,11 @@
 #include <linux/hardirq.h> /* for BUG_ON(!in_atomic()) only */
 #include <linux/memcontrol.h>
 #include <linux/mm_inline.h> /* for page_is_file_cache() */
+#include <linux/mmgang.h>
+#include <trace/events/kmem.h>
 #include "internal.h"
+
+#include <bc/io_acct.h>
 
 /*
  * FIXME: remove all knowledge of the buffer layer from the core VM
@@ -120,6 +124,10 @@ void __remove_from_page_cache(struct page *page)
 	struct address_space *mapping = page->mapping;
 
 	radix_tree_delete(&mapping->page_tree, page->index);
+	if (mapping_cap_account_dirty(mapping) &&
+			radix_tree_prev_tag_get(&mapping->page_tree,
+				PAGECACHE_TAG_DIRTY))
+		ub_io_account_clean(mapping, 1, 1);
 	page->mapping = NULL;
 	mapping->nrpages--;
 	__dec_zone_page_state(page, NR_FILE_PAGES);
@@ -436,6 +444,7 @@ int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 		error = radix_tree_insert(&mapping->page_tree, offset, page);
 		if (likely(!error)) {
 			mapping->nrpages++;
+			gang_add_user_page(page, get_mapping_gang(mapping));
 			__inc_zone_page_state(page, NR_FILE_PAGES);
 			if (PageSwapBacked(page))
 				__inc_zone_page_state(page, NR_SHMEM);
@@ -482,6 +491,9 @@ EXPORT_SYMBOL_GPL(add_to_page_cache_lru);
 #ifdef CONFIG_NUMA
 struct page *__page_cache_alloc(gfp_t gfp)
 {
+	if (unlikely(ub_check_ram_limits(get_exec_ub(), gfp)))
+		return NULL;
+
 	if (cpuset_do_page_mem_spread()) {
 		int n = cpuset_mem_spread_node();
 		return alloc_pages_exact_node(n, gfp, 0);
@@ -626,6 +638,12 @@ void __lock_page_nosync(struct page *page)
 							TASK_UNINTERRUPTIBLE);
 }
 
+static inline void check_pagecache_limits(struct address_space *mapping)
+{
+	if (mapping != &swapper_space)
+		ub_check_ram_limits(get_exec_ub(), GFP_NOWAIT);
+}
+
 /**
  * find_get_page - find and get a page reference
  * @mapping: the address_space to search
@@ -638,6 +656,8 @@ struct page *find_get_page(struct address_space *mapping, pgoff_t offset)
 {
 	void **pagep;
 	struct page *page;
+
+	check_pagecache_limits(mapping);
 
 	rcu_read_lock();
 repeat:
@@ -767,6 +787,8 @@ unsigned find_get_pages(struct address_space *mapping, pgoff_t start,
 	unsigned int ret;
 	unsigned int nr_found;
 
+	check_pagecache_limits(mapping);
+
 	rcu_read_lock();
 restart:
 	nr_found = radix_tree_gang_lookup_slot(&mapping->page_tree,
@@ -819,6 +841,8 @@ unsigned find_get_pages_contig(struct address_space *mapping, pgoff_t index,
 	unsigned int i;
 	unsigned int ret;
 	unsigned int nr_found;
+
+	check_pagecache_limits(mapping);
 
 	rcu_read_lock();
 restart:
@@ -876,6 +900,8 @@ unsigned find_get_pages_tag(struct address_space *mapping, pgoff_t *index,
 	unsigned int i;
 	unsigned int ret;
 	unsigned int nr_found;
+
+	check_pagecache_limits(mapping);
 
 	rcu_read_lock();
 restart:
@@ -1560,6 +1586,8 @@ retry_find:
 
 	ra->prev_pos = (loff_t)offset << PAGE_CACHE_SHIFT;
 	vmf->page = page;
+	trace_mm_filemap_fault(vma->vm_mm, (unsigned long)vmf->virtual_address,
+				vmf->flags&FAULT_FLAG_NONLINEAR);
 	return ret | VM_FAULT_LOCKED;
 
 no_cached_page:

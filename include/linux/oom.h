@@ -32,6 +32,17 @@ extern int unregister_oom_notifier(struct notifier_block *nb);
 
 extern bool oom_killer_disabled;
 
+struct mem_cgroup;
+struct user_beancounter;
+
+struct task_struct *select_bad_process(struct user_beancounter *ub,
+						struct mem_cgroup *mem);
+int oom_kill_process(struct task_struct *p, gfp_t gfp_mask, int order,
+			    struct mem_cgroup *mem, const char *message);
+
+/* linux/mm/oom_group.c */
+extern int get_oom_group(struct task_struct *t);
+
 static inline void oom_killer_disable(void)
 {
 	oom_killer_disabled = true;

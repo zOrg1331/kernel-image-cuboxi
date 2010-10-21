@@ -486,6 +486,8 @@ static int nfs_release_page(struct page *page, gfp_t gfp)
 {
 	dfprintk(PAGECACHE, "NFS: release_page(%p)\n", page);
 
+	if (gfp & __GFP_WAIT)
+		nfs_wb_page(page->mapping->host, page);
 	/* If PagePrivate() is set, then the page is not freeable */
 	if (PagePrivate(page))
 		return 0;
@@ -725,7 +727,8 @@ static int do_unlk(struct file *filp, int cmd, struct file_lock *fl)
 	 * 	still need to complete the unlock.
 	 */
 	/* Use local locking if mounted with "-onolock" */
-	if (!(NFS_SERVER(inode)->flags & NFS_MOUNT_NONLM))
+	if (!(NFS_SERVER(inode)->flags & NFS_MOUNT_NONLM) &&
+			!(fl->fl_flags & FL_LOCAL))
 		status = NFS_PROTO(inode)->lock(filp, cmd, fl);
 	else
 		status = do_vfs_lock(filp, fl);
@@ -746,7 +749,8 @@ static int do_setlk(struct file *filp, int cmd, struct file_lock *fl)
 		goto out;
 
 	/* Use local locking if mounted with "-onolock" */
-	if (!(NFS_SERVER(inode)->flags & NFS_MOUNT_NONLM))
+	if (!(NFS_SERVER(inode)->flags & NFS_MOUNT_NONLM) &&
+			!(fl->fl_flags & FL_LOCAL))
 		status = NFS_PROTO(inode)->lock(filp, cmd, fl);
 	else
 		status = do_vfs_lock(filp, fl);

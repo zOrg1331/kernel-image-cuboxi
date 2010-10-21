@@ -300,7 +300,7 @@ void ima_counts_get(struct file *file)
 
 	kref_put(&iint->refcount, iint_free);
 }
-EXPORT_SYMBOL_GPL(ima_counts_get);
+EXPORT_SYMBOL(ima_counts_get);
 
 /**
  * ima_file_mmap - based on policy, collect/store measurement.

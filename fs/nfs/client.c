@@ -125,6 +125,7 @@ static struct nfs_client *nfs_alloc_client(const struct nfs_client_initdata *cl_
 
 	atomic_set(&clp->cl_count, 1);
 	clp->cl_cons_state = NFS_CS_INITING;
+	clp->owner_env = get_exec_env();
 
 	memcpy(&clp->cl_addr, cl_init->addr, cl_init->addrlen);
 	clp->cl_addrlen = cl_init->addrlen;
@@ -364,6 +365,7 @@ static int nfs_sockaddr_cmp(const struct sockaddr *sa1,
 struct nfs_client *nfs_find_client(const struct sockaddr *addr, u32 nfsversion)
 {
 	struct nfs_client *clp;
+	struct ve_struct *ve = get_exec_env();
 
 	spin_lock(&nfs_client_lock);
 	list_for_each_entry(clp, &nfs_client_list, cl_share_link) {
@@ -376,6 +378,9 @@ struct nfs_client *nfs_find_client(const struct sockaddr *addr, u32 nfsversion)
 
 		/* Different NFS versions cannot share the same nfs_client */
 		if (clp->rpc_ops->version != nfsversion)
+			continue;
+
+		if (!ve_accessible_strict(clp->owner_env, ve))
 			continue;
 
 		/* Match only the IP address, not the port number */
@@ -398,6 +403,7 @@ struct nfs_client *nfs_find_client_next(struct nfs_client *clp)
 {
 	struct sockaddr *sap = (struct sockaddr *)&clp->cl_addr;
 	u32 nfsvers = clp->rpc_ops->version;
+	struct ve_struct *ve = get_exec_env();
 
 	spin_lock(&nfs_client_lock);
 	list_for_each_entry_continue(clp, &nfs_client_list, cl_share_link) {
@@ -409,6 +415,9 @@ struct nfs_client *nfs_find_client_next(struct nfs_client *clp)
 
 		/* Different NFS versions cannot share the same nfs_client */
 		if (clp->rpc_ops->version != nfsvers)
+			continue;
+
+		if (!ve_accessible_strict(clp->owner_env, ve))
 			continue;
 
 		/* Match only the IP address, not the port number */
@@ -431,12 +440,17 @@ static struct nfs_client *nfs_match_client(const struct nfs_client_initdata *dat
 {
 	struct nfs_client *clp;
 	const struct sockaddr *sap = data->addr;
+	struct ve_struct *ve;
 
+	ve = get_exec_env();
 	list_for_each_entry(clp, &nfs_client_list, cl_share_link) {
 	        const struct sockaddr *clap = (struct sockaddr *)&clp->cl_addr;
 		/* Don't match clients that failed to initialise properly */
 		if (clp->cl_cons_state < 0)
 			continue;
+
+		if (!ve_accessible_strict(clp->owner_env, ve))
+				continue;
 
 		/* Different NFS versions cannot share the same nfs_client */
 		if (clp->rpc_ops != data->rpc_ops)
@@ -1036,6 +1050,32 @@ void nfs_free_server(struct nfs_server *server)
 	dprintk("<-- nfs_free_server()\n");
 }
 
+#ifdef CONFIG_VE
+void nfs_change_server_params(void *data, int flags, int timeo, int retrans)
+{
+	struct nfs_server *nfs_server = data;
+	struct nfs_client *nfs_client = nfs_server->nfs_client;		
+	struct rpc_xprt *cl_xprt = nfs_server->client->cl_xprt;	
+	int proto = (nfs_server->flags & NFS_MOUNT_TCP) ? IPPROTO_TCP 
+							: IPPROTO_UDP;
+	struct rpc_timeout timeparams;
+
+	nfs_server->flags = (nfs_server->flags & ~NFS_MOUNT_SOFT) | flags;
+	if (!(nfs_server->flags & NFS_MOUNT_SOFT))
+		nfs_server->client->cl_softrtry = 0;
+
+	nfs_init_timeout_values(&timeparams, proto, timeo, retrans);
+
+	spin_lock_bh(&cl_xprt->transport_lock);
+	nfs_server->client->cl_timeout_default = timeparams;
+	nfs_client->cl_rpcclient->cl_timeout_default = timeparams;
+	rpc_init_rtt(&nfs_server->client->cl_rtt_default, nfs_server->client->cl_timeout->to_initval);
+	rpc_init_rtt(&nfs_client->cl_rpcclient->cl_rtt_default, nfs_client->cl_rpcclient->cl_timeout->to_initval);
+	spin_unlock_bh(&cl_xprt->transport_lock);
+}
+EXPORT_SYMBOL(nfs_change_server_params);
+#endif
+
 /*
  * Create a version 2 or 3 volume record
  * - keyed on server and FSID
@@ -1260,10 +1300,20 @@ error:
 static void nfs4_session_set_rwsize(struct nfs_server *server)
 {
 #ifdef CONFIG_NFS_V4_1
+	struct nfs4_session *sess;
+	u32 server_resp_sz;
+	u32 server_rqst_sz;
+
 	if (!nfs4_has_session(server->nfs_client))
 		return;
-	server->rsize = server->nfs_client->cl_session->fc_attrs.max_resp_sz;
-	server->wsize = server->nfs_client->cl_session->fc_attrs.max_rqst_sz;
+	sess = server->nfs_client->cl_session;
+	server_resp_sz = sess->fc_attrs.max_resp_sz - nfs41_maxread_overhead;
+	server_rqst_sz = sess->fc_attrs.max_rqst_sz - nfs41_maxwrite_overhead;
+
+	if (server->rsize > server_resp_sz)
+		server->rsize = server_resp_sz;
+	if (server->wsize > server_rqst_sz)
+		server->wsize = server_rqst_sz;
 #endif /* CONFIG_NFS_V4_1 */
 }
 

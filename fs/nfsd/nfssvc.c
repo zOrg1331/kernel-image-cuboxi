@@ -1,6 +1,4 @@
 /*
- * linux/fs/nfsd/nfssvc.c
- *
  * Central processing for nfsd.
  *
  * Authors:	Olaf Kirch (okir@monad.swb.de)
@@ -8,37 +6,22 @@
  * Copyright (C) 1995, 1996, 1997 Olaf Kirch <okir@monad.swb.de>
  */
 
-#include <linux/module.h>
 #include <linux/sched.h>
-#include <linux/time.h>
-#include <linux/errno.h>
-#include <linux/nfs.h>
-#include <linux/in.h>
-#include <linux/uio.h>
-#include <linux/unistd.h>
-#include <linux/slab.h>
-#include <linux/smp.h>
 #include <linux/freezer.h>
 #include <linux/fs_struct.h>
-#include <linux/kthread.h>
 #include <linux/swap.h>
 
-#include <linux/sunrpc/types.h>
 #include <linux/sunrpc/stats.h>
-#include <linux/sunrpc/svc.h>
 #include <linux/sunrpc/svcsock.h>
-#include <linux/sunrpc/cache.h>
-#include <linux/nfsd/nfsd.h>
-#include <linux/nfsd/stats.h>
-#include <linux/nfsd/cache.h>
-#include <linux/nfsd/syscall.h>
 #include <linux/lockd/bind.h>
 #include <linux/nfsacl.h>
 #include <linux/seq_file.h>
+#include "nfsd.h"
+#include "cache.h"
+#include "vfs.h"
 
 #define NFSDDBG_FACILITY	NFSDDBG_SVC
 
-extern struct svc_program	nfsd_program;
 static int			nfsd(void *vrqstp);
 struct timeval			nfssvc_boot;
 
@@ -65,7 +48,6 @@ struct timeval			nfssvc_boot;
  *	nfsd_versions
  */
 DEFINE_MUTEX(nfsd_mutex);
-struct svc_serv 		*nfsd_serv;
 
 /*
  * nfsd_drc_lock protects nfsd_drc_max_pages and nfsd_drc_pages_used.
@@ -126,7 +108,6 @@ struct svc_program		nfsd_program = {
 	.pg_vers		= nfsd_versions,	/* version table */
 	.pg_name		= "nfsd",		/* program name */
 	.pg_class		= "nfsd",		/* authentication class */
-	.pg_stats		= &nfsd_svcstats,	/* version table */
 	.pg_authenticate	= &svc_set_client,	/* export authentication */
 
 };
@@ -206,8 +187,6 @@ static void nfsd_last_thread(struct svc_serv *serv)
 	nfsd_racache_shutdown();
 	nfs4_state_shutdown();
 
-	printk(KERN_WARNING "nfsd: last server has exited, flushing export "
-			    "cache\n");
 	nfsd_export_flush();
 }
 
@@ -281,7 +260,8 @@ int nfsd_create_serv(void)
 	}
 
 	nfsd_serv = svc_create_pooled(&nfsd_program, nfsd_max_blksize,
-				      nfsd_last_thread, nfsd, THIS_MODULE);
+				      nfsd_last_thread, nfsd, THIS_MODULE,
+				      get_exec_env()->nfsd_data->svc_stat);
 	if (nfsd_serv == NULL)
 		err = -ENOMEM;
 	else

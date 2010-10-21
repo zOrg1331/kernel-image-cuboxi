@@ -21,6 +21,7 @@ void set_fs_root(struct fs_struct *fs, struct path *path)
 	if (old_root.dentry)
 		path_put(&old_root);
 }
+EXPORT_SYMBOL(set_fs_root);
 
 /*
  * Replace the fs->{pwdmnt,pwd} with {mnt,dentry}. Put the old values.
@@ -47,7 +48,7 @@ void chroot_fs_refs(struct path *old_root, struct path *new_root)
 	int count = 0;
 
 	read_lock(&tasklist_lock);
-	do_each_thread(g, p) {
+	do_each_thread_ve(g, p) {
 		task_lock(p);
 		fs = p->fs;
 		if (fs) {
@@ -67,7 +68,7 @@ void chroot_fs_refs(struct path *old_root, struct path *new_root)
 			write_unlock(&fs->lock);
 		}
 		task_unlock(p);
-	} while_each_thread(g, p);
+	} while_each_thread_ve(g, p);
 	read_unlock(&tasklist_lock);
 	while (count--)
 		path_put(old_root);
@@ -79,6 +80,7 @@ void free_fs_struct(struct fs_struct *fs)
 	path_put(&fs->pwd);
 	kmem_cache_free(fs_cachep, fs);
 }
+EXPORT_SYMBOL(free_fs_struct);
 
 void exit_fs(struct task_struct *tsk)
 {
@@ -96,6 +98,7 @@ void exit_fs(struct task_struct *tsk)
 			free_fs_struct(fs);
 	}
 }
+EXPORT_SYMBOL(exit_fs);
 
 struct fs_struct *copy_fs_struct(struct fs_struct *old)
 {

@@ -278,6 +278,22 @@ out:
 	rcu_read_unlock();
 }
 
+void nf_nat_hash_conntrack(struct net *net, struct nf_conn *ct)
+{
+	unsigned int srchash;
+	struct nf_conn_nat *nat;
+
+	srchash = hash_by_src(&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple);
+	spin_lock_bh(&nf_nat_lock);
+	/* nf_conntrack_alter_reply might re-allocate exntension aera */
+	nat = nfct_nat(ct);
+	nat->ct = ct;
+	hlist_add_head_rcu(&nat->bysource,
+			   &net->ipv4.nat_bysource[srchash]);
+	spin_unlock_bh(&nf_nat_lock);
+}
+EXPORT_SYMBOL_GPL(nf_nat_hash_conntrack);
+
 unsigned int
 nf_nat_setup_info(struct nf_conn *ct,
 		  const struct nf_nat_range *range,
@@ -327,18 +343,8 @@ nf_nat_setup_info(struct nf_conn *ct,
 	}
 
 	/* Place in source hash if this is the first time. */
-	if (have_to_hash) {
-		unsigned int srchash;
-
-		srchash = hash_by_src(&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple);
-		spin_lock_bh(&nf_nat_lock);
-		/* nf_conntrack_alter_reply might re-allocate exntension aera */
-		nat = nfct_nat(ct);
-		nat->ct = ct;
-		hlist_add_head_rcu(&nat->bysource,
-				   &net->ipv4.nat_bysource[srchash]);
-		spin_unlock_bh(&nf_nat_lock);
-	}
+	if (have_to_hash)
+		nf_nat_hash_conntrack(net, ct);
 
 	/* It's done. */
 	if (maniptype == IP_NAT_MANIP_DST)

@@ -46,6 +46,10 @@
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_conntrack.h>
 
+#include <net/sock.h>
+#include <bc/beancounter.h>
+#include <bc/sock.h>
+
 MODULE_LICENSE("GPL");
 
 static char __initdata version[] = "0.93";
@@ -1178,13 +1182,14 @@ static struct nf_conn *
 ctnetlink_create_conntrack(const struct nlattr * const cda[],
 			   struct nf_conntrack_tuple *otuple,
 			   struct nf_conntrack_tuple *rtuple,
-			   u8 u3)
+			   u8 u3,
+			   struct user_beancounter *ub)
 {
 	struct nf_conn *ct;
 	int err = -EINVAL;
 	struct nf_conntrack_helper *helper;
 
-	ct = nf_conntrack_alloc(&init_net, otuple, rtuple, GFP_ATOMIC);
+	ct = nf_conntrack_alloc(&init_net, otuple, rtuple, ub, GFP_ATOMIC);
 	if (IS_ERR(ct))
 		return ERR_PTR(-ENOMEM);
 
@@ -1342,9 +1347,14 @@ ctnetlink_new_conntrack(struct sock *ctnl, struct sk_buff *skb,
 		if (nlh->nlmsg_flags & NLM_F_CREATE) {
 			struct nf_conn *ct;
 			enum ip_conntrack_events events;
+			struct user_beancounter *ub = NULL;
 
+#ifdef CONFIG_BEANCOUNTERS
+			if (skb->sk)
+				ub = sock_bc(skb->sk)->ub;
+#endif
 			ct = ctnetlink_create_conntrack(cda, &otuple,
-							&rtuple, u3);
+							&rtuple, u3, ub);
 			if (IS_ERR(ct)) {
 				err = PTR_ERR(ct);
 				goto out_unlock;
