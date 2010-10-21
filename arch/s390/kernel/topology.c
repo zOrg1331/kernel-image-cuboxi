@@ -63,7 +63,7 @@ struct core_info {
 	cpumask_t mask;
 };
 
-static int topology_enabled;
+static int topology_enabled = 1;
 static void topology_work_fn(struct work_struct *work);
 static struct tl_info *tl_info;
 static struct core_info core_info;
@@ -275,9 +275,9 @@ static void set_topology_timer(void)
 
 static int __init early_parse_topology(char *p)
 {
-	if (strncmp(p, "on", 2))
+	if (strncmp(p, "off", 3))
 		return 0;
-	topology_enabled = 1;
+	topology_enabled = 0;
 	return 0;
 }
 early_param("topology", early_parse_topology);
