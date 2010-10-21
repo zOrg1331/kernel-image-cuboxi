@@ -598,8 +598,14 @@ netxen_send_cmd_descs(struct netxen_adapter *adapter,
 
 	if (nr_desc >= netxen_tx_avail(tx_ring)) {
 		netif_tx_stop_queue(tx_ring->txq);
-		__netif_tx_unlock_bh(tx_ring->txq);
-		return -EBUSY;
+		smp_mb();
+		if (netxen_tx_avail(tx_ring) > nr_desc) {
+			if (netxen_tx_avail(tx_ring) > TX_STOP_THRESH)
+				netif_tx_wake_queue(tx_ring->txq);
+		} else {
+			__netif_tx_unlock_bh(tx_ring->txq);
+			return -EBUSY;
+		}
 	}
 
 	do {
@@ -1816,13 +1822,13 @@ int netxen_nic_get_board_info(struct netxen_adapter *adapter)
 	if (netxen_rom_fast_read(adapter, offset, &board_type))
 		return -EIO;
 
-	adapter->ahw.board_type = board_type;
-
 	if (board_type == NETXEN_BRDTYPE_P3_4_GB_MM) {
 		u32 gpio = NXRD32(adapter, NETXEN_ROMUSB_GLB_PAD_GPIO_I);
 		if ((gpio & 0x8000) == 0)
 			board_type = NETXEN_BRDTYPE_P3_10G_TP;
 	}
+
+	adapter->ahw.board_type = board_type;
 
 	switch (board_type) {
 	case NETXEN_BRDTYPE_P2_SB35_4G:
