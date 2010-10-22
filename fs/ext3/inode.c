@@ -498,7 +498,7 @@ static ext3_fsblk_t ext3_find_goal(struct inode *inode, long block,
 }
 
 /**
- *	ext3_blks_to_allocate: Look up the block map and count the number
+ *	ext3_blks_to_allocate - Look up the block map and count the number
  *	of direct blocks need to be allocated for the given branch.
  *
  *	@branch: chain of indirect blocks
@@ -536,14 +536,18 @@ static int ext3_blks_to_allocate(Indirect *branch, int k, unsigned long blks,
 }
 
 /**
- *	ext3_alloc_blocks: multiple allocate blocks needed for a branch
+ *	ext3_alloc_blocks - multiple allocate blocks needed for a branch
+ *	@handle: handle for this transaction
+ *	@inode: owner
+ *	@goal: preferred place for allocation
  *	@indirect_blks: the number of blocks need to allocate for indirect
  *			blocks
- *
+ *	@blks:	number of blocks need to allocated for direct blocks
  *	@new_blocks: on return it will store the new block numbers for
  *	the indirect blocks(if needed) and the first direct block,
- *	@blks:	on return it will store the total number of allocated
- *		direct blocks
+ *	@err: here we store the error value
+ *
+ *	return the number of direct blocks allocated
  */
 static int ext3_alloc_blocks(handle_t *handle, struct inode *inode,
 			ext3_fsblk_t goal, int indirect_blks, int blks,
@@ -598,9 +602,11 @@ failed_out:
 
 /**
  *	ext3_alloc_branch - allocate and set up a chain of blocks.
+ *	@handle: handle for this transaction
  *	@inode: owner
  *	@indirect_blks: number of allocated indirect blocks
  *	@blks: number of allocated direct blocks
+ *	@goal: preferred place for allocation
  *	@offsets: offsets (in the blocks) to store the pointers to next.
  *	@branch: place to store the chain in.
  *
@@ -700,10 +706,9 @@ failed:
 
 /**
  * ext3_splice_branch - splice the allocated branch onto inode.
+ * @handle: handle for this transaction
  * @inode: owner
  * @block: (logical) number of block we are adding
- * @chain: chain of indirect blocks (with a missing link - see
- *	ext3_alloc_branch)
  * @where: location of missing link
  * @num:   number of indirect blocks we are adding
  * @blks:  number of direct blocks we are adding
@@ -2530,7 +2535,6 @@ void ext3_truncate(struct inode *inode)
 			 */
 		} else {
 			/* Shared branch grows from an indirect block */
-			BUFFER_TRACE(partial->bh, "get_write_access");
 			ext3_free_branches(handle, inode, partial->bh,
 					partial->p,
 					partial->p+1, (chain+n-1) - partial);
@@ -2914,24 +2918,35 @@ struct inode *ext3_iget(struct super_block *sb, unsigned long ino)
 		atomic_set(&ei->i_datasync_tid, tid);
 	}
 
-	if (inode->i_ino >= EXT3_FIRST_INO(inode->i_sb) + 1 &&
-	    EXT3_INODE_SIZE(inode->i_sb) > EXT3_GOOD_OLD_INODE_SIZE) {
-		/*
-		 * When mke2fs creates big inodes it does not zero out
-		 * the unused bytes above EXT3_GOOD_OLD_INODE_SIZE,
-		 * so ignore those first few inodes.
-		 */
+	if (EXT3_INODE_SIZE(inode->i_sb) > EXT3_GOOD_OLD_INODE_SIZE) {
 		ei->i_extra_isize = le16_to_cpu(raw_inode->i_extra_isize);
 		if (EXT3_GOOD_OLD_INODE_SIZE + ei->i_extra_isize >
 		    EXT3_INODE_SIZE(inode->i_sb)) {
-			brelse (bh);
-			ret = -EIO;
-			goto bad_inode;
+			/*
+			 * Old mke2fs (<= 1.37) did not zero i_extra_size for
+			 * large reserved inodes. So just ignore bogus
+			 * i_extra_size for these inodes.
+			 */
+			if (inode->i_ino >= EXT3_FIRST_INO(inode->i_sb) + 1) {
+				brelse (bh);
+				ret = -EIO;
+				goto bad_inode;
+			}
+			ei->i_extra_isize = 0;
 		}
 		if (ei->i_extra_isize == 0) {
-			/* The extra space is currently unused. Use it. */
-			ei->i_extra_isize = sizeof(struct ext3_inode) -
-					    EXT3_GOOD_OLD_INODE_SIZE;
+			/*
+			 * We cannot use free space for reserved inodes because
+			 * old kernels (until 2.6.36) would just ignore xattrs
+			 * in that space. This workaround can be removed if we
+			 * ever deem that mounting a filesystem with an old
+			 * kernel is unlikely enough.
+			 */
+			if (inode->i_ino >= EXT3_FIRST_INO(inode->i_sb) + 1) {
+				/* The extra space is unused. Use it. */
+				ei->i_extra_isize = sizeof(struct ext3_inode) -
+						    EXT3_GOOD_OLD_INODE_SIZE;
+			}
 		} else {
 			__le32 *magic = (void *)raw_inode +
 					EXT3_GOOD_OLD_INODE_SIZE +
