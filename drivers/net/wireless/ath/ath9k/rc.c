@@ -1582,7 +1582,8 @@ static ssize_t read_file_rcstat(struct file *file, char __user *user_buf,
 static const struct file_operations fops_rcstat = {
 	.read = read_file_rcstat,
 	.open = ath9k_debugfs_open,
-	.owner = THIS_MODULE
+	.owner = THIS_MODULE,
+	.llseek = default_llseek,
 };
 
 static void ath_rate_add_sta_debugfs(void *priv, void *priv_sta,
