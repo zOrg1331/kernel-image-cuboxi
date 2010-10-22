@@ -25,6 +25,7 @@ config X86
 	select HAVE_IRQ_WORK
 	select HAVE_IOREMAP_PROT
 	select HAVE_KPROBES
+	select HAVE_MEMBLOCK
 	select ARCH_WANT_OPTIONAL_GPIOLIB
 	select ARCH_WANT_FRAME_POINTERS
 	select HAVE_DMA_ATTRS
@@ -64,6 +65,8 @@ config X86
 	select HAVE_SPARSE_IRQ
 	select GENERIC_IRQ_PROBE
 	select GENERIC_PENDING_IRQ if SMP
+	select HAVE_ARCH_JUMP_LABEL
+	select HAVE_TEXT_POKE_SMP
 
 config INSTRUCTION_DECODER
 	def_bool (KPROBES || PERF_EVENTS)
@@ -196,9 +199,6 @@ config ARCH_SUPPORTS_OPTIMIZED_INLINING
 	def_bool y
 
 config ARCH_SUPPORTS_DEBUG_PAGEALLOC
-	def_bool y
-
-config HAVE_EARLY_RES
 	def_bool y
 
 config HAVE_INTEL_TXT
@@ -346,6 +346,7 @@ endif
 
 config X86_VSMP
 	bool "ScaleMP vSMP"
+	select PARAVIRT_GUEST
 	select PARAVIRT
 	depends on X86_64 && PCI
 	depends on X86_EXTENDED_PLATFORM
@@ -545,16 +546,7 @@ config PARAVIRT_DEBUG
 	  a paravirt_op is missing when it is called.
 
 config NO_BOOTMEM
-	default y
-	bool "Disable Bootmem code"
-	---help---
-	  Use early_res directly instead of bootmem before slab is ready.
-		- allocator (buddy) [generic]
-		- early allocator (bootmem) [generic]
-		- very early allocator (reserve_early*()) [x86]
-		- very very early allocator (early brk model) [x86]
-	  So reduce one layer between early allocator to final allocator
-
+	def_bool y
 
 config MEMTEST
 	bool "Memtest"
