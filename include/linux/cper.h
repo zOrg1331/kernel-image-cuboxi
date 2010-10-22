@@ -22,6 +22,7 @@
 #define LINUX_CPER_H
 
 #include <linux/uuid.h>
+#include <linux/herror_record.h>
 
 /* CPER record signature and the size */
 #define CPER_SIG_RECORD				"CPER"
@@ -309,6 +310,8 @@ struct cper_sec_mem_err {
 /* Reset to default packing */
 #pragma pack()
 
+int herr_severity_to_cper(int herr_severity);
+int cper_severity_to_herr(int cper_severity);
 u64 cper_next_record_id(void);
 
 #endif
