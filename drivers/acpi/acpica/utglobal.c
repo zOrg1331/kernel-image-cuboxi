@@ -766,6 +766,7 @@ acpi_status acpi_ut_init_globals(void)
 	acpi_gbl_gpe_fadt_blocks[0] = NULL;
 	acpi_gbl_gpe_fadt_blocks[1] = NULL;
 	acpi_current_gpe_count = 0;
+	acpi_all_gpes_initialized = FALSE;
 
 	/* Global handlers */
 
@@ -774,6 +775,7 @@ acpi_status acpi_ut_init_globals(void)
 	acpi_gbl_exception_handler = NULL;
 	acpi_gbl_init_handler = NULL;
 	acpi_gbl_table_handler = NULL;
+	acpi_gbl_interface_handler = NULL;
 
 	/* Global Lock support */
 
@@ -800,6 +802,7 @@ acpi_status acpi_ut_init_globals(void)
 	acpi_gbl_debugger_configuration = DEBUGGER_THREADING;
 	acpi_gbl_db_output_flags = ACPI_DB_CONSOLE_OUTPUT;
 	acpi_gbl_osi_data = 0;
+	acpi_gbl_osi_mutex = NULL;
 
 	/* Hardware oriented */
 
