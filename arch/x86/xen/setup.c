@@ -150,6 +150,7 @@ char * __init xen_memory_setup(void)
 	unsigned long extra_pages = 0;
 	unsigned long extra_limit;
 	int i;
+	int op;
 
 	max_pfn = min(MAX_DOMAIN_PAGES, max_pfn);
 	mem_end = PFN_PHYS(max_pfn);
@@ -157,7 +158,10 @@ char * __init xen_memory_setup(void)
 	memmap.nr_entries = E820MAX;
 	set_xen_guest_handle(memmap.buffer, map);
 
-	rc = HYPERVISOR_memory_op(XENMEM_memory_map, &memmap);
+	op = xen_initial_domain() ?
+		XENMEM_machine_memory_map :
+		XENMEM_memory_map;
+	rc = HYPERVISOR_memory_op(op, &memmap);
 	if (rc == -ENOSYS) {
 		memmap.nr_entries = 1;
 		map[0].addr = 0ULL;
@@ -199,6 +203,9 @@ char * __init xen_memory_setup(void)
 	 * Even though this is normal, usable memory under Xen, reserve
 	 * ISA memory anyway because too many things think they can poke
 	 * about in there.
+	 *
+	 * In a dom0 kernel, this region is identity mapped with the
+	 * hardware ISA area, so it really is out of bounds.
 	 */
 	e820_add_region(ISA_START_ADDRESS, ISA_END_ADDRESS - ISA_START_ADDRESS,
 			E820_RESERVED);
@@ -236,7 +243,8 @@ char * __init xen_memory_setup(void)
 	else
 		extra_pages = 0;
 
-	xen_add_extra_mem(extra_pages);
+	if (!xen_initial_domain())
+		xen_add_extra_mem(extra_pages);
 
 	return "Xen";
 }
