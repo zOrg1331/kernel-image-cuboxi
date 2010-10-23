@@ -184,8 +184,8 @@ static ssize_t coda_psdev_write(struct file *file, const char __user *buf,
 	}
 
 	/* adjust outsize. is this useful ?? */
-        req->uc_outSize = nbytes;	
-        req->uc_flags |= REQ_WRITE;
+	req->uc_outSize = nbytes;
+	req->uc_flags |= CODA_REQ_WRITE;
 	count = nbytes;
 
 	/* Convert filedescriptor into a file handle */
@@ -346,6 +346,7 @@ static const struct file_operations coda_psdev_fops = {
 	.unlocked_ioctl	= coda_psdev_ioctl,
 	.open		= coda_psdev_open,
 	.release	= coda_psdev_release,
+	.llseek		= noop_llseek,
 };
 
 static int init_coda_psdev(void)

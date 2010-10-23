@@ -124,9 +124,9 @@ static int count = DEFAULT_COUNT;
 module_param(recur_count, int, 0644);
 MODULE_PARM_DESC(recur_count, " Recursion level for the stack overflow test, "\
 				 "default is 10");
-module_param(cpoint_name, charp, 0644);
+module_param(cpoint_name, charp, 0444);
 MODULE_PARM_DESC(cpoint_name, " Crash Point, where kernel is to be crashed");
-module_param(cpoint_type, charp, 0644);
+module_param(cpoint_type, charp, 0444);
 MODULE_PARM_DESC(cpoint_type, " Crash Point Type, action to be taken on "\
 				"hitting the crash point");
 module_param(cpoint_count, int, 0644);
@@ -575,30 +575,39 @@ struct crash_entry {
 
 static const struct crash_entry crash_entries[] = {
 	{"DIRECT", {.read = lkdtm_debugfs_read,
+			.llseek = generic_file_llseek,
 			.open = lkdtm_debugfs_open,
 			.write = direct_entry} },
 	{"INT_HARDWARE_ENTRY", {.read = lkdtm_debugfs_read,
+			.llseek = generic_file_llseek,
 			.open = lkdtm_debugfs_open,
 			.write = int_hardware_entry} },
 	{"INT_HW_IRQ_EN", {.read = lkdtm_debugfs_read,
+			.llseek = generic_file_llseek,
 			.open = lkdtm_debugfs_open,
 			.write = int_hw_irq_en} },
 	{"INT_TASKLET_ENTRY", {.read = lkdtm_debugfs_read,
+			.llseek = generic_file_llseek,
 			.open = lkdtm_debugfs_open,
 			.write = int_tasklet_entry} },
 	{"FS_DEVRW", {.read = lkdtm_debugfs_read,
+			.llseek = generic_file_llseek,
 			.open = lkdtm_debugfs_open,
 			.write = fs_devrw_entry} },
 	{"MEM_SWAPOUT", {.read = lkdtm_debugfs_read,
+			.llseek = generic_file_llseek,
 			.open = lkdtm_debugfs_open,
 			.write = mem_swapout_entry} },
 	{"TIMERADD", {.read = lkdtm_debugfs_read,
+			.llseek = generic_file_llseek,
 			.open = lkdtm_debugfs_open,
 			.write = timeradd_entry} },
 	{"SCSI_DISPATCH_CMD", {.read = lkdtm_debugfs_read,
+			.llseek = generic_file_llseek,
 			.open = lkdtm_debugfs_open,
 			.write = scsi_dispatch_cmd_entry} },
 	{"IDE_CORE_CP",	{.read = lkdtm_debugfs_read,
+			.llseek = generic_file_llseek,
 			.open = lkdtm_debugfs_open,
 			.write = ide_core_cp_entry} },
 };

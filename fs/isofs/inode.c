@@ -17,7 +17,6 @@
 #include <linux/slab.h>
 #include <linux/nls.h>
 #include <linux/ctype.h>
-#include <linux/smp_lock.h>
 #include <linux/statfs.h>
 #include <linux/cdrom.h>
 #include <linux/parser.h>
@@ -44,11 +43,7 @@ static void isofs_put_super(struct super_block *sb)
 	struct isofs_sb_info *sbi = ISOFS_SB(sb);
 
 #ifdef CONFIG_JOLIET
-	lock_kernel();
-
 	unload_nls(sbi->s_nls_iocharset);
-
-	unlock_kernel();
 #endif
 
 	kfree(sbi);
@@ -722,7 +717,12 @@ root_found:
 	}
 
 	s->s_magic = ISOFS_SUPER_MAGIC;
-	s->s_maxbytes = 0xffffffff; /* We can handle files up to 4 GB */
+
+	/*
+	 * With multi-extent files, file size is only limited by the maximum
+	 * size of a file system, which is 8 TB.
+	 */
+	s->s_maxbytes = 0x80000000000LL;
 
 	/*
 	 * The CDROM is read-only, has no nodes (devices) on it, and since
@@ -818,6 +818,7 @@ root_found:
 	sbi->s_utf8 = opt.utf8;
 	sbi->s_nocompress = opt.nocompress;
 	sbi->s_overriderockperm = opt.overriderockperm;
+	mutex_init(&sbi->s_mutex);
 	/*
 	 * It would be incredibly stupid to allow people to mark every file
 	 * on the disk as suid, so we merely allow them to set the default
@@ -972,8 +973,6 @@ int isofs_get_blocks(struct inode *inode, sector_t iblock_s,
 	int section, rv, error;
 	struct iso_inode_info *ei = ISOFS_I(inode);
 
-	lock_kernel();
-
 	error = -EIO;
 	rv = 0;
 	if (iblock < 0 || iblock != iblock_s) {
@@ -1049,7 +1048,6 @@ int isofs_get_blocks(struct inode *inode, sector_t iblock_s,
 
 	error = 0;
 abort:
-	unlock_kernel();
 	return rv != 0 ? rv : error;
 }
 

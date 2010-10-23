@@ -11,6 +11,10 @@
  * -Eric Paris
  */
 
+/*
+ * When introducing new O_* bits, please check its uniqueness in fcntl_init().
+ */
+
 #define O_ACCMODE	00000003
 #define O_RDONLY	00000000
 #define O_WRONLY	00000001
@@ -118,7 +122,7 @@
 
 struct f_owner_ex {
 	int	type;
-	pid_t	pid;
+	__kernel_pid_t	pid;
 };
 
 /* for F_[GET|SET]FL */

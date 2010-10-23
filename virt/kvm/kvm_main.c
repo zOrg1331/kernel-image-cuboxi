@@ -1305,6 +1305,7 @@ static struct file_operations kvm_vcpu_fops = {
 	.unlocked_ioctl = kvm_vcpu_ioctl,
 	.compat_ioctl   = kvm_vcpu_ioctl,
 	.mmap           = kvm_vcpu_mmap,
+	.llseek		= noop_llseek,
 };
 
 /*
@@ -1774,6 +1775,7 @@ static struct file_operations kvm_vm_fops = {
 	.compat_ioctl   = kvm_vm_compat_ioctl,
 #endif
 	.mmap           = kvm_vm_mmap,
+	.llseek		= noop_llseek,
 };
 
 static int kvm_dev_ioctl_create_vm(void)
@@ -1867,6 +1869,7 @@ out:
 static struct file_operations kvm_chardev_ops = {
 	.unlocked_ioctl = kvm_dev_ioctl,
 	.compat_ioctl   = kvm_dev_ioctl,
+	.llseek		= noop_llseek,
 };
 
 static struct miscdevice kvm_dev = {
@@ -1958,10 +1961,10 @@ static int kvm_cpu_hotplug(struct notifier_block *notifier, unsigned long val,
 		       cpu);
 		hardware_disable(NULL);
 		break;
-	case CPU_ONLINE:
+	case CPU_STARTING:
 		printk(KERN_INFO "kvm: enabling virtualization on CPU%d\n",
 		       cpu);
-		smp_call_function_single(cpu, hardware_enable, NULL, 1);
+		hardware_enable(NULL);
 		break;
 	}
 	return NOTIFY_OK;
@@ -1970,10 +1973,12 @@ static int kvm_cpu_hotplug(struct notifier_block *notifier, unsigned long val,
 
 asmlinkage void kvm_handle_fault_on_reboot(void)
 {
-	if (kvm_rebooting)
+	if (kvm_rebooting) {
 		/* spin while reset goes on */
+		local_irq_enable();
 		while (true)
 			;
+	}
 	/* Fault while not rebooting.  We want the trace. */
 	BUG();
 }
@@ -2096,7 +2101,6 @@ int kvm_io_bus_unregister_dev(struct kvm *kvm, enum kvm_bus bus_idx,
 
 static struct notifier_block kvm_cpu_notifier = {
 	.notifier_call = kvm_cpu_hotplug,
-	.priority = 20, /* must be > scheduler priority */
 };
 
 static int vm_stat_get(void *_offset, u64 *val)

@@ -108,7 +108,7 @@ static int load_misc_binary(struct linux_binprm *bprm, struct pt_regs *regs)
 	Node *fmt;
 	struct file * interp_file = NULL;
 	char iname[BINPRM_BUF_SIZE];
-	char *iname_addr = iname;
+	const char *iname_addr = iname;
 	int retval;
 	int fd_binary = -1;
 
@@ -576,6 +576,7 @@ static ssize_t bm_entry_write(struct file *file, const char __user *buffer,
 static const struct file_operations bm_entry_operations = {
 	.read		= bm_entry_read,
 	.write		= bm_entry_write,
+	.llseek		= default_llseek,
 };
 
 /* /register */
@@ -643,6 +644,7 @@ out:
 
 static const struct file_operations bm_register_operations = {
 	.write		= bm_register_write,
+	.llseek		= noop_llseek,
 };
 
 /* /status */
@@ -680,6 +682,7 @@ static ssize_t bm_status_write(struct file * file, const char __user * buffer,
 static const struct file_operations bm_status_operations = {
 	.read		= bm_status_read,
 	.write		= bm_status_write,
+	.llseek		= default_llseek,
 };
 
 /* Superblock handling */
@@ -724,7 +727,7 @@ static int __init init_misc_binfmt(void)
 {
 	int err = register_filesystem(&bm_fs_type);
 	if (!err) {
-		err = register_binfmt(&misc_format);
+		err = insert_binfmt(&misc_format);
 		if (err)
 			unregister_filesystem(&bm_fs_type);
 	}

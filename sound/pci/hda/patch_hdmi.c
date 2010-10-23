@@ -46,6 +46,7 @@ struct hdmi_spec {
 	 * export one pcm per pipe
 	 */
 	struct hda_pcm	pcm_rec[MAX_HDMI_CVTS];
+	struct hda_pcm_stream codec_pcm_pars[MAX_HDMI_CVTS];
 
 	/*
 	 * nvhdmi specific
@@ -706,8 +707,6 @@ static int hdmi_setup_stream(struct hda_codec *codec, hda_nid_t nid,
 			      u32 stream_tag, int format)
 {
 	struct hdmi_spec *spec = codec->spec;
-	int tag;
-	int fmt;
 	int pinctl;
 	int new_pinctl = 0;
 	int i;
@@ -744,24 +743,48 @@ static int hdmi_setup_stream(struct hda_codec *codec, hda_nid_t nid,
 		return -EINVAL;
 	}
 
-	tag = snd_hda_codec_read(codec, nid, 0, AC_VERB_GET_CONV, 0) >> 4;
-	fmt = snd_hda_codec_read(codec, nid, 0, AC_VERB_GET_STREAM_FORMAT, 0);
+	snd_hda_codec_setup_stream(codec, nid, stream_tag, 0, format);
+	return 0;
+}
 
-	snd_printdd("hdmi_setup_stream: "
-		    "NID=0x%x, %sstream=0x%x, %sformat=0x%x\n",
-		    nid,
-		    tag == stream_tag ? "" : "new-",
-		    stream_tag,
-		    fmt == format ? "" : "new-",
-		    format);
+/*
+ * HDA PCM callbacks
+ */
+static int hdmi_pcm_open(struct hda_pcm_stream *hinfo,
+			 struct hda_codec *codec,
+			 struct snd_pcm_substream *substream)
+{
+	struct hdmi_spec *spec = codec->spec;
+	struct hdmi_eld *eld;
+	struct hda_pcm_stream *codec_pars;
+	unsigned int idx;
 
-	if (tag != stream_tag)
-		snd_hda_codec_write(codec, nid, 0,
-				    AC_VERB_SET_CHANNEL_STREAMID,
-				    stream_tag << 4);
-	if (fmt != format)
-		snd_hda_codec_write(codec, nid, 0,
-				    AC_VERB_SET_STREAM_FORMAT, format);
+	for (idx = 0; idx < spec->num_cvts; idx++)
+		if (hinfo->nid == spec->cvt[idx])
+			break;
+	if (snd_BUG_ON(idx >= spec->num_cvts) ||
+	    snd_BUG_ON(idx >= spec->num_pins))
+		return -EINVAL;
+
+	/* save the PCM info the codec provides */
+	codec_pars = &spec->codec_pcm_pars[idx];
+	if (!codec_pars->rates)
+		*codec_pars = *hinfo;
+
+	eld = &spec->sink_eld[idx];
+	if (eld->sad_count > 0) {
+		hdmi_eld_update_pcm_info(eld, hinfo, codec_pars);
+		if (hinfo->channels_min > hinfo->channels_max ||
+		    !hinfo->rates || !hinfo->formats)
+			return -ENODEV;
+	} else {
+		/* fallback to the codec default */
+		hinfo->channels_min = codec_pars->channels_min;
+		hinfo->channels_max = codec_pars->channels_max;
+		hinfo->rates = codec_pars->rates;
+		hinfo->formats = codec_pars->formats;
+		hinfo->maxbps = codec_pars->maxbps;
+	}
 	return 0;
 }
 

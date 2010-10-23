@@ -1124,7 +1124,7 @@ void jbd2_journal_update_superblock(journal_t *journal, int wait)
 			set_buffer_uptodate(bh);
 		}
 	} else
-		ll_rw_block(SWRITE, 1, &bh);
+		write_dirty_buffer(bh, WRITE);
 
 out:
 	/* If we have just flushed the log (by marking s_start==0), then
@@ -1371,6 +1371,10 @@ int jbd2_journal_check_used_features (journal_t *journal, unsigned long compat,
 
 	if (!compat && !ro && !incompat)
 		return 1;
+	/* Load journal superblock if it is not loaded yet. */
+	if (journal->j_format_version == 0 &&
+	    journal_get_superblock(journal) != 0)
+		return 0;
 	if (journal->j_format_version == 1)
 		return 0;
 

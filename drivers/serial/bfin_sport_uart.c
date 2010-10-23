@@ -121,7 +121,7 @@ static int sport_uart_setup(struct sport_uart_port *up, int size, int baud_rate)
 	unsigned int sclk = get_sclk();
 
 	/* Set TCR1 and TCR2, TFSR is not enabled for uart */
-	SPORT_PUT_TCR1(up, (ITFS | TLSBIT | ITCLK));
+	SPORT_PUT_TCR1(up, (LATFS | ITFS | TFSR | TLSBIT | ITCLK));
 	SPORT_PUT_TCR2(up, size + 1);
 	pr_debug("%s TCR1:%x, TCR2:%x\n", __func__, SPORT_GET_TCR1(up), SPORT_GET_TCR2(up));
 
@@ -131,7 +131,12 @@ static int sport_uart_setup(struct sport_uart_port *up, int size, int baud_rate)
 	pr_debug("%s RCR1:%x, RCR2:%x\n", __func__, SPORT_GET_RCR1(up), SPORT_GET_RCR2(up));
 
 	tclkdiv = sclk / (2 * baud_rate) - 1;
-	rclkdiv = sclk / (2 * baud_rate * 2) - 1;
+	/* The actual uart baud rate of devices vary between +/-2%. The sport
+	 * RX sample rate should be faster than the double of the worst case,
+	 * otherwise, wrong data are received. So, set sport RX clock to be
+	 * 3% faster.
+	 */
+	rclkdiv = sclk / (2 * baud_rate * 2 * 97 / 100) - 1;
 	SPORT_PUT_TCLKDIV(up, tclkdiv);
 	SPORT_PUT_RCLKDIV(up, rclkdiv);
 	SSYNC();

@@ -32,9 +32,6 @@
  */
 
 #include <linux/slab.h>
-#include <linux/writeback.h>
-#include <linux/buffer_head.h>
-#include <scsi/scsi_device.h>
 
 #include "exofs.h"
 
@@ -57,6 +54,9 @@ struct page_collect {
 	unsigned nr_pages;
 	unsigned long length;
 	loff_t pg_first; /* keep 64bit also in 32-arches */
+	bool read_4_write; /* This means two things: that the read is sync
+			    * And the pages should not be unlocked.
+			    */
 };
 
 static void _pcol_init(struct page_collect *pcol, unsigned expected_pages,
@@ -74,6 +74,7 @@ static void _pcol_init(struct page_collect *pcol, unsigned expected_pages,
 	pcol->nr_pages = 0;
 	pcol->length = 0;
 	pcol->pg_first = -1;
+	pcol->read_4_write = false;
 }
 
 static void _pcol_reset(struct page_collect *pcol)
@@ -350,7 +351,8 @@ static int readpage_strip(void *data, struct page *page)
 		if (PageError(page))
 			ClearPageError(page);
 
-		unlock_page(page);
+		if (!pcol->read_4_write)
+			unlock_page(page);
 		EXOFS_DBGMSG("readpage_strip(0x%lx, 0x%lx) empty page,"
 			     " splitting\n", inode->i_ino, page->index);
 
@@ -431,6 +433,7 @@ static int _readpage(struct page *page, bool is_sync)
 	/* readpage_strip might call read_exec(,is_sync==false) at several
 	 * places but not if we have a single page.
 	 */
+	pcol.read_4_write = is_sync;
 	ret = readpage_strip(&pcol, page);
 	if (ret) {
 		EXOFS_ERR("_readpage => %d\n", ret);
@@ -773,15 +776,13 @@ static int exofs_releasepage(struct page *page, gfp_t gfp)
 {
 	EXOFS_DBGMSG("page 0x%lx\n", page->index);
 	WARN_ON(1);
-	return try_to_free_buffers(page);
+	return 0;
 }
 
 static void exofs_invalidatepage(struct page *page, unsigned long offset)
 {
-	EXOFS_DBGMSG("page_has_buffers=>%d\n", page_has_buffers(page));
+	EXOFS_DBGMSG("page 0x%lx offset 0x%lx\n", page->index, offset);
 	WARN_ON(1);
-
-	block_invalidatepage(page, offset);
 }
 
 const struct address_space_operations exofs_aops = {

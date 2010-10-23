@@ -55,7 +55,7 @@
 extern u8 acpi_gbl_permanent_mmap;
 
 /*
- * Globals that are publically available, allowing for
+ * Globals that are publicly available, allowing for
  * run time configuration
  */
 extern u32 acpi_dbg_level;
@@ -66,7 +66,7 @@ extern u8 acpi_gbl_create_osi_method;
 extern u8 acpi_gbl_use_default_register_widths;
 extern acpi_name acpi_gbl_trace_method_name;
 extern u32 acpi_gbl_trace_flags;
-extern u8 acpi_gbl_enable_aml_debug_object;
+extern u32 acpi_gbl_enable_aml_debug_object;
 extern u8 acpi_gbl_copy_dsdt_locally;
 extern u8 acpi_gbl_truncate_io_addresses;
 

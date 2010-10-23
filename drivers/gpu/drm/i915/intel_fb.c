@@ -121,7 +121,9 @@ static int intelfb_create(struct intel_fbdev *ifbdev,
 
 	info->par = ifbdev;
 
-	intel_framebuffer_init(dev, &ifbdev->ifb, &mode_cmd, fbo);
+	ret = intel_framebuffer_init(dev, &ifbdev->ifb, &mode_cmd, fbo);
+	if (ret)
+		goto out_unpin;
 
 	fb = &ifbdev->ifb.base;
 
@@ -235,8 +237,10 @@ int intel_fbdev_destroy(struct drm_device *dev,
 	drm_fb_helper_fini(&ifbdev->helper);
 
 	drm_framebuffer_cleanup(&ifb->base);
-	if (ifb->obj)
+	if (ifb->obj) {
 		drm_gem_object_unreference(ifb->obj);
+		ifb->obj = NULL;
+	}
 
 	return 0;
 }

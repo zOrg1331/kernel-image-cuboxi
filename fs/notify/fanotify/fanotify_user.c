@@ -65,7 +65,7 @@ static int create_fd(struct fsnotify_group *group, struct fsnotify_event *event)
 	if (client_fd < 0)
 		return client_fd;
 
-	if (event->data_type != FSNOTIFY_EVENT_FILE) {
+	if (event->data_type != FSNOTIFY_EVENT_PATH) {
 		WARN_ON(1);
 		put_unused_fd(client_fd);
 		return -EINVAL;
@@ -75,8 +75,8 @@ static int create_fd(struct fsnotify_group *group, struct fsnotify_event *event)
 	 * we need a new file handle for the userspace program so it can read even if it was
 	 * originally opened O_WRONLY.
 	 */
-	dentry = dget(event->file->f_path.dentry);
-	mnt = mntget(event->file->f_path.mnt);
+	dentry = dget(event->path.dentry);
+	mnt = mntget(event->path.mnt);
 	/* it's possible this event was an overflow event.  in that case dentry and mnt
 	 * are NULL;  That's fine, just don't call dentry open */
 	if (dentry && mnt)
@@ -195,6 +195,14 @@ static int prepare_for_access_response(struct fsnotify_group *group,
 	re->fd = fd;
 
 	mutex_lock(&group->fanotify_data.access_mutex);
+
+	if (group->fanotify_data.bypass_perm) {
+		mutex_unlock(&group->fanotify_data.access_mutex);
+		kmem_cache_free(fanotify_response_event_cache, re);
+		event->response = FAN_ALLOW;
+		return 0;
+	}
+		
 	list_add_tail(&re->list, &group->fanotify_data.access_list);
 	mutex_unlock(&group->fanotify_data.access_mutex);
 
@@ -364,9 +372,28 @@ static ssize_t fanotify_write(struct file *file, const char __user *buf, size_t 
 static int fanotify_release(struct inode *ignored, struct file *file)
 {
 	struct fsnotify_group *group = file->private_data;
+	struct fanotify_response_event *re, *lre;
 
 	pr_debug("%s: file=%p group=%p\n", __func__, file, group);
 
+#ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
+	mutex_lock(&group->fanotify_data.access_mutex);
+
+	group->fanotify_data.bypass_perm = true;
+
+	list_for_each_entry_safe(re, lre, &group->fanotify_data.access_list, list) {
+		pr_debug("%s: found group=%p re=%p event=%p\n", __func__, group,
+			 re, re->event);
+
+		list_del_init(&re->list);
+		re->event->response = FAN_ALLOW;
+
+		kmem_cache_free(fanotify_response_event_cache, re);
+	}
+	mutex_unlock(&group->fanotify_data.access_mutex);
+
+	wake_up(&group->fanotify_data.access_waitq);
+#endif
 	/* matches the fanotify_init->fsnotify_alloc_group */
 	fsnotify_put_group(group);
 
@@ -406,6 +433,7 @@ static const struct file_operations fanotify_fops = {
 	.release	= fanotify_release,
 	.unlocked_ioctl	= fanotify_ioctl,
 	.compat_ioctl	= fanotify_ioctl,
+	.llseek		= noop_llseek,
 };
 
 static void fanotify_free_mark(struct fsnotify_mark *fsn_mark)
@@ -614,7 +642,7 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 		__func__, flags, event_f_flags);
 
 	if (!capable(CAP_SYS_ADMIN))
-		return -EACCES;
+		return -EPERM;
 
 	if (flags & ~FAN_ALL_INIT_FLAGS)
 		return -EINVAL;
