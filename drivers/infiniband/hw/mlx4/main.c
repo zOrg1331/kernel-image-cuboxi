@@ -217,7 +217,6 @@ static int eth_link_query_port(struct ib_device *ibdev, u8 port,
 {
 	struct mlx4_ib_iboe *iboe = &to_mdev(ibdev)->iboe;
 	struct net_device *ndev;
-	int err = 0;
 	enum ib_mtu tmp;
 
 	props->active_width	= IB_WIDTH_4X;
@@ -237,10 +236,8 @@ static int eth_link_query_port(struct ib_device *ibdev, u8 port,
 	props->active_mtu	= IB_MTU_256;
 	spin_lock(&iboe->lock);
 	ndev = iboe->netdevs[port - 1];
-	if (!ndev) {
-		err = -ENOMEM;
+	if (!ndev)
 		goto out;
-	}
 
 	tmp = iboe_get_mtu(ndev->mtu);
 	props->active_mtu = tmp ? min(props->max_mtu, tmp) : IB_MTU_256;
@@ -251,7 +248,7 @@ static int eth_link_query_port(struct ib_device *ibdev, u8 port,
 
 out:
 	spin_unlock(&iboe->lock);
-	return err;
+	return 0;
 }
 
 static int mlx4_ib_query_port(struct ib_device *ibdev, u8 port,
