@@ -9,14 +9,18 @@
 */
 
 #include <linux/serial_core.h>
+#include <linux/gpio.h>
+#include <linux/mmc/host.h>
+#include <linux/platform_device.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach-types.h>
-#include <asm/hardware/cache-l2x0.h>
 
 #include <plat/regs-serial.h>
 #include <plat/s5pv310.h>
 #include <plat/cpu.h>
+#include <plat/devs.h>
+#include <plat/sdhci.h>
 
 #include <mach/map.h>
 
@@ -65,6 +69,51 @@ static struct s3c2410_uartcfg smdkv310_uartcfgs[] __initdata = {
 	},
 };
 
+static struct s3c_sdhci_platdata smdkv310_hsmmc0_pdata __initdata = {
+	.cd_type		= S3C_SDHCI_CD_GPIO,
+	.ext_cd_gpio		= S5PV310_GPK0(2),
+	.ext_cd_gpio_invert	= 1,
+	.clk_type		= S3C_SDHCI_CLK_DIV_EXTERNAL,
+#ifdef CONFIG_S5PV310_SDHCI_CH0_8BIT
+	.max_width		= 8,
+	.host_caps		= MMC_CAP_8_BIT_DATA,
+#endif
+};
+
+static struct s3c_sdhci_platdata smdkv310_hsmmc1_pdata __initdata = {
+	.cd_type		= S3C_SDHCI_CD_GPIO,
+	.ext_cd_gpio		= S5PV310_GPK0(2),
+	.ext_cd_gpio_invert	= 1,
+	.clk_type		= S3C_SDHCI_CLK_DIV_EXTERNAL,
+};
+
+static struct s3c_sdhci_platdata smdkv310_hsmmc2_pdata __initdata = {
+	.cd_type		= S3C_SDHCI_CD_GPIO,
+	.ext_cd_gpio		= S5PV310_GPK2(2),
+	.ext_cd_gpio_invert	= 1,
+	.clk_type		= S3C_SDHCI_CLK_DIV_EXTERNAL,
+#ifdef CONFIG_S5PV310_SDHCI_CH2_8BIT
+	.max_width		= 8,
+	.host_caps		= MMC_CAP_8_BIT_DATA,
+#endif
+};
+
+static struct s3c_sdhci_platdata smdkv310_hsmmc3_pdata __initdata = {
+	.cd_type		= S3C_SDHCI_CD_GPIO,
+	.ext_cd_gpio		= S5PV310_GPK2(2),
+	.ext_cd_gpio_invert	= 1,
+	.clk_type		= S3C_SDHCI_CLK_DIV_EXTERNAL,
+};
+
+static struct platform_device *smdkv310_devices[] __initdata = {
+	&s3c_device_hsmmc0,
+	&s3c_device_hsmmc1,
+	&s3c_device_hsmmc2,
+	&s3c_device_hsmmc3,
+	&s3c_device_rtc,
+	&s3c_device_wdt,
+};
+
 static void __init smdkv310_map_io(void)
 {
 	s5p_init_io(NULL, 0, S5P_VA_CHIPID);
@@ -74,9 +123,12 @@ static void __init smdkv310_map_io(void)
 
 static void __init smdkv310_machine_init(void)
 {
-#ifdef CONFIG_CACHE_L2X0
-	l2x0_init(S5P_VA_L2CC, 1 << 28, 0xffffffff);
-#endif
+	s3c_sdhci0_set_platdata(&smdkv310_hsmmc0_pdata);
+	s3c_sdhci1_set_platdata(&smdkv310_hsmmc1_pdata);
+	s3c_sdhci2_set_platdata(&smdkv310_hsmmc2_pdata);
+	s3c_sdhci3_set_platdata(&smdkv310_hsmmc3_pdata);
+
+	platform_add_devices(smdkv310_devices, ARRAY_SIZE(smdkv310_devices));
 }
 
 MACHINE_START(SMDKV310, "SMDKV310")
