@@ -1,0 +1,132 @@
+Importing driver-core.current based on 2.6.36
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.36-git5
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 35da7a307c535f9c2929cae277f3df425c9f9b1e
+HEAD is now at 35da7a3 Merge branch 'for-2.6.37/core' of git://git.kernel.dk/linux-2.6-block
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-fix-kconfig-dependencies.patch
+i2c-pca-platform-change-device-name-of-request_irq.patch
+i2c-simplify-i2c_parent_is_i2c_adapter.patch
+i2c-i2c_parent_is_i2c_adapter-returns-parent.patch
+i2c-stop-including-linux-i2c-id-h.patch
+i2c-change-to-new-flag-variable.patch
+i2c-amd8111-add-proper-error-handling.patch
+i2c-drop-warning-on-sysfs-instantiation.patch
+i2c-optimize-function-i2c_detect.patch
+i2c-mux-driver-for-pca9541-i2c-master-selector.patch
+maintainers-add-maintainer-for-pca9541-i2c-bus-master-selector-driver.patch
+i2c-muxes-pca954x-remove-__devinit-and-__devexit-from-probe-and-remove-functions.patch
+i2c-viapro-less-verbose-on-nack.patch
+i2c-i801-add-intel-patsburg-device-id.patch
+error: patch failed: include/linux/pci_ids.h:2444
+error: include/linux/pci_ids.h: patch does not apply
+Context reduced to (1/1) to apply fragment at 101
+Context reduced to (1/1) to apply fragment at 45
+error: patch failed: drivers/i2c/busses/i2c-i801.c:592
+error: drivers/i2c/busses/i2c-i801.c: patch does not apply
+Importing driver-core.current based on 2.6.36
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.36
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.36-git2
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard d4429f608abde89e8bc1e24b43cd503feb95c496
+HEAD is now at d4429f6 Merge branch 'next' of git://git.kernel.org/pub/scm/linux/kernel/git/benh/powerpc
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k8temp-02-remove-superfluous-cpu-family-check.patch
+hwmon-add-tempx_emergency-attribute-to-sysfs-abi.patch
+hwmon-lm90-01-fix-checkpatch-errors.patch
+hwmon-lm90-02-introduce-device-feature-bits.patch
+hwmon-lm90-03-introduce-function-to-delete-sysfs-files.patch
+hwmon-lm90-04-simplify-set_temp11-register-calculations.patch
+hwmon-lm90-05-add-explicit-support-for-max6659.patch
+hwmon-lm90-06-add-support-for-extra-features-of-max6659.patch
+hwmon-lm90-07-add-support-for-max6695-and-max6696.patch
+hwmon-lm90-08-rearrange-code-to-no-longer-require-forward-declarations.patch
+hwmon-lm90-09-introduce-chip-parameter-structure.patch
+hwmon-lm90-10-introduce-capability-flag-to-indicate-broken-alert-functionality.patch
+hwmon-lm90-11-add-support-for-update_interval-sysfs-attribute.patch
+hwmon-lm90-12-add-old-w83l771-support.patch
+hwmon-lm75-01-make-the-writing-to-sysfs-more-robust.patch
+hwmon-lm75-02-trivial-changes-to-pacify-the-checkpatch.patch
+hwmon-s3c-hwmon-01-use-a-real-mutex.patch
+hwmon-s3c-hwmon-02-depend-on-s3c_adc.patch
+hwmon-w83795-01-new-driver.patch
+hwmon-w83795-02-misc-cleanups.patch
+hwmon-w83795-03-drop-duplicate-enum.patch
+hwmon-w83795-04-refactor-bank-selection.patch
+hwmon-w83795-05-improve-detection.patch
+hwmon-w83795-06-refactor-file-removal.patch
+hwmon-w83795-07-refactor-file-creation.patch
+hwmon-w83795-08-merge-file-creation-and-removal.patch
+hwmon-w83795-09-use-2D-arrays-for-attributes.patch
+hwmon-w83795-10-dedicated-arrays-for-pwm-attr.patch
+hwmon-w83795-11-move-target-speed-to-pwm.patch
+hwmon-w83795-12-add-const-markers.patch
+hwmon-w83795-13-conditional-start-mon.patch
+hwmon-w83795-14-fix-vin-gain.patch
+hwmon-w83795-15-cleanup-probe.patch
+hwmon-w83795-16-fix-fan-LSB-readings.patch
+hwmon-w83795-17-support-dynamic-limits-for-in0-2.patch
+hwmon-w83795-18-fix-PWM-duty-cycle-freq-attr.patch
+hwmon-w83795-19-rename-temp-files.patch
+hwmon-w83795-20-fix-handling-of-negative-temperatures.patch
+hwmon-w83795-21-report-peci-tbase.patch
+hwmon-w83795-22-rework-beep_enable.patch
+hwmon-w83795-23-avoid-reading-the-same-register-twice.patch
+hwmon-w83795-24-get-rid-of-VRLSB_SHIFT.patch
+hwmon-w83795-25-fix-parity-checks.patch
+hwmon-w83795-26-drop-REST_VLT-constants.patch
+hwmon-w83795-27-clean-up-num-constants.patch
+hwmon-w83795-28-clean-up-show-store-temp-mode.patch
+hwmon-w83795-29-dont-pre-read-regs-we-will-update.patch
+hwmon-w83795-30-improve-W83795_REG_PWM-efficiency.patch
+hwmon-w83795-31-pack-register-loops.patch
+hwmon-w83795-32-move-register-reads-to-functions.patch
+hwmon-w83795-33-delay-reading-limits.patch
+hwmon-w83795-34-delay-reading-pwm-config.patch
+hwmon-w83795-35-use-dev_get_drvdata-when-possible.patch
+hwmon-w83795-36-fix-in-min-max-LSB-readings.patch
+hwmon-pcf8591-01-register-hwmon.patch
+hwmon-pcf8591-02-dont-detect.patch
+hwmon-move-ams-driver-to-macintosh.patch
+hwmon-i2c-addresses-are-constant.patch
+hwmon-lm85-01-use-right-freq-table-for-ADT7468.patch
+hwmon-lm85-02-document-ADT7468-as-supported.patch
+hwmon-lm85-03-add-high-freq-ADT7468-pwm-mode.patch
+hwmon-remove-many-experimental-flags.patch
+hwmon-it87-01-move-struct-definitions.patch
+hwmon-it87-02-add-IT8721F-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 7f6b8ec...96eeadf master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.36-rc2
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.36-rc7-185-g53eeb64
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
