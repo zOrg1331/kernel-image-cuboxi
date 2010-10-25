@@ -35,6 +35,7 @@
 #ifndef _NFSD4_STATE_H
 #define _NFSD4_STATE_H
 
+#include <linux/sunrpc/svc_xprt.h>
 #include <linux/nfsd/nfsfh.h>
 #include "nfsfh.h"
 
@@ -64,19 +65,12 @@ typedef struct {
 	(s)->si_fileid, \
 	(s)->si_generation
 
-struct nfsd4_cb_sequence {
-	/* args/res */
-	u32			cbs_minorversion;
-	struct nfs4_client	*cbs_clp;
-};
-
-struct nfs4_rpc_args {
-	void				*args_op;
-	struct nfsd4_cb_sequence	args_seq;
-};
-
 struct nfsd4_callback {
-	struct nfs4_rpc_args cb_args;
+	void *cb_op;
+	struct nfs4_client *cb_clp;
+	u32 cb_minorversion;
+	struct rpc_message cb_msg;
+	const struct rpc_call_ops *cb_ops;
 	struct work_struct cb_work;
 };
 
@@ -91,7 +85,6 @@ struct nfs4_delegation {
 	u32			dl_type;
 	time_t			dl_time;
 /* For recall: */
-	u32			dl_ident;
 	stateid_t		dl_stateid;
 	struct knfsd_fh		dl_fh;
 	int			dl_retries;
@@ -160,6 +153,15 @@ struct nfsd4_clid_slot {
 	struct nfsd4_create_session	sl_cr_ses;
 };
 
+struct nfsd4_conn {
+	struct list_head cn_persession;
+	struct svc_xprt *cn_xprt;
+	struct svc_xpt_user cn_xpt_user;
+	struct nfsd4_session *cn_session;
+/* CDFC4_FORE, CDFC4_BACK: */
+	unsigned char cn_flags;
+};
+
 struct nfsd4_session {
 	struct kref		se_ref;
 	struct list_head	se_hash;	/* hash by sessionid */
@@ -169,6 +171,7 @@ struct nfsd4_session {
 	struct nfs4_sessionid	se_sessionid;
 	struct nfsd4_channel_attrs se_fchannel;
 	struct nfsd4_channel_attrs se_bchannel;
+	struct list_head	se_conns;
 	struct nfsd4_slot	*se_slots[];	/* forward channel slots */
 };
 
@@ -224,8 +227,16 @@ struct nfs4_client {
 
 	/* for v4.0 and v4.1 callbacks: */
 	struct nfs4_cb_conn	cl_cb_conn;
+#define NFSD4_CLIENT_CB_UPDATE	1
+#define NFSD4_CLIENT_KILL	2
+	unsigned long		cl_cb_flags;
 	struct rpc_clnt		*cl_cb_client;
+	u32			cl_cb_ident;
 	atomic_t		cl_cb_set;
+	struct nfsd4_callback	cl_cb_null;
+
+	/* for all client information that callback code might need: */
+	spinlock_t		cl_lock;
 
 	/* for nfs41 */
 	struct list_head	cl_sessions;
@@ -445,7 +456,7 @@ extern void nfsd4_do_callback_rpc(struct work_struct *);
 extern void nfsd4_cb_recall(struct nfs4_delegation *dp);
 extern int nfsd4_create_callback_queue(void);
 extern void nfsd4_destroy_callback_queue(void);
-extern void nfsd4_set_callback_client(struct nfs4_client *, struct rpc_clnt *);
+extern void nfsd4_shutdown_callback(struct nfs4_client *);
 extern void nfs4_put_delegation(struct nfs4_delegation *dp);
 extern __be32 nfs4_make_rec_clidname(char *clidname, struct xdr_netobj *clname);
 extern void nfsd4_init_recdir(char *recdir_name);
