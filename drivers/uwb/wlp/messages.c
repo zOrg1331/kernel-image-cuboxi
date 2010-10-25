@@ -713,7 +713,7 @@ static int wlp_build_assoc_d1(struct wlp *wlp, struct wlp_wss *wss,
 	struct sk_buff *_skb;
 	void *d1_itr;
 
-	if (wlp->dev_info == NULL) {
+	if (wlp->wdi == NULL) {
 		result = __wlp_setup_device_info(wlp);
 		if (result < 0) {
 			dev_err(dev, "WLP: Unable to setup device "
@@ -721,7 +721,7 @@ static int wlp_build_assoc_d1(struct wlp *wlp, struct wlp_wss *wss,
 			goto error;
 		}
 	}
-	info = wlp->dev_info;
+	info = wlp->wdi;
 	_skb = dev_alloc_skb(sizeof(*_d1)
 		      + sizeof(struct wlp_attr_uuid_e)
 		      + sizeof(struct wlp_attr_wss_sel_mthd)
@@ -795,7 +795,7 @@ int wlp_build_assoc_d2(struct wlp *wlp, struct wlp_wss *wss,
 	void *d2_itr;
 	size_t mem_needed;
 
-	if (wlp->dev_info == NULL) {
+	if (wlp->wdi == NULL) {
 		result = __wlp_setup_device_info(wlp);
 		if (result < 0) {
 			dev_err(dev, "WLP: Unable to setup device "
@@ -803,7 +803,7 @@ int wlp_build_assoc_d2(struct wlp *wlp, struct wlp_wss *wss,
 			goto error;
 		}
 	}
-	info = wlp->dev_info;
+	info = wlp->wdi;
 	mem_needed = sizeof(*_d2)
 		      + sizeof(struct wlp_attr_uuid_e)
 		      + sizeof(struct wlp_attr_uuid_r)
@@ -971,7 +971,7 @@ error_parse:
  */
 static
 int wlp_get_variable_info(struct wlp *wlp, void *data,
-			  struct wlp_device_info *dev_info, ssize_t len)
+			  struct wlp_device_info *wdi, ssize_t len)
 {
 	struct device *dev = &wlp->rc->uwb_dev.dev;
 	size_t used = 0;
@@ -994,7 +994,7 @@ int wlp_get_variable_info(struct wlp *wlp, void *data,
 				goto error_parse;
 			}
 			result = wlp_get_manufacturer(wlp, data + used,
-						      dev_info->manufacturer,
+						      wdi->manufacturer,
 						      len - used);
 			if (result < 0) {
 				dev_err(dev, "WLP: Unable to obtain "
@@ -1012,7 +1012,7 @@ int wlp_get_variable_info(struct wlp *wlp, void *data,
 				goto error_parse;
 			}
 			result = wlp_get_model_name(wlp, data + used,
-						    dev_info->model_name,
+						    wdi->model_name,
 						    len - used);
 			if (result < 0) {
 				dev_err(dev, "WLP: Unable to obtain Model "
@@ -1029,7 +1029,7 @@ int wlp_get_variable_info(struct wlp *wlp, void *data,
 				goto error_parse;
 			}
 			result = wlp_get_model_nr(wlp, data + used,
-						  dev_info->model_nr,
+						  wdi->model_nr,
 						  len - used);
 			if (result < 0) {
 				dev_err(dev, "WLP: Unable to obtain Model "
@@ -1046,7 +1046,7 @@ int wlp_get_variable_info(struct wlp *wlp, void *data,
 				goto error_parse;
 			}
 			result = wlp_get_serial(wlp, data + used,
-						dev_info->serial, len - used);
+						wdi->serial, len - used);
 			if (result < 0) {
 				dev_err(dev, "WLP: Unable to obtain Serial "
 					"number attribute from D1 message.\n");
@@ -1062,7 +1062,7 @@ int wlp_get_variable_info(struct wlp *wlp, void *data,
 				goto error_parse;
 			}
 			result = wlp_get_prim_dev_type(wlp, data + used,
-						       &dev_info->prim_dev_type,
+						       &wdi->prim_dev_type,
 						       len - used);
 			if (result < 0) {
 				dev_err(dev, "WLP: Unable to obtain Primary "
@@ -1070,10 +1070,10 @@ int wlp_get_variable_info(struct wlp *wlp, void *data,
 					"message.\n");
 				goto error_parse;
 			}
-			dev_info->prim_dev_type.category =
-				le16_to_cpu(dev_info->prim_dev_type.category);
-			dev_info->prim_dev_type.subID =
-				le16_to_cpu(dev_info->prim_dev_type.subID);
+			wdi->prim_dev_type.category =
+				le16_to_cpu(wdi->prim_dev_type.category);
+			wdi->prim_dev_type.subID =
+				le16_to_cpu(wdi->prim_dev_type.subID);
 			last = WLP_ATTR_PRI_DEV_TYPE;
 			used += result;
 			break;
@@ -1099,7 +1099,7 @@ static
 int wlp_parse_d1_frame(struct wlp *wlp, struct sk_buff *skb,
 		       struct wlp_uuid *uuid_e,
 		       enum wlp_wss_sel_mthd *sel_mthd,
-		       struct wlp_device_info *dev_info,
+		       struct wlp_device_info *wdi,
 		       enum wlp_assc_error *assc_err)
 {
 	struct device *dev = &wlp->rc->uwb_dev.dev;
@@ -1124,7 +1124,7 @@ int wlp_parse_d1_frame(struct wlp *wlp, struct sk_buff *skb,
 		goto error_parse;
 	}
 	used += result;
-	result = wlp_get_dev_name(wlp, ptr + used, dev_info->name,
+	result = wlp_get_dev_name(wlp, ptr + used, wdi->name,
 				     len - used);
 	if (result < 0) {
 		dev_err(dev, "WLP: unable to obtain Device Name from D1 "
@@ -1132,7 +1132,7 @@ int wlp_parse_d1_frame(struct wlp *wlp, struct sk_buff *skb,
 		goto error_parse;
 	}
 	used += result;
-	result = wlp_get_variable_info(wlp, ptr + used, dev_info, len - used);
+	result = wlp_get_variable_info(wlp, ptr + used, wdi, len - used);
 	if (result < 0) {
 		dev_err(dev, "WLP: unable to obtain Device Information from "
 			"D1 message.\n");
@@ -1172,15 +1172,15 @@ void wlp_handle_d1_frame(struct work_struct *ws)
 	struct device *dev = &wlp->rc->uwb_dev.dev;
 	struct wlp_uuid uuid_e;
 	enum wlp_wss_sel_mthd sel_mthd = 0;
-	struct wlp_device_info dev_info;
+	struct wlp_device_info wdi;
 	enum wlp_assc_error assc_err;
 	struct sk_buff *resp = NULL;
 
 	/* Parse D1 frame */
 	mutex_lock(&wss->mutex);
 	mutex_lock(&wlp->mutex); /* to access wlp->uuid */
-	memset(&dev_info, 0, sizeof(dev_info));
-	result = wlp_parse_d1_frame(wlp, skb, &uuid_e, &sel_mthd, &dev_info,
+	memset(&wdi, 0, sizeof(wdi));
+	result = wlp_parse_d1_frame(wlp, skb, &uuid_e, &sel_mthd, &wdi,
 				    &assc_err);
 	if (result < 0) {
 		dev_err(dev, "WLP: Unable to parse incoming D1 frame.\n");
