@@ -1674,7 +1674,7 @@ static inline bool do_gro(struct be_adapter *adapter, struct be_rx_obj *rxo,
 	return (tcp_frame && !err) ? true : false;
 }
 
-int be_poll_rx(struct napi_struct *napi, int budget)
+static int be_poll_rx(struct napi_struct *napi, int budget)
 {
 	struct be_eq_obj *rx_eq = container_of(napi, struct be_eq_obj, napi);
 	struct be_rx_obj *rxo = container_of(rx_eq, struct be_rx_obj, rx_eq);
@@ -2299,9 +2299,6 @@ static int be_clear(struct be_adapter *adapter)
 
 
 #define FW_FILE_HDR_SIGN 	"ServerEngines Corp. "
-char flash_cookie[2][16] =	{"*** SE FLAS",
-				"H DIRECTORY *** "};
-
 static bool be_flash_redboot(struct be_adapter *adapter,
 			const u8 *p, u32 img_start, int image_size,
 			int hdr_size)
