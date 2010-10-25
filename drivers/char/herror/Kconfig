@@ -1,0 +1,4 @@
+config HERR_DEV_CORE
+	bool
+	select LLIST
+	select LLALLOC
