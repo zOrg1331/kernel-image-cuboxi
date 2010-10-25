@@ -388,6 +388,7 @@ int __cpuinit register_sh_pmu(struct sh_pmu *_pmu)
 	pr_info("Performance Events: %s support registered\n", _pmu->name);
 
 	WARN_ON(_pmu->num_events > MAX_HWEVENTS);
+	perf_max_events = _pmu->num_events;
 
 	perf_pmu_register(&pmu);
 	perf_cpu_notifier(sh_pmu_notifier);
