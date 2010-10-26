@@ -175,6 +175,9 @@ cifs_reconnect(struct TCP_Server_Info *server)
 	}
 	server->sequence_number = 0;
 	server->session_estab = false;
+	kfree(server->session_key.response);
+	server->session_key.response = NULL;
+	server->session_key.len = 0;
 
 	spin_lock(&GlobalMid_Lock);
 	list_for_each(tmp, &server->pending_mid_q) {
@@ -1064,7 +1067,7 @@ cifs_parse_mount_options(char *options, const char *devname,
 			}
 			i = cifs_convert_address((struct sockaddr *)&vol->srcaddr,
 						 value, strlen(value));
-			if (i < 0) {
+			if (i == 0) {
 				printk(KERN_WARNING "CIFS:  Could not parse"
 				       " srcaddr: %s\n",
 				       value);
@@ -1560,7 +1563,12 @@ cifs_put_tcp_session(struct TCP_Server_Info *server)
 	server->tcpStatus = CifsExiting;
 	spin_unlock(&GlobalMid_Lock);
 
+	cifs_crypto_shash_release(server);
 	cifs_fscache_release_client_cookie(server);
+
+	kfree(server->session_key.response);
+	server->session_key.response = NULL;
+	server->session_key.len = 0;
 
 	task = xchg(&server->tsk, NULL);
 	if (task)
@@ -1614,10 +1622,16 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
 		goto out_err;
 	}
 
+	rc = cifs_crypto_shash_allocate(tcp_ses);
+	if (rc) {
+		cERROR(1, "could not setup hash structures rc %d", rc);
+		goto out_err;
+	}
+
 	tcp_ses->hostname = extract_hostname(volume_info->UNC);
 	if (IS_ERR(tcp_ses->hostname)) {
 		rc = PTR_ERR(tcp_ses->hostname);
-		goto out_err;
+		goto out_err2;
 	}
 
 	tcp_ses->noblocksnd = volume_info->noblocksnd;
@@ -1661,7 +1675,7 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
 	}
 	if (rc < 0) {
 		cERROR(1, "Error connecting to socket. Aborting operation");
-		goto out_err;
+		goto out_err2;
 	}
 
 	/*
@@ -1675,7 +1689,7 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
 		rc = PTR_ERR(tcp_ses->tsk);
 		cERROR(1, "error %d create cifsd thread", rc);
 		module_put(THIS_MODULE);
-		goto out_err;
+		goto out_err2;
 	}
 
 	/* thread spawned, put it on the list */
@@ -1686,6 +1700,9 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
 	cifs_fscache_get_client_cookie(tcp_ses);
 
 	return tcp_ses;
+
+out_err2:
+	cifs_crypto_shash_release(tcp_ses);
 
 out_err:
 	if (tcp_ses) {
@@ -3178,10 +3195,11 @@ int cifs_setup_session(unsigned int xid, struct cifsSesInfo *ses,
 	} else {
 		mutex_lock(&ses->server->srv_mutex);
 		if (!server->session_estab) {
-			memcpy(&server->session_key.data,
-				&ses->auth_key.data, ses->auth_key.len);
+			server->session_key.response = ses->auth_key.response;
 			server->session_key.len = ses->auth_key.len;
-			ses->server->session_estab = true;
+			server->sequence_number = 0x2;
+			server->session_estab = true;
+			ses->auth_key.response = NULL;
 		}
 		mutex_unlock(&server->srv_mutex);
 
@@ -3191,6 +3209,10 @@ int cifs_setup_session(unsigned int xid, struct cifsSesInfo *ses,
 		ses->need_reconnect = false;
 		spin_unlock(&GlobalMid_Lock);
 	}
+
+	kfree(ses->auth_key.response);
+	ses->auth_key.response = NULL;
+	ses->auth_key.len = 0;
 
 	return rc;
 }
