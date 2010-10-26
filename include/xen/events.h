@@ -12,6 +12,7 @@ int bind_evtchn_to_irqhandler(unsigned int evtchn,
 			      irq_handler_t handler,
 			      unsigned long irqflags, const char *devname,
 			      void *dev_id);
+int bind_virq_to_irq(unsigned int virq, unsigned int cpu);
 int bind_virq_to_irqhandler(unsigned int virq, unsigned int cpu,
 			    irq_handler_t handler,
 			    unsigned long irqflags, const char *devname,
@@ -71,6 +72,13 @@ void xen_hvm_evtchn_do_upcall(void);
  * GSIs are identity mapped; others are dynamically allocated as
  * usual. */
 int xen_allocate_pirq(unsigned gsi, int shareable, char *name);
+int xen_map_pirq_gsi(unsigned pirq, unsigned gsi, int shareable, char *name);
+
+#ifdef CONFIG_PCI_MSI
+/* Allocate an irq and a pirq to be used with MSIs. */
+void xen_allocate_pirq_msi(char *name, int *irq, int *pirq);
+int xen_create_msi_irq(struct pci_dev *dev, struct msi_desc *msidesc, int type);
+#endif
 
 /* De-allocates the above mentioned physical interrupt. */
 int xen_destroy_irq(int irq);
