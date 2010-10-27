@@ -633,7 +633,8 @@ static int fanotify_add_inode_mark(struct fsnotify_group *group,
 }
 
 /* fanotify syscalls */
-SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
+SYSCALL_DEFINE3(fanotify_init, unsigned int, flags, unsigned int, event_f_flags,
+		unsigned int, priority)
 {
 	struct fsnotify_group *group;
 	int f_flags, fd;
@@ -664,6 +665,7 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 	init_waitqueue_head(&group->fanotify_data.access_waitq);
 	INIT_LIST_HEAD(&group->fanotify_data.access_list);
 #endif
+	group->priority = priority;
 
 	fd = anon_inode_getfd("[fanotify]", &fanotify_fops, group, f_flags);
 	if (fd < 0)
