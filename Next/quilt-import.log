@@ -1,0 +1,109 @@
+Importing driver-core.current based on 2.6.36
+Unchanged quilt series driver-core.current
+Importing tty.current based on quilt/driver-core.current
+Unchanged quilt series tty.current
+Importing usb.current based on quilt/tty.current
+Unchanged quilt series usb.current
+Importing staging.current based on quilt/usb.current
+Unchanged quilt series staging.current
+Importing i2c based on 2.6.36-git8
+	quilt series is empty
+$ git update-ref refs/heads/quilt/i2c b18cae4224bde7e5a332c19bc99247b2098ea232
+Importing jdelvare-hwmon based on 2.6.36-git8
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard b18cae4224bde7e5a332c19bc99247b2098ea232
+HEAD is now at b18cae4 Merge branch 'for-next' of git://android.git.kernel.org/kernel/tegra
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-k8temp-02-remove-superfluous-cpu-family-check.patch
+hwmon-add-tempx_emergency-attribute-to-sysfs-abi.patch
+hwmon-lm90-01-fix-checkpatch-errors.patch
+hwmon-lm90-02-introduce-device-feature-bits.patch
+hwmon-lm90-03-introduce-function-to-delete-sysfs-files.patch
+hwmon-lm90-04-simplify-set_temp11-register-calculations.patch
+hwmon-lm90-05-add-explicit-support-for-max6659.patch
+hwmon-lm90-06-add-support-for-extra-features-of-max6659.patch
+hwmon-lm90-07-add-support-for-max6695-and-max6696.patch
+hwmon-lm90-08-rearrange-code-to-no-longer-require-forward-declarations.patch
+hwmon-lm90-09-introduce-chip-parameter-structure.patch
+hwmon-lm90-10-introduce-capability-flag-to-indicate-broken-alert-functionality.patch
+hwmon-lm90-11-add-support-for-update_interval-sysfs-attribute.patch
+hwmon-lm90-12-add-old-w83l771-support.patch
+hwmon-lm75-01-make-the-writing-to-sysfs-more-robust.patch
+hwmon-lm75-02-trivial-changes-to-pacify-the-checkpatch.patch
+hwmon-s3c-hwmon-01-use-a-real-mutex.patch
+hwmon-s3c-hwmon-02-depend-on-s3c_adc.patch
+hwmon-w83795-01-new-driver.patch
+hwmon-w83795-02-misc-cleanups.patch
+hwmon-w83795-03-drop-duplicate-enum.patch
+hwmon-w83795-04-refactor-bank-selection.patch
+hwmon-w83795-05-improve-detection.patch
+hwmon-w83795-06-refactor-file-removal.patch
+hwmon-w83795-07-refactor-file-creation.patch
+hwmon-w83795-08-merge-file-creation-and-removal.patch
+hwmon-w83795-09-use-2D-arrays-for-attributes.patch
+hwmon-w83795-10-dedicated-arrays-for-pwm-attr.patch
+hwmon-w83795-11-move-target-speed-to-pwm.patch
+hwmon-w83795-12-add-const-markers.patch
+hwmon-w83795-13-conditional-start-mon.patch
+hwmon-w83795-14-fix-vin-gain.patch
+hwmon-w83795-15-cleanup-probe.patch
+hwmon-w83795-16-fix-fan-LSB-readings.patch
+hwmon-w83795-17-support-dynamic-limits-for-in0-2.patch
+hwmon-w83795-18-fix-PWM-duty-cycle-freq-attr.patch
+hwmon-w83795-19-rename-temp-files.patch
+hwmon-w83795-20-fix-handling-of-negative-temperatures.patch
+hwmon-w83795-21-report-peci-tbase.patch
+hwmon-w83795-22-rework-beep_enable.patch
+hwmon-w83795-23-avoid-reading-the-same-register-twice.patch
+hwmon-w83795-24-get-rid-of-VRLSB_SHIFT.patch
+hwmon-w83795-25-fix-parity-checks.patch
+hwmon-w83795-26-drop-REST_VLT-constants.patch
+hwmon-w83795-27-clean-up-num-constants.patch
+hwmon-w83795-28-clean-up-show-store-temp-mode.patch
+hwmon-w83795-29-dont-pre-read-regs-we-will-update.patch
+hwmon-w83795-30-improve-W83795_REG_PWM-efficiency.patch
+hwmon-w83795-31-pack-register-loops.patch
+hwmon-w83795-32-move-register-reads-to-functions.patch
+hwmon-w83795-33-delay-reading-limits.patch
+hwmon-w83795-34-delay-reading-pwm-config.patch
+hwmon-w83795-35-use-dev_get_drvdata-when-possible.patch
+hwmon-w83795-36-fix-in-min-max-LSB-readings.patch
+hwmon-pcf8591-01-register-hwmon.patch
+hwmon-pcf8591-02-dont-detect.patch
+hwmon-move-ams-driver-to-macintosh.patch
+hwmon-i2c-addresses-are-constant.patch
+hwmon-lm85-01-use-right-freq-table-for-ADT7468.patch
+hwmon-lm85-02-document-ADT7468-as-supported.patch
+hwmon-lm85-03-add-high-freq-ADT7468-pwm-mode.patch
+hwmon-remove-many-experimental-flags.patch
+hwmon-it87-01-move-struct-definitions.patch
+hwmon-it87-02-add-IT8721F-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + bbd7095...7ce4517 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.36-git6
+$ cd ../quilt-tmp
+$ git reset --hard 229aebb873e29726b91e076161649cf45154b0bf
+HEAD is now at 229aebb Merge branch 'for-next' of git://git.kernel.org/pub/scm/linux/kernel/git/jikos/trivial
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+docbook-add-wait-completion.patch
+docbook-kernel-api-add-idr.patch
+docs-sysrq-keys9.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+   76be97c..b1d4a1f  master     -> quilt/kernel-doc
+Importing rr based on v2.6.36-rc7-185-g53eeb64
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+Unchanged quilt series driver-core
+Importing tty based on quilt/driver-core
+Unchanged quilt series tty
+Importing usb based on quilt/tty
+Unchanged quilt series usb
