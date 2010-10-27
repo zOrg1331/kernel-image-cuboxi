@@ -23,8 +23,10 @@
 /* flags used for fanotify_init() */
 #define FAN_CLOEXEC		0x00000001
 #define FAN_NONBLOCK		0x00000002
+#define FAN_UNLIMITED_QUEUE	0x00000004
 
-#define FAN_ALL_INIT_FLAGS	(FAN_CLOEXEC | FAN_NONBLOCK)
+#define FAN_ALL_INIT_FLAGS	(FAN_CLOEXEC | FAN_NONBLOCK | \
+				 FAN_UNLIMITED_QUEUE)
 
 /* flags used for fanotify_modify_mark() */
 #define FAN_MARK_ADD		0x00000001
