@@ -36,7 +36,16 @@
 	tst	\rd, #0x04
 	beq	1001b
 	.endm
+#else
+	.macro	addruart, rp, rv
+	.endm
+
+	.macro	senduart,rd,rx
+	.endm
+
+	.macro	waituart,rd,rx
+	.endm
+#endif
 
 	.macro	busyuart,rd,rx
 	.endm
-#endif
