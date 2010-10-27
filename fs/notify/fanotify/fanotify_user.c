@@ -16,6 +16,8 @@
 
 #include <asm/ioctls.h>
 
+#define FANOTIFY_DEFAULT_MAX_EVENTS	16384
+
 extern const struct fsnotify_ops fanotify_fsnotify_ops;
 
 static struct kmem_cache *fanotify_mark_cache __read_mostly;
@@ -676,6 +678,7 @@ SYSCALL_DEFINE3(fanotify_init, unsigned int, flags, unsigned int, event_f_flags,
 	INIT_LIST_HEAD(&group->fanotify_data.access_list);
 #endif
 	group->priority = priority;
+	group->max_events = FANOTIFY_DEFAULT_MAX_EVENTS;
 
 	fd = anon_inode_getfd("[fanotify]", &fanotify_fops, group, f_flags);
 	if (fd < 0)
