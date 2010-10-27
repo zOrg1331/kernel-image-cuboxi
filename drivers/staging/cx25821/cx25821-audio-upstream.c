@@ -609,7 +609,7 @@ static irqreturn_t cx25821_upstream_irq_audio(int irq, void *dev_id)
 		return -1;
 
 	sram_ch = dev->channels[dev->_audio_upstream_channel_select].
-				       sram_channels;
+					sram_channels;
 
 	msk_stat = cx_read(sram_ch->int_mstat);
 	audio_status = cx_read(sram_ch->int_stat);
@@ -766,6 +766,7 @@ int cx25821_audio_upstream_init(struct cx25821_dev *dev, int channel_select)
 		/* Default if filename is empty string */
 		if (strcmp(dev->input_audiofilename, "") == 0)
 			dev->_audiofilename = "/root/audioGOOD.wav";
+
 	} else {
 		str_length = strlen(_defaultAudioName);
 		dev->_audiofilename = kmalloc(str_length + 1, GFP_KERNEL);
