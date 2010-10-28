@@ -265,17 +265,17 @@ static struct mem_type mem_types[] = {
 		.domain    = DOMAIN_KERNEL,
 	},
 	[MT_MEMORY_DTCM] = {
-		.prot_pte	= L_PTE_PRESENT | L_PTE_YOUNG |
-		                  L_PTE_DIRTY | L_PTE_WRITE,
-		.prot_l1	= PMD_TYPE_TABLE,
-		.prot_sect	= PMD_TYPE_SECT | PMD_SECT_XN,
-		.domain		= DOMAIN_KERNEL,
+		.prot_pte  = L_PTE_PRESENT | L_PTE_YOUNG | L_PTE_DIRTY |
+				L_PTE_WRITE,
+		.prot_l1   = PMD_TYPE_TABLE,
+		.prot_sect = PMD_TYPE_SECT | PMD_SECT_XN,
+		.domain    = DOMAIN_KERNEL,
 	},
 	[MT_MEMORY_ITCM] = {
 		.prot_pte  = L_PTE_PRESENT | L_PTE_YOUNG | L_PTE_DIRTY |
-				L_PTE_USER | L_PTE_EXEC,
+				L_PTE_WRITE | L_PTE_EXEC,
 		.prot_l1   = PMD_TYPE_TABLE,
-		.domain    = DOMAIN_IO,
+		.domain    = DOMAIN_KERNEL,
 	},
 };
 
@@ -745,13 +745,11 @@ static int __init early_vmalloc(char *arg)
 }
 early_param("vmalloc", early_vmalloc);
 
-phys_addr_t lowmem_end_addr;
-
 static void __init sanity_check_meminfo(void)
 {
 	int i, j, highmem = 0;
 
-	lowmem_end_addr = __pa(vmalloc_min - 1) + 1;
+	memblock_set_current_limit(__pa(vmalloc_min - 1) + 1);
 
 	for (i = 0, j = 0; i < meminfo.nr_banks; i++) {
 		struct membank *bank = &meminfo.bank[j];
