@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.35
-Release: alt7
+Release: alt8
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -348,6 +348,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Fri Oct 29 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.35-alt8
+- 2.6.35.8
+
 * Wed Oct 13 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.35-alt7
 - 2.6.35.7
 
