@@ -388,7 +388,5 @@ void __init xen_arch_setup(void)
 
 	pm_idle = xen_idle;
 
-	paravirt_disable_iospace();
-
 	fiddle_vdso();
 }
