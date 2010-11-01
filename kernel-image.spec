@@ -1,6 +1,6 @@
 Name: kernel-image-xen-dom0
 Version: 2.6.32
-Release: alt24.1
+Release: alt25
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -502,6 +502,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Mon Nov 01 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt25
+- merge jeremy/xen/stable-2.6.32.x (2.6.32.25 + xen patches)
+
 * Wed Oct 06 2010 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt24.1
 - pv_ops kernel from jeremy (linux/kernel/git/jeremy/xen.git)
 
