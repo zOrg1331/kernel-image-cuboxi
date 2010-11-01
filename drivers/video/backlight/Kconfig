@@ -306,6 +306,11 @@ config BACKLIGHT_PCF50633
 	help
 	  If you have a backlight driven by a NXP PCF50633 MFD, say Y here to
 	  enable its driver.
+config BACKLIGHT_NVIDIA
+	tristate "Backlight driver for Nvidia"
+	depends on MFD_88PM860X
+	help
+	  Say Y to enable the backlight driver for Nvidia.
 
 endif # BACKLIGHT_CLASS_DEVICE
 
