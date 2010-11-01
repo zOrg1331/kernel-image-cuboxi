@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.35
-Release: alt7
+Release: alt8
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -636,6 +636,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Mon Nov 01 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt8
+- 2.6.35.8
+- add nvidia backlight support
+
 * Thu Oct 14 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt7
 - 2.6.35.7
 - Add  xen domU kernel
