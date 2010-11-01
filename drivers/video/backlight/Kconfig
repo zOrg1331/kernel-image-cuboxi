@@ -309,7 +309,7 @@ config BACKLIGHT_PCF50633
 
 config BACKLIGHT_NVIDIA
 	tristate "Backlight driver for Nvidia"
-	depends on MFD_88PM860X
+	depends on BACKLIGHT_CLASS_DEVICE
 	help
 	  Say Y to enable the backlight driver for Nvidia.
 
