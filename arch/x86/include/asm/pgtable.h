@@ -15,7 +15,6 @@
 	 : (prot))
 
 #ifndef __ASSEMBLY__
-
 /*
  * ZERO_PAGE is a global shared page that is always zero: used
  * for zero-mapped memory areas etc..
@@ -25,6 +24,8 @@ extern unsigned long empty_zero_page[PAGE_SIZE / sizeof(unsigned long)];
 
 extern spinlock_t pgd_lock;
 extern struct list_head pgd_list;
+
+extern struct mm_struct *pgd_page_get_mm(struct page *page);
 
 #ifdef CONFIG_PARAVIRT
 #include <asm/paravirt.h>

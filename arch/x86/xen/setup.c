@@ -18,6 +18,7 @@
 #include <asm/xen/hypervisor.h>
 #include <asm/xen/hypercall.h>
 
+#include <xen/xen.h>
 #include <xen/page.h>
 #include <xen/interface/callback.h>
 #include <xen/interface/memory.h>
@@ -53,20 +54,19 @@ phys_addr_t xen_extra_mem_start, xen_extra_mem_size;
 static __init void xen_add_extra_mem(unsigned long pages)
 {
 	u64 size = (u64)pages * PAGE_SIZE;
+	u64 extra_start = xen_extra_mem_start + xen_extra_mem_size;
 
 	if (!pages)
 		return;
 
-	e820_add_region(xen_extra_mem_start + xen_extra_mem_size, size, E820_RAM);
+	e820_add_region(extra_start, size, E820_RAM);
 	sanitize_e820_map(e820.map, ARRAY_SIZE(e820.map), &e820.nr_map);
 
-	reserve_early(xen_extra_mem_start + xen_extra_mem_size,
-		      xen_extra_mem_start + xen_extra_mem_size + size,
-		      "XEN EXTRA");
+	reserve_early(extra_start, extra_start + size, "XEN EXTRA");
 
 	xen_extra_mem_size += size;
 
-	xen_max_p2m_pfn = PFN_DOWN(xen_extra_mem_start + xen_extra_mem_size);
+	xen_max_p2m_pfn = PFN_DOWN(extra_start + size);
 }
 
 static unsigned long __init xen_release_chunk(phys_addr_t start_addr,
@@ -87,6 +87,11 @@ static unsigned long __init xen_release_chunk(phys_addr_t start_addr,
 
 	if (end <= start)
 		return 0;
+
+	if (end < PFN_DOWN(ISA_END_ADDRESS))
+		return 0;
+	if (start < PFN_DOWN(ISA_END_ADDRESS))
+		start = PFN_DOWN(ISA_END_ADDRESS);
 
 	printk(KERN_INFO "xen_release_chunk: looking at area pfn %lx-%lx: ",
 	       start, end);
@@ -164,6 +169,7 @@ char * __init xen_memory_setup(void)
 		XENMEM_memory_map;
 	rc = HYPERVISOR_memory_op(op, &memmap);
 	if (rc == -ENOSYS) {
+		BUG_ON(xen_initial_domain());
 		memmap.nr_entries = 1;
 		map[0].addr = 0ULL;
 		map[0].size = mem_end;
@@ -180,27 +186,34 @@ char * __init xen_memory_setup(void)
 		unsigned long long end = map[i].addr + map[i].size;
 
 		if (map[i].type == E820_RAM) {
-			if (end > mem_end) {
+			if (map[i].addr < mem_end && end > mem_end) {
 				/* Truncate region to max_mem. */
-				map[i].size -= end - mem_end;
+				u64 delta = end - mem_end;
 
-				extra_pages += PFN_DOWN(end - mem_end);
+				map[i].size -= delta;
+				extra_pages += PFN_DOWN(delta);
+
+				end = mem_end;
 			}
-		} else if (map[i].type != E820_RAM)
+		}
+
+		if (end > xen_extra_mem_start)
 			xen_extra_mem_start = end;
 
+		/* If region is non-RAM or below mem_end, add what remains */
 		if ((map[i].type != E820_RAM || map[i].addr < mem_end) &&
 		    map[i].size > 0)
 			e820_add_region(map[i].addr, map[i].size, map[i].type);
 	}
 
 	/*
-	 * Even though this is normal, usable memory under Xen, reserve
-	 * ISA memory anyway because too many things think they can poke
+	 * In domU, the ISA region is normal, usable memory, but we
+	 * reserve ISA memory anyway because too many things poke
 	 * about in there.
 	 *
-	 * In a dom0 kernel, this region is identity mapped with the
-	 * hardware ISA area, so it really is out of bounds.
+	 * In Dom0, the host E820 information can leave gaps in the
+	 * ISA range, which would cause us to release those pages.  To
+	 * avoid this, we unconditionally reserve them here.
 	 */
 	e820_add_region(ISA_START_ADDRESS, ISA_END_ADDRESS - ISA_START_ADDRESS,
 			E820_RESERVED);
