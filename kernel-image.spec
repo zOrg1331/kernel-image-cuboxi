@@ -18,7 +18,7 @@ Release: alt1
 
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.3
+%define kgcc_version	4.4
 
 # Enable/disable several parts of kernel
 %def_disable docs
@@ -137,7 +137,6 @@ still useful for some hardware, if the corresponding PATA drivers do
 not work well.
 
 Install this package only if you really need it.
-
 
 %package -n kernel-modules-alsa-%flavour
 Summary: The Advanced Linux Sound Architecture modules
