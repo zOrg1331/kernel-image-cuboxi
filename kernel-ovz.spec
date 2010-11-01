@@ -12,8 +12,8 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab070
-%define ovzrel 7
+%define ovzver 028stab077
+%define ovzrel 1
 
 %if !%{buildup}
 %define _without_up 1
@@ -5283,12 +5283,10 @@ Patch91002: linux-hp-dmi-info-correct.patch
 Patch91003: diff-nfs-rpcsaddr
 
 # Bells and whistles
-Patch100000: diff-fs-fsync-enable-rh5-20080131
 Patch100001: diff-ms-devleak-dstdebug-20080504
 Patch100002: diff-ipv4-dumpbaddst-20080929
 Patch100003: diff-ipv4-reliable-dst-garbage-20080929
 Patch100004: diff-ve-moreleaks-20090829
-Patch100010: diff-ms-nfssync-20081118
 Patch100014: diff-ms-devleaktime-20081111
 Patch100016: diff-rh-cifs-disable-posix-extensons-by-default-20090304
 Patch100017: diff-ms-32bitHW-kernel-panic-string
@@ -5300,11 +5298,7 @@ Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100028: diff-rh-bond802.3ad-slave-speed-20100421
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
-Patch100030: diff-cfq-iosched-zero-async-queue-after-put-20100817
-Patch100032: diff-bc-cfq-fix-preemption-logic
-Patch100033: diff-ve-net-ipforward-lro-fix-oops
-Patch100034: diff-venet-stat-tx_dropped-account-20100910
-Patch100035: diff-ve-vzevent-fix-reboot-detection
+Patch100036: diff-ubc-debug-sock-orphan-acct
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -10389,12 +10383,10 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch91002 -p1
 %patch91003 -p1
 
-%patch100000 -p1
 %patch100001 -p1
 %patch100002 -p1
 %patch100003 -p1
 %patch100004 -p1
-%patch100010 -p1
 %patch100014 -p1
 %patch100016 -p1
 %patch100017 -p1
@@ -10406,11 +10398,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100027 -p1
 %patch100028 -p1
 %patch100029 -p1
-%patch100030 -p1
-%patch100032 -p1
-%patch100033 -p1
-%patch100034 -p1
-%patch100035 -p1
+%patch100036 -p1
 
 %patch101000 -p1
 %patch101001 -p1
