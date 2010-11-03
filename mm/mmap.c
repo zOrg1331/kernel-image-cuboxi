@@ -28,6 +28,7 @@
 #include <linux/rmap.h>
 #include <linux/mmu_notifier.h>
 #include <linux/perf_event.h>
+#include <linux/audit.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
@@ -1108,6 +1109,7 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 	unsigned long retval = -EBADF;
 
 	if (!(flags & MAP_ANONYMOUS)) {
+		audit_mmap_fd(fd, flags);
 		if (unlikely(flags & MAP_HUGETLB))
 			return -EINVAL;
 		file = fget(fd);
@@ -2009,6 +2011,7 @@ static int __split_vma(struct mm_struct * mm, struct vm_area_struct * vma,
 			removed_exe_file_vma(mm);
 		fput(new->vm_file);
 	}
+	unlink_anon_vmas(new);
  out_free_mpol:
 	mpol_put(pol);
  out_free_vma:

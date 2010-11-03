@@ -110,6 +110,7 @@ static const struct file_operations pm_qos_power_fops = {
 	.write = pm_qos_power_write,
 	.open = pm_qos_power_open,
 	.release = pm_qos_power_release,
+	.llseek = noop_llseek,
 };
 
 /* unlocked internal variant */
@@ -389,14 +390,16 @@ static ssize_t pm_qos_power_write(struct file *filp, const char __user *buf,
 	} else if (count == 11) { /* len('0x12345678/0') */
 		if (copy_from_user(ascii_value, buf, 11))
 			return -EFAULT;
+		if (strlen(ascii_value) != 10)
+			return -EINVAL;
 		x = sscanf(ascii_value, "%x", &value);
 		if (x != 1)
 			return -EINVAL;
-		pr_debug(KERN_ERR "%s, %d, 0x%x\n", ascii_value, x, value);
+		pr_debug("%s, %d, 0x%x\n", ascii_value, x, value);
 	} else
 		return -EINVAL;
 
-	pm_qos_req = (struct pm_qos_request_list *)filp->private_data;
+	pm_qos_req = filp->private_data;
 	pm_qos_update_request(pm_qos_req, value);
 
 	return count;
