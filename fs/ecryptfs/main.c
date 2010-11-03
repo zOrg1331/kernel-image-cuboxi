@@ -36,6 +36,7 @@
 #include <linux/parser.h>
 #include <linux/fs_stack.h>
 #include <linux/slab.h>
+#include <linux/magic.h>
 #include "ecryptfs_kernel.h"
 
 /**
@@ -520,6 +521,7 @@ static int ecryptfs_read_super(struct super_block *sb, const char *dev_name)
 	ecryptfs_set_superblock_lower(sb, path.dentry->d_sb);
 	sb->s_maxbytes = path.dentry->d_sb->s_maxbytes;
 	sb->s_blocksize = path.dentry->d_sb->s_blocksize;
+	sb->s_magic = ECRYPTFS_SUPER_MAGIC;
 	ecryptfs_set_dentry_lower(sb->s_root, path.dentry);
 	ecryptfs_set_dentry_lower_mnt(sb->s_root, path.mnt);
 	rc = ecryptfs_interpose(path.dentry, sb->s_root, sb, 0);
