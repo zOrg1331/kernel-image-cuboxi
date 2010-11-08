@@ -89,4 +89,7 @@ int xen_vector_from_irq(unsigned pirq);
 /* Return gsi allocated to pirq */
 int xen_gsi_from_irq(unsigned pirq);
 
+/* Determine whether to ignore this IRQ if passed to a guest. */
+int xen_ignore_irq(int irq);
+
 #endif	/* _XEN_EVENTS_H */
