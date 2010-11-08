@@ -445,7 +445,7 @@ int xen_find_device_domain_owner(struct pci_dev *dev)
 	spin_unlock(&dev_domain_list_spinlock);
 	return domain;
 }
-EXPORT_SYMBOL(xen_find_device_domain_owner);
+EXPORT_SYMBOL_GPL(xen_find_device_domain_owner);
 
 int xen_register_device_domain_owner(struct pci_dev *dev, uint16_t domain)
 {
@@ -467,7 +467,7 @@ int xen_register_device_domain_owner(struct pci_dev *dev, uint16_t domain)
 	spin_unlock(&dev_domain_list_spinlock);
 	return 0;
 }
-EXPORT_SYMBOL(xen_register_device_domain_owner);
+EXPORT_SYMBOL_GPL(xen_register_device_domain_owner);
 
 int xen_unregister_device_domain_owner(struct pci_dev *dev)
 {
@@ -484,4 +484,4 @@ int xen_unregister_device_domain_owner(struct pci_dev *dev)
 	kfree(owner);
 	return 0;
 }
-EXPORT_SYMBOL(xen_unregister_device_domain_owner);
+EXPORT_SYMBOL_GPL(xen_unregister_device_domain_owner);
