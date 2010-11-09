@@ -14,6 +14,7 @@
 #include <linux/mman.h>
 #include <linux/nodemask.h>
 #include <linux/memblock.h>
+#include <linux/sort.h>
 #include <linux/fs.h>
 
 #include <asm/cputype.h>
