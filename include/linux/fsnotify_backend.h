@@ -168,6 +168,7 @@ struct fsnotify_group {
 			wait_queue_head_t access_waitq;
 			bool bypass_perm; /* protected by access_mutex */
 #endif /* CONFIG_FANOTIFY_ACCESS_PERMISSIONS */
+			bool readonly_fallback;
 			int f_flags;
 			unsigned int max_marks;
 			struct user_struct *user;
