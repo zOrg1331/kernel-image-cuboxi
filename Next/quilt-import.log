@@ -1,0 +1,66 @@
+Importing driver-core.current based on 2.6.37-rc1
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core.current c8ddb2713c624f432fa5fe3c7ecffcdda46ea0d4
+Importing tty.current based on quilt/driver-core.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty.current c8ddb2713c624f432fa5fe3c7ecffcdda46ea0d4
+Importing usb.current based on quilt/tty.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb.current c8ddb2713c624f432fa5fe3c7ecffcdda46ea0d4
+Importing staging.current based on quilt/usb.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/staging.current c8ddb2713c624f432fa5fe3c7ecffcdda46ea0d4
+Importing i2c based on 2.6.37-rc1-git5
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 151f52f09c5728ecfdd0c289da1a4b30bb416f2c
+HEAD is now at 151f52f ipw2x00: remove the right /proc/net entry
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-id-01-delete-unused-adapter-ids.patch
+i2c-id-02-drivers-dont-include-i2c-id-h.patch
+i2c-id-03-deprecate-adapter-id-field.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+   8128057..67398cf  master     -> quilt/i2c
+Importing jdelvare-hwmon based on 2.6.37-rc1-git5
+$ cd ../quilt-tmp
+$ git reset --hard 151f52f09c5728ecfdd0c289da1a4b30bb416f2c
+HEAD is now at 151f52f ipw2x00: remove the right /proc/net entry
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-change-mail-address-of-hans-j-koch.patch
+hwmon-lm95241-check-validity-of-input-values.patch
+hwmon-w83795-01-fix-pwm_enable.patch
+hwmon-w83795-02-add-pwm_mode.patch
+hwmon-w83795-03-list-all-usable-temp-sources.patch
+hwmon-w83795-04-sources-show-actual-temp-channels.patch
+hwmon-w83795-05-fix-intrusion-alarm-behavior.patch
+hwmon-w83795-06-clear-intrusion-immediately.patch
+hwmon-w83795-07-check-if-beeping-is-enabled.patch
+hwmon-adm9240-implement-standard-intrusion-detection-interface.patch
+hwmon-w83792d-implement-standard-intrusion-detection-interface.patch
+hwmon-w83793-implement-standard-intrusion-detection-interface.patch
+hwmon-schedule-removal-old-intrusion-detection-interface.patch
+Context reduced to (2/0) to apply fragment at 555
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + dd466ca...c1426f3 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.36-git6
+	quilt series is empty
+$ git update-ref refs/heads/quilt/kernel-doc 229aebb873e29726b91e076161649cf45154b0bf
+Importing rr based on v2.6.36-rc7-185-g53eeb64
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
+Importing aoe based on v2.6.31-rc9
+Unchanged quilt series aoe
+Importing driver-core based on quilt/staging.current
+	quilt series is empty
+$ git update-ref refs/heads/quilt/driver-core c8ddb2713c624f432fa5fe3c7ecffcdda46ea0d4
+Importing tty based on quilt/driver-core
+	quilt series is empty
+$ git update-ref refs/heads/quilt/tty c8ddb2713c624f432fa5fe3c7ecffcdda46ea0d4
+Importing usb based on quilt/tty
+	quilt series is empty
+$ git update-ref refs/heads/quilt/usb c8ddb2713c624f432fa5fe3c7ecffcdda46ea0d4
