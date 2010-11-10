@@ -25,18 +25,18 @@ static int cpu_silicon_rev = -1;
 static int get_mx51_srev(u32 rev)
 {
 	if (rev == 0x0)
-		cpu_silicon_rev = MX51_CHIP_REV_2_0;
+		cpu_silicon_rev = IMX_CHIP_REVISION_2_0;
 	else if (rev == 0x10)
-		cpu_silicon_rev = MX51_CHIP_REV_3_0;
+		cpu_silicon_rev = IMX_CHIP_REVISION_3_0;
 	return 0;
 }
 
 static int get_mx53_srev(u32 rev)
 {
 	if (rev == 0x0)
-		cpu_silicon_rev = MX53_CHIP_REV_1_0;
+		cpu_silicon_rev = IMX_CHIP_REVISION_1_0;
 	else if (rev == 0x10)
-		cpu_silicon_rev = MX51_CHIP_REV_2_0;
+		cpu_silicon_rev = IMX_CHIP_REVISION_2_0;
 	return 0;
 }
 
@@ -88,7 +88,7 @@ static int __init mx51_neon_fixup(void)
 	if (!cpu_is_mx51())
 		return 0;
 
-	if (mx51_revision() < MX51_CHIP_REV_3_0 && (elf_hwcap & HWCAP_NEON)) {
+	if (mx51_revision() < IMX_CHIP_REVISION_3_0 && (elf_hwcap & HWCAP_NEON)) {
 		elf_hwcap &= ~HWCAP_NEON;
 		pr_info("Turning off NEON support, detected broken NEON implementation\n");
 	}
