@@ -14,6 +14,9 @@
 #define	m5307sim_h
 /****************************************************************************/
 
+#define	CPU_NAME		"COLDFIRE(m5307)"
+#define	CPU_INSTR_PER_JIFFY	3
+
 /*
  *	Define the 5307 SIM register set addresses.
  */
@@ -92,6 +95,17 @@
 
 #define	MCFSIM_PADDR		(MCF_MBAR + 0x244)
 #define	MCFSIM_PADAT		(MCF_MBAR + 0x248)
+
+/*
+ *  UART module.
+ */
+#if defined(CONFIG_NETtel) || defined(CONFIG_SECUREEDGEMP3)
+#define MCFUART_BASE1		0x200           /* Base address of UART1 */
+#define MCFUART_BASE2		0x1c0           /* Base address of UART2 */
+#else
+#define MCFUART_BASE1		0x1c0           /* Base address of UART1 */
+#define MCFUART_BASE2		0x200           /* Base address of UART2 */
+#endif
 
 /*
  * Generic GPIO support
