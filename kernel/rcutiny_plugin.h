@@ -293,9 +293,17 @@ static int rcu_boost(void)
  * the current grace period, and, if so, tell the rcu_kthread_task to
  * start boosting them.  If there is an expedited boost in progress,
  * we wait for it to complete.
+ *
+ * If there are no blocked readers blocking the current grace period,
+ * return 0 to let the caller know, otherwise return 1.  Note that this
+ * return value is independent of whether or not boosting was done.
  */
-static void rcu_initiate_boost(void)
+static int rcu_initiate_boost(void)
 {
+	if (!rcu_preempt_blocked_readers_cgp()) {
+		RCU_TRACE(rcu_preempt_ctrlblk.n_normal_balk_blkd_tasks++);
+		return 0;
+	}
 	if (rcu_preempt_ctrlblk.gp_tasks != NULL &&
 	    rcu_preempt_ctrlblk.boost_tasks == NULL &&
 	    rcu_preempt_ctrlblk.boosted_this_gp == 0 &&
@@ -305,6 +313,7 @@ static void rcu_initiate_boost(void)
 		RCU_TRACE(rcu_preempt_ctrlblk.n_normal_boosts++);
 	} else
 		RCU_TRACE(rcu_initiate_boost_trace());
+	return 1;
 }
 
 /*
@@ -349,10 +358,13 @@ static int rcu_boost(void)
 }
 
 /*
- * If there is no RCU priority boosting, we don't initiate boosting.
+ * If there is no RCU priority boosting, we don't initiate boosting,
+ * but we do indicate whether there are blocked readers blocking the
+ * current grace period.
  */
-static void rcu_initiate_boost(void)
+static int rcu_initiate_boost(void)
 {
+	return rcu_preempt_blocked_readers_cgp();
 }
 
 /*
@@ -401,12 +413,12 @@ static void rcu_preempt_cpu_qs(void)
 	/* If there is no GP then there is nothing more to do.  */
 	if (!rcu_preempt_gp_in_progress())
 		return;
-	/* If there are blocked readers, go check up on boosting. */
-	if (rcu_preempt_blocked_readers_cgp()) {
-		rcu_initiate_boost();
+	/*
+	 * Check up on boosting.  If there are no readers blocking the
+	 * current grace period, leave.
+	 */
+	if (rcu_initiate_boost())
 		return;
-	} else
-		RCU_TRACE(rcu_preempt_ctrlblk.n_normal_balk_blkd_tasks++);
 
 	/* Advance callbacks. */
 	rcu_preempt_ctrlblk.completed = rcu_preempt_ctrlblk.gpnum;
