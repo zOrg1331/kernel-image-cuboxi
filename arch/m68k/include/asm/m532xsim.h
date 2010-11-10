@@ -9,6 +9,9 @@
 #define	m532xsim_h
 /****************************************************************************/
 
+#define	CPU_NAME		"COLDFIRE(m532x)"
+#define	CPU_INSTR_PER_JIFFY	3
+
 #define MCF_REG32(x) (*(volatile unsigned long  *)(x))
 #define MCF_REG16(x) (*(volatile unsigned short *)(x))
 #define MCF_REG08(x) (*(volatile unsigned char  *)(x))
@@ -99,6 +102,13 @@
 #define	ACR_CM_OFF_PRE		(2<<5)
 #define	ACR_CM_OFF_IMP		(3<<5)
 #define	ACR_WPROTECT		(1<<2)
+
+/*
+ *  UART module.
+ */
+#define MCFUART_BASE1		0xFC060000	/* Base address of UART1 */
+#define MCFUART_BASE2		0xFC064000	/* Base address of UART2 */
+#define MCFUART_BASE3		0xFC068000	/* Base address of UART3 */
 
 /*********************************************************************
  *
