@@ -20,9 +20,13 @@
 #include <wlc_cfg.h>
 #include <qmath.h>
 #include <osl.h>
-#include <linuxver.h>
+#include <linux/pci.h>
 #include <siutils.h>
 #include <hndpmu.h>
+
+#include <bcmdevs.h>
+#include <sbhndpio.h>
+#include <sbhnddma.h>
 
 #include <wlc_phy_radio.h>
 #include <wlc_phy_int.h>
