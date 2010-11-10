@@ -7,6 +7,7 @@ config SOC_IMX1
 	select CPU_ARM920T
 	select IMX_HAVE_DMA_V1
 	select IMX_HAVE_IOMUX_V1
+	select MXC_AVIC
 	bool
 
 comment "MX1 platforms:"
@@ -36,6 +37,7 @@ config SOC_IMX21
 	select ARCH_MXC_AUDMUX_V1
 	select IMX_HAVE_DMA_V1
 	select IMX_HAVE_IOMUX_V1
+	select MXC_AVIC
 	bool
 
 config SOC_IMX27
@@ -43,6 +45,7 @@ config SOC_IMX27
 	select ARCH_MXC_AUDMUX_V1
 	select IMX_HAVE_DMA_V1
 	select IMX_HAVE_IOMUX_V1
+	select MXC_AVIC
 	bool
 
 choice
