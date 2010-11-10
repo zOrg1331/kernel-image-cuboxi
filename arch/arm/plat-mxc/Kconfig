@@ -25,6 +25,7 @@ config ARCH_MX25
 	select ARCH_MXC_IOMUX_V3
 	select HAVE_FB_IMX
 	select ARCH_MXC_AUDMUX_V2
+	select MXC_AVIC
 	help
 	  This enables support for systems based on the Freescale i.MX25 family
 
@@ -68,12 +69,10 @@ config MXC_IRQ_PRIOR
 	  Say N here, unless you have a specialized requirement.
 
 config MXC_TZIC
-	bool "Enable TrustZone Interrupt Controller"
-	depends on ARCH_MX51
-	help
-	  This will be automatically selected for all processors
-	  containing this interrupt controller.
-	  Say N here only if you are really sure.
+	bool
+
+config MXC_AVIC
+	bool
 
 config MXC_PWM
 	tristate "Enable PWM driver"

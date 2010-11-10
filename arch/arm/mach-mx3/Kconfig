@@ -3,6 +3,7 @@ if ARCH_MX3
 config ARCH_MX31
 	select ARCH_HAS_RNGA
 	select ARCH_MXC_AUDMUX_V2
+	select MXC_AVIC
 	bool
 
 config ARCH_MX35
@@ -10,6 +11,7 @@ config ARCH_MX35
 	select ARCH_MXC_IOMUX_V3
 	select ARCH_MXC_AUDMUX_V2
 	select HAVE_EPIT
+	select MXC_AVIC
 
 comment "MX3 platforms:"
 
