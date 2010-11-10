@@ -119,10 +119,6 @@ bool amd_iommu_dump;
 
 static int __initdata amd_iommu_detected;
 
-/* original values for gart fallback on initialization failure */
-static int __initdata __gart_iommu_aperture_disabled;
-static int __initdata __gart_iommu_aperture;
-
 u16 amd_iommu_last_bdf;			/* largest PCI device id we have
 					   to handle */
 LIST_HEAD(amd_iommu_unity_map);		/* a list of required unity mappings
@@ -138,11 +134,6 @@ bool amd_iommu_unmap_flush;		/* if true, flush on every unmap */
 
 LIST_HEAD(amd_iommu_list);		/* list of all AMD IOMMUs in the
 					   system */
-
-/*
- * Set to true if ACPI table parsing and hardware intialization went properly
- */
-static bool amd_iommu_initialized;
 
 /*
  * Pointer to the device table which is shared by all AMD IOMMUs
@@ -288,12 +279,8 @@ static u8 * __init iommu_map_mmio_space(u64 address)
 {
 	u8 *ret;
 
-	if (!request_mem_region(address, MMIO_REGION_LENGTH, "amd_iommu")) {
-		pr_err("AMD-Vi: Can not reserve memory region %llx for mmio\n",
-			address);
-		pr_err("AMD-Vi: This is a BIOS bug. Please complain to your hardware vendor\n");
+	if (!request_mem_region(address, MMIO_REGION_LENGTH, "amd_iommu"))
 		return NULL;
-	}
 
 	ret = ioremap_nocache(address, MMIO_REGION_LENGTH);
 	if (ret != NULL)
@@ -442,7 +429,7 @@ static u8 * __init alloc_command_buffer(struct amd_iommu *iommu)
 	if (cmd_buf == NULL)
 		return NULL;
 
-	iommu->cmd_buf_size = CMD_BUFFER_SIZE | CMD_BUFFER_UNINITIALIZED;
+	iommu->cmd_buf_size = CMD_BUFFER_SIZE;
 
 	return cmd_buf;
 }
@@ -478,13 +465,12 @@ static void iommu_enable_command_buffer(struct amd_iommu *iommu)
 		    &entry, sizeof(entry));
 
 	amd_iommu_reset_cmd_buffer(iommu);
-	iommu->cmd_buf_size &= ~(CMD_BUFFER_UNINITIALIZED);
 }
 
 static void __init free_command_buffer(struct amd_iommu *iommu)
 {
 	free_pages((unsigned long)iommu->cmd_buf,
-		   get_order(iommu->cmd_buf_size & ~(CMD_BUFFER_UNINITIALIZED)));
+		   get_order(iommu->cmd_buf_size));
 }
 
 /* allocates the memory where the IOMMU will log its events to */
@@ -927,8 +913,6 @@ static int __init init_iommu_all(struct acpi_table_header *table)
 	}
 	WARN_ON(p != end);
 
-	amd_iommu_initialized = true;
-
 	return 0;
 }
 
@@ -941,7 +925,7 @@ static int __init init_iommu_all(struct acpi_table_header *table)
  *
  ****************************************************************************/
 
-static int iommu_setup_msi(struct amd_iommu *iommu)
+static int __init iommu_setup_msi(struct amd_iommu *iommu)
 {
 	int r;
 
@@ -1279,9 +1263,6 @@ int __init amd_iommu_init(void)
 	if (acpi_table_parse("IVRS", init_iommu_all) != 0)
 		goto free;
 
-	if (!amd_iommu_initialized)
-		goto free;
-
 	if (acpi_table_parse("IVRS", init_memory_definitions) != 0)
 		goto free;
 
@@ -1293,19 +1274,12 @@ int __init amd_iommu_init(void)
 	if (ret)
 		goto free;
 
-	enable_iommus();
-
 	if (iommu_pass_through)
 		ret = amd_iommu_init_passthrough();
 	else
 		ret = amd_iommu_init_dma_ops();
-
 	if (ret)
-		goto disable;
-
-	amd_iommu_init_api();
-
-	amd_iommu_init_notifier();
+		goto free;
 
 	enable_iommus();
 
@@ -1326,8 +1300,6 @@ int __init amd_iommu_init(void)
 out:
 	return ret;
 
-disable:
-	disable_iommus();
 free:
 	free_pages((unsigned long)amd_iommu_pd_alloc_bitmap,
 		   get_order(MAX_DOMAIN_ID/8));
@@ -1347,15 +1319,6 @@ free:
 	free_iommu_all();
 
 	free_unity_maps();
-
-#ifdef CONFIG_GART_IOMMU
-	/*
-	 * We failed to initialize the AMD IOMMU - try fallback to GART
-	 * if possible.
-	 */
-	gart_iommu_aperture_disabled = __gart_iommu_aperture_disabled;
-	gart_iommu_aperture = __gart_iommu_aperture;
-#endif
 
 	goto out;
 }
@@ -1382,20 +1345,13 @@ void __init amd_iommu_detect(void)
 	if (swiotlb || no_iommu || (iommu_detected && !gart_iommu_aperture))
 		return;
 
-	if (iommu_pass_through)
-		swiotlb_force = 1;
-
 	if (acpi_table_parse("IVRS", early_amd_iommu_detect) == 0) {
 		iommu_detected = 1;
 		amd_iommu_detected = 1;
 #ifdef CONFIG_GART_IOMMU
-		__gart_iommu_aperture_disabled = gart_iommu_aperture_disabled;
-		__gart_iommu_aperture = gart_iommu_aperture;
 		gart_iommu_aperture_disabled = 1;
 		gart_iommu_aperture = 0;
 #endif
-		/* Make sure ACS will be enabled */
-		pci_request_acs();
 	}
 }
 

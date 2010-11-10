@@ -625,6 +625,9 @@ static int usb_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
 	struct usb_device *usb_dev;
 
+	/* driver is often null here; dev_dbg() would oops */
+	pr_debug("usb %s: uevent\n", dev_name(dev));
+
 	if (is_usb_device(dev)) {
 		usb_dev = to_usb_device(dev);
 	} else if (is_usb_interface(dev)) {
@@ -636,7 +639,6 @@ static int usb_uevent(struct device *dev, struct kobj_uevent_env *env)
 	}
 
 	if (usb_dev->devnum < 0) {
-		/* driver is often null here; dev_dbg() would oops */
 		pr_debug("usb %s: already deleted?\n", dev_name(dev));
 		return -ENODEV;
 	}
@@ -1571,21 +1573,6 @@ void usb_autopm_put_interface_async(struct usb_interface *intf)
 			__func__, status, atomic_read(&intf->pm_usage_cnt));
 }
 EXPORT_SYMBOL_GPL(usb_autopm_put_interface_async);
-
-/**
- * usb_device_autosuspend_enable - enable autosuspend on a device
- * @udev: the usb_device to be autosuspended
- *
- * This routine should be called by an interface driver when it knows that
- * the device in question supports USB autosuspend.
- *
- */
-void usb_device_autosuspend_enable(struct usb_device *udev)
-{
-	udev->autosuspend_disabled = 0;
-	udev->autoresume_disabled = 0;
-}
-EXPORT_SYMBOL_GPL(usb_device_autosuspend_enable);
 
 /**
  * usb_autopm_get_interface - increment a USB interface's PM-usage counter

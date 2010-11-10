@@ -24,7 +24,6 @@
 #include <linux/err.h>
 #include <linux/slab.h>
 #include <linux/ctype.h>
-#include <linux/string.h>
 
 #if 0
 #define DEBUGP printk
@@ -123,7 +122,9 @@ static char *next_arg(char *args, char **param, char **val)
 		next = args + i;
 
 	/* Chew up trailing spaces. */
-	return skip_spaces(next);
+	while (isspace(*next))
+		next++;
+	return next;
 }
 
 /* Args looks like "foo=bar,bar2 baz=fuz wiz". */
@@ -138,7 +139,8 @@ int parse_args(const char *name,
 	DEBUGP("Parsing ARGS: %s\n", args);
 
 	/* Chew leading spaces */
-	args = skip_spaces(args);
+	while (isspace(*args))
+		args++;
 
 	while (*args) {
 		int ret;
@@ -723,7 +725,7 @@ static ssize_t module_attr_store(struct kobject *kobj,
 	return ret;
 }
 
-static const struct sysfs_ops module_sysfs_ops = {
+static struct sysfs_ops module_sysfs_ops = {
 	.show = module_attr_show,
 	.store = module_attr_store,
 };

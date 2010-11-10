@@ -196,8 +196,7 @@ int udp_lib_get_port(struct sock *sk, unsigned short snum,
 			 */
 			do {
 				if (low <= snum && snum <= high &&
-				    !test_bit(snum / UDP_HTABLE_SIZE, bitmap) &&
-				    !inet_is_reserved_local_port(snum))
+				    !test_bit(snum / UDP_HTABLE_SIZE, bitmap))
 					goto found;
 				snum += rand;
 			} while (snum != first);
@@ -983,7 +982,7 @@ try_again:
 		UDP_INC_STATS_USER(sock_net(sk),
 				UDP_MIB_INDATAGRAMS, is_udplite);
 
-	sock_recv_ts_and_drops(msg, sk, skb);
+	sock_recv_timestamp(msg, sk, skb);
 
 	/* Copy the address. */
 	if (sin) {

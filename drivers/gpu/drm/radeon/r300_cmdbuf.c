@@ -990,7 +990,7 @@ static inline int r300_emit_r500fp(drm_radeon_private_t *dev_priv,
 	int sz;
 	int addr;
 	int type;
-	int isclamp;
+	int clamp;
 	int stride;
 	RING_LOCALS;
 
@@ -999,10 +999,10 @@ static inline int r300_emit_r500fp(drm_radeon_private_t *dev_priv,
 	addr = ((header.r500fp.adrhi_flags & 1) << 8) | header.r500fp.adrlo;
 
 	type = !!(header.r500fp.adrhi_flags & R500FP_CONSTANT_TYPE);
-	isclamp = !!(header.r500fp.adrhi_flags & R500FP_CONSTANT_CLAMP);
+	clamp = !!(header.r500fp.adrhi_flags & R500FP_CONSTANT_CLAMP);
 
 	addr |= (type << 16);
-	addr |= (isclamp << 17);
+	addr |= (clamp << 17);
 
 	stride = type ? 4 : 6;
 

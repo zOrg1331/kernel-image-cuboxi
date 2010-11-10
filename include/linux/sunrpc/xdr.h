@@ -1,10 +1,7 @@
 /*
- * XDR standard data types and function declarations
+ * include/linux/sunrpc/xdr.h
  *
  * Copyright (C) 1995-1997 Olaf Kirch <okir@monad.swb.de>
- *
- * Based on:
- *   RFC 4506 "XDR: External Data Representation Standard", May 2006
  */
 
 #ifndef _SUNRPC_XDR_H_
@@ -65,6 +62,7 @@ struct xdr_buf {
 
 	unsigned int	buflen,		/* Total length of storage buffer */
 			len;		/* Length of XDR encoded message */
+
 };
 
 /*
@@ -180,7 +178,7 @@ struct xdr_array2_desc {
 };
 
 extern int xdr_decode_array2(struct xdr_buf *buf, unsigned int base,
-			     struct xdr_array2_desc *desc);
+                             struct xdr_array2_desc *desc);
 extern int xdr_encode_array2(struct xdr_buf *buf, unsigned int base,
 			     struct xdr_array2_desc *desc);
 

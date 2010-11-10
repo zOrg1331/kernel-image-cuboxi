@@ -87,8 +87,7 @@ bad_inode:
 	return ERR_PTR(err);
 }
 
-static int hfsplus_write_inode(struct inode *inode,
-		struct writeback_control *wbc)
+static int hfsplus_write_inode(struct inode *inode, int unused)
 {
 	struct hfsplus_vh *vhdr;
 	int ret = 0;

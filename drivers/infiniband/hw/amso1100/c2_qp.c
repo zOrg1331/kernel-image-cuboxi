@@ -798,10 +798,8 @@ int c2_post_send(struct ib_qp *ibqp, struct ib_send_wr *ib_wr,
 	u8 actual_sge_count;
 	u32 msg_size;
 
-	if (qp->state > IB_QPS_RTS) {
-		err = -EINVAL;
-		goto out;
-	}
+	if (qp->state > IB_QPS_RTS)
+		return -EINVAL;
 
 	while (ib_wr) {
 
@@ -932,7 +930,6 @@ int c2_post_send(struct ib_qp *ibqp, struct ib_send_wr *ib_wr,
 		ib_wr = ib_wr->next;
 	}
 
-out:
 	if (err)
 		*bad_wr = ib_wr;
 	return err;
@@ -947,10 +944,8 @@ int c2_post_receive(struct ib_qp *ibqp, struct ib_recv_wr *ib_wr,
 	unsigned long lock_flags;
 	int err = 0;
 
-	if (qp->state > IB_QPS_RTS) {
-		err = -EINVAL;
-		goto out;
-	}
+	if (qp->state > IB_QPS_RTS)
+		return -EINVAL;
 
 	/*
 	 * Try and post each work request
@@ -1003,7 +998,6 @@ int c2_post_receive(struct ib_qp *ibqp, struct ib_recv_wr *ib_wr,
 		ib_wr = ib_wr->next;
 	}
 
-out:
 	if (err)
 		*bad_wr = ib_wr;
 	return err;

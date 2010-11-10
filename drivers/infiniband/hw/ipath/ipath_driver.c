@@ -39,7 +39,6 @@
 #include <linux/delay.h>
 #include <linux/netdevice.h>
 #include <linux/vmalloc.h>
-#include <linux/bitmap.h>
 
 #include "ipath_kernel.h"
 #include "ipath_verbs.h"
@@ -1698,7 +1697,7 @@ void ipath_chg_pioavailkernel(struct ipath_devdata *dd, unsigned start,
 			      unsigned len, int avail)
 {
 	unsigned long flags;
-	unsigned end, cnt = 0;
+	unsigned end, cnt = 0, next;
 
 	/* There are two bits per send buffer (busy and generation) */
 	start *= 2;
@@ -1749,7 +1748,12 @@ void ipath_chg_pioavailkernel(struct ipath_devdata *dd, unsigned start,
 
 	if (dd->ipath_pioupd_thresh) {
 		end = 2 * (dd->ipath_piobcnt2k + dd->ipath_piobcnt4k);
-		cnt = bitmap_weight(dd->ipath_pioavailkernel, end);
+		next = find_first_bit(dd->ipath_pioavailkernel, end);
+		while (next < end) {
+			cnt++;
+			next = find_next_bit(dd->ipath_pioavailkernel, end,
+					next + 1);
+		}
 	}
 	spin_unlock_irqrestore(&ipath_pioavail_lock, flags);
 

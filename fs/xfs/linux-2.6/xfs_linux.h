@@ -40,6 +40,7 @@
 #include <sv.h>
 #include <time.h>
 
+#include <support/ktrace.h>
 #include <support/debug.h>
 #include <support/uuid.h>
 

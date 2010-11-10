@@ -133,8 +133,6 @@ out:
 	return rc;
 }
 
-static void css_sch_todo(struct work_struct *work);
-
 static struct subchannel *
 css_alloc_subchannel(struct subchannel_id schid)
 {
@@ -149,7 +147,6 @@ css_alloc_subchannel(struct subchannel_id schid)
 		kfree(sch);
 		return ERR_PTR(ret);
 	}
-	INIT_WORK(&sch->todo_work, css_sch_todo);
 	return sch;
 }
 
@@ -192,51 +189,6 @@ void css_sch_device_unregister(struct subchannel *sch)
 	mutex_unlock(&sch->reg_mutex);
 }
 EXPORT_SYMBOL_GPL(css_sch_device_unregister);
-
-static void css_sch_todo(struct work_struct *work)
-{
-	struct subchannel *sch;
-	enum sch_todo todo;
-
-	sch = container_of(work, struct subchannel, todo_work);
-	/* Find out todo. */
-	spin_lock_irq(sch->lock);
-	todo = sch->todo;
-	CIO_MSG_EVENT(4, "sch_todo: sch=0.%x.%04x, todo=%d\n", sch->schid.ssid,
-		      sch->schid.sch_no, todo);
-	sch->todo = SCH_TODO_NOTHING;
-	spin_unlock_irq(sch->lock);
-	/* Perform todo. */
-	if (todo == SCH_TODO_UNREG)
-		css_sch_device_unregister(sch);
-	/* Release workqueue ref. */
-	put_device(&sch->dev);
-}
-
-/**
- * css_sched_sch_todo - schedule a subchannel operation
- * @sch: subchannel
- * @todo: todo
- *
- * Schedule the operation identified by @todo to be performed on the slow path
- * workqueue. Do nothing if another operation with higher priority is already
- * scheduled. Needs to be called with subchannel lock held.
- */
-void css_sched_sch_todo(struct subchannel *sch, enum sch_todo todo)
-{
-	CIO_MSG_EVENT(4, "sch_todo: sched sch=0.%x.%04x todo=%d\n",
-		      sch->schid.ssid, sch->schid.sch_no, todo);
-	if (sch->todo >= todo)
-		return;
-	/* Get workqueue ref. */
-	if (!get_device(&sch->dev))
-		return;
-	sch->todo = todo;
-	if (!queue_work(slow_path_wq, &sch->todo_work)) {
-		/* Already queued, release workqueue ref. */
-		put_device(&sch->dev);
-	}
-}
 
 static void ssd_from_pmcw(struct chsc_ssd_info *ssd, struct pmcw *pmcw)
 {
@@ -424,8 +376,8 @@ static int css_evaluate_new_subchannel(struct subchannel_id schid, int slow)
 		/* Unusable - ignore. */
 		return 0;
 	}
-	CIO_MSG_EVENT(4, "event: sch 0.%x.%04x, new\n", schid.ssid,
-		      schid.sch_no);
+	CIO_MSG_EVENT(4, "Evaluating schid 0.%x.%04x, event %d, unknown, "
+			 "slow path.\n", schid.ssid, schid.sch_no, CIO_OPER);
 
 	return css_probe_device(schid);
 }
@@ -441,10 +393,6 @@ static int css_evaluate_known_subchannel(struct subchannel *sch, int slow)
 			dev_dbg(&sch->dev,
 				"Got subchannel machine check but "
 				"no sch_event handler provided.\n");
-	}
-	if (ret != 0 && ret != -EAGAIN) {
-		CIO_MSG_EVENT(2, "eval: sch 0.%x.%04x, rc=%d\n",
-			      sch->schid.ssid, sch->schid.sch_no, ret);
 	}
 	return ret;
 }
@@ -736,7 +684,6 @@ static int __init setup_css(int nr)
 	css->pseudo_subchannel->dev.parent = &css->device;
 	css->pseudo_subchannel->dev.release = css_subchannel_release;
 	dev_set_name(&css->pseudo_subchannel->dev, "defunct");
-	mutex_init(&css->pseudo_subchannel->reg_mutex);
 	ret = cio_create_sch_lock(css->pseudo_subchannel);
 	if (ret) {
 		kfree(css->pseudo_subchannel);
@@ -869,10 +816,15 @@ static int __init css_bus_init(void)
 
 	/* Try to enable MSS. */
 	ret = chsc_enable_facility(CHSC_SDA_OC_MSS);
-	if (ret)
-		max_ssid = 0;
-	else /* Success. */
+	switch (ret) {
+	case 0: /* Success. */
 		max_ssid = __MAX_SSID;
+		break;
+	case -ENOMEM:
+		goto out;
+	default:
+		max_ssid = 0;
+	}
 
 	ret = slow_subchannel_init();
 	if (ret)
@@ -1019,11 +971,6 @@ static int __init channel_subsystem_init_sync(void)
 	return bus_for_each_drv(&css_bus_type, NULL, NULL, css_settle);
 }
 subsys_initcall_sync(channel_subsystem_init_sync);
-
-void channel_subsystem_reinit(void)
-{
-	chsc_enable_facility(CHSC_SDA_OC_MSS);
-}
 
 int sch_is_pseudo_sch(struct subchannel *sch)
 {

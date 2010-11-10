@@ -1,5 +1,5 @@
-#ifndef __PERF_PARSE_OPTIONS_H
-#define __PERF_PARSE_OPTIONS_H
+#ifndef PARSE_OPTIONS_H
+#define PARSE_OPTIONS_H
 
 enum parse_opt_type {
 	/* special types */
@@ -174,4 +174,4 @@ extern int parse_opt_verbosity_cb(const struct option *, const char *, int);
 
 extern const char *parse_options_fix_filename(const char *prefix, const char *file);
 
-#endif /* __PERF_PARSE_OPTIONS_H */
+#endif

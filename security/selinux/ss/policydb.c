@@ -177,21 +177,6 @@ out_free_role:
 	goto out;
 }
 
-static u32 rangetr_hash(struct hashtab *h, const void *k)
-{
-	const struct range_trans *key = k;
-	return (key->source_type + (key->target_type << 3) +
-		(key->target_class << 5)) & (h->size - 1);
-}
-
-static int rangetr_cmp(struct hashtab *h, const void *k1, const void *k2)
-{
-	const struct range_trans *key1 = k1, *key2 = k2;
-	return (key1->source_type != key2->source_type ||
-		key1->target_type != key2->target_type ||
-		key1->target_class != key2->target_class);
-}
-
 /*
  * Initialize a policy database structure.
  */
@@ -217,10 +202,6 @@ static int policydb_init(struct policydb *p)
 
 	rc = cond_policydb_init(p);
 	if (rc)
-		goto out_free_symtab;
-
-	p->range_tr = hashtab_create(rangetr_hash, rangetr_cmp, 256);
-	if (!p->range_tr)
 		goto out_free_symtab;
 
 	ebitmap_init(&p->policycaps);
@@ -427,20 +408,6 @@ static void symtab_hash_eval(struct symtab *s)
 		       info.slots_used, h->size, info.max_chain_len);
 	}
 }
-
-static void rangetr_hash_eval(struct hashtab *h)
-{
-	struct hashtab_info info;
-
-	hashtab_stat(h, &info);
-	printk(KERN_DEBUG "SELinux: rangetr:  %d entries and %d/%d buckets used, "
-	       "longest chain length %d\n", h->nel,
-	       info.slots_used, h->size, info.max_chain_len);
-}
-#else
-static inline void rangetr_hash_eval(struct hashtab *h)
-{
-}
 #endif
 
 /*
@@ -645,17 +612,6 @@ static int (*destroy_f[SYM_NUM]) (void *key, void *datum, void *datap) =
 	cat_destroy,
 };
 
-static int range_tr_destroy(void *key, void *datum, void *p)
-{
-	struct mls_range *rt = datum;
-	kfree(key);
-	ebitmap_destroy(&rt->level[0].cat);
-	ebitmap_destroy(&rt->level[1].cat);
-	kfree(datum);
-	cond_resched();
-	return 0;
-}
-
 static void ocontext_destroy(struct ocontext *c, int i)
 {
 	context_destroy(&c->context[0]);
@@ -676,6 +632,7 @@ void policydb_destroy(struct policydb *p)
 	int i;
 	struct role_allow *ra, *lra = NULL;
 	struct role_trans *tr, *ltr = NULL;
+	struct range_trans *rt, *lrt = NULL;
 
 	for (i = 0; i < SYM_NUM; i++) {
 		cond_resched();
@@ -736,14 +693,27 @@ void policydb_destroy(struct policydb *p)
 	}
 	kfree(lra);
 
-	hashtab_map(p->range_tr, range_tr_destroy, NULL);
-	hashtab_destroy(p->range_tr);
+	for (rt = p->range_tr; rt; rt = rt->next) {
+		cond_resched();
+		if (lrt) {
+			ebitmap_destroy(&lrt->target_range.level[0].cat);
+			ebitmap_destroy(&lrt->target_range.level[1].cat);
+			kfree(lrt);
+		}
+		lrt = rt;
+	}
+	if (lrt) {
+		ebitmap_destroy(&lrt->target_range.level[0].cat);
+		ebitmap_destroy(&lrt->target_range.level[1].cat);
+		kfree(lrt);
+	}
 
 	if (p->type_attr_map) {
 		for (i = 0; i < p->p_types.nprim; i++)
 			ebitmap_destroy(&p->type_attr_map[i]);
 	}
 	kfree(p->type_attr_map);
+	kfree(p->undefined_perms);
 	ebitmap_destroy(&p->policycaps);
 	ebitmap_destroy(&p->permissive_map);
 
@@ -1670,40 +1640,6 @@ static int policydb_bounds_sanity_check(struct policydb *p)
 
 extern int ss_initialized;
 
-u16 string_to_security_class(struct policydb *p, const char *name)
-{
-	struct class_datum *cladatum;
-
-	cladatum = hashtab_search(p->p_classes.table, name);
-	if (!cladatum)
-		return 0;
-
-	return cladatum->value;
-}
-
-u32 string_to_av_perm(struct policydb *p, u16 tclass, const char *name)
-{
-	struct class_datum *cladatum;
-	struct perm_datum *perdatum = NULL;
-	struct common_datum *comdatum;
-
-	if (!tclass || tclass > p->p_classes.nprim)
-		return 0;
-
-	cladatum = p->class_val_to_struct[tclass-1];
-	comdatum = cladatum->comdatum;
-	if (comdatum)
-		perdatum = hashtab_search(comdatum->permissions.table,
-					  name);
-	if (!perdatum)
-		perdatum = hashtab_search(cladatum->permissions.table,
-					  name);
-	if (!perdatum)
-		return 0;
-
-	return 1U << (perdatum->value-1);
-}
-
 /*
  * Read the configuration data from a policy database binary
  * representation file into a policy database structure.
@@ -1720,8 +1656,7 @@ int policydb_read(struct policydb *p, void *fp)
 	u32 len, len2, config, nprim, nel, nel2;
 	char *policydb_str;
 	struct policydb_compat_info *info;
-	struct range_trans *rt;
-	struct mls_range *r;
+	struct range_trans *rt, *lrt;
 
 	config = 0;
 
@@ -1924,16 +1859,6 @@ int policydb_read(struct policydb *p, void *fp)
 
 	rc = policydb_index_others(p);
 	if (rc)
-		goto bad;
-
-	p->process_class = string_to_security_class(p, "process");
-	if (!p->process_class)
-		goto bad;
-	p->process_trans_perms = string_to_av_perm(p, p->process_class,
-						   "transition");
-	p->process_trans_perms |= string_to_av_perm(p, p->process_class,
-						    "dyntransition");
-	if (!p->process_trans_perms)
 		goto bad;
 
 	for (i = 0; i < info->ocon_num; i++) {
@@ -2154,61 +2079,44 @@ int policydb_read(struct policydb *p, void *fp)
 		if (rc < 0)
 			goto bad;
 		nel = le32_to_cpu(buf[0]);
+		lrt = NULL;
 		for (i = 0; i < nel; i++) {
 			rt = kzalloc(sizeof(*rt), GFP_KERNEL);
 			if (!rt) {
 				rc = -ENOMEM;
 				goto bad;
 			}
+			if (lrt)
+				lrt->next = rt;
+			else
+				p->range_tr = rt;
 			rc = next_entry(buf, fp, (sizeof(u32) * 2));
-			if (rc < 0) {
-				kfree(rt);
+			if (rc < 0)
 				goto bad;
-			}
 			rt->source_type = le32_to_cpu(buf[0]);
 			rt->target_type = le32_to_cpu(buf[1]);
 			if (new_rangetr) {
 				rc = next_entry(buf, fp, sizeof(u32));
-				if (rc < 0) {
-					kfree(rt);
+				if (rc < 0)
 					goto bad;
-				}
 				rt->target_class = le32_to_cpu(buf[0]);
 			} else
-				rt->target_class = p->process_class;
+				rt->target_class = SECCLASS_PROCESS;
 			if (!policydb_type_isvalid(p, rt->source_type) ||
 			    !policydb_type_isvalid(p, rt->target_type) ||
 			    !policydb_class_isvalid(p, rt->target_class)) {
-				kfree(rt);
 				rc = -EINVAL;
 				goto bad;
 			}
-			r = kzalloc(sizeof(*r), GFP_KERNEL);
-			if (!r) {
-				kfree(rt);
-				rc = -ENOMEM;
+			rc = mls_read_range_helper(&rt->target_range, fp);
+			if (rc)
 				goto bad;
-			}
-			rc = mls_read_range_helper(r, fp);
-			if (rc) {
-				kfree(rt);
-				kfree(r);
-				goto bad;
-			}
-			if (!mls_range_isvalid(p, r)) {
+			if (!mls_range_isvalid(p, &rt->target_range)) {
 				printk(KERN_WARNING "SELinux:  rangetrans:  invalid range\n");
-				kfree(rt);
-				kfree(r);
 				goto bad;
 			}
-			rc = hashtab_insert(p->range_tr, rt, r);
-			if (rc) {
-				kfree(rt);
-				kfree(r);
-				goto bad;
-			}
+			lrt = rt;
 		}
-		rangetr_hash_eval(p->range_tr);
 	}
 
 	p->type_attr_map = kmalloc(p->p_types.nprim*sizeof(struct ebitmap), GFP_KERNEL);

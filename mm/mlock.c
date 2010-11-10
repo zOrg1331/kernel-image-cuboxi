@@ -99,14 +99,14 @@ void mlock_vma_page(struct page *page)
  * not get another chance to clear PageMlocked.  If we successfully
  * isolate the page and try_to_munlock() detects other VM_LOCKED vmas
  * mapping the page, it will restore the PageMlocked state, unless the page
- * is mapped in a non-linear vma.  So, we go ahead and ClearPageMlocked(),
+ * is mapped in a non-linear vma.  So, we go ahead and SetPageMlocked(),
  * perhaps redundantly.
  * If we lose the isolation race, and the page is mapped by other VM_LOCKED
  * vmas, we'll detect this in vmscan--via try_to_munlock() or try_to_unmap()
  * either of which will restore the PageMlocked state by calling
  * mlock_vma_page() above, if it can grab the vma's mmap sem.
  */
-void munlock_vma_page(struct page *page)
+static void munlock_vma_page(struct page *page)
 {
 	BUG_ON(!PageLocked(page));
 
@@ -117,7 +117,7 @@ void munlock_vma_page(struct page *page)
 			/*
 			 * did try_to_unlock() succeed or punt?
 			 */
-			if (ret != SWAP_MLOCK)
+			if (ret == SWAP_SUCCESS || ret == SWAP_AGAIN)
 				count_vm_event(UNEVICTABLE_PGMUNLOCKED);
 
 			putback_lru_page(page);
@@ -617,4 +617,45 @@ void user_shm_unlock(size_t size, struct user_struct *user)
 	user->locked_shm -= (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	spin_unlock(&shmlock_user_lock);
 	free_uid(user);
+}
+
+int account_locked_memory(struct mm_struct *mm, struct rlimit *rlim,
+			  size_t size)
+{
+	unsigned long lim, vm, pgsz;
+	int error = -ENOMEM;
+
+	pgsz = PAGE_ALIGN(size) >> PAGE_SHIFT;
+
+	down_write(&mm->mmap_sem);
+
+	lim = rlim[RLIMIT_AS].rlim_cur >> PAGE_SHIFT;
+	vm   = mm->total_vm + pgsz;
+	if (lim < vm)
+		goto out;
+
+	lim = rlim[RLIMIT_MEMLOCK].rlim_cur >> PAGE_SHIFT;
+	vm   = mm->locked_vm + pgsz;
+	if (lim < vm)
+		goto out;
+
+	mm->total_vm  += pgsz;
+	mm->locked_vm += pgsz;
+
+	error = 0;
+ out:
+	up_write(&mm->mmap_sem);
+	return error;
+}
+
+void refund_locked_memory(struct mm_struct *mm, size_t size)
+{
+	unsigned long pgsz = PAGE_ALIGN(size) >> PAGE_SHIFT;
+
+	down_write(&mm->mmap_sem);
+
+	mm->total_vm  -= pgsz;
+	mm->locked_vm -= pgsz;
+
+	up_write(&mm->mmap_sem);
 }

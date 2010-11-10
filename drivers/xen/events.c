@@ -35,8 +35,6 @@
 #include <asm/xen/hypercall.h>
 #include <asm/xen/hypervisor.h>
 
-#include <xen/xen.h>
-#include <xen/hvm.h>
 #include <xen/xen-ops.h>
 #include <xen/events.h>
 #include <xen/interface/xen.h>
@@ -133,7 +131,7 @@ static struct irq_info mk_virq_info(unsigned short evtchn, unsigned short virq)
 			.cpu = 0, .u.virq = virq };
 }
 
-static __used struct irq_info mk_pirq_info(unsigned short evtchn,
+static struct irq_info mk_pirq_info(unsigned short evtchn,
 				    unsigned short gsi, unsigned short vector)
 {
 	return (struct irq_info) { .type = IRQT_PIRQ, .evtchn = evtchn,
@@ -179,7 +177,7 @@ static unsigned virq_from_irq(unsigned irq)
 	return info->u.virq;
 }
 
-static __used unsigned gsi_from_irq(unsigned irq)
+static unsigned gsi_from_irq(unsigned irq)
 {
 	struct irq_info *info = info_for_irq(irq);
 
@@ -189,7 +187,7 @@ static __used unsigned gsi_from_irq(unsigned irq)
 	return info->u.pirq.gsi;
 }
 
-static __used unsigned vector_from_irq(unsigned irq)
+static unsigned vector_from_irq(unsigned irq)
 {
 	struct irq_info *info = info_for_irq(irq);
 
@@ -336,18 +334,9 @@ static int find_unbound_irq(void)
 	int irq;
 	struct irq_desc *desc;
 
-	for (irq = 0; irq < nr_irqs; irq++) {
-		desc = irq_to_desc(irq);
-		/* only 0->15 have init'd desc; handle irq > 16 */
-		if (desc == NULL) 
-			break;
-		if (desc->chip == &no_irq_chip)
-			break;
-		if (desc->chip != &xen_dynamic_chip)
-			continue;
+	for (irq = 0; irq < nr_irqs; irq++)
 		if (irq_info[irq].type == IRQT_UNBOUND)
 			break;
-	}
 
 	if (irq == nr_irqs)
 		panic("No available IRQ to bind to: increase nr_irqs!\n");
@@ -485,9 +474,6 @@ static void unbind_from_irq(unsigned int irq)
 		bind_evtchn_to_cpu(evtchn, 0);
 
 		evtchn_to_irq[evtchn] = -1;
-	}
-
-	if (irq_info[irq].type != IRQT_UNBOUND) {
 		irq_info[irq] = mk_unbound_info();
 
 		dynamic_irq_cleanup(irq);
@@ -627,12 +613,16 @@ static DEFINE_PER_CPU(unsigned, xed_nesting_count);
  * a bitset of words which contain pending event bits.  The second
  * level is a bitset of pending events themselves.
  */
-void __xen_evtchn_do_upcall(struct pt_regs *regs)
+void xen_evtchn_do_upcall(struct pt_regs *regs)
 {
 	int cpu = get_cpu();
+	struct pt_regs *old_regs = set_irq_regs(regs);
 	struct shared_info *s = HYPERVISOR_shared_info;
 	struct vcpu_info *vcpu_info = __get_cpu_var(xen_vcpu);
  	unsigned count;
+
+	exit_idle();
+	irq_enter();
 
 	do {
 		unsigned long pending_words;
@@ -669,26 +659,10 @@ void __xen_evtchn_do_upcall(struct pt_regs *regs)
 	} while(count != 1);
 
 out:
-
-	put_cpu();
-}
-
-void xen_evtchn_do_upcall(struct pt_regs *regs)
-{
-	struct pt_regs *old_regs = set_irq_regs(regs);
-
-	exit_idle();
-	irq_enter();
-
-	__xen_evtchn_do_upcall(regs);
-
 	irq_exit();
 	set_irq_regs(old_regs);
-}
 
-void xen_hvm_evtchn_do_upcall(struct pt_regs *regs)
-{
-	__xen_evtchn_do_upcall(regs);
+	put_cpu();
 }
 
 /* Rebind a new event channel to an existing irq. */
@@ -726,7 +700,7 @@ static int rebind_irq_to_cpu(unsigned irq, unsigned tcpu)
 	struct evtchn_bind_vcpu bind_vcpu;
 	int evtchn = evtchn_from_irq(irq);
 
-	if (!VALID_EVTCHN(evtchn) || xen_hvm_domain())
+	if (!VALID_EVTCHN(evtchn))
 		return -1;
 
 	/* Send future instances of this interrupt to other vcpu. */
@@ -965,8 +939,5 @@ void __init xen_init_IRQ(void)
 	for (i = 0; i < NR_EVENT_CHANNELS; i++)
 		mask_evtchn(i);
 
-	if (xen_hvm_domain())
-		native_init_IRQ();
-	else
-		irq_ctx_init(smp_processor_id());
+	irq_ctx_init(smp_processor_id());
 }

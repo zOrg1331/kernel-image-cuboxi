@@ -240,6 +240,7 @@ static void __cpuinit smp_callin(void)
 	end_local_APIC_setup();
 	map_cpu_to_logical_apicid();
 
+	notify_cpu_starting(cpuid);
 	/*
 	 * Get our bogomips.
 	 *
@@ -255,8 +256,6 @@ static void __cpuinit smp_callin(void)
 	 * Save our processor parameters
 	 */
 	smp_store_cpu_info(cpuid);
-
-	notify_cpu_starting(cpuid);
 
 	/*
 	 * Allow the master to continue.
@@ -672,26 +671,6 @@ static void __cpuinit do_fork_idle(struct work_struct *work)
 	complete(&c_idle->done);
 }
 
-/* reduce the number of lines printed when booting a large cpu count system */
-static void __cpuinit announce_cpu(int cpu, int apicid)
-{
-	static int current_node = -1;
-	int node = cpu_to_node(cpu);
-
-	if (system_state == SYSTEM_BOOTING) {
-		if (node != current_node) {
-			if (current_node > (-1))
-				pr_cont(" Ok.\n");
-			current_node = node;
-			pr_info("Booting Node %3d, Processors ", node);
-		}
-		pr_cont(" #%d%s", cpu, cpu == (nr_cpu_ids - 1) ? " Ok.\n" : "");
-		return;
-	} else
-		pr_info("Booting Node %d Processor %d APIC 0x%x\n",
-			node, cpu, apicid);
-}
-
 /*
  * NOTE - on most systems this is a PHYSICAL apic ID, but on multiquad
  * (ie clustered apic addressing mode), this is a LOGICAL apic ID.
@@ -757,8 +736,9 @@ do_rest:
 	/* start_ip had better be page-aligned! */
 	start_ip = setup_trampoline();
 
-	/* So we see what's up */
-	announce_cpu(cpu, apicid);
+	/* So we see what's up   */
+	printk(KERN_INFO "Booting processor %d APIC 0x%x ip 0x%lx\n",
+			  cpu, apicid, start_ip);
 
 	/*
 	 * This grunge runs the startup process for
@@ -807,17 +787,21 @@ do_rest:
 			udelay(100);
 		}
 
-		if (cpumask_test_cpu(cpu, cpu_callin_mask))
-			pr_debug("CPU%d: has booted.\n", cpu);
-		else {
+		if (cpumask_test_cpu(cpu, cpu_callin_mask)) {
+			/* number CPUs logically, starting from 1 (BSP is 0) */
+			pr_debug("OK.\n");
+			printk(KERN_INFO "CPU%d: ", cpu);
+			print_cpu_info(&cpu_data(cpu));
+			pr_debug("CPU has booted.\n");
+		} else {
 			boot_error = 1;
 			if (*((volatile unsigned char *)trampoline_base)
 					== 0xA5)
 				/* trampoline started but...? */
-				pr_err("CPU%d: Stuck ??\n", cpu);
+				printk(KERN_ERR "Stuck ??\n");
 			else
 				/* trampoline code not run */
-				pr_err("CPU%d: Not responding.\n", cpu);
+				printk(KERN_ERR "Not responding.\n");
 			if (apic->inquire_remote_apic)
 				apic->inquire_remote_apic(apicid);
 		}
@@ -1082,7 +1066,9 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 	set_cpu_sibling_map(0);
 
 	enable_IR_x2apic();
+#ifdef CONFIG_X86_64
 	default_setup_apic_routing();
+#endif
 
 	if (smp_sanity_check(max_cpus) < 0) {
 		printk(KERN_INFO "SMP disabled\n");
@@ -1264,7 +1250,16 @@ static void __ref remove_cpu_from_maps(int cpu)
 void cpu_disable_common(void)
 {
 	int cpu = smp_processor_id();
+	/*
+	 * HACK:
+	 * Allow any queued timer interrupts to get serviced
+	 * This is only a temporary solution until we cleanup
+	 * fixup_irqs as we do for IA64.
+	 */
+	local_irq_enable();
+	mdelay(1);
 
+	local_irq_disable();
 	remove_siblinginfo(cpu);
 
 	/* It's now safe to remove this processor from the online map */
@@ -1305,16 +1300,14 @@ void native_cpu_die(unsigned int cpu)
 	for (i = 0; i < 10; i++) {
 		/* They ack this in play_dead by setting CPU_DEAD */
 		if (per_cpu(cpu_state, cpu) == CPU_DEAD) {
-			if (system_state == SYSTEM_RUNNING)
-				pr_info("CPU %u is now offline\n", cpu);
-
+			printk(KERN_INFO "CPU %d is now offline\n", cpu);
 			if (1 == num_online_cpus())
 				alternatives_smp_switch(0);
 			return;
 		}
 		msleep(100);
 	}
-	pr_err("CPU %u didn't die...\n", cpu);
+	printk(KERN_ERR "CPU %u didn't die...\n", cpu);
 }
 
 void play_dead_common(void)

@@ -243,34 +243,32 @@ static const struct file_operations ima_ascii_measurements_ops = {
 static ssize_t ima_write_policy(struct file *file, const char __user *buf,
 				size_t datalen, loff_t *ppos)
 {
-	char *data = NULL;
-	ssize_t result;
+	char *data;
+	int rc;
 
 	if (datalen >= PAGE_SIZE)
-		datalen = PAGE_SIZE - 1;
-
-	/* No partial writes. */
-	result = -EINVAL;
-	if (*ppos != 0)
-		goto out;
-
-	result = -ENOMEM;
+		return -ENOMEM;
+	if (*ppos != 0) {
+		/* No partial writes. */
+		return -EINVAL;
+	}
 	data = kmalloc(datalen + 1, GFP_KERNEL);
 	if (!data)
-		goto out;
+		return -ENOMEM;
 
+	if (copy_from_user(data, buf, datalen)) {
+		kfree(data);
+		return -EFAULT;
+	}
 	*(data + datalen) = '\0';
-
-	result = -EFAULT;
-	if (copy_from_user(data, buf, datalen))
-		goto out;
-
-	result = ima_parse_add_rule(data);
-out:
-	if (result < 0)
+	rc = ima_parse_add_rule(data);
+	if (rc < 0) {
+		datalen = -EINVAL;
 		valid_policy = 0;
+	}
+
 	kfree(data);
-	return result;
+	return datalen;
 }
 
 static struct dentry *ima_dir;

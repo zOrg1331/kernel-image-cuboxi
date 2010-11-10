@@ -47,7 +47,8 @@ static int linear_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 	lc->start = tmp;
 
-	if (dm_get_device(ti, argv[0], dm_table_get_mode(ti->table), &lc->dev)) {
+	if (dm_get_device(ti, argv[0], lc->start, ti->len,
+			  dm_table_get_mode(ti->table), &lc->dev)) {
 		ti->error = "dm-linear: Device lookup failed";
 		goto bad;
 	}
@@ -152,7 +153,6 @@ static struct target_type linear_target = {
 	.ioctl  = linear_ioctl,
 	.merge  = linear_merge,
 	.iterate_devices = linear_iterate_devices,
-	.features = DM_TARGET_SUPPORTS_DISCARDS,
 };
 
 int __init dm_linear_init(void)

@@ -13,8 +13,6 @@
 
 #include "ssb_private.h"
 
-#include <linux/ctype.h>
-
 
 static const struct ssb_sprom *fallback_sprom;
 
@@ -35,27 +33,17 @@ static int sprom2hex(const u16 *sprom, char *buf, size_t buf_len,
 static int hex2sprom(u16 *sprom, const char *dump, size_t len,
 		     size_t sprom_size_words)
 {
-	char c, tmp[5] = { 0 };
-	int err, cnt = 0;
+	char tmp[5] = { 0 };
+	int cnt = 0;
 	unsigned long parsed;
 
-	/* Strip whitespace at the end. */
-	while (len) {
-		c = dump[len - 1];
-		if (!isspace(c) && c != '\0')
-			break;
-		len--;
-	}
-	/* Length must match exactly. */
-	if (len != sprom_size_words * 4)
+	if (len < sprom_size_words * 2)
 		return -EINVAL;
 
 	while (cnt < sprom_size_words) {
 		memcpy(tmp, dump, 4);
 		dump += 4;
-		err = strict_strtoul(tmp, 16, &parsed);
-		if (err)
-			return err;
+		parsed = simple_strtoul(tmp, NULL, 16);
 		sprom[cnt++] = swab16((u16)parsed);
 	}
 
@@ -178,30 +166,4 @@ int ssb_arch_set_fallback_sprom(const struct ssb_sprom *sprom)
 const struct ssb_sprom *ssb_get_fallback_sprom(void)
 {
 	return fallback_sprom;
-}
-
-bool ssb_is_sprom_available(struct ssb_bus *bus)
-{
-	/* some older devices don't have chipcommon, but they have sprom */
-	if (!bus->chipco.dev)
-		return true;
-
-	/* status register only exists on chipcomon rev >= 11 */
-	if (bus->chipco.dev->id.revision < 11)
-		return true;
-
-	switch (bus->chip_id) {
-	case 0x4312:
-		return SSB_CHIPCO_CHST_4312_SPROM_PRESENT(bus->chipco.status);
-	case 0x4322:
-		return SSB_CHIPCO_CHST_4322_SPROM_PRESENT(bus->chipco.status);
-	case 0x4325:
-		return SSB_CHIPCO_CHST_4325_SPROM_PRESENT(bus->chipco.status);
-	default:
-		break;
-	}
-	if (bus->chipco.dev->id.revision >= 31)
-		return bus->chipco.capabilities & SSB_CHIPCO_CAP_SPROM;
-
-	return true;
 }

@@ -112,7 +112,6 @@ enum zone_stat_item {
 	NUMA_LOCAL,		/* allocation from local node */
 	NUMA_OTHER,		/* allocation from other node */
 #endif
-	NR_ANON_TRANSPARENT_HUGEPAGES,
 	NR_VM_ZONE_STAT_ITEMS };
 
 /*
@@ -329,15 +328,6 @@ struct zone {
 	unsigned long		*pageblock_flags;
 #endif /* CONFIG_SPARSEMEM */
 
-#ifdef CONFIG_COMPACTION
-	/*
-	 * On compaction failure, 1<<compact_defer_shift compactions
-	 * are skipped before trying again. The number attempted since
-	 * last failure is tracked with compact_considered.
-	 */
-	unsigned int		compact_considered;
-	unsigned int		compact_defer_shift;
-#endif
 
 	ZONE_PADDING(_pad1_)
 
@@ -432,8 +422,6 @@ struct zone {
 	 * rarely used fields:
 	 */
 	const char		*name;
-
-	unsigned long padding[16];
 } ____cacheline_internodealigned_in_smp;
 
 typedef enum {

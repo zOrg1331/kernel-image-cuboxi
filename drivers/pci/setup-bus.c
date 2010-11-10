@@ -27,84 +27,37 @@
 #include <linux/slab.h>
 #include "pci.h"
 
-struct resource_list_x {
-	struct resource_list_x *next;
-	struct resource *res;
+static void pbus_assign_resources_sorted(const struct pci_bus *bus)
+{
 	struct pci_dev *dev;
-	resource_size_t start;
-	resource_size_t end;
-	unsigned long flags;
-};
-
-static void add_to_failed_list(struct resource_list_x *head,
-				 struct pci_dev *dev, struct resource *res)
-{
-	struct resource_list_x *list = head;
-	struct resource_list_x *ln = list->next;
-	struct resource_list_x *tmp;
-
-	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
-	if (!tmp) {
-		printk(KERN_WARNING "add_to_failed_list: kmalloc() failed!\n");
-		return;
-	}
-
-	tmp->next = ln;
-	tmp->res = res;
-	tmp->dev = dev;
-	tmp->start = res->start;
-	tmp->end = res->end;
-	tmp->flags = res->flags;
-	list->next = tmp;
-}
-
-static void free_failed_list(struct resource_list_x *head)
-{
-	struct resource_list_x *list, *tmp;
-
-	for (list = head->next; list;) {
-		tmp = list;
-		list = list->next;
-		kfree(tmp);
-	}
-
-	head->next = NULL;
-}
-
-static void __dev_sort_resources(struct pci_dev *dev,
-				 struct resource_list *head)
-{
-	u16 class = dev->class >> 8;
-
-	/* Don't touch classless devices or host bridges or ioapics.  */
-	if (class == PCI_CLASS_NOT_DEFINED || class == PCI_CLASS_BRIDGE_HOST)
-		return;
-
-	/* Don't touch ioapic devices already enabled by firmware */
-	if (class == PCI_CLASS_SYSTEM_PIC) {
-		u16 command;
-		pci_read_config_word(dev, PCI_COMMAND, &command);
-		if (command & (PCI_COMMAND_IO | PCI_COMMAND_MEMORY))
-			return;
-	}
-
-	pdev_sort_resources(dev, head);
-}
-
-static void __assign_resources_sorted(struct resource_list *head,
-				 struct resource_list_x *fail_head)
-{
 	struct resource *res;
-	struct resource_list *list, *tmp;
+	struct resource_list head, *list, *tmp;
 	int idx;
 
-	for (list = head->next; list;) {
+	head.next = NULL;
+	list_for_each_entry(dev, &bus->devices, bus_list) {
+		u16 class = dev->class >> 8;
+
+		/* Don't touch classless devices or host bridges or ioapics.  */
+		if (class == PCI_CLASS_NOT_DEFINED ||
+		    class == PCI_CLASS_BRIDGE_HOST)
+			continue;
+
+		/* Don't touch ioapic devices already enabled by firmware */
+		if (class == PCI_CLASS_SYSTEM_PIC) {
+			u16 command;
+			pci_read_config_word(dev, PCI_COMMAND, &command);
+			if (command & (PCI_COMMAND_IO | PCI_COMMAND_MEMORY))
+				continue;
+		}
+
+		pdev_sort_resources(dev, &head);
+	}
+
+	for (list = head.next; list;) {
 		res = list->res;
 		idx = res - &list->dev->resource[0];
-
 		if (pci_assign_resource(list->dev, idx)) {
-			if (fail_head && !pci_is_root_bus(list->dev->bus))
-				add_to_failed_list(fail_head, list->dev, res);
 			res->start = 0;
 			res->end = 0;
 			res->flags = 0;
@@ -113,19 +66,6 @@ static void __assign_resources_sorted(struct resource_list *head,
 		list = list->next;
 		kfree(tmp);
 	}
-}
-
-static void pbus_assign_resources_sorted(const struct pci_bus *bus,
-					 struct resource_list_x *fail_head)
-{
-	struct pci_dev *dev;
-	struct resource_list head;
-
-	head.next = NULL;
-	list_for_each_entry(dev, &bus->devices, bus_list)
-		__dev_sort_resources(dev, &head);
-
-	__assign_resources_sorted(&head, fail_head);
 }
 
 void pci_setup_cardbus(struct pci_bus *bus)
@@ -186,119 +126,6 @@ void pci_setup_cardbus(struct pci_bus *bus)
 }
 EXPORT_SYMBOL(pci_setup_cardbus);
 
-static void pci_setup_bridge_io(struct pci_bus *bus)
-{
-	struct pci_dev *bridge = bus->self;
-	struct resource *res;
-	struct pci_bus_region region;
-	u32 l, io_upper16;
-
-	if (pci_is_enabled(bridge))
-		return;
-
-	dev_info(&bridge->dev, "PCI bridge, secondary bus %04x:%02x\n",
-		 pci_domain_nr(bus), bus->number);
-
-	/* Set up the top and bottom of the PCI I/O segment for this bus. */
-	res = bus->resource[0];
-	pcibios_resource_to_bus(bridge, &region, res);
-	if (res->flags & IORESOURCE_IO) {
-		pci_read_config_dword(bridge, PCI_IO_BASE, &l);
-		l &= 0xffff0000;
-		l |= (region.start >> 8) & 0x00f0;
-		l |= region.end & 0xf000;
-		/* Set up upper 16 bits of I/O base/limit. */
-		io_upper16 = (region.end & 0xffff0000) | (region.start >> 16);
-		dev_info(&bridge->dev, "  bridge window %pR\n", res);
-	} else {
-		/* Clear upper 16 bits of I/O base/limit. */
-		io_upper16 = 0;
-		l = 0x00f0;
-		dev_info(&bridge->dev, "  bridge window [io  disabled]\n");
-	}
-	/* Temporarily disable the I/O range before updating PCI_IO_BASE. */
-	pci_write_config_dword(bridge, PCI_IO_BASE_UPPER16, 0x0000ffff);
-	/* Update lower 16 bits of I/O base/limit. */
-	pci_write_config_dword(bridge, PCI_IO_BASE, l);
-	/* Update upper 16 bits of I/O base/limit. */
-	pci_write_config_dword(bridge, PCI_IO_BASE_UPPER16, io_upper16);
-}
-
-static void pci_setup_bridge_mmio(struct pci_bus *bus)
-{
-	struct pci_dev *bridge = bus->self;
-	struct resource *res;
-	struct pci_bus_region region;
-	u32 l;
-
-	/* Set up the top and bottom of the PCI Memory segment for this bus. */
-	res = bus->resource[1];
-	pcibios_resource_to_bus(bridge, &region, res);
-	if (res->flags & IORESOURCE_MEM) {
-		l = (region.start >> 16) & 0xfff0;
-		l |= region.end & 0xfff00000;
-		dev_info(&bridge->dev, "  bridge window %pR\n", res);
-	} else {
-		l = 0x0000fff0;
-		dev_info(&bridge->dev, "  bridge window [mem disabled]\n");
-	}
-	pci_write_config_dword(bridge, PCI_MEMORY_BASE, l);
-}
-
-static void pci_setup_bridge_mmio_pref(struct pci_bus *bus)
-{
-	struct pci_dev *bridge = bus->self;
-	struct resource *res;
-	struct pci_bus_region region;
-	u32 l, bu, lu;
-	/* Clear out the upper 32 bits of PREF limit.
-	   If PCI_PREF_BASE_UPPER32 was non-zero, this temporarily
-	   disables PREF range, which is ok. */
-	pci_write_config_dword(bridge, PCI_PREF_LIMIT_UPPER32, 0);
-
-	/* Set up PREF base/limit. */
-	bu = lu = 0;
-	res = bus->resource[2];
-	pcibios_resource_to_bus(bridge, &region, res);
-	if (res->flags & IORESOURCE_PREFETCH) {
-		l = (region.start >> 16) & 0xfff0;
-		l |= region.end & 0xfff00000;
-		if (res->flags & IORESOURCE_MEM_64) {
-			bu = upper_32_bits(region.start);
-			lu = upper_32_bits(region.end);
-		}
-		dev_info(&bridge->dev, "  bridge window %pR\n", res);
-	}
-	else {
-		l = 0x0000fff0;
-		dev_info(&bridge->dev, "  bridge window [mem pref disabled]\n");
-	}
-	pci_write_config_dword(bridge, PCI_PREF_MEMORY_BASE, l);
-
-	/* Set the upper 32 bits of PREF base & limit. */
-	pci_write_config_dword(bridge, PCI_PREF_BASE_UPPER32, bu);
-	pci_write_config_dword(bridge, PCI_PREF_LIMIT_UPPER32, lu);
-}
-
-static void __pci_setup_bridge(struct pci_bus *bus, unsigned long type)
-{
-	struct pci_dev *bridge = bus->self;
-
-	dev_info(&bridge->dev, "PCI bridge to [bus %02x-%02x]\n",
-		 bus->secondary, bus->subordinate);
-
-	if (type & IORESOURCE_IO)
-		pci_setup_bridge_io(bus);
-
-	if (type & IORESOURCE_MEM)
-		pci_setup_bridge_mmio(bus);
-
-	if (type & IORESOURCE_PREFETCH)
-		pci_setup_bridge_mmio_pref(bus);
- 
-	pci_write_config_word(bridge, PCI_BRIDGE_CONTROL, bus->bridge_ctl);
-}
- 
 /* Initialize bridges with base/limit values we have collected.
    PCI-to-PCI Bridge Architecture Specification rev. 1.1 (1998)
    requires that if there is no I/O ports or memory behind the
@@ -312,13 +139,96 @@ static void __pci_setup_bridge(struct pci_bus *bus, unsigned long type)
    first write. Ditto 64-bit prefetchable MMIO.  */
 static void pci_setup_bridge(struct pci_bus *bus)
 {
-	unsigned long type = IORESOURCE_IO | IORESOURCE_MEM |
-				  IORESOURCE_PREFETCH;
+	struct pci_dev *bridge = bus->self;
+	struct pci_bus_region region;
+	u32 l, bu, lu, io_upper16;
+	int pref_mem64;
 
-	__pci_setup_bridge(bus, type);
+	if (pci_is_enabled(bridge))
+		return;
+
+	dev_info(&bridge->dev, "PCI bridge, secondary bus %04x:%02x\n",
+		 pci_domain_nr(bus), bus->number);
+
+	/* Set up the top and bottom of the PCI I/O segment for this bus. */
+	pcibios_resource_to_bus(bridge, &region, bus->resource[0]);
+	if (bus->resource[0]->flags & IORESOURCE_IO) {
+		pci_read_config_dword(bridge, PCI_IO_BASE, &l);
+		l &= 0xffff0000;
+		l |= (region.start >> 8) & 0x00f0;
+		l |= region.end & 0xf000;
+		/* Set up upper 16 bits of I/O base/limit. */
+		io_upper16 = (region.end & 0xffff0000) | (region.start >> 16);
+		dev_info(&bridge->dev, "  IO window: %#04lx-%#04lx\n",
+		    (unsigned long)region.start,
+		    (unsigned long)region.end);
+	}
+	else {
+		/* Clear upper 16 bits of I/O base/limit. */
+		io_upper16 = 0;
+		l = 0x00f0;
+		dev_info(&bridge->dev, "  IO window: disabled\n");
+	}
+	/* Temporarily disable the I/O range before updating PCI_IO_BASE. */
+	pci_write_config_dword(bridge, PCI_IO_BASE_UPPER16, 0x0000ffff);
+	/* Update lower 16 bits of I/O base/limit. */
+	pci_write_config_dword(bridge, PCI_IO_BASE, l);
+	/* Update upper 16 bits of I/O base/limit. */
+	pci_write_config_dword(bridge, PCI_IO_BASE_UPPER16, io_upper16);
+
+	/* Set up the top and bottom of the PCI Memory segment
+	   for this bus. */
+	pcibios_resource_to_bus(bridge, &region, bus->resource[1]);
+	if (bus->resource[1]->flags & IORESOURCE_MEM) {
+		l = (region.start >> 16) & 0xfff0;
+		l |= region.end & 0xfff00000;
+		dev_info(&bridge->dev, "  MEM window: %#08lx-%#08lx\n",
+		    (unsigned long)region.start,
+		    (unsigned long)region.end);
+	}
+	else {
+		l = 0x0000fff0;
+		dev_info(&bridge->dev, "  MEM window: disabled\n");
+	}
+	pci_write_config_dword(bridge, PCI_MEMORY_BASE, l);
+
+	/* Clear out the upper 32 bits of PREF limit.
+	   If PCI_PREF_BASE_UPPER32 was non-zero, this temporarily
+	   disables PREF range, which is ok. */
+	pci_write_config_dword(bridge, PCI_PREF_LIMIT_UPPER32, 0);
+
+	/* Set up PREF base/limit. */
+	pref_mem64 = 0;
+	bu = lu = 0;
+	pcibios_resource_to_bus(bridge, &region, bus->resource[2]);
+	if (bus->resource[2]->flags & IORESOURCE_PREFETCH) {
+		int width = 8;
+		l = (region.start >> 16) & 0xfff0;
+		l |= region.end & 0xfff00000;
+		if (bus->resource[2]->flags & IORESOURCE_MEM_64) {
+			pref_mem64 = 1;
+			bu = upper_32_bits(region.start);
+			lu = upper_32_bits(region.end);
+			width = 16;
+		}
+		dev_info(&bridge->dev, "  PREFETCH window: %#0*llx-%#0*llx\n",
+				width, (unsigned long long)region.start,
+				width, (unsigned long long)region.end);
+	}
+	else {
+		l = 0x0000fff0;
+		dev_info(&bridge->dev, "  PREFETCH window: disabled\n");
+	}
+	pci_write_config_dword(bridge, PCI_PREF_MEMORY_BASE, l);
+
+	if (pref_mem64) {
+		/* Set the upper 32 bits of PREF base & limit. */
+		pci_write_config_dword(bridge, PCI_PREF_BASE_UPPER32, bu);
+		pci_write_config_dword(bridge, PCI_PREF_LIMIT_UPPER32, lu);
+	}
+
+	pci_write_config_word(bridge, PCI_BRIDGE_CONTROL, bus->bridge_ctl);
 }
-
-
 
 /* Check whether the bridge supports optional I/O and
    prefetchable memory ranges. If not, the respective
@@ -631,20 +541,19 @@ void __ref pci_bus_size_bridges(struct pci_bus *bus)
 }
 EXPORT_SYMBOL(pci_bus_size_bridges);
 
-static void __pci_bus_assign_resources(const struct pci_bus *bus,
-					 struct resource_list_x *fail_head)
+void __ref pci_bus_assign_resources(const struct pci_bus *bus)
 {
 	struct pci_bus *b;
 	struct pci_dev *dev;
 
-	pbus_assign_resources_sorted(bus, fail_head);
+	pbus_assign_resources_sorted(bus);
 
 	list_for_each_entry(dev, &bus->devices, bus_list) {
 		b = dev->subordinate;
 		if (!b)
 			continue;
 
-		__pci_bus_assign_resources(b, fail_head);
+		pci_bus_assign_resources(b);
 
 		switch (dev->class >> 8) {
 		case PCI_CLASS_BRIDGE_PCI:
@@ -661,12 +570,6 @@ static void __pci_bus_assign_resources(const struct pci_bus *bus,
 			break;
 		}
 	}
-}
-
-
-void pci_bus_assign_resources(const struct pci_bus *bus)
-{
-	__pci_bus_assign_resources(bus, NULL);
 }
 EXPORT_SYMBOL(pci_bus_assign_resources);
 
@@ -703,147 +606,11 @@ static void pci_bus_dump_resources(struct pci_bus *bus)
 	}
 }
 
-static void pci_bridge_release_resources(struct pci_bus *bus,
-					  unsigned long type)
-{
-	int idx;
-	bool changed = false;
-	struct pci_dev *dev;
-	struct resource *r;
-	unsigned long type_mask = IORESOURCE_IO | IORESOURCE_MEM |
-				  IORESOURCE_PREFETCH;
-
-	dev = bus->self;
-	for (idx = PCI_BRIDGE_RESOURCES; idx < PCI_NUM_RESOURCES;
-	     idx++) {
-		r = &dev->resource[idx];
-		if ((r->flags & type_mask) != type)
-			continue;
-		if (!r->parent)
-			continue;
-		/*
-		 * if there are children under that, we should release them
-		 *  all
-		 */
-		release_child_resources(r);
-		if (!release_resource(r)) {
-			dev_printk(KERN_DEBUG, &dev->dev,
-				 "resource %d %pR released\n", idx, r);
-			/* keep the old size */
-			r->end = r->end - r->start;
-			r->start = 0;
-			r->flags = 0;
-			changed = true;
-		}
-	}
-
-	if (changed) {
-		/* avoiding touch the one without PREF */
-		if (type & IORESOURCE_PREFETCH)
-			type = IORESOURCE_PREFETCH;
-		__pci_setup_bridge(bus, type);
-	}
-}
-
-enum release_type {
-	leaf_only,
-	whole_subtree,
-};
-/*
- * try to release pci bridge resources that is from leaf bridge,
- * so we can allocate big new one later
- */
-static void pci_bus_release_bridge_resources(struct pci_bus *bus,
-						   unsigned long type,
-						   enum release_type rel_type)
-{
-	struct pci_dev *dev;
-	bool is_leaf_bridge = true;
-
-	list_for_each_entry(dev, &bus->devices, bus_list) {
-		struct pci_bus *b = dev->subordinate;
-		if (!b)
-			continue;
-
-		is_leaf_bridge = false;
-
-		if ((dev->class >> 8) != PCI_CLASS_BRIDGE_PCI)
-			continue;
-
-		if (rel_type == whole_subtree)
-			pci_bus_release_bridge_resources(b, type,
-						 whole_subtree);
-	}
-
-	if (pci_is_root_bus(bus))
-		return;
-
-	if ((bus->self->class >> 8) != PCI_CLASS_BRIDGE_PCI)
-		return;
-
-	if ((rel_type == whole_subtree) || is_leaf_bridge)
-		pci_bridge_release_resources(bus, type);
-}
-
-static int __init pci_bus_get_depth(struct pci_bus *bus)
-{
-	int depth = 0;
-	struct pci_dev *dev;
-
-	list_for_each_entry(dev, &bus->devices, bus_list) {
-		int ret;
-		struct pci_bus *b = dev->subordinate;
-		if (!b)
-			continue;
-
-		ret = pci_bus_get_depth(b);
-		if (ret + 1 > depth)
-			depth = ret + 1;
-	}
-
-	return depth;
-}
-static int __init pci_get_max_depth(void)
-{
-	int depth = 0;
-	struct pci_bus *bus;
-
-	list_for_each_entry(bus, &pci_root_buses, node) {
-		int ret;
-
-		ret = pci_bus_get_depth(bus);
-		if (ret > depth)
-			depth = ret;
-	}
-
-	return depth;
-}
-
-/*
- * first try will not touch pci bridge res
- * second  and later try will clear small leaf bridge res
- * will stop till to the max  deepth if can not find good one
- */
 void __init
 pci_assign_unassigned_resources(void)
 {
 	struct pci_bus *bus;
-	int tried_times = 0;
-	enum release_type rel_type = leaf_only;
-	struct resource_list_x head, *list;
-	unsigned long type_mask = IORESOURCE_IO | IORESOURCE_MEM |
-				  IORESOURCE_PREFETCH;
-	unsigned long failed_type;
-	int max_depth = pci_get_max_depth();
-	int pci_try_num;
 
-	head.next = NULL;
-
-	pci_try_num = max_depth + 1;
-	printk(KERN_DEBUG "PCI: max bus depth: %d pci_try_num: %d\n",
-		 max_depth, pci_try_num);
-
-again:
 	/* Depth first, calculate sizes and alignments of all
 	   subordinate buses. */
 	list_for_each_entry(bus, &pci_root_buses, node) {
@@ -851,63 +618,12 @@ again:
 	}
 	/* Depth last, allocate resources and update the hardware. */
 	list_for_each_entry(bus, &pci_root_buses, node) {
-		__pci_bus_assign_resources(bus, &head);
-	}
-	tried_times++;
-
-	/* any device complain? */
-	if (!head.next)
-		goto enable_and_dump;
-	failed_type = 0;
-	for (list = head.next; list;) {
-		failed_type |= list->flags;
-		list = list->next;
-	}
-	/*
-	 * io port are tight, don't try extra
-	 * or if reach the limit, don't want to try more
-	 */
-	failed_type &= type_mask;
-	if ((failed_type == IORESOURCE_IO) || (tried_times >= pci_try_num)) {
-		free_failed_list(&head);
-		goto enable_and_dump;
-	}
-
-	printk(KERN_DEBUG "PCI: No. %d try to assign unassigned res\n",
-			 tried_times + 1);
-
-	/* third times and later will not check if it is leaf */
-	if ((tried_times + 1) > 2)
-		rel_type = whole_subtree;
-
-	/*
-	 * Try to release leaf bridge's resources that doesn't fit resource of
-	 * child device under that bridge
-	 */
-	for (list = head.next; list;) {
-		bus = list->dev->bus;
-		pci_bus_release_bridge_resources(bus, list->flags & type_mask,
-						  rel_type);
-		list = list->next;
-	}
-	/* restore size and flags */
-	for (list = head.next; list;) {
-		struct resource *res = list->res;
-
-		res->start = list->start;
-		res->end = list->end;
-		res->flags = list->flags;
-		if (list->dev->subordinate)
-			res->flags = 0;
-
-		list = list->next;
-	}
-	free_failed_list(&head);
-
-	goto again;
-
-enable_and_dump:
-	/* Depth last, update the hardware. */
-	list_for_each_entry(bus, &pci_root_buses, node)
+		pci_bus_assign_resources(bus);
 		pci_enable_bridges(bus);
+	}
+
+	/* dump the resource on buses */
+	list_for_each_entry(bus, &pci_root_buses, node) {
+		pci_bus_dump_resources(bus);
+	}
 }

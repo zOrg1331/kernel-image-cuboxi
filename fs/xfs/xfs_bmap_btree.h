@@ -46,12 +46,20 @@ typedef struct xfs_bmdr_block {
 #define BMBT_STARTBLOCK_BITLEN	52
 #define BMBT_BLOCKCOUNT_BITLEN	21
 
-typedef struct xfs_bmbt_rec {
+
+#define BMBT_USE_64	1
+
+typedef struct xfs_bmbt_rec_32
+{
+	__uint32_t		l0, l1, l2, l3;
+} xfs_bmbt_rec_32_t;
+typedef struct xfs_bmbt_rec_64
+{
 	__be64			l0, l1;
-} xfs_bmbt_rec_t;
+} xfs_bmbt_rec_64_t;
 
 typedef __uint64_t	xfs_bmbt_rec_base_t;	/* use this for casts */
-typedef xfs_bmbt_rec_t xfs_bmdr_rec_t;
+typedef xfs_bmbt_rec_64_t xfs_bmbt_rec_t, xfs_bmdr_rec_t;
 
 typedef struct xfs_bmbt_rec_host {
 	__uint64_t		l0, l1;
