@@ -163,7 +163,7 @@ index 126dee9..9cfbb04 100644
 +
 +	return ptr;
 +}
-+EXPORT_SYMBOL(compat_alloc_user_space);
++EXPORT_SYMBOL_GPL(compat_alloc_user_space);
 diff --git a/kernel/compat.c b/kernel/compat.c
 index 9cfbb04..95e3a94 100644
 --- a/kernel/compat.c
