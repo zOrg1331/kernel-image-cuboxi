@@ -36,7 +36,7 @@ static struct usb_device_id id_table[] = {
 
 MODULE_DEVICE_TABLE(usb, id_table);
 
-static BOOLEAN gPollingfailed = FALSE;
+static bool gPollingfailed = FALSE;
 int ft1000_poll_thread(void *arg)
 {
 	int ret = STATUS_SUCCESS;
@@ -84,7 +84,6 @@ static int ft1000_probe(struct usb_interface *interface,
 	ft1000dev->dev = dev;
 	ft1000dev->status = 0;
 	ft1000dev->net = NULL;
-	spin_lock_init(&ft1000dev->device_lock);
 	ft1000dev->tx_urb = usb_alloc_urb(0, GFP_ATOMIC);
 	ft1000dev->rx_urb = usb_alloc_urb(0, GFP_ATOMIC);
 

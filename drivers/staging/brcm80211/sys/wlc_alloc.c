@@ -17,15 +17,20 @@
 #include <linux/string.h>
 #include <bcmdefs.h>
 #include <wlc_cfg.h>
-#include <linuxver.h>
+#include <linux/module.h>
+#include <linux/pci.h>
 #include <osl.h>
 #include <bcmutils.h>
 #include <siutils.h>
 #include <wlioctl.h>
 #include <wlc_pub.h>
 #include <wlc_key.h>
+#include <sbhndpio.h>
+#include <sbhnddma.h>
+#include <wlc_event.h>
 #include <wlc_mac80211.h>
 #include <wlc_alloc.h>
+#include <wl_dbg.h>
 
 static wlc_pub_t *wlc_pub_malloc(osl_t *osh, uint unit, uint *err,
 				 uint devid);

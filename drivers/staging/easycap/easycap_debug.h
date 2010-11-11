@@ -24,4 +24,6 @@
  *
 */
 /*****************************************************************************/
-extern int easycap_debug;
+extern int debug;
+extern int gain;
+extern struct easycap_dongle easycap_dongle[];

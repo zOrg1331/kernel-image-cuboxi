@@ -135,9 +135,8 @@ static ssize_t vis_data_read_prim_sec(char *buff, struct hlist_head *if_list)
 	hlist_for_each_entry(entry, pos, if_list, list) {
 		if (entry->primary)
 			len += sprintf(buff + len, "PRIMARY, ");
-		else {
+		else
 			len += sprintf(buff + len,  "SEC %pM, ", entry->addr);
-		}
 	}
 
 	return len;
@@ -470,7 +469,7 @@ void receive_client_update_packet(struct bat_priv *bat_priv,
 	int are_target = 0;
 
 	/* clients shall not broadcast. */
-	if (is_bcast(vis_packet->target_orig))
+	if (is_broadcast_ether_addr(vis_packet->target_orig))
 		return;
 
 	/* Are we the target for this VIS packet? */
@@ -747,7 +746,7 @@ static void send_vis_packet(struct bat_priv *bat_priv, struct vis_info *info)
 	       ETH_ALEN);
 	packet->ttl--;
 
-	if (is_bcast(packet->target_orig))
+	if (is_broadcast_ether_addr(packet->target_orig))
 		broadcast_vis_packet(bat_priv, info);
 	else
 		unicast_vis_packet(bat_priv, info);

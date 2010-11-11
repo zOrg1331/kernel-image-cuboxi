@@ -17,12 +17,14 @@
 #include <bcmdefs.h>
 #include <wlc_cfg.h>
 #include <osl.h>
-#include <linuxver.h>
+#include <linux/module.h>
 #include <bcmutils.h>
 #include <siutils.h>
 #include <bcmendian.h>
 #include <wlioctl.h>
 
+#include <sbhndpio.h>
+#include <sbhnddma.h>
 #include <proto/802.11.h>
 #include <d11.h>
 #include <wlc_rate.h>
