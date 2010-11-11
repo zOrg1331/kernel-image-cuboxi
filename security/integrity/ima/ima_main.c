@@ -177,6 +177,7 @@ out:
 
 	kref_put(&iint->refcount, iint_free);
 }
+EXPORT_SYMBOL_GPL(ima_counts_get);
 
 /*
  * Decrement ima counts
@@ -282,6 +283,7 @@ int ima_file_mmap(struct file *file, unsigned long prot)
 					 MAY_EXEC, FILE_MMAP);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(ima_file_mmap);
 
 /**
  * ima_bprm_check - based on policy, collect/store measurement.
