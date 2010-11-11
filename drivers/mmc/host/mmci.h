@@ -167,6 +167,7 @@ struct mmci_host {
 
 	unsigned int		mclk;
 	unsigned int		cclk;
+	unsigned int		iosclock;
 	u32			pwr;
 	struct mmci_platform_data *plat;
 	struct variant_data	*variant;

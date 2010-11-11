@@ -687,7 +687,23 @@ static void mmci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	spin_lock_irqsave(&host->lock, flags);
 
-	mmci_set_clkreg(host, ios->clock);
+	/*
+	 * Turn on clock whenever ios->clock transitions
+	 * from 0 to !=0 and gate it off whenever ios->clock
+	 * transitions from !=0 to 0.
+	 */
+	if (host->iosclock == 0 && ios->clock != 0) {
+		dev_dbg(mmc_dev(mmc), "enable clock f=%d\n", ios->clock);
+		clk_enable(host->clk);
+		mmci_set_clkreg(host, ios->clock);
+	} else if (host->iosclock != 0 && ios->clock == 0) {
+		dev_dbg(mmc_dev(mmc), "disable clock\n");
+		clk_disable(host->clk);
+	} else if (ios->clock != 0) {
+		mmci_set_clkreg(host, ios->clock);
+		dev_dbg(mmc_dev(mmc), "set clock f=%d\n", ios->clock);
+	}
+	host->iosclock = ios->clock;
 
 	if (host->pwr != pwr) {
 		host->pwr = pwr;
@@ -772,6 +788,8 @@ static int __devinit mmci_probe(struct amba_device *dev, struct amba_id *id)
 
 	host = mmc_priv(mmc);
 	host->mmc = mmc;
+	host->plat = plat;
+	host->variant = variant;
 
 	host->gpio_wp = -ENOSYS;
 	host->gpio_cd = -ENOSYS;
@@ -782,19 +800,14 @@ static int __devinit mmci_probe(struct amba_device *dev, struct amba_id *id)
 	dev_dbg(mmc_dev(mmc), "designer ID = 0x%02x\n", host->hw_designer);
 	dev_dbg(mmc_dev(mmc), "revision = 0x%01x\n", host->hw_revision);
 
+	/* This clock will be enabled/disabled by set_ios() calls later */
 	host->clk = clk_get(&dev->dev, NULL);
 	if (IS_ERR(host->clk)) {
 		ret = PTR_ERR(host->clk);
 		host->clk = NULL;
 		goto host_free;
 	}
-
-	ret = clk_enable(host->clk);
-	if (ret)
-		goto clk_free;
-
-	host->plat = plat;
-	host->variant = variant;
+	host->iosclock = 0;
 	host->mclk = clk_get_rate(host->clk);
 	/*
 	 * According to the spec, mclk is max 100 MHz,
@@ -804,7 +817,7 @@ static int __devinit mmci_probe(struct amba_device *dev, struct amba_id *id)
 	if (host->mclk > 100000000) {
 		ret = clk_set_rate(host->clk, 100000000);
 		if (ret < 0)
-			goto clk_disable;
+			goto clk_free;
 		host->mclk = clk_get_rate(host->clk);
 		dev_dbg(mmc_dev(mmc), "eventual mclk rate: %u Hz\n",
 			host->mclk);
@@ -812,7 +825,7 @@ static int __devinit mmci_probe(struct amba_device *dev, struct amba_id *id)
 	host->base = ioremap(dev->res.start, resource_size(&dev->res));
 	if (!host->base) {
 		ret = -ENOMEM;
-		goto clk_disable;
+		goto clk_free;
 	}
 
 	mmc->ops = &mmci_ops;
@@ -961,8 +974,6 @@ static int __devinit mmci_probe(struct amba_device *dev, struct amba_id *id)
 		gpio_free(host->gpio_cd);
  err_gpio_cd:
 	iounmap(host->base);
- clk_disable:
-	clk_disable(host->clk);
  clk_free:
 	clk_put(host->clk);
  host_free:
