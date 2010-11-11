@@ -39,6 +39,9 @@
 #include <limits.h>
 #include <stddef.h>
 #include <signal.h>
+#include <pwd.h>
+#include <grp.h>
+
 #include <linux/virtio_config.h>
 #include <linux/virtio_net.h>
 #include <linux/virtio_blk.h>
@@ -1874,6 +1877,8 @@ static struct option opts[] = {
 	{ "block", 1, NULL, 'b' },
 	{ "rng", 0, NULL, 'r' },
 	{ "initrd", 1, NULL, 'i' },
+	{ "username", 1, NULL, 'u' },
+	{ "chroot", 1, NULL, 'c' },
 	{ NULL },
 };
 static void usage(void)
@@ -1895,6 +1900,12 @@ int main(int argc, char *argv[])
 	struct boot_params *boot;
 	/* If they specify an initrd file to load. */
 	const char *initrd_name = NULL;
+
+	/* Password structure for initgroups/setres[gu]id */
+	struct passwd *user_details = NULL;
+
+	/* Directory to chroot to */
+	char *chroot_path = NULL;
 
 	/* Save the args: we "reboot" by execing ourselves again. */
 	main_args = argv;
@@ -1951,6 +1962,14 @@ int main(int argc, char *argv[])
 			break;
 		case 'i':
 			initrd_name = optarg;
+			break;
+		case 'u':
+			user_details = getpwnam(optarg);
+			if (!user_details)
+				err(1, "getpwnam failed, incorrect username?");
+			break;
+		case 'c':
+			chroot_path = optarg;
 			break;
 		default:
 			warnx("Unknown argument %s", argv[optind]);
