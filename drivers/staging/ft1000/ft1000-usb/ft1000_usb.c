@@ -36,7 +36,7 @@ static struct usb_device_id id_table[] = {
 
 MODULE_DEVICE_TABLE(usb, id_table);
 
-static BOOLEAN gPollingfailed = FALSE;
+static bool gPollingfailed = FALSE;
 int ft1000_poll_thread(void *arg)
 {
 	int ret = STATUS_SUCCESS;
@@ -84,7 +84,6 @@ static int ft1000_probe(struct usb_interface *interface,
 	ft1000dev->dev = dev;
 	ft1000dev->status = 0;
 	ft1000dev->net = NULL;
-	spin_lock_init(&ft1000dev->device_lock);
 	ft1000dev->tx_urb = usb_alloc_urb(0, GFP_ATOMIC);
 	ft1000dev->rx_urb = usb_alloc_urb(0, GFP_ATOMIC);
 
@@ -176,12 +175,16 @@ static int ft1000_probe(struct usb_interface *interface,
 	gPollingfailed = FALSE;
 	pft1000info->pPollThread =
 	    kthread_run(ft1000_poll_thread, ft1000dev, "ft1000_poll");
+
+	if (IS_ERR(pft1000info->pPollThread)) {
+		ret = PTR_ERR(pft1000info->pPollThread);
+		goto err_thread;
+	}
+
 	msleep(500);
 
 	while (!pft1000info->CardReady) {
 		if (gPollingfailed) {
-			if (pft1000info->pPollThread)
-				kthread_stop(pft1000info->pPollThread);
 			ret = -EIO;
 			goto err_load;
 		}
@@ -202,6 +205,8 @@ static int ft1000_probe(struct usb_interface *interface,
 	return 0;
 
 err_load:
+	kthread_stop(pft1000info->pPollThread);
+err_thread:
 	kfree(pFileStart);
 err_fw:
 	kfree(ft1000dev);

@@ -15,7 +15,9 @@
  */
 #include <linux/types.h>
 #include <linux/sched.h>	/* request_irq() */
+#include <linux/netdevice.h>
 #include <bcmdefs.h>
+#include <osl.h>
 #include <bcmutils.h>
 #include <sdio.h>		/* SDIO Specs */
 #include <bcmsdbus.h>		/* bcmsdh to/from specific controller APIs */
