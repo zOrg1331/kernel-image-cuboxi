@@ -1,0 +1,39 @@
+Importing i2c based on 2.6.37-rc1-git8
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.37-rc1-git8
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.37-rc1-git8
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard f6614b7bb405a9b35dd28baea989a749492c46b2
+HEAD is now at f6614b7 Merge git://git.kernel.org/pub/scm/linux/kernel/git/sfrench/cifs-2.6
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+scr-kernel-doc-xmlesc10.patch
+docs-configfs-remove-unneeded-check.patch
+docs-gpio-poll-usage.patch
+docs-hans-change-email.patch
+docs-next-not-staging.patch
+docs-develproc-staging.patch
+docs-maint-scr-kerndoc.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+ + 4b04eba...58af358 master     -> quilt/kernel-doc  (forced update)
+Importing rr based on v2.6.37-rc1-116-g151f52f
+$ cd ../quilt-tmp
+$ git reset --hard 151f52f09c5728ecfdd0c289da1a4b30bb416f2c
+HEAD is now at 151f52f ipw2x00: remove the right /proc/net entry
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+module:update_prototype_for_ref_formerly_use.patch
+virtio:net_fix_queue_full_check.patch
+virtio:char_console_fix_memory_leak.patch
+virtio:fix_format_of_sysfs_driver_vendor_files.patch
+lguest:guard-pages.patch
+lguest:username-and-chroot.patch
+lguest:document-rng.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + d701501...049f6a5 master     -> quilt/rr  (forced update)
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
