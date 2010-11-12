@@ -39,6 +39,9 @@
 #include <sound/soc-dapm.h>
 #include <sound/initval.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/asoc.h>
+
 #define NAME_SIZE	32
 
 static DEFINE_MUTEX(pcm_mutex);
@@ -238,8 +241,10 @@ static const struct file_operations codec_reg_fops = {
 
 static void soc_init_codec_debugfs(struct snd_soc_codec *codec)
 {
-	codec->debugfs_codec_root = debugfs_create_dir(codec->name ,
-						       debugfs_root);
+	struct dentry *debugfs_card_root = codec->card->debugfs_card_root;
+
+	codec->debugfs_codec_root = debugfs_create_dir(codec->name,
+						       debugfs_card_root);
 	if (!codec->debugfs_codec_root) {
 		printk(KERN_WARNING
 		       "ASoC: Failed to create codec debugfs directory\n");
@@ -253,20 +258,13 @@ static void soc_init_codec_debugfs(struct snd_soc_codec *codec)
 		printk(KERN_WARNING
 		       "ASoC: Failed to create codec register debugfs file\n");
 
-	codec->debugfs_pop_time = debugfs_create_u32("dapm_pop_time", 0644,
-						     codec->debugfs_codec_root,
-						     &codec->pop_time);
-	if (!codec->debugfs_pop_time)
-		printk(KERN_WARNING
-		       "Failed to create pop time debugfs file\n");
-
-	codec->debugfs_dapm = debugfs_create_dir("dapm",
+	codec->dapm.debugfs_dapm = debugfs_create_dir("dapm",
 						 codec->debugfs_codec_root);
-	if (!codec->debugfs_dapm)
+	if (!codec->dapm.debugfs_dapm)
 		printk(KERN_WARNING
 		       "Failed to create DAPM debugfs directory\n");
 
-	snd_soc_dapm_debugfs_init(codec);
+	snd_soc_dapm_debugfs_init(&codec->dapm);
 }
 
 static void soc_cleanup_codec_debugfs(struct snd_soc_codec *codec)
@@ -374,6 +372,29 @@ static const struct file_operations platform_list_fops = {
 	.llseek = default_llseek,/* read accesses f_pos */
 };
 
+static void soc_init_card_debugfs(struct snd_soc_card *card)
+{
+	card->debugfs_card_root = debugfs_create_dir(card->name,
+						     debugfs_root);
+	if (!card->debugfs_card_root) {
+		dev_warn(card->dev,
+			 "ASoC: Failed to create codec debugfs directory\n");
+		return;
+	}
+
+	card->debugfs_pop_time = debugfs_create_u32("dapm_pop_time", 0644,
+						    card->debugfs_card_root,
+						    &card->pop_time);
+	if (!card->debugfs_pop_time)
+		dev_warn(card->dev,
+		       "Failed to create pop time debugfs file\n");
+}
+
+static void soc_cleanup_card_debugfs(struct snd_soc_card *card)
+{
+	debugfs_remove_recursive(card->debugfs_card_root);
+}
+
 #else
 
 static inline void soc_init_codec_debugfs(struct snd_soc_codec *codec)
@@ -381,6 +402,14 @@ static inline void soc_init_codec_debugfs(struct snd_soc_codec *codec)
 }
 
 static inline void soc_cleanup_codec_debugfs(struct snd_soc_codec *codec)
+{
+}
+
+static inline void soc_init_card_debugfs(struct snd_soc_card *card)
+{
+}
+
+static inline void soc_cleanup_card_debugfs(struct snd_soc_card *card)
 {
 }
 #endif
@@ -1017,7 +1046,7 @@ static int soc_suspend(struct device *dev)
 	/* close any waiting streams and save state */
 	for (i = 0; i < card->num_rtd; i++) {
 		run_delayed_work(&card->rtd[i].delayed_work);
-		card->rtd[i].codec->suspend_bias_level = card->rtd[i].codec->bias_level;
+		card->rtd[i].codec->dapm.suspend_bias_level = card->rtd[i].codec->dapm.bias_level;
 	}
 
 	for (i = 0; i < card->num_rtd; i++) {
@@ -1041,7 +1070,7 @@ static int soc_suspend(struct device *dev)
 		/* If there are paths active then the CODEC will be held with
 		 * bias _ON and should not be suspended. */
 		if (!codec->suspended && codec->driver->suspend) {
-			switch (codec->bias_level) {
+			switch (codec->dapm.bias_level) {
 			case SND_SOC_BIAS_STANDBY:
 			case SND_SOC_BIAS_OFF:
 				codec->driver->suspend(codec, PMSG_SUSPEND);
@@ -1110,7 +1139,7 @@ static void soc_resume_deferred(struct work_struct *work)
 		 * resume.  Otherwise the suspend was suppressed.
 		 */
 		if (codec->driver->resume && codec->suspended) {
-			switch (codec->bias_level) {
+			switch (codec->dapm.bias_level) {
 			case SND_SOC_BIAS_STANDBY:
 			case SND_SOC_BIAS_OFF:
 				codec->driver->resume(codec);
@@ -1346,7 +1375,7 @@ static void soc_remove_dai_link(struct snd_soc_card *card, int num)
 		}
 
 		/* Make sure all DAPM widgets are freed */
-		snd_soc_dapm_free(codec);
+		snd_soc_dapm_free(&codec->dapm);
 
 		soc_cleanup_codec_debugfs(codec);
 		device_remove_file(&rtd->dev, &dev_attr_codec_reg);
@@ -1410,6 +1439,7 @@ static int soc_probe_dai_link(struct snd_soc_card *card, int num)
 
 	/* probe the CODEC */
 	if (!codec->probed) {
+		codec->dapm.card = card;
 		if (codec->driver->probe) {
 			ret = codec->driver->probe(codec);
 			if (ret < 0) {
@@ -1470,8 +1500,8 @@ static int soc_probe_dai_link(struct snd_soc_card *card, int num)
 	}
 
 	/* Make sure all DAPM widgets are instantiated */
-	snd_soc_dapm_new_widgets(codec);
-	snd_soc_dapm_sync(codec);
+	snd_soc_dapm_new_widgets(&codec->dapm);
+	snd_soc_dapm_sync(&codec->dapm);
 
 	/* register the rtd device */
 	rtd->dev.release = rtd_release;
@@ -1667,6 +1697,8 @@ static int soc_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&card->codec_dev_list);
 	INIT_LIST_HEAD(&card->platform_dev_list);
 
+	soc_init_card_debugfs(card);
+
 	ret = snd_soc_register_card(card);
 	if (ret != 0) {
 		dev_err(&pdev->dev, "Failed to register card\n");
@@ -1693,6 +1725,8 @@ static int soc_remove(struct platform_device *pdev)
 		/* remove and free each DAI */
 		for (i = 0; i < card->num_rtd; i++)
 			soc_remove_dai_link(card, i);
+
+		soc_cleanup_card_debugfs(card);
 
 		/* remove the card */
 		if (card->remove)
@@ -1876,6 +1910,27 @@ void snd_soc_free_ac97_codec(struct snd_soc_codec *codec)
 	mutex_unlock(&codec->mutex);
 }
 EXPORT_SYMBOL_GPL(snd_soc_free_ac97_codec);
+
+unsigned int snd_soc_read(struct snd_soc_codec *codec, unsigned int reg)
+{
+	unsigned int ret;
+
+	ret = codec->driver->read(codec, reg);
+	dev_dbg(codec->dev, "read %x => %x\n", reg, ret);
+	trace_snd_soc_reg_read(codec, reg, ret);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(snd_soc_read);
+
+unsigned int snd_soc_write(struct snd_soc_codec *codec,
+			   unsigned int reg, unsigned int val)
+{
+	dev_dbg(codec->dev, "write %x = %x\n", reg, val);
+	trace_snd_soc_reg_write(codec, reg, val);
+	return codec->driver->write(codec, reg, val);
+}
+EXPORT_SYMBOL_GPL(snd_soc_write);
 
 /**
  * snd_soc_update_bits - update codec register bits
@@ -3043,8 +3098,10 @@ int snd_soc_register_dais(struct device *dev,
 	for (i = 0; i < count; i++) {
 
 		dai = kzalloc(sizeof(struct snd_soc_dai), GFP_KERNEL);
-		if (dai == NULL)
-			return -ENOMEM;
+		if (dai == NULL) {
+			ret = -ENOMEM;
+			goto err;
+		}
 
 		/* create DAI component name */
 		dai->name = fmt_multiple_name(dev, &dai_drv[i]);
@@ -3217,30 +3274,25 @@ int snd_soc_register_codec(struct device *dev,
 		return -ENOMEM;
 	}
 
-	/* allocate CODEC register cache */
-	if (codec_drv->reg_cache_size && codec_drv->reg_word_size) {
-
-		if (codec_drv->reg_cache_default)
-			codec->reg_cache = kmemdup(codec_drv->reg_cache_default,
-				codec_drv->reg_cache_size * codec_drv->reg_word_size, GFP_KERNEL);
-		else
-			codec->reg_cache = kzalloc(codec_drv->reg_cache_size *
-				codec_drv->reg_word_size, GFP_KERNEL);
-
-		if (codec->reg_cache == NULL) {
-			kfree(codec->name);
-			kfree(codec);
-			return -ENOMEM;
-		}
-	}
-
+	INIT_LIST_HEAD(&codec->dapm.widgets);
+	INIT_LIST_HEAD(&codec->dapm.paths);
+	codec->dapm.bias_level = SND_SOC_BIAS_OFF;
+	codec->dapm.dev = dev;
+	codec->dapm.codec = codec;
 	codec->dev = dev;
 	codec->driver = codec_drv;
-	codec->bias_level = SND_SOC_BIAS_OFF;
 	codec->num_dai = num_dai;
 	mutex_init(&codec->mutex);
-	INIT_LIST_HEAD(&codec->dapm_widgets);
-	INIT_LIST_HEAD(&codec->dapm_paths);
+
+	/* allocate CODEC register cache */
+	if (codec_drv->reg_cache_size && codec_drv->reg_word_size) {
+		ret = snd_soc_cache_init(codec);
+		if (ret < 0) {
+			dev_err(codec->dev, "Failed to set cache compression type: %d\n",
+				ret);
+			goto error_cache;
+		}
+	}
 
 	for (i = 0; i < num_dai; i++) {
 		fixup_codec_formats(&dai_drv[i].playback);
@@ -3251,7 +3303,7 @@ int snd_soc_register_codec(struct device *dev,
 	if (num_dai) {
 		ret = snd_soc_register_dais(dev, dai_drv, num_dai);
 		if (ret < 0)
-			goto error;
+			goto error_dais;
 	}
 
 	mutex_lock(&client_mutex);
@@ -3262,12 +3314,9 @@ int snd_soc_register_codec(struct device *dev,
 	pr_debug("Registered codec '%s'\n", codec->name);
 	return 0;
 
-error:
-	for (i--; i >= 0; i--)
-		snd_soc_unregister_dai(dev);
-
-	if (codec->reg_cache)
-		kfree(codec->reg_cache);
+error_dais:
+	snd_soc_cache_exit(codec);
+error_cache:
 	kfree(codec->name);
 	kfree(codec);
 	return ret;
@@ -3301,8 +3350,7 @@ found:
 
 	pr_debug("Unregistered codec '%s'\n", codec->name);
 
-	if (codec->reg_cache)
-		kfree(codec->reg_cache);
+	snd_soc_cache_exit(codec);
 	kfree(codec->name);
 	kfree(codec);
 }
