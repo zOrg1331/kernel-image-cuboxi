@@ -602,17 +602,6 @@ struct cx231xx_tsport {
 	void                       *port_priv;
 };
 
-struct cx231xx_ir_t {
-	struct input_dev *input_dev;
-	char name[40];
-	char phys[32];
-
-	struct ir_dev_props props;
-
-	/* I2C keyboard data */
-	struct IR_i2c_init_data    init_data;
-};
-
 /* main device struct */
 struct cx231xx {
 	/* generic device properties */
@@ -623,7 +612,7 @@ struct cx231xx {
 	struct cx231xx_board board;
 
 	/* For I2C IR support */
-	struct cx231xx_ir_t ir;
+	struct IR_i2c_init_data    init_data;
 
 	unsigned int stream_on:1;	/* Locks streams */
 	unsigned int vbi_stream_on:1;	/* Locks streams for VBI */

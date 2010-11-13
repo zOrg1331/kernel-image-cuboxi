@@ -10,7 +10,7 @@ menuconfig IR_CORE
 	  if you don't need IR, as otherwise, you may not be able to
 	  compile the driver for your adapter.
 
-config VIDEO_IR
+config IR_LEGACY
 	tristate
 	depends on IR_CORE
 	default IR_CORE
@@ -28,7 +28,7 @@ config LIRC
 	   LIRC daemon handles protocol decoding for IR reception and
 	   encoding for IR transmitting (aka "blasting").
 
-source "drivers/media/IR/keymaps/Kconfig"
+source "drivers/media/rc/keymaps/Kconfig"
 
 config IR_NEC_DECODER
 	tristate "Enable IR raw decoder for the NEC protocol"
@@ -163,5 +163,22 @@ config IR_STREAMZAP
 
 	   To compile this driver as a module, choose M here: the
 	   module will be called streamzap.
+
+config IR_WINBOND_CIR
+        tristate "Winbond IR remote control"
+        depends on X86 && PNP
+	depends on IR_CORE
+        select NEW_LEDS
+        select LEDS_CLASS
+        select LEDS_TRIGGERS
+        select BITREVERSE
+	---help---
+           Say Y here if you want to use the IR remote functionality found
+           in some Winbond SuperI/O chips. Currently only the WPCD376I
+           chip is supported (included in some Intel Media series
+	   motherboards).
+
+           To compile this driver as a module, choose M here: the module will
+	   be called winbond_cir.
 
 endif #IR_CORE

@@ -253,7 +253,7 @@ static void ir_key_poll(struct IR_i2c *ir)
 	}
 
 	if (rc)
-		ir_keydown(ir->input, ir_key, 0);
+		ir_keydown(ir->rc, ir_key, 0);
 }
 
 static void ir_work(struct work_struct *work)
@@ -270,22 +270,18 @@ static int ir_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	char *ir_codes = NULL;
 	const char *name = NULL;
-	u64 ir_type = 0;
+	u64 ir_type = IR_TYPE_UNKNOWN;
 	struct IR_i2c *ir;
-	struct input_dev *input_dev;
+	struct rc_dev *rc = NULL;
 	struct i2c_adapter *adap = client->adapter;
 	unsigned short addr = client->addr;
 	int err;
 
-	ir = kzalloc(sizeof(struct IR_i2c),GFP_KERNEL);
-	input_dev = input_allocate_device();
-	if (!ir || !input_dev) {
-		err = -ENOMEM;
-		goto err_out_free;
-	}
+	ir = kzalloc(sizeof(struct IR_i2c), GFP_KERNEL);
+	if (!ir)
+		return -ENOMEM;
 
 	ir->c = client;
-	ir->input = input_dev;
 	ir->polling_interval = DEFAULT_POLLING_INTERVAL;
 	i2c_set_clientdata(client, ir);
 
@@ -334,6 +330,8 @@ static int ir_probe(struct i2c_client *client, const struct i2c_device_id *id)
 						client->dev.platform_data;
 
 		ir_codes = init_data->ir_codes;
+		rc = init_data->rc_dev;
+
 		name = init_data->name;
 		if (init_data->type)
 			ir_type = init_data->type;
@@ -367,6 +365,19 @@ static int ir_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		}
 	}
 
+	if (!rc) {
+		/*
+		 * If platform_data doesn't specify rc_dev, initilize it
+		 * internally
+		 */
+		rc = rc_allocate_device();
+		if (!rc) {
+			err = -ENOMEM;
+			goto err_out_free;
+		}
+	}
+	ir->rc = rc;
+
 	/* Make sure we are all setup before going on */
 	if (!name || !ir->get_key || !ir_type || !ir_codes) {
 		dprintk(1, ": Unsupported device at address 0x%02x\n",
@@ -383,18 +394,28 @@ static int ir_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		 dev_name(&adap->dev),
 		 dev_name(&client->dev));
 
-	/* init + register input device */
-	ir->ir_type = ir_type;
-	input_dev->id.bustype = BUS_I2C;
-	input_dev->name       = ir->name;
-	input_dev->phys       = ir->phys;
+	/*
+	 * Initialize input_dev fields
+	 * It doesn't make sense to allow overriding them via platform_data
+	 */
+	rc->input_id.bustype = BUS_I2C;
+	rc->input_phys       = ir->phys;
+	rc->input_name	     = ir->name;
 
-	err = ir_input_register(ir->input, ir->ir_codes, NULL, MODULE_NAME);
+	/*
+	 * Initialize the other fields of rc_dev
+	 */
+	rc->map_name       = ir->ir_codes;
+	rc->allowed_protos = ir_type;
+	if (!rc->driver_name)
+		rc->driver_name = MODULE_NAME;
+
+	err = rc_register_device(rc);
 	if (err)
 		goto err_out_free;
 
 	printk(MODULE_NAME ": %s detected at %s [%s]\n",
-	       ir->input->name, ir->input->phys, adap->name);
+	       ir->name, ir->phys, adap->name);
 
 	/* start polling via eventd */
 	INIT_DELAYED_WORK(&ir->work, ir_work);
@@ -403,6 +424,8 @@ static int ir_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	return 0;
 
  err_out_free:
+	/* Only frees rc if it were allocated internally */
+	rc_free_device(rc);
 	kfree(ir);
 	return err;
 }
@@ -415,7 +438,7 @@ static int ir_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&ir->work);
 
 	/* unregister device */
-	ir_input_unregister(ir->input);
+	rc_unregister_device(ir->rc);
 
 	/* free memory */
 	kfree(ir);

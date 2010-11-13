@@ -22,7 +22,6 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/input.h>
 #include <linux/slab.h>
 
 #include "saa7134-reg.h"
@@ -44,16 +43,6 @@ MODULE_PARM_DESC(pinnacle_remote, "Specify Pinnacle PCTV remote: 0=coloured, 1=g
 
 static int ir_rc5_remote_gap = 885;
 module_param(ir_rc5_remote_gap, int, 0644);
-static int ir_rc5_key_timeout = 115;
-module_param(ir_rc5_key_timeout, int, 0644);
-
-static int repeat_delay = 500;
-module_param(repeat_delay, int, 0644);
-MODULE_PARM_DESC(repeat_delay, "delay before key repeat started");
-static int repeat_period = 33;
-module_param(repeat_period, int, 0644);
-MODULE_PARM_DESC(repeat_period, "repeat period between "
-    "keypresses when key is down");
 
 static unsigned int disable_other_ir;
 module_param(disable_other_ir, int, 0644);
@@ -70,7 +59,6 @@ static int saa7134_rc5_irq(struct saa7134_dev *dev);
 static int saa7134_nec_irq(struct saa7134_dev *dev);
 static int saa7134_raw_decode_irq(struct saa7134_dev *dev);
 static void nec_task(unsigned long data);
-static void saa7134_nec_timer(unsigned long data);
 
 /* -------------------- GPIO generic keycode builder -------------------- */
 
@@ -104,25 +92,25 @@ static int build_key(struct saa7134_dev *dev)
 	switch (dev->board) {
 	case SAA7134_BOARD_KWORLD_PLUS_TV_ANALOG:
 		if (data == ir->mask_keycode)
-			ir_input_nokey(ir->dev, &ir->ir);
+			ir_keyup(ir->dev);
 		else
-			ir_input_keydown(ir->dev, &ir->ir, data);
+			ir_keydown_notimeout(ir->dev, data, 0);
 		return 0;
 	}
 
 	if (ir->polling) {
 		if ((ir->mask_keydown  &&  (0 != (gpio & ir->mask_keydown))) ||
 		    (ir->mask_keyup    &&  (0 == (gpio & ir->mask_keyup)))) {
-			ir_input_keydown(ir->dev, &ir->ir, data);
+			ir_keydown_notimeout(ir->dev, data, 0);
 		} else {
-			ir_input_nokey(ir->dev, &ir->ir);
+			ir_keyup(ir->dev);
 		}
 	}
 	else {	/* IRQ driven mode - handle key press and release in one go */
 		if ((ir->mask_keydown  &&  (0 != (gpio & ir->mask_keydown))) ||
 		    (ir->mask_keyup    &&  (0 == (gpio & ir->mask_keyup)))) {
-			ir_input_keydown(ir->dev, &ir->ir, data);
-			ir_input_nokey(ir->dev, &ir->ir);
+			ir_keydown_notimeout(ir->dev, data, 0);
+			ir_keyup(ir->dev);
 		}
 	}
 
@@ -465,17 +453,11 @@ static int __saa7134_ir_start(void *priv)
 		init_timer(&ir->timer_end);
 		ir->timer_end.function = ir_rc5_timer_end;
 		ir->timer_end.data = (unsigned long)ir;
-		init_timer(&ir->timer_keyup);
-		ir->timer_keyup.function = ir_rc5_timer_keyup;
-		ir->timer_keyup.data = (unsigned long)ir;
 		ir->shift_by = 2;
 		ir->start = 0x2;
 		ir->addr = 0x17;
-		ir->rc5_key_timeout = ir_rc5_key_timeout;
 		ir->rc5_remote_gap = ir_rc5_remote_gap;
 	} else if (ir->nec_gpio) {
-		setup_timer(&ir->timer_keyup, saa7134_nec_timer,
-			    (unsigned long)dev);
 		tasklet_init(&ir->tlet, nec_task, (unsigned long)dev);
 	} else if (ir->raw_decode) {
 		/* set timer_end for code completion */
@@ -532,17 +514,17 @@ void saa7134_ir_stop(struct saa7134_dev *dev)
 		__saa7134_ir_stop(dev);
 }
 
-static int saa7134_ir_open(void *priv)
+static int saa7134_ir_open(struct rc_dev *rc)
 {
-	struct saa7134_dev *dev = priv;
+	struct saa7134_dev *dev = rc->priv;
 
 	dev->remote->users++;
 	return __saa7134_ir_start(dev);
 }
 
-static void saa7134_ir_close(void *priv)
+static void saa7134_ir_close(struct rc_dev *rc)
 {
-	struct saa7134_dev *dev = priv;
+	struct saa7134_dev *dev = rc->priv;
 
 	dev->remote->users--;
 	if (!dev->remote->users)
@@ -550,9 +532,9 @@ static void saa7134_ir_close(void *priv)
 }
 
 
-static int saa7134_ir_change_protocol(void *priv, u64 ir_type)
+static int saa7134_ir_change_protocol(struct rc_dev *rc, u64 ir_type)
 {
-	struct saa7134_dev *dev = priv;
+	struct saa7134_dev *dev = rc->priv;
 	struct card_ir *ir = dev->remote;
 	u32 nec_gpio, rc5_gpio;
 
@@ -586,7 +568,7 @@ static int saa7134_ir_change_protocol(void *priv, u64 ir_type)
 int saa7134_input_init1(struct saa7134_dev *dev)
 {
 	struct card_ir *ir;
-	struct input_dev *input_dev;
+	struct rc_dev *rc;
 	char *ir_codes = NULL;
 	u32 mask_keycode = 0;
 	u32 mask_keydown = 0;
@@ -596,7 +578,6 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	int nec_gpio	 = 0;
 	int raw_decode   = 0;
 	int allow_protocol_change = 0;
-	u64 ir_type = IR_TYPE_OTHER;
 	int err;
 
 	if (dev->has_remote != SAA7134_REMOTE_GPIO)
@@ -832,13 +813,13 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	}
 
 	ir = kzalloc(sizeof(*ir), GFP_KERNEL);
-	input_dev = input_allocate_device();
-	if (!ir || !input_dev) {
+	rc = rc_allocate_device();
+	if (!ir || !rc) {
 		err = -ENOMEM;
 		goto err_out_free;
 	}
 
-	ir->dev = input_dev;
+	ir->dev = rc;
 	dev->remote = ir;
 
 	ir->running = 0;
@@ -858,47 +839,40 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	snprintf(ir->phys, sizeof(ir->phys), "pci-%s/ir0",
 		 pci_name(dev->pci));
 
-
-	ir->props.priv = dev;
-	ir->props.open = saa7134_ir_open;
-	ir->props.close = saa7134_ir_close;
-
+	rc->priv = dev;
+	rc->open = saa7134_ir_open;
+	rc->close = saa7134_ir_close;
 	if (raw_decode)
-		ir->props.driver_type = RC_DRIVER_IR_RAW;
+		rc->driver_type = RC_DRIVER_IR_RAW;
 
 	if (!raw_decode && allow_protocol_change) {
-		ir->props.allowed_protos = IR_TYPE_RC5 | IR_TYPE_NEC;
-		ir->props.change_protocol = saa7134_ir_change_protocol;
+		rc->allowed_protos = IR_TYPE_RC5 | IR_TYPE_NEC;
+		rc->change_protocol = saa7134_ir_change_protocol;
 	}
 
-	err = ir_input_init(input_dev, &ir->ir, ir_type);
-	if (err < 0)
-		goto err_out_free;
-
-	input_dev->name = ir->name;
-	input_dev->phys = ir->phys;
-	input_dev->id.bustype = BUS_PCI;
-	input_dev->id.version = 1;
+	rc->input_name = ir->name;
+	rc->input_phys = ir->phys;
+	rc->input_id.bustype = BUS_PCI;
+	rc->input_id.version = 1;
 	if (dev->pci->subsystem_vendor) {
-		input_dev->id.vendor  = dev->pci->subsystem_vendor;
-		input_dev->id.product = dev->pci->subsystem_device;
+		rc->input_id.vendor  = dev->pci->subsystem_vendor;
+		rc->input_id.product = dev->pci->subsystem_device;
 	} else {
-		input_dev->id.vendor  = dev->pci->vendor;
-		input_dev->id.product = dev->pci->device;
+		rc->input_id.vendor  = dev->pci->vendor;
+		rc->input_id.product = dev->pci->device;
 	}
-	input_dev->dev.parent = &dev->pci->dev;
+	rc->dev.parent = &dev->pci->dev;
+	rc->map_name = ir_codes;
+	rc->driver_name = MODULE_NAME;
 
-	err = ir_input_register(ir->dev, ir_codes, &ir->props, MODULE_NAME);
+	err = rc_register_device(rc);
 	if (err)
 		goto err_out_free;
-
-	/* the remote isn't as bouncy as a keyboard */
-	ir->dev->rep[REP_DELAY] = repeat_delay;
-	ir->dev->rep[REP_PERIOD] = repeat_period;
 
 	return 0;
 
 err_out_free:
+	rc_free_device(rc);
 	dev->remote = NULL;
 	kfree(ir);
 	return err;
@@ -910,7 +884,7 @@ void saa7134_input_fini(struct saa7134_dev *dev)
 		return;
 
 	saa7134_ir_stop(dev);
-	ir_input_unregister(dev->remote->dev);
+	rc_unregister_device(dev->remote->dev);
 	kfree(dev->remote);
 	dev->remote = NULL;
 }
@@ -1092,20 +1066,6 @@ static int saa7134_rc5_irq(struct saa7134_dev *dev)
 	return 1;
 }
 
-/* On NEC protocol, One has 2.25 ms, and zero has 1.125 ms
-   The first pulse (start) has 9 + 4.5 ms
- */
-
-static void saa7134_nec_timer(unsigned long data)
-{
-	struct saa7134_dev *dev = (struct saa7134_dev *) data;
-	struct card_ir *ir = dev->remote;
-
-	dprintk("Cancel key repeat\n");
-
-	ir_input_nokey(ir->dev, &ir->ir);
-}
-
 static void nec_task(unsigned long data)
 {
 	struct saa7134_dev *dev = (struct saa7134_dev *) data;
@@ -1194,12 +1154,11 @@ static void nec_task(unsigned long data)
 		dprintk("scancode = 0x%02x (code = 0x%02x, notcode= 0x%02x)\n",
 			 ir->code, ircode, not_code);
 
-		ir_input_keydown(ir->dev, &ir->ir, ir->code);
-	} else
+		ir_keydown(ir->dev, ir->code, 0);
+	} else {
 		dprintk("Repeat last key\n");
-
-	/* Keep repeating the last key */
-	mod_timer(&ir->timer_keyup, jiffies + msecs_to_jiffies(150));
+		ir_repeat(ir->dev);
+	}
 
 	saa_setl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO18_P);
 }
