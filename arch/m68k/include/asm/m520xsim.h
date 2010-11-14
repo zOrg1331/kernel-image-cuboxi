@@ -11,6 +11,9 @@
 #define m520xsim_h
 /****************************************************************************/
 
+#define	CPU_NAME		"COLDFIRE(m520x)"
+#define	CPU_INSTR_PER_JIFFY	3
+
 /*
  *  Define the 520x SIM register set addresses.
  */
@@ -97,6 +100,7 @@
 #define MCFGPIO_PCLRR_UART		0xFC0A402A
 #define MCFGPIO_PCLRR_FECH		0xFC0A402B
 #define MCFGPIO_PCLRR_FECL		0xFC0A402C
+
 /*
  * Generic GPIO support
  */
@@ -109,7 +113,6 @@
 #define MCFGPIO_PIN_MAX			80
 #define MCFGPIO_IRQ_MAX			8
 #define MCFGPIO_IRQ_VECBASE		MCFINT_VECBASE
-/****************************************************************************/
 
 #define MCF_GPIO_PAR_UART                   (0xA4036)
 #define MCF_GPIO_PAR_FECI2C                 (0xA4033)
@@ -124,6 +127,13 @@
 
 #define MCF_GPIO_PAR_FECI2C_PAR_SDA_URXD2   (0x02)
 #define MCF_GPIO_PAR_FECI2C_PAR_SCL_UTXD2   (0x04)
+
+/*
+ *  UART module.
+ */
+#define MCFUART_BASE1		0x60000		/* Base address of UART1 */
+#define MCFUART_BASE2		0x64000		/* Base address of UART2 */
+#define MCFUART_BASE3		0x68000		/* Base address of UART2 */
 
 /*
  *  Reset Controll Unit.
