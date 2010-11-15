@@ -1,0 +1,62 @@
+Importing i2c based on 2.6.37-rc1-git11
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 0143832cc96d0bf78486297aad5c8fb2c2ead02a
+HEAD is now at 0143832 Merge branch 'urgent' of git://git.kernel.org/pub/scm/linux/kernel/git/brodo/pcmcia-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-remove-obsolete-cleanup-for-clientdata.patch
+i2c-id-01-delete-unused-adapter-ids.patch
+i2c-id-02-drivers-dont-include-i2c-id-h.patch
+i2c-id-03-deprecate-adapter-id-field.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 2666fe6...dd6a347 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.37-rc1-git11
+$ cd ../quilt-tmp
+$ git reset --hard 0143832cc96d0bf78486297aad5c8fb2c2ead02a
+HEAD is now at 0143832 Merge branch 'urgent' of git://git.kernel.org/pub/scm/linux/kernel/git/brodo/pcmcia-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-change-mail-address-of-hans-j-koch.patch
+hwmon-lm95241-check-validity-of-input-values.patch
+hwmon-w83795-01-fix-pwm_enable.patch
+hwmon-w83795-02-add-pwm_mode.patch
+hwmon-w83795-03-list-all-usable-temp-sources.patch
+hwmon-w83795-04-sources-show-actual-temp-channels.patch
+hwmon-w83795-05-fix-intrusion-alarm-behavior.patch
+hwmon-w83795-06-clear-intrusion-immediately.patch
+hwmon-w83795-07-check-if-beeping-is-enabled.patch
+hwmon-adm9240-implement-standard-intrusion-detection-interface.patch
+hwmon-w83792d-implement-standard-intrusion-detection-interface.patch
+hwmon-w83793-implement-standard-intrusion-detection-interface.patch
+hwmon-schedule-removal-old-intrusion-detection-interface.patch
+Context reduced to (2/0) to apply fragment at 555
+hwmon-it87-use-pr_fmt-and-pr_level.patch
+hwmon-lm78-use-pr_fmt-and-pr_level.patch
+hwmon-pc87360-use-pr_fmt-and-pr_level.patch
+hwmon-pc87427-use-pr_fmt-and-pr_level.patch
+hwmon-w83781d-use-pr_fmt-and-pr_level.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + b38c6bf...d9faceb master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.37-rc1-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.37-rc1-116-g151f52f
+$ cd ../quilt-tmp
+$ git reset --hard 151f52f09c5728ecfdd0c289da1a4b30bb416f2c
+HEAD is now at 151f52f ipw2x00: remove the right /proc/net entry
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+module:update_prototype_for_ref_formerly_use.patch
+virtio:net_fix_queue_full_check.patch
+virtio:char_console_fix_memory_leak.patch
+virtio:fix_format_of_sysfs_driver_vendor_files.patch
+lguest:guard-pages.patch
+lguest:username-and-chroot.patch
+lguest:document-rng.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 049f6a5...f58b91d master     -> quilt/rr  (forced update)
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
