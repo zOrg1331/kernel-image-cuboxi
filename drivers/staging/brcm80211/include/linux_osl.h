@@ -18,13 +18,7 @@
 #define _linux_osl_h_
 
 
-/* Linux Kernel: File Operations: start */
-extern void *osl_os_open_image(char *filename);
-extern int osl_os_get_image_block(char *buf, int len, void *image);
-extern void osl_os_close_image(void *image);
-/* Linux Kernel: File Operations: end */
-
-extern osl_t *osl_attach(void *pdev, uint bustype, bool pkttag);
+extern osl_t *osl_attach(void *pdev, uint bustype);
 extern void osl_detach(osl_t *osh);
 
 extern u32 g_assert_type;
@@ -62,7 +56,6 @@ extern uint osl_pci_slot(osl_t *osh);
 
 /* Pkttag flag should be part of public information */
 typedef struct {
-	bool pkttag;
 	uint pktalloced;	/* Number of allocated packet buffers */
 	bool mmbus;		/* Bus supports memory-mapped register accesses */
 	pktfree_cb_fn_t tx_fn;	/* Callback function for PKTFREE */
@@ -91,8 +84,6 @@ typedef struct {
 
 #define BUS_SWAP32(v)		(v)
 
-#define	DMA_CONSISTENT_ALIGN	osl_dma_consistent_align()
-extern uint osl_dma_consistent_align(void);
 extern void *osl_dma_alloc_consistent(osl_t *osh, uint size, u16 align,
 				      uint *tot, unsigned long *pap);
 
@@ -141,9 +132,6 @@ extern void osl_dma_unmap(osl_t *osh, uint pa, uint size, int direction);
 #define SELECT_BUS_WRITE(osh, mmap_op, bus_op) mmap_op
 #define SELECT_BUS_READ(osh, mmap_op, bus_op) mmap_op
 #endif
-
-#define OSL_ERROR(bcmerror)	osl_error(bcmerror)
-extern int osl_error(int bcmerror);
 
 /* the largest reasonable packet buffer driver uses for ethernet MTU in bytes */
 #define	PKTBUFSZ	2048	/* largest reasonable packet buffer, driver uses for ethernet MTU */
@@ -271,22 +259,6 @@ extern int osl_error(int bcmerror);
 #define OSL_CACHED(va)		((void *)va)
 #endif				/* mips */
 
-#if defined(mips)
-#define	OSL_GETCYCLES(x)	((x) = read_c0_count() * 2)
-#elif defined(__i386__)
-#define	OSL_GETCYCLES(x)	rdtscl((x))
-#else
-#define OSL_GETCYCLES(x)	((x) = 0)
-#endif				/* defined(mips) */
-
-/* dereference an address that may cause a bus exception */
-#ifdef mips
-#define	BUSPROBE(val, addr)	get_dbe((val), (addr))
-#include <asm/paccess.h>
-#else
-#define	BUSPROBE(val, addr)	({ (val) = R_REG(NULL, (addr)); 0; })
-#endif				/* mips */
-
 /* map/unmap physical to virtual I/O */
 #if !defined(CONFIG_MMC_MSM7X00A)
 #define	REG_MAP(pa, size)	ioremap_nocache((unsigned long)(pa), (unsigned long)(size))
@@ -298,10 +270,6 @@ extern int osl_error(int bcmerror);
 #define	R_SM(r)			(*(r))
 #define	W_SM(r, v)		(*(r) = (v))
 #define	BZERO_SM(r, len)	memset((r), '\0', (len))
-
-#ifdef BRCM_FULLMAC
-#include <linuxver.h>		/* use current 2.4.x calling conventions */
-#endif
 
 /* packet primitives */
 #define	PKTGET(osh, len, send)		osl_pktget((osh), (len))
@@ -316,7 +284,6 @@ extern int osl_error(int bcmerror);
 #define	PKTSETLEN(skb, len)	__skb_trim((struct sk_buff *)(skb), (len))
 #define	PKTPUSH(skb, bytes)	skb_push((struct sk_buff *)(skb), (bytes))
 #define	PKTPULL(skb, bytes)	skb_pull((struct sk_buff *)(skb), (bytes))
-#define	PKTTAG(skb)		((void *)(((struct sk_buff *)(skb))->cb))
 #define PKTALLOCED(osh)		(((osl_pubinfo_t *)(osh))->pktalloced)
 #define PKTSETPOOL(osh, skb, x, y)	do {} while (0)
 #define PKTPOOL(osh, skb)		false
@@ -332,9 +299,6 @@ osl_pkt_frmnative(osl_pubinfo_t *osh, struct sk_buff *skb)
 {
 	struct sk_buff *nskb;
 
-	if (osh->pkttag)
-		bzero((void *)skb->cb, OSL_PKTTAG_SZ);
-
 	for (nskb = skb; nskb; nskb = nskb->next)
 		osh->pktalloced++;
 
@@ -347,9 +311,6 @@ static inline struct sk_buff *
 osl_pkt_tonative(osl_pubinfo_t *osh, void *pkt)
 {
 	struct sk_buff *nskb;
-
-	if (osh->pkttag)
-		bzero(((struct sk_buff *)pkt)->cb, OSL_PKTTAG_SZ);
 
 	for (nskb = (struct sk_buff *)pkt; nskb; nskb = nskb->next)
 		osh->pktalloced--;

@@ -21,13 +21,14 @@
 #include <linux/string.h>
 #include <linux/pci_ids.h>
 #include <bcmdefs.h>
-#include <linuxver.h>
+#include <linux/module.h>
+#include <linux/pci.h>
+#include <linux/sched.h>
 #include <osl.h>
 #define WLC_MAXBSSCFG		1	/* single BSS configs */
 
 #include <wlc_cfg.h>
 #include <net/mac80211.h>
-#include <epivers.h>
 #ifndef WLC_HIGH_ONLY
 #include <phy_version.h>
 #endif
@@ -35,6 +36,8 @@
 #include <pcicfg.h>
 #include <wlioctl.h>
 #include <wlc_key.h>
+#include <sbhndpio.h>
+#include <sbhnddma.h>
 #include <wlc_channel.h>
 #include <wlc_pub.h>
 #include <wlc_scb.h>
@@ -178,32 +181,6 @@ static int phymsglevel = 0xdeadbeef;
 module_param(phymsglevel, int, 0);
 #endif				/* WLC_HIGH_ONLY */
 #endif				/* BCMDBG */
-
-static int oneonly;
-module_param(oneonly, int, 0);
-
-static int piomode;
-module_param(piomode, int, 0);
-
-static int instance_base;	/* Starting instance number */
-module_param(instance_base, int, 0);
-
-#if defined(BCMDBG)
-static char *macaddr;
-module_param(macaddr, charp, S_IRUGO);
-#endif
-
-static int nompc = 1;
-module_param(nompc, int, 0);
-
-static char name[IFNAMSIZ] = "eth%d";
-module_param_string(name, name, IFNAMSIZ, 0);
-
-#ifndef	SRCBASE
-#define	SRCBASE "."
-#endif
-
-#define WL_MAGIC 	0xdeadbeef
 
 #define HW_TO_WL(hw)	 (hw->priv)
 #define WL_TO_HW(wl)	  (wl->pub->ieee_hw)
@@ -773,7 +750,7 @@ static wl_info_t *wl_attach(u16 vendor, u16 device, unsigned long regs,
 	struct ieee80211_hw *hw;
 	u8 perm[ETH_ALEN];
 
-	unit = wl_found + instance_base;
+	unit = wl_found;
 	err = 0;
 
 	if (unit < 0) {
@@ -781,13 +758,7 @@ static wl_info_t *wl_attach(u16 vendor, u16 device, unsigned long regs,
 		return NULL;
 	}
 
-	if (oneonly && (unit != instance_base)) {
-		WL_ERROR(("wl%d: wl_attach: oneonly is set, exiting\n", unit));
-		return NULL;
-	}
-
-	/* Requires pkttag feature */
-	osh = osl_attach(btparam, bustype, true);
+	osh = osl_attach(btparam, bustype);
 	ASSERT(osh);
 
 #ifdef WLC_HIGH_ONLY
@@ -806,7 +777,6 @@ static wl_info_t *wl_attach(u16 vendor, u16 device, unsigned long regs,
 #endif
 	ASSERT(wl);
 
-	wl->magic = WL_MAGIC;
 	wl->osh = osh;
 	atomic_set(&wl->callbacks, 0);
 
@@ -840,9 +810,7 @@ static wl_info_t *wl_attach(u16 vendor, u16 device, unsigned long regs,
 	base_addr = regs;
 
 	if (bustype == PCI_BUS) {
-		/* piomode can be overwritten by command argument */
-		wl->piomode = piomode;
-		WL_TRACE(("PCI/%s\n", wl->piomode ? "PIO" : "DMA"));
+		wl->piomode = false;
 	} else if (bustype == RPC_BUS) {
 		/* Do nothing */
 	} else {
@@ -890,8 +858,8 @@ static wl_info_t *wl_attach(u16 vendor, u16 device, unsigned long regs,
 	wl_release_fw(wl);
 #endif
 	if (!wl->wlc) {
-		printf("%s: %s wlc_attach() failed with code %d\n",
-			KBUILD_MODNAME, EPI_VERSION_STR, err);
+		printf("%s: wlc_attach() failed with code %d\n",
+			KBUILD_MODNAME, err);
 		goto fail;
 	}
 	wl->pub = wlc_pub(wl->wlc);
@@ -909,11 +877,9 @@ static wl_info_t *wl_attach(u16 vendor, u16 device, unsigned long regs,
 			  wl_rpc_down, NULL, NULL);
 #endif				/* WLC_HIGH_ONLY */
 
-	if (nompc) {
-		if (wlc_iovar_setint(wl->wlc, "mpc", 0)) {
-			WL_ERROR(("wl%d: Error setting MPC variable to 0\n",
-				  unit));
-		}
+	if (wlc_iovar_setint(wl->wlc, "mpc", 0)) {
+		WL_ERROR(("wl%d: Error setting MPC variable to 0\n",
+			  unit));
 	}
 #ifdef BCMSDIO
 	/* Set SDIO drive strength */
@@ -958,14 +924,14 @@ static wl_info_t *wl_attach(u16 vendor, u16 device, unsigned long regs,
 	}
 #ifndef WLC_HIGH_ONLY
 	WL_ERROR(("wl%d: Broadcom BCM43xx 802.11 MAC80211 Driver "
-		  EPI_VERSION_STR " (" PHY_VERSION_STR ")", unit));
+		  " (" PHY_VERSION_STR ")", unit));
 #else
-	WL_ERROR(("wl%d: Broadcom BCM43xx 802.11 MAC80211 Driver "
-		  EPI_VERSION_STR, unit));
+	WL_ERROR(("wl%d: Broadcom BCM43xx 802.11 Splitmac MAC80211 Driver "
+		  , unit));
 #endif
 
 #ifdef BCMDBG
-	printf(" (Compiled in " SRCBASE " at " __TIME__ " on " __DATE__ ")");
+	printf(" (Compiled at " __TIME__ " on " __DATE__ ")");
 #endif				/* BCMDBG */
 	printf("\n");
 

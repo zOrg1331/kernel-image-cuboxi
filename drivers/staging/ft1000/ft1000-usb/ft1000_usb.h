@@ -98,16 +98,6 @@ struct prov_record {
 /*end of Jim*/
 #define DEBUG(args...) printk(KERN_INFO args)
 
-#define UCHAR               u8
-#define USHORT              u16
-#define ULONG               u32 /* WTF ??? */
-#define BOOLEAN             u8
-#define PULONG              u32 *
-#define PUSHORT             u16 *
-#define PUCHAR              u8 *
-#define PCHAR               u8 *
-#define UINT                u32
-
 #define FALSE           0
 #define TRUE            1
 
@@ -372,15 +362,15 @@ struct prov_record {
 
 
 
-#define ISR_EMPTY			(UCHAR)0x00 	 // no bits set in ISR
+#define ISR_EMPTY			(u8)0x00 	 // no bits set in ISR
 
-#define ISR_DOORBELL_ACK	(UCHAR)0x01		 //  the doorbell i sent has been recieved.
+#define ISR_DOORBELL_ACK	(u8)0x01		 //  the doorbell i sent has been recieved.
 
-#define ISR_DOORBELL_PEND	(UCHAR)0x02 	 //  doorbell for me
+#define ISR_DOORBELL_PEND	(u8)0x02 	 //  doorbell for me
 
-#define ISR_RCV				(UCHAR)0x04 	 // packet received with no errors
+#define ISR_RCV				(u8)0x04 	 // packet received with no errors
 
-#define ISR_WATERMARK		(UCHAR)0x08 	 //
+#define ISR_WATERMARK		(u8)0x08 	 //
 
 
 
@@ -466,11 +456,8 @@ struct ft1000_device
 {
 	struct usb_device *dev;
 	struct net_device *net;
-	spinlock_t device_lock;
 
 	u32 status;
-
-	wait_queue_head_t control_wait;
 
 	struct urb *rx_urb;
 	struct urb *tx_urb;
@@ -497,9 +484,9 @@ struct ft1000_info {
 	unsigned char usbboot;
     unsigned short dspalive;
     u16 ASIC_ID;
-    BOOLEAN fProvComplete;
-    BOOLEAN fCondResetPend;
-    BOOLEAN fAppMsgPend;
+    bool fProvComplete;
+    bool fCondResetPend;
+    bool fAppMsgPend;
     char *pfwimg;
     int fwimgsz;
     u16 DrvErrNum;
@@ -567,20 +554,20 @@ struct dpram_blk {
 } __attribute__ ((packed));
 
 u16 ft1000_read_register(struct ft1000_device *ft1000dev, u16* Data, u16 nRegIndx);
-u16 ft1000_write_register(struct ft1000_device *ft1000dev, USHORT value, u16 nRegIndx);
-u16 ft1000_read_dpram32(struct ft1000_device *ft1000dev, USHORT indx, PUCHAR buffer, USHORT cnt);
-u16 ft1000_write_dpram32(struct ft1000_device *ft1000dev, USHORT indx, PUCHAR buffer, USHORT cnt);
-u16 ft1000_read_dpram16(struct ft1000_device *ft1000dev, USHORT indx, PUCHAR buffer, u8 highlow);
-u16 ft1000_write_dpram16(struct ft1000_device *ft1000dev, USHORT indx, USHORT value, u8 highlow);
-u16 fix_ft1000_read_dpram32(struct ft1000_device *ft1000dev, USHORT indx, PUCHAR buffer);
-u16 fix_ft1000_write_dpram32(struct ft1000_device *ft1000dev, USHORT indx, PUCHAR buffer);
+u16 ft1000_write_register(struct ft1000_device *ft1000dev, u16 value, u16 nRegIndx);
+u16 ft1000_read_dpram32(struct ft1000_device *ft1000dev, u16 indx, u8 *buffer, u16 cnt);
+u16 ft1000_write_dpram32(struct ft1000_device *ft1000dev, u16 indx, u8 *buffer, u16 cnt);
+u16 ft1000_read_dpram16(struct ft1000_device *ft1000dev, u16 indx, u8 *buffer, u8 highlow);
+u16 ft1000_write_dpram16(struct ft1000_device *ft1000dev, u16 indx, u16 value, u8 highlow);
+u16 fix_ft1000_read_dpram32(struct ft1000_device *ft1000dev, u16 indx, u8 *buffer);
+u16 fix_ft1000_write_dpram32(struct ft1000_device *ft1000dev, u16 indx, u8 *buffer);
 
 extern void *pFileStart;
 extern size_t FileLength;
 extern int numofmsgbuf;
 
 int ft1000_close (struct net_device *dev);
-u16 scram_dnldr(struct ft1000_device *ft1000dev, void *pFileStart, ULONG  FileLength);
+u16 scram_dnldr(struct ft1000_device *ft1000dev, void *pFileStart, u32  FileLength);
 
 extern struct list_head freercvpool;
 extern spinlock_t free_buff_lock;   // lock to arbitrate free buffer list for receive command data

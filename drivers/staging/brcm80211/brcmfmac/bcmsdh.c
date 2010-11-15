@@ -16,13 +16,14 @@
 /* ****************** BCMSDH Interface Functions *************************** */
 
 #include <linux/types.h>
+#include <linux/netdevice.h>
 #include <bcmdefs.h>
 #include <bcmdevs.h>
 #include <bcmendian.h>
+#include <osl.h>
 #include <bcmutils.h>
 #include <hndsoc.h>
 #include <siutils.h>
-#include <osl.h>
 
 #include <bcmsdh.h>		/* BRCM API for SDIO
 			 clients (such as wl, dhd) */
