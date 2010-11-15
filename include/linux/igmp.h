@@ -167,10 +167,10 @@ struct ip_sf_socklist {
  */
 
 struct ip_mc_socklist {
-	struct ip_mc_socklist __rcu *next_rcu;
+	struct ip_mc_socklist	*next;
 	struct ip_mreqn		multi;
 	unsigned int		sfmode;		/* MCAST_{INCLUDE,EXCLUDE} */
-	struct ip_sf_socklist __rcu	*sflist;
+	struct ip_sf_socklist	*sflist;
 	struct rcu_head		rcu;
 };
 
@@ -186,14 +186,11 @@ struct ip_sf_list {
 struct ip_mc_list {
 	struct in_device	*interface;
 	__be32			multiaddr;
-	unsigned int		sfmode;
 	struct ip_sf_list	*sources;
 	struct ip_sf_list	*tomb;
+	unsigned int		sfmode;
 	unsigned long		sfcount[2];
-	union {
-		struct ip_mc_list *next;
-		struct ip_mc_list __rcu *next_rcu;
-	};
+	struct ip_mc_list	*next;
 	struct timer_list	timer;
 	int			users;
 	atomic_t		refcnt;
@@ -204,7 +201,6 @@ struct ip_mc_list {
 	char			loaded;
 	unsigned char		gsquery;	/* check source marks? */
 	unsigned char		crcount;
-	struct rcu_head		rcu;
 };
 
 /* V3 exponential field decoding */
