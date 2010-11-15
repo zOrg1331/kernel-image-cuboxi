@@ -5,13 +5,18 @@
  * (C) Copyright 2000-2004, Greg Ungerer <gerg@snapgear.com>
  */
 #include <linux/mm.h>
+#if defined(CONFIG_M5407) || defined(CONFIG_M54xx)
+#include <asm/m54xxacr.h>
+#endif
 
 #define flush_cache_all()			__flush_cache_all()
 #define flush_cache_mm(mm)			do { } while (0)
 #define flush_cache_dup_mm(mm)			do { } while (0)
 #define flush_cache_range(vma, start, end)	__flush_cache_all()
 #define flush_cache_page(vma, vmaddr)		do { } while (0)
+#ifndef flush_dcache_range
 #define flush_dcache_range(start,len)		__flush_cache_all()
+#endif
 #define ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE 0
 #define flush_dcache_page(page)			do { } while (0)
 #define flush_dcache_mmap_lock(mapping)		do { } while (0)
@@ -27,34 +32,12 @@
 #define copy_from_user_page(vma, page, vaddr, dst, src, len) \
 	memcpy(dst, src, len)
 
+#ifndef __flush_cache_all
 static inline void __flush_cache_all(void)
 {
-#if defined(CONFIG_M5407) || defined(CONFIG_M548x)
-	/*
-	 *	Use cpushl to push and invalidate all cache lines.
-	 *	Gas doesn't seem to know how to generate the ColdFire
-	 *	cpushl instruction... Oh well, bit stuff it for now.
-	 */
-	__asm__ __volatile__ (
-		"nop\n\t"
-		"clrl	%%d0\n\t"
-		"1:\n\t"
-		"movel	%%d0,%%a0\n\t"
-		"2:\n\t"
-		".word	0xf468\n\t"
-		"addl	#0x10,%%a0\n\t"
-		"cmpl	#0x00000800,%%a0\n\t"
-		"blt	2b\n\t"
-		"addql	#1,%%d0\n\t"
-		"cmpil	#4,%%d0\n\t"
-		"bne	1b\n\t"
-		"movel	#0xb6088500,%%d0\n\t"
-		"movec	%%d0,%%CACR\n\t"
-		: : : "d0", "a0" );
-#endif /* CONFIG_M5407 */
 #if defined(CONFIG_M523x) || defined(CONFIG_M527x)
 	__asm__ __volatile__ (
-		"movel	#0x81400100, %%d0\n\t"
+		"movel	#0x81400110, %%d0\n\t"
 		"movec	%%d0, %%CACR\n\t"
 		"nop\n\t"
 		: : : "d0" );
@@ -82,11 +65,12 @@ static inline void __flush_cache_all(void)
 #endif /* CONFIG_M5249 */
 #ifdef CONFIG_M532x
 	__asm__ __volatile__ (
-		"movel	#0x81000200, %%d0\n\t"
+		"movel	#0x81000210, %%d0\n\t"
 		"movec	%%d0, %%CACR\n\t"
 		"nop\n\t"
 		: : : "d0" );
 #endif /* CONFIG_M532x */
 }
+#endif /* __flush_cache_all */
 
 #endif /* _M68KNOMMU_CACHEFLUSH_H */
