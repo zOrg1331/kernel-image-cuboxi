@@ -20,37 +20,43 @@
 
 static int cpu_silicon_rev = -1;
 
-#define SI_REV 0x48
+#define SREV 0x24
+
+static int get_mx51_srev(u32 rev)
+{
+	if (rev == 0x0)
+		cpu_silicon_rev = MX51_CHIP_REV_2_0;
+	else if (rev == 0x10)
+		cpu_silicon_rev = MX51_CHIP_REV_3_0;
+	return 0;
+}
+
+static int get_mx53_srev(u32 rev)
+{
+	if (rev == 0x0)
+		cpu_silicon_rev = MX53_CHIP_REV_1_0;
+	else if (rev == 0x10)
+		cpu_silicon_rev = MX51_CHIP_REV_2_0;
+	return 0;
+}
 
 static void query_silicon_parameter(void)
 {
-	void __iomem *rom = ioremap(MX51_IROM_BASE_ADDR, MX51_IROM_SIZE);
+	void __iomem *iim_base;
 	u32 rev;
 
-	if (!rom) {
-		cpu_silicon_rev = -EINVAL;
-		return;
-	}
+	if (cpu_is_mx51())
+		iim_base = MX51_IO_ADDRESS(MX51_IIM_BASE_ADDR);
+	else if (cpu_is_mx53())
+		iim_base = MX53_IO_ADDRESS(MX53_IIM_BASE_ADDR);
 
-	rev = readl(rom + SI_REV);
-	switch (rev) {
-	case 0x1:
-		cpu_silicon_rev = MX51_CHIP_REV_1_0;
-		break;
-	case 0x2:
-		cpu_silicon_rev = MX51_CHIP_REV_1_1;
-		break;
-	case 0x10:
-		cpu_silicon_rev = MX51_CHIP_REV_2_0;
-		break;
-	case 0x20:
-		cpu_silicon_rev = MX51_CHIP_REV_3_0;
-		break;
-	default:
-		cpu_silicon_rev = 0;
-	}
+	rev = readl(iim_base + SREV) & 0xff;
 
-	iounmap(rom);
+	cpu_silicon_rev = 0;
+	if (cpu_is_mx51())
+		cpu_silicon_rev = get_mx51_srev(rev);
+	else if(cpu_is_mx53())
+		cpu_silicon_rev = get_mx53_srev(rev);
 }
 
 /*
