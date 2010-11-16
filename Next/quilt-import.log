@@ -1,0 +1,25 @@
+Importing i2c based on 2.6.37-rc1-git11
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 0143832cc96d0bf78486297aad5c8fb2c2ead02a
+HEAD is now at 0143832 Merge branch 'urgent' of git://git.kernel.org/pub/scm/linux/kernel/git/brodo/pcmcia-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-remove-obsolete-cleanup-for-clientdata.patch
+i2c-id-01-delete-unused-adapter-ids.patch
+i2c-id-02-drivers-dont-include-i2c-id-h.patch
+i2c-id-03-deprecate-adapter-id-field.patch
+i2c-core-sanity-checks-on-adapter-registration.patch
+i2c-nforce2-remove-unnecessary-cast-of-pci_get_drvdata.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + dd6a347...2955869 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.37-rc1-git11
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.37-rc1-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.37-rc1-116-g151f52f
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+	quilt series is empty
+$ git update-ref refs/heads/quilt/device-mapper 82cc2e4b513e23a03df78b7f32ef957ef8180405
