@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.36
-Release: alt1
+Release: alt2
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -348,6 +348,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Tue Nov 16 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.36-alt2
+- applied automatic process group scheduling patch
+
 * Thu Oct 21 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.36-alt1
 - 2.6.36
 
