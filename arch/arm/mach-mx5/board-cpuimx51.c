@@ -113,7 +113,7 @@ static struct platform_device *devices[] __initdata = {
 #endif
 };
 
-static struct pad_desc eukrea_cpuimx51_pads[] = {
+static iomux_v3_cfg_t eukrea_cpuimx51_pads[] = {
 	/* UART1 */
 	MX51_PAD_UART1_RXD__UART1_RXD,
 	MX51_PAD_UART1_TXD__UART1_TXD,
@@ -292,7 +292,7 @@ static struct sys_timer mxc_timer = {
 
 MACHINE_START(EUKREA_CPUIMX51, "Eukrea CPUIMX51 Module")
 	/* Maintainer: Eric Bénard <eric@eukrea.com> */
-	.boot_params = PHYS_OFFSET + 0x100,
+	.boot_params = MX51_PHYS_OFFSET + 0x100,
 	.map_io = mx51_map_io,
 	.init_irq = mx51_init_irq,
 	.init_machine = eukrea_cpuimx51_init,
