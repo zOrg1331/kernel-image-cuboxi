@@ -66,7 +66,6 @@ static void mmc_host_clk_gate_delayed(struct mmc_host *host)
 	unsigned long tick_ns;
 	unsigned long freq = host->ios.clock;
 	unsigned long flags;
-	int users;
 
 	if (!freq) {
 		pr_err("%s: frequency set to 0 in disable function, "
@@ -80,20 +79,18 @@ static void mmc_host_clk_gate_delayed(struct mmc_host *host)
 	 * clk_disable().
 	 */
 	spin_lock_irqsave(&host->clk_lock, flags);
-	users = host->clk_requests;
 
 	/*
 	 * Delay n bus cycles (at least 8 from MMC spec) before attempting
 	 * to disable the MCI block clock. The reference count may have
 	 * gone up again after this delay due to rescheduling!
 	 */
-	if (!users) {
+	if (!host->clk_requests) {
 		spin_unlock_irqrestore(&host->clk_lock, flags);
 		tick_ns = DIV_ROUND_UP(1000000000, freq);
 		ndelay(host->clk_delay * tick_ns);
 	} else {
 		/* New users appeared while waiting for this work */
-		host->clk_pending_gate = false;
 		spin_unlock_irqrestore(&host->clk_lock, flags);
 		return;
 	}
@@ -105,7 +102,6 @@ static void mmc_host_clk_gate_delayed(struct mmc_host *host)
 		spin_lock_irqsave(&host->clk_lock, flags);
 		pr_debug("%s: gated MCI clock\n", mmc_hostname(host));
 	}
-	host->clk_pending_gate = false;
 	spin_unlock_irqrestore(&host->clk_lock, flags);
 }
 
@@ -115,7 +111,7 @@ static void mmc_host_clk_gate_delayed(struct mmc_host *host)
 static void mmc_host_clk_gate_work(struct work_struct *work)
 {
 	struct mmc_host *host = container_of(work, struct mmc_host,
-					      clk_disable_work);
+					      clk_gate_work);
 
 	mmc_host_clk_gate_delayed(host);
 }
@@ -181,10 +177,8 @@ void mmc_host_clk_gate(struct mmc_host *host)
 	spin_lock_irqsave(&host->clk_lock, flags);
 	host->clk_requests--;
 	if (mmc_host_may_gate_card(host->card) &&
-	    !host->clk_requests) {
-		host->clk_pending_gate = true;
-		schedule_work(&host->clk_disable_work);
-	}
+	    !host->clk_requests)
+		schedule_work(&host->clk_gate_work);
 	spin_unlock_irqrestore(&host->clk_lock, flags);
 }
 
@@ -218,8 +212,7 @@ static inline void mmc_host_clk_init(struct mmc_host *host)
 	/* Hold MCI clock for 8 cycles by default */
 	host->clk_delay = 8;
 	host->clk_gated = false;
-	host->clk_pending_gate = false;
-	INIT_WORK(&host->clk_disable_work, mmc_host_clk_gate_work);
+	INIT_WORK(&host->clk_gate_work, mmc_host_clk_gate_work);
 	spin_lock_init(&host->clk_lock);
 }
 
@@ -233,7 +226,7 @@ static inline void mmc_host_clk_exit(struct mmc_host *host)
 	 * Wait for any outstanding gate and then make sure we're
 	 * ungated before exiting.
 	 */
-	if (cancel_work_sync(&host->clk_disable_work))
+	if (cancel_work_sync(&host->clk_gate_work))
 		mmc_host_clk_gate_delayed(host);
 	if (host->clk_gated)
 		mmc_host_clk_ungate(host);
