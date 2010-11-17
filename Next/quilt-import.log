@@ -1,0 +1,35 @@
+Importing i2c based on 2.6.37-rc2
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard e53beacd23d9cb47590da6a7a7f6d417b941a994
+HEAD is now at e53beac Linux 2.6.37-rc2
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-nforce2-remove-unnecessary-cast-of-pci_get_drvdata.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 2955869...c9a5743 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.37-rc2
+$ cd ../quilt-tmp
+$ git reset --hard e53beacd23d9cb47590da6a7a7f6d417b941a994
+HEAD is now at e53beac Linux 2.6.37-rc2
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-adm9240-implement-standard-intrusion-detection-interface.patch
+hwmon-w83792d-implement-standard-intrusion-detection-interface.patch
+hwmon-w83793-implement-standard-intrusion-detection-interface.patch
+hwmon-schedule-removal-old-intrusion-detection-interface.patch
+hwmon-it87-use-pr_fmt-and-pr_level.patch
+hwmon-lm78-use-pr_fmt-and-pr_level.patch
+hwmon-pc87360-use-pr_fmt-and-pr_level.patch
+hwmon-pc87427-use-pr_fmt-and-pr_level.patch
+hwmon-w83781d-use-pr_fmt-and-pr_level.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + d9faceb...3eb9681 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.37-rc1-git8
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.37-rc1-116-g151f52f
+Unchanged quilt series rr
+Importing device-mapper based on block/for-next
+Unchanged quilt series device-mapper
