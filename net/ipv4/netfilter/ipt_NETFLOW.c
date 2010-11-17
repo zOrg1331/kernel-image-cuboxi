@@ -424,11 +424,11 @@ static struct ctl_table netflow_sysctl_table[] = {
 		.maxlen		= sizeof(int),
 		.proc_handler	= &proc_dointvec,
 	},
-	{ .ctl_name = 0 }
+	{ }
 };
 
 static struct ctl_path netflow_sysctl_path[] = {
-	{ .procname = "net", .ctl_name = CTL_NET },
+	{ .procname = "net" },
 	{ .procname = "netflow" },
 	{ }
 };
@@ -1014,7 +1014,7 @@ static void rate_timer_calc(unsigned long dummy)
 /* packet receiver */
 static unsigned int netflow_target(
 			   struct sk_buff *skb,
-			   const struct xt_target_param *par
+			   const struct xt_action_param *par
 		)
 {
 	struct iphdr _iph, *iph;

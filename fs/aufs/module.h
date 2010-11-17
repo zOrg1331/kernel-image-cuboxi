@@ -31,7 +31,6 @@ struct path;
 struct seq_file;
 
 /* module parameters */
-extern short aufs_nwkq;
 extern int sysaufs_brs;
 
 /* ---------------------------------------------------------------------- */
@@ -40,6 +39,15 @@ extern int au_dir_roflags;
 
 void *au_kzrealloc(void *p, unsigned int nused, unsigned int new_sz, gfp_t gfp);
 int au_seq_path(struct seq_file *seq, struct path *path);
+
+#ifdef CONFIG_PROC_FS
+/* procfs.c */
+int __init au_procfs_init(void);
+void au_procfs_fin(void);
+#else
+AuStubInt0(au_procfs_init, void);
+AuStubVoid(au_procfs_fin, void);
+#endif
 
 /* ---------------------------------------------------------------------- */
 
@@ -50,13 +58,17 @@ enum {
 	AuCache_FINFO,
 	AuCache_VDIR,
 	AuCache_DEHSTR,
-#ifdef CONFIG_AUFS_HINOTIFY
-	AuCache_HINOTIFY,
+#ifdef CONFIG_AUFS_HNOTIFY
+	AuCache_HNOTIFY,
 #endif
 	AuCache_Last
 };
 
-#define AuCache(type)	KMEM_CACHE(type, SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD)
+#define AuCacheFlags		(SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD)
+#define AuCache(type)		KMEM_CACHE(type, AuCacheFlags)
+#define AuCacheCtor(type, ctor)	\
+	kmem_cache_create(#type, sizeof(struct type), \
+			  __alignof__(struct type), AuCacheFlags, ctor)
 
 extern struct kmem_cache *au_cachep[];
 
@@ -71,8 +83,9 @@ AuCacheFuncs(icntnr, ICNTNR);
 AuCacheFuncs(finfo, FINFO);
 AuCacheFuncs(vdir, VDIR);
 AuCacheFuncs(vdir_dehstr, DEHSTR);
-
-/*  ---------------------------------------------------------------------- */
+#ifdef CONFIG_AUFS_HNOTIFY
+AuCacheFuncs(hnotify, HNOTIFY);
+#endif
 
 #endif /* __KERNEL__ */
 #endif /* __AUFS_MODULE_H__ */

@@ -1,6 +1,6 @@
 Name: kernel-image-std-pae
-Version: 2.6.32
-Release: alt21.1
+Version: 2.6.35
+Release: alt8
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -18,7 +18,7 @@ epoch:1
 
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.3
+%define kgcc_version	4.4
 
 # Enable/disable SGML docs formatting
 %def_disable docs
@@ -72,6 +72,7 @@ Requires: mkinitrd >= 1:2.9.9-alt1
 Requires: startup >= 0.8.3-alt1
 
 Provides: kernel = %kversion
+Provides: kernel-module-drbd83
 
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
@@ -93,6 +94,19 @@ kernel variant for ALT Linux distributions.
 
 This kernel build for PAE systems. If you have more then 2Gb of memory use
 this kernel.
+
+%package -n kernel-image-domU-%flavour
+Summary: Uncompressed linux kernel for XEN domU boot 
+Group: System/Kernel and hardware
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+
+%description -n kernel-image-domU-%flavour
+Most XEN virtualization system versions can not boot lzma-compressed
+kernel images. This is an optional package with uncompressed linux
+kernel image for this special case. If you do not know what is it XEN
+it seems that you do not need this package.
+ 
 
 %package -n kernel-modules-oss-%flavour
 Summary: OSS sound driver modules (obsolete)
@@ -197,6 +211,27 @@ Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: %name = %version-%release
 Requires(postun): %name = %version-%release
+
+%package -n kernel-modules-drm-radeon-%flavour
+Summary: The Direct Rendering Infrastructure modules for ATI cards
+Group: System/Kernel and hardware
+Provides:  kernel-modules-drm-radeon-%kversion-%flavour-%krelease = %version-%release
+Conflicts: kernel-modules-drm-radeon-%kversion-%flavour-%krelease < %version-%release
+Conflicts: kernel-modules-drm-radeon-%kversion-%flavour-%krelease > %version-%release
+Requires: kernel-modules-drm-%kversion-%flavour-%krelease = %version-%release
+Prereq: coreutils
+Prereq: module-init-tools >= 3.1
+Prereq: %name = %version-%release
+Requires(postun): %name = %version-%release
+
+%description -n kernel-modules-drm-radeon-%flavour
+The Direct Rendering Infrastructure, also known as the DRI, is a framework
+for allowing direct access to graphics hardware in a safe and efficient
+manner.  It includes changes to the X server, to several client libraries,
+and to the kernel.  The first major use for the DRI is to create fast
+OpenGL implementations.
+
+These are modules for your ALT Linux system
 
 %description -n kernel-modules-drm-nouveau-%flavour
 The Direct Rendering Infrastructure, also known as the DRI, is a framework
@@ -354,6 +389,7 @@ KernelVer=%kversion-%flavour-%krelease
 install -Dp -m644 System.map %buildroot/boot/System.map-$KernelVer
 install -Dp -m644 arch/%base_arch/boot/bzImage \
 	%buildroot/boot/vmlinuz-$KernelVer
+install -Dp -m644 vmlinux %buildroot/boot/vmlinux-$KernelVer
 install -Dp -m644 .config %buildroot/boot/config-$KernelVer
 
 make modules_install INSTALL_MOD_PATH=%buildroot INSTALL_FW_PATH=%buildroot/lib/firmware/$KernelVer
@@ -363,22 +399,6 @@ mkdir -p %buildroot%kbuild_dir/arch/x86
 install -d %buildroot%kbuild_dir
 cp -a include %buildroot%kbuild_dir/include
 cp -a arch/x86/include %buildroot%kbuild_dir/arch/x86
-
-# remove asm-* include files for other architectures
-pushd %buildroot%kbuild_dir/include
-for dir in asm-*; do
-	[ "$dir" = "asm-generic" ] && continue
-	[ "$dir" = "asm-x86" ] && continue
-	rm -rf -- "$dir"
-done
-%ifarch x86_64
-ln -s asm-x86 asm-x86_64
-%else
-%ifarch i586
-ln -s asm-x86 asm-i386
-%endif
-%endif
-popd
 
 # drivers-headers install
 install -d %buildroot%kbuild_dir/drivers/scsi
@@ -467,6 +487,12 @@ ln -s "$(relative %kbuild_dir %old_kbuild_dir)" %buildroot%old_kbuild_dir
 # Provide kernel headers for userspace
 make headers_install INSTALL_HDR_PATH=%buildroot%kheaders_dir
 
+#provide symlink to autoconf.h for back compat
+pushd %buildroot%old_kbuild_dir/include/linux
+ln -s ../generated/autoconf.h
+ln -s ../generated/utsrelease.h
+popd
+
 
 
 # install documentation
@@ -476,11 +502,6 @@ cp -a Documentation/* %buildroot%_docdir/kernel-doc-%base_flavour-%version/
 find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
-
-#remove video headers
-#rm -rf %buildroot%kbuild_dir/include/media
-#rm -rf %buildroot%kbuild_dir/drivers/media
-#rm -fr %buildroot%kbuild_dir/include/linux/video{_decoder,dev,dev2}.h
 
 %post
 %post_kernel_image %kversion-%flavour-%krelease
@@ -512,6 +533,12 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %postun -n kernel-modules-drm-nouveau-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
 
+%post -n kernel-modules-drm-radeon-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-drm-radeon-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
 %post -n kernel-modules-kvm-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
@@ -527,8 +554,15 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %post -n kernel-modules-alsa-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
+%post -n kernel-modules-staging-%flavour
+%post_kernel_modules %kversion-%flavour-%krelease
+
+%postun -n kernel-modules-staging-%flavour
+%postun_kernel_modules %kversion-%flavour-%krelease
+
 %postun -n kernel-modules-alsa-%flavour
 %postun_kernel_modules %kversion-%flavour-%krelease
+
 %post -n kernel-headers-%flavour
 %post_kernel_headers %kversion-%flavour-%krelease
 
@@ -556,11 +590,16 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/sound/oss
 %endif #oss
 
+%files -n kernel-image-domU-%flavour
+/boot/vmlinux-%kversion-%flavour-%krelease
+
 %files -n kernel-modules-ide-%flavour
 %modules_dir/kernel/drivers/ide/
 
+
 %files -n kernel-headers-%flavour
 %kheaders_dir
+
 
 %files -n kernel-headers-modules-%flavour
 %kbuild_dir
@@ -581,9 +620,13 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %files -n kernel-modules-drm-%flavour
 %modules_dir/kernel/drivers/gpu/drm
 %exclude %modules_dir/kernel/drivers/gpu/drm/nouveau
+%exclude %modules_dir/kernel/drivers/gpu/drm/radeon
 
 %files -n kernel-modules-drm-nouveau-%flavour
 %modules_dir/kernel/drivers/gpu/drm/nouveau
+
+%files -n kernel-modules-drm-radeon-%flavour
+%modules_dir/kernel/drivers/gpu/drm/radeon
 
 %files -n kernel-modules-kvm-%flavour
 %modules_dir/kernel/arch/x86/kvm
@@ -595,6 +638,19 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Mon Nov 01 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt8
+- 2.6.35.8
+- compiled-in cfq scheduler
+- add nvidia backlight support
+- add mac book air 3,1 support
+
+* Thu Oct 14 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt7
+- 2.6.35.7
+- Add  xen domU kernel
+- move drm radeon to separated package
+- turn off CONFIG_X86_PPRO_FENCE
+- move DRBD support to this package
+
 * Fri Sep 17 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.32-alt21.1
 - fix CVE-2010-3301
 - mountpoint for cgroup in /sys

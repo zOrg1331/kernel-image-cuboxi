@@ -58,6 +58,7 @@
 #include <linux/inet.h>
 #include <linux/scatterlist.h>
 #include <linux/crypto.h>
+#include <linux/slab.h>
 #include <net/sock.h>
 
 #include <linux/skbuff.h>
@@ -230,7 +231,8 @@ struct sctp_chunk *sctp_make_init(const struct sctp_association *asoc,
 	sp = sctp_sk(asoc->base.sk);
 	num_types = sp->pf->supported_addrs(sp, types);
 
-	chunksize = sizeof(init) + addrs_len + SCTP_SAT_LEN(num_types);
+	chunksize = sizeof(init) + addrs_len;
+	chunksize += WORD_ROUND(SCTP_SAT_LEN(num_types));
 	chunksize += sizeof(ecap_param);
 
 	if (sctp_prsctp_enable)
@@ -260,14 +262,14 @@ struct sctp_chunk *sctp_make_init(const struct sctp_association *asoc,
 		/* Add HMACS parameter length if any were defined */
 		auth_hmacs = (sctp_paramhdr_t *)asoc->c.auth_hmacs;
 		if (auth_hmacs->length)
-			chunksize += ntohs(auth_hmacs->length);
+			chunksize += WORD_ROUND(ntohs(auth_hmacs->length));
 		else
 			auth_hmacs = NULL;
 
 		/* Add CHUNKS parameter length */
 		auth_chunks = (sctp_paramhdr_t *)asoc->c.auth_chunks;
 		if (auth_chunks->length)
-			chunksize += ntohs(auth_chunks->length);
+			chunksize += WORD_ROUND(ntohs(auth_chunks->length));
 		else
 			auth_chunks = NULL;
 
@@ -277,7 +279,8 @@ struct sctp_chunk *sctp_make_init(const struct sctp_association *asoc,
 
 	/* If we have any extensions to report, account for that */
 	if (num_ext)
-		chunksize += sizeof(sctp_supported_ext_param_t) + num_ext;
+		chunksize += WORD_ROUND(sizeof(sctp_supported_ext_param_t) +
+					num_ext);
 
 	/* RFC 2960 3.3.2 Initiation (INIT) (1)
 	 *
@@ -419,13 +422,13 @@ struct sctp_chunk *sctp_make_init_ack(const struct sctp_association *asoc,
 
 		auth_hmacs = (sctp_paramhdr_t *)asoc->c.auth_hmacs;
 		if (auth_hmacs->length)
-			chunksize += ntohs(auth_hmacs->length);
+			chunksize += WORD_ROUND(ntohs(auth_hmacs->length));
 		else
 			auth_hmacs = NULL;
 
 		auth_chunks = (sctp_paramhdr_t *)asoc->c.auth_chunks;
 		if (auth_chunks->length)
-			chunksize += ntohs(auth_chunks->length);
+			chunksize += WORD_ROUND(ntohs(auth_chunks->length));
 		else
 			auth_chunks = NULL;
 
@@ -434,17 +437,25 @@ struct sctp_chunk *sctp_make_init_ack(const struct sctp_association *asoc,
 	}
 
 	if (num_ext)
-		chunksize += sizeof(sctp_supported_ext_param_t) + num_ext;
+		chunksize += WORD_ROUND(sizeof(sctp_supported_ext_param_t) +
+					num_ext);
 
 	/* Now allocate and fill out the chunk.  */
 	retval = sctp_make_chunk(asoc, SCTP_CID_INIT_ACK, 0, chunksize);
 	if (!retval)
 		goto nomem_chunk;
 
-	/* Per the advice in RFC 2960 6.4, send this reply to
-	 * the source of the INIT packet.
+	/* RFC 2960 6.4 Multi-homed SCTP Endpoints
+	 *
+	 * An endpoint SHOULD transmit reply chunks (e.g., SACK,
+	 * HEARTBEAT ACK, * etc.) to the same destination transport
+	 * address from which it received the DATA or control chunk
+	 * to which it is replying.
+	 *
+	 * [INIT ACK back to where the INIT came from.]
 	 */
 	retval->transport = chunk->transport;
+
 	retval->subh.init_hdr =
 		sctp_addto_chunk(retval, sizeof(initack), &initack);
 	retval->param_hdr.v = sctp_addto_chunk(retval, addrs_len, addrs.v);
@@ -482,18 +493,6 @@ struct sctp_chunk *sctp_make_init_ack(const struct sctp_association *asoc,
 
 	/* We need to remove the const qualifier at this point.  */
 	retval->asoc = (struct sctp_association *) asoc;
-
-	/* RFC 2960 6.4 Multi-homed SCTP Endpoints
-	 *
-	 * An endpoint SHOULD transmit reply chunks (e.g., SACK,
-	 * HEARTBEAT ACK, * etc.) to the same destination transport
-	 * address from which it received the DATA or control chunk
-	 * to which it is replying.
-	 *
-	 * [INIT ACK back to where the INIT came from.]
-	 */
-	if (chunk)
-		retval->transport = chunk->transport;
 
 nomem_chunk:
 	kfree(cookie);
@@ -1010,7 +1009,10 @@ static void *sctp_addto_param(struct sctp_chunk *chunk, int len,
 
 	target = skb_put(chunk->skb, len);
 
-	memcpy(target, data, len);
+	if (data)
+		memcpy(target, data, len);
+	else
+		memset(target, 0, len);
 
 	/* Adjust the chunk length field.  */
 	chunk->chunk_hdr->length = htons(chunklen + len);
@@ -1170,16 +1172,18 @@ static inline struct sctp_chunk *sctp_make_op_error_fixed(
 struct sctp_chunk *sctp_make_op_error(const struct sctp_association *asoc,
 				 const struct sctp_chunk *chunk,
 				 __be16 cause_code, const void *payload,
-				 size_t paylen)
+				 size_t paylen, size_t reserve_tail)
 {
 	struct sctp_chunk *retval;
 
-	retval = sctp_make_op_error_space(asoc, chunk, paylen);
+	retval = sctp_make_op_error_space(asoc, chunk, paylen + reserve_tail);
 	if (!retval)
 		goto nodata;
 
-	sctp_init_cause(retval, cause_code, paylen);
+	sctp_init_cause(retval, cause_code, paylen + reserve_tail);
 	sctp_addto_chunk(retval, paylen, payload);
+	if (reserve_tail)
+		sctp_addto_param(retval, reserve_tail, NULL);
 
 nodata:
 	return retval;
@@ -1245,7 +1249,6 @@ struct sctp_chunk *sctp_chunkify(struct sk_buff *skb,
 	INIT_LIST_HEAD(&retval->list);
 	retval->skb		= skb;
 	retval->asoc		= (struct sctp_association *)asoc;
-	retval->resent  	= 0;
 	retval->has_tsn		= 0;
 	retval->has_ssn         = 0;
 	retval->rtt_in_progress	= 0;
@@ -3360,21 +3363,6 @@ int sctp_process_asconf_ack(struct sctp_association *asoc,
 	list_del_init(&asconf->transmitted_list);
 	sctp_chunk_free(asconf);
 	asoc->addip_last_asconf = NULL;
-
-	/* Send the next asconf chunk from the addip chunk queue. */
-	if (!list_empty(&asoc->addip_chunk_list)) {
-		struct list_head *entry = asoc->addip_chunk_list.next;
-		asconf = list_entry(entry, struct sctp_chunk, list);
-
-		list_del_init(entry);
-
-		/* Hold the chunk until an ASCONF_ACK is received. */
-		sctp_chunk_hold(asconf);
-		if (sctp_primitive_ASCONF(asoc, asconf))
-			sctp_chunk_free(asconf);
-		else
-			asoc->addip_last_asconf = asconf;
-	}
 
 	return retval;
 }

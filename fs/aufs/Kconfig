@@ -44,19 +44,37 @@ config AUFS_BRANCH_MAX_32767
 	resources and has a minor impact to performance.
 endchoice
 
-config AUFS_HINOTIFY
-	bool "Use inotify to detect actions on a branch"
-	depends on INOTIFY
+config AUFS_SBILIST
+	bool
+	depends on AUFS_MAGIC_SYSRQ || PROC_FS
+	default y
+	help
+	Automatic configuration for internal use.
+	When aufs supports Magic SysRq or /proc, enabled automatically.
+
+config AUFS_HNOTIFY
+	bool "Detect direct branch access (bypassing aufs)"
 	help
 	If you want to modify files on branches directly, eg. bypassing aufs,
 	and want aufs to detect the changes of them fully, then enable this
-	option and use 'udba=inotify' mount option.
+	option and use 'udba=notify' mount option.
 	It will have a negative impact to the performance.
 	See detail in aufs.5.
 
+choice
+	prompt "method" if AUFS_HNOTIFY
+	default AUFS_HFSNOTIFY
+config AUFS_HFSNOTIFY
+	bool "fsnotify"
+	select FSNOTIFY
+config AUFS_HINOTIFY
+	bool "inotify (DEPRECATED)"
+	depends on INOTIFY
+endchoice
+
 config AUFS_EXPORT
 	bool "NFS-exportable aufs"
-	depends on EXPORTFS = y
+	depends on (AUFS_FS = y && EXPORTFS = y) || (AUFS_FS = m && EXPORTFS)
 	help
 	If you want to export your mounted aufs via NFS, then enable this
 	option. There are several requirements for this configuration.
@@ -75,9 +93,13 @@ config AUFS_INO_T_64
 config AUFS_RDU
 	bool "Readdir in userspace"
 	help
-	If you have millions of files under a single aufs directory, and
-	meet the out of memory, then enable this option and set
-	environment variables for your readdir(3).
+	Aufs has two methods to provide a merged view for a directory,
+	by a user-space library and by kernel-space natively. The latter
+	is always enabled but sometimes large and slow.
+	If you enable this option, install the library in aufs2-util
+	package, and set some environment variables for your readdir(3),
+	then the work will be handled in user-space which generally
+	shows better performance in most cases.
 	See detail in aufs.5.
 
 config AUFS_SP_IATTR
@@ -126,6 +148,15 @@ config AUFS_POLL
 	bool
 	help
 	Automatic configuration for internal use.
+
+config AUFS_BR_HFSPLUS
+	bool "Hfsplus as an aufs branch"
+	depends on HFSPLUS_FS
+	default y
+	help
+	If you want to use hfsplus fs as an aufs branch fs, then enable
+	this option. This option introduces a small overhead at
+	copying-up a file on hfsplus.
 
 config AUFS_BDEV_LOOP
 	bool

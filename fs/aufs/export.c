@@ -26,6 +26,7 @@
 #include <linux/namei.h>
 #include <linux/nsproxy.h>
 #include <linux/random.h>
+#include <linux/writeback.h>
 #include "aufs.h"
 
 union conv {
@@ -90,41 +91,28 @@ static int au_test_anon(struct dentry *dentry)
 /* ---------------------------------------------------------------------- */
 /* inode generation external table */
 
-int au_xigen_inc(struct inode *inode)
+void au_xigen_inc(struct inode *inode)
 {
-	int err;
 	loff_t pos;
 	ssize_t sz;
 	__u32 igen;
 	struct super_block *sb;
 	struct au_sbinfo *sbinfo;
 
-	err = 0;
 	sb = inode->i_sb;
-	sbinfo = au_sbi(sb);
-	/*
-	 * temporary workaround for escaping from SiMustAnyLock() in
-	 * au_mntflags(), since this function is called from au_iinfo_fin().
-	 */
-	if (unlikely(!au_opt_test(sbinfo->si_mntflags, XINO)))
-		goto out;
+	AuDebugOn(!au_opt_test(au_mntflags(sb), XINO));
 
+	sbinfo = au_sbi(sb);
 	pos = inode->i_ino;
 	pos *= sizeof(igen);
 	igen = inode->i_generation + 1;
 	sz = xino_fwrite(sbinfo->si_xwrite, sbinfo->si_xigen, &igen,
 			 sizeof(igen), &pos);
 	if (sz == sizeof(igen))
-		goto out; /* success */
+		return; /* success */
 
-	err = sz;
-	if (unlikely(sz >= 0)) {
-		err = -EIO;
+	if (unlikely(sz >= 0))
 		AuIOErr("xigen error (%zd)\n", sz);
-	}
-
- out:
-	return err;
 }
 
 int au_xigen_new(struct inode *inode)
@@ -175,7 +163,7 @@ int au_xigen_new(struct inode *inode)
 		AuIOErr("xigen error (%zd)\n", sz);
 	}
 
- out:
+out:
 	return err;
 }
 
@@ -197,7 +185,7 @@ int au_xigen_set(struct super_block *sb, struct file *base)
 		fput(sbinfo->si_xigen);
 	sbinfo->si_xigen = file;
 
- out:
+out:
 	return err;
 }
 
@@ -253,9 +241,9 @@ static struct dentry *decode_by_ino(struct super_block *sb, ino_t ino,
 		dentry = ERR_PTR(-ESTALE);
 	}
 
- out_iput:
+out_iput:
 	iput(inode);
- out:
+out:
 	return dentry;
 }
 
@@ -263,32 +251,46 @@ static struct dentry *decode_by_ino(struct super_block *sb, ino_t ino,
 
 /* todo: dirty? */
 /* if exportfs_decode_fh() passed vfsmount*, we could be happy */
+
+struct au_compare_mnt_args {
+	/* input */
+	struct super_block *sb;
+
+	/* output */
+	struct vfsmount *mnt;
+};
+
+static int au_compare_mnt(struct vfsmount *mnt, void *arg)
+{
+	struct au_compare_mnt_args *a = arg;
+
+	if (mnt->mnt_sb != a->sb)
+		return 0;
+	a->mnt = mntget(mnt);
+	return 1;
+}
+
 static struct vfsmount *au_mnt_get(struct super_block *sb)
 {
+	int err;
+	struct au_compare_mnt_args args = {
+		.sb = sb
+	};
 	struct mnt_namespace *ns;
-	struct vfsmount *pos, *mnt;
 
-	spin_lock(&vfsmount_lock);
 	/* no get/put ?? */
 	AuDebugOn(!current->nsproxy);
 	ns = current->nsproxy->mnt_ns;
 	AuDebugOn(!ns);
-	mnt = NULL;
-	/* the order (reverse) will not be a problem */
-	list_for_each_entry(pos, &ns->list, mnt_list)
-		if (pos->mnt_sb == sb) {
-			mnt = mntget(pos);
-			break;
-		}
-	spin_unlock(&vfsmount_lock);
-	AuDebugOn(!mnt);
-
-	return mnt;
+	err = iterate_mounts(au_compare_mnt, &args, ns->root);
+	AuDebugOn(!err);
+	AuDebugOn(!args.mnt);
+	return args.mnt;
 }
 
 struct au_nfsd_si_lock {
-	const unsigned int sigen;
-	const aufs_bindex_t br_id;
+	unsigned int sigen;
+	aufs_bindex_t br_id;
 	unsigned char force_lock;
 };
 
@@ -308,7 +310,7 @@ static aufs_bindex_t si_nfsd_read_lock(struct super_block *sb,
 		si_read_unlock(sb);
 	bindex = -1;
 
- out:
+out:
 	return bindex;
 }
 
@@ -353,7 +355,7 @@ static struct dentry *au_lkup_by_ino(struct path *path, ino_t ino,
 		goto out;
 
 	dentry = ERR_PTR(-ENOMEM);
-	arg.name = __getname();
+	arg.name = __getname_gfp(GFP_NOFS);
 	if (unlikely(!arg.name))
 		goto out_file;
 	arg.ino = ino;
@@ -384,11 +386,11 @@ static struct dentry *au_lkup_by_ino(struct path *path, ino_t ino,
 		dentry = ERR_PTR(-ENOENT);
 	}
 
- out_name:
+out_name:
 	__putname(arg.name);
- out_file:
+out_file:
 	fput(file);
- out:
+out:
 	if (unlikely(nsi_lock
 		     && si_nfsd_read_lock(parent->d_sb, nsi_lock) < 0))
 		if (!IS_ERR(dentry)) {
@@ -419,7 +421,7 @@ static struct dentry *decode_by_dir_ino(struct super_block *sb, ino_t ino,
 	dentry = au_lkup_by_ino(&path, ino, nsi_lock);
 	path_put(&path);
 
- out:
+out:
 	AuTraceErrPtr(dentry);
 	return dentry;
 }
@@ -460,7 +462,7 @@ static char *au_build_path(struct dentry *h_parent, struct path *h_rootpath,
 	if (n != 1)
 		p[strlen(p)] = '/';
 
- out:
+out:
 	AuTraceErrPtr(p);
 	return p;
 }
@@ -530,19 +532,19 @@ struct dentry *decode_by_path(struct super_block *sb, aufs_bindex_t bindex,
 	else
 		dentry = dget(path.dentry);
 
- out_path:
+out_path:
 	path_put(&path);
- out_relock:
+out_relock:
 	if (unlikely(si_nfsd_read_lock(sb, nsi_lock) < 0))
 		if (!IS_ERR(dentry)) {
 			dput(dentry);
 			dentry = ERR_PTR(-ESTALE);
 		}
- out_pathname:
+out_pathname:
 	free_page((unsigned long)pathname);
- out_h_parent:
+out_h_parent:
 	dput(h_parent);
- out:
+out:
 	/* au_br_put(br); */
 	AuTraceErrPtr(dentry);
 	return dentry;
@@ -559,14 +561,16 @@ aufs_fh_to_dentry(struct super_block *sb, struct fid *fid, int fh_len,
 	ino_t ino, dir_ino;
 	aufs_bindex_t bindex;
 	struct au_nfsd_si_lock nsi_lock = {
-		.sigen		= fh[Fh_sigen],
-		.br_id		= fh[Fh_br_id],
 		.force_lock	= 0
 	};
 
-	AuDebugOn(fh_len < Fh_tail);
-
 	dentry = ERR_PTR(-ESTALE);
+	/* it should never happen, but the file handle is unreliable */
+	if (unlikely(fh_len < Fh_tail))
+		goto out;
+	nsi_lock.sigen = fh[Fh_sigen];
+	nsi_lock.br_id = fh[Fh_br_id];
+
 	/* branch id may be wrapped around */
 	bindex = si_nfsd_read_lock(sb, &nsi_lock);
 	if (unlikely(bindex < 0))
@@ -575,7 +579,10 @@ aufs_fh_to_dentry(struct super_block *sb, struct fid *fid, int fh_len,
 
 	/* is this inode still cached? */
 	ino = decode_ino(fh + Fh_ino);
-	AuDebugOn(ino == AUFS_ROOT_INO);
+	/* it should never happen */
+	if (unlikely(ino == AUFS_ROOT_INO))
+		goto out;
+
 	dir_ino = decode_ino(fh + Fh_dir_ino);
 	dentry = decode_by_ino(sb, ino, dir_ino);
 	if (IS_ERR(dentry))
@@ -598,15 +605,15 @@ aufs_fh_to_dentry(struct super_block *sb, struct fid *fid, int fh_len,
 		/* todo?: make it ESTALE */
 		goto out_unlock;
 
- accept:
+accept:
 	if (dentry->d_inode->i_generation == fh[Fh_igen])
 		goto out_unlock; /* success */
 
 	dput(dentry);
 	dentry = ERR_PTR(-ESTALE);
- out_unlock:
+out_unlock:
 	si_read_unlock(sb);
- out:
+out:
 	AuTraceErrPtr(dentry);
 	return dentry;
 }
@@ -628,7 +635,7 @@ static struct dentry *aufs_fh_to_parent(struct super_block *sb, struct fid *fid,
 		parent = decode_by_path(sb, au_br_index(sb, fh[Fh_br_id]),
 					dir_ino, fh, fh_len);
 
- out:
+out:
 	AuTraceErrPtr(parent);
 	return parent;
 }
@@ -711,13 +718,13 @@ static int aufs_encode_fh(struct dentry *dentry, __u32 *fh, int *max_len,
 	else
 		AuWarn1("%s encode_fh failed\n", au_sbtype(h_sb));
 
- out_dput:
+out_dput:
 	dput(h_parent);
- out_unlock:
+out_unlock:
 	di_read_unlock(parent, !AuLock_IR);
 	dput(parent);
 	aufs_read_unlock(dentry, AuLock_IR);
- out:
+out:
 	if (unlikely(err < 0))
 		err = 255;
 	return err;
@@ -725,10 +732,46 @@ static int aufs_encode_fh(struct dentry *dentry, __u32 *fh, int *max_len,
 
 /* ---------------------------------------------------------------------- */
 
+static int aufs_commit_metadata(struct inode *inode)
+{
+	int err;
+	aufs_bindex_t bindex;
+	struct super_block *sb;
+	struct inode *h_inode;
+	int (*f)(struct inode *inode);
+
+	sb = inode->i_sb;
+	si_read_lock(sb, AuLock_FLUSH | AuLock_NOPLMW);
+	ii_write_lock_child(inode);
+	bindex = au_ibstart(inode);
+	AuDebugOn(bindex < 0);
+	h_inode = au_h_iptr(inode, bindex);
+
+	f = h_inode->i_sb->s_export_op->commit_metadata;
+	if (f)
+		err = f(h_inode);
+	else {
+		struct writeback_control wbc = {
+			.sync_mode	= WB_SYNC_ALL,
+			.nr_to_write	= 0 /* metadata only */
+		};
+
+		err = sync_inode(h_inode, &wbc);
+	}
+
+	au_cpup_attr_timesizes(inode);
+	ii_write_unlock(inode);
+	si_read_unlock(sb);
+	return err;
+}
+
+/* ---------------------------------------------------------------------- */
+
 static struct export_operations aufs_export_op = {
-	.fh_to_dentry	= aufs_fh_to_dentry,
+	.fh_to_dentry		= aufs_fh_to_dentry,
 	/* .fh_to_parent	= aufs_fh_to_parent, */
-	.encode_fh	= aufs_encode_fh
+	.encode_fh		= aufs_encode_fh,
+	.commit_metadata	= aufs_commit_metadata
 };
 
 void au_export_init(struct super_block *sb)

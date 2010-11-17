@@ -521,7 +521,7 @@ static void u200_send_callback(struct urb *urb)
 
 	/* free up our allocated buffer */
 //	printk("u200_send_callback:%i bytes of data transmitted\n",urb->actual_length);
-	usb_buffer_free(urb->dev, urb->transfer_buffer_length,
+	usb_free_coherent(urb->dev, urb->transfer_buffer_length,
 			urb->transfer_buffer, urb->transfer_dma);
 }
 
@@ -543,7 +543,7 @@ int u200_start_xmit(struct sk_buff *skb, struct net_device *net)
 		goto error;
 	}
 
-	buf = usb_buffer_alloc(dev->udev, sendsize, GFP_KERNEL, &urb->transfer_dma);
+	buf = usb_alloc_coherent(dev->udev, sendsize, GFP_KERNEL, &urb->transfer_dma);
 	if (!buf) {
 		retval = -ENOMEM;
 		printk("U200:u200_write: can`t allocate buffer\n");
@@ -587,7 +587,7 @@ int u200_start_xmit(struct sk_buff *skb, struct net_device *net)
 			printk("U200:u200_write: can`t allocate URB\n");
 			goto error;
 		}
-		buf = usb_buffer_alloc(dev->udev, sendsize, GFP_KERNEL, &urb->transfer_dma);
+		buf = usb_alloc_coherent(dev->udev, sendsize, GFP_KERNEL, &urb->transfer_dma);
 		if (!buf) {
 			retval = -ENOMEM;
 			printk("U200:u200_write: can`t allocate buffer\n");
@@ -622,7 +622,7 @@ error_unanchor:
 	usb_unanchor_urb(urb);
 error:
 	if (urb) {
-		usb_buffer_free(dev->udev, sendsize, buf, urb->transfer_dma);
+		usb_free_coherent(dev->udev, sendsize, buf, urb->transfer_dma);
 		usb_free_urb(urb);
 	}
 	return retval;
@@ -919,7 +919,7 @@ static void u200_read_bulk_callback(struct urb *urb)
 		printk("u200:read: error bulk status %i\n",urb->status);
 	/* free up our allocated buffer */
 out:
-	usb_buffer_free(urb->dev, urb->transfer_buffer_length,
+	usb_free_coherent(urb->dev, urb->transfer_buffer_length,
 			urb->transfer_buffer, urb->transfer_dma);
 	if(rerun==1)
 		u200_beginread(dev);
@@ -938,7 +938,7 @@ int u200_beginread(struct usb_u200 *dev)
 		retval=-ENOMEM;
 		goto exit;
 	}
-	buf = usb_buffer_alloc(dev->udev, dev->bulk_in_size, GFP_KERNEL, &urb->transfer_dma);
+	buf = usb_alloc_coherent(dev->udev, dev->bulk_in_size, GFP_KERNEL, &urb->transfer_dma);
 	if (!buf) {
 		retval = -ENOMEM;
 		printk("U200:u200_beginread: can`t allocate buffer\n");
@@ -968,7 +968,7 @@ error_unanchor:
 	usb_unanchor_urb(urb);
 error:
 	if (urb) {
-		usb_buffer_free(dev->udev, dev->bulk_in_size, buf, urb->transfer_dma);
+		usb_free_coherent(dev->udev, dev->bulk_in_size, buf, urb->transfer_dma);
 		usb_free_urb(urb);
 	}
 
@@ -996,7 +996,7 @@ static void u200_write_bulk_callback(struct urb *urb)
 	}
 
 	/* free up our allocated buffer */
-	usb_buffer_free(urb->dev, urb->transfer_buffer_length,
+	usb_free_coherent(urb->dev, urb->transfer_buffer_length,
 			urb->transfer_buffer, urb->transfer_dma);
 }
 
@@ -1020,7 +1020,7 @@ static ssize_t u200_write(struct usb_u200* dev, const char *inbuf, size_t count,
 		goto error;
 	}
 
-	buf = usb_buffer_alloc(dev->udev, writesize, GFP_KERNEL, &urb->transfer_dma);
+	buf = usb_alloc_coherent(dev->udev, writesize, GFP_KERNEL, &urb->transfer_dma);
 	if (!buf) {
 		retval = -ENOMEM;
 		printk("U200:u200_write: can`t allocate buffer\n");
@@ -1063,7 +1063,7 @@ error_unanchor:
 	usb_unanchor_urb(urb);
 error:
 	if (urb) {
-		usb_buffer_free(dev->udev, writesize, buf, urb->transfer_dma);
+		usb_free_coherent(dev->udev, writesize, buf, urb->transfer_dma);
 		usb_free_urb(urb);
 	}
 

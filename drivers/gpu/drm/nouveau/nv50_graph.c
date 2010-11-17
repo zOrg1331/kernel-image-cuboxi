@@ -27,7 +27,8 @@
 #include "drmP.h"
 #include "drm.h"
 #include "nouveau_drv.h"
-#include "nv50_grctx.h"
+
+#include "nouveau_grctx.h"
 
 #define IS_G80 ((dev_priv->chipset & 0xf0) == 0x50)
 
@@ -55,14 +56,32 @@ nv50_graph_init_intr(struct drm_device *dev)
 static void
 nv50_graph_init_regs__nv(struct drm_device *dev)
 {
+	struct drm_nouveau_private *dev_priv = dev->dev_private;
+	uint32_t units = nv_rd32(dev, 0x1540);
+	int i;
+
 	NV_DEBUG(dev, "\n");
 
 	nv_wr32(dev, 0x400804, 0xc0000000);
 	nv_wr32(dev, 0x406800, 0xc0000000);
 	nv_wr32(dev, 0x400c04, 0xc0000000);
-	nv_wr32(dev, 0x401804, 0xc0000000);
+	nv_wr32(dev, 0x401800, 0xc0000000);
 	nv_wr32(dev, 0x405018, 0xc0000000);
 	nv_wr32(dev, 0x402000, 0xc0000000);
+
+	for (i = 0; i < 16; i++) {
+		if (units & 1 << i) {
+			if (dev_priv->chipset < 0xa0) {
+				nv_wr32(dev, 0x408900 + (i << 12), 0xc0000000);
+				nv_wr32(dev, 0x408e08 + (i << 12), 0xc0000000);
+				nv_wr32(dev, 0x408314 + (i << 12), 0xc0000000);
+			} else {
+				nv_wr32(dev, 0x408600 + (i << 11), 0xc0000000);
+				nv_wr32(dev, 0x408708 + (i << 11), 0xc0000000);
+				nv_wr32(dev, 0x40831c + (i << 11), 0xc0000000);
+			}
+		}
+	}
 
 	nv_wr32(dev, 0x400108, 0xffffffff);
 
@@ -84,65 +103,41 @@ static int
 nv50_graph_init_ctxctl(struct drm_device *dev)
 {
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
-	uint32_t *voodoo = NULL;
 
 	NV_DEBUG(dev, "\n");
 
-	switch (dev_priv->chipset) {
-	case 0x50:
-		voodoo = nv50_ctxprog;
-		break;
-	case 0x84:
-		voodoo = nv84_ctxprog;
-		break;
-	case 0x86:
-		voodoo = nv86_ctxprog;
-		break;
-	case 0x92:
-		voodoo = nv92_ctxprog;
-		break;
-	case 0x94:
-	case 0x96:
-		voodoo = nv94_ctxprog;
-		break;
-	case 0x98:
-		voodoo = nv98_ctxprog;
-		break;
-	case 0xa0:
-		voodoo = nva0_ctxprog;
-		break;
-	case 0xa5:
-		voodoo = nva5_ctxprog;
-		break;
-	case 0xa8:
-		voodoo = nva8_ctxprog;
-		break;
-	case 0xaa:
-		voodoo = nvaa_ctxprog;
-		break;
-#if 0 /* block accel for now, it won't work */
-	case 0xac:
-		voodoo = nvac_ctxprog;
-		break;
-#endif
-	default:
-		NV_ERROR(dev, "no ctxprog for chipset NV%02x\n", dev_priv->chipset);
-		dev_priv->engine.graph.accel_blocked = true;
-		break;
+	if (nouveau_ctxfw) {
+		nouveau_grctx_prog_load(dev);
+		dev_priv->engine.graph.grctx_size = 0x70000;
 	}
-
-	if (voodoo) {
-		nv_wr32(dev, NV40_PGRAPH_CTXCTL_UCODE_INDEX, 0);
-		while (*voodoo != ~0) {
-			nv_wr32(dev, NV40_PGRAPH_CTXCTL_UCODE_DATA, *voodoo);
-			voodoo++;
+	if (!dev_priv->engine.graph.ctxprog) {
+		struct nouveau_grctx ctx = {};
+		uint32_t *cp = kmalloc(512 * 4, GFP_KERNEL);
+		int i;
+		if (!cp) {
+			NV_ERROR(dev, "Couldn't alloc ctxprog! Disabling acceleration.\n");
+			dev_priv->engine.graph.accel_blocked = true;
+			return 0;
 		}
+		ctx.dev = dev;
+		ctx.mode = NOUVEAU_GRCTX_PROG;
+		ctx.data = cp;
+		ctx.ctxprog_max = 512;
+		if (!nv50_grctx_init(&ctx)) {
+			dev_priv->engine.graph.grctx_size = ctx.ctxvals_pos * 4;
+
+			nv_wr32(dev, NV40_PGRAPH_CTXCTL_UCODE_INDEX, 0);
+			for (i = 0; i < ctx.ctxprog_len; i++)
+				nv_wr32(dev, NV40_PGRAPH_CTXCTL_UCODE_DATA, cp[i]);
+		} else {
+			dev_priv->engine.graph.accel_blocked = true;
+		}
+		kfree(cp);
 	}
 
 	nv_wr32(dev, 0x400320, 4);
 	nv_wr32(dev, NV40_PGRAPH_CTXCTL_CUR, 0);
 	nv_wr32(dev, NV20_PGRAPH_CHANNEL_CTX_POINTER, 0);
-
 	return 0;
 }
 
@@ -169,6 +164,7 @@ void
 nv50_graph_takedown(struct drm_device *dev)
 {
 	NV_DEBUG(dev, "\n");
+	nouveau_grctx_fini(dev);
 }
 
 void
@@ -188,6 +184,12 @@ nv50_graph_channel(struct drm_device *dev)
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	uint32_t inst;
 	int i;
+
+	/* Be sure we're not in the middle of a context switch or bad things
+	 * will happen, such as unloading the wrong pgraph context.
+	 */
+	if (!nv_wait(0x400300, 0x00000001, 0x00000000))
+		NV_ERROR(dev, "Ctxprog is still running\n");
 
 	inst = nv_rd32(dev, NV50_PGRAPH_CTXCTL_CUR);
 	if (!(inst & NV50_PGRAPH_CTXCTL_CUR_LOADED))
@@ -211,16 +213,13 @@ nv50_graph_create_context(struct nouveau_channel *chan)
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct nouveau_gpuobj *ramin = chan->ramin->gpuobj;
 	struct nouveau_gpuobj *ctx;
-	uint32_t *ctxvals = NULL;
-	uint32_t grctx_size = 0x70000;
-	int hdr;
-	int ret;
-	int pos;
+	struct nouveau_pgraph_engine *pgraph = &dev_priv->engine.graph;
+	int hdr, ret;
 
 	NV_DEBUG(dev, "ch%d\n", chan->id);
 
-	ret = nouveau_gpuobj_new_ref(dev, chan, NULL, 0, grctx_size, 0x1000,
-				     NVOBJ_FLAG_ZERO_ALLOC |
+	ret = nouveau_gpuobj_new_ref(dev, chan, NULL, 0, pgraph->grctx_size,
+				     0x1000, NVOBJ_FLAG_ZERO_ALLOC |
 				     NVOBJ_FLAG_ZERO_FREE, &chan->ramin_grctx);
 	if (ret)
 		return ret;
@@ -230,74 +229,24 @@ nv50_graph_create_context(struct nouveau_channel *chan)
 	dev_priv->engine.instmem.prepare_access(dev, true);
 	nv_wo32(dev, ramin, (hdr + 0x00)/4, 0x00190002);
 	nv_wo32(dev, ramin, (hdr + 0x04)/4, chan->ramin_grctx->instance +
-					   grctx_size - 1);
+					   pgraph->grctx_size - 1);
 	nv_wo32(dev, ramin, (hdr + 0x08)/4, chan->ramin_grctx->instance);
 	nv_wo32(dev, ramin, (hdr + 0x0c)/4, 0);
 	nv_wo32(dev, ramin, (hdr + 0x10)/4, 0);
 	nv_wo32(dev, ramin, (hdr + 0x14)/4, 0x00010000);
 	dev_priv->engine.instmem.finish_access(dev);
 
-	switch (dev_priv->chipset) {
-	case 0x50:
-		ctxvals = nv50_ctxvals;
-		break;
-	case 0x84:
-		ctxvals = nv84_ctxvals;
-		break;
-	case 0x86:
-		ctxvals = nv86_ctxvals;
-		break;
-	case 0x92:
-		ctxvals = nv92_ctxvals;
-		break;
-	case 0x94:
-		ctxvals = nv94_ctxvals;
-		break;
-	case 0x96:
-		ctxvals = nv96_ctxvals;
-		break;
-	case 0x98:
-		ctxvals = nv98_ctxvals;
-		break;
-	case 0xa0:
-		ctxvals = nva0_ctxvals;
-		break;
-	case 0xa5:
-		ctxvals = nva5_ctxvals;
-		break;
-	case 0xa8:
-		ctxvals = nva8_ctxvals;
-		break;
-	case 0xaa:
-		ctxvals = nvaa_ctxvals;
-		break;
-#if 0 /* block accel for now, it won't work */
-	case 0xac:
-		ctxvals = nvac_ctxvals;
-		break;
-#endif
-	default:
-		break;
-	}
-
 	dev_priv->engine.instmem.prepare_access(dev, true);
-
-	if (ctxvals) {
-		pos = 0;
-		while (*ctxvals) {
-			int cnt = *ctxvals++;
-
-			while (cnt--)
-				nv_wo32(dev, ctx, pos++, *ctxvals);
-			ctxvals++;
-		}
+	if (!pgraph->ctxprog) {
+		struct nouveau_grctx ctx = {};
+		ctx.dev = chan->dev;
+		ctx.mode = NOUVEAU_GRCTX_VALS;
+		ctx.data = chan->ramin_grctx->gpuobj;
+		nv50_grctx_init(&ctx);
+	} else {
+		nouveau_grctx_vals_load(dev, ctx);
 	}
-
 	nv_wo32(dev, ctx, 0x00000/4, chan->ramin->instance >> 12);
-	if ((dev_priv->chipset & 0xf0) == 0xa0)
-		nv_wo32(dev, ctx, 0x00004/4, 0x00000000);
-	else
-		nv_wo32(dev, ctx, 0x0011c/4, 0x00000000);
 	dev_priv->engine.instmem.finish_access(dev);
 
 	return 0;
@@ -353,32 +302,22 @@ nv50_graph_load_context(struct nouveau_channel *chan)
 	return nv50_graph_do_load_context(chan->dev, inst);
 }
 
-static int
-nv50_graph_do_save_context(struct drm_device *dev, uint32_t inst)
-{
-	uint32_t fifo = nv_rd32(dev, 0x400500);
-
-	nv_wr32(dev, 0x400500, fifo & ~1);
-	nv_wr32(dev, 0x400784, inst);
-	nv_wr32(dev, 0x400824, nv_rd32(dev, 0x400824) | 0x20);
-	nv_wr32(dev, 0x400304, nv_rd32(dev, 0x400304) | 0x01);
-	nouveau_wait_for_idle(dev);
-
-	nv_wr32(dev, 0x400500, fifo);
-	return 0;
-}
-
 int
 nv50_graph_unload_context(struct drm_device *dev)
 {
 	uint32_t inst;
-	int ret;
 
 	inst  = nv_rd32(dev, NV50_PGRAPH_CTXCTL_CUR);
 	if (!(inst & NV50_PGRAPH_CTXCTL_CUR_LOADED))
 		return 0;
 	inst &= NV50_PGRAPH_CTXCTL_CUR_INSTANCE;
-	ret = nv50_graph_do_save_context(dev, inst);
+
+	nouveau_wait_for_idle(dev);
+	nv_wr32(dev, 0x400784, inst);
+	nv_wr32(dev, 0x400824, nv_rd32(dev, 0x400824) | 0x20);
+	nv_wr32(dev, 0x400304, nv_rd32(dev, 0x400304) | 0x01);
+	nouveau_wait_for_idle(dev);
+
 	nv_wr32(dev, NV50_PGRAPH_CTXCTL_CUR, inst);
 	return 0;
 }
@@ -471,9 +410,10 @@ struct nouveau_pgraph_object_class nv50_graph_grclass[] = {
 	{ 0x5039, false, NULL }, /* m2mf */
 	{ 0x502d, false, NULL }, /* 2d */
 	{ 0x50c0, false, NULL }, /* compute */
+	{ 0x85c0, false, NULL }, /* compute (nva3, nva5, nva8) */
 	{ 0x5097, false, NULL }, /* tesla (nv50) */
-	{ 0x8297, false, NULL }, /* tesla (nv80/nv90) */
-	{ 0x8397, false, NULL }, /* tesla (nva0) */
-	{ 0x8597, false, NULL }, /* tesla (nva8) */
+	{ 0x8297, false, NULL }, /* tesla (nv8x/nv9x) */
+	{ 0x8397, false, NULL }, /* tesla (nva0, nvaa, nvac) */
+	{ 0x8597, false, NULL }, /* tesla (nva3, nva5, nva8) */
 	{}
 };

@@ -77,7 +77,7 @@ static int epilog(struct inode *dir, aufs_bindex_t bindex,
 	} else
 		dput(wh);
 
- out:
+out:
 	return err;
 }
 
@@ -120,13 +120,12 @@ int au_may_add(struct dentry *dentry, aufs_bindex_t bindex,
 		}
 	}
 
-	err = -EIO;
+	err = 0;
 	/* expected parent dir is locked */
 	if (unlikely(h_parent != h_dentry->d_parent))
-		goto out;
-	err = 0;
+		err = -EIO;
 
- out:
+out:
 	AuTraceErr(err);
 	return err;
 }
@@ -190,10 +189,10 @@ lock_hdir_lkup_wh(struct dentry *dentry, struct au_dtime *dt,
 
 	wh_dentry = au_wh_lkup(h_parent, &dentry->d_name, br);
 
- out_unpin:
+out_unpin:
 	if (IS_ERR(wh_dentry))
 		au_unpin(pin);
- out:
+out:
 	return wh_dentry;
 }
 
@@ -282,7 +281,7 @@ static int add_simple(struct inode *dir, struct dentry *dentry,
 	au_unpin(&pin);
 	dput(wh_dentry);
 
- out:
+out:
 	if (unlikely(err)) {
 		au_update_dbstart(dentry);
 		d_drop(dentry);
@@ -341,6 +340,7 @@ static int au_cpup_before_link(struct dentry *src_dentry,
 	int err;
 	struct dentry *h_src_dentry;
 	struct mutex *h_mtx;
+	struct file *h_file;
 
 	di_read_lock_parent(a->src_parent, AuLock_IR);
 	err = au_test_and_cpup_dirs(src_dentry, a->bdst);
@@ -355,12 +355,18 @@ static int au_cpup_before_link(struct dentry *src_dentry,
 	if (unlikely(err))
 		goto out;
 	mutex_lock_nested(h_mtx, AuLsc_I_CHILD);
-	err = au_sio_cpup_simple(src_dentry, a->bdst, -1,
-				 AuCpup_DTIME /* | AuCpup_KEEPLINO */);
+	h_file = au_h_open_pre(src_dentry, a->bsrc);
+	if (IS_ERR(h_file)) {
+		err = PTR_ERR(h_file);
+		h_file = NULL;
+	} else
+		err = au_sio_cpup_simple(src_dentry, a->bdst, a->bsrc,
+					 AuCpup_DTIME /* | AuCpup_KEEPLINO */);
 	mutex_unlock(h_mtx);
+	au_h_open_post(src_dentry, a->bsrc, h_file);
 	au_unpin(&a->pin);
 
- out:
+out:
 	di_read_unlock(a->src_parent, AuLock_IR);
 	return err;
 }
@@ -372,6 +378,7 @@ static int au_cpup_or_link(struct dentry *src_dentry, struct au_link_args *a)
 	struct inode *h_inode, *inode;
 	struct dentry *h_src_dentry;
 	struct super_block *sb;
+	struct file *h_file;
 
 	plink = 0;
 	h_inode = NULL;
@@ -385,9 +392,16 @@ static int au_cpup_or_link(struct dentry *src_dentry, struct au_link_args *a)
 		au_set_h_dptr(src_dentry, a->bdst, dget(a->h_path.dentry));
 		h_inode = au_h_dptr(src_dentry, a->bsrc)->d_inode;
 		mutex_lock_nested(&h_inode->i_mutex, AuLsc_I_CHILD);
-		err = au_sio_cpup_single(src_dentry, a->bdst, a->bsrc, -1,
-					 AuCpup_KEEPLINO, a->parent);
+		h_file = au_h_open_pre(src_dentry, a->bsrc);
+		if (IS_ERR(h_file)) {
+			err = PTR_ERR(h_file);
+			h_file = NULL;
+		} else
+			err = au_sio_cpup_single(src_dentry, a->bdst, a->bsrc,
+						 -1, AuCpup_KEEPLINO,
+						 a->parent);
 		mutex_unlock(&h_inode->i_mutex);
+		au_h_open_post(src_dentry, a->bsrc, h_file);
 		au_set_h_dptr(src_dentry, a->bdst, NULL);
 		au_set_dbstart(src_dentry, a->bsrc);
 	} else {
@@ -452,7 +466,10 @@ int aufs_link(struct dentry *src_dentry, struct inode *dir,
 		goto out;
 
 	a->parent = dentry->d_parent; /* dir inode is locked */
-	aufs_read_and_write_lock2(dentry, src_dentry, /*AuLock_FLUSH*/0);
+	err = aufs_read_and_write_lock2(dentry, src_dentry, AuLock_NOPLM);
+	if (unlikely(err))
+		goto out_kfree;
+
 	a->src_parent = dget_parent(src_dentry);
 	wr_dir_args.force_btgt = au_dbstart(src_dentry);
 
@@ -529,21 +546,21 @@ int aufs_link(struct dentry *src_dentry, struct inode *dir,
 		d_drop(dentry);
 	goto out_unpin; /* success */
 
- out_revert:
+out_revert:
 	rerr = vfsub_unlink(au_pinned_h_dir(&a->pin), &a->h_path, /*force*/0);
 	if (!rerr)
 		goto out_dt;
 	AuIOErr("%.*s reverting failed(%d, %d)\n",
 		AuDLNPair(dentry), err, rerr);
 	err = -EIO;
- out_dt:
+out_dt:
 	d_drop(dentry);
 	au_dtime_revert(&dt);
- out_unpin:
+out_unpin:
 	au_unpin(&a->pin);
- out_wh:
+out_wh:
 	dput(wh_dentry);
- out_unlock:
+out_unlock:
 	if (unlikely(err)) {
 		au_update_dbstart(dentry);
 		d_drop(dentry);
@@ -551,8 +568,9 @@ int aufs_link(struct dentry *src_dentry, struct inode *dir,
 	di_write_unlock(a->parent);
 	dput(a->src_parent);
 	aufs_read_and_write_unlock2(dentry, src_dentry);
+out_kfree:
 	kfree(a);
- out:
+out:
 	return err;
 }
 
@@ -632,7 +650,7 @@ int aufs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 		}
 	}
 
- out_dir:
+out_dir:
 	AuLabel(revert dir);
 	rerr = vfsub_rmdir(au_pinned_h_dir(&a->pin), &h_path);
 	if (rerr) {
@@ -642,10 +660,10 @@ int aufs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 	}
 	d_drop(dentry);
 	au_dtime_revert(&a->dt);
- out_unlock:
+out_unlock:
 	au_unpin(&a->pin);
 	dput(wh_dentry);
- out_free:
+out_free:
 	if (unlikely(err)) {
 		au_update_dbstart(dentry);
 		d_drop(dentry);
@@ -653,6 +671,6 @@ int aufs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 	di_write_unlock(parent);
 	aufs_read_unlock(dentry, AuLock_DW);
 	kfree(a);
- out:
+out:
 	return err;
 }

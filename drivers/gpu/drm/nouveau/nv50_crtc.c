@@ -45,7 +45,7 @@ nv50_crtc_lut_load(struct drm_crtc *crtc)
 	void __iomem *lut = nvbo_kmap_obj_iovirtual(nv_crtc->lut.nvbo);
 	int i;
 
-	NV_DEBUG(crtc->dev, "\n");
+	NV_DEBUG_KMS(crtc->dev, "\n");
 
 	for (i = 0; i < 256; i++) {
 		writew(nv_crtc->lut.r[i] >> 2, lut + 8*i + 0);
@@ -68,8 +68,8 @@ nv50_crtc_blank(struct nouveau_crtc *nv_crtc, bool blanked)
 	struct nouveau_channel *evo = dev_priv->evo;
 	int index = nv_crtc->index, ret;
 
-	NV_DEBUG(dev, "index %d\n", nv_crtc->index);
-	NV_DEBUG(dev, "%s\n", blanked ? "blanked" : "unblanked");
+	NV_DEBUG_KMS(dev, "index %d\n", nv_crtc->index);
+	NV_DEBUG_KMS(dev, "%s\n", blanked ? "blanked" : "unblanked");
 
 	if (blanked) {
 		nv_crtc->cursor.hide(nv_crtc, false);
@@ -90,7 +90,6 @@ nv50_crtc_blank(struct nouveau_crtc *nv_crtc, bool blanked)
 		BEGIN_RING(evo, 0, NV50_EVO_CRTC(index, FB_DMA), 1);
 		OUT_RING(evo, NV50_EVO_CRTC_FB_DMA_HANDLE_NONE);
 	} else {
-		nv_crtc->cursor.set_offset(nv_crtc, nv_crtc->cursor.offset);
 		if (nv_crtc->cursor.visible)
 			nv_crtc->cursor.show(nv_crtc, false);
 		else
@@ -140,7 +139,7 @@ nv50_crtc_set_dither(struct nouveau_crtc *nv_crtc, bool on, bool update)
 	struct nouveau_channel *evo = dev_priv->evo;
 	int ret;
 
-	NV_DEBUG(dev, "\n");
+	NV_DEBUG_KMS(dev, "\n");
 
 	ret = RING_SPACE(evo, 2 + (update ? 2 : 0));
 	if (ret) {
@@ -194,7 +193,7 @@ nv50_crtc_set_scale(struct nouveau_crtc *nv_crtc, int scaling_mode, bool update)
 	uint32_t outX, outY, horiz, vert;
 	int ret;
 
-	NV_DEBUG(dev, "\n");
+	NV_DEBUG_KMS(dev, "\n");
 
 	switch (scaling_mode) {
 	case DRM_MODE_SCALE_NONE:
@@ -265,49 +264,40 @@ nv50_crtc_set_scale(struct nouveau_crtc *nv_crtc, int scaling_mode, bool update)
 int
 nv50_crtc_set_clock(struct drm_device *dev, int head, int pclk)
 {
-	uint32_t pll_reg = NV50_PDISPLAY_CRTC_CLK_CTRL1(head);
-	struct nouveau_pll_vals pll;
-	struct pll_lims limits;
+	uint32_t reg = NV50_PDISPLAY_CRTC_CLK_CTRL1(head);
+	struct pll_lims pll;
 	uint32_t reg1, reg2;
-	int ret;
+	int ret, N1, M1, N2, M2, P;
 
-	ret = get_pll_limits(dev, pll_reg, &limits);
+	ret = get_pll_limits(dev, reg, &pll);
 	if (ret)
 		return ret;
 
-	/*XXX: need a vbios image from one of these cards to look at
-	 *     rather than just guessing.  P isn't log2P on these
-	 *     cards, it's uncertain at this stage what the PLL
-	 *     limits tables have to say about these chips.
-	 *
-	 *     getPLL_single will need some modifications to calculate
-	 *     this properly too.
-	 *
-	 *     for the moment, hacking up the PLL limits table with
-	 *     a log2 value matching nv's maximum.
-	 */
-	if (!limits.vco2.maxfreq) {
-		NV_ERROR(dev, "single-stage PLL, please report: %d!!\n",
-			 limits.max_usable_log2p);
-		limits.max_usable_log2p = 6;
-	}
+	if (pll.vco2.maxfreq) {
+		ret = nv50_calc_pll(dev, &pll, pclk, &N1, &M1, &N2, &M2, &P);
+		if (ret <= 0)
+			return 0;
 
-	ret = nouveau_calc_pll_mnp(dev, &limits, pclk, &pll);
-	if (ret <= 0)
-		return ret;
+		NV_DEBUG(dev, "pclk %d out %d NM1 %d %d NM2 %d %d P %d\n",
+			 pclk, ret, N1, M1, N2, M2, P);
 
-	if (limits.vco2.maxfreq) {
-		reg1 = nv_rd32(dev, pll_reg + 4) & 0xff00ff00;
-		reg2 = nv_rd32(dev, pll_reg + 8) & 0x8000ff00;
-		nv_wr32(dev, pll_reg, 0x10000611);
-		nv_wr32(dev, pll_reg + 4, reg1 | (pll.M1 << 16) | pll.N1);
-		nv_wr32(dev, pll_reg + 8,
-			reg2 | (pll.log2P << 28) | (pll.M2 << 16) | pll.N2);
+		reg1 = nv_rd32(dev, reg + 4) & 0xff00ff00;
+		reg2 = nv_rd32(dev, reg + 8) & 0x8000ff00;
+		nv_wr32(dev, reg, 0x10000611);
+		nv_wr32(dev, reg + 4, reg1 | (M1 << 16) | N1);
+		nv_wr32(dev, reg + 8, reg2 | (P << 28) | (M2 << 16) | N2);
 	} else {
-		reg1 = nv_rd32(dev, pll_reg + 4) & 0xffc00000;
-		nv_wr32(dev, pll_reg, 0x50000610);
-		nv_wr32(dev, pll_reg + 4, reg1 |
-			(((1<<pll.log2P)-1) << 16) | (pll.M1 << 8) | pll.N1);
+		ret = nv50_calc_pll2(dev, &pll, pclk, &N1, &N2, &M1, &P);
+		if (ret <= 0)
+			return 0;
+
+		NV_DEBUG(dev, "pclk %d out %d N %d fN 0x%04x M %d P %d\n",
+			 pclk, ret, N1, N2, M1, P);
+
+		reg1 = nv_rd32(dev, reg + 4) & 0xffc00000;
+		nv_wr32(dev, reg, 0x50000610);
+		nv_wr32(dev, reg + 4, reg1 | (P << 16) | (M1 << 8) | N1);
+		nv_wr32(dev, reg + 8, N2);
 	}
 
 	return 0;
@@ -316,13 +306,16 @@ nv50_crtc_set_clock(struct drm_device *dev, int head, int pclk)
 static void
 nv50_crtc_destroy(struct drm_crtc *crtc)
 {
-	struct drm_device *dev = crtc->dev;
-	struct nouveau_crtc *nv_crtc = nouveau_crtc(crtc);
-
-	NV_DEBUG(dev, "\n");
+	struct drm_device *dev;
+	struct nouveau_crtc *nv_crtc;
 
 	if (!crtc)
 		return;
+
+	dev = crtc->dev;
+	nv_crtc = nouveau_crtc(crtc);
+
+	NV_DEBUG_KMS(dev, "\n");
 
 	drm_crtc_cleanup(&nv_crtc->base);
 
@@ -368,15 +361,12 @@ nv50_crtc_cursor_set(struct drm_crtc *crtc, struct drm_file *file_priv,
 
 	nouveau_bo_unmap(cursor);
 
-	nv_crtc->cursor.offset  = nv_crtc->cursor.nvbo->bo.offset;
-	nv_crtc->cursor.offset -= dev_priv->vm_vram_base;
-	nv_crtc->cursor.set_offset(nv_crtc, nv_crtc->cursor.offset);
+	nv_crtc->cursor.set_offset(nv_crtc, nv_crtc->cursor.nvbo->bo.offset -
+					    dev_priv->vm_vram_base);
 	nv_crtc->cursor.show(nv_crtc, true);
 
 out:
-	mutex_lock(&dev->struct_mutex);
-	drm_gem_object_unreference(gem);
-	mutex_unlock(&dev->struct_mutex);
+	drm_gem_object_unreference_unlocked(gem);
 	return ret;
 }
 
@@ -451,15 +441,35 @@ nv50_crtc_prepare(struct drm_crtc *crtc)
 	struct nouveau_crtc *nv_crtc = nouveau_crtc(crtc);
 	struct drm_device *dev = crtc->dev;
 	struct drm_encoder *encoder;
+	uint32_t dac = 0, sor = 0;
 
-	NV_DEBUG(dev, "index %d\n", nv_crtc->index);
+	NV_DEBUG_KMS(dev, "index %d\n", nv_crtc->index);
 
 	/* Disconnect all unused encoders. */
 	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
 		struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
 
-		if (drm_helper_encoder_in_use(encoder))
+		if (!drm_helper_encoder_in_use(encoder))
 			continue;
+
+		if (nv_encoder->dcb->type == OUTPUT_ANALOG ||
+		    nv_encoder->dcb->type == OUTPUT_TV)
+			dac |= (1 << nv_encoder->or);
+		else
+			sor |= (1 << nv_encoder->or);
+	}
+
+	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
+		struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
+
+		if (nv_encoder->dcb->type == OUTPUT_ANALOG ||
+		    nv_encoder->dcb->type == OUTPUT_TV) {
+			if (dac & (1 << nv_encoder->or))
+				continue;
+		} else {
+			if (sor & (1 << nv_encoder->or))
+				continue;
+		}
 
 		nv_encoder->disconnect(nv_encoder);
 	}
@@ -477,7 +487,7 @@ nv50_crtc_commit(struct drm_crtc *crtc)
 	struct nouveau_crtc *nv_crtc = nouveau_crtc(crtc);
 	int ret;
 
-	NV_DEBUG(dev, "index %d\n", nv_crtc->index);
+	NV_DEBUG_KMS(dev, "index %d\n", nv_crtc->index);
 
 	nv50_crtc_blank(nv_crtc, false);
 
@@ -516,7 +526,7 @@ nv50_crtc_do_mode_set_base(struct drm_crtc *crtc, int x, int y,
 	struct nouveau_framebuffer *fb = nouveau_framebuffer(drm_fb);
 	int ret, format;
 
-	NV_DEBUG(dev, "index %d\n", nv_crtc->index);
+	NV_DEBUG_KMS(dev, "index %d\n", nv_crtc->index);
 
 	switch (drm_fb->depth) {
 	case  8:
@@ -631,7 +641,7 @@ nv50_crtc_mode_set(struct drm_crtc *crtc, struct drm_display_mode *mode,
 
 	*nv_crtc->mode = *adjusted_mode;
 
-	NV_DEBUG(dev, "index %d\n", nv_crtc->index);
+	NV_DEBUG_KMS(dev, "index %d\n", nv_crtc->index);
 
 	hsync_dur = adjusted_mode->hsync_end - adjusted_mode->hsync_start;
 	vsync_dur = adjusted_mode->vsync_end - adjusted_mode->vsync_start;
@@ -725,7 +735,7 @@ nv50_crtc_create(struct drm_device *dev, int index)
 	struct nouveau_crtc *nv_crtc = NULL;
 	int ret, i;
 
-	NV_DEBUG(dev, "\n");
+	NV_DEBUG_KMS(dev, "\n");
 
 	nv_crtc = kzalloc(sizeof(*nv_crtc), GFP_KERNEL);
 	if (!nv_crtc)

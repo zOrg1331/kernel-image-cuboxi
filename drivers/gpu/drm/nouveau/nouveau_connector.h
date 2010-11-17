@@ -33,15 +33,14 @@
 struct nouveau_connector {
 	struct drm_connector base;
 
-	struct drm_display_mode *native_mode;
+	struct dcb_connector_table_entry *dcb;
 
 	int scaling_mode;
-
 	bool use_dithering;
 
 	struct nouveau_encoder *detected_encoder;
-
 	struct edid *edid;
+	struct drm_display_mode *native_mode;
 };
 
 static inline struct nouveau_connector *nouveau_connector(
@@ -50,6 +49,7 @@ static inline struct nouveau_connector *nouveau_connector(
 	return container_of(con, struct nouveau_connector, base);
 }
 
-int nouveau_connector_create(struct drm_device *dev, int i2c_index, int type);
+int nouveau_connector_create(struct drm_device *,
+			     struct dcb_connector_table_entry *);
 
 #endif /* __NOUVEAU_CONNECTOR_H__ */

@@ -82,7 +82,7 @@ int au_wr_dir_need_wh(struct dentry *dentry, int isdir, aufs_bindex_t *bcpup)
 	AuDbg("need_wh %d\n", need_wh);
 	err = need_wh;
 
- out:
+out:
 	return err;
 }
 
@@ -144,7 +144,7 @@ int au_may_del(struct dentry *dentry, aufs_bindex_t bindex,
 		err = 0;
 	dput(h_latest);
 
- out:
+out:
 	return err;
 }
 
@@ -195,13 +195,15 @@ lock_hdir_create_wh(struct dentry *dentry, int isdir, aufs_bindex_t *rbcpup,
 		goto out; /* success, no need to create whiteout */
 
 	wh_dentry = au_wh_create(dentry, bcpup, h_path.dentry);
-	if (!IS_ERR(wh_dentry))
-		goto out; /* success */
-	/* returns with the parent is locked and wh_dentry is dget-ed */
+	if (IS_ERR(wh_dentry))
+		goto out_unpin;
 
- out_unpin:
+	/* returns with the parent is locked and wh_dentry is dget-ed */
+	goto out; /* success */
+
+out_unpin:
 	au_unpin(pin);
- out:
+out:
 	return wh_dentry;
 }
 
@@ -229,7 +231,7 @@ static int renwh_and_rmdir(struct dentry *dentry, aufs_bindex_t bindex,
 		goto out;
 
 	/* stop monitoring */
-	au_hin_free(au_hi(dentry->d_inode, bindex));
+	au_hn_free(au_hi(dentry->d_inode, bindex));
 
 	if (!au_test_fs_remote(h_dentry->d_sb)) {
 		dirwh = au_sbi(sb)->si_dirwh;
@@ -248,7 +250,7 @@ static int renwh_and_rmdir(struct dentry *dentry, aufs_bindex_t bindex,
 		err = 0;
 	}
 
- out:
+out:
 	AuTraceErr(err);
 	return err;
 }
@@ -366,11 +368,11 @@ int aufs_unlink(struct inode *dir, struct dentry *dentry)
 			err = rerr;
 	}
 
- out_unlock:
+out_unlock:
 	au_unpin(&pin);
 	dput(wh_dentry);
 	dput(h_path.dentry);
- out:
+out:
 	di_write_unlock(parent);
 	aufs_read_unlock(dentry, AuLock_DW);
 	return err;
@@ -424,7 +426,7 @@ int aufs_rmdir(struct inode *dir, struct dentry *dentry)
 		}
 	} else {
 		/* stop monitoring */
-		au_hin_free(au_hi(inode, bstart));
+		au_hn_free(au_hi(inode, bstart));
 
 		/* dir inode is locked */
 		IMustLock(wh_dentry->d_parent->d_inode);
@@ -454,17 +456,17 @@ int aufs_rmdir(struct inode *dir, struct dentry *dentry)
 			err = rerr;
 	}
 
- out_unpin:
+out_unpin:
 	au_unpin(&pin);
 	dput(wh_dentry);
 	dput(h_dentry);
- out_args:
+out_args:
 	di_write_unlock(parent);
 	if (args)
 		au_whtmp_rmdir_free(args);
- out_unlock:
+out_unlock:
 	aufs_read_unlock(dentry, AuLock_DW);
- out:
+out:
 	AuTraceErr(err);
 	return err;
 }

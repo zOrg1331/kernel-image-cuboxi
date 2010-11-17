@@ -8,10 +8,10 @@ nouveau_fifo_ctx_size(struct drm_device *dev)
 {
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 
-	if (dev_priv->card_type >= NV_40)
+	if (dev_priv->chipset >= 0x40)
 		return 128;
 	else
-	if (dev_priv->card_type >= NV_17)
+	if (dev_priv->chipset >= 0x17)
 		return 64;
 
 	return 32;
@@ -30,7 +30,7 @@ nv04_instmem_determine_amount(struct drm_device *dev)
 		 * of vram.  For now, only reserve a small piece until we know
 		 * more about what each chipset requires.
 		 */
-		switch (dev_priv->chipset & 0xf0) {
+		switch (dev_priv->chipset) {
 		case 0x40:
 		case 0x47:
 		case 0x49:
@@ -92,8 +92,6 @@ nv04_instmem_configure_fixed_tables(struct drm_device *dev)
 		break;
 	case NV_30:
 	case NV_20:
-	case NV_17:
-	case NV_11:
 	case NV_10:
 	case NV_04:
 	default:

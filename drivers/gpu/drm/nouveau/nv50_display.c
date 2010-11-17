@@ -29,6 +29,7 @@
 #include "nouveau_encoder.h"
 #include "nouveau_connector.h"
 #include "nouveau_fb.h"
+#include "nouveau_fbcon.h"
 #include "drm_crtc_helper.h"
 
 static void
@@ -143,7 +144,7 @@ nv50_evo_channel_new(struct drm_device *dev, struct nouveau_channel **pchan)
 	}
 
 	ret = nv50_evo_dmaobj_new(chan, 0x3d, NvEvoVRAM, 0, 0x19,
-				  0, nouveau_mem_fb_amount(dev));
+				  0, dev_priv->vram_size);
 	if (ret) {
 		nv50_evo_channel_del(pchan);
 		return ret;
@@ -183,11 +184,12 @@ nv50_display_init(struct drm_device *dev)
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	struct nouveau_timer_engine *ptimer = &dev_priv->engine.timer;
 	struct nouveau_channel *evo = dev_priv->evo;
-	uint32_t val, ram_amount;
+	struct drm_connector *connector;
+	uint32_t val, ram_amount, hpd_en[2];
 	uint64_t start;
 	int ret, i;
 
-	NV_DEBUG(dev, "\n");
+	NV_DEBUG_KMS(dev, "\n");
 
 	nv_wr32(dev, 0x00610184, nv_rd32(dev, 0x00614004));
 	/*
@@ -195,27 +197,31 @@ nv50_display_init(struct drm_device *dev)
 	 * that enables things.
 	 */
 	/* CRTC? */
-	nv_wr32(dev, 0x00610190 + 0 * 0x10, nv_rd32(dev, 0x00616100 + 0 * 0x800));
-	nv_wr32(dev, 0x00610190 + 1 * 0x10, nv_rd32(dev, 0x00616100 + 1 * 0x800));
-	nv_wr32(dev, 0x00610194 + 0 * 0x10, nv_rd32(dev, 0x00616104 + 0 * 0x800));
-	nv_wr32(dev, 0x00610194 + 1 * 0x10, nv_rd32(dev, 0x00616104 + 1 * 0x800));
-	nv_wr32(dev, 0x00610198 + 0 * 0x10, nv_rd32(dev, 0x00616108 + 0 * 0x800));
-	nv_wr32(dev, 0x00610198 + 1 * 0x10, nv_rd32(dev, 0x00616108 + 1 * 0x800));
-	nv_wr32(dev, 0x0061019c + 0 * 0x10, nv_rd32(dev, 0x0061610c + 0 * 0x800));
-	nv_wr32(dev, 0x0061019c + 1 * 0x10, nv_rd32(dev, 0x0061610c + 1 * 0x800));
+	for (i = 0; i < 2; i++) {
+		val = nv_rd32(dev, 0x00616100 + (i * 0x800));
+		nv_wr32(dev, 0x00610190 + (i * 0x10), val);
+		val = nv_rd32(dev, 0x00616104 + (i * 0x800));
+		nv_wr32(dev, 0x00610194 + (i * 0x10), val);
+		val = nv_rd32(dev, 0x00616108 + (i * 0x800));
+		nv_wr32(dev, 0x00610198 + (i * 0x10), val);
+		val = nv_rd32(dev, 0x0061610c + (i * 0x800));
+		nv_wr32(dev, 0x0061019c + (i * 0x10), val);
+	}
 	/* DAC */
-	nv_wr32(dev, 0x006101d0 + 0 * 0x4, nv_rd32(dev, 0x0061a000 + 0 * 0x800));
-	nv_wr32(dev, 0x006101d0 + 1 * 0x4, nv_rd32(dev, 0x0061a000 + 1 * 0x800));
-	nv_wr32(dev, 0x006101d0 + 2 * 0x4, nv_rd32(dev, 0x0061a000 + 2 * 0x800));
+	for (i = 0; i < 3; i++) {
+		val = nv_rd32(dev, 0x0061a000 + (i * 0x800));
+		nv_wr32(dev, 0x006101d0 + (i * 0x04), val);
+	}
 	/* SOR */
-	nv_wr32(dev, 0x006101e0 + 0 * 0x4, nv_rd32(dev, 0x0061c000 + 0 * 0x800));
-	nv_wr32(dev, 0x006101e0 + 1 * 0x4, nv_rd32(dev, 0x0061c000 + 1 * 0x800));
-	nv_wr32(dev, 0x006101e0 + 2 * 0x4, nv_rd32(dev, 0x0061c000 + 2 * 0x800));
-	nv_wr32(dev, 0x006101e0 + 3 * 0x4, nv_rd32(dev, 0x0061c000 + 3 * 0x800));
+	for (i = 0; i < 4; i++) {
+		val = nv_rd32(dev, 0x0061c000 + (i * 0x800));
+		nv_wr32(dev, 0x006101e0 + (i * 0x04), val);
+	}
 	/* Something not yet in use, tv-out maybe. */
-	nv_wr32(dev, 0x006101f0 + 0 * 0x4, nv_rd32(dev, 0x0061e000 + 0 * 0x800));
-	nv_wr32(dev, 0x006101f0 + 1 * 0x4, nv_rd32(dev, 0x0061e000 + 1 * 0x800));
-	nv_wr32(dev, 0x006101f0 + 2 * 0x4, nv_rd32(dev, 0x0061e000 + 2 * 0x800));
+	for (i = 0; i < 3; i++) {
+		val = nv_rd32(dev, 0x0061e000 + (i * 0x800));
+		nv_wr32(dev, 0x006101f0 + (i * 0x04), val);
+	}
 
 	for (i = 0; i < 3; i++) {
 		nv_wr32(dev, NV50_PDISPLAY_DAC_DPMS_CTRL(i), 0x00550000 |
@@ -226,8 +232,8 @@ nv50_display_init(struct drm_device *dev)
 	/* This used to be in crtc unblank, but seems out of place there. */
 	nv_wr32(dev, NV50_PDISPLAY_UNK_380, 0);
 	/* RAM is clamped to 256 MiB. */
-	ram_amount = nouveau_mem_fb_amount(dev);
-	NV_DEBUG(dev, "ram_amount %d\n", ram_amount);
+	ram_amount = dev_priv->vram_size;
+	NV_DEBUG_KMS(dev, "ram_amount %d\n", ram_amount);
 	if (ram_amount > 256*1024*1024)
 		ram_amount = 256*1024*1024;
 	nv_wr32(dev, NV50_PDISPLAY_RAM_AMOUNT, ram_amount - 1);
@@ -360,9 +366,27 @@ nv50_display_init(struct drm_device *dev)
 					     NV50_PDISPLAY_INTR_EN_CLK_UNK40));
 
 	/* enable hotplug interrupts */
-	nv_wr32(dev, NV50_PCONNECTOR_HOTPLUG_CTRL, 0x7FFF7FFF);
-	/* nv_wr32(dev, NV50_PCONNECTOR_HOTPLUG_INTR, 0x7FFF7FFF); */
+	hpd_en[0] = hpd_en[1] = 0;
+	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
+		struct nouveau_connector *conn = nouveau_connector(connector);
+		struct dcb_gpio_entry *gpio;
 
+		if (conn->dcb->gpio_tag == 0xff)
+			continue;
+
+		gpio = nouveau_bios_gpio_entry(dev, conn->dcb->gpio_tag);
+		if (!gpio)
+			continue;
+
+		hpd_en[gpio->line >> 4] |= (0x00010001 << (gpio->line & 0xf));
+	}
+
+	nv_wr32(dev, 0xe054, 0xffffffff);
+	nv_wr32(dev, 0xe050, hpd_en[0]);
+	if (dev_priv->chipset >= 0x90) {
+		nv_wr32(dev, 0xe074, 0xffffffff);
+		nv_wr32(dev, 0xe070, hpd_en[1]);
+	}
 
 	return 0;
 }
@@ -373,7 +397,7 @@ static int nv50_display_disable(struct drm_device *dev)
 	struct drm_crtc *drm_crtc;
 	int ret, i;
 
-	NV_DEBUG(dev, "\n");
+	NV_DEBUG_KMS(dev, "\n");
 
 	list_for_each_entry(drm_crtc, &dev->mode_config.crtc_list, head) {
 		struct nouveau_crtc *crtc = nouveau_crtc(drm_crtc);
@@ -428,19 +452,22 @@ static int nv50_display_disable(struct drm_device *dev)
 	nv_wr32(dev, NV50_PDISPLAY_INTR_EN, 0x00000000);
 
 	/* disable hotplug interrupts */
-	nv_wr32(dev, NV50_PCONNECTOR_HOTPLUG_INTR, 0);
-
+	nv_wr32(dev, 0xe054, 0xffffffff);
+	nv_wr32(dev, 0xe050, 0x00000000);
+	if (dev_priv->chipset >= 0x90) {
+		nv_wr32(dev, 0xe074, 0xffffffff);
+		nv_wr32(dev, 0xe070, 0x00000000);
+	}
 	return 0;
 }
 
 int nv50_display_create(struct drm_device *dev)
 {
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
-	struct parsed_dcb *dcb = dev_priv->vbios->dcb;
-	uint32_t connector[16] = {};
+	struct dcb_table *dcb = &dev_priv->vbios.dcb;
 	int ret, i;
 
-	NV_DEBUG(dev, "\n");
+	NV_DEBUG_KMS(dev, "\n");
 
 	/* init basic kernel modesetting */
 	drm_mode_config_init(dev);
@@ -474,6 +501,12 @@ int nv50_display_create(struct drm_device *dev)
 	for (i = 0 ; i < dcb->entries; i++) {
 		struct dcb_entry *entry = &dcb->entry[i];
 
+		if (entry->location != DCB_LOC_ON_CHIP) {
+			NV_WARN(dev, "Off-chip encoder %d/%d unsupported\n",
+				entry->type, ffs(entry->or) - 1);
+			continue;
+		}
+
 		switch (entry->type) {
 		case OUTPUT_TMDS:
 		case OUTPUT_LVDS:
@@ -487,49 +520,20 @@ int nv50_display_create(struct drm_device *dev)
 			NV_WARN(dev, "DCB encoder %d unknown\n", entry->type);
 			continue;
 		}
-
-		connector[entry->connector] |= (1 << entry->type);
 	}
 
-	/* It appears that DCB 3.0+ VBIOS has a connector table, however,
-	 * I'm not 100% certain how to decode it correctly yet so just
-	 * look at what encoders are present on each connector index and
-	 * attempt to derive the connector type from that.
-	 */
-	for (i = 0 ; i < dcb->entries; i++) {
-		struct dcb_entry *entry = &dcb->entry[i];
-		uint16_t encoders;
-		int type;
-
-		encoders = connector[entry->connector];
-		if (!(encoders & (1 << entry->type)))
+	for (i = 0 ; i < dcb->connector.entries; i++) {
+		if (i != 0 && dcb->connector.entry[i].index2 ==
+			      dcb->connector.entry[i - 1].index2)
 			continue;
-		connector[entry->connector] = 0;
-
-		if (encoders & (1 << OUTPUT_DP)) {
-			type = DRM_MODE_CONNECTOR_DisplayPort;
-		} else if (encoders & (1 << OUTPUT_TMDS)) {
-			if (encoders & (1 << OUTPUT_ANALOG))
-				type = DRM_MODE_CONNECTOR_DVII;
-			else
-				type = DRM_MODE_CONNECTOR_DVID;
-		} else if (encoders & (1 << OUTPUT_ANALOG)) {
-			type = DRM_MODE_CONNECTOR_VGA;
-		} else if (encoders & (1 << OUTPUT_LVDS)) {
-			type = DRM_MODE_CONNECTOR_LVDS;
-		} else {
-			type = DRM_MODE_CONNECTOR_Unknown;
-		}
-
-		if (type == DRM_MODE_CONNECTOR_Unknown)
-			continue;
-
-		nouveau_connector_create(dev, entry->connector, type);
+		nouveau_connector_create(dev, &dcb->connector.entry[i]);
 	}
 
 	ret = nv50_display_init(dev);
-	if (ret)
+	if (ret) {
+		nv50_display_destroy(dev);
 		return ret;
+	}
 
 	return 0;
 }
@@ -538,7 +542,7 @@ int nv50_display_destroy(struct drm_device *dev)
 {
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 
-	NV_DEBUG(dev, "\n");
+	NV_DEBUG_KMS(dev, "\n");
 
 	drm_mode_config_cleanup(dev);
 
@@ -574,7 +578,7 @@ nv50_display_irq_head(struct drm_device *dev, int *phead,
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	uint32_t unk30 = nv_rd32(dev, NV50_PDISPLAY_UNK30_CTRL);
 	uint32_t dac = 0, sor = 0;
-	int head, i, or;
+	int head, i, or = 0, type = OUTPUT_ANY;
 
 	/* We're assuming that head 0 *or* head 1 will be active here,
 	 * and not both.  I'm not sure if the hw will even signal both
@@ -582,67 +586,68 @@ nv50_display_irq_head(struct drm_device *dev, int *phead,
 	 * CRTC separately, and submission will be blocked by the GPU
 	 * until we handle each in turn.
 	 */
-	NV_DEBUG(dev, "0x610030: 0x%08x\n", unk30);
+	NV_DEBUG_KMS(dev, "0x610030: 0x%08x\n", unk30);
 	head = ffs((unk30 >> 9) & 3) - 1;
-	if (head < 0) {
-		NV_ERROR(dev, "no active heads: 0x%08x\n",
-						nv_rd32(dev, 0x610030));
+	if (head < 0)
 		return -EINVAL;
-	}
 
 	/* This assumes CRTCs are never bound to multiple encoders, which
 	 * should be the case.
 	 */
-	for (i = 0; i < 3; i++) {
-		if (nv50_display_mode_ctrl(dev, false, i) & (1 << head))
-			dac |= (1 << i);
-	}
-
-	for (i = 0; i < 4; i++) {
-		if (nv50_display_mode_ctrl(dev, true, i) & (1 << head))
-			sor |= (1 << i);
-	}
-
-	NV_DEBUG(dev, "dac: 0x%08x, sor: 0x%08x\n", dac, sor);
-
-	if (dac && sor) {
-		NV_ERROR(dev, "multiple encoders: 0x%08x 0x%08x\n", dac, sor);
-		return -1;
-	} else
-	if (dac) {
-		or = ffs(dac) - 1;
-		if (dac & ~(1 << or)) {
-			NV_ERROR(dev, "multiple DAC: 0x%08x\n", dac);
-			return -1;
-		}
-	} else
-	if (sor) {
-		or = ffs(sor) - 1;
-		if (sor & ~(1 << or)) {
-			NV_ERROR(dev, "multiple SOR: 0x%08x\n", sor);
-			return -1;
-		}
-	} else {
-		NV_ERROR(dev, "no encoders!\n");
-		return -1;
-	}
-
-	for (i = 0; i < dev_priv->vbios->dcb->entries; i++) {
-		struct dcb_entry *dcbent = &dev_priv->vbios->dcb->entry[i];
-
-		if (dac && (dcbent->type != OUTPUT_ANALOG &&
-			    dcbent->type != OUTPUT_TV))
-			continue;
-		else
-		if (sor && (dcbent->type != OUTPUT_TMDS &&
-			    dcbent->type != OUTPUT_LVDS))
+	for (i = 0; i < 3 && type == OUTPUT_ANY; i++) {
+		uint32_t mc = nv50_display_mode_ctrl(dev, false, i);
+		if (!(mc & (1 << head)))
 			continue;
 
-		if (dcbent->or & (1 << or)) {
-			*phead = head;
-			*pdcbent = dcbent;
-			return 0;
+		switch ((mc >> 8) & 0xf) {
+		case 0: type = OUTPUT_ANALOG; break;
+		case 1: type = OUTPUT_TV; break;
+		default:
+			NV_ERROR(dev, "unknown dac mode_ctrl: 0x%08x\n", dac);
+			return -1;
 		}
+
+		or = i;
+	}
+
+	for (i = 0; i < 4 && type == OUTPUT_ANY; i++) {
+		uint32_t mc = nv50_display_mode_ctrl(dev, true, i);
+		if (!(mc & (1 << head)))
+			continue;
+
+		switch ((mc >> 8) & 0xf) {
+		case 0: type = OUTPUT_LVDS; break;
+		case 1: type = OUTPUT_TMDS; break;
+		case 2: type = OUTPUT_TMDS; break;
+		case 5: type = OUTPUT_TMDS; break;
+		case 8: type = OUTPUT_DP; break;
+		case 9: type = OUTPUT_DP; break;
+		default:
+			NV_ERROR(dev, "unknown sor mode_ctrl: 0x%08x\n", sor);
+			return -1;
+		}
+
+		or = i;
+	}
+
+	NV_DEBUG_KMS(dev, "type %d, or %d\n", type, or);
+	if (type == OUTPUT_ANY) {
+		NV_ERROR(dev, "unknown encoder!!\n");
+		return -1;
+	}
+
+	for (i = 0; i < dev_priv->vbios.dcb.entries; i++) {
+		struct dcb_entry *dcbent = &dev_priv->vbios.dcb.entry[i];
+
+		if (dcbent->type != type)
+			continue;
+
+		if (!(dcbent->or & (1 << or)))
+			continue;
+
+		*phead = head;
+		*pdcbent = dcbent;
+		return 0;
 	}
 
 	NV_ERROR(dev, "no DCB entry for %d %d\n", dac != 0, or);
@@ -654,19 +659,48 @@ nv50_display_script_select(struct drm_device *dev, struct dcb_entry *dcbent,
 			   int pxclk)
 {
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
-	struct nvbios *bios = &dev_priv->VBIOS;
+	struct nouveau_connector *nv_connector = NULL;
+	struct drm_encoder *encoder;
+	struct nvbios *bios = &dev_priv->vbios;
 	uint32_t mc, script = 0, or;
+
+	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
+		struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
+
+		if (nv_encoder->dcb != dcbent)
+			continue;
+
+		nv_connector = nouveau_encoder_connector_get(nv_encoder);
+		break;
+	}
 
 	or = ffs(dcbent->or) - 1;
 	mc = nv50_display_mode_ctrl(dev, dcbent->type != OUTPUT_ANALOG, or);
 	switch (dcbent->type) {
 	case OUTPUT_LVDS:
 		script = (mc >> 8) & 0xf;
-		if (pxclk >= bios->fp.duallink_transition_clk)
-			script |= 0x0100;
+		if (bios->fp_no_ddc) {
+			if (bios->fp.dual_link)
+				script |= 0x0100;
+			if (bios->fp.if_is_24bit)
+				script |= 0x0200;
+		} else {
+			if (pxclk >= bios->fp.duallink_transition_clk) {
+				script |= 0x0100;
+				if (bios->fp.strapless_is_24bit & 2)
+					script |= 0x0200;
+			} else
+			if (bios->fp.strapless_is_24bit & 1)
+				script |= 0x0200;
+
+			if (nv_connector && nv_connector->edid &&
+			    (nv_connector->edid->revision >= 4) &&
+			    (nv_connector->edid->input & 0x70) >= 0x20)
+				script |= 0x0200;
+		}
 
 		if (nouveau_uscript_lvds >= 0) {
-			NV_INFO(dev, "override script 0x%04x with 0x%04x"
+			NV_INFO(dev, "override script 0x%04x with 0x%04x "
 				     "for output LVDS-%d\n", script,
 				     nouveau_uscript_lvds, or);
 			script = nouveau_uscript_lvds;
@@ -678,11 +712,14 @@ nv50_display_script_select(struct drm_device *dev, struct dcb_entry *dcbent,
 			script |= 0x0100;
 
 		if (nouveau_uscript_tmds >= 0) {
-			NV_INFO(dev, "override script 0x%04x with 0x%04x"
+			NV_INFO(dev, "override script 0x%04x with 0x%04x "
 				     "for output TMDS-%d\n", script,
 				     nouveau_uscript_tmds, or);
 			script = nouveau_uscript_tmds;
 		}
+		break;
+	case OUTPUT_DP:
+		script = (mc >> 8) & 0xf;
 		break;
 	case OUTPUT_ANALOG:
 		script = 0xff;
@@ -747,6 +784,37 @@ ack:
 }
 
 static void
+nv50_display_unk20_dp_hack(struct drm_device *dev, struct dcb_entry *dcb)
+{
+	int or = ffs(dcb->or) - 1, link = !(dcb->dpconf.sor.link & 1);
+	struct drm_encoder *encoder;
+	uint32_t tmp, unk0 = 0, unk1 = 0;
+
+	if (dcb->type != OUTPUT_DP)
+		return;
+
+	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
+		struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
+
+		if (nv_encoder->dcb == dcb) {
+			unk0 = nv_encoder->dp.unk0;
+			unk1 = nv_encoder->dp.unk1;
+			break;
+		}
+	}
+
+	if (unk0 || unk1) {
+		tmp  = nv_rd32(dev, NV50_SOR_DP_CTRL(or, link));
+		tmp &= 0xfffffe03;
+		nv_wr32(dev, NV50_SOR_DP_CTRL(or, link), tmp | unk0);
+
+		tmp  = nv_rd32(dev, NV50_SOR_DP_UNK128(or, link));
+		tmp &= 0xfef080c0;
+		nv_wr32(dev, NV50_SOR_DP_UNK128(or, link), tmp | unk1);
+	}
+}
+
+static void
 nv50_display_unk20_handler(struct drm_device *dev)
 {
 	struct dcb_entry *dcbent;
@@ -760,13 +828,16 @@ nv50_display_unk20_handler(struct drm_device *dev)
 	pclk = nv_rd32(dev, NV50_PDISPLAY_CRTC_P(head, CLOCK)) & 0x3fffff;
 	script = nv50_display_script_select(dev, dcbent, pclk);
 
-	NV_DEBUG(dev, "head %d pxclk: %dKHz\n", head, pclk);
+	NV_DEBUG_KMS(dev, "head %d pxclk: %dKHz\n", head, pclk);
 
-	nouveau_bios_run_display_table(dev, dcbent, 0, -2);
+	if (dcbent->type != OUTPUT_DP)
+		nouveau_bios_run_display_table(dev, dcbent, 0, -2);
 
 	nv50_crtc_set_clock(dev, head, pclk);
 
 	nouveau_bios_run_display_table(dev, dcbent, script, pclk);
+
+	nv50_display_unk20_dp_hack(dev, dcbent);
 
 	tmp = nv_rd32(dev, NV50_PDISPLAY_CRTC_CLK_CTRL2(head));
 	tmp &= ~0x000000f;
@@ -818,7 +889,7 @@ nv50_display_irq_handler_bh(struct work_struct *work)
 		uint32_t intr0 = nv_rd32(dev, NV50_PDISPLAY_INTR_0);
 		uint32_t intr1 = nv_rd32(dev, NV50_PDISPLAY_INTR_1);
 
-		NV_DEBUG(dev, "PDISPLAY_INTR_BH 0x%08x 0x%08x\n", intr0, intr1);
+		NV_DEBUG_KMS(dev, "PDISPLAY_INTR_BH 0x%08x 0x%08x\n", intr0, intr1);
 
 		if (intr1 & NV50_PDISPLAY_INTR_1_CLK_UNK10)
 			nv50_display_unk10_handler(dev);
@@ -851,17 +922,84 @@ nv50_display_error_handler(struct drm_device *dev)
 }
 
 void
+nv50_display_irq_hotplug_bh(struct work_struct *work)
+{
+	struct drm_nouveau_private *dev_priv =
+		container_of(work, struct drm_nouveau_private, hpd_work);
+	struct drm_device *dev = dev_priv->dev;
+	struct drm_connector *connector;
+	const uint32_t gpio_reg[4] = { 0xe104, 0xe108, 0xe280, 0xe284 };
+	uint32_t unplug_mask, plug_mask, change_mask;
+	uint32_t hpd0, hpd1 = 0;
+
+	hpd0 = nv_rd32(dev, 0xe054) & nv_rd32(dev, 0xe050);
+	if (dev_priv->chipset >= 0x90)
+		hpd1 = nv_rd32(dev, 0xe074) & nv_rd32(dev, 0xe070);
+
+	plug_mask   = (hpd0 & 0x0000ffff) | (hpd1 << 16);
+	unplug_mask = (hpd0 >> 16) | (hpd1 & 0xffff0000);
+	change_mask = plug_mask | unplug_mask;
+
+	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
+		struct drm_encoder_helper_funcs *helper;
+		struct nouveau_connector *nv_connector =
+			nouveau_connector(connector);
+		struct nouveau_encoder *nv_encoder;
+		struct dcb_gpio_entry *gpio;
+		uint32_t reg;
+		bool plugged;
+
+		if (!nv_connector->dcb)
+			continue;
+
+		gpio = nouveau_bios_gpio_entry(dev, nv_connector->dcb->gpio_tag);
+		if (!gpio || !(change_mask & (1 << gpio->line)))
+			continue;
+
+		reg = nv_rd32(dev, gpio_reg[gpio->line >> 3]);
+		plugged = !!(reg & (4 << ((gpio->line & 7) << 2)));
+		NV_INFO(dev, "%splugged %s\n", plugged ? "" : "un",
+			drm_get_connector_name(connector)) ;
+
+		if (!connector->encoder || !connector->encoder->crtc ||
+		    !connector->encoder->crtc->enabled)
+			continue;
+		nv_encoder = nouveau_encoder(connector->encoder);
+		helper = connector->encoder->helper_private;
+
+		if (nv_encoder->dcb->type != OUTPUT_DP)
+			continue;
+
+		if (plugged)
+			helper->dpms(connector->encoder, DRM_MODE_DPMS_ON);
+		else
+			helper->dpms(connector->encoder, DRM_MODE_DPMS_OFF);
+	}
+
+	nv_wr32(dev, 0xe054, nv_rd32(dev, 0xe054));
+	if (dev_priv->chipset >= 0x90)
+		nv_wr32(dev, 0xe074, nv_rd32(dev, 0xe074));
+
+	drm_helper_hpd_irq_event(dev);
+}
+
+void
 nv50_display_irq_handler(struct drm_device *dev)
 {
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
 	uint32_t delayed = 0;
+
+	if (nv_rd32(dev, NV50_PMC_INTR_0) & NV50_PMC_INTR_0_HOTPLUG) {
+		if (!work_pending(&dev_priv->hpd_work))
+			queue_work(dev_priv->wq, &dev_priv->hpd_work);
+	}
 
 	while (nv_rd32(dev, NV50_PMC_INTR_0) & NV50_PMC_INTR_0_DISPLAY) {
 		uint32_t intr0 = nv_rd32(dev, NV50_PDISPLAY_INTR_0);
 		uint32_t intr1 = nv_rd32(dev, NV50_PDISPLAY_INTR_1);
 		uint32_t clock;
 
-		NV_DEBUG(dev, "PDISPLAY_INTR 0x%08x 0x%08x\n", intr0, intr1);
+		NV_DEBUG_KMS(dev, "PDISPLAY_INTR 0x%08x 0x%08x\n", intr0, intr1);
 
 		if (!intr0 && !(intr1 & ~delayed))
 			break;
@@ -882,7 +1020,7 @@ nv50_display_irq_handler(struct drm_device *dev)
 		if (clock) {
 			nv_wr32(dev, NV03_PMC_INTR_EN_0, 0);
 			if (!work_pending(&dev_priv->irq_work))
-				schedule_work(&dev_priv->irq_work);
+				queue_work(dev_priv->wq, &dev_priv->irq_work);
 			delayed |= clock;
 			intr1 &= ~clock;
 		}

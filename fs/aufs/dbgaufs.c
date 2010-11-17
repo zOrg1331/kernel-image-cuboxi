@@ -80,7 +80,7 @@ static int dbgaufs_xi_open(struct file *xf, struct file *file, int do_fcnt)
 		err = 0;
 	}
 
- out:
+out:
 	return err;
 
 }
@@ -111,6 +111,7 @@ static int dbgaufs_xib_open(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations dbgaufs_xib_fop = {
+	.owner		= THIS_MODULE,
 	.open		= dbgaufs_xib_open,
 	.release	= dbgaufs_xi_release,
 	.read		= dbgaufs_xi_read
@@ -150,11 +151,12 @@ static int dbgaufs_xino_open(struct inode *inode, struct file *file)
 		err = -ENOENT;
 	si_read_unlock(sb);
 
- out:
+out:
 	return err;
 }
 
 static const struct file_operations dbgaufs_xino_fop = {
+	.owner		= THIS_MODULE,
 	.open		= dbgaufs_xino_open,
 	.release	= dbgaufs_xi_release,
 	.read		= dbgaufs_xi_read
@@ -226,6 +228,7 @@ static int dbgaufs_xigen_open(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations dbgaufs_xigen_fop = {
+	.owner		= THIS_MODULE,
 	.open		= dbgaufs_xigen_open,
 	.release	= dbgaufs_xi_release,
 	.read		= dbgaufs_xi_read
@@ -306,9 +309,9 @@ int dbgaufs_si_init(struct au_sbinfo *sbinfo)
 	if (!err)
 		goto out; /* success */
 
- out_dir:
+out_dir:
 	dbgaufs_si_fin(sbinfo);
- out:
+out:
 	return err;
 }
 

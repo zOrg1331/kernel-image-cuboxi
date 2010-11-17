@@ -20,6 +20,8 @@
  * readdir in userspace.
  */
 
+#include <linux/compat.h>
+#include <linux/fs_stack.h>
 #include <linux/security.h>
 #include <linux/uaccess.h>
 #include <linux/aufs_type.h>
@@ -81,7 +83,7 @@ static int au_rdu_fill(void *__arg, const char *name, int nlen,
 		rdu->tail = arg->ent;
 	}
 
- out:
+out:
 	/* AuTraceErr(err); */
 	return err;
 }
@@ -110,7 +112,7 @@ static int au_rdu_do(struct file *h_file, struct au_rdu_arg *arg)
 		 && !au_ftest_rdu(cookie->flags, FULL));
 	cookie->h_pos = h_file->f_pos;
 
- out:
+out:
 	AuTraceErr(err);
 	return err;
 }
@@ -163,7 +165,10 @@ static int au_rdu(struct file *file, struct aufs_rdu *rdu)
 		goto out_mtx;
 
 	arg.sb = inode->i_sb;
-	si_read_lock(arg.sb, AuLock_FLUSH);
+	err = si_read_lock(arg.sb, AuLock_FLUSH | AuLock_NOPLM);
+	if (unlikely(err))
+		goto out_mtx;
+	/* todo: reval? */
 	fi_read_lock(file);
 
 	err = -EAGAIN;
@@ -180,11 +185,11 @@ static int au_rdu(struct file *file, struct aufs_rdu *rdu)
 	bend = au_fbstart(file);
 	if (cookie->bindex < bend)
 		cookie->bindex = bend;
-	bend = au_fbend(file);
+	bend = au_fbend_dir(file);
 	/* AuDbg("b%d, b%d\n", cookie->bindex, bend); */
 	for (; !err && cookie->bindex <= bend;
 	     cookie->bindex++, cookie->h_pos = 0) {
-		h_file = au_h_fptr(file, cookie->bindex);
+		h_file = au_hf_dir(file, cookie->bindex);
 		if (!h_file)
 			continue;
 
@@ -206,12 +211,12 @@ static int au_rdu(struct file *file, struct aufs_rdu *rdu)
 	fsstack_copy_attr_atime(inode, au_h_iptr(inode, au_ibstart(inode)));
 	ii_read_unlock(inode);
 
- out_unlock:
+out_unlock:
 	fi_read_unlock(file);
 	si_read_unlock(arg.sb);
- out_mtx:
+out_mtx:
 	mutex_unlock(&inode->i_mutex);
- out:
+out:
 	AuTraceErr(err);
 	return err;
 }
@@ -231,14 +236,9 @@ static int au_rdu_ino(struct file *file, struct aufs_rdu *rdu)
 	sb = file->f_dentry->d_sb;
 	si_read_lock(sb, AuLock_FLUSH);
 	while (nent-- > 0) {
-		err = !access_ok(VERIFY_WRITE, u->e, sizeof(ent));
-		if (unlikely(err)) {
-			err = -EFAULT;
-			AuTraceErr(err);
-			break;
-		}
-
 		err = copy_from_user(&ent, u->e, sizeof(ent));
+		if (!err)
+			err = !access_ok(VERIFY_WRITE, &u->e->ino, sizeof(ino));
 		if (unlikely(err)) {
 			err = -EFAULT;
 			AuTraceErr(err);
@@ -273,21 +273,19 @@ static int au_rdu_ino(struct file *file, struct aufs_rdu *rdu)
 
 static int au_rdu_verify(struct aufs_rdu *rdu)
 {
-	AuDbg("rdu{%llu, %p, (%u, %u) | %u | %llu, %u, %u | "
+	AuDbg("rdu{%llu, %p, %u | %u | %llu, %u, %u | "
 	      "%llu, b%d, 0x%x, g%u}\n",
-	      rdu->sz, rdu->ent.e, rdu->verify[0], rdu->verify[1],
+	      rdu->sz, rdu->ent.e, rdu->verify[AufsCtlRduV_SZ],
 	      rdu->blk,
 	      rdu->rent, rdu->shwh, rdu->full,
 	      rdu->cookie.h_pos, rdu->cookie.bindex, rdu->cookie.flags,
 	      rdu->cookie.generation);
 
-	if (rdu->verify[AufsCtlRduV_SZ] == sizeof(*rdu)
-	    && rdu->verify[AufsCtlRduV_SZ_PTR] == sizeof(rdu))
+	if (rdu->verify[AufsCtlRduV_SZ] == sizeof(*rdu))
 		return 0;
 
-	AuDbg("%u:%u, %u:%u\n",
-	      rdu->verify[AufsCtlRduV_SZ], (unsigned int)sizeof(*rdu),
-	      rdu->verify[AufsCtlRduV_SZ_PTR], (unsigned int)sizeof(rdu));
+	AuDbg("%u:%u\n",
+	      rdu->verify[AufsCtlRduV_SZ], (unsigned int)sizeof(*rdu));
 	return -EINVAL;
 }
 
@@ -324,10 +322,59 @@ long au_rdu_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 
 	default:
+		/* err = -ENOTTY; */
 		err = -EINVAL;
 	}
 
- out:
+out:
 	AuTraceErr(err);
 	return err;
 }
+
+#ifdef CONFIG_COMPAT
+long au_rdu_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	long err, e;
+	struct aufs_rdu rdu;
+	void __user *p = compat_ptr(arg);
+
+	/* todo: get_user()? */
+	err = copy_from_user(&rdu, p, sizeof(rdu));
+	if (unlikely(err)) {
+		err = -EFAULT;
+		AuTraceErr(err);
+		goto out;
+	}
+	rdu.ent.e = compat_ptr(rdu.ent.ul);
+	err = au_rdu_verify(&rdu);
+	if (unlikely(err))
+		goto out;
+
+	switch (cmd) {
+	case AUFS_CTL_RDU:
+		err = au_rdu(file, &rdu);
+		if (unlikely(err))
+			break;
+
+		rdu.ent.ul = ptr_to_compat(rdu.ent.e);
+		rdu.tail.ul = ptr_to_compat(rdu.tail.e);
+		e = copy_to_user(p, &rdu, sizeof(rdu));
+		if (unlikely(e)) {
+			err = -EFAULT;
+			AuTraceErr(err);
+		}
+		break;
+	case AUFS_CTL_RDU_INO:
+		err = au_rdu_ino(file, &rdu);
+		break;
+
+	default:
+		/* err = -ENOTTY; */
+		err = -EINVAL;
+	}
+
+out:
+	AuTraceErr(err);
+	return err;
+}
+#endif

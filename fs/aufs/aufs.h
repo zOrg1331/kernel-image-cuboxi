@@ -41,11 +41,13 @@
 #include "dbgaufs.h"
 #include "dentry.h"
 #include "dir.h"
+#include "dynop.h"
 #include "file.h"
 #include "fstype.h"
 #include "inode.h"
 #include "loop.h"
 #include "module.h"
+/* never include ./mtx.h */
 #include "opts.h"
 #include "rwsem.h"
 #include "spl.h"

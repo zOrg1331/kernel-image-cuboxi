@@ -172,37 +172,34 @@ nouveau_i2c_init(struct drm_device *dev, struct dcb_i2c_entry *entry, int index)
 	if (i2c == NULL)
 		return -ENOMEM;
 
-	snprintf(i2c->adapter.name, sizeof(i2c->adapter.name),
-		 "nouveau-%s-%d", pci_name(dev->pdev), index);
-	i2c->adapter.owner = THIS_MODULE;
-	i2c->adapter.algo_data = &i2c->algo;
-	i2c->adapter.dev.parent = &dev->pdev->dev;
-	i2c->dev = dev;
-
 	switch (entry->port_type) {
 	case 0:
-		i2c->algo.setsda = nv04_i2c_setsda;
-		i2c->algo.setscl = nv04_i2c_setscl;
-		i2c->algo.getsda = nv04_i2c_getsda;
-		i2c->algo.getscl = nv04_i2c_getscl;
+		i2c->algo.bit.setsda = nv04_i2c_setsda;
+		i2c->algo.bit.setscl = nv04_i2c_setscl;
+		i2c->algo.bit.getsda = nv04_i2c_getsda;
+		i2c->algo.bit.getscl = nv04_i2c_getscl;
 		i2c->rd = entry->read;
 		i2c->wr = entry->write;
 		break;
 	case 4:
-		i2c->algo.setsda = nv4e_i2c_setsda;
-		i2c->algo.setscl = nv4e_i2c_setscl;
-		i2c->algo.getsda = nv4e_i2c_getsda;
-		i2c->algo.getscl = nv4e_i2c_getscl;
+		i2c->algo.bit.setsda = nv4e_i2c_setsda;
+		i2c->algo.bit.setscl = nv4e_i2c_setscl;
+		i2c->algo.bit.getsda = nv4e_i2c_getsda;
+		i2c->algo.bit.getscl = nv4e_i2c_getscl;
 		i2c->rd = 0x600800 + entry->read;
 		i2c->wr = 0x600800 + entry->write;
 		break;
 	case 5:
-		i2c->algo.setsda = nv50_i2c_setsda;
-		i2c->algo.setscl = nv50_i2c_setscl;
-		i2c->algo.getsda = nv50_i2c_getsda;
-		i2c->algo.getscl = nv50_i2c_getscl;
+		i2c->algo.bit.setsda = nv50_i2c_setsda;
+		i2c->algo.bit.setscl = nv50_i2c_setscl;
+		i2c->algo.bit.getsda = nv50_i2c_getsda;
+		i2c->algo.bit.getscl = nv50_i2c_getscl;
 		i2c->rd = nv50_i2c_port[entry->read];
 		i2c->wr = i2c->rd;
+		break;
+	case 6:
+		i2c->rd = entry->read;
+		i2c->wr = entry->write;
 		break;
 	default:
 		NV_ERROR(dev, "DCB I2C port type %d unknown\n",
@@ -210,13 +207,28 @@ nouveau_i2c_init(struct drm_device *dev, struct dcb_i2c_entry *entry, int index)
 		kfree(i2c);
 		return -EINVAL;
 	}
-	i2c->algo.udelay = 40;
-	i2c->algo.timeout = usecs_to_jiffies(5000);
-	i2c->algo.data = i2c;
 
+	snprintf(i2c->adapter.name, sizeof(i2c->adapter.name),
+		 "nouveau-%s-%d", pci_name(dev->pdev), index);
+	i2c->adapter.owner = THIS_MODULE;
+	i2c->adapter.dev.parent = &dev->pdev->dev;
+	i2c->dev = dev;
 	i2c_set_adapdata(&i2c->adapter, i2c);
 
-	ret = i2c_bit_add_bus(&i2c->adapter);
+	if (entry->port_type < 6) {
+		i2c->adapter.algo_data = &i2c->algo.bit;
+		i2c->algo.bit.udelay = 40;
+		i2c->algo.bit.timeout = usecs_to_jiffies(5000);
+		i2c->algo.bit.data = i2c;
+		ret = i2c_bit_add_bus(&i2c->adapter);
+	} else {
+		i2c->adapter.algo_data = &i2c->algo.dp;
+		i2c->algo.dp.running = false;
+		i2c->algo.dp.address = 0;
+		i2c->algo.dp.aux_ch = nouveau_dp_i2c_aux_ch;
+		ret = i2c_dp_aux_add_bus(&i2c->adapter);
+	}
+
 	if (ret) {
 		NV_ERROR(dev, "Failed to register i2c %d\n", index);
 		kfree(i2c);
@@ -242,16 +254,27 @@ struct nouveau_i2c_chan *
 nouveau_i2c_find(struct drm_device *dev, int index)
 {
 	struct drm_nouveau_private *dev_priv = dev->dev_private;
-	struct nvbios *bios = &dev_priv->VBIOS;
+	struct dcb_i2c_entry *i2c = &dev_priv->vbios.dcb.i2c[index];
 
-	if (index > DCB_MAX_NUM_I2C_ENTRIES)
+	if (index >= DCB_MAX_NUM_I2C_ENTRIES)
 		return NULL;
 
-	if (!bios->bdcb.dcb.i2c[index].chan) {
-		if (nouveau_i2c_init(dev, &bios->bdcb.dcb.i2c[index], index))
-			return NULL;
+	if (dev_priv->chipset >= NV_50 && (i2c->entry & 0x00000100)) {
+		uint32_t reg = 0xe500, val;
+
+		if (i2c->port_type == 6) {
+			reg += i2c->read * 0x50;
+			val  = 0x2002;
+		} else {
+			reg += ((i2c->entry & 0x1e00) >> 9) * 0x50;
+			val  = 0xe001;
+		}
+
+		nv_wr32(dev, reg, (nv_rd32(dev, reg) & ~0xf003) | val);
 	}
 
-	return bios->bdcb.dcb.i2c[index].chan;
+	if (!i2c->chan && nouveau_i2c_init(dev, i2c, index))
+		return NULL;
+	return i2c->chan;
 }
 

@@ -27,7 +27,7 @@
 #include "aufs.h"
 
 unsigned long sysaufs_si_mask;
-struct kset *sysaufs_ket;
+struct kset *sysaufs_kset;
 
 #define AuSiAttr(_name) { \
 	.attr   = { .name = __stringify(_name), .mode = 0444 },	\
@@ -40,7 +40,7 @@ struct attribute *sysaufs_si_attrs[] = {
 	NULL,
 };
 
-static struct sysfs_ops au_sbi_ops = {
+static const struct sysfs_ops au_sbi_ops = {
 	.show   = sysaufs_si_show
 };
 
@@ -56,10 +56,10 @@ int sysaufs_si_init(struct au_sbinfo *sbinfo)
 {
 	int err;
 
-	sbinfo->si_kobj.kset = sysaufs_ket;
+	sbinfo->si_kobj.kset = sysaufs_kset;
 	/* cf. sysaufs_name() */
 	err = kobject_init_and_add
-		(&sbinfo->si_kobj, &au_sbi_ktype, /*&sysaufs_ket->kobj*/NULL,
+		(&sbinfo->si_kobj, &au_sbi_ktype, /*&sysaufs_kset->kobj*/NULL,
 		 SysaufsSiNamePrefix "%lx", sysaufs_si_id(sbinfo));
 
 	dbgaufs_si_null(sbinfo);
@@ -74,8 +74,8 @@ int sysaufs_si_init(struct au_sbinfo *sbinfo)
 void sysaufs_fin(void)
 {
 	dbgaufs_fin();
-	sysfs_remove_group(&sysaufs_ket->kobj, sysaufs_attr_group);
-	kset_unregister(sysaufs_ket);
+	sysfs_remove_group(&sysaufs_kset->kobj, sysaufs_attr_group);
+	kset_unregister(sysaufs_kset);
 }
 
 int __init sysaufs_init(void)
@@ -86,19 +86,22 @@ int __init sysaufs_init(void)
 		get_random_bytes(&sysaufs_si_mask, sizeof(sysaufs_si_mask));
 	} while (!sysaufs_si_mask);
 
-	sysaufs_ket = kset_create_and_add(AUFS_NAME, NULL, fs_kobj);
-	err = PTR_ERR(sysaufs_ket);
-	if (IS_ERR(sysaufs_ket))
+	err = -EINVAL;
+	sysaufs_kset = kset_create_and_add(AUFS_NAME, NULL, fs_kobj);
+	if (unlikely(!sysaufs_kset))
 		goto out;
-	err = sysfs_create_group(&sysaufs_ket->kobj, sysaufs_attr_group);
+	err = PTR_ERR(sysaufs_kset);
+	if (IS_ERR(sysaufs_kset))
+		goto out;
+	err = sysfs_create_group(&sysaufs_kset->kobj, sysaufs_attr_group);
 	if (unlikely(err)) {
-		kset_unregister(sysaufs_ket);
+		kset_unregister(sysaufs_kset);
 		goto out;
 	}
 
 	err = dbgaufs_init();
 	if (unlikely(err))
 		sysaufs_fin();
- out:
+out:
 	return err;
 }

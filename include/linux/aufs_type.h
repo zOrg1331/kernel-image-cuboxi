@@ -20,10 +20,11 @@
 #define __AUFS_TYPE_H__
 
 #include <linux/ioctl.h>
+#include <linux/kernel.h>
 #include <linux/limits.h>
 #include <linux/types.h>
 
-#define AUFS_VERSION	"2-32"
+#define AUFS_VERSION	"2.1-standalone.tree-35-20100920"
 
 /* todo? move this to linux-2.6.19/include/magic.h */
 #define AUFS_SUPER_MAGIC	('a' << 24 | 'u' << 16 | 'f' << 8 | 's')
@@ -75,9 +76,14 @@ typedef __s16 aufs_bindex_t;
 #define AUFS_RDBLK_DEF		512 /* bytes */
 #define AUFS_RDHASH_DEF		32
 #define AUFS_WKQ_NAME		AUFS_NAME "d"
-#define AUFS_NWKQ_DEF		4
+#define AUFS_WKQ_PRE_NAME	AUFS_WKQ_NAME "_pre"
 #define AUFS_MFS_SECOND_DEF	30 /* seconds */
 #define AUFS_PLINK_WARN		100 /* number of plinks */
+
+/* pseudo-link maintenace under /proc */
+#define AUFS_PLINK_MAINT_NAME	"plink_maint"
+#define AUFS_PLINK_MAINT_DIR	"fs/" AUFS_NAME
+#define AUFS_PLINK_MAINT_PATH	AUFS_PLINK_MAINT_DIR "/" AUFS_PLINK_MAINT_NAME
 
 #define AUFS_DIROPQ_NAME	AUFS_WH_PFX ".opq" /* whiteouted doubly */
 #define AUFS_WH_DIROPQ		AUFS_WH_PFX AUFS_DIROPQ_NAME
@@ -105,9 +111,6 @@ typedef __s16 aufs_bindex_t;
 
 /* ioctl */
 enum {
-	AuCtl_PLINK_MAINT,
-	AuCtl_PLINK_CLEAN,
-
 	/* readdir in userspace */
 	AuCtl_RDU,
 	AuCtl_RDU_INO,
@@ -154,12 +157,11 @@ static inline int au_rdu_len(int nlen)
 
 union au_rdu_ent_ul {
 	struct au_rdu_ent __user	*e;
-	unsigned long			ul;
+	__u64				ul;
 };
 
 enum {
 	AufsCtlRduV_SZ,
-	AufsCtlRduV_SZ_PTR,
 	AufsCtlRduV_End
 };
 
@@ -186,8 +188,6 @@ struct aufs_rdu {
 } __aligned(8);
 
 #define AuCtlType		'A'
-#define AUFS_CTL_PLINK_MAINT	_IO(AuCtlType, AuCtl_PLINK_MAINT)
-#define AUFS_CTL_PLINK_CLEAN	_IO(AuCtlType, AuCtl_PLINK_CLEAN)
 #define AUFS_CTL_RDU		_IOWR(AuCtlType, AuCtl_RDU, struct aufs_rdu)
 #define AUFS_CTL_RDU_INO	_IOWR(AuCtlType, AuCtl_RDU_INO, struct aufs_rdu)
 #define AUFS_CTL_WBR_FD		_IO(AuCtlType, AuCtl_WBR_FD)

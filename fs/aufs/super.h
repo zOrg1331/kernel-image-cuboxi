@@ -61,7 +61,18 @@ struct au_sbinfo {
 	/* nowait tasks in the system-wide workqueue */
 	struct au_nowait_tasks	si_nowait;
 
+	/*
+	 * tried sb->s_umount, but failed due to the dependecy between i_mutex.
+	 * rwsem for au_sbinfo is necessary.
+	 */
 	struct au_rwsem		si_rwsem;
+
+	/* prevent recursive locking in deleting inode */
+	struct {
+		unsigned long		*bitmap;
+		spinlock_t		tree_lock;
+		struct radix_tree_root	tree;
+	} au_si_pid;
 
 	/* branch management */
 	unsigned int		si_generation;
@@ -108,7 +119,7 @@ struct au_sbinfo {
 #endif
 
 	/* vdir parameters */
-	unsigned long		si_rdcache;	/* max cache time in HZ */
+	unsigned long		si_rdcache;	/* max cache time in jiffies */
 	unsigned int		si_rdblk;	/* deblk size */
 	unsigned int		si_rdhash;	/* hash size */
 
@@ -130,7 +141,7 @@ struct au_sbinfo {
 	struct au_splhead	si_plink;
 	wait_queue_head_t	si_plink_wq;
 	spinlock_t		si_plink_maint_lock;
-	struct file		*si_plink_maint;
+	pid_t			si_plink_maint_pid;
 
 	/*
 	 * sysfs and lifetime management.
@@ -144,6 +155,10 @@ struct au_sbinfo {
 #ifdef CONFIG_AUFS_EXPORT
 	struct dentry		 *si_dbgaufs_xigen;
 #endif
+#endif
+
+#ifdef CONFIG_AUFS_SBILIST
+	struct list_head	si_list;
 #endif
 
 	/* dirty, necessary for unmounting, sysfs and sysrq */
@@ -187,6 +202,8 @@ static inline unsigned char au_do_ftest_si(struct au_sbinfo *sbi,
 #define AuLock_IW		(1 << 2)	/* write-lock inode */
 #define AuLock_FLUSH		(1 << 3)	/* wait for 'nowait' tasks */
 #define AuLock_DIR		(1 << 4)	/* target is a dir */
+#define AuLock_NOPLM		(1 << 5)	/* return err in plm mode */
+#define AuLock_NOPLMW		(1 << 6)	/* wait for plm mode ends */
 #define au_ftest_lock(flags, name)	((flags) & AuLock_##name)
 #define au_fset_lock(flags, name)	{ (flags) |= AuLock_##name; }
 #define au_fclr_lock(flags, name)	{ (flags) &= ~AuLock_##name; }
@@ -205,12 +222,18 @@ int au_sbr_realloc(struct au_sbinfo *sbinfo, int nbr);
 unsigned int au_sigen_inc(struct super_block *sb);
 aufs_bindex_t au_new_br_id(struct super_block *sb);
 
-void aufs_read_lock(struct dentry *dentry, int flags);
+int si_read_lock(struct super_block *sb, int flags);
+int si_write_lock(struct super_block *sb, int flags);
+int aufs_read_lock(struct dentry *dentry, int flags);
 void aufs_read_unlock(struct dentry *dentry, int flags);
 void aufs_write_lock(struct dentry *dentry);
 void aufs_write_unlock(struct dentry *dentry);
-void aufs_read_and_write_lock2(struct dentry *d1, struct dentry *d2, int isdir);
+int aufs_read_and_write_lock2(struct dentry *d1, struct dentry *d2, int flags);
 void aufs_read_and_write_unlock2(struct dentry *d1, struct dentry *d2);
+
+int si_pid_test_slow(struct super_block *sb);
+void si_pid_set_slow(struct super_block *sb);
+void si_pid_clr_slow(struct super_block *sb);
 
 /* wbr_policy.c */
 extern struct au_wbr_copyup_operations au_wbr_copyup_ops[];
@@ -229,26 +252,29 @@ static inline struct au_sbinfo *au_sbi(struct super_block *sb)
 #ifdef CONFIG_AUFS_EXPORT
 void au_export_init(struct super_block *sb);
 
-static inline int au_test_nfsd(struct task_struct *tsk)
+static inline int au_test_nfsd(void)
 {
-	return !tsk->mm && !strcmp(tsk->comm, "nfsd");
+	struct task_struct *tsk = current;
+
+	return (tsk->flags & PF_KTHREAD)
+		&& !strcmp(tsk->comm, "nfsd");
 }
 
-int au_xigen_inc(struct inode *inode);
+void au_xigen_inc(struct inode *inode);
 int au_xigen_new(struct inode *inode);
 int au_xigen_set(struct super_block *sb, struct file *base);
 void au_xigen_clr(struct super_block *sb);
 
 static inline int au_busy_or_stale(void)
 {
-	if (!au_test_nfsd(current))
+	if (!au_test_nfsd())
 		return -EBUSY;
 	return -ESTALE;
 }
 #else
 AuStubVoid(au_export_init, struct super_block *sb)
-AuStubInt0(au_test_nfsd, struct task_struct *tsk)
-AuStubInt0(au_xigen_inc, struct inode *inode)
+AuStubInt0(au_test_nfsd, void)
+AuStubVoid(au_xigen_inc, struct inode *inode)
 AuStubInt0(au_xigen_new, struct inode *inode)
 AuStubInt0(au_xigen_set, struct super_block *sb, struct file *base)
 AuStubVoid(au_xigen_clr, struct super_block *sb)
@@ -257,6 +283,32 @@ static inline int au_busy_or_stale(void)
 	return -EBUSY;
 }
 #endif /* CONFIG_AUFS_EXPORT */
+
+/* ---------------------------------------------------------------------- */
+
+#ifdef CONFIG_AUFS_SBILIST
+/* module.c */
+extern struct au_splhead au_sbilist;
+
+static inline void au_sbilist_init(void)
+{
+	au_spl_init(&au_sbilist);
+}
+
+static inline void au_sbilist_add(struct super_block *sb)
+{
+	au_spl_add(&au_sbi(sb)->si_list, &au_sbilist);
+}
+
+static inline void au_sbilist_del(struct super_block *sb)
+{
+	au_spl_del(&au_sbi(sb)->si_list, &au_sbilist);
+}
+#else
+AuStubVoid(au_sbilist_init, void)
+AuStubVoid(au_sbilist_add, struct super_block*)
+AuStubVoid(au_sbilist_del, struct super_block*)
+#endif
 
 /* ---------------------------------------------------------------------- */
 
@@ -278,45 +330,120 @@ static inline void dbgaufs_si_null(struct au_sbinfo *sbinfo)
 
 /* ---------------------------------------------------------------------- */
 
+static inline pid_t si_pid_bit(void)
+{
+	/* the origin of pid is 1, but the bitmap's is 0 */
+	return current->pid - 1;
+}
+
+static inline int si_pid_test(struct super_block *sb)
+{
+	pid_t bit = si_pid_bit();
+	if (bit < PID_MAX_DEFAULT)
+		return test_bit(bit, au_sbi(sb)->au_si_pid.bitmap);
+	else
+		return si_pid_test_slow(sb);
+}
+
+static inline void si_pid_set(struct super_block *sb)
+{
+	pid_t bit = si_pid_bit();
+	if (bit < PID_MAX_DEFAULT) {
+		AuDebugOn(test_bit(bit, au_sbi(sb)->au_si_pid.bitmap));
+		set_bit(bit, au_sbi(sb)->au_si_pid.bitmap);
+		/* smp_mb(); */
+	} else
+		si_pid_set_slow(sb);
+}
+
+static inline void si_pid_clr(struct super_block *sb)
+{
+	pid_t bit = si_pid_bit();
+	if (bit < PID_MAX_DEFAULT) {
+		AuDebugOn(!test_bit(bit, au_sbi(sb)->au_si_pid.bitmap));
+		clear_bit(bit, au_sbi(sb)->au_si_pid.bitmap);
+		/* smp_mb(); */
+	} else
+		si_pid_clr_slow(sb);
+}
+
+/* ---------------------------------------------------------------------- */
+
 /* lock superblock. mainly for entry point functions */
 /*
- * si_noflush_read_lock, si_noflush_write_lock,
- * si_read_unlock, si_write_unlock, si_downgrade_lock
+ * __si_read_lock, __si_write_lock,
+ * __si_read_unlock, __si_write_unlock, __si_downgrade_lock
  */
-AuSimpleLockRwsemFuncs(si_noflush, struct super_block *sb,
-		       &au_sbi(sb)->si_rwsem);
-AuSimpleUnlockRwsemFuncs(si, struct super_block *sb, &au_sbi(sb)->si_rwsem);
+AuSimpleRwsemFuncs(__si, struct super_block *sb, &au_sbi(sb)->si_rwsem);
 
 #define SiMustNoWaiters(sb)	AuRwMustNoWaiters(&au_sbi(sb)->si_rwsem)
 #define SiMustAnyLock(sb)	AuRwMustAnyLock(&au_sbi(sb)->si_rwsem)
 #define SiMustWriteLock(sb)	AuRwMustWriteLock(&au_sbi(sb)->si_rwsem)
 
-static inline void si_read_lock(struct super_block *sb, int flags)
+static inline void si_noflush_read_lock(struct super_block *sb)
 {
-	if (au_ftest_lock(flags, FLUSH))
-		au_nwt_flush(&au_sbi(sb)->si_nowait);
-	si_noflush_read_lock(sb);
+	__si_read_lock(sb);
+	si_pid_set(sb);
 }
 
-static inline void si_write_lock(struct super_block *sb)
+static inline int si_noflush_read_trylock(struct super_block *sb)
 {
-	au_nwt_flush(&au_sbi(sb)->si_nowait);
-	si_noflush_write_lock(sb);
+	int locked = __si_read_trylock(sb);
+	if (locked)
+		si_pid_set(sb);
+	return locked;
 }
 
+static inline void si_noflush_write_lock(struct super_block *sb)
+{
+	__si_write_lock(sb);
+	si_pid_set(sb);
+}
+
+static inline int si_noflush_write_trylock(struct super_block *sb)
+{
+	int locked = __si_write_trylock(sb);
+	if (locked)
+		si_pid_set(sb);
+	return locked;
+}
+
+#if 0 /* unused */
 static inline int si_read_trylock(struct super_block *sb, int flags)
 {
 	if (au_ftest_lock(flags, FLUSH))
 		au_nwt_flush(&au_sbi(sb)->si_nowait);
 	return si_noflush_read_trylock(sb);
 }
+#endif
 
+static inline void si_read_unlock(struct super_block *sb)
+{
+	si_pid_clr(sb);
+	__si_read_unlock(sb);
+}
+
+#if 0 /* unused */
 static inline int si_write_trylock(struct super_block *sb, int flags)
 {
 	if (au_ftest_lock(flags, FLUSH))
 		au_nwt_flush(&au_sbi(sb)->si_nowait);
 	return si_noflush_write_trylock(sb);
 }
+#endif
+
+static inline void si_write_unlock(struct super_block *sb)
+{
+	si_pid_clr(sb);
+	__si_write_unlock(sb);
+}
+
+#if 0 /* unused */
+static inline void si_downgrade_lock(struct super_block *sb)
+{
+	__si_downgrade_lock(sb);
+}
+#endif
 
 /* ---------------------------------------------------------------------- */
 

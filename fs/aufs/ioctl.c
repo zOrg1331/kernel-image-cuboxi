@@ -27,7 +27,7 @@
 
 static int au_wbr_fd(struct path *path)
 {
-	int err, fd, flags;
+	int err, fd;
 	aufs_bindex_t wbi, bindex, bend;
 	struct file *h_file;
 	struct super_block *sb;
@@ -38,10 +38,6 @@ static int au_wbr_fd(struct path *path)
 	if (unlikely(err < 0))
 		goto out;
 	fd = err;
-
-	flags = O_RDONLY | O_DIRECTORY;
-	if (force_o_largefile())
-		flags |= O_LARGEFILE;
 
 	wbi = 0;
 	sb = path->dentry->d_sb;
@@ -61,7 +57,8 @@ static int au_wbr_fd(struct path *path)
 		wbr = au_sbr(sb, wbi);
 	}
 	AuDbg("wbi %d\n", wbi);
-	h_file = au_h_open(root, wbi, flags, NULL);
+	h_file = au_h_open(root, wbi, O_RDONLY | O_DIRECTORY | O_LARGEFILE,
+			   NULL);
 	aufs_read_unlock(root, AuLock_IR);
 	err = PTR_ERR(h_file);
 	if (IS_ERR(h_file))
@@ -72,9 +69,9 @@ static int au_wbr_fd(struct path *path)
 	err = fd;
 	goto out; /* success */
 
- out_fd:
+out_fd:
 	put_unused_fd(fd);
- out:
+out:
 	return err;
 }
 
@@ -85,11 +82,6 @@ long aufs_ioctl_dir(struct file *file, unsigned int cmd, unsigned long arg)
 	long err;
 
 	switch (cmd) {
-	case AUFS_CTL_PLINK_MAINT:
-	case AUFS_CTL_PLINK_CLEAN:
-		err = au_plink_ioctl(file, cmd);
-		break;
-
 	case AUFS_CTL_RDU:
 	case AUFS_CTL_RDU_INO:
 		err = au_rdu_ioctl(file, cmd, arg);
@@ -100,8 +92,9 @@ long aufs_ioctl_dir(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 
 	default:
+		/* do not call the lower */
 		AuDbg("0x%x\n", cmd);
-		err = -EINVAL;
+		err = -ENOTTY;
 	}
 
 	AuTraceErr(err);
@@ -118,10 +111,40 @@ long aufs_ioctl_nondir(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 
 	default:
+		/* do not call the lower */
 		AuDbg("0x%x\n", cmd);
-		err = -EINVAL;
+		err = -ENOTTY;
 	}
 
 	AuTraceErr(err);
 	return err;
 }
+
+#ifdef CONFIG_COMPAT
+long aufs_compat_ioctl_dir(struct file *file, unsigned int cmd,
+			   unsigned long arg)
+{
+	long err;
+
+	switch (cmd) {
+	case AUFS_CTL_RDU:
+	case AUFS_CTL_RDU_INO:
+		err = au_rdu_compat_ioctl(file, cmd, arg);
+		break;
+
+	default:
+		err = aufs_ioctl_dir(file, cmd, arg);
+	}
+
+	AuTraceErr(err);
+	return err;
+}
+
+#if 0 /* unused yet */
+long aufs_compat_ioctl_nondir(struct file *file, unsigned int cmd,
+			      unsigned long arg)
+{
+	return aufs_ioctl_nondir(file, cmd, (unsigned long)compat_ptr(arg));
+}
+#endif
+#endif

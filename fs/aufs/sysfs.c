@@ -26,7 +26,30 @@
 #include <linux/sysfs.h>
 #include "aufs.h"
 
+#ifdef CONFIG_AUFS_FS_MODULE
+/* this entry violates the "one line per file" policy of sysfs */
+static ssize_t config_show(struct kobject *kobj, struct kobj_attribute *attr,
+			   char *buf)
+{
+	ssize_t err;
+	static char *conf =
+/* this file is generated at compiling */
+#include "conf.str"
+		;
+
+	err = snprintf(buf, PAGE_SIZE, conf);
+	if (unlikely(err >= PAGE_SIZE))
+		err = -EFBIG;
+	return err;
+}
+
+static struct kobj_attribute au_config_attr = __ATTR_RO(config);
+#endif
+
 static struct attribute *au_attr[] = {
+#ifdef CONFIG_AUFS_FS_MODULE
+	&au_config_attr.attr,
+#endif
 	NULL,	/* need to NULL terminate the list of attributes */
 };
 
@@ -157,7 +180,7 @@ ssize_t sysaufs_si_show(struct kobject *kobj, struct attribute *attr,
 	}
 	BUG();
 
- out_seq:
+out_seq:
 	if (!err) {
 		err = seq->count;
 		/* sysfs limit */
@@ -165,9 +188,9 @@ ssize_t sysaufs_si_show(struct kobject *kobj, struct attribute *attr,
 			err = -EFBIG;
 	}
 	kfree(seq);
- out_unlock:
+out_unlock:
 	si_read_unlock(sb);
- out:
+out:
 	return err;
 }
 
@@ -175,9 +198,12 @@ ssize_t sysaufs_si_show(struct kobject *kobj, struct attribute *attr,
 
 void sysaufs_br_init(struct au_branch *br)
 {
-	br->br_attr.name = br->br_name;
-	br->br_attr.mode = S_IRUGO;
-	br->br_attr.owner = THIS_MODULE;
+	struct attribute *attr = &br->br_attr;
+
+	sysfs_attr_init(attr);
+	attr->name = br->br_name;
+	attr->mode = S_IRUGO;
+	attr->owner = THIS_MODULE;
 }
 
 void sysaufs_brs_del(struct super_block *sb, aufs_bindex_t bindex)
