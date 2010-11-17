@@ -1,6 +1,6 @@
-Name: kernel-image-std-ng
+Name: kernel-image-eeepc-ng
 Version: 2.6.36
-Release: alt2
+Release: alt2.gns1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -348,6 +348,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Wed Nov 17 2010 Mykola Grechukh <gns@altlinux.ru> 2.6.36-alt2.gns1
+- SQUASHFS_LZMA and PM_RUNTIME
+
 * Tue Nov 16 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.36-alt2
 - applied automatic process group scheduling patch
 
