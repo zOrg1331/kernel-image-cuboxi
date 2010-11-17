@@ -16,8 +16,8 @@
 #include <linux/kernel.h>
 #include <linux/ctype.h>
 #include <bcmdefs.h>
+#include <bcmdevs.h>
 #include <wlc_cfg.h>
-#include <linuxver.h>
 #include <osl.h>
 #include <bcmutils.h>
 #include <bcmwifi.h>
@@ -27,7 +27,7 @@
 #include <pcicfg.h>
 #include <bcmsrom.h>
 #include <wlioctl.h>
-#include <epivers.h>
+#include <sbhndpio.h>
 #include <sbhnddma.h>
 #include <hnddma.h>
 #include <hndpmu.h>
@@ -37,6 +37,7 @@
 #include <wlc_key.h>
 #include <wlc_bsscfg.h>
 #include <wlc_channel.h>
+#include <wlc_event.h>
 #include <wlc_mac80211.h>
 #include <wlc_bmac.h>
 #include <wlc_scb.h>
@@ -61,6 +62,7 @@
 #endif				/* WLC_HIGH_ONLY */
 #include <wlc_alloc.h>
 #include <net/mac80211.h>
+#include <wl_dbg.h>
 
 #ifdef WLC_HIGH_ONLY
 #undef R_REG
@@ -134,6 +136,8 @@ uint wl_msg_level =
 #define WLC_TEMPSENSE_PERIOD		10	/* 10 second timeout */
 
 #define SCAN_IN_PROGRESS(x)	0
+
+#define EPI_VERSION_NUM		0x054b0b00
 
 #ifdef BCMDBG
 /* pointer to most recently allocated wl/wlc */
@@ -667,7 +671,7 @@ bool wlc_ps_check(wlc_info_t *wlc)
 		 * may be either true or false due to the low level override.
 		 */
 		wake = STAY_AWAKE(wlc);
-		wake_ok = (wake && ((tmp & MCTL_WAKE) != 0)) || !wake;
+		wake_ok = ((tmp & MCTL_WAKE) != 0) || !wake;
 #endif
 		if (hps && !wake_ok) {
 			WL_ERROR(("wl%d: wake not sync, sw %d maccontrol 0x%x\n", wlc->pub->unit, wake, tmp));
@@ -1780,8 +1784,10 @@ void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
 	ASSERT(sizeof(struct dot11_bcn_prb) == DOT11_BCN_PRB_LEN);
 	ASSERT(sizeof(tx_status_t) == TXSTATUS_LEN);
 	ASSERT(sizeof(ht_cap_ie_t) == HT_CAP_IE_LEN);
+#ifdef BRCM_FULLMAC
 	ASSERT(offsetof(wl_scan_params_t, channel_list) ==
 	       WL_SCAN_PARAMS_FIXED_SIZE);
+#endif
 	ASSERT(IS_ALIGNED(offsetof(wsec_key_t, data), sizeof(u32)));
 	ASSERT(ISPOWEROF2(MA_WINDOW_SZ));
 

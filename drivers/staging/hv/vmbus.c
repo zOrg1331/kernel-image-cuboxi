@@ -109,7 +109,7 @@ static int VmbusOnDeviceAdd(struct hv_device *dev, void *AdditionalInfo)
 
 	/* strcpy(dev->name, "vmbus"); */
 	/* SynIC setup... */
-	on_each_cpu(HvSynicInit, (void *)irqvector, 1);
+	on_each_cpu(hv_synic_init, (void *)irqvector, 1);
 
 	/* Connect to VMBus in the root partition */
 	ret = VmbusConnect();
@@ -127,7 +127,7 @@ static int VmbusOnDeviceRemove(struct hv_device *dev)
 
 	vmbus_release_unattached_channels();
 	VmbusDisconnect();
-	on_each_cpu(HvSynicCleanup, NULL, 1);
+	on_each_cpu(hv_synic_cleanup, NULL, 1);
 	return ret;
 }
 
@@ -138,7 +138,7 @@ static void VmbusOnCleanup(struct hv_driver *drv)
 {
 	/* struct vmbus_driver *driver = (struct vmbus_driver *)drv; */
 
-	HvCleanup();
+	hv_cleanup();
 }
 
 /*
@@ -147,13 +147,13 @@ static void VmbusOnCleanup(struct hv_driver *drv)
 static void VmbusOnMsgDPC(struct hv_driver *drv)
 {
 	int cpu = smp_processor_id();
-	void *page_addr = gHvContext.synICMessagePage[cpu];
+	void *page_addr = hv_context.synic_message_page[cpu];
 	struct hv_message *msg = (struct hv_message *)page_addr +
 				  VMBUS_MESSAGE_SINT;
 	struct hv_message *copied;
 
 	while (1) {
-		if (msg->Header.MessageType == HvMessageTypeNone) {
+		if (msg->header.message_type == HVMSG_NONE) {
 			/* no msg */
 			break;
 		} else {
@@ -166,18 +166,18 @@ static void VmbusOnMsgDPC(struct hv_driver *drv)
 					      (void *)copied);
 		}
 
-		msg->Header.MessageType = HvMessageTypeNone;
+		msg->header.message_type = HVMSG_NONE;
 
 		/*
 		 * Make sure the write to MessageType (ie set to
-		 * HvMessageTypeNone) happens before we read the
+		 * HVMSG_NONE) happens before we read the
 		 * MessagePending and EOMing. Otherwise, the EOMing
 		 * will not deliver any more messages since there is
 		 * no empty slot
 		 */
 		mb();
 
-		if (msg->Header.MessageFlags.MessagePending) {
+		if (msg->header.message_flags.msg_pending) {
 			/*
 			 * This will cause message queue rescan to
 			 * possibly deliver another msg from the
@@ -208,24 +208,24 @@ static int VmbusOnISR(struct hv_driver *drv)
 	struct hv_message *msg;
 	union hv_synic_event_flags *event;
 
-	page_addr = gHvContext.synICMessagePage[cpu];
+	page_addr = hv_context.synic_message_page[cpu];
 	msg = (struct hv_message *)page_addr + VMBUS_MESSAGE_SINT;
 
 	/* Check if there are actual msgs to be process */
-	if (msg->Header.MessageType != HvMessageTypeNone) {
+	if (msg->header.message_type != HVMSG_NONE) {
 		DPRINT_DBG(VMBUS, "received msg type %d size %d",
-				msg->Header.MessageType,
-				msg->Header.PayloadSize);
+				msg->header.message_type,
+				msg->header.payload_size);
 		ret |= 0x1;
 	}
 
 	/* TODO: Check if there are events to be process */
-	page_addr = gHvContext.synICEventPage[cpu];
+	page_addr = hv_context.synic_event_page[cpu];
 	event = (union hv_synic_event_flags *)page_addr + VMBUS_MESSAGE_SINT;
 
 	/* Since we are a child, we only need to check bit 0 */
-	if (test_and_clear_bit(0, (unsigned long *) &event->Flags32[0])) {
-		DPRINT_DBG(VMBUS, "received event %d", event->Flags32[0]);
+	if (test_and_clear_bit(0, (unsigned long *) &event->flags32[0])) {
+		DPRINT_DBG(VMBUS, "received event %d", event->flags32[0]);
 		ret |= 0x2;
 	}
 
@@ -264,7 +264,7 @@ int VmbusInitialize(struct hv_driver *drv)
 	driver->GetChannelOffers	= VmbusGetChannelOffers;
 
 	/* Hypervisor initialization...setup hypercall page..etc */
-	ret = HvInit();
+	ret = hv_init();
 	if (ret != 0)
 		DPRINT_ERR(VMBUS, "Unable to initialize the hypervisor - 0x%x",
 				ret);

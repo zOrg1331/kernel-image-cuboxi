@@ -20,8 +20,7 @@
 
 #define __UNDEF_NO_VERSION__
 
-#include <linuxver.h>
-
+#include <linux/netdevice.h>
 #include <linux/pci.h>
 #include <linux/completion.h>
 
@@ -139,17 +138,6 @@ static int __devexit bcmsdh_remove(struct device *dev);
 #endif				/* BCMLXSDMMC */
 
 #ifndef BCMLXSDMMC
-static struct device_driver bcmsdh_driver = {
-	.name = "pxa2xx-mci",
-	.bus = &platform_bus_type,
-	.probe = bcmsdh_probe,
-	.remove = bcmsdh_remove,
-	.suspend = NULL,
-	.resume = NULL,
-};
-#endif				/* BCMLXSDMMC */
-
-#ifndef BCMLXSDMMC
 static
 #endif				/* BCMLXSDMMC */
 int bcmsdh_probe(struct device *dev)
@@ -189,7 +177,7 @@ int bcmsdh_probe(struct device *dev)
 	}
 #endif				/* defined(OOB_INTR_ONLY) */
 	/* allocate SDIO Host Controller state info */
-	osh = osl_attach(dev, PCI_BUS, false);
+	osh = osl_attach(dev, PCI_BUS);
 	if (!osh) {
 		SDLX_MSG(("%s: osl_attach failed\n", __func__));
 		goto err;
@@ -385,7 +373,7 @@ bcmsdh_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 		SDLX_MSG(("%s: Disabling TI FlashMedia Controller.\n",
 			  __func__));
-		osh = osl_attach(pdev, PCI_BUS, false);
+		osh = osl_attach(pdev, PCI_BUS);
 		if (!osh) {
 			SDLX_MSG(("%s: osl_attach failed\n", __func__));
 			goto err;
@@ -420,7 +408,7 @@ bcmsdh_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 */
 
 	/* allocate SDIO Host Controller state info */
-	osh = osl_attach(pdev, PCI_BUS, false);
+	osh = osl_attach(pdev, PCI_BUS);
 	if (!osh) {
 		SDLX_MSG(("%s: osl_attach failed\n", __func__));
 		goto err;
@@ -523,9 +511,6 @@ int bcmsdh_register(bcmsdh_driver_t *driver)
 #if defined(BCMLXSDMMC)
 	SDLX_MSG(("Linux Kernel SDIO/MMC Driver\n"));
 	error = sdio_function_init();
-#else
-	SDLX_MSG(("Intel PXA270 SDIO Driver\n"));
-	error = driver_register(&bcmsdh_driver);
 #endif				/* defined(BCMLXSDMMC) */
 	return error;
 #endif				/* defined(BCMPLATFORM_BUS) */
@@ -545,9 +530,6 @@ extern void sdio_function_cleanup(void);
 
 void bcmsdh_unregister(void)
 {
-#if defined(BCMPLATFORM_BUS) && !defined(BCMLXSDMMC)
-		driver_unregister(&bcmsdh_driver);
-#endif
 #if defined(BCMLXSDMMC)
 	sdio_function_cleanup();
 #endif				/* BCMLXSDMMC */
