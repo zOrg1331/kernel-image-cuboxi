@@ -67,7 +67,6 @@
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/kref.h>
-#include <linux/smp_lock.h>
 #include <linux/usb.h>
 #include <linux/uaccess.h>
 
