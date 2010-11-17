@@ -639,6 +639,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Mon Nov 01 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt8
 - 2.6.35.8
 - add nvidia backlight support
+- add mac book air 3,1 support
 
 * Thu Oct 14 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt7
 - 2.6.35.7
