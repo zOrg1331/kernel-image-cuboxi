@@ -39,7 +39,7 @@
 #include "devices-imx25.h"
 #include "devices.h"
 
-static struct pad_desc eukrea_mbimxsd_pads[] = {
+static iomux_v3_cfg_t eukrea_mbimxsd_pads[] = {
 	/* LCD */
 	MX25_PAD_LD0__LD0,
 	MX25_PAD_LD1__LD1,
