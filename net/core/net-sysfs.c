@@ -706,21 +706,24 @@ static struct attribute *rx_queue_default_attrs[] = {
 static void rx_queue_release(struct kobject *kobj)
 {
 	struct netdev_rx_queue *queue = to_rx_queue(kobj);
-	struct netdev_rx_queue *first = queue->first;
 	struct rps_map *map;
 	struct rps_dev_flow_table *flow_table;
 
 
 	map = rcu_dereference_raw(queue->rps_map);
-	if (map)
+	if (map) {
+		RCU_INIT_POINTER(queue->rps_map, NULL);
 		call_rcu(&map->rcu, rps_map_release);
+	}
 
 	flow_table = rcu_dereference_raw(queue->rps_flow_table);
-	if (flow_table)
+	if (flow_table) {
+		RCU_INIT_POINTER(queue->rps_flow_table, NULL);
 		call_rcu(&flow_table->rcu, rps_dev_flow_table_release);
+	}
 
-	if (atomic_dec_and_test(&first->count))
-		kfree(first);
+	memset(kobj, 0, sizeof(*kobj));
+	dev_put(queue->dev);
 }
 
 static struct kobj_type rx_queue_ktype = {
@@ -732,7 +735,6 @@ static struct kobj_type rx_queue_ktype = {
 static int rx_queue_add_kobject(struct net_device *net, int index)
 {
 	struct netdev_rx_queue *queue = net->_rx + index;
-	struct netdev_rx_queue *first = queue->first;
 	struct kobject *kobj = &queue->kobj;
 	int error = 0;
 
@@ -745,7 +747,7 @@ static int rx_queue_add_kobject(struct net_device *net, int index)
 	}
 
 	kobject_uevent(kobj, KOBJ_ADD);
-	atomic_inc(&first->count);
+	dev_hold(queue->dev);
 
 	return error;
 }

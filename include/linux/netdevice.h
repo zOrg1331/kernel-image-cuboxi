@@ -592,8 +592,7 @@ struct netdev_rx_queue {
 	struct rps_map __rcu		*rps_map;
 	struct rps_dev_flow_table __rcu	*rps_flow_table;
 	struct kobject			kobj;
-	struct netdev_rx_queue		*first;
-	atomic_t			count;
+	struct net_device		*dev;
 } ____cacheline_aligned_in_smp;
 #endif /* CONFIG_RPS */
 
@@ -951,7 +950,7 @@ struct net_device {
 #endif
 	void 			*atalk_ptr;	/* AppleTalk link 	*/
 	struct in_device __rcu	*ip_ptr;	/* IPv4 specific data	*/
-	void                    *dn_ptr;        /* DECnet specific data */
+	struct dn_dev __rcu     *dn_ptr;        /* DECnet specific data */
 	struct inet6_dev __rcu	*ip6_ptr;       /* IPv6 specific data */
 	void			*ec_ptr;	/* Econet specific data	*/
 	void			*ax25_ptr;	/* AX.25 specific data */
@@ -995,8 +994,8 @@ struct net_device {
 	unsigned int		real_num_rx_queues;
 #endif
 
-	rx_handler_func_t	*rx_handler;
-	void			*rx_handler_data;
+	rx_handler_func_t __rcu	*rx_handler;
+	void __rcu		*rx_handler_data;
 
 	struct netdev_queue __rcu *ingress_queue;
 
@@ -2239,6 +2238,8 @@ unsigned long netdev_fix_features(unsigned long features, const char *name);
 void netif_stacked_transfer_operstate(const struct net_device *rootdev,
 					struct net_device *dev);
 
+int netif_get_vlan_features(struct sk_buff *skb, struct net_device *dev);
+
 static inline int net_gso_ok(int features, int gso_type)
 {
 	int feature = gso_type << NETIF_F_GSO_SHIFT;
@@ -2254,10 +2255,7 @@ static inline int skb_gso_ok(struct sk_buff *skb, int features)
 static inline int netif_needs_gso(struct net_device *dev, struct sk_buff *skb)
 {
 	if (skb_is_gso(skb)) {
-		int features = dev->features;
-
-		if (skb->protocol == htons(ETH_P_8021Q) || skb->vlan_tci)
-			features &= dev->vlan_features;
+		int features = netif_get_vlan_features(skb, dev);
 
 		return (!skb_gso_ok(skb, features) ||
 			unlikely(skb->ip_summed != CHECKSUM_PARTIAL));
