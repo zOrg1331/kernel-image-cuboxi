@@ -336,7 +336,10 @@ more:
 		if (req->r_reply_info.dir_end) {
 			kfree(fi->last_name);
 			fi->last_name = NULL;
-			fi->next_offset = 2;
+			if (ceph_frag_is_rightmost(frag))
+				fi->next_offset = 2;
+			else
+				fi->next_offset = 0;
 		} else {
 			rinfo = &req->r_reply_info;
 			err = note_last_dentry(fi,
@@ -414,6 +417,7 @@ static void reset_readdir(struct ceph_file_info *fi)
 		fi->last_readdir = NULL;
 	}
 	kfree(fi->last_name);
+	fi->last_name = NULL;
 	fi->next_offset = 2;  /* compensate for . and .. */
 	if (fi->dentry) {
 		dput(fi->dentry);
@@ -1204,6 +1208,26 @@ void ceph_dentry_lru_del(struct dentry *dn)
 		list_del_init(&di->lru);
 		mdsc->num_dentry--;
 		spin_unlock(&mdsc->dentry_lru_lock);
+	}
+}
+
+/*
+ * Return name hash for a given dentry.  This is dependent on
+ * the parent directory's hash function.
+ */
+unsigned ceph_dentry_hash(struct dentry *dn)
+{
+	struct inode *dir = dn->d_parent->d_inode;
+	struct ceph_inode_info *dci = ceph_inode(dir);
+
+	switch (dci->i_dir_layout.dl_dir_hash) {
+	case 0:	/* for backward compat */
+	case CEPH_STR_HASH_LINUX:
+		return dn->d_name.hash;
+
+	default:
+		return ceph_str_hash(dci->i_dir_layout.dl_dir_hash,
+				     dn->d_name.name, dn->d_name.len);
 	}
 }
 
