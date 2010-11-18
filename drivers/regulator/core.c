@@ -25,6 +25,9 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/regulator.h>
+
 #include "dummy.h"
 
 #define REGULATOR_VERSION "0.5"
@@ -723,13 +726,16 @@ static int machine_constraints_voltage(struct regulator_dev *rdev,
 	struct regulator_ops *ops = rdev->desc->ops;
 	const char *name = rdev_get_name(rdev);
 	int ret;
+	unsigned selector;
 
 	/* do we need to apply the constraint voltage */
 	if (rdev->constraints->apply_uV &&
 		rdev->constraints->min_uV == rdev->constraints->max_uV &&
 		ops->set_voltage) {
 		ret = ops->set_voltage(rdev,
-			rdev->constraints->min_uV, rdev->constraints->max_uV);
+				       rdev->constraints->min_uV,
+				       rdev->constraints->max_uV,
+				       &selector);
 			if (ret < 0) {
 				printk(KERN_ERR "%s: failed to apply %duV constraint to %s\n",
 				       __func__,
@@ -1052,7 +1058,6 @@ static struct regulator *create_regulator(struct regulator_dev *rdev,
 			printk(KERN_WARNING
 			       "%s: could not add device link %s err %d\n",
 			       __func__, dev->kobj.name, err);
-			device_remove_file(dev, &regulator->dev_attr);
 			goto link_name_err;
 		}
 	}
@@ -1268,13 +1273,17 @@ static int _regulator_enable(struct regulator_dev *rdev)
 {
 	int ret, delay;
 
-	/* do we need to enable the supply regulator first */
-	if (rdev->supply) {
-		ret = _regulator_enable(rdev->supply);
-		if (ret < 0) {
-			printk(KERN_ERR "%s: failed to enable %s: %d\n",
-			       __func__, rdev_get_name(rdev), ret);
-			return ret;
+	if (rdev->use_count == 0) {
+		/* do we need to enable the supply regulator first */
+		if (rdev->supply) {
+			mutex_lock(&rdev->supply->mutex);
+			ret = _regulator_enable(rdev->supply);
+			mutex_unlock(&rdev->supply->mutex);
+			if (ret < 0) {
+				printk(KERN_ERR "%s: failed to enable %s: %d\n",
+				       __func__, rdev_get_name(rdev), ret);
+				return ret;
+			}
 		}
 	}
 
@@ -1306,6 +1315,8 @@ static int _regulator_enable(struct regulator_dev *rdev)
 				delay = 0;
 			}
 
+			trace_regulator_enable(rdev_get_name(rdev));
+
 			/* Allow the regulator to ramp; it would be useful
 			 * to extend this for bulk operations so that the
 			 * regulators can ramp together.  */
@@ -1313,10 +1324,16 @@ static int _regulator_enable(struct regulator_dev *rdev)
 			if (ret < 0)
 				return ret;
 
-			if (delay >= 1000)
+			trace_regulator_enable_delay(rdev_get_name(rdev));
+
+			if (delay >= 1000) {
 				mdelay(delay / 1000);
-			else if (delay)
+				udelay(delay % 1000);
+			} else if (delay) {
 				udelay(delay);
+			}
+
+			trace_regulator_enable_complete(rdev_get_name(rdev));
 
 		} else if (ret < 0) {
 			printk(KERN_ERR "%s: is_enabled() failed for %s: %d\n",
@@ -1359,6 +1376,7 @@ static int _regulator_disable(struct regulator_dev *rdev,
 		struct regulator_dev **supply_rdev_ptr)
 {
 	int ret = 0;
+	*supply_rdev_ptr = NULL;
 
 	if (WARN(rdev->use_count <= 0,
 			"unbalanced disables for %s\n",
@@ -1372,12 +1390,16 @@ static int _regulator_disable(struct regulator_dev *rdev,
 		/* we are last user */
 		if (_regulator_can_change_status(rdev) &&
 		    rdev->desc->ops->disable) {
+			trace_regulator_disable(rdev_get_name(rdev));
+
 			ret = rdev->desc->ops->disable(rdev);
 			if (ret < 0) {
 				printk(KERN_ERR "%s: failed to disable %s\n",
 				       __func__, rdev_get_name(rdev));
 				return ret;
 			}
+
+			trace_regulator_disable_complete(rdev_get_name(rdev));
 
 			_notifier_call_chain(rdev, REGULATOR_EVENT_DISABLE,
 					     NULL);
@@ -1621,6 +1643,7 @@ int regulator_set_voltage(struct regulator *regulator, int min_uV, int max_uV)
 {
 	struct regulator_dev *rdev = regulator->rdev;
 	int ret;
+	unsigned selector;
 
 	mutex_lock(&rdev->mutex);
 
@@ -1636,7 +1659,17 @@ int regulator_set_voltage(struct regulator *regulator, int min_uV, int max_uV)
 		goto out;
 	regulator->min_uV = min_uV;
 	regulator->max_uV = max_uV;
-	ret = rdev->desc->ops->set_voltage(rdev, min_uV, max_uV);
+
+	trace_regulator_set_voltage(rdev_get_name(rdev), min_uV, max_uV);
+
+	ret = rdev->desc->ops->set_voltage(rdev, min_uV, max_uV, &selector);
+
+	if (rdev->desc->ops->list_voltage)
+		selector = rdev->desc->ops->list_voltage(rdev, selector);
+	else
+		selector = -1;
+
+	trace_regulator_set_voltage_complete(rdev_get_name(rdev), selector);
 
 out:
 	_notifier_call_chain(rdev, REGULATOR_EVENT_VOLTAGE_CHANGE, NULL);
@@ -2346,6 +2379,7 @@ struct regulator_dev *regulator_register(struct regulator_desc *regulator_desc,
 	if (init_data->supply_regulator && init_data->supply_regulator_dev) {
 		dev_err(dev,
 			"Supply regulator specified by both name and dev\n");
+		ret = -EINVAL;
 		goto scrub;
 	}
 
@@ -2364,6 +2398,7 @@ struct regulator_dev *regulator_register(struct regulator_desc *regulator_desc,
 		if (!found) {
 			dev_err(dev, "Failed to find supply %s\n",
 				init_data->supply_regulator);
+			ret = -ENODEV;
 			goto scrub;
 		}
 
