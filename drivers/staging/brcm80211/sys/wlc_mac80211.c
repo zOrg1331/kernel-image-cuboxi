@@ -16,8 +16,8 @@
 #include <linux/kernel.h>
 #include <linux/ctype.h>
 #include <bcmdefs.h>
+#include <bcmdevs.h>
 #include <wlc_cfg.h>
-#include <linuxver.h>
 #include <osl.h>
 #include <bcmutils.h>
 #include <bcmwifi.h>
@@ -27,7 +27,7 @@
 #include <pcicfg.h>
 #include <bcmsrom.h>
 #include <wlioctl.h>
-#include <epivers.h>
+#include <sbhndpio.h>
 #include <sbhnddma.h>
 #include <hnddma.h>
 #include <hndpmu.h>
@@ -37,6 +37,7 @@
 #include <wlc_key.h>
 #include <wlc_bsscfg.h>
 #include <wlc_channel.h>
+#include <wlc_event.h>
 #include <wlc_mac80211.h>
 #include <wlc_bmac.h>
 #include <wlc_scb.h>
@@ -61,6 +62,7 @@
 #endif				/* WLC_HIGH_ONLY */
 #include <wlc_alloc.h>
 #include <net/mac80211.h>
+#include <wl_dbg.h>
 
 #ifdef WLC_HIGH_ONLY
 #undef R_REG
@@ -134,6 +136,8 @@ uint wl_msg_level =
 #define WLC_TEMPSENSE_PERIOD		10	/* 10 second timeout */
 
 #define SCAN_IN_PROGRESS(x)	0
+
+#define EPI_VERSION_NUM		0x054b0b00
 
 #ifdef BCMDBG
 /* pointer to most recently allocated wl/wlc */
@@ -261,8 +265,9 @@ static int wlc_iovar_rangecheck(wlc_info_t *wlc, u32 val,
 static u8 wlc_local_constraint_qdbm(wlc_info_t *wlc);
 
 /* send and receive */
-static wlc_txq_info_t *wlc_txq_alloc(wlc_info_t *wlc, osl_t *osh);
-static void wlc_txq_free(wlc_info_t *wlc, osl_t *osh, wlc_txq_info_t *qi);
+static wlc_txq_info_t *wlc_txq_alloc(wlc_info_t *wlc, struct osl_info *osh);
+static void wlc_txq_free(wlc_info_t *wlc, struct osl_info *osh,
+			 wlc_txq_info_t *qi);
 static void wlc_txflowcontrol_signal(wlc_info_t *wlc, wlc_txq_info_t *qi,
 				     bool on, int prio);
 static void wlc_txflowcontrol_reset(wlc_info_t *wlc);
@@ -273,7 +278,7 @@ static void wlc_compute_ofdm_plcp(ratespec_t rate, uint length, u8 *plcp);
 static void wlc_compute_mimo_plcp(ratespec_t rate, uint length, u8 *plcp);
 static u16 wlc_compute_frame_dur(wlc_info_t *wlc, ratespec_t rate,
 				    u8 preamble_type, uint next_frag_len);
-static void wlc_recvctl(wlc_info_t *wlc, osl_t *osh, d11rxhdr_t *rxh,
+static void wlc_recvctl(wlc_info_t *wlc, struct osl_info *osh, d11rxhdr_t *rxh,
 			void *p);
 static uint wlc_calc_frame_len(wlc_info_t *wlc, ratespec_t rate,
 			       u8 preamble_type, uint dur);
@@ -320,7 +325,7 @@ void wlc_get_rcmta(wlc_info_t *wlc, int idx, struct ether_addr *addr)
 {
 	d11regs_t *regs = wlc->regs;
 	u32 v32;
-	osl_t *osh;
+	struct osl_info *osh;
 
 	WL_TRACE(("wl%d: %s\n", WLCWLUNIT(wlc), __func__));
 
@@ -667,7 +672,7 @@ bool wlc_ps_check(wlc_info_t *wlc)
 		 * may be either true or false due to the low level override.
 		 */
 		wake = STAY_AWAKE(wlc);
-		wake_ok = (wake && ((tmp & MCTL_WAKE) != 0)) || !wake;
+		wake_ok = ((tmp & MCTL_WAKE) != 0) || !wake;
 #endif
 		if (hps && !wake_ok) {
 			WL_ERROR(("wl%d: wake not sync, sw %d maccontrol 0x%x\n", wlc->pub->unit, wake, tmp));
@@ -1750,8 +1755,8 @@ wlc_pub_t *wlc_pub(void *wlc)
  * The common driver entry routine. Error codes should be unique
  */
 void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
-		 osl_t *osh, void *regsva, uint bustype, void *btparam,
-		 uint *perr)
+		 struct osl_info *osh, void *regsva, uint bustype,
+		 void *btparam, uint *perr)
 {
 	wlc_info_t *wlc;
 	uint err = 0;
@@ -1780,8 +1785,10 @@ void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
 	ASSERT(sizeof(struct dot11_bcn_prb) == DOT11_BCN_PRB_LEN);
 	ASSERT(sizeof(tx_status_t) == TXSTATUS_LEN);
 	ASSERT(sizeof(ht_cap_ie_t) == HT_CAP_IE_LEN);
+#ifdef BRCM_FULLMAC
 	ASSERT(offsetof(wl_scan_params_t, channel_list) ==
 	       WL_SCAN_PARAMS_FIXED_SIZE);
+#endif
 	ASSERT(IS_ALIGNED(offsetof(wsec_key_t, data), sizeof(u32)));
 	ASSERT(ISPOWEROF2(MA_WINDOW_SZ));
 
@@ -2135,8 +2142,8 @@ static bool wlc_attach_stf_ant_init(wlc_info_t *wlc)
 #ifdef WLC_HIGH_ONLY
 /* HIGH_ONLY bmac_attach, which sync over LOW_ONLY bmac_attach states */
 int wlc_bmac_attach(wlc_info_t *wlc, u16 vendor, u16 device, uint unit,
-		    bool piomode, osl_t *osh, void *regsva, uint bustype,
-		    void *btparam)
+		    bool piomode, struct osl_info *osh, void *regsva,
+		    uint bustype, void *btparam)
 {
 	wlc_bmac_revinfo_t revinfo;
 	uint idx = 0;
@@ -3265,7 +3272,7 @@ _wlc_ioctl(wlc_info_t *wlc, int cmd, void *arg, int len, struct wlc_if *wlcif)
 	uint band;
 	rw_reg_t *r;
 	wlc_bsscfg_t *bsscfg;
-	osl_t *osh;
+	struct osl_info *osh;
 	wlc_bss_info_t *current_bss;
 
 	/* update bsscfg pointer */
@@ -5871,7 +5878,7 @@ wlc_d11hdrs_mac80211(wlc_info_t *wlc, struct ieee80211_hw *hw,
 	struct dot11_header *h;
 	d11txh_t *txh;
 	u8 *plcp, plcp_fallback[D11_PHY_HDR_LEN];
-	osl_t *osh;
+	struct osl_info *osh;
 	int len, phylen, rts_phylen;
 	u16 fc, type, frameid, mch, phyctl, xfts, mainrates;
 	u16 seq = 0, mcl = 0, status = 0;
@@ -6744,7 +6751,7 @@ wlc_dotxstatus(wlc_info_t *wlc, tx_status_t *txs, u32 frm_tx2)
 	d11txh_t *txh;
 	struct scb *scb = NULL;
 	bool free_pdu;
-	osl_t *osh;
+	struct osl_info *osh;
 	int tx_rts, tx_frame_count, tx_rts_count;
 	uint totlen, supr_status;
 	bool lastframe;
@@ -7138,7 +7145,7 @@ prep_mac80211_status(wlc_info_t *wlc, d11rxhdr_t *rxh, void *p,
 }
 
 static void
-wlc_recvctl(wlc_info_t *wlc, osl_t *osh, d11rxhdr_t *rxh, void *p)
+wlc_recvctl(wlc_info_t *wlc, struct osl_info *osh, d11rxhdr_t *rxh, void *p)
 {
 	int len_mpdu;
 	struct ieee80211_rx_status rx_status;
@@ -7205,7 +7212,7 @@ void BCMFASTPATH wlc_recv(wlc_info_t *wlc, void *p)
 {
 	d11rxhdr_t *rxh;
 	struct dot11_header *h;
-	osl_t *osh;
+	struct osl_info *osh;
 	u16 fc;
 	uint len;
 	bool is_amsdu;
@@ -7907,7 +7914,7 @@ void wlc_bss_update_beacon(wlc_info_t *wlc, wlc_bsscfg_t *cfg)
 		u16 bcn[BCN_TMPL_LEN / 2];
 		u32 both_valid = MCMD_BCN0VLD | MCMD_BCN1VLD;
 		d11regs_t *regs = wlc->regs;
-		osl_t *osh = NULL;
+		struct osl_info *osh = NULL;
 
 		osh = wlc->osh;
 
@@ -8029,7 +8036,7 @@ wlc_bss_update_probe_resp(wlc_info_t *wlc, wlc_bsscfg_t *cfg, bool suspend)
 /* prepares pdu for transmission. returns BCM error codes */
 int wlc_prep_pdu(wlc_info_t *wlc, void *pdu, uint *fifop)
 {
-	osl_t *osh;
+	struct osl_info *osh;
 	uint fifo;
 	d11txh_t *txh;
 	struct dot11_header *h;
@@ -8622,7 +8629,7 @@ wlc_txflowcontrol_signal(wlc_info_t *wlc, wlc_txq_info_t *qi, bool on,
 	}
 }
 
-static wlc_txq_info_t *wlc_txq_alloc(wlc_info_t *wlc, osl_t *osh)
+static wlc_txq_info_t *wlc_txq_alloc(wlc_info_t *wlc, struct osl_info *osh)
 {
 	wlc_txq_info_t *qi, *p;
 
@@ -8652,7 +8659,8 @@ static wlc_txq_info_t *wlc_txq_alloc(wlc_info_t *wlc, osl_t *osh)
 	return qi;
 }
 
-static void wlc_txq_free(wlc_info_t *wlc, osl_t *osh, wlc_txq_info_t *qi)
+static void wlc_txq_free(wlc_info_t *wlc, struct osl_info *osh,
+			 wlc_txq_info_t *qi)
 {
 	wlc_txq_info_t *p;
 

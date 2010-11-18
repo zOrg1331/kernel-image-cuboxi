@@ -16,9 +16,13 @@
 
 #include <linux/kernel.h>
 #include <bcmdefs.h>
-#include <linuxver.h>
+#include <linux/module.h>
+#include <linux/pci.h>
+#include <osl.h>
 #include <bcmutils.h>
 #include <siutils.h>
+#include <sbhndpio.h>
+#include <sbhnddma.h>
 #include <wlioctl.h>
 #include <wlc_cfg.h>
 #include <wlc_pub.h>
@@ -32,6 +36,7 @@
 #ifdef MSGTRACE
 #include <msgtrace.h>
 #endif
+#include <wl_dbg.h>
 
 /* Local prototypes */
 static void wlc_timer_cb(void *arg);
