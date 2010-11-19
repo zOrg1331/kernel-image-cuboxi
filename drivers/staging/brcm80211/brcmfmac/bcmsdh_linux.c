@@ -20,8 +20,7 @@
 
 #define __UNDEF_NO_VERSION__
 
-#include <linuxver.h>
-
+#include <linux/netdevice.h>
 #include <linux/pci.h>
 #include <linux/completion.h>
 
@@ -57,7 +56,7 @@ struct bcmsdh_hc {
 #else
 	struct pci_dev *dev;	/* pci device handle */
 #endif				/* BCMPLATFORM_BUS */
-	osl_t *osh;
+	struct osl_info *osh;
 	void *regs;		/* SDIO Host Controller address */
 	bcmsdh_info_t *sdh;	/* SDIO Host Controller handle */
 	void *ch;
@@ -139,22 +138,11 @@ static int __devexit bcmsdh_remove(struct device *dev);
 #endif				/* BCMLXSDMMC */
 
 #ifndef BCMLXSDMMC
-static struct device_driver bcmsdh_driver = {
-	.name = "pxa2xx-mci",
-	.bus = &platform_bus_type,
-	.probe = bcmsdh_probe,
-	.remove = bcmsdh_remove,
-	.suspend = NULL,
-	.resume = NULL,
-};
-#endif				/* BCMLXSDMMC */
-
-#ifndef BCMLXSDMMC
 static
 #endif				/* BCMLXSDMMC */
 int bcmsdh_probe(struct device *dev)
 {
-	osl_t *osh = NULL;
+	struct osl_info *osh = NULL;
 	bcmsdh_hc_t *sdhc = NULL;
 	unsigned long regs = 0;
 	bcmsdh_info_t *sdh = NULL;
@@ -189,7 +177,7 @@ int bcmsdh_probe(struct device *dev)
 	}
 #endif				/* defined(OOB_INTR_ONLY) */
 	/* allocate SDIO Host Controller state info */
-	osh = osl_attach(dev, PCI_BUS, false);
+	osh = osl_attach(dev, PCI_BUS);
 	if (!osh) {
 		SDLX_MSG(("%s: osl_attach failed\n", __func__));
 		goto err;
@@ -258,7 +246,7 @@ static
 int bcmsdh_remove(struct device *dev)
 {
 	bcmsdh_hc_t *sdhc, *prev;
-	osl_t *osh;
+	struct osl_info *osh;
 
 	sdhc = sdhcinfo;
 	drvinfo.detach(sdhc->ch);
@@ -351,7 +339,7 @@ module_param(sd_pci_slot, uint, 0);
 static int __devinit
 bcmsdh_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
-	osl_t *osh = NULL;
+	struct osl_info *osh = NULL;
 	bcmsdh_hc_t *sdhc = NULL;
 	unsigned long regs;
 	bcmsdh_info_t *sdh = NULL;
@@ -385,7 +373,7 @@ bcmsdh_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 		SDLX_MSG(("%s: Disabling TI FlashMedia Controller.\n",
 			  __func__));
-		osh = osl_attach(pdev, PCI_BUS, false);
+		osh = osl_attach(pdev, PCI_BUS);
 		if (!osh) {
 			SDLX_MSG(("%s: osl_attach failed\n", __func__));
 			goto err;
@@ -420,7 +408,7 @@ bcmsdh_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 */
 
 	/* allocate SDIO Host Controller state info */
-	osh = osl_attach(pdev, PCI_BUS, false);
+	osh = osl_attach(pdev, PCI_BUS);
 	if (!osh) {
 		SDLX_MSG(("%s: osl_attach failed\n", __func__));
 		goto err;
@@ -482,7 +470,7 @@ err:
 static void __devexit bcmsdh_pci_remove(struct pci_dev *pdev)
 {
 	bcmsdh_hc_t *sdhc, *prev;
-	osl_t *osh;
+	struct osl_info *osh;
 
 	/* find the SDIO Host Controller state for this
 		 pdev and take it out from the list */
@@ -523,9 +511,6 @@ int bcmsdh_register(bcmsdh_driver_t *driver)
 #if defined(BCMLXSDMMC)
 	SDLX_MSG(("Linux Kernel SDIO/MMC Driver\n"));
 	error = sdio_function_init();
-#else
-	SDLX_MSG(("Intel PXA270 SDIO Driver\n"));
-	error = driver_register(&bcmsdh_driver);
 #endif				/* defined(BCMLXSDMMC) */
 	return error;
 #endif				/* defined(BCMPLATFORM_BUS) */
@@ -545,9 +530,6 @@ extern void sdio_function_cleanup(void);
 
 void bcmsdh_unregister(void)
 {
-#if defined(BCMPLATFORM_BUS) && !defined(BCMLXSDMMC)
-		driver_unregister(&bcmsdh_driver);
-#endif
 #if defined(BCMLXSDMMC)
 	sdio_function_cleanup();
 #endif				/* BCMLXSDMMC */
