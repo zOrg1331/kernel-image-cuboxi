@@ -897,24 +897,27 @@ out:
 
 /* ---------------------------------------------------------------------- */
 
-static int aufs_get_sb(struct file_system_type *fs_type, int flags,
-		       const char *dev_name __maybe_unused, void *raw_data,
-		       struct vfsmount *mnt)
+static struct dentry *aufs_mount(struct file_system_type *fs_type, int flags,
+				 const char *dev_name __maybe_unused,
+				 void *raw_data)
 {
-	int err;
+	struct dentry *root;
 	struct super_block *sb;
 
 	/* all timestamps always follow the ones on the branch */
 	/* mnt->mnt_flags |= MNT_NOATIME | MNT_NODIRATIME; */
-	err = get_sb_nodev(fs_type, flags, raw_data, aufs_fill_super, mnt);
-	if (!err) {
-		sb = mnt->mnt_sb;
-		si_write_lock(sb, !AuLock_FLUSH);
-		sysaufs_brs_add(sb, 0);
-		si_write_unlock(sb);
-		au_sbilist_add(sb);
-	}
-	return err;
+	root = mount_nodev(fs_type, flags, raw_data, aufs_fill_super);
+	if (IS_ERR(root))
+		goto out;
+
+	sb = root->d_sb;
+	si_write_lock(sb, !AuLock_FLUSH);
+	sysaufs_brs_add(sb, 0);
+	si_write_unlock(sb);
+	au_sbilist_add(sb);
+
+out:
+	return root;
 }
 
 static void aufs_kill_sb(struct super_block *sb)
@@ -947,7 +950,7 @@ struct file_system_type aufs_fs_type = {
 	.fs_flags	=
 		FS_RENAME_DOES_D_MOVE	/* a race between rename and others */
 		| FS_REVAL_DOT,		/* for NFS branch and udba */
-	.get_sb		= aufs_get_sb,
+	.mount		= aufs_mount,
 	.kill_sb	= aufs_kill_sb,
 	/* no need to __module_get() and module_put(). */
 	.owner		= THIS_MODULE,
