@@ -1102,8 +1102,6 @@ static void ap_sta_ps_end(struct sta_info *sta)
 
 	atomic_dec(&sdata->bss->num_sta_ps);
 
-	clear_sta_flags(sta, WLAN_STA_PS_STA);
-
 #ifdef CONFIG_MAC80211_VERBOSE_PS_DEBUG
 	printk(KERN_DEBUG "%s: STA %pM aid %d exits power save mode\n",
 	       sdata->name, sta->sta.addr, sta->sta.aid);
@@ -1158,6 +1156,7 @@ ieee80211_rx_h_sta_process(struct ieee80211_rx_data *rx)
 	sta->rx_fragments++;
 	sta->rx_bytes += rx->skb->len;
 	sta->last_signal = status->signal;
+	ewma_add(&sta->avg_signal, -status->signal);
 
 	/*
 	 * Change STA power saving mode only at the end of a frame

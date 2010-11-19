@@ -424,6 +424,7 @@ struct station_parameters {
  * @STATION_INFO_TX_RETRIES: @tx_retries filled
  * @STATION_INFO_TX_FAILED: @tx_failed filled
  * @STATION_INFO_RX_DROP_MISC: @rx_dropped_misc filled
+ * @STATION_INFO_SIGNAL_AVG: @signal_avg filled
  */
 enum station_info_flags {
 	STATION_INFO_INACTIVE_TIME	= 1<<0,
@@ -439,6 +440,7 @@ enum station_info_flags {
 	STATION_INFO_TX_RETRIES		= 1<<10,
 	STATION_INFO_TX_FAILED		= 1<<11,
 	STATION_INFO_RX_DROP_MISC	= 1<<12,
+	STATION_INFO_SIGNAL_AVG		= 1<<13,
 };
 
 /**
@@ -485,6 +487,7 @@ struct rate_info {
  * @plid: mesh peer link id
  * @plink_state: mesh peer link state
  * @signal: signal strength of last received packet in dBm
+ * @signal_avg: signal strength average in dBm
  * @txrate: current unicast bitrate to this station
  * @rx_packets: packets received from this station
  * @tx_packets: packets transmitted to this station
@@ -505,6 +508,7 @@ struct station_info {
 	u16 plid;
 	u8 plink_state;
 	s8 signal;
+	s8 signal_avg;
 	struct rate_info txrate;
 	u32 rx_packets;
 	u32 tx_packets;
@@ -923,6 +927,7 @@ struct cfg80211_disassoc_request {
  * @privacy: this is a protected network, keys will be configured
  *	after joining
  * @basic_rates: bitmap of basic rates to use when creating the IBSS
+ * @mcast_rate: multicast tx rate (in 100 kbps)
  */
 struct cfg80211_ibss_params {
 	u8 *ssid;
@@ -934,6 +939,7 @@ struct cfg80211_ibss_params {
 	u32 basic_rates;
 	bool channel_fixed;
 	bool privacy;
+	int mcast_rate;
 };
 
 /**
@@ -1304,6 +1310,9 @@ struct cfg80211_ops {
 	void	(*mgmt_frame_register)(struct wiphy *wiphy,
 				       struct net_device *dev,
 				       u16 frame_type, bool reg);
+
+	int	(*set_antenna)(struct wiphy *wiphy, u32 tx_ant, u32 rx_ant);
+	int	(*get_antenna)(struct wiphy *wiphy, u32 *tx_ant, u32 *rx_ant);
 };
 
 /*
