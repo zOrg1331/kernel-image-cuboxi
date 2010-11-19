@@ -166,7 +166,7 @@ struct fsnotify_group {
 			struct mutex access_mutex;
 			struct list_head access_list;
 			wait_queue_head_t access_waitq;
-			bool bypass_perm; /* protected by access_mutex */
+			atomic_t bypass_perm;
 #endif /* CONFIG_FANOTIFY_ACCESS_PERMISSIONS */
 			bool readonly_fallback;
 			int f_flags;
