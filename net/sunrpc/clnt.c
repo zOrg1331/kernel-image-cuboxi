@@ -989,20 +989,18 @@ call_refreshresult(struct rpc_task *task)
 	dprint_status(task);
 
 	task->tk_status = 0;
-	task->tk_action = call_allocate;
-	if (status >= 0 && rpcauth_uptodatecred(task))
-		return;
+	task->tk_action = call_refresh;
 	switch (status) {
-	case -EACCES:
-		rpc_exit(task, -EACCES);
-		return;
-	case -ENOMEM:
-		rpc_exit(task, -ENOMEM);
+	case 0:
+		if (rpcauth_uptodatecred(task))
+			task->tk_action = call_allocate;
 		return;
 	case -ETIMEDOUT:
 		rpc_delay(task, 3*HZ);
+	case -EAGAIN:
+		return;
 	}
-	task->tk_action = call_refresh;
+	rpc_exit(task, status);
 }
 
 /*
