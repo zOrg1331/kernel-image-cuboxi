@@ -68,7 +68,7 @@
 #define CPUIMX51SD_GPIO_3_12 IOMUX_PAD(0x57C, 0x194, 3, 0x0, 0, \
 				MX51_PAD_CTRL_1 | PAD_CTL_PUS_22K_UP)
 
-static struct pad_desc eukrea_cpuimx51sd_pads[] = {
+static iomux_v3_cfg_t eukrea_cpuimx51sd_pads[] = {
 	/* UART1 */
 	MX51_PAD_UART1_RXD__UART1_RXD,
 	MX51_PAD_UART1_TXD__UART1_TXD,
@@ -323,7 +323,7 @@ static struct sys_timer mxc_timer = {
 
 MACHINE_START(EUKREA_CPUIMX51SD, "Eukrea CPUIMX51SD")
 	/* Maintainer: Eric Bénard <eric@eukrea.com> */
-	.boot_params = PHYS_OFFSET + 0x100,
+	.boot_params = MX51_PHYS_OFFSET + 0x100,
 	.map_io = mx51_map_io,
 	.init_irq = mx51_init_irq,
 	.init_machine = eukrea_cpuimx51sd_init,
