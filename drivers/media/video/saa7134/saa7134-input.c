@@ -41,14 +41,6 @@ static int pinnacle_remote;
 module_param(pinnacle_remote, int, 0644);    /* Choose Pinnacle PCTV remote */
 MODULE_PARM_DESC(pinnacle_remote, "Specify Pinnacle PCTV remote: 0=coloured, 1=grey (defaults to 0)");
 
-static int ir_rc5_remote_gap = 885;
-module_param(ir_rc5_remote_gap, int, 0644);
-
-static unsigned int disable_other_ir;
-module_param(disable_other_ir, int, 0644);
-MODULE_PARM_DESC(disable_other_ir, "disable full codes of "
-    "alternative remotes from other manufacturers");
-
 #define dprintk(fmt, arg...)	if (ir_debug) \
 	printk(KERN_DEBUG "%s/ir: " fmt, dev->name , ## arg)
 #define i2cdprintk(fmt, arg...)    if (ir_debug) \
@@ -285,22 +277,12 @@ static int get_key_beholdm6xx(struct IR_i2c *ir, u32 *ir_key, u32 *ir_raw)
 		i2cdprintk("read error\n");
 		return -EIO;
 	}
-	/* IR of this card normally decode signals NEC-standard from
-	 * - Sven IHOO MT 5.1R remote. xxyye718
-	 * - Sven DVD HD-10xx remote. xxyyf708
-	 * - BBK ...
-	 * - mayby others
-	 * So, skip not our, if disable full codes mode.
-	 */
-	if (data[10] != 0x6b && data[11] != 0x86 && disable_other_ir)
-		return 0;
 
-	/* Wrong data decode fix */
 	if (data[9] != (unsigned char)(~data[8]))
 		return 0;
 
-	*ir_key = data[9];
-	*ir_raw = data[9];
+	*ir_raw = ((data[10] << 16) | (data[11] << 8) | (data[9] << 0));
+	*ir_key = *ir_raw;
 
 	return 1;
 }
@@ -425,28 +407,25 @@ static int __saa7134_ir_start(void *priv)
 	struct saa7134_dev *dev = priv;
 	struct saa7134_card_ir *ir;
 
-	if (!dev)
+	if (!dev || !dev->remote)
 		return -EINVAL;
 
 	ir  = dev->remote;
-	if (!ir)
-		return -EINVAL;
-
 	if (ir->running)
 		return 0;
 
 	ir->running = true;
+	ir->active = false;
+
 	if (ir->polling) {
 		setup_timer(&ir->timer, saa7134_input_timer,
 			    (unsigned long)dev);
-		ir->timer.expires  = jiffies + HZ;
+		ir->timer.expires = jiffies + HZ;
 		add_timer(&ir->timer);
 	} else if (ir->raw_decode) {
 		/* set timer_end for code completion */
-		init_timer(&ir->timer_end);
-		ir->timer_end.function = ir_raw_decode_timer_end;
-		ir->timer_end.data = (unsigned long)dev;
-		ir->active = false;
+		setup_timer(&ir->timer, ir_raw_decode_timer_end,
+			    (unsigned long)dev);
 	}
 
 	return 0;
@@ -457,22 +436,17 @@ static void __saa7134_ir_stop(void *priv)
 	struct saa7134_dev *dev = priv;
 	struct saa7134_card_ir *ir;
 
-	if (!dev)
+	if (!dev || !dev->remote)
 		return;
 
 	ir  = dev->remote;
-	if (!ir)
-		return;
-
 	if (!ir->running)
 		return;
-	if (dev->remote->polling)
-		del_timer_sync(&dev->remote->timer);
-	else if (ir->raw_decode) {
-		del_timer_sync(&ir->timer_end);
-		ir->active = false;
-	}
 
+	if (ir->polling || ir->raw_decode)
+		del_timer_sync(&ir->timer);
+
+	ir->active = false;
 	ir->running = false;
 
 	return;
@@ -517,8 +491,8 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	u32 mask_keycode = 0;
 	u32 mask_keydown = 0;
 	u32 mask_keyup   = 0;
-	int polling      = 0;
-	int raw_decode   = 0;
+	unsigned polling = 0;
+	bool raw_decode  = false;
 	int err;
 
 	if (dev->has_remote != SAA7134_REMOTE_GPIO)
@@ -583,14 +557,14 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 		mask_keydown = 0x0040000;	/* Enable GPIO18 line on both edges */
 		mask_keyup   = 0x0040000;
 		mask_keycode = 0xffff;
-		raw_decode   = 1;
+		raw_decode   = true;
 		break;
 	case SAA7134_BOARD_AVERMEDIA_M733A:
 		ir_codes     = RC_MAP_AVERMEDIA_M733A_RM_K6;
 		mask_keydown = 0x0040000;
 		mask_keyup   = 0x0040000;
 		mask_keycode = 0xffff;
-		raw_decode   = 1;
+		raw_decode   = true;
 		break;
 	case SAA7134_BOARD_AVERMEDIA_777:
 	case SAA7134_BOARD_AVERMEDIA_A16AR:
@@ -697,7 +671,7 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 		mask_keydown = 0x0040000;	/* Enable GPIO18 line on both edges */
 		mask_keyup   = 0x0040000;
 		mask_keycode = 0xffff;
-		raw_decode   = 1;
+		raw_decode   = true;
 		break;
 	case SAA7134_BOARD_ENCORE_ENLTV:
 	case SAA7134_BOARD_ENCORE_ENLTV_FM:
@@ -711,7 +685,7 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 		mask_keydown = 0x0040000;	/* Enable GPIO18 line on both edges */
 		mask_keyup   = 0x0040000;
 		mask_keycode = 0xffff;
-		raw_decode   = 1;
+		raw_decode   = true;
 		break;
 	case SAA7134_BOARD_10MOONSTVMASTER3:
 		ir_codes     = RC_MAP_ENCORE_ENLTV;
@@ -763,8 +737,6 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 
 	ir->dev = rc;
 	dev->remote = ir;
-
-	ir->running = false;
 
 	/* init hardware-specific stuff */
 	ir->mask_keycode = mask_keycode;
@@ -827,14 +799,12 @@ void saa7134_input_fini(struct saa7134_dev *dev)
 void saa7134_probe_i2c_ir(struct saa7134_dev *dev)
 {
 	struct i2c_board_info info;
-
 	struct i2c_msg msg_msi = {
 		.addr = 0x50,
 		.flags = I2C_M_RD,
 		.len = 0,
 		.buf = NULL,
 	};
-
 	int rc;
 
 	if (disable_ir) {
@@ -934,8 +904,8 @@ void saa7134_probe_i2c_ir(struct saa7134_dev *dev)
 
 static int saa7134_raw_decode_irq(struct saa7134_dev *dev)
 {
-	struct saa7134_card_ir	*ir = dev->remote;
-	unsigned long 	timeout;
+	struct saa7134_card_ir *ir = dev->remote;
+	unsigned long timeout;
 	int space;
 
 	/* Generate initial event */
@@ -944,7 +914,6 @@ static int saa7134_raw_decode_irq(struct saa7134_dev *dev)
 	space = saa_readl(SAA7134_GPIO_GPSTATUS0 >> 2) & ir->mask_keydown;
 	ir_raw_event_store_edge(dev->remote->dev, space ? IR_SPACE : IR_PULSE);
 
-
 	/*
 	 * Wait 15 ms from the start of the first IR event before processing
 	 * the event. This time is enough for NEC protocol. May need adjustments
@@ -952,7 +921,7 @@ static int saa7134_raw_decode_irq(struct saa7134_dev *dev)
 	 */
 	if (!ir->active) {
 		timeout = jiffies + jiffies_to_msecs(15);
-		mod_timer(&ir->timer_end, timeout);
+		mod_timer(&ir->timer, timeout);
 		ir->active = true;
 	}
 
