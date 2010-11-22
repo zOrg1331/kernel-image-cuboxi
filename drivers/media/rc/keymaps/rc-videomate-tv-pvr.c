@@ -12,7 +12,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode videomate_tv_pvr[] = {
+static struct rc_map_table videomate_tv_pvr[] = {
 	{ 0x14, KEY_MUTE },
 	{ 0x24, KEY_ZOOM },
 
@@ -61,23 +61,23 @@ static struct ir_scancode videomate_tv_pvr[] = {
 	{ 0x21, KEY_SLEEP },
 };
 
-static struct rc_keymap videomate_tv_pvr_map = {
+static struct rc_map_list videomate_tv_pvr_map = {
 	.map = {
 		.scan    = videomate_tv_pvr,
 		.size    = ARRAY_SIZE(videomate_tv_pvr),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_VIDEOMATE_TV_PVR,
 	}
 };
 
 static int __init init_rc_map_videomate_tv_pvr(void)
 {
-	return ir_register_map(&videomate_tv_pvr_map);
+	return rc_map_register(&videomate_tv_pvr_map);
 }
 
 static void __exit exit_rc_map_videomate_tv_pvr(void)
 {
-	ir_unregister_map(&videomate_tv_pvr_map);
+	rc_map_unregister(&videomate_tv_pvr_map);
 }
 
 module_init(init_rc_map_videomate_tv_pvr)

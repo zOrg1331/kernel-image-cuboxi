@@ -1,6 +1,6 @@
 #include <media/rc-map.h>
 
-static struct ir_scancode twinhan_vp1027[] = {
+static struct rc_map_table twinhan_vp1027[] = {
 	{ 0x16, KEY_POWER2 },
 	{ 0x17, KEY_FAVORITES },
 	{ 0x0f, KEY_TEXT },
@@ -61,23 +61,23 @@ static struct ir_scancode twinhan_vp1027[] = {
 	{ 0x5f, KEY_BLUE },
 };
 
-static struct rc_keymap twinhan_vp1027_map = {
+static struct rc_map_list twinhan_vp1027_map = {
 	.map = {
 		.scan    = twinhan_vp1027,
 		.size    = ARRAY_SIZE(twinhan_vp1027),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_TWINHAN_VP1027_DVBS,
 	}
 };
 
 static int __init init_rc_map_twinhan_vp1027(void)
 {
-	return ir_register_map(&twinhan_vp1027_map);
+	return rc_map_register(&twinhan_vp1027_map);
 }
 
 static void __exit exit_rc_map_twinhan_vp1027(void)
 {
-	ir_unregister_map(&twinhan_vp1027_map);
+	rc_map_unregister(&twinhan_vp1027_map);
 }
 
 module_init(init_rc_map_twinhan_vp1027)

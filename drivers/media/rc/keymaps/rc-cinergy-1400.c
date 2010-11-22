@@ -14,7 +14,7 @@
 
 /* Cinergy 1400 DVB-T */
 
-static struct ir_scancode cinergy_1400[] = {
+static struct rc_map_table cinergy_1400[] = {
 	{ 0x01, KEY_POWER },
 	{ 0x02, KEY_1 },
 	{ 0x03, KEY_2 },
@@ -58,23 +58,23 @@ static struct ir_scancode cinergy_1400[] = {
 	{ 0x5c, KEY_NEXT },
 };
 
-static struct rc_keymap cinergy_1400_map = {
+static struct rc_map_list cinergy_1400_map = {
 	.map = {
 		.scan    = cinergy_1400,
 		.size    = ARRAY_SIZE(cinergy_1400),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_CINERGY_1400,
 	}
 };
 
 static int __init init_rc_map_cinergy_1400(void)
 {
-	return ir_register_map(&cinergy_1400_map);
+	return rc_map_register(&cinergy_1400_map);
 }
 
 static void __exit exit_rc_map_cinergy_1400(void)
 {
-	ir_unregister_map(&cinergy_1400_map);
+	rc_map_unregister(&cinergy_1400_map);
 }
 
 module_init(init_rc_map_cinergy_1400)

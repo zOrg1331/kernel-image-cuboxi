@@ -12,7 +12,7 @@
 #include <media/rc-map.h>
 
 /* mce-mode imon mce remote key table */
-static struct ir_scancode imon_mce[] = {
+static struct rc_map_table imon_mce[] = {
 	/* keys sorted mostly by frequency of use to optimize lookups */
 	{ 0x800ff415, KEY_REWIND },
 	{ 0x800ff414, KEY_FASTFORWARD },
@@ -115,24 +115,24 @@ static struct ir_scancode imon_mce[] = {
 
 };
 
-static struct rc_keymap imon_mce_map = {
+static struct rc_map_list imon_mce_map = {
 	.map = {
 		.scan    = imon_mce,
 		.size    = ARRAY_SIZE(imon_mce),
 		/* its RC6, but w/a hardware decoder */
-		.ir_type = IR_TYPE_RC6,
+		.rc_type = RC_TYPE_RC6,
 		.name    = RC_MAP_IMON_MCE,
 	}
 };
 
 static int __init init_rc_map_imon_mce(void)
 {
-	return ir_register_map(&imon_mce_map);
+	return rc_map_register(&imon_mce_map);
 }
 
 static void __exit exit_rc_map_imon_mce(void)
 {
-	ir_unregister_map(&imon_mce_map);
+	rc_map_unregister(&imon_mce_map);
 }
 
 module_init(init_rc_map_imon_mce)

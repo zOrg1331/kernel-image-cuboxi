@@ -14,7 +14,7 @@
 
 /* AVERTV STUDIO 303 Remote */
 
-static struct ir_scancode avertv_303[] = {
+static struct rc_map_table avertv_303[] = {
 	{ 0x2a, KEY_1 },
 	{ 0x32, KEY_2 },
 	{ 0x3a, KEY_3 },
@@ -59,23 +59,23 @@ static struct ir_scancode avertv_303[] = {
 	{ 0x1b, KEY_UP },
 };
 
-static struct rc_keymap avertv_303_map = {
+static struct rc_map_list avertv_303_map = {
 	.map = {
 		.scan    = avertv_303,
 		.size    = ARRAY_SIZE(avertv_303),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_AVERTV_303,
 	}
 };
 
 static int __init init_rc_map_avertv_303(void)
 {
-	return ir_register_map(&avertv_303_map);
+	return rc_map_register(&avertv_303_map);
 }
 
 static void __exit exit_rc_map_avertv_303(void)
 {
-	ir_unregister_map(&avertv_303_map);
+	rc_map_unregister(&avertv_303_map);
 }
 
 module_init(init_rc_map_avertv_303)

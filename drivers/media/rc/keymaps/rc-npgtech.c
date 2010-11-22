@@ -12,7 +12,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode npgtech[] = {
+static struct rc_map_table npgtech[] = {
 	{ 0x1d, KEY_SWITCHVIDEOMODE },	/* switch inputs */
 	{ 0x2a, KEY_FRONT },
 
@@ -54,23 +54,23 @@ static struct ir_scancode npgtech[] = {
 
 };
 
-static struct rc_keymap npgtech_map = {
+static struct rc_map_list npgtech_map = {
 	.map = {
 		.scan    = npgtech,
 		.size    = ARRAY_SIZE(npgtech),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_NPGTECH,
 	}
 };
 
 static int __init init_rc_map_npgtech(void)
 {
-	return ir_register_map(&npgtech_map);
+	return rc_map_register(&npgtech_map);
 }
 
 static void __exit exit_rc_map_npgtech(void)
 {
-	ir_unregister_map(&npgtech_map);
+	rc_map_unregister(&npgtech_map);
 }
 
 module_init(init_rc_map_npgtech)

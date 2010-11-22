@@ -34,7 +34,7 @@
 
 #include <media/videobuf-vmalloc.h>
 #include <media/v4l2-device.h>
-#include <media/ir-core.h>
+#include <media/rc-core.h>
 #include <media/ir-kbd-i2c.h>
 #include <media/videobuf-dvb.h>
 
@@ -349,7 +349,7 @@ struct cx231xx_board {
 	u8 ir_i2c_master;
 
 	/* for devices with I2C chips for IR */
-	char *rc_map;
+	char *rc_map_name;
 
 	unsigned int max_range_640_480:1;
 	unsigned int has_dvb:1;
@@ -362,7 +362,7 @@ struct cx231xx_board {
 
 	struct cx231xx_input input[MAX_CX231XX_INPUT];
 	struct cx231xx_input radio;
-	struct ir_scancode_table *ir_codes;
+	struct rc_map *ir_codes;
 };
 
 /* device states */

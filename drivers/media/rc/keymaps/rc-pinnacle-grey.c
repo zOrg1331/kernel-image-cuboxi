@@ -12,7 +12,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode pinnacle_grey[] = {
+static struct rc_map_table pinnacle_grey[] = {
 	{ 0x3a, KEY_0 },
 	{ 0x31, KEY_1 },
 	{ 0x32, KEY_2 },
@@ -63,23 +63,23 @@ static struct ir_scancode pinnacle_grey[] = {
 	{ 0x18, KEY_EPG },
 };
 
-static struct rc_keymap pinnacle_grey_map = {
+static struct rc_map_list pinnacle_grey_map = {
 	.map = {
 		.scan    = pinnacle_grey,
 		.size    = ARRAY_SIZE(pinnacle_grey),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_PINNACLE_GREY,
 	}
 };
 
 static int __init init_rc_map_pinnacle_grey(void)
 {
-	return ir_register_map(&pinnacle_grey_map);
+	return rc_map_register(&pinnacle_grey_map);
 }
 
 static void __exit exit_rc_map_pinnacle_grey(void)
 {
-	ir_unregister_map(&pinnacle_grey_map);
+	rc_map_unregister(&pinnacle_grey_map);
 }
 
 module_init(init_rc_map_pinnacle_grey)

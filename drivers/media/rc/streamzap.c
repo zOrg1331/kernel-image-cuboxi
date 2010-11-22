@@ -35,7 +35,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/usb.h>
-#include <media/ir-core.h>
+#include <media/rc-core.h>
 
 #define DRIVER_VERSION	"1.61"
 #define DRIVER_NAME	"streamzap"
@@ -320,7 +320,7 @@ static struct rc_dev *streamzap_init_rc_dev(struct streamzap_ir *sz)
 	rdev->input_phys = sz->phys;
 	rdev->priv = sz;
 	rdev->driver_type = RC_DRIVER_IR_RAW;
-	rdev->allowed_protos = IR_TYPE_ALL;
+	rdev->allowed_protos = RC_TYPE_ALL;
 	rdev->driver_name = DRIVER_NAME;
 	rdev->map_name = RC_MAP_STREAMZAP;
 

@@ -16,7 +16,7 @@
    Magnus Alm <magnus.alm@gmail.com>
  */
 
-static struct ir_scancode winfast_usbii_deluxe[] = {
+static struct rc_map_table winfast_usbii_deluxe[] = {
 	{ 0x62, KEY_0},
 	{ 0x75, KEY_1},
 	{ 0x76, KEY_2},
@@ -56,23 +56,23 @@ static struct ir_scancode winfast_usbii_deluxe[] = {
 
 };
 
-static struct rc_keymap winfast_usbii_deluxe_map = {
+static struct rc_map_list winfast_usbii_deluxe_map = {
 	.map = {
 		.scan    = winfast_usbii_deluxe,
 		.size    = ARRAY_SIZE(winfast_usbii_deluxe),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_WINFAST_USBII_DELUXE,
 	}
 };
 
 static int __init init_rc_map_winfast_usbii_deluxe(void)
 {
-	return ir_register_map(&winfast_usbii_deluxe_map);
+	return rc_map_register(&winfast_usbii_deluxe_map);
 }
 
 static void __exit exit_rc_map_winfast_usbii_deluxe(void)
 {
-	ir_unregister_map(&winfast_usbii_deluxe_map);
+	rc_map_unregister(&winfast_usbii_deluxe_map);
 }
 
 module_init(init_rc_map_winfast_usbii_deluxe)

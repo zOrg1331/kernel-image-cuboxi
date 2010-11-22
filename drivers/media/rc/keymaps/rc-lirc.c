@@ -9,29 +9,29 @@
  * (at your option) any later version.
  */
 
-#include <media/ir-core.h>
+#include <media/rc-core.h>
 
-static struct ir_scancode lirc[] = {
+static struct rc_map_table lirc[] = {
 	{ },
 };
 
-static struct rc_keymap lirc_map = {
+static struct rc_map_list lirc_map = {
 	.map = {
 		.scan    = lirc,
 		.size    = ARRAY_SIZE(lirc),
-		.ir_type = IR_TYPE_LIRC,
+		.rc_type = RC_TYPE_LIRC,
 		.name    = RC_MAP_LIRC,
 	}
 };
 
 static int __init init_rc_map_lirc(void)
 {
-	return ir_register_map(&lirc_map);
+	return rc_map_register(&lirc_map);
 }
 
 static void __exit exit_rc_map_lirc(void)
 {
-	ir_unregister_map(&lirc_map);
+	rc_map_unregister(&lirc_map);
 }
 
 module_init(init_rc_map_lirc)

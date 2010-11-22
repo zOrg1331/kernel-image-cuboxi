@@ -11,7 +11,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode streamzap[] = {
+static struct rc_map_table streamzap[] = {
 /*
  * The Streamzap remote is almost, but not quite, RC-5, as it has an extra
  * bit in it, which throws the in-kernel RC-5 decoder for a loop. Currently,
@@ -56,23 +56,23 @@ static struct ir_scancode streamzap[] = {
 
 };
 
-static struct rc_keymap streamzap_map = {
+static struct rc_map_list streamzap_map = {
 	.map = {
 		.scan    = streamzap,
 		.size    = ARRAY_SIZE(streamzap),
-		.ir_type = IR_TYPE_RC5_SZ,
+		.rc_type = RC_TYPE_RC5_SZ,
 		.name    = RC_MAP_STREAMZAP,
 	}
 };
 
 static int __init init_rc_map_streamzap(void)
 {
-	return ir_register_map(&streamzap_map);
+	return rc_map_register(&streamzap_map);
 }
 
 static void __exit exit_rc_map_streamzap(void)
 {
-	ir_unregister_map(&streamzap_map);
+	rc_map_unregister(&streamzap_map);
 }
 
 module_init(init_rc_map_streamzap)

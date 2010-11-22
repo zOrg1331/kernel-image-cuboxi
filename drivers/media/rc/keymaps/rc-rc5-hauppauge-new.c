@@ -19,7 +19,7 @@
  * This table contains the complete RC5 code, instead of just the data part
  */
 
-static struct ir_scancode rc5_hauppauge_new[] = {
+static struct rc_map_table rc5_hauppauge_new[] = {
 	/* Keys 0 to 9 */
 	{ 0x1e00, KEY_0 },
 	{ 0x1e01, KEY_1 },
@@ -77,23 +77,23 @@ static struct ir_scancode rc5_hauppauge_new[] = {
 	{ 0x1e3d, KEY_POWER },		/* system power (green button) */
 };
 
-static struct rc_keymap rc5_hauppauge_new_map = {
+static struct rc_map_list rc5_hauppauge_new_map = {
 	.map = {
 		.scan    = rc5_hauppauge_new,
 		.size    = ARRAY_SIZE(rc5_hauppauge_new),
-		.ir_type = IR_TYPE_RC5,
+		.rc_type = RC_TYPE_RC5,
 		.name    = RC_MAP_RC5_HAUPPAUGE_NEW,
 	}
 };
 
 static int __init init_rc_map_rc5_hauppauge_new(void)
 {
-	return ir_register_map(&rc5_hauppauge_new_map);
+	return rc_map_register(&rc5_hauppauge_new_map);
 }
 
 static void __exit exit_rc_map_rc5_hauppauge_new(void)
 {
-	ir_unregister_map(&rc5_hauppauge_new_map);
+	rc_map_unregister(&rc5_hauppauge_new_map);
 }
 
 module_init(init_rc_map_rc5_hauppauge_new)

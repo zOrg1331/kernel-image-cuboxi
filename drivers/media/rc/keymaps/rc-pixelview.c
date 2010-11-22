@@ -12,7 +12,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode pixelview[] = {
+static struct rc_map_table pixelview[] = {
 
 	{ 0x1e, KEY_POWER },	/* power */
 	{ 0x07, KEY_MEDIA },	/* source */
@@ -56,23 +56,23 @@ static struct ir_scancode pixelview[] = {
 	{ 0x18, KEY_MUTE },		/* mute/unmute */
 };
 
-static struct rc_keymap pixelview_map = {
+static struct rc_map_list pixelview_map = {
 	.map = {
 		.scan    = pixelview,
 		.size    = ARRAY_SIZE(pixelview),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_PIXELVIEW,
 	}
 };
 
 static int __init init_rc_map_pixelview(void)
 {
-	return ir_register_map(&pixelview_map);
+	return rc_map_register(&pixelview_map);
 }
 
 static void __exit exit_rc_map_pixelview(void)
 {
-	ir_unregister_map(&pixelview_map);
+	rc_map_unregister(&pixelview_map);
 }
 
 module_init(init_rc_map_pixelview)

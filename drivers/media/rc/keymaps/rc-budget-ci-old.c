@@ -18,7 +18,7 @@
  * This is a "middle of the road" approach, differences are noted
  */
 
-static struct ir_scancode budget_ci_old[] = {
+static struct rc_map_table budget_ci_old[] = {
 	{ 0x00, KEY_0 },
 	{ 0x01, KEY_1 },
 	{ 0x02, KEY_2 },
@@ -66,23 +66,23 @@ static struct ir_scancode budget_ci_old[] = {
 	{ 0x3e, KEY_TUNER },
 };
 
-static struct rc_keymap budget_ci_old_map = {
+static struct rc_map_list budget_ci_old_map = {
 	.map = {
 		.scan    = budget_ci_old,
 		.size    = ARRAY_SIZE(budget_ci_old),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_BUDGET_CI_OLD,
 	}
 };
 
 static int __init init_rc_map_budget_ci_old(void)
 {
-	return ir_register_map(&budget_ci_old_map);
+	return rc_map_register(&budget_ci_old_map);
 }
 
 static void __exit exit_rc_map_budget_ci_old(void)
 {
-	ir_unregister_map(&budget_ci_old_map);
+	rc_map_unregister(&budget_ci_old_map);
 }
 
 module_init(init_rc_map_budget_ci_old)

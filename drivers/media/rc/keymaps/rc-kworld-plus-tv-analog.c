@@ -16,7 +16,7 @@
    Mauro Carvalho Chehab <mchehab@infradead.org>
  */
 
-static struct ir_scancode kworld_plus_tv_analog[] = {
+static struct rc_map_table kworld_plus_tv_analog[] = {
 	{ 0x0c, KEY_PROG1 },		/* Kworld key */
 	{ 0x16, KEY_CLOSECD },		/* -> ) */
 	{ 0x1d, KEY_POWER2 },
@@ -73,23 +73,23 @@ static struct ir_scancode kworld_plus_tv_analog[] = {
 	{ 0x23, KEY_GREEN},		/* C */
 };
 
-static struct rc_keymap kworld_plus_tv_analog_map = {
+static struct rc_map_list kworld_plus_tv_analog_map = {
 	.map = {
 		.scan    = kworld_plus_tv_analog,
 		.size    = ARRAY_SIZE(kworld_plus_tv_analog),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_KWORLD_PLUS_TV_ANALOG,
 	}
 };
 
 static int __init init_rc_map_kworld_plus_tv_analog(void)
 {
-	return ir_register_map(&kworld_plus_tv_analog_map);
+	return rc_map_register(&kworld_plus_tv_analog_map);
 }
 
 static void __exit exit_rc_map_kworld_plus_tv_analog(void)
 {
-	ir_unregister_map(&kworld_plus_tv_analog_map);
+	rc_map_unregister(&kworld_plus_tv_analog_map);
 }
 
 module_init(init_rc_map_kworld_plus_tv_analog)

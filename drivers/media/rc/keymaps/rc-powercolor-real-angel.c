@@ -17,7 +17,7 @@
  * Daniel Fraga <fragabr@gmail.com>
  */
 
-static struct ir_scancode powercolor_real_angel[] = {
+static struct rc_map_table powercolor_real_angel[] = {
 	{ 0x38, KEY_SWITCHVIDEOMODE },	/* switch inputs */
 	{ 0x0c, KEY_MEDIA },		/* Turn ON/OFF App */
 	{ 0x00, KEY_0 },
@@ -55,23 +55,23 @@ static struct ir_scancode powercolor_real_angel[] = {
 	{ 0x25, KEY_POWER },		/* power */
 };
 
-static struct rc_keymap powercolor_real_angel_map = {
+static struct rc_map_list powercolor_real_angel_map = {
 	.map = {
 		.scan    = powercolor_real_angel,
 		.size    = ARRAY_SIZE(powercolor_real_angel),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_POWERCOLOR_REAL_ANGEL,
 	}
 };
 
 static int __init init_rc_map_powercolor_real_angel(void)
 {
-	return ir_register_map(&powercolor_real_angel_map);
+	return rc_map_register(&powercolor_real_angel_map);
 }
 
 static void __exit exit_rc_map_powercolor_real_angel(void)
 {
-	ir_unregister_map(&powercolor_real_angel_map);
+	rc_map_unregister(&powercolor_real_angel_map);
 }
 
 module_init(init_rc_map_powercolor_real_angel)

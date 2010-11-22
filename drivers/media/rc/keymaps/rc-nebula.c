@@ -12,7 +12,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode nebula[] = {
+static struct rc_map_table nebula[] = {
 	{ 0x00, KEY_0 },
 	{ 0x01, KEY_1 },
 	{ 0x02, KEY_2 },
@@ -70,23 +70,23 @@ static struct ir_scancode nebula[] = {
 	{ 0x36, KEY_PC },
 };
 
-static struct rc_keymap nebula_map = {
+static struct rc_map_list nebula_map = {
 	.map = {
 		.scan    = nebula,
 		.size    = ARRAY_SIZE(nebula),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_NEBULA,
 	}
 };
 
 static int __init init_rc_map_nebula(void)
 {
-	return ir_register_map(&nebula_map);
+	return rc_map_register(&nebula_map);
 }
 
 static void __exit exit_rc_map_nebula(void)
 {
-	ir_unregister_map(&nebula_map);
+	rc_map_unregister(&nebula_map);
 }
 
 module_init(init_rc_map_nebula)

@@ -20,7 +20,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode digitalnow_tinytwin[] = {
+static struct rc_map_table digitalnow_tinytwin[] = {
 	{ 0x0000, KEY_MUTE },            /* [symbol speaker] */
 	{ 0x0001, KEY_VOLUMEUP },
 	{ 0x0002, KEY_POWER2 },          /* TV [power button] */
@@ -72,23 +72,23 @@ static struct ir_scancode digitalnow_tinytwin[] = {
 	{ 0x005a, KEY_PREVIOUS },        /* REPLAY */
 };
 
-static struct rc_keymap digitalnow_tinytwin_map = {
+static struct rc_map_list digitalnow_tinytwin_map = {
 	.map = {
 		.scan    = digitalnow_tinytwin,
 		.size    = ARRAY_SIZE(digitalnow_tinytwin),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_DIGITALNOW_TINYTWIN,
 	}
 };
 
 static int __init init_rc_map_digitalnow_tinytwin(void)
 {
-	return ir_register_map(&digitalnow_tinytwin_map);
+	return rc_map_register(&digitalnow_tinytwin_map);
 }
 
 static void __exit exit_rc_map_digitalnow_tinytwin(void)
 {
-	ir_unregister_map(&digitalnow_tinytwin_map);
+	rc_map_unregister(&digitalnow_tinytwin_map);
 }
 
 module_init(init_rc_map_digitalnow_tinytwin)

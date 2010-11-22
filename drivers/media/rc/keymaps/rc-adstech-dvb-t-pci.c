@@ -14,7 +14,7 @@
 
 /* ADS Tech Instant TV DVB-T PCI Remote */
 
-static struct ir_scancode adstech_dvb_t_pci[] = {
+static struct rc_map_table adstech_dvb_t_pci[] = {
 	/* Keys 0 to 9 */
 	{ 0x4d, KEY_0 },
 	{ 0x57, KEY_1 },
@@ -63,23 +63,23 @@ static struct ir_scancode adstech_dvb_t_pci[] = {
 	{ 0x1c, KEY_VOLUMEDOWN },
 };
 
-static struct rc_keymap adstech_dvb_t_pci_map = {
+static struct rc_map_list adstech_dvb_t_pci_map = {
 	.map = {
 		.scan    = adstech_dvb_t_pci,
 		.size    = ARRAY_SIZE(adstech_dvb_t_pci),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_ADSTECH_DVB_T_PCI,
 	}
 };
 
 static int __init init_rc_map_adstech_dvb_t_pci(void)
 {
-	return ir_register_map(&adstech_dvb_t_pci_map);
+	return rc_map_register(&adstech_dvb_t_pci_map);
 }
 
 static void __exit exit_rc_map_adstech_dvb_t_pci(void)
 {
-	ir_unregister_map(&adstech_dvb_t_pci_map);
+	rc_map_unregister(&adstech_dvb_t_pci_map);
 }
 
 module_init(init_rc_map_adstech_dvb_t_pci)

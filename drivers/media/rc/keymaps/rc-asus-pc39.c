@@ -18,7 +18,7 @@
  * which has a label saying is "Model PC-39"
  */
 
-static struct ir_scancode asus_pc39[] = {
+static struct rc_map_table asus_pc39[] = {
 	/* Keys 0 to 9 */
 	{ 0x082a, KEY_0 },
 	{ 0x0816, KEY_1 },
@@ -65,23 +65,23 @@ static struct ir_scancode asus_pc39[] = {
 	{ 0x083e, KEY_DVD },		/* dvd */
 };
 
-static struct rc_keymap asus_pc39_map = {
+static struct rc_map_list asus_pc39_map = {
 	.map = {
 		.scan    = asus_pc39,
 		.size    = ARRAY_SIZE(asus_pc39),
-		.ir_type = IR_TYPE_RC5,
+		.rc_type = RC_TYPE_RC5,
 		.name    = RC_MAP_ASUS_PC39,
 	}
 };
 
 static int __init init_rc_map_asus_pc39(void)
 {
-	return ir_register_map(&asus_pc39_map);
+	return rc_map_register(&asus_pc39_map);
 }
 
 static void __exit exit_rc_map_asus_pc39(void)
 {
-	ir_unregister_map(&asus_pc39_map);
+	rc_map_unregister(&asus_pc39_map);
 }
 
 module_init(init_rc_map_asus_pc39)

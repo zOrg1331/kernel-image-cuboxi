@@ -16,7 +16,7 @@
    Devin Heitmueller <devin.heitmueller@gmail.com>
  */
 
-static struct ir_scancode evga_indtube[] = {
+static struct rc_map_table evga_indtube[] = {
 	{ 0x12, KEY_POWER},
 	{ 0x02, KEY_MODE},	/* TV */
 	{ 0x14, KEY_MUTE},
@@ -35,23 +35,23 @@ static struct ir_scancode evga_indtube[] = {
 	{ 0x13, KEY_CAMERA},
 };
 
-static struct rc_keymap evga_indtube_map = {
+static struct rc_map_list evga_indtube_map = {
 	.map = {
 		.scan    = evga_indtube,
 		.size    = ARRAY_SIZE(evga_indtube),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_EVGA_INDTUBE,
 	}
 };
 
 static int __init init_rc_map_evga_indtube(void)
 {
-	return ir_register_map(&evga_indtube_map);
+	return rc_map_register(&evga_indtube_map);
 }
 
 static void __exit exit_rc_map_evga_indtube(void)
 {
-	ir_unregister_map(&evga_indtube_map);
+	rc_map_unregister(&evga_indtube_map);
 }
 
 module_init(init_rc_map_evga_indtube)

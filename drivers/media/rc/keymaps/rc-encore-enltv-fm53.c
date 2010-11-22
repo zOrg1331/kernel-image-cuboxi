@@ -16,7 +16,7 @@
    Mauro Carvalho Chehab <mchehab@infradead.org>
  */
 
-static struct ir_scancode encore_enltv_fm53[] = {
+static struct rc_map_table encore_enltv_fm53[] = {
 	{ 0x10, KEY_POWER2},
 	{ 0x06, KEY_MUTE},
 
@@ -55,23 +55,23 @@ static struct ir_scancode encore_enltv_fm53[] = {
 	{ 0x47, KEY_SLEEP},		/* shutdown */
 };
 
-static struct rc_keymap encore_enltv_fm53_map = {
+static struct rc_map_list encore_enltv_fm53_map = {
 	.map = {
 		.scan    = encore_enltv_fm53,
 		.size    = ARRAY_SIZE(encore_enltv_fm53),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_ENCORE_ENLTV_FM53,
 	}
 };
 
 static int __init init_rc_map_encore_enltv_fm53(void)
 {
-	return ir_register_map(&encore_enltv_fm53_map);
+	return rc_map_register(&encore_enltv_fm53_map);
 }
 
 static void __exit exit_rc_map_encore_enltv_fm53(void)
 {
-	ir_unregister_map(&encore_enltv_fm53_map);
+	rc_map_unregister(&encore_enltv_fm53_map);
 }
 
 module_init(init_rc_map_encore_enltv_fm53)

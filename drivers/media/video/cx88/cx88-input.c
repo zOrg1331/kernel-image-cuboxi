@@ -29,7 +29,7 @@
 #include <linux/module.h>
 
 #include "cx88.h"
-#include <media/ir-core.h>
+#include <media/rc-core.h>
 
 #define MODULE_NAME "cx88xx"
 
@@ -123,26 +123,26 @@ static void cx88_ir_handle_key(struct cx88_IR *ir)
 
 		data = (data << 4) | ((gpio_key & 0xf0) >> 4);
 
-		ir_keydown(ir->dev, data, 0);
+		rc_keydown(ir->dev, data, 0);
 
 	} else if (ir->mask_keydown) {
 		/* bit set on keydown */
 		if (gpio & ir->mask_keydown)
-			ir_keydown_notimeout(ir->dev, data, 0);
+			rc_keydown_notimeout(ir->dev, data, 0);
 		else
-			ir_keyup(ir->dev);
+			rc_keyup(ir->dev);
 
 	} else if (ir->mask_keyup) {
 		/* bit cleared on keydown */
 		if (0 == (gpio & ir->mask_keyup))
-			ir_keydown_notimeout(ir->dev, data, 0);
+			rc_keydown_notimeout(ir->dev, data, 0);
 		else
-			ir_keyup(ir->dev);
+			rc_keyup(ir->dev);
 
 	} else {
 		/* can't distinguish keydown/up :-/ */
-		ir_keydown_notimeout(ir->dev, data, 0);
-		ir_keyup(ir->dev);
+		rc_keydown_notimeout(ir->dev, data, 0);
+		rc_keyup(ir->dev);
 	}
 }
 
@@ -241,7 +241,7 @@ int cx88_ir_init(struct cx88_core *core, struct pci_dev *pci)
 	struct cx88_IR *ir;
 	struct rc_dev *dev;
 	char *ir_codes = NULL;
-	u64 ir_type = IR_TYPE_OTHER;
+	u64 rc_type = RC_TYPE_OTHER;
 	int err = -ENOMEM;
 	u32 hardware_mask = 0;	/* For devices with a hardware mask, when
 				 * used with a full-code IR table
@@ -404,7 +404,7 @@ int cx88_ir_init(struct cx88_core *core, struct pci_dev *pci)
 		break;
 	case CX88_BOARD_TWINHAN_VP1027_DVBS:
 		ir_codes         = RC_MAP_TWINHAN_VP1027_DVBS;
-		ir_type          = IR_TYPE_NEC;
+		rc_type          = RC_TYPE_NEC;
 		ir->sampling     = 0xff00; /* address */
 		break;
 	}
@@ -457,7 +457,7 @@ int cx88_ir_init(struct cx88_core *core, struct pci_dev *pci)
 		dev->timeout = 10 * 1000 * 1000; /* 10 ms */
 	} else {
 		dev->driver_type = RC_DRIVER_SCANCODE;
-		dev->allowed_protos = ir_type;
+		dev->allowed_protos = rc_type;
 	}
 
 	ir->core = core;
@@ -557,7 +557,7 @@ void cx88_i2c_init_ir(struct cx88_core *core)
 			/* Hauppauge XVR */
 			core->init_data.name = "cx88 Hauppauge XVR remote";
 			core->init_data.ir_codes = RC_MAP_HAUPPAUGE_NEW;
-			core->init_data.type = IR_TYPE_RC5;
+			core->init_data.type = RC_TYPE_RC5;
 			core->init_data.internal_get_key_func = IR_KBD_GET_KEY_HAUP_XVR;
 
 			info.platform_data = &core->init_data;

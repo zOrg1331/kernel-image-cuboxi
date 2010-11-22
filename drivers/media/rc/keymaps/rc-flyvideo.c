@@ -12,7 +12,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode flyvideo[] = {
+static struct rc_map_table flyvideo[] = {
 	{ 0x0f, KEY_0 },
 	{ 0x03, KEY_1 },
 	{ 0x04, KEY_2 },
@@ -44,23 +44,23 @@ static struct ir_scancode flyvideo[] = {
 	{ 0x0a, KEY_ANGLE },	/* no label, may be used as the PAUSE button */
 };
 
-static struct rc_keymap flyvideo_map = {
+static struct rc_map_list flyvideo_map = {
 	.map = {
 		.scan    = flyvideo,
 		.size    = ARRAY_SIZE(flyvideo),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_FLYVIDEO,
 	}
 };
 
 static int __init init_rc_map_flyvideo(void)
 {
-	return ir_register_map(&flyvideo_map);
+	return rc_map_register(&flyvideo_map);
 }
 
 static void __exit exit_rc_map_flyvideo(void)
 {
-	ir_unregister_map(&flyvideo_map);
+	rc_map_unregister(&flyvideo_map);
 }
 
 module_init(init_rc_map_flyvideo)

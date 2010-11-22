@@ -15,7 +15,7 @@
 /* Encore ENLTV2-FM  - silver plastic - "Wand Media" written at the botton
     Mauro Carvalho Chehab <mchehab@infradead.org> */
 
-static struct ir_scancode encore_enltv2[] = {
+static struct rc_map_table encore_enltv2[] = {
 	{ 0x4c, KEY_POWER2 },
 	{ 0x4a, KEY_TUNER },
 	{ 0x40, KEY_1 },
@@ -64,23 +64,23 @@ static struct ir_scancode encore_enltv2[] = {
 	{ 0x79, KEY_STOP },
 };
 
-static struct rc_keymap encore_enltv2_map = {
+static struct rc_map_list encore_enltv2_map = {
 	.map = {
 		.scan    = encore_enltv2,
 		.size    = ARRAY_SIZE(encore_enltv2),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_ENCORE_ENLTV2,
 	}
 };
 
 static int __init init_rc_map_encore_enltv2(void)
 {
-	return ir_register_map(&encore_enltv2_map);
+	return rc_map_register(&encore_enltv2_map);
 }
 
 static void __exit exit_rc_map_encore_enltv2(void)
 {
-	ir_unregister_map(&encore_enltv2_map);
+	rc_map_unregister(&encore_enltv2_map);
 }
 
 module_init(init_rc_map_encore_enltv2)

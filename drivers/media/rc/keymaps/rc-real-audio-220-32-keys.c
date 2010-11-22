@@ -14,7 +14,7 @@
 
 /* Zogis Real Audio 220 - 32 keys IR */
 
-static struct ir_scancode real_audio_220_32_keys[] = {
+static struct rc_map_table real_audio_220_32_keys[] = {
 	{ 0x1c, KEY_RADIO},
 	{ 0x12, KEY_POWER2},
 
@@ -52,23 +52,23 @@ static struct ir_scancode real_audio_220_32_keys[] = {
 
 };
 
-static struct rc_keymap real_audio_220_32_keys_map = {
+static struct rc_map_list real_audio_220_32_keys_map = {
 	.map = {
 		.scan    = real_audio_220_32_keys,
 		.size    = ARRAY_SIZE(real_audio_220_32_keys),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_REAL_AUDIO_220_32_KEYS,
 	}
 };
 
 static int __init init_rc_map_real_audio_220_32_keys(void)
 {
-	return ir_register_map(&real_audio_220_32_keys_map);
+	return rc_map_register(&real_audio_220_32_keys_map);
 }
 
 static void __exit exit_rc_map_real_audio_220_32_keys(void)
 {
-	ir_unregister_map(&real_audio_220_32_keys_map);
+	rc_map_unregister(&real_audio_220_32_keys_map);
 }
 
 module_init(init_rc_map_real_audio_220_32_keys)

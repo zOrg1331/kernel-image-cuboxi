@@ -20,7 +20,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode msi_digivox_ii[] = {
+static struct rc_map_table msi_digivox_ii[] = {
 	{ 0x0002, KEY_2 },
 	{ 0x0003, KEY_UP },              /* up */
 	{ 0x0004, KEY_3 },
@@ -41,23 +41,23 @@ static struct ir_scancode msi_digivox_ii[] = {
 	{ 0x001f, KEY_VOLUMEDOWN },
 };
 
-static struct rc_keymap msi_digivox_ii_map = {
+static struct rc_map_list msi_digivox_ii_map = {
 	.map = {
 		.scan    = msi_digivox_ii,
 		.size    = ARRAY_SIZE(msi_digivox_ii),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_MSI_DIGIVOX_II,
 	}
 };
 
 static int __init init_rc_map_msi_digivox_ii(void)
 {
-	return ir_register_map(&msi_digivox_ii_map);
+	return rc_map_register(&msi_digivox_ii_map);
 }
 
 static void __exit exit_rc_map_msi_digivox_ii(void)
 {
-	ir_unregister_map(&msi_digivox_ii_map);
+	rc_map_unregister(&msi_digivox_ii_map);
 }
 
 module_init(init_rc_map_msi_digivox_ii)

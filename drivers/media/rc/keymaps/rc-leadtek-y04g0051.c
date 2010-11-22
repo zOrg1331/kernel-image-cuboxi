@@ -20,7 +20,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode leadtek_y04g0051[] = {
+static struct rc_map_table leadtek_y04g0051[] = {
 	{ 0x0300, KEY_POWER2 },
 	{ 0x0303, KEY_SCREEN },
 	{ 0x0304, KEY_RIGHT },
@@ -73,23 +73,23 @@ static struct ir_scancode leadtek_y04g0051[] = {
 	{ 0x035f, KEY_CHANNELDOWN },
 };
 
-static struct rc_keymap leadtek_y04g0051_map = {
+static struct rc_map_list leadtek_y04g0051_map = {
 	.map = {
 		.scan    = leadtek_y04g0051,
 		.size    = ARRAY_SIZE(leadtek_y04g0051),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_LEADTEK_Y04G0051,
 	}
 };
 
 static int __init init_rc_map_leadtek_y04g0051(void)
 {
-	return ir_register_map(&leadtek_y04g0051_map);
+	return rc_map_register(&leadtek_y04g0051_map);
 }
 
 static void __exit exit_rc_map_leadtek_y04g0051(void)
 {
-	ir_unregister_map(&leadtek_y04g0051_map);
+	rc_map_unregister(&leadtek_y04g0051_map);
 }
 
 module_init(init_rc_map_leadtek_y04g0051)

@@ -46,7 +46,7 @@ static int ir_jvc_decode(struct rc_dev *dev, struct ir_raw_event ev)
 {
 	struct jvc_dec *data = &dev->raw->jvc;
 
-	if (!(dev->raw->enabled_protocols & IR_TYPE_JVC))
+	if (!(dev->raw->enabled_protocols & RC_TYPE_JVC))
 		return 0;
 
 	if (!is_timing_event(ev)) {
@@ -139,12 +139,12 @@ again:
 			scancode = (bitrev8((data->bits >> 8) & 0xff) << 8) |
 				   (bitrev8((data->bits >> 0) & 0xff) << 0);
 			IR_dprintk(1, "JVC scancode 0x%04x\n", scancode);
-			ir_keydown(dev, scancode, data->toggle);
+			rc_keydown(dev, scancode, data->toggle);
 			data->first = false;
 			data->old_bits = data->bits;
 		} else if (data->bits == data->old_bits) {
 			IR_dprintk(1, "JVC repeat\n");
-			ir_repeat(dev);
+			rc_repeat(dev);
 		} else {
 			IR_dprintk(1, "JVC invalid repeat msg\n");
 			break;
@@ -173,7 +173,7 @@ out:
 }
 
 static struct ir_raw_handler jvc_handler = {
-	.protocols	= IR_TYPE_JVC,
+	.protocols	= RC_TYPE_JVC,
 	.decode		= ir_jvc_decode,
 };
 

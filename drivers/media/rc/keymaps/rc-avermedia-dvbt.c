@@ -14,7 +14,7 @@
 
 /* Matt Jesson <dvb@jesson.eclipse.co.uk */
 
-static struct ir_scancode avermedia_dvbt[] = {
+static struct rc_map_table avermedia_dvbt[] = {
 	{ 0x28, KEY_0 },		/* '0' / 'enter' */
 	{ 0x22, KEY_1 },		/* '1' */
 	{ 0x12, KEY_2 },		/* '2' / 'up arrow' */
@@ -52,23 +52,23 @@ static struct ir_scancode avermedia_dvbt[] = {
 	{ 0x3e, KEY_VOLUMEUP },		/* 'volume +' */
 };
 
-static struct rc_keymap avermedia_dvbt_map = {
+static struct rc_map_list avermedia_dvbt_map = {
 	.map = {
 		.scan    = avermedia_dvbt,
 		.size    = ARRAY_SIZE(avermedia_dvbt),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_AVERMEDIA_DVBT,
 	}
 };
 
 static int __init init_rc_map_avermedia_dvbt(void)
 {
-	return ir_register_map(&avermedia_dvbt_map);
+	return rc_map_register(&avermedia_dvbt_map);
 }
 
 static void __exit exit_rc_map_avermedia_dvbt(void)
 {
-	ir_unregister_map(&avermedia_dvbt_map);
+	rc_map_unregister(&avermedia_dvbt_map);
 }
 
 module_init(init_rc_map_avermedia_dvbt)

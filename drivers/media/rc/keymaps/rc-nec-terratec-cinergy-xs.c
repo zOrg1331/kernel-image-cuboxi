@@ -16,7 +16,7 @@
    Mauro Carvalho Chehab <mchehab@redhat.com>
  */
 
-static struct ir_scancode nec_terratec_cinergy_xs[] = {
+static struct rc_map_table nec_terratec_cinergy_xs[] = {
 	{ 0x1441, KEY_HOME},
 	{ 0x1401, KEY_POWER2},
 
@@ -79,23 +79,23 @@ static struct ir_scancode nec_terratec_cinergy_xs[] = {
 	{ 0x145c, KEY_NEXT},
 };
 
-static struct rc_keymap nec_terratec_cinergy_xs_map = {
+static struct rc_map_list nec_terratec_cinergy_xs_map = {
 	.map = {
 		.scan    = nec_terratec_cinergy_xs,
 		.size    = ARRAY_SIZE(nec_terratec_cinergy_xs),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_NEC_TERRATEC_CINERGY_XS,
 	}
 };
 
 static int __init init_rc_map_nec_terratec_cinergy_xs(void)
 {
-	return ir_register_map(&nec_terratec_cinergy_xs_map);
+	return rc_map_register(&nec_terratec_cinergy_xs_map);
 }
 
 static void __exit exit_rc_map_nec_terratec_cinergy_xs(void)
 {
-	ir_unregister_map(&nec_terratec_cinergy_xs_map);
+	rc_map_unregister(&nec_terratec_cinergy_xs_map);
 }
 
 module_init(init_rc_map_nec_terratec_cinergy_xs)

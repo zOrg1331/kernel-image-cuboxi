@@ -24,7 +24,7 @@
  * helps to descide which keycodes to assign to the buttons.
  */
 
-static struct ir_scancode behold[] = {
+static struct rc_map_table behold[] = {
 
 	/*  0x1c            0x12  *
 	 *  TV/FM          POWER  *
@@ -115,23 +115,23 @@ static struct ir_scancode behold[] = {
 
 };
 
-static struct rc_keymap behold_map = {
+static struct rc_map_list behold_map = {
 	.map = {
 		.scan    = behold,
 		.size    = ARRAY_SIZE(behold),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_BEHOLD,
 	}
 };
 
 static int __init init_rc_map_behold(void)
 {
-	return ir_register_map(&behold_map);
+	return rc_map_register(&behold_map);
 }
 
 static void __exit exit_rc_map_behold(void)
 {
-	ir_unregister_map(&behold_map);
+	rc_map_unregister(&behold_map);
 }
 
 module_init(init_rc_map_behold)

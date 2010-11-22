@@ -18,7 +18,7 @@
 	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
-#include <media/ir-core.h>
+#include <media/rc-core.h>
 #include <linux/pci.h>
 
 #include "dmxdev.h"
@@ -34,7 +34,7 @@
 #define MODULE_NAME "mantis_core"
 #define RC_MAP_MANTIS "rc-mantis"
 
-static struct ir_scancode mantis_ir_table[] = {
+static struct rc_map_table mantis_ir_table[] = {
 	{ 0x29, KEY_POWER	},
 	{ 0x28, KEY_FAVORITES	},
 	{ 0x30, KEY_TEXT	},
@@ -95,11 +95,11 @@ static struct ir_scancode mantis_ir_table[] = {
 	{ 0x00, KEY_BLUE	},
 };
 
-static struct rc_keymap ir_mantis_map = {
+static struct rc_map_list ir_mantis_map = {
 	.map = {
 		.scan = mantis_ir_table,
 		.size = ARRAY_SIZE(mantis_ir_table),
-		.ir_type = IR_TYPE_UNKNOWN,
+		.rc_type = RC_TYPE_UNKNOWN,
 		.name = RC_MAP_MANTIS,
 	}
 };
@@ -109,7 +109,7 @@ int mantis_input_init(struct mantis_pci *mantis)
 	struct rc_dev *dev;
 	int err;
 
-	err = ir_register_map(&ir_mantis_map);
+	err = rc_map_register(&ir_mantis_map);
 	if (err)
 		goto out;
 
@@ -145,7 +145,7 @@ int mantis_input_init(struct mantis_pci *mantis)
 out_dev:
 	rc_free_device(dev);
 out_map:
-	ir_unregister_map(&ir_mantis_map);
+	rc_map_unregister(&ir_mantis_map);
 out:
 	return err;
 }
@@ -153,7 +153,7 @@ out:
 int mantis_exit(struct mantis_pci *mantis)
 {
 	rc_unregister_device(mantis->rc);
-	ir_unregister_map(&ir_mantis_map);
+	rc_map_unregister(&ir_mantis_map);
 	return 0;
 }
 

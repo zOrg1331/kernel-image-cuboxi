@@ -21,7 +21,7 @@
 #include <media/rc-map.h>
 
 /* Uses NEC extended 0x02bd */
-static struct ir_scancode total_media_in_hand[] = {
+static struct rc_map_table total_media_in_hand[] = {
 	{ 0x02bd00, KEY_1 },
 	{ 0x02bd01, KEY_2 },
 	{ 0x02bd02, KEY_3 },
@@ -59,23 +59,23 @@ static struct ir_scancode total_media_in_hand[] = {
 	{ 0x02bd45, KEY_INFO },            /* [red (I)] */
 };
 
-static struct rc_keymap total_media_in_hand_map = {
+static struct rc_map_list total_media_in_hand_map = {
 	.map = {
 		.scan    = total_media_in_hand,
 		.size    = ARRAY_SIZE(total_media_in_hand),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_TOTAL_MEDIA_IN_HAND,
 	}
 };
 
 static int __init init_rc_map_total_media_in_hand(void)
 {
-	return ir_register_map(&total_media_in_hand_map);
+	return rc_map_register(&total_media_in_hand_map);
 }
 
 static void __exit exit_rc_map_total_media_in_hand(void)
 {
-	ir_unregister_map(&total_media_in_hand_map);
+	rc_map_unregister(&total_media_in_hand_map);
 }
 
 module_init(init_rc_map_total_media_in_hand)

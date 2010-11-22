@@ -12,7 +12,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode purpletv[] = {
+static struct rc_map_table purpletv[] = {
 	{ 0x03, KEY_POWER },
 	{ 0x6f, KEY_MUTE },
 	{ 0x10, KEY_BACKSPACE },	/* Recall */
@@ -55,23 +55,23 @@ static struct ir_scancode purpletv[] = {
 
 };
 
-static struct rc_keymap purpletv_map = {
+static struct rc_map_list purpletv_map = {
 	.map = {
 		.scan    = purpletv,
 		.size    = ARRAY_SIZE(purpletv),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_PURPLETV,
 	}
 };
 
 static int __init init_rc_map_purpletv(void)
 {
-	return ir_register_map(&purpletv_map);
+	return rc_map_register(&purpletv_map);
 }
 
 static void __exit exit_rc_map_purpletv(void)
 {
-	ir_unregister_map(&purpletv_map);
+	rc_map_unregister(&purpletv_map);
 }
 
 module_init(init_rc_map_purpletv)

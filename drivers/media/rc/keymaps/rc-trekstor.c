@@ -23,7 +23,7 @@
 /* TrekStor DVB-T USB Stick remote controller. */
 /* Imported from af9015.h.
    Initial keytable was from Marc Schneider <macke@macke.org> */
-static struct ir_scancode trekstor[] = {
+static struct rc_map_table trekstor[] = {
 	{ 0x0084, KEY_0 },
 	{ 0x0085, KEY_MUTE },            /* Mute */
 	{ 0x0086, KEY_HOMEPAGE },        /* Home */
@@ -54,23 +54,23 @@ static struct ir_scancode trekstor[] = {
 	{ 0x009f, KEY_LEFT },            /* Left */
 };
 
-static struct rc_keymap trekstor_map = {
+static struct rc_map_list trekstor_map = {
 	.map = {
 		.scan    = trekstor,
 		.size    = ARRAY_SIZE(trekstor),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_TREKSTOR,
 	}
 };
 
 static int __init init_rc_map_trekstor(void)
 {
-	return ir_register_map(&trekstor_map);
+	return rc_map_register(&trekstor_map);
 }
 
 static void __exit exit_rc_map_trekstor(void)
 {
-	ir_unregister_map(&trekstor_map);
+	rc_map_unregister(&trekstor_map);
 }
 
 module_init(init_rc_map_trekstor)

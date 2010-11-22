@@ -12,7 +12,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode tevii_nec[] = {
+static struct rc_map_table tevii_nec[] = {
 	{ 0x0a, KEY_POWER2},
 	{ 0x0c, KEY_MUTE},
 	{ 0x11, KEY_1},
@@ -62,23 +62,23 @@ static struct ir_scancode tevii_nec[] = {
 	{ 0x58, KEY_SWITCHVIDEOMODE},
 };
 
-static struct rc_keymap tevii_nec_map = {
+static struct rc_map_list tevii_nec_map = {
 	.map = {
 		.scan    = tevii_nec,
 		.size    = ARRAY_SIZE(tevii_nec),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_TEVII_NEC,
 	}
 };
 
 static int __init init_rc_map_tevii_nec(void)
 {
-	return ir_register_map(&tevii_nec_map);
+	return rc_map_register(&tevii_nec_map);
 }
 
 static void __exit exit_rc_map_tevii_nec(void)
 {
-	ir_unregister_map(&tevii_nec_map);
+	rc_map_unregister(&tevii_nec_map);
 }
 
 module_init(init_rc_map_tevii_nec)

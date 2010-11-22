@@ -17,7 +17,7 @@
    Pavel Mihaylov <bin@bash.info>
    Also for the remote bundled with Kozumi KTV-01C card */
 
-static struct ir_scancode pctv_sedna[] = {
+static struct rc_map_table pctv_sedna[] = {
 	{ 0x00, KEY_0 },
 	{ 0x01, KEY_1 },
 	{ 0x02, KEY_2 },
@@ -54,23 +54,23 @@ static struct ir_scancode pctv_sedna[] = {
 	{ 0x1f, KEY_PLAY },	/* Play */
 };
 
-static struct rc_keymap pctv_sedna_map = {
+static struct rc_map_list pctv_sedna_map = {
 	.map = {
 		.scan    = pctv_sedna,
 		.size    = ARRAY_SIZE(pctv_sedna),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_PCTV_SEDNA,
 	}
 };
 
 static int __init init_rc_map_pctv_sedna(void)
 {
-	return ir_register_map(&pctv_sedna_map);
+	return rc_map_register(&pctv_sedna_map);
 }
 
 static void __exit exit_rc_map_pctv_sedna(void)
 {
-	ir_unregister_map(&pctv_sedna_map);
+	rc_map_unregister(&pctv_sedna_map);
 }
 
 module_init(init_rc_map_pctv_sedna)

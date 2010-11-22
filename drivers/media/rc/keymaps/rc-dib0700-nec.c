@@ -17,7 +17,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode dib0700_nec_table[] = {
+static struct rc_map_table dib0700_nec_table[] = {
 	/* Key codes for the Pixelview SBTVD remote */
 	{ 0x8613, KEY_MUTE },
 	{ 0x8612, KEY_POWER },
@@ -98,23 +98,23 @@ static struct ir_scancode dib0700_nec_table[] = {
 	{ 0x4542, KEY_SELECT }, /* Select video input, 'Select' for Teletext */
 };
 
-static struct rc_keymap dib0700_nec_map = {
+static struct rc_map_list dib0700_nec_map = {
 	.map = {
 		.scan    = dib0700_nec_table,
 		.size    = ARRAY_SIZE(dib0700_nec_table),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_DIB0700_NEC_TABLE,
 	}
 };
 
 static int __init init_rc_map(void)
 {
-	return ir_register_map(&dib0700_nec_map);
+	return rc_map_register(&dib0700_nec_map);
 }
 
 static void __exit exit_rc_map(void)
 {
-	ir_unregister_map(&dib0700_nec_map);
+	rc_map_unregister(&dib0700_nec_map);
 }
 
 module_init(init_rc_map)

@@ -14,7 +14,7 @@
 
 /* DViCO FUSION HDTV MCE remote */
 
-static struct ir_scancode fusionhdtv_mce[] = {
+static struct rc_map_table fusionhdtv_mce[] = {
 
 	{ 0x0b, KEY_1 },
 	{ 0x17, KEY_2 },
@@ -72,23 +72,23 @@ static struct ir_scancode fusionhdtv_mce[] = {
 	{ 0x4e, KEY_POWER },
 };
 
-static struct rc_keymap fusionhdtv_mce_map = {
+static struct rc_map_list fusionhdtv_mce_map = {
 	.map = {
 		.scan    = fusionhdtv_mce,
 		.size    = ARRAY_SIZE(fusionhdtv_mce),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_FUSIONHDTV_MCE,
 	}
 };
 
 static int __init init_rc_map_fusionhdtv_mce(void)
 {
-	return ir_register_map(&fusionhdtv_mce_map);
+	return rc_map_register(&fusionhdtv_mce_map);
 }
 
 static void __exit exit_rc_map_fusionhdtv_mce(void)
 {
-	ir_unregister_map(&fusionhdtv_mce_map);
+	rc_map_unregister(&fusionhdtv_mce_map);
 }
 
 module_init(init_rc_map_fusionhdtv_mce)

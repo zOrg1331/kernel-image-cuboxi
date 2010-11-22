@@ -14,7 +14,7 @@
 
 /* Mike Baikov <mike@baikov.com> */
 
-static struct ir_scancode gotview7135[] = {
+static struct rc_map_table gotview7135[] = {
 
 	{ 0x11, KEY_POWER },
 	{ 0x35, KEY_TV },
@@ -53,23 +53,23 @@ static struct ir_scancode gotview7135[] = {
 	{ 0x38, KEY_F24 },	/* NORMAL TIMESHIFT */
 };
 
-static struct rc_keymap gotview7135_map = {
+static struct rc_map_list gotview7135_map = {
 	.map = {
 		.scan    = gotview7135,
 		.size    = ARRAY_SIZE(gotview7135),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_GOTVIEW7135,
 	}
 };
 
 static int __init init_rc_map_gotview7135(void)
 {
-	return ir_register_map(&gotview7135_map);
+	return rc_map_register(&gotview7135_map);
 }
 
 static void __exit exit_rc_map_gotview7135(void)
 {
-	ir_unregister_map(&gotview7135_map);
+	rc_map_unregister(&gotview7135_map);
 }
 
 module_init(init_rc_map_gotview7135)

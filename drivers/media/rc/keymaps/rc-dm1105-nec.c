@@ -16,7 +16,7 @@
    Igor M. Liplianin <liplianin@me.by>
  */
 
-static struct ir_scancode dm1105_nec[] = {
+static struct rc_map_table dm1105_nec[] = {
 	{ 0x0a, KEY_POWER2},		/* power */
 	{ 0x0c, KEY_MUTE},		/* mute */
 	{ 0x11, KEY_1},
@@ -50,23 +50,23 @@ static struct ir_scancode dm1105_nec[] = {
 	{ 0x1b, KEY_B},			/* recall */
 };
 
-static struct rc_keymap dm1105_nec_map = {
+static struct rc_map_list dm1105_nec_map = {
 	.map = {
 		.scan    = dm1105_nec,
 		.size    = ARRAY_SIZE(dm1105_nec),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_DM1105_NEC,
 	}
 };
 
 static int __init init_rc_map_dm1105_nec(void)
 {
-	return ir_register_map(&dm1105_nec_map);
+	return rc_map_register(&dm1105_nec_map);
 }
 
 static void __exit exit_rc_map_dm1105_nec(void)
 {
-	ir_unregister_map(&dm1105_nec_map);
+	rc_map_unregister(&dm1105_nec_map);
 }
 
 module_init(init_rc_map_dm1105_nec)

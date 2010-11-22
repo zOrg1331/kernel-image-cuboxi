@@ -12,7 +12,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode tbs_nec[] = {
+static struct rc_map_table tbs_nec[] = {
 	{ 0x04, KEY_POWER2},	/*power*/
 	{ 0x14, KEY_MUTE},	/*mute*/
 	{ 0x07, KEY_1},
@@ -47,23 +47,23 @@ static struct ir_scancode tbs_nec[] = {
 	{ 0x1b, KEY_MODE},
 };
 
-static struct rc_keymap tbs_nec_map = {
+static struct rc_map_list tbs_nec_map = {
 	.map = {
 		.scan    = tbs_nec,
 		.size    = ARRAY_SIZE(tbs_nec),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_TBS_NEC,
 	}
 };
 
 static int __init init_rc_map_tbs_nec(void)
 {
-	return ir_register_map(&tbs_nec_map);
+	return rc_map_register(&tbs_nec_map);
 }
 
 static void __exit exit_rc_map_tbs_nec(void)
 {
-	ir_unregister_map(&tbs_nec_map);
+	rc_map_unregister(&tbs_nec_map);
 }
 
 module_init(init_rc_map_tbs_nec)

@@ -25,7 +25,7 @@
    Initial keytable was from Alain Kalker <miki@dds.nl> */
 
 /* Digittrade DVB-T USB Stick */
-static struct ir_scancode digittrade[] = {
+static struct rc_map_table digittrade[] = {
 	{ 0x0000, KEY_9 },
 	{ 0x0001, KEY_EPG },             /* EPG */
 	{ 0x0002, KEY_VOLUMEDOWN },      /* Vol Dn */
@@ -56,23 +56,23 @@ static struct ir_scancode digittrade[] = {
 	{ 0x0054, KEY_0 },
 };
 
-static struct rc_keymap digittrade_map = {
+static struct rc_map_list digittrade_map = {
 	.map = {
 		.scan    = digittrade,
 		.size    = ARRAY_SIZE(digittrade),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_DIGITTRADE,
 	}
 };
 
 static int __init init_rc_map_digittrade(void)
 {
-	return ir_register_map(&digittrade_map);
+	return rc_map_register(&digittrade_map);
 }
 
 static void __exit exit_rc_map_digittrade(void)
 {
-	ir_unregister_map(&digittrade_map);
+	rc_map_unregister(&digittrade_map);
 }
 
 module_init(init_rc_map_digittrade)

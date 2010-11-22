@@ -44,7 +44,7 @@ static int ir_sony_decode(struct rc_dev *dev, struct ir_raw_event ev)
 	u32 scancode;
 	u8 device, subdevice, function;
 
-	if (!(dev->raw->enabled_protocols & IR_TYPE_SONY))
+	if (!(dev->raw->enabled_protocols & RC_TYPE_SONY))
 		return 0;
 
 	if (!is_timing_event(ev)) {
@@ -143,7 +143,7 @@ static int ir_sony_decode(struct rc_dev *dev, struct ir_raw_event ev)
 
 		scancode = device << 16 | subdevice << 8 | function;
 		IR_dprintk(1, "Sony(%u) scancode 0x%05x\n", data->count, scancode);
-		ir_keydown(dev, scancode, 0);
+		rc_keydown(dev, scancode, 0);
 		data->state = STATE_INACTIVE;
 		return 0;
 	}
@@ -156,7 +156,7 @@ out:
 }
 
 static struct ir_raw_handler sony_handler = {
-	.protocols	= IR_TYPE_SONY,
+	.protocols	= RC_TYPE_SONY,
 	.decode		= ir_sony_decode,
 };
 

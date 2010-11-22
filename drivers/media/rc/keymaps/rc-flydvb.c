@@ -12,7 +12,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode flydvb[] = {
+static struct rc_map_table flydvb[] = {
 	{ 0x01, KEY_ZOOM },		/* Full Screen */
 	{ 0x00, KEY_POWER },		/* Power */
 
@@ -51,23 +51,23 @@ static struct ir_scancode flydvb[] = {
 	{ 0x0e, KEY_NEXT },		/* End >>| */
 };
 
-static struct rc_keymap flydvb_map = {
+static struct rc_map_list flydvb_map = {
 	.map = {
 		.scan    = flydvb,
 		.size    = ARRAY_SIZE(flydvb),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_FLYDVB,
 	}
 };
 
 static int __init init_rc_map_flydvb(void)
 {
-	return ir_register_map(&flydvb_map);
+	return rc_map_register(&flydvb_map);
 }
 
 static void __exit exit_rc_map_flydvb(void)
 {
-	ir_unregister_map(&flydvb_map);
+	rc_map_unregister(&flydvb_map);
 }
 
 module_init(init_rc_map_flydvb)

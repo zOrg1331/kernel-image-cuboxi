@@ -15,7 +15,7 @@
 /* Alfons Geser <a.geser@cox.net>
  * updates from Job D. R. Borges <jobdrb@ig.com.br> */
 
-static struct ir_scancode eztv[] = {
+static struct rc_map_table eztv[] = {
 	{ 0x12, KEY_POWER },
 	{ 0x01, KEY_TV },	/* DVR */
 	{ 0x15, KEY_DVD },	/* DVD */
@@ -70,23 +70,23 @@ static struct ir_scancode eztv[] = {
 	{ 0x21, KEY_DOT },	/* . (decimal dot) */
 };
 
-static struct rc_keymap eztv_map = {
+static struct rc_map_list eztv_map = {
 	.map = {
 		.scan    = eztv,
 		.size    = ARRAY_SIZE(eztv),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_EZTV,
 	}
 };
 
 static int __init init_rc_map_eztv(void)
 {
-	return ir_register_map(&eztv_map);
+	return rc_map_register(&eztv_map);
 }
 
 static void __exit exit_rc_map_eztv(void)
 {
-	ir_unregister_map(&eztv_map);
+	rc_map_unregister(&eztv_map);
 }
 
 module_init(init_rc_map_eztv)

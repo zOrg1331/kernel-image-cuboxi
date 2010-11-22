@@ -20,7 +20,7 @@
 
 #include <media/rc-map.h>
 
-static struct ir_scancode anysee[] = {
+static struct rc_map_table anysee[] = {
 	{ 0x0800, KEY_0 },
 	{ 0x0801, KEY_1 },
 	{ 0x0802, KEY_2 },
@@ -67,23 +67,23 @@ static struct ir_scancode anysee[] = {
 	{ 0x0851, KEY_PAUSE },
 };
 
-static struct rc_keymap anysee_map = {
+static struct rc_map_list anysee_map = {
 	.map = {
 		.scan    = anysee,
 		.size    = ARRAY_SIZE(anysee),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_ANYSEE,
 	}
 };
 
 static int __init init_rc_map_anysee(void)
 {
-	return ir_register_map(&anysee_map);
+	return rc_map_register(&anysee_map);
 }
 
 static void __exit exit_rc_map_anysee(void)
 {
-	ir_unregister_map(&anysee_map);
+	rc_map_unregister(&anysee_map);
 }
 
 module_init(init_rc_map_anysee)

@@ -16,7 +16,7 @@
  * slightly different versions), shipped with cx88+ivtv cards.
  * almost rc5 coding, but some non-standard keys */
 
-static struct ir_scancode hauppauge_new[] = {
+static struct rc_map_table hauppauge_new[] = {
 	/* Keys 0 to 9 */
 	{ 0x00, KEY_0 },
 	{ 0x01, KEY_1 },
@@ -74,23 +74,23 @@ static struct ir_scancode hauppauge_new[] = {
 	{ 0x3d, KEY_POWER },		/* system power (green button) */
 };
 
-static struct rc_keymap hauppauge_new_map = {
+static struct rc_map_list hauppauge_new_map = {
 	.map = {
 		.scan    = hauppauge_new,
 		.size    = ARRAY_SIZE(hauppauge_new),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_HAUPPAUGE_NEW,
 	}
 };
 
 static int __init init_rc_map_hauppauge_new(void)
 {
-	return ir_register_map(&hauppauge_new_map);
+	return rc_map_register(&hauppauge_new_map);
 }
 
 static void __exit exit_rc_map_hauppauge_new(void)
 {
-	ir_unregister_map(&hauppauge_new_map);
+	rc_map_unregister(&hauppauge_new_map);
 }
 
 module_init(init_rc_map_hauppauge_new)

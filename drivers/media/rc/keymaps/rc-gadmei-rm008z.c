@@ -16,7 +16,7 @@
    Shine Liu <shinel@foxmail.com>
  */
 
-static struct ir_scancode gadmei_rm008z[] = {
+static struct rc_map_table gadmei_rm008z[] = {
 	{ 0x14, KEY_POWER2},		/* POWER OFF */
 	{ 0x0c, KEY_MUTE},		/* MUTE */
 
@@ -55,23 +55,23 @@ static struct ir_scancode gadmei_rm008z[] = {
 	{ 0x15, KEY_ENTER},		/* OK */
 };
 
-static struct rc_keymap gadmei_rm008z_map = {
+static struct rc_map_list gadmei_rm008z_map = {
 	.map = {
 		.scan    = gadmei_rm008z,
 		.size    = ARRAY_SIZE(gadmei_rm008z),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_GADMEI_RM008Z,
 	}
 };
 
 static int __init init_rc_map_gadmei_rm008z(void)
 {
-	return ir_register_map(&gadmei_rm008z_map);
+	return rc_map_register(&gadmei_rm008z_map);
 }
 
 static void __exit exit_rc_map_gadmei_rm008z(void)
 {
-	ir_unregister_map(&gadmei_rm008z_map);
+	rc_map_unregister(&gadmei_rm008z_map);
 }
 
 module_init(init_rc_map_gadmei_rm008z)

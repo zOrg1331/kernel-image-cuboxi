@@ -23,7 +23,7 @@
 /* Initial keytable is from Jose Alberto Reguero <jareguero@telefonica.net>
    and Felipe Morales Moreno <felipe.morales.moreno@gmail.com> */
 /* FIXME: mappings are not 100% correct? */
-static struct ir_scancode avermedia_rm_ks[] = {
+static struct rc_map_table avermedia_rm_ks[] = {
 	{ 0x0501, KEY_POWER2 },
 	{ 0x0502, KEY_CHANNELUP },
 	{ 0x0503, KEY_CHANNELDOWN },
@@ -53,23 +53,23 @@ static struct ir_scancode avermedia_rm_ks[] = {
 	{ 0x0556, KEY_ZOOM },
 };
 
-static struct rc_keymap avermedia_rm_ks_map = {
+static struct rc_map_list avermedia_rm_ks_map = {
 	.map = {
 		.scan    = avermedia_rm_ks,
 		.size    = ARRAY_SIZE(avermedia_rm_ks),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_AVERMEDIA_RM_KS,
 	}
 };
 
 static int __init init_rc_map_avermedia_rm_ks(void)
 {
-	return ir_register_map(&avermedia_rm_ks_map);
+	return rc_map_register(&avermedia_rm_ks_map);
 }
 
 static void __exit exit_rc_map_avermedia_rm_ks(void)
 {
-	ir_unregister_map(&avermedia_rm_ks_map);
+	rc_map_unregister(&avermedia_rm_ks_map);
 }
 
 module_init(init_rc_map_avermedia_rm_ks)

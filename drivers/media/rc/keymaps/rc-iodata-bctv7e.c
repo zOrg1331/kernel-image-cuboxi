@@ -14,7 +14,7 @@
 
 /* IO-DATA BCTV7E Remote */
 
-static struct ir_scancode iodata_bctv7e[] = {
+static struct rc_map_table iodata_bctv7e[] = {
 	{ 0x40, KEY_TV },
 	{ 0x20, KEY_RADIO },		/* FM */
 	{ 0x60, KEY_EPG },
@@ -62,23 +62,23 @@ static struct ir_scancode iodata_bctv7e[] = {
 	{ 0x01, KEY_NEXT },		/* skip >| */
 };
 
-static struct rc_keymap iodata_bctv7e_map = {
+static struct rc_map_list iodata_bctv7e_map = {
 	.map = {
 		.scan    = iodata_bctv7e,
 		.size    = ARRAY_SIZE(iodata_bctv7e),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_IODATA_BCTV7E,
 	}
 };
 
 static int __init init_rc_map_iodata_bctv7e(void)
 {
-	return ir_register_map(&iodata_bctv7e_map);
+	return rc_map_register(&iodata_bctv7e_map);
 }
 
 static void __exit exit_rc_map_iodata_bctv7e(void)
 {
-	ir_unregister_map(&iodata_bctv7e_map);
+	rc_map_unregister(&iodata_bctv7e_map);
 }
 
 module_init(init_rc_map_iodata_bctv7e)

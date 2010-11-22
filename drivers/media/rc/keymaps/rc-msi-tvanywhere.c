@@ -14,7 +14,7 @@
 
 /* MSI TV@nywhere MASTER remote */
 
-static struct ir_scancode msi_tvanywhere[] = {
+static struct rc_map_table msi_tvanywhere[] = {
 	/* Keys 0 to 9 */
 	{ 0x00, KEY_0 },
 	{ 0x01, KEY_1 },
@@ -43,23 +43,23 @@ static struct ir_scancode msi_tvanywhere[] = {
 	{ 0x1f, KEY_VOLUMEDOWN },
 };
 
-static struct rc_keymap msi_tvanywhere_map = {
+static struct rc_map_list msi_tvanywhere_map = {
 	.map = {
 		.scan    = msi_tvanywhere,
 		.size    = ARRAY_SIZE(msi_tvanywhere),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_MSI_TVANYWHERE,
 	}
 };
 
 static int __init init_rc_map_msi_tvanywhere(void)
 {
-	return ir_register_map(&msi_tvanywhere_map);
+	return rc_map_register(&msi_tvanywhere_map);
 }
 
 static void __exit exit_rc_map_msi_tvanywhere(void)
 {
-	ir_unregister_map(&msi_tvanywhere_map);
+	rc_map_unregister(&msi_tvanywhere_map);
 }
 
 module_init(init_rc_map_msi_tvanywhere)

@@ -14,7 +14,7 @@
 
 /* Pinnacle PCTV HD 800i mini remote */
 
-static struct ir_scancode pinnacle_pctv_hd[] = {
+static struct rc_map_table pinnacle_pctv_hd[] = {
 
 	{ 0x0f, KEY_1 },
 	{ 0x15, KEY_2 },
@@ -47,23 +47,23 @@ static struct ir_scancode pinnacle_pctv_hd[] = {
 	{ 0x3f, KEY_EPG },	/* Labeled "?" */
 };
 
-static struct rc_keymap pinnacle_pctv_hd_map = {
+static struct rc_map_list pinnacle_pctv_hd_map = {
 	.map = {
 		.scan    = pinnacle_pctv_hd,
 		.size    = ARRAY_SIZE(pinnacle_pctv_hd),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_PINNACLE_PCTV_HD,
 	}
 };
 
 static int __init init_rc_map_pinnacle_pctv_hd(void)
 {
-	return ir_register_map(&pinnacle_pctv_hd_map);
+	return rc_map_register(&pinnacle_pctv_hd_map);
 }
 
 static void __exit exit_rc_map_pinnacle_pctv_hd(void)
 {
-	ir_unregister_map(&pinnacle_pctv_hd_map);
+	rc_map_unregister(&pinnacle_pctv_hd_map);
 }
 
 module_init(init_rc_map_pinnacle_pctv_hd)

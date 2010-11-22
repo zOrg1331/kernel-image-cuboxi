@@ -21,7 +21,7 @@
  * helps to descide which keycodes to assign to the buttons.
  */
 
-static struct ir_scancode behold_columbus[] = {
+static struct rc_map_table behold_columbus[] = {
 
 	/*  0x13   0x11   0x1C   0x12  *
 	 *  Mute  Source  TV/FM  Power *
@@ -82,23 +82,23 @@ static struct ir_scancode behold_columbus[] = {
 
 };
 
-static struct rc_keymap behold_columbus_map = {
+static struct rc_map_list behold_columbus_map = {
 	.map = {
 		.scan    = behold_columbus,
 		.size    = ARRAY_SIZE(behold_columbus),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_BEHOLD_COLUMBUS,
 	}
 };
 
 static int __init init_rc_map_behold_columbus(void)
 {
-	return ir_register_map(&behold_columbus_map);
+	return rc_map_register(&behold_columbus_map);
 }
 
 static void __exit exit_rc_map_behold_columbus(void)
 {
-	ir_unregister_map(&behold_columbus_map);
+	rc_map_unregister(&behold_columbus_map);
 }
 
 module_init(init_rc_map_behold_columbus)

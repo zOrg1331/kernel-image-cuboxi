@@ -14,7 +14,7 @@
 
 /* Alex Hermann <gaaf@gmx.net> */
 
-static struct ir_scancode avermedia[] = {
+static struct rc_map_table avermedia[] = {
 	{ 0x28, KEY_1 },
 	{ 0x18, KEY_2 },
 	{ 0x38, KEY_3 },
@@ -60,23 +60,23 @@ static struct ir_scancode avermedia[] = {
 	{ 0x31, KEY_CHANNELUP }		/* CHANNEL/PAGE+ */
 };
 
-static struct rc_keymap avermedia_map = {
+static struct rc_map_list avermedia_map = {
 	.map = {
 		.scan    = avermedia,
 		.size    = ARRAY_SIZE(avermedia),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_AVERMEDIA,
 	}
 };
 
 static int __init init_rc_map_avermedia(void)
 {
-	return ir_register_map(&avermedia_map);
+	return rc_map_register(&avermedia_map);
 }
 
 static void __exit exit_rc_map_avermedia(void)
 {
-	ir_unregister_map(&avermedia_map);
+	rc_map_unregister(&avermedia_map);
 }
 
 module_init(init_rc_map_avermedia)

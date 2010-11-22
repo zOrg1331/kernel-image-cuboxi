@@ -16,7 +16,7 @@
    Mauro Carvalho Chehab <mchehab@infradead.org>
  */
 
-static struct ir_scancode kaiomy[] = {
+static struct rc_map_table kaiomy[] = {
 	{ 0x43, KEY_POWER2},
 	{ 0x01, KEY_LIST},
 	{ 0x0b, KEY_ZOOM},
@@ -61,23 +61,23 @@ static struct ir_scancode kaiomy[] = {
 	{ 0x1f, KEY_BLUE},
 };
 
-static struct rc_keymap kaiomy_map = {
+static struct rc_map_list kaiomy_map = {
 	.map = {
 		.scan    = kaiomy,
 		.size    = ARRAY_SIZE(kaiomy),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_KAIOMY,
 	}
 };
 
 static int __init init_rc_map_kaiomy(void)
 {
-	return ir_register_map(&kaiomy_map);
+	return rc_map_register(&kaiomy_map);
 }
 
 static void __exit exit_rc_map_kaiomy(void)
 {
-	ir_unregister_map(&kaiomy_map);
+	rc_map_unregister(&kaiomy_map);
 }
 
 module_init(init_rc_map_kaiomy)

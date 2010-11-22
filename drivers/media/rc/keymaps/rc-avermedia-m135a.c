@@ -22,7 +22,7 @@
  * codes added by Herton Ronaldo Krzesinski <herton@mandriva.com.br>
  */
 
-static struct ir_scancode avermedia_m135a[] = {
+static struct rc_map_table avermedia_m135a[] = {
 	/* RM-JX */
 	{ 0x0200, KEY_POWER2 },
 	{ 0x022e, KEY_DOT },		/* '.' */
@@ -121,23 +121,23 @@ static struct ir_scancode avermedia_m135a[] = {
 	{ 0x041e, KEY_NEXT },
 };
 
-static struct rc_keymap avermedia_m135a_map = {
+static struct rc_map_list avermedia_m135a_map = {
 	.map = {
 		.scan    = avermedia_m135a,
 		.size    = ARRAY_SIZE(avermedia_m135a),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_AVERMEDIA_M135A,
 	}
 };
 
 static int __init init_rc_map_avermedia_m135a(void)
 {
-	return ir_register_map(&avermedia_m135a_map);
+	return rc_map_register(&avermedia_m135a_map);
 }
 
 static void __exit exit_rc_map_avermedia_m135a(void)
 {
-	ir_unregister_map(&avermedia_m135a_map);
+	rc_map_unregister(&avermedia_m135a_map);
 }
 
 module_init(init_rc_map_avermedia_m135a)

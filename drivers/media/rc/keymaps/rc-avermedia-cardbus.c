@@ -14,7 +14,7 @@
 
 /* Oldrich Jedlicka <oldium.pro@seznam.cz> */
 
-static struct ir_scancode avermedia_cardbus[] = {
+static struct rc_map_table avermedia_cardbus[] = {
 	{ 0x00, KEY_POWER },
 	{ 0x01, KEY_TUNER },		/* TV/FM */
 	{ 0x03, KEY_TEXT },		/* Teletext */
@@ -71,23 +71,23 @@ static struct ir_scancode avermedia_cardbus[] = {
 	{ 0x43, KEY_CHANNELUP },	/* Channel up */
 };
 
-static struct rc_keymap avermedia_cardbus_map = {
+static struct rc_map_list avermedia_cardbus_map = {
 	.map = {
 		.scan    = avermedia_cardbus,
 		.size    = ARRAY_SIZE(avermedia_cardbus),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_AVERMEDIA_CARDBUS,
 	}
 };
 
 static int __init init_rc_map_avermedia_cardbus(void)
 {
-	return ir_register_map(&avermedia_cardbus_map);
+	return rc_map_register(&avermedia_cardbus_map);
 }
 
 static void __exit exit_rc_map_avermedia_cardbus(void)
 {
-	ir_unregister_map(&avermedia_cardbus_map);
+	rc_map_unregister(&avermedia_cardbus_map);
 }
 
 module_init(init_rc_map_avermedia_cardbus)

@@ -17,7 +17,7 @@
    present on PV MPEG 8000GT
  */
 
-static struct ir_scancode pixelview_new[] = {
+static struct rc_map_table pixelview_new[] = {
 	{ 0x3c, KEY_TIME },		/* Timeshift */
 	{ 0x12, KEY_POWER },
 
@@ -57,23 +57,23 @@ static struct ir_scancode pixelview_new[] = {
 	{ 0x34, KEY_RADIO },
 };
 
-static struct rc_keymap pixelview_new_map = {
+static struct rc_map_list pixelview_new_map = {
 	.map = {
 		.scan    = pixelview_new,
 		.size    = ARRAY_SIZE(pixelview_new),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_PIXELVIEW_NEW,
 	}
 };
 
 static int __init init_rc_map_pixelview_new(void)
 {
-	return ir_register_map(&pixelview_new_map);
+	return rc_map_register(&pixelview_new_map);
 }
 
 static void __exit exit_rc_map_pixelview_new(void)
 {
-	ir_unregister_map(&pixelview_new_map);
+	rc_map_unregister(&pixelview_new_map);
 }
 
 module_init(init_rc_map_pixelview_new)

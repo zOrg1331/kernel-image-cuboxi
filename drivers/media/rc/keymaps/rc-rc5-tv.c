@@ -16,7 +16,7 @@
 /* see http://users.pandora.be/nenya/electronics/rc5/codes00.htm */
 /* used by old (black) Hauppauge remotes                         */
 
-static struct ir_scancode rc5_tv[] = {
+static struct rc_map_table rc5_tv[] = {
 	/* Keys 0 to 9 */
 	{ 0x00, KEY_0 },
 	{ 0x01, KEY_1 },
@@ -55,23 +55,23 @@ static struct ir_scancode rc5_tv[] = {
 
 };
 
-static struct rc_keymap rc5_tv_map = {
+static struct rc_map_list rc5_tv_map = {
 	.map = {
 		.scan    = rc5_tv,
 		.size    = ARRAY_SIZE(rc5_tv),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_RC5_TV,
 	}
 };
 
 static int __init init_rc_map_rc5_tv(void)
 {
-	return ir_register_map(&rc5_tv_map);
+	return rc_map_register(&rc5_tv_map);
 }
 
 static void __exit exit_rc_map_rc5_tv(void)
 {
-	ir_unregister_map(&rc5_tv_map);
+	rc_map_unregister(&rc5_tv_map);
 }
 
 module_init(init_rc_map_rc5_tv)

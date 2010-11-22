@@ -61,7 +61,7 @@
 #define DVB_USB_LOG_PREFIX "LME2510(C)"
 #include <linux/usb.h>
 #include <linux/usb/input.h>
-#include <media/ir-core.h>
+#include <media/rc-core.h>
 
 #include "dvb-usb.h"
 #include "lmedm04.h"
@@ -198,7 +198,7 @@ static int lme2510_remote_keypress(struct dvb_usb_adapter *adap, u16 keypress)
 	deb_info(1, "INT Key Keypress =%04x", keypress);
 
 	if (keypress > 0)
-		ir_keydown(d->rc_dev, keypress, 0);
+		rc_keydown(d->rc_dev, keypress, 0);
 
 	return 0;
 }

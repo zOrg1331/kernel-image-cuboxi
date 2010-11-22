@@ -24,7 +24,7 @@
 /* Uses NEC extended 0x61d6. */
 /* This remote seems to be same as rc-kworld-315u.c. Anyhow, add new remote
    since rc-kworld-315u.c lacks NEC extended address byte. */
-static struct ir_scancode msi_digivox_iii[] = {
+static struct rc_map_table msi_digivox_iii[] = {
 	{ 0x61d601, KEY_VIDEO },           /* Source */
 	{ 0x61d602, KEY_3 },
 	{ 0x61d603, KEY_POWER },           /* ShutDown */
@@ -59,23 +59,23 @@ static struct ir_scancode msi_digivox_iii[] = {
 	{ 0x61d643, KEY_POWER2 },          /* [red power button] */
 };
 
-static struct rc_keymap msi_digivox_iii_map = {
+static struct rc_map_list msi_digivox_iii_map = {
 	.map = {
 		.scan    = msi_digivox_iii,
 		.size    = ARRAY_SIZE(msi_digivox_iii),
-		.ir_type = IR_TYPE_NEC,
+		.rc_type = RC_TYPE_NEC,
 		.name    = RC_MAP_MSI_DIGIVOX_III,
 	}
 };
 
 static int __init init_rc_map_msi_digivox_iii(void)
 {
-	return ir_register_map(&msi_digivox_iii_map);
+	return rc_map_register(&msi_digivox_iii_map);
 }
 
 static void __exit exit_rc_map_msi_digivox_iii(void)
 {
-	ir_unregister_map(&msi_digivox_iii_map);
+	rc_map_unregister(&msi_digivox_iii_map);
 }
 
 module_init(init_rc_map_msi_digivox_iii)

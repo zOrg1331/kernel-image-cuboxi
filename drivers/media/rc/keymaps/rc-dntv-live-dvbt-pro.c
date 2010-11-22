@@ -14,7 +14,7 @@
 
 /* DigitalNow DNTV Live! DVB-T Pro Remote */
 
-static struct ir_scancode dntv_live_dvbt_pro[] = {
+static struct rc_map_table dntv_live_dvbt_pro[] = {
 	{ 0x16, KEY_POWER },
 	{ 0x5b, KEY_HOME },
 
@@ -71,23 +71,23 @@ static struct ir_scancode dntv_live_dvbt_pro[] = {
 	{ 0x5d, KEY_BLUE },
 };
 
-static struct rc_keymap dntv_live_dvbt_pro_map = {
+static struct rc_map_list dntv_live_dvbt_pro_map = {
 	.map = {
 		.scan    = dntv_live_dvbt_pro,
 		.size    = ARRAY_SIZE(dntv_live_dvbt_pro),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_DNTV_LIVE_DVBT_PRO,
 	}
 };
 
 static int __init init_rc_map_dntv_live_dvbt_pro(void)
 {
-	return ir_register_map(&dntv_live_dvbt_pro_map);
+	return rc_map_register(&dntv_live_dvbt_pro_map);
 }
 
 static void __exit exit_rc_map_dntv_live_dvbt_pro(void)
 {
-	ir_unregister_map(&dntv_live_dvbt_pro_map);
+	rc_map_unregister(&dntv_live_dvbt_pro_map);
 }
 
 module_init(init_rc_map_dntv_live_dvbt_pro)

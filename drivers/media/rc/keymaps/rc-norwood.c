@@ -16,7 +16,7 @@
    By Peter Naulls <peter@chocky.org>
    Key comments are the functions given in the manual */
 
-static struct ir_scancode norwood[] = {
+static struct rc_map_table norwood[] = {
 	/* Keys 0 to 9 */
 	{ 0x20, KEY_0 },
 	{ 0x21, KEY_1 },
@@ -59,23 +59,23 @@ static struct ir_scancode norwood[] = {
 	{ 0x65, KEY_POWER },		/* Computer power      */
 };
 
-static struct rc_keymap norwood_map = {
+static struct rc_map_list norwood_map = {
 	.map = {
 		.scan    = norwood,
 		.size    = ARRAY_SIZE(norwood),
-		.ir_type = IR_TYPE_UNKNOWN,	/* Legacy IR type */
+		.rc_type = RC_TYPE_UNKNOWN,	/* Legacy IR type */
 		.name    = RC_MAP_NORWOOD,
 	}
 };
 
 static int __init init_rc_map_norwood(void)
 {
-	return ir_register_map(&norwood_map);
+	return rc_map_register(&norwood_map);
 }
 
 static void __exit exit_rc_map_norwood(void)
 {
-	ir_unregister_map(&norwood_map);
+	rc_map_unregister(&norwood_map);
 }
 
 module_init(init_rc_map_norwood)

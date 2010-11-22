@@ -34,7 +34,7 @@
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
-#include <media/ir-core.h>
+#include <media/rc-core.h>
 
 #include "budget.h"
 
@@ -159,7 +159,7 @@ static void msp430_ir_interrupt(unsigned long data)
 	    budget_ci->ir.rc5_device != (command & 0x1f))
 		return;
 
-	ir_keydown(dev, budget_ci->ir.ir_key, (command & 0x20) ? 1 : 0);
+	rc_keydown(dev, budget_ci->ir.ir_key, (command & 0x20) ? 1 : 0);
 }
 
 static int msp430_ir_init(struct budget_ci *budget_ci)
