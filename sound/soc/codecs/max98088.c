@@ -28,6 +28,11 @@
 #include <sound/max98088.h>
 #include "max98088.h"
 
+enum max98088_type {
+       MAX98088,
+       MAX98089,
+};
+
 struct max98088_cdata {
        unsigned int rate;
        unsigned int fmt;
@@ -36,6 +41,7 @@ struct max98088_cdata {
 
 struct max98088_priv {
        u8 reg_cache[M98088_REG_CNT];
+       enum max98088_type devtype;
        void *control_data;
        struct max98088_pdata *pdata;
        unsigned int sysclk;
@@ -1224,15 +1230,17 @@ static const struct snd_soc_dapm_route audio_map[] = {
 
 static int max98088_add_widgets(struct snd_soc_codec *codec)
 {
-       snd_soc_dapm_new_controls(codec, max98088_dapm_widgets,
+       struct snd_soc_dapm_context *dapm = &codec->dapm;
+
+       snd_soc_dapm_new_controls(dapm, max98088_dapm_widgets,
                                  ARRAY_SIZE(max98088_dapm_widgets));
 
-       snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
+       snd_soc_dapm_add_routes(dapm, audio_map, ARRAY_SIZE(audio_map));
 
        snd_soc_add_controls(codec, max98088_snd_controls,
                             ARRAY_SIZE(max98088_snd_controls));
 
-       snd_soc_dapm_new_widgets(codec);
+       snd_soc_dapm_new_widgets(dapm);
        return 0;
 }
 
@@ -1617,7 +1625,7 @@ static int max98088_set_bias_level(struct snd_soc_codec *codec,
                break;
 
        case SND_SOC_BIAS_STANDBY:
-               if (codec->bias_level == SND_SOC_BIAS_OFF)
+               if (codec->dapm.bias_level == SND_SOC_BIAS_OFF)
                        max98088_sync_cache(codec);
 
                snd_soc_update_bits(codec, M98088_REG_4C_PWR_EN_IN,
@@ -1630,7 +1638,7 @@ static int max98088_set_bias_level(struct snd_soc_codec *codec,
                codec->cache_sync = 1;
                break;
        }
-       codec->bias_level = level;
+       codec->dapm.bias_level = level;
        return 0;
 }
 
@@ -2040,6 +2048,8 @@ static int max98088_i2c_probe(struct i2c_client *i2c,
        if (max98088 == NULL)
                return -ENOMEM;
 
+       max98088->devtype = id->driver_data;
+
        i2c_set_clientdata(i2c, max98088);
        max98088->control_data = i2c;
        max98088->pdata = i2c->dev.platform_data;
@@ -2059,7 +2069,8 @@ static int __devexit max98088_i2c_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id max98088_i2c_id[] = {
-       { "max98088", 0 },
+       { "max98088", MAX98088 },
+       { "max98089", MAX98089 },
        { }
 };
 MODULE_DEVICE_TABLE(i2c, max98088_i2c_id);
