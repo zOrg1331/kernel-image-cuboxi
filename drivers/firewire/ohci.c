@@ -577,6 +577,8 @@ static int ohci_update_phy_reg(struct fw_card *card, int addr,
 	return ret;
 }
 
+#define AR_PAGE_SIZE (8*1024)
+
 static void ar_context_link_page(struct ar_context *ctx,
 				 struct ar_buffer *ab, dma_addr_t ab_bus)
 {
@@ -588,9 +590,9 @@ static void ar_context_link_page(struct ar_context *ctx,
 						    DESCRIPTOR_STATUS |
 						    DESCRIPTOR_BRANCH_ALWAYS);
 	offset = offsetof(struct ar_buffer, data);
-	ab->descriptor.req_count      = cpu_to_le16(PAGE_SIZE - offset);
+	ab->descriptor.req_count      = cpu_to_le16(AR_PAGE_SIZE - offset);
 	ab->descriptor.data_address   = cpu_to_le32(ab_bus + offset);
-	ab->descriptor.res_count      = cpu_to_le16(PAGE_SIZE - offset);
+	ab->descriptor.res_count      = cpu_to_le16(AR_PAGE_SIZE - offset);
 	ab->descriptor.branch_address = 0;
 
 	wmb(); /* finish init of new descriptors before branch_address update */
@@ -608,7 +610,7 @@ static int ar_context_add_page(struct ar_context *ctx)
 	struct ar_buffer *ab;
 	dma_addr_t uninitialized_var(ab_bus);
 
-	ab = dma_alloc_coherent(dev, PAGE_SIZE, &ab_bus, GFP_ATOMIC);
+	ab = dma_alloc_coherent(dev, AR_PAGE_SIZE, &ab_bus, GFP_KERNEL);
 	if (ab == NULL)
 		return -ENOMEM;
 
@@ -627,7 +629,7 @@ static void ar_context_release(struct ar_context *ctx)
 		ab_next = ab->next;
 		offset = offsetof(struct ar_buffer, data);
 		ab_bus = le32_to_cpu(ab->descriptor.data_address) - offset;
-		dma_free_coherent(ctx->ohci->card.device, PAGE_SIZE,
+		dma_free_coherent(ctx->ohci->card.device, AR_PAGE_SIZE,
 				  ab, ab_bus);
 	}
 }
@@ -764,11 +766,11 @@ static void ar_context_tasklet(unsigned long data)
 
 		ab = ab->next;
 		d = &ab->descriptor;
-		size = start + PAGE_SIZE - ctx->pointer;
+		size = start + AR_PAGE_SIZE - ctx->pointer;
 		/* valid buffer data in the next page */
 		rest = le16_to_cpu(d->req_count) - le16_to_cpu(d->res_count);
 		/* what actually fits in this page */
-		size2 = min(rest, (size_t)PAGE_SIZE - offset - size);
+		size2 = min(rest, AR_PAGE_SIZE - offset - size);
 		memmove(buffer, ctx->pointer, size);
 		memcpy(buffer + size, ab->data, size2);
 
@@ -789,7 +791,7 @@ static void ar_context_tasklet(unsigned long data)
 			size -= pktsize;
 			/* fill up this page again */
 			size3 = min(rest - size2,
-				    (size_t)PAGE_SIZE - offset - size - size2);
+				    AR_PAGE_SIZE - offset - size - size2);
 			memcpy(buffer + size + size2,
 			       (void *) ab->data + size2, size3);
 			size2 += size3;
@@ -809,20 +811,20 @@ static void ar_context_tasklet(unsigned long data)
 
 			ar_context_link_page(ctx, start, start_bus);
 		} else {
-			ctx->pointer = start + PAGE_SIZE;
+			ctx->pointer = start + AR_PAGE_SIZE;
 		}
 	} else {
 		buffer = ctx->pointer;
 		ctx->pointer = end =
-			(void *) ab + PAGE_SIZE - le16_to_cpu(res_count);
+			(void *) ab + AR_PAGE_SIZE - le16_to_cpu(res_count);
 
 		while (buffer < end)
 			buffer = handle_ar_packet(ctx, buffer);
 	}
 }
 
-static int ar_context_init(struct ar_context *ctx,
-			   struct fw_ohci *ohci, u32 regs)
+static void ar_context_init(struct ar_context *ctx,
+			    struct fw_ohci *ohci, u32 regs)
 {
 	struct ar_buffer ab;
 
@@ -831,12 +833,10 @@ static int ar_context_init(struct ar_context *ctx,
 	ctx->last_buffer = &ab;
 	tasklet_init(&ctx->tasklet, ar_context_tasklet, (unsigned long)ctx);
 
-	ar_context_add_page(ctx);
-	ar_context_add_page(ctx);
+	WARN_ON(ar_context_add_page(ctx) ||
+		ar_context_add_page(ctx));
 	ctx->current_buffer = ab.next;
 	ctx->pointer = ctx->current_buffer->data;
-
-	return 0;
 }
 
 static void ar_context_run(struct ar_context *ctx)
