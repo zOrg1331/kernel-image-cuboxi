@@ -1,6 +1,6 @@
 Name: kernel-image-eeepc-ng
 Version: 2.6.36
-Release: alt2.gns1
+Release: alt4
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -348,11 +348,18 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
-* Wed Nov 17 2010 Mykola Grechukh <gns@altlinux.ru> 2.6.36-alt2.gns1
-- SQUASHFS_LZMA and PM_RUNTIME
+* Tue Nov 23 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.36-alt4
+- 2.6.36.1
+
+* Wed Nov 17 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.36-alt3
+- enabled PM_RUNTIME
+- iosched: cfq by default
 
 * Tue Nov 16 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.36-alt2
 - applied automatic process group scheduling patch
+
+* Wed Nov 17 2010 Mykola Grechukh <gns@altlinux.ru> 2.6.36-alt2.gns1
+- SQUASHFS_LZMA and PM_RUNTIME
 
 * Thu Oct 21 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.36-alt1
 - 2.6.36
