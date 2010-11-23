@@ -75,8 +75,6 @@ struct kernel_stat_glob {
 extern struct kernel_stat_glob kstat_glob ____cacheline_aligned;
 extern spinlock_t kstat_glb_lock;
 
-extern void kstat_init(void);
-
 #ifdef CONFIG_VE
 #define KSTAT_PERF_ENTER(name)				\
 	unsigned long flags;				\

@@ -659,16 +659,7 @@ DEFINE_SPINLOCK(kstat_glb_lock);
 EXPORT_SYMBOL(kstat_glob);
 EXPORT_SYMBOL(kstat_glb_lock);
 static DEFINE_PER_CPU(struct kstat_lat_pcpu_snap_struct, glob_kstat_lat);
-static DEFINE_PER_CPU(struct kstat_lat_pcpu_snap_struct, alloc_kstat_lat[KSTAT_ALLOCSTAT_NR]);
-
-void __init kstat_init(void)
-{
-	int i;
-
-	kstat_glob.sched_lat.cur = &per_cpu_var(glob_kstat_lat);
-	for ( i = 0 ; i < KSTAT_ALLOCSTAT_NR ; i++)
-		kstat_glob.alloc_lat[i].cur = &per_cpu_var(alloc_kstat_lat[i]);
-}
+static DEFINE_PER_CPU(struct kstat_lat_pcpu_snap_struct, alloc_kstat_lat);
 
 /*
  * The domain tree (rq->sd) is protected by RCU's quiescent state transition.
@@ -9926,6 +9917,10 @@ void __init sched_init(void)
 	update_shares_data = __alloc_percpu(nr_cpu_ids * sizeof(unsigned long),
 					    __alignof__(unsigned long));
 #endif
+	kstat_glob.sched_lat.cur = &per_cpu__glob_kstat_lat;
+	for ( j = 0 ; j < KSTAT_ALLOCSTAT_NR ; j++)
+		kstat_glob.alloc_lat[j].cur = &per_cpu__alloc_kstat_lat;
+
 	for_each_possible_cpu(i) {
 		struct rq *rq;
 

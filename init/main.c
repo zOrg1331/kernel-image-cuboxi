@@ -583,7 +583,6 @@ asmlinkage void __init start_kernel(void)
 	setup_per_cpu_areas();
 	init_ve0();
 	ub_init_early();
-	kstat_init();
 	smp_prepare_boot_cpu();	/* arch-specific boot-cpu hooks */
 
 	build_all_zonelists();
