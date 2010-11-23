@@ -1,6 +1,6 @@
 Name: kernel-image-std-ng
 Version: 2.6.36
-Release: alt3
+Release: alt4
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -18,7 +18,7 @@ Release: alt3
 
 # Build options
 # You can change compiler version by editing this line:
-%define kgcc_version	4.4
+%define kgcc_version	4.5
 
 # Enable/disable SGML docs formatting
 %def_disable docs
@@ -348,6 +348,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Tue Nov 23 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.36-alt4
+- 2.6.36.1
+
 * Wed Nov 17 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.36-alt3
 - enabled PM_RUNTIME
 - iosched: cfq by default
