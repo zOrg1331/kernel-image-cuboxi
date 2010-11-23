@@ -2,8 +2,9 @@
 #include "mlmetxrx_f.h"
 #include "mto.h"
 #include "sysdef.h"
-#include "wbhal_f.h"
+#include "wbhal.h"
 #include "wblinux_f.h"
+#include "wb35tx_f.h"
 
 unsigned char
 Mds_initial(struct wbsoft_priv *adapter)
@@ -15,11 +16,6 @@ Mds_initial(struct wbsoft_priv *adapter)
 	pMds->TxFragmentThreshold = DEFAULT_FRAGMENT_THRESHOLD;
 
 	return hal_get_tx_buffer(&adapter->sHwData, &pMds->pTxBuffer);
-}
-
-void
-Mds_Destroy(struct wbsoft_priv *adapter)
-{
 }
 
 static void Mds_DurationSet(struct wbsoft_priv *adapter,  struct wb35_descriptor *pDes,  u8 *buffer)

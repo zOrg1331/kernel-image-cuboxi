@@ -16,19 +16,19 @@
 #include <linux/kernel.h>
 #include <wlc_cfg.h>
 #include <bcmdefs.h>
-#include <linuxver.h>
-#include <bcmdefs.h>
 #include <osl.h>
 #include <bcmutils.h>
 #include <siutils.h>
 #include <bcmendian.h>
 #include <wlioctl.h>
+#include <sbhndpio.h>
 #include <sbhnddma.h>
 #include <hnddma.h>
 #include <d11.h>
 #include <wlc_rate.h>
 #include <wlc_pub.h>
 #include <wlc_key.h>
+#include <wlc_event.h>
 #include <wlc_mac80211.h>
 #include <wlc_phy_hal.h>
 #include <wlc_antsel.h>
@@ -36,11 +36,8 @@
 #include <net/mac80211.h>
 #include <wlc_ampdu.h>
 #include <wl_export.h>
+#include <wl_dbg.h>
 
-#ifdef WLC_HIGH_ONLY
-#include <bcm_rpc_tp.h>
-#include <wlc_rpctx.h>
-#endif
 
 #define AMPDU_MAX_MPDU		32	/* max number of mpdus in an ampdu */
 #define AMPDU_NUM_MPDU_LEGACY	16	/* max number of mpdus in an ampdu to a legacy */
@@ -125,11 +122,6 @@ struct ampdu_info {
 				 */
 	wlc_fifo_info_t fifo_tb[NUM_FFPLD_FIFO];	/* table of fifo infos  */
 
-#ifdef WLC_HIGH_ONLY
-	void *p;
-	tx_status_t txs;
-	bool waiting_status;	/* To help sanity checks */
-#endif
 };
 
 #define AMPDU_CLEANUPFLAG_RX   (0x1)
@@ -209,10 +201,6 @@ ampdu_info_t *wlc_ampdu_attach(wlc_info_t *wlc)
 		ampdu->rx_factor = AMPDU_RX_FACTOR_32K;
 	else
 		ampdu->rx_factor = AMPDU_RX_FACTOR_64K;
-#ifdef WLC_HIGH_ONLY
-	/* Restrict to smaller rcv size for BMAC dongle */
-	ampdu->rx_factor = AMPDU_RX_FACTOR_32K;
-#endif
 	ampdu->retry_limit = AMPDU_DEF_RETRY_LIMIT;
 	ampdu->rr_retry_limit = AMPDU_DEF_RR_RETRY_LIMIT;
 
@@ -503,7 +491,7 @@ int BCMFASTPATH
 wlc_sendampdu(ampdu_info_t *ampdu, wlc_txq_info_t *qi, void **pdu, int prec)
 {
 	wlc_info_t *wlc;
-	osl_t *osh;
+	struct osl_info *osh;
 	void *p, *pkt[AMPDU_MAX_MPDU];
 	u8 tid, ndelim;
 	int err = 0;
@@ -886,19 +874,9 @@ wlc_sendampdu(ampdu_info_t *ampdu, wlc_txq_info_t *qi, void **pdu, int prec)
 		if (frameid & TXFID_RATE_PROBE_MASK) {
 			WL_ERROR(("%s: XXX what to do with TXFID_RATE_PROBE_MASK!?\n", __func__));
 		}
-#ifdef WLC_HIGH_ONLY
-		if (wlc->rpc_agg & BCM_RPC_TP_HOST_AGG_AMPDU)
-			bcm_rpc_tp_agg_set(bcm_rpc_tp_get(wlc->rpc),
-					   BCM_RPC_TP_HOST_AGG_AMPDU, true);
-#endif
 		for (i = 0; i < count; i++)
 			wlc_txfifo(wlc, fifo, pkt[i], i == (count - 1),
 				   ampdu->txpkt_weight);
-#ifdef WLC_HIGH_ONLY
-		if (wlc->rpc_agg & BCM_RPC_TP_HOST_AGG_AMPDU)
-			bcm_rpc_tp_agg_set(bcm_rpc_tp_get(wlc->rpc),
-					   BCM_RPC_TP_HOST_AGG_AMPDU, false);
-#endif
 
 	}
 	/* endif (count) */
@@ -930,7 +908,6 @@ wlc_ampdu_dotxstatus(ampdu_info_t *ampdu, struct scb *scb, void *p,
 	 * call the first one
 	 */
 	if (txs->status & TX_STATUS_ACK_RCV) {
-#ifdef WLC_LOW
 		u8 status_delay = 0;
 
 		/* wait till the next 8 bytes of txstatus is available */
@@ -948,49 +925,12 @@ wlc_ampdu_dotxstatus(ampdu_info_t *ampdu, struct scb *scb, void *p,
 		ASSERT(!(s1 & TX_STATUS_INTERMEDIATE));
 		ASSERT(s1 & TX_STATUS_AMPDU);
 		s2 = R_REG(wlc->osh, &wlc->regs->frmtxstatus2);
-#else				/* WLC_LOW */
-
-		/* Store the relevant information in ampdu structure */
-		WL_AMPDU_TX(("wl%d: wlc_ampdu_dotxstatus: High Recvd\n",
-			     wlc->pub->unit));
-
-		ASSERT(!ampdu->p);
-		ampdu->p = p;
-		bcopy(txs, &ampdu->txs, sizeof(tx_status_t));
-		ampdu->waiting_status = true;
-		return;
-#endif				/* WLC_LOW */
 	}
 
 	wlc_ampdu_dotxstatus_complete(ampdu, scb, p, txs, s1, s2);
 	wlc_ampdu_txflowcontrol(wlc, scb_ampdu, ini);
 }
 
-#ifdef WLC_HIGH_ONLY
-void wlc_ampdu_txstatus_complete(ampdu_info_t *ampdu, u32 s1, u32 s2)
-{
-	WL_AMPDU_TX(("wl%d: wlc_ampdu_txstatus_complete: High Recvd 0x%x 0x%x p:%p\n", ampdu->wlc->pub->unit, s1, s2, ampdu->p));
-
-	ASSERT(ampdu->waiting_status);
-
-	/* The packet may have been freed if the SCB went away, if so, then still free the
-	 * DMA chain
-	 */
-	if (ampdu->p) {
-		struct ieee80211_tx_info *tx_info;
-		struct scb *scb;
-
-		tx_info = IEEE80211_SKB_CB(ampdu->p);
-		scb = (struct scb *)tx_info->control.sta->drv_priv;
-
-		wlc_ampdu_dotxstatus_complete(ampdu, scb, ampdu->p, &ampdu->txs,
-					      s1, s2);
-		ampdu->p = NULL;
-	}
-
-	ampdu->waiting_status = false;
-}
-#endif				/* WLC_HIGH_ONLY */
 void rate_status(wlc_info_t *wlc, struct ieee80211_tx_info *tx_info,
 		 tx_status_t *txs, u8 mcs);
 
@@ -1116,11 +1056,6 @@ wlc_ampdu_dotxstatus_complete(ampdu_info_t *ampdu, struct scb *scb, void *p,
 				if (wlc_ffpld_check_txfunfl(wlc, prio2fifo[tid])
 				    > 0) {
 					tx_error = true;
-#ifdef WLC_HIGH_ONLY
-					/* With BMAC, TX Underflows should not happen */
-					WL_ERROR(("wl%d: BMAC TX Underflow?",
-						  wlc->pub->unit));
-#endif
 				}
 			}
 		} else if (txs->phyerr) {
@@ -1186,8 +1121,8 @@ wlc_ampdu_dotxstatus_complete(ampdu_info_t *ampdu, struct scb *scb, void *p,
 				     status & TX_STATUS_FRM_RTX_MASK) >>
 				    TX_STATUS_FRM_RTX_SHIFT;
 
-				PKTPULL(p, D11_PHY_HDR_LEN);
-				PKTPULL(p, D11_TXH_LEN);
+				skb_pull(p, D11_PHY_HDR_LEN);
+				skb_pull(p, D11_TXH_LEN);
 
 				ieee80211_tx_status_irqsafe(wlc->pub->ieee_hw,
 							    p);
@@ -1212,8 +1147,8 @@ wlc_ampdu_dotxstatus_complete(ampdu_info_t *ampdu, struct scb *scb, void *p,
 				ieee80211_tx_info_clear_status(tx_info);
 				tx_info->flags |=
 				    IEEE80211_TX_STAT_AMPDU_NO_BACK;
-				PKTPULL(p, D11_PHY_HDR_LEN);
-				PKTPULL(p, D11_TXH_LEN);
+				skb_pull(p, D11_PHY_HDR_LEN);
+				skb_pull(p, D11_TXH_LEN);
 				WL_ERROR(("%s: BA Timeout, seq %d, in_transit %d\n", SHORTNAME, seq, ini->tx_in_transit));
 				ieee80211_tx_status_irqsafe(wlc->pub->ieee_hw,
 							    p);
