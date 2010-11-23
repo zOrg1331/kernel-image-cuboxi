@@ -266,7 +266,7 @@ static inline void da850_evm_setup_emac_rmii(int rmii_sel)
 	struct davinci_soc_info *soc_info = &davinci_soc_info;
 
 	soc_info->emac_pdata->rmii_en = 1;
-	gpio_set_value(rmii_sel, 0);
+	gpio_set_value_cansleep(rmii_sel, 0);
 }
 #else
 static inline void da850_evm_setup_emac_rmii(int rmii_sel) { }
@@ -325,9 +325,9 @@ static int da850_evm_ui_expander_teardown(struct i2c_client *client,
 					unsigned gpio, unsigned ngpio, void *c)
 {
 	/* deselect all functionalities */
-	gpio_set_value(gpio + 5, 1);
-	gpio_set_value(gpio + 6, 1);
-	gpio_set_value(gpio + 7, 1);
+	gpio_set_value_cansleep(gpio + 5, 1);
+	gpio_set_value_cansleep(gpio + 6, 1);
+	gpio_set_value_cansleep(gpio + 7, 1);
 
 	gpio_free(gpio + 5);
 	gpio_free(gpio + 6);
@@ -591,7 +591,7 @@ static struct tps6507x_board tps_board = {
 	.tps6507x_ts_init_data = &tps6507x_touchscreen_data,
 };
 
-static struct i2c_board_info __initdata da850evm_tps65070_info[] = {
+static struct i2c_board_info __initdata da850_evm_tps65070_info[] = {
 	{
 		I2C_BOARD_INFO("tps6507x", 0x48),
 		.platform_data = &tps_board,
@@ -600,8 +600,8 @@ static struct i2c_board_info __initdata da850evm_tps65070_info[] = {
 
 static int __init pmic_tps65070_init(void)
 {
-	return i2c_register_board_info(1, da850evm_tps65070_info,
-					ARRAY_SIZE(da850evm_tps65070_info));
+	return i2c_register_board_info(1, da850_evm_tps65070_info,
+					ARRAY_SIZE(da850_evm_tps65070_info));
 }
 
 static const short da850_evm_lcdc_pins[] = {
