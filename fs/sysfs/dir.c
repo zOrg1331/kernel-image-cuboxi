@@ -539,9 +539,6 @@ static void sysfs_drop_dentry(struct sysfs_dirent *sd)
 	struct inode *inode;
 	struct dentry *dentry;
 
-	if (!ve_sysfs_alowed())
-		return;
-
 	inode = ilookup(sysfs_sb, sd->s_ino);
 	if (!inode)
 		return;
@@ -715,15 +712,12 @@ int sysfs_create_dir(struct kobject * kobj)
 	struct sysfs_dirent *parent_sd, *sd;
 	int error = 0;
 
-	if (!ve_sysfs_alowed())
-		return 0;
-
 	BUG_ON(!kobj);
 
 	if (kobj->parent)
 		parent_sd = kobj->parent->sd;
 	else
-		parent_sd = ve_sysfs_root;
+		parent_sd = &sysfs_root;
 
 	error = create_dir(kobj, parent_sd, kobject_name(kobj), &sd);
 	if (!error)
@@ -825,9 +819,6 @@ void sysfs_remove_dir(struct kobject * kobj)
 {
 	struct sysfs_dirent *sd = kobj->sd;
 
-	if (!ve_sysfs_alowed())
-		return;
-
 	spin_lock(&sysfs_assoc_lock);
 	kobj->sd = NULL;
 	spin_unlock(&sysfs_assoc_lock);
@@ -842,9 +833,6 @@ int sysfs_rename_dir(struct kobject * kobj, const char *new_name)
 	struct dentry *old_dentry = NULL, *new_dentry = NULL;
 	const char *dup_name = NULL;
 	int error;
-
-	if (!ve_sysfs_alowed())
-		return 0;
 
 	mutex_lock(&sysfs_rename_mutex);
 
@@ -911,7 +899,7 @@ int sysfs_move_dir(struct kobject *kobj, struct kobject *new_parent_kobj)
 	mutex_lock(&sysfs_rename_mutex);
 	BUG_ON(!sd->s_parent);
 	new_parent_sd = (new_parent_kobj && new_parent_kobj->sd) ?
-		new_parent_kobj->sd : ve_sysfs_root;
+		new_parent_kobj->sd : &sysfs_root;
 
 	error = 0;
 	if (sd->s_parent == new_parent_sd)

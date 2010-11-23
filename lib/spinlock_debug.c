@@ -58,9 +58,9 @@ static void spin_bug(spinlock_t *lock, const char *msg)
 
 	if (lock->owner && lock->owner != SPINLOCK_OWNER_INIT)
 		owner = lock->owner;
-	printk(KERN_EMERG "BUG: spinlock %s on CPU#%d, %s/%d (%s)\n",
+	printk(KERN_EMERG "BUG: spinlock %s on CPU#%d, %s/%d\n",
 		msg, raw_smp_processor_id(),
-		current->comm, task_pid_nr(current), print_tainted());
+		current->comm, task_pid_nr(current));
 	printk(KERN_EMERG " lock: %p, .magic: %08x, .owner: %s/%d, "
 			".owner_cpu: %d\n",
 		lock, lock->magic,
@@ -114,9 +114,9 @@ static void __spin_lock_debug(spinlock_t *lock)
 		if (print_once) {
 			print_once = 0;
 			printk(KERN_EMERG "BUG: spinlock lockup on CPU#%d, "
-					"%s/%d, %p (%s)\n",
+					"%s/%d, %p\n",
 				raw_smp_processor_id(), current->comm,
-				task_pid_nr(current), lock, print_tainted());
+				task_pid_nr(current), lock);
 			dump_stack();
 #ifdef CONFIG_SMP
 			trigger_all_cpu_backtrace();
@@ -159,9 +159,9 @@ static void rwlock_bug(rwlock_t *lock, const char *msg)
 	if (!debug_locks_off())
 		return;
 
-	printk(KERN_EMERG "BUG: rwlock %s on CPU#%d, %s/%d, %p (%s)\n",
+	printk(KERN_EMERG "BUG: rwlock %s on CPU#%d, %s/%d, %p\n",
 		msg, raw_smp_processor_id(), current->comm,
-		task_pid_nr(current), lock, print_tainted());
+		task_pid_nr(current), lock);
 	dump_stack();
 }
 
@@ -184,9 +184,9 @@ static void __read_lock_debug(rwlock_t *lock)
 		if (print_once) {
 			print_once = 0;
 			printk(KERN_EMERG "BUG: read-lock lockup on CPU#%d, "
-					"%s/%d, %p (%s)\n",
+					"%s/%d, %p\n",
 				raw_smp_processor_id(), current->comm,
-				current->pid, lock, print_tainted());
+				current->pid, lock);
 			dump_stack();
 		}
 	}
@@ -259,9 +259,9 @@ static void __write_lock_debug(rwlock_t *lock)
 		if (print_once) {
 			print_once = 0;
 			printk(KERN_EMERG "BUG: write-lock lockup on CPU#%d, "
-					"%s/%d, %p (%s)\n",
+					"%s/%d, %p\n",
 				raw_smp_processor_id(), current->comm,
-				current->pid, lock, print_tainted());
+				current->pid, lock);
 			dump_stack();
 		}
 	}

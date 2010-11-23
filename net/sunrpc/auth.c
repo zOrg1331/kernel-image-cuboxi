@@ -123,19 +123,16 @@ rpcauth_unhash_cred_locked(struct rpc_cred *cred)
 	clear_bit(RPCAUTH_CRED_HASHED, &cred->cr_flags);
 }
 
-static int
+static void
 rpcauth_unhash_cred(struct rpc_cred *cred)
 {
 	spinlock_t *cache_lock;
-	int ret;
 
 	cache_lock = &cred->cr_auth->au_credcache->lock;
 	spin_lock(cache_lock);
-	ret = atomic_read(&cred->cr_count) == 0;
-	if (ret)
+	if (atomic_read(&cred->cr_count) == 0)
 		rpcauth_unhash_cred_locked(cred);
 	spin_unlock(cache_lock);
-	return ret;
 }
 
 /*
@@ -449,35 +446,31 @@ void
 put_rpccred(struct rpc_cred *cred)
 {
 	/* Fast path for unhashed credentials */
-	if (test_bit(RPCAUTH_CRED_HASHED, &cred->cr_flags) == 0) {
-		if (atomic_dec_and_test(&cred->cr_count))
-			cred->cr_ops->crdestroy(cred);
-		return;
-	}
+	if (test_bit(RPCAUTH_CRED_HASHED, &cred->cr_flags) != 0)
+		goto need_lock;
 
+	if (!atomic_dec_and_test(&cred->cr_count))
+		return;
+	goto out_destroy;
+need_lock:
 	if (!atomic_dec_and_lock(&cred->cr_count, &rpc_credcache_lock))
 		return;
 	if (!list_empty(&cred->cr_lru)) {
 		number_cred_unused--;
 		list_del_init(&cred->cr_lru);
 	}
+	if (test_bit(RPCAUTH_CRED_UPTODATE, &cred->cr_flags) == 0)
+		rpcauth_unhash_cred(cred);
 	if (test_bit(RPCAUTH_CRED_HASHED, &cred->cr_flags) != 0) {
-		if (test_bit(RPCAUTH_CRED_UPTODATE, &cred->cr_flags) != 0) {
-			cred->cr_expire = jiffies;
-			list_add_tail(&cred->cr_lru, &cred_unused);
-			number_cred_unused++;
-			goto out_nodestroy;
-		}
-		if (!rpcauth_unhash_cred(cred)) {
-			/* We were hashed and someone looked us up... */
-			goto out_nodestroy;
-		}
+		cred->cr_expire = jiffies;
+		list_add_tail(&cred->cr_lru, &cred_unused);
+		number_cred_unused++;
+		spin_unlock(&rpc_credcache_lock);
+		return;
 	}
 	spin_unlock(&rpc_credcache_lock);
+out_destroy:
 	cred->cr_ops->crdestroy(cred);
-	return;
-out_nodestroy:
-	spin_unlock(&rpc_credcache_lock);
 }
 EXPORT_SYMBOL_GPL(put_rpccred);
 

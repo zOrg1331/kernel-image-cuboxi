@@ -281,7 +281,6 @@ static long zcrypt_pcica_modexpo(struct zcrypt_device *zdev,
 	struct completion work;
 	int rc;
 
-	ap_init_message(&ap_msg);
 	ap_msg.message = kmalloc(PCICA_MAX_MESSAGE_SIZE, GFP_KERNEL);
 	if (!ap_msg.message)
 		return -ENOMEM;
@@ -319,7 +318,6 @@ static long zcrypt_pcica_modexpo_crt(struct zcrypt_device *zdev,
 	struct completion work;
 	int rc;
 
-	ap_init_message(&ap_msg);
 	ap_msg.message = kmalloc(PCICA_MAX_MESSAGE_SIZE, GFP_KERNEL);
 	if (!ap_msg.message)
 		return -ENOMEM;

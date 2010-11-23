@@ -305,8 +305,9 @@ static int __init early_parse_mem(char *p)
 }
 early_param("mem", early_parse_mem);
 
-unsigned int user_mode = HOME_SPACE_MODE;
-EXPORT_SYMBOL_GPL(user_mode);
+#ifdef CONFIG_S390_SWITCH_AMODE
+unsigned int switch_amode = 0;
+EXPORT_SYMBOL_GPL(switch_amode);
 
 static int set_amode_and_uaccess(unsigned long user_amode,
 				 unsigned long user32_amode)
@@ -339,29 +340,23 @@ static int set_amode_and_uaccess(unsigned long user_amode,
  */
 static int __init early_parse_switch_amode(char *p)
 {
-	if (user_mode != SECONDARY_SPACE_MODE)
-		user_mode = PRIMARY_SPACE_MODE;
+	switch_amode = 1;
 	return 0;
 }
 early_param("switch_amode", early_parse_switch_amode);
 
-static int __init early_parse_user_mode(char *p)
+#else /* CONFIG_S390_SWITCH_AMODE */
+static inline int set_amode_and_uaccess(unsigned long user_amode,
+					unsigned long user32_amode)
 {
-	if (p && strcmp(p, "primary") == 0)
-		user_mode = PRIMARY_SPACE_MODE;
-#ifdef CONFIG_S390_EXEC_PROTECT
-	else if (p && strcmp(p, "secondary") == 0)
-		user_mode = SECONDARY_SPACE_MODE;
-#endif
-	else if (!p || strcmp(p, "home") == 0)
-		user_mode = HOME_SPACE_MODE;
-	else
-		return 1;
 	return 0;
 }
-early_param("user_mode", early_parse_user_mode);
+#endif /* CONFIG_S390_SWITCH_AMODE */
 
 #ifdef CONFIG_S390_EXEC_PROTECT
+unsigned int s390_noexec = 0;
+EXPORT_SYMBOL_GPL(s390_noexec);
+
 /*
  * Enable execute protection?
  */
@@ -369,7 +364,8 @@ static int __init early_parse_noexec(char *p)
 {
 	if (!strncmp(p, "off", 3))
 		return 0;
-	user_mode = SECONDARY_SPACE_MODE;
+	switch_amode = 1;
+	s390_noexec = 1;
 	return 0;
 }
 early_param("noexec", early_parse_noexec);
@@ -377,7 +373,7 @@ early_param("noexec", early_parse_noexec);
 
 static void setup_addressing_mode(void)
 {
-	if (user_mode == SECONDARY_SPACE_MODE) {
+	if (s390_noexec) {
 		if (set_amode_and_uaccess(PSW_ASC_SECONDARY,
 					  PSW32_ASC_SECONDARY))
 			pr_info("Execute protection active, "
@@ -385,7 +381,7 @@ static void setup_addressing_mode(void)
 		else
 			pr_info("Execute protection active, "
 				"mvcos not available\n");
-	} else if (user_mode == PRIMARY_SPACE_MODE) {
+	} else if (switch_amode) {
 		if (set_amode_and_uaccess(PSW_ASC_PRIMARY, PSW32_ASC_PRIMARY))
 			pr_info("Address spaces switched, "
 				"mvcos available\n");
@@ -415,7 +411,7 @@ setup_lowcore(void)
 	lc->restart_psw.mask = PSW_BASE_BITS | PSW_DEFAULT_KEY;
 	lc->restart_psw.addr =
 		PSW_ADDR_AMODE | (unsigned long) restart_int_handler;
-	if (user_mode != HOME_SPACE_MODE)
+	if (switch_amode)
 		lc->restart_psw.mask |= PSW_ASC_HOME;
 	lc->external_new_psw.mask = psw_kernel_bits;
 	lc->external_new_psw.addr =

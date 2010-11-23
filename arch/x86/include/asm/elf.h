@@ -291,7 +291,7 @@ struct task_struct;
 
 #define	ARCH_DLINFO_IA32(vdso_enabled)					\
 do {									\
-	if (vdso_enabled && sysctl_at_vsyscall) {			\
+	if (vdso_enabled) {						\
 		NEW_AUX_ENT(AT_SYSINFO,	VDSO_ENTRY);			\
 		NEW_AUX_ENT(AT_SYSINFO_EHDR, VDSO_CURRENT_BASE);	\
 	}								\
@@ -338,11 +338,9 @@ struct linux_binprm;
 
 #define ARCH_HAS_SETUP_ADDITIONAL_PAGES 1
 extern int arch_setup_additional_pages(struct linux_binprm *bprm,
-				       int uses_interp,
-				       unsigned long map_address);
+				       int uses_interp);
 
-extern int syscall32_setup_pages(struct linux_binprm *, int exstack,
-				 unsigned long map_address);
+extern int syscall32_setup_pages(struct linux_binprm *, int exstack);
 #define compat_arch_setup_additional_pages	syscall32_setup_pages
 
 extern unsigned long arch_randomize_brk(struct mm_struct *mm);

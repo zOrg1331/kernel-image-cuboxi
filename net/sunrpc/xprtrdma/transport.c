@@ -269,7 +269,6 @@ xprt_rdma_destroy(struct rpc_xprt *xprt)
 
 	kfree(xprt->slot);
 	xprt->slot = NULL;
-	put_ve(xprt->owner_env);
 	kfree(xprt);
 
 	dprintk("RPC:       %s: returning\n", __func__);

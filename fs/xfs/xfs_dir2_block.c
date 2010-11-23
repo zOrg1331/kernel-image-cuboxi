@@ -36,8 +36,8 @@
 #include "xfs_dir2_data.h"
 #include "xfs_dir2_leaf.h"
 #include "xfs_dir2_block.h"
+#include "xfs_dir2_trace.h"
 #include "xfs_error.h"
-#include "xfs_trace.h"
 
 /*
  * Local function prototypes.
@@ -94,8 +94,7 @@ xfs_dir2_block_addname(
 	__be16			*tagp;		/* pointer to tag value */
 	xfs_trans_t		*tp;		/* transaction structure */
 
-	trace_xfs_dir2_block_addname(args);
-
+	xfs_dir2_trace_args("block_addname", args);
 	dp = args->dp;
 	tp = args->trans;
 	mp = dp->i_mount;
@@ -591,8 +590,7 @@ xfs_dir2_block_lookup(
 	int			error;		/* error return value */
 	xfs_mount_t		*mp;		/* filesystem mount point */
 
-	trace_xfs_dir2_block_lookup(args);
-
+	xfs_dir2_trace_args("block_lookup", args);
 	/*
 	 * Get the buffer, look up the entry.
 	 * If not found (ENOENT) then return, have no buffer.
@@ -749,8 +747,7 @@ xfs_dir2_block_removename(
 	int			size;		/* shortform size */
 	xfs_trans_t		*tp;		/* transaction pointer */
 
-	trace_xfs_dir2_block_removename(args);
-
+	xfs_dir2_trace_args("block_removename", args);
 	/*
 	 * Look up the entry in the block.  Gets the buffer and entry index.
 	 * It will always be there, the vnodeops level does a lookup first.
@@ -826,8 +823,7 @@ xfs_dir2_block_replace(
 	int			error;		/* error return value */
 	xfs_mount_t		*mp;		/* filesystem mount point */
 
-	trace_xfs_dir2_block_replace(args);
-
+	xfs_dir2_trace_args("block_replace", args);
 	/*
 	 * Lookup the entry in the directory.  Get buffer and entry index.
 	 * This will always succeed since the caller has already done a lookup.
@@ -901,8 +897,7 @@ xfs_dir2_leaf_to_block(
 	int			to;		/* block/leaf to index */
 	xfs_trans_t		*tp;		/* transaction pointer */
 
-	trace_xfs_dir2_leaf_to_block(args);
-
+	xfs_dir2_trace_args_bb("leaf_to_block", args, lbp, dbp);
 	dp = args->dp;
 	tp = args->trans;
 	mp = dp->i_mount;
@@ -1049,8 +1044,7 @@ xfs_dir2_sf_to_block(
 	xfs_trans_t		*tp;		/* transaction pointer */
 	struct xfs_name		name;
 
-	trace_xfs_dir2_sf_to_block(args);
-
+	xfs_dir2_trace_args("sf_to_block", args);
 	dp = args->dp;
 	tp = args->trans;
 	mp = dp->i_mount;

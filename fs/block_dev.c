@@ -246,8 +246,7 @@ struct super_block *freeze_bdev(struct block_device *bdev)
 	if (!sb)
 		goto out;
 	if (sb->s_flags & MS_RDONLY) {
-		sb->s_frozen = SB_FREEZE_TRANS;
-		up_write(&sb->s_umount);
+		deactivate_locked_super(sb);
 		mutex_unlock(&bdev->bd_fsfreeze_mutex);
 		return sb;
 	}
@@ -308,7 +307,7 @@ int thaw_bdev(struct block_device *bdev, struct super_block *sb)
 	BUG_ON(sb->s_bdev != bdev);
 	down_write(&sb->s_umount);
 	if (sb->s_flags & MS_RDONLY)
-		goto out_unfrozen;
+		goto out_deactivate;
 
 	if (sb->s_op->unfreeze_fs) {
 		error = sb->s_op->unfreeze_fs(sb);
@@ -322,11 +321,11 @@ int thaw_bdev(struct block_device *bdev, struct super_block *sb)
 		}
 	}
 
-out_unfrozen:
 	sb->s_frozen = SB_UNFROZEN;
 	smp_wmb();
 	wake_up(&sb->s_wait_unfrozen);
 
+out_deactivate:
 	if (sb)
 		deactivate_locked_super(sb);
 out_unlock:
@@ -406,17 +405,7 @@ static loff_t block_llseek(struct file *file, loff_t offset, int origin)
  
 static int block_fsync(struct file *filp, struct dentry *dentry, int datasync)
 {
-	struct block_device *bdev = I_BDEV(filp->f_mapping->host);
-	int error;
-
-	error = sync_blockdev(bdev);
-	if (error)
-		return error;
-	
-	error = blkdev_issue_flush(bdev, NULL);
-	if (error == -EOPNOTSUPP)
-		error = 0;
-	return error;
+	return sync_blockdev(I_BDEV(filp->f_mapping->host));
 }
 
 /*
@@ -1611,7 +1600,7 @@ int __invalidate_device(struct block_device *bdev)
 		 * hold).
 		 */
 		shrink_dcache_sb(sb);
-		res = invalidate_inodes_check(sb, 1);
+		res = invalidate_inodes(sb);
 		drop_super(sb);
 	}
 	invalidate_bdev(bdev);

@@ -127,8 +127,7 @@ static const struct proto_ops pvc_proto_ops = {
 };
 
 
-static int pvc_create(struct net *net, struct socket *sock, int protocol,
-		      int kern)
+static int pvc_create(struct net *net, struct socket *sock,int protocol)
 {
 	if (net != &init_net)
 		return -EAFNOSUPPORT;

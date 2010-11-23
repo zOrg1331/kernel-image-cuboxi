@@ -1643,11 +1643,8 @@ fault:
 }
 EXPORT_SYMBOL_GPL(iscsi_queuecommand);
 
-int iscsi_change_queue_depth(struct scsi_device *sdev, int depth, int reason)
+int iscsi_change_queue_depth(struct scsi_device *sdev, int depth)
 {
-	if (reason != SCSI_QDEPTH_DEFAULT)
-		return -EOPNOTSUPP;
-
 	scsi_adjust_queue_depth(sdev, scsi_get_tag_type(sdev), depth);
 	return sdev->queue_depth;
 }

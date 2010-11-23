@@ -11,7 +11,6 @@
 #include <linux/kprobes.h>		/* __kprobes, ...		*/
 #include <linux/mmiotrace.h>		/* kmmio_handler, ...		*/
 #include <linux/perf_event.h>		/* perf_sw_event		*/
-#include <trace/events/kmem.h>
 
 #include <asm/traps.h>			/* dotraplinkage, ...		*/
 #include <asm/pgalloc.h>		/* pgd_*(), ...			*/
@@ -690,7 +689,7 @@ show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 	if (!printk_ratelimit())
 		return;
 
-	ve_printk(VE_LOG, "%s%s[%d]: segfault at %lx ip %p sp %p error %lx",
+	printk("%s%s[%d]: segfault at %lx ip %p sp %p error %lx",
 		task_pid_nr(tsk) > 1 ? KERN_INFO : KERN_EMERG,
 		tsk->comm, task_pid_nr(tsk), address,
 		(void *)regs->ip, (void *)regs->sp, error_code);
@@ -910,7 +909,7 @@ spurious_fault(unsigned long error_code, unsigned long address)
 	return ret;
 }
 
-int show_unhandled_signals = 0;
+int show_unhandled_signals = 1;
 
 static inline int
 access_error(unsigned long error_code, int write, struct vm_area_struct *vma)
@@ -938,16 +937,26 @@ static int fault_in_kernel_space(unsigned long address)
 	return address >= TASK_SIZE_MAX;
 }
 
-static inline void __do_page_fault(struct pt_regs *regs, unsigned long address, unsigned long error_code)
+/*
+ * This routine handles page faults.  It determines the address,
+ * and the problem, and then passes it off to one of the appropriate
+ * routines.
+ */
+dotraplinkage void __kprobes
+do_page_fault(struct pt_regs *regs, unsigned long error_code)
 {
 	struct vm_area_struct *vma;
 	struct task_struct *tsk;
+	unsigned long address;
 	struct mm_struct *mm;
 	int write;
 	int fault;
 
 	tsk = current;
 	mm = tsk->mm;
+
+	/* Get the faulting address: */
+	address = read_cr2();
 
 	/*
 	 * Detect and handle instructions that would cause a page fault for
@@ -1127,23 +1136,4 @@ good_area:
 	check_v8086_mode(regs, address, tsk);
 
 	up_read(&mm->mmap_sem);
-}
-
-/*
- * This routine handles page faults.  It determines the address,
- * and the problem, and then passes it off to one of the appropriate
- * routines.
- */
-dotraplinkage void __kprobes
-do_page_fault(struct pt_regs *regs, unsigned long error_code)
-{
-	unsigned long address;
-
-	/* Get the faulting address: */
-	address = read_cr2();
-
-	__do_page_fault(regs, address, error_code);
-
-	if (!user_mode(regs))
-		trace_mm_kernel_pagefault(current, address, regs);
 }

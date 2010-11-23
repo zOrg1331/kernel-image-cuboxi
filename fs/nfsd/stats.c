@@ -1,4 +1,6 @@
 /*
+ * linux/fs/nfsd/stats.c
+ *
  * procfs-based user access to knfsd statistics
  *
  * /proc/net/rpc/nfsd
@@ -21,16 +23,22 @@
  * Copyright (C) 1995, 1996, 1997 Olaf Kirch <okir@monad.swb.de>
  */
 
+#include <linux/kernel.h>
+#include <linux/time.h>
+#include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/stat.h>
 #include <linux/module.h>
+
+#include <linux/sunrpc/svc.h>
 #include <linux/sunrpc/stats.h>
+#include <linux/nfsd/nfsd.h>
 #include <linux/nfsd/stats.h>
 
-#include "nfsd.h"
-
-#ifndef CONFIG_VE
 struct nfsd_stats	nfsdstats;
-#endif
+struct svc_stat		nfsd_svcstats = {
+	.program	= &nfsd_program,
+};
 
 static int nfsd_proc_show(struct seq_file *seq, void *v)
 {
@@ -62,7 +70,7 @@ static int nfsd_proc_show(struct seq_file *seq, void *v)
 	seq_putc(seq, '\n');
 	
 	/* show my rpc info */
-	svc_seq_show(seq, get_exec_env()->nfsd_data->svc_stat);
+	svc_seq_show(seq, &nfsd_svcstats);
 
 #ifdef CONFIG_NFSD_V4
 	/* Show count for individual nfsv4 operations */
@@ -90,27 +98,14 @@ static const struct file_operations nfsd_proc_fops = {
 	.release = single_release,
 };
 
-int
+void
 nfsd_stat_init(void)
 {
-	struct ve_nfsd_data *d;
-
-	d = get_exec_env()->nfsd_data;
-	d->svc_stat = kzalloc(sizeof(struct svc_stat), GFP_KERNEL);
-	if (d->svc_stat == NULL)
-		return -ENOMEM;
-
-	d->svc_stat->program = &nfsd_program;
-	svc_proc_register(d->svc_stat, &nfsd_proc_fops);
-	return 0;
+	svc_proc_register(&nfsd_svcstats, &nfsd_proc_fops);
 }
 
 void
 nfsd_stat_shutdown(void)
 {
-	struct ve_nfsd_data *d;
-
-	d = get_exec_env()->nfsd_data;
 	svc_proc_unregister("nfsd");
-	kfree(d->svc_stat);
 }

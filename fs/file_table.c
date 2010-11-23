@@ -22,13 +22,8 @@
 #include <linux/fsnotify.h>
 #include <linux/sysctl.h>
 #include <linux/percpu_counter.h>
-#include <linux/ve.h>
 
 #include <asm/atomic.h>
-
-#include <bc/beancounter.h>
-#include <bc/kmem.h>
-#include <bc/misc.h>
 
 /* sysctl tunables... */
 struct files_stat_struct files_stat = {
@@ -39,7 +34,7 @@ struct files_stat_struct files_stat = {
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(files_lock);
 
 /* SLAB cache for file structures */
-struct kmem_cache *filp_cachep __read_mostly;
+static struct kmem_cache *filp_cachep __read_mostly;
 
 static struct percpu_counter nr_files __cacheline_aligned_in_smp;
 
@@ -48,16 +43,13 @@ static inline void file_free_rcu(struct rcu_head *head)
 	struct file *f = container_of(head, struct file, f_u.fu_rcuhead);
 
 	put_cred(f->f_cred);
-	put_ve(f->owner_env);
 	kmem_cache_free(filp_cachep, f);
 }
 
 static inline void file_free(struct file *f)
 {
+	percpu_counter_dec(&nr_files);
 	file_check_state(f);
-	if (f->f_ub == get_ub0())
-		percpu_counter_dec(&nr_files);
-	ub_file_uncharge(f);
 	call_rcu(&f->f_u.fu_rcuhead, file_free_rcu);
 }
 
@@ -111,14 +103,11 @@ struct file *get_empty_filp(void)
 	const struct cred *cred = current_cred();
 	static int old_max;
 	struct file * f;
-	int acct;
 
-	acct = (get_exec_ub() == get_ub0());
 	/*
 	 * Privileged users can go above max_files
 	 */
-	if (acct && get_nr_files() >= files_stat.max_files &&
-			!capable(CAP_SYS_ADMIN)) {
+	if (get_nr_files() >= files_stat.max_files && !capable(CAP_SYS_ADMIN)) {
 		/*
 		 * percpu_counters are inaccurate.  Do an expensive check before
 		 * we go and fail.
@@ -131,13 +120,7 @@ struct file *get_empty_filp(void)
 	if (f == NULL)
 		goto fail;
 
-	if (ub_file_charge(f))
-		goto fail_ch;
-	if (acct)
-		percpu_counter_inc(&nr_files);
-
-	f->owner_env = get_ve(get_exec_env());
-
+	percpu_counter_inc(&nr_files);
 	if (security_file_alloc(f))
 		goto fail_sec;
 
@@ -162,10 +145,6 @@ over:
 fail_sec:
 	file_free(f);
 fail:
-	return NULL;
-
-fail_ch:
-	kmem_cache_free(filp_cachep, f);
 	return NULL;
 }
 
@@ -352,10 +331,7 @@ struct file *fget_light(unsigned int fd, int *fput_needed)
 	*fput_needed = 0;
 	if (likely((atomic_read(&files->count) == 1))) {
 		file = fcheck_files(files, fd);
-		if (unlikely(file && file->f_heavy))
-			goto slow;
 	} else {
-slow:
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
 		if (file) {
@@ -460,48 +436,6 @@ retry:
 	}
 	file_list_unlock();
 }
-
-struct file *get_task_file(pid_t pid, int fd)
-{
-	int err;
-	struct task_struct *tsk;
-	struct files_struct *fs;
-	struct file *file = NULL;
-
-	err = -ESRCH;
-	read_lock(&tasklist_lock);
-	tsk = find_task_by_vpid(pid);
-	if (tsk == NULL) {
-		read_unlock(&tasklist_lock);
-		goto out;
-	}
-
-	get_task_struct(tsk);
-	read_unlock(&tasklist_lock);
-
-	err = -EINVAL;
-	fs = get_files_struct(tsk);
-	if (fs == NULL)
-		goto out_put;
-
-	rcu_read_lock();
-	err = -EBADF;
-	file = fcheck_files(fs, fd);
-	if (file == NULL)
-		goto out_unlock;
-
-	err = 0;
-	get_file(file);
-
-out_unlock:
-	rcu_read_unlock();
-	put_files_struct(fs);
-out_put:
-	put_task_struct(tsk);
-out:
-	return err ? ERR_PTR(err) : file;
-}
-EXPORT_SYMBOL(get_task_file);
 
 void __init files_init(unsigned long mempages)
 { 

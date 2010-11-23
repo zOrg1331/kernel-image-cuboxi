@@ -114,16 +114,13 @@ void __cpuinit check_tsc_sync_source(int cpu)
 		return;
 
 	if (boot_cpu_has(X86_FEATURE_TSC_RELIABLE)) {
-		if (cpu == (nr_cpu_ids-1) || system_state != SYSTEM_BOOTING)
-			pr_info(
-			"Skipped synchronization checks as TSC is reliable.\n");
+		printk_once(KERN_INFO "Skipping synchronization checks as TSC is reliable.\n");
 		return;
 	}
 
-#ifdef CONFIG_VE
-	/* TSC reset. kill whatever might rely on old values */
-	VE_TASK_INFO(current)->wakeup_stamp = 0;
-#endif
+	pr_info("checking TSC synchronization [CPU#%d -> CPU#%d]:",
+		smp_processor_id(), cpu);
+
 	/*
 	 * Reset it - in case this is a second bootup:
 	 */
@@ -145,14 +142,12 @@ void __cpuinit check_tsc_sync_source(int cpu)
 		cpu_relax();
 
 	if (nr_warps) {
-		pr_warning("TSC synchronization [CPU#%d -> CPU#%d]:\n",
-			smp_processor_id(), cpu);
+		printk("\n");
 		pr_warning("Measured %Ld cycles TSC warp between CPUs, "
 			   "turning off TSC clock.\n", max_warp);
 		mark_tsc_unstable("check_tsc_sync_source failed");
 	} else {
-		pr_debug("TSC synchronization [CPU#%d -> CPU#%d]: passed\n",
-			smp_processor_id(), cpu);
+		printk(" passed.\n");
 	}
 
 	/*

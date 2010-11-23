@@ -323,8 +323,7 @@ static struct sock *rfcomm_sock_alloc(struct net *net, struct socket *sock, int 
 	return sk;
 }
 
-static int rfcomm_sock_create(struct net *net, struct socket *sock,
-			      int protocol, int kern)
+static int rfcomm_sock_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 
@@ -704,7 +703,7 @@ static int rfcomm_sock_recvmsg(struct kiocb *iocb, struct socket *sock,
 		copied += chunk;
 		size   -= chunk;
 
-		sock_recv_ts_and_drops(msg, sk, skb);
+		sock_recv_timestamp(msg, sk, skb);
 
 		if (!(flags & MSG_PEEK)) {
 			atomic_sub(chunk, &sk->sk_rmem_alloc);

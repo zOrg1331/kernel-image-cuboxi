@@ -281,7 +281,6 @@ int acpi_pci_irq_add_prt(acpi_handle handle, struct pci_bus *bus)
 	kfree(buffer.pointer);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(acpi_pci_irq_add_prt);
 
 void acpi_pci_irq_del_prt(struct pci_bus *bus)
 {
@@ -300,7 +299,6 @@ void acpi_pci_irq_del_prt(struct pci_bus *bus)
 	}
 	spin_unlock(&acpi_prt_lock);
 }
-EXPORT_SYMBOL_GPL(acpi_pci_irq_del_prt);
 
 /* --------------------------------------------------------------------------
                           PCI Interrupt Routing Support

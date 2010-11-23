@@ -26,14 +26,6 @@ static struct kmem_cache *nsproxy_cachep;
 
 struct nsproxy init_nsproxy = INIT_NSPROXY(init_nsproxy);
 
-void get_task_namespaces(struct task_struct *tsk)
-{
-	struct nsproxy *ns = tsk->nsproxy;
-	if (ns) {
-		get_nsproxy(ns);
-	}
-}
-
 static inline struct nsproxy *create_nsproxy(void)
 {
 	struct nsproxy *nsproxy;
@@ -77,7 +69,7 @@ static struct nsproxy *create_new_namespaces(unsigned long flags,
 		goto out_ipc;
 	}
 
-	new_nsp->pid_ns = copy_pid_ns(flags, tsk->nsproxy->pid_ns);
+	new_nsp->pid_ns = copy_pid_ns(flags, task_active_pid_ns(tsk));
 	if (IS_ERR(new_nsp->pid_ns)) {
 		err = PTR_ERR(new_nsp->pid_ns);
 		goto out_pid;
@@ -112,8 +104,7 @@ out_ns:
  * called from clone.  This now handles copy for nsproxy and all
  * namespaces therein.
  */
-int copy_namespaces(unsigned long flags, struct task_struct *tsk,
-		int force_admin)
+int copy_namespaces(unsigned long flags, struct task_struct *tsk)
 {
 	struct nsproxy *old_ns = tsk->nsproxy;
 	struct nsproxy *new_ns;
@@ -128,20 +119,9 @@ int copy_namespaces(unsigned long flags, struct task_struct *tsk,
 				CLONE_NEWPID | CLONE_NEWNET)))
 		return 0;
 
-	if (!force_admin) {
-		if (!capable(CAP_SYS_ADMIN)) {
-			err = -EPERM;
-			goto out;
-		}
-
-		/*
-		 * netns-vs-sysfs is deadly broken, thus new namespace
-		 * (even in ve0) can bring the node down
-		 */
-		if (flags & CLONE_NEWNET) {
-			err = -EINVAL;
-			goto out;
-		}
+	if (!capable(CAP_SYS_ADMIN)) {
+		err = -EPERM;
+		goto out;
 	}
 
 	/*
@@ -168,7 +148,6 @@ out:
 	put_nsproxy(old_ns);
 	return err;
 }
-EXPORT_SYMBOL(copy_namespaces);
 
 void free_nsproxy(struct nsproxy *ns)
 {
@@ -183,22 +162,6 @@ void free_nsproxy(struct nsproxy *ns)
 	put_net(ns->net_ns);
 	kmem_cache_free(nsproxy_cachep, ns);
 }
-EXPORT_SYMBOL(free_nsproxy);
-
-struct mnt_namespace * get_task_mnt_ns(struct task_struct *tsk)
-{
-	struct mnt_namespace *mnt_ns = NULL;
-
-	task_lock(tsk);
-	if (tsk->nsproxy)
-		mnt_ns = tsk->nsproxy->mnt_ns;
-	if (mnt_ns)
-		get_mnt_ns(mnt_ns);
-	task_unlock(tsk);
-
-	return mnt_ns;
-}
-EXPORT_SYMBOL(get_task_mnt_ns);
 
 /*
  * Called from unshare. Unshare all the namespaces part of nsproxy.
@@ -215,9 +178,6 @@ int unshare_nsproxy_namespaces(unsigned long unshare_flags,
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
-
-	if (unshare_flags & CLONE_NEWNET)
-		return -EINVAL;
 
 	*new_nsp = create_new_namespaces(unshare_flags, current,
 				new_fs ? new_fs : current->fs);

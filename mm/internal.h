@@ -12,7 +12,6 @@
 #define __MM_INTERNAL_H
 
 #include <linux/mm.h>
-#include <linux/mmgang.h>
 
 void free_pgtables(struct mmu_gather *tlb, struct vm_area_struct *start_vma,
 		unsigned long floor, unsigned long ceiling);
@@ -51,9 +50,6 @@ extern void putback_lru_page(struct page *page);
  */
 extern void __free_pages_bootmem(struct page *page, unsigned int order);
 extern void prep_compound_page(struct page *page, unsigned long order);
-#ifdef CONFIG_MEMORY_FAILURE
-extern bool is_free_buddy_page(struct page *page);
-#endif
 
 
 /*
@@ -67,6 +63,17 @@ static inline unsigned long page_order(struct page *page)
 	return page_private(page);
 }
 
+#ifdef CONFIG_HAVE_MLOCK
+extern long mlock_vma_pages_range(struct vm_area_struct *vma,
+			unsigned long start, unsigned long end);
+extern void munlock_vma_pages_range(struct vm_area_struct *vma,
+			unsigned long start, unsigned long end);
+static inline void munlock_vma_pages_all(struct vm_area_struct *vma)
+{
+	munlock_vma_pages_range(vma, vma->vm_start, vma->vm_end);
+}
+#endif
+
 /*
  * unevictable_migrate_page() called only from migrate_page_copy() to
  * migrate unevictable flag to new page.
@@ -79,21 +86,7 @@ static inline void unevictable_migrate_page(struct page *new, struct page *old)
 		SetPageUnevictable(new);
 }
 
-#ifdef CONFIG_MMU
-extern long mlock_vma_pages_range(struct vm_area_struct *vma,
-			unsigned long start, unsigned long end);
-extern void __munlock_vma_pages_range(struct vm_area_struct *vma,
-			unsigned long start, unsigned long end, int acct);
-static inline void munlock_vma_pages_range(struct vm_area_struct *vma,
-			unsigned long start, unsigned long end)
-{
-	__munlock_vma_pages_range(vma, start, end, 1);
-}
-static inline void munlock_vma_pages_all(struct vm_area_struct *vma)
-{
-	munlock_vma_pages_range(vma, vma->vm_start, vma->vm_end);
-}
-
+#ifdef CONFIG_HAVE_MLOCKED_PAGE_BIT
 /*
  * Called only in fault path via page_evictable() for a new page
  * to determine if it's being mapped into a LOCKED vma.
@@ -107,14 +100,6 @@ static inline int is_mlocked_vma(struct vm_area_struct *vma, struct page *page)
 		return 0;
 
 	if (!TestSetPageMlocked(page)) {
-		struct gang_set *gs = get_mm_gang(vma->vm_mm);
-
-		rcu_read_lock();
-		/* page is isolated by caller */
-		if (page_gang(page)->set != gs)
-			gang_mod_user_page(page, gs);
-		rcu_read_unlock();
-
 		inc_zone_page_state(page, NR_MLOCK);
 		count_vm_event(UNEVICTABLE_PGMLOCKED);
 	}
@@ -122,10 +107,9 @@ static inline int is_mlocked_vma(struct vm_area_struct *vma, struct page *page)
 }
 
 /*
- * must be called with vma's mmap_sem held for read or write, and page locked.
+ * must be called with vma's mmap_sem held for read, and page locked.
  */
-extern void mlock_vma_page(struct vm_area_struct *vma, struct page *page);
-extern void munlock_vma_page(struct page *page);
+extern void mlock_vma_page(struct page *page);
 
 /*
  * Clear the page's PageMlocked().  This can be useful in a situation where
@@ -160,16 +144,16 @@ static inline void mlock_migrate_page(struct page *newpage, struct page *page)
 	}
 }
 
-#else /* !CONFIG_MMU */
+#else /* CONFIG_HAVE_MLOCKED_PAGE_BIT */
 static inline int is_mlocked_vma(struct vm_area_struct *v, struct page *p)
 {
 	return 0;
 }
 static inline void clear_page_mlock(struct page *page) { }
-static inline void mlock_vma_page(struct vm_area_struct *vma, struct page *page) { }
+static inline void mlock_vma_page(struct page *page) { }
 static inline void mlock_migrate_page(struct page *new, struct page *old) { }
 
-#endif /* !CONFIG_MMU */
+#endif /* CONFIG_HAVE_MLOCKED_PAGE_BIT */
 
 /*
  * Return the mem_map entry representing the 'offset' subpage within
@@ -276,12 +260,3 @@ int __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 #define ZONE_RECLAIM_SOME	0
 #define ZONE_RECLAIM_SUCCESS	1
 #endif
-
-extern int hwpoison_filter(struct page *p);
-
-extern u32 hwpoison_filter_dev_major;
-extern u32 hwpoison_filter_dev_minor;
-extern u64 hwpoison_filter_flags_mask;
-extern u64 hwpoison_filter_flags_value;
-extern u64 hwpoison_filter_memcg;
-extern u32 hwpoison_filter_enable;

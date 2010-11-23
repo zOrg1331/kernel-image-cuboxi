@@ -10,8 +10,6 @@
 #ifndef _ASM_X86_I387_H
 #define _ASM_X86_I387_H
 
-#ifndef __ASSEMBLY__
-
 #include <linux/sched.h>
 #include <linux/kernel_stat.h>
 #include <linux/regset.h>
@@ -412,10 +410,5 @@ static inline unsigned short get_fpu_mxcsr(struct task_struct *tsk)
 		return MXCSR_DEFAULT;
 	}
 }
-
-#endif /* __ASSEMBLY__ */
-
-#define PSHUFB_XMM5_XMM0 .byte 0x66, 0x0f, 0x38, 0x00, 0xc5
-#define PSHUFB_XMM5_XMM6 .byte 0x66, 0x0f, 0x38, 0x00, 0xf5
 
 #endif /* _ASM_X86_I387_H */

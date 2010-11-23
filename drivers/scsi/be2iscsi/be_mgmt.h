@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2005 - 2010 ServerEngines
+ * Copyright (C) 2005 - 2009 ServerEngines
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -175,9 +175,7 @@ struct mgmt_hba_attributes {
 	u8 phy_port;
 	u32 firmware_post_status;
 	u32 hba_mtu[8];
-	u8 iscsi_features;
-	u8 future_u8[3];
-	u32 future_u32[3];
+	u32 future_u32[4];
 } __packed;
 
 struct mgmt_controller_attributes {
@@ -231,7 +229,6 @@ struct beiscsi_endpoint {
 	struct beiscsi_hba *phba;
 	struct beiscsi_sess *sess;
 	struct beiscsi_conn *conn;
-	struct iscsi_endpoint *openiscsi_ep;
 	unsigned short ip_type;
 	char dst6_addr[ISCSI_ADDRESS_BUF_LEN];
 	unsigned long dst_addr;
@@ -249,5 +246,4 @@ unsigned char mgmt_invalidate_connection(struct beiscsi_hba *phba,
 					 unsigned short cid,
 					 unsigned short issue_reset,
 					 unsigned short savecfg_flag);
-
 #endif

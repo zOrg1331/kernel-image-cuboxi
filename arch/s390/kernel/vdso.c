@@ -86,8 +86,7 @@ static void vdso_init_data(struct vdso_data *vd)
 	unsigned int facility_list;
 
 	facility_list = stfl();
-	vd->ectg_available =
-		user_mode != HOME_SPACE_MODE && (facility_list & 1);
+	vd->ectg_available = switch_amode && (facility_list & 1);
 }
 
 #ifdef CONFIG_64BIT
@@ -115,7 +114,7 @@ int vdso_alloc_per_cpu(int cpu, struct _lowcore *lowcore)
 
 	lowcore->vdso_per_cpu_data = __LC_PASTE;
 
-	if (user_mode == HOME_SPACE_MODE || !vdso_enabled)
+	if (!switch_amode || !vdso_enabled)
 		return 0;
 
 	segment_table = __get_free_pages(GFP_KERNEL, SEGMENT_ORDER);
@@ -161,7 +160,7 @@ void vdso_free_per_cpu(int cpu, struct _lowcore *lowcore)
 	unsigned long segment_table, page_table, page_frame;
 	u32 *psal, *aste;
 
-	if (user_mode == HOME_SPACE_MODE || !vdso_enabled)
+	if (!switch_amode || !vdso_enabled)
 		return;
 
 	psal = (u32 *)(addr_t) lowcore->paste[4];
@@ -185,7 +184,7 @@ static void __vdso_init_cr5(void *dummy)
 
 static void vdso_init_cr5(void)
 {
-	if (user_mode != HOME_SPACE_MODE && vdso_enabled)
+	if (switch_amode && vdso_enabled)
 		on_each_cpu(__vdso_init_cr5, NULL, 1);
 }
 #endif /* CONFIG_64BIT */

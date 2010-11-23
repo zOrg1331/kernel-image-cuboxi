@@ -74,7 +74,6 @@ void __cpuinit detect_extended_topology(struct cpuinfo_x86 *c)
 	unsigned int eax, ebx, ecx, edx, sub_index;
 	unsigned int ht_mask_width, core_plus_mask_width;
 	unsigned int core_select_mask, core_level_siblings;
-	static bool printed;
 
 	if (c->cpuid_level < 0xb)
 		return;
@@ -128,14 +127,12 @@ void __cpuinit detect_extended_topology(struct cpuinfo_x86 *c)
 
 	c->x86_max_cores = (core_level_siblings / smp_num_siblings);
 
-	if (!printed) {
-		printk(KERN_INFO  "CPU: Physical Processor ID: %d\n",
-		       c->phys_proc_id);
-		if (c->x86_max_cores > 1)
-			printk(KERN_INFO  "CPU: Processor Core ID: %d\n",
-			       c->cpu_core_id);
-		printed = 1;
-	}
+
+	printk(KERN_INFO  "CPU: Physical Processor ID: %d\n",
+	       c->phys_proc_id);
+	if (c->x86_max_cores > 1)
+		printk(KERN_INFO  "CPU: Processor Core ID: %d\n",
+		       c->cpu_core_id);
 	return;
 #endif
 }

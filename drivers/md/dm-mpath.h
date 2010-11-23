@@ -12,7 +12,6 @@
 struct dm_dev;
 
 struct dm_path {
-	uint64_t features;
 	struct dm_dev *dev;	/* Read-only */
 	void *pscontext;	/* For path-selector use */
 };
