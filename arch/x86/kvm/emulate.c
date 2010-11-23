@@ -20,16 +20,8 @@
  * From: xen-unstable 10676:af9809f51f81a3c43f276f00c81a52ef558afda4
  */
 
-#ifndef __KERNEL__
-#include <stdio.h>
-#include <stdint.h>
-#include <public/xen.h>
-#define DPRINTF(_f, _a ...) printf(_f , ## _a)
-#else
 #include <linux/kvm_host.h>
 #include "kvm_cache_regs.h"
-#define DPRINTF(x...) do {} while (0)
-#endif
 #include <linux/module.h>
 #include <asm/kvm_emulate.h>
 
@@ -418,9 +410,9 @@ address_mask(struct decode_cache *c, unsigned long reg)
 }
 
 static inline unsigned long
-register_address(struct decode_cache *c, unsigned long base, unsigned long reg)
+register_address(struct decode_cache *c, unsigned long reg)
 {
-	return base + address_mask(c, reg);
+	return address_mask(c, reg);
 }
 
 static inline void
@@ -452,26 +444,26 @@ static unsigned long seg_base(struct x86_emulate_ctxt *ctxt,
 	return ops->get_cached_segment_base(seg, ctxt->vcpu);
 }
 
-static unsigned long seg_override_base(struct x86_emulate_ctxt *ctxt,
-				       struct x86_emulate_ops *ops,
-				       struct decode_cache *c)
+static unsigned seg_override(struct x86_emulate_ctxt *ctxt,
+			     struct x86_emulate_ops *ops,
+			     struct decode_cache *c)
 {
 	if (!c->has_seg_override)
 		return 0;
 
-	return seg_base(ctxt, ops, c->seg_override);
+	return c->seg_override;
 }
 
-static unsigned long es_base(struct x86_emulate_ctxt *ctxt,
-			     struct x86_emulate_ops *ops)
+static ulong linear(struct x86_emulate_ctxt *ctxt,
+		    struct segmented_address addr)
 {
-	return seg_base(ctxt, ops, VCPU_SREG_ES);
-}
+	struct decode_cache *c = &ctxt->decode;
+	ulong la;
 
-static unsigned long ss_base(struct x86_emulate_ctxt *ctxt,
-			     struct x86_emulate_ops *ops)
-{
-	return seg_base(ctxt, ops, VCPU_SREG_SS);
+	la = seg_base(ctxt, ctxt->ops, addr.seg) + addr.ea;
+	if (c->ad_bytes != 8)
+		la &= (u32)-1;
+	return la;
 }
 
 static void emulate_exception(struct x86_emulate_ctxt *ctxt, int vec,
@@ -564,7 +556,7 @@ static void *decode_register(u8 modrm_reg, unsigned long *regs,
 
 static int read_descriptor(struct x86_emulate_ctxt *ctxt,
 			   struct x86_emulate_ops *ops,
-			   ulong addr,
+			   struct segmented_address addr,
 			   u16 *size, unsigned long *address, int op_bytes)
 {
 	int rc;
@@ -572,10 +564,13 @@ static int read_descriptor(struct x86_emulate_ctxt *ctxt,
 	if (op_bytes == 2)
 		op_bytes = 3;
 	*address = 0;
-	rc = ops->read_std(addr, (unsigned long *)size, 2, ctxt->vcpu, NULL);
+	rc = ops->read_std(linear(ctxt, addr), (unsigned long *)size, 2,
+			   ctxt->vcpu, NULL);
 	if (rc != X86EMUL_CONTINUE)
 		return rc;
-	rc = ops->read_std(addr + 2, address, op_bytes, ctxt->vcpu, NULL);
+	addr.ea += 2;
+	rc = ops->read_std(linear(ctxt, addr), address, op_bytes,
+			   ctxt->vcpu, NULL);
 	return rc;
 }
 
@@ -768,7 +763,7 @@ static int decode_modrm(struct x86_emulate_ctxt *ctxt,
 			break;
 		}
 	}
-	op->addr.mem = modrm_ea;
+	op->addr.mem.ea = modrm_ea;
 done:
 	return rc;
 }
@@ -783,13 +778,13 @@ static int decode_abs(struct x86_emulate_ctxt *ctxt,
 	op->type = OP_MEM;
 	switch (c->ad_bytes) {
 	case 2:
-		op->addr.mem = insn_fetch(u16, 2, c->eip);
+		op->addr.mem.ea = insn_fetch(u16, 2, c->eip);
 		break;
 	case 4:
-		op->addr.mem = insn_fetch(u32, 4, c->eip);
+		op->addr.mem.ea = insn_fetch(u32, 4, c->eip);
 		break;
 	case 8:
-		op->addr.mem = insn_fetch(u64, 8, c->eip);
+		op->addr.mem.ea = insn_fetch(u64, 8, c->eip);
 		break;
 	}
 done:
@@ -808,7 +803,7 @@ static void fetch_bit_operand(struct decode_cache *c)
 		else if (c->src.bytes == 4)
 			sv = (s32)c->src.val & (s32)mask;
 
-		c->dst.addr.mem += (sv >> 3);
+		c->dst.addr.mem.ea += (sv >> 3);
 	}
 
 	/* only subword offset */
@@ -1101,7 +1096,7 @@ static inline int writeback(struct x86_emulate_ctxt *ctxt,
 	case OP_MEM:
 		if (c->lock_prefix)
 			rc = ops->cmpxchg_emulated(
-					c->dst.addr.mem,
+					linear(ctxt, c->dst.addr.mem),
 					&c->dst.orig_val,
 					&c->dst.val,
 					c->dst.bytes,
@@ -1109,7 +1104,7 @@ static inline int writeback(struct x86_emulate_ctxt *ctxt,
 					ctxt->vcpu);
 		else
 			rc = ops->write_emulated(
-					c->dst.addr.mem,
+					linear(ctxt, c->dst.addr.mem),
 					&c->dst.val,
 					c->dst.bytes,
 					&err,
@@ -1137,8 +1132,8 @@ static inline void emulate_push(struct x86_emulate_ctxt *ctxt,
 	c->dst.bytes = c->op_bytes;
 	c->dst.val = c->src.val;
 	register_address_increment(c, &c->regs[VCPU_REGS_RSP], -c->op_bytes);
-	c->dst.addr.mem = register_address(c, ss_base(ctxt, ops),
-					   c->regs[VCPU_REGS_RSP]);
+	c->dst.addr.mem.ea = register_address(c, c->regs[VCPU_REGS_RSP]);
+	c->dst.addr.mem.seg = VCPU_SREG_SS;
 }
 
 static int emulate_pop(struct x86_emulate_ctxt *ctxt,
@@ -1147,10 +1142,11 @@ static int emulate_pop(struct x86_emulate_ctxt *ctxt,
 {
 	struct decode_cache *c = &ctxt->decode;
 	int rc;
+	struct segmented_address addr;
 
-	rc = read_emulated(ctxt, ops, register_address(c, ss_base(ctxt, ops),
-						       c->regs[VCPU_REGS_RSP]),
-			   dest, len);
+	addr.ea = register_address(c, c->regs[VCPU_REGS_RSP]);
+	addr.seg = VCPU_SREG_SS;
+	rc = read_emulated(ctxt, ops, linear(ctxt, addr), dest, len);
 	if (rc != X86EMUL_CONTINUE)
 		return rc;
 
@@ -2231,14 +2227,15 @@ int emulator_task_switch(struct x86_emulate_ctxt *ctxt,
 	return (rc == X86EMUL_UNHANDLEABLE) ? -1 : 0;
 }
 
-static void string_addr_inc(struct x86_emulate_ctxt *ctxt, unsigned long base,
+static void string_addr_inc(struct x86_emulate_ctxt *ctxt, unsigned seg,
 			    int reg, struct operand *op)
 {
 	struct decode_cache *c = &ctxt->decode;
 	int df = (ctxt->eflags & EFLG_DF) ? -1 : 1;
 
 	register_address_increment(c, &c->regs[reg], df * op->bytes);
-	op->addr.mem = register_address(c,  base, c->regs[reg]);
+	op->addr.mem.ea = register_address(c, c->regs[reg]);
+	op->addr.mem.seg = seg;
 }
 
 static int em_push(struct x86_emulate_ctxt *ctxt)
@@ -2647,7 +2644,7 @@ static int decode_imm(struct x86_emulate_ctxt *ctxt, struct operand *op,
 
 	op->type = OP_IMM;
 	op->bytes = size;
-	op->addr.mem = c->eip;
+	op->addr.mem.ea = c->eip;
 	/* NB. Immediates are sign-extended as necessary. */
 	switch (op->bytes) {
 	case 1:
@@ -2803,10 +2800,8 @@ done_prefixes:
 	c->execute = opcode.u.execute;
 
 	/* Unrecognised? */
-	if (c->d == 0 || (c->d & Undefined)) {
-		DPRINTF("Cannot emulate %02x\n", c->b);
+	if (c->d == 0 || (c->d & Undefined))
 		return -1;
-	}
 
 	if (mode == X86EMUL_MODE_PROT64 && (c->d & Stack))
 		c->op_bytes = 8;
@@ -2831,14 +2826,13 @@ done_prefixes:
 	if (!c->has_seg_override)
 		set_seg_override(c, VCPU_SREG_DS);
 
-	if (memop.type == OP_MEM && !(!c->twobyte && c->b == 0x8d))
-		memop.addr.mem += seg_override_base(ctxt, ops, c);
+	memop.addr.mem.seg = seg_override(ctxt, ops, c);
 
 	if (memop.type == OP_MEM && c->ad_bytes != 8)
-		memop.addr.mem = (u32)memop.addr.mem;
+		memop.addr.mem.ea = (u32)memop.addr.mem.ea;
 
 	if (memop.type == OP_MEM && c->rip_relative)
-		memop.addr.mem += c->eip;
+		memop.addr.mem.ea += c->eip;
 
 	/*
 	 * Decode and fetch the source operand: register, memory
@@ -2890,14 +2884,14 @@ done_prefixes:
 	case SrcSI:
 		c->src.type = OP_MEM;
 		c->src.bytes = (c->d & ByteOp) ? 1 : c->op_bytes;
-		c->src.addr.mem =
-			register_address(c,  seg_override_base(ctxt, ops, c),
-					 c->regs[VCPU_REGS_RSI]);
+		c->src.addr.mem.ea =
+			register_address(c, c->regs[VCPU_REGS_RSI]);
+		c->src.addr.mem.seg = seg_override(ctxt, ops, c),
 		c->src.val = 0;
 		break;
 	case SrcImmFAddr:
 		c->src.type = OP_IMM;
-		c->src.addr.mem = c->eip;
+		c->src.addr.mem.ea = c->eip;
 		c->src.bytes = c->op_bytes + 2;
 		insn_fetch_arr(c->src.valptr, c->src.bytes, c->eip);
 		break;
@@ -2944,7 +2938,7 @@ done_prefixes:
 		break;
 	case DstImmUByte:
 		c->dst.type = OP_IMM;
-		c->dst.addr.mem = c->eip;
+		c->dst.addr.mem.ea = c->eip;
 		c->dst.bytes = 1;
 		c->dst.val = insn_fetch(u8, 1, c->eip);
 		break;
@@ -2969,9 +2963,9 @@ done_prefixes:
 	case DstDI:
 		c->dst.type = OP_MEM;
 		c->dst.bytes = (c->d & ByteOp) ? 1 : c->op_bytes;
-		c->dst.addr.mem =
-			register_address(c, es_base(ctxt, ops),
-					 c->regs[VCPU_REGS_RDI]);
+		c->dst.addr.mem.ea =
+			register_address(c, c->regs[VCPU_REGS_RDI]);
+		c->dst.addr.mem.seg = VCPU_SREG_ES;
 		c->dst.val = 0;
 		break;
 	case ImplicitOps:
@@ -3050,7 +3044,7 @@ x86_emulate_insn(struct x86_emulate_ctxt *ctxt)
 	}
 
 	if ((c->src.type == OP_MEM) && !(c->d & NoAccess)) {
-		rc = read_emulated(ctxt, ops, c->src.addr.mem,
+		rc = read_emulated(ctxt, ops, linear(ctxt, c->src.addr.mem),
 					c->src.valptr, c->src.bytes);
 		if (rc != X86EMUL_CONTINUE)
 			goto done;
@@ -3058,7 +3052,7 @@ x86_emulate_insn(struct x86_emulate_ctxt *ctxt)
 	}
 
 	if (c->src2.type == OP_MEM) {
-		rc = read_emulated(ctxt, ops, c->src2.addr.mem,
+		rc = read_emulated(ctxt, ops, linear(ctxt, c->src2.addr.mem),
 					&c->src2.val, c->src2.bytes);
 		if (rc != X86EMUL_CONTINUE)
 			goto done;
@@ -3070,7 +3064,7 @@ x86_emulate_insn(struct x86_emulate_ctxt *ctxt)
 
 	if ((c->dst.type == OP_MEM) && !(c->d & Mov)) {
 		/* optimisation - avoid slow emulated read if Mov */
-		rc = read_emulated(ctxt, ops, c->dst.addr.mem,
+		rc = read_emulated(ctxt, ops, linear(ctxt, c->dst.addr.mem),
 				   &c->dst.val, c->dst.bytes);
 		if (rc != X86EMUL_CONTINUE)
 			goto done;
@@ -3221,7 +3215,7 @@ special_insn:
 		c->dst.val = ops->get_segment_selector(c->modrm_reg, ctxt->vcpu);
 		break;
 	case 0x8d: /* lea r16/r32, m */
-		c->dst.val = c->src.addr.mem;
+		c->dst.val = c->src.addr.mem.ea;
 		break;
 	case 0x8e: { /* mov seg, r/m16 */
 		uint16_t sel;
@@ -3268,7 +3262,6 @@ special_insn:
 		break;
 	case 0xa6 ... 0xa7:	/* cmps */
 		c->dst.type = OP_NONE; /* Disable writeback. */
-		DPRINTF("cmps: mem1=0x%p mem2=0x%p\n", c->src.addr.mem, c->dst.addr.mem);
 		goto cmp;
 	case 0xa8 ... 0xa9:	/* test ax, imm */
 		goto test;
@@ -3449,11 +3442,11 @@ writeback:
 	c->dst.type = saved_dst_type;
 
 	if ((c->d & SrcMask) == SrcSI)
-		string_addr_inc(ctxt, seg_override_base(ctxt, ops, c),
+		string_addr_inc(ctxt, seg_override(ctxt, ops, c),
 				VCPU_REGS_RSI, &c->src);
 
 	if ((c->d & DstMask) == DstDI)
-		string_addr_inc(ctxt, es_base(ctxt, ops), VCPU_REGS_RDI,
+		string_addr_inc(ctxt, VCPU_SREG_ES, VCPU_REGS_RDI,
 				&c->dst);
 
 	if (c->rep_prefix && (c->d & String)) {
@@ -3546,7 +3539,8 @@ twobyte_insn:
 			emulate_ud(ctxt);
 			goto done;
 		case 7: /* invlpg*/
-			emulate_invlpg(ctxt->vcpu, c->src.addr.mem);
+			emulate_invlpg(ctxt->vcpu,
+				       linear(ctxt, c->src.addr.mem));
 			/* Disable writeback. */
 			c->dst.type = OP_NONE;
 			break;
@@ -3785,6 +3779,5 @@ twobyte_insn:
 	goto writeback;
 
 cannot_emulate:
-	DPRINTF("Cannot emulate %02x\n", c->b);
 	return -1;
 }
