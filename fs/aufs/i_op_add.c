@@ -275,18 +275,17 @@ static int add_simple(struct inode *dir, struct dentry *dentry,
 			err = -EIO;
 		}
 		au_dtime_revert(&dt);
-		d_drop(dentry);
 	}
 
 	au_unpin(&pin);
 	dput(wh_dentry);
 
 out:
+	di_write_unlock(parent);
 	if (unlikely(err)) {
 		au_update_dbstart(dentry);
 		d_drop(dentry);
 	}
-	di_write_unlock(parent);
 	aufs_read_unlock(dentry, AuLock_DW);
 	return err;
 }
@@ -548,25 +547,23 @@ int aufs_link(struct dentry *src_dentry, struct inode *dir,
 
 out_revert:
 	rerr = vfsub_unlink(au_pinned_h_dir(&a->pin), &a->h_path, /*force*/0);
-	if (!rerr)
-		goto out_dt;
-	AuIOErr("%.*s reverting failed(%d, %d)\n",
-		AuDLNPair(dentry), err, rerr);
-	err = -EIO;
-out_dt:
-	d_drop(dentry);
+	if (unlikely(rerr)) {
+		AuIOErr("%.*s reverting failed(%d, %d)\n",
+			AuDLNPair(dentry), err, rerr);
+		err = -EIO;
+	}
 	au_dtime_revert(&dt);
 out_unpin:
 	au_unpin(&a->pin);
 out_wh:
 	dput(wh_dentry);
 out_unlock:
+	di_write_unlock(a->parent);
+	dput(a->src_parent);
 	if (unlikely(err)) {
 		au_update_dbstart(dentry);
 		d_drop(dentry);
 	}
-	di_write_unlock(a->parent);
-	dput(a->src_parent);
 	aufs_read_and_write_unlock2(dentry, src_dentry);
 out_kfree:
 	kfree(a);
@@ -658,17 +655,16 @@ out_dir:
 			AuDLNPair(dentry), err, rerr);
 		err = -EIO;
 	}
-	d_drop(dentry);
 	au_dtime_revert(&a->dt);
 out_unlock:
 	au_unpin(&a->pin);
 	dput(wh_dentry);
 out_free:
+	di_write_unlock(parent);
 	if (unlikely(err)) {
 		au_update_dbstart(dentry);
 		d_drop(dentry);
 	}
-	di_write_unlock(parent);
 	aufs_read_unlock(dentry, AuLock_DW);
 	kfree(a);
 out:
