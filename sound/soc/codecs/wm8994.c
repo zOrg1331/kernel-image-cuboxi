@@ -24,7 +24,6 @@
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
-#include <sound/soc-dapm.h>
 #include <sound/initval.h>
 #include <sound/tlv.h>
 
@@ -2504,6 +2503,8 @@ static int  wm8994_codec_remove(struct snd_soc_codec *codec)
 	wm8994_free_irq(codec->control_data, WM8994_IRQ_MIC2_DET, wm8994);
 	wm8994_free_irq(codec->control_data, WM8994_IRQ_MIC1_SHRT, wm8994);
 	wm8994_free_irq(codec->control_data, WM8994_IRQ_MIC1_DET, wm8994);
+	kfree(wm8994->retune_mobile_texts);
+	kfree(wm8994->drc_texts);
 	kfree(wm8994);
 
 	return 0;
@@ -2516,6 +2517,8 @@ static struct snd_soc_codec_driver soc_codec_dev_wm8994 = {
 	.resume =	wm8994_resume,
 	.read = wm8994_read,
 	.write = wm8994_write,
+	.readable_register = wm8994_readable,
+	.volatile_register = wm8994_volatile,
 	.set_bias_level = wm8994_set_bias_level,
 };
 

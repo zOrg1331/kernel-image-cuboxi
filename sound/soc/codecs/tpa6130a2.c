@@ -29,7 +29,6 @@
 #include <linux/slab.h>
 #include <sound/tpa6130a2-plat.h>
 #include <sound/soc.h>
-#include <sound/soc-dapm.h>
 #include <sound/tlv.h>
 
 #include "tpa6130a2.h"
@@ -78,8 +77,10 @@ static int tpa6130a2_i2c_write(int reg, u8 value)
 
 	if (data->power_state) {
 		val = i2c_smbus_write_byte_data(tpa6130a2_client, reg, value);
-		if (val < 0)
+		if (val < 0) {
 			dev_err(&tpa6130a2_client->dev, "Write failed\n");
+			return val;
+		}
 	}
 
 	/* Either powered on or off, we save the context */
