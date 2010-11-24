@@ -186,12 +186,16 @@ static ssize_t v4l2_read(struct file *filp, char __user *buf,
 		size_t sz, loff_t *off)
 {
 	struct video_device *vdev = video_devdata(filp);
-	int ret = -EIO;
+	int ret = -ENODEV;
 
 	if (!vdev->fops->read)
 		return -EINVAL;
-	if (vdev->lock)
-		mutex_lock(vdev->lock);
+	if (vdev->lock) {
+		int res = mutex_lock_interruptible(vdev->lock);
+
+		if (res)
+			return res;
+	}
 	if (video_is_registered(vdev))
 		ret = vdev->fops->read(filp, buf, sz, off);
 	if (vdev->lock)
@@ -203,12 +207,16 @@ static ssize_t v4l2_write(struct file *filp, const char __user *buf,
 		size_t sz, loff_t *off)
 {
 	struct video_device *vdev = video_devdata(filp);
-	int ret = -EIO;
+	int ret = -ENODEV;
 
 	if (!vdev->fops->write)
 		return -EINVAL;
-	if (vdev->lock)
-		mutex_lock(vdev->lock);
+	if (vdev->lock) {
+		int res = mutex_lock_interruptible(vdev->lock);
+
+		if (res)
+			return res;
+	}
 	if (video_is_registered(vdev))
 		ret = vdev->fops->write(filp, buf, sz, off);
 	if (vdev->lock)
@@ -219,12 +227,12 @@ static ssize_t v4l2_write(struct file *filp, const char __user *buf,
 static unsigned int v4l2_poll(struct file *filp, struct poll_table_struct *poll)
 {
 	struct video_device *vdev = video_devdata(filp);
-	int ret = DEFAULT_POLLMASK;
+	int ret = POLLERR;
 
 	if (!vdev->fops->poll)
 		return ret;
-	if (vdev->lock)
-		mutex_lock(vdev->lock);
+	if (vdev->lock && mutex_lock_interruptible(vdev->lock))
+		return ret;
 	if (video_is_registered(vdev))
 		ret = vdev->fops->poll(filp, poll);
 	if (vdev->lock)
@@ -238,20 +246,53 @@ static long v4l2_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	int ret = -ENODEV;
 
 	if (vdev->fops->unlocked_ioctl) {
-		if (vdev->lock)
-			mutex_lock(vdev->lock);
+		if (vdev->lock) {
+			int res = mutex_lock_interruptible(vdev->lock);
+
+			if (res)
+				return res;
+		}
 		if (video_is_registered(vdev))
 			ret = vdev->fops->unlocked_ioctl(filp, cmd, arg);
 		if (vdev->lock)
 			mutex_unlock(vdev->lock);
 	} else if (vdev->fops->ioctl) {
-		/* TODO: convert all drivers to unlocked_ioctl */
+		/* This code path is a replacement for the BKL. It is a major
+		 * hack but it will have to do for those drivers that are not
+		 * yet converted to use unlocked_ioctl.
+		 *
+		 * There are two options: if the driver implements struct
+		 * v4l2_device, then the lock defined there is used to
+		 * serialize the ioctls. Otherwise the v4l2 core lock defined
+		 * below is used. This lock is really bad since it serializes
+		 * completely independent devices.
+		 *
+		 * Both variants suffer from the same problem: if the driver
+		 * sleeps, then it blocks all ioctls since the lock is still
+		 * held. This is very common for VIDIOC_DQBUF since that
+		 * normally waits for a frame to arrive. As a result any other
+		 * ioctl calls will proceed very, very slowly since each call
+		 * will have to wait for the VIDIOC_QBUF to finish. Things that
+		 * should take 0.01s may now take 10-20 seconds.
+		 *
+		 * The workaround is to *not* take the lock for VIDIOC_DQBUF.
+		 * This actually works OK for videobuf-based drivers, since
+		 * videobuf will take its own internal lock.
+		 */
 		static DEFINE_MUTEX(v4l2_ioctl_mutex);
+		struct mutex *m = vdev->v4l2_dev ?
+			&vdev->v4l2_dev->ioctl_lock : &v4l2_ioctl_mutex;
 
-		mutex_lock(&v4l2_ioctl_mutex);
+		if (cmd != VIDIOC_DQBUF) {
+			int res = mutex_lock_interruptible(m);
+
+			if (res)
+				return res;
+		}
 		if (video_is_registered(vdev))
 			ret = vdev->fops->ioctl(filp, cmd, arg);
-		mutex_unlock(&v4l2_ioctl_mutex);
+		if (cmd != VIDIOC_DQBUF)
+			mutex_unlock(m);
 	} else
 		ret = -ENOTTY;
 
@@ -265,8 +306,12 @@ static int v4l2_mmap(struct file *filp, struct vm_area_struct *vm)
 
 	if (!vdev->fops->mmap)
 		return ret;
-	if (vdev->lock)
-		mutex_lock(vdev->lock);
+	if (vdev->lock) {
+		int res = mutex_lock_interruptible(vdev->lock);
+
+		if (res)
+			return res;
+	}
 	if (video_is_registered(vdev))
 		ret = vdev->fops->mmap(filp, vm);
 	if (vdev->lock)
@@ -292,8 +337,11 @@ static int v4l2_open(struct inode *inode, struct file *filp)
 	video_get(vdev);
 	mutex_unlock(&videodev_lock);
 	if (vdev->fops->open) {
-		if (vdev->lock)
-			mutex_lock(vdev->lock);
+		if (vdev->lock) {
+			ret = mutex_lock_interruptible(vdev->lock);
+			if (ret)
+				goto err;
+		}
 		if (video_is_registered(vdev))
 			ret = vdev->fops->open(filp);
 		else
@@ -302,6 +350,7 @@ static int v4l2_open(struct inode *inode, struct file *filp)
 			mutex_unlock(vdev->lock);
 	}
 
+err:
 	/* decrease the refcount in case of an error */
 	if (ret)
 		video_put(vdev);
