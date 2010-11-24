@@ -969,7 +969,6 @@ int au_whtmp_rmdir(struct inode *dir, aufs_bindex_t bindex,
 		h_tmp.dentry = wh_dentry;
 		h_tmp.mnt = br->br_mnt;
 		err = vfsub_rmdir(h_dir, &h_tmp);
-		/* d_drop(h_dentry); */
 	}
 
 	if (!err) {

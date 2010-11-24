@@ -550,6 +550,7 @@ int au_refresh_hdentry(struct dentry *dentry, mode_t type)
 	if (npositive < 0)
 		goto out;
 	if (dinfo->di_bwh >= 0 && dinfo->di_bwh <= dinfo->di_bstart)
+		/* removed logically by whiteout */
 		d_drop(dentry);
 
 out_dgen:
