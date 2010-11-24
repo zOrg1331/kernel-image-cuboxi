@@ -183,28 +183,6 @@ static void au_ren_rev_whsrc(int err, struct au_ren_args *a)
 	if (rerr)
 		RevertFailure("unlink %.*s", AuDLNPair(a->src_wh_dentry));
 }
-
-static void au_ren_rev_drop(struct au_ren_args *a)
-{
-	struct dentry *d, *h_d;
-	int i;
-	aufs_bindex_t bend, bindex;
-
-	for (i = 0; i < AuSrcDst; i++) {
-		d = a->sd[i].dentry;
-		d_drop(d);
-		bend = au_dbend(d);
-		for (bindex = au_dbstart(d); bindex <= bend; bindex++) {
-			h_d = au_h_dptr(d, bindex);
-			if (h_d)
-				d_drop(h_d);
-		}
-	}
-
-	au_update_dbstart(a->dst_dentry);
-	if (a->thargs)
-		d_drop(a->h_dst);
-}
 #undef RevertFailure
 
 /* ---------------------------------------------------------------------- */
@@ -254,6 +232,9 @@ static int au_ren_or_cpup(struct au_ren_args *a)
 			au_set_dbstart(d, a->src_bstart);
 		}
 	}
+	if (!err && a->h_dst)
+		/* it will be set to dinfo later */
+		dget(a->h_dst);
 
 	return err;
 }
@@ -425,6 +406,7 @@ out_rename:
 		au_ren_rev_rename(err, a);
 	else
 		au_ren_rev_cpup(err, a);
+	dput(a->h_dst);
 out_whtmp:
 	if (a->thargs)
 		au_ren_rev_whtmp(err, a);
@@ -434,7 +416,6 @@ out_whdst:
 out_whsrc:
 	if (a->src_wh_dentry)
 		au_ren_rev_whsrc(err, a);
-	au_ren_rev_drop(a);
 out_success:
 	dput(a->src_wh_dentry);
 	dput(a->dst_wh_dentry);
@@ -708,6 +689,12 @@ static void au_ren_refresh(struct au_ren_args *a)
 	struct inode *i, *h_i;
 	struct super_block *sb;
 
+	d = a->dst_dentry;
+	d_drop(d);
+	if (a->h_dst)
+		/* already dget-ed by au_ren_or_cpup() */
+		au_set_h_dptr(d, a->btgt, a->h_dst);
+
 	i = a->dst_inode;
 	if (i) {
 		if (!au_ftest_ren(a->flags, ISDIR))
@@ -716,6 +703,15 @@ static void au_ren_refresh(struct au_ren_args *a)
 			vfsub_dead_dir(i);
 			au_cpup_attr_timesizes(i);
 		}
+		au_update_dbrange(d, /*do_put_zero*/1);
+	} else {
+		bend = a->btgt;
+		for (bindex = au_dbstart(d); bindex < bend; bindex++)
+			au_set_h_dptr(d, bindex, NULL);
+		bend = au_dbend(d);
+		for (bindex = a->btgt + 1; bindex <= bend; bindex++)
+			au_set_h_dptr(d, bindex, NULL);
+		au_update_dbrange(d, /*do_put_zero*/0);
 	}
 
 	d = a->src_dentry;
@@ -967,12 +963,13 @@ out_hdir:
 out_children:
 	au_nhash_wh_free(&a->whlist);
 out_unlock:
-	if (unlikely(err && au_ftest_ren(a->flags, ISDIR))) {
-		au_update_dbstart(a->dst_dentry);
-		d_drop(a->dst_dentry);
-	}
 	if (!err)
 		d_move(a->src_dentry, a->dst_dentry);
+	else {
+		au_update_dbstart(a->dst_dentry);
+		if (!a->dst_inode)
+			d_drop(a->dst_dentry);
+	}
 	if (au_ftest_ren(a->flags, ISSAMEDIR))
 		di_write_unlock(a->dst_parent);
 	else
