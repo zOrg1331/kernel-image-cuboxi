@@ -617,8 +617,20 @@ static void __init check_cpu_stall_init(void)
 static void __note_new_gpnum(struct rcu_state *rsp, struct rcu_node *rnp, struct rcu_data *rdp)
 {
 	if (rdp->gpnum != rnp->gpnum) {
-		rdp->qs_pending = 1;
-		rdp->passed_quiesc = 0;
+		/*
+		 * Because RCU checks for the prior grace period ending
+		 * before checking for a new grace period starting, it
+		 * is possible for rdp->gpnum to be set to the old grace
+		 * period and rdp->completed to be set to the new grace
+		 * period.  So don't bother checking for a quiescent state
+		 * for the rnp->gpnum grace period unless it really is
+		 * waiting for this CPU.
+		 */
+		if (rdp->completed != rnp->gpnum) {
+			rdp->qs_pending = 1;
+			rdp->passed_quiesc = 0;
+		}
+
 		rdp->gpnum = rnp->gpnum;
 	}
 }
