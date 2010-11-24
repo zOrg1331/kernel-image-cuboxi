@@ -33,7 +33,22 @@
 #define MXC_CPU_MX31		31
 #define MXC_CPU_MX35		35
 #define MXC_CPU_MX51		51
+#define MXC_CPU_MX53		53
 #define MXC_CPU_MXC91231	91231
+
+#define IMX_CHIP_REVISION_1_0		0x10
+#define IMX_CHIP_REVISION_1_1		0x11
+#define IMX_CHIP_REVISION_1_2		0x12
+#define IMX_CHIP_REVISION_1_3		0x13
+#define IMX_CHIP_REVISION_2_0		0x20
+#define IMX_CHIP_REVISION_2_1		0x21
+#define IMX_CHIP_REVISION_2_2		0x22
+#define IMX_CHIP_REVISION_2_3		0x23
+#define IMX_CHIP_REVISION_3_0		0x30
+#define IMX_CHIP_REVISION_3_1		0x31
+#define IMX_CHIP_REVISION_3_2		0x32
+#define IMX_CHIP_REVISION_3_3		0x33
+#define IMX_CHIP_REVISION_UNKNOWN	0xff
 
 #ifndef __ASSEMBLY__
 extern unsigned int __mxc_cpu_type;
@@ -119,6 +134,7 @@ extern unsigned int __mxc_cpu_type;
 #  define mxc_cpu_type MXC_CPU_MX51
 # endif
 # define cpu_is_mx51()		(mxc_cpu_type == MXC_CPU_MX51)
+# define cpu_is_mx53()		(mxc_cpu_type == MXC_CPU_MX53)
 #else
 # define cpu_is_mx51()		(0)
 #endif
