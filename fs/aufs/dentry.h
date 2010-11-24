@@ -82,6 +82,8 @@ aufs_bindex_t au_dbtaildir(struct dentry *dentry);
 
 void au_set_h_dptr(struct dentry *dentry, aufs_bindex_t bindex,
 		   struct dentry *h_dentry);
+int au_digen_test(struct dentry *dentry, unsigned int sigen);
+int au_dbrange_test(struct dentry *dentry);
 void au_update_digen(struct dentry *dentry);
 void au_update_dbrange(struct dentry *dentry, int do_put_zero);
 void au_update_dbstart(struct dentry *dentry);

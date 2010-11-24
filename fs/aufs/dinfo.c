@@ -302,6 +302,36 @@ void au_set_h_dptr(struct dentry *dentry, aufs_bindex_t bindex,
 	hd->hd_dentry = h_dentry;
 }
 
+int au_dbrange_test(struct dentry *dentry)
+{
+	int err;
+	aufs_bindex_t bstart, bend;
+
+	err = 0;
+	bstart = au_dbstart(dentry);
+	bend = au_dbend(dentry);
+	if (bstart >= 0)
+		AuDebugOn(bend < 0 && bstart > bend);
+	else {
+		err = -EIO;
+		AuDebugOn(bend >= 0);
+	}
+
+	return err;
+}
+
+int au_digen_test(struct dentry *dentry, unsigned int sigen)
+{
+	int err;
+
+	err = 0;
+	if (unlikely(au_digen(dentry) != sigen
+		     || au_iigen_test(dentry->d_inode, sigen)))
+		err = -EIO;
+
+	return err;
+}
+
 void au_update_digen(struct dentry *dentry)
 {
 	atomic_set(&au_di(dentry)->di_generation, au_sigen(dentry->d_sb));

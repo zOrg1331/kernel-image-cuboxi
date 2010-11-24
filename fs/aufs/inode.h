@@ -336,6 +336,17 @@ static inline void au_iigen_dec(struct inode *inode)
 #endif
 }
 
+static inline int au_iigen_test(struct inode *inode, unsigned int sigen)
+{
+	int err;
+
+	err = 0;
+	if (unlikely(inode && au_iigen(inode) != sigen))
+		err = -EIO;
+
+	return err;
+}
+
 /* ---------------------------------------------------------------------- */
 
 static inline aufs_bindex_t au_ii_br_id(struct inode *inode,
