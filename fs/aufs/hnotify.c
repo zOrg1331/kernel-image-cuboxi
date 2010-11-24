@@ -170,7 +170,6 @@ static int hn_gen_tree(struct dentry *dentry)
 			if (IS_ROOT(d))
 				continue;
 
-			d_drop(d);
 			au_digen_dec(d);
 			if (d->d_inode)
 				/* todo: reset children xino?
@@ -216,10 +215,7 @@ static int hn_gen_by_inode(char *name, unsigned int nlen, struct inode *inode,
 			    && memcmp(dname->name, name, nlen))
 				continue;
 			err = 0;
-			spin_lock(&d->d_lock);
-			__d_drop(d);
 			au_digen_dec(d);
-			spin_unlock(&d->d_lock);
 			break;
 		}
 		spin_unlock(&dcache_lock);
@@ -257,7 +253,6 @@ static int hn_gen_by_name(struct dentry *dentry, const unsigned int isdir)
 
 	err = 0;
 	if (!isdir) {
-		d_drop(dentry);
 		au_digen_dec(dentry);
 		if (inode)
 			au_iigen_dec(inode);
@@ -376,12 +371,12 @@ static struct dentry *lookup_wlock_by_name(char *name, unsigned int nlen,
 		dname = &d->d_name;
 		if (dname->len != nlen || memcmp(dname->name, name, nlen))
 			continue;
-		if (!atomic_read(&d->d_count) || !d->d_fsdata) {
-			spin_lock(&d->d_lock);
-			__d_drop(d);
-			spin_unlock(&d->d_lock);
+		if (au_di(d))
+			au_digen_dec(d);
+		else
 			continue;
-		}
+		if (!atomic_read(&d->d_count))
+			continue;
 
 		dentry = dget(d);
 		break;

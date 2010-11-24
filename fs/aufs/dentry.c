@@ -847,8 +847,10 @@ out_inval:
 	AuTraceErr(err);
 	valid = !err;
 out:
-	if (!valid)
+	if (!valid) {
 		AuDbg("%.*s invalid, %d\n", AuDLNPair(dentry), valid);
+		d_drop(dentry);
+	}
 	return valid;
 }
 
