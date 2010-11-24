@@ -520,12 +520,11 @@ static void au_hn_bh(void *_args)
 	ii_write_unlock(a->dir);
 
 out:
-	au_nwt_done(&sbinfo->si_nowait);
-	si_write_unlock(sb);
-
 	iput(a->h_child_inode);
 	iput(a->h_dir);
 	iput(a->dir);
+	si_write_unlock(sb);
+	au_nwt_done(&sbinfo->si_nowait);
 	kfree(a);
 }
 
