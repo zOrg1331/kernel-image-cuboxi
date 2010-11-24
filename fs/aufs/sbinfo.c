@@ -87,7 +87,6 @@ int au_si_alloc(struct super_block *sb)
 	INIT_RADIX_TREE(&sbinfo->au_si_pid.tree, GFP_ATOMIC | __GFP_NOFAIL);
 
 	atomic_long_set(&sbinfo->si_ninodes, 0);
-
 	atomic_long_set(&sbinfo->si_nfiles, 0);
 
 	sbinfo->si_bend = -1;
