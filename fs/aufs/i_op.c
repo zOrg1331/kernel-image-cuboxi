@@ -535,7 +535,7 @@ static int au_pin_and_icpup(struct dentry *dentry, struct iattr *ia,
 		au_fset_wrdir(wr_dir_args.flags, ISDIR);
 	/* plink or hi_wh() case */
 	ibstart = au_ibstart(inode);
-	if (bstart != ibstart)
+	if (bstart != ibstart && !au_test_ro(inode->i_sb, ibstart, inode))
 		wr_dir_args.force_btgt = ibstart;
 	err = au_wr_dir(dentry, /*src_dentry*/NULL, &wr_dir_args);
 	if (unlikely(err < 0))

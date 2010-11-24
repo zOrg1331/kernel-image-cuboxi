@@ -569,15 +569,18 @@ static int test_dentry_busy(struct dentry *root, aufs_bindex_t bindex,
 				}
 			}
 
+			/* AuDbgDentry(d); */
 			inode = d->d_inode;
 			bstart = au_dbstart(d);
 			bend = au_dbend(d);
 			if (bstart <= bindex
 			    && bindex <= bend
 			    && au_h_dptr(d, bindex)
-			    && (!S_ISDIR(inode->i_mode) || bstart == bend)) {
+			    && ((inode && !S_ISDIR(inode->i_mode))
+				|| bstart == bend)) {
 				err = -EBUSY;
 				AuVerbose(verbose, "busy %.*s\n", AuDLNPair(d));
+				AuDbgDentry(d);
 			}
 			di_read_unlock(d, AuLock_IR);
 		}

@@ -504,7 +504,10 @@ static int do_refresh(struct dentry *dentry, mode_t type,
 
 static int test_dir(struct dentry *dentry, void *arg __maybe_unused)
 {
-	return S_ISDIR(dentry->d_inode->i_mode);
+	struct inode *inode;
+
+	inode = dentry->d_inode;
+	return inode && S_ISDIR(inode->i_mode);
 }
 
 /* gave up consolidating with refresh_nondir() */
@@ -570,7 +573,10 @@ out:
 
 static int test_nondir(struct dentry *dentry, void *arg __maybe_unused)
 {
-	return !S_ISDIR(dentry->d_inode->i_mode);
+	struct inode *inode;
+
+	inode = dentry->d_inode;
+	return !inode || !S_ISDIR(inode->i_mode);
 }
 
 static int refresh_nondir(struct dentry *root, unsigned int sigen,
