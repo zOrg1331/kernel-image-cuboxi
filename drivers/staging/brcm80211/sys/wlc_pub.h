@@ -260,7 +260,7 @@ typedef struct wlc_pub {
 	uint mac80211_state;
 	uint unit;		/* device instance number */
 	uint corerev;		/* core revision */
-	osl_t *osh;		/* pointer to os handle */
+	struct osl_info *osh;		/* pointer to os handle */
 	si_t *sih;		/* SB handle (cookie for siutils calls) */
 	char *vars;		/* "environment" name=value */
 	bool up;		/* interface up and running */
@@ -318,9 +318,6 @@ typedef struct wlc_pub {
 				 * is implemented properly in osl of that port
 				 * when it enables this Power Save feature.
 				 */
-#ifdef BCMSDIO
-	uint sdiod_drive_strength;	/* SDIO drive strength */
-#endif				/* BCMSDIO */
 
 	u16 boardrev;	/* version # of particular board */
 	u8 sromrev;		/* version # of the srom */
@@ -437,13 +434,9 @@ struct wlc_if;
 #define EDCF_ENAB(pub) (WME_ENAB(pub))
 #define QOS_ENAB(pub) (WME_ENAB(pub) || N_ENAB(pub))
 
-#define MONITOR_ENAB(wlc)	(bcmspace && (wlc)->monitor)
+#define MONITOR_ENAB(wlc)	((wlc)->monitor)
 
-#define PROMISC_ENAB(wlc)	(bcmspace && (wlc)->promisc)
-
-extern void wlc_pkttag_info_move(wlc_pub_t *pub, void *pkt_from, void *pkt_to);
-
-#define WLPKTTAGSCB(p) (WLPKTTAG(p)->_scb)
+#define PROMISC_ENAB(wlc)	((wlc)->promisc)
 
 #define	WLC_PREC_COUNT		16	/* Max precedence level implemented */
 
@@ -497,8 +490,8 @@ extern const u8 wme_fifo2ac[];
 
 /* common functions for every port */
 extern void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit,
-			bool piomode, osl_t *osh, void *regsva, uint bustype,
-			void *btparam, uint *perr);
+			bool piomode, struct osl_info *osh, void *regsva,
+			uint bustype, void *btparam, uint *perr);
 extern uint wlc_detach(struct wlc_info *wlc);
 extern int wlc_up(struct wlc_info *wlc);
 extern uint wlc_down(struct wlc_info *wlc);
@@ -616,10 +609,6 @@ extern void wlc_pmkid_event(struct wlc_bsscfg *cfg);
 
 #define BAND_2G_NAME		"2.4G"
 #define BAND_5G_NAME		"5G"
-
-#if defined(BCMSDIO) || defined(WLC_HIGH_ONLY)
-void wlc_device_removed(void *arg);
-#endif
 
 /* BMAC RPC: 7 u32 params: pkttotlen, fifo, commit, fid, txpktpend, pktflag, rpc_id */
 #define WLC_RPCTX_PARAMS		32
