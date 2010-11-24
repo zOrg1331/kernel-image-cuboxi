@@ -925,6 +925,15 @@ rcu_report_qs_rdp(int cpu, struct rcu_state *rsp, struct rcu_data *rdp, long las
 		 * race occurred.
 		 */
 		rdp->passed_quiesc = 0;	/* try again later! */
+
+		/*
+		 * Another CPU may have taken care of us if we were in an
+		 * extended quiescent state, in which case we don't need
+		 * to continue to track anything.
+		 */
+		if (rnp->gpnum == rnp->completed)
+			rdp->qs_pending = 0;
+
 		raw_spin_unlock_irqrestore(&rnp->lock, flags);
 		return;
 	}
