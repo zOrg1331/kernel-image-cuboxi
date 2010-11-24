@@ -854,7 +854,7 @@ out:
 
 static void aufs_d_release(struct dentry *dentry)
 {
-	if (dentry->d_fsdata) {
+	if (au_di(dentry)) {
 		au_di_fin(dentry);
 		au_hn_di_reinit(dentry);
 	}

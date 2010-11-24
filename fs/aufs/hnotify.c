@@ -498,7 +498,7 @@ static void au_hn_bh(void *_args)
 	args.h_nlen = a->h_child_nlen;
 	err = hn_job(&args);
 	if (dentry) {
-		if (dentry->d_fsdata)
+		if (au_di(dentry))
 			di_write_unlock(dentry);
 		dput(dentry);
 	}

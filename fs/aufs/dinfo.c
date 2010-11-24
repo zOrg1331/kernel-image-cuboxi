@@ -74,7 +74,7 @@ void au_di_fin(struct dentry *dentry)
 	aufs_bindex_t bend, bindex;
 
 	/* dentry may not be revalidated */
-	di = dentry->d_fsdata;
+	di = au_di(dentry);
 	bindex = di->di_bstart;
 	if (bindex >= 0) {
 		bend = di->di_bend;

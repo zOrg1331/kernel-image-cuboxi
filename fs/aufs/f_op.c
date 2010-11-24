@@ -381,7 +381,7 @@ static struct file *au_safe_file(struct vm_area_struct *vma)
 	struct file *file;
 
 	file = vma->vm_file;
-	if (file->private_data && au_test_aufs(file->f_dentry->d_sb))
+	if (au_fi(file) && au_test_aufs(file->f_dentry->d_sb))
 		return file;
 	return NULL;
 }
