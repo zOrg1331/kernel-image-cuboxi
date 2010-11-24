@@ -1794,16 +1794,18 @@ struct sk_buff *skb_gso_segment(struct sk_buff *skb, int features)
 	struct sk_buff *segs = ERR_PTR(-EPROTONOSUPPORT);
 	struct packet_type *ptype;
 	__be16 type = skb->protocol;
+	int vlan_depth = ETH_HLEN;
 	int err;
 
-	if (type == htons(ETH_P_8021Q)) {
-		struct vlan_ethhdr *veh;
+	while (type == htons(ETH_P_8021Q)) {
+		struct vlan_hdr *vh;
 
-		if (unlikely(!pskb_may_pull(skb, VLAN_ETH_HLEN)))
+		if (unlikely(!pskb_may_pull(skb, vlan_depth + VLAN_HLEN)))
 			return ERR_PTR(-EINVAL);
 
-		veh = (struct vlan_ethhdr *)skb->data;
-		type = veh->h_vlan_encapsulated_proto;
+		vh = (struct vlan_hdr *)(skb->data + vlan_depth);
+		type = vh->h_vlan_encapsulated_proto;
+		vlan_depth += VLAN_HLEN;
 	}
 
 	skb_reset_mac_header(skb);
@@ -1817,8 +1819,7 @@ struct sk_buff *skb_gso_segment(struct sk_buff *skb, int features)
 		if (dev && dev->ethtool_ops && dev->ethtool_ops->get_drvinfo)
 			dev->ethtool_ops->get_drvinfo(dev, &info);
 
-		WARN(1, "%s: caps=(0x%lx, 0x%lx) len=%d data_len=%d "
-			"ip_summed=%d",
+		WARN(1, "%s: caps=(0x%lx, 0x%lx) len=%d data_len=%d ip_summed=%d\n",
 		     info.driver, dev ? dev->features : 0L,
 		     skb->sk ? skb->sk->sk_route_caps : 0L,
 		     skb->len, skb->data_len, skb->ip_summed);
@@ -1967,6 +1968,23 @@ static inline void skb_orphan_try(struct sk_buff *skb)
 	}
 }
 
+int netif_get_vlan_features(struct sk_buff *skb, struct net_device *dev)
+{
+	__be16 protocol = skb->protocol;
+
+	if (protocol == htons(ETH_P_8021Q)) {
+		struct vlan_ethhdr *veh = (struct vlan_ethhdr *)skb->data;
+		protocol = veh->h_vlan_encapsulated_proto;
+	} else if (!skb->vlan_tci)
+		return dev->features;
+
+	if (protocol != htons(ETH_P_8021Q))
+		return dev->features & dev->vlan_features;
+	else
+		return 0;
+}
+EXPORT_SYMBOL(netif_get_vlan_features);
+
 /*
  * Returns true if either:
  *	1. skb has frag_list and the device doesn't support FRAGLIST, or
@@ -1977,15 +1995,20 @@ static inline void skb_orphan_try(struct sk_buff *skb)
 static inline int skb_needs_linearize(struct sk_buff *skb,
 				      struct net_device *dev)
 {
-	int features = dev->features;
+	if (skb_is_nonlinear(skb)) {
+		int features = dev->features;
 
-	if (skb->protocol == htons(ETH_P_8021Q) || vlan_tx_tag_present(skb))
-		features &= dev->vlan_features;
+		if (vlan_tx_tag_present(skb))
+			features &= dev->vlan_features;
 
-	return skb_is_nonlinear(skb) &&
-	       ((skb_has_frag_list(skb) && !(features & NETIF_F_FRAGLIST)) ||
-		(skb_shinfo(skb)->nr_frags && (!(features & NETIF_F_SG) ||
-					      illegal_highdma(dev, skb))));
+		return (skb_has_frag_list(skb) &&
+			!(features & NETIF_F_FRAGLIST)) ||
+			(skb_shinfo(skb)->nr_frags &&
+			(!(features & NETIF_F_SG) ||
+			illegal_highdma(dev, skb)));
+	}
+
+	return 0;
 }
 
 int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
@@ -5029,12 +5052,8 @@ static int netif_alloc_rx_queues(struct net_device *dev)
 	}
 	dev->_rx = rx;
 
-	/*
-	 * Set a pointer to first element in the array which holds the
-	 * reference count.
-	 */
 	for (i = 0; i < count; i++)
-		rx[i].first = rx;
+		rx[i].dev = dev;
 #endif
 	return 0;
 }
@@ -5109,14 +5128,6 @@ int register_netdevice(struct net_device *dev)
 	netdev_set_addr_lockdep_class(dev);
 
 	dev->iflink = -1;
-
-	ret = netif_alloc_rx_queues(dev);
-	if (ret)
-		goto out;
-
-	ret = netif_alloc_netdev_queues(dev);
-	if (ret)
-		goto out;
 
 	netdev_init_queues(dev);
 
@@ -5577,10 +5588,14 @@ struct net_device *alloc_netdev_mq(int sizeof_priv, const char *name,
 
 	dev->num_tx_queues = queue_count;
 	dev->real_num_tx_queues = queue_count;
+	if (netif_alloc_netdev_queues(dev))
+		goto free_pcpu;
 
 #ifdef CONFIG_RPS
 	dev->num_rx_queues = queue_count;
 	dev->real_num_rx_queues = queue_count;
+	if (netif_alloc_rx_queues(dev))
+		goto free_pcpu;
 #endif
 
 	dev->gso_max_size = GSO_MAX_SIZE;
@@ -5597,6 +5612,11 @@ struct net_device *alloc_netdev_mq(int sizeof_priv, const char *name,
 
 free_pcpu:
 	free_percpu(dev->pcpu_refcnt);
+	kfree(dev->_tx);
+#ifdef CONFIG_RPS
+	kfree(dev->_rx);
+#endif
+
 free_p:
 	kfree(p);
 	return NULL;
@@ -5618,6 +5638,9 @@ void free_netdev(struct net_device *dev)
 	release_net(dev_net(dev));
 
 	kfree(dev->_tx);
+#ifdef CONFIG_RPS
+	kfree(dev->_rx);
+#endif
 
 	kfree(rcu_dereference_raw(dev->ingress_queue));
 
