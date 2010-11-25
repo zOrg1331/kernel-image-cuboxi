@@ -805,6 +805,12 @@ static int aufs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 		valid = err;
 		goto out;
 	}
+	if (unlikely(au_dbrange_test(dentry))) {
+		err = -EINVAL;
+		AuTraceErr(err);
+		goto out_dgrade;
+	}
+
 	sigen = au_sigen(sb);
 	if (au_digen_test(dentry, sigen)) {
 		AuDebugOn(IS_ROOT(dentry));

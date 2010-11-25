@@ -754,12 +754,17 @@ static int aufs_getattr(struct vfsmount *mnt __maybe_unused,
 	if (!au_d_removed(dentry) && !udba_none) {
 		unsigned int sigen = au_sigen(sb);
 		err = au_digen_test(dentry, sigen);
-		if (!err)
+		if (!err) {
 			di_read_lock_child(dentry, AuLock_IR);
-		else {
+			err = au_dbrange_test(dentry);
+			if (unlikely(err))
+				goto out_unlock;
+		} else {
 			AuDebugOn(IS_ROOT(dentry));
 			di_write_lock_child(dentry);
-			err = au_reval_for_attr(dentry, sigen);
+			err = au_dbrange_test(dentry);
+			if (!err)
+				err = au_reval_for_attr(dentry, sigen);
 			di_downgrade_lock(dentry, AuLock_IR);
 			if (unlikely(err))
 				goto out_unlock;

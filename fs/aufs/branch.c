@@ -548,10 +548,18 @@ static int test_dentry_busy(struct dentry *root, aufs_bindex_t bindex,
 		for (j = 0; !err && j < ndentry; j++) {
 			d = dpage->dentries[j];
 			AuDebugOn(!atomic_read(&d->d_count));
-			if (!au_digen_test(d, sigen))
+			if (!au_digen_test(d, sigen)) {
 				di_read_lock_child(d, AuLock_IR);
-			else {
+				if (unlikely(au_dbrange_test(d))) {
+					di_read_unlock(d, AuLock_IR);
+					continue;
+				}
+			} else {
 				di_write_lock_child(d);
+				if (unlikely(au_dbrange_test(d))) {
+					di_write_unlock(d);
+					continue;
+				}
 				err = au_reval_dpath(d, sigen);
 				if (!err)
 					di_downgrade_lock(d, AuLock_IR);
