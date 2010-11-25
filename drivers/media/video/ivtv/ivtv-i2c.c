@@ -172,7 +172,7 @@ static int ivtv_i2c_new_ir(struct ivtv *itv, u32 hw, const char *type, u8 addr)
 		init_data->ir_codes = RC_MAP_AVERMEDIA_CARDBUS;
 		init_data->internal_get_key_func =
 					IR_KBD_GET_KEY_AVERMEDIA_CARDBUS;
-		init_data->type = IR_TYPE_OTHER;
+		init_data->type = RC_TYPE_OTHER;
 		init_data->name = "AVerMedia AVerTV card";
 		break;
 	case IVTV_HW_I2C_IR_RX_HAUP_EXT:
@@ -180,14 +180,14 @@ static int ivtv_i2c_new_ir(struct ivtv *itv, u32 hw, const char *type, u8 addr)
 		/* Default to old black remote */
 		init_data->ir_codes = RC_MAP_RC5_TV;
 		init_data->internal_get_key_func = IR_KBD_GET_KEY_HAUP;
-		init_data->type = IR_TYPE_RC5;
+		init_data->type = RC_TYPE_RC5;
 		init_data->name = itv->card_name;
 		break;
 	case IVTV_HW_Z8F0811_IR_RX_HAUP:
 		/* Default to grey remote */
 		init_data->ir_codes = RC_MAP_HAUPPAUGE_NEW;
 		init_data->internal_get_key_func = IR_KBD_GET_KEY_HAUP_XVR;
-		init_data->type = IR_TYPE_RC5;
+		init_data->type = RC_TYPE_RC5;
 		init_data->name = itv->card_name;
 		break;
 	}
@@ -239,19 +239,16 @@ int ivtv_i2c_register(struct ivtv *itv, unsigned idx)
 		return -1;
 	if (hw == IVTV_HW_TUNER) {
 		/* special tuner handling */
-		sd = v4l2_i2c_new_subdev(&itv->v4l2_dev,
-				adap, NULL, type,
-				0, itv->card_i2c->radio);
+		sd = v4l2_i2c_new_subdev(&itv->v4l2_dev, adap, type, 0,
+				itv->card_i2c->radio);
 		if (sd)
 			sd->grp_id = 1 << idx;
-		sd = v4l2_i2c_new_subdev(&itv->v4l2_dev,
-				adap, NULL, type,
-				0, itv->card_i2c->demod);
+		sd = v4l2_i2c_new_subdev(&itv->v4l2_dev, adap, type, 0,
+				itv->card_i2c->demod);
 		if (sd)
 			sd->grp_id = 1 << idx;
-		sd = v4l2_i2c_new_subdev(&itv->v4l2_dev,
-				adap, NULL, type,
-				0, itv->card_i2c->tv);
+		sd = v4l2_i2c_new_subdev(&itv->v4l2_dev, adap, type, 0,
+				itv->card_i2c->tv);
 		if (sd)
 			sd->grp_id = 1 << idx;
 		return sd ? 0 : -1;
@@ -267,17 +264,16 @@ int ivtv_i2c_register(struct ivtv *itv, unsigned idx)
 	/* It's an I2C device other than an analog tuner or IR chip */
 	if (hw == IVTV_HW_UPD64031A || hw == IVTV_HW_UPD6408X) {
 		sd = v4l2_i2c_new_subdev(&itv->v4l2_dev,
-				adap, NULL, type, 0, I2C_ADDRS(hw_addrs[idx]));
+				adap, type, 0, I2C_ADDRS(hw_addrs[idx]));
 	} else if (hw == IVTV_HW_CX25840) {
 		struct cx25840_platform_data pdata;
 
 		pdata.pvr150_workaround = itv->pvr150_workaround;
 		sd = v4l2_i2c_new_subdev_cfg(&itv->v4l2_dev,
-				adap, NULL, type, 0, &pdata, hw_addrs[idx],
-				NULL);
+				adap, type, 0, &pdata, hw_addrs[idx], NULL);
 	} else {
 		sd = v4l2_i2c_new_subdev(&itv->v4l2_dev,
-				adap, NULL, type, hw_addrs[idx], NULL);
+				adap, type, hw_addrs[idx], NULL);
 	}
 	if (sd)
 		sd->grp_id = 1 << idx;
