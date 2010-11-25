@@ -8,6 +8,7 @@
  */
 #include <linux/io.h>
 #include <linux/slab.h>
+#include <linux/kernel_stat.h>
 #include <asm/atomic.h>
 #include <asm/debug.h>
 #include <asm/qdio.h>
@@ -127,6 +128,7 @@ static void tiqdio_thinint_handler(void *alsi, void *data)
 	struct qdio_q *q;
 
 	last_ai_time = S390_lowcore.int_clock;
+	kstat_cpu(smp_processor_id()).irqs[IOINT_QAI]++;
 
 	/*
 	 * SVS only when needed: issue SVS to benefit from iqdio interrupt
@@ -292,8 +294,8 @@ void qdio_shutdown_thinint(struct qdio_irq *irq_ptr)
 		return;
 
 	/* reset adapter interrupt indicators */
-	put_indicator(irq_ptr->dsci);
 	set_subchannel_ind(irq_ptr, 1);
+	put_indicator(irq_ptr->dsci);
 }
 
 void __exit tiqdio_unregister_thinints(void)
