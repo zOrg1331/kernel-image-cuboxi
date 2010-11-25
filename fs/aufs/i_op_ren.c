@@ -79,7 +79,7 @@ struct au_ren_args {
 	struct au_hinode *src_hinode;
 	struct path h_path;
 	struct au_nhash whlist;
-	aufs_bindex_t btgt;
+	aufs_bindex_t btgt, src_bwh, src_bdiropq;
 
 	unsigned int flags;
 
@@ -110,6 +110,7 @@ static void au_ren_rev_diropq(int err, struct au_ren_args *a)
 	au_hn_imtx_lock_nested(a->src_hinode, AuLsc_I_CHILD);
 	rerr = au_diropq_remove(a->src_dentry, a->btgt);
 	au_hn_imtx_unlock(a->src_hinode);
+	au_set_dbdiropq(a->src_dentry, a->src_bdiropq);
 	if (rerr)
 		RevertFailure("remove diropq %.*s", AuDLNPair(a->src_dentry));
 }
@@ -180,6 +181,7 @@ static void au_ren_rev_whsrc(int err, struct au_ren_args *a)
 
 	a->h_path.dentry = a->src_wh_dentry;
 	rerr = au_wh_unlink_dentry(a->src_h_dir, &a->h_path, a->src_dentry);
+	au_set_dbwh(a->src_dentry, a->src_bwh);
 	if (rerr)
 		RevertFailure("unlink %.*s", AuDLNPair(a->src_wh_dentry));
 }
@@ -273,6 +275,7 @@ static int au_ren_diropq(struct au_ren_args *a)
 	struct dentry *diropq;
 
 	err = 0;
+	a->src_bdiropq = au_dbdiropq(a->src_dentry);
 	a->src_hinode = au_hi(a->src_inode, a->btgt);
 	au_hn_imtx_lock_nested(a->src_hinode, AuLsc_I_CHILD);
 	diropq = au_diropq_create(a->src_dentry, a->btgt);
@@ -301,6 +304,8 @@ static int do_rename(struct au_ren_args *a)
 
 	/* create whiteout for src_dentry */
 	if (au_ftest_ren(a->flags, WHSRC)) {
+		a->src_bwh = au_dbwh(a->src_dentry);
+		AuDebugOn(a->src_bwh >= 0);
 		a->src_wh_dentry
 			= au_wh_create(a->src_dentry, a->btgt, a->src_h_parent);
 		err = PTR_ERR(a->src_wh_dentry);
@@ -982,6 +987,11 @@ out_hdir:
 	au_ren_unlock(a);
 out_children:
 	au_nhash_wh_free(&a->whlist);
+	if (err && a->dst_inode && a->dst_bstart != a->btgt) {
+		AuDbg("bstart %d, btgt %d\n", a->dst_bstart, a->btgt);
+		au_set_h_dptr(a->dst_dentry, a->btgt, NULL);
+		au_set_dbstart(a->dst_dentry, a->dst_bstart);
+	}
 out_parent:
 	if (!err)
 		d_move(a->src_dentry, a->dst_dentry);

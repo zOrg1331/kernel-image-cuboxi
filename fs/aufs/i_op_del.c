@@ -268,10 +268,6 @@ static void epilog(struct inode *dir, struct dentry *dentry,
 	d_drop(dentry);
 	inode->i_ctime = dir->i_ctime;
 
-	if (atomic_read(&dentry->d_count) == 1) {
-		au_set_h_dptr(dentry, au_dbstart(dentry), NULL);
-		au_update_dbstart(dentry);
-	}
 	if (au_ibstart(dir) == bindex)
 		au_cpup_attr_timesizes(dir);
 	dir->i_version++;
