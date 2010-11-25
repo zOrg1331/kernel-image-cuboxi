@@ -179,7 +179,7 @@ struct au_sbinfo {
  * then try refreshing dirs at access time again.
  * if it is false, refreshing dirs at access time is unnecesary
  */
-#define AuSi_FAILED_REFRESH_DIRS	1
+#define AuSi_FAILED_REFRESH_DIR	1
 static inline unsigned char au_do_ftest_si(struct au_sbinfo *sbi,
 					   unsigned int flag)
 {

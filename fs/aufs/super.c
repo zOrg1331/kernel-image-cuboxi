@@ -644,7 +644,7 @@ out:
 	return err;
 }
 
-static void au_remount_refresh(struct super_block *sb, unsigned int flags)
+static void au_remount_refresh(struct super_block *sb)
 {
 	int err;
 	unsigned int sigen;
@@ -655,7 +655,7 @@ static void au_remount_refresh(struct super_block *sb, unsigned int flags)
 	au_sigen_inc(sb);
 	sigen = au_sigen(sb);
 	sbinfo = au_sbi(sb);
-	au_fclr_si(sbinfo, FAILED_REFRESH_DIRS);
+	au_fclr_si(sbinfo, FAILED_REFRESH_DIR);
 
 	root = sb->s_root;
 	DiMustNoWaiters(root);
@@ -666,17 +666,15 @@ static void au_remount_refresh(struct super_block *sb, unsigned int flags)
 
 	err = refresh_dir(root, sigen);
 	if (unlikely(err)) {
-		au_fset_si(sbinfo, FAILED_REFRESH_DIRS);
+		au_fset_si(sbinfo, FAILED_REFRESH_DIR);
 		pr_warning("Refreshing directories failed, ignored (%d)\n",
 			   err);
 	}
 
-	if (au_ftest_opts(flags, REFRESH_NONDIR)) {
-		err = refresh_nondir(root, sigen, !err);
-		if (unlikely(err))
-			pr_warning("Refreshing non-directories failed, ignored"
-				   "(%d)\n", err);
-	}
+	err = refresh_nondir(root, sigen, !err);
+	if (unlikely(err))
+		pr_warning("Refreshing non-directories failed, ignored"
+			   "(%d)\n", err);
 
 	/* aufs_write_lock() calls ..._child() */
 	di_write_lock_child(root);
@@ -745,9 +743,8 @@ static int aufs_remount_fs(struct super_block *sb, int *flags, char *data)
 	err = au_opts_remount(sb, &opts);
 	au_opts_free(&opts);
 
-	if (au_ftest_opts(opts.flags, REFRESH_DIR)
-	    || au_ftest_opts(opts.flags, REFRESH_NONDIR))
-		au_remount_refresh(sb, opts.flags);
+	if (au_ftest_opts(opts.flags, REFRESH))
+		au_remount_refresh(sb);
 
 	if (au_ftest_opts(opts.flags, REFRESH_DYAOP)) {
 		mntflags = au_mntflags(sb);
@@ -932,7 +929,7 @@ static void aufs_kill_sb(struct super_block *sb)
 			sbinfo->si_wbr_create_ops->fin(sb);
 		if (au_opt_test(sbinfo->si_mntflags, UDBA_HNOTIFY)) {
 			au_opt_set_udba(sbinfo->si_mntflags, UDBA_NONE);
-			au_remount_refresh(sb, /*flags*/0);
+			au_remount_refresh(sb);
 		}
 		if (au_opt_test(sbinfo->si_mntflags, PLINK))
 			au_plink_put(sb, /*verbose*/1);

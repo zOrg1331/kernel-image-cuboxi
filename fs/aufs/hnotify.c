@@ -220,7 +220,7 @@ static int hn_gen_by_inode(char *name, unsigned int nlen, struct inode *inode,
 		}
 		spin_unlock(&dcache_lock);
 	} else {
-		au_fset_si(au_sbi(inode->i_sb), FAILED_REFRESH_DIRS);
+		au_fset_si(au_sbi(inode->i_sb), FAILED_REFRESH_DIR);
 		d = d_find_alias(inode);
 		if (!d) {
 			au_iigen_dec(inode);
@@ -257,7 +257,7 @@ static int hn_gen_by_name(struct dentry *dentry, const unsigned int isdir)
 		if (inode)
 			au_iigen_dec(inode);
 	} else {
-		au_fset_si(au_sbi(dentry->d_sb), FAILED_REFRESH_DIRS);
+		au_fset_si(au_sbi(dentry->d_sb), FAILED_REFRESH_DIR);
 		if (inode)
 			err = hn_gen_tree(dentry);
 	}

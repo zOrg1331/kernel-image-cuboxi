@@ -732,7 +732,7 @@ int au_reval_dpath(struct dentry *dentry, unsigned int sigen)
 	struct dentry *d, *parent;
 	struct inode *inode;
 
-	if (!au_ftest_si(au_sbi(dentry->d_sb), FAILED_REFRESH_DIRS))
+	if (!au_ftest_si(au_sbi(dentry->d_sb), FAILED_REFRESH_DIR))
 		return simple_reval_dpath(dentry, sigen);
 
 	/* slow loop, keep it simple and stupid */
