@@ -16,7 +16,10 @@
 #include "mds_f.h"
 #include "mlmetxrx_f.h"
 #include "mto.h"
-#include "wbhal_f.h"
+#include "wbhal.h"
+#include "wb35reg_f.h"
+#include "wb35tx_f.h"
+#include "wb35rx_f.h"
 #include "wblinux_f.h"
 
 MODULE_DESCRIPTION("IS89C35 802.11bg WLAN USB Driver");
@@ -608,15 +611,6 @@ static void hal_led_control(unsigned long data)
 			}
 			break;
 		}
-
-		/* Active send null packet to avoid AP disconnect */
-		if (pHwData->LED_LinkOn) {
-			pHwData->NullPacketCount += TimeInterval;
-			if (pHwData->NullPacketCount >=
-			    DEFAULT_NULL_PACKET_COUNT) {
-				pHwData->NullPacketCount = 0;
-			}
-		}
 	}
 
 	pHwData->time_count += TimeInterval;
@@ -860,8 +854,6 @@ static void hal_halt(struct hw_data *pHwData)
 
 static void wb35_hw_halt(struct wbsoft_priv *adapter)
 {
-	Mds_Destroy(adapter);
-
 	/* Turn off Rx and Tx hardware ability */
 	hal_stop(&adapter->sHwData);
 #ifdef _PE_USB_INI_DUMP_
