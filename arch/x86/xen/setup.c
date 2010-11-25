@@ -18,7 +18,6 @@
 #include <asm/xen/hypervisor.h>
 #include <asm/xen/hypercall.h>
 
-#include <xen/xen.h>
 #include <xen/page.h>
 #include <xen/interface/callback.h>
 #include <xen/interface/memory.h>
@@ -88,11 +87,6 @@ static unsigned long __init xen_release_chunk(phys_addr_t start_addr,
 	if (end <= start)
 		return 0;
 
-	if (end < PFN_DOWN(ISA_END_ADDRESS))
-		return 0;
-	if (start < PFN_DOWN(ISA_END_ADDRESS))
-		start = PFN_DOWN(ISA_END_ADDRESS);
-
 	printk(KERN_INFO "xen_release_chunk: looking at area pfn %lx-%lx: ",
 	       start, end);
 	for(pfn = start; pfn < end; pfn++) {
@@ -123,16 +117,18 @@ static unsigned long __init xen_return_unused_memory(unsigned long max_pfn,
 						     const struct e820map *e820)
 {
 	phys_addr_t max_addr = PFN_PHYS(max_pfn);
-	phys_addr_t last_end = 0;
+	phys_addr_t last_end = ISA_END_ADDRESS;
 	unsigned long released = 0;
 	int i;
 
+	/* Free any unused memory above the low 1Mbyte. */
 	for (i = 0; i < e820->nr_map && last_end < max_addr; i++) {
 		phys_addr_t end = e820->map[i].addr;
 		end = min(max_addr, end);
 
-		released += xen_release_chunk(last_end, end);
-		last_end = e820->map[i].addr + e820->map[i].size;
+		if (last_end < end)
+			released += xen_release_chunk(last_end, end);
+		last_end = max(last_end, e820->map[i].addr + e820->map[i].size);
 	}
 
 	if (last_end < max_addr)
@@ -185,24 +181,21 @@ char * __init xen_memory_setup(void)
 	for (i = 0; i < memmap.nr_entries; i++) {
 		unsigned long long end = map[i].addr + map[i].size;
 
-		if (map[i].type == E820_RAM) {
-			if (map[i].addr < mem_end && end > mem_end) {
-				/* Truncate region to max_mem. */
-				u64 delta = end - mem_end;
+		if (map[i].type == E820_RAM && end > mem_end) {
+			/* RAM off the end - may be partially included */
+			u64 delta = min(map[i].size, end - mem_end);
 
-				map[i].size -= delta;
-				extra_pages += PFN_DOWN(delta);
+			map[i].size -= delta;
+			end -= delta;
 
-				end = mem_end;
-			}
+			extra_pages += PFN_DOWN(delta);
 		}
 
-		if (end > xen_extra_mem_start)
+		if (map[i].size > 0 && end > xen_extra_mem_start)
 			xen_extra_mem_start = end;
 
-		/* If region is non-RAM or below mem_end, add what remains */
-		if ((map[i].type != E820_RAM || map[i].addr < mem_end) &&
-		    map[i].size > 0)
+		/* Add region if any remains */
+		if (map[i].size > 0)
 			e820_add_region(map[i].addr, map[i].size, map[i].type);
 	}
 
@@ -254,20 +247,6 @@ char * __init xen_memory_setup(void)
 	xen_add_extra_mem(extra_pages);
 
 	return "Xen";
-}
-
-static void xen_idle(void)
-{
-	local_irq_disable();
-
-	if (need_resched())
-		local_irq_enable();
-	else {
-		current_thread_info()->status &= ~TS_POLLING;
-		smp_mb__after_clear_bit();
-		safe_halt();
-		current_thread_info()->status |= TS_POLLING;
-	}
 }
 
 /*
@@ -380,7 +359,11 @@ void __init xen_arch_setup(void)
 	       MAX_GUEST_CMDLINE > COMMAND_LINE_SIZE ?
 	       COMMAND_LINE_SIZE : MAX_GUEST_CMDLINE);
 
-	pm_idle = xen_idle;
+	/* Set up idle, making sure it calls safe_halt() pvop */
+#ifdef CONFIG_X86_32
+	boot_cpu_data.hlt_works_ok = 1;
+#endif
+	pm_idle = default_idle;
 
 	fiddle_vdso();
 }
