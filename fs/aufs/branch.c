@@ -548,8 +548,7 @@ static int test_dentry_busy(struct dentry *root, aufs_bindex_t bindex,
 		for (j = 0; !err && j < ndentry; j++) {
 			d = dpage->dentries[j];
 			AuDebugOn(!atomic_read(&d->d_count));
-			inode = d->d_inode;
-			if (au_digen(d) == sigen && au_iigen(inode) == sigen)
+			if (!au_digen_test(d, sigen))
 				di_read_lock_child(d, AuLock_IR);
 			else {
 				di_write_lock_child(d);
@@ -562,6 +561,7 @@ static int test_dentry_busy(struct dentry *root, aufs_bindex_t bindex,
 				}
 			}
 
+			inode = d->d_inode;
 			bstart = au_dbstart(d);
 			bend = au_dbend(d);
 			if (bstart <= bindex

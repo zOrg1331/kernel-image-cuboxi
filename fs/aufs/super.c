@@ -553,7 +553,7 @@ static int refresh_dir(struct dentry *root, unsigned int sigen)
 
 			d = dentries[j];
 			au_dbg_verify_dir_parent(d, sigen);
-			if (au_digen(d) != sigen) {
+			if (au_digen_test(d, sigen)) {
 				e = do_refresh(d, S_IFDIR, flags);
 				if (unlikely(e && !err))
 					err = e;
@@ -622,7 +622,7 @@ static int refresh_nondir(struct dentry *root, unsigned int sigen,
 			d = dentries[j];
 			au_dbg_verify_nondir_parent(d, sigen);
 			inode = d->d_inode;
-			if (inode && au_digen(d) != sigen) {
+			if (inode && au_digen_test(d, sigen)) {
 				e = do_refresh(d, inode->i_mode & S_IFMT,
 					       /*dir_flags*/0);
 				if (unlikely(e && !err))

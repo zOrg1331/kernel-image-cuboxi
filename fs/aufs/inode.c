@@ -254,7 +254,7 @@ static int reval_inode(struct inode *inode, struct dentry *dentry, int *matched)
 		if (h_inode && h_inode == h_dinode) {
 			*matched = 1;
 			err = 0;
-			if (au_iigen(inode) != au_digen(dentry))
+			if (au_iigen_test(inode, au_digen(dentry)))
 				err = au_refresh_hinode(inode, dentry);
 			break;
 		}

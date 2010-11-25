@@ -235,7 +235,7 @@ static struct dentry *decode_by_ino(struct super_block *sb, ino_t ino,
 			}
 		spin_unlock(&dcache_lock);
 	}
-	if (unlikely(dentry && sigen != au_digen(dentry))) {
+	if (unlikely(dentry && au_digen_test(dentry, sigen))) {
 		dput(dentry);
 		dentry = ERR_PTR(-ESTALE);
 	}
@@ -591,7 +591,8 @@ aufs_fh_to_dentry(struct super_block *sb, struct fid *fid, int fh_len,
 		goto out_unlock;
 
 accept:
-	if (dentry->d_inode->i_generation == fh[Fh_igen])
+	if (!au_digen_test(dentry, au_sigen(sb))
+	    && dentry->d_inode->i_generation == fh[Fh_igen])
 		goto out_unlock; /* success */
 
 	dput(dentry);

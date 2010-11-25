@@ -530,8 +530,7 @@ int au_refresh_hdentry(struct dentry *dentry, mode_t type)
 	AuDebugOn(IS_ROOT(dentry));
 	sigen = au_sigen(sb);
 	parent = dget_parent(dentry);
-	AuDebugOn(au_digen(parent) != sigen
-		  || au_iigen(parent->d_inode) != sigen);
+	AuDebugOn(au_digen_test(parent, sigen));
 
 	dinfo = au_di(dentry);
 	err = au_di_realloc(dinfo, au_sbend(sb) + 1);
@@ -712,17 +711,16 @@ static int simple_reval_dpath(struct dentry *dentry, unsigned int sigen)
 	struct dentry *parent;
 	struct inode *inode;
 
-	inode = dentry->d_inode;
-	if (au_digen(dentry) == sigen && au_iigen(inode) == sigen)
+	if (!au_digen_test(dentry, sigen))
 		return 0;
 
 	parent = dget_parent(dentry);
 	di_read_lock_parent(parent, AuLock_IR);
-	AuDebugOn(au_digen(parent) != sigen
-		  || au_iigen(parent->d_inode) != sigen);
+	AuDebugOn(au_digen_test(parent, sigen));
 	au_dbg_verify_gen(parent, sigen);
 
 	/* returns a number of positive dentries */
+	inode = dentry->d_inode;
 	err = au_refresh_hdentry(dentry, inode->i_mode & S_IFMT);
 	if (err >= 0)
 		err = au_refresh_hinode(inode, dentry);
@@ -745,14 +743,12 @@ int au_reval_dpath(struct dentry *dentry, unsigned int sigen)
 	/* cf: au_cpup_dirs() */
 	err = 0;
 	parent = NULL;
-	while (au_digen(dentry) != sigen
-	       || au_iigen(dentry->d_inode) != sigen) {
+	while (au_digen_test(dentry, sigen)) {
 		d = dentry;
 		while (1) {
 			dput(parent);
 			parent = dget_parent(d);
-			if (au_digen(parent) == sigen
-			    && au_iigen(parent->d_inode) == sigen)
+			if (!au_digen_test(parent, sigen))
 				break;
 			d = parent;
 		}
@@ -762,7 +758,7 @@ int au_reval_dpath(struct dentry *dentry, unsigned int sigen)
 			di_write_lock_child(d);
 
 		/* someone might update our dentry while we were sleeping */
-		if (au_digen(d) != sigen || au_iigen(d->d_inode) != sigen) {
+		if (au_digen_test(d, sigen)) {
 			di_read_lock_parent(parent, AuLock_IR);
 			/* returns a number of positive dentries */
 			err = au_refresh_hdentry(d, inode->i_mode & S_IFMT);
@@ -810,14 +806,14 @@ static int aufs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 		goto out;
 	}
 	sigen = au_sigen(sb);
-	if (au_digen(dentry) != sigen) {
+	if (au_digen_test(dentry, sigen)) {
 		AuDebugOn(IS_ROOT(dentry));
 		if (inode)
 			err = au_reval_dpath(dentry, sigen);
 		if (unlikely(err))
 			goto out_dgrade;
 	}
-	if (inode && au_iigen(inode) != sigen) {
+	if (au_iigen_test(inode, sigen)) {
 		AuDebugOn(IS_ROOT(dentry));
 		err = au_refresh_hinode(inode, dentry);
 		if (unlikely(err))

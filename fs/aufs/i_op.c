@@ -96,6 +96,11 @@ static int aufs_permission(struct inode *inode, int mask)
 	sb = inode->i_sb;
 	si_read_lock(sb, AuLock_FLUSH);
 	ii_read_lock_child(inode);
+#if 0
+	err = au_iigen_test(inode, au_sigen(sb));
+	if (unlikely(err))
+		goto out;
+#endif
 
 	if (!isdir || write_mask) {
 		err = au_busy_or_stale();
@@ -171,9 +176,13 @@ static struct dentry *aufs_lookup(struct inode *dir, struct dentry *dentry,
 	if (unlikely(err))
 		goto out_si;
 
+	npositive = -EIO;
 	parent = dentry->d_parent; /* dir inode is locked */
 	di_read_lock_parent(parent, AuLock_IR);
-	npositive = au_lkup_dentry(dentry, au_dbstart(parent), /*type*/0, nd);
+	err = au_digen_test(parent, au_sigen(sb));
+	if (!err)
+		npositive = au_lkup_dentry(dentry, au_dbstart(parent),
+					   /*type*/0, nd);
 	di_read_unlock(parent, AuLock_IR);
 	err = npositive;
 	ret = ERR_PTR(err);
@@ -464,7 +473,7 @@ static int au_reval_for_attr(struct dentry *dentry, unsigned int sigen)
 
 	err = 0;
 	inode = dentry->d_inode;
-	if (au_digen(dentry) != sigen || au_iigen(inode) != sigen) {
+	if (au_digen_test(dentry, sigen)) {
 		parent = dget_parent(dentry);
 		di_read_lock_parent(parent, AuLock_IR);
 		/* returns a number of positive dentries */
@@ -744,7 +753,8 @@ static int aufs_getattr(struct vfsmount *mnt __maybe_unused,
 	/* support fstat(2) */
 	if (!au_d_removed(dentry) && !udba_none) {
 		unsigned int sigen = au_sigen(sb);
-		if (au_digen(dentry) == sigen && au_iigen(inode) == sigen)
+		err = au_digen_test(dentry, sigen);
+		if (!err)
 			di_read_lock_child(dentry, AuLock_IR);
 		else {
 			AuDebugOn(IS_ROOT(dentry));

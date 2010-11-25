@@ -549,11 +549,9 @@ int au_reval_and_lock_fdi(struct file *file, int (*reopen)(struct file *file),
 	}
 
 	AuDbg("sigen %d, figen %d\n", sigen, figen);
-	if (sigen != au_digen(dentry)
-	    || sigen != au_iigen(inode)) {
+	if (au_digen_test(dentry, sigen)) {
 		err = au_reval_dpath(dentry, sigen);
-		AuDebugOn(!err && (au_digen(dentry) != sigen
-				   || au_iigen(inode) != sigen));
+		AuDebugOn(!err && au_digen_test(dentry, sigen));
 	}
 
 	if (!err)
