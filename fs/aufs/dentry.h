@@ -62,6 +62,10 @@ int au_reval_dpath(struct dentry *dentry, unsigned int sigen);
 
 /* dinfo.c */
 void au_di_init_once(void *_di);
+struct au_dinfo *au_di_alloc(struct super_block *sb, unsigned int lsc);
+void au_di_free(struct au_dinfo *dinfo);
+void au_di_swap(struct au_dinfo *a, struct au_dinfo *b);
+void au_di_cp(struct au_dinfo *dst, struct au_dinfo *src);
 int au_di_init(struct dentry *dentry);
 void au_di_fin(struct dentry *dentry);
 int au_di_realloc(struct au_dinfo *dinfo, int nbr);
@@ -105,7 +109,8 @@ enum {
 	AuLsc_DI_CHILD3,	/* copyup dirs */
 	AuLsc_DI_PARENT,
 	AuLsc_DI_PARENT2,
-	AuLsc_DI_PARENT3
+	AuLsc_DI_PARENT3,
+	AuLsc_DI_TMP		/* temp for replacing dinfo */
 };
 
 /*
