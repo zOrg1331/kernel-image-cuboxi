@@ -1416,6 +1416,11 @@ struct super_block {
 	 * generic_show_options()
 	 */
 	char __rcu *s_options;
+
+	/*
+	 * Saved pool identifier for cleancache (-1 means none)
+	 */
+	int cleancache_poolid;
 };
 
 extern struct timespec current_fs_time(struct super_block *sb);
