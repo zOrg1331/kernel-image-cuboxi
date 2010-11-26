@@ -791,6 +791,10 @@ static int aufs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 	struct super_block *sb;
 	struct inode *inode;
 
+	valid = 0;
+	if (unlikely(!au_di(dentry)))
+		goto out;
+
 	valid = 1;
 	sb = dentry->d_sb;
 	inode = dentry->d_inode;
