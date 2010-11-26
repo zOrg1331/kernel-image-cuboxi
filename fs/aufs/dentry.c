@@ -437,23 +437,24 @@ int au_h_verify(struct dentry *h_dentry, unsigned int udba, struct inode *h_dir,
 
 /* ---------------------------------------------------------------------- */
 
-static void au_do_refresh_hdentry(struct au_hdentry *p, struct au_dinfo *dinfo,
-				  struct dentry *parent)
+static int au_do_refresh_hdentry(struct dentry *dentry, struct dentry *parent)
 {
-	struct dentry *h_d;
-	struct au_hdentry tmp, *q;
-	struct super_block *sb;
+	int err;
 	aufs_bindex_t new_bindex, bindex, bend, bwh, bdiropq;
+	struct au_hdentry tmp, *p, *q;
+	struct au_dinfo *dinfo;
+	struct super_block *sb;
 
-	AuRwMustWriteLock(&dinfo->di_rwsem);
+	DiMustWriteLock(dentry);
 
-	sb = parent->d_sb;
+	sb = dentry->d_sb;
+	dinfo = au_di(dentry);
 	bend = dinfo->di_bend;
 	bwh = dinfo->di_bwh;
 	bdiropq = dinfo->di_bdiropq;
+	p = dinfo->di_hdentry + dinfo->di_bstart;
 	for (bindex = dinfo->di_bstart; bindex <= bend; bindex++, p++) {
-		h_d = p->hd_dentry;
-		if (!h_d)
+		if (!p->hd_dentry)
 			continue;
 
 		new_bindex = au_br_index(sb, p->hd_id);
@@ -491,6 +492,9 @@ static void au_do_refresh_hdentry(struct au_hdentry *p, struct au_dinfo *dinfo,
 	    && au_sbr_whable(sb, bdiropq))
 		dinfo->di_bdiropq = bdiropq;
 
+	err = -EIO;
+	dinfo->di_bstart = -1;
+	dinfo->di_bend = -1;
 	bend = au_dbend(parent);
 	p = dinfo->di_hdentry;
 	for (bindex = 0; bindex <= bend; bindex++, p++)
@@ -499,12 +503,17 @@ static void au_do_refresh_hdentry(struct au_hdentry *p, struct au_dinfo *dinfo,
 			break;
 		}
 
-	p = dinfo->di_hdentry + bend;
-	for (bindex = bend; bindex >= 0; bindex--, p--)
-		if (p->hd_dentry) {
-			dinfo->di_bend = bindex;
-			break;
-		}
+	if (dinfo->di_bstart >= 0) {
+		p = dinfo->di_hdentry + bend;
+		for (bindex = bend; bindex >= 0; bindex--, p--)
+			if (p->hd_dentry) {
+				dinfo->di_bend = bindex;
+				err = 0;
+				break;
+			}
+	}
+
+	return err;
 }
 
 /*
@@ -533,8 +542,7 @@ int au_refresh_hdentry(struct dentry *dentry, mode_t type)
 	npositive = err;
 	if (unlikely(err))
 		goto out;
-	au_do_refresh_hdentry(dinfo->di_hdentry + dinfo->di_bstart, dinfo,
-			      parent);
+	au_do_refresh_hdentry(dentry, parent);
 
 	npositive = 0;
 	bstart = au_dbstart(parent);
