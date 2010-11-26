@@ -618,6 +618,7 @@ static int test_inode_busy(struct super_block *sb, aufs_bindex_t bindex,
 		else {
 			ii_write_lock_child(i);
 			err = au_refresh_hinode_self(i);
+			au_iigen_dec(i);
 			if (!err)
 				ii_downgrade_lock(i);
 			else {
