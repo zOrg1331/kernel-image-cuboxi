@@ -58,6 +58,7 @@ int au_lkup_dentry(struct dentry *dentry, aufs_bindex_t bstart, mode_t type,
 		   struct nameidata *nd);
 int au_lkup_neg(struct dentry *dentry, aufs_bindex_t bindex);
 int au_refresh_hdentry(struct dentry *dentry, mode_t type);
+int au_refresh_dentry(struct dentry *dentry, struct dentry *parent);
 int au_reval_dpath(struct dentry *dentry, unsigned int sigen);
 
 /* dinfo.c */
