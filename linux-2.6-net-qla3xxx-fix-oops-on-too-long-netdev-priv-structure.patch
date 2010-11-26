@@ -1,0 +1,132 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Wed, 11 Aug 2010 19:58:08 -0400
+Subject: [net] qla3xxx: fix oops on too-long netdev priv structure
+Message-id: <20100811195808.GH1573@hmsreliant.think-freely.org>
+Patchwork-id: 27518
+O-Subject: Re: [RHEL 5.6 PATCH] fix oops in qla3xxx on too-long netdev priv
+	structure (bz 620508)
+Bugzilla: 620508
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Hey all-
+        This got reported a few days ago.  I didn't think it would happen, but
+apparently the qla3xxx driver allocates a net_device with more than 65Kb worth
+of private data.  Upstream / RHEL6 doesn't have a problem with this, but RHEL5
+this net_device_extended structure that lives at the end of the private area
+to work around abi issues.  Its records the private length in a u16, which means
+we can only have 65kb of private data per net_device.  qla3xxx violates that and
+winds up corrupting memory.  We could increase the priv_len field in net_device,
+but I think doing so would break abi if any third party vendors reference that
+variable.  So instead, we've done this, which puts the qla3xxx driver on a priv
+diet of sorts, and adds a check to the netdev_alloc function to ensure that we
+don't silently violate the length field again.  Tested and confirmed to solve bz
+620508.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/qla3xxx.c b/drivers/net/qla3xxx.c
+index 891b8c4..feda8a0 100644
+--- a/drivers/net/qla3xxx.c
++++ b/drivers/net/qla3xxx.c
+@@ -3989,6 +3989,7 @@ static int __devinit ql3xxx_probe(struct pci_dev *pdev,
+ {
+ 	struct net_device *ndev = NULL;
+ 	struct ql3_adapter *qdev = NULL;
++	struct ql_tx_buf_cb *tx_buf = NULL;
+ 	static int cards_found = 0;
+ 	int pci_using_dac, err;
+ 
+@@ -4022,12 +4023,20 @@ static int __devinit ql3xxx_probe(struct pci_dev *pdev,
+ 		goto err_out_free_regions;
+ 	}
+ 
++	tx_buf = kzalloc(sizeof(struct ql_tx_buf_cb)*NUM_REQ_Q_ENTRIES, GFP_KERNEL);
++	if (!tx_buf) {
++		printk(KERN_ERR PFX "%s could not allocate tx_buf_cb\n",
++		       pci_name(pdev));
++		err = -ENOMEM;
++		goto err_out_free_regions;
++	}
++
+ 	ndev = alloc_etherdev(sizeof(struct ql3_adapter));
+ 	if (!ndev) {
+ 		printk(KERN_ERR PFX "%s could not alloc etherdev\n",
+ 		       pci_name(pdev));
+ 		err = -ENOMEM;
+-		goto err_out_free_regions;
++		goto err_out_free_txb;
+ 	}
+ 
+ 	SET_MODULE_OWNER(ndev);
+@@ -4036,6 +4045,7 @@ static int __devinit ql3xxx_probe(struct pci_dev *pdev,
+ 	pci_set_drvdata(pdev, ndev);
+ 
+ 	qdev = netdev_priv(ndev);
++	qdev->tx_buf = tx_buf;
+ 	qdev->index = cards_found;
+ 	qdev->ndev = ndev;
+ 	qdev->pdev = pdev;
+@@ -4157,6 +4167,8 @@ err_out_iounmap:
+ 	iounmap(qdev->mem_map_registers);
+ err_out_free_ndev:
+ 	free_netdev(ndev);
++err_out_free_txb:
++	kfree(tx_buf);
+ err_out_free_regions:
+ 	pci_release_regions(pdev);
+ err_out_disable_pdev:
+@@ -4186,6 +4198,7 @@ static void __devexit ql3xxx_remove(struct pci_dev *pdev)
+ 	iounmap(qdev->mem_map_registers);
+ 	pci_release_regions(pdev);
+ 	pci_set_drvdata(pdev, NULL);
++	kfree(qdev->tx_buf);
+ 	free_netdev(ndev);
+ }
+ 
+diff --git a/drivers/net/qla3xxx.h b/drivers/net/qla3xxx.h
+index 8f0c6eb..c0982a5 100644
+--- a/drivers/net/qla3xxx.h
++++ b/drivers/net/qla3xxx.h
+@@ -1211,7 +1211,7 @@ struct ql3_adapter {
+ 	u32 req_consumer_index_phy_addr_high;
+ 	u32 req_consumer_index_phy_addr_low;
+ 	atomic_t tx_count;
+-	struct ql_tx_buf_cb tx_buf[NUM_REQ_Q_ENTRIES];
++	struct ql_tx_buf_cb *tx_buf;
+ 
+ 	/* Net Response Queue */
+ 	u32 rsp_q_size;
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index bb56266..dbc7553 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -586,6 +586,10 @@ struct net_device
+ 	/* space for optional statistics and wireless sysfs groups */
+ 	struct attribute_group  *sysfs_groups[3];
+ #ifndef __GENKSYMS__
++	/*
++	 * Private data size is limited to 64kB
++	 */
++#define NETDEV_PRIV_LEN_MAX	0X0000FFFF
+ 	unsigned short priv_len;
+ #endif
+ };
+diff --git a/net/core/dev.c b/net/core/dev.c
+index de00e24..1968d30 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -3803,6 +3803,11 @@ struct net_device *alloc_netdev(int sizeof_priv, const char *name,
+ 	struct net_device *dev;
+ 	int alloc_size;
+ 
++	if (sizeof_priv > NETDEV_PRIV_LEN_MAX) {
++		printk(KERN_ERR "alloc_dev: Private data too big.\n");
++		return NULL;
++	}
++
+ 	/* ensure 32-byte alignment of both the device and private area */
+ 	alloc_size = (sizeof(*dev) + NETDEV_ALIGN_CONST) & ~NETDEV_ALIGN_CONST;
+ 	alloc_size += (sizeof_priv + NETDEV_ALIGN_CONST) & ~NETDEV_ALIGN_CONST;

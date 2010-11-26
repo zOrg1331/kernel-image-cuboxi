@@ -1,0 +1,51 @@
+From: Ulrich Obergfell <uobergfe@redhat.com>
+Date: Wed, 1 Sep 2010 16:26:51 -0400
+Subject: [time] initialize tick_nsec based on kernel parameters
+Message-id: <690369250.684331283358411819.JavaMail.root@zmail07.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 27995
+O-Subject: [RHEL5.6 PATCH 2/3 BZ586285] initialize 'tick_nsec' depending on
+	'divider' and 'pmtimer_fine_grained' kernel parameters
+Bugzilla: 586285
+RH-Acked-by: Glauber Costa <glommer@redhat.com>
+
+RH-Bugzilla: 586285
+RH-Upstream-status: N/A
+
+This is the third part of a four-part message. Please refer to first part:
+http://post-office.corp.redhat.com/archives/rhkernel-list/2010-September/msg00037.html
+
+Patch part 2 of 3
+-----------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index f953710..d9dbe32 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -1385,6 +1385,25 @@ void __init time_init(void)
+ {
+ 	unsigned int hypervisor_khz;
+ 
++	/*
++	 * 'tick_nsec' is set to TICK_NSEC at compile time. The value of
++	 * TICK_NSEC depends on HZ. The kernel parameter 'tick_divider'
++	 * allows to change REAL_HZ at boottime, so 'tick_nsec' needs to
++	 * be adjusted to REAL_HZ. Otherwise time will drift backwards.
++	 *
++	 * For example, with HZ=1000 the initial value of 'tick_nsec'
++	 * is 999848 and with HZ=100 the initial value of 'tick_nsec'
++	 * is 10000000. Therefore, with 'tick_divider=10' the value of
++	 * 'tick_nsec' needs to be adjusted to 10000000 / 10 = 1000000.
++	 * Otherwise time drifts backwards by 1000000 - 999848 = 152 ns
++	 * per logical tick. This accumulates to 152 * 1000 * 3600 =
++	 * 547200000 ns = 0.5472 seconds per hour.
++	 */
++	if (tick_divider > 1 && pmtimer_fine_grained) {
++		unsigned long acthz = SH_DIV(CLOCK_TICK_RATE, LATCH, 8);
++		tick_nsec = SH_DIV(NSEC_PER_SEC, acthz, 8) / tick_divider;
++	}
++
+ 	if (nohpet)
+ 		vxtime.hpet_address = 0;
+ 

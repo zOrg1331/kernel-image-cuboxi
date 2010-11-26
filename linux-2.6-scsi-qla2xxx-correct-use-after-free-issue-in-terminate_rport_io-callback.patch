@@ -1,0 +1,133 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Thu, 14 Oct 2010 16:23:55 -0400
+Subject: [scsi] qla2xxx: Correct use-after-free issue in terminate_rport_io callback
+Message-id: <20101014202355.2162.84808.sendpatchset@localhost.localdomain>
+O-Subject: [PATCH 5.5.z] qla2xxx: Correct use-after-free issue in terminate_rport_io callback.
+Bugzilla: 643135
+RH-Acked-by: Rob Evers <revers@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Bugzilla
+--------
+
+Bug 643135 (https://bugzilla.redhat.com/show_bug.cgi?id=643135)
+
+Upstream Status
+---------------
+
+linux-2.6 commit id 715848ca6fffeb6362a50887d9c26245bd5dfba9
+
+RHEL 5.6 Status
+---------------
+
+This fix has been accepted into RHEL 5.6 and was originally posted to RHKL
+here:
+
+http://post-office.corp.redhat.com/archives/rhkernel-list/2010-June/msg01073.html
+
+Testing
+-------
+
+This point fix was verified by the customer to fix their issue in bug 628583.
+
+Description
+-----------
+
+From: Andrew Vasquez <andrew.vasquez@qlogic.com>
+Date: Tue, 23 Feb 2010 12:18:45 +0000 (+0530)
+Subject: qla2xxx: Correct use-after-free issue in terminate_rport_io callback.
+
+qla2xxx: Correct use-after-free issue in terminate_rport_io callback.
+
+The explicit logout (LOGO) issued at the end of the callback will
+flush (via normal scsi_cmnd->done()) any outstanding commands
+(FCP2) the firmware is holding.  While iterating through the
+outstanding_cmnd array in qla2x00_abort_fcport_cmds(), locking
+and unlocking of the hardware spinlock, opens-up the driver to
+cases where the processed SRB (sp) could be used after the
+command completed from interrupt context.
+
+Signed-off-by: Andrew Vasquez <andrew.vasquez@qlogic.com>
+---
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index 48fd2de..ef8f3eb 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -2208,8 +2208,6 @@ qla2x00_dev_loss_tmo_callbk(struct fc_rport *rport)
+ 		fcport->loop_id = FC_NO_LOOP_ID;
+ 	}
+ 
+-	qla2x00_abort_fcport_cmds(fcport);
+-
+ 	/*
+ 	 * Transport has effectively 'deleted' the rport, clear
+ 	 * all local references.
+@@ -2251,7 +2249,6 @@ qla2x00_terminate_rport_io(struct fc_rport *rport)
+ 		fcport->loop_id = FC_NO_LOOP_ID;
+ 	}
+ 
+-	qla2x00_abort_fcport_cmds(fcport);
+ 	scsi_target_unblock(&rport->dev);
+ }
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_gbl.h b/drivers/scsi/qla2xxx/qla_gbl.h
+index dbc7e29..50c79c7 100644
+--- a/drivers/scsi/qla2xxx/qla_gbl.h
++++ b/drivers/scsi/qla2xxx/qla_gbl.h
+@@ -87,8 +87,6 @@ extern int ql2xdontresethba;
+ extern int qla2x00_loop_reset(scsi_qla_host_t *);
+ extern void qla2x00_abort_all_cmds(scsi_qla_host_t *, int);
+ 
+-extern void qla2x00_abort_fcport_cmds(fc_port_t *);
+-
+ /*
+  * Global Functions in qla_mid.c source file.
+  */
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 034c711..7c1ddd0 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -754,40 +754,6 @@ qla2x00_wait_for_loop_ready(scsi_qla_host_t *ha)
+ 	return (return_status);
+ }
+ 
+-void
+-qla2x00_abort_fcport_cmds(fc_port_t *fcport)
+-{
+-	int cnt;
+-	unsigned long flags;
+-	srb_t *sp;
+-	scsi_qla_host_t *ha = fcport->ha;
+-	scsi_qla_host_t *pha = to_qla_parent(ha);
+-
+-	spin_lock_irqsave(&pha->hardware_lock, flags);
+-	for (cnt = 1; cnt < MAX_OUTSTANDING_COMMANDS; cnt++) {
+-		sp = pha->outstanding_cmds[cnt];
+-		if (!sp)
+-			continue;
+-		if (sp->fcport != fcport)
+-			continue;
+-
+-		spin_unlock_irqrestore(&pha->hardware_lock, flags);
+-		if (ha->isp_ops->abort_command(ha, sp)) {
+-			DEBUG2(qla_printk(KERN_WARNING, ha,
+-			    "Abort failed --  %lx\n", sp->cmd->serial_number));
+-		} else {
+-			if (qla2x00_eh_wait_on_command(ha, sp->cmd) !=
+-			    QLA_SUCCESS)
+-				DEBUG2(qla_printk(KERN_WARNING, ha,
+-				    "Abort failed while waiting --  %lx\n",
+-				    sp->cmd->serial_number));
+-
+-		}
+-		spin_lock_irqsave(&pha->hardware_lock, flags);
+-	}
+-	spin_unlock_irqrestore(&pha->hardware_lock, flags);
+-}
+-
+ static int
+ qla2x00_is_eh_active(struct Scsi_Host *shost)
+ {
+

@@ -1,0 +1,112 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 14 Oct 2010 18:05:05 +0200
+Subject: [misc] futex: replace LOCK_PREFIX in futex.h
+Message-id: <20101014160505.GB2629@psychotron.redhat.com>
+O-Subject: [RHEL5] futex: replace LOCK_PREFIX in futex.h
+Bugzilla: 633176
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+RH-Acked-by: Gleb Natapov <gleb@redhat.com>
+RH-Acked-by: Petr Matousek <pmatouse@redhat.com>
+RH-Acked-by: Cong Wang <amwang@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+Thu, Oct 14, 2010 at 08:04:14AM CEST, eteo@redhat.com wrote:
+>This is for CVE-2010-3086 rhel-5.6 [#633176:NEW].
+>
+>Please review.
+>
+>---
+>Subject: [RHEL5] futex: replace LOCK_PREFIX in futex.h
+>
+>Backport of the upstream commit: 9d55b9923a (x86: replace LOCK_PREFIX in
+>futex.h), see also: https://bugzilla.redhat.com/show_bug.cgi?id=429412
+>
+>RHEL5 still replaces the LOCK prefix with a NOP, unlike mainline which
+>rewrites the instruction using a DS prefix, see commit: 1f49a2c2aeb
+>(x86: revert replace LOCK_PREFIX in futex.h).
+>
+>Replacing the LOCK prefix with a NOP causes exceptions to not match the
+>__ex_table fault fixup, causing kernel panics and the like when they
+>trigger.
+>
+
+The same patch non-malformed.
+
+https://brewweb.devel.redhat.com/taskinfo?taskID=2824359
+
+diff --git a/include/asm-i386/futex.h b/include/asm-i386/futex.h
+index 946d97c..d84e60f 100644
+--- a/include/asm-i386/futex.h
++++ b/include/asm-i386/futex.h
+@@ -28,7 +28,7 @@
+ "1:	movl	%2, %0\n\
+ 	movl	%0, %3\n"					\
+ 	insn "\n"						\
+-"2:	" LOCK_PREFIX "cmpxchgl %3, %2\n\
++"2:	lock cmpxchgl %3, %2\n\
+ 	jnz	1b\n\
+ 3:	.section .fixup,\"ax\"\n\
+ 4:	mov	%5, %1\n\
+@@ -68,7 +68,7 @@ futex_atomic_op_inuser (int encoded_op, int __user *uaddr)
+ #endif
+ 		switch (op) {
+ 		case FUTEX_OP_ADD:
+-			__futex_atomic_op1(LOCK_PREFIX "xaddl %0, %2", ret,
++			__futex_atomic_op1("lock xaddl %0, %2", ret,
+ 					   oldval, uaddr, oparg);
+ 			break;
+ 		case FUTEX_OP_OR:
+@@ -111,7 +111,7 @@ futex_atomic_cmpxchg_inatomic(int __user *uaddr, int oldval, int newval)
+ 		return -EFAULT;
+ 
+ 	__asm__ __volatile__(
+-		"1:	" LOCK_PREFIX "cmpxchgl %3, %1		\n"
++		"1:	lock cmpxchgl %3, %1			\n"
+ 
+ 		"2:	.section .fixup, \"ax\"			\n"
+ 		"3:	mov     %2, %0				\n"
+diff --git a/include/asm-i386/msr.h b/include/asm-i386/msr.h
+index 249b0c7..869e75a 100644
+--- a/include/asm-i386/msr.h
++++ b/include/asm-i386/msr.h
+@@ -301,6 +301,7 @@ void wrmsr_on_cpu(unsigned int cpu, u32 msr_no, u32 l, u32 h);
+ int rdmsr_safe_on_cpu(unsigned int cpu, u32 msr_no, u32 *l, u32 *h);
+ int wrmsr_safe_on_cpu(unsigned int cpu, u32 msr_no, u32 l, u32 h);
+ #else  /*  CONFIG_SMP  */
++#include <asm/errno.h>
+ static inline void rdmsr_on_cpu(unsigned int cpu, u32 msr_no, u32 *l, u32 *h)
+ {
+ 	rdmsr(msr_no, *l, *h);
+diff --git a/include/asm-x86_64/futex.h b/include/asm-x86_64/futex.h
+index 9804bf0..2c51565 100644
+--- a/include/asm-x86_64/futex.h
++++ b/include/asm-x86_64/futex.h
+@@ -27,7 +27,7 @@
+ "1:	movl	%2, %0\n\
+ 	movl	%0, %3\n"					\
+ 	insn "\n"						\
+-"2:	" LOCK_PREFIX "cmpxchgl %3, %2\n\
++"2:	lock cmpxchgl %3, %2\n\
+ 	jnz	1b\n\
+ 3:	.section .fixup,\"ax\"\n\
+ 4:	mov	%5, %1\n\
+@@ -62,7 +62,7 @@ futex_atomic_op_inuser (int encoded_op, int __user *uaddr)
+ 		__futex_atomic_op1("xchgl %0, %2", ret, oldval, uaddr, oparg);
+ 		break;
+ 	case FUTEX_OP_ADD:
+-		__futex_atomic_op1(LOCK_PREFIX "xaddl %0, %2", ret, oldval,
++		__futex_atomic_op1("lock xaddl %0, %2", ret, oldval,
+ 				   uaddr, oparg);
+ 		break;
+ 	case FUTEX_OP_OR:
+@@ -101,7 +101,7 @@ futex_atomic_cmpxchg_inatomic(int __user *uaddr, int oldval, int newval)
+ 		return -EFAULT;
+ 
+ 	__asm__ __volatile__(
+-		"1:	" LOCK_PREFIX "cmpxchgl %3, %1		\n"
++		"1:	lock cmpxchgl %3, %1			\n"
+ 
+ 		"2:	.section .fixup, \"ax\"			\n"
+ 		"3:	mov     %2, %0				\n"
+

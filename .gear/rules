@@ -75,6 +75,7 @@ copy: diff-openafs-for_each_process
 copy: diff-rh-cifs-disable-posix-extensons-by-default-20090304
 copy: diff-rh-hung-task-tunes-and-fixes
 copy: diff-scsi-add-modalias-mainstream
+copy: diff-serial-pci-add-netmos-9901-support
 copy: diff-snd-hda-intel
 copy: diff-tossing-headers-around
 copy: diff-ubc-debug-sock-orphan-acct
@@ -95,5 +96,5 @@ copy: kabi_whitelist_x86_64
 copy: kabi_whitelist_x86_64xen
 copy: kabitool
 tar.bz2: linux name=linux-2.6.18
-copy: patch-028stab077-core
+copy: patch-028stab079-core
 tar.gz: xen name=xen-15502 base= suffix=.tar.bz2

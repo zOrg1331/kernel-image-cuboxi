@@ -1,0 +1,277 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 May 2010 14:55:11 -0400
+Subject: [fs] nfs: wait for close before silly-renaming
+Message-id: <1273589711-1396-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 25012
+O-Subject: [RHEL5 PATCH] BZ#565974: NFS: wait for close before silly-renaming
+Bugzilla: 565974
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+Calling unlink on a file on NFSv4 does not wait for the CLOSE. With most
+NFS servers, this isn't really an issue, but some seem to have real
+problems with silly-renaming in general. This patchset is intended to
+work around issues on those servers by helping to ensure that the client
+waits for a CLOSE to complete before proceeding in certain codepaths.
+
+This patch is a backport of these 4 commits from upstream:
+
+a49c3c7736a2e77931dabc5bc4a83fb4b2da013e
+5e11934d13c9a3bcb0cadad6c7a7de5c32660422
+3bec63db55463365110d00721ed60a31e4614cb6
+b39e625b6e75aa70e26c13f9378756bb5f2af032
+
+The customer who reported this was easily able to reproduce this in
+their environment and reported that this fixed the issue for them. There
+have also been some RHTS failures that I suspect may be fixed by this as
+well.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/nfs/file.c b/fs/nfs/file.c
+index 35a6c76..9278701 100644
+--- a/fs/nfs/file.c
++++ b/fs/nfs/file.c
+@@ -123,7 +123,7 @@ nfs_file_release(struct inode *inode, struct file *filp)
+ {
+ 	/* Ensure that dirty pages are flushed out with the right creds */
+ 	if (filp->f_mode & FMODE_WRITE)
+-		filemap_fdatawrite(filp->f_mapping);
++		nfs_wb_all(filp->f_dentry->d_inode);
+ 	nfs_inc_stats(inode, NFSIOS_VFSRELEASE);
+ 	return NFS_PROTO(inode)->file_release(inode, filp);
+ }
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index 5dd8ada..2a5c1a1 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -498,7 +498,6 @@ static struct nfs_open_context *alloc_nfs_open_context(struct vfsmount *mnt, str
+ 
+ 	ctx = (struct nfs_open_context *)kmalloc(sizeof(*ctx), GFP_KERNEL);
+ 	if (ctx != NULL) {
+-		atomic_set(&ctx->count, 1);
+ 		ctx->path.dentry = dget(dentry);
+ 		ctx->path.mnt = mntget(mnt);
+ 		ctx->cred = get_rpccred(cred);
+@@ -507,6 +506,7 @@ static struct nfs_open_context *alloc_nfs_open_context(struct vfsmount *mnt, str
+ 		ctx->flags = 0;
+ 		ctx->error = 0;
+ 		ctx->dir_cookie = 0;
++		atomic_set(&ctx->count, 1);
+ 	}
+ 	return ctx;
+ }
+@@ -518,26 +518,40 @@ struct nfs_open_context *get_nfs_open_context(struct nfs_open_context *ctx)
+ 	return ctx;
+ }
+ 
+-void put_nfs_open_context(struct nfs_open_context *ctx)
++static void __put_nfs_open_context(struct nfs_open_context *ctx, int wait)
+ {
++	struct inode *inode;
++
+ 	if (ctx == NULL)
+ 		return;
+ 
+-	if (atomic_dec_and_test(&ctx->count)) {
+-		if (!list_empty(&ctx->list)) {
+-			struct inode *inode = ctx->path.dentry->d_inode;
+-			spin_lock(&inode->i_lock);
+-			list_del(&ctx->list);
+-			spin_unlock(&inode->i_lock);
+-		}
+-		if (ctx->state != NULL)
++	inode = ctx->path.dentry->d_inode;
++
++	if (!atomic_dec_and_lock(&ctx->count, &inode->i_lock))
++		return;
++	list_del(&ctx->list);
++	spin_unlock(&inode->i_lock);
++	if (ctx->state != NULL) {
++		if (wait)
++			nfs4_close_sync(&ctx->path, ctx->state, ctx->mode);
++		else
+ 			nfs4_close_state(&ctx->path, ctx->state, ctx->mode);
+-		if (ctx->cred != NULL)
+-			put_rpccred(ctx->cred);
+-		dput(ctx->path.dentry);
+-		mntput(ctx->path.mnt);
+-		kfree(ctx);
+ 	}
++	if (ctx->cred != NULL)
++		put_rpccred(ctx->cred);
++	dput(ctx->path.dentry);
++	mntput(ctx->path.mnt);
++	kfree(ctx);
++}
++
++void put_nfs_open_context(struct nfs_open_context *ctx)
++{
++	__put_nfs_open_context(ctx, 0);
++}
++
++static void put_nfs_open_context_sync(struct nfs_open_context *ctx)
++{
++	__put_nfs_open_context(ctx, 1);
+ }
+ 
+ /*
+@@ -586,7 +600,7 @@ static void nfs_file_clear_open_context(struct file *filp)
+ 		spin_lock(&inode->i_lock);
+ 		list_move_tail(&ctx->list, &NFS_I(inode)->open_files);
+ 		spin_unlock(&inode->i_lock);
+-		put_nfs_open_context(ctx);
++		put_nfs_open_context_sync(ctx);
+ 		nfs_fscache_reset_cookie(inode);
+ 	}
+ }
+diff --git a/fs/nfs/nfs4_fs.h b/fs/nfs/nfs4_fs.h
+index a4c8d1d..0888827 100644
+--- a/fs/nfs/nfs4_fs.h
++++ b/fs/nfs/nfs4_fs.h
+@@ -165,7 +165,7 @@ extern int nfs4_proc_setclientid(struct nfs_client *, u32, unsigned short, struc
+ extern int nfs4_proc_setclientid_confirm(struct nfs_client *, struct rpc_cred *);
+ extern int nfs4_proc_async_renew(struct nfs_client *, struct rpc_cred *);
+ extern int nfs4_proc_renew(struct nfs_client *, struct rpc_cred *);
+-extern int nfs4_do_close(struct path *path, struct nfs4_state *state);
++extern int nfs4_do_close(struct path *path, struct nfs4_state *state, int wait);
+ extern struct dentry *nfs4_atomic_open(struct inode *, struct dentry *, struct nameidata *);
+ extern int nfs4_open_revalidate(struct inode *, struct dentry *, int, struct nameidata *);
+ extern int nfs4_server_capabilities(struct nfs_server *server, struct nfs_fh *fhandle);
+@@ -197,6 +197,7 @@ extern void nfs4_drop_state_owner(struct nfs4_state_owner *);
+ extern struct nfs4_state * nfs4_get_open_state(struct inode *, struct nfs4_state_owner *);
+ extern void nfs4_put_open_state(struct nfs4_state *);
+ extern void nfs4_close_state(struct path *, struct nfs4_state *, mode_t);
++extern void nfs4_close_sync(struct path *, struct nfs4_state *, mode_t);
+ extern void nfs4_state_set_mode_locked(struct nfs4_state *, mode_t);
+ extern void nfs4_schedule_state_recovery(struct nfs_client *);
+ extern void nfs4_put_lock_state(struct nfs4_lock_state *lsp);
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index bc6d415..9168cb1 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -297,19 +297,6 @@ static void nfs4_opendata_free(struct nfs4_opendata *p)
+ 	}
+ }
+ 
+-/* Helper for asynchronous RPC calls */
+-static int nfs4_call_async(struct rpc_clnt *clnt,
+-		const struct rpc_call_ops *tk_ops, void *calldata)
+-{
+-	struct rpc_task *task;
+-
+-	if (!(task = rpc_new_task_wq(clnt, RPC_TASK_ASYNC, tk_ops, calldata,
+-				     nfsiod_workqueue)))
+-		return -ENOMEM;
+-	rpc_execute(task);
+-	return 0;
+-}
+-
+ static int nfs4_wait_for_completion_rpc_task(struct rpc_task *task)
+ {
+ 	sigset_t oldset;
+@@ -1233,10 +1220,12 @@ static const struct rpc_call_ops nfs4_close_ops = {
+  *
+  * NOTE: Caller must be holding the sp->so_owner semaphore!
+  */
+-int nfs4_do_close(struct path *path, struct nfs4_state *state)
++int nfs4_do_close(struct path *path, struct nfs4_state *state, int wait)
+ {
+ 	struct nfs_server *server = NFS_SERVER(state->inode);
+ 	struct nfs4_closedata *calldata;
++	struct nfs4_state_owner *sp = state->owner;
++	struct rpc_task *task;
+ 	int status = -ENOMEM;
+ 
+ 	calldata = kmalloc(sizeof(*calldata), GFP_KERNEL);
+@@ -1256,14 +1245,20 @@ int nfs4_do_close(struct path *path, struct nfs4_state *state)
+ 	calldata->path.mnt = mntget(path->mnt);
+ 	calldata->path.dentry = dget(path->dentry);
+ 
+-	status = nfs4_call_async(server->client, &nfs4_close_ops, calldata);
+-	if (status == 0)
+-		goto out;
+-
+-	nfs_free_seqid(calldata->arg.seqid);
++	task = rpc_run_task_wq(server->client, RPC_TASK_ASYNC, &nfs4_close_ops,
++				calldata, nfsiod_workqueue);
++	if (IS_ERR(task))
++		return PTR_ERR(task);
++	status = 0;
++	if (wait)
++		status = rpc_wait_for_completion_task(task);
++	rpc_put_task(task);
++	return status;
+ out_free_calldata:
+ 	kfree(calldata);
+ out:
++	nfs4_put_open_state(state);
++	nfs4_put_state_owner(sp);
+ 	return status;
+ }
+ 
+@@ -1278,7 +1273,7 @@ static int nfs4_intent_set_file(struct nameidata *nd, struct path *path, struct
+ 		ctx->state = state;
+ 		return 0;
+ 	}
+-	nfs4_close_state(path, state, nd->intent.open.flags);
++	nfs4_close_sync(path, state, nd->intent.open.flags);
+ 	return PTR_ERR(filp);
+ }
+ 
+@@ -1367,7 +1362,7 @@ nfs4_open_revalidate(struct inode *dir, struct dentry *dentry, int openflags, st
+ 		nfs4_intent_set_file(nd, &path, state);
+ 		return 1;
+ 	}
+-	nfs4_close_state(&path, state, openflags);
++	nfs4_close_sync(&path, state, openflags);
+ out_drop:
+ 	d_drop(dentry);
+ 	return 0;
+@@ -1955,7 +1950,7 @@ nfs4_proc_create(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
+ 	if (status == 0 && (nd->flags & LOOKUP_OPEN))
+ 		status = nfs4_intent_set_file(nd, &path, state);
+ 	else
+-		nfs4_close_state(&path, state, flags);
++		nfs4_close_sync(&path, state, flags);
+ out:
+ 	return status;
+ }
+diff --git a/fs/nfs/nfs4state.c b/fs/nfs/nfs4state.c
+index 4bdcc59..34c5268 100644
+--- a/fs/nfs/nfs4state.c
++++ b/fs/nfs/nfs4state.c
+@@ -311,7 +311,7 @@ void nfs4_put_open_state(struct nfs4_state *state)
+ /*
+  * Close the current file.
+  */
+-void nfs4_close_state(struct path *path, struct nfs4_state *state, mode_t mode)
++static void __nfs4_close(struct path *path, struct nfs4_state *state, mode_t mode, int wait)
+ {
+ 	struct inode *inode = state->inode;
+ 	struct nfs4_state_owner *owner = state->owner;
+@@ -345,10 +345,21 @@ void nfs4_close_state(struct path *path, struct nfs4_state *state, mode_t mode)
+ 	spin_unlock(&inode->i_lock);
+ 	spin_unlock(&owner->so_lock);
+ 
+-	if (oldstate != newstate && nfs4_do_close(path, state) == 0)
+-		return;
+-	nfs4_put_open_state(state);
+-	nfs4_put_state_owner(owner);
++	if (oldstate == newstate) {
++		nfs4_put_open_state(state);
++		nfs4_put_state_owner(owner);
++	} else
++		nfs4_do_close(path, state, wait);
++}
++
++void nfs4_close_state(struct path *path, struct nfs4_state *state, mode_t mode)
++{
++	__nfs4_close(path, state, mode, 0);
++}
++
++void nfs4_close_sync(struct path *path, struct nfs4_state *state, mode_t mode)
++{
++	__nfs4_close(path, state, mode, 1);
+ }
+ 
+ /*

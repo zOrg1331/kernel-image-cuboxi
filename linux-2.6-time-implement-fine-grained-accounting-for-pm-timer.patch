@@ -1,0 +1,216 @@
+From: Ulrich Obergfell <uobergfe@redhat.com>
+Date: Wed, 1 Sep 2010 16:30:30 -0400
+Subject: [time] implement fine grained accounting for PM timer
+Message-id: <1282060887.684971283358630024.JavaMail.root@zmail07.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 27996
+O-Subject: [RHEL5.6 PATCH 3/3 BZ586285] implement 'fine grained accounting'
+	for PM timer depending on 'divider' and 'pmtimer_fine_grained' kernel
+	parameters
+Bugzilla: 586285
+RH-Acked-by: Glauber Costa <glommer@redhat.com>
+
+RH-Bugzilla: 586285
+RH-Upstream-status: N/A
+
+implement 'fine grained accounting' for PM timer depending on 'divider' and 'pmtimer_fine_grained' kernel parameters
+
+This is the fourth part of a four-part message. Please refer to first part:
+http://post-office.corp.redhat.com/archives/rhkernel-list/2010-September/msg00037.html
+
+Patch part 3 of 3
+-----------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/kernel/pmtimer.c b/arch/x86_64/kernel/pmtimer.c
+index c234193..f6a0525 100644
+--- a/arch/x86_64/kernel/pmtimer.c
++++ b/arch/x86_64/kernel/pmtimer.c
+@@ -34,6 +34,9 @@ u32 pmtmr_ioport __read_mostly;
+ /* value of the Power timer at last timer interrupt */
+ static u32 offset_delay;
+ static u32 last_pmtmr_tick;
++static u32 cycles_not_accounted_HZ;
++
++#define PM_TIMER_FREQUENCY 3579545UL
+ 
+ #define ACPI_PM_MASK 0xFFFFFF /* limit it to 24 bits */
+ 
+@@ -82,6 +85,110 @@ int pmtimer_mark_offset(void)
+ 	return lost - 1;
+ }
+ 
++/*
++ * This function facilitates fine-grained accounting of 'jiffies' in the
++ * timer interrupt handler if the actual length of the current real tick
++ * is not equal to the expected length of a real tick. This is useful if
++ * 'tick_divider' is greater than 1 because 'tick_divider' specifies the
++ * number of logical ticks ('jiffies') per real tick. The actual length
++ * of the current real tick is returned in the location which is pointed
++ * to by the argument 'njiffies'.
++ *
++ * In order to avoid inexact results due to the error margin of cyc2us(),
++ * the number of 'jiffies' to account is computed based on the PM timer
++ * frequency. Conceptually, this is being done as follows:
++ *
++ *   -  Determine the number of PM timer cycles that have elapsed between
++ *      the current PM timer sample and the previous PM timer sample.
++ *      This is the 'delta'.
++ *
++ *   -  The number of jiffies to account is equal to the 'delta' divided
++ *      by the number of PM timer cycles per jiffy.
++ *
++ * In order to avoid rounding errors by scaling the PM timer frequency
++ * down to a jiffy (i.e. PM_TIMER_FREQUENCY/HZ), the 'delta' is instead
++ * scaled up to HZ (i.e. delta*HZ).
++ */
++int pmtimer_mark_offset_return_njiffies(unsigned int *njiffies)
++{
++	unsigned long tsc;
++	u64 delta;
++	u32 real_ticks;
++	u32 jiffies_to_account;
++	u32 prev_offset_delay = offset_delay;
++	u32 tick = inl(pmtmr_ioport);
++
++	/*
++	 * Determine the number of elapsed cycles, scale up to HZ,
++	 * and add the unaccounted amount from the previous tick.
++	 */
++	delta = (u64)((tick - last_pmtmr_tick) & ACPI_PM_MASK) * HZ;
++	delta += cycles_not_accounted_HZ;
++
++	/*
++	 * Postpone accounting if the delta is less than a jiffy.
++	 */
++	if (delta < PM_TIMER_FREQUENCY) {
++		*njiffies = 0;
++		return -1;
++	}
++
++	last_pmtmr_tick = tick;
++
++	/*
++	 * Compute the number of jiffies to account.
++	 */
++	jiffies_to_account = (u32)(delta / PM_TIMER_FREQUENCY);
++
++	/*
++	 * Remember the unaccounted amount and compute the 'offset_delay'
++	 * for use by do_gettimeoffset_pm(). The unaccounted amount needs
++	 * to be scaled down (divided by HZ) to compute the 'offset_delay'.
++	 */
++	cycles_not_accounted_HZ = (u32)(delta % PM_TIMER_FREQUENCY);
++	offset_delay = cyc2us(cycles_not_accounted_HZ / HZ);
++
++	/*
++	 * Compute the number of real ticks that have elapsed.
++	 * Consider three cases:
++	 *
++	 * 1. If 'real_ticks' is less than 1, the current real tick is
++	 *    shorter than expected. Return the actual length in jiffies
++	 *    where 1 <= *njiffies < tick_divider.
++	 *
++	 * 2. If 'real_ticks' is equal 1, the current real tick may be
++	 *    longer than expected. Return the actual length in jiffies
++	 *    where tick_divider <= *njiffies < tick_divider*2.
++	 *
++	 * 3. If 'real_ticks' is greater than 1, we lost some real ticks.
++	 *    Return one full real tick plus a fraction of a real tick
++	 *    where tick_divider <= *njiffies < tick_divider*2 (similar
++	 *    to case 2.) and where the function's return value reflects
++	 *    the number of lost real ticks.
++	 */
++	real_ticks = jiffies_to_account / tick_divider;
++	if (real_ticks < 1)
++		*njiffies = jiffies_to_account;
++	else
++		*njiffies = tick_divider + (jiffies_to_account % tick_divider);
++
++	/*
++	 * Account the elapsed jiffies plus the current 'offset_delay' in
++	 * 'monotonic_base' and set a time stamp in 'vxtime.last_tsc' for
++	 * use by monotonic_clock(). The previous 'offset_delay' which was
++	 * accounted in 'monotonic_base' at the previous real tick must be
++	 * un-accounted (subtracted) during the current real tick because
++	 * it is now included in the current 'jiffies_to_account' and/or
++	 * in the current 'offset_delay'.
++	 */
++	monotonic_base += (u64)jiffies_to_account * (u64)(NSEC_PER_SEC / HZ) +
++	    ((u64)offset_delay - (u64)prev_offset_delay) * (u64)NSEC_PER_USEC;
++	rdtscll(tsc);
++	vxtime.last_tsc = tsc;
++
++	return real_ticks - 1;
++}
++
+ static unsigned pmtimer_wait_tick(void)
+ {
+ 	u32 a, b;
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index d9dbe32..20ee974 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -419,6 +419,7 @@ static void do_timer_account_lost_ticks(struct pt_regs *regs)
+ {
+ 	unsigned long tsc;
+ 	int delay = 0, offset = 0, lost = 0, i;
++	unsigned int njiffies = tick_divider;
+ 
+ 	if (vxtime.hpet_address)
+ 		offset = hpet_readl(HPET_COUNTER);
+@@ -454,7 +455,19 @@ static void do_timer_account_lost_ticks(struct pt_regs *regs)
+ 		vxtime.last = offset;
+ #ifdef CONFIG_X86_PM_TIMER
+ 	} else if (vxtime.mode == VXTIME_PMTMR) {
+-		lost = pmtimer_mark_offset();
++		if (tick_divider == 1) {
++			lost = pmtimer_mark_offset();
++		} else {
++			/*
++			 * Fine-grained accounting with tick_divider > 1 is
++			 * enabled by default. It can be disabled by setting
++			 * the kernel parameter 'pmtimer_fine_grained=0'.
++			 */
++			if (pmtimer_fine_grained)
++				lost = pmtimer_mark_offset_return_njiffies(&njiffies);
++			else
++				lost = pmtimer_mark_offset();
++		}
+ #endif
+ 	} else {
+ 		offset = (((tsc - vxtime.last_tsc) *
+@@ -486,8 +499,19 @@ static void do_timer_account_lost_ticks(struct pt_regs *regs)
+ 		jiffies += lost;
+ 	}
+ 
+-	/* Do the timer stuff */
+-	for (i = 0; i < tick_divider; i++)
++	/*
++	 * Do the timer stuff.
++	 *
++	 * On entry to this routine, 'njiffies' is set to 'tick_divider'.
++	 * However, if 'tick_divider' is greater than 1 and if the actual
++	 * length of the current real tick is not equal to the expected
++	 * length of a real tick, pmtimer_mark_offset_return_njiffies()
++	 * returns the actual tick length in 'njiffies' so that we can do
++	 * a fine-grained accounting. 'njiffies' can even be zero if the
++	 * current real tick is shorter than a jiffy. Accounting is being
++	 * postponed in this case.
++	 */
++	for (i = 0; i < njiffies; i++)
+ 		do_timer_jiffy(regs);
+ }
+ 
+diff --git a/include/asm-x86_64/proto.h b/include/asm-x86_64/proto.h
+index 3e3c238..ddfd21a 100644
+--- a/include/asm-x86_64/proto.h
++++ b/include/asm-x86_64/proto.h
+@@ -37,6 +37,7 @@ extern void config_acpi_tables(void);
+ extern void ia32_syscall(void);
+ 
+ extern int pmtimer_mark_offset(void);
++extern int pmtimer_mark_offset_return_njiffies(unsigned int *);
+ extern void pmtimer_resume(void);
+ extern void pmtimer_wait(unsigned);
+ extern int pmtimer_calibrate_apic(unsigned, int *tries);
