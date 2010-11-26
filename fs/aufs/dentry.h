@@ -29,10 +29,9 @@
 #include <linux/aufs_type.h>
 #include "rwsem.h"
 
-/* make a single member structure for future use */
-/* todo: remove this structure */
 struct au_hdentry {
 	struct dentry		*hd_dentry;
+	aufs_bindex_t		hd_id;
 };
 
 struct au_dinfo {

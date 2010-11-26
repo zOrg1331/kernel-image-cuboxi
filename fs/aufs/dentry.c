@@ -440,13 +440,14 @@ int au_h_verify(struct dentry *h_dentry, unsigned int udba, struct inode *h_dir,
 static void au_do_refresh_hdentry(struct au_hdentry *p, struct au_dinfo *dinfo,
 				  struct dentry *parent)
 {
-	struct dentry *h_d, *h_dp;
+	struct dentry *h_d;
 	struct au_hdentry tmp, *q;
 	struct super_block *sb;
 	aufs_bindex_t new_bindex, bindex, bend, bwh, bdiropq;
 
 	AuRwMustWriteLock(&dinfo->di_rwsem);
 
+	sb = parent->d_sb;
 	bend = dinfo->di_bend;
 	bwh = dinfo->di_bwh;
 	bdiropq = dinfo->di_bdiropq;
@@ -455,14 +456,10 @@ static void au_do_refresh_hdentry(struct au_hdentry *p, struct au_dinfo *dinfo,
 		if (!h_d)
 			continue;
 
-		h_dp = dget_parent(h_d);
-		if (h_dp == au_h_dptr(parent, bindex)) {
-			dput(h_dp);
+		new_bindex = au_br_index(sb, p->hd_id);
+		if (new_bindex == bindex)
 			continue;
-		}
 
-		new_bindex = au_find_dbindex(parent, h_dp);
-		dput(h_dp);
 		if (dinfo->di_bwh == bindex)
 			bwh = new_bindex;
 		if (dinfo->di_bdiropq == bindex)
@@ -484,7 +481,6 @@ static void au_do_refresh_hdentry(struct au_hdentry *p, struct au_dinfo *dinfo,
 		}
 	}
 
-	sb = parent->d_sb;
 	dinfo->di_bwh = -1;
 	if (bwh >= 0 && bwh <= au_sbend(sb) && au_sbr_whable(sb, bwh))
 		dinfo->di_bwh = bwh;

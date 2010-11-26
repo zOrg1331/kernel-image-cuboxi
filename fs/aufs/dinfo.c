@@ -35,7 +35,7 @@ int au_di_init(struct dentry *dentry)
 {
 	struct au_dinfo *dinfo;
 	struct super_block *sb;
-	int nbr;
+	int nbr, i;
 
 	dinfo = au_cache_alloc_dinfo();
 	if (unlikely(!dinfo))
@@ -56,6 +56,8 @@ int au_di_init(struct dentry *dentry)
 	dinfo->di_bend = -1;
 	dinfo->di_bwh = -1;
 	dinfo->di_bdiropq = -1;
+	for (i = 0; i < nbr; i++)
+		dinfo->di_hdentry[i].hd_id = -1;
 
 	dentry->d_fsdata = dinfo;
 	dentry->d_op = &aufs_dop;
@@ -295,11 +297,16 @@ void au_set_h_dptr(struct dentry *dentry, aufs_bindex_t bindex,
 		   struct dentry *h_dentry)
 {
 	struct au_hdentry *hd = au_di(dentry)->di_hdentry + bindex;
+	struct au_branch *br;
 
 	DiMustWriteLock(dentry);
 
 	au_hdput(hd);
 	hd->hd_dentry = h_dentry;
+	if (h_dentry) {
+		br = au_sbr(dentry->d_sb, bindex);
+		hd->hd_id = br->br_id;
+	}
 }
 
 int au_dbrange_test(struct dentry *dentry)
