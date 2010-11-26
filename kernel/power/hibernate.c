@@ -646,6 +646,7 @@ int hibernate(void)
 		swsusp_free();
 		if (!error)
 			power_down();
+		in_suspend = 0;
 	} else {
 		pr_debug("PM: Image restored successfully.\n");
 	}
