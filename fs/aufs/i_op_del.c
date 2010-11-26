@@ -434,7 +434,7 @@ int aufs_rmdir(struct inode *dir, struct dentry *dentry)
 	}
 
 	if (!err) {
-		clear_nlink(inode);
+		vfsub_dead_dir(inode);
 		au_set_dbdiropq(dentry, -1);
 		epilog(dir, dentry, bindex);
 

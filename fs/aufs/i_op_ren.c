@@ -686,7 +686,7 @@ static void au_ren_refresh_dir(struct au_ren_args *a)
 		au_cpup_attr_timesizes(a->src_inode);
 		au_cpup_attr_nlink(dir, /*force*/1);
 		if (a->dst_inode) {
-			clear_nlink(a->dst_inode);
+			vfsub_dead_dir(a->dst_inode);
 			au_cpup_attr_timesizes(a->dst_inode);
 		}
 	}
