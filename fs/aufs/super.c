@@ -521,7 +521,7 @@ static int refresh_dir(struct dentry *root, unsigned int sigen)
 	list_for_each_entry(inode, &root->d_sb->s_inodes, i_sb_list)
 		if (S_ISDIR(inode->i_mode) && au_iigen(inode) != sigen) {
 			ii_write_lock_child(inode);
-			e = au_refresh_hinode_self(inode, /*do_attr*/1);
+			e = au_refresh_hinode_self(inode);
 			ii_write_unlock(inode);
 			if (unlikely(e)) {
 				AuDbg("e %d, i%lu\n", e, inode->i_ino);
@@ -586,7 +586,7 @@ static int refresh_nondir(struct dentry *root, unsigned int sigen,
 	list_for_each_entry(inode, &root->d_sb->s_inodes, i_sb_list)
 		if (!S_ISDIR(inode->i_mode) && au_iigen(inode) != sigen) {
 			ii_write_lock_child(inode);
-			e = au_refresh_hinode_self(inode, /*do_attr*/1);
+			e = au_refresh_hinode_self(inode);
 			ii_write_unlock(inode);
 			if (unlikely(e)) {
 				AuDbg("e %d, i%lu\n", e, inode->i_ino);
