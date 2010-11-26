@@ -95,7 +95,7 @@
 /* PPC CPM type number */
 #define PORT_CPM        58
 
-/* MPC52xx type numbers */
+/* MPC52xx (and MPC512x) type numbers */
 #define PORT_MPC52xx	59
 
 /* IBM icom */
@@ -198,6 +198,9 @@
 
 /* TI OMAP-UART */
 #define PORT_OMAP	96
+
+/* VIA VT8500 SoC */
+#define PORT_VT8500	97
 
 #ifdef __KERNEL__
 
