@@ -685,11 +685,8 @@ static void au_ren_refresh_dir(struct au_ren_args *a)
 		/* is this updating defined in POSIX? */
 		au_cpup_attr_timesizes(a->src_inode);
 		au_cpup_attr_nlink(dir, /*force*/1);
-		if (a->dst_inode) {
-			vfsub_dead_dir(a->dst_inode);
-			au_cpup_attr_timesizes(a->dst_inode);
-		}
 	}
+
 	if (au_ibstart(dir) == a->btgt)
 		au_cpup_attr_timesizes(dir);
 
@@ -710,6 +707,16 @@ static void au_ren_refresh(struct au_ren_args *a)
 	struct dentry *d, *h_d;
 	struct inode *i, *h_i;
 	struct super_block *sb;
+
+	i = a->dst_inode;
+	if (i) {
+		if (!au_ftest_ren(a->flags, ISDIR))
+			vfsub_drop_nlink(i);
+		else {
+			vfsub_dead_dir(i);
+			au_cpup_attr_timesizes(i);
+		}
+	}
 
 	d = a->src_dentry;
 	au_set_dbwh(d, -1);
