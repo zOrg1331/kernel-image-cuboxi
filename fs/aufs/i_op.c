@@ -475,6 +475,7 @@ int au_pin(struct au_pin *pin, struct dentry *dentry, aufs_bindex_t bindex,
  *		  unhashed.
  * for ->setattr(), ia->ia_file is passed from ftruncate only.
  */
+/* todo: consolidate with do_refresh() and simple_reval_dpath() */
 static int au_reval_for_attr(struct dentry *dentry, unsigned int sigen)
 {
 	int err;
@@ -486,10 +487,7 @@ static int au_reval_for_attr(struct dentry *dentry, unsigned int sigen)
 	if (au_digen_test(dentry, sigen)) {
 		parent = dget_parent(dentry);
 		di_read_lock_parent(parent, AuLock_IR);
-		/* returns a number of positive dentries */
-		err = au_refresh_hdentry(dentry, inode->i_mode & S_IFMT);
-		if (err >= 0)
-			err = au_refresh_hinode(inode, dentry);
+		err = au_refresh_dentry(dentry, parent);
 		di_read_unlock(parent, AuLock_IR);
 		dput(parent);
 	}

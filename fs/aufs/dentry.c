@@ -808,54 +808,6 @@ out:
 	return err;
 }
 
-/*
- * returns the number of found lower positive dentries,
- * otherwise an error.
- */
-int au_refresh_hdentry(struct dentry *dentry, mode_t type)
-{
-	int npositive, err;
-	unsigned int sigen;
-	aufs_bindex_t bstart;
-	struct au_dinfo *dinfo;
-	struct super_block *sb;
-	struct dentry *parent;
-
-	DiMustWriteLock(dentry);
-
-	sb = dentry->d_sb;
-	AuDebugOn(IS_ROOT(dentry));
-	sigen = au_sigen(sb);
-	parent = dget_parent(dentry);
-	AuDebugOn(au_digen_test(parent, sigen));
-
-	dinfo = au_di(dentry);
-	err = au_di_realloc(dinfo, au_sbend(sb) + 1);
-	npositive = err;
-	if (unlikely(err))
-		goto out;
-	au_do_refresh_hdentry(dentry, parent);
-
-	npositive = 0;
-	bstart = au_dbstart(parent);
-	if (type != S_IFDIR && dinfo->di_bstart == bstart)
-		goto out_dgen; /* success */
-
-	npositive = au_lkup_dentry(dentry, bstart, type, /*nd*/NULL);
-	if (npositive < 0)
-		goto out;
-	if (dinfo->di_bwh >= 0 && dinfo->di_bwh <= dinfo->di_bstart)
-		/* removed logically by whiteout */
-		d_drop(dentry);
-
-out_dgen:
-	au_update_digen(dentry);
-out:
-	dput(parent);
-	AuTraceErr(npositive);
-	return npositive;
-}
-
 static noinline_for_stack
 int au_do_h_d_reval(struct dentry *h_dentry, struct nameidata *nd,
 		    struct dentry *dentry, aufs_bindex_t bindex)
@@ -1001,11 +953,11 @@ static int h_d_revalidate(struct dentry *dentry, struct inode *inode,
 	return err;
 }
 
+/* todo: consolidate with do_refresh() and au_reval_for_attr() */
 static int simple_reval_dpath(struct dentry *dentry, unsigned int sigen)
 {
 	int err;
 	struct dentry *parent;
-	struct inode *inode;
 
 	if (!au_digen_test(dentry, sigen))
 		return 0;
@@ -1014,15 +966,10 @@ static int simple_reval_dpath(struct dentry *dentry, unsigned int sigen)
 	di_read_lock_parent(parent, AuLock_IR);
 	AuDebugOn(au_digen_test(parent, sigen));
 	au_dbg_verify_gen(parent, sigen);
-
-	/* returns a number of positive dentries */
-	inode = dentry->d_inode;
-	err = au_refresh_hdentry(dentry, inode->i_mode & S_IFMT);
-	if (err >= 0)
-		err = au_refresh_hinode(inode, dentry);
-
+	err = au_refresh_dentry(dentry, parent);
 	di_read_unlock(parent, AuLock_IR);
 	dput(parent);
+	AuTraceErr(err);
 	return err;
 }
 
@@ -1055,11 +1002,12 @@ int au_reval_dpath(struct dentry *dentry, unsigned int sigen)
 
 		/* someone might update our dentry while we were sleeping */
 		if (au_digen_test(d, sigen)) {
+			/*
+			 * todo: consolidate with simple_reval_dpath(),
+			 * do_refresh() and au_reval_for_attr().
+			 */
 			di_read_lock_parent(parent, AuLock_IR);
-			/* returns a number of positive dentries */
-			err = au_refresh_hdentry(d, inode->i_mode & S_IFMT);
-			if (err >= 0)
-				err = au_refresh_hinode(inode, d);
+			err = au_refresh_dentry(d, parent);
 			di_read_unlock(parent, AuLock_IR);
 		}
 
@@ -1099,6 +1047,7 @@ static int aufs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 	err = aufs_read_lock(dentry, AuLock_FLUSH | AuLock_DW | AuLock_NOPLM);
 	if (unlikely(err)) {
 		valid = err;
+		AuTraceErr(err);
 		goto out;
 	}
 	if (unlikely(au_dbrange_test(dentry))) {
@@ -1110,27 +1059,28 @@ static int aufs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 	sigen = au_sigen(sb);
 	if (au_digen_test(dentry, sigen)) {
 		AuDebugOn(IS_ROOT(dentry));
-		if (inode)
-			err = au_reval_dpath(dentry, sigen);
-		if (unlikely(err))
+		err = au_reval_dpath(dentry, sigen);
+		if (unlikely(err)) {
+			AuTraceErr(err);
 			goto out_dgrade;
-	}
-	if (au_iigen_test(inode, sigen)) {
-		AuDebugOn(IS_ROOT(dentry));
-		err = au_refresh_hinode(inode, dentry);
-		if (unlikely(err))
-			goto out_dgrade;
+		}
 	}
 	di_downgrade_lock(dentry, AuLock_IR);
 
 	err = -EINVAL;
+	if (inode && (IS_DEADDIR(inode) || !inode->i_nlink))
+		goto out_inval;
+
 	do_udba = !au_opt_test(au_mntflags(sb), UDBA_NONE);
 	if (do_udba && inode) {
 		aufs_bindex_t bstart = au_ibstart(inode);
+		struct inode *h_inode;
 
-		if (bstart >= 0
-		    && au_test_higen(inode, au_h_iptr(inode, bstart)))
-			goto out_inval;
+		if (bstart >= 0) {
+			h_inode = au_h_iptr(inode, bstart);
+			if (h_inode && au_test_higen(inode, h_inode))
+				goto out_inval;
+		}
 	}
 
 	err = h_d_revalidate(dentry, inode, nd, do_udba);

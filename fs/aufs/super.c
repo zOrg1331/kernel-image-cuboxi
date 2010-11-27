@@ -473,8 +473,8 @@ void au_iarray_free(struct inode **a, unsigned long long max)
 /*
  * refresh dentry and inode at remount time.
  */
-static int do_refresh(struct dentry *dentry, mode_t type,
-		      unsigned int dir_flags)
+/* todo: consolidate with simple_reval_dpath() and au_reval_for_attr() */
+static int do_refresh(struct dentry *dentry, unsigned int dir_flags)
 {
 	int err;
 	struct dentry *parent;
@@ -482,19 +482,9 @@ static int do_refresh(struct dentry *dentry, mode_t type,
 	di_write_lock_child(dentry);
 	parent = dget_parent(dentry);
 	di_read_lock_parent(parent, AuLock_IR);
-
-	/* returns the number of positive dentries */
-	err = au_refresh_hdentry(dentry, type);
-	if (err >= 0) {
-		struct inode *inode = dentry->d_inode;
-		err = au_refresh_hinode(inode, dentry);
-		if (!err && type == S_IFDIR)
-			au_hn_reset(inode, dir_flags);
-	}
-	if (unlikely(err))
-		pr_err("unrecoverable error %d, %.*s\n",
-		       err, AuDLNPair(dentry));
-
+	err = au_refresh_dentry(dentry, parent);
+	if (!err && dir_flags)
+		au_hn_reset(dentry->d_inode, dir_flags);
 	di_read_unlock(parent, AuLock_IR);
 	dput(parent);
 	di_write_unlock(dentry);
@@ -557,7 +547,7 @@ static int refresh_dir(struct dentry *root, unsigned int sigen)
 			d = dentries[j];
 			au_dbg_verify_dir_parent(d, sigen);
 			if (au_digen_test(d, sigen)) {
-				e = do_refresh(d, S_IFDIR, flags);
+				e = do_refresh(d, flags);
 				if (unlikely(e && !err))
 					err = e;
 				/* break on err */
@@ -627,10 +617,8 @@ static int refresh_nondir(struct dentry *root, unsigned int sigen,
 
 			d = dentries[j];
 			au_dbg_verify_nondir_parent(d, sigen);
-			inode = d->d_inode;
-			if (inode && au_digen_test(d, sigen)) {
-				e = do_refresh(d, inode->i_mode & S_IFMT,
-					       /*dir_flags*/0);
+			if (au_digen_test(d, sigen)) {
+				e = do_refresh(d, /*dir_flags*/0);
 				if (unlikely(e && !err))
 					err = e;
 				/* go on even err */
