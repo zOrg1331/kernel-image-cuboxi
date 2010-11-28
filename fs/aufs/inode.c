@@ -358,7 +358,7 @@ new_ino:
 		ii_write_unlock(inode);
 		iget_failed(inode);
 		goto out_err;
-	} else if (!must_new) {
+	} else if (!must_new && !IS_DEADDIR(inode) && inode->i_nlink) {
 		/*
 		 * horrible race condition between lookup, readdir and copyup
 		 * (or something).

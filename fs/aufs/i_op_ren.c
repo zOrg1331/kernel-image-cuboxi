@@ -882,13 +882,33 @@ int aufs_rename(struct inode *_src_dir, struct dentry *_src_dentry,
 	if (unlikely(err))
 		goto out_free;
 
+	err = au_d_hashed_positive(a->src_dentry);
+	if (unlikely(err))
+		goto out_unlock;
+	err = -ENOENT;
+	if (a->dst_inode) {
+		/*
+		 * If it is a dir, VFS unhash dst_dentry before this
+		 * function. It means we cannot rely upon d_unhashed().
+		 */
+		if (unlikely(!a->dst_inode->i_nlink))
+			goto out_unlock;
+		if (!S_ISDIR(a->dst_inode->i_mode)) {
+			err = au_d_hashed_positive(a->dst_dentry);
+			if (unlikely(err))
+				goto out_unlock;
+		} else if (unlikely(IS_DEADDIR(a->dst_inode)))
+			goto out_unlock;
+	} else if (unlikely(d_unhashed(a->dst_dentry)))
+		goto out_unlock;
+
 	au_fset_ren(a->flags, ISSAMEDIR); /* temporary */
 	di_write_lock_parent(a->dst_parent);
 
 	/* which branch we process */
 	err = au_ren_wbr(a);
 	if (unlikely(err < 0))
-		goto out_unlock;
+		goto out_parent;
 	a->br = au_sbr(a->dst_dentry->d_sb, a->btgt);
 	a->h_path.mnt = a->br->br_mnt;
 
@@ -962,7 +982,7 @@ out_hdir:
 	au_ren_unlock(a);
 out_children:
 	au_nhash_wh_free(&a->whlist);
-out_unlock:
+out_parent:
 	if (!err)
 		d_move(a->src_dentry, a->dst_dentry);
 	else {
@@ -974,6 +994,7 @@ out_unlock:
 		di_write_unlock(a->dst_parent);
 	else
 		di_write_unlock2(a->src_parent, a->dst_parent);
+out_unlock:
 	aufs_read_and_write_unlock2(a->dst_dentry, a->src_dentry);
 out_free:
 	iput(a->dst_inode);

@@ -831,7 +831,9 @@ static int aufs_readlink(struct dentry *dentry, char __user *buf, int bufsiz)
 	int err;
 
 	aufs_read_lock(dentry, AuLock_IR);
-	err = h_readlink(dentry, au_dbstart(dentry), buf, bufsiz);
+	err = au_d_hashed_positive(dentry);
+	if (!err)
+		err = h_readlink(dentry, au_dbstart(dentry), buf, bufsiz);
 	aufs_read_unlock(dentry, AuLock_IR);
 
 	return err;
@@ -852,10 +854,13 @@ static void *aufs_follow_link(struct dentry *dentry, struct nameidata *nd)
 		goto out;
 
 	aufs_read_lock(dentry, AuLock_IR);
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
-	err = h_readlink(dentry, au_dbstart(dentry), buf.u, PATH_MAX);
-	set_fs(old_fs);
+	err = au_d_hashed_positive(dentry);
+	if (!err) {
+		old_fs = get_fs();
+		set_fs(KERNEL_DS);
+		err = h_readlink(dentry, au_dbstart(dentry), buf.u, PATH_MAX);
+		set_fs(old_fs);
+	}
 	aufs_read_unlock(dentry, AuLock_IR);
 
 	if (err >= 0) {
