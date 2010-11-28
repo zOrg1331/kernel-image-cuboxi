@@ -869,7 +869,7 @@ int aufs_rename(struct inode *_src_dir, struct dentry *_src_dentry,
 	}
 
 	err = -ENOTDIR;
-	flags = AuLock_FLUSH | AuLock_NOPLM;
+	flags = AuLock_FLUSH | AuLock_NOPLM | AuLock_GEN;
 	if (S_ISDIR(a->src_inode->i_mode)) {
 		au_fset_ren(a->flags, ISDIR);
 		if (unlikely(a->dst_inode && !S_ISDIR(a->dst_inode->i_mode)))

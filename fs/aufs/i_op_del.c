@@ -316,15 +316,17 @@ int aufs_unlink(struct inode *dir, struct dentry *dentry)
 
 	IMustLock(dir);
 
-	aufs_read_lock(dentry, AuLock_DW);
-	err = au_d_hashed_positive(dentry);
+	err = aufs_read_lock(dentry, AuLock_DW | AuLock_GEN);
 	if (unlikely(err))
 		goto out;
+	err = au_d_hashed_positive(dentry);
+	if (unlikely(err))
+		goto out_unlock;
 	inode = dentry->d_inode;
 	IMustLock(inode);
 	err = -EISDIR;
 	if (unlikely(S_ISDIR(inode->i_mode)))
-		goto out; /* possible? */
+		goto out_unlock; /* possible? */
 
 	bstart = au_dbstart(dentry);
 	bwh = au_dbwh(dentry);
@@ -378,8 +380,9 @@ out_unpin:
 	dput(h_path.dentry);
 out_parent:
 	di_write_unlock(parent);
-out:
+out_unlock:
 	aufs_read_unlock(dentry, AuLock_DW);
+out:
 	return err;
 }
 
@@ -395,22 +398,25 @@ int aufs_rmdir(struct inode *dir, struct dentry *dentry)
 
 	IMustLock(dir);
 
-	aufs_read_lock(dentry, AuLock_DW | AuLock_FLUSH);
+	err = aufs_read_lock(dentry, AuLock_DW | AuLock_FLUSH | AuLock_GEN);
+	if (unlikely(err))
+		goto out;
+
 	/* VFS already unhashes it */
 	inode = dentry->d_inode;
 	err = -ENOENT;
 	if (unlikely(!inode || !inode->i_nlink
 		     || IS_DEADDIR(inode)))
-		goto out;
+		goto out_unlock;
 	IMustLock(inode);
 	err = -ENOTDIR;
 	if (unlikely(!S_ISDIR(inode->i_mode)))
-		goto out; /* possible? */
+		goto out_unlock; /* possible? */
 
 	err = -ENOMEM;
 	args = au_whtmp_rmdir_alloc(dir->i_sb, GFP_NOFS);
 	if (unlikely(!args))
-		goto out;
+		goto out_unlock;
 
 	parent = dentry->d_parent; /* dir inode is locked */
 	di_write_lock_parent(parent);
@@ -475,8 +481,9 @@ out_parent:
 	di_write_unlock(parent);
 	if (args)
 		au_whtmp_rmdir_free(args);
-out:
+out_unlock:
 	aufs_read_unlock(dentry, AuLock_DW);
+out:
 	AuTraceErr(err);
 	return err;
 }

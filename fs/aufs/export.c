@@ -653,19 +653,21 @@ static int aufs_encode_fh(struct dentry *dentry, __u32 *fh, int *max_len,
 		goto out;
 	}
 
-	err = -EIO;
 	h_parent = NULL;
-	sb = dentry->d_sb;
-	aufs_read_lock(dentry, AuLock_FLUSH | AuLock_IR);
-	parent = dget_parent(dentry);
-	di_read_lock_parent(parent, !AuLock_IR);
+	err = aufs_read_lock(dentry, AuLock_FLUSH | AuLock_IR | AuLock_GEN);
+	if (unlikely(err))
+		goto out;
+
 	inode = dentry->d_inode;
 	AuDebugOn(!inode);
+	sb = dentry->d_sb;
 #ifdef CONFIG_AUFS_DEBUG
 	if (unlikely(!au_opt_test(au_mntflags(sb), XINO)))
 		AuWarn1("NFS-exporting requires xino\n");
 #endif
-
+	err = -EIO;
+	parent = dget_parent(dentry);
+	di_read_lock_parent(parent, !AuLock_IR);
 	bend = au_dbtaildir(parent);
 	for (bindex = au_dbstart(parent); bindex <= bend; bindex++) {
 		h_parent = au_h_dptr(parent, bindex);

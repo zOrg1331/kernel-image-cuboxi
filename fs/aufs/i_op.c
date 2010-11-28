@@ -830,12 +830,15 @@ static int aufs_readlink(struct dentry *dentry, char __user *buf, int bufsiz)
 {
 	int err;
 
-	aufs_read_lock(dentry, AuLock_IR);
+	err = aufs_read_lock(dentry, AuLock_IR | AuLock_GEN);
+	if (unlikely(err))
+		goto out;
 	err = au_d_hashed_positive(dentry);
 	if (!err)
 		err = h_readlink(dentry, au_dbstart(dentry), buf, bufsiz);
 	aufs_read_unlock(dentry, AuLock_IR);
 
+out:
 	return err;
 }
 
@@ -853,7 +856,10 @@ static void *aufs_follow_link(struct dentry *dentry, struct nameidata *nd)
 	if (unlikely(!buf.k))
 		goto out;
 
-	aufs_read_lock(dentry, AuLock_IR);
+	err = aufs_read_lock(dentry, AuLock_IR | AuLock_GEN);
+	if (unlikely(err))
+		goto out_name;
+
 	err = au_d_hashed_positive(dentry);
 	if (!err) {
 		old_fs = get_fs();
@@ -869,8 +875,9 @@ static void *aufs_follow_link(struct dentry *dentry, struct nameidata *nd)
 		nd_set_link(nd, buf.k);
 		return NULL; /* success */
 	}
-	__putname(buf.k);
 
+out_name:
+	__putname(buf.k);
 out:
 	path_put(&nd->path);
 	AuTraceErr(err);

@@ -248,10 +248,12 @@ static int add_simple(struct inode *dir, struct dentry *dentry,
 	IMustLock(dir);
 
 	parent = dentry->d_parent; /* dir inode is locked */
-	aufs_read_lock(dentry, AuLock_DW);
-	err = au_d_may_add(dentry);
+	err = aufs_read_lock(dentry, AuLock_DW | AuLock_GEN);
 	if (unlikely(err))
 		goto out;
+	err = au_d_may_add(dentry);
+	if (unlikely(err))
+		goto out_unlock;
 	di_write_lock_parent(parent);
 	wh_dentry = lock_hdir_lkup_wh(dentry, &dt, /*src_dentry*/NULL, &pin,
 				      &wr_dir_args);
@@ -297,12 +299,13 @@ static int add_simple(struct inode *dir, struct dentry *dentry,
 
 out_parent:
 	di_write_unlock(parent);
-out:
+out_unlock:
 	if (unlikely(err)) {
 		au_update_dbstart(dentry);
 		d_drop(dentry);
 	}
 	aufs_read_unlock(dentry, AuLock_DW);
+out:
 	return err;
 }
 
@@ -477,7 +480,8 @@ int aufs_link(struct dentry *src_dentry, struct inode *dir,
 		goto out;
 
 	a->parent = dentry->d_parent; /* dir inode is locked */
-	err = aufs_read_and_write_lock2(dentry, src_dentry, AuLock_NOPLM);
+	err = aufs_read_and_write_lock2(dentry, src_dentry,
+					AuLock_NOPLM | AuLock_GEN);
 	if (unlikely(err))
 		goto out_kfree;
 	err = au_d_hashed_positive(src_dentry);
@@ -615,7 +619,9 @@ int aufs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 	if (unlikely(!a))
 		goto out;
 
-	aufs_read_lock(dentry, AuLock_DW);
+	err = aufs_read_lock(dentry, AuLock_DW | AuLock_GEN);
+	if (unlikely(err))
+		goto out_free;
 	err = au_d_may_add(dentry);
 	if (unlikely(err))
 		goto out_unlock;
@@ -690,6 +696,7 @@ out_unlock:
 		d_drop(dentry);
 	}
 	aufs_read_unlock(dentry, AuLock_DW);
+out_free:
 	kfree(a);
 out:
 	return err;
