@@ -59,24 +59,20 @@ int au_wr_dir_need_wh(struct dentry *dentry, int isdir, aufs_bindex_t *bcpup)
 			goto out;
 		need_wh = 1;
 	} else {
-		aufs_bindex_t old_bend, new_bend, bdiropq = -1;
+		struct au_dinfo *dinfo, *tmp;
 
-		old_bend = au_dbend(dentry);
-		if (isdir) {
-			bdiropq = au_dbdiropq(dentry);
-			au_set_dbdiropq(dentry, -1);
-		}
-		need_wh = au_lkup_dentry(dentry, bstart + 1, /*type*/0,
-					 /*nd*/NULL);
-		err = need_wh;
-		if (isdir)
-			au_set_dbdiropq(dentry, bdiropq);
-		if (unlikely(err < 0))
-			goto out;
-		new_bend = au_dbend(dentry);
-		if (!need_wh && old_bend != new_bend) {
-			au_set_h_dptr(dentry, new_bend, NULL);
-			au_set_dbend(dentry, old_bend);
+		need_wh = -ENOMEM;
+		dinfo = au_di(dentry);
+		tmp = au_di_alloc(sb, AuLsc_DI_TMP);
+		if (tmp) {
+			au_di_cp(tmp, dinfo);
+			au_di_swap(tmp, dinfo);
+			/* returns the number of positive dentries */
+			need_wh = au_lkup_dentry(dentry, bstart + 1, /*type*/0,
+						 /*nd*/NULL);
+			au_di_swap(tmp, dinfo);
+			au_rw_write_unlock(&tmp->di_rwsem);
+			au_di_free(tmp);
 		}
 	}
 	AuDbg("need_wh %d\n", need_wh);
