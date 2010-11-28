@@ -305,6 +305,13 @@ AuSimpleUnlockRwsemFuncs(ii, struct inode *i, &au_ii(i)->ii_rwsem);
 
 /* ---------------------------------------------------------------------- */
 
+static inline void au_icntnr_init(struct au_icntnr *c)
+{
+#ifdef CONFIG_AUFS_DEBUG
+	c->vfs_inode.i_mode = 0;
+#endif
+}
+
 static inline unsigned int au_iigen(struct inode *inode)
 {
 	return atomic_read(&au_ii(inode)->ii_generation);

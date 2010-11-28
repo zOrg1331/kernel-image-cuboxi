@@ -75,6 +75,9 @@ void au_set_h_iptr(struct inode *inode, aufs_bindex_t bindex,
 		struct super_block *sb = inode->i_sb;
 		struct au_branch *br;
 
+		AuDebugOn(inode->i_mode
+			  && (h_inode->i_mode & S_IFMT)
+			  != (inode->i_mode & S_IFMT));
 		if (bindex == iinfo->ii_bstart)
 			au_cpup_igen(inode, h_inode);
 		br = au_sbr(sb, bindex);

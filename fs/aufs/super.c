@@ -38,6 +38,7 @@ static struct inode *aufs_alloc_inode(struct super_block *sb __maybe_unused)
 
 	c = au_cache_alloc_icntnr();
 	if (c) {
+		au_icntnr_init(c);
 		c->vfs_inode.i_version = 1; /* sigen(sb); */
 		c->iinfo.ii_hinode = NULL;
 		return &c->vfs_inode;
