@@ -36,6 +36,7 @@
 #include <linux/parser.h>
 #include <linux/fs_stack.h>
 #include <linux/slab.h>
+#include <linux/magic.h>
 #include "ecryptfs_kernel.h"
 
 /**
@@ -116,7 +117,6 @@ void __ecryptfs_printk(const char *fmt, ...)
  */
 int ecryptfs_init_persistent_file(struct dentry *ecryptfs_dentry)
 {
-	const struct cred *cred = current_cred();
 	struct ecryptfs_inode_info *inode_info =
 		ecryptfs_inode_to_private(ecryptfs_dentry->d_inode);
 	int rc = 0;
@@ -129,7 +129,7 @@ int ecryptfs_init_persistent_file(struct dentry *ecryptfs_dentry)
 
 		lower_dentry = ecryptfs_dentry_to_lower(ecryptfs_dentry);
 		rc = ecryptfs_privileged_open(&inode_info->lower_file,
-					      lower_dentry, lower_mnt, cred);
+					      lower_dentry, lower_mnt);
 		if (rc) {
 			printk(KERN_ERR "Error opening lower persistent file "
 			       "for lower_dentry [0x%p] and lower_mnt [0x%p]; "
@@ -520,6 +520,7 @@ static int ecryptfs_read_super(struct super_block *sb, const char *dev_name)
 	ecryptfs_set_superblock_lower(sb, path.dentry->d_sb);
 	sb->s_maxbytes = path.dentry->d_sb->s_maxbytes;
 	sb->s_blocksize = path.dentry->d_sb->s_blocksize;
+	sb->s_magic = ECRYPTFS_SUPER_MAGIC;
 	ecryptfs_set_dentry_lower(sb->s_root, path.dentry);
 	ecryptfs_set_dentry_lower_mnt(sb->s_root, path.mnt);
 	rc = ecryptfs_interpose(path.dentry, sb->s_root, sb, 0);
@@ -828,9 +829,10 @@ static int __init ecryptfs_init(void)
 		ecryptfs_printk(KERN_ERR, "The eCryptfs extent size is "
 				"larger than the host's page size, and so "
 				"eCryptfs cannot run on this system. The "
-				"default eCryptfs extent size is [%d] bytes; "
-				"the page size is [%d] bytes.\n",
-				ECRYPTFS_DEFAULT_EXTENT_SIZE, PAGE_CACHE_SIZE);
+				"default eCryptfs extent size is [%u] bytes; "
+				"the page size is [%lu] bytes.\n",
+				ECRYPTFS_DEFAULT_EXTENT_SIZE,
+				(unsigned long)PAGE_CACHE_SIZE);
 		goto out;
 	}
 	rc = ecryptfs_init_kmem_caches();
