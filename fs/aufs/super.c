@@ -473,7 +473,129 @@ void au_iarray_free(struct inode **a, unsigned long long max)
 /*
  * refresh dentry and inode at remount time.
  */
+#if 0
 /* todo: consolidate with simple_reval_dpath() and au_reval_for_attr() */
+static int au_do_refresh(struct dentry *dentry, unsigned int dir_flags,
+		      struct dentry *parent)
+{
+	int err;
+
+	di_write_lock_child(dentry);
+	di_read_lock_parent(parent, AuLock_IR);
+	err = au_refresh_dentry(dentry, parent);
+	if (!err && dir_flags)
+		au_hn_reset(dentry->d_inode, dir_flags);
+	di_read_unlock(parent, AuLock_IR);
+	di_write_unlock(dentry);
+
+	return err;
+}
+
+static int au_do_refresh_d(struct dentry *dentry, unsigned int sigen,
+			   struct au_sbinfo *sbinfo,
+			   const unsigned int dir_flags)
+{
+	int err;
+	struct dentry *parent;
+	struct inode *inode;
+
+	err = -EIO;
+	parent = dget_parent(dentry);
+	if (!au_digen_test(parent, sigen) && au_digen_test(dentry, sigen)) {
+		inode = dentry->d_inode;
+		if (inode) {
+			if (!S_ISDIR(inode->i_mode))
+				err = au_do_refresh(dentry, /*dir_flags*/0,
+						 parent);
+			else {
+				err = au_do_refresh(dentry, dir_flags, parent);
+				if (unlikely(err))
+					au_fset_si(sbinfo, FAILED_REFRESH_DIR);
+			}
+		} else
+			err = au_do_refresh(dentry, /*dir_flags*/0, parent);
+		AuDbgDentry(dentry);
+	}
+	dput(parent);
+
+	return err;
+}
+
+static int au_refresh_d(struct super_block *sb)
+{
+	int err, i, j, ndentry, e;
+	unsigned int sigen;
+	struct au_dcsub_pages dpages;
+	struct au_dpage *dpage;
+	struct dentry **dentries, *d;
+	struct au_sbinfo *sbinfo;
+	struct dentry *root = sb->s_root;
+	const unsigned int dir_flags = au_hi_flags(root->d_inode, /*isdir*/1);
+
+	err = au_dpages_init(&dpages, GFP_NOFS);
+	if (unlikely(err))
+		goto out;
+	err = au_dcsub_pages(&dpages, root, NULL, NULL);
+	if (unlikely(err))
+		goto out_dpages;
+
+	sigen = au_sigen(sb);
+	sbinfo = au_sbi(sb);
+	for (i = 0; i < dpages.ndpage; i++) {
+		dpage = dpages.dpages + i;
+		dentries = dpage->dentries;
+		ndentry = dpage->ndentry;
+		for (j = 0; j < ndentry; j++) {
+			d = dentries[j];
+			e = au_do_refresh_d(d, sigen, sbinfo, dir_flags);
+			if (unlikely(e && !err))
+				err = e;
+			/* go on even err */
+		}
+	}
+
+out_dpages:
+	au_dpages_free(&dpages);
+out:
+	return err;
+}
+
+static int au_refresh_i(struct super_block *sb)
+{
+	int err, e;
+	unsigned int sigen;
+	unsigned long long max, ull;
+	struct inode *inode, **array;
+
+	array = au_iarray_alloc(sb, &max);
+	err = PTR_ERR(array);
+	if (IS_ERR(array))
+		goto out;
+
+	err = 0;
+	sigen = au_sigen(sb);
+	for (ull = 0; ull < max; ull++) {
+		inode = array[ull];
+		if (au_iigen(inode) != sigen) {
+			ii_write_lock_child(inode);
+			e = au_refresh_hinode_self(inode);
+			ii_write_unlock(inode);
+			if (unlikely(e)) {
+				pr_err("error %d, i%lu\n", e, inode->i_ino);
+				if (!err)
+					err = e;
+				/* go on even if err */
+			}
+		}
+	}
+
+	au_iarray_free(array, max);
+
+out:
+	return err;
+}
+#endif
+
 static int do_refresh(struct dentry *dentry, unsigned int dir_flags)
 {
 	int err;
