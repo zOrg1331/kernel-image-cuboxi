@@ -63,6 +63,14 @@ source "fs/autofs/Kconfig"
 source "fs/autofs4/Kconfig"
 source "fs/fuse/Kconfig"
 
+config SIM_FS
+	tristate "VPS filesystem"
+	default m
+	help
+	  This file system is a part of Virtuozzo. It intoduces a fake
+	  superblock and blockdev to VE to hide real device and show
+	  statfs results taken from quota.
+
 config CUSE
 	tristate "Character device in Userpace support"
 	depends on FUSE_FS
@@ -145,7 +153,7 @@ config HUGETLBFS
 	  If unsure, say N.
 
 config HUGETLB_PAGE
-	def_bool HUGETLBFS
+	def_bool HUGETLBFS || TRANSPARENT_HUGEPAGE
 
 source "fs/configfs/Kconfig"
 
@@ -188,7 +196,6 @@ source "fs/romfs/Kconfig"
 source "fs/sysv/Kconfig"
 source "fs/ufs/Kconfig"
 source "fs/exofs/Kconfig"
-source "fs/aufs/Kconfig"
 
 endif # MISC_FILESYSTEMS
 

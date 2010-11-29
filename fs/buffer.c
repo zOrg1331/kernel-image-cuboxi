@@ -287,7 +287,7 @@ static void free_more_memory(void)
 	struct zone *zone;
 	int nid;
 
-	wakeup_flusher_threads(1024);
+	wakeup_flusher_threads(NULL, 1024);
 	yield();
 
 	for_each_online_node(nid) {
@@ -677,6 +677,11 @@ static void __set_page_dirty(struct page *page,
 		account_page_dirtied(page, mapping);
 		radix_tree_tag_set(&mapping->page_tree,
 				page_index(page), PAGECACHE_TAG_DIRTY);
+		if (mapping_cap_account_dirty(mapping) &&
+				!radix_tree_prev_tag_get(
+					&mapping->page_tree,
+					PAGECACHE_TAG_DIRTY))
+			ub_io_account_dirty(mapping, 1);
 	}
 	spin_unlock_irq(&mapping->tree_lock);
 	__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);

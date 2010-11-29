@@ -50,6 +50,7 @@ struct rpc_clnt {
 				cl_discrtry : 1,/* disconnect before retry */
 				cl_autobind : 1,/* use getport() */
 				cl_chatty   : 1;/* be verbose */
+	unsigned int		cl_broken   : 1;/* no responce for too long */
 
 	struct rpc_rtt *	cl_rtt;		/* RTO estimator data */
 	const struct rpc_timeout *cl_timeout;	/* Timeout strategy */
@@ -61,6 +62,7 @@ struct rpc_clnt {
 	struct rpc_rtt		cl_rtt_default;
 	struct rpc_timeout	cl_timeout_default;
 	struct rpc_program *	cl_program;
+	unsigned long		cl_pr_time;
 	char			cl_inline_name[32];
 	char			*cl_principal;	/* target to authenticate to */
 };
@@ -162,6 +164,9 @@ size_t		rpc_pton(const char *, const size_t,
 char *		rpc_sockaddr2uaddr(const struct sockaddr *);
 size_t		rpc_uaddr2sockaddr(const char *, const size_t,
 				   struct sockaddr *, const size_t);
+
+extern int ve_ip_map_init(void);
+extern void ve_ip_map_exit(void);
 
 static inline unsigned short rpc_get_port(const struct sockaddr *sap)
 {

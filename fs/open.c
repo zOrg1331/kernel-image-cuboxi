@@ -30,19 +30,23 @@
 #include <linux/audit.h>
 #include <linux/falloc.h>
 #include <linux/fs_struct.h>
+#include <linux/ima.h>
 
-int vfs_statfs(struct dentry *dentry, struct kstatfs *buf)
+#include "internal.h"
+
+int vfs_statfs_by_sb(struct super_block *sb,
+		struct dentry *dentry, struct kstatfs *buf)
 {
 	int retval = -ENODEV;
 
 	if (dentry) {
 		retval = -ENOSYS;
-		if (dentry->d_sb->s_op->statfs) {
+		if (sb->s_op->statfs) {
 			memset(buf, 0, sizeof(*buf));
 			retval = security_sb_statfs(dentry);
 			if (retval)
 				return retval;
-			retval = dentry->d_sb->s_op->statfs(dentry, buf);
+			retval = sb->s_op->statfs(dentry, buf);
 			if (retval == 0 && buf->f_frsize == 0)
 				buf->f_frsize = buf->f_bsize;
 		}
@@ -50,14 +54,26 @@ int vfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	return retval;
 }
 
+int vfs_statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf)
+{
+	return vfs_statfs_by_sb(dentry->d_sb, dentry, buf);
+}
+
+EXPORT_SYMBOL(vfs_statfs_by_dentry);
+
+int vfs_statfs(struct path *path, struct kstatfs *buf)
+{
+	return vfs_statfs_by_sb(path->mnt->mnt_sb, path->dentry, buf);
+}
+
 EXPORT_SYMBOL(vfs_statfs);
 
-static int vfs_statfs_native(struct dentry *dentry, struct statfs *buf)
+static int vfs_statfs_native(struct path *path, struct statfs *buf)
 {
 	struct kstatfs st;
 	int retval;
 
-	retval = vfs_statfs(dentry, &st);
+	retval = vfs_statfs(path, &st);
 	if (retval)
 		return retval;
 
@@ -96,12 +112,12 @@ static int vfs_statfs_native(struct dentry *dentry, struct statfs *buf)
 	return 0;
 }
 
-static int vfs_statfs64(struct dentry *dentry, struct statfs64 *buf)
+static int vfs_statfs64(struct path *path, struct statfs64 *buf)
 {
 	struct kstatfs st;
 	int retval;
 
-	retval = vfs_statfs(dentry, &st);
+	retval = vfs_statfs(path, &st);
 	if (retval)
 		return retval;
 
@@ -131,7 +147,7 @@ SYSCALL_DEFINE2(statfs, const char __user *, pathname, struct statfs __user *, b
 	error = user_path(pathname, &path);
 	if (!error) {
 		struct statfs tmp;
-		error = vfs_statfs_native(path.dentry, &tmp);
+		error = vfs_statfs_native(&path, &tmp);
 		if (!error && copy_to_user(buf, &tmp, sizeof(tmp)))
 			error = -EFAULT;
 		path_put(&path);
@@ -149,7 +165,7 @@ SYSCALL_DEFINE3(statfs64, const char __user *, pathname, size_t, sz, struct stat
 	error = user_path(pathname, &path);
 	if (!error) {
 		struct statfs64 tmp;
-		error = vfs_statfs64(path.dentry, &tmp);
+		error = vfs_statfs64(&path, &tmp);
 		if (!error && copy_to_user(buf, &tmp, sizeof(tmp)))
 			error = -EFAULT;
 		path_put(&path);
@@ -167,7 +183,7 @@ SYSCALL_DEFINE2(fstatfs, unsigned int, fd, struct statfs __user *, buf)
 	file = fget(fd);
 	if (!file)
 		goto out;
-	error = vfs_statfs_native(file->f_path.dentry, &tmp);
+	error = vfs_statfs_native(&file->f_path, &tmp);
 	if (!error && copy_to_user(buf, &tmp, sizeof(tmp)))
 		error = -EFAULT;
 	fput(file);
@@ -188,7 +204,7 @@ SYSCALL_DEFINE3(fstatfs64, unsigned int, fd, size_t, sz, struct statfs64 __user 
 	file = fget(fd);
 	if (!file)
 		goto out;
-	error = vfs_statfs64(file->f_path.dentry, &tmp);
+	error = vfs_statfs64(&file->f_path, &tmp);
 	if (!error && copy_to_user(buf, &tmp, sizeof(tmp)))
 		error = -EFAULT;
 	fput(file);
@@ -223,7 +239,6 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
 	mutex_unlock(&dentry->d_inode->i_mutex);
 	return ret;
 }
-EXPORT_SYMBOL(do_truncate);
 
 static long do_sys_truncate(const char __user *pathname, loff_t length)
 {
@@ -631,14 +646,20 @@ out:
 	return err;
 }
 
-SYSCALL_DEFINE3(fchmodat, int, dfd, const char __user *, filename, mode_t, mode)
+static int do_fchmodat(int dfd, const char __user *filename, mode_t mode, int flag)
 {
 	struct path path;
 	struct inode *inode;
 	int error;
 	struct iattr newattrs;
+	int follow;
 
-	error = user_path_at(dfd, filename, LOOKUP_FOLLOW, &path);
+	error = -EINVAL;
+	if ((flag & ~AT_SYMLINK_NOFOLLOW) != 0)
+		goto out;
+
+	follow = (flag & AT_SYMLINK_NOFOLLOW) ? 0 : LOOKUP_FOLLOW;
+	error = user_path_at(dfd, filename, follow, &path);
 	if (error)
 		goto out;
 	inode = path.dentry->d_inode;
@@ -660,9 +681,19 @@ out:
 	return error;
 }
 
+SYSCALL_DEFINE3(fchmodat, int, dfd, const char __user *, filename, mode_t, mode)
+{
+	return do_fchmodat(dfd, filename, mode, 0);
+}
+
 SYSCALL_DEFINE2(chmod, const char __user *, filename, mode_t, mode)
 {
-	return sys_fchmodat(AT_FDCWD, filename, mode);
+	return do_fchmodat(AT_FDCWD, filename, mode, 0);
+}
+
+SYSCALL_DEFINE2(lchmod, const char __user *, filename, mode_t, mode)
+{
+	return do_fchmodat(AT_FDCWD, filename, mode, AT_SYMLINK_NOFOLLOW);
 }
 
 static int chown_common(struct dentry * dentry, uid_t user, gid_t group)
@@ -708,6 +739,7 @@ out_release:
 out:
 	return error;
 }
+EXPORT_SYMBOL(sys_chown);
 
 SYSCALL_DEFINE5(fchownat, int, dfd, const char __user *, filename, uid_t, user,
 		gid_t, group, int, flag)
@@ -843,6 +875,7 @@ static struct file *__dentry_open(struct dentry *dentry, struct vfsmount *mnt,
 		if (error)
 			goto cleanup_all;
 	}
+	ima_counts_get(f);
 
 	f->f_flags &= ~(O_CREAT | O_EXCL | O_NOCTTY | O_TRUNC);
 
@@ -949,6 +982,7 @@ struct file *nameidata_to_filp(struct nameidata *nd, int flags)
 	return filp;
 }
 
+int odirect_enable = 0;
 /*
  * dentry_open() will have done dput(dentry) and mntput(mnt) if it returns an
  * error.
@@ -972,6 +1006,9 @@ struct file *dentry_open(struct dentry *dentry, struct vfsmount *mnt, int flags,
 		dump_stack();
 		return ERR_PTR(-EINVAL);
 	}
+
+	if (!capable(CAP_SYS_RAWIO) && !odirect_enable)
+		flags &= ~O_DIRECT;
 
 	error = -ENFILE;
 	f = get_empty_filp();
@@ -1063,6 +1100,7 @@ SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, int, mode)
 	asmlinkage_protect(3, ret, filename, flags, mode);
 	return ret;
 }
+EXPORT_SYMBOL(sys_open);
 
 SYSCALL_DEFINE4(openat, int, dfd, const char __user *, filename, int, flags,
 		int, mode)

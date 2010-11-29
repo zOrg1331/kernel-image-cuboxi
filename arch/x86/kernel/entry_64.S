@@ -405,8 +405,12 @@ ENTRY(ret_from_fork)
 
 	call schedule_tail			# rdi: 'prev' task parameter
 
+ret_from_fork_tail:
 	GET_THREAD_INFO(%rcx)
+	btr $TIF_RESUME,TI_flags(%rcx)
+	jc  x86_64_ret_from_resume
 
+ret_from_fork_check:
 	RESTORE_REST
 
 	testl $3, CS-ARGOFFSET(%rsp)		# from kernel_thread?
@@ -418,6 +422,18 @@ ENTRY(ret_from_fork)
 	RESTORE_TOP_OF_STACK %rdi, -ARGOFFSET
 	jmp ret_from_sys_call			# go to the SYSRET fastpath
 
+x86_64_ret_from_resume:
+	movq (%rsp),%rax
+	testq %rax,%rax
+	jz 1f
+	movq  %rsp,%rdi
+	call  *%rax
+1:
+	addq $256,%rsp
+	cmpq $0,ORIG_RAX(%rsp)
+	jge  ret_from_fork_tail
+	RESTORE_REST
+	jmp  int_ret_from_sys_call
 	CFI_ENDPROC
 END(ret_from_fork)
 
@@ -571,8 +587,8 @@ auditsys:
 	 * masked off.
 	 */
 sysret_audit:
-	movq %rax,%rsi		/* second arg, syscall return value */
-	cmpq $0,%rax		/* is it < 0? */
+	movq RAX-ARGOFFSET(%rsp), %rsi /* second arg, syscall return value */
+	cmpq $0,%rsi		/* is it < 0? */
 	setl %al		/* 1 if so, 0 if not */
 	movzbl %al,%edi		/* zero-extend that into %edi */
 	inc %edi /* first arg, 0->1(AUDITSC_SUCCESS), 1->2(AUDITSC_FAILURE) */
@@ -969,8 +985,8 @@ apicinterrupt UV_BAU_MESSAGE \
 #endif
 apicinterrupt LOCAL_TIMER_VECTOR \
 	apic_timer_interrupt smp_apic_timer_interrupt
-apicinterrupt GENERIC_INTERRUPT_VECTOR \
-	generic_interrupt smp_generic_interrupt
+apicinterrupt X86_PLATFORM_IPI_VECTOR \
+	x86_platform_ipi smp_x86_platform_ipi
 
 #ifdef CONFIG_SMP
 apicinterrupt INVALIDATE_TLB_VECTOR_START+0 \
@@ -1182,7 +1198,7 @@ ENTRY(kernel_thread)
 	xorl %r9d,%r9d
 
 	# clone now
-	call do_fork
+	call do_fork_kthread
 	movq %rax,RAX(%rsp)
 	xorl %edi,%edi
 
@@ -1363,6 +1379,9 @@ ENTRY(xen_failsafe_callback)
 	jmp error_exit
 	CFI_ENDPROC
 END(xen_failsafe_callback)
+
+apicinterrupt XEN_HVM_EVTCHN_CALLBACK \
+	xen_hvm_callback_vector smp_xen_hvm_callback_vector
 
 #endif /* CONFIG_XEN */
 

@@ -112,6 +112,7 @@ enum zone_stat_item {
 	NUMA_LOCAL,		/* allocation from local node */
 	NUMA_OTHER,		/* allocation from other node */
 #endif
+	NR_ANON_TRANSPARENT_HUGEPAGES,
 	NR_VM_ZONE_STAT_ITEMS };
 
 /*
@@ -283,6 +284,30 @@ struct zone_reclaim_stat {
 	unsigned long		nr_saved_scan[NR_LRU_LISTS];
 };
 
+struct gang;
+
+struct gang_set {
+#ifdef CONFIG_MEMORY_GANGS
+	struct gang		*gangs[MAX_NUMNODES];
+#endif
+	struct zone_reclaim_stat reclaim_stat;
+};
+
+struct gang {
+	struct zone		*zone;
+	struct gang_set		*set;
+#ifdef CONFIG_MEMORY_GANGS
+	struct list_head	list;
+	struct list_head	rr_list;
+#endif
+	spinlock_t		lru_lock;
+	struct gang_lru {
+		struct list_head list;
+		unsigned long nr_pages;
+	} lru[NR_LRU_LISTS];
+	unsigned long		pages_scanned;
+};
+
 struct zone {
 	/* Fields commonly accessed by the page allocator */
 
@@ -328,15 +353,30 @@ struct zone {
 	unsigned long		*pageblock_flags;
 #endif /* CONFIG_SPARSEMEM */
 
+#ifdef CONFIG_COMPACTION
+	/*
+	 * On compaction failure, 1<<compact_defer_shift compactions
+	 * are skipped before trying again. The number attempted since
+	 * last failure is tracked with compact_considered.
+	 */
+	unsigned int		compact_considered;
+	unsigned int		compact_defer_shift;
+#endif
 
 	ZONE_PADDING(_pad1_)
 
 	/* Fields commonly accessed by the page reclaim scanner */
-	spinlock_t		lru_lock;	
-	struct zone_lru {
-		struct list_head list;
-	} lru[NR_LRU_LISTS];
 
+#ifndef CONFIG_MEMORY_GANGS
+	struct gang		init_gang;
+#else
+	spinlock_t		gangs_lock;
+	int			nr_gangs;
+	struct list_head	gangs;
+	struct list_head	gangs_rr;
+#endif /* CONFIG_MEMORY_GANGS */
+
+	spinlock_t		stat_lock;
 	struct zone_reclaim_stat reclaim_stat;
 
 	unsigned long		pages_scanned;	   /* since last reclaim */
@@ -422,6 +462,8 @@ struct zone {
 	 * rarely used fields:
 	 */
 	const char		*name;
+
+	unsigned long padding[16];
 } ____cacheline_internodealigned_in_smp;
 
 typedef enum {
@@ -613,6 +655,9 @@ struct bootmem_data;
 typedef struct pglist_data {
 	struct zone node_zones[MAX_NR_ZONES];
 	struct zonelist node_zonelists[MAX_ZONELISTS];
+#ifdef CONFIG_MEMORY_GANGS
+	struct gang init_gangs[MAX_NR_ZONES];
+#endif
 	int nr_zones;
 #ifdef CONFIG_FLAT_NODE_MEM_MAP	/* means !SPARSEMEM */
 	struct page *node_mem_map;
@@ -652,9 +697,10 @@ typedef struct pglist_data {
 
 #include <linux/memory_hotplug.h>
 
+extern struct mutex zonelists_mutex;
 void get_zone_counts(unsigned long *active, unsigned long *inactive,
 			unsigned long *free);
-void build_all_zonelists(void);
+void build_all_zonelists(void *data);
 void wakeup_kswapd(struct zone *zone, int order);
 int zone_watermark_ok(struct zone *z, int order, unsigned long mark,
 		int classzone_idx, int alloc_flags);
