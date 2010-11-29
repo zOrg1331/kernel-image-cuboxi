@@ -1021,13 +1021,16 @@ static void ath9k_hw_set_def_power_per_rate_table(struct ath_hw *ah,
 		0, {0, 0, 0, 0}
 	};
 	u16 scaledPower = 0, minCtlPower, maxRegAllowedPower;
-	u16 ctlModesFor11a[] =
-		{ CTL_11A, CTL_5GHT20, CTL_11A_EXT, CTL_5GHT40 };
-	u16 ctlModesFor11g[] =
-		{ CTL_11B, CTL_11G, CTL_2GHT20, CTL_11B_EXT, CTL_11G_EXT,
-		  CTL_2GHT40
-		};
-	u16 numCtlModes, *pCtlMode, ctlMode, freq;
+	static const u16 ctlModesFor11a[] = {
+		CTL_11A, CTL_5GHT20, CTL_11A_EXT, CTL_5GHT40
+	};
+	static const u16 ctlModesFor11g[] = {
+		CTL_11B, CTL_11G, CTL_2GHT20,
+		CTL_11B_EXT, CTL_11G_EXT, CTL_2GHT40
+	};
+	u16 numCtlModes;
+	const u16 *pCtlMode;
+	u16 ctlMode, freq;
 	struct chan_centers centers;
 	int tx_chainmask;
 	u16 twiceMinEdgePower;
@@ -1258,7 +1261,7 @@ static void ath9k_hw_def_set_txpower(struct ath_hw *ah,
 				    u16 cfgCtl,
 				    u8 twiceAntennaReduction,
 				    u8 twiceMaxRegulatoryPower,
-				    u8 powerLimit)
+				    u8 powerLimit, bool test)
 {
 #define RT_AR_DELTA(x) (ratesArray[x] - cck_ofdm_delta)
 	struct ath_regulatory *regulatory = ath9k_hw_regulatory(ah);
@@ -1285,11 +1288,43 @@ static void ath9k_hw_def_set_txpower(struct ath_hw *ah,
 
 	ath9k_hw_set_def_power_cal_table(ah, chan, &txPowerIndexOffset);
 
+	regulatory->max_power_level = 0;
 	for (i = 0; i < ARRAY_SIZE(ratesArray); i++) {
 		ratesArray[i] =	(int16_t)(txPowerIndexOffset + ratesArray[i]);
 		if (ratesArray[i] > AR5416_MAX_RATE_POWER)
 			ratesArray[i] = AR5416_MAX_RATE_POWER;
+		if (ratesArray[i] > regulatory->max_power_level)
+			regulatory->max_power_level = ratesArray[i];
 	}
+
+	if (!test) {
+		i = rate6mb;
+
+		if (IS_CHAN_HT40(chan))
+			i = rateHt40_0;
+		else if (IS_CHAN_HT20(chan))
+			i = rateHt20_0;
+
+		regulatory->max_power_level = ratesArray[i];
+	}
+
+	switch(ar5416_get_ntxchains(ah->txchainmask)) {
+	case 1:
+		break;
+	case 2:
+		regulatory->max_power_level += INCREASE_MAXPOW_BY_TWO_CHAIN;
+		break;
+	case 3:
+		regulatory->max_power_level += INCREASE_MAXPOW_BY_THREE_CHAIN;
+		break;
+	default:
+		ath_print(ath9k_hw_common(ah), ATH_DBG_EEPROM,
+			  "Invalid chainmask configuration\n");
+		break;
+	}
+
+	if (test)
+		return;
 
 	if (AR_SREV_9280_20_OR_LATER(ah)) {
 		for (i = 0; i < Ar5416RateSize; i++) {
@@ -1387,34 +1422,6 @@ static void ath9k_hw_def_set_txpower(struct ath_hw *ah,
 	REG_WRITE(ah, AR_PHY_POWER_TX_SUB,
 		  ATH9K_POW_SM(pModal->pwrDecreaseFor3Chain, 6)
 		  | ATH9K_POW_SM(pModal->pwrDecreaseFor2Chain, 0));
-
-	i = rate6mb;
-
-	if (IS_CHAN_HT40(chan))
-		i = rateHt40_0;
-	else if (IS_CHAN_HT20(chan))
-		i = rateHt20_0;
-
-	if (AR_SREV_9280_20_OR_LATER(ah))
-		regulatory->max_power_level =
-			ratesArray[i] + AR5416_PWR_TABLE_OFFSET_DB * 2;
-	else
-		regulatory->max_power_level = ratesArray[i];
-
-	switch(ar5416_get_ntxchains(ah->txchainmask)) {
-	case 1:
-		break;
-	case 2:
-		regulatory->max_power_level += INCREASE_MAXPOW_BY_TWO_CHAIN;
-		break;
-	case 3:
-		regulatory->max_power_level += INCREASE_MAXPOW_BY_THREE_CHAIN;
-		break;
-	default:
-		ath_print(ath9k_hw_common(ah), ATH_DBG_EEPROM,
-			  "Invalid chainmask configuration\n");
-		break;
-	}
 }
 
 static u8 ath9k_hw_def_get_num_ant_config(struct ath_hw *ah,

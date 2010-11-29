@@ -480,6 +480,11 @@ int qlcnic_fw_create_ctx(struct qlcnic_adapter *adapter)
 {
 	int err;
 
+	if (adapter->flags & QLCNIC_NEED_FLR) {
+		pci_reset_function(adapter->pdev);
+		adapter->flags &= ~QLCNIC_NEED_FLR;
+	}
+
 	err = qlcnic_fw_cmd_create_rx_ctx(adapter);
 	if (err)
 		return err;

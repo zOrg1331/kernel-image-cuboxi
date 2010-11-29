@@ -445,22 +445,17 @@ static void iwlagn_rx_reply_tx(struct iwl_priv *priv,
 
 			if (priv->mac80211_registered &&
 			    (iwl_queue_space(&txq->q) > txq->q.low_mark) &&
-			    (agg->state != IWL_EMPTYING_HW_QUEUE_DELBA)) {
-				if (agg->state == IWL_AGG_OFF)
-					iwl_wake_queue(priv, txq_id);
-				else
-					iwl_wake_queue(priv, txq->swq_id);
-			}
+			    (agg->state != IWL_EMPTYING_HW_QUEUE_DELBA))
+				iwl_wake_queue(priv, txq);
 		}
 	} else {
-		BUG_ON(txq_id != txq->swq_id);
 		iwlagn_set_tx_status(priv, info, tx_resp, txq_id, false);
 		freed = iwlagn_tx_queue_reclaim(priv, txq_id, index);
 		iwl_free_tfds_in_queue(priv, sta_id, tid, freed);
 
 		if (priv->mac80211_registered &&
 		    (iwl_queue_space(&txq->q) > txq->q.low_mark))
-			iwl_wake_queue(priv, txq_id);
+			iwl_wake_queue(priv, txq);
 	}
 
 	iwlagn_txq_check_empty(priv, sta_id, tid, txq_id);
@@ -496,6 +491,10 @@ int iwlagn_send_tx_power(struct iwl_priv *priv)
 	struct iwlagn_tx_power_dbm_cmd tx_power_cmd;
 	u8 tx_ant_cfg_cmd;
 
+	if (WARN_ONCE(test_bit(STATUS_SCAN_HW, &priv->status),
+		      "TX Power requested while scanning!\n"))
+		return -EAGAIN;
+
 	/* half dBm need to multiply */
 	tx_power_cmd.global_lmt = (s8)(2 * priv->tx_power_user_lmt);
 
@@ -522,9 +521,8 @@ int iwlagn_send_tx_power(struct iwl_priv *priv)
 	else
 		tx_ant_cfg_cmd = REPLY_TX_POWER_DBM_CMD;
 
-	return  iwl_send_cmd_pdu_async(priv, tx_ant_cfg_cmd,
-				       sizeof(tx_power_cmd), &tx_power_cmd,
-				       NULL);
+	return iwl_send_cmd_pdu(priv, tx_ant_cfg_cmd, sizeof(tx_power_cmd),
+				&tx_power_cmd);
 }
 
 void iwlagn_temperature(struct iwl_priv *priv)
@@ -749,6 +747,12 @@ int iwlagn_hw_nic_init(struct iwl_priv *priv)
 			return ret;
 	} else
 		iwlagn_txq_ctx_reset(priv);
+
+	if (priv->cfg->base_params->shadow_reg_enable) {
+		/* enable shadow regs in HW */
+		iwl_set_bit(priv, CSR_MAC_SHADOW_REG_CTRL,
+			0x800FFFFF);
+	}
 
 	set_bit(STATUS_INIT, &priv->status);
 
@@ -1584,22 +1588,6 @@ int iwlagn_request_scan(struct iwl_priv *priv, struct ieee80211_vif *vif)
 	return ret;
 }
 
-void iwlagn_post_scan(struct iwl_priv *priv)
-{
-	struct iwl_rxon_context *ctx;
-
-	/*
-	 * Since setting the RXON may have been deferred while
-	 * performing the scan, fire one off if needed
-	 */
-	for_each_context(priv, ctx)
-		if (memcmp(&ctx->staging, &ctx->active, sizeof(ctx->staging)))
-			iwlagn_commit_rxon(priv, ctx);
-
-	if (priv->cfg->ops->hcmd->set_pan_params)
-		priv->cfg->ops->hcmd->set_pan_params(priv);
-}
-
 int iwlagn_manage_ibss_station(struct iwl_priv *priv,
 			       struct ieee80211_vif *vif, bool add)
 {
@@ -1841,6 +1829,10 @@ void iwlagn_send_advance_bt_config(struct iwl_priv *priv)
 	} else {
 		bt_cmd.flags = IWLAGN_BT_FLAG_COEX_MODE_3W <<
 					IWLAGN_BT_FLAG_COEX_MODE_SHIFT;
+		if (priv->cfg->bt_params &&
+		    priv->cfg->bt_params->bt_sco_disable)
+			bt_cmd.flags |= IWLAGN_BT_FLAG_SYNC_2_BT_DISABLE;
+
 		if (priv->bt_ch_announce)
 			bt_cmd.flags |= IWLAGN_BT_FLAG_CHANNEL_INHIBITION;
 		IWL_DEBUG_INFO(priv, "BT coex flag: 0X%x\n", bt_cmd.flags);
@@ -1884,12 +1876,20 @@ static void iwlagn_bt_traffic_change_work(struct work_struct *work)
 	struct iwl_rxon_context *ctx;
 	int smps_request = -1;
 
+	/*
+	 * Note: bt_traffic_load can be overridden by scan complete and
+	 * coex profile notifications. Ignore that since only bad consequence
+	 * can be not matching debug print with actual state.
+	 */
 	IWL_DEBUG_INFO(priv, "BT traffic load changes: %d\n",
 		       priv->bt_traffic_load);
 
 	switch (priv->bt_traffic_load) {
 	case IWL_BT_COEX_TRAFFIC_LOAD_NONE:
-		smps_request = IEEE80211_SMPS_AUTOMATIC;
+		if (priv->bt_status)
+			smps_request = IEEE80211_SMPS_DYNAMIC;
+		else
+			smps_request = IEEE80211_SMPS_AUTOMATIC;
 		break;
 	case IWL_BT_COEX_TRAFFIC_LOAD_LOW:
 		smps_request = IEEE80211_SMPS_DYNAMIC;
@@ -1906,6 +1906,16 @@ static void iwlagn_bt_traffic_change_work(struct work_struct *work)
 
 	mutex_lock(&priv->mutex);
 
+	/*
+	 * We can not send command to firmware while scanning. When the scan
+	 * complete we will schedule this work again. We do check with mutex
+	 * locked to prevent new scan request to arrive. We do not check
+	 * STATUS_SCANNING to avoid race when queue_work two times from
+	 * different notifications, but quit and not perform any work at all.
+	 */
+	if (test_bit(STATUS_SCAN_HW, &priv->status))
+		goto out;
+
 	if (priv->cfg->ops->lib->update_chain_flags)
 		priv->cfg->ops->lib->update_chain_flags(priv);
 
@@ -1915,7 +1925,7 @@ static void iwlagn_bt_traffic_change_work(struct work_struct *work)
 				ieee80211_request_smps(ctx->vif, smps_request);
 		}
 	}
-
+out:
 	mutex_unlock(&priv->mutex);
 }
 
@@ -1990,7 +2000,7 @@ static void iwlagn_set_kill_ack_msk(struct iwl_priv *priv,
 				     struct iwl_bt_uart_msg *uart_msg)
 {
 	u8 kill_ack_msk;
-	__le32 bt_kill_ack_msg[2] = {
+	static const __le32 bt_kill_ack_msg[2] = {
 			cpu_to_le32(0xFFFFFFF), cpu_to_le32(0xFFFFFC00) };
 
 	kill_ack_msk = (((BT_UART_MSG_FRAME3A2DP_MSK |
@@ -2014,7 +2024,6 @@ void iwlagn_bt_coex_profile_notif(struct iwl_priv *priv,
 	struct iwl_bt_coex_profile_notif *coex = &pkt->u.bt_coex_profile_notif;
 	struct iwlagn_bt_sco_cmd sco_cmd = { .flags = 0 };
 	struct iwl_bt_uart_msg *uart_msg = &coex->last_bt_uart_msg;
-	u8 last_traffic_load;
 
 	IWL_DEBUG_NOTIF(priv, "BT Coex notification:\n");
 	IWL_DEBUG_NOTIF(priv, "    status: %d\n", coex->bt_status);
@@ -2023,11 +2032,10 @@ void iwlagn_bt_coex_profile_notif(struct iwl_priv *priv,
 			coex->bt_ci_compliance);
 	iwlagn_print_uartmsg(priv, uart_msg);
 
-	last_traffic_load = priv->notif_bt_traffic_load;
-	priv->notif_bt_traffic_load = coex->bt_traffic_load;
+	priv->last_bt_traffic_load = priv->bt_traffic_load;
 	if (priv->iw_mode != NL80211_IFTYPE_ADHOC) {
 		if (priv->bt_status != coex->bt_status ||
-		    last_traffic_load != coex->bt_traffic_load) {
+		    priv->last_bt_traffic_load != coex->bt_traffic_load) {
 			if (coex->bt_status) {
 				/* BT on */
 				if (!priv->bt_ch_announce)
@@ -2276,7 +2284,7 @@ static const char *get_csr_string(int cmd)
 void iwl_dump_csr(struct iwl_priv *priv)
 {
 	int i;
-	u32 csr_tbl[] = {
+	static const u32 csr_tbl[] = {
 		CSR_HW_IF_CONFIG_REG,
 		CSR_INT_COALESCING,
 		CSR_INT,
@@ -2335,7 +2343,7 @@ int iwl_dump_fh(struct iwl_priv *priv, char **buf, bool display)
 	int pos = 0;
 	size_t bufsz = 0;
 #endif
-	u32 fh_tbl[] = {
+	static const u32 fh_tbl[] = {
 		FH_RSCSR_CHNL0_STTS_WPTR_REG,
 		FH_RSCSR_CHNL0_RBDCB_BASE_REG,
 		FH_RSCSR_CHNL0_WPTR,

@@ -107,6 +107,7 @@ int ath9k_wiphy_add(struct ath_softc *sc)
 	aphy->sc = sc;
 	aphy->hw = hw;
 	sc->sec_wiphy[i] = aphy;
+	aphy->last_rssi = ATH_RSSI_DUMMY_MARKER;
 	spin_unlock_bh(&sc->wiphy_lock);
 
 	memcpy(addr, common->macaddr, ETH_ALEN);
@@ -186,7 +187,7 @@ static int ath9k_send_nullfunc(struct ath_wiphy *aphy,
 	info->control.rates[1].idx = -1;
 
 	memset(&txctl, 0, sizeof(struct ath_tx_control));
-	txctl.txq = &sc->tx.txq[sc->tx.hwq_map[WME_AC_VO]];
+	txctl.txq = sc->tx.txq_map[WME_AC_VO];
 	txctl.frame_type = ps ? ATH9K_IFT_PAUSE : ATH9K_IFT_UNPAUSE;
 
 	if (ath_tx_start(aphy->hw, skb, &txctl) != 0)
@@ -304,13 +305,12 @@ void ath9k_wiphy_chan_work(struct work_struct *work)
  * ath9k version of ieee80211_tx_status() for TX frames that are generated
  * internally in the driver.
  */
-void ath9k_tx_status(struct ieee80211_hw *hw, struct sk_buff *skb)
+void ath9k_tx_status(struct ieee80211_hw *hw, struct sk_buff *skb, int ftype)
 {
 	struct ath_wiphy *aphy = hw->priv;
 	struct ieee80211_tx_info *tx_info = IEEE80211_SKB_CB(skb);
 
-	if ((tx_info->pad[0] & ATH_TX_INFO_FRAME_TYPE_PAUSE) &&
-	    aphy->state == ATH_WIPHY_PAUSING) {
+	if (ftype == ATH9K_IFT_PAUSE && aphy->state == ATH_WIPHY_PAUSING) {
 		if (!(tx_info->flags & IEEE80211_TX_STAT_ACK)) {
 			printk(KERN_DEBUG "ath9k: %s: no ACK for pause "
 			       "frame\n", wiphy_name(hw->wiphy));
