@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt2
+Release: alt3
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -583,6 +583,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Mon Nov 29 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt3
+- Remove %post and %preun scripts for kernel-image
+- Apply 042test002.1 patches
+- Replace config files with el ones
+
 * Mon Nov 01 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt2
 - Build with gcc4.4
 - Don't panic when booting on i586 (OpenVZ bug 1681)
