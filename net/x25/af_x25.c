@@ -1357,11 +1357,11 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 	void __user *argp = (void __user *)arg;
 	int rc;
 
-	lock_kernel();
 	switch (cmd) {
 		case TIOCOUTQ: {
-			int amount = sk->sk_sndbuf - sk_wmem_alloc_get(sk);
+			int amount;
 
+			amount = sk->sk_sndbuf - sk_wmem_alloc_get(sk);
 			if (amount < 0)
 				amount = 0;
 			rc = put_user(amount, (unsigned int __user *)argp);
@@ -1375,8 +1375,10 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 			 * These two are safe on a single CPU system as
 			 * only user tasks fiddle here
 			 */
+			lock_sock(sk);
 			if ((skb = skb_peek(&sk->sk_receive_queue)) != NULL)
 				amount = skb->len;
+			release_sock(sk);
 			rc = put_user(amount, (unsigned int __user *)argp);
 			break;
 		}
@@ -1413,24 +1415,31 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 			rc = x25_route_ioctl(cmd, argp);
 			break;
 		case SIOCX25GSUBSCRIP:
+			lock_kernel();
 			rc = x25_subscr_ioctl(cmd, argp);
+			unlock_kernel();
 			break;
 		case SIOCX25SSUBSCRIP:
 			rc = -EPERM;
 			if (!capable(CAP_NET_ADMIN))
 				break;
+			lock_kernel();
 			rc = x25_subscr_ioctl(cmd, argp);
+			unlock_kernel();
 			break;
 		case SIOCX25GFACILITIES: {
 			struct x25_facilities fac = x25->facilities;
+			lock_kernel();
 			rc = copy_to_user(argp, &fac,
 					  sizeof(fac)) ? -EFAULT : 0;
+			unlock_kernel();
 			break;
 		}
 
 		case SIOCX25SFACILITIES: {
 			struct x25_facilities facilities;
 			rc = -EFAULT;
+			lock_kernel();
 			if (copy_from_user(&facilities, argp,
 					   sizeof(facilities)))
 				break;
@@ -1466,12 +1475,15 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 				break;
 			x25->facilities = facilities;
 			rc = 0;
+			unlock_kernel();
 			break;
 		}
 
 		case SIOCX25GDTEFACILITIES: {
+			lock_kernel();
 			rc = copy_to_user(argp, &x25->dte_facilities,
 						sizeof(x25->dte_facilities));
+			unlock_kernel();
 			if (rc)
 				rc = -EFAULT;
 			break;
@@ -1480,6 +1492,7 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		case SIOCX25SDTEFACILITIES: {
 			struct x25_dte_facilities dtefacs;
 			rc = -EFAULT;
+			lock_kernel();
 			if (copy_from_user(&dtefacs, argp, sizeof(dtefacs)))
 				break;
 			rc = -EINVAL;
@@ -1496,13 +1509,16 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 				break;
 			x25->dte_facilities = dtefacs;
 			rc = 0;
+			unlock_kernel();
 			break;
 		}
 
 		case SIOCX25GCALLUSERDATA: {
 			struct x25_calluserdata cud = x25->calluserdata;
+			lock_kernel();
 			rc = copy_to_user(argp, &cud,
 					  sizeof(cud)) ? -EFAULT : 0;
+			unlock_kernel();
 			break;
 		}
 
@@ -1510,6 +1526,7 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 			struct x25_calluserdata calluserdata;
 
 			rc = -EFAULT;
+			lock_kernel();
 			if (copy_from_user(&calluserdata, argp,
 					   sizeof(calluserdata)))
 				break;
@@ -1517,24 +1534,29 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 			if (calluserdata.cudlength > X25_MAX_CUD_LEN)
 				break;
 			x25->calluserdata = calluserdata;
+			unlock_kernel();
 			rc = 0;
 			break;
 		}
 
 		case SIOCX25GCAUSEDIAG: {
 			struct x25_causediag causediag;
+			lock_kernel();
 			causediag = x25->causediag;
 			rc = copy_to_user(argp, &causediag,
 					  sizeof(causediag)) ? -EFAULT : 0;
+			unlock_kernel();
 			break;
 		}
 
 		case SIOCX25SCAUSEDIAG: {
 			struct x25_causediag causediag;
 			rc = -EFAULT;
+			lock_kernel();
 			if (copy_from_user(&causediag, argp, sizeof(causediag)))
 				break;
 			x25->causediag = causediag;
+			unlock_kernel();
 			rc = 0;
 			break;
 
@@ -1543,6 +1565,7 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		case SIOCX25SCUDMATCHLEN: {
 			struct x25_subaddr sub_addr;
 			rc = -EINVAL;
+			lock_kernel();
 			if(sk->sk_state != TCP_CLOSE)
 				break;
 			rc = -EFAULT;
@@ -1553,21 +1576,25 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 			if(sub_addr.cudmatchlength > X25_MAX_CUD_LEN)
 				break;
 			x25->cudmatchlength = sub_addr.cudmatchlength;
+			unlock_kernel();
 			rc = 0;
 			break;
 		}
 
 		case SIOCX25CALLACCPTAPPRV: {
 			rc = -EINVAL;
+			lock_kernel();
 			if (sk->sk_state != TCP_CLOSE)
 				break;
 			clear_bit(X25_ACCPT_APPRV_FLAG, &x25->flags);
+			unlock_kernel();
 			rc = 0;
 			break;
 		}
 
 		case SIOCX25SENDCALLACCPT:  {
 			rc = -EINVAL;
+			lock_kernel();
 			if (sk->sk_state != TCP_ESTABLISHED)
 				break;
 			/* must call accptapprv above */
@@ -1575,6 +1602,7 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 				break;
 			x25_write_internal(sk, X25_CALL_ACCEPTED);
 			x25->state = X25_STATE_3;
+			unlock_kernel();
 			rc = 0;
 			break;
 		}
@@ -1583,7 +1611,6 @@ static int x25_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 			rc = -ENOIOCTLCMD;
 			break;
 	}
-	unlock_kernel();
 
 	return rc;
 }
@@ -1654,19 +1681,15 @@ static int compat_x25_ioctl(struct socket *sock, unsigned int cmd,
 		break;
 	case SIOCGSTAMP:
 		rc = -EINVAL;
-		lock_kernel();
 		if (sk)
 			rc = compat_sock_get_timestamp(sk,
 					(struct timeval __user*)argp);
-		unlock_kernel();
 		break;
 	case SIOCGSTAMPNS:
 		rc = -EINVAL;
-		lock_kernel();
 		if (sk)
 			rc = compat_sock_get_timestampns(sk,
 					(struct timespec __user*)argp);
-		unlock_kernel();
 		break;
 	case SIOCGIFADDR:
 	case SIOCSIFADDR:
@@ -1685,9 +1708,7 @@ static int compat_x25_ioctl(struct socket *sock, unsigned int cmd,
 		rc = -EPERM;
 		if (!capable(CAP_NET_ADMIN))
 			break;
-		lock_kernel();
 		rc = x25_route_ioctl(cmd, argp);
-		unlock_kernel();
 		break;
 	case SIOCX25GSUBSCRIP:
 		lock_kernel();
