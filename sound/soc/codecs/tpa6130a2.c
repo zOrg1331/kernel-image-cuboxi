@@ -29,7 +29,6 @@
 #include <linux/slab.h>
 #include <sound/tpa6130a2-plat.h>
 #include <sound/soc.h>
-#include <sound/soc-dapm.h>
 #include <sound/tlv.h>
 
 #include "tpa6130a2.h"
@@ -128,9 +127,6 @@ static int tpa6130a2_power(int power)
 
 	mutex_lock(&data->mutex);
 	if (power && !data->power_state) {
-		/* Power on */
-		if (data->power_gpio >= 0)
-			gpio_set_value(data->power_gpio, 1);
 
 		ret = regulator_enable(data->supply);
 		if (ret != 0) {
@@ -138,6 +134,9 @@ static int tpa6130a2_power(int power)
 				"Failed to enable supply: %d\n", ret);
 			goto exit;
 		}
+		/* Power on */
+		if (data->power_gpio >= 0)
+			gpio_set_value(data->power_gpio, 1);
 
 		data->power_state = 1;
 		ret = tpa6130a2_initialize();
@@ -390,16 +389,17 @@ static const struct snd_soc_dapm_route audio_map[] = {
 int tpa6130a2_add_controls(struct snd_soc_codec *codec)
 {
 	struct	tpa6130a2_data *data;
+	struct snd_soc_dapm_context *dapm = &codec->dapm;
 
 	if (tpa6130a2_client == NULL)
 		return -ENODEV;
 
 	data = i2c_get_clientdata(tpa6130a2_client);
 
-	snd_soc_dapm_new_controls(codec, tpa6130a2_dapm_widgets,
+	snd_soc_dapm_new_controls(dapm, tpa6130a2_dapm_widgets,
 				ARRAY_SIZE(tpa6130a2_dapm_widgets));
 
-	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
+	snd_soc_dapm_add_routes(dapm, audio_map, ARRAY_SIZE(audio_map));
 
 	if (data->id == TPA6140A2)
 		return snd_soc_add_controls(codec, tpa6140a2_controls,
