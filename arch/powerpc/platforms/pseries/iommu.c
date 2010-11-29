@@ -140,7 +140,7 @@ static int tce_build_pSeriesLP(struct iommu_table *tbl, long tcenum,
 	return ret;
 }
 
-static DEFINE_PER_CPU(u64 *, tce_page) = NULL;
+static DEFINE_PER_CPU(u64 *, tce_page);
 
 static int tce_buildmulti_pSeriesLP(struct iommu_table *tbl, long tcenum,
 				     long npages, unsigned long uaddr,
@@ -589,13 +589,8 @@ static struct notifier_block iommu_reconfig_nb = {
 /* These are called very early. */
 void iommu_init_early_pSeries(void)
 {
-	if (of_chosen && of_get_property(of_chosen, "linux,iommu-off", NULL)) {
-		/* Direct I/O, IOMMU off */
-		ppc_md.pci_dma_dev_setup = NULL;
-		ppc_md.pci_dma_bus_setup = NULL;
-		set_pci_dma_ops(&dma_direct_ops);
+	if (of_chosen && of_get_property(of_chosen, "linux,iommu-off", NULL))
 		return;
-	}
 
 	if (firmware_has_feature(FW_FEATURE_LPAR)) {
 		if (firmware_has_feature(FW_FEATURE_MULTITCE)) {
@@ -622,3 +617,17 @@ void iommu_init_early_pSeries(void)
 	set_pci_dma_ops(&dma_iommu_ops);
 }
 
+static int __init disable_multitce(char *str)
+{
+	if (strcmp(str, "off") == 0 &&
+	    firmware_has_feature(FW_FEATURE_LPAR) &&
+	    firmware_has_feature(FW_FEATURE_MULTITCE)) {
+		printk(KERN_INFO "Disabling MULTITCE firmware feature\n");
+		ppc_md.tce_build = tce_build_pSeriesLP;
+		ppc_md.tce_free	 = tce_free_pSeriesLP;
+		powerpc_firmware_features &= ~FW_FEATURE_MULTITCE;
+	}
+	return 1;
+}
+
+__setup("multitce=", disable_multitce);
