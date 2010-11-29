@@ -16,8 +16,8 @@
 #include <linux/kernel.h>
 #include <linux/ctype.h>
 #include <bcmdefs.h>
+#include <bcmdevs.h>
 #include <wlc_cfg.h>
-#include <linuxver.h>
 #include <osl.h>
 #include <bcmutils.h>
 #include <bcmwifi.h>
@@ -27,7 +27,7 @@
 #include <pcicfg.h>
 #include <bcmsrom.h>
 #include <wlioctl.h>
-#include <epivers.h>
+#include <sbhndpio.h>
 #include <sbhnddma.h>
 #include <hnddma.h>
 #include <hndpmu.h>
@@ -37,6 +37,7 @@
 #include <wlc_key.h>
 #include <wlc_bsscfg.h>
 #include <wlc_channel.h>
+#include <wlc_event.h>
 #include <wlc_mac80211.h>
 #include <wlc_bmac.h>
 #include <wlc_scb.h>
@@ -47,27 +48,11 @@
 #include <wlc_ampdu.h>
 #include <wlc_event.h>
 #include <wl_export.h>
-#ifdef BCMSDIO
-#include <bcmsdh.h>
-#else
 #include "d11ucode_ext.h"
-#endif
-#ifdef WLC_HIGH_ONLY
-#include <bcm_rpc_tp.h>
-#include <bcm_rpc.h>
-#include <bcm_xdr.h>
-#include <wlc_rpc.h>
-#include <wlc_rpctx.h>
-#endif				/* WLC_HIGH_ONLY */
 #include <wlc_alloc.h>
 #include <net/mac80211.h>
+#include <wl_dbg.h>
 
-#ifdef WLC_HIGH_ONLY
-#undef R_REG
-#undef W_REG
-#define R_REG(osh, r) RPC_READ_REG(osh, r)
-#define W_REG(osh, r, v) RPC_WRITE_REG(osh, r, v)
-#endif
 
 /*
  * buffer length needed for wlc_format_ssid
@@ -107,12 +92,8 @@
 /* To inform the ucode of the last mcast frame posted so that it can clear moredata bit */
 #define BCMCFID(wlc, fid) wlc_bmac_write_shm((wlc)->hw, M_BCMC_FID, (fid))
 
-#ifndef WLC_HIGH_ONLY
 #define WLC_WAR16165(wlc) (BUSTYPE(wlc->pub->sih->bustype) == PCI_BUS && \
 				(!AP_ENAB(wlc->pub)) && (wlc->war16165))
-#else
-#define WLC_WAR16165(wlc) (false)
-#endif				/* WLC_HIGH_ONLY */
 
 /* debug/trace */
 uint wl_msg_level =
@@ -134,6 +115,8 @@ uint wl_msg_level =
 #define WLC_TEMPSENSE_PERIOD		10	/* 10 second timeout */
 
 #define SCAN_IN_PROGRESS(x)	0
+
+#define EPI_VERSION_NUM		0x054b0b00
 
 #ifdef BCMDBG
 /* pointer to most recently allocated wl/wlc */
@@ -261,8 +244,9 @@ static int wlc_iovar_rangecheck(wlc_info_t *wlc, u32 val,
 static u8 wlc_local_constraint_qdbm(wlc_info_t *wlc);
 
 /* send and receive */
-static wlc_txq_info_t *wlc_txq_alloc(wlc_info_t *wlc, osl_t *osh);
-static void wlc_txq_free(wlc_info_t *wlc, osl_t *osh, wlc_txq_info_t *qi);
+static wlc_txq_info_t *wlc_txq_alloc(wlc_info_t *wlc, struct osl_info *osh);
+static void wlc_txq_free(wlc_info_t *wlc, struct osl_info *osh,
+			 wlc_txq_info_t *qi);
 static void wlc_txflowcontrol_signal(wlc_info_t *wlc, wlc_txq_info_t *qi,
 				     bool on, int prio);
 static void wlc_txflowcontrol_reset(wlc_info_t *wlc);
@@ -273,7 +257,7 @@ static void wlc_compute_ofdm_plcp(ratespec_t rate, uint length, u8 *plcp);
 static void wlc_compute_mimo_plcp(ratespec_t rate, uint length, u8 *plcp);
 static u16 wlc_compute_frame_dur(wlc_info_t *wlc, ratespec_t rate,
 				    u8 preamble_type, uint next_frag_len);
-static void wlc_recvctl(wlc_info_t *wlc, osl_t *osh, d11rxhdr_t *rxh,
+static void wlc_recvctl(wlc_info_t *wlc, struct osl_info *osh, d11rxhdr_t *rxh,
 			void *p);
 static uint wlc_calc_frame_len(wlc_info_t *wlc, ratespec_t rate,
 			       u8 preamble_type, uint dur);
@@ -320,7 +304,7 @@ void wlc_get_rcmta(wlc_info_t *wlc, int idx, struct ether_addr *addr)
 {
 	d11regs_t *regs = wlc->regs;
 	u32 v32;
-	osl_t *osh;
+	struct osl_info *osh;
 
 	WL_TRACE(("wl%d: %s\n", WLCWLUNIT(wlc), __func__));
 
@@ -396,22 +380,6 @@ void wlc_reset(wlc_info_t *wlc)
 	wlc_ampdu_reset(wlc->ampdu);
 	wlc->txretried = 0;
 
-#ifdef WLC_HIGH_ONLY
-	/* Need to set a flag(to be cleared asynchronously by BMAC driver with high call)
-	 *  in order to prevent wlc_rpctx_txreclaim() from screwing wlc_rpctx_getnexttxp(),
-	 *  which could be invoked by already QUEUED high call(s) from BMAC driver before
-	 *  wlc_bmac_reset() finishes.
-	 * It's not needed before in monolithic driver model because d11core interrupts would
-	 *  have been cleared instantly in wlc_bmac_reset() and no txstatus interrupt
-	 *  will come to driver to fetch those flushed dma pkt pointers.
-	 */
-	wlc->reset_bmac_pending = true;
-
-	wlc_rpctx_txreclaim(wlc->rpctx);
-
-	wlc_stf_phy_txant_upd(wlc);
-	wlc_phy_ant_rxdiv_set(wlc->band->pi, wlc->stf->ant_rx_ovr);
-#endif
 }
 
 void wlc_fatal_error(wlc_info_t *wlc)
@@ -654,21 +622,11 @@ bool wlc_ps_check(wlc_info_t *wlc)
 
 			res = false;
 		}
-#ifdef WLC_LOW
 		/* For a monolithic build the wake check can be exact since it looks at wake
 		 * override bits. The MCTL_WAKE bit should match the 'wake' value.
 		 */
 		wake = STAY_AWAKE(wlc) || wlc->hw->wake_override;
 		wake_ok = (wake == ((tmp & MCTL_WAKE) != 0));
-#else
-		/* For a split build we will not have access to any wake overrides from the low
-		 * level. The check can only make sure the MCTL_WAKE bit is on if the high
-		 * level 'wake' value is true. If the high level 'wake' is false, the MCTL_WAKE
-		 * may be either true or false due to the low level override.
-		 */
-		wake = STAY_AWAKE(wlc);
-		wake_ok = (wake && ((tmp & MCTL_WAKE) != 0)) || !wake;
-#endif
 		if (hps && !wake_ok) {
 			WL_ERROR(("wl%d: wake not sync, sw %d maccontrol 0x%x\n", wlc->pub->unit, wake, tmp));
 			res = false;
@@ -1750,8 +1708,8 @@ wlc_pub_t *wlc_pub(void *wlc)
  * The common driver entry routine. Error codes should be unique
  */
 void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
-		 osl_t *osh, void *regsva, uint bustype, void *btparam,
-		 uint *perr)
+		 struct osl_info *osh, void *regsva, uint bustype,
+		 void *btparam, uint *perr)
 {
 	wlc_info_t *wlc;
 	uint err = 0;
@@ -1780,8 +1738,10 @@ void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
 	ASSERT(sizeof(struct dot11_bcn_prb) == DOT11_BCN_PRB_LEN);
 	ASSERT(sizeof(tx_status_t) == TXSTATUS_LEN);
 	ASSERT(sizeof(ht_cap_ie_t) == HT_CAP_IE_LEN);
+#ifdef BRCM_FULLMAC
 	ASSERT(offsetof(wl_scan_params_t, channel_list) ==
 	       WL_SCAN_PARAMS_FIXED_SIZE);
+#endif
 	ASSERT(IS_ALIGNED(offsetof(wsec_key_t, data), sizeof(u32)));
 	ASSERT(ISPOWEROF2(MA_WINDOW_SZ));
 
@@ -1851,10 +1811,6 @@ void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
 	/* propagate *vars* from BMAC driver to high driver */
 	wlc_bmac_copyfrom_vars(wlc->hw, &pub->vars, &wlc->vars_size);
 
-#ifdef WLC_HIGH_ONLY
-	WL_TRACE(("nvram : vars %p , vars_size %d\n", pub->vars,
-		  wlc->vars_size));
-#endif
 
 	/* set maximum allowed duty cycle */
 	wlc->tx_duty_cycle_ofdm =
@@ -1872,14 +1828,12 @@ void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
 	wlc_phy_stf_chain_init(wlc->band->pi, wlc->stf->hw_txchain,
 			       wlc->stf->hw_rxchain);
 
-#ifdef WLC_LOW
 	/* pull up some info resulting from the low attach */
 	{
 		int i;
 		for (i = 0; i < NFIFO; i++)
 			wlc->core->txavail[i] = wlc->hw->txavail[i];
 	}
-#endif				/* WLC_LOW */
 
 	wlc_bmac_hw_etheraddr(wlc->hw, &wlc->perm_etheraddr);
 
@@ -2132,134 +2086,6 @@ static bool wlc_attach_stf_ant_init(wlc_info_t *wlc)
 	return true;
 }
 
-#ifdef WLC_HIGH_ONLY
-/* HIGH_ONLY bmac_attach, which sync over LOW_ONLY bmac_attach states */
-int wlc_bmac_attach(wlc_info_t *wlc, u16 vendor, u16 device, uint unit,
-		    bool piomode, osl_t *osh, void *regsva, uint bustype,
-		    void *btparam)
-{
-	wlc_bmac_revinfo_t revinfo;
-	uint idx = 0;
-	rpc_info_t *rpc = (rpc_info_t *) btparam;
-
-	ASSERT(bustype == RPC_BUS);
-
-	/* install the rpc handle in the various state structures used by stub RPC functions */
-	wlc->rpc = rpc;
-	wlc->hw->rpc = rpc;
-	wlc->hw->osh = osh;
-
-	wlc->regs = 0;
-
-	wlc->rpctx = wlc_rpctx_attach(wlc->pub, wlc);
-	if (wlc->rpctx == NULL)
-		return -1;
-
-	/*
-	 * FIFO 0
-	 * TX: TX_AC_BK_FIFO (TX AC Background data packets)
-	 */
-	/* Always initialized */
-	ASSERT(NRPCTXBUFPOST <= NTXD);
-	wlc_rpctx_fifoinit(wlc->rpctx, TX_DATA_FIFO, NRPCTXBUFPOST);
-	wlc_rpctx_fifoinit(wlc->rpctx, TX_CTL_FIFO, NRPCTXBUFPOST);
-	wlc_rpctx_fifoinit(wlc->rpctx, TX_BCMC_FIFO, NRPCTXBUFPOST);
-
-	/* VI and BK inited only if WME */
-	if (WME_ENAB(wlc->pub)) {
-		wlc_rpctx_fifoinit(wlc->rpctx, TX_AC_BK_FIFO, NRPCTXBUFPOST);
-		wlc_rpctx_fifoinit(wlc->rpctx, TX_AC_VI_FIFO, NRPCTXBUFPOST);
-	}
-
-	/* Allocate SB handle */
-	wlc->pub->sih = osl_malloc(wlc->osh, sizeof(si_t));
-	if (!wlc->pub->sih)
-		return -1;
-	bzero(wlc->pub->sih, sizeof(si_t));
-
-	/* sync up revinfo with BMAC */
-	bzero(&revinfo, sizeof(wlc_bmac_revinfo_t));
-	if (wlc_bmac_revinfo_get(wlc->hw, &revinfo) != 0)
-		return -1;
-	wlc->vendorid = (u16) revinfo.vendorid;
-	wlc->deviceid = (u16) revinfo.deviceid;
-
-	wlc->pub->boardrev = (u16) revinfo.boardrev;
-	wlc->pub->corerev = revinfo.corerev;
-	wlc->pub->sromrev = (u8) revinfo.sromrev;
-	wlc->pub->sih->chiprev = revinfo.chiprev;
-	wlc->pub->sih->chip = revinfo.chip;
-	wlc->pub->sih->chippkg = revinfo.chippkg;
-	wlc->pub->sih->boardtype = revinfo.boardtype;
-	wlc->pub->sih->boardvendor = revinfo.boardvendor;
-	wlc->pub->sih->bustype = revinfo.bustype;
-	wlc->pub->sih->buscoretype = revinfo.buscoretype;
-	wlc->pub->sih->buscorerev = revinfo.buscorerev;
-	wlc->pub->sih->issim = (bool) revinfo.issim;
-	wlc->pub->sih->rpc = rpc;
-
-	if (revinfo.nbands == 0 || revinfo.nbands > 2)
-		return -1;
-	wlc->pub->_nbands = revinfo.nbands;
-
-	for (idx = 0; idx < wlc->pub->_nbands; idx++) {
-		uint bandunit, bandtype;	/* To access bandstate */
-		wlc_phy_t *pi = osl_malloc(wlc->osh, sizeof(wlc_phy_t));
-
-		if (!pi)
-			return -1;
-		bzero(pi, sizeof(wlc_phy_t));
-		pi->rpc = rpc;
-
-		bandunit = revinfo.band[idx].bandunit;
-		bandtype = revinfo.band[idx].bandtype;
-		wlc->bandstate[bandunit]->radiorev =
-		    (u8) revinfo.band[idx].radiorev;
-		wlc->bandstate[bandunit]->phytype =
-		    (u16) revinfo.band[idx].phytype;
-		wlc->bandstate[bandunit]->phyrev =
-		    (u16) revinfo.band[idx].phyrev;
-		wlc->bandstate[bandunit]->radioid =
-		    (u16) revinfo.band[idx].radioid;
-		wlc->bandstate[bandunit]->abgphy_encore =
-		    revinfo.band[idx].abgphy_encore;
-
-		wlc->bandstate[bandunit]->pi = pi;
-		wlc->bandstate[bandunit]->bandunit = bandunit;
-		wlc->bandstate[bandunit]->bandtype = bandtype;
-	}
-
-	/* misc stuff */
-
-	return 0;
-}
-
-/* Free the convenience handles */
-int wlc_bmac_detach(wlc_info_t *wlc)
-{
-	uint idx;
-
-	if (wlc->pub->sih) {
-		osl_mfree(wlc->osh, (void *)wlc->pub->sih, sizeof(si_t));
-		wlc->pub->sih = NULL;
-	}
-
-	for (idx = 0; idx < MAXBANDS; idx++)
-		if (wlc->bandstate[idx]->pi) {
-			kfree(wlc->bandstate[idx]->pi);
-			wlc->bandstate[idx]->pi = NULL;
-		}
-
-	if (wlc->rpctx) {
-		wlc_rpctx_detach(wlc->rpctx);
-		wlc->rpctx = NULL;
-	}
-
-	return 0;
-
-}
-
-#endif				/* WLC_HIGH_ONLY */
 
 static void wlc_timers_deinit(wlc_info_t *wlc)
 {
@@ -2328,15 +2154,6 @@ uint wlc_detach(wlc_info_t *wlc)
 
 	/* free other state */
 
-#ifdef WLC_HIGH_ONLY
-	/* High-Only driver has an allocated copy of vars, monolithic just
-	 * references the wlc->hw->vars which is freed in wlc_bmac_detach()
-	 */
-	if (wlc->pub->vars) {
-		kfree(wlc->pub->vars);
-		wlc->pub->vars = NULL;
-	}
-#endif
 
 #ifdef BCMDBG
 	if (wlc->country_ie_override) {
@@ -2667,13 +2484,7 @@ static void wlc_watchdog(void *arg)
 	if (wlc->pub->radio_disabled)
 		return;
 
-#ifdef WLC_LOW
 	wlc_bmac_watchdog(wlc);
-#endif
-#ifdef WLC_HIGH_ONLY
-	/* maintenance */
-	wlc_bmac_rpc_watchdog(wlc);
-#endif
 
 	/* occasionally sample mac stat counters to detect 16-bit counter wrap */
 	if ((WLC_UPDATE_STATS(wlc))
@@ -2702,10 +2513,8 @@ static void wlc_watchdog(void *arg)
 		wlc->tempsense_lasttime = wlc->pub->now;
 		wlc_tempsense_upd(wlc);
 	}
-#ifdef WLC_LOW
 	/* BMAC_NOTE: for HIGH_ONLY driver, this seems being called after RPC bus failed */
 	ASSERT(wlc_bmac_taclear(wlc->hw, true));
-#endif
 
 	/* Verify that tx_prec_map and fifos are in sync to avoid lock ups */
 	ASSERT(wlc_tx_prec_map_verify(wlc));
@@ -2922,9 +2731,6 @@ uint wlc_down(wlc_info_t *wlc)
 	/* wlc_bmac_down_finish has done wlc_coredisable(). so clk is off */
 	wlc->clk = false;
 
-#ifdef WLC_HIGH_ONLY
-	wlc_rpctx_txreclaim(wlc->rpctx);
-#endif
 
 	/* Verify all packets are flushed from the driver */
 	if (PKTALLOCED(wlc->osh) != 0) {
@@ -3265,7 +3071,7 @@ _wlc_ioctl(wlc_info_t *wlc, int cmd, void *arg, int len, struct wlc_if *wlcif)
 	uint band;
 	rw_reg_t *r;
 	wlc_bsscfg_t *bsscfg;
-	osl_t *osh;
+	struct osl_info *osh;
 	wlc_bss_info_t *current_bss;
 
 	/* update bsscfg pointer */
@@ -3388,10 +3194,6 @@ _wlc_ioctl(wlc_info_t *wlc, int cmd, void *arg, int len, struct wlc_if *wlcif)
 				wlc_set_chanspec(wlc, chspec);
 				wlc_enable_mac(wlc);
 			}
-#ifdef WLC_HIGH_ONLY
-			/* delay for channel change */
-			msleep(50);
-#endif
 			break;
 		}
 
@@ -4406,14 +4208,12 @@ _wlc_ioctl(wlc_info_t *wlc, int cmd, void *arg, int len, struct wlc_if *wlcif)
 		}
 
 	}
-#ifdef WLC_LOW
 	/* BMAC_NOTE: for HIGH_ONLY driver, this seems being called after RPC bus failed */
 	/* In hw_off condition, IOCTLs that reach here are deemed safe but taclear would
 	 * certainly result in getting -1 for register reads. So skip ta_clear altogether
 	 */
 	if (!(wlc->pub->hw_off))
 		ASSERT(wlc_bmac_taclear(wlc->hw, ta_ok) || !ta_ok);
-#endif
 
 	return bcmerror;
 }
@@ -4622,11 +4422,6 @@ wlc_iovar_op(wlc_info_t *wlc, const char *name,
 	/* iovar name not found */
 	if (i >= WLC_MAXMODULES) {
 		err = BCME_UNSUPPORTED;
-#ifdef WLC_HIGH_ONLY
-		err =
-		    bcmsdh_iovar_op(wlc->btparam, name, params, p_len, arg, len,
-				    set);
-#endif
 		goto exit;
 	}
 
@@ -5188,14 +4983,6 @@ u16 wlc_rate_shm_offset(wlc_info_t *wlc, u8 rate)
 }
 
 /* Callback for device removed */
-#if defined(WLC_HIGH_ONLY)
-void wlc_device_removed(void *arg)
-{
-	wlc_info_t *wlc = (wlc_info_t *) arg;
-
-	wlc->device_present = false;
-}
-#endif				/* WLC_HIGH_ONLY */
 
 /*
  * Attempts to queue a packet onto a multiple-precedence queue,
@@ -5460,13 +5247,6 @@ wlc_txfifo(wlc_info_t *wlc, uint fifo, void *p, bool commit, s8 txpktpend)
 	if (WLC_WAR16165(wlc))
 		wlc_war16165(wlc, true);
 
-#ifdef WLC_HIGH_ONLY
-	if (RPCTX_ENAB(wlc->pub)) {
-		(void)wlc_rpctx_tx(wlc->rpctx, fifo, p, commit, frameid,
-				   txpktpend);
-		return;
-	}
-#else
 
 	/* Bump up pending count for if not using rpc. If rpc is used, this will be handled
 	 * in wlc_bmac_txfifo()
@@ -5484,7 +5264,6 @@ wlc_txfifo(wlc_info_t *wlc, uint fifo, void *p, bool commit, s8 txpktpend)
 	if (dma_txfast(wlc->hw->di[fifo], p, commit) < 0) {
 		WL_ERROR(("wlc_txfifo: fatal, toss frames !!!\n"));
 	}
-#endif				/* WLC_HIGH_ONLY */
 }
 
 static u16
@@ -5798,9 +5577,7 @@ u16 BCMFASTPATH wlc_phytxctl1_calc(wlc_info_t *wlc, ratespec_t rspec)
 	/* phy clock must support 40Mhz if tx descriptor uses it */
 	if ((phyctl1 & PHY_TXC1_BW_MASK) >= PHY_TXC1_BW_40MHZ) {
 		ASSERT(CHSPEC_WLC_BW(wlc->chanspec) == WLC_40_MHZ);
-#ifndef WLC_HIGH_ONLY
 		ASSERT(wlc->chanspec == wlc_phy_chanspec_get(wlc->band->pi));
-#endif
 	}
 #endif				/* BCMDBG */
 	return phyctl1;
@@ -5871,7 +5648,7 @@ wlc_d11hdrs_mac80211(wlc_info_t *wlc, struct ieee80211_hw *hw,
 	struct dot11_header *h;
 	d11txh_t *txh;
 	u8 *plcp, plcp_fallback[D11_PHY_HDR_LEN];
-	osl_t *osh;
+	struct osl_info *osh;
 	int len, phylen, rts_phylen;
 	u16 fc, type, frameid, mch, phyctl, xfts, mainrates;
 	u16 seq = 0, mcl = 0, status = 0;
@@ -5935,10 +5712,10 @@ wlc_d11hdrs_mac80211(wlc_info_t *wlc, struct ieee80211_hw *hw,
 	ASSERT(tx_info);
 
 	/* add PLCP */
-	plcp = PKTPUSH(p, D11_PHY_HDR_LEN);
+	plcp = skb_push(p, D11_PHY_HDR_LEN);
 
 	/* add Broadcom tx descriptor header */
-	txh = (d11txh_t *) PKTPUSH(p, D11_TXH_LEN);
+	txh = (d11txh_t *) skb_push(p, D11_TXH_LEN);
 	bzero((char *)txh, D11_TXH_LEN);
 
 	/* setup frameid */
@@ -5981,13 +5758,6 @@ wlc_d11hdrs_mac80211(wlc_info_t *wlc, struct ieee80211_hw *hw,
 	if (txrate[1]->idx < 0) {
 		txrate[1] = txrate[0];
 	}
-#ifdef WLC_HIGH_ONLY
-	/* Double protection , just in case */
-	if (txrate[0]->idx > HIGHEST_SINGLE_STREAM_MCS)
-		txrate[0]->idx = HIGHEST_SINGLE_STREAM_MCS;
-	if (txrate[1]->idx > HIGHEST_SINGLE_STREAM_MCS)
-		txrate[1]->idx = HIGHEST_SINGLE_STREAM_MCS;
-#endif
 
 	for (k = 0; k < hw->max_rates; k++) {
 		is_mcs[k] =
@@ -6686,9 +6456,7 @@ void wlc_high_dpc(wlc_info_t *wlc, u32 macintstatus)
 	if (!pktq_empty(&wlc->active_queue->q))
 		wlc_send_q(wlc, wlc->active_queue);
 
-#ifndef WLC_HIGH_ONLY
 	ASSERT(wlc_ps_check(wlc));
-#endif
 }
 
 static void *wlc_15420war(wlc_info_t *wlc, uint queue)
@@ -6744,7 +6512,7 @@ wlc_dotxstatus(wlc_info_t *wlc, tx_status_t *txs, u32 frm_tx2)
 	d11txh_t *txh;
 	struct scb *scb = NULL;
 	bool free_pdu;
-	osl_t *osh;
+	struct osl_info *osh;
 	int tx_rts, tx_frame_count, tx_rts_count;
 	uint totlen, supr_status;
 	bool lastframe;
@@ -6883,8 +6651,8 @@ wlc_dotxstatus(wlc_info_t *wlc, tx_status_t *txs, u32 frm_tx2)
 		PKTSETLINK(p, NULL);
 		wlc->txretried = 0;
 		/* remove PLCP & Broadcom tx descriptor header */
-		PKTPULL(p, D11_PHY_HDR_LEN);
-		PKTPULL(p, D11_TXH_LEN);
+		skb_pull(p, D11_PHY_HDR_LEN);
+		skb_pull(p, D11_TXH_LEN);
 		ieee80211_tx_status_irqsafe(wlc->pub->ieee_hw, p);
 		WLCNTINCR(wlc->pub->_cnt->ieee_tx_status);
 	} else {
@@ -6899,12 +6667,6 @@ wlc_dotxstatus(wlc_info_t *wlc, tx_status_t *txs, u32 frm_tx2)
 	if (p)
 		PKTFREE(osh, p, true);
 
-#ifdef WLC_HIGH_ONLY
-	/* If this is a split driver, do the big-hammer here.
-	 * If this is a monolithic driver, wlc_bmac.c:wlc_dpc() will do the big-hammer.
-	 */
-	wl_init(wlc->wl);
-#endif
 	return true;
 
 }
@@ -7138,7 +6900,7 @@ prep_mac80211_status(wlc_info_t *wlc, d11rxhdr_t *rxh, void *p,
 }
 
 static void
-wlc_recvctl(wlc_info_t *wlc, osl_t *osh, d11rxhdr_t *rxh, void *p)
+wlc_recvctl(wlc_info_t *wlc, struct osl_info *osh, d11rxhdr_t *rxh, void *p)
 {
 	int len_mpdu;
 	struct ieee80211_rx_status rx_status;
@@ -7156,8 +6918,8 @@ wlc_recvctl(wlc_info_t *wlc, osl_t *osh, d11rxhdr_t *rxh, void *p)
 
 	/* mac header+body length, exclude CRC and plcp header */
 	len_mpdu = PKTLEN(p) - D11_PHY_HDR_LEN - DOT11_FCS_LEN;
-	PKTPULL(p, D11_PHY_HDR_LEN);
-	PKTSETLEN(p, len_mpdu);
+	skb_pull(p, D11_PHY_HDR_LEN);
+	__skb_trim(p, len_mpdu);
 
 	ASSERT(!PKTNEXT(p));
 	ASSERT(!PKTLINK(p));
@@ -7205,7 +6967,7 @@ void BCMFASTPATH wlc_recv(wlc_info_t *wlc, void *p)
 {
 	d11rxhdr_t *rxh;
 	struct dot11_header *h;
-	osl_t *osh;
+	struct osl_info *osh;
 	u16 fc;
 	uint len;
 	bool is_amsdu;
@@ -7218,7 +6980,7 @@ void BCMFASTPATH wlc_recv(wlc_info_t *wlc, void *p)
 	rxh = (d11rxhdr_t *) PKTDATA(p);
 
 	/* strip off rxhdr */
-	PKTPULL(p, wlc->hwrxoff);
+	skb_pull(p, wlc->hwrxoff);
 
 	/* fixup rx header endianness */
 	ltoh16_buf((void *)rxh, sizeof(d11rxhdr_t));
@@ -7231,7 +6993,7 @@ void BCMFASTPATH wlc_recv(wlc_info_t *wlc, void *p)
 				  wlc->pub->unit, PKTLEN(p)));
 			goto toss;
 		}
-		PKTPULL(p, 2);
+		skb_pull(p, 2);
 	}
 
 	h = (struct dot11_header *)(PKTDATA(p) + D11_PHY_HDR_LEN);
@@ -7907,7 +7669,7 @@ void wlc_bss_update_beacon(wlc_info_t *wlc, wlc_bsscfg_t *cfg)
 		u16 bcn[BCN_TMPL_LEN / 2];
 		u32 both_valid = MCMD_BCN0VLD | MCMD_BCN1VLD;
 		d11regs_t *regs = wlc->regs;
-		osl_t *osh = NULL;
+		struct osl_info *osh = NULL;
 
 		osh = wlc->osh;
 
@@ -8029,7 +7791,7 @@ wlc_bss_update_probe_resp(wlc_info_t *wlc, wlc_bsscfg_t *cfg, bool suspend)
 /* prepares pdu for transmission. returns BCM error codes */
 int wlc_prep_pdu(wlc_info_t *wlc, void *pdu, uint *fifop)
 {
-	osl_t *osh;
+	struct osl_info *osh;
 	uint fifo;
 	d11txh_t *txh;
 	struct dot11_header *h;
@@ -8476,9 +8238,6 @@ void wlc_pllreq(wlc_info_t *wlc, bool set, mbool req_bit)
 
 void wlc_reset_bmac_done(wlc_info_t *wlc)
 {
-#ifdef WLC_HIGH_ONLY
-	wlc->reset_bmac_pending = false;
-#endif
 }
 
 void wlc_ht_mimops_cap_update(wlc_info_t *wlc, u8 mimops_mode)
@@ -8622,7 +8381,7 @@ wlc_txflowcontrol_signal(wlc_info_t *wlc, wlc_txq_info_t *qi, bool on,
 	}
 }
 
-static wlc_txq_info_t *wlc_txq_alloc(wlc_info_t *wlc, osl_t *osh)
+static wlc_txq_info_t *wlc_txq_alloc(wlc_info_t *wlc, struct osl_info *osh)
 {
 	wlc_txq_info_t *qi, *p;
 
@@ -8652,7 +8411,8 @@ static wlc_txq_info_t *wlc_txq_alloc(wlc_info_t *wlc, osl_t *osh)
 	return qi;
 }
 
-static void wlc_txq_free(wlc_info_t *wlc, osl_t *osh, wlc_txq_info_t *qi)
+static void wlc_txq_free(wlc_info_t *wlc, struct osl_info *osh,
+			 wlc_txq_info_t *qi)
 {
 	wlc_txq_info_t *p;
 

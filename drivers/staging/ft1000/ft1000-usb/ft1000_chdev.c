@@ -64,7 +64,7 @@ spinlock_t free_buff_lock;
 int numofmsgbuf = 0;
 
 // Global variable to indicate that all provisioning data is sent to DSP
-//BOOLEAN fProvComplete;
+//bool fProvComplete;
 
 //
 // Table of entry-point routines for char device
@@ -423,7 +423,7 @@ static int ft1000_ChOpen (struct inode *Inode, struct file *File)
 
     if ( pdevobj[num] != NULL )
         //info = (struct ft1000_info *)(pdevobj[num]->net->priv);
-		info = (struct ft1000_info *)netdev_priv(pdevobj[num]->net);
+		info = netdev_priv(pdevobj[num]->net);
     else
     {
         DEBUG("ft1000_ChOpen: can not find device object %d\n", num);
@@ -488,7 +488,7 @@ static unsigned int ft1000_ChPoll(struct file *file, poll_table *wait)
         return (-EBADF);
     }
 
-	info = (struct ft1000_info *) netdev_priv(dev);
+	info = netdev_priv(dev);
 
     // Search for matching file object
     for (i=0; i<MAX_NUM_APP; i++) {
@@ -560,7 +560,7 @@ static long ft1000_ChIoctl (struct file *File, unsigned int Command,
     //DEBUG("FT1000:ft1000_ChIoctl:Command = 0x%x Argument = 0x%8x\n", Command, (u32)Argument);
 
     dev = File->private_data;
-	info = (struct ft1000_info *) netdev_priv(dev);
+	info = netdev_priv(dev);
     ft1000dev = info->pFt1000Dev;
     cmd = _IOC_NR(Command);
     //DEBUG("FT1000:ft1000_ChIoctl:cmd = 0x%x\n", cmd);
@@ -622,10 +622,10 @@ static long ft1000_ChIoctl (struct file *File, unsigned int Command,
         memcpy(get_stat_data.eui64, info->eui64, EUISZ);
 
             if (info->ProgConStat != 0xFF) {
-                ft1000_read_dpram16(ft1000dev, FT1000_MAG_DSP_LED, (PUCHAR)&ledStat, FT1000_MAG_DSP_LED_INDX);
+                ft1000_read_dpram16(ft1000dev, FT1000_MAG_DSP_LED, (u8 *)&ledStat, FT1000_MAG_DSP_LED_INDX);
                 get_stat_data.LedStat = ntohs(ledStat);
                 DEBUG("FT1000:ft1000_ChIoctl: LedStat = 0x%x\n", get_stat_data.LedStat);
-                ft1000_read_dpram16(ft1000dev, FT1000_MAG_DSP_CON_STATE, (PUCHAR)&conStat, FT1000_MAG_DSP_CON_STATE_INDX);
+                ft1000_read_dpram16(ft1000dev, FT1000_MAG_DSP_CON_STATE, (u8 *)&conStat, FT1000_MAG_DSP_CON_STATE_INDX);
                 get_stat_data.ConStat = ntohs(conStat);
                 DEBUG("FT1000:ft1000_ChIoctl: ConStat = 0x%x\n", get_stat_data.ConStat);
             }
@@ -650,14 +650,14 @@ static long ft1000_ChIoctl (struct file *File, unsigned int Command,
         break;
     case IOCTL_SET_DPRAM_CMD:
         {
-            IOCTL_DPRAM_BLK *dpram_data;
+            IOCTL_DPRAM_BLK *dpram_data = NULL;
             //IOCTL_DPRAM_COMMAND dpram_command;
-            USHORT qtype;
-            USHORT msgsz;
+            u16 qtype;
+            u16 msgsz;
 		struct pseudo_hdr *ppseudo_hdr;
-            PUSHORT pmsg;
-            USHORT total_len;
-            USHORT app_index;
+            u16 *pmsg;
+            u16 total_len;
+            u16 app_index;
             u16 status;
 
             //DEBUG("FT1000:ft1000_ChIoctl: IOCTL_FT1000_SET_DPRAM called\n");
@@ -698,7 +698,7 @@ static long ft1000_ChIoctl (struct file *File, unsigned int Command,
 			break;
 
                 //if ( copy_from_user(&(dpram_command.dpram_blk), (PIOCTL_DPRAM_BLK)Argument, msgsz+2) ) {
-                if ( copy_from_user(&dpram_data, argp, msgsz+2) ) {
+                if ( copy_from_user(dpram_data, argp, msgsz+2) ) {
                     DEBUG("FT1000:ft1000_ChIoctl: copy fault occurred\n");
                     result = -EFAULT;
                 }
@@ -765,8 +765,8 @@ static long ft1000_ChIoctl (struct file *File, unsigned int Command,
                         // Make sure we are within the limits of the slow queue memory limitation
                         if ( (msgsz < MAX_CMD_SQSIZE) && (msgsz > PSEUDOSZ) ) {
                             // Need to put sequence number plus new checksum for message
-                            //pmsg = (PUSHORT)&dpram_command.dpram_blk.pseudohdr;
-                            pmsg = (PUSHORT)&dpram_data->pseudohdr;
+                            //pmsg = (u16 *)&dpram_command.dpram_blk.pseudohdr;
+                            pmsg = (u16 *)&dpram_data->pseudohdr;
 				ppseudo_hdr = (struct pseudo_hdr *)pmsg;
                             total_len = msgsz+2;
                             if (total_len & 0x1) {
@@ -900,7 +900,7 @@ static int ft1000_ChRelease (struct inode *Inode, struct file *File)
     DEBUG("ft1000_ChRelease called\n");
 
     dev = File->private_data;
-	info = (struct ft1000_info *) netdev_priv(dev);
+	info = netdev_priv(dev);
 
     if (ft1000_flarion_cnt == 0) {
         info->appcnt--;

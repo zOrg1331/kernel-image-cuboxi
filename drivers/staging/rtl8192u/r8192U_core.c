@@ -1507,7 +1507,7 @@ static void rtl8192_tx_isr(struct urb *tx_urb)
 	{
 		//
 		// Handle HW Beacon:
-		// We had transfer our beacon frame to host controler at this moment.
+		// We had transfer our beacon frame to host controller at this moment.
 		//
 		//
 		// Caution:
@@ -5085,7 +5085,7 @@ static void rtl8192_query_rxphystatus(
 			//Get Rx snr value in DB
 			tmp_rxsnr =	pofdm_buf->rxsnr_X[i];
 			rx_snrX = (char)(tmp_rxsnr);
-			//rx_snrX >>= 1;;
+			//rx_snrX >>= 1;
 			rx_snrX /= 2;
 			priv->stats.rxSNRdB[i] = (long)rx_snrX;
 
