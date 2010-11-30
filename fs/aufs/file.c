@@ -552,13 +552,12 @@ int au_reval_and_lock_fdi(struct file *file, int (*reopen)(struct file *file),
 	if (sigen != au_digen(dentry)
 	    || sigen != au_iigen(inode)) {
 		err = au_reval_dpath(dentry, sigen);
-		if (unlikely(err < 0))
-			goto out;
-		AuDebugOn(au_digen(dentry) != sigen
-			  || au_iigen(inode) != sigen);
+		AuDebugOn(!err && (au_digen(dentry) != sigen
+				   || au_iigen(inode) != sigen));
 	}
 
-	err = refresh_file(file, reopen);
+	if (!err)
+		err = refresh_file(file, reopen);
 	if (!err) {
 		if (!wlock) {
 			di_downgrade_lock(dentry, AuLock_IR);
