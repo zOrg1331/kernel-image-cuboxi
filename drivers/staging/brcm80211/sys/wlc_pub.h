@@ -260,7 +260,7 @@ typedef struct wlc_pub {
 	uint mac80211_state;
 	uint unit;		/* device instance number */
 	uint corerev;		/* core revision */
-	osl_t *osh;		/* pointer to os handle */
+	struct osl_info *osh;		/* pointer to os handle */
 	si_t *sih;		/* SB handle (cookie for siutils calls) */
 	char *vars;		/* "environment" name=value */
 	bool up;		/* interface up and running */
@@ -318,9 +318,6 @@ typedef struct wlc_pub {
 				 * is implemented properly in osl of that port
 				 * when it enables this Power Save feature.
 				 */
-#ifdef BCMSDIO
-	uint sdiod_drive_strength;	/* SDIO drive strength */
-#endif				/* BCMSDIO */
 
 	u16 boardrev;	/* version # of particular board */
 	u8 sromrev;		/* version # of the srom */
@@ -437,17 +434,13 @@ struct wlc_if;
 #define EDCF_ENAB(pub) (WME_ENAB(pub))
 #define QOS_ENAB(pub) (WME_ENAB(pub) || N_ENAB(pub))
 
-#define MONITOR_ENAB(wlc)	(bcmspace && (wlc)->monitor)
+#define MONITOR_ENAB(wlc)	((wlc)->monitor)
 
-#define PROMISC_ENAB(wlc)	(bcmspace && (wlc)->promisc)
-
-extern void wlc_pkttag_info_move(wlc_pub_t *pub, void *pkt_from, void *pkt_to);
-
-#define WLPKTTAGSCB(p) (WLPKTTAG(p)->_scb)
+#define PROMISC_ENAB(wlc)	((wlc)->promisc)
 
 #define	WLC_PREC_COUNT		16	/* Max precedence level implemented */
 
-/* pri is PKTPRIO encoded in the packet. This maps the Packet priority to
+/* pri is priority encoded in the packet. This maps the Packet priority to
  * enqueue precedence as defined in wlc_prec_map
  */
 extern const u8 wlc_prio2prec_map[];
@@ -497,8 +490,8 @@ extern const u8 wme_fifo2ac[];
 
 /* common functions for every port */
 extern void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit,
-			bool piomode, osl_t *osh, void *regsva, uint bustype,
-			void *btparam, uint *perr);
+			bool piomode, struct osl_info *osh, void *regsva,
+			uint bustype, void *btparam, uint *perr);
 extern uint wlc_detach(struct wlc_info *wlc);
 extern int wlc_up(struct wlc_info *wlc);
 extern uint wlc_down(struct wlc_info *wlc);
@@ -519,6 +512,8 @@ extern bool wlc_isr(struct wlc_info *wlc, bool *wantdpc);
 extern bool wlc_dpc(struct wlc_info *wlc, bool bounded);
 extern bool wlc_send80211_raw(struct wlc_info *wlc, wlc_if_t *wlcif, void *p,
 			      uint ac);
+extern bool wlc_sendpkt_mac80211(wlc_info_t *wlc, struct sk_buff *sdu,
+				 struct ieee80211_hw *hw);
 extern int wlc_iovar_op(struct wlc_info *wlc, const char *name, void *params,
 			int p_len, void *arg, int len, bool set,
 			struct wlc_if *wlcif);
@@ -527,6 +522,11 @@ extern int wlc_ioctl(struct wlc_info *wlc, int cmd, void *arg, int len,
 /* helper functions */
 extern void wlc_statsupd(struct wlc_info *wlc);
 extern int wlc_get_header_len(void);
+extern void wlc_mac_bcn_promisc_change(wlc_info_t *wlc, bool promisc);
+extern void wlc_set_addrmatch(wlc_info_t *wlc, int match_reg_offset,
+			      const struct ether_addr *addr);
+extern void wlc_wme_setparams(wlc_info_t *wlc, u16 aci, void *arg,
+			      bool suspend);
 
 extern wlc_pub_t *wlc_pub(void *wlc);
 
@@ -616,10 +616,6 @@ extern void wlc_pmkid_event(struct wlc_bsscfg *cfg);
 
 #define BAND_2G_NAME		"2.4G"
 #define BAND_5G_NAME		"5G"
-
-#if defined(BCMSDIO) || defined(WLC_HIGH_ONLY)
-void wlc_device_removed(void *arg);
-#endif
 
 /* BMAC RPC: 7 u32 params: pkttotlen, fifo, commit, fid, txpktpend, pktflag, rpc_id */
 #define WLC_RPCTX_PARAMS		32
