@@ -250,4 +250,4 @@ static int __init sh7750_pmu_init(void)
 
 	return register_sh_pmu(&sh7750_pmu);
 }
-early_initcall(sh7750_pmu_init);
+arch_initcall(sh7750_pmu_init);
