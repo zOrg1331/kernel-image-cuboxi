@@ -905,7 +905,6 @@ static int au_br_mod_files_ro(struct super_block *sb, aufs_bindex_t bindex)
 	unsigned long long ull, max;
 	aufs_bindex_t br_id;
 	struct file *file, *hf, **array;
-	struct dentry *dentry;
 	struct inode *inode;
 	struct au_hfile *hfile;
 
@@ -918,8 +917,6 @@ static int au_br_mod_files_ro(struct super_block *sb, aufs_bindex_t bindex)
 	br_id = au_sbr_id(sb, bindex);
 	for (ull = 0; ull < max; ull++) {
 		file = array[ull];
-		dentry = file->f_dentry;
-		inode = dentry->d_inode;
 
 		/* AuDbg("%.*s\n", AuDLNPair(file->f_dentry)); */
 		fi_read_lock(file);
@@ -931,6 +928,7 @@ static int au_br_mod_files_ro(struct super_block *sb, aufs_bindex_t bindex)
 			goto out_array;
 		}
 
+		inode = file->f_dentry->d_inode;
 		hfile = &au_fi(file)->fi_htop;
 		hf = hfile->hf_file;
 		if (!S_ISREG(inode->i_mode)
