@@ -103,8 +103,8 @@ static int __devinit cs5535_mfd_probe(struct pci_dev *pdev,
 		goto err_disable;
 	}
 
-	dev_info(&pdev->dev, "%d devices registered.\n",
-			ARRAY_SIZE(cs5535_mfd_cells));
+	dev_info(&pdev->dev, "%u devices registered.\n",
+			(unsigned int) ARRAY_SIZE(cs5535_mfd_cells));
 
 	return 0;
 
