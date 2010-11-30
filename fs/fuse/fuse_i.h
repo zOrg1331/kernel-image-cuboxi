@@ -55,8 +55,7 @@ extern unsigned max_user_congthresh;
 
 /* One forget request */
 struct fuse_forget_link {
-	u64 nodeid;
-	struct fuse_forget_in forget_in;
+	struct fuse_forget_one forget_one;
 	struct fuse_forget_link *next;
 };
 
