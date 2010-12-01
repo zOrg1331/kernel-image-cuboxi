@@ -131,16 +131,14 @@ typedef enum {
 } wlc_bmac_state_id_t;
 
 extern int wlc_bmac_attach(wlc_info_t *wlc, u16 vendor, u16 device,
-			   uint unit, bool piomode, osl_t *osh, void *regsva,
-			   uint bustype, void *btparam);
+			   uint unit, bool piomode, struct osl_info *osh,
+			   void *regsva, uint bustype, void *btparam);
 extern int wlc_bmac_detach(wlc_info_t *wlc);
 extern void wlc_bmac_watchdog(void *arg);
 extern void wlc_bmac_info_init(wlc_hw_info_t *wlc_hw);
 
 /* up/down, reset, clk */
-#ifdef WLC_LOW
 extern void wlc_bmac_xtal(wlc_hw_info_t *wlc_hw, bool want);
-#endif
 
 extern void wlc_bmac_copyto_objmem(wlc_hw_info_t *wlc_hw,
 				   uint offset, const void *buf, int len,
@@ -242,16 +240,6 @@ extern void wlc_bmac_retrylimit_upd(wlc_hw_info_t *wlc_hw, u16 SRL,
 
 extern void wlc_bmac_fifoerrors(wlc_hw_info_t *wlc_hw);
 
-#ifdef WLC_HIGH_ONLY
-extern void wlc_bmac_dngl_reboot(rpc_info_t *);
-extern void wlc_bmac_dngl_rpc_agg(rpc_info_t *, u16 agg);
-extern void wlc_bmac_dngl_rpc_msglevel(rpc_info_t *, u16 level);
-extern void wlc_bmac_dngl_rpc_txq_wm_set(rpc_info_t *rpc, u32 wm);
-extern void wlc_bmac_dngl_rpc_txq_wm_get(rpc_info_t *rpc, u32 *wm);
-extern void wlc_bmac_dngl_rpc_agg_limit_set(rpc_info_t *rpc, u32 val);
-extern void wlc_bmac_dngl_rpc_agg_limit_get(rpc_info_t *rpc, u32 *pval);
-extern int wlc_bmac_debug_template(wlc_hw_info_t *wlc_hw);
-#endif
 
 /* API for BMAC driver (e.g. wlc_phy.c etc) */
 

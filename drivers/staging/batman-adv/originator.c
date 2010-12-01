@@ -26,8 +26,10 @@
 #include "hash.h"
 #include "translation-table.h"
 #include "routing.h"
+#include "gateway_client.h"
 #include "hard-interface.h"
 #include "unicast.h"
+#include "soft-interface.h"
 
 static void purge_orig(struct work_struct *work);
 
@@ -39,22 +41,21 @@ static void start_purge_timer(struct bat_priv *bat_priv)
 
 int originator_init(struct bat_priv *bat_priv)
 {
-	unsigned long flags;
 	if (bat_priv->orig_hash)
 		return 1;
 
-	spin_lock_irqsave(&bat_priv->orig_hash_lock, flags);
-	bat_priv->orig_hash = hash_new(128, compare_orig, choose_orig);
+	spin_lock_bh(&bat_priv->orig_hash_lock);
+	bat_priv->orig_hash = hash_new(128);
 
 	if (!bat_priv->orig_hash)
 		goto err;
 
-	spin_unlock_irqrestore(&bat_priv->orig_hash_lock, flags);
+	spin_unlock_bh(&bat_priv->orig_hash_lock);
 	start_purge_timer(bat_priv);
 	return 1;
 
 err:
-	spin_unlock_irqrestore(&bat_priv->orig_hash_lock, flags);
+	spin_unlock_bh(&bat_priv->orig_hash_lock);
 	return 0;
 }
 
@@ -107,17 +108,15 @@ static void free_orig_node(void *data, void *arg)
 
 void originator_free(struct bat_priv *bat_priv)
 {
-	unsigned long flags;
-
 	if (!bat_priv->orig_hash)
 		return;
 
 	cancel_delayed_work_sync(&bat_priv->orig_work);
 
-	spin_lock_irqsave(&bat_priv->orig_hash_lock, flags);
+	spin_lock_bh(&bat_priv->orig_hash_lock);
 	hash_delete(bat_priv->orig_hash, free_orig_node, bat_priv);
 	bat_priv->orig_hash = NULL;
-	spin_unlock_irqrestore(&bat_priv->orig_hash_lock, flags);
+	spin_unlock_bh(&bat_priv->orig_hash_lock);
 }
 
 /* this function finds or creates an originator entry for the given
@@ -127,8 +126,11 @@ struct orig_node *get_orig_node(struct bat_priv *bat_priv, uint8_t *addr)
 	struct orig_node *orig_node;
 	struct hashtable_t *swaphash;
 	int size;
+	int hash_added;
 
-	orig_node = ((struct orig_node *)hash_find(bat_priv->orig_hash, addr));
+	orig_node = ((struct orig_node *)hash_find(bat_priv->orig_hash,
+						   compare_orig, choose_orig,
+						   addr));
 
 	if (orig_node)
 		return orig_node;
@@ -165,11 +167,13 @@ struct orig_node *get_orig_node(struct bat_priv *bat_priv, uint8_t *addr)
 	if (!orig_node->bcast_own_sum)
 		goto free_bcast_own;
 
-	if (hash_add(bat_priv->orig_hash, orig_node) < 0)
+	hash_added = hash_add(bat_priv->orig_hash, compare_orig, choose_orig,
+			      orig_node);
+	if (hash_added < 0)
 		goto free_bcast_own_sum;
 
 	if (bat_priv->orig_hash->elements * 4 > bat_priv->orig_hash->size) {
-		swaphash = hash_resize(bat_priv->orig_hash,
+		swaphash = hash_resize(bat_priv->orig_hash, choose_orig,
 				       bat_priv->orig_hash->size * 2);
 
 		if (!swaphash)
@@ -265,16 +269,19 @@ static bool purge_orig_node(struct bat_priv *bat_priv,
 static void _purge_orig(struct bat_priv *bat_priv)
 {
 	HASHIT(hashit);
+	struct element_t *bucket;
 	struct orig_node *orig_node;
-	unsigned long flags;
 
-	spin_lock_irqsave(&bat_priv->orig_hash_lock, flags);
+	spin_lock_bh(&bat_priv->orig_hash_lock);
 
 	/* for all origins... */
 	while (hash_iterate(bat_priv->orig_hash, &hashit)) {
-		orig_node = hashit.bucket->data;
+		bucket = hlist_entry(hashit.walk, struct element_t, hlist);
+		orig_node = bucket->data;
 
 		if (purge_orig_node(bat_priv, orig_node)) {
+			if (orig_node->gw_flags)
+				gw_node_delete(bat_priv, orig_node);
 			hash_remove_bucket(bat_priv->orig_hash, &hashit);
 			free_orig_node(orig_node, bat_priv);
 		}
@@ -284,8 +291,12 @@ static void _purge_orig(struct bat_priv *bat_priv)
 			frag_list_free(&orig_node->frag_list);
 	}
 
-	spin_unlock_irqrestore(&bat_priv->orig_hash_lock, flags);
+	spin_unlock_bh(&bat_priv->orig_hash_lock);
 
+	gw_node_purge(bat_priv);
+	gw_election(bat_priv);
+
+	softif_neigh_purge(bat_priv);
 }
 
 static void purge_orig(struct work_struct *work)
@@ -307,6 +318,7 @@ void purge_orig_ref(struct bat_priv *bat_priv)
 int orig_seq_print_text(struct seq_file *seq, void *offset)
 {
 	HASHIT(hashit);
+	struct element_t *bucket;
 	struct net_device *net_dev = (struct net_device *)seq->private;
 	struct bat_priv *bat_priv = netdev_priv(net_dev);
 	struct orig_node *orig_node;
@@ -314,7 +326,6 @@ int orig_seq_print_text(struct seq_file *seq, void *offset)
 	int batman_count = 0;
 	int last_seen_secs;
 	int last_seen_msecs;
-	unsigned long flags;
 
 	if ((!bat_priv->primary_if) ||
 	    (bat_priv->primary_if->if_status != IF_ACTIVE)) {
@@ -336,11 +347,11 @@ int orig_seq_print_text(struct seq_file *seq, void *offset)
 		   "Originator", "last-seen", "#", TQ_MAX_VALUE, "Nexthop",
 		   "outgoingIF", "Potential nexthops");
 
-	spin_lock_irqsave(&bat_priv->orig_hash_lock, flags);
+	spin_lock_bh(&bat_priv->orig_hash_lock);
 
 	while (hash_iterate(bat_priv->orig_hash, &hashit)) {
-
-		orig_node = hashit.bucket->data;
+		bucket = hlist_entry(hashit.walk, struct element_t, hlist);
+		orig_node = bucket->data;
 
 		if (!orig_node->router)
 			continue;
@@ -367,7 +378,7 @@ int orig_seq_print_text(struct seq_file *seq, void *offset)
 		batman_count++;
 	}
 
-	spin_unlock_irqrestore(&bat_priv->orig_hash_lock, flags);
+	spin_unlock_bh(&bat_priv->orig_hash_lock);
 
 	if ((batman_count == 0))
 		seq_printf(seq, "No batman nodes in range ...\n");
@@ -409,25 +420,26 @@ int orig_hash_add_if(struct batman_if *batman_if, int max_if_num)
 {
 	struct bat_priv *bat_priv = netdev_priv(batman_if->soft_iface);
 	struct orig_node *orig_node;
-	unsigned long flags;
 	HASHIT(hashit);
+	struct element_t *bucket;
 
 	/* resize all orig nodes because orig_node->bcast_own(_sum) depend on
 	 * if_num */
-	spin_lock_irqsave(&bat_priv->orig_hash_lock, flags);
+	spin_lock_bh(&bat_priv->orig_hash_lock);
 
 	while (hash_iterate(bat_priv->orig_hash, &hashit)) {
-		orig_node = hashit.bucket->data;
+		bucket = hlist_entry(hashit.walk, struct element_t, hlist);
+		orig_node = bucket->data;
 
 		if (orig_node_add_if(orig_node, max_if_num) == -1)
 			goto err;
 	}
 
-	spin_unlock_irqrestore(&bat_priv->orig_hash_lock, flags);
+	spin_unlock_bh(&bat_priv->orig_hash_lock);
 	return 0;
 
 err:
-	spin_unlock_irqrestore(&bat_priv->orig_hash_lock, flags);
+	spin_unlock_bh(&bat_priv->orig_hash_lock);
 	return -ENOMEM;
 }
 
@@ -488,16 +500,17 @@ int orig_hash_del_if(struct batman_if *batman_if, int max_if_num)
 	struct bat_priv *bat_priv = netdev_priv(batman_if->soft_iface);
 	struct batman_if *batman_if_tmp;
 	struct orig_node *orig_node;
-	unsigned long flags;
 	HASHIT(hashit);
+	struct element_t *bucket;
 	int ret;
 
 	/* resize all orig nodes because orig_node->bcast_own(_sum) depend on
 	 * if_num */
-	spin_lock_irqsave(&bat_priv->orig_hash_lock, flags);
+	spin_lock_bh(&bat_priv->orig_hash_lock);
 
 	while (hash_iterate(bat_priv->orig_hash, &hashit)) {
-		orig_node = hashit.bucket->data;
+		bucket = hlist_entry(hashit.walk, struct element_t, hlist);
+		orig_node = bucket->data;
 
 		ret = orig_node_del_if(orig_node, max_if_num,
 				       batman_if->if_num);
@@ -524,10 +537,10 @@ int orig_hash_del_if(struct batman_if *batman_if, int max_if_num)
 	rcu_read_unlock();
 
 	batman_if->if_num = -1;
-	spin_unlock_irqrestore(&bat_priv->orig_hash_lock, flags);
+	spin_unlock_bh(&bat_priv->orig_hash_lock);
 	return 0;
 
 err:
-	spin_unlock_irqrestore(&bat_priv->orig_hash_lock, flags);
+	spin_unlock_bh(&bat_priv->orig_hash_lock);
 	return -ENOMEM;
 }

@@ -27,6 +27,9 @@
 #include "translation-table.h"
 #include "originator.h"
 #include "hard-interface.h"
+#include "gateway_common.h"
+#include "gateway_client.h"
+#include "soft-interface.h"
 #include "vis.h"
 #include "icmp_socket.h"
 
@@ -53,12 +56,11 @@ static int fdebug_log(struct debug_log *debug_log, char *fmt, ...)
 	va_list args;
 	static char debug_log_buf[256];
 	char *p;
-	unsigned long flags;
 
 	if (!debug_log)
 		return 0;
 
-	spin_lock_irqsave(&debug_log->lock, flags);
+	spin_lock_bh(&debug_log->lock);
 	va_start(args, fmt);
 	printed_len = vscnprintf(debug_log_buf, sizeof(debug_log_buf),
 				 fmt, args);
@@ -67,7 +69,7 @@ static int fdebug_log(struct debug_log *debug_log, char *fmt, ...)
 	for (p = debug_log_buf; *p != 0; p++)
 		emit_log_char(debug_log, *p);
 
-	spin_unlock_irqrestore(&debug_log->lock, flags);
+	spin_unlock_bh(&debug_log->lock);
 
 	wake_up(&debug_log->queue_wait);
 
@@ -109,7 +111,6 @@ static ssize_t log_read(struct file *file, char __user *buf,
 	struct debug_log *debug_log = bat_priv->debug_log;
 	int error, i = 0;
 	char c;
-	unsigned long flags;
 
 	if ((file->f_flags & O_NONBLOCK) &&
 	    !(debug_log->log_end - debug_log->log_start))
@@ -130,7 +131,7 @@ static ssize_t log_read(struct file *file, char __user *buf,
 	if (error)
 		return error;
 
-	spin_lock_irqsave(&debug_log->lock, flags);
+	spin_lock_bh(&debug_log->lock);
 
 	while ((!error) && (i < count) &&
 	       (debug_log->log_start != debug_log->log_end)) {
@@ -138,18 +139,18 @@ static ssize_t log_read(struct file *file, char __user *buf,
 
 		debug_log->log_start++;
 
-		spin_unlock_irqrestore(&debug_log->lock, flags);
+		spin_unlock_bh(&debug_log->lock);
 
 		error = __put_user(c, buf);
 
-		spin_lock_irqsave(&debug_log->lock, flags);
+		spin_lock_bh(&debug_log->lock);
 
 		buf++;
 		i++;
 
 	}
 
-	spin_unlock_irqrestore(&debug_log->lock, flags);
+	spin_unlock_bh(&debug_log->lock);
 
 	if (!error)
 		return i;
@@ -227,6 +228,18 @@ static int originators_open(struct inode *inode, struct file *file)
 	return single_open(file, orig_seq_print_text, net_dev);
 }
 
+static int gateways_open(struct inode *inode, struct file *file)
+{
+	struct net_device *net_dev = (struct net_device *)inode->i_private;
+	return single_open(file, gw_client_seq_print_text, net_dev);
+}
+
+static int softif_neigh_open(struct inode *inode, struct file *file)
+{
+	struct net_device *net_dev = (struct net_device *)inode->i_private;
+	return single_open(file, softif_neigh_seq_print_text, net_dev);
+}
+
 static int transtable_global_open(struct inode *inode, struct file *file)
 {
 	struct net_device *net_dev = (struct net_device *)inode->i_private;
@@ -263,12 +276,16 @@ struct bat_debuginfo bat_debuginfo_##_name = {	\
 };
 
 static BAT_DEBUGINFO(originators, S_IRUGO, originators_open);
+static BAT_DEBUGINFO(gateways, S_IRUGO, gateways_open);
+static BAT_DEBUGINFO(softif_neigh, S_IRUGO, softif_neigh_open);
 static BAT_DEBUGINFO(transtable_global, S_IRUGO, transtable_global_open);
 static BAT_DEBUGINFO(transtable_local, S_IRUGO, transtable_local_open);
 static BAT_DEBUGINFO(vis_data, S_IRUGO, vis_data_open);
 
 static struct bat_debuginfo *mesh_debuginfos[] = {
 	&bat_debuginfo_originators,
+	&bat_debuginfo_gateways,
+	&bat_debuginfo_softif_neigh,
 	&bat_debuginfo_transtable_global,
 	&bat_debuginfo_transtable_local,
 	&bat_debuginfo_vis_data,

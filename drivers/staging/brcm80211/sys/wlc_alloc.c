@@ -17,22 +17,27 @@
 #include <linux/string.h>
 #include <bcmdefs.h>
 #include <wlc_cfg.h>
-#include <linuxver.h>
+#include <linux/module.h>
+#include <linux/pci.h>
 #include <osl.h>
 #include <bcmutils.h>
 #include <siutils.h>
 #include <wlioctl.h>
 #include <wlc_pub.h>
 #include <wlc_key.h>
+#include <sbhndpio.h>
+#include <sbhnddma.h>
+#include <wlc_event.h>
 #include <wlc_mac80211.h>
 #include <wlc_alloc.h>
+#include <wl_dbg.h>
 
-static wlc_pub_t *wlc_pub_malloc(osl_t *osh, uint unit, uint *err,
+static wlc_pub_t *wlc_pub_malloc(struct osl_info *osh, uint unit, uint *err,
 				 uint devid);
-static void wlc_pub_mfree(osl_t *osh, wlc_pub_t *pub);
+static void wlc_pub_mfree(struct osl_info *osh, wlc_pub_t *pub);
 static void wlc_tunables_init(wlc_tunables_t *tunables, uint devid);
 
-void *wlc_calloc(osl_t *osh, uint unit, uint size)
+void *wlc_calloc(struct osl_info *osh, uint unit, uint size)
 {
 	void *item;
 
@@ -58,14 +63,10 @@ void wlc_tunables_init(wlc_tunables_t *tunables, uint devid)
 	tunables->ampdudatahiwat = WLC_AMPDUDATAHIWAT;
 	tunables->rxbnd = RXBND;
 	tunables->txsbnd = TXSBND;
-#if defined(WLC_HIGH_ONLY) && defined(NTXD_USB_4319)
-	if (devid == BCM4319_CHIP_ID) {
-		tunables->ntxd = NTXD_USB_4319;
-	}
-#endif				/* WLC_HIGH_ONLY */
 }
 
-static wlc_pub_t *wlc_pub_malloc(osl_t *osh, uint unit, uint *err, uint devid)
+static wlc_pub_t *wlc_pub_malloc(struct osl_info *osh, uint unit, uint *err,
+				 uint devid)
 {
 	wlc_pub_t *pub;
 
@@ -99,7 +100,7 @@ static wlc_pub_t *wlc_pub_malloc(osl_t *osh, uint unit, uint *err, uint devid)
 	return NULL;
 }
 
-static void wlc_pub_mfree(osl_t *osh, wlc_pub_t *pub)
+static void wlc_pub_mfree(struct osl_info *osh, wlc_pub_t *pub)
 {
 	if (pub == NULL)
 		return;
@@ -114,7 +115,7 @@ static void wlc_pub_mfree(osl_t *osh, wlc_pub_t *pub)
 	kfree(pub);
 }
 
-wlc_bsscfg_t *wlc_bsscfg_malloc(osl_t *osh, uint unit)
+wlc_bsscfg_t *wlc_bsscfg_malloc(struct osl_info *osh, uint unit)
 {
 	wlc_bsscfg_t *cfg;
 
@@ -134,7 +135,7 @@ wlc_bsscfg_t *wlc_bsscfg_malloc(osl_t *osh, uint unit)
 	return NULL;
 }
 
-void wlc_bsscfg_mfree(osl_t *osh, wlc_bsscfg_t *cfg)
+void wlc_bsscfg_mfree(struct osl_info *osh, wlc_bsscfg_t *cfg)
 {
 	if (cfg == NULL)
 		return;
@@ -164,7 +165,8 @@ void wlc_bsscfg_ID_assign(wlc_info_t *wlc, wlc_bsscfg_t *bsscfg)
 /*
  * The common driver entry routine. Error codes should be unique
  */
-wlc_info_t *wlc_attach_malloc(osl_t *osh, uint unit, uint *err, uint devid)
+wlc_info_t *wlc_attach_malloc(struct osl_info *osh, uint unit, uint *err,
+			      uint devid)
 {
 	wlc_info_t *wlc;
 
@@ -194,7 +196,6 @@ wlc_info_t *wlc_attach_malloc(osl_t *osh, uint unit, uint *err, uint devid)
 	}
 	wlc->hw->wlc = wlc;
 
-#ifdef WLC_LOW
 	wlc->hw->bandstate[0] = (wlc_hwband_t *)wlc_calloc(osh, unit,
 		(sizeof(wlc_hwband_t) * MAXBANDS));
 	if (wlc->hw->bandstate[0] == NULL) {
@@ -209,7 +210,6 @@ wlc_info_t *wlc_attach_malloc(osl_t *osh, uint unit, uint *err, uint devid)
 			     (sizeof(wlc_hwband_t) * i));
 		}
 	}
-#endif				/* WLC_LOW */
 
 	wlc->modulecb = (modulecb_t *)wlc_calloc(osh, unit,
 		sizeof(modulecb_t) * WLC_MAXMODULES);
@@ -301,7 +301,7 @@ wlc_info_t *wlc_attach_malloc(osl_t *osh, uint unit, uint *err, uint devid)
 	return NULL;
 }
 
-void wlc_detach_mfree(wlc_info_t *wlc, osl_t *osh)
+void wlc_detach_mfree(wlc_info_t *wlc, struct osl_info *osh)
 {
 	if (wlc == NULL)
 		return;
@@ -355,12 +355,10 @@ void wlc_detach_mfree(wlc_info_t *wlc, osl_t *osh)
 	}
 
 	if (wlc->hw) {
-#ifdef WLC_LOW
 		if (wlc->hw->bandstate[0]) {
 			kfree(wlc->hw->bandstate[0]);
 			wlc->hw->bandstate[0] = NULL;
 		}
-#endif
 
 		/* free hw struct */
 		kfree(wlc->hw);
