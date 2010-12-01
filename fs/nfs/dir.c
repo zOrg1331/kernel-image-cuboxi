@@ -639,6 +639,7 @@ int nfs_readdir_filler(nfs_readdir_descriptor_t *desc, struct page* page)
 static
 void cache_page_release(nfs_readdir_descriptor_t *desc)
 {
+	unlock_page(desc->page);
 	page_cache_release(desc->page);
 	desc->page = NULL;
 }
@@ -646,8 +647,20 @@ void cache_page_release(nfs_readdir_descriptor_t *desc)
 static
 struct page *get_cache_page(nfs_readdir_descriptor_t *desc)
 {
-	return read_cache_page(desc->file->f_path.dentry->d_inode->i_mapping,
+	struct page *page;
+
+	for (;;) {
+		page = read_cache_page(desc->file->f_path.dentry->d_inode->i_mapping,
 			desc->page_index, (filler_t *)nfs_readdir_filler, desc);
+		if (IS_ERR(page))
+			break;
+		lock_page(page);
+		if (page->mapping != NULL && PageUptodate(page))
+			break;
+		unlock_page(page);
+		page_cache_release(page);
+	}
+	return page;
 }
 
 /*
@@ -771,6 +784,7 @@ int uncached_readdir(nfs_readdir_descriptor_t *desc, void *dirent,
 	desc->page_index = 0;
 	desc->last_cookie = *desc->dir_cookie;
 	desc->page = page;
+	lock_page(page);
 
 	status = nfs_readdir_xdr_to_array(desc, page, inode);
 	if (status < 0)
