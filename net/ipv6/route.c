@@ -558,11 +558,7 @@ struct rt6_info *rt6_lookup(struct net *net, const struct in6_addr *daddr,
 {
 	struct flowi fl = {
 		.oif = oif,
-		.nl_u = {
-			.ip6_u = {
-				.daddr = *daddr,
-			},
-		},
+		.fl6_dst = *daddr,
 	};
 	struct dst_entry *dst;
 	int flags = strict ? RT6_LOOKUP_F_IFACE : 0;
@@ -778,13 +774,9 @@ void ip6_route_input(struct sk_buff *skb)
 	int flags = RT6_LOOKUP_F_HAS_SADDR;
 	struct flowi fl = {
 		.iif = skb->dev->ifindex,
-		.nl_u = {
-			.ip6_u = {
-				.daddr = iph->daddr,
-				.saddr = iph->saddr,
-				.flowlabel = (* (__be32 *) iph)&IPV6_FLOWINFO_MASK,
-			},
-		},
+		.fl6_dst = iph->daddr,
+		.fl6_src = iph->saddr,
+		.fl6_flowlabel = (* (__be32 *) iph)&IPV6_FLOWINFO_MASK,
 		.mark = skb->mark,
 		.proto = iph->nexthdr,
 	};
@@ -1463,12 +1455,8 @@ static struct rt6_info *ip6_route_redirect(struct in6_addr *dest,
 	struct ip6rd_flowi rdfl = {
 		.fl = {
 			.oif = dev->ifindex,
-			.nl_u = {
-				.ip6_u = {
-					.daddr = *dest,
-					.saddr = *src,
-				},
-			},
+			.fl6_dst = *dest,
+			.fl6_src = *src,
 		},
 	};
 
@@ -2464,8 +2452,6 @@ static int ip6_route_dev_notify(struct notifier_block *this,
  */
 
 #ifdef CONFIG_PROC_FS
-
-#define RT6_INFO_LEN (32 + 4 + 32 + 4 + 32 + 40 + 5 + 1)
 
 struct rt6_proc_arg
 {

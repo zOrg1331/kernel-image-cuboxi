@@ -1557,11 +1557,18 @@ static void dev_queue_xmit_nit(struct sk_buff *skb, struct net_device *dev)
  */
 int netif_set_real_num_tx_queues(struct net_device *dev, unsigned int txq)
 {
+	int rc;
+
 	if (txq < 1 || txq > dev->num_tx_queues)
 		return -EINVAL;
 
 	if (dev->reg_state == NETREG_REGISTERED) {
 		ASSERT_RTNL();
+
+		rc = netdev_queue_update_kobjects(dev, dev->real_num_tx_queues,
+						  txq);
+		if (rc)
+			return rc;
 
 		if (txq < dev->real_num_tx_queues)
 			qdisc_reset_all_tx_gt(dev, txq);
@@ -1794,16 +1801,18 @@ struct sk_buff *skb_gso_segment(struct sk_buff *skb, int features)
 	struct sk_buff *segs = ERR_PTR(-EPROTONOSUPPORT);
 	struct packet_type *ptype;
 	__be16 type = skb->protocol;
+	int vlan_depth = ETH_HLEN;
 	int err;
 
-	if (type == htons(ETH_P_8021Q)) {
-		struct vlan_ethhdr *veh;
+	while (type == htons(ETH_P_8021Q)) {
+		struct vlan_hdr *vh;
 
-		if (unlikely(!pskb_may_pull(skb, VLAN_ETH_HLEN)))
+		if (unlikely(!pskb_may_pull(skb, vlan_depth + VLAN_HLEN)))
 			return ERR_PTR(-EINVAL);
 
-		veh = (struct vlan_ethhdr *)skb->data;
-		type = veh->h_vlan_encapsulated_proto;
+		vh = (struct vlan_hdr *)(skb->data + vlan_depth);
+		type = vh->h_vlan_encapsulated_proto;
+		vlan_depth += VLAN_HLEN;
 	}
 
 	skb_reset_mac_header(skb);
@@ -1817,8 +1826,7 @@ struct sk_buff *skb_gso_segment(struct sk_buff *skb, int features)
 		if (dev && dev->ethtool_ops && dev->ethtool_ops->get_drvinfo)
 			dev->ethtool_ops->get_drvinfo(dev, &info);
 
-		WARN(1, "%s: caps=(0x%lx, 0x%lx) len=%d data_len=%d "
-			"ip_summed=%d",
+		WARN(1, "%s: caps=(0x%lx, 0x%lx) len=%d data_len=%d ip_summed=%d\n",
 		     info.driver, dev ? dev->features : 0L,
 		     skb->sk ? skb->sk->sk_route_caps : 0L,
 		     skb->len, skb->data_len, skb->ip_summed);
@@ -1967,6 +1975,23 @@ static inline void skb_orphan_try(struct sk_buff *skb)
 	}
 }
 
+int netif_get_vlan_features(struct sk_buff *skb, struct net_device *dev)
+{
+	__be16 protocol = skb->protocol;
+
+	if (protocol == htons(ETH_P_8021Q)) {
+		struct vlan_ethhdr *veh = (struct vlan_ethhdr *)skb->data;
+		protocol = veh->h_vlan_encapsulated_proto;
+	} else if (!skb->vlan_tci)
+		return dev->features;
+
+	if (protocol != htons(ETH_P_8021Q))
+		return dev->features & dev->vlan_features;
+	else
+		return 0;
+}
+EXPORT_SYMBOL(netif_get_vlan_features);
+
 /*
  * Returns true if either:
  *	1. skb has frag_list and the device doesn't support FRAGLIST, or
@@ -1977,15 +2002,20 @@ static inline void skb_orphan_try(struct sk_buff *skb)
 static inline int skb_needs_linearize(struct sk_buff *skb,
 				      struct net_device *dev)
 {
-	int features = dev->features;
+	if (skb_is_nonlinear(skb)) {
+		int features = dev->features;
 
-	if (skb->protocol == htons(ETH_P_8021Q) || vlan_tx_tag_present(skb))
-		features &= dev->vlan_features;
+		if (vlan_tx_tag_present(skb))
+			features &= dev->vlan_features;
 
-	return skb_is_nonlinear(skb) &&
-	       ((skb_has_frag_list(skb) && !(features & NETIF_F_FRAGLIST)) ||
-		(skb_shinfo(skb)->nr_frags && (!(features & NETIF_F_SG) ||
-					      illegal_highdma(dev, skb))));
+		return (skb_has_frag_list(skb) &&
+			!(features & NETIF_F_FRAGLIST)) ||
+			(skb_shinfo(skb)->nr_frags &&
+			(!(features & NETIF_F_SG) ||
+			illegal_highdma(dev, skb)));
+	}
+
+	return 0;
 }
 
 int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
@@ -2119,26 +2149,70 @@ static inline u16 dev_cap_txqueue(struct net_device *dev, u16 queue_index)
 	return queue_index;
 }
 
+static inline int get_xps_queue(struct net_device *dev, struct sk_buff *skb)
+{
+#ifdef CONFIG_XPS
+	struct xps_dev_maps *dev_maps;
+	struct xps_map *map;
+	int queue_index = -1;
+
+	rcu_read_lock();
+	dev_maps = rcu_dereference(dev->xps_maps);
+	if (dev_maps) {
+		map = rcu_dereference(
+		    dev_maps->cpu_map[raw_smp_processor_id()]);
+		if (map) {
+			if (map->len == 1)
+				queue_index = map->queues[0];
+			else {
+				u32 hash;
+				if (skb->sk && skb->sk->sk_hash)
+					hash = skb->sk->sk_hash;
+				else
+					hash = (__force u16) skb->protocol ^
+					    skb->rxhash;
+				hash = jhash_1word(hash, hashrnd);
+				queue_index = map->queues[
+				    ((u64)hash * map->len) >> 32];
+			}
+			if (unlikely(queue_index >= dev->real_num_tx_queues))
+				queue_index = -1;
+		}
+	}
+	rcu_read_unlock();
+
+	return queue_index;
+#else
+	return -1;
+#endif
+}
+
 static struct netdev_queue *dev_pick_tx(struct net_device *dev,
 					struct sk_buff *skb)
 {
 	int queue_index;
 	const struct net_device_ops *ops = dev->netdev_ops;
 
-	if (ops->ndo_select_queue) {
+	if (dev->real_num_tx_queues == 1)
+		queue_index = 0;
+	else if (ops->ndo_select_queue) {
 		queue_index = ops->ndo_select_queue(dev, skb);
 		queue_index = dev_cap_txqueue(dev, queue_index);
 	} else {
 		struct sock *sk = skb->sk;
 		queue_index = sk_tx_queue_get(sk);
-		if (queue_index < 0 || queue_index >= dev->real_num_tx_queues) {
 
-			queue_index = 0;
-			if (dev->real_num_tx_queues > 1)
+		if (queue_index < 0 || skb->ooo_okay ||
+		    queue_index >= dev->real_num_tx_queues) {
+			int old_index = queue_index;
+
+			queue_index = get_xps_queue(dev, skb);
+			if (queue_index < 0)
 				queue_index = skb_tx_hash(dev, skb);
 
-			if (sk) {
-				struct dst_entry *dst = rcu_dereference_check(sk->sk_dst_cache, 1);
+			if (queue_index != old_index && sk) {
+				struct dst_entry *dst =
+				    rcu_dereference_check(sk->sk_dst_cache, 1);
 
 				if (dst && skb_dst(skb) == dst)
 					sk_tx_queue_set(sk, queue_index);
@@ -5014,9 +5088,9 @@ void netif_stacked_transfer_operstate(const struct net_device *rootdev,
 }
 EXPORT_SYMBOL(netif_stacked_transfer_operstate);
 
+#ifdef CONFIG_RPS
 static int netif_alloc_rx_queues(struct net_device *dev)
 {
-#ifdef CONFIG_RPS
 	unsigned int i, count = dev->num_rx_queues;
 	struct netdev_rx_queue *rx;
 
@@ -5029,20 +5103,17 @@ static int netif_alloc_rx_queues(struct net_device *dev)
 	}
 	dev->_rx = rx;
 
-	/*
-	 * Set a pointer to first element in the array which holds the
-	 * reference count.
-	 */
 	for (i = 0; i < count; i++)
-		rx[i].first = rx;
-#endif
+		rx[i].dev = dev;
 	return 0;
 }
+#endif
 
 static int netif_alloc_netdev_queues(struct net_device *dev)
 {
 	unsigned int count = dev->num_tx_queues;
 	struct netdev_queue *tx;
+	int i;
 
 	BUG_ON(count < 1);
 
@@ -5053,6 +5124,10 @@ static int netif_alloc_netdev_queues(struct net_device *dev)
 		return -ENOMEM;
 	}
 	dev->_tx = tx;
+
+	for (i = 0; i < count; i++)
+		tx[i].dev = dev;
+
 	return 0;
 }
 
@@ -5060,8 +5135,6 @@ static void netdev_init_one_queue(struct net_device *dev,
 				  struct netdev_queue *queue,
 				  void *_unused)
 {
-	queue->dev = dev;
-
 	/* Initialize queue lock */
 	spin_lock_init(&queue->_xmit_lock);
 	netdev_set_xmit_lockdep_class(&queue->_xmit_lock, dev->type);
@@ -5109,14 +5182,6 @@ int register_netdevice(struct net_device *dev)
 	netdev_set_addr_lockdep_class(dev);
 
 	dev->iflink = -1;
-
-	ret = netif_alloc_rx_queues(dev);
-	if (ret)
-		goto out;
-
-	ret = netif_alloc_netdev_queues(dev);
-	if (ret)
-		goto out;
 
 	netdev_init_queues(dev);
 
@@ -5577,10 +5642,14 @@ struct net_device *alloc_netdev_mq(int sizeof_priv, const char *name,
 
 	dev->num_tx_queues = queue_count;
 	dev->real_num_tx_queues = queue_count;
+	if (netif_alloc_netdev_queues(dev))
+		goto free_pcpu;
 
 #ifdef CONFIG_RPS
 	dev->num_rx_queues = queue_count;
 	dev->real_num_rx_queues = queue_count;
+	if (netif_alloc_rx_queues(dev))
+		goto free_pcpu;
 #endif
 
 	dev->gso_max_size = GSO_MAX_SIZE;
@@ -5597,6 +5666,11 @@ struct net_device *alloc_netdev_mq(int sizeof_priv, const char *name,
 
 free_pcpu:
 	free_percpu(dev->pcpu_refcnt);
+	kfree(dev->_tx);
+#ifdef CONFIG_RPS
+	kfree(dev->_rx);
+#endif
+
 free_p:
 	kfree(p);
 	return NULL;
@@ -5618,6 +5692,9 @@ void free_netdev(struct net_device *dev)
 	release_net(dev_net(dev));
 
 	kfree(dev->_tx);
+#ifdef CONFIG_RPS
+	kfree(dev->_rx);
+#endif
 
 	kfree(rcu_dereference_raw(dev->ingress_queue));
 
