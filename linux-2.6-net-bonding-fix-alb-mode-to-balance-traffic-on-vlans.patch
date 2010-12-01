@@ -1,0 +1,55 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Thu, 2 Sep 2010 03:20:34 -0400
+Subject: [net] bonding: fix ALB mode to balance traffic on VLANs
+Message-id: <1283397634-18013-1-git-send-email-gospo@redhat.com>
+Patchwork-id: 28007
+O-Subject: [PATCH RHEL5.6] bonding: fix ALB mode to balance traffic on VLANs
+Bugzilla: 578531
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Backport of upstream commits:
+
+d8190dff018ffe932d17cae047c6b3d1c5fc7574 bonding: set device in RLB ARP packet handler
+6146b1a4da98377e4abddc91ba5856bef8f23f1e bonding: Fix ALB mode to balance traffic on VLANs
+2690f8d62e98779c71625dba9a0fd525d8b2263d bonding: Remove debug printk
+
+This patch has been in my test kernels for a while and the reporter has
+verified that they no longer see the lockups they see without this
+patch.
+
+This will resolve RHBZ 578531.
+
+
+diff --git a/drivers/net/bonding/bond_alb.c b/drivers/net/bonding/bond_alb.c
+index ea2e771..51c3644 100644
+--- a/drivers/net/bonding/bond_alb.c
++++ b/drivers/net/bonding/bond_alb.c
+@@ -345,11 +345,15 @@ static void rlb_update_entry_from_arp(struct bonding *bond, struct arp_pkt *arp)
+ 
+ static int rlb_arp_recv(struct sk_buff *skb, struct net_device *bond_dev, struct packet_type *ptype, struct net_device *orig_dev)
+ {
+-	struct bonding *bond = bond_dev->priv;
++	struct bonding *bond;
+ 	struct arp_pkt *arp = (struct arp_pkt *)skb->data;
+ 	int res = NET_RX_DROP;
+ 
+-	if (!(bond_dev->flags & IFF_MASTER))
++	while (bond_dev->priv_flags & IFF_802_1Q_VLAN)
++		bond_dev = VLAN_DEV_INFO(bond_dev)->real_dev;
++
++	if (!(bond_dev->priv_flags & IFF_BONDING) ||
++	    !(bond_dev->flags & IFF_MASTER))
+ 		goto out;
+ 
+ 	if (!arp) {
+@@ -364,6 +368,7 @@ static int rlb_arp_recv(struct sk_buff *skb, struct net_device *bond_dev, struct
+ 
+ 	if (arp->op_code == htons(ARPOP_REPLY)) {
+ 		/* update rx hash table for this ARP */
++		bond = bond_dev->priv;
+ 		rlb_update_entry_from_arp(bond, arp);
+ 		dprintk("Server received an ARP Reply from client\n");
+ 	}

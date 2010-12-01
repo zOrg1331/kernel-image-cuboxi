@@ -1,0 +1,215 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Mon, 30 Aug 2010 17:39:41 -0400
+Subject: [fs] nfsv4: add support for RELEASE_LOCKOWNER operation
+Message-id: <1283189983-10655-4-git-send-email-steved@redhat.com>
+Patchwork-id: 27946
+O-Subject: [RHEL5.5.z PATCH 3/5] NFSv4: Add support for the RELEASE_LOCKOWNER
+	operation
+Bugzilla: 620502
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: J. Bruce Fields <bfields@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+This is needed by NFSv4.0 servers in order to keep the number of locking
+stateids at a manageable level.
+
+Signed-off-by: Steve Dickson <steved@redhat.com>
+
+diff --git a/fs/nfs/nfs4_fs.h b/fs/nfs/nfs4_fs.h
+index 0888827..cd68c23 100644
+--- a/fs/nfs/nfs4_fs.h
++++ b/fs/nfs/nfs4_fs.h
+@@ -171,6 +171,7 @@ extern int nfs4_open_revalidate(struct inode *, struct dentry *, int, struct nam
+ extern int nfs4_server_capabilities(struct nfs_server *server, struct nfs_fh *fhandle);
+ extern int nfs4_proc_fs_locations(struct inode *dir, struct dentry *dentry,
+ 		struct nfs4_fs_locations *fs_locations, struct page *page);
++extern void nfs4_release_lockowner(const struct nfs4_lock_state *);
+ 
+ extern struct nfs4_state_recovery_ops nfs4_reboot_recovery_ops;
+ extern struct nfs4_state_recovery_ops nfs4_network_partition_recovery_ops;
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index 67b5ed1..73a0cb2 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -3682,6 +3682,32 @@ out:
+ 	return err;
+ }
+ 
++static void nfs4_release_lockowner_release(void *calldata)
++{
++	kfree(calldata);
++}
++
++const struct rpc_call_ops nfs4_release_lockowner_ops = {
++	.rpc_release = nfs4_release_lockowner_release,
++};
++
++void nfs4_release_lockowner(const struct nfs4_lock_state *lsp)
++{
++	struct nfs_server *server = NFS_SERVER(lsp->ls_state->inode);
++	struct nfs_release_lockowner_args *args;
++	struct rpc_message msg = {
++		.rpc_proc = &nfs4_procedures[NFSPROC4_CLNT_RELEASE_LOCKOWNER],
++	};
++
++	args = kmalloc(sizeof(*args), GFP_NOFS);
++	if (!args)
++		return;
++	args->lock_owner.clientid = server->nfs_client->cl_clientid;
++	args->lock_owner.id = lsp->ls_id;
++	msg.rpc_argp = args;
++	rpc_call_async(server->client, &msg, 0, &nfs4_release_lockowner_ops, args);
++}
++
+ #define XATTR_NAME_NFSV4_ACL "system.nfs4_acl"
+ 
+ int nfs4_setxattr(struct dentry *dentry, const char *key, const void *buf,
+diff --git a/fs/nfs/nfs4state.c b/fs/nfs/nfs4state.c
+index 34c5268..1fc1ef2 100644
+--- a/fs/nfs/nfs4state.c
++++ b/fs/nfs/nfs4state.c
+@@ -452,6 +452,8 @@ void nfs4_put_lock_state(struct nfs4_lock_state *lsp)
+ 	if (list_empty(&state->lock_states))
+ 		clear_bit(LK_STATE_IN_USE, &state->flags);
+ 	spin_unlock(&state->state_lock);
++	if (lsp->ls_flags & NFS_LOCK_INITIALIZED)
++		nfs4_release_lockowner(lsp);
+ 	kfree(lsp);
+ }
+ 
+diff --git a/fs/nfs/nfs4xdr.c b/fs/nfs/nfs4xdr.c
+index cc49973..fdcbda7 100644
+--- a/fs/nfs/nfs4xdr.c
++++ b/fs/nfs/nfs4xdr.c
+@@ -71,6 +71,7 @@ static int nfs4_stat_to_errno(int);
+  * we currently use size 1 (u32) out of (NFS4_OPAQUE_LIMIT  >> 2)
+  */
+ #define owner_id_maxsz          (1 + 1)
++#define decode_lockowner_maxsz  (1 + XDR_QUADLEN(IDMAP_NAMESZ))
+ #define compound_encode_hdr_maxsz	(3 + (NFS4_MAXTAGLEN >> 2))
+ #define compound_decode_hdr_maxsz	(3 + (NFS4_MAXTAGLEN >> 2))
+ #define op_encode_hdr_maxsz	(1)
+@@ -126,6 +127,7 @@ static int nfs4_stat_to_errno(int);
+ #define encode_link_maxsz	(op_encode_hdr_maxsz + \
+ 				nfs4_name_maxsz)
+ #define decode_link_maxsz	(op_decode_hdr_maxsz + 5)
++#define encode_lockowner_maxsz  (7)
+ #define encode_symlink_maxsz	(op_encode_hdr_maxsz + \
+ 				1 + nfs4_name_maxsz + \
+ 				1 + \
+@@ -278,6 +280,12 @@ static int nfs4_stat_to_errno(int);
+ 				decode_putfh_maxsz + \
+ 				decode_getattr_maxsz + \
+ 				op_decode_hdr_maxsz + 4)
++#define NFS4_enc_release_lockowner_sz \
++                (compound_encode_hdr_maxsz + \
++                 encode_lockowner_maxsz)
++#define NFS4_dec_release_lockowner_sz \
++                (compound_decode_hdr_maxsz + \
++                 decode_lockowner_maxsz)
+ #define NFS4_enc_access_sz	(compound_encode_hdr_maxsz + \
+ 				encode_putfh_maxsz + \
+ 				op_encode_hdr_maxsz + 1)
+@@ -845,6 +853,14 @@ static int encode_locku(struct xdr_stream *xdr, const struct nfs_locku_args *arg
+ 
+ 	return 0;
+ }
++static void encode_release_lockowner(struct xdr_stream *xdr, const struct nfs_lowner *lowner)
++{
++	uint32_t *p;
++
++	RESERVE_SPACE(4);
++	WRITE32(OP_RELEASE_LOCKOWNER);
++	encode_lockowner(xdr, lowner);
++}
+ 
+ static int encode_lookup(struct xdr_stream *xdr, const struct qstr *name)
+ {
+@@ -1693,6 +1709,19 @@ out:
+ 	return status;
+ }
+ 
++static int nfs4_xdr_enc_release_lockowner(struct rpc_rqst *req, __be32 *p, struct nfs_release_lockowner_args *args)
++{
++	struct xdr_stream xdr;
++	struct compound_hdr hdr = {
++		.nops = 1,
++	};
++
++	xdr_init_encode(&xdr, &req->rq_snd_buf, p);
++	encode_compound_hdr(&xdr, &hdr);
++	encode_release_lockowner(&xdr, &args->lock_owner);
++	return 0;
++}
++
+ /*
+  * Encode a READLINK request
+  */
+@@ -3214,6 +3243,11 @@ static int decode_locku(struct xdr_stream *xdr, struct nfs_locku_res *res)
+ 	return status;
+ }
+ 
++static int decode_release_lockowner(struct xdr_stream *xdr)
++{
++	return decode_op_hdr(xdr, OP_RELEASE_LOCKOWNER);
++}
++
+ static int decode_lookup(struct xdr_stream *xdr)
+ {
+ 	return decode_op_hdr(xdr, OP_LOOKUP);
+@@ -4155,6 +4189,19 @@ out:
+ 	return status;
+ }
+ 
++static int nfs4_xdr_dec_release_lockowner(struct rpc_rqst *rqstp, __be32 *p, void *dummy)
++{
++	struct xdr_stream xdr;
++	struct compound_hdr hdr;
++	int status;
++
++	xdr_init_decode(&xdr, &rqstp->rq_rcv_buf, p);
++	status = decode_compound_hdr(&xdr, &hdr);
++	if (!status)
++		status = decode_release_lockowner(&xdr);
++	return status;
++}
++
+ /*
+  * Decode READLINK response
+  */
+@@ -4621,6 +4668,7 @@ struct rpc_procinfo	nfs4_procedures[] = {
+   PROC(GETACL,		enc_getacl,	dec_getacl),
+   PROC(SETACL,		enc_setacl,	dec_setacl),
+   PROC(FS_LOCATIONS,	enc_fs_locations, dec_fs_locations),
++  PROC(RELEASE_LOCKOWNER, enc_release_lockowner, dec_release_lockowner),
+ };
+ 
+ struct rpc_version		nfs_version4 = {
+diff --git a/include/linux/nfs4.h b/include/linux/nfs4.h
+index 4397ed9..53bc193 100644
+--- a/include/linux/nfs4.h
++++ b/include/linux/nfs4.h
+@@ -391,6 +391,7 @@ enum {
+ 	NFSPROC4_CLNT_GETACL,
+ 	NFSPROC4_CLNT_SETACL,
+ 	NFSPROC4_CLNT_FS_LOCATIONS,
++	NFSPROC4_CLNT_RELEASE_LOCKOWNER,
+ };
+ 
+ #endif
+diff --git a/include/linux/nfs_xdr.h b/include/linux/nfs_xdr.h
+index e05943f..1d7c25f 100644
+--- a/include/linux/nfs_xdr.h
++++ b/include/linux/nfs_xdr.h
+@@ -225,6 +225,10 @@ struct nfs_lockt_res {
+ 	struct file_lock *	denied; /* LOCK, LOCKT failed */
+ };
+ 
++struct nfs_release_lockowner_args {
++	struct nfs_lowner	lock_owner;
++};
++
+ struct nfs4_delegreturnargs {
+ 	const struct nfs_fh *fhandle;
+ 	const nfs4_stateid *stateid;

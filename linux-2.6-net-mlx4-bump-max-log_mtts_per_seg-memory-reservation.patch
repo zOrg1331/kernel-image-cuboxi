@@ -1,0 +1,48 @@
+From: Jay Fenlason <fenlason@redhat.com>
+Date: Mon, 27 Sep 2010 16:07:50 -0400
+Subject: [net] mlx4: bump max log_mtts_per_seg memory reservation
+Message-id: <20100927160750.GB15427@redhat.com>
+Patchwork-id: 28422
+O-Subject: [PATCH RHEL-5] bz636198 Add OFED-1.5.2 patch to increase
+	log_mtts_per_seg for 5.5z-stream
+Bugzilla: 636198
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+This patch increases the maximum amount of memory the mlx4 driver can
+register, because customers are running on machines with more memory now
+and are hitting this limit.  It has no effect on anything except the
+mxl4 driver and only if you attempt to pass a previouly too-large size
+to the driver.
+
+Please review and ack.
+
+-----------------------------------------------------------------------------
+As there are now machines with more physical memory, we need to be able to
+register more memory. This patch lifts the upper limit of log_mtts_per_seg from
+5 to 7, increasing the amount of memory that can be registered.
+
+Signed-off-by: Eli Cohen <eli@dev.mellanox.co.il>
+Rediffed by Jay Fenlason <fenlason@redhat.com> for 2.6.18.el5
+
+diff --git a/drivers/net/mlx4/main.c b/drivers/net/mlx4/main.c
+index 185a634..713004a 100644
+--- a/drivers/net/mlx4/main.c
++++ b/drivers/net/mlx4/main.c
+@@ -135,7 +135,7 @@ MODULE_PARM_DESC(log_num_mtt,
+ 
+ static int log_mtts_per_seg = ilog2(MLX4_MTT_ENTRY_PER_SEG);
+ module_param_named(log_mtts_per_seg, log_mtts_per_seg, int, 0444);
+-MODULE_PARM_DESC(log_mtts_per_seg, "Log2 number of MTT entries per segment (1-5)");
++MODULE_PARM_DESC(log_mtts_per_seg, "Log2 number of MTT entries per segment (1-7)");
+ 
+ static void process_mod_param_profile(void)
+ {
+@@ -1722,7 +1722,7 @@ static int __init mlx4_verify_params(void)
+ 		return -1;
+ 	}
+ 
+-	if ((log_mtts_per_seg < 1) || (log_mtts_per_seg > 5)) {
++	if ((log_mtts_per_seg < 1) || (log_mtts_per_seg > 7)) {
+ 		printk(KERN_WARNING "mlx4_core: bad log_mtts_per_seg: %d\n", log_mtts_per_seg);
+ 		return -1;
+ 	}

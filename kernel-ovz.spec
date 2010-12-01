@@ -4,7 +4,7 @@
 %define with_doc       0
 %define with_headers   1
 %define with_openafs   0
-%define ovzver 028stab077
+%define ovzver 028stab079
 %define ovzrel 1
 
 # Whether to apply the Xen patches -- leave this enabled.
@@ -734,6 +734,8 @@ Patch20211: xen-set-hypervisor-present-cpuid-bit.patch
 Patch20212: xen-ia64-unset-be-from-the-task-psr.patch
 Patch20213: xen-bring-back-vmxe-svme-flags.patch
 Patch20214: xen-fix-guest-crash-on-non-ept-machine-may-crash-host.patch
+Patch20215: xen-hvm-fix-up-suspend-resume-migration-w-pv-drivers.patch
+Patch20216: xen-hvm-correct-accuracy-of-pmtimer.patch
 # end of Xen patches
 
 Patch21007: linux-2.6-netlabel-error-checking-cleanups.patch
@@ -4862,6 +4864,43 @@ Patch25177: linux-2.6-net-cxgb3-get-fatal-parity-error-status-on-interrupt.patch
 Patch25178: linux-2.6-net-cxgb3-don-t-flush-workqueue-if-called-from-wq.patch
 Patch25179: linux-2.6-fs-xfs-fix-missing-untrusted-inode-lookup-tag.patch
 Patch25180: linux-2.6-misc-make-compat_alloc_user_space-incorporate-the-access_ok.patch
+Patch25181: linux-2.6-s390-dasd-fix-race-between-tasklet-and-dasd_sleep_on.patch
+Patch25182: linux-2.6-acpi-thinkpad-acpi-lock-down-video-output-state-access.patch
+Patch25183: linux-2.6-net-qla3xxx-fix-oops-on-too-long-netdev-priv-structure.patch
+Patch25184: linux-2.6-net-bonding-fix-alb-mode-to-balance-traffic-on-vlans.patch
+Patch25185: linux-2.6-pnp-reserve-system-board-iomem-and-ioport-resources.patch
+Patch25186: linux-2.6-pnp-ignore-both-unset-and-disabled-ioresources.patch
+Patch25187: linux-2.6-virt-xen-fix-xennet-driver-to-not-corrupt-data.patch
+Patch25188: linux-2.6-fs-dlm-no-node-callback-when-try-1cb-lock-req-fails.patch
+Patch25189: linux-2.6-fs-dlm-fix-try-1cb-failure-part-2.patch
+Patch25190: linux-2.6-net-ipv4-fix-buffer-overflow-in-icmpmsg_put.patch
+Patch25191: linux-2.6-fs-aio-fix-cleanup-in-io_submit_one.patch
+Patch25192: linux-2.6-fs-xfs-prevent-reading-uninitialized-stack-memory.patch
+Patch25193: linux-2.6-fs-aio-check-for-multiplication-overflow-in-io_submit.patch
+Patch25194: linux-2.6-scsi-fix-disk-spinup-for-shorter-path-restore-times.patch
+Patch25195: linux-2.6-misc-fix-race-in-pid-generation-causing-immediate-reuse.patch
+Patch25196: linux-2.6-md-dm-fix-deadlock-with-fsync-vs-resize-in-lvm.patch
+Patch25197: linux-2.6-net-sched-fix-info-leak-in-traffic-policing.patch
+Patch25198: linux-2.6-scsi-lpfc-fix-ioctl-crash-in-lpfc_nlp_put.patch
+Patch25199: linux-2.6-scsi-megaraid_sas-fix-physical-disk-handling.patch
+Patch25200: linux-2.6-fs-nfs-wait-for-close-before-silly-renaming.patch
+Patch25201: linux-2.6-time-introduce-pmtimer_fine_grained-kernel-parameter.patch
+Patch25202: linux-2.6-time-initialize-tick_nsec-based-on-kernel-parameters.patch
+Patch25203: linux-2.6-time-implement-fine-grained-accounting-for-pm-timer.patch
+Patch25204: linux-2.6-fs-nfsv4-ensure-we-track-lock-state-in-r-w-requests.patch
+Patch25205: linux-2.6-fs-nfsv4-clean-up-for-lockowner-xdr-encoding.patch
+Patch25206: linux-2.6-fs-nfsv4-add-support-for-release_lockowner-operation.patch
+Patch25207: linux-2.6-fs-nfsv4-ensure-lockowners-are-labelled-correctly.patch
+Patch25208: linux-2.6-fs-nfsv4-fix-bug-when-server-returns-nfs4err_resource.patch
+Patch25209: linux-2.6-net-bonding-fix-igmp-report-on-slave-during-failover.patch
+Patch25210: linux-2.6-v4l-remove-compat-code-for-vidiocsmicrocode.patch
+Patch25211: linux-2.6-misc-futex-replace-lock_prefix-in-futex-h.patch
+Patch25212: linux-2.6-scsi-qla2xxx-correct-use-after-free-issue-in-terminate_rport_io-callback.patch
+Patch25213: linux-2.6-fs-xfs-fix-speculative-allocation-beyond-eof.patch
+Patch25214: linux-2.6-net-rds-fix-local-privilege-escalation.patch
+Patch25215: linux-2.6-net-bonding-correctly-process-non-linear-skbs.patch
+Patch25216: linux-2.6-fs-nfs-fix-regression-in-nfs-direct-i-o-path.patch
+Patch25217: linux-2.6-net-mlx4-bump-max-log_mtts_per_seg-memory-reservation.patch
 
 Patch30000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch30001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -4941,6 +4980,7 @@ Patch90503: diff-openafs-configure-no-mod-check
 # mix
 Patch91002: linux-hp-dmi-info-correct.patch
 Patch91003: diff-nfs-rpcsaddr
+Patch91004: diff-serial-pci-add-netmos-9901-support
 
 # Bells and whistles
 Patch100001: diff-ms-devleak-dstdebug-20080504
@@ -9698,6 +9738,43 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch25178 -p1
 %patch25179 -p1
 %patch25180 -p1
+%patch25181 -p1
+%patch25182 -p1
+%patch25183 -p1
+%patch25184 -p1
+%patch25185 -p1
+%patch25186 -p1
+%patch25187 -p1
+%patch25188 -p1
+%patch25189 -p1
+%patch25190 -p1
+%patch25191 -p1
+%patch25192 -p1
+%patch25193 -p1
+%patch25194 -p1
+%patch25195 -p1
+%patch25196 -p1
+%patch25197 -p1
+%patch25198 -p1
+%patch25199 -p1
+%patch25200 -p1
+%patch25201 -p1
+%patch25202 -p1
+%patch25203 -p1
+%patch25204 -p1
+%patch25205 -p1
+%patch25206 -p1
+%patch25207 -p1
+%patch25208 -p1
+%patch25209 -p1
+%patch25210 -p1
+%patch25211 -p1
+%patch25212 -p1
+%patch25213 -p1
+%patch25214 -p1
+%patch25215 -p1
+%patch25216 -p1
+%patch25217 -p1
 
 %patch30000 -p1
 %patch30001 -p1
@@ -9757,6 +9834,7 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 
 %patch91002 -p1
 %patch91003 -p1
+%patch91004 -p1
 
 %patch100001 -p1
 %patch100002 -p1
@@ -10048,6 +10126,8 @@ cd xen
 %patch20212 -p1
 %patch20213 -p1
 %patch20214 -p1
+%patch20215 -p1
+%patch20216 -p1
 # end of necessary hypervisor patches
 %endif
 

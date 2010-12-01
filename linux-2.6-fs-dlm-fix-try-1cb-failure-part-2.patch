@@ -1,0 +1,91 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Wed, 8 Sep 2010 21:56:46 -0400
+Subject: [fs] dlm: fix try 1cb failure, part 2
+Message-id: <23768002.1683941283983006115.JavaMail.root@zmail05.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 28182
+O-Subject: Re: [RHEL5.6 PATCH] dlm: Don't send callback to node making lock
+	request when "try 1cb" fails
+Bugzilla: 504188
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+
+part2 patch to bz 504188
+
+dlm: Don't send callback to node making lock request when "try 1cb" fails
+
+The patch introduces a new glock flag called the queued flag. This is set any
+time a holder is queued on a glock. It is reset upon a state change which does
+not involve the UN state occurs, and only then if there are no queued holders
+at the time.
+
+If the flag is not set, then the minimum hold time will not be obeyed. Instead
+the demote will be scheduled immediately. If the flag is set, then the min hold
+time will be obeyed as usual.
+
+This patch combined with the dlm patch posted by Dave Teigland earlier improves
+gfs2 performance for the test case in the bz greatly.
+
+Resolves: rhbz#504188
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+Tested-by: Abhi Das <adas@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index 888d648..444fb3d 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -497,6 +497,8 @@ static void state_change(struct gfs2_glock *gl, unsigned int new_state)
+ 		else
+ 			gfs2_glock_put_nolock(gl);
+ 	}
++	if (held1 && held2 && list_empty(&gl->gl_holders))
++		clear_bit(GLF_QUEUED, &gl->gl_flags);
+ 
+ 	gl->gl_state = new_state;
+ 	gl->gl_tchange = jiffies;
+@@ -1049,6 +1051,7 @@ fail:
+ 		if (unlikely((gh->gh_flags & LM_FLAG_PRIORITY) && !insert_pt))
+ 			insert_pt = &gh2->gh_list;
+ 	}
++	set_bit(GLF_QUEUED, &gl->gl_flags);
+ 	if (likely(insert_pt == NULL)) {
+ 		list_add_tail(&gh->gh_list, &gl->gl_holders);
+ 		if (unlikely(gh->gh_flags & LM_FLAG_PRIORITY))
+@@ -1397,10 +1400,12 @@ static void blocking_cb(struct gfs2_sbd *sdp, struct lm_lockname *name,
+ 		return;
+ 
+ 	holdtime = gl->gl_tchange + gl->gl_ops->go_min_hold_time;
+-	if (time_before(now, holdtime))
+-		delay = holdtime - now;
+-	if (test_bit(GLF_REPLY_PENDING, &gl->gl_flags))
+-		delay = gl->gl_ops->go_min_hold_time;
++	if (test_bit(GLF_QUEUED, &gl->gl_flags)) {
++		if (time_before(now, holdtime))
++			delay = holdtime - now;
++		if (test_bit(GLF_REPLY_PENDING, &gl->gl_flags))
++			delay = gl->gl_ops->go_min_hold_time;
++	}
+ 
+ 	spin_lock(&gl->gl_spin);
+ 	handle_callback(gl, state, delay);
+@@ -1729,6 +1734,8 @@ static const char *gflags2str(char *buf, const unsigned long *gflags)
+ 		*p++ = 'i';
+ 	if (test_bit(GLF_REPLY_PENDING, gflags))
+ 		*p++ = 'r';
++	if (test_bit(GLF_QUEUED, gflags))
++		*p++ = 'q';
+ 	*p = 0;
+ 	return buf;
+ }
+diff --git a/fs/gfs2/incore.h b/fs/gfs2/incore.h
+index c62e974..1e5f8d8 100644
+--- a/fs/gfs2/incore.h
++++ b/fs/gfs2/incore.h
+@@ -164,6 +164,7 @@ enum {
+ 	GLF_LFLUSH			= 7,
+ 	GLF_INVALIDATE_IN_PROGRESS	= 8,
+ 	GLF_REPLY_PENDING		= 9,
++	GLF_QUEUED			= 12,
+ };
+ 
+ struct gfs2_glock {

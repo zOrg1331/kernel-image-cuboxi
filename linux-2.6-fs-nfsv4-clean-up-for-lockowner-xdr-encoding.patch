@@ -1,0 +1,78 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Mon, 30 Aug 2010 17:39:40 -0400
+Subject: [fs] nfsv4: clean up for lockowner XDR encoding
+Message-id: <1283189983-10655-3-git-send-email-steved@redhat.com>
+Patchwork-id: 27944
+O-Subject: [RHEL5.5.z PATCH 2/5] NFSv4: Clean up for lockowner XDR encoding
+Bugzilla: 620502
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: J. Bruce Fields <bfields@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+This is a back port of:
+
+    commit daccbded7f153ec84a3baf3136052e41d0eab555
+    Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+    Date:   Fri Jun 25 18:11:43 2010 -0400
+
+        NFSv4: Clean up for lockowner XDR encoding
+
+     Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+Signed-off-by: Steve Dickson <steved@redhat.com>
+
+diff --git a/fs/nfs/nfs4xdr.c b/fs/nfs/nfs4xdr.c
+index 5fb8788..cc49973 100644
+--- a/fs/nfs/nfs4xdr.c
++++ b/fs/nfs/nfs4xdr.c
+@@ -775,6 +775,16 @@ static inline uint64_t nfs4_lock_length(struct file_lock *fl)
+ 		return ~(uint64_t)0;
+ 	return fl->fl_end - fl->fl_start + 1;
+ }
++static void 
++encode_lockowner(struct xdr_stream *xdr, const struct nfs_lowner *lowner)
++{
++	uint32_t *p;
++
++	RESERVE_SPACE(16);
++	WRITE64(lowner->clientid);
++	WRITE32(4);
++	WRITE32(lowner->id);
++}
+ 
+ /*
+  * opcode,type,reclaim,offset,length,new_lock_owner = 32
+@@ -792,13 +802,11 @@ static int encode_lock(struct xdr_stream *xdr, const struct nfs_lock_args *args)
+ 	WRITE64(nfs4_lock_length(args->fl));
+ 	WRITE32(args->new_lock_owner);
+ 	if (args->new_lock_owner){
+-		RESERVE_SPACE(40);
++		RESERVE_SPACE(24);
+ 		WRITE32(args->open_seqid->sequence->counter);
+ 		WRITEMEM(args->open_stateid->data, sizeof(args->open_stateid->data));
+ 		WRITE32(args->lock_seqid->sequence->counter);
+-		WRITE64(args->lock_owner.clientid);
+-		WRITE32(4);
+-		WRITE32(args->lock_owner.id);
++		encode_lockowner(xdr, &args->lock_owner);
+ 	}
+ 	else {
+ 		RESERVE_SPACE(20);
+@@ -813,14 +821,12 @@ static int encode_lockt(struct xdr_stream *xdr, const struct nfs_lockt_args *arg
+ {
+ 	uint32_t *p;
+ 
+-	RESERVE_SPACE(40);
++	RESERVE_SPACE(24);
+ 	WRITE32(OP_LOCKT);
+ 	WRITE32(nfs4_lock_type(args->fl, 0));
+ 	WRITE64(args->fl->fl_start);
+ 	WRITE64(nfs4_lock_length(args->fl));
+-	WRITE64(args->lock_owner.clientid);
+-	WRITE32(4);
+-	WRITE32(args->lock_owner.id);
++	encode_lockowner(xdr, &args->lock_owner);
+ 
+ 	return 0;
+ }
