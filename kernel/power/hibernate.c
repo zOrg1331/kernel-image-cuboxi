@@ -62,7 +62,7 @@ void hibernation_set_ops(const struct platform_hibernation_ops *ops)
 {
 	if (ops && !(ops->begin && ops->end &&  ops->pre_snapshot
 	    && ops->prepare && ops->finish && ops->enter && ops->pre_restore
-	    && ops->restore_cleanup)) {
+	    && ops->restore_cleanup && ops->leave)) {
 		WARN_ON(1);
 		return;
 	}
@@ -646,6 +646,7 @@ int hibernate(void)
 		swsusp_free();
 		if (!error)
 			power_down();
+		in_suspend = 0;
 	} else {
 		pr_debug("PM: Image restored successfully.\n");
 	}
