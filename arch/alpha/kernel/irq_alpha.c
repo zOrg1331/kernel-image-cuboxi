@@ -112,6 +112,8 @@ init_IRQ(void)
 	wrent(entInt, 0);
 
 	alpha_mv.init_irq();
+
+	init_hw_perf_events();
 }
 
 /*
