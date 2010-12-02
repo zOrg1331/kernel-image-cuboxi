@@ -51,8 +51,8 @@
 
 #define _QLCNIC_LINUX_MAJOR 5
 #define _QLCNIC_LINUX_MINOR 0
-#define _QLCNIC_LINUX_SUBVERSION 11
-#define QLCNIC_LINUX_VERSIONID  "5.0.11"
+#define _QLCNIC_LINUX_SUBVERSION 12
+#define QLCNIC_LINUX_VERSIONID  "5.0.12"
 #define QLCNIC_DRV_IDC_VER  0x01
 #define QLCNIC_DRIVER_VERSION  ((_QLCNIC_LINUX_MAJOR << 16) |\
 		 (_QLCNIC_LINUX_MINOR << 8) | (_QLCNIC_LINUX_SUBVERSION))
@@ -923,6 +923,7 @@ struct qlcnic_ipaddr {
 #define QLCNIC_MACSPOOF			0x200
 #define QLCNIC_MAC_OVERRIDE_DISABLED	0x400
 #define QLCNIC_PROMISC_DISABLED		0x800
+#define QLCNIC_NEED_FLR			0x1000
 #define QLCNIC_IS_MSI_FAMILY(adapter) \
 	((adapter)->flags & (QLCNIC_MSI_ENABLED | QLCNIC_MSIX_ENABLED))
 
@@ -1126,8 +1127,7 @@ struct qlcnic_eswitch {
 /* Return codes for Error handling */
 #define QL_STATUS_INVALID_PARAM	-1
 
-#define MAX_BW			100
-#define MIN_BW			1
+#define MAX_BW			100	/* % of link speed */
 #define MAX_VLAN_ID		4095
 #define MIN_VLAN_ID		2
 #define MAX_TX_QUEUES		1
@@ -1135,7 +1135,7 @@ struct qlcnic_eswitch {
 #define DEFAULT_MAC_LEARN	1
 
 #define IS_VALID_VLAN(vlan)	(vlan >= MIN_VLAN_ID && vlan < MAX_VLAN_ID)
-#define IS_VALID_BW(bw)		(bw >= MIN_BW && bw <= MAX_BW)
+#define IS_VALID_BW(bw)		(bw <= MAX_BW)
 #define IS_VALID_TX_QUEUES(que)	(que > 0 && que <= MAX_TX_QUEUES)
 #define IS_VALID_RX_QUEUES(que)	(que > 0 && que <= MAX_RX_QUEUES)
 
@@ -1377,6 +1377,8 @@ static const struct qlcnic_brdinfo qlcnic_boards[] = {
 		"3200 Series Single Port 10Gb Intelligent Ethernet Adapter"},
 	{0x1077, 0x8020, 0x103c, 0x3733,
 		"NC523SFP 10Gb 2-port Server Adapter"},
+	{0x1077, 0x8020, 0x103c, 0x3346,
+		"CN1000Q Dual Port Converged Network Adapter"},
 	{0x1077, 0x8020, 0x0, 0x0, "cLOM8214 1/10GbE Controller"},
 };
 
