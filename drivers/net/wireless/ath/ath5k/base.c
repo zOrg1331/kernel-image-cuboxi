@@ -549,7 +549,7 @@ static void ath_vif_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
 	/* Calculate combined mode - when APs are active, operate in AP mode.
 	 * Otherwise use the mode of the new interface. This can currently
 	 * only deal with combinations of APs and STAs. Only one ad-hoc
-	 * interfaces is allowed above.
+	 * interfaces is allowed.
 	 */
 	if (avf->opmode == NL80211_IFTYPE_AP)
 		iter_data->opmode = NL80211_IFTYPE_AP;
@@ -558,16 +558,8 @@ static void ath_vif_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
 			iter_data->opmode = avf->opmode;
 }
 
-static void ath_do_set_opmode(struct ath5k_softc *sc)
-{
-	struct ath5k_hw *ah = sc->ah;
-	ath5k_hw_set_opmode(ah, sc->opmode);
-	ATH5K_DBG(sc, ATH5K_DEBUG_MODE, "mode setup opmode %d (%s)\n",
-		  sc->opmode, ath_opmode_to_string(sc->opmode));
-}
-
-void ath5k_update_bssid_mask_and_opmode(struct ath5k_softc *sc,
-					struct ieee80211_vif *vif)
+static void ath5k_update_bssid_mask_and_opmode(struct ath5k_softc *sc,
+					       struct ieee80211_vif *vif)
 {
 	struct ath_common *common = ath5k_hw_common(sc->ah);
 	struct ath_vif_iter_data iter_data;
@@ -595,7 +587,9 @@ void ath5k_update_bssid_mask_and_opmode(struct ath5k_softc *sc,
 		/* Nothing active, default to station mode */
 		sc->opmode = NL80211_IFTYPE_STATION;
 
-	ath_do_set_opmode(sc);
+	ath5k_hw_set_opmode(sc->ah, sc->opmode);
+	ATH5K_DBG(sc, ATH5K_DEBUG_MODE, "mode setup opmode %d (%s)\n",
+		  sc->opmode, ath_opmode_to_string(sc->opmode));
 
 	if (iter_data.need_set_hw_addr && iter_data.found_active)
 		ath5k_hw_set_lladdr(sc->ah, iter_data.active_mac);
@@ -1307,8 +1301,7 @@ ath5k_update_beacon_rssi(struct ath5k_softc *sc, struct sk_buff *skb, int rssi)
 	    memcmp(mgmt->bssid, common->curbssid, ETH_ALEN) != 0)
 		return;
 
-	ah->ah_beacon_rssi_avg = ath5k_moving_average(ah->ah_beacon_rssi_avg,
-						      rssi);
+	ewma_add(&ah->ah_beacon_rssi_avg, rssi);
 
 	/* in IBSS mode we should keep RSSI statistics per neighbour */
 	/* le16_to_cpu(mgmt->u.beacon.capab_info) & WLAN_CAPABILITY_IBSS */
@@ -2562,6 +2555,7 @@ ath5k_reset(struct ath5k_softc *sc, struct ieee80211_channel *chan)
 	ah->ah_cal_next_full = jiffies;
 	ah->ah_cal_next_ani = jiffies;
 	ah->ah_cal_next_nf = jiffies;
+	ewma_init(&ah->ah_beacon_rssi_avg, 1000, 8);
 
 	/*
 	 * Change channels and update the h/w rate map if we're switching;
@@ -3206,13 +3200,31 @@ static int ath5k_get_survey(struct ieee80211_hw *hw, int idx,
 {
 	struct ath5k_softc *sc = hw->priv;
 	struct ieee80211_conf *conf = &hw->conf;
+	struct ath_common *common = ath5k_hw_common(sc->ah);
+	struct ath_cycle_counters *cc = &common->cc_survey;
+	unsigned int div = common->clockrate * 1000;
 
-	 if (idx != 0)
+	if (idx != 0)
 		return -ENOENT;
 
 	survey->channel = conf->channel;
 	survey->filled = SURVEY_INFO_NOISE_DBM;
 	survey->noise = sc->ah->ah_noise_floor;
+
+	spin_lock_bh(&common->cc_lock);
+	ath_hw_cycle_counters_update(common);
+	if (cc->cycles > 0) {
+		survey->filled |= SURVEY_INFO_CHANNEL_TIME |
+			SURVEY_INFO_CHANNEL_TIME_BUSY |
+			SURVEY_INFO_CHANNEL_TIME_RX |
+			SURVEY_INFO_CHANNEL_TIME_TX;
+		survey->channel_time += cc->cycles / div;
+		survey->channel_time_busy += cc->rx_busy / div;
+		survey->channel_time_rx += cc->rx_frame / div;
+		survey->channel_time_tx += cc->tx_frame / div;
+	}
+	memset(cc, 0, sizeof(*cc));
+	spin_unlock_bh(&common->cc_lock);
 
 	return 0;
 }
@@ -3395,6 +3407,36 @@ static int ath5k_conf_tx(struct ieee80211_hw *hw, u16 queue,
 	return ret;
 }
 
+static int ath5k_set_antenna(struct ieee80211_hw *hw, u32 tx_ant, u32 rx_ant)
+{
+	struct ath5k_softc *sc = hw->priv;
+
+	if (tx_ant == 1 && rx_ant == 1)
+		ath5k_hw_set_antenna_mode(sc->ah, AR5K_ANTMODE_FIXED_A);
+	else if (tx_ant == 2 && rx_ant == 2)
+		ath5k_hw_set_antenna_mode(sc->ah, AR5K_ANTMODE_FIXED_B);
+	else if ((tx_ant & 3) == 3 && (rx_ant & 3) == 3)
+		ath5k_hw_set_antenna_mode(sc->ah, AR5K_ANTMODE_DEFAULT);
+	else
+		return -EINVAL;
+	return 0;
+}
+
+static int ath5k_get_antenna(struct ieee80211_hw *hw, u32 *tx_ant, u32 *rx_ant)
+{
+	struct ath5k_softc *sc = hw->priv;
+
+	switch (sc->ah->ah_ant_mode) {
+	case AR5K_ANTMODE_FIXED_A:
+		*tx_ant = 1; *rx_ant = 1; break;
+	case AR5K_ANTMODE_FIXED_B:
+		*tx_ant = 2; *rx_ant = 2; break;
+	case AR5K_ANTMODE_DEFAULT:
+		*tx_ant = 3; *rx_ant = 3; break;
+	}
+	return 0;
+}
+
 static const struct ieee80211_ops ath5k_hw_ops = {
 	.tx 		= ath5k_tx,
 	.start 		= ath5k_start,
@@ -3415,6 +3457,8 @@ static const struct ieee80211_ops ath5k_hw_ops = {
 	.sw_scan_start	= ath5k_sw_scan_start,
 	.sw_scan_complete = ath5k_sw_scan_complete,
 	.set_coverage_class = ath5k_set_coverage_class,
+	.set_antenna	= ath5k_set_antenna,
+	.get_antenna	= ath5k_get_antenna,
 };
 
 /********************\

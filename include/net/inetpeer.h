@@ -11,12 +11,21 @@
 #include <linux/init.h>
 #include <linux/jiffies.h>
 #include <linux/spinlock.h>
+#include <net/ipv6.h>
 #include <asm/atomic.h>
+
+typedef struct {
+	union {
+		__be32		a4;
+		__be32		a6[4];
+	};
+	__u16	family;
+} inet_peer_address_t;
 
 struct inet_peer {
 	/* group together avl_left,avl_right,v4daddr to speedup lookups */
 	struct inet_peer __rcu	*avl_left, *avl_right;
-	__be32			v4daddr;	/* peer's address */
+	inet_peer_address_t	daddr;
 	__u32			avl_height;
 	struct list_head	unused;
 	__u32			dtime;		/* the time of last use of not
@@ -42,7 +51,25 @@ struct inet_peer {
 void			inet_initpeers(void) __init;
 
 /* can be called with or without local BH being disabled */
-struct inet_peer	*inet_getpeer(__be32 daddr, int create);
+struct inet_peer	*inet_getpeer(inet_peer_address_t *daddr, int create);
+
+static inline struct inet_peer *inet_getpeer_v4(__be32 v4daddr, int create)
+{
+	inet_peer_address_t daddr;
+
+	daddr.a4 = v4daddr;
+	daddr.family = AF_INET;
+	return inet_getpeer(&daddr, create);
+}
+
+static inline struct inet_peer *inet_getpeer_v6(struct in6_addr *v6daddr, int create)
+{
+	inet_peer_address_t daddr;
+
+	ipv6_addr_copy((struct in6_addr *)daddr.a6, v6daddr);
+	daddr.family = AF_INET6;
+	return inet_getpeer(&daddr, create);
+}
 
 /* can be called from BH context or outside */
 extern void inet_putpeer(struct inet_peer *p);

@@ -873,17 +873,11 @@ static void bond_mc_del(struct bonding *bond, void *addr)
 static void __bond_resend_igmp_join_requests(struct net_device *dev)
 {
 	struct in_device *in_dev;
-	struct ip_mc_list *im;
 
 	rcu_read_lock();
 	in_dev = __in_dev_get_rcu(dev);
-	if (in_dev) {
-		read_lock(&in_dev->mc_list_lock);
-		for (im = in_dev->mc_list; im; im = im->next)
-			ip_mc_rejoin_group(im);
-		read_unlock(&in_dev->mc_list_lock);
-	}
-
+	if (in_dev)
+		ip_mc_rejoin_groups(in_dev);
 	rcu_read_unlock();
 }
 
@@ -3211,7 +3205,7 @@ out:
 #ifdef CONFIG_PROC_FS
 
 static void *bond_info_seq_start(struct seq_file *seq, loff_t *pos)
-	__acquires(&dev_base_lock)
+	__acquires(RCU)
 	__acquires(&bond->lock)
 {
 	struct bonding *bond = seq->private;
@@ -3220,7 +3214,7 @@ static void *bond_info_seq_start(struct seq_file *seq, loff_t *pos)
 	int i;
 
 	/* make sure the bond won't be taken away */
-	read_lock(&dev_base_lock);
+	rcu_read_lock();
 	read_lock(&bond->lock);
 
 	if (*pos == 0)
@@ -3250,12 +3244,12 @@ static void *bond_info_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 
 static void bond_info_seq_stop(struct seq_file *seq, void *v)
 	__releases(&bond->lock)
-	__releases(&dev_base_lock)
+	__releases(RCU)
 {
 	struct bonding *bond = seq->private;
 
 	read_unlock(&bond->lock);
-	read_unlock(&dev_base_lock);
+	rcu_read_unlock();
 }
 
 static void bond_info_show_master(struct seq_file *seq)
