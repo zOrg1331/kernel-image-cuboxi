@@ -1,0 +1,43 @@
+Importing i2c based on 2.6.37-rc4
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.37-rc4
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard e8a7e48bb248a1196484d3f8afa53bded2b24e71
+HEAD is now at e8a7e48 Linux 2.6.37-rc4
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-it87-fix-manual-pwm-IT8721F.patch
+hwmon-adm1026-01-fix-setting-fan_div.patch
+hwmon-adm1026-02-allow-1-as-a-valid-divider-value.patch
+hwmon-adm9240-implement-standard-intrusion-detection-interface.patch
+hwmon-w83792d-implement-standard-intrusion-detection-interface.patch
+hwmon-w83793-implement-standard-intrusion-detection-interface.patch
+hwmon-schedule-removal-old-intrusion-detection-interface.patch
+hwmon-it87-use-pr_fmt-and-pr_level.patch
+hwmon-lm78-use-pr_fmt-and-pr_level.patch
+hwmon-pc87360-use-pr_fmt-and-pr_level.patch
+hwmon-pc87427-use-pr_fmt-and-pr_level.patch
+hwmon-w83781d-use-pr_fmt-and-pr_level.patch
+hwmon-fschmd-drop-useless-mutex.patch
+hwmon-w83793-drop-useless-mutex.patch
+hwmon-w83627hf-document-W83627THF-voltage-pins.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 8eb9cd4...6e4e37d master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.37-rc4
+$ cd ../quilt-tmp
+$ git reset --hard e8a7e48bb248a1196484d3f8afa53bded2b24e71
+HEAD is now at e8a7e48 Linux 2.6.37-rc4
+$ git quiltimport --author Randy Dunlap <randy.dunlap@oracle.com> --patches ../quilt/kernel-doc
+docum-dontdiff-update11.patch
+docum-kernel-docs-update12.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/kernel-doc
+From ../quilt-tmp
+ + 60ddcd6...31c16d18 master     -> quilt/kernel-doc  (forced update)
+Importing rr based on v2.6.37-rc1-116-g151f52f
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.37-rc4-12-g22a5b56
+	quilt series is empty
+$ git update-ref refs/heads/quilt/device-mapper 22a5b566c8c442b0b35b3b106795e2f2b3578096
