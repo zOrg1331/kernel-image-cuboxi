@@ -16,6 +16,7 @@
 #include <linux/cache.h>
 #include <linux/profile.h>
 #include <linux/errno.h>
+#include <linux/ftrace.h>
 #include <linux/mm.h>
 #include <linux/err.h>
 #include <linux/cpu.h>
@@ -24,6 +25,7 @@
 #include <linux/irq.h>
 #include <linux/percpu.h>
 #include <linux/clockchips.h>
+#include <linux/completion.h>
 
 #include <asm/atomic.h>
 #include <asm/cacheflush.h>
@@ -46,63 +48,13 @@
  */
 struct secondary_data secondary_data;
 
-/*
- * structures for inter-processor calls
- * - A collection of single bit ipi messages.
- */
-struct ipi_data {
-	spinlock_t lock;
-	unsigned long ipi_count;
-	unsigned long bits;
-};
-
-static DEFINE_PER_CPU(struct ipi_data, ipi_data) = {
-	.lock	= SPIN_LOCK_UNLOCKED,
-};
-
 enum ipi_msg_type {
-	IPI_TIMER,
+	IPI_TIMER = 2,
 	IPI_RESCHEDULE,
 	IPI_CALL_FUNC,
 	IPI_CALL_FUNC_SINGLE,
 	IPI_CPU_STOP,
 };
-
-static inline void identity_mapping_add(pgd_t *pgd, unsigned long start,
-	unsigned long end)
-{
-	unsigned long addr, prot;
-	pmd_t *pmd;
-
-	prot = PMD_TYPE_SECT | PMD_SECT_AP_WRITE;
-	if (cpu_architecture() <= CPU_ARCH_ARMv5TEJ && !cpu_is_xscale())
-		prot |= PMD_BIT4;
-
-	for (addr = start & PGDIR_MASK; addr < end;) {
-		pmd = pmd_offset(pgd + pgd_index(addr), addr);
-		pmd[0] = __pmd(addr | prot);
-		addr += SECTION_SIZE;
-		pmd[1] = __pmd(addr | prot);
-		addr += SECTION_SIZE;
-		flush_pmd_entry(pmd);
-		outer_clean_range(__pa(pmd), __pa(pmd + 1));
-	}
-}
-
-static inline void identity_mapping_del(pgd_t *pgd, unsigned long start,
-	unsigned long end)
-{
-	unsigned long addr;
-	pmd_t *pmd;
-
-	for (addr = start & PGDIR_MASK; addr < end; addr += PGDIR_SIZE) {
-		pmd = pmd_offset(pgd + pgd_index(addr), addr);
-		pmd[0] = __pmd(0);
-		pmd[1] = __pmd(0);
-		clean_pmd_entry(pmd);
-		outer_clean_range(__pa(pmd), __pa(pmd + 1));
-	}
-}
 
 int __cpuinit __cpu_up(unsigned int cpu)
 {
@@ -252,12 +204,20 @@ int __cpu_disable(void)
 	return 0;
 }
 
+static DECLARE_COMPLETION(cpu_died);
+
 /*
  * called on the thread which is asking for a CPU to be shutdown -
  * waits until shutdown has completed, or it is timed out.
  */
 void __cpu_die(unsigned int cpu)
 {
+	if (wait_for_completion_timeout(&cpu_died, 5000)) {
+		printk(KERN_ERR "CPU%u: cpu didn't die\n");
+		return;
+	}
+	printk(KERN_NOTICE "CPU%u: shutdown\n", cpu);
+
 	if (!platform_cpu_kill(cpu))
 		printk("CPU%u: unable to kill\n", cpu);
 }
@@ -274,12 +234,17 @@ void __ref cpu_die(void)
 {
 	unsigned int cpu = smp_processor_id();
 
-	local_irq_disable();
 	idle_task_exit();
+
+	local_irq_disable();
+	mb();
+
+	/* Tell __cpu_die() that this CPU is now safe to dispose of */
+	complete(&cpu_died);
 
 	/*
 	 * actual CPU shutdown procedure is at least platform (if not
-	 * CPU) specific
+	 * CPU) specific.
 	 */
 	platform_cpu_die(cpu);
 
@@ -389,22 +354,13 @@ void __init smp_prepare_boot_cpu(void)
 static void send_ipi_message(const struct cpumask *mask, enum ipi_msg_type msg)
 {
 	unsigned long flags;
-	unsigned int cpu;
 
 	local_irq_save(flags);
-
-	for_each_cpu(cpu, mask) {
-		struct ipi_data *ipi = &per_cpu(ipi_data, cpu);
-
-		spin_lock(&ipi->lock);
-		ipi->bits |= 1 << msg;
-		spin_unlock(&ipi->lock);
-	}
 
 	/*
 	 * Call the platform specific cross-CPU call function.
 	 */
-	smp_cross_call(mask);
+	smp_cross_call(mask, msg);
 
 	local_irq_restore(flags);
 }
@@ -419,28 +375,43 @@ void arch_send_call_function_single_ipi(int cpu)
 	send_ipi_message(cpumask_of(cpu), IPI_CALL_FUNC_SINGLE);
 }
 
-void show_ipi_list(struct seq_file *p)
+static const char *ipi_types[NR_IPI] = {
+#define S(x,s)	[x - IPI_TIMER] = s
+	S(IPI_TIMER, "Timer broadcast interrupts"),
+	S(IPI_RESCHEDULE, "Rescheduling interrupts"),
+	S(IPI_CALL_FUNC, "Function call interrupts"),
+	S(IPI_CALL_FUNC_SINGLE, "Single function call interrupts"),
+	S(IPI_CPU_STOP, "CPU stop interrupts"),
+};
+
+void show_ipi_list(struct seq_file *p, int prec)
 {
-	unsigned int cpu;
+	unsigned int cpu, i;
 
-	seq_puts(p, "IPI:");
+	for (i = 0; i < NR_IPI; i++) {
+		seq_printf(p, "%*s%u: ", prec - 1, "IPI", i);
 
-	for_each_present_cpu(cpu)
-		seq_printf(p, " %10lu", per_cpu(ipi_data, cpu).ipi_count);
+		for_each_present_cpu(cpu)
+			seq_printf(p, "%10u ",
+				   __get_irq_stat(cpu, ipi_irqs[i]));
 
-	seq_putc(p, '\n');
+		seq_printf(p, " %s\n", ipi_types[i]);
+	}
 }
 
-void show_local_irqs(struct seq_file *p)
+u64 smp_irq_stat_cpu(unsigned int cpu)
 {
-	unsigned int cpu;
+	u64 sum = 0;
+	int i;
 
-	seq_printf(p, "LOC: ");
+	for (i = 0; i < NR_IPI; i++)
+		sum += __get_irq_stat(cpu, ipi_irqs[i]);
 
-	for_each_present_cpu(cpu)
-		seq_printf(p, "%10u ", irq_stat[cpu].local_timer_irqs);
+#ifdef CONFIG_LOCAL_TIMERS
+	sum += __get_irq_stat(cpu, local_timer_irqs);
+#endif
 
-	seq_putc(p, '\n');
+	return sum;
 }
 
 /*
@@ -457,17 +428,29 @@ static void ipi_timer(void)
 }
 
 #ifdef CONFIG_LOCAL_TIMERS
-asmlinkage void __exception do_local_timer(struct pt_regs *regs)
+asmlinkage void __exception_irq_entry do_local_timer(struct pt_regs *regs)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
 	int cpu = smp_processor_id();
 
 	if (local_timer_ack()) {
-		irq_stat[cpu].local_timer_irqs++;
+		__inc_irq_stat(cpu, local_timer_irqs);
 		ipi_timer();
 	}
 
 	set_irq_regs(old_regs);
+}
+
+void show_local_irqs(struct seq_file *p, int prec)
+{
+	unsigned int cpu;
+
+	seq_printf(p, "%*s: ", prec, "LOC");
+
+	for_each_present_cpu(cpu)
+		seq_printf(p, "%10u ", __get_irq_stat(cpu, local_timer_irqs));
+
+	seq_printf(p, " Local timer interrupts\n");
 }
 #endif
 
@@ -537,71 +520,44 @@ static void ipi_cpu_stop(unsigned int cpu)
 
 /*
  * Main handler for inter-processor interrupts
- *
- * For ARM, the ipimask now only identifies a single
- * category of IPI (Bit 1 IPIs have been replaced by a
- * different mechanism):
- *
- *  Bit 0 - Inter-processor function call
  */
-asmlinkage void __exception do_IPI(struct pt_regs *regs)
+asmlinkage void __exception_irq_entry do_IPI(int ipinr, struct pt_regs *regs)
 {
 	unsigned int cpu = smp_processor_id();
-	struct ipi_data *ipi = &per_cpu(ipi_data, cpu);
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
-	ipi->ipi_count++;
+	if (ipinr >= IPI_TIMER && ipinr < IPI_TIMER + NR_IPI)
+		__inc_irq_stat(cpu, ipi_irqs[ipinr - IPI_TIMER]);
 
-	for (;;) {
-		unsigned long msgs;
+	switch (ipinr) {
+	case IPI_TIMER:
+		ipi_timer();
+		break;
 
-		spin_lock(&ipi->lock);
-		msgs = ipi->bits;
-		ipi->bits = 0;
-		spin_unlock(&ipi->lock);
+	case IPI_RESCHEDULE:
+		/*
+		 * nothing more to do - eveything is
+		 * done on the interrupt return path
+		 */
+		break;
 
-		if (!msgs)
-			break;
+	case IPI_CALL_FUNC:
+		generic_smp_call_function_interrupt();
+		break;
 
-		do {
-			unsigned nextmsg;
+	case IPI_CALL_FUNC_SINGLE:
+		generic_smp_call_function_single_interrupt();
+		break;
 
-			nextmsg = msgs & -msgs;
-			msgs &= ~nextmsg;
-			nextmsg = ffz(~nextmsg);
+	case IPI_CPU_STOP:
+		ipi_cpu_stop(cpu);
+		break;
 
-			switch (nextmsg) {
-			case IPI_TIMER:
-				ipi_timer();
-				break;
-
-			case IPI_RESCHEDULE:
-				/*
-				 * nothing more to do - eveything is
-				 * done on the interrupt return path
-				 */
-				break;
-
-			case IPI_CALL_FUNC:
-				generic_smp_call_function_interrupt();
-				break;
-
-			case IPI_CALL_FUNC_SINGLE:
-				generic_smp_call_function_single_interrupt();
-				break;
-
-			case IPI_CPU_STOP:
-				ipi_cpu_stop(cpu);
-				break;
-
-			default:
-				printk(KERN_CRIT "CPU%u: Unknown IPI message 0x%x\n",
-				       cpu, nextmsg);
-				break;
-			}
-		} while (msgs);
+	default:
+		printk(KERN_CRIT "CPU%u: Unknown IPI message 0x%x\n",
+		       cpu, ipinr);
+		break;
 	}
-
 	set_irq_regs(old_regs);
 }
 

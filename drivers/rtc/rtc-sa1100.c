@@ -39,7 +39,7 @@
 #include <mach/regs-ost.h>
 #endif
 
-#define RTC_DEF_DIVIDER		32768 - 1
+#define RTC_DEF_DIVIDER		(32768 - 1)
 #define RTC_DEF_TRIM		0
 
 static unsigned long rtc_freq = 1024;
@@ -61,7 +61,8 @@ static inline int rtc_periodic_alarm(struct rtc_time *tm)
  * Calculate the next alarm time given the requested alarm time mask
  * and the current time.
  */
-static void rtc_next_alarm_time(struct rtc_time *next, struct rtc_time *now, struct rtc_time *alrm)
+static void rtc_next_alarm_time(struct rtc_time *next, struct rtc_time *now,
+	struct rtc_time *alrm)
 {
 	unsigned long next_time;
 	unsigned long now_time;
@@ -116,7 +117,23 @@ static irqreturn_t sa1100_rtc_interrupt(int irq, void *dev_id)
 	rtsr = RTSR;
 	/* clear interrupt sources */
 	RTSR = 0;
-	RTSR = (RTSR_AL | RTSR_HZ) & (rtsr >> 2);
+	/* Fix for a nasty initialization problem the in SA11xx RTSR register.
+	 * See also the comments in sa1100_rtc_probe(). */
+	if (rtsr & (RTSR_ALE | RTSR_HZE)) {
+		/* This is the original code, before there was the if test
+		 * above. This code does not clear interrupts that were not
+		 * enabled. */
+		RTSR = (RTSR_AL | RTSR_HZ) & (rtsr >> 2);
+	} else {
+		/* For some reason, it is possible to enter this routine
+		 * without interruptions enabled, it has been tested with
+		 * several units (Bug in SA11xx chip?).
+		 *
+		 * This situation leads to an infinite "loop" of interrupt
+		 * routine calling and as a result the processor seems to
+		 * lock on its first call to open(). */
+		RTSR = RTSR_AL | RTSR_HZ;
+	}
 
 	/* clear alarm interrupt if it has occurred */
 	if (rtsr & RTSR_AL)
@@ -178,7 +195,7 @@ static int sa1100_rtc_read_callback(struct device *dev, int data)
 		 * Here we compare (match - OSCR) 8 instead of 0 --
 		 * see comment in pxa_timer_interrupt() for explanation.
 		 */
-		while( (signed long)((osmr1 = OSMR1) - OSCR) <= 8 ) {
+		while ((signed long)((osmr1 = OSMR1) - OSCR) <= 8) {
 			data += 0x100;
 			OSSR = OSSR_M1;	/* clear match on timer 1 */
 			OSMR1 = osmr1 + period;
@@ -192,19 +209,19 @@ static int sa1100_rtc_open(struct device *dev)
 	int ret;
 
 	ret = request_irq(IRQ_RTC1Hz, sa1100_rtc_interrupt, IRQF_DISABLED,
-				"rtc 1Hz", dev);
+		"rtc 1Hz", dev);
 	if (ret) {
 		dev_err(dev, "IRQ %d already in use.\n", IRQ_RTC1Hz);
 		goto fail_ui;
 	}
 	ret = request_irq(IRQ_RTCAlrm, sa1100_rtc_interrupt, IRQF_DISABLED,
-				"rtc Alrm", dev);
+		"rtc Alrm", dev);
 	if (ret) {
 		dev_err(dev, "IRQ %d already in use.\n", IRQ_RTCAlrm);
 		goto fail_ai;
 	}
 	ret = request_irq(IRQ_OST1, timer1_interrupt, IRQF_DISABLED,
-				"rtc timer", dev);
+		"rtc timer", dev);
 	if (ret) {
 		dev_err(dev, "IRQ %d already in use.\n", IRQ_OST1);
 		goto fail_pi;
@@ -236,7 +253,7 @@ static void sa1100_rtc_release(struct device *dev)
 static int sa1100_rtc_ioctl(struct device *dev, unsigned int cmd,
 		unsigned long arg)
 {
-	switch(cmd) {
+	switch (cmd) {
 	case RTC_AIE_OFF:
 		spin_lock_irq(&sa1100_rtc_lock);
 		RTSR &= ~RTSR_ALE;
@@ -333,6 +350,7 @@ static int sa1100_rtc_proc(struct device *dev, struct seq_file *seq)
 	seq_printf(seq, "periodic_IRQ\t: %s\n",
 			(OIER & OIER_E1) ? "yes" : "no");
 	seq_printf(seq, "periodic_freq\t: %ld\n", rtc_freq);
+	seq_printf(seq, "RTSR\t\t: 0x%08x\n", (u32)RTSR);
 
 	return 0;
 }
@@ -364,7 +382,8 @@ static int sa1100_rtc_probe(struct platform_device *pdev)
 	 */
 	if (RTTR == 0) {
 		RTTR = RTC_DEF_DIVIDER + (RTC_DEF_TRIM << 16);
-		dev_warn(&pdev->dev, "warning: initializing default clock divider/trim value\n");
+		dev_warn(&pdev->dev, "warning: "
+			"initializing default clock divider/trim value\n");
 		/* The current RTC value probably doesn't make sense either */
 		RCNR = 0;
 	}
@@ -379,6 +398,30 @@ static int sa1100_rtc_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, rtc);
 
+	/* Fix for a nasty initialization problem the in SA11xx RTSR register.
+	 * See also the comments in sa1100_rtc_interrupt().
+	 *
+	 * Sometimes bit 1 of the RTSR (RTSR_HZ) will wake up 1, which means an
+	 * interrupt pending, even though interrupts were never enabled.
+	 * In this case, this bit it must be reset before enabling
+	 * interruptions to avoid a nonexistent interrupt to occur.
+	 *
+	 * In principle, the same problem would apply to bit 0, although it has
+	 * never been observed to happen.
+	 *
+	 * This issue is addressed both here and in sa1100_rtc_interrupt().
+	 * If the issue is not addressed here, in the times when the processor
+	 * wakes up with the bit set there will be one spurious interrupt.
+	 *
+	 * The issue is also dealt with in sa1100_rtc_interrupt() to be on the
+	 * safe side, once the condition that lead to this strange
+	 * initialization is unknown and could in principle happen during
+	 * normal processing.
+	 *
+	 * Notice that clearing bit 1 and 0 is accomplished by writting ONES to
+	 * the corresponding bits in RTSR. */
+	RTSR = RTSR_AL | RTSR_HZ;
+
 	return 0;
 }
 
@@ -386,7 +429,7 @@ static int sa1100_rtc_remove(struct platform_device *pdev)
 {
 	struct rtc_device *rtc = platform_get_drvdata(pdev);
 
- 	if (rtc)
+	if (rtc)
 		rtc_device_unregister(rtc);
 
 	return 0;
