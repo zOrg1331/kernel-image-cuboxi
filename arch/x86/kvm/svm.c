@@ -31,6 +31,7 @@
 
 #include <asm/tlbflush.h>
 #include <asm/desc.h>
+#include <asm/kvm_para.h>
 
 #include <asm/virtext.h>
 #include "trace.h"
@@ -123,7 +124,12 @@ struct vcpu_svm {
 	u64 next_rip;
 
 	u64 host_user_msrs[NR_HOST_SAVE_USER_MSRS];
-	u64 host_gs_base;
+	struct {
+		u16 fs;
+		u16 gs;
+		u16 ldt;
+		u64 gs_base;
+	} host;
 
 	u32 *msrpm;
 
@@ -133,6 +139,7 @@ struct vcpu_svm {
 
 	unsigned int3_injected;
 	unsigned long int3_rip;
+	u32 apf_reason;
 };
 
 #define MSR_INVALID			0xffffffffU
@@ -264,11 +271,6 @@ static u32 svm_msrpm_offset(u32 msr)
 
 #define MAX_INST_SIZE 15
 
-static inline u32 svm_has(u32 feat)
-{
-	return svm_features & feat;
-}
-
 static inline void clgi(void)
 {
 	asm volatile (__ex(SVM_CLGI));
@@ -374,7 +376,7 @@ static void svm_queue_exception(struct kvm_vcpu *vcpu, unsigned nr,
 	    nested_svm_check_exception(svm, nr, has_error_code, error_code))
 		return;
 
-	if (nr == BP_VECTOR && !svm_has(SVM_FEATURE_NRIP)) {
+	if (nr == BP_VECTOR && !static_cpu_has(X86_FEATURE_NRIPS)) {
 		unsigned long rip, old_rip = kvm_rip_read(&svm->vcpu);
 
 		/*
@@ -670,7 +672,7 @@ static __init int svm_hardware_setup(void)
 
 	svm_features = cpuid_edx(SVM_CPUID_FUNC);
 
-	if (!svm_has(SVM_FEATURE_NPT))
+	if (!boot_cpu_has(X86_FEATURE_NPT))
 		npt_enabled = false;
 
 	if (npt_enabled && !npt) {
@@ -869,7 +871,7 @@ static void init_vmcb(struct vcpu_svm *svm)
 	svm->nested.vmcb = 0;
 	svm->vcpu.arch.hflags = 0;
 
-	if (svm_has(SVM_FEATURE_PAUSE_FILTER)) {
+	if (boot_cpu_has(X86_FEATURE_PAUSEFILTER)) {
 		control->pause_filter_count = 3000;
 		control->intercept |= (1ULL << INTERCEPT_PAUSE);
 	}
@@ -992,6 +994,13 @@ static void svm_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		svm->asid_generation = 0;
 	}
 
+#ifdef CONFIG_X86_64
+	rdmsrl(MSR_GS_BASE, to_svm(vcpu)->host.gs_base);
+#endif
+	savesegment(fs, svm->host.fs);
+	savesegment(gs, svm->host.gs);
+	svm->host.ldt = kvm_read_ldt();
+
 	for (i = 0; i < NR_HOST_SAVE_USER_MSRS; i++)
 		rdmsrl(host_save_user_msrs[i], svm->host_user_msrs[i]);
 }
@@ -1002,6 +1011,14 @@ static void svm_vcpu_put(struct kvm_vcpu *vcpu)
 	int i;
 
 	++vcpu->stat.host_state_reload;
+	kvm_load_ldt(svm->host.ldt);
+	loadsegment(fs, svm->host.fs);
+#ifdef CONFIG_X86_64
+	load_gs_index(svm->host.gs);
+	wrmsrl(MSR_KERNEL_GS_BASE, current->thread.gs);
+#else
+	loadsegment(gs, svm->host.gs);
+#endif
 	for (i = 0; i < NR_HOST_SAVE_USER_MSRS; i++)
 		wrmsrl(host_save_user_msrs[i], svm->host_user_msrs[i]);
 }
@@ -1348,20 +1365,6 @@ static void svm_guest_debug(struct kvm_vcpu *vcpu, struct kvm_guest_debug *dbg)
 	update_db_intercept(vcpu);
 }
 
-static void load_host_msrs(struct kvm_vcpu *vcpu)
-{
-#ifdef CONFIG_X86_64
-	wrmsrl(MSR_GS_BASE, to_svm(vcpu)->host_gs_base);
-#endif
-}
-
-static void save_host_msrs(struct kvm_vcpu *vcpu)
-{
-#ifdef CONFIG_X86_64
-	rdmsrl(MSR_GS_BASE, to_svm(vcpu)->host_gs_base);
-#endif
-}
-
 static void new_asid(struct vcpu_svm *svm, struct svm_cpu_data *sd)
 {
 	if (sd->next_asid > sd->max_asid) {
@@ -1383,16 +1386,33 @@ static void svm_set_dr7(struct kvm_vcpu *vcpu, unsigned long value)
 
 static int pf_interception(struct vcpu_svm *svm)
 {
-	u64 fault_address;
+	u64 fault_address = svm->vmcb->control.exit_info_2;
 	u32 error_code;
+	int r = 1;
 
-	fault_address  = svm->vmcb->control.exit_info_2;
-	error_code = svm->vmcb->control.exit_info_1;
+	switch (svm->apf_reason) {
+	default:
+		error_code = svm->vmcb->control.exit_info_1;
 
-	trace_kvm_page_fault(fault_address, error_code);
-	if (!npt_enabled && kvm_event_needs_reinjection(&svm->vcpu))
-		kvm_mmu_unprotect_page_virt(&svm->vcpu, fault_address);
-	return kvm_mmu_page_fault(&svm->vcpu, fault_address, error_code);
+		trace_kvm_page_fault(fault_address, error_code);
+		if (!npt_enabled && kvm_event_needs_reinjection(&svm->vcpu))
+			kvm_mmu_unprotect_page_virt(&svm->vcpu, fault_address);
+		r = kvm_mmu_page_fault(&svm->vcpu, fault_address, error_code);
+		break;
+	case KVM_PV_REASON_PAGE_NOT_PRESENT:
+		svm->apf_reason = 0;
+		local_irq_disable();
+		kvm_async_pf_task_wait(fault_address);
+		local_irq_enable();
+		break;
+	case KVM_PV_REASON_PAGE_READY:
+		svm->apf_reason = 0;
+		local_irq_disable();
+		kvm_async_pf_task_wake(fault_address);
+		local_irq_enable();
+		break;
+	}
+	return r;
 }
 
 static int db_interception(struct vcpu_svm *svm)
@@ -1836,8 +1856,8 @@ static int nested_svm_exit_special(struct vcpu_svm *svm)
 			return NESTED_EXIT_HOST;
 		break;
 	case SVM_EXIT_EXCP_BASE + PF_VECTOR:
-		/* When we're shadowing, trap PFs */
-		if (!npt_enabled)
+		/* When we're shadowing, trap PFs, but not async PF */
+		if (!npt_enabled && svm->apf_reason == 0)
 			return NESTED_EXIT_HOST;
 		break;
 	case SVM_EXIT_EXCP_BASE + NM_VECTOR:
@@ -1892,6 +1912,10 @@ static int nested_svm_intercept(struct vcpu_svm *svm)
 	case SVM_EXIT_EXCP_BASE ... SVM_EXIT_EXCP_BASE + 0x1f: {
 		u32 excp_bits = 1 << (exit_code - SVM_EXIT_EXCP_BASE);
 		if (svm->nested.intercept_exceptions & excp_bits)
+			vmexit = NESTED_EXIT_DONE;
+		/* async page fault always cause vmexit */
+		else if ((exit_code == SVM_EXIT_EXCP_BASE + PF_VECTOR) &&
+			 svm->apf_reason != 0)
 			vmexit = NESTED_EXIT_DONE;
 		break;
 	}
@@ -2714,7 +2738,7 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, unsigned ecx, u64 data)
 		svm->vmcb->save.sysenter_esp = data;
 		break;
 	case MSR_IA32_DEBUGCTLMSR:
-		if (!svm_has(SVM_FEATURE_LBRV)) {
+		if (!boot_cpu_has(X86_FEATURE_LBRV)) {
 			pr_unimpl(vcpu, "%s: MSR_IA32_DEBUGCTL 0x%llx, nop\n",
 					__func__, data);
 			break;
@@ -3289,9 +3313,6 @@ static void svm_cancel_injection(struct kvm_vcpu *vcpu)
 static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
-	u16 fs_selector;
-	u16 gs_selector;
-	u16 ldt_selector;
 
 	svm->vmcb->save.rax = vcpu->arch.regs[VCPU_REGS_RAX];
 	svm->vmcb->save.rsp = vcpu->arch.regs[VCPU_REGS_RSP];
@@ -3308,10 +3329,6 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	sync_lapic_to_cr8(vcpu);
 
-	save_host_msrs(vcpu);
-	savesegment(fs, fs_selector);
-	savesegment(gs, gs_selector);
-	ldt_selector = kvm_read_ldt();
 	svm->vmcb->save.cr2 = vcpu->arch.cr2;
 
 	clgi();
@@ -3389,19 +3406,8 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 #endif
 		);
 
-	vcpu->arch.cr2 = svm->vmcb->save.cr2;
-	vcpu->arch.regs[VCPU_REGS_RAX] = svm->vmcb->save.rax;
-	vcpu->arch.regs[VCPU_REGS_RSP] = svm->vmcb->save.rsp;
-	vcpu->arch.regs[VCPU_REGS_RIP] = svm->vmcb->save.rip;
-
-	load_host_msrs(vcpu);
-	kvm_load_ldt(ldt_selector);
-	loadsegment(fs, fs_selector);
 #ifdef CONFIG_X86_64
-	load_gs_index(gs_selector);
-	wrmsrl(MSR_KERNEL_GS_BASE, current->thread.gs);
-#else
-	loadsegment(gs, gs_selector);
+	wrmsrl(MSR_GS_BASE, svm->host.gs_base);
 #endif
 
 	reload_tss(vcpu);
@@ -3410,9 +3416,18 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	stgi();
 
+	vcpu->arch.cr2 = svm->vmcb->save.cr2;
+	vcpu->arch.regs[VCPU_REGS_RAX] = svm->vmcb->save.rax;
+	vcpu->arch.regs[VCPU_REGS_RSP] = svm->vmcb->save.rsp;
+	vcpu->arch.regs[VCPU_REGS_RIP] = svm->vmcb->save.rip;
+
 	sync_cr8_to_lapic(vcpu);
 
 	svm->next_rip = 0;
+
+	/* if exit due to PF check for async PF */
+	if (svm->vmcb->control.exit_code == SVM_EXIT_EXCP_BASE + PF_VECTOR)
+		svm->apf_reason = kvm_read_and_reset_pf_reason();
 
 	if (npt_enabled) {
 		vcpu->arch.regs_avail &= ~(1 << VCPU_EXREG_PDPTR);
@@ -3507,7 +3522,7 @@ static void svm_set_supported_cpuid(u32 func, struct kvm_cpuid_entry2 *entry)
 				   additional features */
 
 		/* Support next_rip if host supports it */
-		if (svm_has(SVM_FEATURE_NRIP))
+		if (boot_cpu_has(X86_FEATURE_NRIPS))
 			entry->edx |= SVM_FEATURE_NRIP;
 
 		/* Support NPT for the guest if enabled */
