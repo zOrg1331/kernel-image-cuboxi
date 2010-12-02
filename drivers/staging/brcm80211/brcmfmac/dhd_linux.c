@@ -32,7 +32,6 @@
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <bcmdefs.h>
-#include <linuxver.h>
 #include <osl.h>
 #include <bcmutils.h>
 #include <bcmendian.h>
@@ -1019,7 +1018,7 @@ static void dhd_set_multicast_list(struct net_device *dev)
 	up(&dhd->sysioc_sem);
 }
 
-int dhd_sendpkt(dhd_pub_t *dhdp, int ifidx, void *pktbuf)
+int dhd_sendpkt(dhd_pub_t *dhdp, int ifidx, struct sk_buff *pktbuf)
 {
 	int ret;
 	dhd_info_t *dhd = (dhd_info_t *) (dhdp->info);
@@ -1029,8 +1028,8 @@ int dhd_sendpkt(dhd_pub_t *dhdp, int ifidx, void *pktbuf)
 		return -ENODEV;
 
 	/* Update multicast statistic */
-	if (PKTLEN(pktbuf) >= ETHER_ADDR_LEN) {
-		u8 *pktdata = (u8 *) PKTDATA(pktbuf);
+	if (pktbuf->len >= ETHER_ADDR_LEN) {
+		u8 *pktdata = (u8 *) (pktbuf->data);
 		struct ether_header *eh = (struct ether_header *)pktdata;
 
 		if (ETHER_ISMULTI(eh->ether_dhost))
@@ -1133,13 +1132,15 @@ void dhd_txflowcontrol(dhd_pub_t *dhdp, int ifidx, bool state)
 		netif_wake_queue(net);
 }
 
-void dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt)
+void dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, struct sk_buff *pktbuf,
+		  int numpkt)
 {
 	dhd_info_t *dhd = (dhd_info_t *) dhdp->info;
 	struct sk_buff *skb;
 	unsigned char *eth;
 	uint len;
-	void *data, *pnext, *save_pktbuf;
+	void *data;
+	struct sk_buff *pnext, *save_pktbuf;
 	int i;
 	dhd_if_t *ifp;
 	wl_event_msg_t event;
@@ -1150,8 +1151,8 @@ void dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt)
 
 	for (i = 0; pktbuf && i < numpkt; i++, pktbuf = pnext) {
 
-		pnext = PKTNEXT(pktbuf);
-		PKTSETNEXT(pktbuf, NULL);
+		pnext = pktbuf->next;
+		pktbuf->next = NULL;
 
 		skb = PKTTONATIVE(dhdp->osh, pktbuf);
 
@@ -1190,7 +1191,7 @@ void dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt)
 		/* Process special event packets and then discard them */
 		if (ntoh16(skb->protocol) == ETHER_TYPE_BRCM)
 			dhd_wl_host_event(dhd, &ifidx,
-					  skb->mac_header,
+					  skb_mac_header(skb),
 					  &event, &data);
 
 		ASSERT(ifidx < DHD_MAX_IFS && dhd->iflist[ifidx]);
@@ -1223,7 +1224,7 @@ void dhd_event(struct dhd_info *dhd, char *evpkt, int evlen, int ifidx)
 	return;
 }
 
-void dhd_txcomplete(dhd_pub_t *dhdp, void *txp, bool success)
+void dhd_txcomplete(dhd_pub_t *dhdp, struct sk_buff *txp, bool success)
 {
 	uint ifidx;
 	dhd_info_t *dhd = (dhd_info_t *) (dhdp->info);
@@ -1232,7 +1233,7 @@ void dhd_txcomplete(dhd_pub_t *dhdp, void *txp, bool success)
 
 	dhd_prot_hdrpull(dhdp, &ifidx, txp);
 
-	eh = (struct ether_header *)PKTDATA(txp);
+	eh = (struct ether_header *)(txp->data);
 	type = ntoh16(eh->ether_type);
 
 	if (type == ETHER_TYPE_802_1X)
@@ -1621,6 +1622,51 @@ static int dhd_ethtool(dhd_info_t *dhd, void *uaddr)
 	return 0;
 }
 
+static s16 linuxbcmerrormap[] = { 0,	/* 0 */
+	-EINVAL,		/* BCME_ERROR */
+	-EINVAL,		/* BCME_BADARG */
+	-EINVAL,		/* BCME_BADOPTION */
+	-EINVAL,		/* BCME_NOTUP */
+	-EINVAL,		/* BCME_NOTDOWN */
+	-EINVAL,		/* BCME_NOTAP */
+	-EINVAL,		/* BCME_NOTSTA */
+	-EINVAL,		/* BCME_BADKEYIDX */
+	-EINVAL,		/* BCME_RADIOOFF */
+	-EINVAL,		/* BCME_NOTBANDLOCKED */
+	-EINVAL,		/* BCME_NOCLK */
+	-EINVAL,		/* BCME_BADRATESET */
+	-EINVAL,		/* BCME_BADBAND */
+	-E2BIG,			/* BCME_BUFTOOSHORT */
+	-E2BIG,			/* BCME_BUFTOOLONG */
+	-EBUSY,			/* BCME_BUSY */
+	-EINVAL,		/* BCME_NOTASSOCIATED */
+	-EINVAL,		/* BCME_BADSSIDLEN */
+	-EINVAL,		/* BCME_OUTOFRANGECHAN */
+	-EINVAL,		/* BCME_BADCHAN */
+	-EFAULT,		/* BCME_BADADDR */
+	-ENOMEM,		/* BCME_NORESOURCE */
+	-EOPNOTSUPP,		/* BCME_UNSUPPORTED */
+	-EMSGSIZE,		/* BCME_BADLENGTH */
+	-EINVAL,		/* BCME_NOTREADY */
+	-EPERM,			/* BCME_NOTPERMITTED */
+	-ENOMEM,		/* BCME_NOMEM */
+	-EINVAL,		/* BCME_ASSOCIATED */
+	-ERANGE,		/* BCME_RANGE */
+	-EINVAL,		/* BCME_NOTFOUND */
+	-EINVAL,		/* BCME_WME_NOT_ENABLED */
+	-EINVAL,		/* BCME_TSPEC_NOTFOUND */
+	-EINVAL,		/* BCME_ACM_NOTSUPPORTED */
+	-EINVAL,		/* BCME_NOT_WME_ASSOCIATION */
+	-EIO,			/* BCME_SDIO_ERROR */
+	-ENODEV,		/* BCME_DONGLE_DOWN */
+	-EINVAL,		/* BCME_VERSION */
+	-EIO,			/* BCME_TXFAIL */
+	-EIO,			/* BCME_RXFAIL */
+	-EINVAL,		/* BCME_NODEVICE */
+	-EINVAL,		/* BCME_NMODE_DISABLED */
+	-ENODATA,		/* BCME_NONRESIDENT */
+};
+
 static int dhd_ioctl_entry(struct net_device *net, struct ifreq *ifr, int cmd)
 {
 	dhd_info_t *dhd = *(dhd_info_t **) netdev_priv(net);
@@ -1742,7 +1788,12 @@ done:
 	if (buf)
 		kfree(buf);
 
-	return OSL_ERROR(bcmerror);
+	if (bcmerror > 0)
+		bcmerror = 0;
+	else if (bcmerror < BCME_LAST)
+		bcmerror = BCME_ERROR;
+
+	return linuxbcmerrormap[-bcmerror];
 }
 
 static int dhd_stop(struct net_device *net)
@@ -1814,12 +1865,12 @@ static int dhd_open(struct net_device *net)
 	return ret;
 }
 
-osl_t *dhd_osl_attach(void *pdev, uint bustype)
+struct osl_info *dhd_osl_attach(void *pdev, uint bustype)
 {
-	return osl_attach(pdev, bustype, true);
+	return osl_attach(pdev, bustype);
 }
 
-void dhd_osl_detach(osl_t *osh)
+void dhd_osl_detach(struct osl_info *osh)
 {
 	osl_detach(osh);
 }
@@ -1877,7 +1928,8 @@ void dhd_del_if(dhd_info_t *dhd, int ifidx)
 	up(&dhd->sysioc_sem);
 }
 
-dhd_pub_t *dhd_attach(osl_t *osh, struct dhd_bus *bus, uint bus_hdrlen)
+dhd_pub_t *dhd_attach(struct osl_info *osh, struct dhd_bus *bus,
+			uint bus_hdrlen)
 {
 	dhd_info_t *dhd = NULL;
 	struct net_device *net;
@@ -2192,14 +2244,6 @@ dhd_iovar(dhd_pub_t *pub, int ifidx, char *name, char *cmd_buf, uint cmd_len,
 static struct net_device_ops dhd_ops_pri = {
 	.ndo_open = dhd_open,
 	.ndo_stop = dhd_stop,
-	.ndo_get_stats = dhd_get_stats,
-	.ndo_do_ioctl = dhd_ioctl_entry,
-	.ndo_start_xmit = dhd_start_xmit,
-	.ndo_set_mac_address = dhd_set_mac_address,
-	.ndo_set_multicast_list = dhd_set_multicast_list
-};
-
-static struct net_device_ops dhd_ops_virt = {
 	.ndo_get_stats = dhd_get_stats,
 	.ndo_do_ioctl = dhd_ioctl_entry,
 	.ndo_start_xmit = dhd_start_xmit,

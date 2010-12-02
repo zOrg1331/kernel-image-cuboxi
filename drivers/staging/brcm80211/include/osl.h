@@ -17,14 +17,21 @@
 #ifndef _osl_h_
 #define _osl_h_
 
+struct osl_pubinfo {
+	uint pktalloced;	/* Number of allocated packet buffers */
+	bool mmbus;		/* Bus supports memory-mapped registers */
+};
+
 /* osl handle type forward declaration */
-typedef struct osl_info osl_t;
+struct osl_info {
+	struct osl_pubinfo pub;
+	uint magic;
+	void *pdev;
+	uint bustype;
+};
+
 typedef struct osl_dmainfo osldma_t;
 
-#define OSL_PKTTAG_SZ	32	/* Size of PktTag */
-
-/* Drivers use PKTFREESETCB to register a callback function when a packet is freed by OSL */
-typedef void (*pktfree_cb_fn_t) (void *ctx, void *pkt, unsigned int status);
 
 #ifdef BCMSDIO
 /* Drivers use REGOPSSET() to register register read/write funcitons */
@@ -48,12 +55,5 @@ typedef void (*osl_wreg_fn_t) (void *ctx, void *reg, unsigned int val,
 #ifndef OR_REG
 #define OR_REG(osh, r, v)		W_REG(osh, (r), R_REG(osh, r) | (v))
 #endif				/* !OR_REG */
-
-#if !defined(OSL_SYSUPTIME)
-#define OSL_SYSUPTIME() (0)
-#define OSL_SYSUPTIME_SUPPORT false
-#else
-#define OSL_SYSUPTIME_SUPPORT true
-#endif				/* OSL_SYSUPTIME */
 
 #endif				/* _osl_h_ */

@@ -18,12 +18,17 @@
 #include <linux/string.h>
 #include <bcmdefs.h>
 #include <wlc_cfg.h>
-#include <linuxver.h>
+#include <linux/delay.h>
+#include <linux/pci.h>
 #include <osl.h>
 #include <siutils.h>
 #include <sbchipc.h>
 #include <hndpmu.h>
 #include <bcmendian.h>
+
+#include <bcmdevs.h>
+#include <sbhndpio.h>
+#include <sbhnddma.h>
 
 #include <wlc_phy_radio.h>
 #include <wlc_phy_int.h>
