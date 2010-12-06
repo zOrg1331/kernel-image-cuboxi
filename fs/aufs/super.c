@@ -498,7 +498,7 @@ static int au_do_refresh_d(struct dentry *dentry, unsigned int sigen,
 	struct dentry *parent;
 	struct inode *inode;
 
-	err = -EIO;
+	err = 0;
 	parent = dget_parent(dentry);
 	if (!au_digen_test(parent, sigen) && au_digen_test(dentry, sigen)) {
 		inode = dentry->d_inode;
@@ -517,6 +517,7 @@ static int au_do_refresh_d(struct dentry *dentry, unsigned int sigen,
 	}
 	dput(parent);
 
+	AuTraceErr(err);
 	return err;
 }
 
@@ -618,6 +619,9 @@ static void au_remount_refresh(struct super_block *sb)
 	di_write_lock_child(root);
 
 	au_cpup_attr_all(inode, /*force*/1);
+
+	if (unlikely(err))
+		AuIOErr("refresh failed, ignored, %d\n", err);
 }
 
 /* stop extra interpretation of errno in mount(8), and strange error messages */
