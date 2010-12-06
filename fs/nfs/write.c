@@ -422,7 +422,6 @@ static void nfs_inode_remove_request(struct nfs_page *req)
 		iput(inode);
 	} else
 		spin_unlock(&inode->i_lock);
-	nfs_clear_request(req);
 	nfs_release_request(req);
 }
 
