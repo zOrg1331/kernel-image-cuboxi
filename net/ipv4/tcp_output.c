@@ -55,7 +55,7 @@ int sysctl_tcp_workaround_signed_windows __read_mostly = 0;
 int sysctl_tcp_tso_win_divisor __read_mostly = 3;
 
 int sysctl_tcp_mtu_probing __read_mostly = 0;
-int sysctl_tcp_base_mss __read_mostly = 512;
+int sysctl_tcp_base_mss __read_mostly = TCP_BASE_MSS;
 
 /* By default, RFC2861 behavior.  */
 int sysctl_tcp_slow_start_after_idle __read_mostly = 1;
@@ -822,8 +822,11 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 							   &md5);
 	tcp_header_size = tcp_options_size + sizeof(struct tcphdr);
 
-	if (tcp_packets_in_flight(tp) == 0)
+	if (tcp_packets_in_flight(tp) == 0) {
 		tcp_ca_event(sk, CA_EVENT_TX_START);
+		skb->ooo_okay = 1;
+	} else
+		skb->ooo_okay = 0;
 
 	skb_push(skb, tcp_header_size);
 	skb_reset_transport_header(skb);
@@ -2592,6 +2595,7 @@ int tcp_connect(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct sk_buff *buff;
+	int err;
 
 	tcp_connect_init(sk);
 
@@ -2614,7 +2618,9 @@ int tcp_connect(struct sock *sk)
 	sk->sk_wmem_queued += buff->truesize;
 	sk_mem_charge(sk, buff->truesize);
 	tp->packets_out += tcp_skb_pcount(buff);
-	tcp_transmit_skb(sk, buff, 1, sk->sk_allocation);
+	err = tcp_transmit_skb(sk, buff, 1, sk->sk_allocation);
+	if (err == -ECONNREFUSED)
+		return err;
 
 	/* We change tp->snd_nxt after the tcp_transmit_skb() call
 	 * in order to make this packet get counted in tcpOutSegs.

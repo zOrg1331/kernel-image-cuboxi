@@ -534,7 +534,9 @@ static void ath9k_hw_set_4k_power_per_rate_table(struct ath_hw *ah,
 	u16 twiceMinEdgePower;
 	u16 twiceMaxEdgePower = AR5416_MAX_RATE_POWER;
 	u16 scaledPower = 0, minCtlPower, maxRegAllowedPower;
-	u16 numCtlModes, *pCtlMode, ctlMode, freq;
+	u16 numCtlModes;
+	const u16 *pCtlMode;
+	u16 ctlMode, freq;
 	struct chan_centers centers;
 	struct cal_ctl_data_4k *rep;
 	struct ar5416_eeprom_4k *pEepData = &ah->eeprom.map4k;
@@ -550,10 +552,10 @@ static void ath9k_hw_set_4k_power_per_rate_table(struct ath_hw *ah,
 	struct cal_target_power_ht targetPowerHt20, targetPowerHt40 = {
 		0, {0, 0, 0, 0}
 	};
-	u16 ctlModesFor11g[] =
-		{ CTL_11B, CTL_11G, CTL_2GHT20, CTL_11B_EXT, CTL_11G_EXT,
-		  CTL_2GHT40
-		};
+	static const u16 ctlModesFor11g[] = {
+		CTL_11B, CTL_11G, CTL_2GHT20,
+		CTL_11B_EXT, CTL_11G_EXT, CTL_2GHT40
+	};
 
 	ath9k_hw_get_channel_centers(ah, chan, &centers);
 
@@ -726,7 +728,7 @@ static void ath9k_hw_4k_set_txpower(struct ath_hw *ah,
 				    u16 cfgCtl,
 				    u8 twiceAntennaReduction,
 				    u8 twiceMaxRegulatoryPower,
-				    u8 powerLimit)
+				    u8 powerLimit, bool test)
 {
 	struct ath_regulatory *regulatory = ath9k_hw_regulatory(ah);
 	struct ar5416_eeprom_4k *pEepData = &ah->eeprom.map4k;
@@ -751,15 +753,20 @@ static void ath9k_hw_4k_set_txpower(struct ath_hw *ah,
 
 	ath9k_hw_set_4k_power_cal_table(ah, chan, &txPowerIndexOffset);
 
+	regulatory->max_power_level = 0;
 	for (i = 0; i < ARRAY_SIZE(ratesArray); i++) {
 		ratesArray[i] =	(int16_t)(txPowerIndexOffset + ratesArray[i]);
 		if (ratesArray[i] > AR5416_MAX_RATE_POWER)
 			ratesArray[i] = AR5416_MAX_RATE_POWER;
+
+		if (ratesArray[i] > regulatory->max_power_level)
+			regulatory->max_power_level = ratesArray[i];
 	}
 
+	if (test)
+	    return;
 
 	/* Update regulatory */
-
 	i = rate6mb;
 	if (IS_CHAN_HT40(chan))
 		i = rateHt40_0;

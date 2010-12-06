@@ -23,7 +23,6 @@
 #include <linux/gfp.h>
 #include "net_driver.h"
 #include "efx.h"
-#include "mdio_10g.h"
 #include "nic.h"
 
 #include "mcdi.h"
@@ -910,6 +909,7 @@ static void efx_mac_work(struct work_struct *data)
 
 static int efx_probe_port(struct efx_nic *efx)
 {
+	unsigned char *perm_addr;
 	int rc;
 
 	netif_dbg(efx, probe, efx->net_dev, "create port\n");
@@ -923,11 +923,12 @@ static int efx_probe_port(struct efx_nic *efx)
 		return rc;
 
 	/* Sanity check MAC address */
-	if (is_valid_ether_addr(efx->mac_address)) {
-		memcpy(efx->net_dev->dev_addr, efx->mac_address, ETH_ALEN);
+	perm_addr = efx->net_dev->perm_addr;
+	if (is_valid_ether_addr(perm_addr)) {
+		memcpy(efx->net_dev->dev_addr, perm_addr, ETH_ALEN);
 	} else {
 		netif_err(efx, probe, efx->net_dev, "invalid MAC address %pM\n",
-			  efx->mac_address);
+			  perm_addr);
 		if (!allow_bad_hwaddr) {
 			rc = -EINVAL;
 			goto err;
@@ -1962,7 +1963,6 @@ void efx_reset_down(struct efx_nic *efx, enum reset_type method)
 
 	efx_stop_all(efx);
 	mutex_lock(&efx->mac_lock);
-	mutex_lock(&efx->spi_lock);
 
 	efx_fini_channels(efx);
 	if (efx->port_initialized && method != RESET_TYPE_INVISIBLE)
@@ -2004,7 +2004,6 @@ int efx_reset_up(struct efx_nic *efx, enum reset_type method, bool ok)
 	efx_init_channels(efx);
 	efx_restore_filters(efx);
 
-	mutex_unlock(&efx->spi_lock);
 	mutex_unlock(&efx->mac_lock);
 
 	efx_start_all(efx);
@@ -2014,7 +2013,6 @@ int efx_reset_up(struct efx_nic *efx, enum reset_type method, bool ok)
 fail:
 	efx->port_initialized = false;
 
-	mutex_unlock(&efx->spi_lock);
 	mutex_unlock(&efx->mac_lock);
 
 	return rc;
@@ -2202,8 +2200,6 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
 	/* Initialise common structures */
 	memset(efx, 0, sizeof(*efx));
 	spin_lock_init(&efx->biu_lock);
-	mutex_init(&efx->mdio_lock);
-	mutex_init(&efx->spi_lock);
 #ifdef CONFIG_SFC_MTD
 	INIT_LIST_HEAD(&efx->mtd_list);
 #endif

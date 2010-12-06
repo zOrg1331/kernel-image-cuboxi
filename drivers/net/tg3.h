@@ -1327,6 +1327,8 @@
 
 #define TG3_RDMA_RSRVCTRL_REG		0x00004900
 #define TG3_RDMA_RSRVCTRL_FIFO_OFLW_FIX	 0x00000004
+#define TG3_RDMA_RSRVCTRL_TXMRGN_320B	 0x28000000
+#define TG3_RDMA_RSRVCTRL_TXMRGN_MASK	 0xffe00000
 /* 0x4904 --> 0x4910 unused */
 
 #define TG3_LSO_RD_DMA_CRPTEN_CTRL	0x00004910
@@ -2562,10 +2564,6 @@ struct ring_info {
 	DEFINE_DMA_UNMAP_ADDR(mapping);
 };
 
-struct tg3_config_info {
-	u32				flags;
-};
-
 struct tg3_link_config {
 	/* Describes what we're trying to get. */
 	u32				advertising;
@@ -2713,17 +2711,17 @@ struct tg3_napi {
 	u32				last_irq_tag;
 	u32				int_mbox;
 	u32				coal_now;
-	u32				tx_prod;
-	u32				tx_cons;
-	u32				tx_pending;
-	u32				prodmbox;
 
-	u32				consmbox;
+	u32				consmbox ____cacheline_aligned;
 	u32				rx_rcb_ptr;
 	u16				*rx_rcb_prod_idx;
 	struct tg3_rx_prodring_set	prodring;
-
 	struct tg3_rx_buffer_desc	*rx_rcb;
+
+	u32				tx_prod	____cacheline_aligned;
+	u32				tx_cons;
+	u32				tx_pending;
+	u32				prodmbox;
 	struct tg3_tx_buffer_desc	*tx_ring;
 	struct ring_info		*tx_buffers;
 
@@ -2946,6 +2944,7 @@ struct tg3 {
 	int				pcix_cap;
 	int				pcie_cap;
 	};
+	int				pcie_readrq;
 
 	struct mii_bus			*mdio_bus;
 	int				mdio_irq[PHY_MAX_ADDR];
