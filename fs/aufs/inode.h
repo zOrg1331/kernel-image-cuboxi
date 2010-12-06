@@ -455,16 +455,15 @@ static inline void au_pin_set_parent(struct au_pin *pin, struct dentry *parent)
 #ifdef CONFIG_AUFS_HNOTIFY
 struct au_hnotify_op {
 	void (*ctl)(struct au_hinode *hinode, int do_set);
-	int (*alloc)(struct au_hnotify *hn, struct inode *h_inode);
-	void (*free)(struct au_hnotify *hn);
+	int (*alloc)(struct au_hinode *hinode);
+	void (*free)(struct au_hinode *hinode);
 
 	void (*fin)(void);
 	int (*init)(void);
 };
 
 /* hnotify.c */
-int au_hn_alloc(struct au_hinode *hinode, struct inode *inode,
-		struct inode *h_inode);
+int au_hn_alloc(struct au_hinode *hinode, struct inode *inode);
 void au_hn_free(struct au_hinode *hinode);
 void au_hn_ctl(struct au_hinode *hinode, int do_set);
 void au_hn_reset(struct inode *inode, unsigned int flags);
@@ -485,8 +484,7 @@ void au_hn_init(struct au_hinode *hinode)
 #else
 static inline
 int au_hn_alloc(struct au_hinode *hinode __maybe_unused,
-		struct inode *inode __maybe_unused,
-		struct inode *h_inode __maybe_unused)
+		struct inode *inode __maybe_unused)
 {
 	return -EOPNOTSUPP;
 }

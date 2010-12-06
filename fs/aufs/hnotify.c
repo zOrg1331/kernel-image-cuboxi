@@ -22,8 +22,7 @@
 
 #include "aufs.h"
 
-int au_hn_alloc(struct au_hinode *hinode, struct inode *inode,
-		struct inode *h_inode)
+int au_hn_alloc(struct au_hinode *hinode, struct inode *inode)
 {
 	int err;
 	struct au_hnotify *hn;
@@ -32,10 +31,11 @@ int au_hn_alloc(struct au_hinode *hinode, struct inode *inode,
 	hn = au_cache_alloc_hnotify();
 	if (hn) {
 		hn->hn_aufs_inode = inode;
-		err = au_hnotify_op.alloc(hn, h_inode);
-		if (!err)
-			hinode->hi_notify = hn;
-		else {
+		hinode->hi_notify = hn;
+		err = au_hnotify_op.alloc(hinode);
+		AuTraceErr(err);
+		if (unlikely(err)) {
+			hinode->hi_notify = NULL;
 			au_cache_free_hnotify(hn);
 			/*
 			 * The upper dir was removed by udba, but the same named
@@ -48,6 +48,7 @@ int au_hn_alloc(struct au_hinode *hinode, struct inode *inode,
 		}
 	}
 
+	AuTraceErr(err);
 	return err;
 }
 
@@ -57,7 +58,7 @@ void au_hn_free(struct au_hinode *hinode)
 
 	hn = hinode->hi_notify;
 	if (hn) {
-		au_hnotify_op.free(hn);
+		au_hnotify_op.free(hinode);
 		au_cache_free_hnotify(hn);
 		hinode->hi_notify = NULL;
 	}

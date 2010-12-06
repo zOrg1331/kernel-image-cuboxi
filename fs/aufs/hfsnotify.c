@@ -37,20 +37,24 @@ static void au_hfsn_free_mark(struct fsnotify_mark_entry *entry)
 	AuDbg("here\n");
 }
 
-static int au_hfsn_alloc(struct au_hnotify *hn, struct inode *h_inode)
+static int au_hfsn_alloc(struct au_hinode *hinode)
 {
+	struct au_hnotify *hn;
 	struct fsnotify_mark_entry *entry;
 
+	hn = hinode->hi_notify;
 	entry = &hn->hn_entry;
 	fsnotify_init_mark(entry, au_hfsn_free_mark);
 	entry->mask = AuHfsnMask;
-	return fsnotify_add_mark(entry, au_hfsn_group, h_inode);
+	return fsnotify_add_mark(entry, au_hfsn_group, hinode->hi_inode);
 }
 
-static void au_hfsn_free(struct au_hnotify *hn)
+static void au_hfsn_free(struct au_hinode *hinode)
 {
+	struct au_hnotify *hn;
 	struct fsnotify_mark_entry *entry;
 
+	hn = hinode->hi_notify;
 	entry = &hn->hn_entry;
 	fsnotify_destroy_mark_by_entry(entry);
 	fsnotify_put_mark(entry);
