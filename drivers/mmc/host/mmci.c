@@ -831,7 +831,6 @@ static int __devinit mmci_probe(struct amba_device *dev, struct amba_id *id)
 		mmc->f_max = min(host->mclk, fmax);
 	dev_dbg(mmc_dev(mmc), "clocking block at %u Hz\n", mmc->f_max);
 
-#ifdef CONFIG_REGULATOR
 	/* If we're using the regulator framework, try to fetch a regulator */
 	host->vcc = regulator_get(&dev->dev, "vmmc");
 	if (IS_ERR(host->vcc))
@@ -850,7 +849,7 @@ static int __devinit mmci_probe(struct amba_device *dev, struct amba_id *id)
 				 "(using regulator instead)\n");
 		}
 	}
-#endif
+
 	/* Fall back to platform data if no regulator is found */
 	if (host->vcc == NULL)
 		mmc->ocr_avail = plat->ocr_mask;
