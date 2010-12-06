@@ -37,15 +37,12 @@
 #include <linux/kobject.h>
 #include <linux/mutex.h>
 #include <linux/file.h>
-#include <linux/ve_proto.h>
 #include <asm/uaccess.h>
 #include "internal.h"
 
 
 LIST_HEAD(super_blocks);
-EXPORT_SYMBOL(super_blocks);
 DEFINE_SPINLOCK(sb_lock);
-EXPORT_SYMBOL(sb_lock);
 
 /**
  *	alloc_super	-	create new superblock
@@ -72,15 +69,13 @@ static struct super_block *alloc_super(struct file_system_type *type)
 		INIT_LIST_HEAD(&s->s_dentry_lru);
 		init_rwsem(&s->s_umount);
 		mutex_init(&s->s_lock);
-		lockdep_set_class(&s->s_umount,
-				&type->proto->s_umount_key);
+		lockdep_set_class(&s->s_umount, &type->s_umount_key);
 		/*
 		 * The locking rules for s_lock are up to the
 		 * filesystem. For example ext3fs has different
 		 * lock ordering than usbfs:
 		 */
-		lockdep_set_class(&s->s_lock,
-				&type->proto->s_lock_key);
+		lockdep_set_class(&s->s_lock, &type->s_lock_key);
 		/*
 		 * sget() can have s_umount recursion.
 		 *
@@ -165,7 +160,6 @@ int __put_super_and_need_restart(struct super_block *sb)
 	BUG_ON(sb->s_count == 0);
 	return 0;
 }
-EXPORT_SYMBOL(__put_super_and_need_restart);
 
 /**
  *	put_super	-	drop a temporary reference to superblock
@@ -180,7 +174,7 @@ void put_super(struct super_block *sb)
 	__put_super(sb);
 	spin_unlock(&sb_lock);
 }
-EXPORT_SYMBOL(put_super);
+
 
 /**
  *	deactivate_super	-	drop an active reference to superblock
@@ -313,13 +307,11 @@ void generic_shutdown_super(struct super_block *sb)
 		/* bad name - it should be evict_inodes() */
 		invalidate_inodes(sb);
 
-		if (sb->dq_op && sb->dq_op->shutdown)
-			sb->dq_op->shutdown(sb);
 		if (sop->put_super)
 			sop->put_super(sb);
 
 		/* Forget any remaining inodes */
-		if (invalidate_inodes_check(sb, 1)) {
+		if (invalidate_inodes(sb)) {
 			printk("VFS: Busy inodes after unmount of %s. "
 			   "Self-destruct in 5 seconds.  Have a nice day...\n",
 			   sb->s_id);
@@ -539,27 +531,18 @@ rescan:
 	spin_unlock(&sb_lock);
 	return NULL;
 }
-EXPORT_SYMBOL(user_get_super);
 
 SYSCALL_DEFINE2(ustat, unsigned, dev, struct ustat __user *, ubuf)
 {
-	dev_t kdev;
         struct super_block *s;
         struct ustat tmp;
         struct kstatfs sbuf;
-	int err;
+	int err = -EINVAL;
 
-	kdev = new_decode_dev(dev);
-	err = get_device_perms_ve(S_IFBLK, kdev, FMODE_READ);
-	if (err)
-		goto out;
-
-	err = -EINVAL;
-	s = user_get_super(kdev);
-	if (s == NULL)
-		goto out;
-
-	err = vfs_statfs_by_sb(s, s->s_root, &sbuf);
+        s = user_get_super(new_decode_dev(dev));
+        if (s == NULL)
+                goto out;
+	err = vfs_statfs(s->s_root, &sbuf);
 	drop_super(s);
 	if (err)
 		goto out;
@@ -670,13 +653,6 @@ static DEFINE_IDA(unnamed_dev_ida);
 static DEFINE_SPINLOCK(unnamed_dev_lock);/* protects the above */
 static int unnamed_dev_start = 0; /* don't bother trying below it */
 
-/* for compatibility with coreutils still unaware of new minor sizes */
-int unnamed_dev_majors[] = {
-	0, 144, 145, 146, 242, 243, 244, 245,
-	246, 247, 248, 249, 250, 251, 252, 253
-};
-EXPORT_SYMBOL(unnamed_dev_majors);
-
 int set_anon_super(struct super_block *s, void *data)
 {
 	int dev;
@@ -696,7 +672,7 @@ int set_anon_super(struct super_block *s, void *data)
 	else if (error)
 		return -EAGAIN;
 
-	if ((dev & MAX_ID_MASK) >= (1 << MINORBITS)) {
+	if ((dev & MAX_ID_MASK) == (1 << MINORBITS)) {
 		spin_lock(&unnamed_dev_lock);
 		ida_remove(&unnamed_dev_ida, dev);
 		if (unnamed_dev_start > dev)
@@ -704,7 +680,7 @@ int set_anon_super(struct super_block *s, void *data)
 		spin_unlock(&unnamed_dev_lock);
 		return -EMFILE;
 	}
-	s->s_dev = make_unnamed_dev(dev);
+	s->s_dev = MKDEV(0, dev & MINORMASK);
 	return 0;
 }
 
@@ -712,9 +688,8 @@ EXPORT_SYMBOL(set_anon_super);
 
 void kill_anon_super(struct super_block *sb)
 {
-	int slot;
+	int slot = MINOR(sb->s_dev);
 
-	slot = unnamed_dev_idx(sb->s_dev);
 	generic_shutdown_super(sb);
 	spin_lock(&unnamed_dev_lock);
 	ida_remove(&unnamed_dev_ida, slot);
@@ -926,9 +901,8 @@ int get_sb_single(struct file_system_type *fs_type,
 			return error;
 		}
 		s->s_flags |= MS_ACTIVE;
-	} else {
-		do_remount_sb(s, flags, data, 0);
 	}
+	do_remount_sb(s, flags, data, 0);
 	simple_set_mnt(mnt, s);
 	return 0;
 }

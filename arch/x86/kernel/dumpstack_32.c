@@ -10,14 +10,19 @@
 #include <linux/module.h>
 #include <linux/ptrace.h>
 #include <linux/kexec.h>
-#include <linux/sysfs.h>
 #include <linux/bug.h>
 #include <linux/nmi.h>
+#include <linux/sysfs.h>
 
 #include <asm/stacktrace.h>
 
 #include "dumpstack.h"
 
+/* Just a stub for now */
+int x86_is_stack_id(int id, char *name)
+{
+	return 0;
+}
 
 void dump_trace(struct task_struct *task, struct pt_regs *regs,
 		unsigned long *stack, unsigned long bp,
@@ -30,7 +35,6 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 
 	if (!stack) {
 		unsigned long dummy;
-
 		stack = &dummy;
 		if (task && task != current)
 			stack = (unsigned long *)task->thread.sp;
@@ -53,7 +57,8 @@ void dump_trace(struct task_struct *task, struct pt_regs *regs,
 
 		context = (struct thread_info *)
 			((unsigned long)stack & (~(THREAD_SIZE - 1)));
-		bp = ops->walk_stack(context, stack, bp, ops, data, NULL, &graph);
+		bp = print_context_stack(context, stack, bp, ops,
+					 data, NULL, &graph);
 
 		stack = (unsigned long *)context->previous_esp;
 		if (!stack)
@@ -67,7 +72,7 @@ EXPORT_SYMBOL(dump_trace);
 
 void
 show_stack_log_lvl(struct task_struct *task, struct pt_regs *regs,
-		   unsigned long *sp, unsigned long bp, char *log_lvl)
+		unsigned long *sp, unsigned long bp, char *log_lvl)
 {
 	unsigned long *stack;
 	int i;
@@ -100,9 +105,8 @@ void show_registers(struct pt_regs *regs)
 	print_modules();
 	__show_regs(regs, 0);
 
-	printk(KERN_EMERG "Process %.*s (pid: %d, veid: %d, ti=%p task=%p task.ti=%p)\n",
+	printk(KERN_EMERG "Process %.*s (pid: %d, ti=%p task=%p task.ti=%p)\n",
 		TASK_COMM_LEN, current->comm, task_pid_nr(current),
-		VEID(current->ve_task_info.owner_env),
 		current_thread_info(), current, task_thread_info(current));
 	/*
 	 * When in-kernel, we also print out the stack and code at the
@@ -152,3 +156,4 @@ int is_valid_bugaddr(unsigned long ip)
 
 	return ud2 == 0x0b0f;
 }
+

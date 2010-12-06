@@ -138,7 +138,6 @@ static int udp_lib_lport_inuse(struct net *net, __u16 num,
 		    sk2 != sk					&&
 		    (bitmap || sk2->sk_hash == num)		&&
 		    (!sk2->sk_reuse || !sk->sk_reuse)		&&
-		    sk->sk_reuse != 2 &&
 		    (!sk2->sk_bound_dev_if || !sk->sk_bound_dev_if
 			|| sk2->sk_bound_dev_if == sk->sk_bound_dev_if) &&
 		    (*saddr_comp)(sk, sk2)) {
@@ -197,8 +196,7 @@ int udp_lib_get_port(struct sock *sk, unsigned short snum,
 			 */
 			do {
 				if (low <= snum && snum <= high &&
-				    !test_bit(snum / UDP_HTABLE_SIZE, bitmap) &&
-				    !inet_is_reserved_local_port(snum))
+				    !test_bit(snum / UDP_HTABLE_SIZE, bitmap))
 					goto found;
 				snum += rand;
 			} while (snum != first);
@@ -984,7 +982,7 @@ try_again:
 		UDP_INC_STATS_USER(sock_net(sk),
 				UDP_MIB_INDATAGRAMS, is_udplite);
 
-	sock_recv_ts_and_drops(msg, sk, skb);
+	sock_recv_timestamp(msg, sk, skb);
 
 	/* Copy the address. */
 	if (sin) {
@@ -1294,9 +1292,6 @@ int __udp4_lib_rcv(struct sk_buff *skb, struct udp_table *udptable,
 
 	uh   = udp_hdr(skb);
 	ulen = ntohs(uh->len);
-	saddr = ip_hdr(skb)->saddr;
-	daddr = ip_hdr(skb)->daddr;
-
 	if (ulen > skb->len)
 		goto short_packet;
 
@@ -1309,6 +1304,9 @@ int __udp4_lib_rcv(struct sk_buff *skb, struct udp_table *udptable,
 
 	if (udp4_csum_init(skb, uh, proto))
 		goto csum_error;
+
+	saddr = ip_hdr(skb)->saddr;
+	daddr = ip_hdr(skb)->daddr;
 
 	if (rt->rt_flags & (RTCF_BROADCAST|RTCF_MULTICAST))
 		return __udp4_lib_mcast_deliver(net, skb, uh,

@@ -268,7 +268,6 @@ static int __iommu_queue_command(struct amd_iommu *iommu, struct iommu_cmd *cmd)
 	u32 tail, head;
 	u8 *target;
 
-	WARN_ON(iommu->cmd_buf_size & CMD_BUFFER_UNINITIALIZED);
 	tail = readl(iommu->mmio_base + MMIO_CMD_TAIL_OFFSET);
 	target = iommu->cmd_buf + tail;
 	memcpy_toio(target, cmd, sizeof(*cmd));
@@ -541,11 +540,11 @@ static void flush_all_devices_for_iommu(struct amd_iommu *iommu)
 static void flush_devices_by_domain(struct protection_domain *domain)
 {
 	struct amd_iommu *iommu;
-	unsigned long i;
+	int i;
 
 	for (i = 0; i <= amd_iommu_last_bdf; ++i) {
 		if ((domain == NULL && amd_iommu_pd_table[i] == NULL) ||
-		    (domain != NULL && amd_iommu_pd_table[i] != domain))
+		    (amd_iommu_pd_table[i] != domain))
 			continue;
 
 		iommu = amd_iommu_rlookup_table[i];
@@ -781,7 +780,7 @@ static int alloc_new_range(struct amd_iommu *iommu,
 			   bool populate, gfp_t gfp)
 {
 	int index = dma_dom->aperture_size >> APERTURE_RANGE_SHIFT;
-	unsigned long i;
+	int i;
 
 #ifdef CONFIG_IOMMU_STRESS
 	populate = false;
@@ -1209,7 +1208,6 @@ static void attach_device(struct amd_iommu *iommu,
  */
 static void __detach_device(struct protection_domain *domain, u16 devid)
 {
-	struct amd_iommu *iommu = amd_iommu_rlookup_table[devid];
 
 	/* lock domain */
 	spin_lock(&domain->lock);
@@ -1232,16 +1230,12 @@ static void __detach_device(struct protection_domain *domain, u16 devid)
 
 	/*
 	 * If we run in passthrough mode the device must be assigned to the
-	 * passthrough domain if it is detached from any other domain.
-	 * Make sure we can deassign from the pt_domain itself.
+	 * passthrough domain if it is detached from any other domain
 	 */
-	if (iommu_pass_through && domain != pt_domain)
+	if (iommu_pass_through) {
+		struct amd_iommu *iommu = amd_iommu_rlookup_table[devid];
 		__attach_device(iommu, pt_domain, devid);
-
-	iommu_queue_inv_dev_entry(iommu, devid);
-	if (domain->dev_cnt == 0)
-		iommu_flush_tlb_pde(iommu, domain->id);
-	iommu_completion_wait(iommu);
+	}
 }
 
 /*
@@ -1278,6 +1272,10 @@ static int device_change_notifier(struct notifier_block *nb,
 		goto out;
 
 	domain = domain_for_device(devid);
+
+	if (domain && !dma_ops_domain(domain))
+		WARN_ONCE(1, "AMD IOMMU WARNING: device %s already bound "
+			  "to a non-dma-ops domain\n", dev_name(dev));
 
 	switch (action) {
 	case BUS_NOTIFY_UNBOUND_DRIVER:
@@ -1316,11 +1314,6 @@ out:
 static struct notifier_block device_nb = {
 	.notifier_call = device_change_notifier,
 };
-
-void amd_iommu_init_notifier(void)
-{
-	bus_register_notifier(&pci_bus_type, &device_nb);
-}
 
 /*****************************************************************************
  *
@@ -2054,10 +2047,10 @@ static void prealloc_protection_domains(void)
 	struct pci_dev *dev = NULL;
 	struct dma_ops_domain *dma_dom;
 	struct amd_iommu *iommu;
-	u16 devid, __devid;
+	u16 devid;
 
 	while ((dev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, dev)) != NULL) {
-		__devid = devid = calc_devid(dev->bus->number, dev->devfn);
+		devid = calc_devid(dev->bus->number, dev->devfn);
 		if (devid > amd_iommu_last_bdf)
 			continue;
 		devid = amd_iommu_alias_table[devid];
@@ -2071,10 +2064,6 @@ static void prealloc_protection_domains(void)
 			continue;
 		init_unity_mappings_for_device(dma_dom, devid);
 		dma_dom->target_dev = devid;
-
-		attach_device(iommu, &dma_dom->domain, devid);
-		if (__devid != devid)
-			attach_device(iommu, &dma_dom->domain, __devid);
 
 		list_add_tail(&dma_dom->list, &iommu_pd_list);
 	}
@@ -2093,12 +2082,6 @@ static struct dma_map_ops amd_iommu_dma_ops = {
 /*
  * The function which clues the AMD IOMMU driver into dma_ops.
  */
-
-void __init amd_iommu_init_api(void)
-{
-	register_iommu(&amd_iommu_ops);
-}
-
 int __init amd_iommu_init_dma_ops(void)
 {
 	struct amd_iommu *iommu;
@@ -2129,9 +2112,17 @@ int __init amd_iommu_init_dma_ops(void)
 	iommu_detected = 1;
 	force_iommu = 1;
 	bad_dma_address = 0;
+#ifdef CONFIG_GART_IOMMU
+	gart_iommu_aperture_disabled = 1;
+	gart_iommu_aperture = 0;
+#endif
 
 	/* Make the driver finally visible to the drivers */
 	dma_ops = &amd_iommu_dma_ops;
+
+	register_iommu(&amd_iommu_ops);
+
+	bus_register_notifier(&pci_bus_type, &device_nb);
 
 	amd_iommu_stats_init();
 
@@ -2240,7 +2231,9 @@ static void amd_iommu_domain_destroy(struct iommu_domain *dom)
 
 	free_pagetable(domain);
 
-	protection_domain_free(domain);
+	domain_id_free(domain->id);
+
+	kfree(domain);
 
 	dom->priv = NULL;
 }

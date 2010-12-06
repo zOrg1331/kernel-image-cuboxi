@@ -608,7 +608,7 @@ static void protect_vma(struct vm_area_struct *vma, unsigned long flags)
  */
 static void add_vma_to_mm(struct mm_struct *mm, struct vm_area_struct *vma)
 {
-	struct vm_area_struct *pvma, **pp, *next;
+	struct vm_area_struct *pvma, **pp;
 	struct address_space *mapping;
 	struct rb_node **p, *parent;
 
@@ -668,11 +668,8 @@ static void add_vma_to_mm(struct mm_struct *mm, struct vm_area_struct *vma)
 			break;
 	}
 
-	next = *pp;
+	vma->vm_next = *pp;
 	*pp = vma;
-	vma->vm_next = next;
-	if (next)
-		next->vm_prev = vma;
 }
 
 /*
@@ -1214,7 +1211,7 @@ unsigned long do_mmap_pgoff(struct file *file,
 	region->vm_flags = vm_flags;
 	region->vm_pgoff = pgoff;
 
-	INIT_LIST_HEAD(&vma->anon_vma_chain);
+	INIT_LIST_HEAD(&vma->anon_vma_node);
 	vma->vm_flags = vm_flags;
 	vma->vm_pgoff = pgoff;
 
@@ -1465,7 +1462,6 @@ int split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 	add_vma_to_mm(mm, new);
 	return 0;
 }
-EXPORT_SYMBOL(split_vma);
 
 /*
  * shrink a VMA by removing the specified chunk from either the beginning or

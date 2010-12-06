@@ -973,13 +973,14 @@ static int mg_probe(struct platform_device *plat_dev)
 	host->breq->queuedata = host;
 
 	/* mflash is random device, thanx for the noop */
-	err = elevator_change(host->breq, "noop");
+	elevator_exit(host->breq->elevator);
+	err = elevator_init(host->breq, "noop");
 	if (err) {
 		printk(KERN_ERR "%s:%d (elevator_init) fail\n",
 				__func__, __LINE__);
 		goto probe_err_6;
 	}
-	blk_queue_max_hw_sectors(host->breq, MG_MAX_SECTS);
+	blk_queue_max_sectors(host->breq, MG_MAX_SECTS);
 	blk_queue_logical_block_size(host->breq, MG_SECTOR_SIZE);
 
 	init_timer(&host->timer);

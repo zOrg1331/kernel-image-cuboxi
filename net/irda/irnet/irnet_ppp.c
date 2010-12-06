@@ -76,8 +76,9 @@ irnet_ctrl_write(irnet_socket *	ap,
       /* Look at the next command */
       start = next;
 
-	/* Scrap whitespaces before the command */
-	start = skip_spaces(start);
+      /* Scrap whitespaces before the command */
+      while(isspace(*start))
+	start++;
 
       /* ',' is our command separator */
       next = strchr(start, ',');
@@ -132,7 +133,8 @@ irnet_ctrl_write(irnet_socket *	ap,
 	      char *	endp;
 
 	      /* Scrap whitespaces before the command */
-	      begp = skip_spaces(begp);
+	      while(isspace(*begp))
+		begp++;
 
 	      /* Convert argument to a number (last arg is the base) */
 	      addr = simple_strtoul(begp, &endp, 16);

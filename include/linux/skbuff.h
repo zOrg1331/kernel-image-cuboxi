@@ -190,6 +190,9 @@ struct skb_shared_info {
 	atomic_t	dataref;
 	unsigned short	nr_frags;
 	unsigned short	gso_size;
+#ifdef CONFIG_HAS_DMA
+	dma_addr_t	dma_head;
+#endif
 	/* Warning: this field is not always filled in (UFO)! */
 	unsigned short	gso_segs;
 	unsigned short  gso_type;
@@ -198,6 +201,9 @@ struct skb_shared_info {
 	struct sk_buff	*frag_list;
 	struct skb_shared_hwtstamps hwtstamps;
 	skb_frag_t	frags[MAX_SKB_FRAGS];
+#ifdef CONFIG_HAS_DMA
+	dma_addr_t	dma_maps[MAX_SKB_FRAGS];
+#endif
 	/* Intermediate layers must ensure that destructor_arg
 	 * remains valid until skb destructor */
 	void *		destructor_arg;
@@ -304,8 +310,6 @@ typedef unsigned char *sk_buff_data_t;
  *	@vlan_tci: vlan tag control information
  */
 
-#include <bc/sock.h>
-
 struct sk_buff {
 	/* These two members must be first. */
 	struct sk_buff		*next;
@@ -353,13 +357,6 @@ struct sk_buff {
 	__be16			protocol:16;
 	kmemcheck_bitfield_end(flags1);
 
-#ifdef CONFIG_VE
-	unsigned int		accounted:1;
-	unsigned int		redirected:1;
-#endif
-#if defined(CONFIG_BRIDGE) || defined (CONFIG_BRIDGE_MODULE)
-	__u8			brmark;
-#endif
 	void			(*destructor)(struct sk_buff *skb);
 #if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
 	struct nf_conntrack	*nfct;
@@ -380,10 +377,7 @@ struct sk_buff {
 	kmemcheck_bitfield_begin(flags2);
 	__u16			queue_mapping:16;
 #ifdef CONFIG_IPV6_NDISC_NODETYPE
-	__u8			ndisc_nodetype:2,
-				deliver_no_wcard:1;
-#else
-	__u8			deliver_no_wcard:1;
+	__u8			ndisc_nodetype:2;
 #endif
 	kmemcheck_bitfield_end(flags2);
 
@@ -395,10 +389,8 @@ struct sk_buff {
 #ifdef CONFIG_NETWORK_SECMARK
 	__u32			secmark;
 #endif
-	union {
-		__u32		mark;
-		__u32		dropcount;
-	};
+
+	__u32			mark;
 
 	__u16			vlan_tci;
 
@@ -412,8 +404,6 @@ struct sk_buff {
 				*data;
 	unsigned int		truesize;
 	atomic_t		users;
-	struct skb_beancounter	skb_bc;
-	struct ve_struct	*owner_env;
 };
 
 #ifdef __KERNEL__
@@ -421,9 +411,16 @@ struct sk_buff {
  *	Handling routines are only of interest to the kernel
  */
 #include <linux/slab.h>
-#include <bc/net.h>
 
 #include <asm/system.h>
+
+#ifdef CONFIG_HAS_DMA
+#include <linux/dma-mapping.h>
+extern int skb_dma_map(struct device *dev, struct sk_buff *skb,
+		       enum dma_data_direction dir);
+extern void skb_dma_unmap(struct device *dev, struct sk_buff *skb,
+			  enum dma_data_direction dir);
+#endif
 
 static inline struct dst_entry *skb_dst(const struct sk_buff *skb)
 {
@@ -1425,9 +1422,6 @@ static inline void pskb_trim_unique(struct sk_buff *skb, unsigned int len)
  */
 static inline void skb_orphan(struct sk_buff *skb)
 {
-	if (skb->sk)
-		ub_skb_uncharge(skb);
-
 	if (skb->destructor)
 		skb->destructor(skb);
 	skb->destructor = NULL;
@@ -1493,16 +1487,6 @@ static inline struct sk_buff *netdev_alloc_skb(struct net_device *dev,
 		unsigned int length)
 {
 	return __netdev_alloc_skb(dev, length, GFP_ATOMIC);
-}
-
-static inline struct sk_buff *netdev_alloc_skb_ip_align(struct net_device *dev,
-		unsigned int length)
-{
-	struct sk_buff *skb = netdev_alloc_skb(dev, length + NET_IP_ALIGN);
-
-	if (NET_IP_ALIGN && skb)
-		skb_reserve(skb, NET_IP_ALIGN);
-	return skb;
 }
 
 extern struct page *__netdev_alloc_page(struct net_device *dev, gfp_t gfp_mask);
@@ -2022,26 +2006,6 @@ static inline void skb_copy_secmark(struct sk_buff *to, const struct sk_buff *fr
 
 static inline void skb_init_secmark(struct sk_buff *skb)
 { }
-#endif
-
-#if defined(CONFIG_BRIDGE) || defined (CONFIG_BRIDGE_MODULE)
-static inline void skb_copy_brmark(struct sk_buff *to, const struct sk_buff *from)
-{
-	to->brmark = from->brmark;
-}
-
-static inline void skb_init_brmark(struct sk_buff *skb)
-{
-	skb->brmark = 0;
-}
-#else
-static inline void skb_copy_brmark(struct sk_buff *to, const struct sk_buff *from)
-{
-}
-
-static inline void skb_init_brmark(struct sk_buff *skb)
-{
-}
 #endif
 
 static inline void skb_set_queue_mapping(struct sk_buff *skb, u16 queue_mapping)

@@ -48,10 +48,8 @@ cond_syscall(sys_shutdown);
 cond_syscall(sys_sendmsg);
 cond_syscall(compat_sys_sendmsg);
 cond_syscall(sys_recvmsg);
-cond_syscall(sys_recvmmsg);
 cond_syscall(compat_sys_recvmsg);
 cond_syscall(compat_sys_recvfrom);
-cond_syscall(compat_sys_recvmmsg);
 cond_syscall(sys_socketcall);
 cond_syscall(sys_futex);
 cond_syscall(compat_sys_futex);
@@ -181,18 +179,3 @@ cond_syscall(sys_eventfd2);
 
 /* performance counters: */
 cond_syscall(sys_perf_event_open);
-cond_syscall(sys_getluid);
-cond_syscall(sys_setluid);
-cond_syscall(sys_setublimit);
-cond_syscall(compat_sys_setublimit);
-cond_syscall(sys_ubstat);
-
-/* fairsched compat */
-cond_syscall(sys_fairsched_mknod);
-cond_syscall(sys_fairsched_rmnod);
-cond_syscall(sys_fairsched_mvpr);
-cond_syscall(sys_fairsched_vcpus);
-cond_syscall(sys_fairsched_chwt);
-cond_syscall(sys_fairsched_rate);
-
-cond_syscall(compat_sys_lutime);

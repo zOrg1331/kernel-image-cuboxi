@@ -1,4 +1,3 @@
-#include <linux/sched.h>
 #include <linux/spinlock.h>
 #include <linux/errno.h>
 #include <linux/init.h>
@@ -28,9 +27,6 @@ static int __init noexec_setup(char *str)
 	} else if (!strncmp(str, "off", 3)) {
 		disable_nx = 1;
 		__supported_pte_mask &= ~_PAGE_NX;
-#ifdef CONFIG_X86_32
-		exec_shield = 0;
-#endif
 	}
 	return 0;
 }

@@ -170,7 +170,6 @@ static void __cpuinit early_init_cyrix(struct cpuinfo_x86 *c)
 {
 	unsigned char dir0, dir0_msn, dir1 = 0;
 
-	mark_hardware_unsupported("Cyrix Processor");
 	__do_cyrix_devid(&dir0, &dir1);
 	dir0_msn = dir0 >> 4; /* identifies CPU "family"   */
 
@@ -374,7 +373,7 @@ static void __cpuinit init_nsc(struct cpuinfo_x86 *c)
 	/* Handle the GX (Formally known as the GX2) */
 
 	if (c->x86 == 5 && c->x86_model == 5)
-		cpu_detect_cache_sizes(c);
+		display_cacheinfo(c);
 	else
 		init_cyrix(c);
 }

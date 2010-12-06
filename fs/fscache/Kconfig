@@ -1,6 +1,7 @@
 
 config FSCACHE
 	tristate "General filesystem local caching manager"
+	depends on EXPERIMENTAL
 	select SLOW_WORK
 	help
 	  This option enables a generic filesystem caching manager that can be

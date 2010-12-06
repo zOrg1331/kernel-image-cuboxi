@@ -14,7 +14,6 @@
 #include <linux/file.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
-#include <linux/nsproxy.h>
 #include <trace/events/sched.h>
 
 static DEFINE_SPINLOCK(kthread_create_lock);
@@ -26,7 +25,6 @@ struct kthread_create_info
 	/* Information passed to kthread() from kthreadd. */
 	int (*threadfn)(void *data);
 	void *data;
-	struct ve_struct *ve;
 
 	/* Result passed back to kthread_create() from kthreadd. */
 	struct task_struct *result;
@@ -69,16 +67,6 @@ static int kthread(void *_create)
 	init_completion(&self.exited);
 	current->vfork_done = &self.exited;
 
-	if (do_ve_enter_hook && create->ve != get_ve0()) {
-		ret = do_ve_enter_hook(create->ve, 0);
-		if (ret < 0) {
-			create->result = ERR_PTR(ret);
-			complete(&create->done);
-			goto out;
-		}
-	} else if (create->ve != get_ve0())
-		BUG();
-
 	/* OK, tell user we're spawned, wait for stop or wakeup */
 	__set_current_state(TASK_UNINTERRUPTIBLE);
 	create->result = current;
@@ -88,7 +76,7 @@ static int kthread(void *_create)
 	ret = -EINTR;
 	if (!self.should_stop)
 		ret = threadfn(data);
-out:
+
 	/* we can't just return, we must preserve "self" on stack */
 	do_exit(ret);
 }
@@ -106,7 +94,7 @@ static void create_kthread(struct kthread_create_info *create)
 }
 
 /**
- * kthread_create_ve - create a kthread.
+ * kthread_create - create a kthread.
  * @threadfn: the function to run until signal_pending(current).
  * @data: data ptr for @threadfn.
  * @namefmt: printf-style name for the thread.
@@ -124,8 +112,7 @@ static void create_kthread(struct kthread_create_info *create)
  *
  * Returns a task_struct or ERR_PTR(-ENOMEM).
  */
-struct task_struct *kthread_create_ve(struct ve_struct *ve,
-				   int (*threadfn)(void *data),
+struct task_struct *kthread_create(int (*threadfn)(void *data),
 				   void *data,
 				   const char namefmt[],
 				   ...)
@@ -134,7 +121,6 @@ struct task_struct *kthread_create_ve(struct ve_struct *ve,
 
 	create.threadfn = threadfn;
 	create.data = data;
-	create.ve = ve;
 	init_completion(&create.done);
 
 	spin_lock(&kthread_create_lock);
@@ -161,7 +147,7 @@ struct task_struct *kthread_create_ve(struct ve_struct *ve,
 	}
 	return create.result;
 }
-EXPORT_SYMBOL(kthread_create_ve);
+EXPORT_SYMBOL(kthread_create);
 
 /**
  * kthread_stop - stop a thread created by kthread_create().
@@ -210,7 +196,7 @@ int kthreadd(void *unused)
 	set_task_comm(tsk, "kthreadd");
 	ignore_signals(tsk);
 	set_cpus_allowed_ptr(tsk, cpu_all_mask);
-	set_mems_allowed(node_states[N_HIGH_MEMORY]);
+	set_mems_allowed(node_possible_map);
 
 	current->flags |= PF_NOFREEZE | PF_FREEZER_NOSIG;
 

@@ -26,7 +26,6 @@
 #include <linux/file.h>
 #include <linux/fdtable.h>
 #include <linux/vfs.h>
-#include <linux/virtinfo.h>
 #include <linux/ioctl.h>
 #include <linux/init.h>
 #include <linux/smb.h>
@@ -39,6 +38,8 @@
 #include <linux/dirent.h>
 #include <linux/fsnotify.h>
 #include <linux/highuid.h>
+#include <linux/sunrpc/svc.h>
+#include <linux/nfsd/nfsd.h>
 #include <linux/nfsd/syscall.h>
 #include <linux/personality.h>
 #include <linux/rwsem.h>
@@ -72,18 +73,6 @@ int compat_printk(const char *fmt, ...)
 
 #include "read_write.h"
 
-int ve_compat_printk(int dst, const char *fmt, ...)
-{
-	va_list ap;
-	int ret;
-	if (!compat_log)
-		return 0;
-	va_start(ap, fmt);
-	ret = ve_vprintk(dst, fmt, ap);
-	va_end(ap);
-	return ret;
-}
-
 /*
  * Not all architectures have sys_utime, so implement this in terms
  * of sys_utimes.
@@ -100,21 +89,6 @@ asmlinkage long compat_sys_utime(char __user *filename, struct compat_utimbuf __
 		tv[1].tv_nsec = 0;
 	}
 	return do_utimes(AT_FDCWD, filename, t ? tv : NULL, 0);
-}
-
-asmlinkage long compat_sys_lutime(char __user * filename,
-		struct compat_utimbuf __user *t)
-{
-	struct timespec tv[2];
-
-	if (t) {
-		if (get_user(tv[0].tv_sec, &t->actime) ||
-		    get_user(tv[1].tv_sec, &t->modtime))
-			return -EFAULT;
-		tv[0].tv_nsec = 0;
-		tv[1].tv_nsec = 0;
-	}
-	return do_utimes(AT_FDCWD, filename, t ? tv : NULL, AT_SYMLINK_NOFOLLOW);
 }
 
 asmlinkage long compat_sys_utimensat(unsigned int dfd, char __user *filename, struct compat_timespec __user *t, int flags)
@@ -293,7 +267,7 @@ asmlinkage long compat_sys_statfs(const char __user *pathname, struct compat_sta
 	error = user_path(pathname, &path);
 	if (!error) {
 		struct kstatfs tmp;
-		error = vfs_statfs(&path, &tmp);
+		error = vfs_statfs(path.dentry, &tmp);
 		if (!error)
 			error = put_compat_statfs(buf, &tmp);
 		path_put(&path);
@@ -311,7 +285,7 @@ asmlinkage long compat_sys_fstatfs(unsigned int fd, struct compat_statfs __user 
 	file = fget(fd);
 	if (!file)
 		goto out;
-	error = vfs_statfs(&file->f_path, &tmp);
+	error = vfs_statfs(file->f_path.dentry, &tmp);
 	if (!error)
 		error = put_compat_statfs(buf, &tmp);
 	fput(file);
@@ -361,7 +335,7 @@ asmlinkage long compat_sys_statfs64(const char __user *pathname, compat_size_t s
 	error = user_path(pathname, &path);
 	if (!error) {
 		struct kstatfs tmp;
-		error = vfs_statfs(&path, &tmp);
+		error = vfs_statfs(path.dentry, &tmp);
 		if (!error)
 			error = put_compat_statfs64(buf, &tmp);
 		path_put(&path);
@@ -382,7 +356,7 @@ asmlinkage long compat_sys_fstatfs64(unsigned int fd, compat_size_t sz, struct c
 	file = fget(fd);
 	if (!file)
 		goto out;
-	error = vfs_statfs(&file->f_path, &tmp);
+	error = vfs_statfs(file->f_path.dentry, &tmp);
 	if (!error)
 		error = put_compat_statfs64(buf, &tmp);
 	fput(file);
@@ -405,8 +379,7 @@ asmlinkage long compat_sys_ustat(unsigned dev, struct compat_ustat __user *u)
 	sb = user_get_super(new_decode_dev(dev));
 	if (!sb)
 		return -EINVAL;
-
-	err = vfs_statfs_by_sb(sb, sb->s_root, &sbuf);
+	err = vfs_statfs(sb->s_root, &sbuf);
 	drop_super(sb);
 	if (err)
 		return err;
@@ -1496,10 +1469,6 @@ int compat_do_execve(char * filename,
 	bool clear_in_exec;
 	int retval;
 
-	retval = virtinfo_gencall(VIRTINFO_DOEXECVE, NULL);
-	if (retval)
-		return retval;
-
 	retval = unshare_files(&displaced);
 	if (retval)
 		goto out_ret;
@@ -1562,6 +1531,8 @@ int compat_do_execve(char * filename,
 	retval = search_binary_handler(bprm, regs);
 	if (retval < 0)
 		goto out;
+
+	current->stack_start = current->mm->start_stack;
 
 	/* execve succeeded */
 	current->fs->in_exec = 0;

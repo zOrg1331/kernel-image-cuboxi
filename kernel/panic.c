@@ -23,7 +23,7 @@
 #include <linux/nmi.h>
 #include <linux/dmi.h>
 
-int panic_on_oops = 1;
+int panic_on_oops;
 static unsigned long tainted_mask;
 static int pause_on_oops;
 static int pause_on_oops_flag;
@@ -161,24 +161,6 @@ static const struct tnt tnts[] = {
 	{ TAINT_OVERRIDDEN_ACPI_TABLE,	'A', ' ' },
 	{ TAINT_WARN,			'W', ' ' },
 	{ TAINT_CRAP,			'C', ' ' },
-	{ TAINT_FIRMWARE_WORKAROUND,	'I', ' ' }, /* not in RHEL6 */
-	{ TAINT_12,			'?', '-' },
-	{ TAINT_13,			'?', '-' },
-	{ TAINT_14,			'?', '-' },
-	{ TAINT_15,			'?', '-' },
-	{ TAINT_16,			'?', '-' },
-	{ TAINT_17,			'?', '-' },
-	{ TAINT_18,			'?', '-' },
-	{ TAINT_19,			'?', '-' },
-	{ TAINT_20,			'?', '-' },
-	{ TAINT_21,			'?', '-' },
-	{ TAINT_22,			'?', '-' },
-	{ TAINT_23,			'?', '-' },
-	{ TAINT_24,			'?', '-' },
-	{ TAINT_25,			'?', '-' },
-	{ TAINT_26,			'?', '-' },
-	{ TAINT_27,			'?', '-' },
-	{ TAINT_HARDWARE_UNSUPPORTED,	'H', ' ' },
 };
 
 /**
@@ -195,8 +177,6 @@ static const struct tnt tnts[] = {
  *  'A' - ACPI table overridden.
  *  'W' - Taint on warning.
  *  'C' - modules from drivers/staging are loaded.
- *  'I' - Working around severe firmware bug, unusued in RHEL6
- *  'H' - Hardware is unsupported.
  *
  *	The string is overwritten by the next call to print_tainted().
  */
@@ -220,7 +200,6 @@ const char *print_tainted(void)
 
 	return buf;
 }
-EXPORT_SYMBOL(print_tainted);
 
 int test_taint(unsigned flag)
 {
@@ -368,14 +347,12 @@ struct slowpath_args {
 	va_list args;
 };
 
-static void warn_slowpath_common(const char *file, int line, void *caller,
-				 unsigned taint, struct slowpath_args *args)
+static void warn_slowpath_common(const char *file, int line, void *caller, struct slowpath_args *args)
 {
 	const char *board;
 
 	printk(KERN_WARNING "------------[ cut here ]------------\n");
-	printk(KERN_WARNING "WARNING: at %s:%d %pS() (%s)\n",
-		file, line, caller, print_tainted());
+	printk(KERN_WARNING "WARNING: at %s:%d %pS()\n", file, line, caller);
 	board = dmi_get_system_info(DMI_PRODUCT_NAME);
 	if (board)
 		printk(KERN_WARNING "Hardware name: %s\n", board);
@@ -386,7 +363,7 @@ static void warn_slowpath_common(const char *file, int line, void *caller,
 	print_modules();
 	dump_stack();
 	print_oops_end_marker();
-	add_taint(taint);
+	add_taint(TAINT_WARN);
 }
 
 void warn_slowpath_fmt(const char *file, int line, const char *fmt, ...)
@@ -395,29 +372,14 @@ void warn_slowpath_fmt(const char *file, int line, const char *fmt, ...)
 
 	args.fmt = fmt;
 	va_start(args.args, fmt);
-	warn_slowpath_common(file, line, __builtin_return_address(0),
-			     TAINT_WARN, &args);
+	warn_slowpath_common(file, line, __builtin_return_address(0), &args);
 	va_end(args.args);
 }
 EXPORT_SYMBOL(warn_slowpath_fmt);
 
-void warn_slowpath_fmt_taint(const char *file, int line,
-			     unsigned taint, const char *fmt, ...)
-{
-	struct slowpath_args args;
-
-	args.fmt = fmt;
-	va_start(args.args, fmt);
-	warn_slowpath_common(file, line, __builtin_return_address(0),
-			     taint, &args);
-	va_end(args.args);
-}
-EXPORT_SYMBOL(warn_slowpath_fmt_taint);
-
 void warn_slowpath_null(const char *file, int line)
 {
-	warn_slowpath_common(file, line, __builtin_return_address(0),
-			     TAINT_WARN, NULL);
+	warn_slowpath_common(file, line, __builtin_return_address(0), NULL);
 }
 EXPORT_SYMBOL(warn_slowpath_null);
 #endif

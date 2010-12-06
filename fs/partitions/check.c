@@ -20,7 +20,6 @@
 #include <linux/ctype.h>
 #include <linux/genhd.h>
 #include <linux/blktrace_api.h>
-#include <linux/sysfs.h>
 
 #include "check.h"
 
@@ -133,7 +132,6 @@ char *disk_name(struct gendisk *hd, int partno, char *buf)
 
 	return buf;
 }
-EXPORT_SYMBOL(disk_name);
 
 const char *bdevname(struct block_device *bdev, char *buf)
 {
@@ -228,13 +226,6 @@ ssize_t part_alignment_offset_show(struct device *dev,
 	return sprintf(buf, "%llu\n", (unsigned long long)p->alignment_offset);
 }
 
-ssize_t part_discard_alignment_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct hd_struct *p = dev_to_part(dev);
-	return sprintf(buf, "%u\n", p->discard_alignment);
-}
-
 ssize_t part_stat_show(struct device *dev,
 		       struct device_attribute *attr, char *buf)
 {
@@ -297,8 +288,6 @@ static DEVICE_ATTR(partition, S_IRUGO, part_partition_show, NULL);
 static DEVICE_ATTR(start, S_IRUGO, part_start_show, NULL);
 static DEVICE_ATTR(size, S_IRUGO, part_size_show, NULL);
 static DEVICE_ATTR(alignment_offset, S_IRUGO, part_alignment_offset_show, NULL);
-static DEVICE_ATTR(discard_alignment, S_IRUGO, part_discard_alignment_show,
-		   NULL);
 static DEVICE_ATTR(stat, S_IRUGO, part_stat_show, NULL);
 static DEVICE_ATTR(inflight, S_IRUGO, part_inflight_show, NULL);
 #ifdef CONFIG_FAIL_MAKE_REQUEST
@@ -311,7 +300,6 @@ static struct attribute *part_attrs[] = {
 	&dev_attr_start.attr,
 	&dev_attr_size.attr,
 	&dev_attr_alignment_offset.attr,
-	&dev_attr_discard_alignment.attr,
 	&dev_attr_stat.attr,
 	&dev_attr_inflight.attr,
 #ifdef CONFIG_FAIL_MAKE_REQUEST
@@ -414,10 +402,7 @@ struct hd_struct *add_partition(struct gendisk *disk, int partno,
 	pdev = part_to_dev(p);
 
 	p->start_sect = start;
-	p->alignment_offset =
-		queue_limit_alignment_offset(&disk->queue->limits, start);
-	p->discard_alignment =
-		queue_limit_discard_alignment(&disk->queue->limits, start);
+	p->alignment_offset = queue_sector_alignment_offset(disk->queue, start);
 	p->nr_sects = len;
 	p->partno = partno;
 	p->policy = get_disk_ro(disk);
@@ -498,16 +483,14 @@ void register_disk(struct gendisk *disk)
 
 	if (device_add(ddev))
 		return;
-
-	if (!sysfs_deprecated) {
-		err = sysfs_create_link(block_depr, &ddev->kobj,
-					kobject_name(&ddev->kobj));
-		if (err) {
-			device_del(ddev);
-			return;
-		}
+#ifndef CONFIG_SYSFS_DEPRECATED
+	err = sysfs_create_link(block_depr, &ddev->kobj,
+				kobject_name(&ddev->kobj));
+	if (err) {
+		device_del(ddev);
+		return;
 	}
-
+#endif
 	disk->part0.holder_dir = kobject_create_and_add("holders", &ddev->kobj);
 	disk->slave_dir = kobject_create_and_add("slaves", &ddev->kobj);
 
@@ -523,7 +506,7 @@ void register_disk(struct gendisk *disk)
 	if (!bdev)
 		goto exit;
 
-	disk->flags |= GENHD_FL_INVALIDATED;
+	bdev->bd_invalidated = 1;
 	err = blkdev_get(bdev, FMODE_READ);
 	if (err < 0)
 		goto exit;
@@ -562,7 +545,7 @@ int rescan_partitions(struct gendisk *disk, struct block_device *bdev)
 	if (disk->fops->revalidate_disk)
 		disk->fops->revalidate_disk(disk);
 	check_disk_size_change(disk, bdev);
-	bdev->bd_disk->flags &= ~GENHD_FL_INVALIDATED;
+	bdev->bd_invalidated = 0;
 	if (!get_capacity(disk) || !(state = check_partition(disk, bdev)))
 		return 0;
 	if (IS_ERR(state))	/* I/O error reading the partition table */
@@ -613,7 +596,7 @@ try_scan:
 				if (capacity > get_capacity(disk)) {
 					set_capacity(disk, capacity);
 					check_disk_size_change(disk, bdev);
-					bdev->bd_disk->flags &= ~GENHD_FL_INVALIDATED;
+					bdev->bd_invalidated = 0;
 				}
 				goto try_scan;
 			} else {
@@ -689,7 +672,8 @@ void del_gendisk(struct gendisk *disk)
 	kobject_put(disk->part0.holder_dir);
 	kobject_put(disk->slave_dir);
 	disk->driverfs_dev = NULL;
-	if (!sysfs_deprecated)
-		sysfs_remove_link(block_depr, dev_name(disk_to_dev(disk)));
+#ifndef CONFIG_SYSFS_DEPRECATED
+	sysfs_remove_link(block_depr, dev_name(disk_to_dev(disk)));
+#endif
 	device_del(disk_to_dev(disk));
 }

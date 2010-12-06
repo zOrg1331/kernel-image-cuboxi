@@ -62,8 +62,6 @@ int __kprobes is_prohibited_opcode(kprobe_opcode_t *instruction)
 	case 0x0b:	/* bsm	 */
 	case 0x83:	/* diag  */
 	case 0x44:	/* ex	 */
-	case 0xac:	/* stnsm */
-	case 0xad:	/* stosm */
 		return -EINVAL;
 	}
 	switch (*(__u16 *) instruction) {
@@ -73,7 +71,6 @@ int __kprobes is_prohibited_opcode(kprobe_opcode_t *instruction)
 	case 0xb258:	/* bsg	 */
 	case 0xb218:	/* pc	 */
 	case 0xb228:	/* pt	 */
-	case 0xb98d:	/* epsw	 */
 		return -EINVAL;
 	}
 	return 0;

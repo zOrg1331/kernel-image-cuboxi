@@ -21,7 +21,6 @@
 #include <linux/list.h>
 #include <linux/sysctl.h>
 #include <linux/ctype.h>
-#include <linux/string.h>
 #include <linux/uaccess.h>
 #include <linux/dynamic_debug.h>
 #include <linux/debugfs.h>
@@ -210,7 +209,8 @@ static int ddebug_tokenize(char *buf, char *words[], int maxwords)
 		char *end;
 
 		/* Skip leading whitespace */
-		buf = skip_spaces(buf);
+		while (*buf && isspace(*buf))
+			buf++;
 		if (!*buf)
 			break;	/* oh, it was trailing whitespace */
 

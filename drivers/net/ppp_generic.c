@@ -53,9 +53,6 @@
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 
-#include <linux/ve_task.h>
-#include <linux/vzcalluser.h>
-
 #define PPP_VERSION	"2.4.2"
 
 /*
@@ -371,8 +368,6 @@ static int ppp_open(struct inode *inode, struct file *file)
 	 */
 	if (!capable(CAP_NET_ADMIN))
 		return -EPERM;
-	if (!net_generic(get_exec_env()->ve_netns, ppp_net_id)) /* no VE_FEATURE_PPP */
-		return -EACCES;
 	return 0;
 }
 
@@ -872,9 +867,6 @@ static __net_init int ppp_init_net(struct net *net)
 	struct ppp_net *pn;
 	int err;
 
-	if (!(get_exec_env()->features & VE_FEATURE_PPP))
-		return 0;
-
 	pn = kzalloc(sizeof(*pn), GFP_KERNEL);
 	if (!pn)
 		return -ENOMEM;
@@ -901,9 +893,6 @@ static __net_exit void ppp_exit_net(struct net *net)
 	struct ppp_net *pn;
 
 	pn = net_generic(net, ppp_net_id);
-	if (!pn) /* no VE_FEATURE_PPP */
-		return;
-
 	idr_destroy(&pn->units_idr);
 	/*
 	 * if someone has cached our net then
@@ -1064,7 +1053,7 @@ static void ppp_setup(struct net_device *dev)
 	dev->tx_queue_len = 3;
 	dev->type = ARPHRD_PPP;
 	dev->flags = IFF_POINTOPOINT | IFF_NOARP | IFF_MULTICAST;
-	dev->features |= NETIF_F_NETNS_LOCAL | NETIF_F_VIRTUAL;
+	dev->features |= NETIF_F_NETNS_LOCAL;
 	dev->priv_flags &= ~IFF_XMIT_DST_RELEASE;
 }
 

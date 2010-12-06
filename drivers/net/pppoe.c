@@ -77,7 +77,6 @@
 #include <linux/file.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/vzcalluser.h>
 
 #include <linux/nsproxy.h>
 #include <net/net_namespace.h>
@@ -547,9 +546,6 @@ static struct proto pppoe_sk_proto __read_mostly = {
 static int pppoe_create(struct net *net, struct socket *sock)
 {
 	struct sock *sk;
-
-	if (!(get_exec_env()->features & VE_FEATURE_PPP))
-		return -EACCES;
 
 	sk = sk_alloc(net, PF_PPPOX, GFP_KERNEL, &pppoe_sk_proto);
 	if (!sk)
@@ -1148,9 +1144,6 @@ static __net_init int pppoe_init_net(struct net *net)
 	struct proc_dir_entry *pde;
 	int err;
 
-	if (!(get_exec_env()->features & VE_FEATURE_PPP))
-		return 0;
-
 	pn = kzalloc(sizeof(*pn), GFP_KERNEL);
 	if (!pn)
 		return -ENOMEM;
@@ -1180,11 +1173,8 @@ static __net_exit void pppoe_exit_net(struct net *net)
 {
 	struct pppoe_net *pn;
 
-	pn = net_generic(net, pppoe_net_id);
-	if (!pn) /* no VE_FEATURE_PPP */
-		return;
-
 	proc_net_remove(net, "pppoe");
+	pn = net_generic(net, pppoe_net_id);
 	/*
 	 * if someone has cached our net then
 	 * further net_generic call will return NULL

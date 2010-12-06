@@ -97,8 +97,8 @@ unsigned ext4_init_block_bitmap(struct super_block *sb, struct buffer_head *bh,
 		/* If checksum is bad mark all blocks used to prevent allocation
 		 * essentially implementing a per-group read-only flag. */
 		if (!ext4_group_desc_csum_verify(sbi, block_group, gdp)) {
-			ext4_error(sb, "Checksum bad for group %u",
-					block_group);
+			ext4_error(sb, __func__,
+				  "Checksum bad for group %u", block_group);
 			ext4_free_blks_set(sb, gdp, 0);
 			ext4_free_inodes_set(sb, gdp, 0);
 			ext4_itable_unused_set(sb, gdp, 0);
@@ -189,6 +189,9 @@ unsigned ext4_init_block_bitmap(struct super_block *sb, struct buffer_head *bh,
  * when a file system is mounted (see ext4_fill_super).
  */
 
+
+#define in_range(b, first, len)	((b) >= (first) && (b) <= (first) + (len) - 1)
+
 /**
  * ext4_get_group_desc() -- load group descriptor from disk
  * @sb:			super block
@@ -207,8 +210,10 @@ struct ext4_group_desc * ext4_get_group_desc(struct super_block *sb,
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 
 	if (block_group >= ngroups) {
-		ext4_error(sb, "block_group >= groups_count - block_group = %u,"
-			   " groups_count = %u", block_group, ngroups);
+		ext4_error(sb, "ext4_get_group_desc",
+			   "block_group >= groups_count - "
+			   "block_group = %u, groups_count = %u",
+			   block_group, ngroups);
 
 		return NULL;
 	}
@@ -216,7 +221,8 @@ struct ext4_group_desc * ext4_get_group_desc(struct super_block *sb,
 	group_desc = block_group >> EXT4_DESC_PER_BLOCK_BITS(sb);
 	offset = block_group & (EXT4_DESC_PER_BLOCK(sb) - 1);
 	if (!sbi->s_group_desc[group_desc]) {
-		ext4_error(sb, "Group descriptor not loaded - "
+		ext4_error(sb, "ext4_get_group_desc",
+			   "Group descriptor not loaded - "
 			   "block_group = %u, group_desc = %u, desc = %u",
 			   block_group, group_desc, offset);
 		return NULL;
@@ -276,7 +282,9 @@ static int ext4_valid_block_bitmap(struct super_block *sb,
 		return 1;
 
 err_out:
-	ext4_error(sb, "Invalid block bitmap - block_group = %d, block = %llu",
+	ext4_error(sb, __func__,
+			"Invalid block bitmap - "
+			"block_group = %d, block = %llu",
 			block_group, bitmap_blk);
 	return 0;
 }
@@ -303,7 +311,8 @@ ext4_read_block_bitmap(struct super_block *sb, ext4_group_t block_group)
 	bitmap_blk = ext4_block_bitmap(sb, desc);
 	bh = sb_getblk(sb, bitmap_blk);
 	if (unlikely(!bh)) {
-		ext4_error(sb, "Cannot read block bitmap - "
+		ext4_error(sb, __func__,
+			    "Cannot read block bitmap - "
 			    "block_group = %u, block_bitmap = %llu",
 			    block_group, bitmap_blk);
 		return NULL;
@@ -345,7 +354,8 @@ ext4_read_block_bitmap(struct super_block *sb, ext4_group_t block_group)
 	set_bitmap_uptodate(bh);
 	if (bh_submit_read(bh) < 0) {
 		put_bh(bh);
-		ext4_error(sb, "Cannot read block bitmap - "
+		ext4_error(sb, __func__,
+			    "Cannot read block bitmap - "
 			    "block_group = %u, block_bitmap = %llu",
 			    block_group, bitmap_blk);
 		return NULL;
@@ -409,7 +419,8 @@ void ext4_add_groupblocks(handle_t *handle, struct super_block *sb,
 	    in_range(block, ext4_inode_table(sb, desc), sbi->s_itb_per_group) ||
 	    in_range(block + count - 1, ext4_inode_table(sb, desc),
 		     sbi->s_itb_per_group)) {
-		ext4_error(sb, "Adding blocks in system zones - "
+		ext4_error(sb, __func__,
+			   "Adding blocks in system zones - "
 			   "Block = %llu, count = %lu",
 			   block, count);
 		goto error_return;
@@ -442,7 +453,8 @@ void ext4_add_groupblocks(handle_t *handle, struct super_block *sb,
 		BUFFER_TRACE(bitmap_bh, "clear bit");
 		if (!ext4_clear_bit_atomic(ext4_group_lock_ptr(sb, block_group),
 						bit + i, bitmap_bh->b_data)) {
-			ext4_error(sb, "bit already cleared for block %llu",
+			ext4_error(sb, __func__,
+				   "bit already cleared for block %llu",
 				   (ext4_fsblk_t)(block + i));
 			BUFFER_TRACE(bitmap_bh, "bit already cleared");
 		} else {
@@ -630,15 +642,14 @@ ext4_fsblk_t ext4_new_meta_blocks(handle_t *handle, struct inode *inode,
 	ret = ext4_mb_new_blocks(handle, &ar, errp);
 	if (count)
 		*count = ar.len;
+
 	/*
-	 * Account for the allocated meta blocks.  We will never
-	 * fail EDQUOT for metdata, but we do account for it.
+	 * Account for the allocated meta blocks
 	 */
 	if (!(*errp) && EXT4_I(inode)->i_delalloc_reserved_flag) {
 		spin_lock(&EXT4_I(inode)->i_block_reservation_lock);
 		EXT4_I(inode)->i_allocated_meta_blocks += ar.len;
 		spin_unlock(&EXT4_I(inode)->i_block_reservation_lock);
-		vfs_dq_alloc_block_nofail(inode, ar.len);
 	}
 	return ret;
 }
@@ -750,13 +761,7 @@ static unsigned long ext4_bg_num_gdb_meta(struct super_block *sb,
 static unsigned long ext4_bg_num_gdb_nometa(struct super_block *sb,
 					ext4_group_t group)
 {
-	if (!ext4_bg_has_super(sb, group))
-		return 0;
-
-	if (EXT4_HAS_INCOMPAT_FEATURE(sb,EXT4_FEATURE_INCOMPAT_META_BG))
-		return le32_to_cpu(EXT4_SB(sb)->s_es->s_first_meta_bg);
-	else
-		return EXT4_SB(sb)->s_gdb_count;
+	return ext4_bg_has_super(sb, group) ? EXT4_SB(sb)->s_gdb_count : 0;
 }
 
 /**

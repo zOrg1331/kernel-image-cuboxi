@@ -513,8 +513,7 @@ int mls_compute_sid(struct context *scontext,
 		    u32 specified,
 		    struct context *newcontext)
 {
-	struct range_trans rtr;
-	struct mls_range *r;
+	struct range_trans *rtr;
 
 	if (!selinux_mls_enabled)
 		return 0;
@@ -522,15 +521,18 @@ int mls_compute_sid(struct context *scontext,
 	switch (specified) {
 	case AVTAB_TRANSITION:
 		/* Look for a range transition rule. */
-		rtr.source_type = scontext->type;
-		rtr.target_type = tcontext->type;
-		rtr.target_class = tclass;
-		r = hashtab_search(policydb.range_tr, &rtr);
-		if (r)
-			return mls_range_set(newcontext, r);
+		for (rtr = policydb.range_tr; rtr; rtr = rtr->next) {
+			if (rtr->source_type == scontext->type &&
+			    rtr->target_type == tcontext->type &&
+			    rtr->target_class == tclass) {
+				/* Set the range from the rule */
+				return mls_range_set(newcontext,
+						     &rtr->target_range);
+			}
+		}
 		/* Fallthrough */
 	case AVTAB_CHANGE:
-		if (tclass == policydb.process_class)
+		if (tclass == SECCLASS_PROCESS)
 			/* Use the process MLS attributes. */
 			return mls_context_cpy(newcontext, scontext);
 		else
@@ -539,8 +541,8 @@ int mls_compute_sid(struct context *scontext,
 	case AVTAB_MEMBER:
 		/* Use the process effective MLS attributes. */
 		return mls_context_cpy_low(newcontext, scontext);
-
-	/* fall through */
+	default:
+		return -EINVAL;
 	}
 	return -EINVAL;
 }

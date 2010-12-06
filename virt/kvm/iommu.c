@@ -32,10 +32,10 @@ static int kvm_iommu_unmap_memslots(struct kvm *kvm);
 static void kvm_iommu_put_pages(struct kvm *kvm,
 				gfn_t base_gfn, unsigned long npages);
 
-int kvm_iommu_map_pages(struct kvm *kvm, struct kvm_memory_slot *slot)
+int kvm_iommu_map_pages(struct kvm *kvm,
+			gfn_t base_gfn, unsigned long npages)
 {
-	gfn_t gfn = slot->base_gfn;
-	unsigned long npages = slot->npages;
+	gfn_t gfn = base_gfn;
 	pfn_t pfn;
 	int i, r = 0;
 	struct iommu_domain *domain = kvm->arch.iommu_domain;
@@ -54,7 +54,7 @@ int kvm_iommu_map_pages(struct kvm *kvm, struct kvm_memory_slot *slot)
 		if (iommu_iova_to_phys(domain, gfn_to_gpa(gfn)))
 			continue;
 
-		pfn = gfn_to_pfn_memslot(kvm, slot, gfn);
+		pfn = gfn_to_pfn(kvm, gfn);
 		r = iommu_map_range(domain,
 				    gfn_to_gpa(gfn),
 				    pfn_to_hpa(pfn),
@@ -69,19 +69,17 @@ int kvm_iommu_map_pages(struct kvm *kvm, struct kvm_memory_slot *slot)
 	return 0;
 
 unmap_pages:
-	kvm_iommu_put_pages(kvm, slot->base_gfn, i);
+	kvm_iommu_put_pages(kvm, base_gfn, i);
 	return r;
 }
 
 static int kvm_iommu_map_memslots(struct kvm *kvm)
 {
 	int i, r = 0;
-	struct kvm_memslots *slots;
 
-	slots = rcu_dereference(kvm->memslots);
-
-	for (i = 0; i < slots->nmemslots; i++) {
-		r = kvm_iommu_map_pages(kvm, &slots->memslots[i]);
+	for (i = 0; i < kvm->nmemslots; i++) {
+		r = kvm_iommu_map_pages(kvm, kvm->memslots[i].base_gfn,
+					kvm->memslots[i].npages);
 		if (r)
 			break;
 	}
@@ -212,13 +210,10 @@ static void kvm_iommu_put_pages(struct kvm *kvm,
 static int kvm_iommu_unmap_memslots(struct kvm *kvm)
 {
 	int i;
-	struct kvm_memslots *slots;
 
-	slots = rcu_dereference(kvm->memslots);
-
-	for (i = 0; i < slots->nmemslots; i++) {
-		kvm_iommu_put_pages(kvm, slots->memslots[i].base_gfn,
-				    slots->memslots[i].npages);
+	for (i = 0; i < kvm->nmemslots; i++) {
+		kvm_iommu_put_pages(kvm, kvm->memslots[i].base_gfn,
+				    kvm->memslots[i].npages);
 	}
 
 	return 0;

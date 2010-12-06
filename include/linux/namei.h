@@ -56,8 +56,6 @@ enum {LAST_NORM, LAST_ROOT, LAST_DOT, LAST_DOTDOT, LAST_BIND};
 #define LOOKUP_CREATE		0x0200
 #define LOOKUP_EXCL		0x0400
 #define LOOKUP_RENAME_TARGET	0x0800
-#define LOOKUP_STRICT		0x2000	/* no symlinks or other filesystems */
-#define LOOKUP_DIVE		0x8000	/* no follow mount */
 
 extern int user_path_at(int, const char __user *, unsigned, struct path *);
 
@@ -77,6 +75,9 @@ extern struct file *lookup_instantiate_filp(struct nameidata *nd, struct dentry 
 extern struct file *nameidata_to_filp(struct nameidata *nd, int flags);
 extern void release_open_intent(struct nameidata *);
 
+extern struct dentry *lookup_hash(struct nameidata *nd);
+extern int __lookup_one_len(const char *name, struct qstr *this,
+			    struct dentry *base, int len);
 extern struct dentry *lookup_one_len(const char *, struct dentry *, int);
 extern struct dentry *lookup_one_noperm(const char *, struct dentry *);
 

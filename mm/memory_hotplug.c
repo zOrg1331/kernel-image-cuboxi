@@ -27,7 +27,6 @@
 #include <linux/page-isolation.h>
 #include <linux/pfn.h>
 #include <linux/suspend.h>
-#include <linux/mm_inline.h>
 
 #include <asm/tlbflush.h>
 
@@ -72,9 +71,7 @@ static void get_page_bootmem(unsigned long info,  struct page *page, int type)
 	atomic_inc(&page->_count);
 }
 
-/* reference to __meminit __free_pages_bootmem is valid
- * so use __ref to tell modpost not to generate a warning */
-void __ref put_page_bootmem(struct page *page)
+void put_page_bootmem(struct page *page)
 {
 	int type;
 
@@ -389,13 +386,6 @@ int online_pages(unsigned long pfn, unsigned long nr_pages)
 	int ret;
 	struct memory_notify arg;
 
-#ifdef __i386__
-	/* BZ 557131 -- disable Memory Hotplug (hot add) for 32-bit kernel.
-	 * This code block must be removed when hot add is re-enabled for
-	 * 32-bit */
-	pr_info("ERROR: Memory Hot Add is currently disabled for x86 32-bit\n");
-	return -EINVAL;
-#endif
 	arg.start_pfn = pfn;
 	arg.nr_pages = nr_pages;
 	arg.status_change_nid = -1;
@@ -421,14 +411,12 @@ int online_pages(unsigned long pfn, unsigned long nr_pages)
 	 * This means the page allocator ignores this zone.
 	 * So, zonelist must be updated after online.
 	 */
-	mutex_lock(&zonelists_mutex);
 	if (!populated_zone(zone))
 		need_zonelists_rebuild = 1;
 
 	ret = walk_system_ram_range(pfn, nr_pages, &onlined_pages,
 		online_pages_range);
 	if (ret) {
-		mutex_unlock(&zonelists_mutex);
 		printk(KERN_DEBUG "online_pages %lx at %lx failed\n",
 			nr_pages, pfn);
 		memory_notify(MEM_CANCEL_ONLINE, &arg);
@@ -437,12 +425,8 @@ int online_pages(unsigned long pfn, unsigned long nr_pages)
 
 	zone->present_pages += onlined_pages;
 	zone->zone_pgdat->node_present_pages += onlined_pages;
-	if (need_zonelists_rebuild)
-		build_all_zonelists(zone);
-	else
-		zone_pcp_update(zone);
 
-	mutex_unlock(&zonelists_mutex);
+	zone_pcp_update(zone);
 	setup_per_zone_wmarks();
 	calculate_zone_inactive_ratio(zone);
 	if (onlined_pages) {
@@ -450,7 +434,10 @@ int online_pages(unsigned long pfn, unsigned long nr_pages)
 		node_set_state(zone_to_nid(zone), N_HIGH_MEMORY);
 	}
 
-	vm_total_pages = nr_free_pagecache_pages();
+	if (need_zonelists_rebuild)
+		build_all_zonelists();
+	else
+		vm_total_pages = nr_free_pagecache_pages();
 
 	writeback_set_ratelimit();
 
@@ -490,29 +477,6 @@ static void rollback_node_hotadd(int nid, pg_data_t *pgdat)
 	return;
 }
 
-
-/*
- * called by cpu_up() to online a node without onlined memory.
- */
-int mem_online_node(int nid)
-{
-	pg_data_t	*pgdat;
-	int	ret;
-
-	lock_system_sleep();
-	pgdat = hotadd_new_pgdat(nid, 0);
-	if (pgdat) {
-		ret = -ENOMEM;
-		goto out;
-	}
-	node_set_online(nid);
-	ret = register_one_node(nid);
-	BUG_ON(ret);
-
-out:
-	unlock_system_sleep();
-	return ret;
-}
 
 /* we are OK calling __meminit stuff here - we have CONFIG_MEMORY_HOTPLUG */
 int __ref add_memory(int nid, u64 start, u64 size)
@@ -708,9 +672,6 @@ do_migrate_range(unsigned long start_pfn, unsigned long end_pfn)
 		if (!ret) { /* Success */
 			list_add_tail(&page->lru, &source);
 			move_pages--;
-			inc_zone_page_state(page, NR_ISOLATED_ANON +
-					    page_is_file_cache(page));
-
 		} else {
 			/* Becasue we don't have big zone->lock. we should
 			   check this again here. */
@@ -733,7 +694,7 @@ do_migrate_range(unsigned long start_pfn, unsigned long end_pfn)
 	if (list_empty(&source))
 		goto out;
 	/* this function returns # of failed pages */
-	ret = migrate_pages(&source, hotremove_migrate_alloc, 0, 1);
+	ret = migrate_pages(&source, hotremove_migrate_alloc, 0);
 
 out:
 	return ret;

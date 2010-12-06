@@ -229,9 +229,6 @@ static int svc_sendto(struct svc_rqst *rqstp, struct xdr_buf *xdr)
 	unsigned long tailoff;
 	unsigned long headoff;
 	RPC_IFDEBUG(char buf[RPC_MAX_ADDRBUFLEN]);
-	struct ve_struct *old_env;
-
-	old_env = set_exec_env(sock->sk->owner_env);
 
 	if (rqstp->rq_prot == IPPROTO_UDP) {
 		struct msghdr msg = {
@@ -257,8 +254,6 @@ out:
 	dprintk("svc: socket %p sendto([%p %Zu... ], %d) = %d (addr %s)\n",
 		svsk, xdr->head[0].iov_base, xdr->head[0].iov_len,
 		xdr->len, len, svc_print_addr(rqstp, buf, sizeof(buf)));
-
-	(void)set_exec_env(old_env);
 
 	return len;
 }
@@ -552,6 +547,7 @@ static int svc_udp_recvfrom(struct svc_rqst *rqstp)
 			dprintk("svc: recvfrom returned error %d\n", -err);
 			set_bit(XPT_DATA, &svsk->sk_xprt.xpt_flags);
 		}
+		svc_xprt_received(&svsk->sk_xprt);
 		return -EAGAIN;
 	}
 	len = svc_addr_len(svc_addr(rqstp));
@@ -565,6 +561,11 @@ static int svc_udp_recvfrom(struct svc_rqst *rqstp)
 	}
 	svsk->sk_sk->sk_stamp = skb->tstamp;
 	set_bit(XPT_DATA, &svsk->sk_xprt.xpt_flags); /* there may be more data... */
+
+	/*
+	 * Maybe more packets - kick another thread ASAP.
+	 */
+	svc_xprt_received(&svsk->sk_xprt);
 
 	len  = skb->len - sizeof(struct udphdr);
 	rqstp->rq_arg.len = len;
@@ -916,6 +917,7 @@ static int svc_tcp_recv_record(struct svc_sock *svsk, struct svc_rqst *rqstp)
 		if (len < want) {
 			dprintk("svc: short recvfrom while reading record "
 				"length (%d of %d)\n", len, want);
+			svc_xprt_received(&svsk->sk_xprt);
 			goto err_again; /* record header not complete */
 		}
 
@@ -951,6 +953,7 @@ static int svc_tcp_recv_record(struct svc_sock *svsk, struct svc_rqst *rqstp)
 	if (len < svsk->sk_reclen) {
 		dprintk("svc: incomplete TCP record (%d of %d)\n",
 			len, svsk->sk_reclen);
+		svc_xprt_received(&svsk->sk_xprt);
 		goto err_again;	/* record not complete */
 	}
 	len = svsk->sk_reclen;
@@ -958,12 +961,13 @@ static int svc_tcp_recv_record(struct svc_sock *svsk, struct svc_rqst *rqstp)
 
 	return len;
  error:
-	if (len == -EAGAIN)
+	if (len == -EAGAIN) {
 		dprintk("RPC: TCP recv_record got EAGAIN\n");
+		svc_xprt_received(&svsk->sk_xprt);
+	}
 	return len;
  err_delete:
 	set_bit(XPT_CLOSE, &svsk->sk_xprt.xpt_flags);
-	svc_xprt_received(&svsk->sk_xprt);
  err_again:
 	return -EAGAIN;
 }
@@ -1105,6 +1109,7 @@ out:
 	svsk->sk_tcplen = 0;
 
 	svc_xprt_copy_addrs(rqstp, &svsk->sk_xprt);
+	svc_xprt_received(&svsk->sk_xprt);
 	if (serv->sv_stats)
 		serv->sv_stats->nettcpcnt++;
 
@@ -1113,6 +1118,7 @@ out:
 err_again:
 	if (len == -EAGAIN) {
 		dprintk("RPC: TCP recvfrom got EAGAIN\n");
+		svc_xprt_received(&svsk->sk_xprt);
 		return len;
 	}
 error:
@@ -1351,7 +1357,7 @@ int svc_addsock(struct svc_serv *serv, const int fd, char *name_return,
 
 	if (!so)
 		return err;
-	if ((so->sk->sk_family != PF_INET) && (so->sk->sk_family != PF_INET6))
+	if (so->sk->sk_family != AF_INET)
 		err =  -EAFNOSUPPORT;
 	else if (so->sk->sk_protocol != IPPROTO_TCP &&
 	    so->sk->sk_protocol != IPPROTO_UDP)
@@ -1430,9 +1436,8 @@ static struct svc_xprt *svc_create_socket(struct svc_serv *serv,
 
 	error = sock_create_kern(family, type, protocol, &sock);
 	if (error < 0)
-		return ERR_PTR(-ENOMEM);
+		return ERR_PTR(error);
 
-	sk_change_net_get(sock->sk, get_exec_env()->ve_netns);
 	svc_reclassify_socket(sock);
 
 	/*
@@ -1483,8 +1488,6 @@ static void svc_sock_detach(struct svc_xprt *xprt)
 
 	dprintk("svc: svc_sock_detach(%p)\n", svsk);
 
-	/* XXX: serialization? */
-	sk->sk_user_data = NULL;
 	/* put back the old socket callbacks */
 	sk->sk_state_change = svsk->sk_ostate;
 	sk->sk_data_ready = svsk->sk_odata;

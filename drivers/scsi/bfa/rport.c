@@ -19,7 +19,6 @@
  *  rport.c Remote port implementation.
  */
 
-#include <linux/slab.h>
 #include <bfa.h>
 #include <bfa_svc.h>
 #include "fcbuild.h"
@@ -225,7 +224,7 @@ bfa_fcs_rport_sm_uninit(struct bfa_fcs_rport_s *rport, enum rport_event event)
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -277,7 +276,7 @@ bfa_fcs_rport_sm_plogi_sending(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -333,7 +332,7 @@ bfa_fcs_rport_sm_plogiacc_sending(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -407,7 +406,7 @@ bfa_fcs_rport_sm_plogi_retry(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -482,7 +481,7 @@ bfa_fcs_rport_sm_plogi(struct bfa_fcs_rport_s *rport, enum rport_event event)
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -535,7 +534,7 @@ bfa_fcs_rport_sm_hal_online(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -590,7 +589,7 @@ bfa_fcs_rport_sm_online(struct bfa_fcs_rport_s *rport, enum rport_event event)
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -647,7 +646,7 @@ bfa_fcs_rport_sm_nsquery_sending(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -705,7 +704,7 @@ bfa_fcs_rport_sm_nsquery(struct bfa_fcs_rport_s *rport, enum rport_event event)
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -755,7 +754,7 @@ bfa_fcs_rport_sm_adisc_sending(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -817,7 +816,7 @@ bfa_fcs_rport_sm_adisc(struct bfa_fcs_rport_s *rport, enum rport_event event)
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -847,7 +846,7 @@ bfa_fcs_rport_sm_fc4_logorcv(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -870,7 +869,7 @@ bfa_fcs_rport_sm_fc4_logosend(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -906,7 +905,7 @@ bfa_fcs_rport_sm_fc4_offline(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -926,17 +925,10 @@ bfa_fcs_rport_sm_hcb_offline(struct bfa_fcs_rport_s *rport,
 	case RPSM_EVENT_HCB_OFFLINE:
 	case RPSM_EVENT_ADDRESS_CHANGE:
 		if (bfa_fcs_port_is_online(rport->port)) {
-			if (bfa_fcs_fabric_is_switched(rport->port->fabric)) {
-				bfa_sm_set_state(rport,
-					bfa_fcs_rport_sm_nsdisc_sending);
-				rport->ns_retries = 0;
-				bfa_fcs_rport_send_gidpn(rport, NULL);
-			} else {
-				bfa_sm_set_state(rport,
-					bfa_fcs_rport_sm_plogi_sending);
-				rport->plogi_retries = 0;
-				bfa_fcs_rport_send_plogi(rport, NULL);
-			}
+			bfa_sm_set_state(rport,
+					 bfa_fcs_rport_sm_nsdisc_sending);
+			rport->ns_retries = 0;
+			bfa_fcs_rport_send_gidpn(rport, NULL);
 		} else {
 			rport->pid = 0;
 			bfa_sm_set_state(rport, bfa_fcs_rport_sm_offline);
@@ -959,7 +951,7 @@ bfa_fcs_rport_sm_hcb_offline(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -1019,7 +1011,7 @@ bfa_fcs_rport_sm_hcb_logorcv(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -1046,7 +1038,7 @@ bfa_fcs_rport_sm_hcb_logosend(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -1081,7 +1073,7 @@ bfa_fcs_rport_sm_logo_sending(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -1140,7 +1132,7 @@ bfa_fcs_rport_sm_offline(struct bfa_fcs_rport_s *rport, enum rport_event event)
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -1196,7 +1188,7 @@ bfa_fcs_rport_sm_nsdisc_sending(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -1257,7 +1249,7 @@ bfa_fcs_rport_sm_nsdisc_retry(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -1342,7 +1334,7 @@ bfa_fcs_rport_sm_nsdisc_sent(struct bfa_fcs_rport_s *rport,
 		break;
 
 	default:
-		bfa_sm_fault(rport->fcs, event);
+		bfa_assert(0);
 	}
 }
 
@@ -1374,7 +1366,7 @@ bfa_fcs_rport_send_plogi(void *rport_cbarg, struct bfa_fcxp_s *fcxp_alloced)
 	len = fc_plogi_build(&fchs, bfa_fcxp_get_reqbuf(fcxp), rport->pid,
 			     bfa_fcs_port_get_fcid(port), 0,
 			     port->port_cfg.pwwn, port->port_cfg.nwwn,
-			     bfa_fcport_get_maxfrsize(port->fcs->bfa));
+			     bfa_pport_get_maxfrsize(port->fcs->bfa));
 
 	bfa_fcxp_send(fcxp, NULL, port->fabric->vf_id, port->lp_tag, BFA_FALSE,
 		      FC_CLASS_3, len, &fchs, bfa_fcs_rport_plogi_response,
@@ -1486,7 +1478,7 @@ bfa_fcs_rport_send_plogiacc(void *rport_cbarg, struct bfa_fcxp_s *fcxp_alloced)
 	len = fc_plogi_acc_build(&fchs, bfa_fcxp_get_reqbuf(fcxp), rport->pid,
 				 bfa_fcs_port_get_fcid(port), rport->reply_oxid,
 				 port->port_cfg.pwwn, port->port_cfg.nwwn,
-				 bfa_fcport_get_maxfrsize(port->fcs->bfa));
+				 bfa_pport_get_maxfrsize(port->fcs->bfa));
 
 	bfa_fcxp_send(fcxp, NULL, port->fabric->vf_id, port->lp_tag, BFA_FALSE,
 		      FC_CLASS_3, len, &fchs, NULL, NULL, FC_MAX_PDUSZ, 0);
@@ -1821,7 +1813,7 @@ bfa_fcs_rport_process_rpsc(struct bfa_fcs_rport_s *rport,
 	/*
 	 * get curent speed from pport attributes from BFA
 	 */
-	bfa_fcport_get_attr(port->fcs->bfa, &pport_attr);
+	bfa_pport_get_attr(port->fcs->bfa, &pport_attr);
 
 	speeds.port_op_speed = fc_bfa_speed_to_rpsc_operspeed(pport_attr.speed);
 
@@ -2040,10 +2032,13 @@ bfa_fcs_rport_aen_post(struct bfa_fcs_rport_s *rport,
 
 	switch (event) {
 	case BFA_RPORT_AEN_ONLINE:
+		bfa_log(logmod, BFA_AEN_RPORT_ONLINE, rpwwn_ptr, lpwwn_ptr);
+		break;
 	case BFA_RPORT_AEN_OFFLINE:
+		bfa_log(logmod, BFA_AEN_RPORT_OFFLINE, rpwwn_ptr, lpwwn_ptr);
+		break;
 	case BFA_RPORT_AEN_DISCONNECT:
-		bfa_log(logmod, BFA_LOG_CREATE_ID(BFA_AEN_CAT_RPORT, event),
-			rpwwn_ptr, lpwwn_ptr);
+		bfa_log(logmod, BFA_AEN_RPORT_DISCONNECT, rpwwn_ptr, lpwwn_ptr);
 		break;
 	case BFA_RPORT_AEN_QOS_PRIO:
 		aen_data.rport.priv.qos = data->priv.qos;
@@ -2169,7 +2164,7 @@ bfa_fcs_rport_update(struct bfa_fcs_rport_s *rport, struct fc_logi_s *plogi)
 		bfa_trc(port->fcs, port->fabric->bb_credit);
 
 		port->fabric->bb_credit = bfa_os_ntohs(plogi->csp.bbcred);
-		bfa_fcport_set_tx_bbcredit(port->fcs->bfa,
+		bfa_pport_set_tx_bbcredit(port->fcs->bfa,
 					  port->fabric->bb_credit);
 	}
 
@@ -2577,6 +2572,23 @@ bfa_fcs_rport_send_ls_rjt(struct bfa_fcs_rport_s *rport, struct fchs_s *rx_fchs,
 
 	bfa_fcxp_send(fcxp, NULL, port->fabric->vf_id, port->lp_tag, BFA_FALSE,
 		      FC_CLASS_3, len, &fchs, NULL, NULL, FC_MAX_PDUSZ, 0);
+}
+
+/**
+ *   Module initialization
+ */
+void
+bfa_fcs_rport_modinit(struct bfa_fcs_s *fcs)
+{
+}
+
+/**
+ *   Module cleanup
+ */
+void
+bfa_fcs_rport_modexit(struct bfa_fcs_s *fcs)
+{
+	bfa_fcs_modexit_comp(fcs);
 }
 
 /**

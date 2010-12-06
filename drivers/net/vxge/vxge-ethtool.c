@@ -12,7 +12,6 @@
  * Copyright(c) 2002-2009 Neterion Inc.
  ******************************************************************************/
 #include<linux/ethtool.h>
-#include <linux/slab.h>
 #include <linux/pci.h>
 #include <linux/etherdevice.h>
 
@@ -109,7 +108,7 @@ static void vxge_ethtool_gregs(struct net_device *dev,
 	int index, offset;
 	enum vxge_hw_status status;
 	u64 reg;
-	u64 *reg_space = (u64 *) space;
+	u8 *reg_space = (u8 *) space;
 	struct vxgedev *vdev = (struct vxgedev *)netdev_priv(dev);
 	struct __vxge_hw_device  *hldev = (struct __vxge_hw_device *)
 					pci_get_drvdata(vdev->pdev);
@@ -129,7 +128,8 @@ static void vxge_ethtool_gregs(struct net_device *dev,
 						__func__, __LINE__);
 				return;
 			}
-			*reg_space++ = reg;
+
+			memcpy((reg_space + offset), &reg, 8);
 		}
 	}
 }

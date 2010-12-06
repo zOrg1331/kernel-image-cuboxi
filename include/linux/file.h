@@ -18,9 +18,11 @@ extern void drop_file_write_access(struct file *file);
 struct file_operations;
 struct vfsmount;
 struct dentry;
-struct path;
-extern struct file *alloc_file(struct path *, fmode_t mode,
-	const struct file_operations *fop);
+extern int init_file(struct file *, struct vfsmount *mnt,
+		struct dentry *dentry, fmode_t mode,
+		const struct file_operations *fop);
+extern struct file *alloc_file(struct vfsmount *, struct dentry *dentry,
+		fmode_t mode, const struct file_operations *fop);
 
 static inline void fput_light(struct file *file, int fput_needed)
 {
@@ -38,8 +40,5 @@ extern int get_unused_fd(void);
 extern void put_unused_fd(unsigned int fd);
 
 extern void fd_install(unsigned int fd, struct file *file);
-
-struct file *get_task_file(pid_t pid, int fd);
-extern struct kmem_cache *filp_cachep;
 
 #endif /* __LINUX_FILE_H */

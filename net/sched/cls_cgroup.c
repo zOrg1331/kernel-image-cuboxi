@@ -15,11 +15,14 @@
 #include <linux/errno.h>
 #include <linux/skbuff.h>
 #include <linux/cgroup.h>
-#include <linux/rcupdate.h>
 #include <net/rtnetlink.h>
 #include <net/pkt_cls.h>
-#include <net/sock.h>
-#include <net/cls_cgroup.h>
+
+struct cgroup_cls_state
+{
+	struct cgroup_subsys_state css;
+	u32 classid;
+};
 
 static inline struct cgroup_cls_state *cgrp_cls_state(struct cgroup *cgrp)
 {
@@ -97,10 +100,6 @@ static int cls_cgroup_classify(struct sk_buff *skb, struct tcf_proto *tp,
 	struct cls_cgroup_head *head = tp->root;
 	u32 classid;
 
-	rcu_read_lock();
-	classid = task_cls_state(current)->classid;
-	rcu_read_unlock();
-
 	/*
 	 * Due to the nature of the classifier it is required to ignore all
 	 * packets originating from softirq context as accessing `current'
@@ -111,12 +110,12 @@ static int cls_cgroup_classify(struct sk_buff *skb, struct tcf_proto *tp,
 	 * calls by looking at the number of nested bh disable calls because
 	 * softirqs always disables bh.
 	 */
-	if (softirq_count() != SOFTIRQ_OFFSET) {
-		/* If there is an sk_classid we'll use that. */
-		if (!skb->sk)
-			return -1;
-		classid = skb->sk->sk_classid;
-	}
+	if (softirq_count() != SOFTIRQ_OFFSET)
+		return -1;
+
+	rcu_read_lock();
+	classid = task_cls_state(current)->classid;
+	rcu_read_unlock();
 
 	if (!classid)
 		return -1;
@@ -278,21 +277,11 @@ static struct tcf_proto_ops cls_cgroup_ops __read_mostly = {
 
 static int __init init_cgroup_cls(void)
 {
-#ifndef CONFIG_NET_CLS_CGROUP
-	/* We can't use rcu_assign_pointer because this is an int. */
-	smp_wmb();
-	net_cls_subsys_id = net_cls_subsys.subsys_id;
-#endif
 	return register_tcf_proto_ops(&cls_cgroup_ops);
 }
 
 static void __exit exit_cgroup_cls(void)
 {
-#ifndef CONFIG_NET_CLS_CGROUP
-	/* We can't use rcu_assign_pointer because this is an int. */
-	smp_wmb();
-	net_cls_subsys_id = -1;
-#endif
 	unregister_tcf_proto_ops(&cls_cgroup_ops);
 }
 

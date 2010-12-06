@@ -60,8 +60,6 @@
 #include <net/dst.h>
 #include <net/checksum.h>
 
-#include <bc/net.h>
-
 /*
  * This structure really needs to be cleaned up.
  * Most of it is for TCP, and not used by any of
@@ -295,7 +293,7 @@ struct sock {
 	void			*sk_security;
 #endif
 	__u32			sk_mark;
-	u32			sk_classid;
+	/* XXX 4 bytes hole on 64 bit */
 	void			(*sk_state_change)(struct sock *sk);
 	void			(*sk_data_ready)(struct sock *sk, int bytes);
 	void			(*sk_write_space)(struct sock *sk);
@@ -303,8 +301,6 @@ struct sock {
   	int			(*sk_backlog_rcv)(struct sock *sk,
 						  struct sk_buff *skb);  
 	void                    (*sk_destruct)(struct sock *sk);
-	struct sock_beancounter sk_bc;
-	struct ve_struct	*owner_env;
 };
 
 /*
@@ -508,7 +504,6 @@ enum sock_flags {
 	SOCK_TIMESTAMPING_SOFTWARE,     /* %SOF_TIMESTAMPING_SOFTWARE */
 	SOCK_TIMESTAMPING_RAW_HARDWARE, /* %SOF_TIMESTAMPING_RAW_HARDWARE */
 	SOCK_TIMESTAMPING_SYS_HARDWARE, /* %SOF_TIMESTAMPING_SYS_HARDWARE */
-	SOCK_RXQ_OVFL,
 };
 
 static inline void sock_copy_flags(struct sock *nsk, struct sock *osk)
@@ -596,8 +591,6 @@ static inline int sk_backlog_rcv(struct sock *sk, struct sk_buff *skb)
 	})
 
 extern int sk_stream_wait_connect(struct sock *sk, long *timeo_p);
-extern int __sk_stream_wait_memory(struct sock *sk, long *timeo_p,
-				unsigned long amount);
 extern int sk_stream_wait_memory(struct sock *sk, long *timeo_p);
 extern void sk_stream_wait_close(struct sock *sk, long timeo_p);
 extern int sk_stream_error(struct sock *sk, int flags, int err);
@@ -835,8 +828,7 @@ static inline int sk_has_account(struct sock *sk)
 	return !!sk->sk_prot->memory_allocated;
 }
 
-static inline int sk_wmem_schedule(struct sock *sk, int size,
-		struct sk_buff *skb)
+static inline int sk_wmem_schedule(struct sock *sk, int size)
 {
 	if (!sk_has_account(sk))
 		return 1;
@@ -844,15 +836,12 @@ static inline int sk_wmem_schedule(struct sock *sk, int size,
 		__sk_mem_schedule(sk, size, SK_MEM_SEND);
 }
 
-static inline int sk_rmem_schedule(struct sock *sk,  struct sk_buff *skb)
+static inline int sk_rmem_schedule(struct sock *sk, int size)
 {
 	if (!sk_has_account(sk))
 		return 1;
-	if (!(skb->truesize <= sk->sk_forward_alloc ||
-	      __sk_mem_schedule(sk, skb->truesize, SK_MEM_RECV)))
-		return 0;
-
-	return !ub_sockrcvbuf_charge(sk, skb);
+	return size <= sk->sk_forward_alloc ||
+		__sk_mem_schedule(sk, size, SK_MEM_RECV);
 }
 
 static inline void sk_mem_reclaim(struct sock *sk)
@@ -976,23 +965,10 @@ extern struct sk_buff 		*sock_alloc_send_pskb(struct sock *sk,
 						      unsigned long data_len,
 						      int noblock,
 						      int *errcode);
-extern struct sk_buff 		*sock_alloc_send_skb2(struct sock *sk,
-						     unsigned long size,
-						     unsigned long size2,
-						     int noblock,
-						     int *errcode);
 extern void *sock_kmalloc(struct sock *sk, int size,
 			  gfp_t priority);
 extern void sock_kfree_s(struct sock *sk, void *mem, int size);
 extern void sk_send_sigurg(struct sock *sk);
-
-#ifdef CONFIG_CGROUPS
-extern void sock_update_classid(struct sock *sk);
-#else
-static inline void sock_update_classid(struct sock *sk)
-{
-}
-#endif
 
 /*
  * Functions to fill in entries in struct proto_ops when a protocol
@@ -1351,7 +1327,6 @@ static inline void sock_poll_wait(struct file *filp,
 
 static inline void skb_set_owner_w(struct sk_buff *skb, struct sock *sk)
 {
-	WARN_ON(skb->destructor);
 	skb_orphan(skb);
 	skb->sk = sk;
 	skb->destructor = sock_wfree;
@@ -1365,7 +1340,6 @@ static inline void skb_set_owner_w(struct sk_buff *skb, struct sock *sk)
 
 static inline void skb_set_owner_r(struct sk_buff *skb, struct sock *sk)
 {
-	WARN_ON(skb->destructor);
 	skb_orphan(skb);
 	skb->sk = sk;
 	skb->destructor = sock_rfree;
@@ -1518,8 +1492,6 @@ sock_recv_timestamp(struct msghdr *msg, struct sock *sk, struct sk_buff *skb)
 		sk->sk_stamp = kt;
 }
 
-extern void sock_recv_ts_and_drops(struct msghdr *msg, struct sock *sk, struct sk_buff *skb);
-
 /**
  * sock_tx_timestamp - checks whether the outgoing packet is to be time stamped
  * @msg:	outgoing packet
@@ -1588,13 +1560,6 @@ static inline void sk_change_net(struct sock *sk, struct net *net)
 {
 	put_net(sock_net(sk));
 	sock_net_set(sk, hold_net(net));
-}
-
-static inline void sk_change_net_get(struct sock *sk, struct net *net)
-{
-	struct net *old_net = sock_net(sk);
-	sock_net_set(sk, get_net(net));
-	put_net(old_net);
 }
 
 static inline struct sock *skb_steal_sock(struct sk_buff *skb)

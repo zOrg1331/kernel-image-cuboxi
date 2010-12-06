@@ -91,6 +91,7 @@
 
 #define NUM_SEL_MNT_OPTS 5
 
+extern unsigned int policydb_loaded_version;
 extern int selinux_nlmsg_lookup(u16 sclass, u16 nlmsg_type, u32 *perm);
 extern struct security_operations *security_ops;
 
@@ -1826,33 +1827,6 @@ static inline u32 file_to_av(struct file *file)
 	return av;
 }
 
-static inline u32 open_inode_to_av(struct inode *inode)
-{
-	if (selinux_policycap_openperm) {
-		mode_t mode = inode->i_mode;
-		/*
-		 * lnk files and socks do not really have an 'open'
-		 */
-		if (S_ISREG(mode))
-			return FILE__OPEN;
-		else if (S_ISCHR(mode))
-			return CHR_FILE__OPEN;
-		else if (S_ISBLK(mode))
-			return BLK_FILE__OPEN;
-		else if (S_ISFIFO(mode))
-			return FIFO_FILE__OPEN;
-		else if (S_ISDIR(mode))
-			return DIR__OPEN;
-		else if (S_ISSOCK(mode))
-			return SOCK_FILE__OPEN;
-		else
-			printk(KERN_ERR "SELinux: WARNING: inside %s with "
-				"unknown mode:%o\n", __func__, mode);
-	}
-
-	return 0;
-}
-
 /*
  * Convert a file to an access vector and include the correct open
  * open permission.
@@ -1861,8 +1835,27 @@ static inline u32 open_file_to_av(struct file *file)
 {
 	u32 av = file_to_av(file);
 
-	av |= open_inode_to_av(file->f_path.dentry->d_inode);
-
+	if (selinux_policycap_openperm) {
+		mode_t mode = file->f_path.dentry->d_inode->i_mode;
+		/*
+		 * lnk files and socks do not really have an 'open'
+		 */
+		if (S_ISREG(mode))
+			av |= FILE__OPEN;
+		else if (S_ISCHR(mode))
+			av |= CHR_FILE__OPEN;
+		else if (S_ISBLK(mode))
+			av |= BLK_FILE__OPEN;
+		else if (S_ISFIFO(mode))
+			av |= FIFO_FILE__OPEN;
+		else if (S_ISDIR(mode))
+			av |= DIR__OPEN;
+		else if (S_ISSOCK(mode))
+			av |= SOCK_FILE__OPEN;
+		else
+			printk(KERN_ERR "SELinux: WARNING: inside %s with "
+				"unknown mode:%o\n", __func__, mode);
+	}
 	return av;
 }
 
@@ -2373,8 +2366,7 @@ static void selinux_bprm_committing_creds(struct linux_binprm *bprm)
 			initrlim = init_task.signal->rlim + i;
 			rlim->rlim_cur = min(rlim->rlim_max, initrlim->rlim_cur);
 		}
-		update_rlimit_cpu(current,
-				current->signal->rlim[RLIMIT_CPU].rlim_cur);
+		update_rlimit_cpu(rlim->rlim_cur);
 	}
 }
 
@@ -3238,24 +3230,6 @@ static int selinux_dentry_open(struct file *file, const struct cred *cred)
 	return inode_has_perm(cred, inode, open_file_to_av(file), NULL);
 }
 
-/*
- * This is a RHEL only hack to check the OPEN permission on all truncate()
- * calls. See https://bugzilla.redhat.com/show_bug.cgi?id=578841 for the
- * reason we have this hack.
- */
-static int selinux_path_truncate(struct path *path, loff_t length,
-				 unsigned int time_attrs)
-{
-	const struct cred *cred = current_cred();
-	struct inode *inode = path->dentry->d_inode;
-	u32 av = open_inode_to_av(inode);
-
-	if (av)
-		return inode_has_perm(cred, inode, av, NULL);
-
-	return 0;
-}
-
 /* task security operations */
 
 static int selinux_task_create(unsigned long clone_flags)
@@ -3361,21 +3335,12 @@ static int selinux_kernel_create_files_as(struct cred *new, struct inode *inode)
 
 	if (ret == 0)
 		tsec->create_sid = isec->sid;
-	return ret;
+	return 0;
 }
 
-static int selinux_kernel_module_request(char *kmod_name)
+static int selinux_kernel_module_request(void)
 {
-	u32 sid;
-	struct common_audit_data ad;
-
-	sid = task_sid(current);
-
-	COMMON_AUDIT_DATA_INIT(&ad, KMOD);
-	ad.u.kmod_name = kmod_name;
-
-	return avc_has_perm(sid, SECINITSID_KERNEL, SECCLASS_SYSTEM,
-			    SYSTEM__MODULE_REQUEST, &ad);
+	return task_has_system(current, SYSTEM__MODULE_REQUEST);
 }
 
 static int selinux_task_setpgid(struct task_struct *p, pid_t pgid)
@@ -3425,17 +3390,16 @@ static int selinux_task_getioprio(struct task_struct *p)
 	return current_has_perm(p, PROCESS__GETSCHED);
 }
 
-static int selinux_task_setrlimit(struct task_struct *p, unsigned int resource,
-		struct rlimit *new_rlim)
+static int selinux_task_setrlimit(unsigned int resource, struct rlimit *new_rlim)
 {
-	struct rlimit *old_rlim = p->signal->rlim + resource;
+	struct rlimit *old_rlim = current->signal->rlim + resource;
 
 	/* Control the ability to change the hard limit (whether
 	   lowering or raising it), so that the hard limit can
 	   later be used as a safe reset point for the soft limit
 	   upon context transitions.  See selinux_bprm_committing_creds. */
 	if (old_rlim->rlim_max != new_rlim->rlim_max)
-		return current_has_perm(p, PROCESS__SETRLIMIT);
+		return current_has_perm(current, PROCESS__SETRLIMIT);
 
 	return 0;
 }
@@ -4750,7 +4714,10 @@ static int selinux_netlink_send(struct sock *sk, struct sk_buff *skb)
 	if (err)
 		return err;
 
-	return selinux_nlmsg_perm(sk, skb);
+	if (policydb_loaded_version >= POLICYDB_VERSION_NLCLASS)
+		err = selinux_nlmsg_perm(sk, skb);
+
+	return err;
 }
 
 static int selinux_netlink_recv(struct sk_buff *skb, int capability)
@@ -5558,8 +5525,6 @@ static struct security_operations selinux_ops = {
 
 	.dentry_open =			selinux_dentry_open,
 
-	.path_truncate = 		selinux_path_truncate,
-
 	.task_create =			selinux_task_create,
 	.cred_alloc_blank =		selinux_cred_alloc_blank,
 	.cred_free =			selinux_cred_free,
@@ -5865,11 +5830,11 @@ int selinux_disable(void)
 	selinux_disabled = 1;
 	selinux_enabled = 0;
 
-	/* Reset security_ops to the secondary module, dummy or capability. */
-	security_ops = secondary_ops;
-
 	/* Try to destroy the avc node cache */
 	avc_disable();
+
+	/* Reset security_ops to the secondary module, dummy or capability. */
+	security_ops = secondary_ops;
 
 	/* Unregister netfilter hooks. */
 	selinux_nf_ip_exit();

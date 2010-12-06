@@ -72,8 +72,6 @@
 #include <asm/unaligned.h>
 #include <net/netdma.h>
 
-#include <bc/tcp.h>
-
 int sysctl_tcp_timestamps __read_mostly = 1;
 int sysctl_tcp_window_scaling __read_mostly = 1;
 int sysctl_tcp_sack __read_mostly = 1;
@@ -309,7 +307,7 @@ static void tcp_grow_window(struct sock *sk, struct sk_buff *skb)
 	/* Check #1 */
 	if (tp->rcv_ssthresh < tp->window_clamp &&
 	    (int)tp->rcv_ssthresh < tcp_space(sk) &&
-	    ub_tcp_rmem_allows_expand(sk)) {
+	    !tcp_memory_pressure) {
 		int incr;
 
 		/* Check #2. Increase window, if skb with such overhead
@@ -379,8 +377,6 @@ static void tcp_init_buffer_space(struct sock *sk)
 
 	tp->rcv_ssthresh = min(tp->rcv_ssthresh, tp->window_clamp);
 	tp->snd_cwnd_stamp = tcp_time_stamp;
-
-	ub_tcp_update_maxadvmss(sk);
 }
 
 /* 5. Recalculate window clamp after socket hit its memory bounds. */
@@ -393,7 +389,7 @@ static void tcp_clamp_window(struct sock *sk)
 
 	if (sk->sk_rcvbuf < sysctl_tcp_rmem[2] &&
 	    !(sk->sk_userlocks & SOCK_RCVBUF_LOCK) &&
-	    !ub_tcp_memory_pressure(sk) &&
+	    !tcp_memory_pressure &&
 	    atomic_read(&tcp_memory_allocated) < sysctl_tcp_mem[0]) {
 		sk->sk_rcvbuf = min(atomic_read(&sk->sk_rmem_alloc),
 				    sysctl_tcp_rmem[2]);
@@ -4272,19 +4268,19 @@ static void tcp_ofo_queue(struct sock *sk)
 static int tcp_prune_ofo_queue(struct sock *sk);
 static int tcp_prune_queue(struct sock *sk);
 
-static inline int tcp_try_rmem_schedule(struct sock *sk, struct sk_buff *skb)
+static inline int tcp_try_rmem_schedule(struct sock *sk, unsigned int size)
 {
 	if (atomic_read(&sk->sk_rmem_alloc) > sk->sk_rcvbuf ||
-	    !sk_rmem_schedule(sk, skb)) {
+	    !sk_rmem_schedule(sk, size)) {
 
 		if (tcp_prune_queue(sk) < 0)
 			return -1;
 
-		if (!sk_rmem_schedule(sk, skb)) {
+		if (!sk_rmem_schedule(sk, size)) {
 			if (!tcp_prune_ofo_queue(sk))
 				return -1;
 
-			if (!sk_rmem_schedule(sk, skb))
+			if (!sk_rmem_schedule(sk, size))
 				return -1;
 		}
 	}
@@ -4336,8 +4332,8 @@ static void tcp_data_queue(struct sock *sk, struct sk_buff *skb)
 		if (eaten <= 0) {
 queue_and_out:
 			if (eaten < 0 &&
-			    tcp_try_rmem_schedule(sk, skb))
-				goto drop_part;
+			    tcp_try_rmem_schedule(sk, skb->truesize))
+				goto drop;
 
 			skb_set_owner_r(skb, sk);
 			__skb_queue_tail(&sk->sk_receive_queue, skb);
@@ -4381,12 +4377,6 @@ out_of_window:
 drop:
 		__kfree_skb(skb);
 		return;
-
-drop_part:
-		if (after(tp->copied_seq, tp->rcv_nxt))
-			tp->rcv_nxt = tp->copied_seq;
-		__kfree_skb(skb);
-		return;
 	}
 
 	/* Out of window. F.e. zero window probe. */
@@ -4413,7 +4403,7 @@ drop_part:
 
 	TCP_ECN_check_ce(tp, skb);
 
-	if (tcp_try_rmem_schedule(sk, skb))
+	if (tcp_try_rmem_schedule(sk, skb->truesize))
 		goto drop;
 
 	/* Disable header prediction. */
@@ -4599,10 +4589,6 @@ restart:
 		nskb = alloc_skb(copy + header, GFP_ATOMIC);
 		if (!nskb)
 			return;
-		if (ub_tcprcvbuf_charge_forced(skb->sk, nskb) < 0) {
-			kfree_skb(nskb);
-			return;
-		}
 
 		skb_set_mac_header(nskb, skb_mac_header(skb) - skb->head);
 		skb_set_network_header(nskb, (skb_network_header(skb) -
@@ -4731,7 +4717,7 @@ static int tcp_prune_queue(struct sock *sk)
 
 	if (atomic_read(&sk->sk_rmem_alloc) >= sk->sk_rcvbuf)
 		tcp_clamp_window(sk);
-	else if (ub_tcp_memory_pressure(sk))
+	else if (tcp_memory_pressure)
 		tp->rcv_ssthresh = min(tp->rcv_ssthresh, 4U * tp->advmss);
 
 	tcp_collapse_ofo_queue(sk);
@@ -4797,7 +4783,7 @@ static int tcp_should_expand_sndbuf(struct sock *sk)
 		return 0;
 
 	/* If we are under global TCP memory pressure, do not expand.  */
-	if (ub_tcp_memory_pressure(sk))
+	if (tcp_memory_pressure)
 		return 0;
 
 	/* If we are under soft global TCP memory pressure, do not expand.  */
@@ -5300,10 +5286,6 @@ int tcp_rcv_established(struct sock *sk, struct sk_buff *skb,
 
 				if ((int)skb->truesize > sk->sk_forward_alloc)
 					goto step5;
-				/* This is OK not to try to free memory here.
-				 * Do this below on slow path. Den */
-				if (ub_tcprcvbuf_charge(sk, skb) < 0)
-					goto step5;
 
 				NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPHPHITS);
 
@@ -5717,9 +5699,11 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 
 				/* tcp_ack considers this ACK as duplicate
 				 * and does not calculate rtt.
-				 * Force it here.
+				 * Fix it at least with timestamps.
 				 */
-				tcp_ack_update_rtt(sk, 0, 0);
+				if (tp->rx_opt.saw_tstamp &&
+				    tp->rx_opt.rcv_tsecr && !tp->srtt)
+					tcp_ack_saw_tstamp(sk, 0);
 
 				if (tp->rx_opt.tstamp_ok)
 					tp->advmss -= TCPOLEN_TSTAMP_ALIGNED;

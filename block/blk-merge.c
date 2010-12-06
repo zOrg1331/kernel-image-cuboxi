@@ -206,7 +206,8 @@ static inline int ll_new_hw_segment(struct request_queue *q,
 {
 	int nr_phys_segs = bio_phys_segments(q, bio);
 
-	if (req->nr_phys_segments + nr_phys_segs > queue_max_segments(q)) {
+	if (req->nr_phys_segments + nr_phys_segs > queue_max_hw_segments(q) ||
+	    req->nr_phys_segments + nr_phys_segs > queue_max_phys_segments(q)) {
 		req->cmd_flags |= REQ_NOMERGE;
 		if (req == q->last_merge)
 			q->last_merge = NULL;
@@ -299,7 +300,10 @@ static int ll_merge_requests_fn(struct request_queue *q, struct request *req,
 		total_phys_segments--;
 	}
 
-	if (total_phys_segments > queue_max_segments(q))
+	if (total_phys_segments > queue_max_phys_segments(q))
+		return 0;
+
+	if (total_phys_segments > queue_max_hw_segments(q))
 		return 0;
 
 	/* Merge is OK... */
@@ -360,12 +364,6 @@ static int attempt_merge(struct request_queue *q, struct request *req,
 			  struct request *next)
 {
 	if (!rq_mergeable(req) || !rq_mergeable(next))
-		return 0;
-
-	/*
-	 * Don't merge file system requests and discard requests
-	 */
-	if ((req->cmd_flags & REQ_DISCARD) != (next->cmd_flags & REQ_DISCARD))
 		return 0;
 
 	/*

@@ -19,6 +19,8 @@
 #include <linux/radix-tree.h>
 #include "ima.h"
 
+#define ima_iint_delete ima_inode_free
+
 RADIX_TREE(ima_iint_store, GFP_ATOMIC);
 DEFINE_SPINLOCK(ima_iint_lock);
 
@@ -43,21 +45,22 @@ out:
 	return iint;
 }
 
-/**
- * ima_inode_alloc - allocate an iint associated with an inode
- * @inode: pointer to the inode
+/* Allocate memory for the iint associated with the inode
+ * from the iint_cache slab, initialize the iint, and
+ * insert it into the radix tree.
+ *
+ * On success return a pointer to the iint; on failure return NULL.
  */
-int ima_inode_alloc(struct inode *inode)
+struct ima_iint_cache *ima_iint_insert(struct inode *inode)
 {
 	struct ima_iint_cache *iint = NULL;
 	int rc = 0;
 
-	if (!ima_enabled)
-		return 0;
-
+	if (!ima_initialized)
+		return iint;
 	iint = kmem_cache_alloc(iint_cache, GFP_NOFS);
 	if (!iint)
-		return -ENOMEM;
+		return iint;
 
 	rc = radix_tree_preload(GFP_NOFS);
 	if (rc < 0)
@@ -66,13 +69,66 @@ int ima_inode_alloc(struct inode *inode)
 	spin_lock(&ima_iint_lock);
 	rc = radix_tree_insert(&ima_iint_store, (unsigned long)inode, iint);
 	spin_unlock(&ima_iint_lock);
-	radix_tree_preload_end();
 out:
-	if (rc < 0)
+	if (rc < 0) {
 		kmem_cache_free(iint_cache, iint);
-
-	return rc;
+		if (rc == -EEXIST) {
+			spin_lock(&ima_iint_lock);
+			iint = radix_tree_lookup(&ima_iint_store,
+						 (unsigned long)inode);
+			spin_unlock(&ima_iint_lock);
+		} else
+			iint = NULL;
+	}
+	radix_tree_preload_end();
+	return iint;
 }
+
+/**
+ * ima_inode_alloc - allocate an iint associated with an inode
+ * @inode: pointer to the inode
+ *
+ * Return 0 on success, 1 on failure.
+ */
+int ima_inode_alloc(struct inode *inode)
+{
+	struct ima_iint_cache *iint;
+
+	if (!ima_initialized)
+		return 0;
+
+	iint = ima_iint_insert(inode);
+	if (!iint)
+		return 1;
+	return 0;
+}
+
+/* ima_iint_find_insert_get - get the iint associated with an inode
+ *
+ * Most insertions are done at inode_alloc, except those allocated
+ * before late_initcall. When the iint does not exist, allocate it,
+ * initialize and insert it, and increment the iint refcount.
+ *
+ * (Can't initialize at security_initcall before any inodes are
+ * allocated, got to wait at least until proc_init.)
+ *
+ *  Return the iint.
+ */
+struct ima_iint_cache *ima_iint_find_insert_get(struct inode *inode)
+{
+	struct ima_iint_cache *iint = NULL;
+
+	iint = ima_iint_find_get(inode);
+	if (iint)
+		return iint;
+
+	iint = ima_iint_insert(inode);
+	if (iint)
+		kref_get(&iint->refcount);
+
+	return iint;
+}
+EXPORT_SYMBOL_GPL(ima_iint_find_insert_get);
 
 /* iint_free - called when the iint refcount goes to zero */
 void iint_free(struct kref *kref)
@@ -82,17 +138,17 @@ void iint_free(struct kref *kref)
 	iint->version = 0;
 	iint->flags = 0UL;
 	if (iint->readcount != 0) {
-		printk(KERN_INFO "%s: readcount: %ld\n", __func__,
+		printk(KERN_INFO "%s: readcount: %ld\n", __FUNCTION__,
 		       iint->readcount);
 		iint->readcount = 0;
 	}
 	if (iint->writecount != 0) {
-		printk(KERN_INFO "%s: writecount: %ld\n", __func__,
+		printk(KERN_INFO "%s: writecount: %ld\n", __FUNCTION__,
 		       iint->writecount);
 		iint->writecount = 0;
 	}
 	if (iint->opencount != 0) {
-		printk(KERN_INFO "%s: opencount: %ld\n", __func__,
+		printk(KERN_INFO "%s: opencount: %ld\n", __FUNCTION__,
 		       iint->opencount);
 		iint->opencount = 0;
 	}
@@ -108,18 +164,17 @@ void iint_rcu_free(struct rcu_head *rcu_head)
 }
 
 /**
- * ima_inode_free - called on security_inode_free
+ * ima_iint_delete - called on integrity_inode_free
  * @inode: pointer to the inode
  *
  * Free the integrity information(iint) associated with an inode.
  */
-void ima_inode_free(struct inode *inode)
+void ima_iint_delete(struct inode *inode)
 {
 	struct ima_iint_cache *iint;
 
-	if (!ima_enabled)
+	if (!ima_initialized)
 		return;
-
 	spin_lock(&ima_iint_lock);
 	iint = radix_tree_delete(&ima_iint_store, (unsigned long)inode);
 	spin_unlock(&ima_iint_lock);
@@ -141,14 +196,9 @@ static void init_once(void *foo)
 	kref_set(&iint->refcount, 1);
 }
 
-static int __init ima_iintcache_init(void)
+void __init ima_iintcache_init(void)
 {
-	if (!ima_enabled)
-		return 0;
-
 	iint_cache =
 	    kmem_cache_create("iint_cache", sizeof(struct ima_iint_cache), 0,
 			      SLAB_PANIC, init_once);
-	return 0;
 }
-security_initcall(ima_iintcache_init);

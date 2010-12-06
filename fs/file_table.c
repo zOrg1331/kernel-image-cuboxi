@@ -13,6 +13,7 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/security.h>
+#include <linux/ima.h>
 #include <linux/eventpoll.h>
 #include <linux/rcupdate.h>
 #include <linux/mount.h>
@@ -21,16 +22,8 @@
 #include <linux/fsnotify.h>
 #include <linux/sysctl.h>
 #include <linux/percpu_counter.h>
-#include <linux/ima.h>
-#include <linux/ve.h>
 
 #include <asm/atomic.h>
-
-#include <bc/beancounter.h>
-#include <bc/kmem.h>
-#include <bc/misc.h>
-
-#include "internal.h"
 
 /* sysctl tunables... */
 struct files_stat_struct files_stat = {
@@ -41,7 +34,7 @@ struct files_stat_struct files_stat = {
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(files_lock);
 
 /* SLAB cache for file structures */
-struct kmem_cache *filp_cachep __read_mostly;
+static struct kmem_cache *filp_cachep __read_mostly;
 
 static struct percpu_counter nr_files __cacheline_aligned_in_smp;
 
@@ -50,16 +43,13 @@ static inline void file_free_rcu(struct rcu_head *head)
 	struct file *f = container_of(head, struct file, f_u.fu_rcuhead);
 
 	put_cred(f->f_cred);
-	put_ve(f->owner_env);
 	kmem_cache_free(filp_cachep, f);
 }
 
 static inline void file_free(struct file *f)
 {
+	percpu_counter_dec(&nr_files);
 	file_check_state(f);
-	if (f->f_ub == get_ub0())
-		percpu_counter_dec(&nr_files);
-	ub_file_uncharge(f);
 	call_rcu(&f->f_u.fu_rcuhead, file_free_rcu);
 }
 
@@ -113,14 +103,11 @@ struct file *get_empty_filp(void)
 	const struct cred *cred = current_cred();
 	static int old_max;
 	struct file * f;
-	int acct;
 
-	acct = (get_exec_ub() == get_ub0());
 	/*
 	 * Privileged users can go above max_files
 	 */
-	if (acct && get_nr_files() >= files_stat.max_files &&
-			!capable(CAP_SYS_ADMIN)) {
+	if (get_nr_files() >= files_stat.max_files && !capable(CAP_SYS_ADMIN)) {
 		/*
 		 * percpu_counters are inaccurate.  Do an expensive check before
 		 * we go and fail.
@@ -133,13 +120,7 @@ struct file *get_empty_filp(void)
 	if (f == NULL)
 		goto fail;
 
-	if (ub_file_charge(f))
-		goto fail_ch;
-	if (acct)
-		percpu_counter_inc(&nr_files);
-
-	f->owner_env = get_ve(get_exec_env());
-
+	percpu_counter_inc(&nr_files);
 	if (security_file_alloc(f))
 		goto fail_sec;
 
@@ -165,11 +146,9 @@ fail_sec:
 	file_free(f);
 fail:
 	return NULL;
-
-fail_ch:
-	kmem_cache_free(filp_cachep, f);
-	return NULL;
 }
+
+EXPORT_SYMBOL(get_empty_filp);
 
 /**
  * alloc_file - allocate and initialize a 'struct file'
@@ -186,8 +165,8 @@ fail_ch:
  * If all the callers of init_file() are eliminated, its
  * code should be moved into this function.
  */
-struct file *alloc_file(struct path *path, fmode_t mode,
-		const struct file_operations *fop)
+struct file *alloc_file(struct vfsmount *mnt, struct dentry *dentry,
+		fmode_t mode, const struct file_operations *fop)
 {
 	struct file *file;
 
@@ -195,8 +174,35 @@ struct file *alloc_file(struct path *path, fmode_t mode,
 	if (!file)
 		return NULL;
 
-	file->f_path = *path;
-	file->f_mapping = path->dentry->d_inode->i_mapping;
+	init_file(file, mnt, dentry, mode, fop);
+	return file;
+}
+EXPORT_SYMBOL(alloc_file);
+
+/**
+ * init_file - initialize a 'struct file'
+ * @file: the already allocated 'struct file' to initialized
+ * @mnt: the vfsmount on which the file resides
+ * @dentry: the dentry representing this file
+ * @mode: the mode the file is opened with
+ * @fop: the 'struct file_operations' for this file
+ *
+ * Use this instead of setting the members directly.  Doing so
+ * avoids making mistakes like forgetting the mntget() or
+ * forgetting to take a write on the mnt.
+ *
+ * Note: This is a crappy interface.  It is here to make
+ * merging with the existing users of get_empty_filp()
+ * who have complex failure logic easier.  All users
+ * of this should be moving to alloc_file().
+ */
+int init_file(struct file *file, struct vfsmount *mnt, struct dentry *dentry,
+	   fmode_t mode, const struct file_operations *fop)
+{
+	int error = 0;
+	file->f_path.dentry = dentry;
+	file->f_path.mnt = mntget(mnt);
+	file->f_mapping = dentry->d_inode->i_mapping;
 	file->f_mode = mode;
 	file->f_op = fop;
 
@@ -206,14 +212,14 @@ struct file *alloc_file(struct path *path, fmode_t mode,
 	 * visible.  We do this for consistency, and so
 	 * that we can do debugging checks at __fput()
 	 */
-	if ((mode & FMODE_WRITE) && !special_file(path->dentry->d_inode->i_mode)) {
+	if ((mode & FMODE_WRITE) && !special_file(dentry->d_inode->i_mode)) {
 		file_take_write(file);
-		WARN_ON(mnt_clone_write(path->mnt));
+		error = mnt_clone_write(mnt);
+		WARN_ON(error);
 	}
-	ima_counts_get(file);
-	return file;
+	return error;
 }
-EXPORT_SYMBOL(alloc_file);
+EXPORT_SYMBOL(init_file);
 
 void fput(struct file *file)
 {
@@ -325,10 +331,7 @@ struct file *fget_light(unsigned int fd, int *fput_needed)
 	*fput_needed = 0;
 	if (likely((atomic_read(&files->count) == 1))) {
 		file = fcheck_files(files, fd);
-		if (unlikely(file && file->f_heavy))
-			goto slow;
 	} else {
-slow:
 		rcu_read_lock();
 		file = fcheck_files(files, fd);
 		if (file) {
@@ -417,9 +420,7 @@ retry:
 			continue;
 		if (!(f->f_mode & FMODE_WRITE))
 			continue;
-		spin_lock(&f->f_lock);
 		f->f_mode &= ~FMODE_WRITE;
-		spin_unlock(&f->f_lock);
 		if (file_check_writeable(f) != 0)
 			continue;
 		file_release_write(f);
@@ -435,48 +436,6 @@ retry:
 	}
 	file_list_unlock();
 }
-
-struct file *get_task_file(pid_t pid, int fd)
-{
-	int err;
-	struct task_struct *tsk;
-	struct files_struct *fs;
-	struct file *file = NULL;
-
-	err = -ESRCH;
-	read_lock(&tasklist_lock);
-	tsk = find_task_by_vpid(pid);
-	if (tsk == NULL) {
-		read_unlock(&tasklist_lock);
-		goto out;
-	}
-
-	get_task_struct(tsk);
-	read_unlock(&tasklist_lock);
-
-	err = -EINVAL;
-	fs = get_files_struct(tsk);
-	if (fs == NULL)
-		goto out_put;
-
-	rcu_read_lock();
-	err = -EBADF;
-	file = fcheck_files(fs, fd);
-	if (file == NULL)
-		goto out_unlock;
-
-	err = 0;
-	get_file(file);
-
-out_unlock:
-	rcu_read_unlock();
-	put_files_struct(fs);
-out_put:
-	put_task_struct(tsk);
-out:
-	return err ? ERR_PTR(err) : file;
-}
-EXPORT_SYMBOL(get_task_file);
 
 void __init files_init(unsigned long mempages)
 { 

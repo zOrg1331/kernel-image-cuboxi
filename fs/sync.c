@@ -10,19 +10,13 @@
 #include <linux/writeback.h>
 #include <linux/syscalls.h>
 #include <linux/linkage.h>
-#include <linux/pid_namespace.h>
 #include <linux/pagemap.h>
 #include <linux/quotaops.h>
 #include <linux/buffer_head.h>
 #include "internal.h"
 
-#include <bc/beancounter.h>
-#include <bc/io_acct.h>
-
 #define VALID_FLAGS (SYNC_FILE_RANGE_WAIT_BEFORE|SYNC_FILE_RANGE_WRITE| \
 			SYNC_FILE_RANGE_WAIT_AFTER)
-
-int sysctl_fsync_enable = 2;
 
 /*
  * Do the filesystem syncing work. For simple filesystems
@@ -31,8 +25,7 @@ int sysctl_fsync_enable = 2;
  * wait == 1 case since in that case write_inode() functions do
  * sync_dirty_buffer() and thus effectively write one block at a time.
  */
-static int __sync_filesystem(struct super_block *sb,
-		struct user_beancounter *ub, int wait)
+static int __sync_filesystem(struct super_block *sb, int wait)
 {
 	/*
 	 * This should be safe, as we require bdi backing to actually
@@ -44,10 +37,10 @@ static int __sync_filesystem(struct super_block *sb,
 	/* Avoid doing twice syncing and cache pruning for quota sync */
 	if (!wait) {
 		writeout_quota_sb(sb, -1);
-		writeback_inodes_sb_ub(sb, ub);
+		writeback_inodes_sb(sb);
 	} else {
 		sync_quota_sb(sb, -1);
-		sync_inodes_sb_ub(sb, ub);
+		sync_inodes_sb(sb);
 	}
 	if (sb->s_op->sync_fs)
 		sb->s_op->sync_fs(sb, wait);
@@ -75,10 +68,10 @@ int sync_filesystem(struct super_block *sb)
 	if (sb->s_flags & MS_RDONLY)
 		return 0;
 
-	ret = __sync_filesystem(sb, NULL, 0);
+	ret = __sync_filesystem(sb, 0);
 	if (ret < 0)
 		return ret;
-	return __sync_filesystem(sb, NULL, 1);
+	return __sync_filesystem(sb, 1);
 }
 EXPORT_SYMBOL_GPL(sync_filesystem);
 
@@ -96,7 +89,7 @@ EXPORT_SYMBOL_GPL(sync_filesystem);
  * flags again, which will cause process A to resync everything.  Fix that with
  * a local mutex.
  */
-static void sync_filesystems(struct user_beancounter *ub, int wait)
+static void sync_filesystems(int wait)
 {
 	struct super_block *sb;
 	static DEFINE_MUTEX(mutex);
@@ -116,7 +109,7 @@ restart:
 
 		down_read(&sb->s_umount);
 		if (!(sb->s_flags & MS_RDONLY) && sb->s_root && sb->s_bdi)
-			__sync_filesystem(sb, ub, wait);
+			__sync_filesystem(sb, wait);
 		up_read(&sb->s_umount);
 
 		/* restart only when sb is no longer on the list */
@@ -134,36 +127,11 @@ restart:
  */
 SYSCALL_DEFINE0(sync)
 {
-	struct user_beancounter *ub, *sync_ub;
-	struct ve_struct *ve;
-
-	ub = get_exec_ub();
-	ve = get_exec_env();
-	ub_percpu_inc(ub, sync);
-
-	/* init can't sync during VE stop. Rationale:
-	 *  - NFS with -o hard will block forever as network is down
-	 *  - no useful job is performed as VE0 will call umount/sync
-	 *    by his own later
-	 *  Den
-	 */
-	if (!ve_is_super(ve) &&
-			(!sysctl_fsync_enable ||
-			current == ve->ve_ns->pid_ns->child_reaper))
-		goto skip;
-
-	if (!ve_is_super(ve) && sysctl_fsync_enable == 2)
-		sync_ub = get_io_ub();
-	else
-		sync_ub = NULL;
-
-	wakeup_flusher_threads(sync_ub, 0);
-	sync_filesystems(sync_ub, 0);
-	sync_filesystems(sync_ub, 1);
-	if (unlikely(laptop_mode) && !sync_ub)
+	wakeup_flusher_threads(0);
+	sync_filesystems(0);
+	sync_filesystems(1);
+	if (unlikely(laptop_mode))
 		laptop_sync_completion();
-skip:
-	ub_percpu_inc(ub, sync_done);
 	return 0;
 }
 
@@ -173,8 +141,8 @@ static void do_sync_work(struct work_struct *work)
 	 * Sync twice to reduce the possibility we skipped some inodes / pages
 	 * because they were temporarily locked
 	 */
-	sync_filesystems(NULL, 0);
-	sync_filesystems(NULL, 0);
+	sync_filesystems(0);
+	sync_filesystems(0);
 	printk("Emergency Sync complete\n");
 	kfree(work);
 }
@@ -239,7 +207,6 @@ int vfs_fsync_range(struct file *file, struct dentry *dentry, loff_t start,
 	const struct file_operations *fop;
 	struct address_space *mapping;
 	int err, ret;
-	struct user_beancounter *ub;
 
 	/*
 	 * Get mapping and operations from the file in case we have
@@ -259,12 +226,6 @@ int vfs_fsync_range(struct file *file, struct dentry *dentry, loff_t start,
 		goto out;
 	}
 
-	ub = get_exec_ub();
-	if (datasync)
-		ub_percpu_inc(ub, fdsync);
-	else
-		ub_percpu_inc(ub, fsync);
-
 	ret = filemap_write_and_wait_range(mapping, start, end);
 
 	/*
@@ -277,10 +238,6 @@ int vfs_fsync_range(struct file *file, struct dentry *dentry, loff_t start,
 		ret = err;
 	mutex_unlock(&mapping->host->i_mutex);
 
-	if (datasync)
-		ub_percpu_inc(ub, fdsync_done);
-	else
-		ub_percpu_inc(ub, fsync_done);
 out:
 	return ret;
 }
@@ -309,9 +266,6 @@ static int do_fsync(unsigned int fd, int datasync)
 {
 	struct file *file;
 	int ret = -EBADF;
-
-	if (!ve_is_super(get_exec_env()) && !sysctl_fsync_enable) 
-		return 0;
 
 	file = fget(fd);
 	if (file) {
@@ -404,9 +358,6 @@ SYSCALL_DEFINE(sync_file_range)(int fd, loff_t offset, loff_t nbytes,
 	int fput_needed;
 	umode_t i_mode;
 
-	if (!ve_is_super(get_exec_env()) && !sysctl_fsync_enable)
-		return 0;
-
 	ret = -EINVAL;
 	if (flags & ~VALID_FLAGS)
 		goto out;
@@ -493,15 +444,11 @@ int do_sync_mapping_range(struct address_space *mapping, loff_t offset,
 			  loff_t endbyte, unsigned int flags)
 {
 	int ret;
-	struct user_beancounter *ub;
 
 	if (!mapping) {
 		ret = -EINVAL;
-		goto out_noacct;
+		goto out;
 	}
-
-	ub = get_exec_ub();
-	ub_percpu_inc(ub, frsync);
 
 	ret = 0;
 	if (flags & SYNC_FILE_RANGE_WAIT_BEFORE) {
@@ -525,8 +472,6 @@ int do_sync_mapping_range(struct address_space *mapping, loff_t offset,
 					endbyte >> PAGE_CACHE_SHIFT);
 	}
 out:
-	ub_percpu_inc(ub, frsync_done);
-out_noacct:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(do_sync_mapping_range);

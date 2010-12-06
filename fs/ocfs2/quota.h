@@ -17,6 +17,10 @@
 
 #include "ocfs2.h"
 
+/* Common stuff */
+/* id number of quota format */
+#define QFMT_OCFS2 3
+
 /*
  * In-memory structures
  */

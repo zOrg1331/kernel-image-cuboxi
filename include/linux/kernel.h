@@ -245,12 +245,6 @@ extern struct ratelimit_state printk_ratelimit_state;
 extern int printk_ratelimit(void);
 extern bool printk_timed_ratelimit(unsigned long *caller_jiffies,
 				   unsigned int interval_msec);
-asmlinkage int ve_vprintk(int dst, const char *fmt, va_list args)
-	__attribute__ ((format (printf, 2, 0)));
-asmlinkage int ve_printk(int, const char * fmt, ...)
-	__attribute__ ((format (printf, 2, 3)));
-void prepare_printk(void);
-
 
 extern int printk_delay_msec;
 
@@ -278,15 +272,6 @@ static inline int printk_ratelimit(void) { return 0; }
 static inline bool printk_timed_ratelimit(unsigned long *caller_jiffies, \
 					  unsigned int interval_msec)	\
 		{ return false; }
-static inline int ve_printk(int d, const char *s, ...)
-	__attribute__ ((format (printf, 2, 3)));
-static inline int ve_printk(int d, const char *s, ...)
-{
-	return 0;
-}
-static inline void prepare_printk(void)
-{
-}
 
 /* No effect, but we still get type checking even in the !PRINTK case: */
 #define printk_once(x...) printk(x)
@@ -303,18 +288,10 @@ extern void asmlinkage __attribute__((format(printf, 1, 2)))
 	early_printk(const char *fmt, ...);
 
 unsigned long int_sqrt(unsigned long);
-extern int console_silence_loglevel;
-
-#define VE0_LOG		1
-#define VE_LOG		2
-#define VE_LOG_BOTH	(VE0_LOG | VE_LOG)
 
 static inline void console_silent(void)
 {
-	if (console_loglevel > console_silence_loglevel) {
-		printk(KERN_EMERG "console shuts up ...\n");
-		console_loglevel = 0;
-	}
+	console_loglevel = 0;
 }
 
 static inline void console_verbose(void)
@@ -328,7 +305,6 @@ extern void wake_up_klogd(void);
 extern int oops_in_progress;		/* If set, an oops, panic(), BUG() or die() is in progress */
 extern int panic_timeout;
 extern int panic_on_oops;
-extern int decode_call_traces;
 extern int panic_on_unrecovered_nmi;
 extern int panic_on_io_nmi;
 extern const char *print_tainted(void);
@@ -358,30 +334,7 @@ extern enum system_states {
 #define TAINT_OVERRIDDEN_ACPI_TABLE	8
 #define TAINT_WARN			9
 #define TAINT_CRAP			10
-#define TAINT_FIRMWARE_WORKAROUND	11 /* currently not in RHEL6 */
-#define TAINT_12			12
-#define TAINT_13			13
-#define TAINT_14			14
-#define TAINT_15			15
-#define TAINT_16			16
-#define TAINT_17			17
-#define TAINT_18			18
-#define TAINT_19			19
-#define TAINT_20			20
-#define TAINT_21			21
-#define TAINT_22			22
-#define TAINT_23			23
-#define TAINT_24			24
-#define TAINT_25			25
-#define TAINT_26			26
-#define TAINT_27			27
-/* Reserving bits for vendor specific uses */
-#define TAINT_HARDWARE_UNSUPPORTED	28
-/* Bits 29 - 31 are reserved for Red Hat use only */
-#define TAINT_RESERVED29		29
-#define TAINT_RESERVED30		30
-#define TAINT_RESERVED31		31
- 
+
 extern void dump_stack(void) __cold;
 
 enum {
@@ -758,5 +711,4 @@ struct sysinfo {
 # define REBUILD_DUE_TO_FTRACE_MCOUNT_RECORD
 #endif
 
-extern void mark_hardware_unsupported(const char *msg);
 #endif

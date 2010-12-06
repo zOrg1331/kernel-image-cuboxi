@@ -55,9 +55,7 @@ static int qeth_l2_do_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 		rc = qeth_snmp_command(card, rq->ifr_ifru.ifru_data);
 		break;
 	case SIOC_QETH_GET_CARD_TYPE:
-		if ((card->info.type == QETH_CARD_TYPE_OSD ||
-		     card->info.type == QETH_CARD_TYPE_OSM ||
-		     card->info.type == QETH_CARD_TYPE_OSX) &&
+		if ((card->info.type == QETH_CARD_TYPE_OSAE) &&
 		    !card->info.guestlan)
 			return 1;
 		return 0;
@@ -310,10 +308,6 @@ static void qeth_l2_vlan_rx_add_vid(struct net_device *dev, unsigned short vid)
 	struct qeth_vlan_vid *id;
 
 	QETH_DBF_TEXT_(TRACE, 4, "aid:%d", vid);
-	if (card->info.type == QETH_CARD_TYPE_OSM) {
-		QETH_DBF_TEXT(TRACE, 3, "aidOSM");
-		return;
-	}
 	if (qeth_wait_for_threads(card, QETH_RECOVER_THREAD)) {
 		QETH_DBF_TEXT(TRACE, 3, "aidREC");
 		return;
@@ -334,10 +328,6 @@ static void qeth_l2_vlan_rx_kill_vid(struct net_device *dev, unsigned short vid)
 	struct qeth_card *card = dev->ml_priv;
 
 	QETH_DBF_TEXT_(TRACE, 4, "kid:%d", vid);
-	if (card->info.type == QETH_CARD_TYPE_OSM) {
-		QETH_DBF_TEXT(TRACE, 3, "kidOSM");
-		return;
-	}
 	if (qeth_wait_for_threads(card, QETH_RECOVER_THREAD)) {
 		QETH_DBF_TEXT(TRACE, 3, "kidREC");
 		return;
@@ -580,10 +570,8 @@ static int qeth_l2_request_initial_mac(struct qeth_card *card)
 			"device %s: x%x\n", CARD_BUS_ID(card), rc);
 	}
 
-	if (card->info.type == QETH_CARD_TYPE_IQD ||
-	    card->info.type == QETH_CARD_TYPE_OSM ||
-	    card->info.type == QETH_CARD_TYPE_OSX ||
-	    card->info.guestlan) {
+	if ((card->info.type == QETH_CARD_TYPE_IQD) || 
+	    (card->info.guestlan)) {
 		rc = qeth_setadpparms_change_macaddr(card);
 		if (rc) {
 			QETH_DBF_MESSAGE(2, "couldn't get MAC address on "
@@ -612,10 +600,8 @@ static int qeth_l2_set_mac_address(struct net_device *dev, void *p)
 		return -EOPNOTSUPP;
 	}
 
-	if (card->info.type == QETH_CARD_TYPE_OSN ||
-	    card->info.type == QETH_CARD_TYPE_OSM ||
-	    card->info.type == QETH_CARD_TYPE_OSX) {
-		QETH_DBF_TEXT(TRACE, 3, "setmcTYP");
+	if (card->info.type == QETH_CARD_TYPE_OSN) {
+		QETH_DBF_TEXT(TRACE, 3, "setmcOSN");
 		return -EOPNOTSUPP;
 	}
 	QETH_DBF_TEXT_(TRACE, 3, "%s", CARD_BUS_ID(card));
@@ -648,7 +634,7 @@ static void qeth_l2_set_multicast_list(struct net_device *dev)
 	for (dm = dev->mc_list; dm; dm = dm->next)
 		qeth_l2_add_mc(card, dm->da_addr, 0);
 
-	netdev_for_each_uc_addr(ha, dev)
+	list_for_each_entry(ha, &dev->uc.list, list)
 		qeth_l2_add_mc(card, ha->addr, 1);
 
 	spin_unlock_bh(&card->mclock);
@@ -795,8 +781,7 @@ static void qeth_l2_qdio_input_handler(struct ccw_device *ccwdev,
 		index = i % QDIO_MAX_BUFFERS_PER_Q;
 		buffer = &card->qdio.in_q->bufs[index];
 		if (!(qdio_err &&
-		      qeth_check_qdio_errors(card, buffer->buffer, qdio_err,
-					     "qinerr")))
+		      qeth_check_qdio_errors(buffer->buffer, qdio_err, "qinerr")))
 			qeth_l2_process_inbound_buffer(card, buffer, index);
 		/* clear buffer and give back to hardware */
 		qeth_put_buffer_pool_entry(card, buffer->pool_entry);
@@ -911,6 +896,9 @@ static const struct net_device_ops qeth_l2_netdev_ops = {
 static int qeth_l2_setup_netdev(struct qeth_card *card)
 {
 	switch (card->info.type) {
+	case QETH_CARD_TYPE_OSAE:
+		card->dev = alloc_etherdev(0);
+		break;
 	case QETH_CARD_TYPE_IQD:
 		card->dev = alloc_netdev(0, "hsi%d", ether_setup);
 		break;
@@ -947,28 +935,25 @@ static int __qeth_l2_set_online(struct ccwgroup_device *gdev, int recovery_mode)
 	enum qeth_card_states recover_flag;
 
 	BUG_ON(!card);
-	mutex_lock(&card->conf_mutex);
 	QETH_DBF_TEXT(SETUP, 2, "setonlin");
 	QETH_DBF_HEX(SETUP, 2, &card, sizeof(void *));
 
+	qeth_set_allowed_threads(card, QETH_RECOVER_THREAD, 1);
 	recover_flag = card->state;
 	rc = ccw_device_set_online(CARD_RDEV(card));
 	if (rc) {
 		QETH_DBF_TEXT_(SETUP, 2, "1err%d", rc);
-		rc = -EIO;
-		goto out;
+		return -EIO;
 	}
 	rc = ccw_device_set_online(CARD_WDEV(card));
 	if (rc) {
 		QETH_DBF_TEXT_(SETUP, 2, "1err%d", rc);
-		rc = -EIO;
-		goto out;
+		return -EIO;
 	}
 	rc = ccw_device_set_online(CARD_DDEV(card));
 	if (rc) {
 		QETH_DBF_TEXT_(SETUP, 2, "1err%d", rc);
-		rc = -EIO;
-		goto out;
+		return -EIO;
 	}
 
 	rc = qeth_core_hardsetup_card(card);
@@ -996,21 +981,16 @@ static int __qeth_l2_set_online(struct ccwgroup_device *gdev, int recovery_mode)
 			dev_warn(&card->gdev->dev,
 				"The LAN is offline\n");
 			card->lan_online = 0;
-			rc = 0;
-			goto out;
+			return 0;
 		}
 		goto out_remove;
 	} else
 		card->lan_online = 1;
 
-	if ((card->info.type == QETH_CARD_TYPE_OSD) ||
-	    (card->info.type == QETH_CARD_TYPE_OSX))
-		/* configure isolation level */
-		qeth_set_access_ctrl_online(card);
-
-	if (card->info.type != QETH_CARD_TYPE_OSN &&
-	    card->info.type != QETH_CARD_TYPE_OSM)
+	if (card->info.type != QETH_CARD_TYPE_OSN) {
+		qeth_set_large_send(card, card->options.large_send);
 		qeth_l2_process_vlans(card, 0);
+	}
 
 	netif_tx_disable(card->dev);
 
@@ -1037,9 +1017,7 @@ static int __qeth_l2_set_online(struct ccwgroup_device *gdev, int recovery_mode)
 	}
 	/* let user_space know that device is online */
 	kobject_uevent(&gdev->dev.kobj, KOBJ_CHANGE);
-out:
-	mutex_unlock(&card->conf_mutex);
-	return rc;
+	return 0;
 out_remove:
 	card->use_hard_stop = 1;
 	qeth_l2_stop_card(card, 0);
@@ -1050,7 +1028,6 @@ out_remove:
 		card->state = CARD_STATE_RECOVER;
 	else
 		card->state = CARD_STATE_DOWN;
-	mutex_unlock(&card->conf_mutex);
 	return -ENODEV;
 }
 
@@ -1066,7 +1043,6 @@ static int __qeth_l2_set_offline(struct ccwgroup_device *cgdev,
 	int rc = 0, rc2 = 0, rc3 = 0;
 	enum qeth_card_states recover_flag;
 
-	mutex_lock(&card->conf_mutex);
 	QETH_DBF_TEXT(SETUP, 3, "setoffl");
 	QETH_DBF_HEX(SETUP, 3, &card, sizeof(void *));
 
@@ -1085,7 +1061,6 @@ static int __qeth_l2_set_offline(struct ccwgroup_device *cgdev,
 		card->state = CARD_STATE_RECOVER;
 	/* let user_space know that device is offline */
 	kobject_uevent(&cgdev->dev.kobj, KOBJ_CHANGE);
-	mutex_unlock(&card->conf_mutex);
 	return 0;
 }
 

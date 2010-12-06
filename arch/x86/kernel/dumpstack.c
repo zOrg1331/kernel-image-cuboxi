@@ -109,32 +109,6 @@ print_context_stack(struct thread_info *tinfo,
 	}
 	return bp;
 }
-EXPORT_SYMBOL_GPL(print_context_stack);
-
-unsigned long
-print_context_stack_bp(struct thread_info *tinfo,
-		       unsigned long *stack, unsigned long bp,
-		       const struct stacktrace_ops *ops, void *data,
-		       unsigned long *end, int *graph)
-{
-	struct stack_frame *frame = (struct stack_frame *)bp;
-	unsigned long *ret_addr = &frame->return_address;
-
-	while (valid_stack_ptr(tinfo, ret_addr, sizeof(*ret_addr), end)) {
-		unsigned long addr = *ret_addr;
-
-		if (!__kernel_text_address(addr))
-			break;
-
-		ops->address(data, addr, 1);
-		frame = frame->next_frame;
-		ret_addr = &frame->return_address;
-		print_ftrace_graph_addr(addr, data, ops, tinfo, graph);
-	}
-
-	return (unsigned long)frame;
-}
-EXPORT_SYMBOL_GPL(print_context_stack_bp);
 
 
 static void
@@ -167,11 +141,10 @@ static void print_trace_address(void *data, unsigned long addr, int reliable)
 }
 
 static const struct stacktrace_ops print_trace_ops = {
-	.warning		= print_trace_warning,
-	.warning_symbol		= print_trace_warning_symbol,
-	.stack			= print_trace_stack,
-	.address		= print_trace_address,
-	.walk_stack		= print_context_stack,
+	.warning = print_trace_warning,
+	.warning_symbol = print_trace_warning_symbol,
+	.stack = print_trace_stack,
+	.address = print_trace_address,
 };
 
 void
@@ -223,6 +196,11 @@ unsigned __kprobes long oops_begin(void)
 {
 	int cpu;
 	unsigned long flags;
+
+	/* notify the hw-branch tracer so it may disable tracing and
+	   add the last trace to the trace buffer -
+	   the earlier this happens, the more useful the trace. */
+	trace_hw_branch_oops();
 
 	oops_enter();
 
@@ -290,12 +268,11 @@ int __kprobes __die(const char *str, struct pt_regs *regs, long err)
 
 	show_registers(regs);
 #ifdef CONFIG_X86_32
-	if (user_mode_vm(regs)) {
+	sp = (unsigned long) (&regs->sp);
+	savesegment(ss, ss);
+	if (user_mode(regs)) {
 		sp = regs->sp;
 		ss = regs->ss & 0xffff;
-	} else {
-		sp = kernel_stack_pointer(regs);
-		savesegment(ss, ss);
 	}
 	printk(KERN_EMERG "EIP: [<%08lx>] ", regs->ip);
 	print_symbol("%s", regs->ip);
@@ -343,7 +320,6 @@ die_nmi(char *str, struct pt_regs *regs, int do_panic)
 	printk(" on CPU%d, ip %08lx, registers:\n",
 		smp_processor_id(), regs->ip);
 	show_registers(regs);
-	nmi_show_regs(regs, 1);
 	oops_end(flags, regs, 0);
 	if (do_panic || panic_on_oops)
 		panic("Non maskable interrupt");

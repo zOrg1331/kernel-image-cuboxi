@@ -31,7 +31,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/pci.h>
-#include <linux/pci-aspm.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
@@ -357,10 +356,10 @@ static int iwl3945_send_beacon_cmd(struct iwl_priv *priv)
 static void iwl3945_unset_hw_params(struct iwl_priv *priv)
 {
 	if (priv->shared_virt)
-		dma_free_coherent(&priv->pci_dev->dev,
-				  sizeof(struct iwl3945_shared),
-				  priv->shared_virt,
-				  priv->shared_phys);
+		pci_free_consistent(priv->pci_dev,
+				    sizeof(struct iwl3945_shared),
+				    priv->shared_virt,
+				    priv->shared_phys);
 }
 
 static void iwl3945_build_tx_cmd_hwcrypto(struct iwl_priv *priv,
@@ -562,9 +561,6 @@ static int iwl3945_tx_skb(struct iwl_priv *priv, struct sk_buff *skb)
 	/* Descriptor for chosen Tx queue */
 	txq = &priv->txq[txq_id];
 	q = &txq->q;
-
-	if ((iwl_queue_space(q) < q->high_mark))
-		goto drop;
 
 	spin_lock_irqsave(&priv->lock, flags);
 
@@ -1273,10 +1269,10 @@ static void iwl3945_rx_queue_free(struct iwl_priv *priv, struct iwl_rx_queue *rx
 		}
 	}
 
-	dma_free_coherent(&priv->pci_dev->dev, 4 * RX_QUEUE_SIZE, rxq->bd,
-			  rxq->dma_addr);
-	dma_free_coherent(&priv->pci_dev->dev, sizeof(struct iwl_rb_status),
-			  rxq->rb_stts, rxq->rb_stts_dma);
+	pci_free_consistent(priv->pci_dev, 4 * RX_QUEUE_SIZE, rxq->bd,
+			    rxq->dma_addr);
+	pci_free_consistent(priv->pci_dev, sizeof(struct iwl_rb_status),
+			    rxq->rb_stts, rxq->rb_stts_dma);
 	rxq->bd = NULL;
 	rxq->rb_stts  = NULL;
 }
@@ -1905,7 +1901,7 @@ static void iwl3945_init_hw_rates(struct iwl_priv *priv,
 {
 	int i;
 
-	for (i = 0; i < IWL_RATE_COUNT_LEGACY; i++) {
+	for (i = 0; i < IWL_RATE_COUNT; i++) {
 		rates[i].bitrate = iwl3945_rates[i].ieee * 5;
 		rates[i].hw_value = i; /* Rate scaling will work on indexes */
 		rates[i].hw_value_short = i;
@@ -2454,13 +2450,6 @@ static void iwl3945_alive_start(struct iwl_priv *priv)
 	/* After the ALIVE response, we can send commands to 3945 uCode */
 	set_bit(STATUS_ALIVE, &priv->status);
 
-	if (priv->cfg->ops->lib->recover_from_tx_stall) {
-		/* Enable timer to monitor the driver queues */
-		mod_timer(&priv->monitor_recover,
-			jiffies +
-			msecs_to_jiffies(priv->cfg->monitor_recover_period));
-	}
-
 	if (iwl_is_rfkill(priv))
 		return;
 
@@ -2763,6 +2752,7 @@ static void iwl3945_bg_request_scan(struct work_struct *data)
 		.len = sizeof(struct iwl3945_scan_cmd),
 		.flags = CMD_SIZE_HUGE,
 	};
+	int rc = 0;
 	struct iwl3945_scan_cmd *scan;
 	struct ieee80211_conf *conf = NULL;
 	u8 n_probes = 0;
@@ -2790,6 +2780,7 @@ static void iwl3945_bg_request_scan(struct work_struct *data)
 	if (test_bit(STATUS_SCAN_HW, &priv->status)) {
 		IWL_DEBUG_INFO(priv, "Multiple concurrent scan requests  "
 				"Ignoring second request.\n");
+		rc = -EIO;
 		goto done;
 	}
 
@@ -2824,7 +2815,7 @@ static void iwl3945_bg_request_scan(struct work_struct *data)
 		priv->scan = kmalloc(sizeof(struct iwl3945_scan_cmd) +
 				     IWL_MAX_SCAN_SIZE, GFP_KERNEL);
 		if (!priv->scan) {
-			IWL_DEBUG_SCAN(priv, "Fail to allocate scan memory\n");
+			rc = -ENOMEM;
 			goto done;
 		}
 	}
@@ -2867,9 +2858,7 @@ static void iwl3945_bg_request_scan(struct work_struct *data)
 			       scan_suspend_time, interval);
 	}
 
-	if (priv->is_internal_short_scan) {
-		IWL_DEBUG_SCAN(priv, "Start internal passive scan.\n");
-	} else if (priv->scan_request->n_ssids) {
+	if (priv->scan_request->n_ssids) {
 		int i, p = 0;
 		IWL_DEBUG_SCAN(priv, "Kicking off active scan\n");
 		for (i = 0; i < priv->scan_request->n_ssids; i++) {
@@ -2916,20 +2905,13 @@ static void iwl3945_bg_request_scan(struct work_struct *data)
 		goto done;
 	}
 
-	if (!priv->is_internal_short_scan) {
-		scan->tx_cmd.len = cpu_to_le16(
+	scan->tx_cmd.len = cpu_to_le16(
 			iwl_fill_probe_req(priv,
 				(struct ieee80211_mgmt *)scan->data,
 				priv->scan_request->ie,
 				priv->scan_request->ie_len,
 				IWL_MAX_SCAN_SIZE - sizeof(*scan)));
-	} else {
-		scan->tx_cmd.len = cpu_to_le16(
-			iwl_fill_probe_req(priv,
-				(struct ieee80211_mgmt *)scan->data,
-				NULL, 0,
-				IWL_MAX_SCAN_SIZE - sizeof(*scan)));
-	}
+
 	/* select Rx antennas */
 	scan->flags |= iwl3945_get_antenna_flags(priv);
 
@@ -2951,7 +2933,8 @@ static void iwl3945_bg_request_scan(struct work_struct *data)
 	scan->len = cpu_to_le16(cmd.len);
 
 	set_bit(STATUS_SCAN_HW, &priv->status);
-	if (iwl_send_cmd_sync(priv, &cmd))
+	rc = iwl_send_cmd_sync(priv, &cmd);
+	if (rc)
 		goto done;
 
 	queue_delayed_work(priv->workqueue, &priv->scan_check,
@@ -3738,13 +3721,6 @@ static void iwl3945_setup_deferred_work(struct iwl_priv *priv)
 
 	iwl3945_hw_setup_deferred_work(priv);
 
-	if (priv->cfg->ops->lib->recover_from_tx_stall) {
-		init_timer(&priv->monitor_recover);
-		priv->monitor_recover.data = (unsigned long)priv;
-		priv->monitor_recover.function =
-			priv->cfg->ops->lib->recover_from_tx_stall;
-	}
-
 	tasklet_init(&priv->irq_tasklet, (void (*)(unsigned long))
 		     iwl3945_irq_tasklet, (unsigned long)priv);
 }
@@ -3757,8 +3733,6 @@ static void iwl3945_cancel_deferred_work(struct iwl_priv *priv)
 	cancel_delayed_work(&priv->scan_check);
 	cancel_delayed_work(&priv->alive_start);
 	cancel_work_sync(&priv->beacon_update);
-	if (priv->cfg->ops->lib->recover_from_tx_stall)
-		del_timer_sync(&priv->monitor_recover);
 }
 
 static struct attribute *iwl3945_sysfs_entries[] = {
@@ -3880,11 +3854,9 @@ static int iwl3945_setup_mac(struct iwl_priv *priv)
 	/* Tell mac80211 our characteristics */
 	hw->flags = IEEE80211_HW_SIGNAL_DBM |
 		    IEEE80211_HW_NOISE_DBM |
-		    IEEE80211_HW_SPECTRUM_MGMT;
-
-	if (!priv->cfg->broken_powersave)
-		hw->flags |= IEEE80211_HW_SUPPORTS_PS |
-			     IEEE80211_HW_SUPPORTS_DYNAMIC_PS;
+		    IEEE80211_HW_SPECTRUM_MGMT |
+		    IEEE80211_HW_SUPPORTS_PS |
+		    IEEE80211_HW_SUPPORTS_DYNAMIC_PS;
 
 	hw->wiphy->interface_modes =
 		BIT(NL80211_IFTYPE_STATION) |
@@ -3968,9 +3940,6 @@ static int iwl3945_pci_probe(struct pci_dev *pdev, const struct pci_device_id *e
 	/***************************
 	 * 2. Initializing PCI bus
 	 * *************************/
-	pci_disable_link_state(pdev, PCIE_LINK_STATE_L0S | PCIE_LINK_STATE_L1 |
-				PCIE_LINK_STATE_CLKPM);
-
 	if (pci_enable_device(pdev)) {
 		err = -ENODEV;
 		goto out_ieee80211_free_hw;
@@ -4057,13 +4026,6 @@ static int iwl3945_pci_probe(struct pci_dev *pdev, const struct pci_device_id *e
 
 	IWL_INFO(priv, "Detected Intel Wireless WiFi Link %s\n",
 		priv->cfg->name);
-
-	/*
-	 * stop and reset the on-board processor just in case it is in a
-	 * strange state ... like being left stranded by a primary kernel
-	 * and this is now the kdump kernel trying to start up
-	 */
-	iwl_write32(priv, CSR_RESET, CSR_RESET_REG_FLAG_NEVO_RESET);
 
 	/***********************
 	 * 7. Setup Services

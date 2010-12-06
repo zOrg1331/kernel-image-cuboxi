@@ -73,8 +73,6 @@
 /* Quota format type IDs */
 #define	QFMT_VFS_OLD 1
 #define	QFMT_VFS_V0 2
-#define QFMT_OCFS2 3
-#define	QFMT_VFS_V1 4
 
 /* Size of block in which space limits are passed through the quota
  * interface */
@@ -174,10 +172,6 @@ enum {
 #include <linux/rwsem.h>
 #include <linux/spinlock.h>
 #include <linux/wait.h>
-
-#include <linux/spinlock.h>
-
-extern spinlock_t dq_data_lock;
 
 #include <linux/dqblk_xfs.h>
 #include <linux/dqblk_v1.h>
@@ -297,8 +291,6 @@ struct quota_format_ops {
 	int (*release_dqblk)(struct dquot *dquot);	/* Called when last reference to dquot is being dropped */
 };
 
-struct inode;
-struct iattr;
 /* Operations working with dquots */
 struct dquot_operations {
 	int (*initialize) (struct inode *, int);
@@ -321,18 +313,11 @@ struct dquot_operations {
 	int (*claim_space) (struct inode *, qsize_t);
 	/* release rsved quota for delayed alloc */
 	void (*release_rsv) (struct inode *, qsize_t);
-	/* get reserved quota for delayed alloc, value returned is managed by
-	 * quota code only */
-	qsize_t *(*get_reserved_space) (struct inode *);
-	int (*rename) (struct inode *, struct inode *, struct inode *);
-
-	void (*swap_inode) (struct inode *, struct inode *);
-	void (*shutdown) (struct super_block *);
-	unsigned int (*orphan_cookie) (struct inode *i);
+	/* get reserved quota for delayed alloc */
+	qsize_t (*get_reserved_space) (struct inode *);
 };
 
 /* Operations handling requests from userspace */
-struct v2_disk_dqblk;
 struct quotactl_ops {
 	int (*quota_on)(struct super_block *, int, int, char *, int);
 	int (*quota_off)(struct super_block *, int, int);
@@ -345,10 +330,6 @@ struct quotactl_ops {
 	int (*set_xstate)(struct super_block *, unsigned int, int);
 	int (*get_xquota)(struct super_block *, int, qid_t, struct fs_disk_quota *);
 	int (*set_xquota)(struct super_block *, int, qid_t, struct fs_disk_quota *);
-#ifdef CONFIG_QUOTA_COMPAT
-	int (*get_quoti)(struct super_block *, int, unsigned int,
-			struct v2_disk_dqblk __user *);
-#endif
 };
 
 struct quota_format_type {
@@ -395,17 +376,6 @@ static inline unsigned int dquot_generic_flag(unsigned int flags, int type)
 	return flags >> _DQUOT_STATE_FLAGS;
 }
 
-#ifdef CONFIG_QUOTA_NETLINK_INTERFACE
-extern void quota_send_warning(short type, unsigned int id, dev_t dev,
-			       const char warntype);
-#else
-static inline void quota_send_warning(short type, unsigned int id, dev_t dev,
-				      const char warntype)
-{
-	return;
-}
-#endif /* CONFIG_QUOTA_NETLINK_INTERFACE */
-
 struct quota_info {
 	unsigned int flags;			/* Flags for diskquotas on this device */
 	struct mutex dqio_mutex;		/* lock device while I/O in progress */
@@ -414,12 +384,6 @@ struct quota_info {
 	struct inode *files[MAXQUOTAS];		/* inodes of quotafiles */
 	struct mem_dqinfo info[MAXQUOTAS];	/* Information for each quota type */
 	struct quota_format_ops *ops[MAXQUOTAS];	/* Operations for each type */
-#if defined(CONFIG_VZ_QUOTA) || defined(CONFIG_VZ_QUOTA_MODULE)
-	struct vz_quota_master *vzdq_master;
-	const struct dquot_operations	*dq_op_orig;
-	const struct quotactl_ops	*qcop_orig;
-	int vzdq_count;
-#endif
 };
 
 int register_quota_format(struct quota_format_type *fmt);

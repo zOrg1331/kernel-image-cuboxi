@@ -18,7 +18,6 @@
 #include <linux/rmap.h>
 #include <linux/mmzone.h>
 #include <linux/hugetlb.h>
-#include <bc/vmpages.h>
 
 #include "internal.h"
 
@@ -77,23 +76,15 @@ void __clear_page_mlock(struct page *page)
  * Mark page as mlocked if not already.
  * If page on LRU, isolate and putback to move to unevictable list.
  */
-void mlock_vma_page(struct vm_area_struct *vma, struct page *page)
+void mlock_vma_page(struct page *page)
 {
 	BUG_ON(!PageLocked(page));
 
 	if (!TestSetPageMlocked(page)) {
 		inc_zone_page_state(page, NR_MLOCK);
 		count_vm_event(UNEVICTABLE_PGMLOCKED);
-		if (!isolate_lru_page(page)) {
-			struct gang_set *gs = get_mm_gang(vma->vm_mm);
-
-			rcu_read_lock();
-			if (page_gang(page)->set != gs)
-				gang_mod_user_page(page, gs);
-			rcu_read_unlock();
-
+		if (!isolate_lru_page(page))
 			putback_lru_page(page);
-		}
 	}
 }
 
@@ -108,14 +99,14 @@ void mlock_vma_page(struct vm_area_struct *vma, struct page *page)
  * not get another chance to clear PageMlocked.  If we successfully
  * isolate the page and try_to_munlock() detects other VM_LOCKED vmas
  * mapping the page, it will restore the PageMlocked state, unless the page
- * is mapped in a non-linear vma.  So, we go ahead and ClearPageMlocked(),
+ * is mapped in a non-linear vma.  So, we go ahead and SetPageMlocked(),
  * perhaps redundantly.
  * If we lose the isolation race, and the page is mapped by other VM_LOCKED
  * vmas, we'll detect this in vmscan--via try_to_munlock() or try_to_unmap()
  * either of which will restore the PageMlocked state by calling
  * mlock_vma_page() above, if it can grab the vma's mmap sem.
  */
-void munlock_vma_page(struct page *page)
+static void munlock_vma_page(struct page *page)
 {
 	BUG_ON(!PageLocked(page));
 
@@ -126,7 +117,7 @@ void munlock_vma_page(struct page *page)
 			/*
 			 * did try_to_unlock() succeed or punt?
 			 */
-			if (ret != SWAP_MLOCK)
+			if (ret == SWAP_SUCCESS || ret == SWAP_AGAIN)
 				count_vm_event(UNEVICTABLE_PGMUNLOCKED);
 
 			putback_lru_page(page);
@@ -145,13 +136,6 @@ void munlock_vma_page(struct page *page)
 				count_vm_event(UNEVICTABLE_PGMUNLOCKED);
 		}
 	}
-}
-
-static inline int stack_guard_page(struct vm_area_struct *vma, unsigned long addr)
-{
-	return (vma->vm_flags & VM_GROWSDOWN) &&
-		(vma->vm_start == addr) &&
-		!vma_stack_continue(vma->vm_prev, addr);
 }
 
 /**
@@ -185,12 +169,6 @@ static long __mlock_vma_pages_range(struct vm_area_struct *vma,
 	gup_flags = FOLL_TOUCH | FOLL_GET;
 	if (vma->vm_flags & VM_WRITE)
 		gup_flags |= FOLL_WRITE;
-
-	/* We don't try to access the guard page of a stack vma */
-	if (stack_guard_page(vma, start)) {
-		addr += PAGE_SIZE;
-		nr_pages--;
-	}
 
 	while (nr_pages > 0) {
 		int i;
@@ -237,7 +215,7 @@ static long __mlock_vma_pages_range(struct vm_area_struct *vma,
 				 * only check for file-cache page truncation.
 				 */
 				if (page->mapping)
-					mlock_vma_page(vma, page);
+					mlock_vma_page(page);
 				unlock_page(page);
 			}
 			put_page(page);	/* ref from get_user_pages() */
@@ -331,14 +309,12 @@ no_mlock:
  * and re-mlocked by try_to_{munlock|unmap} before we unmap and
  * free them.  This will result in freeing mlocked pages.
  */
-void __munlock_vma_pages_range(struct vm_area_struct *vma,
-			     unsigned long start, unsigned long end, int acct)
+void munlock_vma_pages_range(struct vm_area_struct *vma,
+			     unsigned long start, unsigned long end)
 {
 	unsigned long addr;
 
 	lru_add_drain();
-	if (acct)
-		ub_locked_uncharge(vma->vm_mm, end - start);
 	vma->vm_flags &= ~VM_LOCKED;
 
 	for (addr = start; addr < end; addr += PAGE_SIZE) {
@@ -398,12 +374,6 @@ static int mlock_fixup(struct vm_area_struct *vma, struct vm_area_struct **prev,
 		goto out;	/* don't set VM_LOCKED,  don't count */
 	}
 
-	if (newflags & VM_LOCKED) {
-		ret = ub_locked_charge(mm, end - start);
-		if (ret < 0)
-			goto out;
-	}
-
 	pgoff = vma->vm_pgoff + ((start - vma->vm_start) >> PAGE_SHIFT);
 	*prev = vma_merge(mm, *prev, start, end, newflags, vma->anon_vma,
 			  vma->vm_file, pgoff, vma_policy(vma));
@@ -415,13 +385,13 @@ static int mlock_fixup(struct vm_area_struct *vma, struct vm_area_struct **prev,
 	if (start != vma->vm_start) {
 		ret = split_vma(mm, vma, start, 1);
 		if (ret)
-			goto out_uncharge;
+			goto out;
 	}
 
 	if (end != vma->vm_end) {
 		ret = split_vma(mm, vma, end, 0);
 		if (ret)
-			goto out_uncharge;
+			goto out;
 	}
 
 success:
@@ -451,11 +421,6 @@ success:
 out:
 	*prev = vma;
 	return ret;
-
-out_uncharge:
-	if (newflags & VM_LOCKED)
-		ub_locked_uncharge(mm, end - start);
-	goto out;
 }
 
 static int do_mlock(unsigned long start, size_t len, int on)
@@ -534,7 +499,6 @@ SYSCALL_DEFINE2(mlock, unsigned long, start, size_t, len)
 	up_write(&current->mm->mmap_sem);
 	return error;
 }
-EXPORT_SYMBOL(sys_mlock);
 
 SYSCALL_DEFINE2(munlock, unsigned long, start, size_t, len)
 {
@@ -547,7 +511,6 @@ SYSCALL_DEFINE2(munlock, unsigned long, start, size_t, len)
 	up_write(&current->mm->mmap_sem);
 	return ret;
 }
-EXPORT_SYMBOL(sys_munlock);
 
 static int do_mlockall(int flags)
 {
@@ -646,4 +609,45 @@ void user_shm_unlock(size_t size, struct user_struct *user)
 	user->locked_shm -= (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	spin_unlock(&shmlock_user_lock);
 	free_uid(user);
+}
+
+int account_locked_memory(struct mm_struct *mm, struct rlimit *rlim,
+			  size_t size)
+{
+	unsigned long lim, vm, pgsz;
+	int error = -ENOMEM;
+
+	pgsz = PAGE_ALIGN(size) >> PAGE_SHIFT;
+
+	down_write(&mm->mmap_sem);
+
+	lim = rlim[RLIMIT_AS].rlim_cur >> PAGE_SHIFT;
+	vm   = mm->total_vm + pgsz;
+	if (lim < vm)
+		goto out;
+
+	lim = rlim[RLIMIT_MEMLOCK].rlim_cur >> PAGE_SHIFT;
+	vm   = mm->locked_vm + pgsz;
+	if (lim < vm)
+		goto out;
+
+	mm->total_vm  += pgsz;
+	mm->locked_vm += pgsz;
+
+	error = 0;
+ out:
+	up_write(&mm->mmap_sem);
+	return error;
+}
+
+void refund_locked_memory(struct mm_struct *mm, size_t size)
+{
+	unsigned long pgsz = PAGE_ALIGN(size) >> PAGE_SHIFT;
+
+	down_write(&mm->mmap_sem);
+
+	mm->total_vm  -= pgsz;
+	mm->locked_vm -= pgsz;
+
+	up_write(&mm->mmap_sem);
 }

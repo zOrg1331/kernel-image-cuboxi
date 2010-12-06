@@ -79,9 +79,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/mutex.h>
-#include <linux/if_vlan.h>
-
-#include <bc/net.h>
 
 #ifdef CONFIG_INET
 #include <net/inet_common.h>
@@ -557,8 +554,6 @@ static int packet_rcv(struct sk_buff *skb, struct net_device *dev,
 	if (dev_net(dev) != sock_net(sk))
 		goto drop;
 
-	skb_orphan(skb);
-
 	skb->dev = dev;
 
 	if (dev->header_ops) {
@@ -622,9 +617,6 @@ static int packet_rcv(struct sk_buff *skb, struct net_device *dev,
 	if (pskb_trim(skb, snaplen))
 		goto drop_n_acct;
 
-	if (ub_sockrcvbuf_charge(sk, skb))
-		goto drop_n_acct;
-
 	skb_set_owner_r(skb, sk);
 	skb->dev = NULL;
 	skb_dst_drop(skb);
@@ -634,14 +626,15 @@ static int packet_rcv(struct sk_buff *skb, struct net_device *dev,
 
 	spin_lock(&sk->sk_receive_queue.lock);
 	po->stats.tp_packets++;
-	skb->dropcount = atomic_read(&sk->sk_drops);
 	__skb_queue_tail(&sk->sk_receive_queue, skb);
 	spin_unlock(&sk->sk_receive_queue.lock);
 	sk->sk_data_ready(sk, skb->len);
 	return 0;
 
 drop_n_acct:
-	po->stats.tp_drops = atomic_inc_return(&sk->sk_drops);
+	spin_lock(&sk->sk_receive_queue.lock);
+	po->stats.tp_drops++;
+	spin_unlock(&sk->sk_receive_queue.lock);
 
 drop_n_restore:
 	if (skb_head != skb->data && skb_shared(skb)) {
@@ -682,8 +675,6 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 
 	if (dev_net(dev) != sock_net(sk))
 		goto drop;
-
-	skb_orphan(skb);
 
 	if (dev->header_ops) {
 		if (sk->sk_type != SOCK_DGRAM)
@@ -734,12 +725,6 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 			snaplen = 0;
 	}
 
-	if (copy_skb &&
-	    ub_sockrcvbuf_charge(sk, copy_skb)) {
-		spin_lock(&sk->sk_receive_queue.lock);
-		goto ring_is_full;
-	}
-
 	spin_lock(&sk->sk_receive_queue.lock);
 	h.raw = packet_current_frame(po, &po->rx_ring, TP_STATUS_KERNEL);
 	if (!h.raw)
@@ -781,7 +766,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 			getnstimeofday(&ts);
 		h.h2->tp_sec = ts.tv_sec;
 		h.h2->tp_nsec = ts.tv_nsec;
-		h.h2->tp_vlan_tci = vlan_tx_tag_get(skb);
+		h.h2->tp_vlan_tci = skb->vlan_tci;
 		hdrlen = sizeof(*h.h2);
 		break;
 	default:
@@ -1043,20 +1028,8 @@ static int tpacket_snd(struct packet_sock *po, struct msghdr *msg)
 
 		status = TP_STATUS_SEND_REQUEST;
 		err = dev_queue_xmit(skb);
-		if (unlikely(err > 0)) {
-			err = net_xmit_errno(err);
-			if (err && __packet_get_status(po, ph) ==
-				   TP_STATUS_AVAILABLE) {
-				/* skb was destructed already */
-				skb = NULL;
-				goto out_status;
-			}
-			/*
-			 * skb was dropped but not destructed yet;
-			 * let's treat it like congestion or err < 0
-			 */
-			err = 0;
-		}
+		if (unlikely(err > 0 && (err = net_xmit_errno(err)) != 0))
+			goto out_xmit;
 		packet_increment_head(&po->tx_ring);
 		len_sum += tp_len;
 	} while (likely((ph != NULL) || ((!(msg->msg_flags & MSG_DONTWAIT))
@@ -1066,6 +1039,9 @@ static int tpacket_snd(struct packet_sock *po, struct msghdr *msg)
 	err = len_sum;
 	goto out_put;
 
+out_xmit:
+	skb->destructor = sock_wfree;
+	atomic_dec(&po->tx_ring.pending);
 out_status:
 	__packet_set_status(po, ph, status);
 	kfree_skb(skb);
@@ -1365,8 +1341,7 @@ static struct proto packet_proto = {
  *	Create a packet of type SOCK_PACKET.
  */
 
-static int packet_create(struct net *net, struct socket *sock, int protocol,
-			 int kern)
+static int packet_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 	struct packet_sock *po;
@@ -1385,8 +1360,6 @@ static int packet_create(struct net *net, struct socket *sock, int protocol,
 	sk = sk_alloc(net, PF_PACKET, GFP_KERNEL, &packet_proto);
 	if (sk == NULL)
 		goto out;
-	if (ub_other_sock_charge(sk))
-		goto out_free;
 
 	sock->ops = &packet_ops;
 	if (sock->type == SOCK_PACKET)
@@ -1426,9 +1399,6 @@ static int packet_create(struct net *net, struct socket *sock, int protocol,
 	sock_prot_inuse_add(net, &packet_proto, 1);
 	write_unlock_bh(&net->packet.sklist_lock);
 	return 0;
-
-out_free:
-	sk_free(sk);
 out:
 	return err;
 }
@@ -1502,7 +1472,7 @@ static int packet_recvmsg(struct kiocb *iocb, struct socket *sock,
 	if (err)
 		goto out_free;
 
-	sock_recv_ts_and_drops(msg, sk, skb);
+	sock_recv_timestamp(msg, sk, skb);
 
 	if (msg->msg_name)
 		memcpy(msg->msg_name, &PACKET_SKB_CB(skb)->sa,
@@ -1518,7 +1488,7 @@ static int packet_recvmsg(struct kiocb *iocb, struct socket *sock,
 		aux.tp_snaplen = skb->len;
 		aux.tp_mac = 0;
 		aux.tp_net = skb_network_offset(skb);
-		aux.tp_vlan_tci = vlan_tx_tag_get(skb);
+		aux.tp_vlan_tci = skb->vlan_tci;
 
 		put_cmsg(msg, SOL_PACKET, PACKET_AUXDATA, sizeof(aux), &aux);
 	}
@@ -2129,7 +2099,7 @@ static void free_pg_vec(char **pg_vec, unsigned int order, unsigned int len)
 
 static inline char *alloc_one_pg_vec_page(unsigned long order)
 {
-	gfp_t gfp_flags = GFP_KERNEL_UBC | __GFP_COMP | __GFP_ZERO | __GFP_NOWARN;
+	gfp_t gfp_flags = GFP_KERNEL | __GFP_COMP | __GFP_ZERO | __GFP_NOWARN;
 
 	return (char *) __get_free_pages(gfp_flags, order);
 }
@@ -2140,7 +2110,7 @@ static char **alloc_pg_vec(struct tpacket_req *req, int order)
 	char **pg_vec;
 	int i;
 
-	pg_vec = kzalloc(block_nr * sizeof(char *), GFP_KERNEL_UBC);
+	pg_vec = kzalloc(block_nr * sizeof(char *), GFP_KERNEL);
 	if (unlikely(!pg_vec))
 		goto out;
 

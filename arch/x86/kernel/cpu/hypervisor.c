@@ -21,7 +21,6 @@
  *
  */
 
-#include <linux/module.h>
 #include <asm/processor.h>
 #include <asm/vmware.h>
 #include <asm/hypervisor.h>

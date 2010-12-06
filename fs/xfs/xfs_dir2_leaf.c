@@ -38,8 +38,8 @@
 #include "xfs_dir2_leaf.h"
 #include "xfs_dir2_block.h"
 #include "xfs_dir2_node.h"
+#include "xfs_dir2_trace.h"
 #include "xfs_error.h"
-#include "xfs_trace.h"
 
 /*
  * Local function declarations.
@@ -80,8 +80,7 @@ xfs_dir2_block_to_leaf(
 	int			needscan;	/* need to rescan bestfree */
 	xfs_trans_t		*tp;		/* transaction pointer */
 
-	trace_xfs_dir2_block_to_leaf(args);
-
+	xfs_dir2_trace_args_b("block_to_leaf", args, dbp);
 	dp = args->dp;
 	mp = dp->i_mount;
 	tp = args->trans;
@@ -189,8 +188,7 @@ xfs_dir2_leaf_addname(
 	xfs_trans_t		*tp;		/* transaction pointer */
 	xfs_dir2_db_t		use_block;	/* data block number */
 
-	trace_xfs_dir2_leaf_addname(args);
-
+	xfs_dir2_trace_args("leaf_addname", args);
 	dp = args->dp;
 	tp = args->trans;
 	mp = dp->i_mount;
@@ -1268,8 +1266,7 @@ xfs_dir2_leaf_lookup(
 	xfs_dir2_leaf_entry_t	*lep;		/* leaf entry */
 	xfs_trans_t		*tp;		/* transaction pointer */
 
-	trace_xfs_dir2_leaf_lookup(args);
-
+	xfs_dir2_trace_args("leaf_lookup", args);
 	/*
 	 * Look up name in the leaf block, returning both buffers and index.
 	 */
@@ -1457,8 +1454,7 @@ xfs_dir2_leaf_removename(
 	xfs_dir2_data_off_t	oldbest;	/* old value of best free */
 	xfs_trans_t		*tp;		/* transaction pointer */
 
-	trace_xfs_dir2_leaf_removename(args);
-
+	xfs_dir2_trace_args("leaf_removename", args);
 	/*
 	 * Lookup the leaf entry, get the leaf and data blocks read in.
 	 */
@@ -1590,8 +1586,7 @@ xfs_dir2_leaf_replace(
 	xfs_dir2_leaf_entry_t	*lep;		/* leaf entry */
 	xfs_trans_t		*tp;		/* transaction pointer */
 
-	trace_xfs_dir2_leaf_replace(args);
-
+	xfs_dir2_trace_args("leaf_replace", args);
 	/*
 	 * Look up the entry.
 	 */
@@ -1771,9 +1766,7 @@ xfs_dir2_node_to_leaf(
 	if (state->path.active > 1)
 		return 0;
 	args = state->args;
-
-	trace_xfs_dir2_node_to_leaf(args);
-
+	xfs_dir2_trace_args("node_to_leaf", args);
 	mp = state->mp;
 	dp = args->dp;
 	tp = args->trans;

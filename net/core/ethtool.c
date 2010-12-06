@@ -244,9 +244,8 @@ static int ethtool_get_rxnfc(struct net_device *dev, void __user *useraddr)
 
 	if (info.cmd == ETHTOOL_GRXCLSRLALL) {
 		if (info.rule_cnt > 0) {
-			if (info.rule_cnt <= KMALLOC_MAX_SIZE / sizeof(u32))
-				rule_buf = kmalloc(info.rule_cnt * sizeof(u32),
-						   GFP_USER);
+			rule_buf = kmalloc(info.rule_cnt * sizeof(u32),
+					   GFP_USER);
 			if (!rule_buf)
 				return -ENOMEM;
 		}
@@ -955,7 +954,7 @@ int dev_ethtool(struct net *net, struct ifreq *ifr)
 	case ETHTOOL_GRXCLSRLALL:
 		break;
 	default:
-		if (!capable(CAP_NET_ADMIN) && !capable(CAP_VE_NET_ADMIN))
+		if (!capable(CAP_NET_ADMIN))
 			return -EPERM;
 	}
 

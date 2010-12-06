@@ -135,12 +135,12 @@ static void print_rq(struct seq_file *m, struct rq *rq, int rq_cpu)
 
 	read_lock_irqsave(&tasklist_lock, flags);
 
-	do_each_thread_all(g, p) {
+	do_each_thread(g, p) {
 		if (!p->se.on_rq || task_cpu(p) != rq_cpu)
 			continue;
 
 		print_task(m, rq, p);
-	} while_each_thread_all(g, p);
+	} while_each_thread(g, p);
 
 	read_unlock_irqrestore(&tasklist_lock, flags);
 }
@@ -285,16 +285,12 @@ static void print_cpu(struct seq_file *m, int cpu)
 
 #ifdef CONFIG_SCHEDSTATS
 #define P(n) SEQ_printf(m, "  .%-30s: %d\n", #n, rq->n);
-#define P64(n) SEQ_printf(m, "  .%-30s: %Ld\n", #n, rq->n);
 
 	P(yld_count);
 
 	P(sched_switch);
 	P(sched_count);
 	P(sched_goidle);
-#ifdef CONFIG_SMP
-	P64(avg_idle);
-#endif
 
 	P(ttwu_count);
 	P(ttwu_local);
@@ -308,12 +304,6 @@ static void print_cpu(struct seq_file *m, int cpu)
 
 	print_rq(m, rq, cpu);
 }
-
-static const char *sched_tunable_scaling_names[] = {
-	"none",
-	"logaritmic",
-	"linear"
-};
 
 static int sched_debug_show(struct seq_file *m, void *v)
 {
@@ -339,10 +329,6 @@ static int sched_debug_show(struct seq_file *m, void *v)
 	P(sysctl_sched_features);
 #undef PN
 #undef P
-
-	SEQ_printf(m, "  .%-40s: %d (%s)\n", "sysctl_sched_tunable_scaling",
-		sysctl_sched_tunable_scaling,
-		sched_tunable_scaling_names[sysctl_sched_tunable_scaling]);
 
 	for_each_online_cpu(cpu)
 		print_cpu(m, cpu);

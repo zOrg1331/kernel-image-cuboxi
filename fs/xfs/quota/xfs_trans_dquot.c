@@ -589,18 +589,12 @@ xfs_trans_unreserve_and_mod_dquots(
 	}
 }
 
-STATIC void
-xfs_quota_warn(
-	struct xfs_mount	*mp,
-	struct xfs_dquot	*dqp,
-	int			type)
+STATIC int
+xfs_quota_error(uint flags)
 {
-	/* no warnings for project quotas - we just return ENOSPC later */
-	if (dqp->dq_flags & XFS_DQ_PROJ)
-		return;
-	quota_send_warning((dqp->dq_flags & XFS_DQ_USER) ? USRQUOTA : GRPQUOTA,
-			   be32_to_cpu(dqp->q_core.d_id), mp->m_super->s_dev,
-			   type);
+	if (flags & XFS_QMOPT_ENOSPC)
+		return ENOSPC;
+	return EDQUOT;
 }
 
 /*
@@ -618,6 +612,7 @@ xfs_trans_dqresv(
 	long		ninos,
 	uint		flags)
 {
+	int		error;
 	xfs_qcnt_t	hardlimit;
 	xfs_qcnt_t	softlimit;
 	time_t		timer;
@@ -654,6 +649,7 @@ xfs_trans_dqresv(
 		warnlimit = XFS_QI_RTBWARNLIMIT(dqp->q_mount);
 		resbcountp = &dqp->q_res_rtbcount;
 	}
+	error = 0;
 
 	if ((flags & XFS_QMOPT_FORCE_RES) == 0 &&
 	    dqp->q_core.d_id &&
@@ -671,20 +667,18 @@ xfs_trans_dqresv(
 			 * nblks.
 			 */
 			if (hardlimit > 0ULL &&
-			    hardlimit <= nblks + *resbcountp) {
-				xfs_quota_warn(mp, dqp, QUOTA_NL_BHARDWARN);
+			     (hardlimit <= nblks + *resbcountp)) {
+				error = xfs_quota_error(flags);
 				goto error_return;
 			}
+
 			if (softlimit > 0ULL &&
-			    softlimit <= nblks + *resbcountp) {
+			     (softlimit <= nblks + *resbcountp)) {
 				if ((timer != 0 && get_seconds() > timer) ||
 				    (warns != 0 && warns >= warnlimit)) {
-					xfs_quota_warn(mp, dqp,
-						       QUOTA_NL_BSOFTLONGWARN);
+					error = xfs_quota_error(flags);
 					goto error_return;
 				}
-
-				xfs_quota_warn(mp, dqp, QUOTA_NL_BSOFTWARN);
 			}
 		}
 		if (ninos > 0) {
@@ -698,19 +692,15 @@ xfs_trans_dqresv(
 			softlimit = be64_to_cpu(dqp->q_core.d_ino_softlimit);
 			if (!softlimit)
 				softlimit = q->qi_isoftlimit;
-
 			if (hardlimit > 0ULL && count >= hardlimit) {
-				xfs_quota_warn(mp, dqp, QUOTA_NL_IHARDWARN);
+				error = xfs_quota_error(flags);
 				goto error_return;
-			}
-			if (softlimit > 0ULL && count >= softlimit) {
-				if  ((timer != 0 && get_seconds() > timer) ||
+			} else if (softlimit > 0ULL && count >= softlimit) {
+				if ((timer != 0 && get_seconds() > timer) ||
 				     (warns != 0 && warns >= warnlimit)) {
-					xfs_quota_warn(mp, dqp,
-						       QUOTA_NL_ISOFTLONGWARN);
+					error = xfs_quota_error(flags);
 					goto error_return;
 				}
-				xfs_quota_warn(mp, dqp, QUOTA_NL_ISOFTWARN);
 			}
 		}
 	}
@@ -746,14 +736,9 @@ xfs_trans_dqresv(
 	ASSERT(dqp->q_res_rtbcount >= be64_to_cpu(dqp->q_core.d_rtbcount));
 	ASSERT(dqp->q_res_icount >= be64_to_cpu(dqp->q_core.d_icount));
 
-	xfs_dqunlock(dqp);
-	return 0;
-
 error_return:
 	xfs_dqunlock(dqp);
-	if (flags & XFS_QMOPT_ENOSPC)
-		return ENOSPC;
-	return EDQUOT;
+	return error;
 }
 
 

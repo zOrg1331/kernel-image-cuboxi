@@ -241,8 +241,7 @@ static struct proto hidp_proto = {
 	.obj_size	= sizeof(struct bt_sock)
 };
 
-static int hidp_sock_create(struct net *net, struct socket *sock, int protocol,
-			    int kern)
+static int hidp_sock_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 

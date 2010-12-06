@@ -251,7 +251,6 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 	sdev->model = scsi_null_device_strs;
 	sdev->rev = scsi_null_device_strs;
 	sdev->host = shost;
-	sdev->queue_ramp_up_period = SCSI_DEFAULT_RAMP_UP_PERIOD;
 	sdev->id = starget->id;
 	sdev->lun = lun;
 	sdev->channel = starget->channel;
@@ -416,8 +415,9 @@ static struct scsi_target *scsi_alloc_target(struct device *parent,
 	starget->reap_ref = 1;
 	dev->parent = get_device(parent);
 	dev_set_name(dev, "target%d:%d:%d", shost->host_no, channel, id);
-	if (!sysfs_deprecated)
-		dev->bus = &scsi_bus_type;
+#ifndef CONFIG_SYSFS_DEPRECATED
+	dev->bus = &scsi_bus_type;
+#endif
 	dev->type = &scsi_target_type;
 	starget->id = id;
 	starget->channel = channel;
@@ -878,7 +878,7 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 	 * broken RA4x00 Compaq Disk Array
 	 */
 	if (*bflags & BLIST_MAX_512)
-		blk_queue_max_hw_sectors(sdev->request_queue, 512);
+		blk_queue_max_sectors(sdev->request_queue, 512);
 
 	/*
 	 * Some devices may not want to have a start command automatically
@@ -940,8 +940,6 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 			return SCSI_SCAN_NO_RESPONSE;
 		}
 	}
-
-	sdev->max_queue_depth = sdev->queue_depth;
 
 	/*
 	 * Ok, the device is now all set up, we can

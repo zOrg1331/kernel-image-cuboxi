@@ -1,4 +1,4 @@
-hostprogs-y	:= modpost mk_elfconfig mod-extract
+hostprogs-y	:= modpost mk_elfconfig
 always		:= $(hostprogs-y) empty.o
 
 modpost-objs	:= modpost.o file2alias.o sumversion.o

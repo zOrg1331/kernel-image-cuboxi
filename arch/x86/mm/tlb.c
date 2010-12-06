@@ -6,7 +6,6 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 
-#include <asm/desc.h>
 #include <asm/tlbflush.h>
 #include <asm/mmu_context.h>
 #include <asm/apic.h>
@@ -131,12 +130,6 @@ void smp_invalidate_interrupt(struct pt_regs *regs)
 	union smp_flush_state *f;
 
 	cpu = smp_processor_id();
-
-#ifdef CONFIG_X86_32
-	if (current->active_mm)
-		load_user_cs_desc(cpu, current->active_mm);
-#endif
-
 	/*
 	 * orig_rax contains the negated interrupt vector.
 	 * Use that to determine where the sender put the data.
@@ -262,7 +255,6 @@ void flush_tlb_mm(struct mm_struct *mm)
 
 	preempt_enable();
 }
-EXPORT_SYMBOL(flush_tlb_mm);
 
 void flush_tlb_page(struct vm_area_struct *vma, unsigned long va)
 {
@@ -282,7 +274,6 @@ void flush_tlb_page(struct vm_area_struct *vma, unsigned long va)
 
 	preempt_enable();
 }
-EXPORT_SYMBOL(flush_tlb_page);
 
 static void do_flush_tlb_all(void *info)
 {

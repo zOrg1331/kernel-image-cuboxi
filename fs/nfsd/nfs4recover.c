@@ -1,4 +1,6 @@
 /*
+*  linux/fs/nfsd/nfs4recover.c
+*
 *  Copyright (c) 2004 The Regents of the University of Michigan.
 *  All rights reserved.
 *
@@ -31,14 +33,20 @@
 *
 */
 
+#include <linux/err.h>
+#include <linux/sunrpc/svc.h>
+#include <linux/nfsd/nfsd.h>
+#include <linux/nfs4.h>
+#include <linux/nfsd/state.h>
+#include <linux/nfsd/xdr4.h>
+#include <linux/param.h>
 #include <linux/file.h>
 #include <linux/namei.h>
+#include <asm/uaccess.h>
+#include <linux/scatterlist.h>
 #include <linux/crypto.h>
 #include <linux/sched.h>
-
-#include "nfsd.h"
-#include "state.h"
-#include "vfs.h"
+#include <linux/mount.h>
 
 #define NFSDDBG_FACILITY                NFSDDBG_PROC
 
@@ -119,7 +127,9 @@ out_no_tfm:
 static void
 nfsd4_sync_rec_dir(void)
 {
-	vfs_fsync(NULL, rec_dir.dentry, 0);
+	mutex_lock(&rec_dir.dentry->d_inode->i_mutex);
+	nfsd_sync_dir(rec_dir.dentry);
+	mutex_unlock(&rec_dir.dentry->d_inode->i_mutex);
 }
 
 int

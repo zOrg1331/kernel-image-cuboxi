@@ -6376,7 +6376,7 @@ static void niu_set_rx_mode(struct net_device *dev)
 	if ((dev->flags & IFF_ALLMULTI) || (dev->mc_count > 0))
 		np->flags |= NIU_FLAGS_MCAST;
 
-	alt_cnt = netdev_uc_count(dev);
+	alt_cnt = dev->uc.count;
 	if (alt_cnt > niu_num_alt_addr(np)) {
 		alt_cnt = 0;
 		np->flags |= NIU_FLAGS_PROMISC;
@@ -6385,7 +6385,7 @@ static void niu_set_rx_mode(struct net_device *dev)
 	if (alt_cnt) {
 		int index = 0;
 
-		netdev_for_each_uc_addr(ha, dev) {
+		list_for_each_entry(ha, &dev->uc.list, list) {
 			err = niu_set_alt_mac(np, index, ha->addr);
 			if (err)
 				printk(KERN_WARNING PFX "%s: Error %d "
@@ -7315,28 +7315,33 @@ static int niu_get_ethtool_tcam_all(struct niu *np,
 	struct niu_parent *parent = np->parent;
 	struct niu_tcam_entry *tp;
 	int i, idx, cnt;
+	u16 n_entries;
 	unsigned long flags;
-	int ret = 0;
+
 
 	/* put the tcam size here */
 	nfc->data = tcam_get_size(np);
 
 	niu_lock_parent(np, flags);
+	n_entries = nfc->rule_cnt;
 	for (cnt = 0, i = 0; i < nfc->data; i++) {
 		idx = tcam_get_index(np, i);
 		tp = &parent->tcam[idx];
 		if (!tp->valid)
 			continue;
-		if (cnt == nfc->rule_cnt) {
-			ret = -EMSGSIZE;
-			break;
-		}
 		rule_locs[cnt] = i;
 		cnt++;
 	}
 	niu_unlock_parent(np, flags);
 
-	return ret;
+	if (n_entries != cnt) {
+		/* print warning, this should not happen */
+		pr_info(PFX "niu%d: %s In niu_get_ethtool_tcam_all, "
+			"n_entries[%d] != cnt[%d]!!!\n\n",
+			np->parent->index, np->dev->name, n_entries, cnt);
+	}
+
+	return 0;
 }
 
 static int niu_get_nfc(struct net_device *dev, struct ethtool_rxnfc *cmd,

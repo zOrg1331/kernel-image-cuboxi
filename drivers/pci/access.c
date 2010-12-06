@@ -219,13 +219,8 @@ static int pci_vpd_pci22_wait(struct pci_dev *dev)
 			return 0;
 		}
 
-		if (time_after(jiffies, timeout)) {
-			dev_printk(KERN_DEBUG, &dev->dev,
-				   "vpd r/w failed.  This is likely a firmware "
-				   "bug on this device.  Contact the card "
-				   "vendor for a firmware update.");
+		if (time_after(jiffies, timeout))
 			return -ETIMEDOUT;
-		}
 		if (fatal_signal_pending(current))
 			return -EINTR;
 		if (!cond_resched())

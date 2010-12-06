@@ -144,11 +144,6 @@ void vnic_rq_init(struct vnic_rq *rq, unsigned int cq_index,
 	/* Use current fetch_index as the ring starting point */
 	fetch_index = ioread32(&rq->ctrl->fetch_index);
 
-	if (fetch_index == 0xFFFFFFFF) { /* check for hardware gone  */
-		/* Hardware surprise removal: reset fetch_index */
-		fetch_index = 0;
-	}
-
 	vnic_rq_init_start(rq, cq_index,
 		fetch_index, fetch_index,
 		error_interrupt_enable,
@@ -172,10 +167,10 @@ int vnic_rq_disable(struct vnic_rq *rq)
 	iowrite32(0, &rq->ctrl->enable);
 
 	/* Wait for HW to ACK disable request */
-	for (wait = 0; wait < 1000; wait++) {
+	for (wait = 0; wait < 100; wait++) {
 		if (!(ioread32(&rq->ctrl->running)))
 			return 0;
-		udelay(10);
+		udelay(1);
 	}
 
 	printk(KERN_ERR "Failed to disable RQ[%d]\n", rq->index);
@@ -189,6 +184,8 @@ void vnic_rq_clean(struct vnic_rq *rq,
 	struct vnic_rq_buf *buf;
 	u32 fetch_index;
 
+	BUG_ON(ioread32(&rq->ctrl->enable));
+
 	buf = rq->to_clean;
 
 	while (vnic_rq_desc_used(rq) > 0) {
@@ -201,12 +198,6 @@ void vnic_rq_clean(struct vnic_rq *rq,
 
 	/* Use current fetch_index as the ring starting point */
 	fetch_index = ioread32(&rq->ctrl->fetch_index);
-
-	if (fetch_index == 0xFFFFFFFF) { /* check for hardware gone  */
-		/* Hardware surprise removal: reset fetch_index */
-		fetch_index = 0;
-	}
-
 	rq->to_use = rq->to_clean =
 		&rq->bufs[fetch_index / VNIC_RQ_BUF_BLK_ENTRIES]
 			[fetch_index % VNIC_RQ_BUF_BLK_ENTRIES];

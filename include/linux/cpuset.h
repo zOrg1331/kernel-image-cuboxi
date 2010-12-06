@@ -73,7 +73,6 @@ extern void cpuset_lock(void);
 extern void cpuset_unlock(void);
 
 extern int cpuset_mem_spread_node(void);
-extern int cpuset_slab_spread_node(void);
 
 static inline int cpuset_do_page_mem_spread(void)
 {
@@ -162,11 +161,6 @@ static inline void cpuset_lock(void) {}
 static inline void cpuset_unlock(void) {}
 
 static inline int cpuset_mem_spread_node(void)
-{
-	return 0;
-}
-
-static inline int cpuset_slab_spread_node(void)
 {
 	return 0;
 }

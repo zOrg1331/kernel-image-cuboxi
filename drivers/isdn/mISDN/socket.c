@@ -779,7 +779,7 @@ base_sock_create(struct net *net, struct socket *sock, int protocol)
 }
 
 static int
-mISDN_sock_create(struct net *net, struct socket *sock, int proto, int kern)
+mISDN_sock_create(struct net *net, struct socket *sock, int proto)
 {
 	int err = -EPROTONOSUPPORT;
 

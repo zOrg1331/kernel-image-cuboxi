@@ -501,8 +501,8 @@ int ip_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
 			if (skb->sk) {
 				frag->sk = skb->sk;
 				frag->destructor = sock_wfree;
+				truesizes += frag->truesize;
 			}
-			truesizes += frag->truesize;
 		}
 
 		/* Everything is OK. Generate! */
@@ -860,10 +860,8 @@ int ip_append_data(struct sock *sk,
 	    !exthdrlen)
 		csummode = CHECKSUM_PARTIAL;
 
-	skb = skb_peek_tail(&sk->sk_write_queue);
-
 	inet->cork.length += length;
-	if (((length > mtu) || (skb && skb_is_gso(skb))) &&
+	if (((length> mtu) || !skb_queue_empty(&sk->sk_write_queue)) &&
 	    (sk->sk_protocol == IPPROTO_UDP) &&
 	    (rt->u.dst.dev->features & NETIF_F_UFO)) {
 		err = ip_ufo_append_data(sk, getfrag, from, length, hh_len,
@@ -881,7 +879,7 @@ int ip_append_data(struct sock *sk,
 	 * adding appropriate IP header.
 	 */
 
-	if (!skb)
+	if ((skb = skb_peek_tail(&sk->sk_write_queue)) == NULL)
 		goto alloc_new_skb;
 
 	while (length > 0) {
@@ -1110,8 +1108,7 @@ ssize_t	ip_append_page(struct sock *sk, struct page *page,
 		return -EINVAL;
 
 	inet->cork.length += size;
-	if ((size + skb->len > mtu) &&
-	    (sk->sk_protocol == IPPROTO_UDP) &&
+	if ((sk->sk_protocol == IPPROTO_UDP) &&
 	    (rt->u.dst.dev->features & NETIF_F_UFO)) {
 		skb_shinfo(skb)->gso_size = mtu - fragheaderlen;
 		skb_shinfo(skb)->gso_type = SKB_GSO_UDP;
@@ -1365,13 +1362,12 @@ void ip_send_reply(struct sock *sk, struct sk_buff *skb, struct ip_reply_arg *ar
 		char			data[40];
 	} replyopts;
 	struct ipcm_cookie ipc;
-	__be32 saddr, daddr;
+	__be32 daddr;
 	struct rtable *rt = skb_rtable(skb);
 
 	if (ip_options_echo(&replyopts.opt, skb))
 		return;
 
-	saddr = ip_hdr(skb)->daddr;
 	daddr = ipc.addr = rt->rt_src;
 	ipc.opt = NULL;
 	ipc.shtx.flags = 0;
@@ -1387,7 +1383,7 @@ void ip_send_reply(struct sock *sk, struct sk_buff *skb, struct ip_reply_arg *ar
 		struct flowi fl = { .oif = arg->bound_dev_if,
 				    .nl_u = { .ip4_u =
 					      { .daddr = daddr,
-						.saddr = saddr,
+						.saddr = rt->rt_spec_dst,
 						.tos = RT_TOS(ip_hdr(skb)->tos) } },
 				    /* Not quite clean, but right. */
 				    .uli_u = { .ports =

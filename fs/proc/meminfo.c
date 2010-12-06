@@ -10,7 +10,6 @@
 #include <linux/seq_file.h>
 #include <linux/swap.h>
 #include <linux/vmstat.h>
-#include <linux/virtinfo.h>
 #include <asm/atomic.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
@@ -20,28 +19,9 @@ void __attribute__((weak)) arch_report_meminfo(struct seq_file *m)
 {
 }
 
-#define K(x) ((x) << (PAGE_SHIFT - 10))
-
-static int meminfo_proc_show_mi(struct seq_file *m, struct meminfo *mi)
+static int meminfo_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m,
-		"MemTotal:       %8lu kB\n"
-		"MemFree:        %8lu kB\n"
-		"SwapTotal:      %8lu kB\n"
-		"SwapFree:       %8lu kB\n",
-		K(mi->si->totalram),
-		K(mi->si->freeram),
-		K(mi->si->totalswap),
-		K(mi->si->freeswap));
-
-	return 0;
-}
-
-int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *ub)
-{
-	int ret;
 	struct sysinfo i;
-	struct meminfo mi;
 	unsigned long committed;
 	unsigned long allowed;
 	struct vmalloc_info vmi;
@@ -49,21 +29,12 @@ int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *u
 	unsigned long pages[NR_LRU_LISTS];
 	int lru;
 
-	si_meminfo(&i);
-	si_swapinfo(&i);
-
-	mi.si = &i;
-	mi.ub = ub;
-
-	ret = virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_MEMINFO, &mi);
-	if (ret & NOTIFY_FAIL)
-		return 0;
-	if (ret & NOTIFY_OK)
-		return meminfo_proc_show_mi(m, &mi);
-
 /*
  * display in kilobytes.
  */
+#define K(x) ((x) << (PAGE_SHIFT - 10))
+	si_meminfo(&i);
+	si_swapinfo(&i);
 	committed = percpu_counter_read_positive(&vm_committed_as);
 	allowed = ((totalram_pages - hugetlb_total_pages())
 		* sysctl_overcommit_ratio / 100) + total_swap_pages;
@@ -130,9 +101,6 @@ int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *u
 #ifdef CONFIG_MEMORY_FAILURE
 		"HardwareCorrupted: %5lu kB\n"
 #endif
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-		"AnonHugePages:  %8lu kB\n"
-#endif
 		,
 		K(i.totalram),
 		K(i.freeram),
@@ -160,12 +128,7 @@ int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *u
 		K(i.freeswap),
 		K(global_page_state(NR_FILE_DIRTY)),
 		K(global_page_state(NR_WRITEBACK)),
-		K(global_page_state(NR_ANON_PAGES)
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-		  + global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
-		  HPAGE_PMD_NR
-#endif
-		  ),
+		K(global_page_state(NR_ANON_PAGES)),
 		K(global_page_state(NR_FILE_MAPPED)),
 		K(global_page_state(NR_SHMEM)),
 		K(global_page_state(NR_SLAB_RECLAIMABLE) +
@@ -188,10 +151,6 @@ int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *u
 #ifdef CONFIG_MEMORY_FAILURE
 		,atomic_long_read(&mce_bad_pages) << (PAGE_SHIFT - 10)
 #endif
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-		,K(global_page_state(NR_ANON_TRANSPARENT_HUGEPAGES) *
-		   HPAGE_PMD_NR)
-#endif
 		);
 
 	hugetlb_report_meminfo(m);
@@ -200,11 +159,6 @@ int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *u
 
 	return 0;
 #undef K
-}
-
-static int meminfo_proc_show(struct seq_file *m, void *v)
-{
-	return meminfo_proc_show_ub(m, v, top_beancounter(current->mm->mm_ub));
 }
 
 static int meminfo_proc_open(struct inode *inode, struct file *file)
@@ -221,7 +175,7 @@ static const struct file_operations meminfo_proc_fops = {
 
 static int __init proc_meminfo_init(void)
 {
-	proc_create("meminfo", 0, &glob_proc_root, &meminfo_proc_fops);
+	proc_create("meminfo", 0, NULL, &meminfo_proc_fops);
 	return 0;
 }
 module_init(proc_meminfo_init);

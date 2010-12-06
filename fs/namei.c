@@ -35,8 +35,6 @@
 #include <linux/fs_struct.h>
 #include <asm/uaccess.h>
 
-#include "internal.h"
-
 #define ACC_MODE(x) ("\000\004\002\006"[(x)&O_ACCMODE])
 
 /* [Feb-1997 T. Schoebel-Theuer]
@@ -145,7 +143,6 @@ char * getname(const char __user * filename)
 {
 	char *tmp, *result;
 
-	/*ub_dentry_checkup();*/
 	result = ERR_PTR(-ENOMEM);
 	tmp = __getname();
 	if (tmp)  {
@@ -237,7 +234,6 @@ int generic_permission(struct inode *inode, int mask,
 	/*
 	 * Searching includes executable on directories, else just read.
 	 */
-	mask &= MAY_READ | MAY_WRITE | MAY_EXEC;
 	if (mask == MAY_READ || (S_ISDIR(inode->i_mode) && !(mask & MAY_WRITE)))
 		if (capable(CAP_DAC_READ_SEARCH))
 			return 0;
@@ -354,6 +350,7 @@ int deny_write_access(struct file * file)
 
 	return 0;
 }
+EXPORT_SYMBOL(deny_write_access);
 
 /**
  * path_get - get a reference to a path
@@ -431,65 +428,10 @@ static struct dentry * cached_lookup(struct dentry * parent, struct qstr * name,
 	if (!dentry)
 		dentry = d_lookup(parent, name);
 
-	/*
-	 * The revalidation rules are simple:
-	 * d_revalidate operation is called when we're about to use a cached
-	 * dentry rather than call d_lookup.
-	 * d_revalidate method may unhash the dentry itself or return FALSE, in
-	 * which case if the dentry can be released d_lookup will be called.
-	 *
-	 * Additionally, by request of NFS people
-	 * (http://linux.bkbits.net:8080/linux-2.4/cset@1.181?nav=index.html|src/|src/fs|related/fs/namei.c)
-	 * d_revalidate is called when `/', `.' or `..' are looked up.
-	 * Since re-lookup is impossible on them, we introduce a hack and
-	 * return an error in this case.
-	 *
-	 *     2003/02/19  SAW
-	 */
 	if (dentry && dentry->d_op && dentry->d_op->d_revalidate)
 		dentry = do_revalidate(dentry, nd);
 
 	return dentry;
-}
-
-/*
- * force_reval_path - force revalidation of a dentry
- *
- * In some situations the path walking code will trust dentries without
- * revalidating them. This causes problems for filesystems that depend on
- * d_revalidate to handle file opens (e.g. NFSv4). When FS_REVAL_DOT is set
- * (which indicates that it's possible for the dentry to go stale), force
- * a d_revalidate call before proceeding.
- *
- * Returns 0 if the revalidation was successful. If the revalidation fails,
- * either return the error returned by d_revalidate or -ESTALE if the
- * revalidation it just returned 0. If d_revalidate returns 0, we attempt to
- * invalidate the dentry. It's up to the caller to handle putting references
- * to the path if necessary.
- */
-static int
-force_reval_path(struct path *path, struct nameidata *nd)
-{
-	int status;
-	struct dentry *dentry = path->dentry;
-
-	/*
-	 * only check on filesystems where it's possible for the dentry to
-	 * become stale. It's assumed that if this flag is set then the
-	 * d_revalidate op will also be defined.
-	 */
-	if (!(dentry->d_sb->s_type->fs_flags & FS_REVAL_DOT))
-		return 0;
-
-	status = dentry->d_op->d_revalidate(dentry, nd);
-	if (status > 0)
-		return 0;
-
-	if (!status) {
-		d_invalidate(dentry);
-		status = -ESTALE;
-	}
-	return status;
 }
 
 /*
@@ -537,7 +479,6 @@ static struct dentry * real_lookup(struct dentry * parent, struct qstr * name, s
 	struct dentry * result;
 	struct inode *dir = parent->d_inode;
 
-repeat:
 	mutex_lock(&dir->i_mutex);
 	/*
 	 * First re-do the cached lookup just in case it was created
@@ -584,7 +525,7 @@ out_unlock:
 	if (result->d_op && result->d_op->d_revalidate) {
 		result = do_revalidate(result, nd);
 		if (!result)
-			goto repeat;
+			result = ERR_PTR(-ENOENT);
 	}
 	return result;
 }
@@ -620,8 +561,13 @@ static __always_inline int link_path_walk(const char *name, struct nameidata *nd
 
 static __always_inline void set_root(struct nameidata *nd)
 {
-	if (!nd->root.mnt)
-		get_fs_root(current->fs, &nd->root);
+	if (!nd->root.mnt) {
+		struct fs_struct *fs = current->fs;
+		read_lock(&fs->lock);
+		nd->root = fs->root;
+		path_get(&nd->root);
+		read_unlock(&fs->lock);
+	}
 }
 
 static __always_inline int __vfs_follow_link(struct nameidata *nd, const char *link)
@@ -696,11 +642,6 @@ static __always_inline int __do_follow_link(struct path *path, struct nameidata 
 		error = 0;
 		if (s)
 			error = __vfs_follow_link(nd, s);
-		else if (nd->last_type == LAST_BIND) {
-			error = force_reval_path(&nd->path, nd);
-			if (error)
-				path_put(&nd->path);
-		}
 		if (dentry->d_inode->i_op->put_link)
 			dentry->d_inode->i_op->put_link(dentry, nd, cookie);
 	}
@@ -824,12 +765,6 @@ static __always_inline void follow_dotdot(struct nameidata *nd)
 		    nd->path.mnt == nd->root.mnt) {
 			break;
 		}
-#ifdef CONFIG_VE
-		if (nd->path.dentry == get_exec_env()->root_path.dentry &&
-		    nd->path.mnt == get_exec_env()->root_path.mnt) {
-			break;
-		}
-#endif
 		spin_lock(&dcache_lock);
 		if (nd->path.dentry != nd->path.mnt->mnt_root) {
 			nd->path.dentry = dget(nd->path.dentry->d_parent);
@@ -851,8 +786,7 @@ static __always_inline void follow_dotdot(struct nameidata *nd)
 		mntput(nd->path.mnt);
 		nd->path.mnt = parent;
 	}
-	if (!(nd->flags & LOOKUP_DIVE))
-		follow_mount(&nd->path);
+	follow_mount(&nd->path);
 }
 
 /*
@@ -871,14 +805,9 @@ static int do_lookup(struct nameidata *nd, struct qstr *name,
 	if (dentry->d_op && dentry->d_op->d_revalidate)
 		goto need_revalidate;
 done:
-	if ((nd->flags & LOOKUP_STRICT) && d_mountpoint(dentry)) {
-		dput(dentry);
-		return -ENOENT;
-	}
 	path->mnt = mnt;
 	path->dentry = dentry;
-	if (!(nd->flags & LOOKUP_DIVE))
-		__follow_mount(path);
+	__follow_mount(path);
 	return 0;
 
 need_lookup:
@@ -900,18 +829,6 @@ fail:
 }
 
 /*
- * This is a temporary kludge to deal with "automount" symlinks; proper
- * solution is to trigger them on follow_mount(), so that do_lookup()
- * would DTRT.  To be killed before 2.6.34-final.
- */
-static inline int follow_on_final(struct inode *inode, unsigned lookup_flags)
-{
-	return inode && unlikely(inode->i_op->follow_link) &&
-		!(lookup_flags & LOOKUP_STRICT) &&
-		((lookup_flags & LOOKUP_FOLLOW) || S_ISDIR(inode->i_mode));
-}
-
-/*
  * Name resolution.
  * This is the basic name resolution function, turning a pathname into
  * the final dentry. We expect 'base' to be positive and a directory.
@@ -925,7 +842,6 @@ static int __link_path_walk(const char *name, struct nameidata *nd)
 	struct inode *inode;
 	int err;
 	unsigned int lookup_flags = nd->flags;
-	int real_components = 0;
 	
 	while (*name=='/')
 		name++;
@@ -994,7 +910,6 @@ static int __link_path_walk(const char *name, struct nameidata *nd)
 				break;
 		}
 		/* This does the actual lookups.. */
-		real_components++;
 		err = do_lookup(nd, &this, &next);
 		if (err)
 			break;
@@ -1005,9 +920,6 @@ static int __link_path_walk(const char *name, struct nameidata *nd)
 			goto out_dput;
 
 		if (inode->i_op->follow_link) {
-			err = -ENOENT;
-			if (lookup_flags & LOOKUP_STRICT)
-				goto out_dput;
 			err = do_follow_link(&next, nd);
 			if (err)
 				goto return_err;
@@ -1052,7 +964,8 @@ last_component:
 		if (err)
 			break;
 		inode = next.dentry->d_inode;
-		if (follow_on_final(inode, lookup_flags)) {
+		if ((lookup_flags & LOOKUP_FOLLOW)
+		    && inode && inode->i_op->follow_link) {
 			err = do_follow_link(&next, nd);
 			if (err)
 				goto return_err;
@@ -1084,19 +997,12 @@ return_reval:
 		 * We bypassed the ordinary revalidation routines.
 		 * We may need to check the cached dentry for staleness.
 		 */
-		if (!real_components && nd->path.dentry && nd->path.dentry->d_sb &&
+		if (nd->path.dentry && nd->path.dentry->d_sb &&
 		    (nd->path.dentry->d_sb->s_type->fs_flags & FS_REVAL_DOT)) {
 			err = -ESTALE;
 			/* Note: we do not d_invalidate() */
 			if (!nd->path.dentry->d_op->d_revalidate(
 					nd->path.dentry, nd))
-				/*
-				 * This lookup is for `/' or `.' or `..'.
-				 * The filesystem unhashed the dentry itself
-				 * inside d_revalidate (otherwise, d_invalidate
-				 * wouldn't succeed).  As a special courtesy to
-				 * NFS we return an error.   2003/02/19  SAW
-				 */
 				break;
 		}
 return_base:
@@ -1110,12 +1016,11 @@ return_err:
 	return err;
 }
 
-int path_walk(const char *name, struct nameidata *nd)
+static int path_walk(const char *name, struct nameidata *nd)
 {
 	current->total_link_count = 0;
 	return link_path_walk(name, nd);
 }
-EXPORT_SYMBOL(path_walk);
 
 static int path_init(int dfd, const char *name, unsigned int flags, struct nameidata *nd)
 {
@@ -1133,7 +1038,11 @@ static int path_init(int dfd, const char *name, unsigned int flags, struct namei
 		nd->path = nd->root;
 		path_get(&nd->root);
 	} else if (dfd == AT_FDCWD) {
-		get_fs_pwd(current->fs, &nd->path);
+		struct fs_struct *fs = current->fs;
+		read_lock(&fs->lock);
+		nd->path = fs->pwd;
+		path_get(&fs->pwd);
+		read_unlock(&fs->lock);
 	} else {
 		struct dentry *dentry;
 
@@ -1311,7 +1220,7 @@ out:
  * needs parent already locked. Doesn't follow mounts.
  * SMP-safe.
  */
-static struct dentry *lookup_hash(struct nameidata *nd)
+struct dentry *lookup_hash(struct nameidata *nd)
 {
 	int err;
 
@@ -1320,8 +1229,9 @@ static struct dentry *lookup_hash(struct nameidata *nd)
 		return ERR_PTR(err);
 	return __lookup_hash(&nd->last, nd->path.dentry, nd);
 }
+EXPORT_SYMBOL(lookup_hash);
 
-static int __lookup_one_len(const char *name, struct qstr *this,
+int __lookup_one_len(const char *name, struct qstr *this,
 		struct dentry *base, int len)
 {
 	unsigned long hash;
@@ -1342,6 +1252,7 @@ static int __lookup_one_len(const char *name, struct qstr *this,
 	this->hash = end_name_hash(hash);
 	return 0;
 }
+EXPORT_SYMBOL(__lookup_one_len);
 
 /**
  * lookup_one_len - filesystem helper to lookup single pathname component
@@ -1625,46 +1536,69 @@ int may_open(struct path *path, int acc_mode, int flag)
 	if (error)
 		return error;
 
+	error = ima_path_check(path, acc_mode ?
+			       acc_mode & (MAY_READ | MAY_WRITE | MAY_EXEC) :
+			       ACC_MODE(flag) & (MAY_READ | MAY_WRITE),
+			       IMA_COUNT_UPDATE);
+
+	if (error)
+		return error;
 	/*
 	 * An append-only file must be opened in append mode for writing.
 	 */
 	if (IS_APPEND(inode)) {
+		error = -EPERM;
 		if  ((flag & FMODE_WRITE) && !(flag & O_APPEND))
-			return -EPERM;
+			goto err_out;
 		if (flag & O_TRUNC)
-			return -EPERM;
+			goto err_out;
 	}
 
 	/* O_NOATIME can only be set by the owner or superuser */
-	if (flag & O_NOATIME && !is_owner_or_cap(inode))
-		return -EPERM;
+	if (flag & O_NOATIME)
+		if (!is_owner_or_cap(inode)) {
+			error = -EPERM;
+			goto err_out;
+		}
 
 	/*
 	 * Ensure there are no outstanding leases on the file.
 	 */
-	return break_lease(inode, flag);
-}
-
-static int handle_truncate(struct file *filp)
-{
-	struct path *path = &filp->f_path;
-	struct inode *inode = path->dentry->d_inode;
-	int error = get_write_access(inode);
+	error = break_lease(inode, flag);
 	if (error)
-		return error;
-	/*
-	 * Refuse to truncate files with mandatory locks held on them.
-	 */
-	error = locks_verify_locked(inode);
-	if (!error)
-		error = security_path_truncate(path, 0,
-				       ATTR_MTIME|ATTR_CTIME|ATTR_OPEN);
-	if (!error) {
-		error = do_truncate(path->dentry, 0,
-				    ATTR_MTIME|ATTR_CTIME|ATTR_OPEN,
-				    filp);
-	}
-	put_write_access(inode);
+		goto err_out;
+
+	if (flag & O_TRUNC) {
+		error = get_write_access(inode);
+		if (error)
+			goto err_out;
+
+		/*
+		 * Refuse to truncate files with mandatory locks held on them.
+		 */
+		error = locks_verify_locked(inode);
+		if (!error)
+			error = security_path_truncate(path, 0,
+					       ATTR_MTIME|ATTR_CTIME|ATTR_OPEN);
+		if (!error) {
+			vfs_dq_init(inode);
+
+			error = do_truncate(dentry, 0,
+					    ATTR_MTIME|ATTR_CTIME|ATTR_OPEN,
+					    NULL);
+		}
+		put_write_access(inode);
+		if (error)
+			goto err_out;
+	} else
+		if (flag & FMODE_WRITE)
+			vfs_dq_init(inode);
+
+	return 0;
+err_out:
+	ima_counts_put(path, acc_mode ?
+		       acc_mode & (MAY_READ | MAY_WRITE | MAY_EXEC) :
+		       ACC_MODE(flag) & (MAY_READ | MAY_WRITE));
 	return error;
 }
 
@@ -1719,7 +1653,7 @@ static inline int open_to_namei_flags(int flag)
 	return flag;
 }
 
-static int open_will_truncate(int flag, struct inode *inode)
+static int open_will_write_to_fs(int flag, struct inode *inode)
 {
 	/*
 	 * We'll never write to the fs underlying
@@ -1744,7 +1678,7 @@ struct file *do_filp_open(int dfd, const char *pathname,
 	struct path path;
 	struct dentry *dir;
 	int count = 0;
-	int will_truncate;
+	int will_write;
 	int flag = open_to_namei_flags(open_flag);
 
 	if (!acc_mode)
@@ -1840,16 +1774,13 @@ do_last:
 			goto exit;
 		}
 		filp = nameidata_to_filp(&nd, open_flag);
+		if (IS_ERR(filp))
+			ima_counts_put(&nd.path,
+				       acc_mode & (MAY_READ | MAY_WRITE |
+						   MAY_EXEC));
 		mnt_drop_write(nd.path.mnt);
 		if (nd.root.mnt)
 			path_put(&nd.root);
-		if (!IS_ERR(filp)) {
-			error = ima_file_check(filp, acc_mode);
-			if (error) {
-				fput(filp);
-				filp = ERR_PTR(error);
-			}
-		}
 		return filp;
 	}
 
@@ -1890,44 +1821,28 @@ ok:
 	 * be avoided. Taking this mnt write here
 	 * ensures that (2) can not occur.
 	 */
-	will_truncate = open_will_truncate(flag, nd.path.dentry->d_inode);
-	if (will_truncate) {
+	will_write = open_will_write_to_fs(flag, nd.path.dentry->d_inode);
+	if (will_write) {
 		error = mnt_want_write(nd.path.mnt);
 		if (error)
 			goto exit;
 	}
 	error = may_open(&nd.path, acc_mode, flag);
 	if (error) {
-		if (will_truncate)
+		if (will_write)
 			mnt_drop_write(nd.path.mnt);
 		goto exit;
 	}
 	filp = nameidata_to_filp(&nd, open_flag);
-	if (!IS_ERR(filp)) {
-		error = ima_file_check(filp, acc_mode);
-		if (error) {
-			fput(filp);
-			filp = ERR_PTR(error);
-		}
-	}
-	if (!IS_ERR(filp)) {
-		if (acc_mode & MAY_WRITE)
-			vfs_dq_init(nd.path.dentry->d_inode);
-
-		if (will_truncate) {
-			error = handle_truncate(filp);
-			if (error) {
-				fput(filp);
-				filp = ERR_PTR(error);
-			}
-		}
-	}
+	if (IS_ERR(filp))
+		ima_counts_put(&nd.path,
+			       acc_mode & (MAY_READ | MAY_WRITE | MAY_EXEC));
 	/*
 	 * It is now safe to drop the mnt write
 	 * because the filp has had a write taken
 	 * on its behalf.
 	 */
-	if (will_truncate)
+	if (will_write)
 		mnt_drop_write(nd.path.mnt);
 	if (nd.root.mnt)
 		path_put(&nd.root);
@@ -2172,7 +2087,6 @@ SYSCALL_DEFINE3(mknod, const char __user *, filename, int, mode, unsigned, dev)
 {
 	return sys_mknodat(AT_FDCWD, filename, mode, dev);
 }
-EXPORT_SYMBOL(sys_mknod);
 
 int vfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 {
@@ -2237,7 +2151,6 @@ SYSCALL_DEFINE2(mkdir, const char __user *, pathname, int, mode)
 {
 	return sys_mkdirat(AT_FDCWD, pathname, mode);
 }
-EXPORT_SYMBOL(sys_mkdir);
 
 /*
  * We try to drop the dentry early: we should have
@@ -2352,7 +2265,6 @@ SYSCALL_DEFINE1(rmdir, const char __user *, pathname)
 {
 	return do_rmdir(AT_FDCWD, pathname);
 }
-EXPORT_SYMBOL(sys_rmdir);
 
 int vfs_unlink(struct inode *dir, struct dentry *dentry)
 {
@@ -2460,7 +2372,6 @@ SYSCALL_DEFINE1(unlink, const char __user *, pathname)
 {
 	return do_unlinkat(AT_FDCWD, pathname);
 }
-EXPORT_SYMBOL(sys_unlink);
 
 int vfs_symlink(struct inode *dir, struct dentry *dentry, const char *oldname)
 {
@@ -2529,7 +2440,6 @@ SYSCALL_DEFINE2(symlink, const char __user *, oldname, const char __user *, newn
 {
 	return sys_symlinkat(oldname, AT_FDCWD, newname);
 }
-EXPORT_SYMBOL(sys_symlink);
 
 int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_dentry)
 {
@@ -2743,9 +2653,6 @@ int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	int is_dir = S_ISDIR(old_dentry->d_inode->i_mode);
 	const char *old_name;
 
-	if (vfs_dq_rename(old_dentry->d_inode, old_dir, new_dir))
-		return -EXDEV;
-
 	if (old_dentry->d_inode == new_dentry->d_inode)
  		return 0;
  
@@ -2880,7 +2787,6 @@ SYSCALL_DEFINE2(rename, const char __user *, oldname, const char __user *, newna
 {
 	return sys_renameat(AT_FDCWD, oldname, AT_FDCWD, newname);
 }
-EXPORT_SYMBOL(sys_rename);
 
 int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen, const char *link)
 {

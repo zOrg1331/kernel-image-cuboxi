@@ -42,7 +42,6 @@
 #include "xfs_attr.h"
 #include "xfs_attr_leaf.h"
 #include "xfs_error.h"
-#include "xfs_trace.h"
 
 /*
  * xfs_attr_leaf.c
@@ -99,7 +98,7 @@ STATIC int xfs_attr_leaf_entsize(xfs_attr_leafblock_t *leaf, int index);
  * If namespace bits don't match return 0.
  * If all match then return 1.
  */
-STATIC int
+STATIC_INLINE int
 xfs_attr_namesp_match(int arg_flags, int ondisk_flags)
 {
 	return XFS_ATTR_NSP_ONDISK(ondisk_flags) == XFS_ATTR_NSP_ARGS_TO_ONDISK(arg_flags);
@@ -595,7 +594,7 @@ xfs_attr_shortform_list(xfs_attr_list_context_t *context)
 	cursor = context->cursor;
 	ASSERT(cursor != NULL);
 
-	trace_xfs_attr_list_sf(context);
+	xfs_attr_trace_l_c("sf start", context);
 
 	/*
 	 * If the buffer is large enough and the cursor is at the start,
@@ -628,7 +627,7 @@ xfs_attr_shortform_list(xfs_attr_list_context_t *context)
 				return error;
 			sfe = XFS_ATTR_SF_NEXTENTRY(sfe);
 		}
-		trace_xfs_attr_list_sf_all(context);
+		xfs_attr_trace_l_c("sf big-gulp", context);
 		return(0);
 	}
 
@@ -654,6 +653,7 @@ xfs_attr_shortform_list(xfs_attr_list_context_t *context)
 			XFS_CORRUPTION_ERROR("xfs_attr_shortform_list",
 					     XFS_ERRLEVEL_LOW,
 					     context->dp->i_mount, sfe);
+			xfs_attr_trace_l_c("sf corrupted", context);
 			kmem_free(sbuf);
 			return XFS_ERROR(EFSCORRUPTED);
 		}
@@ -693,6 +693,7 @@ xfs_attr_shortform_list(xfs_attr_list_context_t *context)
 	}
 	if (i == nsbuf) {
 		kmem_free(sbuf);
+		xfs_attr_trace_l_c("blk end", context);
 		return(0);
 	}
 
@@ -718,6 +719,7 @@ xfs_attr_shortform_list(xfs_attr_list_context_t *context)
 	}
 
 	kmem_free(sbuf);
+	xfs_attr_trace_l_c("sf E-O-F", context);
 	return(0);
 }
 
@@ -2321,7 +2323,7 @@ xfs_attr_leaf_list_int(xfs_dabuf_t *bp, xfs_attr_list_context_t *context)
 	cursor = context->cursor;
 	cursor->initted = 1;
 
-	trace_xfs_attr_list_leaf(context);
+	xfs_attr_trace_l_cl("blk start", context, leaf);
 
 	/*
 	 * Re-find our place in the leaf block if this is a new syscall.
@@ -2342,7 +2344,7 @@ xfs_attr_leaf_list_int(xfs_dabuf_t *bp, xfs_attr_list_context_t *context)
 			}
 		}
 		if (i == be16_to_cpu(leaf->hdr.count)) {
-			trace_xfs_attr_list_notfound(context);
+			xfs_attr_trace_l_c("not found", context);
 			return(0);
 		}
 	} else {
@@ -2417,7 +2419,7 @@ xfs_attr_leaf_list_int(xfs_dabuf_t *bp, xfs_attr_list_context_t *context)
 			break;
 		cursor->offset++;
 	}
-	trace_xfs_attr_list_leaf_end(context);
+	xfs_attr_trace_l_cl("blk end", context, leaf);
 	return(retval);
 }
 
@@ -2950,7 +2952,7 @@ xfs_attr_leaf_freextent(xfs_trans_t **trans, xfs_inode_t *dp,
 						map.br_blockcount);
 			bp = xfs_trans_get_buf(*trans,
 					dp->i_mount->m_ddev_targp,
-					dblkno, dblkcnt, XBF_LOCK);
+					dblkno, dblkcnt, XFS_BUF_LOCK);
 			xfs_trans_binval(*trans, bp);
 			/*
 			 * Roll to next transaction.

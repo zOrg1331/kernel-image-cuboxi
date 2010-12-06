@@ -49,7 +49,7 @@ static ssize_t gfs2_attr_store(struct kobject *kobj, struct attribute *attr,
 	return a->store ? a->store(sdp, buf, len) : len;
 }
 
-static const struct sysfs_ops gfs2_attr_ops = {
+static struct sysfs_ops gfs2_attr_ops = {
 	.show  = gfs2_attr_show,
 	.store = gfs2_attr_store,
 };
@@ -158,7 +158,7 @@ static ssize_t statfs_sync_store(struct gfs2_sbd *sdp, const char *buf,
 	if (simple_strtol(buf, NULL, 0) != 1)
 		return -EINVAL;
 
-	gfs2_statfs_sync(sdp->sd_vfs, 0);
+	gfs2_statfs_sync(sdp);
 	return len;
 }
 
@@ -171,14 +171,13 @@ static ssize_t quota_sync_store(struct gfs2_sbd *sdp, const char *buf,
 	if (simple_strtol(buf, NULL, 0) != 1)
 		return -EINVAL;
 
-	gfs2_quota_sync(sdp->sd_vfs, 0);
+	gfs2_quota_sync(sdp);
 	return len;
 }
 
 static ssize_t quota_refresh_user_store(struct gfs2_sbd *sdp, const char *buf,
 					size_t len)
 {
-	int error;
 	u32 id;
 
 	if (!capable(CAP_SYS_ADMIN))
@@ -186,14 +185,13 @@ static ssize_t quota_refresh_user_store(struct gfs2_sbd *sdp, const char *buf,
 
 	id = simple_strtoul(buf, NULL, 0);
 
-	error = gfs2_quota_refresh(sdp, 1, id);
-	return error ? error : len;
+	gfs2_quota_refresh(sdp, 1, id);
+	return len;
 }
 
 static ssize_t quota_refresh_group_store(struct gfs2_sbd *sdp, const char *buf,
 					 size_t len)
 {
-	int error;
 	u32 id;
 
 	if (!capable(CAP_SYS_ADMIN))
@@ -201,8 +199,8 @@ static ssize_t quota_refresh_group_store(struct gfs2_sbd *sdp, const char *buf,
 
 	id = simple_strtoul(buf, NULL, 0);
 
-	error = gfs2_quota_refresh(sdp, 0, id);
-	return error ? error : len;
+	gfs2_quota_refresh(sdp, 0, id);
+	return len;
 }
 
 static ssize_t demote_rq_store(struct gfs2_sbd *sdp, const char *buf, size_t len)
@@ -237,8 +235,6 @@ static ssize_t demote_rq_store(struct gfs2_sbd *sdp, const char *buf, size_t len
 	glops = gfs2_glops_list[gltype];
 	if (glops == NULL)
 		return -EINVAL;
-	if (!test_and_set_bit(SDF_DEMOTE, &sdp->sd_flags))
-		fs_info(sdp, "demote interface used\n");
 	rv = gfs2_glock_get(sdp, glnum, glops, 0, &gl);
 	if (rv)
 		return rv;

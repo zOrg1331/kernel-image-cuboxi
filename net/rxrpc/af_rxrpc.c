@@ -608,8 +608,7 @@ static unsigned int rxrpc_poll(struct file *file, struct socket *sock,
 /*
  * create an RxRPC socket
  */
-static int rxrpc_create(struct net *net, struct socket *sock, int protocol,
-			int kern)
+static int rxrpc_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct rxrpc_sock *rx;
 	struct sock *sk;

@@ -428,6 +428,7 @@ static void iucv_sock_close(struct sock *sk)
 		break;
 
 	default:
+		sock_set_flag(sk, SOCK_ZAPPED);
 		/* nothing to do here */
 		break;
 	}
@@ -481,8 +482,7 @@ static struct sock *iucv_sock_alloc(struct socket *sock, int proto, gfp_t prio)
 }
 
 /* Create an IUCV socket */
-static int iucv_sock_create(struct net *net, struct socket *sock, int protocol,
-			    int kern)
+static int iucv_sock_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 

@@ -24,7 +24,6 @@
 #include <linux/binfmts.h>
 #include <linux/personality.h>
 #include <linux/init.h>
-#include <linux/coredump.h>
 
 #include <asm/system.h>
 #include <asm/uaccess.h>
@@ -33,7 +32,7 @@
 
 static int load_aout_binary(struct linux_binprm *, struct pt_regs * regs);
 static int load_aout_library(struct file*);
-static int aout_core_dump(struct coredump_params *cprm);
+static int aout_core_dump(long signr, struct pt_regs *regs, struct file *file, unsigned long limit);
 
 static struct linux_binfmt aout_format = {
 	.module		= THIS_MODULE,
@@ -61,6 +60,26 @@ static int set_brk(unsigned long start, unsigned long end)
 }
 
 /*
+ * These are the only things you should do on a core-file: use only these
+ * macros to write out all the necessary info.
+ */
+
+static int dump_write(struct file *file, const void *addr, int nr)
+{
+	return file->f_op->write(file, addr, nr, &file->f_pos) == nr;
+}
+
+#define DUMP_WRITE(addr, nr)	\
+	if (!dump_write(file, (void *)(addr), (nr))) \
+		goto end_coredump;
+
+#define DUMP_SEEK(offset) \
+if (file->f_op->llseek) { \
+	if (file->f_op->llseek(file,(offset),0) != (offset)) \
+ 		goto end_coredump; \
+} else file->f_pos = (offset)
+
+/*
  * Routine writes a core dump image in the current directory.
  * Currently only a stub-function.
  *
@@ -70,9 +89,8 @@ static int set_brk(unsigned long start, unsigned long end)
  * dumping of the process results in another error..
  */
 
-static int aout_core_dump(struct coredump_params *cprm)
+static int aout_core_dump(long signr, struct pt_regs *regs, struct file *file, unsigned long limit)
 {
-	struct file *file = cprm->file;
 	mm_segment_t fs;
 	int has_dumped = 0;
 	unsigned long dump_start, dump_size;
@@ -90,16 +108,16 @@ static int aout_core_dump(struct coredump_params *cprm)
 	current->flags |= PF_DUMPCORE;
        	strncpy(dump.u_comm, current->comm, sizeof(dump.u_comm));
 	dump.u_ar0 = offsetof(struct user, regs);
-	dump.signal = cprm->signr;
-	aout_dump_thread(cprm->regs, &dump);
+	dump.signal = signr;
+	aout_dump_thread(regs, &dump);
 
 /* If the size of the dump file exceeds the rlimit, then see what would happen
    if we wrote the stack, but not the data area.  */
-	if ((dump.u_dsize + dump.u_ssize+1) * PAGE_SIZE > cprm->limit)
+	if ((dump.u_dsize + dump.u_ssize+1) * PAGE_SIZE > limit)
 		dump.u_dsize = 0;
 
 /* Make sure we have enough room to write the stack and data areas. */
-	if ((dump.u_ssize + 1) * PAGE_SIZE > cprm->limit)
+	if ((dump.u_ssize + 1) * PAGE_SIZE > limit)
 		dump.u_ssize = 0;
 
 /* make sure we actually have a data and stack area to dump */
@@ -111,31 +129,26 @@ static int aout_core_dump(struct coredump_params *cprm)
 
 	set_fs(KERNEL_DS);
 /* struct user */
-	if (!dump_write(file, &dump, sizeof(dump)))
-		goto end_coredump;
+	DUMP_WRITE(&dump,sizeof(dump));
 /* Now dump all of the user data.  Include malloced stuff as well */
-	if (!dump_seek(cprm->file, PAGE_SIZE - sizeof(dump)))
-		goto end_coredump;
+	DUMP_SEEK(PAGE_SIZE);
 /* now we start writing out the user space info */
 	set_fs(USER_DS);
 /* Dump the data area */
 	if (dump.u_dsize != 0) {
 		dump_start = START_DATA(dump);
 		dump_size = dump.u_dsize << PAGE_SHIFT;
-		if (!dump_write(file, dump_start, dump_size))
-			goto end_coredump;
+		DUMP_WRITE(dump_start,dump_size);
 	}
 /* Now prepare to dump the stack area */
 	if (dump.u_ssize != 0) {
 		dump_start = START_STACK(dump);
 		dump_size = dump.u_ssize << PAGE_SHIFT;
-		if (!dump_write(file, dump_start, dump_size))
-			goto end_coredump;
+		DUMP_WRITE(dump_start,dump_size);
 	}
 /* Finally dump the task struct.  Not be used by gdb, but could be useful */
 	set_fs(KERNEL_DS);
-	if (!dump_write(file, current, sizeof(*current)))
-		goto end_coredump;
+	DUMP_WRITE(current,sizeof(*current));
 end_coredump:
 	set_fs(fs);
 	return has_dumped;
@@ -250,7 +263,6 @@ static int load_aout_binary(struct linux_binprm * bprm, struct pt_regs * regs)
 #else
 	set_personality(PER_LINUX);
 #endif
-	setup_new_exec(bprm);
 
 	current->mm->end_code = ex.a_text +
 		(current->mm->start_code = N_TXTADDR(ex));
@@ -298,12 +310,12 @@ static int load_aout_binary(struct linux_binprm * bprm, struct pt_regs * regs)
 		if ((ex.a_text & 0xfff || ex.a_data & 0xfff) &&
 		    (N_MAGIC(ex) != NMAGIC) && printk_ratelimit())
 		{
-			ve_printk(VE_LOG, KERN_NOTICE "executable not page aligned\n");
+			printk(KERN_NOTICE "executable not page aligned\n");
 		}
 
 		if ((fd_offset & ~PAGE_MASK) != 0 && printk_ratelimit())
 		{
-			ve_printk(VE_LOG, KERN_WARNING 
+			printk(KERN_WARNING 
 			       "fd_offset is not page aligned. Please convert program: %s\n",
 			       bprm->file->f_path.dentry->d_name.name);
 		}
@@ -412,7 +424,7 @@ static int load_aout_library(struct file *file)
 
 		if (printk_ratelimit())
 		{
-			ve_printk(VE_LOG, KERN_WARNING 
+			printk(KERN_WARNING 
 			       "N_TXTOFF is not page aligned. Please convert library: %s\n",
 			       file->f_path.dentry->d_name.name);
 		}

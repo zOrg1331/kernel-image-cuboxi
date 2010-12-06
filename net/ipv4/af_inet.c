@@ -115,7 +115,6 @@
 #ifdef CONFIG_IP_MROUTE
 #include <linux/mroute.h>
 #endif
-#include <bc/net.h>
 
 
 /* The inetsw table contains everything that inet_create needs to
@@ -263,8 +262,7 @@ static inline int inet_netns_ok(struct net *net, int protocol)
  *	Create an inet socket.
  */
 
-static int inet_create(struct net *net, struct socket *sock, int protocol,
-		       int kern)
+static int inet_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 	struct inet_protosw *answer;
@@ -326,12 +324,8 @@ lookup_protocol:
 			goto out_rcu_unlock;
 	}
 
-	err = vz_security_protocol_check(answer->protocol);
-	if (err < 0)
-		goto out_rcu_unlock;
-
 	err = -EPERM;
-	if (sock->type == SOCK_RAW && !kern && !capable(CAP_NET_RAW))
+	if (answer->capability > 0 && !capable(answer->capability))
 		goto out_rcu_unlock;
 
 	err = -EAFNOSUPPORT;
@@ -350,13 +344,6 @@ lookup_protocol:
 	sk = sk_alloc(net, PF_INET, GFP_KERNEL, answer_prot);
 	if (sk == NULL)
 		goto out;
-
-	err = -ENOBUFS;
-	if (ub_sock_charge(sk, PF_INET, sock->type))
-		goto out_sk_free;
-	/* if charge was successful, sock_init_data() MUST be called to
-	 * set sk->sk_type. otherwise sk will be uncharged to wrong resource
-	 */
 
 	err = 0;
 	sk->sk_no_check = answer_no_check;
@@ -415,9 +402,6 @@ out:
 out_rcu_unlock:
 	rcu_read_unlock();
 	goto out;
-out_sk_free:
-	sk_free(sk);
-	return err;
 }
 
 
@@ -432,9 +416,6 @@ int inet_release(struct socket *sock)
 
 	if (sk) {
 		long timeout;
-		struct ve_struct *saved_env;
-
-		saved_env = set_exec_env(sk->owner_env);
 
 		/* Applications forget to leave groups before exiting */
 		ip_mc_drop_socket(sk);
@@ -452,8 +433,6 @@ int inet_release(struct socket *sock)
 			timeout = sk->sk_lingertime;
 		sock->sk = NULL;
 		sk->sk_prot->close(sk, timeout);
-
-		(void)set_exec_env(saved_env);
 	}
 	return 0;
 }
@@ -968,6 +947,7 @@ static struct inet_protosw inetsw_array[] =
 		.protocol =   IPPROTO_TCP,
 		.prot =       &tcp_prot,
 		.ops =        &inet_stream_ops,
+		.capability = -1,
 		.no_check =   0,
 		.flags =      INET_PROTOSW_PERMANENT |
 			      INET_PROTOSW_ICSK,
@@ -978,6 +958,7 @@ static struct inet_protosw inetsw_array[] =
 		.protocol =   IPPROTO_UDP,
 		.prot =       &udp_prot,
 		.ops =        &inet_dgram_ops,
+		.capability = -1,
 		.no_check =   UDP_CSUM_DEFAULT,
 		.flags =      INET_PROTOSW_PERMANENT,
        },
@@ -988,6 +969,7 @@ static struct inet_protosw inetsw_array[] =
 	       .protocol =   IPPROTO_IP,	/* wild card */
 	       .prot =       &raw_prot,
 	       .ops =        &inet_sockraw_ops,
+	       .capability = CAP_NET_RAW,
 	       .no_check =   UDP_CSUM_DEFAULT,
 	       .flags =      INET_PROTOSW_REUSE,
        }
@@ -1566,13 +1548,9 @@ static int __init inet_init(void)
 
 	BUILD_BUG_ON(sizeof(struct inet_skb_parm) > sizeof(dummy_skb->cb));
 
-	sysctl_local_reserved_ports = kzalloc(65536 / 8, GFP_KERNEL);
-	if (!sysctl_local_reserved_ports)
-		goto out;
-
 	rc = proto_register(&tcp_prot, 1);
 	if (rc)
-		goto out_free_reserved_ports;
+		goto out;
 
 	rc = proto_register(&udp_prot, 1);
 	if (rc)
@@ -1671,8 +1649,6 @@ out_unregister_udp_proto:
 	proto_unregister(&udp_prot);
 out_unregister_tcp_proto:
 	proto_unregister(&tcp_prot);
-out_free_reserved_ports:
-	kfree(sysctl_local_reserved_ports);
 	goto out;
 }
 

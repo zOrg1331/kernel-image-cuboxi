@@ -46,10 +46,6 @@
 #include <linux/netfilter/nfnetlink.h>
 #include <linux/netfilter/nfnetlink_conntrack.h>
 
-#include <net/sock.h>
-#include <bc/beancounter.h>
-#include <bc/sock.h>
-
 MODULE_LICENSE("GPL");
 
 static char __initdata version[] = "0.93";
@@ -425,17 +421,6 @@ ctnetlink_proto_size(const struct nf_conn *ct)
 }
 
 static inline size_t
-ctnetlink_counters_size(const struct nf_conn *ct)
-{
-	if (!nf_ct_ext_exist(ct, NF_CT_EXT_ACCT))
-		return 0;
-	return 2 * nla_total_size(0) /* CTA_COUNTERS_ORIG|REPL */
-	       + 2 * nla_total_size(sizeof(uint64_t)) /* CTA_COUNTERS_PACKETS */
-	       + 2 * nla_total_size(sizeof(uint64_t)) /* CTA_COUNTERS_BYTES */
-	       ;
-}
-
-static inline size_t
 ctnetlink_nlmsg_size(const struct nf_conn *ct)
 {
 	return NLMSG_ALIGN(sizeof(struct nfgenmsg))
@@ -445,7 +430,11 @@ ctnetlink_nlmsg_size(const struct nf_conn *ct)
 	       + 3 * nla_total_size(sizeof(u_int8_t)) /* CTA_PROTO_NUM */
 	       + nla_total_size(sizeof(u_int32_t)) /* CTA_ID */
 	       + nla_total_size(sizeof(u_int32_t)) /* CTA_STATUS */
-	       + ctnetlink_counters_size(ct)
+#ifdef CONFIG_NF_CT_ACCT
+	       + 2 * nla_total_size(0) /* CTA_COUNTERS_ORIG|REPL */
+	       + 2 * nla_total_size(sizeof(uint64_t)) /* CTA_COUNTERS_PACKETS */
+	       + 2 * nla_total_size(sizeof(uint64_t)) /* CTA_COUNTERS_BYTES */
+#endif
 	       + nla_total_size(sizeof(u_int32_t)) /* CTA_TIMEOUT */
 	       + nla_total_size(0) /* CTA_PROTOINFO */
 	       + nla_total_size(0) /* CTA_HELP */
@@ -605,7 +594,7 @@ ctnetlink_dump_table(struct sk_buff *skb, struct netlink_callback *cb)
 
 	rcu_read_lock();
 	last = (struct nf_conn *)cb->args[1];
-	for (; cb->args[0] < init_net.ct.htable_size; cb->args[0]++) {
+	for (; cb->args[0] < nf_conntrack_htable_size; cb->args[0]++) {
 restart:
 		hlist_nulls_for_each_entry_rcu(h, n, &init_net.ct.hash[cb->args[0]],
 					 hnnode) {
@@ -1189,14 +1178,13 @@ static struct nf_conn *
 ctnetlink_create_conntrack(const struct nlattr * const cda[],
 			   struct nf_conntrack_tuple *otuple,
 			   struct nf_conntrack_tuple *rtuple,
-			   u8 u3,
-			   struct user_beancounter *ub)
+			   u8 u3)
 {
 	struct nf_conn *ct;
 	int err = -EINVAL;
 	struct nf_conntrack_helper *helper;
 
-	ct = nf_conntrack_alloc(&init_net, otuple, rtuple, ub, GFP_ATOMIC);
+	ct = nf_conntrack_alloc(&init_net, otuple, rtuple, GFP_ATOMIC);
 	if (IS_ERR(ct))
 		return ERR_PTR(-ENOMEM);
 
@@ -1354,14 +1342,9 @@ ctnetlink_new_conntrack(struct sock *ctnl, struct sk_buff *skb,
 		if (nlh->nlmsg_flags & NLM_F_CREATE) {
 			struct nf_conn *ct;
 			enum ip_conntrack_events events;
-			struct user_beancounter *ub = NULL;
 
-#ifdef CONFIG_BEANCOUNTERS
-			if (skb->sk)
-				ub = sock_bc(skb->sk)->ub;
-#endif
 			ct = ctnetlink_create_conntrack(cda, &otuple,
-							&rtuple, u3, ub);
+							&rtuple, u3);
 			if (IS_ERR(ct)) {
 				err = PTR_ERR(ct);
 				goto out_unlock;

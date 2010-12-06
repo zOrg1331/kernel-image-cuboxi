@@ -54,9 +54,6 @@
 static int drm_version(struct drm_device *dev, void *data,
 		       struct drm_file *file_priv);
 
-#define DRM_IOCTL_DEF(ioctl, _func, _flags) \
-	[DRM_IOCTL_NR(ioctl)] = {.cmd = ioctl, .func = _func, .flags = _flags, .cmd_drv = 0}
-
 /** Ioctl table */
 static struct drm_ioctl_desc drm_ioctls[] = {
 	DRM_IOCTL_DEF(DRM_IOCTL_VERSION, drm_version, 0),
@@ -128,28 +125,26 @@ static struct drm_ioctl_desc drm_ioctls[] = {
 
 	DRM_IOCTL_DEF(DRM_IOCTL_UPDATE_DRAW, drm_update_drawable_info, DRM_AUTH|DRM_MASTER|DRM_ROOT_ONLY),
 
-	DRM_IOCTL_DEF(DRM_IOCTL_GEM_CLOSE, drm_gem_close_ioctl, DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_GEM_FLINK, drm_gem_flink_ioctl, DRM_AUTH|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_GEM_OPEN, drm_gem_open_ioctl, DRM_AUTH|DRM_UNLOCKED),
+	DRM_IOCTL_DEF(DRM_IOCTL_GEM_CLOSE, drm_gem_close_ioctl, 0),
+	DRM_IOCTL_DEF(DRM_IOCTL_GEM_FLINK, drm_gem_flink_ioctl, DRM_AUTH),
+	DRM_IOCTL_DEF(DRM_IOCTL_GEM_OPEN, drm_gem_open_ioctl, DRM_AUTH),
 
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETRESOURCES, drm_mode_getresources, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETCRTC, drm_mode_getcrtc, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_SETCRTC, drm_mode_setcrtc, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CURSOR, drm_mode_cursor_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETGAMMA, drm_mode_gamma_get_ioctl, DRM_MASTER|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_SETGAMMA, drm_mode_gamma_set_ioctl, DRM_MASTER|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETENCODER, drm_mode_getencoder, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETCONNECTOR, drm_mode_getconnector, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_ATTACHMODE, drm_mode_attachmode_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_DETACHMODE, drm_mode_detachmode_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETPROPERTY, drm_mode_getproperty_ioctl, DRM_MASTER | DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_SETPROPERTY, drm_mode_connector_property_set_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETPROPBLOB, drm_mode_getblob_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETFB, drm_mode_getfb, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_ADDFB, drm_mode_addfb, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_RMFB, drm_mode_rmfb, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_PAGE_FLIP, drm_mode_page_flip_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_DIRTYFB, drm_mode_dirtyfb_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW|DRM_UNLOCKED)
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETRESOURCES, drm_mode_getresources, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETCRTC, drm_mode_getcrtc, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_SETCRTC, drm_mode_setcrtc, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CURSOR, drm_mode_cursor_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETGAMMA, drm_mode_gamma_get_ioctl, DRM_MASTER),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_SETGAMMA, drm_mode_gamma_set_ioctl, DRM_MASTER),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETENCODER, drm_mode_getencoder, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETCONNECTOR, drm_mode_getconnector, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_ATTACHMODE, drm_mode_attachmode_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_DETACHMODE, drm_mode_detachmode_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETPROPERTY, drm_mode_getproperty_ioctl, DRM_MASTER | DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_SETPROPERTY, drm_mode_connector_property_set_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETPROPBLOB, drm_mode_getblob_ioctl, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_GETFB, drm_mode_getfb, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_ADDFB, drm_mode_addfb, DRM_MASTER|DRM_CONTROL_ALLOW),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_RMFB, drm_mode_rmfb, DRM_MASTER|DRM_CONTROL_ALLOW),
 };
 
 #define DRM_CORE_IOCTL_COUNT	ARRAY_SIZE( drm_ioctls )
@@ -371,29 +366,6 @@ module_init(drm_core_init);
 module_exit(drm_core_exit);
 
 /**
- * Copy and IOCTL return string to user space
- */
-static int drm_copy_field(char *buf, size_t *buf_len, const char *value)
-{
-	int len;
-
-	/* don't overflow userbuf */
-	len = strlen(value);
-	if (len > *buf_len)
-		len = *buf_len;
-
-	/* let userspace know exact length of driver value (which could be
-	 * larger than the userspace-supplied buffer) */
-	*buf_len = strlen(value);
-
-	/* finally, try filling in the userbuf */
-	if (len && buf)
-		if (copy_to_user(buf, value, len))
-			return -EFAULT;
-	return 0;
-}
-
-/**
  * Get version information
  *
  * \param inode device inode.
@@ -408,21 +380,16 @@ static int drm_version(struct drm_device *dev, void *data,
 		       struct drm_file *file_priv)
 {
 	struct drm_version *version = data;
-	int err;
+	int len;
 
 	version->version_major = dev->driver->major;
 	version->version_minor = dev->driver->minor;
 	version->version_patchlevel = dev->driver->patchlevel;
-	err = drm_copy_field(version->name, &version->name_len,
-			dev->driver->name);
-	if (!err)
-		err = drm_copy_field(version->date, &version->date_len,
-				dev->driver->date);
-	if (!err)
-		err = drm_copy_field(version->desc, &version->desc_len,
-				dev->driver->desc);
+	DRM_COPY(version->name, dev->driver->name);
+	DRM_COPY(version->date, dev->driver->date);
+	DRM_COPY(version->desc, dev->driver->desc);
 
-	return err;
+	return 0;
 }
 
 /**
@@ -437,20 +404,18 @@ static int drm_version(struct drm_device *dev, void *data,
  * Looks up the ioctl function in the ::ioctls table, checking for root
  * previleges if so required, and dispatches to the respective function.
  */
-long drm_ioctl(struct file *filp,
+int drm_ioctl(struct inode *inode, struct file *filp,
 	      unsigned int cmd, unsigned long arg)
 {
 	struct drm_file *file_priv = filp->private_data;
-	struct drm_device *dev;
+	struct drm_device *dev = file_priv->minor->dev;
 	struct drm_ioctl_desc *ioctl;
 	drm_ioctl_t *func;
 	unsigned int nr = DRM_IOCTL_NR(cmd);
 	int retcode = -EINVAL;
 	char stack_kdata[128];
 	char *kdata = NULL;
-	unsigned int usize, asize;
 
-	dev = file_priv->minor->dev;
 	atomic_inc(&dev->ioctl_count);
 	atomic_inc(&dev->counts[_DRM_STAT_IOCTLS]);
 	++file_priv->ioctl_count;
@@ -464,18 +429,11 @@ long drm_ioctl(struct file *filp,
 	    ((nr < DRM_COMMAND_BASE) || (nr >= DRM_COMMAND_END)))
 		goto err_i1;
 	if ((nr >= DRM_COMMAND_BASE) && (nr < DRM_COMMAND_END) &&
-	    (nr < DRM_COMMAND_BASE + dev->driver->num_ioctls)) {
-		u32 drv_size;
+	    (nr < DRM_COMMAND_BASE + dev->driver->num_ioctls))
 		ioctl = &dev->driver->ioctls[nr - DRM_COMMAND_BASE];
-		drv_size = _IOC_SIZE(ioctl->cmd_drv);
-		usize = asize = _IOC_SIZE(cmd);
-		if (drv_size > asize)
-			asize = drv_size;
-	}
 	else if ((nr >= DRM_COMMAND_END) || (nr < DRM_COMMAND_BASE)) {
 		ioctl = &drm_ioctls[nr];
 		cmd = ioctl->cmd;
-		usize = asize = _IOC_SIZE(cmd);
 	} else
 		goto err_i1;
 
@@ -495,10 +453,10 @@ long drm_ioctl(struct file *filp,
 		retcode = -EACCES;
 	} else {
 		if (cmd & (IOC_IN | IOC_OUT)) {
-			if (asize <= sizeof(stack_kdata)) {
+			if (_IOC_SIZE(cmd) <= sizeof(stack_kdata)) {
 				kdata = stack_kdata;
 			} else {
-				kdata = kmalloc(asize, GFP_KERNEL);
+				kdata = kmalloc(_IOC_SIZE(cmd), GFP_KERNEL);
 				if (!kdata) {
 					retcode = -ENOMEM;
 					goto err_i1;
@@ -508,24 +466,16 @@ long drm_ioctl(struct file *filp,
 
 		if (cmd & IOC_IN) {
 			if (copy_from_user(kdata, (void __user *)arg,
-					   usize) != 0) {
+					   _IOC_SIZE(cmd)) != 0) {
 				retcode = -EFAULT;
 				goto err_i1;
 			}
-		} else
-			memset(kdata, 0, usize);
-
-		if (ioctl->flags & DRM_UNLOCKED)
-			retcode = func(dev, kdata, file_priv);
-		else {
-			lock_kernel();
-			retcode = func(dev, kdata, file_priv);
-			unlock_kernel();
 		}
+		retcode = func(dev, kdata, file_priv);
 
 		if (cmd & IOC_OUT) {
 			if (copy_to_user((void __user *)arg, kdata,
-					 usize) != 0)
+					 _IOC_SIZE(cmd)) != 0)
 				retcode = -EFAULT;
 		}
 	}

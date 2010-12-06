@@ -19,9 +19,4 @@ struct termiox
 #define	DTRXOFF		0x0004		/* DTR flow control on input */
 #define DSRXON		0x0008		/* DCD flow control on output */
 
-#ifndef CDTRDSR
-#warning This architecture should implement CDTRDSR
-#define CDTRDSR 0 /* remove this when all architectures have a definition */
-#endif
-
 #endif
