@@ -17,6 +17,9 @@
 /* Require clock free running */
 #define PXA_FLAG_DISABLE_CLOCK_GATING (1<<0)
 
+/* Card is always wired to host, like on-chip emmc */
+#define PXA_FLAG_CARD_PERMANENT	(1<<1)
+
 /* Board design supports 8-bit data on SD/SDIO BUS */
 #define PXA_FLAG_SD_8_BIT_CAPABLE_SLOT (1<<2)
 
