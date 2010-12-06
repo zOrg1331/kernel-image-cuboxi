@@ -69,9 +69,7 @@
 #include <linux/venet.h>
 #include <linux/vzctl.h>
 #include <linux/vzcalluser.h>
-#ifdef CONFIG_VZ_FAIRSCHED
 #include <linux/fairsched.h>
-#endif
 
 #include <linux/virtinfo.h>
 #include <linux/utsrelease.h>
