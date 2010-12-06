@@ -629,6 +629,38 @@ out:
 	return err;
 }
 
+/* ---------------------------------------------------------------------- */
+
+int au_hnotify_reset_br(unsigned int udba, struct au_branch *br, int perm)
+{
+	int err;
+
+	AuDebugOn(!(udba & AuOptMask_UDBA));
+
+	err = 0;
+	if (au_hnotify_op.reset_br)
+		err = au_hnotify_op.reset_br(udba, br, perm);
+
+	return err;
+}
+
+int au_hnotify_init_br(struct au_branch *br, int perm)
+{
+	int err;
+
+	err = 0;
+	if (au_hnotify_op.init_br)
+		err = au_hnotify_op.init_br(br, perm);
+
+	return err;
+}
+
+void au_hnotify_fin_br(struct au_branch *br)
+{
+	if (au_hnotify_op.fin_br)
+		au_hnotify_op.fin_br(br);
+}
+
 static void au_hn_destroy_cache(void)
 {
 	kmem_cache_destroy(au_cachep[AuCache_HNOTIFY]);
@@ -642,7 +674,9 @@ int __init au_hnotify_init(void)
 	err = -ENOMEM;
 	au_cachep[AuCache_HNOTIFY] = AuCache(au_hnotify);
 	if (au_cachep[AuCache_HNOTIFY]) {
-		err = au_hnotify_op.init();
+		err = 0;
+		if (au_hnotify_op.init)
+			err = au_hnotify_op.init();
 		if (unlikely(err))
 			au_hn_destroy_cache();
 	}
@@ -652,7 +686,8 @@ int __init au_hnotify_init(void)
 
 void au_hnotify_fin(void)
 {
-	au_hnotify_op.fin();
+	if (au_hnotify_op.fin)
+		au_hnotify_op.fin();
 	/* cf. au_cache_fin() */
 	if (au_cachep[AuCache_HNOTIFY])
 		au_hn_destroy_cache();
