@@ -17,19 +17,10 @@
 #ifndef _wlc_h_
 #define _wlc_h_
 
-#include <wlc_types.h>
-
-#include <wl_dbg.h>
 #include <wlioctl.h>
-#include <wlc_event.h>
 #include <wlc_phy_hal.h>
 #include <wlc_channel.h>
-#ifdef WLC_SPLIT
-#include <bcm_rpc.h>
-#endif
-
 #include <wlc_bsscfg.h>
-
 #include <wlc_scb.h>
 
 #define MA_WINDOW_SZ		8	/* moving average window size */
@@ -220,15 +211,11 @@ extern const u8 prio2fifo[];
  * (some platforms return all 0).
  * If clocks are present, call the sb routine which will figure out if the device is removed.
  */
-#ifdef WLC_HIGH_ONLY
-#define DEVICEREMOVED(wlc)	(!wlc->device_present)
-#else
 #define DEVICEREMOVED(wlc)      \
 	((wlc->hw->clk) ?   \
 	((R_REG(wlc->hw->osh, &wlc->hw->regs->maccontrol) & \
 	(MCTL_PSM_JMP_0 | MCTL_IHR_EN)) != MCTL_IHR_EN) : \
 	(si_deviceremoved(wlc->hw->sih)))
-#endif				/* WLC_HIGH_ONLY */
 
 #define WLCWLUNIT(wlc)		((wlc)->pub->unit)
 
@@ -316,13 +303,11 @@ typedef struct wlc_stf {
  * core state (mac)
  */
 typedef struct wlccore {
-#ifdef WLC_LOW
 	uint coreidx;		/* # sb enumerated core */
 
 	/* fifo */
 	uint *txavail[NFIFO];	/* # tx descriptors available */
 	s16 txpktpend[NFIFO];	/* tx admission control */
-#endif				/* WLC_LOW */
 
 	macstat_t *macstat_snapshot;	/* mac hw prev read values */
 } wlccore_t;
@@ -416,7 +401,6 @@ struct wlc_if {
 /* flags for the interface */
 #define WLC_IF_LINKED		0x02	/* this interface is linked to a wl_if */
 
-#ifdef WLC_LOW
 typedef struct wlc_hwband {
 	int bandtype;		/* WLC_BAND_2G, WLC_BAND_5G */
 	uint bandunit;		/* bandstate[] index */
@@ -433,20 +417,15 @@ typedef struct wlc_hwband {
 	wlc_phy_t *pi;		/* pointer to phy specific information */
 	bool abgphy_encore;
 } wlc_hwband_t;
-#endif				/* WLC_LOW */
 
 struct wlc_hw_info {
-#ifdef WLC_SPLIT
-	rpc_info_t *rpc;	/* Handle to RPC module */
-#endif
-	osl_t *osh;		/* pointer to os handle */
+	struct osl_info *osh;		/* pointer to os handle */
 	bool _piomode;		/* true if pio mode */
 	wlc_info_t *wlc;
 
 	/* fifo */
 	hnddma_t *di[NFIFO];	/* hnddma handles, per fifo */
 
-#ifdef WLC_LOW
 	uint unit;		/* device instance number */
 
 	/* version info */
@@ -501,27 +480,14 @@ struct wlc_hw_info {
 	bool phyclk;		/* phy is out of reset and has clock */
 	bool dma_lpbk;		/* core is in DMA loopback */
 
-#ifdef BCMSDIO
-	void *sdh;
-#endif
 	bool ucode_loaded;	/* true after ucode downloaded */
 
-#ifdef WLC_LOW_ONLY
-	struct wl_timer *wdtimer;	/* timer for watchdog routine */
-	struct ether_addr orig_etheraddr;	/* original hw ethernet address */
-	u16 rpc_dngl_agg;	/* rpc agg control for dongle */
-	u32 mem_required_def;	/* memory required to replenish RX DMA ring */
-	u32 mem_required_lower;	/* memory required with lower RX bound */
-	u32 mem_required_least;	/* minimum memory requirement to handle RX */
-
-#endif				/* WLC_LOW_ONLY */
 
 	u8 hw_stf_ss_opmode;	/* STF single stream operation mode */
 	u8 antsel_type;	/* Type of boardlevel mimo antenna switch-logic
 				 * 0 = N/A, 1 = 2x4 board, 2 = 2x3 CB2 board
 				 */
 	u32 antsel_avail;	/* put antsel_info_t here if more info is needed */
-#endif				/* WLC_LOW */
 };
 
 /* TX Queue information
@@ -542,14 +508,11 @@ typedef struct wlc_txq_info {
  */
 struct wlc_info {
 	wlc_pub_t *pub;		/* pointer to wlc public state */
-	osl_t *osh;		/* pointer to os handle */
+	struct osl_info *osh;		/* pointer to os handle */
 	struct wl_info *wl;	/* pointer to os-specific private state */
 	d11regs_t *regs;	/* pointer to device registers */
 
 	wlc_hw_info_t *hw;	/* HW related state used primarily by BMAC */
-#ifdef WLC_SPLIT
-	rpc_info_t *rpc;	/* Handle to RPC module */
-#endif
 
 	/* clock */
 	int clkreq_override;	/* setting for clkreq for PCIE : Auto, 0, 1 */
@@ -584,12 +547,6 @@ struct wlc_info {
 	s8 txpwr_local_max;	/* regulatory local txpwr max */
 	u8 txpwr_local_constraint;	/* local power contraint in dB */
 
-#ifdef WLC_HIGH_ONLY
-	rpctx_info_t *rpctx;	/* RPC TX module */
-	bool reset_bmac_pending;	/* bmac reset is in progressing */
-	u32 rpc_agg;		/* host agg: bit 16-31, bmac agg: bit 0-15 */
-	u32 rpc_msglevel;	/* host rpc: bit 16-31, bmac rpc: bit 0-15 */
-#endif
 
 	ampdu_info_t *ampdu;	/* ampdu module handler */
 	antsel_info_t *asi;	/* antsel module handler */
@@ -842,23 +799,9 @@ struct antsel_info {
 #define IS_MBAND_UNLOCKED(wlc) \
 	((NBANDS(wlc) > 1) && !(wlc)->bandlocked)
 
-#ifdef WLC_LOW
 #define WLC_BAND_PI_RADIO_CHANSPEC wlc_phy_chanspec_get(wlc->band->pi)
-#else
-#define WLC_BAND_PI_RADIO_CHANSPEC (wlc->chanspec)
-#endif
 
 /* sum the individual fifo tx pending packet counts */
-#if defined(WLC_HIGH_ONLY)
-#define TXPKTPENDTOT(wlc)		(wlc_rpctx_txpktpend((wlc)->rpctx, 0, true))
-#define TXPKTPENDGET(wlc, fifo)		(wlc_rpctx_txpktpend((wlc)->rpctx, (fifo), false))
-#define TXPKTPENDINC(wlc, fifo, val)	(wlc_rpctx_txpktpendinc((wlc)->rpctx, (fifo), (val)))
-#define TXPKTPENDDEC(wlc, fifo, val)	(wlc_rpctx_txpktpenddec((wlc)->rpctx, (fifo), (val)))
-#define TXPKTPENDCLR(wlc, fifo)		(wlc_rpctx_txpktpendclr((wlc)->rpctx, (fifo)))
-#define TXAVAIL(wlc, fifo)		(wlc_rpctx_txavail((wlc)->rpctx, (fifo)))
-#define GETNEXTTXP(wlc, _queue)		(wlc_rpctx_getnexttxp((wlc)->rpctx, (_queue)))
-
-#else
 #define	TXPKTPENDTOT(wlc) ((wlc)->core->txpktpend[0] + (wlc)->core->txpktpend[1] + \
 	(wlc)->core->txpktpend[2] + (wlc)->core->txpktpend[3])
 #define TXPKTPENDGET(wlc, fifo)		((wlc)->core->txpktpend[(fifo)])
@@ -868,20 +811,20 @@ struct antsel_info {
 #define TXAVAIL(wlc, fifo)		(*(wlc)->core->txavail[(fifo)])
 #define GETNEXTTXP(wlc, _queue)								\
 		dma_getnexttxp((wlc)->hw->di[(_queue)], HNDDMA_RANGE_TRANSMITTED)
-#endif				/* WLC_HIGH_ONLY */
 
 #define WLC_IS_MATCH_SSID(wlc, ssid1, ssid2, len1, len2) \
-	((len1 == len2) && !bcmp(ssid1, ssid2, len1))
+	((len1 == len2) && !memcmp(ssid1, ssid2, len1))
 
-/* API shared by both WLC_HIGH and WLC_LOW driver */
 extern void wlc_high_dpc(wlc_info_t *wlc, u32 macintstatus);
 extern void wlc_fatal_error(wlc_info_t *wlc);
 extern void wlc_bmac_rpc_watchdog(wlc_info_t *wlc);
-extern void wlc_recv(wlc_info_t *wlc, void *p);
+extern void wlc_recv(wlc_info_t *wlc, struct sk_buff *p);
 extern bool wlc_dotxstatus(wlc_info_t *wlc, tx_status_t *txs, u32 frm_tx2);
-extern void wlc_txfifo(wlc_info_t *wlc, uint fifo, void *p, bool commit,
-		       s8 txpktpend);
+extern void wlc_txfifo(wlc_info_t *wlc, uint fifo, struct sk_buff *p,
+		       bool commit, s8 txpktpend);
 extern void wlc_txfifo_complete(wlc_info_t *wlc, uint fifo, s8 txpktpend);
+extern void wlc_txq_enq(void *ctx, struct scb *scb, struct sk_buff *sdu,
+			uint prec);
 extern void wlc_info_init(wlc_info_t *wlc, int unit);
 extern void wlc_print_txstatus(tx_status_t *txs);
 extern int wlc_xmtfifo_sz_get(wlc_info_t *wlc, uint fifo, uint *blocks);
@@ -917,10 +860,8 @@ extern void wlc_print_txdesc(d11txh_t *txh);
 extern void wlc_print_dot11_mac_hdr(u8 *buf, int len);
 #endif
 
-#ifdef WLC_LOW
 extern void wlc_setxband(wlc_hw_info_t *wlc_hw, uint bandunit);
 extern void wlc_coredisable(wlc_hw_info_t *wlc_hw);
-#endif
 
 extern bool wlc_valid_rate(wlc_info_t *wlc, ratespec_t rate, int band,
 			   bool verbose);
@@ -940,7 +881,7 @@ extern void wlc_txflowcontrol_override(wlc_info_t *wlc, wlc_txq_info_t *qi,
 extern bool wlc_txflowcontrol_prio_isset(wlc_info_t *wlc, wlc_txq_info_t *qi,
 					 int prio);
 extern void wlc_send_q(wlc_info_t *wlc, wlc_txq_info_t *qi);
-extern int wlc_prep_pdu(wlc_info_t *wlc, void *pdu, uint *fifo);
+extern int wlc_prep_pdu(wlc_info_t *wlc, struct sk_buff *pdu, uint *fifo);
 
 extern u16 wlc_calc_lsig_len(wlc_info_t *wlc, ratespec_t ratespec,
 				uint mac_len);
@@ -984,8 +925,8 @@ extern bool wlc_ismpc(wlc_info_t *wlc);
 extern bool wlc_is_non_delay_mpc(wlc_info_t *wlc);
 extern void wlc_radio_mpc_upd(wlc_info_t *wlc);
 extern bool wlc_prec_enq(wlc_info_t *wlc, struct pktq *q, void *pkt, int prec);
-extern bool wlc_prec_enq_head(wlc_info_t *wlc, struct pktq *q, void *pkt,
-			      int prec, bool head);
+extern bool wlc_prec_enq_head(wlc_info_t *wlc, struct pktq *q,
+			      struct sk_buff *pkt, int prec, bool head);
 extern u16 wlc_phytxctl1_calc(wlc_info_t *wlc, ratespec_t rspec);
 extern void wlc_compute_plcp(wlc_info_t *wlc, ratespec_t rate, uint length,
 			     u8 *plcp);
@@ -1014,8 +955,6 @@ extern void wlc_mimops_action_ht_send(wlc_info_t *wlc, wlc_bsscfg_t *bsscfg,
 extern void wlc_switch_shortslot(wlc_info_t *wlc, bool shortslot);
 extern void wlc_set_bssid(wlc_bsscfg_t *cfg);
 extern void wlc_edcf_setparams(wlc_bsscfg_t *cfg, bool suspend);
-extern void wlc_wme_setparams(wlc_info_t *wlc, u16 aci, void *arg,
-			      bool suspend);
 
 extern void wlc_set_ratetable(wlc_info_t *wlc);
 extern int wlc_set_mac(wlc_bsscfg_t *cfg);
