@@ -240,7 +240,7 @@ ABS_MT_TOOL_TYPE
 The type of approaching tool. A lot of kernel drivers cannot distinguish
 between different tool types, such as a finger or a pen. In such cases, the
 event should be omitted. The protocol currently supports MT_TOOL_FINGER and
-MT_TOOL_PEN [2].
+MT_TOOL_PEN and MT_TOOL_ENVELOPE [2].
 
 ABS_MT_BLOB_ID
 
@@ -312,7 +312,8 @@ where examples can be found.
 [1] With the extension ABS_MT_APPROACH_X and ABS_MT_APPROACH_Y, the
 difference between the contact position and the approaching tool position
 could be used to derive tilt.
-[2] The list can of course be extended.
+[2] ABS_MT_ENVELOPE contacts represent an envelope of the contacts rather
+than the actual contacts. Used with older, not fully MT capable, devices.
 [3] Multitouch X driver project: http://bitmath.org/code/multitouch/.
 [4] See the section on event computation.
 [5] See the section on finger tracking.
