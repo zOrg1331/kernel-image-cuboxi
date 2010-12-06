@@ -10,6 +10,7 @@ extern void unix_inflight(struct file *fp);
 extern void unix_notinflight(struct file *fp);
 extern void unix_gc(void);
 extern void wait_for_unix_gc(void);
+extern void unix_destruct_fds(struct sk_buff *skb);
 
 #define UNIX_HASH_SIZE	256
 
@@ -21,6 +22,9 @@ struct unix_address {
 	unsigned	hash;
 	struct sockaddr_un name[0];
 };
+
+int unix_bind_path(struct sock *, struct dentry *, struct vfsmount *);
+int unix_attach_addr(struct sock *, struct sockaddr_un *, int);
 
 struct unix_skb_parms {
 	struct ucred		creds;		/* Skb credentials	*/

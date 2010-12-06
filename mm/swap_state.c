@@ -18,8 +18,13 @@
 #include <linux/pagevec.h>
 #include <linux/migrate.h>
 #include <linux/page_cgroup.h>
+#include <linux/mmgang.h>
 
 #include <asm/pgtable.h>
+
+#include <bc/vmpages.h>
+#include <bc/io_acct.h>
+#include <bc/kmem.h>
 
 /*
  * swapper_space is a fiction, retained to simplify the path through
@@ -46,15 +51,17 @@ struct address_space swapper_space = {
 	.i_mmap_nonlinear = LIST_HEAD_INIT(swapper_space.i_mmap_nonlinear),
 	.backing_dev_info = &swap_backing_dev_info,
 };
+EXPORT_SYMBOL(swapper_space);
 
 #define INC_CACHE_INFO(x)	do { swap_cache_info.x++; } while (0)
 
-static struct {
+struct {
 	unsigned long add_total;
 	unsigned long del_total;
 	unsigned long find_success;
 	unsigned long find_total;
 } swap_cache_info;
+EXPORT_SYMBOL(swap_cache_info);
 
 void show_swap_cache_info(void)
 {
@@ -118,6 +125,7 @@ int add_to_swap_cache(struct page *page, swp_entry_t entry, gfp_t gfp_mask)
 	}
 	return error;
 }
+EXPORT_SYMBOL(add_to_swap_cache);
 
 /*
  * This must be called only on pages that have
@@ -140,11 +148,12 @@ void __delete_from_swap_cache(struct page *page)
 /**
  * add_to_swap - allocate swap space for a page
  * @page: page we want to move to swap
+ * @ub: user_beancounter to charge swap-entry
  *
  * Allocate swap space for the page and add the page to the
  * swap cache.  Caller needs to hold the page lock. 
  */
-int add_to_swap(struct page *page)
+int add_to_swap(struct page *page, struct user_beancounter *ub)
 {
 	swp_entry_t entry;
 	int err;
@@ -152,9 +161,15 @@ int add_to_swap(struct page *page)
 	VM_BUG_ON(!PageLocked(page));
 	VM_BUG_ON(!PageUptodate(page));
 
-	entry = get_swap_page();
+	entry = get_swap_page(ub);
 	if (!entry.val)
 		return 0;
+
+	if (unlikely(PageTransHuge(page)))
+		if (unlikely(split_huge_page(page))) {
+			swapcache_free(entry, NULL);
+			return 0;
+		}
 
 	/*
 	 * Radix-tree node allocations from PF_MEMALLOC contexts could
@@ -182,6 +197,7 @@ int add_to_swap(struct page *page)
 		return 0;
 	}
 }
+EXPORT_SYMBOL(add_to_swap);
 
 /*
  * This must be called only on pages that have
@@ -329,6 +345,14 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 			/*
 			 * Initiate read into locked page and return.
 			 */
+
+#ifdef CONFIG_BC_SWAP_ACCOUNTING
+			gang_add_user_page(new_page,
+					&get_swap_ub(entry)->gang_set);
+#else
+			gang_add_user_page(new_page, vma->vm_mm ?
+					get_mm_gang(vma->vm_mm) : &init_gang_set);
+#endif
 			lru_cache_add_anon(new_page);
 			swap_readpage(new_page);
 			return new_page;
@@ -347,6 +371,7 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 		page_cache_release(new_page);
 	return found_page;
 }
+EXPORT_SYMBOL(read_swap_cache_async);
 
 /**
  * swapin_readahead - swap in pages in hope we need them soon

@@ -26,6 +26,7 @@
 #include <linux/syscalls.h>
 #include <linux/security.h>
 #include <linux/pid_namespace.h>
+#include <bc/beancounter.h>
 
 int set_task_ioprio(struct task_struct *task, int ioprio)
 {
@@ -80,6 +81,9 @@ SYSCALL_DEFINE3(ioprio_set, int, which, int, who, int, ioprio)
 	struct user_struct *user;
 	struct pid *pgrp;
 	int ret;
+
+	if (!ve_is_super(get_exec_env()))
+		return -EPERM;
 
 	switch (class) {
 		case IOPRIO_CLASS_RT:
@@ -137,16 +141,24 @@ SYSCALL_DEFINE3(ioprio_set, int, which, int, who, int, ioprio)
 			if (!user)
 				break;
 
-			do_each_thread(g, p) {
+			do_each_thread_all(g, p) {
 				if (__task_cred(p)->uid != who)
 					continue;
 				ret = set_task_ioprio(p, ioprio);
 				if (ret)
 					goto free_uid;
-			} while_each_thread(g, p);
+			} while_each_thread_all(g, p);
 free_uid:
 			if (who)
 				free_uid(user);
+			break;
+		case IOPRIO_WHO_UBC:
+			if (class != IOPRIO_CLASS_BE) {
+				ret = -ERANGE;
+				break;
+			}
+
+			ret = ub_set_ioprio(who, data);
 			break;
 		default:
 			ret = -EINVAL;
@@ -230,7 +242,7 @@ SYSCALL_DEFINE2(ioprio_get, int, which, int, who)
 			if (!user)
 				break;
 
-			do_each_thread(g, p) {
+			do_each_thread_ve(g, p) {
 				if (__task_cred(p)->uid != user->uid)
 					continue;
 				tmpio = get_task_ioprio(p);
@@ -240,7 +252,7 @@ SYSCALL_DEFINE2(ioprio_get, int, which, int, who)
 					ret = tmpio;
 				else
 					ret = ioprio_best(ret, tmpio);
-			} while_each_thread(g, p);
+			} while_each_thread_ve(g, p);
 
 			if (who)
 				free_uid(user);

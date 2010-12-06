@@ -30,6 +30,7 @@
 #include <linux/syscalls.h>
 #include <linux/uio.h>
 #include <linux/security.h>
+#include <linux/virtinfo.h>
 
 /*
  * Attempt to steal a page from a pipe buffer. This should perhaps go into
@@ -100,6 +101,7 @@ static int page_cache_pipe_buf_confirm(struct pipe_inode_info *pipe,
 	int err;
 
 	if (!PageUptodate(page)) {
+		virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_PREPARE, NULL);
 		lock_page(page);
 
 		/*
@@ -370,12 +372,17 @@ __generic_file_splice_read(struct file *in, loff_t *ppos,
 			 * for an in-flight io page
 			 */
 			if (flags & SPLICE_F_NONBLOCK) {
-				if (!trylock_page(page)) {
+				if ((virtinfo_notifier_call(VITYPE_IO,
+						VIRTINFO_IO_CONGESTION, NULL) &
+							NOTIFY_FAIL) ||
+						!trylock_page(page)) {
 					error = -EAGAIN;
 					break;
 				}
-			} else
+			} else {
+				virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_PREPARE, NULL);
 				lock_page(page);
+			}
 
 			/*
 			 * Page was truncated, or invalidated by the
@@ -1051,8 +1058,8 @@ EXPORT_SYMBOL(generic_splice_sendpage);
 /*
  * Attempt to initiate a splice from pipe to file.
  */
-long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
-		    loff_t *ppos, size_t len, unsigned int flags)
+static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
+			   loff_t *ppos, size_t len, unsigned int flags)
 {
 	ssize_t (*splice_write)(struct pipe_inode_info *, struct file *,
 				loff_t *, size_t, unsigned int);
@@ -1074,14 +1081,13 @@ long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
 
 	return splice_write(pipe, out, ppos, len, flags);
 }
-EXPORT_SYMBOL(do_splice_from);
 
 /*
  * Attempt to initiate a splice from a file to a pipe.
  */
-long do_splice_to(struct file *in, loff_t *ppos,
-		  struct pipe_inode_info *pipe, size_t len,
-		  unsigned int flags)
+static long do_splice_to(struct file *in, loff_t *ppos,
+			 struct pipe_inode_info *pipe, size_t len,
+			 unsigned int flags)
 {
 	ssize_t (*splice_read)(struct file *, loff_t *,
 			       struct pipe_inode_info *, size_t, unsigned int);
@@ -1100,7 +1106,6 @@ long do_splice_to(struct file *in, loff_t *ppos,
 
 	return splice_read(in, ppos, pipe, len, flags);
 }
-EXPORT_SYMBOL(do_splice_to);
 
 /**
  * splice_direct_to_actor - splices data directly between two non-pipes
@@ -1265,6 +1270,7 @@ long do_splice_direct(struct file *in, loff_t *ppos, struct file *out,
 
 	return ret;
 }
+EXPORT_SYMBOL(do_splice_direct);
 
 static int splice_pipe_to_pipe(struct pipe_inode_info *ipipe,
 			       struct pipe_inode_info *opipe,

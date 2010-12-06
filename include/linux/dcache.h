@@ -102,6 +102,7 @@ struct dentry {
 	struct qstr d_name;
 
 	struct list_head d_lru;		/* LRU list */
+	struct list_head d_bclru;		/* LRU list */
 	/*
 	 * d_child and d_rcu can share memory
 	 */
@@ -116,9 +117,13 @@ struct dentry {
 	struct super_block *d_sb;	/* The root of the dentry tree */
 	void *d_fsdata;			/* fs-specific data */
 
+	struct user_beancounter *d_ub;
 	unsigned char d_iname[DNAME_INLINE_LEN_MIN];	/* small names */
 };
 
+#define DNAME_INLINE_LEN (sizeof(struct dentry)-offsetof(struct dentry,d_iname))
+
+extern struct kmem_cache *dentry_cache;
 /*
  * dentry->d_lock spinlock nesting subclasses:
  *
@@ -186,6 +191,8 @@ d_iput:		no		no		no       yes
 
 #define DCACHE_FSNOTIFY_PARENT_WATCHED	0x0080 /* Parent inode is watched by some fsnotify listener */
 
+#define DCACHE_BCTOP		0x0400
+
 extern spinlock_t dcache_lock;
 extern seqlock_t rename_lock;
 
@@ -243,6 +250,7 @@ extern struct dentry * d_obtain_alias(struct inode *);
 extern void shrink_dcache_sb(struct super_block *);
 extern void shrink_dcache_parent(struct dentry *);
 extern void shrink_dcache_for_umount(struct super_block *);
+extern int shrink_dcache_ub(struct user_beancounter *, long nr);
 extern int d_invalidate(struct dentry *);
 
 /* only used at mount-time */
@@ -314,6 +322,7 @@ extern char *dynamic_dname(struct dentry *, char *, int, const char *, ...);
 extern char *__d_path(const struct path *path, struct path *root, char *, int);
 extern char *d_path(const struct path *, char *, int);
 extern char *dentry_path(struct dentry *, char *, int);
+extern int d_root_check(struct path *path);
 
 /* Allocation counts.. */
 

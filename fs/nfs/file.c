@@ -161,14 +161,17 @@ static int nfs_revalidate_file_size(struct inode *inode, struct file *filp)
 	struct nfs_server *server = NFS_SERVER(inode);
 	struct nfs_inode *nfsi = NFS_I(inode);
 
-	if (server->flags & NFS_MOUNT_NOAC)
-		goto force_reval;
+	if (nfs_have_delegated_attributes(inode))
+		goto out_noreval;
+
 	if (filp->f_flags & O_DIRECT)
 		goto force_reval;
-	if (nfsi->npages != 0)
-		return 0;
-	if (!(nfsi->cache_validity & NFS_INO_REVAL_PAGECACHE) && !nfs_attribute_timeout(inode))
-		return 0;
+	if (nfsi->cache_validity & NFS_INO_REVAL_PAGECACHE)
+		goto force_reval;
+	if (nfs_attribute_timeout(inode))
+		goto force_reval;
+out_noreval:
+	return 0;
 force_reval:
 	return __nfs_revalidate_inode(server, inode);
 }
@@ -486,6 +489,9 @@ static int nfs_release_page(struct page *page, gfp_t gfp)
 {
 	dfprintk(PAGECACHE, "NFS: release_page(%p)\n", page);
 
+	/* Only do I/O if gfp is a superset of GFP_KERNEL */
+	if ((gfp & GFP_KERNEL) == GFP_KERNEL)
+		nfs_wb_page(page->mapping->host, page);
 	/* If PagePrivate() is set, then the page is not freeable */
 	if (PagePrivate(page))
 		return 0;
@@ -725,7 +731,8 @@ static int do_unlk(struct file *filp, int cmd, struct file_lock *fl)
 	 * 	still need to complete the unlock.
 	 */
 	/* Use local locking if mounted with "-onolock" */
-	if (!(NFS_SERVER(inode)->flags & NFS_MOUNT_NONLM))
+	if (!(NFS_SERVER(inode)->flags & NFS_MOUNT_NONLM) &&
+			!(fl->fl_flags & FL_LOCAL))
 		status = NFS_PROTO(inode)->lock(filp, cmd, fl);
 	else
 		status = do_vfs_lock(filp, fl);
@@ -746,7 +753,8 @@ static int do_setlk(struct file *filp, int cmd, struct file_lock *fl)
 		goto out;
 
 	/* Use local locking if mounted with "-onolock" */
-	if (!(NFS_SERVER(inode)->flags & NFS_MOUNT_NONLM))
+	if (!(NFS_SERVER(inode)->flags & NFS_MOUNT_NONLM) &&
+			!(fl->fl_flags & FL_LOCAL))
 		status = NFS_PROTO(inode)->lock(filp, cmd, fl);
 	else
 		status = do_vfs_lock(filp, fl);

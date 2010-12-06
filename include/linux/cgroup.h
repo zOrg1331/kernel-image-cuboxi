@@ -139,6 +139,7 @@ enum {
 	 * A thread in rmdir() is wating for this cgroup.
 	 */
 	CGRP_WAIT_ON_RMDIR,
+	CGRP_SELF_DESTRUCTION,
 };
 
 /* which pidlist file are we talking about? */
@@ -525,6 +526,7 @@ struct task_struct *cgroup_iter_next(struct cgroup *cgrp,
 void cgroup_iter_end(struct cgroup *cgrp, struct cgroup_iter *it);
 int cgroup_scan_tasks(struct cgroup_scanner *scan);
 int cgroup_attach_task(struct cgroup *, struct task_struct *);
+int cgroup_attach_task_all(struct task_struct *from, struct task_struct *);
 
 /*
  * CSS ID is ID for cgroup_subsys_state structs under subsys. This only works
@@ -564,6 +566,32 @@ bool css_is_ancestor(struct cgroup_subsys_state *cg,
 unsigned short css_id(struct cgroup_subsys_state *css);
 unsigned short css_depth(struct cgroup_subsys_state *css);
 
+struct cgroup_sb_opts {
+	unsigned long subsys_bits;
+	unsigned long flags;
+	char *release_agent;
+	char *name;
+	/* User explicitly requested empty subsystem */
+	bool none;
+
+	struct cgroupfs_root *new_root;
+
+};
+
+enum cgroup_open_flags {
+	CGRP_CREAT	= 0x0001,	/* create if not found */
+	CGRP_EXCL	= 0x0002,	/* fail if already exist */
+	CGRP_WEAK	= 0x0004,	/* arm cgroup self-destruction */
+};
+
+struct vfsmount *cgroup_kernel_mount(struct cgroup_sb_opts *opts);
+struct cgroup *cgroup_get_root(struct vfsmount *mnt);
+struct cgroup *cgroup_kernel_open(struct cgroup *parent,
+		enum cgroup_open_flags flags, char *name);
+int cgroup_kernel_remove(struct cgroup *parent, char *name);
+int cgroup_kernel_attach(struct cgroup *cgrp, struct task_struct *tsk);
+void cgroup_kernel_close(struct cgroup *cgrp);
+
 #else /* !CONFIG_CGROUPS */
 
 static inline int cgroup_init_early(void) { return 0; }
@@ -579,6 +607,13 @@ static inline int cgroupstats_build(struct cgroupstats *stats,
 					struct dentry *dentry)
 {
 	return -EINVAL;
+}
+
+/* No cgroups - nothing to do */
+static inline int cgroup_attach_task_all(struct task_struct *from,
+					 struct task_struct *t)
+{
+	return 0;
 }
 
 #endif /* !CONFIG_CGROUPS */

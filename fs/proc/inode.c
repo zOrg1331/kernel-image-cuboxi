@@ -442,22 +442,29 @@ static const struct file_operations proc_reg_file_ops_no_compat = {
 #endif
 
 struct inode *proc_get_inode(struct super_block *sb, unsigned int ino,
-				struct proc_dir_entry *de)
+		struct proc_dir_entry *de, struct proc_dir_entry *lde)
 {
 	struct inode * inode;
+	struct proc_dir_entry *de_lnk = de;
 
 	inode = iget_locked(sb, ino);
 	if (!inode)
 		return NULL;
 	if (inode->i_state & I_NEW) {
+		if (PROC_IS_HARDLINK(de_lnk))
+			de = de_lnk->data;
+
 		inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME;
 		PROC_I(inode)->fd = 0;
 		PROC_I(inode)->pde = de;
+#ifdef CONFIG_VE
+		PROC_I(inode)->lpde = lde;
+#endif
 
-		if (de->mode) {
-			inode->i_mode = de->mode;
-			inode->i_uid = de->uid;
-			inode->i_gid = de->gid;
+		if (de_lnk->mode) {
+			inode->i_mode = de_lnk->mode;
+			inode->i_uid = de_lnk->uid;
+			inode->i_gid = de_lnk->gid;
 		}
 		if (de->size)
 			inode->i_size = de->size;
@@ -479,8 +486,12 @@ struct inode *proc_get_inode(struct super_block *sb, unsigned int ino,
 			}
 		}
 		unlock_new_inode(inode);
+		if (PROC_IS_HARDLINK(de_lnk)) {
+			de_get(de);
+			de_put(de_lnk);;
+		}
 	} else
-	       de_put(de);
+	       de_put(de_lnk);
 	return inode;
 }			
 
@@ -494,9 +505,11 @@ int proc_fill_super(struct super_block *s)
 	s->s_magic = PROC_SUPER_MAGIC;
 	s->s_op = &proc_sops;
 	s->s_time_gran = 1;
-	
-	de_get(&proc_root);
-	root_inode = proc_get_inode(s, PROC_ROOT_INO, &proc_root);
+
+	de_get(get_exec_env()->proc_root);
+	de_get(&glob_proc_root);
+	root_inode = proc_get_inode(s, PROC_ROOT_INO,
+			&glob_proc_root, get_exec_env()->proc_root);
 	if (!root_inode)
 		goto out_no_root;
 	root_inode->i_uid = 0;

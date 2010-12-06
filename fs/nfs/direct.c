@@ -48,6 +48,7 @@
 #include <linux/nfs_fs.h>
 #include <linux/nfs_page.h>
 #include <linux/sunrpc/clnt.h>
+#include <linux/task_io_accounting_ops.h>
 
 #include <asm/system.h>
 #include <asm/uaccess.h>
@@ -342,6 +343,7 @@ static ssize_t nfs_direct_read_schedule_segment(struct nfs_direct_req *dreq,
 		data->res.fattr = &data->fattr;
 		data->res.eof = 0;
 		data->res.count = bytes;
+		nfs_fattr_init(&data->fattr);
 		msg.rpc_argp = &data->args;
 		msg.rpc_resp = &data->res;
 
@@ -418,6 +420,8 @@ static ssize_t nfs_direct_read(struct kiocb *iocb, const struct iovec *iov,
 	struct inode *inode = iocb->ki_filp->f_mapping->host;
 	struct nfs_direct_req *dreq;
 
+	virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_PREPARE, NULL);
+
 	dreq = nfs_direct_req_alloc();
 	if (!dreq)
 		return -ENOMEM;
@@ -431,6 +435,9 @@ static ssize_t nfs_direct_read(struct kiocb *iocb, const struct iovec *iov,
 	if (!result)
 		result = nfs_direct_wait(dreq);
 	nfs_direct_req_release(dreq);
+
+	if (result > 0)
+		task_io_account_read(result);
 
 	return result;
 }
@@ -575,6 +582,7 @@ static void nfs_direct_commit_schedule(struct nfs_direct_req *dreq)
 	data->res.count = 0;
 	data->res.fattr = &data->fattr;
 	data->res.verf = &data->verf;
+	nfs_fattr_init(&data->fattr);
 
 	NFS_PROTO(data->inode)->commit_setup(data, &msg);
 
@@ -766,6 +774,7 @@ static ssize_t nfs_direct_write_schedule_segment(struct nfs_direct_req *dreq,
 		data->res.fattr = &data->fattr;
 		data->res.count = bytes;
 		data->res.verf = &data->verf;
+		nfs_fattr_init(&data->fattr);
 
 		task_setup_data.task = &data->task;
 		task_setup_data.callback_data = data;
@@ -847,6 +856,8 @@ static ssize_t nfs_direct_write(struct kiocb *iocb, const struct iovec *iov,
 	size_t wsize = NFS_SERVER(inode)->wsize;
 	int sync = NFS_UNSTABLE;
 
+	virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_PREPARE, NULL);
+
 	dreq = nfs_direct_req_alloc();
 	if (!dreq)
 		return -ENOMEM;
@@ -864,6 +875,9 @@ static ssize_t nfs_direct_write(struct kiocb *iocb, const struct iovec *iov,
 	if (!result)
 		result = nfs_direct_wait(dreq);
 	nfs_direct_req_release(dreq);
+
+	if (result > 0)
+		task_io_account_write(result);
 
 	return result;
 }

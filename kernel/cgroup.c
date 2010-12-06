@@ -22,6 +22,7 @@
  *  distribution for more details.
  */
 
+#include <linux/module.h>
 #include <linux/cgroup.h>
 #include <linux/ctype.h>
 #include <linux/errno.h>
@@ -177,12 +178,19 @@ enum {
 	ROOT_NOPREFIX, /* mounted subsystems have no named prefix */
 };
 
+static int cgroup_is_disposable(const struct cgroup *cgrp)
+{
+	return (cgrp->flags & ((1 << CGRP_NOTIFY_ON_RELEASE) |
+				(1 << CGRP_SELF_DESTRUCTION))) > 0;
+}
+
 static int cgroup_is_releasable(const struct cgroup *cgrp)
 {
 	const int bits =
 		(1 << CGRP_RELEASABLE) |
-		(1 << CGRP_NOTIFY_ON_RELEASE);
-	return (cgrp->flags & bits) == bits;
+		(1 << CGRP_NOTIFY_ON_RELEASE) |
+		(1 << CGRP_SELF_DESTRUCTION);
+	return (cgrp->flags & bits) > (1 << CGRP_RELEASABLE);
 }
 
 static int notify_on_release(const struct cgroup *cgrp)
@@ -306,7 +314,7 @@ static void __put_css_set(struct css_set *cg, int taskexit)
 		list_del(&link->cg_link_list);
 		list_del(&link->cgrp_link_list);
 		if (atomic_dec_and_test(&cgrp->count) &&
-		    notify_on_release(cgrp)) {
+		    cgroup_is_disposable(cgrp)) {
 			if (taskexit)
 				set_bit(CGRP_RELEASABLE, &cgrp->flags);
 			check_for_release(cgrp);
@@ -959,18 +967,6 @@ static int cgroup_show_options(struct seq_file *seq, struct vfsmount *vfs)
 	return 0;
 }
 
-struct cgroup_sb_opts {
-	unsigned long subsys_bits;
-	unsigned long flags;
-	char *release_agent;
-	char *name;
-	/* User explicitly requested empty subsystem */
-	bool none;
-
-	struct cgroupfs_root *new_root;
-
-};
-
 /* Convert a hierarchy specifier into a bitmask of subsystems and
  * flags. */
 static int parse_cgroupfs_options(char *data,
@@ -1291,7 +1287,14 @@ static int cgroup_get_sb(struct file_system_type *fs_type,
 	struct cgroupfs_root *new_root;
 
 	/* First find the desired set of subsystems */
-	ret = parse_cgroupfs_options(data, &opts);
+	if (!(flags & MS_KERNMOUNT))
+		ret = parse_cgroupfs_options(data, &opts);
+	else {
+		opts = *(struct cgroup_sb_opts *)data;
+		opts.name = kstrdup(opts.name, GFP_KERNEL);
+		opts.release_agent = kstrdup(opts.release_agent, GFP_KERNEL);
+	}
+
 	if (ret)
 		goto out_err;
 
@@ -1603,6 +1606,30 @@ int cgroup_attach_task(struct cgroup *cgrp, struct task_struct *tsk)
 	cgroup_wakeup_rmdir_waiter(cgrp);
 	return 0;
 }
+
+/**
+ * cgroup_attach_task_all - attach task 'tsk' to all cgroups of task 'from'
+ * @from: attach to all cgroups of a given task
+ * @tsk: the task to be attached
+ */
+int cgroup_attach_task_all(struct task_struct *from, struct task_struct *tsk)
+{
+	struct cgroupfs_root *root;
+	struct cgroup *cur_cg;
+	int retval = 0;
+
+	cgroup_lock();
+	for_each_active_root(root) {
+		cur_cg = task_cgroup_from_root(from, root);
+		retval = cgroup_attach_task(cur_cg, tsk);
+		if (retval)
+			break;
+	}
+	cgroup_unlock();
+
+	return retval;
+}
+EXPORT_SYMBOL_GPL(cgroup_attach_task_all);
 
 /*
  * Attach task with pid 'pid' to cgroup 'cgrp'. Call with cgroup_mutex
@@ -2127,7 +2154,7 @@ static void cgroup_enable_task_cg_lists(void)
 	struct task_struct *p, *g;
 	write_lock(&css_set_lock);
 	use_task_css_set_links = 1;
-	do_each_thread(g, p) {
+	do_each_thread_all(g, p) {
 		task_lock(p);
 		/*
 		 * We should check if the process is exiting, otherwise
@@ -2137,7 +2164,7 @@ static void cgroup_enable_task_cg_lists(void)
 		if (!(p->flags & PF_EXITING) && list_empty(&p->cg_list))
 			list_add(&p->cg_list, &p->cgroups->tasks);
 		task_unlock(p);
-	} while_each_thread(g, p);
+	} while_each_thread_all(g, p);
 	write_unlock(&css_set_lock);
 }
 
@@ -2468,7 +2495,6 @@ static struct cgroup_pidlist *cgroup_pidlist_find(struct cgroup *cgrp,
 			/* make sure l doesn't vanish out from under us */
 			down_write(&l->mutex);
 			mutex_unlock(&cgrp->pidlist_mutex);
-			l->use_count++;
 			return l;
 		}
 	}
@@ -2789,6 +2815,23 @@ static int cgroup_write_notify_on_release(struct cgroup *cgrp,
 	return 0;
 }
 
+static u64 cgroup_read_self_destruction(struct cgroup *cgrp,
+		struct cftype *cft)
+{
+	return test_bit(CGRP_SELF_DESTRUCTION, &cgrp->flags);
+}
+
+static int cgroup_write_self_destruction(struct cgroup *cgrp,
+		struct cftype *cft, u64 val)
+{
+	clear_bit(CGRP_RELEASABLE, &cgrp->flags);
+	if (val)
+		set_bit(CGRP_SELF_DESTRUCTION, &cgrp->flags);
+	else
+		clear_bit(CGRP_SELF_DESTRUCTION, &cgrp->flags);
+	return 0;
+}
+
 /*
  * for the common functions, 'private' gives the type of file
  */
@@ -2813,6 +2856,11 @@ static struct cftype files[] = {
 		.name = "notify_on_release",
 		.read_u64 = cgroup_read_notify_on_release,
 		.write_u64 = cgroup_write_notify_on_release,
+	},
+	{
+		.name = "self_destruction",
+		.read_u64 = cgroup_read_self_destruction,
+		.write_u64 = cgroup_write_self_destruction,
 	},
 };
 
@@ -2934,6 +2982,9 @@ static long cgroup_create(struct cgroup *parent, struct dentry *dentry,
 
 	if (notify_on_release(parent))
 		set_bit(CGRP_NOTIFY_ON_RELEASE, &cgrp->flags);
+
+	if (test_bit(CGRP_SELF_DESTRUCTION, &parent->flags))
+		set_bit(CGRP_SELF_DESTRUCTION, &cgrp->flags);
 
 	for_each_subsys(root, ss) {
 		struct cgroup_subsys_state *css = ss->create(ss, cgrp);
@@ -3710,7 +3761,7 @@ void __css_put(struct cgroup_subsys_state *css)
 	rcu_read_lock();
 	val = atomic_dec_return(&css->refcnt);
 	if (val == 1) {
-		if (notify_on_release(cgrp)) {
+		if (cgroup_is_disposable(cgrp)) {
 			set_bit(CGRP_RELEASABLE, &cgrp->flags);
 			check_for_release(cgrp);
 		}
@@ -3757,6 +3808,20 @@ static void cgroup_release_agent(struct work_struct *work)
 						    release_list);
 		list_del_init(&cgrp->release_list);
 		spin_unlock(&release_list_lock);
+
+		if (test_bit(CGRP_SELF_DESTRUCTION, &cgrp->flags)) {
+			struct inode *parent = cgrp->dentry->d_parent->d_inode;
+
+			dget(cgrp->dentry);
+			mutex_unlock(&cgroup_mutex);
+			mutex_lock_nested(&parent->i_mutex, I_MUTEX_PARENT);
+			vfs_rmdir(parent, cgrp->dentry);
+			mutex_unlock(&parent->i_mutex);
+			dput(cgrp->dentry);
+			mutex_lock(&cgroup_mutex);
+			goto continue_free;
+		}
+
 		pathbuf = kmalloc(PAGE_SIZE, GFP_KERNEL);
 		if (!pathbuf)
 			goto continue_free;
@@ -4195,3 +4260,93 @@ struct cgroup_subsys debug_subsys = {
 	.subsys_id = debug_subsys_id,
 };
 #endif /* CONFIG_CGROUP_DEBUG */
+
+struct vfsmount *cgroup_kernel_mount(struct cgroup_sb_opts *opts)
+{
+	return kern_mount_data(&cgroup_fs_type, opts);
+}
+EXPORT_SYMBOL(cgroup_kernel_mount);
+
+struct cgroup *cgroup_get_root(struct vfsmount *mnt)
+{
+	return mnt->mnt_root->d_fsdata;
+}
+EXPORT_SYMBOL(cgroup_get_root);
+
+struct cgroup *cgroup_kernel_open(struct cgroup *parent,
+		enum cgroup_open_flags flags, char *name)
+{
+	struct dentry *dentry;
+	struct cgroup *cgrp;
+	int ret = 0;
+
+	mutex_lock_nested(&parent->dentry->d_inode->i_mutex, I_MUTEX_PARENT);
+	dentry = lookup_one_len(name, parent->dentry, strlen(name));
+	cgrp = ERR_CAST(dentry);
+	if (IS_ERR(dentry))
+		goto out;
+
+	if (flags & CGRP_CREAT) {
+		if ((flags & CGRP_EXCL) && dentry->d_inode)
+			ret = -EEXIST;
+		else if (!dentry->d_inode)
+			ret = vfs_mkdir(parent->dentry->d_inode, dentry, 0755);
+		else
+			flags &= ~CGRP_WEAK;
+	}
+	if (!ret && dentry->d_inode) {
+		cgrp = __d_cgrp(dentry);
+		atomic_inc(&cgrp->count);
+		if (flags & CGRP_WEAK)
+			set_bit(CGRP_SELF_DESTRUCTION, &cgrp->flags);
+	} else
+		cgrp = ret ? ERR_PTR(ret) : NULL;
+	dput(dentry);
+out:
+	mutex_unlock(&parent->dentry->d_inode->i_mutex);
+	return cgrp;
+}
+EXPORT_SYMBOL(cgroup_kernel_open);
+
+/* FIXME remove sub-cgroups too */
+int cgroup_kernel_remove(struct cgroup *parent, char *name)
+{
+	struct dentry *dentry;
+	int ret;
+
+	mutex_lock_nested(&parent->dentry->d_inode->i_mutex, I_MUTEX_PARENT);
+	dentry = lookup_one_len(name, parent->dentry, strlen(name));
+	ret = PTR_ERR(dentry);
+	if (IS_ERR(dentry))
+		goto out;
+	ret = -ENOENT;
+	if (dentry->d_inode)
+		ret = vfs_rmdir(parent->dentry->d_inode, dentry);
+	dput(dentry);
+out:
+	mutex_unlock(&parent->dentry->d_inode->i_mutex);
+	return ret;
+}
+EXPORT_SYMBOL(cgroup_kernel_remove);
+
+int cgroup_kernel_attach(struct cgroup *cgrp, struct task_struct *tsk)
+{
+	int ret;
+
+	cgroup_lock();
+	ret = cgroup_attach_task(cgrp, tsk);
+	cgroup_unlock();
+	return ret;
+}
+EXPORT_SYMBOL(cgroup_kernel_attach);
+
+void cgroup_kernel_close(struct cgroup *cgrp)
+{
+	if (!cgroup_is_disposable(cgrp)) {
+		atomic_dec(&cgrp->count);
+	} else if (atomic_dec_and_test(&cgrp->count)) {
+		set_bit(CGRP_RELEASABLE, &cgrp->flags);
+		check_for_release(cgrp);
+	}
+}
+EXPORT_SYMBOL(cgroup_kernel_close);

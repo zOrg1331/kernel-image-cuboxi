@@ -22,6 +22,7 @@
 #include <linux/fdtable.h>
 #include <linux/binfmts.h>
 #include <linux/nsproxy.h>
+#include <linux/virtinfo.h>
 #include <linux/pid_namespace.h>
 #include <linux/ptrace.h>
 #include <linux/profile.h>
@@ -50,13 +51,16 @@
 #include <linux/perf_event.h>
 #include <trace/events/sched.h>
 
+#include <bc/misc.h>
+#include <bc/oom_kill.h>
+
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 #include "cred-internals.h"
 
-static void exit_mm(struct task_struct * tsk);
+void exit_mm(struct task_struct * tsk);
 
 static void __unhash_process(struct task_struct *p)
 {
@@ -67,6 +71,10 @@ static void __unhash_process(struct task_struct *p)
 		detach_pid(p, PIDTYPE_SID);
 
 		list_del_rcu(&p->tasks);
+#ifdef CONFIG_VE
+		list_del_rcu(&p->ve_task_info.vetask_list);
+		list_del(&p->ve_task_info.aux_list);
+#endif
 		__get_cpu_var(process_counts)--;
 	}
 	list_del_rcu(&p->thread_group);
@@ -177,6 +185,8 @@ repeat:
 	write_lock_irq(&tasklist_lock);
 	tracehook_finish_release_task(p);
 	__exit_signal(p);
+	nr_zombie--;
+	atomic_inc(&nr_dead);
 
 	/*
 	 * If we are the last non-leader member of the thread
@@ -208,6 +218,8 @@ repeat:
 
 	write_unlock_irq(&tasklist_lock);
 	release_thread(p);
+	ub_task_uncharge(p);
+	pput_ve(p->ve_task_info.owner_env);
 	call_rcu(&p->rcu, delayed_put_task_struct);
 
 	p = leader;
@@ -507,6 +519,7 @@ struct files_struct *get_files_struct(struct task_struct *task)
 
 	return files;
 }
+EXPORT_SYMBOL_GPL(get_files_struct);
 
 void put_files_struct(struct files_struct *files)
 {
@@ -526,6 +539,7 @@ void put_files_struct(struct files_struct *files)
 		free_fdtable(fdt);
 	}
 }
+EXPORT_SYMBOL_GPL(put_files_struct);
 
 void reset_files_struct(struct files_struct *files)
 {
@@ -568,6 +582,7 @@ mm_need_new_owner(struct mm_struct *mm, struct task_struct *p)
 		return 0;
 	return 1;
 }
+EXPORT_SYMBOL_GPL(put_fs_struct);
 
 void mm_update_next_owner(struct mm_struct *mm)
 {
@@ -598,10 +613,10 @@ retry:
 	 * Search through everything else. We should not get
 	 * here often
 	 */
-	do_each_thread(g, c) {
+	do_each_thread_all(g, c) {
 		if (c->mm == mm)
 			goto assign_new_owner;
-	} while_each_thread(g, c);
+	} while_each_thread_all(g, c);
 
 	read_unlock(&tasklist_lock);
 	/*
@@ -640,7 +655,7 @@ assign_new_owner:
  * Turn us into a lazy TLB process if we
  * aren't already..
  */
-static void exit_mm(struct task_struct * tsk)
+void exit_mm(struct task_struct * tsk)
 {
 	struct mm_struct *mm = tsk->mm;
 	struct core_state *core_state;
@@ -648,6 +663,10 @@ static void exit_mm(struct task_struct * tsk)
 	mm_release(tsk, mm);
 	if (!mm)
 		return;
+
+	if (test_tsk_thread_flag(tsk, TIF_MEMDIE))
+		mm->oom_killed = 1;
+
 	/*
 	 * Serialize with any possible pending coredump.
 	 * We must hold mmap_sem around checking core_state
@@ -692,6 +711,7 @@ static void exit_mm(struct task_struct * tsk)
 	mm_update_next_owner(mm);
 	mmput(mm);
 }
+EXPORT_SYMBOL(exit_mm);
 
 /*
  * When we die, we re-parent all our children.
@@ -706,7 +726,7 @@ static struct task_struct *find_new_reaper(struct task_struct *father)
 	struct task_struct *thread;
 
 	thread = father;
-	while_each_thread(father, thread) {
+	while_each_thread_ve(father, thread) {
 		if (thread->flags & PF_EXITING)
 			continue;
 		if (unlikely(pid_ns->child_reaper == father))
@@ -839,11 +859,16 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 	     tsk->self_exec_id != tsk->parent_exec_id))
 		tsk->exit_signal = SIGCHLD;
 
+	if (tsk->exit_signal != -1 && tsk == init_pid_ns.child_reaper)
+		/* We dont want people slaying init. */
+		tsk->exit_signal = SIGCHLD;
+
 	signal = tracehook_notify_death(tsk, &cookie, group_dead);
 	if (signal >= 0)
 		signal = do_notify_parent(tsk, signal);
 
 	tsk->exit_state = signal == DEATH_REAP ? EXIT_DEAD : EXIT_ZOMBIE;
+	nr_zombie++;
 
 	/* mt-exec, de_thread() is waiting for us */
 	if (thread_group_leader(tsk) &&
@@ -900,7 +925,6 @@ NORET_TYPE void do_exit(long code)
 		panic("Attempted to kill the idle task!");
 
 	tracehook_report_exit(&code);
-
 	validate_creds_for_do_exit(tsk);
 
 	/*
@@ -983,7 +1007,15 @@ NORET_TYPE void do_exit(long code)
 	 */
 	perf_event_exit_task(tsk);
 
-	exit_notify(tsk, group_dead);
+	if (!(tsk->flags & PF_EXIT_RESTART))
+		exit_notify(tsk, group_dead);
+	else {
+		write_lock_irq(&tasklist_lock);
+		tsk->exit_state = EXIT_ZOMBIE;
+		nr_zombie++;
+		write_unlock_irq(&tasklist_lock);
+		exit_task_namespaces(tsk);
+	}
 #ifdef CONFIG_NUMA
 	mpol_put(tsk->mempolicy);
 	tsk->mempolicy = NULL;
@@ -1031,7 +1063,6 @@ NORET_TYPE void complete_and_exit(struct completion *comp, long code)
 
 	do_exit(code);
 }
-
 EXPORT_SYMBOL(complete_and_exit);
 
 SYSCALL_DEFINE1(exit, int, error_code)
@@ -1103,10 +1134,38 @@ struct pid *task_pid_type(struct task_struct *task, enum pid_type type)
 	return task->pids[type].pid;
 }
 
-static int eligible_pid(struct wait_opts *wo, struct task_struct *p)
+static int __eligible_pid(struct wait_opts *wo, struct task_struct *p)
 {
 	return	wo->wo_type == PIDTYPE_MAX ||
 		task_pid_type(p, wo->wo_type) == wo->wo_pid;
+}
+
+static int __entered_pid(struct wait_opts *wo, struct task_struct *p)
+{
+	struct pid *pid, *wo_pid;
+
+	wo_pid = wo->wo_pid;
+	if (wo_pid->level != 0)
+		return 0;
+
+	pid = task_pid_type(p, wo->wo_type);
+	if (pid->level != 1)
+		return 0;
+
+	if (wo_pid->numbers[0].nr != pid->numbers[0].nr)
+		return 0;
+
+	wo->wo_pid = get_pid(pid);
+	put_pid(wo_pid);
+	return 1;
+}
+
+static int eligible_pid(struct wait_opts *wo, struct task_struct *p)
+{
+	if (__eligible_pid(wo, p))
+		return 1;
+	else
+		return __entered_pid(wo, p);
 }
 
 static int eligible_child(struct wait_opts *wo, struct task_struct *p)
@@ -1626,7 +1685,7 @@ repeat:
 
 		if (wo->wo_flags & __WNOTHREAD)
 			break;
-	} while_each_thread(current, tsk);
+	} while_each_thread_ve(current, tsk);
 	read_unlock(&tasklist_lock);
 
 notask:
@@ -1708,7 +1767,7 @@ SYSCALL_DEFINE5(waitid, int, which, pid_t, upid, struct siginfo __user *,
 			ret = put_user(0, &infop->si_status);
 	}
 
-	put_pid(pid);
+	put_pid(wo.wo_pid);
 
 	/* avoid REGPARM breakage on x86: */
 	asmlinkage_protect(5, ret, which, upid, infop, options, ru);
@@ -1747,12 +1806,13 @@ SYSCALL_DEFINE4(wait4, pid_t, upid, int __user *, stat_addr,
 	wo.wo_stat	= stat_addr;
 	wo.wo_rusage	= ru;
 	ret = do_wait(&wo);
-	put_pid(pid);
+	put_pid(wo.wo_pid);
 
 	/* avoid REGPARM breakage on x86: */
 	asmlinkage_protect(4, ret, upid, stat_addr, options, ru);
 	return ret;
 }
+EXPORT_SYMBOL(sys_wait4);
 
 #ifdef __ARCH_WANT_SYS_WAITPID
 
