@@ -312,7 +312,7 @@ static int au_wbr_mfs_sec(substring_t *arg, char *str,
 	int n, err;
 
 	err = 0;
-	if (!match_int(arg, &n) && 0 <= n && n <= MAX_SEC_IN_JIFFIES)
+	if (!match_int(arg, &n) && 0 <= n && n <= AUFS_MFS_MAX_SEC)
 		create->mfs_second = n;
 	else {
 		pr_err("bad integer in %s\n", str);
@@ -346,7 +346,7 @@ static int au_wbr_create_val(char *str, struct au_opt_wbr_create *create)
 		/*FALLTHROUGH*/
 	case AuWbrCreate_MFS:
 	case AuWbrCreate_PMFS:
-		create->mfs_second = AUFS_MFS_SECOND_DEF;
+		create->mfs_second = AUFS_MFS_DEF_SEC;
 		break;
 	case AuWbrCreate_MFSV:
 	case AuWbrCreate_PMFSV:
