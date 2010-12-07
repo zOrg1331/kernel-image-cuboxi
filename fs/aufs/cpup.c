@@ -576,8 +576,9 @@ static int au_cpup_single(struct dentry *dentry, aufs_bindex_t bdst,
 	if (dst_inode) {
 		if (unlikely(!plink)) {
 			err = -EIO;
-			AuIOErr("i%lu exists on a upper branch "
-				"but plink is disabled\n", inode->i_ino);
+			AuIOErr("hi%lu(i%lu) exists on b%d "
+				"but plink is disabled\n",
+				dst_inode->i_ino, inode->i_ino, bdst);
 			goto out;
 		}
 
@@ -591,7 +592,8 @@ static int au_cpup_single(struct dentry *dentry, aufs_bindex_t bdst,
 			if (unlikely(!h_src->d_inode)) {
 				err = -EIO;
 				AuIOErr("i%lu exists on a upper branch "
-					"but plink is broken\n", inode->i_ino);
+					"but not pseudo-linked\n",
+					inode->i_ino);
 				dput(h_src);
 				goto out;
 			}

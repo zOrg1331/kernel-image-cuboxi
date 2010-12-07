@@ -267,9 +267,11 @@ int au_lkup_dentry(struct dentry *dentry, aufs_bindex_t bstart, mode_t type,
 	}
 	err = npositive;
 	if (unlikely(!au_opt_test(au_mntflags(dentry->d_sb), UDBA_NONE)
-		     && au_dbstart(dentry) < 0))
-		/* both of real entry and whiteout found */
+		     && au_dbstart(dentry) < 0)) {
 		err = -EIO;
+		AuIOErr("both of real entry and whiteout found, %.*s, err %d\n",
+			AuDLNPair(dentry), err);
+	}
 
 out_parent:
 	dput(parent);
@@ -320,8 +322,8 @@ int au_lkup_neg(struct dentry *dentry, aufs_bindex_t bindex)
 		goto out;
 	if (unlikely(h_dentry->d_inode)) {
 		err = -EIO;
-		AuIOErr("b%d %.*s should be negative.\n",
-			bindex, AuDLNPair(h_dentry));
+		AuIOErr("%.*s should be negative on b%d.\n",
+			AuDLNPair(h_dentry), bindex);
 		dput(h_dentry);
 		goto out;
 	}
@@ -1093,9 +1095,11 @@ static int aufs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 	}
 
 	err = h_d_revalidate(dentry, inode, nd, do_udba);
-	if (unlikely(!err && do_udba && au_dbstart(dentry) < 0))
-		/* both of real entry and whiteout found */
+	if (unlikely(!err && do_udba && au_dbstart(dentry) < 0)) {
 		err = -EIO;
+		AuDbg("both of real entry and whiteout found, %.*s, err %d\n",
+		      AuDLNPair(dentry), err);
+	}
 	goto out_inval;
 
 out_dgrade:
