@@ -44,8 +44,7 @@ Packager: Kernel Maintainers Team <kernel@packages.altlinux.org>
 
 Patch0: %name-%version-%release.patch
 
-ExclusiveArch: i586 x86_64
-
+ExclusiveArch: x86_64
 ExclusiveOS: Linux
 
 BuildRequires(pre): rpm-build-kernel
@@ -355,10 +354,6 @@ for dir in asm-*; do
 done
 %ifarch x86_64
 ln -s asm-x86 asm-x86_64
-%else
-%ifarch i586
-ln -s asm-x86 asm-i386
-%endif
 %endif
 popd
 
@@ -424,12 +419,8 @@ KbuildFiles="
 	scripts/bin2c
 	scripts/gcc-version.sh
 	scripts/recordmcount.pl
-%ifarch i586
-	scripts/gcc-x86_32-has-stack-protector.sh
-%else
 %ifarch x86_64
 	scripts/gcc-x86_64-has-stack-protector.sh
-%endif
 %endif
 	scripts/module-common.lds
 
