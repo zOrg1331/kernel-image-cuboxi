@@ -1208,6 +1208,7 @@ struct input_dev {
 	struct input_mt_slot *mt;
 	int mtsize;
 	int slot;
+	int trkid;
 
 	struct input_absinfo *absinfo;
 
