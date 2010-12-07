@@ -961,7 +961,9 @@ static int au_br_mod_files_ro(struct super_block *sb, aufs_bindex_t bindex)
 		hfile = &au_fi(file)->fi_htop;
 		hf = hfile->hf_file;
 		/* fi_read_unlock(file); */
+		spin_lock(&hf->f_lock);
 		hf->f_mode &= ~FMODE_WRITE;
+		spin_unlock(&hf->f_lock);
 		if (!file_check_writeable(hf)) {
 			file_release_write(hf);
 			mnt_drop_write(hf->f_vfsmnt);
