@@ -38,8 +38,8 @@
 //#endif
 
 
-u16 ft1000_read_dpram16 (struct ft1000_device *ft1000dev, USHORT indx,
-			 PUCHAR buffer, u8 highlow);
+u16 ft1000_read_dpram16 (struct ft1000_device *ft1000dev, u16 indx,
+			 u8 *buffer, u8 highlow);
 
 
 static int
@@ -65,7 +65,7 @@ ft1000ReadProc (char *page, char **start, off_t off, int count, int *eof,
   time_t delta;
 
   dev = (struct net_device *) data;
-	info = (struct ft1000_info *) netdev_priv(dev);
+	info = netdev_priv(dev);
 
   if (off > 0)
     {
@@ -77,11 +77,11 @@ ft1000ReadProc (char *page, char **start, off_t off, int count, int *eof,
   if (info->ProgConStat != 0xFF)
     {
       ft1000_read_dpram16 (info->pFt1000Dev, FT1000_MAG_DSP_LED,
-			   (PUCHAR) & ledStat, FT1000_MAG_DSP_LED_INDX);
+			   (u8 *)&ledStat, FT1000_MAG_DSP_LED_INDX);
       info->LedStat = ntohs (ledStat);
 
       ft1000_read_dpram16 (info->pFt1000Dev, FT1000_MAG_DSP_CON_STATE,
-			   (PUCHAR) & conStat, FT1000_MAG_DSP_CON_STATE_INDX);
+			   (u8 *)&conStat, FT1000_MAG_DSP_CON_STATE_INDX);
       info->ConStat = ntohs (conStat);
       do_gettimeofday (&tv);
       delta = (tv.tv_sec - info->ConTm);
@@ -172,7 +172,7 @@ ft1000NotifyProc (struct notifier_block *this, unsigned long event, void *ptr)
 	struct ft1000_info *info;
   struct proc_dir_entry *ft1000_proc_file;
 
-info = (struct ft1000_info *) netdev_priv(dev);
+info = netdev_priv(dev);
 
 
   switch (event)
@@ -198,7 +198,7 @@ ft1000InitProc (struct net_device *dev)
 {
 	struct ft1000_info *info;
   struct proc_dir_entry *ft1000_proc_file;
-	info = (struct ft1000_info *) netdev_priv(dev);
+	info = netdev_priv(dev);
 
 
   info->ft1000_proc_dir = proc_mkdir (FT1000_PROC_DIR, FTNET_PROC);
