@@ -940,9 +940,16 @@ int au_opts_parse(struct super_block *sb, char *str, struct au_opts *opts)
 			break;
 
 		case Opt_rdcache:
-			if (unlikely(match_int(&a->args[0], &opt->rdcache)
-				     || opt->rdcache > MAX_SEC_IN_JIFFIES))
+			if (unlikely(match_int(&a->args[0], &n))) {
+				pr_err("bad integer in %s\n", opt_str);
 				break;
+			}
+			if (unlikely(n > AUFS_RDCACHE_MAX)) {
+				pr_err("rdcache must be smaller than %d\n",
+				       AUFS_RDCACHE_MAX);
+				break;
+			}
+			opt->rdcache = n;
 			err = 0;
 			opt->type = token;
 			break;

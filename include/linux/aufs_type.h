@@ -73,6 +73,7 @@ typedef __s16 aufs_bindex_t;
 #define AUFS_XINO_TRUNC_STEP	4  /* blocks */
 #define AUFS_DIRWH_DEF		3
 #define AUFS_RDCACHE_DEF	10 /* seconds */
+#define AUFS_RDCACHE_MAX	3600 /* seconds */
 #define AUFS_RDBLK_DEF		512 /* bytes */
 #define AUFS_RDHASH_DEF		32
 #define AUFS_WKQ_NAME		AUFS_NAME "d"

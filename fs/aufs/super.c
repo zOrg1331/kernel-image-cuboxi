@@ -197,7 +197,7 @@ out:
 /* seq_file will re-call me in case of too long string */
 static int aufs_show_options(struct seq_file *m, struct vfsmount *mnt)
 {
-	int err, n;
+	int err;
 	unsigned int mnt_flags, v;
 	struct super_block *sb;
 	struct au_sbinfo *sbinfo;
@@ -255,8 +255,8 @@ static int aufs_show_options(struct seq_file *m, struct vfsmount *mnt)
 
 	AuUInt(DIRWH, dirwh, sbinfo->si_dirwh);
 
-	n = jiffies_to_msecs(sbinfo->si_rdcache) / MSEC_PER_SEC;
-	AuUInt(RDCACHE, rdcache, n);
+	v = jiffies_to_msecs(sbinfo->si_rdcache) / MSEC_PER_SEC;
+	AuUInt(RDCACHE, rdcache, v);
 
 	AuUInt(RDBLK, rdblk, sbinfo->si_rdblk);
 	AuUInt(RDHASH, rdhash, sbinfo->si_rdhash);
