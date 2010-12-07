@@ -42,6 +42,9 @@
 int tipc_reg_start(void);
 void tipc_reg_stop(void);
 
+int tipc_attach(unsigned int *userref);
+void tipc_detach(unsigned int userref);
+
 int tipc_reg_add_port(struct user_port *up_ptr);
 int tipc_reg_remove_port(struct user_port *up_ptr);
 
