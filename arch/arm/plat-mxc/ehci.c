@@ -69,9 +69,9 @@
 int mxc_initialize_usb_hw(int port, unsigned int flags)
 {
 	unsigned int v;
-#if defined(CONFIG_ARCH_MX25)
+#if defined(CONFIG_SOC_IMX25)
 	if (cpu_is_mx25()) {
-		v = readl(MX25_IO_ADDRESS(MX25_OTG_BASE_ADDR +
+		v = readl(MX25_IO_ADDRESS(MX25_USB_BASE_ADDR +
 				     USBCTRL_OTGBASE_OFFSET));
 
 		switch (port) {
@@ -108,14 +108,14 @@ int mxc_initialize_usb_hw(int port, unsigned int flags)
 			return -EINVAL;
 		}
 
-		writel(v, MX25_IO_ADDRESS(MX25_OTG_BASE_ADDR +
+		writel(v, MX25_IO_ADDRESS(MX25_USB_BASE_ADDR +
 				     USBCTRL_OTGBASE_OFFSET));
 		return 0;
 	}
-#endif /* CONFIG_ARCH_MX25 */
+#endif /* if defined(CONFIG_SOC_IMX25) */
 #if defined(CONFIG_ARCH_MX3)
 	if (cpu_is_mx31()) {
-		v = readl(MX31_IO_ADDRESS(MX31_OTG_BASE_ADDR +
+		v = readl(MX31_IO_ADDRESS(MX31_USB_BASE_ADDR +
 				     USBCTRL_OTGBASE_OFFSET));
 
 		switch (port) {
@@ -153,13 +153,13 @@ int mxc_initialize_usb_hw(int port, unsigned int flags)
 			return -EINVAL;
 		}
 
-		writel(v, MX31_IO_ADDRESS(MX31_OTG_BASE_ADDR +
+		writel(v, MX31_IO_ADDRESS(MX31_USB_BASE_ADDR +
 				     USBCTRL_OTGBASE_OFFSET));
 		return 0;
 	}
 
 	if (cpu_is_mx35()) {
-		v = readl(MX35_IO_ADDRESS(MX35_OTG_BASE_ADDR +
+		v = readl(MX35_IO_ADDRESS(MX35_USB_BASE_ADDR +
 				     USBCTRL_OTGBASE_OFFSET));
 
 		switch (port) {
@@ -196,7 +196,7 @@ int mxc_initialize_usb_hw(int port, unsigned int flags)
 			return -EINVAL;
 		}
 
-		writel(v, MX35_IO_ADDRESS(MX35_OTG_BASE_ADDR +
+		writel(v, MX35_IO_ADDRESS(MX35_USB_BASE_ADDR +
 				     USBCTRL_OTGBASE_OFFSET));
 		return 0;
 	}
@@ -206,7 +206,7 @@ int mxc_initialize_usb_hw(int port, unsigned int flags)
 		/* On i.MX27 we can use the i.MX31 USBCTRL bits, they
 		 * are identical
 		 */
-		v = readl(MX27_IO_ADDRESS(MX27_OTG_BASE_ADDR +
+		v = readl(MX27_IO_ADDRESS(MX27_USB_BASE_ADDR +
 				     USBCTRL_OTGBASE_OFFSET));
 		switch (port) {
 		case 0:	/* OTG port */
@@ -241,12 +241,12 @@ int mxc_initialize_usb_hw(int port, unsigned int flags)
 		default:
 			return -EINVAL;
 		}
-		writel(v, MX27_IO_ADDRESS(MX27_OTG_BASE_ADDR +
+		writel(v, MX27_IO_ADDRESS(MX27_USB_BASE_ADDR +
 				     USBCTRL_OTGBASE_OFFSET));
 		return 0;
 	}
 #endif /* CONFIG_MACH_MX27 */
-#ifdef CONFIG_ARCH_MX51
+#ifdef CONFIG_SOC_IMX51
 	if (cpu_is_mx51()) {
 		void __iomem *usb_base;
 		void __iomem *usbotg_base;
