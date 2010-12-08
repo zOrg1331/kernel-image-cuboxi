@@ -1047,6 +1047,6 @@ init_hw_perf_events(void)
 
 	return 0;
 }
-early_initcall(init_hw_perf_events);
+arch_initcall(init_hw_perf_events);
 
 #endif /* defined(CONFIG_CPU_MIPS32)... */

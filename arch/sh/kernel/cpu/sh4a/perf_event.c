@@ -284,4 +284,4 @@ static int __init sh4a_pmu_init(void)
 
 	return register_sh_pmu(&sh4a_pmu);
 }
-early_initcall(sh4a_pmu_init);
+arch_initcall(sh4a_pmu_init);
