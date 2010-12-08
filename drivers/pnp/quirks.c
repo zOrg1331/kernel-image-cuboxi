@@ -343,7 +343,37 @@ static struct pnp_protocol pnp_fixup_protocol = {
 	.name = "Plug and Play fixup",
 };
 
+static int __init hp_nx6325_fixup(const struct dmi_system_id *d)
+{
+	struct pnp_dev *dev;
+
+	/*
+	 * The BIOS apparently forgot to describe some regions in the
+	 * address map.  See https://bugzilla.kernel.org/show_bug.cgi?id=23332
+	 */
+
+	dev = pnp_alloc_dev(&pnp_fixup_protocol, 0, "LNXHAZRD");
+	if (!dev)
+		return 0;
+
+	dev->active = 1;
+	pnp_add_mem_resource(dev, 0xf8300000, 0xf83fffff, 0);
+	pnp_add_mem_resource(dev, 0xf8500000, 0xf85fffff, 0);
+	pnp_add_mem_resource(dev, 0xf9100000, 0xf91fffff, 0);
+	pnp_add_device(dev);
+	dev_info(&dev->dev, "added to work around BIOS defect\n");
+	return 0;
+}
+
 static const struct dmi_system_id pnp_fixup_table[] __initconst = {
+	{
+		.callback = hp_nx6325_fixup,
+		.ident = "HP nx6325 laptop",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "HP Compaq nx6325"),
+		},
+	},
 	{}
 };
 
