@@ -48,6 +48,7 @@ static inline void __init smpboot_setup_io_apic(void)
 		setup_IO_APIC();
 	else {
 		nr_ioapics = 0;
+		localise_nmi_watchdog();
 	}
 #endif
 }
