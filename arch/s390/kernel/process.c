@@ -75,13 +75,8 @@ unsigned long thread_saved_pc(struct task_struct *tsk)
  */
 static void default_idle(void)
 {
-	/* CPU is going idle. */
-#ifdef CONFIG_HOTPLUG_CPU
-	if (cpu_is_offline(smp_processor_id())) {
-		preempt_enable_no_resched();
+	if (cpu_is_offline(smp_processor_id()))
 		cpu_die();
-	}
-#endif
 	local_irq_disable();
 	if (need_resched()) {
 		local_irq_enable();
