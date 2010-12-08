@@ -374,9 +374,17 @@ new_ino:
 			goto out; /* success */
 		}
 
-		ii_write_unlock(inode);
+		/*
+		 * iget_failed() calls iput(), but we need to call
+		 * ii_write_unlock() after iget_failed(). so dirty hack for
+		 * i_count.
+		 */
+		atomic_inc(&inode->i_count);
 		iget_failed(inode);
-		goto out_err;
+		ii_write_unlock(inode);
+		au_xino_write(sb, bstart, h_ino, /*ino*/0);
+		/* ignore this error */
+		goto out_iput;
 	} else if (!must_new && !IS_DEADDIR(inode) && inode->i_nlink) {
 		/*
 		 * horrible race condition between lookup, readdir and copyup
@@ -413,7 +421,6 @@ new_ino:
 
 out_iput:
 	iput(inode);
-out_err:
 	inode = ERR_PTR(err);
 out:
 	if (mtx)
