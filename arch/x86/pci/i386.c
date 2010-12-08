@@ -77,9 +77,6 @@ pcibios_align_resource(void *data, const struct resource *res,
 		 */
 		if (!skip_isa_ioresource_align(dev))
 			start &= ~0x300;
-	} else if (res->flags & IORESOURCE_MEM) {
-		if (start < BIOS_END)
-			start = res->end;	/* fail; no space */
 	}
 	return start;
 }
