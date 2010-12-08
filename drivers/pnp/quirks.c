@@ -15,6 +15,7 @@
 
 #include <linux/types.h>
 #include <linux/kernel.h>
+#include <linux/dmi.h>
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/pnp.h>
@@ -336,4 +337,18 @@ void pnp_fixup_device(struct pnp_dev *dev)
 			f->quirk_function);
 		f->quirk_function(dev);
 	}
+}
+
+static struct pnp_protocol pnp_fixup_protocol = {
+	.name = "Plug and Play fixup",
+};
+
+static const struct dmi_system_id pnp_fixup_table[] __initconst = {
+	{}
+};
+
+void __init platform_pnp_fixups(void)
+{
+	pnp_register_protocol(&pnp_fixup_protocol);
+	dmi_check_system(pnp_fixup_table);
 }
