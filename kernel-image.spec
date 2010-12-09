@@ -639,6 +639,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 * Fri Nov 26 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt9
 - 2.6.35.9
 - fix CVE-2010-4249
+- update AUFS
 
 * Mon Nov 01 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt8
 - 2.6.35.8
