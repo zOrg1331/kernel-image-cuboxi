@@ -14,6 +14,7 @@
 #include <linux/timer.h>
 #include <linux/delay.h>
 #include <linux/gfp.h>
+#include <linux/kernel_stat.h>
 #include <asm/atomic.h>
 #include <asm/debug.h>
 #include <asm/qdio.h>
@@ -970,6 +971,7 @@ void qdio_int_handler(struct ccw_device *cdev, unsigned long intparm,
 		return;
 	}
 
+	kstat_cpu(smp_processor_id()).irqs[IOINT_QDI]++;
 	if (irq_ptr->perf_stat_enabled)
 		irq_ptr->perf_stat.qdio_int++;
 
@@ -1445,6 +1447,9 @@ static int handle_outbound(struct qdio_q *q, unsigned int callflags,
 	used = atomic_add_return(count, &q->nr_buf_used);
 	BUG_ON(used > QDIO_MAX_BUFFERS_PER_Q);
 
+	if (used == QDIO_MAX_BUFFERS_PER_Q)
+		qperf_inc(q, outbound_queue_full);
+
 	if (callflags & QDIO_FLAG_PCI_OUT) {
 		q->u.out.pci_out_enabled = 1;
 		qperf_inc(q, pci_request_int);
@@ -1490,7 +1495,13 @@ static int handle_outbound(struct qdio_q *q, unsigned int callflags,
 		qperf_inc(q, fast_requeue);
 
 out:
-	tasklet_schedule(&q->tasklet);
+	/* in case of SIGA errors we must process the error immediately */
+	if (used >= q->u.out.scan_threshold || rc)
+		tasklet_schedule(&q->tasklet);
+	else
+		/* free the SBALs in case of no further traffic */
+		if (!timer_pending(&q->u.out.timer))
+			mod_timer(&q->u.out.timer, jiffies + HZ);
 	return rc;
 }
 
@@ -1550,7 +1561,7 @@ int qdio_start_irq(struct ccw_device *cdev, int nr)
 
 	WARN_ON(queue_irqs_enabled(q));
 
-	if (!shared_ind(q->irq_ptr))
+	if (!shared_ind(q->irq_ptr->dsci))
 		xchg(q->irq_ptr->dsci, 0);
 
 	qdio_stop_polling(q);
@@ -1560,7 +1571,7 @@ int qdio_start_irq(struct ccw_device *cdev, int nr)
 	 * We need to check again to not lose initiative after
 	 * resetting the ACK state.
 	 */
-	if (!shared_ind(q->irq_ptr) && *q->irq_ptr->dsci)
+	if (!shared_ind(q->irq_ptr->dsci) && *q->irq_ptr->dsci)
 		goto rescan;
 	if (!qdio_inbound_q_done(q))
 		goto rescan;
