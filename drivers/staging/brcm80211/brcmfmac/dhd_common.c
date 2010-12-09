@@ -16,6 +16,7 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <bcmdefs.h>
+#include <linux/netdevice.h>
 #include <osl.h>
 #include <bcmutils.h>
 #include <bcmendian.h>
@@ -326,9 +327,10 @@ void dhd_store_conn_status(u32 event, u32 status, u32 reason)
 	}
 }
 
-bool dhd_prec_enq(dhd_pub_t *dhdp, struct pktq *q, void *pkt, int prec)
+bool dhd_prec_enq(dhd_pub_t *dhdp, struct pktq *q, struct sk_buff *pkt,
+		  int prec)
 {
-	void *p;
+	struct sk_buff *p;
 	int eprec = -1;		/* precedence to evict from */
 	bool discard_oldest;
 
@@ -366,7 +368,7 @@ bool dhd_prec_enq(dhd_pub_t *dhdp, struct pktq *q, void *pkt, int prec)
 			ASSERT(p);
 		}
 
-		PKTFREE(dhdp->osh, p, true);
+		pkt_buf_free_skb(dhdp->osh, p, true);
 	}
 
 	/* Enqueue */
@@ -832,7 +834,7 @@ wl_host_event(struct dhd_info *dhd, int *ifidx, void *pktdata,
 	u16 flags;
 	int evlen;
 
-	if (bcmp(BRCM_OUI, &pvt_data->bcm_hdr.oui[0], DOT11_OUI_LEN)) {
+	if (memcmp(BRCM_OUI, &pvt_data->bcm_hdr.oui[0], DOT11_OUI_LEN)) {
 		DHD_ERROR(("%s: mismatched OUI, bailing\n", __func__));
 		return BCME_ERROR;
 	}

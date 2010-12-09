@@ -19,8 +19,8 @@
 
 /* forward declarations */
 
-typedef struct wlc_info wlc_info_t;
-typedef struct wlc_hw_info wlc_hw_info_t;
+struct wlc_info;
+struct wlc_hw_info;
 typedef struct wlc_if wlc_if_t;
 typedef struct wl_if wl_if_t;
 typedef struct led_info led_info_t;
@@ -35,12 +35,7 @@ typedef struct wlc_auth_info wlc_auth_info_t;
 typedef struct supplicant supplicant_t;
 typedef struct authenticator authenticator_t;
 typedef struct antsel_info antsel_info_t;
-#if !defined(WLC_LOW)
-typedef struct rpctx_info rpctx_info_t;
-#endif
-#ifdef WLC_LOW
 typedef struct bmac_pmq bmac_pmq_t;
-#endif
 
 struct d11init;
 
