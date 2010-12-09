@@ -8,7 +8,7 @@
  * the Free Software Foundation.
  */
 
-#include <linux/input-mt.h>
+#include <linux/input/mt.h>
 #include <linux/slab.h>
 
 #define TRKID_SGN	((TRKID_MAX + 1) >> 1)
