@@ -30,7 +30,7 @@
 #define EXPIO_PARENT_INT	(MXC_INTERNAL_IRQS + GPIO_PORTA + 6)
 #define MX51_3DS_ECSPI2_CS	(GPIO_PORTC + 28)
 
-static struct pad_desc mx51_3ds_pads[] = {
+static iomux_v3_cfg_t mx51_3ds_pads[] = {
 	/* UART1 */
 	MX51_PAD_UART1_RXD__UART1_RXD,
 	MX51_PAD_UART1_TXD__UART1_TXD,
@@ -172,6 +172,7 @@ static void __init mxc_board_init(void)
 		printk(KERN_WARNING "Init of the debugboard failed, all "
 				    "devices on the board are unusable.\n");
 
+	imx51_add_sdhci_esdhc_imx(0, NULL);
 	mxc_init_keypad();
 }
 
@@ -186,7 +187,7 @@ static struct sys_timer mxc_timer = {
 
 MACHINE_START(MX51_3DS, "Freescale MX51 3-Stack Board")
 	/* Maintainer: Freescale Semiconductor, Inc. */
-	.boot_params = PHYS_OFFSET + 0x100,
+	.boot_params = MX51_PHYS_OFFSET + 0x100,
 	.map_io = mx51_map_io,
 	.init_irq = mx51_init_irq,
 	.init_machine = mxc_board_init,
