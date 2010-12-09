@@ -55,8 +55,6 @@ struct rtable {
 	/* Cache lookup keys */
 	struct flowi		fl;
 
-	struct in_device	*idev;
-	
 	int			rt_genid;
 	unsigned		rt_flags;
 	__u16			rt_type;
@@ -72,6 +70,16 @@ struct rtable {
 	__be32			rt_spec_dst; /* RFC1122 specific destination */
 	struct inet_peer	*peer; /* long-living peer info */
 };
+
+static inline bool rt_is_input_route(struct rtable *rt)
+{
+	return rt->fl.iif != 0;
+}
+
+static inline bool rt_is_output_route(struct rtable *rt)
+{
+	return rt->fl.iif == 0;
+}
 
 struct ip_rt_acct {
 	__u32 	o_bytes;
@@ -161,14 +169,12 @@ static inline int ip_route_connect(struct rtable **rp, __be32 dst,
 {
 	struct flowi fl = { .oif = oif,
 			    .mark = sk->sk_mark,
-			    .nl_u = { .ip4_u = { .daddr = dst,
-						 .saddr = src,
-						 .tos   = tos } },
+			    .fl4_dst = dst,
+			    .fl4_src = src,
+			    .fl4_tos = tos,
 			    .proto = protocol,
-			    .uli_u = { .ports =
-				       { .sport = sport,
-					 .dport = dport } } };
-
+			    .fl_ip_sport = sport,
+			    .fl_ip_dport = dport };
 	int err;
 	struct net *net = sock_net(sk);
 

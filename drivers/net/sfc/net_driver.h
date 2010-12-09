@@ -648,6 +648,7 @@ struct efx_filter_state;
  * @n_tx_channels: Number of channels used for TX
  * @rx_buffer_len: RX buffer length
  * @rx_buffer_order: Order (log2) of number of pages for each RX buffer
+ * @rx_hash_key: Toeplitz hash key for RSS
  * @rx_indir_table: Indirection table for RSS
  * @int_error_count: Number of internal errors seen recently
  * @int_error_expire: Time at which error count will be expired
@@ -658,11 +659,6 @@ struct efx_filter_state;
  *	to verify that an interrupt has occurred.
  * @irq_zero_count: Number of legacy IRQs seen with queue flags == 0
  * @fatal_irq_level: IRQ level (bit number) used for serious errors
- * @spi_flash: SPI flash device
- *	This field will be %NULL if no flash device is present (or for Siena).
- * @spi_eeprom: SPI EEPROM device
- *	This field will be %NULL if no EEPROM device is present (or for Siena).
- * @spi_lock: SPI bus lock
  * @mtd_list: List of MTDs attached to the NIC
  * @n_rx_nodesc_drop_cnt: RX no descriptor drop count
  * @nic_data: Hardware dependant state
@@ -683,15 +679,12 @@ struct efx_filter_state;
  * @stats_buffer: DMA buffer for statistics
  * @stats_lock: Statistics update lock. Serialises statistics fetches
  * @mac_op: MAC interface
- * @mac_address: Permanent MAC address
  * @phy_type: PHY type
- * @mdio_lock: MDIO lock
  * @phy_op: PHY interface
  * @phy_data: PHY private data (including PHY-specific stats)
  * @mdio: PHY MDIO interface
  * @mdio_bus: PHY MDIO bus ID (only used by Siena)
  * @phy_mode: PHY operating mode. Serialised by @mac_lock.
- * @xmac_poll_required: XMAC link state needs polling
  * @link_advertising: Autonegotiation advertising flags
  * @link_state: Current state of the link
  * @n_link_state_changes: Number of times the link has changed state
@@ -748,9 +741,6 @@ struct efx_nic {
 	unsigned irq_zero_count;
 	unsigned fatal_irq_level;
 
-	struct efx_spi_device *spi_flash;
-	struct efx_spi_device *spi_eeprom;
-	struct mutex spi_lock;
 #ifdef CONFIG_SFC_MTD
 	struct list_head mtd_list;
 #endif
@@ -773,17 +763,14 @@ struct efx_nic {
 	spinlock_t stats_lock;
 
 	struct efx_mac_operations *mac_op;
-	unsigned char mac_address[ETH_ALEN];
 
 	unsigned int phy_type;
-	struct mutex mdio_lock;
 	struct efx_phy_operations *phy_op;
 	void *phy_data;
 	struct mdio_if_info mdio;
 	unsigned int mdio_bus;
 	enum efx_phy_mode phy_mode;
 
-	bool xmac_poll_required;
 	u32 link_advertising;
 	struct efx_link_state link_state;
 	unsigned int n_link_state_changes;
@@ -831,6 +818,7 @@ static inline unsigned int efx_port_num(struct efx_nic *efx)
  *	be called while the controller is uninitialised.
  * @probe_port: Probe the MAC and PHY
  * @remove_port: Free resources allocated by probe_port()
+ * @handle_global_event: Handle a "global" event (may be %NULL)
  * @prepare_flush: Prepare the hardware for flushing the DMA queues
  * @update_stats: Update statistics not provided by event handling
  * @start_stats: Start the regular fetching of statistics
@@ -875,6 +863,7 @@ struct efx_nic_type {
 	int (*reset)(struct efx_nic *efx, enum reset_type method);
 	int (*probe_port)(struct efx_nic *efx);
 	void (*remove_port)(struct efx_nic *efx);
+	bool (*handle_global_event)(struct efx_channel *channel, efx_qword_t *);
 	void (*prepare_flush)(struct efx_nic *efx);
 	void (*update_stats)(struct efx_nic *efx);
 	void (*start_stats)(struct efx_nic *efx);
