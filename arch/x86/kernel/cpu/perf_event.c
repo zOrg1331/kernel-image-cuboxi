@@ -1362,7 +1362,7 @@ static void __init pmu_check_apic(void)
 	pr_info("no hardware sampling interrupt available.\n");
 }
 
-int __init init_hw_perf_events(void)
+void __init init_hw_perf_events(void)
 {
 	struct event_constraint *c;
 	int err;
@@ -1377,11 +1377,11 @@ int __init init_hw_perf_events(void)
 		err = amd_pmu_init();
 		break;
 	default:
-		return 0;
+		return;
 	}
 	if (err != 0) {
 		pr_cont("no PMU driver, software events only.\n");
-		return 0;
+		return;
 	}
 
 	pmu_check_apic();
@@ -1389,7 +1389,7 @@ int __init init_hw_perf_events(void)
 	/* sanity check that the hardware exists or is emulated */
 	if (!check_hw_exists()) {
 		pr_cont("Broken PMU hardware detected, software events only.\n");
-		return 0;
+		return;
 	}
 
 	pr_cont("%s PMU driver.\n", x86_pmu.name);
@@ -1440,10 +1440,7 @@ int __init init_hw_perf_events(void)
 
 	perf_pmu_register(&pmu);
 	perf_cpu_notifier(x86_pmu_notifier);
-
-	return 0;
 }
-early_initcall(init_hw_perf_events);
 
 static inline void x86_pmu_read(struct perf_event *event)
 {

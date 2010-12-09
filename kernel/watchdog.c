@@ -547,13 +547,13 @@ static struct notifier_block __cpuinitdata cpu_nfb = {
 	.notifier_call = cpu_callback
 };
 
-void __init lockup_detector_init(void)
+static int __init spawn_watchdog_task(void)
 {
 	void *cpu = (void *)(long)smp_processor_id();
 	int err;
 
 	if (no_watchdog)
-		return;
+		return 0;
 
 	err = cpu_callback(&cpu_nfb, CPU_UP_PREPARE, cpu);
 	WARN_ON(notifier_to_errno(err));
@@ -561,5 +561,6 @@ void __init lockup_detector_init(void)
 	cpu_callback(&cpu_nfb, CPU_ONLINE, cpu);
 	register_cpu_notifier(&cpu_nfb);
 
-	return;
+	return 0;
 }
+early_initcall(spawn_watchdog_task);
