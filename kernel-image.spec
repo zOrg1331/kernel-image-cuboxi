@@ -67,7 +67,7 @@ BuildRequires: ccache
 BuildRequires: ccache
 %endif
 
-Requires: bootloader-utils >= 0.3-alt1
+Requires: bootloader-utils >= 0.4.9-alt1
 Requires: module-init-tools >= 3.1
 Requires: mkinitrd >= 1:2.9.9-alt1
 Requires: startup >= 0.8.3-alt1
@@ -501,12 +501,6 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
 
-%post
-%post_kernel_image %kversion-%flavour-%krelease
-
-%preun
-%preun_kernel_image %kversion-%flavour-%krelease
-
 %post -n kernel-modules-oss-%flavour
 %post_kernel_modules %kversion-%flavour-%krelease
 
@@ -640,6 +634,7 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 - 2.6.35.9
 - fix CVE-2010-4249
 - update AUFS
+- migrate postscripts to filetrigger
 
 * Mon Nov 01 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt8
 - 2.6.35.8
