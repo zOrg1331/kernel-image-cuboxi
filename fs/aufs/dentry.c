@@ -1009,7 +1009,7 @@ int au_reval_dpath(struct dentry *dentry, unsigned int sigen)
 
 		inode = d->d_inode;
 		if (d != dentry)
-			di_write_lock_child(d);
+			di_write_lock_child2(d);
 
 		/* someone might update our dentry while we were sleeping */
 		if (au_digen_test(d, sigen)) {
