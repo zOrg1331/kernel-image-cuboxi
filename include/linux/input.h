@@ -1125,6 +1125,7 @@ struct ff_effect {
  *	of tracked contacts
  * @mtsize: number of MT slots the device uses
  * @slot: MT slot currently being transmitted
+ * @trkid: stores MT tracking ID for the current contact
  * @absinfo: array of &struct absinfo elements holding information
  *	about absolute axes (current value, min, max, flat, fuzz,
  *	resolution)
