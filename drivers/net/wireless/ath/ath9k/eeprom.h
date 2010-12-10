@@ -280,6 +280,7 @@ enum eeprom_param {
 	EEP_PAPRD,
 	EEP_MODAL_VER,
 	EEP_ANT_DIV_CTL1,
+	EEP_CHAIN_MASK_REDUCE
 };
 
 enum ar5416_rates {
@@ -681,7 +682,8 @@ struct eeprom_ops {
 	void (*set_addac)(struct ath_hw *hw, struct ath9k_channel *chan);
 	void (*set_txpower)(struct ath_hw *hw, struct ath9k_channel *chan,
 			   u16 cfgCtl, u8 twiceAntennaReduction,
-			   u8 twiceMaxRegulatoryPower, u8 powerLimit);
+			   u8 twiceMaxRegulatoryPower, u8 powerLimit,
+			   bool test);
 	u16 (*get_spur_channel)(struct ath_hw *ah, u16 i, bool is2GHz);
 };
 
