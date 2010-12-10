@@ -243,6 +243,19 @@ extern void dccp_reqsk_send_ack(struct sock *sk, struct sk_buff *skb,
 extern void dccp_send_sync(struct sock *sk, const u64 seq,
 			   const enum dccp_pkt_type pkt_type);
 
+/*
+ * TX Packet Dequeueing Interface
+ */
+extern void		dccp_qpolicy_push(struct sock *sk, struct sk_buff *skb);
+extern bool		dccp_qpolicy_full(struct sock *sk);
+extern void		dccp_qpolicy_drop(struct sock *sk, struct sk_buff *skb);
+extern struct sk_buff	*dccp_qpolicy_top(struct sock *sk);
+extern struct sk_buff	*dccp_qpolicy_pop(struct sock *sk);
+extern bool		dccp_qpolicy_param_ok(struct sock *sk, __be32 param);
+
+/*
+ * TX Packet Output and TX Timers
+ */
 extern void   dccp_write_xmit(struct sock *sk);
 extern void   dccp_write_space(struct sock *sk);
 extern void   dccp_flush_write_queue(struct sock *sk, long *time_budget);
@@ -457,12 +470,15 @@ static inline void dccp_update_gss(struct sock *sk, u64 seq)
 	dp->dccps_awh = dp->dccps_gss;
 }
 
+static inline int dccp_ackvec_pending(const struct sock *sk)
+{
+	return dccp_sk(sk)->dccps_hc_rx_ackvec != NULL &&
+	       !dccp_ackvec_is_empty(dccp_sk(sk)->dccps_hc_rx_ackvec);
+}
+
 static inline int dccp_ack_pending(const struct sock *sk)
 {
-	const struct dccp_sock *dp = dccp_sk(sk);
-	return (dp->dccps_hc_rx_ackvec != NULL &&
-		dccp_ackvec_pending(dp->dccps_hc_rx_ackvec)) ||
-	       inet_csk_ack_scheduled(sk);
+	return dccp_ackvec_pending(sk) || inet_csk_ack_scheduled(sk);
 }
 
 extern int  dccp_feat_finalise_settings(struct dccp_sock *dp);
