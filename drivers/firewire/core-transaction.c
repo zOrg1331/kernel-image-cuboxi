@@ -36,6 +36,7 @@
 #include <linux/string.h>
 #include <linux/timer.h>
 #include <linux/types.h>
+#include <linux/workqueue.h>
 
 #include <asm/byteorder.h>
 
@@ -250,7 +251,7 @@ static void fw_fill_request(struct fw_packet *packet, int tcode, int tlabel,
 		break;
 
 	default:
-		WARN(1, "wrong tcode %d", tcode);
+		WARN(1, "wrong tcode %d\n", tcode);
 	}
  common:
 	packet->speed = speed;
@@ -638,7 +639,7 @@ int fw_get_response_length(struct fw_request *r)
 		}
 
 	default:
-		WARN(1, "wrong tcode %d", tcode);
+		WARN(1, "wrong tcode %d\n", tcode);
 		return 0;
 	}
 }
@@ -694,7 +695,7 @@ void fw_fill_response(struct fw_packet *response, u32 *request_header,
 		break;
 
 	default:
-		WARN(1, "wrong tcode %d", tcode);
+		WARN(1, "wrong tcode %d\n", tcode);
 	}
 
 	response->payload_mapped = false;
@@ -1192,13 +1193,21 @@ static int __init fw_core_init(void)
 {
 	int ret;
 
+	fw_wq = alloc_workqueue(KBUILD_MODNAME,
+				WQ_NON_REENTRANT | WQ_MEM_RECLAIM, 0);
+	if (!fw_wq)
+		return -ENOMEM;
+
 	ret = bus_register(&fw_bus_type);
-	if (ret < 0)
+	if (ret < 0) {
+		destroy_workqueue(fw_wq);
 		return ret;
+	}
 
 	fw_cdev_major = register_chrdev(0, "firewire", &fw_device_ops);
 	if (fw_cdev_major < 0) {
 		bus_unregister(&fw_bus_type);
+		destroy_workqueue(fw_wq);
 		return fw_cdev_major;
 	}
 
@@ -1214,6 +1223,7 @@ static void __exit fw_core_cleanup(void)
 {
 	unregister_chrdev(fw_cdev_major, "firewire");
 	bus_unregister(&fw_bus_type);
+	destroy_workqueue(fw_wq);
 	idr_destroy(&fw_device_idr);
 }
 
