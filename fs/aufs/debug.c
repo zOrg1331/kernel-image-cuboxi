@@ -404,7 +404,7 @@ void au_dbg_verify_gen(struct dentry *parent, unsigned int sigen)
 
 	err = au_dpages_init(&dpages, GFP_NOFS);
 	AuDebugOn(err);
-	err = au_dcsub_pages_rev(&dpages, parent, /*do_include*/1, NULL, NULL);
+	err = au_dcsub_pages_rev_aufs(&dpages, parent, /*do_include*/1);
 	AuDebugOn(err);
 	for (i = dpages.ndpage - 1; !err && i >= 0; i--) {
 		dpage = dpages.dpages + i;
