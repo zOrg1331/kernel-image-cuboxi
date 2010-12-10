@@ -658,6 +658,7 @@ static int au_refresh_by_dinfo(struct dentry *dentry, struct au_dinfo *dinfo,
 				au_set_h_dptr(dentry, tmp->di_bstart,
 					      dget(hd->hd_dentry));
 			}
+			au_dbg_verify_dinode(dentry);
 		} else {
 			AuDbg("negative --> positive\n");
 			/*
@@ -669,10 +670,12 @@ static int au_refresh_by_dinfo(struct dentry *dentry, struct au_dinfo *dinfo,
 			 */
 			d_drop(dentry);
 			/* au_di_swap(tmp, dinfo); */
+			au_dbg_verify_dinode(dentry);
 		}
 	} else {
 		AuDbg("positive originally\n");
 		/* inode may be NULL */
+		AuDebugOn(inode && (inode->i_mode & S_IFMT) != orig_h.mode);
 		if (!tmp_h.inode) {
 			AuDbg("positive --> negative\n");
 			/* or bypassing aufs */
@@ -681,6 +684,7 @@ static int au_refresh_by_dinfo(struct dentry *dentry, struct au_dinfo *dinfo,
 				dinfo->di_bwh = tmp->di_bwh;
 			if (inode)
 				err = au_refresh_hinode_self(inode);
+			au_dbg_verify_dinode(dentry);
 		} else if (orig_h.mode == tmp_h.mode) {
 			AuDbg("positive --> positive, same type\n");
 			if (!S_ISDIR(orig_h.mode)
@@ -692,6 +696,7 @@ static int au_refresh_by_dinfo(struct dentry *dentry, struct au_dinfo *dinfo,
 				au_hide(dentry);
 				if (inode)
 					err = au_refresh_hinode_self(inode);
+				au_dbg_verify_dinode(dentry);
 			} else {
 				/* fill empty slots */
 				if (dinfo->di_bstart > tmp->di_bstart)
@@ -718,6 +723,7 @@ static int au_refresh_by_dinfo(struct dentry *dentry, struct au_dinfo *dinfo,
 						      dget(h_dentry));
 				}
 				err = au_refresh_hinode(inode, dentry);
+				au_dbg_verify_dinode(dentry);
 			}
 		} else {
 			AuDbg("positive --> positive, different type\n");
@@ -725,6 +731,7 @@ static int au_refresh_by_dinfo(struct dentry *dentry, struct au_dinfo *dinfo,
 			au_hide(dentry);
 			if (inode)
 				err = au_refresh_hinode_self(inode);
+			au_dbg_verify_dinode(dentry);
 		}
 	}
 
@@ -763,6 +770,7 @@ int au_refresh_dentry(struct dentry *dentry, struct dentry *parent)
 		AuDebugOn(au_dbstart(dentry) < 0 && au_dbend(dentry) >= 0);
 		if (inode)
 			err = au_refresh_hinode_self(inode);
+		au_dbg_verify_dinode(dentry);
 		if (!err)
 			goto out_dgen; /* success */
 		goto out;
@@ -789,6 +797,7 @@ int au_refresh_dentry(struct dentry *dentry, struct dentry *parent)
 		/* compare/refresh by dinfo */
 		AuDbgDentry(dentry);
 		err = au_refresh_by_dinfo(dentry, dinfo, tmp);
+		au_dbg_verify_dinode(dentry);
 		AuTraceErr(err);
 	}
 	au_rw_write_unlock(&tmp->di_rwsem);
