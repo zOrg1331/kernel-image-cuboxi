@@ -847,9 +847,9 @@ struct input_keymap_entry {
 /*
  * MT_TOOL types
  */
-#define MT_TOOL_FINGER		0
-#define MT_TOOL_PEN		1
-#define MT_TOOL_ENVELOPE	2
+#define MT_TOOL_FINGER		0	/* normal finger */
+#define MT_TOOL_PEN		1	/* pen tool */
+#define MT_TOOL_ENVELOPE	2	/* rectangle corner - older hw only */
 #define MT_TOOL_MAX		2
 
 /*
