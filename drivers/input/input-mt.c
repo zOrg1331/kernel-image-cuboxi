@@ -101,18 +101,37 @@ void input_mt_report_slot_state(struct input_dev *dev,
 EXPORT_SYMBOL(input_mt_report_slot_state);
 
 /**
+ * input_mt_report_finger_count() - report contact count
+ * @dev: input device with allocated MT slots
+ * @count: the number of contacts
+ *
+ * Reports the contact count via BTN_TOOL_FINGER, BTN_TOOL_DOUBLETAP,
+ * BTN_TOOL_TRIPLETAP and BTN_TOOL_QUADTAP.
+ *
+ * The input core ensures only the KEY events already setup for
+ * this device will produce output.
+ */
+void input_mt_report_finger_count(struct input_dev *dev, int count)
+{
+	input_event(dev, EV_KEY, BTN_TOOL_FINGER, count == 1);
+	input_event(dev, EV_KEY, BTN_TOOL_DOUBLETAP, count == 2);
+	input_event(dev, EV_KEY, BTN_TOOL_TRIPLETAP, count == 3);
+	input_event(dev, EV_KEY, BTN_TOOL_QUADTAP, count == 4);
+}
+EXPORT_SYMBOL(input_mt_report_finger_count);
+
+/**
  * input_mt_report_pointer_emulation() - common pointer emulation
  * @dev: input device with allocated MT slots
+ * @use_count: report number of active contacts as finger count
  *
  * Performs legacy pointer emulation via BTN_TOUCH, ABS_X, ABS_Y and
- * ABS_PRESSURE. Touchpad finger count is emulated using
- * BTN_TOOL_FINGER, BTN_TOOL_DOUBLETAP, BTN_TOOL_TRIPLETAP and
- * BTN_TOOL_QUADTAP.
+ * ABS_PRESSURE. Touchpad finger count is emulated if use_count is true.
  *
  * The input core ensures only the KEY and ABS axes already setup for
  * this device will produce output.
  */
-void input_mt_report_pointer_emulation(struct input_dev *dev)
+void input_mt_report_pointer_emulation(struct input_dev *dev, bool use_count)
 {
 	struct input_mt_slot *oldest = 0;
 	int oldid = dev->trkid;
@@ -133,10 +152,8 @@ void input_mt_report_pointer_emulation(struct input_dev *dev)
 	}
 
 	input_event(dev, EV_KEY, BTN_TOUCH, count > 0);
-	input_event(dev, EV_KEY, BTN_TOOL_FINGER, count == 1);
-	input_event(dev, EV_KEY, BTN_TOOL_DOUBLETAP, count == 2);
-	input_event(dev, EV_KEY, BTN_TOOL_TRIPLETAP, count == 3);
-	input_event(dev, EV_KEY, BTN_TOOL_QUADTAP, count == 4);
+	if (use_count)
+		input_mt_report_finger_count(dev, count);
 
 	if (oldest) {
 		int x = input_mt_get_value(oldest, ABS_MT_POSITION_X);

@@ -168,7 +168,7 @@ static void mmm_filter_event(struct mmm_data *md, struct input_dev *input)
 		f->valid = 0;
 	}
 
-	input_mt_report_pointer_emulation(input);
+	input_mt_report_pointer_emulation(input, true);
 	input_sync(input);
 }
 

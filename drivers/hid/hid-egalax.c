@@ -133,7 +133,7 @@ static void egalax_filter_event(struct egalax_data *td, struct input_dev *input)
 		input_event(input, EV_ABS, ABS_MT_POSITION_Y, td->y);
 		input_event(input, EV_ABS, ABS_MT_PRESSURE, td->z);
 	}
-	input_mt_report_pointer_emulation(input);
+	input_mt_report_pointer_emulation(input, true);
 }
 
 static int egalax_event(struct hid_device *hid, struct hid_field *field,

@@ -51,6 +51,7 @@ static inline void input_mt_slot(struct input_dev *dev, int slot)
 void input_mt_report_slot_state(struct input_dev *dev,
 				unsigned int tool_type, bool active);
 
-void input_mt_report_pointer_emulation(struct input_dev *dev);
+void input_mt_report_finger_count(struct input_dev *dev, int count);
+void input_mt_report_pointer_emulation(struct input_dev *dev, bool use_count);
 
 #endif

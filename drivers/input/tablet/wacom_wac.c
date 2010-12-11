@@ -890,7 +890,7 @@ static int wacom_bpt_touch(struct wacom_wac *wacom)
 		}
 	}
 
-	input_mt_report_pointer_emulation(input);
+	input_mt_report_pointer_emulation(input, true);
 
 	input_report_key(input, BTN_LEFT, (data[1] & 0x08) != 0);
 	input_report_key(input, BTN_FORWARD, (data[1] & 0x04) != 0);
