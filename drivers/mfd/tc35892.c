@@ -163,15 +163,15 @@ static irqreturn_t tc35892_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static void tc35892_irq_dummy(unsigned int irq)
+static void tc35892_irq_dummy(struct irq_data *data)
 {
 	/* No mask/unmask at this level */
 }
 
 static struct irq_chip tc35892_irq_chip = {
-	.name	= "tc35892",
-	.mask	= tc35892_irq_dummy,
-	.unmask	= tc35892_irq_dummy,
+	.name		= "tc35892",
+	.irq_mask	= tc35892_irq_dummy,
+	.irq_unmask	= tc35892_irq_dummy,
 };
 
 static int tc35892_irq_init(struct tc35892 *tc35892)
