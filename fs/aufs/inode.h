@@ -452,8 +452,8 @@ static inline void au_pin_set_parent(struct au_pin *pin, struct dentry *parent)
 
 /* ---------------------------------------------------------------------- */
 
-#ifdef CONFIG_AUFS_HNOTIFY
 struct au_branch;
+#ifdef CONFIG_AUFS_HNOTIFY
 struct au_hnotify_op {
 	void (*ctl)(struct au_hinode *hinode, int do_set);
 	int (*alloc)(struct au_hinode *hinode);
