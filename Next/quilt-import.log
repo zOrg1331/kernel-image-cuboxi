@@ -1,0 +1,45 @@
+Importing i2c based on 2.6.37-rc5-git3
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 6313e3c21743cc88bb5bd8aa72948ee1e83937b6
+HEAD is now at 6313e3c Merge branches 'x86-fixes-for-linus', 'perf-fixes-for-linus' and 'sched-fixes-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-i801-include-linux-slab-h.patch
+i2c-nforce2-remove-unnecessary-cast-of-pci_get_drvdata.patch
+i2c-add-generic-i2c-multiplexer-using-gpio-api.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 437c533...05ae2aa master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.37-rc5-git3
+$ cd ../quilt-tmp
+$ git reset --hard 6313e3c21743cc88bb5bd8aa72948ee1e83937b6
+HEAD is now at 6313e3c Merge branches 'x86-fixes-for-linus', 'perf-fixes-for-linus' and 'sched-fixes-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/tip/linux-2.6-tip
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-it87-fix-manual-pwm-IT8721F.patch
+hwmon-adm1026-01-fix-setting-fan_div.patch
+hwmon-adm1026-02-allow-1-as-a-valid-divider-value.patch
+hwmon-ads7828-update-email-contact-details.patch
+hwmon-adm9240-implement-standard-intrusion-detection-interface.patch
+hwmon-w83792d-implement-standard-intrusion-detection-interface.patch
+hwmon-w83793-implement-standard-intrusion-detection-interface.patch
+hwmon-schedule-removal-old-intrusion-detection-interface.patch
+hwmon-it87-use-pr_fmt-and-pr_level.patch
+hwmon-lm78-use-pr_fmt-and-pr_level.patch
+hwmon-pc87360-use-pr_fmt-and-pr_level.patch
+hwmon-pc87427-use-pr_fmt-and-pr_level.patch
+hwmon-w83781d-use-pr_fmt-and-pr_level.patch
+hwmon-fschmd-drop-useless-mutex.patch
+hwmon-w83793-drop-useless-mutex.patch
+hwmon-w83627hf-document-W83627THF-voltage-pins.patch
+hwmon-emc1403-add-emc1423-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 536a31c...517e2a0 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.37-rc4
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.37-rc1-116-g151f52f
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.37-rc4-12-g22a5b56
+Unchanged quilt series device-mapper
