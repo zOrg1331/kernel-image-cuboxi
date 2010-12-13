@@ -1314,6 +1314,8 @@ void d_set_d_op(struct dentry *dentry, const struct dentry_operations *op)
 		dentry->d_flags |= DCACHE_OP_COMPARE;
 	if (op->d_revalidate)
 		dentry->d_flags |= DCACHE_OP_REVALIDATE;
+	if (op->d_revalidate_rcu)
+		dentry->d_flags |= DCACHE_OP_REVALIDATE_RCU;
 	if (op->d_delete)
 		dentry->d_flags |= DCACHE_OP_DELETE;
 
