@@ -13,7 +13,7 @@
 #include <linux/pci.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <xen/events.h>
 #include <asm/xen/pci.h>
 #include <asm/xen/hypervisor.h>
@@ -603,7 +603,7 @@ static pci_ers_result_t common_process(struct pcistub_device *psdev,
 	if (test_bit(_XEN_PCIF_active,
 		(unsigned long *)&psdev->pdev->sh_info->flags)) {
 		dev_dbg(&psdev->dev->dev,
-			"schedule pci_conf service in pciback \n");
+			"schedule pci_conf service in pciback\n");
 		test_and_schedule_op(psdev->pdev);
 	}
 
@@ -1055,7 +1055,8 @@ static ssize_t pcistub_irq_handler_show(struct device_driver *drv, char *buf)
 		if (!dev_data)
 			continue;
 		count +=
-		    scnprintf(buf + count, PAGE_SIZE - count, "%s:%s:%sing:%ld\n",
+		    scnprintf(buf + count, PAGE_SIZE - count,
+			      "%s:%s:%sing:%ld\n",
 			      pci_name(psdev->dev),
 			      dev_data->isr_on ? "on" : "off",
 			      dev_data->ack_intr ? "ack" : "not ack",

@@ -698,7 +698,7 @@ int xen_create_msi_irq(struct pci_dev *dev, struct msi_desc *msidesc, int type)
 	domid = rc = xen_find_device_domain_owner(dev);
 	if (rc < 0)
 		domid = DOMID_SELF;
-	
+
 	memset(&map_irq, 0, sizeof(map_irq));
 	map_irq.domid = domid;
 	map_irq.type = MAP_PIRQ_TYPE_MSI;
@@ -850,18 +850,18 @@ static int bind_ipi_to_irq(unsigned int ipi, unsigned int cpu)
 }
 
 static int bind_interdomain_evtchn_to_irq(unsigned int remote_domain,
-                                          unsigned int remote_port)
+					  unsigned int remote_port)
 {
-        struct evtchn_bind_interdomain bind_interdomain;
-        int err;
+	struct evtchn_bind_interdomain bind_interdomain;
+	int err;
 
-        bind_interdomain.remote_dom  = remote_domain;
-        bind_interdomain.remote_port = remote_port;
+	bind_interdomain.remote_dom  = remote_domain;
+	bind_interdomain.remote_port = remote_port;
 
-        err = HYPERVISOR_event_channel_op(EVTCHNOP_bind_interdomain,
-                                          &bind_interdomain);
+	err = HYPERVISOR_event_channel_op(EVTCHNOP_bind_interdomain,
+					  &bind_interdomain);
 
-        return err ? : bind_evtchn_to_irq(bind_interdomain.local_port);
+	return err ? : bind_evtchn_to_irq(bind_interdomain.local_port);
 }
 
 
@@ -966,19 +966,19 @@ int bind_interdomain_evtchn_to_irqhandler(unsigned int remote_domain,
 					  const char *devname,
 					  void *dev_id)
 {
-        int irq, retval;
+	int irq, retval;
 
-        irq = bind_interdomain_evtchn_to_irq(remote_domain, remote_port);
-        if (irq < 0)
-                return irq;
+	irq = bind_interdomain_evtchn_to_irq(remote_domain, remote_port);
+	if (irq < 0)
+		return irq;
 
-        retval = request_irq(irq, handler, irqflags, devname, dev_id);
-        if (retval != 0) {
-                unbind_from_irq(irq);
-                return retval;
-        }
+	retval = request_irq(irq, handler, irqflags, devname, dev_id);
+	if (retval != 0) {
+		unbind_from_irq(irq);
+		return retval;
+	}
 
-        return irq;
+	return irq;
 }
 EXPORT_SYMBOL_GPL(bind_interdomain_evtchn_to_irqhandler);
 

@@ -63,12 +63,11 @@ void pciback_control_isr(struct pci_dev *dev, int reset)
 				dev_data->irq_name, dev);
 		if (rc) {
 			dev_err(&dev->dev, "%s: failed to install fake IRQ " \
-				"handler for IRQ %d! (rc:%d)\n", dev_data->irq_name,
-				dev_data->irq, rc);
+				"handler for IRQ %d! (rc:%d)\n",
+				dev_data->irq_name, dev_data->irq, rc);
 			goto out;
 		}
-	}
-	else {
+	} else {
 		free_irq(dev_data->irq, dev);
 		dev_data->irq = 0;
 	}
@@ -188,7 +187,7 @@ void pciback_do_op(struct work_struct *data)
 			break;
 #endif
 		default:
-			op->err = XEN_PCI_ERR_not_implemented;	
+			op->err = XEN_PCI_ERR_not_implemented;
 			break;
 		}
 	}

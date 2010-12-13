@@ -12,7 +12,7 @@
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <xen/interface/io/pciif.h>
 
 struct pci_dev_entry {
@@ -20,8 +20,8 @@ struct pci_dev_entry {
 	struct pci_dev *dev;
 };
 
-#define _PDEVF_op_active 	(0)
-#define PDEVF_op_active 	(1<<(_PDEVF_op_active))
+#define _PDEVF_op_active	(0)
+#define PDEVF_op_active		(1<<(_PDEVF_op_active))
 #define _PCIB_op_pending	(1)
 #define PCIB_op_pending		(1<<(_PCIB_op_pending))
 
@@ -45,11 +45,11 @@ struct pciback_device {
 
 struct pciback_dev_data {
 	struct list_head config_fields;
-	unsigned int permissive : 1;
-	unsigned int warned_on_write : 1;
-	unsigned int enable_intx : 1;
-	unsigned int isr_on : 1; /* Whether the IRQ handler is installed. */ 
-	unsigned int ack_intr : 1; /* .. and ACK-ing */
+	unsigned int permissive:1;
+	unsigned int warned_on_write:1;
+	unsigned int enable_intx:1;
+	unsigned int isr_on:1; /* Whether the IRQ handler is installed. */
+	unsigned int ack_intr:1; /* .. and ACK-ing */
 	unsigned long handled;
 	unsigned int irq; /* Saved in case device transitions to MSI/MSI-X */
 	char irq_name[0]; /* pciback[000:04:00.0] */

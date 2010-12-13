@@ -27,7 +27,7 @@ static inline int xen_find_device_domain_owner(struct pci_dev *dev)
 	return -1;
 }
 static inline int xen_register_device_domain_owner(struct pci_dev *dev,
- 						   uint16_t domain)
+						   uint16_t domain)
 {
 	return -1;
 }

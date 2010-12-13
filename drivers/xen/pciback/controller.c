@@ -378,7 +378,7 @@ int pciback_publish_pci_roots(struct pciback_device *pdev,
 	}
 
 	err = xenbus_printf(XBT_NIL, pdev->xdev->nodename, str,
-			    "%lx", (sizeof(struct acpi_resource) * 2) + 1);
+			    "%lx", (sizeof(struct acpi_resource) *2) + 1);
 
 out:
 	spin_unlock(&dev_data->lock);
