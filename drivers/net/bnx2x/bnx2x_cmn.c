@@ -698,6 +698,29 @@ void bnx2x_release_phy_lock(struct bnx2x *bp)
 	mutex_unlock(&bp->port.phy_mutex);
 }
 
+/* calculates MF speed according to current linespeed and MF configuration */
+u16 bnx2x_get_mf_speed(struct bnx2x *bp)
+{
+	u16 line_speed = bp->link_vars.line_speed;
+	if (IS_MF(bp)) {
+		u16 maxCfg = (bp->mf_config[BP_VN(bp)] &
+						FUNC_MF_CFG_MAX_BW_MASK) >>
+						FUNC_MF_CFG_MAX_BW_SHIFT;
+		/* Calculate the current MAX line speed limit for the DCC
+		 * capable devices
+		 */
+		if (IS_MF_SD(bp)) {
+			u16 vn_max_rate = maxCfg * 100;
+
+			if (vn_max_rate < line_speed)
+				line_speed = vn_max_rate;
+		} else /* IS_MF_SI(bp)) */
+			line_speed = (line_speed * maxCfg) / 100;
+	}
+
+	return line_speed;
+}
+
 void bnx2x_link_report(struct bnx2x *bp)
 {
 	if (bp->flags & MF_FUNC_DIS) {
@@ -713,17 +736,8 @@ void bnx2x_link_report(struct bnx2x *bp)
 			netif_carrier_on(bp->dev);
 		netdev_info(bp->dev, "NIC Link is Up, ");
 
-		line_speed = bp->link_vars.line_speed;
-		if (IS_MF(bp)) {
-			u16 vn_max_rate;
+		line_speed = bnx2x_get_mf_speed(bp);
 
-			vn_max_rate =
-				((bp->mf_config[BP_VN(bp)] &
-				  FUNC_MF_CFG_MAX_BW_MASK) >>
-						FUNC_MF_CFG_MAX_BW_SHIFT) * 100;
-			if (vn_max_rate < line_speed)
-				line_speed = vn_max_rate;
-		}
 		pr_cont("%d Mbps ", line_speed);
 
 		if (bp->link_vars.duplex == DUPLEX_FULL)
@@ -1692,11 +1706,10 @@ static inline u32 bnx2x_xmit_type(struct bnx2x *bp, struct sk_buff *skb)
 		}
 	}
 
-	if (skb_shinfo(skb)->gso_type & SKB_GSO_TCPV4)
-		rc |= (XMIT_GSO_V4 | XMIT_CSUM_V4 | XMIT_CSUM_TCP);
-
-	else if (skb_shinfo(skb)->gso_type & SKB_GSO_TCPV6)
-		rc |= (XMIT_GSO_V6 | XMIT_CSUM_TCP | XMIT_CSUM_V6);
+	if (skb_is_gso_v6(skb))
+		rc |= XMIT_GSO_V6 | XMIT_CSUM_TCP | XMIT_CSUM_V6;
+	else if (skb_is_gso(skb))
+		rc |= XMIT_GSO_V4 | XMIT_CSUM_V4 | XMIT_CSUM_TCP;
 
 	return rc;
 }
@@ -1782,15 +1795,15 @@ exit_lbl:
 }
 #endif
 
-static inline void bnx2x_set_pbd_gso_e2(struct sk_buff *skb,
-				     struct eth_tx_parse_bd_e2 *pbd,
-				     u32 xmit_type)
+static inline void bnx2x_set_pbd_gso_e2(struct sk_buff *skb, u32 *parsing_data,
+					u32 xmit_type)
 {
-	pbd->parsing_data |= cpu_to_le16(skb_shinfo(skb)->gso_size) <<
-		ETH_TX_PARSE_BD_E2_LSO_MSS_SHIFT;
+	*parsing_data |= (skb_shinfo(skb)->gso_size <<
+			      ETH_TX_PARSE_BD_E2_LSO_MSS_SHIFT) &
+			      ETH_TX_PARSE_BD_E2_LSO_MSS;
 	if ((xmit_type & XMIT_GSO_V6) &&
 	    (ipv6_hdr(skb)->nexthdr == NEXTHDR_IPV6))
-		pbd->parsing_data |= ETH_TX_PARSE_BD_E2_IPV6_WITH_EXT_HDR;
+		*parsing_data |= ETH_TX_PARSE_BD_E2_IPV6_WITH_EXT_HDR;
 }
 
 /**
@@ -1835,15 +1848,15 @@ static inline void bnx2x_set_pbd_gso(struct sk_buff *skb,
  * @return header len
  */
 static inline  u8 bnx2x_set_pbd_csum_e2(struct bnx2x *bp, struct sk_buff *skb,
-	struct eth_tx_parse_bd_e2 *pbd,
-	u32 xmit_type)
+	u32 *parsing_data, u32 xmit_type)
 {
-	pbd->parsing_data |= cpu_to_le16(tcp_hdrlen(skb)/4) <<
-		ETH_TX_PARSE_BD_E2_TCP_HDR_LENGTH_DW_SHIFT;
+	*parsing_data |= ((tcp_hdrlen(skb)/4) <<
+		ETH_TX_PARSE_BD_E2_TCP_HDR_LENGTH_DW_SHIFT) &
+		ETH_TX_PARSE_BD_E2_TCP_HDR_LENGTH_DW;
 
-	pbd->parsing_data |= cpu_to_le16(((unsigned char *)tcp_hdr(skb) -
-					  skb->data) / 2) <<
-		ETH_TX_PARSE_BD_E2_TCP_HDR_START_OFFSET_W_SHIFT;
+	*parsing_data |= ((((u8 *)tcp_hdr(skb) - skb->data) / 2) <<
+		ETH_TX_PARSE_BD_E2_TCP_HDR_START_OFFSET_W_SHIFT) &
+		ETH_TX_PARSE_BD_E2_TCP_HDR_START_OFFSET_W;
 
 	return skb_transport_header(skb) + tcp_hdrlen(skb) - skb->data;
 }
@@ -1912,6 +1925,7 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct eth_tx_bd *tx_data_bd, *total_pkt_bd = NULL;
 	struct eth_tx_parse_bd_e1x *pbd_e1x = NULL;
 	struct eth_tx_parse_bd_e2 *pbd_e2 = NULL;
+	u32 pbd_e2_parsing_data = 0;
 	u16 pkt_prod, bd_prod;
 	int nbd, fp_index;
 	dma_addr_t mapping;
@@ -2033,8 +2047,9 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		memset(pbd_e2, 0, sizeof(struct eth_tx_parse_bd_e2));
 		/* Set PBD in checksum offload case */
 		if (xmit_type & XMIT_CSUM)
-			hlen = bnx2x_set_pbd_csum_e2(bp,
-						     skb, pbd_e2, xmit_type);
+			hlen = bnx2x_set_pbd_csum_e2(bp, skb,
+						     &pbd_e2_parsing_data,
+						     xmit_type);
 	} else {
 		pbd_e1x = &fp->tx_desc_ring[bd_prod].parse_bd_e1x;
 		memset(pbd_e1x, 0, sizeof(struct eth_tx_parse_bd_e1x));
@@ -2076,10 +2091,18 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			bd_prod = bnx2x_tx_split(bp, fp, tx_buf, &tx_start_bd,
 						 hlen, bd_prod, ++nbd);
 		if (CHIP_IS_E2(bp))
-			bnx2x_set_pbd_gso_e2(skb, pbd_e2, xmit_type);
+			bnx2x_set_pbd_gso_e2(skb, &pbd_e2_parsing_data,
+					     xmit_type);
 		else
 			bnx2x_set_pbd_gso(skb, pbd_e1x, xmit_type);
 	}
+
+	/* Set the PBD's parsing_data field if not zero
+	 * (for the chips newer than 57711).
+	 */
+	if (pbd_e2_parsing_data)
+		pbd_e2->parsing_data = cpu_to_le32(pbd_e2_parsing_data);
+
 	tx_data_bd = (struct eth_tx_bd *)tx_start_bd;
 
 	/* Handle fragmented skb */

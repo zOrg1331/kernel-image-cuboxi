@@ -1009,15 +1009,10 @@ static int veth_get_settings(struct net_device *dev, struct ethtool_cmd *ecmd)
 	return 0;
 }
 
-static u32 veth_get_link(struct net_device *dev)
-{
-	return 1;
-}
-
 static const struct ethtool_ops ops = {
 	.get_drvinfo = veth_get_drvinfo,
 	.get_settings = veth_get_settings,
-	.get_link = veth_get_link,
+	.get_link = ethtool_op_get_link,
 };
 
 static const struct net_device_ops veth_netdev_ops = {
@@ -1605,7 +1600,7 @@ static int veth_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	}
 	veth_dev[i] = dev;
 
-	port = (struct veth_port*)netdev_priv(dev);
+	port = netdev_priv(dev);
 
 	/* Start the state machine on each connection on this vlan. If we're
 	 * the first dev to do so this will commence link negotiation */

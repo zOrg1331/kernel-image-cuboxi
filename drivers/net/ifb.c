@@ -36,22 +36,10 @@
 #include <net/pkt_sched.h>
 #include <net/net_namespace.h>
 
-#define TX_TIMEOUT  (2*HZ)
-
 #define TX_Q_LIMIT    32
 struct ifb_private {
 	struct tasklet_struct   ifb_tasklet;
 	int     tasklet_pending;
-	/* mostly debug stats leave in for now */
-	unsigned long   st_task_enter; /* tasklet entered */
-	unsigned long   st_txq_refl_try; /* transmit queue refill attempt */
-	unsigned long   st_rxq_enter; /* receive queue entered */
-	unsigned long   st_rx2tx_tran; /* receive to trasmit transfers */
-	unsigned long   st_rxq_notenter; /*receiveQ not entered, resched */
-	unsigned long   st_rx_frm_egr; /* received from egress path */
-	unsigned long   st_rx_frm_ing; /* received from ingress path */
-	unsigned long   st_rxq_check;
-	unsigned long   st_rxq_rsch;
 	struct sk_buff_head     rq;
 	struct sk_buff_head     tq;
 };
@@ -73,19 +61,12 @@ static void ri_tasklet(unsigned long dev)
 	struct sk_buff *skb;
 
 	txq = netdev_get_tx_queue(_dev, 0);
-	dp->st_task_enter++;
 	if ((skb = skb_peek(&dp->tq)) == NULL) {
-		dp->st_txq_refl_try++;
 		if (__netif_tx_trylock(txq)) {
-			dp->st_rxq_enter++;
-			while ((skb = skb_dequeue(&dp->rq)) != NULL) {
-				skb_queue_tail(&dp->tq, skb);
-				dp->st_rx2tx_tran++;
-			}
+			skb_queue_splice_tail_init(&dp->rq, &dp->tq);
 			__netif_tx_unlock(txq);
 		} else {
 			/* reschedule */
-			dp->st_rxq_notenter++;
 			goto resched;
 		}
 	}
@@ -112,10 +93,8 @@ static void ri_tasklet(unsigned long dev)
 		skb->skb_iif = _dev->ifindex;
 
 		if (from & AT_EGRESS) {
-			dp->st_rx_frm_egr++;
 			dev_queue_xmit(skb);
 		} else if (from & AT_INGRESS) {
-			dp->st_rx_frm_ing++;
 			skb_pull(skb, skb->dev->hard_header_len);
 			netif_rx(skb);
 		} else
@@ -123,13 +102,11 @@ static void ri_tasklet(unsigned long dev)
 	}
 
 	if (__netif_tx_trylock(txq)) {
-		dp->st_rxq_check++;
 		if ((skb = skb_peek(&dp->rq)) == NULL) {
 			dp->tasklet_pending = 0;
 			if (netif_queue_stopped(_dev))
 				netif_wake_queue(_dev);
 		} else {
-			dp->st_rxq_rsch++;
 			__netif_tx_unlock(txq);
 			goto resched;
 		}
@@ -184,7 +161,7 @@ static netdev_tx_t ifb_xmit(struct sk_buff *skb, struct net_device *dev)
 		netif_stop_queue(dev);
 	}
 
-	skb_queue_tail(&dp->rq, skb);
+	__skb_queue_tail(&dp->rq, skb);
 	if (!dp->tasklet_pending) {
 		dp->tasklet_pending = 1;
 		tasklet_schedule(&dp->ifb_tasklet);
@@ -199,8 +176,8 @@ static int ifb_close(struct net_device *dev)
 
 	tasklet_kill(&dp->ifb_tasklet);
 	netif_stop_queue(dev);
-	skb_queue_purge(&dp->rq);
-	skb_queue_purge(&dp->tq);
+	__skb_queue_purge(&dp->rq);
+	__skb_queue_purge(&dp->tq);
 	return 0;
 }
 
@@ -209,8 +186,8 @@ static int ifb_open(struct net_device *dev)
 	struct ifb_private *dp = netdev_priv(dev);
 
 	tasklet_init(&dp->ifb_tasklet, ri_tasklet, (unsigned long)dev);
-	skb_queue_head_init(&dp->rq);
-	skb_queue_head_init(&dp->tq);
+	__skb_queue_head_init(&dp->rq);
+	__skb_queue_head_init(&dp->tq);
 	netif_start_queue(dev);
 
 	return 0;

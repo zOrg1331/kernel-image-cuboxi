@@ -1,25 +1,8 @@
 /*
- * Copyright (C) 2009 - QLogic Corporation.
- * All rights reserved.
+ * QLogic qlcnic NIC Driver
+ * Copyright (c)  2009-2010 QLogic Corporation
  *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place - Suite 330, Boston,
- * MA  02111-1307, USA.
- *
- * The full GNU General Public License is included in this distribution
- * in the file called "COPYING".
- *
+ * See LICENSE.qlcnic for copyright and licensing details.
  */
 
 #include "qlcnic.h"
@@ -1233,57 +1216,4 @@ int qlcnic_config_led(struct qlcnic_adapter *adapter, u32 state, u32 rate)
 		dev_err(&adapter->pdev->dev, "LED configuration failed.\n");
 
 	return rv;
-}
-
-static int qlcnic_set_fw_loopback(struct qlcnic_adapter *adapter, u32 flag)
-{
-	struct qlcnic_nic_req	req;
-	int			rv;
-	u64			word;
-
-	memset(&req, 0, sizeof(struct qlcnic_nic_req));
-	req.qhdr = cpu_to_le64(QLCNIC_HOST_REQUEST << 23);
-
-	word = QLCNIC_H2C_OPCODE_CONFIG_LOOPBACK |
-			((u64)adapter->portnum << 16);
-	req.req_hdr = cpu_to_le64(word);
-	req.words[0] = cpu_to_le64(flag);
-
-	rv = qlcnic_send_cmd_descs(adapter, (struct cmd_desc_type0 *)&req, 1);
-	if (rv)
-		dev_err(&adapter->pdev->dev,
-			"%sting loopback mode failed.\n",
-					flag ? "Set" : "Reset");
-	return rv;
-}
-
-int qlcnic_set_ilb_mode(struct qlcnic_adapter *adapter)
-{
-	if (qlcnic_set_fw_loopback(adapter, 1))
-		return -EIO;
-
-	if (qlcnic_nic_set_promisc(adapter,
-				VPORT_MISS_MODE_ACCEPT_ALL)) {
-		qlcnic_set_fw_loopback(adapter, 0);
-		return -EIO;
-	}
-
-	msleep(1000);
-	return 0;
-}
-
-void qlcnic_clear_ilb_mode(struct qlcnic_adapter *adapter)
-{
-	int mode = VPORT_MISS_MODE_DROP;
-	struct net_device *netdev = adapter->netdev;
-
-	qlcnic_set_fw_loopback(adapter, 0);
-
-	if (netdev->flags & IFF_PROMISC)
-		mode = VPORT_MISS_MODE_ACCEPT_ALL;
-	else if (netdev->flags & IFF_ALLMULTI)
-		mode = VPORT_MISS_MODE_ACCEPT_MULTI;
-
-	qlcnic_nic_set_promisc(adapter, mode);
-	msleep(1000);
 }
