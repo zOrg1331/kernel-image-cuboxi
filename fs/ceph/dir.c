@@ -112,6 +112,7 @@ static int __dcache_readdir(struct file *filp,
 	     last);
 
 	spin_lock(&dcache_lock);
+	spin_lock(&parent->d_lock);
 
 	/* start at beginning? */
 	if (filp->f_pos == 2 || (last &&
@@ -135,7 +136,7 @@ more:
 			fi->at_end = 1;
 			goto out_unlock;
 		}
-		spin_lock(&dentry->d_lock);
+		spin_lock_nested(&dentry->d_lock, DENTRY_D_LOCK_NESTED);
 		if (!d_unhashed(dentry) && dentry->d_inode &&
 		    ceph_snap(dentry->d_inode) != CEPH_SNAPDIR &&
 		    ceph_ino(dentry->d_inode) != CEPH_INO_CEPH &&
@@ -153,6 +154,7 @@ more:
 
 	dget_dlock(dentry);
 	spin_unlock(&dentry->d_lock);
+	spin_unlock(&parent->d_lock);
 	spin_unlock(&dcache_lock);
 
 	dout(" %llu (%llu) dentry %p %.*s %p\n", di->offset, filp->f_pos,
@@ -187,10 +189,12 @@ more:
 	}
 
 	spin_lock(&dcache_lock);
+	spin_lock(&parent->d_lock);
 	p = p->prev;	/* advance to next dentry */
 	goto more;
 
 out_unlock:
+	spin_unlock(&parent->d_lock);
 	spin_unlock(&dcache_lock);
 out:
 	if (last)
