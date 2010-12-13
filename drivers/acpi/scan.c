@@ -750,7 +750,7 @@ acpi_bus_extract_wakeup_device_power_package(struct acpi_device *device,
 		device->wakeup.resources.handles[i] = element->reference.handle;
 	}
 
-	acpi_gpe_can_wake(device->wakeup.gpe_device, device->wakeup.gpe_number);
+	acpi_setup_gpe_for_wake(device->wakeup.gpe_device, device->wakeup.gpe_number);
 
 	return AE_OK;
 }
@@ -1444,7 +1444,7 @@ int acpi_bus_start(struct acpi_device *device)
 
 	result = acpi_bus_scan(device->handle, &ops, NULL);
 
-	acpi_update_gpes();
+	acpi_update_all_gpes();
 
 	return result;
 }
@@ -1561,7 +1561,7 @@ int __init acpi_scan_init(void)
 	if (result)
 		acpi_device_unregister(acpi_root, ACPI_BUS_REMOVAL_NORMAL);
 	else
-		acpi_update_gpes();
+		acpi_update_all_gpes();
 
 	return result;
 }
