@@ -192,7 +192,6 @@ ecryptfs_get_key_payload_data(struct key *key)
 		(((struct user_key_payload*)key->payload.data)->data);
 }
 
-#define ECRYPTFS_SUPER_MAGIC 0xf15f
 #define ECRYPTFS_MAX_KEYSET_SIZE 1024
 #define ECRYPTFS_MAX_CIPHER_NAME_SIZE 32
 #define ECRYPTFS_MAX_NUM_ENC_KEYS 64
@@ -584,6 +583,7 @@ ecryptfs_set_dentry_lower_mnt(struct dentry *dentry, struct vfsmount *lower_mnt)
 
 #define ecryptfs_printk(type, fmt, arg...) \
         __ecryptfs_printk(type "%s: " fmt, __func__, ## arg);
+__attribute__ ((format(printf, 1, 2)))
 void __ecryptfs_printk(const char *fmt, ...);
 
 extern const struct file_operations ecryptfs_main_fops;
@@ -760,8 +760,7 @@ int ecryptfs_init_kthread(void);
 void ecryptfs_destroy_kthread(void);
 int ecryptfs_privileged_open(struct file **lower_file,
 			     struct dentry *lower_dentry,
-			     struct vfsmount *lower_mnt,
-			     const struct cred *cred);
+			     struct vfsmount *lower_mnt);
 int ecryptfs_init_persistent_file(struct dentry *ecryptfs_dentry);
 int
 ecryptfs_write_tag_70_packet(char *dest, size_t *remaining_bytes,
