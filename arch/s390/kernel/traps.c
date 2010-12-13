@@ -365,12 +365,10 @@ static inline void __user *get_psw_address(struct pt_regs *regs,
 		((regs->psw.addr - (pgm_int_code >> 16)) & PSW_ADDR_INSN);
 }
 
-void __kprobes do_single_step(struct pt_regs *regs)
+void __kprobes do_per_trap(struct pt_regs *regs)
 {
-	if (notify_die(DIE_SSTEP, "sstep", regs, 0, 0,
-					SIGTRAP) == NOTIFY_STOP){
+	if (notify_die(DIE_SSTEP, "sstep", regs, 0, 0, SIGTRAP) == NOTIFY_STOP)
 		return;
-	}
 	if (tracehook_consider_fatal_signal(current, SIGTRAP))
 		force_sig(SIGTRAP, current);
 }
@@ -733,5 +731,6 @@ void __init trap_init(void)
         pgm_check_table[0x15] = &operand_exception;
         pgm_check_table[0x1C] = &space_switch_exception;
         pgm_check_table[0x1D] = &hfp_sqrt_exception;
-	pfault_irq_init();
+	/* Enable machine checks early. */
+	local_mcck_enable();
 }
