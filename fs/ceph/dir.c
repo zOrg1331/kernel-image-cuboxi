@@ -41,11 +41,11 @@ int ceph_init_dentry(struct dentry *dentry)
 		return 0;
 
 	if (ceph_snap(dentry->d_parent->d_inode) == CEPH_NOSNAP)
-		dentry->d_op = &ceph_dentry_ops;
+		d_set_d_op(dentry, &ceph_dentry_ops);
 	else if (ceph_snap(dentry->d_parent->d_inode) == CEPH_SNAPDIR)
-		dentry->d_op = &ceph_snapdir_dentry_ops;
+		d_set_d_op(dentry, &ceph_snapdir_dentry_ops);
 	else
-		dentry->d_op = &ceph_snap_dentry_ops;
+		d_set_d_op(dentry, &ceph_snap_dentry_ops);
 
 	di = kmem_cache_alloc(ceph_dentry_cachep, GFP_NOFS | __GFP_ZERO);
 	if (!di)
