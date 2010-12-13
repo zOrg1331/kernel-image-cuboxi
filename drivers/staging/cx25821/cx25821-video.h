@@ -49,10 +49,11 @@
 
 #define VIDEO_DEBUG 0
 
-#define dprintk(level, fmt, arg...)\
-    do { if (VIDEO_DEBUG >= level)\
-	printk(KERN_DEBUG "%s/0: " fmt, dev->name, ## arg);\
-    } while (0)
+#define dprintk(level, fmt, arg...)					\
+do {									\
+	if (VIDEO_DEBUG >= level)					\
+		printk(KERN_DEBUG "%s/0: " fmt, dev->name, ##arg);	\
+} while (0)
 
 /* For IOCTL to identify running upstream */
 #define UPSTREAM_START_VIDEO        700
@@ -87,7 +88,7 @@ extern unsigned int vid_limit;
 
 #define FORMAT_FLAGS_PACKED       0x01
 extern struct cx25821_fmt formats[];
-extern struct cx25821_fmt *format_by_fourcc(unsigned int fourcc);
+extern struct cx25821_fmt *cx25821_format_by_fourcc(unsigned int fourcc);
 extern struct cx25821_data timeout_data[MAX_VID_CHANNEL_NUM];
 
 extern void cx25821_dump_video_queue(struct cx25821_dev *dev,
