@@ -166,7 +166,7 @@ static void __init omap_detect_sram(void)
 		     cpu_is_omap1710())
 			omap_sram_size = 0x4000;	/* 16K */
 		else if (cpu_is_omap1611())
-			omap_sram_size = 0x3e800;	/* 250K */
+			omap_sram_size = SZ_256K;
 		else {
 			printk(KERN_ERR "Could not detect SRAM size\n");
 			omap_sram_size = 0x4000;
@@ -270,7 +270,7 @@ void omap_sram_reprogram_clock(u32 dpllctl, u32 ckctl)
 	_omap_sram_reprogram_clock(dpllctl, ckctl);
 }
 
-int __init omap1_sram_init(void)
+static int __init omap1_sram_init(void)
 {
 	_omap_sram_reprogram_clock =
 			omap_sram_push(omap1_sram_reprogram_clock,
