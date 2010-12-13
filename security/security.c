@@ -517,7 +517,7 @@ int security_inode_exec_permission(struct inode *inode, unsigned int flags)
 {
 	if (unlikely(IS_PRIVATE(inode)))
 		return 0;
-	if (rcu)
+	if (flags)
 		return -ECHILD;
 	return security_ops->inode_permission(inode, MAY_EXEC);
 }
