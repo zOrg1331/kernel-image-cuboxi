@@ -95,24 +95,32 @@ static void __hfsplus_ext_write_extent(struct inode *inode, struct hfs_find_data
 				HFSPLUS_TYPE_RSRC : HFSPLUS_TYPE_DATA);
 
 	res = hfs_brec_find(fd);
-	if (hip->flags & HFSPLUS_FLG_EXT_NEW) {
+	if (hip->extent_state & HFSPLUS_EXT_NEW) {
 		if (res != -ENOENT)
 			return;
 		hfs_brec_insert(fd, hip->cached_extents,
 				sizeof(hfsplus_extent_rec));
-		hip->flags &= ~(HFSPLUS_FLG_EXT_DIRTY | HFSPLUS_FLG_EXT_NEW);
+		hip->extent_state &= ~(HFSPLUS_EXT_DIRTY | HFSPLUS_EXT_NEW);
 	} else {
 		if (res)
 			return;
 		hfs_bnode_write(fd->bnode, hip->cached_extents,
 				fd->entryoffset, fd->entrylength);
-		hip->flags &= ~HFSPLUS_FLG_EXT_DIRTY;
+		hip->extent_state &= ~HFSPLUS_EXT_DIRTY;
 	}
+
+	/*
+	 * We can't just use hfsplus_mark_inode_dirty here, because we
+	 * also get called from hfsplus_write_inode, which should not
+	 * redirty the inode.  Instead the callers have to be careful
+	 * to explicily mark the inode dirty, too.
+	 */
+	set_bit(HFSPLUS_I_EXT_DIRTY, &hip->flags);
 }
 
 static void hfsplus_ext_write_extent_locked(struct inode *inode)
 {
-	if (HFSPLUS_I(inode)->flags & HFSPLUS_FLG_EXT_DIRTY) {
+	if (HFSPLUS_I(inode)->extent_state & HFSPLUS_EXT_DIRTY) {
 		struct hfs_find_data fd;
 
 		hfs_find_init(HFSPLUS_SB(inode->i_sb)->ext_tree, &fd);
@@ -155,7 +163,7 @@ static inline int __hfsplus_ext_cache_extent(struct hfs_find_data *fd, struct in
 
 	WARN_ON(!mutex_is_locked(&hip->extents_lock));
 
-	if (hip->flags & HFSPLUS_FLG_EXT_DIRTY)
+	if (hip->extent_state & HFSPLUS_EXT_DIRTY)
 		__hfsplus_ext_write_extent(inode, fd);
 
 	res = __hfsplus_ext_read_extent(fd, hip->cached_extents, inode->i_ino,
@@ -167,7 +175,7 @@ static inline int __hfsplus_ext_cache_extent(struct hfs_find_data *fd, struct in
 		hip->cached_blocks = hfsplus_ext_block_count(hip->cached_extents);
 	} else {
 		hip->cached_start = hip->cached_blocks = 0;
-		hip->flags &= ~(HFSPLUS_FLG_EXT_DIRTY | HFSPLUS_FLG_EXT_NEW);
+		hip->extent_state &= ~(HFSPLUS_EXT_DIRTY | HFSPLUS_EXT_NEW);
 	}
 	return res;
 }
@@ -197,6 +205,7 @@ int hfsplus_get_block(struct inode *inode, sector_t iblock,
 	struct hfsplus_inode_info *hip = HFSPLUS_I(inode);
 	int res = -EIO;
 	u32 ablock, dblock, mask;
+	int was_dirty = 0;
 	int shift;
 
 	/* Convert inode block to disk allocation block */
@@ -223,14 +232,20 @@ int hfsplus_get_block(struct inode *inode, sector_t iblock,
 		return -EIO;
 
 	mutex_lock(&hip->extents_lock);
+
+	/*
+	 * hfsplus_ext_read_extent will write out a cached extent into
+	 * the extents btree.  In that case we may have to mark the inode
+	 * dirty even for a pure read of an extent here.
+	 */
+	was_dirty = (hip->extent_state & HFSPLUS_EXT_DIRTY);
 	res = hfsplus_ext_read_extent(inode, ablock);
-	if (!res) {
-		dblock = hfsplus_ext_find_block(hip->cached_extents,
-						ablock - hip->cached_start);
-	} else {
+	if (res) {
 		mutex_unlock(&hip->extents_lock);
 		return -EIO;
 	}
+	dblock = hfsplus_ext_find_block(hip->cached_extents,
+					ablock - hip->cached_start);
 	mutex_unlock(&hip->extents_lock);
 
 done:
@@ -242,8 +257,9 @@ done:
 		hip->phys_size += sb->s_blocksize;
 		hip->fs_blocks++;
 		inode_add_bytes(inode, sb->s_blocksize);
-		mark_inode_dirty(inode);
 	}
+	if (create || was_dirty)
+		mark_inode_dirty(inode);
 	return 0;
 }
 
@@ -429,7 +445,7 @@ int hfsplus_file_extend(struct inode *inode)
 					 start, len);
 		if (!res) {
 			hfsplus_dump_extent(hip->cached_extents);
-			hip->flags |= HFSPLUS_FLG_EXT_DIRTY;
+			hip->extent_state |= HFSPLUS_EXT_DIRTY;
 			hip->cached_blocks += len;
 		} else if (res == -ENOSPC)
 			goto insert_extent;
@@ -438,7 +454,7 @@ out:
 	mutex_unlock(&hip->extents_lock);
 	if (!res) {
 		hip->alloc_blocks += len;
-		mark_inode_dirty(inode);
+		hfsplus_mark_inode_dirty(inode, HFSPLUS_I_ALLOC_DIRTY);
 	}
 	return res;
 
@@ -450,7 +466,7 @@ insert_extent:
 	hip->cached_extents[0].start_block = cpu_to_be32(start);
 	hip->cached_extents[0].block_count = cpu_to_be32(len);
 	hfsplus_dump_extent(hip->cached_extents);
-	hip->flags |= HFSPLUS_FLG_EXT_DIRTY | HFSPLUS_FLG_EXT_NEW;
+	hip->extent_state |= HFSPLUS_EXT_DIRTY | HFSPLUS_EXT_NEW;
 	hip->cached_start = hip->alloc_blocks;
 	hip->cached_blocks = len;
 
@@ -513,12 +529,12 @@ void hfsplus_file_truncate(struct inode *inode)
 				     alloc_cnt - start, alloc_cnt - blk_cnt);
 		hfsplus_dump_extent(hip->cached_extents);
 		if (blk_cnt > start) {
-			hip->flags |= HFSPLUS_FLG_EXT_DIRTY;
+			hip->extent_state |= HFSPLUS_EXT_DIRTY;
 			break;
 		}
 		alloc_cnt = start;
 		hip->cached_start = hip->cached_blocks = 0;
-		hip->flags &= ~(HFSPLUS_FLG_EXT_DIRTY | HFSPLUS_FLG_EXT_NEW);
+		hip->extent_state &= ~(HFSPLUS_EXT_DIRTY | HFSPLUS_EXT_NEW);
 		hfs_brec_remove(&fd);
 	}
 	hfs_find_exit(&fd);
@@ -529,5 +545,5 @@ out:
 	hip->phys_size = inode->i_size;
 	hip->fs_blocks = (inode->i_size + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
 	inode_set_bytes(inode, hip->fs_blocks << sb->s_blocksize_bits);
-	mark_inode_dirty(inode);
+	hfsplus_mark_inode_dirty(inode, HFSPLUS_I_ALLOC_DIRTY);
 }
