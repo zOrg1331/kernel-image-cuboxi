@@ -429,32 +429,17 @@ int d_invalidate(struct dentry * dentry)
 EXPORT_SYMBOL(d_invalidate);
 
 /* This must be called with d_lock held */
-static inline struct dentry * __dget_locked_dlock(struct dentry *dentry)
+static inline void __dget_dlock(struct dentry *dentry)
 {
 	dentry->d_count++;
-	dentry_lru_del(dentry);
-	return dentry;
 }
 
-/* This must be called with d_lock held */
-static inline struct dentry * __dget_locked(struct dentry *dentry)
+static inline void __dget(struct dentry *dentry)
 {
 	spin_lock(&dentry->d_lock);
-	__dget_locked_dlock(dentry);
+	__dget_dlock(dentry);
 	spin_unlock(&dentry->d_lock);
-	return dentry;
 }
-
-struct dentry * dget_locked_dlock(struct dentry *dentry)
-{
-	return __dget_locked_dlock(dentry);
-}
-
-struct dentry * dget_locked(struct dentry *dentry)
-{
-	return __dget_locked(dentry);
-}
-EXPORT_SYMBOL(dget_locked);
 
 struct dentry *dget_parent(struct dentry *dentry)
 {
@@ -535,7 +520,7 @@ static struct dentry *__d_find_alias(struct inode *inode, int want_discon)
 	struct dentry *alias;
 	alias = ___d_find_alias(inode, want_discon);
 	if (alias) {
-		__dget_locked_dlock(alias);
+		__dget_dlock(alias);
 		spin_unlock(&alias->d_lock);
 	}
 	return alias;
@@ -566,7 +551,7 @@ restart:
 	list_for_each_entry(dentry, &inode->i_dentry, d_alias) {
 		spin_lock(&dentry->d_lock);
 		if (!dentry->d_count) {
-			__dget_locked_dlock(dentry);
+			__dget_dlock(dentry);
 			__d_drop(dentry);
 			spin_unlock(&dentry->d_lock);
 			spin_unlock(&dcache_inode_lock);
@@ -1261,7 +1246,8 @@ struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 		 * don't need child lock because it is not subject
 		 * to concurrency here
 		 */
-		dentry->d_parent = dget_dlock(parent);
+		__dget_dlock(parent);
+		dentry->d_parent = parent;
 		dentry->d_sb = parent->d_sb;
 		list_add(&dentry->d_u.d_child, &parent->d_subdirs);
 		spin_unlock(&parent->d_lock);
@@ -1360,7 +1346,7 @@ static struct dentry *__d_instantiate_unique(struct dentry *entry,
 			goto next;
 		if (memcmp(qstr->name, name, len))
 			goto next;
-		dget_locked_dlock(alias);
+		__dget_dlock(alias);
 		spin_unlock(&alias->d_lock);
 		return alias;
 next:
@@ -1616,7 +1602,7 @@ struct dentry *d_add_ci(struct dentry *dentry, struct inode *inode,
 	 * reference to it, move it in place and use it.
 	 */
 	new = list_entry(inode->i_dentry.next, struct dentry, d_alias);
-	dget_locked(new);
+	__dget(new);
 	spin_unlock(&dcache_inode_lock);
 	security_d_instantiate(found, inode);
 	d_move(new, found);
@@ -1792,7 +1778,7 @@ int d_validate(struct dentry *dentry, struct dentry *dparent)
 	list_for_each_entry(child, &dparent->d_subdirs, d_u.d_child) {
 		if (dentry == child) {
 			spin_lock_nested(&dentry->d_lock, DENTRY_D_LOCK_NESTED);
-			__dget_locked_dlock(dentry);
+			__dget_dlock(dentry);
 			spin_unlock(&dentry->d_lock);
 			spin_unlock(&dparent->d_lock);
 			return 1;
