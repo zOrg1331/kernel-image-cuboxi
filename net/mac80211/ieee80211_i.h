@@ -260,6 +260,7 @@ enum ieee80211_work_type {
 	IEEE80211_WORK_ASSOC_BEACON_WAIT,
 	IEEE80211_WORK_ASSOC,
 	IEEE80211_WORK_REMAIN_ON_CHANNEL,
+	IEEE80211_WORK_OFFCHANNEL_TX,
 };
 
 /**
@@ -320,6 +321,10 @@ struct ieee80211_work {
 		struct {
 			u32 duration;
 		} remain;
+		struct {
+			struct sk_buff *frame;
+			u32 wait;
+		} offchan_tx;
 	};
 
 	int ie_len;
@@ -349,8 +354,10 @@ struct ieee80211_if_managed {
 	struct work_struct chswitch_work;
 	struct work_struct beacon_connection_loss_work;
 
+	unsigned long beacon_timeout;
 	unsigned long probe_timeout;
 	int probe_send_count;
+	bool nullfunc_failed;
 
 	struct mutex mtx;
 	struct cfg80211_bss *associated;
@@ -550,7 +557,7 @@ struct ieee80211_sub_if_data {
 	unsigned int fragment_next;
 
 	struct ieee80211_key *keys[NUM_DEFAULT_KEYS + NUM_DEFAULT_MGMT_KEYS];
-	struct ieee80211_key *default_key;
+	struct ieee80211_key *default_unicast_key, *default_multicast_key;
 	struct ieee80211_key *default_mgmt_key;
 
 	u16 sequence_number;
@@ -588,7 +595,8 @@ struct ieee80211_sub_if_data {
 	struct {
 		struct dentry *dir;
 		struct dentry *subdir_stations;
-		struct dentry *default_key;
+		struct dentry *default_unicast_key;
+		struct dentry *default_multicast_key;
 		struct dentry *default_mgmt_key;
 	} debugfs;
 #endif
@@ -600,19 +608,6 @@ static inline
 struct ieee80211_sub_if_data *vif_to_sdata(struct ieee80211_vif *p)
 {
 	return container_of(p, struct ieee80211_sub_if_data, vif);
-}
-
-static inline void
-ieee80211_sdata_set_mesh_id(struct ieee80211_sub_if_data *sdata,
-			    u8 mesh_id_len, u8 *mesh_id)
-{
-#ifdef CONFIG_MAC80211_MESH
-	struct ieee80211_if_mesh *ifmsh = &sdata->u.mesh;
-	ifmsh->mesh_id_len = mesh_id_len;
-	memcpy(ifmsh->mesh_id, mesh_id, mesh_id_len);
-#else
-	WARN_ON(1);
-#endif
 }
 
 enum sdata_queue_type {
@@ -1264,6 +1259,8 @@ void ieee80211_send_nullfunc(struct ieee80211_local *local,
 			     int powersave);
 void ieee80211_sta_rx_notify(struct ieee80211_sub_if_data *sdata,
 			     struct ieee80211_hdr *hdr);
+void ieee80211_sta_tx_notify(struct ieee80211_sub_if_data *sdata,
+			     struct ieee80211_hdr *hdr, bool ack);
 void ieee80211_beacon_connection_loss_work(struct work_struct *work);
 
 void ieee80211_wake_queues_by_reason(struct ieee80211_hw *hw,
@@ -1278,6 +1275,9 @@ void ieee80211_add_pending_skb(struct ieee80211_local *local,
 			       struct sk_buff *skb);
 int ieee80211_add_pending_skbs(struct ieee80211_local *local,
 			       struct sk_buff_head *skbs);
+int ieee80211_add_pending_skbs_fn(struct ieee80211_local *local,
+				  struct sk_buff_head *skbs,
+				  void (*fn)(void *data), void *data);
 
 void ieee80211_send_auth(struct ieee80211_sub_if_data *sdata,
 			 u16 transaction, u16 auth_alg,
@@ -1287,6 +1287,10 @@ int ieee80211_build_preq_ies(struct ieee80211_local *local, u8 *buffer,
 			     const u8 *ie, size_t ie_len,
 			     enum ieee80211_band band, u32 rate_mask,
 			     u8 channel);
+struct sk_buff *ieee80211_build_probe_req(struct ieee80211_sub_if_data *sdata,
+					  u8 *dst,
+					  const u8 *ssid, size_t ssid_len,
+					  const u8 *ie, size_t ie_len);
 void ieee80211_send_probe_req(struct ieee80211_sub_if_data *sdata, u8 *dst,
 			      const u8 *ssid, size_t ssid_len,
 			      const u8 *ie, size_t ie_len);

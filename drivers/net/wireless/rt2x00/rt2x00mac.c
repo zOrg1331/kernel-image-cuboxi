@@ -104,7 +104,7 @@ int rt2x00mac_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 	struct rt2x00_dev *rt2x00dev = hw->priv;
 	struct ieee80211_tx_info *tx_info = IEEE80211_SKB_CB(skb);
 	enum data_queue_qid qid = skb_get_queue_mapping(skb);
-	struct data_queue *queue;
+	struct data_queue *queue = NULL;
 
 	/*
 	 * Mac80211 might be calling this function while we are trying
@@ -153,7 +153,7 @@ int rt2x00mac_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 		goto exit_fail;
 
 	if (rt2x00queue_threshold(queue))
-		ieee80211_stop_queue(rt2x00dev->hw, qid);
+		rt2x00queue_pause_queue(queue);
 
 	return NETDEV_TX_OK;
 
@@ -283,14 +283,8 @@ int rt2x00mac_add_interface(struct ieee80211_hw *hw,
 	 * invalid behavior in the device.
 	 */
 	memcpy(&intf->mac, vif->addr, ETH_ALEN);
-	if (vif->type == NL80211_IFTYPE_AP) {
-		memcpy(&intf->bssid, vif->addr, ETH_ALEN);
-		rt2x00lib_config_intf(rt2x00dev, intf, vif->type,
-				      intf->mac, intf->bssid);
-	} else {
-		rt2x00lib_config_intf(rt2x00dev, intf, vif->type,
-				      intf->mac, NULL);
-	}
+	rt2x00lib_config_intf(rt2x00dev, intf, vif->type,
+			      intf->mac, NULL);
 
 	/*
 	 * Some filters depend on the current working mode. We can force
@@ -358,7 +352,7 @@ int rt2x00mac_config(struct ieee80211_hw *hw, u32 changed)
 	 * if for any reason the link tuner must be reset, this will be
 	 * handled by rt2x00lib_config().
 	 */
-	rt2x00lib_toggle_rx(rt2x00dev, STATE_RADIO_RX_OFF_LINK);
+	rt2x00queue_stop_queue(rt2x00dev->rx);
 
 	/*
 	 * When we've just turned on the radio, we want to reprogram
@@ -376,7 +370,7 @@ int rt2x00mac_config(struct ieee80211_hw *hw, u32 changed)
 	rt2x00lib_config_antenna(rt2x00dev, rt2x00dev->default_ant);
 
 	/* Turn RX back on */
-	rt2x00lib_toggle_rx(rt2x00dev, STATE_RADIO_RX_ON_LINK);
+	rt2x00queue_start_queue(rt2x00dev->rx);
 
 	return 0;
 }
@@ -719,3 +713,13 @@ void rt2x00mac_rfkill_poll(struct ieee80211_hw *hw)
 	wiphy_rfkill_set_hw_state(hw->wiphy, !active);
 }
 EXPORT_SYMBOL_GPL(rt2x00mac_rfkill_poll);
+
+void rt2x00mac_flush(struct ieee80211_hw *hw, bool drop)
+{
+	struct rt2x00_dev *rt2x00dev = hw->priv;
+	struct data_queue *queue;
+
+	tx_queue_for_each(rt2x00dev, queue)
+		rt2x00queue_flush_queue(queue, drop);
+}
+EXPORT_SYMBOL_GPL(rt2x00mac_flush);

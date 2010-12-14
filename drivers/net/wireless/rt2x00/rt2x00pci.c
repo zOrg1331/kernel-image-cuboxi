@@ -82,6 +82,13 @@ void rt2x00pci_rxdone(struct rt2x00_dev *rt2x00dev)
 		skbdesc->desc_len = entry->queue->desc_size;
 
 		/*
+		 * DMA is already done, notify rt2x00lib that
+		 * it finished successfully.
+		 */
+		rt2x00lib_dmastart(entry);
+		rt2x00lib_dmadone(entry);
+
+		/*
 		 * Send the frame to rt2x00lib for further processing.
 		 */
 		rt2x00lib_rxdone(entry);
@@ -105,7 +112,7 @@ static int rt2x00pci_alloc_queue_dma(struct rt2x00_dev *rt2x00dev,
 	 */
 	addr = dma_alloc_coherent(rt2x00dev->dev,
 				  queue->limit * queue->desc_size,
-				  &dma, GFP_KERNEL | GFP_DMA);
+				  &dma, GFP_KERNEL);
 	if (!addr)
 		return -ENOMEM;
 
