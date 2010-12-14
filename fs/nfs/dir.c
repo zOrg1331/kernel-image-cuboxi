@@ -438,7 +438,7 @@ void nfs_prime_dcache(struct dentry *parent, struct nfs_entry *entry)
 	if (dentry == NULL)
 		return;
 
-	dentry->d_op = NFS_PROTO(dir)->dentry_ops;
+	d_set_d_op(dentry, NFS_PROTO(dir)->dentry_ops);
 	inode = nfs_fhget(dentry->d_sb, entry->fh, entry->fattr);
 	if (IS_ERR(inode))
 		goto out;
@@ -1117,7 +1117,7 @@ out_error:
 /*
  * This is called from dput() when d_count is going to 0.
  */
-static int nfs_dentry_delete(struct dentry *dentry)
+static int nfs_dentry_delete(const struct dentry *dentry)
 {
 	dfprintk(VFS, "NFS: dentry_delete(%s/%s, %x)\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name,
@@ -1188,7 +1188,7 @@ static struct dentry *nfs_lookup(struct inode *dir, struct dentry * dentry, stru
 	if (dentry->d_name.len > NFS_SERVER(dir)->namelen)
 		goto out;
 
-	dentry->d_op = NFS_PROTO(dir)->dentry_ops;
+	d_set_d_op(dentry, NFS_PROTO(dir)->dentry_ops);
 
 	/*
 	 * If we're doing an exclusive create, optimize away the lookup
@@ -1333,7 +1333,7 @@ static struct dentry *nfs_atomic_lookup(struct inode *dir, struct dentry *dentry
 		res = ERR_PTR(-ENAMETOOLONG);
 		goto out;
 	}
-	dentry->d_op = NFS_PROTO(dir)->dentry_ops;
+	d_set_d_op(dentry, NFS_PROTO(dir)->dentry_ops);
 
 	/* Let vfs_create() deal with O_EXCL. Instantiate, but don't hash
 	 * the dentry. */
@@ -1718,11 +1718,9 @@ static int nfs_unlink(struct inode *dir, struct dentry *dentry)
 	dfprintk(VFS, "NFS: unlink(%s/%ld, %s)\n", dir->i_sb->s_id,
 		dir->i_ino, dentry->d_name.name);
 
-	spin_lock(&dcache_lock);
 	spin_lock(&dentry->d_lock);
-	if (atomic_read(&dentry->d_count) > 1) {
+	if (dentry->d_count > 1) {
 		spin_unlock(&dentry->d_lock);
-		spin_unlock(&dcache_lock);
 		/* Start asynchronous writeout of the inode */
 		write_inode_now(dentry->d_inode, 0);
 		error = nfs_sillyrename(dir, dentry);
@@ -1733,7 +1731,6 @@ static int nfs_unlink(struct inode *dir, struct dentry *dentry)
 		need_rehash = 1;
 	}
 	spin_unlock(&dentry->d_lock);
-	spin_unlock(&dcache_lock);
 	error = nfs_safe_remove(dentry);
 	if (!error || error == -ENOENT) {
 		nfs_set_verifier(dentry, nfs_save_change_attribute(dir));
@@ -1868,7 +1865,7 @@ static int nfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	dfprintk(VFS, "NFS: rename(%s/%s -> %s/%s, ct=%d)\n",
 		 old_dentry->d_parent->d_name.name, old_dentry->d_name.name,
 		 new_dentry->d_parent->d_name.name, new_dentry->d_name.name,
-		 atomic_read(&new_dentry->d_count));
+		 new_dentry->d_count);
 
 	/*
 	 * For non-directories, check whether the target is busy and if so,
@@ -1886,7 +1883,7 @@ static int nfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 			rehash = new_dentry;
 		}
 
-		if (atomic_read(&new_dentry->d_count) > 2) {
+		if (new_dentry->d_count > 2) {
 			int err;
 
 			/* copy the target dentry's name */

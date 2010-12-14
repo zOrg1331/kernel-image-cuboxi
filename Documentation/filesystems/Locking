@@ -10,8 +10,11 @@ be able to use diff(1).
 --------------------------- dentry_operations --------------------------
 prototypes:
 	int (*d_revalidate)(struct dentry *, int);
-	int (*d_hash) (struct dentry *, struct qstr *);
-	int (*d_compare) (struct dentry *, struct qstr *, struct qstr *);
+	int (*d_hash)(const struct dentry *, const struct inode *,
+			struct qstr *);
+	int (*d_compare)(const struct dentry *, const struct inode *,
+			const struct dentry *, const struct inode *,
+			unsigned int, const char *, const struct qstr *);
 	int (*d_delete)(struct dentry *);
 	void (*d_release)(struct dentry *);
 	void (*d_iput)(struct dentry *, struct inode *);
@@ -19,14 +22,14 @@ prototypes:
 
 locking rules:
 	none have BKL
-		dcache_lock	rename_lock	->d_lock	may block
-d_revalidate:	no		no		no		yes
-d_hash		no		no		no		yes
-d_compare:	no		yes		no		no 
-d_delete:	yes		no		yes		no
-d_release:	no		no		no		yes
-d_iput:		no		no		no		yes
-d_dname:	no		no		no		no
+		rename_lock	->d_lock	may block
+d_revalidate:	no		no		yes
+d_hash		no		no		no
+d_compare:	yes		no		no
+d_delete:	no		yes		no
+d_release:	no		no		yes
+d_iput:		no		no		yes
+d_dname:	no		no		no
 
 --------------------------- inode_operations --------------------------- 
 prototypes:

@@ -262,6 +262,7 @@ static struct inode *sock_alloc_inode(struct super_block *sb)
 }
 
 
+
 static void wq_free_rcu(struct rcu_head *head)
 {
 	struct socket_wq *wq = container_of(head, struct socket_wq, rcu);
@@ -360,14 +361,14 @@ static int sock_alloc_file(struct socket *sock, struct file **f, int flags)
 	if (unlikely(fd < 0))
 		return fd;
 
-	path.dentry = d_alloc(sock_mnt->mnt_sb->s_root, &name);
+	path.dentry = d_alloc_pseudo(sock_mnt->mnt_sb, &name);
 	if (unlikely(!path.dentry)) {
 		put_unused_fd(fd);
 		return -ENOMEM;
 	}
 	path.mnt = mntget(sock_mnt);
 
-	path.dentry->d_op = &sockfs_dentry_operations;
+	d_set_d_op(path.dentry, &sockfs_dentry_operations);
 	d_instantiate(path.dentry, SOCK_INODE(sock));
 	SOCK_INODE(sock)->i_fop = &socket_file_ops;
 
