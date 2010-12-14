@@ -817,14 +817,14 @@ static int hidinput_open(struct input_dev *dev)
 {
 	struct hid_device *hid = input_get_drvdata(dev);
 
-	return hid->ll_driver->open(hid);
+	return hid_hw_open(hid);
 }
 
 static void hidinput_close(struct input_dev *dev)
 {
 	struct hid_device *hid = input_get_drvdata(dev);
 
-	hid->ll_driver->close(hid);
+	hid_hw_close(hid);
 }
 
 /*
@@ -871,7 +871,7 @@ int hidinput_connect(struct hid_device *hid, unsigned int force)
 				if (!hidinput || !input_dev) {
 					kfree(hidinput);
 					input_free_device(input_dev);
-					err_hid("Out of memory during hid input probe");
+					hid_err(hid, "Out of memory during hid input probe\n");
 					goto out_unwind;
 				}
 
