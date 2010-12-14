@@ -16,6 +16,7 @@
 #include <linux/init.h>
 #include <linux/clk.h>
 #include <linux/io.h>
+#include <linux/err.h>
 
 #include <plat/common.h>
 #include <plat/board.h>
@@ -163,7 +164,7 @@ static int __init omap_init_clocksource_32k(void)
 			return -ENODEV;
 
 		sync_32k_ick = clk_get(NULL, "omap_32ksync_ick");
-		if (sync_32k_ick)
+		if (!IS_ERR(sync_32k_ick))
 			clk_enable(sync_32k_ick);
 
 		offset_32k = clocksource_32k.read(&clocksource_32k);
