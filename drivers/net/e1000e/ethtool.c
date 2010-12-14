@@ -194,20 +194,6 @@ static int e1000_get_settings(struct net_device *netdev,
 	return 0;
 }
 
-static u32 e1000_get_link(struct net_device *netdev)
-{
-	struct e1000_adapter *adapter = netdev_priv(netdev);
-	struct e1000_hw *hw = &adapter->hw;
-
-	/*
-	 * Avoid touching hardware registers when possible, otherwise
-	 * link negotiation can get messed up when user-level scripts
-	 * are rapidly polling the driver to see if link is up.
-	 */
-	return netif_running(netdev) ? netif_carrier_ok(netdev) :
-	    !!(er32(STATUS) & E1000_STATUS_LU);
-}
-
 static int e1000_set_spd_dplx(struct e1000_adapter *adapter, u16 spddplx)
 {
 	struct e1000_mac_info *mac = &adapter->hw.mac;
@@ -1263,6 +1249,7 @@ static int e1000_integrated_phy_loopback(struct e1000_adapter *adapter)
 	u32 ctrl_reg = 0;
 	u32 stat_reg = 0;
 	u16 phy_reg = 0;
+	s32 ret_val = 0;
 
 	hw->mac.autoneg = 0;
 
@@ -1322,7 +1309,13 @@ static int e1000_integrated_phy_loopback(struct e1000_adapter *adapter)
 	case e1000_phy_82577:
 	case e1000_phy_82578:
 		/* Workaround: K1 must be disabled for stable 1Gbps operation */
+		ret_val = hw->phy.ops.acquire(hw);
+		if (ret_val) {
+			e_err("Cannot setup 1Gbps loopback.\n");
+			return ret_val;
+		}
 		e1000_configure_k1_ich8lan(hw, false);
+		hw->phy.ops.release(hw);
 		break;
 	case e1000_phy_82579:
 		/* Disable PHY energy detect power down */
@@ -1860,7 +1853,7 @@ static int e1000_set_wol(struct net_device *netdev,
 /* bit defines for adapter->led_status */
 #define E1000_LED_ON		0
 
-static void e1000e_led_blink_task(struct work_struct *work)
+void e1000e_led_blink_task(struct work_struct *work)
 {
 	struct e1000_adapter *adapter = container_of(work,
 	                                struct e1000_adapter, led_blink_task);
@@ -1892,7 +1885,6 @@ static int e1000_phys_id(struct net_device *netdev, u32 data)
 	    (hw->mac.type == e1000_pch2lan) ||
 	    (hw->mac.type == e1000_82583) ||
 	    (hw->mac.type == e1000_82574)) {
-		INIT_WORK(&adapter->led_blink_task, e1000e_led_blink_task);
 		if (!adapter->blink_timer.function) {
 			init_timer(&adapter->blink_timer);
 			adapter->blink_timer.function =
@@ -1986,6 +1978,9 @@ static void e1000_get_ethtool_stats(struct net_device *netdev,
 			p = (char *) adapter +
 					e1000_gstrings_stats[i].stat_offset;
 			break;
+		default:
+			data[i] = 0;
+			continue;
 		}
 
 		data[i] = (e1000_gstrings_stats[i].sizeof_stat ==
@@ -2024,7 +2019,7 @@ static const struct ethtool_ops e1000_ethtool_ops = {
 	.get_msglevel		= e1000_get_msglevel,
 	.set_msglevel		= e1000_set_msglevel,
 	.nway_reset		= e1000_nway_reset,
-	.get_link		= e1000_get_link,
+	.get_link		= ethtool_op_get_link,
 	.get_eeprom_len		= e1000_get_eeprom_len,
 	.get_eeprom		= e1000_get_eeprom,
 	.set_eeprom		= e1000_set_eeprom,

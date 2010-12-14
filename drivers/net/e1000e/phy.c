@@ -226,6 +226,13 @@ s32 e1000e_read_phy_reg_mdic(struct e1000_hw *hw, u32 offset, u16 *data)
 	}
 	*data = (u16) mdic;
 
+	/*
+	 * Allow some time after each MDIC transaction to avoid
+	 * reading duplicate data in the next MDIC transaction.
+	 */
+	if (hw->mac.type == e1000_pch2lan)
+		udelay(100);
+
 	return 0;
 }
 
@@ -278,6 +285,13 @@ s32 e1000e_write_phy_reg_mdic(struct e1000_hw *hw, u32 offset, u16 data)
 		e_dbg("MDI Error\n");
 		return -E1000_ERR_PHY;
 	}
+
+	/*
+	 * Allow some time after each MDIC transaction to avoid
+	 * reading duplicate data in the next MDIC transaction.
+	 */
+	if (hw->mac.type == e1000_pch2lan)
+		udelay(100);
 
 	return 0;
 }
@@ -1840,11 +1854,12 @@ s32 e1000e_get_cable_length_igp_2(struct e1000_hw *hw)
 	u16 phy_data, i, agc_value = 0;
 	u16 cur_agc_index, max_agc_index = 0;
 	u16 min_agc_index = IGP02E1000_CABLE_LENGTH_TABLE_SIZE - 1;
-	u16 agc_reg_array[IGP02E1000_PHY_CHANNEL_NUM] =
-							 {IGP02E1000_PHY_AGC_A,
-							  IGP02E1000_PHY_AGC_B,
-							  IGP02E1000_PHY_AGC_C,
-							  IGP02E1000_PHY_AGC_D};
+	static const u16 agc_reg_array[IGP02E1000_PHY_CHANNEL_NUM] = {
+	       IGP02E1000_PHY_AGC_A,
+	       IGP02E1000_PHY_AGC_B,
+	       IGP02E1000_PHY_AGC_C,
+	       IGP02E1000_PHY_AGC_D
+	};
 
 	/* Read the AGC registers for all channels */
 	for (i = 0; i < IGP02E1000_PHY_CHANNEL_NUM; i++) {
