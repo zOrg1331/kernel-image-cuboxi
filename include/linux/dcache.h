@@ -81,26 +81,30 @@ full_name_hash(const unsigned char *name, unsigned int len)
  * give reasonable cacheline footprint with larger lines without the
  * large memory footprint increase).
  */
-#ifdef CONFIG_64BIT /* XXX update */
-#define DNAME_INLINE_LEN_MIN 32 /* 192 bytes */
+#ifdef CONFIG_64BIT
+#define DNAME_INLINE_LEN 32 /* 192 bytes */
 #else
-#define DNAME_INLINE_LEN_MIN 40 /* 128 bytes */
+#define DNAME_INLINE_LEN 40 /* 128 bytes */
 #endif
 
 struct dentry {
-	unsigned int d_count;		/* protected by d_lock */
+	/* RCU lookup touched fields */
 	unsigned int d_flags;		/* protected by d_lock */
-	spinlock_t d_lock;		/* per dentry lock */
 	seqcount_t d_seq;		/* per dentry seqlock */
-	struct inode *d_inode;		/* Where the name belongs to - NULL is
-					 * negative */
-	/*
-	 * The next three fields are touched by __d_lookup.  Place them here
-	 * so they all fit in a cache line.
-	 */
 	struct hlist_node d_hash;	/* lookup hash list */
 	struct dentry *d_parent;	/* parent directory */
 	struct qstr d_name;
+	struct inode *d_inode;		/* Where the name belongs to - NULL is
+					 * negative */
+	unsigned char d_iname[DNAME_INLINE_LEN];	/* small names */
+
+	/* Ref lookup also touches following */
+	unsigned int d_count;		/* protected by d_lock */
+	spinlock_t d_lock;		/* per dentry lock */
+	const struct dentry_operations *d_op;
+	struct super_block *d_sb;	/* The root of the dentry tree */
+	unsigned long d_time;		/* used by d_revalidate */
+	void *d_fsdata;			/* fs-specific data */
 
 	struct list_head d_lru;		/* LRU list */
 	/*
@@ -112,12 +116,6 @@ struct dentry {
 	} d_u;
 	struct list_head d_subdirs;	/* our children */
 	struct list_head d_alias;	/* inode alias list */
-	unsigned long d_time;		/* used by d_revalidate */
-	const struct dentry_operations *d_op;
-	struct super_block *d_sb;	/* The root of the dentry tree */
-	void *d_fsdata;			/* fs-specific data */
-
-	unsigned char d_iname[DNAME_INLINE_LEN_MIN];	/* small names */
 };
 
 /*
