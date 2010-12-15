@@ -132,6 +132,7 @@ enum dentry_d_lock_class
 
 struct dentry_operations {
 	int (*d_revalidate)(struct dentry *, struct nameidata *);
+	int (*d_revalidate_rcu)(struct dentry *, struct nameidata *);
 	int (*d_hash)(const struct dentry *, const struct inode *,
 			struct qstr *);
 	int (*d_compare)(const struct dentry *, const struct inode *,
@@ -184,8 +185,12 @@ struct dentry_operations {
 #define DCACHE_OP_HASH		0x1000
 #define DCACHE_OP_COMPARE	0x2000
 #define DCACHE_OP_REVALIDATE	0x4000
-#define DCACHE_OP_DELETE	0x8000
+#define DCACHE_OP_REVALIDATE_RCU 0x8000
 
+#define DCACHE_OP_DELETE	0x10000
+
+#define DCACHE_OP_REVALIDATE_EITHER	\
+	(DCACHE_OP_REVALIDATE|DCACHE_OP_REVALIDATE_RCU)
 
 extern spinlock_t dcache_inode_lock;
 extern seqlock_t rename_lock;
