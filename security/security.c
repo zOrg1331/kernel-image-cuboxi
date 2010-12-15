@@ -513,7 +513,7 @@ int security_inode_permission(struct inode *inode, int mask)
 	return security_ops->inode_permission(inode, mask);
 }
 
-int security_inode_exec_permission(struct inode *inode, int rcu)
+int security_inode_exec_permission(struct inode *inode, unsigned int flags)
 {
 	if (unlikely(IS_PRIVATE(inode)))
 		return 0;

@@ -325,7 +325,10 @@ struct inode_operations {
         void * (*follow_link) (struct dentry *, struct nameidata *);
         void (*put_link) (struct dentry *, struct nameidata *, void *);
 	void (*truncate) (struct inode *);
-	int (*permission) (struct inode *, int, struct nameidata *);
+	int (*permission) (struct inode *, int);
+	int (*permission_rcu) (struct inode *, int, unsigned int);
+	int (*check_acl)(struct inode *, int);
+	int (*check_acl_rcu)(struct inode *, int, unsigned int);
 	int (*setattr) (struct dentry *, struct iattr *);
 	int (*getattr) (struct vfsmount *mnt, struct dentry *, struct kstat *);
 	int (*setxattr) (struct dentry *, const char *,const void *,size_t,int);
@@ -413,6 +416,15 @@ otherwise noted.
 
   permission: called by the VFS to check for access rights on a POSIX-like
   	filesystem.
+
+  permission_rcu: same as permission, but may be called in rcu-walk
+        mode (flags & IPERM_RCU). If in rcu-walk mode, the filesystem
+	must check the permission without blocking or storing to the
+	inode.
+
+	If a situation is encountered that rcu-walk cannot handle, return
+	-ECHILD and it will be called again in ref-walk mode. Filesystem
+	should only define at most one of permission or permission_rcu.
 
   setattr: called by the VFS to set attributes for a file. This method
   	is called by chmod(2) and related system calls.
