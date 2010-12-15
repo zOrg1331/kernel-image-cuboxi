@@ -102,6 +102,6 @@ const struct inode_operations ext2_file_inode_operations = {
 	.removexattr	= generic_removexattr,
 #endif
 	.setattr	= ext2_setattr,
-	.check_acl	= ext2_check_acl,
+	.check_acl_rcu	= ext2_check_acl_rcu,
 	.fiemap		= ext2_fiemap,
 };

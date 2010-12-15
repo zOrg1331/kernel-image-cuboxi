@@ -2485,7 +2485,7 @@ static const struct inode_operations shmem_inode_operations = {
 	.getxattr	= generic_getxattr,
 	.listxattr	= generic_listxattr,
 	.removexattr	= generic_removexattr,
-	.check_acl	= generic_check_acl,
+	.check_acl_rcu	= generic_check_acl_rcu,
 #endif
 
 };
@@ -2508,7 +2508,7 @@ static const struct inode_operations shmem_dir_inode_operations = {
 	.getxattr	= generic_getxattr,
 	.listxattr	= generic_listxattr,
 	.removexattr	= generic_removexattr,
-	.check_acl	= generic_check_acl,
+	.check_acl_rcu	= generic_check_acl_rcu,
 #endif
 };
 
@@ -2519,7 +2519,7 @@ static const struct inode_operations shmem_special_inode_operations = {
 	.getxattr	= generic_getxattr,
 	.listxattr	= generic_listxattr,
 	.removexattr	= generic_removexattr,
-	.check_acl	= generic_check_acl,
+	.check_acl_rcu	= generic_check_acl_rcu,
 #endif
 };
 

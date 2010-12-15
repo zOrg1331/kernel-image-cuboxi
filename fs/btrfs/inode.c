@@ -7212,11 +7212,11 @@ static int btrfs_set_page_dirty(struct page *page)
 	return __set_page_dirty_nobuffers(page);
 }
 
-static int btrfs_permission(struct inode *inode, int mask)
+static int btrfs_permission_rcu(struct inode *inode, int mask, unsigned int flags)
 {
 	if ((BTRFS_I(inode)->flags & BTRFS_INODE_READONLY) && (mask & MAY_WRITE))
 		return -EACCES;
-	return generic_permission(inode, mask, btrfs_check_acl);
+	return generic_permission_rcu(inode, mask, flags, btrfs_check_acl_rcu);
 }
 
 static const struct inode_operations btrfs_dir_inode_operations = {
@@ -7235,11 +7235,11 @@ static const struct inode_operations btrfs_dir_inode_operations = {
 	.getxattr	= btrfs_getxattr,
 	.listxattr	= btrfs_listxattr,
 	.removexattr	= btrfs_removexattr,
-	.permission	= btrfs_permission,
+	.permission_rcu	= btrfs_permission_rcu,
 };
 static const struct inode_operations btrfs_dir_ro_inode_operations = {
 	.lookup		= btrfs_lookup,
-	.permission	= btrfs_permission,
+	.permission_rcu	= btrfs_permission_rcu,
 };
 
 static const struct file_operations btrfs_dir_file_operations = {
@@ -7308,14 +7308,14 @@ static const struct inode_operations btrfs_file_inode_operations = {
 	.getxattr	= btrfs_getxattr,
 	.listxattr      = btrfs_listxattr,
 	.removexattr	= btrfs_removexattr,
-	.permission	= btrfs_permission,
+	.permission_rcu	= btrfs_permission_rcu,
 	.fallocate	= btrfs_fallocate,
 	.fiemap		= btrfs_fiemap,
 };
 static const struct inode_operations btrfs_special_inode_operations = {
 	.getattr	= btrfs_getattr,
 	.setattr	= btrfs_setattr,
-	.permission	= btrfs_permission,
+	.permission_rcu	= btrfs_permission_rcu,
 	.setxattr	= btrfs_setxattr,
 	.getxattr	= btrfs_getxattr,
 	.listxattr	= btrfs_listxattr,
@@ -7326,7 +7326,7 @@ static const struct inode_operations btrfs_symlink_inode_operations = {
 	.follow_link	= page_follow_link_light,
 	.put_link	= page_put_link,
 	.getattr	= btrfs_getattr,
-	.permission	= btrfs_permission,
+	.permission_rcu	= btrfs_permission_rcu,
 	.setxattr	= btrfs_setxattr,
 	.getxattr	= btrfs_getxattr,
 	.listxattr	= btrfs_listxattr,
