@@ -977,10 +977,11 @@ int have_submounts(struct dentry *parent)
 	struct dentry *this_parent;
 	struct list_head *next;
 	unsigned seq;
+	int locked = 0;
 
-rename_retry:
-	this_parent = parent;
 	seq = read_seqbegin(&rename_lock);
+again:
+	this_parent = parent;
 
 	if (d_mountpoint(parent))
 		goto positive;
@@ -1025,7 +1026,7 @@ resume:
 		/* might go back up the wrong parent if we have had a rename
 		 * or deletion */
 		if (this_parent != child->d_parent ||
-				read_seqretry(&rename_lock, seq)) {
+			 (!locked && read_seqretry(&rename_lock, seq))) {
 			spin_unlock(&this_parent->d_lock);
 			rcu_read_unlock();
 			goto rename_retry;
@@ -1035,13 +1036,22 @@ resume:
 		goto resume;
 	}
 	spin_unlock(&this_parent->d_lock);
-	if (read_seqretry(&rename_lock, seq))
+	if (!locked && read_seqretry(&rename_lock, seq))
 		goto rename_retry;
+	if (locked)
+		write_sequnlock(&rename_lock);
 	return 0; /* No mount points found in tree */
 positive:
-	if (read_seqretry(&rename_lock, seq))
+	if (!locked && read_seqretry(&rename_lock, seq))
 		goto rename_retry;
+	if (locked)
+		write_sequnlock(&rename_lock);
 	return 1;
+
+rename_retry:
+	locked = 1;
+	write_seqlock(&rename_lock);
+	goto again;
 }
 EXPORT_SYMBOL(have_submounts);
 
@@ -1065,11 +1075,11 @@ static int select_parent(struct dentry * parent)
 	struct list_head *next;
 	unsigned seq;
 	int found = 0;
+	int locked = 0;
 
-rename_retry:
-	this_parent = parent;
 	seq = read_seqbegin(&rename_lock);
-
+again:
+	this_parent = parent;
 	spin_lock(&this_parent->d_lock);
 repeat:
 	next = this_parent->d_subdirs.next;
@@ -1131,7 +1141,7 @@ resume:
 		/* might go back up the wrong parent if we have had a rename
 		 * or deletion */
 		if (this_parent != child->d_parent ||
-				read_seqretry(&rename_lock, seq)) {
+			(!locked && read_seqretry(&rename_lock, seq))) {
 			spin_unlock(&this_parent->d_lock);
 			rcu_read_unlock();
 			goto rename_retry;
@@ -1142,9 +1152,18 @@ resume:
 	}
 out:
 	spin_unlock(&this_parent->d_lock);
-	if (read_seqretry(&rename_lock, seq))
+	if (!locked && read_seqretry(&rename_lock, seq))
 		goto rename_retry;
+	if (locked)
+		write_sequnlock(&rename_lock);
 	return found;
+
+rename_retry:
+	if (found)
+		return found;
+	locked = 1;
+	write_seqlock(&rename_lock);
+	goto again;
 }
 
 /**
@@ -2665,10 +2684,11 @@ void d_genocide(struct dentry *root)
 	struct dentry *this_parent;
 	struct list_head *next;
 	unsigned seq;
+	int locked = 0;
 
-rename_retry:
-	this_parent = root;
 	seq = read_seqbegin(&rename_lock);
+again:
+	this_parent = root;
 	spin_lock(&this_parent->d_lock);
 repeat:
 	next = this_parent->d_subdirs.next;
@@ -2713,7 +2733,7 @@ resume:
 		/* might go back up the wrong parent if we have had a rename
 		 * or deletion */
 		if (this_parent != child->d_parent ||
-				read_seqretry(&rename_lock, seq)) {
+			 (!locked && read_seqretry(&rename_lock, seq))) {
 			spin_unlock(&this_parent->d_lock);
 			rcu_read_unlock();
 			goto rename_retry;
@@ -2723,8 +2743,16 @@ resume:
 		goto resume;
 	}
 	spin_unlock(&this_parent->d_lock);
-	if (read_seqretry(&rename_lock, seq))
+	if (!locked && read_seqretry(&rename_lock, seq))
 		goto rename_retry;
+	if (locked)
+		write_sequnlock(&rename_lock);
+	return;
+
+rename_retry:
+	locked = 1;
+	write_seqlock(&rename_lock);
+	goto again;
 }
 
 /**
