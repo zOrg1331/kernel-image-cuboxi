@@ -68,7 +68,8 @@ int rt2x00lib_enable_radio(struct rt2x00_dev *rt2x00dev)
 	/*
 	 * Enable RX.
 	 */
-	rt2x00lib_toggle_rx(rt2x00dev, STATE_RADIO_RX_ON);
+	rt2x00dev->ops->lib->set_device_state(rt2x00dev, STATE_RADIO_RX_ON);
+	rt2x00link_start_tuner(rt2x00dev);
 
 	/*
 	 * Start watchdog monitoring.
@@ -102,7 +103,8 @@ void rt2x00lib_disable_radio(struct rt2x00_dev *rt2x00dev)
 	/*
 	 * Disable RX.
 	 */
-	rt2x00lib_toggle_rx(rt2x00dev, STATE_RADIO_RX_OFF);
+	rt2x00link_stop_tuner(rt2x00dev);
+	rt2x00dev->ops->lib->set_device_state(rt2x00dev, STATE_RADIO_RX_OFF);
 
 	/*
 	 * Disable radio.
@@ -111,23 +113,6 @@ void rt2x00lib_disable_radio(struct rt2x00_dev *rt2x00dev)
 	rt2x00dev->ops->lib->set_device_state(rt2x00dev, STATE_RADIO_IRQ_OFF);
 	rt2x00led_led_activity(rt2x00dev, false);
 	rt2x00leds_led_radio(rt2x00dev, false);
-}
-
-void rt2x00lib_toggle_rx(struct rt2x00_dev *rt2x00dev, enum dev_state state)
-{
-	/*
-	 * When we are disabling the RX, we should also stop the link tuner.
-	 */
-	if (state == STATE_RADIO_RX_OFF)
-		rt2x00link_stop_tuner(rt2x00dev);
-
-	rt2x00dev->ops->lib->set_device_state(rt2x00dev, state);
-
-	/*
-	 * When we are enabling the RX, we should also start the link tuner.
-	 */
-	if (state == STATE_RADIO_RX_ON)
-		rt2x00link_start_tuner(rt2x00dev);
 }
 
 static void rt2x00lib_intf_scheduled_iter(void *data, u8 *mac,
@@ -265,10 +250,9 @@ void rt2x00lib_txdone(struct queue_entry *entry,
 	struct ieee80211_tx_info *tx_info = IEEE80211_SKB_CB(entry->skb);
 	struct skb_frame_desc *skbdesc = get_skb_frame_desc(entry->skb);
 	enum data_queue_qid qid = skb_get_queue_mapping(entry->skb);
-	unsigned int header_length = ieee80211_get_hdrlen_from_skb(entry->skb);
+	unsigned int header_length, i;
 	u8 rate_idx, rate_flags, retry_rates;
 	u8 skbdesc_flags = skbdesc->flags;
-	unsigned int i;
 	bool success;
 
 	/*
@@ -285,6 +269,11 @@ void rt2x00lib_txdone(struct queue_entry *entry,
 	 * Signal that the TX descriptor is no longer in the skb.
 	 */
 	skbdesc->flags &= ~SKBDESC_DESC_IN_SKB;
+
+	/*
+	 * Determine the length of 802.11 header.
+	 */
+	header_length = ieee80211_get_hdrlen_from_skb(entry->skb);
 
 	/*
 	 * Remove L2 padding which was added during
@@ -390,9 +379,12 @@ void rt2x00lib_txdone(struct queue_entry *entry,
 	 * through a mac80211 library call (RTS/CTS) then we should not
 	 * send the status report back.
 	 */
-	if (!(skbdesc_flags & SKBDESC_NOT_MAC80211))
-		ieee80211_tx_status(rt2x00dev->hw, entry->skb);
-	else
+	if (!(skbdesc_flags & SKBDESC_NOT_MAC80211)) {
+		if (test_bit(DRIVER_REQUIRE_TASKLET_CONTEXT, &rt2x00dev->flags))
+			ieee80211_tx_status(rt2x00dev->hw, entry->skb);
+		else
+			ieee80211_tx_status_ni(rt2x00dev->hw, entry->skb);
+	} else
 		dev_kfree_skb_any(entry->skb);
 
 	/*
@@ -483,6 +475,10 @@ void rt2x00lib_rxdone(struct queue_entry *entry)
 	unsigned int header_length;
 	int rate_idx;
 
+	if (!test_bit(DEVICE_STATE_PRESENT, &rt2x00dev->flags) ||
+	    !test_bit(DEVICE_STATE_ENABLED_RADIO, &rt2x00dev->flags))
+		goto submit_entry;
+
 	if (test_bit(ENTRY_DATA_IO_FAILED, &entry->flags))
 		goto submit_entry;
 
@@ -567,9 +563,13 @@ void rt2x00lib_rxdone(struct queue_entry *entry)
 	entry->skb = skb;
 
 submit_entry:
-	rt2x00dev->ops->lib->clear_entry(entry);
-	rt2x00queue_index_inc(entry->queue, Q_INDEX);
+	entry->flags = 0;
 	rt2x00queue_index_inc(entry->queue, Q_INDEX_DONE);
+	if (test_bit(DEVICE_STATE_PRESENT, &rt2x00dev->flags) &&
+	    test_bit(DEVICE_STATE_ENABLED_RADIO, &rt2x00dev->flags)) {
+		rt2x00dev->ops->lib->clear_entry(entry);
+		rt2x00queue_index_inc(entry->queue, Q_INDEX);
+	}
 }
 EXPORT_SYMBOL_GPL(rt2x00lib_rxdone);
 
@@ -678,7 +678,7 @@ static void rt2x00lib_rate(struct ieee80211_rate *entry,
 {
 	entry->flags = 0;
 	entry->bitrate = rate->bitrate;
-	entry->hw_value =index;
+	entry->hw_value = index;
 	entry->hw_value_short = index;
 
 	if (rate->flags & DEV_RATE_SHORT_PREAMBLE)

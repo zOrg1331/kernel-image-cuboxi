@@ -698,6 +698,29 @@ void bnx2x_release_phy_lock(struct bnx2x *bp)
 	mutex_unlock(&bp->port.phy_mutex);
 }
 
+/* calculates MF speed according to current linespeed and MF configuration */
+u16 bnx2x_get_mf_speed(struct bnx2x *bp)
+{
+	u16 line_speed = bp->link_vars.line_speed;
+	if (IS_MF(bp)) {
+		u16 maxCfg = (bp->mf_config[BP_VN(bp)] &
+						FUNC_MF_CFG_MAX_BW_MASK) >>
+						FUNC_MF_CFG_MAX_BW_SHIFT;
+		/* Calculate the current MAX line speed limit for the DCC
+		 * capable devices
+		 */
+		if (IS_MF_SD(bp)) {
+			u16 vn_max_rate = maxCfg * 100;
+
+			if (vn_max_rate < line_speed)
+				line_speed = vn_max_rate;
+		} else /* IS_MF_SI(bp)) */
+			line_speed = (line_speed * maxCfg) / 100;
+	}
+
+	return line_speed;
+}
+
 void bnx2x_link_report(struct bnx2x *bp)
 {
 	if (bp->flags & MF_FUNC_DIS) {
@@ -713,17 +736,8 @@ void bnx2x_link_report(struct bnx2x *bp)
 			netif_carrier_on(bp->dev);
 		netdev_info(bp->dev, "NIC Link is Up, ");
 
-		line_speed = bp->link_vars.line_speed;
-		if (IS_MF(bp)) {
-			u16 vn_max_rate;
+		line_speed = bnx2x_get_mf_speed(bp);
 
-			vn_max_rate =
-				((bp->mf_config[BP_VN(bp)] &
-				  FUNC_MF_CFG_MAX_BW_MASK) >>
-						FUNC_MF_CFG_MAX_BW_SHIFT) * 100;
-			if (vn_max_rate < line_speed)
-				line_speed = vn_max_rate;
-		}
 		pr_cont("%d Mbps ", line_speed);
 
 		if (bp->link_vars.duplex == DUPLEX_FULL)
@@ -1692,11 +1706,10 @@ static inline u32 bnx2x_xmit_type(struct bnx2x *bp, struct sk_buff *skb)
 		}
 	}
 
-	if (skb_shinfo(skb)->gso_type & SKB_GSO_TCPV4)
-		rc |= (XMIT_GSO_V4 | XMIT_CSUM_V4 | XMIT_CSUM_TCP);
-
-	else if (skb_shinfo(skb)->gso_type & SKB_GSO_TCPV6)
-		rc |= (XMIT_GSO_V6 | XMIT_CSUM_TCP | XMIT_CSUM_V6);
+	if (skb_is_gso_v6(skb))
+		rc |= XMIT_GSO_V6 | XMIT_CSUM_TCP | XMIT_CSUM_V6;
+	else if (skb_is_gso(skb))
+		rc |= XMIT_GSO_V4 | XMIT_CSUM_V4 | XMIT_CSUM_TCP;
 
 	return rc;
 }
