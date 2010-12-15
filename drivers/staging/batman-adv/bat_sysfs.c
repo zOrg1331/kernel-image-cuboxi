@@ -24,10 +24,15 @@
 #include "translation-table.h"
 #include "originator.h"
 #include "hard-interface.h"
+#include "gateway_common.h"
+#include "gateway_client.h"
 #include "vis.h"
 
-#define to_dev(obj)     container_of(obj, struct device, kobj)
+#define to_dev(obj)		container_of(obj, struct device, kobj)
+#define kobj_to_netdev(obj)	to_net_dev(to_dev(obj->parent))
+#define kobj_to_batpriv(obj)	netdev_priv(kobj_to_netdev(obj))
 
+/* Use this, if you have customized show and store functions */
 #define BAT_ATTR(_name, _mode, _show, _store)	\
 struct bat_attribute bat_attr_##_name = {	\
 	.attr = {.name = __stringify(_name),	\
@@ -36,159 +41,168 @@ struct bat_attribute bat_attr_##_name = {	\
 	.store  = _store,			\
 };
 
-static ssize_t show_aggr_ogms(struct kobject *kobj, struct attribute *attr,
-			     char *buff)
-{
-	struct device *dev = to_dev(kobj->parent);
-	struct bat_priv *bat_priv = netdev_priv(to_net_dev(dev));
-	int aggr_status = atomic_read(&bat_priv->aggregation_enabled);
-
-	return sprintf(buff, "%s\n",
-		       aggr_status == 0 ? "disabled" : "enabled");
+#define BAT_ATTR_STORE_BOOL(_name, _post_func)				\
+ssize_t store_##_name(struct kobject *kobj, struct attribute *attr,	\
+		      char *buff, size_t count)				\
+{									\
+	struct net_device *net_dev = kobj_to_netdev(kobj);		\
+	struct bat_priv *bat_priv = netdev_priv(net_dev);		\
+	return __store_bool_attr(buff, count, _post_func, attr,		\
+				 &bat_priv->_name, net_dev);		\
 }
 
-static ssize_t store_aggr_ogms(struct kobject *kobj, struct attribute *attr,
-			      char *buff, size_t count)
+#define BAT_ATTR_SHOW_BOOL(_name)					\
+ssize_t show_##_name(struct kobject *kobj, struct attribute *attr,	\
+			    char *buff)					\
+{									\
+	struct bat_priv *bat_priv = kobj_to_batpriv(kobj);		\
+	return sprintf(buff, "%s\n",					\
+		       atomic_read(&bat_priv->_name) == 0 ?		\
+		       "disabled" : "enabled");				\
+}									\
+
+/* Use this, if you are going to turn a [name] in bat_priv on or off */
+#define BAT_ATTR_BOOL(_name, _mode, _post_func)				\
+	static BAT_ATTR_STORE_BOOL(_name, _post_func)			\
+	static BAT_ATTR_SHOW_BOOL(_name)				\
+	static BAT_ATTR(_name, _mode, show_##_name, store_##_name)
+
+
+#define BAT_ATTR_STORE_UINT(_name, _min, _max, _post_func)		\
+ssize_t store_##_name(struct kobject *kobj, struct attribute *attr,	\
+			     char *buff, size_t count)			\
+{									\
+	struct net_device *net_dev = kobj_to_netdev(kobj);		\
+	struct bat_priv *bat_priv = netdev_priv(net_dev);		\
+	return __store_uint_attr(buff, count, _min, _max, _post_func,	\
+				 attr, &bat_priv->_name, net_dev);	\
+}
+
+#define BAT_ATTR_SHOW_UINT(_name)					\
+ssize_t show_##_name(struct kobject *kobj, struct attribute *attr,	\
+			    char *buff)					\
+{									\
+	struct bat_priv *bat_priv = kobj_to_batpriv(kobj);		\
+	return sprintf(buff, "%i\n", atomic_read(&bat_priv->_name));	\
+}									\
+
+/* Use this, if you are going to set [name] in bat_priv to unsigned integer
+ * values only */
+#define BAT_ATTR_UINT(_name, _mode, _min, _max, _post_func)		\
+	static BAT_ATTR_STORE_UINT(_name, _min, _max, _post_func)	\
+	static BAT_ATTR_SHOW_UINT(_name)				\
+	static BAT_ATTR(_name, _mode, show_##_name, store_##_name)
+
+
+static int store_bool_attr(char *buff, size_t count,
+			   struct net_device *net_dev,
+			   char *attr_name, atomic_t *attr)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct net_device *net_dev = to_net_dev(dev);
-	struct bat_priv *bat_priv = netdev_priv(net_dev);
-	int aggr_tmp = -1;
+	int enabled = -1;
 
-	if (((count == 2) && (buff[0] == '1')) ||
-	    (strncmp(buff, "enable", 6) == 0))
-		aggr_tmp = 1;
+	if (buff[count - 1] == '\n')
+		buff[count - 1] = '\0';
 
-	if (((count == 2) && (buff[0] == '0')) ||
-	    (strncmp(buff, "disable", 7) == 0))
-		aggr_tmp = 0;
+	if ((strncmp(buff, "1", 2) == 0) ||
+	    (strncmp(buff, "enable", 7) == 0) ||
+	    (strncmp(buff, "enabled", 8) == 0))
+		enabled = 1;
 
-	if (aggr_tmp < 0) {
-		if (buff[count - 1] == '\n')
-			buff[count - 1] = '\0';
+	if ((strncmp(buff, "0", 2) == 0) ||
+	    (strncmp(buff, "disable", 8) == 0) ||
+	    (strncmp(buff, "disabled", 9) == 0))
+		enabled = 0;
 
+	if (enabled < 0) {
 		bat_info(net_dev,
-			 "Invalid parameter for 'aggregate OGM' setting"
-			 "received: %s\n", buff);
+			 "%s: Invalid parameter received: %s\n",
+			 attr_name, buff);
 		return -EINVAL;
 	}
 
-	if (atomic_read(&bat_priv->aggregation_enabled) == aggr_tmp)
+	if (atomic_read(attr) == enabled)
 		return count;
 
-	bat_info(net_dev, "Changing aggregation from: %s to: %s\n",
-		 atomic_read(&bat_priv->aggregation_enabled) == 1 ?
-		 "enabled" : "disabled", aggr_tmp == 1 ? "enabled" :
-		 "disabled");
+	bat_info(net_dev, "%s: Changing from: %s to: %s\n", attr_name,
+		 atomic_read(attr) == 1 ? "enabled" : "disabled",
+		 enabled == 1 ? "enabled" : "disabled");
 
-	atomic_set(&bat_priv->aggregation_enabled, (unsigned)aggr_tmp);
+	atomic_set(attr, (unsigned)enabled);
 	return count;
 }
 
-static ssize_t show_bond(struct kobject *kobj, struct attribute *attr,
-			     char *buff)
+static inline ssize_t __store_bool_attr(char *buff, size_t count,
+			void (*post_func)(struct net_device *),
+			struct attribute *attr,
+			atomic_t *attr_store, struct net_device *net_dev)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct bat_priv *bat_priv = netdev_priv(to_net_dev(dev));
-	int bond_status = atomic_read(&bat_priv->bonding_enabled);
+	int ret;
 
-	return sprintf(buff, "%s\n",
-		       bond_status == 0 ? "disabled" : "enabled");
+	ret = store_bool_attr(buff, count, net_dev, (char *)attr->name,
+			      attr_store);
+	if (post_func && ret)
+		post_func(net_dev);
+
+	return ret;
 }
 
-static ssize_t store_bond(struct kobject *kobj, struct attribute *attr,
-			  char *buff, size_t count)
+static int store_uint_attr(char *buff, size_t count,
+			   struct net_device *net_dev, char *attr_name,
+			   unsigned int min, unsigned int max, atomic_t *attr)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct net_device *net_dev = to_net_dev(dev);
-	struct bat_priv *bat_priv = netdev_priv(net_dev);
-	int bonding_enabled_tmp = -1;
+	unsigned long uint_val;
+	int ret;
 
-	if (((count == 2) && (buff[0] == '1')) ||
-	    (strncmp(buff, "enable", 6) == 0))
-		bonding_enabled_tmp = 1;
-
-	if (((count == 2) && (buff[0] == '0')) ||
-	    (strncmp(buff, "disable", 7) == 0))
-		bonding_enabled_tmp = 0;
-
-	if (bonding_enabled_tmp < 0) {
-		if (buff[count - 1] == '\n')
-			buff[count - 1] = '\0';
-
-		bat_err(net_dev,
-			"Invalid parameter for 'bonding' setting received: "
-			"%s\n", buff);
+	ret = strict_strtoul(buff, 10, &uint_val);
+	if (ret) {
+		bat_info(net_dev,
+			 "%s: Invalid parameter received: %s\n",
+			 attr_name, buff);
 		return -EINVAL;
 	}
 
-	if (atomic_read(&bat_priv->bonding_enabled) == bonding_enabled_tmp)
-		return count;
-
-	bat_info(net_dev, "Changing bonding from: %s to: %s\n",
-		 atomic_read(&bat_priv->bonding_enabled) == 1 ?
-		 "enabled" : "disabled",
-		 bonding_enabled_tmp == 1 ? "enabled" : "disabled");
-
-	atomic_set(&bat_priv->bonding_enabled, (unsigned)bonding_enabled_tmp);
-	return count;
-}
-
-static ssize_t show_frag(struct kobject *kobj, struct attribute *attr,
-			     char *buff)
-{
-	struct device *dev = to_dev(kobj->parent);
-	struct bat_priv *bat_priv = netdev_priv(to_net_dev(dev));
-	int frag_status = atomic_read(&bat_priv->frag_enabled);
-
-	return sprintf(buff, "%s\n",
-		       frag_status == 0 ? "disabled" : "enabled");
-}
-
-static ssize_t store_frag(struct kobject *kobj, struct attribute *attr,
-			  char *buff, size_t count)
-{
-	struct device *dev = to_dev(kobj->parent);
-	struct net_device *net_dev = to_net_dev(dev);
-	struct bat_priv *bat_priv = netdev_priv(net_dev);
-	int frag_enabled_tmp = -1;
-
-	if (((count == 2) && (buff[0] == '1')) ||
-	    (strncmp(buff, "enable", 6) == 0))
-		frag_enabled_tmp = 1;
-
-	if (((count == 2) && (buff[0] == '0')) ||
-	    (strncmp(buff, "disable", 7) == 0))
-		frag_enabled_tmp = 0;
-
-	if (frag_enabled_tmp < 0) {
-		if (buff[count - 1] == '\n')
-			buff[count - 1] = '\0';
-
-		bat_err(net_dev,
-			"Invalid parameter for 'fragmentation' setting on mesh"
-			"received: %s\n", buff);
+	if (uint_val < min) {
+		bat_info(net_dev, "%s: Value is too small: %lu min: %u\n",
+			 attr_name, uint_val, min);
 		return -EINVAL;
 	}
 
-	if (atomic_read(&bat_priv->frag_enabled) == frag_enabled_tmp)
+	if (uint_val > max) {
+		bat_info(net_dev, "%s: Value is too big: %lu max: %u\n",
+			 attr_name, uint_val, max);
+		return -EINVAL;
+	}
+
+	if (atomic_read(attr) == uint_val)
 		return count;
 
-	bat_info(net_dev, "Changing fragmentation from: %s to: %s\n",
-		 atomic_read(&bat_priv->frag_enabled) == 1 ?
-		 "enabled" : "disabled",
-		 frag_enabled_tmp == 1 ? "enabled" : "disabled");
+	bat_info(net_dev, "%s: Changing from: %i to: %lu\n",
+		 attr_name, atomic_read(attr), uint_val);
 
-	atomic_set(&bat_priv->frag_enabled, (unsigned)frag_enabled_tmp);
-	update_min_mtu(net_dev);
+	atomic_set(attr, uint_val);
 	return count;
+}
+
+static inline ssize_t __store_uint_attr(char *buff, size_t count,
+			int min, int max,
+			void (*post_func)(struct net_device *),
+			struct attribute *attr,
+			atomic_t *attr_store, struct net_device *net_dev)
+{
+	int ret;
+
+	ret = store_uint_attr(buff, count, net_dev, (char *)attr->name,
+			      min, max, attr_store);
+	if (post_func && ret)
+		post_func(net_dev);
+
+	return ret;
 }
 
 static ssize_t show_vis_mode(struct kobject *kobj, struct attribute *attr,
 			     char *buff)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct bat_priv *bat_priv = netdev_priv(to_net_dev(dev));
+	struct bat_priv *bat_priv = kobj_to_batpriv(kobj);
 	int vis_mode = atomic_read(&bat_priv->vis_mode);
 
 	return sprintf(buff, "%s\n",
@@ -199,8 +213,7 @@ static ssize_t show_vis_mode(struct kobject *kobj, struct attribute *attr,
 static ssize_t store_vis_mode(struct kobject *kobj, struct attribute *attr,
 			      char *buff, size_t count)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct net_device *net_dev = to_net_dev(dev);
+	struct net_device *net_dev = kobj_to_netdev(kobj);
 	struct bat_priv *bat_priv = netdev_priv(net_dev);
 	unsigned long val;
 	int ret, vis_mode_tmp = -1;
@@ -238,103 +251,124 @@ static ssize_t store_vis_mode(struct kobject *kobj, struct attribute *attr,
 	return count;
 }
 
-static ssize_t show_orig_interval(struct kobject *kobj, struct attribute *attr,
-				 char *buff)
+static void post_gw_deselect(struct net_device *net_dev)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct bat_priv *bat_priv = netdev_priv(to_net_dev(dev));
-
-	return sprintf(buff, "%i\n",
-		       atomic_read(&bat_priv->orig_interval));
+	struct bat_priv *bat_priv = netdev_priv(net_dev);
+	gw_deselect(bat_priv);
 }
 
-static ssize_t store_orig_interval(struct kobject *kobj, struct attribute *attr,
-				  char *buff, size_t count)
+static ssize_t show_gw_mode(struct kobject *kobj, struct attribute *attr,
+			    char *buff)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct net_device *net_dev = to_net_dev(dev);
+	struct bat_priv *bat_priv = kobj_to_batpriv(kobj);
+	int bytes_written;
+
+	switch (atomic_read(&bat_priv->gw_mode)) {
+	case GW_MODE_CLIENT:
+		bytes_written = sprintf(buff, "%s\n", GW_MODE_CLIENT_NAME);
+		break;
+	case GW_MODE_SERVER:
+		bytes_written = sprintf(buff, "%s\n", GW_MODE_SERVER_NAME);
+		break;
+	default:
+		bytes_written = sprintf(buff, "%s\n", GW_MODE_OFF_NAME);
+		break;
+	}
+
+	return bytes_written;
+}
+
+static ssize_t store_gw_mode(struct kobject *kobj, struct attribute *attr,
+			     char *buff, size_t count)
+{
+	struct net_device *net_dev = kobj_to_netdev(kobj);
 	struct bat_priv *bat_priv = netdev_priv(net_dev);
-	unsigned long orig_interval_tmp;
-	int ret;
+	char *curr_gw_mode_str;
+	int gw_mode_tmp = -1;
 
-	ret = strict_strtoul(buff, 10, &orig_interval_tmp);
-	if (ret) {
-		bat_info(net_dev, "Invalid parameter for 'orig_interval' "
-			 "setting received: %s\n", buff);
+	if (buff[count - 1] == '\n')
+		buff[count - 1] = '\0';
+
+	if (strncmp(buff, GW_MODE_OFF_NAME, strlen(GW_MODE_OFF_NAME)) == 0)
+		gw_mode_tmp = GW_MODE_OFF;
+
+	if (strncmp(buff, GW_MODE_CLIENT_NAME,
+		   strlen(GW_MODE_CLIENT_NAME)) == 0)
+		gw_mode_tmp = GW_MODE_CLIENT;
+
+	if (strncmp(buff, GW_MODE_SERVER_NAME,
+		   strlen(GW_MODE_SERVER_NAME)) == 0)
+		gw_mode_tmp = GW_MODE_SERVER;
+
+	if (gw_mode_tmp < 0) {
+		bat_info(net_dev,
+			 "Invalid parameter for 'gw mode' setting received: "
+			 "%s\n", buff);
 		return -EINVAL;
 	}
 
-	if (orig_interval_tmp < JITTER * 2) {
-		bat_info(net_dev, "New originator interval too small: %li "
-			 "(min: %i)\n", orig_interval_tmp, JITTER * 2);
-		return -EINVAL;
-	}
-
-	if (atomic_read(&bat_priv->orig_interval) == orig_interval_tmp)
+	if (atomic_read(&bat_priv->gw_mode) == gw_mode_tmp)
 		return count;
 
-	bat_info(net_dev, "Changing originator interval from: %i to: %li\n",
-		 atomic_read(&bat_priv->orig_interval),
-		 orig_interval_tmp);
+	switch (atomic_read(&bat_priv->gw_mode)) {
+	case GW_MODE_CLIENT:
+		curr_gw_mode_str = GW_MODE_CLIENT_NAME;
+		break;
+	case GW_MODE_SERVER:
+		curr_gw_mode_str = GW_MODE_SERVER_NAME;
+		break;
+	default:
+		curr_gw_mode_str = GW_MODE_OFF_NAME;
+		break;
+	}
 
-	atomic_set(&bat_priv->orig_interval, orig_interval_tmp);
+	bat_info(net_dev, "Changing gw mode from: %s to: %s\n",
+		 curr_gw_mode_str, buff);
+
+	gw_deselect(bat_priv);
+	atomic_set(&bat_priv->gw_mode, (unsigned)gw_mode_tmp);
 	return count;
 }
 
-#ifdef CONFIG_BATMAN_ADV_DEBUG
-static ssize_t show_log_level(struct kobject *kobj, struct attribute *attr,
-			     char *buff)
+static ssize_t show_gw_bwidth(struct kobject *kobj, struct attribute *attr,
+			      char *buff)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct bat_priv *bat_priv = netdev_priv(to_net_dev(dev));
-	int log_level = atomic_read(&bat_priv->log_level);
+	struct bat_priv *bat_priv = kobj_to_batpriv(kobj);
+	int down, up;
+	int gw_bandwidth = atomic_read(&bat_priv->gw_bandwidth);
 
-	return sprintf(buff, "%d\n", log_level);
+	gw_bandwidth_to_kbit(gw_bandwidth, &down, &up);
+	return sprintf(buff, "%i%s/%i%s\n",
+		       (down > 2048 ? down / 1024 : down),
+		       (down > 2048 ? "MBit" : "KBit"),
+		       (up > 2048 ? up / 1024 : up),
+		       (up > 2048 ? "MBit" : "KBit"));
 }
 
-static ssize_t store_log_level(struct kobject *kobj, struct attribute *attr,
-			      char *buff, size_t count)
+static ssize_t store_gw_bwidth(struct kobject *kobj, struct attribute *attr,
+			       char *buff, size_t count)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct net_device *net_dev = to_net_dev(dev);
-	struct bat_priv *bat_priv = netdev_priv(net_dev);
-	unsigned long log_level_tmp;
-	int ret;
+	struct net_device *net_dev = kobj_to_netdev(kobj);
 
-	ret = strict_strtoul(buff, 10, &log_level_tmp);
-	if (ret) {
-		bat_info(net_dev, "Invalid parameter for 'log_level' "
-			 "setting received: %s\n", buff);
-		return -EINVAL;
-	}
+	if (buff[count - 1] == '\n')
+		buff[count - 1] = '\0';
 
-	if (log_level_tmp > 3) {
-		bat_info(net_dev, "New log level too big: %li "
-			 "(max: %i)\n", log_level_tmp, 3);
-		return -EINVAL;
-	}
-
-	if (atomic_read(&bat_priv->log_level) == log_level_tmp)
-		return count;
-
-	bat_info(net_dev, "Changing log level from: %i to: %li\n",
-		 atomic_read(&bat_priv->log_level),
-		 log_level_tmp);
-
-	atomic_set(&bat_priv->log_level, (unsigned)log_level_tmp);
-	return count;
+	return gw_bandwidth_set(net_dev, buff, count);
 }
-#endif
 
-static BAT_ATTR(aggregated_ogms, S_IRUGO | S_IWUSR,
-		show_aggr_ogms, store_aggr_ogms);
-static BAT_ATTR(bonding, S_IRUGO | S_IWUSR, show_bond, store_bond);
-static BAT_ATTR(fragmentation, S_IRUGO | S_IWUSR, show_frag, store_frag);
+BAT_ATTR_BOOL(aggregated_ogms, S_IRUGO | S_IWUSR, NULL);
+BAT_ATTR_BOOL(bonding, S_IRUGO | S_IWUSR, NULL);
+BAT_ATTR_BOOL(fragmentation, S_IRUGO | S_IWUSR, update_min_mtu);
 static BAT_ATTR(vis_mode, S_IRUGO | S_IWUSR, show_vis_mode, store_vis_mode);
-static BAT_ATTR(orig_interval, S_IRUGO | S_IWUSR,
-		show_orig_interval, store_orig_interval);
+static BAT_ATTR(gw_mode, S_IRUGO | S_IWUSR, show_gw_mode, store_gw_mode);
+BAT_ATTR_UINT(orig_interval, S_IRUGO | S_IWUSR, 2 * JITTER, INT_MAX, NULL);
+BAT_ATTR_UINT(hop_penalty, S_IRUGO | S_IWUSR, 0, TQ_MAX_VALUE, NULL);
+BAT_ATTR_UINT(gw_sel_class, S_IRUGO | S_IWUSR, 1, TQ_MAX_VALUE,
+	      post_gw_deselect);
+static BAT_ATTR(gw_bandwidth, S_IRUGO | S_IWUSR, show_gw_bwidth,
+		store_gw_bwidth);
 #ifdef CONFIG_BATMAN_ADV_DEBUG
-static BAT_ATTR(log_level, S_IRUGO | S_IWUSR, show_log_level, store_log_level);
+BAT_ATTR_UINT(log_level, S_IRUGO | S_IWUSR, 0, 3, NULL);
 #endif
 
 static struct bat_attribute *mesh_attrs[] = {
@@ -342,7 +376,11 @@ static struct bat_attribute *mesh_attrs[] = {
 	&bat_attr_bonding,
 	&bat_attr_fragmentation,
 	&bat_attr_vis_mode,
+	&bat_attr_gw_mode,
 	&bat_attr_orig_interval,
+	&bat_attr_hop_penalty,
+	&bat_attr_gw_sel_class,
+	&bat_attr_gw_bandwidth,
 #ifdef CONFIG_BATMAN_ADV_DEBUG
 	&bat_attr_log_level,
 #endif
@@ -402,8 +440,7 @@ void sysfs_del_meshif(struct net_device *dev)
 static ssize_t show_mesh_iface(struct kobject *kobj, struct attribute *attr,
 			       char *buff)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct net_device *net_dev = to_net_dev(dev);
+	struct net_device *net_dev = kobj_to_netdev(kobj);
 	struct batman_if *batman_if = get_batman_if_by_netdev(net_dev);
 	ssize_t length;
 
@@ -413,7 +450,7 @@ static ssize_t show_mesh_iface(struct kobject *kobj, struct attribute *attr,
 	length = sprintf(buff, "%s\n", batman_if->if_status == IF_NOT_IN_USE ?
 			 "none" : batman_if->soft_iface->name);
 
-	hardif_put(batman_if);
+	kref_put(&batman_if->refcount, hardif_free_ref);
 
 	return length;
 }
@@ -421,8 +458,7 @@ static ssize_t show_mesh_iface(struct kobject *kobj, struct attribute *attr,
 static ssize_t store_mesh_iface(struct kobject *kobj, struct attribute *attr,
 				char *buff, size_t count)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct net_device *net_dev = to_net_dev(dev);
+	struct net_device *net_dev = kobj_to_netdev(kobj);
 	struct batman_if *batman_if = get_batman_if_by_netdev(net_dev);
 	int status_tmp = -1;
 	int ret;
@@ -436,7 +472,7 @@ static ssize_t store_mesh_iface(struct kobject *kobj, struct attribute *attr,
 	if (strlen(buff) >= IFNAMSIZ) {
 		pr_err("Invalid parameter for 'mesh_iface' setting received: "
 		       "interface name too long '%s'\n", buff);
-		hardif_put(batman_if);
+		kref_put(&batman_if->refcount, hardif_free_ref);
 		return -EINVAL;
 	}
 
@@ -447,7 +483,7 @@ static ssize_t store_mesh_iface(struct kobject *kobj, struct attribute *attr,
 
 	if ((batman_if->if_status == status_tmp) || ((batman_if->soft_iface) &&
 	    (strncmp(batman_if->soft_iface->name, buff, IFNAMSIZ) == 0))) {
-		hardif_put(batman_if);
+		kref_put(&batman_if->refcount, hardif_free_ref);
 		return count;
 	}
 
@@ -455,7 +491,7 @@ static ssize_t store_mesh_iface(struct kobject *kobj, struct attribute *attr,
 		rtnl_lock();
 		hardif_disable_interface(batman_if);
 		rtnl_unlock();
-		hardif_put(batman_if);
+		kref_put(&batman_if->refcount, hardif_free_ref);
 		return count;
 	}
 
@@ -467,7 +503,7 @@ static ssize_t store_mesh_iface(struct kobject *kobj, struct attribute *attr,
 	}
 
 	ret = hardif_enable_interface(batman_if, buff);
-	hardif_put(batman_if);
+	kref_put(&batman_if->refcount, hardif_free_ref);
 
 	return ret;
 }
@@ -475,8 +511,7 @@ static ssize_t store_mesh_iface(struct kobject *kobj, struct attribute *attr,
 static ssize_t show_iface_status(struct kobject *kobj, struct attribute *attr,
 				 char *buff)
 {
-	struct device *dev = to_dev(kobj->parent);
-	struct net_device *net_dev = to_net_dev(dev);
+	struct net_device *net_dev = kobj_to_netdev(kobj);
 	struct batman_if *batman_if = get_batman_if_by_netdev(net_dev);
 	ssize_t length;
 
@@ -502,7 +537,7 @@ static ssize_t show_iface_status(struct kobject *kobj, struct attribute *attr,
 		break;
 	}
 
-	hardif_put(batman_if);
+	kref_put(&batman_if->refcount, hardif_free_ref);
 
 	return length;
 }

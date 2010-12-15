@@ -28,14 +28,17 @@
 #include "types.h"
 #include "vis.h"
 #include "aggregation.h"
+#include "gateway_common.h"
+#include "originator.h"
 
 
 static void send_outstanding_bcast_packet(struct work_struct *work);
 
 /* apply hop penalty for a normal link */
-static uint8_t hop_penalty(const uint8_t tq)
+static uint8_t hop_penalty(const uint8_t tq, struct bat_priv *bat_priv)
 {
-	return (tq * (TQ_MAX_VALUE - TQ_HOP_PENALTY)) / (TQ_MAX_VALUE);
+	int hop_penalty = atomic_read(&bat_priv->hop_penalty);
+	return (tq * (TQ_MAX_VALUE - hop_penalty)) / (TQ_MAX_VALUE);
 }
 
 /* when do we schedule our own packet to be sent */
@@ -282,6 +285,13 @@ void schedule_own_packet(struct batman_if *batman_if)
 	else
 		batman_packet->flags &= ~VIS_SERVER;
 
+	if ((batman_if == bat_priv->primary_if) &&
+	    (atomic_read(&bat_priv->gw_mode) == GW_MODE_SERVER))
+		batman_packet->gw_flags =
+				(uint8_t)atomic_read(&bat_priv->gw_bandwidth);
+	else
+		batman_packet->gw_flags = 0;
+
 	atomic_inc(&batman_if->seqno);
 
 	slide_own_bcast_window(batman_if);
@@ -330,7 +340,7 @@ void schedule_forward_packet(struct orig_node *orig_node,
 	}
 
 	/* apply hop penalty */
-	batman_packet->tq = hop_penalty(batman_packet->tq);
+	batman_packet->tq = hop_penalty(batman_packet->tq, bat_priv);
 
 	bat_dbg(DBG_BATMAN, bat_priv,
 		"Forwarding packet: tq_orig: %i, tq_avg: %i, "
@@ -365,13 +375,12 @@ static void _add_bcast_packet_to_list(struct bat_priv *bat_priv,
 				      struct forw_packet *forw_packet,
 				      unsigned long send_time)
 {
-	unsigned long flags;
 	INIT_HLIST_NODE(&forw_packet->list);
 
 	/* add new packet to packet list */
-	spin_lock_irqsave(&bat_priv->forw_bcast_list_lock, flags);
+	spin_lock_bh(&bat_priv->forw_bcast_list_lock);
 	hlist_add_head(&forw_packet->list, &bat_priv->forw_bcast_list);
-	spin_unlock_irqrestore(&bat_priv->forw_bcast_list_lock, flags);
+	spin_unlock_bh(&bat_priv->forw_bcast_list_lock);
 
 	/* start timer for this packet */
 	INIT_DELAYED_WORK(&forw_packet->delayed_work,
@@ -441,14 +450,13 @@ static void send_outstanding_bcast_packet(struct work_struct *work)
 		container_of(work, struct delayed_work, work);
 	struct forw_packet *forw_packet =
 		container_of(delayed_work, struct forw_packet, delayed_work);
-	unsigned long flags;
 	struct sk_buff *skb1;
 	struct net_device *soft_iface = forw_packet->if_incoming->soft_iface;
 	struct bat_priv *bat_priv = netdev_priv(soft_iface);
 
-	spin_lock_irqsave(&bat_priv->forw_bcast_list_lock, flags);
+	spin_lock_bh(&bat_priv->forw_bcast_list_lock);
 	hlist_del(&forw_packet->list);
-	spin_unlock_irqrestore(&bat_priv->forw_bcast_list_lock, flags);
+	spin_unlock_bh(&bat_priv->forw_bcast_list_lock);
 
 	if (atomic_read(&bat_priv->mesh_state) == MESH_DEACTIVATING)
 		goto out;
@@ -486,13 +494,12 @@ void send_outstanding_bat_packet(struct work_struct *work)
 		container_of(work, struct delayed_work, work);
 	struct forw_packet *forw_packet =
 		container_of(delayed_work, struct forw_packet, delayed_work);
-	unsigned long flags;
 	struct bat_priv *bat_priv;
 
 	bat_priv = netdev_priv(forw_packet->if_incoming->soft_iface);
-	spin_lock_irqsave(&bat_priv->forw_bat_list_lock, flags);
+	spin_lock_bh(&bat_priv->forw_bat_list_lock);
 	hlist_del(&forw_packet->list);
-	spin_unlock_irqrestore(&bat_priv->forw_bat_list_lock, flags);
+	spin_unlock_bh(&bat_priv->forw_bat_list_lock);
 
 	if (atomic_read(&bat_priv->mesh_state) == MESH_DEACTIVATING)
 		goto out;
@@ -520,7 +527,6 @@ void purge_outstanding_packets(struct bat_priv *bat_priv,
 {
 	struct forw_packet *forw_packet;
 	struct hlist_node *tmp_node, *safe_tmp_node;
-	unsigned long flags;
 
 	if (batman_if)
 		bat_dbg(DBG_BATMAN, bat_priv,
@@ -531,7 +537,7 @@ void purge_outstanding_packets(struct bat_priv *bat_priv,
 			"purge_outstanding_packets()\n");
 
 	/* free bcast list */
-	spin_lock_irqsave(&bat_priv->forw_bcast_list_lock, flags);
+	spin_lock_bh(&bat_priv->forw_bcast_list_lock);
 	hlist_for_each_entry_safe(forw_packet, tmp_node, safe_tmp_node,
 				  &bat_priv->forw_bcast_list, list) {
 
@@ -543,19 +549,19 @@ void purge_outstanding_packets(struct bat_priv *bat_priv,
 		    (forw_packet->if_incoming != batman_if))
 			continue;
 
-		spin_unlock_irqrestore(&bat_priv->forw_bcast_list_lock, flags);
+		spin_unlock_bh(&bat_priv->forw_bcast_list_lock);
 
 		/**
 		 * send_outstanding_bcast_packet() will lock the list to
 		 * delete the item from the list
 		 */
 		cancel_delayed_work_sync(&forw_packet->delayed_work);
-		spin_lock_irqsave(&bat_priv->forw_bcast_list_lock, flags);
+		spin_lock_bh(&bat_priv->forw_bcast_list_lock);
 	}
-	spin_unlock_irqrestore(&bat_priv->forw_bcast_list_lock, flags);
+	spin_unlock_bh(&bat_priv->forw_bcast_list_lock);
 
 	/* free batman packet list */
-	spin_lock_irqsave(&bat_priv->forw_bat_list_lock, flags);
+	spin_lock_bh(&bat_priv->forw_bat_list_lock);
 	hlist_for_each_entry_safe(forw_packet, tmp_node, safe_tmp_node,
 				  &bat_priv->forw_bat_list, list) {
 
@@ -567,14 +573,14 @@ void purge_outstanding_packets(struct bat_priv *bat_priv,
 		    (forw_packet->if_incoming != batman_if))
 			continue;
 
-		spin_unlock_irqrestore(&bat_priv->forw_bat_list_lock, flags);
+		spin_unlock_bh(&bat_priv->forw_bat_list_lock);
 
 		/**
 		 * send_outstanding_bat_packet() will lock the list to
 		 * delete the item from the list
 		 */
 		cancel_delayed_work_sync(&forw_packet->delayed_work);
-		spin_lock_irqsave(&bat_priv->forw_bat_list_lock, flags);
+		spin_lock_bh(&bat_priv->forw_bat_list_lock);
 	}
-	spin_unlock_irqrestore(&bat_priv->forw_bat_list_lock, flags);
+	spin_unlock_bh(&bat_priv->forw_bat_list_lock);
 }
