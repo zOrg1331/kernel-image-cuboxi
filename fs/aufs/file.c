@@ -375,7 +375,7 @@ static int au_file_refresh_by_inode(struct file *file, int *need_reopen)
 	sb = dentry->d_sb;
 	inode = dentry->d_inode;
 	bstart = au_ibstart(inode);
-	if (bstart == finfo->fi_btop)
+	if (bstart == finfo->fi_btop || IS_ROOT(dentry))
 		goto out;
 
 	parent = dget_parent(dentry);
