@@ -40,6 +40,7 @@
 #include <asm/xen/pci.h>
 #include <asm/xen/hypercall.h>
 #include <asm/xen/hypervisor.h>
+#include <asm/xen/pci.h>
 
 #include <xen/xen.h>
 #include <xen/hvm.h>
@@ -97,6 +98,7 @@ struct irq_info
 			unsigned short gsi;
 			unsigned char vector;
 			unsigned char flags;
+			uint16_t domid;
 		} pirq;
 	} u;
 };
@@ -157,7 +159,8 @@ static struct irq_info mk_pirq_info(unsigned short evtchn, unsigned short pirq,
 {
 	return (struct irq_info) { .type = IRQT_PIRQ, .evtchn = evtchn,
 			.cpu = 0,
-			.u.pirq = { .pirq = pirq, .gsi = gsi, .vector = vector } };
+			.u.pirq = { .pirq = pirq, .gsi = gsi,
+				     .vector = vector, .domid = DOMID_SELF } };
 }
 
 /*
@@ -699,11 +702,16 @@ int xen_create_msi_irq(struct pci_dev *dev, struct msi_desc *msidesc, int type)
 	int irq = -1;
 	struct physdev_map_pirq map_irq;
 	int rc;
+	domid_t domid;
 	int pos;
 	u32 table_offset, bir;
 
+	domid = rc = xen_find_device_domain_owner(dev);
+	if (rc < 0)
+		domid = DOMID_SELF;
+
 	memset(&map_irq, 0, sizeof(map_irq));
-	map_irq.domid = DOMID_SELF;
+	map_irq.domid = domid;
 	map_irq.type = MAP_PIRQ_TYPE_MSI;
 	map_irq.index = -1;
 	map_irq.pirq = -1;
@@ -738,6 +746,8 @@ int xen_create_msi_irq(struct pci_dev *dev, struct msi_desc *msidesc, int type)
 		goto out;
 	}
 	irq_info[irq] = mk_pirq_info(0, map_irq.pirq, 0, map_irq.index);
+	if (domid)
+		irq_info[irq].u.pirq.domid = domid;
 
 	set_irq_chip_and_handler_name(irq, &xen_pirq_chip,
 			handle_level_irq,
@@ -764,7 +774,7 @@ int xen_destroy_irq(int irq)
 
 	if (xen_initial_domain()) {
 		unmap_irq.pirq = info->u.pirq.pirq;
-		unmap_irq.domid = DOMID_SELF;
+		unmap_irq.domid = info->u.pirq.domid;
 		rc = HYPERVISOR_physdev_op(PHYSDEVOP_unmap_pirq, &unmap_irq);
 		if (rc) {
 			printk(KERN_WARNING "unmap irq failed %d\n", rc);
@@ -790,6 +800,7 @@ int xen_gsi_from_irq(unsigned irq)
 {
 	return gsi_from_irq(irq);
 }
+EXPORT_SYMBOL_GPL(xen_gsi_from_irq);
 
 int xen_irq_from_pirq(unsigned pirq)
 {
@@ -853,6 +864,21 @@ static int bind_ipi_to_irq(unsigned int ipi, unsigned int cpu)
  out:
 	spin_unlock(&irq_mapping_update_lock);
 	return irq;
+}
+
+static int bind_interdomain_evtchn_to_irq(unsigned int remote_domain,
+					  unsigned int remote_port)
+{
+	struct evtchn_bind_interdomain bind_interdomain;
+	int err;
+
+	bind_interdomain.remote_dom  = remote_domain;
+	bind_interdomain.remote_port = remote_port;
+
+	err = HYPERVISOR_event_channel_op(EVTCHNOP_bind_interdomain,
+					  &bind_interdomain);
+
+	return err ? : bind_evtchn_to_irq(bind_interdomain.local_port);
 }
 
 
@@ -949,6 +975,29 @@ int bind_evtchn_to_irqhandler(unsigned int evtchn,
 	return irq;
 }
 EXPORT_SYMBOL_GPL(bind_evtchn_to_irqhandler);
+
+int bind_interdomain_evtchn_to_irqhandler(unsigned int remote_domain,
+					  unsigned int remote_port,
+					  irq_handler_t handler,
+					  unsigned long irqflags,
+					  const char *devname,
+					  void *dev_id)
+{
+	int irq, retval;
+
+	irq = bind_interdomain_evtchn_to_irq(remote_domain, remote_port);
+	if (irq < 0)
+		return irq;
+
+	retval = request_irq(irq, handler, irqflags, devname, dev_id);
+	if (retval != 0) {
+		unbind_from_irq(irq);
+		return retval;
+	}
+
+	return irq;
+}
+EXPORT_SYMBOL_GPL(bind_interdomain_evtchn_to_irqhandler);
 
 int bind_virq_to_irqhandler(unsigned int virq, unsigned int cpu,
 			    irq_handler_t handler,
@@ -1432,6 +1481,19 @@ void xen_poll_irq(int irq)
 {
 	xen_poll_irq_timeout(irq, 0 /* no timeout */);
 }
+
+/* Check whether the IRQ line is shared with other guests. */
+int xen_ignore_irq(int irq)
+{
+	struct irq_info *info = info_for_irq(irq);
+	struct physdev_irq_status_query irq_status = { .irq =
+							info->u.pirq.gsi };
+
+	if (HYPERVISOR_physdev_op(PHYSDEVOP_irq_status_query, &irq_status))
+		return 0;
+	return !(irq_status.flags & XENIRQSTAT_shared);
+}
+EXPORT_SYMBOL_GPL(xen_ignore_irq);
 
 void xen_irq_resume(void)
 {
