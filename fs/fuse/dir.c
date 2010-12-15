@@ -154,7 +154,7 @@ u64 fuse_get_attr_version(struct fuse_conn *fc)
  * the lookup once more.  If the lookup results in the same inode,
  * then refresh the attributes, timeouts and mark the dentry valid.
  */
-static int fuse_dentry_revalidate(struct dentry *entry, struct nameidata *nd)
+static int fuse_dentry_revalidate_rcu(struct dentry *entry, struct nameidata *nd)
 {
 	struct inode *inode = entry->d_inode;
 
@@ -168,6 +168,9 @@ static int fuse_dentry_revalidate(struct dentry *entry, struct nameidata *nd)
 		struct fuse_forget_link *forget;
 		struct dentry *parent;
 		u64 attr_version;
+
+		if (nd->flags & LOOKUP_RCU)
+			return -ECHILD;
 
 		/* For negative dentries, always do a fresh lookup */
 		if (!inode)
@@ -224,7 +227,7 @@ static int invalid_nodeid(u64 nodeid)
 }
 
 const struct dentry_operations fuse_dentry_operations = {
-	.d_revalidate	= fuse_dentry_revalidate,
+	.d_revalidate_rcu = fuse_dentry_revalidate_rcu,
 };
 
 int fuse_valid_type(int m)
@@ -346,7 +349,7 @@ static struct dentry *fuse_lookup(struct inode *dir, struct dentry *entry,
 	}
 
 	entry = newent ? newent : entry;
-	entry->d_op = &fuse_dentry_operations;
+	d_set_d_op(entry, &fuse_dentry_operations);
 	if (outarg_valid)
 		fuse_change_entry_timeout(entry, &outarg);
 	else
