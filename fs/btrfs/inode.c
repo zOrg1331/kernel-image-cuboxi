@@ -4084,7 +4084,7 @@ struct inode *btrfs_lookup_dentry(struct inode *dir, struct dentry *dentry)
 	int index;
 	int ret;
 
-	dentry->d_op = &btrfs_dentry_operations;
+	d_set_d_op(dentry, &btrfs_dentry_operations);
 
 	if (dentry->d_name.len > BTRFS_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
@@ -4127,7 +4127,7 @@ struct inode *btrfs_lookup_dentry(struct inode *dir, struct dentry *dentry)
 	return inode;
 }
 
-static int btrfs_dentry_delete(struct dentry *dentry)
+static int btrfs_dentry_delete(const struct dentry *dentry)
 {
 	struct btrfs_root *root;
 
@@ -6495,6 +6495,13 @@ struct inode *btrfs_alloc_inode(struct super_block *sb)
 	return inode;
 }
 
+static void btrfs_i_callback(struct rcu_head *head)
+{
+	struct inode *inode = container_of(head, struct inode, i_rcu);
+	INIT_LIST_HEAD(&inode->i_dentry);
+	kmem_cache_free(btrfs_inode_cachep, BTRFS_I(inode));
+}
+
 void btrfs_destroy_inode(struct inode *inode)
 {
 	struct btrfs_ordered_extent *ordered;
@@ -6564,7 +6571,7 @@ void btrfs_destroy_inode(struct inode *inode)
 	inode_tree_del(inode);
 	btrfs_drop_extent_cache(inode, 0, (u64)-1, 0);
 free:
-	kmem_cache_free(btrfs_inode_cachep, BTRFS_I(inode));
+	call_rcu(&inode->i_rcu, btrfs_i_callback);
 }
 
 int btrfs_drop_inode(struct inode *inode)
@@ -7204,11 +7211,11 @@ static int btrfs_set_page_dirty(struct page *page)
 	return __set_page_dirty_nobuffers(page);
 }
 
-static int btrfs_permission(struct inode *inode, int mask)
+static int btrfs_permission_rcu(struct inode *inode, int mask, unsigned int flags)
 {
 	if ((BTRFS_I(inode)->flags & BTRFS_INODE_READONLY) && (mask & MAY_WRITE))
 		return -EACCES;
-	return generic_permission(inode, mask, btrfs_check_acl);
+	return generic_permission_rcu(inode, mask, flags, btrfs_check_acl_rcu);
 }
 
 static const struct inode_operations btrfs_dir_inode_operations = {
@@ -7227,11 +7234,11 @@ static const struct inode_operations btrfs_dir_inode_operations = {
 	.getxattr	= btrfs_getxattr,
 	.listxattr	= btrfs_listxattr,
 	.removexattr	= btrfs_removexattr,
-	.permission	= btrfs_permission,
+	.permission_rcu	= btrfs_permission_rcu,
 };
 static const struct inode_operations btrfs_dir_ro_inode_operations = {
 	.lookup		= btrfs_lookup,
-	.permission	= btrfs_permission,
+	.permission_rcu	= btrfs_permission_rcu,
 };
 
 static const struct file_operations btrfs_dir_file_operations = {
@@ -7300,14 +7307,14 @@ static const struct inode_operations btrfs_file_inode_operations = {
 	.getxattr	= btrfs_getxattr,
 	.listxattr      = btrfs_listxattr,
 	.removexattr	= btrfs_removexattr,
-	.permission	= btrfs_permission,
+	.permission_rcu	= btrfs_permission_rcu,
 	.fallocate	= btrfs_fallocate,
 	.fiemap		= btrfs_fiemap,
 };
 static const struct inode_operations btrfs_special_inode_operations = {
 	.getattr	= btrfs_getattr,
 	.setattr	= btrfs_setattr,
-	.permission	= btrfs_permission,
+	.permission_rcu	= btrfs_permission_rcu,
 	.setxattr	= btrfs_setxattr,
 	.getxattr	= btrfs_getxattr,
 	.listxattr	= btrfs_listxattr,
@@ -7318,7 +7325,7 @@ static const struct inode_operations btrfs_symlink_inode_operations = {
 	.follow_link	= page_follow_link_light,
 	.put_link	= page_put_link,
 	.getattr	= btrfs_getattr,
-	.permission	= btrfs_permission,
+	.permission_rcu	= btrfs_permission_rcu,
 	.setxattr	= btrfs_setxattr,
 	.getxattr	= btrfs_getxattr,
 	.listxattr	= btrfs_listxattr,

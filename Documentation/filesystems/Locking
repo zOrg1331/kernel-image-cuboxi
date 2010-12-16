@@ -9,9 +9,13 @@ be able to use diff(1).
 
 --------------------------- dentry_operations --------------------------
 prototypes:
-	int (*d_revalidate)(struct dentry *, int);
-	int (*d_hash) (struct dentry *, struct qstr *);
-	int (*d_compare) (struct dentry *, struct qstr *, struct qstr *);
+	int (*d_revalidate)(struct dentry *, struct nameidata *);
+	int (*d_revalidate_rcu)(struct dentry *, struct nameidata *);
+	int (*d_hash)(const struct dentry *, const struct inode *,
+			struct qstr *);
+	int (*d_compare)(const struct dentry *, const struct inode *,
+			const struct dentry *, const struct inode *,
+			unsigned int, const char *, const struct qstr *);
 	int (*d_delete)(struct dentry *);
 	void (*d_release)(struct dentry *);
 	void (*d_iput)(struct dentry *, struct inode *);
@@ -19,13 +23,14 @@ prototypes:
 
 locking rules:
 	none have BKL
-		dcache_lock	rename_lock	->d_lock	may block
-d_revalidate:	no		no		no		yes
-d_hash		no		no		no		yes
-d_compare:	no		yes		no		no 
-d_delete:	yes		no		yes		no
-d_release:	no		no		no		yes
-d_iput:		no		no		no		yes
+		rename_lock	->d_lock	may block	rcu-walk
+d_revalidate:	no		no		yes		no
+d_revalidate_rcu:no		no		yes (ref-walk)	maybe
+d_hash		no		no		no		maybe
+d_compare:	yes		no		no		maybe
+d_delete:	no		yes		no		no
+d_release:	no		no		yes		no
+d_iput:		no		no		yes		no
 d_dname:	no		no		no		no
 
 --------------------------- inode_operations --------------------------- 
@@ -44,7 +49,10 @@ ata *);
 	int (*readlink) (struct dentry *, char __user *,int);
 	int (*follow_link) (struct dentry *, struct nameidata *);
 	void (*truncate) (struct inode *);
-	int (*permission) (struct inode *, int, struct nameidata *);
+	int (*permission) (struct inode *, int);
+	int (*permission_rcu) (struct inode *, int, unsigned int);
+	int (*check_acl)(struct inode *, int);
+	int (*check_acl_rcu)(struct inode *, int, unsigned int);
 	int (*setattr) (struct dentry *, struct iattr *);
 	int (*getattr) (struct vfsmount *, struct dentry *, struct kstat *);
 	int (*setxattr) (struct dentry *, const char *,const void *,size_t,int);
@@ -69,6 +77,7 @@ follow_link:	no
 truncate:	yes		(see below)
 setattr:	yes
 permission:	no
+permission_rcu: no (may not block if called in rcu-walk mode)
 getattr:	no
 setxattr:	yes
 getxattr:	no
