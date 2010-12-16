@@ -103,7 +103,6 @@ static struct clocksource clocksource_32k = {
 	.rating		= 250,
 	.read		= omap_32k_read_dummy,
 	.mask		= CLOCKSOURCE_MASK(32),
-	.shift		= 10,
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
 };
 
@@ -168,12 +167,9 @@ static int __init omap_init_clocksource_32k(void)
 		if (!IS_ERR(sync_32k_ick))
 			clk_enable(sync_32k_ick);
 
-		clocksource_32k.mult = clocksource_hz2mult(32768,
-					    clocksource_32k.shift);
-
 		offset_32k = clocksource_32k.read(&clocksource_32k);
 
-		if (clocksource_register(&clocksource_32k))
+		if (clocksource_register_hz(&clocksource_32k, 32768))
 			printk(err, clocksource_32k.name);
 	}
 	return 0;

@@ -1,5 +1,5 @@
 /*
- *  linux/arch/arm/plat-versatile/timer-sp.c
+ *  linux/arch/arm/common/timer-sp.c
  *
  *  Copyright (C) 1999 - 2003 ARM Limited
  *  Copyright (C) 2000 Deep Blue Solutions Ltd
@@ -26,8 +26,6 @@
 
 #include <asm/hardware/arm_timer.h>
 
-#include <plat/timer-sp.h>
-
 /*
  * These timers are currently always setup to be clocked at 1MHz.
  */
@@ -46,7 +44,6 @@ static struct clocksource clocksource_sp804 = {
 	.rating		= 200,
 	.read		= sp804_read,
 	.mask		= CLOCKSOURCE_MASK(32),
-	.shift		= 20,
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
 };
 
@@ -63,8 +60,7 @@ void __init sp804_clocksource_init(void __iomem *base)
 	writel(TIMER_CTRL_32BIT | TIMER_CTRL_ENABLE | TIMER_CTRL_PERIODIC,
 		clksrc_base + TIMER_CTRL);
 
-	cs->mult = clocksource_khz2mult(TIMER_FREQ_KHZ, cs->shift);
-	clocksource_register(cs);
+	clocksource_register_khz(cs, TIMER_FREQ_KHZ);
 }
 
 
