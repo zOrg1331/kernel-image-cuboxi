@@ -231,6 +231,12 @@ static struct clk init_clocks_disable[] = {
 		.enable		= s5p64x0_pclk_ctrl,
 		.ctrlbit	= (1 << 5),
 	}, {
+		.name		= "rtc",
+		.id		= -1,
+		.parent		= &clk_pclk_low.clk,
+		.enable		= s5p64x0_pclk_ctrl,
+		.ctrlbit	= (1 << 6),
+	}, {
 		.name		= "adc",
 		.id		= -1,
 		.parent		= &clk_pclk_low.clk,
@@ -256,7 +262,7 @@ static struct clk init_clocks_disable[] = {
 		.ctrlbit	= (1 << 22),
 	}, {
 		.name		= "iis",
-		.id		= -1,
+		.id		= 0,
 		.parent		= &clk_pclk_low.clk,
 		.enable		= s5p64x0_pclk_ctrl,
 		.ctrlbit	= (1 << 26),
