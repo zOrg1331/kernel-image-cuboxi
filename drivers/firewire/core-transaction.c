@@ -36,6 +36,7 @@
 #include <linux/string.h>
 #include <linux/timer.h>
 #include <linux/types.h>
+#include <linux/workqueue.h>
 
 #include <asm/byteorder.h>
 
@@ -250,7 +251,7 @@ static void fw_fill_request(struct fw_packet *packet, int tcode, int tlabel,
 		break;
 
 	default:
-		WARN(1, "wrong tcode %d", tcode);
+		WARN(1, "wrong tcode %d\n", tcode);
 	}
  common:
 	packet->speed = speed;
@@ -423,7 +424,8 @@ static void transmit_phy_packet_callback(struct fw_packet *packet,
 }
 
 static struct fw_packet phy_config_packet = {
-	.header_length	= 8,
+	.header_length	= 12,
+	.header[0]	= TCODE_LINK_INTERNAL << 4,
 	.payload_length	= 0,
 	.speed		= SCODE_100,
 	.callback	= transmit_phy_packet_callback,
@@ -451,8 +453,8 @@ void fw_send_phy_config(struct fw_card *card,
 
 	mutex_lock(&phy_config_mutex);
 
-	phy_config_packet.header[0] = data;
-	phy_config_packet.header[1] = ~data;
+	phy_config_packet.header[1] = data;
+	phy_config_packet.header[2] = ~data;
 	phy_config_packet.generation = generation;
 	INIT_COMPLETION(phy_config_done);
 
@@ -638,7 +640,7 @@ int fw_get_response_length(struct fw_request *r)
 		}
 
 	default:
-		WARN(1, "wrong tcode %d", tcode);
+		WARN(1, "wrong tcode %d\n", tcode);
 		return 0;
 	}
 }
@@ -694,7 +696,7 @@ void fw_fill_response(struct fw_packet *response, u32 *request_header,
 		break;
 
 	default:
-		WARN(1, "wrong tcode %d", tcode);
+		WARN(1, "wrong tcode %d\n", tcode);
 	}
 
 	response->payload_mapped = false;
@@ -1192,13 +1194,21 @@ static int __init fw_core_init(void)
 {
 	int ret;
 
+	fw_wq = alloc_workqueue(KBUILD_MODNAME,
+				WQ_NON_REENTRANT | WQ_MEM_RECLAIM, 0);
+	if (!fw_wq)
+		return -ENOMEM;
+
 	ret = bus_register(&fw_bus_type);
-	if (ret < 0)
+	if (ret < 0) {
+		destroy_workqueue(fw_wq);
 		return ret;
+	}
 
 	fw_cdev_major = register_chrdev(0, "firewire", &fw_device_ops);
 	if (fw_cdev_major < 0) {
 		bus_unregister(&fw_bus_type);
+		destroy_workqueue(fw_wq);
 		return fw_cdev_major;
 	}
 
@@ -1214,6 +1224,7 @@ static void __exit fw_core_cleanup(void)
 {
 	unregister_chrdev(fw_cdev_major, "firewire");
 	bus_unregister(&fw_bus_type);
+	destroy_workqueue(fw_wq);
 	idr_destroy(&fw_device_idr);
 }
 
