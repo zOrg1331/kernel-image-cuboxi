@@ -749,6 +749,8 @@ static struct nfsd4_session *alloc_init_session(struct svc_rqst *rqstp, struct n
 	 */
 	slotsize = nfsd4_sanitize_slot_size(fchan->maxresp_cached);
 	numslots = nfsd4_get_drc_mem(slotsize, fchan->maxreqs);
+	if (numslots < 1)
+		return NULL;
 
 	new = alloc_session(slotsize, numslots);
 	if (!new) {
@@ -1344,7 +1346,7 @@ nfsd4_exchange_id(struct svc_rqst *rqstp,
 	case SP4_NONE:
 		break;
 	case SP4_SSV:
-		return nfserr_encr_alg_unsupp;
+		return nfserr_serverfault;
 	default:
 		BUG();				/* checked by xdr code */
 	case SP4_MACH_CRED:
@@ -1560,6 +1562,8 @@ nfsd4_create_session(struct svc_rqst *rqstp,
 	status = nfs_ok;
 	memcpy(cr_ses->sessionid.data, new->se_sessionid.data,
 	       NFS4_MAX_SESSIONID_LEN);
+	memcpy(&cr_ses->fore_channel, &new->se_fchannel,
+		sizeof(struct nfsd4_channel_attrs));
 	cs_slot->sl_seqid++;
 	cr_ses->seqid = cs_slot->sl_seqid;
 
@@ -3081,9 +3085,10 @@ nfs4_preprocess_stateid_op(struct nfsd4_compound_state *cstate,
 		if (status)
 			goto out;
 		renew_client(dp->dl_client);
-		if (filpp)
+		if (filpp) {
 			*filpp = find_readable_file(dp->dl_file);
-		BUG_ON(!*filpp);
+			BUG_ON(!*filpp);
+		}
 	} else { /* open or lock stateid */
 		stp = find_stateid(stateid, flags);
 		if (!stp)
