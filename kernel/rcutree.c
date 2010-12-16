@@ -617,17 +617,9 @@ static void __init check_cpu_stall_init(void)
 static void __note_new_gpnum(struct rcu_state *rsp, struct rcu_node *rnp, struct rcu_data *rdp)
 {
 	if (rdp->gpnum != rnp->gpnum) {
-		/*
-		 * If the current grace period is waiting for this CPU,
-		 * set up to detect a quiescent state, otherwise don't
-		 * go looking for one.
-		 */
+		rdp->qs_pending = 1;
+		rdp->passed_quiesc = 0;
 		rdp->gpnum = rnp->gpnum;
-		if (rnp->qsmask & rdp->grpmask) {
-			rdp->qs_pending = 1;
-			rdp->passed_quiesc = 0;
-		} else
-			rdp->qs_pending = 0;
 	}
 }
 
@@ -689,20 +681,19 @@ __rcu_process_gp_end(struct rcu_state *rsp, struct rcu_node *rnp, struct rcu_dat
 
 		/*
 		 * If we were in an extended quiescent state, we may have
-		 * missed some grace periods that others CPUs handled on
+		 * missed some grace periods that others CPUs took care on
 		 * our behalf. Catch up with this state to avoid noting
-		 * spurious new grace periods.  If another grace period
-		 * has started, then rnp->gpnum will have advanced, so
-		 * we will detect this later on.
+		 * spurious new grace periods.
 		 */
-		if (ULONG_CMP_LT(rdp->gpnum, rdp->completed))
+		if (rdp->completed > rdp->gpnum)
 			rdp->gpnum = rdp->completed;
 
 		/*
-		 * If RCU does not need a quiescent state from this CPU,
-		 * then make sure that this CPU doesn't go looking for one.
+		 * If another CPU handled our extended quiescent states and
+		 * we have no more grace period to complete yet, then stop
+		 * chasing quiescent states.
 		 */
-		if (rnp->qsmask & rdp->grpmask)
+		if (rdp->completed == rnp->gpnum)
 			rdp->qs_pending = 0;
 	}
 }
