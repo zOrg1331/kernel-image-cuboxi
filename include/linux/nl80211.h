@@ -773,6 +773,9 @@ enum nl80211_commands {
  *	cache, a wiphy attribute.
  *
  * @NL80211_ATTR_DURATION: Duration of an operation in milliseconds, u32.
+ * @NL80211_ATTR_MAX_REMAIN_ON_CHANNEL_DURATION: Device attribute that
+ *	specifies the maximum duration that can be requested with the
+ *	remain-on-channel operation, in milliseconds, u32.
  *
  * @NL80211_ATTR_COOKIE: Generic 64-bit cookie to identify objects.
  *
@@ -850,6 +853,10 @@ enum nl80211_commands {
  *	nl80211 capability flag.
  *
  * @NL80211_ATTR_BSS_HTOPMODE: HT operation mode (u16)
+ *
+ * @NL80211_ATTR_KEY_DEFAULT_TYPES: A nested attribute containing flags
+ *	attributes, specifying what a key should be set as default as.
+ *	See &enum nl80211_key_default_types.
  *
  * @NL80211_ATTR_MAX: highest attribute number currently defined
  * @__NL80211_ATTR_AFTER_LAST: internal use
@@ -1028,6 +1035,10 @@ enum nl80211_attrs {
 	NL80211_ATTR_OFFCHANNEL_TX_OK,
 
 	NL80211_ATTR_BSS_HT_OPMODE,
+
+	NL80211_ATTR_KEY_DEFAULT_TYPES,
+
+	NL80211_ATTR_MAX_REMAIN_ON_CHANNEL_DURATION,
 
 	/* add attributes here, update the policy in nl80211.c */
 
@@ -1775,6 +1786,23 @@ enum nl80211_wpa_versions {
 };
 
 /**
+ * enum nl80211_key_default_types - key default types
+ * @__NL80211_KEY_DEFAULT_TYPE_INVALID: invalid
+ * @NL80211_KEY_DEFAULT_TYPE_UNICAST: key should be used as default
+ *	unicast key
+ * @NL80211_KEY_DEFAULT_TYPE_MULTICAST: key should be used as default
+ *	multicast key
+ * @NUM_NL80211_KEY_DEFAULT_TYPES: number of default types
+ */
+enum nl80211_key_default_types {
+	__NL80211_KEY_DEFAULT_TYPE_INVALID,
+	NL80211_KEY_DEFAULT_TYPE_UNICAST,
+	NL80211_KEY_DEFAULT_TYPE_MULTICAST,
+
+	NUM_NL80211_KEY_DEFAULT_TYPES
+};
+
+/**
  * enum nl80211_key_attributes - key attributes
  * @__NL80211_KEY_INVALID: invalid
  * @NL80211_KEY_DATA: (temporal) key data; for TKIP this consists of
@@ -1790,6 +1818,9 @@ enum nl80211_wpa_versions {
  * @NL80211_KEY_TYPE: the key type from enum nl80211_key_type, if not
  *	specified the default depends on whether a MAC address was
  *	given with the command using the key or not (u32)
+ * @NL80211_KEY_DEFAULT_TYPES: A nested attribute containing flags
+ *	attributes, specifying what a key should be set as default as.
+ *	See &enum nl80211_key_default_types.
  * @__NL80211_KEY_AFTER_LAST: internal
  * @NL80211_KEY_MAX: highest key attribute
  */
@@ -1802,6 +1833,7 @@ enum nl80211_key_attributes {
 	NL80211_KEY_DEFAULT,
 	NL80211_KEY_DEFAULT_MGMT,
 	NL80211_KEY_TYPE,
+	NL80211_KEY_DEFAULT_TYPES,
 
 	/* keep last */
 	__NL80211_KEY_AFTER_LAST,
