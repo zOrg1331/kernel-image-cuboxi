@@ -212,7 +212,14 @@ void __pnp_remove_device(struct pnp_dev *dev)
 
 static int __init pnp_init(void)
 {
-	return bus_register(&pnp_bus_type);
+	int ret;
+
+	ret = bus_register(&pnp_bus_type);
+	if (ret)
+		return ret;
+
+	platform_pnp_fixups();
+	return 0;
 }
 
 subsys_initcall(pnp_init);
