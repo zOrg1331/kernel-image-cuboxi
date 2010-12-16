@@ -104,7 +104,6 @@ static void new_aggregated_packet(unsigned char *packet_buff, int packet_len,
 {
 	struct bat_priv *bat_priv = netdev_priv(if_incoming->soft_iface);
 	struct forw_packet *forw_packet_aggr;
-	unsigned long flags;
 	unsigned char *skb_buff;
 
 	/* own packet should always be scheduled */
@@ -123,7 +122,7 @@ static void new_aggregated_packet(unsigned char *packet_buff, int packet_len,
 		return;
 	}
 
-	if ((atomic_read(&bat_priv->aggregation_enabled)) &&
+	if ((atomic_read(&bat_priv->aggregated_ogms)) &&
 	    (packet_len < MAX_AGGREGATION_BYTES))
 		forw_packet_aggr->skb = dev_alloc_skb(MAX_AGGREGATION_BYTES +
 						      sizeof(struct ethhdr));
@@ -156,9 +155,9 @@ static void new_aggregated_packet(unsigned char *packet_buff, int packet_len,
 		forw_packet_aggr->direct_link_flags |= 1;
 
 	/* add new packet to packet list */
-	spin_lock_irqsave(&bat_priv->forw_bat_list_lock, flags);
+	spin_lock_bh(&bat_priv->forw_bat_list_lock);
 	hlist_add_head(&forw_packet_aggr->list, &bat_priv->forw_bat_list);
-	spin_unlock_irqrestore(&bat_priv->forw_bat_list_lock, flags);
+	spin_unlock_bh(&bat_priv->forw_bat_list_lock);
 
 	/* start timer for this packet */
 	INIT_DELAYED_WORK(&forw_packet_aggr->delayed_work,
@@ -201,12 +200,11 @@ void add_bat_packet_to_list(struct bat_priv *bat_priv,
 	struct batman_packet *batman_packet =
 		(struct batman_packet *)packet_buff;
 	bool direct_link = batman_packet->flags & DIRECTLINK ? 1 : 0;
-	unsigned long flags;
 
 	/* find position for the packet in the forward queue */
-	spin_lock_irqsave(&bat_priv->forw_bat_list_lock, flags);
+	spin_lock_bh(&bat_priv->forw_bat_list_lock);
 	/* own packets are not to be aggregated */
-	if ((atomic_read(&bat_priv->aggregation_enabled)) && (!own_packet)) {
+	if ((atomic_read(&bat_priv->aggregated_ogms)) && (!own_packet)) {
 		hlist_for_each_entry(forw_packet_pos, tmp_node,
 				     &bat_priv->forw_bat_list, list) {
 			if (can_aggregate_with(batman_packet,
@@ -225,7 +223,7 @@ void add_bat_packet_to_list(struct bat_priv *bat_priv,
 	 * suitable aggregation packet found */
 	if (forw_packet_aggr == NULL) {
 		/* the following section can run without the lock */
-		spin_unlock_irqrestore(&bat_priv->forw_bat_list_lock, flags);
+		spin_unlock_bh(&bat_priv->forw_bat_list_lock);
 
 		/**
 		 * if we could not aggregate this packet with one of the others
@@ -233,7 +231,7 @@ void add_bat_packet_to_list(struct bat_priv *bat_priv,
 		 * later on
 		 */
 		if ((!own_packet) &&
-		    (atomic_read(&bat_priv->aggregation_enabled)))
+		    (atomic_read(&bat_priv->aggregated_ogms)))
 			send_time += msecs_to_jiffies(MAX_AGGREGATION_MS);
 
 		new_aggregated_packet(packet_buff, packet_len,
@@ -243,7 +241,7 @@ void add_bat_packet_to_list(struct bat_priv *bat_priv,
 		aggregate(forw_packet_aggr,
 			  packet_buff, packet_len,
 			  direct_link);
-		spin_unlock_irqrestore(&bat_priv->forw_bat_list_lock, flags);
+		spin_unlock_bh(&bat_priv->forw_bat_list_lock);
 	}
 }
 
