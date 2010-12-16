@@ -54,7 +54,7 @@
 
 #define DRV_EXTRAVERSION "-k2"
 
-#define DRV_VERSION "1.2.7" DRV_EXTRAVERSION
+#define DRV_VERSION "1.2.20" DRV_EXTRAVERSION
 char e1000e_driver_name[] = "e1000e";
 const char e1000e_driver_version[] = DRV_VERSION;
 
@@ -2059,10 +2059,9 @@ int e1000e_setup_tx_resources(struct e1000_adapter *adapter)
 	int err = -ENOMEM, size;
 
 	size = sizeof(struct e1000_buffer) * tx_ring->count;
-	tx_ring->buffer_info = vmalloc(size);
+	tx_ring->buffer_info = vzalloc(size);
 	if (!tx_ring->buffer_info)
 		goto err;
-	memset(tx_ring->buffer_info, 0, size);
 
 	/* round up to nearest 4K */
 	tx_ring->size = tx_ring->count * sizeof(struct e1000_tx_desc);
@@ -2095,10 +2094,9 @@ int e1000e_setup_rx_resources(struct e1000_adapter *adapter)
 	int i, size, desc_len, err = -ENOMEM;
 
 	size = sizeof(struct e1000_buffer) * rx_ring->count;
-	rx_ring->buffer_info = vmalloc(size);
+	rx_ring->buffer_info = vzalloc(size);
 	if (!rx_ring->buffer_info)
 		goto err;
-	memset(rx_ring->buffer_info, 0, size);
 
 	for (i = 0; i < rx_ring->count; i++) {
 		buffer_info = &rx_ring->buffer_info[i];
@@ -2132,7 +2130,7 @@ err_pages:
 	}
 err:
 	vfree(rx_ring->buffer_info);
-	e_err("Unable to allocate memory for the transmit descriptor ring\n");
+	e_err("Unable to allocate memory for the receive descriptor ring\n");
 	return err;
 }
 
@@ -4595,7 +4593,7 @@ dma_error:
 			i += tx_ring->count;
 		i--;
 		buffer_info = &tx_ring->buffer_info[i];
-		e1000_put_txbuf(adapter, buffer_info);;
+		e1000_put_txbuf(adapter, buffer_info);
 	}
 
 	return 0;
@@ -4631,7 +4629,7 @@ static void e1000_tx_queue(struct e1000_adapter *adapter,
 
 	i = tx_ring->next_to_use;
 
-	while (count--) {
+	do {
 		buffer_info = &tx_ring->buffer_info[i];
 		tx_desc = E1000_TX_DESC(*tx_ring, i);
 		tx_desc->buffer_addr = cpu_to_le64(buffer_info->dma);
@@ -4642,7 +4640,7 @@ static void e1000_tx_queue(struct e1000_adapter *adapter,
 		i++;
 		if (i == tx_ring->count)
 			i = 0;
-	}
+	} while (--count > 0);
 
 	tx_desc->lower.data |= cpu_to_le32(adapter->txd_cmd);
 
@@ -5465,6 +5463,36 @@ static void e1000_shutdown(struct pci_dev *pdev)
 }
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
+
+static irqreturn_t e1000_intr_msix(int irq, void *data)
+{
+	struct net_device *netdev = data;
+	struct e1000_adapter *adapter = netdev_priv(netdev);
+	int vector, msix_irq;
+
+	if (adapter->msix_entries) {
+		vector = 0;
+		msix_irq = adapter->msix_entries[vector].vector;
+		disable_irq(msix_irq);
+		e1000_intr_msix_rx(msix_irq, netdev);
+		enable_irq(msix_irq);
+
+		vector++;
+		msix_irq = adapter->msix_entries[vector].vector;
+		disable_irq(msix_irq);
+		e1000_intr_msix_tx(msix_irq, netdev);
+		enable_irq(msix_irq);
+
+		vector++;
+		msix_irq = adapter->msix_entries[vector].vector;
+		disable_irq(msix_irq);
+		e1000_msix_other(msix_irq, netdev);
+		enable_irq(msix_irq);
+	}
+
+	return IRQ_HANDLED;
+}
+
 /*
  * Polling 'interrupt' - used by things like netconsole to send skbs
  * without having to re-enable interrupts. It's not called while
@@ -5474,10 +5502,21 @@ static void e1000_netpoll(struct net_device *netdev)
 {
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 
-	disable_irq(adapter->pdev->irq);
-	e1000_intr(adapter->pdev->irq, netdev);
-
-	enable_irq(adapter->pdev->irq);
+	switch (adapter->int_mode) {
+	case E1000E_INT_MODE_MSIX:
+		e1000_intr_msix(adapter->pdev->irq, netdev);
+		break;
+	case E1000E_INT_MODE_MSI:
+		disable_irq(adapter->pdev->irq);
+		e1000_intr_msi(adapter->pdev->irq, netdev);
+		enable_irq(adapter->pdev->irq);
+		break;
+	default: /* E1000E_INT_MODE_LEGACY */
+		disable_irq(adapter->pdev->irq);
+		e1000_intr(adapter->pdev->irq, netdev);
+		enable_irq(adapter->pdev->irq);
+		break;
+	}
 }
 #endif
 
@@ -5587,7 +5626,8 @@ static void e1000_print_device_info(struct e1000_adapter *adapter)
 {
 	struct e1000_hw *hw = &adapter->hw;
 	struct net_device *netdev = adapter->netdev;
-	u32 pba_num;
+	u32 ret_val;
+	u8 pba_str[E1000_PBANUM_LENGTH];
 
 	/* print bus type/speed/width info */
 	e_info("(PCI Express:2.5GB/s:%s) %pM\n",
@@ -5598,9 +5638,12 @@ static void e1000_print_device_info(struct e1000_adapter *adapter)
 	       netdev->dev_addr);
 	e_info("Intel(R) PRO/%s Network Connection\n",
 	       (hw->phy.type == e1000_phy_ife) ? "10/100" : "1000");
-	e1000e_read_pba_num(hw, &pba_num);
-	e_info("MAC: %d, PHY: %d, PBA No: %06x-%03x\n",
-	       hw->mac.type, hw->phy.type, (pba_num >> 8), (pba_num & 0xff));
+	ret_val = e1000_read_pba_string_generic(hw, pba_str,
+						E1000_PBANUM_LENGTH);
+	if (ret_val)
+		strcpy(pba_str, "Unknown");
+	e_info("MAC: %d, PHY: %d, PBA No: %s\n",
+	       hw->mac.type, hw->phy.type, pba_str);
 }
 
 static void e1000_eeprom_checks(struct e1000_adapter *adapter)
@@ -5864,6 +5907,7 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
 	INIT_WORK(&adapter->downshift_task, e1000e_downshift_workaround);
 	INIT_WORK(&adapter->update_phy_task, e1000e_update_phy_task);
 	INIT_WORK(&adapter->print_hang_task, e1000_print_hw_hang);
+	INIT_WORK(&adapter->led_blink_task, e1000e_led_blink_task);
 
 	/* Initialize link parameters. User can change them with ethtool */
 	adapter->hw.mac.autoneg = 1;
@@ -5984,8 +6028,8 @@ static void __devexit e1000_remove(struct pci_dev *pdev)
 	bool down = test_bit(__E1000_DOWN, &adapter->state);
 
 	/*
-	 * flush_scheduled work may reschedule our watchdog task, so
-	 * explicitly disable watchdog tasks from being rescheduled
+	 * The timers may be rescheduled, so explicitly disable them
+	 * from being rescheduled.
 	 */
 	if (!down)
 		set_bit(__E1000_DOWN, &adapter->state);
@@ -5996,8 +6040,8 @@ static void __devexit e1000_remove(struct pci_dev *pdev)
 	cancel_work_sync(&adapter->watchdog_task);
 	cancel_work_sync(&adapter->downshift_task);
 	cancel_work_sync(&adapter->update_phy_task);
+	cancel_work_sync(&adapter->led_blink_task);
 	cancel_work_sync(&adapter->print_hang_task);
-	flush_scheduled_work();
 
 	if (!(netdev->flags & IFF_UP))
 		e1000_power_down_phy(adapter);

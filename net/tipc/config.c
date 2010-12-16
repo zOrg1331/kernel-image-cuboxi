@@ -35,23 +35,11 @@
  */
 
 #include "core.h"
-#include "dbg.h"
-#include "bearer.h"
 #include "port.h"
 #include "link.h"
-#include "zone.h"
-#include "addr.h"
 #include "name_table.h"
-#include "node.h"
+#include "user_reg.h"
 #include "config.h"
-#include "discover.h"
-
-struct subscr_data {
-	char usr_handle[8];
-	u32 domain;
-	u32 port_ref;
-	struct list_head subd_list;
-};
 
 struct manager {
 	u32 user_ref;
@@ -572,7 +560,7 @@ int tipc_cfg_init(void)
 	struct tipc_name_seq seq;
 	int res;
 
-	res = tipc_attach(&mng.user_ref, NULL, NULL);
+	res = tipc_attach(&mng.user_ref);
 	if (res)
 		goto failed;
 
