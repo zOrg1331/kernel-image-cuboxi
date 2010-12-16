@@ -16,7 +16,6 @@
 #include <linux/device.h>
 #include <linux/types.h>
 #include <sound/control.h>
-#include <sound/soc.h>
 
 /* widget has no PM register bit */
 #define SND_SOC_NOPM	-1
@@ -72,6 +71,10 @@
 	 wcontrols, wncontrols) \
 {	.id = snd_soc_dapm_pga, .name = wname, .reg = wreg, .shift = wshift, \
 	.invert = winvert, .kcontrols = wcontrols, .num_kcontrols = wncontrols}
+#define SND_SOC_DAPM_OUT_DRV(wname, wreg, wshift, winvert,\
+	 wcontrols, wncontrols) \
+{	.id = snd_soc_dapm_out_drv, .name = wname, .reg = wreg, .shift = wshift, \
+	.invert = winvert, .kcontrols = wcontrols, .num_kcontrols = wncontrols}
 #define SND_SOC_DAPM_MIXER(wname, wreg, wshift, winvert, \
 	 wcontrols, wncontrols)\
 {	.id = snd_soc_dapm_mixer, .name = wname, .reg = wreg, .shift = wshift, \
@@ -114,6 +117,11 @@
 #define SND_SOC_DAPM_PGA_E(wname, wreg, wshift, winvert, wcontrols, \
 	wncontrols, wevent, wflags) \
 {	.id = snd_soc_dapm_pga, .name = wname, .reg = wreg, .shift = wshift, \
+	.invert = winvert, .kcontrols = wcontrols, .num_kcontrols = wncontrols, \
+	.event = wevent, .event_flags = wflags}
+#define SND_SOC_DAPM_OUT_DRV_E(wname, wreg, wshift, winvert, wcontrols, \
+	wncontrols, wevent, wflags) \
+{	.id = snd_soc_dapm_out_drv, .name = wname, .reg = wreg, .shift = wshift, \
 	.invert = winvert, .kcontrols = wcontrols, .num_kcontrols = wncontrols, \
 	.event = wevent, .event_flags = wflags}
 #define SND_SOC_DAPM_MIXER_E(wname, wreg, wshift, winvert, wcontrols, \
@@ -297,6 +305,7 @@ enum snd_soc_dapm_type;
 struct snd_soc_dapm_path;
 struct snd_soc_dapm_pin;
 struct snd_soc_dapm_route;
+struct snd_soc_dapm_context;
 
 int dapm_reg_event(struct snd_soc_dapm_widget *w,
 		   struct snd_kcontrol *kcontrol, int event);
@@ -324,16 +333,16 @@ int snd_soc_dapm_get_pin_switch(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *uncontrol);
 int snd_soc_dapm_put_pin_switch(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *uncontrol);
-int snd_soc_dapm_new_control(struct snd_soc_codec *codec,
+int snd_soc_dapm_new_control(struct snd_soc_dapm_context *dapm,
 	const struct snd_soc_dapm_widget *widget);
-int snd_soc_dapm_new_controls(struct snd_soc_codec *codec,
+int snd_soc_dapm_new_controls(struct snd_soc_dapm_context *dapm,
 	const struct snd_soc_dapm_widget *widget,
 	int num);
 
 /* dapm path setup */
-int snd_soc_dapm_new_widgets(struct snd_soc_codec *codec);
-void snd_soc_dapm_free(struct snd_soc_codec *codec);
-int snd_soc_dapm_add_routes(struct snd_soc_codec *codec,
+int snd_soc_dapm_new_widgets(struct snd_soc_dapm_context *dapm);
+void snd_soc_dapm_free(struct snd_soc_dapm_context *dapm);
+int snd_soc_dapm_add_routes(struct snd_soc_dapm_context *dapm,
 			    const struct snd_soc_dapm_route *route, int num);
 
 /* dapm events */
@@ -343,17 +352,21 @@ void snd_soc_dapm_shutdown(struct snd_soc_card *card);
 
 /* dapm sys fs - used by the core */
 int snd_soc_dapm_sys_add(struct device *dev);
-void snd_soc_dapm_debugfs_init(struct snd_soc_codec *codec);
+void snd_soc_dapm_debugfs_init(struct snd_soc_dapm_context *dapm);
 
 /* dapm audio pin control and status */
-int snd_soc_dapm_enable_pin(struct snd_soc_codec *codec, const char *pin);
-int snd_soc_dapm_disable_pin(struct snd_soc_codec *codec, const char *pin);
-int snd_soc_dapm_nc_pin(struct snd_soc_codec *codec, const char *pin);
-int snd_soc_dapm_get_pin_status(struct snd_soc_codec *codec, const char *pin);
-int snd_soc_dapm_sync(struct snd_soc_codec *codec);
-int snd_soc_dapm_force_enable_pin(struct snd_soc_codec *codec,
+int snd_soc_dapm_enable_pin(struct snd_soc_dapm_context *dapm,
+			    const char *pin);
+int snd_soc_dapm_disable_pin(struct snd_soc_dapm_context *dapm,
+			     const char *pin);
+int snd_soc_dapm_nc_pin(struct snd_soc_dapm_context *dapm, const char *pin);
+int snd_soc_dapm_get_pin_status(struct snd_soc_dapm_context *dapm,
+				const char *pin);
+int snd_soc_dapm_sync(struct snd_soc_dapm_context *dapm);
+int snd_soc_dapm_force_enable_pin(struct snd_soc_dapm_context *dapm,
 				  const char *pin);
-int snd_soc_dapm_ignore_suspend(struct snd_soc_codec *codec, const char *pin);
+int snd_soc_dapm_ignore_suspend(struct snd_soc_dapm_context *dapm,
+				const char *pin);
 
 /* dapm widget types */
 enum snd_soc_dapm_type {
@@ -364,6 +377,7 @@ enum snd_soc_dapm_type {
 	snd_soc_dapm_mixer,			/* mixes several analog signals together */
 	snd_soc_dapm_mixer_named_ctl,		/* mixer with named controls */
 	snd_soc_dapm_pga,			/* programmable gain/attenuation (volume) */
+	snd_soc_dapm_out_drv,			/* output driver */
 	snd_soc_dapm_adc,			/* analog to digital converter */
 	snd_soc_dapm_dac,			/* digital to analog converter */
 	snd_soc_dapm_micbias,		/* microphone bias (power) */
@@ -425,6 +439,7 @@ struct snd_soc_dapm_widget {
 	char *sname;	/* stream name */
 	struct snd_soc_codec *codec;
 	struct list_head list;
+	struct snd_soc_dapm_context *dapm;
 
 	/* dapm control */
 	short reg;						/* negative reg = no direct dapm */
@@ -459,6 +474,23 @@ struct snd_soc_dapm_widget {
 
 	/* used during DAPM updates */
 	struct list_head power_list;
+};
+
+/* DAPM context */
+struct snd_soc_dapm_context {
+	struct list_head widgets;
+	struct list_head paths;
+	enum snd_soc_bias_level bias_level;
+	enum snd_soc_bias_level suspend_bias_level;
+	struct delayed_work delayed_work;
+	unsigned int idle_bias_off:1; /* Use BIAS_OFF instead of STANDBY */
+
+	struct device *dev; /* from parent - for debug */
+	struct snd_soc_codec *codec; /* parent codec */
+	struct snd_soc_card *card; /* parent card */
+#ifdef CONFIG_DEBUG_FS
+	struct dentry *debugfs_dapm;
+#endif
 };
 
 #endif
