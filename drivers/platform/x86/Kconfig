@@ -425,7 +425,10 @@ config EEEPC_WMI
 	depends on INPUT
 	depends on EXPERIMENTAL
 	depends on BACKLIGHT_CLASS_DEVICE
+	depends on RFKILL || RFKILL = n
 	select INPUT_SPARSEKMAP
+	select LEDS_CLASS
+	select NEW_LEDS
 	---help---
 	  Say Y here if you want to support WMI-based hotkeys on Eee PC laptops.
 
@@ -575,6 +578,15 @@ config INTEL_SCU_IPC
 	  IPC is used to bridge the communications between kernel and SCU on
 	  some embedded Intel x86 platforms. This is not needed for PC-type
 	  machines.
+
+config INTEL_SCU_IPC_UTIL
+	tristate "Intel SCU IPC utility driver"
+	depends on INTEL_SCU_IPC
+	default y
+	---help---
+	  The IPC Util driver provides an interface with the SCU enabling
+	  low level access for debug work and updating the firmware. Say
+	  N unless you will be doing this on an Intel MID platform.
 
 config GPIO_INTEL_PMIC
 	bool "Intel PMIC GPIO support"
