@@ -21,6 +21,7 @@
 #include <linux/irq.h>
 #include <linux/io.h>
 #include <linux/sysdev.h>
+#include <linux/i2c/pxa-i2c.h>
 
 #include <mach/hardware.h>
 #include <mach/gpio.h>
@@ -30,7 +31,6 @@
 #include <mach/pm.h>
 #include <mach/dma.h>
 #include <mach/regs-intc.h>
-#include <plat/i2c.h>
 
 #include "generic.h"
 #include "devices.h"

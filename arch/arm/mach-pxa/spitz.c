@@ -19,6 +19,7 @@
 #include <linux/gpio.h>
 #include <linux/leds.h>
 #include <linux/i2c.h>
+#include <linux/i2c/pxa-i2c.h>
 #include <linux/i2c/pca953x.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/ads7846.h>
@@ -43,8 +44,6 @@
 #include <mach/pxafb.h>
 #include <mach/spitz.h>
 #include <mach/sharpsl_pm.h>
-
-#include <plat/i2c.h>
 
 #include "generic.h"
 #include "devices.h"
