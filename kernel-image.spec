@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
-Version: 2.6.35
-Release: alt9
+Version: 2.6.36
+Release: alt2
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -589,6 +589,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Fri Dec 17 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.36-alt2
+- 2.6.36.2
+
 * Tue Nov 23 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.35-alt9
 - 2.6.35.9
 - default io sched set to deadline
