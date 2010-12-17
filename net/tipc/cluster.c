@@ -36,17 +36,10 @@
 
 #include "core.h"
 #include "cluster.h"
-#include "addr.h"
-#include "node_subscr.h"
 #include "link.h"
-#include "node.h"
-#include "net.h"
-#include "msg.h"
-#include "bearer.h"
 
 static void tipc_cltr_multicast(struct cluster *c_ptr, struct sk_buff *buf,
 				u32 lower, u32 upper);
-static struct sk_buff *tipc_cltr_prepare_routing_msg(u32 data_size, u32 dest);
 
 struct tipc_node **tipc_local_nodes = NULL;
 struct tipc_node_map tipc_cltr_bcast_nodes = {0,{0,}};

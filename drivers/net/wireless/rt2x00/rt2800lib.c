@@ -277,13 +277,17 @@ int rt2800_wait_wpdma_ready(struct rt2x00_dev *rt2x00dev)
 	unsigned int i;
 	u32 reg;
 
+	/*
+	 * Some devices are really slow to respond here. Wait a whole second
+	 * before timing out.
+	 */
 	for (i = 0; i < REGISTER_BUSY_COUNT; i++) {
 		rt2800_register_read(rt2x00dev, WPDMA_GLO_CFG, &reg);
 		if (!rt2x00_get_field32(reg, WPDMA_GLO_CFG_TX_DMA_BUSY) &&
 		    !rt2x00_get_field32(reg, WPDMA_GLO_CFG_RX_DMA_BUSY))
 			return 0;
 
-		msleep(1);
+		msleep(10);
 	}
 
 	ERROR(rt2x00dev, "WPDMA TX/RX busy, aborting.\n");
@@ -483,7 +487,7 @@ void rt2800_write_tx_data(struct queue_entry *entry,
 			   txdesc->key_idx : 0xff);
 	rt2x00_set_field32(&word, TXWI_W1_MPDU_TOTAL_BYTE_COUNT,
 			   txdesc->length);
-	rt2x00_set_field32(&word, TXWI_W1_PACKETID_QUEUE, txdesc->qid);
+	rt2x00_set_field32(&word, TXWI_W1_PACKETID_QUEUE, entry->queue->qid);
 	rt2x00_set_field32(&word, TXWI_W1_PACKETID_ENTRY, (entry->entry_idx % 3) + 1);
 	rt2x00_desc_write(txwi, 1, word);
 
@@ -727,7 +731,7 @@ void rt2800_txdone(struct rt2x00_dev *rt2x00dev)
 	 * that the TX_STA_FIFO stack has a size of 16. We stick to our
 	 * tx ring size for now.
 	 */
-	for (i = 0; i < TX_ENTRIES; i++) {
+	for (i = 0; i < rt2x00dev->ops->tx->entry_num; i++) {
 		rt2800_register_read(rt2x00dev, TX_STA_FIFO, &reg);
 		if (!rt2x00_get_field32(reg, TX_STA_FIFO_VALID))
 			break;
@@ -824,7 +828,7 @@ void rt2800_write_beacon(struct queue_entry *entry, struct txentry_desc *txdesc)
 }
 EXPORT_SYMBOL_GPL(rt2800_write_beacon);
 
-static void inline rt2800_clear_beacon(struct rt2x00_dev *rt2x00dev,
+static inline void rt2800_clear_beacon(struct rt2x00_dev *rt2x00dev,
 				       unsigned int beacon_base)
 {
 	int i;
@@ -1144,6 +1148,7 @@ void rt2800_config_intf(struct rt2x00_dev *rt2x00dev, struct rt2x00_intf *intf,
 			struct rt2x00intf_conf *conf, const unsigned int flags)
 {
 	u32 reg;
+	bool update_bssid = false;
 
 	if (flags & CONFIG_UPDATE_TYPE) {
 		/*
@@ -1173,6 +1178,16 @@ void rt2800_config_intf(struct rt2x00_dev *rt2x00dev, struct rt2x00_intf *intf,
 	}
 
 	if (flags & CONFIG_UPDATE_MAC) {
+		if (flags & CONFIG_UPDATE_TYPE &&
+		    conf->sync == TSF_SYNC_AP_NONE) {
+			/*
+			 * The BSSID register has to be set to our own mac
+			 * address in AP mode.
+			 */
+			memcpy(conf->bssid, conf->mac, sizeof(conf->mac));
+			update_bssid = true;
+		}
+
 		if (!is_zero_ether_addr((const u8 *)conf->mac)) {
 			reg = le32_to_cpu(conf->mac[1]);
 			rt2x00_set_field32(&reg, MAC_ADDR_DW1_UNICAST_TO_ME_MASK, 0xff);
@@ -1183,7 +1198,7 @@ void rt2800_config_intf(struct rt2x00_dev *rt2x00dev, struct rt2x00_intf *intf,
 					      conf->mac, sizeof(conf->mac));
 	}
 
-	if (flags & CONFIG_UPDATE_BSSID) {
+	if ((flags & CONFIG_UPDATE_BSSID) || update_bssid) {
 		if (!is_zero_ether_addr((const u8 *)conf->bssid)) {
 			reg = le32_to_cpu(conf->bssid[1]);
 			rt2x00_set_field32(&reg, MAC_BSSID_DW1_BSS_ID_MASK, 3);
@@ -1529,7 +1544,8 @@ static void rt2800_config_channel(struct rt2x00_dev *rt2x00dev,
 	    rt2x00_rf(rt2x00dev, RF3020) ||
 	    rt2x00_rf(rt2x00dev, RF3021) ||
 	    rt2x00_rf(rt2x00dev, RF3022) ||
-	    rt2x00_rf(rt2x00dev, RF3052))
+	    rt2x00_rf(rt2x00dev, RF3052) ||
+	    rt2x00_rf(rt2x00dev, RF3320))
 		rt2800_config_channel_rf3xxx(rt2x00dev, conf, rf, info);
 	else
 		rt2800_config_channel_rf2xxx(rt2x00dev, conf, rf, info);
@@ -2097,7 +2113,23 @@ static int rt2800_init_registers(struct rt2x00_dev *rt2x00dev)
 		rt2800_register_write(rt2x00dev, WPDMA_GLO_CFG, reg);
 	}
 
-	rt2800_register_write(rt2x00dev, TXOP_CTRL_CFG, 0x0000583f);
+	/*
+	 * The legacy driver also sets TXOP_CTRL_CFG_RESERVED_TRUN_EN to 1
+	 * although it is reserved.
+	 */
+	rt2800_register_read(rt2x00dev, TXOP_CTRL_CFG, &reg);
+	rt2x00_set_field32(&reg, TXOP_CTRL_CFG_TIMEOUT_TRUN_EN, 1);
+	rt2x00_set_field32(&reg, TXOP_CTRL_CFG_AC_TRUN_EN, 1);
+	rt2x00_set_field32(&reg, TXOP_CTRL_CFG_TXRATEGRP_TRUN_EN, 1);
+	rt2x00_set_field32(&reg, TXOP_CTRL_CFG_USER_MODE_TRUN_EN, 1);
+	rt2x00_set_field32(&reg, TXOP_CTRL_CFG_MIMO_PS_TRUN_EN, 1);
+	rt2x00_set_field32(&reg, TXOP_CTRL_CFG_RESERVED_TRUN_EN, 1);
+	rt2x00_set_field32(&reg, TXOP_CTRL_CFG_LSIG_TXOP_EN, 0);
+	rt2x00_set_field32(&reg, TXOP_CTRL_CFG_EXT_CCA_EN, 0);
+	rt2x00_set_field32(&reg, TXOP_CTRL_CFG_EXT_CCA_DLY, 88);
+	rt2x00_set_field32(&reg, TXOP_CTRL_CFG_EXT_CWMIN, 0);
+	rt2800_register_write(rt2x00dev, TXOP_CTRL_CFG, reg);
+
 	rt2800_register_write(rt2x00dev, TXOP_HLDR_ET, 0x00000002);
 
 	rt2800_register_read(rt2x00dev, TX_RTS_CFG, &reg);
@@ -2134,7 +2166,7 @@ static int rt2800_init_registers(struct rt2x00_dev *rt2x00dev)
 					 SHARED_KEY_MODE_ENTRY(i), 0);
 
 	for (i = 0; i < 256; i++) {
-		u32 wcid[2] = { 0xffffffff, 0x00ffffff };
+		static const u32 wcid[2] = { 0xffffffff, 0x00ffffff };
 		rt2800_register_multiwrite(rt2x00dev, MAC_WCID_ENTRY(i),
 					      wcid, sizeof(wcid));
 
@@ -2981,7 +3013,8 @@ int rt2800_init_eeprom(struct rt2x00_dev *rt2x00dev)
 	    !rt2x00_rf(rt2x00dev, RF2020) &&
 	    !rt2x00_rf(rt2x00dev, RF3021) &&
 	    !rt2x00_rf(rt2x00dev, RF3022) &&
-	    !rt2x00_rf(rt2x00dev, RF3052)) {
+	    !rt2x00_rf(rt2x00dev, RF3052) &&
+	    !rt2x00_rf(rt2x00dev, RF3320)) {
 		ERROR(rt2x00dev, "Invalid RF chipset detected.\n");
 		return -ENODEV;
 	}
@@ -3245,7 +3278,8 @@ int rt2800_probe_hw_mode(struct rt2x00_dev *rt2x00dev)
 	} else if (rt2x00_rf(rt2x00dev, RF3020) ||
 		   rt2x00_rf(rt2x00dev, RF2020) ||
 		   rt2x00_rf(rt2x00dev, RF3021) ||
-		   rt2x00_rf(rt2x00dev, RF3022)) {
+		   rt2x00_rf(rt2x00dev, RF3022) ||
+		   rt2x00_rf(rt2x00dev, RF3320)) {
 		spec->num_channels = 14;
 		spec->channels = rf_vals_3x;
 	} else if (rt2x00_rf(rt2x00dev, RF3052)) {

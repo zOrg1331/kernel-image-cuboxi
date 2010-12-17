@@ -35,10 +35,8 @@
  */
 
 #include "core.h"
-#include "dbg.h"
 #include "name_table.h"
-#include "port.h"
-#include "ref.h"
+#include "user_reg.h"
 #include "subscr.h"
 
 /**
@@ -544,14 +542,14 @@ static void subscr_named_msg_event(void *usr_handle,
 int tipc_subscr_start(void)
 {
 	struct tipc_name_seq seq = {TIPC_TOP_SRV, TIPC_TOP_SRV, TIPC_TOP_SRV};
-	int res = -1;
+	int res;
 
 	memset(&topsrv, 0, sizeof (topsrv));
 	spin_lock_init(&topsrv.lock);
 	INIT_LIST_HEAD(&topsrv.subscriber_list);
 
 	spin_lock_bh(&topsrv.lock);
-	res = tipc_attach(&topsrv.user_ref, NULL, NULL);
+	res = tipc_attach(&topsrv.user_ref);
 	if (res) {
 		spin_unlock_bh(&topsrv.lock);
 		return res;
