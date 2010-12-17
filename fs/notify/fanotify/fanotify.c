@@ -92,7 +92,11 @@ static int fanotify_get_response_from_access(struct fsnotify_group *group,
 
 	pr_debug("%s: group=%p event=%p\n", __func__, group, event);
 
-	wait_event(group->fanotify_data.access_waitq, event->response);
+	wait_event(group->fanotify_data.access_waitq, event->response ||
+				atomic_read(&group->fanotify_data.bypass_perm));
+
+	if (!event->response) /* bypass_perm set */
+		return 0;
 
 	/* userspace responded, convert to something usable */
 	spin_lock(&event->lock);
@@ -180,13 +184,6 @@ static bool fanotify_should_send_event(struct fsnotify_group *group,
 		marks_mask = (vfsmnt_mark->mask | inode_mark->mask);
 		marks_ignored_mask = (vfsmnt_mark->ignored_mask | inode_mark->ignored_mask);
 	} else if (inode_mark) {
-		/*
-		 * if the event is for a child and this inode doesn't care about
-		 * events on the child, don't send it!
-		 */
-		if ((event_mask & FS_EVENT_ON_CHILD) &&
-		    !(inode_mark->mask & FS_EVENT_ON_CHILD))
-			return false;
 		marks_mask = inode_mark->mask;
 		marks_ignored_mask = inode_mark->ignored_mask;
 	} else if (vfsmnt_mark) {
@@ -200,10 +197,21 @@ static bool fanotify_should_send_event(struct fsnotify_group *group,
 	    (marks_ignored_mask & FS_ISDIR))
 		return false;
 
-	if (event_mask & marks_mask & ~marks_ignored_mask)
-		return true;
+	/*
+	 * if the event is for a child and this inode doesn't care about
+	 * events on the child, don't send it!
+	 */
+	if ((event_mask & FS_EVENT_ON_CHILD) &&
+	    !(marks_mask & FS_EVENT_ON_CHILD))
+		return false;
 
-	return false;
+	/*
+	 * It might seem logical to check:
+	 * if (event_mask & marks_mask & ~marks_ignored_mask)
+	 * 	return true;
+	 * but we we know this was true from the caller so just return true.
+	 */
+	return true;
 }
 
 static void fanotify_free_group_priv(struct fsnotify_group *group)

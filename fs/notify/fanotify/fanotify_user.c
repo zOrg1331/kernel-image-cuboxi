@@ -62,6 +62,7 @@ static int create_fd(struct fsnotify_group *group, struct fsnotify_event *event)
 	struct dentry *dentry;
 	struct vfsmount *mnt;
 	struct file *new_file;
+	unsigned int flags;
 
 	pr_debug("%s: group=%p event=%p\n", __func__, group, event);
 
@@ -83,12 +84,22 @@ static int create_fd(struct fsnotify_group *group, struct fsnotify_event *event)
 	mnt = mntget(event->path.mnt);
 	/* it's possible this event was an overflow event.  in that case dentry and mnt
 	 * are NULL;  That's fine, just don't call dentry open */
-	if (dentry && mnt)
-		new_file = dentry_open(dentry, mnt,
-				       group->fanotify_data.f_flags | FMODE_NONOTIFY,
-				       current_cred());
-	else
+	if (dentry && mnt) {
+		flags = group->fanotify_data.f_flags;
+		new_file = dentry_open(dentry, mnt, flags, current_cred());
+		/*
+		 * Attempt fallback to read-only access if writable was not possible
+		 * in order to at least provide something to the listener.
+		 */
+		if (IS_ERR(new_file) && group->fanotify_data.readonly_fallback) {
+			flags &= ~O_ACCMODE;
+			flags |= O_RDONLY;
+			new_file = dentry_open(dentry, mnt, flags,
+					       current_cred());
+		}
+	} else {
 		new_file = ERR_PTR(-EOVERFLOW);
+	}
 	if (IS_ERR(new_file)) {
 		/*
 		 * we still send an event even if we can't open the file.  this
@@ -106,20 +117,29 @@ static int create_fd(struct fsnotify_group *group, struct fsnotify_event *event)
 	return client_fd;
 }
 
-static ssize_t fill_event_metadata(struct fsnotify_group *group,
+static int fill_event_metadata(struct fsnotify_group *group,
 				   struct fanotify_event_metadata *metadata,
 				   struct fsnotify_event *event)
 {
+	int ret = 0;
+
 	pr_debug("%s: group=%p metadata=%p event=%p\n", __func__,
 		 group, metadata, event);
 
 	metadata->event_len = FAN_EVENT_METADATA_LEN;
+	metadata->metadata_len = FAN_EVENT_METADATA_LEN;
 	metadata->vers = FANOTIFY_METADATA_VERSION;
 	metadata->mask = event->mask & FAN_ALL_OUTGOING_EVENTS;
 	metadata->pid = pid_vnr(event->tgid);
-	metadata->fd = create_fd(group, event);
+	if (unlikely(event->mask & FAN_Q_OVERFLOW))
+		metadata->fd = FAN_NOFD;
+	else {
+		metadata->fd = create_fd(group, event);
+		if (metadata->fd < 0)
+			ret = metadata->fd;
+	}
 
-	return metadata->fd;
+	return ret;
 }
 
 #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
@@ -199,14 +219,6 @@ static int prepare_for_access_response(struct fsnotify_group *group,
 	re->fd = fd;
 
 	mutex_lock(&group->fanotify_data.access_mutex);
-
-	if (group->fanotify_data.bypass_perm) {
-		mutex_unlock(&group->fanotify_data.access_mutex);
-		kmem_cache_free(fanotify_response_event_cache, re);
-		event->response = FAN_ALLOW;
-		return 0;
-	}
-		
 	list_add_tail(&re->list, &group->fanotify_data.access_list);
 	mutex_unlock(&group->fanotify_data.access_mutex);
 
@@ -257,24 +269,34 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 
 	pr_debug("%s: group=%p event=%p\n", __func__, group, event);
 
-	fd = fill_event_metadata(group, &fanotify_event_metadata, event);
-	if (fd < 0)
-		return fd;
+	ret = fill_event_metadata(group, &fanotify_event_metadata, event);
+	if (ret < 0)
+		goto out;
 
+	fd = fanotify_event_metadata.fd;
 	ret = prepare_for_access_response(group, event, fd);
 	if (ret)
 		goto out_close_fd;
 
 	ret = -EFAULT;
-	if (copy_to_user(buf, &fanotify_event_metadata, FAN_EVENT_METADATA_LEN))
+	if (copy_to_user(buf, &fanotify_event_metadata,
+			 fanotify_event_metadata.event_len))
 		goto out_kill_access_response;
 
-	return FAN_EVENT_METADATA_LEN;
+	return fanotify_event_metadata.event_len;
 
 out_kill_access_response:
 	remove_access_response(group, event, fd);
 out_close_fd:
-	sys_close(fd);
+	if (fd != FAN_NOFD)
+		sys_close(fd);
+out:
+#ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
+	if (event->mask & FAN_ALL_PERM_EVENTS) {
+		event->response = FAN_DENY;
+		wake_up(&group->fanotify_data.access_waitq);
+	}
+#endif
 	return ret;
 }
 
@@ -382,7 +404,7 @@ static int fanotify_release(struct inode *ignored, struct file *file)
 
 	mutex_lock(&group->fanotify_data.access_mutex);
 
-	group->fanotify_data.bypass_perm = true;
+	atomic_inc(&group->fanotify_data.bypass_perm);
 
 	list_for_each_entry_safe(re, lre, &group->fanotify_data.access_list, list) {
 		pr_debug("%s: found group=%p re=%p event=%p\n", __func__, group,
@@ -497,6 +519,7 @@ static __u32 fanotify_mark_remove_from_mask(struct fsnotify_mark *fsn_mark,
 					    unsigned int flags)
 {
 	__u32 oldmask;
+	int destroy_mark;
 
 	spin_lock(&fsn_mark->lock);
 	if (!(flags & FAN_MARK_IGNORED_MASK)) {
@@ -506,9 +529,10 @@ static __u32 fanotify_mark_remove_from_mask(struct fsnotify_mark *fsn_mark,
 		oldmask = fsn_mark->ignored_mask;
 		fsnotify_set_mark_ignored_mask_locked(fsn_mark, (oldmask & ~mask));
 	}
+	destroy_mark = (!fsn_mark->mask && !fsn_mark->ignored_mask);
 	spin_unlock(&fsn_mark->lock);
 
-	if (!(oldmask & ~mask))
+	if (destroy_mark)
 		fsnotify_destroy_mark(fsn_mark);
 
 	return mask & oldmask;
@@ -520,17 +544,23 @@ static int fanotify_remove_vfsmount_mark(struct fsnotify_group *group,
 {
 	struct fsnotify_mark *fsn_mark = NULL;
 	__u32 removed;
+	int ret;
 
+	mutex_lock(&group->mutex);
+	ret = -ENOENT;
 	fsn_mark = fsnotify_find_vfsmount_mark(group, mnt);
 	if (!fsn_mark)
-		return -ENOENT;
+		goto err;
 
 	removed = fanotify_mark_remove_from_mask(fsn_mark, mask, flags);
 	fsnotify_put_mark(fsn_mark);
 	if (removed & mnt->mnt_fsnotify_mask)
 		fsnotify_recalc_vfsmount_mask(mnt);
+	ret = 0;
+err:
+	mutex_unlock(&group->mutex);
 
-	return 0;
+	return ret;
 }
 
 static int fanotify_remove_inode_mark(struct fsnotify_group *group,
@@ -539,18 +569,24 @@ static int fanotify_remove_inode_mark(struct fsnotify_group *group,
 {
 	struct fsnotify_mark *fsn_mark = NULL;
 	__u32 removed;
+	int ret;
 
+	mutex_lock(&group->mutex);
+	ret = -ENOENT;
 	fsn_mark = fsnotify_find_inode_mark(group, inode);
 	if (!fsn_mark)
-		return -ENOENT;
+		goto err;
 
 	removed = fanotify_mark_remove_from_mask(fsn_mark, mask, flags);
 	/* matches the fsnotify_find_inode_mark() */
 	fsnotify_put_mark(fsn_mark);
 	if (removed & inode->i_fsnotify_mask)
 		fsnotify_recalc_inode_mask(inode);
+	ret = 0;
+err:
+	mutex_unlock(&group->mutex);
 
-	return 0;
+	return ret;
 }
 
 static __u32 fanotify_mark_add_to_mask(struct fsnotify_mark *fsn_mark,
@@ -586,31 +622,36 @@ static int fanotify_add_vfsmount_mark(struct fsnotify_group *group,
 {
 	struct fsnotify_mark *fsn_mark;
 	__u32 added;
+	int ret;
 
+	mutex_lock(&group->mutex);
 	fsn_mark = fsnotify_find_vfsmount_mark(group, mnt);
 	if (!fsn_mark) {
-		int ret;
+		ret = -ENOSPC;
+		if (atomic_read(&group->num_marks) >
+		    group->fanotify_data.max_marks)
+			goto err;
 
-		if (atomic_read(&group->num_marks) > group->fanotify_data.max_marks)
-			return -ENOSPC;
-
+		ret = -ENOMEM;
 		fsn_mark = kmem_cache_alloc(fanotify_mark_cache, GFP_KERNEL);
 		if (!fsn_mark)
-			return -ENOMEM;
+			goto err;
 
 		fsnotify_init_mark(fsn_mark, fanotify_free_mark);
 		ret = fsnotify_add_mark(fsn_mark, group, NULL, mnt, 0);
-		if (ret) {
-			fanotify_free_mark(fsn_mark);
-			return ret;
-		}
+		if (ret)
+			goto err2;
 	}
 	added = fanotify_mark_add_to_mask(fsn_mark, mask, flags);
-	fsnotify_put_mark(fsn_mark);
+
 	if (added & ~mnt->mnt_fsnotify_mask)
 		fsnotify_recalc_vfsmount_mask(mnt);
-
-	return 0;
+	ret = 0;
+err2:
+	fsnotify_put_mark(fsn_mark);
+err:
+	mutex_unlock(&group->mutex);
+	return ret;
 }
 
 static int fanotify_add_inode_mark(struct fsnotify_group *group,
@@ -619,6 +660,7 @@ static int fanotify_add_inode_mark(struct fsnotify_group *group,
 {
 	struct fsnotify_mark *fsn_mark;
 	__u32 added;
+	int ret;
 
 	pr_debug("%s: group=%p inode=%p\n", __func__, group, inode);
 
@@ -632,29 +674,34 @@ static int fanotify_add_inode_mark(struct fsnotify_group *group,
 	    (atomic_read(&inode->i_writecount) > 0))
 		return 0;
 
+	mutex_lock(&group->mutex);
 	fsn_mark = fsnotify_find_inode_mark(group, inode);
 	if (!fsn_mark) {
-		int ret;
+		ret = -ENOSPC;
+		if (atomic_read(&group->num_marks) >
+		    group->fanotify_data.max_marks)
+			goto err;
 
-		if (atomic_read(&group->num_marks) > group->fanotify_data.max_marks)
-			return -ENOSPC;
-
+		ret = -ENOMEM;
 		fsn_mark = kmem_cache_alloc(fanotify_mark_cache, GFP_KERNEL);
 		if (!fsn_mark)
-			return -ENOMEM;
+			goto err;
 
 		fsnotify_init_mark(fsn_mark, fanotify_free_mark);
 		ret = fsnotify_add_mark(fsn_mark, group, inode, NULL, 0);
-		if (ret) {
-			fanotify_free_mark(fsn_mark);
-			return ret;
-		}
+		if (ret)
+			goto err2;
 	}
 	added = fanotify_mark_add_to_mask(fsn_mark, mask, flags);
-	fsnotify_put_mark(fsn_mark);
+
 	if (added & ~inode->i_fsnotify_mask)
 		fsnotify_recalc_inode_mask(inode);
-	return 0;
+	ret = 0;
+err2:
+	fsnotify_put_mark(fsn_mark);
+err:
+	mutex_unlock(&group->mutex);
+	return ret;
 }
 
 /* fanotify syscalls */
@@ -687,17 +734,20 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 
 	/* fsnotify_alloc_group takes a ref.  Dropped in fanotify_release */
 	group = fsnotify_alloc_group(&fanotify_fsnotify_ops);
-	if (IS_ERR(group))
+	if (IS_ERR(group)) {
+		free_uid(user);
 		return PTR_ERR(group);
+	}
 
 	group->fanotify_data.user = user;
 	atomic_inc(&user->fanotify_listeners);
 
-	group->fanotify_data.f_flags = event_f_flags;
+	group->fanotify_data.f_flags = event_f_flags | FMODE_NONOTIFY;
 #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
 	mutex_init(&group->fanotify_data.access_mutex);
 	init_waitqueue_head(&group->fanotify_data.access_waitq);
 	INIT_LIST_HEAD(&group->fanotify_data.access_list);
+	atomic_set(&group->fanotify_data.bypass_perm, 0);
 #endif
 	switch (flags & FAN_ALL_CLASS_BITS) {
 	case FAN_CLASS_NOTIF:
@@ -732,6 +782,14 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 		group->fanotify_data.max_marks = FANOTIFY_DEFAULT_MAX_MARKS;
 	}
 
+	fd = -EINVAL;
+	if (flags & FAN_READONLY_FALLBACK) {
+		if ((event_f_flags & O_ACCMODE) == O_RDWR)
+			group->fanotify_data.readonly_fallback = true;
+		else
+			goto out_put_group;
+	}
+
 	fd = anon_inode_getfd("[fanotify]", &fanotify_fops, group, f_flags);
 	if (fd < 0)
 		goto out_put_group;
@@ -764,8 +822,10 @@ SYSCALL_DEFINE(fanotify_mark)(int fanotify_fd, unsigned int flags,
 	if (flags & ~FAN_ALL_MARK_FLAGS)
 		return -EINVAL;
 	switch (flags & (FAN_MARK_ADD | FAN_MARK_REMOVE | FAN_MARK_FLUSH)) {
-	case FAN_MARK_ADD:
+	case FAN_MARK_ADD:		/* fallthrough */
 	case FAN_MARK_REMOVE:
+		if (!mask)
+			return -EINVAL;
 	case FAN_MARK_FLUSH:
 		break;
 	default:
