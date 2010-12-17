@@ -4152,9 +4152,6 @@ static irqreturn_t bttv_irq(int irq, void *dev_id)
 
 	btv=(struct bttv *)dev_id;
 
-	if (btv->custom_irq)
-		handled = btv->custom_irq(btv);
-
 	count=0;
 	while (1) {
 		/* get/clear interrupt status bits */
@@ -4190,7 +4187,6 @@ static irqreturn_t bttv_irq(int irq, void *dev_id)
 			btv->field_count++;
 
 		if ((astat & BT848_INT_GPINT) && btv->remote) {
-			wake_up(&btv->gpioq);
 			bttv_input_irq(btv);
 		}
 
@@ -4395,7 +4391,6 @@ static int __devinit bttv_probe(struct pci_dev *dev,
 	mutex_init(&btv->lock);
 	spin_lock_init(&btv->s_lock);
 	spin_lock_init(&btv->gpio_lock);
-	init_waitqueue_head(&btv->gpioq);
 	init_waitqueue_head(&btv->i2c_queue);
 	INIT_LIST_HEAD(&btv->c.subs);
 	INIT_LIST_HEAD(&btv->capture);
@@ -4583,7 +4578,6 @@ static void __devexit bttv_remove(struct pci_dev *pci_dev)
 
 	/* tell gpio modules we are leaving ... */
 	btv->shutdown=1;
-	wake_up(&btv->gpioq);
 	bttv_input_fini(btv);
 	bttv_sub_del_devices(&btv->c);
 
