@@ -115,8 +115,8 @@ struct bfa_dma_s {
 static inline void
 __bfa_dma_addr_set(union bfi_addr_u *dma_addr, u64 pa)
 {
-	dma_addr->a32.addr_lo = (u32) pa;
-	dma_addr->a32.addr_hi = (u32) (bfa_os_u32(pa));
+	dma_addr->a32.addr_lo = (__be32) pa;
+	dma_addr->a32.addr_hi = (__be32) (bfa_os_u32(pa));
 }
 
 
@@ -125,8 +125,8 @@ __bfa_dma_addr_set(union bfi_addr_u *dma_addr, u64 pa)
 static inline void
 __bfa_dma_be_addr_set(union bfi_addr_u *dma_addr, u64 pa)
 {
-	dma_addr->a32.addr_lo = (u32) cpu_to_be32(pa);
-	dma_addr->a32.addr_hi = (u32) cpu_to_be32(bfa_os_u32(pa));
+	dma_addr->a32.addr_lo = cpu_to_be32(pa);
+	dma_addr->a32.addr_hi = cpu_to_be32(bfa_os_u32(pa));
 }
 
 struct bfa_ioc_regs_s {
@@ -421,7 +421,7 @@ bfa_cb_image_get_chunk(int type, u32 off)
 		return bfi_image_ct_cna_get_chunk(off);	break;
 	case BFI_IMAGE_CB_FC:
 		return bfi_image_cb_fc_get_chunk(off);	break;
-	default: return 0;
+	default: return NULL;
 	}
 }
 

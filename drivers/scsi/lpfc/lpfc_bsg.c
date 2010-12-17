@@ -2162,7 +2162,7 @@ lpfc_bsg_diag_test(struct fc_bsg_job *job)
 		goto loopback_test_exit;
 	}
 
-	if (size >= BUF_SZ_4K) {
+	if (full_size >= BUF_SZ_4K) {
 		/*
 		 * Allocate memory for ioctl data. If buffer is bigger than 64k,
 		 * then we allocate 64k and re-use that buffer over and over to
@@ -2171,7 +2171,7 @@ lpfc_bsg_diag_test(struct fc_bsg_job *job)
 		 * problem with GET_FCPTARGETMAPPING...
 		 */
 		if (size <= (64 * 1024))
-			total_mem = size;
+			total_mem = full_size;
 		else
 			total_mem = 64 * 1024;
 	} else
@@ -2601,12 +2601,11 @@ static int lpfc_bsg_check_cmd_access(struct lpfc_hba *phba,
 			phba->wait_4_mlo_maint_flg = 1;
 		} else if (mb->un.varWords[0] == SETVAR_MLORST) {
 			phba->link_flag &= ~LS_LOOPBACK_MODE;
-			phba->fc_topology = TOPOLOGY_PT_PT;
+			phba->fc_topology = LPFC_TOPOLOGY_PT_PT;
 		}
 		break;
 	case MBX_READ_SPARM64:
-	case MBX_READ_LA:
-	case MBX_READ_LA64:
+	case MBX_READ_TOPOLOGY:
 	case MBX_REG_LOGIN:
 	case MBX_REG_LOGIN64:
 	case MBX_CONFIG_PORT:
