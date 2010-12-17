@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt4
+Release: alt5
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -583,6 +583,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Fri Dec 17 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt5
+- The Return Of The i586
+
 * Tue Dec 07 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt4
 - Apply 042test003.1 patches
 - Fix build without CONFIG_VZ_FAIRSCHED
