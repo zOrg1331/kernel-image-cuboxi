@@ -1,0 +1,17 @@
+object f6f94e2ab1b33f0082ac22d71f66385a60d8157f
+type commit
+tag v2.6.36
+tagger Linus Torvalds <torvalds@linux-foundation.org> 1287606678 -0700
+
+Linux 2.6.36
+
+The latest and greatest, and totally bug-free.  At least until 2.6.37
+comes along and shoves it under a speeding train like some kind of a
+bully.
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.10 (GNU/Linux)
+
+iEYEABECAAYFAky/UcwACgkQF3YsRnbiHLvg/ACffKjAb1fD6fpqcHbSijHHpbP3
+4SkAnR4xOy7iKhmfS50ZrVsOkFFTuBHG
+=JD3z
+-----END PGP SIGNATURE-----
