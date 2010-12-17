@@ -239,6 +239,7 @@ enum vmcs_field {
 #define EXIT_REASON_TASK_SWITCH         9
 #define EXIT_REASON_CPUID               10
 #define EXIT_REASON_HLT                 12
+#define EXIT_REASON_INVD                13
 #define EXIT_REASON_INVLPG              14
 #define EXIT_REASON_RDPMC               15
 #define EXIT_REASON_RDTSC               16
@@ -295,6 +296,12 @@ enum vmcs_field {
 #define GUEST_INTR_STATE_MOV_SS		0x00000002
 #define GUEST_INTR_STATE_SMI		0x00000004
 #define GUEST_INTR_STATE_NMI		0x00000008
+
+/* GUEST_ACTIVITY_STATE flags */
+#define GUEST_ACTIVITY_ACTIVE		0
+#define GUEST_ACTIVITY_HLT		1
+#define GUEST_ACTIVITY_SHUTDOWN		2
+#define GUEST_ACTIVITY_WAIT_SIPI	3
 
 /*
  * Exit Qualifications for MOV for Control Register Access
