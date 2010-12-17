@@ -104,6 +104,7 @@ extern struct platform_device s5pv310_device_i2s0;
 extern struct platform_device s5pv310_device_i2s1;
 extern struct platform_device s5pv310_device_i2s2;
 extern struct platform_device s5pv310_device_spdif;
+extern struct platform_device s5pv310_device_pd[];
 
 extern struct platform_device s5p6442_device_pcm0;
 extern struct platform_device s5p6442_device_pcm1;
@@ -131,7 +132,8 @@ extern struct platform_device s5p_device_fimc0;
 extern struct platform_device s5p_device_fimc1;
 extern struct platform_device s5p_device_fimc2;
 
-extern struct platform_device s5pv310_device_pd[];
+extern struct platform_device s5p_device_mipi_csis0;
+extern struct platform_device s5p_device_mipi_csis1;
 
 /* s3c2440 specific devices */
 
