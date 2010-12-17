@@ -13,7 +13,7 @@
 %define _without_kabichk 1
 
 %define ovzver 028stab079
-%define ovzrel 1
+%define ovzrel 2
 
 %if !%{buildup}
 %define _without_up 1
@@ -420,6 +420,7 @@ Provides: kernel-drm = 4.3.0
 Provides: kernel-%{_target_cpu} = %{rpmversion}-%{release}
 Provides: vzkernel = %{KVERREL}
 Provides: vzquotamod
+Provides: vzeventmod
 Prereq: %{kernel_prereq}
 Conflicts: %{kernel_dot_org_conflicts}
 Conflicts: %{package_conflicts}
@@ -5435,6 +5436,7 @@ Provides: kernel-drm = 4.3.0
 Provides: kernel-%{_target_cpu} = %{rpmversion}-%{release}PAE
 Provides: vzkernel = %{KVERREL}
 Provides: vzquotamod
+Provides: vzeventmod
 Prereq: %{kernel_prereq}
 Conflicts: %{kernel_dot_org_conflicts}
 Conflicts: %{package_conflicts}
@@ -5476,6 +5478,7 @@ Provides: kernel-drm = 4.3.0
 Provides: kernel-%{_target_cpu} = %{rpmversion}-%{release}ent
 Provides: vzkernel = %{KVERREL}
 Provides: vzquotamod
+Provides: vzeventmod
 Prereq: %{kernel_prereq}
 Conflicts: %{kernel_dot_org_conflicts}
 Conflicts: %{package_conflicts}
@@ -5514,6 +5517,7 @@ Provides: kernel-drm = 4.3.0
 Provides: kernel-%{_target_cpu} = %{rpmversion}-%{release}smp
 Provides: vzkernel = %{KVERREL}
 Provides: vzquotamod
+Provides: vzeventmod
 Prereq: %{kernel_prereq}
 Conflicts: %{kernel_dot_org_conflicts}
 Conflicts: %{package_conflicts}
@@ -5558,6 +5562,7 @@ Provides: kernel-%{_target_cpu} = %{rpmversion}-%{release}xen
 Provides: xen-hypervisor-abi = %{xen_abi_ver}
 Provides: vzkernel = %{KVERREL}
 Provides: vzquotamod
+Provides: vzeventmod
 Prereq: %{kernel_prereq}
 Conflicts: %{kernel_dot_org_conflicts}
 Conflicts: %{package_conflicts}
@@ -5631,6 +5636,7 @@ Summary: The Linux kernel compiled with debug config
 Group: System Environment/Kernel
 Provides: vzkernel
 Provides: vzquotamod
+Provides: vzeventmod
 Prereq: %{kernel_prereq}
 Conflicts: %{kernel_dot_org_conflicts}
 Conflicts: %{package_conflicts}
@@ -5646,6 +5652,7 @@ Summary: The Linux PAE kernel compiled with debug config
 Group: System Environment/Kernel
 Provides: vzkernel
 Provides: vzquotamod
+Provides: vzeventmod
 Prereq: %{kernel_prereq}
 Conflicts: %{kernel_dot_org_conflicts}
 Conflicts: %{package_conflicts}
@@ -5661,6 +5668,7 @@ Summary: The Linux ent kernel compiled with debug config
 Group: System Environment/Kernel
 Provides: vzkernel
 Provides: vzquotamod
+Provides: vzeventmod
 Prereq: %{kernel_prereq}
 Conflicts: %{kernel_dot_org_conflicts}
 Conflicts: %{package_conflicts}
@@ -5676,6 +5684,7 @@ Summary: The Linux smp kernel compiled with debug config
 Group: System Environment/Kernel
 Provides: vzkernel
 Provides: vzquotamod
+Provides: vzeventmod
 Prereq: %{kernel_prereq}
 Conflicts: %{kernel_dot_org_conflicts}
 Conflicts: %{package_conflicts}
