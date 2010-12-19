@@ -9,7 +9,7 @@ config ARM
 	select GENERIC_ATOMIC64 if (!CPU_32v6K || !AEABI)
 	select HAVE_OPROFILE if (HAVE_PERF_EVENTS)
 	select HAVE_ARCH_KGDB
-	select HAVE_KPROBES if (!XIP_KERNEL)
+	select HAVE_KPROBES if (!XIP_KERNEL && !THUMB2_KERNEL)
 	select HAVE_KRETPROBES if (HAVE_KPROBES)
 	select HAVE_FUNCTION_TRACER if (!XIP_KERNEL)
 	select HAVE_FTRACE_MCOUNT_RECORD if (!XIP_KERNEL)
@@ -33,6 +33,9 @@ config ARM
 	  <http://www.arm.linux.org.uk/>.
 
 config HAVE_PWM
+	bool
+
+config MIGHT_HAVE_PCI
 	bool
 
 config SYS_SUPPORTS_APM_EMULATION
@@ -222,7 +225,7 @@ config ARCH_INTEGRATOR
 	bool "ARM Ltd. Integrator family"
 	select ARM_AMBA
 	select ARCH_HAS_CPUFREQ
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select ICST
 	select GENERIC_CLOCKEVENTS
 	select PLAT_VERSATILE
@@ -232,7 +235,7 @@ config ARCH_INTEGRATOR
 config ARCH_REALVIEW
 	bool "ARM Ltd. RealView family"
 	select ARM_AMBA
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select ICST
 	select GENERIC_CLOCKEVENTS
 	select ARCH_WANT_OPTIONAL_GPIOLIB
@@ -246,7 +249,7 @@ config ARCH_VERSATILE
 	bool "ARM Ltd. Versatile family"
 	select ARM_AMBA
 	select ARM_VIC
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select ICST
 	select GENERIC_CLOCKEVENTS
 	select ARCH_WANT_OPTIONAL_GPIOLIB
@@ -260,7 +263,7 @@ config ARCH_VEXPRESS
 	select ARCH_WANT_OPTIONAL_GPIOLIB
 	select ARM_AMBA
 	select ARM_TIMER_SP804
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select GENERIC_CLOCKEVENTS
 	select HAVE_CLK
 	select ICST
@@ -281,7 +284,7 @@ config ARCH_BCMRING
 	depends on MMU
 	select CPU_V6
 	select ARM_AMBA
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select GENERIC_CLOCKEVENTS
 	select ARCH_WANT_OPTIONAL_GPIOLIB
 	help
@@ -299,6 +302,7 @@ config ARCH_CNS3XXX
 	select CPU_V6
 	select GENERIC_CLOCKEVENTS
 	select ARM_GIC
+	select MIGHT_HAVE_PCI
 	select PCI_DOMAINS if PCI
 	help
 	  Support for Cavium Networks CNS3XXX platform.
@@ -328,7 +332,7 @@ config ARCH_EP93XX
 	select CPU_ARM920T
 	select ARM_AMBA
 	select ARM_VIC
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select ARCH_REQUIRE_GPIOLIB
 	select ARCH_HAS_HOLES_MEMORYMODEL
 	select ARCH_USES_GETTIMEOFFSET
@@ -348,14 +352,14 @@ config ARCH_MXC
 	bool "Freescale MXC/iMX-based"
 	select GENERIC_CLOCKEVENTS
 	select ARCH_REQUIRE_GPIOLIB
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	help
 	  Support for Freescale MXC/iMX-based family of processors
 
 config ARCH_STMP3XXX
 	bool "Freescale STMP3xxx"
 	select CPU_ARM926T
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select ARCH_REQUIRE_GPIOLIB
 	select GENERIC_CLOCKEVENTS
 	select USB_ARCH_HAS_EHCI
@@ -434,6 +438,7 @@ config ARCH_IXP4XX
 	select CPU_XSCALE
 	select GENERIC_GPIO
 	select GENERIC_CLOCKEVENTS
+	select MIGHT_HAVE_PCI
 	select DMABOUNCE if PCI
 	help
 	  Support for Intel's IXP4XX (XScale) family of processors.
@@ -473,7 +478,7 @@ config ARCH_LPC32XX
 	select HAVE_IDE
 	select ARM_AMBA
 	select USB_ARCH_HAS_OHCI
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select GENERIC_TIME
 	select GENERIC_CLOCKEVENTS
 	help
@@ -507,7 +512,7 @@ config ARCH_MMP
 	bool "Marvell PXA168/910/MMP2"
 	depends on MMU
 	select ARCH_REQUIRE_GPIOLIB
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select GENERIC_CLOCKEVENTS
 	select TICK_ONESHOT
 	select PLAT_PXA
@@ -540,7 +545,7 @@ config ARCH_W90X900
 	bool "Nuvoton W90X900 CPU"
 	select CPU_ARM926T
 	select ARCH_REQUIRE_GPIOLIB
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select GENERIC_CLOCKEVENTS
 	help
 	  Support for Nuvoton (Winbond logic dept.) ARM9 processor,
@@ -554,7 +559,7 @@ config ARCH_W90X900
 config ARCH_NUC93X
 	bool "Nuvoton NUC93X CPU"
 	select CPU_ARM926T
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	help
 	  Support for Nuvoton (Winbond logic dept.) NUC93X MCU,The NUC93X is a
 	  low-power and high performance MPEG-4/JPEG multimedia controller chip.
@@ -565,7 +570,7 @@ config ARCH_TEGRA
 	select GENERIC_CLOCKEVENTS
 	select GENERIC_GPIO
 	select HAVE_CLK
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select ARCH_HAS_BARRIERS if CACHE_L2X0
 	select ARCH_HAS_CPUFREQ
 	help
@@ -575,7 +580,7 @@ config ARCH_TEGRA
 config ARCH_PNX4008
 	bool "Philips Nexperia PNX4008 Mobile"
 	select CPU_ARM926T
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select ARCH_USES_GETTIMEOFFSET
 	help
 	  This enables support for Philips PNX4008 mobile platform.
@@ -585,7 +590,7 @@ config ARCH_PXA
 	depends on MMU
 	select ARCH_MTD_XIP
 	select ARCH_HAS_CPUFREQ
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select ARCH_REQUIRE_GPIOLIB
 	select GENERIC_CLOCKEVENTS
 	select TICK_ONESHOT
@@ -762,7 +767,7 @@ config ARCH_TCC_926
 	bool "Telechips TCC ARM926-based systems"
 	select CPU_ARM926T
 	select HAVE_CLK
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select GENERIC_CLOCKEVENTS
 	help
 	  Support for Telechips TCC ARM926-based systems.
@@ -786,7 +791,7 @@ config ARCH_U300
 	select ARM_AMBA
 	select ARM_VIC
 	select GENERIC_CLOCKEVENTS
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select GENERIC_GPIO
 	help
 	  Support for ST-Ericsson U300 series mobile platforms.
@@ -796,7 +801,7 @@ config ARCH_U8500
 	select CPU_V7
 	select ARM_AMBA
 	select GENERIC_CLOCKEVENTS
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select ARCH_REQUIRE_GPIOLIB
 	help
 	  Support for ST-Ericsson's Ux500 architecture
@@ -806,7 +811,7 @@ config ARCH_NOMADIK
 	select ARM_AMBA
 	select ARM_VIC
 	select CPU_ARM926T
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select GENERIC_CLOCKEVENTS
 	select ARCH_REQUIRE_GPIOLIB
 	help
@@ -818,7 +823,7 @@ config ARCH_DAVINCI
 	select ARCH_REQUIRE_GPIOLIB
 	select ZONE_DMA
 	select HAVE_IDE
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select GENERIC_ALLOCATOR
 	select ARCH_HAS_HOLES_MEMORYMODEL
 	help
@@ -838,7 +843,7 @@ config PLAT_SPEAR
 	bool "ST SPEAr"
 	select ARM_AMBA
 	select ARCH_REQUIRE_GPIOLIB
-	select COMMON_CLKDEV
+	select CLKDEV_LOOKUP
 	select GENERIC_CLOCKEVENTS
 	select HAVE_CLK
 	help
@@ -1165,7 +1170,7 @@ config ISA_DMA_API
 	bool
 
 config PCI
-	bool "PCI support" if ARCH_INTEGRATOR_AP || ARCH_VERSATILE_PB || ARCH_IXP4XX || ARCH_KS8695 || MACH_ARMCORE || ARCH_CNS3XXX
+	bool "PCI support" if MIGHT_HAVE_PCI
 	help
 	  Find out whether you have a PCI motherboard. PCI is the name of a
 	  bus system, i.e. the way the CPU talks to the other stuff inside
@@ -1230,7 +1235,7 @@ config SMP
 config SMP_ON_UP
 	bool "Allow booting SMP kernel on uniprocessor systems (EXPERIMENTAL)"
 	depends on EXPERIMENTAL
-	depends on SMP && !XIP && !THUMB2_KERNEL
+	depends on SMP && !XIP
 	default y
 	help
 	  SMP kernels contain instructions which fail on non-SMP processors.
@@ -1311,7 +1316,7 @@ config HZ
 	default 100
 
 config THUMB2_KERNEL
-	bool "Compile the kernel in Thumb-2 mode"
+	bool "Compile the kernel in Thumb-2 mode (EXPERIMENTAL)"
 	depends on CPU_V7 && EXPERIMENTAL
 	select AEABI
 	select ARM_ASM_UNIFIED
@@ -1525,6 +1530,7 @@ config SECCOMP
 
 config CC_STACKPROTECTOR
 	bool "Enable -fstack-protector buffer overflow detection (EXPERIMENTAL)"
+	depends on EXPERIMENTAL
 	help
 	  This option turns on the -fstack-protector GCC feature. This
 	  feature puts, at the beginning of functions, a canary value on
@@ -1651,6 +1657,19 @@ config ATAGS_PROC
 	  Should the atags used to boot the kernel be exported in an "atags"
 	  file in procfs. Useful with kexec.
 
+config CRASH_DUMP
+	bool "Build kdump crash kernel (EXPERIMENTAL)"
+	depends on EXPERIMENTAL
+	help
+	  Generate crash dump after being started by kexec. This should
+	  be normally only set in special crash dump kernels which are
+	  loaded in the main kernel with kexec-tools into a specially
+	  reserved region and then later executed after a crash by
+	  kdump/kexec. The crash dump kernel must be compiled to a
+	  memory address not used by the main kernel
+
+	  For more details see Documentation/kdump/kdump.txt
+
 config AUTO_ZRELADDR
 	bool "Auto calculation of the decompressed kernel image address"
 	depends on !ZBOOT_ROM && !ARCH_U300
@@ -1708,7 +1727,7 @@ config CPU_FREQ_S3C
 	  Internal configuration node for common cpufreq on Samsung SoC
 
 config CPU_FREQ_S3C24XX
-	bool "CPUfreq driver for Samsung S3C24XX series CPUs"
+	bool "CPUfreq driver for Samsung S3C24XX series CPUs (EXPERIMENTAL)"
 	depends on ARCH_S3C2410 && CPU_FREQ && EXPERIMENTAL
 	select CPU_FREQ_S3C
 	help
@@ -1720,7 +1739,7 @@ config CPU_FREQ_S3C24XX
 	  If in doubt, say N.
 
 config CPU_FREQ_S3C24XX_PLL
-	bool "Support CPUfreq changing of PLL frequency"
+	bool "Support CPUfreq changing of PLL frequency (EXPERIMENTAL)"
 	depends on CPU_FREQ_S3C24XX && EXPERIMENTAL
 	help
 	  Compile in support for changing the PLL frequency from the
