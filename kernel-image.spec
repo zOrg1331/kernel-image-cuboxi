@@ -239,6 +239,7 @@ Conflicts: kernel-modules-v4l-%kversion-%flavour-%krelease < %version-%release
 Conflicts: kernel-modules-v4l-%kversion-%flavour-%krelease > %version-%release
 Provides:  kernel-modules-uvcvideo-%kversion-%flavour-%krelease = %version-%release
 Provides:  kernel-modules-gspca-%kversion-%flavour-%krelease = %version-%release
+Provides:  kernel-modules-lirc-%kversion-%flavour-%krelease = %version-%release
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
 Prereq: %name = %version-%release
@@ -579,9 +580,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 
 %files -n kernel-modules-v4l-%flavour
 %modules_dir/kernel/drivers/media/
+%modules_dir/kernel/drivers/staging/lirc/
 
 %files -n kernel-modules-staging-%flavour
 %modules_dir/kernel/drivers/staging/
+%exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
 * Fri Dec 17 2010 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.36-alt2
