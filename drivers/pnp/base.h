@@ -7,6 +7,8 @@ extern spinlock_t pnp_lock;
 extern struct device_attribute pnp_interface_attrs[];
 void *pnp_alloc(long size);
 
+void platform_pnp_fixups(void);
+
 int pnp_register_protocol(struct pnp_protocol *protocol);
 void pnp_unregister_protocol(struct pnp_protocol *protocol);
 
