@@ -517,10 +517,15 @@ struct ieee80211_hw *ieee80211_alloc_hw(size_t priv_data_len,
 
 	wiphy->mgmt_stypes = ieee80211_default_mgmt_stypes;
 
+	wiphy->privid = mac80211_wiphy_privid;
+
 	wiphy->flags |= WIPHY_FLAG_NETNS_OK |
 			WIPHY_FLAG_4ADDR_AP |
-			WIPHY_FLAG_4ADDR_STATION;
-	wiphy->privid = mac80211_wiphy_privid;
+			WIPHY_FLAG_4ADDR_STATION |
+			WIPHY_FLAG_SUPPORTS_SEPARATE_DEFAULT_KEYS;
+
+	if (!ops->set_key)
+		wiphy->flags |= WIPHY_FLAG_IBSS_RSN;
 
 	wiphy->bss_priv_size = sizeof(struct ieee80211_bss);
 
@@ -739,6 +744,8 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 			local->wiphy_ciphers_allocated = true;
 		}
 	}
+
+	local->hw.wiphy->max_remain_on_channel_duration = 5000;
 
 	result = wiphy_register(local->hw.wiphy);
 	if (result < 0)
