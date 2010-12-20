@@ -2359,14 +2359,6 @@ bfa_fcs_rport_itnim_ack(struct bfa_fcs_rport_s *rport)
 	bfa_sm_send_event(rport, RPSM_EVENT_FC4_OFFLINE);
 }
 
-/*
- *	Called by fcptm to notify that the ITN cleanup is done.
- */
-void
-bfa_fcs_rport_tin_ack(struct bfa_fcs_rport_s *rport)
-{
-	bfa_sm_send_event(rport, RPSM_EVENT_FC4_OFFLINE);
-}
 
 /*
  *	brief
@@ -2602,7 +2594,7 @@ bfa_fcs_rport_set_del_timeout(u8 rport_tmo)
 		bfa_fcs_rport_del_timeout = rport_tmo * 1000;
 }
 void
-bfa_fcs_rport_prlo(struct bfa_fcs_rport_s *rport, u16 ox_id)
+bfa_fcs_rport_prlo(struct bfa_fcs_rport_s *rport, __be16 ox_id)
 {
 	bfa_trc(rport->fcs, rport->pid);
 

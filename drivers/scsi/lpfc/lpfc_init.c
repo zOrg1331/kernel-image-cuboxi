@@ -446,23 +446,25 @@ lpfc_config_port_post(struct lpfc_hba *phba)
 	/* Get the default values for Model Name and Description */
 	lpfc_get_hba_model_desc(phba, phba->ModelName, phba->ModelDesc);
 
-	if ((phba->cfg_link_speed > LINK_SPEED_10G)
-	    || ((phba->cfg_link_speed == LINK_SPEED_1G)
+	if ((phba->cfg_link_speed > LPFC_USER_LINK_SPEED_16G)
+	    || ((phba->cfg_link_speed == LPFC_USER_LINK_SPEED_1G)
 		&& !(phba->lmt & LMT_1Gb))
-	    || ((phba->cfg_link_speed == LINK_SPEED_2G)
+	    || ((phba->cfg_link_speed == LPFC_USER_LINK_SPEED_2G)
 		&& !(phba->lmt & LMT_2Gb))
-	    || ((phba->cfg_link_speed == LINK_SPEED_4G)
+	    || ((phba->cfg_link_speed == LPFC_USER_LINK_SPEED_4G)
 		&& !(phba->lmt & LMT_4Gb))
-	    || ((phba->cfg_link_speed == LINK_SPEED_8G)
+	    || ((phba->cfg_link_speed == LPFC_USER_LINK_SPEED_8G)
 		&& !(phba->lmt & LMT_8Gb))
-	    || ((phba->cfg_link_speed == LINK_SPEED_10G)
-		&& !(phba->lmt & LMT_10Gb))) {
+	    || ((phba->cfg_link_speed == LPFC_USER_LINK_SPEED_10G)
+		&& !(phba->lmt & LMT_10Gb))
+	    || ((phba->cfg_link_speed == LPFC_USER_LINK_SPEED_16G)
+		&& !(phba->lmt & LMT_16Gb))) {
 		/* Reset link speed to auto */
 		lpfc_printf_log(phba, KERN_WARNING, LOG_LINK_EVENT,
 			"1302 Invalid speed for this board: "
 			"Reset link speed to auto: x%x\n",
 			phba->cfg_link_speed);
-			phba->cfg_link_speed = LINK_SPEED_AUTO;
+			phba->cfg_link_speed = LPFC_USER_LINK_SPEED_AUTO;
 	}
 
 	phba->link_state = LPFC_LINK_DOWN;
@@ -648,22 +650,23 @@ lpfc_hba_init_link(struct lpfc_hba *phba, uint32_t flag)
 	mb = &pmb->u.mb;
 	pmb->vport = vport;
 
-	lpfc_init_link(phba, pmb, phba->cfg_topology,
-		phba->cfg_link_speed);
+	lpfc_init_link(phba, pmb, phba->cfg_topology, phba->cfg_link_speed);
 	pmb->mbox_cmpl = lpfc_sli_def_mbox_cmpl;
 	lpfc_set_loopback_flag(phba);
 	rc = lpfc_sli_issue_mbox(phba, pmb, flag);
-	if (rc != MBX_SUCCESS) {
+	if ((rc != MBX_BUSY) && (rc != MBX_SUCCESS)) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 			"0498 Adapter failed to init, mbxCmd x%x "
 			"INIT_LINK, mbxStatus x%x\n",
 			mb->mbxCommand, mb->mbxStatus);
-		/* Clear all interrupt enable conditions */
-		writel(0, phba->HCregaddr);
-		readl(phba->HCregaddr); /* flush */
-		/* Clear all pending interrupts */
-		writel(0xffffffff, phba->HAregaddr);
-		readl(phba->HAregaddr); /* flush */
+		if (phba->sli_rev <= LPFC_SLI_REV3) {
+			/* Clear all interrupt enable conditions */
+			writel(0, phba->HCregaddr);
+			readl(phba->HCregaddr); /* flush */
+			/* Clear all pending interrupts */
+			writel(0xffffffff, phba->HAregaddr);
+			readl(phba->HAregaddr); /* flush */
+		}
 		phba->link_state = LPFC_HBA_ERROR;
 		if (rc != MBX_BUSY || flag == MBX_POLL)
 			mempool_free(pmb, phba->mbox_mem_pool);
@@ -924,6 +927,35 @@ lpfc_hb_timeout(unsigned long ptr)
 	if (!tmo_posted)
 		lpfc_worker_wake_up(phba);
 	return;
+}
+
+/**
+ * lpfc_rrq_timeout - The RRQ-timer timeout handler
+ * @ptr: unsigned long holds the pointer to lpfc hba data structure.
+ *
+ * This is the RRQ-timer timeout handler registered to the lpfc driver. When
+ * this timer fires, a RRQ timeout event shall be posted to the lpfc driver
+ * work-port-events bitmap and the worker thread is notified. This timeout
+ * event will be used by the worker thread to invoke the actual timeout
+ * handler routine, lpfc_rrq_handler. Any periodical operations will
+ * be performed in the timeout handler and the RRQ timeout event bit shall
+ * be cleared by the worker thread after it has taken the event bitmap out.
+ **/
+static void
+lpfc_rrq_timeout(unsigned long ptr)
+{
+	struct lpfc_hba *phba;
+	uint32_t tmo_posted;
+	unsigned long iflag;
+
+	phba = (struct lpfc_hba *)ptr;
+	spin_lock_irqsave(&phba->pport->work_port_lock, iflag);
+	tmo_posted = phba->hba_flag & HBA_RRQ_ACTIVE;
+	if (!tmo_posted)
+		phba->hba_flag |= HBA_RRQ_ACTIVE;
+	spin_unlock_irqrestore(&phba->pport->work_port_lock, iflag);
+	if (!tmo_posted)
+		lpfc_worker_wake_up(phba);
 }
 
 /**
@@ -1459,8 +1491,8 @@ lpfc_handle_latt(struct lpfc_hba *phba)
 	lpfc_els_flush_all_cmd(phba);
 
 	psli->slistat.link_event++;
-	lpfc_read_la(phba, pmb, mp);
-	pmb->mbox_cmpl = lpfc_mbx_cmpl_read_la;
+	lpfc_read_topology(phba, pmb, mp);
+	pmb->mbox_cmpl = lpfc_mbx_cmpl_read_topology;
 	pmb->vport = vport;
 	/* Block ELS IOCBs until we have processed this mbox command */
 	phba->sli.ring[LPFC_ELS_RING].flag |= LPFC_STOP_IOCB_EVENT;
@@ -1852,6 +1884,14 @@ lpfc_get_hba_model_desc(struct lpfc_hba *phba, uint8_t *mdp, uint8_t *descp)
 	case PCI_DEVICE_ID_BALIUS:
 		m = (typeof(m)){"LPVe12002", "PCIe Shared I/O",
 				"Fibre Channel Adapter"};
+		break;
+	case PCI_DEVICE_ID_LANCER_FC:
+		oneConnect = 1;
+		m = (typeof(m)){"Undefined", "PCIe", "Fibre Channel Adapter"};
+		break;
+	case PCI_DEVICE_ID_LANCER_FCOE:
+		oneConnect = 1;
+		m = (typeof(m)){"Undefined", "PCIe", "FCoE"};
 		break;
 	default:
 		m = (typeof(m)){"Unknown", "", ""};
@@ -3051,20 +3091,20 @@ lpfc_sli4_parse_latt_type(struct lpfc_hba *phba,
 	switch (bf_get(lpfc_acqe_link_status, acqe_link)) {
 	case LPFC_ASYNC_LINK_STATUS_DOWN:
 	case LPFC_ASYNC_LINK_STATUS_LOGICAL_DOWN:
-		att_type = AT_LINK_DOWN;
+		att_type = LPFC_ATT_LINK_DOWN;
 		break;
 	case LPFC_ASYNC_LINK_STATUS_UP:
 		/* Ignore physical link up events - wait for logical link up */
-		att_type = AT_RESERVED;
+		att_type = LPFC_ATT_RESERVED;
 		break;
 	case LPFC_ASYNC_LINK_STATUS_LOGICAL_UP:
-		att_type = AT_LINK_UP;
+		att_type = LPFC_ATT_LINK_UP;
 		break;
 	default:
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"0399 Invalid link attention type: x%x\n",
 				bf_get(lpfc_acqe_link_status, acqe_link));
-		att_type = AT_RESERVED;
+		att_type = LPFC_ATT_RESERVED;
 		break;
 	}
 	return att_type;
@@ -3088,32 +3128,28 @@ lpfc_sli4_parse_latt_link_speed(struct lpfc_hba *phba,
 
 	switch (bf_get(lpfc_acqe_link_speed, acqe_link)) {
 	case LPFC_ASYNC_LINK_SPEED_ZERO:
-		link_speed = LA_UNKNW_LINK;
-		break;
 	case LPFC_ASYNC_LINK_SPEED_10MBPS:
-		link_speed = LA_UNKNW_LINK;
-		break;
 	case LPFC_ASYNC_LINK_SPEED_100MBPS:
-		link_speed = LA_UNKNW_LINK;
+		link_speed = LPFC_LINK_SPEED_UNKNOWN;
 		break;
 	case LPFC_ASYNC_LINK_SPEED_1GBPS:
-		link_speed = LA_1GHZ_LINK;
+		link_speed = LPFC_LINK_SPEED_1GHZ;
 		break;
 	case LPFC_ASYNC_LINK_SPEED_10GBPS:
-		link_speed = LA_10GHZ_LINK;
+		link_speed = LPFC_LINK_SPEED_10GHZ;
 		break;
 	default:
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
 				"0483 Invalid link-attention link speed: x%x\n",
 				bf_get(lpfc_acqe_link_speed, acqe_link));
-		link_speed = LA_UNKNW_LINK;
+		link_speed = LPFC_LINK_SPEED_UNKNOWN;
 		break;
 	}
 	return link_speed;
 }
 
 /**
- * lpfc_sli4_async_link_evt - Process the asynchronous link event
+ * lpfc_sli4_async_link_evt - Process the asynchronous FC or FCoE link event
  * @phba: pointer to lpfc hba data structure.
  * @acqe_link: pointer to the async link completion queue entry.
  *
@@ -3126,11 +3162,12 @@ lpfc_sli4_async_link_evt(struct lpfc_hba *phba,
 	struct lpfc_dmabuf *mp;
 	LPFC_MBOXQ_t *pmb;
 	MAILBOX_t *mb;
-	READ_LA_VAR *la;
+	struct lpfc_mbx_read_top *la;
 	uint8_t att_type;
+	int rc;
 
 	att_type = lpfc_sli4_parse_latt_type(phba, acqe_link);
-	if (att_type != AT_LINK_DOWN && att_type != AT_LINK_UP)
+	if (att_type != LPFC_ATT_LINK_DOWN && att_type != LPFC_ATT_LINK_UP)
 		return;
 	phba->fcoe_eventtag = acqe_link->event_tag;
 	pmb = (LPFC_MBOXQ_t *)mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
@@ -3161,27 +3198,10 @@ lpfc_sli4_async_link_evt(struct lpfc_hba *phba,
 	/* Update link event statistics */
 	phba->sli.slistat.link_event++;
 
-	/* Create pseudo lpfc_handle_latt mailbox command from link ACQE */
-	lpfc_read_la(phba, pmb, mp);
+	/* Create lpfc_handle_latt mailbox command from link ACQE */
+	lpfc_read_topology(phba, pmb, mp);
+	pmb->mbox_cmpl = lpfc_mbx_cmpl_read_topology;
 	pmb->vport = phba->pport;
-
-	/* Parse and translate status field */
-	mb = &pmb->u.mb;
-	mb->mbxStatus = lpfc_sli4_parse_latt_fault(phba, acqe_link);
-
-	/* Parse and translate link attention fields */
-	la = (READ_LA_VAR *) &pmb->u.mb.un.varReadLA;
-	la->eventTag = acqe_link->event_tag;
-	la->attType = att_type;
-	la->UlnkSpeed = lpfc_sli4_parse_latt_link_speed(phba, acqe_link);
-
-	/* Fake the the following irrelvant fields */
-	la->topology = TOPOLOGY_PT_PT;
-	la->granted_AL_PA = 0;
-	la->il = 0;
-	la->pb = 0;
-	la->fa = 0;
-	la->mm = 0;
 
 	/* Keep the link status for extra SLI4 state machine reference */
 	phba->sli4_hba.link_state.speed =
@@ -3196,9 +3216,42 @@ lpfc_sli4_async_link_evt(struct lpfc_hba *phba,
 				bf_get(lpfc_acqe_link_fault, acqe_link);
 	phba->sli4_hba.link_state.logical_speed =
 				bf_get(lpfc_acqe_qos_link_speed, acqe_link);
+	/*
+	 * For FC Mode: issue the READ_TOPOLOGY mailbox command to fetch
+	 * topology info. Note: Optional for non FC-AL ports.
+	 */
+	if (!(phba->hba_flag & HBA_FCOE_MODE)) {
+		rc = lpfc_sli_issue_mbox(phba, pmb, MBX_NOWAIT);
+		if (rc == MBX_NOT_FINISHED)
+			goto out_free_dmabuf;
+		return;
+	}
+	/*
+	 * For FCoE Mode: fill in all the topology information we need and call
+	 * the READ_TOPOLOGY completion routine to continue without actually
+	 * sending the READ_TOPOLOGY mailbox command to the port.
+	 */
+	/* Parse and translate status field */
+	mb = &pmb->u.mb;
+	mb->mbxStatus = lpfc_sli4_parse_latt_fault(phba, acqe_link);
+
+	/* Parse and translate link attention fields */
+	la = (struct lpfc_mbx_read_top *) &pmb->u.mb.un.varReadTop;
+	la->eventTag = acqe_link->event_tag;
+	bf_set(lpfc_mbx_read_top_att_type, la, att_type);
+	bf_set(lpfc_mbx_read_top_link_spd, la,
+	       lpfc_sli4_parse_latt_link_speed(phba, acqe_link));
+
+	/* Fake the the following irrelvant fields */
+	bf_set(lpfc_mbx_read_top_topology, la, LPFC_TOPOLOGY_PT_PT);
+	bf_set(lpfc_mbx_read_top_alpa_granted, la, 0);
+	bf_set(lpfc_mbx_read_top_il, la, 0);
+	bf_set(lpfc_mbx_read_top_pb, la, 0);
+	bf_set(lpfc_mbx_read_top_fa, la, 0);
+	bf_set(lpfc_mbx_read_top_mm, la, 0);
 
 	/* Invoke the lpfc_handle_latt mailbox command callback function */
-	lpfc_mbx_cmpl_read_la(phba, pmb);
+	lpfc_mbx_cmpl_read_topology(phba, pmb);
 
 	return;
 
@@ -3247,10 +3300,12 @@ lpfc_sli4_perform_vport_cvl(struct lpfc_vport *vport)
 		if (!ndlp)
 			return 0;
 	}
-	if (phba->pport->port_state < LPFC_FLOGI)
+	if ((phba->pport->port_state < LPFC_FLOGI) &&
+		(phba->pport->port_state != LPFC_VPORT_FAILED))
 		return NULL;
 	/* If virtual link is not yet instantiated ignore CVL */
-	if ((vport != phba->pport) && (vport->port_state < LPFC_FDISC))
+	if ((vport != phba->pport) && (vport->port_state < LPFC_FDISC)
+		&& (vport->port_state != LPFC_VPORT_FAILED))
 		return NULL;
 	shost = lpfc_shost_from_vport(vport);
 	if (!shost)
@@ -3285,15 +3340,15 @@ lpfc_sli4_perform_all_vport_cvl(struct lpfc_hba *phba)
 }
 
 /**
- * lpfc_sli4_async_fcoe_evt - Process the asynchronous fcoe event
+ * lpfc_sli4_async_fip_evt - Process the asynchronous FCoE FIP event
  * @phba: pointer to lpfc hba data structure.
  * @acqe_link: pointer to the async fcoe completion queue entry.
  *
  * This routine is to handle the SLI4 asynchronous fcoe event.
  **/
 static void
-lpfc_sli4_async_fcoe_evt(struct lpfc_hba *phba,
-			 struct lpfc_acqe_fcoe *acqe_fcoe)
+lpfc_sli4_async_fip_evt(struct lpfc_hba *phba,
+			struct lpfc_acqe_fcoe *acqe_fcoe)
 {
 	uint8_t event_type = bf_get(lpfc_acqe_fcoe_event_type, acqe_fcoe);
 	int rc;
@@ -3595,12 +3650,13 @@ void lpfc_sli4_async_event_proc(struct lpfc_hba *phba)
 		/* Process the asynchronous event */
 		switch (bf_get(lpfc_trailer_code, &cq_event->cqe.mcqe_cmpl)) {
 		case LPFC_TRAILER_CODE_LINK:
+		case LPFC_TRAILER_CODE_FC:
 			lpfc_sli4_async_link_evt(phba,
 						 &cq_event->cqe.acqe_link);
 			break;
 		case LPFC_TRAILER_CODE_FCOE:
-			lpfc_sli4_async_fcoe_evt(phba,
-						 &cq_event->cqe.acqe_fcoe);
+			lpfc_sli4_async_fip_evt(phba,
+						&cq_event->cqe.acqe_fcoe);
 			break;
 		case LPFC_TRAILER_CODE_DCBX:
 			lpfc_sli4_async_dcbx_evt(phba,
@@ -3948,7 +4004,7 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 	int rc, i, hbq_count, buf_size, dma_buf_size, max_buf_size;
 	uint8_t pn_page[LPFC_MAX_SUPPORTED_PAGES] = {0};
 	struct lpfc_mqe *mqe;
-	int longs;
+	int longs, sli_family;
 
 	/* Before proceed, wait for POST done and device ready */
 	rc = lpfc_sli4_post_status_check(phba);
@@ -3963,6 +4019,9 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 	init_timer(&phba->hb_tmofunc);
 	phba->hb_tmofunc.function = lpfc_hb_timeout;
 	phba->hb_tmofunc.data = (unsigned long)phba;
+	init_timer(&phba->rrq_tmr);
+	phba->rrq_tmr.function = lpfc_rrq_timeout;
+	phba->rrq_tmr.data = (unsigned long)phba;
 
 	psli = &phba->sli;
 	/* MBOX heartbeat timer */
@@ -4010,12 +4069,22 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 	 */
 	buf_size = (sizeof(struct fcp_cmnd) + sizeof(struct fcp_rsp) +
 		    ((phba->cfg_sg_seg_cnt + 2) * sizeof(struct sli4_sge)));
-	/* Feature Level 1 hardware is limited to 2 pages */
-	if ((bf_get(lpfc_sli_intf_featurelevel1, &phba->sli4_hba.sli_intf) ==
-	     LPFC_SLI_INTF_FEATURELEVEL1_1))
-		max_buf_size = LPFC_SLI4_FL1_MAX_BUF_SIZE;
-	else
-		max_buf_size = LPFC_SLI4_MAX_BUF_SIZE;
+
+	sli_family = bf_get(lpfc_sli_intf_sli_family, &phba->sli4_hba.sli_intf);
+	max_buf_size = LPFC_SLI4_MAX_BUF_SIZE;
+	switch (sli_family) {
+	case LPFC_SLI_INTF_FAMILY_BE2:
+	case LPFC_SLI_INTF_FAMILY_BE3:
+		/* There is a single hint for BE - 2 pages per BPL. */
+		if (bf_get(lpfc_sli_intf_sli_hint1, &phba->sli4_hba.sli_intf) ==
+		    LPFC_SLI_INTF_SLI_HINT1_1)
+			max_buf_size = LPFC_SLI4_FL1_MAX_BUF_SIZE;
+		break;
+	case LPFC_SLI_INTF_FAMILY_LNCR_A0:
+	case LPFC_SLI_INTF_FAMILY_LNCR_B0:
+	default:
+		break;
+	}
 	for (dma_buf_size = LPFC_SLI4_MIN_BUF_SIZE;
 	     dma_buf_size < max_buf_size && buf_size > dma_buf_size;
 	     dma_buf_size = dma_buf_size << 1)
@@ -5231,16 +5300,22 @@ lpfc_sli4_post_status_check(struct lpfc_hba *phba)
 		   &phba->sli4_hba.sli_intf) == LPFC_SLI_INTF_VALID) {
 		lpfc_printf_log(phba, KERN_INFO, LOG_INIT,
 				"2534 Device Info: ChipType=0x%x, SliRev=0x%x, "
-				"FeatureL1=0x%x, FeatureL2=0x%x\n",
+				"IFType=0x%x, SLIHint_1=0x%x, SLIHint_2=0x%x, "
+				"FT=0x%x\n",
 				bf_get(lpfc_sli_intf_sli_family,
 				       &phba->sli4_hba.sli_intf),
 				bf_get(lpfc_sli_intf_slirev,
 				       &phba->sli4_hba.sli_intf),
-				bf_get(lpfc_sli_intf_featurelevel1,
+				bf_get(lpfc_sli_intf_if_type,
 				       &phba->sli4_hba.sli_intf),
-				bf_get(lpfc_sli_intf_featurelevel2,
+				bf_get(lpfc_sli_intf_sli_hint1,
+				       &phba->sli4_hba.sli_intf),
+				bf_get(lpfc_sli_intf_sli_hint2,
+				       &phba->sli4_hba.sli_intf),
+				bf_get(lpfc_sli_intf_func_type,
 				       &phba->sli4_hba.sli_intf));
 	}
+
 	phba->sli4_hba.ue_mask_lo = readl(phba->sli4_hba.UEMASKLOregaddr);
 	phba->sli4_hba.ue_mask_hi = readl(phba->sli4_hba.UEMASKHIregaddr);
 	/* With uncoverable error, log the error message and return error */
@@ -8149,6 +8224,8 @@ lpfc_pci_probe_one_s4(struct pci_dev *pdev, const struct pci_device_id *pid)
 		goto out_unset_driver_resource_s4;
 	}
 
+	INIT_LIST_HEAD(&phba->active_rrq_list);
+
 	/* Set up common device driver resources */
 	error = lpfc_setup_driver_resource_phase2(phba);
 	if (error) {
@@ -8989,6 +9066,10 @@ static struct pci_device_id lpfc_id_table[] = {
 	{PCI_VENDOR_ID_EMULEX, PCI_DEVICE_ID_FALCON,
 		PCI_ANY_ID, PCI_ANY_ID, },
 	{PCI_VENDOR_ID_EMULEX, PCI_DEVICE_ID_BALIUS,
+		PCI_ANY_ID, PCI_ANY_ID, },
+	{PCI_VENDOR_ID_EMULEX, PCI_DEVICE_ID_LANCER_FC,
+		PCI_ANY_ID, PCI_ANY_ID, },
+	{PCI_VENDOR_ID_EMULEX, PCI_DEVICE_ID_LANCER_FCOE,
 		PCI_ANY_ID, PCI_ANY_ID, },
 	{ 0 }
 };
