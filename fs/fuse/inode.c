@@ -104,13 +104,20 @@ static struct inode *fuse_alloc_inode(struct super_block *sb)
 	return inode;
 }
 
+static void fuse_i_callback(struct rcu_head *head)
+{
+	struct inode *inode = container_of(head, struct inode, i_rcu);
+	INIT_LIST_HEAD(&inode->i_dentry);
+	kmem_cache_free(fuse_inode_cachep, inode);
+}
+
 static void fuse_destroy_inode(struct inode *inode)
 {
 	struct fuse_inode *fi = get_fuse_inode(inode);
 	BUG_ON(!list_empty(&fi->write_files));
 	BUG_ON(!list_empty(&fi->queued_writes));
 	kfree(fi->forget);
-	kmem_cache_free(fuse_inode_cachep, inode);
+	call_rcu(&inode->i_rcu, fuse_i_callback);
 }
 
 static void fuse_evict_inode(struct inode *inode)
@@ -611,7 +618,7 @@ static struct dentry *fuse_get_dentry(struct super_block *sb,
 
 	entry = d_obtain_alias(inode);
 	if (!IS_ERR(entry) && get_node_id(inode) != FUSE_ROOT_ID) {
-		entry->d_op = &fuse_dentry_operations;
+		d_set_d_op(entry, &fuse_dentry_operations);
 		fuse_invalidate_entry_cache(entry);
 	}
 
@@ -713,7 +720,7 @@ static struct dentry *fuse_get_parent(struct dentry *child)
 
 	parent = d_obtain_alias(inode);
 	if (!IS_ERR(parent) && get_node_id(inode) != FUSE_ROOT_ID) {
-		parent->d_op = &fuse_dentry_operations;
+		d_set_d_op(parent, &fuse_dentry_operations);
 		fuse_invalidate_entry_cache(parent);
 	}
 
