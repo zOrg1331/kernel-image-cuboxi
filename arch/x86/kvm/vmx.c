@@ -69,6 +69,9 @@ module_param(emulate_invalid_guest_state, bool, S_IRUGO);
 static int __read_mostly vmm_exclusive = 1;
 module_param(vmm_exclusive, bool, S_IRUGO);
 
+static int __read_mostly yield_on_hlt = 1;
+module_param(yield_on_hlt, bool, S_IRUGO);
+
 #define KVM_GUEST_CR0_MASK_UNRESTRICTED_GUEST				\
 	(X86_CR0_WP | X86_CR0_NE | X86_CR0_NW | X86_CR0_CD)
 #define KVM_GUEST_CR0_MASK						\
@@ -565,10 +568,10 @@ static inline void ept_sync_individual_addr(u64 eptp, gpa_t gpa)
 
 static unsigned long vmcs_readl(unsigned long field)
 {
-	unsigned long value;
+	unsigned long value = 0;
 
 	asm volatile (__ex(ASM_VMX_VMREAD_RDX_RAX)
-		      : "=a"(value) : "d"(field) : "cc");
+		      : "+a"(value) : "d"(field) : "cc");
 	return value;
 }
 
@@ -1009,6 +1012,17 @@ static void skip_emulated_instruction(struct kvm_vcpu *vcpu)
 	vmx_set_interrupt_shadow(vcpu, 0);
 }
 
+static void vmx_clear_hlt(struct kvm_vcpu *vcpu)
+{
+	/* Ensure that we clear the HLT state in the VMCS.  We don't need to
+	 * explicitly skip the instruction because if the HLT state is set, then
+	 * the instruction is already executing and RIP has already been
+	 * advanced. */
+	if (!yield_on_hlt &&
+	    vmcs_read32(GUEST_ACTIVITY_STATE) == GUEST_ACTIVITY_HLT)
+		vmcs_write32(GUEST_ACTIVITY_STATE, GUEST_ACTIVITY_ACTIVE);
+}
+
 static void vmx_queue_exception(struct kvm_vcpu *vcpu, unsigned nr,
 				bool has_error_code, u32 error_code,
 				bool reinject)
@@ -1035,6 +1049,7 @@ static void vmx_queue_exception(struct kvm_vcpu *vcpu, unsigned nr,
 		intr_info |= INTR_TYPE_HARD_EXCEPTION;
 
 	vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, intr_info);
+	vmx_clear_hlt(vcpu);
 }
 
 static bool vmx_rdtscp_supported(void)
@@ -1305,8 +1320,11 @@ static __init int vmx_disabled_by_bios(void)
 			&& tboot_enabled())
 			return 1;
 		if (!(msr & FEATURE_CONTROL_VMXON_ENABLED_OUTSIDE_SMX)
-			&& !tboot_enabled())
+			&& !tboot_enabled()) {
+			printk(KERN_WARNING "kvm: disable TXT in the BIOS or "
+				" activate TXT before enabling KVM\n");
 			return 1;
+		}
 	}
 
 	return 0;
@@ -1416,7 +1434,7 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 				&_pin_based_exec_control) < 0)
 		return -EIO;
 
-	min = CPU_BASED_HLT_EXITING |
+	min =
 #ifdef CONFIG_X86_64
 	      CPU_BASED_CR8_LOAD_EXITING |
 	      CPU_BASED_CR8_STORE_EXITING |
@@ -1429,6 +1447,10 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 	      CPU_BASED_MWAIT_EXITING |
 	      CPU_BASED_MONITOR_EXITING |
 	      CPU_BASED_INVLPG_EXITING;
+
+	if (yield_on_hlt)
+		min |= CPU_BASED_HLT_EXITING;
+
 	opt = CPU_BASED_TPR_SHADOW |
 	      CPU_BASED_USE_MSR_BITMAPS |
 	      CPU_BASED_ACTIVATE_SECONDARY_CONTROLS;
@@ -2725,7 +2747,7 @@ static int vmx_vcpu_reset(struct kvm_vcpu *vcpu)
 	vmcs_writel(GUEST_IDTR_BASE, 0);
 	vmcs_write32(GUEST_IDTR_LIMIT, 0xffff);
 
-	vmcs_write32(GUEST_ACTIVITY_STATE, 0);
+	vmcs_write32(GUEST_ACTIVITY_STATE, GUEST_ACTIVITY_ACTIVE);
 	vmcs_write32(GUEST_INTERRUPTIBILITY_INFO, 0);
 	vmcs_write32(GUEST_PENDING_DBG_EXCEPTIONS, 0);
 
@@ -2787,6 +2809,10 @@ static void enable_nmi_window(struct kvm_vcpu *vcpu)
 		return;
 	}
 
+	if (vmcs_read32(GUEST_INTERRUPTIBILITY_INFO) & GUEST_INTR_STATE_STI) {
+		enable_irq_window(vcpu);
+		return;
+	}
 	cpu_based_vm_exec_control = vmcs_read32(CPU_BASED_VM_EXEC_CONTROL);
 	cpu_based_vm_exec_control |= CPU_BASED_VIRTUAL_NMI_PENDING;
 	vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, cpu_based_vm_exec_control);
@@ -2814,6 +2840,7 @@ static void vmx_inject_irq(struct kvm_vcpu *vcpu)
 	} else
 		intr |= INTR_TYPE_EXT_INTR;
 	vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, intr);
+	vmx_clear_hlt(vcpu);
 }
 
 static void vmx_inject_nmi(struct kvm_vcpu *vcpu)
@@ -2841,6 +2868,7 @@ static void vmx_inject_nmi(struct kvm_vcpu *vcpu)
 	}
 	vmcs_write32(VM_ENTRY_INTR_INFO_FIELD,
 			INTR_TYPE_NMI_INTR | INTR_INFO_VALID_MASK | NMI_VECTOR);
+	vmx_clear_hlt(vcpu);
 }
 
 static int vmx_nmi_allowed(struct kvm_vcpu *vcpu)
@@ -2849,7 +2877,8 @@ static int vmx_nmi_allowed(struct kvm_vcpu *vcpu)
 		return 0;
 
 	return	!(vmcs_read32(GUEST_INTERRUPTIBILITY_INFO) &
-			(GUEST_INTR_STATE_MOV_SS | GUEST_INTR_STATE_NMI));
+		  (GUEST_INTR_STATE_MOV_SS | GUEST_INTR_STATE_STI
+		   | GUEST_INTR_STATE_NMI));
 }
 
 static bool vmx_get_nmi_mask(struct kvm_vcpu *vcpu)
@@ -3349,6 +3378,11 @@ static int handle_vmx_insn(struct kvm_vcpu *vcpu)
 	return 1;
 }
 
+static int handle_invd(struct kvm_vcpu *vcpu)
+{
+	return emulate_instruction(vcpu, 0, 0, 0) == EMULATE_DONE;
+}
+
 static int handle_invlpg(struct kvm_vcpu *vcpu)
 {
 	unsigned long exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
@@ -3476,7 +3510,7 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 
 	gpa = vmcs_read64(GUEST_PHYSICAL_ADDRESS);
 	trace_kvm_page_fault(gpa, exit_qualification);
-	return kvm_mmu_page_fault(vcpu, gpa & PAGE_MASK, 0);
+	return kvm_mmu_page_fault(vcpu, gpa, exit_qualification & 0x3);
 }
 
 static u64 ept_rsvd_mask(u64 spte, int level)
@@ -3649,6 +3683,7 @@ static int (*kvm_vmx_exit_handlers[])(struct kvm_vcpu *vcpu) = {
 	[EXIT_REASON_MSR_WRITE]               = handle_wrmsr,
 	[EXIT_REASON_PENDING_INTERRUPT]       = handle_interrupt_window,
 	[EXIT_REASON_HLT]                     = handle_halt,
+	[EXIT_REASON_INVD]		      = handle_invd,
 	[EXIT_REASON_INVLPG]		      = handle_invlpg,
 	[EXIT_REASON_VMCALL]                  = handle_vmcall,
 	[EXIT_REASON_VMCLEAR]	              = handle_vmx_insn,
@@ -3676,6 +3711,12 @@ static int (*kvm_vmx_exit_handlers[])(struct kvm_vcpu *vcpu) = {
 static const int kvm_vmx_max_exit_handlers =
 	ARRAY_SIZE(kvm_vmx_exit_handlers);
 
+static void vmx_get_exit_info(struct kvm_vcpu *vcpu, u64 *info1, u64 *info2)
+{
+	*info1 = vmcs_readl(EXIT_QUALIFICATION);
+	*info2 = vmcs_read32(VM_EXIT_INTR_INFO);
+}
+
 /*
  * The guest has exited.  See if we can fix it or if we need userspace
  * assistance.
@@ -3686,7 +3727,7 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 	u32 exit_reason = vmx->exit_reason;
 	u32 vectoring_info = vmx->idt_vectoring_info;
 
-	trace_kvm_exit(exit_reason, vcpu);
+	trace_kvm_exit(exit_reason, vcpu, KVM_ISA_VMX);
 
 	/* If guest state is invalid, start emulating */
 	if (vmx->emulation_required && emulate_invalid_guest_state)
@@ -4320,7 +4361,9 @@ static struct kvm_x86_ops vmx_x86_ops = {
 	.get_tdp_level = get_ept_level,
 	.get_mt_mask = vmx_get_mt_mask,
 
+	.get_exit_info = vmx_get_exit_info,
 	.exit_reasons_str = vmx_exit_reasons_str,
+
 	.get_lpage_level = vmx_get_lpage_level,
 
 	.cpuid_update = vmx_cpuid_update,
@@ -4396,8 +4439,6 @@ static int __init vmx_init(void)
 
 	if (enable_ept) {
 		bypass_guest_pf = 0;
-		kvm_mmu_set_base_ptes(VMX_EPT_READABLE_MASK |
-			VMX_EPT_WRITABLE_MASK);
 		kvm_mmu_set_mask_ptes(0ull, 0ull, 0ull, 0ull,
 				VMX_EPT_EXECUTABLE_MASK);
 		kvm_enable_tdp();
