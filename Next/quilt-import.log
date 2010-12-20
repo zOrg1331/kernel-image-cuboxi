@@ -1,0 +1,22 @@
+Importing i2c based on 2.6.37-rc5-git3
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.37-rc5-git3
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.37-rc4
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.37-rc5
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.37-rc4-12-g22a5b56
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 22a5b566c8c442b0b35b3b106795e2f2b3578096
+HEAD is now at 22a5b56 Merge branch 'for_linus' of git://github.com/at91linux/linux-2.6-at91
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-dont-take-i_mutex-to-change-device-size.patch
+dm-mpath-disable-blk_abort_queue.patch
+dm-io-remove-BIO_RW_SYNCIO-flag-from-kcopyd.patch
+dm-ioctl-allow-rename-to-fill-empty-uuid.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+   22a5b56..4752fef  master     -> quilt/device-mapper
