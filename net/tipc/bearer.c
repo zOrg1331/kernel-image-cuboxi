@@ -36,12 +36,9 @@
 
 #include "core.h"
 #include "config.h"
-#include "dbg.h"
 #include "bearer.h"
-#include "link.h"
 #include "port.h"
 #include "discover.h"
-#include "bcast.h"
 
 #define MAX_ADDR_STR 32
 
@@ -625,7 +622,7 @@ int tipc_block_bearer(const char *name)
  * Note: This routine assumes caller holds tipc_net_lock.
  */
 
-static int bearer_disable(struct bearer *b_ptr)
+static void bearer_disable(struct bearer *b_ptr)
 {
 	struct link *l_ptr;
 	struct link *temp_l_ptr;
@@ -641,7 +638,6 @@ static int bearer_disable(struct bearer *b_ptr)
 	}
 	spin_unlock_bh(&b_ptr->publ.lock);
 	memset(b_ptr, 0, sizeof(struct bearer));
-	return 0;
 }
 
 int tipc_disable_bearer(const char *name)
@@ -654,8 +650,10 @@ int tipc_disable_bearer(const char *name)
 	if (b_ptr == NULL) {
 		warn("Attempt to disable unknown bearer <%s>\n", name);
 		res = -EINVAL;
-	} else
-		res = bearer_disable(b_ptr);
+	} else {
+		bearer_disable(b_ptr);
+		res = 0;
+	}
 	write_unlock_bh(&tipc_net_lock);
 	return res;
 }
