@@ -56,8 +56,8 @@
 #include "bnx2_fw.h"
 
 #define DRV_MODULE_NAME		"bnx2"
-#define DRV_MODULE_VERSION	"2.0.18"
-#define DRV_MODULE_RELDATE	"Oct 7, 2010"
+#define DRV_MODULE_VERSION	"2.0.20"
+#define DRV_MODULE_RELDATE	"Nov 24, 2010"
 #define FW_MIPS_FILE_06		"bnx2/bnx2-mips-06-6.0.15.fw"
 #define FW_RV2P_FILE_06		"bnx2/bnx2-rv2p-06-6.0.15.fw"
 #define FW_MIPS_FILE_09		"bnx2/bnx2-mips-09-6.0.17.fw"
@@ -766,12 +766,9 @@ bnx2_alloc_rx_mem(struct bnx2 *bp)
 		int j;
 
 		rxr->rx_buf_ring =
-			vmalloc(SW_RXBD_RING_SIZE * bp->rx_max_ring);
+			vzalloc(SW_RXBD_RING_SIZE * bp->rx_max_ring);
 		if (rxr->rx_buf_ring == NULL)
 			return -ENOMEM;
-
-		memset(rxr->rx_buf_ring, 0,
-		       SW_RXBD_RING_SIZE * bp->rx_max_ring);
 
 		for (j = 0; j < bp->rx_max_ring; j++) {
 			rxr->rx_desc_ring[j] =
@@ -785,13 +782,11 @@ bnx2_alloc_rx_mem(struct bnx2 *bp)
 		}
 
 		if (bp->rx_pg_ring_size) {
-			rxr->rx_pg_ring = vmalloc(SW_RXPG_RING_SIZE *
+			rxr->rx_pg_ring = vzalloc(SW_RXPG_RING_SIZE *
 						  bp->rx_max_pg_ring);
 			if (rxr->rx_pg_ring == NULL)
 				return -ENOMEM;
 
-			memset(rxr->rx_pg_ring, 0, SW_RXPG_RING_SIZE *
-			       bp->rx_max_pg_ring);
 		}
 
 		for (j = 0; j < bp->rx_max_pg_ring; j++) {
@@ -4645,13 +4640,28 @@ bnx2_reset_chip(struct bnx2 *bp, u32 reset_code)
 
 	/* Wait for the current PCI transaction to complete before
 	 * issuing a reset. */
-	REG_WR(bp, BNX2_MISC_ENABLE_CLR_BITS,
-	       BNX2_MISC_ENABLE_CLR_BITS_TX_DMA_ENABLE |
-	       BNX2_MISC_ENABLE_CLR_BITS_DMA_ENGINE_ENABLE |
-	       BNX2_MISC_ENABLE_CLR_BITS_RX_DMA_ENABLE |
-	       BNX2_MISC_ENABLE_CLR_BITS_HOST_COALESCE_ENABLE);
-	val = REG_RD(bp, BNX2_MISC_ENABLE_CLR_BITS);
-	udelay(5);
+	if ((CHIP_NUM(bp) == CHIP_NUM_5706) ||
+	    (CHIP_NUM(bp) == CHIP_NUM_5708)) {
+		REG_WR(bp, BNX2_MISC_ENABLE_CLR_BITS,
+		       BNX2_MISC_ENABLE_CLR_BITS_TX_DMA_ENABLE |
+		       BNX2_MISC_ENABLE_CLR_BITS_DMA_ENGINE_ENABLE |
+		       BNX2_MISC_ENABLE_CLR_BITS_RX_DMA_ENABLE |
+		       BNX2_MISC_ENABLE_CLR_BITS_HOST_COALESCE_ENABLE);
+		val = REG_RD(bp, BNX2_MISC_ENABLE_CLR_BITS);
+		udelay(5);
+	} else {  /* 5709 */
+		val = REG_RD(bp, BNX2_MISC_NEW_CORE_CTL);
+		val &= ~BNX2_MISC_NEW_CORE_CTL_DMA_ENABLE;
+		REG_WR(bp, BNX2_MISC_NEW_CORE_CTL, val);
+		val = REG_RD(bp, BNX2_MISC_NEW_CORE_CTL);
+
+		for (i = 0; i < 100; i++) {
+			msleep(1);
+			val = REG_RD(bp, BNX2_PCICFG_DEVICE_CONTROL);
+			if (!(val & BNX2_PCICFG_DEVICE_STATUS_NO_PEND))
+				break;
+		}
+	}
 
 	/* Wait for the firmware to tell us it is ok to issue a reset. */
 	bnx2_fw_sync(bp, BNX2_DRV_MSG_DATA_WAIT0 | reset_code, 1, 1);
@@ -4673,7 +4683,7 @@ bnx2_reset_chip(struct bnx2 *bp, u32 reset_code)
 		val = BNX2_PCICFG_MISC_CONFIG_REG_WINDOW_ENA |
 		      BNX2_PCICFG_MISC_CONFIG_TARGET_MB_WORD_SWAP;
 
-		pci_write_config_dword(bp->pdev, BNX2_PCICFG_MISC_CONFIG, val);
+		REG_WR(bp, BNX2_PCICFG_MISC_CONFIG, val);
 
 	} else {
 		val = BNX2_PCICFG_MISC_CONFIG_CORE_RST_REQ |
@@ -7914,15 +7924,15 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
 		goto err_out_release;
 	}
 
+	bnx2_set_power_state(bp, PCI_D0);
+
 	/* Configure byte swap and enable write to the reg_window registers.
 	 * Rely on CPU to do target byte swapping on big endian systems
 	 * The chip's target access swapping will not swap all accesses
 	 */
-	pci_write_config_dword(bp->pdev, BNX2_PCICFG_MISC_CONFIG,
-			       BNX2_PCICFG_MISC_CONFIG_REG_WINDOW_ENA |
-			       BNX2_PCICFG_MISC_CONFIG_TARGET_MB_WORD_SWAP);
-
-	bnx2_set_power_state(bp, PCI_D0);
+	REG_WR(bp, BNX2_PCICFG_MISC_CONFIG,
+		   BNX2_PCICFG_MISC_CONFIG_REG_WINDOW_ENA |
+		   BNX2_PCICFG_MISC_CONFIG_TARGET_MB_WORD_SWAP);
 
 	bp->chip_id = REG_RD(bp, BNX2_MISC_ID);
 
@@ -8383,7 +8393,7 @@ bnx2_remove_one(struct pci_dev *pdev)
 	struct net_device *dev = pci_get_drvdata(pdev);
 	struct bnx2 *bp = netdev_priv(dev);
 
-	flush_scheduled_work();
+	cancel_work_sync(&bp->reset_task);
 
 	unregister_netdev(dev);
 
@@ -8421,7 +8431,7 @@ bnx2_suspend(struct pci_dev *pdev, pm_message_t state)
 	if (!netif_running(dev))
 		return 0;
 
-	flush_scheduled_work();
+	cancel_work_sync(&bp->reset_task);
 	bnx2_netif_stop(bp, true);
 	netif_device_detach(dev);
 	del_timer_sync(&bp->timer);

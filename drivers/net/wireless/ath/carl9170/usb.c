@@ -160,8 +160,7 @@ err_acc:
 
 static void carl9170_usb_tx_data_complete(struct urb *urb)
 {
-	struct ar9170 *ar = (struct ar9170 *)
-	      usb_get_intfdata(usb_ifnum_to_if(urb->dev, 0));
+	struct ar9170 *ar = usb_get_intfdata(usb_ifnum_to_if(urb->dev, 0));
 
 	if (WARN_ON_ONCE(!ar)) {
 		dev_kfree_skb_irq(urb->context);
@@ -433,7 +432,7 @@ static void carl9170_usb_rx_complete(struct urb *urb)
 			 * device.
 			 */
 
-			carl9170_restart(ar, CARL9170_RR_SLOW_SYSTEM);
+			ieee80211_queue_work(ar->hw, &ar->ping_work);
 		}
 	} else {
 		/*

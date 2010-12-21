@@ -406,8 +406,7 @@ p9pdu_vwritef(struct p9_fcall *pdu, int proto_version, const char *fmt,
 				const char *sptr = va_arg(ap, const char *);
 				int16_t len = 0;
 				if (sptr)
-					len = min_t(int16_t, strlen(sptr),
-								USHRT_MAX);
+					len = min_t(int16_t, strlen(sptr), USHRT_MAX);
 
 				errcode = p9pdu_writef(pdu, proto_version,
 								"w", len);

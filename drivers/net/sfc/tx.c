@@ -240,8 +240,7 @@ netdev_tx_t efx_enqueue_skb(struct efx_tx_queue *tx_queue, struct sk_buff *skb)
 				 * of read_count. */
 				smp_mb();
 				tx_queue->old_read_count =
-					*(volatile unsigned *)
-					&tx_queue->read_count;
+					ACCESS_ONCE(tx_queue->read_count);
 				fill_level = (tx_queue->insert_count
 					      - tx_queue->old_read_count);
 				q_space = efx->txq_entries - 1 - fill_level;
@@ -401,6 +400,7 @@ void efx_xmit_done(struct efx_tx_queue *tx_queue, unsigned int index)
 {
 	unsigned fill_level;
 	struct efx_nic *efx = tx_queue->efx;
+	struct netdev_queue *queue;
 
 	EFX_BUG_ON_PARANOID(index > tx_queue->ptr_mask);
 
@@ -417,12 +417,25 @@ void efx_xmit_done(struct efx_tx_queue *tx_queue, unsigned int index)
 
 			/* Do this under netif_tx_lock(), to avoid racing
 			 * with efx_xmit(). */
-			netif_tx_lock(efx->net_dev);
+			queue = netdev_get_tx_queue(
+				efx->net_dev,
+				tx_queue->queue / EFX_TXQ_TYPES);
+			__netif_tx_lock(queue, smp_processor_id());
 			if (tx_queue->stopped) {
 				tx_queue->stopped = 0;
 				efx_wake_queue(tx_queue->channel);
 			}
-			netif_tx_unlock(efx->net_dev);
+			__netif_tx_unlock(queue);
+		}
+	}
+
+	/* Check whether the hardware queue is now empty */
+	if ((int)(tx_queue->read_count - tx_queue->old_write_count) >= 0) {
+		tx_queue->old_write_count = ACCESS_ONCE(tx_queue->write_count);
+		if (tx_queue->read_count == tx_queue->old_write_count) {
+			smp_mb();
+			tx_queue->empty_read_count =
+				tx_queue->read_count | EFX_EMPTY_COUNT_VALID;
 		}
 	}
 }
@@ -470,8 +483,10 @@ void efx_init_tx_queue(struct efx_tx_queue *tx_queue)
 
 	tx_queue->insert_count = 0;
 	tx_queue->write_count = 0;
+	tx_queue->old_write_count = 0;
 	tx_queue->read_count = 0;
 	tx_queue->old_read_count = 0;
+	tx_queue->empty_read_count = 0 | EFX_EMPTY_COUNT_VALID;
 	BUG_ON(tx_queue->stopped);
 
 	/* Set up TX descriptor ring */
@@ -760,7 +775,7 @@ static int efx_tx_queue_insert(struct efx_tx_queue *tx_queue,
 			 * stopped from the access of read_count. */
 			smp_mb();
 			tx_queue->old_read_count =
-				*(volatile unsigned *)&tx_queue->read_count;
+				ACCESS_ONCE(tx_queue->read_count);
 			fill_level = (tx_queue->insert_count
 				      - tx_queue->old_read_count);
 			q_space = efx->txq_entries - 1 - fill_level;
