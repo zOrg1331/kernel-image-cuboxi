@@ -33,13 +33,11 @@
 #include <asm/mach/arch.h>
 #include <mach/mx25.h>
 #include <mach/imx-uart.h>
-#include <mach/imxfb.h>
 #include <mach/audmux.h>
 
 #include "devices-imx25.h"
-#include "devices.h"
 
-static struct pad_desc eukrea_mbimxsd_pads[] = {
+static iomux_v3_cfg_t eukrea_mbimxsd_pads[] = {
 	/* LCD */
 	MX25_PAD_LD0__LD0,
 	MX25_PAD_LD1__LD1,
@@ -151,7 +149,7 @@ static struct imx_fb_videomode eukrea_mximxsd_modes[] = {
 	},
 };
 
-static struct imx_fb_platform_data eukrea_mximxsd_fb_pdata = {
+static const struct imx_fb_platform_data eukrea_mximxsd_fb_pdata __initconst = {
 	.mode		= eukrea_mximxsd_modes,
 	.num_modes	= ARRAY_SIZE(eukrea_mximxsd_modes),
 	.pwmr		= 0x00A903FF,
@@ -273,11 +271,11 @@ void __init eukrea_mbimxsd25_baseboard_init(void)
 #endif
 
 	imx25_add_imx_uart1(&uart_pdata);
-	mxc_register_device(&mx25_fb_device, &eukrea_mximxsd_fb_pdata);
+	imx25_add_imx_fb(&eukrea_mximxsd_fb_pdata);
 	imx25_add_imx_ssi(0, &eukrea_mbimxsd_ssi_pdata);
 
 	imx25_add_flexcan1(NULL);
-	imx25_add_esdhc(0, NULL);
+	imx25_add_sdhci_esdhc_imx(0, NULL);
 
 	gpio_request(GPIO_LED1, "LED1");
 	gpio_direction_output(GPIO_LED1, 1);

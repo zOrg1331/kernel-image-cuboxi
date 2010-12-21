@@ -20,6 +20,8 @@
 #include <linux/fec.h>
 #include <linux/gpio_keys.h>
 #include <linux/input.h>
+#include <linux/spi/flash.h>
+#include <linux/spi/spi.h>
 
 #include <mach/common.h>
 #include <mach/hardware.h>
@@ -36,11 +38,13 @@
 #include "devices.h"
 #include "cpu_op-mx51.h"
 
-#define BABBAGE_USB_HUB_RESET	(0*32 + 7)	/* GPIO_1_7 */
-#define BABBAGE_USBH1_STP	(0*32 + 27)	/* GPIO_1_27 */
-#define BABBAGE_PHY_RESET	(1*32 + 5)	/* GPIO_2_5 */
-#define BABBAGE_FEC_PHY_RESET	(1*32 + 14)	/* GPIO_2_14 */
-#define BABBAGE_POWER_KEY	(1*32 + 21)	/* GPIO_2_21 */
+#define BABBAGE_USB_HUB_RESET	IMX_GPIO_NR(1, 7)
+#define BABBAGE_USBH1_STP	IMX_GPIO_NR(1, 27)
+#define BABBAGE_PHY_RESET	IMX_GPIO_NR(2, 5)
+#define BABBAGE_FEC_PHY_RESET	IMX_GPIO_NR(2, 14)
+#define BABBAGE_POWER_KEY	IMX_GPIO_NR(2, 21)
+#define BABBAGE_ECSPI1_CS0	IMX_GPIO_NR(4, 24)
+#define BABBAGE_ECSPI1_CS1	IMX_GPIO_NR(4, 25)
 
 /* USB_CTRL_1 */
 #define MX51_USB_CTRL_1_OFFSET			0x10
@@ -65,7 +69,7 @@ static const struct gpio_keys_platform_data imx_button_data __initconst = {
 	.nbuttons	= ARRAY_SIZE(babbage_buttons),
 };
 
-static struct pad_desc mx51babbage_pads[] = {
+static iomux_v3_cfg_t mx51babbage_pads[] = {
 	/* UART1 */
 	MX51_PAD_UART1_RXD__UART1_RXD,
 	MX51_PAD_UART1_TXD__UART1_TXD,
@@ -147,6 +151,13 @@ static struct pad_desc mx51babbage_pads[] = {
 	MX51_PAD_SD2_DATA1__SD2_DATA1,
 	MX51_PAD_SD2_DATA2__SD2_DATA2,
 	MX51_PAD_SD2_DATA3__SD2_DATA3,
+
+	/* eCSPI1 */
+	MX51_PAD_CSPI1_MISO__ECSPI1_MISO,
+	MX51_PAD_CSPI1_MOSI__ECSPI1_MOSI,
+	MX51_PAD_CSPI1_SCLK__ECSPI1_SCLK,
+	MX51_PAD_CSPI1_SS0__GPIO_4_24,
+	MX51_PAD_CSPI1_SS1__GPIO_4_25,
 };
 
 /* Serial ports */
@@ -177,8 +188,8 @@ static struct imxi2c_platform_data babbage_hsi2c_data = {
 
 static int gpio_usbh1_active(void)
 {
-	struct pad_desc usbh1stp_gpio = MX51_PAD_USBH1_STP__GPIO_1_27;
-	struct pad_desc phyreset_gpio = MX51_PAD_EIM_D21__GPIO_2_5;
+	iomux_v3_cfg_t usbh1stp_gpio = MX51_PAD_USBH1_STP__GPIO_1_27;
+	iomux_v3_cfg_t phyreset_gpio = MX51_PAD_EIM_D21__GPIO_2_5;
 	int ret;
 
 	/* Set USBH1_STP to GPIO and toggle it */
@@ -251,6 +262,8 @@ static int initialize_otg_port(struct platform_device *pdev)
 	void __iomem *usbother_base;
 
 	usb_base = ioremap(MX51_OTG_BASE_ADDR, SZ_4K);
+	if (!usb_base)
+		return -ENOMEM;
 	usbother_base = usb_base + MX5_USBOTHER_REGS_OFFSET;
 
 	/* Set the PHY clock to 19.2MHz */
@@ -269,6 +282,8 @@ static int initialize_usbh1_port(struct platform_device *pdev)
 	void __iomem *usbother_base;
 
 	usb_base = ioremap(MX51_OTG_BASE_ADDR, SZ_4K);
+	if (!usb_base)
+		return -ENOMEM;
 	usbother_base = usb_base + MX5_USBOTHER_REGS_OFFSET;
 
 	/* The clock for the USBH1 ULPI port will come externally from the PHY. */
@@ -310,13 +325,34 @@ static int __init babbage_otg_mode(char *options)
 }
 __setup("otg_mode=", babbage_otg_mode);
 
+static struct spi_board_info mx51_babbage_spi_board_info[] __initdata = {
+	{
+		.modalias = "mtd_dataflash",
+		.max_speed_hz = 25000000,
+		.bus_num = 0,
+		.chip_select = 1,
+		.mode = SPI_MODE_0,
+		.platform_data = NULL,
+	},
+};
+
+static int mx51_babbage_spi_cs[] = {
+	BABBAGE_ECSPI1_CS0,
+	BABBAGE_ECSPI1_CS1,
+};
+
+static const struct spi_imx_master mx51_babbage_spi_pdata __initconst = {
+	.chipselect     = mx51_babbage_spi_cs,
+	.num_chipselect = ARRAY_SIZE(mx51_babbage_spi_cs),
+};
+
 /*
  * Board specific initialization.
  */
 static void __init mxc_board_init(void)
 {
-	struct pad_desc usbh1stp = MX51_PAD_USBH1_STP__USBH1_STP;
-	struct pad_desc power_key = MX51_PAD_EIM_A27__GPIO_2_21;
+	iomux_v3_cfg_t usbh1stp = MX51_PAD_USBH1_STP__USBH1_STP;
+	iomux_v3_cfg_t power_key = MX51_PAD_EIM_A27__GPIO_2_21;
 
 #if defined(CONFIG_CPU_FREQ_IMX)
 	get_cpu_op = mx51_get_cpu_op;
@@ -349,8 +385,13 @@ static void __init mxc_board_init(void)
 	mxc_iomux_v3_setup_pad(&usbh1stp);
 	babbage_usbhub_reset();
 
-	imx51_add_esdhc(0, NULL);
-	imx51_add_esdhc(1, NULL);
+	imx51_add_sdhci_esdhc_imx(0, NULL);
+	imx51_add_sdhci_esdhc_imx(1, NULL);
+
+	spi_register_board_info(mx51_babbage_spi_board_info,
+		ARRAY_SIZE(mx51_babbage_spi_board_info));
+	imx51_add_ecspi(0, &mx51_babbage_spi_pdata);
+	imx51_add_imx2_wdt(0, NULL);
 }
 
 static void __init mx51_babbage_timer_init(void)
