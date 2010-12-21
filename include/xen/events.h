@@ -23,6 +23,12 @@ int bind_ipi_to_irqhandler(enum ipi_vector ipi,
 			   unsigned long irqflags,
 			   const char *devname,
 			   void *dev_id);
+int bind_interdomain_evtchn_to_irqhandler(unsigned int remote_domain,
+					  unsigned int remote_port,
+					  irq_handler_t handler,
+					  unsigned long irqflags,
+					  const char *devname,
+					  void *dev_id);
 
 /*
  * Common unbind function for all event sources. Takes IRQ to unbind from.
@@ -91,7 +97,11 @@ int xen_vector_from_irq(unsigned pirq);
 /* Return gsi allocated to pirq */
 int xen_gsi_from_irq(unsigned pirq);
 
+
 /* Return irq from pirq */
 int xen_irq_from_pirq(unsigned pirq);
+
+/* Determine whether to ignore this IRQ if passed to a guest. */
+int xen_ignore_irq(int irq);
 
 #endif	/* _XEN_EVENTS_H */
