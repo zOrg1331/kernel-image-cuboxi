@@ -147,6 +147,8 @@ static struct platform_device *smdkv310_devices[] __initdata = {
 	&s3c_device_rtc,
 	&s3c_device_wdt,
 	&smdkv310_smsc911x,
+	&samsung_asoc_dma,
+	&s5pv310_device_ac97,
 };
 
 static void __init smdkv310_smsc911x_init(void)
