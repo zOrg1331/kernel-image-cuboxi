@@ -749,6 +749,8 @@ static struct nfsd4_session *alloc_init_session(struct svc_rqst *rqstp, struct n
 	 */
 	slotsize = nfsd4_sanitize_slot_size(fchan->maxresp_cached);
 	numslots = nfsd4_get_drc_mem(slotsize, fchan->maxreqs);
+	if (numslots < 1)
+		return NULL;
 
 	new = alloc_session(slotsize, numslots);
 	if (!new) {
@@ -1132,45 +1134,30 @@ find_unconfirmed_client(clientid_t *clid)
 	return NULL;
 }
 
-/*
- * Return 1 iff clp's clientid establishment method matches the use_exchange_id
- * parameter. Matching is based on the fact the at least one of the
- * EXCHGID4_FLAG_USE_{NON_PNFS,PNFS_MDS,PNFS_DS} flags must be set for v4.1
- *
- * FIXME: we need to unify the clientid namespaces for nfsv4.x
- * and correctly deal with client upgrade/downgrade in EXCHANGE_ID
- * and SET_CLIENTID{,_CONFIRM}
- */
-static inline int
-match_clientid_establishment(struct nfs4_client *clp, bool use_exchange_id)
+static bool clp_used_exchangeid(struct nfs4_client *clp)
 {
-	bool has_exchange_flags = (clp->cl_exchange_flags != 0);
-	return use_exchange_id == has_exchange_flags;
-}
+	return clp->cl_exchange_flags != 0;
+} 
 
 static struct nfs4_client *
-find_confirmed_client_by_str(const char *dname, unsigned int hashval,
-			     bool use_exchange_id)
+find_confirmed_client_by_str(const char *dname, unsigned int hashval)
 {
 	struct nfs4_client *clp;
 
 	list_for_each_entry(clp, &conf_str_hashtbl[hashval], cl_strhash) {
-		if (same_name(clp->cl_recdir, dname) &&
-		    match_clientid_establishment(clp, use_exchange_id))
+		if (same_name(clp->cl_recdir, dname))
 			return clp;
 	}
 	return NULL;
 }
 
 static struct nfs4_client *
-find_unconfirmed_client_by_str(const char *dname, unsigned int hashval,
-			       bool use_exchange_id)
+find_unconfirmed_client_by_str(const char *dname, unsigned int hashval)
 {
 	struct nfs4_client *clp;
 
 	list_for_each_entry(clp, &unconf_str_hashtbl[hashval], cl_strhash) {
-		if (same_name(clp->cl_recdir, dname) &&
-		    match_clientid_establishment(clp, use_exchange_id))
+		if (same_name(clp->cl_recdir, dname))
 			return clp;
 	}
 	return NULL;
@@ -1344,7 +1331,7 @@ nfsd4_exchange_id(struct svc_rqst *rqstp,
 	case SP4_NONE:
 		break;
 	case SP4_SSV:
-		return nfserr_encr_alg_unsupp;
+		return nfserr_serverfault;
 	default:
 		BUG();				/* checked by xdr code */
 	case SP4_MACH_CRED:
@@ -1361,8 +1348,12 @@ nfsd4_exchange_id(struct svc_rqst *rqstp,
 	nfs4_lock_state();
 	status = nfs_ok;
 
-	conf = find_confirmed_client_by_str(dname, strhashval, true);
+	conf = find_confirmed_client_by_str(dname, strhashval);
 	if (conf) {
+		if (!clp_used_exchangeid(conf)) {
+			status = nfserr_clid_inuse; /* XXX: ? */
+			goto out;
+		}
 		if (!same_verf(&verf, &conf->cl_verifier)) {
 			/* 18.35.4 case 8 */
 			if (exid->flags & EXCHGID4_FLAG_UPD_CONFIRMED_REC_A) {
@@ -1403,7 +1394,7 @@ nfsd4_exchange_id(struct svc_rqst *rqstp,
 		goto out;
 	}
 
-	unconf  = find_unconfirmed_client_by_str(dname, strhashval, true);
+	unconf  = find_unconfirmed_client_by_str(dname, strhashval);
 	if (unconf) {
 		/*
 		 * Possible retry or client restart.  Per 18.35.4 case 4,
@@ -1560,6 +1551,8 @@ nfsd4_create_session(struct svc_rqst *rqstp,
 	status = nfs_ok;
 	memcpy(cr_ses->sessionid.data, new->se_sessionid.data,
 	       NFS4_MAX_SESSIONID_LEN);
+	memcpy(&cr_ses->fore_channel, &new->se_fchannel,
+		sizeof(struct nfsd4_channel_attrs));
 	cs_slot->sl_seqid++;
 	cr_ses->seqid = cs_slot->sl_seqid;
 
@@ -1801,10 +1794,12 @@ nfsd4_setclientid(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	strhashval = clientstr_hashval(dname);
 
 	nfs4_lock_state();
-	conf = find_confirmed_client_by_str(dname, strhashval, false);
+	conf = find_confirmed_client_by_str(dname, strhashval);
 	if (conf) {
 		/* RFC 3530 14.2.33 CASE 0: */
 		status = nfserr_clid_inuse;
+		if (clp_used_exchangeid(conf))
+			goto out;
 		if (!same_creds(&conf->cl_cred, &rqstp->rq_cred)) {
 			char addr_str[INET6_ADDRSTRLEN];
 			rpc_ntop((struct sockaddr *) &conf->cl_addr, addr_str,
@@ -1819,7 +1814,7 @@ nfsd4_setclientid(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	 * has a description of SETCLIENTID request processing consisting
 	 * of 5 bullet points, labeled as CASE0 - CASE4 below.
 	 */
-	unconf = find_unconfirmed_client_by_str(dname, strhashval, false);
+	unconf = find_unconfirmed_client_by_str(dname, strhashval);
 	status = nfserr_resource;
 	if (!conf) {
 		/*
@@ -1964,7 +1959,7 @@ nfsd4_setclientid_confirm(struct svc_rqst *rqstp,
 			unsigned int hash =
 				clientstr_hashval(unconf->cl_recdir);
 			conf = find_confirmed_client_by_str(unconf->cl_recdir,
-							    hash, false);
+							    hash);
 			if (conf) {
 				nfsd4_remove_clid_dir(conf);
 				expire_client(conf);
@@ -3081,9 +3076,10 @@ nfs4_preprocess_stateid_op(struct nfsd4_compound_state *cstate,
 		if (status)
 			goto out;
 		renew_client(dp->dl_client);
-		if (filpp)
+		if (filpp) {
 			*filpp = find_readable_file(dp->dl_file);
-		BUG_ON(!*filpp);
+			BUG_ON(!*filpp);
+		}
 	} else { /* open or lock stateid */
 		stp = find_stateid(stateid, flags);
 		if (!stp)
@@ -4107,7 +4103,7 @@ nfs4_has_reclaimed_state(const char *name, bool use_exchange_id)
 	unsigned int strhashval = clientstr_hashval(name);
 	struct nfs4_client *clp;
 
-	clp = find_confirmed_client_by_str(name, strhashval, use_exchange_id);
+	clp = find_confirmed_client_by_str(name, strhashval);
 	return clp ? 1 : 0;
 }
 
