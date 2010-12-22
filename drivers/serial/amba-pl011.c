@@ -74,6 +74,7 @@ struct uart_amba_port {
 	unsigned int		ifls;		/* vendor-specific */
 	unsigned int		lcrh_tx;	/* vendor-specific */
 	unsigned int		lcrh_rx;	/* vendor-specific */
+	unsigned int		fifosize;	/* vendor-specific */
 	bool			oversampling;   /* vendor-specific */
 	bool			autorts;
 };
@@ -203,7 +204,7 @@ static void pl011_tx_chars(struct uart_amba_port *uap)
 		return;
 	}
 
-	count = uap->port.fifosize >> 1;
+	count = uap->fifosize >> 1;
 	do {
 		writew(xmit->buf[xmit->tail], uap->port.membase + UART01x_DR);
 		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
@@ -536,7 +537,7 @@ pl011_set_termios(struct uart_port *port, struct ktermios *termios,
 		if (!(termios->c_cflag & PARODD))
 			lcr_h |= UART01x_LCRH_EPS;
 	}
-	if (port->fifosize > 1)
+	if (uap->fifosize > 1)
 		lcr_h |= UART01x_LCRH_FEN;
 
 	spin_lock_irqsave(&port->lock, flags);
@@ -866,12 +867,13 @@ static int pl011_probe(struct amba_device *dev, struct amba_id *id)
 	uap->lcrh_rx = vendor->lcrh_rx;
 	uap->lcrh_tx = vendor->lcrh_tx;
 	uap->oversampling = vendor->oversampling;
+	uap->fifosize = vendor->fifosize;
 	uap->port.dev = &dev->dev;
 	uap->port.mapbase = dev->res.start;
 	uap->port.membase = base;
 	uap->port.iotype = UPIO_MEM;
 	uap->port.irq = dev->irq[0];
-	uap->port.fifosize = vendor->fifosize;
+	uap->port.fifosize = uap->fifosize;
 	uap->port.ops = &amba_pl011_pops;
 	uap->port.flags = UPF_BOOT_AUTOCONF;
 	uap->port.line = i;
