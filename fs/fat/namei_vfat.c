@@ -31,7 +31,7 @@
  * If it happened, the negative dentry isn't actually negative
  * anymore.  So, drop it.
  */
-static int vfat_revalidate_shortname(struct dentry *dentry)
+static int vfat_revalidate_rcu_shortname(struct dentry *dentry)
 {
 	int ret = 1;
 	spin_lock(&dentry->d_lock);
@@ -41,15 +41,15 @@ static int vfat_revalidate_shortname(struct dentry *dentry)
 	return ret;
 }
 
-static int vfat_revalidate(struct dentry *dentry, struct nameidata *nd)
+static int vfat_revalidate_rcu(struct dentry *dentry, struct nameidata *nd)
 {
 	/* This is not negative dentry. Always valid. */
 	if (dentry->d_inode)
 		return 1;
-	return vfat_revalidate_shortname(dentry);
+	return vfat_revalidate_rcu_shortname(dentry);
 }
 
-static int vfat_revalidate_ci(struct dentry *dentry, struct nameidata *nd)
+static int vfat_revalidate_rcu_ci(struct dentry *dentry, struct nameidata *nd)
 {
 	/*
 	 * This is not negative dentry. Always valid.
@@ -81,7 +81,7 @@ static int vfat_revalidate_ci(struct dentry *dentry, struct nameidata *nd)
 			return 0;
 	}
 
-	return vfat_revalidate_shortname(dentry);
+	return vfat_revalidate_rcu_shortname(dentry);
 }
 
 /* returns the length of a struct qstr, ignoring trailing dots */
@@ -175,13 +175,13 @@ static int vfat_cmp(const struct dentry *parent, const struct inode *pinode,
 }
 
 static const struct dentry_operations vfat_ci_dentry_ops = {
-	.d_revalidate	= vfat_revalidate_ci,
+	.d_revalidate	= vfat_revalidate_rcu_ci,
 	.d_hash		= vfat_hashi,
 	.d_compare	= vfat_cmpi,
 };
 
 static const struct dentry_operations vfat_dentry_ops = {
-	.d_revalidate	= vfat_revalidate,
+	.d_revalidate	= vfat_revalidate_rcu,
 	.d_hash		= vfat_hash,
 	.d_compare	= vfat_cmp,
 };

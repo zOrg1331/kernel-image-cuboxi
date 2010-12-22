@@ -237,12 +237,21 @@ static int sysfs_dentry_delete(const struct dentry *dentry)
 	return !!(sd->s_flags & SYSFS_FLAG_REMOVED);
 }
 
-static int sysfs_dentry_revalidate(struct dentry *dentry, struct nameidata *nd)
+static int sysfs_dentry_revalidate_rcu(struct dentry *dentry, struct nameidata *nd)
 {
 	struct sysfs_dirent *sd = dentry->d_fsdata;
 	int is_dir;
 
-	mutex_lock(&sysfs_mutex);
+	if (nd->flags & LOOKUP_RCU) {
+		if (!mutex_trylock(&sysfs_mutex))
+			return -ECHILD;
+		/* ensure dentry still exists, now under the sysfs_mutex */
+		if (read_seqcount_retry(&dentry->d_seq, nd->seq)) {
+			mutex_unlock(&sysfs_mutex);
+			return -ECHILD;
+		}
+	} else
+		mutex_lock(&sysfs_mutex);
 
 	/* The sysfs dirent has been deleted */
 	if (sd->s_flags & SYSFS_FLAG_REMOVED)
@@ -272,6 +281,9 @@ out_bad:
 	 */
 	is_dir = (sysfs_type(sd) == SYSFS_DIR);
 	mutex_unlock(&sysfs_mutex);
+	if (nd->flags & LOOKUP_RCU)
+		return -ECHILD;
+
 	if (is_dir) {
 		/* If we have submounts we must allow the vfs caches
 		 * to lie about the state of the filesystem to prevent
@@ -294,7 +306,7 @@ static void sysfs_dentry_iput(struct dentry *dentry, struct inode *inode)
 }
 
 static const struct dentry_operations sysfs_dentry_ops = {
-	.d_revalidate	= sysfs_dentry_revalidate,
+	.d_revalidate_rcu = sysfs_dentry_revalidate_rcu,
 	.d_delete	= sysfs_dentry_delete,
 	.d_iput		= sysfs_dentry_iput,
 };
