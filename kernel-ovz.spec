@@ -5,7 +5,7 @@
 %define with_headers   1
 %define with_openafs   0
 %define ovzver 028stab079
-%define ovzrel 1
+%define ovzrel 2
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -78,6 +78,7 @@ Provides: kernel-drm = 4.3.0
 Provides: kernel-%_target_cpu = %kversion-%flavour-%krelease
 Provides: vzkernel = %KVERREL
 Provides: vzquotamod
+Provides: vzeventmod
 Provides: alsa = 1.0.14
 
 BuildRequires: kernel-source-%kversion
