@@ -376,3 +376,9 @@ the filesystem provides it), which requires dropping out of rcu-walk mode. If
 you can run all or substantial number of cases of d_revalidate without blocking
 or storing to the dentry or inodes, d_revalidate_rcu can be used, with care (see
 Documentation/filesystems/vfs.txt and existing users).
+
+	permission and check_acl are inode permission checks that are called
+on many or all directory inodes on the way down a path walk (to check for
+exec permission). If you can run all, or a substantial number of cases of
+these without blocking or storing to the inodes, permission_rcu or
+check_acl_rcu can be used, with care.
