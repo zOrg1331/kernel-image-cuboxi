@@ -217,6 +217,8 @@ static RESERVE_BRK_ARRAY(unsigned long **, p2m_top, P2M_TOP_PER_PAGE);
 static RESERVE_BRK_ARRAY(unsigned long, p2m_top_mfn, P2M_TOP_PER_PAGE);
 static RESERVE_BRK_ARRAY(unsigned long *, p2m_top_mfn_p, P2M_TOP_PER_PAGE);
 
+static RESERVE_BRK_ARRAY(unsigned long, p2m_identity, P2M_PER_PAGE);
+
 RESERVE_BRK(p2m_mid, PAGE_SIZE * (MAX_DOMAIN_PAGES / (P2M_PER_PAGE * P2M_MID_PER_PAGE)));
 RESERVE_BRK(p2m_mid_mfn, PAGE_SIZE * (MAX_DOMAIN_PAGES / (P2M_PER_PAGE * P2M_MID_PER_PAGE)));
 
@@ -379,6 +381,9 @@ void __init xen_build_dynamic_phys_to_machine(void)
 	p2m_top = extend_brk(PAGE_SIZE, PAGE_SIZE);
 	p2m_top_init(p2m_top);
 
+	p2m_identity = extend_brk(PAGE_SIZE, PAGE_SIZE);
+	p2m_init(p2m_identity);
+
 	/*
 	 * The domain builder gives us a pre-constructed p2m array in
 	 * mfn_list for all the pages initially given to us, so we just
@@ -409,6 +414,14 @@ unsigned long get_phys_to_machine(unsigned long pfn)
 	topidx = p2m_top_index(pfn);
 	mididx = p2m_mid_index(pfn);
 	idx = p2m_index(pfn);
+
+	/*
+	 * The INVALID_P2M_ENTRY is filled in both p2m_*identity
+	 * and in p2m_*missing, so returning the INVALID_P2M_ENTRY
+	 * would be wrong.
+	 */
+	if (p2m_top[topidx][mididx] == p2m_identity)
+		return IDENTITY_FRAME(pfn);
 
 	return p2m_top[topidx][mididx][idx];
 }
@@ -479,9 +492,11 @@ static bool alloc_p2m(unsigned long pfn)
 			p2m_top_mfn_p[topidx] = mid_mfn;
 	}
 
-	if (p2m_top[topidx][mididx] == p2m_missing) {
+	if (p2m_top[topidx][mididx] == p2m_identity ||
+	    p2m_top[topidx][mididx] == p2m_missing) {
 		/* p2m leaf page is missing */
 		unsigned long *p2m;
+		unsigned long *p2m_orig = p2m_top[topidx][mididx];
 
 		p2m = alloc_p2m_page();
 		if (!p2m)
@@ -489,7 +504,7 @@ static bool alloc_p2m(unsigned long pfn)
 
 		p2m_init(p2m);
 
-		if (cmpxchg(&mid[mididx], p2m_missing, p2m) != p2m_missing)
+		if (cmpxchg(&mid[mididx], p2m_orig, p2m) != p2m_orig)
 			free_p2m_page(p2m);
 		else
 			mid_mfn[mididx] = virt_to_mfn(p2m);
@@ -498,6 +513,36 @@ static bool alloc_p2m(unsigned long pfn)
 	return true;
 }
 
+bool __set_phys_to_identity(unsigned long pfn)
+{
+	unsigned topidx;
+
+	if (unlikely(pfn >= MAX_P2M_PFN))
+		return false;
+
+	if (unlikely(xen_feature(XENFEAT_auto_translated_physmap)))
+		return true;
+
+	topidx = p2m_top_index(pfn);
+
+	/*
+	 * During E820 parsing (when there are no memory allocator) we
+	 * create for identity PFNs a top entry to guard ourselves against:
+	 *   - non-RAM entries or gaps in E820 not 1GB-aligned (say, PCI hole
+	 *     starts a 2.5GB)
+	 *   - and not the full amount of memory is passed (say, only 1GB).
+	 * We could be setting in p2m_mid_missing to p2m_identity which would
+	 * be horrific as p2m_mid_missing is present for all top P2M void
+	 * entries. For details: https://lkml.org/lkml/2011/1/5/124
+	 */
+	if (p2m_top[topidx] == p2m_mid_missing) {
+		unsigned long **mid = extend_brk(PAGE_SIZE, PAGE_SIZE);
+		p2m_mid_init(mid);
+
+		p2m_top[topidx] = mid;
+	}
+	return __set_phys_to_machine(pfn, IDENTITY_FRAME(pfn));
+}
 /* Try to install p2m mapping; fail if intermediate bits missing */
 bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn)
 {
@@ -516,6 +561,20 @@ bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn)
 	topidx = p2m_top_index(pfn);
 	mididx = p2m_mid_index(pfn);
 	idx = p2m_index(pfn);
+
+	/* For sparse holes were the p2m leaf has real PFN along with
+	 * PCI holes, stick in the PFN as the MFN value.
+	 */
+	if (mfn != INVALID_P2M_ENTRY && (mfn & IDENTITY_FRAME_BIT)) {
+		if (p2m_top[topidx][mididx] == p2m_identity)
+			return true;
+
+		/* Swap over from MISSING to IDENTITY if needed. */
+		if (p2m_top[topidx][mididx] == p2m_missing) {
+			p2m_top[topidx][mididx] = p2m_identity;
+			return true;
+		}
+	}
 
 	if (p2m_top[topidx][mididx] == p2m_missing)
 		return mfn == INVALID_P2M_ENTRY;
