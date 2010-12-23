@@ -89,7 +89,7 @@
  * or not.
  */
 struct vendor_data {
-	char *name;
+	const char *name;
 	u8 channels;
 	bool dualmaster;
 };
