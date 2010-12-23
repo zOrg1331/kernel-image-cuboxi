@@ -1626,6 +1626,8 @@ static void pl08x_tasklet(unsigned long data)
 	struct pl08x_dma_chan *plchan = (struct pl08x_dma_chan *) data;
 	struct pl08x_phy_chan *phychan = plchan->phychan;
 	struct pl08x_driver_data *pl08x = plchan->host;
+	dma_async_tx_callback callback = NULL;
+	void *callback_param = NULL;
 	unsigned long flags;
 
 	if (!plchan)
@@ -1634,22 +1636,14 @@ static void pl08x_tasklet(unsigned long data)
 	spin_lock_irqsave(&plchan->lock, flags);
 
 	if (plchan->at) {
-		dma_async_tx_callback callback =
-			plchan->at->tx.callback;
-		void *callback_param =
-			plchan->at->tx.callback_param;
+		callback = plchan->at->tx.callback;
+		callback_param = plchan->at->tx.callback_param;
 
 		/*
 		 * Update last completed
 		 */
 		plchan->lc =
 			(plchan->at->tx.cookie);
-
-		/*
-		 * Callback to signal completion
-		 */
-		if (callback)
-			callback(callback_param);
 
 		/*
 		 * Device callbacks should NOT clear
@@ -1730,6 +1724,10 @@ static void pl08x_tasklet(unsigned long data)
 	}
 
 	spin_unlock_irqrestore(&plchan->lock, flags);
+
+	/* Callback to signal completion */
+	if (callback)
+		callback(callback_param);
 }
 
 static irqreturn_t pl08x_irq(int irq, void *dev)
