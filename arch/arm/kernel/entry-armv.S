@@ -48,7 +48,7 @@
 	 */
 	ALT_SMP(test_for_ipi r0, r6, r5, lr)
 	ALT_UP_B(9997f)
-	movne	r0, sp
+	movne	r1, sp
 	adrne	lr, BSYM(1b)
 	bne	do_IPI
 
@@ -842,7 +842,7 @@ __kuser_helper_start:
  */
 
 __kuser_memory_barrier:				@ 0xffff0fa0
-	smp_dmb
+	smp_dmb	arm
 	usr_ret	lr
 
 	.align	5
@@ -959,7 +959,7 @@ kuser_cmpxchg_fixup:
 
 #else
 
-	smp_dmb
+	smp_dmb	arm
 1:	ldrex	r3, [r2]
 	subs	r3, r3, r0
 	strexeq	r3, r1, [r2]
