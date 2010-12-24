@@ -1030,10 +1030,6 @@ static void xen_reboot(int reason)
 {
 	struct sched_shutdown r = { .reason = reason };
 
-#ifdef CONFIG_SMP
-	stop_other_cpus();
-#endif
-
 	if (HYPERVISOR_sched_op(SCHEDOP_shutdown, &r))
 		BUG();
 }
@@ -1198,6 +1194,15 @@ asmlinkage void __init xen_start_kernel(void)
 	xen_initial_gdt = &per_cpu(gdt_page, 0);
 
 	xen_smp_init();
+
+#ifdef CONFIG_ACPI_NUMA
+	/*
+	 * The pages we from Xen are not related to machine pages, so
+	 * any NUMA information the kernel tries to get from ACPI will
+	 * be meaningless.  Prevent it from trying.
+	 */
+	acpi_numa = -1;
+#endif
 
 	pgd = (pgd_t *)xen_start_info->pt_base;
 
