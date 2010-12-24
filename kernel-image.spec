@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt5
+Release: alt6
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -583,6 +583,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Fri Dec 24 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt6
+- ALT and ovz specific syslog patch (ALT 24807)
+- cgroupfs: create /sys/fs/cgroup to mount cgroupfs on (ALT 24809)
+
 * Fri Dec 17 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt5
 - The Return Of The i586
 
