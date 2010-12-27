@@ -149,7 +149,7 @@ static void release_iso_resource(struct client *, struct client_resource *);
 static void schedule_iso_resource(struct iso_resource *r, unsigned long delay)
 {
 	client_get(r->client);
-	if (!schedule_delayed_work(&r->work, delay))
+	if (!queue_delayed_work(fw_wq, &r->work, delay))
 		client_put(r->client);
 }
 
@@ -1501,9 +1501,10 @@ static int ioctl_send_phy_packet(struct client *client, union ioctl_arg *arg)
 	e->client		= client;
 	e->p.speed		= SCODE_100;
 	e->p.generation		= a->generation;
-	e->p.header[0]		= a->data[0];
-	e->p.header[1]		= a->data[1];
-	e->p.header_length	= 8;
+	e->p.header[0]		= TCODE_LINK_INTERNAL << 4;
+	e->p.header[1]		= a->data[0];
+	e->p.header[2]		= a->data[1];
+	e->p.header_length	= 12;
 	e->p.callback		= outbound_phy_packet_callback;
 	e->phy_packet.closure	= a->closure;
 	e->phy_packet.type	= FW_CDEV_EVENT_PHY_PACKET_SENT;
