@@ -1,6 +1,6 @@
 Name: kernel-image-eeepc-ng
 Version: 2.6.36
-Release: alt6
+Release: alt6.gns1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -339,6 +339,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif
 
 %changelog
+* Mon Dec 27 2010 Mykola Grechukh <gns@altlinux.ru> 2.6.36-alt6.gns1
+- squashfs-lzma
+
 * Mon Dec 13 2010 Valery Inozemtsev <shrek@altlinux.ru> 2.6.36-alt6
 - enabled aufs2.1
 
