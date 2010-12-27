@@ -19,7 +19,6 @@
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
-#include <sound/soc-dapm.h>
 #include <sound/tlv.h>
 #include <sound/initval.h>
 #include <sound/jack.h>
@@ -1172,7 +1171,7 @@ static int pm860x_set_bias_level(struct snd_soc_codec *codec,
 		break;
 
 	case SND_SOC_BIAS_STANDBY:
-		if (codec->bias_level == SND_SOC_BIAS_OFF) {
+		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF) {
 			/* Enable Audio PLL & Audio section */
 			data = AUDIO_PLL | AUDIO_SECTION_RESET
 				| AUDIO_SECTION_ON;
@@ -1185,7 +1184,7 @@ static int pm860x_set_bias_level(struct snd_soc_codec *codec,
 		pm860x_set_bits(codec->control_data, REG_MISC2, data, 0);
 		break;
 	}
-	codec->bias_level = level;
+	codec->dapm.bias_level = level;
 	return 0;
 }
 
@@ -1346,6 +1345,7 @@ EXPORT_SYMBOL_GPL(pm860x_mic_jack_detect);
 static int pm860x_probe(struct snd_soc_codec *codec)
 {
 	struct pm860x_priv *pm860x = snd_soc_codec_get_drvdata(codec);
+	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	int i, ret;
 
 	pm860x->codec = codec;
@@ -1358,7 +1358,7 @@ static int pm860x_probe(struct snd_soc_codec *codec)
 					   pm860x->name[i], pm860x);
 		if (ret < 0) {
 			dev_err(codec->dev, "Failed to request IRQ!\n");
-			goto out_irq;
+			goto out;
 		}
 	}
 
@@ -1369,22 +1369,20 @@ static int pm860x_probe(struct snd_soc_codec *codec)
 	if (ret < 0) {
 		dev_err(codec->dev, "Failed to fill register cache: %d\n",
 			ret);
-		goto out_codec;
+		goto out;
 	}
 
 	snd_soc_add_controls(codec, pm860x_snd_controls,
 			     ARRAY_SIZE(pm860x_snd_controls));
-	snd_soc_dapm_new_controls(codec, pm860x_dapm_widgets,
+	snd_soc_dapm_new_controls(dapm, pm860x_dapm_widgets,
 				  ARRAY_SIZE(pm860x_dapm_widgets));
-	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
+	snd_soc_dapm_add_routes(dapm, audio_map, ARRAY_SIZE(audio_map));
 	return 0;
 
-out_codec:
-	i = 3;
-out_irq:
-	for (; i >= 0; i--)
+out:
+	while (--i >= 0)
 		free_irq(pm860x->irq[i], pm860x);
-	return -EINVAL;
+	return ret;
 }
 
 static int pm860x_remove(struct snd_soc_codec *codec)
