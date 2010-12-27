@@ -2526,7 +2526,7 @@ static void rtl8168d_2_hw_phy_config(void __iomem *ioaddr)
 
 		val = mdio_read(ioaddr, 0x0d);
 		if ((val & 0x00ff) != 0x006c) {
-			u32 set[] = {
+			static const u32 set[] = {
 				0x0065, 0x0066, 0x0067, 0x0068,
 				0x0069, 0x006a, 0x006b, 0x006c
 			};
@@ -3250,7 +3250,7 @@ static void __devexit rtl8169_remove_one(struct pci_dev *pdev)
 	struct net_device *dev = pci_get_drvdata(pdev);
 	struct rtl8169_private *tp = netdev_priv(dev);
 
-	flush_scheduled_work();
+	cancel_delayed_work_sync(&tp->task);
 
 	unregister_netdev(dev);
 
