@@ -320,17 +320,17 @@ static void fill_frame(struct gspca_dev *gspca_dev,
 	for (i = 0; i < urb->number_of_packets; i++) {
 
 		/* check the packet status and length */
-		len = urb->iso_frame_desc[i].actual_length;
-		if (len == 0) {
-			if (gspca_dev->empty_packet == 0)
-				gspca_dev->empty_packet = 1;
-			continue;
-		}
 		st = urb->iso_frame_desc[i].status;
 		if (st) {
 			err("ISOC data error: [%d] len=%d, status=%d",
 				i, len, st);
 			gspca_dev->last_packet_type = DISCARD_PACKET;
+			continue;
+		}
+		len = urb->iso_frame_desc[i].actual_length;
+		if (len == 0) {
+			if (gspca_dev->empty_packet == 0)
+				gspca_dev->empty_packet = 1;
 			continue;
 		}
 
@@ -1708,12 +1708,13 @@ static int vidioc_g_parm(struct file *filp, void *priv,
 
 		if (mutex_lock_interruptible(&gspca_dev->usb_lock))
 			return -ERESTARTSYS;
-		gspca_dev->usb_err = 0;
-		if (gspca_dev->present)
-			ret = gspca_dev->sd_desc->get_streamparm(gspca_dev,
-								 parm);
-		else
+		if (gspca_dev->present) {
+			gspca_dev->usb_err = 0;
+			gspca_dev->sd_desc->get_streamparm(gspca_dev, parm);
+			ret = gspca_dev->usb_err;
+		} else {
 			ret = -ENODEV;
+		}
 		mutex_unlock(&gspca_dev->usb_lock);
 		return ret;
 	}
@@ -1738,12 +1739,13 @@ static int vidioc_s_parm(struct file *filp, void *priv,
 
 		if (mutex_lock_interruptible(&gspca_dev->usb_lock))
 			return -ERESTARTSYS;
-		gspca_dev->usb_err = 0;
-		if (gspca_dev->present)
-			ret = gspca_dev->sd_desc->set_streamparm(gspca_dev,
-								 parm);
-		else
+		if (gspca_dev->present) {
+			gspca_dev->usb_err = 0;
+			gspca_dev->sd_desc->set_streamparm(gspca_dev, parm);
+			ret = gspca_dev->usb_err;
+		} else {
 			ret = -ENODEV;
+		}
 		mutex_unlock(&gspca_dev->usb_lock);
 		return ret;
 	}
