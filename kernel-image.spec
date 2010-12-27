@@ -63,16 +63,14 @@ BuildRequires: ccache
 BuildRequires: ccache
 %endif
 
-Requires: bootloader-utils >= 0.3-alt1
-Requires: module-init-tools >= 3.1
-Requires: mkinitrd >= 1:2.9.9-alt1
+Requires: bootloader-utils >= 0.4.9-alt1
 Requires: startup >= 0.8.3-alt1
 
 Provides: kernel = %kversion
 
 Prereq: coreutils
 Prereq: module-init-tools >= 3.1
-Prereq: mkinitrd >= 1:2.9.9-alt1
+Prereq: make-initrd
 
 %description
 This package contains the Linux kernel that is used to boot and run
@@ -93,7 +91,6 @@ Summary: Header files for the Linux kernel
 Group: Development/Kernel
 Requires: kernel-headers-common >= 1.1.5
 Provides: kernel-headers = %version
-#Provides: kernel-headers-%base_flavour = %version-%release
 
 %description -n kernel-headers-%flavour
 This package makes Linux kernel headers corresponding to the Linux
@@ -312,12 +309,6 @@ cp -a Documentation/* %buildroot%_docdir/kernel-doc-%base_flavour-%version/
 find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 	-maxdepth 1 -type f -not -name '*.html' -delete
 %endif # if_enabled docs
-
-%post
-%post_kernel_image %kversion-%flavour-%krelease
-
-%preun
-%preun_kernel_image %kversion-%flavour-%krelease
 
 %post -n kernel-headers-%flavour
 %post_kernel_headers %kversion-%flavour-%krelease
