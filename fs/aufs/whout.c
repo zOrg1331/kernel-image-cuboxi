@@ -123,6 +123,7 @@ struct dentry *au_whtmp_lkup(struct dentry *h_parent, struct au_branch *br,
 	int i;
 	char defname[NAME_MAX - AUFS_MAX_NAMELEN + DNAME_INLINE_LEN_MIN + 1],
 		*name, *p;
+	/* strict atomic_t is unnecessary here */
 	static unsigned short cnt;
 	struct qstr qs;
 
@@ -607,8 +608,8 @@ out:
 	if (wbr)
 		atomic_dec(&wbr->wbr_wh_running);
 	atomic_dec(&a->br->br_count);
-	au_nwt_done(&au_sbi(a->sb)->si_nowait);
 	si_write_unlock(a->sb);
+	au_nwt_done(&au_sbi(a->sb)->si_nowait);
 	kfree(arg);
 	if (unlikely(err))
 		AuIOErr("err %d\n", err);
@@ -969,7 +970,6 @@ int au_whtmp_rmdir(struct inode *dir, aufs_bindex_t bindex,
 		h_tmp.dentry = wh_dentry;
 		h_tmp.mnt = br->br_mnt;
 		err = vfsub_rmdir(h_dir, &h_tmp);
-		/* d_drop(h_dentry); */
 	}
 
 	if (!err) {
@@ -1030,9 +1030,9 @@ static void call_rmdir_whtmp(void *args)
 out:
 	/* mutex_unlock(&a->dir->i_mutex); */
 	atomic_dec(&a->br->br_count);
-	au_nwt_done(&au_sbi(sb)->si_nowait);
-	si_read_unlock(sb);
 	au_whtmp_rmdir_free(a);
+	si_read_unlock(sb);
+	au_nwt_done(&au_sbi(sb)->si_nowait);
 	if (unlikely(err))
 		AuIOErr("err %d\n", err);
 }
