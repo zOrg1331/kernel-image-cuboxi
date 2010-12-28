@@ -30,7 +30,7 @@
 #include "ecryptfs_kernel.h"
 
 /**
- * ecryptfs_d_revalidate - revalidate an ecryptfs dentry
+ * ecryptfs_d_revalidate_rcu - revalidate an ecryptfs dentry
  * @dentry: The ecryptfs dentry
  * @nd: The associated nameidata
  *
@@ -42,7 +42,7 @@
  * Returns 1 if valid, 0 otherwise.
  *
  */
-static int ecryptfs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
+static int ecryptfs_d_revalidate_rcu(struct dentry *dentry, struct nameidata *nd)
 {
 	struct dentry *lower_dentry = ecryptfs_dentry_to_lower(dentry);
 	struct vfsmount *lower_mnt = ecryptfs_dentry_to_lower_mnt(dentry);
@@ -50,13 +50,18 @@ static int ecryptfs_d_revalidate(struct dentry *dentry, struct nameidata *nd)
 	struct vfsmount *vfsmount_save;
 	int rc = 1;
 
-	if (!lower_dentry->d_op || !lower_dentry->d_op->d_revalidate)
+	if (!(lower_dentry->d_flags & DCACHE_OP_REVALIDATE_EITHER))
 		goto out;
+	if (nd->flags & LOOKUP_RCU)
+		return -ECHILD;
 	dentry_save = nd->path.dentry;
 	vfsmount_save = nd->path.mnt;
 	nd->path.dentry = lower_dentry;
 	nd->path.mnt = lower_mnt;
-	rc = lower_dentry->d_op->d_revalidate(lower_dentry, nd);
+	if (lower_dentry->d_flags & DCACHE_OP_REVALIDATE)
+		rc = lower_dentry->d_op->d_revalidate(lower_dentry, nd);
+	else
+		rc = lower_dentry->d_op->d_revalidate_rcu(lower_dentry, nd);
 	nd->path.dentry = dentry_save;
 	nd->path.mnt = vfsmount_save;
 	if (dentry->d_inode) {
@@ -91,6 +96,6 @@ static void ecryptfs_d_release(struct dentry *dentry)
 }
 
 const struct dentry_operations ecryptfs_dops = {
-	.d_revalidate = ecryptfs_d_revalidate,
+	.d_revalidate_rcu = ecryptfs_d_revalidate_rcu,
 	.d_release = ecryptfs_d_release,
 };
