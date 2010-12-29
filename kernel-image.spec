@@ -1,6 +1,6 @@
 Name: kernel-image-std-def
 Version: 2.6.35
-Release: alt9
+Release: alt9.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -630,6 +630,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/staging/
 
 %changelog
+* Wed Dec 29 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt9.1
+- update aufs2
+
 * Fri Nov 26 2010 Michail Yakushin <silicium@altlinux.ru> 1:2.6.35-alt9
 - 2.6.35.9
 - fix CVE-2010-4249
