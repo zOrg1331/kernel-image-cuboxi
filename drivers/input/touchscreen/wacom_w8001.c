@@ -37,7 +37,6 @@ MODULE_LICENSE("GPL");
 
 #define W8001_QUERY_PACKET	0x20
 
-#define W8001_CMD_STOP		'0'
 #define W8001_CMD_START		'1'
 #define W8001_CMD_QUERY		'*'
 #define W8001_CMD_TOUCHQUERY	'%'
@@ -280,45 +279,23 @@ static int w8001_setup(struct w8001 *w8001)
 	struct w8001_coord coord;
 	int error;
 
-	error = w8001_command(w8001, W8001_CMD_STOP, false);
+	error = w8001_command(w8001, W8001_CMD_QUERY, true);
 	if (error)
 		return error;
 
-	mdelay(250);	/* wait 250ms before querying the device */
+	parse_data(w8001->response, &coord);
 
-	/* penabled? */
-	error = w8001_command(w8001, W8001_CMD_QUERY, true);
-	if (!error) {
-		__set_bit(BTN_TOOL_PEN, dev->keybit);
-		__set_bit(BTN_TOOL_RUBBER, dev->keybit);
-		__set_bit(BTN_STYLUS, dev->keybit);
-		__set_bit(BTN_STYLUS2, dev->keybit);
-		parse_data(w8001->response, &coord);
+	input_set_abs_params(dev, ABS_X, 0, coord.x, 0, 0);
+	input_set_abs_params(dev, ABS_Y, 0, coord.y, 0, 0);
+	input_set_abs_params(dev, ABS_PRESSURE, 0, coord.pen_pressure, 0, 0);
+	input_set_abs_params(dev, ABS_TILT_X, 0, coord.tilt_x, 0, 0);
+	input_set_abs_params(dev, ABS_TILT_Y, 0, coord.tilt_y, 0, 0);
 
-		input_set_abs_params(dev, ABS_X, 0, coord.x, 0, 0);
-		input_set_abs_params(dev, ABS_Y, 0, coord.y, 0, 0);
-		input_set_abs_params(dev, ABS_PRESSURE, 0, coord.pen_pressure, 0, 0);
-		if (coord.tilt_x && coord.tilt_y) {
-			input_set_abs_params(dev, ABS_TILT_X, 0, coord.tilt_x, 0, 0);
-			input_set_abs_params(dev, ABS_TILT_Y, 0, coord.tilt_y, 0, 0);
-		}
-	}
-
-	/* Touch enabled? */
 	error = w8001_command(w8001, W8001_CMD_TOUCHQUERY, true);
-
-	/*
-	 * Some non-touch devices may reply to the touch query. But their
-	 * second byte is empty, which indicates touch is not supported.
-	 */
-	if (!error && w8001->response[1]) {
+	if (!error) {
 		struct w8001_touch_query touch;
 
 		parse_touchquery(w8001->response, &touch);
-
-		input_set_abs_params(dev, ABS_X, 0, touch.x, 0, 0);
-		input_set_abs_params(dev, ABS_Y, 0, touch.y, 0, 0);
-		__set_bit(BTN_TOOL_FINGER, dev->keybit);
 
 		switch (touch.sensor_id) {
 		case 0:
@@ -398,6 +375,10 @@ static int w8001_connect(struct serio *serio, struct serio_driver *drv)
 
 	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
 	__set_bit(BTN_TOUCH, input_dev->keybit);
+	__set_bit(BTN_TOOL_PEN, input_dev->keybit);
+	__set_bit(BTN_TOOL_RUBBER, input_dev->keybit);
+	__set_bit(BTN_STYLUS, input_dev->keybit);
+	__set_bit(BTN_STYLUS2, input_dev->keybit);
 
 	serio_set_drvdata(serio, w8001);
 	err = serio_open(serio, drv);
