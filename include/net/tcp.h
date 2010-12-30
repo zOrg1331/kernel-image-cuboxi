@@ -44,6 +44,13 @@
 #include <net/dst.h>
 
 #include <linux/seq_file.h>
+#include <bc/net.h>
+
+#define TCP_PAGE(sk)	(sk->sk_sndmsg_page)
+#define TCP_OFF(sk)	(sk->sk_sndmsg_off)
+
+#define TW_WSCALE_MASK		0x0f
+#define TW_WSCALE_SPEC		0x10
 
 extern struct inet_hashinfo tcp_hashinfo;
 
@@ -222,7 +229,9 @@ extern int sysctl_tcp_mem[3];
 extern int sysctl_tcp_wmem[3];
 extern int sysctl_tcp_rmem[3];
 extern int sysctl_tcp_app_win;
+#ifndef sysctl_tcp_adv_win_scale
 extern int sysctl_tcp_adv_win_scale;
+#endif
 extern int sysctl_tcp_tw_reuse;
 extern int sysctl_tcp_frto;
 extern int sysctl_tcp_frto_response;
@@ -237,6 +246,10 @@ extern int sysctl_tcp_base_mss;
 extern int sysctl_tcp_workaround_signed_windows;
 extern int sysctl_tcp_slow_start_after_idle;
 extern int sysctl_tcp_max_ssthresh;
+extern int sysctl_tcp_use_sg;
+extern int sysctl_tcp_max_tw_kmem_fraction;
+extern int sysctl_tcp_max_tw_buckets_ub;
+
 
 extern atomic_t tcp_memory_allocated;
 extern struct percpu_counter tcp_sockets_allocated;
@@ -592,7 +605,11 @@ extern u32	__tcp_select_window(struct sock *sk);
  * to use only the low 32-bits of jiffies and hide the ugly
  * casts with the following macro.
  */
+#ifdef CONFIG_VE
+#define tcp_time_stamp		((__u32)(jiffies + get_exec_env()->jiffies_fixup))
+#else
 #define tcp_time_stamp		((__u32)(jiffies))
+#endif
 
 /* This is what the send packet queuing engine uses to pass
  * TCP per-packet control information to the transmission
@@ -1031,6 +1048,14 @@ static inline int keepalive_probes(const struct tcp_sock *tp)
 	return tp->keepalive_probes ? : sysctl_tcp_keepalive_probes;
 }
 
+static inline u32 keepalive_time_elapsed(const struct tcp_sock *tp)
+{
+	const struct inet_connection_sock *icsk = &tp->inet_conn;
+
+	return min_t(u32, tcp_time_stamp - icsk->icsk_ack.lrcvtime,
+			  tcp_time_stamp - tp->rcv_tstamp);
+}
+
 static inline int tcp_fin_time(const struct sock *sk)
 {
 	int fin_timeout = tcp_sk(sk)->linger2 ? : sysctl_tcp_fin_timeout;
@@ -1263,13 +1288,19 @@ static inline struct sk_buff *tcp_write_queue_prev(struct sock *sk, struct sk_bu
  * TCP connection after "boundary" unsucessful, exponentially backed-off
  * retransmissions with an initial RTO of TCP_RTO_MIN.
  */
-static inline bool retransmits_timed_out(const struct sock *sk,
+static inline bool retransmits_timed_out(struct sock *sk,
 					 unsigned int boundary)
 {
 	unsigned int timeout, linear_backoff_thresh;
+	unsigned int start_ts;
 
 	if (!inet_csk(sk)->icsk_retransmits)
 		return false;
+
+	if (unlikely(!tcp_sk(sk)->retrans_stamp))
+		start_ts = TCP_SKB_CB(tcp_write_queue_head(sk))->when;
+	else
+		start_ts = tcp_sk(sk)->retrans_stamp;
 
 	linear_backoff_thresh = ilog2(TCP_RTO_MAX/TCP_RTO_MIN);
 
@@ -1279,7 +1310,7 @@ static inline bool retransmits_timed_out(const struct sock *sk,
 		timeout = ((2 << linear_backoff_thresh) - 1) * TCP_RTO_MIN +
 			  (boundary - linear_backoff_thresh) * TCP_RTO_MAX;
 
-	return (tcp_time_stamp - tcp_sk(sk)->retrans_stamp) >= timeout;
+	return (tcp_time_stamp - start_ts) >= timeout;
 }
 
 static inline struct sk_buff *tcp_send_head(struct sock *sk)

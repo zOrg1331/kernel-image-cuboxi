@@ -147,6 +147,7 @@ static void kobject_init_internal(struct kobject *kobj)
 	if (!kobj)
 		return;
 	kref_init(&kobj->kref);
+	INIT_LIST_HEAD(&kobj->env_head);
 	INIT_LIST_HEAD(&kobj->entry);
 	kobj->state_in_sysfs = 0;
 	kobj->state_add_uevent_sent = 0;
@@ -700,7 +701,7 @@ static ssize_t kobj_attr_store(struct kobject *kobj, struct attribute *attr,
 	return ret;
 }
 
-struct sysfs_ops kobj_sysfs_ops = {
+const struct sysfs_ops kobj_sysfs_ops = {
 	.show	= kobj_attr_show,
 	.store	= kobj_attr_store,
 };

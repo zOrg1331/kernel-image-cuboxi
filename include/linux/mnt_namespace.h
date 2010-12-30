@@ -36,5 +36,7 @@ extern const struct seq_operations mounts_op;
 extern const struct seq_operations mountinfo_op;
 extern const struct seq_operations mountstats_op;
 
+extern struct rw_semaphore namespace_sem;
+
 #endif
 #endif

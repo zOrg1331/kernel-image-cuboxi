@@ -30,6 +30,7 @@
 #include <linux/syscalls.h>
 #include <linux/uio.h>
 #include <linux/security.h>
+#include <linux/virtinfo.h>
 
 /*
  * Attempt to steal a page from a pipe buffer. This should perhaps go into
@@ -100,6 +101,7 @@ static int page_cache_pipe_buf_confirm(struct pipe_inode_info *pipe,
 	int err;
 
 	if (!PageUptodate(page)) {
+		virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_PREPARE, NULL);
 		lock_page(page);
 
 		/*
@@ -370,12 +372,17 @@ __generic_file_splice_read(struct file *in, loff_t *ppos,
 			 * for an in-flight io page
 			 */
 			if (flags & SPLICE_F_NONBLOCK) {
-				if (!trylock_page(page)) {
+				if ((virtinfo_notifier_call(VITYPE_IO,
+						VIRTINFO_IO_CONGESTION, NULL) &
+							NOTIFY_FAIL) ||
+						!trylock_page(page)) {
 					error = -EAGAIN;
 					break;
 				}
-			} else
+			} else {
+				virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_PREPARE, NULL);
 				lock_page(page);
+			}
 
 			/*
 			 * Page was truncated, or invalidated by the
@@ -1263,6 +1270,7 @@ long do_splice_direct(struct file *in, loff_t *ppos, struct file *out,
 
 	return ret;
 }
+EXPORT_SYMBOL(do_splice_direct);
 
 static int splice_pipe_to_pipe(struct pipe_inode_info *ipipe,
 			       struct pipe_inode_info *opipe,
