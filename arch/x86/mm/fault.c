@@ -17,6 +17,8 @@
 #include <asm/pgalloc.h>		/* pgd_*(), ...			*/
 #include <asm/kmemcheck.h>		/* kmemcheck_*(), ...		*/
 
+#include <bc/oom_kill.h>
+
 /*
  * Page fault error code bits:
  *
@@ -805,7 +807,7 @@ out_of_memory(struct pt_regs *regs, unsigned long error_code,
 	 */
 	up_read(&current->mm->mmap_sem);
 
-	pagefault_out_of_memory();
+	out_of_memory_in_ub(get_exec_ub(), 0);
 }
 
 static void

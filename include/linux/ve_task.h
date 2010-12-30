@@ -50,18 +50,10 @@ extern struct ve_struct ve0;
 
 #define get_exec_env()	(current->ve_task_info.exec_env)
 #define set_exec_env(ve)	({		\
-		struct ve_task_info *vi;	\
-		struct ve_struct *old, *new;	\
-						\
-		vi = &current->ve_task_info;	\
-		old = vi->exec_env;		\
-		new = ve;			\
-		if (unlikely(new == NULL)) {	\
-			printk("%s: NULL exec env (%s)\n", __func__, #ve);\
-			new = get_ve0();	\
-		}				\
-		vi->exec_env = new;		\
-		old;				\
+		struct ve_struct *__old;	\
+		__old = current->ve_task_info.exec_env;	\
+		current->ve_task_info.exec_env = ve;	\
+		__old;				\
 	})
 #else
 #define get_ve0()		(NULL)

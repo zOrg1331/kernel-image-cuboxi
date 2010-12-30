@@ -1134,6 +1134,8 @@ extern void send_sigio(struct fown_struct *fown, int fd, int band);
 extern int do_sync_mapping_range(struct address_space *mapping, loff_t offset,
 			loff_t endbyte, unsigned int flags);
 
+extern void generic_set_file_flags_unlocked(struct file*, unsigned int arg);
+extern int generic_set_file_flags(struct file*, unsigned int arg);
 #ifdef CONFIG_FILE_LOCKING
 extern int fcntl_getlk(struct file *, struct flock __user *);
 extern int fcntl_setlk(unsigned int, struct file *, unsigned int,
@@ -1540,10 +1542,11 @@ struct file_operations {
 	int (*lock) (struct file *, int, struct file_lock *);
 	ssize_t (*sendpage) (struct file *, struct page *, int, size_t, loff_t *, int);
 	unsigned long (*get_unmapped_area)(struct file *, unsigned long, unsigned long, unsigned long, unsigned long);
-	int (*check_flags)(int);
+	int (*set_flags)(struct file *, int);
 	int (*flock) (struct file *, int, struct file_lock *);
 	ssize_t (*splice_write)(struct pipe_inode_info *, struct file *, loff_t *, size_t, unsigned int);
 	ssize_t (*splice_read)(struct file *, loff_t *, struct pipe_inode_info *, size_t, unsigned int);
+	int (*fadvise)(struct file* file, loff_t offset, loff_t len, int advice);
 	int (*setlease)(struct file *, long, struct file_lock **);
 	struct file * (*get_host)(struct file *);
 };

@@ -367,14 +367,17 @@ static inline void vzquota_cur_qmblk_reset(void)
  */
 int vzquota_get_super(struct super_block *sb)
 {
-	if (sb->dq_op != &vz_quota_operations) {
+	if (!IS_VZ_QUOTA(sb)) {
 		down(&sb->s_dquot.dqonoff_sem);
 		if (sb->s_dquot.flags & (DQUOT_USR_ENABLED|DQUOT_GRP_ENABLED)) {
 			up(&sb->s_dquot.dqonoff_sem);
 			return -EEXIST;
 		}
 		sb->s_dquot.dq_op_orig = sb->dq_op;
-		sb->dq_op = &vz_quota_operations;
+		if (sb->s_dquot.dq_op_orig->reserve_space)
+			sb->dq_op = &vz_quota_operations_rsv;
+		else
+			sb->dq_op = &vz_quota_operations;
 		/* XXX this may race with sys_quotactl */
 #ifdef CONFIG_VZ_QUOTA_UGID
 		sb->s_dquot.qcop_orig = sb->s_qcop;
@@ -482,7 +485,7 @@ int vzquota_get_super(struct super_block *sb)
 
 	mutex_lock(&sb->s_dquot.dqonoff_mutex);
 	err = -EEXIST;
-	if (sb_any_quota_loaded(sb) && sb->dq_op != &vz_quota_operations)
+	if (sb_any_quota_loaded(sb) && !IS_VZ_QUOTA(sb))
 		goto out_up;
 
 	/*
@@ -496,10 +499,12 @@ int vzquota_get_super(struct super_block *sb)
 		__VZ_QUOTA_NOQUOTA(sb) = qnew;
 	}
 
-	if (sb->dq_op != &vz_quota_operations) {
+	if (!IS_VZ_QUOTA(sb)) {
 		sb->s_dquot.dq_op_orig = sb->dq_op;
-		sb->dq_op = &vz_quota_operations;
-
+		if (sb->s_dquot.dq_op_orig->reserve_space)
+			sb->dq_op = &vz_quota_operations_rsv;
+		else
+			sb->dq_op = &vz_quota_operations;
 #ifdef CONFIG_VZ_QUOTA_UGID
 		sb->s_dquot.qcop_orig = sb->s_qcop;
 		sb->s_qcop = &vz_quotactl_operations;
@@ -1264,7 +1269,7 @@ struct vz_quota_master *vzquota_inode_qmblk(struct inode *inode)
 
 	might_sleep();
 
-	if (inode->i_sb->dq_op != &vz_quota_operations)
+	if (!IS_VZ_QUOTA(inode->i_sb))
 		return NULL;
 #if defined(VZ_QUOTA_UNLOAD)
 #error Make sure qmblk does not disappear

@@ -88,7 +88,7 @@ out:
  * Returns 0 if kobject_uevent() is completed with success or the
  * corresponding error when it fails.
  */
-int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
+int kobject_uevent_env_one(struct kobject *kobj, enum kobject_action action,
 		       char *envp_ext[])
 {
 	struct kobj_uevent_env *env;
@@ -270,6 +270,21 @@ exit:
 	return retval;
 }
 EXPORT_SYMBOL_GPL(kobject_uevent_env);
+
+extern int ve_kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
+			char *envp_ext[]);
+int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
+		       char *envp_ext[])
+{
+	int err, ret = 0;
+
+	ret = kobject_uevent_env_one(kobj, action, envp_ext);
+
+	err = ve_kobject_uevent_env(kobj, action, envp_ext);
+	if (ret && err < 0)
+		ret = err;
+	return ret;
+}
 
 /**
  * kobject_uevent - notify userspace by ending an uevent

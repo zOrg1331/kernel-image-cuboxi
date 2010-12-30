@@ -2047,7 +2047,7 @@ adjudge_to_death:
 				int ubid = 0;
 #ifdef CONFIG_BEANCOUNTERS
 				ubid = sock_has_ubc(sk) ?
-				   top_beancounter(sock_bc(sk)->ub)->ub_uid : 0;
+					   sock_bc(sk)->ub->ub_uid : 0;
 #endif
 				printk(KERN_INFO "TCP: too many of orphaned "
 				       "sockets (%d in CT%d)\n", orphans, ubid);

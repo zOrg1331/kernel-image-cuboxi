@@ -224,7 +224,7 @@ destroy_conntrack(struct nf_conntrack *nfct)
 	pr_debug("destroy_conntrack: returning ct=%p to slab\n", ct);
 	nf_conntrack_free(ct);
 #ifdef CONFIG_VE_IPTABLES
-	(void)set_exec_env(old);
+	(void)set_exec_env(old_ve);
 #endif
 }
 

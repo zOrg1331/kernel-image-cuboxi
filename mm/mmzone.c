@@ -227,10 +227,10 @@ again:
 
 		uncharge_beancounter_fast(src_ub, UB_PHYSPAGES, nr_pages);
 		charge_beancounter_fast(dst_ub, UB_PHYSPAGES, nr_pages, UB_FORCE);
-		ub_percpu_tree_sub(src_ub, mapped_file_pages, file_mapped);
-		ub_percpu_tree_sub(src_ub, anonymous_pages, anon_mapped);
-		ub_percpu_tree_add(dst_ub, mapped_file_pages, file_mapped);
-		ub_percpu_tree_add(dst_ub, anonymous_pages, anon_mapped);
+		ub_percpu_sub(src_ub, mapped_file_pages, file_mapped);
+		ub_percpu_sub(src_ub, anonymous_pages, anon_mapped);
+		ub_percpu_add(dst_ub, mapped_file_pages, file_mapped);
+		ub_percpu_add(dst_ub, anonymous_pages, anon_mapped);
 	}
 	if (restart)
 		goto again;

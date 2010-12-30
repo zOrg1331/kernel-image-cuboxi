@@ -327,6 +327,11 @@ out:
 	return count;
 }
 
+extern ssize_t ve_device_handler(struct device *dev, struct device_attribute *attr,
+			    const char *buf, size_t count);
+static struct device_attribute ve_device_attr =
+	__ATTR(ve_device_add, S_IWUSR, NULL, ve_device_handler);
+
 static struct device_attribute uevent_attr =
 	__ATTR(uevent, S_IRUGO | S_IWUSR, show_uevent, store_uevent);
 
@@ -978,6 +983,9 @@ int device_add(struct device *dev)
 	if (platform_notify)
 		platform_notify(dev);
 
+	error = device_create_file(dev, &ve_device_attr);
+	if (error)
+		goto veError;
 	error = device_create_file(dev, &uevent_attr);
 	if (error)
 		goto attrError;
@@ -1052,6 +1060,8 @@ done:
  ueventattrError:
 	device_remove_file(dev, &uevent_attr);
  attrError:
+	device_remove_file(dev, &ve_device_attr);
+ veError:
 	kobject_uevent(&dev->kobj, KOBJ_REMOVE);
 	kobject_del(&dev->kobj);
  Error:
@@ -1122,6 +1132,7 @@ void put_device(struct device *dev)
  * NOTE: this should be called manually _iff_ device_add() was
  * also called manually.
  */
+extern void ve_device_del(struct device *dev, struct ve_struct *ve);
 void device_del(struct device *dev)
 {
 	struct device *parent = dev->parent;
@@ -1156,6 +1167,7 @@ void device_del(struct device *dev)
 		mutex_unlock(&dev->class->p->class_mutex);
 	}
 	device_remove_file(dev, &uevent_attr);
+	device_remove_file(dev, &ve_device_attr);
 	device_remove_attrs(dev);
 	bus_remove_device(dev);
 
@@ -1171,6 +1183,7 @@ void device_del(struct device *dev)
 	 */
 	if (platform_notify_remove)
 		platform_notify_remove(dev);
+	ve_device_del(dev, NULL);
 	kobject_uevent(&dev->kobj, KOBJ_REMOVE);
 	cleanup_device_parent(dev);
 	kobject_del(&dev->kobj);

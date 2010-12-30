@@ -309,8 +309,19 @@ static void sysfs_d_iput(struct dentry * dentry, struct inode * inode)
 	iput(inode);
 }
 
+static int sysfs_d_revalidate(struct dentry * d, struct nameidata *nd)
+{
+	struct sysfs_dirent *sd = d->d_fsdata;
+	if (sd->s_flags & SYSFS_FLAG_REMOVED) {
+		d_drop(d);
+		return 0;
+	}
+	return 1;
+}
+
 static const struct dentry_operations sysfs_dentry_ops = {
 	.d_iput		= sysfs_d_iput,
+	.d_revalidate	= sysfs_d_revalidate,
 };
 
 struct sysfs_dirent *sysfs_new_dirent(const char *name, umode_t mode, int type)

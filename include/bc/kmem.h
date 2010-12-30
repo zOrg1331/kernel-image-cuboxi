@@ -46,11 +46,6 @@ struct kmem_cache;
 UB_DECLARE_FUNC(struct user_beancounter *, vmalloc_ub(void *obj))
 UB_DECLARE_FUNC(struct user_beancounter *, mem_ub(void *obj))
 
-UB_DECLARE_FUNC(int, ub_kmemsize_charge(struct user_beancounter *ub,
-		unsigned long size, enum ub_severity strict))
-UB_DECLARE_VOID_FUNC(ub_kmemsize_uncharge(struct user_beancounter *ub,
-		unsigned long size))
-
 UB_DECLARE_FUNC(int, ub_page_charge(struct page *page, int order,
 			struct user_beancounter *ub, enum ub_severity strict))
 UB_DECLARE_VOID_FUNC(ub_page_uncharge(struct page *page, int order))

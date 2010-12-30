@@ -267,7 +267,7 @@ void free_pid(struct pid *pid)
 			hlist_del_rcu(&upid->pid_chain);
 	}
 	spin_unlock(&pidmap_lock);
-	ub_kmemsize_uncharge(pid->ub,
+	uncharge_beancounter_fast(pid->ub, UB_KMEMSIZE,
 		kmem_cache_objuse(pid->numbers[pid->level].ns->pid_cachep));
 	local_irq_restore(flags);
 
@@ -314,7 +314,8 @@ struct pid *alloc_pid(struct pid_namespace *ns, pid_t vpid)
 #ifdef CONFIG_BEANCOUNTERS
 	ub = get_exec_ub();
 	local_irq_disable();
-	if (ub_kmemsize_charge(ub, kmem_cache_objuse(ns->pid_cachep), UB_HARD))
+	if (charge_beancounter_fast(ub, UB_KMEMSIZE,
+				kmem_cache_objuse(ns->pid_cachep), UB_HARD))
 		goto out_enable;
 	pid->ub = get_beancounter(ub);
 	spin_lock(&pidmap_lock);

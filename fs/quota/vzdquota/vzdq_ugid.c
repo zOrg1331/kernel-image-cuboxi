@@ -271,6 +271,17 @@ struct dquot_operations vz_quota_operations2 = {
 	.drop		= vzquota_drop2,
 	.alloc_space	= vzquota_alloc_space2,
 	.alloc_inode	= vzquota_alloc_inode2,
+	.free_space	= vzquota_free_space2,
+	.free_inode	= vzquota_free_inode2,
+	.transfer	= vzquota_transfer2,
+};
+
+
+struct dquot_operations vz_quota_operations2_rsv = {
+	.initialize	= vzquota_initialize2,
+	.drop		= vzquota_drop2,
+	.alloc_space	= vzquota_alloc_space2,
+	.alloc_inode	= vzquota_alloc_inode2,
 	.reserve_space  = vzquota_reserve_space2,
 	.claim_space    = vzquota_claim_reserved_space2,
 	.release_rsv    = vzquota_release_reserved_space2,
@@ -348,6 +359,7 @@ static int vz_quota_on(struct super_block *sb, int type,
 		int format_id, char *path, int remount)
 {
 	struct vz_quota_master *qmblk;
+	struct super_block *real_sb;
 	int mask2;
 	int err;
 
@@ -365,7 +377,18 @@ static int vz_quota_on(struct super_block *sb, int type,
 
 	mutex_lock(&vz_quota_mutex);
 	mask2 = 0;
-	sb->dq_op = &vz_quota_operations2;
+
+	err = -EIO;
+	if (!sb->s_op->get_quota_root)
+		goto out_sem;
+	real_sb = sb->s_op->get_quota_root(sb)->i_sb;
+	if (!IS_VZ_QUOTA(real_sb))
+		goto out_sem;
+	if (real_sb->s_dquot.dq_op_orig->reserve_space)
+		sb->dq_op = &vz_quota_operations2_rsv;
+	else
+		sb->dq_op = &vz_quota_operations2;
+
 	sb->s_qcop = &vz_quotactl_operations;
 	if (type == USRQUOTA)
 		mask2 = VZDQ_USRQUOTA;
@@ -1321,7 +1344,7 @@ static void ugid_quota_on_sb(struct super_block *sb)
 		return;
 
 	real_sb = sb->s_op->get_quota_root(sb)->i_sb;
-	if (real_sb->dq_op != &vz_quota_operations)
+	if (!IS_VZ_QUOTA(real_sb))
 		return;
 
 	sb->dq_op = &vz_quota_operations2;

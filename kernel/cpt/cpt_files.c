@@ -109,7 +109,7 @@ int cpt_verify_overmount(char *path, struct dentry *d, struct vfsmount *mnt,
 
 int cpt_need_delayfs(struct vfsmount *mnt)
 {
-	if (top_beancounter(slab_ub(mnt)) != top_beancounter(get_exec_ub()))
+	if (slab_ub(mnt) != get_exec_ub())
 		return 0;
 	if (mnt->mnt_sb->s_magic == FSMAGIC_NFS)
 		return 1;
@@ -1984,7 +1984,7 @@ static int dump_vfsmount(struct vfsmount *mnt, struct cpt_context *ctx)
 	v.cpt_content = CPT_CONTENT_ARRAY;
 
 	v.cpt_mntflags = mnt->mnt_flags;
-	if (top_beancounter(slab_ub(mnt)) != top_beancounter(get_exec_ub())) {
+	if (slab_ub(mnt) != get_exec_ub()) {
 		v.cpt_mntflags |= CPT_MNT_EXT;
 	} else if (cpt_need_delayfs(mnt)) {
 		v.cpt_mntflags |= CPT_MNT_DELAYFS;

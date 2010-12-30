@@ -204,7 +204,7 @@ static int bc_ioacct_notify(struct vnotifier_block *self,
 	if (event != VIRTINFO_VMSTAT)
 		return old_ret;
 
-	ub = top_beancounter(get_exec_ub());
+	ub = get_exec_ub();
 	if (ub == get_ub0())
 		return old_ret;
 

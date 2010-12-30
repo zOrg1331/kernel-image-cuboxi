@@ -21,7 +21,6 @@
 
 #include <bc/beancounter.h>
 #include <bc/kmem.h>
-#include <bc/hash.h>
 #include <bc/proc.h>
 
 /*
@@ -220,57 +219,6 @@ late_initcall(bc_kmem_debug_init);
 #define dec_pages_charged(ub, cache)		do { } while (0)
 #endif
 
-#define UB_KMEM_QUANT	(PAGE_SIZE * 4)
-
-/* called with IRQ disabled */
-int ub_kmemsize_charge(struct user_beancounter *ub,
-		unsigned long size,
-		enum ub_severity strict)
-{
-	struct task_beancounter *tbc;
-
-	tbc = &current->task_bc;
-	if (ub != tbc->task_ub || size > UB_KMEM_QUANT)
-		goto just_charge;
-	if (tbc->kmem_precharged >= size) {
-		tbc->kmem_precharged -= size;
-		return 0;
-	}
-
-	if (charge_beancounter(ub, UB_KMEMSIZE, UB_KMEM_QUANT, UB_HARD) == 0) {
-		tbc->kmem_precharged += UB_KMEM_QUANT - size;
-		return 0;
-	}
-
-just_charge:
-	return charge_beancounter(ub, UB_KMEMSIZE, size, strict);
-}
-
-/* called with IRQ disabled */
-void ub_kmemsize_uncharge(struct user_beancounter *ub,
-		unsigned long size)
-{
-	struct task_beancounter *tbc;
-
-	if (size > UB_MAXVALUE) {
-		printk("ub_kmemsize_uncharge: size %lu\n", size);
-		dump_stack();
-	}
-
-	tbc = &current->task_bc;
-	if (ub != tbc->task_ub)
-		goto just_uncharge;
-
-	tbc->kmem_precharged += size;
-	if (tbc->kmem_precharged < UB_KMEM_QUANT * 2)
-		return;
-	size = tbc->kmem_precharged - UB_KMEM_QUANT;
-	tbc->kmem_precharged -= size;
-
-just_uncharge:
-	uncharge_beancounter(ub, UB_KMEMSIZE, size);
-}
-
 /* called with IRQ disabled */
 int ub_slab_charge(struct kmem_cache *cachep, void *objp, gfp_t flags)
 {
@@ -282,12 +230,12 @@ int ub_slab_charge(struct kmem_cache *cachep, void *objp, gfp_t flags)
 		return 0;
 
 	size = CHARGE_SIZE(kmem_cache_objuse(cachep));
-	if (ub_kmemsize_charge(ub, size,
+	if (charge_beancounter_fast(ub, UB_KMEMSIZE, size,
 				(flags & __GFP_SOFT_UBC ? UB_SOFT : UB_HARD)))
 		goto out_err;
 
 	if (inc_slab_charged(ub, cachep) < 0) {
-		ub_kmemsize_uncharge(ub, size);
+		uncharge_beancounter_fast(ub, UB_KMEMSIZE, size);
 		goto out_err;
 	}
 	*ub_slab_ptr(cachep, objp) = ub;
@@ -310,7 +258,7 @@ void ub_slab_uncharge(struct kmem_cache *cachep, void *objp)
 
 	dec_slab_charged(*ub_ref, cachep);
 	size = CHARGE_SIZE(kmem_cache_objuse(cachep));
-	ub_kmemsize_uncharge(*ub_ref, size);
+	uncharge_beancounter_fast(*ub_ref, UB_KMEMSIZE, size);
 	put_beancounter(*ub_ref);
 	*ub_ref = NULL;
 }
@@ -325,7 +273,7 @@ int ub_page_charge(struct page *page, int order,
 	unsigned long flags;
 
 	local_irq_save(flags);
-	if (ub_kmemsize_charge(ub, CHARGE_ORDER(order), strict))
+	if (charge_beancounter_fast(ub, UB_KMEMSIZE, CHARGE_ORDER(order), strict))
 		goto err;
 
 	inc_pages_charged(ub, order);
@@ -353,7 +301,7 @@ void ub_page_uncharge(struct page *page, int order)
 	BUG_ON(ub->ub_magic != UB_MAGIC);
 	dec_pages_charged(ub, order);
 	local_irq_save(flags);
-	ub_kmemsize_uncharge(ub, CHARGE_ORDER(order));
+	uncharge_beancounter_fast(ub, UB_KMEMSIZE, CHARGE_ORDER(order));
 	local_irq_restore(flags);
 	put_beancounter(ub);
 	gang_del_kernel_page(page, order);

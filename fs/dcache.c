@@ -35,7 +35,6 @@
 #include <linux/hardirq.h>
 #include <bc/beancounter.h>
 #include <bc/dcache.h>
-#include <bc/hash.h>
 #include "internal.h"
 
 int sysctl_vfs_cache_pressure __read_mostly = 100;
@@ -977,7 +976,7 @@ struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 	if (parent)
 		ub = parent->d_ub;
 	else
-		ub = top_beancounter(get_exec_ub());
+		ub = get_exec_ub();
 
 	if (ub_dcache_charge(ub, name->len))
 		return NULL;

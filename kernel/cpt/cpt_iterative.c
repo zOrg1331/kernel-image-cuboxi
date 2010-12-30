@@ -139,10 +139,10 @@ retry:
 
 			pte_unmap_unlock(pte, ptl);
 			err = handle_mm_fault(mm, vma, addr, 0);
-			if (err == VM_FAULT_SIGBUS)
-				return -EFAULT;
-			if (err == VM_FAULT_OOM)
+			if (err & VM_FAULT_OOM)
 				return -ENOMEM;
+			if (err & VM_FAULT_ERROR)
+				return -EFAULT;
 			err = 0;
 			pte = pte_offset_map_lock(vma->vm_mm, pmd, addr, &ptl);
 			ptent = *pte;

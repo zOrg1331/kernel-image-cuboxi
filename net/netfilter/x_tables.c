@@ -71,10 +71,7 @@ static const char *const xt_prefix[NFPROTO_NUMPROTO] = {
 #ifdef CONFIG_BEANCOUNTERS
 static inline struct user_beancounter *xt_table_ub(struct xt_table_info *info)
 {
-	struct user_beancounter *ub;
-
-	for (ub = mem_ub(info); ub->parent != NULL; ub = ub->parent);
-	return ub;
+	return mem_ub(info);
 }
 
 static void uncharge_xtables(struct xt_table_info *info, unsigned long size)

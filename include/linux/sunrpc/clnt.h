@@ -140,6 +140,7 @@ int		rpcb_v4_register(const u32 program, const u32 version,
 				 const char *netid);
 int		rpcb_getport_sync(struct sockaddr_in *, u32, u32, int);
 void		rpcb_getport_async(struct rpc_task *);
+void		rpcb_break_local(void);
 
 void		rpc_call_start(struct rpc_task *);
 int		rpc_call_async(struct rpc_clnt *clnt,

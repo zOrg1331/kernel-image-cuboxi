@@ -13,9 +13,5 @@ obj-$(CONFIG_VE_CALLS) += vzmon.o
 
 vzmon-objs = vecalls.o
 
-ifeq ($(CONFIG_VZ_PCI), y)
-vzmon-objs += vzpci.o
-endif
-
 obj-$(CONFIG_VZ_DEV) += vzdev.o
 obj-$(CONFIG_VZ_EVENT) += vzevent.o

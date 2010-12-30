@@ -24,8 +24,6 @@ cpt_object_t *cpt_add_ubc(struct user_beancounter *bc, struct cpt_context *ctx)
 	if (obj != NULL) {
 		if (obj->o_count == 1)
 			get_beancounter(bc);
-		if (bc->parent != NULL && obj->o_parent == NULL)
-			obj->o_parent = cpt_add_ubc(bc->parent, ctx);
 	}
 	return obj;
 }
@@ -36,9 +34,7 @@ __u64 cpt_lookup_ubc(struct user_beancounter *bc, struct cpt_context *ctx)
 
 	obj = lookup_cpt_object(CPT_OBJ_UBC, bc, ctx);
 	if (obj == NULL) {
-		char buf[48];
-		print_ub_uid(bc, buf, sizeof(buf));
-		eprintk("CPT: unknown ub %s (%p)\n", buf, bc);
+		eprintk("CPT: unknown ub %u (%p)\n", bc->ub_uid, bc);
 		dump_stack();
 		return CPT_NULL;
 	}

@@ -107,10 +107,4 @@ config VZ_EVENT
  	  networking code does. By now just the notifications of
  	  the VE essensial status changes are being sent.
 
-config VZ_PCI
-	bool "PCI device moving"
-	depends on VE && SYSFS && PCI
-	default y
-	help
-	  This option provide the mechanism for moving pci devices in VE
 endmenu

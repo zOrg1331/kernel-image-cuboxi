@@ -367,7 +367,7 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 		 */
 #ifdef CONFIG_BEANCOUNTERS
 		if (sock_has_ubc(sk))
-			ubid = top_beancounter(sock_bc(sk)->ub)->ub_uid;
+			ubid = sock_bc(sk)->ub->ub_uid;
 #endif
 		LIMIT_NETDEBUG(KERN_INFO "TCP: time wait bucket table overflow (CT%d)\n", ubid);
 	}

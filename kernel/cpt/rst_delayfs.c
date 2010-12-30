@@ -170,7 +170,7 @@ static int delay_mmap(struct file *file, struct vm_area_struct *vma)
 static void delay_switch_mm(struct mm_struct *mm, struct super_block *sb)
 {
 	struct vm_area_struct *vma;
-	struct file *fake, *real;
+	struct file *fake, *real, *exe;
 
 	down_write(&mm->mmap_sem);
 	for ( vma = mm->mmap ; vma ; vma = vma->vm_next ) {
@@ -180,6 +180,15 @@ static void delay_switch_mm(struct mm_struct *mm, struct super_block *sb)
 		real = vma->vm_file->f_dentry->d_fsdata;
 		if (real)
 			delay_remmap(vma, fake, real);
+	}
+	exe = mm->exe_file;
+	if (exe && exe->f_vfsmnt->mnt_sb == sb) {
+		real = exe->f_dentry->d_fsdata;
+		if (real && !IS_ERR(real)) {
+			get_file(real);
+			fput(exe);
+			mm->exe_file = real;
+		}
 	}
 	up_write(&mm->mmap_sem);
 }

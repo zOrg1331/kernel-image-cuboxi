@@ -84,7 +84,7 @@ static int tcp_out_of_resources(struct sock *sk, int do_reset)
 			int ubid = 0;
 #ifdef CONFIG_BEANCOUNTERS
 			ubid = sock_has_ubc(sk) ?
-				top_beancounter(sock_bc(sk)->ub)->ub_uid : 0;
+					sock_bc(sk)->ub->ub_uid : 0;
 #endif
 			printk(KERN_INFO "Orphaned socket dropped "
 			       "(%d,%d in CT%d)\n", orph, orphans, ubid);

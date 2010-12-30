@@ -238,7 +238,7 @@ int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *u
 
 static int meminfo_proc_show(struct seq_file *m, void *v)
 {
-	return meminfo_proc_show_ub(m, v, top_beancounter(current->mm->mm_ub));
+	return meminfo_proc_show_ub(m, v, current->mm->mm_ub);
 }
 
 static int meminfo_proc_open(struct inode *inode, struct file *file)

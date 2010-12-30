@@ -545,6 +545,7 @@ extern int vzquota_hash_size;
  */
 extern struct quotactl_ops vz_quotactl_operations;
 extern struct dquot_operations vz_quota_operations2;
+extern struct dquot_operations vz_quota_operations2_rsv;
 extern struct quota_format_type vz_quota_empty_v2_format;
 
 #define QUGID_TREE(qmblk, type)	(((type) == USRQUOTA) ?		\
@@ -575,6 +576,10 @@ long do_vzquotaugidctl(int cmd, unsigned int quota_id,
  * Other VZ quota parts
  */
 extern struct dquot_operations vz_quota_operations;
+extern struct dquot_operations vz_quota_operations_rsv;
+
+#define IS_VZ_QUOTA(sb) ((sb)->dq_op == &vz_quota_operations ||		\
+				(sb)->dq_op == &vz_quota_operations_rsv)
 
 long do_vzquotactl(int cmd, unsigned int quota_id,
 		struct vz_quota_stat __user *qstat, const char __user *ve_root,

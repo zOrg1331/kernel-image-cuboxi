@@ -644,7 +644,7 @@ void vzquota_inode_off(struct inode * inode)
 	/* The call is made through virtinfo, it can be an inode
 	 * not controlled by vzquota.
 	 */
-	if (inode->i_sb->dq_op != &vz_quota_operations)
+	if (!IS_VZ_QUOTA(inode->i_sb))
 		return;
 
 	qmblk = vzquota_inode_data(inode, &data);
@@ -836,6 +836,21 @@ extern void vzquota_shutdown_super(struct super_block *sb);
  * Structure of superblock diskquota operations.
  */
 struct dquot_operations vz_quota_operations = {
+	.initialize	= vzquota_initialize,
+	.drop		= vzquota_drop,
+	.alloc_space	= vzquota_alloc_space,
+	.alloc_inode	= vzquota_alloc_inode,
+	.free_space     = vzquota_release_space,
+	.free_inode	= vzquota_free_inode,
+	.transfer	= vzquota_transfer,
+	.rename		= vzquota_rename,
+
+	.swap_inode	= vzquota_swap_inode,
+	.shutdown	= vzquota_shutdown_super,
+	.orphan_cookie	= vzquota_qmblk_id,
+};
+
+struct dquot_operations vz_quota_operations_rsv = {
 	.initialize	= vzquota_initialize,
 	.drop		= vzquota_drop,
 	.alloc_space	= vzquota_alloc_space,

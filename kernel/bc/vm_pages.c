@@ -190,7 +190,6 @@ void __ub_unused_privvm_dec(struct mm_struct *mm, long size)
 	if (ub == NULL)
 		return;
 
-	ub = top_beancounter(ub);
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	__unused_privvm_dec_locked(ub, size);
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
@@ -213,7 +212,6 @@ void ub_unused_privvm_add(struct mm_struct *mm,
 	if (ub == NULL || !VM_UB_PRIVATE(vma->vm_flags, vma->vm_file))
 		return;
 
-	ub = top_beancounter(ub);
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	ub->ub_unused_privvmpages += size;
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
@@ -241,7 +239,6 @@ int ub_protected_charge(struct mm_struct *mm, unsigned long size,
 	if (flags & VM_WRITE)
 		return PRIVVM_TO_SHARED;
 
-	ub = top_beancounter(ub);
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	if (__charge_privvm_locked(ub, size, UB_SOFT) < 0)
 		goto err;
@@ -256,7 +253,7 @@ err:
 int ub_memory_charge(struct mm_struct *mm, unsigned long size,
 		unsigned vm_flags, struct file *vm_file, int sv)
 {
-	struct user_beancounter *ub, *ubl;
+	struct user_beancounter *ub;
 	unsigned long flags;
 
 	ub = mm->mm_ub;
@@ -274,16 +271,15 @@ int ub_memory_charge(struct mm_struct *mm, unsigned long size,
 			goto out_err;
 	}
 	if (VM_UB_PRIVATE(vm_flags, vm_file)) {
-		ubl = top_beancounter(ub);
-		spin_lock_irqsave(&ubl->ub_lock, flags);
-		if (__charge_privvm_locked(ubl, size, sv))
+		spin_lock_irqsave(&ub->ub_lock, flags);
+		if (__charge_privvm_locked(ub, size, sv))
 			goto out_private;
-		spin_unlock_irqrestore(&ubl->ub_lock, flags);
+		spin_unlock_irqrestore(&ub->ub_lock, flags);
 	}
 	return 0;
 
 out_private:
-	spin_unlock_irqrestore(&ubl->ub_lock, flags);
+	spin_unlock_irqrestore(&ub->ub_lock, flags);
 	if (vm_flags & VM_LOCKED)
 		uncharge_beancounter(ub, UB_LOCKEDPAGES, size);
 out_err:
@@ -305,7 +301,6 @@ void ub_memory_uncharge(struct mm_struct *mm, unsigned long size,
 	if (vm_flags & VM_LOCKED)
 		uncharge_beancounter(ub, UB_LOCKEDPAGES, size);
 	if (VM_UB_PRIVATE(vm_flags, vm_file)) {
-		ub = top_beancounter(ub);
 		spin_lock_irqsave(&ub->ub_lock, flags);
 		__unused_privvm_dec_locked(ub, size);
 		spin_unlock_irqrestore(&ub->ub_lock, flags);
@@ -370,10 +365,8 @@ static inline void do_ub_tmpfs_respages_inc(struct user_beancounter *ub)
 
 void ub_tmpfs_respages_inc(struct shmem_inode_info *shi)
 {
-	struct user_beancounter *ub;
-
-	for (ub = shi->shmi_ub; ub != NULL; ub = ub->parent)
-		do_ub_tmpfs_respages_inc(ub);
+	if (shi->shmi_ub)
+		do_ub_tmpfs_respages_inc(shi->shmi_ub);
 }
 
 static inline void do_ub_tmpfs_respages_sub(struct user_beancounter *ub,
@@ -395,10 +388,8 @@ static inline void do_ub_tmpfs_respages_sub(struct user_beancounter *ub,
 void ub_tmpfs_respages_sub(struct shmem_inode_info *shi,
 		unsigned long size)
 {
-	struct user_beancounter *ub;
-
-	for (ub = shi->shmi_ub; ub != NULL; ub = ub->parent)
-		do_ub_tmpfs_respages_sub(ub, size);
+	if (shi->shmi_ub)
+		do_ub_tmpfs_respages_sub(shi->shmi_ub, size);
 }
 
 int ub_shmpages_charge(struct shmem_inode_info *shi, unsigned long size)
@@ -411,7 +402,6 @@ int ub_shmpages_charge(struct shmem_inode_info *shi, unsigned long size)
 	if (ub == NULL)
 		return 0;
 
-	ub = top_beancounter(ub);
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	ret = __charge_beancounter_locked(ub, UB_SHMPAGES, size, UB_HARD);
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
@@ -427,7 +417,6 @@ void ub_shmpages_uncharge(struct shmem_inode_info *shi, unsigned long size)
 	if (ub == NULL)
 		return;
 
-	ub = top_beancounter(ub);
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	__uncharge_beancounter_locked(ub, UB_SHMPAGES, size);
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
@@ -443,13 +432,14 @@ int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
 
 	while (precharge_beancounter(ub, UB_PHYSPAGES, 1)) {
 		unsigned long progress, flags;
-		int no_swap_left = !ub_resource_excess(ub, UB_SWAPPAGES, UB_SOFT);
+		int no_swap_left;
 
 		if (test_thread_flag(TIF_MEMDIE))
 			return -ENOMEM;
 
 		ub_oom_start();
 
+		no_swap_left = precharge_beancounter(ub, UB_SWAPPAGES, 1) != 0;
 		progress = try_to_free_gang_pages(&ub->gang_set, no_swap_left, gfp_mask);
 		/* FIXME account there progress into throttler */
 		if (progress)
@@ -479,41 +469,21 @@ int ub_check_ram_limits(struct user_beancounter *ub, gfp_t gfp_mask)
 EXPORT_SYMBOL(ub_check_ram_limits);
 
 #ifdef CONFIG_BC_SWAP_ACCOUNTING
-static inline void do_ub_swapentry_inc(struct user_beancounter *ub)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&ub->ub_lock, flags);
-	__charge_beancounter_locked(ub, UB_SWAPPAGES, 1, UB_FORCE);
-	spin_unlock_irqrestore(&ub->ub_lock, flags);
-}
-
 void ub_swapentry_inc(struct swap_info_struct *si, pgoff_t num,
 		struct user_beancounter *ub)
 {
 	si->swap_ubs[num] = get_beancounter(ub);
-	for (; ub != NULL; ub = ub->parent)
-		do_ub_swapentry_inc(ub);
+	charge_beancounter_fast(ub, UB_SWAPPAGES, 1, UB_FORCE);
 }
 EXPORT_SYMBOL(ub_swapentry_inc);
 
-static inline void do_ub_swapentry_dec(struct user_beancounter *ub)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&ub->ub_lock, flags);
-	__uncharge_beancounter_locked(ub, UB_SWAPPAGES, 1);
-	spin_unlock_irqrestore(&ub->ub_lock, flags);
-}
-
 void ub_swapentry_dec(struct swap_info_struct *si, pgoff_t num)
 {
-	struct user_beancounter *ub, *ubp;
+	struct user_beancounter *ub;
 
 	ub = si->swap_ubs[num];
 	si->swap_ubs[num] = NULL;
-	for (ubp = ub; ubp != NULL; ubp = ubp->parent)
-		do_ub_swapentry_dec(ubp);
+	uncharge_beancounter_fast(ub, UB_SWAPPAGES, 1);
 	put_beancounter(ub);
 }
 EXPORT_SYMBOL(ub_swapentry_dec);
@@ -552,7 +522,7 @@ static int vmguar_enough_memory(int old_ret)
 	if (!current->mm)
 		return NOTIFY_DONE;
 
-	ub = top_beancounter(current->mm->mm_ub);
+	ub = current->mm->mm_ub;
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	__ub_update_privvm(ub);
 	if (ub->ub_parms[UB_PRIVVMPAGES].held <=
@@ -593,7 +563,7 @@ static int bc_fill_sysinfo(struct user_beancounter *ub, struct sysinfo *si, int 
 static int bc_fill_meminfo(struct user_beancounter *ub, struct meminfo *mi, int old_ret)
 {
 	int cpu, ret;
-	long dcache;
+	long dcache, kmem;
 
 	ret = bc_fill_sysinfo(ub, mi->si, old_ret);
 	if (!(ret & NOTIFY_STOP_MASK))
@@ -607,6 +577,7 @@ static int bc_fill_meminfo(struct user_beancounter *ub, struct meminfo *mi, int 
 	mi->locked = ub->ub_parms[UB_LOCKEDPAGES].held;
 	mi->shmem = ub->ub_parms[UB_SHMPAGES].held;
 	dcache = ub->ub_parms[UB_DCACHESIZE].held;
+	kmem = ub->ub_parms[UB_KMEMSIZE].held;
 
 	mi->anon_mapped = mi->file_mapped = mi->dirty_pages = 0;
 	for_each_possible_cpu(cpu) {
@@ -616,6 +587,7 @@ static int bc_fill_meminfo(struct user_beancounter *ub, struct meminfo *mi, int 
 		mi->file_mapped += pcpu->mapped_file_pages;
 		mi->dirty_pages	+= pcpu->dirty_pages;
 		dcache		-= pcpu->precharge[UB_DCACHESIZE];
+		kmem		-= pcpu->precharge[UB_KMEMSIZE];
 	}
 
 	mi->anon_mapped = max_t(long, 0, mi->anon_mapped);
@@ -624,7 +596,7 @@ static int bc_fill_meminfo(struct user_beancounter *ub, struct meminfo *mi, int 
 
 	mi->slab_reclaimable = DIV_ROUND_UP(max(0L, dcache), PAGE_SIZE);
 	mi->slab_unreclaimable =
-		DIV_ROUND_UP(ub->ub_parms[UB_KMEMSIZE].held, PAGE_SIZE);
+		DIV_ROUND_UP(max(0L, kmem - dcache), PAGE_SIZE);
 out:
 	return ret;
 }

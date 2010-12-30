@@ -1774,7 +1774,7 @@ static int swap_show_ve(struct seq_file *swap, void *v)
 	int ret;
 
 	si_swapinfo(&si);
-	old_ub = set_exec_ub(top_beancounter(current->mm->mm_ub));
+	old_ub = set_exec_ub(current->mm->mm_ub);
 	ret = virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_SYSINFO, &si);
 	(void)set_exec_ub(old_ub);
 	if (ret & NOTIFY_FAIL)

@@ -76,6 +76,7 @@ struct kobject {
 	unsigned int state_add_uevent_sent:1;
 	unsigned int state_remove_uevent_sent:1;
 	unsigned int uevent_suppress:1;
+	struct list_head	env_head;
 };
 
 extern int kobject_set_name(struct kobject *kobj, const char *name, ...)
@@ -208,6 +209,8 @@ extern struct kobject *firmware_kobj;
 #if defined(CONFIG_HOTPLUG)
 int kobject_uevent(struct kobject *kobj, enum kobject_action action);
 int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
+			char *envp[]);
+int kobject_uevent_env_one(struct kobject *kobj, enum kobject_action action,
 			char *envp[]);
 
 int add_uevent_var(struct kobj_uevent_env *env, const char *format, ...)

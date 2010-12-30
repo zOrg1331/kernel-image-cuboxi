@@ -452,6 +452,8 @@ static void ve_nfs_stop(void *data)
 	}
 	spin_unlock(&sb_lock);
 
+	rpcb_break_local();
+
 	/* Make sure no async RPC task is in progress */
 	up_write(&rpc_async_task_lock);
 
@@ -681,7 +683,9 @@ static void nfs_show_mountd_options(struct seq_file *m, struct nfs_server *nfss,
 
 	if (nfss->mountd_version || showdefaults)
 		seq_printf(m, ",mountvers=%u", nfss->mountd_version);
-	if (nfss->mountd_port || showdefaults)
+	if ((nfss->mountd_port &&
+		nfss->mountd_port != (unsigned short)NFS_UNSPEC_PORT) || 
+		showdefaults)
 		seq_printf(m, ",mountport=%u", nfss->mountd_port);
 
 	nfs_show_mountd_netid(m, nfss, showdefaults);

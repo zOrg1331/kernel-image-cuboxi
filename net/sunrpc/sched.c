@@ -633,6 +633,9 @@ static void __rpc_execute(struct rpc_task *task)
 		 * broken.
 		 */
 		if (task->tk_client->cl_broken) {
+			dprintk("RPC: client 0x%p is broken. Drop task %d "
+				"with EIO.",
+					task->tk_client, task->tk_pid);
 			task->tk_flags |= RPC_TASK_KILLED;
 			rpc_exit(task, -EIO);
 			break;

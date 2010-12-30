@@ -120,7 +120,7 @@ static unsigned long tmpfs_ram_pages(void)
 	unsigned long ub_rampages = ULONG_MAX;
 	struct user_beancounter *ub;
 
-	ub = top_beancounter(current->mm->mm_ub);
+	ub = current->mm->mm_ub;
 	if (ub != get_ub0()) {
 		ub_rampages = ub->ub_parms[UB_PHYSPAGES].limit;
 		if (ub_rampages == UB_MAXVALUE)

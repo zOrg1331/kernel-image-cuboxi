@@ -183,10 +183,11 @@ static int __pid_ns_attach_task(struct pid_namespace *ns,
 	 * CPU detection) new size can very well be smaller than old size.
 	 */
 	if (new_size > old_size) {
-		if (ub_kmemsize_charge(pid->ub, new_size - old_size, UB_HARD) < 0)
+		if (charge_beancounter_fast(pid->ub, UB_KMEMSIZE,
+					new_size - old_size, UB_HARD) < 0)
 			goto out_enable;
 	} else
-		ub_kmemsize_uncharge(pid->ub, old_size - new_size);
+		uncharge_beancounter_fast(pid->ub, UB_KMEMSIZE, old_size - new_size);
 
 	write_lock(&tasklist_lock);
 

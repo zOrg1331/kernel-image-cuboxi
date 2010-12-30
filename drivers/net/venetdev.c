@@ -67,8 +67,7 @@ void ip_entry_unhash(struct ip_entry_struct *entry)
 {
 	list_del(&entry->ve_list);
 	hlist_del(&entry->ip_hash);
-
-	veip_pool_ops->ip_entry_release(entry);
+	kfree(entry);
 }
 
 int veip_put(struct veip_struct *veip)
@@ -81,7 +80,7 @@ int veip_put(struct veip_struct *veip)
 		return 0;
 
 	list_del(&veip->list);
-	kfree(veip);
+	veip_pool_ops->veip_free(veip);
 	return 1;
 }
 
@@ -249,12 +248,23 @@ unlock:
 	write_unlock_irq(&veip_hash_lock);
 }
 
+static int veip_entry_conflict(struct ip_entry_struct *entry, struct ve_struct *ve)
+{
+	if (entry->active_env != NULL)
+		return -EADDRINUSE;
+	if (entry->tgt_veip && entry->tgt_veip->veid != ve->veid)
+		return -EADDRNOTAVAIL;
+
+	entry->active_env = ve;
+	return 0;
+}
+
 static int veip_entry_add(struct ve_struct *ve, struct ve_addr_struct *addr)
 {
 	struct ip_entry_struct *entry, *found;
 	int err;
 
-	entry = veip_pool_ops->ip_entry_create(ve->veid);
+	entry = kzalloc(sizeof(struct ip_entry_struct), GFP_KERNEL);
 	if (entry == NULL)
 		return -ENOMEM;
 
@@ -268,7 +278,7 @@ static int veip_entry_add(struct ve_struct *ve, struct ve_addr_struct *addr)
 	write_lock_irq(&veip_hash_lock);
 	found = venet_entry_lookup(addr);
 	if (found != NULL) {
-		err = veip_pool_ops->ip_entry_conflict(found, ve);
+		err = veip_entry_conflict(found, ve);
 		goto out_unlock;
 	}
 
@@ -282,7 +292,7 @@ out_unlock:
 	write_unlock_irq(&veip_hash_lock);
 out:
 	if (entry != NULL)
-		veip_pool_ops->ip_entry_release(entry);
+		kfree(entry);
 
 	return err;
 }
@@ -448,7 +458,7 @@ static int venet_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (unlikely(ve->disable_net))
 		goto outf;
 
-	rcv = skb->owner_env->_venet_dev;
+	rcv = ve->_venet_dev;
 	if (!rcv)
 		/* VE going down */
 		goto outf;
@@ -1006,7 +1016,7 @@ __exit void venet_exit(void)
 	remove_proc_entry("veip", proc_vz_dir);
 #endif
 	venet_stop(get_ve0());
-	veip_pool_ops->veip_cleanup();
+	veip_cleanup();
 
 	BUG_ON(!list_empty(&veip_lh));
 }
@@ -1017,6 +1027,7 @@ module_exit(venet_exit);
 MODULE_AUTHOR("Parallels <info@parallels.com>");
 MODULE_DESCRIPTION("Virtuozzo Virtual Network Device");
 MODULE_LICENSE("GPL v2");
+MODULE_ALIAS("vznet");
 
 EXPORT_SYMBOL(veip_hash_lock);
 EXPORT_SYMBOL(ip_entry_hash);

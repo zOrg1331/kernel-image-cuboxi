@@ -20,8 +20,6 @@ struct task_beancounter {
 	struct user_beancounter *saved_ub;
 	struct user_beancounter	*task_ub;
 	struct user_beancounter *fork_sub;
-	unsigned long file_precharged, file_quant, file_count;
-	unsigned long kmem_precharged;
 	unsigned long oom_generation;
 };
 
@@ -51,8 +49,6 @@ extern struct user_beancounter ub0;
 	tbc->exec_ub = __newub;		\
 	old;				\
 })
-
-void ub_init_task_bc(struct task_beancounter *);
 
 #else /* CONFIG_BEANCOUNTERS */
 

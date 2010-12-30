@@ -69,14 +69,15 @@
 #include <linux/venet.h>
 #include <linux/vzctl.h>
 #include <linux/vzcalluser.h>
+#ifdef CONFIG_VZ_FAIRSCHED
 #include <linux/fairsched.h>
+#endif
 
 #include <linux/virtinfo.h>
 #include <linux/utsrelease.h>
 #include <linux/major.h>
 
 #include <bc/dcache.h>
-#include "vzpci.h"
 
 int nr_ve = 1;	/* One VE always exists. Compatibility with vestat */
 EXPORT_SYMBOL(nr_ve);
@@ -472,9 +473,6 @@ static int init_ve_sysfs(struct ve_struct *ve)
 				   &ve->sysfs_mnt);
 		if (err != 0)
 			goto out_fs_type;
-		err = init_ve_sysfs_pci(ve);
-		if (err != 0)
-			goto err_pci;
 	}
 #endif
 
@@ -510,8 +508,6 @@ err_devices:
 	classes_fini();
 err_classes:
 #ifdef CONFIG_SYSFS
-	fini_ve_sysfs_pci(ve);
-err_pci:
 	unregister_ve_fs_type(ve->sysfs_fstype, ve->sysfs_mnt);
 	/* sysfs_fstype is freed in real_put_ve -> free_ve_filesystems */
 out_fs_type:
@@ -530,7 +526,6 @@ static void fini_ve_sysfs(struct ve_struct *ve)
 	devices_fini();
 	classes_fini();
 #ifdef CONFIG_SYSFS
-	fini_ve_sysfs_pci(ve);
 	unregister_ve_fs_type(ve->sysfs_fstype, ve->sysfs_mnt);
 	ve->sysfs_mnt = NULL;
 	kfree(ve->_sysfs_root);
@@ -757,6 +752,7 @@ static int init_ve_struct(struct ve_struct *ve, envid_t veid,
 
 	ve->_randomize_va_space = ve0._randomize_va_space;
 	INIT_LIST_HEAD(&ve->vetask_auxlist);
+	INIT_LIST_HEAD(&ve->devices);
  
 	return 0;
 }
@@ -804,8 +800,7 @@ static void set_ve_root(struct ve_struct *ve, struct task_struct *tsk)
 {
 	get_fs_root(tsk->fs, &ve->root_path);
 	/* mark_tree_virtual(&ve->root_path); */
-	ub_dcache_set_owner(ve->root_path.dentry,
-			top_beancounter(get_exec_ub()));
+	ub_dcache_set_owner(ve->root_path.dentry, get_exec_ub());
 }
 
 static void put_ve_root(struct ve_struct *ve)
@@ -1377,6 +1372,8 @@ out_up:
 	return err;
 }
 
+extern void fini_ve_devices(struct ve_struct *ve);
+
 static void env_cleanup(struct ve_struct *ve)
 {
 	struct ve_struct *old_ve;
@@ -1399,6 +1396,7 @@ static void env_cleanup(struct ve_struct *ve)
 	unregister_ve_tty_drivers(ve);
 	fini_ve_meminfo(ve);
 
+	fini_ve_devices(ve);
 	fini_ve_cgroups(ve);
 
 	fini_ve_namespaces(ve, NULL);
@@ -2256,15 +2254,24 @@ static int ve_configure_make_proc_link(struct ve_struct *ve, mode_t mode,
 		return -EINVAL;
 	link++;
 
+	down(&ve_proc_entries_lock);
 	parent = ve->proc_root;
 	end = strrchr(name, '/');
 	if (end) {
 		*end = '\0';
 		parent = ve_proc_mkdir_recursive(ve, name, &list);
 		*end = '/';
-		if (IS_ERR(parent))
-			return PTR_ERR(parent);
+		if (IS_ERR(parent)) {
+			ret = PTR_ERR(parent);
+			goto out_unlock;
+		}
 		name = end + 1;
+	}
+
+	de = __proc_lookup(parent, name, strlen(name));
+	if (de) {
+		ret = -EEXIST;
+		goto out_unlock;
 	}
 
 	ve_de = kmalloc(sizeof(struct ve_proc_dir_entry *), GFP_KERNEL);
@@ -2287,16 +2294,16 @@ static int ve_configure_make_proc_link(struct ve_struct *ve, mode_t mode,
 
 	ve_de->de = de;
 	ve_de->ve = ve;
-	down(&ve_proc_entries_lock);
 	list_splice_init(&list, &ve_proc_entries);
 	list_add(&ve_de->list, &ve_proc_entries);
-	up(&ve_proc_entries_lock);
 out_free:
 	if (ret)
 		kfree(ve_de);
 out_dir:
 	if (ret)
 		cleanup_ve_proc_entries(ve, &list);
+out_unlock:
+	up(&ve_proc_entries_lock);	
 	return ret;
 }
 
@@ -2312,10 +2319,7 @@ static int ve_configure(envid_t veid, unsigned int key,
 
 	switch(key) {
 	case VE_CONFIGURE_OS_RELEASE:
-		err = init_ve_osrelease(ve, data);
-		break;
-	case VE_CONFIGURE_MOVE_PCI_DEVICE:
-		err = ve_configure_move_pci_device(ve, size, data);
+		err = init_ve_osrelease(ve, data); 
 		break;
 	case VE_CONFIGURE_CREATE_PROC_LINK:
 		err = ve_configure_make_proc_link(ve, val, size, data);

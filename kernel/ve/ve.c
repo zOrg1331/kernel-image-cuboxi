@@ -88,6 +88,7 @@ struct ve_struct ve0 = {
 #else
 					2,
 #endif
+	.devices		= LIST_HEAD_INIT(ve0.devices)
 };
 
 EXPORT_SYMBOL(ve0);

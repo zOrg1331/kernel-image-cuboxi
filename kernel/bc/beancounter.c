@@ -37,7 +37,6 @@
 #include <linux/pid_namespace.h>
 
 #include <bc/beancounter.h>
-#include <bc/hash.h>
 #include <bc/vmpages.h>
 #include <bc/proc.h>
 
@@ -82,10 +81,15 @@ const char *ub_rnames[] = {
 
 unsigned int ub_dcache_threshold __read_mostly = 1024;
 
-/* default standard and maximum perpcu resources precharge */
-static int resource_precharge[UB_RESOURCES][2] = {
-	[UB_PHYSPAGES]	= {128, 256},    /* up to 1Mb */
-	[UB_DCACHESIZE] = {2 * PAGE_SIZE, 4 * PAGE_SIZE},
+/* default maximum perpcu resources precharge */
+static int resource_precharge[UB_RESOURCES] = {
+	[UB_KMEMSIZE]	= 32 * PAGE_SIZE,
+	[UB_NUMPROC]	= 4,
+	[UB_PHYSPAGES]	= 256,	/* up to 1Mb */
+	[UB_NUMSIGINFO]	= 4,
+	[UB_DCACHESIZE] = 4 * PAGE_SIZE,
+	[UB_NUMFILE]	= 8,
+	[UB_SWAPPAGES]	= 256,
 };
 
 /* natural limits for percpu precharge bounds */
@@ -96,12 +100,9 @@ void init_beancounter_precharge(struct user_beancounter *ub, int resource)
 {
 	/* limit maximum precharge with one half of current resource excess */
 	ub->ub_parms[resource].max_precharge = min_t(long,
-			resource_precharge[resource][1],
+			resource_precharge[resource],
 			ub_resource_excess(ub, resource, UB_SOFT) /
 			(2 * num_possible_cpus()));
-	ub->ub_parms[resource].std_precharge = min(
-			resource_precharge[resource][0],
-			ub->ub_parms[resource].max_precharge / 2);
 }
 
 static void init_beancounter_precharges(struct user_beancounter *ub)
@@ -119,15 +120,11 @@ static void __init init_beancounter_precharges_early(struct user_beancounter *ub
 	for ( resource = 0 ; resource < UB_RESOURCES ; resource++ ) {
 
 		/* DEBUG: sanity checks for initial prechage bounds */
-		BUG_ON(resource_precharge[resource][0] < resource_precharge_min);
-		BUG_ON(resource_precharge[resource][0] > resource_precharge_max);
-		BUG_ON(resource_precharge[resource][1] < resource_precharge_min);
-		BUG_ON(resource_precharge[resource][1] > resource_precharge_max);
+		BUG_ON(resource_precharge[resource] < resource_precharge_min);
+		BUG_ON(resource_precharge[resource] > resource_precharge_max);
 
-		ub->ub_parms[resource].std_precharge =
-			resource_precharge[resource][0];
 		ub->ub_parms[resource].max_precharge =
-			resource_precharge[resource][1];
+			resource_precharge[resource];
 	}
 }
 
@@ -137,36 +134,23 @@ static void uncharge_beancounter_precharge(struct user_beancounter *ub)
 
 	for ( resource = 0 ; resource < UB_RESOURCES ; resource++ ) {
 		/* DEBUG: to trigger BUG_ON in precharge/charge/uncharge */
-		ub->ub_parms[resource].std_precharge = -1;
+		ub->ub_parms[resource].max_precharge = -1;
 		precharge = __ub_percpu_sum(ub, precharge[resource]);
 		if (!precharge)
 			continue;
 		BUG_ON(ub->ub_parms[resource].held < precharge);
 		__uncharge_beancounter_locked(ub, resource, precharge);
-		uncharge_beancounter_fast(ub->parent, resource, precharge);
 	}
 }
 
 static void init_beancounter_struct(struct user_beancounter *ub);
 static void init_beancounter_nolimits(struct user_beancounter *ub);
 
-int print_ub_uid(struct user_beancounter *ub, char *buf, int size)
-{
-	if (ub->parent != NULL)
-		return snprintf(buf, size, "%u.%u",
-				ub->parent->ub_uid, ub->ub_uid);
-	else
-		return snprintf(buf, size, "%u", ub->ub_uid);
-}
-EXPORT_SYMBOL(print_ub_uid);
-
+#define UB_HASH_SIZE 256
 #define ub_hash_fun(x) ((((x) >> 8) ^ (x)) & (UB_HASH_SIZE - 1))
-#define ub_subhash_fun(p, id) ub_hash_fun((p)->ub_uid + (id) * 17)
-struct hlist_head ub_hash[UB_HASH_SIZE];
-DEFINE_SPINLOCK(ub_hash_lock);
+static struct hlist_head ub_hash[UB_HASH_SIZE];
+static DEFINE_SPINLOCK(ub_hash_lock);
 LIST_HEAD(ub_list_head); /* protected by ub_hash_lock */
-EXPORT_SYMBOL(ub_hash);
-EXPORT_SYMBOL(ub_hash_lock);
 EXPORT_SYMBOL(ub_list_head);
 
 static struct cgroup *ub_cgroup_root;
@@ -198,7 +182,7 @@ EXPORT_SYMBOL(set_task_exec_ub);
  *	will mean the old entry is still around with resource tied to it.
  */
 
-static struct user_beancounter *alloc_ub(uid_t uid, struct user_beancounter *p)
+static struct user_beancounter *alloc_ub(uid_t uid)
 {
 	struct user_beancounter *new_ub;
 	char name[16];
@@ -210,14 +194,8 @@ static struct user_beancounter *alloc_ub(uid_t uid, struct user_beancounter *p)
 	if (new_ub == NULL)
 		return NULL;
 
-	if (p == NULL) {
-		memcpy(new_ub, &default_beancounter, sizeof(*new_ub));
-		init_beancounter_struct(new_ub);
-	} else {
-		memset(new_ub, 0, sizeof(*new_ub));
-		init_beancounter_struct(new_ub);
-		init_beancounter_nolimits(new_ub);
-	}
+	memcpy(new_ub, &default_beancounter, sizeof(*new_ub));
+	init_beancounter_struct(new_ub);
 
 	init_beancounter_precharges(new_ub);
 
@@ -238,7 +216,6 @@ static struct user_beancounter *alloc_ub(uid_t uid, struct user_beancounter *p)
 		goto fail_free;
 
 	new_ub->ub_uid = uid;
-	new_ub->parent = get_beancounter(p);
 	return new_ub;
 
 fail_free:
@@ -268,151 +245,85 @@ static inline void free_ub(struct user_beancounter *ub)
 	__free_ub(ub);
 }
 
-static inline struct user_beancounter *bc_lookup_hash(struct hlist_head *hash,
-		uid_t uid, struct user_beancounter *parent)
-{
-	struct user_beancounter *ub;
-	struct hlist_node *ptr;
-
-	hlist_for_each_entry (ub, ptr, hash, ub_hash)
-		if (ub->ub_uid == uid && ub->parent == parent)
-			return get_beancounter(ub);
-
-	return NULL;
-}
-
 int ub_count;
-
-/* next two must be called under ub_hash_lock */
-static inline void ub_count_inc(struct user_beancounter *ub)
-{
-	if (ub->parent)
-		ub->parent->ub_childs++;
-	else
-	       ub_count++;
-}
-
-static inline void ub_count_dec(struct user_beancounter *ub)
-{
-	if (ub->parent)
-		ub->parent->ub_childs--;
-	else
-		ub_count--;
-}
 
 struct user_beancounter *get_beancounter_byuid(uid_t uid, int create)
 {
 	struct user_beancounter *new_ub, *ub;
 	unsigned long flags;
 	struct hlist_head *hash;
+	struct hlist_node *ptr;
 
 	hash = &ub_hash[ub_hash_fun(uid)];
-	new_ub = NULL;
-retry:
-	spin_lock_irqsave(&ub_hash_lock, flags);
-	ub = bc_lookup_hash(hash, uid, NULL);
-	if (ub != NULL) {
-		spin_unlock_irqrestore(&ub_hash_lock, flags);
 
-		if (new_ub != NULL)
-			free_ub(new_ub);
-		return ub;
+	rcu_read_lock();
+	hlist_for_each_entry_rcu(ub, ptr, hash, ub_hash) {
+		if (ub->ub_uid != uid)
+			continue;
+
+		if (get_beancounter_rcu(ub)) {
+			rcu_read_unlock();
+			return ub;
+		}
+
+		spin_lock_irqsave(&ub_hash_lock, flags);
+		if (!hlist_unhashed(&ub->ub_hash)) {
+			get_beancounter(ub);
+			spin_unlock_irqrestore(&ub_hash_lock, flags);
+			rcu_read_unlock();
+			cancel_work_sync(&ub->work);
+			return ub;
+		}
+		spin_unlock_irqrestore(&ub_hash_lock, flags);
 	}
+	rcu_read_unlock();
 
-	if (!create) {
-		/* no ub found */
-		spin_unlock_irqrestore(&ub_hash_lock, flags);
+	if (!create)
 		return NULL;
-	}
 
-	if (new_ub != NULL) {
-		list_add_rcu(&new_ub->ub_list, &ub_list_head);
-		hlist_add_head(&new_ub->ub_hash, hash);
-		ub_count_inc(new_ub);
-		add_mem_gangs(&new_ub->gang_set);
-		spin_unlock_irqrestore(&ub_hash_lock, flags);
-		return new_ub;
-	}
-	spin_unlock_irqrestore(&ub_hash_lock, flags);
-
-	new_ub = alloc_ub(uid, NULL);
+	new_ub = alloc_ub(uid);
 	if (new_ub == NULL)
 		return NULL;
 
-	goto retry;
+	spin_lock_irqsave(&ub_hash_lock, flags);
 
+	hlist_for_each_entry(ub, ptr, hash, ub_hash) {
+		if (ub->ub_uid != uid)
+			continue;
+
+		get_beancounter(ub);
+		spin_unlock_irqrestore(&ub_hash_lock, flags);
+		free_ub(new_ub);
+		cancel_work_sync(&ub->work);
+		return ub;
+	}
+
+	ub_count++;
+	list_add_rcu(&new_ub->ub_list, &ub_list_head);
+	hlist_add_head_rcu(&new_ub->ub_hash, hash);
+	add_mem_gangs(&new_ub->gang_set);
+	spin_unlock_irqrestore(&ub_hash_lock, flags);
+
+	return new_ub;
 }
 EXPORT_SYMBOL(get_beancounter_byuid);
 
-struct user_beancounter *get_subbeancounter_byid(struct user_beancounter *p,
-		int id, int create)
-{
-	struct user_beancounter *new_ub, *ub;
-	unsigned long flags;
-	struct hlist_head *hash;
-
-	hash = &ub_hash[ub_subhash_fun(p, id)];
-	new_ub = NULL;
-retry:
-	spin_lock_irqsave(&ub_hash_lock, flags);
-	ub = bc_lookup_hash(hash, id, p);
-	if (ub != NULL) {
-		spin_unlock_irqrestore(&ub_hash_lock, flags);
-
-		if (new_ub != NULL) {
-			put_beancounter(new_ub->parent);
-			free_ub(new_ub);
-		}
-		return ub;
-	}
-
-	if (!create) {
-		/* no ub found */
-		spin_unlock_irqrestore(&ub_hash_lock, flags);
-		return NULL;
-	}
-
-	if (new_ub != NULL) {
-		list_add_rcu(&new_ub->ub_list, &ub_list_head);
-		hlist_add_head(&new_ub->ub_hash, hash);
-		ub_count_inc(new_ub);
-		add_mem_gangs(&new_ub->gang_set);
-		spin_unlock_irqrestore(&ub_hash_lock, flags);
-		return new_ub;
-	}
-	spin_unlock_irqrestore(&ub_hash_lock, flags);
-
-	new_ub = alloc_ub(id, p);
-	if (new_ub == NULL)
-		return NULL;
-
-	goto retry;
-}
-EXPORT_SYMBOL(get_subbeancounter_byid);
-
-static void put_warn(struct user_beancounter *ub)
-{
-	char id[64];
-
-	print_ub_uid(ub, id, sizeof(id));
-	printk(KERN_ERR "UB: Bad refcount (%d) on put of %s (%p)\n",
-			atomic_read(&ub->ub_refcount), id, ub);
-}
-
 #ifdef CONFIG_BC_KEEP_UNUSED
-#define release_beancounter(ub)	do { } while (0)
+
+void release_beancounter(struct user_beancounter *ub)
+{
+}
+
 #else
+
 static int verify_res(struct user_beancounter *ub, int resource,
 		unsigned long held)
 {
-	char id[64];
-
 	if (likely(held == 0))
 		return 1;
 
-	print_ub_uid(ub, id, sizeof(id));
-	printk(KERN_WARNING "Ub %s helds %lu in %s on put\n",
-			id, held, ub_rnames[resource]);
+	printk(KERN_WARNING "Ub %u helds %ld in %s on put\n",
+			ub->ub_uid, held, ub_rnames[resource]);
 	return 0;
 }
 
@@ -447,20 +358,32 @@ static void bc_free_rcu(struct rcu_head *rcu)
 
 static void delayed_release_beancounter(struct work_struct *w)
 {
-	struct user_beancounter *ub, *parent;
+	struct user_beancounter *ub;
 	unsigned long flags;
+	int refcount;
 
-	ub = container_of(w, struct user_beancounter, cleanup.work);
-again:
-	local_irq_save(flags);
-	if (!atomic_dec_and_lock(&ub->ub_refcount, &ub_hash_lock)) {
+	ub = container_of(w, struct user_beancounter, work);
+
+	spin_lock_irqsave(&ub_hash_lock, flags);
+
+	refcount = atomic_read(&ub->ub_refcount);
+	if (refcount > 0)
 		/* raced with get_beancounter_byuid */
-		local_irq_restore(flags);
-		return;
+		goto out;
+
+	if (WARN_ON(refcount < 0)) {
+		printk(KERN_ERR "UB: Bad refcount (%d) on put of %u (%p)\n",
+				refcount, ub->ub_uid, ub);
+		goto out;
 	}
 
-	hlist_del(&ub->ub_hash);
-	ub_count_dec(ub);
+	if (WARN_ON((ub == get_ub0()))) {
+		printk(KERN_ERR "Trying to put ub0\n");
+		goto out;
+	}
+
+	ub_count--;
+	hlist_del_init_rcu(&ub->ub_hash);
 	list_del_rcu(&ub->ub_list);
 	spin_unlock_irqrestore(&ub_hash_lock, flags);
 
@@ -471,58 +394,26 @@ again:
 	ub_free_counters(ub);
 	percpu_counter_destroy(&ub->ub_orphan_count);
 
-	parent = ub->parent;
-
 	call_rcu(&ub->rcu, bc_free_rcu);
-	if (parent) {
-		ub = parent;
-		goto again;
-	}
+	return;
+
+out:
+	spin_unlock_irqrestore(&ub_hash_lock, flags);
 }
 
-static inline void release_beancounter(struct user_beancounter *ub)
-{
-	struct execute_work *ew;
-
-	ew = &ub->cleanup;
-	INIT_WORK(&ew->work, delayed_release_beancounter);
-	queue_work(ub_clean_wq, &ew->work);
-}
-#endif
-
-void __put_beancounter(struct user_beancounter *ub)
+void release_beancounter(struct user_beancounter *ub)
 {
 	unsigned long flags;
 
-	/* equevalent to atomic_dec_and_lock_irqsave() */
-	local_irq_save(flags);
-	if (likely(!atomic_dec_and_lock(&ub->ub_refcount, &ub_hash_lock))) {
-		if (unlikely(atomic_read(&ub->ub_refcount) < 0))
-			put_warn(ub);
-		local_irq_restore(flags);
-		return;
-	}
-
-	if (unlikely(ub == get_ub0())) {
-		printk(KERN_ERR "Trying to put ub0\n");
-		spin_unlock_irqrestore(&ub_hash_lock, flags);
-		return;
-	}
-
-	/* prevent get_beancounter_byuid + put_beancounter() reentrance */
-	atomic_inc(&ub->ub_refcount);
+	spin_lock_irqsave(&ub_hash_lock, flags);
+	if (!atomic_read(&ub->ub_refcount))
+		queue_work(ub_clean_wq, &ub->work);
 	spin_unlock_irqrestore(&ub_hash_lock, flags);
-
-	release_beancounter(ub);
 }
-EXPORT_SYMBOL(__put_beancounter);
 
-void put_beancounter_safe(struct user_beancounter *ub)
-{
-	synchronize_rcu();
-	__put_beancounter(ub);
-}
-EXPORT_SYMBOL(put_beancounter_safe);
+#endif /* CONFIG_BC_KEEP_UNUSED */
+
+EXPORT_SYMBOL(release_beancounter);
 
 /*
  *	Generic resource charging stuff
@@ -569,62 +460,28 @@ int charge_beancounter(struct user_beancounter *ub,
 		int resource, unsigned long val, enum ub_severity strict)
 {
 	int retval;
-	struct user_beancounter *p, *q;
 	unsigned long flags;
 
 	retval = -EINVAL;
 	if (val > UB_MAXVALUE)
 		goto out;
 
-	local_irq_save(flags);
-	for (p = ub; p != NULL; p = p->parent) {
-		spin_lock(&p->ub_lock);
-		retval = __charge_beancounter_locked(p, resource, val, strict);
-		spin_unlock(&p->ub_lock);
-		if (retval)
-			goto unroll;
+	if (ub) {
+		spin_lock_irqsave(&ub->ub_lock, flags);
+		retval = __charge_beancounter_locked(ub, resource, val, strict);
+		spin_unlock_irqrestore(&ub->ub_lock, flags);
 	}
-out_restore:
-	local_irq_restore(flags);
 out:
 	return retval;
-
-unroll:
-	for (q = ub; q != p; q = q->parent) {
-		spin_lock(&q->ub_lock);
-		__uncharge_beancounter_locked(q, resource, val);
-		spin_unlock(&q->ub_lock);
-	}
-	goto out_restore;
 }
 
 EXPORT_SYMBOL(charge_beancounter);
 
-void __charge_beancounter_notop(struct user_beancounter *ub,
-		int resource, unsigned long val)
-{
-	struct user_beancounter *p;
-	unsigned long flags;
-
-	local_irq_save(flags);
-	for (p = ub; p->parent != NULL; p = p->parent) {
-		spin_lock(&p->ub_lock);
-		__charge_beancounter_locked(p, resource, val, UB_FORCE);
-		spin_unlock(&p->ub_lock);
-	}
-	local_irq_restore(flags);
-}
-
-EXPORT_SYMBOL(__charge_beancounter_notop);
-
 void uncharge_warn(struct user_beancounter *ub, int resource,
 		unsigned long val, unsigned long held)
 {
-	char id[64];
-
-	print_ub_uid(ub, id, sizeof(id));
-	printk(KERN_ERR "Uncharging too much %lu h %lu, res %s ub %s\n",
-			val, held, ub_rnames[resource], id);
+	printk(KERN_ERR "Uncharging too much %lu h %lu, res %s ub %u\n",
+			val, held, ub_rnames[resource], ub->ub_uid);
 	ub_debug_trace(1, 10, 10*HZ);
 }
 
@@ -645,33 +502,15 @@ void uncharge_beancounter(struct user_beancounter *ub,
 		int resource, unsigned long val)
 {
 	unsigned long flags;
-	struct user_beancounter *p;
 
-	for (p = ub; p != NULL; p = p->parent) {
-		spin_lock_irqsave(&p->ub_lock, flags);
-		__uncharge_beancounter_locked(p, resource, val);
-		spin_unlock_irqrestore(&p->ub_lock, flags);
+	if (ub) {
+		spin_lock_irqsave(&ub->ub_lock, flags);
+		__uncharge_beancounter_locked(ub, resource, val);
+		spin_unlock_irqrestore(&ub->ub_lock, flags);
 	}
 }
 
 EXPORT_SYMBOL(uncharge_beancounter);
-
-void __uncharge_beancounter_notop(struct user_beancounter *ub,
-		int resource, unsigned long val)
-{
-	struct user_beancounter *p;
-	unsigned long flags;
-
-	local_irq_save(flags);
-	for (p = ub; p->parent != NULL; p = p->parent) {
-		spin_lock(&p->ub_lock);
-		__uncharge_beancounter_locked(p, resource, val);
-		spin_unlock(&p->ub_lock);
-	}
-	local_irq_restore(flags);
-}
-
-EXPORT_SYMBOL(__uncharge_beancounter_notop);
 
 /* called with disabled interrupts and preemption */
 static int __precharge_beancounter_percpu(struct user_beancounter *ub,
@@ -680,7 +519,7 @@ static int __precharge_beancounter_percpu(struct user_beancounter *ub,
 	struct ub_percpu_struct *ub_pcpu = ub_percpu(ub, smp_processor_id());
 	int charge, retval;
 
-	BUG_ON(ub->ub_parms[resource].std_precharge < 0);
+	BUG_ON(ub->ub_parms[resource].max_precharge < 0);
 
 	if (likely(ub_pcpu->precharge[resource] >= val))
 		return 0;
@@ -689,7 +528,7 @@ static int __precharge_beancounter_percpu(struct user_beancounter *ub,
 		return -ENOMEM;
 
 	spin_lock(&ub->ub_lock);
-	charge = max((int)val, ub->ub_parms[resource].std_precharge) -
+	charge = max((int)val, ub->ub_parms[resource].max_precharge >> 1) -
 		ub_pcpu->precharge[resource];
 	retval = __charge_beancounter_locked(ub, resource,
 			charge, UB_SOFT | UB_TEST);
@@ -707,7 +546,7 @@ static int __charge_beancounter_percpu(struct user_beancounter *ub,
 	struct ub_percpu_struct *ub_pcpu = ub_percpu(ub, smp_processor_id());
 	int retval, precharge;
 
-	BUG_ON(ub->ub_parms[resource].std_precharge < 0);
+	BUG_ON(ub->ub_parms[resource].max_precharge < 0);
 
 	if (likely(ub_pcpu->precharge[resource] >= val)) {
 		ub_pcpu->precharge[resource] -= val;
@@ -715,7 +554,7 @@ static int __charge_beancounter_percpu(struct user_beancounter *ub,
 	}
 
 	spin_lock(&ub->ub_lock);
-	precharge = max(0, ub->ub_parms[resource].std_precharge -
+	precharge = max(0, (ub->ub_parms[resource].max_precharge >> 1) -
 			ub_pcpu->precharge[resource]);
 	retval = __charge_beancounter_locked(ub, resource,
 			val + precharge, UB_SOFT | UB_TEST);
@@ -738,7 +577,7 @@ void __uncharge_beancounter_percpu(struct user_beancounter *ub,
 	struct ub_percpu_struct *ub_pcpu = ub_percpu(ub, smp_processor_id());
 	int uncharge;
 
-	BUG_ON(ub->ub_parms[resource].std_precharge < 0);
+	BUG_ON(ub->ub_parms[resource].max_precharge < 0);
 
 	if (likely(ub_pcpu->precharge[resource] + val <=
 				ub->ub_parms[resource].max_precharge)) {
@@ -747,11 +586,11 @@ void __uncharge_beancounter_percpu(struct user_beancounter *ub,
 	}
 
 	spin_lock(&ub->ub_lock);
-	if (ub->ub_parms[resource].std_precharge !=
-			resource_precharge[resource][0])
+	if (ub->ub_parms[resource].max_precharge !=
+			resource_precharge[resource])
 		init_beancounter_precharge(ub, resource);
 	uncharge = max(0, ub_pcpu->precharge[resource] -
-			ub->ub_parms[resource].std_precharge);
+			(ub->ub_parms[resource].max_precharge >> 1));
 	ub_pcpu->precharge[resource] -= uncharge;
 	smp_wmb();
 	__uncharge_beancounter_locked(ub, resource, val + uncharge);
@@ -774,16 +613,14 @@ int precharge_beancounter(struct user_beancounter *ub,
 		int resource, unsigned long val)
 {
 	unsigned long flags;
-	int retval = 0;
+	int retval;
 
+	retval = -EINVAL;
 	local_irq_save(flags);
 	preempt_disable();
 
-	for ( ; ub != NULL; ub = ub->parent ) {
+	if (ub)
 		retval = __precharge_beancounter_percpu(ub, resource, val);
-		if (retval)
-			break;
-	}
 
 	preempt_enable();
 	local_irq_restore(flags);
@@ -795,7 +632,6 @@ EXPORT_SYMBOL(precharge_beancounter);
 int charge_beancounter_fast(struct user_beancounter *ub,
 		int resource, unsigned long val, enum ub_severity strict)
 {
-	struct user_beancounter *p, *q;
 	unsigned long flags;
 	int retval;
 
@@ -805,26 +641,12 @@ int charge_beancounter_fast(struct user_beancounter *ub,
 
 	local_irq_save(flags);
 	preempt_disable();
-
-	for ( p = ub ; p != NULL; p = p->parent) {
-		retval = __charge_beancounter_percpu(p, resource, val, strict);
-		if (retval)
-			goto unroll;
-	}
-
-out_restore:
+	if (ub)
+		retval = __charge_beancounter_percpu(ub, resource, val, strict);
 	preempt_enable();
 	local_irq_restore(flags);
 out:
 	return retval;
-
-unroll:
-	for (q = ub; q != p; q = q->parent) {
-		spin_lock(&q->ub_lock);
-		__uncharge_beancounter_locked(q, resource, val);
-		spin_unlock(&q->ub_lock);
-	}
-	goto out_restore;
 }
 EXPORT_SYMBOL(charge_beancounter_fast);
 
@@ -836,7 +658,7 @@ void uncharge_beancounter_fast(struct user_beancounter *ub,
 	local_irq_save(flags);
 	preempt_disable();
 
-	for ( ; ub != NULL; ub = ub->parent )
+	if (ub)
 		__uncharge_beancounter_percpu(ub, resource, val);
 
 	preempt_enable();
@@ -868,6 +690,9 @@ static void init_beancounter_struct(struct user_beancounter *ub)
 	INIT_LIST_HEAD(&ub->ub_cclist);
 #endif
 	INIT_LIST_HEAD(&ub->ub_dentry_lru);
+#ifndef CONFIG_BC_KEEP_UNUSED
+	INIT_WORK(&ub->work, delayed_release_beancounter);
+#endif
 }
 
 static void init_beancounter_nolimits(struct user_beancounter *ub)
@@ -939,12 +764,11 @@ void __init ub_init_early(void)
 	current->task_bc.task_ub = get_beancounter(ub);
 	__charge_beancounter_locked(ub, UB_NUMPROC, 1, UB_FORCE);
 	current->task_bc.fork_sub = get_beancounter(ub);
-	ub_init_task_bc(&current->task_bc);
 	init_mm.mm_ub = get_beancounter(ub);
 
 	hlist_add_head(&ub->ub_hash, &ub_hash[ub->ub_uid]);
 	list_add(&ub->ub_list, &ub_list_head);
-	ub_count_inc(ub);
+	ub_count++;
 }
 
 static int proc_resource_precharge(ctl_table *table, int write,

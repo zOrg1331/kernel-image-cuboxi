@@ -21,6 +21,11 @@
 #include <linux/skbuff.h>
 #include <linux/venet.h>
 
+static void veip_free(struct veip_struct *veip)
+{
+	kfree(veip);
+}
+
 static void veip_release(struct ve_struct *ve)
 {
 	veip_put(ve->veip);
@@ -37,21 +42,6 @@ static int veip_create(struct ve_struct *ve)
 
 	ve->veip = veip;
 	return 0;
-}
-
-static struct ip_entry_struct *veip_entry_create(int veid)
-{
-	return kzalloc(sizeof(struct ip_entry_struct), GFP_KERNEL);
-}
-
-static void veip_entry_free(struct ip_entry_struct *entry)
-{
-	kfree(entry);
-}
-
-static int veip_entry_conflict(struct ip_entry_struct *entry, struct ve_struct *ve)
-{
-	return -EADDRINUSE;
 }
 
 static int skb_extract_addr(struct sk_buff *skb,
@@ -136,7 +126,7 @@ out_source:
 	return ERR_PTR(-EACCES);
 }
 
-static void veip_cleanup(void)
+void veip_cleanup(void)
 {
 	int i;
 
@@ -155,12 +145,9 @@ static void veip_cleanup(void)
 }
 
 static struct veip_pool_ops open_pool_ops = {
-	.ip_entry_create = veip_entry_create,
-	.ip_entry_release = veip_entry_free,
-	.ip_entry_conflict = veip_entry_conflict,
 	.veip_create = veip_create,
 	.veip_release = veip_release,
-	.veip_cleanup = veip_cleanup,
+	.veip_free = veip_free,
 	.veip_lookup = veip_lookup,
 };
 

@@ -32,7 +32,7 @@ static inline struct user_beancounter *get_io_ub(void)
 	if (unlikely(ub == NULL))
 		ub = get_task_ub(current);
 
-	return top_beancounter(ub);
+	return ub;
 }
 
 static inline struct user_beancounter *get_mapping_ub(struct address_space *mapping)

@@ -61,14 +61,12 @@ static int restore_one_bc(struct cpt_beancounter_image *v,
 	int resources, i;
 
 	if (v->cpt_parent != CPT_NULL) {
-		pobj = lookup_cpt_obj_bypos(CPT_OBJ_UBC, v->cpt_parent, ctx);
-		if (pobj == NULL)
-			return -ESRCH;
-		bc = get_subbeancounter_byid(pobj->o_obj, v->cpt_id, 1);
+		/*
+		 * No subbeancounters supported anymore. So just exit.
+		 */
+		return 0;
 	} else {
 		bc = get_exec_ub();
-		while (bc->parent)
-			bc = bc->parent;
 		get_beancounter(bc);
 	}
 	if (bc == NULL)
@@ -103,9 +101,8 @@ static int restore_one_bc(struct cpt_beancounter_image *v,
 	}
 
 out:
-	if (!bc->parent)
-		for (i = 0; i < UB_RESOURCES; i++)
-			copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, i);
+	for (i = 0; i < UB_RESOURCES; i++)
+		copy_one_ubparm(bc->ub_parms, ctx->saved_ubc, i);
 
 	return 0;
 }

@@ -8,7 +8,6 @@
 
 #include <bc/beancounter.h>
 #include <bc/oom_kill.h>
-#include <bc/hash.h>
 
 #define UB_OOM_TIMEOUT	(5 * HZ)
 
@@ -95,8 +94,6 @@ int ub_oom_task_skip(struct user_beancounter *ub, struct task_struct *tsk)
 	else
 		mm_ub = tsk->mm->mm_ub;
 
-	while (mm_ub != NULL && mm_ub != ub)
-		mm_ub = mm_ub->parent;
 	task_unlock(tsk);
 
 	return mm_ub != ub;
@@ -114,8 +111,6 @@ struct user_beancounter *ub_oom_select_worst(void)
 	for_each_beancounter (walkp) {
 		long ub_overdraft;
 
-		if (walkp->parent != NULL)
-			continue;
 		if (walkp->ub_oom_noproc)
 			continue;
 

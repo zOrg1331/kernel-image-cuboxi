@@ -87,10 +87,8 @@ struct ubparm {
 	unsigned long	minheld;
 	/* count of failed charges */
 	unsigned long	failcnt;
-	/* standard percpu resource precharge */
-	int	std_precharge;
 	/* maximum percpu resource precharge */
-	int	max_precharge;
+	int		max_precharge;
 };
 
 /*
@@ -192,7 +190,7 @@ struct user_beancounter
 
 	union {
 		struct rcu_head rcu;
-		struct execute_work cleanup;
+		struct work_struct work;
 	};
 
 	spinlock_t		ub_lock;
@@ -218,8 +216,6 @@ struct user_beancounter
 
 	struct cgroup		*ub_cgroup;
 
-	struct user_beancounter *parent;
-	int			ub_childs;
 	int			dirty_exceeded;
 	void			*private_data2;
 
@@ -243,14 +239,6 @@ enum ub_severity { UB_HARD, UB_SOFT, UB_FORCE };
 
 #define UB_TEST	0x100
 #define UB_SEV_FLAGS	UB_TEST
-
-static inline
-struct user_beancounter *top_beancounter(struct user_beancounter *ub)
-{
-	while (ub->parent != NULL)
-		ub = ub->parent;
-	return ub;
-}
 
 static inline int ub_barrier_hit(struct user_beancounter *ub, int resource)
 {
@@ -316,8 +304,6 @@ static inline unsigned long ub_resource_excess(struct user_beancounter *ub,
 #define ub_percpu_sub(ub, f, v)	do { } while (0)
 #define ub_percpu_inc(ub, f)	do { } while (0)
 #define ub_percpu_dec(ub, f)	do { } while (0)
-#define ub_percpu_tree_add(ub, field, val) do { } while (0)
-#define ub_percpu_tree_sub(ub, field, val) do { } while (0)
 
 #define mm_ub(mm)	(NULL)
 
@@ -337,6 +323,11 @@ static inline void uncharge_beancounter(struct user_beancounter *ub,
 			int resource, unsigned long val) { }
 
 #else /* CONFIG_BEANCOUNTERS */
+
+extern struct list_head ub_list_head;
+
+#define for_each_beancounter(__ubp) \
+	list_for_each_entry_rcu(__ubp, &ub_list_head, ub_list)
 
 #define ub_percpu(ub, cpu) (per_cpu_ptr((ub)->ub_percpu, (cpu)))
 
@@ -366,26 +357,6 @@ static inline void uncharge_beancounter(struct user_beancounter *ub,
 	} while (0)
 #define ub_percpu_dec(ub, field) ub_percpu_sub(ub, field, 1)
 
-#define ub_percpu_tree_add(ub, field, val) do {			\
-		typeof(val) __val = (val);			\
-		struct user_beancounter *__ub = (ub);		\
-		int __cpu = get_cpu();				\
-		do {						\
-			ub_percpu(__ub, __cpu)->field += __val;	\
-		} while (unlikely(__ub = __ub->parent));	\
-		put_cpu();					\
-	} while(0)
-
-#define ub_percpu_tree_sub(ub, field, val) do {			\
-		typeof(val) __val = (val);			\
-		struct user_beancounter *__ub = (ub);		\
-		int __cpu = get_cpu();				\
-		do {						\
-			ub_percpu(__ub, __cpu)->field -= __val;	\
-		} while (unlikely(__ub = __ub->parent));	\
-		put_cpu();					\
-	} while(0)
-
 #define mm_ub(mm)	((mm)->mm_ub)
 /*
  *  Charge/uncharge operations
@@ -396,9 +367,6 @@ extern int __charge_beancounter_locked(struct user_beancounter *ub,
 
 extern void __uncharge_beancounter_locked(struct user_beancounter *ub,
 		int resource, unsigned long val);
-
-extern void put_beancounter_safe(struct user_beancounter *ub);
-extern void __put_beancounter(struct user_beancounter *ub);
 
 extern void uncharge_warn(struct user_beancounter *ub, int resource,
 		unsigned long val, unsigned long held);
@@ -412,25 +380,19 @@ extern const char *ub_rnames[];
  *	Put a beancounter reference
  */
 
+extern void release_beancounter(struct user_beancounter *ub);
+
+static inline void __put_beancounter(struct user_beancounter *ub)
+{
+	if (atomic_dec_and_test(&ub->ub_refcount))
+		release_beancounter(ub);
+}
+
 static inline void put_beancounter(struct user_beancounter *ub)
 {
 	if (unlikely(ub == NULL))
 		return;
 
-	/* FIXME - optimize not to disable interrupts and make call */
-	__put_beancounter(ub);
-}
-
-/* fast put, refcount can't reach zero */
-static inline void __put_beancounter_batch(struct user_beancounter *ub, int n)
-{
-	atomic_sub(n, &ub->ub_refcount);
-}
-
-static inline void put_beancounter_batch(struct user_beancounter *ub, int n)
-{
-	if (n > 1)
-		__put_beancounter_batch(ub, n - 1);
 	__put_beancounter(ub);
 }
 
@@ -455,20 +417,10 @@ struct user_beancounter *get_beancounter_rcu(struct user_beancounter *ub)
 	return atomic_inc_not_zero(&ub->ub_refcount) ? ub : NULL;
 }
 
-static inline void get_beancounter_batch(struct user_beancounter *ub, int n)
-{
-	atomic_add(n, &ub->ub_refcount);
-}
-
-extern struct user_beancounter *get_subbeancounter_byid(
-		struct user_beancounter *,
-		int id, int create);
-
 extern void ub_init_late(void);
 extern void ub_init_early(void);
 
 int ubstat_alloc_store(struct user_beancounter *ub);
-extern int print_ub_uid(struct user_beancounter *ub, char *buf, int size);
 
 /*
  *	Resource charging
@@ -487,24 +439,6 @@ int charge_beancounter(struct user_beancounter *ub, int resource,
 		unsigned long val, enum ub_severity strict);
 void uncharge_beancounter(struct user_beancounter *ub, int resource,
 		unsigned long val);
-void __charge_beancounter_notop(struct user_beancounter *ub, int resource,
-		unsigned long val);
-void __uncharge_beancounter_notop(struct user_beancounter *ub, int resource,
-		unsigned long val);
-
-static inline void charge_beancounter_notop(struct user_beancounter *ub,
-		int resource, unsigned long val)
-{
-	if (ub->parent != NULL)
-		__charge_beancounter_notop(ub, resource, val);
-}
-
-static inline void uncharge_beancounter_notop(struct user_beancounter *ub,
-		int resource, unsigned long val)
-{
-	if (ub->parent != NULL)
-		__uncharge_beancounter_notop(ub, resource, val);
-}
 
 void init_beancounter_precharge(struct user_beancounter *ub, int resource);
 

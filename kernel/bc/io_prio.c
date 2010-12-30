@@ -12,7 +12,6 @@
 #include <linux/cgroup.h>
 #include <bc/beancounter.h>
 #include <bc/proc.h>
-#include <bc/hash.h>
 #include "blk-cgroup.h"
 
 static u64 ioprio_weight[UB_IOPRIO_MAX] = {320, 365, 410, 460, 500, 550, 600, 640};
@@ -101,8 +100,6 @@ static void *bc_iostat_start(struct seq_file *f, loff_t *ppos)
 
 	rcu_read_lock();
 	for_each_beancounter(ub) {
-		if (ub->parent != NULL)
-			continue;
 		if (!pos--)
 			return ub;
 	}
@@ -117,8 +114,6 @@ static void *bc_iostat_next(struct seq_file *f, void *v, loff_t *ppos)
 	entry = &ub->ub_list;
 	list_for_each_continue_rcu(entry, &ub_list_head) {
 		ub = list_entry(entry, struct user_beancounter, ub_list);
-		if (ub->parent != NULL)
-			continue;
 		(*ppos)++;
 		return ub;
 	}

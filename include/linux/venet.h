@@ -30,7 +30,6 @@ struct ip_entry_struct
 {
 	struct ve_addr_struct	addr;
 	struct ve_struct	*active_env;
-	struct venet_stat	*stat;
 	struct veip_struct	*tgt_veip;
 	struct hlist_node 	ip_hash;
 	struct list_head 	ve_list;
@@ -50,15 +49,13 @@ struct veip_struct
 	struct list_head	list;
 	struct list_head	ext_lh;
 	envid_t			veid;
+	struct venet_stat	*stat;
 };
 
 struct veip_pool_ops {
-	struct ip_entry_struct *(*ip_entry_create)(int veid);
-	void (*ip_entry_release)(struct ip_entry_struct *);
-	int (*ip_entry_conflict)(struct ip_entry_struct *, struct ve_struct *);
 	int (*veip_create)(struct ve_struct *);
 	void (*veip_release)(struct ve_struct *);
-	void (*veip_cleanup)(void);
+	void (*veip_free)(struct veip_struct *);
 	struct ve_struct *(*veip_lookup)(struct sk_buff *);
 };
 
@@ -86,6 +83,7 @@ struct veip_struct *veip_find(envid_t veid);
 struct veip_struct *veip_findcreate(envid_t veid);
 /* veip_hash_lock should be taken for write by caller */
 int veip_put(struct veip_struct *veip);
+void veip_cleanup(void);
 
 extern struct list_head veip_lh;
 

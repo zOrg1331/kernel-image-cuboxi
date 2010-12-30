@@ -68,18 +68,10 @@ struct vzctl_ve_configure {
 	unsigned int veid;
 	unsigned int key;
 #define VE_CONFIGURE_OS_RELEASE		2
-#define VE_CONFIGURE_MOVE_PCI_DEVICE	3
 #define VE_CONFIGURE_CREATE_PROC_LINK	4
 	unsigned int val;
 	unsigned int size;
 	char data[0];
-};
-
-struct vzctl_ve_pci_dev {
-	int domain;
-	unsigned int bus;
-	unsigned int slot;
-	unsigned int func;
 };
 
 struct vzctl_ve_meminfo {

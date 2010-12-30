@@ -13,14 +13,43 @@ static unsigned int dcache_charge_size(int name_len)
 		(name_len > DNAME_INLINE_LEN ? name_len : 0);
 }
 
+static int __ub_dcache_charge(struct user_beancounter *ub,
+		unsigned long size, int strict)
+{
+	int ret;
+
+	ret = charge_beancounter_fast(ub, UB_KMEMSIZE, size, strict);
+	if (unlikely(ret))
+		goto no_kmem;
+
+	ret = charge_beancounter_fast(ub, UB_DCACHESIZE, size, strict);
+	if (unlikely(ret))
+		goto no_dcache;
+
+	return 0;
+
+no_dcache:
+	uncharge_beancounter_fast(ub, UB_KMEMSIZE, size);
+no_kmem:
+	return ret;
+}
+
+static void __ub_dcache_uncharge(struct user_beancounter *ub,
+		unsigned long size)
+{
+	uncharge_beancounter_fast(ub, UB_DCACHESIZE, size);
+	uncharge_beancounter_fast(ub, UB_KMEMSIZE, size);
+}
+
 int ub_dcache_charge(struct user_beancounter *ub, int name_len)
 {
 	int size, shrink;
 
 	size = dcache_charge_size(name_len);
 	do {
-		if (!charge_beancounter_fast(ub, UB_DCACHESIZE, size, UB_SOFT | UB_TEST))
+		if (!__ub_dcache_charge(ub, size, UB_SOFT | UB_TEST))
 			return 0;
+
 		shrink = max(size, ub->ub_parms[UB_DCACHESIZE].max_precharge);
 		shrink = DIV_ROUND_UP(shrink, dcache_charge_size(0));
 	} while (shrink_dcache_ub(ub, shrink));
@@ -37,7 +66,7 @@ void ub_dcache_uncharge(struct user_beancounter *ub, int name_len)
 	unsigned int size;
 
 	size = dcache_charge_size(name_len);
-	uncharge_beancounter_fast(ub, UB_DCACHESIZE, size);
+	__ub_dcache_uncharge(ub, size);
 }
 
 static unsigned long recharge_subtree(struct dentry *d, struct user_beancounter *ub,
@@ -89,8 +118,8 @@ void ub_dcache_set_owner(struct dentry *root, struct user_beancounter *ub)
 	cub = root->d_ub;
 	if (ub != cub) {
 		size = recharge_subtree(root, ub, cub);
-		uncharge_beancounter_fast(cub, UB_DCACHESIZE, size);
-		charge_beancounter_fast(ub, UB_DCACHESIZE, size, UB_FORCE);
+		__ub_dcache_uncharge(cub, size);
+		__ub_dcache_charge(ub, size, UB_FORCE);
 	}
 
 	get_beancounter(ub);

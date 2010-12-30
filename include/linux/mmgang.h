@@ -131,25 +131,25 @@ static inline void gang_del_kernel_page(struct page *page, int order)
 static inline void gang_map_anon_page(struct page *page)
 {
 	rcu_read_lock();
-	ub_percpu_tree_add(get_gang_ub(page_gang(page)), anonymous_pages, 1);
+	ub_percpu_add(get_gang_ub(page_gang(page)), anonymous_pages, 1);
 	rcu_read_unlock();
 }
 static inline void gang_unmap_anon_page(struct page *page)
 {
 	rcu_read_lock();
-	ub_percpu_tree_sub(get_gang_ub(page_gang(page)), anonymous_pages, 1);
+	ub_percpu_sub(get_gang_ub(page_gang(page)), anonymous_pages, 1);
 	rcu_read_unlock();
 }
 static inline void gang_map_file_page(struct page *page)
 {
 	rcu_read_lock();
-	ub_percpu_tree_add(get_gang_ub(page_gang(page)), mapped_file_pages, 1);
+	ub_percpu_add(get_gang_ub(page_gang(page)), mapped_file_pages, 1);
 	rcu_read_unlock();
 }
 static inline void gang_unmap_file_page(struct page *page)
 {
 	rcu_read_lock();
-	ub_percpu_tree_sub(get_gang_ub(page_gang(page)), mapped_file_pages, 1);
+	ub_percpu_sub(get_gang_ub(page_gang(page)), mapped_file_pages, 1);
 	rcu_read_unlock();
 }
 

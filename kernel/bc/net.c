@@ -103,13 +103,12 @@ static int ub_sock_makewreserv_locked(struct sock *sk,
 
 int __ub_too_many_orphans(struct sock *sk, int count)
 {
-	struct user_beancounter *ub;
 
-	if (sock_has_ubc(sk)) {
-		ub = top_beancounter(sock_bc(sk)->ub);
-		if (count >= ub->ub_parms[UB_NUMTCPSOCK].barrier >> 2)
+	struct ubparm *ub_sock;
+
+	ub_sock = &sock_bc(sk)->ub->ub_parms[UB_NUMTCPSOCK];
+	if (sock_has_ubc(sk) && (count >= ub_sock->barrier >> 2))
 			return 1;
-	}
 	return 0;
 }
 
@@ -123,14 +122,12 @@ static void ub_sock_snd_wakeup(struct user_beancounter *ub)
 	struct sock *sk;
 	struct sock_beancounter *skbc;
 	struct socket *sock;
-	unsigned long added;
 
 	while (!list_empty(&ub->ub_other_sk_list)) {
 		p = ub->ub_other_sk_list.next;
 		skbc = list_entry(p, struct sock_beancounter, ub_sock_list);
 		sk = skbc_sock(skbc);
 
-		added = 0;
 		sock = sk->sk_socket;
 		if (sock == NULL) {
 			/* sk being destroyed */
@@ -141,11 +138,9 @@ static void ub_sock_snd_wakeup(struct user_beancounter *ub)
 		ub_debug(UBD_NET_SLEEP,
 				"Checking queue, waiting %lu, reserv %lu\n",
 				skbc->ub_waitspc, skbc->poll_reserv);
-		added = -skbc->poll_reserv;
 		if (ub_sock_makewreserv_locked(sk, UB_OTHERSOCKBUF,
 					skbc->ub_waitspc))
 			break;
-		added += skbc->poll_reserv;
 
 		list_del_init(&skbc->ub_sock_list);
 
@@ -163,9 +158,6 @@ static void ub_sock_snd_wakeup(struct user_beancounter *ub)
 		sk->sk_write_space(sk);
 		read_unlock(&sk->sk_callback_lock);
 
-		if (skbc->ub != ub && added)
-			charge_beancounter_notop(skbc->ub,
-				       	UB_OTHERSOCKBUF, added);
 		sock_put(sk);
 
 		spin_lock(&ub->ub_lock);
@@ -178,14 +170,12 @@ static void ub_tcp_snd_wakeup(struct user_beancounter *ub)
 	struct sock *sk;
 	struct sock_beancounter *skbc;
 	struct socket *sock;
-	unsigned long added;
 
 	while (!list_empty(&ub->ub_tcp_sk_list)) {
 		p = ub->ub_tcp_sk_list.next;
 		skbc = list_entry(p, struct sock_beancounter, ub_sock_list);
 		sk = skbc_sock(skbc);
 
-		added = 0;
 		sock = sk->sk_socket;
 		if (sock == NULL) {
 			/* sk being destroyed */
@@ -196,11 +186,9 @@ static void ub_tcp_snd_wakeup(struct user_beancounter *ub)
 		ub_debug(UBD_NET_SLEEP,
 				"Checking queue, waiting %lu, reserv %lu\n",
 				skbc->ub_waitspc, skbc->poll_reserv);
-		added = -skbc->poll_reserv;
 		if (ub_sock_makewreserv_locked(sk, UB_TCPSNDBUF,
 					skbc->ub_waitspc))
 			break;
-		added += skbc->poll_reserv;
 
 		list_del_init(&skbc->ub_sock_list);
 
@@ -218,8 +206,6 @@ static void ub_tcp_snd_wakeup(struct user_beancounter *ub)
 		sk->sk_write_space(sk);
 		read_unlock(&sk->sk_callback_lock);
 
-		if (skbc->ub != ub && added)
-			charge_beancounter_notop(skbc->ub, UB_TCPSNDBUF, added);
 		sock_put(sk);
 
 		spin_lock(&ub->ub_lock);
@@ -231,16 +217,14 @@ int ub_sock_snd_queue_add(struct sock *sk, int res, unsigned long size)
 	unsigned long flags;
 	struct sock_beancounter *skbc;
 	struct user_beancounter *ub;
-	unsigned long added_reserv;
 
 	if (!sock_has_ubc(sk))
 		return 0;
 
 	skbc = sock_bc(sk);
-	ub = top_beancounter(skbc->ub);
+	ub = skbc->ub;
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	ub_debug(UBD_NET_SLEEP, "attempt to charge for %lu\n", size);
-	added_reserv = -skbc->poll_reserv;
 	if (!ub_sock_makewreserv_locked(sk, res, size)) {
 		/*
 		 * It looks a bit hackish, but it is compatible with both
@@ -249,10 +233,7 @@ int ub_sock_snd_queue_add(struct sock *sk, int res, unsigned long size)
 		 * right after spin_unlock_irqrestore.
 		 */
 		__set_current_state(TASK_RUNNING);
-		added_reserv += skbc->poll_reserv;
 		spin_unlock_irqrestore(&ub->ub_lock, flags);
-		if (added_reserv)
-			charge_beancounter_notop(skbc->ub, res, added_reserv);
 		return 0;
 	}
 
@@ -318,7 +299,7 @@ void ub_sock_sndqueuedel(struct sock *sk)
 	skbc = sock_bc(sk);
 
 	/* race with write_space callback of other socket */
-	ub = top_beancounter(skbc->ub);
+	ub = skbc->ub;
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	list_del_init(&skbc->ub_sock_list);
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
@@ -368,7 +349,7 @@ static void ub_update_rmem_thres(struct sock_beancounter *skub)
 	struct user_beancounter *ub;
 
 	if (skub && skub->ub) {
-		ub = top_beancounter(skub->ub);
+		ub = skub->ub;
 		ub->ub_rmem_thres = ub->ub_parms[UB_TCPRCVBUF].barrier /
 			(ub->ub_parms[UB_NUMTCPSOCK].held + 1);
 	}
@@ -407,19 +388,18 @@ static inline void sk_free_beancounter(struct sock *sk)
 static int __sock_charge(struct sock *sk, int res)
 {
 	struct sock_beancounter *skbc;
-	struct user_beancounter *cub, *ub;
+	struct user_beancounter *ub;
 	unsigned long added_reserv, added_forw;
 	unsigned long flags;
 
-	cub = get_exec_ub();
-	if (unlikely(cub == NULL))
+	ub = get_exec_ub();
+	if (unlikely(ub == NULL))
 		return 0;
 
 	sk_alloc_beancounter(sk);
 	skbc = sock_bc(sk);
 	INIT_LIST_HEAD(&skbc->ub_sock_list);
 
-	ub = top_beancounter(cub);
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	if (unlikely(__charge_beancounter_locked(ub, res, 1, UB_HARD) < 0))
 		goto out_limit;
@@ -448,13 +428,7 @@ static int __sock_charge(struct sock *sk, int res)
 	}
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
 
-	charge_beancounter_notop(cub, res, 1);
-	if (added_reserv)
-		charge_beancounter_notop(cub, UB_TCPSNDBUF, added_reserv);
-	if (added_forw)
-		charge_beancounter_notop(cub, UB_TCPRCVBUF, added_forw);
-
-	skbc->ub = get_beancounter(cub);
+	skbc->ub = get_beancounter(ub);
 	return 0;
 
 out_limit:
@@ -507,7 +481,7 @@ void ub_sock_uncharge(struct sock *sk)
 	skbc = sock_bc(sk);
 	ub_debug(UBD_NET_SOCKET, "Calling ub_sock_uncharge on %p\n", sk);
 
-	ub = top_beancounter(skbc->ub);
+	ub = skbc->ub;
 
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	if (!list_empty(&skbc->ub_sock_list)) {
@@ -533,22 +507,12 @@ void ub_sock_uncharge(struct sock *sk)
 	if (unlikely(skbc->ub_wcharged))
 		printk(KERN_WARNING
 		       "ub_sock_uncharge: wch=%lu for ub %p (%d).\n",
-		       skbc->ub_wcharged, skbc->ub, skbc->ub->ub_uid);
+		       skbc->ub_wcharged, ub, ub->ub_uid);
 	skbc->poll_reserv = 0;
 	skbc->forw_space = 0;
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
 
-	uncharge_beancounter_notop(skbc->ub,
-			(is_tcp_sock ? UB_TCPSNDBUF : UB_OTHERSOCKBUF),
-			reserv);
-	if (forw)
-		uncharge_beancounter_notop(skbc->ub,
-				(is_tcp_sock ? UB_TCPRCVBUF : UB_DGRAMRCVBUF),
-				forw);
-	uncharge_beancounter_notop(skbc->ub,
-			(is_tcp_sock ? UB_NUMTCPSOCK : UB_NUMOTHERSOCK), 1);
-
-	put_beancounter(skbc->ub);
+	put_beancounter(ub);
 	sk_free_beancounter(sk);
 }
 
@@ -592,7 +556,7 @@ static int ub_sock_makewreserv_locked(struct sock *sk,
 	if (skbc->poll_reserv >= size) /* no work to be done */
 		goto out;
 
-	ub = top_beancounter(skbc->ub);
+	ub = skbc->ub;
 	ub->ub_parms[bufid].held += size - skbc->poll_reserv;
 
 	wcharge_added = 0;
@@ -664,9 +628,7 @@ unroll:
 int ub_sock_make_wreserv(struct sock *sk, int bufid, unsigned long size)
 {
 	struct sock_beancounter *skbc;
-	struct user_beancounter *ub;
 	unsigned long flags;
-	unsigned long added_reserv;
 	int err;
 
 	skbc = sock_bc(sk);
@@ -679,15 +641,9 @@ int ub_sock_make_wreserv(struct sock *sk, int bufid, unsigned long size)
 	if (unlikely(!sock_has_ubc(sk)) || likely(skbc->poll_reserv >= size))
 		return 0;
 
-	ub = top_beancounter(skbc->ub);
-	spin_lock_irqsave(&ub->ub_lock, flags);
-	added_reserv = -skbc->poll_reserv;
+	spin_lock_irqsave(&skbc->ub->ub_lock, flags);
 	err = ub_sock_makewreserv_locked(sk, bufid, size);
-	added_reserv += skbc->poll_reserv;
-	spin_unlock_irqrestore(&ub->ub_lock, flags);
-
-	if (added_reserv)
-		charge_beancounter_notop(skbc->ub, bufid, added_reserv);
+	spin_unlock_irqrestore(&skbc->ub->ub_lock, flags);
 
 	return err;
 }
@@ -722,7 +678,7 @@ static void ub_sock_do_ret_wreserv(struct sock *sk, int bufid,
 	unsigned long flags;
 
 	skbc = sock_bc(sk);
-	ub = top_beancounter(skbc->ub);
+	ub = skbc->ub;
 
 	extra = 0;
 	spin_lock_irqsave(&ub->ub_lock, flags);
@@ -739,24 +695,19 @@ static void ub_sock_do_ret_wreserv(struct sock *sk, int bufid,
 			ub_sock_snd_wakeup(ub);
 	}
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
-
-	if (extra)
-		uncharge_beancounter_notop(skbc->ub, bufid, extra);
 }
 
 void ub_sock_ret_wreserv(struct sock *sk, int bufid,
 		unsigned long size, unsigned long ressize)
 {
 	struct sock_beancounter *skbc;
-	struct user_beancounter *ub;
 
 	if (unlikely(!sock_has_ubc(sk)))
 		return;
 
 	skbc = sock_bc(sk);
-	ub = top_beancounter(skbc->ub);
 	/* check if the reserve can be kept */
-	if (ub_barrier_farsz(ub, bufid)) {
+	if (ub_barrier_farsz(skbc->ub, bufid)) {
 		skbc->poll_reserv += size;
 		return;
 	}
@@ -838,7 +789,7 @@ int ub_sock_tcp_chargerecv(struct sock *sk, struct sk_buff *skb,
 	 * subsides, to #1.
 	 */
 	retval = 0;
-	ub = top_beancounter(sock_bc(sk)->ub);
+	ub = sock_bc(sk)->ub;
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	ub->ub_parms[UB_TCPRCVBUF].held += chargesize;
 	if (ub->ub_parms[UB_TCPRCVBUF].held >
@@ -849,11 +800,8 @@ int ub_sock_tcp_chargerecv(struct sock *sk, struct sk_buff *skb,
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
 
 out:
-	if (retval == 0) {
-		charge_beancounter_notop(sock_bc(sk)->ub, UB_TCPRCVBUF,
-				chargesize);
+	if (retval == 0)
 		ub_skb_set_charge(skb, sk, chargesize, UB_TCPRCVBUF);
-	}
 	return retval;
 
 excess:
@@ -889,7 +837,7 @@ static void ub_tcprcvbuf_uncharge(struct sk_buff *skb)
 	int prev_pres;
 	struct user_beancounter *ub;
 
-	ub = top_beancounter(skb_bc(skb)->ub);
+	ub = skb_bc(skb)->ub;
 	if (ub_barrier_farsz(ub, UB_TCPRCVBUF)) {
 		sock_bc(skb->sk)->forw_space += skb_bc(skb)->charged;
 		ub_skb_set_uncharge(skb);
@@ -914,8 +862,6 @@ static void ub_tcprcvbuf_uncharge(struct sk_buff *skb)
 		ub->ub_rmem_pressure = UB_RMEM_KEEP;
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
 
-	uncharge_beancounter_notop(skb_bc(skb)->ub, UB_TCPRCVBUF,
-			skb_bc(skb)->charged);
 	ub_skb_set_uncharge(skb);
 }
 
@@ -927,11 +873,10 @@ static void ub_tcprcvbuf_uncharge(struct sk_buff *skb)
 static void ub_socksndbuf_uncharge(struct sk_buff *skb)
 {
 	unsigned long flags;
-	struct user_beancounter *ub, *cub;
+	struct user_beancounter *ub;
 	unsigned long chargesize;
 
-	cub = skb_bc(skb)->ub;
-	ub = top_beancounter(cub);
+	ub = skb_bc(skb)->ub;
 	chargesize = skb_bc(skb)->charged;
 
 	spin_lock_irqsave(&ub->ub_lock, flags);
@@ -941,7 +886,6 @@ static void ub_socksndbuf_uncharge(struct sk_buff *skb)
 	ub_sock_snd_wakeup(ub);
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
 
-	uncharge_beancounter_notop(cub, UB_OTHERSOCKBUF, chargesize);
 	ub_skb_set_uncharge(skb);
 }
 
@@ -988,7 +932,6 @@ int ub_sock_getwres_other(struct sock *sk, unsigned long size)
 	struct sock_beancounter *skbc;
 	struct user_beancounter *ub;
 	unsigned long flags;
-	unsigned long added_reserv;
 	int err;
 
 	if (unlikely(!sock_has_ubc(sk)))
@@ -997,20 +940,14 @@ int ub_sock_getwres_other(struct sock *sk, unsigned long size)
 	/*
 	 * Nothing except beancounter lock protects skbc->poll_reserv.
 	 * So, take the lock and do the job.
-	 * Dances with added_reserv repeat ub_sock_make_wreserv.
 	 */
 	skbc = sock_bc(sk);
-	ub = top_beancounter(skbc->ub);
+	ub = skbc->ub;
 	spin_lock_irqsave(&ub->ub_lock, flags);
-	added_reserv = -skbc->poll_reserv;
 	err = ub_sock_makewreserv_locked(sk, UB_OTHERSOCKBUF, size);
-	added_reserv += skbc->poll_reserv;
 	if (!err)
 		skbc->poll_reserv -= size;
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
-
-	if (added_reserv)
-		charge_beancounter_notop(skbc->ub, UB_OTHERSOCKBUF, added_reserv);
 
 	return err;
 }
@@ -1123,7 +1060,7 @@ int ub_sock_tcp_chargesend(struct sock *sk, struct sk_buff *skb,
 		return 0;
 	}
 
-	ub = top_beancounter(skbc->ub);
+	ub = skbc->ub;
 	spin_lock_irqsave(&ub->ub_lock, flags);
 	ret = __charge_beancounter_locked(ub, UB_TCPSNDBUF,
 			chargesize, strict);
@@ -1135,10 +1072,8 @@ int ub_sock_tcp_chargesend(struct sock *sk, struct sk_buff *skb,
 	if (!ret && ub_barrier_hit(ub, UB_TCPSNDBUF))
 		skbc->ub_wcharged += chargesize;
 	spin_unlock_irqrestore(&ub->ub_lock, flags);
-	if (likely(!ret)) {
-		charge_beancounter_notop(skbc->ub, UB_TCPSNDBUF, chargesize);
+	if (likely(!ret))
 		ub_skb_set_charge(skb, sk, chargesize, UB_TCPSNDBUF);
-	}
 	return ret;
 }
 EXPORT_SYMBOL(ub_sock_tcp_chargesend);

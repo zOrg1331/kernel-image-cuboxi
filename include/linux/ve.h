@@ -200,12 +200,12 @@ struct ve_struct {
 	struct kobject		*_virtual_dir;
 	struct kset		*class_kset;
 	struct kset		*devices_kset;
-	struct kobject		*pci_kobj;
 	struct kobject		*dev_kobj;
 	struct kobject		*dev_char_kobj;
 	struct kobject		*dev_block_kobj;
 	struct class		*tty_class;
 	struct class		*mem_class;
+	struct list_head	devices;
 
 #ifdef CONFIG_NET
 	struct class		*net_class;

@@ -176,6 +176,20 @@ static const struct sockaddr_in rpcb_inaddr_loopback = {
 
 static DEFINE_MUTEX(rpcb_create_local_mutex);
 
+void rpcb_break_local(void)
+{
+	if (get_exec_env()->rpc_data == NULL)
+		return;
+
+	mutex_lock(&rpcb_create_local_mutex);
+	if (rpcb_local_clnt)
+		rpcb_local_clnt->cl_broken = 1;
+	if (rpcb_local_clnt4)
+		rpcb_local_clnt4->cl_broken = 1;
+	mutex_unlock(&rpcb_create_local_mutex);
+}
+EXPORT_SYMBOL_GPL(rpcb_break_local);
+
 /*
  * Returns zero on success, otherwise a negative errno value
  * is returned.

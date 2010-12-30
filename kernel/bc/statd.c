@@ -21,7 +21,6 @@
 #include <asm/param.h>
 
 #include <bc/beancounter.h>
-#include <bc/hash.h>
 #include <bc/statd.h>
 
 static spinlock_t ubs_notify_lock = SPIN_LOCK_UNLOCKED;
@@ -46,16 +45,17 @@ static int ubstat_get_list(void __user *buf, long size)
 	ptr = page;
 	end = page + PAGE_SIZE / sizeof(*ptr);
 
-	spin_lock_irq(&ub_hash_lock);
+	rcu_read_lock();
 	for_each_beancounter(ub) {
-		if (ub->parent != NULL)
-			continue;
 		*ptr++ = ub->ub_uid;
 		if (ptr != end)
 			continue;
 
-		get_beancounter(ub);
-		spin_unlock_irq(&ub_hash_lock);
+		if (!get_beancounter_rcu(ub)) {
+			ptr--;
+			continue;
+		}
+		rcu_read_unlock();
 
 		put_beancounter(ubp);
 		ubp = ub;
@@ -74,9 +74,9 @@ static int ubstat_get_list(void __user *buf, long size)
 		ptr = page;
 		end = page + PAGE_SIZE / sizeof(*ptr);
 
-		spin_lock_irq(&ub_hash_lock);
+		rcu_read_lock();
 	}
-	spin_unlock_irq(&ub_hash_lock);
+	rcu_read_unlock();
 
 	put_beancounter(ubp);
 	size = min_t(long, (ptr - page) * sizeof(*ptr), size);

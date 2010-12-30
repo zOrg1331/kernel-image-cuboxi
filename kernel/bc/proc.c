@@ -15,7 +15,6 @@
 #include <linux/virtinfo.h>
 
 #include <bc/beancounter.h>
-#include <bc/hash.h>
 #include <bc/proc.h>
 
 /* Generic output formats */
@@ -42,15 +41,11 @@ static const char *res_fmt = "%10s  %-12s %20lu %20lu %20lu %20lu %20lu\n";
 static void ub_show_res(struct seq_file *f, struct user_beancounter *ub,
 		int r, int show_uid)
 {
-	int len;
 	char ub_uid[64];
 
-	if (show_uid && r == 0) {
-		len = print_ub_uid(ub, ub_uid, sizeof(ub_uid) - 2);
-		ub_uid[len] = ':';
-		ub_uid[len + 1] = '\0';
-	} else
-		strcpy(ub_uid, "");
+	memset(ub_uid, 0, sizeof(ub_uid));
+	if (show_uid && r == 0)
+		snprintf(ub_uid, sizeof(ub_uid), "%u:", ub->ub_uid);
 
 	seq_printf(f, res_fmt, ub_uid, ub_rnames[r],
 			ub->ub_parms[r].held,
@@ -90,15 +85,12 @@ static struct bc_proc_entry bc_resources_entry = {
 static int bc_debug_show(struct seq_file *f, void *v)
 {
 	struct user_beancounter *ub;
-	char buf[64];
 
 	ub = seq_beancounter(f);
-	print_ub_uid(ub, buf, sizeof(buf));
-	seq_printf(f, "uid: %s\n", buf);
+	seq_printf(f, "uid: %u\n", ub->ub_uid);
 	seq_printf(f, "ref: %d\n", atomic_read(&ub->ub_refcount));
 
 	seq_printf(f, "bc: %p\n", ub);
-	seq_printf(f, "par: %p\n", ub->parent);
 	seq_printf(f, "sizeof: %lu\n", sizeof(struct user_beancounter));
 	return 0;
 }
@@ -114,15 +106,14 @@ static int bc_precharge_show(struct seq_file *f, void *v)
 	struct user_beancounter *ub;
 	int i, cpus = num_possible_cpus();
 
-	seq_printf(f, "resource        \tsum\tstd\tmax\n");
+	seq_printf(f, "resource        \tsum\tmax\n");
 
 	ub = seq_beancounter(f);
 	for ( i = 0 ; i < UB_RESOURCES ; i++ ) {
 		if (!strcmp(ub_rnames[i], "dummy"))
 			continue;
-		seq_printf(f, "%-16s\t%d\t%d\t%d\n", ub_rnames[i],
+		seq_printf(f, "%-16s\t%d\t%d\n", ub_rnames[i],
 				__ub_percpu_sum(ub, precharge[i]),
-				ub->ub_parms[i].std_precharge * cpus,
 				ub->ub_parms[i].max_precharge * cpus);
 	}
 
@@ -159,7 +150,7 @@ static int bc_proc_meminfo_show(struct seq_file *f, void *v)
 	struct ve_struct *ve, *old;
 
 	ub = seq_beancounter(f);
-	ve = get_ve_by_id(top_beancounter(ub)->ub_uid);
+	ve = get_ve_by_id(ub->ub_uid);
 	if (ve == NULL)
 		return -ESRCH;
 
@@ -197,12 +188,7 @@ static int res_show(struct seq_file *f, void *v)
 static int ub_accessible(struct user_beancounter *exec,
 		struct user_beancounter *target)
 {
-	struct user_beancounter *p, *q;
-
-	p = top_beancounter(exec);
-	q = top_beancounter(target);
-
-	return (p == get_ub0() || p == q);
+	return (exec == get_ub0() || exec == target);
 }
 
 static void ub_show_header(struct seq_file *f)
@@ -226,8 +212,6 @@ static void *ub_start(struct seq_file *f, loff_t *ppos)
 
 	rcu_read_lock();
 	for_each_beancounter(ub) {
-		if (ub->parent != NULL)
-			continue;
 		if (!ub_accessible(exec_ub, ub))
 			continue;
 		if (pos-- == 0)
@@ -249,11 +233,8 @@ static void *ub_next(struct seq_file *f, void *v, loff_t *ppos)
 
 	list_for_each_continue_rcu(entry, &ub_list_head) {
 		ub = list_entry(entry, struct user_beancounter, ub_list);
-		if (ub->parent != NULL)
-			continue;
 		if (!ub_accessible(exec_ub, ub))
 			continue;
-
 		(*ppos)++;
 		return ub;
 	}
@@ -354,13 +335,7 @@ EXPORT_SYMBOL(bc_register_proc_root_entry);
 
 static inline unsigned long bc_make_ino(struct user_beancounter *ub)
 {
-	unsigned long ret;
-
-	ret = 0xbc000000;
-	if (ub->parent)
-		ret |= ((ub->parent->ub_uid + 1) << 4);
-	ret |= (ub->ub_uid + 1);
-	return ret;
+	return 0xbc000000 | (ub->ub_uid + 1);
 }
 
 static inline unsigned long bc_make_file_ino(struct bc_proc_entry *de)
@@ -436,6 +411,9 @@ static int bc_readdir(struct file *file, filldir_t filler, void *data,
 		pos++;
 	}
 
+	if (parent)
+		goto out;
+
 	rcu_read_lock();
 	prev = NULL;
 	ub = list_entry(&ub_list_head, struct user_beancounter, ub_list);
@@ -449,9 +427,6 @@ static int bc_readdir(struct file *file, filldir_t filler, void *data,
 		if (&ub->ub_list == &ub_list_head)
 			break;
 
-		if (ub->parent != parent)
-			continue;
-
 		if (filled++ < pos)
 			continue;
 
@@ -461,7 +436,7 @@ static int bc_readdir(struct file *file, filldir_t filler, void *data,
 		rcu_read_unlock();
 		put_beancounter(prev);
 
-		len = print_ub_uid(ub, buf, sizeof(buf));
+		len = snprintf(buf, sizeof(buf), "%u", ub->ub_uid);
 		ino = bc_make_ino(ub);
 
 		err = (*filler)(data, buf, len, pos, ino, DT_DIR);
@@ -645,9 +620,6 @@ static int bc_entry_readdir(struct file *file, void *data, filldir_t filler)
 static struct dentry *bc_entry_lookup(struct inode *dir, struct dentry *dentry,
 		struct nameidata *nd)
 {
-	int id;
-	char *end;
-	struct user_beancounter *par, *ub;
 	struct dentry *de;
 
 	if (!(capable(CAP_DAC_OVERRIDE) && capable(CAP_DAC_READ_SEARCH)))
@@ -657,23 +629,7 @@ static struct dentry *bc_entry_lookup(struct inode *dir, struct dentry *dentry,
 	if (de != ERR_PTR(-ESRCH))
 		return de;
 
-	id = simple_strtol(dentry->d_name.name, &end, 10);
-	if (*end != '.')
-		return ERR_PTR(-ENOENT);
-
-	par = (struct user_beancounter *)dir->i_private;
-	if (par->ub_uid != id)
-		return ERR_PTR(-ENOENT);
-
-	id = simple_strtol(end + 1, &end, 10);
-	if (*end != '\0')
-		return ERR_PTR(-ENOENT);
-
-	ub = get_subbeancounter_byid(par, id, 0);
-	if (ub == NULL)
-		return ERR_PTR(-ENOENT);
-
-	return bc_lookup(ub, dir, dentry);
+	return ERR_PTR(-ENOENT);
 }
 
 static int bc_entry_getattr(struct vfsmount *mnt, struct dentry *dentry,
@@ -683,7 +639,7 @@ static int bc_entry_getattr(struct vfsmount *mnt, struct dentry *dentry,
 
 	generic_fillattr(dentry->d_inode, stat);
 	ub = (struct user_beancounter *)dentry->d_fsdata;
-	stat->nlink = ub->ub_childs + 2;
+	stat->nlink = 2;
 	return 0;
 }
 

@@ -341,10 +341,10 @@ static inline void task_cap(struct seq_file *m, struct task_struct *p)
 static inline void ub_dump_task_info(struct task_struct *tsk,
 		char *stsk, int ltsk, char *smm, int lmm)
 {
-	print_ub_uid(tsk->task_bc.task_ub, stsk, ltsk);
+	snprintf(stsk, ltsk, "%u", tsk->task_bc.task_ub->ub_uid);
 	task_lock(tsk);
 	if (tsk->mm)
-		print_ub_uid(tsk->mm->mm_ub, smm, lmm);
+		snprintf(smm, lmm, "%u", tsk->mm->mm_ub->ub_uid);
 	else
 		strncpy(smm, "N/A", lmm);
 	task_unlock(tsk);
@@ -519,7 +519,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 %lu %lu %lu %lu %lu %ld %ld %ld %ld %d 0 %llu %lu %ld %lu %lu %lu %lu %lu \
 %lu %lu %lu %lu %lu %lu %lu %lu %d %d %u %u %llu %lu %ld"
 #ifdef CONFIG_VE
-	" 0 0 0 0 0 0 0 %d %u"
+	" 0 0 0 0 0 %d %u"
 #endif
 #ifdef CONFIG_BEANCOUNTERS
 	" %s %s"
@@ -573,7 +573,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 		cputime_to_clock_t(gtime),
 		cputime_to_clock_t(cgtime)
 #ifdef CONFIG_VE
-		, task_pid_vnr(task),
+		, task_pid_nr_ns(task, task_active_pid_ns(task)),
 		VEID(VE_TASK_INFO(task)->owner_env)
 #endif
 #ifdef CONFIG_BEANCOUNTERS
