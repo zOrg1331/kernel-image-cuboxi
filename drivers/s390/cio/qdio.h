@@ -202,6 +202,7 @@ struct qdio_dev_perf_stat {
 	unsigned int inbound_queue_full;
 	unsigned int outbound_call;
 	unsigned int outbound_handler;
+	unsigned int outbound_queue_full;
 	unsigned int fast_requeue;
 	unsigned int target_full;
 	unsigned int eqbs;
@@ -249,6 +250,8 @@ struct qdio_output_q {
 	int use_enh_siga;
 	/* timer to check for more outbound work */
 	struct timer_list timer;
+	/* used SBALs before tasklet schedule */
+	int scan_threshold;
 };
 
 /*
@@ -423,9 +426,9 @@ struct indicator_t {
 
 extern struct indicator_t *q_indicators;
 
-static inline int shared_ind(struct qdio_irq *irq_ptr)
+static inline int shared_ind(u32 *dsci)
 {
-	return irq_ptr->dsci == &q_indicators[TIQDIO_SHARED_IND].ind;
+	return dsci == &q_indicators[TIQDIO_SHARED_IND].ind;
 }
 
 /* prototypes for thin interrupt */
