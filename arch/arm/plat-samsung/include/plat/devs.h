@@ -54,7 +54,6 @@ extern struct platform_device s3c_device_lcd;
 extern struct platform_device s3c_device_nand;
 extern struct platform_device s3c_device_ohci;
 extern struct platform_device s3c_device_onenand;
-extern struct platform_device s3c_device_pcm;
 extern struct platform_device s3c_device_rtc;
 extern struct platform_device s3c_device_sdi;
 extern struct platform_device s3c_device_spi0;
@@ -123,6 +122,7 @@ extern struct platform_device s5pv310_device_pd[];
 extern struct platform_device s5pv310_device_spdif;
 
 extern struct platform_device samsung_device_keypad;
+extern struct platform_device samsung_asoc_dma;
 
 /* s3c2440 specific devices */
 
