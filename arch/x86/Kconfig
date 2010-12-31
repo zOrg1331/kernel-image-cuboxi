@@ -2064,6 +2064,8 @@ source "drivers/pcmcia/Kconfig"
 
 source "drivers/pci/hotplug/Kconfig"
 
+source "drivers/vbus/Kconfig"
+
 endmenu
 
 
