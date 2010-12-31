@@ -138,6 +138,8 @@ void fw_cdev_handle_phy_packet(struct fw_card *card, struct fw_packet *p);
 extern struct rw_semaphore fw_device_rwsem;
 extern struct idr fw_device_idr;
 extern int fw_cdev_major;
+struct workqueue_struct;
+extern struct workqueue_struct *fw_wq;
 
 struct fw_device *fw_device_get_by_devt(dev_t devt);
 int fw_device_set_broadcast_channel(struct device *dev, void *gen);
@@ -215,9 +217,11 @@ static inline bool is_next_generation(int new_generation, int old_generation)
 
 /* -transaction */
 
+#define TCODE_LINK_INTERNAL		0xe
+
 #define TCODE_IS_READ_REQUEST(tcode)	(((tcode) & ~1) == 4)
 #define TCODE_IS_BLOCK_PACKET(tcode)	(((tcode) &  1) != 0)
-#define TCODE_IS_LINK_INTERNAL(tcode)	((tcode) == 0xe)
+#define TCODE_IS_LINK_INTERNAL(tcode)	((tcode) == TCODE_LINK_INTERNAL)
 #define TCODE_IS_REQUEST(tcode)		(((tcode) &  2) == 0)
 #define TCODE_IS_RESPONSE(tcode)	(((tcode) &  2) != 0)
 #define TCODE_HAS_REQUEST_DATA(tcode)	(((tcode) & 12) != 4)
