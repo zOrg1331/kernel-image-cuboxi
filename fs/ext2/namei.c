@@ -417,7 +417,7 @@ const struct inode_operations ext2_dir_inode_operations = {
 	.removexattr	= generic_removexattr,
 #endif
 	.setattr	= ext2_setattr,
-	.check_acl	= ext2_check_acl,
+	.check_acl_rcu	= ext2_check_acl_rcu,
 };
 
 const struct inode_operations ext2_special_inode_operations = {
@@ -428,5 +428,5 @@ const struct inode_operations ext2_special_inode_operations = {
 	.removexattr	= generic_removexattr,
 #endif
 	.setattr	= ext2_setattr,
-	.check_acl	= ext2_check_acl,
+	.check_acl_rcu	= ext2_check_acl_rcu,
 };

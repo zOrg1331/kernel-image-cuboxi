@@ -228,9 +228,16 @@ struct inode *v9fs_alloc_inode(struct super_block *sb)
  *
  */
 
+static void v9fs_i_callback(struct rcu_head *head)
+{
+	struct inode *inode = container_of(head, struct inode, i_rcu);
+	INIT_LIST_HEAD(&inode->i_dentry);
+	kmem_cache_free(vcookie_cache, v9fs_inode2cookie(inode));
+}
+
 void v9fs_destroy_inode(struct inode *inode)
 {
-	kmem_cache_free(vcookie_cache, v9fs_inode2cookie(inode));
+	call_rcu(&inode->i_rcu, v9fs_i_callback);
 }
 #endif
 
@@ -530,9 +537,9 @@ v9fs_create(struct v9fs_session_info *v9ses, struct inode *dir,
 	}
 
 	if (v9ses->cache)
-		dentry->d_op = &v9fs_cached_dentry_operations;
+		d_set_d_op(dentry, &v9fs_cached_dentry_operations);
 	else
-		dentry->d_op = &v9fs_dentry_operations;
+		d_set_d_op(dentry, &v9fs_dentry_operations);
 
 	d_instantiate(dentry, inode);
 	err = v9fs_fid_add(dentry, fid);
@@ -697,9 +704,9 @@ struct dentry *v9fs_vfs_lookup(struct inode *dir, struct dentry *dentry,
 
 inst_out:
 	if (v9ses->cache)
-		dentry->d_op = &v9fs_cached_dentry_operations;
+		d_set_d_op(dentry, &v9fs_cached_dentry_operations);
 	else
-		dentry->d_op = &v9fs_dentry_operations;
+		d_set_d_op(dentry, &v9fs_dentry_operations);
 
 	d_add(dentry, inode);
 	return NULL;
