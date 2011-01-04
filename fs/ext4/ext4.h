@@ -62,8 +62,8 @@
 #define EXT4_ERROR_INODE_BLOCK(inode, block, fmt, a...)			\
 	ext4_error_inode((inode), __func__, __LINE__, (block), (fmt), ## a)
 
-#define EXT4_ERROR_FILE(file, fmt, a...)	\
-	ext4_error_file(__func__, __LINE__, (file), (fmt), ## a)
+#define EXT4_ERROR_FILE(file, block, fmt, a...)				\
+	ext4_error_file((file), __func__, __LINE__, (block), (fmt), ## a)
 
 /* data type for block offset of block group */
 typedef int ext4_grpblk_t;
@@ -561,22 +561,6 @@ struct ext4_new_group_data {
 #define EXT4_IOC32_SETVERSION_OLD	FS_IOC32_SETVERSION
 #endif
 
-
-/*
- *  Mount options
- */
-struct ext4_mount_options {
-	unsigned long s_mount_opt;
-	uid_t s_resuid;
-	gid_t s_resgid;
-	unsigned long s_commit_interval;
-	u32 s_min_batch_time, s_max_batch_time;
-#ifdef CONFIG_QUOTA
-	int s_jquota_fmt;
-	char *s_qf_names[MAXQUOTAS];
-#endif
-};
-
 /* Max physical block we can addres w/o extents */
 #define EXT4_MAX_BLOCK_FILE_PHYS	0xFFFFFFFF
 
@@ -709,6 +693,8 @@ do {									       \
 	if (EXT4_FITS_IN_INODE(raw_inode, EXT4_I(inode), xtime ## _extra))     \
 		ext4_decode_extra_time(&(inode)->xtime,			       \
 				       raw_inode->xtime ## _extra);	       \
+	else								       \
+		(inode)->xtime.tv_nsec = 0;				       \
 } while (0)
 
 #define EXT4_EINODE_GET_XTIME(xtime, einode, raw_inode)			       \
@@ -719,6 +705,8 @@ do {									       \
 	if (EXT4_FITS_IN_INODE(raw_inode, einode, xtime ## _extra))	       \
 		ext4_decode_extra_time(&(einode)->xtime,		       \
 				       raw_inode->xtime ## _extra);	       \
+	else								       \
+		(einode)->xtime.tv_nsec = 0;				       \
 } while (0)
 
 #define i_disk_version osd1.linux1.l_i_version
@@ -917,10 +905,19 @@ struct ext4_inode_info {
 #define EXT4_MOUNT_DISCARD		0x40000000 /* Issue DISCARD requests */
 #define EXT4_MOUNT_INIT_INODE_TABLE	0x80000000 /* Initialize uninitialized itables */
 
-#define clear_opt(o, opt)		o &= ~EXT4_MOUNT_##opt
-#define set_opt(o, opt)			o |= EXT4_MOUNT_##opt
+#define clear_opt(sb, opt)		EXT4_SB(sb)->s_mount_opt &= \
+						~EXT4_MOUNT_##opt
+#define set_opt(sb, opt)		EXT4_SB(sb)->s_mount_opt |= \
+						EXT4_MOUNT_##opt
 #define test_opt(sb, opt)		(EXT4_SB(sb)->s_mount_opt & \
 					 EXT4_MOUNT_##opt)
+
+#define clear_opt2(sb, opt)		EXT4_SB(sb)->s_mount_opt2 &= \
+						~EXT4_MOUNT2_##opt
+#define set_opt2(sb, opt)		EXT4_SB(sb)->s_mount_opt2 |= \
+						EXT4_MOUNT2_##opt
+#define test_opt2(sb, opt)		(EXT4_SB(sb)->s_mount_opt2 & \
+					 EXT4_MOUNT2_##opt)
 
 #define ext4_set_bit			ext2_set_bit
 #define ext4_set_bit_atomic		ext2_set_bit_atomic
@@ -1087,6 +1084,7 @@ struct ext4_sb_info {
 	struct ext4_super_block *s_es;	/* Pointer to the super block in the buffer */
 	struct buffer_head **s_group_desc;
 	unsigned int s_mount_opt;
+	unsigned int s_mount_opt2;
 	unsigned int s_mount_flags;
 	ext4_fsblk_t s_sb_block;
 	uid_t s_resuid;
@@ -1642,10 +1640,12 @@ extern unsigned ext4_init_block_bitmap(struct super_block *sb,
 
 /* dir.c */
 extern int __ext4_check_dir_entry(const char *, unsigned int, struct inode *,
+				  struct file *,
 				  struct ext4_dir_entry_2 *,
 				  struct buffer_head *, unsigned int);
-#define ext4_check_dir_entry(dir, de, bh, offset) \
-	__ext4_check_dir_entry(__func__, __LINE__, (dir), (de), (bh), (offset))
+#define ext4_check_dir_entry(dir, filp, de, bh, offset)			\
+	unlikely(__ext4_check_dir_entry(__func__, __LINE__, (dir), (filp), \
+					(de), (bh), (offset)))
 extern int ext4_htree_store_dirent(struct file *dir_file, __u32 hash,
 				    __u32 minor_hash,
 				    struct ext4_dir_entry_2 *dirent);
@@ -1752,8 +1752,8 @@ extern void ext4_error_inode(struct inode *, const char *, unsigned int,
 			     ext4_fsblk_t, const char *, ...)
 	__attribute__ ((format (printf, 5, 6)));
 extern void ext4_error_file(struct file *, const char *, unsigned int,
-			    const char *, ...)
-	__attribute__ ((format (printf, 4, 5)));
+			    ext4_fsblk_t, const char *, ...)
+	__attribute__ ((format (printf, 5, 6)));
 extern void __ext4_std_error(struct super_block *, const char *,
 			     unsigned int, int);
 extern void __ext4_abort(struct super_block *, const char *, unsigned int,
