@@ -21,6 +21,7 @@ config MIPS
 	select HAVE_DMA_API_DEBUG
 	select HAVE_GENERIC_HARDIRQS
 	select GENERIC_IRQ_PROBE
+	select HAVE_ARCH_JUMP_LABEL
 
 menu "Machine selection"
 
@@ -882,6 +883,9 @@ config MIPS_DISABLE_OBSOLETE_IDE
 
 config SYNC_R4K
 	bool
+
+config MIPS_MACHINE
+	def_bool n
 
 config NO_IOPORT
 	def_bool n
