@@ -718,7 +718,13 @@ struct op_x86_model_spec op_amd_spec;
 
 static int op_amd_init(struct oprofile_operations *ops)
 {
+	/*
+	 * init_ibs() preforms implictly cpu-local operations, so pin this
+	 * thread to its current CPU
+	 */
+	preempt_disable();
 	init_ibs();
+	preempt_enable();
 	create_arch_files = ops->create_files;
 	ops->create_files = setup_ibs_files;
 
