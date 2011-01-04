@@ -25,11 +25,13 @@
 /* these are ordered by size to support multi-SoC kernels */
 #if defined CONFIG_ARCH_MX2
 #define MXC_GPIO_IRQS		(32 * 6)
+#elif defined CONFIG_ARCH_MX50
+#define MXC_GPIO_IRQS		(32 * 6)
 #elif defined CONFIG_ARCH_MX1
 #define MXC_GPIO_IRQS		(32 * 4)
 #elif defined CONFIG_ARCH_MX25
 #define MXC_GPIO_IRQS		(32 * 4)
-#elif defined CONFIG_ARCH_MX5
+#elif defined CONFIG_ARCH_MX51
 #define MXC_GPIO_IRQS		(32 * 4)
 #elif defined CONFIG_ARCH_MXC91231
 #define MXC_GPIO_IRQS		(32 * 4)
