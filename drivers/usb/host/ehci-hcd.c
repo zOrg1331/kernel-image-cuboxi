@@ -1232,6 +1232,7 @@ MODULE_LICENSE ("GPL");
 #ifdef CONFIG_USB_CNS3XXX_EHCI
 #include "ehci-cns3xxx.c"
 #define PLATFORM_DRIVER		cns3xxx_ehci_driver
+#endif
 
 #ifdef CONFIG_ARCH_VT8500
 #include "ehci-vt8500.c"
