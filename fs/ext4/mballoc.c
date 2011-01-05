@@ -2608,18 +2608,12 @@ int ext4_mb_release(struct super_block *sb)
 static inline int ext4_issue_discard(struct super_block *sb,
 		ext4_group_t block_group, ext4_grpblk_t block, int count)
 {
-	int ret;
 	ext4_fsblk_t discard_block;
 
 	discard_block = block + ext4_group_first_block_no(sb, block_group);
 	trace_ext4_discard_blocks(sb,
 			(unsigned long long) discard_block, count);
-	ret = sb_issue_discard(sb, discard_block, count, GFP_NOFS, 0);
-	if (ret == -EOPNOTSUPP) {
-		ext4_warning(sb, "discard not supported, disabling");
-		clear_opt(EXT4_SB(sb)->s_mount_opt, DISCARD);
-	}
-	return ret;
+	return sb_issue_discard(sb, discard_block, count, GFP_NOFS, 0);
 }
 
 /*
@@ -2631,7 +2625,7 @@ static void release_blocks_on_commit(journal_t *journal, transaction_t *txn)
 	struct super_block *sb = journal->j_private;
 	struct ext4_buddy e4b;
 	struct ext4_group_info *db;
-	int err, count = 0, count2 = 0;
+	int err, ret, count = 0, count2 = 0;
 	struct ext4_free_data *entry;
 	struct list_head *l, *ltmp;
 
@@ -2641,9 +2635,15 @@ static void release_blocks_on_commit(journal_t *journal, transaction_t *txn)
 		mb_debug(1, "gonna free %u blocks in group %u (0x%p):",
 			 entry->count, entry->group, entry);
 
-		if (test_opt(sb, DISCARD))
-			ext4_issue_discard(sb, entry->group,
+		if (test_opt(sb, DISCARD)) {
+			ret = ext4_issue_discard(sb, entry->group,
 					entry->start_blk, entry->count);
+			if (unlikely(ret == -EOPNOTSUPP)) {
+				ext4_warning(sb, "discard not supported, "
+						 "disabling");
+				clear_opt(sb, DISCARD);
+			}
+		}
 
 		err = ext4_mb_load_buddy(sb, entry->group, &e4b);
 		/* we expect to find existing buddy because it's pinned */
@@ -4626,7 +4626,11 @@ do_more:
 		 * blocks being freed are metadata. these blocks shouldn't
 		 * be used until this transaction is committed
 		 */
-		new_entry  = kmem_cache_alloc(ext4_free_ext_cachep, GFP_NOFS);
+		new_entry = kmem_cache_alloc(ext4_free_ext_cachep, GFP_NOFS);
+		if (!new_entry) {
+			err = -ENOMEM;
+			goto error_return;
+		}
 		new_entry->start_blk = bit;
 		new_entry->group  = block_group;
 		new_entry->count = count;
@@ -4718,8 +4722,6 @@ static int ext4_trim_extent(struct super_block *sb, int start, int count,
 	ext4_unlock_group(sb, group);
 
 	ret = ext4_issue_discard(sb, group, start, count);
-	if (ret)
-		ext4_std_error(sb, ret);
 
 	ext4_lock_group(sb, group);
 	mb_free_blocks(NULL, e4b, start, ex.fe_len);
@@ -4815,6 +4817,7 @@ ext4_grpblk_t ext4_trim_all_free(struct super_block *sb, struct ext4_buddy *e4b,
 int ext4_trim_fs(struct super_block *sb, struct fstrim_range *range)
 {
 	struct ext4_buddy e4b;
+	ext4_fsblk_t blocks_count = ext4_blocks_count(EXT4_SB(sb)->s_es);
 	ext4_group_t first_group, last_group;
 	ext4_group_t group, ngroups = ext4_get_groups_count(sb);
 	ext4_grpblk_t cnt = 0, first_block, last_block;
@@ -4825,6 +4828,9 @@ int ext4_trim_fs(struct super_block *sb, struct fstrim_range *range)
 	len = range->len >> sb->s_blocksize_bits;
 	minlen = range->minlen >> sb->s_blocksize_bits;
 	trimmed = 0;
+
+	if (len > blocks_count)
+		len = blocks_count - start;
 
 	if (unlikely(minlen > EXT4_BLOCKS_PER_GROUP(sb)))
 		return -EINVAL;

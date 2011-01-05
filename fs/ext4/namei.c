@@ -581,9 +581,9 @@ static int htree_dirblock_to_tree(struct file *dir_file,
 					   dir->i_sb->s_blocksize -
 					   EXT4_DIR_REC_LEN(0));
 	for (; de < top; de = ext4_next_entry(de, dir->i_sb->s_blocksize)) {
-		if (!ext4_check_dir_entry(dir, de, bh,
-					(block<<EXT4_BLOCK_SIZE_BITS(dir->i_sb))
-						+((char *)de - bh->b_data))) {
+		if (ext4_check_dir_entry(dir, NULL, de, bh,
+				(block<<EXT4_BLOCK_SIZE_BITS(dir->i_sb))
+					 + ((char *)de - bh->b_data))) {
 			/* On error, skip the f_pos to the next block. */
 			dir_file->f_pos = (dir_file->f_pos |
 					(dir->i_sb->s_blocksize - 1)) + 1;
@@ -820,7 +820,7 @@ static inline int search_dirblock(struct buffer_head *bh,
 		if ((char *) de + namelen <= dlimit &&
 		    ext4_match (namelen, name, de)) {
 			/* found a match - just to be sure, do a full check */
-			if (!ext4_check_dir_entry(dir, de, bh, offset))
+			if (ext4_check_dir_entry(dir, NULL, de, bh, offset))
 				return -1;
 			*res_dir = de;
 			return 1;
@@ -1036,7 +1036,7 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, stru
 			return ERR_PTR(-EIO);
 		}
 		inode = ext4_iget(dir->i_sb, ino);
-		if (unlikely(IS_ERR(inode))) {
+		if (IS_ERR(inode)) {
 			if (PTR_ERR(inode) == -ESTALE) {
 				EXT4_ERROR_INODE(dir,
 						 "deleted inode referenced: %u",
@@ -1269,7 +1269,7 @@ static int add_dirent_to_buf(handle_t *handle, struct dentry *dentry,
 		de = (struct ext4_dir_entry_2 *)bh->b_data;
 		top = bh->b_data + blocksize - reclen;
 		while ((char *) de <= top) {
-			if (!ext4_check_dir_entry(dir, de, bh, offset))
+			if (ext4_check_dir_entry(dir, NULL, de, bh, offset))
 				return -EIO;
 			if (ext4_match(namelen, name, de))
 				return -EEXIST;
@@ -1636,7 +1636,7 @@ static int ext4_delete_entry(handle_t *handle,
 	pde = NULL;
 	de = (struct ext4_dir_entry_2 *) bh->b_data;
 	while (i < bh->b_size) {
-		if (!ext4_check_dir_entry(dir, de, bh, i))
+		if (ext4_check_dir_entry(dir, NULL, de, bh, i))
 			return -EIO;
 		if (de == de_del)  {
 			BUFFER_TRACE(bh, "get_write_access");
@@ -1789,7 +1789,7 @@ static int ext4_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 {
 	handle_t *handle;
 	struct inode *inode;
-	struct buffer_head *dir_block;
+	struct buffer_head *dir_block = NULL;
 	struct ext4_dir_entry_2 *de;
 	unsigned int blocksize = dir->i_sb->s_blocksize;
 	int err, retries = 0;
@@ -1822,7 +1822,9 @@ retry:
 	if (!dir_block)
 		goto out_clear_inode;
 	BUFFER_TRACE(dir_block, "get_write_access");
-	ext4_journal_get_write_access(handle, dir_block);
+	err = ext4_journal_get_write_access(handle, dir_block);
+	if (err)
+		goto out_clear_inode;
 	de = (struct ext4_dir_entry_2 *) dir_block->b_data;
 	de->inode = cpu_to_le32(inode->i_ino);
 	de->name_len = 1;
@@ -1839,10 +1841,12 @@ retry:
 	ext4_set_de_type(dir->i_sb, de, S_IFDIR);
 	inode->i_nlink = 2;
 	BUFFER_TRACE(dir_block, "call ext4_handle_dirty_metadata");
-	ext4_handle_dirty_metadata(handle, dir, dir_block);
-	brelse(dir_block);
-	ext4_mark_inode_dirty(handle, inode);
-	err = ext4_add_entry(handle, dentry, inode);
+	err = ext4_handle_dirty_metadata(handle, dir, dir_block);
+	if (err)
+		goto out_clear_inode;
+	err = ext4_mark_inode_dirty(handle, inode);
+	if (!err)
+		err = ext4_add_entry(handle, dentry, inode);
 	if (err) {
 out_clear_inode:
 		clear_nlink(inode);
@@ -1853,10 +1857,13 @@ out_clear_inode:
 	}
 	ext4_inc_count(handle, dir);
 	ext4_update_dx_flag(dir);
-	ext4_mark_inode_dirty(handle, dir);
+	err = ext4_mark_inode_dirty(handle, dir);
+	if (err)
+		goto out_clear_inode;
 	d_instantiate(dentry, inode);
 	unlock_new_inode(inode);
 out_stop:
+	brelse(dir_block);
 	ext4_journal_stop(handle);
 	if (err == -ENOSPC && ext4_should_retry_alloc(dir->i_sb, &retries))
 		goto retry;
@@ -1919,7 +1926,7 @@ static int empty_dir(struct inode *inode)
 			}
 			de = (struct ext4_dir_entry_2 *) bh->b_data;
 		}
-		if (!ext4_check_dir_entry(inode, de, bh, offset)) {
+		if (ext4_check_dir_entry(inode, NULL, de, bh, offset)) {
 			de = (struct ext4_dir_entry_2 *)(bh->b_data +
 							 sb->s_blocksize);
 			offset = (offset | (sb->s_blocksize - 1)) + 1;
