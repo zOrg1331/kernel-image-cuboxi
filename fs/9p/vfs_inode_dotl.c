@@ -78,11 +78,11 @@ static struct dentry *v9fs_dentry_from_dir_inode(struct inode *inode)
 {
 	struct dentry *dentry;
 
-	spin_lock(&dcache_lock);
+	spin_lock(&inode->i_lock);
 	/* Directory should have only one entry. */
 	BUG_ON(S_ISDIR(inode->i_mode) && !list_is_singular(&inode->i_dentry));
 	dentry = list_entry(inode->i_dentry.next, struct dentry, d_alias);
-	spin_unlock(&dcache_lock);
+	spin_unlock(&inode->i_lock);
 	return dentry;
 }
 
@@ -215,7 +215,7 @@ v9fs_vfs_create_dotl(struct inode *dir, struct dentry *dentry, int omode,
 				err);
 			goto error;
 		}
-		dentry->d_op = &v9fs_cached_dentry_operations;
+		d_set_d_op(dentry, &v9fs_cached_dentry_operations);
 		d_instantiate(dentry, inode);
 		err = v9fs_fid_add(dentry, fid);
 		if (err < 0)
@@ -233,7 +233,7 @@ v9fs_vfs_create_dotl(struct inode *dir, struct dentry *dentry, int omode,
 			err = PTR_ERR(inode);
 			goto error;
 		}
-		dentry->d_op = &v9fs_dentry_operations;
+		d_set_d_op(dentry, &v9fs_dentry_operations);
 		d_instantiate(dentry, inode);
 	}
 	/* Now set the ACL based on the default value */
@@ -331,7 +331,7 @@ static int v9fs_vfs_mkdir_dotl(struct inode *dir,
 				err);
 			goto error;
 		}
-		dentry->d_op = &v9fs_cached_dentry_operations;
+		d_set_d_op(dentry, &v9fs_cached_dentry_operations);
 		d_instantiate(dentry, inode);
 		err = v9fs_fid_add(dentry, fid);
 		if (err < 0)
@@ -348,7 +348,7 @@ static int v9fs_vfs_mkdir_dotl(struct inode *dir,
 			err = PTR_ERR(inode);
 			goto error;
 		}
-		dentry->d_op = &v9fs_dentry_operations;
+		d_set_d_op(dentry, &v9fs_dentry_operations);
 		d_instantiate(dentry, inode);
 	}
 	/* Now set the ACL based on the default value */
@@ -589,7 +589,7 @@ v9fs_vfs_symlink_dotl(struct inode *dir, struct dentry *dentry,
 					err);
 			goto error;
 		}
-		dentry->d_op = &v9fs_cached_dentry_operations;
+		d_set_d_op(dentry, &v9fs_cached_dentry_operations);
 		d_instantiate(dentry, inode);
 		err = v9fs_fid_add(dentry, fid);
 		if (err < 0)
@@ -602,7 +602,7 @@ v9fs_vfs_symlink_dotl(struct inode *dir, struct dentry *dentry,
 			err = PTR_ERR(inode);
 			goto error;
 		}
-		dentry->d_op = &v9fs_dentry_operations;
+		d_set_d_op(dentry, &v9fs_dentry_operations);
 		d_instantiate(dentry, inode);
 	}
 
@@ -678,7 +678,7 @@ v9fs_vfs_link_dotl(struct dentry *old_dentry, struct inode *dir,
 		ihold(old_dentry->d_inode);
 	}
 
-	dentry->d_op = old_dentry->d_op;
+	d_set_d_op(dentry, old_dentry->d_op);
 	d_instantiate(dentry, old_dentry->d_inode);
 
 	return err;
@@ -757,7 +757,7 @@ v9fs_vfs_mknod_dotl(struct inode *dir, struct dentry *dentry, int omode,
 				err);
 			goto error;
 		}
-		dentry->d_op = &v9fs_cached_dentry_operations;
+		d_set_d_op(dentry, &v9fs_cached_dentry_operations);
 		d_instantiate(dentry, inode);
 		err = v9fs_fid_add(dentry, fid);
 		if (err < 0)
@@ -773,7 +773,7 @@ v9fs_vfs_mknod_dotl(struct inode *dir, struct dentry *dentry, int omode,
 			err = PTR_ERR(inode);
 			goto error;
 		}
-		dentry->d_op = &v9fs_dentry_operations;
+		d_set_d_op(dentry, &v9fs_dentry_operations);
 		d_instantiate(dentry, inode);
 	}
 	/* Now set the ACL based on the default value */
