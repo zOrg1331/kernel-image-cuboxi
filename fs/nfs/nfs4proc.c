@@ -49,6 +49,7 @@
 #include <linux/mount.h>
 #include <linux/module.h>
 #include <linux/sunrpc/bc_xprt.h>
+#include <linux/xattr.h>
 
 #include "nfs4_fs.h"
 #include "delegation.h"
@@ -1984,8 +1985,8 @@ int nfs4_do_close(struct path *path, struct nfs4_state *state, gfp_t gfp_mask, i
 	path_get(path);
 	calldata->path = *path;
 
-	msg.rpc_argp = &calldata->arg,
-	msg.rpc_resp = &calldata->res,
+	msg.rpc_argp = &calldata->arg;
+	msg.rpc_resp = &calldata->res;
 	task_setup_data.callback_data = calldata;
 	task = rpc_run_task(&task_setup_data);
 	if (IS_ERR(task))
@@ -2486,6 +2487,7 @@ nfs4_proc_create(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
 		path = &ctx->path;
 		fmode = ctx->mode;
 	}
+	sattr->ia_mode &= ~current_umask();
 	state = nfs4_do_open(dir, path, fmode, flags, sattr, cred);
 	d_drop(dentry);
 	if (IS_ERR(state)) {
@@ -2816,6 +2818,8 @@ static int nfs4_proc_mkdir(struct inode *dir, struct dentry *dentry,
 {
 	struct nfs4_exception exception = { };
 	int err;
+
+	sattr->ia_mode &= ~current_umask();
 	do {
 		err = nfs4_handle_exception(NFS_SERVER(dir),
 				_nfs4_proc_mkdir(dir, dentry, sattr),
@@ -2916,6 +2920,8 @@ static int nfs4_proc_mknod(struct inode *dir, struct dentry *dentry,
 {
 	struct nfs4_exception exception = { };
 	int err;
+
+	sattr->ia_mode &= ~current_umask();
 	do {
 		err = nfs4_handle_exception(NFS_SERVER(dir),
 				_nfs4_proc_mknod(dir, dentry, sattr, rdev),
@@ -3517,7 +3523,7 @@ int nfs4_proc_setclientid(struct nfs_client *clp, u32 program,
 		if (signalled())
 			break;
 		if (loop++ & 1)
-			ssleep(clp->cl_lease_time + 1);
+			ssleep(clp->cl_lease_time / HZ + 1);
 		else
 			if (++clp->cl_id_uniquifier == 0)
 				break;
@@ -3663,8 +3669,8 @@ static int _nfs4_proc_delegreturn(struct inode *inode, struct rpc_cred *cred, co
 	data->rpc_status = 0;
 
 	task_setup_data.callback_data = data;
-	msg.rpc_argp = &data->args,
-	msg.rpc_resp = &data->res,
+	msg.rpc_argp = &data->args;
+	msg.rpc_resp = &data->res;
 	task = rpc_run_task(&task_setup_data);
 	if (IS_ERR(task))
 		return PTR_ERR(task);
@@ -3908,8 +3914,8 @@ static struct rpc_task *nfs4_do_unlck(struct file_lock *fl,
 		return ERR_PTR(-ENOMEM);
 	}
 
-	msg.rpc_argp = &data->arg,
-	msg.rpc_resp = &data->res,
+	msg.rpc_argp = &data->arg;
+	msg.rpc_resp = &data->res;
 	task_setup_data.callback_data = data;
 	return rpc_run_task(&task_setup_data);
 }
@@ -4145,8 +4151,8 @@ static int _nfs4_do_setlk(struct nfs4_state *state, int cmd, struct file_lock *f
 			data->arg.reclaim = NFS_LOCK_RECLAIM;
 		task_setup_data.callback_ops = &nfs4_recover_lock_ops;
 	}
-	msg.rpc_argp = &data->arg,
-	msg.rpc_resp = &data->res,
+	msg.rpc_argp = &data->arg;
+	msg.rpc_resp = &data->res;
 	task_setup_data.callback_data = data;
 	task = rpc_run_task(&task_setup_data);
 	if (IS_ERR(task))
@@ -4398,42 +4404,36 @@ void nfs4_release_lockowner(const struct nfs4_lock_state *lsp)
 
 #define XATTR_NAME_NFSV4_ACL "system.nfs4_acl"
 
-int nfs4_setxattr(struct dentry *dentry, const char *key, const void *buf,
-		size_t buflen, int flags)
+static int nfs4_xattr_set_nfs4_acl(struct dentry *dentry, const char *key,
+				   const void *buf, size_t buflen,
+				   int flags, int type)
 {
-	struct inode *inode = dentry->d_inode;
+	if (strcmp(key, "") != 0)
+		return -EINVAL;
 
-	if (strcmp(key, XATTR_NAME_NFSV4_ACL) != 0)
-		return -EOPNOTSUPP;
-
-	return nfs4_proc_set_acl(inode, buf, buflen);
+	return nfs4_proc_set_acl(dentry->d_inode, buf, buflen);
 }
 
-/* The getxattr man page suggests returning -ENODATA for unknown attributes,
- * and that's what we'll do for e.g. user attributes that haven't been set.
- * But we'll follow ext2/ext3's lead by returning -EOPNOTSUPP for unsupported
- * attributes in kernel-managed attribute namespaces. */
-ssize_t nfs4_getxattr(struct dentry *dentry, const char *key, void *buf,
-		size_t buflen)
+static int nfs4_xattr_get_nfs4_acl(struct dentry *dentry, const char *key,
+				   void *buf, size_t buflen, int type)
 {
-	struct inode *inode = dentry->d_inode;
+	if (strcmp(key, "") != 0)
+		return -EINVAL;
 
-	if (strcmp(key, XATTR_NAME_NFSV4_ACL) != 0)
-		return -EOPNOTSUPP;
-
-	return nfs4_proc_get_acl(inode, buf, buflen);
+	return nfs4_proc_get_acl(dentry->d_inode, buf, buflen);
 }
 
-ssize_t nfs4_listxattr(struct dentry *dentry, char *buf, size_t buflen)
+static size_t nfs4_xattr_list_nfs4_acl(struct dentry *dentry, char *list,
+				       size_t list_len, const char *name,
+				       size_t name_len, int type)
 {
-	size_t len = strlen(XATTR_NAME_NFSV4_ACL) + 1;
+	size_t len = sizeof(XATTR_NAME_NFSV4_ACL);
 
 	if (!nfs4_server_supports_acls(NFS_SERVER(dentry->d_inode)))
 		return 0;
-	if (buf && buflen < len)
-		return -ERANGE;
-	if (buf)
-		memcpy(buf, XATTR_NAME_NFSV4_ACL, len);
+
+	if (list && len <= list_len)
+		memcpy(list, XATTR_NAME_NFSV4_ACL, len);
 	return len;
 }
 
@@ -5504,9 +5504,10 @@ static const struct inode_operations nfs4_file_inode_operations = {
 	.permission	= nfs_permission,
 	.getattr	= nfs_getattr,
 	.setattr	= nfs_setattr,
-	.getxattr	= nfs4_getxattr,
-	.setxattr	= nfs4_setxattr,
-	.listxattr	= nfs4_listxattr,
+	.getxattr	= generic_getxattr,
+	.setxattr	= generic_setxattr,
+	.listxattr	= generic_listxattr,
+	.removexattr	= generic_removexattr,
 };
 
 const struct nfs_rpc_ops nfs_v4_clientops = {
@@ -5549,6 +5550,18 @@ const struct nfs_rpc_ops nfs_v4_clientops = {
 	.clear_acl_cache = nfs4_zap_acl_attr,
 	.close_context  = nfs4_close_context,
 	.open_context	= nfs4_atomic_open,
+};
+
+static const struct xattr_handler nfs4_xattr_nfs4_acl_handler = {
+	.prefix	= XATTR_NAME_NFSV4_ACL,
+	.list	= nfs4_xattr_list_nfs4_acl,
+	.get	= nfs4_xattr_get_nfs4_acl,
+	.set	= nfs4_xattr_set_nfs4_acl,
+};
+
+const struct xattr_handler *nfs4_xattr_handlers[] = {
+	&nfs4_xattr_nfs4_acl_handler,
+	NULL
 };
 
 /*
