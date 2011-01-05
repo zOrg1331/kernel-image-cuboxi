@@ -234,7 +234,7 @@ int configfs_make_dirent(struct configfs_dirent * parent_sd,
 	sd->s_dentry = dentry;
 	if (dentry) {
 		dentry->d_fsdata = configfs_get(sd);
-		dentry->d_op = &configfs_dentry_ops;
+		d_set_d_op(dentry, &configfs_dentry_ops);
 	}
 
 	return 0;
@@ -278,7 +278,7 @@ static int create_dir(struct config_item * k, struct dentry * p,
 		error = configfs_create(d, mode, init_dir);
 		if (!error) {
 			inc_nlink(p->d_inode);
-			(d)->d_op = &configfs_dentry_ops;
+			d_set_d_op((d), &configfs_dentry_ops);
 		} else {
 			struct configfs_dirent *sd = d->d_fsdata;
 			if (sd) {
@@ -372,7 +372,7 @@ int configfs_create_link(struct configfs_symlink *sl,
 	if (!err) {
 		err = configfs_create(dentry, mode, init_symlink);
 		if (!err)
-			dentry->d_op = &configfs_dentry_ops;
+			d_set_d_op(dentry, &configfs_dentry_ops);
 		else {
 			struct configfs_dirent *sd = dentry->d_fsdata;
 			if (sd) {
@@ -447,7 +447,7 @@ static int configfs_attach_attr(struct configfs_dirent * sd, struct dentry * den
 		return error;
 	}
 
-	dentry->d_op = &configfs_dentry_ops;
+	d_set_d_op(dentry, &configfs_dentry_ops);
 	d_rehash(dentry);
 
 	return 0;
