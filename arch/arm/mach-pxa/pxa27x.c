@@ -17,6 +17,7 @@
 #include <linux/suspend.h>
 #include <linux/platform_device.h>
 #include <linux/sysdev.h>
+#include <linux/i2c/pxa-i2c.h>
 
 #include <mach/hardware.h>
 #include <asm/irq.h>
@@ -27,7 +28,6 @@
 #include <mach/ohci.h>
 #include <mach/pm.h>
 #include <mach/dma.h>
-#include <plat/i2c.h>
 
 #include "generic.h"
 #include "devices.h"
