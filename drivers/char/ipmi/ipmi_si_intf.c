@@ -70,6 +70,8 @@
 #ifdef CONFIG_PPC_OF
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
+#include <linux/of_address.h>
+#include <linux/of_irq.h>
 #endif
 
 #define PFX "ipmi_si: "
@@ -2559,7 +2561,7 @@ static int __devinit ipmi_of_probe(struct platform_device *dev,
 {
 	struct smi_info *info;
 	struct resource resource;
-	const int *regsize, *regspacing, *regshift;
+	const __be32 *regsize, *regspacing, *regshift;
 	struct device_node *np = dev->dev.of_node;
 	int ret;
 	int proplen;
@@ -2612,9 +2614,9 @@ static int __devinit ipmi_of_probe(struct platform_device *dev,
 
 	info->io.addr_data	= resource.start;
 
-	info->io.regsize	= regsize ? *regsize : DEFAULT_REGSIZE;
-	info->io.regspacing	= regspacing ? *regspacing : DEFAULT_REGSPACING;
-	info->io.regshift	= regshift ? *regshift : 0;
+	info->io.regsize	= regsize ? be32_to_cpup(regsize) : DEFAULT_REGSIZE;
+	info->io.regspacing	= regspacing ? be32_to_cpup(regspacing) : DEFAULT_REGSPACING;
+	info->io.regshift	= regshift ? be32_to_cpup(regshift) : 0;
 
 	info->irq		= irq_of_parse_and_map(dev->dev.of_node, 0);
 	info->dev		= &dev->dev;
