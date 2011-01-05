@@ -1305,6 +1305,7 @@ void d_set_d_op(struct dentry *dentry, const struct dentry_operations *op)
 	BUG_ON(dentry->d_flags & (DCACHE_OP_HASH	|
 				DCACHE_OP_COMPARE	|
 				DCACHE_OP_REVALIDATE	|
+				DCACHE_OP_REVALIDATE_RCU|
 				DCACHE_OP_DELETE ));
 	dentry->d_op = op;
 	if (!op)
@@ -1315,6 +1316,8 @@ void d_set_d_op(struct dentry *dentry, const struct dentry_operations *op)
 		dentry->d_flags |= DCACHE_OP_COMPARE;
 	if (op->d_revalidate)
 		dentry->d_flags |= DCACHE_OP_REVALIDATE;
+	if (op->d_revalidate_rcu)
+		dentry->d_flags |= DCACHE_OP_REVALIDATE_RCU;
 	if (op->d_delete)
 		dentry->d_flags |= DCACHE_OP_DELETE;
 
