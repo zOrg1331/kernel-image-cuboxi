@@ -52,6 +52,8 @@ phys_addr_t xen_extra_mem_start, xen_extra_mem_size;
 
 static __init void xen_add_extra_mem(unsigned long pages)
 {
+	unsigned long pfn;
+
 	u64 size = (u64)pages * PAGE_SIZE;
 	u64 extra_start = xen_extra_mem_start + xen_extra_mem_size;
 
@@ -66,6 +68,9 @@ static __init void xen_add_extra_mem(unsigned long pages)
 	xen_extra_mem_size += size;
 
 	xen_max_p2m_pfn = PFN_DOWN(extra_start + size);
+
+	for (pfn = PFN_DOWN(extra_start); pfn <= xen_max_p2m_pfn; pfn++)
+		__set_phys_to_machine(pfn, INVALID_P2M_ENTRY);
 }
 
 static unsigned long __init xen_release_chunk(phys_addr_t start_addr,
@@ -104,7 +109,7 @@ static unsigned long __init xen_release_chunk(phys_addr_t start_addr,
 		WARN(ret != 1, "Failed to release memory %lx-%lx err=%d\n",
 		     start, end, ret);
 		if (ret == 1) {
-			set_phys_to_machine(pfn, INVALID_P2M_ENTRY);
+			__set_phys_to_machine(pfn, INVALID_P2M_ENTRY);
 			len++;
 		}
 	}
@@ -138,6 +143,38 @@ static unsigned long __init xen_return_unused_memory(unsigned long max_pfn,
 	return released;
 }
 
+static unsigned long __init xen_set_identity(const struct e820map *e820)
+{
+	phys_addr_t last = xen_initial_domain() ? 0 : ISA_END_ADDRESS;
+	int i;
+	unsigned long identity = 0;
+	unsigned long pfn;
+
+	for (i = 0; i < e820->nr_map; i++) {
+		phys_addr_t start = e820->map[i].addr;
+		phys_addr_t end = start + e820->map[i].size;
+
+		if (end < start)
+			continue;
+
+		/* Skip over the 1MB region. */
+		if (last > end)
+			continue;
+
+		if (e820->map[i].type == E820_RAM) {
+			/* Without saving 'last' we would gooble RAM too. */
+			last = end;
+			continue;
+		}
+
+		for (pfn = PFN_UP(last); pfn < PFN_DOWN(end); pfn++)
+			__set_phys_to_identity(pfn);
+		identity += pfn - PFN_UP(last);
+
+		last = end;
+	}
+	return identity;
+}
 /**
  * machine_specific_memory_setup - Hook for machine specific memory setup.
  **/
@@ -151,6 +188,7 @@ char * __init xen_memory_setup(void)
 	struct xen_memory_map memmap;
 	unsigned long extra_pages = 0;
 	unsigned long extra_limit;
+	unsigned long identity_pages = 0;
 	int i;
 	int op;
 
@@ -246,6 +284,12 @@ char * __init xen_memory_setup(void)
 
 	xen_add_extra_mem(extra_pages);
 
+	/*
+	 * Set P2M for all non-RAM pages and E820 gaps to be identity
+	 * type PFNs.
+	 */
+	identity_pages = xen_set_identity(&e820);
+	printk(KERN_INFO "Set %ld page(s) to 1-1 mapping.\n", identity_pages);
 	return "Xen";
 }
 

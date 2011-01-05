@@ -30,7 +30,9 @@ typedef struct xpaddr {
 /**** MACHINE <-> PHYSICAL CONVERSION MACROS ****/
 #define INVALID_P2M_ENTRY	(~0UL)
 #define FOREIGN_FRAME_BIT	(1UL<<31)
+#define IDENTITY_FRAME_BIT	(1UL<<30)
 #define FOREIGN_FRAME(m)	((m) | FOREIGN_FRAME_BIT)
+#define IDENTITY_FRAME(m)	((m) | IDENTITY_FRAME_BIT)
 
 /* Maximum amount of memory we can handle in a domain in pages */
 #define MAX_DOMAIN_PAGES						\
@@ -41,6 +43,8 @@ extern unsigned int   machine_to_phys_order;
 
 extern unsigned long get_phys_to_machine(unsigned long pfn);
 extern bool set_phys_to_machine(unsigned long pfn, unsigned long mfn);
+extern bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn);
+extern bool __set_phys_to_identity(unsigned long pfn);
 
 static inline unsigned long pfn_to_mfn(unsigned long pfn)
 {
@@ -52,7 +56,7 @@ static inline unsigned long pfn_to_mfn(unsigned long pfn)
 	mfn = get_phys_to_machine(pfn);
 
 	if (mfn != INVALID_P2M_ENTRY)
-		mfn &= ~FOREIGN_FRAME_BIT;
+		mfn &= ~(FOREIGN_FRAME_BIT | IDENTITY_FRAME_BIT);
 
 	return mfn;
 }
