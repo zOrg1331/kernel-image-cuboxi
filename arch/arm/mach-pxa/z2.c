@@ -20,6 +20,7 @@
 #include <linux/z2_battery.h>
 #include <linux/dma-mapping.h>
 #include <linux/spi/spi.h>
+#include <linux/spi/pxa2xx_spi.h>
 #include <linux/spi/libertas_spi.h>
 #include <linux/spi/lms283gf05.h>
 #include <linux/power_supply.h>
@@ -28,6 +29,7 @@
 #include <linux/gpio_keys.h>
 #include <linux/delay.h>
 #include <linux/regulator/machine.h>
+#include <linux/i2c/pxa-i2c.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -38,9 +40,6 @@
 #include <mach/pxafb.h>
 #include <mach/mmc.h>
 #include <plat/pxa27x_keypad.h>
-#include <mach/pxa2xx_spi.h>
-
-#include <plat/i2c.h>
 
 #include "generic.h"
 #include "devices.h"
