@@ -564,3 +564,13 @@ Why:	This field is deprecated. I2C device drivers shouldn't change their
 Who:	Jean Delvare <khali@linux-fr.org>
 
 ----------------------------
+
+What:	Legacy, non-standard chassis intrusion detection interface.
+When:	June 2011
+Why:	The adm9240, w83792d and w83793 hardware monitoring drivers have
+	legacy interfaces for chassis intrusion detection. A standard
+	interface has been added to each driver, so the legacy interface
+	can be removed.
+Who:	Jean Delvare <khali@linux-fr.org>
+
+----------------------------
