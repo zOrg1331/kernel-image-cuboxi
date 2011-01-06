@@ -46,6 +46,7 @@
 #include <linux/module.h>
 #include <linux/gfp.h>
 #include <linux/memblock.h>
+#include <linux/seq_file.h>
 
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
@@ -217,6 +218,8 @@ static RESERVE_BRK_ARRAY(unsigned long **, p2m_top, P2M_TOP_PER_PAGE);
 static RESERVE_BRK_ARRAY(unsigned long, p2m_top_mfn, P2M_TOP_PER_PAGE);
 static RESERVE_BRK_ARRAY(unsigned long *, p2m_top_mfn_p, P2M_TOP_PER_PAGE);
 
+static RESERVE_BRK_ARRAY(unsigned long, p2m_identity, P2M_PER_PAGE);
+
 RESERVE_BRK(p2m_mid, PAGE_SIZE * (MAX_DOMAIN_PAGES / (P2M_PER_PAGE * P2M_MID_PER_PAGE)));
 RESERVE_BRK(p2m_mid_mfn, PAGE_SIZE * (MAX_DOMAIN_PAGES / (P2M_PER_PAGE * P2M_MID_PER_PAGE)));
 
@@ -379,6 +382,9 @@ void __init xen_build_dynamic_phys_to_machine(void)
 	p2m_top = extend_brk(PAGE_SIZE, PAGE_SIZE);
 	p2m_top_init(p2m_top);
 
+	p2m_identity = extend_brk(PAGE_SIZE, PAGE_SIZE);
+	p2m_init(p2m_identity);
+
 	/*
 	 * The domain builder gives us a pre-constructed p2m array in
 	 * mfn_list for all the pages initially given to us, so we just
@@ -409,6 +415,14 @@ unsigned long get_phys_to_machine(unsigned long pfn)
 	topidx = p2m_top_index(pfn);
 	mididx = p2m_mid_index(pfn);
 	idx = p2m_index(pfn);
+
+	/*
+	 * The INVALID_P2M_ENTRY is filled in both p2m_*identity
+	 * and in p2m_*missing, so returning the INVALID_P2M_ENTRY
+	 * would be wrong.
+	 */
+	if (p2m_top[topidx][mididx] == p2m_identity)
+		return IDENTITY_FRAME(pfn);
 
 	return p2m_top[topidx][mididx][idx];
 }
@@ -479,9 +493,11 @@ static bool alloc_p2m(unsigned long pfn)
 			p2m_top_mfn_p[topidx] = mid_mfn;
 	}
 
-	if (p2m_top[topidx][mididx] == p2m_missing) {
+	if (p2m_top[topidx][mididx] == p2m_identity ||
+	    p2m_top[topidx][mididx] == p2m_missing) {
 		/* p2m leaf page is missing */
 		unsigned long *p2m;
+		unsigned long *p2m_orig = p2m_top[topidx][mididx];
 
 		p2m = alloc_p2m_page();
 		if (!p2m)
@@ -489,19 +505,60 @@ static bool alloc_p2m(unsigned long pfn)
 
 		p2m_init(p2m);
 
-		if (cmpxchg(&mid[mididx], p2m_missing, p2m) != p2m_missing)
+		if (cmpxchg(&mid[mididx], p2m_orig, p2m) != p2m_orig)
 			free_p2m_page(p2m);
-		else
+		else {
 			mid_mfn[mididx] = virt_to_mfn(p2m);
+			if (p2m_orig == p2m_identity) {
+				unsigned i;
+				for (i = 0; i < P2M_MID_PER_PAGE; i++)
+					p2m[i] = IDENTITY_FRAME(pfn+i);
+			}
+		}
 	}
 
 	return true;
 }
 
+bool __set_phys_to_identity(unsigned long pfn)
+{
+	unsigned topidx;
+
+	if (unlikely(pfn >= MAX_P2M_PFN))
+		return false;
+
+	if (unlikely(xen_feature(XENFEAT_auto_translated_physmap)))
+		return true;
+
+	topidx = p2m_top_index(pfn);
+
+	/*
+	 * During E820 parsing (when there are no memory allocator) we
+	 * create for identity PFNs a top entry to guard ourselves against:
+	 *   - non-RAM entries or gaps in E820 not 1GB-aligned (say, PCI hole
+	 *     starts a 2.5GB)
+	 *   - and not the full amount of memory is passed (say, only 1GB).
+	 * We could be setting in p2m_mid_missing to p2m_identity which would
+	 * be horrific as p2m_mid_missing is present for all top P2M void
+	 * entries. For details: https://lkml.org/lkml/2011/1/5/124
+	 */
+	if (p2m_top[topidx] == p2m_mid_missing) {
+		unsigned long **mid = extend_brk(PAGE_SIZE, PAGE_SIZE);
+		p2m_mid_init(mid);
+
+		p2m_top[topidx] = mid;
+	}
+	return __set_phys_to_machine(pfn, IDENTITY_FRAME(pfn));
+}
 /* Try to install p2m mapping; fail if intermediate bits missing */
 bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn)
 {
 	unsigned topidx, mididx, idx;
+
+	if (unlikely(xen_feature(XENFEAT_auto_translated_physmap))) {
+		BUG_ON(pfn != mfn && mfn != INVALID_P2M_ENTRY);
+		return true;
+	}
 
 	if (unlikely(pfn >= MAX_P2M_PFN)) {
 		BUG_ON(mfn != INVALID_P2M_ENTRY);
@@ -512,8 +569,31 @@ bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn)
 	mididx = p2m_mid_index(pfn);
 	idx = p2m_index(pfn);
 
+	/* For sparse holes were the p2m leaf has real PFN along with
+	 * PCI holes, stick in the PFN as the MFN value.
+	 */
+	if (mfn != INVALID_P2M_ENTRY && (mfn & IDENTITY_FRAME_BIT)) {
+		if (p2m_top[topidx][mididx] == p2m_identity)
+			return true;
+
+		/* Swap over from MISSING to IDENTITY if needed. */
+		if (p2m_top[topidx][mididx] == p2m_missing) {
+			BUG_ON(cmpxchg(&p2m_top[topidx][mididx], p2m_missing,
+				p2m_identity) != p2m_missing);
+			return true;
+		}
+	}
+
 	if (p2m_top[topidx][mididx] == p2m_missing)
 		return mfn == INVALID_P2M_ENTRY;
+
+	/*
+	 * If INVALID_P2M_ENTRY is being set on a region shared by
+	 * IDENTITY pages, we want alloc_p2m to create a new page and fill
+	 * it with IDENTITY and INVALID_P2M_ENTRY entries (as needed).
+	 */
+	if (p2m_top[topidx][mididx] == p2m_identity)
+		return false;
 
 	p2m_top[topidx][mididx][idx] = mfn;
 
@@ -522,11 +602,6 @@ bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn)
 
 bool set_phys_to_machine(unsigned long pfn, unsigned long mfn)
 {
-	if (unlikely(xen_feature(XENFEAT_auto_translated_physmap))) {
-		BUG_ON(pfn != mfn && mfn != INVALID_P2M_ENTRY);
-		return true;
-	}
-
 	if (unlikely(!__set_phys_to_machine(pfn, mfn)))  {
 		if (!alloc_p2m(pfn))
 			return false;
@@ -780,8 +855,12 @@ static pteval_t pte_pfn_to_mfn(pteval_t val)
 	if (val & _PAGE_PRESENT) {
 		unsigned long pfn = (val & PTE_PFN_MASK) >> PAGE_SHIFT;
 		pteval_t flags = val & PTE_FLAGS_MASK;
-		unsigned long mfn = pfn_to_mfn(pfn);
+		unsigned long mfn;
 
+		if (!xen_feature(XENFEAT_auto_translated_physmap))
+			mfn = get_phys_to_machine(pfn);
+		else
+			mfn = pfn;
 		/*
 		 * If there's no mfn for the pfn, then just create an
 		 * empty non-present pte.  Unfortunately this loses
@@ -791,8 +870,18 @@ static pteval_t pte_pfn_to_mfn(pteval_t val)
 		if (unlikely(mfn == INVALID_P2M_ENTRY)) {
 			mfn = 0;
 			flags = 0;
+		} else {
+			/*
+			 * Paramount to do this test _after_ the
+			 * INVALID_P2M_ENTRY as INVALID_P2M_ENTRY &
+			 * IDENTITY_FRAME_BIT resolves to true.
+			 */
+			mfn &= ~FOREIGN_FRAME_BIT;
+			if (mfn & IDENTITY_FRAME_BIT) {
+				mfn &= ~IDENTITY_FRAME_BIT;
+				flags |= _PAGE_IOMAP;
+			}
 		}
-
 		val = ((pteval_t)mfn << PAGE_SHIFT) | flags;
 	}
 
@@ -895,6 +984,41 @@ pte_t xen_make_pte(pteval_t pte)
 	return native_make_pte(pte);
 }
 PV_CALLEE_SAVE_REGS_THUNK(xen_make_pte);
+
+#ifdef CONFIG_XEN_DEBUG
+pte_t xen_make_pte_debug(pteval_t pte)
+{
+	phys_addr_t addr = (pte & PTE_PFN_MASK);
+	phys_addr_t other_addr;
+	bool io_page = false;
+	pte_t _pte;
+
+	if (pte & _PAGE_IOMAP)
+		io_page = true;
+
+	_pte = xen_make_pte(pte);
+
+	if (!addr)
+		return _pte;
+
+	if (io_page &&
+	    (xen_initial_domain() || addr >= ISA_END_ADDRESS)) {
+		other_addr = pfn_to_mfn(addr >> PAGE_SHIFT) << PAGE_SHIFT;
+		WARN(addr != other_addr,
+			"0x%lx is using VM_IO, but it is 0x%lx!\n",
+			(unsigned long)addr, (unsigned long)other_addr);
+	} else {
+		pteval_t iomap_set = (_pte.pte & PTE_FLAGS_MASK) & _PAGE_IOMAP;
+		other_addr = (_pte.pte & PTE_PFN_MASK);
+		WARN((addr == other_addr) && (!io_page) && (!iomap_set),
+			"0x%lx is missing VM_IO (and wasn't fixed)!\n",
+			(unsigned long)addr);
+	}
+
+	return _pte;
+}
+PV_CALLEE_SAVE_REGS_THUNK(xen_make_pte_debug);
+#endif
 
 pgd_t xen_make_pgd(pgdval_t pgd)
 {
@@ -2306,6 +2430,9 @@ __init void xen_ident_map_ISA(void)
 
 static __init void xen_post_allocator_init(void)
 {
+#ifdef CONFIG_XEN_DEBUG
+	pv_mmu_ops.make_pte = PV_CALLEE_SAVE(xen_make_pte_debug);
+#endif
 	pv_mmu_ops.set_pte = xen_set_pte;
 	pv_mmu_ops.set_pmd = xen_set_pmd;
 	pv_mmu_ops.set_pud = xen_set_pud;
@@ -2438,7 +2565,7 @@ static void xen_zap_pfn_range(unsigned long vaddr, unsigned int order,
 			in_frames[i] = virt_to_mfn(vaddr);
 
 		MULTI_update_va_mapping(mcs.mc, vaddr, VOID_PTE, 0);
-		set_phys_to_machine(virt_to_pfn(vaddr), INVALID_P2M_ENTRY);
+		__set_phys_to_machine(virt_to_pfn(vaddr), INVALID_P2M_ENTRY);
 
 		if (out_frames)
 			out_frames[i] = virt_to_pfn(vaddr);
@@ -2717,6 +2844,90 @@ EXPORT_SYMBOL_GPL(xen_remap_domain_mfn_range);
 
 #ifdef CONFIG_XEN_DEBUG_FS
 
+static int p2m_dump_show(struct seq_file *m, void *v)
+{
+	static const char * const level_name[] = { "top", "middle",
+						"entry", "abnormal" };
+	static const char * const type_name[] = { "identity", "missing",
+						"pfn", "abnormal"};
+#define TYPE_IDENTITY 0
+#define TYPE_MISSING 1
+#define TYPE_PFN 2
+#define TYPE_UNKNOWN 3
+	unsigned long pfn, prev_pfn_type = 0, prev_pfn_level = 0;
+	unsigned int uninitialized_var(prev_level);
+	unsigned int uninitialized_var(prev_type);
+
+	if (!p2m_top)
+		return 0;
+
+	for (pfn = 0; pfn < MAX_DOMAIN_PAGES; pfn++) {
+		unsigned topidx = p2m_top_index(pfn);
+		unsigned mididx = p2m_mid_index(pfn);
+		unsigned idx = p2m_index(pfn);
+		unsigned lvl, type;
+
+		lvl = 4;
+		type = TYPE_UNKNOWN;
+		if (p2m_top[topidx] == p2m_mid_missing) {
+			lvl = 0; type = TYPE_MISSING;
+		} else if (p2m_top[topidx][mididx] == p2m_identity) {
+			lvl = 1; type = TYPE_IDENTITY;
+		} else if (p2m_top[topidx][mididx][idx] == pfn) {
+			lvl = 2; type = TYPE_PFN;
+		} else if (p2m_top[topidx][mididx][idx] == IDENTITY_FRAME(pfn)) {
+			lvl = 2; type = TYPE_IDENTITY;
+		} else if (p2m_top[topidx][mididx][idx] != pfn) {
+			lvl = 2; type = TYPE_PFN;
+		} else if (p2m_top[topidx] == NULL) {
+			lvl = 0; type = TYPE_UNKNOWN;
+		} else if (p2m_top[topidx][mididx] == NULL) {
+			lvl = 1; type = TYPE_UNKNOWN;
+		} else if (p2m_top[topidx][mididx][idx] == 0) {
+			lvl = 2; type = TYPE_UNKNOWN;
+		} else if (p2m_top[topidx][mididx] == p2m_missing) {
+			lvl = 1; type = TYPE_MISSING;
+		} else if (p2m_top[topidx][mididx][idx] == INVALID_P2M_ENTRY) {
+			lvl = 2; type = TYPE_MISSING;
+		} else if (p2m_top[topidx][mididx][idx] != pfn) {
+			lvl = 2; type = TYPE_PFN;
+		}
+		if (pfn == 0) {
+			prev_level = lvl;
+			prev_type = type;
+		}
+		if (pfn == MAX_DOMAIN_PAGES-1) {
+			lvl = 3;
+			type = TYPE_UNKNOWN;
+		}
+		if (prev_type != type) {
+			seq_printf(m, " [0x%lx->0x%lx] %s\n",
+				prev_pfn_type, pfn, type_name[prev_type]);
+			prev_pfn_type = pfn;
+			prev_type = type;
+		}
+		if (prev_level != lvl) {
+			seq_printf(m, " [0x%lx->0x%lx] level %s\n",
+				prev_pfn_level, pfn, level_name[prev_level]);
+			prev_pfn_level = pfn;
+			prev_level = lvl;
+		}
+	}
+	return 0;
+}
+
+static int p2m_dump_open(struct inode *inode, struct file *filp)
+{
+	return single_open(filp, p2m_dump_show, NULL);
+}
+
+static const struct file_operations p2m_dump_fops = {
+	.open		= p2m_dump_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 static struct dentry *d_mmu_debug;
 
 static int __init xen_mmu_debugfs(void)
@@ -2772,6 +2983,7 @@ static int __init xen_mmu_debugfs(void)
 	debugfs_create_u32("prot_commit_batched", 0444, d_mmu_debug,
 			   &mmu_stats.prot_commit_batched);
 
+	debugfs_create_file("p2m", 0600, d_mmu_debug, NULL, &p2m_dump_fops);
 	return 0;
 }
 fs_initcall(xen_mmu_debugfs);
