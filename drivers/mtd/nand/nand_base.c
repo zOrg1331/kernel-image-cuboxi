@@ -1782,6 +1782,13 @@ static int nand_do_read_oob(struct mtd_info *mtd, loff_t from,
 	else
 		len = mtd->oobsize;
 
+	/* Do not allow read past end of page */
+	if ((ops->ooboffs + readlen) > len) {
+		DEBUG(MTD_DEBUG_LEVEL0, "%s: Attempt to read "
+				"past end of page\n", __func__);
+		return -EINVAL;
+	}
+
 	if (unlikely(ops->ooboffs >= len)) {
 		DEBUG(MTD_DEBUG_LEVEL0, "%s: Attempt to start read "
 					"outside oob\n", __func__);
@@ -2377,7 +2384,7 @@ static int nand_do_write_oob(struct mtd_info *mtd, loff_t to,
 		return -EINVAL;
 	}
 
-	/* Do not allow reads past end of device */
+	/* Do not allow write past end of device */
 	if (unlikely(to >= mtd->size ||
 		     ops->ooboffs + ops->ooblen >
 			((mtd->size >> chip->page_shift) -
@@ -2887,7 +2894,7 @@ static int nand_flash_detect_onfi(struct mtd_info *mtd, struct nand_chip *chip,
 	mtd->writesize = le32_to_cpu(p->byte_per_page);
 	mtd->erasesize = le32_to_cpu(p->pages_per_block) * mtd->writesize;
 	mtd->oobsize = le16_to_cpu(p->spare_bytes_per_page);
-	chip->chipsize = le32_to_cpu(p->blocks_per_lun) * mtd->erasesize;
+	chip->chipsize = (uint64_t)le32_to_cpu(p->blocks_per_lun) * mtd->erasesize;
 	busw = 0;
 	if (le16_to_cpu(p->features) & 1)
 		busw = NAND_BUSWIDTH_16;
