@@ -40,6 +40,7 @@
 #include <linux/workqueue.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
+#include <linux/ratelimit.h>
 
 #include "ext4_jbd2.h"
 #include "xattr.h"
@@ -552,7 +553,7 @@ static ext4_fsblk_t ext4_find_goal(struct inode *inode, ext4_lblk_t block,
 }
 
 /**
- *	ext4_blks_to_allocate: Look up the block map and count the number
+ *	ext4_blks_to_allocate - Look up the block map and count the number
  *	of direct blocks need to be allocated for the given branch.
  *
  *	@branch: chain of indirect blocks
@@ -591,13 +592,19 @@ static int ext4_blks_to_allocate(Indirect *branch, int k, unsigned int blks,
 
 /**
  *	ext4_alloc_blocks: multiple allocate blocks needed for a branch
+ *	@handle: handle for this transaction
+ *	@inode: inode which needs allocated blocks
+ *	@iblock: the logical block to start allocated at
+ *	@goal: preferred physical block of allocation
  *	@indirect_blks: the number of blocks need to allocate for indirect
  *			blocks
- *
+ *	@blks: number of desired blocks
  *	@new_blocks: on return it will store the new block numbers for
  *	the indirect blocks(if needed) and the first direct block,
- *	@blks:	on return it will store the total number of allocated
- *		direct blocks
+ *	@err: on return it will store the error code
+ *
+ *	This function will return the number of blocks allocated as
+ *	requested by the passed-in parameters.
  */
 static int ext4_alloc_blocks(handle_t *handle, struct inode *inode,
 			     ext4_lblk_t iblock, ext4_fsblk_t goal,
@@ -711,9 +718,11 @@ failed_out:
 
 /**
  *	ext4_alloc_branch - allocate and set up a chain of blocks.
+ *	@handle: handle for this transaction
  *	@inode: owner
  *	@indirect_blks: number of allocated indirect blocks
  *	@blks: number of allocated direct blocks
+ *	@goal: preferred place for allocation
  *	@offsets: offsets (in the blocks) to store the pointers to next.
  *	@branch: place to store the chain in.
  *
@@ -826,6 +835,7 @@ failed:
 
 /**
  * ext4_splice_branch - splice the allocated branch onto inode.
+ * @handle: handle for this transaction
  * @inode: owner
  * @block: (logical) number of block we are adding
  * @chain: chain of indirect blocks (with a missing link - see
@@ -3720,8 +3730,7 @@ static int ext4_set_bh_endio(struct buffer_head *bh, struct inode *inode)
 retry:
 	io_end = ext4_init_io_end(inode, GFP_ATOMIC);
 	if (!io_end) {
-		if (printk_ratelimit())
-			printk(KERN_WARNING "%s: allocation fail\n", __func__);
+		pr_warning_ratelimited("%s: allocation fail\n", __func__);
 		schedule();
 		goto retry;
 	}
