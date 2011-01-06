@@ -507,8 +507,14 @@ static bool alloc_p2m(unsigned long pfn)
 
 		if (cmpxchg(&mid[mididx], p2m_orig, p2m) != p2m_orig)
 			free_p2m_page(p2m);
-		else
+		else {
 			mid_mfn[mididx] = virt_to_mfn(p2m);
+			if (p2m_orig == p2m_identity) {
+				unsigned i;
+				for (i = 0; i < P2M_MID_PER_PAGE; i++)
+					p2m[i] = IDENTITY_FRAME(pfn+i);
+			}
+		}
 	}
 
 	return true;
@@ -580,6 +586,14 @@ bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn)
 
 	if (p2m_top[topidx][mididx] == p2m_missing)
 		return mfn == INVALID_P2M_ENTRY;
+
+	/*
+	 * If INVALID_P2M_ENTRY is being set on a region shared by
+	 * IDENTITY pages, we want alloc_p2m to create a new page and fill
+	 * it with IDENTITY and INVALID_P2M_ENTRY entries (as needed).
+	 */
+	if (p2m_top[topidx][mididx] == p2m_identity)
+		return false;
 
 	p2m_top[topidx][mididx][idx] = mfn;
 

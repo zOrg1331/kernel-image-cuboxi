@@ -430,6 +430,7 @@ static int __init balloon_init(void)
 		/* totalram_pages doesn't include the boot-time
 		   balloon extension, so don't subtract from it. */
 		__balloon_append(page);
+		set_phys_to_machine(pfn, INVALID_P2M_ENTRY);
 	}
 
 	target_watch.callback = watch_target;
