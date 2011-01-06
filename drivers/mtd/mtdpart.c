@@ -384,6 +384,7 @@ static struct mtd_part *allocate_partition(struct mtd_info *master,
 	slave->mtd.flags = master->flags & ~part->mask_flags;
 	slave->mtd.size = part->size;
 	slave->mtd.writesize = master->writesize;
+	slave->mtd.writebufsize = master->writebufsize;
 	slave->mtd.oobsize = master->oobsize;
 	slave->mtd.oobavail = master->oobavail;
 	slave->mtd.subpage_sft = master->subpage_sft;
@@ -720,19 +721,19 @@ int parse_mtd_partitions(struct mtd_info *master, const char **types,
 }
 EXPORT_SYMBOL_GPL(parse_mtd_partitions);
 
-int mtd_is_master(struct mtd_info *mtd)
+int mtd_is_partition(struct mtd_info *mtd)
 {
 	struct mtd_part *part;
-	int nopart = 0;
+	int ispart = 0;
 
 	mutex_lock(&mtd_partitions_mutex);
 	list_for_each_entry(part, &mtd_partitions, list)
 		if (&part->mtd == mtd) {
-			nopart = 1;
+			ispart = 1;
 			break;
 		}
 	mutex_unlock(&mtd_partitions_mutex);
 
-	return nopart;
+	return ispart;
 }
-EXPORT_SYMBOL_GPL(mtd_is_master);
+EXPORT_SYMBOL_GPL(mtd_is_partition);
