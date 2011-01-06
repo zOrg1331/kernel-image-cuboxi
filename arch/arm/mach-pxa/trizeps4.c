@@ -26,6 +26,7 @@
 #include <linux/dm9000.h>
 #include <linux/mtd/physmap.h>
 #include <linux/mtd/partitions.h>
+#include <linux/i2c/pxa-i2c.h>
 
 #include <asm/types.h>
 #include <asm/setup.h>
@@ -40,7 +41,6 @@
 #include <asm/mach/flash.h>
 
 #include <mach/pxa27x.h>
-#include <mach/pxa2xx_spi.h>
 #include <mach/trizeps4.h>
 #include <mach/audio.h>
 #include <mach/pxafb.h>
@@ -48,7 +48,6 @@
 #include <mach/irda.h>
 #include <mach/ohci.h>
 #include <mach/smemc.h>
-#include <plat/i2c.h>
 
 #include "generic.h"
 #include "devices.h"

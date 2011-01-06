@@ -26,10 +26,12 @@
 #include <linux/spi/spi.h>
 #include <linux/spi/tdo24m.h>
 #include <linux/spi/libertas_spi.h>
+#include <linux/spi/pxa2xx_spi.h>
 #include <linux/power_supply.h>
 #include <linux/apm-emulation.h>
 #include <linux/i2c.h>
 #include <linux/i2c/pca953x.h>
+#include <linux/i2c/pxa-i2c.h>
 #include <linux/regulator/userspace-consumer.h>
 
 #include <media/soc_camera.h>
@@ -44,9 +46,7 @@
 #include <mach/ohci.h>
 #include <mach/mmc.h>
 #include <plat/pxa27x_keypad.h>
-#include <plat/i2c.h>
 #include <mach/camera.h>
-#include <mach/pxa2xx_spi.h>
 
 #include "generic.h"
 #include "devices.h"
