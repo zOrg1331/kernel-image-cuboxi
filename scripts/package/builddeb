@@ -25,8 +25,44 @@ create_package() {
 	chown -R root:root "$pdir"
 	chmod -R go-w "$pdir"
 
+	# Attempt to find the correct Debian architecture
+	local forcearch="" debarch=""
+	case "$UTS_MACHINE" in
+	i386|ia64|alpha)
+		debarch="$UTS_MACHINE" ;;
+	x86_64)
+		debarch=amd64 ;;
+	sparc*)
+		debarch=sparc ;;
+	s390*)
+		debarch=s390 ;;
+	ppc*)
+		debarch=powerpc ;;
+	parisc*)
+		debarch=hppa ;;
+	mips*)
+		debarch=mips$(grep -q CPU_LITTLE_ENDIAN=y .config && echo el) ;;
+	arm*)
+		debarch=arm$(grep -q CONFIG_AEABI=y .config && echo el) ;;
+	*)
+		echo "" >&2
+		echo "** ** **  WARNING  ** ** **" >&2
+		echo "" >&2
+		echo "Your architecture doesn't have it's equivalent" >&2
+		echo "Debian userspace architecture defined!" >&2
+		echo "Falling back to using your current userspace instead!" >&2
+		echo "Please add support for $UTS_MACHINE to ${0} ..." >&2
+		echo "" >&2
+	esac
+	if [ -n "$KBUILD_DEBARCH" ] ; then
+		debarch="$KBUILD_DEBARCH"
+	fi
+	if [ -n "$debarch" ] ; then
+		forcearch="-DArchitecture=$debarch"
+	fi
+
 	# Create the package
-	dpkg-gencontrol -isp -p$pname -P"$pdir"
+	dpkg-gencontrol -isp $forcearch -p$pname -P"$pdir"
 	dpkg --build "$pdir" ..
 }
 
@@ -40,17 +76,21 @@ else
 fi
 tmpdir="$objtree/debian/tmp"
 fwdir="$objtree/debian/fwtmp"
+hdrdir="$objtree/debian/hdrtmp"
 packagename=linux-image-$version
 fwpackagename=linux-firmware-image
+hdrpackagename=linux-headers-$version
 
 if [ "$ARCH" = "um" ] ; then
 	packagename=user-mode-linux-$version
 fi
 
 # Setup the directory structure
-rm -rf "$tmpdir" "$fwdir"
-mkdir -p "$tmpdir/DEBIAN" "$tmpdir/lib" "$tmpdir/boot" "$tmpdir/usr/share/doc/$packagename"
-mkdir -p "$fwdir/DEBIAN" "$fwdir/lib" "$fwdir/usr/share/doc/$fwpackagename"
+rm -rf "$tmpdir" "$fwdir" "$hdrdir"
+mkdir -m 755 -p "$tmpdir/DEBIAN"
+mkdir -p  "$tmpdir/lib" "$tmpdir/boot" "$tmpdir/usr/share/doc/$packagename"
+mkdir -m 755 -p "$fwdir/DEBIAN"
+mkdir -p "$fwdir/lib" "$fwdir/usr/share/doc/$fwpackagename"
 if [ "$ARCH" = "um" ] ; then
 	mkdir -p "$tmpdir/usr/lib/uml/modules/$version" "$tmpdir/usr/bin"
 fi
@@ -187,6 +227,30 @@ Description: Linux kernel, version $version
 EOF
 
 fi
+
+# Build header package
+find . -name Makefile -o -name Kconfig\* -o -name \*.pl > /tmp/files$$
+find arch/x86/include include scripts -type f >> /tmp/files$$
+(cd $objtree; find .config Module.symvers include scripts -type f >> /tmp/objfiles$$)
+destdir=$hdrdir/usr/src/linux-headers-$version
+mkdir -p "$destdir" "$hdrdir/DEBIAN" "$hdrdir/usr/share/doc/$hdrpackagename"
+tar -c -f - -T /tmp/files$$ | (cd $destdir; tar -xf -)
+(cd $objtree; tar -c -f - -T /tmp/objfiles$$) | (cd $destdir; tar -xf -)
+rm -f /tmp/files$$ /tmp/objfiles$$
+arch=$(dpkg --print-architecture)
+
+cat <<EOF >> debian/control
+
+Package: $hdrpackagename
+Provides: linux-headers, linux-headers-2.6
+Architecture: $arch
+Description: Linux kernel headers for $KERNELRELEASE on $arch
+ This package provides kernel header files for $KERNELRELEASE on $arch
+ .
+ This is useful for people who need to build external modules
+EOF
+
+create_package "$hdrpackagename" "$hdrdir"
 
 # Do we have firmware? Move it out of the way and build it into a package.
 if [ -e "$tmpdir/lib/firmware" ]; then
