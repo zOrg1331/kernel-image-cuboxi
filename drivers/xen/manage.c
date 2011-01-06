@@ -145,10 +145,9 @@ out_resume:
 	if (!cancelled) {
 		xen_arch_resume();
 		xs_resume();
+		dpm_resume_end(PMSG_RESUME);
 	} else
 		xs_suspend_cancel();
-
-	dpm_resume_end(PMSG_RESUME);
 
 	/* Make sure timer events get retriggered on all CPUs */
 	clock_was_set();
