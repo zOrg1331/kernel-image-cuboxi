@@ -2518,7 +2518,7 @@ const struct inode_operations ext4_dir_inode_operations = {
 	.listxattr	= ext4_listxattr,
 	.removexattr	= generic_removexattr,
 #endif
-	.check_acl	= ext4_check_acl,
+	.check_acl_rcu	= ext4_check_acl_rcu,
 	.fiemap         = ext4_fiemap,
 };
 
@@ -2530,5 +2530,5 @@ const struct inode_operations ext4_special_inode_operations = {
 	.listxattr	= ext4_listxattr,
 	.removexattr	= generic_removexattr,
 #endif
-	.check_acl	= ext4_check_acl,
+	.check_acl_rcu	= ext4_check_acl_rcu,
 };

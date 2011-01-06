@@ -370,6 +370,15 @@ struct inode *ceph_alloc_inode(struct super_block *sb)
 	return &ci->vfs_inode;
 }
 
+static void ceph_i_callback(struct rcu_head *head)
+{
+	struct inode *inode = container_of(head, struct inode, i_rcu);
+	struct ceph_inode_info *ci = ceph_inode(inode);
+
+	INIT_LIST_HEAD(&inode->i_dentry);
+	kmem_cache_free(ceph_inode_cachep, ci);
+}
+
 void ceph_destroy_inode(struct inode *inode)
 {
 	struct ceph_inode_info *ci = ceph_inode(inode);
@@ -409,7 +418,7 @@ void ceph_destroy_inode(struct inode *inode)
 	if (ci->i_xattrs.prealloc_blob)
 		ceph_buffer_put(ci->i_xattrs.prealloc_blob);
 
-	kmem_cache_free(ceph_inode_cachep, ci);
+	call_rcu(&inode->i_rcu, ceph_i_callback);
 }
 
 
@@ -845,13 +854,13 @@ static void ceph_set_dentry_offset(struct dentry *dn)
 	di->offset = ceph_inode(inode)->i_max_offset++;
 	spin_unlock(&inode->i_lock);
 
-	spin_lock(&dcache_lock);
-	spin_lock(&dn->d_lock);
+	spin_lock(&dir->d_lock);
+	spin_lock_nested(&dn->d_lock, DENTRY_D_LOCK_NESTED);
 	list_move(&dn->d_u.d_child, &dir->d_subdirs);
 	dout("set_dentry_offset %p %lld (%p %p)\n", dn, di->offset,
 	     dn->d_u.d_child.prev, dn->d_u.d_child.next);
 	spin_unlock(&dn->d_lock);
-	spin_unlock(&dcache_lock);
+	spin_unlock(&dir->d_lock);
 }
 
 /*
@@ -883,8 +892,8 @@ static struct dentry *splice_dentry(struct dentry *dn, struct inode *in,
 	} else if (realdn) {
 		dout("dn %p (%d) spliced with %p (%d) "
 		     "inode %p ino %llx.%llx\n",
-		     dn, atomic_read(&dn->d_count),
-		     realdn, atomic_read(&realdn->d_count),
+		     dn, dn->d_count,
+		     realdn, realdn->d_count,
 		     realdn->d_inode, ceph_vinop(realdn->d_inode));
 		dput(dn);
 		dn = realdn;
@@ -1235,11 +1244,11 @@ retry_lookup:
 			goto retry_lookup;
 		} else {
 			/* reorder parent's d_subdirs */
-			spin_lock(&dcache_lock);
-			spin_lock(&dn->d_lock);
+			spin_lock(&parent->d_lock);
+			spin_lock_nested(&dn->d_lock, DENTRY_D_LOCK_NESTED);
 			list_move(&dn->d_u.d_child, &parent->d_subdirs);
 			spin_unlock(&dn->d_lock);
-			spin_unlock(&dcache_lock);
+			spin_unlock(&parent->d_lock);
 		}
 
 		di = dn->d_fsdata;

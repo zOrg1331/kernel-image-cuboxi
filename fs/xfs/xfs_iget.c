@@ -102,12 +102,11 @@ xfs_inode_alloc(
 	return ip;
 }
 
-void
-__xfs_inode_free(
+STATIC void
+xfs_inode_free_callback(
 	struct rcu_head		*head)
 {
-	struct inode		*inode = container_of((void *)head,
-							struct inode, i_dentry);
+	struct inode		*inode = container_of(head, struct inode, i_rcu);
 	struct xfs_inode	*ip = XFS_I(inode);
 
 	INIT_LIST_HEAD(&inode->i_dentry);
@@ -167,7 +166,7 @@ xfs_inode_free(
 	ip->i_flags = XFS_IRECLAIM;
 	ip->i_ino = 0;
 	spin_unlock(&ip->i_flags_lock);
-	call_rcu((struct rcu_head *)&VFS_I(ip)->i_dentry, __xfs_inode_free);
+	call_rcu(&ip->i_vnode.i_rcu, xfs_inode_free_callback);
 }
 
 /*
