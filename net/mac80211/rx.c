@@ -538,6 +538,8 @@ static void ieee80211_release_reorder_frame(struct ieee80211_hw *hw,
 {
 	struct sk_buff *skb = tid_agg_rx->reorder_buf[index];
 
+	lockdep_assert_held(&tid_agg_rx->reorder_lock);
+
 	if (!skb)
 		goto no_frame;
 
@@ -556,6 +558,8 @@ static void ieee80211_release_reorder_frames(struct ieee80211_hw *hw,
 					     struct sk_buff_head *frames)
 {
 	int index;
+
+	lockdep_assert_held(&tid_agg_rx->reorder_lock);
 
 	while (seq_less(tid_agg_rx->head_seq_num, head_seq_num)) {
 		index = seq_sub(tid_agg_rx->head_seq_num, tid_agg_rx->ssn) %
@@ -580,6 +584,8 @@ static void ieee80211_sta_reorder_release(struct ieee80211_hw *hw,
 					  struct sk_buff_head *frames)
 {
 	int index, j;
+
+	lockdep_assert_held(&tid_agg_rx->reorder_lock);
 
 	/* release the buffer until next missing frame */
 	index = seq_sub(tid_agg_rx->head_seq_num, tid_agg_rx->ssn) %
@@ -683,10 +689,11 @@ static bool ieee80211_sta_manage_reorder_buf(struct ieee80211_hw *hw,
 	int index;
 	bool ret = true;
 
+	spin_lock(&tid_agg_rx->reorder_lock);
+
 	buf_size = tid_agg_rx->buf_size;
 	head_seq_num = tid_agg_rx->head_seq_num;
 
-	spin_lock(&tid_agg_rx->reorder_lock);
 	/* frame with out of date sequence number */
 	if (seq_less(mpdu_seq_num, head_seq_num)) {
 		dev_kfree_skb(skb);
@@ -948,12 +955,31 @@ ieee80211_rx_h_decrypt(struct ieee80211_rx_data *rx)
 		 * have been expected.
 		 */
 		struct ieee80211_key *key = NULL;
+		struct ieee80211_sub_if_data *sdata = rx->sdata;
+		int i;
+
 		if (ieee80211_is_mgmt(fc) &&
 		    is_multicast_ether_addr(hdr->addr1) &&
 		    (key = rcu_dereference(rx->sdata->default_mgmt_key)))
 			rx->key = key;
-		else if ((key = rcu_dereference(rx->sdata->default_key)))
-			rx->key = key;
+		else {
+			if (rx->sta) {
+				for (i = 0; i < NUM_DEFAULT_KEYS; i++) {
+					key = rcu_dereference(rx->sta->gtk[i]);
+					if (key)
+						break;
+				}
+			}
+			if (!key) {
+				for (i = 0; i < NUM_DEFAULT_KEYS; i++) {
+					key = rcu_dereference(sdata->keys[i]);
+					if (key)
+						break;
+				}
+			}
+			if (key)
+				rx->key = key;
+		}
 		return RX_CONTINUE;
 	} else {
 		u8 keyid;
@@ -1102,8 +1128,6 @@ static void ap_sta_ps_end(struct sta_info *sta)
 
 	atomic_dec(&sdata->bss->num_sta_ps);
 
-	clear_sta_flags(sta, WLAN_STA_PS_STA);
-
 #ifdef CONFIG_MAC80211_VERBOSE_PS_DEBUG
 	printk(KERN_DEBUG "%s: STA %pM aid %d exits power save mode\n",
 	       sdata->name, sta->sta.addr, sta->sta.aid);
@@ -1158,6 +1182,7 @@ ieee80211_rx_h_sta_process(struct ieee80211_rx_data *rx)
 	sta->rx_fragments++;
 	sta->rx_bytes += rx->skb->len;
 	sta->last_signal = status->signal;
+	ewma_add(&sta->avg_signal, -status->signal);
 
 	/*
 	 * Change STA power saving mode only at the end of a frame
@@ -1515,12 +1540,30 @@ ieee80211_drop_unencrypted_mgmt(struct ieee80211_rx_data *rx)
 	if (rx->sta && test_sta_flags(rx->sta, WLAN_STA_MFP)) {
 		if (unlikely(!ieee80211_has_protected(fc) &&
 			     ieee80211_is_unicast_robust_mgmt_frame(rx->skb) &&
-			     rx->key))
+			     rx->key)) {
+			if (ieee80211_is_deauth(fc))
+				cfg80211_send_unprot_deauth(rx->sdata->dev,
+							    rx->skb->data,
+							    rx->skb->len);
+			else if (ieee80211_is_disassoc(fc))
+				cfg80211_send_unprot_disassoc(rx->sdata->dev,
+							      rx->skb->data,
+							      rx->skb->len);
 			return -EACCES;
+		}
 		/* BIP does not use Protected field, so need to check MMIE */
 		if (unlikely(ieee80211_is_multicast_robust_mgmt_frame(rx->skb) &&
-			     ieee80211_get_mmie_keyidx(rx->skb) < 0))
+			     ieee80211_get_mmie_keyidx(rx->skb) < 0)) {
+			if (ieee80211_is_deauth(fc))
+				cfg80211_send_unprot_deauth(rx->sdata->dev,
+							    rx->skb->data,
+							    rx->skb->len);
+			else if (ieee80211_is_disassoc(fc))
+				cfg80211_send_unprot_disassoc(rx->sdata->dev,
+							      rx->skb->data,
+							      rx->skb->len);
 			return -EACCES;
+		}
 		/*
 		 * When using MFP, Action frames are not allowed prior to
 		 * having configured keys.
@@ -1875,9 +1918,8 @@ ieee80211_rx_h_data(struct ieee80211_rx_data *rx)
 	dev->stats.rx_packets++;
 	dev->stats.rx_bytes += rx->skb->len;
 
-	if (ieee80211_is_data(hdr->frame_control) &&
-	    !is_multicast_ether_addr(hdr->addr1) &&
-	    local->hw.conf.dynamic_ps_timeout > 0 && local->ps_sdata) {
+	if (local->ps_sdata && local->hw.conf.dynamic_ps_timeout > 0 &&
+	    !is_multicast_ether_addr(((struct ethhdr *)rx->skb->data)->h_dest)) {
 			mod_timer(&local->dynamic_ps_timer, jiffies +
 			 msecs_to_jiffies(local->hw.conf.dynamic_ps_timeout));
 	}
@@ -1926,9 +1968,12 @@ ieee80211_rx_h_ctrl(struct ieee80211_rx_data *rx, struct sk_buff_head *frames)
 			mod_timer(&tid_agg_rx->session_timer,
 				  TU_TO_EXP_TIME(tid_agg_rx->timeout));
 
+		spin_lock(&tid_agg_rx->reorder_lock);
 		/* release stored frames up to start of BAR */
 		ieee80211_release_reorder_frames(hw, tid_agg_rx, start_seq_num,
 						 frames);
+		spin_unlock(&tid_agg_rx->reorder_lock);
+
 		kfree_skb(skb);
 		return RX_QUEUED;
 	}
@@ -2119,8 +2164,11 @@ ieee80211_rx_h_action(struct ieee80211_rx_data *rx)
 		}
 		break;
 	case WLAN_CATEGORY_MESH_PLINK:
-	case WLAN_CATEGORY_MESH_PATH_SEL:
 		if (!ieee80211_vif_is_mesh(&sdata->vif))
+			break;
+		goto queue;
+	case WLAN_CATEGORY_MESH_PATH_SEL:
+		if (!mesh_path_sel_is_hwmp(sdata))
 			break;
 		goto queue;
 	}
@@ -2524,9 +2572,8 @@ static void ieee80211_invoke_rx_handlers(struct ieee80211_rx_data *rx)
 }
 
 /*
- * This function makes calls into the RX path. Therefore the
- * caller must hold the sta_info->lock and everything has to
- * be under rcu_read_lock protection as well.
+ * This function makes calls into the RX path, therefore
+ * it has to be invoked under RCU read lock.
  */
 void ieee80211_release_reorder_timeout(struct sta_info *sta, int tid)
 {
@@ -2884,6 +2931,9 @@ void ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb)
 		return;
 	}
 
+	ieee80211_tpt_led_trig_rx(local,
+			((struct ieee80211_hdr *)skb->data)->frame_control,
+			skb->len);
 	__ieee80211_rx_handle_packet(hw, skb);
 
 	rcu_read_unlock();
