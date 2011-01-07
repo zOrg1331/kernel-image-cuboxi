@@ -296,7 +296,7 @@ static int decrease_reservation(unsigned long nr_pages)
 	/* No more mappings: invalidate P2M and add to balloon. */
 	for (i = 0; i < nr_pages; i++) {
 		pfn = mfn_to_pfn(frame_list[i]);
-		set_phys_to_machine(pfn, INVALID_P2M_ENTRY);
+		__set_phys_to_machine(pfn, INVALID_P2M_ENTRY);
 		balloon_append(pfn_to_page(pfn));
 	}
 
@@ -430,6 +430,7 @@ static int __init balloon_init(void)
 		/* totalram_pages doesn't include the boot-time
 		   balloon extension, so don't subtract from it. */
 		__balloon_append(page);
+		set_phys_to_machine(pfn, INVALID_P2M_ENTRY);
 	}
 
 	target_watch.callback = watch_target;
