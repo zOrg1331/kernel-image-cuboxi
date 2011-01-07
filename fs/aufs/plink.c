@@ -89,15 +89,10 @@ out:
 
 void au_plink_maint_leave(struct au_sbinfo *sbinfo)
 {
-	int iam;
-
 	spin_lock(&sbinfo->si_plink_maint_lock);
-	iam = (sbinfo->si_plink_maint_pid == current->pid);
-	if (iam)
-		sbinfo->si_plink_maint_pid = 0;
+	sbinfo->si_plink_maint_pid = 0;
 	spin_unlock(&sbinfo->si_plink_maint_lock);
-	if (iam)
-		wake_up_all(&sbinfo->si_plink_wq);
+	wake_up_all(&sbinfo->si_plink_wq);
 }
 
 int au_plink_maint_enter(struct super_block *sb)
