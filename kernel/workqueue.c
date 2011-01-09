@@ -770,8 +770,7 @@ static inline void worker_clr_flags(struct worker *worker, unsigned int flags)
 
 	/* if transitioning out of NOT_RUNNING, increment nr_running */
 	if ((flags & WORKER_NOT_RUNNING) && (oflags & WORKER_NOT_RUNNING))
-		if (!(worker->flags & WORKER_NOT_RUNNING))
-			atomic_inc(get_gcwq_nr_running(gcwq->cpu));
+		atomic_inc(get_gcwq_nr_running(gcwq->cpu));
 }
 
 /**
