@@ -25,6 +25,8 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -2500,7 +2502,7 @@ static int __init dme1737_isa_detect(int sio_cip, unsigned short *addr)
 	base_addr = (dme1737_sio_inb(sio_cip, 0x60) << 8) |
 		     dme1737_sio_inb(sio_cip, 0x61);
 	if (!base_addr) {
-		printk(KERN_ERR "dme1737: Base address not set.\n");
+		pr_err("Base address not set\n");
 		err = -ENODEV;
 		goto exit;
 	}
@@ -2530,22 +2532,20 @@ static int __init dme1737_isa_device_add(unsigned short addr)
 
 	pdev = platform_device_alloc("dme1737", addr);
 	if (!pdev) {
-		printk(KERN_ERR "dme1737: Failed to allocate device.\n");
+		pr_err("Failed to allocate device\n");
 		err = -ENOMEM;
 		goto exit;
 	}
 
 	err = platform_device_add_resources(pdev, &res, 1);
 	if (err) {
-		printk(KERN_ERR "dme1737: Failed to add device resource "
-		       "(err = %d).\n", err);
+		pr_err("Failed to add device resource (err = %d)\n", err);
 		goto exit_device_put;
 	}
 
 	err = platform_device_add(pdev);
 	if (err) {
-		printk(KERN_ERR "dme1737: Failed to add device (err = %d).\n",
-		       err);
+		pr_err("Failed to add device (err = %d)\n", err);
 		goto exit_device_put;
 	}
 
