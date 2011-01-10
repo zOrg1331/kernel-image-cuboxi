@@ -1732,33 +1732,6 @@ void netif_device_attach(struct net_device *dev)
 }
 EXPORT_SYMBOL(netif_device_attach);
 
-static bool can_checksum_protocol(unsigned long features, __be16 protocol)
-{
-	return ((features & NETIF_F_NO_CSUM) ||
-		((features & NETIF_F_V4_CSUM) &&
-		 protocol == htons(ETH_P_IP)) ||
-		((features & NETIF_F_V6_CSUM) &&
-		 protocol == htons(ETH_P_IPV6)) ||
-		((features & NETIF_F_FCOE_CRC) &&
-		 protocol == htons(ETH_P_FCOE)));
-}
-
-static bool dev_can_checksum(struct net_device *dev, struct sk_buff *skb)
-{
-	__be16 protocol = skb->protocol;
-	int features = dev->features;
-
-	if (vlan_tx_tag_present(skb)) {
-		features &= dev->vlan_features;
-	} else if (protocol == htons(ETH_P_8021Q)) {
-		struct vlan_ethhdr *veh = (struct vlan_ethhdr *)skb->data;
-		protocol = veh->h_vlan_encapsulated_proto;
-		features &= dev->vlan_features;
-	}
-
-	return can_checksum_protocol(features, protocol);
-}
-
 /**
  * skb_dev_set -- assign a new device to a buffer
  * @skb: buffer for the new device
@@ -1971,16 +1944,14 @@ static void dev_gso_skb_destructor(struct sk_buff *skb)
 /**
  *	dev_gso_segment - Perform emulated hardware segmentation on skb.
  *	@skb: buffer to segment
+ *	@features: device features as applicable to this skb
  *
  *	This function segments the given skb and stores the list of segments
  *	in skb->next.
  */
-static int dev_gso_segment(struct sk_buff *skb)
+static int dev_gso_segment(struct sk_buff *skb, int features)
 {
-	struct net_device *dev = skb->dev;
 	struct sk_buff *segs;
-	int features = dev->features & ~(illegal_highdma(dev, skb) ?
-					 NETIF_F_SG : 0);
 
 	segs = skb_gso_segment(skb, features);
 
@@ -2017,22 +1988,52 @@ static inline void skb_orphan_try(struct sk_buff *skb)
 	}
 }
 
-int netif_get_vlan_features(struct sk_buff *skb, struct net_device *dev)
+static bool can_checksum_protocol(unsigned long features, __be16 protocol)
+{
+	return ((features & NETIF_F_GEN_CSUM) ||
+		((features & NETIF_F_V4_CSUM) &&
+		 protocol == htons(ETH_P_IP)) ||
+		((features & NETIF_F_V6_CSUM) &&
+		 protocol == htons(ETH_P_IPV6)) ||
+		((features & NETIF_F_FCOE_CRC) &&
+		 protocol == htons(ETH_P_FCOE)));
+}
+
+static int harmonize_features(struct sk_buff *skb, __be16 protocol, int features)
+{
+	if (!can_checksum_protocol(protocol, features)) {
+		features &= ~NETIF_F_ALL_CSUM;
+		features &= ~NETIF_F_SG;
+	} else if (illegal_highdma(skb->dev, skb)) {
+		features &= ~NETIF_F_SG;
+	}
+
+	return features;
+}
+
+int netif_skb_features(struct sk_buff *skb)
 {
 	__be16 protocol = skb->protocol;
+	int features = skb->dev->features;
 
 	if (protocol == htons(ETH_P_8021Q)) {
 		struct vlan_ethhdr *veh = (struct vlan_ethhdr *)skb->data;
 		protocol = veh->h_vlan_encapsulated_proto;
-	} else if (!skb->vlan_tci)
-		return dev->features;
+	} else if (!vlan_tx_tag_present(skb)) {
+		return harmonize_features(skb, protocol, features);
+	}
 
-	if (protocol != htons(ETH_P_8021Q))
-		return dev->features & dev->vlan_features;
-	else
-		return 0;
+	features &= skb->dev->vlan_features;
+
+	if (protocol != htons(ETH_P_8021Q)) {
+		return harmonize_features(skb, protocol, features);
+	} else {
+		features &= NETIF_F_SG | NETIF_F_HIGHDMA | NETIF_F_FRAGLIST |
+				NETIF_F_GEN_CSUM;
+		return harmonize_features(skb, protocol, features);
+	}
 }
-EXPORT_SYMBOL(netif_get_vlan_features);
+EXPORT_SYMBOL(netif_skb_features);
 
 /*
  * Returns true if either:
@@ -2042,22 +2043,13 @@ EXPORT_SYMBOL(netif_get_vlan_features);
  *	   support DMA from it.
  */
 static inline int skb_needs_linearize(struct sk_buff *skb,
-				      struct net_device *dev)
+				      int features)
 {
-	if (skb_is_nonlinear(skb)) {
-		int features = dev->features;
-
-		if (vlan_tx_tag_present(skb))
-			features &= dev->vlan_features;
-
-		return (skb_has_frag_list(skb) &&
-			!(features & NETIF_F_FRAGLIST)) ||
+	return skb_is_nonlinear(skb) &&
+			((skb_has_frag_list(skb) &&
+				!(features & NETIF_F_FRAGLIST)) ||
 			(skb_shinfo(skb)->nr_frags &&
-			(!(features & NETIF_F_SG) ||
-			illegal_highdma(dev, skb)));
-	}
-
-	return 0;
+				!(features & NETIF_F_SG)));
 }
 
 int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
@@ -2067,6 +2059,8 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 	int rc = NETDEV_TX_OK;
 
 	if (likely(!skb->next)) {
+		int features;
+
 		/*
 		 * If device doesnt need skb->dst, release it right now while
 		 * its hot in this cpu cache
@@ -2079,8 +2073,10 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 
 		skb_orphan_try(skb);
 
+		features = netif_skb_features(skb);
+
 		if (vlan_tx_tag_present(skb) &&
-		    !(dev->features & NETIF_F_HW_VLAN_TX)) {
+		    !(features & NETIF_F_HW_VLAN_TX)) {
 			skb = __vlan_put_tag(skb, vlan_tx_tag_get(skb));
 			if (unlikely(!skb))
 				goto out;
@@ -2088,13 +2084,13 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 			skb->vlan_tci = 0;
 		}
 
-		if (netif_needs_gso(dev, skb)) {
-			if (unlikely(dev_gso_segment(skb)))
+		if (netif_needs_gso(skb, features)) {
+			if (unlikely(dev_gso_segment(skb, features)))
 				goto out_kfree_skb;
 			if (skb->next)
 				goto gso;
 		} else {
-			if (skb_needs_linearize(skb, dev) &&
+			if (skb_needs_linearize(skb, features) &&
 			    __skb_linearize(skb))
 				goto out_kfree_skb;
 
@@ -2105,7 +2101,7 @@ int dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 			if (skb->ip_summed == CHECKSUM_PARTIAL) {
 				skb_set_transport_header(skb,
 					skb_checksum_start_offset(skb));
-				if (!dev_can_checksum(dev, skb) &&
+				if (!(features & NETIF_F_ALL_CSUM) &&
 				     skb_checksum_help(skb))
 					goto out_kfree_skb;
 			}

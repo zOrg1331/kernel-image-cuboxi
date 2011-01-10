@@ -2303,7 +2303,7 @@ unsigned long netdev_fix_features(unsigned long features, const char *name);
 void netif_stacked_transfer_operstate(const struct net_device *rootdev,
 					struct net_device *dev);
 
-int netif_get_vlan_features(struct sk_buff *skb, struct net_device *dev);
+int netif_skb_features(struct sk_buff *skb);
 
 static inline int net_gso_ok(int features, int gso_type)
 {
@@ -2317,16 +2317,10 @@ static inline int skb_gso_ok(struct sk_buff *skb, int features)
 	       (!skb_has_frag_list(skb) || (features & NETIF_F_FRAGLIST));
 }
 
-static inline int netif_needs_gso(struct net_device *dev, struct sk_buff *skb)
+static inline int netif_needs_gso(struct sk_buff *skb, int features)
 {
-	if (skb_is_gso(skb)) {
-		int features = netif_get_vlan_features(skb, dev);
-
-		return (!skb_gso_ok(skb, features) ||
-			unlikely(skb->ip_summed != CHECKSUM_PARTIAL));
-	}
-
-	return 0;
+	return skb_is_gso(skb) && (!skb_gso_ok(skb, features) ||
+		unlikely(skb->ip_summed != CHECKSUM_PARTIAL));
 }
 
 static inline void netif_set_gso_max_size(struct net_device *dev,
