@@ -770,8 +770,7 @@ static inline void worker_clr_flags(struct worker *worker, unsigned int flags)
 
 	/* if transitioning out of NOT_RUNNING, increment nr_running */
 	if ((flags & WORKER_NOT_RUNNING) && (oflags & WORKER_NOT_RUNNING))
-		if (!(worker->flags & WORKER_NOT_RUNNING))
-			atomic_inc(get_gcwq_nr_running(gcwq->cpu));
+		atomic_inc(get_gcwq_nr_running(gcwq->cpu));
 }
 
 /**
@@ -1840,7 +1839,7 @@ __acquires(&gcwq->lock)
 	spin_unlock_irq(&gcwq->lock);
 
 	work_clear_pending(work);
-	lock_map_acquire(&cwq->wq->lockdep_map);
+	lock_map_acquire_read(&cwq->wq->lockdep_map);
 	lock_map_acquire(&lockdep_map);
 	trace_workqueue_execute_start(work);
 	f(work);
@@ -2384,8 +2383,18 @@ static bool start_flush_work(struct work_struct *work, struct wq_barrier *barr,
 	insert_wq_barrier(cwq, barr, work, worker);
 	spin_unlock_irq(&gcwq->lock);
 
-	lock_map_acquire(&cwq->wq->lockdep_map);
+	/*
+	 * If @max_active is 1 or rescuer is in use, flushing another work
+	 * item on the same workqueue may lead to deadlock.  Make sure the
+	 * flusher is not running on the same workqueue by verifying write
+	 * access.
+	 */
+	if (cwq->wq->saved_max_active == 1 || cwq->wq->flags & WQ_RESCUER)
+		lock_map_acquire(&cwq->wq->lockdep_map);
+	else
+		lock_map_acquire_read(&cwq->wq->lockdep_map);
 	lock_map_release(&cwq->wq->lockdep_map);
+
 	return true;
 already_gone:
 	spin_unlock_irq(&gcwq->lock);
