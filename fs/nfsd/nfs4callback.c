@@ -631,7 +631,8 @@ static int max_cb_time(void)
 /* Reference counting, callback cleanup, etc., all look racy as heck.
  * And why is cl_cb_set an atomic? */
 
-int setup_callback_client(struct nfs4_client *clp, struct nfs4_cb_conn *conn)
+static int setup_callback_client(struct nfs4_client *clp,
+		struct nfs4_cb_conn *conn)
 {
 	struct rpc_timeout	timeparms = {
 		.to_initval	= max_cb_time(),
@@ -641,6 +642,7 @@ int setup_callback_client(struct nfs4_client *clp, struct nfs4_cb_conn *conn)
 		.net		= &init_net,
 		.address	= (struct sockaddr *) &conn->cb_addr,
 		.addrsize	= conn->cb_addrlen,
+		.saddress	= (struct sockaddr *) &conn->cb_saddr,
 		.timeout	= &timeparms,
 		.program	= &cb_program,
 		.version	= 0,
@@ -906,13 +908,13 @@ void nfsd4_shutdown_callback(struct nfs4_client *clp)
 	flush_workqueue(callback_wq);
 }
 
-void nfsd4_release_cb(struct nfsd4_callback *cb)
+static void nfsd4_release_cb(struct nfsd4_callback *cb)
 {
 	if (cb->cb_ops->rpc_release)
 		cb->cb_ops->rpc_release(cb);
 }
 
-void nfsd4_process_cb_update(struct nfsd4_callback *cb)
+static void nfsd4_process_cb_update(struct nfsd4_callback *cb)
 {
 	struct nfs4_cb_conn conn;
 	struct nfs4_client *clp = cb->cb_clp;
