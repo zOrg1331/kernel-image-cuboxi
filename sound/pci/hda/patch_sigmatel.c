@@ -389,6 +389,9 @@ static hda_nid_t stac92hd83xxx_dmic_nids[STAC92HD83XXX_NUM_DMICS + 1] = {
 	0x11, 0x20, 0
 };
 
+#define STAC92HD88XXX_NUM_DMICS	STAC92HD83XXX_NUM_DMICS
+#define stac92hd88xxx_dmic_nids	stac92hd83xxx_dmic_nids
+
 #define STAC92HD87B_NUM_DMICS	 1
 static hda_nid_t stac92hd87b_dmic_nids[STAC92HD87B_NUM_DMICS + 1] = {
 	0x11, 0
@@ -5422,7 +5425,7 @@ static int patch_stac92hd83xxx(struct hda_codec *codec)
 	snd_hda_codec_write_cache(codec, codec->afg, 0, 0x7ED, 0);
 	codec->no_trigger_sense = 1;
 	codec->spec = spec;
-	spec->linear_tone_beep = 1;
+	spec->linear_tone_beep = 0;
 	codec->slave_dig_outs = stac92hd83xxx_slave_dig_outs;
 	spec->digbeep_nid = 0x21;
 	spec->dmic_nids = stac92hd83xxx_dmic_nids;
@@ -5462,15 +5465,21 @@ again:
 		spec->num_dmics = stac92xx_connected_ports(codec,
 				stac92hd87b_dmic_nids,
 				STAC92HD87B_NUM_DMICS);
-		/* Fall through */
+		spec->num_pins = ARRAY_SIZE(stac92hd88xxx_pin_nids);
+		spec->pin_nids = stac92hd88xxx_pin_nids;
+		spec->mono_nid = 0;
+		spec->num_pwrs = 0;
+		break;
 	case 0x111d7666:
 	case 0x111d7667:
 	case 0x111d7668:
 	case 0x111d7669:
+		spec->num_dmics = stac92xx_connected_ports(codec,
+				stac92hd88xxx_dmic_nids,
+				STAC92HD88XXX_NUM_DMICS);
 		spec->num_pins = ARRAY_SIZE(stac92hd88xxx_pin_nids);
 		spec->pin_nids = stac92hd88xxx_pin_nids;
 		spec->mono_nid = 0;
-		spec->digbeep_nid = 0;
 		spec->num_pwrs = 0;
 		break;
 	case 0x111d7604:
