@@ -1295,7 +1295,7 @@ static struct clk_lookup mx51_lookups[] = {
 	_REGISTER_CLOCK("mxc-ehci.2", "usb_ahb", usb_ahb_clk)
 	_REGISTER_CLOCK("fsl-usb2-udc", "usb", usboh3_clk)
 	_REGISTER_CLOCK("fsl-usb2-udc", "usb_ahb", ahb_clk)
-	_REGISTER_CLOCK("imx-keypad.0", NULL, kpp_clk)
+	_REGISTER_CLOCK("imx-keypad", NULL, kpp_clk)
 	_REGISTER_CLOCK("mxc_nand", NULL, nfc_clk)
 	_REGISTER_CLOCK("imx-ssi.0", NULL, ssi1_clk)
 	_REGISTER_CLOCK("imx-ssi.1", NULL, ssi2_clk)
@@ -1326,6 +1326,13 @@ static struct clk_lookup mx53_lookups[] = {
 	_REGISTER_CLOCK(NULL, "gpt", gpt_clk)
 	_REGISTER_CLOCK("fec.0", NULL, fec_clk)
 	_REGISTER_CLOCK(NULL, "iim_clk", iim_clk)
+	_REGISTER_CLOCK("imx-i2c.0", NULL, i2c1_clk)
+	_REGISTER_CLOCK("imx-i2c.1", NULL, i2c2_clk)
+	_REGISTER_CLOCK("sdhci-esdhc-imx.0", NULL, esdhc1_clk)
+	_REGISTER_CLOCK("sdhci-esdhc-imx.1", NULL, esdhc2_clk)
+	_REGISTER_CLOCK("imx53-ecspi.0", NULL, ecspi1_clk)
+	_REGISTER_CLOCK("imx53-ecspi.1", NULL, ecspi2_clk)
+	_REGISTER_CLOCK("imx53-cspi.0", NULL, cspi_clk)
 };
 
 static void clk_tree_init(void)
@@ -1363,7 +1370,6 @@ int __init mx51_clocks_init(unsigned long ckil, unsigned long osc,
 
 	clk_tree_init();
 
-	clk_set_parent(&uart_root_clk, &pll3_sw_clk);
 	clk_enable(&cpu_clk);
 	clk_enable(&main_bus_clk);
 
@@ -1406,6 +1412,7 @@ int __init mx53_clocks_init(unsigned long ckil, unsigned long osc,
 
 	clk_tree_init();
 
+	clk_set_parent(&uart_root_clk, &pll3_sw_clk);
 	clk_enable(&cpu_clk);
 	clk_enable(&main_bus_clk);
 
