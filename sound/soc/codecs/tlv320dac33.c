@@ -36,7 +36,6 @@
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
-#include <sound/soc-dapm.h>
 #include <sound/initval.h>
 #include <sound/tlv.h>
 
@@ -316,8 +315,6 @@ static void dac33_init_chip(struct snd_soc_codec *codec)
 	 clock source = internal osc (?) */
 	dac33_write(codec, DAC33_ANA_VOL_SOFT_STEP_CTRL, DAC33_VOLCLKEN);
 
-	dac33_write(codec, DAC33_PWR_CTRL, DAC33_PDNALLB);
-
 	/* Restore only selected registers (gains mostly) */
 	dac33_write(codec, DAC33_LDAC_DIG_VOL_CTRL,
 		    dac33_read_reg_cache(codec, DAC33_LDAC_DIG_VOL_CTRL));
@@ -354,6 +351,21 @@ static inline void dac33_soft_power(struct snd_soc_codec *codec, int power)
 	else
 		reg &= ~(DAC33_PDNALLB | DAC33_OSCPDNB |
 			 DAC33_DACRPDNB | DAC33_DACLPDNB);
+	dac33_write(codec, DAC33_PWR_CTRL, reg);
+}
+
+static inline void dac33_disable_digital(struct snd_soc_codec *codec)
+{
+	u8 reg;
+
+	/* Stop the DAI clock */
+	reg = dac33_read_reg_cache(codec, DAC33_SER_AUDIOIF_CTRL_B);
+	reg &= ~DAC33_BCLKON;
+	dac33_write(codec, DAC33_SER_AUDIOIF_CTRL_B, reg);
+
+	/* Power down the Oscillator, and DACs */
+	reg = dac33_read_reg_cache(codec, DAC33_PWR_CTRL);
+	reg &= ~(DAC33_OSCPDNB | DAC33_DACRPDNB | DAC33_DACLPDNB);
 	dac33_write(codec, DAC33_PWR_CTRL, reg);
 }
 
@@ -405,7 +417,7 @@ exit:
 	return ret;
 }
 
-static int playback_event(struct snd_soc_dapm_widget *w,
+static int dac33_playback_event(struct snd_soc_dapm_widget *w,
 		struct snd_kcontrol *kcontrol, int event)
 {
 	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(w->codec);
@@ -416,6 +428,9 @@ static int playback_event(struct snd_soc_dapm_widget *w,
 			dac33_calculate_times(dac33->substream);
 			dac33_prepare_chip(dac33->substream);
 		}
+		break;
+	case SND_SOC_DAPM_POST_PMD:
+		dac33_disable_digital(w->codec);
 		break;
 	}
 	return 0;
@@ -593,8 +608,8 @@ static const struct snd_soc_dapm_widget dac33_dapm_widgets[] = {
 	SND_SOC_DAPM_INPUT("LINEL"),
 	SND_SOC_DAPM_INPUT("LINER"),
 
-	SND_SOC_DAPM_DAC("DACL", "Left Playback", DAC33_LDAC_PWR_CTRL, 2, 0),
-	SND_SOC_DAPM_DAC("DACR", "Right Playback", DAC33_RDAC_PWR_CTRL, 2, 0),
+	SND_SOC_DAPM_DAC("DACL", "Left Playback", SND_SOC_NOPM, 0, 0),
+	SND_SOC_DAPM_DAC("DACR", "Right Playback", SND_SOC_NOPM, 0, 0),
 
 	/* Analog bypass */
 	SND_SOC_DAPM_SWITCH("Analog Left Bypass", SND_SOC_NOPM, 0, 0,
@@ -602,12 +617,18 @@ static const struct snd_soc_dapm_widget dac33_dapm_widgets[] = {
 	SND_SOC_DAPM_SWITCH("Analog Right Bypass", SND_SOC_NOPM, 0, 0,
 				&dac33_dapm_abypassr_control),
 
-	SND_SOC_DAPM_REG(snd_soc_dapm_mixer, "Output Left Amp Power",
+	SND_SOC_DAPM_REG(snd_soc_dapm_mixer, "Output Left Amplifier",
 			 DAC33_OUT_AMP_PWR_CTRL, 6, 3, 3, 0),
-	SND_SOC_DAPM_REG(snd_soc_dapm_mixer, "Output Right Amp Power",
+	SND_SOC_DAPM_REG(snd_soc_dapm_mixer, "Output Right Amplifier",
 			 DAC33_OUT_AMP_PWR_CTRL, 4, 3, 3, 0),
 
-	SND_SOC_DAPM_PRE("Prepare Playback", playback_event),
+	SND_SOC_DAPM_SUPPLY("Left DAC Power",
+			    DAC33_LDAC_PWR_CTRL, 2, 0, NULL, 0),
+	SND_SOC_DAPM_SUPPLY("Right DAC Power",
+			    DAC33_RDAC_PWR_CTRL, 2, 0, NULL, 0),
+
+	SND_SOC_DAPM_PRE("Pre Playback", dac33_playback_event),
+	SND_SOC_DAPM_POST("Post Playback", dac33_playback_event),
 };
 
 static const struct snd_soc_dapm_route audio_map[] = {
@@ -615,24 +636,28 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"Analog Left Bypass", "Switch", "LINEL"},
 	{"Analog Right Bypass", "Switch", "LINER"},
 
-	{"Output Left Amp Power", NULL, "DACL"},
-	{"Output Right Amp Power", NULL, "DACR"},
+	{"Output Left Amplifier", NULL, "DACL"},
+	{"Output Right Amplifier", NULL, "DACR"},
 
-	{"Output Left Amp Power", NULL, "Analog Left Bypass"},
-	{"Output Right Amp Power", NULL, "Analog Right Bypass"},
+	{"Output Left Amplifier", NULL, "Analog Left Bypass"},
+	{"Output Right Amplifier", NULL, "Analog Right Bypass"},
+
+	{"Output Left Amplifier", NULL, "Left DAC Power"},
+	{"Output Right Amplifier", NULL, "Right DAC Power"},
 
 	/* output */
-	{"LEFT_LO", NULL, "Output Left Amp Power"},
-	{"RIGHT_LO", NULL, "Output Right Amp Power"},
+	{"LEFT_LO", NULL, "Output Left Amplifier"},
+	{"RIGHT_LO", NULL, "Output Right Amplifier"},
 };
 
 static int dac33_add_widgets(struct snd_soc_codec *codec)
 {
-	snd_soc_dapm_new_controls(codec, dac33_dapm_widgets,
-				  ARRAY_SIZE(dac33_dapm_widgets));
+	struct snd_soc_dapm_context *dapm = &codec->dapm;
 
+	snd_soc_dapm_new_controls(dapm, dac33_dapm_widgets,
+				  ARRAY_SIZE(dac33_dapm_widgets));
 	/* set up audio path interconnects */
-	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
+	snd_soc_dapm_add_routes(dapm, audio_map, ARRAY_SIZE(audio_map));
 
 	return 0;
 }
@@ -640,16 +665,18 @@ static int dac33_add_widgets(struct snd_soc_codec *codec)
 static int dac33_set_bias_level(struct snd_soc_codec *codec,
 				enum snd_soc_bias_level level)
 {
+	struct tlv320dac33_priv *dac33 = snd_soc_codec_get_drvdata(codec);
 	int ret;
 
 	switch (level) {
 	case SND_SOC_BIAS_ON:
-		dac33_soft_power(codec, 1);
+		if (!dac33->substream)
+			dac33_soft_power(codec, 1);
 		break;
 	case SND_SOC_BIAS_PREPARE:
 		break;
 	case SND_SOC_BIAS_STANDBY:
-		if (codec->bias_level == SND_SOC_BIAS_OFF) {
+		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF) {
 			/* Coming from OFF, switch on the codec */
 			ret = dac33_hard_power(codec, 1);
 			if (ret != 0)
@@ -660,14 +687,14 @@ static int dac33_set_bias_level(struct snd_soc_codec *codec,
 		break;
 	case SND_SOC_BIAS_OFF:
 		/* Do not power off, when the codec is already off */
-		if (codec->bias_level == SND_SOC_BIAS_OFF)
+		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF)
 			return 0;
 		ret = dac33_hard_power(codec, 0);
 		if (ret != 0)
 			return ret;
 		break;
 	}
-	codec->bias_level = level;
+	codec->dapm.bias_level = level;
 
 	return 0;
 }
@@ -1415,7 +1442,7 @@ static int dac33_soc_probe(struct snd_soc_codec *codec)
 
 	codec->control_data = dac33->control_data;
 	codec->hw_write = (hw_write_t) i2c_master_send;
-	codec->idle_bias_off = 1;
+	codec->dapm.idle_bias_off = 1;
 	dac33->codec = codec;
 
 	/* Read the tlv320dac33 ID registers */
