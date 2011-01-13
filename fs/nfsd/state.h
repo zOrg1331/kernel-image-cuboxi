@@ -81,6 +81,7 @@ struct nfs4_delegation {
 	atomic_t		dl_count;       /* ref count */
 	struct nfs4_client	*dl_client;
 	struct nfs4_file	*dl_file;
+	struct file		*dl_vfs_file;
 	struct file_lock	*dl_flock;
 	u32			dl_type;
 	time_t			dl_time;
@@ -95,6 +96,7 @@ struct nfs4_delegation {
 struct nfs4_cb_conn {
 	/* SETCLIENTID info */
 	struct sockaddr_storage	cb_addr;
+	struct sockaddr_storage	cb_saddr;
 	size_t			cb_addrlen;
 	u32                     cb_prog; /* used only in 4.0 case;
 					    per-session otherwise */

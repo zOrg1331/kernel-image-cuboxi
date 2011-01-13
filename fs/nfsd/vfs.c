@@ -35,8 +35,8 @@
 #endif /* CONFIG_NFSD_V3 */
 
 #ifdef CONFIG_NFSD_V4
-#include <linux/nfs4_acl.h>
-#include <linux/nfsd_idmap.h>
+#include "acl.h"
+#include "idmap.h"
 #endif /* CONFIG_NFSD_V4 */
 
 #include "nfsd.h"
@@ -380,8 +380,6 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
 		 * we need to break all leases.
 		 */
 		host_err = break_lease(inode, O_WRONLY | O_NONBLOCK);
-		if (host_err == -EWOULDBLOCK)
-			host_err = -ETIMEDOUT;
 		if (host_err) /* ENOMEM or EWOULDBLOCK */
 			goto out_nfserr;
 
@@ -752,8 +750,6 @@ nfsd_open(struct svc_rqst *rqstp, struct svc_fh *fhp, int type,
 	 */
 	if (!(access & NFSD_MAY_NOT_BREAK_LEASE))
 		host_err = break_lease(inode, O_NONBLOCK | ((access & NFSD_MAY_WRITE) ? O_WRONLY : 0));
-	if (host_err == -EWOULDBLOCK)
-		host_err = -ETIMEDOUT;
 	if (host_err) /* NOMEM or WOULDBLOCK */
 		goto out_nfserr;
 

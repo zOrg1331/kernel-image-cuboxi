@@ -230,7 +230,8 @@ alloc_init_deleg(struct nfs4_client *clp, struct nfs4_stateid *stp, struct svc_f
 	dp->dl_client = clp;
 	get_nfs4_file(fp);
 	dp->dl_file = fp;
-	nfs4_file_get_access(fp, O_RDONLY);
+	dp->dl_vfs_file = find_readable_file(fp);
+	get_file(dp->dl_vfs_file);
 	dp->dl_flock = NULL;
 	dp->dl_type = type;
 	dp->dl_stateid.si_boot = boot_time;
@@ -252,6 +253,7 @@ nfs4_put_delegation(struct nfs4_delegation *dp)
 	if (atomic_dec_and_test(&dp->dl_count)) {
 		dprintk("NFSD: freeing dp %p\n",dp);
 		put_nfs4_file(dp->dl_file);
+		fput(dp->dl_vfs_file);
 		kmem_cache_free(deleg_slab, dp);
 		num_delegations--;
 	}
@@ -265,12 +267,10 @@ nfs4_put_delegation(struct nfs4_delegation *dp)
 static void
 nfs4_close_delegation(struct nfs4_delegation *dp)
 {
-	struct file *filp = find_readable_file(dp->dl_file);
-
 	dprintk("NFSD: close_delegation dp %p\n",dp);
+	/* XXX: do we even need this check?: */
 	if (dp->dl_flock)
-		vfs_setlease(filp, F_UNLCK, &dp->dl_flock);
-	nfs4_file_put_access(dp->dl_file, O_RDONLY);
+		vfs_setlease(dp->dl_vfs_file, F_UNLCK, &dp->dl_flock);
 }
 
 /* Called under the state lock. */
@@ -749,6 +749,8 @@ static struct nfsd4_session *alloc_init_session(struct svc_rqst *rqstp, struct n
 	 */
 	slotsize = nfsd4_sanitize_slot_size(fchan->maxresp_cached);
 	numslots = nfsd4_get_drc_mem(slotsize, fchan->maxreqs);
+	if (numslots < 1)
+		return NULL;
 
 	new = alloc_session(slotsize, numslots);
 	if (!new) {
@@ -1132,54 +1134,55 @@ find_unconfirmed_client(clientid_t *clid)
 	return NULL;
 }
 
-/*
- * Return 1 iff clp's clientid establishment method matches the use_exchange_id
- * parameter. Matching is based on the fact the at least one of the
- * EXCHGID4_FLAG_USE_{NON_PNFS,PNFS_MDS,PNFS_DS} flags must be set for v4.1
- *
- * FIXME: we need to unify the clientid namespaces for nfsv4.x
- * and correctly deal with client upgrade/downgrade in EXCHANGE_ID
- * and SET_CLIENTID{,_CONFIRM}
- */
-static inline int
-match_clientid_establishment(struct nfs4_client *clp, bool use_exchange_id)
+static bool clp_used_exchangeid(struct nfs4_client *clp)
 {
-	bool has_exchange_flags = (clp->cl_exchange_flags != 0);
-	return use_exchange_id == has_exchange_flags;
-}
+	return clp->cl_exchange_flags != 0;
+} 
 
 static struct nfs4_client *
-find_confirmed_client_by_str(const char *dname, unsigned int hashval,
-			     bool use_exchange_id)
+find_confirmed_client_by_str(const char *dname, unsigned int hashval)
 {
 	struct nfs4_client *clp;
 
 	list_for_each_entry(clp, &conf_str_hashtbl[hashval], cl_strhash) {
-		if (same_name(clp->cl_recdir, dname) &&
-		    match_clientid_establishment(clp, use_exchange_id))
+		if (same_name(clp->cl_recdir, dname))
 			return clp;
 	}
 	return NULL;
 }
 
 static struct nfs4_client *
-find_unconfirmed_client_by_str(const char *dname, unsigned int hashval,
-			       bool use_exchange_id)
+find_unconfirmed_client_by_str(const char *dname, unsigned int hashval)
 {
 	struct nfs4_client *clp;
 
 	list_for_each_entry(clp, &unconf_str_hashtbl[hashval], cl_strhash) {
-		if (same_name(clp->cl_recdir, dname) &&
-		    match_clientid_establishment(clp, use_exchange_id))
+		if (same_name(clp->cl_recdir, dname))
 			return clp;
 	}
 	return NULL;
 }
 
+static void rpc_svcaddr2sockaddr(struct sockaddr *sa, unsigned short family, union svc_addr_u *svcaddr)
+{
+	switch (family) {
+	case AF_INET:
+		((struct sockaddr_in *)sa)->sin_family = AF_INET;
+		((struct sockaddr_in *)sa)->sin_addr = svcaddr->addr;
+		return;
+	case AF_INET6:
+		((struct sockaddr_in6 *)sa)->sin6_family = AF_INET6;
+		((struct sockaddr_in6 *)sa)->sin6_addr = svcaddr->addr6;
+		return;
+	}
+}
+
 static void
-gen_callback(struct nfs4_client *clp, struct nfsd4_setclientid *se, u32 scopeid)
+gen_callback(struct nfs4_client *clp, struct nfsd4_setclientid *se, struct svc_rqst *rqstp)
 {
 	struct nfs4_cb_conn *conn = &clp->cl_cb_conn;
+	struct sockaddr	*sa = svc_addr(rqstp);
+	u32 scopeid = rpc_get_scope_id(sa);
 	unsigned short expected_family;
 
 	/* Currently, we only support tcp and tcp6 for the callback channel */
@@ -1205,6 +1208,7 @@ gen_callback(struct nfs4_client *clp, struct nfsd4_setclientid *se, u32 scopeid)
 
 	conn->cb_prog = se->se_callback_prog;
 	conn->cb_ident = se->se_callback_ident;
+	rpc_svcaddr2sockaddr((struct sockaddr *)&conn->cb_saddr, expected_family, &rqstp->rq_daddr);
 	return;
 out_err:
 	conn->cb_addr.ss_family = AF_UNSPEC;
@@ -1344,7 +1348,7 @@ nfsd4_exchange_id(struct svc_rqst *rqstp,
 	case SP4_NONE:
 		break;
 	case SP4_SSV:
-		return nfserr_encr_alg_unsupp;
+		return nfserr_serverfault;
 	default:
 		BUG();				/* checked by xdr code */
 	case SP4_MACH_CRED:
@@ -1361,8 +1365,12 @@ nfsd4_exchange_id(struct svc_rqst *rqstp,
 	nfs4_lock_state();
 	status = nfs_ok;
 
-	conf = find_confirmed_client_by_str(dname, strhashval, true);
+	conf = find_confirmed_client_by_str(dname, strhashval);
 	if (conf) {
+		if (!clp_used_exchangeid(conf)) {
+			status = nfserr_clid_inuse; /* XXX: ? */
+			goto out;
+		}
 		if (!same_verf(&verf, &conf->cl_verifier)) {
 			/* 18.35.4 case 8 */
 			if (exid->flags & EXCHGID4_FLAG_UPD_CONFIRMED_REC_A) {
@@ -1403,7 +1411,7 @@ nfsd4_exchange_id(struct svc_rqst *rqstp,
 		goto out;
 	}
 
-	unconf  = find_unconfirmed_client_by_str(dname, strhashval, true);
+	unconf  = find_unconfirmed_client_by_str(dname, strhashval);
 	if (unconf) {
 		/*
 		 * Possible retry or client restart.  Per 18.35.4 case 4,
@@ -1560,6 +1568,8 @@ nfsd4_create_session(struct svc_rqst *rqstp,
 	status = nfs_ok;
 	memcpy(cr_ses->sessionid.data, new->se_sessionid.data,
 	       NFS4_MAX_SESSIONID_LEN);
+	memcpy(&cr_ses->fore_channel, &new->se_fchannel,
+		sizeof(struct nfsd4_channel_attrs));
 	cs_slot->sl_seqid++;
 	cr_ses->seqid = cs_slot->sl_seqid;
 
@@ -1775,7 +1785,6 @@ __be32
 nfsd4_setclientid(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 		  struct nfsd4_setclientid *setclid)
 {
-	struct sockaddr		*sa = svc_addr(rqstp);
 	struct xdr_netobj 	clname = { 
 		.len = setclid->se_namelen,
 		.data = setclid->se_name,
@@ -1801,10 +1810,12 @@ nfsd4_setclientid(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	strhashval = clientstr_hashval(dname);
 
 	nfs4_lock_state();
-	conf = find_confirmed_client_by_str(dname, strhashval, false);
+	conf = find_confirmed_client_by_str(dname, strhashval);
 	if (conf) {
 		/* RFC 3530 14.2.33 CASE 0: */
 		status = nfserr_clid_inuse;
+		if (clp_used_exchangeid(conf))
+			goto out;
 		if (!same_creds(&conf->cl_cred, &rqstp->rq_cred)) {
 			char addr_str[INET6_ADDRSTRLEN];
 			rpc_ntop((struct sockaddr *) &conf->cl_addr, addr_str,
@@ -1819,7 +1830,7 @@ nfsd4_setclientid(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	 * has a description of SETCLIENTID request processing consisting
 	 * of 5 bullet points, labeled as CASE0 - CASE4 below.
 	 */
-	unconf = find_unconfirmed_client_by_str(dname, strhashval, false);
+	unconf = find_unconfirmed_client_by_str(dname, strhashval);
 	status = nfserr_resource;
 	if (!conf) {
 		/*
@@ -1876,7 +1887,7 @@ nfsd4_setclientid(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	 * for consistent minorversion use throughout:
 	 */
 	new->cl_minorversion = 0;
-	gen_callback(new, setclid, rpc_get_scope_id(sa));
+	gen_callback(new, setclid, rqstp);
 	add_to_unconfirmed(new, strhashval);
 	setclid->se_clientid.cl_boot = new->cl_clientid.cl_boot;
 	setclid->se_clientid.cl_id = new->cl_clientid.cl_id;
@@ -1964,7 +1975,7 @@ nfsd4_setclientid_confirm(struct svc_rqst *rqstp,
 			unsigned int hash =
 				clientstr_hashval(unconf->cl_recdir);
 			conf = find_confirmed_client_by_str(unconf->cl_recdir,
-							    hash, false);
+							    hash);
 			if (conf) {
 				nfsd4_remove_clid_dir(conf);
 				expire_client(conf);
@@ -2300,41 +2311,6 @@ void nfsd_break_deleg_cb(struct file_lock *fl)
 	nfsd4_cb_recall(dp);
 }
 
-/*
- * The file_lock is being reapd.
- *
- * Called by locks_free_lock() with lock_flocks() held.
- */
-static
-void nfsd_release_deleg_cb(struct file_lock *fl)
-{
-	struct nfs4_delegation *dp = (struct nfs4_delegation *)fl->fl_owner;
-
-	dprintk("NFSD nfsd_release_deleg_cb: fl %p dp %p dl_count %d\n", fl,dp, atomic_read(&dp->dl_count));
-
-	if (!(fl->fl_flags & FL_LEASE) || !dp)
-		return;
-	dp->dl_flock = NULL;
-}
-
-/*
- * Called from setlease() with lock_flocks() held
- */
-static
-int nfsd_same_client_deleg_cb(struct file_lock *onlist, struct file_lock *try)
-{
-	struct nfs4_delegation *onlistd =
-		(struct nfs4_delegation *)onlist->fl_owner;
-	struct nfs4_delegation *tryd =
-		(struct nfs4_delegation *)try->fl_owner;
-
-	if (onlist->fl_lmops != try->fl_lmops)
-		return 0;
-
-	return onlistd->dl_client == tryd->dl_client;
-}
-
-
 static
 int nfsd_change_deleg_cb(struct file_lock **onlist, int arg)
 {
@@ -2346,8 +2322,6 @@ int nfsd_change_deleg_cb(struct file_lock **onlist, int arg)
 
 static const struct lock_manager_operations nfsd_lease_mng_ops = {
 	.fl_break = nfsd_break_deleg_cb,
-	.fl_release_private = nfsd_release_deleg_cb,
-	.fl_mylease = nfsd_same_client_deleg_cb,
 	.fl_change = nfsd_change_deleg_cb,
 };
 
@@ -2514,8 +2488,6 @@ static __be32 nfs4_get_vfs_file(struct svc_rqst *rqstp, struct nfs4_file
 	if (!fp->fi_fds[oflag]) {
 		status = nfsd_open(rqstp, cur_fh, S_IFREG, access,
 			&fp->fi_fds[oflag]);
-		if (status == nfserr_dropit)
-			status = nfserr_jukebox;
 		if (status)
 			return status;
 	}
@@ -2655,7 +2627,7 @@ nfs4_open_delegation(struct svc_fh *fh, struct nfsd4_open *open, struct nfs4_sta
 	dp->dl_flock = fl;
 
 	/* vfs_setlease checks to see if delegation should be handed out.
-	 * the lock_manager callbacks fl_mylease and fl_change are used
+	 * the lock_manager callback fl_change is used
 	 */
 	if ((status = vfs_setlease(fl->fl_file, fl->fl_type, &fl))) {
 		dprintk("NFSD: setlease failed [%d], no delegation\n", status);
@@ -3081,9 +3053,10 @@ nfs4_preprocess_stateid_op(struct nfsd4_compound_state *cstate,
 		if (status)
 			goto out;
 		renew_client(dp->dl_client);
-		if (filpp)
+		if (filpp) {
 			*filpp = find_readable_file(dp->dl_file);
-		BUG_ON(!*filpp);
+			BUG_ON(!*filpp);
+		}
 	} else { /* open or lock stateid */
 		stp = find_stateid(stateid, flags);
 		if (!stp)
@@ -4107,7 +4080,7 @@ nfs4_has_reclaimed_state(const char *name, bool use_exchange_id)
 	unsigned int strhashval = clientstr_hashval(name);
 	struct nfs4_client *clp;
 
-	clp = find_confirmed_client_by_str(name, strhashval, use_exchange_id);
+	clp = find_confirmed_client_by_str(name, strhashval);
 	return clp ? 1 : 0;
 }
 
