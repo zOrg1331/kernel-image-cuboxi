@@ -5289,7 +5289,7 @@ SAMSUNG AUDIO (ASoC) DRIVERS
 M:	Jassi Brar <jassi.brar@samsung.com>
 L:	alsa-devel@alsa-project.org (moderated for non-subscribers)
 S:	Supported
-F:	sound/soc/s3c24xx
+F:	sound/soc/samsung
 
 TIMEKEEPING, NTP
 M:	John Stultz <johnstul@us.ibm.com>
