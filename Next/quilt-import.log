@@ -1,0 +1,83 @@
+Importing i2c based on 2.6.37-git8
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 4162cf64973df51fc885825bc9ca4d055891c49f
+HEAD is now at 4162cf6 Merge git://git.kernel.org/pub/scm/linux/kernel/git/davem/net-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-unregister-dummy-devices-last.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 764443a...ee643c4 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.37-git8
+$ cd ../quilt-tmp
+$ git reset --hard 4162cf64973df51fc885825bc9ca4d055891c49f
+HEAD is now at 4162cf6 Merge git://git.kernel.org/pub/scm/linux/kernel/git/davem/net-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-ads7828-update-email-contact-details.patch
+hwmon-w83795-silent-false-warning-from-gcc.patch
+hwmon-via686a-initialize-fan-div.patch
+hwmon-adm9240-implement-standard-intrusion-detection-interface.patch
+hwmon-w83792d-implement-standard-intrusion-detection-interface.patch
+hwmon-w83793-implement-standard-intrusion-detection-interface.patch
+hwmon-schedule-removal-old-intrusion-detection-interface.patch
+hwmon-it87-use-pr_fmt-and-pr_level.patch
+hwmon-lm78-use-pr_fmt-and-pr_level.patch
+hwmon-pc87360-use-pr_fmt-and-pr_level.patch
+hwmon-pc87427-use-pr_fmt-and-pr_level.patch
+hwmon-w83781d-use-pr_fmt-and-pr_level.patch
+hwmon-fschmd-drop-useless-mutex.patch
+hwmon-w83793-drop-useless-mutex.patch
+hwmon-w83627hf-document-W83627THF-voltage-pins.patch
+hwmon-emc1403-add-emc1423-support.patch
+hwmon-dme1737-01-add-in7-for-sch5127.patch
+hwmon-dme1737-02-minor-cleanups.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 1daa8ca...1f0ce26 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.37-rc4
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.37-rc5
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.37
+$ cd ../quilt-tmp
+$ git reset --hard 3c0eee3fe6a3a1c745379547c7e7c904aa64f6d5
+HEAD is now at 3c0eee3 Linux 2.6.37
+$ git quiltimport --author Alasdair G Kergon <agk@redhat.com> --patches ../quilt/device-mapper
+dm-dont-take-i_mutex-to-change-device-size.patch
+dm-mpath-disable-blk_abort_queue.patch
+dm-io-remove-BIO_RW_SYNCIO-flag-from-kcopyd.patch
+dm-ioctl-allow-rename-to-fill-empty-uuid.patch
+dm-raid1-support-discard.patch
+dm-remove-dm_mutex-after-bkl-conversion.patch
+dm-crypt-set-key-size-early.patch
+dm-log-userspace-trap-all-failed-log-construction-errors.patch
+dm-kcopyd-delay-unplugging.patch
+dm-log-userspace-split-flush-queue.patch
+dm-log-userspace-group-clear-and-mark-requests.patch
+dm-log-userspace-add-version-number-to-comms.patch
+dm-crypt-simplify-compatible-table-output.patch
+dm-crypt-scale-to-multiple-cpus.patch
+dm-crypt-use-io-thread-for-reads-only-if-mempool-exhausted.patch
+dm-crypt-add-post-iv-call-to-iv-generator.patch
+dm-crypt-add-multi-key-capability.patch
+dm-crypt-add-loop-aes-iv-generator.patch
+dm-ioctl-suppress-needless-warning-messages.patch
+dm-snapshot-remove-unused-dm_snapshot-queued_bios_work.patch
+dm-dont-use-flush_scheduled_work.patch
+dm-stripe-switch-from-local-workqueue-to-system_wq.patch
+dm-convert-workqueues-to-alloc_ordered.patch
+dm-use-non-reentrant-workqueues-if-equivalent.patch
+dm-snapshot-persistent-make-metadata_wq-multithreaded.patch
+dm-snapshot-avoid-storing-private-suspended-state.patch
+dm-log-use-PTR_ERR-value-instead-of-ENOMEM.patch
+dm-remove-superfluous-irq-disablement-in-dm_request_fn.patch
+dm-mpath-delay-activate_path-retry-on-SCSI_DH_RETRY.patch
+dm-introduce-target-callbacks-and-congestion-callback.patch
+dm-per-target-unplug-callback-support.patch
+dm-raid456-basic-support.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/device-mapper
+From ../quilt-tmp
+ + 7dbdc1d...b73cde6 master     -> quilt/device-mapper  (forced update)
