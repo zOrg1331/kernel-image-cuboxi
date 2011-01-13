@@ -1,0 +1,44 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Fri, 21 May 2010 10:33:29 -0400
+Subject: [net] gro: fix bogus gso_size on the first fraglist entry
+Message-id: <20100521103329.GB29320@gondor.apana.org.au>
+Patchwork-id: 25502
+O-Subject: [RHEL5 PATCH] gro: Fix bogus gso_size on the first fraglist entry
+Bugzilla: 588015
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Hi:
+
+RHEL5 Bugzilla #588015
+
+This bug is triggered when NICs that use fraglist GRO merging
+generate packets that are transmitted to an interface that supports
+fraglist but not TSO.  This happens to be the case with the tun
+backend of virtio-net in RHEL5.
+
+When GRO produces fraglist entries, and the resulting skb hits
+an interface that is incapable of TSO but capable of FRAGLIST,
+we end up producing a bogus packet with gso_size non-zero.
+
+This was reported in the field with older versions of KVM that
+did not set the TSO bits on tuntap.
+
+This patch fixes that.
+
+Reported-by: Igor Zhang <yugzhang@redhat.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index a476fbe..705c436 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -2150,6 +2150,7 @@ int skb_gro_receive(struct sk_buff **head, struct sk_buff *skb)
+ 	*NAPI_GRO_CB(nskb) = *NAPI_GRO_CB(p);
+ 	skb_shinfo(nskb)->frag_list = p;
+ 	skb_shinfo(nskb)->gso_size = pinfo->gso_size;
++	pinfo->gso_size = 0;
+ 	skb_header_release(p);
+ 	nskb->prev = p;
+ 

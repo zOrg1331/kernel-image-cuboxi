@@ -1,0 +1,54 @@
+From: David Teigland <teigland@redhat.com>
+Date: Fri, 12 Nov 2010 16:51:28 -0500
+Subject: [fs] dlm: use TCP_NODELAY
+Message-id: <20101112165128.GB11037@redhat.com>
+Patchwork-id: 29218
+O-Subject: [RHEL5.6 PATCH] dlm: use TCP_NODELAY
+Bugzilla: 604139
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+bz 604139 (patch 1 of 2)
+
+upstream: scheduled for 2.6.38
+
+Nagling doesn't help and can sometimes hurt dlm comms.
+
+
+diff --git a/fs/dlm/lowcomms.c b/fs/dlm/lowcomms.c
+index b802a0f..164ab41 100644
+--- a/fs/dlm/lowcomms.c
++++ b/fs/dlm/lowcomms.c
+@@ -885,6 +885,7 @@ static void tcp_connect_to_sock(struct connection *con)
+ 	struct sockaddr_storage saddr, src_addr;
+ 	int addr_len;
+ 	struct socket *sock = NULL;
++	int one = 1;
+ 
+ 	if (con->nodeid == 0) {
+ 		log_print("attempt to connect sock 0 foiled");
+@@ -930,6 +931,11 @@ static void tcp_connect_to_sock(struct connection *con)
+ 	make_sockaddr(&saddr, dlm_config.ci_tcp_port, &addr_len);
+ 
+ 	log_print("connecting to %d", con->nodeid);
++
++	/* Turn off Nagle's algorithm */
++	kernel_setsockopt(sock, SOL_TCP, TCP_NODELAY, (char *)&one,
++			  sizeof(one));
++
+ 	result =
+ 		sock->ops->connect(sock, (struct sockaddr *)&saddr, addr_len,
+ 				   O_NONBLOCK);
+@@ -981,6 +987,10 @@ static struct socket *tcp_create_listen_sock(struct connection *con,
+ 		goto create_out;
+ 	}
+ 
++	/* Turn off Nagle's algorithm */
++	kernel_setsockopt(sock, SOL_TCP, TCP_NODELAY, (char *)&one,
++			  sizeof(one));
++
+ 	result = kernel_setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+ 				   (char *)&one, sizeof(one));
+ 

@@ -1,0 +1,31 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 24 Nov 2010 21:24:07 -0500
+Subject: [scsi] lpfc: set heartbeat timer off by default
+Message-id: <1290633848-10834-7-git-send-email-revers@redhat.com>
+Patchwork-id: 29618
+O-Subject: [RHEL5.6 PATCH 6/7] lpfc: Set heartbeat timer off by default
+Bugzilla: 655119
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=655119
+
+diff --git a/drivers/scsi/lpfc/lpfc_attr.c b/drivers/scsi/lpfc/lpfc_attr.c
+index 6ece7ec..8291f29 100644
+--- a/drivers/scsi/lpfc/lpfc_attr.c
++++ b/drivers/scsi/lpfc/lpfc_attr.c
+@@ -3645,12 +3645,12 @@ LPFC_ATTR_R(fcp_eq_count, LPFC_FP_EQN_DEF, LPFC_FP_EQN_MIN, LPFC_FP_EQN_MAX,
+ LPFC_ATTR_R(enable_hba_reset, 1, 0, 1, "Enable HBA resets from the driver.");
+ 
+ /*
+-# lpfc_enable_hba_heartbeat: Enable HBA heartbeat timer..
++# lpfc_enable_hba_heartbeat: Disable HBA heartbeat timer..
+ #       0  = HBA Heartbeat disabled
+ #       1  = HBA Heartbeat enabled (default)
+ # Value range is [0,1]. Default value is 1.
+ */
+-LPFC_ATTR_R(enable_hba_heartbeat, 1, 0, 1, "Enable HBA Heartbeat.");
++LPFC_ATTR_R(enable_hba_heartbeat, 0, 0, 1, "Enable HBA Heartbeat.");
+ 
+ /*
+  * lpfc_sg_seg_cnt: Initial Maximum DMA Segment Count

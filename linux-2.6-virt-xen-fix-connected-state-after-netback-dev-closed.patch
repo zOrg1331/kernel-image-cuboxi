@@ -1,0 +1,47 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Wed, 12 May 2010 16:20:31 -0400
+Subject: [virt] xen: fix Connected state after netback dev closed
+Message-id: <1273681231-17053-1-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 25027
+O-Subject: [RHEL5.5 PATCH] xen: netback does not properly get to the Connected
+	state after it's been Closed
+Bugzilla: 591548
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Bugzilla: 591548
+
+Upstream status: Upstream ties the Connected transition to the completion of
+  the hotplug scripts (via a xenstore watch), so it doesn't have this issue.
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2440245
+
+The netback driver fails to transition from InitWait to Connected after it's
+been closed once.  The reason is that at the moment netdev_state_change is
+called the interface is still down, so the NETDEV_CHANGE event is not called.
+
+This is visible with the xenpv-win drivers by disabling and enabling the
+adapters repeatedly.  Without the patch, the drivers hang about 1 in 50 times
+(and that is because of some hacks in the drivers; if I make the drivers talk
+the correct xenbus protocol they will hang 100% of the time).
+
+I tested this by running disable/enable cycles for ~30 minutes on a
+Windows 2003 guest.  I've also started Windows 2008 "Common Scenario Stress
+With IO", it should finish overnight.
+
+
+diff --git a/drivers/xen/netback/interface.c b/drivers/xen/netback/interface.c
+index ccef3e4..b475006 100644
+--- a/drivers/xen/netback/interface.c
++++ b/drivers/xen/netback/interface.c
+@@ -359,7 +359,8 @@ netdev_notify(struct notifier_block *this, unsigned long event, void *ptr)
+ 	struct net_device *dev = ptr;
+ 
+ 	/* Carrier up event and is it one of our devices? */
+-	if (event == NETDEV_CHANGE && netif_carrier_ok(dev) &&
++	if ((event == NETDEV_CHANGE || event == NETDEV_UP) &&
++	    netif_carrier_ok(dev) &&
+ 	    dev->open == net_open) {
+ 		netif_t *netif = netdev_priv(dev);
+ 

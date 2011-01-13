@@ -1,0 +1,43 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Wed, 27 Oct 2010 16:04:34 -0400
+Subject: [net] netxen: fix set mac addr
+Message-id: <1288209874-19243-1-git-send-email-gospo@redhat.com>
+O-Subject: [RHEL5.5.z PATCH] netxen: fix MAC address so bonding works
+Bugzilla: 647681
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+A customer reported that round-robin bonding didn't work over
+netxen-based devices.  The update for RHEL5.6 resolved it, but the
+following upstream commit should be applied to RHEL5.5.z to fix it for
+those users:
+
+    commit d49c9640975355c79f346869831bf9780d185de0
+    Author: Amit Kumar Salecha <amit.salecha@qlogic.com>
+    Date:   Thu Jan 7 22:10:16 2010 +0000
+
+        netxen: fix set mac addr
+
+The reporter verified that this will resolve RHBZ 613828.
+---
+ drivers/net/netxen/netxen_nic_hw.c |    3 +++
+ 1 files changed, 3 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/net/netxen/netxen_nic_hw.c b/drivers/net/netxen/netxen_nic_hw.c
+index e241e8f..12c366c 100644
+--- a/drivers/net/netxen/netxen_nic_hw.c
++++ b/drivers/net/netxen/netxen_nic_hw.c
+@@ -691,6 +691,9 @@ void netxen_p3_nic_set_multi(struct net_device *netdev)
+ 	struct list_head *head;
+ 	nx_mac_list_t *cur;
+ 
++	if (adapter->is_up != NETXEN_ADAPTER_UP_MAGIC)
++		return;
++
+ 	list_splice_tail_init(&adapter->mac_list, &del_list);
+ 
+ 	nx_p3_nic_add_mac(adapter, adapter->mac_addr, &del_list);
+-- 
+1.5.4.7
+
