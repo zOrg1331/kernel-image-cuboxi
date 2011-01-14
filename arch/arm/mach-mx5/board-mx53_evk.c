@@ -21,6 +21,9 @@
 
 #include <linux/init.h>
 #include <linux/clk.h>
+#include <linux/fec.h>
+#include <linux/delay.h>
+#include <linux/gpio.h>
 #include <mach/common.h>
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
@@ -28,6 +31,10 @@
 #include <asm/mach/time.h>
 #include <mach/imx-uart.h>
 #include <mach/iomux-mx53.h>
+
+#define SMD_FEC_PHY_RST		IMX_GPIO_NR(7, 6)
+#define EVK_ECSPI1_CS0		IMX_GPIO_NR(3, 19)
+#define EVK_ECSPI1_CS1		IMX_GPIO_NR(2, 30)
 
 #include "crm_regs.h"
 #include "devices-imx53.h"
@@ -60,11 +67,55 @@ static inline void mx53_evk_init_uart(void)
 	imx53_add_imx_uart(2, &mx53_evk_uart_pdata);
 }
 
+static const struct imxi2c_platform_data mx53_evk_i2c_data __initconst = {
+	.bitrate = 100000,
+};
+
+static inline void mx53_evk_fec_reset(void)
+{
+	int ret;
+
+	/* reset FEC PHY */
+	ret = gpio_request(SMD_FEC_PHY_RST, "fec-phy-reset");
+	if (ret) {
+		printk(KERN_ERR"failed to get GPIO_FEC_PHY_RESET: %d\n", ret);
+		return;
+	}
+	gpio_direction_output(SMD_FEC_PHY_RST, 0);
+	gpio_set_value(SMD_FEC_PHY_RST, 0);
+	msleep(1);
+	gpio_set_value(SMD_FEC_PHY_RST, 1);
+}
+
+static struct fec_platform_data mx53_evk_fec_pdata = {
+	.phy = PHY_INTERFACE_MODE_RMII,
+};
+
+static int mx53_evk_spi_cs[] = {
+	EVK_ECSPI1_CS0,
+	EVK_ECSPI1_CS1,
+};
+
+static const struct spi_imx_master mx53_evk_spi_data __initconst = {
+	.chipselect     = mx53_evk_spi_cs,
+	.num_chipselect = ARRAY_SIZE(mx53_evk_spi_cs),
+};
+
 static void __init mx53_evk_board_init(void)
 {
 	mxc_iomux_v3_setup_multiple_pads(mx53_evk_pads,
 					ARRAY_SIZE(mx53_evk_pads));
 	mx53_evk_init_uart();
+	mx53_evk_fec_reset();
+	imx53_add_fec(&mx53_evk_fec_pdata);
+
+	imx53_add_imx_i2c(0, &mx53_evk_i2c_data);
+	imx53_add_imx_i2c(1, &mx53_evk_i2c_data);
+
+	imx53_add_sdhci_esdhc_imx(0, NULL);
+	imx53_add_sdhci_esdhc_imx(1, NULL);
+
+	imx53_add_ecspi(0, &mx53_evk_spi_data);
 }
 
 static void __init mx53_evk_timer_init(void)
