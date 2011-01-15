@@ -1,0 +1,23 @@
+Importing i2c based on 2.6.37-git10
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 581548db3b3c0f6e25b500329eb02e3c72e7acbe
+HEAD is now at 581548d Merge branch 'release' of git://git.kernel.org/pub/scm/linux/kernel/git/aegl/linux-2.6
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-unregister-dummy-devices-last.patch
+i2c-factor-out-runtime-suspend-checks-from-pm-operations.patch
+i2c-encourage-move-to-dev_pm_ops-by-warning-on-use-of-legacy-methods.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 7af213c...11c964d master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.37-git10
+	quilt series is empty
+$ git update-ref refs/heads/quilt/jdelvare-hwmon 581548db3b3c0f6e25b500329eb02e3c72e7acbe
+Importing kernel-doc based on 2.6.37-rc4
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.37-rc5
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.37-7185-g52cfd50
+	quilt series is empty
+$ git update-ref refs/heads/quilt/device-mapper 52cfd503ad7176d23a5dd7af3981744feb60622f
