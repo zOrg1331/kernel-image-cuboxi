@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt7
+Release: alt8
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -583,6 +583,11 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Mon Jan 17 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt8
+- Changes to configs
+- ptrace: return virtual pid in events by Andrey Vagin (ALT 24829)
+- fix NULL dereference in nfsd_statfs (ALT 24873)
+
 * Thu Dec 30 2010 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt7
 - Switch to new scheme of merging with the latest kernel
 - Apply 042test005.1 patches
