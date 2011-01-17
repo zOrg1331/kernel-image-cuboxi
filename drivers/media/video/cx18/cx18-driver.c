@@ -36,6 +36,7 @@
 #include "cx18-scb.h"
 #include "cx18-mailbox.h"
 #include "cx18-ioctl.h"
+#include "cx18-controls.h"
 #include "tuner-xc2028.h"
 
 #include <media/tveeprom.h>
@@ -664,21 +665,9 @@ static int __devinit cx18_create_in_workq(struct cx18 *cx)
 {
 	snprintf(cx->in_workq_name, sizeof(cx->in_workq_name), "%s-in",
 		 cx->v4l2_dev.name);
-	cx->in_work_queue = create_singlethread_workqueue(cx->in_workq_name);
+	cx->in_work_queue = alloc_ordered_workqueue(cx->in_workq_name, 0);
 	if (cx->in_work_queue == NULL) {
 		CX18_ERR("Unable to create incoming mailbox handler thread\n");
-		return -ENOMEM;
-	}
-	return 0;
-}
-
-static int __devinit cx18_create_out_workq(struct cx18 *cx)
-{
-	snprintf(cx->out_workq_name, sizeof(cx->out_workq_name), "%s-out",
-		 cx->v4l2_dev.name);
-	cx->out_work_queue = create_workqueue(cx->out_workq_name);
-	if (cx->out_work_queue == NULL) {
-		CX18_ERR("Unable to create outgoing mailbox handler threads\n");
 		return -ENOMEM;
 	}
 	return 0;
@@ -710,15 +699,9 @@ static int __devinit cx18_init_struct1(struct cx18 *cx)
 	mutex_init(&cx->epu2apu_mb_lock);
 	mutex_init(&cx->epu2cpu_mb_lock);
 
-	ret = cx18_create_out_workq(cx);
+	ret = cx18_create_in_workq(cx);
 	if (ret)
 		return ret;
-
-	ret = cx18_create_in_workq(cx);
-	if (ret) {
-		destroy_workqueue(cx->out_work_queue);
-		return ret;
-	}
 
 	cx18_init_in_work_orders(cx);
 
@@ -726,15 +709,21 @@ static int __devinit cx18_init_struct1(struct cx18 *cx)
 	cx->open_id = 1;
 
 	/* Initial settings */
-	cx2341x_fill_defaults(&cx->params);
-	cx->temporal_strength = cx->params.video_temporal_filter;
-	cx->spatial_strength = cx->params.video_spatial_filter;
-	cx->filter_mode = cx->params.video_spatial_filter_mode |
-		(cx->params.video_temporal_filter_mode << 1) |
-		(cx->params.video_median_filter_type << 2);
-	cx->params.port = CX2341X_PORT_MEMORY;
-	cx->params.capabilities =
-				CX2341X_CAP_HAS_TS | CX2341X_CAP_HAS_SLICED_VBI;
+	cx->cxhdl.port = CX2341X_PORT_MEMORY;
+	cx->cxhdl.capabilities = CX2341X_CAP_HAS_TS | CX2341X_CAP_HAS_SLICED_VBI;
+	cx->cxhdl.ops = &cx18_cxhdl_ops;
+	cx->cxhdl.func = cx18_api_func;
+	ret = cx2341x_handler_init(&cx->cxhdl, 50);
+	if (ret)
+		return ret;
+	cx->v4l2_dev.ctrl_handler = &cx->cxhdl.hdl;
+
+	cx->temporal_strength = cx->cxhdl.video_temporal_filter->cur.val;
+	cx->spatial_strength = cx->cxhdl.video_spatial_filter->cur.val;
+	cx->filter_mode = cx->cxhdl.video_spatial_filter_mode->cur.val |
+		(cx->cxhdl.video_temporal_filter_mode->cur.val << 1) |
+		(cx->cxhdl.video_median_filter_type->cur.val << 2);
+
 	init_waitqueue_head(&cx->cap_w);
 	init_waitqueue_head(&cx->mb_apu_waitq);
 	init_waitqueue_head(&cx->mb_cpu_waitq);
@@ -1046,7 +1035,7 @@ static int __devinit cx18_probe(struct pci_dev *pci_dev,
 	else
 		cx->is_50hz = 1;
 
-	cx->params.video_gop_size = cx->is_60hz ? 15 : 12;
+	cx2341x_handler_set_50hz(&cx->cxhdl, !cx->is_60hz);
 
 	if (cx->options.radio > 0)
 		cx->v4l2_cap |= V4L2_CAP_RADIO;
@@ -1092,7 +1081,6 @@ static int __devinit cx18_probe(struct pci_dev *pci_dev,
 
 	/* Load cx18 submodules (cx18-alsa) */
 	request_modules(cx);
-
 	return 0;
 
 free_streams:
@@ -1107,7 +1095,6 @@ free_mem:
 	release_mem_region(cx->base_addr, CX18_MEM_SIZE);
 free_workqueues:
 	destroy_workqueue(cx->in_work_queue);
-	destroy_workqueue(cx->out_work_queue);
 err:
 	if (retval == 0)
 		retval = -ENODEV;
@@ -1259,7 +1246,6 @@ static void cx18_remove(struct pci_dev *pci_dev)
 	cx18_halt_firmware(cx);
 
 	destroy_workqueue(cx->in_work_queue);
-	destroy_workqueue(cx->out_work_queue);
 
 	cx18_streams_cleanup(cx, 1);
 
@@ -1276,6 +1262,8 @@ static void cx18_remove(struct pci_dev *pci_dev)
 	if (cx->vbi.sliced_mpeg_data[0] != NULL)
 		for (i = 0; i < CX18_VBI_FRAMES; i++)
 			kfree(cx->vbi.sliced_mpeg_data[i]);
+
+	v4l2_ctrl_handler_free(&cx->av_state.hdl);
 
 	CX18_INFO("Removed %s\n", cx->card_name);
 
