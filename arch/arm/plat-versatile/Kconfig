@@ -1,0 +1,2 @@
+config PLAT_VERSATILE_CLCD
+	bool
