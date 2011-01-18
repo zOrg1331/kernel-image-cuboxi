@@ -273,6 +273,7 @@ config ARCH_VEXPRESS
 	select HAVE_SCHED_CLOCK
 	select ICST
 	select PLAT_VERSATILE
+	select PLAT_VERSATILE_CLCD
 	help
 	  This enables support for the ARM Ltd Versatile Express boards.
 
