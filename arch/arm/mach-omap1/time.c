@@ -44,15 +44,20 @@
 #include <linux/clocksource.h>
 #include <linux/clockchips.h>
 #include <linux/io.h>
+#include <linux/sched.h>
 
 #include <asm/system.h>
 #include <mach/hardware.h>
 #include <asm/leds.h>
 #include <asm/irq.h>
+#include <asm/sched_clock.h>
+
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
 
 #include <plat/common.h>
+
+#ifdef CONFIG_OMAP_MPU_TIMER
 
 #define OMAP_MPU_TIMER_BASE		OMAP_MPU_TIMER1_BASE
 #define OMAP_MPU_TIMER_OFFSET		0x100
@@ -67,7 +72,7 @@ typedef struct {
 ((volatile omap_mpu_timer_regs_t*)OMAP1_IO_ADDRESS(OMAP_MPU_TIMER_BASE +	\
 				 (n)*OMAP_MPU_TIMER_OFFSET))
 
-static inline unsigned long omap_mpu_timer_read(int nr)
+static inline unsigned long notrace omap_mpu_timer_read(int nr)
 {
 	volatile omap_mpu_timer_regs_t* timer = omap_mpu_timer_base(nr);
 	return timer->read_tim;
@@ -212,10 +217,20 @@ static struct clocksource clocksource_mpu = {
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
 };
 
+static DEFINE_CLOCK_DATA(cd);
+
+static void notrace mpu_update_sched_clock(void)
+{
+	u32 cyc = mpu_read(&clocksource_mpu);
+	update_sched_clock(&cd, cyc, (u32)~0);
+}
+
 static void __init omap_init_clocksource(unsigned long rate)
 {
 	static char err[] __initdata = KERN_ERR
 			"%s: can't register clocksource!\n";
+
+	init_sched_clock(&cd, mpu_update_sched_clock, 32, rate);
 
 	setup_irq(INT_TIMER2, &omap_mpu_timer2_irq);
 	omap_mpu_timer_start(1, ~0, 1);
@@ -224,12 +239,7 @@ static void __init omap_init_clocksource(unsigned long rate)
 		printk(err, clocksource_mpu.name);
 }
 
-/*
- * ---------------------------------------------------------------------------
- * Timer initialization
- * ---------------------------------------------------------------------------
- */
-static void __init omap_timer_init(void)
+static void __init omap_mpu_timer_init(void)
 {
 	struct clk	*ck_ref = clk_get(NULL, "ck_ref");
 	unsigned long	rate;
@@ -244,6 +254,38 @@ static void __init omap_timer_init(void)
 
 	omap_init_mpu_timer(rate);
 	omap_init_clocksource(rate);
+}
+
+#else
+static inline void omap_mpu_timer_init(void)
+{
+	pr_err("Bogus timer, should not happen\n");
+}
+#endif	/* CONFIG_OMAP_MPU_TIMER */
+
+static inline int omap_32k_timer_usable(void)
+{
+	int res = false;
+
+	if (cpu_is_omap730() || cpu_is_omap15xx())
+		return res;
+
+#ifdef CONFIG_OMAP_32K_TIMER
+	res = omap_32k_timer_init();
+#endif
+
+	return res;
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Timer initialization
+ * ---------------------------------------------------------------------------
+ */
+static void __init omap_timer_init(void)
+{
+	if (!omap_32k_timer_usable())
+		omap_mpu_timer_init();
 }
 
 struct sys_timer omap_timer = {
