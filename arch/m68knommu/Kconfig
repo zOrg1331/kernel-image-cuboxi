@@ -167,6 +167,7 @@ config M5275
 
 config M528x
 	bool "MCF528x"
+	select COLDFIRE_SW_A7
 	select GENERIC_CLOCKEVENTS
 	select HAVE_CACHE_SPLIT
 	help
