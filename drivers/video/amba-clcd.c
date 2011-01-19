@@ -147,8 +147,16 @@ clcdfb_set_bitfields(struct clcd_fb *fb, struct fb_var_screeninfo *var)
 		 * Green length can be 5 or 6 depending whether
 		 * we're operating in RGB555 or RGB565 mode.
 		 */
-		if (var->green.length != 5 && var->green.length != 6)
-			var->green.length = 6;
+		if (var->green.length != 5 && var->green.length != 6) {
+			/*
+			 * PL110 officially only supports RGB555,
+			 * but may be wired up to allow RGB565.
+			 */
+			if (amba_part(fb->dev) == 0x110)
+				var->green.length = 5;
+			else
+				var->green.length = 6;
+		}
 		break;
 	case 32:
 		if (fb->panel->cntl & CNTL_LCDTFT) {
@@ -443,8 +451,8 @@ static int clcdfb_register(struct clcd_fb *fb)
 
 	fb_set_var(&fb->fb, &fb->fb.var);
 
-        printk(KERN_INFO "CLCD: %s hardware, %s display\n",
-               fb->board->name, fb->panel->mode.name);
+	dev_info(&fb->dev->dev, "%s hardware, %s display\n",
+	         fb->board->name, fb->panel->mode.name);
 
 	ret = register_framebuffer(&fb->fb);
 	if (ret == 0)
@@ -485,6 +493,10 @@ static int clcdfb_probe(struct amba_device *dev, struct amba_id *id)
 
 	fb->dev = dev;
 	fb->board = board;
+
+	dev_info(&fb->dev->dev, "PL%03x rev%u at 0x%08llx\n",
+		amba_part(dev), amba_rev(dev),
+		(unsigned long long)dev->res.start);
 
 	ret = fb->board->setup(fb);
 	if (ret)

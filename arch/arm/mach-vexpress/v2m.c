@@ -48,10 +48,14 @@ void __init v2m_map_io(struct map_desc *tile, size_t num)
 }
 
 
-static void __init v2m_timer_init(void)
+void __init v2m_init_early(void)
 {
 	versatile_sched_clock_init(MMIO_P2V(V2M_SYS_24MHZ), 24000000);
+}
 
+
+static void __init v2m_timer_init(void)
+{
 	writel(0, MMIO_P2V(V2M_TIMER0) + TIMER_CTRL);
 	writel(0, MMIO_P2V(V2M_TIMER1) + TIMER_CTRL);
 
