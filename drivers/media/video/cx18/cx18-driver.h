@@ -564,7 +564,7 @@ struct cx18 {
 	struct cx18_av_state av_state;
 
 	/* codec settings */
-	struct cx2341x_mpeg_params params;
+	struct cx2341x_handler cxhdl;
 	u32 filter_mode;
 	u32 temporal_strength;
 	u32 spatial_strength;
@@ -616,9 +616,6 @@ struct cx18 {
 	char in_workq_name[11]; /* "cx18-NN-in" */
 	struct cx18_in_work_order in_work_order[CX18_MAX_IN_WORK_ORDERS];
 	char epu_debug_str[256]; /* CX18_EPU_DEBUG is rare: use shared space */
-
-	struct workqueue_struct *out_work_queue;
-	char out_workq_name[12]; /* "cx18-NN-out" */
 
 	/* i2c */
 	struct i2c_adapter i2c_adap[2];
