@@ -479,7 +479,8 @@ bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn)
 
 		/* Swap over from MISSING to IDENTITY if needed. */
 		if (p2m_top[topidx][mididx] == p2m_missing) {
-			p2m_top[topidx][mididx] = p2m_identity;
+			BUG_ON(cmpxchg(&p2m_top[topidx][mididx], p2m_missing,
+				p2m_identity) != p2m_missing);
 			return true;
 		}
 	}
