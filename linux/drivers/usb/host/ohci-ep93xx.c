@@ -28,9 +28,6 @@
 #include <linux/signal.h>
 #include <linux/platform_device.h>
 
-#include <asm/mach-types.h>
-#include <asm/hardware.h>
-
 static struct clk *usb_host_clock;
 
 static void ep93xx_start_hc(struct device *dev)
@@ -50,7 +47,7 @@ static int usb_hcd_ep93xx_probe(const struct hc_driver *driver,
 	struct usb_hcd *hcd;
 
 	if (pdev->resource[1].flags != IORESOURCE_IRQ) {
-		pr_debug("resource[1] is not IORESOURCE_IRQ");
+		dbg("resource[1] is not IORESOURCE_IRQ");
 		return -ENOMEM;
 	}
 
@@ -68,21 +65,28 @@ static int usb_hcd_ep93xx_probe(const struct hc_driver *driver,
 
 	hcd->regs = ioremap(hcd->rsrc_start, hcd->rsrc_len);
 	if (hcd->regs == NULL) {
-		pr_debug("ioremap failed");
+		dbg("ioremap failed");
 		retval = -ENOMEM;
 		goto err2;
 	}
 
-	usb_host_clock = clk_get(&pdev->dev, "usb_host");
+	usb_host_clock = clk_get(&pdev->dev, NULL);
+	if (IS_ERR(usb_host_clock)) {
+		dbg("clk_get failed");
+		retval = PTR_ERR(usb_host_clock);
+		goto err3;
+	}
+
 	ep93xx_start_hc(&pdev->dev);
 
 	ohci_hcd_init(hcd_to_ohci(hcd));
 
-	retval = usb_add_hcd(hcd, pdev->resource[1].start, SA_INTERRUPT);
+	retval = usb_add_hcd(hcd, pdev->resource[1].start, IRQF_DISABLED);
 	if (retval == 0)
 		return retval;
 
 	ep93xx_stop_hc(&pdev->dev);
+err3:
 	iounmap(hcd->regs);
 err2:
 	release_mem_region(hcd->rsrc_start, hcd->rsrc_len);
@@ -128,6 +132,7 @@ static struct hc_driver ohci_ep93xx_hc_driver = {
 	.flags			= HCD_USB11 | HCD_MEMORY,
 	.start			= ohci_ep93xx_start,
 	.stop			= ohci_stop,
+	.shutdown		= ohci_shutdown,
 	.urb_enqueue		= ohci_urb_enqueue,
 	.urb_dequeue		= ohci_urb_dequeue,
 	.endpoint_disable	= ohci_endpoint_disable,
@@ -167,7 +172,7 @@ static int ohci_hcd_ep93xx_drv_remove(struct platform_device *pdev)
 static int ohci_hcd_ep93xx_drv_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	struct usb_hcd *hcd = platform_get_drvdata(pdev);
-	struct ochi_hcd *ohci = hcd_to_ohci(hcd);
+	struct ohci_hcd *ohci = hcd_to_ohci(hcd);
 
 	if (time_before(jiffies, ohci->next_statechange))
 		msleep(5);
@@ -175,7 +180,6 @@ static int ohci_hcd_ep93xx_drv_suspend(struct platform_device *pdev, pm_message_
 
 	ep93xx_stop_hc(&pdev->dev);
 	hcd->state = HC_STATE_SUSPENDED;
-	pdev->dev.power.power_state = PMSG_SUSPEND;
 
 	return 0;
 }
@@ -184,16 +188,14 @@ static int ohci_hcd_ep93xx_drv_resume(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd = platform_get_drvdata(pdev);
 	struct ohci_hcd *ohci = hcd_to_ohci(hcd);
-	int status;
 
 	if (time_before(jiffies, ohci->next_statechange))
 		msleep(5);
 	ohci->next_statechange = jiffies;
 
 	ep93xx_start_hc(&pdev->dev);
-	pdev->dev.power.power_state = PMSG_ON;
-	usb_hcd_resume_root_hub(hcd);
 
+	ohci_finish_controller_resume(hcd);
 	return 0;
 }
 #endif
@@ -202,24 +204,15 @@ static int ohci_hcd_ep93xx_drv_resume(struct platform_device *pdev)
 static struct platform_driver ohci_hcd_ep93xx_driver = {
 	.probe		= ohci_hcd_ep93xx_drv_probe,
 	.remove		= ohci_hcd_ep93xx_drv_remove,
+	.shutdown	= usb_hcd_platform_shutdown,
 #ifdef CONFIG_PM
 	.suspend	= ohci_hcd_ep93xx_drv_suspend,
 	.resume		= ohci_hcd_ep93xx_drv_resume,
 #endif
 	.driver		= {
 		.name	= "ep93xx-ohci",
+		.owner	= THIS_MODULE,
 	},
 };
 
-static int __init ohci_hcd_ep93xx_init(void)
-{
-	return platform_driver_register(&ohci_hcd_ep93xx_driver);
-}
-
-static void __exit ohci_hcd_ep93xx_cleanup(void)
-{
-	platform_driver_unregister(&ohci_hcd_ep93xx_driver);
-}
-
-module_init(ohci_hcd_ep93xx_init);
-module_exit(ohci_hcd_ep93xx_cleanup);
+MODULE_ALIAS("platform:ep93xx-ohci");

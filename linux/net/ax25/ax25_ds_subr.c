@@ -12,7 +12,6 @@
 #include <linux/socket.h>
 #include <linux/in.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/string.h>
 #include <linux/sockios.h>
@@ -42,7 +41,7 @@ void ax25_ds_enquiry_response(ax25_cb *ax25)
 	ax25_cb *ax25o;
 	struct hlist_node *node;
 
-	/* Please note that neither DK4EG´s nor DG2FEF´s
+	/* Please note that neither DK4EG's nor DG2FEF's
 	 * DAMA spec mention the following behaviour as seen
 	 * with TheFirmware:
 	 *
@@ -137,7 +136,7 @@ static void ax25_kiss_cmd(ax25_dev *ax25_dev, unsigned char cmd, unsigned char p
 	if ((skb = alloc_skb(2, GFP_ATOMIC)) == NULL)
 		return;
 
-	skb->nh.raw = skb->data;
+	skb_reset_network_header(skb);
 	p = skb_put(skb, 2);
 
 	*p++ = cmd;

@@ -16,37 +16,44 @@
 
 #include <asm/assembler.h>
 #include <asm/domain.h>
-#include <asm/procinfo.h>
 #include <asm/ptrace.h>
 #include <asm/asm-offsets.h>
 #include <asm/memory.h>
 #include <asm/thread_info.h>
 #include <asm/system.h>
 
-#define KERNEL_RAM_ADDR	(PAGE_OFFSET + TEXT_OFFSET)
+#if (PHYS_OFFSET & 0x001fffff)
+#error "PHYS_OFFSET must be at an even 2MiB boundary!"
+#endif
+
+#define KERNEL_RAM_VADDR	(PAGE_OFFSET + TEXT_OFFSET)
+#define KERNEL_RAM_PADDR	(PHYS_OFFSET + TEXT_OFFSET)
+
 
 /*
  * swapper_pg_dir is the virtual address of the initial page table.
- * We place the page tables 16K below KERNEL_RAM_ADDR.  Therefore, we must
- * make sure that KERNEL_RAM_ADDR is correctly set.  Currently, we expect
+ * We place the page tables 16K below KERNEL_RAM_VADDR.  Therefore, we must
+ * make sure that KERNEL_RAM_VADDR is correctly set.  Currently, we expect
  * the least significant 16 bits to be 0x8000, but we could probably
- * relax this restriction to KERNEL_RAM_ADDR >= PAGE_OFFSET + 0x4000.
+ * relax this restriction to KERNEL_RAM_VADDR >= PAGE_OFFSET + 0x4000.
  */
-#if (KERNEL_RAM_ADDR & 0xffff) != 0x8000
-#error KERNEL_RAM_ADDR must start at 0xXXXX8000
+#if (KERNEL_RAM_VADDR & 0xffff) != 0x8000
+#error KERNEL_RAM_VADDR must start at 0xXXXX8000
 #endif
 
 	.globl	swapper_pg_dir
-	.equ	swapper_pg_dir, KERNEL_RAM_ADDR - 0x4000
+	.equ	swapper_pg_dir, KERNEL_RAM_VADDR - 0x4000
 
 	.macro	pgtbl, rd
-	ldr	\rd, =(__virt_to_phys(KERNEL_RAM_ADDR - 0x4000))
+	ldr	\rd, =(KERNEL_RAM_PADDR - 0x4000)
 	.endm
 
 #ifdef CONFIG_XIP_KERNEL
-#define TEXTADDR  XIP_VIRT_ADDR(CONFIG_XIP_PHYS_ADDR)
+#define KERNEL_START	XIP_VIRT_ADDR(CONFIG_XIP_PHYS_ADDR)
+#define KERNEL_END	_edata_loc
 #else
-#define TEXTADDR  KERNEL_RAM_ADDR
+#define KERNEL_START	KERNEL_RAM_VADDR
+#define KERNEL_END	_end
 #endif
 
 /*
@@ -55,7 +62,7 @@
  *
  * This is normally called from the decompressor code.  The requirements
  * are: MMU = off, D-cache = off, I-cache = dont care, r0 = 0,
- * r1 = machine nr.
+ * r1 = machine nr, r2 = atags pointer.
  *
  * This code is mostly position independent, so if you link the kernel at
  * 0xc0008000, you call this at __pa(0xc0008000).
@@ -67,10 +74,9 @@
  * crap here - that's what the boot loader (or in extreme, well justified
  * circumstances, zImage) is for.
  */
-	__INIT
-	.type	stext, %function
+	.section ".text.head", "ax"
 ENTRY(stext)
-	msr	cpsr_c, #PSR_F_BIT | PSR_I_BIT | SVC_MODE @ ensure svc mode
+	setmode	PSR_F_BIT | PSR_I_BIT | SVC_MODE, r9 @ ensure svc mode
 						@ and irqs disabled
 	mrc	p15, 0, r9, c0, c0		@ get processor id
 	bl	__lookup_processor_type		@ r5=procinfo r9=cpuid
@@ -79,6 +85,7 @@ ENTRY(stext)
 	bl	__lookup_machine_type		@ r5=machinfo
 	movs	r8, r5				@ invalid machine (r5=0)?
 	beq	__error_a			@ yes, error 'a'
+	bl	__vet_atags
 	bl	__create_page_tables
 
 	/*
@@ -90,11 +97,13 @@ ENTRY(stext)
 	 */
 	ldr	r13, __switch_data		@ address to jump to after
 						@ mmu has been enabled
-	adr	lr, __enable_mmu		@ return (PIC) address
-	add	pc, r10, #PROCINFO_INITFUNC
+	adr	lr, BSYM(__enable_mmu)		@ return (PIC) address
+ ARM(	add	pc, r10, #PROCINFO_INITFUNC	)
+ THUMB(	add	r12, r10, #PROCINFO_INITFUNC	)
+ THUMB(	mov	pc, r12				)
+ENDPROC(stext)
 
 #if defined(CONFIG_SMP)
-	.type   secondary_startup, #function
 ENTRY(secondary_startup)
 	/*
 	 * Common entry point for secondary CPUs.
@@ -103,7 +112,7 @@ ENTRY(secondary_startup)
 	 * the processor type - there is no need to check the machine type
 	 * as it has already been validated by the primary processor.
 	 */
-	msr	cpsr_c, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
+	setmode	PSR_F_BIT | PSR_I_BIT | SVC_MODE, r9
 	mrc	p15, 0, r9, c0, c0		@ get processor id
 	bl	__lookup_processor_type
 	movs	r10, r5				@ invalid processor?
@@ -114,12 +123,16 @@ ENTRY(secondary_startup)
 	 * Use the page tables supplied from  __cpu_up.
 	 */
 	adr	r4, __secondary_data
-	ldmia	r4, {r5, r7, r13}		@ address to jump to after
+	ldmia	r4, {r5, r7, r12}		@ address to jump to after
 	sub	r4, r4, r5			@ mmu has been enabled
 	ldr	r4, [r7, r4]			@ get secondary_data.pgdir
-	adr	lr, __enable_mmu		@ return address
-	add	pc, r10, #PROCINFO_INITFUNC	@ initialise processor
-						@ (return control reg)
+	adr	lr, BSYM(__enable_mmu)		@ return address
+	mov	r13, r12			@ __secondary_switched address
+ ARM(	add	pc, r10, #PROCINFO_INITFUNC	) @ initialise processor
+						  @ (return control reg)
+ THUMB(	add	r12, r10, #PROCINFO_INITFUNC	)
+ THUMB(	mov	pc, r12				)
+ENDPROC(secondary_startup)
 
 	/*
 	 * r6  = &secondary_data
@@ -128,6 +141,7 @@ ENTRY(__secondary_switched)
 	ldr	sp, [r7, #4]			@ get secondary_data.stack
 	mov	fp, #0
 	b	secondary_start_kernel
+ENDPROC(__secondary_switched)
 
 	.type	__secondary_data, %object
 __secondary_data:
@@ -143,7 +157,6 @@ __secondary_data:
  * this is just loading the page table pointer and domain access
  * registers.
  */
-	.type	__enable_mmu, %function
 __enable_mmu:
 #ifdef CONFIG_ALIGNMENT_TRAP
 	orr	r0, r0, #CR_A
@@ -166,6 +179,7 @@ __enable_mmu:
 	mcr	p15, 0, r5, c3, c0, 0		@ load domain access register
 	mcr	p15, 0, r4, c2, c0, 0		@ load page table pointer
 	b	__turn_mmu_on
+ENDPROC(__enable_mmu)
 
 /*
  * Enable the MMU.  This completely changes the structure of the visible
@@ -179,15 +193,14 @@ __enable_mmu:
  * other registers depend on the function called upon completion
  */
 	.align	5
-	.type	__turn_mmu_on, %function
 __turn_mmu_on:
 	mov	r0, r0
 	mcr	p15, 0, r0, c1, c0, 0		@ write control reg
 	mrc	p15, 0, r3, c0, c0, 0		@ read id reg
 	mov	r3, r3
-	mov	r3, r3
-	mov	pc, r13
-
+	mov	r3, r13
+	mov	pc, r3
+ENDPROC(__turn_mmu_on)
 
 
 /*
@@ -203,7 +216,6 @@ __turn_mmu_on:
  *  r0, r3, r6, r7 corrupted
  *  r4 = physical page table address
  */
-	.type	__create_page_tables, %function
 __create_page_tables:
 	pgtbl	r4				@ page table address
 
@@ -228,47 +240,53 @@ __create_page_tables:
 	 * will be removed by paging_init().  We use our current program
 	 * counter to determine corresponding section base address.
 	 */
-	mov	r6, pc, lsr #20			@ start of kernel section
+	mov	r6, pc
+	mov	r6, r6, lsr #20			@ start of kernel section
 	orr	r3, r7, r6, lsl #20		@ flags + kernel base
 	str	r3, [r4, r6, lsl #2]		@ identity mapping
 
 	/*
 	 * Now setup the pagetables for our kernel direct
-	 * mapped region.  We round TEXTADDR down to the
-	 * nearest megabyte boundary.  It is assumed that
-	 * the kernel fits within 4 contigous 1MB sections.
+	 * mapped region.
 	 */
-	add	r0, r4,  #(TEXTADDR & 0xff000000) >> 18	@ start of kernel
-	str	r3, [r0, #(TEXTADDR & 0x00f00000) >> 18]!
+	add	r0, r4,  #(KERNEL_START & 0xff000000) >> 18
+	str	r3, [r0, #(KERNEL_START & 0x00f00000) >> 18]!
+	ldr	r6, =(KERNEL_END - 1)
+	add	r0, r0, #4
+	add	r6, r4, r6, lsr #18
+1:	cmp	r0, r6
 	add	r3, r3, #1 << 20
-	str	r3, [r0, #4]!			@ KERNEL + 1MB
+	strls	r3, [r0], #4
+	bls	1b
+
+#ifdef CONFIG_XIP_KERNEL
+	/*
+	 * Map some ram to cover our .data and .bss areas.
+	 */
+	orr	r3, r7, #(KERNEL_RAM_PADDR & 0xff000000)
+	.if	(KERNEL_RAM_PADDR & 0x00f00000)
+	orr	r3, r3, #(KERNEL_RAM_PADDR & 0x00f00000)
+	.endif
+	add	r0, r4,  #(KERNEL_RAM_VADDR & 0xff000000) >> 18
+	str	r3, [r0, #(KERNEL_RAM_VADDR & 0x00f00000) >> 18]!
+	ldr	r6, =(_end - 1)
+	add	r0, r0, #4
+	add	r6, r4, r6, lsr #18
+1:	cmp	r0, r6
 	add	r3, r3, #1 << 20
-	str	r3, [r0, #4]!			@ KERNEL + 2MB
-	add	r3, r3, #1 << 20
-	str	r3, [r0, #4]			@ KERNEL + 3MB
+	strls	r3, [r0], #4
+	bls	1b
+#endif
 
 	/*
 	 * Then map first 1MB of ram in case it contains our boot params.
 	 */
 	add	r0, r4, #PAGE_OFFSET >> 18
-	orr	r6, r7, #PHYS_OFFSET
+	orr	r6, r7, #(PHYS_OFFSET & 0xff000000)
+	.if	(PHYS_OFFSET & 0x00f00000)
+	orr	r6, r6, #(PHYS_OFFSET & 0x00f00000)
+	.endif
 	str	r6, [r0]
-
-#ifdef CONFIG_XIP_KERNEL
-	/*
-	 * Map some ram to cover our .data and .bss areas.
-	 * Mapping 3MB should be plenty.
-	 */
-	sub	r3, r4, #PHYS_OFFSET
-	mov	r3, r3, lsr #20
-	add	r0, r0, r3, lsl #2
-	add	r6, r6, r3, lsl #20
-	str	r6, [r0], #4
-	add	r6, r6, #(1 << 20)
-	str	r6, [r0], #4
-	add	r6, r6, #(1 << 20)
-	str	r6, [r0]
-#endif
 
 #ifdef CONFIG_DEBUG_LL
 	ldr	r7, [r10, #PROCINFO_IO_MMUFLAGS] @ io_mmuflags
@@ -312,6 +330,7 @@ __create_page_tables:
 #endif
 #endif
 	mov	pc, lr
+ENDPROC(__create_page_tables)
 	.ltorg
 
 #include "head-common.S"

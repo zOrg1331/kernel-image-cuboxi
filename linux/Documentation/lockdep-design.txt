@@ -27,14 +27,40 @@ lock-class.
 State
 -----
 
-The validator tracks lock-class usage history into 5 separate state bits:
+The validator tracks lock-class usage history into 4n + 1 separate state bits:
 
-- 'ever held in hardirq context'                    [ == hardirq-safe   ]
-- 'ever held in softirq context'                    [ == softirq-safe   ]
-- 'ever held with hardirqs enabled'                 [ == hardirq-unsafe ]
-- 'ever held with softirqs and hardirqs enabled'    [ == softirq-unsafe ]
+- 'ever held in STATE context'
+- 'ever held as readlock in STATE context'
+- 'ever held with STATE enabled'
+- 'ever held as readlock with STATE enabled'
+
+Where STATE can be either one of (kernel/lockdep_states.h)
+ - hardirq
+ - softirq
+ - reclaim_fs
 
 - 'ever used'                                       [ == !unused        ]
+
+When locking rules are violated, these state bits are presented in the
+locking error messages, inside curlies. A contrived example:
+
+   modprobe/2287 is trying to acquire lock:
+    (&sio_locks[i].lock){-.-...}, at: [<c02867fd>] mutex_lock+0x21/0x24
+
+   but task is already holding lock:
+    (&sio_locks[i].lock){-.-...}, at: [<c02867fd>] mutex_lock+0x21/0x24
+
+
+The bit position indicates STATE, STATE-read, for each of the states listed
+above, and the character displayed in each indicates:
+
+   '.'  acquired while irqs disabled and not in irq context
+   '-'  acquired in irq context
+   '+'  acquired with irqs enabled
+   '?'  acquired in irq context with irqs enabled.
+
+Unused mutexes cannot be part of the cause of an error.
+
 
 Single-lock state rules:
 ------------------------
@@ -111,7 +137,7 @@ cases there is an inherent "natural" ordering between the two objects
 (defined by the properties of the hierarchy), and the kernel grabs the
 locks in this fixed order on each of the objects.
 
-An example of such an object hieararchy that results in "nested locking"
+An example of such an object hierarchy that results in "nested locking"
 is that of a "whole disk" block-dev object and a "partition" block-dev
 object; the partition is "part of" the whole device and as long as one
 always takes the whole disk lock as a higher lock than the partition
@@ -136,11 +162,11 @@ enum bdev_bd_mutex_lock_class
 In this case the locking is done on a bdev object that is known to be a
 partition.
 
-The validator treats a lock that is taken in such a nested fasion as a
+The validator treats a lock that is taken in such a nested fashion as a
 separate (sub)class for the purposes of validation.
 
 Note: When changing code to use the _nested() primitives, be careful and
-check really thoroughly that the hiearchy is correctly mapped; otherwise
+check really thoroughly that the hierarchy is correctly mapped; otherwise
 you can get false positives or false negatives.
 
 Proof of 100% correctness:
@@ -148,7 +174,7 @@ Proof of 100% correctness:
 
 The validator achieves perfect, mathematical 'closure' (proof of locking
 correctness) in the sense that for every simple, standalone single-task
-locking sequence that occured at least once during the lifetime of the
+locking sequence that occurred at least once during the lifetime of the
 kernel, the validator proves it with a 100% certainty that no
 combination and timing of these locking sequences can cause any class of
 lock related deadlock. [*]

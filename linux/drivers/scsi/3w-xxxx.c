@@ -1,14 +1,14 @@
 /* 
    3w-xxxx.c -- 3ware Storage Controller device driver for Linux.
 
-   Written By: Adam Radford <linuxraid@amcc.com>
+   Written By: Adam Radford <linuxraid@lsi.com>
    Modifications By: Joel Jacobson <linux@3ware.com>
    		     Arnaldo Carvalho de Melo <acme@conectiva.com.br>
                      Brad Strand <linux@3ware.com>
 
-   Copyright (C) 1999-2005 3ware Inc.
+   Copyright (C) 1999-2010 3ware Inc.
 
-   Kernel compatiblity By: 	Andre Hedrick <andre@suse.com>
+   Kernel compatibility By: 	Andre Hedrick <andre@suse.com>
    Non-Copyright (C) 2000	Andre Hedrick <andre@suse.com>
    
    Further tiny build fixes and trivial hoovering    Alan Cox
@@ -47,10 +47,10 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA 
 
    Bugs/Comments/Suggestions should be mailed to:                            
-   linuxraid@amcc.com
+   linuxraid@lsi.com
 
    For more information, goto:
-   http://www.amcc.com
+   http://www.lsi.com
 
    History
    -------
@@ -191,10 +191,15 @@
                  before shutting down card.
                  Change to new 'change_queue_depth' api.
                  Fix 'handled=1' ISR usage, remove bogus IRQ check.
+   1.26.02.002 - Free irq handler in __tw_shutdown().
+                 Turn on RCD bit for caching mode page.
+                 Serialize reset code.
+   1.26.02.003 - Force 60 second timeout default.
 */
 
 #include <linux/module.h>
 #include <linux/reboot.h>
+#include <linux/smp_lock.h>
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
 #include <linux/moduleparam.h>
@@ -214,19 +219,19 @@
 #include "3w-xxxx.h"
 
 /* Globals */
-#define TW_DRIVER_VERSION "1.26.02.001"
+#define TW_DRIVER_VERSION "1.26.02.003RH"
 static TW_Device_Extension *tw_device_extension_list[TW_MAX_SLOT];
 static int tw_device_extension_count = 0;
 static int twe_major = -1;
 
 /* Module parameters */
-MODULE_AUTHOR("AMCC");
+MODULE_AUTHOR("LSI");
 MODULE_DESCRIPTION("3ware Storage Controller Linux Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(TW_DRIVER_VERSION);
 
 /* Function prototypes */
-static int tw_reset_device_extension(TW_Device_Extension *tw_dev, int ioctl_reset);
+static int tw_reset_device_extension(TW_Device_Extension *tw_dev);
 
 /* Functions */
 
@@ -481,9 +486,10 @@ static void tw_state_request_start(TW_Device_Extension *tw_dev, int *request_id)
 } /* End tw_state_request_start() */
 
 /* Show some statistics about the card */
-static ssize_t tw_show_stats(struct class_device *class_dev, char *buf)
+static ssize_t tw_show_stats(struct device *dev, struct device_attribute *attr,
+			     char *buf)
 {
-	struct Scsi_Host *host = class_to_shost(class_dev);
+	struct Scsi_Host *host = class_to_shost(dev);
 	TW_Device_Extension *tw_dev = (TW_Device_Extension *)host->hostdata;
 	unsigned long flags = 0;
 	ssize_t len;
@@ -516,8 +522,12 @@ static ssize_t tw_show_stats(struct class_device *class_dev, char *buf)
 } /* End tw_show_stats() */
 
 /* This function will set a devices queue depth */
-static int tw_change_queue_depth(struct scsi_device *sdev, int queue_depth)
+static int tw_change_queue_depth(struct scsi_device *sdev, int queue_depth,
+				 int reason)
 {
+	if (reason != SCSI_QDEPTH_DEFAULT)
+		return -EOPNOTSUPP;
+
 	if (queue_depth > TW_Q_LENGTH-2)
 		queue_depth = TW_Q_LENGTH-2;
 	scsi_adjust_queue_depth(sdev, MSG_ORDERED_TAG, queue_depth);
@@ -525,7 +535,7 @@ static int tw_change_queue_depth(struct scsi_device *sdev, int queue_depth)
 } /* End tw_change_queue_depth() */
 
 /* Create sysfs 'stats' entry */
-static struct class_device_attribute tw_host_stats_attr = {
+static struct device_attribute tw_host_stats_attr = {
 	.attr = {
 		.name = 	"stats",
 		.mode =		S_IRUGO,
@@ -534,7 +544,7 @@ static struct class_device_attribute tw_host_stats_attr = {
 };
 
 /* Host attributes initializer */
-static struct class_device_attribute *tw_host_attrs[] = {
+static struct device_attribute *tw_host_attrs[] = {
 	&tw_host_stats_attr,
 	NULL,
 };
@@ -984,24 +994,12 @@ static int tw_chrdev_ioctl(struct inode *inode, struct file *file, unsigned int 
 			/* Now wait for the command to complete */
 			timeout = wait_event_timeout(tw_dev->ioctl_wqueue, tw_dev->chrdev_request_id == TW_IOCTL_CHRDEV_FREE, timeout);
 
-			/* See if we reset while waiting for the ioctl to complete */
-			if (test_bit(TW_IN_RESET, &tw_dev->flags)) {
-				clear_bit(TW_IN_RESET, &tw_dev->flags);
-				retval = -ERESTARTSYS;
-				goto out2;
-			}
-
 			/* We timed out, and didn't get an interrupt */
 			if (tw_dev->chrdev_request_id != TW_IOCTL_CHRDEV_FREE) {
 				/* Now we need to reset the board */
 				printk(KERN_WARNING "3w-xxxx: scsi%d: Character ioctl (0x%x) timed out, resetting card.\n", tw_dev->host->host_no, cmd);
 				retval = -EIO;
-				spin_lock_irqsave(tw_dev->host->host_lock, flags);
-				tw_dev->state[request_id] = TW_S_COMPLETED;
-				tw_state_request_finish(tw_dev, request_id);
-				tw_dev->posted_request_count--;
-				spin_unlock_irqrestore(tw_dev->host->host_lock, flags);
-				if (tw_reset_device_extension(tw_dev, 1)) {
+				if (tw_reset_device_extension(tw_dev)) {
 					printk(KERN_WARNING "3w-xxxx: tw_chrdev_ioctl(): Reset failed for card %d.\n", tw_dev->host->host_no);
 				}
 				goto out2;
@@ -1035,10 +1033,12 @@ out:
 } /* End tw_chrdev_ioctl() */
 
 /* This function handles open for the character device */
+/* NOTE that this function races with remove. */
 static int tw_chrdev_open(struct inode *inode, struct file *file)
 {
 	unsigned int minor_number;
 
+	cycle_kernel_lock();
 	dprintk(KERN_WARNING "3w-xxxx: tw_ioctl_open()\n");
 
 	minor_number = iminor(inode);
@@ -1049,7 +1049,7 @@ static int tw_chrdev_open(struct inode *inode, struct file *file)
 } /* End tw_chrdev_open() */
 
 /* File operations struct for character device */
-static struct file_operations tw_fops = {
+static const struct file_operations tw_fops = {
 	.owner		= THIS_MODULE,
 	.ioctl		= tw_chrdev_ioctl,
 	.open		= tw_chrdev_open,
@@ -1282,61 +1282,29 @@ static int tw_map_scsi_sg_data(struct pci_dev *pdev, struct scsi_cmnd *cmd)
 	int use_sg;
 
 	dprintk(KERN_WARNING "3w-xxxx: tw_map_scsi_sg_data()\n");
-	
-	if (cmd->use_sg == 0)
-		return 0;
 
-	use_sg = pci_map_sg(pdev, cmd->request_buffer, cmd->use_sg, DMA_BIDIRECTIONAL);
-	
-	if (use_sg == 0) {
+	use_sg = scsi_dma_map(cmd);
+	if (use_sg < 0) {
 		printk(KERN_WARNING "3w-xxxx: tw_map_scsi_sg_data(): pci_map_sg() failed.\n");
 		return 0;
 	}
 
 	cmd->SCp.phase = TW_PHASE_SGLIST;
 	cmd->SCp.have_data_in = use_sg;
-	
+
 	return use_sg;
 } /* End tw_map_scsi_sg_data() */
-
-static u32 tw_map_scsi_single_data(struct pci_dev *pdev, struct scsi_cmnd *cmd)
-{
-	dma_addr_t mapping;
-
-	dprintk(KERN_WARNING "3w-xxxx: tw_map_scsi_single_data()\n");
-
-	if (cmd->request_bufflen == 0)
-		return 0;
-
-	mapping = pci_map_page(pdev, virt_to_page(cmd->request_buffer), offset_in_page(cmd->request_buffer), cmd->request_bufflen, DMA_BIDIRECTIONAL);
-
-	if (mapping == 0) {
-		printk(KERN_WARNING "3w-xxxx: tw_map_scsi_single_data(): pci_map_page() failed.\n");
-		return 0;
-	}
-
-	cmd->SCp.phase = TW_PHASE_SINGLE;
-	cmd->SCp.have_data_in = mapping;
-
-	return mapping;
-} /* End tw_map_scsi_single_data() */
 
 static void tw_unmap_scsi_data(struct pci_dev *pdev, struct scsi_cmnd *cmd)
 {
 	dprintk(KERN_WARNING "3w-xxxx: tw_unmap_scsi_data()\n");
 
-	switch(cmd->SCp.phase) {
-		case TW_PHASE_SINGLE:
-			pci_unmap_page(pdev, cmd->SCp.have_data_in, cmd->request_bufflen, DMA_BIDIRECTIONAL);
-			break;
-		case TW_PHASE_SGLIST:
-			pci_unmap_sg(pdev, cmd->request_buffer, cmd->use_sg, DMA_BIDIRECTIONAL);
-			break;
-	}
+	if (cmd->SCp.phase == TW_PHASE_SGLIST)
+		scsi_dma_unmap(cmd);
 } /* End tw_unmap_scsi_data() */
 
 /* This function will reset a device extension */
-static int tw_reset_device_extension(TW_Device_Extension *tw_dev, int ioctl_reset) 
+static int tw_reset_device_extension(TW_Device_Extension *tw_dev)
 {
 	int i = 0;
 	struct scsi_cmnd *srb;
@@ -1382,15 +1350,10 @@ static int tw_reset_device_extension(TW_Device_Extension *tw_dev, int ioctl_rese
 		printk(KERN_WARNING "3w-xxxx: scsi%d: Reset sequence failed.\n", tw_dev->host->host_no);
 		return 1;
 	}
-	TW_ENABLE_AND_CLEAR_INTERRUPTS(tw_dev);
 
-	/* Wake up any ioctl that was pending before the reset */
-	if ((tw_dev->chrdev_request_id == TW_IOCTL_CHRDEV_FREE) || (ioctl_reset)) {
-		clear_bit(TW_IN_RESET, &tw_dev->flags);
-	} else {
-		tw_dev->chrdev_request_id = TW_IOCTL_CHRDEV_FREE;
-		wake_up(&tw_dev->ioctl_wqueue);
-	}
+	TW_ENABLE_AND_CLEAR_INTERRUPTS(tw_dev);
+	clear_bit(TW_IN_RESET, &tw_dev->flags);
+	tw_dev->chrdev_request_id = TW_IOCTL_CHRDEV_FREE;
 
 	return 0;
 } /* End tw_reset_device_extension() */
@@ -1437,14 +1400,18 @@ static int tw_scsi_eh_reset(struct scsi_cmnd *SCpnt)
 		"WARNING: Command (0x%x) timed out, resetting card.\n",
 		SCpnt->cmnd[0]);
 
+	/* Make sure we are not issuing an ioctl or resetting from ioctl */
+	mutex_lock(&tw_dev->ioctl_lock);
+
 	/* Now reset the card and some of the device extension data */
-	if (tw_reset_device_extension(tw_dev, 0)) {
+	if (tw_reset_device_extension(tw_dev)) {
 		printk(KERN_WARNING "3w-xxxx: scsi%d: Reset failed.\n", tw_dev->host->host_no);
 		goto out;
 	}
 
 	retval = SUCCESS;
 out:
+	mutex_unlock(&tw_dev->ioctl_lock);
 	return retval;
 } /* End tw_scsi_eh_reset() */
 
@@ -1505,31 +1472,7 @@ static int tw_scsiop_inquiry(TW_Device_Extension *tw_dev, int request_id)
 static void tw_transfer_internal(TW_Device_Extension *tw_dev, int request_id,
 				 void *data, unsigned int len)
 {
-	struct scsi_cmnd *cmd = tw_dev->srb[request_id];
-	void *buf;
-	unsigned int transfer_len;
-	unsigned long flags = 0;
-
-	if (cmd->use_sg) {
-		struct scatterlist *sg =
-			(struct scatterlist *)cmd->request_buffer;
-		local_irq_save(flags);
-		buf = kmap_atomic(sg->page, KM_IRQ0) + sg->offset;
-		transfer_len = min(sg->length, len);
-	} else {
-		buf = cmd->request_buffer;
-		transfer_len = min(cmd->request_bufflen, len);
-	}
-
-	memcpy(buf, data, transfer_len);
-	
-	if (cmd->use_sg) {
-		struct scatterlist *sg;
-
-		sg = (struct scatterlist *)cmd->request_buffer;
-		kunmap_atomic(buf - sg->offset, KM_IRQ0);
-		local_irq_restore(flags);
-	}
+	scsi_sg_copy_from_buffer(tw_dev->srb[request_id], data, len);
 }
 
 /* This function is called by the isr to complete an inquiry command */
@@ -1660,9 +1603,9 @@ static int tw_scsiop_mode_sense_complete(TW_Device_Extension *tw_dev, int reques
 	request_buffer[4] = 0x8;        /* caching page */
 	request_buffer[5] = 0xa;        /* page length */
 	if (*flags & 0x1)
-		request_buffer[6] = 0x4;        /* WCE on */
+		request_buffer[6] = 0x5;        /* WCE on, RCD on */
 	else
-		request_buffer[6] = 0x0;        /* WCE off */
+		request_buffer[6] = 0x1;        /* WCE off, RCD on */
 	tw_transfer_internal(tw_dev, request_id, request_buffer,
 			     sizeof(request_buffer));
 
@@ -1774,19 +1717,20 @@ static int tw_scsiop_read_write(TW_Device_Extension *tw_dev, int request_id)
 {
 	TW_Command *command_packet;
 	unsigned long command_que_value;
-	u32 lba = 0x0, num_sectors = 0x0, buffaddr = 0x0;
+	u32 lba = 0x0, num_sectors = 0x0;
 	int i, use_sg;
 	struct scsi_cmnd *srb;
-	struct scatterlist *sglist;
+	struct scatterlist *sglist, *sg;
 
 	dprintk(KERN_NOTICE "3w-xxxx: tw_scsiop_read_write()\n");
 
-	if (tw_dev->srb[request_id]->request_buffer == NULL) {
+	srb = tw_dev->srb[request_id];
+
+	sglist = scsi_sglist(srb);
+	if (!sglist) {
 		printk(KERN_WARNING "3w-xxxx: tw_scsiop_read_write(): Request buffer NULL.\n");
 		return 1;
 	}
-	sglist = (struct scatterlist *)tw_dev->srb[request_id]->request_buffer;
-	srb = tw_dev->srb[request_id];
 
 	/* Initialize command packet */
 	command_packet = (TW_Command *)tw_dev->command_packet_virtual_address[request_id];
@@ -1829,33 +1773,18 @@ static int tw_scsiop_read_write(TW_Device_Extension *tw_dev, int request_id)
 	command_packet->byte8.io.lba = lba;
 	command_packet->byte6.block_count = num_sectors;
 
-	/* Do this if there are no sg list entries */
-	if (tw_dev->srb[request_id]->use_sg == 0) {    
-		dprintk(KERN_NOTICE "3w-xxxx: tw_scsiop_read_write(): SG = 0\n");
-		buffaddr = tw_map_scsi_single_data(tw_dev->tw_pci_dev, tw_dev->srb[request_id]);
-		if (buffaddr == 0)
-			return 1;
+	use_sg = tw_map_scsi_sg_data(tw_dev->tw_pci_dev, tw_dev->srb[request_id]);
+	if (!use_sg)
+		return 1;
 
-		command_packet->byte8.io.sgl[0].address = buffaddr;
-		command_packet->byte8.io.sgl[0].length = tw_dev->srb[request_id]->request_bufflen;
+	scsi_for_each_sg(tw_dev->srb[request_id], sg, use_sg, i) {
+		command_packet->byte8.io.sgl[i].address = sg_dma_address(sg);
+		command_packet->byte8.io.sgl[i].length = sg_dma_len(sg);
 		command_packet->size+=2;
 	}
 
-	/* Do this if we have multiple sg list entries */
-	if (tw_dev->srb[request_id]->use_sg > 0) {
-		use_sg = tw_map_scsi_sg_data(tw_dev->tw_pci_dev, tw_dev->srb[request_id]);
-		if (use_sg == 0)
-			return 1;
-
-		for (i=0;i<use_sg; i++) {
-			command_packet->byte8.io.sgl[i].address = sg_dma_address(&sglist[i]);
-			command_packet->byte8.io.sgl[i].length = sg_dma_len(&sglist[i]);
-			command_packet->size+=2;
-		}
-	}
-
 	/* Update SG statistics */
-	tw_dev->sgl_entries = tw_dev->srb[request_id]->use_sg;
+	tw_dev->sgl_entries = scsi_sg_count(tw_dev->srb[request_id]);
 	if (tw_dev->sgl_entries > tw_dev->max_sgl_entries)
 		tw_dev->max_sgl_entries = tw_dev->sgl_entries;
 
@@ -1874,10 +1803,17 @@ static int tw_scsiop_read_write(TW_Device_Extension *tw_dev, int request_id)
 /* This function will handle the request sense scsi command */
 static int tw_scsiop_request_sense(TW_Device_Extension *tw_dev, int request_id)
 {
+	char request_buffer[18];
+
 	dprintk(KERN_NOTICE "3w-xxxx: tw_scsiop_request_sense()\n");
 
-	/* For now we just zero the request buffer */
-	memset(tw_dev->srb[request_id]->request_buffer, 0, tw_dev->srb[request_id]->request_bufflen);
+	memset(request_buffer, 0, sizeof(request_buffer));
+	request_buffer[0] = 0x70; /* Immediate fixed format */
+	request_buffer[7] = 10;	/* minimum size per SPC: 18 bytes */
+	/* leave all other fields zero, giving effectively NO_SENSE return */
+	tw_transfer_internal(tw_dev, request_id, request_buffer,
+			     sizeof(request_buffer));
+
 	tw_dev->state[request_id] = TW_S_COMPLETED;
 	tw_state_request_finish(tw_dev, request_id);
 
@@ -2012,6 +1948,10 @@ static int tw_scsi_queue(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd 
 	int retval = 1;
 	TW_Device_Extension *tw_dev = (TW_Device_Extension *)SCpnt->device->host->hostdata;
 
+	/* If we are resetting due to timed out ioctl, report as busy */
+	if (test_bit(TW_IN_RESET, &tw_dev->flags))
+		return SCSI_MLQUEUE_HOST_BUSY;
+
 	/* Save done function into Scsi_Cmnd struct */
 	SCpnt->scsi_done = done;
 		 
@@ -2078,8 +2018,7 @@ static int tw_scsi_queue(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd 
 } /* End tw_scsi_queue() */
 
 /* This function is the interrupt service routine */
-static irqreturn_t tw_interrupt(int irq, void *dev_instance,
-		     struct pt_regs *regs) 
+static irqreturn_t tw_interrupt(int irq, void *dev_instance) 
 {
 	int request_id;
 	u32 status_reg_value;
@@ -2100,6 +2039,10 @@ static irqreturn_t tw_interrupt(int irq, void *dev_instance,
 		goto tw_interrupt_bail;
 
 	handled = 1;
+
+	/* If we are resetting, bail */
+	if (test_bit(TW_IN_RESET, &tw_dev->flags))
+		goto tw_interrupt_bail;
 
 	/* Check controller for errors */
 	if (tw_check_bits(status_reg_value)) {
@@ -2277,6 +2220,9 @@ static void __tw_shutdown(TW_Device_Extension *tw_dev)
 	/* Disable interrupts */
 	TW_DISABLE_INTERRUPTS(tw_dev);
 
+	/* Free up the IRQ */
+	free_irq(tw_dev->tw_pci_dev->irq, tw_dev);
+
 	printk(KERN_WARNING "3w-xxxx: Shutting down host %d.\n", tw_dev->host->host_no);
 
 	/* Tell the card we are shutting down */
@@ -2299,6 +2245,15 @@ static void tw_shutdown(struct pci_dev *pdev)
 	__tw_shutdown(tw_dev);
 } /* End tw_shutdown() */
 
+/* This function gets called when a disk is coming online */
+static int tw_slave_configure(struct scsi_device *sdev)
+{
+	/* Force 60 second timeout */
+	blk_queue_rq_timeout(sdev->request_queue, 60 * HZ);
+
+	return 0;
+} /* End tw_slave_configure() */
+
 static struct scsi_host_template driver_template = {
 	.module			= THIS_MODULE,
 	.name			= "3ware Storage Controller",
@@ -2307,6 +2262,7 @@ static struct scsi_host_template driver_template = {
 	.bios_param		= tw_scsi_biosparam,
 	.change_queue_depth	= tw_change_queue_depth,
 	.can_queue		= TW_Q_LENGTH-2,
+	.slave_configure	= tw_slave_configure,
 	.this_id		= -1,
 	.sg_tablesize		= TW_MAX_SGL_LENGTH,
 	.max_sectors		= TW_MAX_SECTORS,
@@ -2344,8 +2300,6 @@ static int __devinit tw_probe(struct pci_dev *pdev, const struct pci_device_id *
 		goto out_disable_device;
 	}
 	tw_dev = (TW_Device_Extension *)host->hostdata;
-
-	memset(tw_dev, 0, sizeof(TW_Device_Extension));
 
 	/* Save values to device extension */
 	tw_dev->host = host;
@@ -2445,9 +2399,6 @@ static void tw_remove(struct pci_dev *pdev)
 		twe_major = -1;
 	}
 
-	/* Free up the IRQ */
-	free_irq(tw_dev->tw_pci_dev->irq, tw_dev);
-
 	/* Shutdown the card */
 	__tw_shutdown(tw_dev);
 
@@ -2486,7 +2437,7 @@ static int __init tw_init(void)
 {
 	printk(KERN_WARNING "3ware Storage Controller device driver for Linux v%s.\n", TW_DRIVER_VERSION);
 
-	return pci_module_init(&tw_driver);
+	return pci_register_driver(&tw_driver);
 } /* End tw_init() */
 
 /* This function is called on driver exit */

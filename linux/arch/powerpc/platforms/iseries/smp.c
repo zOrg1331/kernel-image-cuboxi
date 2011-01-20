@@ -18,7 +18,6 @@
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/interrupt.h>
 #include <linux/kernel_stat.h>
 #include <linux/delay.h>
@@ -43,9 +42,11 @@
 #include <asm/cputable.h>
 #include <asm/system.h>
 
+#include "smp.h"
+
 static unsigned long iSeries_smp_message[NR_CPUS];
 
-void iSeries_smp_message_recv(struct pt_regs *regs)
+void iSeries_smp_message_recv(void)
 {
 	int cpu = smp_processor_id();
 	int msg;
@@ -55,7 +56,7 @@ void iSeries_smp_message_recv(struct pt_regs *regs)
 
 	for (msg = 0; msg < 4; msg++)
 		if (test_and_clear_bit(msg, &iSeries_smp_message[cpu]))
-			smp_message_recv(msg, regs);
+			smp_message_recv(msg);
 }
 
 static inline void smp_iSeries_do_message(int cpu, int msg)

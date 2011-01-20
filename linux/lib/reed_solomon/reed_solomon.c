@@ -1,5 +1,5 @@
 /*
- * lib/reed_solomon/rslib.c
+ * lib/reed_solomon/reed_solomon.c
  *
  * Overview:
  *   Generic Reed Solomon encoder / decoder library
@@ -45,7 +45,6 @@
 #include <linux/rslib.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
-#include <asm/semaphore.h>
 
 /* This list holds all currently allocated rs control structures */
 static LIST_HEAD (rslist);
@@ -56,6 +55,7 @@ static DEFINE_MUTEX(rslistlock);
  * rs_init - Initialize a Reed-Solomon codec
  * @symsize:	symbol size, bits (1-8)
  * @gfpoly:	Field generator polynomial coefficients
+ * @gffunc:	Field generator function
  * @fcr:	first root of RS code generator polynomial, index form
  * @prim:	primitive element to generate polynomial roots
  * @nroots:	RS code generator polynomial degree (number of roots)
@@ -63,8 +63,8 @@ static DEFINE_MUTEX(rslistlock);
  * Allocate a control structure and the polynom arrays for faster
  * en/decoding. Fill the arrays according to the given parameters.
  */
-static struct rs_control *rs_init(int symsize, int gfpoly, int fcr,
-				   int prim, int nroots)
+static struct rs_control *rs_init(int symsize, int gfpoly, int (*gffunc)(int),
+                                  int fcr, int prim, int nroots)
 {
 	struct rs_control *rs;
 	int i, j, sr, root, iprim;
@@ -82,6 +82,7 @@ static struct rs_control *rs_init(int symsize, int gfpoly, int fcr,
 	rs->prim = prim;
 	rs->nroots = nroots;
 	rs->gfpoly = gfpoly;
+	rs->gffunc = gffunc;
 
 	/* Allocate the arrays */
 	rs->alpha_to = kmalloc(sizeof(uint16_t) * (rs->nn + 1), GFP_KERNEL);
@@ -99,17 +100,26 @@ static struct rs_control *rs_init(int symsize, int gfpoly, int fcr,
 	/* Generate Galois field lookup tables */
 	rs->index_of[0] = rs->nn;	/* log(zero) = -inf */
 	rs->alpha_to[rs->nn] = 0;	/* alpha**-inf = 0 */
-	sr = 1;
-	for (i = 0; i < rs->nn; i++) {
-		rs->index_of[sr] = i;
-		rs->alpha_to[i] = sr;
-		sr <<= 1;
-		if (sr & (1 << symsize))
-			sr ^= gfpoly;
-		sr &= rs->nn;
+	if (gfpoly) {
+		sr = 1;
+		for (i = 0; i < rs->nn; i++) {
+			rs->index_of[sr] = i;
+			rs->alpha_to[i] = sr;
+			sr <<= 1;
+			if (sr & (1 << symsize))
+				sr ^= gfpoly;
+			sr &= rs->nn;
+		}
+	} else {
+		sr = gffunc(0);
+		for (i = 0; i < rs->nn; i++) {
+			rs->index_of[sr] = i;
+			rs->alpha_to[i] = sr;
+			sr = gffunc(sr);
+		}
 	}
 	/* If it's not primitive, exit */
-	if(sr != 1)
+	if(sr != rs->alpha_to[0])
 		goto errpol;
 
 	/* Find prim-th root of 1, used in decoding */
@@ -173,18 +183,22 @@ void free_rs(struct rs_control *rs)
 }
 
 /**
- * init_rs - Find a matching or allocate a new rs control structure
+ * init_rs_internal - Find a matching or allocate a new rs control structure
  *  @symsize:	the symbol size (number of bits)
  *  @gfpoly:	the extended Galois field generator polynomial coefficients,
  *		with the 0th coefficient in the low order bit. The polynomial
  *		must be primitive;
+ *  @gffunc:	pointer to function to generate the next field element,
+ *		or the multiplicative identity element if given 0.  Used
+ *		instead of gfpoly if gfpoly is 0
  *  @fcr:  	the first consecutive root of the rs code generator polynomial
  *		in index form
  *  @prim:	primitive element to generate polynomial roots
  *  @nroots:	RS code generator polynomial degree (number of roots)
  */
-struct rs_control *init_rs(int symsize, int gfpoly, int fcr, int prim,
-			   int nroots)
+static struct rs_control *init_rs_internal(int symsize, int gfpoly,
+                                           int (*gffunc)(int), int fcr,
+                                           int prim, int nroots)
 {
 	struct list_head	*tmp;
 	struct rs_control	*rs;
@@ -208,6 +222,8 @@ struct rs_control *init_rs(int symsize, int gfpoly, int fcr, int prim,
 			continue;
 		if (gfpoly != rs->gfpoly)
 			continue;
+		if (gffunc != rs->gffunc)
+			continue;
 		if (fcr != rs->fcr)
 			continue;
 		if (prim != rs->prim)
@@ -220,7 +236,7 @@ struct rs_control *init_rs(int symsize, int gfpoly, int fcr, int prim,
 	}
 
 	/* Create a new one */
-	rs = rs_init(symsize, gfpoly, fcr, prim, nroots);
+	rs = rs_init(symsize, gfpoly, gffunc, fcr, prim, nroots);
 	if (rs) {
 		rs->users = 1;
 		list_add(&rs->list, &rslist);
@@ -228,6 +244,42 @@ struct rs_control *init_rs(int symsize, int gfpoly, int fcr, int prim,
 out:
 	mutex_unlock(&rslistlock);
 	return rs;
+}
+
+/**
+ * init_rs - Find a matching or allocate a new rs control structure
+ *  @symsize:	the symbol size (number of bits)
+ *  @gfpoly:	the extended Galois field generator polynomial coefficients,
+ *		with the 0th coefficient in the low order bit. The polynomial
+ *		must be primitive;
+ *  @fcr:  	the first consecutive root of the rs code generator polynomial
+ *		in index form
+ *  @prim:	primitive element to generate polynomial roots
+ *  @nroots:	RS code generator polynomial degree (number of roots)
+ */
+struct rs_control *init_rs(int symsize, int gfpoly, int fcr, int prim,
+                           int nroots)
+{
+	return init_rs_internal(symsize, gfpoly, NULL, fcr, prim, nroots);
+}
+
+/**
+ * init_rs_non_canonical - Find a matching or allocate a new rs control
+ *                         structure, for fields with non-canonical
+ *                         representation
+ *  @symsize:	the symbol size (number of bits)
+ *  @gffunc:	pointer to function to generate the next field element,
+ *		or the multiplicative identity element if given 0.  Used
+ *		instead of gfpoly if gfpoly is 0
+ *  @fcr:  	the first consecutive root of the rs code generator polynomial
+ *		in index form
+ *  @prim:	primitive element to generate polynomial roots
+ *  @nroots:	RS code generator polynomial degree (number of roots)
+ */
+struct rs_control *init_rs_non_canonical(int symsize, int (*gffunc)(int),
+                                         int fcr, int prim, int nroots)
+{
+	return init_rs_internal(symsize, 0, gffunc, fcr, prim, nroots);
 }
 
 #ifdef CONFIG_REED_SOLOMON_ENC8
@@ -267,6 +319,7 @@ EXPORT_SYMBOL_GPL(encode_rs8);
  *  The syndrome and parity uses a uint16_t data type to enable
  *  symbol size > 8. The calling code must take care of decoding of the
  *  syndrome result and the received parity before calling this code.
+ *  Returns the number of corrected bits or -EBADMSG for uncorrectable errors.
  */
 int decode_rs8(struct rs_control *rs, uint8_t *data, uint16_t *par, int len,
 	       uint16_t *s, int no_eras, int *eras_pos, uint16_t invmsk,
@@ -310,6 +363,7 @@ EXPORT_SYMBOL_GPL(encode_rs16);
  *  @corr:	buffer to store correction bitmask on eras_pos
  *
  *  Each field in the data array contains up to symbol size bits of valid data.
+ *  Returns the number of corrected bits or -EBADMSG for uncorrectable errors.
  */
 int decode_rs16(struct rs_control *rs, uint16_t *data, uint16_t *par, int len,
 		uint16_t *s, int no_eras, int *eras_pos, uint16_t invmsk,
@@ -321,6 +375,7 @@ EXPORT_SYMBOL_GPL(decode_rs16);
 #endif
 
 EXPORT_SYMBOL_GPL(init_rs);
+EXPORT_SYMBOL_GPL(init_rs_non_canonical);
 EXPORT_SYMBOL_GPL(free_rs);
 
 MODULE_LICENSE("GPL");

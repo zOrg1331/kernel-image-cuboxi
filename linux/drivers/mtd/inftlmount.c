@@ -8,8 +8,6 @@
  * Author: Fabrice Bellard (fabrice.bellard@netgem.com)
  * Copyright (C) 2000 Netgem S.A.
  *
- * $Id: inftlmount.c,v 1.18 2005/11/07 11:14:20 gleixner Exp $
- *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -30,23 +28,13 @@
 #include <asm/errno.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
-#include <linux/miscdevice.h>
-#include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
-#include <linux/sched.h>
 #include <linux/init.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/nftl.h>
 #include <linux/mtd/inftl.h>
 #include <linux/mtd/compatmac.h>
-
-char inftlmountrev[]="$Revision: 1.18 $";
-
-extern int inftl_read_oob(struct mtd_info *mtd, loff_t offs, size_t len,
-			  size_t *retlen, uint8_t *buf);
-extern int inftl_write_oob(struct mtd_info *mtd, loff_t offs, size_t len,
-			   size_t *retlen, uint8_t *buf);
 
 /*
  * find_boot_record: Find the INFTL Media Header and its Spare copy which
@@ -74,7 +62,7 @@ static int find_boot_record(struct INFTLrecord *inftl)
 	 * otherwise.
 	 */
 	inftl->EraseSize = inftl->mbd.mtd->erasesize;
-        inftl->nb_blocks = inftl->mbd.mtd->size / inftl->EraseSize;
+        inftl->nb_blocks = (u32)inftl->mbd.mtd->size / inftl->EraseSize;
 
 	inftl->MediaUnit = BLOCK_NIL;
 
@@ -198,7 +186,7 @@ static int find_boot_record(struct INFTLrecord *inftl)
 				mh->BlockMultiplierBits);
 			inftl->EraseSize = inftl->mbd.mtd->erasesize <<
 				mh->BlockMultiplierBits;
-			inftl->nb_blocks = inftl->mbd.mtd->size / inftl->EraseSize;
+			inftl->nb_blocks = (u32)inftl->mbd.mtd->size / inftl->EraseSize;
 			block >>= mh->BlockMultiplierBits;
 		}
 
@@ -582,14 +570,13 @@ int INFTL_mount(struct INFTLrecord *s)
 	logical_block = block = BLOCK_NIL;
 
 	/* Temporary buffer to store ANAC numbers. */
-	ANACtable = kmalloc(s->nb_blocks * sizeof(u8), GFP_KERNEL);
+	ANACtable = kcalloc(s->nb_blocks, sizeof(u8), GFP_KERNEL);
 	if (!ANACtable) {
 		printk(KERN_WARNING "INFTL: allocation of ANACtable "
 				"failed (%zd bytes)\n",
 				s->nb_blocks * sizeof(u8));
 		return -ENOMEM;
 	}
-	memset(ANACtable, 0, s->nb_blocks);
 
 	/*
 	 * First pass is to explore each physical unit, and construct the

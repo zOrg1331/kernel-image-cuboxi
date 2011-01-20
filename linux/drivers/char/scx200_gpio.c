@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
+#include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 
@@ -44,13 +45,14 @@ struct nsc_gpio_ops scx200_gpio_ops = {
 	.gpio_change	= scx200_gpio_change,
 	.gpio_current	= scx200_gpio_current
 };
-EXPORT_SYMBOL(scx200_gpio_ops);
+EXPORT_SYMBOL_GPL(scx200_gpio_ops);
 
 static int scx200_gpio_open(struct inode *inode, struct file *file)
 {
 	unsigned m = iminor(inode);
 	file->private_data = &scx200_gpio_ops;
 
+	cycle_kernel_lock();
 	if (m >= MAX_PINS)
 		return -EINVAL;
 	return nonseekable_open(inode, file);
@@ -69,7 +71,7 @@ static const struct file_operations scx200_gpio_fileops = {
 	.release = scx200_gpio_release,
 };
 
-struct cdev scx200_gpio_cdev;  /* use 1 cdev for all pins */
+static struct cdev scx200_gpio_cdev;  /* use 1 cdev for all pins */
 
 static int __init scx200_gpio_init(void)
 {

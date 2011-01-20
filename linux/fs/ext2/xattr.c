@@ -342,12 +342,9 @@ static void ext2_xattr_update_super_block(struct super_block *sb)
 	if (EXT2_HAS_COMPAT_FEATURE(sb, EXT2_FEATURE_COMPAT_EXT_ATTR))
 		return;
 
-	lock_super(sb);
-	EXT2_SB(sb)->s_es->s_feature_compat |=
-		cpu_to_le32(EXT2_FEATURE_COMPAT_EXT_ATTR);
+	EXT2_SET_COMPAT_FEATURE(sb, EXT2_FEATURE_COMPAT_EXT_ATTR);
 	sb->s_dirt = 1;
 	mark_buffer_dirty(EXT2_SB(sb)->s_sbh);
-	unlock_super(sb);
 }
 
 /*
@@ -521,11 +518,10 @@ bad_block:		ext2_error(sb, "ext2_xattr_set",
 		}
 	} else {
 		/* Allocate a buffer where we construct the new block. */
-		header = kmalloc(sb->s_blocksize, GFP_KERNEL);
+		header = kzalloc(sb->s_blocksize, GFP_KERNEL);
 		error = -ENOMEM;
 		if (header == NULL)
 			goto cleanup;
-		memset(header, 0, sb->s_blocksize);
 		end = (char *)header + sb->s_blocksize;
 		header->h_magic = cpu_to_le32(EXT2_XATTR_MAGIC);
 		header->h_blocks = header->h_refcount = cpu_to_le32(1);
@@ -646,12 +642,11 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 				ea_bdebug(new_bh, "reusing block");
 
 				error = -EDQUOT;
-				if (DQUOT_ALLOC_BLOCK(inode, 1)) {
+				if (vfs_dq_alloc_block(inode, 1)) {
 					unlock_buffer(new_bh);
 					goto cleanup;
 				}
-				HDR(new_bh)->h_refcount = cpu_to_le32(1 +
-					le32_to_cpu(HDR(new_bh)->h_refcount));
+				le32_add_cpu(&HDR(new_bh)->h_refcount, 1);
 				ea_bdebug(new_bh, "refcount now=%d",
 					le32_to_cpu(HDR(new_bh)->h_refcount));
 			}
@@ -664,12 +659,9 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 			ext2_xattr_cache_insert(new_bh);
 		} else {
 			/* We need to allocate a new block */
-			int goal = le32_to_cpu(EXT2_SB(sb)->s_es->
-						           s_first_data_block) +
-				   EXT2_I(inode)->i_block_group *
-				   EXT2_BLOCKS_PER_GROUP(sb);
-			int block = ext2_new_block(inode, goal,
-						   NULL, NULL, &error);
+			ext2_fsblk_t goal = ext2_group_first_block_no(sb,
+						EXT2_I(inode)->i_block_group);
+			int block = ext2_new_block(inode, goal, &error);
 			if (error)
 				goto cleanup;
 			ea_idebug(inode, "creating block %d", block);
@@ -707,7 +699,7 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 		 * as if nothing happened and cleanup the unused block */
 		if (error && error != -ENOSPC) {
 			if (new_bh && new_bh != old_bh)
-				DQUOT_FREE_BLOCK(inode, 1);
+				vfs_dq_free_block(inode, 1);
 			goto cleanup;
 		}
 	} else
@@ -736,11 +728,10 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 			bforget(old_bh);
 		} else {
 			/* Decrement the refcount only. */
-			HDR(old_bh)->h_refcount = cpu_to_le32(
-				le32_to_cpu(HDR(old_bh)->h_refcount) - 1);
+			le32_add_cpu(&HDR(old_bh)->h_refcount, -1);
 			if (ce)
 				mb_cache_entry_release(ce);
-			DQUOT_FREE_BLOCK(inode, 1);
+			vfs_dq_free_block(inode, 1);
 			mark_buffer_dirty(old_bh);
 			ea_bdebug(old_bh, "refcount now=%d",
 				le32_to_cpu(HDR(old_bh)->h_refcount));
@@ -794,8 +785,7 @@ ext2_xattr_delete_inode(struct inode *inode)
 		bforget(bh);
 		unlock_buffer(bh);
 	} else {
-		HDR(bh)->h_refcount = cpu_to_le32(
-			le32_to_cpu(HDR(bh)->h_refcount) - 1);
+		le32_add_cpu(&HDR(bh)->h_refcount, -1);
 		if (ce)
 			mb_cache_entry_release(ce);
 		ea_bdebug(bh, "refcount now=%d",
@@ -804,7 +794,7 @@ ext2_xattr_delete_inode(struct inode *inode)
 		mark_buffer_dirty(bh);
 		if (IS_SYNC(inode))
 			sync_dirty_buffer(bh);
-		DQUOT_FREE_BLOCK(inode, 1);
+		vfs_dq_free_block(inode, 1);
 	}
 	EXT2_I(inode)->i_file_acl = 0;
 
@@ -840,7 +830,7 @@ ext2_xattr_cache_insert(struct buffer_head *bh)
 	struct mb_cache_entry *ce;
 	int error;
 
-	ce = mb_cache_entry_alloc(ext2_xattr_cache);
+	ce = mb_cache_entry_alloc(ext2_xattr_cache, GFP_NOFS);
 	if (!ce)
 		return -ENOMEM;
 	error = mb_cache_entry_insert(ce, bh->b_bdev, bh->b_blocknr, &hash);

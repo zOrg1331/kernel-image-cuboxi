@@ -74,7 +74,7 @@ static void ultra32_block_output(struct net_device *dev, int count,
 				 const unsigned char *buf,
 				 const int start_page);
 static int ultra32_close(struct net_device *dev);
-
+
 #define ULTRA32_CMDREG	0	/* Offset to ASIC command register. */
 #define	 ULTRA32_RESET	0x80	/* Board reset, in ULTRA32_CMDREG. */
 #define	 ULTRA32_MEMENB	0x40	/* Enable the shared memory. */
@@ -132,8 +132,6 @@ struct net_device * __init ultra32_probe(int unit)
 		netdev_boot_setup_check(dev);
 	}
 
-	SET_MODULE_OWNER(dev);
-
 	irq = dev->irq;
 
 	/* EISA spec allows for up to 16 slots, but 8 is typical. */
@@ -154,6 +152,22 @@ out:
 	free_netdev(dev);
 	return ERR_PTR(err);
 }
+
+
+static const struct net_device_ops ultra32_netdev_ops = {
+	.ndo_open 		= ultra32_open,
+	.ndo_stop 		= ultra32_close,
+	.ndo_start_xmit		= ei_start_xmit,
+	.ndo_tx_timeout		= ei_tx_timeout,
+	.ndo_get_stats		= ei_get_stats,
+	.ndo_set_multicast_list = ei_set_multicast_list,
+	.ndo_validate_addr	= eth_validate_addr,
+	.ndo_set_mac_address 	= eth_mac_addr,
+	.ndo_change_mtu		= eth_change_mtu,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller	= ei_poll,
+#endif
+};
 
 static int __init ultra32_probe1(struct net_device *dev, int ioaddr)
 {
@@ -205,10 +219,11 @@ static int __init ultra32_probe1(struct net_device *dev, int ioaddr)
 
 	model_name = "SMC Ultra32";
 
-	printk("%s: %s at 0x%X,", dev->name, model_name, ioaddr);
-
 	for (i = 0; i < 6; i++)
-		printk(" %2.2X", dev->dev_addr[i] = inb(ioaddr + 8 + i));
+		dev->dev_addr[i] = inb(ioaddr + 8 + i);
+
+	printk("%s: %s at 0x%X, %pM",
+	       dev->name, model_name, ioaddr, dev->dev_addr);
 
 	/* Switch from the station address to the alternate register set and
 	   read the useful registers there. */
@@ -274,11 +289,8 @@ static int __init ultra32_probe1(struct net_device *dev, int ioaddr)
 	ei_status.block_output = &ultra32_block_output;
 	ei_status.get_8390_hdr = &ultra32_get_8390_hdr;
 	ei_status.reset_8390 = &ultra32_reset_8390;
-	dev->open = &ultra32_open;
-	dev->stop = &ultra32_close;
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	dev->poll_controller = ei_poll;
-#endif
+
+	dev->netdev_ops = &ultra32_netdev_ops;
 	NS8390_init(dev, 0);
 
 	return 0;
@@ -314,7 +326,7 @@ static int ultra32_close(struct net_device *dev)
 	int ioaddr = dev->base_addr - ULTRA32_NIC_OFFSET; /* CMDREG */
 
 	netif_stop_queue(dev);
-	
+
 	if (ei_debug > 1)
 		printk("%s: Shutting down ethercard.\n", dev->name);
 
@@ -395,8 +407,7 @@ static void ultra32_block_input(struct net_device *dev,
 			memcpy_fromio(skb->data + semi_count, ei_status.mem + TX_PAGES * 256, count);
 		}
 	} else {
-		/* Packet is in one chunk -- we can copy + cksum. */
-		eth_io_copy_and_sum(skb, xfer_start, count, 0);
+		memcpy_fromio(skb->data, xfer_start, count);
 	}
 }
 
@@ -413,7 +424,7 @@ static void ultra32_block_output(struct net_device *dev,
 
 	memcpy_toio(xfer_start, buf, count);
 }
-
+
 #ifdef MODULE
 #define MAX_ULTRA32_CARDS   4	/* Max number of Ultra cards per module */
 static struct net_device *dev_ultra[MAX_ULTRA32_CARDS];
@@ -437,7 +448,7 @@ int __init init_module(void)
 	return -ENXIO;
 }
 
-void cleanup_module(void)
+void __exit cleanup_module(void)
 {
 	int this_dev;
 

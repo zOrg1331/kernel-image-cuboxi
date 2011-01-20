@@ -7,10 +7,10 @@
  * (from the mac68k project) introduced dhd's support for 16-bit cards.
  *
  * (C) 1996,1998 by Thomas Bogendoerfer (tsbogend@alpha.franken.de)
- * 
+ *
  * This driver is based on work from Andreas Busse, but most of
  * the code is rewritten.
- * 
+ *
  * (C) 1995 by Andreas Busse (andy@waldorf-gmbh.de)
  *
  *    Core code included by system sonic drivers
@@ -46,32 +46,9 @@ static int sonic_open(struct net_device *dev)
 {
 	struct sonic_local *lp = netdev_priv(dev);
 	int i;
-	
+
 	if (sonic_debug > 2)
 		printk("sonic_open: initializing sonic driver.\n");
-
-	/*
-	 * We don't need to deal with auto-irq stuff since we
-	 * hardwire the sonic interrupt.
-	 */
-/*
- * XXX Horrible work around:  We install sonic_interrupt as fast interrupt.
- * This means that during execution of the handler interrupt are disabled
- * covering another bug otherwise corrupting data.  This doesn't mean
- * this glue works ok under all situations.
- *
- * Note (dhd): this also appears to prevent lockups on the Macintrash
- * when more than one Ethernet card is installed (knock on wood)
- *
- * Note (fthain): whether the above is still true is anyones guess. Certainly
- * the buffer handling algorithms will not tolerate re-entrance without some
- * mutual exclusion added. Anyway, the memcpy has now been eliminated from the
- * rx code to make this a faster "fast interrupt".
- */
-	if (request_irq(dev->irq, &sonic_interrupt, SONIC_IRQ_FLAG, "sonic", dev)) {
-		printk(KERN_ERR "\n%s: unable to get IRQ %d .\n", dev->name, dev->irq);
-		return -EAGAIN;
-	}
 
 	for (i = 0; i < SONIC_NUM_RRS; i++) {
 		struct sk_buff *skb = dev_alloc_skb(SONIC_RBSIZE + 2);
@@ -85,7 +62,6 @@ static int sonic_open(struct net_device *dev)
 			       dev->name);
 			return -ENOMEM;
 		}
-		skb->dev = dev;
 		/* align IP header unless DMA requires otherwise */
 		if (SONIC_BUS_SCALE(lp->dma_bitmode) == 2)
 			skb_reserve(skb, 2);
@@ -170,8 +146,6 @@ static int sonic_close(struct net_device *dev)
 		}
 	}
 
-	free_irq(dev->irq, dev);	/* release the IRQ */
-
 	return 0;
 }
 
@@ -179,8 +153,13 @@ static void sonic_tx_timeout(struct net_device *dev)
 {
 	struct sonic_local *lp = netdev_priv(dev);
 	int i;
-	/* Stop the interrupts for this */
+	/*
+	 * put the Sonic into software-reset mode and
+	 * disable all interrupts before releasing DMA buffers
+	 */
 	SONIC_WRITE(SONIC_IMR, 0);
+	SONIC_WRITE(SONIC_ISR, 0x7fff);
+	SONIC_WRITE(SONIC_CMD, SONIC_CR_RST);
 	/* We could resend the original skbs. Easier to re-initialise. */
 	for (i = 0; i < SONIC_NUM_TDS; i++) {
 		if(lp->tx_laddr[i]) {
@@ -232,7 +211,7 @@ static int sonic_send_packet(struct sk_buff *skb, struct net_device *dev)
 	length = skb->len;
 	if (length < ETH_ZLEN) {
 		if (skb_padto(skb, ETH_ZLEN))
-			return 0;
+			return NETDEV_TX_OK;
 		length = ETH_ZLEN;
 	}
 
@@ -244,9 +223,9 @@ static int sonic_send_packet(struct sk_buff *skb, struct net_device *dev)
 	if (!laddr) {
 		printk(KERN_ERR "%s: failed to map tx DMA buffer.\n", dev->name);
 		dev_kfree_skb(skb);
-		return 1;
+		return NETDEV_TX_BUSY;
 	}
-   
+
 	sonic_tda_put(dev, entry, SONIC_TD_STATUS, 0);       /* clear status */
 	sonic_tda_put(dev, entry, SONIC_TD_FRAG_COUNT, 1);   /* single fragment */
 	sonic_tda_put(dev, entry, SONIC_TD_PKTSIZE, length); /* length of packet */
@@ -286,23 +265,18 @@ static int sonic_send_packet(struct sk_buff *skb, struct net_device *dev)
 
 	dev->trans_start = jiffies;
 
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /*
  * The typical workload of the driver:
  * Handle the network interface interrupts.
  */
-static irqreturn_t sonic_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t sonic_interrupt(int irq, void *dev_id)
 {
-	struct net_device *dev = (struct net_device *) dev_id;
+	struct net_device *dev = dev_id;
 	struct sonic_local *lp = netdev_priv(dev);
 	int status;
-
-	if (dev == NULL) {
-		printk(KERN_ERR "sonic_interrupt: irq %d for unknown device.\n", irq);
-		return IRQ_NONE;
-	}
 
 	if (!(status = SONIC_READ(SONIC_ISR) & SONIC_IMR_DEFAULT))
 		return IRQ_NONE;
@@ -456,10 +430,9 @@ static void sonic_rx(struct net_device *dev)
 				lp->stats.rx_dropped++;
 				break;
 			}
-			new_skb->dev = dev;
 			/* provide 16 byte IP header alignment unless DMA requires otherwise */
 			if(SONIC_BUS_SCALE(lp->dma_bitmode) == 2)
-				skb_reserve(new_skb, 2); 
+				skb_reserve(new_skb, 2);
 
 			new_laddr = dma_map_single(lp->device, skb_put(new_skb, SONIC_RBSIZE),
 		                               SONIC_RBSIZE, DMA_FROM_DEVICE);
@@ -477,7 +450,6 @@ static void sonic_rx(struct net_device *dev)
 			skb_trim(used_skb, pkt_len);
 			used_skb->protocol = eth_type_trans(used_skb, dev);
 			netif_rx(used_skb);
-			dev->last_rx = jiffies;
 			lp->stats.rx_packets++;
 			lp->stats.rx_bytes += pkt_len;
 
@@ -641,7 +613,7 @@ static int sonic_init(struct net_device *dev)
 					SONIC_BUS_SCALE(lp->dma_bitmode)) & 0xffff;
 	lp->cur_rwp = (lp->rra_laddr + (SONIC_NUM_RRS - 1) * SIZEOF_SONIC_RR *
 					SONIC_BUS_SCALE(lp->dma_bitmode)) & 0xffff;
-  
+
 	SONIC_WRITE(SONIC_RSA, lp->rra_laddr & 0xffff);
 	SONIC_WRITE(SONIC_REA, lp->rra_end);
 	SONIC_WRITE(SONIC_RRP, lp->rra_laddr & 0xffff);
@@ -652,7 +624,7 @@ static int sonic_init(struct net_device *dev)
 	/* load the resource pointers */
 	if (sonic_debug > 3)
 		printk("sonic_init: issuing RRRA command\n");
-  
+
 	SONIC_WRITE(SONIC_CMD, SONIC_CR_RRRA);
 	i = 0;
 	while (i++ < 100) {
@@ -662,14 +634,14 @@ static int sonic_init(struct net_device *dev)
 
 	if (sonic_debug > 2)
 		printk("sonic_init: status=%x i=%d\n", SONIC_READ(SONIC_CMD), i);
-    
+
 	/*
 	 * Initialize the receive descriptors so that they
 	 * become a circular linked list, ie. let the last
 	 * descriptor point to the first again.
 	 */
 	if (sonic_debug > 2)
-		printk("sonic_init: initialize receive descriptors\n");      
+		printk("sonic_init: initialize receive descriptors\n");
 	for (i=0; i<SONIC_NUM_RDS; i++) {
 		sonic_rda_put(dev, i, SONIC_RD_STATUS, 0);
 		sonic_rda_put(dev, i, SONIC_RD_PKTLEN, 0);
@@ -689,7 +661,7 @@ static int sonic_init(struct net_device *dev)
 	SONIC_WRITE(SONIC_URDA, lp->rda_laddr >> 16);
 	SONIC_WRITE(SONIC_CRDA, lp->rda_laddr & 0xffff);
 
-	/* 
+	/*
 	 * initialize transmit descriptors
 	 */
 	if (sonic_debug > 2)
@@ -712,7 +684,7 @@ static int sonic_init(struct net_device *dev)
 	SONIC_WRITE(SONIC_CTDA, lp->tda_laddr & 0xffff);
 	lp->cur_tx = lp->next_tx = 0;
 	lp->eol_tx = SONIC_NUM_TDS - 1;
-    
+
 	/*
 	 * put our own address to CAM desc[0]
 	 */

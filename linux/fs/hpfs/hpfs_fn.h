@@ -12,9 +12,7 @@
 #include <linux/mutex.h>
 #include <linux/pagemap.h>
 #include <linux/buffer_head.h>
-#include <linux/hpfs_fs.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 
 #include "hpfs.h"
 
@@ -267,7 +265,7 @@ void hpfs_set_ea(struct inode *, struct fnode *, char *, char *, int);
 
 int hpfs_file_fsync(struct file *, struct dentry *, int);
 extern const struct file_operations hpfs_file_ops;
-extern struct inode_operations hpfs_file_iops;
+extern const struct inode_operations hpfs_file_iops;
 extern const struct address_space_operations hpfs_aops;
 
 /* inode.c */
@@ -276,7 +274,7 @@ void hpfs_init_inode(struct inode *);
 void hpfs_read_inode(struct inode *);
 void hpfs_write_inode(struct inode *);
 void hpfs_write_inode_nolock(struct inode *);
-int hpfs_notify_change(struct dentry *, struct iattr *);
+int hpfs_setattr(struct dentry *, struct iattr *);
 void hpfs_write_if_changed(struct inode *);
 void hpfs_delete_inode(struct inode *);
 
@@ -303,7 +301,7 @@ void hpfs_decide_conv(struct inode *, unsigned char *, unsigned);
 
 /* namei.c */
 
-extern struct inode_operations hpfs_dir_iops;
+extern const struct inode_operations hpfs_dir_iops;
 extern const struct address_space_operations hpfs_symlink_aops;
 
 static inline struct hpfs_inode_info *hpfs_i(struct inode *inode)
@@ -318,7 +316,8 @@ static inline struct hpfs_sb_info *hpfs_sb(struct super_block *sb)
 
 /* super.c */
 
-void hpfs_error(struct super_block *, char *, ...);
+void hpfs_error(struct super_block *, const char *, ...)
+	__attribute__((format (printf, 2, 3)));
 int hpfs_stop_cycles(struct super_block *, int, int *, int *, char *);
 unsigned hpfs_count_one_bitmap(struct super_block *, secno);
 

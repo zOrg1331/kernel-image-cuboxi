@@ -38,6 +38,7 @@
 #include "xfs_ialloc.h"
 #include "xfs_alloc.h"
 #include "xfs_error.h"
+#include "xfs_trace.h"
 
 
 #define XFS_ABSDIFF(a,b)	(((a) <= (b)) ? ((b) - (a)) : ((a) - (b)))
@@ -45,35 +46,11 @@
 #define	XFSA_FIXUP_BNO_OK	1
 #define	XFSA_FIXUP_CNT_OK	2
 
-STATIC int
+STATIC void
 xfs_alloc_search_busy(xfs_trans_t *tp,
 		    xfs_agnumber_t agno,
 		    xfs_agblock_t bno,
 		    xfs_extlen_t len);
-
-#if defined(XFS_ALLOC_TRACE)
-ktrace_t *xfs_alloc_trace_buf;
-
-#define	TRACE_ALLOC(s,a)	\
-	xfs_alloc_trace_alloc(fname, s, a, __LINE__)
-#define	TRACE_FREE(s,a,b,x,f)	\
-	xfs_alloc_trace_free(fname, s, mp, a, b, x, f, __LINE__)
-#define	TRACE_MODAGF(s,a,f)	\
-	xfs_alloc_trace_modagf(fname, s, mp, a, f, __LINE__)
-#define	TRACE_BUSY(fname,s,ag,agb,l,sl,tp)	\
-	xfs_alloc_trace_busy(fname, s, mp, ag, agb, l, sl, tp, XFS_ALLOC_KTRACE_BUSY, __LINE__)
-#define	TRACE_UNBUSY(fname,s,ag,sl,tp)	\
-	xfs_alloc_trace_busy(fname, s, mp, ag, -1, -1, sl, tp, XFS_ALLOC_KTRACE_UNBUSY, __LINE__)
-#define	TRACE_BUSYSEARCH(fname,s,ag,agb,l,sl,tp)	\
-	xfs_alloc_trace_busy(fname, s, mp, ag, agb, l, sl, tp, XFS_ALLOC_KTRACE_BUSYSEARCH, __LINE__)
-#else
-#define	TRACE_ALLOC(s,a)
-#define	TRACE_FREE(s,a,b,x,f)
-#define	TRACE_MODAGF(s,a,f)
-#define	TRACE_BUSY(s,a,ag,agb,l,sl,tp)
-#define	TRACE_UNBUSY(fname,s,ag,sl,tp)
-#define	TRACE_BUSYSEARCH(fname,s,ag,agb,l,sl,tp)
-#endif	/* XFS_ALLOC_TRACE */
 
 /*
  * Prototypes for per-ag allocation routines
@@ -90,10 +67,96 @@ STATIC int xfs_alloc_ag_vextent_small(xfs_alloc_arg_t *,
  */
 
 /*
+ * Lookup the record equal to [bno, len] in the btree given by cur.
+ */
+STATIC int				/* error */
+xfs_alloc_lookup_eq(
+	struct xfs_btree_cur	*cur,	/* btree cursor */
+	xfs_agblock_t		bno,	/* starting block of extent */
+	xfs_extlen_t		len,	/* length of extent */
+	int			*stat)	/* success/failure */
+{
+	cur->bc_rec.a.ar_startblock = bno;
+	cur->bc_rec.a.ar_blockcount = len;
+	return xfs_btree_lookup(cur, XFS_LOOKUP_EQ, stat);
+}
+
+/*
+ * Lookup the first record greater than or equal to [bno, len]
+ * in the btree given by cur.
+ */
+STATIC int				/* error */
+xfs_alloc_lookup_ge(
+	struct xfs_btree_cur	*cur,	/* btree cursor */
+	xfs_agblock_t		bno,	/* starting block of extent */
+	xfs_extlen_t		len,	/* length of extent */
+	int			*stat)	/* success/failure */
+{
+	cur->bc_rec.a.ar_startblock = bno;
+	cur->bc_rec.a.ar_blockcount = len;
+	return xfs_btree_lookup(cur, XFS_LOOKUP_GE, stat);
+}
+
+/*
+ * Lookup the first record less than or equal to [bno, len]
+ * in the btree given by cur.
+ */
+STATIC int				/* error */
+xfs_alloc_lookup_le(
+	struct xfs_btree_cur	*cur,	/* btree cursor */
+	xfs_agblock_t		bno,	/* starting block of extent */
+	xfs_extlen_t		len,	/* length of extent */
+	int			*stat)	/* success/failure */
+{
+	cur->bc_rec.a.ar_startblock = bno;
+	cur->bc_rec.a.ar_blockcount = len;
+	return xfs_btree_lookup(cur, XFS_LOOKUP_LE, stat);
+}
+
+/*
+ * Update the record referred to by cur to the value given
+ * by [bno, len].
+ * This either works (return 0) or gets an EFSCORRUPTED error.
+ */
+STATIC int				/* error */
+xfs_alloc_update(
+	struct xfs_btree_cur	*cur,	/* btree cursor */
+	xfs_agblock_t		bno,	/* starting block of extent */
+	xfs_extlen_t		len)	/* length of extent */
+{
+	union xfs_btree_rec	rec;
+
+	rec.alloc.ar_startblock = cpu_to_be32(bno);
+	rec.alloc.ar_blockcount = cpu_to_be32(len);
+	return xfs_btree_update(cur, &rec);
+}
+
+/*
+ * Get the data from the pointed-to record.
+ */
+STATIC int				/* error */
+xfs_alloc_get_rec(
+	struct xfs_btree_cur	*cur,	/* btree cursor */
+	xfs_agblock_t		*bno,	/* output: starting block of extent */
+	xfs_extlen_t		*len,	/* output: length of extent */
+	int			*stat)	/* output: success/failure */
+{
+	union xfs_btree_rec	*rec;
+	int			error;
+
+	error = xfs_btree_get_rec(cur, &rec, stat);
+	if (!error && *stat == 1) {
+		*bno = be32_to_cpu(rec->alloc.ar_startblock);
+		*len = be32_to_cpu(rec->alloc.ar_blockcount);
+	}
+	return error;
+}
+
+/*
  * Compute aligned version of the found extent.
  * Takes alignment and min length into account.
  */
-STATIC int				/* success (>= minlen) */
+STATIC void
 xfs_alloc_compute_aligned(
 	xfs_agblock_t	foundbno,	/* starting block in found extent */
 	xfs_extlen_t	foundlen,	/* length in found extent */
@@ -116,7 +179,6 @@ xfs_alloc_compute_aligned(
 	}
 	*resbno = bno;
 	*reslen = len;
-	return len >= minlen;
 }
 
 /*
@@ -295,21 +357,20 @@ xfs_alloc_fixup_trees(
 			return error;
 		XFS_WANT_CORRUPTED_RETURN(i == 1);
 	}
-#ifdef DEBUG
-	{
-		xfs_alloc_block_t	*bnoblock;
-		xfs_alloc_block_t	*cntblock;
 
-		if (bno_cur->bc_nlevels == 1 &&
-		    cnt_cur->bc_nlevels == 1) {
-			bnoblock = XFS_BUF_TO_ALLOC_BLOCK(bno_cur->bc_bufs[0]);
-			cntblock = XFS_BUF_TO_ALLOC_BLOCK(cnt_cur->bc_bufs[0]);
-			XFS_WANT_CORRUPTED_RETURN(
-				be16_to_cpu(bnoblock->bb_numrecs) ==
-				be16_to_cpu(cntblock->bb_numrecs));
-		}
+#ifdef DEBUG
+	if (bno_cur->bc_nlevels == 1 && cnt_cur->bc_nlevels == 1) {
+		struct xfs_btree_block	*bnoblock;
+		struct xfs_btree_block	*cntblock;
+
+		bnoblock = XFS_BUF_TO_BLOCK(bno_cur->bc_bufs[0]);
+		cntblock = XFS_BUF_TO_BLOCK(cnt_cur->bc_bufs[0]);
+
+		XFS_WANT_CORRUPTED_RETURN(
+			bnoblock->bb_numrecs == cntblock->bb_numrecs);
 	}
 #endif
+
 	/*
 	 * Deal with all four cases: the allocated record is contained
 	 * within the freespace record, so we can have new freespace
@@ -334,7 +395,7 @@ xfs_alloc_fixup_trees(
 	/*
 	 * Delete the entry from the by-size btree.
 	 */
-	if ((error = xfs_alloc_delete(cnt_cur, &i)))
+	if ((error = xfs_btree_delete(cnt_cur, &i)))
 		return error;
 	XFS_WANT_CORRUPTED_RETURN(i == 1);
 	/*
@@ -344,7 +405,7 @@ xfs_alloc_fixup_trees(
 		if ((error = xfs_alloc_lookup_eq(cnt_cur, nfbno1, nflen1, &i)))
 			return error;
 		XFS_WANT_CORRUPTED_RETURN(i == 0);
-		if ((error = xfs_alloc_insert(cnt_cur, &i)))
+		if ((error = xfs_btree_insert(cnt_cur, &i)))
 			return error;
 		XFS_WANT_CORRUPTED_RETURN(i == 1);
 	}
@@ -352,7 +413,7 @@ xfs_alloc_fixup_trees(
 		if ((error = xfs_alloc_lookup_eq(cnt_cur, nfbno2, nflen2, &i)))
 			return error;
 		XFS_WANT_CORRUPTED_RETURN(i == 0);
-		if ((error = xfs_alloc_insert(cnt_cur, &i)))
+		if ((error = xfs_btree_insert(cnt_cur, &i)))
 			return error;
 		XFS_WANT_CORRUPTED_RETURN(i == 1);
 	}
@@ -363,7 +424,7 @@ xfs_alloc_fixup_trees(
 		/*
 		 * No remaining freespace, just delete the by-block tree entry.
 		 */
-		if ((error = xfs_alloc_delete(bno_cur, &i)))
+		if ((error = xfs_btree_delete(bno_cur, &i)))
 			return error;
 		XFS_WANT_CORRUPTED_RETURN(i == 1);
 	} else {
@@ -380,7 +441,7 @@ xfs_alloc_fixup_trees(
 		if ((error = xfs_alloc_lookup_eq(bno_cur, nfbno2, nflen2, &i)))
 			return error;
 		XFS_WANT_CORRUPTED_RETURN(i == 0);
-		if ((error = xfs_alloc_insert(bno_cur, &i)))
+		if ((error = xfs_btree_insert(bno_cur, &i)))
 			return error;
 		XFS_WANT_CORRUPTED_RETURN(i == 1);
 	}
@@ -414,124 +475,6 @@ xfs_alloc_read_agfl(
 	return 0;
 }
 
-#if defined(XFS_ALLOC_TRACE)
-/*
- * Add an allocation trace entry for an alloc call.
- */
-STATIC void
-xfs_alloc_trace_alloc(
-	char		*name,		/* function tag string */
-	char		*str,		/* additional string */
-	xfs_alloc_arg_t	*args,		/* allocation argument structure */
-	int		line)		/* source line number */
-{
-	ktrace_enter(xfs_alloc_trace_buf,
-		(void *)(__psint_t)(XFS_ALLOC_KTRACE_ALLOC | (line << 16)),
-		(void *)name,
-		(void *)str,
-		(void *)args->mp,
-		(void *)(__psunsigned_t)args->agno,
-		(void *)(__psunsigned_t)args->agbno,
-		(void *)(__psunsigned_t)args->minlen,
-		(void *)(__psunsigned_t)args->maxlen,
-		(void *)(__psunsigned_t)args->mod,
-		(void *)(__psunsigned_t)args->prod,
-		(void *)(__psunsigned_t)args->minleft,
-		(void *)(__psunsigned_t)args->total,
-		(void *)(__psunsigned_t)args->alignment,
-		(void *)(__psunsigned_t)args->len,
-		(void *)((((__psint_t)args->type) << 16) |
-			 (__psint_t)args->otype),
-		(void *)(__psint_t)((args->wasdel << 3) |
-				    (args->wasfromfl << 2) |
-				    (args->isfl << 1) |
-				    (args->userdata << 0)));
-}
-
-/*
- * Add an allocation trace entry for a free call.
- */
-STATIC void
-xfs_alloc_trace_free(
-	char		*name,		/* function tag string */
-	char		*str,		/* additional string */
-	xfs_mount_t	*mp,		/* file system mount point */
-	xfs_agnumber_t	agno,		/* allocation group number */
-	xfs_agblock_t	agbno,		/* a.g. relative block number */
-	xfs_extlen_t	len,		/* length of extent */
-	int		isfl,		/* set if is freelist allocation/free */
-	int		line)		/* source line number */
-{
-	ktrace_enter(xfs_alloc_trace_buf,
-		(void *)(__psint_t)(XFS_ALLOC_KTRACE_FREE | (line << 16)),
-		(void *)name,
-		(void *)str,
-		(void *)mp,
-		(void *)(__psunsigned_t)agno,
-		(void *)(__psunsigned_t)agbno,
-		(void *)(__psunsigned_t)len,
-		(void *)(__psint_t)isfl,
-		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-}
-
-/*
- * Add an allocation trace entry for modifying an agf.
- */
-STATIC void
-xfs_alloc_trace_modagf(
-	char		*name,		/* function tag string */
-	char		*str,		/* additional string */
-	xfs_mount_t	*mp,		/* file system mount point */
-	xfs_agf_t	*agf,		/* new agf value */
-	int		flags,		/* logging flags for agf */
-	int		line)		/* source line number */
-{
-	ktrace_enter(xfs_alloc_trace_buf,
-		(void *)(__psint_t)(XFS_ALLOC_KTRACE_MODAGF | (line << 16)),
-		(void *)name,
-		(void *)str,
-		(void *)mp,
-		(void *)(__psint_t)flags,
-		(void *)(__psunsigned_t)be32_to_cpu(agf->agf_seqno),
-		(void *)(__psunsigned_t)be32_to_cpu(agf->agf_length),
-		(void *)(__psunsigned_t)be32_to_cpu(agf->agf_roots[XFS_BTNUM_BNO]),
-		(void *)(__psunsigned_t)be32_to_cpu(agf->agf_roots[XFS_BTNUM_CNT]),
-		(void *)(__psunsigned_t)be32_to_cpu(agf->agf_levels[XFS_BTNUM_BNO]),
-		(void *)(__psunsigned_t)be32_to_cpu(agf->agf_levels[XFS_BTNUM_CNT]),
-		(void *)(__psunsigned_t)be32_to_cpu(agf->agf_flfirst),
-		(void *)(__psunsigned_t)be32_to_cpu(agf->agf_fllast),
-		(void *)(__psunsigned_t)be32_to_cpu(agf->agf_flcount),
-		(void *)(__psunsigned_t)be32_to_cpu(agf->agf_freeblks),
-		(void *)(__psunsigned_t)be32_to_cpu(agf->agf_longest));
-}
-
-STATIC void
-xfs_alloc_trace_busy(
-	char		*name,		/* function tag string */
-	char		*str,		/* additional string */
-	xfs_mount_t	*mp,		/* file system mount point */
-	xfs_agnumber_t	agno,		/* allocation group number */
-	xfs_agblock_t	agbno,		/* a.g. relative block number */
-	xfs_extlen_t	len,		/* length of extent */
-	int		slot,		/* perag Busy slot */
-	xfs_trans_t	*tp,
-	int		trtype,		/* type: add, delete, search */
-	int		line)		/* source line number */
-{
-	ktrace_enter(xfs_alloc_trace_buf,
-		(void *)(__psint_t)(trtype | (line << 16)),
-		(void *)name,
-		(void *)str,
-		(void *)mp,
-		(void *)(__psunsigned_t)agno,
-		(void *)(__psunsigned_t)agbno,
-		(void *)(__psunsigned_t)len,
-		(void *)(__psint_t)slot,
-		(void *)tp,
-		NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-}
-#endif	/* XFS_ALLOC_TRACE */
-
 /*
  * Allocation group level functions.
  */
@@ -549,9 +492,6 @@ xfs_alloc_ag_vextent(
 	xfs_alloc_arg_t	*args)	/* argument structure for allocation */
 {
 	int		error=0;
-#ifdef XFS_ALLOC_TRACE
-	static char	fname[] = "xfs_alloc_ag_vextent";
-#endif
 
 	ASSERT(args->minlen > 0);
 	ASSERT(args->maxlen > 0);
@@ -584,9 +524,6 @@ xfs_alloc_ag_vextent(
 	 */
 	if (args->agbno != NULLAGBLOCK) {
 		xfs_agf_t	*agf;	/* allocation group freelist header */
-#ifdef XFS_ALLOC_TRACE
-		xfs_mount_t	*mp = args->mp;
-#endif
 		long		slen = (long)args->len;
 
 		ASSERT(args->len >= args->minlen && args->len <= args->maxlen);
@@ -595,13 +532,12 @@ xfs_alloc_ag_vextent(
 		if (!(args->wasfromfl)) {
 
 			agf = XFS_BUF_TO_AGF(args->agbp);
-			be32_add(&agf->agf_freeblks, -(args->len));
+			be32_add_cpu(&agf->agf_freeblks, -(args->len));
 			xfs_trans_agblocks_delta(args->tp,
 						 -((long)(args->len)));
 			args->pag->pagf_freeblks -= args->len;
 			ASSERT(be32_to_cpu(agf->agf_freeblks) <=
 				be32_to_cpu(agf->agf_length));
-			TRACE_MODAGF(NULL, agf, XFS_AGF_FREEBLKS);
 			xfs_alloc_log_agf(args->tp, args->agbp,
 						XFS_AGF_FREEBLKS);
 			/* search the busylist for these blocks */
@@ -635,9 +571,6 @@ xfs_alloc_ag_vextent_exact(
 	xfs_agblock_t	fbno;	/* start block of found extent */
 	xfs_agblock_t	fend;	/* end block of found extent */
 	xfs_extlen_t	flen;	/* length of found extent */
-#ifdef XFS_ALLOC_TRACE
-	static char	fname[] = "xfs_alloc_ag_vextent_exact";
-#endif
 	int		i;	/* success/failure of operation */
 	xfs_agblock_t	maxend;	/* end of maximal extent */
 	xfs_agblock_t	minend;	/* end of minimal extent */
@@ -647,8 +580,8 @@ xfs_alloc_ag_vextent_exact(
 	/*
 	 * Allocate/initialize a cursor for the by-number freespace btree.
 	 */
-	bno_cur = xfs_btree_init_cursor(args->mp, args->tp, args->agbp,
-		args->agno, XFS_BTNUM_BNO, NULL, 0);
+	bno_cur = xfs_allocbt_init_cursor(args->mp, args->tp, args->agbp,
+		args->agno, XFS_BTNUM_BNO);
 	/*
 	 * Lookup bno and minlen in the btree (minlen is irrelevant, really).
 	 * Look for the closest free block <= bno, it must contain bno
@@ -703,8 +636,8 @@ xfs_alloc_ag_vextent_exact(
 	 * We are allocating agbno for rlen [agbno .. end]
 	 * Allocate/initialize a cursor for the by-size btree.
 	 */
-	cnt_cur = xfs_btree_init_cursor(args->mp, args->tp, args->agbp,
-		args->agno, XFS_BTNUM_CNT, NULL, 0);
+	cnt_cur = xfs_allocbt_init_cursor(args->mp, args->tp, args->agbp,
+		args->agno, XFS_BTNUM_CNT);
 	ASSERT(args->agbno + args->len <=
 		be32_to_cpu(XFS_BUF_TO_AGF(args->agbp)->agf_length));
 	if ((error = xfs_alloc_fixup_trees(cnt_cur, bno_cur, fbno, flen,
@@ -714,13 +647,14 @@ xfs_alloc_ag_vextent_exact(
 	}
 	xfs_btree_del_cursor(bno_cur, XFS_BTREE_NOERROR);
 	xfs_btree_del_cursor(cnt_cur, XFS_BTREE_NOERROR);
-	TRACE_ALLOC("normal", args);
+
+	trace_xfs_alloc_exact_done(args);
 	args->wasfromfl = 0;
 	return 0;
 
 error0:
 	xfs_btree_del_cursor(bno_cur, XFS_BTREE_ERROR);
-	TRACE_ALLOC("error", args);
+	trace_xfs_alloc_exact_error(args);
 	return error;
 }
 
@@ -737,9 +671,6 @@ xfs_alloc_ag_vextent_near(
 	xfs_btree_cur_t	*bno_cur_gt;	/* cursor for bno btree, right side */
 	xfs_btree_cur_t	*bno_cur_lt;	/* cursor for bno btree, left side */
 	xfs_btree_cur_t	*cnt_cur;	/* cursor for count btree */
-#ifdef XFS_ALLOC_TRACE
-	static char	fname[] = "xfs_alloc_ag_vextent_near";
-#endif
 	xfs_agblock_t	gtbno;		/* start bno of right side entry */
 	xfs_agblock_t	gtbnoa;		/* aligned ... */
 	xfs_extlen_t	gtdiff;		/* difference to right side entry */
@@ -764,13 +695,13 @@ xfs_alloc_ag_vextent_near(
 	 */
 	int		dofirst;	/* set to do first algorithm */
 
-	dofirst = random() & 1;
+	dofirst = random32() & 1;
 #endif
 	/*
 	 * Get a cursor for the by-size btree.
 	 */
-	cnt_cur = xfs_btree_init_cursor(args->mp, args->tp, args->agbp,
-		args->agno, XFS_BTNUM_CNT, NULL, 0);
+	cnt_cur = xfs_allocbt_init_cursor(args->mp, args->tp, args->agbp,
+		args->agno, XFS_BTNUM_CNT);
 	ltlen = 0;
 	bno_cur_lt = bno_cur_gt = NULL;
 	/*
@@ -828,7 +759,7 @@ xfs_alloc_ag_vextent_near(
 				XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
 				if (ltlen >= args->minlen)
 					break;
-				if ((error = xfs_alloc_increment(cnt_cur, 0, &i)))
+				if ((error = xfs_btree_increment(cnt_cur, 0, &i)))
 					goto error0;
 			} while (i);
 			ASSERT(ltlen >= args->minlen);
@@ -838,7 +769,7 @@ xfs_alloc_ag_vextent_near(
 		i = cnt_cur->bc_ptrs[0];
 		for (j = 1, blen = 0, bdiff = 0;
 		     !error && j && (blen < args->maxlen || bdiff > 0);
-		     error = xfs_alloc_increment(cnt_cur, 0, &j)) {
+		     error = xfs_btree_increment(cnt_cur, 0, &j)) {
 			/*
 			 * For each entry, decide if it's better than
 			 * the previous best entry.
@@ -846,9 +777,9 @@ xfs_alloc_ag_vextent_near(
 			if ((error = xfs_alloc_get_rec(cnt_cur, &ltbno, &ltlen, &i)))
 				goto error0;
 			XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
-			if (!xfs_alloc_compute_aligned(ltbno, ltlen,
-					args->alignment, args->minlen,
-					&ltbnoa, &ltlena))
+			xfs_alloc_compute_aligned(ltbno, ltlen, args->alignment,
+					args->minlen, &ltbnoa, &ltlena);
+			if (ltlena < args->minlen)
 				continue;
 			args->len = XFS_EXTLEN_MIN(ltlena, args->maxlen);
 			xfs_alloc_fix_len(args);
@@ -883,7 +814,7 @@ xfs_alloc_ag_vextent_near(
 		args->len = blen;
 		if (!xfs_alloc_fix_minleft(args)) {
 			xfs_btree_del_cursor(cnt_cur, XFS_BTREE_NOERROR);
-			TRACE_ALLOC("nominleft", args);
+			trace_xfs_alloc_near_nominleft(args);
 			return 0;
 		}
 		blen = args->len;
@@ -896,8 +827,8 @@ xfs_alloc_ag_vextent_near(
 		/*
 		 * Set up a cursor for the by-bno tree.
 		 */
-		bno_cur_lt = xfs_btree_init_cursor(args->mp, args->tp,
-			args->agbp, args->agno, XFS_BTNUM_BNO, NULL, 0);
+		bno_cur_lt = xfs_allocbt_init_cursor(args->mp, args->tp,
+			args->agbp, args->agno, XFS_BTNUM_BNO);
 		/*
 		 * Fix up the btree entries.
 		 */
@@ -906,7 +837,8 @@ xfs_alloc_ag_vextent_near(
 			goto error0;
 		xfs_btree_del_cursor(cnt_cur, XFS_BTREE_NOERROR);
 		xfs_btree_del_cursor(bno_cur_lt, XFS_BTREE_NOERROR);
-		TRACE_ALLOC("first", args);
+
+		trace_xfs_alloc_near_first(args);
 		return 0;
 	}
 	/*
@@ -924,8 +856,8 @@ xfs_alloc_ag_vextent_near(
 	/*
 	 * Allocate and initialize the cursor for the leftward search.
 	 */
-	bno_cur_lt = xfs_btree_init_cursor(args->mp, args->tp, args->agbp,
-		args->agno, XFS_BTNUM_BNO, NULL, 0);
+	bno_cur_lt = xfs_allocbt_init_cursor(args->mp, args->tp, args->agbp,
+		args->agno, XFS_BTNUM_BNO);
 	/*
 	 * Lookup <= bno to find the leftward search's starting point.
 	 */
@@ -948,7 +880,7 @@ xfs_alloc_ag_vextent_near(
 	 * Increment the cursor, so we will point at the entry just right
 	 * of the leftward entry if any, or to the leftmost entry.
 	 */
-	if ((error = xfs_alloc_increment(bno_cur_gt, 0, &i)))
+	if ((error = xfs_btree_increment(bno_cur_gt, 0, &i)))
 		goto error0;
 	if (!i) {
 		/*
@@ -967,11 +899,11 @@ xfs_alloc_ag_vextent_near(
 			if ((error = xfs_alloc_get_rec(bno_cur_lt, &ltbno, &ltlen, &i)))
 				goto error0;
 			XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
-			if (xfs_alloc_compute_aligned(ltbno, ltlen,
-					args->alignment, args->minlen,
-					&ltbnoa, &ltlena))
+			xfs_alloc_compute_aligned(ltbno, ltlen, args->alignment,
+					args->minlen, &ltbnoa, &ltlena);
+			if (ltlena >= args->minlen)
 				break;
-			if ((error = xfs_alloc_decrement(bno_cur_lt, 0, &i)))
+			if ((error = xfs_btree_decrement(bno_cur_lt, 0, &i)))
 				goto error0;
 			if (!i) {
 				xfs_btree_del_cursor(bno_cur_lt,
@@ -983,11 +915,11 @@ xfs_alloc_ag_vextent_near(
 			if ((error = xfs_alloc_get_rec(bno_cur_gt, &gtbno, &gtlen, &i)))
 				goto error0;
 			XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
-			if (xfs_alloc_compute_aligned(gtbno, gtlen,
-					args->alignment, args->minlen,
-					&gtbnoa, &gtlena))
+			xfs_alloc_compute_aligned(gtbno, gtlen, args->alignment,
+					args->minlen, &gtbnoa, &gtlena);
+			if (gtlena >= args->minlen)
 				break;
-			if ((error = xfs_alloc_increment(bno_cur_gt, 0, &i)))
+			if ((error = xfs_btree_increment(bno_cur_gt, 0, &i)))
 				goto error0;
 			if (!i) {
 				xfs_btree_del_cursor(bno_cur_gt,
@@ -1076,7 +1008,7 @@ xfs_alloc_ag_vextent_near(
 					/*
 					 * Fell off the right end.
 					 */
-					if ((error = xfs_alloc_increment(
+					if ((error = xfs_btree_increment(
 							bno_cur_gt, 0, &i)))
 						goto error0;
 					if (!i) {
@@ -1172,7 +1104,7 @@ xfs_alloc_ag_vextent_near(
 					/*
 					 * Fell off the left end.
 					 */
-					if ((error = xfs_alloc_decrement(
+					if ((error = xfs_btree_decrement(
 							bno_cur_lt, 0, &i)))
 						goto error0;
 					if (!i) {
@@ -1197,7 +1129,7 @@ xfs_alloc_ag_vextent_near(
 	 * If we couldn't get anything, give up.
 	 */
 	if (bno_cur_lt == NULL && bno_cur_gt == NULL) {
-		TRACE_ALLOC("neither", args);
+		trace_xfs_alloc_size_neither(args);
 		args->agbno = NULLAGBLOCK;
 		return 0;
 	}
@@ -1224,7 +1156,7 @@ xfs_alloc_ag_vextent_near(
 	args->len = XFS_EXTLEN_MIN(ltlena, args->maxlen);
 	xfs_alloc_fix_len(args);
 	if (!xfs_alloc_fix_minleft(args)) {
-		TRACE_ALLOC("nominleft", args);
+		trace_xfs_alloc_near_nominleft(args);
 		xfs_btree_del_cursor(bno_cur_lt, XFS_BTREE_NOERROR);
 		xfs_btree_del_cursor(cnt_cur, XFS_BTREE_NOERROR);
 		return 0;
@@ -1239,13 +1171,18 @@ xfs_alloc_ag_vextent_near(
 	if ((error = xfs_alloc_fixup_trees(cnt_cur, bno_cur_lt, ltbno, ltlen,
 			ltnew, rlen, XFSA_FIXUP_BNO_OK)))
 		goto error0;
-	TRACE_ALLOC(j ? "gt" : "lt", args);
+
+	if (j)
+		trace_xfs_alloc_near_greater(args);
+	else
+		trace_xfs_alloc_near_lesser(args);
+
 	xfs_btree_del_cursor(cnt_cur, XFS_BTREE_NOERROR);
 	xfs_btree_del_cursor(bno_cur_lt, XFS_BTREE_NOERROR);
 	return 0;
 
  error0:
-	TRACE_ALLOC("error", args);
+	trace_xfs_alloc_near_error(args);
 	if (cnt_cur != NULL)
 		xfs_btree_del_cursor(cnt_cur, XFS_BTREE_ERROR);
 	if (bno_cur_lt != NULL)
@@ -1270,9 +1207,6 @@ xfs_alloc_ag_vextent_size(
 	int		error;		/* error result */
 	xfs_agblock_t	fbno;		/* start of found freespace */
 	xfs_extlen_t	flen;		/* length of found freespace */
-#ifdef XFS_ALLOC_TRACE
-	static char	fname[] = "xfs_alloc_ag_vextent_size";
-#endif
 	int		i;		/* temp status variable */
 	xfs_agblock_t	rbno;		/* returned block number */
 	xfs_extlen_t	rlen;		/* length of returned extent */
@@ -1280,8 +1214,8 @@ xfs_alloc_ag_vextent_size(
 	/*
 	 * Allocate and initialize a cursor for the by-size btree.
 	 */
-	cnt_cur = xfs_btree_init_cursor(args->mp, args->tp, args->agbp,
-		args->agno, XFS_BTNUM_CNT, NULL, 0);
+	cnt_cur = xfs_allocbt_init_cursor(args->mp, args->tp, args->agbp,
+		args->agno, XFS_BTNUM_CNT);
 	bno_cur = NULL;
 	/*
 	 * Look for an entry >= maxlen+alignment-1 blocks.
@@ -1299,7 +1233,7 @@ xfs_alloc_ag_vextent_size(
 			goto error0;
 		if (i == 0 || flen == 0) {
 			xfs_btree_del_cursor(cnt_cur, XFS_BTREE_NOERROR);
-			TRACE_ALLOC("noentry", args);
+			trace_xfs_alloc_size_noentry(args);
 			return 0;
 		}
 		ASSERT(i == 1);
@@ -1334,7 +1268,7 @@ xfs_alloc_ag_vextent_size(
 		bestflen = flen;
 		bestfbno = fbno;
 		for (;;) {
-			if ((error = xfs_alloc_decrement(cnt_cur, 0, &i)))
+			if ((error = xfs_btree_decrement(cnt_cur, 0, &i)))
 				goto error0;
 			if (i == 0)
 				break;
@@ -1376,7 +1310,7 @@ xfs_alloc_ag_vextent_size(
 	xfs_alloc_fix_len(args);
 	if (rlen < args->minlen || !xfs_alloc_fix_minleft(args)) {
 		xfs_btree_del_cursor(cnt_cur, XFS_BTREE_NOERROR);
-		TRACE_ALLOC("nominleft", args);
+		trace_xfs_alloc_size_nominleft(args);
 		args->agbno = NULLAGBLOCK;
 		return 0;
 	}
@@ -1385,8 +1319,8 @@ xfs_alloc_ag_vextent_size(
 	/*
 	 * Allocate and initialize a cursor for the by-block tree.
 	 */
-	bno_cur = xfs_btree_init_cursor(args->mp, args->tp, args->agbp,
-		args->agno, XFS_BTNUM_BNO, NULL, 0);
+	bno_cur = xfs_allocbt_init_cursor(args->mp, args->tp, args->agbp,
+		args->agno, XFS_BTNUM_BNO);
 	if ((error = xfs_alloc_fixup_trees(cnt_cur, bno_cur, fbno, flen,
 			rbno, rlen, XFSA_FIXUP_CNT_OK)))
 		goto error0;
@@ -1399,11 +1333,11 @@ xfs_alloc_ag_vextent_size(
 		args->agbno + args->len <=
 			be32_to_cpu(XFS_BUF_TO_AGF(args->agbp)->agf_length),
 		error0);
-	TRACE_ALLOC("normal", args);
+	trace_xfs_alloc_size_done(args);
 	return 0;
 
 error0:
-	TRACE_ALLOC("error", args);
+	trace_xfs_alloc_size_error(args);
 	if (cnt_cur)
 		xfs_btree_del_cursor(cnt_cur, XFS_BTREE_ERROR);
 	if (bno_cur)
@@ -1427,12 +1361,9 @@ xfs_alloc_ag_vextent_small(
 	int		error;
 	xfs_agblock_t	fbno;
 	xfs_extlen_t	flen;
-#ifdef XFS_ALLOC_TRACE
-	static char	fname[] = "xfs_alloc_ag_vextent_small";
-#endif
 	int		i;
 
-	if ((error = xfs_alloc_decrement(ccur, 0, &i)))
+	if ((error = xfs_btree_decrement(ccur, 0, &i)))
 		goto error0;
 	if (i) {
 		if ((error = xfs_alloc_get_rec(ccur, &fbno, &flen, &i)))
@@ -1447,7 +1378,8 @@ xfs_alloc_ag_vextent_small(
 	else if (args->minlen == 1 && args->alignment == 1 && !args->isfl &&
 		 (be32_to_cpu(XFS_BUF_TO_AGF(args->agbp)->agf_flcount)
 		  > args->minleft)) {
-		if ((error = xfs_alloc_get_freelist(args->tp, args->agbp, &fbno)))
+		error = xfs_alloc_get_freelist(args->tp, args->agbp, &fbno, 0);
+		if (error)
 			goto error0;
 		if (fbno != NULLAGBLOCK) {
 			if (args->userdata) {
@@ -1464,7 +1396,7 @@ xfs_alloc_ag_vextent_small(
 				be32_to_cpu(XFS_BUF_TO_AGF(args->agbp)->agf_length),
 				error0);
 			args->wasfromfl = 1;
-			TRACE_ALLOC("freelist", args);
+			trace_xfs_alloc_small_freelist(args);
 			*stat = 0;
 			return 0;
 		}
@@ -1477,24 +1409,26 @@ xfs_alloc_ag_vextent_small(
 	/*
 	 * Can't allocate from the freelist for some reason.
 	 */
-	else
+	else {
+		fbno = NULLAGBLOCK;
 		flen = 0;
+	}
 	/*
 	 * Can't do the allocation, give up.
 	 */
 	if (flen < args->minlen) {
 		args->agbno = NULLAGBLOCK;
-		TRACE_ALLOC("notenough", args);
+		trace_xfs_alloc_small_notenough(args);
 		flen = 0;
 	}
 	*fbnop = fbno;
 	*flenp = flen;
 	*stat = 1;
-	TRACE_ALLOC("normal", args);
+	trace_xfs_alloc_small_done(args);
 	return 0;
 
 error0:
-	TRACE_ALLOC("error", args);
+	trace_xfs_alloc_small_error(args);
 	return error;
 }
 
@@ -1513,9 +1447,6 @@ xfs_free_ag_extent(
 	xfs_btree_cur_t	*bno_cur;	/* cursor for by-block btree */
 	xfs_btree_cur_t	*cnt_cur;	/* cursor for by-size btree */
 	int		error;		/* error return value */
-#ifdef XFS_ALLOC_TRACE
-	static char	fname[] = "xfs_free_ag_extent";
-#endif
 	xfs_agblock_t	gtbno;		/* start of right neighbor block */
 	xfs_extlen_t	gtlen;		/* length of right neighbor block */
 	int		haveleft;	/* have a left neighbor block */
@@ -1531,8 +1462,7 @@ xfs_free_ag_extent(
 	/*
 	 * Allocate and initialize a cursor for the by-block btree.
 	 */
-	bno_cur = xfs_btree_init_cursor(mp, tp, agbp, agno, XFS_BTNUM_BNO, NULL,
-		0);
+	bno_cur = xfs_allocbt_init_cursor(mp, tp, agbp, agno, XFS_BTNUM_BNO);
 	cnt_cur = NULL;
 	/*
 	 * Look for a neighboring block on the left (lower block numbers)
@@ -1565,7 +1495,7 @@ xfs_free_ag_extent(
 	 * Look for a neighboring block on the right (higher block numbers)
 	 * that is contiguous with this space.
 	 */
-	if ((error = xfs_alloc_increment(bno_cur, 0, &haveright)))
+	if ((error = xfs_btree_increment(bno_cur, 0, &haveright)))
 		goto error0;
 	if (haveright) {
 		/*
@@ -1591,8 +1521,7 @@ xfs_free_ag_extent(
 	/*
 	 * Now allocate and initialize a cursor for the by-size tree.
 	 */
-	cnt_cur = xfs_btree_init_cursor(mp, tp, agbp, agno, XFS_BTNUM_CNT, NULL,
-		0);
+	cnt_cur = xfs_allocbt_init_cursor(mp, tp, agbp, agno, XFS_BTNUM_CNT);
 	/*
 	 * Have both left and right contiguous neighbors.
 	 * Merge all three into a single free block.
@@ -1604,7 +1533,7 @@ xfs_free_ag_extent(
 		if ((error = xfs_alloc_lookup_eq(cnt_cur, ltbno, ltlen, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
-		if ((error = xfs_alloc_delete(cnt_cur, &i)))
+		if ((error = xfs_btree_delete(cnt_cur, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
 		/*
@@ -1613,19 +1542,19 @@ xfs_free_ag_extent(
 		if ((error = xfs_alloc_lookup_eq(cnt_cur, gtbno, gtlen, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
-		if ((error = xfs_alloc_delete(cnt_cur, &i)))
+		if ((error = xfs_btree_delete(cnt_cur, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
 		/*
 		 * Delete the old by-block entry for the right block.
 		 */
-		if ((error = xfs_alloc_delete(bno_cur, &i)))
+		if ((error = xfs_btree_delete(bno_cur, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
 		/*
 		 * Move the by-block cursor back to the left neighbor.
 		 */
-		if ((error = xfs_alloc_decrement(bno_cur, 0, &i)))
+		if ((error = xfs_btree_decrement(bno_cur, 0, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
 #ifdef DEBUG
@@ -1664,14 +1593,14 @@ xfs_free_ag_extent(
 		if ((error = xfs_alloc_lookup_eq(cnt_cur, ltbno, ltlen, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
-		if ((error = xfs_alloc_delete(cnt_cur, &i)))
+		if ((error = xfs_btree_delete(cnt_cur, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
 		/*
 		 * Back up the by-block cursor to the left neighbor, and
 		 * update its length.
 		 */
-		if ((error = xfs_alloc_decrement(bno_cur, 0, &i)))
+		if ((error = xfs_btree_decrement(bno_cur, 0, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
 		nbno = ltbno;
@@ -1690,7 +1619,7 @@ xfs_free_ag_extent(
 		if ((error = xfs_alloc_lookup_eq(cnt_cur, gtbno, gtlen, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
-		if ((error = xfs_alloc_delete(cnt_cur, &i)))
+		if ((error = xfs_btree_delete(cnt_cur, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
 		/*
@@ -1709,7 +1638,7 @@ xfs_free_ag_extent(
 	else {
 		nbno = bno;
 		nlen = len;
-		if ((error = xfs_alloc_insert(bno_cur, &i)))
+		if ((error = xfs_btree_insert(bno_cur, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
 	}
@@ -1721,7 +1650,7 @@ xfs_free_ag_extent(
 	if ((error = xfs_alloc_lookup_eq(cnt_cur, nbno, nlen, &i)))
 		goto error0;
 	XFS_WANT_CORRUPTED_GOTO(i == 0, error0);
-	if ((error = xfs_alloc_insert(cnt_cur, &i)))
+	if ((error = xfs_btree_insert(cnt_cur, &i)))
 		goto error0;
 	XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
 	xfs_btree_del_cursor(cnt_cur, XFS_BTREE_NOERROR);
@@ -1733,26 +1662,25 @@ xfs_free_ag_extent(
 		xfs_agf_t	*agf;
 		xfs_perag_t	*pag;		/* per allocation group data */
 
-		agf = XFS_BUF_TO_AGF(agbp);
-		pag = &mp->m_perag[agno];
-		be32_add(&agf->agf_freeblks, len);
-		xfs_trans_agblocks_delta(tp, len);
+		pag = xfs_perag_get(mp, agno);
 		pag->pagf_freeblks += len;
+		xfs_perag_put(pag);
+
+		agf = XFS_BUF_TO_AGF(agbp);
+		be32_add_cpu(&agf->agf_freeblks, len);
+		xfs_trans_agblocks_delta(tp, len);
 		XFS_WANT_CORRUPTED_GOTO(
 			be32_to_cpu(agf->agf_freeblks) <=
 			be32_to_cpu(agf->agf_length),
 			error0);
-		TRACE_MODAGF(NULL, agf, XFS_AGF_FREEBLKS);
 		xfs_alloc_log_agf(tp, agbp, XFS_AGF_FREEBLKS);
 		if (!isfl)
 			xfs_trans_mod_sb(tp, XFS_TRANS_SB_FDBLOCKS, (long)len);
 		XFS_STATS_INC(xs_freex);
 		XFS_STATS_ADD(xs_freeb, len);
 	}
-	TRACE_FREE(haveleft ?
-			(haveright ? "both" : "left") :
-			(haveright ? "right" : "none"),
-		agno, bno, len, isfl);
+
+	trace_xfs_free_extent(mp, agno, bno, len, isfl, haveleft, haveright);
 
 	/*
 	 * Since blocks move to the free list without the coordination
@@ -1769,7 +1697,7 @@ xfs_free_ag_extent(
 	return 0;
 
  error0:
-	TRACE_FREE("error", agno, bno, len, isfl);
+	trace_xfs_free_extent(mp, agno, bno, len, isfl, -1, -1);
 	if (bno_cur)
 		xfs_btree_del_cursor(bno_cur, XFS_BTREE_ERROR);
 	if (cnt_cur)
@@ -1802,6 +1730,25 @@ xfs_alloc_compute_maxlevels(
 	for (level = 1; maxblocks > 1; level++)
 		maxblocks = (maxblocks + minnoderecs - 1) / minnoderecs;
 	mp->m_ag_maxlevels = level;
+}
+
+/*
+ * Find the length of the longest extent in an AG.
+ */
+xfs_extlen_t
+xfs_alloc_longest_free_extent(
+	struct xfs_mount	*mp,
+	struct xfs_perag	*pag)
+{
+	xfs_extlen_t		need, delta = 0;
+
+	need = XFS_MIN_FREELIST_PAG(pag, mp);
+	if (need > pag->pagf_flcount)
+		delta = need - pag->pagf_flcount;
+
+	if (pag->pagf_longest > delta)
+		return pag->pagf_longest - delta;
+	return pag->pagf_flcount > 0 || pag->pagf_longest > 0;
 }
 
 /*
@@ -1856,15 +1803,12 @@ xfs_alloc_fix_freelist(
 	}
 
 	if (!(flags & XFS_ALLOC_FLAG_FREEING)) {
-		need = XFS_MIN_FREELIST_PAG(pag, mp);
-		delta = need > pag->pagf_flcount ? need - pag->pagf_flcount : 0;
 		/*
 		 * If it looks like there isn't a long enough extent, or enough
 		 * total blocks, reject it.
 		 */
-		longest = (pag->pagf_longest > delta) ?
-			(pag->pagf_longest - delta) :
-			(pag->pagf_flcount > 0 || pag->pagf_longest > 0);
+		need = XFS_MIN_FREELIST_PAG(pag, mp);
+		longest = xfs_alloc_longest_free_extent(mp, pag);
 		if ((args->minlen + args->alignment + args->minalignslop - 1) >
 				longest ||
 		    ((int)(pag->pagf_freeblks + pag->pagf_flcount -
@@ -1921,7 +1865,8 @@ xfs_alloc_fix_freelist(
 	while (be32_to_cpu(agf->agf_flcount) > need) {
 		xfs_buf_t	*bp;
 
-		if ((error = xfs_alloc_get_freelist(tp, agbp, &bno)))
+		error = xfs_alloc_get_freelist(tp, agbp, &bno, 0);
+		if (error)
 			return error;
 		if ((error = xfs_free_ag_extent(tp, agbp, args->agno, bno, 1, 1)))
 			return error;
@@ -1971,8 +1916,9 @@ xfs_alloc_fix_freelist(
 		 * Put each allocated block on the list.
 		 */
 		for (bno = targs.agbno; bno < targs.agbno + targs.len; bno++) {
-			if ((error = xfs_alloc_put_freelist(tp, agbp, agflbp,
-					bno)))
+			error = xfs_alloc_put_freelist(tp, agbp,
+							agflbp, bno, 0);
+			if (error)
 				return error;
 		}
 	}
@@ -1989,16 +1935,15 @@ int				/* error */
 xfs_alloc_get_freelist(
 	xfs_trans_t	*tp,	/* transaction pointer */
 	xfs_buf_t	*agbp,	/* buffer containing the agf structure */
-	xfs_agblock_t	*bnop)	/* block address retrieved from freelist */
+	xfs_agblock_t	*bnop,	/* block address retrieved from freelist */
+	int		btreeblk) /* destination is a AGF btree */
 {
 	xfs_agf_t	*agf;	/* a.g. freespace structure */
 	xfs_agfl_t	*agfl;	/* a.g. freelist structure */
 	xfs_buf_t	*agflbp;/* buffer for a.g. freelist structure */
 	xfs_agblock_t	bno;	/* block number returned */
 	int		error;
-#ifdef XFS_ALLOC_TRACE
-	static char	fname[] = "xfs_alloc_get_freelist";
-#endif
+	int		logflags;
 	xfs_mount_t	*mp;	/* mount structure */
 	xfs_perag_t	*pag;	/* per allocation group data */
 
@@ -2021,17 +1966,26 @@ xfs_alloc_get_freelist(
 	/*
 	 * Get the block number and update the data structures.
 	 */
-	bno = INT_GET(agfl->agfl_bno[be32_to_cpu(agf->agf_flfirst)], ARCH_CONVERT);
-	be32_add(&agf->agf_flfirst, 1);
+	bno = be32_to_cpu(agfl->agfl_bno[be32_to_cpu(agf->agf_flfirst)]);
+	be32_add_cpu(&agf->agf_flfirst, 1);
 	xfs_trans_brelse(tp, agflbp);
 	if (be32_to_cpu(agf->agf_flfirst) == XFS_AGFL_SIZE(mp))
 		agf->agf_flfirst = 0;
-	pag = &mp->m_perag[be32_to_cpu(agf->agf_seqno)];
-	be32_add(&agf->agf_flcount, -1);
+
+	pag = xfs_perag_get(mp, be32_to_cpu(agf->agf_seqno));
+	be32_add_cpu(&agf->agf_flcount, -1);
 	xfs_trans_agflist_delta(tp, -1);
 	pag->pagf_flcount--;
-	TRACE_MODAGF(NULL, agf, XFS_AGF_FLFIRST | XFS_AGF_FLCOUNT);
-	xfs_alloc_log_agf(tp, agbp, XFS_AGF_FLFIRST | XFS_AGF_FLCOUNT);
+	xfs_perag_put(pag);
+
+	logflags = XFS_AGF_FLFIRST | XFS_AGF_FLCOUNT;
+	if (btreeblk) {
+		be32_add_cpu(&agf->agf_btreeblks, 1);
+		pag->pagf_btreeblks++;
+		logflags |= XFS_AGF_BTREEBLKS;
+	}
+
+	xfs_alloc_log_agf(tp, agbp, logflags);
 	*bnop = bno;
 
 	/*
@@ -2069,8 +2023,11 @@ xfs_alloc_log_agf(
 		offsetof(xfs_agf_t, agf_flcount),
 		offsetof(xfs_agf_t, agf_freeblks),
 		offsetof(xfs_agf_t, agf_longest),
+		offsetof(xfs_agf_t, agf_btreeblks),
 		sizeof(xfs_agf_t)
 	};
+
+	trace_xfs_agf(tp->t_mountp, XFS_BUF_TO_AGF(bp), fields, _RET_IP_);
 
 	xfs_btree_offsets(fields, offsets, XFS_AGF_NUM_BITS, &first, &last);
 	xfs_trans_log_buf(tp, bp, (uint)first, (uint)last);
@@ -2104,15 +2061,14 @@ xfs_alloc_put_freelist(
 	xfs_trans_t		*tp,	/* transaction pointer */
 	xfs_buf_t		*agbp,	/* buffer for a.g. freelist header */
 	xfs_buf_t		*agflbp,/* buffer for a.g. free block array */
-	xfs_agblock_t		bno)	/* block being freed */
+	xfs_agblock_t		bno,	/* block being freed */
+	int			btreeblk) /* block came from a AGF btree */
 {
 	xfs_agf_t		*agf;	/* a.g. freespace structure */
 	xfs_agfl_t		*agfl;	/* a.g. free block array */
-	xfs_agblock_t		*blockp;/* pointer to array entry */
+	__be32			*blockp;/* pointer to array entry */
 	int			error;
-#ifdef XFS_ALLOC_TRACE
-	static char		fname[] = "xfs_alloc_put_freelist";
-#endif
+	int			logflags;
 	xfs_mount_t		*mp;	/* mount structure */
 	xfs_perag_t		*pag;	/* per allocation group data */
 
@@ -2123,18 +2079,29 @@ xfs_alloc_put_freelist(
 			be32_to_cpu(agf->agf_seqno), &agflbp)))
 		return error;
 	agfl = XFS_BUF_TO_AGFL(agflbp);
-	be32_add(&agf->agf_fllast, 1);
+	be32_add_cpu(&agf->agf_fllast, 1);
 	if (be32_to_cpu(agf->agf_fllast) == XFS_AGFL_SIZE(mp))
 		agf->agf_fllast = 0;
-	pag = &mp->m_perag[be32_to_cpu(agf->agf_seqno)];
-	be32_add(&agf->agf_flcount, 1);
+
+	pag = xfs_perag_get(mp, be32_to_cpu(agf->agf_seqno));
+	be32_add_cpu(&agf->agf_flcount, 1);
 	xfs_trans_agflist_delta(tp, 1);
 	pag->pagf_flcount++;
+
+	logflags = XFS_AGF_FLLAST | XFS_AGF_FLCOUNT;
+	if (btreeblk) {
+		be32_add_cpu(&agf->agf_btreeblks, -1);
+		pag->pagf_btreeblks--;
+		logflags |= XFS_AGF_BTREEBLKS;
+	}
+	xfs_perag_put(pag);
+
+	xfs_alloc_log_agf(tp, agbp, logflags);
+
 	ASSERT(be32_to_cpu(agf->agf_flcount) <= XFS_AGFL_SIZE(mp));
 	blockp = &agfl->agfl_bno[be32_to_cpu(agf->agf_fllast)];
-	INT_SET(*blockp, ARCH_CONVERT, bno);
-	TRACE_MODAGF(NULL, agf, XFS_AGF_FLLAST | XFS_AGF_FLCOUNT);
-	xfs_alloc_log_agf(tp, agbp, XFS_AGF_FLLAST | XFS_AGF_FLCOUNT);
+	*blockp = cpu_to_be32(bno);
+	xfs_alloc_log_agf(tp, agbp, logflags);
 	xfs_trans_log_buf(tp, agflbp,
 		(int)((xfs_caddr_t)blockp - (xfs_caddr_t)agfl),
 		(int)((xfs_caddr_t)blockp - (xfs_caddr_t)agfl +
@@ -2146,68 +2113,101 @@ xfs_alloc_put_freelist(
  * Read in the allocation group header (free/alloc section).
  */
 int					/* error */
-xfs_alloc_read_agf(
-	xfs_mount_t	*mp,		/* mount point structure */
-	xfs_trans_t	*tp,		/* transaction pointer */
-	xfs_agnumber_t	agno,		/* allocation group number */
-	int		flags,		/* XFS_ALLOC_FLAG_... */
-	xfs_buf_t	**bpp)		/* buffer for the ag freelist header */
+xfs_read_agf(
+	struct xfs_mount	*mp,	/* mount point structure */
+	struct xfs_trans	*tp,	/* transaction pointer */
+	xfs_agnumber_t		agno,	/* allocation group number */
+	int			flags,	/* XFS_BUF_ */
+	struct xfs_buf		**bpp)	/* buffer for the ag freelist header */
 {
-	xfs_agf_t	*agf;		/* ag freelist header */
+	struct xfs_agf	*agf;		/* ag freelist header */
 	int		agf_ok;		/* set if agf is consistent */
-	xfs_buf_t	*bp;		/* return value */
-	xfs_perag_t	*pag;		/* per allocation group data */
 	int		error;
 
 	ASSERT(agno != NULLAGNUMBER);
 	error = xfs_trans_read_buf(
 			mp, tp, mp->m_ddev_targp,
 			XFS_AG_DADDR(mp, agno, XFS_AGF_DADDR(mp)),
-			XFS_FSS_TO_BB(mp, 1),
-			(flags & XFS_ALLOC_FLAG_TRYLOCK) ? XFS_BUF_TRYLOCK : 0U,
-			&bp);
+			XFS_FSS_TO_BB(mp, 1), flags, bpp);
 	if (error)
 		return error;
-	ASSERT(!bp || !XFS_BUF_GETERROR(bp));
-	if (!bp) {
-		*bpp = NULL;
+	if (!*bpp)
 		return 0;
-	}
+
+	ASSERT(!XFS_BUF_GETERROR(*bpp));
+	agf = XFS_BUF_TO_AGF(*bpp);
+
 	/*
 	 * Validate the magic number of the agf block.
 	 */
-	agf = XFS_BUF_TO_AGF(bp);
 	agf_ok =
 		be32_to_cpu(agf->agf_magicnum) == XFS_AGF_MAGIC &&
 		XFS_AGF_GOOD_VERSION(be32_to_cpu(agf->agf_versionnum)) &&
 		be32_to_cpu(agf->agf_freeblks) <= be32_to_cpu(agf->agf_length) &&
 		be32_to_cpu(agf->agf_flfirst) < XFS_AGFL_SIZE(mp) &&
 		be32_to_cpu(agf->agf_fllast) < XFS_AGFL_SIZE(mp) &&
-		be32_to_cpu(agf->agf_flcount) <= XFS_AGFL_SIZE(mp);
+		be32_to_cpu(agf->agf_flcount) <= XFS_AGFL_SIZE(mp) &&
+		be32_to_cpu(agf->agf_seqno) == agno;
+	if (xfs_sb_version_haslazysbcount(&mp->m_sb))
+		agf_ok = agf_ok && be32_to_cpu(agf->agf_btreeblks) <=
+						be32_to_cpu(agf->agf_length);
 	if (unlikely(XFS_TEST_ERROR(!agf_ok, mp, XFS_ERRTAG_ALLOC_READ_AGF,
 			XFS_RANDOM_ALLOC_READ_AGF))) {
 		XFS_CORRUPTION_ERROR("xfs_alloc_read_agf",
 				     XFS_ERRLEVEL_LOW, mp, agf);
-		xfs_trans_brelse(tp, bp);
+		xfs_trans_brelse(tp, *bpp);
 		return XFS_ERROR(EFSCORRUPTED);
 	}
-	pag = &mp->m_perag[agno];
+	XFS_BUF_SET_VTYPE_REF(*bpp, B_FS_AGF, XFS_AGF_REF);
+	return 0;
+}
+
+/*
+ * Read in the allocation group header (free/alloc section).
+ */
+int					/* error */
+xfs_alloc_read_agf(
+	struct xfs_mount	*mp,	/* mount point structure */
+	struct xfs_trans	*tp,	/* transaction pointer */
+	xfs_agnumber_t		agno,	/* allocation group number */
+	int			flags,	/* XFS_ALLOC_FLAG_... */
+	struct xfs_buf		**bpp)	/* buffer for the ag freelist header */
+{
+	struct xfs_agf		*agf;		/* ag freelist header */
+	struct xfs_perag	*pag;		/* per allocation group data */
+	int			error;
+
+	ASSERT(agno != NULLAGNUMBER);
+
+	error = xfs_read_agf(mp, tp, agno,
+			(flags & XFS_ALLOC_FLAG_TRYLOCK) ? XBF_TRYLOCK : 0,
+			bpp);
+	if (error)
+		return error;
+	if (!*bpp)
+		return 0;
+	ASSERT(!XFS_BUF_GETERROR(*bpp));
+
+	agf = XFS_BUF_TO_AGF(*bpp);
+	pag = xfs_perag_get(mp, agno);
 	if (!pag->pagf_init) {
 		pag->pagf_freeblks = be32_to_cpu(agf->agf_freeblks);
+		pag->pagf_btreeblks = be32_to_cpu(agf->agf_btreeblks);
 		pag->pagf_flcount = be32_to_cpu(agf->agf_flcount);
 		pag->pagf_longest = be32_to_cpu(agf->agf_longest);
 		pag->pagf_levels[XFS_BTNUM_BNOi] =
 			be32_to_cpu(agf->agf_levels[XFS_BTNUM_BNOi]);
 		pag->pagf_levels[XFS_BTNUM_CNTi] =
 			be32_to_cpu(agf->agf_levels[XFS_BTNUM_CNTi]);
-		spinlock_init(&pag->pagb_lock, "xfspagb");
-		pag->pagb_list = kmem_zalloc(XFS_PAGB_NUM_SLOTS *
-					sizeof(xfs_perag_busy_t), KM_SLEEP);
+		spin_lock_init(&pag->pagb_lock);
+		pag->pagb_count = 0;
+		memset(pag->pagb_list, 0, sizeof(pag->pagb_list));
 		pag->pagf_init = 1;
 	}
 #ifdef DEBUG
 	else if (!XFS_FORCED_SHUTDOWN(mp)) {
 		ASSERT(pag->pagf_freeblks == be32_to_cpu(agf->agf_freeblks));
+		ASSERT(pag->pagf_btreeblks == be32_to_cpu(agf->agf_btreeblks));
 		ASSERT(pag->pagf_flcount == be32_to_cpu(agf->agf_flcount));
 		ASSERT(pag->pagf_longest == be32_to_cpu(agf->agf_longest));
 		ASSERT(pag->pagf_levels[XFS_BTNUM_BNOi] ==
@@ -2216,8 +2216,7 @@ xfs_alloc_read_agf(
 		       be32_to_cpu(agf->agf_levels[XFS_BTNUM_CNTi]));
 	}
 #endif
-	XFS_BUF_SET_VTYPE_REF(bp, B_FS_AGF, XFS_AGF_REF);
-	*bpp = bp;
+	xfs_perag_put(pag);
 	return 0;
 }
 
@@ -2233,9 +2232,6 @@ xfs_alloc_vextent(
 	xfs_agblock_t	agsize;	/* allocation group size */
 	int		error;
 	int		flags;	/* XFS_ALLOC_FLAG_... locking flags */
-#ifdef XFS_ALLOC_TRACE
-	static char	fname[] = "xfs_alloc_vextent";
-#endif
 	xfs_extlen_t	minleft;/* minimum left value, temp copy */
 	xfs_mount_t	*mp;	/* mount structure pointer */
 	xfs_agnumber_t	sagno;	/* starting allocation group number */
@@ -2267,7 +2263,7 @@ xfs_alloc_vextent(
 	    args->minlen > args->maxlen || args->minlen > agsize ||
 	    args->mod >= args->prod) {
 		args->fsbno = NULLFSBLOCK;
-		TRACE_ALLOC("badargs", args);
+		trace_xfs_alloc_vextent_badargs(args);
 		return 0;
 	}
 	minleft = args->minleft;
@@ -2280,24 +2276,21 @@ xfs_alloc_vextent(
 		 * These three force us into a single a.g.
 		 */
 		args->agno = XFS_FSB_TO_AGNO(mp, args->fsbno);
-		down_read(&mp->m_peraglock);
-		args->pag = &mp->m_perag[args->agno];
+		args->pag = xfs_perag_get(mp, args->agno);
 		args->minleft = 0;
 		error = xfs_alloc_fix_freelist(args, 0);
 		args->minleft = minleft;
 		if (error) {
-			TRACE_ALLOC("nofix", args);
+			trace_xfs_alloc_vextent_nofix(args);
 			goto error0;
 		}
 		if (!args->agbp) {
-			up_read(&mp->m_peraglock);
-			TRACE_ALLOC("noagbp", args);
+			trace_xfs_alloc_vextent_noagbp(args);
 			break;
 		}
 		args->agbno = XFS_FSB_TO_AGBNO(mp, args->fsbno);
 		if ((error = xfs_alloc_ag_vextent(args)))
 			goto error0;
-		up_read(&mp->m_peraglock);
 		break;
 	case XFS_ALLOCTYPE_START_BNO:
 		/*
@@ -2349,14 +2342,13 @@ xfs_alloc_vextent(
 		 * Loop over allocation groups twice; first time with
 		 * trylock set, second time without.
 		 */
-		down_read(&mp->m_peraglock);
 		for (;;) {
-			args->pag = &mp->m_perag[args->agno];
+			args->pag = xfs_perag_get(mp, args->agno);
 			if (no_min) args->minleft = 0;
 			error = xfs_alloc_fix_freelist(args, flags);
 			args->minleft = minleft;
 			if (error) {
-				TRACE_ALLOC("nofix", args);
+				trace_xfs_alloc_vextent_nofix(args);
 				goto error0;
 			}
 			/*
@@ -2367,7 +2359,9 @@ xfs_alloc_vextent(
 					goto error0;
 				break;
 			}
-			TRACE_ALLOC("loopfailed", args);
+
+			trace_xfs_alloc_vextent_loopfailed(args);
+
 			/*
 			 * Didn't work, figure out the next iteration.
 			 */
@@ -2394,7 +2388,7 @@ xfs_alloc_vextent(
 			if (args->agno == sagno) {
 				if (no_min == 1) {
 					args->agbno = NULLAGBLOCK;
-					TRACE_ALLOC("allfailed", args);
+					trace_xfs_alloc_vextent_allfailed(args);
 					break;
 				}
 				if (flags == 0) {
@@ -2408,8 +2402,8 @@ xfs_alloc_vextent(
 					}
 				}
 			}
+			xfs_perag_put(args->pag);
 		}
-		up_read(&mp->m_peraglock);
 		if (bump_rotor || (type == XFS_ALLOCTYPE_ANY_AG)) {
 			if (args->agno == sagno)
 				mp->m_agfrotor = (mp->m_agfrotor + 1) %
@@ -2435,9 +2429,10 @@ xfs_alloc_vextent(
 			args->len);
 #endif
 	}
+	xfs_perag_put(args->pag);
 	return 0;
 error0:
-	up_read(&mp->m_peraglock);
+	xfs_perag_put(args->pag);
 	return error;
 }
 
@@ -2462,8 +2457,7 @@ xfs_free_extent(
 	args.agno = XFS_FSB_TO_AGNO(args.mp, bno);
 	ASSERT(args.agno < args.mp->m_sb.sb_agcount);
 	args.agbno = XFS_FSB_TO_AGBNO(args.mp, bno);
-	down_read(&args.mp->m_peraglock);
-	args.pag = &args.mp->m_perag[args.agno];
+	args.pag = xfs_perag_get(args.mp, args.agno);
 	if ((error = xfs_alloc_fix_freelist(&args, XFS_ALLOC_FLAG_FREEING)))
 		goto error0;
 #ifdef DEBUG
@@ -2473,7 +2467,7 @@ xfs_free_extent(
 #endif
 	error = xfs_free_ag_extent(tp, args.agbp, args.agno, args.agbno, len, 0);
 error0:
-	up_read(&args.mp->m_peraglock);
+	xfs_perag_put(args.pag);
 	return error;
 }
 
@@ -2494,16 +2488,15 @@ xfs_alloc_mark_busy(xfs_trans_t *tp,
 		    xfs_agblock_t bno,
 		    xfs_extlen_t len)
 {
-	xfs_mount_t		*mp;
 	xfs_perag_busy_t	*bsy;
+	struct xfs_perag	*pag;
 	int			n;
-	SPLDECL(s);
 
-	mp = tp->t_mountp;
-	s = mutex_spinlock(&mp->m_perag[agno].pagb_lock);
+	pag = xfs_perag_get(tp->t_mountp, agno);
+	spin_lock(&pag->pagb_lock);
 
 	/* search pagb_list for an open slot */
-	for (bsy = mp->m_perag[agno].pagb_list, n = 0;
+	for (bsy = pag->pagb_list, n = 0;
 	     n < XFS_PAGB_NUM_SLOTS;
 	     bsy++, n++) {
 		if (bsy->busy_tp == NULL) {
@@ -2511,16 +2504,16 @@ xfs_alloc_mark_busy(xfs_trans_t *tp,
 		}
 	}
 
+	trace_xfs_alloc_busy(tp->t_mountp, agno, bno, len, n);
+
 	if (n < XFS_PAGB_NUM_SLOTS) {
-		bsy = &mp->m_perag[agno].pagb_list[n];
-		mp->m_perag[agno].pagb_count++;
-		TRACE_BUSY("xfs_alloc_mark_busy", "got", agno, bno, len, n, tp);
+		bsy = &pag->pagb_list[n];
+		pag->pagb_count++;
 		bsy->busy_start = bno;
 		bsy->busy_length = len;
 		bsy->busy_tp = tp;
 		xfs_trans_add_busy(tp, agno, n);
 	} else {
-		TRACE_BUSY("xfs_alloc_mark_busy", "FULL", agno, bno, len, -1, tp);
 		/*
 		 * The busy list is full!  Since it is now not possible to
 		 * track the free block, make this a synchronous transaction
@@ -2530,7 +2523,8 @@ xfs_alloc_mark_busy(xfs_trans_t *tp,
 		xfs_trans_set_sync(tp);
 	}
 
-	mutex_spinunlock(&mp->m_perag[agno].pagb_lock, s);
+	spin_unlock(&pag->pagb_lock);
+	xfs_perag_put(pag);
 }
 
 void
@@ -2538,87 +2532,74 @@ xfs_alloc_clear_busy(xfs_trans_t *tp,
 		     xfs_agnumber_t agno,
 		     int idx)
 {
-	xfs_mount_t		*mp;
+	struct xfs_perag	*pag;
 	xfs_perag_busy_t	*list;
-	SPLDECL(s);
-
-	mp = tp->t_mountp;
-
-	s = mutex_spinlock(&mp->m_perag[agno].pagb_lock);
-	list = mp->m_perag[agno].pagb_list;
 
 	ASSERT(idx < XFS_PAGB_NUM_SLOTS);
+	pag = xfs_perag_get(tp->t_mountp, agno);
+	spin_lock(&pag->pagb_lock);
+	list = pag->pagb_list;
+
+	trace_xfs_alloc_unbusy(tp->t_mountp, agno, idx, list[idx].busy_tp == tp);
+
 	if (list[idx].busy_tp == tp) {
-		TRACE_UNBUSY("xfs_alloc_clear_busy", "found", agno, idx, tp);
 		list[idx].busy_tp = NULL;
-		mp->m_perag[agno].pagb_count--;
-	} else {
-		TRACE_UNBUSY("xfs_alloc_clear_busy", "missing", agno, idx, tp);
+		pag->pagb_count--;
 	}
 
-	mutex_spinunlock(&mp->m_perag[agno].pagb_lock, s);
+	spin_unlock(&pag->pagb_lock);
+	xfs_perag_put(pag);
 }
 
 
 /*
- * returns non-zero if any of (agno,bno):len is in a busy list
+ * If we find the extent in the busy list, force the log out to get the
+ * extent out of the busy list so the caller can use it straight away.
  */
-STATIC int
+STATIC void
 xfs_alloc_search_busy(xfs_trans_t *tp,
 		    xfs_agnumber_t agno,
 		    xfs_agblock_t bno,
 		    xfs_extlen_t len)
 {
-	xfs_mount_t		*mp;
+	struct xfs_perag	*pag;
 	xfs_perag_busy_t	*bsy;
-	int			n;
 	xfs_agblock_t		uend, bend;
-	xfs_lsn_t		lsn;
+	xfs_lsn_t		lsn = 0;
 	int			cnt;
-	SPLDECL(s);
 
-	mp = tp->t_mountp;
+	pag = xfs_perag_get(tp->t_mountp, agno);
+	spin_lock(&pag->pagb_lock);
+	cnt = pag->pagb_count;
 
-	s = mutex_spinlock(&mp->m_perag[agno].pagb_lock);
-	cnt = mp->m_perag[agno].pagb_count;
-
+	/*
+	 * search pagb_list for this slot, skipping open slots. We have to
+	 * search the entire array as there may be multiple overlaps and
+	 * we have to get the most recent LSN for the log force to push out
+	 * all the transactions that span the range.
+	 */
 	uend = bno + len - 1;
+	for (cnt = 0; cnt < pag->pagb_count; cnt++) {
+		bsy = &pag->pagb_list[cnt];
+		if (!bsy->busy_tp)
+			continue;
 
-	/* search pagb_list for this slot, skipping open slots */
-	for (bsy = mp->m_perag[agno].pagb_list, n = 0;
-	     cnt; bsy++, n++) {
+		bend = bsy->busy_start + bsy->busy_length - 1;
+		if (bno > bend || uend < bsy->busy_start)
+			continue;
 
-		/*
-		 * (start1,length1) within (start2, length2)
-		 */
-		if (bsy->busy_tp != NULL) {
-			bend = bsy->busy_start + bsy->busy_length - 1;
-			if ((bno > bend) ||
-			    (uend < bsy->busy_start)) {
-				cnt--;
-			} else {
-				TRACE_BUSYSEARCH("xfs_alloc_search_busy",
-						 "found1", agno, bno, len, n,
-						 tp);
-				break;
-			}
-		}
+		/* (start1,length1) within (start2, length2) */
+		if (XFS_LSN_CMP(bsy->busy_tp->t_commit_lsn, lsn) > 0)
+			lsn = bsy->busy_tp->t_commit_lsn;
 	}
+	spin_unlock(&pag->pagb_lock);
+	xfs_perag_put(pag);
+	trace_xfs_alloc_busysearch(tp->t_mountp, agno, bno, len, lsn);
 
 	/*
 	 * If a block was found, force the log through the LSN of the
 	 * transaction that freed the block
 	 */
-	if (cnt) {
-		TRACE_BUSYSEARCH("xfs_alloc_search_busy", "found", agno, bno, len, n, tp);
-		lsn = bsy->busy_tp->t_commit_lsn;
-		mutex_spinunlock(&mp->m_perag[agno].pagb_lock, s);
-		xfs_log_force(mp, lsn, XFS_LOG_FORCE|XFS_LOG_SYNC);
-	} else {
-		TRACE_BUSYSEARCH("xfs_alloc_search_busy", "not-found", agno, bno, len, n, tp);
-		n = -1;
-		mutex_spinunlock(&mp->m_perag[agno].pagb_lock, s);
-	}
-
-	return n;
+	if (lsn)
+		xfs_log_force_lsn(tp->t_mountp, lsn, XFS_LOG_SYNC);
 }

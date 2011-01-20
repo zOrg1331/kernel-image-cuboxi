@@ -7,6 +7,8 @@
  * Copyright (C) Balbir Singh, IBM Corp. 2006
  * Copyright (c) Jay Lan, SGI. 2006
  *
+ * Compile with
+ *	gcc -I/usr/src/linux/include getdelays.c -o getdelays
  */
 
 #include <stdio.h>
@@ -19,11 +21,11 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
-#include <sys/types.h>
 #include <signal.h>
 
 #include <linux/genetlink.h>
 #include <linux/taskstats.h>
+#include <linux/cgroupstats.h>
 
 /*
  * Generic macros for dealing with netlink sockets. Might be duplicated
@@ -35,13 +37,21 @@
 #define NLA_DATA(na)		((void *)((char*)(na) + NLA_HDRLEN))
 #define NLA_PAYLOAD(len)	(len - NLA_HDRLEN)
 
-#define err(code, fmt, arg...) do { printf(fmt, ##arg); exit(code); } while (0)
-int done = 0;
-int rcvbufsz=0;
+#define err(code, fmt, arg...)			\
+	do {					\
+		fprintf(stderr, fmt, ##arg);	\
+		exit(code);			\
+	} while (0)
 
-    char name[100];
-int dbg=0, print_delays=0;
+int done;
+int rcvbufsz;
+char name[100];
+int dbg;
+int print_delays;
+int print_io_accounting;
+int print_task_context_switch_counts;
 __u64 stime, utime;
+
 #define PRINTF(fmt, arg...) {			\
 	    if (dbg) {				\
 		printf(fmt, ##arg);		\
@@ -49,11 +59,9 @@ __u64 stime, utime;
 	}
 
 /* Maximum size of response requested or message sent */
-#define MAX_MSG_SIZE	256
+#define MAX_MSG_SIZE	1024
 /* Maximum number of cpus expected to be specified in a cpumask */
 #define MAX_CPUS	32
-/* Maximum length of pathname to log file */
-#define MAX_FILENAME	256
 
 struct msgtemplate {
 	struct nlmsghdr n;
@@ -62,6 +70,17 @@ struct msgtemplate {
 };
 
 char cpumask[100+6*MAX_CPUS];
+
+static void usage(void)
+{
+	fprintf(stderr, "getdelays [-dilv] [-w logfile] [-r bufsize] "
+			"[-m cpumask] [-t tgid] [-p pid]\n");
+	fprintf(stderr, "  -d: print delayacct stats\n");
+	fprintf(stderr, "  -i: print IO accounting (works only with -p)\n");
+	fprintf(stderr, "  -l: listen forever\n");
+	fprintf(stderr, "  -v: debug on\n");
+	fprintf(stderr, "  -C: container path\n");
+}
 
 /*
  * Create a raw netlink socket and bind
@@ -78,8 +97,9 @@ static int create_nl_socket(int protocol)
 	if (rcvbufsz)
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF,
 				&rcvbufsz, sizeof(rcvbufsz)) < 0) {
-			printf("Unable to set socket rcv buf size to %d\n",
-			       rcvbufsz);
+			fprintf(stderr, "Unable to set socket rcv buf size "
+					"to %d\n",
+				rcvbufsz);
 			return -1;
 		}
 
@@ -96,7 +116,7 @@ error:
 }
 
 
-int send_cmd(int sd, __u16 nlmsg_type, __u32 nlmsg_pid,
+static int send_cmd(int sd, __u16 nlmsg_type, __u32 nlmsg_pid,
 	     __u8 genl_cmd, __u16 nla_type,
 	     void *nla_data, int nla_len)
 {
@@ -140,7 +160,7 @@ int send_cmd(int sd, __u16 nlmsg_type, __u32 nlmsg_pid,
  * Probe the controller in genetlink to find the family id
  * for the TASKSTATS family
  */
-int get_family_id(int sd)
+static int get_family_id(int sd)
 {
 	struct {
 		struct nlmsghdr n;
@@ -148,7 +168,7 @@ int get_family_id(int sd)
 		char buf[256];
 	} ans;
 
-	int id, rc;
+	int id = 0, rc;
 	struct nlattr *na;
 	int rep_len;
 
@@ -170,25 +190,64 @@ int get_family_id(int sd)
 	return id;
 }
 
-void print_delayacct(struct taskstats *t)
+static void print_delayacct(struct taskstats *t)
 {
 	printf("\n\nCPU   %15s%15s%15s%15s\n"
 	       "      %15llu%15llu%15llu%15llu\n"
 	       "IO    %15s%15s\n"
 	       "      %15llu%15llu\n"
-	       "MEM   %15s%15s\n"
-	       "      %15llu%15llu\n\n",
+	       "SWAP  %15s%15s\n"
+	       "      %15llu%15llu\n"
+	       "RECLAIM  %12s%15s\n"
+	       "      %15llu%15llu\n",
 	       "count", "real total", "virtual total", "delay total",
-	       t->cpu_count, t->cpu_run_real_total, t->cpu_run_virtual_total,
-	       t->cpu_delay_total,
+	       (unsigned long long)t->cpu_count,
+	       (unsigned long long)t->cpu_run_real_total,
+	       (unsigned long long)t->cpu_run_virtual_total,
+	       (unsigned long long)t->cpu_delay_total,
 	       "count", "delay total",
-	       t->blkio_count, t->blkio_delay_total,
-	       "count", "delay total", t->swapin_count, t->swapin_delay_total);
+	       (unsigned long long)t->blkio_count,
+	       (unsigned long long)t->blkio_delay_total,
+	       "count", "delay total",
+	       (unsigned long long)t->swapin_count,
+	       (unsigned long long)t->swapin_delay_total,
+	       "count", "delay total",
+	       (unsigned long long)t->freepages_count,
+	       (unsigned long long)t->freepages_delay_total);
+}
+
+static void task_context_switch_counts(struct taskstats *t)
+{
+	printf("\n\nTask   %15s%15s\n"
+	       "       %15llu%15llu\n",
+	       "voluntary", "nonvoluntary",
+	       (unsigned long long)t->nvcsw, (unsigned long long)t->nivcsw);
+}
+
+static void print_cgroupstats(struct cgroupstats *c)
+{
+	printf("sleeping %llu, blocked %llu, running %llu, stopped %llu, "
+		"uninterruptible %llu\n", (unsigned long long)c->nr_sleeping,
+		(unsigned long long)c->nr_io_wait,
+		(unsigned long long)c->nr_running,
+		(unsigned long long)c->nr_stopped,
+		(unsigned long long)c->nr_uninterruptible);
+}
+
+
+static void print_ioacct(struct taskstats *t)
+{
+	printf("%s: read=%llu, write=%llu, cancelled_write=%llu\n",
+		t->ac_comm,
+		(unsigned long long)t->read_bytes,
+		(unsigned long long)t->write_bytes,
+		(unsigned long long)t->cancelled_write_bytes);
 }
 
 int main(int argc, char *argv[])
 {
-	int c, rc, rep_len, aggr_len, len2, cmd_type;
+	int c, rc, rep_len, aggr_len, len2;
+	int cmd_type = TASKSTATS_CMD_ATTR_UNSPEC;
 	__u16 id;
 	__u32 mypid;
 
@@ -202,13 +261,16 @@ int main(int argc, char *argv[])
 	int count = 0;
 	int write_file = 0;
 	int maskset = 0;
-	char logfile[128];
+	char *logfile = NULL;
 	int loop = 0;
+	int containerset = 0;
+	char containerpath[1024];
+	int cfd = 0;
 
 	struct msgtemplate msg;
 
 	while (1) {
-		c = getopt(argc, argv, "dw:r:m:t:p:v:l");
+		c = getopt(argc, argv, "qdiw:r:m:t:p:vlC:");
 		if (c < 0)
 			break;
 
@@ -217,8 +279,20 @@ int main(int argc, char *argv[])
 			printf("print delayacct stats ON\n");
 			print_delays = 1;
 			break;
+		case 'i':
+			printf("printing IO accounting\n");
+			print_io_accounting = 1;
+			break;
+		case 'q':
+			printf("printing task/process context switch rates\n");
+			print_task_context_switch_counts = 1;
+			break;
+		case 'C':
+			containerset = 1;
+			strncpy(containerpath, optarg, strlen(optarg) + 1);
+			break;
 		case 'w':
-			strncpy(logfile, optarg, MAX_FILENAME);
+			logfile = strdup(optarg);
 			printf("write to file %s\n", logfile);
 			write_file = 1;
 			break;
@@ -238,14 +312,12 @@ int main(int argc, char *argv[])
 			if (!tid)
 				err(1, "Invalid tgid\n");
 			cmd_type = TASKSTATS_CMD_ATTR_TGID;
-			print_delays = 1;
 			break;
 		case 'p':
 			tid = atoi(optarg);
 			if (!tid)
 				err(1, "Invalid pid\n");
 			cmd_type = TASKSTATS_CMD_ATTR_PID;
-			print_delays = 1;
 			break;
 		case 'v':
 			printf("debug on\n");
@@ -256,7 +328,7 @@ int main(int argc, char *argv[])
 			loop = 1;
 			break;
 		default:
-			printf("Unknown option %d\n", c);
+			usage();
 			exit(-1);
 		}
 	}
@@ -277,7 +349,7 @@ int main(int argc, char *argv[])
 	mypid = getpid();
 	id = get_family_id(nl_sd);
 	if (!id) {
-		printf("Error getting family id, errno %d", errno);
+		fprintf(stderr, "Error getting family id, errno %d\n", errno);
 		goto err;
 	}
 	PRINTF("family id %d\n", id);
@@ -285,12 +357,17 @@ int main(int argc, char *argv[])
 	if (maskset) {
 		rc = send_cmd(nl_sd, id, mypid, TASKSTATS_CMD_GET,
 			      TASKSTATS_CMD_ATTR_REGISTER_CPUMASK,
-			      &cpumask, sizeof(cpumask));
+			      &cpumask, strlen(cpumask) + 1);
 		PRINTF("Sent register cpumask, retval %d\n", rc);
 		if (rc < 0) {
-			printf("error sending register cpumask\n");
+			fprintf(stderr, "error sending register cpumask\n");
 			goto err;
 		}
+	}
+
+	if (tid && containerset) {
+		fprintf(stderr, "Select either -t or -C, not both\n");
+		goto err;
 	}
 
 	if (tid) {
@@ -298,9 +375,27 @@ int main(int argc, char *argv[])
 			      cmd_type, &tid, sizeof(__u32));
 		PRINTF("Sent pid/tgid, retval %d\n", rc);
 		if (rc < 0) {
-			printf("error sending tid/tgid cmd\n");
+			fprintf(stderr, "error sending tid/tgid cmd\n");
 			goto done;
 		}
+	}
+
+	if (containerset) {
+		cfd = open(containerpath, O_RDONLY);
+		if (cfd < 0) {
+			perror("error opening container file");
+			goto err;
+		}
+		rc = send_cmd(nl_sd, id, mypid, CGROUPSTATS_CMD_GET,
+			      CGROUPSTATS_CMD_ATTR_FD, &cfd, sizeof(__u32));
+		if (rc < 0) {
+			perror("error sending cgroupstats command");
+			goto err;
+		}
+	}
+	if (!maskset && !tid && !containerset) {
+		usage();
+		goto err;
 	}
 
 	do {
@@ -310,16 +405,19 @@ int main(int argc, char *argv[])
 		PRINTF("received %d bytes\n", rep_len);
 
 		if (rep_len < 0) {
-			printf("nonfatal reply error: errno %d\n", errno);
+			fprintf(stderr, "nonfatal reply error: errno %d\n",
+				errno);
 			continue;
 		}
 		if (msg.n.nlmsg_type == NLMSG_ERROR ||
 		    !NLMSG_OK((&msg.n), rep_len)) {
-			printf("fatal reply error,  errno %d\n", errno);
+			struct nlmsgerr *err = NLMSG_DATA(&msg);
+			fprintf(stderr, "fatal reply error,  errno %d\n",
+				err->error);
 			goto done;
 		}
 
-		PRINTF("nlmsghdr size=%d, nlmsg_len=%d, rep_len=%d\n",
+		PRINTF("nlmsghdr size=%zu, nlmsg_len=%d, rep_len=%d\n",
 		       sizeof(struct nlmsghdr), msg.n.nlmsg_len, rep_len);
 
 
@@ -355,6 +453,10 @@ int main(int argc, char *argv[])
 						count++;
 						if (print_delays)
 							print_delayacct((struct taskstats *) NLA_DATA(na));
+						if (print_io_accounting)
+							print_ioacct((struct taskstats *) NLA_DATA(na));
+						if (print_task_context_switch_counts)
+							task_context_switch_counts((struct taskstats *) NLA_DATA(na));
 						if (fd) {
 							if (write(fd, NLA_DATA(na), na->nla_len) < 0) {
 								err(1,"write error\n");
@@ -364,7 +466,9 @@ int main(int argc, char *argv[])
 							goto done;
 						break;
 					default:
-						printf("Unknown nested nla_type %d\n", na->nla_type);
+						fprintf(stderr, "Unknown nested"
+							" nla_type %d\n",
+							na->nla_type);
 						break;
 					}
 					len2 += NLA_ALIGN(na->nla_len);
@@ -372,8 +476,12 @@ int main(int argc, char *argv[])
 				}
 				break;
 
+			case CGROUPSTATS_TYPE_CGROUP_STATS:
+				print_cgroupstats(NLA_DATA(na));
+				break;
 			default:
-				printf("Unknown nla_type %d\n", na->nla_type);
+				fprintf(stderr, "Unknown nla_type %d\n",
+					na->nla_type);
 				break;
 			}
 			na = (struct nlattr *) (GENLMSG_DATA(&msg) + len);
@@ -383,7 +491,7 @@ done:
 	if (maskset) {
 		rc = send_cmd(nl_sd, id, mypid, TASKSTATS_CMD_GET,
 			      TASKSTATS_CMD_ATTR_DEREGISTER_CPUMASK,
-			      &cpumask, sizeof(cpumask));
+			      &cpumask, strlen(cpumask) + 1);
 		printf("Sent deregister mask, retval %d\n", rc);
 		if (rc < 0)
 			err(rc, "error sending deregister cpumask\n");
@@ -392,5 +500,7 @@ err:
 	close(nl_sd);
 	if (fd)
 		close(fd);
+	if (cfd)
+		close(cfd);
 	return 0;
 }

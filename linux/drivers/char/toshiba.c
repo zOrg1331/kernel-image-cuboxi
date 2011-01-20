@@ -58,7 +58,6 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/fcntl.h>
 #include <linux/miscdevice.h>
@@ -68,6 +67,7 @@
 #include <linux/init.h>
 #include <linux/stat.h>
 #include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 
 #include <linux/toshiba.h>
 
@@ -249,6 +249,7 @@ int tosh_smm(SMMRegisters *regs)
 
 	return eax;
 }
+EXPORT_SYMBOL(tosh_smm);
 
 
 static int tosh_ioctl(struct inode *ip, struct file *fp, unsigned int cmd,
@@ -297,12 +298,10 @@ static int tosh_ioctl(struct inode *ip, struct file *fp, unsigned int cmd,
  * Print the information for /proc/toshiba
  */
 #ifdef CONFIG_PROC_FS
-static int tosh_get_info(char *buffer, char **start, off_t fpos, int length)
+static int proc_toshiba_show(struct seq_file *m, void *v)
 {
-	char *temp;
 	int key;
 
-	temp = buffer;
 	key = tosh_fn_status();
 
 	/* Arguments
@@ -313,8 +312,7 @@ static int tosh_get_info(char *buffer, char **start, off_t fpos, int length)
 	     4) BIOS date (in SCI date format)
 	     5) Fn Key status
 	*/
-
-	temp += sprintf(temp, "1.1 0x%04x %d.%d %d.%d 0x%04x 0x%02x\n",
+	seq_printf(m, "1.1 0x%04x %d.%d %d.%d 0x%04x 0x%02x\n",
 		tosh_id,
 		(tosh_sci & 0xff00)>>8,
 		tosh_sci & 0xff,
@@ -322,9 +320,21 @@ static int tosh_get_info(char *buffer, char **start, off_t fpos, int length)
 		tosh_bios & 0xff,
 		tosh_date,
 		key);
-
-	return temp-buffer;
+	return 0;
 }
+
+static int proc_toshiba_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, proc_toshiba_show, NULL);
+}
+
+static const struct file_operations proc_toshiba_fops = {
+	.owner		= THIS_MODULE,
+	.open		= proc_toshiba_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 #endif
 
 
@@ -416,7 +426,7 @@ static int tosh_probe(void)
 	int i,major,minor,day,year,month,flag;
 	unsigned char signature[7] = { 0x54,0x4f,0x53,0x48,0x49,0x42,0x41 };
 	SMMRegisters regs;
-	void __iomem *bios = ioremap(0xf0000, 0x10000);
+	void __iomem *bios = ioremap_cache(0xf0000, 0x10000);
 
 	if (!bios)
 		return -ENOMEM;
@@ -495,7 +505,7 @@ static int __init toshiba_init(void)
 	if (tosh_probe())
 		return -ENODEV;
 
-	printk(KERN_INFO "Toshiba System Managment Mode driver v" TOSH_VERSION "\n");
+	printk(KERN_INFO "Toshiba System Management Mode driver v" TOSH_VERSION "\n");
 
 	/* set the port to use for Fn status if not specified as a parameter */
 	if (tosh_fn==0x00)
@@ -507,10 +517,14 @@ static int __init toshiba_init(void)
 		return retval;
 
 #ifdef CONFIG_PROC_FS
-	/* register the proc entry */
-	if (create_proc_info_entry("toshiba", 0, NULL, tosh_get_info) == NULL) {
-		misc_deregister(&tosh_device);
-		return -ENOMEM;
+	{
+		struct proc_dir_entry *pde;
+
+		pde = proc_create("toshiba", 0, NULL, &proc_toshiba_fops);
+		if (!pde) {
+			misc_deregister(&tosh_device);
+			return -ENOMEM;
+		}
 	}
 #endif
 

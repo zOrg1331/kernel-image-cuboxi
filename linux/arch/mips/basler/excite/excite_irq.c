@@ -29,7 +29,7 @@
 #include <linux/timex.h>
 #include <linux/slab.h>
 #include <linux/random.h>
-#include <asm/bitops.h>
+#include <linux/bitops.h>
 #include <asm/bootinfo.h>
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -47,16 +47,12 @@ extern asmlinkage void excite_handle_int(void);
  */
 void __init arch_init_irq(void)
 {
-	mips_cpu_irq_init(0);
-	rm7k_cpu_irq_init(8);
-	rm9k_cpu_irq_init(12);
-
-#ifdef CONFIG_KGDB
-	excite_kgdb_init();
-#endif
+	mips_cpu_irq_init();
+	rm7k_cpu_irq_init();
+	rm9k_cpu_irq_init();
 }
 
-asmlinkage void plat_irq_dispatch(struct pt_regs *regs)
+asmlinkage void plat_irq_dispatch(void)
 {
 	const u32
 		interrupts = read_c0_cause() >> 8,
@@ -67,7 +63,7 @@ asmlinkage void plat_irq_dispatch(struct pt_regs *regs)
 
 	/* process timer interrupt */
 	if (pending & (1 << TIMER_IRQ)) {
-		do_IRQ(TIMER_IRQ, regs);
+		do_IRQ(TIMER_IRQ);
 		return;
 	}
 
@@ -80,7 +76,7 @@ asmlinkage void plat_irq_dispatch(struct pt_regs *regs)
 #else
 	if (pending & (1 << USB_IRQ)) {
 #endif
-		do_IRQ(USB_IRQ, regs);
+		do_IRQ(USB_IRQ);
 		return;
 	}
 
@@ -90,10 +86,7 @@ asmlinkage void plat_irq_dispatch(struct pt_regs *regs)
 	msgint	    = msgintflags & msgintmask & (0x1 << (TITAN_MSGINT % 0x20));
 	if ((pending & (1 << TITAN_IRQ)) && msgint) {
 		ocd_writel(msgint, INTP0Clear0 + (TITAN_MSGINT / 0x20 * 0x10));
-#if defined(CONFIG_KGDB)
-		excite_kgdb_inthdl(regs);
-#endif
-		do_IRQ(TITAN_IRQ, regs);
+		do_IRQ(TITAN_IRQ);
 		return;
 	}
 
@@ -102,7 +95,7 @@ asmlinkage void plat_irq_dispatch(struct pt_regs *regs)
 	msgintmask  = ocd_readl(INTP0Mask0 + (FPGA0_MSGINT / 0x20 * 0x10));
 	msgint	    = msgintflags & msgintmask & (0x1 << (FPGA0_MSGINT % 0x20));
 	if ((pending & (1 << FPGA0_IRQ)) && msgint) {
-		do_IRQ(FPGA0_IRQ, regs);
+		do_IRQ(FPGA0_IRQ);
 		return;
 	}
 
@@ -111,7 +104,7 @@ asmlinkage void plat_irq_dispatch(struct pt_regs *regs)
 	msgintmask  = ocd_readl(INTP0Mask0 + (FPGA1_MSGINT / 0x20 * 0x10));
 	msgint	    = msgintflags & msgintmask & (0x1 << (FPGA1_MSGINT % 0x20));
 	if ((pending & (1 << FPGA1_IRQ)) && msgint) {
-		do_IRQ(FPGA1_IRQ, regs);
+		do_IRQ(FPGA1_IRQ);
 		return;
 	}
 
@@ -120,10 +113,10 @@ asmlinkage void plat_irq_dispatch(struct pt_regs *regs)
 	msgintmask  = ocd_readl(INTP0Mask0 + (PHY_MSGINT / 0x20 * 0x10));
 	msgint	    = msgintflags & msgintmask & (0x1 << (PHY_MSGINT % 0x20));
 	if ((pending & (1 << PHY_IRQ)) && msgint) {
-		do_IRQ(PHY_IRQ, regs);
+		do_IRQ(PHY_IRQ);
 		return;
 	}
 
 	/* Process spurious interrupts */
-	spurious_interrupt(regs);
+	spurious_interrupt();
 }

@@ -31,14 +31,12 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * $Id: cache.c 1349 2004-12-16 21:09:43Z roland $
  */
 
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/slab.h>
-#include <linux/sched.h>	/* INIT_WORK, schedule_work(), flush_scheduled_work() */
+#include <linux/workqueue.h>
 
 #include <rdma/ib_cache.h>
 
@@ -62,12 +60,13 @@ struct ib_update_work {
 
 static inline int start_port(struct ib_device *device)
 {
-	return device->node_type == IB_NODE_SWITCH ? 0 : 1;
+	return (device->node_type == RDMA_NODE_IB_SWITCH) ? 0 : 1;
 }
 
 static inline int end_port(struct ib_device *device)
 {
-	return device->node_type == IB_NODE_SWITCH ? 0 : device->phys_port_cnt;
+	return (device->node_type == RDMA_NODE_IB_SWITCH) ?
+		0 : device->phys_port_cnt;
 }
 
 int ib_get_cached_gid(struct ib_device *device,
@@ -284,9 +283,10 @@ err:
 	kfree(tprops);
 }
 
-static void ib_cache_task(void *work_ptr)
+static void ib_cache_task(struct work_struct *_work)
 {
-	struct ib_update_work *work = work_ptr;
+	struct ib_update_work *work =
+		container_of(_work, struct ib_update_work, work);
 
 	ib_cache_update(work->device, work->port_num);
 	kfree(work);
@@ -305,7 +305,7 @@ static void ib_cache_event(struct ib_event_handler *handler,
 	    event->event == IB_EVENT_CLIENT_REREGISTER) {
 		work = kmalloc(sizeof *work, GFP_ATOMIC);
 		if (work) {
-			INIT_WORK(&work->work, ib_cache_task, work);
+			INIT_WORK(&work->work, ib_cache_task);
 			work->device   = event->device;
 			work->port_num = event->element.port_num;
 			schedule_work(&work->work);

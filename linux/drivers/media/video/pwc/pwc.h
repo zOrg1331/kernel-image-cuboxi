@@ -29,27 +29,26 @@
 #include <linux/usb.h>
 #include <linux/spinlock.h>
 #include <linux/wait.h>
-#include <linux/smp_lock.h>
 #include <linux/version.h>
-#include <asm/semaphore.h>
+#include <linux/mutex.h>
+#include <linux/mm.h>
 #include <asm/errno.h>
 #include <linux/videodev.h>
 #include <media/v4l2-common.h>
+#include <media/v4l2-ioctl.h>
+#ifdef CONFIG_USB_PWC_INPUT_EVDEV
+#include <linux/input.h>
+#endif
 
 #include "pwc-uncompress.h"
 #include <media/pwc-ioctl.h>
-
-/* Turn some debugging options on/off */
-#ifndef CONFIG_PWC_DEBUG
-#define CONFIG_PWC_DEBUG 1
-#endif
 
 /* Version block */
 #define PWC_MAJOR	10
 #define PWC_MINOR	0
 #define PWC_EXTRAMINOR	12
 #define PWC_VERSION_CODE KERNEL_VERSION(PWC_MAJOR,PWC_MINOR,PWC_EXTRAMINOR)
-#define PWC_VERSION 	"10.0.12"
+#define PWC_VERSION 	"10.0.13"
 #define PWC_NAME 	"pwc"
 #define PFX		PWC_NAME ": "
 
@@ -76,7 +75,7 @@
 #define PWC_DEBUG_TRACE(fmt, args...) PWC_DEBUG(TRACE, fmt, ##args)
 
 
-#if CONFIG_PWC_DEBUG
+#ifdef CONFIG_USB_PWC_DEBUG
 
 #define PWC_DEBUG_LEVEL	(PWC_DEBUG_LEVEL_MODULE)
 
@@ -90,7 +89,7 @@
 #define PWC_INFO(fmt, args...) printk(KERN_INFO PFX fmt, ##args)
 #define PWC_TRACE(fmt, args...) PWC_DEBUG(TRACE, fmt, ##args)
 
-#else /* if ! CONFIG_PWC_DEBUG */
+#else /* if ! CONFIG_USB_PWC_DEBUG */
 
 #define PWC_ERROR(fmt, args...) printk(KERN_ERR PFX fmt, ##args)
 #define PWC_WARNING(fmt, args...) printk(KERN_WARNING PFX fmt, ##args)
@@ -135,12 +134,6 @@
 #define DEVICE_USE_CODEC2(x) ((x)>=675 && (x)<700)
 #define DEVICE_USE_CODEC3(x) ((x)>=700)
 #define DEVICE_USE_CODEC23(x) ((x)>=675)
-
-
-#ifndef V4L2_PIX_FMT_PWC1
-#define V4L2_PIX_FMT_PWC1	v4l2_fourcc('P','W','C','1')
-#define V4L2_PIX_FMT_PWC2	v4l2_fourcc('P','W','C','2')
-#endif
 
 /* The following structures were based on cpia.h. Why reinvent the wheel? :-) */
 struct pwc_iso_buf
@@ -198,6 +191,7 @@ struct pwc_device
    char vsnapshot;		/* snapshot mode */
    char vsync;			/* used by isoc handler */
    char vmirror;		/* for ToUCaM series */
+	char unplugged;
 
    int cmd_len;
    unsigned char cmd_buf[13];
@@ -249,7 +243,7 @@ struct pwc_device
    int image_read_pos;			/* In case we read data in pieces, keep track of were we are in the imagebuffer */
    int image_used[MAX_IMAGES];		/* For MCAPTURE and SYNC */
 
-   struct semaphore modlock;		/* to prevent races in video_open(), etc */
+   struct mutex modlock;		/* to prevent races in video_open(), etc */
    spinlock_t ptrlock;			/* for manipulating the buffer pointers */
 
    /*** motorized pan/tilt feature */
@@ -257,6 +251,10 @@ struct pwc_device
    int pan_angle;			/* in degrees * 100 */
    int tilt_angle;			/* absolute angle; 0,0 is home position */
    int snapshot_button_status;		/* set to 1 when the user push the button, reset to 0 when this value is read */
+#ifdef CONFIG_USB_PWC_INPUT_EVDEV
+   struct input_dev *button_dev;	/* webcam snapshot button input */
+   char button_phys[64];
+#endif
 
    /*** Misc. data ***/
    wait_queue_head_t frameq;		/* When waiting for a frame to finish... */
@@ -270,7 +268,7 @@ extern "C" {
 #endif
 
 /* Global variables */
-#if CONFIG_PWC_DEBUG
+#ifdef CONFIG_USB_PWC_DEBUG
 extern int pwc_trace;
 #endif
 extern int pwc_mbufs;
@@ -292,6 +290,7 @@ void pwc_construct(struct pwc_device *pdev);
 /** Functions in pwc-ctrl.c */
 /* Request a certain video mode. Returns < 0 if not possible */
 extern int pwc_set_video_mode(struct pwc_device *pdev, int width, int height, int frames, int compression, int snapshot);
+extern unsigned int pwc_get_fps(struct pwc_device *pdev, unsigned int index, unsigned int size);
 /* Calculate the number of bytes per image (not frame) */
 extern int pwc_mpt_reset(struct pwc_device *pdev, int flags);
 extern int pwc_mpt_set_angle(struct pwc_device *pdev, int pan, int tilt);
@@ -338,11 +337,10 @@ extern int pwc_get_dynamic_noise(struct pwc_device *pdev, int *noise);
 extern int pwc_camera_power(struct pwc_device *pdev, int power);
 
 /* Private ioctl()s; see pwc-ioctl.h */
-extern int pwc_ioctl(struct pwc_device *pdev, unsigned int cmd, void *arg);
+extern long pwc_ioctl(struct pwc_device *pdev, unsigned int cmd, void *arg);
 
 /** Functions in pwc-v4l.c */
-extern int pwc_video_do_ioctl(struct inode *inode, struct file *file,
-			      unsigned int cmd, void *arg);
+extern long pwc_video_do_ioctl(struct file *file, unsigned int cmd, void *arg);
 
 /** pwc-uncompress.c */
 /* Expand frame to image, possibly including decompression. Uses read_frame and fill_image */

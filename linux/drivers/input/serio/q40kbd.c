@@ -1,6 +1,4 @@
 /*
- * $Id: q40kbd.c,v 1.12 2002/02/02 22:26:44 vojtech Exp $
- *
  *  Copyright (c) 2000-2001 Vojtech Pavlik
  *
  *  Based on the work of:
@@ -49,18 +47,18 @@ MODULE_AUTHOR("Vojtech Pavlik <vojtech@ucw.cz>");
 MODULE_DESCRIPTION("Q40 PS/2 keyboard controller driver");
 MODULE_LICENSE("GPL");
 
-DEFINE_SPINLOCK(q40kbd_lock);
+static DEFINE_SPINLOCK(q40kbd_lock);
 static struct serio *q40kbd_port;
 static struct platform_device *q40kbd_device;
 
-static irqreturn_t q40kbd_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t q40kbd_interrupt(int irq, void *dev_id)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&q40kbd_lock, flags);
 
 	if (Q40_IRQ_KEYB_MASK & master_inb(INTERRUPT_REG))
-		serio_interrupt(q40kbd_port, master_inb(KEYCODE_REG), 0, regs);
+		serio_interrupt(q40kbd_port, master_inb(KEYCODE_REG), 0);
 
 	master_outb(-1, KEYBOARD_UNLOCK_REG);
 
@@ -156,7 +154,7 @@ static int __init q40kbd_init(void)
 	int error;
 
 	if (!MACH_IS_Q40)
-		return -EIO;
+		return -ENODEV;
 
 	error = platform_driver_register(&q40kbd_driver);
 	if (error)

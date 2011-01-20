@@ -1,6 +1,4 @@
 /*
- * $Id: stinger.c,v 1.10 2002/01/22 20:29:31 vojtech Exp $
- *
  *  Copyright (c) 2000-2001 Vojtech Pavlik
  *  Copyright (c) 2000 Mark Fletcher
  */
@@ -64,14 +62,12 @@ struct stinger {
  * Stinger. It updates the data accordingly.
  */
 
-static void stinger_process_packet(struct stinger *stinger, struct pt_regs *regs)
+static void stinger_process_packet(struct stinger *stinger)
 {
 	struct input_dev *dev = stinger->dev;
 	unsigned char *data = stinger->data;
 
 	if (!stinger->idx) return;
-
-	input_regs(dev, regs);
 
 	input_report_key(dev, BTN_A,	  ((data[0] & 0x20) >> 5));
 	input_report_key(dev, BTN_B,	  ((data[0] & 0x10) >> 4));
@@ -99,7 +95,7 @@ static void stinger_process_packet(struct stinger *stinger, struct pt_regs *regs
  */
 
 static irqreturn_t stinger_interrupt(struct serio *serio,
-	unsigned char data, unsigned int flags, struct pt_regs *regs)
+	unsigned char data, unsigned int flags)
 {
 	struct stinger *stinger = serio_get_drvdata(serio);
 
@@ -109,7 +105,7 @@ static irqreturn_t stinger_interrupt(struct serio *serio,
 		stinger->data[stinger->idx++] = data;
 
 	if (stinger->idx == 4) {
-		stinger_process_packet(stinger, regs);
+		stinger_process_packet(stinger);
 		stinger->idx = 0;
 	}
 
@@ -145,7 +141,7 @@ static int stinger_connect(struct serio *serio, struct serio_driver *drv)
 	stinger = kmalloc(sizeof(struct stinger), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!stinger || !input_dev)
-		goto fail;
+		goto fail1;
 
 	stinger->dev = input_dev;
 	snprintf(stinger->phys, sizeof(stinger->phys), "%s/serio0", serio->phys);
@@ -156,13 +152,13 @@ static int stinger_connect(struct serio *serio, struct serio_driver *drv)
 	input_dev->id.vendor = SERIO_STINGER;
 	input_dev->id.product = 0x0001;
 	input_dev->id.version = 0x0100;
-	input_dev->cdev.dev = &serio->dev;
-	input_dev->private = stinger;
+	input_dev->dev.parent = &serio->dev;
 
-	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
-	input_dev->keybit[LONG(BTN_A)] = BIT(BTN_A) | BIT(BTN_B) | BIT(BTN_C) | BIT(BTN_X) |
-					 BIT(BTN_Y) | BIT(BTN_Z) | BIT(BTN_TL) | BIT(BTN_TR) |
-					 BIT(BTN_START) | BIT(BTN_SELECT);
+	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+	input_dev->keybit[BIT_WORD(BTN_A)] = BIT_MASK(BTN_A) | BIT_MASK(BTN_B) |
+		BIT_MASK(BTN_C) | BIT_MASK(BTN_X) | BIT_MASK(BTN_Y) |
+		BIT_MASK(BTN_Z) | BIT_MASK(BTN_TL) | BIT_MASK(BTN_TR) |
+		BIT_MASK(BTN_START) | BIT_MASK(BTN_SELECT);
 	input_set_abs_params(input_dev, ABS_X, -64, 64, 0, 4);
 	input_set_abs_params(input_dev, ABS_Y, -64, 64, 0, 4);
 
@@ -170,13 +166,17 @@ static int stinger_connect(struct serio *serio, struct serio_driver *drv)
 
 	err = serio_open(serio, drv);
 	if (err)
-		goto fail;
+		goto fail2;
 
-	input_register_device(stinger->dev);
+	err = input_register_device(stinger->dev);
+	if (err)
+		goto fail3;
+
 	return 0;
 
- fail:	serio_set_drvdata(serio, NULL);
-	input_free_device(input_dev);
+ fail3:	serio_close(serio);
+ fail2:	serio_set_drvdata(serio, NULL);
+ fail1:	input_free_device(input_dev);
 	kfree(stinger);
 	return err;
 }
@@ -214,8 +214,7 @@ static struct serio_driver stinger_drv = {
 
 static int __init stinger_init(void)
 {
-	serio_register_driver(&stinger_drv);
-	return 0;
+	return serio_register_driver(&stinger_drv);
 }
 
 static void __exit stinger_exit(void)

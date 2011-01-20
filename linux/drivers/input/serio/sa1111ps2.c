@@ -40,7 +40,7 @@ struct ps2if {
  * at the most one, but we loop for safety.  If there was a
  * framing error, we have to manually clear the status.
  */
-static irqreturn_t ps2_rxint(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t ps2_rxint(int irq, void *dev_id)
 {
 	struct ps2if *ps2if = dev_id;
 	unsigned int scancode, flag, status;
@@ -58,7 +58,7 @@ static irqreturn_t ps2_rxint(int irq, void *dev_id, struct pt_regs *regs)
 		if (hweight8(scancode) & 1)
 			flag ^= SERIO_PARITY;
 
-		serio_interrupt(ps2if->io, scancode, flag, regs);
+		serio_interrupt(ps2if->io, scancode, flag);
 
 		status = sa1111_readl(ps2if->base + SA1111_PS2STAT);
         }
@@ -69,7 +69,7 @@ static irqreturn_t ps2_rxint(int irq, void *dev_id, struct pt_regs *regs)
 /*
  * Completion of ps2 write
  */
-static irqreturn_t ps2_txint(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t ps2_txint(int irq, void *dev_id)
 {
 	struct ps2if *ps2if = dev_id;
 	unsigned int status;
@@ -77,7 +77,7 @@ static irqreturn_t ps2_txint(int irq, void *dev_id, struct pt_regs *regs)
 	spin_lock(&ps2if->lock);
 	status = sa1111_readl(ps2if->base + SA1111_PS2STAT);
 	if (ps2if->head == ps2if->tail) {
-		disable_irq(irq);
+		disable_irq_nosync(irq);
 		/* done */
 	} else if (status & PS2STAT_TXE) {
 		sa1111_writel(ps2if->buf[ps2if->tail], ps2if->base + SA1111_PS2DATA);
@@ -170,7 +170,7 @@ static void ps2_close(struct serio *io)
 /*
  * Clear the input buffer.
  */
-static void __init ps2_clear_input(struct ps2if *ps2if)
+static void __devinit ps2_clear_input(struct ps2if *ps2if)
 {
 	int maxread = 100;
 
@@ -228,28 +228,26 @@ static int __init ps2_test(struct ps2if *ps2if)
 /*
  * Add one device to this driver.
  */
-static int ps2_probe(struct sa1111_dev *dev)
+static int __devinit ps2_probe(struct sa1111_dev *dev)
 {
 	struct ps2if *ps2if;
 	struct serio *serio;
 	int ret;
 
-	ps2if = kmalloc(sizeof(struct ps2if), GFP_KERNEL);
-	serio = kmalloc(sizeof(struct serio), GFP_KERNEL);
+	ps2if = kzalloc(sizeof(struct ps2if), GFP_KERNEL);
+	serio = kzalloc(sizeof(struct serio), GFP_KERNEL);
 	if (!ps2if || !serio) {
 		ret = -ENOMEM;
 		goto free;
 	}
 
-	memset(ps2if, 0, sizeof(struct ps2if));
-	memset(serio, 0, sizeof(struct serio));
 
 	serio->id.type		= SERIO_8042;
 	serio->write		= ps2_write;
 	serio->open		= ps2_open;
 	serio->close		= ps2_close;
-	strlcpy(serio->name, dev->dev.bus_id, sizeof(serio->name));
-	strlcpy(serio->phys, dev->dev.bus_id, sizeof(serio->phys));
+	strlcpy(serio->name, dev_name(&dev->dev), sizeof(serio->name));
+	strlcpy(serio->phys, dev_name(&dev->dev), sizeof(serio->phys));
 	serio->port_data	= ps2if;
 	serio->dev.parent	= &dev->dev;
 	ps2if->io		= serio;

@@ -8,7 +8,7 @@
  * Bus Glue for Sharp LH7A404
  *
  * Written by Christopher Hoover <ch@hpl.hp.com>
- * Based on fragments of previous driver by Rusell King et al.
+ * Based on fragments of previous driver by Russell King et al.
  *
  * Modified for LH7A404 from ohci-sa1111.c
  *  by Durgesh Pattamatta <pattamattad@sharpsec.com>
@@ -19,7 +19,7 @@
 #include <linux/platform_device.h>
 #include <linux/signal.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 
 
 extern int usb_disabled(void);
@@ -38,7 +38,7 @@ static void lh7a404_start_hc(struct platform_device *dev)
 	CSC_PWRCNT |= CSC_PWRCNT_USBH_EN; /* Enable clock */
 	udelay(1000);
 	USBH_CMDSTATUS = OHCI_HCR;
-	
+
 	printk(KERN_DEBUG __FILE__
 		   ": Clock to USB host has been enabled \n");
 }
@@ -89,7 +89,7 @@ int usb_hcd_lh7a404_probe (const struct hc_driver *driver,
 		retval = -EBUSY;
 		goto err1;
 	}
-	
+
 	hcd->regs = ioremap(hcd->rsrc_start, hcd->rsrc_len);
 	if (!hcd->regs) {
 		pr_debug("ioremap failed");
@@ -173,11 +173,8 @@ static const struct hc_driver ohci_lh7a404_hc_driver = {
 	 * basic lifecycle operations
 	 */
 	.start =		ohci_lh7a404_start,
-#ifdef	CONFIG_PM
-	/* suspend:		ohci_lh7a404_suspend,  -- tbd */
-	/* resume:		ohci_lh7a404_resume,   -- tbd */
-#endif /*CONFIG_PM*/
 	.stop =			ohci_stop,
+	.shutdown =		ohci_shutdown,
 
 	/*
 	 * managing i/o requests and associated device resources
@@ -244,6 +241,7 @@ static int ohci_hcd_lh7a404_drv_resume(struct platform_device *dev)
 static struct platform_driver ohci_hcd_lh7a404_driver = {
 	.probe		= ohci_hcd_lh7a404_drv_probe,
 	.remove		= ohci_hcd_lh7a404_drv_remove,
+	.shutdown	= usb_hcd_platform_shutdown,
 	/*.suspend	= ohci_hcd_lh7a404_drv_suspend, */
 	/*.resume	= ohci_hcd_lh7a404_drv_resume, */
 	.driver		= {
@@ -252,19 +250,4 @@ static struct platform_driver ohci_hcd_lh7a404_driver = {
 	},
 };
 
-static int __init ohci_hcd_lh7a404_init (void)
-{
-	pr_debug (DRIVER_INFO " (LH7A404)");
-	pr_debug ("block sizes: ed %d td %d\n",
-		sizeof (struct ed), sizeof (struct td));
-
-	return platform_driver_register(&ohci_hcd_lh7a404_driver);
-}
-
-static void __exit ohci_hcd_lh7a404_cleanup (void)
-{
-	platform_driver_unregister(&ohci_hcd_lh7a404_driver);
-}
-
-module_init (ohci_hcd_lh7a404_init);
-module_exit (ohci_hcd_lh7a404_cleanup);
+MODULE_ALIAS("platform:lh7a404-ohci");

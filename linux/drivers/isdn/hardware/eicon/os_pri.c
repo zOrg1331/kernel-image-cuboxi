@@ -487,7 +487,7 @@ diva_pri_start_adapter(PISDN_ADAPTER IoAdapter,
 	}
 	DIVA_OS_MEM_DETACH_ADDRESS(IoAdapter, boot);
 
-	IoAdapter->Initialized = TRUE;
+	IoAdapter->Initialized = true;
 
 	/*
 	   Check Interrupt
@@ -504,7 +504,7 @@ diva_pri_start_adapter(PISDN_ADAPTER IoAdapter,
 	if (!IoAdapter->IrqCount) {
 		DBG_ERR(("A: A(%d) interrupt test failed",
 			 IoAdapter->ANum))
-		IoAdapter->Initialized = FALSE;
+		IoAdapter->Initialized = false;
 		IoAdapter->stop(IoAdapter);
 		return (-1);
 	}
@@ -513,7 +513,7 @@ diva_pri_start_adapter(PISDN_ADAPTER IoAdapter,
 
 	diva_xdi_display_adapter_features(IoAdapter->ANum);
 
-	DBG_LOG(("A(%d) PRI adapter successfull started", IoAdapter->ANum))
+	DBG_LOG(("A(%d) PRI adapter successfully started", IoAdapter->ANum))
 	/*
 	   Register with DIDD
 	 */

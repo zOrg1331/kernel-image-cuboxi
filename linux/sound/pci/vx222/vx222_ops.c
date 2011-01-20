@@ -20,7 +20,6 @@
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
-#include <sound/driver.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/firmware.h>
@@ -28,6 +27,7 @@
 
 #include <sound/core.h>
 #include <sound/control.h>
+#include <sound/tlv.h>
 #include <asm/io.h>
 #include "vx222.h"
 
@@ -107,7 +107,9 @@ static unsigned char vx2_inb(struct vx_core *chip, int offset)
 static void vx2_outb(struct vx_core *chip, int offset, unsigned char val)
 {
 	outb(val, vx2_reg_addr(chip, offset));
-	//printk("outb: %x -> %x\n", val, vx2_reg_addr(chip, offset));
+	/*
+	printk(KERN_DEBUG "outb: %x -> %x\n", val, vx2_reg_addr(chip, offset));
+	*/
 }
 
 /**
@@ -126,7 +128,9 @@ static unsigned int vx2_inl(struct vx_core *chip, int offset)
  */
 static void vx2_outl(struct vx_core *chip, int offset, unsigned int val)
 {
-	// printk("outl: %x -> %x\n", val, vx2_reg_addr(chip, offset));
+	/*
+	printk(KERN_DEBUG "outl: %x -> %x\n", val, vx2_reg_addr(chip, offset));
+	*/
 	outl(val, vx2_reg_addr(chip, offset));
 }
 
@@ -253,7 +257,8 @@ static void vx2_dma_write(struct vx_core *chip, struct snd_pcm_runtime *runtime,
 	int offset = pipe->hw_ptr;
 	u32 *addr = (u32 *)(runtime->dma_area + offset);
 
-	snd_assert(count % 4 == 0, return);
+	if (snd_BUG_ON(count % 4))
+		return;
 
 	vx2_setup_pseudo_dma(chip, 1);
 
@@ -291,7 +296,8 @@ static void vx2_dma_read(struct vx_core *chip, struct snd_pcm_runtime *runtime,
 	u32 *addr = (u32 *)(runtime->dma_area + offset);
 	unsigned long port = vx2_reg_addr(chip, VX_DMA);
 
-	snd_assert(count % 4 == 0, return);
+	if (snd_BUG_ON(count % 4))
+		return;
 
 	vx2_setup_pseudo_dma(chip, 0);
 	/* Transfer using pseudo-dma.
@@ -359,9 +365,9 @@ static int vx2_load_xilinx_binary(struct vx_core *chip, const struct firmware *x
 {
 	unsigned int i;
 	unsigned int port;
-	unsigned char *image;
+	const unsigned char *image;
 
-	/* XILINX reset (wait at least 1 milisecond between reset on and off). */
+	/* XILINX reset (wait at least 1 millisecond between reset on and off). */
 	vx_outl(chip, CNTRL, VX_CNTRL_REGISTER_VALUE | VX_XILINX_RESET_MASK);
 	vx_inl(chip, CNTRL);
 	msleep(10);
@@ -675,7 +681,8 @@ static void vx2_write_akm(struct vx_core *chip, int reg, unsigned int data)
 	   a look up table, as there is no linear matching between the driver codec values
 	   and the real dBu value
 	*/
-	snd_assert(data < sizeof(vx2_akm_gains_lut), return);
+	if (snd_BUG_ON(data >= sizeof(vx2_akm_gains_lut)))
+		return;
 
 	switch (reg) {
 	case XX_CODEC_LEVEL_LEFT_REGISTER:
@@ -823,7 +830,8 @@ static void vx2_set_input_level(struct snd_vx222 *chip)
 		preamp++;	/* raise pre ampli + 18dB */
 		miclevel -= (18 * 2);   /* lower level 18 dB (*2 because of 0.5 dB steps !) */
         }
-	snd_assert(preamp < 4, return);
+	if (snd_BUG_ON(preamp >= 4))
+		return;
 
 	/* set pre-amp level */
 	chip->regSELMIC &= ~MICRO_SELECT_PREAMPLI_MASK;
@@ -844,6 +852,8 @@ static void vx2_set_input_level(struct snd_vx222 *chip)
 
 
 #define MIC_LEVEL_MAX	0xff
+
+static const DECLARE_TLV_DB_SCALE(db_scale_mic, -6450, 50, 0);
 
 /*
  * controls API for input levels
@@ -874,6 +884,12 @@ static int vx_input_level_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem
 {
 	struct vx_core *_chip = snd_kcontrol_chip(kcontrol);
 	struct snd_vx222 *chip = (struct snd_vx222 *)_chip;
+	if (ucontrol->value.integer.value[0] < 0 ||
+	    ucontrol->value.integer.value[0] > MIC_LEVEL_MAX)
+		return -EINVAL;
+	if (ucontrol->value.integer.value[1] < 0 ||
+	    ucontrol->value.integer.value[1] > MIC_LEVEL_MAX)
+		return -EINVAL;
 	mutex_lock(&_chip->mixer_mutex);
 	if (chip->input_level[0] != ucontrol->value.integer.value[0] ||
 	    chip->input_level[1] != ucontrol->value.integer.value[1]) {
@@ -909,6 +925,9 @@ static int vx_mic_level_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_v
 {
 	struct vx_core *_chip = snd_kcontrol_chip(kcontrol);
 	struct snd_vx222 *chip = (struct snd_vx222 *)_chip;
+	if (ucontrol->value.integer.value[0] < 0 ||
+	    ucontrol->value.integer.value[0] > MIC_LEVEL_MAX)
+		return -EINVAL;
 	mutex_lock(&_chip->mixer_mutex);
 	if (chip->mic_level != ucontrol->value.integer.value[0]) {
 		chip->mic_level = ucontrol->value.integer.value[0];
@@ -922,18 +941,24 @@ static int vx_mic_level_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_v
 
 static struct snd_kcontrol_new vx_control_input_level = {
 	.iface =	SNDRV_CTL_ELEM_IFACE_MIXER,
+	.access =	(SNDRV_CTL_ELEM_ACCESS_READWRITE |
+			 SNDRV_CTL_ELEM_ACCESS_TLV_READ),
 	.name =		"Capture Volume",
 	.info =		vx_input_level_info,
 	.get =		vx_input_level_get,
 	.put =		vx_input_level_put,
+	.tlv = { .p = db_scale_mic },
 };
 
 static struct snd_kcontrol_new vx_control_mic_level = {
 	.iface =	SNDRV_CTL_ELEM_IFACE_MIXER,
+	.access =	(SNDRV_CTL_ELEM_ACCESS_READWRITE |
+			 SNDRV_CTL_ELEM_ACCESS_TLV_READ),
 	.name =		"Mic Capture Volume",
 	.info =		vx_mic_level_info,
 	.get =		vx_mic_level_get,
 	.put =		vx_mic_level_put,
+	.tlv = { .p = db_scale_mic },
 };
 
 /*

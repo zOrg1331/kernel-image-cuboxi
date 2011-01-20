@@ -195,7 +195,7 @@ static void pmu_nvram_complete(struct adb_request *req)
 static unsigned char pmu_nvram_read_byte(int addr)
 {
 	struct adb_request req;
-	DECLARE_COMPLETION(req_complete); 
+	DECLARE_COMPLETION_ONSTACK(req_complete);
 	
 	req.arg = system_state == SYSTEM_RUNNING ? &req_complete : NULL;
 	if (pmu_request(&req, pmu_nvram_complete, 3, PMU_READ_NVRAM,
@@ -211,7 +211,7 @@ static unsigned char pmu_nvram_read_byte(int addr)
 static void pmu_nvram_write_byte(int addr, unsigned char val)
 {
 	struct adb_request req;
-	DECLARE_COMPLETION(req_complete); 
+	DECLARE_COMPLETION_ONSTACK(req_complete);
 	
 	req.arg = system_state == SYSTEM_RUNNING ? &req_complete : NULL;
 	if (pmu_request(&req, pmu_nvram_complete, 4, PMU_WRITE_NVRAM,
@@ -553,7 +553,7 @@ static int __init core99_nvram_setup(struct device_node *dp, unsigned long addr)
 	 * identify the chip using flash id commands and base ourselves on
 	 * a list of known chips IDs
 	 */
-	if (device_is_compatible(dp, "amd-0137")) {
+	if (of_device_is_compatible(dp, "amd-0137")) {
 		core99_erase_bank = amd_erase_bank;
 		core99_write_bank = amd_write_bank;
 	} else {
@@ -588,7 +588,7 @@ int __init pmac_nvram_init(void)
 		}
 	}
 
-	is_core_99 = device_is_compatible(dp, "nvram,flash");
+	is_core_99 = of_device_is_compatible(dp, "nvram,flash");
 	if (is_core_99) {
 		err = core99_nvram_setup(dp, r1.start);
 		goto bail;

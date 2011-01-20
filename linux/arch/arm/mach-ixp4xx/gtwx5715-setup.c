@@ -1,7 +1,7 @@
 /*
  * arch/arm/mach-ixp4xx/gtwx5715-setup.c
  *
- * Gemtek GTWX5715 (Linksys WRV54G) board settup
+ * Gemtek GTWX5715 (Linksys WRV54G) board setup
  *
  * Copyright (C) 2004 George T. Joseph
  * Derived from Coyote
@@ -32,12 +32,12 @@
 #include <asm/types.h>
 #include <asm/setup.h>
 #include <asm/memory.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/flash.h>
-#include <asm/arch/gtwx5715.h>
+#include <mach/gtwx5715.h>
 
 /*
  * Xscale UART registers are 32 bits wide with only the least

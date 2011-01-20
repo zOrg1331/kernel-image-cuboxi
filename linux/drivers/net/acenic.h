@@ -173,7 +173,7 @@ typedef struct {
 /*
  * Host control register bits.
  */
-	
+
 #define IN_INT		0x01
 #define CLR_INT		0x02
 #define HW_RESET	0x08
@@ -449,7 +449,7 @@ struct cmd {
 
 struct tx_desc{
         aceaddr	addr;
-	u32	flagsize; 
+	u32	flagsize;
 #if 0
 /*
  * This is in PCI shared mem and must be accessed with readl/writel
@@ -693,8 +693,11 @@ struct ace_private
 				__attribute__ ((aligned (SMP_CACHE_BYTES)));
 	u32			last_tx, last_std_rx, last_mini_rx;
 #endif
-	struct net_device_stats stats;
 	int			pci_using_dac;
+	u8			firmware_major;
+	u8			firmware_minor;
+	u8			firmware_fix;
+	u32			firmware_start;
 };
 
 
@@ -754,7 +757,7 @@ static inline void ace_unmask_irq(struct net_device *dev)
 {
 	struct ace_private *ap = netdev_priv(dev);
 	struct ace_regs __iomem *regs = ap->regs;
- 
+
 	if (ACE_IS_TIGON_I(ap))
 		writel(0, &regs->MaskInt);
 	else
@@ -769,10 +772,11 @@ static int ace_init(struct net_device *dev);
 static void ace_load_std_rx_ring(struct ace_private *ap, int nr_bufs);
 static void ace_load_mini_rx_ring(struct ace_private *ap, int nr_bufs);
 static void ace_load_jumbo_rx_ring(struct ace_private *ap, int nr_bufs);
-static irqreturn_t ace_interrupt(int irq, void *dev_id, struct pt_regs *regs);
+static irqreturn_t ace_interrupt(int irq, void *dev_id);
 static int ace_load_firmware(struct net_device *dev);
 static int ace_open(struct net_device *dev);
-static int ace_start_xmit(struct sk_buff *skb, struct net_device *dev);
+static netdev_tx_t ace_start_xmit(struct sk_buff *skb,
+				  struct net_device *dev);
 static int ace_close(struct net_device *dev);
 static void ace_tasklet(unsigned long dev);
 static void ace_dump_trace(struct ace_private *ap);
@@ -787,7 +791,6 @@ static struct net_device_stats *ace_get_stats(struct net_device *dev);
 static int read_eeprom_byte(struct net_device *dev, unsigned long offset);
 #if ACENIC_DO_VLAN
 static void ace_vlan_rx_register(struct net_device *dev, struct vlan_group *grp);
-static void ace_vlan_rx_kill_vid(struct net_device *dev, unsigned short vid);
 #endif
 
 #endif /* _ACENIC_H_ */

@@ -7,10 +7,13 @@
  * directory of the kernel sources for details.
  */
 
-#include <linux/module.h>
-#include <linux/vmalloc.h>
-#include <linux/slab.h>
 #include <linux/mm.h>
+#include <linux/module.h>
+#include <linux/pci.h>
+#include <linux/slab.h>
+#include <linux/vmalloc.h>
+#include <linux/scatterlist.h>
+
 #include "dma.h"
 
 /* dma_prog_region */
@@ -59,6 +62,9 @@ void dma_prog_region_free(struct dma_prog_region *prog)
 
 /* dma_region */
 
+/**
+ * dma_region_init - clear out all fields but do not allocate anything
+ */
 void dma_region_init(struct dma_region *dma)
 {
 	dma->kvirt = NULL;
@@ -68,6 +74,9 @@ void dma_region_init(struct dma_region *dma)
 	dma->sglist = NULL;
 }
 
+/**
+ * dma_region_alloc - allocate the buffer and map it to the IOMMU
+ */
 int dma_region_alloc(struct dma_region *dma, unsigned long n_bytes,
 		     struct pci_dev *dev, int direction)
 {
@@ -94,16 +103,15 @@ int dma_region_alloc(struct dma_region *dma, unsigned long n_bytes,
 		goto err;
 	}
 
-	/* just to be safe - this will become unnecessary once sglist->address goes away */
-	memset(dma->sglist, 0, dma->n_pages * sizeof(*dma->sglist));
+	sg_init_table(dma->sglist, dma->n_pages);
 
 	/* fill scatter/gather list with pages */
 	for (i = 0; i < dma->n_pages; i++) {
 		unsigned long va =
 		    (unsigned long)dma->kvirt + (i << PAGE_SHIFT);
 
-		dma->sglist[i].page = vmalloc_to_page((void *)va);
-		dma->sglist[i].length = PAGE_SIZE;
+		sg_set_page(&dma->sglist[i], vmalloc_to_page((void *)va),
+				PAGE_SIZE, 0);
 	}
 
 	/* map sglist to the IOMMU */
@@ -125,6 +133,9 @@ int dma_region_alloc(struct dma_region *dma, unsigned long n_bytes,
 	return -ENOMEM;
 }
 
+/**
+ * dma_region_free - unmap and free the buffer
+ */
 void dma_region_free(struct dma_region *dma)
 {
 	if (dma->n_dma_pages) {
@@ -164,6 +175,12 @@ static inline int dma_region_find(struct dma_region *dma, unsigned long offset,
 	return i;
 }
 
+/**
+ * dma_region_offset_to_bus - get bus address of an offset within a DMA region
+ *
+ * Returns the DMA bus address of the byte with the given @offset relative to
+ * the beginning of the @dma.
+ */
 dma_addr_t dma_region_offset_to_bus(struct dma_region * dma,
 				    unsigned long offset)
 {
@@ -174,6 +191,9 @@ dma_addr_t dma_region_offset_to_bus(struct dma_region * dma,
 	return sg_dma_address(sg) + rem;
 }
 
+/**
+ * dma_region_sync_for_cpu - sync the CPU's view of the buffer
+ */
 void dma_region_sync_for_cpu(struct dma_region *dma, unsigned long offset,
 			     unsigned long len)
 {
@@ -190,6 +210,9 @@ void dma_region_sync_for_cpu(struct dma_region *dma, unsigned long offset,
 				dma->direction);
 }
 
+/**
+ * dma_region_sync_for_device - sync the IO bus' view of the buffer
+ */
 void dma_region_sync_for_device(struct dma_region *dma, unsigned long offset,
 				unsigned long len)
 {
@@ -208,39 +231,29 @@ void dma_region_sync_for_device(struct dma_region *dma, unsigned long offset,
 
 #ifdef CONFIG_MMU
 
-/* nopage() handler for mmap access */
-
-static struct page *dma_region_pagefault(struct vm_area_struct *area,
-					 unsigned long address, int *type)
+static int dma_region_pagefault(struct vm_area_struct *vma,
+				struct vm_fault *vmf)
 {
-	unsigned long offset;
-	unsigned long kernel_virt_addr;
-	struct page *ret = NOPAGE_SIGBUS;
-
-	struct dma_region *dma = (struct dma_region *)area->vm_private_data;
+	struct dma_region *dma = (struct dma_region *)vma->vm_private_data;
 
 	if (!dma->kvirt)
-		goto out;
+		return VM_FAULT_SIGBUS;
 
-	if ((address < (unsigned long)area->vm_start) ||
-	    (address >
-	     (unsigned long)area->vm_start + (dma->n_pages << PAGE_SHIFT)))
-		goto out;
+	if (vmf->pgoff >= dma->n_pages)
+		return VM_FAULT_SIGBUS;
 
-	if (type)
-		*type = VM_FAULT_MINOR;
-	offset = address - area->vm_start;
-	kernel_virt_addr = (unsigned long)dma->kvirt + offset;
-	ret = vmalloc_to_page((void *)kernel_virt_addr);
-	get_page(ret);
-      out:
-	return ret;
+	vmf->page = vmalloc_to_page(dma->kvirt + (vmf->pgoff << PAGE_SHIFT));
+	get_page(vmf->page);
+	return 0;
 }
 
-static struct vm_operations_struct dma_region_vm_ops = {
-	.nopage = dma_region_pagefault,
+static const struct vm_operations_struct dma_region_vm_ops = {
+	.fault = dma_region_pagefault,
 };
 
+/**
+ * dma_region_mmap - map the buffer into a user space process
+ */
 int dma_region_mmap(struct dma_region *dma, struct file *file,
 		    struct vm_area_struct *vma)
 {
@@ -249,7 +262,7 @@ int dma_region_mmap(struct dma_region *dma, struct file *file,
 	if (!dma->kvirt)
 		return -EINVAL;
 
-	/* must be page-aligned */
+	/* must be page-aligned (XXX: comment is wrong, we could allow pgoff) */
 	if (vma->vm_pgoff != 0)
 		return -EINVAL;
 
@@ -261,7 +274,7 @@ int dma_region_mmap(struct dma_region *dma, struct file *file,
 	vma->vm_ops = &dma_region_vm_ops;
 	vma->vm_private_data = dma;
 	vma->vm_file = file;
-	vma->vm_flags |= VM_RESERVED;
+	vma->vm_flags |= VM_RESERVED | VM_ALWAYSDUMP;
 
 	return 0;
 }

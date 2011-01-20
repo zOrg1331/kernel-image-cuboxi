@@ -24,7 +24,6 @@
  */
 
 
-#include <sound/driver.h>
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
@@ -42,7 +41,7 @@
 #undef DEBUG
 
 #ifdef DEBUG
-#define DBG(fmt...) printk(fmt)
+#define DBG(fmt...) printk(KERN_DEBUG fmt)
 #else
 #define DBG(fmt...)
 #endif
@@ -190,7 +189,7 @@ static int check_audio_gpio(struct pmac_gpio *gp)
 
 	ret = do_gpio_read(gp);
 
-	return (ret & 0xd) == (gp->active_val & 0xd);
+	return (ret & 0x1) == (gp->active_val & 0x1);
 }
 
 static int read_audio_gpio(struct pmac_gpio *gp)
@@ -198,7 +197,8 @@ static int read_audio_gpio(struct pmac_gpio *gp)
 	int ret;
 	if (! gp->addr)
 		return 0;
-	ret = ((do_gpio_read(gp) & 0x02) !=0);
+	ret = do_gpio_read(gp);
+	ret = (ret & 0x02) !=0;
 	return ret == gp->active_state;
 }
 
@@ -240,7 +240,7 @@ static int tumbler_set_master_volume(struct pmac_tumbler *mix)
   
 	if (i2c_smbus_write_i2c_block_data(mix->i2c.client, TAS_REG_VOL, 6,
 					   block) < 0) {
-		snd_printk("failed to set volume \n");
+		snd_printk(KERN_ERR "failed to set volume \n");
 		return -EINVAL;
 	}
 	return 0;
@@ -263,7 +263,7 @@ static int tumbler_get_master_volume(struct snd_kcontrol *kcontrol,
 {
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct pmac_tumbler *mix = chip->mixer_data;
-	snd_assert(mix, return -ENODEV);
+
 	ucontrol->value.integer.value[0] = mix->master_vol[0];
 	ucontrol->value.integer.value[1] = mix->master_vol[1];
 	return 0;
@@ -274,14 +274,19 @@ static int tumbler_put_master_volume(struct snd_kcontrol *kcontrol,
 {
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct pmac_tumbler *mix = chip->mixer_data;
+	unsigned int vol[2];
 	int change;
 
-	snd_assert(mix, return -ENODEV);
-	change = mix->master_vol[0] != ucontrol->value.integer.value[0] ||
-		mix->master_vol[1] != ucontrol->value.integer.value[1];
+	vol[0] = ucontrol->value.integer.value[0];
+	vol[1] = ucontrol->value.integer.value[1];
+	if (vol[0] >= ARRAY_SIZE(master_volume_table) ||
+	    vol[1] >= ARRAY_SIZE(master_volume_table))
+		return -EINVAL;
+	change = mix->master_vol[0] != vol[0] ||
+		mix->master_vol[1] != vol[1];
 	if (change) {
-		mix->master_vol[0] = ucontrol->value.integer.value[0];
-		mix->master_vol[1] = ucontrol->value.integer.value[1];
+		mix->master_vol[0] = vol[0];
+		mix->master_vol[1] = vol[1];
 		tumbler_set_master_volume(mix);
 	}
 	return change;
@@ -293,7 +298,7 @@ static int tumbler_get_master_switch(struct snd_kcontrol *kcontrol,
 {
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct pmac_tumbler *mix = chip->mixer_data;
-	snd_assert(mix, return -ENODEV);
+
 	ucontrol->value.integer.value[0] = mix->master_switch[0];
 	ucontrol->value.integer.value[1] = mix->master_switch[1];
 	return 0;
@@ -306,7 +311,6 @@ static int tumbler_put_master_switch(struct snd_kcontrol *kcontrol,
 	struct pmac_tumbler *mix = chip->mixer_data;
 	int change;
 
-	snd_assert(mix, return -ENODEV);
 	change = mix->master_switch[0] != ucontrol->value.integer.value[0] ||
 		mix->master_switch[1] != ucontrol->value.integer.value[1];
 	if (change) {
@@ -346,7 +350,7 @@ static int tumbler_set_drc(struct pmac_tumbler *mix)
 
 	if (i2c_smbus_write_i2c_block_data(mix->i2c.client, TAS_REG_DRC,
 					   2, val) < 0) {
-		snd_printk("failed to set DRC\n");
+		snd_printk(KERN_ERR "failed to set DRC\n");
 		return -EINVAL;
 	}
 	return 0;
@@ -382,7 +386,7 @@ static int snapper_set_drc(struct pmac_tumbler *mix)
 
 	if (i2c_smbus_write_i2c_block_data(mix->i2c.client, TAS_REG_DRC,
 					   6, val) < 0) {
-		snd_printk("failed to set DRC\n");
+		snd_printk(KERN_ERR "failed to set DRC\n");
 		return -EINVAL;
 	}
 	return 0;
@@ -416,13 +420,22 @@ static int tumbler_put_drc_value(struct snd_kcontrol *kcontrol,
 {
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct pmac_tumbler *mix;
+	unsigned int val;
 	int change;
 
 	if (! (mix = chip->mixer_data))
 		return -ENODEV;
-	change = mix->drc_range != ucontrol->value.integer.value[0];
+	val = ucontrol->value.integer.value[0];
+	if (chip->model == PMAC_TUMBLER) {
+		if (val > TAS3001_DRC_MAX)
+			return -EINVAL;
+	} else {
+		if (val > TAS3004_DRC_MAX)
+			return -EINVAL;
+	}
+	change = mix->drc_range != val;
 	if (change) {
-		mix->drc_range = ucontrol->value.integer.value[0];
+		mix->drc_range = val;
 		if (chip->model == PMAC_TUMBLER)
 			tumbler_set_drc(mix);
 		else
@@ -493,7 +506,8 @@ static int tumbler_set_mono_volume(struct pmac_tumbler *mix,
 		block[i] = (vol >> ((info->bytes - i - 1) * 8)) & 0xff;
 	if (i2c_smbus_write_i2c_block_data(mix->i2c.client, info->reg,
 					   info->bytes, block) < 0) {
-		snd_printk("failed to set mono volume %d\n", info->index);
+		snd_printk(KERN_ERR "failed to set mono volume %d\n",
+			   info->index);
 		return -EINVAL;
 	}
 	return 0;
@@ -529,13 +543,17 @@ static int tumbler_put_mono(struct snd_kcontrol *kcontrol,
 	struct tumbler_mono_vol *info = (struct tumbler_mono_vol *)kcontrol->private_value;
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct pmac_tumbler *mix;
+	unsigned int vol;
 	int change;
 
 	if (! (mix = chip->mixer_data))
 		return -ENODEV;
-	change = mix->mono_vol[info->index] != ucontrol->value.integer.value[0];
+	vol = ucontrol->value.integer.value[0];
+	if (vol >= info->max)
+		return -EINVAL;
+	change = mix->mono_vol[info->index] != vol;
 	if (change) {
-		mix->mono_vol[info->index] = ucontrol->value.integer.value[0];
+		mix->mono_vol[info->index] = vol;
 		tumbler_set_mono_volume(mix, info);
 	}
 	return change;
@@ -626,7 +644,7 @@ static int snapper_set_mix_vol1(struct pmac_tumbler *mix, int idx, int ch, int r
 	}
 	if (i2c_smbus_write_i2c_block_data(mix->i2c.client, reg,
 					   9, block) < 0) {
-		snd_printk("failed to set mono volume %d\n", reg);
+		snd_printk(KERN_ERR "failed to set mono volume %d\n", reg);
 		return -EINVAL;
 	}
 	return 0;
@@ -671,15 +689,21 @@ static int snapper_put_mix(struct snd_kcontrol *kcontrol,
 	int idx = (int)kcontrol->private_value;
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct pmac_tumbler *mix;
+	unsigned int vol[2];
 	int change;
 
 	if (! (mix = chip->mixer_data))
 		return -ENODEV;
-	change = mix->mix_vol[idx][0] != ucontrol->value.integer.value[0] ||
-		mix->mix_vol[idx][1] != ucontrol->value.integer.value[1];
+	vol[0] = ucontrol->value.integer.value[0];
+	vol[1] = ucontrol->value.integer.value[1];
+	if (vol[0] >= ARRAY_SIZE(mixer_volume_table) ||
+	    vol[1] >= ARRAY_SIZE(mixer_volume_table))
+		return -EINVAL;
+	change = mix->mix_vol[idx][0] != vol[0] ||
+		mix->mix_vol[idx][1] != vol[1];
 	if (change) {
-		mix->mix_vol[idx][0] = ucontrol->value.integer.value[0];
-		mix->mix_vol[idx][1] = ucontrol->value.integer.value[1];
+		mix->mix_vol[idx][0] = vol[0];
+		mix->mix_vol[idx][1] = vol[1];
 		snapper_set_mix_vol(mix, idx);
 	}
 	return change;
@@ -782,8 +806,7 @@ static int snapper_get_capture_source(struct snd_kcontrol *kcontrol,
 	struct snd_pmac *chip = snd_kcontrol_chip(kcontrol);
 	struct pmac_tumbler *mix = chip->mixer_data;
 
-	snd_assert(mix, return -ENODEV);
-	ucontrol->value.integer.value[0] = mix->capture_source;
+	ucontrol->value.enumerated.item[0] = mix->capture_source;
 	return 0;
 }
 
@@ -794,10 +817,9 @@ static int snapper_put_capture_source(struct snd_kcontrol *kcontrol,
 	struct pmac_tumbler *mix = chip->mixer_data;
 	int change;
 
-	snd_assert(mix, return -ENODEV);
-	change = ucontrol->value.integer.value[0] != mix->capture_source;
+	change = ucontrol->value.enumerated.item[0] != mix->capture_source;
 	if (change) {
-		mix->capture_source = !!ucontrol->value.integer.value[0];
+		mix->capture_source = !!ucontrol->value.enumerated.item[0];
 		snapper_set_capture_source(mix);
 	}
 	return change;
@@ -816,7 +838,7 @@ static int snapper_put_capture_source(struct snd_kcontrol *kcontrol,
 
 /*
  */
-static struct snd_kcontrol_new tumbler_mixers[] __initdata = {
+static struct snd_kcontrol_new tumbler_mixers[] __devinitdata = {
 	{ .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	  .name = "Master Playback Volume",
 	  .info = tumbler_info_master_volume,
@@ -840,7 +862,7 @@ static struct snd_kcontrol_new tumbler_mixers[] __initdata = {
 	},
 };
 
-static struct snd_kcontrol_new snapper_mixers[] __initdata = {
+static struct snd_kcontrol_new snapper_mixers[] __devinitdata = {
 	{ .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	  .name = "Master Playback Volume",
 	  .info = tumbler_info_master_volume,
@@ -854,7 +876,8 @@ static struct snd_kcontrol_new snapper_mixers[] __initdata = {
 	  .put = tumbler_put_master_switch
 	},
 	DEFINE_SNAPPER_MIX("PCM Playback Volume", 0, VOL_IDX_PCM),
-	DEFINE_SNAPPER_MIX("PCM Playback Volume", 1, VOL_IDX_PCM2),
+	/* Alternative PCM is assigned to Mic analog loopback on iBook G4 */
+	DEFINE_SNAPPER_MIX("Mic Playback Volume", 0, VOL_IDX_PCM2),
 	DEFINE_SNAPPER_MIX("Monitor Mix Volume", 0, VOL_IDX_ADC),
 	DEFINE_SNAPPER_MONO("Tone Control - Bass", bass),
 	DEFINE_SNAPPER_MONO("Tone Control - Treble", treble),
@@ -872,7 +895,7 @@ static struct snd_kcontrol_new snapper_mixers[] __initdata = {
 	},
 };
 
-static struct snd_kcontrol_new tumbler_hp_sw __initdata = {
+static struct snd_kcontrol_new tumbler_hp_sw __devinitdata = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "Headphone Playback Switch",
 	.info = snd_pmac_boolean_mono_info,
@@ -880,7 +903,7 @@ static struct snd_kcontrol_new tumbler_hp_sw __initdata = {
 	.put = tumbler_put_mute_switch,
 	.private_value = TUMBLER_MUTE_HP,
 };
-static struct snd_kcontrol_new tumbler_speaker_sw __initdata = {
+static struct snd_kcontrol_new tumbler_speaker_sw __devinitdata = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "PC Speaker Playback Switch",
 	.info = snd_pmac_boolean_mono_info,
@@ -888,7 +911,7 @@ static struct snd_kcontrol_new tumbler_speaker_sw __initdata = {
 	.put = tumbler_put_mute_switch,
 	.private_value = TUMBLER_MUTE_AMP,
 };
-static struct snd_kcontrol_new tumbler_lineout_sw __initdata = {
+static struct snd_kcontrol_new tumbler_lineout_sw __devinitdata = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "Line Out Playback Switch",
 	.info = snd_pmac_boolean_mono_info,
@@ -896,7 +919,7 @@ static struct snd_kcontrol_new tumbler_lineout_sw __initdata = {
 	.put = tumbler_put_mute_switch,
 	.private_value = TUMBLER_MUTE_LINE,
 };
-static struct snd_kcontrol_new tumbler_drc_sw __initdata = {
+static struct snd_kcontrol_new tumbler_drc_sw __devinitdata = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "DRC Switch",
 	.info = snd_pmac_boolean_mono_info,
@@ -941,10 +964,11 @@ static void check_mute(struct snd_pmac *chip, struct pmac_gpio *gp, int val, int
 }
 
 static struct work_struct device_change;
+static struct snd_pmac *device_change_chip;
 
-static void device_change_handler(void *self)
+static void device_change_handler(struct work_struct *work)
 {
-	struct snd_pmac *chip = self;
+	struct snd_pmac *chip = device_change_chip;
 	struct pmac_tumbler *mix;
 	int headphone, lineout;
 
@@ -952,7 +976,8 @@ static void device_change_handler(void *self)
 		return;
 
 	mix = chip->mixer_data;
-	snd_assert(mix, return);
+	if (snd_BUG_ON(!mix))
+		return;
 
 	headphone = tumbler_detect_headphone(chip);
 	lineout = tumbler_detect_lineout(chip);
@@ -1007,7 +1032,8 @@ static void tumbler_update_automute(struct snd_pmac *chip, int do_notify)
 	if (chip->auto_mute) {
 		struct pmac_tumbler *mix;
 		mix = chip->mixer_data;
-		snd_assert(mix, return);
+		if (snd_BUG_ON(!mix))
+			return;
 		mix->auto_mute_notify = do_notify;
 		schedule_work(&device_change);
 	}
@@ -1016,7 +1042,7 @@ static void tumbler_update_automute(struct snd_pmac *chip, int do_notify)
 
 
 /* interrupt - headphone plug changed */
-static irqreturn_t headphone_intr(int irq, void *devid, struct pt_regs *regs)
+static irqreturn_t headphone_intr(int irq, void *devid)
 {
 	struct snd_pmac *chip = devid;
 	if (chip->update_automute && chip->initialized) {
@@ -1029,32 +1055,40 @@ static irqreturn_t headphone_intr(int irq, void *devid, struct pt_regs *regs)
 /* look for audio-gpio device */
 static struct device_node *find_audio_device(const char *name)
 {
+	struct device_node *gpiop;
 	struct device_node *np;
   
-	if (! (np = find_devices("gpio")))
+	gpiop = of_find_node_by_name(NULL, "gpio");
+	if (! gpiop)
 		return NULL;
   
-	for (np = np->child; np; np = np->sibling) {
-		char *property = get_property(np, "audio-gpio", NULL);
+	for (np = of_get_next_child(gpiop, NULL); np;
+			np = of_get_next_child(gpiop, np)) {
+		const char *property = of_get_property(np, "audio-gpio", NULL);
 		if (property && strcmp(property, name) == 0)
-			return np;
+			break;
 	}  
-	return NULL;
+	of_node_put(gpiop);
+	return np;
 }
 
 /* look for audio-gpio device */
 static struct device_node *find_compatible_audio_device(const char *name)
 {
+	struct device_node *gpiop;
 	struct device_node *np;
   
-	if (! (np = find_devices("gpio")))
+	gpiop = of_find_node_by_name(NULL, "gpio");
+	if (!gpiop)
 		return NULL;
   
-	for (np = np->child; np; np = np->sibling) {
-		if (device_is_compatible(np, name))
-			return np;
+	for (np = of_get_next_child(gpiop, NULL); np;
+			np = of_get_next_child(gpiop, np)) {
+		if (of_device_is_compatible(np, name))
+			break;
 	}  
-	return NULL;
+	of_node_put(gpiop);
+	return np;
 }
 
 /* find an audio device and get its address */
@@ -1062,7 +1096,9 @@ static long tumbler_find_device(const char *device, const char *platform,
 				struct pmac_gpio *gp, int is_compatible)
 {
 	struct device_node *node;
-	u32 *base, addr;
+	const u32 *base;
+	u32 addr;
+	long ret;
 
 	if (is_compatible)
 		node = find_compatible_audio_device(device);
@@ -1074,12 +1110,13 @@ static long tumbler_find_device(const char *device, const char *platform,
 		return -ENODEV;
 	}
 
-	base = (u32 *)get_property(node, "AAPL,address", NULL);
+	base = of_get_property(node, "AAPL,address", NULL);
 	if (! base) {
-		base = (u32 *)get_property(node, "reg", NULL);
+		base = of_get_property(node, "reg", NULL);
 		if (!base) {
 			DBG("(E) cannot find address for device %s !\n", device);
 			snd_printd("cannot find address for device %s\n", device);
+			of_node_put(node);
 			return -ENODEV;
 		}
 		addr = *base;
@@ -1090,13 +1127,13 @@ static long tumbler_find_device(const char *device, const char *platform,
 
 	gp->addr = addr & 0x0000ffff;
 	/* Try to find the active state, default to 0 ! */
-	base = (u32 *)get_property(node, "audio-gpio-active-state", NULL);
+	base = of_get_property(node, "audio-gpio-active-state", NULL);
 	if (base) {
 		gp->active_state = *base;
 		gp->active_val = (*base) ? 0x5 : 0x4;
 		gp->inactive_val = (*base) ? 0x4 : 0x5;
 	} else {
-		u32 *prop = NULL;
+		const u32 *prop = NULL;
 		gp->active_state = 0;
 		gp->active_val = 0x4;
 		gp->inactive_val = 0x5;
@@ -1105,7 +1142,7 @@ static long tumbler_find_device(const char *device, const char *platform,
 		 * as we don't yet have an interpreter for these things
 		 */
 		if (platform)
-			prop = (u32 *)get_property(node, platform, NULL);
+			prop = of_get_property(node, platform, NULL);
 		if (prop) {
 			if (prop[3] == 0x9 && prop[4] == 0x9) {
 				gp->active_val = 0xd;
@@ -1121,7 +1158,9 @@ static long tumbler_find_device(const char *device, const char *platform,
 	DBG("(I) GPIO device %s found, offset: %x, active state: %d !\n",
 	    device, gp->addr, gp->active_state);
 
-	return irq_of_parse_and_map(node, 0);
+	ret = irq_of_parse_and_map(node, 0);
+	of_node_put(node);
+	return ret;
 }
 
 /* reset audio */
@@ -1188,8 +1227,6 @@ static void tumbler_resume(struct snd_pmac *chip)
 {
 	struct pmac_tumbler *mix = chip->mixer_data;
 
-	snd_assert(mix, return);
-
 	mix->acs &= ~1;
 	mix->master_switch[0] = mix->save_master_switch[0];
 	mix->master_switch[1] = mix->save_master_switch[1];
@@ -1232,11 +1269,10 @@ static void tumbler_resume(struct snd_pmac *chip)
 #endif
 
 /* initialize tumbler */
-static int __init tumbler_init(struct snd_pmac *chip)
+static int __devinit tumbler_init(struct snd_pmac *chip)
 {
 	int irq;
 	struct pmac_tumbler *mix = chip->mixer_data;
-	snd_assert(mix, return -EINVAL);
 
 	if (tumbler_find_device("audio-hw-reset",
 				"platform-do-hw-reset",
@@ -1303,18 +1339,15 @@ static void tumbler_cleanup(struct snd_pmac *chip)
 }
 
 /* exported */
-int __init snd_pmac_tumbler_init(struct snd_pmac *chip)
+int __devinit snd_pmac_tumbler_init(struct snd_pmac *chip)
 {
 	int i, err;
 	struct pmac_tumbler *mix;
-	u32 *paddr;
+	const u32 *paddr;
 	struct device_node *tas_node, *np;
 	char *chipname;
 
-#ifdef CONFIG_KMOD
-	if (current->fs->root)
-		request_module("i2c-powermac");
-#endif /* CONFIG_KMOD */	
+	request_module("i2c-powermac");
 
 	mix = kzalloc(sizeof(*mix), GFP_KERNEL);
 	if (! mix)
@@ -1328,9 +1361,9 @@ int __init snd_pmac_tumbler_init(struct snd_pmac *chip)
 
 	for (np = chip->node->child; np; np = np->sibling) {
 		if (!strcmp(np->name, "sound")) {
-			if (get_property(np, "has-anded-reset", NULL))
+			if (of_get_property(np, "has-anded-reset", NULL))
 				mix->anded_reset = 1;
-			if (get_property(np, "layout-id", NULL))
+			if (of_get_property(np, "layout-id", NULL))
 				mix->reset_on_sleep = 0;
 			break;
 		}
@@ -1339,19 +1372,20 @@ int __init snd_pmac_tumbler_init(struct snd_pmac *chip)
 		return err;
 
 	/* set up TAS */
-	tas_node = find_devices("deq");
+	tas_node = of_find_node_by_name(NULL, "deq");
 	if (tas_node == NULL)
-		tas_node = find_devices("codec");
+		tas_node = of_find_node_by_name(NULL, "codec");
 	if (tas_node == NULL)
 		return -ENODEV;
 
-	paddr = (u32 *)get_property(tas_node, "i2c-address", NULL);
+	paddr = of_get_property(tas_node, "i2c-address", NULL);
 	if (paddr == NULL)
-		paddr = (u32 *)get_property(tas_node, "reg", NULL);
+		paddr = of_get_property(tas_node, "reg", NULL);
 	if (paddr)
 		mix->i2c.addr = (*paddr) >> 1;
 	else
 		mix->i2c.addr = TAS_I2C_ADDR;
+	of_node_put(tas_node);
 
 	DBG("(I) TAS i2c address is: %x\n", mix->i2c.addr);
 
@@ -1415,7 +1449,8 @@ int __init snd_pmac_tumbler_init(struct snd_pmac *chip)
 	chip->resume = tumbler_resume;
 #endif
 
-	INIT_WORK(&device_change, device_change_handler, (void *)chip);
+	INIT_WORK(&device_change, device_change_handler);
+	device_change_chip = chip;
 
 #ifdef PMAC_SUPPORT_AUTOMUTE
 	if ((mix->headphone_irq >=0 || mix->lineout_irq >= 0)

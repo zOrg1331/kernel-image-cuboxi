@@ -32,8 +32,6 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * $Id: mthca_dev.h 1349 2004-12-16 21:09:43Z roland $
  */
 
 #ifndef MTHCA_DEV_H
@@ -45,27 +43,26 @@
 #include <linux/dma-mapping.h>
 #include <linux/timer.h>
 #include <linux/mutex.h>
-
-#include <asm/semaphore.h>
+#include <linux/list.h>
+#include <linux/semaphore.h>
 
 #include "mthca_provider.h"
 #include "mthca_doorbell.h"
 
 #define DRV_NAME	"ib_mthca"
 #define PFX		DRV_NAME ": "
-#define DRV_VERSION	"0.08"
-#define DRV_RELDATE	"February 14, 2006"
+#define DRV_VERSION	"1.0"
+#define DRV_RELDATE	"April 4, 2008"
 
 enum {
 	MTHCA_FLAG_DDR_HIDDEN = 1 << 1,
 	MTHCA_FLAG_SRQ        = 1 << 2,
-	MTHCA_FLAG_MSI        = 1 << 3,
-	MTHCA_FLAG_MSI_X      = 1 << 4,
-	MTHCA_FLAG_NO_LAM     = 1 << 5,
-	MTHCA_FLAG_FMR        = 1 << 6,
-	MTHCA_FLAG_MEMFREE    = 1 << 7,
-	MTHCA_FLAG_PCIE       = 1 << 8,
-	MTHCA_FLAG_SINAI_OPT  = 1 << 9
+	MTHCA_FLAG_MSI_X      = 1 << 3,
+	MTHCA_FLAG_NO_LAM     = 1 << 4,
+	MTHCA_FLAG_FMR        = 1 << 5,
+	MTHCA_FLAG_MEMFREE    = 1 << 6,
+	MTHCA_FLAG_PCIE       = 1 << 7,
+	MTHCA_FLAG_SINAI_OPT  = 1 << 8
 };
 
 enum {
@@ -82,7 +79,7 @@ enum {
 	MTHCA_QP_CONTEXT_SIZE = 0x200,
 	MTHCA_RDB_ENTRY_SIZE  =  0x20,
 	MTHCA_AV_SIZE         =  0x20,
-	MTHCA_MGM_ENTRY_SIZE  =  0x40,
+	MTHCA_MGM_ENTRY_SIZE  = 0x100,
 
 	/* Arbel FW gives us these, but we need them for Tavor */
 	MTHCA_MPT_ENTRY_SIZE  =  0x40,
@@ -162,6 +159,7 @@ struct mthca_limits {
 	int      reserved_eqs;
 	int      num_mpts;
 	int      num_mtt_segs;
+	int	 mtt_seg_size;
 	int      fmr_reserved_mtts;
 	int      reserved_mtts;
 	int      reserved_mrws;
@@ -205,6 +203,7 @@ struct mthca_pd_table {
 
 struct mthca_buddy {
 	unsigned long **bits;
+	int	       *num_free;
 	int             max_order;
 	spinlock_t      lock;
 };
@@ -280,10 +279,12 @@ struct mthca_mcg_table {
 struct mthca_catas_err {
 	u64			addr;
 	u32 __iomem	       *map;
-	unsigned long		stop;
 	u32			size;
 	struct timer_list	timer;
+	struct list_head	list;
 };
+
+extern struct mutex mthca_device_mutex;
 
 struct mthca_dev {
 	struct ib_device  ib_dev;
@@ -356,6 +357,7 @@ struct mthca_dev {
 	struct ib_ah         *sm_ah[MTHCA_MAX_PORTS];
 	spinlock_t            sm_lock;
 	u8                    rate[MTHCA_MAX_PORTS];
+	bool		      active;
 };
 
 #ifdef CONFIG_INFINIBAND_MTHCA_DEBUG
@@ -387,11 +389,11 @@ extern void __buggy_use_of_MTHCA_PUT(void);
 	do {                                                          \
 		void *__p = (char *) (source) + (offset);             \
 		switch (sizeof (dest)) {                              \
-			case 1: (dest) = *(u8 *) __p;       break;    \
-			case 2: (dest) = be16_to_cpup(__p); break;    \
-			case 4: (dest) = be32_to_cpup(__p); break;    \
-			case 8: (dest) = be64_to_cpup(__p); break;    \
-			default: __buggy_use_of_MTHCA_GET();          \
+		case 1: (dest) = *(u8 *) __p;       break;	      \
+		case 2: (dest) = be16_to_cpup(__p); break;	      \
+		case 4: (dest) = be32_to_cpup(__p); break;	      \
+		case 8: (dest) = be64_to_cpup(__p); break;	      \
+		default: __buggy_use_of_MTHCA_GET();		      \
 		}                                                     \
 	} while (0)
 
@@ -450,12 +452,17 @@ void mthca_unregister_device(struct mthca_dev *dev);
 
 void mthca_start_catas_poll(struct mthca_dev *dev);
 void mthca_stop_catas_poll(struct mthca_dev *dev);
+int __mthca_restart_one(struct pci_dev *pdev);
+int mthca_catas_init(void);
+void mthca_catas_cleanup(void);
 
 int mthca_uar_alloc(struct mthca_dev *dev, struct mthca_uar *uar);
 void mthca_uar_free(struct mthca_dev *dev, struct mthca_uar *uar);
 
 int mthca_pd_alloc(struct mthca_dev *dev, int privileged, struct mthca_pd *pd);
 void mthca_pd_free(struct mthca_dev *dev, struct mthca_pd *pd);
+
+int mthca_write_mtt_size(struct mthca_dev *dev);
 
 struct mthca_mtt *mthca_alloc_mtt(struct mthca_dev *dev, int size);
 void mthca_free_mtt(struct mthca_dev *dev, struct mthca_mtt *mtt);
@@ -486,8 +493,8 @@ void mthca_unmap_eq_icm(struct mthca_dev *dev);
 
 int mthca_poll_cq(struct ib_cq *ibcq, int num_entries,
 		  struct ib_wc *entry);
-int mthca_tavor_arm_cq(struct ib_cq *cq, enum ib_cq_notify notify);
-int mthca_arbel_arm_cq(struct ib_cq *cq, enum ib_cq_notify notify);
+int mthca_tavor_arm_cq(struct ib_cq *cq, enum ib_cq_notify_flags flags);
+int mthca_arbel_arm_cq(struct ib_cq *cq, enum ib_cq_notify_flags flags);
 int mthca_init_cq(struct mthca_dev *dev, int nent,
 		  struct mthca_ucontext *ctx, u32 pdn,
 		  struct mthca_cq *cq);
@@ -506,7 +513,7 @@ int mthca_alloc_srq(struct mthca_dev *dev, struct mthca_pd *pd,
 		    struct ib_srq_attr *attr, struct mthca_srq *srq);
 void mthca_free_srq(struct mthca_dev *dev, struct mthca_srq *srq);
 int mthca_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr,
-		     enum ib_srq_attr_mask attr_mask);
+		     enum ib_srq_attr_mask attr_mask, struct ib_udata *udata);
 int mthca_query_srq(struct ib_srq *srq, struct ib_srq_attr *srq_attr);
 int mthca_max_srq_sge(struct mthca_dev *dev);
 void mthca_srq_event(struct mthca_dev *dev, u32 srqn,
@@ -521,7 +528,8 @@ void mthca_qp_event(struct mthca_dev *dev, u32 qpn,
 		    enum ib_event_type event_type);
 int mthca_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_mask,
 		   struct ib_qp_init_attr *qp_init_attr);
-int mthca_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int attr_mask);
+int mthca_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr, int attr_mask,
+		    struct ib_udata *udata);
 int mthca_tavor_post_send(struct ib_qp *ibqp, struct ib_send_wr *wr,
 			  struct ib_send_wr **bad_wr);
 int mthca_tavor_post_receive(struct ib_qp *ibqp, struct ib_recv_wr *wr,

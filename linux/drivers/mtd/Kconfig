@@ -1,9 +1,6 @@
-# $Id: Kconfig,v 1.11 2005/11/07 11:14:19 gleixner Exp $
-
-menu "Memory Technology Devices (MTD)"
-
-config MTD
+menuconfig MTD
 	tristate "Memory Technology Device (MTD) support"
+	depends on HAS_IOMEM
 	help
 	  Memory Technology Devices are flash, RAM and similar chips, often
 	  used for solid state file systems on embedded devices. This option
@@ -13,9 +10,10 @@ config MTD
 	  them. It will also allow you to select individual drivers for
 	  particular hardware and users of MTD devices. If unsure, say N.
 
+if MTD
+
 config MTD_DEBUG
 	bool "Debugging"
-	depends on MTD
 	help
 	  This turns on low-level debugging for the entire MTD sub-system.
 	  Normally, you should say 'N'.
@@ -27,9 +25,16 @@ config MTD_DEBUG_VERBOSE
 	help
 	  Determines the verbosity level of the MTD debugging messages.
 
+config MTD_TESTS
+	tristate "MTD tests support"
+	depends on m
+	help
+	  This option includes various MTD tests into compilation. The tests
+	  should normally be compiled as kernel modules. The modules perform
+	  various checks and verifications when loaded.
+
 config MTD_CONCAT
 	tristate "MTD concatenating support"
-	depends on MTD
 	help
 	  Support for concatenating several MTD devices into a single
 	  (virtual) one. This allows you to have -for example- a JFFS(2)
@@ -38,7 +43,6 @@ config MTD_CONCAT
 
 config MTD_PARTITIONS
 	bool "MTD partitioning support"
-	depends on MTD
 	help
 	  If you have a device which needs to divide its flash chip(s) up
 	  into multiple 'partitions', each of which appears to the user as
@@ -101,7 +105,7 @@ config MTD_REDBOOT_PARTS_READONLY
 
 config MTD_CMDLINE_PARTS
 	bool "Command line partition table parsing"
-	depends on MTD_PARTITIONS = "y"
+	depends on MTD_PARTITIONS = "y" && MTD = "y"
 	---help---
 	  Allow generic configuration of the MTD partition tables via the kernel
 	  command line. Multiple flash resources are supported for hardware where
@@ -150,23 +154,47 @@ config MTD_AFS_PARTS
 
 	  You will still need the parsing functions to be called by the driver
 	  for your particular device. It won't happen automatically. The
-	  'armflash' map driver (CONFIG_MTD_ARMFLASH) does this, for example.
+	  'armflash' map driver (CONFIG_MTD_ARM_INTEGRATOR) does this, for
+	  example.
+
+config MTD_OF_PARTS
+	tristate "Flash partition map based on OF description"
+	depends on (MICROBLAZE || PPC_OF) && MTD_PARTITIONS
+	help
+	  This provides a partition parsing function which derives
+	  the partition map from the children of the flash node,
+	  as described in Documentation/powerpc/booting-without-of.txt.
+
+config MTD_AR7_PARTS
+	tristate "TI AR7 partitioning support"
+	depends on MTD_PARTITIONS
+	---help---
+	  TI AR7 partitioning support
 
 comment "User Modules And Translation Layers"
-	depends on MTD
 
 config MTD_CHAR
 	tristate "Direct char device access to MTD devices"
-	depends on MTD
 	help
 	  This provides a character device for each MTD device present in
 	  the system, allowing the user to read and write directly to the
 	  memory chips, and also use ioctl() to obtain information about
 	  the device, or to erase parts of it.
 
+config HAVE_MTD_OTP
+	bool
+	help
+	  Enable access to OTP regions using MTD_CHAR.
+
+config MTD_BLKDEVS
+	tristate "Common interface to block layer for MTD 'translation layers'"
+	depends on BLOCK
+	default n
+
 config MTD_BLOCK
 	tristate "Caching block device access to MTD devices"
-	depends on MTD
+	depends on BLOCK
+	select MTD_BLKDEVS
 	---help---
 	  Although most flash chips have an erase size too large to be useful
 	  as block devices, it is possible to use MTD devices which are based
@@ -188,7 +216,8 @@ config MTD_BLOCK
 
 config MTD_BLOCK_RO
 	tristate "Readonly block device access to MTD devices"
-	depends on MTD_BLOCK!=y && MTD
+	depends on MTD_BLOCK!=y && BLOCK
+	select MTD_BLKDEVS
 	help
 	  This allows you to mount read-only file systems (such as cramfs)
 	  from an MTD device, without the overhead (and danger) of the caching
@@ -199,7 +228,8 @@ config MTD_BLOCK_RO
 
 config FTL
 	tristate "FTL (Flash Translation Layer) support"
-	depends on MTD
+	depends on BLOCK
+	select MTD_BLKDEVS
 	---help---
 	  This provides support for the original Flash Translation Layer which
 	  is part of the PCMCIA specification. It uses a kind of pseudo-
@@ -215,7 +245,8 @@ config FTL
 
 config NFTL
 	tristate "NFTL (NAND Flash Translation Layer) support"
-	depends on MTD
+	depends on BLOCK
+	select MTD_BLKDEVS
 	---help---
 	  This provides support for the NAND Flash Translation Layer which is
 	  used on M-Systems' DiskOnChip devices. It uses a kind of pseudo-
@@ -238,7 +269,8 @@ config NFTL_RW
 
 config INFTL
 	tristate "INFTL (Inverse NAND Flash Translation Layer) support"
-	depends on MTD
+	depends on BLOCK
+	select MTD_BLKDEVS
 	---help---
 	  This provides support for the Inverse NAND Flash Translation
 	  Layer which is used on M-Systems' newer DiskOnChip devices. It
@@ -255,13 +287,33 @@ config INFTL
 
 config RFD_FTL
         tristate "Resident Flash Disk (Flash Translation Layer) support"
-	depends on MTD
+	depends on BLOCK
+	select MTD_BLKDEVS
 	---help---
 	  This provides support for the flash translation layer known
 	  as the Resident Flash Disk (RFD), as used by the Embedded BIOS
 	  of General Software. There is a blurb at:
 
 		http://www.gensw.com/pages/prod/bios/rfd.htm
+
+config SSFDC
+	tristate "NAND SSFDC (SmartMedia) read only translation layer"
+	depends on BLOCK
+	select MTD_BLKDEVS
+	help
+	  This enables read only access to SmartMedia formatted NAND
+	  flash. You can mount it with FAT file system.
+
+config MTD_OOPS
+	tristate "Log panic/oops to an MTD buffer"
+	depends on MTD
+	help
+	  This enables panic and oops messages to be logged to a circular
+	  buffer in a flash partition where it can be read back at some
+	  later point.
+
+	  To use, add console=ttyMTDx to the kernel command line,
+	  where x is the MTD device number to use.
 
 source "drivers/mtd/chips/Kconfig"
 
@@ -273,5 +325,8 @@ source "drivers/mtd/nand/Kconfig"
 
 source "drivers/mtd/onenand/Kconfig"
 
-endmenu
+source "drivers/mtd/lpddr/Kconfig"
 
+source "drivers/mtd/ubi/Kconfig"
+
+endif # MTD

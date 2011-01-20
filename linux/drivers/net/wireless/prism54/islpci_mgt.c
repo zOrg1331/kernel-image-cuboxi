@@ -1,5 +1,4 @@
 /*
- *  
  *  Copyright (C) 2002 Intersil Americas Inc.
  *  Copyright 2004 Jens Maurer <Jens.Maurer@gmx.net>
  *
@@ -21,6 +20,7 @@
 #include <linux/netdevice.h>
 #include <linux/module.h>
 #include <linux/pci.h>
+#include <linux/sched.h>
 
 #include <asm/io.h>
 #include <asm/system.h>
@@ -387,7 +387,7 @@ islpci_mgt_receive(struct net_device *ndev)
 
 			/* Create work to handle trap out of interrupt
 			 * context. */
-			INIT_WORK(&frame->ws, prism54_process_trap, frame);
+			INIT_WORK(&frame->ws, prism54_process_trap);
 			schedule_work(&frame->ws);
 
 		} else {
@@ -461,7 +461,7 @@ islpci_mgt_transaction(struct net_device *ndev,
 
 	*recvframe = NULL;
 
-	if (down_interruptible(&priv->mgmt_sem))
+	if (mutex_lock_interruptible(&priv->mgmt_lock))
 		return -ERESTARTSYS;
 
 	prepare_to_wait(&priv->mgmt_wqueue, &wait, TASK_UNINTERRUPTIBLE);
@@ -502,10 +502,10 @@ islpci_mgt_transaction(struct net_device *ndev,
 	printk(KERN_WARNING "%s: timeout waiting for mgmt response\n",
 	       ndev->name);
 
-	/* TODO: we should reset the device here */     
+	/* TODO: we should reset the device here */
  out:
 	finish_wait(&priv->mgmt_wqueue, &wait);
-	up(&priv->mgmt_sem);
+	mutex_unlock(&priv->mgmt_lock);
 	return err;
 }
 

@@ -36,7 +36,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/moduleparam.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/errno.h>
@@ -80,7 +79,7 @@ MODULE_PARM_DESC(irq, "IRQ of MK712 touchscreen controller");
 static struct input_dev *mk712_dev;
 static DEFINE_SPINLOCK(mk712_lock);
 
-static irqreturn_t mk712_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t mk712_interrupt(int irq, void *dev_id)
 {
 	unsigned char status;
 	static int debounce = 1;
@@ -88,7 +87,6 @@ static irqreturn_t mk712_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	static unsigned short last_y;
 
 	spin_lock(&mk712_lock);
-	input_regs(mk712_dev, regs);
 
 	status = inb(mk712_io + MK712_STATUS);
 
@@ -97,15 +95,13 @@ static irqreturn_t mk712_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 		goto end;
 	}
 
-	if (~status & MK712_STATUS_TOUCH)
-	{
+	if (~status & MK712_STATUS_TOUCH) {
 		debounce = 1;
 		input_report_key(mk712_dev, BTN_TOUCH, 0);
 		goto end;
 	}
 
-	if (debounce)
-	{
+	if (debounce) {
 		debounce = 0;
 		goto end;
 	}
@@ -114,8 +110,7 @@ static irqreturn_t mk712_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	input_report_abs(mk712_dev, ABS_X, last_x);
 	input_report_abs(mk712_dev, ABS_Y, last_y);
 
-end:
-
+ end:
 	last_x = inw(mk712_io + MK712_X) & 0x0fff;
 	last_y = inw(mk712_io + MK712_Y) & 0x0fff;
 	input_sync(mk712_dev);
@@ -170,13 +165,14 @@ static int __init mk712_init(void)
 	    (inw(mk712_io + MK712_STATUS) & 0xf333)) {
 		printk(KERN_WARNING "mk712: device not present\n");
 		err = -ENODEV;
-		goto fail;
+		goto fail1;
 	}
 
-	if (!(mk712_dev = input_allocate_device())) {
+	mk712_dev = input_allocate_device();
+	if (!mk712_dev) {
 		printk(KERN_ERR "mk712: not enough memory\n");
 		err = -ENOMEM;
-		goto fail;
+		goto fail1;
 	}
 
 	mk712_dev->name = "ICS MicroClock MK712 TouchScreen";
@@ -189,21 +185,25 @@ static int __init mk712_init(void)
 	mk712_dev->open    = mk712_open;
 	mk712_dev->close   = mk712_close;
 
-	mk712_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
-	mk712_dev->keybit[LONG(BTN_TOUCH)] = BIT(BTN_TOUCH);
+	mk712_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+	mk712_dev->keybit[BIT_WORD(BTN_TOUCH)] = BIT_MASK(BTN_TOUCH);
 	input_set_abs_params(mk712_dev, ABS_X, 0, 0xfff, 88, 0);
 	input_set_abs_params(mk712_dev, ABS_Y, 0, 0xfff, 88, 0);
 
 	if (request_irq(mk712_irq, mk712_interrupt, 0, "mk712", mk712_dev)) {
 		printk(KERN_WARNING "mk712: unable to get IRQ\n");
 		err = -EBUSY;
-		goto fail;
+		goto fail1;
 	}
 
-	input_register_device(mk712_dev);
+	err = input_register_device(mk712_dev);
+	if (err)
+		goto fail2;
+
 	return 0;
 
- fail:	input_free_device(mk712_dev);
+ fail2:	free_irq(mk712_irq, mk712_dev);
+ fail1:	input_free_device(mk712_dev);
 	release_region(mk712_io, 8);
 	return err;
 }

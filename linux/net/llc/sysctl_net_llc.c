@@ -1,6 +1,6 @@
 /*
  * sysctl_net_llc.c: sysctl interface to LLC net subsystem.
- * 
+ *
  * Arnaldo Carvalho de Melo <acme@conectiva.com.br>
  */
 
@@ -20,8 +20,8 @@ static struct ctl_table llc2_timeout_table[] = {
 		.data		= &sysctl_llc2_ack_timeout,
 		.maxlen		= sizeof(long),
 		.mode		= 0644,
-		.proc_handler   = &proc_dointvec_jiffies,
-		.strategy       = &sysctl_jiffies,
+		.proc_handler   = proc_dointvec_jiffies,
+		.strategy       = sysctl_jiffies,
 	},
 	{
 		.ctl_name	= NET_LLC2_BUSY_TIMEOUT,
@@ -29,8 +29,8 @@ static struct ctl_table llc2_timeout_table[] = {
 		.data		= &sysctl_llc2_busy_timeout,
 		.maxlen		= sizeof(long),
 		.mode		= 0644,
-		.proc_handler   = &proc_dointvec_jiffies,
-		.strategy       = &sysctl_jiffies,
+		.proc_handler   = proc_dointvec_jiffies,
+		.strategy       = sysctl_jiffies,
 	},
 	{
 		.ctl_name	= NET_LLC2_P_TIMEOUT,
@@ -38,8 +38,8 @@ static struct ctl_table llc2_timeout_table[] = {
 		.data		= &sysctl_llc2_p_timeout,
 		.maxlen		= sizeof(long),
 		.mode		= 0644,
-		.proc_handler   = &proc_dointvec_jiffies,
-		.strategy       = &sysctl_jiffies,
+		.proc_handler   = proc_dointvec_jiffies,
+		.strategy       = sysctl_jiffies,
 	},
 	{
 		.ctl_name	= NET_LLC2_REJ_TIMEOUT,
@@ -47,8 +47,8 @@ static struct ctl_table llc2_timeout_table[] = {
 		.data		= &sysctl_llc2_rej_timeout,
 		.maxlen		= sizeof(long),
 		.mode		= 0644,
-		.proc_handler   = &proc_dointvec_jiffies,
-		.strategy       = &sysctl_jiffies,
+		.proc_handler   = proc_dointvec_jiffies,
+		.strategy       = sysctl_jiffies,
 	},
 	{ 0 },
 };
@@ -60,8 +60,8 @@ static struct ctl_table llc_station_table[] = {
 		.data		= &sysctl_llc_station_ack_timeout,
 		.maxlen		= sizeof(long),
 		.mode		= 0644,
-		.proc_handler   = &proc_dointvec_jiffies,
-		.strategy       = &sysctl_jiffies,
+		.proc_handler   = proc_dointvec_jiffies,
+		.strategy       = sysctl_jiffies,
 	},
 	{ 0 },
 };
@@ -72,7 +72,7 @@ static struct ctl_table llc2_dir_timeout_table[] = {
 		.procname	= "timeout",
 		.mode		= 0555,
 		.child		= llc2_timeout_table,
-       	},
+	},
 	{ 0 },
 };
 
@@ -82,7 +82,7 @@ static struct ctl_table llc_table[] = {
 		.procname	= "llc2",
 		.mode		= 0555,
 		.child		= llc2_dir_timeout_table,
-       	},
+	},
 	{
 		.ctl_name       = NET_LLC_STATION,
 		.procname       = "station",
@@ -92,31 +92,17 @@ static struct ctl_table llc_table[] = {
 	{ 0 },
 };
 
-static struct ctl_table llc_dir_table[] = {
-	{
-		.ctl_name	= NET_LLC,
-		.procname	= "llc",
-		.mode		= 0555,
-		.child		= llc_table,
-       	},
-	{ 0 },
-};
-
-static struct ctl_table llc_root_table[] = {
-	{
-		.ctl_name	= CTL_NET,
-		.procname	= "net",
-		.mode		= 0555,
-		.child		= llc_dir_table,
-	},
-	{ 0 },
+static struct ctl_path llc_path[] = {
+	{ .procname = "net", .ctl_name = CTL_NET, },
+	{ .procname = "llc", .ctl_name = NET_LLC, },
+	{ }
 };
 
 static struct ctl_table_header *llc_table_header;
 
 int __init llc_sysctl_init(void)
 {
-	llc_table_header = register_sysctl_table(llc_root_table, 1);
+	llc_table_header = register_sysctl_paths(llc_path, llc_table);
 
 	return llc_table_header ? 0 : -ENOMEM;
 }

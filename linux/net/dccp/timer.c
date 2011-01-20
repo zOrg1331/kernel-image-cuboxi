@@ -1,6 +1,6 @@
 /*
  *  net/dccp/timer.c
- * 
+ *
  *  An implementation of the DCCP protocol
  *  Arnaldo Carvalho de Melo <acme@conectiva.com.br>
  *
@@ -15,15 +15,10 @@
 
 #include "dccp.h"
 
-static void dccp_write_timer(unsigned long data);
-static void dccp_keepalive_timer(unsigned long data);
-static void dccp_delack_timer(unsigned long data);
-
-void dccp_init_xmit_timers(struct sock *sk)
-{
-	inet_csk_init_xmit_timers(sk, &dccp_write_timer, &dccp_delack_timer,
-				  &dccp_keepalive_timer);
-}
+/* sysctl variables governing numbers of retransmission attempts */
+int  sysctl_dccp_request_retries	__read_mostly = TCP_SYN_RETRIES;
+int  sysctl_dccp_retries1		__read_mostly = TCP_RETR1;
+int  sysctl_dccp_retries2		__read_mostly = TCP_RETR2;
 
 static void dccp_write_err(struct sock *sk)
 {
@@ -44,11 +39,10 @@ static int dccp_write_timeout(struct sock *sk)
 	if (sk->sk_state == DCCP_REQUESTING || sk->sk_state == DCCP_PARTOPEN) {
 		if (icsk->icsk_retransmits != 0)
 			dst_negative_advice(&sk->sk_dst_cache);
-		retry_until = icsk->icsk_syn_retries ? :
-			    /* FIXME! */ 3 /* FIXME! sysctl_tcp_syn_retries */;
+		retry_until = icsk->icsk_syn_retries ?
+			    : sysctl_dccp_request_retries;
 	} else {
-		if (icsk->icsk_retransmits >=
-		     /* FIXME! sysctl_tcp_retries1 */ 5 /* FIXME! */) {
+		if (icsk->icsk_retransmits >= sysctl_dccp_retries1) {
 			/* NOTE. draft-ietf-tcpimpl-pmtud-01.txt requires pmtu
 			   black hole detection. :-(
 
@@ -66,13 +60,13 @@ static int dccp_write_timeout(struct sock *sk)
    be far nicer to have all of the black holes fixed rather than fixing
    all of the TCP implementations."
 
-                           Golden words :-).
+			   Golden words :-).
 		   */
 
 			dst_negative_advice(&sk->sk_dst_cache);
 		}
 
-		retry_until = /* FIXME! */ 15 /* FIXME! sysctl_tcp_retries2 */;
+		retry_until = sysctl_dccp_retries2;
 		/*
 		 * FIXME: see tcp_write_timout and tcp_out_of_resources
 		 */
@@ -86,53 +80,6 @@ static int dccp_write_timeout(struct sock *sk)
 	return 0;
 }
 
-/* This is the same as tcp_delack_timer, sans prequeue & mem_reclaim stuff */
-static void dccp_delack_timer(unsigned long data)
-{
-	struct sock *sk = (struct sock *)data;
-	struct inet_connection_sock *icsk = inet_csk(sk);
-
-	bh_lock_sock(sk);
-	if (sock_owned_by_user(sk)) {
-		/* Try again later. */
-		icsk->icsk_ack.blocked = 1;
-		NET_INC_STATS_BH(LINUX_MIB_DELAYEDACKLOCKED);
-		sk_reset_timer(sk, &icsk->icsk_delack_timer,
-			       jiffies + TCP_DELACK_MIN);
-		goto out;
-	}
-
-	if (sk->sk_state == DCCP_CLOSED ||
-	    !(icsk->icsk_ack.pending & ICSK_ACK_TIMER))
-		goto out;
-	if (time_after(icsk->icsk_ack.timeout, jiffies)) {
-		sk_reset_timer(sk, &icsk->icsk_delack_timer,
-			       icsk->icsk_ack.timeout);
-		goto out;
-	}
-
-	icsk->icsk_ack.pending &= ~ICSK_ACK_TIMER;
-
-	if (inet_csk_ack_scheduled(sk)) {
-		if (!icsk->icsk_ack.pingpong) {
-			/* Delayed ACK missed: inflate ATO. */
-			icsk->icsk_ack.ato = min(icsk->icsk_ack.ato << 1,
-						 icsk->icsk_rto);
-		} else {
-			/* Delayed ACK missed: leave pingpong mode and
-			 * deflate ATO.
-			 */
-			icsk->icsk_ack.pingpong = 0;
-			icsk->icsk_ack.ato = TCP_ATO_MIN;
-		}
-		dccp_send_ack(sk);
-		NET_INC_STATS_BH(LINUX_MIB_DELAYEDACKS);
-	}
-out:
-	bh_unlock_sock(sk);
-	sock_put(sk);
-}
-
 /*
  *	The DCCP retransmit timer.
  */
@@ -140,31 +87,12 @@ static void dccp_retransmit_timer(struct sock *sk)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 
-	/* retransmit timer is used for feature negotiation throughout
-	 * connection.  In this case, no packet is re-transmitted, but rather an
-	 * ack is generated and pending changes are splaced into its options.
-	 */
-	if (sk->sk_send_head == NULL) {
-		dccp_pr_debug("feat negotiation retransmit timeout %p\n", sk);
-		if (sk->sk_state == DCCP_OPEN)
-			dccp_send_ack(sk);
-		goto backoff;
-	}
-
 	/*
-	 * sk->sk_send_head has to have one skb with
-	 * DCCP_SKB_CB(skb)->dccpd_type set to one of the retransmittable DCCP
-	 * packet types (REQUEST, RESPONSE, the ACK in the 3way handshake
-	 * (PARTOPEN timer), etc).
-	 */
-	BUG_TRAP(sk->sk_send_head != NULL);
-
-	/* 
 	 * More than than 4MSL (8 minutes) has passed, a RESET(aborted) was
 	 * sent, no need to retransmit, this sock is dead.
 	 */
 	if (dccp_write_timeout(sk))
-		goto out;
+		return;
 
 	/*
 	 * We want to know the number of packets retransmitted, not the
@@ -173,30 +101,27 @@ static void dccp_retransmit_timer(struct sock *sk)
 	if (icsk->icsk_retransmits == 0)
 		DCCP_INC_STATS_BH(DCCP_MIB_TIMEOUTS);
 
-	if (dccp_retransmit_skb(sk, sk->sk_send_head) < 0) {
+	if (dccp_retransmit_skb(sk) != 0) {
 		/*
 		 * Retransmission failed because of local congestion,
 		 * do not backoff.
 		 */
-		if (icsk->icsk_retransmits == 0)
+		if (--icsk->icsk_retransmits == 0)
 			icsk->icsk_retransmits = 1;
 		inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS,
 					  min(icsk->icsk_rto,
 					      TCP_RESOURCE_PROBE_INTERVAL),
 					  DCCP_RTO_MAX);
-		goto out;
+		return;
 	}
 
-backoff:
 	icsk->icsk_backoff++;
-	icsk->icsk_retransmits++;
 
 	icsk->icsk_rto = min(icsk->icsk_rto << 1, DCCP_RTO_MAX);
 	inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS, icsk->icsk_rto,
 				  DCCP_RTO_MAX);
-	if (icsk->icsk_retransmits > 3 /* FIXME: sysctl_dccp_retries1 */)
+	if (icsk->icsk_retransmits > sysctl_dccp_retries1)
 		__sk_dst_reset(sk);
-out:;
 }
 
 static void dccp_write_timer(unsigned long data)
@@ -251,7 +176,7 @@ static void dccp_keepalive_timer(unsigned long data)
 	/* Only process if socket is not in use. */
 	bh_lock_sock(sk);
 	if (sock_owned_by_user(sk)) {
-		/* Try again later. */ 
+		/* Try again later. */
 		inet_csk_reset_keepalive_timer(sk, HZ / 20);
 		goto out;
 	}
@@ -263,4 +188,102 @@ static void dccp_keepalive_timer(unsigned long data)
 out:
 	bh_unlock_sock(sk);
 	sock_put(sk);
+}
+
+/* This is the same as tcp_delack_timer, sans prequeue & mem_reclaim stuff */
+static void dccp_delack_timer(unsigned long data)
+{
+	struct sock *sk = (struct sock *)data;
+	struct inet_connection_sock *icsk = inet_csk(sk);
+
+	bh_lock_sock(sk);
+	if (sock_owned_by_user(sk)) {
+		/* Try again later. */
+		icsk->icsk_ack.blocked = 1;
+		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);
+		sk_reset_timer(sk, &icsk->icsk_delack_timer,
+			       jiffies + TCP_DELACK_MIN);
+		goto out;
+	}
+
+	if (sk->sk_state == DCCP_CLOSED ||
+	    !(icsk->icsk_ack.pending & ICSK_ACK_TIMER))
+		goto out;
+	if (time_after(icsk->icsk_ack.timeout, jiffies)) {
+		sk_reset_timer(sk, &icsk->icsk_delack_timer,
+			       icsk->icsk_ack.timeout);
+		goto out;
+	}
+
+	icsk->icsk_ack.pending &= ~ICSK_ACK_TIMER;
+
+	if (inet_csk_ack_scheduled(sk)) {
+		if (!icsk->icsk_ack.pingpong) {
+			/* Delayed ACK missed: inflate ATO. */
+			icsk->icsk_ack.ato = min(icsk->icsk_ack.ato << 1,
+						 icsk->icsk_rto);
+		} else {
+			/* Delayed ACK missed: leave pingpong mode and
+			 * deflate ATO.
+			 */
+			icsk->icsk_ack.pingpong = 0;
+			icsk->icsk_ack.ato = TCP_ATO_MIN;
+		}
+		dccp_send_ack(sk);
+		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKS);
+	}
+out:
+	bh_unlock_sock(sk);
+	sock_put(sk);
+}
+
+/* Transmit-delay timer: used by the CCIDs to delay actual send time */
+static void dccp_write_xmit_timer(unsigned long data)
+{
+	struct sock *sk = (struct sock *)data;
+	struct dccp_sock *dp = dccp_sk(sk);
+
+	bh_lock_sock(sk);
+	if (sock_owned_by_user(sk))
+		sk_reset_timer(sk, &dp->dccps_xmit_timer, jiffies+1);
+	else
+		dccp_write_xmit(sk, 0);
+	bh_unlock_sock(sk);
+	sock_put(sk);
+}
+
+static void dccp_init_write_xmit_timer(struct sock *sk)
+{
+	struct dccp_sock *dp = dccp_sk(sk);
+
+	setup_timer(&dp->dccps_xmit_timer, dccp_write_xmit_timer,
+			(unsigned long)sk);
+}
+
+void dccp_init_xmit_timers(struct sock *sk)
+{
+	dccp_init_write_xmit_timer(sk);
+	inet_csk_init_xmit_timers(sk, &dccp_write_timer, &dccp_delack_timer,
+				  &dccp_keepalive_timer);
+}
+
+static ktime_t dccp_timestamp_seed;
+/**
+ * dccp_timestamp  -  10s of microseconds time source
+ * Returns the number of 10s of microseconds since loading DCCP. This is native
+ * DCCP time difference format (RFC 4340, sec. 13).
+ * Please note: This will wrap around about circa every 11.9 hours.
+ */
+u32 dccp_timestamp(void)
+{
+	s64 delta = ktime_us_delta(ktime_get_real(), dccp_timestamp_seed);
+
+	do_div(delta, 10);
+	return delta;
+}
+EXPORT_SYMBOL_GPL(dccp_timestamp);
+
+void __init dccp_timestamping_init(void)
+{
+	dccp_timestamp_seed = ktime_get_real();
 }

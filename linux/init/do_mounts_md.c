@@ -1,5 +1,6 @@
-
-#include <linux/raid/md.h>
+#include <linux/delay.h>
+#include <linux/raid/md_u.h>
+#include <linux/raid/md_p.h>
 
 #include "do_mounts.h"
 
@@ -12,7 +13,12 @@
  * The code for that is here.
  */
 
-static int __initdata raid_noautodetect, raid_autopart;
+#ifdef CONFIG_MD_AUTODETECT
+static int __initdata raid_noautodetect;
+#else
+static int __initdata raid_noautodetect=1;
+#endif
+static int __initdata raid_autopart;
 
 static struct {
 	int minor;
@@ -20,11 +26,10 @@ static struct {
 	int level;
 	int chunk;
 	char *device_names;
-} md_setup_args[MAX_MD_DEVS] __initdata;
+} md_setup_args[256] __initdata;
 
 static int md_setup_ents __initdata;
 
-extern int mdp_major;
 /*
  * Parse the command-line parameters given our kernel, but do not
  * actually try to invoke the MD device now; that is handled by
@@ -61,10 +66,6 @@ static int __init md_setup(char *str)
 		return 0;
 	}
 	str1 = str;
-	if (minor >= MAX_MD_DEVS) {
-		printk(KERN_WARNING "md: md=%d, Minor device number too high.\n", minor);
-		return 0;
-	}
 	for (ent=0 ; ent< md_setup_ents ; ent++)
 		if (md_setup_args[ent].minor == minor &&
 		    md_setup_args[ent].partitioned == partitioned) {
@@ -72,7 +73,7 @@ static int __init md_setup(char *str)
 			       "Replacing previous definition.\n", partitioned?"d":"", minor);
 			break;
 		}
-	if (ent >= MAX_MD_DEVS) {
+	if (ent >= ARRAY_SIZE(md_setup_args)) {
 		printk(KERN_WARNING "md: md=%s%d - too many md initialisations\n", partitioned?"d":"", minor);
 		return 0;
 	}
@@ -112,8 +113,6 @@ static int __init md_setup(char *str)
 	return 1;
 }
 
-#define MdpMinorShift 6
-
 static void __init md_setup_drive(void)
 {
 	int minor, i, ent, partitioned;
@@ -137,7 +136,7 @@ static void __init md_setup_drive(void)
 		else
 			dev = MKDEV(MD_MAJOR, minor);
 		create_dev(name, dev);
-		for (i = 0; i < MD_SB_DISKS && devname != 0; i++) {
+		for (i = 0; i < MD_SB_DISKS && devname != NULL; i++) {
 			char *p;
 			char comp_name[64];
 			u32 rdev;
@@ -257,6 +256,8 @@ static int __init raid_setup(char *str)
 
 		if (!strncmp(str, "noautodetect", wlen))
 			raid_noautodetect = 1;
+		if (!strncmp(str, "autodetect", wlen))
+			raid_noautodetect = 0;
 		if (strncmp(str, "partitionable", wlen)==0)
 			raid_autopart = 1;
 		if (strncmp(str, "part", wlen)==0)
@@ -269,17 +270,33 @@ static int __init raid_setup(char *str)
 __setup("raid=", raid_setup);
 __setup("md=", md_setup);
 
+static void __init autodetect_raid(void)
+{
+	int fd;
+
+	/*
+	 * Since we don't want to detect and use half a raid array, we need to
+	 * wait for the known devices to complete their probing
+	 */
+	printk(KERN_INFO "md: Waiting for all devices to be available before autodetect\n");
+	printk(KERN_INFO "md: If you don't use raid, use raid=noautodetect\n");
+
+	wait_for_device_probe();
+
+	fd = sys_open("/dev/md0", 0, 0);
+	if (fd >= 0) {
+		sys_ioctl(fd, RAID_AUTORUN, raid_autopart);
+		sys_close(fd);
+	}
+}
+
 void __init md_run_setup(void)
 {
 	create_dev("/dev/md0", MKDEV(MD_MAJOR, 0));
+
 	if (raid_noautodetect)
-		printk(KERN_INFO "md: Skipping autodetection of RAID arrays. (raid=noautodetect)\n");
-	else {
-		int fd = sys_open("/dev/md0", 0, 0);
-		if (fd >= 0) {
-			sys_ioctl(fd, RAID_AUTORUN, raid_autopart);
-			sys_close(fd);
-		}
-	}
+		printk(KERN_INFO "md: Skipping autodetection of RAID arrays. (raid=autodetect will force)\n");
+	else
+		autodetect_raid();
 	md_setup_drive();
 }

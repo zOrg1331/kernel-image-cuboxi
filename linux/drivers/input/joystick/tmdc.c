@@ -1,6 +1,4 @@
 /*
- * $Id: tmdc.c,v 1.31 2002/01/22 20:29:52 vojtech Exp $
- *
  *  Copyright (c) 1998-2001 Vojtech Pavlik
  *
  *   Based on the work of:
@@ -265,7 +263,7 @@ static void tmdc_poll(struct gameport *gameport)
 
 static int tmdc_open(struct input_dev *dev)
 {
-	struct tmdc *tmdc = dev->private;
+	struct tmdc *tmdc = input_get_drvdata(dev);
 
 	gameport_start_polling(tmdc->gameport);
 	return 0;
@@ -273,7 +271,7 @@ static int tmdc_open(struct input_dev *dev)
 
 static void tmdc_close(struct input_dev *dev)
 {
-	struct tmdc *tmdc = dev->private;
+	struct tmdc *tmdc = input_get_drvdata(dev);
 
 	gameport_stop_polling(tmdc->gameport);
 }
@@ -326,13 +324,14 @@ static int tmdc_setup_port(struct tmdc *tmdc, int idx, unsigned char *data)
 	input_dev->id.vendor = GAMEPORT_ID_VENDOR_THRUSTMASTER;
 	input_dev->id.product = model->id;
 	input_dev->id.version = 0x0100;
-	input_dev->cdev.dev = &tmdc->gameport->dev;
-	input_dev->private = tmdc;
+	input_dev->dev.parent = &tmdc->gameport->dev;
+
+	input_set_drvdata(input_dev, tmdc);
 
 	input_dev->open = tmdc_open;
 	input_dev->close = tmdc_close;
 
-	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
+	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
 
 	for (i = 0; i < port->absc && i < TMDC_ABS; i++)
 		if (port->abs[i] >= 0)
@@ -439,8 +438,7 @@ static struct gameport_driver tmdc_drv = {
 
 static int __init tmdc_init(void)
 {
-	gameport_register_driver(&tmdc_drv);
-	return 0;
+	return gameport_register_driver(&tmdc_drv);
 }
 
 static void __exit tmdc_exit(void)

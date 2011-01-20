@@ -24,13 +24,17 @@
 #include <linux/errno.h>
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
+#include <linux/io.h>
 
+#include <asm/cputype.h>
 #include <asm/cacheflush.h>
-#include <asm/io.h>
 #include <asm/mmu_context.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
 #include <asm/sizes.h>
+
+#include <asm/mach/map.h>
+#include "mm.h"
 
 /*
  * Used by ioremap() and iounmap() code to mark (super)section-mapped
@@ -38,93 +42,80 @@
  */
 #define VM_ARM_SECTION_MAPPING	0x80000000
 
-static inline void
-remap_area_pte(pte_t * pte, unsigned long address, unsigned long size,
-	       unsigned long phys_addr, pgprot_t pgprot)
+static int remap_area_pte(pmd_t *pmd, unsigned long addr, unsigned long end,
+			  unsigned long phys_addr, const struct mem_type *type)
 {
-	unsigned long end;
+	pgprot_t prot = __pgprot(type->prot_pte);
+	pte_t *pte;
 
-	address &= ~PMD_MASK;
-	end = address + size;
-	if (end > PMD_SIZE)
-		end = PMD_SIZE;
-	BUG_ON(address >= end);
+	pte = pte_alloc_kernel(pmd, addr);
+	if (!pte)
+		return -ENOMEM;
+
 	do {
 		if (!pte_none(*pte))
 			goto bad;
 
-		set_pte(pte, pfn_pte(phys_addr >> PAGE_SHIFT, pgprot));
-		address += PAGE_SIZE;
+		set_pte_ext(pte, pfn_pte(phys_addr >> PAGE_SHIFT, prot), 0);
 		phys_addr += PAGE_SIZE;
-		pte++;
-	} while (address && (address < end));
-	return;
+	} while (pte++, addr += PAGE_SIZE, addr != end);
+	return 0;
 
  bad:
-	printk("remap_area_pte: page already exists\n");
+	printk(KERN_CRIT "remap_area_pte: page already exists\n");
 	BUG();
 }
 
-static inline int
-remap_area_pmd(pmd_t * pmd, unsigned long address, unsigned long size,
-	       unsigned long phys_addr, unsigned long flags)
+static inline int remap_area_pmd(pgd_t *pgd, unsigned long addr,
+				 unsigned long end, unsigned long phys_addr,
+				 const struct mem_type *type)
 {
-	unsigned long end;
-	pgprot_t pgprot;
+	unsigned long next;
+	pmd_t *pmd;
+	int ret = 0;
 
-	address &= ~PGDIR_MASK;
-	end = address + size;
+	pmd = pmd_alloc(&init_mm, pgd, addr);
+	if (!pmd)
+		return -ENOMEM;
 
-	if (end > PGDIR_SIZE)
-		end = PGDIR_SIZE;
-
-	phys_addr -= address;
-	BUG_ON(address >= end);
-
-	pgprot = __pgprot(L_PTE_PRESENT | L_PTE_YOUNG | L_PTE_DIRTY | L_PTE_WRITE | flags);
 	do {
-		pte_t * pte = pte_alloc_kernel(pmd, address);
-		if (!pte)
-			return -ENOMEM;
-		remap_area_pte(pte, address, end - address, address + phys_addr, pgprot);
-		address = (address + PMD_SIZE) & PMD_MASK;
-		pmd++;
-	} while (address && (address < end));
-	return 0;
+		next = pmd_addr_end(addr, end);
+		ret = remap_area_pte(pmd, addr, next, phys_addr, type);
+		if (ret)
+			return ret;
+		phys_addr += next - addr;
+	} while (pmd++, addr = next, addr != end);
+	return ret;
 }
 
-static int
-remap_area_pages(unsigned long start, unsigned long pfn,
-		 unsigned long size, unsigned long flags)
+static int remap_area_pages(unsigned long start, unsigned long pfn,
+			    size_t size, const struct mem_type *type)
 {
-	unsigned long address = start;
-	unsigned long end = start + size;
+	unsigned long addr = start;
+	unsigned long next, end = start + size;
 	unsigned long phys_addr = __pfn_to_phys(pfn);
+	pgd_t *pgd;
 	int err = 0;
-	pgd_t * dir;
 
-	phys_addr -= address;
-	dir = pgd_offset(&init_mm, address);
-	BUG_ON(address >= end);
+	BUG_ON(addr >= end);
+	pgd = pgd_offset_k(addr);
 	do {
-		pmd_t *pmd = pmd_alloc(&init_mm, dir, address);
-		if (!pmd) {
-			err = -ENOMEM;
+		next = pgd_addr_end(addr, end);
+		err = remap_area_pmd(pgd, addr, next, phys_addr, type);
+		if (err)
 			break;
-		}
-		if (remap_area_pmd(pmd, address, end - address,
-					 phys_addr + address, flags)) {
-			err = -ENOMEM;
-			break;
-		}
-
-		address = (address + PGDIR_SIZE) & PGDIR_MASK;
-		dir++;
-	} while (address && (address < end));
+		phys_addr += next - addr;
+	} while (pgd++, addr = next, addr != end);
 
 	return err;
 }
 
+int ioremap_page(unsigned long virt, unsigned long phys,
+		 const struct mem_type *mtype)
+{
+	return remap_area_pages(virt, __phys_to_pfn(phys), PAGE_SIZE, mtype);
+}
+EXPORT_SYMBOL(ioremap_page);
 
 void __check_kvm_seq(struct mm_struct *mm)
 {
@@ -153,7 +144,7 @@ void __check_kvm_seq(struct mm_struct *mm)
  */
 static void unmap_area_sections(unsigned long virt, unsigned long size)
 {
-	unsigned long addr = virt, end = virt + (size & ~SZ_1M);
+	unsigned long addr = virt, end = virt + (size & ~(SZ_1M - 1));
 	pgd_t *pgd;
 
 	flush_cache_vunmap(addr, end);
@@ -177,7 +168,7 @@ static void unmap_area_sections(unsigned long virt, unsigned long size)
 			 * Free the page table, if there was one.
 			 */
 			if ((pmd_val(pmd) & PMD_TYPE_MASK) == PMD_TYPE_TABLE)
-				pte_free_kernel(pmd_page_kernel(pmd));
+				pte_free_kernel(&init_mm, pmd_page_vaddr(pmd));
 		}
 
 		addr += PGDIR_SIZE;
@@ -196,9 +187,9 @@ static void unmap_area_sections(unsigned long virt, unsigned long size)
 
 static int
 remap_area_sections(unsigned long virt, unsigned long pfn,
-		    unsigned long size, unsigned long flags)
+		    size_t size, const struct mem_type *type)
 {
-	unsigned long prot, addr = virt, end = virt + size;
+	unsigned long addr = virt, end = virt + size;
 	pgd_t *pgd;
 
 	/*
@@ -207,23 +198,13 @@ remap_area_sections(unsigned long virt, unsigned long pfn,
 	 */
 	unmap_area_sections(virt, size);
 
-	prot = PMD_TYPE_SECT | PMD_SECT_AP_WRITE | PMD_DOMAIN(DOMAIN_IO) |
-	       (flags & (L_PTE_CACHEABLE | L_PTE_BUFFERABLE));
-
-	/*
-	 * ARMv6 and above need XN set to prevent speculative prefetches
-	 * hitting IO.
-	 */
-	if (cpu_architecture() >= CPU_ARCH_ARMv6)
-		prot |= PMD_SECT_XN;
-
 	pgd = pgd_offset_k(addr);
 	do {
 		pmd_t *pmd = pmd_offset(pgd, addr);
 
-		pmd[0] = __pmd(__pfn_to_phys(pfn) | prot);
+		pmd[0] = __pmd(__pfn_to_phys(pfn) | type->prot_sect);
 		pfn += SZ_1M >> PAGE_SHIFT;
-		pmd[1] = __pmd(__pfn_to_phys(pfn) | prot);
+		pmd[1] = __pmd(__pfn_to_phys(pfn) | type->prot_sect);
 		pfn += SZ_1M >> PAGE_SHIFT;
 		flush_pmd_entry(pmd);
 
@@ -236,9 +217,9 @@ remap_area_sections(unsigned long virt, unsigned long pfn,
 
 static int
 remap_area_supersections(unsigned long virt, unsigned long pfn,
-			 unsigned long size, unsigned long flags)
+			 size_t size, const struct mem_type *type)
 {
-	unsigned long prot, addr = virt, end = virt + size;
+	unsigned long addr = virt, end = virt + size;
 	pgd_t *pgd;
 
 	/*
@@ -247,22 +228,12 @@ remap_area_supersections(unsigned long virt, unsigned long pfn,
 	 */
 	unmap_area_sections(virt, size);
 
-	prot = PMD_TYPE_SECT | PMD_SECT_SUPER | PMD_SECT_AP_WRITE |
-			PMD_DOMAIN(DOMAIN_IO) |
-			(flags & (L_PTE_CACHEABLE | L_PTE_BUFFERABLE));
-
-	/*
-	 * ARMv6 and above need XN set to prevent speculative prefetches
-	 * hitting IO.
-	 */
-	if (cpu_architecture() >= CPU_ARCH_ARMv6)
-		prot |= PMD_SECT_XN;
-
 	pgd = pgd_offset_k(virt);
 	do {
 		unsigned long super_pmd_val, i;
 
-		super_pmd_val = __pfn_to_phys(pfn) | prot;
+		super_pmd_val = __pfn_to_phys(pfn) | type->prot_sect |
+				PMD_SECT_SUPER;
 		super_pmd_val |= ((pfn >> (32 - PAGE_SHIFT)) & 0xf) << 20;
 
 		for (i = 0; i < 8; i++) {
@@ -294,12 +265,13 @@ remap_area_supersections(unsigned long virt, unsigned long pfn,
  * caller shouldn't need to know that small detail.
  *
  * 'flags' are the extra L_PTE_ flags that you want to specify for this
- * mapping.  See include/asm-arm/proc-armv/pgtable.h for more information.
+ * mapping.  See <asm/pgtable.h> for more information.
  */
 void __iomem *
-__ioremap_pfn(unsigned long pfn, unsigned long offset, size_t size,
-	      unsigned long flags)
+__arm_ioremap_pfn(unsigned long pfn, unsigned long offset, size_t size,
+		  unsigned int mtype)
 {
+	const struct mem_type *type;
 	int err;
 	unsigned long addr;
  	struct vm_struct * area;
@@ -310,23 +282,33 @@ __ioremap_pfn(unsigned long pfn, unsigned long offset, size_t size,
 	if (pfn >= 0x100000 && (__pfn_to_phys(pfn) & ~SUPERSECTION_MASK))
 		return NULL;
 
+	type = get_mem_type(mtype);
+	if (!type)
+		return NULL;
+
+	/*
+	 * Page align the mapping size, taking account of any offset.
+	 */
+	size = PAGE_ALIGN(offset + size);
+
  	area = get_vm_area(size, VM_IOREMAP);
  	if (!area)
  		return NULL;
  	addr = (unsigned long)area->addr;
 
 #ifndef CONFIG_SMP
-	if ((((cpu_architecture() >= CPU_ARCH_ARMv6) && (get_cr() & CR_XP)) ||
-	       cpu_is_xsc3()) &&
+	if (DOMAIN_IO == 0 &&
+	    (((cpu_architecture() >= CPU_ARCH_ARMv6) && (get_cr() & CR_XP)) ||
+	       cpu_is_xsc3()) && pfn >= 0x100000 &&
 	       !((__pfn_to_phys(pfn) | size | addr) & ~SUPERSECTION_MASK)) {
 		area->flags |= VM_ARM_SECTION_MAPPING;
-		err = remap_area_supersections(addr, pfn, size, flags);
+		err = remap_area_supersections(addr, pfn, size, type);
 	} else if (!((__pfn_to_phys(pfn) | size | addr) & ~PMD_MASK)) {
 		area->flags |= VM_ARM_SECTION_MAPPING;
-		err = remap_area_sections(addr, pfn, size, flags);
+		err = remap_area_sections(addr, pfn, size, type);
 	} else
 #endif
-		err = remap_area_pages(addr, pfn, size, flags);
+		err = remap_area_pages(addr, pfn, size, type);
 
 	if (err) {
  		vunmap((void *)addr);
@@ -336,10 +318,10 @@ __ioremap_pfn(unsigned long pfn, unsigned long offset, size_t size,
 	flush_cache_vmap(addr, addr + size);
 	return (void __iomem *) (offset + addr);
 }
-EXPORT_SYMBOL(__ioremap_pfn);
+EXPORT_SYMBOL(__arm_ioremap_pfn);
 
 void __iomem *
-__ioremap(unsigned long phys_addr, size_t size, unsigned long flags)
+__arm_ioremap(unsigned long phys_addr, size_t size, unsigned int mtype)
 {
 	unsigned long last_addr;
  	unsigned long offset = phys_addr & ~PAGE_MASK;
@@ -352,41 +334,29 @@ __ioremap(unsigned long phys_addr, size_t size, unsigned long flags)
 	if (!size || last_addr < phys_addr)
 		return NULL;
 
-	/*
- 	 * Page align the mapping size
-	 */
-	size = PAGE_ALIGN(last_addr + 1) - phys_addr;
-
- 	return __ioremap_pfn(pfn, offset, size, flags);
+ 	return __arm_ioremap_pfn(pfn, offset, size, mtype);
 }
-EXPORT_SYMBOL(__ioremap);
+EXPORT_SYMBOL(__arm_ioremap);
 
-void __iounmap(void __iomem *addr)
+void __iounmap(volatile void __iomem *io_addr)
 {
+	void *addr = (void *)(PAGE_MASK & (unsigned long)io_addr);
 #ifndef CONFIG_SMP
 	struct vm_struct **p, *tmp;
-#endif
-	unsigned int section_mapping = 0;
 
-	addr = (void __iomem *)(PAGE_MASK & (unsigned long)addr);
-
-#ifndef CONFIG_SMP
 	/*
 	 * If this is a section based mapping we need to handle it
-	 * specially as the VM subysystem does not know how to handle
+	 * specially as the VM subsystem does not know how to handle
 	 * such a beast. We need the lock here b/c we need to clear
 	 * all the mappings before the area can be reclaimed
 	 * by someone else.
 	 */
 	write_lock(&vmlist_lock);
 	for (p = &vmlist ; (tmp = *p) ; p = &tmp->next) {
-		if((tmp->flags & VM_IOREMAP) && (tmp->addr == addr)) {
+		if ((tmp->flags & VM_IOREMAP) && (tmp->addr == addr)) {
 			if (tmp->flags & VM_ARM_SECTION_MAPPING) {
-				*p = tmp->next;
 				unmap_area_sections((unsigned long)tmp->addr,
 						    tmp->size);
-				kfree(tmp);
-				section_mapping = 1;
 			}
 			break;
 		}
@@ -394,7 +364,6 @@ void __iounmap(void __iomem *addr)
 	write_unlock(&vmlist_lock);
 #endif
 
-	if (!section_mapping)
-		vunmap(addr);
+	vunmap(addr);
 }
 EXPORT_SYMBOL(__iounmap);

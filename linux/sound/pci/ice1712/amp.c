@@ -3,7 +3,7 @@
  *
  *   Lowlevel functions for Advanced Micro Peripherals Ltd AUDIO2000
  *
- *	Copyright (c) 2000 Jaroslav Kysela <perex@suse.cz>
+ *	Copyright (c) 2000 Jaroslav Kysela <perex@perex.cz>
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -21,7 +21,6 @@
  *
  */      
 
-#include <sound/driver.h>
 #include <asm/io.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -42,7 +41,7 @@ static void wm_put(struct snd_ice1712 *ice, int reg, unsigned short val)
 
 static int __devinit snd_vt1724_amp_init(struct snd_ice1712 *ice)
 {
-	static unsigned short wm_inits[] = {
+	static const unsigned short wm_inits[] = {
 		WM_ATTEN_L,	0x0000,	/* 0 db */
 		WM_ATTEN_R,	0x0000,	/* 0 db */
 		WM_DAC_CTRL,	0x0008,	/* 24bit I2S */
@@ -53,11 +52,13 @@ static int __devinit snd_vt1724_amp_init(struct snd_ice1712 *ice)
 
 	/* only use basic functionality for now */
 
-	ice->num_total_dacs = 2;	/* only PSDOUT0 is connected */
+	/* VT1616 6ch codec connected to PSDOUT0 using packed mode */
+	ice->num_total_dacs = 6;
 	ice->num_total_adcs = 2;
 
-	/* Chaintech AV-710 has another codecs, which need initialization */
-	/* initialize WM8728 codec */
+	/* Chaintech AV-710 has another WM8728 codec connected to PSDOUT4
+	   (shared with the SPDIF output). Mixer control for this codec
+	   is not yet supported. */
 	if (ice->eeprom.subvendor == VT1724_SUBDEVICE_AV710) {
 		for (i = 0; i < ARRAY_SIZE(wm_inits); i += 2)
 			wm_put(ice, wm_inits[i], wm_inits[i+1]);

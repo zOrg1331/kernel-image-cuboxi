@@ -186,7 +186,7 @@
  *
  * Thanks go also to:
  *	James Ashton <jaa101@syseng.anu.edu.au>,
- *	Alan Cox <alan@redhat.com>,
+ *	Alan Cox <alan@lxorguk.ukuu.org.uk>,
  *	Allan Creighton <allanc@cs.usyd.edu.au>,
  *	Matthew Geier <matthew@cs.usyd.edu.au>,
  *	Remo di Giovanni <remo@cs.usyd.edu.au>,
@@ -400,7 +400,6 @@
  */
 #undef SET_PSA_CRC		/* Calculate and set the CRC on PSA (slower) */
 #define USE_PSA_CONFIG		/* Use info from the PSA. */
-#undef STRUCT_CHECK		/* Verify padding of structures. */
 #undef EEPROM_IS_PROTECTED	/* doesn't seem to be necessary */
 #define MULTICAST_AVOID		/* Avoid extra multicast (I'm sceptical). */
 #undef SET_MAC_ADDRESS		/* Experimental */
@@ -449,9 +448,6 @@ static const char	*version	= "wavelan.c : v24 (SMP + wireless extensions) 11/12/
 /* Watchdog temporisation */
 #define	WATCHDOG_JIFFIES	(512*HZ/100)
 
-/* Macro to get the number of elements in an array */
-#define	NELS(a)				(sizeof(a) / sizeof(a[0]))
-
 /* ------------------------ PRIVATE IOCTL ------------------------ */
 
 #define SIOCSIPQTHR	SIOCIWFIRSTPRIV		/* Set quality threshold */
@@ -463,11 +459,9 @@ static const char	*version	= "wavelan.c : v24 (SMP + wireless extensions) 11/12/
 /****************************** TYPES ******************************/
 
 /* Shortcuts */
-typedef struct net_device_stats	en_stats;
 typedef struct iw_statistics	iw_stats;
 typedef struct iw_quality	iw_qual;
-typedef struct iw_freq		iw_freq;
-typedef struct net_local	net_local;
+typedef struct iw_freq		iw_freq;typedef struct net_local	net_local;
 typedef struct timer_list	timer_list;
 
 /* Basic types */
@@ -479,15 +473,12 @@ typedef u_char		mac_addr[WAVELAN_ADDR_SIZE];	/* Hardware address */
  * For each network interface, Linux keeps data in two structures:  "device"
  * keeps the generic data (same format for everybody) and "net_local" keeps
  * additional specific data.
- * Note that some of this specific data is in fact generic (en_stats, for
- * example).
  */
 struct net_local
 {
   net_local *	next;		/* linked list of the devices */
   struct net_device *	dev;		/* reverse link */
   spinlock_t	spinlock;	/* Serialize access to the hardware (SMP) */
-  en_stats	stats;		/* Ethernet interface statistics */
   int		nresets;	/* number of hardware resets */
   u_char	reconfig_82586;	/* We need to reconfigure the controller. */
   u_char	promiscuous;	/* promiscuous mode */
@@ -605,8 +596,6 @@ static void
 static inline void
 	wv_init_info(struct net_device *);	/* display startup info */
 /* ------------------- IOCTL, STATS & RECONFIG ------------------- */
-static en_stats	*
-	wavelan_get_stats(struct net_device *);	/* Give stats /proc/net/dev */
 static iw_stats *
 	wavelan_get_wireless_stats(struct net_device *);
 static void
@@ -622,7 +611,7 @@ static inline int
 	wv_packet_write(struct net_device *,	/* Write a packet to the Tx buffer. */
 			void *,
 			short);
-static int
+static netdev_tx_t
 	wavelan_packet_xmit(struct sk_buff *,	/* Send a packet. */
 			    struct net_device *);
 /* -------------------- HARDWARE CONFIGURATION -------------------- */
@@ -642,8 +631,7 @@ static int
 /* ---------------------- INTERRUPT HANDLING ---------------------- */
 static irqreturn_t
 	wavelan_interrupt(int,		/* interrupt handler */
-			  void *,
-			  struct pt_regs *);
+			  void *);
 static void
 	wavelan_watchdog(struct net_device *);	/* transmission watchdog */
 /* ------------------- CONFIGURATION CALLBACKS ------------------- */

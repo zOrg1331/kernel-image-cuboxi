@@ -13,18 +13,20 @@
 #include <linux/mm.h>
 #include <linux/hugetlb.h>
 #include <linux/pagemap.h>
-#include <linux/smp_lock.h>
+#include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/sysctl.h>
+#include <linux/log2.h>
 #include <asm/mman.h>
 #include <asm/pgalloc.h>
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
 
-unsigned int hpage_shift=HPAGE_SHIFT_DEFAULT;
+unsigned int hpage_shift = HPAGE_SHIFT_DEFAULT;
+EXPORT_SYMBOL(hpage_shift);
 
 pte_t *
-huge_pte_alloc (struct mm_struct *mm, unsigned long addr)
+huge_pte_alloc(struct mm_struct *mm, unsigned long addr, unsigned long sz)
 {
 	unsigned long taddr = htlbpage_to_page(addr);
 	pgd_t *pgd;
@@ -64,13 +66,19 @@ huge_pte_offset (struct mm_struct *mm, unsigned long addr)
 	return pte;
 }
 
+int huge_pmd_unshare(struct mm_struct *mm, unsigned long *addr, pte_t *ptep)
+{
+	return 0;
+}
+
 #define mk_pte_huge(entry) { pte_val(entry) |= _PAGE_P; }
 
 /*
  * Don't actually need to do any preparation, but need to make sure
  * the address is in the right region.
  */
-int prepare_hugepage_range(unsigned long addr, unsigned long len)
+int prepare_hugepage_range(struct file *file,
+			unsigned long addr, unsigned long len)
 {
 	if (len & ~HPAGE_MASK)
 		return -EINVAL;
@@ -101,13 +109,19 @@ int pmd_huge(pmd_t pmd)
 {
 	return 0;
 }
+
+int pud_huge(pud_t pud)
+{
+	return 0;
+}
+
 struct page *
 follow_huge_pmd(struct mm_struct *mm, unsigned long address, pmd_t *pmd, int write)
 {
 	return NULL;
 }
 
-void hugetlb_free_pgd_range(struct mmu_gather **tlb,
+void hugetlb_free_pgd_range(struct mmu_gather *tlb,
 			unsigned long addr, unsigned long end,
 			unsigned long floor, unsigned long ceiling)
 {
@@ -141,6 +155,14 @@ unsigned long hugetlb_get_unmapped_area(struct file *file, unsigned long addr, u
 		return -ENOMEM;
 	if (len & ~HPAGE_MASK)
 		return -EINVAL;
+
+	/* Handle MAP_FIXED */
+	if (flags & MAP_FIXED) {
+		if (prepare_hugepage_range(file, addr, len))
+			return -EINVAL;
+		return addr;
+	}
+
 	/* This code assumes that RGN_HPAGE != 0. */
 	if ((REGION_NUMBER(addr) != RGN_HPAGE) || (addr & (HPAGE_SIZE - 1)))
 		addr = HPAGE_REGION_BASE;
@@ -168,7 +190,7 @@ static int __init hugetlb_setup_sz(char *str)
 		tr_pages = 0x15557000UL;
 
 	size = memparse(str, &str);
-	if (*str || (size & (size-1)) || !(tr_pages & size) ||
+	if (*str || !is_power_of_2(size) || !(tr_pages & size) ||
 		size <= PAGE_SIZE ||
 		size >= (1UL << PAGE_SHIFT << MAX_ORDER)) {
 		printk(KERN_WARNING "Invalid huge page size specified\n");
@@ -181,6 +203,6 @@ static int __init hugetlb_setup_sz(char *str)
 	 * override here with new page shift.
 	 */
 	ia64_set_rr(HPAGE_REGION_BASE, hpage_shift << 2);
-	return 1;
+	return 0;
 }
-__setup("hugepagesz=", hugetlb_setup_sz);
+early_param("hugepagesz", hugetlb_setup_sz);

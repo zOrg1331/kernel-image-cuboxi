@@ -1,101 +1,188 @@
 /*
- * Copyright (C) 2000, 2001, 2002 Jeff Dike (jdike@karaya.com)
+ * Copyright (C) 2000 - 2007 Jeff Dike (jdike{addtoit,linux.intel}.com)
  * Licensed under the GPL
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
+#include <stddef.h>
+#include <errno.h>
+#include <signal.h>
 #include <time.h>
 #include <sys/time.h>
-#include <signal.h>
-#include <errno.h>
-#include "user_util.h"
-#include "kern_util.h"
-#include "user.h"
-#include "process.h"
 #include "kern_constants.h"
+#include "kern_util.h"
 #include "os.h"
+#include "process.h"
+#include "user.h"
 
-static void set_interval(int timer_type)
+int set_interval(void)
 {
-	int usec = 1000000/hz();
+	int usec = UM_USEC_PER_SEC / UM_HZ;
 	struct itimerval interval = ((struct itimerval) { { 0, usec },
 							  { 0, usec } });
 
-	if(setitimer(timer_type, &interval, NULL) == -1)
-		panic("setitimer failed - errno = %d\n", errno);
+	if (setitimer(ITIMER_VIRTUAL, &interval, NULL) == -1)
+		return -errno;
+
+	return 0;
 }
 
-void enable_timer(void)
+int timer_one_shot(int ticks)
 {
-	set_interval(ITIMER_VIRTUAL);
+	unsigned long usec = ticks * UM_USEC_PER_SEC / UM_HZ;
+	unsigned long sec = usec / UM_USEC_PER_SEC;
+	struct itimerval interval;
+
+	usec %= UM_USEC_PER_SEC;
+	interval = ((struct itimerval) { { 0, 0 }, { sec, usec } });
+
+	if (setitimer(ITIMER_VIRTUAL, &interval, NULL) == -1)
+		return -errno;
+
+	return 0;
 }
 
-void disable_timer(void)
+/**
+ * timeval_to_ns - Convert timeval to nanoseconds
+ * @ts:		pointer to the timeval variable to be converted
+ *
+ * Returns the scalar nanosecond representation of the timeval
+ * parameter.
+ *
+ * Ripped from linux/time.h because it's a kernel header, and thus
+ * unusable from here.
+ */
+static inline long long timeval_to_ns(const struct timeval *tv)
 {
-	struct itimerval disable = ((struct itimerval) { { 0, 0 }, { 0, 0 }});
-	if((setitimer(ITIMER_VIRTUAL, &disable, NULL) < 0) ||
-	   (setitimer(ITIMER_REAL, &disable, NULL) < 0))
-		printk("disnable_timer - setitimer failed, errno = %d\n",
-		       errno);
-	/* If there are signals already queued, after unblocking ignore them */
-	set_handler(SIGALRM, SIG_IGN, 0, -1);
-	set_handler(SIGVTALRM, SIG_IGN, 0, -1);
+	return ((long long) tv->tv_sec * UM_NSEC_PER_SEC) +
+		tv->tv_usec * UM_NSEC_PER_USEC;
 }
 
-void switch_timers(int to_real)
+long long disable_timer(void)
 {
-	struct itimerval disable = ((struct itimerval) { { 0, 0 }, { 0, 0 }});
-	struct itimerval enable = ((struct itimerval) { { 0, 1000000/hz() },
-							{ 0, 1000000/hz() }});
-	int old, new;
+	struct itimerval time = ((struct itimerval) { { 0, 0 }, { 0, 0 } });
+	int remain, max = UM_NSEC_PER_SEC / UM_HZ;
 
-	if(to_real){
-		old = ITIMER_VIRTUAL;
-		new = ITIMER_REAL;
-	}
-	else {
-		old = ITIMER_REAL;
-		new = ITIMER_VIRTUAL;
-	}
+	if (setitimer(ITIMER_VIRTUAL, &time, &time) < 0)
+		printk(UM_KERN_ERR "disable_timer - setitimer failed, "
+		       "errno = %d\n", errno);
 
-	if((setitimer(old, &disable, NULL) < 0) ||
-	   (setitimer(new, &enable, NULL)))
-		printk("switch_timers - setitimer failed, errno = %d\n",
-		       errno);
+	remain = timeval_to_ns(&time.it_value);
+	if (remain > max)
+		remain = max;
+
+	return remain;
 }
 
-#ifdef UML_CONFIG_MODE_TT
-void uml_idle_timer(void)
-{
-	if(signal(SIGVTALRM, SIG_IGN) == SIG_ERR)
-		panic("Couldn't unset SIGVTALRM handler");
-
-	set_handler(SIGALRM, (__sighandler_t) alarm_handler,
-		    SA_RESTART, SIGUSR1, SIGIO, SIGWINCH, SIGVTALRM, -1);
-	set_interval(ITIMER_REAL);
-}
-#endif
-
-unsigned long long os_nsecs(void)
+long long os_nsecs(void)
 {
 	struct timeval tv;
 
 	gettimeofday(&tv, NULL);
-	return((unsigned long long) tv.tv_sec * BILLION + tv.tv_usec * 1000);
+	return timeval_to_ns(&tv);
 }
 
-void idle_sleep(int secs)
+#ifdef UML_CONFIG_NO_HZ
+static int after_sleep_interval(struct timespec *ts)
+{
+	return 0;
+}
+
+static void deliver_alarm(void)
+{
+	alarm_handler(SIGVTALRM, NULL);
+}
+
+static unsigned long long sleep_time(unsigned long long nsecs)
+{
+	return nsecs;
+}
+
+#else
+unsigned long long last_tick;
+unsigned long long skew;
+
+static void deliver_alarm(void)
+{
+	unsigned long long this_tick = os_nsecs();
+	int one_tick = UM_NSEC_PER_SEC / UM_HZ;
+
+	/* Protection against the host's time going backwards */
+	if ((last_tick != 0) && (this_tick < last_tick))
+		this_tick = last_tick;
+
+	if (last_tick == 0)
+		last_tick = this_tick - one_tick;
+
+	skew += this_tick - last_tick;
+
+	while (skew >= one_tick) {
+		alarm_handler(SIGVTALRM, NULL);
+		skew -= one_tick;
+	}
+
+	last_tick = this_tick;
+}
+
+static unsigned long long sleep_time(unsigned long long nsecs)
+{
+	return nsecs > skew ? nsecs - skew : 0;
+}
+
+static inline long long timespec_to_us(const struct timespec *ts)
+{
+	return ((long long) ts->tv_sec * UM_USEC_PER_SEC) +
+		ts->tv_nsec / UM_NSEC_PER_USEC;
+}
+
+static int after_sleep_interval(struct timespec *ts)
+{
+	int usec = UM_USEC_PER_SEC / UM_HZ;
+	long long start_usecs = timespec_to_us(ts);
+	struct timeval tv;
+	struct itimerval interval;
+
+	/*
+	 * It seems that rounding can increase the value returned from
+	 * setitimer to larger than the one passed in.  Over time,
+	 * this will cause the remaining time to be greater than the
+	 * tick interval.  If this happens, then just reduce the first
+	 * tick to the interval value.
+	 */
+	if (start_usecs > usec)
+		start_usecs = usec;
+
+	start_usecs -= skew / UM_NSEC_PER_USEC;
+	if (start_usecs < 0)
+		start_usecs = 0;
+
+	tv = ((struct timeval) { .tv_sec  = start_usecs / UM_USEC_PER_SEC,
+				 .tv_usec = start_usecs % UM_USEC_PER_SEC });
+	interval = ((struct itimerval) { { 0, usec }, tv });
+
+	if (setitimer(ITIMER_VIRTUAL, &interval, NULL) == -1)
+		return -errno;
+
+	return 0;
+}
+#endif
+
+void idle_sleep(unsigned long long nsecs)
 {
 	struct timespec ts;
 
-	ts.tv_sec = secs;
-	ts.tv_nsec = 0;
-	nanosleep(&ts, NULL);
-}
+	/*
+	 * nsecs can come in as zero, in which case, this starts a
+	 * busy loop.  To prevent this, reset nsecs to the tick
+	 * interval if it is zero.
+	 */
+	if (nsecs == 0)
+		nsecs = UM_NSEC_PER_SEC / UM_HZ;
 
-void user_time_init(void)
-{
-	set_interval(ITIMER_VIRTUAL);
+	nsecs = sleep_time(nsecs);
+	ts = ((struct timespec) { .tv_sec	= nsecs / UM_NSEC_PER_SEC,
+				  .tv_nsec	= nsecs % UM_NSEC_PER_SEC });
+
+	if (nanosleep(&ts, &ts) == 0)
+		deliver_alarm();
+	after_sleep_interval(&ts);
 }

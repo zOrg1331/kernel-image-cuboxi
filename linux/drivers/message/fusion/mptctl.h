@@ -3,10 +3,10 @@
  *      Fusion MPT misc device (ioctl) driver.
  *      For use with PCI chip/adapter(s):
  *          LSIFC9xx/LSI409xx Fibre Channel
- *      running LSI Logic Fusion MPT (Message Passing Technology) firmware.
+ *      running LSI Fusion MPT (Message Passing Technology) firmware.
  *
- *  Copyright (c) 1999-2005 LSI Logic Corporation
- *  (mailto:mpt_linux_developer@lsil.com)
+ *  Copyright (c) 1999-2008 LSI Corporation
+ *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  */
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/

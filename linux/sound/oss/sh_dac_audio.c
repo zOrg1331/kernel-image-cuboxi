@@ -1,3 +1,14 @@
+/*
+ * sound/oss/sh_dac_audio.c
+ *
+ * SH DAC based sound :(
+ *
+ *  Copyright (C) 2004,2005  Andriy Skulysh
+ *
+ * This file is subject to the terms and conditions of the GNU General Public
+ * License.  See the file "COPYING" in the main directory of this archive
+ * for more details.
+ */
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/sched.h>
@@ -6,30 +17,19 @@
 #include <linux/fs.h>
 #include <linux/sound.h>
 #include <linux/soundcard.h>
+#include <linux/interrupt.h>
+#include <linux/hrtimer.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
 #include <asm/irq.h>
 #include <asm/delay.h>
-#include <linux/interrupt.h>
-
-#include <asm/cpu/dac.h>
-
-#ifdef MACH_HP600
-#include <asm/hp6xx/hp6xx.h>
-#include <asm/hd64461/hd64461.h>
-#endif
+#include <asm/clock.h>
+#include <cpu/dac.h>
+#include <asm/machvec.h>
+#include <mach/hp6xx.h>
+#include <asm/hd64461.h>
 
 #define MODNAME "sh_dac_audio"
-
-#define TMU_TOCR_INIT	0x00
-
-#define TMU1_TCR_INIT	0x0020	/* Clock/4, rising edge; interrupt on */
-#define TMU1_TSTR_INIT  0x02	/* Bit to turn on TMU1 */
-
-#define TMU_TSTR	0xfffffe92
-#define TMU1_TCOR	0xfffffea0
-#define TMU1_TCNT	0xfffffea4
-#define TMU1_TCR	0xfffffea8
 
 #define BUFFER_SIZE 48000
 
@@ -37,23 +37,17 @@ static int rate;
 static int empty;
 static char *data_buffer, *buffer_begin, *buffer_end;
 static int in_use, device_major;
+static struct hrtimer hrtimer;
+static ktime_t wakeups_per_second;
 
 static void dac_audio_start_timer(void)
 {
-	u8 tstr;
-
-	tstr = ctrl_inb(TMU_TSTR);
-	tstr |= TMU1_TSTR_INIT;
-	ctrl_outb(tstr, TMU_TSTR);
+	hrtimer_start(&hrtimer, wakeups_per_second, HRTIMER_MODE_REL);
 }
 
 static void dac_audio_stop_timer(void)
 {
-	u8 tstr;
-
-	tstr = ctrl_inb(TMU_TSTR);
-	tstr &= ~TMU1_TSTR_INIT;
-	ctrl_outb(tstr, TMU_TSTR);
+	hrtimer_cancel(&hrtimer);
 }
 
 static void dac_audio_reset(void)
@@ -71,36 +65,31 @@ static void dac_audio_sync(void)
 
 static void dac_audio_start(void)
 {
-#ifdef MACH_HP600
-	u16 v;
-	v = inw(HD64461_GPADR);
-	v &= ~HD64461_GPADR_SPEAKER;
-	outw(v, HD64461_GPADR);
-#endif
+	if (mach_is_hp6xx()) {
+		u16 v = __raw_readw(HD64461_GPADR);
+		v &= ~HD64461_GPADR_SPEAKER;
+		__raw_writew(v, HD64461_GPADR);
+	}
+
 	sh_dac_enable(CONFIG_SOUND_SH_DAC_AUDIO_CHANNEL);
-	ctrl_outw(TMU1_TCR_INIT, TMU1_TCR);
 }
 static void dac_audio_stop(void)
 {
-#ifdef MACH_HP600
-	u16 v;
-#endif
 	dac_audio_stop_timer();
-#ifdef MACH_HP600
-	v = inw(HD64461_GPADR);
-	v |= HD64461_GPADR_SPEAKER;
-	outw(v, HD64461_GPADR);
-#endif
+
+	if (mach_is_hp6xx()) {
+		u16 v = __raw_readw(HD64461_GPADR);
+		v |= HD64461_GPADR_SPEAKER;
+		__raw_writew(v, HD64461_GPADR);
+	}
+
+	sh_dac_output(0, CONFIG_SOUND_SH_DAC_AUDIO_CHANNEL);
 	sh_dac_disable(CONFIG_SOUND_SH_DAC_AUDIO_CHANNEL);
 }
 
 static void dac_audio_set_rate(void)
 {
-	unsigned long interval;
-
-	interval = (current_cpu_data.module_clock / 4) / rate;
-	ctrl_outl(interval, TMU1_TCOR);
-	ctrl_outl(interval, TMU1_TCNT);
+	wakeups_per_second = ktime_set(0, 1000000000 / rate);
 }
 
 static int dac_audio_ioctl(struct inode *inode, struct file *file,
@@ -127,7 +116,9 @@ static int dac_audio_ioctl(struct inode *inode, struct file *file,
 		return put_user(AFMT_U8, (int *)arg);
 
 	case SNDCTL_DSP_NONBLOCK:
+		spin_lock(&file->f_lock);
 		file->f_flags |= O_NONBLOCK;
+		spin_unlock(&file->f_lock);
 		return 0;
 
 	case SNDCTL_DSP_GETCAPS:
@@ -247,7 +238,7 @@ static int dac_audio_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-struct file_operations dac_audio_fops = {
+const struct file_operations dac_audio_fops = {
       .read =		dac_audio_read,
       .write =	dac_audio_write,
       .ioctl =	dac_audio_ioctl,
@@ -255,32 +246,26 @@ struct file_operations dac_audio_fops = {
       .release =	dac_audio_release,
 };
 
-static irqreturn_t timer1_interrupt(int irq, void *dev, struct pt_regs *regs)
+static enum hrtimer_restart sh_dac_audio_timer(struct hrtimer *handle)
 {
-	unsigned long timer_status;
-
-	timer_status = ctrl_inw(TMU1_TCR);
-	timer_status &= ~0x100;
-	ctrl_outw(timer_status, TMU1_TCR);
-
 	if (!empty) {
 		sh_dac_output(*buffer_begin, CONFIG_SOUND_SH_DAC_AUDIO_CHANNEL);
 		buffer_begin++;
 
 		if (buffer_begin == data_buffer + BUFFER_SIZE)
 			buffer_begin = data_buffer;
-		if (buffer_begin == buffer_end) {
+		if (buffer_begin == buffer_end)
 			empty = 1;
-			dac_audio_stop_timer();
-		}
 	}
-	return IRQ_HANDLED;
+
+	if (!empty)
+		hrtimer_start(&hrtimer, wakeups_per_second, HRTIMER_MODE_REL);
+
+	return HRTIMER_NORESTART;
 }
 
 static int __init dac_audio_init(void)
 {
-	int retval;
-
 	if ((device_major = register_sound_dsp(&dac_audio_fops, -1)) < 0) {
 		printk(KERN_ERR "Cannot register dsp device");
 		return device_major;
@@ -296,21 +281,25 @@ static int __init dac_audio_init(void)
 	rate = 8000;
 	dac_audio_set_rate();
 
-	retval =
-	    request_irq(TIMER1_IRQ, timer1_interrupt, IRQF_DISABLED, MODNAME, 0);
-	if (retval < 0) {
-		printk(KERN_ERR "sh_dac_audio: IRQ %d request failed\n",
-		       TIMER1_IRQ);
-		return retval;
-	}
+	/* Today: High Resolution Timer driven DAC playback.
+	 * The timer callback gets called once per sample. Ouch.
+	 *
+	 * Future: A much better approach would be to use the
+	 * SH7720 CMT+DMAC+DAC hardware combination like this:
+	 * - Program sample rate using CMT0 or CMT1
+	 * - Program DMAC to use CMT for timing and output to DAC
+	 * - Play sound using DMAC, let CPU sleep.
+	 * - While at it, rewrite this driver to use ALSA.
+	 */
+
+	hrtimer_init(&hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer.function = sh_dac_audio_timer;
 
 	return 0;
 }
 
 static void __exit dac_audio_exit(void)
 {
-	free_irq(TIMER1_IRQ, 0);
-
 	unregister_sound_dsp(device_major);
 	kfree((void *)data_buffer);
 }

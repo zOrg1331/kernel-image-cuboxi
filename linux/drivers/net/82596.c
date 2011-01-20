@@ -57,6 +57,7 @@
 #include <asm/io.h>
 #include <asm/dma.h>
 #include <asm/pgtable.h>
+#include <asm/cacheflush.h>
 
 static char version[] __initdata =
 	"82596.c $Revision: 1.5 $\n";
@@ -121,13 +122,13 @@ static char version[] __initdata =
 #define ISCP_BUSY	0x00010000
 #define MACH_IS_APRICOT	0
 #else
-#define WSWAPrfd(x)     ((struct i596_rfd *)(x))
-#define WSWAPrbd(x)     ((struct i596_rbd *)(x))
-#define WSWAPiscp(x)    ((struct i596_iscp *)(x))
-#define WSWAPscb(x)     ((struct i596_scb *)(x))
-#define WSWAPcmd(x)     ((struct i596_cmd *)(x))
-#define WSWAPtbd(x)     ((struct i596_tbd *)(x))
-#define WSWAPchar(x)    ((char *)(x))
+#define WSWAPrfd(x)     ((struct i596_rfd *)((long)x))
+#define WSWAPrbd(x)     ((struct i596_rbd *)((long)x))
+#define WSWAPiscp(x)    ((struct i596_iscp *)((long)x))
+#define WSWAPscb(x)     ((struct i596_scb *)((long)x))
+#define WSWAPcmd(x)     ((struct i596_cmd *)((long)x))
+#define WSWAPtbd(x)     ((struct i596_tbd *)((long)x))
+#define WSWAPchar(x)    ((char *)((long)x))
 #define ISCP_BUSY	0x0001
 #define MACH_IS_APRICOT	1
 #endif
@@ -325,7 +326,6 @@ struct i596_private {
 	struct i596_cmd *cmd_head;
 	int cmd_backlog;
 	unsigned long last_cmd;
-	struct net_device_stats stats;
 	struct i596_rfd rfds[RX_RING_SIZE];
 	struct i596_rbd rbds[RX_RING_SIZE];
 	struct tx_cmd tx_cmds[TX_RING_SIZE];
@@ -356,10 +356,9 @@ static char init_setup[] =
 	0x7f /*  *multi IA */ };
 
 static int i596_open(struct net_device *dev);
-static int i596_start_xmit(struct sk_buff *skb, struct net_device *dev);
-static irqreturn_t i596_interrupt(int irq, void *dev_id, struct pt_regs *regs);
+static netdev_tx_t i596_start_xmit(struct sk_buff *skb, struct net_device *dev);
+static irqreturn_t i596_interrupt(int irq, void *dev_id);
 static int i596_close(struct net_device *dev);
-static struct net_device_stats *i596_get_stats(struct net_device *dev);
 static void i596_add_cmd(struct net_device *dev, struct i596_cmd *cmd);
 static void i596_tx_timeout (struct net_device *dev);
 static void print_eth(unsigned char *buf, char *str);
@@ -444,7 +443,7 @@ static inline int wait_cmd(struct net_device *dev, struct i596_private *lp, int 
 static inline int wait_cfg(struct net_device *dev, struct i596_cmd *cmd, int delcnt, char *str)
 {
 	volatile struct i596_cmd *c = cmd;
-	
+
 	while (--delcnt && c->command)
 		udelay(10);
 	if (!delcnt) {
@@ -455,10 +454,10 @@ static inline int wait_cfg(struct net_device *dev, struct i596_cmd *cmd, int del
 		return 0;
 }
 
- 
+
 static void i596_display_data(struct net_device *dev)
 {
-	struct i596_private *lp = dev->priv;
+	struct i596_private *lp = dev->ml_priv;
 	struct i596_cmd *cmd;
 	struct i596_rfd *rfd;
 	struct i596_rbd *rbd;
@@ -501,7 +500,7 @@ static void i596_display_data(struct net_device *dev)
 
 
 #if defined(ENABLE_MVME16x_NET) || defined(ENABLE_BVME6000_NET)
-static irqreturn_t i596_error(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t i596_error(int irq, void *dev_id)
 {
 	struct net_device *dev = dev_id;
 #ifdef ENABLE_MVME16x_NET
@@ -528,7 +527,7 @@ static irqreturn_t i596_error(int irq, void *dev_id, struct pt_regs *regs)
 
 static inline void init_rx_bufs(struct net_device *dev)
 {
-	struct i596_private *lp = dev->priv;
+	struct i596_private *lp = dev->ml_priv;
 	int i;
 	struct i596_rfd *rfd;
 	struct i596_rbd *rbd;
@@ -579,7 +578,7 @@ static inline void init_rx_bufs(struct net_device *dev)
 
 static inline void remove_rx_bufs(struct net_device *dev)
 {
-	struct i596_private *lp = dev->priv;
+	struct i596_private *lp = dev->ml_priv;
 	struct i596_rbd *rbd;
 	int i;
 
@@ -593,7 +592,7 @@ static inline void remove_rx_bufs(struct net_device *dev)
 
 static void rebuild_rx_bufs(struct net_device *dev)
 {
-	struct i596_private *lp = dev->priv;
+	struct i596_private *lp = dev->ml_priv;
 	int i;
 
 	/* Ensure rx frame/buffer descriptors are tidy */
@@ -612,7 +611,7 @@ static void rebuild_rx_bufs(struct net_device *dev)
 
 static int init_i596_mem(struct net_device *dev)
 {
-	struct i596_private *lp = dev->priv;
+	struct i596_private *lp = dev->ml_priv;
 #if !defined(ENABLE_MVME16x_NET) && !defined(ENABLE_BVME6000_NET) || defined(ENABLE_APRICOT)
 	short ioaddr = dev->base_addr;
 #endif
@@ -765,7 +764,7 @@ failed:
 
 static inline int i596_rx(struct net_device *dev)
 {
-	struct i596_private *lp = dev->priv;
+	struct i596_private *lp = dev->ml_priv;
 	struct i596_rfd *rfd;
 	struct i596_rbd *rbd;
 	int frames = 0;
@@ -787,7 +786,7 @@ static inline int i596_rx(struct net_device *dev)
 		}
 		DEB(DEB_RXFRAME, printk(KERN_DEBUG "  rfd %p, rfd.rbd %p, rfd.stat %04x\n",
 			rfd, rfd->rbd, rfd->stat));
-		
+
 		if (rbd != I596_NULL && ((rfd->stat) & STAT_OK)) {
 			/* a good frame */
 			int pkt_len = rbd->count & 0x3fff;
@@ -827,10 +826,9 @@ memory_squeeze:
 			if (skb == NULL) {
 				/* XXX tulip.c can defer packets here!! */
 				printk(KERN_WARNING "%s: i596_rx Memory squeeze, dropping packet.\n", dev->name);
-				lp->stats.rx_dropped++;
+				dev->stats.rx_dropped++;
 			}
 			else {
-				skb->dev = dev;
 				if (!rx_in_place) {
 					/* 16 byte align the data fields */
 					skb_reserve(skb, 2);
@@ -843,29 +841,28 @@ memory_squeeze:
 						pkt_len);
 #endif
 				netif_rx(skb);
-				dev->last_rx = jiffies;
-				lp->stats.rx_packets++;
-				lp->stats.rx_bytes+=pkt_len;
+				dev->stats.rx_packets++;
+				dev->stats.rx_bytes+=pkt_len;
 			}
 		}
 		else {
 			DEB(DEB_ERRORS, printk(KERN_DEBUG "%s: Error, rfd.stat = 0x%04x\n",
 					dev->name, rfd->stat));
-			lp->stats.rx_errors++;
+			dev->stats.rx_errors++;
 			if ((rfd->stat) & 0x0001)
-				lp->stats.collisions++;
+				dev->stats.collisions++;
 			if ((rfd->stat) & 0x0080)
-				lp->stats.rx_length_errors++;
+				dev->stats.rx_length_errors++;
 			if ((rfd->stat) & 0x0100)
-				lp->stats.rx_over_errors++;
+				dev->stats.rx_over_errors++;
 			if ((rfd->stat) & 0x0200)
-				lp->stats.rx_fifo_errors++;
+				dev->stats.rx_fifo_errors++;
 			if ((rfd->stat) & 0x0400)
-				lp->stats.rx_frame_errors++;
+				dev->stats.rx_frame_errors++;
 			if ((rfd->stat) & 0x0800)
-				lp->stats.rx_crc_errors++;
+				dev->stats.rx_crc_errors++;
 			if ((rfd->stat) & 0x1000)
-				lp->stats.rx_length_errors++;
+				dev->stats.rx_length_errors++;
 		}
 
 		/* Clear the buffer descriptor count and EOF + F flags */
@@ -916,8 +913,8 @@ static void i596_cleanup_cmd(struct net_device *dev, struct i596_private *lp)
 
 				dev_kfree_skb(skb);
 
-				lp->stats.tx_errors++;
-				lp->stats.tx_aborted_errors++;
+				dev->stats.tx_errors++;
+				dev->stats.tx_aborted_errors++;
 
 				ptr->v_next = ptr->b_next = I596_NULL;
 				tx_cmd->cmd.command = 0;  /* Mark as free */
@@ -961,7 +958,7 @@ static void i596_reset(struct net_device *dev, struct i596_private *lp,
 
 static void i596_add_cmd(struct net_device *dev, struct i596_cmd *cmd)
 {
-	struct i596_private *lp = dev->priv;
+	struct i596_private *lp = dev->ml_priv;
 	int ioaddr = dev->base_addr;
 	unsigned long flags;
 
@@ -1031,17 +1028,17 @@ static int i596_open(struct net_device *dev)
 
 static void i596_tx_timeout (struct net_device *dev)
 {
-	struct i596_private *lp = dev->priv;
+	struct i596_private *lp = dev->ml_priv;
 	int ioaddr = dev->base_addr;
 
 	/* Transmitter timeout, serious problems. */
 	DEB(DEB_ERRORS,printk(KERN_ERR "%s: transmit timed out, status resetting.\n",
 			dev->name));
 
-	lp->stats.tx_errors++;
+	dev->stats.tx_errors++;
 
 	/* Try to restart the adaptor */
-	if (lp->last_restart == lp->stats.tx_packets) {
+	if (lp->last_restart == dev->stats.tx_packets) {
 		DEB(DEB_ERRORS,printk(KERN_ERR "Resetting board.\n"));
 		/* Shutdown and restart */
 		i596_reset (dev, lp, ioaddr);
@@ -1050,28 +1047,27 @@ static void i596_tx_timeout (struct net_device *dev)
 		DEB(DEB_ERRORS,printk(KERN_ERR "Kicking board.\n"));
 		lp->scb.command = CUC_START | RX_START;
 		CA (dev);
-		lp->last_restart = lp->stats.tx_packets;
+		lp->last_restart = dev->stats.tx_packets;
 	}
 
 	dev->trans_start = jiffies;
 	netif_wake_queue (dev);
 }
 
-
-static int i596_start_xmit(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t i596_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-	struct i596_private *lp = dev->priv;
+	struct i596_private *lp = dev->ml_priv;
 	struct tx_cmd *tx_cmd;
 	struct i596_tbd *tbd;
 	short length = skb->len;
 	dev->trans_start = jiffies;
 
-	DEB(DEB_STARTTX,printk(KERN_DEBUG "%s: i596_start_xmit(%x,%x) called\n", dev->name,
-				skb->len, (unsigned int)skb->data));
+	DEB(DEB_STARTTX,printk(KERN_DEBUG "%s: i596_start_xmit(%x,%p) called\n",
+				dev->name, skb->len, skb->data));
 
 	if (skb->len < ETH_ZLEN) {
 		if (skb_padto(skb, ETH_ZLEN))
-			return 0;
+			return NETDEV_TX_OK;
 		length = ETH_ZLEN;
 	}
 	netif_stop_queue(dev);
@@ -1082,7 +1078,7 @@ static int i596_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (tx_cmd->cmd.command) {
 		printk(KERN_NOTICE "%s: xmit ring full, dropping packet.\n",
 				dev->name);
-		lp->stats.tx_dropped++;
+		dev->stats.tx_dropped++;
 
 		dev_kfree_skb(skb);
 	} else {
@@ -1107,30 +1103,34 @@ static int i596_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		DEB(DEB_TXADDR,print_eth(skb->data, "tx-queued"));
 		i596_add_cmd(dev, &tx_cmd->cmd);
 
-		lp->stats.tx_packets++;
-		lp->stats.tx_bytes += length;
+		dev->stats.tx_packets++;
+		dev->stats.tx_bytes += length;
 	}
 
 	netif_start_queue(dev);
 
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 static void print_eth(unsigned char *add, char *str)
 {
-	int i;
-
-	printk(KERN_DEBUG "i596 0x%p, ", add);
-	for (i = 0; i < 6; i++)
-		printk(" %02X", add[i + 6]);
-	printk(" -->");
-	for (i = 0; i < 6; i++)
-		printk(" %02X", add[i]);
-	printk(" %02X%02X, %s\n", add[12], add[13], str);
+	printk(KERN_DEBUG "i596 0x%p, %pM --> %pM %02X%02X, %s\n",
+	       add, add + 6, add, add[12], add[13], str);
 }
 
 static int io = 0x300;
 static int irq = 10;
+
+static const struct net_device_ops i596_netdev_ops = {
+	.ndo_open 		= i596_open,
+	.ndo_stop		= i596_close,
+	.ndo_start_xmit		= i596_start_xmit,
+	.ndo_set_multicast_list = set_multicast_list,
+	.ndo_tx_timeout		= i596_tx_timeout,
+	.ndo_change_mtu		= eth_change_mtu,
+	.ndo_set_mac_address 	= eth_mac_addr,
+	.ndo_validate_addr	= eth_validate_addr,
+};
 
 struct net_device * __init i82596_probe(int unit)
 {
@@ -1167,6 +1167,7 @@ struct net_device * __init i82596_probe(int unit)
 		memcpy(eth_addr, (void *) 0xfffc1f2c, 6);	/* YUCK! Get addr from NOVRAM */
 		dev->base_addr = MVME_I596_BASE;
 		dev->irq = (unsigned) MVME16x_IRQ_I596;
+		goto found;
 	}
 #endif
 #ifdef ENABLE_BVME6000_NET
@@ -1181,6 +1182,7 @@ struct net_device * __init i82596_probe(int unit)
 		rtc[3] = msr;
 		dev->base_addr = BVME_I596_BASE;
 		dev->irq = (unsigned) BVME_IRQ_I596;
+		goto found;
 	}
 #endif
 #ifdef ENABLE_APRICOT
@@ -1197,6 +1199,8 @@ struct net_device * __init i82596_probe(int unit)
 			goto out;
 		}
 
+		dev->base_addr = ioaddr;
+
 		for (i = 0; i < 8; i++) {
 			eth_addr[i] = inb(ioaddr + 8 + i);
 			checksum += eth_addr[i];
@@ -1208,16 +1212,20 @@ struct net_device * __init i82596_probe(int unit)
 		   Some other boards trip the checksum.. but then appear as
 		   ether address 0. Trap these - AC */
 
-		if ((checksum % 0x100) || 
+		if ((checksum % 0x100) ||
 		    (memcmp(eth_addr, "\x00\x00\x49", 3) != 0)) {
 			err = -ENODEV;
 			goto out1;
 		}
 
-		dev->base_addr = ioaddr;
 		dev->irq = 10;
+		goto found;
 	}
 #endif
+	err = -ENODEV;
+	goto out;
+
+found:
 	dev->mem_start = (int)__get_free_pages(GFP_ATOMIC, 0);
 	if (!dev->mem_start) {
 		err = -ENOMEM;
@@ -1234,19 +1242,14 @@ struct net_device * __init i82596_probe(int unit)
 	DEB(DEB_PROBE,printk(KERN_INFO "%s", version));
 
 	/* The 82596-specific entries in the device structure. */
-	SET_MODULE_OWNER(dev);
-	dev->open = i596_open;
-	dev->stop = i596_close;
-	dev->hard_start_xmit = i596_start_xmit;
-	dev->get_stats = i596_get_stats;
-	dev->set_multicast_list = set_multicast_list;
-	dev->tx_timeout = i596_tx_timeout;
+	dev->netdev_ops = &i596_netdev_ops;
 	dev->watchdog_timeo = TX_TIMEOUT;
 
-	dev->priv = (void *)(dev->mem_start);
+	dev->ml_priv = (void *)(dev->mem_start);
 
-	lp = dev->priv;
-	DEB(DEB_INIT,printk(KERN_DEBUG "%s: lp at 0x%08lx (%d bytes), lp->scb at 0x%08lx\n",
+	lp = dev->ml_priv;
+	DEB(DEB_INIT,printk(KERN_DEBUG "%s: lp at 0x%08lx (%zd bytes), "
+			"lp->scb at 0x%08lx\n",
 			dev->name, (unsigned long)lp,
 			sizeof(struct i596_private), (unsigned long)&lp->scb));
 	memset((void *) lp, 0, sizeof(struct i596_private));
@@ -1283,7 +1286,7 @@ out:
 	return ERR_PTR(err);
 }
 
-static irqreturn_t i596_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t i596_interrupt(int irq, void *dev_id)
 {
 	struct net_device *dev = dev_id;
 	struct i596_private *lp;
@@ -1294,7 +1297,7 @@ static irqreturn_t i596_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 #ifdef ENABLE_BVME6000_NET
 	if (MACH_IS_BVME6000) {
 		if (*(char *) BVME_LOCAL_IRQ_STAT & BVME_ETHERR) {
-			i596_error(irq, dev_id, regs);
+			i596_error(irq, dev_id);
 			return IRQ_HANDLED;
 		}
 	}
@@ -1305,7 +1308,7 @@ static irqreturn_t i596_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	}
 
 	ioaddr = dev->base_addr;
-	lp = dev->priv;
+	lp = dev->ml_priv;
 
 	spin_lock (&lp->lock);
 
@@ -1343,17 +1346,17 @@ static irqreturn_t i596_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 				if ((ptr->status) & STAT_OK) {
 					DEB(DEB_TXADDR,print_eth(skb->data, "tx-done"));
 				} else {
-					lp->stats.tx_errors++;
+					dev->stats.tx_errors++;
 					if ((ptr->status) & 0x0020)
-						lp->stats.collisions++;
+						dev->stats.collisions++;
 					if (!((ptr->status) & 0x0040))
-						lp->stats.tx_heartbeat_errors++;
+						dev->stats.tx_heartbeat_errors++;
 					if ((ptr->status) & 0x0400)
-						lp->stats.tx_carrier_errors++;
+						dev->stats.tx_carrier_errors++;
 					if ((ptr->status) & 0x0800)
-						lp->stats.collisions++;
+						dev->stats.collisions++;
 					if ((ptr->status) & 0x1000)
-						lp->stats.tx_aborted_errors++;
+						dev->stats.tx_aborted_errors++;
 				}
 
 				dev_kfree_skb_irq(skb);
@@ -1408,8 +1411,8 @@ static irqreturn_t i596_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 			if (netif_running(dev)) {
 				DEB(DEB_ERRORS,printk(KERN_ERR "%s: i596 interrupt receive unit inactive, status 0x%x\n", dev->name, status));
 				ack_cmd |= RX_START;
-				lp->stats.rx_errors++;
-				lp->stats.rx_fifo_errors++;
+				dev->stats.rx_errors++;
+				dev->stats.rx_fifo_errors++;
 				rebuild_rx_bufs(dev);
 			}
 		}
@@ -1448,7 +1451,7 @@ static irqreturn_t i596_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 
 static int i596_close(struct net_device *dev)
 {
-	struct i596_private *lp = dev->priv;
+	struct i596_private *lp = dev->ml_priv;
 	unsigned long flags;
 
 	netif_stop_queue(dev);
@@ -1492,21 +1495,13 @@ static int i596_close(struct net_device *dev)
 	return 0;
 }
 
-static struct net_device_stats *
- i596_get_stats(struct net_device *dev)
-{
-	struct i596_private *lp = dev->priv;
-
-	return &lp->stats;
-}
-
 /*
  *    Set or clear the multicast filter for this adaptor.
  */
 
 static void set_multicast_list(struct net_device *dev)
 {
-	struct i596_private *lp = dev->priv;
+	struct i596_private *lp = dev->ml_priv;
 	int config = 0, cnt;
 
 	DEB(DEB_MULTI,printk(KERN_DEBUG "%s: set multicast list, %d entries, promisc %s, allmulti %s\n",
@@ -1545,7 +1540,7 @@ static void set_multicast_list(struct net_device *dev)
 		printk(KERN_ERR "%s: Only %d multicast addresses supported",
 			dev->name, cnt);
 	}
-	
+
 	if (dev->mc_count > 0) {
 		struct dev_mc_list *dmi;
 		unsigned char *cp;
@@ -1560,8 +1555,8 @@ static void set_multicast_list(struct net_device *dev)
 		for (dmi = dev->mc_list; cnt && dmi != NULL; dmi = dmi->next, cnt--, cp += 6) {
 			memcpy(cp, dmi->dmi_addr, 6);
 			if (i596_debug > 1)
-				DEB(DEB_MULTI,printk(KERN_INFO "%s: Adding address %02x:%02x:%02x:%02x:%02x:%02x\n",
-						dev->name, cp[0],cp[1],cp[2],cp[3],cp[4],cp[5]));
+				DEB(DEB_MULTI,printk(KERN_INFO "%s: Adding address %pM\n",
+						dev->name, cp));
 		}
 		i596_add_cmd(dev, &cmd->cmd);
 	}
@@ -1609,9 +1604,3 @@ void __exit cleanup_module(void)
 }
 
 #endif				/* MODULE */
-
-/*
- * Local variables:
- *  compile-command: "gcc -D__KERNEL__ -I/usr/src/linux/net/inet -Wall -Wstrict-prototypes -O6 -m486 -c 82596.c"
- * End:
- */

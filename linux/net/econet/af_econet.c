@@ -13,7 +13,6 @@
 
 #include <linux/types.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
 #include <linux/string.h>
 #include <linux/mm.h>
 #include <linux/socket.h>
@@ -139,7 +138,7 @@ static int econet_recvmsg(struct kiocb *iocb, struct socket *sock,
 	skb=skb_recv_datagram(sk,flags,flags&MSG_DONTWAIT,&err);
 
 	/*
-	 *	An error occurred so return it. Because skb_recv_datagram() 
+	 *	An error occurred so return it. Because skb_recv_datagram()
 	 *	handles the blocking we don't see and worry about blocking
 	 *	retries.
 	 */
@@ -163,7 +162,7 @@ static int econet_recvmsg(struct kiocb *iocb, struct socket *sock,
 	err = memcpy_toiovec(msg->msg_iov, skb->data, copied);
 	if (err)
 		goto out_free;
-	skb_get_timestamp(skb, &sk->sk_stamp);
+	sk->sk_stamp = skb->tstamp;
 
 	if (msg->msg_name)
 		memcpy(msg->msg_name, skb->cb, msg->msg_namelen);
@@ -190,15 +189,15 @@ static int econet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len
 	struct sockaddr_ec *sec = (struct sockaddr_ec *)uaddr;
 	struct sock *sk;
 	struct econet_sock *eo;
-	
+
 	/*
 	 *	Check legality
 	 */
-	 
+
 	if (addr_len < sizeof(struct sockaddr_ec) ||
 	    sec->sec_family != AF_ECONET)
 		return -EINVAL;
-	
+
 	mutex_lock(&econet_mutex);
 
 	sk = sock->sk;
@@ -283,18 +282,18 @@ static int econet_sendmsg(struct kiocb *iocb, struct socket *sock,
 	int i;
 	mm_segment_t oldfs;
 #endif
-		
+
 	/*
-	 *	Check the flags. 
+	 *	Check the flags.
 	 */
 
-	if (msg->msg_flags & ~(MSG_DONTWAIT|MSG_CMSG_COMPAT)) 
+	if (msg->msg_flags & ~(MSG_DONTWAIT|MSG_CMSG_COMPAT))
 		return -EINVAL;
 
 	/*
-	 *	Get and verify the address. 
+	 *	Get and verify the address.
 	 */
-	 
+
 	mutex_lock(&econet_mutex);
 
 	if (saddr == NULL) {
@@ -337,42 +336,42 @@ static int econet_sendmsg(struct kiocb *iocb, struct socket *sock,
 		/* Real hardware Econet.  We're not worthy etc. */
 #ifdef CONFIG_ECONET_NATIVE
 		unsigned short proto = 0;
+		int res;
 
 		dev_hold(dev);
-		
-		skb = sock_alloc_send_skb(sk, len+LL_RESERVED_SPACE(dev), 
+
+		skb = sock_alloc_send_skb(sk, len+LL_ALLOCATED_SPACE(dev),
 					  msg->msg_flags & MSG_DONTWAIT, &err);
 		if (skb==NULL)
 			goto out_unlock;
-		
+
 		skb_reserve(skb, LL_RESERVED_SPACE(dev));
-		skb->nh.raw = skb->data;
-		
+		skb_reset_network_header(skb);
+
 		eb = (struct ec_cb *)&skb->cb;
-		
+
 		/* BUG: saddr may be NULL */
 		eb->cookie = saddr->cookie;
 		eb->sec = *saddr;
 		eb->sent = ec_tx_done;
 
-		if (dev->hard_header) {
-			int res;
+		err = -EINVAL;
+		res = dev_hard_header(skb, dev, ntohs(proto), &addr, NULL, len);
+		if (res < 0)
+			goto out_free;
+		if (res > 0) {
 			struct ec_framehdr *fh;
-			err = -EINVAL;
-			res = dev->hard_header(skb, dev, ntohs(proto), 
-					       &addr, NULL, len);
 			/* Poke in our control byte and
 			   port number.  Hack, hack.  */
 			fh = (struct ec_framehdr *)(skb->data);
 			fh->cb = cb;
 			fh->port = port;
 			if (sock->type != SOCK_DGRAM) {
-				skb->tail = skb->data;
+				skb_reset_tail_pointer(skb);
 				skb->len = 0;
-			} else if (res < 0)
-				goto out_free;
+			}
 		}
-		
+
 		/* Copy the data. Returns -EFAULT on error */
 		err = memcpy_fromiovec(skb_put(skb,len), msg->msg_iov, len);
 		skb->protocol = proto;
@@ -380,15 +379,15 @@ static int econet_sendmsg(struct kiocb *iocb, struct socket *sock,
 		skb->priority = sk->sk_priority;
 		if (err)
 			goto out_free;
-		
+
 		err = -ENETDOWN;
 		if (!(dev->flags & IFF_UP))
 			goto out_free;
-		
+
 		/*
 		 *	Now send it
 		 */
-		
+
 		dev_queue_xmit(skb);
 		dev_put(dev);
 		mutex_unlock(&econet_mutex);
@@ -414,7 +413,7 @@ static int econet_sendmsg(struct kiocb *iocb, struct socket *sock,
 		mutex_unlock(&econet_mutex);
 		return -ENETDOWN;		/* No socket - can't send */
 	}
-	
+
 	/* Make up a UDP datagram and hand it off to some higher intellect. */
 
 	memset(&udpdest, 0, sizeof(udpdest));
@@ -432,7 +431,7 @@ static int econet_sendmsg(struct kiocb *iocb, struct socket *sock,
 		idev = __in_dev_get_rcu(dev);
 		if (idev) {
 			if (idev->ifa_list)
-				network = ntohl(idev->ifa_list->ifa_address) & 
+				network = ntohl(idev->ifa_list->ifa_address) &
 					0xffffff00;		/* !!! */
 		}
 		rcu_read_unlock();
@@ -470,7 +469,7 @@ static int econet_sendmsg(struct kiocb *iocb, struct socket *sock,
 	}
 
 	/* Get a skbuff (no data, just holds our cb information) */
-	if ((skb = sock_alloc_send_skb(sk, 0, 
+	if ((skb = sock_alloc_send_skb(sk, 0,
 				       msg->msg_flags & MSG_DONTWAIT,
 				       &err)) == NULL) {
 		mutex_unlock(&econet_mutex);
@@ -521,6 +520,7 @@ static int econet_getname(struct socket *sock, struct sockaddr *uaddr,
 	if (peer)
 		return -EOPNOTSUPP;
 
+	memset(sec, 0, sizeof(*sec));
 	mutex_lock(&econet_mutex);
 
 	sk = sock->sk;
@@ -541,8 +541,7 @@ static void econet_destroy_timer(unsigned long data)
 {
 	struct sock *sk=(struct sock *)data;
 
-	if (!atomic_read(&sk->sk_wmem_alloc) &&
-	    !atomic_read(&sk->sk_rmem_alloc)) {
+	if (!sk_has_allocations(sk)) {
 		sk_free(sk);
 		return;
 	}
@@ -574,16 +573,13 @@ static int econet_release(struct socket *sock)
 
 	sk->sk_state_change(sk);	/* It is useless. Just for sanity. */
 
-	sock->sk = NULL;
-	sk->sk_socket = NULL;
-	sock_set_flag(sk, SOCK_DEAD);
+	sock_orphan(sk);
 
 	/* Purge queues */
 
 	skb_queue_purge(&sk->sk_receive_queue);
 
-	if (atomic_read(&sk->sk_rmem_alloc) ||
-	    atomic_read(&sk->sk_wmem_alloc)) {
+	if (sk_has_allocations(sk)) {
 		sk->sk_timer.data     = (unsigned long)sk;
 		sk->sk_timer.expires  = jiffies + HZ;
 		sk->sk_timer.function = econet_destroy_timer;
@@ -609,11 +605,15 @@ static struct proto econet_proto = {
  *	Create an Econet socket
  */
 
-static int econet_create(struct socket *sock, int protocol)
+static int econet_create(struct net *net, struct socket *sock, int protocol,
+			 int kern)
 {
 	struct sock *sk;
 	struct econet_sock *eo;
 	int err;
+
+	if (net != &init_net)
+		return -EAFNOSUPPORT;
 
 	/* Econet only provides datagram services. */
 	if (sock->type != SOCK_DGRAM)
@@ -622,7 +622,7 @@ static int econet_create(struct socket *sock, int protocol)
 	sock->state = SS_UNCONNECTED;
 
 	err = -ENOBUFS;
-	sk = sk_alloc(PF_ECONET, GFP_KERNEL, &econet_proto, 1);
+	sk = sk_alloc(net, PF_ECONET, GFP_KERNEL, &econet_proto);
 	if (sk == NULL)
 		goto out;
 
@@ -660,7 +660,7 @@ static int ec_dev_ioctl(struct socket *sock, unsigned int cmd, void __user *arg)
 	if (copy_from_user(&ifr, arg, sizeof(struct ifreq)))
 		return -EFAULT;
 
-	if ((dev = dev_get_by_name(ifr.ifr_name)) == NULL) 
+	if ((dev = dev_get_by_name(&init_net, ifr.ifr_name)) == NULL)
 		return -ENODEV;
 
 	sec = (struct sockaddr_ec *)&ifr.ifr_addr;
@@ -728,6 +728,9 @@ static int econet_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg
 		case SIOCGSTAMP:
 			return sock_get_timestamp(sk, argp);
 
+		case SIOCGSTAMPNS:
+			return sock_get_timestampns(sk, argp);
+
 		case SIOCSIFADDR:
 		case SIOCGIFADDR:
 			return ec_dev_ioctl(sock, cmd, argp);
@@ -754,7 +757,7 @@ static const struct proto_ops econet_ops = {
 	.connect =	sock_no_connect,
 	.socketpair =	sock_no_socketpair,
 	.accept =	sock_no_accept,
-	.getname =	econet_getname, 
+	.getname =	econet_getname,
 	.poll =		datagram_poll,
 	.ioctl =	econet_ioctl,
 	.listen =	sock_no_listen,
@@ -780,7 +783,7 @@ static struct sock *ec_listening_socket(unsigned char port, unsigned char
 
 	sk_for_each(sk, node, &econet_sklist) {
 		struct econet_sock *opt = ec_sk(sk);
-		if ((opt->port == port || opt->port == 0) && 
+		if ((opt->port == port || opt->port == 0) &&
 		    (opt->station == station || opt->station == 0) &&
 		    (opt->net == net || opt->net == 0))
 			goto found;
@@ -815,7 +818,7 @@ static int ec_queue_packet(struct sock *sk, struct sk_buff *skb,
 
 #ifdef CONFIG_ECONET_AUNUDP
 /*
- *	Send an AUN protocol response. 
+ *	Send an AUN protocol response.
  */
 
 static void aun_send_response(__u32 addr, unsigned long seq, int code, int cb)
@@ -828,7 +831,7 @@ static void aun_send_response(__u32 addr, unsigned long seq, int code, int cb)
 	struct aunhdr ah = {.code = code, .cb = cb, .handle = seq};
 	struct kvec iov = {.iov_base = (void *)&ah, .iov_len = sizeof(ah)};
 	struct msghdr udpmsg;
-	
+
 	udpmsg.msg_name = (void *)&sin;
 	udpmsg.msg_namelen = sizeof(sin);
 	udpmsg.msg_control = NULL;
@@ -846,7 +849,7 @@ static void aun_send_response(__u32 addr, unsigned long seq, int code, int cb)
 
 static void aun_incoming(struct sk_buff *skb, struct aunhdr *ah, size_t len)
 {
-	struct iphdr *ip = skb->nh.iph;
+	struct iphdr *ip = ip_hdr(skb);
 	unsigned char stn = ntohl(ip->saddr) & 0xff;
 	struct sock *sk;
 	struct sk_buff *newskb;
@@ -858,7 +861,7 @@ static void aun_incoming(struct sk_buff *skb, struct aunhdr *ah, size_t len)
 	if ((sk = ec_listening_socket(ah->port, stn, edev->net)) == NULL)
 		goto bad;		/* Nobody wants it */
 
-	newskb = alloc_skb((len - sizeof(struct aunhdr) + 15) & ~15, 
+	newskb = alloc_skb((len - sizeof(struct aunhdr) + 15) & ~15,
 			   GFP_ATOMIC);
 	if (newskb == NULL)
 	{
@@ -867,7 +870,7 @@ static void aun_incoming(struct sk_buff *skb, struct aunhdr *ah, size_t len)
 		goto bad;
 	}
 
-	memcpy(skb_put(newskb, len - sizeof(struct aunhdr)), (void *)(ah+1), 
+	memcpy(skb_put(newskb, len - sizeof(struct aunhdr)), (void *)(ah+1),
 	       len - sizeof(struct aunhdr));
 
 	if (ec_queue_packet(sk, newskb, stn, edev->net, ah->cb, ah->port))
@@ -898,15 +901,10 @@ static void aun_tx_ack(unsigned long seq, int result)
 	struct ec_cb *eb;
 
 	spin_lock_irqsave(&aun_queue_lock, flags);
-	skb = skb_peek(&aun_queue);
-	while (skb && skb != (struct sk_buff *)&aun_queue)
-	{
-		struct sk_buff *newskb = skb->next;
+	skb_queue_walk(&aun_queue, skb) {
 		eb = (struct ec_cb *)&skb->cb;
 		if (eb->seq == seq)
 			goto foundit;
-
-		skb = newskb;
 	}
 	spin_unlock_irqrestore(&aun_queue_lock, flags);
 	printk(KERN_DEBUG "AUN: unknown sequence %ld\n", seq);
@@ -941,10 +939,10 @@ static void aun_data_available(struct sock *sk, int slen)
 		printk(KERN_DEBUG "AUN: recvfrom() error %d\n", -err);
 	}
 
-	data = skb->h.raw + sizeof(struct udphdr);
+	data = skb_transport_header(skb) + sizeof(struct udphdr);
 	ah = (struct aunhdr *)data;
 	len = skb->len - sizeof(struct udphdr);
-	ip = skb->nh.iph;
+	ip = ip_hdr(skb);
 
 	switch (ah->code)
 	{
@@ -979,23 +977,18 @@ static void aun_data_available(struct sock *sk, int slen)
 
 static void ab_cleanup(unsigned long h)
 {
-	struct sk_buff *skb;
+	struct sk_buff *skb, *n;
 	unsigned long flags;
 
 	spin_lock_irqsave(&aun_queue_lock, flags);
-	skb = skb_peek(&aun_queue);
-	while (skb && skb != (struct sk_buff *)&aun_queue)
-	{
-		struct sk_buff *newskb = skb->next;
+	skb_queue_walk_safe(&aun_queue, skb, n) {
 		struct ec_cb *eb = (struct ec_cb *)&skb->cb;
-		if ((jiffies - eb->start) > eb->timeout)
-		{
-			tx_result(skb->sk, eb->cookie, 
+		if ((jiffies - eb->start) > eb->timeout) {
+			tx_result(skb->sk, eb->cookie,
 				  ECTYPE_TRANSMIT_NOT_PRESENT);
 			skb_unlink(skb, &aun_queue);
 			kfree_skb(skb);
 		}
-		skb = newskb;
 	}
 	spin_unlock_irqrestore(&aun_queue_lock, flags);
 
@@ -1009,9 +1002,8 @@ static int __init aun_udp_initialise(void)
 
 	skb_queue_head_init(&aun_queue);
 	spin_lock_init(&aun_queue_lock);
-	init_timer(&ab_cleanup_timer);
+	setup_timer(&ab_cleanup_timer, ab_cleanup, 0);
 	ab_cleanup_timer.expires = jiffies + (HZ*2);
-	ab_cleanup_timer.function = ab_cleanup;
 	add_timer(&ab_cleanup_timer);
 
 	memset(&sin, 0, sizeof(sin));
@@ -1024,11 +1016,11 @@ static int __init aun_udp_initialise(void)
 		printk("AUN: socket error %d\n", -error);
 		return error;
 	}
-	
+
 	udpsock->sk->sk_reuse = 1;
 	udpsock->sk->sk_allocation = GFP_ATOMIC; /* we're going to call it
 						    from interrupts */
-	
+
 	error = udpsock->ops->bind(udpsock, (struct sockaddr *)&sin,
 				sizeof(sin));
 	if (error < 0)
@@ -1060,6 +1052,9 @@ static int econet_rcv(struct sk_buff *skb, struct net_device *dev, struct packet
 	struct sock *sk;
 	struct ec_device *edev = dev->ec_ptr;
 
+	if (!net_eq(dev_net(dev), &init_net))
+		goto drop;
+
 	if (skb->pkt_type == PACKET_OTHERHOST)
 		goto drop;
 
@@ -1079,7 +1074,7 @@ static int econet_rcv(struct sk_buff *skb, struct net_device *dev, struct packet
 		skb->protocol = htons(ETH_P_IP);
 		skb_pull(skb, sizeof(struct ec_framehdr));
 		netif_rx(skb);
-		return 0;
+		return NET_RX_SUCCESS;
 	}
 
 	sk = ec_listening_socket(hdr->port, hdr->src_stn, hdr->src_net);
@@ -1090,15 +1085,15 @@ static int econet_rcv(struct sk_buff *skb, struct net_device *dev, struct packet
 			    hdr->port))
 		goto drop;
 
-	return 0;
+	return NET_RX_SUCCESS;
 
 drop:
 	kfree_skb(skb);
 	return NET_RX_DROP;
 }
 
-static struct packet_type econet_packet_type = {
-	.type =		__constant_htons(ETH_P_ECONET),
+static struct packet_type econet_packet_type __read_mostly = {
+	.type =		cpu_to_be16(ETH_P_ECONET),
 	.func =		econet_rcv,
 };
 
@@ -1113,6 +1108,9 @@ static int econet_notifier(struct notifier_block *this, unsigned long msg, void 
 {
 	struct net_device *dev = (struct net_device *)data;
 	struct ec_device *edev;
+
+	if (!net_eq(dev_net(dev), &init_net))
+		return NOTIFY_DONE;
 
 	switch (msg) {
 	case NETDEV_UNREGISTER:
@@ -1144,6 +1142,9 @@ static void __exit econet_proto_exit(void)
 		sock_release(udpsock);
 #endif
 	unregister_netdevice_notifier(&econet_netdev_notifier);
+#ifdef CONFIG_ECONET_NATIVE
+	dev_remove_pack(&econet_packet_type);
+#endif
 	sock_unregister(econet_family_ops.family);
 	proto_unregister(&econet_proto);
 }

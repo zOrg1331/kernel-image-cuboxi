@@ -2,16 +2,21 @@
 #define CCISS_H
 
 #include <linux/genhd.h>
+#include <linux/mutex.h>
 
 #include "cciss_cmd.h"
 
 
-#define NWD		16
 #define NWD_SHIFT	4
 #define MAX_PART	(1 << NWD_SHIFT)
 
 #define IO_OK		0
 #define IO_ERROR	1
+#define IO_NEEDS_RETRY  3
+
+#define VENDOR_LEN	8
+#define MODEL_LEN	16
+#define REV_LEN		4
 
 struct ctlr_info;
 typedef struct ctlr_info ctlr_info_t;
@@ -25,7 +30,7 @@ struct access_method {
 };
 typedef struct _drive_info_struct
 {
- 	__u32   LunID;	
+	unsigned char LunID[8];
 	int 	usage_count;
 	struct request_queue *queue;
 	sector_t nr_blocks;
@@ -35,21 +40,21 @@ typedef struct _drive_info_struct
 	int 	cylinders;
 	int	raid_level; /* set to -1 to indicate that
 			     * the drive is not in use/configured
-			    */
-	int	busy_configuring; /*This is set when the drive is being removed
-				   *to prevent it from being opened or it's queue
-				   *from being started.
-				  */
+			     */
+	int	busy_configuring; /* This is set when a drive is being removed
+				   * to prevent it from being opened or it's
+				   * queue from being started.
+				   */
+	struct	device dev;
+	__u8 serial_no[16]; /* from inquiry page 0x83,
+			     * not necc. null terminated.
+			     */
+	char vendor[VENDOR_LEN + 1]; /* SCSI vendor string */
+	char model[MODEL_LEN + 1];   /* SCSI model string */
+	char rev[REV_LEN + 1];       /* SCSI revision string */
+	char device_initialized;     /* indicates whether dev is initialized */
 } drive_info_struct;
 
-#ifdef CONFIG_CISS_SCSI_TAPE
-
-struct sendcmd_reject_list {
-	int ncompletions;
-	unsigned long *complete; /* array of NR_CMDS tags */
-};
-
-#endif
 struct ctlr_info 
 {
 	int	ctlr;
@@ -60,6 +65,7 @@ struct ctlr_info
 	__u32	board_id;
 	void __iomem *vaddr;
 	unsigned long paddr;
+	int 	nr_cmds; /* Number of commands allowed on this controller */
 	CfgTable_struct __iomem *cfgtable;
 	int	interrupts_enabled;
 	int	major;
@@ -76,15 +82,19 @@ struct ctlr_info
 	unsigned int intr[4];
 	unsigned int msix_vector;
 	unsigned int msi_vector;
+	int 	cciss_max_sectors;
+	BYTE	cciss_read;
+	BYTE	cciss_write;
+	BYTE	cciss_read_capacity;
 
 	// information about each logical volume
-	drive_info_struct drv[CISS_MAX_LUN];
+	drive_info_struct *drv[CISS_MAX_LUN];
 
 	struct access_method access;
 
 	/* queue and queue Info */ 
-	CommandList_struct *reqQ;
-	CommandList_struct  *cmpQ;
+	struct hlist_head reqQ;
+	struct hlist_head cmpQ;
 	unsigned int Qdepth;
 	unsigned int maxQsinceinit;
 	unsigned int maxSG;
@@ -100,6 +110,8 @@ struct ctlr_info
 	int			nr_frees; 
 	int			busy_configuring;
 	int			busy_initializing;
+	int			busy_scanning;
+	struct mutex		busy_shutting_down;
 
 	/* This element holds the zero based queue number of the last
 	 * queue to be started.  It is used for fairness.
@@ -107,14 +119,16 @@ struct ctlr_info
 	int			next_to_run;
 
 	// Disk structures we need to pass back
-	struct gendisk   *gendisk[NWD];
+	struct gendisk   *gendisk[CISS_MAX_LUN];
 #ifdef CONFIG_CISS_SCSI_TAPE
 	void *scsi_ctlr; /* ptr to structure containing scsi related stuff */
 	/* list of block side commands the scsi error handling sucked up */
 	/* and saved for later processing */
-	struct sendcmd_reject_list scsi_rejects;
 #endif
 	unsigned char alive;
+	struct list_head scan_list;
+	struct completion scan_wait;
+	struct device dev;
 };
 
 /*  Defining the diffent access_menthods */
@@ -142,6 +156,24 @@ struct ctlr_info
 
 #define CCISS_INTR_ON 	1 
 #define CCISS_INTR_OFF	0
+
+/* CCISS_BOARD_READY_WAIT_SECS is how long to wait for a board
+ * to become ready, in seconds, before giving up on it.
+ * CCISS_BOARD_READY_POLL_INTERVAL_MSECS * is how long to wait
+ * between polling the board to see if it is ready, in
+ * milliseconds.  CCISS_BOARD_READY_POLL_INTERVAL and
+ * CCISS_BOARD_READY_ITERATIONS are derived from those.
+ */
+#define CCISS_BOARD_READY_WAIT_SECS (120)
+#define CCISS_BOARD_READY_POLL_INTERVAL_MSECS (100)
+#define CCISS_BOARD_READY_POLL_INTERVAL \
+	((CCISS_BOARD_READY_POLL_INTERVAL_MSECS * HZ) / 1000)
+#define CCISS_BOARD_READY_ITERATIONS \
+	((CCISS_BOARD_READY_WAIT_SECS * 1000) / \
+		CCISS_BOARD_READY_POLL_INTERVAL_MSECS)
+#define CCISS_POST_RESET_PAUSE_MSECS (3000)
+#define CCISS_POST_RESET_NOOP_RETRIES (12)
+
 /* 
 	Send the command to the hardware 
 */
@@ -279,6 +311,7 @@ struct board_type {
 	__u32	board_id;
 	char	*product_name;
 	struct access_method *access;
+	int nr_cmds; /* Max cmds this kind of ctlr can handle. */
 };
 
 #define CCISS_LOCK(i)	(&hba[i]->lock)

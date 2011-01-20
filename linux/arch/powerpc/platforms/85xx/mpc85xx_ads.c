@@ -17,61 +17,65 @@
 #include <linux/kdev_t.h>
 #include <linux/delay.h>
 #include <linux/seq_file.h>
-#include <linux/root_dev.h>
+#include <linux/of_platform.h>
 
 #include <asm/system.h>
 #include <asm/time.h>
 #include <asm/machdep.h>
 #include <asm/pci-bridge.h>
-#include <asm/mpc85xx.h>
-#include <asm/prom.h>
 #include <asm/mpic.h>
 #include <mm/mmu_decl.h>
 #include <asm/udbg.h>
 
 #include <sysdev/fsl_soc.h>
-#include "mpc85xx.h"
+#include <sysdev/fsl_pci.h>
 
-#ifndef CONFIG_PCI
-unsigned long isa_io_base = 0;
-unsigned long isa_mem_base = 0;
+#ifdef CONFIG_CPM2
+#include <asm/cpm2.h>
+#include <sysdev/cpm2_pic.h>
 #endif
 
 #ifdef CONFIG_PCI
-int
-mpc85xx_exclude_device(u_char bus, u_char devfn)
+static int mpc85xx_exclude_device(struct pci_controller *hose,
+				   u_char bus, u_char devfn)
 {
 	if (bus == 0 && PCI_SLOT(devfn) == 0)
 		return PCIBIOS_DEVICE_NOT_FOUND;
 	else
 		return PCIBIOS_SUCCESSFUL;
 }
-
-void __init
-mpc85xx_pcibios_fixup(void)
-{
-	struct pci_dev *dev = NULL;
-
-	for_each_pci_dev(dev)
-		pci_read_irq_line(dev);
-}
 #endif /* CONFIG_PCI */
 
+#ifdef CONFIG_CPM2
 
-void __init mpc85xx_ads_pic_init(void)
+static void cpm2_cascade(unsigned int irq, struct irq_desc *desc)
+{
+	int cascade_irq;
+
+	while ((cascade_irq = cpm2_get_irq()) >= 0)
+		generic_handle_irq(cascade_irq);
+
+	desc->chip->eoi(irq);
+}
+
+#endif /* CONFIG_CPM2 */
+
+static void __init mpc85xx_ads_pic_init(void)
 {
 	struct mpic *mpic;
 	struct resource r;
 	struct device_node *np = NULL;
+#ifdef CONFIG_CPM2
+	int irq;
+#endif
 
 	np = of_find_node_by_type(np, "open-pic");
-
-	if (np == NULL) {
+	if (!np) {
 		printk(KERN_ERR "Could not find open-pic node\n");
 		return;
 	}
 
-	if(of_address_to_resource(np, 0, &r)) {
+	if (of_address_to_resource(np, 0, &r)) {
 		printk(KERN_ERR "Could not map mpic register space\n");
 		of_node_put(np);
 		return;
@@ -79,39 +83,107 @@ void __init mpc85xx_ads_pic_init(void)
 
 	mpic = mpic_alloc(np, r.start,
 			MPIC_PRIMARY | MPIC_WANTS_RESET | MPIC_BIG_ENDIAN,
-			4, 0, " OpenPIC  ");
+			0, 256, " OpenPIC  ");
 	BUG_ON(mpic == NULL);
 	of_node_put(np);
 
-	mpic_assign_isu(mpic, 0, r.start + 0x10200);
-	mpic_assign_isu(mpic, 1, r.start + 0x10280);
-	mpic_assign_isu(mpic, 2, r.start + 0x10300);
-	mpic_assign_isu(mpic, 3, r.start + 0x10380);
-	mpic_assign_isu(mpic, 4, r.start + 0x10400);
-	mpic_assign_isu(mpic, 5, r.start + 0x10480);
-	mpic_assign_isu(mpic, 6, r.start + 0x10500);
-	mpic_assign_isu(mpic, 7, r.start + 0x10580);
-
-	/* Unused on this platform (leave room for 8548) */
-	mpic_assign_isu(mpic, 8, r.start + 0x10600);
-	mpic_assign_isu(mpic, 9, r.start + 0x10680);
-	mpic_assign_isu(mpic, 10, r.start + 0x10700);
-	mpic_assign_isu(mpic, 11, r.start + 0x10780);
-
-	/* External Interrupts */
-	mpic_assign_isu(mpic, 12, r.start + 0x10000);
-	mpic_assign_isu(mpic, 13, r.start + 0x10080);
-	mpic_assign_isu(mpic, 14, r.start + 0x10100);
-
 	mpic_init(mpic);
+
+#ifdef CONFIG_CPM2
+	/* Setup CPM2 PIC */
+	np = of_find_compatible_node(NULL, NULL, "fsl,cpm2-pic");
+	if (np == NULL) {
+		printk(KERN_ERR "PIC init: can not find fsl,cpm2-pic node\n");
+		return;
+	}
+	irq = irq_of_parse_and_map(np, 0);
+
+	cpm2_pic_init(np);
+	of_node_put(np);
+	set_irq_chained_handler(irq, cpm2_cascade);
+#endif
 }
 
 /*
  * Setup the architecture
  */
+#ifdef CONFIG_CPM2
+struct cpm_pin {
+	int port, pin, flags;
+};
+
+static const struct cpm_pin mpc8560_ads_pins[] = {
+	/* SCC1 */
+	{3, 29, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{3, 30, CPM_PIN_OUTPUT | CPM_PIN_SECONDARY},
+	{3, 31, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+
+	/* SCC2 */
+	{2, 12, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{2, 13, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{3, 26, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{3, 27, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{3, 28, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+
+	/* FCC2 */
+	{1, 18, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 19, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 20, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 21, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 22, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{1, 23, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{1, 24, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{1, 25, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{1, 26, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 27, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 28, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 29, CPM_PIN_OUTPUT | CPM_PIN_SECONDARY},
+	{1, 30, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 31, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{2, 18, CPM_PIN_INPUT | CPM_PIN_PRIMARY}, /* CLK14 */
+	{2, 19, CPM_PIN_INPUT | CPM_PIN_PRIMARY}, /* CLK13 */
+
+	/* FCC3 */
+	{1, 4, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{1, 5, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{1, 6, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{1, 8, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 9, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 10, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 11, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 12, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 13, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 14, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{1, 15, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+	{1, 16, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{1, 17, CPM_PIN_INPUT | CPM_PIN_PRIMARY},
+	{2, 16, CPM_PIN_INPUT | CPM_PIN_PRIMARY}, /* CLK16 */
+	{2, 17, CPM_PIN_INPUT | CPM_PIN_PRIMARY}, /* CLK15 */
+	{2, 27, CPM_PIN_OUTPUT | CPM_PIN_PRIMARY},
+};
+
+static void __init init_ioports(void)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(mpc8560_ads_pins); i++) {
+		const struct cpm_pin *pin = &mpc8560_ads_pins[i];
+		cpm2_set_pin(pin->port, pin->pin, pin->flags);
+	}
+
+	cpm2_clk_setup(CPM_CLK_SCC1, CPM_BRG1, CPM_CLK_RX);
+	cpm2_clk_setup(CPM_CLK_SCC1, CPM_BRG1, CPM_CLK_TX);
+	cpm2_clk_setup(CPM_CLK_SCC2, CPM_BRG2, CPM_CLK_RX);
+	cpm2_clk_setup(CPM_CLK_SCC2, CPM_BRG2, CPM_CLK_TX);
+	cpm2_clk_setup(CPM_CLK_FCC2, CPM_CLK13, CPM_CLK_RX);
+	cpm2_clk_setup(CPM_CLK_FCC2, CPM_CLK14, CPM_CLK_TX);
+	cpm2_clk_setup(CPM_CLK_FCC3, CPM_CLK15, CPM_CLK_RX);
+	cpm2_clk_setup(CPM_CLK_FCC3, CPM_CLK16, CPM_CLK_TX);
+}
+#endif
+
 static void __init mpc85xx_ads_setup_arch(void)
 {
-	struct device_node *cpu;
 #ifdef CONFIG_PCI
 	struct device_node *np;
 #endif
@@ -119,63 +191,61 @@ static void __init mpc85xx_ads_setup_arch(void)
 	if (ppc_md.progress)
 		ppc_md.progress("mpc85xx_ads_setup_arch()", 0);
 
-	cpu = of_find_node_by_type(NULL, "cpu");
-	if (cpu != 0) {
-		unsigned int *fp;
-
-		fp = (int *)get_property(cpu, "clock-frequency", NULL);
-		if (fp != 0)
-			loops_per_jiffy = *fp / HZ;
-		else
-			loops_per_jiffy = 50000000 / HZ;
-		of_node_put(cpu);
-	}
-
-#ifdef CONFIG_PCI
-	for (np = NULL; (np = of_find_node_by_type(np, "pci")) != NULL;)
-		add_bridge(np);
-
-	ppc_md.pcibios_fixup = mpc85xx_pcibios_fixup;
-	ppc_md.pci_exclude_device = mpc85xx_exclude_device;
+#ifdef CONFIG_CPM2
+	cpm2_reset();
+	init_ioports();
 #endif
 
-#ifdef  CONFIG_ROOT_NFS
-	ROOT_DEV = Root_NFS;
-#else
-	ROOT_DEV = Root_HDA1;
+#ifdef CONFIG_PCI
+	for_each_compatible_node(np, "pci", "fsl,mpc8540-pci")
+		fsl_add_bridge(np, 1);
+
+	ppc_md.pci_exclude_device = mpc85xx_exclude_device;
 #endif
 }
 
-void mpc85xx_ads_show_cpuinfo(struct seq_file *m)
+static void mpc85xx_ads_show_cpuinfo(struct seq_file *m)
 {
 	uint pvid, svid, phid1;
-	uint memsize = total_memory;
 
 	pvid = mfspr(SPRN_PVR);
 	svid = mfspr(SPRN_SVR);
 
 	seq_printf(m, "Vendor\t\t: Freescale Semiconductor\n");
-	seq_printf(m, "Machine\t\t: mpc85xx\n");
 	seq_printf(m, "PVR\t\t: 0x%x\n", pvid);
 	seq_printf(m, "SVR\t\t: 0x%x\n", svid);
 
 	/* Display cpu Pll setting */
 	phid1 = mfspr(SPRN_HID1);
 	seq_printf(m, "PLL setting\t: 0x%x\n", ((phid1 >> 24) & 0x3f));
-
-	/* Display the amount of memory */
-	seq_printf(m, "Memory\t\t: %d MB\n", memsize / (1024 * 1024));
 }
+
+static struct of_device_id __initdata of_bus_ids[] = {
+	{ .name = "soc", },
+	{ .type = "soc", },
+	{ .name = "cpm", },
+	{ .name = "localbus", },
+	{ .compatible = "simple-bus", },
+	{ .compatible = "gianfar", },
+	{},
+};
+
+static int __init declare_of_platform_devices(void)
+{
+	of_platform_bus_probe(NULL, of_bus_ids, NULL);
+
+	return 0;
+}
+machine_device_initcall(mpc85xx_ads, declare_of_platform_devices);
 
 /*
  * Called very early, device-tree isn't unflattened
  */
 static int __init mpc85xx_ads_probe(void)
 {
-	/* We always match for now, eventually we should look at the flat
-	   dev tree to ensure this is the board we are suppose to run on
-	*/
-	return 1;
+        unsigned long root = of_get_flat_dt_root();
+
+        return of_flat_dt_is_compatible(root, "MPC85xxADS");
 }
 
 define_machine(mpc85xx_ads) {
@@ -185,7 +255,7 @@ define_machine(mpc85xx_ads) {
 	.init_IRQ		= mpc85xx_ads_pic_init,
 	.show_cpuinfo		= mpc85xx_ads_show_cpuinfo,
 	.get_irq		= mpic_get_irq,
-	.restart		= mpc85xx_restart,
+	.restart		= fsl_rstcr_restart,
 	.calibrate_decr		= generic_calibrate_decr,
 	.progress		= udbg_progress,
 };

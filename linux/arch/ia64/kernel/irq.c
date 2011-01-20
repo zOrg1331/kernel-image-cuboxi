@@ -4,7 +4,7 @@
  *	Copyright (C) 1992, 1998 Linus Torvalds, Ingo Molnar
  *
  * This file contains the code used by various IRQ handling routines:
- * asking for different IRQ's should be done through these routines
+ * asking for different IRQs should be done through these routines
  * instead of just grabbing them. Thus setups with different IRQ numbers
  * shouldn't result in any weird surprises, and installing new handlers
  * should be easier.
@@ -12,7 +12,7 @@
  * Copyright (C) Ashok Raj<ashok.raj@intel.com>, Intel Corporation 2004
  *
  * 4/14/2004: Added code to handle cpu migration and do safe irq
- *			migration without lossing interrupts for iosapic
+ *			migration without losing interrupts for iosapic
  *			architecture.
  */
 
@@ -33,9 +33,14 @@ void ack_bad_irq(unsigned int irq)
 }
 
 #ifdef CONFIG_IA64_GENERIC
+ia64_vector __ia64_irq_to_vector(int irq)
+{
+	return irq_cfg[irq].vector;
+}
+
 unsigned int __ia64_local_vector_to_irq (ia64_vector vec)
 {
-	return (unsigned int) vec;
+	return __get_cpu_var(vector_irq)[vec];
 }
 #endif
 
@@ -56,9 +61,11 @@ int show_interrupts(struct seq_file *p, void *v)
 	unsigned long flags;
 
 	if (i == 0) {
-		seq_printf(p, "           ");
+		char cpuname[16];
+		seq_printf(p, "     ");
 		for_each_online_cpu(j) {
-			seq_printf(p, "CPU%d       ",j);
+			snprintf(cpuname, 10, "CPU%d", j);
+			seq_printf(p, "%10s ", cpuname);
 		}
 		seq_putc(p, '\n');
 	}
@@ -73,10 +80,10 @@ int show_interrupts(struct seq_file *p, void *v)
 		seq_printf(p, "%10u ", kstat_irqs(i));
 #else
 		for_each_online_cpu(j) {
-			seq_printf(p, "%10u ", kstat_cpu(j).irqs[i]);
+			seq_printf(p, "%10u ", kstat_irqs_cpu(i, j));
 		}
 #endif
-		seq_printf(p, " %14s", irq_desc[i].chip->typename);
+		seq_printf(p, " %14s", irq_desc[i].chip->name);
 		seq_printf(p, "  %s", action->name);
 
 		for (action=action->next; action; action = action->next)
@@ -95,32 +102,42 @@ static char irq_redir [NR_IRQS]; // = { [0 ... NR_IRQS-1] = 1 };
 
 void set_irq_affinity_info (unsigned int irq, int hwid, int redir)
 {
-	cpumask_t mask = CPU_MASK_NONE;
-
-	cpu_set(cpu_logical_id(hwid), mask);
-
 	if (irq < NR_IRQS) {
-		irq_desc[irq].affinity = mask;
+		cpumask_copy(irq_desc[irq].affinity,
+			     cpumask_of(cpu_logical_id(hwid)));
 		irq_redir[irq] = (char) (redir & 0xff);
 	}
 }
+
+bool is_affinity_mask_valid(const struct cpumask *cpumask)
+{
+	if (ia64_platform_is("sn2")) {
+		/* Only allow one CPU to be specified in the smp_affinity mask */
+		if (cpumask_weight(cpumask) != 1)
+			return false;
+	}
+	return true;
+}
+
 #endif /* CONFIG_SMP */
 
 #ifdef CONFIG_HOTPLUG_CPU
 unsigned int vectors_in_migration[NR_IRQS];
 
 /*
- * Since cpu_online_map is already updated, we just need to check for
+ * Since cpu_online_mask is already updated, we just need to check for
  * affinity that has zeros
  */
 static void migrate_irqs(void)
 {
-	cpumask_t	mask;
-	irq_desc_t *desc;
+	struct irq_desc *desc;
 	int 		irq, new_cpu;
 
 	for (irq=0; irq < NR_IRQS; irq++) {
 		desc = irq_desc + irq;
+
+		if (desc->status == IRQ_DISABLED)
+			continue;
 
 		/*
 		 * No handling for now.
@@ -131,15 +148,14 @@ static void migrate_irqs(void)
 		if (desc->status == IRQ_PER_CPU)
 			continue;
 
-		cpus_and(mask, irq_desc[irq].affinity, cpu_online_map);
-		if (any_online_cpu(mask) == NR_CPUS) {
+		if (cpumask_any_and(irq_desc[irq].affinity, cpu_online_mask)
+		    >= nr_cpu_ids) {
 			/*
 			 * Save it for phase 2 processing
 			 */
 			vectors_in_migration[irq] = irq;
 
-			new_cpu = any_online_cpu(cpu_online_map);
-			mask = cpumask_of_cpu(new_cpu);
+			new_cpu = cpumask_any(cpu_online_mask);
 
 			/*
 			 * Al three are essential, currently WARN_ON.. maybe panic?
@@ -147,7 +163,8 @@ static void migrate_irqs(void)
 			if (desc->chip && desc->chip->disable &&
 				desc->chip->enable && desc->chip->set_affinity) {
 				desc->chip->disable(irq);
-				desc->chip->set_affinity(irq, mask);
+				desc->chip->set_affinity(irq,
+							 cpumask_of(new_cpu));
 				desc->chip->enable(irq);
 			} else {
 				WARN_ON((!(desc->chip) || !(desc->chip->disable) ||
@@ -162,21 +179,21 @@ void fixup_irqs(void)
 {
 	unsigned int irq;
 	extern void ia64_process_pending_intr(void);
-	extern void ia64_disable_timer(void);
 	extern volatile int time_keeper_id;
 
-	ia64_disable_timer();
+	/* Mask ITV to disable timer */
+	ia64_set_itv(1 << 16);
 
 	/*
 	 * Find a new timesync master
 	 */
 	if (smp_processor_id() == time_keeper_id) {
-		time_keeper_id = first_cpu(cpu_online_map);
+		time_keeper_id = cpumask_first(cpu_online_mask);
 		printk ("CPU %d is now promoted to time-keeper master\n", time_keeper_id);
 	}
 
 	/*
-	 * Phase 1: Locate irq's bound to this cpu and
+	 * Phase 1: Locate IRQs bound to this cpu and
 	 * relocate them for cpu removal.
 	 */
 	migrate_irqs();
@@ -194,8 +211,11 @@ void fixup_irqs(void)
 	 */
 	for (irq=0; irq < NR_IRQS; irq++) {
 		if (vectors_in_migration[irq]) {
+			struct pt_regs *old_regs = set_irq_regs(NULL);
+
 			vectors_in_migration[irq]=0;
-			__do_IRQ(irq, NULL);
+			generic_handle_irq(irq);
+			set_irq_regs(old_regs);
 		}
 	}
 

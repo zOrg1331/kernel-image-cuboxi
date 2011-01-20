@@ -1,7 +1,7 @@
 
  request_firmware() hotplug interface:
  ------------------------------------
-	Copyright (C) 2003 Manuel Estrada Sainz <ranty@debian.org>
+	Copyright (C) 2003 Manuel Estrada Sainz
 
  Why:
  ---
@@ -77,7 +77,8 @@
    seconds for the whole load operation.
 
  - request_firmware_nowait() is also provided for convenience in
-   non-user contexts.
+   user contexts to request firmware asynchronously, but can't be called
+   in atomic contexts.
 
 
  about in-kernel persistence:

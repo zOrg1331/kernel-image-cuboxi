@@ -15,64 +15,64 @@
 #include <linux/module.h>
 #include <linux/fb.h>
 #include <linux/slab.h>
+#include <linux/uaccess.h>
 
-#include <asm/uaccess.h>
-
-static u16 red2[] = {
+static u16 red2[] __read_mostly = {
     0x0000, 0xaaaa
 };
-static u16 green2[] = {
+static u16 green2[] __read_mostly = {
     0x0000, 0xaaaa
 };
-static u16 blue2[] = {
+static u16 blue2[] __read_mostly = {
     0x0000, 0xaaaa
 };
 
-static u16 red4[] = {
+static u16 red4[] __read_mostly = {
     0x0000, 0xaaaa, 0x5555, 0xffff
 };
-static u16 green4[] = {
+static u16 green4[] __read_mostly = {
     0x0000, 0xaaaa, 0x5555, 0xffff
 };
-static u16 blue4[] = {
+static u16 blue4[] __read_mostly = {
     0x0000, 0xaaaa, 0x5555, 0xffff
 };
 
-static u16 red8[] = {
+static u16 red8[] __read_mostly = {
     0x0000, 0x0000, 0x0000, 0x0000, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa
 };
-static u16 green8[] = {
+static u16 green8[] __read_mostly = {
     0x0000, 0x0000, 0xaaaa, 0xaaaa, 0x0000, 0x0000, 0x5555, 0xaaaa
 };
-static u16 blue8[] = {
+static u16 blue8[] __read_mostly = {
     0x0000, 0xaaaa, 0x0000, 0xaaaa, 0x0000, 0xaaaa, 0x0000, 0xaaaa
 };
 
-static u16 red16[] = {
+static u16 red16[] __read_mostly = {
     0x0000, 0x0000, 0x0000, 0x0000, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa,
     0x5555, 0x5555, 0x5555, 0x5555, 0xffff, 0xffff, 0xffff, 0xffff
 };
-static u16 green16[] = {
+static u16 green16[] __read_mostly = {
     0x0000, 0x0000, 0xaaaa, 0xaaaa, 0x0000, 0x0000, 0x5555, 0xaaaa,
     0x5555, 0x5555, 0xffff, 0xffff, 0x5555, 0x5555, 0xffff, 0xffff
 };
-static u16 blue16[] = {
+static u16 blue16[] __read_mostly = {
     0x0000, 0xaaaa, 0x0000, 0xaaaa, 0x0000, 0xaaaa, 0x0000, 0xaaaa,
     0x5555, 0xffff, 0x5555, 0xffff, 0x5555, 0xffff, 0x5555, 0xffff
 };
 
-static struct fb_cmap default_2_colors = {
-    0, 2, red2, green2, blue2, NULL
+static const struct fb_cmap default_2_colors = {
+    .len=2, .red=red2, .green=green2, .blue=blue2
 };
-static struct fb_cmap default_8_colors = {
-    0, 8, red8, green8, blue8, NULL
+static const struct fb_cmap default_8_colors = {
+    .len=8, .red=red8, .green=green8, .blue=blue8
 };
-static struct fb_cmap default_4_colors = {
-    0, 4, red4, green4, blue4, NULL
+static const struct fb_cmap default_4_colors = {
+    .len=4, .red=red4, .green=green4, .blue=blue4
 };
-static struct fb_cmap default_16_colors = {
-    0, 16, red16, green16, blue16, NULL
+static const struct fb_cmap default_16_colors = {
+    .len=16, .red=red16, .green=green16, .blue=blue16
 };
+
 
 
 /**
@@ -146,7 +146,7 @@ void fb_dealloc_cmap(struct fb_cmap *cmap)
  *	Copy contents of colormap from @from to @to.
  */
 
-int fb_copy_cmap(struct fb_cmap *from, struct fb_cmap *to)
+int fb_copy_cmap(const struct fb_cmap *from, struct fb_cmap *to)
 {
 	int tooff = 0, fromoff = 0;
 	int size;
@@ -170,7 +170,7 @@ int fb_copy_cmap(struct fb_cmap *from, struct fb_cmap *to)
 	return 0;
 }
 
-int fb_cmap_to_user(struct fb_cmap *from, struct fb_cmap_user *to)
+int fb_cmap_to_user(const struct fb_cmap *from, struct fb_cmap_user *to)
 {
 	int tooff = 0, fromoff = 0;
 	int size;
@@ -250,10 +250,6 @@ int fb_set_user_cmap(struct fb_cmap_user *cmap, struct fb_info *info)
 	int rc, size = cmap->len * sizeof(u16);
 	struct fb_cmap umap;
 
-	if (cmap->start < 0 || (!info->fbops->fb_setcolreg &&
-			        !info->fbops->fb_setcmap))
-		return -EINVAL;
-
 	memset(&umap, 0, sizeof(struct fb_cmap));
 	rc = fb_alloc_cmap(&umap, cmap->len, cmap->transp != NULL);
 	if (rc)
@@ -262,11 +258,23 @@ int fb_set_user_cmap(struct fb_cmap_user *cmap, struct fb_info *info)
 	    copy_from_user(umap.green, cmap->green, size) ||
 	    copy_from_user(umap.blue, cmap->blue, size) ||
 	    (cmap->transp && copy_from_user(umap.transp, cmap->transp, size))) {
-		fb_dealloc_cmap(&umap);
-		return -EFAULT;
+		rc = -EFAULT;
+		goto out;
 	}
 	umap.start = cmap->start;
+	if (!lock_fb_info(info)) {
+		rc = -ENODEV;
+		goto out;
+	}
+	if (cmap->start < 0 || (!info->fbops->fb_setcolreg &&
+				!info->fbops->fb_setcmap)) {
+		rc = -EINVAL;
+		goto out1;
+	}
 	rc = fb_set_cmap(&umap, info);
+out1:
+	unlock_fb_info(info);
+out:
 	fb_dealloc_cmap(&umap);
 	return rc;
 }
@@ -282,7 +290,7 @@ int fb_set_user_cmap(struct fb_cmap_user *cmap, struct fb_info *info)
  *
  */
 
-struct fb_cmap *fb_default_cmap(int len)
+const struct fb_cmap *fb_default_cmap(int len)
 {
     if (len <= 2)
 	return &default_2_colors;
@@ -305,22 +313,22 @@ void fb_invert_cmaps(void)
 {
     u_int i;
 
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < ARRAY_SIZE(red2); i++) {
 	red2[i] = ~red2[i];
 	green2[i] = ~green2[i];
 	blue2[i] = ~blue2[i];
     }
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < ARRAY_SIZE(red4); i++) {
 	red4[i] = ~red4[i];
 	green4[i] = ~green4[i];
 	blue4[i] = ~blue4[i];
     }
-    for (i = 0; i < 8; i++) {
+    for (i = 0; i < ARRAY_SIZE(red8); i++) {
 	red8[i] = ~red8[i];
 	green8[i] = ~green8[i];
 	blue8[i] = ~blue8[i];
     }
-    for (i = 0; i < 16; i++) {
+    for (i = 0; i < ARRAY_SIZE(red16); i++) {
 	red16[i] = ~red16[i];
 	green16[i] = ~green16[i];
 	blue16[i] = ~blue16[i];

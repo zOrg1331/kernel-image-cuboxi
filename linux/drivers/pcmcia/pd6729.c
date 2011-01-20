@@ -58,7 +58,7 @@ MODULE_AUTHOR("Jun Komuro <komurojun-mbn@nifty.com>");
 
 static int irq_mode = 1; /* 0 = ISA interrupt, 1 = PCI interrupt */
 static int irq_list[16];
-static int irq_list_count = 0;
+static unsigned int irq_list_count = 0;
 
 module_param(irq_mode, int, 0444);
 module_param_array(irq_list, int, &irq_list_count, 0444);
@@ -182,7 +182,7 @@ static void indirect_write16(struct pd6729_socket *socket, unsigned short reg,
 
 /* Interrupt handler functionality */
 
-static irqreturn_t pd6729_interrupt(int irq, void *dev, struct pt_regs *regs)
+static irqreturn_t pd6729_interrupt(int irq, void *dev)
 {
 	struct pd6729_socket *socket = (struct pd6729_socket *)dev;
 	int i;
@@ -249,7 +249,7 @@ static void pd6729_interrupt_wrapper(unsigned long data)
 {
 	struct pd6729_socket *socket = (struct pd6729_socket *) data;
 
-	pd6729_interrupt(0, (void *)socket, NULL);
+	pd6729_interrupt(0, (void *)socket);
 	mod_timer(&socket->poll_timer, jiffies + HZ);
 }
 
@@ -575,16 +575,16 @@ static struct pccard_operations pd6729_operations = {
 	.set_mem_map		= pd6729_set_mem_map,
 };
 
-static irqreturn_t pd6729_test(int irq, void *dev, struct pt_regs *regs)
+static irqreturn_t pd6729_test(int irq, void *dev)
 {
 	dprintk("-> hit on irq %d\n", irq);
 	return IRQ_HANDLED;
 }
 
-static int pd6729_check_irq(int irq, int flags)
+static int pd6729_check_irq(int irq)
 {
-	if (request_irq(irq, pd6729_test, flags, "x", pd6729_test) != 0)
-		return -1;
+	if (request_irq(irq, pd6729_test, IRQF_PROBE_SHARED, "x", pd6729_test)
+		!= 0) return -1;
 	free_irq(irq, pd6729_test);
 	return 0;
 }
@@ -610,7 +610,7 @@ static u_int __devinit pd6729_isa_scan(void)
 
 	/* just find interrupts that aren't in use */
 	for (i = 0; i < 16; i++)
-		if ((mask0 & (1 << i)) && (pd6729_check_irq(i, 0) == 0))
+		if ((mask0 & (1 << i)) && (pd6729_check_irq(i) == 0))
 			mask |= (1 << i);
 
 	printk(KERN_INFO "pd6729: ISA irqs = ");
@@ -640,6 +640,12 @@ static int __devinit pd6729_pci_probe(struct pci_dev *dev,
 
 	if ((ret = pci_enable_device(dev)))
 		goto err_out_free_mem;
+
+	if (!pci_resource_start(dev, 0)) {
+		printk(KERN_INFO "pd6729: refusing to load the driver "
+				 "as the io_base is 0.\n");
+		goto err_out_free_mem;
+	}
 
 	printk(KERN_INFO "pd6729: Cirrus PD6729 PCI to PCMCIA Bridge "
 		"at 0x%llx on irq %d\n",
@@ -682,7 +688,7 @@ static int __devinit pd6729_pci_probe(struct pci_dev *dev,
 
 		socket[i].socket.ops = &pd6729_operations;
 		socket[i].socket.resource_ops = &pccard_nonstatic_ops;
-		socket[i].socket.dev.dev = &dev->dev;
+		socket[i].socket.dev.parent = &dev->dev;
 		socket[i].socket.driver_data = &socket[i];
 	}
 
@@ -755,15 +761,17 @@ static void __devexit pd6729_pci_remove(struct pci_dev *dev)
 	kfree(socket);
 }
 
+#ifdef CONFIG_PM
 static int pd6729_socket_suspend(struct pci_dev *dev, pm_message_t state)
 {
-	return pcmcia_socket_dev_suspend(&dev->dev, state);
+	return pcmcia_socket_dev_suspend(&dev->dev);
 }
 
 static int pd6729_socket_resume(struct pci_dev *dev)
 {
 	return pcmcia_socket_dev_resume(&dev->dev);
 }
+#endif
 
 static struct pci_device_id pd6729_pci_ids[] = {
 	{
@@ -776,23 +784,25 @@ static struct pci_device_id pd6729_pci_ids[] = {
 };
 MODULE_DEVICE_TABLE(pci, pd6729_pci_ids);
 
-static struct pci_driver pd6729_pci_drv = {
+static struct pci_driver pd6729_pci_driver = {
 	.name		= "pd6729",
 	.id_table	= pd6729_pci_ids,
 	.probe		= pd6729_pci_probe,
 	.remove		= __devexit_p(pd6729_pci_remove),
+#ifdef CONFIG_PM
 	.suspend	= pd6729_socket_suspend,
 	.resume		= pd6729_socket_resume,
+#endif
 };
 
 static int pd6729_module_init(void)
 {
-	return pci_register_driver(&pd6729_pci_drv);
+	return pci_register_driver(&pd6729_pci_driver);
 }
 
 static void pd6729_module_exit(void)
 {
-	pci_unregister_driver(&pd6729_pci_drv);
+	pci_unregister_driver(&pd6729_pci_driver);
 }
 
 module_init(pd6729_module_init);

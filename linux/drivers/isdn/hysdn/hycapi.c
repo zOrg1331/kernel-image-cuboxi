@@ -67,7 +67,7 @@ hycapi_reset_ctr(struct capi_ctr *ctrl)
 	printk(KERN_NOTICE "HYCAPI hycapi_reset_ctr\n");
 #endif
 	capilib_release(&cinfo->ncci_head);
-	capi_ctr_reseted(ctrl);
+	capi_ctr_down(ctrl);
 }
 
 /******************************
@@ -347,7 +347,7 @@ int hycapi_capi_stop(hysdn_card *card)
 	if(cinfo) {
 		ctrl = &cinfo->capi_ctrl;
 /*		ctrl->suspend_output(ctrl); */
-		capi_ctr_reseted(ctrl);
+		capi_ctr_down(ctrl);
 	}
 	return 0;
 }
@@ -398,8 +398,9 @@ static u16 hycapi_send_message(struct capi_ctr *ctrl, struct sk_buff *skb)
 			_len = CAPIMSG_LEN(skb->data);
 			if (_len > 22) {
 				_len2 = _len - 22;
-				memcpy(msghead, skb->data, 22);
-				memcpy(skb->data + _len2, msghead, 22);
+				skb_copy_from_linear_data(skb, msghead, 22);
+				skb_copy_to_linear_data_offset(skb, _len2,
+							       msghead, 22);
 				skb_pull(skb, _len2);
 				CAPIMSG_SETLEN(skb->data, 22);
 				retval = capilib_data_b3_req(&cinfo->ncci_head,
@@ -461,11 +462,11 @@ static int hycapi_read_proc(char *page, char **start, off_t off,
 		default: s = "???"; break;
 	}
 	len += sprintf(page+len, "%-16s %s\n", "type", s);
-	if ((s = cinfo->version[VER_DRIVER]) != 0)
+	if ((s = cinfo->version[VER_DRIVER]) != NULL)
 		len += sprintf(page+len, "%-16s %s\n", "ver_driver", s);
-	if ((s = cinfo->version[VER_CARDTYPE]) != 0)
+	if ((s = cinfo->version[VER_CARDTYPE]) != NULL)
 		len += sprintf(page+len, "%-16s %s\n", "ver_cardtype", s);
-	if ((s = cinfo->version[VER_SERIAL]) != 0)
+	if ((s = cinfo->version[VER_SERIAL]) != NULL)
 		len += sprintf(page+len, "%-16s %s\n", "ver_serial", s);
     
 	len += sprintf(page+len, "%-16s %s\n", "cardname", cinfo->cardname);
@@ -540,7 +541,7 @@ hycapi_rx_capipkt(hysdn_card * card, unsigned char *buf, unsigned short len)
 	}
 	ctrl = &cinfo->capi_ctrl;
 	if(len < CAPI_MSG_BASELEN) {
-		printk(KERN_ERR "HYSDN Card%d: invalid CAPI-message, lenght %d!\n",
+		printk(KERN_ERR "HYSDN Card%d: invalid CAPI-message, length %d!\n",
 		       card->myid, len);
 		return;
 	}	
@@ -745,12 +746,11 @@ hycapi_capi_create(hysdn_card *card)
 		return 1;
 	}
 	if (!card->hyctrlinfo) {
-		cinfo = (hycapictrl_info *) kmalloc(sizeof(hycapictrl_info), GFP_ATOMIC);
+		cinfo = kzalloc(sizeof(hycapictrl_info), GFP_ATOMIC);
 		if (!cinfo) {
 			printk(KERN_WARNING "HYSDN: no memory for capi-ctrl.\n");
 			return -ENOMEM;
 		}
-		memset(cinfo, 0, sizeof(hycapictrl_info));
 		card->hyctrlinfo = cinfo;
 		cinfo->card = card;
 		spin_lock_init(&cinfo->lock);

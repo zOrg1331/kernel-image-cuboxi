@@ -22,9 +22,6 @@
 #include <linux/module.h>
 #include <asm/uaccess.h>
 
-atomic_t irq_err_count;
-atomic_t irq_mis_count;
-
 /*
  * Generic, controller-independent functions:
  */
@@ -52,7 +49,7 @@ int show_interrupts(struct seq_file *p, void *v)
 		seq_printf(p, "%10u ", kstat_irqs(i));
 #else
 		for_each_online_cpu(j)
-			seq_printf(p, "%10u ", kstat_cpu(j).irqs[i]);
+			seq_printf(p, "%10u ", kstat_irqs_cpu(i, j));
 #endif
 		seq_printf(p, " %14s", irq_desc[i].chip->typename);
 		seq_printf(p, "  %s", action->name);
@@ -63,27 +60,27 @@ int show_interrupts(struct seq_file *p, void *v)
 		seq_putc(p, '\n');
 skip:
 		spin_unlock_irqrestore(&irq_desc[i].lock, flags);
-	} else if (i == NR_IRQS) {
-		seq_printf(p, "ERR: %10u\n", atomic_read(&irq_err_count));
-		seq_printf(p, "MIS: %10u\n", atomic_read(&irq_mis_count));
 	}
 	return 0;
 }
 
 /*
- * do_IRQ handles all normal device IRQ's (the special
+ * do_IRQ handles all normal device IRQs (the special
  * SMP cross-CPU interrupts have their own specific
  * handlers).
  */
 asmlinkage unsigned int do_IRQ(int irq, struct pt_regs *regs)
 {
+	struct pt_regs *old_regs;
+	old_regs = set_irq_regs(regs);
 	irq_enter();
 
 #ifdef CONFIG_DEBUG_STACKOVERFLOW
 	/* FIXME M32R */
 #endif
-	__do_IRQ(irq, regs);
+	__do_IRQ(irq);
 	irq_exit();
+	set_irq_regs(old_regs);
 
 	return 1;
 }

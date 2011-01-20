@@ -16,23 +16,44 @@ do { \
 	debug_event(lcs_dbf_##name,level,(void*)(addr),len); \
 } while (0)
 
-#define LCS_DBF_TEXT_(level,name,text...) \
-do {                                       \
-	sprintf(debug_buffer, text);  \
-		debug_text_event(lcs_dbf_##name,level, debug_buffer);\
-} while (0)
+/* Allow to sort out low debug levels early to avoid wasted sprints */
+static inline int lcs_dbf_passes(debug_info_t *dbf_grp, int level)
+{
+	return (level <= dbf_grp->level);
+}
 
-/**
- * some more definitions for debug or output stuff
- */
-#define PRINTK_HEADER		" lcs: "
+#define LCS_DBF_TEXT_(level,name,text...) \
+	do { \
+		if (lcs_dbf_passes(lcs_dbf_##name, level)) { \
+			sprintf(debug_buffer, text); \
+			debug_text_event(lcs_dbf_##name, level, debug_buffer); \
+		} \
+	} while (0)
 
 /**
  *	sysfs related stuff
  */
 #define CARD_FROM_DEV(cdev) \
-	(struct lcs_card *) \
-	((struct ccwgroup_device *)cdev->dev.driver_data)->dev.driver_data;
+	(struct lcs_card *) dev_get_drvdata( \
+		&((struct ccwgroup_device *)dev_get_drvdata(&cdev->dev))->dev);
+
+/**
+ * Enum for classifying detected devices.
+ */
+enum lcs_channel_types {
+	/* Device is not a channel  */
+	lcs_channel_type_none,
+
+	/* Device is a 2216 channel */
+	lcs_channel_type_parallel,
+
+	/* Device is a 2216 channel */
+	lcs_channel_type_2216,
+
+	/* Device is a OSA2 card */
+	lcs_channel_type_osa2
+};
+
 /**
  * CCW commands used in this driver
  */
@@ -127,22 +148,23 @@ do {                                       \
  * LCS Buffer states
  */
 enum lcs_buffer_states {
-	BUF_STATE_EMPTY,	/* buffer is empty */
-	BUF_STATE_LOCKED,	/* buffer is locked, don't touch */
-	BUF_STATE_READY,	/* buffer is ready for read/write */
-	BUF_STATE_PROCESSED,
+	LCS_BUF_STATE_EMPTY,	/* buffer is empty */
+	LCS_BUF_STATE_LOCKED,	/* buffer is locked, don't touch */
+	LCS_BUF_STATE_READY,	/* buffer is ready for read/write */
+	LCS_BUF_STATE_PROCESSED,
 };
 
 /**
  * LCS Channel State Machine declarations
  */
 enum lcs_channel_states {
-	CH_STATE_INIT,
-	CH_STATE_HALTED,
-	CH_STATE_STOPPED,
-	CH_STATE_RUNNING,
-	CH_STATE_SUSPENDED,
-	CH_STATE_CLEARED,
+	LCS_CH_STATE_INIT,
+	LCS_CH_STATE_HALTED,
+	LCS_CH_STATE_STOPPED,
+	LCS_CH_STATE_RUNNING,
+	LCS_CH_STATE_SUSPENDED,
+	LCS_CH_STATE_CLEARED,
+	LCS_CH_STATE_ERROR,
 };
 
 /**
@@ -169,7 +191,7 @@ struct lcs_header {
 }  __attribute__ ((packed));
 
 struct lcs_ip_mac_pair {
-	__u32  ip_addr;
+	__be32  ip_addr;
 	__u8   mac_addr[LCS_MAC_LENGTH];
 	__u8   reserved[2];
 }  __attribute__ ((packed));
@@ -287,7 +309,7 @@ struct lcs_card {
 	enum lcs_dev_states state;
 	struct net_device *dev;
 	struct net_device_stats stats;
-	unsigned short (*lan_type_trans)(struct sk_buff *skb,
+	__be16 (*lan_type_trans)(struct sk_buff *skb,
 					 struct net_device *dev);
 	struct ccwgroup_device *gdev;
 	struct lcs_channel read;

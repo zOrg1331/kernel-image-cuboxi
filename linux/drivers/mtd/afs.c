@@ -21,8 +21,6 @@
    This is access code for flashes using ARM's flash partitioning
    standards.
 
-   $Id: afs.c,v 1.15 2005/11/07 11:14:19 gleixner Exp $
-
 ======================================================================*/
 
 #include <linux/module.h>
@@ -207,11 +205,10 @@ static int parse_afs_partitions(struct mtd_info *mtd,
 	if (!sz)
 		return ret;
 
-	parts = kmalloc(sz, GFP_KERNEL);
+	parts = kzalloc(sz, GFP_KERNEL);
 	if (!parts)
 		return -ENOMEM;
 
-	memset(parts, 0, sz);
 	str = (char *)(parts + idx);
 
 	/*
@@ -242,7 +239,7 @@ static int parse_afs_partitions(struct mtd_info *mtd,
 		parts[idx].offset	= img_ptr;
 		parts[idx].mask_flags	= 0;
 
-		printk("  mtd%d: at 0x%08x, %5dKB, %8u, %s\n",
+		printk("  mtd%d: at 0x%08x, %5lluKiB, %8u, %s\n",
 			idx, img_ptr, parts[idx].size / 1024,
 			iis.imageNumber, str);
 

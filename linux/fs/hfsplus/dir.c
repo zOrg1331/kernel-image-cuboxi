@@ -10,7 +10,6 @@
 
 #include <linux/errno.h>
 #include <linux/fs.h>
-#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/random.h>
 
@@ -37,6 +36,8 @@ static struct dentry *hfsplus_lookup(struct inode *dir, struct dentry *dentry,
 	u16 type;
 
 	sb = dir->i_sb;
+
+	dentry->d_op = &hfsplus_dentry_operations;
 	dentry->d_fsdata = NULL;
 	hfs_find_init(HFSPLUS_SB(sb).cat_tree, &fd);
 	hfsplus_cat_build_key(sb, fd.search_key, dir->i_ino, &dentry->d_name);
@@ -96,9 +97,9 @@ again:
 		goto fail;
 	}
 	hfs_find_exit(&fd);
-	inode = iget(dir->i_sb, cnid);
-	if (!inode)
-		return ERR_PTR(-EACCES);
+	inode = hfsplus_iget(dir->i_sb, cnid);
+	if (IS_ERR(inode))
+		return ERR_CAST(inode);
 	if (S_ISREG(inode->i_mode))
 		HFSPLUS_I(inode).dev = linkid;
 out:
@@ -111,7 +112,7 @@ fail:
 
 static int hfsplus_readdir(struct file *filp, void *dirent, filldir_t filldir)
 {
-	struct inode *inode = filp->f_dentry->d_inode;
+	struct inode *inode = filp->f_path.dentry->d_inode;
 	struct super_block *sb = inode->i_sb;
 	int len, err;
 	char strbuf[HFSPLUS_MAX_STRLEN + 1];
@@ -298,7 +299,7 @@ static int hfsplus_link(struct dentry *src_dentry, struct inode *dst_dir,
 	if (res)
 		return res;
 
-	inode->i_nlink++;
+	inc_nlink(inode);
 	hfsplus_instantiate(dst_dentry, inode, cnid);
 	atomic_inc(&inode->i_count);
 	inode->i_ctime = CURRENT_TIME_SEC;
@@ -338,17 +339,24 @@ static int hfsplus_unlink(struct inode *dir, struct dentry *dentry)
 		return res;
 
 	if (inode->i_nlink > 0)
-		inode->i_nlink--;
-	hfsplus_delete_inode(inode);
-	if (inode->i_ino != cnid && !inode->i_nlink) {
-		if (!atomic_read(&HFSPLUS_I(inode).opencnt)) {
-			res = hfsplus_delete_cat(inode->i_ino, HFSPLUS_SB(sb).hidden_dir, NULL);
-			if (!res)
-				hfsplus_delete_inode(inode);
+		drop_nlink(inode);
+	if (inode->i_ino == cnid)
+		clear_nlink(inode);
+	if (!inode->i_nlink) {
+		if (inode->i_ino != cnid) {
+			HFSPLUS_SB(sb).file_count--;
+			if (!atomic_read(&HFSPLUS_I(inode).opencnt)) {
+				res = hfsplus_delete_cat(inode->i_ino,
+							 HFSPLUS_SB(sb).hidden_dir,
+							 NULL);
+				if (!res)
+					hfsplus_delete_inode(inode);
+			} else
+				inode->i_flags |= S_DEAD;
 		} else
-			inode->i_flags |= S_DEAD;
+			hfsplus_delete_inode(inode);
 	} else
-		inode->i_nlink = 0;
+		HFSPLUS_SB(sb).file_count--;
 	inode->i_ctime = CURRENT_TIME_SEC;
 	mark_inode_dirty(inode);
 
@@ -387,7 +395,7 @@ static int hfsplus_rmdir(struct inode *dir, struct dentry *dentry)
 	res = hfsplus_delete_cat(inode->i_ino, dir, &dentry->d_name);
 	if (res)
 		return res;
-	inode->i_nlink = 0;
+	clear_nlink(inode);
 	inode->i_ctime = CURRENT_TIME_SEC;
 	hfsplus_delete_inode(inode);
 	mark_inode_dirty(inode);
@@ -471,7 +479,7 @@ static int hfsplus_rename(struct inode *old_dir, struct dentry *old_dentry,
 	return res;
 }
 
-struct inode_operations hfsplus_dir_inode_operations = {
+const struct inode_operations hfsplus_dir_inode_operations = {
 	.lookup		= hfsplus_lookup,
 	.create		= hfsplus_create,
 	.link		= hfsplus_link,

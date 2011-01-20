@@ -1,6 +1,4 @@
 /*
- * $Id: lightning.c,v 1.20 2002/01/22 20:41:31 vojtech Exp $
- *
  *  Copyright (c) 1998-2001 Vojtech Pavlik
  */
 
@@ -309,7 +307,7 @@ static int __init l4_init(void)
 	int i, cards = 0;
 
 	if (!request_region(L4_PORT, 1, "lightning"))
-		return -1;
+		return -EBUSY;
 
 	for (i = 0; i < 2; i++)
 		if (l4_add_card(i) == 0)
@@ -319,7 +317,7 @@ static int __init l4_init(void)
 
 	if (!cards) {
 		release_region(L4_PORT, 1);
-		return -1;
+		return -ENODEV;
 	}
 
 	return 0;

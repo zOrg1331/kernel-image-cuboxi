@@ -121,6 +121,15 @@
 
 #ifdef __KERNEL__
 
+extern const char *CardType[];
+extern int nrcards;
+
+extern const char *l1_revision;
+extern const char *l2_revision;
+extern const char *l3_revision;
+extern const char *lli_revision;
+extern const char *tei_revision;
+
 /* include l3dss1 & ni1 specific process structures, but no other defines */
 #ifdef CONFIG_HISAX_EURO
   #define l3dss1_process
@@ -202,7 +211,7 @@ struct Layer1 {
 	void *hardware;
 	struct BCState *bcs;
 	struct PStack **stlistp;
-	long Flags;
+	unsigned long Flags;
 	struct FsmInst l1m;
 	struct FsmTimer	timer;
 	void (*l1l2) (struct PStack *, int, void *);
@@ -694,7 +703,7 @@ struct hfcPCI_hw {
         int nt_timer;
         struct pci_dev *dev;
         unsigned char *pci_io; /* start of PCI IO memory */
-        void *share_start; /* shared memory for Fifos start */
+	dma_addr_t dma; /* dma handle for Fifos */
         void *fifos; /* FIFO memory */ 
         int last_bfifo_cnt[2]; /* marker saving last b-fifo frame count */
 	struct timer_list timer;
@@ -794,19 +803,6 @@ struct w6692_hw {
 	unsigned int iobase;
 	struct timer_list timer;
 };
-
-#ifdef  CONFIG_HISAX_TESTEMU
-struct te_hw {
-	unsigned char *sfifo;
-	unsigned char *sfifo_w;
-	unsigned char *sfifo_r;
-	unsigned char *sfifo_e;
-	int sfifo_cnt;
-	unsigned int stat;
-	wait_queue_head_t rwaitq;
-	wait_queue_head_t swaitq;
-};
-#endif
 
 struct arcofi_msg {
 	struct arcofi_msg *next;
@@ -916,9 +912,6 @@ struct IsdnCardState {
 		struct ix1_hw niccy;
 		struct isurf_hw isurf;
 		struct saphir_hw saphir;
-#ifdef CONFIG_HISAX_TESTEMU
-		struct te_hw te;
-#endif
 		struct bkm_hw ax;
 		struct gazel_hw gazel;
 		struct w6692_hw w6692;
@@ -941,7 +934,7 @@ struct IsdnCardState {
 	int		(*cardmsg) (struct IsdnCardState *, int, void *);
 	void		(*setstack_d) (struct PStack *, struct IsdnCardState *);
 	void		(*DC_Close) (struct IsdnCardState *);
-	int		(*irq_func) (int, void *, struct pt_regs *);
+	irq_handler_t	irq_func;
 	int		(*auxcmd) (struct IsdnCardState *, isdn_ctrl *);
 	struct Channel	channel[2+MAX_WAITING_CALLS];
 	struct BCState	bcs[2+MAX_WAITING_CALLS];
@@ -1139,12 +1132,6 @@ struct IsdnCardState {
 #define  CARD_HFC_SX 0
 #endif
 
-#ifdef  CONFIG_HISAX_AMD7930
-#define CARD_AMD7930 1
-#else
-#define CARD_AMD7930 0
-#endif
-
 #ifdef	CONFIG_HISAX_NICCY
 #define	CARD_NICCY 1
 #ifndef ISDN_CHIP_ISAC
@@ -1179,15 +1166,6 @@ struct IsdnCardState {
 #endif
 #else
 #define CARD_HSTSAPHIR 0
-#endif
-
-#ifdef	CONFIG_HISAX_TESTEMU
-#define	CARD_TESTEMU 1
-#define ISDN_CTYPE_TESTEMU 99
-#undef ISDN_CTYPE_COUNT
-#define  ISDN_CTYPE_COUNT ISDN_CTYPE_TESTEMU
-#else
-#define CARD_TESTEMU 0
 #endif
 
 #ifdef	CONFIG_HISAX_BKM_A4T
@@ -1316,7 +1294,18 @@ void dlogframe(struct IsdnCardState *cs, struct sk_buff *skb, int dir);
 void iecpy(u_char * dest, u_char * iestart, int ieoffset);
 #endif	/* __KERNEL__ */
 
-#define HZDELAY(jiffs) {int tout = jiffs; while (tout--) udelay(1000000/HZ);}
+/*
+ * Busywait delay for `jiffs' jiffies
+ */
+#define HZDELAY(jiffs) do {					\
+		int tout = jiffs;				\
+								\
+		while (tout--) {				\
+			int loops = USEC_PER_SEC / HZ;		\
+			while (loops--)				\
+				udelay(1);			\
+		}						\
+	} while (0)
 
 int ll_run(struct IsdnCardState *cs, int addfeatures);
 int CallcNew(void);

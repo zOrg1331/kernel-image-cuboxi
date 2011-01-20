@@ -15,6 +15,8 @@
 #define ROCKET_TYPE_MODEMIII	3
 #define ROCKET_TYPE_PC104       4
 
+#include <linux/mutex.h>
+
 #include <asm/io.h>
 #include <asm/byteorder.h>
 
@@ -24,7 +26,6 @@ typedef unsigned int ByteIO_t;
 typedef unsigned int Word_t;
 typedef unsigned int WordIO_t;
 
-typedef unsigned long DWord_t;
 typedef unsigned int DWordIO_t;
 
 /*
@@ -36,11 +37,10 @@ typedef unsigned int DWordIO_t;
  * instruction.
  */
 
-#ifdef ROCKET_DEBUG_IO
 static inline void sOutB(unsigned short port, unsigned char value)
 {
 #ifdef ROCKET_DEBUG_IO
-	printk("sOutB(%x, %x)...", port, value);
+	printk(KERN_DEBUG "sOutB(%x, %x)...\n", port, value);
 #endif
 	outb_p(value, port);
 }
@@ -48,17 +48,18 @@ static inline void sOutB(unsigned short port, unsigned char value)
 static inline void sOutW(unsigned short port, unsigned short value)
 {
 #ifdef ROCKET_DEBUG_IO
-	printk("sOutW(%x, %x)...", port, value);
+	printk(KERN_DEBUG "sOutW(%x, %x)...\n", port, value);
 #endif
 	outw_p(value, port);
 }
 
-static inline void sOutDW(unsigned short port, unsigned long value)
+static inline void out32(unsigned short port, Byte_t *p)
 {
+	u32 value = get_unaligned_le32(p);
 #ifdef ROCKET_DEBUG_IO
-	printk("sOutDW(%x, %lx)...", port, value);
+	printk(KERN_DEBUG "out32(%x, %lx)...\n", port, value);
 #endif
-	outl_p(cpu_to_le32(value), port);
+	outl_p(value, port);
 }
 
 static inline unsigned char sInB(unsigned short port)
@@ -70,14 +71,6 @@ static inline unsigned short sInW(unsigned short port)
 {
 	return inw_p(port);
 }
-
-#else				/* !ROCKET_DEBUG_IO */
-#define sOutB(a, b) outb_p(b, a)
-#define sOutW(a, b) outw_p(b, a)
-#define sOutDW(port, value) outl_p(cpu_to_le32(value), port)
-#define sInB(a) (inb_p(a))
-#define sInW(a) (inw_p(a))
-#endif				/* ROCKET_DEBUG_IO */
 
 /* This is used to move arrays of bytes so byte swapping isn't appropriate. */
 #define sOutStrW(port, addr, count) if (count) outsw(port, addr, count)
@@ -102,12 +95,6 @@ static inline unsigned short sInW(unsigned short port)
 /* AIOP ID numbers, identifies AIOP type implementing channel */
 #define AIOPID_NULL -1		/* no AIOP or channel exists */
 #define AIOPID_0001 0x0001	/* AIOP release 1 */
-
-#define NULLDEV -1		/* identifies non-existant device */
-#define NULLCTL -1		/* identifies non-existant controller */
-#define NULLCTLPTR (CONTROLLER_T *)0	/* identifies non-existant controller */
-#define NULLAIOP -1		/* identifies non-existant AIOP */
-#define NULLCHAN -1		/* identifies non-existant channel */
 
 /************************************************************************
  Global Register Offsets - Direct Access - Fixed values
@@ -394,7 +381,7 @@ Call:     sClrBreak(ChP)
 #define sClrBreak(ChP) \
 do { \
    (ChP)->TxControl[3] &= ~SETBREAK; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -406,7 +393,7 @@ Call:     sClrDTR(ChP)
 #define sClrDTR(ChP) \
 do { \
    (ChP)->TxControl[3] &= ~SET_DTR; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -419,7 +406,7 @@ Call:     sClrRTS(ChP)
 do { \
    if ((ChP)->rtsToggle) break; \
    (ChP)->TxControl[3] &= ~SET_RTS; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -493,7 +480,7 @@ Call:     sDisCTSFlowCtl(ChP)
 #define sDisCTSFlowCtl(ChP) \
 do { \
    (ChP)->TxControl[2] &= ~CTSFC_EN; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -505,7 +492,7 @@ Call:     sDisIXANY(ChP)
 #define sDisIXANY(ChP) \
 do { \
    (ChP)->R[0x0e] = 0x86; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->R[0x0c]); \
+   out32((ChP)->IndexAddr,&(ChP)->R[0x0c]); \
 } while (0)
 
 /***************************************************************************
@@ -519,7 +506,7 @@ Comments: Function sSetParity() can be used in place of functions sEnParity(),
 #define sDisParity(ChP) \
 do { \
    (ChP)->TxControl[2] &= ~PARITY_EN; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -531,7 +518,7 @@ Call:     sDisRTSToggle(ChP)
 #define sDisRTSToggle(ChP) \
 do { \
    (ChP)->TxControl[2] &= ~RTSTOG_EN; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
    (ChP)->rtsToggle = 0; \
 } while (0)
 
@@ -544,7 +531,7 @@ Call:     sDisRxFIFO(ChP)
 #define sDisRxFIFO(ChP) \
 do { \
    (ChP)->R[0x32] = 0x0a; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->R[0x30]); \
+   out32((ChP)->IndexAddr,&(ChP)->R[0x30]); \
 } while (0)
 
 /***************************************************************************
@@ -571,7 +558,7 @@ Call:     sDisTransmit(ChP)
 #define sDisTransmit(ChP) \
 do { \
    (ChP)->TxControl[3] &= ~TX_ENABLE; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -583,7 +570,7 @@ Call:     sDisTxSoftFlowCtl(ChP)
 #define sDisTxSoftFlowCtl(ChP) \
 do { \
    (ChP)->R[0x06] = 0x8a; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->R[0x04]); \
+   out32((ChP)->IndexAddr,&(ChP)->R[0x04]); \
 } while (0)
 
 /***************************************************************************
@@ -608,7 +595,7 @@ Call:     sEnCTSFlowCtl(ChP)
 #define sEnCTSFlowCtl(ChP) \
 do { \
    (ChP)->TxControl[2] |= CTSFC_EN; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -620,7 +607,7 @@ Call:     sEnIXANY(ChP)
 #define sEnIXANY(ChP) \
 do { \
    (ChP)->R[0x0e] = 0x21; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->R[0x0c]); \
+   out32((ChP)->IndexAddr,&(ChP)->R[0x0c]); \
 } while (0)
 
 /***************************************************************************
@@ -637,7 +624,7 @@ Warnings: Before enabling parity odd or even parity should be chosen using
 #define sEnParity(ChP) \
 do { \
    (ChP)->TxControl[2] |= PARITY_EN; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -651,10 +638,10 @@ Comments: This function will disable RTS flow control and clear the RTS
 #define sEnRTSToggle(ChP) \
 do { \
    (ChP)->RxControl[2] &= ~RTSFC_EN; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->RxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->RxControl); \
    (ChP)->TxControl[2] |= RTSTOG_EN; \
    (ChP)->TxControl[3] &= ~SET_RTS; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
    (ChP)->rtsToggle = 1; \
 } while (0)
 
@@ -667,7 +654,7 @@ Call:     sEnRxFIFO(ChP)
 #define sEnRxFIFO(ChP) \
 do { \
    (ChP)->R[0x32] = 0x08; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->R[0x30]); \
+   out32((ChP)->IndexAddr,&(ChP)->R[0x30]); \
 } while (0)
 
 /***************************************************************************
@@ -688,7 +675,7 @@ Warnings: This function must be called after valid microcode has been
 #define sEnRxProcessor(ChP) \
 do { \
    (ChP)->RxControl[2] |= RXPROC_EN; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->RxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->RxControl); \
 } while (0)
 
 /***************************************************************************
@@ -712,7 +699,7 @@ Call:     sEnTransmit(ChP)
 #define sEnTransmit(ChP) \
 do { \
    (ChP)->TxControl[3] |= TX_ENABLE; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -724,7 +711,7 @@ Call:     sEnTxSoftFlowCtl(ChP)
 #define sEnTxSoftFlowCtl(ChP) \
 do { \
    (ChP)->R[0x06] = 0xc5; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->R[0x04]); \
+   out32((ChP)->IndexAddr,&(ChP)->R[0x04]); \
 } while (0)
 
 /***************************************************************************
@@ -931,7 +918,7 @@ Call:     sSendBreak(ChP)
 #define sSendBreak(ChP) \
 do { \
    (ChP)->TxControl[3] |= SETBREAK; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -945,7 +932,7 @@ Call:     sSetBaud(ChP,Divisor)
 do { \
    (ChP)->BaudDiv[2] = (Byte_t)(DIVISOR); \
    (ChP)->BaudDiv[3] = (Byte_t)((DIVISOR) >> 8); \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->BaudDiv[0]); \
+   out32((ChP)->IndexAddr,(ChP)->BaudDiv); \
 } while (0)
 
 /***************************************************************************
@@ -957,7 +944,7 @@ Call:     sSetData7(ChP)
 #define sSetData7(ChP) \
 do { \
    (ChP)->TxControl[2] &= ~DATA8BIT; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -969,7 +956,7 @@ Call:     sSetData8(ChP)
 #define sSetData8(ChP) \
 do { \
    (ChP)->TxControl[2] |= DATA8BIT; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -981,7 +968,7 @@ Call:     sSetDTR(ChP)
 #define sSetDTR(ChP) \
 do { \
    (ChP)->TxControl[3] |= SET_DTR; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -998,7 +985,7 @@ Warnings: This function has no effect unless parity is enabled with function
 #define sSetEvenParity(ChP) \
 do { \
    (ChP)->TxControl[2] |= EVEN_PAR; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -1015,7 +1002,7 @@ Warnings: This function has no effect unless parity is enabled with function
 #define sSetOddParity(ChP) \
 do { \
    (ChP)->TxControl[2] &= ~EVEN_PAR; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -1028,7 +1015,7 @@ Call:     sSetRTS(ChP)
 do { \
    if ((ChP)->rtsToggle) break; \
    (ChP)->TxControl[3] |= SET_RTS; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -1054,7 +1041,7 @@ Comments: An interrupt will be generated when the trigger level is reached
 do { \
    (ChP)->RxControl[2] &= ~TRIG_MASK; \
    (ChP)->RxControl[2] |= LEVEL; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->RxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->RxControl); \
 } while (0)
 
 /***************************************************************************
@@ -1066,7 +1053,7 @@ Call:     sSetStop1(ChP)
 #define sSetStop1(ChP) \
 do { \
    (ChP)->TxControl[2] &= ~STOP2; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -1078,7 +1065,7 @@ Call:     sSetStop2(ChP)
 #define sSetStop2(ChP) \
 do { \
    (ChP)->TxControl[2] |= STOP2; \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->TxControl[0]); \
+   out32((ChP)->IndexAddr,(ChP)->TxControl); \
 } while (0)
 
 /***************************************************************************
@@ -1091,7 +1078,7 @@ Call:     sSetTxXOFFChar(ChP,Ch)
 #define sSetTxXOFFChar(ChP,CH) \
 do { \
    (ChP)->R[0x07] = (CH); \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->R[0x04]); \
+   out32((ChP)->IndexAddr,&(ChP)->R[0x04]); \
 } while (0)
 
 /***************************************************************************
@@ -1104,7 +1091,7 @@ Call:     sSetTxXONChar(ChP,Ch)
 #define sSetTxXONChar(ChP,CH) \
 do { \
    (ChP)->R[0x0b] = (CH); \
-   sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->R[0x08]); \
+   out32((ChP)->IndexAddr,&(ChP)->R[0x08]); \
 } while (0)
 
 /***************************************************************************
@@ -1117,7 +1104,7 @@ Comments: This function is used to start a Rx processor after it was
           will restart both the Rx processor and software input flow control.
 
 */
-#define sStartRxProcessor(ChP) sOutDW((ChP)->IndexAddr,*(DWord_t *)&(ChP)->R[0])
+#define sStartRxProcessor(ChP) out32((ChP)->IndexAddr,&(ChP)->R[0])
 
 /***************************************************************************
 Function: sWriteTxByte
@@ -1138,40 +1125,28 @@ Warnings: This function writes the data byte without checking to see if
 
 struct r_port {
 	int magic;
+	struct tty_port port;
 	int line;
-	int flags;
-	int count;
-	int blocked_open;
-	struct tty_struct *tty;
+	int flags;		/* Don't yet match the ASY_ flags!! */
 	unsigned int board:3;
 	unsigned int aiop:2;
 	unsigned int chan:3;
 	CONTROLLER_t *ctlp;
 	CHANNEL_t channel;
-	int closing_wait;
-	int close_delay;
 	int intmask;
 	int xmit_fifo_room;	/* room in xmit fifo */
 	unsigned char *xmit_buf;
 	int xmit_head;
 	int xmit_tail;
 	int xmit_cnt;
-	int session;
-	int pgrp;
 	int cd_status;
 	int ignore_status_mask;
 	int read_status_mask;
 	int cps;
 
-#ifdef DECLARE_WAITQUEUE
-	wait_queue_head_t open_wait;
-	wait_queue_head_t close_wait;
-#else
-	struct wait_queue *open_wait;
-	struct wait_queue *close_wait;
-#endif
+	struct completion close_wait;	/* Not yet matching the core */
 	spinlock_t slock;
-	struct semaphore write_sem;
+	struct mutex write_mtx;
 };
 
 #define RPORT_MAGIC 0x525001
@@ -1186,14 +1161,6 @@ struct r_port {
 
 /* number of characters left in xmit buffer before we ask for more */
 #define WAKEUP_CHARS 256
-
-/* Internal flags used only by the rocketport driver */
-#define ROCKET_INITIALIZED	0x80000000	/* Port is active */
-#define ROCKET_CLOSING		0x40000000	/* Serial port is closing */
-#define ROCKET_NORMAL_ACTIVE	0x20000000	/* Normal port is active */
-
-/* tty subtypes */
-#define SERIAL_TYPE_NORMAL 1
 
 /*
  * Assigned major numbers for the Comtrol Rocketport
@@ -1244,13 +1211,4 @@ struct r_port {
 
 /* Compact PCI device */ 
 #define PCI_DEVICE_ID_CRP16INTF		0x0903	/* Rocketport Compact PCI 16 port w/external I/F */
-
-#define TTY_GET_LINE(t) t->index
-#define TTY_DRIVER_MINOR_START(t) t->driver->minor_start
-#define TTY_DRIVER_SUBTYPE(t) t->driver->subtype
-#define TTY_DRIVER_NAME(t) t->driver->name
-#define TTY_DRIVER_NAME_BASE(t) t->driver->name_base
-#define TTY_DRIVER_FLUSH_BUFFER_EXISTS(t) t->driver->flush_buffer
-#define TTY_DRIVER_FLUSH_BUFFER(t) t->driver->flush_buffer(t)
-
 

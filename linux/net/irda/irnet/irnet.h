@@ -44,7 +44,7 @@
  * the generic Linux PPP driver. Because IrNET depend on recent
  * changes of the PPP driver interface, IrNET will work only with very
  * recent kernel (2.3.99-pre6 and up).
- * 
+ *
  * The present implementation offer the following features :
  *	o simple user interface using pppd
  *	o efficient implementation (interface directly to PPP and IrTTP)
@@ -249,6 +249,7 @@
 #include <linux/poll.h>
 #include <linux/capability.h>
 #include <linux/ctype.h>	/* isspace() */
+#include <linux/string.h>	/* skip_spaces() */
 #include <asm/uaccess.h>
 #include <linux/init.h>
 
@@ -327,7 +328,7 @@
 
 #define DEBUG_ASSERT		0	/* Verify all assertions */
 
-/* 
+/*
  * These are the macros we are using to actually print the debug
  * statements. Don't look at it, it's ugly...
  *
@@ -337,27 +338,27 @@
 /* All error messages (will show up in the normal logs) */
 #define DERROR(dbg, format, args...) \
 	{if(DEBUG_##dbg) \
-		printk(KERN_INFO "irnet: %s(): " format, __FUNCTION__ , ##args);}
+		printk(KERN_INFO "irnet: %s(): " format, __func__ , ##args);}
 
 /* Normal debug message (will show up in /var/log/debug) */
 #define DEBUG(dbg, format, args...) \
 	{if(DEBUG_##dbg) \
-		printk(KERN_DEBUG "irnet: %s(): " format, __FUNCTION__ , ##args);}
+		printk(KERN_DEBUG "irnet: %s(): " format, __func__ , ##args);}
 
 /* Entering a function (trace) */
 #define DENTER(dbg, format, args...) \
 	{if(DEBUG_##dbg) \
-		printk(KERN_DEBUG "irnet: -> %s" format, __FUNCTION__ , ##args);}
+		printk(KERN_DEBUG "irnet: -> %s" format, __func__ , ##args);}
 
 /* Entering and exiting a function in one go (trace) */
 #define DPASS(dbg, format, args...) \
 	{if(DEBUG_##dbg) \
-		printk(KERN_DEBUG "irnet: <>%s" format, __FUNCTION__ , ##args);}
+		printk(KERN_DEBUG "irnet: <>%s" format, __func__ , ##args);}
 
 /* Exiting a function (trace) */
 #define DEXIT(dbg, format, args...) \
 	{if(DEBUG_##dbg) \
-		printk(KERN_DEBUG "irnet: <-%s()" format, __FUNCTION__ , ##args);}
+		printk(KERN_DEBUG "irnet: <-%s()" format, __func__ , ##args);}
 
 /* Exit a function with debug */
 #define DRETURN(ret, dbg, args...) \
@@ -405,7 +406,7 @@ typedef struct irnet_socket
   /* "pppd" interact directly with us on a /dev/ file */
   struct file *		file;		/* File descriptor of this instance */
   /* TTY stuff - to keep "pppd" happy */
-  struct termios	termios;	/* Various tty flags */
+  struct ktermios	termios;	/* Various tty flags */
   /* Stuff for the control channel */
   int			event_index;	/* Last read in the event log */
 
@@ -419,7 +420,7 @@ typedef struct irnet_socket
   u32			raccm;		/* to please pppd - dummy) */
   unsigned int		flags;		/* PPP flags (compression, ...) */
   unsigned int		rbits;		/* Unused receive flags ??? */
-
+  struct work_struct disconnect_work;   /* Process context disconnection */
   /* ------------------------ IrTTP part ------------------------ */
   /* We create a pseudo "socket" over the IrDA tranport */
   unsigned long		ttp_open;	/* Set when IrTTP is ready */

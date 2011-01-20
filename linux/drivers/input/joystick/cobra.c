@@ -1,6 +1,4 @@
 /*
- * $Id: cobra.c,v 1.19 2002/01/22 20:26:52 vojtech Exp $
- *
  *  Copyright (c) 1999-2001 Vojtech Pavlik
  */
 
@@ -142,7 +140,7 @@ static void cobra_poll(struct gameport *gameport)
 
 static int cobra_open(struct input_dev *dev)
 {
-	struct cobra *cobra = dev->private;
+	struct cobra *cobra = input_get_drvdata(dev);
 
 	gameport_start_polling(cobra->gameport);
 	return 0;
@@ -150,7 +148,7 @@ static int cobra_open(struct input_dev *dev)
 
 static void cobra_close(struct input_dev *dev)
 {
-	struct cobra *cobra = dev->private;
+	struct cobra *cobra = input_get_drvdata(dev);
 
 	gameport_stop_polling(cobra->gameport);
 }
@@ -211,24 +209,28 @@ static int cobra_connect(struct gameport *gameport, struct gameport_driver *drv)
 		input_dev->id.vendor = GAMEPORT_ID_VENDOR_CREATIVE;
 		input_dev->id.product = 0x0008;
 		input_dev->id.version = 0x0100;
-		input_dev->cdev.dev = &gameport->dev;
-		input_dev->private = cobra;
+		input_dev->dev.parent = &gameport->dev;
+
+		input_set_drvdata(input_dev, cobra);
 
 		input_dev->open = cobra_open;
 		input_dev->close = cobra_close;
 
-		input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
+		input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
 		input_set_abs_params(input_dev, ABS_X, -1, 1, 0, 0);
 		input_set_abs_params(input_dev, ABS_Y, -1, 1, 0, 0);
 		for (j = 0; cobra_btn[j]; j++)
 			set_bit(cobra_btn[j], input_dev->keybit);
 
-		input_register_device(cobra->dev[i]);
+		err = input_register_device(cobra->dev[i]);
+		if (err)
+			goto fail4;
 	}
 
 	return 0;
 
- fail3:	for (i = 0; i < 2; i++)
+ fail4:	input_free_device(cobra->dev[i]);
+ fail3:	while (--i >= 0)
 		if (cobra->dev[i])
 			input_unregister_device(cobra->dev[i]);
  fail2:	gameport_close(gameport);
@@ -261,8 +263,7 @@ static struct gameport_driver cobra_drv = {
 
 static int __init cobra_init(void)
 {
-	gameport_register_driver(&cobra_drv);
-	return 0;
+	return gameport_register_driver(&cobra_drv);
 }
 
 static void __exit cobra_exit(void)

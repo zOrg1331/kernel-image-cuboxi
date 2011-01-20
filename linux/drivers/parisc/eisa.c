@@ -33,7 +33,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
-#include <linux/sched.h>
 #include <linux/spinlock.h>
 #include <linux/eisa.h>
 
@@ -189,7 +188,7 @@ static unsigned int eisa_startup_irq(unsigned int irq)
 	return 0;
 }
 
-static struct hw_interrupt_type eisa_interrupt_type = {
+static struct irq_chip eisa_interrupt_type = {
 	.typename =	"EISA",
 	.startup =	eisa_startup_irq,
 	.shutdown =	eisa_disable_irq,
@@ -199,7 +198,7 @@ static struct hw_interrupt_type eisa_interrupt_type = {
 	.end =		no_end_irq,
 };
 
-static irqreturn_t eisa_irq(int wax_irq, void *intr_dev, struct pt_regs *regs)
+static irqreturn_t eisa_irq(int wax_irq, void *intr_dev)
 {
 	int irq = gsc_readb(0xfc01f000); /* EISA supports 16 irqs */
 	unsigned long flags;
@@ -234,7 +233,7 @@ static irqreturn_t eisa_irq(int wax_irq, void *intr_dev, struct pt_regs *regs)
 	}
 	spin_unlock_irqrestore(&eisa_irq_lock, flags);
 
-	__do_IRQ(irq, regs);
+	__do_IRQ(irq);
    
 	spin_lock_irqsave(&eisa_irq_lock, flags);
 	/* unmask */
@@ -249,7 +248,7 @@ static irqreturn_t eisa_irq(int wax_irq, void *intr_dev, struct pt_regs *regs)
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t dummy_irq2_handler(int _, void *dev, struct pt_regs *regs)
+static irqreturn_t dummy_irq2_handler(int _, void *dev)
 {
 	printk(KERN_ALERT "eisa: uhh, irq2?\n");
 	return IRQ_HANDLED;
@@ -308,14 +307,14 @@ static void init_eisa_pic(void)
 
 #define is_mongoose(dev) (dev->id.sversion == 0x00076)
 
-static int __devinit eisa_probe(struct parisc_device *dev)
+static int __init eisa_probe(struct parisc_device *dev)
 {
 	int i, result;
 
 	char *name = is_mongoose(dev) ? "Mongoose" : "Wax";
 
 	printk(KERN_INFO "%s EISA Adapter found at 0x%08lx\n", 
-		name, dev->hpa.start);
+		name, (unsigned long)dev->hpa.start);
 
 	eisa_dev.hba.dev = dev;
 	eisa_dev.hba.iommu = ccio_get_iommu(dev);
@@ -347,10 +346,10 @@ static int __devinit eisa_probe(struct parisc_device *dev)
 	}
 	
 	/* Reserve IRQ2 */
-	irq_desc[2].action = &irq2_action;
+	irq_to_desc(2)->action = &irq2_action;
 	
 	for (i = 0; i < 16; i++) {
-		irq_desc[i].chip = &eisa_interrupt_type;
+		irq_to_desc(i)->chip = &eisa_interrupt_type;
 	}
 	
 	EISA_bus = 1;
@@ -374,7 +373,7 @@ static int __devinit eisa_probe(struct parisc_device *dev)
 	if (result >= 0) {
 		/* FIXME : Don't enumerate the bus twice. */
 		eisa_dev.root.dev = &dev->dev;
-		dev->dev.driver_data = &eisa_dev.root;
+		dev_set_drvdata(&dev->dev, &eisa_dev.root);
 		eisa_dev.root.bus_base_addr = 0;
 		eisa_dev.root.res = &eisa_dev.hba.io_space;
 		eisa_dev.root.slots = result;
@@ -388,7 +387,7 @@ static int __devinit eisa_probe(struct parisc_device *dev)
 	return 0;
 }
 
-static struct parisc_device_id eisa_tbl[] = {
+static const struct parisc_device_id eisa_tbl[] = {
 	{ HPHW_BA, HVERSION_REV_ANY_ID, HVERSION_ANY_ID, 0x00076 }, /* Mongoose */
 	{ HPHW_BA, HVERSION_REV_ANY_ID, HVERSION_ANY_ID, 0x00090 }, /* Wax EISA */
 	{ 0, }

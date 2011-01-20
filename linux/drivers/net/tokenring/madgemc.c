@@ -11,7 +11,7 @@
  *	- Madge Smart 16/4 Ringnode MC32 (??)
  *
  *  Maintainer(s):
- *    AF	Adam Fritzler		mid@auk.cx
+ *    AF	Adam Fritzler
  *
  *  Modification History:
  *	16-Jan-00	AF	Created
@@ -23,7 +23,6 @@ static const char version[] = "madgemc.c: v0.91 23/01/2000 by Adam Fritzler\n";
 #include <linux/mca.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
-#include <linux/pci.h>
 #include <linux/init.h>
 #include <linux/netdevice.h>
 #include <linux/trdevice.h>
@@ -70,7 +69,7 @@ static void madgemc_setregpage(struct net_device *dev, int page);
 static void madgemc_setsifsel(struct net_device *dev, int val);
 static void madgemc_setint(struct net_device *dev, int val);
 
-static irqreturn_t madgemc_interrupt(int irq, void *dev_id, struct pt_regs *regs);
+static irqreturn_t madgemc_interrupt(int irq, void *dev_id);
 
 /*
  * These work around paging, however they don't guarentee you're on the
@@ -143,7 +142,7 @@ static void madgemc_sifwritew(struct net_device *dev, unsigned short val, unsign
 	return;
 }
 
-
+static struct net_device_ops madgemc_netdev_ops __read_mostly;
 
 static int __devinit madgemc_probe(struct device *device)
 {	
@@ -152,7 +151,7 @@ static int __devinit madgemc_probe(struct device *device)
 	struct net_local *tp;
 	struct card_info *card;
 	struct mca_device *mdev = to_mca_device(device);
-	int ret = 0, i = 0;
+	int ret = 0;
 
 	if (versionprinted++ == 0)
 		printk("%s", version);
@@ -169,8 +168,7 @@ static int __devinit madgemc_probe(struct device *device)
 		goto getout;
 	}
 
-	SET_MODULE_OWNER(dev);
-	dev->dma = 0;
+	dev->netdev_ops = &madgemc_netdev_ops;
 
 	card = kmalloc(sizeof(struct card_info), GFP_KERNEL);
 	if (card==NULL) {
@@ -324,11 +322,8 @@ static int __devinit madgemc_probe(struct device *device)
 	mca_device_set_name(mdev, (card->cardtype == 0x08)?MADGEMC16_CARDNAME:MADGEMC32_CARDNAME);
 	mca_set_adapter_procfn(mdev->slot, madgemc_mcaproc, dev);
 
-	printk("%s:     Ring Station Address: ", dev->name);
-	printk("%2.2x", dev->dev_addr[0]);
-	for (i = 1; i < 6; i++)
-		printk(":%2.2x", dev->dev_addr[i]);
-	printk("\n");
+	printk("%s:     Ring Station Address: %pM\n",
+	       dev->name, dev->dev_addr);
 
 	if (tmsdev_init(dev, device)) {
 		printk("%s: unable to get memory for dev->priv.\n", 
@@ -352,9 +347,6 @@ static int __devinit madgemc_probe(struct device *device)
 	tp->DataRate = (card->ringspeed)?SPEED_16:SPEED_4;
 
 	memcpy(tp->ProductID, "Madge MCA 16/4    ", PROD_ID_SIZE + 1);
-
-	dev->open = madgemc_open;
-	dev->stop = madgemc_close;
 
 	tp->tmspriv = card;
 	dev_set_drvdata(device, dev);
@@ -417,7 +409,7 @@ getout:
  * exhausted all contiguous interrupts.
  *
  */
-static irqreturn_t madgemc_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t madgemc_interrupt(int irq, void *dev_id)
 {
 	int pending,reg1;
 	struct net_device *dev;
@@ -451,7 +443,7 @@ static irqreturn_t madgemc_interrupt(int irq, void *dev_id, struct pt_regs *regs
 			outb(reg1, dev->base_addr + MC_CONTROL_REG1);
 
 			/* Continue handling as normal */
-			tms380tr_interrupt(irq, dev_id, regs);
+			tms380tr_interrupt(irq, dev_id);
 
 			pending = SIFREADW(SIFSTS); /* restart - the SIF way */
 
@@ -471,7 +463,7 @@ static irqreturn_t madgemc_interrupt(int irq, void *dev_id, struct pt_regs *regs
  * zero to leave the TMS NSELOUT bits unaffected.
  *
  */
-unsigned short madgemc_setnselout_pins(struct net_device *dev)
+static unsigned short madgemc_setnselout_pins(struct net_device *dev)
 {
 	unsigned char reg1;
 	struct net_local *tp = netdev_priv(dev);
@@ -691,15 +683,12 @@ static int madgemc_close(struct net_device *dev)
 static int madgemc_mcaproc(char *buf, int slot, void *d) 
 {	
 	struct net_device *dev = (struct net_device *)d;
-	struct net_local *tp = dev->priv;
+	struct net_local *tp = netdev_priv(dev);
 	struct card_info *curcard = tp->tmspriv;
 	int len = 0;
 	
 	len += sprintf(buf+len, "-------\n");
 	if (curcard) {
-		struct net_local *tp = netdev_priv(dev);
-		int i;
-		
 		len += sprintf(buf+len, "Card Revision: %d\n", curcard->cardrev);
 		len += sprintf(buf+len, "RAM Size: %dkb\n", curcard->ramsize);
 		len += sprintf(buf+len, "Cable type: %s\n", (curcard->cabletype)?"STP/DB9":"UTP/RJ-45");
@@ -718,11 +707,8 @@ static int madgemc_mcaproc(char *buf, int slot, void *d)
 		}
 		len += sprintf(buf+len, " (%s)\n", (curcard->fairness)?"Unfair":"Fair");
 		
-		len += sprintf(buf+len, "Ring Station Address: ");
-		len += sprintf(buf+len, "%2.2x", dev->dev_addr[0]);
-		for (i = 1; i < 6; i++)
-			len += sprintf(buf+len, " %2.2x", dev->dev_addr[i]);
-		len += sprintf(buf+len, "\n");
+		len += sprintf(buf+len, "Ring Station Address: %pM\n",
+			       dev->dev_addr);
 	} else 
 		len += sprintf(buf+len, "Card not configured\n");
 
@@ -737,7 +723,7 @@ static int __devexit madgemc_remove(struct device *device)
 
 	BUG_ON(!dev);
 
-	tp = dev->priv;
+	tp = netdev_priv(dev);
 	card = tp->tmspriv;
 	kfree(card);
 	tp->tmspriv = NULL;
@@ -769,6 +755,10 @@ static struct mca_driver madgemc_driver = {
 
 static int __init madgemc_init (void)
 {
+	madgemc_netdev_ops = tms380tr_netdev_ops;
+	madgemc_netdev_ops.ndo_open = madgemc_open;
+	madgemc_netdev_ops.ndo_stop = madgemc_close;
+
 	return mca_register_driver (&madgemc_driver);
 }
 

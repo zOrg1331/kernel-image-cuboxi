@@ -12,8 +12,6 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License.
- *
- *  $Id: 8250_pnp.c,v 1.10 2002/07/21 21:32:30 rmk Exp $
  */
 #include <linux/module.h>
 #include <linux/init.h>
@@ -69,6 +67,8 @@ static const struct pnp_device_id pnp_dev_table[] = {
 	{	"CTL3001",		0	},
 	/* Creative Labs Modem Blaster 28.8 DSVD PnP Voice */
 	{	"CTL3011",		0	},
+	/* Davicom ISA 33.6K Modem */
+	{	"DAV0336",		0	},
 	/* Creative */
 	/* Creative Modem Blaster Flash56 DI5601-1 */
 	{	"DMB1032",		0	},
@@ -89,6 +89,8 @@ static const struct pnp_device_id pnp_dev_table[] = {
 	/* Archtek America Corp. */
 	/* Archtek SmartLink Modem 3334BT Plug & Play */
 	{	"GVC000F",		0	},
+	/* Archtek SmartLink Modem 3334BRV 33.6K Data Fax Voice */
+	{	"GVC0303",		0	},
 	/* Hayes */
 	/* Hayes Optima 288 V.34-V.FC + FAX + Voice Plug & Play */
 	{	"HAY0001",		0	},
@@ -268,6 +270,8 @@ static const struct pnp_device_id pnp_dev_table[] = {
 	{       "RSS0250",              0       },
 	/* SupraExpress 28.8 Data/Fax PnP modem */
 	{	"SUP1310",		0	},
+	/* SupraExpress 336i PnP Voice Modem */
+	{	"SUP1381",		0	},
 	/* SupraExpress 33.6 Data/Fax PnP modem */
 	{	"SUP1421",		0	},
 	/* SupraExpress 33.6 Data/Fax PnP modem */
@@ -324,9 +328,33 @@ static const struct pnp_device_id pnp_dev_table[] = {
 	/* U.S. Robotics 56K Voice INT PnP*/
 	{	"USR9190",		0	},
 	/* Wacom tablets */
-	{	"WACF004",		0	},
-	{	"WACF005",		0	},
-	{       "WACF006",              0       },
+	{	"WACFXXX",		0	},
+	/* Compaq touchscreen */
+	{       "FPI2002",              0 },
+	/* Fujitsu Stylistic touchscreens */
+	{       "FUJ02B2",              0 },
+	{       "FUJ02B3",              0 },
+	/* Fujitsu Stylistic LT touchscreens */
+	{       "FUJ02B4",              0 },
+	/* Passive Fujitsu Stylistic touchscreens */
+	{       "FUJ02B6",              0 },
+	{       "FUJ02B7",              0 },
+	{       "FUJ02B8",              0 },
+	{       "FUJ02B9",              0 },
+	{       "FUJ02BC",              0 },
+	/* Fujitsu Wacom Tablet PC device */
+	{	"FUJ02E5",		0	},
+	/* Fujitsu P-series tablet PC device */
+	{	"FUJ02E6",		0	},
+	/* Fujitsu Wacom 2FGT Tablet PC device */
+	{	"FUJ02E7",		0	},
+	/* Fujitsu Wacom 1FGT Tablet PC device */
+	{	"FUJ02E9",		0	},
+	/*
+	 * LG C1 EXPRESS DUAL (C1-PB11A3) touch screen (actually a FUJ02E6 in
+	 * disguise)
+	 */
+	{	"LTS0001",		0       },
 	/* Rockwell's (PORALiNK) 33600 INT PNP */
 	{	"WCI0003",		0	},
 	/* Unkown PnP modems */
@@ -356,21 +384,14 @@ static int __devinit check_name(char *name)
 	return 0;
 }
 
-static int __devinit check_resources(struct pnp_option *option)
+static int __devinit check_resources(struct pnp_dev *dev)
 {
-	struct pnp_option *tmp;
-	if (!option)
-		return 0;
+	resource_size_t base[] = {0x2f8, 0x3f8, 0x2e8, 0x3e8};
+	int i;
 
-	for (tmp = option; tmp; tmp = tmp->next) {
-		struct pnp_port *port;
-		for (port = tmp->port; port; port = port->next)
-			if ((port->size == 8) &&
-			    ((port->min == 0x2f8) ||
-			     (port->min == 0x3f8) ||
-			     (port->min == 0x2e8) ||
-			     (port->min == 0x3e8)))
-				return 1;
+	for (i = 0; i < ARRAY_SIZE(base); i++) {
+		if (pnp_possible_config(dev, IORESOURCE_IO, base[i], 8))
+			return 1;
 	}
 
 	return 0;
@@ -389,13 +410,11 @@ static int __devinit check_resources(struct pnp_option *option)
  */
 static int __devinit serial_pnp_guess_board(struct pnp_dev *dev, int *flags)
 {
-	if (!(check_name(pnp_dev_name(dev)) || (dev->card && check_name(dev->card->name))))
-		return -ENODEV;
+	if (!(check_name(pnp_dev_name(dev)) ||
+		(dev->card && check_name(dev->card->name))))
+			return -ENODEV;
 
-	if (check_resources(dev->independent))
-		return 0;
-
-	if (check_resources(dev->dependent))
+	if (check_resources(dev))
 		return 0;
 
 	return -ENODEV;
@@ -414,7 +433,8 @@ serial_pnp_probe(struct pnp_dev *dev, const struct pnp_device_id *dev_id)
 	}
 
 	memset(&port, 0, sizeof(struct uart_port));
-	port.irq = pnp_irq(dev, 0);
+	if (pnp_irq_valid(dev, 0))
+		port.irq = pnp_irq(dev, 0);
 	if (pnp_port_valid(dev, 0)) {
 		port.iobase = pnp_port_start(dev, 0);
 		port.iotype = UPIO_PORT;
@@ -426,8 +446,9 @@ serial_pnp_probe(struct pnp_dev *dev, const struct pnp_device_id *dev_id)
 		return -ENODEV;
 
 #ifdef SERIAL_DEBUG_PNP
-	printk("Setup PNP port: port %x, mem 0x%lx, irq %d, type %d\n",
-	       port.iobase, port.mapbase, port.irq, port.iotype);
+	printk(KERN_DEBUG
+		"Setup PNP port: port %x, mem 0x%lx, irq %d, type %d\n",
+		       port.iobase, port.mapbase, port.irq, port.iotype);
 #endif
 
 	port.flags |= UPF_SKIP_TEST | UPF_BOOT_AUTOCONF;
@@ -437,11 +458,11 @@ serial_pnp_probe(struct pnp_dev *dev, const struct pnp_device_id *dev_id)
 	port.dev = &dev->dev;
 
 	line = serial8250_register_port(&port);
+	if (line < 0)
+		return -ENODEV;
 
-	if (line >= 0)
-		pnp_set_drvdata(dev, (void *)((long)line + 1));
-	return line >= 0 ? 0 : -ENODEV;
-
+	pnp_set_drvdata(dev, (void *)((long)line + 1));
+	return 0;
 }
 
 static void __devexit serial_pnp_remove(struct pnp_dev *dev)
@@ -451,11 +472,38 @@ static void __devexit serial_pnp_remove(struct pnp_dev *dev)
 		serial8250_unregister_port(line - 1);
 }
 
+#ifdef CONFIG_PM
+static int serial_pnp_suspend(struct pnp_dev *dev, pm_message_t state)
+{
+	long line = (long)pnp_get_drvdata(dev);
+
+	if (!line)
+		return -ENODEV;
+	serial8250_suspend_port(line - 1);
+	return 0;
+}
+
+static int serial_pnp_resume(struct pnp_dev *dev)
+{
+	long line = (long)pnp_get_drvdata(dev);
+
+	if (!line)
+		return -ENODEV;
+	serial8250_resume_port(line - 1);
+	return 0;
+}
+#else
+#define serial_pnp_suspend NULL
+#define serial_pnp_resume NULL
+#endif /* CONFIG_PM */
+
 static struct pnp_driver serial_pnp_driver = {
 	.name		= "serial",
-	.id_table	= pnp_dev_table,
 	.probe		= serial_pnp_probe,
 	.remove		= __devexit_p(serial_pnp_remove),
+	.suspend	= serial_pnp_suspend,
+	.resume		= serial_pnp_resume,
+	.id_table	= pnp_dev_table,
 };
 
 static int __init serial8250_pnp_init(void)

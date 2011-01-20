@@ -18,8 +18,6 @@
 #include <linux/interrupt.h>
 #include <asm/irq.h>
 #include <linux/in6.h>
-#include <linux/pci.h>
-#include <linux/ide.h>
 
 #include <asm/uaccess.h>
 #include <asm/checksum.h>
@@ -27,7 +25,6 @@
 #include <asm/io.h>
 #include <asm/page.h>
 #include <asm/pgalloc.h>
-#include <asm/semaphore.h>
 #ifdef CONFIG_BLK_DEV_FD
 #include <asm/floppy.h>
 #endif
@@ -39,21 +36,10 @@
 /*
  * String functions
  */
-EXPORT_SYMBOL(memcmp);
 EXPORT_SYMBOL(memset);
 EXPORT_SYMBOL(memcpy);
 EXPORT_SYMBOL(memmove);
-EXPORT_SYMBOL(memchr);
-EXPORT_SYMBOL(strcat);
-EXPORT_SYMBOL(strchr);
-EXPORT_SYMBOL(strlen);
-EXPORT_SYMBOL(strncat);
-EXPORT_SYMBOL(strnlen);
-EXPORT_SYMBOL(strrchr);
-EXPORT_SYMBOL(strstr);
 
-EXPORT_SYMBOL(enable_irq);
-EXPORT_SYMBOL(disable_irq);
 EXPORT_SYMBOL(kernel_thread);
 
 /*
@@ -82,14 +68,6 @@ EXPORT_SYMBOL(__udivsi3);
 EXPORT_SYMBOL(__umodsi3);
 EXPORT_SYMBOL(__udivdi3);
 EXPORT_SYMBOL(__umoddi3);
-
-/*
- * Semaphore operations
- */
-EXPORT_SYMBOL(__down);
-EXPORT_SYMBOL(__down_interruptible);
-EXPORT_SYMBOL(__down_trylock);
-EXPORT_SYMBOL(__up);
 
 #ifdef CONFIG_NET
 /*

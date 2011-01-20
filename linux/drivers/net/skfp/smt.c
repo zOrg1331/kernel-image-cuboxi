@@ -18,6 +18,8 @@
 #include "h/fddi.h"
 #include "h/smc.h"
 #include "h/smt_p.h"
+#include <linux/bitrev.h>
+#include <linux/kernel.h>
 
 #define KERNEL
 #include "h/smtstate.h"
@@ -25,8 +27,6 @@
 #ifndef	lint
 static const char ID_sccs[] = "@(#)smt.c	2.43 98/11/23 (C) SK " ;
 #endif
-
-extern const u_char canonical[256] ;
 
 /*
  * FC in SMbuf
@@ -53,16 +53,6 @@ static const char *const smt_class_name[] = {
 static const struct fddi_addr SMT_Unknown = {
 	{ 0,0,0x1f,0,0,0 }
 } ;
-
-/*
- * external variables
- */
-extern const struct fddi_addr fddi_broadcast ;
-
-/*
- * external functions
- */
-int pcm_status_twisted(struct s_smc *smc);
 
 /*
  * function prototypes
@@ -180,7 +170,7 @@ void smt_agent_init(struct s_smc *smc)
 	driver_get_bia(smc,&smc->mib.fddiSMTStationId.sid_node) ;
 	for (i = 0 ; i < 6 ; i ++) {
 		smc->mib.fddiSMTStationId.sid_node.a[i] =
-			canonical[smc->mib.fddiSMTStationId.sid_node.a[i]] ;
+			bitrev8(smc->mib.fddiSMTStationId.sid_node.a[i]);
 	}
 	smc->mib.fddiSMTManufacturerData[0] =
 		smc->mib.fddiSMTStationId.sid_node.a[0] ;
@@ -713,7 +703,7 @@ void smt_received_pack(struct s_smc *smc, SMbuf *mb, int fs)
 			smc->mib.priv.fddiPRIVECF_Reply_Rx++ ;
 			DB_SMT("SMT: received ECF reply from %s\n",
 				addr_to_string(&sm->smt_source),0) ;
-			if (sm_to_para(smc,sm,SMT_P_ECHODATA) == 0) {
+			if (sm_to_para(smc,sm,SMT_P_ECHODATA) == NULL) {
 				DB_SMT("SMT: ECHODATA missing\n",0,0) ;
 				break ;
 			}
@@ -1655,7 +1645,7 @@ static const struct smt_pdef {
 	{ SMT_P4053,	0,	SWAP_SMT_P4053			} ,
 } ;
 
-#define N_SMT_PLEN	(sizeof(smt_pdef)/sizeof(smt_pdef[0]))
+#define N_SMT_PLEN	ARRAY_SIZE(smt_pdef)
 
 int smt_check_para(struct s_smc *smc, struct smt_header	*sm,
 		   const u_short list[])
@@ -1731,25 +1721,23 @@ void fddi_send_antc(struct s_smc *smc, struct fddi_addr *dest)
 #endif
 
 #ifdef	DEBUG
-#define hextoasc(x)	"0123456789abcdef"[x]
-
 char *addr_to_string(struct fddi_addr *addr)
 {
 	int	i ;
 	static char	string[6*3] = "****" ;
 
 	for (i = 0 ; i < 6 ; i++) {
-		string[i*3] = hextoasc((addr->a[i]>>4)&0xf) ;
-		string[i*3+1] = hextoasc((addr->a[i])&0xf) ;
-		string[i*3+2] = ':' ;
+		string[i * 3] = hex_asc_hi(addr->a[i]);
+		string[i * 3 + 1] = hex_asc_lo(addr->a[i]);
+		string[i * 3 + 2] = ':';
 	}
-	string[5*3+2] = 0 ;
-	return(string) ;
+	string[5 * 3 + 2] = 0;
+	return(string);
 }
 #endif
 
 #ifdef	AM29K
-smt_ifconfig(int argc, char *argv[])
+int smt_ifconfig(int argc, char *argv[])
 {
 	if (argc >= 2 && !strcmp(argv[0],"opt_bypass") &&
 	    !strcmp(argv[1],"yes")) {
@@ -2049,9 +2037,8 @@ static void hwm_conv_can(struct s_smc *smc, char *data, int len)
 
 	SK_UNUSED(smc) ;
 
-	for (i = len; i ; i--, data++) {
-		*data = canonical[*(u_char *)data] ;
-	}
+	for (i = len; i ; i--, data++)
+		*data = bitrev8(*data);
 }
 #endif
 

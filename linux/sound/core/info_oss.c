@@ -1,6 +1,6 @@
 /*
  *  Information interface for ALSA driver
- *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -19,7 +19,6 @@
  *
  */
 
-#include <sound/driver.h>
 #include <linux/slab.h>
 #include <linux/time.h>
 #include <linux/string.h>
@@ -44,8 +43,10 @@ int snd_oss_info_register(int dev, int num, char *string)
 {
 	char *x;
 
-	snd_assert(dev >= 0 && dev < SNDRV_OSS_INFO_DEV_COUNT, return -ENXIO);
-	snd_assert(num >= 0 && num < SNDRV_CARDS, return -ENXIO);
+	if (snd_BUG_ON(dev < 0 || dev >= SNDRV_OSS_INFO_DEV_COUNT))
+		return -ENXIO;
+	if (snd_BUG_ON(num < 0 || num >= SNDRV_CARDS))
+		return -ENXIO;
 	mutex_lock(&strings);
 	if (string == NULL) {
 		if ((x = snd_sndstat_strings[num][dev]) != NULL) {
@@ -65,8 +66,6 @@ int snd_oss_info_register(int dev, int num, char *string)
 }
 
 EXPORT_SYMBOL(snd_oss_info_register);
-
-extern void snd_card_info_read_oss(struct snd_info_buffer *buffer);
 
 static int snd_sndstat_show_strings(struct snd_info_buffer *buf, char *id, int dev)
 {
@@ -96,11 +95,11 @@ static void snd_sndstat_proc_read(struct snd_info_entry *entry,
 {
 	snd_iprintf(buffer, "Sound Driver:3.8.1a-980706 (ALSA v" CONFIG_SND_VERSION " emulation code)\n");
 	snd_iprintf(buffer, "Kernel: %s %s %s %s %s\n",
-		    system_utsname.sysname,
-		    system_utsname.nodename,
-		    system_utsname.release,
-		    system_utsname.version,
-		    system_utsname.machine);
+		    init_utsname()->sysname,
+		    init_utsname()->nodename,
+		    init_utsname()->release,
+		    init_utsname()->version,
+		    init_utsname()->machine);
 	snd_iprintf(buffer, "Config options: 0\n");
 	snd_iprintf(buffer, "\nInstalled drivers: \n");
 	snd_iprintf(buffer, "Type 10: ALSA emulation\n");
@@ -131,10 +130,8 @@ int snd_info_minor_register(void)
 
 int snd_info_minor_unregister(void)
 {
-	if (snd_sndstat_proc_entry) {
-		snd_info_unregister(snd_sndstat_proc_entry);
-		snd_sndstat_proc_entry = NULL;
-	}
+	snd_info_free_entry(snd_sndstat_proc_entry);
+	snd_sndstat_proc_entry = NULL;
 	return 0;
 }
 

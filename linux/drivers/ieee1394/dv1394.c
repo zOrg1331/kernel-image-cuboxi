@@ -94,7 +94,7 @@
 #include <linux/pci.h>
 #include <linux/fs.h>
 #include <linux/poll.h>
-#include <linux/smp_lock.h>
+#include <linux/mutex.h>
 #include <linux/bitops.h>
 #include <asm/byteorder.h>
 #include <asm/atomic.h>
@@ -110,15 +110,15 @@
 #include <linux/compat.h>
 #include <linux/cdev.h>
 
-#include "ieee1394.h"
-#include "ieee1394_types.h"
-#include "nodemgr.h"
-#include "hosts.h"
-#include "ieee1394_core.h"
-#include "highlevel.h"
 #include "dv1394.h"
 #include "dv1394-private.h"
-
+#include "highlevel.h"
+#include "hosts.h"
+#include "ieee1394.h"
+#include "ieee1394_core.h"
+#include "ieee1394_hotplug.h"
+#include "ieee1394_types.h"
+#include "nodemgr.h"
 #include "ohci1394.h"
 
 /* DEBUG LEVELS:
@@ -136,13 +136,13 @@
 #if DV1394_DEBUG_LEVEL >= 2
 #define irq_printk( args... ) printk( args )
 #else
-#define irq_printk( args... )
+#define irq_printk( args... ) do {} while (0)
 #endif
 
 #if DV1394_DEBUG_LEVEL >= 1
 #define debug_printk( args... ) printk( args)
 #else
-#define debug_printk( args... )
+#define debug_printk( args... ) do {} while (0)
 #endif
 
 /* issue a dummy PCI read to force the preceding write
@@ -247,7 +247,7 @@ static void frame_delete(struct frame *f)
 
    Frame_prepare() must be called OUTSIDE the video->spinlock.
    However, frame_prepare() must still be serialized, so
-   it should be called WITH the video->sem taken.
+   it should be called WITH the video->mtx taken.
  */
 
 static void frame_prepare(struct video_card *video, unsigned int this_frame)
@@ -265,7 +265,7 @@ static void frame_prepare(struct video_card *video, unsigned int this_frame)
 	/* these flags denote packets that need special attention */
 	int empty_packet, first_packet, last_packet, mid_packet;
 
-	u32 *branch_address, *last_branch_address = NULL;
+	__le32 *branch_address, *last_branch_address = NULL;
 	unsigned long data_p;
 	int first_packet_empty = 0;
 	u32 cycleTimer, ct_sec, ct_cyc, ct_off;
@@ -848,7 +848,7 @@ static void receive_packets(struct video_card *video)
 	dma_addr_t block_dma = 0;
 	struct packet *data = NULL;
 	dma_addr_t data_dma = 0;
-	u32 *last_branch_address = NULL;
+	__le32 *last_branch_address = NULL;
 	unsigned long irq_flags;
 	int want_interrupt = 0;
 	struct frame *f = NULL;
@@ -918,7 +918,7 @@ static int do_dv1394_init(struct video_card *video, struct dv1394_init *init)
 		/* default SYT offset is 3 cycles */
 		init->syt_offset = 3;
 
-	if ( (init->channel > 63) || (init->channel < 0) )
+	if (init->channel > 63)
 		init->channel = 63;
 
 	chan_mask = (u64)1 << init->channel;
@@ -1270,8 +1270,14 @@ static int dv1394_mmap(struct file *file, struct vm_area_struct *vma)
 	struct video_card *video = file_to_video_card(file);
 	int retval = -EINVAL;
 
-	/* serialize mmap */
-	down(&video->sem);
+	/*
+	 * We cannot use the blocking variant mutex_lock here because .mmap
+	 * is called with mmap_sem held, while .ioctl, .read, .write acquire
+	 * video->mtx and subsequently call copy_to/from_user which will
+	 * grab mmap_sem in case of a page fault.
+	 */
+	if (!mutex_trylock(&video->mtx))
+		return -EAGAIN;
 
 	if ( ! video_card_initialized(video) ) {
 		retval = do_dv1394_init_default(video);
@@ -1281,7 +1287,7 @@ static int dv1394_mmap(struct file *file, struct vm_area_struct *vma)
 
 	retval = dma_region_mmap(&video->dv_buf, file, vma);
 out:
-	up(&video->sem);
+	mutex_unlock(&video->mtx);
 	return retval;
 }
 
@@ -1319,11 +1325,7 @@ static int dv1394_fasync(int fd, struct file *file, int on)
 
 	struct video_card *video = file_to_video_card(file);
 
-	int retval = fasync_helper(fd, file, on, &video->fasync);
-
-	if (retval < 0)
-		return retval;
-        return 0;
+	return fasync_helper(fd, file, on, &video->fasync);
 }
 
 static ssize_t dv1394_write(struct file *file, const char __user *buffer, size_t count, loff_t *ppos)
@@ -1337,17 +1339,17 @@ static ssize_t dv1394_write(struct file *file, const char __user *buffer, size_t
 
 	/* serialize this to prevent multi-threaded mayhem */
 	if (file->f_flags & O_NONBLOCK) {
-		if (down_trylock(&video->sem))
+		if (!mutex_trylock(&video->mtx))
 			return -EAGAIN;
 	} else {
-		if (down_interruptible(&video->sem))
+		if (mutex_lock_interruptible(&video->mtx))
 			return -ERESTARTSYS;
 	}
 
 	if ( !video_card_initialized(video) ) {
 		ret = do_dv1394_init_default(video);
 		if (ret) {
-			up(&video->sem);
+			mutex_unlock(&video->mtx);
 			return ret;
 		}
 	}
@@ -1418,7 +1420,7 @@ static ssize_t dv1394_write(struct file *file, const char __user *buffer, size_t
 
 	remove_wait_queue(&video->waitq, &wait);
 	set_current_state(TASK_RUNNING);
-	up(&video->sem);
+	mutex_unlock(&video->mtx);
 	return ret;
 }
 
@@ -1434,17 +1436,17 @@ static ssize_t dv1394_read(struct file *file,  char __user *buffer, size_t count
 
 	/* serialize this to prevent multi-threaded mayhem */
 	if (file->f_flags & O_NONBLOCK) {
-		if (down_trylock(&video->sem))
+		if (!mutex_trylock(&video->mtx))
 			return -EAGAIN;
 	} else {
-		if (down_interruptible(&video->sem))
+		if (mutex_lock_interruptible(&video->mtx))
 			return -ERESTARTSYS;
 	}
 
 	if ( !video_card_initialized(video) ) {
 		ret = do_dv1394_init_default(video);
 		if (ret) {
-			up(&video->sem);
+			mutex_unlock(&video->mtx);
 			return ret;
 		}
 		video->continuity_counter = -1;
@@ -1526,7 +1528,7 @@ static ssize_t dv1394_read(struct file *file,  char __user *buffer, size_t count
 
 	remove_wait_queue(&video->waitq, &wait);
 	set_current_state(TASK_RUNNING);
-	up(&video->sem);
+	mutex_unlock(&video->mtx);
 	return ret;
 }
 
@@ -1535,27 +1537,20 @@ static ssize_t dv1394_read(struct file *file,  char __user *buffer, size_t count
 
 static long dv1394_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	struct video_card *video;
+	struct video_card *video = file_to_video_card(file);
 	unsigned long flags;
 	int ret = -EINVAL;
 	void __user *argp = (void __user *)arg;
 
 	DECLARE_WAITQUEUE(wait, current);
 
-	lock_kernel();
-	video = file_to_video_card(file);
-
 	/* serialize this to prevent multi-threaded mayhem */
 	if (file->f_flags & O_NONBLOCK) {
-		if (down_trylock(&video->sem)) {
-			unlock_kernel();
+		if (!mutex_trylock(&video->mtx))
 			return -EAGAIN;
-		}
 	} else {
-		if (down_interruptible(&video->sem)) {
-			unlock_kernel();
+		if (mutex_lock_interruptible(&video->mtx))
 			return -ERESTARTSYS;
-		}
 	}
 
 	switch(cmd)
@@ -1778,8 +1773,7 @@ static long dv1394_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	}
 
  out:
-	up(&video->sem);
-	unlock_kernel();
+	mutex_unlock(&video->mtx);
 	return ret;
 }
 
@@ -1795,12 +1789,13 @@ static int dv1394_open(struct inode *inode, struct file *file)
 	} else {
 		/* look up the card by ID */
 		unsigned long flags;
+		int idx = ieee1394_file_to_instance(file);
 
 		spin_lock_irqsave(&dv1394_cards_lock, flags);
 		if (!list_empty(&dv1394_cards)) {
 			struct video_card *p;
 			list_for_each_entry(p, &dv1394_cards, list) {
-				if ((p->id) == ieee1394_file_to_instance(file)) {
+				if ((p->id) == idx) {
 					video = p;
 					break;
 				}
@@ -1809,7 +1804,7 @@ static int dv1394_open(struct inode *inode, struct file *file)
 		spin_unlock_irqrestore(&dv1394_cards_lock, flags);
 
 		if (!video) {
-			debug_printk("dv1394: OHCI card %d not found", ieee1394_file_to_instance(file));
+			debug_printk("dv1394: OHCI card %d not found", idx);
 			return -ENODEV;
 		}
 
@@ -1825,6 +1820,10 @@ static int dv1394_open(struct inode *inode, struct file *file)
 
 #endif
 
+	printk(KERN_INFO "%s: NOTE, the dv1394 interface is unsupported "
+	       "and will not be available in the new firewire driver stack. "
+	       "Try libraw1394 based programs instead.\n", current->comm);
+
 	return 0;
 }
 
@@ -1835,9 +1834,6 @@ static int dv1394_release(struct inode *inode, struct file *file)
 
 	/* OK to free the DMA buffer, no more mappings can exist */
 	do_dv1394_shutdown(video, 1);
-
-	/* clean up async I/O users */
-	dv1394_fasync(-1, file, 0);
 
 	/* give someone else a turn */
 	clear_bit(0, &video->open);
@@ -2115,17 +2111,17 @@ static void ir_tasklet_func(unsigned long data)
 			f = video->frames[next_i / MAX_PACKETS];
 			next = &(f->descriptor_pool[next_i % MAX_PACKETS]);
 			next_dma = ((unsigned long) block - (unsigned long) f->descriptor_pool) + f->descriptor_pool_dma;
-			next->u.in.il.q[0] |= 3 << 20; /* enable interrupt */
-			next->u.in.il.q[2] = 0; /* disable branch */
+			next->u.in.il.q[0] |= cpu_to_le32(3 << 20); /* enable interrupt */
+			next->u.in.il.q[2] = cpu_to_le32(0); /* disable branch */
 
 			/* link previous to next */
 			prev_i = (next_i == 0) ? (MAX_PACKETS * video->n_frames - 1) : (next_i - 1);
 			f = video->frames[prev_i / MAX_PACKETS];
 			prev = &(f->descriptor_pool[prev_i % MAX_PACKETS]);
 			if (prev_i % (MAX_PACKETS/2)) {
-				prev->u.in.il.q[0] &= ~(3 << 20); /* no interrupt */
+				prev->u.in.il.q[0] &= ~cpu_to_le32(3 << 20); /* no interrupt */
 			} else {
-				prev->u.in.il.q[0] |= 3 << 20; /* enable interrupt */
+				prev->u.in.il.q[0] |= cpu_to_le32(3 << 20); /* enable interrupt */
 			}
 			prev->u.in.il.q[2] = cpu_to_le32(next_dma | 1); /* set Z=1 */
 			wmb();
@@ -2154,7 +2150,7 @@ out:
 }
 
 static struct cdev dv1394_cdev;
-static struct file_operations dv1394_fops=
+static const struct file_operations dv1394_fops=
 {
 	.owner =	THIS_MODULE,
 	.poll =         dv1394_poll,
@@ -2175,7 +2171,8 @@ static struct file_operations dv1394_fops=
 /*
  * Export information about protocols/devices supported by this driver.
  */
-static struct ieee1394_device_id dv1394_id_table[] = {
+#ifdef MODULE
+static const struct ieee1394_device_id dv1394_id_table[] = {
 	{
 		.match_flags	= IEEE1394_MATCH_SPECIFIER_ID | IEEE1394_MATCH_VERSION,
 		.specifier_id	= AVC_UNIT_SPEC_ID_ENTRY & 0xffffff,
@@ -2185,14 +2182,10 @@ static struct ieee1394_device_id dv1394_id_table[] = {
 };
 
 MODULE_DEVICE_TABLE(ieee1394, dv1394_id_table);
+#endif /* MODULE */
 
 static struct hpsb_protocol_driver dv1394_driver = {
-	.name		= "DV/1394 Driver",
-	.id_table	= dv1394_id_table,
-	.driver         = {
-		.name	= "dv1394",
-		.bus	= &ieee1394_bus_type,
-	},
+	.name = "dv1394",
 };
 
 
@@ -2253,7 +2246,7 @@ static int dv1394_init(struct ti_ohci *ohci, enum pal_or_ntsc format, enum modes
 	clear_bit(0, &video->open);
 	spin_lock_init(&video->spinlock);
 	video->dma_running = 0;
-	init_MUTEX(&video->sem);
+	mutex_init(&video->mtx);
 	init_waitqueue_head(&video->waitq);
 	video->fasync = NULL;
 
@@ -2266,49 +2259,37 @@ static int dv1394_init(struct ti_ohci *ohci, enum pal_or_ntsc format, enum modes
 	return 0;
 }
 
-static void dv1394_un_init(struct video_card *video)
+static void dv1394_remove_host(struct hpsb_host *host)
 {
-	/* obviously nobody has the driver open at this point */
-	do_dv1394_shutdown(video, 1);
-	kfree(video);
-}
-
-
-static void dv1394_remove_host (struct hpsb_host *host)
-{
-	struct video_card *video;
+	struct video_card *video, *tmp_video;
 	unsigned long flags;
-	int id = host->id;
+	int found_ohci_card = 0;
 
-	/* We only work with the OHCI-1394 driver */
-	if (strcmp(host->driver->name, OHCI1394_DRIVER_NAME))
-		return;
-
-	/* find the corresponding video_cards */
 	do {
-		struct video_card *tmp_vid;
-
 		video = NULL;
-
 		spin_lock_irqsave(&dv1394_cards_lock, flags);
-		list_for_each_entry(tmp_vid, &dv1394_cards, list) {
-			if ((tmp_vid->id >> 2) == id) {
-				list_del(&tmp_vid->list);
-				video = tmp_vid;
+		list_for_each_entry(tmp_video, &dv1394_cards, list) {
+			if ((tmp_video->id >> 2) == host->id) {
+				list_del(&tmp_video->list);
+				video = tmp_video;
+				found_ohci_card = 1;
 				break;
 			}
 		}
 		spin_unlock_irqrestore(&dv1394_cards_lock, flags);
 
-		if (video)
-			dv1394_un_init(video);
-	} while (video != NULL);
+		if (video) {
+			do_dv1394_shutdown(video, 1);
+			kfree(video);
+		}
+	} while (video);
 
-	class_device_destroy(hpsb_protocol_class,
-		MKDEV(IEEE1394_MAJOR, IEEE1394_MINOR_BLOCK_DV1394 * 16 + (id<<2)));
+	if (found_ohci_card)
+		device_destroy(hpsb_protocol_class, MKDEV(IEEE1394_MAJOR,
+			   IEEE1394_MINOR_BLOCK_DV1394 * 16 + (host->id << 2)));
 }
 
-static void dv1394_add_host (struct hpsb_host *host)
+static void dv1394_add_host(struct hpsb_host *host)
 {
 	struct ti_ohci *ohci;
 	int id = host->id;
@@ -2319,9 +2300,10 @@ static void dv1394_add_host (struct hpsb_host *host)
 
 	ohci = (struct ti_ohci *)host->hostdata;
 
-	class_device_create(hpsb_protocol_class, NULL, MKDEV(
-		IEEE1394_MAJOR,	IEEE1394_MINOR_BLOCK_DV1394 * 16 + (id<<2)), 
-		NULL, "dv1394-%d", id);
+	device_create(hpsb_protocol_class, NULL,
+		      MKDEV(IEEE1394_MAJOR,
+			    IEEE1394_MINOR_BLOCK_DV1394 * 16 + (id<<2)),
+		      NULL, "dv1394-%d", id);
 
 	dv1394_init(ohci, DV1394_NTSC, MODE_RECEIVE);
 	dv1394_init(ohci, DV1394_NTSC, MODE_TRANSMIT);
@@ -2588,7 +2570,6 @@ static int __init dv1394_init_module(void)
 
 	cdev_init(&dv1394_cdev, &dv1394_fops);
 	dv1394_cdev.owner = THIS_MODULE;
-	kobject_set_name(&dv1394_cdev.kobj, "dv1394");
 	ret = cdev_add(&dv1394_cdev, IEEE1394_DV1394_DEV, 16);
 	if (ret) {
 		printk(KERN_ERR "dv1394: unable to register character device\n");

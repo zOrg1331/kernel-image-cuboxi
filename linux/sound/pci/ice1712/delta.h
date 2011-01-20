@@ -7,7 +7,7 @@
  *   Lowlevel functions for M-Audio Delta 1010, 44, 66, Dio2496, Audiophile
  *                          Digigram VX442
  *
- *	Copyright (c) 2000 Jaroslav Kysela <perex@suse.cz>
+ *	Copyright (c) 2000 Jaroslav Kysela <perex@perex.cz>
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -31,13 +31,16 @@
 		"{MidiMan M Audio,Delta DiO 2496},"\
 		"{MidiMan M Audio,Delta 66},"\
 		"{MidiMan M Audio,Delta 44},"\
+		"{MidiMan M Audio,Delta 410},"\
 		"{MidiMan M Audio,Audiophile 24/96},"\
 		"{Digigram,VX442},"\
 		"{Lionstracs,Mediastation},"
 
 #define ICE1712_SUBDEVICE_DELTA1010	0x121430d6
+#define ICE1712_SUBDEVICE_DELTA1010E	0xff1430d6
 #define ICE1712_SUBDEVICE_DELTADIO2496	0x121431d6
 #define ICE1712_SUBDEVICE_DELTA66	0x121432d6
+#define ICE1712_SUBDEVICE_DELTA66E	0xff1432d6
 #define ICE1712_SUBDEVICE_DELTA44	0x121433d6
 #define ICE1712_SUBDEVICE_AUDIOPHILE	0x121434d6
 #define ICE1712_SUBDEVICE_DELTA410	0x121438d6
@@ -63,7 +66,7 @@ extern struct snd_ice1712_card_info snd_ice1712_delta_cards[];
 					/* look to CS8414 datasheet */
 #define ICE1712_DELTA_SPDIF_OUT_STAT_CLOCK 0x04
 					/* S/PDIF output status clock */
-					/* (writting on rising edge - 0->1) */
+					/* (writing on rising edge - 0->1) */
 					/* all except Delta44 */
 					/* look to CS8404A datasheet */
 #define ICE1712_DELTA_SPDIF_OUT_STAT_DATA 0x08
@@ -100,7 +103,7 @@ extern struct snd_ice1712_card_info snd_ice1712_delta_cards[];
 					/* AKM4524 serial data */
 #define ICE1712_DELTA_CODEC_SERIAL_CLOCK 0x20
 					/* AKM4524 serial clock */
-					/* (writting on rising edge - 0->1 */
+					/* (writing on rising edge - 0->1 */
 #define ICE1712_DELTA_CODEC_CHIP_A	0x40
 #define ICE1712_DELTA_CODEC_CHIP_B	0x80
 					/* 1 - select chip A or B */

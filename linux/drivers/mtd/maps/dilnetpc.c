@@ -14,8 +14,6 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA
  *
- * $Id: dilnetpc.c,v 1.20 2005/11/07 11:14:26 gleixner Exp $
- *
  * The DIL/Net PC is a tiny embedded PC board made by SSV Embedded Systems
  * featuring the AMD Elan SC410 processor. There are two variants of this
  * board: DNP/1486 and ADNP/1486. The DNP version has 2 megs of flash
@@ -402,8 +400,8 @@ static int __init init_dnpc(void)
 			++higlvl_partition_info[i].name;
 	}
 
-	printk(KERN_NOTICE "DIL/Net %s flash: 0x%lx at 0x%lx\n",
-		is_dnp ? "DNPC" : "ADNP", dnpc_map.size, dnpc_map.phys);
+	printk(KERN_NOTICE "DIL/Net %s flash: 0x%lx at 0x%llx\n",
+		is_dnp ? "DNPC" : "ADNP", dnpc_map.size, (unsigned long long)dnpc_map.phys);
 
 	dnpc_map.virt = ioremap_nocache(dnpc_map.phys, dnpc_map.size);
 

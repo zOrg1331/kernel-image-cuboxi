@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
  *                   Uros Bizjak <uros@kss-loka.si>
  *
  *  Lowlevel routines for control of Sound Blaster cards
@@ -20,7 +20,6 @@
  *
  */
 
-#include <sound/driver.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -33,7 +32,7 @@
 #include <asm/io.h>
 #include <asm/dma.h>
 
-MODULE_AUTHOR("Jaroslav Kysela <perex@suse.cz>");
+MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>");
 MODULE_DESCRIPTION("ALSA lowlevel driver for Sound Blaster cards");
 MODULE_LICENSE("GPL");
 
@@ -52,7 +51,7 @@ int snd_sbdsp_command(struct snd_sb *chip, unsigned char val)
 			outb(val, SBP(chip, COMMAND));
 			return 1;
 		}
-	snd_printd("%s [0x%lx]: timeout (0x%x)\n", __FUNCTION__, chip->port, val);
+	snd_printd("%s [0x%lx]: timeout (0x%x)\n", __func__, chip->port, val);
 	return 0;
 }
 
@@ -69,7 +68,7 @@ int snd_sbdsp_get_byte(struct snd_sb *chip)
 			return val;
 		}
 	}
-	snd_printd("%s [0x%lx]: timeout\n", __FUNCTION__, chip->port);
+	snd_printd("%s [0x%lx]: timeout\n", __func__, chip->port);
 	return -ENODEV;
 }
 
@@ -88,7 +87,7 @@ int snd_sbdsp_reset(struct snd_sb *chip)
 			else
 				break;
 		}
-	snd_printdd("%s [0x%lx] failed...\n", __FUNCTION__, chip->port);
+	snd_printdd("%s [0x%lx] failed...\n", __func__, chip->port);
 	return -ENODEV;
 }
 
@@ -128,7 +127,7 @@ static int snd_sbdsp_probe(struct snd_sb * chip)
 	minor = version & 0xff;
 	snd_printdd("SB [0x%lx]: DSP chip found, version = %i.%i\n",
 		    chip->port, major, minor);
-	
+
 	switch (chip->hardware) {
 	case SB_HW_AUTO:
 		switch (major) {
@@ -168,6 +167,9 @@ static int snd_sbdsp_probe(struct snd_sb * chip)
 	case SB_HW_DT019X:
 		str = "(DT019X/ALS007)";
 		break;
+	case SB_HW_CS5530:
+		str = "16 (CS5530)";
+		break;
 	default:
 		return -ENODEV;
 	}
@@ -205,7 +207,7 @@ static int snd_sbdsp_dev_free(struct snd_device *device)
 int snd_sbdsp_create(struct snd_card *card,
 		     unsigned long port,
 		     int irq,
-		     irqreturn_t (*irq_handler)(int, void *, struct pt_regs *),
+		     irq_handler_t irq_handler,
 		     int dma8,
 		     int dma16,
 		     unsigned short hardware,
@@ -217,7 +219,8 @@ int snd_sbdsp_create(struct snd_card *card,
 		.dev_free =	snd_sbdsp_dev_free,
 	};
 
-	snd_assert(r_chip != NULL, return -EINVAL);
+	if (snd_BUG_ON(!r_chip))
+		return -EINVAL;
 	*r_chip = NULL;
 	chip = kzalloc(sizeof(*chip), GFP_KERNEL);
 	if (chip == NULL)
@@ -231,8 +234,10 @@ int snd_sbdsp_create(struct snd_card *card,
 	chip->dma16 = -1;
 	chip->port = port;
 	
-	if (request_irq(irq, irq_handler, hardware == SB_HW_ALS4000 ?
-			IRQF_DISABLED | IRQF_SHARED : IRQF_DISABLED,
+	if (request_irq(irq, irq_handler,
+			(hardware == SB_HW_ALS4000 ||
+			 hardware == SB_HW_CS5530) ?
+			IRQF_SHARED : IRQF_DISABLED,
 			"SoundBlaster", (void *) chip)) {
 		snd_printk(KERN_ERR "sb: can't grab irq %d\n", irq);
 		snd_sbdsp_free(chip);

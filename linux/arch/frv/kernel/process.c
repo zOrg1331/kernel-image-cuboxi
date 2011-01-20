@@ -25,12 +25,14 @@
 #include <linux/elf.h>
 #include <linux/reboot.h>
 #include <linux/interrupt.h>
+#include <linux/pagemap.h>
 
 #include <asm/asm-offsets.h>
 #include <asm/uaccess.h>
 #include <asm/system.h>
 #include <asm/setup.h>
 #include <asm/pgtable.h>
+#include <asm/tlb.h>
 #include <asm/gdb-stub.h>
 #include <asm/mb-regs.h>
 
@@ -81,12 +83,10 @@ void (*idle)(void) = core_sleep_idle;
  */
 void cpu_idle(void)
 {
-	int cpu = smp_processor_id();
-
 	/* endless idle loop with no priority at all */
 	while (1) {
 		while (!need_resched()) {
-			irq_stat[cpu].idle_timestamp = jiffies;
+			check_pgt_cache();
 
 			if (!frv_dma_inprogress && idle)
 				idle();
@@ -200,7 +200,7 @@ void prepare_to_copy(struct task_struct *tsk)
 /*
  * set up the kernel stack and exception frames for a new process
  */
-int copy_thread(int nr, unsigned long clone_flags,
+int copy_thread(unsigned long clone_flags,
 		unsigned long usp, unsigned long topstk,
 		struct task_struct *p, struct pt_regs *regs)
 {

@@ -11,6 +11,7 @@
  */
 
 #include <linux/init.h>
+#include <linux/sched.h>
 #include "hisax.h"
 #include "hfc_2bds0.h"
 #include "isdnl1.h"
@@ -549,10 +550,11 @@ setstack_2b(struct PStack *st, struct BCState *bcs)
 }
 
 static void
-hfcd_bh(struct IsdnCardState *cs)
+hfcd_bh(struct work_struct *work)
 {
-	if (!cs)
-		return;
+	struct IsdnCardState *cs =
+		container_of(work, struct IsdnCardState, tqueue);
+
 	if (test_and_clear_bit(D_L1STATECHANGE, &cs->event)) {
 		switch (cs->dc.hfcd.ph_state) {
 			case (0):
@@ -1018,7 +1020,8 @@ hfc_dbusy_timer(struct IsdnCardState *cs)
 static unsigned int
 *init_send_hfcd(int cnt)
 {
-	int i, *send;
+	int i;
+	unsigned *send;
 
 	if (!(send = kmalloc(cnt * sizeof(unsigned int), GFP_ATOMIC))) {
 		printk(KERN_WARNING
@@ -1072,5 +1075,5 @@ set_cs_func(struct IsdnCardState *cs)
 	cs->dbusytimer.function = (void *) hfc_dbusy_timer;
 	cs->dbusytimer.data = (long) cs;
 	init_timer(&cs->dbusytimer);
-	INIT_WORK(&cs->tqueue, (void *)(void *) hfcd_bh, cs);
+	INIT_WORK(&cs->tqueue, hfcd_bh);
 }

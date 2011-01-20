@@ -17,9 +17,9 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <asm/types.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
-#include <asm/arch/irqs.h>
+#include <mach/irqs.h>
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
 #include <linux/device.h>
@@ -106,29 +106,24 @@ static struct platform_device *devices[] __initdata = {
  * we have to handle all timer interrupts in one place.
  */
 static void
-h7202_timerx_demux_handler(unsigned int irq_unused, struct irqdesc *desc,
-			struct pt_regs *regs)
+h7202_timerx_demux_handler(unsigned int irq_unused, struct irq_desc *desc)
 {
 	unsigned int mask, irq;
 
 	mask = CPU_REG (TIMER_VIRT, TIMER_TOPSTAT);
 
 	if ( mask & TSTAT_T0INT ) {
-		write_seqlock(&xtime_lock);
-		timer_tick(regs);
-		write_sequnlock(&xtime_lock);
+		timer_tick();
 		if( mask == TSTAT_T0INT )
 			return;
 	}
 
 	mask >>= 1;
 	irq = IRQ_TIMER1;
-	desc = irq_desc + irq;
 	while (mask) {
 		if (mask & 1)
-			desc_handle_irq(irq, desc, regs);
+			generic_handle_irq(irq);
 		irq++;
-		desc++;
 		mask >>= 1;
 	}
 }
@@ -137,14 +132,14 @@ h7202_timerx_demux_handler(unsigned int irq_unused, struct irqdesc *desc,
  * Timer interrupt handler
  */
 static irqreturn_t
-h7202_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+h7202_timer_interrupt(int irq, void *dev_id)
 {
-	h7202_timerx_demux_handler(0, NULL, regs);
+	h7202_timerx_demux_handler(0, NULL);
 	return IRQ_HANDLED;
 }
 
 /*
- * mask multiplexed timer irq's
+ * mask multiplexed timer IRQs
  */
 static void inline mask_timerx_irq (u32 irq)
 {
@@ -154,7 +149,7 @@ static void inline mask_timerx_irq (u32 irq)
 }
 
 /*
- * unmask multiplexed timer irq's
+ * unmask multiplexed timer IRQs
  */
 static void inline unmask_timerx_irq (u32 irq)
 {
@@ -163,7 +158,7 @@ static void inline unmask_timerx_irq (u32 irq)
 	CPU_REG (TIMER_VIRT, TIMER_TOPCTRL) |= bit;
 }
 
-static struct irqchip h7202_timerx_chip = {
+static struct irq_chip h7202_timerx_chip = {
 	.ack = mask_timerx_irq,
 	.mask = mask_timerx_irq,
 	.unmask = unmask_timerx_irq,
@@ -171,7 +166,7 @@ static struct irqchip h7202_timerx_chip = {
 
 static struct irqaction h7202_timer_irq = {
 	.name		= "h7202 Timer Tick",
-	.flags		= IRQF_DISABLED | IRQF_TIMER,
+	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
 	.handler	= h7202_timer_interrupt,
 };
 
@@ -203,7 +198,7 @@ void __init h7202_init_irq (void)
 	                  irq < IRQ_CHAINED_TIMERX(NR_TIMERX_IRQS); irq++) {
 		mask_timerx_irq(irq);
 		set_irq_chip(irq, &h7202_timerx_chip);
-		set_irq_handler(irq, do_edge_IRQ);
+		set_irq_handler(irq, handle_edge_irq);
 		set_irq_flags(irq, IRQF_VALID );
 	}
 	set_irq_chained_handler(IRQ_TIMERX, h7202_timerx_demux_handler);

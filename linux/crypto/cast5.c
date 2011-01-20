@@ -769,8 +769,7 @@ static void key_schedule(u32 * x, u32 * z, u32 * k)
 }
 
 
-static int cast5_setkey(struct crypto_tfm *tfm, const u8 *key,
-			unsigned key_len, u32 *flags)
+static int cast5_setkey(struct crypto_tfm *tfm, const u8 *key, unsigned key_len)
 {
 	struct cast5_ctx *c = crypto_tfm_ctx(tfm);
 	int i;
@@ -778,11 +777,6 @@ static int cast5_setkey(struct crypto_tfm *tfm, const u8 *key,
 	u32 z[4];
 	u32 k[16];
 	__be32 p_key[4];
-	
-	if (key_len < 5 || key_len > 16) {
-		*flags |= CRYPTO_TFM_RES_BAD_KEY_LEN;
-		return -EINVAL;
-	}
 
 	c->rr = key_len <= 10 ? 1 : 0;
 
@@ -823,18 +817,18 @@ static struct crypto_alg alg = {
 	}
 };
 
-static int __init init(void)
+static int __init cast5_mod_init(void)
 {
 	return crypto_register_alg(&alg);
 }
 
-static void __exit fini(void)
+static void __exit cast5_mod_fini(void)
 {
 	crypto_unregister_alg(&alg);
 }
 
-module_init(init);
-module_exit(fini);
+module_init(cast5_mod_init);
+module_exit(cast5_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Cast5 Cipher Algorithm");

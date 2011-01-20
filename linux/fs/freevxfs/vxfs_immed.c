@@ -35,6 +35,7 @@
 #include <linux/namei.h>
 
 #include "vxfs.h"
+#include "vxfs_extern.h"
 #include "vxfs_inode.h"
 
 
@@ -48,13 +49,13 @@ static int	vxfs_immed_readpage(struct file *, struct page *);
  * Unliked all other operations we do not go through the pagecache,
  * but do all work directly on the inode.
  */
-struct inode_operations vxfs_immed_symlink_iops = {
+const struct inode_operations vxfs_immed_symlink_iops = {
 	.readlink =		generic_readlink,
 	.follow_link =		vxfs_immed_follow_link,
 };
 
 /*
- * Adress space operations for immed files and directories.
+ * Address space operations for immed files and directories.
  */
 const struct address_space_operations vxfs_immed_aops = {
 	.readpage =		vxfs_immed_readpage,

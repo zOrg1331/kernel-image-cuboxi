@@ -21,11 +21,9 @@
 #include <linux/delay.h>
 #include <linux/initrd.h>
 #include <linux/platform_device.h>
-#include <linux/ide.h>
 #include <linux/seq_file.h>
 #include <linux/ioport.h>
 #include <linux/console.h>
-#include <linux/utsname.h>
 #include <linux/screen_info.h>
 #include <linux/root_dev.h>
 #include <linux/notifier.h>
@@ -33,6 +31,10 @@
 #include <linux/unistd.h>
 #include <linux/serial.h>
 #include <linux/serial_8250.h>
+#include <linux/debugfs.h>
+#include <linux/percpu.h>
+#include <linux/lmb.h>
+#include <linux/of_platform.h>
 #include <asm/io.h>
 #include <asm/prom.h>
 #include <asm/processor.h>
@@ -55,8 +57,9 @@
 #include <asm/cache.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
-#include <asm/lmb.h>
 #include <asm/xmon.h>
+#include <asm/cputhreads.h>
+#include <mm/mmu_decl.h>
 
 #include "setup.h"
 
@@ -75,6 +78,8 @@ struct machdep_calls *machine_id;
 EXPORT_SYMBOL(machine_id);
 
 unsigned long klimit = (unsigned long) _end;
+
+char cmd_line[COMMAND_LINE_SIZE];
 
 /*
  * This still seems to be needed... -- paulus
@@ -163,6 +168,8 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	unsigned short min;
 
 	if (cpu_id == NR_CPUS) {
+		struct device_node *root;
+		const char *model = NULL;
 #if defined(CONFIG_SMP) && defined(CONFIG_PPC32)
 		unsigned long bogosum = 0;
 		int i;
@@ -174,8 +181,21 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 		seq_printf(m, "timebase\t: %lu\n", ppc_tb_freq);
 		if (ppc_md.name)
 			seq_printf(m, "platform\t: %s\n", ppc_md.name);
+		root = of_find_node_by_path("/");
+		if (root)
+			model = of_get_property(root, "model", NULL);
+		if (model)
+			seq_printf(m, "model\t\t: %s\n", model);
+		of_node_put(root);
+
 		if (ppc_md.show_cpuinfo != NULL)
 			ppc_md.show_cpuinfo(m);
+
+#ifdef CONFIG_PPC32
+		/* Display the amount of memory */
+		seq_printf(m, "Memory\t\t: %d MB\n",
+			   (unsigned int)(total_memory / (1024 * 1024)));
+#endif
 
 		return 0;
 	}
@@ -241,8 +261,21 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	/* If we are a Freescale core do a simple check so
 	 * we dont have to keep adding cases in the future */
 	if (PVR_VER(pvr) & 0x8000) {
-		maj = PVR_MAJ(pvr);
-		min = PVR_MIN(pvr);
+		switch (PVR_VER(pvr)) {
+		case 0x8000:	/* 7441/7450/7451, Voyager */
+		case 0x8001:	/* 7445/7455, Apollo 6 */
+		case 0x8002:	/* 7447/7457, Apollo 7 */
+		case 0x8003:	/* 7447A, Apollo 7 PM */
+		case 0x8004:	/* 7448, Apollo 8 */
+		case 0x800c:	/* 7410, Nitro */
+			maj = ((pvr >> 8) & 0xF);
+			min = PVR_MIN(pvr);
+			break;
+		default:	/* e500/book-e */
+			maj = PVR_MAJ(pvr);
+			min = PVR_MIN(pvr);
+			break;
+		}
 	} else {
 		switch (PVR_VER(pvr)) {
 			case 0x0020:	/* 403 family */
@@ -294,7 +327,7 @@ static void c_stop(struct seq_file *m, void *v)
 {
 }
 
-struct seq_operations cpuinfo_op = {
+const struct seq_operations cpuinfo_op = {
 	.start =c_start,
 	.next =	c_next,
 	.stop =	c_stop,
@@ -304,24 +337,8 @@ struct seq_operations cpuinfo_op = {
 void __init check_for_initrd(void)
 {
 #ifdef CONFIG_BLK_DEV_INITRD
-	unsigned long *prop;
-
-	DBG(" -> check_for_initrd()\n");
-
-	if (of_chosen) {
-		prop = (unsigned long *)get_property(of_chosen,
-				"linux,initrd-start", NULL);
-		if (prop != NULL) {
-			initrd_start = (unsigned long)__va(*prop);
-			prop = (unsigned long *)get_property(of_chosen,
-					"linux,initrd-end", NULL);
-			if (prop != NULL) {
-				initrd_end = (unsigned long)__va(*prop);
-				initrd_below_start_ok = 1;
-			} else
-				initrd_start = 0;
-		}
-	}
+	DBG(" -> check_for_initrd()  initrd_start=0x%lx  initrd_end=0x%lx\n",
+	    initrd_start, initrd_end);
 
 	/* If we were passed an initrd, set the ROOT_DEV properly if the values
 	 * look sensible. If not, clear initrd reference.
@@ -341,11 +358,35 @@ void __init check_for_initrd(void)
 
 #ifdef CONFIG_SMP
 
+int threads_per_core, threads_shift;
+cpumask_t threads_core_mask;
+
+static void __init cpu_init_thread_core_maps(int tpc)
+{
+	int i;
+
+	threads_per_core = tpc;
+	threads_core_mask = CPU_MASK_NONE;
+
+	/* This implementation only supports power of 2 number of threads
+	 * for simplicity and performance
+	 */
+	threads_shift = ilog2(tpc);
+	BUG_ON(tpc != (1 << threads_shift));
+
+	for (i = 0; i < tpc; i++)
+		cpu_set(i, threads_core_mask);
+
+	printk(KERN_INFO "CPU maps initialized for %d thread%s per core\n",
+	       tpc, tpc > 1 ? "s" : "");
+	printk(KERN_DEBUG " (thread shift is %d)\n", threads_shift);
+}
+
+
 /**
  * setup_cpu_maps - initialize the following cpu maps:
  *                  cpu_possible_map
  *                  cpu_present_map
- *                  cpu_sibling_map
  *
  * Having the possible map set up early allows us to restrict allocations
  * of things like irqstacks to num_possible_cpus() rather than NR_CPUS.
@@ -364,27 +405,43 @@ void __init smp_setup_cpu_maps(void)
 {
 	struct device_node *dn = NULL;
 	int cpu = 0;
+	int nthreads = 1;
+
+	DBG("smp_setup_cpu_maps()\n");
 
 	while ((dn = of_find_node_by_type(dn, "cpu")) && cpu < NR_CPUS) {
-		int *intserv;
-		int j, len = sizeof(u32), nthreads = 1;
+		const int *intserv;
+		int j, len;
 
-		intserv = (int *)get_property(dn, "ibm,ppc-interrupt-server#s",
-					      &len);
-		if (intserv)
+		DBG("  * %s...\n", dn->full_name);
+
+		intserv = of_get_property(dn, "ibm,ppc-interrupt-server#s",
+				&len);
+		if (intserv) {
 			nthreads = len / sizeof(int);
-		else {
-			intserv = (int *) get_property(dn, "reg", NULL);
+			DBG("    ibm,ppc-interrupt-server#s -> %d threads\n",
+			    nthreads);
+		} else {
+			DBG("    no ibm,ppc-interrupt-server#s -> 1 thread\n");
+			intserv = of_get_property(dn, "reg", NULL);
 			if (!intserv)
 				intserv = &cpu;	/* assume logical == phys */
 		}
 
 		for (j = 0; j < nthreads && cpu < NR_CPUS; j++) {
-			cpu_set(cpu, cpu_present_map);
+			DBG("    thread %d -> cpu %d (hard id %d)\n",
+			    j, cpu, intserv[j]);
+			set_cpu_present(cpu, true);
 			set_hard_smp_processor_id(cpu, intserv[j]);
-			cpu_set(cpu, cpu_possible_map);
+			set_cpu_possible(cpu, true);
 			cpu++;
 		}
+	}
+
+	/* If no SMT supported, nthreads is forced to 1 */
+	if (!cpu_has_feature(CPU_FTR_SMT)) {
+		DBG("  SMT disabled ! nthreads forced to 1\n");
+		nthreads = 1;
 	}
 
 #ifdef CONFIG_PPC64
@@ -395,13 +452,12 @@ void __init smp_setup_cpu_maps(void)
 	if (machine_is(pseries) && firmware_has_feature(FW_FEATURE_LPAR) &&
 	    (dn = of_find_node_by_path("/rtas"))) {
 		int num_addr_cell, num_size_cell, maxcpus;
-		unsigned int *ireg;
+		const unsigned int *ireg;
 
-		num_addr_cell = prom_n_addr_cells(dn);
-		num_size_cell = prom_n_size_cells(dn);
+		num_addr_cell = of_n_addr_cells(dn);
+		num_size_cell = of_n_size_cells(dn);
 
-		ireg = (unsigned int *)
-			get_property(dn, "ibm,lrdr-capacity", NULL);
+		ireg = of_get_property(dn, "ibm,lrdr-capacity", NULL);
 
 		if (!ireg)
 			goto out;
@@ -410,7 +466,7 @@ void __init smp_setup_cpu_maps(void)
 
 		/* Double maxcpus for processors which have SMT capability */
 		if (cpu_has_feature(CPU_FTR_SMT))
-			maxcpus *= 2;
+			maxcpus *= nthreads;
 
 		if (maxcpus > NR_CPUS) {
 			printk(KERN_WARNING
@@ -423,46 +479,24 @@ void __init smp_setup_cpu_maps(void)
 			       maxcpus);
 
 		for (cpu = 0; cpu < maxcpus; cpu++)
-			cpu_set(cpu, cpu_possible_map);
+			set_cpu_possible(cpu, true);
 	out:
 		of_node_put(dn);
 	}
-
-	/*
-	 * Do the sibling map; assume only two threads per processor.
-	 */
-	for_each_possible_cpu(cpu) {
-		cpu_set(cpu, cpu_sibling_map[cpu]);
-		if (cpu_has_feature(CPU_FTR_SMT))
-			cpu_set(cpu ^ 0x1, cpu_sibling_map[cpu]);
-	}
-
 	vdso_data->processorCount = num_present_cpus();
 #endif /* CONFIG_PPC64 */
+
+        /* Initialize CPU <=> thread mapping/
+	 *
+	 * WARNING: We assume that the number of threads is the same for
+	 * every CPU in the system. If that is not the case, then some code
+	 * here will have to be reworked
+	 */
+	cpu_init_thread_core_maps(nthreads);
 }
 #endif /* CONFIG_SMP */
 
-int __initdata do_early_xmon;
-#ifdef CONFIG_XMON
-static int __init early_xmon(char *p)
-{
-	/* ensure xmon is enabled */
-	if (p) {
-		if (strncmp(p, "on", 2) == 0)
-			xmon_init(1);
-		if (strncmp(p, "off", 3) == 0)
-			xmon_init(0);
-		if (strncmp(p, "early", 5) != 0)
-			return 0;
-	}
-	xmon_init(1);
-	do_early_xmon = 1;
-
-	return 0;
-}
-early_param("xmon", early_xmon);
-#endif
-
+#ifdef CONFIG_PCSPKR_PLATFORM
 static __init int add_pcspkr(void)
 {
 	struct device_node *np;
@@ -485,6 +519,7 @@ static __init int add_pcspkr(void)
 	return ret;
 }
 device_initcall(add_pcspkr);
+#endif	/* CONFIG_PCSPKR_PLATFORM */
 
 void probe_machine(void)
 {
@@ -517,11 +552,51 @@ void probe_machine(void)
 	printk(KERN_INFO "Using %s machine description\n", ppc_md.name);
 }
 
+/* Match a class of boards, not a specific device configuration. */
 int check_legacy_ioport(unsigned long base_port)
 {
-	if (ppc_md.check_legacy_ioport == NULL)
-		return 0;
-	return ppc_md.check_legacy_ioport(base_port);
+	struct device_node *parent, *np = NULL;
+	int ret = -ENODEV;
+
+	switch(base_port) {
+	case I8042_DATA_REG:
+		if (!(np = of_find_compatible_node(NULL, NULL, "pnpPNP,303")))
+			np = of_find_compatible_node(NULL, NULL, "pnpPNP,f03");
+		if (np) {
+			parent = of_get_parent(np);
+			of_node_put(np);
+			np = parent;
+			break;
+		}
+		np = of_find_node_by_type(NULL, "8042");
+		/* Pegasos has no device_type on its 8042 node, look for the
+		 * name instead */
+		if (!np)
+			np = of_find_node_by_name(NULL, "8042");
+		break;
+	case FDC_BASE: /* FDC1 */
+		np = of_find_node_by_type(NULL, "fdc");
+		break;
+#ifdef CONFIG_PPC_PREP
+	case _PIDXR:
+	case _PNPWRP:
+	case PNPBIOS_BASE:
+		/* implement me */
+#endif
+	default:
+		/* ipmi is supposed to fail here */
+		break;
+	}
+	if (!np)
+		return ret;
+	parent = of_get_parent(np);
+	if (parent) {
+		if (strcmp(parent->type, "isa") == 0)
+			ret = 0;
+		of_node_put(parent);
+	}
+	of_node_put(np);
+	return ret;
 }
 EXPORT_SYMBOL(check_legacy_ioport);
 
@@ -541,3 +616,90 @@ void __init setup_panic(void)
 {
 	atomic_notifier_chain_register(&panic_notifier_list, &ppc_panic_block);
 }
+
+#ifdef CONFIG_CHECK_CACHE_COHERENCY
+/*
+ * For platforms that have configurable cache-coherency.  This function
+ * checks that the cache coherency setting of the kernel matches the setting
+ * left by the firmware, as indicated in the device tree.  Since a mismatch
+ * will eventually result in DMA failures, we print * and error and call
+ * BUG() in that case.
+ */
+
+#ifdef CONFIG_NOT_COHERENT_CACHE
+#define KERNEL_COHERENCY	0
+#else
+#define KERNEL_COHERENCY	1
+#endif
+
+static int __init check_cache_coherency(void)
+{
+	struct device_node *np;
+	const void *prop;
+	int devtree_coherency;
+
+	np = of_find_node_by_path("/");
+	prop = of_get_property(np, "coherency-off", NULL);
+	of_node_put(np);
+
+	devtree_coherency = prop ? 0 : 1;
+
+	if (devtree_coherency != KERNEL_COHERENCY) {
+		printk(KERN_ERR
+			"kernel coherency:%s != device tree_coherency:%s\n",
+			KERNEL_COHERENCY ? "on" : "off",
+			devtree_coherency ? "on" : "off");
+		BUG();
+	}
+
+	return 0;
+}
+
+late_initcall(check_cache_coherency);
+#endif /* CONFIG_CHECK_CACHE_COHERENCY */
+
+#ifdef CONFIG_DEBUG_FS
+struct dentry *powerpc_debugfs_root;
+
+static int powerpc_debugfs_init(void)
+{
+	powerpc_debugfs_root = debugfs_create_dir("powerpc", NULL);
+
+	return powerpc_debugfs_root == NULL;
+}
+arch_initcall(powerpc_debugfs_init);
+#endif
+
+static int ppc_dflt_bus_notify(struct notifier_block *nb,
+				unsigned long action, void *data)
+{
+	struct device *dev = data;
+
+	/* We are only intereted in device addition */
+	if (action != BUS_NOTIFY_ADD_DEVICE)
+		return 0;
+
+	set_dma_ops(dev, &dma_direct_ops);
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block ppc_dflt_plat_bus_notifier = {
+	.notifier_call = ppc_dflt_bus_notify,
+	.priority = INT_MAX,
+};
+
+static struct notifier_block ppc_dflt_of_bus_notifier = {
+	.notifier_call = ppc_dflt_bus_notify,
+	.priority = INT_MAX,
+};
+
+static int __init setup_bus_notifier(void)
+{
+	bus_register_notifier(&platform_bus_type, &ppc_dflt_plat_bus_notifier);
+	bus_register_notifier(&of_platform_bus_type, &ppc_dflt_of_bus_notifier);
+
+	return 0;
+}
+
+arch_initcall(setup_bus_notifier);

@@ -10,21 +10,19 @@
 #include <linux/reboot.h>
 #include <linux/delay.h>
 #include <linux/initrd.h>
-#include <linux/ide.h>
 #include <linux/tty.h>
 #include <linux/bootmem.h>
 #include <linux/seq_file.h>
 #include <linux/root_dev.h>
 #include <linux/cpu.h>
 #include <linux/console.h>
+#include <linux/lmb.h>
 
-#include <asm/residual.h>
 #include <asm/io.h>
 #include <asm/prom.h>
 #include <asm/processor.h>
 #include <asm/pgtable.h>
 #include <asm/setup.h>
-#include <asm/amigappc.h>
 #include <asm/smp.h>
 #include <asm/elf.h>
 #include <asm/cputable.h>
@@ -40,39 +38,28 @@
 #include <asm/time.h>
 #include <asm/serial.h>
 #include <asm/udbg.h>
+#include <asm/mmu_context.h>
+#include <asm/swiotlb.h>
 
 #include "setup.h"
 
 #define DBG(fmt...)
 
-#if defined CONFIG_KGDB
-#include <asm/kgdb.h>
-#endif
-
 extern void bootx_init(unsigned long r4, unsigned long phys);
-
-struct ide_machdep_calls ppc_ide_md;
 
 int boot_cpuid;
 EXPORT_SYMBOL_GPL(boot_cpuid);
 int boot_cpuid_phys;
 
+int smp_hw_index[NR_CPUS];
+
 unsigned long ISA_DMA_THRESHOLD;
 unsigned int DMA_MODE_READ;
 unsigned int DMA_MODE_WRITE;
 
-int have_of = 1;
-
-#ifdef CONFIG_PPC_MULTIPLATFORM
-dev_t boot_dev;
-#endif /* CONFIG_PPC_MULTIPLATFORM */
-
-#ifdef CONFIG_MAGIC_SYSRQ
-unsigned long SYSRQ_KEY = 0x54;
-#endif /* CONFIG_MAGIC_SYSRQ */
-
 #ifdef CONFIG_VGA_CONSOLE
 unsigned long vgacon_remap_base;
+EXPORT_SYMBOL(vgacon_remap_base);
 #endif
 
 /*
@@ -92,20 +79,33 @@ int ucache_bsize;
  * from the address that it was linked at, so we must use RELOC/PTRRELOC
  * to access static data (including strings).  -- paulus
  */
-unsigned long __init early_init(unsigned long dt_ptr)
+notrace unsigned long __init early_init(unsigned long dt_ptr)
 {
 	unsigned long offset = reloc_offset();
+	struct cpu_spec *spec;
 
 	/* First zero the BSS -- use memset_io, some platforms don't have
 	 * caches on yet */
-	memset_io((void __iomem *)PTRRELOC(&__bss_start), 0, _end - __bss_start);
+	memset_io((void __iomem *)PTRRELOC(&__bss_start), 0,
+			__bss_stop - __bss_start);
 
 	/*
 	 * Identify the CPU type and fix up code sections
 	 * that depend on which cpu we have.
 	 */
-	identify_cpu(offset, 0);
-	do_cpu_ftr_fixups(offset);
+	spec = identify_cpu(offset, mfspr(SPRN_PVR));
+
+	do_feature_fixups(spec->cpu_features,
+			  PTRRELOC(&__start___ftr_fixup),
+			  PTRRELOC(&__stop___ftr_fixup));
+
+	do_feature_fixups(spec->mmu_features,
+			  PTRRELOC(&__start___mmu_ftr_fixup),
+			  PTRRELOC(&__stop___mmu_ftr_fixup));
+
+	do_lwsync_fixups(spec->cpu_features,
+			 PTRRELOC(&__start___lwsync_fixup),
+			 PTRRELOC(&__stop___lwsync_fixup));
 
 	return KERNELBASE + offset;
 }
@@ -117,19 +117,19 @@ unsigned long __init early_init(unsigned long dt_ptr)
  * This is called very early on the boot process, after a minimal
  * MMU environment has been set up but before MMU_init is called.
  */
-void __init machine_init(unsigned long dt_ptr, unsigned long phys)
+notrace void __init machine_init(unsigned long dt_ptr)
 {
-	/* If btext is enabled, we might have a BAT setup for early display,
-	 * thus we do enable some very basic udbg output
-	 */
-#ifdef CONFIG_BOOTX_TEXT
-	udbg_putc = btext_drawchar;
-#endif
+	lockdep_init();
+
+	/* Enable early debugging if any specified (see udbg.h) */
+	udbg_early_init();
 
 	/* Do some early initialization based on the flat device tree */
 	early_init_devtree(__va(dt_ptr));
 
 	probe_machine();
+
+	setup_kdump_trampoline();
 
 #ifdef CONFIG_6xx
 	if (cpu_has_feature(CPU_FTR_CAN_DOZE) ||
@@ -137,13 +137,18 @@ void __init machine_init(unsigned long dt_ptr, unsigned long phys)
 		ppc_md.power_save = ppc6xx_idle;
 #endif
 
+#ifdef CONFIG_E500
+	if (cpu_has_feature(CPU_FTR_CAN_DOZE) ||
+	    cpu_has_feature(CPU_FTR_CAN_NAP))
+		ppc_md.power_save = e500_idle;
+#endif
 	if (ppc_md.progress)
 		ppc_md.progress("id mach(): done", 0x200);
 }
 
 #ifdef CONFIG_BOOKE_WDT
 /* Checks wdt=x and wdt_period=xx command-line option */
-int __init early_parse_wdt(char *p)
+notrace int __init early_parse_wdt(char *p)
 {
 	if (p && strncmp(p, "0", 1) != 0)
 	       booke_wdt_enabled = 1;
@@ -175,6 +180,18 @@ int __init ppc_setup_l2cr(char *str)
 }
 __setup("l2cr=", ppc_setup_l2cr);
 
+/* Checks "l3cr=xxxx" command-line option */
+int __init ppc_setup_l3cr(char *str)
+{
+	if (cpu_has_feature(CPU_FTR_L3CR)) {
+		unsigned long val = simple_strtoul(str, NULL, 0);
+		printk(KERN_INFO "l3cr set to %lx\n", val);
+		_set_L3CR(val);		/* and enable it */
+	}
+	return 1;
+}
+__setup("l3cr=", ppc_setup_l3cr);
+
 #ifdef CONFIG_GENERIC_NVRAM
 
 /* Generic nvram hooks used by drivers/char/gen_nvram.c */
@@ -193,6 +210,14 @@ void nvram_write_byte(unsigned char val, int addr)
 }
 EXPORT_SYMBOL(nvram_write_byte);
 
+ssize_t nvram_get_size(void)
+{
+	if (ppc_md.nvram_size)
+		return ppc_md.nvram_size();
+	return -1;
+}
+EXPORT_SYMBOL(nvram_get_size);
+
 void nvram_sync(void)
 {
 	if (ppc_md.nvram_sync)
@@ -202,18 +227,11 @@ EXPORT_SYMBOL(nvram_sync);
 
 #endif /* CONFIG_NVRAM */
 
-static struct cpu cpu_devices[NR_CPUS];
-
 int __init ppc_init(void)
 {
-	int i;
-
 	/* clear the progress line */
-	if ( ppc_md.progress ) ppc_md.progress("             ", 0xffff);
-
-	/* register CPU devices */
-	for_each_possible_cpu(i)
-		register_cpu(&cpu_devices[i], i);
+	if (ppc_md.progress)
+		ppc_md.progress("             ", 0xffff);
 
 	/* call platform init */
 	if (ppc_md.init != NULL) {
@@ -223,6 +241,46 @@ int __init ppc_init(void)
 }
 
 arch_initcall(ppc_init);
+
+#ifdef CONFIG_IRQSTACKS
+static void __init irqstack_early_init(void)
+{
+	unsigned int i;
+
+	/* interrupt stacks must be in lowmem, we get that for free on ppc32
+	 * as the lmb is limited to lowmem by LMB_REAL_LIMIT */
+	for_each_possible_cpu(i) {
+		softirq_ctx[i] = (struct thread_info *)
+			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
+		hardirq_ctx[i] = (struct thread_info *)
+			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
+	}
+}
+#else
+#define irqstack_early_init()
+#endif
+
+#if defined(CONFIG_BOOKE) || defined(CONFIG_40x)
+static void __init exc_lvl_early_init(void)
+{
+	unsigned int i;
+
+	/* interrupt stacks must be in lowmem, we get that for free on ppc32
+	 * as the lmb is limited to lowmem by LMB_REAL_LIMIT */
+	for_each_possible_cpu(i) {
+		critirq_ctx[i] = (struct thread_info *)
+			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
+#ifdef CONFIG_BOOKE
+		dbgirq_ctx[i] = (struct thread_info *)
+			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
+		mcheckirq_ctx[i] = (struct thread_info *)
+			__va(lmb_alloc(THREAD_SIZE, THREAD_SIZE));
+#endif
+	}
+}
+#else
+#define exc_lvl_early_init()
+#endif
 
 /* Warning, IO base is not yet inited */
 void __init setup_arch(char **cmdline_p)
@@ -242,36 +300,21 @@ void __init setup_arch(char **cmdline_p)
 
 	smp_setup_cpu_maps();
 
-#ifdef CONFIG_XMON_DEFAULT
-	xmon_init(1);
-#endif
 	/* Register early console */
 	register_early_udbg_console();
 
-#if defined(CONFIG_KGDB)
-	if (ppc_md.kgdb_map_scc)
-		ppc_md.kgdb_map_scc();
-	set_debug_traps();
-	if (strstr(cmd_line, "gdb")) {
-		if (ppc_md.progress)
-			ppc_md.progress("setup_arch: kgdb breakpoint", 0x4000);
-		printk("kgdb breakpoint activated\n");
-		breakpoint();
-	}
-#endif
+	xmon_setup();
 
 	/*
 	 * Set cache line size based on type of cpu as a default.
 	 * Systems with OF can look in the properties on the cpu node(s)
 	 * for a possibly more accurate value.
 	 */
-	if (cpu_has_feature(CPU_FTR_SPLIT_ID_CACHE)) {
-		dcache_bsize = cur_cpu_spec->dcache_bsize;
-		icache_bsize = cur_cpu_spec->icache_bsize;
-		ucache_bsize = 0;
-	} else
-		ucache_bsize = dcache_bsize = icache_bsize
-			= cur_cpu_spec->dcache_bsize;
+	dcache_bsize = cur_cpu_spec->dcache_bsize;
+	icache_bsize = cur_cpu_spec->icache_bsize;
+	ucache_bsize = 0;
+	if (cpu_has_feature(CPU_FTR_UNIFIED_ID_CACHE))
+		ucache_bsize = icache_bsize = dcache_bsize;
 
 	/* reboot on panic */
 	panic_timeout = 180;
@@ -279,13 +322,14 @@ void __init setup_arch(char **cmdline_p)
 	if (ppc_md.panic)
 		setup_panic();
 
-	init_mm.start_code = PAGE_OFFSET;
+	init_mm.start_code = (unsigned long)_stext;
 	init_mm.end_code = (unsigned long) _etext;
 	init_mm.end_data = (unsigned long) _edata;
 	init_mm.brk = klimit;
 
-	if (do_early_xmon)
-		debugger(NULL);
+	exc_lvl_early_init();
+
+	irqstack_early_init();
 
 	/* set up the bootmem stuff with available memory */
 	do_init_bootmem();
@@ -295,8 +339,18 @@ void __init setup_arch(char **cmdline_p)
 	conswitchp = &dummy_con;
 #endif
 
-	ppc_md.setup_arch();
+	if (ppc_md.setup_arch)
+		ppc_md.setup_arch();
 	if ( ppc_md.progress ) ppc_md.progress("arch: exit", 0x3eab);
 
+#ifdef CONFIG_SWIOTLB
+	if (ppc_swiotlb_enable)
+		swiotlb_init();
+#endif
+
 	paging_init();
+
+	/* Initialize the MMU context management stuff */
+	mmu_context_init();
+
 }

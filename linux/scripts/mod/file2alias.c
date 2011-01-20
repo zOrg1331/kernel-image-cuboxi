@@ -37,7 +37,6 @@ typedef unsigned char	__u8;
  * even potentially has different endianness and word sizes, since
  * we handle those differences explicitly below */
 #include "../../include/linux/mod_devicetable.h"
-#include "../../include/linux/input.h"
 
 #define ADD(str, sep, cond, field)                              \
 do {                                                            \
@@ -52,20 +51,51 @@ do {                                                            \
                 sprintf(str + strlen(str), "*");                \
 } while(0)
 
+/* Always end in a wildcard, for future extension */
+static inline void add_wildcard(char *str)
+{
+	int len = strlen(str);
+
+	if (str[len - 1] != '*')
+		strcat(str + len, "*");
+}
+
+unsigned int cross_build = 0;
 /**
  * Check that sizeof(device_id type) are consistent with size of section
  * in .o file. If in-consistent then userspace and kernel does not agree
  * on actual size which is a bug.
+ * Also verify that the final entry in the table is all zeros.
+ * Ignore both checks if build host differ from target host and size differs.
  **/
-static void device_id_size_check(const char *modname, const char *device_id,
-				 unsigned long size, unsigned long id_size)
+static void device_id_check(const char *modname, const char *device_id,
+			    unsigned long size, unsigned long id_size,
+			    void *symval)
 {
+	int i;
+
 	if (size % id_size || size < id_size) {
+		if (cross_build != 0)
+			return;
 		fatal("%s: sizeof(struct %s_device_id)=%lu is not a modulo "
 		      "of the size of section __mod_%s_device_table=%lu.\n"
 		      "Fix definition of struct %s_device_id "
 		      "in mod_devicetable.h\n",
 		      modname, device_id, id_size, device_id, size, device_id);
+	}
+	/* Verify last one is a terminator */
+	for (i = 0; i < id_size; i++ ) {
+		if (*(uint8_t*)(symval+size-id_size+i)) {
+			fprintf(stderr,"%s: struct %s_device_id is %lu bytes.  "
+				"The last of %lu is:\n",
+				modname, device_id, id_size, size / id_size);
+			for (i = 0; i < id_size; i++ )
+				fprintf(stderr,"0x%02x ",
+					*(uint8_t*)(symval+size-id_size+i) );
+			fprintf(stderr,"\n");
+			fatal("%s: struct %s_device_id is not terminated "
+				"with a NULL entry!\n", modname, device_id);
+		}
 	}
 }
 
@@ -112,9 +142,7 @@ static void do_usb_entry(struct usb_device_id *id,
 	    id->match_flags&USB_DEVICE_ID_MATCH_INT_PROTOCOL,
 	    id->bInterfaceProtocol);
 
-	/* Always end in a wildcard, for future extension */
-	if (alias[strlen(alias)-1] != '*')
-		strcat(alias, "*");
+	add_wildcard(alias);
 	buf_printf(&mod->dev_table_buf,
 		   "MODULE_ALIAS(\"%s\");\n", alias);
 }
@@ -138,7 +166,7 @@ static void do_usb_entry_multi(struct usb_device_id *id, struct module *mod)
 	 * Some modules (visor) have empty slots as placeholder for
 	 * run-time specification that results in catch-all alias
 	 */
-	if (!(id->idVendor | id->bDeviceClass | id->bInterfaceClass))
+	if (!(id->idVendor | id->idProduct | id->bDeviceClass | id->bInterfaceClass))
 		return;
 
 	/* Convert numeric bcdDevice range into fnmatch-able pattern(s) */
@@ -169,13 +197,28 @@ static void do_usb_table(void *symval, unsigned long size,
 	unsigned int i;
 	const unsigned long id_size = sizeof(struct usb_device_id);
 
-	device_id_size_check(mod->name, "usb", size, id_size);
+	device_id_check(mod->name, "usb", size, id_size, symval);
 
 	/* Leave last one: it's the terminator. */
 	size -= id_size;
 
 	for (i = 0; i < size; i += id_size)
 		do_usb_entry_multi(symval + i, mod);
+}
+
+/* Looks like: hid:bNvNpN */
+static int do_hid_entry(const char *filename,
+			     struct hid_device_id *id, char *alias)
+{
+	id->bus = TO_NATIVE(id->bus);
+	id->vendor = TO_NATIVE(id->vendor);
+	id->product = TO_NATIVE(id->product);
+
+	sprintf(alias, "hid:b%04X", id->bus);
+	ADD(alias, "v", id->vendor != HID_ANY_ID, id->vendor);
+	ADD(alias, "p", id->product != HID_ANY_ID, id->product);
+
+	return 1;
 }
 
 /* Looks like: ieee1394:venNmoNspNverN */
@@ -198,6 +241,7 @@ static int do_ieee1394_entry(const char *filename,
 	ADD(alias, "ver", id->match_flags & IEEE1394_MATCH_VERSION,
 	    id->version);
 
+	add_wildcard(alias);
 	return 1;
 }
 
@@ -240,6 +284,7 @@ static int do_pci_entry(const char *filename,
 	ADD(alias, "bc", baseclass_mask == 0xFF, baseclass);
 	ADD(alias, "sc", subclass_mask == 0xFF, subclass);
 	ADD(alias, "i", interface_mask == 0xFF, interface);
+	add_wildcard(alias);
 	return 1;
 }
 
@@ -262,6 +307,23 @@ static int do_ccw_entry(const char *filename,
 	    id->dev_type);
 	ADD(alias, "dm", id->match_flags&CCW_DEVICE_ID_MATCH_DEVICE_MODEL,
 	    id->dev_model);
+	add_wildcard(alias);
+	return 1;
+}
+
+/* looks like: "ap:tN" */
+static int do_ap_entry(const char *filename,
+		       struct ap_device_id *id, char *alias)
+{
+	sprintf(alias, "ap:t%02X*", id->dev_type);
+	return 1;
+}
+
+/* looks like: "css:tN" */
+static int do_css_entry(const char *filename,
+			struct css_device_id *id, char *alias)
+{
+	sprintf(alias, "css:t%01X", id->type);
 	return 1;
 }
 
@@ -280,30 +342,101 @@ static int do_serio_entry(const char *filename,
 	ADD(alias, "id", id->id != SERIO_ANY, id->id);
 	ADD(alias, "ex", id->extra != SERIO_ANY, id->extra);
 
+	add_wildcard(alias);
+	return 1;
+}
+
+/* looks like: "acpi:ACPI0003 or acpi:PNP0C0B" or "acpi:LNXVIDEO" */
+static int do_acpi_entry(const char *filename,
+			struct acpi_device_id *id, char *alias)
+{
+	sprintf(alias, "acpi*:%s:*", id->id);
 	return 1;
 }
 
 /* looks like: "pnp:dD" */
-static int do_pnp_entry(const char *filename,
-			struct pnp_device_id *id, char *alias)
+static void do_pnp_device_entry(void *symval, unsigned long size,
+				struct module *mod)
 {
-	sprintf(alias, "pnp:d%s", id->id);
-	return 1;
+	const unsigned long id_size = sizeof(struct pnp_device_id);
+	const unsigned int count = (size / id_size)-1;
+	const struct pnp_device_id *devs = symval;
+	unsigned int i;
+
+	device_id_check(mod->name, "pnp", size, id_size, symval);
+
+	for (i = 0; i < count; i++) {
+		const char *id = (char *)devs[i].id;
+		char acpi_id[sizeof(devs[0].id)];
+		int j;
+
+		buf_printf(&mod->dev_table_buf,
+			   "MODULE_ALIAS(\"pnp:d%s*\");\n", id);
+
+		/* fix broken pnp bus lowercasing */
+		for (j = 0; j < sizeof(acpi_id); j++)
+			acpi_id[j] = toupper(id[j]);
+		buf_printf(&mod->dev_table_buf,
+			   "MODULE_ALIAS(\"acpi*:%s:*\");\n", acpi_id);
+	}
 }
 
-/* looks like: "pnp:cCdD..." */
-static int do_pnp_card_entry(const char *filename,
-			struct pnp_card_device_id *id, char *alias)
+/* looks like: "pnp:dD" for every device of the card */
+static void do_pnp_card_entries(void *symval, unsigned long size,
+				struct module *mod)
 {
-	int i;
+	const unsigned long id_size = sizeof(struct pnp_card_device_id);
+	const unsigned int count = (size / id_size)-1;
+	const struct pnp_card_device_id *cards = symval;
+	unsigned int i;
 
-	sprintf(alias, "pnp:c%s", id->id);
-	for (i = 0; i < PNP_MAX_DEVICES; i++) {
-		if (! *id->devs[i].id)
-			break;
-		sprintf(alias + strlen(alias), "d%s", id->devs[i].id);
+	device_id_check(mod->name, "pnp", size, id_size, symval);
+
+	for (i = 0; i < count; i++) {
+		unsigned int j;
+		const struct pnp_card_device_id *card = &cards[i];
+
+		for (j = 0; j < PNP_MAX_DEVICES; j++) {
+			const char *id = (char *)card->devs[j].id;
+			int i2, j2;
+			int dup = 0;
+
+			if (!id[0])
+				break;
+
+			/* find duplicate, already added value */
+			for (i2 = 0; i2 < i && !dup; i2++) {
+				const struct pnp_card_device_id *card2 = &cards[i2];
+
+				for (j2 = 0; j2 < PNP_MAX_DEVICES; j2++) {
+					const char *id2 = (char *)card2->devs[j2].id;
+
+					if (!id2[0])
+						break;
+
+					if (!strcmp(id, id2)) {
+						dup = 1;
+						break;
+					}
+				}
+			}
+
+			/* add an individual alias for every device entry */
+			if (!dup) {
+				char acpi_id[sizeof(card->devs[0].id)];
+				int k;
+
+				buf_printf(&mod->dev_table_buf,
+					   "MODULE_ALIAS(\"pnp:d%s*\");\n", id);
+
+				/* fix broken pnp bus lowercasing */
+				for (k = 0; k < sizeof(acpi_id); k++)
+					acpi_id[k] = toupper(id[k]);
+				buf_printf(&mod->dev_table_buf,
+					   "MODULE_ALIAS(\"acpi*:%s:*\");\n", acpi_id);
+			}
+		}
 	}
-	return 1;
 }
 
 /* Looks like: pcmcia:mNcNfNfnNpfnNvaNvbNvcNvdN. */
@@ -339,6 +472,7 @@ static int do_pcmcia_entry(const char *filename,
        ADD(alias, "pc", id->match_flags & PCMCIA_DEV_ID_MATCH_PROD_ID3, id->prod_id_hash[2]);
        ADD(alias, "pd", id->match_flags & PCMCIA_DEV_ID_MATCH_PROD_ID4, id->prod_id_hash[3]);
 
+	add_wildcard(alias);
        return 1;
 }
 
@@ -346,17 +480,23 @@ static int do_pcmcia_entry(const char *filename,
 
 static int do_of_entry (const char *filename, struct of_device_id *of, char *alias)
 {
+    int len;
     char *tmp;
-    sprintf (alias, "of:N%sT%sC%s",
+    len = sprintf (alias, "of:N%sT%s",
                     of->name[0] ? of->name : "*",
-                    of->type[0] ? of->type : "*",
-                    of->compatible[0] ? of->compatible : "*");
+                    of->type[0] ? of->type : "*");
+
+    if (of->compatible[0])
+        sprintf (&alias[len], "%sC%s",
+                     of->type[0] ? "*" : "",
+                     of->compatible);
 
     /* Replace all whitespace with underscores */
     for (tmp = alias; tmp && *tmp; tmp++)
         if (isspace (*tmp))
             *tmp = '_';
 
+    add_wildcard(alias);
     return 1;
 }
 
@@ -373,13 +513,7 @@ static int do_vio_entry(const char *filename, struct vio_device_id *vio,
 		if (isspace (*tmp))
 			*tmp = '_';
 
-	return 1;
-}
-
-static int do_i2c_entry(const char *filename, struct i2c_device_id *i2c, char *alias)
-{
-	strcpy(alias, "i2c:");
-	ADD(alias, "id", 1, i2c->id);
+	add_wildcard(alias);
 	return 1;
 }
 
@@ -408,35 +542,214 @@ static int do_input_entry(const char *filename, struct input_device_id *id,
 
 	sprintf(alias + strlen(alias), "-e*");
 	if (id->flags & INPUT_DEVICE_ID_MATCH_EVBIT)
-		do_input(alias, id->evbit, 0, EV_MAX);
+		do_input(alias, id->evbit, 0, INPUT_DEVICE_ID_EV_MAX);
 	sprintf(alias + strlen(alias), "k*");
 	if (id->flags & INPUT_DEVICE_ID_MATCH_KEYBIT)
-		do_input(alias, id->keybit, KEY_MIN_INTERESTING, KEY_MAX);
+		do_input(alias, id->keybit,
+			 INPUT_DEVICE_ID_KEY_MIN_INTERESTING,
+			 INPUT_DEVICE_ID_KEY_MAX);
 	sprintf(alias + strlen(alias), "r*");
 	if (id->flags & INPUT_DEVICE_ID_MATCH_RELBIT)
-		do_input(alias, id->relbit, 0, REL_MAX);
+		do_input(alias, id->relbit, 0, INPUT_DEVICE_ID_REL_MAX);
 	sprintf(alias + strlen(alias), "a*");
 	if (id->flags & INPUT_DEVICE_ID_MATCH_ABSBIT)
-		do_input(alias, id->absbit, 0, ABS_MAX);
+		do_input(alias, id->absbit, 0, INPUT_DEVICE_ID_ABS_MAX);
 	sprintf(alias + strlen(alias), "m*");
 	if (id->flags & INPUT_DEVICE_ID_MATCH_MSCIT)
-		do_input(alias, id->mscbit, 0, MSC_MAX);
+		do_input(alias, id->mscbit, 0, INPUT_DEVICE_ID_MSC_MAX);
 	sprintf(alias + strlen(alias), "l*");
 	if (id->flags & INPUT_DEVICE_ID_MATCH_LEDBIT)
-		do_input(alias, id->ledbit, 0, LED_MAX);
+		do_input(alias, id->ledbit, 0, INPUT_DEVICE_ID_LED_MAX);
 	sprintf(alias + strlen(alias), "s*");
 	if (id->flags & INPUT_DEVICE_ID_MATCH_SNDBIT)
-		do_input(alias, id->sndbit, 0, SND_MAX);
+		do_input(alias, id->sndbit, 0, INPUT_DEVICE_ID_SND_MAX);
 	sprintf(alias + strlen(alias), "f*");
 	if (id->flags & INPUT_DEVICE_ID_MATCH_FFBIT)
-		do_input(alias, id->ffbit, 0, FF_MAX);
+		do_input(alias, id->ffbit, 0, INPUT_DEVICE_ID_FF_MAX);
 	sprintf(alias + strlen(alias), "w*");
 	if (id->flags & INPUT_DEVICE_ID_MATCH_SWBIT)
-		do_input(alias, id->swbit, 0, SW_MAX);
+		do_input(alias, id->swbit, 0, INPUT_DEVICE_ID_SW_MAX);
 	return 1;
 }
 
-/* Ignore any prefix, eg. v850 prepends _ */
+static int do_eisa_entry(const char *filename, struct eisa_device_id *eisa,
+		char *alias)
+{
+	if (eisa->sig[0])
+		sprintf(alias, EISA_DEVICE_MODALIAS_FMT "*", eisa->sig);
+	else
+		strcat(alias, "*");
+	return 1;
+}
+
+/* Looks like: parisc:tNhvNrevNsvN */
+static int do_parisc_entry(const char *filename, struct parisc_device_id *id,
+		char *alias)
+{
+	id->hw_type = TO_NATIVE(id->hw_type);
+	id->hversion = TO_NATIVE(id->hversion);
+	id->hversion_rev = TO_NATIVE(id->hversion_rev);
+	id->sversion = TO_NATIVE(id->sversion);
+
+	strcpy(alias, "parisc:");
+	ADD(alias, "t", id->hw_type != PA_HWTYPE_ANY_ID, id->hw_type);
+	ADD(alias, "hv", id->hversion != PA_HVERSION_ANY_ID, id->hversion);
+	ADD(alias, "rev", id->hversion_rev != PA_HVERSION_REV_ANY_ID, id->hversion_rev);
+	ADD(alias, "sv", id->sversion != PA_SVERSION_ANY_ID, id->sversion);
+
+	add_wildcard(alias);
+	return 1;
+}
+
+/* Looks like: sdio:cNvNdN. */
+static int do_sdio_entry(const char *filename,
+			struct sdio_device_id *id, char *alias)
+{
+	id->class = TO_NATIVE(id->class);
+	id->vendor = TO_NATIVE(id->vendor);
+	id->device = TO_NATIVE(id->device);
+
+	strcpy(alias, "sdio:");
+	ADD(alias, "c", id->class != (__u8)SDIO_ANY_ID, id->class);
+	ADD(alias, "v", id->vendor != (__u16)SDIO_ANY_ID, id->vendor);
+	ADD(alias, "d", id->device != (__u16)SDIO_ANY_ID, id->device);
+	add_wildcard(alias);
+	return 1;
+}
+
+/* Looks like: ssb:vNidNrevN. */
+static int do_ssb_entry(const char *filename,
+			struct ssb_device_id *id, char *alias)
+{
+	id->vendor = TO_NATIVE(id->vendor);
+	id->coreid = TO_NATIVE(id->coreid);
+	id->revision = TO_NATIVE(id->revision);
+
+	strcpy(alias, "ssb:");
+	ADD(alias, "v", id->vendor != SSB_ANY_VENDOR, id->vendor);
+	ADD(alias, "id", id->coreid != SSB_ANY_ID, id->coreid);
+	ADD(alias, "rev", id->revision != SSB_ANY_REV, id->revision);
+	add_wildcard(alias);
+	return 1;
+}
+
+/* Looks like: virtio:dNvN */
+static int do_virtio_entry(const char *filename, struct virtio_device_id *id,
+			   char *alias)
+{
+	id->device = TO_NATIVE(id->device);
+	id->vendor = TO_NATIVE(id->vendor);
+
+	strcpy(alias, "virtio:");
+	ADD(alias, "d", id->device != VIRTIO_DEV_ANY_ID, id->device);
+	ADD(alias, "v", id->vendor != VIRTIO_DEV_ANY_ID, id->vendor);
+
+	add_wildcard(alias);
+	return 1;
+}
+
+/* Looks like: i2c:S */
+static int do_i2c_entry(const char *filename, struct i2c_device_id *id,
+			char *alias)
+{
+	sprintf(alias, I2C_MODULE_PREFIX "%s", id->name);
+
+	return 1;
+}
+
+/* Looks like: spi:S */
+static int do_spi_entry(const char *filename, struct spi_device_id *id,
+			char *alias)
+{
+	sprintf(alias, SPI_MODULE_PREFIX "%s", id->name);
+
+	return 1;
+}
+
+static const struct dmifield {
+	const char *prefix;
+	int field;
+} dmi_fields[] = {
+	{ "bvn", DMI_BIOS_VENDOR },
+	{ "bvr", DMI_BIOS_VERSION },
+	{ "bd",  DMI_BIOS_DATE },
+	{ "svn", DMI_SYS_VENDOR },
+	{ "pn",  DMI_PRODUCT_NAME },
+	{ "pvr", DMI_PRODUCT_VERSION },
+	{ "rvn", DMI_BOARD_VENDOR },
+	{ "rn",  DMI_BOARD_NAME },
+	{ "rvr", DMI_BOARD_VERSION },
+	{ "cvn", DMI_CHASSIS_VENDOR },
+	{ "ct",  DMI_CHASSIS_TYPE },
+	{ "cvr", DMI_CHASSIS_VERSION },
+	{ NULL,  DMI_NONE }
+};
+
+static void dmi_ascii_filter(char *d, const char *s)
+{
+	/* Filter out characters we don't want to see in the modalias string */
+	for (; *s; s++)
+		if (*s > ' ' && *s < 127 && *s != ':')
+			*(d++) = *s;
+
+	*d = 0;
+}
+
+
+static int do_dmi_entry(const char *filename, struct dmi_system_id *id,
+			char *alias)
+{
+	int i, j;
+
+	sprintf(alias, "dmi*");
+
+	for (i = 0; i < ARRAY_SIZE(dmi_fields); i++) {
+		for (j = 0; j < 4; j++) {
+			if (id->matches[j].slot &&
+			    id->matches[j].slot == dmi_fields[i].field) {
+				sprintf(alias + strlen(alias), ":%s*",
+					dmi_fields[i].prefix);
+				dmi_ascii_filter(alias + strlen(alias),
+						 id->matches[j].substr);
+				strcat(alias, "*");
+			}
+		}
+	}
+
+	strcat(alias, ":");
+	return 1;
+}
+
+static int do_platform_entry(const char *filename,
+			     struct platform_device_id *id, char *alias)
+{
+	sprintf(alias, PLATFORM_MODULE_PREFIX "%s", id->name);
+	return 1;
+}
+
+static int do_mdio_entry(const char *filename,
+			 struct mdio_device_id *id, char *alias)
+{
+	int i;
+
+	alias += sprintf(alias, MDIO_MODULE_PREFIX);
+
+	for (i = 0; i < 32; i++) {
+		if (!((id->phy_id_mask >> (31-i)) & 1))
+			*(alias++) = '?';
+		else if ((id->phy_id >> (31-i)) & 1)
+			*(alias++) = '1';
+		else
+			*(alias++) = '0';
+	}
+
+	/* Terminate the string */
+	*alias = 0;
+
+	return 1;
+}
+
+/* Ignore any prefix, eg. some architectures prepend _ */
 static inline int sym_is(const char *symbol, const char *name)
 {
 	const char *match;
@@ -457,15 +770,12 @@ static void do_table(void *symval, unsigned long size,
 	char alias[500];
 	int (*do_entry)(const char *, void *entry, char *alias) = function;
 
-	device_id_size_check(mod->name, device_id, size, id_size);
+	device_id_check(mod->name, device_id, size, id_size, symval);
 	/* Leave last one: it's the terminator. */
 	size -= id_size;
 
 	for (i = 0; i < size; i += id_size) {
 		if (do_entry(mod->name, symval+i, alias)) {
-			/* Always end in a wildcard, for future extension */
-			if (alias[strlen(alias)-1] != '*')
-				strcat(alias, "*");
 			buf_printf(&mod->dev_table_buf,
 				   "MODULE_ALIAS(\"%s\");\n", alias);
 		}
@@ -479,14 +789,21 @@ void handle_moddevtable(struct module *mod, struct elf_info *info,
 			Elf_Sym *sym, const char *symname)
 {
 	void *symval;
+	char *zeros = NULL;
 
 	/* We're looking for a section relative symbol */
 	if (!sym->st_shndx || sym->st_shndx >= info->hdr->e_shnum)
 		return;
 
-	symval = (void *)info->hdr
-		+ info->sechdrs[sym->st_shndx].sh_offset
-		+ sym->st_value;
+	/* Handle all-NULL symbols allocated into .bss */
+	if (info->sechdrs[sym->st_shndx].sh_type & SHT_NOBITS) {
+		zeros = calloc(1, sym->st_size);
+		symval = zeros;
+	} else {
+		symval = (void *)info->hdr
+			+ info->sechdrs[sym->st_shndx].sh_offset
+			+ sym->st_value;
+	}
 
 	if (sym_is(symname, "__mod_pci_device_table"))
 		do_table(symval, sym->st_size,
@@ -495,6 +812,10 @@ void handle_moddevtable(struct module *mod, struct elf_info *info,
 	else if (sym_is(symname, "__mod_usb_device_table"))
 		/* special case to handle bcdDevice ranges */
 		do_usb_table(symval, sym->st_size, mod);
+	else if (sym_is(symname, "__mod_hid_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct hid_device_id), "hid",
+			 do_hid_entry, mod);
 	else if (sym_is(symname, "__mod_ieee1394_device_table"))
 		do_table(symval, sym->st_size,
 			 sizeof(struct ieee1394_device_id), "ieee1394",
@@ -503,18 +824,26 @@ void handle_moddevtable(struct module *mod, struct elf_info *info,
 		do_table(symval, sym->st_size,
 			 sizeof(struct ccw_device_id), "ccw",
 			 do_ccw_entry, mod);
+	else if (sym_is(symname, "__mod_ap_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct ap_device_id), "ap",
+			 do_ap_entry, mod);
+	else if (sym_is(symname, "__mod_css_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct css_device_id), "css",
+			 do_css_entry, mod);
 	else if (sym_is(symname, "__mod_serio_device_table"))
 		do_table(symval, sym->st_size,
 			 sizeof(struct serio_device_id), "serio",
 			 do_serio_entry, mod);
+	else if (sym_is(symname, "__mod_acpi_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct acpi_device_id), "acpi",
+			 do_acpi_entry, mod);
 	else if (sym_is(symname, "__mod_pnp_device_table"))
-		do_table(symval, sym->st_size,
-			 sizeof(struct pnp_device_id), "pnp",
-			 do_pnp_entry, mod);
+		do_pnp_device_entry(symval, sym->st_size, mod);
 	else if (sym_is(symname, "__mod_pnp_card_device_table"))
-		do_table(symval, sym->st_size,
-			 sizeof(struct pnp_card_device_id), "pnp_card",
-			 do_pnp_card_entry, mod);
+		do_pnp_card_entries(symval, sym->st_size, mod);
 	else if (sym_is(symname, "__mod_pcmcia_device_table"))
 		do_table(symval, sym->st_size,
 			 sizeof(struct pcmcia_device_id), "pcmcia",
@@ -527,14 +856,51 @@ void handle_moddevtable(struct module *mod, struct elf_info *info,
 		do_table(symval, sym->st_size,
 			 sizeof(struct vio_device_id), "vio",
 			 do_vio_entry, mod);
-	else if (sym_is(symname, "__mod_i2c_device_table"))
-		do_table(symval, sym->st_size,
-			 sizeof(struct i2c_device_id), "i2c",
-			 do_i2c_entry, mod);
 	else if (sym_is(symname, "__mod_input_device_table"))
 		do_table(symval, sym->st_size,
 			 sizeof(struct input_device_id), "input",
 			 do_input_entry, mod);
+	else if (sym_is(symname, "__mod_eisa_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct eisa_device_id), "eisa",
+			 do_eisa_entry, mod);
+	else if (sym_is(symname, "__mod_parisc_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct parisc_device_id), "parisc",
+			 do_parisc_entry, mod);
+	else if (sym_is(symname, "__mod_sdio_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct sdio_device_id), "sdio",
+			 do_sdio_entry, mod);
+	else if (sym_is(symname, "__mod_ssb_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct ssb_device_id), "ssb",
+			 do_ssb_entry, mod);
+	else if (sym_is(symname, "__mod_virtio_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct virtio_device_id), "virtio",
+			 do_virtio_entry, mod);
+	else if (sym_is(symname, "__mod_i2c_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct i2c_device_id), "i2c",
+			 do_i2c_entry, mod);
+	else if (sym_is(symname, "__mod_spi_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct spi_device_id), "spi",
+			 do_spi_entry, mod);
+	else if (sym_is(symname, "__mod_dmi_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct dmi_system_id), "dmi",
+			 do_dmi_entry, mod);
+	else if (sym_is(symname, "__mod_platform_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct platform_device_id), "platform",
+			 do_platform_entry, mod);
+	else if (sym_is(symname, "__mod_mdio_device_table"))
+		do_table(symval, sym->st_size,
+			 sizeof(struct mdio_device_id), "mdio",
+			 do_mdio_entry, mod);
+	free(zeros);
 }
 
 /* Now add out buffered information to the generated C source */

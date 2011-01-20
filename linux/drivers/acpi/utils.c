@@ -30,22 +30,28 @@
 #include <acpi/acpi_bus.h>
 #include <acpi/acpi_drivers.h>
 
+#include "internal.h"
+
 #define _COMPONENT		ACPI_BUS_COMPONENT
-ACPI_MODULE_NAME("acpi_utils")
+ACPI_MODULE_NAME("utils");
 
 /* --------------------------------------------------------------------------
                             Object Evaluation Helpers
    -------------------------------------------------------------------------- */
+static void
+acpi_util_eval_error(acpi_handle h, acpi_string p, acpi_status s)
+{
 #ifdef ACPI_DEBUG_OUTPUT
-#define acpi_util_eval_error(h,p,s) {\
-	char prefix[80] = {'\0'};\
-	struct acpi_buffer buffer = {sizeof(prefix), prefix};\
-	acpi_get_name(h, ACPI_FULL_PATHNAME, &buffer);\
-	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Evaluate [%s.%s]: %s\n",\
-		(char *) prefix, p, acpi_format_exception(s))); }
+	char prefix[80] = {'\0'};
+	struct acpi_buffer buffer = {sizeof(prefix), prefix};
+	acpi_get_name(h, ACPI_FULL_PATHNAME, &buffer);
+	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Evaluate [%s.%s]: %s\n",
+		(char *) prefix, p, acpi_format_exception(s)));
 #else
-#define acpi_util_eval_error(h,p,s)
+	return;
 #endif
+}
+
 acpi_status
 acpi_extract_package(union acpi_object *package,
 		     struct acpi_buffer *format, struct acpi_buffer *buffer)
@@ -83,7 +89,7 @@ acpi_extract_package(union acpi_object *package,
 		return AE_BAD_DATA;
 	}
 
-	format_string = (char *)format->pointer;
+	format_string = format->pointer;
 
 	/*
 	 * Calculate size_required.
@@ -252,40 +258,31 @@ EXPORT_SYMBOL(acpi_extract_package);
 acpi_status
 acpi_evaluate_integer(acpi_handle handle,
 		      acpi_string pathname,
-		      struct acpi_object_list *arguments, unsigned long *data)
+		      struct acpi_object_list *arguments, unsigned long long *data)
 {
 	acpi_status status = AE_OK;
-	union acpi_object *element;
+	union acpi_object element;
 	struct acpi_buffer buffer = { 0, NULL };
-
 
 	if (!data)
 		return AE_BAD_PARAMETER;
 
-	element = kmalloc(sizeof(union acpi_object), irqs_disabled() ? GFP_ATOMIC: GFP_KERNEL);
-	if (!element)
-		return AE_NO_MEMORY;
-
-	memset(element, 0, sizeof(union acpi_object));
 	buffer.length = sizeof(union acpi_object);
-	buffer.pointer = element;
+	buffer.pointer = &element;
 	status = acpi_evaluate_object(handle, pathname, arguments, &buffer);
 	if (ACPI_FAILURE(status)) {
 		acpi_util_eval_error(handle, pathname, status);
-		kfree(element);
 		return status;
 	}
 
-	if (element->type != ACPI_TYPE_INTEGER) {
+	if (element.type != ACPI_TYPE_INTEGER) {
 		acpi_util_eval_error(handle, pathname, AE_BAD_DATA);
-		kfree(element);
 		return AE_BAD_DATA;
 	}
 
-	*data = element->integer.value;
-	kfree(element);
+	*data = element.integer.value;
 
-	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Return value [%lu]\n", *data));
+	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Return value [%llu]\n", *data));
 
 	return AE_OK;
 }
@@ -321,12 +318,11 @@ acpi_evaluate_string(acpi_handle handle,
 		return AE_BAD_DATA;
 	}
 
-	*data = kmalloc(element->string.length + 1, GFP_KERNEL);
+	*data = kzalloc(element->string.length + 1, GFP_KERNEL);
 	if (!data) {
 		printk(KERN_ERR PREFIX "Memory allocation\n");
 		return -ENOMEM;
 	}
-	memset(*data, 0, element->string.length + 1);
 
 	memcpy(*data, element->string.pointer, element->string.length);
 
@@ -361,7 +357,7 @@ acpi_evaluate_reference(acpi_handle handle,
 	if (ACPI_FAILURE(status))
 		goto end;
 
-	package = (union acpi_object *)buffer.pointer;
+	package = buffer.pointer;
 
 	if ((buffer.length == 0) || !package) {
 		printk(KERN_ERR PREFIX "No return object (len %X ptr %p)\n",
@@ -396,7 +392,7 @@ acpi_evaluate_reference(acpi_handle handle,
 
 		element = &(package->package.elements[i]);
 
-		if (element->type != ACPI_TYPE_ANY) {
+		if (element->type != ACPI_TYPE_LOCAL_REFERENCE) {
 			status = AE_BAD_DATA;
 			printk(KERN_ERR PREFIX
 				    "Expecting a [Reference] package element, found type %X\n",
@@ -405,6 +401,12 @@ acpi_evaluate_reference(acpi_handle handle,
 			break;
 		}
 
+		if (!element->reference.handle) {
+			printk(KERN_WARNING PREFIX "Invalid reference in"
+			       " package %s\n", pathname);
+			status = AE_NULL_ENTRY;
+			break;
+		}
 		/* Get the  acpi_handle. */
 
 		list->handles[i] = element->reference.handle;

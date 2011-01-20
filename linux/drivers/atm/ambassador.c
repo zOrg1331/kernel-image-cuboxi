@@ -32,6 +32,10 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/poison.h>
+#include <linux/bitrev.h>
+#include <linux/mutex.h>
+#include <linux/firmware.h>
+#include <linux/ihex.h>
 
 #include <asm/atomic.h>
 #include <asm/io.h>
@@ -288,29 +292,6 @@ static inline void __init show_version (void) {
   
 */
 
-/********** microcode **********/
-
-#ifdef AMB_NEW_MICROCODE
-#define UCODE(x) UCODE2(atmsar12.x)
-#else
-#define UCODE(x) UCODE2(atmsar11.x)
-#endif
-#define UCODE2(x) #x
-
-static u32 __devinitdata ucode_start =
-#include UCODE(start)
-;
-
-static region __devinitdata ucode_regions[] = {
-#include UCODE(regions)
-  { 0, 0 }
-};
-
-static u32 __devinitdata ucode_data[] = {
-#include UCODE(data)
-  0xdeadbeef
-};
-
 static void do_housekeeping (unsigned long arg);
 /********** globals **********/
 
@@ -436,7 +417,7 @@ static inline void dump_skb (char * prefix, unsigned int vc, struct sk_buff * sk
 
 /* see limitations under Hardware Features */
 
-static inline int check_area (void * start, size_t length) {
+static int check_area (void * start, size_t length) {
   // assumes length > 0
   const u32 fourmegmask = -1 << 22;
   const u32 twofivesixmask = -1 << 8;
@@ -455,7 +436,7 @@ static inline int check_area (void * start, size_t length) {
 
 /********** free an skb (as per ATM device driver documentation) **********/
 
-static inline void amb_kfree_skb (struct sk_buff * skb) {
+static void amb_kfree_skb (struct sk_buff * skb) {
   if (ATM_SKB(skb)->vcc->pop) {
     ATM_SKB(skb)->vcc->pop (ATM_SKB(skb)->vcc, skb);
   } else {
@@ -465,7 +446,7 @@ static inline void amb_kfree_skb (struct sk_buff * skb) {
 
 /********** TX completion **********/
 
-static inline void tx_complete (amb_dev * dev, tx_out * tx) {
+static void tx_complete (amb_dev * dev, tx_out * tx) {
   tx_simple * tx_descr = bus_to_virt (tx->handle);
   struct sk_buff * skb = tx_descr->skb;
   
@@ -642,7 +623,7 @@ static int command_do (amb_dev * dev, command * cmd) {
 
 /********** TX queue pair **********/
 
-static inline int tx_give (amb_dev * dev, tx_in * tx) {
+static int tx_give (amb_dev * dev, tx_in * tx) {
   amb_txq * txq = &dev->txq;
   unsigned long flags;
   
@@ -674,7 +655,7 @@ static inline int tx_give (amb_dev * dev, tx_in * tx) {
   }
 }
 
-static inline int tx_take (amb_dev * dev) {
+static int tx_take (amb_dev * dev) {
   amb_txq * txq = &dev->txq;
   unsigned long flags;
   
@@ -702,7 +683,7 @@ static inline int tx_take (amb_dev * dev) {
 
 /********** RX queue pairs **********/
 
-static inline int rx_give (amb_dev * dev, rx_in * rx, unsigned char pool) {
+static int rx_give (amb_dev * dev, rx_in * rx, unsigned char pool) {
   amb_rxq * rxq = &dev->rxq[pool];
   unsigned long flags;
   
@@ -727,7 +708,7 @@ static inline int rx_give (amb_dev * dev, rx_in * rx, unsigned char pool) {
   }
 }
 
-static inline int rx_take (amb_dev * dev, unsigned char pool) {
+static int rx_take (amb_dev * dev, unsigned char pool) {
   amb_rxq * rxq = &dev->rxq[pool];
   unsigned long flags;
   
@@ -760,7 +741,7 @@ static inline int rx_take (amb_dev * dev, unsigned char pool) {
 /********** RX Pool handling **********/
 
 /* pre: buffers_wanted = 0, post: pending = 0 */
-static inline void drain_rx_pool (amb_dev * dev, unsigned char pool) {
+static void drain_rx_pool (amb_dev * dev, unsigned char pool) {
   amb_rxq * rxq = &dev->rxq[pool];
   
   PRINTD (DBG_FLOW|DBG_POOL, "drain_rx_pool %p %hu", dev, pool);
@@ -795,7 +776,7 @@ static void drain_rx_pools (amb_dev * dev) {
     drain_rx_pool (dev, pool);
 }
 
-static inline void fill_rx_pool (amb_dev * dev, unsigned char pool,
+static void fill_rx_pool (amb_dev * dev, unsigned char pool,
                                  gfp_t priority)
 {
   rx_in rx;
@@ -820,7 +801,7 @@ static inline void fill_rx_pool (amb_dev * dev, unsigned char pool,
     }
     // cast needed as there is no %? for pointer differences
     PRINTD (DBG_SKB, "allocated skb at %p, head %p, area %li",
-	    skb, skb->head, (long) (skb->end - skb->head));
+	    skb, skb->head, (long) (skb_end_pointer(skb) - skb->head));
     rx.handle = virt_to_bus (skb);
     rx.host_address = cpu_to_be32 (virt_to_bus (skb->data));
     if (rx_give (dev, &rx, pool))
@@ -845,7 +826,7 @@ static void fill_rx_pools (amb_dev * dev) {
 
 /********** enable host interrupts **********/
 
-static inline void interrupts_on (amb_dev * dev) {
+static void interrupts_on (amb_dev * dev) {
   wr_plain (dev, offsetof(amb_mem, interrupt_control),
 	    rd_plain (dev, offsetof(amb_mem, interrupt_control))
 	    | AMB_INTERRUPT_BITS);
@@ -853,7 +834,7 @@ static inline void interrupts_on (amb_dev * dev) {
 
 /********** disable host interrupts **********/
 
-static inline void interrupts_off (amb_dev * dev) {
+static void interrupts_off (amb_dev * dev) {
   wr_plain (dev, offsetof(amb_mem, interrupt_control),
 	    rd_plain (dev, offsetof(amb_mem, interrupt_control))
 	    &~ AMB_INTERRUPT_BITS);
@@ -861,17 +842,10 @@ static inline void interrupts_off (amb_dev * dev) {
 
 /********** interrupt handling **********/
 
-static irqreturn_t interrupt_handler(int irq, void *dev_id,
-					struct pt_regs *pt_regs) {
-  amb_dev * dev = (amb_dev *) dev_id;
-  (void) pt_regs;
+static irqreturn_t interrupt_handler(int irq, void *dev_id) {
+  amb_dev * dev = dev_id;
   
   PRINTD (DBG_IRQ|DBG_FLOW, "interrupt_handler: %p", dev_id);
-  
-  if (!dev_id) {
-    PRINTD (DBG_IRQ|DBG_ERR, "irq with NULL dev_id: %d", irq);
-    return IRQ_NONE;
-  }
   
   {
     u32 interrupt = rd_plain (dev, offsetof(amb_mem, interrupt));
@@ -915,8 +889,8 @@ static irqreturn_t interrupt_handler(int irq, void *dev_id,
 
 /********** make rate (not quite as much fun as Horizon) **********/
 
-static unsigned int make_rate (unsigned int rate, rounding r,
-			       u16 * bits, unsigned int * actual) {
+static int make_rate (unsigned int rate, rounding r,
+		      u16 * bits, unsigned int * actual) {
   unsigned char exp = -1; // hush gcc
   unsigned int man = -1;  // hush gcc
   
@@ -979,7 +953,7 @@ static unsigned int make_rate (unsigned int rate, rounding r,
       }
       case round_up: {
 	// check all bits that we are discarding
-	if (man & (-1>>9)) {
+	if (man & (~0U>>9)) {
 	  man = (man>>(32-9)) + 1;
 	  if (man == (1<<9)) {
 	    // no need to check for round up outside of range
@@ -1046,7 +1020,7 @@ static int amb_open (struct atm_vcc * atm_vcc)
   struct atm_qos * qos;
   struct atm_trafprm * txtp;
   struct atm_trafprm * rxtp;
-  u16 tx_rate_bits;
+  u16 tx_rate_bits = -1; // hush gcc
   u16 tx_vc_bits = -1; // hush gcc
   u16 tx_frame_bits = -1; // hush gcc
   
@@ -1102,6 +1076,8 @@ static int amb_open (struct atm_vcc * atm_vcc)
 	    r = round_up;
 	  }
 	  error = make_rate (pcr, r, &tx_rate_bits, NULL);
+	  if (error)
+	    return error;
 	  tx_vc_bits = TX_UBR_CAPPED;
 	  tx_frame_bits = TX_FRAME_CAPPED;
 	}
@@ -1181,7 +1157,7 @@ static int amb_open (struct atm_vcc * atm_vcc)
     
     vcc->tx_frame_bits = tx_frame_bits;
     
-    down (&dev->vcc_sf);
+    mutex_lock(&dev->vcc_sf);
     if (dev->rxer[vci]) {
       // RXer on the channel already, just modify rate...
       cmd.request = cpu_to_be32 (SRB_MODIFY_VC_RATE);
@@ -1207,7 +1183,7 @@ static int amb_open (struct atm_vcc * atm_vcc)
 	schedule();
     }
     dev->txer[vci].tx_present = 1;
-    up (&dev->vcc_sf);
+    mutex_unlock(&dev->vcc_sf);
   }
   
   if (rxtp->traffic_class != ATM_NONE) {
@@ -1215,7 +1191,7 @@ static int amb_open (struct atm_vcc * atm_vcc)
     
     vcc->rx_info.pool = pool;
     
-    down (&dev->vcc_sf); 
+    mutex_lock(&dev->vcc_sf);
     /* grow RX buffer pool */
     if (!dev->rxq[pool].buffers_wanted)
       dev->rxq[pool].buffers_wanted = rx_lats;
@@ -1241,7 +1217,7 @@ static int amb_open (struct atm_vcc * atm_vcc)
       schedule();
     // this link allows RX frames through
     dev->rxer[vci] = atm_vcc;
-    up (&dev->vcc_sf);
+    mutex_unlock(&dev->vcc_sf);
   }
   
   // indicate readiness
@@ -1266,7 +1242,7 @@ static void amb_close (struct atm_vcc * atm_vcc) {
   if (atm_vcc->qos.txtp.traffic_class != ATM_NONE) {
     command cmd;
     
-    down (&dev->vcc_sf);
+    mutex_lock(&dev->vcc_sf);
     if (dev->rxer[vci]) {
       // RXer still on the channel, just modify rate... XXX not really needed
       cmd.request = cpu_to_be32 (SRB_MODIFY_VC_RATE);
@@ -1281,7 +1257,7 @@ static void amb_close (struct atm_vcc * atm_vcc) {
     dev->txer[vci].tx_present = 0;
     while (command_do (dev, &cmd))
       schedule();
-    up (&dev->vcc_sf);
+    mutex_unlock(&dev->vcc_sf);
   }
   
   // disable RXing
@@ -1291,7 +1267,7 @@ static void amb_close (struct atm_vcc * atm_vcc) {
     // this is (the?) one reason why we need the amb_vcc struct
     unsigned char pool = vcc->rx_info.pool;
     
-    down (&dev->vcc_sf);
+    mutex_lock(&dev->vcc_sf);
     if (dev->txer[vci].tx_present) {
       // TXer still on the channel, just go to pool zero XXX not really needed
       cmd.request = cpu_to_be32 (SRB_MODIFY_VC_FLAGS);
@@ -1318,7 +1294,7 @@ static void amb_close (struct atm_vcc * atm_vcc) {
       dev->rxq[pool].buffers_wanted = 0;
       drain_rx_pool (dev, pool);
     }
-    up (&dev->vcc_sf);
+    mutex_unlock(&dev->vcc_sf);
   }
   
   // free our structure
@@ -1329,14 +1305,6 @@ static void amb_close (struct atm_vcc * atm_vcc) {
 
   return;
 }
-
-/********** Set socket options for a VC **********/
-
-// int amb_getsockopt (struct atm_vcc * atm_vcc, int level, int optname, void * optval, int optlen);
-
-/********** Set socket options for a VC **********/
-
-// int amb_setsockopt (struct atm_vcc * atm_vcc, int level, int optname, void * optval, int optlen);
 
 /********** Send **********/
 
@@ -1844,45 +1812,34 @@ static int __devinit get_loader_version (loader_block * lb,
 
 /* loader: write memory data blocks */
 
-static int __devinit loader_write (loader_block * lb,
-				const amb_dev * dev, const u32 * data,
-				u32 address, unsigned int count) {
-  unsigned int i;
+static int __devinit loader_write (loader_block* lb,
+				   const amb_dev *dev,
+				   const struct ihex_binrec *rec) {
   transfer_block * tb = &lb->payload.transfer;
   
   PRINTD (DBG_FLOW|DBG_LOAD, "loader_write");
-  
-  if (count > MAX_TRANSFER_DATA)
-    return -EINVAL;
-  tb->address = cpu_to_be32 (address);
-  tb->count = cpu_to_be32 (count);
-  for (i = 0; i < count; ++i)
-    tb->data[i] = cpu_to_be32 (data[i]);
+
+  tb->address = rec->addr;
+  tb->count = cpu_to_be32(be16_to_cpu(rec->len) / 4);
+  memcpy(tb->data, rec->data, be16_to_cpu(rec->len));
   return do_loader_command (lb, dev, write_adapter_memory);
 }
 
 /* loader: verify memory data blocks */
 
 static int __devinit loader_verify (loader_block * lb,
-				 const amb_dev * dev, const u32 * data,
-				 u32 address, unsigned int count) {
-  unsigned int i;
+				    const amb_dev *dev,
+				    const struct ihex_binrec *rec) {
   transfer_block * tb = &lb->payload.transfer;
   int res;
   
   PRINTD (DBG_FLOW|DBG_LOAD, "loader_verify");
   
-  if (count > MAX_TRANSFER_DATA)
-    return -EINVAL;
-  tb->address = cpu_to_be32 (address);
-  tb->count = cpu_to_be32 (count);
+  tb->address = rec->addr;
+  tb->count = cpu_to_be32(be16_to_cpu(rec->len) / 4);
   res = do_loader_command (lb, dev, read_adapter_memory);
-  if (!res)
-    for (i = 0; i < count; ++i)
-      if (tb->data[i] != cpu_to_be32 (data[i])) {
-	res = -EINVAL;
-	break;
-      }
+  if (!res && memcmp(tb->data, rec->data, be16_to_cpu(rec->len)))
+    res = -EINVAL;
   return res;
 }
 
@@ -1965,47 +1922,53 @@ static int amb_reset (amb_dev * dev, int diags) {
 /********** transfer and start the microcode **********/
 
 static int __devinit ucode_init (loader_block * lb, amb_dev * dev) {
-  unsigned int i = 0;
-  unsigned int total = 0;
-  const u32 * pointer = ucode_data;
-  u32 address;
-  unsigned int count;
+  const struct firmware *fw;
+  unsigned long start_address;
+  const struct ihex_binrec *rec;
   int res;
   
+  res = request_ihex_firmware(&fw, "atmsar11.fw", &dev->pci_dev->dev);
+  if (res) {
+    PRINTK (KERN_ERR, "Cannot load microcode data");
+    return res;
+  }
+
+  /* First record contains just the start address */
+  rec = (const struct ihex_binrec *)fw->data;
+  if (be16_to_cpu(rec->len) != sizeof(__be32) || be32_to_cpu(rec->addr)) {
+    PRINTK (KERN_ERR, "Bad microcode data (no start record)");
+    return -EINVAL;
+  }
+  start_address = be32_to_cpup((__be32 *)rec->data);
+
+  rec = ihex_next_binrec(rec);
+
   PRINTD (DBG_FLOW|DBG_LOAD, "ucode_init");
-  
-  while (address = ucode_regions[i].start,
-	 count = ucode_regions[i].count) {
-    PRINTD (DBG_LOAD, "starting region (%x, %u)", address, count);
-    while (count) {
-      unsigned int words;
-      if (count <= MAX_TRANSFER_DATA)
-	words = count;
-      else
-	words = MAX_TRANSFER_DATA;
-      total += words;
-      res = loader_write (lb, dev, pointer, address, words);
-      if (res)
-	return res;
-      res = loader_verify (lb, dev, pointer, address, words);
-      if (res)
-	return res;
-      count -= words;
-      address += sizeof(u32) * words;
-      pointer += words;
+
+  while (rec) {
+    PRINTD (DBG_LOAD, "starting region (%x, %u)", be32_to_cpu(rec->addr),
+	    be16_to_cpu(rec->len));
+    if (be16_to_cpu(rec->len) > 4 * MAX_TRANSFER_DATA) {
+	    PRINTK (KERN_ERR, "Bad microcode data (record too long)");
+	    return -EINVAL;
     }
-    i += 1;
+    if (be16_to_cpu(rec->len) & 3) {
+	    PRINTK (KERN_ERR, "Bad microcode data (odd number of bytes)");
+	    return -EINVAL;
+    }
+    res = loader_write(lb, dev, rec);
+    if (res)
+      break;
+
+    res = loader_verify(lb, dev, rec);
+    if (res)
+      break;
   }
-  if (*pointer == ATM_POISON) {
-    return loader_start (lb, dev, ucode_start);
-  } else {
-    // cast needed as there is no %? for pointer differnces
-    PRINTD (DBG_LOAD|DBG_ERR,
-	    "offset=%li, *pointer=%x, address=%x, total=%u",
-	    (long) (pointer - ucode_data), *pointer, address, total);
-    PRINTK (KERN_ERR, "incorrect microcode data");
-    return -ENOMEM;
-  }
+  release_firmware(fw);
+  if (!res)
+    res = loader_start(lb, dev, start_address);
+
+  return res;
 }
 
 /********** give adapter parameters **********/
@@ -2075,18 +2038,6 @@ static void __devinit amb_ucode_version (amb_dev * dev) {
   PRINTK (KERN_INFO, "microcode version is %u.%u", major, minor);
 }
   
-// swap bits within byte to get Ethernet ordering
-static u8 bit_swap (u8 byte)
-{
-    const u8 swap[] = {
-      0x0, 0x8, 0x4, 0xc,
-      0x2, 0xa, 0x6, 0xe,
-      0x1, 0x9, 0x5, 0xd,
-      0x3, 0xb, 0x7, 0xf
-    };
-    return ((swap[byte & 0xf]<<4) | swap[byte>>4]);
-}
-
 // get end station address
 static void __devinit amb_esi (amb_dev * dev, u8 * esi) {
   u32 lower4;
@@ -2108,9 +2059,9 @@ static void __devinit amb_esi (amb_dev * dev, u8 * esi) {
     PRINTDB (DBG_INIT, "ESI:");
     for (i = 0; i < ESI_LEN; ++i) {
       if (i < 4)
-	  esi[i] = bit_swap (lower4>>(8*i));
+	  esi[i] = bitrev8(lower4>>(8*i));
       else
-	  esi[i] = bit_swap (upper2>>(8*(i-4)));
+	  esi[i] = bitrev8(upper2>>(8*(i-4)));
       PRINTDM (DBG_INIT, " %02x", esi[i]);
     }
     
@@ -2179,7 +2130,6 @@ static int __devinit amb_init (amb_dev * dev)
 static void setup_dev(amb_dev *dev, struct pci_dev *pci_dev) 
 {
       unsigned char pool;
-      memset (dev, 0, sizeof(amb_dev));
       
       // set up known dev items straight away
       dev->pci_dev = pci_dev; 
@@ -2205,7 +2155,7 @@ static void setup_dev(amb_dev *dev, struct pci_dev *pci_dev)
       
       // semaphore for txer/rxer modifications - we cannot use a
       // spinlock as the critical region needs to switch processes
-      init_MUTEX (&dev->vcc_sf);
+      mutex_init(&dev->vcc_sf);
       // queue manipulation spinlocks; we want atomic reads and
       // writes to the queue descriptors (handles IRQ and SMP)
       // consider replacing "int pending" -> "atomic_t available"
@@ -2269,7 +2219,7 @@ static int __devinit amb_probe(struct pci_dev *pci_dev, const struct pci_device_
 		goto out_disable;
 	}
 
-	dev = kmalloc (sizeof(amb_dev), GFP_KERNEL);
+	dev = kzalloc(sizeof(amb_dev), GFP_KERNEL);
 	if (!dev) {
 		PRINTK (KERN_ERR, "out of memory!");
 		err = -ENOMEM;
@@ -2459,8 +2409,8 @@ static int __init amb_module_init (void)
 static void __exit amb_module_exit (void)
 {
   PRINTD (DBG_FLOW|DBG_INIT, "cleanup_module");
-  
-  return pci_unregister_driver(&amb_driver);
+
+  pci_unregister_driver(&amb_driver);
 }
 
 module_init(amb_module_init);

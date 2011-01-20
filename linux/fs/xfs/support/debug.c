@@ -15,13 +15,18 @@
  * along with this program; if not, write the Free Software Foundation,
  * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
+#include <xfs.h>
 #include "debug.h"
-#include "spin.h"
-#include <asm/page.h>
-#include <linux/sched.h>
-#include <linux/kernel.h>
 
-static char		message[256];	/* keep it off the stack */
+/* xfs_mount.h drags a lot of crap in, sorry.. */
+#include "xfs_sb.h"
+#include "xfs_inum.h"
+#include "xfs_ag.h"
+#include "xfs_dmapi.h"
+#include "xfs_mount.h"
+#include "xfs_error.h"
+
+static char		message[1024];	/* keep it off the stack */
 static DEFINE_SPINLOCK(xfs_err_lock);
 
 /* Translate from CE_FOO to KERN_FOO, err_level(CE_FOO) == KERN_FOO */
@@ -46,34 +51,55 @@ cmn_err(register int level, char *fmt, ...)
 	spin_lock_irqsave(&xfs_err_lock,flags);
 	va_start(ap, fmt);
 	if (*fmt == '!') fp++;
-	len = vsprintf(message, fp, ap);
-	if (level != CE_DEBUG && message[len-1] != '\n')
-		strcat(message, "\n");
-	printk("%s%s", err_level[level], message);
+	len = vsnprintf(message, sizeof(message), fp, ap);
+	if (len >= sizeof(message))
+		len = sizeof(message) - 1;
+	if (message[len-1] == '\n')
+		message[len-1] = 0;
+	printk("%s%s\n", err_level[level], message);
 	va_end(ap);
 	spin_unlock_irqrestore(&xfs_err_lock,flags);
-
-	if (level == CE_PANIC)
-		BUG();
+	BUG_ON(level == CE_PANIC);
 }
 
 void
-icmn_err(register int level, char *fmt, va_list ap)
+xfs_fs_vcmn_err(
+	int			level,
+	struct xfs_mount	*mp,
+	char			*fmt,
+	va_list			ap)
 {
-	ulong	flags;
-	int	len;
+	unsigned long		flags;
+	int			len = 0;
 
 	level &= XFS_ERR_MASK;
-	if(level > XFS_MAX_ERR_LEVEL)
+	if (level > XFS_MAX_ERR_LEVEL)
 		level = XFS_MAX_ERR_LEVEL;
+
 	spin_lock_irqsave(&xfs_err_lock,flags);
-	len = vsprintf(message, fmt, ap);
-	if (level != CE_DEBUG && message[len-1] != '\n')
-		strcat(message, "\n");
+
+	if (mp) {
+		len = sprintf(message, "Filesystem \"%s\": ", mp->m_fsname);
+
+		/*
+		 * Skip the printk if we can't print anything useful
+		 * due to an over-long device name.
+		 */
+		if (len >= sizeof(message))
+			goto out;
+	}
+
+	len = vsnprintf(message + len, sizeof(message) - len, fmt, ap);
+	if (len >= sizeof(message))
+		len = sizeof(message) - 1;
+	if (message[len-1] == '\n')
+		message[len-1] = 0;
+
+	printk("%s%s\n", err_level[level], message);
+ out:
 	spin_unlock_irqrestore(&xfs_err_lock,flags);
-	printk("%s%s", err_level[level], message);
-	if (level == CE_PANIC)
-		BUG();
+
+	BUG_ON(level == CE_PANIC);
 }
 
 void
@@ -83,19 +109,8 @@ assfail(char *expr, char *file, int line)
 	BUG();
 }
 
-#if ((defined(DEBUG) || defined(INDUCE_IO_ERRROR)) && !defined(NO_WANT_RANDOM))
-unsigned long random(void)
+void
+xfs_hex_dump(void *p, int length)
 {
-	static unsigned long	RandomValue = 1;
-	/* cycles pseudo-randomly through all values between 1 and 2^31 - 2 */
-	register long	rv = RandomValue;
-	register long	lo;
-	register long	hi;
-
-	hi = rv / 127773;
-	lo = rv % 127773;
-	rv = 16807 * lo - 2836 * hi;
-	if (rv <= 0) rv += 2147483647;
-	return RandomValue = rv;
+	print_hex_dump(KERN_ALERT, "", DUMP_PREFIX_ADDRESS, 16, 1, p, length, 1);
 }
-#endif /* DEBUG || INDUCE_IO_ERRROR || !NO_WANT_RANDOM */

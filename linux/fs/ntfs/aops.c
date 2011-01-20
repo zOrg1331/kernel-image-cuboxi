@@ -2,7 +2,7 @@
  * aops.c - NTFS kernel address space operations and page cache handling.
  *	    Part of the Linux-NTFS project.
  *
- * Copyright (c) 2001-2006 Anton Altaparmakov
+ * Copyright (c) 2001-2007 Anton Altaparmakov
  * Copyright (c) 2002 Richard Russon
  *
  * This program/include file is free software; you can redistribute it and/or
@@ -86,17 +86,19 @@ static void ntfs_end_buffer_async_read(struct buffer_head *bh, int uptodate)
 		}
 		/* Check for the current buffer head overflowing. */
 		if (unlikely(file_ofs + bh->b_size > init_size)) {
-			u8 *kaddr;
 			int ofs;
+			void *kaddr;
 
 			ofs = 0;
 			if (file_ofs < init_size)
 				ofs = init_size - file_ofs;
+			local_irq_save(flags);
 			kaddr = kmap_atomic(page, KM_BIO_SRC_IRQ);
 			memset(kaddr + bh_offset(bh) + ofs, 0,
 					bh->b_size - ofs);
-			kunmap_atomic(kaddr, KM_BIO_SRC_IRQ);
 			flush_dcache_page(page);
+			kunmap_atomic(kaddr, KM_BIO_SRC_IRQ);
+			local_irq_restore(flags);
 		}
 	} else {
 		clear_buffer_uptodate(bh);
@@ -143,11 +145,13 @@ static void ntfs_end_buffer_async_read(struct buffer_head *bh, int uptodate)
 		recs = PAGE_CACHE_SIZE / rec_size;
 		/* Should have been verified before we got here... */
 		BUG_ON(!recs);
+		local_irq_save(flags);
 		kaddr = kmap_atomic(page, KM_BIO_SRC_IRQ);
 		for (i = 0; i < recs; i++)
 			post_read_mst_fixup((NTFS_RECORD*)(kaddr +
 					i * rec_size), rec_size);
 		kunmap_atomic(kaddr, KM_BIO_SRC_IRQ);
+		local_irq_restore(flags);
 		flush_dcache_page(page);
 		if (likely(page_uptodate && !PageError(page)))
 			SetPageUptodate(page);
@@ -241,8 +245,7 @@ static int ntfs_read_block(struct page *page)
 	rl = NULL;
 	nr = i = 0;
 	do {
-		u8 *kaddr;
-		int err;
+		int err = 0;
 
 		if (unlikely(buffer_uptodate(bh)))
 			continue;
@@ -250,11 +253,10 @@ static int ntfs_read_block(struct page *page)
 			arr[nr++] = bh;
 			continue;
 		}
-		err = 0;
 		bh->b_bdev = vol->sb->s_bdev;
 		/* Is the block within the allowed limits? */
 		if (iblock < lblock) {
-			BOOL is_retry = FALSE;
+			bool is_retry = false;
 
 			/* Convert iblock into corresponding vcn and offset. */
 			vcn = (VCN)iblock << blocksize_bits >>
@@ -292,7 +294,7 @@ lock_retry_remap:
 				goto handle_hole;
 			/* If first try and runlist unmapped, map and retry. */
 			if (!is_retry && lcn == LCN_RL_NOT_MAPPED) {
-				is_retry = TRUE;
+				is_retry = true;
 				/*
 				 * Attempt to map runlist, dropping lock for
 				 * the duration.
@@ -336,10 +338,7 @@ handle_hole:
 		bh->b_blocknr = -1UL;
 		clear_buffer_mapped(bh);
 handle_zblock:
-		kaddr = kmap_atomic(page, KM_USER0);
-		memset(kaddr + i * blocksize, 0, blocksize);
-		kunmap_atomic(kaddr, KM_USER0);
-		flush_dcache_page(page);
+		zero_user(page, i * blocksize, blocksize);
 		if (likely(!err))
 			set_buffer_uptodate(bh);
 	} while (i++, iblock++, (bh = bh->b_this_page) != head);
@@ -401,7 +400,7 @@ static int ntfs_readpage(struct file *file, struct page *page)
 	loff_t i_size;
 	struct inode *vi;
 	ntfs_inode *ni, *base_ni;
-	u8 *kaddr;
+	u8 *addr;
 	ntfs_attr_search_ctx *ctx;
 	MFT_RECORD *mrec;
 	unsigned long flags;
@@ -410,6 +409,15 @@ static int ntfs_readpage(struct file *file, struct page *page)
 
 retry_readpage:
 	BUG_ON(!PageLocked(page));
+	vi = page->mapping->host;
+	i_size = i_size_read(vi);
+	/* Is the page fully outside i_size? (truncate in progress) */
+	if (unlikely(page->index >= (i_size + PAGE_CACHE_SIZE - 1) >>
+			PAGE_CACHE_SHIFT)) {
+		zero_user(page, 0, PAGE_CACHE_SIZE);
+		ntfs_debug("Read outside i_size - truncated?");
+		goto done;
+	}
 	/*
 	 * This can potentially happen because we clear PageUptodate() during
 	 * ntfs_writepage() of MstProtected() attributes.
@@ -418,7 +426,6 @@ retry_readpage:
 		unlock_page(page);
 		return 0;
 	}
-	vi = page->mapping->host;
 	ni = NTFS_I(vi);
 	/*
 	 * Only $DATA attributes can be encrypted and only unnamed $DATA
@@ -456,10 +463,7 @@ retry_readpage:
 	 * ok to ignore the compressed flag here.
 	 */
 	if (unlikely(page->index > 0)) {
-		kaddr = kmap_atomic(page, KM_USER0);
-		memset(kaddr, 0, PAGE_CACHE_SIZE);
-		flush_dcache_page(page);
-		kunmap_atomic(kaddr, KM_USER0);
+		zero_user(page, 0, PAGE_CACHE_SIZE);
 		goto done;
 	}
 	if (!NInoAttr(ni))
@@ -499,15 +503,15 @@ retry_readpage:
 		/* Race with shrinking truncate. */
 		attr_len = i_size;
 	}
-	kaddr = kmap_atomic(page, KM_USER0);
+	addr = kmap_atomic(page, KM_USER0);
 	/* Copy the data to the page. */
-	memcpy(kaddr, (u8*)ctx->attr +
+	memcpy(addr, (u8*)ctx->attr +
 			le16_to_cpu(ctx->attr->data.resident.value_offset),
 			attr_len);
 	/* Zero the remainder of the page. */
-	memset(kaddr + attr_len, 0, PAGE_CACHE_SIZE - attr_len);
+	memset(addr + attr_len, 0, PAGE_CACHE_SIZE - attr_len);
 	flush_dcache_page(page);
-	kunmap_atomic(kaddr, KM_USER0);
+	kunmap_atomic(addr, KM_USER0);
 put_unm_err_out:
 	ntfs_attr_put_search_ctx(ctx);
 unm_err_out:
@@ -558,7 +562,7 @@ static int ntfs_write_block(struct page *page, struct writeback_control *wbc)
 	unsigned long flags;
 	unsigned int blocksize, vcn_ofs;
 	int err;
-	BOOL need_end_writeback;
+	bool need_end_writeback;
 	unsigned char blocksize_bits;
 
 	vi = page->mapping->host;
@@ -626,7 +630,7 @@ static int ntfs_write_block(struct page *page, struct writeback_control *wbc)
 	rl = NULL;
 	err = 0;
 	do {
-		BOOL is_retry = FALSE;
+		bool is_retry = false;
 
 		if (unlikely(block >= dblock)) {
 			/*
@@ -768,7 +772,7 @@ lock_retry_remap:
 		}
 		/* If first try and runlist unmapped, map and retry. */
 		if (!is_retry && lcn == LCN_RL_NOT_MAPPED) {
-			is_retry = TRUE;
+			is_retry = true;
 			/*
 			 * Attempt to map runlist, dropping lock for
 			 * the duration.
@@ -786,14 +790,9 @@ lock_retry_remap:
 		 * uptodate so it can get discarded by the VM.
 		 */
 		if (err == -ENOENT || lcn == LCN_ENOENT) {
-			u8 *kaddr;
-
 			bh->b_blocknr = -1;
 			clear_buffer_dirty(bh);
-			kaddr = kmap_atomic(page, KM_USER0);
-			memset(kaddr + bh_offset(bh), 0, blocksize);
-			kunmap_atomic(kaddr, KM_USER0);
-			flush_dcache_page(page);
+			zero_user(page, bh_offset(bh), blocksize);
 			set_buffer_uptodate(bh);
 			err = 0;
 			continue;
@@ -874,12 +873,12 @@ lock_retry_remap:
 	set_page_writeback(page);	/* Keeps try_to_free_buffers() away. */
 
 	/* Submit the prepared buffers for i/o. */
-	need_end_writeback = TRUE;
+	need_end_writeback = true;
 	do {
 		struct buffer_head *next = bh->b_this_page;
 		if (buffer_async_write(bh)) {
 			submit_bh(WRITE, bh);
-			need_end_writeback = FALSE;
+			need_end_writeback = false;
 		}
 		bh = next;
 	} while (bh != head);
@@ -932,7 +931,7 @@ static int ntfs_write_mst_block(struct page *page,
 	runlist_element *rl;
 	int i, nr_locked_nis, nr_recs, nr_bhs, max_bhs, bhs_per_rec, err, err2;
 	unsigned bh_size, rec_size_bits;
-	BOOL sync, is_mft, page_is_dirty, rec_is_dirty;
+	bool sync, is_mft, page_is_dirty, rec_is_dirty;
 	unsigned char bh_size_bits;
 
 	ntfs_debug("Entering for inode 0x%lx, attribute type 0x%x, page index "
@@ -975,10 +974,10 @@ static int ntfs_write_mst_block(struct page *page,
 
 	rl = NULL;
 	err = err2 = nr_bhs = nr_recs = nr_locked_nis = 0;
-	page_is_dirty = rec_is_dirty = FALSE;
+	page_is_dirty = rec_is_dirty = false;
 	rec_start_bh = NULL;
 	do {
-		BOOL is_retry = FALSE;
+		bool is_retry = false;
 
 		if (likely(block < rec_block)) {
 			if (unlikely(block >= dblock)) {
@@ -1009,10 +1008,10 @@ static int ntfs_write_mst_block(struct page *page,
 			}
 			if (!buffer_dirty(bh)) {
 				/* Clean records are not written out. */
-				rec_is_dirty = FALSE;
+				rec_is_dirty = false;
 				continue;
 			}
-			rec_is_dirty = TRUE;
+			rec_is_dirty = true;
 			rec_start_bh = bh;
 		}
 		/* Need to map the buffer if it is not mapped already. */
@@ -1053,7 +1052,7 @@ lock_retry_remap:
 				 */
 				if (!is_mft && !is_retry &&
 						lcn == LCN_RL_NOT_MAPPED) {
-					is_retry = TRUE;
+					is_retry = true;
 					/*
 					 * Attempt to map runlist, dropping
 					 * lock for the duration.
@@ -1063,7 +1062,7 @@ lock_retry_remap:
 					if (likely(!err2))
 						goto lock_retry_remap;
 					if (err2 == -ENOMEM)
-						page_is_dirty = TRUE;
+						page_is_dirty = true;
 					lcn = err2;
 				} else {
 					err2 = -EIO;
@@ -1145,7 +1144,7 @@ lock_retry_remap:
 				 * means we need to redirty the page before
 				 * returning.
 				 */
-				page_is_dirty = TRUE;
+				page_is_dirty = true;
 				/*
 				 * Remove the buffers in this mft record from
 				 * the list of buffers to write.
@@ -1195,7 +1194,7 @@ lock_retry_remap:
 		tbh = bhs[i];
 		if (!tbh)
 			continue;
-		if (unlikely(test_set_buffer_locked(tbh)))
+		if (!trylock_buffer(tbh))
 			BUG();
 		/* The buffer dirty state is now irrelevant, just clean it. */
 		clear_buffer_dirty(tbh);
@@ -1356,7 +1355,7 @@ static int ntfs_writepage(struct page *page, struct writeback_control *wbc)
 	loff_t i_size;
 	struct inode *vi = page->mapping->host;
 	ntfs_inode *base_ni = NULL, *ni = NTFS_I(vi);
-	char *kaddr;
+	char *addr;
 	ntfs_attr_search_ctx *ctx = NULL;
 	MFT_RECORD *m = NULL;
 	u32 attr_len;
@@ -1418,10 +1417,7 @@ retry_writepage:
 		if (page->index >= (i_size >> PAGE_CACHE_SHIFT)) {
 			/* The page straddles i_size. */
 			unsigned int ofs = i_size & ~PAGE_CACHE_MASK;
-			kaddr = kmap_atomic(page, KM_USER0);
-			memset(kaddr + ofs, 0, PAGE_CACHE_SIZE - ofs);
-			kunmap_atomic(kaddr, KM_USER0);
-			flush_dcache_page(page);
+			zero_user_segment(page, ofs, PAGE_CACHE_SIZE);
 		}
 		/* Handle mst protected attributes. */
 		if (NInoMstProtected(ni))
@@ -1498,14 +1494,14 @@ retry_writepage:
 		/* Shrinking cannot fail. */
 		BUG_ON(err);
 	}
-	kaddr = kmap_atomic(page, KM_USER0);
+	addr = kmap_atomic(page, KM_USER0);
 	/* Copy the data from the page to the mft record. */
 	memcpy((u8*)ctx->attr +
 			le16_to_cpu(ctx->attr->data.resident.value_offset),
-			kaddr, attr_len);
+			addr, attr_len);
 	/* Zero out of bounds area in the page cache page. */
-	memset(kaddr + attr_len, 0, PAGE_CACHE_SIZE - attr_len);
-	kunmap_atomic(kaddr, KM_USER0);
+	memset(addr + attr_len, 0, PAGE_CACHE_SIZE - attr_len);
+	kunmap_atomic(addr, KM_USER0);
 	flush_dcache_page(page);
 	flush_dcache_mft_record_page(ctx->ntfs_ino);
 	/* We are done with the page. */
@@ -1554,6 +1550,7 @@ const struct address_space_operations ntfs_aops = {
 	.migratepage	= buffer_migrate_page,	/* Move a page cache page from
 						   one physical page to an
 						   other. */
+	.error_remove_page = generic_error_remove_page,
 };
 
 /**
@@ -1573,6 +1570,7 @@ const struct address_space_operations ntfs_mst_aops = {
 	.migratepage	= buffer_migrate_page,	/* Move a page cache page from
 						   one physical page to an
 						   other. */
+	.error_remove_page = generic_error_remove_page,
 };
 
 #ifdef NTFS_RW

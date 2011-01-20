@@ -21,11 +21,11 @@
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/sched.h>
+#include <linux/io.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 #include <asm/leds.h>
-#include <asm/io.h>
 #include <asm/hardware/clps7111.h>
 
 #include <asm/mach/time.h>
@@ -48,17 +48,15 @@ static unsigned long clps711x_gettimeoffset(void)
  * IRQ handler for the timer
  */
 static irqreturn_t
-p720t_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+p720t_timer_interrupt(int irq, void *dev_id)
 {
-	write_seqlock(&xtime_lock);
-	timer_tick(regs);
-	write_sequnlock(&xtime_lock);
+	timer_tick();
 	return IRQ_HANDLED;
 }
 
 static struct irqaction clps711x_timer_irq = {
 	.name		= "CLPS711x Timer Tick",
-	.flags		= IRQF_DISABLED | IRQF_TIMER,
+	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
 	.handler	= p720t_timer_interrupt,
 };
 

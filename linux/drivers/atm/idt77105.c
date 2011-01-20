@@ -4,7 +4,6 @@
 
 
 #include <linux/module.h>
-#include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/errno.h>
@@ -358,7 +357,7 @@ static const struct atmphy_ops idt77105_ops = {
 };
 
 
-int __devinit idt77105_init(struct atm_dev *dev)
+int idt77105_init(struct atm_dev *dev)
 {
 	dev->phy = &idt77105_ops;
 	return 0;

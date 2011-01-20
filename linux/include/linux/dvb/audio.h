@@ -24,12 +24,7 @@
 #ifndef _DVBAUDIO_H_
 #define _DVBAUDIO_H_
 
-#ifdef __KERNEL__
 #include <linux/types.h>
-#else
-#include <stdint.h>
-#endif
-
 
 typedef enum {
 	AUDIO_SOURCE_DEMUX, /* Select the demux as the main source */
@@ -47,7 +42,9 @@ typedef enum {
 typedef enum {
 	AUDIO_STEREO,
 	AUDIO_MONO_LEFT,
-	AUDIO_MONO_RIGHT
+	AUDIO_MONO_RIGHT,
+	AUDIO_MONO,
+	AUDIO_STEREO_SWAPPED
 } audio_channel_select_t;
 
 
@@ -79,7 +76,7 @@ struct audio_karaoke{  /* if Vocal1 or Vocal2 are non-zero, they get mixed  */
 } audio_karaoke_t;     /* into left and right  */
 
 
-typedef uint16_t audio_attributes_t;
+typedef __u16 audio_attributes_t;
 /*   bits: descr. */
 /*   15-13 audio coding mode (0=ac3, 2=mpeg1, 3=mpeg2ext, 4=LPCM, 6=DTS, */
 /*   12    multichannel extension */
@@ -133,5 +130,6 @@ typedef uint16_t audio_attributes_t;
  * extracted by the PES parser.
  */
 #define AUDIO_GET_PTS              _IOR('o', 19, __u64)
+#define AUDIO_BILINGUAL_CHANNEL_SELECT _IO('o', 20)
 
 #endif /* _DVBAUDIO_H_ */

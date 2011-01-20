@@ -1,7 +1,6 @@
 #include <linux/types.h>
 #include <linux/mm.h>
 #include <linux/blkdev.h>
-#include <linux/sched.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 
@@ -24,7 +23,7 @@
 #define DMA(ptr) ((gvp11_scsiregs *)((ptr)->base))
 #define HDATA(ptr) ((struct WD33C93_hostdata *)((ptr)->hostdata))
 
-static irqreturn_t gvp11_intr (int irq, void *_instance, struct pt_regs *fp)
+static irqreturn_t gvp11_intr (int irq, void *_instance)
 {
     unsigned long flags;
     unsigned int status;
@@ -47,7 +46,7 @@ void gvp11_setup (char *str, int *ints)
     gvp11_xfer_mask = ints[1];
 }
 
-static int dma_setup (Scsi_Cmnd *cmd, int dir_in)
+static int dma_setup(struct scsi_cmnd *cmd, int dir_in)
 {
     unsigned short cntr = GVP11_DMAC_INT_ENABLE;
     unsigned long addr = virt_to_bus(cmd->SCp.ptr);
@@ -55,8 +54,7 @@ static int dma_setup (Scsi_Cmnd *cmd, int dir_in)
     static int scsi_alloc_out_of_range = 0;
 
     /* use bounce buffer if the physical address is bad */
-    if (addr & HDATA(cmd->device->host)->dma_xfer_mask ||
-	(!dir_in && mm_end_of_chunk (addr, cmd->SCp.this_residual)))
+    if (addr & HDATA(cmd->device->host)->dma_xfer_mask)
     {
 	HDATA(cmd->device->host)->dma_bounce_len = (cmd->SCp.this_residual + 511)
 	    & ~0x1ff;
@@ -142,8 +140,8 @@ static int dma_setup (Scsi_Cmnd *cmd, int dir_in)
     return 0;
 }
 
-static void dma_stop (struct Scsi_Host *instance, Scsi_Cmnd *SCpnt,
-		      int status)
+static void dma_stop(struct Scsi_Host *instance, struct scsi_cmnd *SCpnt,
+		     int status)
 {
     /* stop DMA */
     DMA(instance)->SP_DMA = 1;
@@ -324,16 +322,23 @@ int __init gvp11_detect(struct scsi_host_template *tpnt)
 	 */
 	regs.SASR = &(DMA(instance)->SASR);
 	regs.SCMD = &(DMA(instance)->SCMD);
+	HDATA(instance)->no_sync = 0xff;
+	HDATA(instance)->fast = 0;
+	HDATA(instance)->dma_mode = CTRL_DMA;
 	wd33c93_init(instance, regs, dma_setup, dma_stop,
 		     (epc & GVP_SCSICLKMASK) ? WD33C93_FS_8_10
 					     : WD33C93_FS_12_15);
 
-	request_irq(IRQ_AMIGA_PORTS, gvp11_intr, IRQF_SHARED, "GVP11 SCSI",
-		    instance);
+	if (request_irq(IRQ_AMIGA_PORTS, gvp11_intr, IRQF_SHARED, "GVP11 SCSI",
+			instance))
+		goto unregister;
 	DMA(instance)->CNTR = GVP11_DMAC_INT_ENABLE;
 	num_gvp11++;
 	continue;
 
+unregister:
+	scsi_unregister(instance);
+	wd33c93_release();
 release:
 	release_mem_region(address, 256);
     }
@@ -341,7 +346,7 @@ release:
     return num_gvp11;
 }
 
-static int gvp11_bus_reset(Scsi_Cmnd *cmd)
+static int gvp11_bus_reset(struct scsi_cmnd *cmd)
 {
 	/* FIXME perform bus-specific reset */
 

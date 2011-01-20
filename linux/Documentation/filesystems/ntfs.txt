@@ -13,7 +13,7 @@ Table of contents
 - Using NTFS volume and stripe sets
   - The Device-Mapper driver
   - The Software RAID / MD driver
-  - Limitiations when using the MD driver
+  - Limitations when using the MD driver
 - ChangeLog
 
 
@@ -40,10 +40,10 @@ Web site
 ========
 
 There is plenty of additional information on the linux-ntfs web site
-at http://linux-ntfs.sourceforge.net/
+at http://www.linux-ntfs.org/
 
 The web site has a lot of additional information, such as a comprehensive
-FAQ, documentation on the NTFS on-disk format, informaiton on the Linux-NTFS
+FAQ, documentation on the NTFS on-disk format, information on the Linux-NTFS
 userspace utilities, etc.
 
 
@@ -272,7 +272,7 @@ And you would know that /dev/hda2 has a size of 37768814 - 4209030 + 1 =
 For Win2k and later dynamic disks, you can for example use the ldminfo utility
 which is part of the Linux LDM tools (the latest version at the time of
 writing is linux-ldm-0.0.8.tar.bz2).  You can download it from:
-	http://linux-ntfs.sourceforge.net/downloads.html
+	http://www.linux-ntfs.org/
 Simply extract the downloaded archive (tar xvjf linux-ldm-0.0.8.tar.bz2), go
 into it (cd linux-ldm-0.0.8) and change to the test directory (cd test).  You
 will find the precompiled (i386) ldminfo utility there.  NOTE: You will not be
@@ -337,7 +337,7 @@ Finally, for a mirrored volume, i.e. raid level 1, the table would look like
 this (note all values are in 512-byte sectors):
 
 --- cut here ---
-# Ofs Size   Raid   Log  Number Region Should Number Source  Start Taget  Start
+# Ofs Size   Raid   Log  Number Region Should Number Source  Start Target Start
 # in  of the type   type of log size   sync?  of     Device  in    Device in
 # vol volume		 params		     mirrors	     Device	  Device
 0    2056320 mirror core 2	16     nosync 2	   /dev/hda1 0   /dev/hdb1 0
@@ -349,7 +349,7 @@ end of the line.
 Note the "Should sync?" parameter "nosync" means that the two mirrors are
 already in sync which will be the case on a clean shutdown of Windows.  If the
 mirrors are not clean, you can specify the "sync" option instead of "nosync"
-and the Device-Mapper driver will then copy the entirey of the "Source Device"
+and the Device-Mapper driver will then copy the entirety of the "Source Device"
 to the "Target Device" or if you specified multipled target devices to all of
 them.
 
@@ -383,14 +383,14 @@ Software RAID / MD driver.  For which you need to set up your /etc/raidtab
 appropriately (see man 5 raidtab).
 
 Linear volume sets, i.e. linear raid, as well as stripe sets, i.e. raid level
-0, have been tested and work fine (though see section "Limitiations when using
+0, have been tested and work fine (though see section "Limitations when using
 the MD driver with NTFS volumes" especially if you want to use linear raid).
 Even though untested, there is no reason why mirrors, i.e. raid level 1, and
 stripes with parity, i.e. raid level 5, should not work, too.
 
 You have to use the "persistent-superblock 0" option for each raid-disk in the
 NTFS volume/stripe you are configuring in /etc/raidtab as the persistent
-superblock used by the MD driver would damange the NTFS volume.
+superblock used by the MD driver would damage the NTFS volume.
 
 Windows by default uses a stripe chunk size of 64k, so you probably want the
 "chunk-size 64k" option for each raid-disk, too.
@@ -407,7 +407,7 @@ raiddev /dev/md0
 	device		/dev/hda5
 	raid-disk	0
 	device		/dev/hdb1
-	raid-disl	1
+	raid-disk	1
 
 For linear raid, just change the raid-level above to "raid-level linear", for
 mirrors, change it to "raid-level 1", and for stripe sets with parity, change
@@ -435,7 +435,7 @@ setup correctly to avoid the possibility of causing damage to the data on the
 ntfs volume.
 
 
-Limitiations when using the Software RAID / MD driver
+Limitations when using the Software RAID / MD driver
 -----------------------------------------------------
 
 Using the md driver will not work properly if any of your NTFS partitions have
@@ -457,6 +457,10 @@ ChangeLog
 
 Note, a technical ChangeLog aimed at kernel hackers is in fs/ntfs/ChangeLog.
 
+2.1.29:
+	- Fix a deadlock when mounting read-write.
+2.1.28:
+	- Fix a deadlock.
 2.1.27:
 	- Implement page migration support so the kernel can move memory used
 	  by NTFS files and directories around for management purposes.
@@ -599,7 +603,7 @@ Note, a technical ChangeLog aimed at kernel hackers is in fs/ntfs/ChangeLog.
 	- Major bug fixes for reading files and volumes in corner cases which
 	  were being hit by Windows 2k/XP users.
 2.1.2:
-	- Major bug fixes aleviating the hangs in statfs experienced by some
+	- Major bug fixes alleviating the hangs in statfs experienced by some
 	  users.
 2.1.1:
 	- Update handling of compressed files so people no longer get the

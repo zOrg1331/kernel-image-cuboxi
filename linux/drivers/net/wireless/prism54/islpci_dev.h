@@ -1,6 +1,5 @@
 /*
- *  
- *  Copyright (C) 2002 Intersil Americas Inc. 
+ *  Copyright (C) 2002 Intersil Americas Inc.
  *  Copyright (C) 2003 Herbert Valerio Riedel <hvr@gnu.org>
  *  Copyright (C) 2003 Luis R. Rodriguez <mcgrof@ruslug.rutgers.edu>
  *  Copyright (C) 2003 Aurelien Alleaume <slts@free.fr>
@@ -27,6 +26,7 @@
 #include <linux/wireless.h>
 #include <net/iw_handler.h>
 #include <linux/list.h>
+#include <linux/mutex.h>
 
 #include "isl_38xx.h"
 #include "isl_oid.h"
@@ -55,7 +55,7 @@ struct islpci_acl {
    enum { MAC_POLICY_OPEN=0, MAC_POLICY_ACCEPT=1, MAC_POLICY_REJECT=2 } policy;
    struct list_head mac_list;  /* a list of mac_entry */
    int size;   /* size of queue */
-   struct semaphore sem;   /* accessed in ioctls and trap_work */
+   struct mutex lock;   /* accessed in ioctls and trap_work */
 };
 
 struct islpci_membuf {
@@ -72,12 +72,12 @@ struct islpci_bss_wpa_ie {
 	u8 bssid[ETH_ALEN];
 	u8 wpa_ie[MAX_WPA_IE_LEN];
 	size_t wpa_ie_len;
-	
+
 };
 
 typedef struct {
 	spinlock_t slock;	/* generic spinlock; */
-	
+
 	u32 priv_oid;
 
 	/* our mib cache */
@@ -85,10 +85,10 @@ typedef struct {
         struct rw_semaphore mib_sem;
 	void **mib;
 	char nickname[IW_ESSID_MAX_SIZE+1];
-	
+
 	/* Take care of the wireless stats */
 	struct work_struct stats_work;
-	struct semaphore stats_sem;
+	struct mutex stats_lock;
 	/* remember when we last updated the stats */
 	unsigned long stats_timestamp;
 	/* The first is accessed under semaphore locking.
@@ -120,7 +120,7 @@ typedef struct {
 	struct net_device *ndev;
 
 	/* device queue interface members */
-	struct isl38xx_cb *control_block;	/* device control block 
+	struct isl38xx_cb *control_block;	/* device control block
 							   (== driver_mem_address!) */
 
 	/* Each queue has three indexes:
@@ -158,14 +158,11 @@ typedef struct {
 	dma_addr_t pci_map_tx_address[ISL38XX_CB_TX_QSIZE];
 	dma_addr_t pci_map_rx_address[ISL38XX_CB_RX_QSIZE];
 
-	/* driver network interface members */
-	struct net_device_stats statistics;
-
 	/* wait for a reset interrupt */
 	wait_queue_head_t reset_done;
 
 	/* used by islpci_mgt_transaction */
-	struct semaphore mgmt_sem; /* serialize access to mailbox and wqueue */
+	struct mutex mgmt_lock; /* serialize access to mailbox and wqueue */
 	struct islpci_mgmtframe *mgmt_received;	  /* mbox for incoming frame */
 	wait_queue_head_t mgmt_wqueue;            /* waitqueue for mbox */
 
@@ -178,7 +175,9 @@ typedef struct {
 	int wpa; /* WPA mode enabled */
 	struct list_head bss_wpa_list;
 	int num_bss_wpa;
-	struct semaphore wpa_sem;
+	struct mutex wpa_lock;
+	u8 wpa_ie[MAX_WPA_IE_LEN];
+	size_t wpa_ie_len;
 
 	struct work_struct reset_task;
 	int reset_task_pending;
@@ -196,7 +195,7 @@ islpci_state_t islpci_set_state(islpci_private *priv, islpci_state_t new_state);
 
 #define ISLPCI_TX_TIMEOUT               (2*HZ)
 
-irqreturn_t islpci_interrupt(int, void *, struct pt_regs *);
+irqreturn_t islpci_interrupt(int, void *);
 
 int prism54_post_setup(islpci_private *, int);
 int islpci_reset(islpci_private *, int);
@@ -210,4 +209,8 @@ islpci_trigger(islpci_private *priv)
 
 int islpci_free_memory(islpci_private *);
 struct net_device *islpci_setup(struct pci_dev *);
+
+#define DRV_NAME	"prism54"
+#define DRV_VERSION	"1.2"
+
 #endif				/* _ISLPCI_DEV_H */

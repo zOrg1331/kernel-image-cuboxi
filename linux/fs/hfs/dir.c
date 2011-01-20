@@ -53,7 +53,7 @@ done:
  */
 static int hfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 {
-	struct inode *inode = filp->f_dentry->d_inode;
+	struct inode *inode = filp->f_path.dentry->d_inode;
 	struct super_block *sb = inode->i_sb;
 	int len, err;
 	char strbuf[HFS_MAX_NAMELEN];
@@ -79,6 +79,11 @@ static int hfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 		filp->f_pos++;
 		/* fall through */
 	case 1:
+		if (fd.entrylength > sizeof(entry) || fd.entrylength < 0) {
+			err = -EIO;
+			goto out;
+		}
+
 		hfs_bnode_read(fd.bnode, &entry, fd.entryoffset, fd.entrylength);
 		if (entry.type != HFS_CDR_THD) {
 			printk(KERN_ERR "hfs: bad catalog folder thread\n");
@@ -109,6 +114,12 @@ static int hfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 			err = -EIO;
 			goto out;
 		}
+
+		if (fd.entrylength > sizeof(entry) || fd.entrylength < 0) {
+			err = -EIO;
+			goto out;
+		}
+
 		hfs_bnode_read(fd.bnode, &entry, fd.entryoffset, fd.entrylength);
 		type = entry.type;
 		len = hfs_mac2asc(sb, strbuf, &fd.key->cat.CName);
@@ -246,7 +257,7 @@ static int hfs_unlink(struct inode *dir, struct dentry *dentry)
 	if (res)
 		return res;
 
-	inode->i_nlink--;
+	drop_nlink(inode);
 	hfs_delete_inode(inode);
 	inode->i_ctime = CURRENT_TIME_SEC;
 	mark_inode_dirty(inode);
@@ -273,7 +284,7 @@ static int hfs_rmdir(struct inode *dir, struct dentry *dentry)
 	res = hfs_cat_delete(inode->i_ino, dir, &dentry->d_name);
 	if (res)
 		return res;
-	inode->i_nlink = 0;
+	clear_nlink(inode);
 	inode->i_ctime = CURRENT_TIME_SEC;
 	hfs_delete_inode(inode);
 	mark_inode_dirty(inode);
@@ -320,7 +331,7 @@ const struct file_operations hfs_dir_operations = {
 	.release	= hfs_dir_release,
 };
 
-struct inode_operations hfs_dir_inode_operations = {
+const struct inode_operations hfs_dir_inode_operations = {
 	.create		= hfs_create,
 	.lookup		= hfs_lookup,
 	.unlink		= hfs_unlink,

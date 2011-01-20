@@ -77,17 +77,17 @@ ENTRY(ret_from_fork)
 	jra	.Lret_from_exception
 
 do_trace_entry:
-	movel	#-ENOSYS,%sp@(PT_D0)	| needed for strace
+	movel	#-ENOSYS,%sp@(PT_OFF_D0)| needed for strace
 	subql	#4,%sp
 	SAVE_SWITCH_STACK
 	jbsr	syscall_trace
 	RESTORE_SWITCH_STACK
 	addql	#4,%sp
-	movel	%sp@(PT_ORIG_D0),%d0
+	movel	%sp@(PT_OFF_ORIG_D0),%d0
 	cmpl	#NR_syscalls,%d0
 	jcs	syscall
 badsys:
-	movel	#-ENOSYS,%sp@(PT_D0)
+	movel	#-ENOSYS,%sp@(PT_OFF_D0)
 	jra	ret_from_syscall
 
 do_trace_exit:
@@ -103,7 +103,7 @@ ENTRY(ret_from_signal)
 	addql	#4,%sp
 /* on 68040 complete pending writebacks if any */
 #ifdef CONFIG_M68040
-	bfextu	%sp@(PT_VECTOR){#0,#4},%d0
+	bfextu	%sp@(PT_OFF_FORMATVEC){#0,#4},%d0
 	subql	#7,%d0				| bus error frame ?
 	jbne	1f
 	movel	%sp,%sp@-
@@ -127,7 +127,7 @@ ENTRY(system_call)
 	jcc	badsys
 syscall:
 	jbsr	@(sys_call_table,%d0:l:4)@(0)
-	movel	%d0,%sp@(PT_D0)		| save the return value
+	movel	%d0,%sp@(PT_OFF_D0)	| save the return value
 ret_from_syscall:
 	|oriw	#0x0700,%sr
 	movew	%curptr@(TASK_INFO+TINFO_FLAGS+2),%d0
@@ -135,7 +135,7 @@ ret_from_syscall:
 1:	RESTORE_ALL
 
 syscall_exit_work:
-	btst	#5,%sp@(PT_SR)		| check if returning to kernel
+	btst	#5,%sp@(PT_OFF_SR)	| check if returning to kernel
 	bnes	1b			| if so, skip resched, signals
 	lslw	#1,%d0
 	jcs	do_trace_exit
@@ -148,7 +148,7 @@ syscall_exit_work:
 
 ENTRY(ret_from_exception)
 .Lret_from_exception:
-	btst	#5,%sp@(PT_SR)		| check if returning to kernel
+	btst	#5,%sp@(PT_OFF_SR)	| check if returning to kernel
 	bnes	1f			| if so, skip resched, signals
 	| only allow interrupts when we are really the last one on the
 	| kernel stack, otherwise stack overflow can occur during
@@ -182,7 +182,7 @@ do_signal_return:
 	jbra	resume_userspace
 
 do_delayed_trace:
-	bclr	#7,%sp@(PT_SR)		| clear trace bit in SR
+	bclr	#7,%sp@(PT_OFF_SR)	| clear trace bit in SR
 	pea	1			| send SIGTRAP
 	movel	%curptr,%sp@-
 	pea	LSIGTRAP
@@ -199,13 +199,13 @@ ENTRY(auto_inthandler)
 	GET_CURRENT(%d0)
 	addqb	#1,%curptr@(TASK_INFO+TINFO_PREEMPT+1)
 					|  put exception # in d0
-	bfextu	%sp@(PT_VECTOR){#4,#10},%d0
+	bfextu	%sp@(PT_OFF_FORMATVEC){#4,#10},%d0
 	subw	#VEC_SPUR,%d0
 
 	movel	%sp,%sp@-
 	movel	%d0,%sp@-		|  put vector # on stack
 auto_irqhandler_fixup = . + 2
-	jsr	m68k_handle_int		|  process the IRQ
+	jsr	__m68k_handle_int	|  process the IRQ
 	addql	#8,%sp			|  pop parameters off stack
 
 ret_from_interrupt:
@@ -216,7 +216,7 @@ ret_from_interrupt:
 	ALIGN
 ret_from_last_interrupt:
 	moveq	#(~ALLOWINT>>8)&0xff,%d0
-	andb	%sp@(PT_SR),%d0
+	andb	%sp@(PT_OFF_SR),%d0
 	jne	2b
 
 	/* check if we need to do software interrupts */
@@ -232,14 +232,14 @@ ENTRY(user_inthandler)
 	GET_CURRENT(%d0)
 	addqb	#1,%curptr@(TASK_INFO+TINFO_PREEMPT+1)
 					|  put exception # in d0
-	bfextu	%sp@(PT_VECTOR){#4,#10},%d0
+	bfextu	%sp@(PT_OFF_FORMATVEC){#4,#10},%d0
 user_irqvec_fixup = . + 2
 	subw	#VEC_USER,%d0
 
 	movel	%sp,%sp@-
 	movel	%d0,%sp@-		|  put vector # on stack
 user_irqhandler_fixup = . + 2
-	jsr	m68k_handle_int		|  process the IRQ
+	jsr	__m68k_handle_int	|  process the IRQ
 	addql	#8,%sp			|  pop parameters off stack
 
 	subqb	#1,%curptr@(TASK_INFO+TINFO_PREEMPT+1)
@@ -424,7 +424,7 @@ resume:
 .data
 ALIGN
 sys_call_table:
-	.long sys_ni_syscall	/* 0  -  old "setup()" system call*/
+	.long sys_restart_syscall	/* 0 - old "setup()" system call, used for restarting */
 	.long sys_exit
 	.long sys_fork
 	.long sys_read
@@ -513,7 +513,7 @@ sys_call_table:
 	.long sys_uselib
 	.long sys_swapon
 	.long sys_reboot
-	.long old_readdir
+	.long sys_old_readdir
 	.long old_mmap		/* 90 */
 	.long sys_munmap
 	.long sys_truncate
@@ -692,7 +692,7 @@ sys_call_table:
 	.long sys_tgkill	/* 265 */
 	.long sys_utimes
 	.long sys_fadvise64_64
-	.long sys_mbind	
+	.long sys_mbind
 	.long sys_get_mempolicy
 	.long sys_set_mempolicy	/* 270 */
 	.long sys_mq_open
@@ -706,4 +706,55 @@ sys_call_table:
 	.long sys_add_key
 	.long sys_request_key	/* 280 */
 	.long sys_keyctl
+	.long sys_ioprio_set
+	.long sys_ioprio_get
+	.long sys_inotify_init
+	.long sys_inotify_add_watch	/* 285 */
+	.long sys_inotify_rm_watch
+	.long sys_migrate_pages
+	.long sys_openat
+	.long sys_mkdirat
+	.long sys_mknodat		/* 290 */
+	.long sys_fchownat
+	.long sys_futimesat
+	.long sys_fstatat64
+	.long sys_unlinkat
+	.long sys_renameat		/* 295 */
+	.long sys_linkat
+	.long sys_symlinkat
+	.long sys_readlinkat
+	.long sys_fchmodat
+	.long sys_faccessat		/* 300 */
+	.long sys_ni_syscall		/* Reserved for pselect6 */
+	.long sys_ni_syscall		/* Reserved for ppoll */
+	.long sys_unshare
+	.long sys_set_robust_list
+	.long sys_get_robust_list	/* 305 */
+	.long sys_splice
+	.long sys_sync_file_range
+	.long sys_tee
+	.long sys_vmsplice
+	.long sys_move_pages		/* 310 */
+	.long sys_sched_setaffinity
+	.long sys_sched_getaffinity
+	.long sys_kexec_load
+	.long sys_getcpu
+	.long sys_epoll_pwait		/* 315 */
+	.long sys_utimensat
+	.long sys_signalfd
+	.long sys_timerfd_create
+	.long sys_eventfd
+	.long sys_fallocate		/* 320 */
+	.long sys_timerfd_settime
+	.long sys_timerfd_gettime
+	.long sys_signalfd4
+	.long sys_eventfd2
+	.long sys_epoll_create1		/* 325 */
+	.long sys_dup3
+	.long sys_pipe2
+	.long sys_inotify_init1
+	.long sys_preadv
+	.long sys_pwritev		/* 330 */
+	.long sys_rt_tgsigqueueinfo
+	.long sys_perf_event_open
 

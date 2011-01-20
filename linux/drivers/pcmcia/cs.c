@@ -26,17 +26,15 @@
 #include <linux/ioport.h>
 #include <linux/delay.h>
 #include <linux/pm.h>
-#include <linux/pci.h>
 #include <linux/device.h>
 #include <linux/kthread.h>
+#include <linux/freezer.h>
 #include <asm/system.h>
 #include <asm/irq.h>
 
-#define IN_CARD_SERVICES
 #include <pcmcia/cs_types.h>
 #include <pcmcia/ss.h>
 #include <pcmcia/cs.h>
-#include <pcmcia/bulkmem.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/cisreg.h>
 #include <pcmcia/ds.h>
@@ -63,7 +61,7 @@ INT_MODULE_PARM(unreset_limit,	30);		/* unreset_check's */
 /* Access speed for attribute memory windows */
 INT_MODULE_PARM(cis_speed,	300);		/* ns */
 
-#ifdef DEBUG
+#ifdef CONFIG_PCMCIA_DEBUG
 static int pc_debug;
 
 module_param(pc_debug, int, 0644);
@@ -89,7 +87,7 @@ DECLARE_RWSEM(pcmcia_socket_list_rwsem);
 EXPORT_SYMBOL(pcmcia_socket_list_rwsem);
 
 
-/**
+/*
  * Low-level PCMCIA socket drivers need to register with the PCCard
  * core using pcmcia_register_socket.
  *
@@ -100,41 +98,49 @@ EXPORT_SYMBOL(pcmcia_socket_list_rwsem);
  * These functions check for the appropriate struct pcmcia_soket arrays,
  * and pass them to the low-level functions pcmcia_{suspend,resume}_socket
  */
+static int socket_early_resume(struct pcmcia_socket *skt);
+static int socket_late_resume(struct pcmcia_socket *skt);
 static int socket_resume(struct pcmcia_socket *skt);
 static int socket_suspend(struct pcmcia_socket *skt);
 
-int pcmcia_socket_dev_suspend(struct device *dev, pm_message_t state)
+static void pcmcia_socket_dev_run(struct device *dev,
+				  int (*cb)(struct pcmcia_socket *))
 {
 	struct pcmcia_socket *socket;
 
 	down_read(&pcmcia_socket_list_rwsem);
 	list_for_each_entry(socket, &pcmcia_socket_list, socket_list) {
-		if (socket->dev.dev != dev)
+		if (socket->dev.parent != dev)
 			continue;
 		mutex_lock(&socket->skt_mutex);
-		socket_suspend(socket);
+		cb(socket);
 		mutex_unlock(&socket->skt_mutex);
 	}
 	up_read(&pcmcia_socket_list_rwsem);
+}
 
+int pcmcia_socket_dev_suspend(struct device *dev)
+{
+	pcmcia_socket_dev_run(dev, socket_suspend);
 	return 0;
 }
 EXPORT_SYMBOL(pcmcia_socket_dev_suspend);
 
+void pcmcia_socket_dev_early_resume(struct device *dev)
+{
+	pcmcia_socket_dev_run(dev, socket_early_resume);
+}
+EXPORT_SYMBOL(pcmcia_socket_dev_early_resume);
+
+void pcmcia_socket_dev_late_resume(struct device *dev)
+{
+	pcmcia_socket_dev_run(dev, socket_late_resume);
+}
+EXPORT_SYMBOL(pcmcia_socket_dev_late_resume);
+
 int pcmcia_socket_dev_resume(struct device *dev)
 {
-	struct pcmcia_socket *socket;
-
-	down_read(&pcmcia_socket_list_rwsem);
-	list_for_each_entry(socket, &pcmcia_socket_list, socket_list) {
-		if (socket->dev.dev != dev)
-			continue;
-		mutex_lock(&socket->skt_mutex);
-		socket_resume(socket);
-		mutex_unlock(&socket->skt_mutex);
-	}
-	up_read(&pcmcia_socket_list_rwsem);
-
+	pcmcia_socket_dev_run(dev, socket_resume);
 	return 0;
 }
 EXPORT_SYMBOL(pcmcia_socket_dev_resume);
@@ -142,12 +148,12 @@ EXPORT_SYMBOL(pcmcia_socket_dev_resume);
 
 struct pcmcia_socket * pcmcia_get_socket(struct pcmcia_socket *skt)
 {
-	struct class_device *cl_dev = class_device_get(&skt->dev);
-	if (!cl_dev)
+	struct device *dev = get_device(&skt->dev);
+	if (!dev)
 		return NULL;
-	skt = class_get_devdata(cl_dev);
+	skt = dev_get_drvdata(dev);
 	if (!try_module_get(skt->owner)) {
-		class_device_put(&skt->dev);
+		put_device(&skt->dev);
 		return NULL;
 	}
 	return (skt);
@@ -158,14 +164,14 @@ EXPORT_SYMBOL(pcmcia_get_socket);
 void pcmcia_put_socket(struct pcmcia_socket *skt)
 {
 	module_put(skt->owner);
-	class_device_put(&skt->dev);
+	put_device(&skt->dev);
 }
 EXPORT_SYMBOL(pcmcia_put_socket);
 
 
-static void pcmcia_release_socket(struct class_device *class_dev)
+static void pcmcia_release_socket(struct device *dev)
 {
-	struct pcmcia_socket *socket = class_get_devdata(class_dev);
+	struct pcmcia_socket *socket = dev_get_drvdata(dev);
 
 	complete(&socket->socket_released);
 }
@@ -174,24 +180,19 @@ static int pccardd(void *__skt);
 
 /**
  * pcmcia_register_socket - add a new pcmcia socket device
+ * @socket: the &socket to register
  */
 int pcmcia_register_socket(struct pcmcia_socket *socket)
 {
 	struct task_struct *tsk;
 	int ret;
 
-	if (!socket || !socket->ops || !socket->dev.dev || !socket->resource_ops)
+	if (!socket || !socket->ops || !socket->dev.parent || !socket->resource_ops)
 		return -EINVAL;
 
 	cs_dbg(socket, 0, "pcmcia_register_socket(0x%p)\n", socket->ops);
 
 	spin_lock_init(&socket->lock);
-
-	if (socket->resource_ops->init) {
-		ret = socket->resource_ops->init(socket);
-		if (ret)
-			return (ret);
-	}
 
 	/* try to obtain a socket number [yes, it gets ugly if we
 	 * register more than 2^sizeof(unsigned int) pcmcia
@@ -225,9 +226,9 @@ int pcmcia_register_socket(struct pcmcia_socket *socket)
 #endif
 
 	/* set proper values in socket->dev */
-	socket->dev.class_data = socket;
+	dev_set_drvdata(&socket->dev, socket);
 	socket->dev.class = &pcmcia_socket_class;
-	snprintf(socket->dev.class_id, BUS_ID_SIZE, "pcmcia_socket%u", socket->sock);
+	dev_set_name(&socket->dev, "pcmcia_socket%u", socket->sock);
 
 	/* base address = 0, map = 0 */
 	socket->cis_mem.flags = 0;
@@ -237,9 +238,14 @@ int pcmcia_register_socket(struct pcmcia_socket *socket)
 
 	init_completion(&socket->socket_released);
 	init_completion(&socket->thread_done);
-	init_waitqueue_head(&socket->thread_wait);
 	mutex_init(&socket->skt_mutex);
 	spin_lock_init(&socket->thread_lock);
+
+	if (socket->resource_ops->init) {
+		ret = socket->resource_ops->init(socket);
+		if (ret)
+			goto err;
+	}
 
 	tsk = kthread_run(pccardd, socket, "pccardd");
 	if (IS_ERR(tsk)) {
@@ -249,7 +255,8 @@ int pcmcia_register_socket(struct pcmcia_socket *socket)
 
 	wait_for_completion(&socket->thread_done);
 	if (!socket->thread) {
-		printk(KERN_WARNING "PCMCIA: warning: socket thread for socket %p did not start\n", socket);
+		dev_printk(KERN_WARNING, &socket->dev,
+			   "PCMCIA: warning: socket thread did not start\n");
 		return -EIO;
 	}
 
@@ -268,6 +275,7 @@ EXPORT_SYMBOL(pcmcia_register_socket);
 
 /**
  * pcmcia_unregister_socket - remove a pcmcia socket device
+ * @socket: the &socket to unregister
  */
 void pcmcia_unregister_socket(struct pcmcia_socket *socket)
 {
@@ -276,10 +284,9 @@ void pcmcia_unregister_socket(struct pcmcia_socket *socket)
 
 	cs_dbg(socket, 0, "pcmcia_unregister_socket(0x%p)\n", socket->ops);
 
-	if (socket->thread) {
-		wake_up(&socket->thread_wait);
+	if (socket->thread)
 		kthread_stop(socket->thread);
-	}
+
 	release_cis_mem(socket);
 
 	/* remove from our own list */
@@ -311,7 +318,7 @@ struct pcmcia_socket * pcmcia_get_socket_by_nr(unsigned int nr)
 }
 EXPORT_SYMBOL(pcmcia_get_socket_by_nr);
 
-/**
+/*
  * The central event handler.  Send_event() sends an event to the
  * 16-bit subsystem, which then calls the relevant device drivers.
  * Parse_events() interprets the event bits from
@@ -368,19 +375,19 @@ static int socket_reset(struct pcmcia_socket *skt)
 		skt->ops->get_status(skt, &status);
 
 		if (!(status & SS_DETECT))
-			return CS_NO_CARD;
+			return -ENODEV;
 
 		if (status & SS_READY)
-			return CS_SUCCESS;
+			return 0;
 
 		msleep(unreset_check * 10);
 	}
 
 	cs_err(skt, "time out after reset.\n");
-	return CS_GENERAL_FAILURE;
+	return -ETIMEDOUT;
 }
 
-/**
+/*
  * socket_setup() and socket_shutdown() are called by the main event handler
  * when card insertion and removal events are received.
  * socket_setup() turns on socket power and resets the socket, in two stages.
@@ -409,9 +416,13 @@ static void socket_shutdown(struct pcmcia_socket *s)
 #endif
 	s->functions = 0;
 
+	/* give socket some time to power down */
+	msleep(100);
+
 	s->ops->get_status(s, &status);
 	if (status & SS_POWERON) {
-		printk(KERN_ERR "PCMCIA: socket %p: *** DANGER *** unable to remove socket power\n", s);
+		dev_printk(KERN_ERR, &s->dev,
+			   "*** DANGER *** unable to remove socket power\n");
 	}
 
 	cs_socket_put(s);
@@ -425,14 +436,14 @@ static int socket_setup(struct pcmcia_socket *skt, int initial_delay)
 
 	skt->ops->get_status(skt, &status);
 	if (!(status & SS_DETECT))
-		return CS_NO_CARD;
+		return -ENODEV;
 
 	msleep(initial_delay * 10);
 
 	for (i = 0; i < 100; i++) {
 		skt->ops->get_status(skt, &status);
 		if (!(status & SS_DETECT))
-			return CS_NO_CARD;
+			return -ENODEV;
 
 		if (!(status & SS_PENDING))
 			break;
@@ -442,13 +453,13 @@ static int socket_setup(struct pcmcia_socket *skt, int initial_delay)
 
 	if (status & SS_PENDING) {
 		cs_err(skt, "voltage interrogation timed out.\n");
-		return CS_GENERAL_FAILURE;
+		return -ETIMEDOUT;
 	}
 
 	if (status & SS_CARDBUS) {
 		if (!(skt->features & SS_CAP_CARDBUS)) {
 			cs_err(skt, "cardbus cards are not supported.\n");
-			return CS_BAD_TYPE;
+			return -EINVAL;
 		}
 		skt->state |= SOCKET_CARDBUS;
 	}
@@ -462,7 +473,7 @@ static int socket_setup(struct pcmcia_socket *skt, int initial_delay)
 		skt->socket.Vcc = skt->socket.Vpp = 50;
 	else {
 		cs_err(skt, "unsupported voltage key.\n");
-		return CS_BAD_TYPE;
+		return -EIO;
 	}
 
 	if (skt->power_hook)
@@ -479,7 +490,7 @@ static int socket_setup(struct pcmcia_socket *skt, int initial_delay)
 	skt->ops->get_status(skt, &status);
 	if (!(status & SS_POWERON)) {
 		cs_err(skt, "unable to apply power.\n");
-		return CS_BAD_TYPE;
+		return -EIO;
 	}
 
 	status = socket_reset(skt);
@@ -501,15 +512,16 @@ static int socket_insert(struct pcmcia_socket *skt)
 	cs_dbg(skt, 4, "insert\n");
 
 	if (!cs_socket_get(skt))
-		return CS_NO_CARD;
+		return -ENODEV;
 
 	ret = socket_setup(skt, setup_delay);
-	if (ret == CS_SUCCESS) {
+	if (ret == 0) {
 		skt->state |= SOCKET_PRESENT;
 
-		printk(KERN_NOTICE "pccard: %s card inserted into slot %d\n",
-		       (skt->state & SOCKET_CARDBUS) ? "CardBus" : "PCMCIA",
-		       skt->sock);
+		dev_printk(KERN_NOTICE, &skt->dev,
+			   "pccard: %s card inserted into slot %d\n",
+			   (skt->state & SOCKET_CARDBUS) ? "CardBus" : "PCMCIA",
+			   skt->sock);
 
 #ifdef CONFIG_CARDBUS
 		if (skt->state & SOCKET_CARDBUS) {
@@ -530,7 +542,7 @@ static int socket_insert(struct pcmcia_socket *skt)
 static int socket_suspend(struct pcmcia_socket *skt)
 {
 	if (skt->state & SOCKET_SUSPEND)
-		return CS_IN_USE;
+		return -EBUSY;
 
 	send_event(skt, CS_EVENT_PM_SUSPEND, CS_EVENT_PRI_LOW);
 	skt->socket = dead_socket;
@@ -539,32 +551,27 @@ static int socket_suspend(struct pcmcia_socket *skt)
 		skt->ops->suspend(skt);
 	skt->state |= SOCKET_SUSPEND;
 
-	return CS_SUCCESS;
+	return 0;
 }
 
-/*
- * Resume a socket.  If a card is present, verify its CIS against
- * our cached copy.  If they are different, the card has been
- * replaced, and we need to tell the drivers.
- */
-static int socket_resume(struct pcmcia_socket *skt)
+static int socket_early_resume(struct pcmcia_socket *skt)
 {
-	int ret;
-
-	if (!(skt->state & SOCKET_SUSPEND))
-		return CS_IN_USE;
-
 	skt->socket = dead_socket;
 	skt->ops->init(skt);
 	skt->ops->set_socket(skt, &skt->socket);
+	if (skt->state & SOCKET_PRESENT)
+		skt->resume_status = socket_setup(skt, resume_delay);
+	return 0;
+}
 
+static int socket_late_resume(struct pcmcia_socket *skt)
+{
 	if (!(skt->state & SOCKET_PRESENT)) {
 		skt->state &= ~SOCKET_SUSPEND;
 		return socket_insert(skt);
 	}
 
-	ret = socket_setup(skt, resume_delay);
-	if (ret == CS_SUCCESS) {
+	if (skt->resume_status == 0) {
 		/*
 		 * FIXME: need a better check here for cardbus cards.
 		 */
@@ -589,12 +596,27 @@ static int socket_resume(struct pcmcia_socket *skt)
 
 	skt->state &= ~SOCKET_SUSPEND;
 
-	return CS_SUCCESS;
+	return 0;
+}
+
+/*
+ * Resume a socket.  If a card is present, verify its CIS against
+ * our cached copy.  If they are different, the card has been
+ * replaced, and we need to tell the drivers.
+ */
+static int socket_resume(struct pcmcia_socket *skt)
+{
+	if (!(skt->state & SOCKET_SUSPEND))
+		return -EBUSY;
+
+	socket_early_resume(skt);
+	return socket_late_resume(skt);
 }
 
 static void socket_remove(struct pcmcia_socket *skt)
 {
-	printk(KERN_NOTICE "pccard: card ejected from slot %d\n", skt->sock);
+	dev_printk(KERN_NOTICE, &skt->dev,
+		   "pccard: card ejected from slot %d\n", skt->sock);
 	socket_shutdown(skt);
 }
 
@@ -630,7 +652,6 @@ static void socket_detect_change(struct pcmcia_socket *skt)
 static int pccardd(void *__skt)
 {
 	struct pcmcia_socket *skt = __skt;
-	DECLARE_WAITQUEUE(wait, current);
 	int ret;
 
 	skt->thread = current;
@@ -639,18 +660,21 @@ static int pccardd(void *__skt)
 	skt->ops->set_socket(skt, &skt->socket);
 
 	/* register with the device core */
-	ret = class_device_register(&skt->dev);
+	ret = device_register(&skt->dev);
 	if (ret) {
-		printk(KERN_WARNING "PCMCIA: unable to register socket 0x%p\n",
-			skt);
+		dev_printk(KERN_WARNING, &skt->dev,
+			   "PCMCIA: unable to register socket\n");
 		skt->thread = NULL;
 		complete(&skt->thread_done);
 		return 0;
 	}
+	ret = pccard_sysfs_add_socket(&skt->dev);
+	if (ret)
+		dev_warn(&skt->dev, "err %d adding socket attributes\n", ret);
 
-	add_wait_queue(&skt->thread_wait, &wait);
 	complete(&skt->thread_done);
 
+	set_freezable();
 	for (;;) {
 		unsigned long flags;
 		unsigned int events;
@@ -685,10 +709,9 @@ static int pccardd(void *__skt)
 	/* make sure we are running before we exit */
 	set_current_state(TASK_RUNNING);
 
-	remove_wait_queue(&skt->thread_wait, &wait);
-
 	/* remove from the device core */
-	class_device_unregister(&skt->dev);
+	pccard_sysfs_remove_socket(&skt->dev);
+	device_unregister(&skt->dev);
 
 	return 0;
 }
@@ -706,7 +729,7 @@ void pcmcia_parse_events(struct pcmcia_socket *s, u_int events)
 		s->thread_events |= events;
 		spin_unlock_irqrestore(&s->thread_lock, flags);
 
-		wake_up(&s->thread_wait);
+		wake_up_process(s->thread);
 	}
 } /* pcmcia_parse_events */
 EXPORT_SYMBOL(pcmcia_parse_events);
@@ -746,7 +769,7 @@ EXPORT_SYMBOL(pccard_register_pcmcia);
  * CIS register.
  */
 
-int pccard_reset_card(struct pcmcia_socket *skt)
+int pcmcia_reset_card(struct pcmcia_socket *skt)
 {
 	int ret;
 
@@ -755,15 +778,15 @@ int pccard_reset_card(struct pcmcia_socket *skt)
 	mutex_lock(&skt->skt_mutex);
 	do {
 		if (!(skt->state & SOCKET_PRESENT)) {
-			ret = CS_NO_CARD;
+			ret = -ENODEV;
 			break;
 		}
 		if (skt->state & SOCKET_SUSPEND) {
-			ret = CS_IN_USE;
+			ret = -EBUSY;
 			break;
 		}
 		if (skt->state & SOCKET_CARDBUS) {
-			ret = CS_UNSUPPORTED_FUNCTION;
+			ret = -EPERM;
 			break;
 		}
 
@@ -772,20 +795,20 @@ int pccard_reset_card(struct pcmcia_socket *skt)
 			send_event(skt, CS_EVENT_RESET_PHYSICAL, CS_EVENT_PRI_LOW);
 			if (skt->callback)
 				skt->callback->suspend(skt);
-			if (socket_reset(skt) == CS_SUCCESS) {
+			if (socket_reset(skt) == 0) {
 				send_event(skt, CS_EVENT_CARD_RESET, CS_EVENT_PRI_LOW);
 				if (skt->callback)
 					skt->callback->resume(skt);
 			}
 		}
 
-		ret = CS_SUCCESS;
+		ret = 0;
 	} while (0);
 	mutex_unlock(&skt->skt_mutex);
 
 	return ret;
 } /* reset_card */
-EXPORT_SYMBOL(pccard_reset_card);
+EXPORT_SYMBOL(pcmcia_reset_card);
 
 
 /* These shut down or wake up a socket.  They are sort of user
@@ -800,11 +823,11 @@ int pcmcia_suspend_card(struct pcmcia_socket *skt)
 	mutex_lock(&skt->skt_mutex);
 	do {
 		if (!(skt->state & SOCKET_PRESENT)) {
-			ret = CS_NO_CARD;
+			ret = -ENODEV;
 			break;
 		}
 		if (skt->state & SOCKET_CARDBUS) {
-			ret = CS_UNSUPPORTED_FUNCTION;
+			ret = -EPERM;
 			break;
 		}
 		if (skt->callback) {
@@ -830,11 +853,11 @@ int pcmcia_resume_card(struct pcmcia_socket *skt)
 	mutex_lock(&skt->skt_mutex);
 	do {
 		if (!(skt->state & SOCKET_PRESENT)) {
-			ret = CS_NO_CARD;
+			ret = -ENODEV;
 			break;
 		}
 		if (skt->state & SOCKET_CARDBUS) {
-			ret = CS_UNSUPPORTED_FUNCTION;
+			ret = -EPERM;
 			break;
 		}
 		ret = socket_resume(skt);
@@ -890,7 +913,7 @@ int pcmcia_insert_card(struct pcmcia_socket *skt)
 			ret = -EBUSY;
 			break;
 		}
-		if (socket_insert(skt) == CS_NO_CARD) {
+		if (socket_insert(skt) == -ENODEV) {
 			ret = -ENODEV;
 			break;
 		}
@@ -903,17 +926,13 @@ int pcmcia_insert_card(struct pcmcia_socket *skt)
 EXPORT_SYMBOL(pcmcia_insert_card);
 
 
-static int pcmcia_socket_uevent(struct class_device *dev, char **envp,
-			        int num_envp, char *buffer, int buffer_size)
+static int pcmcia_socket_uevent(struct device *dev,
+				struct kobj_uevent_env *env)
 {
 	struct pcmcia_socket *s = container_of(dev, struct pcmcia_socket, dev);
-	int i = 0, length = 0;
 
-	if (add_uevent_var(envp, num_envp, &i, buffer, buffer_size,
-			   &length, "SOCKET_NO=%u", s->sock))
+	if (add_uevent_var(env, "SOCKET_NO=%u", s->sock))
 		return -ENOMEM;
-
-	envp[i] = NULL;
 
 	return 0;
 }
@@ -929,8 +948,8 @@ static void pcmcia_release_socket_class(struct class *data)
 
 struct class pcmcia_socket_class = {
 	.name = "pcmcia_socket",
-	.uevent = pcmcia_socket_uevent,
-	.release = pcmcia_release_socket,
+	.dev_uevent = pcmcia_socket_uevent,
+	.dev_release = pcmcia_release_socket,
 	.class_release = pcmcia_release_socket_class,
 };
 EXPORT_SYMBOL(pcmcia_socket_class);
@@ -938,20 +957,13 @@ EXPORT_SYMBOL(pcmcia_socket_class);
 
 static int __init init_pcmcia_cs(void)
 {
-	int ret;
-
 	init_completion(&pcmcia_unload);
-	ret = class_register(&pcmcia_socket_class);
-	if (ret)
-		return (ret);
-	return class_interface_register(&pccard_sysfs_interface);
+	return class_register(&pcmcia_socket_class);
 }
 
 static void __exit exit_pcmcia_cs(void)
 {
-	class_interface_unregister(&pccard_sysfs_interface);
 	class_unregister(&pcmcia_socket_class);
-
 	wait_for_completion(&pcmcia_unload);
 }
 

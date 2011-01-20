@@ -7,17 +7,17 @@
 #include <linux/string.h>
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/lmb.h>
 
 #include <asm/sections.h>
 #include <asm/prom.h>
 #include <asm/btext.h>
-#include <asm/prom.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
 #include <asm/pgtable.h>
 #include <asm/io.h>
-#include <asm/lmb.h>
 #include <asm/processor.h>
+#include <asm/udbg.h>
 
 #define NO_SCROLL
 
@@ -158,35 +158,37 @@ int btext_initialize(struct device_node *np)
 {
 	unsigned int width, height, depth, pitch;
 	unsigned long address = 0;
-	u32 *prop;
+	const u32 *prop;
 
-	prop = (u32 *)get_property(np, "linux,bootx-width", NULL);
+	prop = of_get_property(np, "linux,bootx-width", NULL);
 	if (prop == NULL)
-		prop = (u32 *)get_property(np, "width", NULL);
+		prop = of_get_property(np, "width", NULL);
 	if (prop == NULL)
 		return -EINVAL;
 	width = *prop;
-	prop = (u32 *)get_property(np, "linux,bootx-height", NULL);
+	prop = of_get_property(np, "linux,bootx-height", NULL);
 	if (prop == NULL)
-		prop = (u32 *)get_property(np, "height", NULL);
+		prop = of_get_property(np, "height", NULL);
 	if (prop == NULL)
 		return -EINVAL;
 	height = *prop;
-	prop = (u32 *)get_property(np, "linux,bootx-depth", NULL);
+	prop = of_get_property(np, "linux,bootx-depth", NULL);
 	if (prop == NULL)
-		prop = (u32 *)get_property(np, "depth", NULL);
+		prop = of_get_property(np, "depth", NULL);
 	if (prop == NULL)
 		return -EINVAL;
 	depth = *prop;
 	pitch = width * ((depth + 7) / 8);
-	prop = (u32 *)get_property(np, "linux,bootx-linebytes", NULL);
+	prop = of_get_property(np, "linux,bootx-linebytes", NULL);
 	if (prop == NULL)
-		prop = (u32 *)get_property(np, "linebytes", NULL);
-	if (prop)
+		prop = of_get_property(np, "linebytes", NULL);
+	if (prop && *prop != 0xffffffffu)
 		pitch = *prop;
 	if (pitch == 1)
 		pitch = 0x1000;
-	prop = (u32 *)get_property(np, "address", NULL);
+	prop = of_get_property(np, "linux,bootx-addr", NULL);
+	if (prop == NULL)
+		prop = of_get_property(np, "address", NULL);
 	if (prop)
 		address = *prop;
 
@@ -214,11 +216,11 @@ int btext_initialize(struct device_node *np)
 
 int __init btext_find_display(int allow_nonstdout)
 {
-	char *name;
+	const char *name;
 	struct device_node *np = NULL; 
 	int rc = -ENODEV;
 
-	name = (char *)get_property(of_chosen, "linux,stdout-path", NULL);
+	name = of_get_property(of_chosen, "linux,stdout-path", NULL);
 	if (name != NULL) {
 		np = of_find_node_by_path(name);
 		if (np != NULL) {
@@ -234,8 +236,8 @@ int __init btext_find_display(int allow_nonstdout)
 	if (rc == 0 || !allow_nonstdout)
 		return rc;
 
-	for (np = NULL; (np = of_find_node_by_type(np, "display"));) {
-		if (get_property(np, "linux,opened", NULL)) {
+	for_each_node_by_type(np, "display") {
+		if (of_get_property(np, "linux,opened", NULL)) {
 			printk("trying %s ...\n", np->full_name);
 			rc = btext_initialize(np);
 			printk("result: %d\n", rc);
@@ -440,28 +442,26 @@ void btext_drawtext(const char *c, unsigned int len)
 
 void btext_drawhex(unsigned long v)
 {
-	char *hex_table = "0123456789abcdef";
-
 	if (!boot_text_mapped)
 		return;
 #ifdef CONFIG_PPC64
-	btext_drawchar(hex_table[(v >> 60) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >> 56) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >> 52) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >> 48) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >> 44) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >> 40) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >> 36) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >> 32) & 0x0000000FUL]);
+	btext_drawchar(hex_asc_hi(v >> 56));
+	btext_drawchar(hex_asc_lo(v >> 56));
+	btext_drawchar(hex_asc_hi(v >> 48));
+	btext_drawchar(hex_asc_lo(v >> 48));
+	btext_drawchar(hex_asc_hi(v >> 40));
+	btext_drawchar(hex_asc_lo(v >> 40));
+	btext_drawchar(hex_asc_hi(v >> 32));
+	btext_drawchar(hex_asc_lo(v >> 32));
 #endif
-	btext_drawchar(hex_table[(v >> 28) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >> 24) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >> 20) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >> 16) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >> 12) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >>  8) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >>  4) & 0x0000000FUL]);
-	btext_drawchar(hex_table[(v >>  0) & 0x0000000FUL]);
+	btext_drawchar(hex_asc_hi(v >> 24));
+	btext_drawchar(hex_asc_lo(v >> 24));
+	btext_drawchar(hex_asc_hi(v >> 16));
+	btext_drawchar(hex_asc_lo(v >> 16));
+	btext_drawchar(hex_asc_hi(v >> 8));
+	btext_drawchar(hex_asc_lo(v >> 8));
+	btext_drawchar(hex_asc_hi(v));
+	btext_drawchar(hex_asc_lo(v));
 	btext_drawchar(' ');
 }
 
@@ -912,3 +912,11 @@ static unsigned char vga_font[cmapsz] = {
 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 0x00, 0x00, 0x00, 0x00,
 };
+
+void __init udbg_init_btext(void)
+{
+	/* If btext is enabled, we might have a BAT setup for early display,
+	 * thus we do enable some very basic udbg output
+	 */
+	udbg_putc = btext_drawchar;
+}

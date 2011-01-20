@@ -21,10 +21,8 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/sysctl.h>
 #include <linux/configfs.h>
 
-#include "endian.h"
 #include "tcp.h"
 #include "nodemanager.h"
 #include "heartbeat.h"
@@ -35,78 +33,8 @@
 /* for now we operate under the assertion that there can be only one
  * cluster active at a time.  Changing this will require trickling
  * cluster references throughout where nodes are looked up */
-static struct o2nm_cluster *o2nm_single_cluster = NULL;
+struct o2nm_cluster *o2nm_single_cluster = NULL;
 
-#define OCFS2_MAX_HB_CTL_PATH 256
-static char ocfs2_hb_ctl_path[OCFS2_MAX_HB_CTL_PATH] = "/sbin/ocfs2_hb_ctl";
-
-static ctl_table ocfs2_nm_table[] = {
-	{
-		.ctl_name	= 1,
-		.procname	= "hb_ctl_path",
-		.data		= ocfs2_hb_ctl_path,
-		.maxlen		= OCFS2_MAX_HB_CTL_PATH,
-		.mode		= 0644,
-		.proc_handler	= &proc_dostring,
-		.strategy	= &sysctl_string,
-	},
-	{ .ctl_name = 0 }
-};
-
-static ctl_table ocfs2_mod_table[] = {
-	{
-		.ctl_name	= KERN_OCFS2_NM,
-		.procname	= "nm",
-		.data		= NULL,
-		.maxlen		= 0,
-		.mode		= 0555,
-		.child		= ocfs2_nm_table
-	},
-	{ .ctl_name = 0}
-};
-
-static ctl_table ocfs2_kern_table[] = {
-	{
-		.ctl_name	= KERN_OCFS2,
-		.procname	= "ocfs2",
-		.data		= NULL,
-		.maxlen		= 0,
-		.mode		= 0555,
-		.child		= ocfs2_mod_table
-	},
-	{ .ctl_name = 0}
-};
-
-static ctl_table ocfs2_root_table[] = {
-	{
-		.ctl_name	= CTL_FS,
-		.procname	= "fs",
-		.data		= NULL,
-		.maxlen		= 0,
-		.mode		= 0555,
-		.child		= ocfs2_kern_table
-	},
-	{ .ctl_name = 0 }
-};
-
-static struct ctl_table_header *ocfs2_table_header = NULL;
-
-const char *o2nm_get_hb_ctl_path(void)
-{
-	return ocfs2_hb_ctl_path;
-}
-EXPORT_SYMBOL_GPL(o2nm_get_hb_ctl_path);
-
-struct o2nm_cluster {
-	struct config_group	cl_group;
-	unsigned		cl_has_local:1;
-	u8			cl_local_node;
-	rwlock_t		cl_nodes_lock;
-	struct o2nm_node  	*cl_nodes[O2NM_MAX_NODES];
-	struct rb_root		cl_node_ip_tree;
-	/* this bitmap is part of a hack for disk bitmap.. will go eventually. - zab */
-	unsigned long	cl_nodes_bitmap[BITS_TO_LONGS(O2NM_MAX_NODES)];
-};
 
 struct o2nm_node *o2nm_get_node_by_num(u8 node_num)
 {
@@ -152,14 +80,16 @@ static struct o2nm_node *o2nm_node_ip_tree_lookup(struct o2nm_cluster *cluster,
 	struct o2nm_node *node, *ret = NULL;
 
 	while (*p) {
+		int cmp;
+
 		parent = *p;
 		node = rb_entry(parent, struct o2nm_node, nd_ip_node);
 
-		if (memcmp(&ip_needle, &node->nd_ipv4_address,
-		           sizeof(ip_needle)) < 0)
+		cmp = memcmp(&ip_needle, &node->nd_ipv4_address,
+				sizeof(ip_needle));
+		if (cmp < 0)
 			p = &(*p)->rb_left;
-		else if (memcmp(&ip_needle, &node->nd_ipv4_address,
-			        sizeof(ip_needle)) > 0)
+		else if (cmp > 0)
 			p = &(*p)->rb_right;
 		else {
 			ret = node;
@@ -320,7 +250,7 @@ static ssize_t o2nm_node_ipv4_port_write(struct o2nm_node *node,
 
 static ssize_t o2nm_node_ipv4_address_read(struct o2nm_node *node, char *page)
 {
-	return sprintf(page, "%u.%u.%u.%u\n", NIPQUAD(node->nd_ipv4_address));
+	return sprintf(page, "%pI4\n", &node->nd_ipv4_address);
 }
 
 static ssize_t o2nm_node_ipv4_address_write(struct o2nm_node *node,
@@ -541,30 +471,196 @@ static struct o2nm_node_group *to_o2nm_node_group(struct config_group *group)
 }
 #endif
 
+struct o2nm_cluster_attribute {
+	struct configfs_attribute attr;
+	ssize_t (*show)(struct o2nm_cluster *, char *);
+	ssize_t (*store)(struct o2nm_cluster *, const char *, size_t);
+};
+
+static ssize_t o2nm_cluster_attr_write(const char *page, ssize_t count,
+                                       unsigned int *val)
+{
+	unsigned long tmp;
+	char *p = (char *)page;
+
+	tmp = simple_strtoul(p, &p, 0);
+	if (!p || (*p && (*p != '\n')))
+		return -EINVAL;
+
+	if (tmp == 0)
+		return -EINVAL;
+	if (tmp >= (u32)-1)
+		return -ERANGE;
+
+	*val = tmp;
+
+	return count;
+}
+
+static ssize_t o2nm_cluster_attr_idle_timeout_ms_read(
+	struct o2nm_cluster *cluster, char *page)
+{
+	return sprintf(page, "%u\n", cluster->cl_idle_timeout_ms);
+}
+
+static ssize_t o2nm_cluster_attr_idle_timeout_ms_write(
+	struct o2nm_cluster *cluster, const char *page, size_t count)
+{
+	ssize_t ret;
+	unsigned int val;
+
+	ret =  o2nm_cluster_attr_write(page, count, &val);
+
+	if (ret > 0) {
+		if (cluster->cl_idle_timeout_ms != val
+			&& o2net_num_connected_peers()) {
+			mlog(ML_NOTICE,
+			     "o2net: cannot change idle timeout after "
+			     "the first peer has agreed to it."
+			     "  %d connected peers\n",
+			     o2net_num_connected_peers());
+			ret = -EINVAL;
+		} else if (val <= cluster->cl_keepalive_delay_ms) {
+			mlog(ML_NOTICE, "o2net: idle timeout must be larger "
+			     "than keepalive delay\n");
+			ret = -EINVAL;
+		} else {
+			cluster->cl_idle_timeout_ms = val;
+		}
+	}
+
+	return ret;
+}
+
+static ssize_t o2nm_cluster_attr_keepalive_delay_ms_read(
+	struct o2nm_cluster *cluster, char *page)
+{
+	return sprintf(page, "%u\n", cluster->cl_keepalive_delay_ms);
+}
+
+static ssize_t o2nm_cluster_attr_keepalive_delay_ms_write(
+	struct o2nm_cluster *cluster, const char *page, size_t count)
+{
+	ssize_t ret;
+	unsigned int val;
+
+	ret =  o2nm_cluster_attr_write(page, count, &val);
+
+	if (ret > 0) {
+		if (cluster->cl_keepalive_delay_ms != val
+		    && o2net_num_connected_peers()) {
+			mlog(ML_NOTICE,
+			     "o2net: cannot change keepalive delay after"
+			     " the first peer has agreed to it."
+			     "  %d connected peers\n",
+			     o2net_num_connected_peers());
+			ret = -EINVAL;
+		} else if (val >= cluster->cl_idle_timeout_ms) {
+			mlog(ML_NOTICE, "o2net: keepalive delay must be "
+			     "smaller than idle timeout\n");
+			ret = -EINVAL;
+		} else {
+			cluster->cl_keepalive_delay_ms = val;
+		}
+	}
+
+	return ret;
+}
+
+static ssize_t o2nm_cluster_attr_reconnect_delay_ms_read(
+	struct o2nm_cluster *cluster, char *page)
+{
+	return sprintf(page, "%u\n", cluster->cl_reconnect_delay_ms);
+}
+
+static ssize_t o2nm_cluster_attr_reconnect_delay_ms_write(
+	struct o2nm_cluster *cluster, const char *page, size_t count)
+{
+	return o2nm_cluster_attr_write(page, count,
+	                               &cluster->cl_reconnect_delay_ms);
+}
+static struct o2nm_cluster_attribute o2nm_cluster_attr_idle_timeout_ms = {
+	.attr	= { .ca_owner = THIS_MODULE,
+		    .ca_name = "idle_timeout_ms",
+		    .ca_mode = S_IRUGO | S_IWUSR },
+	.show	= o2nm_cluster_attr_idle_timeout_ms_read,
+	.store	= o2nm_cluster_attr_idle_timeout_ms_write,
+};
+
+static struct o2nm_cluster_attribute o2nm_cluster_attr_keepalive_delay_ms = {
+	.attr	= { .ca_owner = THIS_MODULE,
+		    .ca_name = "keepalive_delay_ms",
+		    .ca_mode = S_IRUGO | S_IWUSR },
+	.show	= o2nm_cluster_attr_keepalive_delay_ms_read,
+	.store	= o2nm_cluster_attr_keepalive_delay_ms_write,
+};
+
+static struct o2nm_cluster_attribute o2nm_cluster_attr_reconnect_delay_ms = {
+	.attr	= { .ca_owner = THIS_MODULE,
+		    .ca_name = "reconnect_delay_ms",
+		    .ca_mode = S_IRUGO | S_IWUSR },
+	.show	= o2nm_cluster_attr_reconnect_delay_ms_read,
+	.store	= o2nm_cluster_attr_reconnect_delay_ms_write,
+};
+
+static struct configfs_attribute *o2nm_cluster_attrs[] = {
+	&o2nm_cluster_attr_idle_timeout_ms.attr,
+	&o2nm_cluster_attr_keepalive_delay_ms.attr,
+	&o2nm_cluster_attr_reconnect_delay_ms.attr,
+	NULL,
+};
+static ssize_t o2nm_cluster_show(struct config_item *item,
+                                 struct configfs_attribute *attr,
+                                 char *page)
+{
+	struct o2nm_cluster *cluster = to_o2nm_cluster(item);
+	struct o2nm_cluster_attribute *o2nm_cluster_attr =
+		container_of(attr, struct o2nm_cluster_attribute, attr);
+	ssize_t ret = 0;
+
+	if (o2nm_cluster_attr->show)
+		ret = o2nm_cluster_attr->show(cluster, page);
+	return ret;
+}
+
+static ssize_t o2nm_cluster_store(struct config_item *item,
+                                  struct configfs_attribute *attr,
+                                  const char *page, size_t count)
+{
+	struct o2nm_cluster *cluster = to_o2nm_cluster(item);
+	struct o2nm_cluster_attribute *o2nm_cluster_attr =
+		container_of(attr, struct o2nm_cluster_attribute, attr);
+	ssize_t ret;
+
+	if (o2nm_cluster_attr->store == NULL) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = o2nm_cluster_attr->store(cluster, page, count);
+	if (ret < count)
+		goto out;
+out:
+	return ret;
+}
+
 static struct config_item *o2nm_node_group_make_item(struct config_group *group,
 						     const char *name)
 {
 	struct o2nm_node *node = NULL;
-	struct config_item *ret = NULL;
 
 	if (strlen(name) > O2NM_MAX_NAME_LEN)
-		goto out; /* ENAMETOOLONG */
+		return ERR_PTR(-ENAMETOOLONG);
 
-	node = kcalloc(1, sizeof(struct o2nm_node), GFP_KERNEL);
+	node = kzalloc(sizeof(struct o2nm_node), GFP_KERNEL);
 	if (node == NULL)
-		goto out; /* ENOMEM */
+		return ERR_PTR(-ENOMEM);
 
 	strcpy(node->nd_name, name); /* use item.ci_namebuf instead? */
 	config_item_init_type_name(&node->nd_item, name, &o2nm_node_type);
 	spin_lock_init(&node->nd_lock);
 
-	ret = &node->nd_item;
-
-out:
-	if (ret == NULL)
-		kfree(node);
-
-	return ret;
+	return &node->nd_item;
 }
 
 static void o2nm_node_group_drop_item(struct config_group *group,
@@ -622,10 +718,13 @@ static void o2nm_cluster_release(struct config_item *item)
 
 static struct configfs_item_operations o2nm_cluster_item_ops = {
 	.release	= o2nm_cluster_release,
+	.show_attribute		= o2nm_cluster_show,
+	.store_attribute	= o2nm_cluster_store,
 };
 
 static struct config_item_type o2nm_cluster_type = {
 	.ct_item_ops	= &o2nm_cluster_item_ops,
+	.ct_attrs	= o2nm_cluster_attrs,
 	.ct_owner	= THIS_MODULE,
 };
 
@@ -656,10 +755,10 @@ static struct config_group *o2nm_cluster_group_make_group(struct config_group *g
 	/* this runs under the parent dir's i_mutex; there can be only
 	 * one caller in here at a time */
 	if (o2nm_single_cluster)
-		goto out; /* ENOSPC */
+		return ERR_PTR(-ENOSPC);
 
-	cluster = kcalloc(1, sizeof(struct o2nm_cluster), GFP_KERNEL);
-	ns = kcalloc(1, sizeof(struct o2nm_node_group), GFP_KERNEL);
+	cluster = kzalloc(sizeof(struct o2nm_cluster), GFP_KERNEL);
+	ns = kzalloc(sizeof(struct o2nm_node_group), GFP_KERNEL);
 	defs = kcalloc(3, sizeof(struct config_group *), GFP_KERNEL);
 	o2hb_group = o2hb_alloc_hb_set();
 	if (cluster == NULL || ns == NULL || o2hb_group == NULL || defs == NULL)
@@ -676,6 +775,9 @@ static struct config_group *o2nm_cluster_group_make_group(struct config_group *g
 	cluster->cl_group.default_groups[2] = NULL;
 	rwlock_init(&cluster->cl_nodes_lock);
 	cluster->cl_node_ip_tree = RB_ROOT;
+	cluster->cl_reconnect_delay_ms = O2NET_RECONNECT_DELAY_MS_DEFAULT;
+	cluster->cl_idle_timeout_ms    = O2NET_IDLE_TIMEOUT_MS_DEFAULT;
+	cluster->cl_keepalive_delay_ms = O2NET_KEEPALIVE_DELAY_MS_DEFAULT;
 
 	ret = &cluster->cl_group;
 	o2nm_single_cluster = cluster;
@@ -686,6 +788,7 @@ out:
 		kfree(ns);
 		o2hb_free_hb_set(o2hb_group);
 		kfree(defs);
+		ret = ERR_PTR(-ENOMEM);
 	}
 
 	return ret;
@@ -730,17 +833,55 @@ static struct o2nm_cluster_group o2nm_cluster_group = {
 	},
 };
 
+int o2nm_depend_item(struct config_item *item)
+{
+	return configfs_depend_item(&o2nm_cluster_group.cs_subsys, item);
+}
+
+void o2nm_undepend_item(struct config_item *item)
+{
+	configfs_undepend_item(&o2nm_cluster_group.cs_subsys, item);
+}
+
+int o2nm_depend_this_node(void)
+{
+	int ret = 0;
+	struct o2nm_node *local_node;
+
+	local_node = o2nm_get_node_by_num(o2nm_this_node());
+	if (!local_node) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = o2nm_depend_item(&local_node->nd_item);
+	o2nm_node_put(local_node);
+
+out:
+	return ret;
+}
+
+void o2nm_undepend_this_node(void)
+{
+	struct o2nm_node *local_node;
+
+	local_node = o2nm_get_node_by_num(o2nm_this_node());
+	BUG_ON(!local_node);
+
+	o2nm_undepend_item(&local_node->nd_item);
+	o2nm_node_put(local_node);
+}
+
+
 static void __exit exit_o2nm(void)
 {
-	if (ocfs2_table_header)
-		unregister_sysctl_table(ocfs2_table_header);
-
 	/* XXX sync with hb callbacks and shut down hb? */
 	o2net_unregister_hb_callbacks();
 	configfs_unregister_subsystem(&o2nm_cluster_group.cs_subsys);
 	o2cb_sys_shutdown();
 
 	o2net_exit();
+	o2hb_exit();
 }
 
 static int __init init_o2nm(void)
@@ -749,22 +890,20 @@ static int __init init_o2nm(void)
 
 	cluster_print_version();
 
-	o2hb_init();
-	o2net_init();
+	ret = o2hb_init();
+	if (ret)
+		goto out;
 
-	ocfs2_table_header = register_sysctl_table(ocfs2_root_table, 0);
-	if (!ocfs2_table_header) {
-		printk(KERN_ERR "nodemanager: unable to register sysctl\n");
-		ret = -ENOMEM; /* or something. */
-		goto out_o2net;
-	}
+	ret = o2net_init();
+	if (ret)
+		goto out_o2hb;
 
 	ret = o2net_register_hb_callbacks();
 	if (ret)
-		goto out_sysctl;
+		goto out_o2net;
 
 	config_group_init(&o2nm_cluster_group.cs_subsys.su_group);
-	init_MUTEX(&o2nm_cluster_group.cs_subsys.su_sem);
+	mutex_init(&o2nm_cluster_group.cs_subsys.su_mutex);
 	ret = configfs_register_subsystem(&o2nm_cluster_group.cs_subsys);
 	if (ret) {
 		printk(KERN_ERR "nodemanager: Registration returned %d\n", ret);
@@ -778,10 +917,10 @@ static int __init init_o2nm(void)
 	configfs_unregister_subsystem(&o2nm_cluster_group.cs_subsys);
 out_callbacks:
 	o2net_unregister_hb_callbacks();
-out_sysctl:
-	unregister_sysctl_table(ocfs2_table_header);
 out_o2net:
 	o2net_exit();
+out_o2hb:
+	o2hb_exit();
 out:
 	return ret;
 }

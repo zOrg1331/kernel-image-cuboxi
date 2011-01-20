@@ -12,9 +12,10 @@
 #include <linux/device.h>
 #include <linux/string.h>
 #include <linux/slab.h>
+#include <linux/io.h>
 #include <linux/amba/bus.h>
 
-#include <asm/io.h>
+#include <asm/irq.h>
 #include <asm/sizes.h>
 
 #define to_amba_device(d)	container_of(d, struct amba_device, dev)
@@ -44,17 +45,13 @@ static int amba_match(struct device *dev, struct device_driver *drv)
 }
 
 #ifdef CONFIG_HOTPLUG
-static int amba_uevent(struct device *dev, char **envp, int nr_env, char *buf, int bufsz)
+static int amba_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
 	struct amba_device *pcdev = to_amba_device(dev);
+	int retval = 0;
 
-	if (nr_env < 2)
-		return -ENOMEM;
-
-	snprintf(buf, bufsz, "AMBA_ID=%08x", pcdev->periphid);
-	*envp++ = buf;
-	*envp++ = NULL;
-	return 0;
+	retval = add_uevent_var(env, "AMBA_ID=%08x", pcdev->periphid);
+	return retval;
 }
 #else
 #define amba_uevent NULL
@@ -80,12 +77,38 @@ static int amba_resume(struct device *dev)
 	return ret;
 }
 
+#define amba_attr_func(name,fmt,arg...)					\
+static ssize_t name##_show(struct device *_dev,				\
+			   struct device_attribute *attr, char *buf)	\
+{									\
+	struct amba_device *dev = to_amba_device(_dev);			\
+	return sprintf(buf, fmt, arg);					\
+}
+
+#define amba_attr(name,fmt,arg...)	\
+amba_attr_func(name,fmt,arg)		\
+static DEVICE_ATTR(name, S_IRUGO, name##_show, NULL)
+
+amba_attr_func(id, "%08x\n", dev->periphid);
+amba_attr(irq0, "%u\n", dev->irq[0]);
+amba_attr(irq1, "%u\n", dev->irq[1]);
+amba_attr_func(resource, "\t%016llx\t%016llx\t%016lx\n",
+	 (unsigned long long)dev->res.start, (unsigned long long)dev->res.end,
+	 dev->res.flags);
+
+static struct device_attribute amba_dev_attrs[] = {
+	__ATTR_RO(id),
+	__ATTR_RO(resource),
+	__ATTR_NULL,
+};
+
 /*
  * Primecells are part of the Advanced Microcontroller Bus Architecture,
  * so we call the bus "amba".
  */
 static struct bus_type amba_bustype = {
 	.name		= "amba",
+	.dev_attrs	= amba_dev_attrs,
 	.match		= amba_match,
 	.uevent		= amba_uevent,
 	.suspend	= amba_suspend,
@@ -169,21 +192,6 @@ static void amba_device_release(struct device *dev)
 	kfree(d);
 }
 
-#define amba_attr(name,fmt,arg...)				\
-static ssize_t show_##name(struct device *_dev, struct device_attribute *attr, char *buf)	\
-{								\
-	struct amba_device *dev = to_amba_device(_dev);		\
-	return sprintf(buf, fmt, arg);				\
-}								\
-static DEVICE_ATTR(name, S_IRUGO, show_##name, NULL)
-
-amba_attr(id, "%08x\n", dev->periphid);
-amba_attr(irq0, "%u\n", dev->irq[0]);
-amba_attr(irq1, "%u\n", dev->irq[1]);
-amba_attr(resource, "\t%016llx\t%016llx\t%016lx\n",
-	 (unsigned long long)dev->res.start, (unsigned long long)dev->res.end,
-	 dev->res.flags);
-
 /**
  *	amba_device_register - register an AMBA device
  *	@dev: AMBA device to register
@@ -196,52 +204,78 @@ amba_attr(resource, "\t%016llx\t%016llx\t%016lx\n",
 int amba_device_register(struct amba_device *dev, struct resource *parent)
 {
 	u32 pid, cid;
+	u32 size;
 	void __iomem *tmp;
 	int i, ret;
+
+	device_initialize(&dev->dev);
+
+	/*
+	 * Copy from device_add
+	 */
+	if (dev->dev.init_name) {
+		dev_set_name(&dev->dev, "%s", dev->dev.init_name);
+		dev->dev.init_name = NULL;
+	}
 
 	dev->dev.release = amba_device_release;
 	dev->dev.bus = &amba_bustype;
 	dev->dev.dma_mask = &dev->dma_mask;
-	dev->res.name = dev->dev.bus_id;
+	dev->res.name = dev_name(&dev->dev);
 
 	if (!dev->dev.coherent_dma_mask && dev->dma_mask)
 		dev_warn(&dev->dev, "coherent dma mask is unset\n");
 
 	ret = request_resource(parent, &dev->res);
-	if (ret == 0) {
-		tmp = ioremap(dev->res.start, SZ_4K);
-		if (!tmp) {
-			ret = -ENOMEM;
-			goto out;
-		}
+	if (ret)
+		goto err_out;
 
-		for (pid = 0, i = 0; i < 4; i++)
-			pid |= (readl(tmp + 0xfe0 + 4 * i) & 255) << (i * 8);
-		for (cid = 0, i = 0; i < 4; i++)
-			cid |= (readl(tmp + 0xff0 + 4 * i) & 255) << (i * 8);
-
-		iounmap(tmp);
-
-		if (cid == 0xb105f00d)
-			dev->periphid = pid;
-
-		if (dev->periphid)
-			ret = device_register(&dev->dev);
-		else
-			ret = -ENODEV;
-
-		if (ret == 0) {
-			device_create_file(&dev->dev, &dev_attr_id);
-			if (dev->irq[0] != NO_IRQ)
-				device_create_file(&dev->dev, &dev_attr_irq0);
-			if (dev->irq[1] != NO_IRQ)
-				device_create_file(&dev->dev, &dev_attr_irq1);
-			device_create_file(&dev->dev, &dev_attr_resource);
-		} else {
- out:
-			release_resource(&dev->res);
-		}
+	/*
+	 * Dynamically calculate the size of the resource
+	 * and use this for iomap
+	 */
+	size = resource_size(&dev->res);
+	tmp = ioremap(dev->res.start, size);
+	if (!tmp) {
+		ret = -ENOMEM;
+		goto err_release;
 	}
+
+	/*
+	 * Read pid and cid based on size of resource
+	 * they are located at end of region
+	 */
+	for (pid = 0, i = 0; i < 4; i++)
+		pid |= (readl(tmp + size - 0x20 + 4 * i) & 255) << (i * 8);
+	for (cid = 0, i = 0; i < 4; i++)
+		cid |= (readl(tmp + size - 0x10 + 4 * i) & 255) << (i * 8);
+
+	iounmap(tmp);
+
+	if (cid == 0xb105f00d)
+		dev->periphid = pid;
+
+	if (!dev->periphid) {
+		ret = -ENODEV;
+		goto err_release;
+	}
+
+	ret = device_add(&dev->dev);
+	if (ret)
+		goto err_release;
+
+	if (dev->irq[0] != NO_IRQ)
+		ret = device_create_file(&dev->dev, &dev_attr_irq0);
+	if (ret == 0 && dev->irq[1] != NO_IRQ)
+		ret = device_create_file(&dev->dev, &dev_attr_irq1);
+	if (ret == 0)
+		return ret;
+
+	device_unregister(&dev->dev);
+
+ err_release:
+	release_resource(&dev->res);
+ err_out:
 	return ret;
 }
 
@@ -280,7 +314,7 @@ static int amba_find_match(struct device *dev, void *data)
 	if (d->parent)
 		r &= d->parent == dev->parent;
 	if (d->busid)
-		r &= strcmp(dev->bus_id, d->busid) == 0;
+		r &= strcmp(dev_name(dev), d->busid) == 0;
 
 	if (r) {
 		get_device(dev);
@@ -329,11 +363,14 @@ amba_find_device(const char *busid, struct device *parent, unsigned int id,
 int amba_request_regions(struct amba_device *dev, const char *name)
 {
 	int ret = 0;
+	u32 size;
 
 	if (!name)
 		name = dev->dev.driver->name;
 
-	if (!request_mem_region(dev->res.start, SZ_4K, name))
+	size = resource_size(&dev->res);
+
+	if (!request_mem_region(dev->res.start, size, name))
 		ret = -EBUSY;
 
 	return ret;
@@ -347,7 +384,10 @@ int amba_request_regions(struct amba_device *dev, const char *name)
  */
 void amba_release_regions(struct amba_device *dev)
 {
-	release_mem_region(dev->res.start, SZ_4K);
+	u32 size;
+
+	size = resource_size(&dev->res);
+	release_mem_region(dev->res.start, size);
 }
 
 EXPORT_SYMBOL(amba_driver_register);

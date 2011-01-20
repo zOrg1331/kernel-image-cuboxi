@@ -72,8 +72,8 @@ rx164_end_irq(unsigned int irq)
 		rx164_enable_irq(irq);
 }
 
-static struct hw_interrupt_type rx164_irq_type = {
-	.typename	= "RX164",
+static struct irq_chip rx164_irq_type = {
+	.name		= "RX164",
 	.startup	= rx164_startup_irq,
 	.shutdown	= rx164_disable_irq,
 	.enable		= rx164_enable_irq,
@@ -83,7 +83,7 @@ static struct hw_interrupt_type rx164_irq_type = {
 };
 
 static void 
-rx164_device_interrupt(unsigned long vector, struct pt_regs *regs)
+rx164_device_interrupt(unsigned long vector)
 {
 	unsigned long pld;
 	volatile unsigned int *dirr;
@@ -102,9 +102,9 @@ rx164_device_interrupt(unsigned long vector, struct pt_regs *regs)
 		i = ffz(~pld);
 		pld &= pld - 1; /* clear least bit set */
 		if (i == 20) {
-			isa_no_iack_sc_device_interrupt(vector, regs);
+			isa_no_iack_sc_device_interrupt(vector);
 		} else {
-			handle_irq(16+i, regs);
+			handle_irq(16+i);
 		}
 	}
 }

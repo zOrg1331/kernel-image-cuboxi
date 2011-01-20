@@ -20,6 +20,7 @@
 #include <asm/machdep.h>
 #include <asm/uaccess.h>
 #include <asm/pSeries_reconfig.h>
+#include <asm/mmu.h>
 
 
 
@@ -95,7 +96,7 @@ static struct device_node *derive_parent(const char *path)
 	return parent;
 }
 
-static BLOCKING_NOTIFIER_HEAD(pSeries_reconfig_chain);
+BLOCKING_NOTIFIER_HEAD(pSeries_reconfig_chain);
 
 int pSeries_reconfig_notifier_register(struct notifier_block *nb)
 {
@@ -123,7 +124,7 @@ static int pSeries_reconfig_add_node(const char *path, struct property *proplist
 	strcpy(np->full_name, path);
 
 	np->properties = proplist;
-	OF_MARK_DYNAMIC(np);
+	of_node_set_flag(np, OF_DYNAMIC);
 	kref_init(&np->kref);
 
 	np->parent = derive_parent(path);
@@ -167,6 +168,7 @@ static int pSeries_reconfig_remove_node(struct device_node *np)
 
 	if ((child = of_get_next_child(np, NULL))) {
 		of_node_put(child);
+		of_node_put(parent);
 		return -EBUSY;
 	}
 
@@ -221,14 +223,14 @@ static char * parse_next_property(char *buf, char *end, char **name, int *length
 	tmp = strchr(buf, ' ');
 	if (!tmp) {
 		printk(KERN_ERR "property parse failed in %s at line %d\n",
-		       __FUNCTION__, __LINE__);
+		       __func__, __LINE__);
 		return NULL;
 	}
 	*tmp = '\0';
 
 	if (++tmp >= end) {
 		printk(KERN_ERR "property parse failed in %s at line %d\n",
-		       __FUNCTION__, __LINE__);
+		       __func__, __LINE__);
 		return NULL;
 	}
 
@@ -237,12 +239,12 @@ static char * parse_next_property(char *buf, char *end, char **name, int *length
 	*length = simple_strtoul(tmp, &tmp, 10);
 	if (*length == -1) {
 		printk(KERN_ERR "property parse failed in %s at line %d\n",
-		       __FUNCTION__, __LINE__);
+		       __func__, __LINE__);
 		return NULL;
 	}
 	if (*tmp != ' ' || ++tmp >= end) {
 		printk(KERN_ERR "property parse failed in %s at line %d\n",
-		       __FUNCTION__, __LINE__);
+		       __func__, __LINE__);
 		return NULL;
 	}
 
@@ -251,12 +253,12 @@ static char * parse_next_property(char *buf, char *end, char **name, int *length
 	tmp += *length;
 	if (tmp > end) {
 		printk(KERN_ERR "property parse failed in %s at line %d\n",
-		       __FUNCTION__, __LINE__);
+		       __func__, __LINE__);
 		return NULL;
 	}
 	else if (tmp < end && *tmp != ' ' && *tmp != '\0') {
 		printk(KERN_ERR "property parse failed in %s at line %d\n",
-		       __FUNCTION__, __LINE__);
+		       __func__, __LINE__);
 		return NULL;
 	}
 	tmp++;
@@ -268,11 +270,10 @@ static char * parse_next_property(char *buf, char *end, char **name, int *length
 static struct property *new_property(const char *name, const int length,
 				     const unsigned char *value, struct property *last)
 {
-	struct property *new = kmalloc(sizeof(*new), GFP_KERNEL);
+	struct property *new = kzalloc(sizeof(*new), GFP_KERNEL);
 
 	if (!new)
 		return NULL;
-	memset(new, 0, sizeof(*new));
 
 	if (!(new->name = kmalloc(strlen(name) + 1, GFP_KERNEL)))
 		goto cleanup;
@@ -365,7 +366,7 @@ static char *parse_node(char *buf, size_t bufsize, struct device_node **npp)
 	*buf = '\0';
 	buf++;
 
-	handle = simple_strtoul(handle_str, NULL, 10);
+	handle = simple_strtoul(handle_str, NULL, 0);
 
 	*npp = of_find_node_by_phandle(handle);
 	return buf;
@@ -422,8 +423,8 @@ static int do_update_property(char *buf, size_t bufsize)
 {
 	struct device_node *np;
 	unsigned char *value;
-	char *name, *end;
-	int length;
+	char *name, *end, *next_prop;
+	int rc, length;
 	struct property *newprop, *oldprop;
 	buf = parse_node(buf, bufsize, &np);
 	end = buf + bufsize;
@@ -431,18 +432,56 @@ static int do_update_property(char *buf, size_t bufsize)
 	if (!np)
 		return -ENODEV;
 
-	if (parse_next_property(buf, end, &name, &length, &value) == NULL)
+	next_prop = parse_next_property(buf, end, &name, &length, &value);
+	if (!next_prop)
 		return -EINVAL;
 
 	newprop = new_property(name, length, value, NULL);
 	if (!newprop)
 		return -ENOMEM;
 
-	oldprop = of_find_property(np, name,NULL);
-	if (!oldprop)
-		return -ENODEV;
+	if (!strcmp(name, "slb-size") || !strcmp(name, "ibm,slb-size"))
+		slb_set_size(*(int *)value);
 
-	return prom_update_property(np, newprop, oldprop);
+	oldprop = of_find_property(np, name,NULL);
+	if (!oldprop) {
+		if (strlen(name))
+			return prom_add_property(np, newprop);
+		return -ENODEV;
+	}
+
+	rc = prom_update_property(np, newprop, oldprop);
+	if (rc)
+		return rc;
+
+	/* For memory under the ibm,dynamic-reconfiguration-memory node
+	 * of the device tree, adding and removing memory is just an update
+	 * to the ibm,dynamic-memory property instead of adding/removing a
+	 * memory node in the device tree.  For these cases we still need to
+	 * involve the notifier chain.
+	 */
+	if (!strcmp(name, "ibm,dynamic-memory")) {
+		int action;
+
+		next_prop = parse_next_property(next_prop, end, &name,
+						&length, &value);
+		if (!next_prop)
+			return -EINVAL;
+
+		if (!strcmp(name, "add"))
+			action = PSERIES_DRCONF_MEM_ADD;
+		else
+			action = PSERIES_DRCONF_MEM_REMOVE;
+
+		rc = blocking_notifier_call_chain(&pSeries_reconfig_chain,
+						  action, value);
+		if (rc == NOTIFY_BAD) {
+			rc = prom_update_property(np, oldprop, newprop);
+			return -ENOMEM;
+		}
+	}
+
+	return 0;
 }
 
 /**
@@ -500,7 +539,7 @@ out:
 	return rv ? rv : count;
 }
 
-static struct file_operations ofdt_fops = {
+static const struct file_operations ofdt_fops = {
 	.write = ofdt_write
 };
 
@@ -512,13 +551,9 @@ static int proc_ppc64_create_ofdt(void)
 	if (!machine_is(pseries))
 		return 0;
 
-	ent = create_proc_entry("ppc64/ofdt", S_IWUSR, NULL);
-	if (ent) {
-		ent->nlink = 1;
-		ent->data = NULL;
+	ent = proc_create("ppc64/ofdt", S_IWUSR, NULL, &ofdt_fops);
+	if (ent)
 		ent->size = 0;
-		ent->proc_fops = &ofdt_fops;
-	}
 
 	return 0;
 }

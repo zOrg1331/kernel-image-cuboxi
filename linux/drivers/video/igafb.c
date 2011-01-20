@@ -44,8 +44,8 @@
 
 #include <asm/io.h>
 
-#ifdef __sparc__
-#include <asm/pbm.h>
+#ifdef CONFIG_SPARC
+#include <asm/prom.h>
 #include <asm/pcic.h>
 #endif
 
@@ -96,7 +96,7 @@ struct fb_var_screeninfo default_var = {
 	.vmode		= FB_VMODE_NONINTERLACED
 };
 
-#ifdef __sparc__
+#ifdef CONFIG_SPARC
 struct fb_var_screeninfo default_var_1024x768 __initdata = {
 	/* 1024x768, 75 Hz, Non-Interlaced (78.75 MHz dotclock) */
 	.xres		= 1024,
@@ -188,7 +188,7 @@ static inline void iga_outb(struct iga_par *par, unsigned char val,
         pci_outb(par, val, reg+1);
 }
 
-#endif /* __sparc__ */
+#endif /* CONFIG_SPARC */
 
 /*
  *  Very important functionality for the JavaEngine1 computer:
@@ -217,7 +217,7 @@ static void iga_blank_border(struct iga_par *par)
 		iga_outb(par, 0, IGA_EXT_CNTRL, IGA_IDX_OVERSCAN_COLOR + i);
 }
 
-#ifdef __sparc__
+#ifdef CONFIG_SPARC
 static int igafb_mmap(struct fb_info *info,
 		      struct vm_area_struct *vma)
 {
@@ -271,7 +271,7 @@ static int igafb_mmap(struct fb_info *info,
 	vma->vm_flags |= VM_IO;
 	return 0;
 }
-#endif /* __sparc__ */
+#endif /* CONFIG_SPARC */
 
 static int igafb_setcolreg(unsigned regno, unsigned red, unsigned green,
                            unsigned blue, unsigned transp,
@@ -323,7 +323,7 @@ static struct fb_ops igafb_ops = {
 	.fb_fillrect	= cfb_fillrect,
 	.fb_copyarea	= cfb_copyarea,
 	.fb_imageblit	= cfb_imageblit,
-#ifdef __sparc__
+#ifdef CONFIG_SPARC
 	.fb_mmap 	= igafb_mmap,
 #endif
 };
@@ -370,7 +370,6 @@ static int __init iga_init(struct fb_info *info, struct iga_par *par)
 
 int __init igafb_init(void)
 {
-        extern int con_is_present(void);
         struct fb_info *info;
         struct pci_dev *pdev;
         struct iga_par *par;
@@ -380,51 +379,50 @@ int __init igafb_init(void)
 	if (fb_get_options("igafb", NULL))
 		return -ENODEV;
 
-        /* Do not attach when we have a serial console. */
-        if (!con_is_present())
-                return -ENXIO;
-
-        pdev = pci_find_device(PCI_VENDOR_ID_INTERG, 
+        pdev = pci_get_device(PCI_VENDOR_ID_INTERG,
                                PCI_DEVICE_ID_INTERG_1682, 0);
 	if (pdev == NULL) {
 		/*
 		 * XXX We tried to use cyber2000fb.c for IGS 2000.
 		 * But it does not initialize the chip in JavaStation-E, alas.
 		 */
-        	pdev = pci_find_device(PCI_VENDOR_ID_INTERG, 0x2000, 0);
+        	pdev = pci_get_device(PCI_VENDOR_ID_INTERG, 0x2000, 0);
         	if(pdev == NULL) {
         	        return -ENXIO;
 		}
 		iga2000 = 1;
 	}
+	/* We leak a reference here but as it cannot be unloaded this is
+	   fine. If you write unload code remember to free it in unload */
 	
-	size = sizeof(struct fb_info) + sizeof(struct iga_par) + sizeof(u32)*16;
+	size = sizeof(struct iga_par) + sizeof(u32)*16;
 
-        info = kmalloc(size, GFP_ATOMIC);
+	info = framebuffer_alloc(size, &pdev->dev);
         if (!info) {
                 printk("igafb_init: can't alloc fb_info\n");
+		 pci_dev_put(pdev);
                 return -ENOMEM;
         }
-        memset(info, 0, size);
 
-	par = (struct iga_par *) (info + 1);
-	
+	par = info->par;
 
 	if ((addr = pdev->resource[0].start) == 0) {
                 printk("igafb_init: no memory start\n");
 		kfree(info);
+		pci_dev_put(pdev);
 		return -ENXIO;
 	}
 
 	if ((info->screen_base = ioremap(addr, 1024*1024*2)) == 0) {
                 printk("igafb_init: can't remap %lx[2M]\n", addr);
 		kfree(info);
+		pci_dev_put(pdev);
 		return -ENXIO;
 	}
 
 	par->frame_buffer_phys = addr & PCI_BASE_ADDRESS_MEM_MASK;
 
-#ifdef __sparc__
+#ifdef CONFIG_SPARC
 	/*
 	 * The following is sparc specific and this is why:
 	 *
@@ -453,6 +451,7 @@ int __init igafb_init(void)
                 printk("igafb_init: can't remap %lx[4K]\n", igafb_fix.mmio_start);
 		iounmap((void *)info->screen_base);
 		kfree(info);
+		pci_dev_put(pdev);
 		return -ENXIO;
 	}
 
@@ -464,23 +463,22 @@ int __init igafb_init(void)
 	 * one additional region with size == 0. 
 	 */
 
-	par->mmap_map = kmalloc(4 * sizeof(*par->mmap_map), GFP_ATOMIC);
+	par->mmap_map = kzalloc(4 * sizeof(*par->mmap_map), GFP_ATOMIC);
 	if (!par->mmap_map) {
 		printk("igafb_init: can't alloc mmap_map\n");
 		iounmap((void *)par->io_base);
 		iounmap(info->screen_base);
 		kfree(info);
+		pci_dev_put(pdev);
 		return -ENOMEM;
 	}
-
-	memset(par->mmap_map, 0, 4 * sizeof(*par->mmap_map));
 
 	/*
 	 * Set default vmode and cmode from PROM properties.
 	 */
 	{
-                struct pcidev_cookie *cookie = pdev->sysdata;
-                int node = cookie->prom_node;
+		struct device_node *dp = pci_device_to_OF_node(pdev);
+                int node = dp->node;
                 int width = prom_getintdefault(node, "width", 1024);
                 int height = prom_getintdefault(node, "height", 768);
                 int depth = prom_getintdefault(node, "depth", 8);
@@ -527,7 +525,6 @@ int __init igafb_init(void)
 	info->var = default_var;
 	info->fix = igafb_fix;
 	info->pseudo_palette = (void *)(par + 1);
-	info->device = &pdev->dev;
 
 	if (!iga_init(info, par)) {
 		iounmap((void *)par->io_base);
@@ -536,7 +533,7 @@ int __init igafb_init(void)
 		kfree(info);
         }
 
-#ifdef __sparc__
+#ifdef CONFIG_SPARC
 	    /*
 	     * Add /dev/fb mmap values.
 	     */
@@ -554,7 +551,7 @@ int __init igafb_init(void)
 	    par->mmap_map[1].size = PAGE_SIZE * 2; /* X wants 2 pages */
 	    par->mmap_map[1].prot_mask = SRMMU_CACHE;
 	    par->mmap_map[1].prot_flag = SRMMU_WRITE;
-#endif /* __sparc__ */
+#endif /* CONFIG_SPARC */
 
 	return 0;
 }
@@ -573,3 +570,10 @@ int __init igafb_setup(char *options)
 
 module_init(igafb_init);
 MODULE_LICENSE("GPL");
+static struct pci_device_id igafb_pci_tbl[] __devinitdata = {
+	{ PCI_VENDOR_ID_INTERG, PCI_DEVICE_ID_INTERG_1682,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+	{ }
+};
+
+MODULE_DEVICE_TABLE(pci, igafb_pci_tbl);

@@ -8,6 +8,7 @@
  *  	<c.pellegrin@exadron.com>
  *
  * PM support added by Rodolfo Giometti <giometti@linux.it>
+ * Cursor enable/disable by Rodolfo Giometti <giometti@linux.it>
  *
  * Copyright 2002 MontaVista Software
  * Author: MontaVista Software, Inc.
@@ -109,6 +110,56 @@ static struct fb_var_screeninfo au1100fb_var __initdata = {
 };
 
 static struct au1100fb_drv_info drv_info;
+
+static int nocursor = 0;
+module_param(nocursor, int, 0644);
+MODULE_PARM_DESC(nocursor, "cursor enable/disable");
+
+/* fb_blank
+ * Blank the screen. Depending on the mode, the screen will be
+ * activated with the backlight color, or desactivated
+ */
+static int au1100fb_fb_blank(int blank_mode, struct fb_info *fbi)
+{
+	struct au1100fb_device *fbdev = to_au1100fb_device(fbi);
+
+	print_dbg("fb_blank %d %p", blank_mode, fbi);
+
+	switch (blank_mode) {
+
+	case VESA_NO_BLANKING:
+			/* Turn on panel */
+			fbdev->regs->lcd_control |= LCD_CONTROL_GO;
+#ifdef CONFIG_MIPS_PB1100
+			if (drv_info.panel_idx == 1) {
+				au_writew(au_readw(PB1100_G_CONTROL)
+					  | (PB1100_G_CONTROL_BL | PB1100_G_CONTROL_VDD),
+			PB1100_G_CONTROL);
+			}
+#endif
+		au_sync();
+		break;
+
+	case VESA_VSYNC_SUSPEND:
+	case VESA_HSYNC_SUSPEND:
+	case VESA_POWERDOWN:
+			/* Turn off panel */
+			fbdev->regs->lcd_control &= ~LCD_CONTROL_GO;
+#ifdef CONFIG_MIPS_PB1100
+			if (drv_info.panel_idx == 1) {
+				au_writew(au_readw(PB1100_G_CONTROL)
+				  	  & ~(PB1100_G_CONTROL_BL | PB1100_G_CONTROL_VDD),
+			PB1100_G_CONTROL);
+			}
+#endif
+		au_sync();
+		break;
+	default:
+		break;
+
+	}
+	return 0;
+}
 
 /*
  * Set hardware with var settings. This will enable the controller with a specific
@@ -267,52 +318,6 @@ int au1100fb_fb_setcolreg(unsigned regno, unsigned red, unsigned green, unsigned
 	return 0;
 }
 
-/* fb_blank
- * Blank the screen. Depending on the mode, the screen will be
- * activated with the backlight color, or desactivated
- */
-int au1100fb_fb_blank(int blank_mode, struct fb_info *fbi)
-{
-	struct au1100fb_device *fbdev = to_au1100fb_device(fbi);
-
-	print_dbg("fb_blank %d %p", blank_mode, fbi);
-
-	switch (blank_mode) {
-
-	case VESA_NO_BLANKING:
-			/* Turn on panel */
-			fbdev->regs->lcd_control |= LCD_CONTROL_GO;
-#ifdef CONFIG_MIPS_PB1100
-			if (drv_info.panel_idx == 1) {
-				au_writew(au_readw(PB1100_G_CONTROL)
-					  | (PB1100_G_CONTROL_BL | PB1100_G_CONTROL_VDD),
-			PB1100_G_CONTROL);
-			}
-#endif
-		au_sync();
-		break;
-
-	case VESA_VSYNC_SUSPEND:
-	case VESA_HSYNC_SUSPEND:
-	case VESA_POWERDOWN:
-			/* Turn off panel */
-			fbdev->regs->lcd_control &= ~LCD_CONTROL_GO;
-#ifdef CONFIG_MIPS_PB1100
-			if (drv_info.panel_idx == 1) {
-				au_writew(au_readw(PB1100_G_CONTROL)
-				  	  & ~(PB1100_G_CONTROL_BL | PB1100_G_CONTROL_VDD),
-			PB1100_G_CONTROL);
-			}
-#endif
-		au_sync();
-		break;
-	default:
-		break;
-
-	}
-	return 0;
-}
-
 /* fb_pan_display
  * Pan display in x and/or y as specified
  */
@@ -422,6 +427,17 @@ int au1100fb_fb_mmap(struct fb_info *fbi, struct vm_area_struct *vma)
 	return 0;
 }
 
+/* fb_cursor
+ * Used to disable cursor drawing...
+ */
+int au1100fb_fb_cursor(struct fb_info *info, struct fb_cursor *cursor)
+{
+	if (nocursor)
+		return 0;
+	else
+		return -EINVAL;	/* just to force soft_cursor() call */
+}
+
 static struct fb_ops au1100fb_ops =
 {
 	.owner			= THIS_MODULE,
@@ -433,6 +449,7 @@ static struct fb_ops au1100fb_ops =
 	.fb_imageblit		= cfb_imageblit,
 	.fb_rotate		= au1100fb_fb_rotate,
 	.fb_mmap		= au1100fb_fb_mmap,
+	.fb_cursor		= au1100fb_fb_cursor,
 };
 
 
@@ -440,7 +457,7 @@ static struct fb_ops au1100fb_ops =
 
 /* AU1100 LCD controller device driver */
 
-int au1100fb_drv_probe(struct device *dev)
+static int __init au1100fb_drv_probe(struct platform_device *dev)
 {
 	struct au1100fb_device *fbdev = NULL;
 	struct resource *regs_res;
@@ -451,15 +468,14 @@ int au1100fb_drv_probe(struct device *dev)
 			return -EINVAL;
 
 	/* Allocate new device private */
-	if (!(fbdev = kmalloc(sizeof(struct au1100fb_device), GFP_KERNEL))) {
+	if (!(fbdev = kzalloc(sizeof(struct au1100fb_device), GFP_KERNEL))) {
 		print_err("fail to allocate device private record");
 		return -ENOMEM;
 	}
-	memset((void*)fbdev, 0, sizeof(struct au1100fb_device));
 
 	fbdev->panel = &known_lcd_panels[drv_info.panel_idx];
 
-	dev_set_drvdata(dev, (void*)fbdev);
+	platform_set_drvdata(dev, (void *)fbdev);
 
 	/* Allocate region for our registers and map them */
 	if (!(regs_res = platform_get_resource(to_platform_device(dev),
@@ -532,10 +548,9 @@ int au1100fb_drv_probe(struct device *dev)
 	fbdev->info.fbops = &au1100fb_ops;
 	fbdev->info.fix = au1100fb_fix;
 
-	if (!(fbdev->info.pseudo_palette = kmalloc(sizeof(u32) * 16, GFP_KERNEL))) {
+	if (!(fbdev->info.pseudo_palette = kzalloc(sizeof(u32) * 16, GFP_KERNEL))) {
 		return -ENOMEM;
 	}
-	memset(fbdev->info.pseudo_palette, 0, sizeof(u32) * 16);
 
 	if (fb_alloc_cmap(&fbdev->info.cmap, AU1100_LCD_NBR_PALETTE_ENTRIES, 0) < 0) {
 		print_err("Fail to allocate colormap (%d entries)",
@@ -568,19 +583,19 @@ failed:
 		fb_dealloc_cmap(&fbdev->info.cmap);
 	}
 	kfree(fbdev);
-	dev_set_drvdata(dev, NULL);
+	platform_set_drvdata(dev, NULL);
 
 	return 0;
 }
 
-int au1100fb_drv_remove(struct device *dev)
+int au1100fb_drv_remove(struct platform_device *dev)
 {
 	struct au1100fb_device *fbdev = NULL;
 
 	if (!dev)
 		return -ENODEV;
 
-	fbdev = (struct au1100fb_device*) dev_get_drvdata(dev);
+	fbdev = (struct au1100fb_device *) platform_get_drvdata(dev);
 
 #if !defined(CONFIG_FRAMEBUFFER_CONSOLE) && defined(CONFIG_LOGO)
 	au1100fb_fb_blank(VESA_POWERDOWN, &fbdev->info);
@@ -605,9 +620,9 @@ int au1100fb_drv_remove(struct device *dev)
 static u32 sys_clksrc;
 static struct au1100fb_regs fbregs;
 
-int au1100fb_drv_suspend(struct device *dev, pm_message_t state)
+int au1100fb_drv_suspend(struct platform_device *dev, pm_message_t state)
 {
-	struct au1100fb_device *fbdev = dev_get_drvdata(dev);
+	struct au1100fb_device *fbdev = platform_get_drvdata(dev);
 
 	if (!fbdev)
 		return 0;
@@ -626,9 +641,9 @@ int au1100fb_drv_suspend(struct device *dev, pm_message_t state)
 	return 0;
 }
 
-int au1100fb_drv_resume(struct device *dev)
+int au1100fb_drv_resume(struct platform_device *dev)
 {
-	struct au1100fb_device *fbdev = dev_get_drvdata(dev);
+	struct au1100fb_device *fbdev = platform_get_drvdata(dev);
 
 	if (!fbdev)
 		return 0;
@@ -648,10 +663,11 @@ int au1100fb_drv_resume(struct device *dev)
 #define au1100fb_drv_resume NULL
 #endif
 
-static struct device_driver au1100fb_driver = {
-	.name		= "au1100-lcd",
-	.bus		= &platform_bus_type,
-
+static struct platform_driver au1100fb_driver = {
+	.driver = {
+		.name		= "au1100-lcd",
+		.owner          = THIS_MODULE,
+	},
 	.probe		= au1100fb_drv_probe,
         .remove		= au1100fb_drv_remove,
 	.suspend	= au1100fb_drv_suspend,
@@ -677,7 +693,7 @@ int au1100fb_setup(char *options)
 	if (options) {
 		while ((this_opt = strsep(&options,",")) != NULL) {
 			/* Panel option */
-		if (!strncmp(this_opt, "panel:", 6)) {
+			if (!strncmp(this_opt, "panel:", 6)) {
 				int i;
 				this_opt += 6;
 				for (i = 0; i < num_panels; i++) {
@@ -685,22 +701,30 @@ int au1100fb_setup(char *options)
 					      	     known_lcd_panels[i].name,
 							strlen(this_opt))) {
 						panel_idx = i;
-					break;
+						break;
+					}
 				}
-			}
 				if (i >= num_panels) {
  					print_warn("Panel %s not supported!", this_opt);
 				}
 			}
+			if (!strncmp(this_opt, "nocursor", 8)) {
+				this_opt += 8;
+				nocursor = 1;
+				print_info("Cursor disabled");
+			}
 			/* Mode option (only option that start with digit) */
 			else if (isdigit(this_opt[0])) {
-				mode = kmalloc(strlen(this_opt) + 1, GFP_KERNEL);
-				strncpy(mode, this_opt, strlen(this_opt) + 1);
+				mode = kstrdup(this_opt, GFP_KERNEL);
+				if (!mode) {
+					print_err("memory allocation failed");
+					return -ENOMEM;
+				}
 			}
 			/* Unsupported option */
 			else {
 				print_warn("Unsupported option \"%s\"", this_opt);
-		}
+			}
 		}
 	}
 
@@ -733,12 +757,12 @@ int __init au1100fb_init(void)
 		return ret;
 	}
 
-	return driver_register(&au1100fb_driver);
+	return platform_driver_register(&au1100fb_driver);
 }
 
 void __exit au1100fb_cleanup(void)
 {
-	driver_unregister(&au1100fb_driver);
+	platform_driver_unregister(&au1100fb_driver);
 
 	kfree(drv_info.opt_mode);
 }

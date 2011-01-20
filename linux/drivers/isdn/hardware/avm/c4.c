@@ -28,8 +28,8 @@
 #include <linux/isdn/capilli.h>
 #include "avmcard.h"
 
-#undef CONFIG_C4_DEBUG
-#undef CONFIG_C4_POLLDEBUG
+#undef AVM_C4_DEBUG
+#undef AVM_C4_POLLDEBUG
 
 /* ------------------------------------------------------------- */
 
@@ -420,7 +420,7 @@ static void c4_dispatch_tx(avmcard *card)
 
 	skb = skb_dequeue(&dma->send_queue);
 	if (!skb) {
-#ifdef CONFIG_C4_DEBUG
+#ifdef AVM_C4_DEBUG
 		printk(KERN_DEBUG "%s: tx underrun\n", card->name);
 #endif
 		return;
@@ -444,20 +444,21 @@ static void c4_dispatch_tx(avmcard *card)
 			_put_slice(&p, skb->data, len);
 		}
 		txlen = (u8 *)p - (u8 *)dma->sendbuf.dmabuf;
-#ifdef CONFIG_C4_DEBUG
+#ifdef AVM_C4_DEBUG
 		printk(KERN_DEBUG "%s: tx put msg len=%d\n", card->name, txlen);
 #endif
 	} else {
 		txlen = skb->len-2;
-#ifdef CONFIG_C4_POLLDEBUG
+#ifdef AVM_C4_POLLDEBUG
 		if (skb->data[2] == SEND_POLLACK)
 			printk(KERN_INFO "%s: ack to c4\n", card->name);
 #endif
-#ifdef CONFIG_C4_DEBUG
+#ifdef AVM_C4_DEBUG
 		printk(KERN_DEBUG "%s: tx put 0x%x len=%d\n",
 				card->name, skb->data[2], txlen);
 #endif
-		memcpy(dma->sendbuf.dmabuf, skb->data+2, skb->len-2);
+		skb_copy_from_linear_data_offset(skb, 2, dma->sendbuf.dmabuf,
+						 skb->len - 2);
 	}
 	txlen = (txlen + 3) & ~3;
 
@@ -508,7 +509,7 @@ static void c4_handle_rx(avmcard *card)
 	u32 cidx;
 
 
-#ifdef CONFIG_C4_DEBUG
+#ifdef AVM_C4_DEBUG
 	printk(KERN_DEBUG "%s: rx 0x%x len=%lu\n", card->name,
 				b1cmd, (unsigned long)dma->recvlen);
 #endif
@@ -586,7 +587,7 @@ static void c4_handle_rx(avmcard *card)
 		break;
 
 	case RECEIVE_START:
-#ifdef CONFIG_C4_POLLDEBUG
+#ifdef AVM_C4_POLLDEBUG
 		printk(KERN_INFO "%s: poll from c4\n", card->name);
 #endif
 		if (!suppress_pollack)
@@ -677,8 +678,10 @@ static irqreturn_t c4_handle_interrupt(avmcard *card)
                 for (i=0; i < card->nr_controllers; i++) {
 			avmctrl_info *cinfo = &card->ctrlinfo[i];
 			memset(cinfo->version, 0, sizeof(cinfo->version));
+			spin_lock_irqsave(&card->lock, flags);
 			capilib_release(&cinfo->ncci_head);
-			capi_ctr_reseted(&cinfo->capi_ctrl);
+			spin_unlock_irqrestore(&card->lock, flags);
+			capi_ctr_down(&cinfo->capi_ctrl);
 		}
 		card->nlogcontr = 0;
 		return IRQ_HANDLED;
@@ -713,7 +716,7 @@ static irqreturn_t c4_handle_interrupt(avmcard *card)
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t c4_interrupt(int interrupt, void *devptr, struct pt_regs *regs)
+static irqreturn_t c4_interrupt(int interrupt, void *devptr)
 {
 	avmcard *card = devptr;
 
@@ -726,6 +729,7 @@ static void c4_send_init(avmcard *card)
 {
 	struct sk_buff *skb;
 	void *p;
+	unsigned long flags;
 
 	skb = alloc_skb(15, GFP_ATOMIC);
 	if (!skb) {
@@ -743,12 +747,15 @@ static void c4_send_init(avmcard *card)
 	skb_put(skb, (u8 *)p - (u8 *)skb->data);
 
 	skb_queue_tail(&card->dma->send_queue, skb);
+	spin_lock_irqsave(&card->lock, flags);
 	c4_dispatch_tx(card);
+	spin_unlock_irqrestore(&card->lock, flags);
 }
 
 static int queue_sendconfigword(avmcard *card, u32 val)
 {
 	struct sk_buff *skb;
+	unsigned long flags;
 	void *p;
 
 	skb = alloc_skb(3+4, GFP_ATOMIC);
@@ -765,7 +772,9 @@ static int queue_sendconfigword(avmcard *card, u32 val)
 	skb_put(skb, (u8 *)p - (u8 *)skb->data);
 
 	skb_queue_tail(&card->dma->send_queue, skb);
+	spin_lock_irqsave(&card->lock, flags);
 	c4_dispatch_tx(card);
+	spin_unlock_irqrestore(&card->lock, flags);
 	return 0;
 }
 
@@ -900,7 +909,7 @@ static void c4_reset_ctr(struct capi_ctr *ctrl)
         for (i=0; i < card->nr_controllers; i++) {
 		cinfo = &card->ctrlinfo[i];
 		memset(cinfo->version, 0, sizeof(cinfo->version));
-		capi_ctr_reseted(&cinfo->capi_ctrl);
+		capi_ctr_down(&cinfo->capi_ctrl);
 	}
 	card->nlogcontr = 0;
 }
@@ -985,7 +994,9 @@ static void c4_release_appl(struct capi_ctr *ctrl, u16 appl)
 	struct sk_buff *skb;
 	void *p;
 
+	spin_lock_irqsave(&card->lock, flags);
 	capilib_release_appl(&cinfo->ncci_head, appl);
+	spin_unlock_irqrestore(&card->lock, flags);
 
 	if (ctrl->cnr == card->cardnr) {
 		skb = alloc_skb(7, GFP_ATOMIC);
@@ -1018,7 +1029,8 @@ static u16 c4_send_message(struct capi_ctr *ctrl, struct sk_buff *skb)
 	u16 retval = CAPI_NOERROR;
 	unsigned long flags;
 
- 	if (CAPIMSG_CMD(skb->data) == CAPI_DATA_B3_REQ) {
+	spin_lock_irqsave(&card->lock, flags);
+	if (CAPIMSG_CMD(skb->data) == CAPI_DATA_B3_REQ) {
 		retval = capilib_data_b3_req(&cinfo->ncci_head,
 					     CAPIMSG_APPID(skb->data),
 					     CAPIMSG_NCCI(skb->data),
@@ -1026,10 +1038,9 @@ static u16 c4_send_message(struct capi_ctr *ctrl, struct sk_buff *skb)
 	}
 	if (retval == CAPI_NOERROR) {
 		skb_queue_tail(&card->dma->send_queue, skb);
-		spin_lock_irqsave(&card->lock, flags);
 		c4_dispatch_tx(card);
-		spin_unlock_irqrestore(&card->lock, flags);
 	}
+	spin_unlock_irqrestore(&card->lock, flags);
 	return retval;
 }
 
@@ -1077,11 +1088,11 @@ static int c4_read_proc(char *page, char **start, off_t off,
 	default: s = "???"; break;
 	}
 	len += sprintf(page+len, "%-16s %s\n", "type", s);
-	if ((s = cinfo->version[VER_DRIVER]) != 0)
+	if ((s = cinfo->version[VER_DRIVER]) != NULL)
 	   len += sprintf(page+len, "%-16s %s\n", "ver_driver", s);
-	if ((s = cinfo->version[VER_CARDTYPE]) != 0)
+	if ((s = cinfo->version[VER_CARDTYPE]) != NULL)
 	   len += sprintf(page+len, "%-16s %s\n", "ver_cardtype", s);
-	if ((s = cinfo->version[VER_SERIAL]) != 0)
+	if ((s = cinfo->version[VER_SERIAL]) != NULL)
 	   len += sprintf(page+len, "%-16s %s\n", "ver_serial", s);
 
 	if (card->cardtype != avm_m1) {
@@ -1156,7 +1167,7 @@ static int c4_add_card(struct capicardparams *p, struct pci_dev *dev,
 	}
 
 	card->mbase = ioremap(card->membase, 128);
-	if (card->mbase == 0) {
+	if (card->mbase == NULL) {
 		printk(KERN_NOTICE "c4: can't remap memory at 0x%lx\n",
 		       card->membase);
 		retval = -EIO;
@@ -1280,9 +1291,9 @@ static int __init c4_init(void)
 	char rev[32];
 	int err;
 
-	if ((p = strchr(revision, ':')) != 0 && p[1]) {
+	if ((p = strchr(revision, ':')) != NULL && p[1]) {
 		strlcpy(rev, p + 2, 32);
-		if ((p = strchr(rev, '$')) != 0 && p > rev)
+		if ((p = strchr(rev, '$')) != NULL && p > rev)
 		   *(p-1) = 0;
 	} else
 		strcpy(rev, "1.0");

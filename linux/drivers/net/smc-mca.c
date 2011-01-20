@@ -182,6 +182,23 @@ static char *smc_mca_adapter_names[] __initdata = {
 
 static int ultra_found = 0;
 
+
+static const struct net_device_ops ultramca_netdev_ops = {
+	.ndo_open		= ultramca_open,
+	.ndo_stop		= ultramca_close_card,
+
+	.ndo_start_xmit		= ei_start_xmit,
+	.ndo_tx_timeout		= ei_tx_timeout,
+	.ndo_get_stats		= ei_get_stats,
+	.ndo_set_multicast_list = ei_set_multicast_list,
+	.ndo_validate_addr	= eth_validate_addr,
+	.ndo_set_mac_address 	= eth_mac_addr,
+	.ndo_change_mtu		= eth_change_mtu,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller 	= ei_poll,
+#endif
+};
+
 static int __init ultramca_probe(struct device *gen_dev)
 {
 	unsigned short ioaddr;
@@ -250,9 +267,9 @@ static int __init ultramca_probe(struct device *gen_dev)
 			break;
 		}
 	}
-	
-	if(!tirq || !tbase 
-	   || (irq && irq != tirq) 
+
+	if(!tirq || !tbase
+	   || (irq && irq != tirq)
 	   || (base_addr && tbase != base_addr))
 		/* FIXME: we're trying to force the ordering of the
 		 * devices here, there should be a way of getting this
@@ -264,7 +281,6 @@ static int __init ultramca_probe(struct device *gen_dev)
 	if(!dev)
 		return -ENODEV;
 
-	SET_MODULE_OWNER(dev);
 	SET_NETDEV_DEV(dev, gen_dev);
 	mca_device_set_name(mca_dev, smc_mca_adapter_names[adapter]);
 	mca_device_set_claim(mca_dev, 1);
@@ -310,7 +326,7 @@ static int __init ultramca_probe(struct device *gen_dev)
 			 * the index of the 0x2000 step.
 			 * beware different number of pages [hs]
 			 */
-			dev->mem_start = (unsigned long) 
+			dev->mem_start = (unsigned long)
 			  mca_device_transform_memory(mca_dev, (void *)(0xc0000 + (0x2000 * (pos3 & 0xf))));
 			num_pages = 0x20 + (2 * (pos3 & 0x10));
 			break;
@@ -331,10 +347,11 @@ static int __init ultramca_probe(struct device *gen_dev)
 	reg4 = inb(ioaddr + 4) & 0x7f;
 	outb(reg4, ioaddr + 4);
 
-	printk(KERN_INFO "smc_mca[%d]: Parameters: %#3x,", slot + 1, ioaddr);
-
 	for (i = 0; i < 6; i++)
-		printk(" %2.2X", dev->dev_addr[i] = inb(ioaddr + 8 + i));
+		dev->dev_addr[i] = inb(ioaddr + 8 + i);
+
+	printk(KERN_INFO "smc_mca[%d]: Parameters: %#3x, %pM",
+	       slot + 1, ioaddr, dev->dev_addr);
 
 	/* Switch from the station address to the alternate register set
 	 * and read the useful registers there.
@@ -353,7 +370,7 @@ static int __init ultramca_probe(struct device *gen_dev)
 
 	outb(reg4, ioaddr + 4);
 
-	gen_dev->driver_data = dev;
+	dev_set_drvdata(gen_dev, dev);
 
 	/* The 8390 isn't at the base address, so fake the offset
 	 */
@@ -384,11 +401,7 @@ static int __init ultramca_probe(struct device *gen_dev)
 
 	ei_status.priv = slot;
 
-	dev->open = &ultramca_open;
-	dev->stop = &ultramca_close_card;
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	dev->poll_controller = ei_poll;
-#endif
+	dev->netdev_ops = &ultramca_netdev_ops;
 
 	NS8390_init(dev, 0);
 
@@ -482,8 +495,7 @@ static void ultramca_block_input(struct net_device *dev, int count, struct sk_bu
 		count -= semi_count;
 		memcpy_fromio(skb->data + semi_count, ei_status.mem + TX_PAGES * 256, count);
 	} else {
-		/* Packet is in one chunk -- we can copy + cksum. */
-		eth_io_copy_and_sum(skb, xfer_start, count, 0);
+		memcpy_fromio(skb->data, xfer_start, count);
 	}
 
 }
@@ -501,7 +513,7 @@ static int ultramca_close_card(struct net_device *dev)
 	int ioaddr = dev->base_addr - ULTRA_NIC_OFFSET; /* ASIC addr */
 
 	netif_stop_queue(dev);
-	
+
 	if (ei_debug > 1)
 		printk("%s: Shutting down ethercard.\n", dev->name);
 
@@ -519,7 +531,7 @@ static int ultramca_close_card(struct net_device *dev)
 static int ultramca_remove(struct device *gen_dev)
 {
 	struct mca_device *mca_dev = to_mca_device(gen_dev);
-	struct net_device *dev = (struct net_device *)gen_dev->driver_data;
+	struct net_device *dev = dev_get_drvdata(gen_dev);
 
 	if (dev) {
 		/* NB: ultra_close_card() does free_irq */

@@ -5,7 +5,8 @@
  *
  *  adding & removing files & directories
  */
-
+#include <linux/sched.h>
+#include <linux/smp_lock.h>
 #include "hpfs_fn.h"
 
 static int hpfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
@@ -89,14 +90,14 @@ static int hpfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 	brelse(bh);
 	hpfs_mark_4buffers_dirty(&qbh0);
 	hpfs_brelse4(&qbh0);
-	dir->i_nlink++;
+	inc_nlink(dir);
 	insert_inode_hash(result);
 
-	if (result->i_uid != current->fsuid ||
-	    result->i_gid != current->fsgid ||
+	if (result->i_uid != current_fsuid() ||
+	    result->i_gid != current_fsgid() ||
 	    result->i_mode != (mode | S_IFDIR)) {
-		result->i_uid = current->fsuid;
-		result->i_gid = current->fsgid;
+		result->i_uid = current_fsuid();
+		result->i_gid = current_fsgid();
 		result->i_mode = mode | S_IFDIR;
 		hpfs_write_inode_nolock(result);
 	}
@@ -184,11 +185,11 @@ static int hpfs_create(struct inode *dir, struct dentry *dentry, int mode, struc
 
 	insert_inode_hash(result);
 
-	if (result->i_uid != current->fsuid ||
-	    result->i_gid != current->fsgid ||
+	if (result->i_uid != current_fsuid() ||
+	    result->i_gid != current_fsgid() ||
 	    result->i_mode != (mode | S_IFREG)) {
-		result->i_uid = current->fsuid;
-		result->i_gid = current->fsgid;
+		result->i_uid = current_fsuid();
+		result->i_gid = current_fsgid();
 		result->i_mode = mode | S_IFREG;
 		hpfs_write_inode_nolock(result);
 	}
@@ -247,8 +248,8 @@ static int hpfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t 
 	result->i_mtime.tv_nsec = 0;
 	result->i_atime.tv_nsec = 0;
 	hpfs_i(result)->i_ea_size = 0;
-	result->i_uid = current->fsuid;
-	result->i_gid = current->fsgid;
+	result->i_uid = current_fsuid();
+	result->i_gid = current_fsgid();
 	result->i_nlink = 1;
 	result->i_size = 0;
 	result->i_blocks = 1;
@@ -325,8 +326,8 @@ static int hpfs_symlink(struct inode *dir, struct dentry *dentry, const char *sy
 	result->i_atime.tv_nsec = 0;
 	hpfs_i(result)->i_ea_size = 0;
 	result->i_mode = S_IFLNK | 0777;
-	result->i_uid = current->fsuid;
-	result->i_gid = current->fsgid;
+	result->i_uid = current_fsuid();
+	result->i_gid = current_fsgid();
 	result->i_blocks = 1;
 	result->i_nlink = 1;
 	result->i_size = strlen(symlink);
@@ -415,7 +416,7 @@ again:
 		d_drop(dentry);
 		spin_lock(&dentry->d_lock);
 		if (atomic_read(&dentry->d_count) > 1 ||
-		    permission(inode, MAY_WRITE, NULL) ||
+		    generic_permission(inode, MAY_WRITE, NULL) ||
 		    !S_ISREG(inode->i_mode) ||
 		    get_write_access(inode)) {
 			spin_unlock(&dentry->d_lock);
@@ -434,7 +435,7 @@ again:
 		unlock_kernel();
 		return -ENOSPC;
 	default:
-		inode->i_nlink--;
+		drop_nlink(inode);
 		err = 0;
 	}
 	goto out;
@@ -494,8 +495,8 @@ static int hpfs_rmdir(struct inode *dir, struct dentry *dentry)
 		err = -ENOSPC;
 		break;
 	default:
-		dir->i_nlink--;
-		inode->i_nlink = 0;
+		drop_nlink(dir);
+		clear_nlink(inode);
 		err = 0;
 	}
 	goto out;
@@ -590,7 +591,7 @@ static int hpfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		int r;
 		if ((r = hpfs_remove_dirent(old_dir, dno, dep, &qbh, 1)) != 2) {
 			if ((nde = map_dirent(new_dir, hpfs_i(new_dir)->i_dno, (char *)new_name, new_len, NULL, &qbh1))) {
-				new_inode->i_nlink = 0;
+				clear_nlink(new_inode);
 				copy_de(nde, &de);
 				memcpy(nde->name, new_name, new_len);
 				hpfs_mark_4buffers_dirty(&qbh1);
@@ -635,8 +636,8 @@ static int hpfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	end:
 	hpfs_i(i)->i_parent_dir = new_dir->i_ino;
 	if (S_ISDIR(i->i_mode)) {
-		new_dir->i_nlink++;
-		old_dir->i_nlink--;
+		inc_nlink(new_dir);
+		drop_nlink(old_dir);
 	}
 	if ((fnode = hpfs_map_fnode(i->i_sb, i->i_ino, &bh))) {
 		fnode->up = new_dir->i_ino;
@@ -659,7 +660,7 @@ end1:
 	return err;
 }
 
-struct inode_operations hpfs_dir_iops =
+const struct inode_operations hpfs_dir_iops =
 {
 	.create		= hpfs_create,
 	.lookup		= hpfs_lookup,
@@ -669,5 +670,5 @@ struct inode_operations hpfs_dir_iops =
 	.rmdir		= hpfs_rmdir,
 	.mknod		= hpfs_mknod,
 	.rename		= hpfs_rename,
-	.setattr	= hpfs_notify_change,
+	.setattr	= hpfs_setattr,
 };

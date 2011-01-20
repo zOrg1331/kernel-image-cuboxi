@@ -33,19 +33,19 @@ static unsigned long locomolcd_flags;
 
 static void locomolcd_on(int comadj)
 {
-	locomo_gpio_set_dir(locomolcd_dev, LOCOMO_GPIO_LCD_VSHA_ON, 0);
-	locomo_gpio_write(locomolcd_dev, LOCOMO_GPIO_LCD_VSHA_ON, 1);
+	locomo_gpio_set_dir(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_VSHA_ON, 0);
+	locomo_gpio_write(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_VSHA_ON, 1);
 	mdelay(2);
 
-	locomo_gpio_set_dir(locomolcd_dev, LOCOMO_GPIO_LCD_VSHD_ON, 0);
-	locomo_gpio_write(locomolcd_dev, LOCOMO_GPIO_LCD_VSHD_ON, 1);
+	locomo_gpio_set_dir(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_VSHD_ON, 0);
+	locomo_gpio_write(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_VSHD_ON, 1);
 	mdelay(2);
 
 	locomo_m62332_senddata(locomolcd_dev, comadj, 0);
 	mdelay(5);
 
-	locomo_gpio_set_dir(locomolcd_dev, LOCOMO_GPIO_LCD_VEE_ON, 0);
-	locomo_gpio_write(locomolcd_dev, LOCOMO_GPIO_LCD_VEE_ON, 1);
+	locomo_gpio_set_dir(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_VEE_ON, 0);
+	locomo_gpio_write(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_VEE_ON, 1);
 	mdelay(10);
 
 	/* TFTCRST | CPSOUT=0 | CPSEN */
@@ -58,8 +58,8 @@ static void locomolcd_on(int comadj)
 	locomo_writel((0x04 | 0x01), locomolcd_dev->mapbase + LOCOMO_TC);
 	mdelay(10);
 
-	locomo_gpio_set_dir(locomolcd_dev, LOCOMO_GPIO_LCD_MOD, 0);
-	locomo_gpio_write(locomolcd_dev, LOCOMO_GPIO_LCD_MOD, 1);
+	locomo_gpio_set_dir(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_MOD, 0);
+	locomo_gpio_write(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_MOD, 1);
 }
 
 static void locomolcd_off(int comadj)
@@ -68,16 +68,16 @@ static void locomolcd_off(int comadj)
 	locomo_writel(0x06, locomolcd_dev->mapbase + LOCOMO_TC);
 	mdelay(1);
 
-	locomo_gpio_write(locomolcd_dev, LOCOMO_GPIO_LCD_VSHA_ON, 0);
+	locomo_gpio_write(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_VSHA_ON, 0);
 	mdelay(110);
 
-	locomo_gpio_write(locomolcd_dev, LOCOMO_GPIO_LCD_VEE_ON, 0);
+	locomo_gpio_write(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_VEE_ON, 0);
 	mdelay(700);
 
 	/* TFTCRST=0 | CPSOUT=0 | CPSEN = 0 */
 	locomo_writel(0, locomolcd_dev->mapbase + LOCOMO_TC);
-	locomo_gpio_write(locomolcd_dev, LOCOMO_GPIO_LCD_MOD, 0);
-	locomo_gpio_write(locomolcd_dev, LOCOMO_GPIO_LCD_VSHD_ON, 0);
+	locomo_gpio_write(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_MOD, 0);
+	locomo_gpio_write(locomolcd_dev->dev.parent, LOCOMO_GPIO_LCD_VSHD_ON, 0);
 }
 
 void locomolcd_power(int on)
@@ -112,11 +112,11 @@ static int current_intensity;
 
 static int locomolcd_set_intensity(struct backlight_device *bd)
 {
-	int intensity = bd->props->brightness;
+	int intensity = bd->props.brightness;
 
-	if (bd->props->power != FB_BLANK_UNBLANK)
+	if (bd->props.power != FB_BLANK_UNBLANK)
 		intensity = 0;
-	if (bd->props->fb_blank != FB_BLANK_UNBLANK)
+	if (bd->props.fb_blank != FB_BLANK_UNBLANK)
 		intensity = 0;
 	if (locomolcd_flags & LOCOMOLCD_SUSPENDED)
 		intensity = 0;
@@ -141,11 +141,9 @@ static int locomolcd_get_intensity(struct backlight_device *bd)
 	return current_intensity;
 }
 
-static struct backlight_properties locomobl_data = {
-	.owner		= THIS_MODULE,
+static struct backlight_ops locomobl_data = {
 	.get_brightness = locomolcd_get_intensity,
 	.update_status  = locomolcd_set_intensity,
-	.max_brightness = 4,
 };
 
 #ifdef CONFIG_PM
@@ -167,14 +165,14 @@ static int locomolcd_resume(struct locomo_dev *dev)
 #define locomolcd_resume	NULL
 #endif
 
-static int locomolcd_probe(struct locomo_dev *dev)
+static int locomolcd_probe(struct locomo_dev *ldev)
 {
 	unsigned long flags;
 
 	local_irq_save(flags);
-	locomolcd_dev = dev;
+	locomolcd_dev = ldev;
 
-	locomo_gpio_set_dir(dev, LOCOMO_GPIO_FL_VR, 0);
+	locomo_gpio_set_dir(ldev->dev.parent, LOCOMO_GPIO_FL_VR, 0);
 
 	/* the poodle_lcd_power function is called for the first time
 	 * from fs_initcall, which is before locomo is activated.
@@ -184,13 +182,14 @@ static int locomolcd_probe(struct locomo_dev *dev)
 
 	local_irq_restore(flags);
 
-	locomolcd_bl_device = backlight_device_register("locomo-bl", NULL, &locomobl_data);
+	locomolcd_bl_device = backlight_device_register("locomo-bl", &ldev->dev, NULL, &locomobl_data);
 
 	if (IS_ERR (locomolcd_bl_device))
 		return PTR_ERR (locomolcd_bl_device);
 
 	/* Set up frontlight so that screen is readable */
-	locomobl_data.brightness = 2;
+	locomolcd_bl_device->props.max_brightness = 4,
+	locomolcd_bl_device->props.brightness = 2;
 	locomolcd_set_intensity(locomolcd_bl_device);
 
 	return 0;
@@ -199,6 +198,10 @@ static int locomolcd_probe(struct locomo_dev *dev)
 static int locomolcd_remove(struct locomo_dev *dev)
 {
 	unsigned long flags;
+
+	locomolcd_bl_device->props.brightness = 0;
+	locomolcd_bl_device->props.power = 0;
+	locomolcd_set_intensity(locomolcd_bl_device);
 
 	backlight_device_unregister(locomolcd_bl_device);
 	local_irq_save(flags);

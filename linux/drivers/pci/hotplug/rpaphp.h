@@ -28,7 +28,7 @@
 #define _PPC64PHP_H
 
 #include <linux/pci.h>
-#include "pci_hotplug.h"
+#include <linux/pci_hotplug.h>
 
 #define DR_INDICATOR 9002
 #define DR_ENTITY_SENSE 9003
@@ -46,10 +46,10 @@
 #define PRESENT         1	/* Card in slot */
 
 #define MY_NAME "rpaphp"
-extern int debug;
+extern int rpaphp_debug;
 #define dbg(format, arg...)					\
 	do {							\
-		if (debug)					\
+		if (rpaphp_debug)					\
 			printk(KERN_DEBUG "%s: " format,	\
 				MY_NAME , ## arg); 		\
 	} while (0)
@@ -74,7 +74,6 @@ struct slot {
 	u32 type;
 	u32 power_domain;
 	char *name;
-	char *location;
 	struct device_node *dn;
 	struct pci_bus *bus;
 	struct list_head *pci_devs;
@@ -83,19 +82,15 @@ struct slot {
 
 extern struct hotplug_slot_ops rpaphp_hotplug_slot_ops;
 extern struct list_head rpaphp_slot_head;
-extern int num_slots;
 
 /* function prototypes */
 
 /* rpaphp_pci.c */
-extern int rpaphp_enable_pci_slot(struct slot *slot);
-extern int rpaphp_register_pci_slot(struct slot *slot);
-extern int rpaphp_get_pci_adapter_status(struct slot *slot, int is_init, u8 * value);
+extern int rpaphp_enable_slot(struct slot *slot);
 extern int rpaphp_get_sensor_state(struct slot *slot, int *state);
 
 /* rpaphp_core.c */
 extern int rpaphp_add_slot(struct device_node *dn);
-extern int rpaphp_remove_slot(struct slot *slot);
 extern int rpaphp_get_drc_props(struct device_node *dn, int *drc_index,
 		char **drc_name, char **drc_type, int *drc_power_domain);
 
@@ -104,7 +99,5 @@ extern void dealloc_slot_struct(struct slot *slot);
 extern struct slot *alloc_slot_struct(struct device_node *dn, int drc_index, char *drc_name, int power_domain);
 extern int rpaphp_register_slot(struct slot *slot);
 extern int rpaphp_deregister_slot(struct slot *slot);
-extern int rpaphp_get_power_status(struct slot *slot, u8 * value);
-extern int rpaphp_set_attention_status(struct slot *slot, u8 status);
 	
 #endif				/* _PPC64PHP_H */

@@ -46,14 +46,16 @@
 extern void dec_machine_restart(char *command);
 extern void dec_machine_halt(void);
 extern void dec_machine_power_off(void);
-extern irqreturn_t dec_intr_halt(int irq, void *dev_id, struct pt_regs *regs);
+extern irqreturn_t dec_intr_halt(int irq, void *dev_id);
 
 unsigned long dec_kn_slot_base, dec_kn_slot_size;
 
 EXPORT_SYMBOL(dec_kn_slot_base);
 EXPORT_SYMBOL(dec_kn_slot_size);
 
-spinlock_t ioasic_ssr_lock;
+int dec_tc_bus;
+
+DEFINE_SPINLOCK(ioasic_ssr_lock);
 
 volatile u32 *ioasic_base;
 
@@ -143,13 +145,9 @@ static void __init dec_be_init(void)
 	}
 }
 
-
-extern void dec_time_init(void);
-
 void __init plat_mem_setup(void)
 {
 	board_be_init = dec_be_init;
-	board_time_init = dec_time_init;
 
 	wbflush_setup();
 
@@ -234,7 +232,7 @@ static void __init dec_init_kn01(void)
 	memcpy(&cpu_mask_nr_tbl, &kn01_cpu_mask_nr_tbl,
 		sizeof(kn01_cpu_mask_nr_tbl));
 
-	mips_cpu_irq_init(DEC_CPU_IRQ_BASE);
+	mips_cpu_irq_init();
 
 }				/* dec_init_kn01 */
 
@@ -309,7 +307,7 @@ static void __init dec_init_kn230(void)
 	memcpy(&cpu_mask_nr_tbl, &kn230_cpu_mask_nr_tbl,
 		sizeof(kn230_cpu_mask_nr_tbl));
 
-	mips_cpu_irq_init(DEC_CPU_IRQ_BASE);
+	mips_cpu_irq_init();
 
 }				/* dec_init_kn230 */
 
@@ -403,7 +401,7 @@ static void __init dec_init_kn02(void)
 	memcpy(&asic_mask_nr_tbl, &kn02_asic_mask_nr_tbl,
 		sizeof(kn02_asic_mask_nr_tbl));
 
-	mips_cpu_irq_init(DEC_CPU_IRQ_BASE);
+	mips_cpu_irq_init();
 	init_kn02_irqs(KN02_IRQ_BASE);
 
 }				/* dec_init_kn02 */
@@ -504,7 +502,7 @@ static void __init dec_init_kn02ba(void)
 	memcpy(&asic_mask_nr_tbl, &kn02ba_asic_mask_nr_tbl,
 		sizeof(kn02ba_asic_mask_nr_tbl));
 
-	mips_cpu_irq_init(DEC_CPU_IRQ_BASE);
+	mips_cpu_irq_init();
 	init_ioasic_irqs(IO_IRQ_BASE);
 
 }				/* dec_init_kn02ba */
@@ -601,7 +599,7 @@ static void __init dec_init_kn02ca(void)
 	memcpy(&asic_mask_nr_tbl, &kn02ca_asic_mask_nr_tbl,
 		sizeof(kn02ca_asic_mask_nr_tbl));
 
-	mips_cpu_irq_init(DEC_CPU_IRQ_BASE);
+	mips_cpu_irq_init();
 	init_ioasic_irqs(IO_IRQ_BASE);
 
 }				/* dec_init_kn02ca */
@@ -702,7 +700,7 @@ static void __init dec_init_kn03(void)
 	memcpy(&asic_mask_nr_tbl, &kn03_asic_mask_nr_tbl,
 		sizeof(kn03_asic_mask_nr_tbl));
 
-	mips_cpu_irq_init(DEC_CPU_IRQ_BASE);
+	mips_cpu_irq_init();
 	init_ioasic_irqs(IO_IRQ_BASE);
 
 }				/* dec_init_kn03 */
@@ -760,4 +758,10 @@ void __init arch_init_irq(void)
 	/* Register the HALT interrupt. */
 	if (dec_interrupt[DEC_IRQ_HALT] >= 0)
 		setup_irq(dec_interrupt[DEC_IRQ_HALT], &haltirq);
+}
+
+asmlinkage unsigned int dec_irq_dispatch(unsigned int irq)
+{
+	do_IRQ(irq);
+	return 0;
 }

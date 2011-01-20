@@ -2,7 +2,6 @@
  * Routines common to all CFI-type probes.
  * (C) 2001-2003 Red Hat, Inc.
  * GPL'd
- * $Id: gen_probe.c,v 1.24 2005/11/07 11:14:23 gleixner Exp $
  */
 
 #include <linux/kernel.h>
@@ -40,7 +39,7 @@ struct mtd_info *mtd_do_chip_probe(struct map_info *map, struct chip_probe *cp)
 	if (mtd) {
 		if (mtd->size > map->size) {
 			printk(KERN_WARNING "Reducing visibility of %ldKiB chip to %ldKiB\n",
-			       (unsigned long)mtd->size >> 10, 
+			       (unsigned long)mtd->size >> 10,
 			       (unsigned long)map->size >> 10);
 			mtd->size = map->size;
 		}
@@ -71,8 +70,8 @@ static struct cfi_private *genprobe_ident_chips(struct map_info *map, struct chi
 	   interleave and device type, etc. */
 	if (!genprobe_new_chip(map, cp, &cfi)) {
 		/* The probe didn't like it */
-		printk(KERN_DEBUG "%s: Found no %s device at location zero\n",
-		       cp->name, map->name);
+		pr_debug("%s: Found no %s device at location zero\n",
+			 cp->name, map->name);
 		return NULL;
 	}
 
@@ -112,14 +111,13 @@ static struct cfi_private *genprobe_ident_chips(struct map_info *map, struct chi
 		max_chips = 1;
 	}
 
-	mapsize = (max_chips + BITS_PER_LONG-1) / BITS_PER_LONG;
-	chip_map = kmalloc(mapsize, GFP_KERNEL);
+	mapsize = sizeof(long) * DIV_ROUND_UP(max_chips, BITS_PER_LONG);
+	chip_map = kzalloc(mapsize, GFP_KERNEL);
 	if (!chip_map) {
 		printk(KERN_WARNING "%s: kmalloc failed for CFI chip map\n", map->name);
 		kfree(cfi.cfiq);
 		return NULL;
 	}
-	memset (chip_map, 0, mapsize);
 
 	set_bit(0, chip_map); /* Mark first chip valid */
 

@@ -3,12 +3,10 @@
  *
  * Definitions and interface for Linux - z/VM Monitor Stream.
  *
- * Copyright (C) 2003,2006 IBM Corporation, IBM Deutschland Entwicklung GmbH.
+ * Copyright IBM Corp. 2003, 2008
  *
  * Author: Gerald Schaefer <gerald.schaefer@de.ibm.com>
  */
-
-//#define APPLDATA_DEBUG			/* Debug messages on/off */
 
 #define APPLDATA_MAX_REC_SIZE	  4024	/* Maximum size of the */
 					/* data buffer */
@@ -21,39 +19,12 @@
 #define APPLDATA_RECORD_NET_SUM_ID	0x03	/* must be < 256 !     */
 #define APPLDATA_RECORD_PROC_ID		0x04
 
-#define CTL_APPLDATA 		2120	/* sysctl IDs, must be unique */
-#define CTL_APPLDATA_TIMER 	2121
+#define CTL_APPLDATA_TIMER 	2121	/* sysctl IDs, must be unique */
 #define CTL_APPLDATA_INTERVAL 	2122
 #define CTL_APPLDATA_MEM	2123
 #define CTL_APPLDATA_OS		2124
 #define CTL_APPLDATA_NET_SUM	2125
 #define CTL_APPLDATA_PROC	2126
-
-#ifndef CONFIG_64BIT
-
-#define APPLDATA_START_INTERVAL_REC 0x00	/* Function codes for */
-#define APPLDATA_STOP_REC	    0x01	/* DIAG 0xDC	  */
-#define APPLDATA_GEN_EVENT_RECORD   0x02
-#define APPLDATA_START_CONFIG_REC   0x03
-
-#else
-
-#define APPLDATA_START_INTERVAL_REC 0x80
-#define APPLDATA_STOP_REC	    0x81
-#define APPLDATA_GEN_EVENT_RECORD   0x82
-#define APPLDATA_START_CONFIG_REC   0x83
-
-#endif /* CONFIG_64BIT */
-
-#define P_INFO(x...)	printk(KERN_INFO MY_PRINT_NAME " info: " x)
-#define P_ERROR(x...)	printk(KERN_ERR MY_PRINT_NAME " error: " x)
-#define P_WARNING(x...)	printk(KERN_WARNING MY_PRINT_NAME " status: " x)
-
-#ifdef APPLDATA_DEBUG
-#define P_DEBUG(x...)   printk(KERN_DEBUG MY_PRINT_NAME " debug: " x)
-#else
-#define P_DEBUG(x...)   do {} while (0)
-#endif
 
 struct appldata_ops {
 	struct list_head list;
@@ -62,7 +33,6 @@ struct appldata_ops {
 	int    active;				/* monitoring status */
 
 	/* fill in from here */
-	unsigned int ctl_nr;			/* sysctl ID */
 	char name[APPLDATA_PROC_NAME_LENGTH];	/* name of /proc fs node */
 	unsigned char record_nr;		/* Record Nr. for Product ID */
 	void (*callback)(void *data);		/* callback function */

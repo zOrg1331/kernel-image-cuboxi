@@ -3,6 +3,8 @@
  *
  * 2004-2005 (c) Tundra Semiconductor Corp.
  * Author: Alex Bounine (alexandreb@tundra.com)
+ * Author: Roy Zang (tie-fei.zang@freescale.com)
+ * 	   Add pci interrupt router host
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -33,6 +35,7 @@
 #include <asm/machdep.h>
 #include <asm/pci-bridge.h>
 #include <asm/tsi108.h>
+#include <asm/tsi108_pci.h>
 #include <asm/tsi108_irq.h>
 #include <asm/prom.h>
 
@@ -47,7 +50,9 @@
 	((((bus)<<16) | ((devfunc)<<8) | (offset & 0xfc)) + tsi108_pci_cfg_base)
 
 u32 tsi108_pci_cfg_base;
+static u32 tsi108_pci_cfg_phys;
 u32 tsi108_csr_vir_base;
+static struct irq_host *pci_irq_host;
 
 extern u32 get_vir_csrbase(void);
 extern u32 tsi108_read_reg(u32 reg_offset);
@@ -58,9 +63,10 @@ tsi108_direct_write_config(struct pci_bus *bus, unsigned int devfunc,
 			   int offset, int len, u32 val)
 {
 	volatile unsigned char *cfg_addr;
+	struct pci_controller *hose = pci_bus_to_host(bus);
 
 	if (ppc_md.pci_exclude_device)
-		if (ppc_md.pci_exclude_device(bus->number, devfunc))
+		if (ppc_md.pci_exclude_device(hose, bus->number, devfunc))
 			return PCIBIOS_DEVICE_NOT_FOUND;
 
 	cfg_addr = (unsigned char *)(tsi_mk_config_addr(bus->number,
@@ -143,10 +149,11 @@ tsi108_direct_read_config(struct pci_bus *bus, unsigned int devfn, int offset,
 			  int len, u32 * val)
 {
 	volatile unsigned char *cfg_addr;
+	struct pci_controller *hose = pci_bus_to_host(bus);
 	u32 temp;
 
 	if (ppc_md.pci_exclude_device)
-		if (ppc_md.pci_exclude_device(bus->number, devfn))
+		if (ppc_md.pci_exclude_device(hose, bus->number, devfn))
 			return PCIBIOS_DEVICE_NOT_FOUND;
 
 	cfg_addr = (unsigned char *)(tsi_mk_config_addr(bus->number,
@@ -181,46 +188,44 @@ tsi108_direct_read_config(struct pci_bus *bus, unsigned int devfn, int offset,
 
 void tsi108_clear_pci_cfg_error(void)
 {
-	tsi108_clear_pci_error(TSI108_PCI_CFG_BASE_PHYS);
+	tsi108_clear_pci_error(tsi108_pci_cfg_phys);
 }
 
 static struct pci_ops tsi108_direct_pci_ops = {
-	tsi108_direct_read_config,
-	tsi108_direct_write_config
+	.read = tsi108_direct_read_config,
+	.write = tsi108_direct_write_config,
 };
 
-int __init tsi108_setup_pci(struct device_node *dev)
+int __init tsi108_setup_pci(struct device_node *dev, u32 cfg_phys, int primary)
 {
 	int len;
 	struct pci_controller *hose;
 	struct resource rsrc;
-	int *bus_range;
-	int primary = 0, has_address = 0;
+	const int *bus_range;
+	int has_address = 0;
 
 	/* PCI Config mapping */
-	tsi108_pci_cfg_base = (u32)ioremap(TSI108_PCI_CFG_BASE_PHYS,
-			TSI108_PCI_CFG_SIZE);
-	DBG("TSI_PCI: %s tsi108_pci_cfg_base=0x%x\n", __FUNCTION__,
+	tsi108_pci_cfg_base = (u32)ioremap(cfg_phys, TSI108_PCI_CFG_SIZE);
+	tsi108_pci_cfg_phys = cfg_phys;
+	DBG("TSI_PCI: %s tsi108_pci_cfg_base=0x%x\n", __func__,
 	    tsi108_pci_cfg_base);
 
 	/* Fetch host bridge registers address */
 	has_address = (of_address_to_resource(dev, 0, &rsrc) == 0);
 
 	/* Get bus range if any */
-	bus_range = (int *)get_property(dev, "bus-range", &len);
+	bus_range = of_get_property(dev, "bus-range", &len);
 	if (bus_range == NULL || len < 2 * sizeof(int)) {
 		printk(KERN_WARNING "Can't get bus-range for %s, assume"
 		       " bus 0\n", dev->full_name);
 	}
 
-	hose = pcibios_alloc_controller();
+	hose = pcibios_alloc_controller(dev);
 
 	if (!hose) {
 		printk("PCI Host bridge init failed\n");
 		return -ENOMEM;
 	}
-	hose->arch_data = dev;
-	hose->set_cfg_type = 1;
 
 	hose->first_busno = bus_range ? bus_range[0] : 0;
 	hose->last_busno = bus_range ? bus_range[1] : 0xff;
@@ -378,6 +383,32 @@ static struct irq_chip tsi108_pci_irq = {
 	.unmask = tsi108_pci_irq_enable,
 };
 
+static int pci_irq_host_xlate(struct irq_host *h, struct device_node *ct,
+			    u32 *intspec, unsigned int intsize,
+			    irq_hw_number_t *out_hwirq, unsigned int *out_flags)
+{
+	*out_hwirq = intspec[0];
+	*out_flags = IRQ_TYPE_LEVEL_HIGH;
+	return 0;
+}
+
+static int pci_irq_host_map(struct irq_host *h, unsigned int virq,
+			  irq_hw_number_t hw)
+{	unsigned int irq;
+	DBG("%s(%d, 0x%lx)\n", __func__, virq, hw);
+	if ((virq >= 1) && (virq <= 4)){
+		irq = virq + IRQ_PCI_INTAD_BASE - 1;
+		get_irq_desc(irq)->status |= IRQ_LEVEL;
+		set_irq_chip(irq, &tsi108_pci_irq);
+	}
+	return 0;
+}
+
+static struct irq_host_ops pci_irq_host_ops = {
+	.map = pci_irq_host_map,
+	.xlate = pci_irq_host_xlate,
+};
+
 /*
  * Exported functions
  */
@@ -391,25 +422,24 @@ static struct irq_chip tsi108_pci_irq = {
  * to the MPIC.
  */
 
-void __init tsi108_pci_int_init(void)
+void __init tsi108_pci_int_init(struct device_node *node)
 {
-	u_int i;
-
 	DBG("Tsi108_pci_int_init: initializing PCI interrupts\n");
 
-	for (i = 0; i < NUM_PCI_IRQS; i++) {
-		irq_desc[i + IRQ_PCI_INTAD_BASE].chip = &tsi108_pci_irq;
-		irq_desc[i + IRQ_PCI_INTAD_BASE].status |= IRQ_LEVEL;
+	pci_irq_host = irq_alloc_host(node, IRQ_HOST_MAP_LEGACY,
+				      0, &pci_irq_host_ops, 0);
+	if (pci_irq_host == NULL) {
+		printk(KERN_ERR "pci_irq_host: failed to allocate irq host !\n");
+		return;
 	}
 
 	init_pci_source();
 }
 
-void tsi108_irq_cascade(unsigned int irq, struct irq_desc *desc,
-			    struct pt_regs *regs)
+void tsi108_irq_cascade(unsigned int irq, struct irq_desc *desc)
 {
 	unsigned int cascade_irq = get_pci_source();
 	if (cascade_irq != NO_IRQ)
-		generic_handle_irq(cascade_irq, regs);
+		generic_handle_irq(cascade_irq);
 	desc->chip->eoi(irq);
 }

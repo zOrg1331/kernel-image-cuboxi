@@ -11,105 +11,104 @@
 
 #include <linux/mm.h>
 #include <linux/sysctl.h>
+#include "dccp.h"
+#include "feat.h"
 
 #ifndef CONFIG_SYSCTL
 #error This file should not be compiled without CONFIG_SYSCTL defined
 #endif
 
-extern int dccp_feat_default_sequence_window;
-extern int dccp_feat_default_rx_ccid;
-extern int dccp_feat_default_tx_ccid;
-extern int dccp_feat_default_ack_ratio;
-extern int dccp_feat_default_send_ack_vector;
-extern int dccp_feat_default_send_ndp_count;
+/* Boundary values */
+static int		zero     = 0,
+			u8_max   = 0xFF;
+static unsigned long	seqw_min = 32;
 
 static struct ctl_table dccp_default_table[] = {
 	{
-		.ctl_name	= NET_DCCP_DEFAULT_SEQ_WINDOW,
 		.procname	= "seq_window",
-		.data		= &dccp_feat_default_sequence_window,
-		.maxlen		= sizeof(dccp_feat_default_sequence_window),
+		.data		= &sysctl_dccp_sequence_window,
+		.maxlen		= sizeof(sysctl_dccp_sequence_window),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= proc_doulongvec_minmax,
+		.extra1		= &seqw_min,		/* RFC 4340, 7.5.2 */
 	},
 	{
-		.ctl_name	= NET_DCCP_DEFAULT_RX_CCID,
 		.procname	= "rx_ccid",
-		.data		= &dccp_feat_default_rx_ccid,
-		.maxlen		= sizeof(dccp_feat_default_rx_ccid),
+		.data		= &sysctl_dccp_rx_ccid,
+		.maxlen		= sizeof(sysctl_dccp_rx_ccid),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &u8_max,		/* RFC 4340, 10. */
 	},
 	{
-		.ctl_name	= NET_DCCP_DEFAULT_TX_CCID,
 		.procname	= "tx_ccid",
-		.data		= &dccp_feat_default_tx_ccid,
-		.maxlen		= sizeof(dccp_feat_default_tx_ccid),
+		.data		= &sysctl_dccp_tx_ccid,
+		.maxlen		= sizeof(sysctl_dccp_tx_ccid),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &u8_max,		/* RFC 4340, 10. */
 	},
 	{
-		.ctl_name	= NET_DCCP_DEFAULT_ACK_RATIO,
-		.procname	= "ack_ratio",
-		.data		= &dccp_feat_default_ack_ratio,
-		.maxlen		= sizeof(dccp_feat_default_ack_ratio),
+		.procname	= "request_retries",
+		.data		= &sysctl_dccp_request_retries,
+		.maxlen		= sizeof(sysctl_dccp_request_retries),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &u8_max,
 	},
 	{
-		.ctl_name	= NET_DCCP_DEFAULT_SEND_ACKVEC,
-		.procname	= "send_ackvec",
-		.data		= &dccp_feat_default_send_ack_vector,
-		.maxlen		= sizeof(dccp_feat_default_send_ack_vector),
+		.procname	= "retries1",
+		.data		= &sysctl_dccp_retries1,
+		.maxlen		= sizeof(sysctl_dccp_retries1),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &u8_max,
 	},
 	{
-		.ctl_name	= NET_DCCP_DEFAULT_SEND_NDP,
-		.procname	= "send_ndp",
-		.data		= &dccp_feat_default_send_ndp_count,
-		.maxlen		= sizeof(dccp_feat_default_send_ndp_count),
+		.procname	= "retries2",
+		.data		= &sysctl_dccp_retries2,
+		.maxlen		= sizeof(sysctl_dccp_retries2),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &u8_max,
 	},
+	{
+		.procname	= "tx_qlen",
+		.data		= &sysctl_dccp_tx_qlen,
+		.maxlen		= sizeof(sysctl_dccp_tx_qlen),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+	},
+	{
+		.procname	= "sync_ratelimit",
+		.data		= &sysctl_dccp_sync_ratelimit,
+		.maxlen		= sizeof(sysctl_dccp_sync_ratelimit),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_ms_jiffies,
+	},
+
 	{ .ctl_name = 0, }
 };
 
-static struct ctl_table dccp_table[] = {
-	{
-		.ctl_name	= NET_DCCP_DEFAULT,
-		.procname	= "default",
-		.mode		= 0555,
-		.child		= dccp_default_table,
-	},
-	{ .ctl_name = 0, },
-};
-
-static struct ctl_table dccp_dir_table[] = {
-	{
-		.ctl_name	= NET_DCCP,
-		.procname	= "dccp",
-		.mode		= 0555,
-		.child		= dccp_table,
-	},
-	{ .ctl_name = 0, },
-};
-
-static struct ctl_table dccp_root_table[] = {
-	{
-		.ctl_name	= CTL_NET,
-		.procname	= "net",
-		.mode		= 0555,
-		.child		= dccp_dir_table,
-	},
-	{ .ctl_name = 0, },
+static struct ctl_path dccp_path[] = {
+	{ .procname = "net", .ctl_name = CTL_NET, },
+	{ .procname = "dccp", .ctl_name = NET_DCCP, },
+	{ .procname = "default", .ctl_name = NET_DCCP_DEFAULT, },
+	{ }
 };
 
 static struct ctl_table_header *dccp_table_header;
 
 int __init dccp_sysctl_init(void)
 {
-	dccp_table_header = register_sysctl_table(dccp_root_table, 1);
+	dccp_table_header = register_sysctl_paths(dccp_path,
+			dccp_default_table);
 
 	return dccp_table_header != NULL ? 0 : -ENOMEM;
 }

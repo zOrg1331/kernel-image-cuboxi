@@ -2,9 +2,9 @@
  *
  *  Bluetooth virtual HCI driver
  *
- *  Copyright (C) 2000-2001 Qualcomm Incorporated
- *  Copyright (C) 2002-2003 Maxim Krasnyansky <maxk@qualcomm.com>
- *  Copyright (C) 2004-2005 Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright (C) 2000-2001  Qualcomm Incorporated
+ *  Copyright (C) 2002-2003  Maxim Krasnyansky <maxk@qualcomm.com>
+ *  Copyright (C) 2004-2006  Marcel Holtmann <marcel@holtmann.org>
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -39,12 +39,7 @@
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 
-#ifndef CONFIG_BT_HCIVHCI_DEBUG
-#undef  BT_DBG
-#define BT_DBG(D...)
-#endif
-
-#define VERSION "1.2"
+#define VERSION "1.3"
 
 static int minor = MISC_DYNAMIC_MINOR;
 
@@ -55,13 +50,7 @@ struct vhci_data {
 
 	wait_queue_head_t read_wait;
 	struct sk_buff_head readq;
-
-	struct fasync_struct *fasync;
 };
-
-#define VHCI_FASYNC	0x0010
-
-static struct miscdevice vhci_miscdev;
 
 static int vhci_open_dev(struct hci_dev *hdev)
 {
@@ -72,21 +61,21 @@ static int vhci_open_dev(struct hci_dev *hdev)
 
 static int vhci_close_dev(struct hci_dev *hdev)
 {
-	struct vhci_data *vhci = hdev->driver_data;
+	struct vhci_data *data = hdev->driver_data;
 
 	if (!test_and_clear_bit(HCI_RUNNING, &hdev->flags))
 		return 0;
 
-	skb_queue_purge(&vhci->readq);
+	skb_queue_purge(&data->readq);
 
 	return 0;
 }
 
 static int vhci_flush(struct hci_dev *hdev)
 {
-	struct vhci_data *vhci = hdev->driver_data;
+	struct vhci_data *data = hdev->driver_data;
 
-	skb_queue_purge(&vhci->readq);
+	skb_queue_purge(&data->readq);
 
 	return 0;
 }
@@ -94,7 +83,7 @@ static int vhci_flush(struct hci_dev *hdev)
 static int vhci_send_frame(struct sk_buff *skb)
 {
 	struct hci_dev* hdev = (struct hci_dev *) skb->dev;
-	struct vhci_data *vhci;
+	struct vhci_data *data;
 
 	if (!hdev) {
 		BT_ERR("Frame for unknown HCI device (hdev=NULL)");
@@ -104,15 +93,12 @@ static int vhci_send_frame(struct sk_buff *skb)
 	if (!test_bit(HCI_RUNNING, &hdev->flags))
 		return -EBUSY;
 
-	vhci = hdev->driver_data;
+	data = hdev->driver_data;
 
 	memcpy(skb_push(skb, 1), &bt_cb(skb)->pkt_type, 1);
-	skb_queue_tail(&vhci->readq, skb);
+	skb_queue_tail(&data->readq, skb);
 
-	if (vhci->flags & VHCI_FASYNC)
-		kill_fasync(&vhci->fasync, SIGIO, POLL_IN);
-
-	wake_up_interruptible(&vhci->read_wait);
+	wake_up_interruptible(&data->read_wait);
 
 	return 0;
 }
@@ -122,7 +108,7 @@ static void vhci_destruct(struct hci_dev *hdev)
 	kfree(hdev->driver_data);
 }
 
-static inline ssize_t vhci_get_user(struct vhci_data *vhci,
+static inline ssize_t vhci_get_user(struct vhci_data *data,
 					const char __user *buf, size_t count)
 {
 	struct sk_buff *skb;
@@ -139,7 +125,7 @@ static inline ssize_t vhci_get_user(struct vhci_data *vhci,
 		return -EFAULT;
 	}
 
-	skb->dev = (void *) vhci->hdev;
+	skb->dev = (void *) data->hdev;
 	bt_cb(skb)->pkt_type = *((__u8 *) skb->data);
 	skb_pull(skb, 1);
 
@@ -148,7 +134,7 @@ static inline ssize_t vhci_get_user(struct vhci_data *vhci,
 	return count;
 }
 
-static inline ssize_t vhci_put_user(struct vhci_data *vhci,
+static inline ssize_t vhci_put_user(struct vhci_data *data,
 			struct sk_buff *skb, char __user *buf, int count)
 {
 	char __user *ptr = buf;
@@ -161,67 +147,53 @@ static inline ssize_t vhci_put_user(struct vhci_data *vhci,
 
 	total += len;
 
-	vhci->hdev->stat.byte_tx += len;
+	data->hdev->stat.byte_tx += len;
 
 	switch (bt_cb(skb)->pkt_type) {
 	case HCI_COMMAND_PKT:
-		vhci->hdev->stat.cmd_tx++;
+		data->hdev->stat.cmd_tx++;
 		break;
 
 	case HCI_ACLDATA_PKT:
-		vhci->hdev->stat.acl_tx++;
+		data->hdev->stat.acl_tx++;
 		break;
 
 	case HCI_SCODATA_PKT:
-		vhci->hdev->stat.cmd_tx++;
+		data->hdev->stat.cmd_tx++;
 		break;
 	};
 
 	return total;
 }
 
-static loff_t vhci_llseek(struct file * file, loff_t offset, int origin)
+static ssize_t vhci_read(struct file *file,
+				char __user *buf, size_t count, loff_t *pos)
 {
-	return -ESPIPE;
-}
-
-static ssize_t vhci_read(struct file * file, char __user * buf, size_t count, loff_t *pos)
-{
-	DECLARE_WAITQUEUE(wait, current);
-	struct vhci_data *vhci = file->private_data;
+	struct vhci_data *data = file->private_data;
 	struct sk_buff *skb;
 	ssize_t ret = 0;
 
-	add_wait_queue(&vhci->read_wait, &wait);
 	while (count) {
-		set_current_state(TASK_INTERRUPTIBLE);
-
-		skb = skb_dequeue(&vhci->readq);
-		if (!skb) {
-			if (file->f_flags & O_NONBLOCK) {
-				ret = -EAGAIN;
-				break;
-			}
-
-			if (signal_pending(current)) {
-				ret = -ERESTARTSYS;
-				break;
-			}
-
-			schedule();
-			continue;
+		skb = skb_dequeue(&data->readq);
+		if (skb) {
+			ret = vhci_put_user(data, skb, buf, count);
+			if (ret < 0)
+				skb_queue_head(&data->readq, skb);
+			else
+				kfree_skb(skb);
+			break;
 		}
 
-		if (access_ok(VERIFY_WRITE, buf, count))
-			ret = vhci_put_user(vhci, skb, buf, count);
-		else
-			ret = -EFAULT;
+		if (file->f_flags & O_NONBLOCK) {
+			ret = -EAGAIN;
+			break;
+		}
 
-		kfree_skb(skb);
-		break;
+		ret = wait_event_interruptible(data->read_wait,
+					!skb_queue_empty(&data->readq));
+		if (ret < 0)
+			break;
 	}
-	set_current_state(TASK_RUNNING);
-	remove_wait_queue(&vhci->read_wait, &wait);
 
 	return ret;
 }
@@ -229,21 +201,18 @@ static ssize_t vhci_read(struct file * file, char __user * buf, size_t count, lo
 static ssize_t vhci_write(struct file *file,
 			const char __user *buf, size_t count, loff_t *pos)
 {
-	struct vhci_data *vhci = file->private_data;
+	struct vhci_data *data = file->private_data;
 
-	if (!access_ok(VERIFY_READ, buf, count))
-		return -EFAULT;
-
-	return vhci_get_user(vhci, buf, count);
+	return vhci_get_user(data, buf, count);
 }
 
 static unsigned int vhci_poll(struct file *file, poll_table *wait)
 {
-	struct vhci_data *vhci = file->private_data;
+	struct vhci_data *data = file->private_data;
 
-	poll_wait(file, &vhci->read_wait, wait);
+	poll_wait(file, &data->read_wait, wait);
 
-	if (!skb_queue_empty(&vhci->readq))
+	if (!skb_queue_empty(&data->readq))
 		return POLLIN | POLLRDNORM;
 
 	return POLLOUT | POLLWRNORM;
@@ -257,26 +226,26 @@ static int vhci_ioctl(struct inode *inode, struct file *file,
 
 static int vhci_open(struct inode *inode, struct file *file)
 {
-	struct vhci_data *vhci;
+	struct vhci_data *data;
 	struct hci_dev *hdev;
 
-	vhci = kzalloc(sizeof(struct vhci_data), GFP_KERNEL);
-	if (!vhci)
+	data = kzalloc(sizeof(struct vhci_data), GFP_KERNEL);
+	if (!data)
 		return -ENOMEM;
 
-	skb_queue_head_init(&vhci->readq);
-	init_waitqueue_head(&vhci->read_wait);
+	skb_queue_head_init(&data->readq);
+	init_waitqueue_head(&data->read_wait);
 
 	hdev = hci_alloc_dev();
 	if (!hdev) {
-		kfree(vhci);
+		kfree(data);
 		return -ENOMEM;
 	}
 
-	vhci->hdev = hdev;
+	data->hdev = hdev;
 
-	hdev->type = HCI_VHCI;
-	hdev->driver_data = vhci;
+	hdev->type = HCI_VIRTUAL;
+	hdev->driver_data = data;
 
 	hdev->open     = vhci_open_dev;
 	hdev->close    = vhci_close_dev;
@@ -288,20 +257,20 @@ static int vhci_open(struct inode *inode, struct file *file)
 
 	if (hci_register_dev(hdev) < 0) {
 		BT_ERR("Can't register HCI device");
-		kfree(vhci);
+		kfree(data);
 		hci_free_dev(hdev);
 		return -EBUSY;
 	}
 
-	file->private_data = vhci;
+	file->private_data = data;
 
 	return nonseekable_open(inode, file);
 }
 
 static int vhci_release(struct inode *inode, struct file *file)
 {
-	struct vhci_data *vhci = file->private_data;
-	struct hci_dev *hdev = vhci->hdev;
+	struct vhci_data *data = file->private_data;
+	struct hci_dev *hdev = data->hdev;
 
 	if (hci_unregister_dev(hdev) < 0) {
 		BT_ERR("Can't unregister HCI device %s", hdev->name);
@@ -314,45 +283,24 @@ static int vhci_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static int vhci_fasync(int fd, struct file *file, int on)
-{
-	struct vhci_data *vhci = file->private_data;
-	int err;
-
-	err = fasync_helper(fd, file, on, &vhci->fasync);
-	if (err < 0)
-		return err;
-
-	if (on)
-		vhci->flags |= VHCI_FASYNC;
-	else
-		vhci->flags &= ~VHCI_FASYNC;
-
-	return 0;
-}
-
-static struct file_operations vhci_fops = {
-	.owner		= THIS_MODULE,
-	.llseek		= vhci_llseek,
+static const struct file_operations vhci_fops = {
 	.read		= vhci_read,
 	.write		= vhci_write,
 	.poll		= vhci_poll,
 	.ioctl		= vhci_ioctl,
 	.open		= vhci_open,
 	.release	= vhci_release,
-	.fasync		= vhci_fasync,
 };
 
 static struct miscdevice vhci_miscdev= {
-	.name		= "vhci",
-	.fops		= &vhci_fops,
+	.name	= "vhci",
+	.fops	= &vhci_fops,
+	.minor	= MISC_DYNAMIC_MINOR,
 };
 
 static int __init vhci_init(void)
 {
 	BT_INFO("Virtual HCI driver ver %s", VERSION);
-
-	vhci_miscdev.minor = minor;
 
 	if (misc_register(&vhci_miscdev) < 0) {
 		BT_ERR("Can't register misc device with minor %d", minor);
@@ -371,10 +319,7 @@ static void __exit vhci_exit(void)
 module_init(vhci_init);
 module_exit(vhci_exit);
 
-module_param(minor, int, 0444);
-MODULE_PARM_DESC(minor, "Miscellaneous minor device number");
-
-MODULE_AUTHOR("Maxim Krasnyansky <maxk@qualcomm.com>, Marcel Holtmann <marcel@holtmann.org>");
+MODULE_AUTHOR("Marcel Holtmann <marcel@holtmann.org>");
 MODULE_DESCRIPTION("Bluetooth virtual HCI driver ver " VERSION);
 MODULE_VERSION(VERSION);
 MODULE_LICENSE("GPL");

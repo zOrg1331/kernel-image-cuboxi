@@ -1,4 +1,4 @@
-#define VERSION "0.22"
+#define VERSION "0.23"
 /* ns83820.c by Benjamin LaHaise with contributions.
  *
  * Questions/comments/discussion to linux-ns83820@kvack.org.
@@ -65,7 +65,7 @@
  *			0.20 -	fix stupid RFEN thinko.  i am such a smurf.
  *	20040828	0.21 -	add hardware vlan accleration
  *				by Neil Horman <nhorman@redhat.com>
- *	20050406	0.22 -	improved DAC ifdefs from Andi Kleen	
+ *	20050406	0.22 -	improved DAC ifdefs from Andi Kleen
  *			     -	removal of dead code from Adrian Bunk
  *			     -	fix half duplex collision behaviour
  * Driver Overview
@@ -104,7 +104,6 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/delay.h>
-#include <linux/smp_lock.h>
 #include <linux/workqueue.h>
 #include <linux/init.h>
 #include <linux/ip.h>	/* for iph */
@@ -112,6 +111,7 @@
 #include <linux/compiler.h>
 #include <linux/prefetch.h>
 #include <linux/ethtool.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/if_vlan.h>
 #include <linux/rtnetlink.h>
@@ -377,7 +377,7 @@ static int lnksts = 0;		/* CFG_LNKSTS bit polarity */
 #define LINK_DOWN		0x02
 #define LINK_UP			0x04
 
-#define HW_ADDR_LEN	sizeof(dma_addr_t) 
+#define HW_ADDR_LEN	sizeof(dma_addr_t)
 #define desc_addr_set(desc, addr)				\
 	do {							\
 		((desc)[0] = cpu_to_le32(addr));		\
@@ -410,14 +410,14 @@ static int lnksts = 0;		/* CFG_LNKSTS bit polarity */
 struct rx_info {
 	spinlock_t	lock;
 	int		up;
-	long		idle;
+	unsigned long	idle;
 
 	struct sk_buff	*skbs[NR_RX_DESC];
 
-	u32		*next_rx_desc;
+	__le32		*next_rx_desc;
 	u16		next_rx, next_empty;
 
-	u32		*descs;
+	__le32		*descs;
 	dma_addr_t	phy_descs;
 };
 
@@ -427,6 +427,7 @@ struct ns83820 {
 	u8			__iomem *base;
 
 	struct pci_dev		*pci_dev;
+	struct net_device	*ndev;
 
 #ifdef NS83820_VLAN_ACCEL_SUPPORT
 	struct vlan_group	*vlgrp;
@@ -459,7 +460,7 @@ struct ns83820 {
 	struct sk_buff	*tx_skbs[NR_TX_DESC];
 
 	char		pad[16] __attribute__((aligned(16)));
-	u32		*tx_descs;
+	__le32		*tx_descs;
 	dma_addr_t	tx_phy_descs;
 
 	struct timer_list	tx_watchdog;
@@ -493,7 +494,7 @@ static inline void kick_rx(struct net_device *ndev)
 	(((NR_TX_DESC-2 + dev->tx_done_idx - dev->tx_free_idx) % NR_TX_DESC) > MIN_TX_DESC_FREE)
 
 
-#ifdef NS83820_VLAN_ACCEL_SUPPORT 
+#ifdef NS83820_VLAN_ACCEL_SUPPORT
 static void ns83820_vlan_rx_register(struct net_device *ndev, struct vlan_group *grp)
 {
 	struct ns83820 *dev = PRIV(ndev);
@@ -503,18 +504,6 @@ static void ns83820_vlan_rx_register(struct net_device *ndev, struct vlan_group 
 
 	dev->vlgrp = grp;
 
-	spin_unlock(&dev->tx_lock);
-	spin_unlock_irq(&dev->misc_lock);
-}
-
-static void ns83820_vlan_rx_kill_vid(struct net_device *ndev, unsigned short vid)
-{
-	struct ns83820 *dev = PRIV(ndev);
-
-	spin_lock_irq(&dev->misc_lock);
-	spin_lock(&dev->tx_lock);
-	if (dev->vlgrp)
-		dev->vlgrp->vlan_devices[vid] = NULL;
 	spin_unlock(&dev->tx_lock);
 	spin_unlock_irq(&dev->misc_lock);
 }
@@ -533,7 +522,7 @@ static void ns83820_vlan_rx_kill_vid(struct net_device *ndev, unsigned short vid
  * conditions, still route realtime traffic with as low jitter as
  * possible.
  */
-static inline void build_rx_desc(struct ns83820 *dev, u32 *desc, dma_addr_t link, dma_addr_t buf, u32 cmdsts, u32 extsts)
+static inline void build_rx_desc(struct ns83820 *dev, __le32 *desc, dma_addr_t link, dma_addr_t buf, u32 cmdsts, u32 extsts)
 {
 	desc_addr_set(desc + DESC_LINK, link);
 	desc_addr_set(desc + DESC_BUFPTR, buf);
@@ -547,7 +536,7 @@ static inline int ns83820_add_rx_skb(struct ns83820 *dev, struct sk_buff *skb)
 {
 	unsigned next_empty;
 	u32 cmdsts;
-	u32 *sg;
+	__le32 *sg;
 	dma_addr_t buf;
 
 	next_empty = dev->rx_info.next_empty;
@@ -597,17 +586,13 @@ static inline int rx_refill(struct net_device *ndev, gfp_t gfp)
 	for (i=0; i<NR_RX_DESC; i++) {
 		struct sk_buff *skb;
 		long res;
+
 		/* extra 16 bytes for alignment */
-		skb = __dev_alloc_skb(REAL_RX_BUF_SIZE+16, gfp);
+		skb = __netdev_alloc_skb(ndev, REAL_RX_BUF_SIZE+16, gfp);
 		if (unlikely(!skb))
 			break;
 
-		res = (long)skb->data & 0xf;
-		res = 0x10 - res;
-		res &= 0xf;
-		skb_reserve(skb, res);
-
-		skb->dev = ndev;
+		skb_reserve(skb, skb->data - PTR_ALIGN(skb->data, 16));
 		if (gfp != GFP_ATOMIC)
 			spin_lock_irqsave(&dev->rx_info.lock, flags);
 		res = ns83820_add_rx_skb(dev, skb);
@@ -624,17 +609,16 @@ static inline int rx_refill(struct net_device *ndev, gfp_t gfp)
 	return i ? 0 : -ENOMEM;
 }
 
-static void FASTCALL(rx_refill_atomic(struct net_device *ndev));
-static void fastcall rx_refill_atomic(struct net_device *ndev)
+static void rx_refill_atomic(struct net_device *ndev)
 {
 	rx_refill(ndev, GFP_ATOMIC);
 }
 
 /* REFILL */
-static inline void queue_refill(void *_dev)
+static inline void queue_refill(struct work_struct *work)
 {
-	struct net_device *ndev = _dev;
-	struct ns83820 *dev = PRIV(ndev);
+	struct ns83820 *dev = container_of(work, struct ns83820, tq_refill);
+	struct net_device *ndev = dev->ndev;
 
 	rx_refill(ndev, GFP_KERNEL);
 	if (dev->rx_info.up)
@@ -646,8 +630,7 @@ static inline void clear_rx_desc(struct ns83820 *dev, unsigned i)
 	build_rx_desc(dev, dev->rx_info.descs + (DESC_SIZE * i), 0, 0, CMDSTS_OWN, 0);
 }
 
-static void FASTCALL(phy_intr(struct net_device *ndev));
-static void fastcall phy_intr(struct net_device *ndev)
+static void phy_intr(struct net_device *ndev)
 {
 	struct ns83820 *dev = PRIV(ndev);
 	static const char *speeds[] = { "10", "100", "1000", "1000(?)", "1000F" };
@@ -840,13 +823,11 @@ static void ns83820_cleanup_rx(struct ns83820 *dev)
 		struct sk_buff *skb = dev->rx_info.skbs[i];
 		dev->rx_info.skbs[i] = NULL;
 		clear_rx_desc(dev, i);
-		if (skb)
-			kfree_skb(skb);
+		kfree_skb(skb);
 	}
 }
 
-static void FASTCALL(ns83820_rx_kick(struct net_device *ndev));
-static void fastcall ns83820_rx_kick(struct net_device *ndev)
+static void ns83820_rx_kick(struct net_device *ndev)
 {
 	struct ns83820 *dev = PRIV(ndev);
 	/*if (nr_rx_empty(dev) >= NR_RX_DESC/4)*/ {
@@ -865,16 +846,16 @@ static void fastcall ns83820_rx_kick(struct net_device *ndev)
 }
 
 /* rx_irq
- *	
+ *
  */
-static void FASTCALL(rx_irq(struct net_device *ndev));
-static void fastcall rx_irq(struct net_device *ndev)
+static void rx_irq(struct net_device *ndev)
 {
 	struct ns83820 *dev = PRIV(ndev);
 	struct rx_info *info = &dev->rx_info;
 	unsigned next_rx;
 	int rx_rc, len;
-	u32 cmdsts, *desc;
+	u32 cmdsts;
+	__le32 *desc;
 	unsigned long flags;
 	int nr = 0;
 
@@ -921,14 +902,14 @@ static void fastcall rx_irq(struct net_device *ndev)
 		 * that are 64 bytes with a vlan header appended
 		 * like arp frames, or pings, are flagged as Runts
 		 * when the tag is stripped and hardware.  This
-		 * also means that the OK bit in the descriptor 
+		 * also means that the OK bit in the descriptor
 		 * is cleared when the frame comes in so we have
 		 * to do a specific length check here to make sure
 		 * the frame would have been ok, had we not stripped
 		 * the tag.
-		 */ 
+		 */
 		if (likely((CMDSTS_OK & cmdsts) ||
-			((cmdsts & CMDSTS_RUNT) && len >= 56))) {   
+			((cmdsts & CMDSTS_RUNT) && len >= 56))) {
 #else
 		if (likely(CMDSTS_OK & cmdsts)) {
 #endif
@@ -945,7 +926,7 @@ static void fastcall rx_irq(struct net_device *ndev)
 				skb->ip_summed = CHECKSUM_NONE;
 			}
 			skb->protocol = eth_type_trans(skb, ndev);
-#ifdef NS83820_VLAN_ACCEL_SUPPORT 
+#ifdef NS83820_VLAN_ACCEL_SUPPORT
 			if(extsts & EXTSTS_VPKT) {
 				unsigned short tag;
 				tag = ntohs(extsts & EXTSTS_VTG_MASK);
@@ -1010,7 +991,8 @@ static inline void kick_tx(struct ns83820 *dev)
 static void do_tx_done(struct net_device *ndev)
 {
 	struct ns83820 *dev = PRIV(ndev);
-	u32 cmdsts, tx_done_idx, *desc;
+	u32 cmdsts, tx_done_idx;
+	__le32 *desc;
 
 	dprintk("do_tx_done(%p)\n", ndev);
 	tx_done_idx = dev->tx_done_idx;
@@ -1047,7 +1029,7 @@ static void do_tx_done(struct net_device *ndev)
 			dev_kfree_skb_irq(skb);
 			atomic_dec(&dev->nr_tx_skbs);
 		} else
-			pci_unmap_page(dev->pci_dev, 
+			pci_unmap_page(dev->pci_dev,
 					addr,
 					len,
 					PCI_DMA_TODEVICE);
@@ -1077,7 +1059,7 @@ static void ns83820_cleanup_tx(struct ns83820 *dev)
 		struct sk_buff *skb = dev->tx_skbs[i];
 		dev->tx_skbs[i] = NULL;
 		if (skb) {
-			u32 *desc = dev->tx_descs + (i * DESC_SIZE);
+			__le32 *desc = dev->tx_descs + (i * DESC_SIZE);
 			pci_unmap_single(dev->pci_dev,
 					desc_addr_get(desc + DESC_BUFPTR),
 					le32_to_cpu(desc[DESC_CMDSTS]) & CMDSTS_LEN_MASK,
@@ -1096,7 +1078,8 @@ static void ns83820_cleanup_tx(struct ns83820 *dev)
  * while trying to track down a bug in either the zero copy code or
  * the tx fifo (hence the MAX_FRAG_LEN).
  */
-static int ns83820_hard_start_xmit(struct sk_buff *skb, struct net_device *ndev)
+static netdev_tx_t ns83820_hard_start_xmit(struct sk_buff *skb,
+					   struct net_device *ndev)
 {
 	struct ns83820 *dev = PRIV(ndev);
 	u32 free_idx, cmdsts, extsts;
@@ -1107,7 +1090,7 @@ static int ns83820_hard_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	skb_frag_t *frag;
 	int stopped = 0;
 	int do_intr = 0;
-	volatile u32 *first_desc;
+	volatile __le32 *first_desc;
 
 	dprintk("ns83820_hard_start_xmit\n");
 
@@ -1116,7 +1099,7 @@ again:
 	if (unlikely(dev->CFG_cache & CFG_LNKSTS)) {
 		netif_stop_queue(ndev);
 		if (unlikely(dev->CFG_cache & CFG_LNKSTS))
-			return 1;
+			return NETDEV_TX_BUSY;
 		netif_start_queue(ndev);
 	}
 
@@ -1134,7 +1117,7 @@ again:
 			netif_start_queue(ndev);
 			goto again;
 		}
-		return 1;
+		return NETDEV_TX_BUSY;
 	}
 
 	if (free_idx == dev->tx_intr_idx) {
@@ -1153,11 +1136,11 @@ again:
 	if (!nr_frags)
 		frag = NULL;
 	extsts = 0;
-	if (skb->ip_summed == CHECKSUM_HW) {
+	if (skb->ip_summed == CHECKSUM_PARTIAL) {
 		extsts |= EXTSTS_IPPKT;
-		if (IPPROTO_TCP == skb->nh.iph->protocol)
+		if (IPPROTO_TCP == ip_hdr(skb)->protocol)
 			extsts |= EXTSTS_TCPPKT;
-		else if (IPPROTO_UDP == skb->nh.iph->protocol)
+		else if (IPPROTO_UDP == ip_hdr(skb)->protocol)
 			extsts |= EXTSTS_UDPPKT;
 	}
 
@@ -1180,7 +1163,7 @@ again:
 	first_desc = dev->tx_descs + (free_idx * DESC_SIZE);
 
 	for (;;) {
-		volatile u32 *desc = dev->tx_descs + (free_idx * DESC_SIZE);
+		volatile __le32 *desc = dev->tx_descs + (free_idx * DESC_SIZE);
 
 		dprintk("frag[%3u]: %4u @ 0x%08Lx\n", free_idx, len,
 			(unsigned long long)buf);
@@ -1223,9 +1206,7 @@ again:
 	if (stopped && (dev->tx_done_idx != tx_done_idx) && start_tx_okay(dev))
 		netif_start_queue(ndev);
 
-	/* set the transmit start time to catch transmit timeouts */
-	ndev->trans_start = jiffies;
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 static void ns83820_update_stats(struct ns83820 *dev)
@@ -1258,6 +1239,149 @@ static struct net_device_stats *ns83820_get_stats(struct net_device *ndev)
 	return &dev->stats;
 }
 
+/* Let ethtool retrieve info */
+static int ns83820_get_settings(struct net_device *ndev,
+				struct ethtool_cmd *cmd)
+{
+	struct ns83820 *dev = PRIV(ndev);
+	u32 cfg, tanar, tbicr;
+	int have_optical = 0;
+	int fullduplex   = 0;
+
+	/*
+	 * Here's the list of available ethtool commands from other drivers:
+	 *	cmd->advertising =
+	 *	cmd->speed =
+	 *	cmd->duplex =
+	 *	cmd->port = 0;
+	 *	cmd->phy_address =
+	 *	cmd->transceiver = 0;
+	 *	cmd->autoneg =
+	 *	cmd->maxtxpkt = 0;
+	 *	cmd->maxrxpkt = 0;
+	 */
+
+	/* read current configuration */
+	cfg   = readl(dev->base + CFG) ^ SPDSTS_POLARITY;
+	tanar = readl(dev->base + TANAR);
+	tbicr = readl(dev->base + TBICR);
+
+	if (dev->CFG_cache & CFG_TBI_EN) {
+		/* we have an optical interface */
+		have_optical = 1;
+		fullduplex = (cfg & CFG_DUPSTS) ? 1 : 0;
+
+	} else {
+		/* We have copper */
+		fullduplex = (cfg & CFG_DUPSTS) ? 1 : 0;
+        }
+
+	cmd->supported = SUPPORTED_Autoneg;
+
+	/* we have optical interface */
+	if (dev->CFG_cache & CFG_TBI_EN) {
+		cmd->supported |= SUPPORTED_1000baseT_Half |
+					SUPPORTED_1000baseT_Full |
+					SUPPORTED_FIBRE;
+		cmd->port       = PORT_FIBRE;
+	} /* TODO: else copper related  support */
+
+	cmd->duplex = fullduplex ? DUPLEX_FULL : DUPLEX_HALF;
+	switch (cfg / CFG_SPDSTS0 & 3) {
+	case 2:
+		cmd->speed = SPEED_1000;
+		break;
+	case 1:
+		cmd->speed = SPEED_100;
+		break;
+	default:
+		cmd->speed = SPEED_10;
+		break;
+	}
+	cmd->autoneg = (tbicr & TBICR_MR_AN_ENABLE) ? 1: 0;
+	return 0;
+}
+
+/* Let ethool change settings*/
+static int ns83820_set_settings(struct net_device *ndev,
+				struct ethtool_cmd *cmd)
+{
+	struct ns83820 *dev = PRIV(ndev);
+	u32 cfg, tanar;
+	int have_optical = 0;
+	int fullduplex   = 0;
+
+	/* read current configuration */
+	cfg = readl(dev->base + CFG) ^ SPDSTS_POLARITY;
+	tanar = readl(dev->base + TANAR);
+
+	if (dev->CFG_cache & CFG_TBI_EN) {
+		/* we have optical */
+		have_optical = 1;
+		fullduplex   = (tanar & TANAR_FULL_DUP);
+
+	} else {
+		/* we have copper */
+		fullduplex = cfg & CFG_DUPSTS;
+	}
+
+	spin_lock_irq(&dev->misc_lock);
+	spin_lock(&dev->tx_lock);
+
+	/* Set duplex */
+	if (cmd->duplex != fullduplex) {
+		if (have_optical) {
+			/*set full duplex*/
+			if (cmd->duplex == DUPLEX_FULL) {
+				/* force full duplex */
+				writel(readl(dev->base + TXCFG)
+					| TXCFG_CSI | TXCFG_HBI | TXCFG_ATP,
+					dev->base + TXCFG);
+				writel(readl(dev->base + RXCFG) | RXCFG_RX_FD,
+					dev->base + RXCFG);
+				/* Light up full duplex LED */
+				writel(readl(dev->base + GPIOR) | GPIOR_GP1_OUT,
+					dev->base + GPIOR);
+			} else {
+				/*TODO: set half duplex */
+			}
+
+		} else {
+			/*we have copper*/
+			/* TODO: Set duplex for copper cards */
+		}
+		printk(KERN_INFO "%s: Duplex set via ethtool\n",
+		ndev->name);
+	}
+
+	/* Set autonegotiation */
+	if (1) {
+		if (cmd->autoneg == AUTONEG_ENABLE) {
+			/* restart auto negotiation */
+			writel(TBICR_MR_AN_ENABLE | TBICR_MR_RESTART_AN,
+				dev->base + TBICR);
+			writel(TBICR_MR_AN_ENABLE, dev->base + TBICR);
+				dev->linkstate = LINK_AUTONEGOTIATE;
+
+			printk(KERN_INFO "%s: autoneg enabled via ethtool\n",
+				ndev->name);
+		} else {
+			/* disable auto negotiation */
+			writel(0x00000000, dev->base + TBICR);
+		}
+
+		printk(KERN_INFO "%s: autoneg %s via ethtool\n", ndev->name,
+				cmd->autoneg ? "ENABLED" : "DISABLED");
+	}
+
+	phy_intr(ndev);
+	spin_unlock(&dev->tx_lock);
+	spin_unlock_irq(&dev->misc_lock);
+
+	return 0;
+}
+/* end ethtool get/set support -df */
+
 static void ns83820_get_drvinfo(struct net_device *ndev, struct ethtool_drvinfo *info)
 {
 	struct ns83820 *dev = PRIV(ndev);
@@ -1273,9 +1397,11 @@ static u32 ns83820_get_link(struct net_device *ndev)
 	return cfg & CFG_LNKSTS ? 1 : 0;
 }
 
-static struct ethtool_ops ops = {
-	.get_drvinfo = ns83820_get_drvinfo,
-	.get_link = ns83820_get_link
+static const struct ethtool_ops ops = {
+	.get_settings    = ns83820_get_settings,
+	.set_settings    = ns83820_set_settings,
+	.get_drvinfo     = ns83820_get_drvinfo,
+	.get_link        = ns83820_get_link
 };
 
 /* this function is called in irq context from the ISR */
@@ -1288,7 +1414,7 @@ static void ns83820_mib_isr(struct ns83820 *dev)
 }
 
 static void ns83820_do_isr(struct net_device *ndev, u32 isr);
-static irqreturn_t ns83820_irq(int foo, void *data, struct pt_regs *regs)
+static irqreturn_t ns83820_irq(int foo, void *data)
 {
 	struct net_device *ndev = data;
 	struct ns83820 *dev = PRIV(ndev);
@@ -1359,8 +1485,8 @@ static void ns83820_do_isr(struct net_device *ndev, u32 isr)
 			dev->tx_idx = 0;
 		}
 		/* The may have been a race between a pci originated read
-		 * and the descriptor update from the cpu.  Just in case, 
-		 * kick the transmitter if the hardware thinks it is on a 
+		 * and the descriptor update from the cpu.  Just in case,
+		 * kick the transmitter if the hardware thinks it is on a
 		 * different descriptor than we are.
 		 */
 		if (dev->tx_idx != dev->tx_free_idx)
@@ -1388,8 +1514,8 @@ static void ns83820_do_isr(struct net_device *ndev, u32 isr)
 
 	/* The TxIdle interrupt can come in before the transmit has
 	 * completed.  Normally we reap packets off of the combination
-	 * of TxDesc and TxIdle and leave TxOk disabled (since it 
-	 * occurs on every packet), but when no further irqs of this 
+	 * of TxDesc and TxIdle and leave TxOk disabled (since it
+	 * occurs on every packet), but when no further irqs of this
 	 * nature are expected, we must enable TxOk.
 	 */
 	if ((ISR_TXIDLE & isr) && (dev->tx_done_idx != dev->tx_free_idx)) {
@@ -1455,7 +1581,8 @@ static int ns83820_stop(struct net_device *ndev)
 static void ns83820_tx_timeout(struct net_device *ndev)
 {
 	struct ns83820 *dev = PRIV(ndev);
-        u32 tx_done_idx, *desc;
+        u32 tx_done_idx;
+	__le32 *desc;
 	unsigned long flags;
 
 	spin_lock_irqsave(&dev->tx_lock, flags);
@@ -1499,7 +1626,7 @@ static void ns83820_tx_watch(unsigned long data)
 		);
 #endif
 
-	if (time_after(jiffies, ndev->trans_start + 1*HZ) &&
+	if (time_after(jiffies, dev_trans_start(ndev) + 1*HZ) &&
 	    dev->tx_done_idx != dev->tx_free_idx) {
 		printk(KERN_DEBUG "%s: ns83820_tx_watch: %u %u %d\n",
 			ndev->name,
@@ -1592,7 +1719,7 @@ static void ns83820_set_multicast(struct net_device *ndev)
 	else
 		and_mask &= ~(RFCR_AAU | RFCR_AAM);
 
-	if (ndev->flags & IFF_ALLMULTI)
+	if (ndev->flags & IFF_ALLMULTI || ndev->mc_count)
 		or_mask |= RFCR_AAM;
 	else
 		and_mask &= ~RFCR_AAM;
@@ -1820,7 +1947,23 @@ static void ns83820_probe_phy(struct net_device *ndev)
 }
 #endif
 
-static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_device_id *id)
+static const struct net_device_ops netdev_ops = {
+	.ndo_open		= ns83820_open,
+	.ndo_stop		= ns83820_stop,
+	.ndo_start_xmit		= ns83820_hard_start_xmit,
+	.ndo_get_stats		= ns83820_get_stats,
+	.ndo_change_mtu		= ns83820_change_mtu,
+	.ndo_set_multicast_list = ns83820_set_multicast,
+	.ndo_validate_addr	= eth_validate_addr,
+	.ndo_set_mac_address 	= eth_mac_addr,
+	.ndo_tx_timeout		= ns83820_tx_timeout,
+#ifdef NS83820_VLAN_ACCEL_SUPPORT
+	.ndo_vlan_rx_register	= ns83820_vlan_rx_register,
+#endif
+};
+
+static int __devinit ns83820_init_one(struct pci_dev *pci_dev,
+				      const struct pci_device_id *id)
 {
 	struct net_device *ndev;
 	struct ns83820 *dev;
@@ -1830,9 +1973,9 @@ static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_
 
 	/* See if we can set the dma mask early on; failure is fatal. */
 	if (sizeof(dma_addr_t) == 8 &&
-	 	!pci_set_dma_mask(pci_dev, DMA_64BIT_MASK)) {
+		!pci_set_dma_mask(pci_dev, DMA_BIT_MASK(64))) {
 		using_dac = 1;
-	} else if (!pci_set_dma_mask(pci_dev, DMA_32BIT_MASK)) {
+	} else if (!pci_set_dma_mask(pci_dev, DMA_BIT_MASK(32))) {
 		using_dac = 0;
 	} else {
 		dev_warn(&pci_dev->dev, "pci_set_dma_mask failed!\n");
@@ -1841,19 +1984,21 @@ static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_
 
 	ndev = alloc_etherdev(sizeof(struct ns83820));
 	dev = PRIV(ndev);
+
 	err = -ENOMEM;
 	if (!dev)
 		goto out;
+
+	dev->ndev = ndev;
 
 	spin_lock_init(&dev->rx_info.lock);
 	spin_lock_init(&dev->tx_lock);
 	spin_lock_init(&dev->misc_lock);
 	dev->pci_dev = pci_dev;
 
-	SET_MODULE_OWNER(ndev);
 	SET_NETDEV_DEV(ndev, &pci_dev->dev);
 
-	INIT_WORK(&dev->tq_refill, queue_refill, ndev);
+	INIT_WORK(&dev->tq_refill, queue_refill);
 	tasklet_init(&dev->rx_tasklet, rx_action, (unsigned long)ndev);
 
 	err = pci_enable_device(pci_dev);
@@ -1910,14 +2055,8 @@ static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_
 		ndev->name, le32_to_cpu(readl(dev->base + 0x22c)),
 		pci_dev->subsystem_vendor, pci_dev->subsystem_device);
 
-	ndev->open = ns83820_open;
-	ndev->stop = ns83820_stop;
-	ndev->hard_start_xmit = ns83820_hard_start_xmit;
-	ndev->get_stats = ns83820_get_stats;
-	ndev->change_mtu = ns83820_change_mtu;
-	ndev->set_multicast_list = ns83820_set_multicast;
+	ndev->netdev_ops = &netdev_ops;
 	SET_ETHTOOL_OPS(ndev, &ops);
-	ndev->tx_timeout = ns83820_tx_timeout;
 	ndev->watchdog_timeo = 5 * HZ;
 	pci_set_drvdata(pci_dev, ndev);
 
@@ -1956,7 +2095,7 @@ static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_
 	/* When compiled with 64 bit addressing, we must always enable
 	 * the 64 bit descriptor format.
 	 */
-	if (sizeof(dma_addr_t) == 8) 
+	if (sizeof(dma_addr_t) == 8)
 		dev->CFG_cache |= CFG_M64ADDR;
 	if (using_dac)
 		dev->CFG_cache |= CFG_T64ADDR;
@@ -1994,7 +2133,7 @@ static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_
 		writel(dev->CFG_cache, dev->base + CFG);
 	}
 
-#if 0	/* Huh?  This sets the PCI latency register.  Should be done via 
+#if 0	/* Huh?  This sets the PCI latency register.  Should be done via
 	 * the PCI layer.  FIXME.
 	 */
 	if (readl(dev->base + SRR))
@@ -2006,7 +2145,7 @@ static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_
 	 * can be transmitted is 8192 - FLTH - burst size.
 	 * If only the transmit fifo was larger...
 	 */
-	/* Ramit : 1024 DMA is not a good idea, it ends up banging 
+	/* Ramit : 1024 DMA is not a good idea, it ends up banging
 	 * some DELL and COMPAQ SMP systems */
 	writel(TXCFG_CSI | TXCFG_HBI | TXCFG_ATP | TXCFG_MXDMA512
 		| ((1600 / 32) * 0x100),
@@ -2020,8 +2159,8 @@ static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_
 	/* Set Rx to full duplex, don't accept runt, errored, long or length
 	 * range errored packets.  Use 512 byte DMA.
 	 */
-	/* Ramit : 1024 DMA is not a good idea, it ends up banging 
-	 * some DELL and COMPAQ SMP systems 
+	/* Ramit : 1024 DMA is not a good idea, it ends up banging
+	 * some DELL and COMPAQ SMP systems
 	 * Turn on ALP, only we are accpeting Jumbo Packets */
 	writel(RXCFG_AEP | RXCFG_ARP | RXCFG_AIRL | RXCFG_RX_FD
 		| RXCFG_STRIPCRC
@@ -2045,7 +2184,7 @@ static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_
 	 * also turn on tag stripping if hardware acceleration is enabled
 	 */
 #ifdef NS83820_VLAN_ACCEL_SUPPORT
-#define VRCR_INIT_VALUE (VRCR_IPEN|VRCR_VTDEN|VRCR_VTREN) 
+#define VRCR_INIT_VALUE (VRCR_IPEN|VRCR_VTDEN|VRCR_VTREN)
 #else
 #define VRCR_INIT_VALUE (VRCR_IPEN|VRCR_VTDEN)
 #endif
@@ -2080,8 +2219,6 @@ static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_
 #ifdef NS83820_VLAN_ACCEL_SUPPORT
 	/* We also support hardware vlan acceleration */
 	ndev->features |= NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_RX;
-	ndev->vlan_rx_register = ns83820_vlan_rx_register;
-	ndev->vlan_rx_kill_vid = ns83820_vlan_rx_kill_vid;
 #endif
 
 	if (using_dac) {
@@ -2090,14 +2227,11 @@ static int __devinit ns83820_init_one(struct pci_dev *pci_dev, const struct pci_
 		ndev->features |= NETIF_F_HIGHDMA;
 	}
 
-	printk(KERN_INFO "%s: ns83820 v" VERSION ": DP83820 v%u.%u: %02x:%02x:%02x:%02x:%02x:%02x io=0x%08lx irq=%d f=%s\n",
+	printk(KERN_INFO "%s: ns83820 v" VERSION ": DP83820 v%u.%u: %pM io=0x%08lx irq=%d f=%s\n",
 		ndev->name,
 		(unsigned)readl(dev->base + SRR) >> 8,
 		(unsigned)readl(dev->base + SRR) & 0xff,
-		ndev->dev_addr[0], ndev->dev_addr[1],
-		ndev->dev_addr[2], ndev->dev_addr[3],
-		ndev->dev_addr[4], ndev->dev_addr[5],
-		addr, pci_dev->irq,
+		ndev->dev_addr, addr, pci_dev->irq,
 		(ndev->features & NETIF_F_HIGHDMA) ? "h,sg" : "sg"
 		);
 
@@ -2178,7 +2312,7 @@ static struct pci_driver driver = {
 static int __init ns83820_init(void)
 {
 	printk(KERN_INFO "ns83820.c: National Semiconductor DP83820 10/100/1000 driver.\n");
-	return pci_module_init(&driver);
+	return pci_register_driver(&driver);
 }
 
 static void __exit ns83820_exit(void)

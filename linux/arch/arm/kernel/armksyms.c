@@ -8,16 +8,18 @@
  * published by the Free Software Foundation.
  */
 #include <linux/module.h>
+#include <linux/sched.h>
 #include <linux/string.h>
 #include <linux/cryptohash.h>
 #include <linux/delay.h>
 #include <linux/in6.h>
 #include <linux/syscalls.h>
+#include <linux/uaccess.h>
+#include <linux/io.h>
 
 #include <asm/checksum.h>
-#include <asm/io.h>
 #include <asm/system.h>
-#include <asm/uaccess.h>
+#include <asm/ftrace.h>
 
 /*
  * libgcc functions - functions that are used internally by the
@@ -57,7 +59,7 @@ extern void fp_enter(void);
 #define EXPORT_SYMBOL_ALIAS(sym,orig)		\
  EXPORT_CRC_ALIAS(sym)				\
  static const struct kernel_symbol __ksymtab_##sym	\
-  __attribute_used__ __attribute__((section("__ksymtab"))) =	\
+  __used __attribute__((section("__ksymtab"))) =	\
     { (unsigned long)&orig, #sym };
 
 /*
@@ -76,6 +78,7 @@ EXPORT_SYMBOL(__const_udelay);
 
 	/* networking */
 EXPORT_SYMBOL(csum_partial);
+EXPORT_SYMBOL(csum_partial_copy_from_user);
 EXPORT_SYMBOL(csum_partial_copy_nocheck);
 EXPORT_SYMBOL(__csum_ipv6_magic);
 
@@ -113,6 +116,8 @@ EXPORT_SYMBOL(__strnlen_user);
 EXPORT_SYMBOL(__strncpy_from_user);
 
 #ifdef CONFIG_MMU
+EXPORT_SYMBOL(copy_page);
+
 EXPORT_SYMBOL(__copy_from_user);
 EXPORT_SYMBOL(__copy_to_user);
 EXPORT_SYMBOL(__clear_user);
@@ -179,8 +184,7 @@ EXPORT_SYMBOL(_find_first_bit_be);
 EXPORT_SYMBOL(_find_next_bit_be);
 #endif
 
-	/* syscalls */
-EXPORT_SYMBOL(sys_write);
-EXPORT_SYMBOL(sys_lseek);
-EXPORT_SYMBOL(sys_exit);
-EXPORT_SYMBOL(sys_wait4);
+#ifdef CONFIG_FUNCTION_TRACER
+EXPORT_SYMBOL(mcount);
+EXPORT_SYMBOL(__gnu_mcount_nc);
+#endif

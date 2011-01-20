@@ -1,6 +1,6 @@
 /*
  *  The driver for the EMU10K1 (SB Live!) based soundcards
- *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
  *
  *  Copyright (c) by James Courtier-Dutton <James@superbug.demon.co.uk>
  *      Added support for Audigy 2 Value.
@@ -23,7 +23,6 @@
  * 
  */
 
-#include <sound/driver.h>
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/time.h>
@@ -32,7 +31,7 @@
 #include <sound/emu10k1.h>
 #include <sound/initval.h>
 
-MODULE_AUTHOR("Jaroslav Kysela <perex@suse.cz>");
+MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>");
 MODULE_DESCRIPTION("EMU10K1");
 MODULE_LICENSE("GPL");
 MODULE_SUPPORTED_DEVICE("{{Creative Labs,SB Live!/PCI512/E-mu APS},"
@@ -78,9 +77,9 @@ MODULE_PARM_DESC(subsystem, "Force card subsystem model.");
  * Class 0401: 1102:0008 (rev 00) Subsystem: 1102:1001 -> Audigy2 Value  Model:SB0400
  */
 static struct pci_device_id snd_emu10k1_ids[] = {
-	{ 0x1102, 0x0002, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0 },	/* EMU10K1 */
-	{ 0x1102, 0x0004, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 1 },	/* Audigy */
-	{ 0x1102, 0x0008, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 1 },	/* Audigy 2 Value SB0400 */
+	{ PCI_VDEVICE(CREATIVE, 0x0002), 0 },	/* EMU10K1 */
+	{ PCI_VDEVICE(CREATIVE, 0x0004), 1 },	/* Audigy */
+	{ PCI_VDEVICE(CREATIVE, 0x0008), 1 },	/* Audigy 2 Value SB0400 */
 	{ 0, }
 };
 
@@ -115,9 +114,9 @@ static int __devinit snd_card_emu10k1_probe(struct pci_dev *pci,
 		return -ENOENT;
 	}
 
-	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
-	if (card == NULL)
-		return -ENOMEM;
+	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
+	if (err < 0)
+		return err;
 	if (max_buffer_size[dev] < 32)
 		max_buffer_size[dev] = 32;
 	else if (max_buffer_size[dev] > 1024)
@@ -226,22 +225,27 @@ static int snd_emu10k1_suspend(struct pci_dev *pci, pm_message_t state)
 
 	snd_emu10k1_done(emu);
 
-	pci_set_power_state(pci, PCI_D3hot);
 	pci_disable_device(pci);
 	pci_save_state(pci);
+	pci_set_power_state(pci, pci_choose_state(pci, state));
 	return 0;
 }
 
-int snd_emu10k1_resume(struct pci_dev *pci)
+static int snd_emu10k1_resume(struct pci_dev *pci)
 {
 	struct snd_card *card = pci_get_drvdata(pci);
 	struct snd_emu10k1 *emu = card->private_data;
 
-	pci_restore_state(pci);
-	pci_enable_device(pci);
 	pci_set_power_state(pci, PCI_D0);
+	pci_restore_state(pci);
+	if (pci_enable_device(pci) < 0) {
+		printk(KERN_ERR "emu10k1: pci_enable_device failed, "
+		       "disabling device\n");
+		snd_card_disconnect(card);
+		return -EIO;
+	}
 	pci_set_master(pci);
-	
+
 	snd_emu10k1_resume_init(emu);
 	snd_emu10k1_efx_resume(emu);
 	snd_ac97_resume(emu->ac97);

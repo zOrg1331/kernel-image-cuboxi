@@ -23,7 +23,7 @@ Index
 
 1. Copyright
 ============
-Copyright (C) 2006 by Luca Risolia <luca.risolia@studio.unibo.it>
+Copyright (C) 2006-2007 by Luca Risolia <luca.risolia@studio.unibo.it>
 
 
 2. Disclaimer
@@ -80,7 +80,7 @@ Some of the features of the driver are:
   high compression quality (see also "Notes for V4L2 application developers"
   paragraph);
 - full support for the capabilities of every possible image sensors that can
-  be connected to the ET61X[12]51 bridges, including, for istance, red, green,
+  be connected to the ET61X[12]51 bridges, including, for instance, red, green,
   blue and global gain adjustments and exposure control (see "Supported
   devices" paragraph for details);
 - use of default color settings for sunlight conditions;
@@ -135,8 +135,9 @@ And finally:
 6. Module loading
 =================
 To use the driver, it is necessary to load the "et61x251" module into memory
-after every other module required: "videodev", "usbcore" and, depending on
-the USB host controller you have, "ehci-hcd", "uhci-hcd" or "ohci-hcd".
+after every other module required: "videodev", "v4l2_common", "compat_ioctl32",
+"usbcore" and, depending on the USB host controller you have, "ehci-hcd",
+"uhci-hcd" or "ohci-hcd".
 
 Loading can be done as shown below:
 
@@ -222,7 +223,7 @@ identifier - of the camera registered as "/dev/video0":
 	[root@localhost #] echo 1 > i2c_reg
 	[root@localhost #] cat i2c_val
 
-Note that if the sensor registers can not be read, "cat" will fail.
+Note that if the sensor registers cannot be read, "cat" will fail.
 To avoid race conditions, all the I/O accesses to the files are serialized.
 
 

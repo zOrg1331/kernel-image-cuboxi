@@ -14,10 +14,10 @@
 	2) The existing myriad of other Linux 8390 drivers by Donald Becker.
 	3) Info for getting IRQ and sh-mem gleaned from the EISA cfg file
 
-	The NE3210 is an EISA shared memory NS8390 implementation.  Shared 
+	The NE3210 is an EISA shared memory NS8390 implementation.  Shared
 	memory address > 1MB should work with this driver.
 
-	Note that the .cfg file (3/11/93, v1.0) has AUI and BNC switched 
+	Note that the .cfg file (3/11/93, v1.0) has AUI and BNC switched
 	around (or perhaps there are some defective/backwards cards ???)
 
 	This driver WILL NOT WORK FOR THE NE3200 - it is completely different
@@ -36,6 +36,7 @@
 #include <linux/interrupt.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/mm.h>
 
 #include <asm/io.h>
 #include <asm/system.h>
@@ -43,9 +44,6 @@
 #include "8390.h"
 
 #define DRV_NAME "ne3210"
-
-static int ne3210_open(struct net_device *dev);
-static int ne3210_close(struct net_device *dev);
 
 static void ne3210_reset_8390(struct net_device *dev);
 
@@ -105,9 +103,8 @@ static int __init ne3210_eisa_probe (struct device *device)
 		return -ENOMEM;
 	}
 
-	SET_MODULE_OWNER(dev);
 	SET_NETDEV_DEV(dev, device);
-	device->driver_data = dev;
+	dev_set_drvdata(device, dev);
 	ioaddr = edev->base_addr;
 
 	if (!request_region(ioaddr, NE3210_IO_EXTENT, DRV_NAME)) {
@@ -127,17 +124,15 @@ static int __init ne3210_eisa_probe (struct device *device)
 		inb(ioaddr + NE3210_CFG1), inb(ioaddr + NE3210_CFG2));
 #endif
 
-
 	port_index = inb(ioaddr + NE3210_CFG2) >> 6;
-	printk("ne3210.c: NE3210 in EISA slot %d, media: %s, addr:",
-		edev->slot, ifmap[port_index]);
 	for(i = 0; i < ETHER_ADDR_LEN; i++)
-		printk(" %02x", (dev->dev_addr[i] = inb(ioaddr + NE3210_SA_PROM + i)));
-	
+		dev->dev_addr[i] = inb(ioaddr + NE3210_SA_PROM + i);
+	printk("ne3210.c: NE3210 in EISA slot %d, media: %s, addr: %pM.\n",
+		edev->slot, ifmap[port_index], dev->dev_addr);
 
 	/* Snarf the interrupt now. CFG file has them all listed as `edge' with share=NO */
 	dev->irq = irq_map[(inb(ioaddr + NE3210_CFG2) >> 3) & 0x07];
-	printk(".\nne3210.c: using IRQ %d, ", dev->irq);
+	printk("ne3210.c: using IRQ %d, ", dev->irq);
 
 	retval = request_irq(dev->irq, ei_interrupt, 0, DRV_NAME, dev);
 	if (retval) {
@@ -155,19 +150,20 @@ static int __init ne3210_eisa_probe (struct device *device)
 		if (phys_mem < virt_to_phys(high_memory)) {
 			printk(KERN_CRIT "ne3210.c: Card RAM overlaps with normal memory!!!\n");
 			printk(KERN_CRIT "ne3210.c: Use EISA SCU to set card memory below 1MB,\n");
-			printk(KERN_CRIT "ne3210.c: or to an address above 0x%lx.\n", virt_to_phys(high_memory));
+			printk(KERN_CRIT "ne3210.c: or to an address above 0x%llx.\n",
+				(u64)virt_to_phys(high_memory));
 			printk(KERN_CRIT "ne3210.c: Driver NOT installed.\n");
 			retval = -EINVAL;
 			goto out3;
 		}
 	}
-	
+
 	if (!request_mem_region (phys_mem, NE3210_STOP_PG*0x100, DRV_NAME)) {
 		printk ("ne3210.c: Unable to request shared memory at physical address %#lx\n",
 			phys_mem);
 		goto out3;
 	}
-	
+
 	printk("%dkB memory at physical address %#lx\n",
 	       NE3210_STOP_PG/4, phys_mem);
 
@@ -201,16 +197,13 @@ static int __init ne3210_eisa_probe (struct device *device)
 	ei_status.block_output = &ne3210_block_output;
 	ei_status.get_8390_hdr = &ne3210_get_8390_hdr;
 
-	dev->open = &ne3210_open;
-	dev->stop = &ne3210_close;
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	dev->poll_controller = ei_poll;
-#endif
+	dev->netdev_ops = &ei_netdev_ops;
+
 	dev->if_port = ifmap_val[port_index];
 
 	if ((retval = register_netdev (dev)))
 		goto out5;
-		
+
 	NS8390_init(dev, 0);
 	return 0;
 
@@ -226,13 +219,13 @@ static int __init ne3210_eisa_probe (struct device *device)
 	release_region (ioaddr, NE3210_IO_EXTENT);
  out:
 	free_netdev (dev);
-	
+
 	return retval;
 }
 
 static int __devexit ne3210_eisa_remove (struct device *device)
 {
-	struct net_device  *dev    = device->driver_data;
+	struct net_device  *dev    = dev_get_drvdata(device);
 	unsigned long       ioaddr = to_eisa_device (device)->base_addr;
 
 	unregister_netdev (dev);
@@ -289,7 +282,7 @@ ne3210_get_8390_hdr(struct net_device *dev, struct e8390_pkt_hdr *hdr, int ring_
 	hdr->count = (hdr->count + 3) & ~3;     /* Round up allocation. */
 }
 
-/*	
+/*
  *	Block input and output are easy on shared memory ethercards, the only
  *	complication is when the ring buffer wraps. The count will already
  *	be rounded up to a doubleword value via ne3210_get_8390_hdr() above.
@@ -322,27 +315,12 @@ static void ne3210_block_output(struct net_device *dev, int count,
 	memcpy_toio(shmem, buf, count);
 }
 
-static int ne3210_open(struct net_device *dev)
-{
-	ei_open(dev);
-	return 0;
-}
-
-static int ne3210_close(struct net_device *dev)
-{
-
-	if (ei_debug > 1)
-		printk("%s: Shutting down ethercard.\n", dev->name);
-
-	ei_close(dev);
-	return 0;
-}
-
 static struct eisa_device_id ne3210_ids[] = {
 	{ "EGL0101" },
 	{ "NVL1801" },
 	{ "" },
 };
+MODULE_DEVICE_TABLE(eisa, ne3210_ids);
 
 static struct eisa_driver ne3210_eisa_driver = {
 	.id_table = ne3210_ids,

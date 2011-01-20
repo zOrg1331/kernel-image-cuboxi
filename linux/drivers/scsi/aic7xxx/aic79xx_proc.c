@@ -57,7 +57,7 @@ static int	ahd_proc_write_seeprom(struct ahd_softc *ahd,
  * Table of syncrates that don't follow the "divisible by 4"
  * rule. This table will be expanded in future SCSI specs.
  */
-static struct {
+static const struct {
 	u_int period_factor;
 	u_int period;	/* in 100ths of ns */
 } scsi_syncrates[] = {
@@ -136,7 +136,7 @@ copy_info(struct info_str *info, char *fmt, ...)
 	return (len);
 }
 
-void
+static void
 ahd_format_transinfo(struct info_str *info, struct ahd_transinfo *tinfo)
 {
 	u_int speed;

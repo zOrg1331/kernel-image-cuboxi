@@ -49,7 +49,7 @@ MODULE_LICENSE("GPL");
  * @p: pointer to buffer over which CRC is run
  * @len: length of buffer @p
  */
-u32 __attribute_pure__ crc32_le(u32 crc, unsigned char const *p, size_t len);
+u32 __pure crc32_le(u32 crc, unsigned char const *p, size_t len);
 
 #if CRC_LE_BITS == 1
 /*
@@ -57,7 +57,7 @@ u32 __attribute_pure__ crc32_le(u32 crc, unsigned char const *p, size_t len);
  * simplified by inlining the table in ?: form.
  */
 
-u32 __attribute_pure__ crc32_le(u32 crc, unsigned char const *p, size_t len)
+u32 __pure crc32_le(u32 crc, unsigned char const *p, size_t len)
 {
 	int i;
 	while (len--) {
@@ -69,7 +69,7 @@ u32 __attribute_pure__ crc32_le(u32 crc, unsigned char const *p, size_t len)
 }
 #else				/* Table-based approach */
 
-u32 __attribute_pure__ crc32_le(u32 crc, unsigned char const *p, size_t len)
+u32 __pure crc32_le(u32 crc, unsigned char const *p, size_t len)
 {
 # if CRC_LE_BITS == 8
 	const u32      *b =(u32 *)p;
@@ -145,7 +145,7 @@ u32 __attribute_pure__ crc32_le(u32 crc, unsigned char const *p, size_t len)
  * @p: pointer to buffer over which CRC is run
  * @len: length of buffer @p
  */
-u32 __attribute_pure__ crc32_be(u32 crc, unsigned char const *p, size_t len);
+u32 __pure crc32_be(u32 crc, unsigned char const *p, size_t len);
 
 #if CRC_BE_BITS == 1
 /*
@@ -153,7 +153,7 @@ u32 __attribute_pure__ crc32_be(u32 crc, unsigned char const *p, size_t len);
  * simplified by inlining the table in ?: form.
  */
 
-u32 __attribute_pure__ crc32_be(u32 crc, unsigned char const *p, size_t len)
+u32 __pure crc32_be(u32 crc, unsigned char const *p, size_t len)
 {
 	int i;
 	while (len--) {
@@ -167,7 +167,7 @@ u32 __attribute_pure__ crc32_be(u32 crc, unsigned char const *p, size_t len)
 }
 
 #else				/* Table-based approach */
-u32 __attribute_pure__ crc32_be(u32 crc, unsigned char const *p, size_t len)
+u32 __pure crc32_be(u32 crc, unsigned char const *p, size_t len)
 {
 # if CRC_BE_BITS == 8
 	const u32      *b =(u32 *)p;
@@ -235,23 +235,8 @@ u32 __attribute_pure__ crc32_be(u32 crc, unsigned char const *p, size_t len)
 }
 #endif
 
-/**
- * bitreverse - reverse the order of bits in a u32 value
- * @x: value to be bit-reversed
- */
-u32 bitreverse(u32 x)
-{
-	x = (x >> 16) | (x << 16);
-	x = (x >> 8 & 0x00ff00ff) | (x << 8 & 0xff00ff00);
-	x = (x >> 4 & 0x0f0f0f0f) | (x << 4 & 0xf0f0f0f0);
-	x = (x >> 2 & 0x33333333) | (x << 2 & 0xcccccccc);
-	x = (x >> 1 & 0x55555555) | (x << 1 & 0xaaaaaaaa);
-	return x;
-}
-
 EXPORT_SYMBOL(crc32_le);
 EXPORT_SYMBOL(crc32_be);
-EXPORT_SYMBOL(bitreverse);
 
 /*
  * A brief CRC tutorial.
@@ -363,7 +348,7 @@ EXPORT_SYMBOL(bitreverse);
  * but again the multiple of the polynomial to subtract depends only on
  * the high bits, the high 8 bits in this case.  
  *
- * The multile we need in that case is the low 32 bits of a 40-bit
+ * The multiple we need in that case is the low 32 bits of a 40-bit
  * value whose high 8 bits are given, and which is a multiple of the
  * generator polynomial.  This is simply the CRC-32 of the given
  * one-byte message.
@@ -400,10 +385,7 @@ buf_dump(char const *prefix, unsigned char const *buf, size_t len)
 static void bytereverse(unsigned char *buf, size_t len)
 {
 	while (len--) {
-		unsigned char x = *buf;
-		x = (x >> 4) | (x << 4);
-		x = (x >> 2 & 0x33) | (x << 2 & 0xcc);
-		x = (x >> 1 & 0x55) | (x << 1 & 0xaa);
+		unsigned char x = bitrev8(*buf);
 		*buf++ = x;
 	}
 }
@@ -460,11 +442,11 @@ static u32 test_step(u32 init, unsigned char *buf, size_t len)
 	/* Now swap it around for the other test */
 
 	bytereverse(buf, len + 4);
-	init = bitreverse(init);
-	crc2 = bitreverse(crc1);
-	if (crc1 != bitreverse(crc2))
+	init = bitrev32(init);
+	crc2 = bitrev32(crc1);
+	if (crc1 != bitrev32(crc2))
 		printf("\nBit reversal fail: 0x%08x -> 0x%08x -> 0x%08x\n",
-		       crc1, crc2, bitreverse(crc2));
+		       crc1, crc2, bitrev32(crc2));
 	crc1 = crc32_le(init, buf, len);
 	if (crc1 != crc2)
 		printf("\nCRC endianness fail: 0x%08x != 0x%08x\n", crc1,

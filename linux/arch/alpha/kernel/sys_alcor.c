@@ -89,8 +89,8 @@ alcor_end_irq(unsigned int irq)
 		alcor_enable_irq(irq);
 }
 
-static struct hw_interrupt_type alcor_irq_type = {
-	.typename	= "ALCOR",
+static struct irq_chip alcor_irq_type = {
+	.name		= "ALCOR",
 	.startup	= alcor_startup_irq,
 	.shutdown	= alcor_disable_irq,
 	.enable		= alcor_enable_irq,
@@ -100,7 +100,7 @@ static struct hw_interrupt_type alcor_irq_type = {
 };
 
 static void
-alcor_device_interrupt(unsigned long vector, struct pt_regs *regs)
+alcor_device_interrupt(unsigned long vector)
 {
 	unsigned long pld;
 	unsigned int i;
@@ -116,9 +116,9 @@ alcor_device_interrupt(unsigned long vector, struct pt_regs *regs)
 		i = ffz(~pld);
 		pld &= pld - 1; /* clear least bit set */
 		if (i == 31) {
-			isa_device_interrupt(vector, regs);
+			isa_device_interrupt(vector);
 		} else {
-			handle_irq(16 + i, regs);
+			handle_irq(16 + i);
 		}
 	}
 }
@@ -138,7 +138,7 @@ alcor_init_irq(void)
 
 	for (i = 16; i < 48; ++i) {
 		/* On Alcor, at least, lines 20..30 are not connected
-		   and can generate spurrious interrupts if we turn them
+		   and can generate spurious interrupts if we turn them
 		   on while IRQ probing.  */
 		if (i >= 16+20 && i <= 16+30)
 			continue;
@@ -259,7 +259,7 @@ alcor_init_pci(void)
 	if (dev && dev->devfn == PCI_DEVFN(6,0)) {
 		alpha_mv.sys.cia.gru_int_req_bits = XLT_GRU_INT_REQ_BITS; 
 		printk(KERN_INFO "%s: Detected AS500 or XLT motherboard.\n",
-		       __FUNCTION__);
+		       __func__);
 	}
 	pci_dev_put(dev);
 }

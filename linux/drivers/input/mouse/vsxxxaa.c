@@ -211,7 +211,7 @@ vsxxxaa_smells_like_packet (struct vsxxxaa *mouse, unsigned char type, size_t le
 }
 
 static void
-vsxxxaa_handle_REL_packet (struct vsxxxaa *mouse, struct pt_regs *regs)
+vsxxxaa_handle_REL_packet (struct vsxxxaa *mouse)
 {
 	struct input_dev *dev = mouse->dev;
 	unsigned char *buf = mouse->buf;
@@ -258,7 +258,6 @@ vsxxxaa_handle_REL_packet (struct vsxxxaa *mouse, struct pt_regs *regs)
 	/*
 	 * Report what we've found so far...
 	 */
-	input_regs (dev, regs);
 	input_report_key (dev, BTN_LEFT, left);
 	input_report_key (dev, BTN_MIDDLE, middle);
 	input_report_key (dev, BTN_RIGHT, right);
@@ -269,7 +268,7 @@ vsxxxaa_handle_REL_packet (struct vsxxxaa *mouse, struct pt_regs *regs)
 }
 
 static void
-vsxxxaa_handle_ABS_packet (struct vsxxxaa *mouse, struct pt_regs *regs)
+vsxxxaa_handle_ABS_packet (struct vsxxxaa *mouse)
 {
 	struct input_dev *dev = mouse->dev;
 	unsigned char *buf = mouse->buf;
@@ -312,7 +311,6 @@ vsxxxaa_handle_ABS_packet (struct vsxxxaa *mouse, struct pt_regs *regs)
 	/*
 	 * Report what we've found so far...
 	 */
-	input_regs (dev, regs);
 	input_report_key (dev, BTN_LEFT, left);
 	input_report_key (dev, BTN_MIDDLE, middle);
 	input_report_key (dev, BTN_RIGHT, right);
@@ -323,7 +321,7 @@ vsxxxaa_handle_ABS_packet (struct vsxxxaa *mouse, struct pt_regs *regs)
 }
 
 static void
-vsxxxaa_handle_POR_packet (struct vsxxxaa *mouse, struct pt_regs *regs)
+vsxxxaa_handle_POR_packet (struct vsxxxaa *mouse)
 {
 	struct input_dev *dev = mouse->dev;
 	unsigned char *buf = mouse->buf;
@@ -332,7 +330,7 @@ vsxxxaa_handle_POR_packet (struct vsxxxaa *mouse, struct pt_regs *regs)
 
 	/*
 	 * Check for Power-On-Reset packets. These are sent out
-	 * after plugging the mouse in, or when explicitely
+	 * after plugging the mouse in, or when explicitly
 	 * requested by sending 'T'.
 	 *
 	 * [0]:	1	0	1	0	R3	R2	R1	R0
@@ -367,7 +365,6 @@ vsxxxaa_handle_POR_packet (struct vsxxxaa *mouse, struct pt_regs *regs)
 
 	if (error <= 0x1f) {
 		/* No (serious) error. Report buttons */
-		input_regs (dev, regs);
 		input_report_key (dev, BTN_LEFT, left);
 		input_report_key (dev, BTN_MIDDLE, middle);
 		input_report_key (dev, BTN_RIGHT, right);
@@ -387,15 +384,15 @@ vsxxxaa_handle_POR_packet (struct vsxxxaa *mouse, struct pt_regs *regs)
 	printk (KERN_NOTICE "%s on %s: Forceing standard packet format, "
 			"incremental streaming mode and 72 samples/sec\n",
 			mouse->name, mouse->phys);
-	mouse->serio->write (mouse->serio, 'S');	/* Standard format */
+	serio_write (mouse->serio, 'S');	/* Standard format */
 	mdelay (50);
-	mouse->serio->write (mouse->serio, 'R');	/* Incremental */
+	serio_write (mouse->serio, 'R');	/* Incremental */
 	mdelay (50);
-	mouse->serio->write (mouse->serio, 'L');	/* 72 samples/sec */
+	serio_write (mouse->serio, 'L');	/* 72 samples/sec */
 }
 
 static void
-vsxxxaa_parse_buffer (struct vsxxxaa *mouse, struct pt_regs *regs)
+vsxxxaa_parse_buffer (struct vsxxxaa *mouse)
 {
 	unsigned char *buf = mouse->buf;
 	int stray_bytes;
@@ -432,7 +429,7 @@ vsxxxaa_parse_buffer (struct vsxxxaa *mouse, struct pt_regs *regs)
 				continue;
 			}
 
-			vsxxxaa_handle_REL_packet (mouse, regs);
+			vsxxxaa_handle_REL_packet (mouse);
 			continue; /* More to parse? */
 		}
 
@@ -446,7 +443,7 @@ vsxxxaa_parse_buffer (struct vsxxxaa *mouse, struct pt_regs *regs)
 				continue;
 			}
 
-			vsxxxaa_handle_ABS_packet (mouse, regs);
+			vsxxxaa_handle_ABS_packet (mouse);
 			continue; /* More to parse? */
 		}
 
@@ -460,7 +457,7 @@ vsxxxaa_parse_buffer (struct vsxxxaa *mouse, struct pt_regs *regs)
 				continue;
 			}
 
-			vsxxxaa_handle_POR_packet (mouse, regs);
+			vsxxxaa_handle_POR_packet (mouse);
 			continue; /* More to parse? */
 		}
 
@@ -469,13 +466,12 @@ vsxxxaa_parse_buffer (struct vsxxxaa *mouse, struct pt_regs *regs)
 }
 
 static irqreturn_t
-vsxxxaa_interrupt (struct serio *serio, unsigned char data, unsigned int flags,
-		struct pt_regs *regs)
+vsxxxaa_interrupt (struct serio *serio, unsigned char data, unsigned int flags)
 {
 	struct vsxxxaa *mouse = serio_get_drvdata (serio);
 
 	vsxxxaa_queue_byte (mouse, data);
-	vsxxxaa_parse_buffer (mouse, regs);
+	vsxxxaa_parse_buffer (mouse);
 
 	return IRQ_HANDLED;
 }
@@ -501,7 +497,7 @@ vsxxxaa_connect (struct serio *serio, struct serio_driver *drv)
 	mouse = kzalloc (sizeof (struct vsxxxaa), GFP_KERNEL);
 	input_dev = input_allocate_device ();
 	if (!mouse || !input_dev)
-		goto fail;
+		goto fail1;
 
 	mouse->dev = input_dev;
 	mouse->serio = serio;
@@ -512,8 +508,7 @@ vsxxxaa_connect (struct serio *serio, struct serio_driver *drv)
 	input_dev->name = mouse->name;
 	input_dev->phys = mouse->phys;
 	input_dev->id.bustype = BUS_RS232;
-	input_dev->cdev.dev = &serio->dev;
-	input_dev->private = mouse;
+	input_dev->dev.parent = &serio->dev;
 
 	set_bit (EV_KEY, input_dev->evbit);		/* We have buttons */
 	set_bit (EV_REL, input_dev->evbit);
@@ -531,20 +526,23 @@ vsxxxaa_connect (struct serio *serio, struct serio_driver *drv)
 
 	err = serio_open (serio, drv);
 	if (err)
-		goto fail;
+		goto fail2;
 
 	/*
 	 * Request selftest. Standard packet format and differential
 	 * mode will be requested after the device ID'ed successfully.
 	 */
-	serio->write (serio, 'T'); /* Test */
+	serio_write (serio, 'T'); /* Test */
 
-	input_register_device (input_dev);
+	err = input_register_device (input_dev);
+	if (err)
+		goto fail3;
 
 	return 0;
 
- fail:	serio_set_drvdata (serio, NULL);
-	input_free_device (input_dev);
+ fail3:	serio_close (serio);
+ fail2:	serio_set_drvdata (serio, NULL);
+ fail1:	input_free_device (input_dev);
 	kfree (mouse);
 	return err;
 }
@@ -575,8 +573,7 @@ static struct serio_driver vsxxxaa_drv = {
 static int __init
 vsxxxaa_init (void)
 {
-	serio_register_driver(&vsxxxaa_drv);
-	return 0;
+	return serio_register_driver(&vsxxxaa_drv);
 }
 
 static void __exit

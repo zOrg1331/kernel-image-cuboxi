@@ -122,8 +122,6 @@ struct efivar_entry {
 	struct kobject kobj;
 };
 
-#define get_efivar_entry(n) list_entry(n, struct efivar_entry, list)
-
 struct efivar_attribute {
 	struct attribute attr;
 	ssize_t (*show) (struct efivar_entry *entry, char *buf);
@@ -131,23 +129,9 @@ struct efivar_attribute {
 };
 
 
-#define EFI_ATTR(_name, _mode, _show, _store) \
-struct subsys_attribute efi_attr_##_name = { \
-	.attr = {.name = __stringify(_name), .mode = _mode, .owner = THIS_MODULE}, \
-	.show = _show, \
-	.store = _store, \
-};
-
 #define EFIVAR_ATTR(_name, _mode, _show, _store) \
 struct efivar_attribute efivar_attr_##_name = { \
-	.attr = {.name = __stringify(_name), .mode = _mode, .owner = THIS_MODULE}, \
-	.show = _show, \
-	.store = _store, \
-};
-
-#define VAR_SUBSYS_ATTR(_name, _mode, _show, _store) \
-struct subsys_attribute var_subsys_attr_##_name = { \
-	.attr = {.name = __stringify(_name), .mode = _mode, .owner = THIS_MODULE}, \
+	.attr = {.name = __stringify(_name), .mode = _mode}, \
 	.show = _show, \
 	.store = _store, \
 };
@@ -378,7 +362,7 @@ static ssize_t efivar_attr_store(struct kobject *kobj, struct attribute *attr,
 	return ret;
 }
 
-static struct sysfs_ops efivar_attr_ops = {
+static const struct sysfs_ops efivar_attr_ops = {
 	.show = efivar_attr_show,
 	.store = efivar_attr_store,
 };
@@ -386,9 +370,6 @@ static struct sysfs_ops efivar_attr_ops = {
 static void efivar_release(struct kobject *kobj)
 {
 	struct efivar_entry *var = container_of(kobj, struct efivar_entry, kobj);
-	spin_lock(&efivars_lock);
-	list_del(&var->list);
-	spin_unlock(&efivars_lock);
 	kfree(var);
 }
 
@@ -407,32 +388,26 @@ static struct attribute *def_attrs[] = {
 	NULL,
 };
 
-static struct kobj_type ktype_efivar = {
+static struct kobj_type efivar_ktype = {
 	.release = efivar_release,
 	.sysfs_ops = &efivar_attr_ops,
 	.default_attrs = def_attrs,
 };
 
-static ssize_t
-dummy(struct subsystem *sub, char *buf)
-{
-	return -ENODEV;
-}
-
 static inline void
 efivar_unregister(struct efivar_entry *var)
 {
-	kobject_unregister(&var->kobj);
+	kobject_put(&var->kobj);
 }
 
 
-static ssize_t
-efivar_create(struct subsystem *sub, const char *buf, size_t count)
+static ssize_t efivar_create(struct file *filp, struct kobject *kobj,
+			     struct bin_attribute *bin_attr,
+			     char *buf, loff_t pos, size_t count)
 {
 	struct efi_variable *new_var = (struct efi_variable *)buf;
-	struct efivar_entry *search_efivar = NULL;
+	struct efivar_entry *search_efivar, *n;
 	unsigned long strsize1, strsize2;
-	struct list_head *pos, *n;
 	efi_status_t status = EFI_NOT_FOUND;
 	int found = 0;
 
@@ -444,8 +419,7 @@ efivar_create(struct subsystem *sub, const char *buf, size_t count)
 	/*
 	 * Does this variable already exist?
 	 */
-	list_for_each_safe(pos, n, &efivar_list) {
-		search_efivar = get_efivar_entry(pos);
+	list_for_each_entry_safe(search_efivar, n, &efivar_list, list) {
 		strsize1 = utf8_strsize(search_efivar->var.VariableName, 1024);
 		strsize2 = utf8_strsize(new_var->VariableName, 1024);
 		if (strsize1 == strsize2 &&
@@ -486,13 +460,13 @@ efivar_create(struct subsystem *sub, const char *buf, size_t count)
 	return count;
 }
 
-static ssize_t
-efivar_delete(struct subsystem *sub, const char *buf, size_t count)
+static ssize_t efivar_delete(struct file *filp, struct kobject *kobj,
+			     struct bin_attribute *bin_attr,
+			     char *buf, loff_t pos, size_t count)
 {
 	struct efi_variable *del_var = (struct efi_variable *)buf;
-	struct efivar_entry *search_efivar = NULL;
+	struct efivar_entry *search_efivar, *n;
 	unsigned long strsize1, strsize2;
-	struct list_head *pos, *n;
 	efi_status_t status = EFI_NOT_FOUND;
 	int found = 0;
 
@@ -504,8 +478,7 @@ efivar_delete(struct subsystem *sub, const char *buf, size_t count)
 	/*
 	 * Does this variable already exist?
 	 */
-	list_for_each_safe(pos, n, &efivar_list) {
-		search_efivar = get_efivar_entry(pos);
+	list_for_each_entry_safe(search_efivar, n, &efivar_list, list) {
 		strsize1 = utf8_strsize(search_efivar->var.VariableName, 1024);
 		strsize2 = utf8_strsize(del_var->VariableName, 1024);
 		if (strsize1 == strsize2 &&
@@ -537,34 +510,35 @@ efivar_delete(struct subsystem *sub, const char *buf, size_t count)
 		spin_unlock(&efivars_lock);
 		return -EIO;
 	}
+	list_del(&search_efivar->list);
 	/* We need to release this lock before unregistering. */
 	spin_unlock(&efivars_lock);
-
 	efivar_unregister(search_efivar);
 
 	/* It's dead Jim.... */
 	return count;
 }
 
-static VAR_SUBSYS_ATTR(new_var, 0200, dummy, efivar_create);
-static VAR_SUBSYS_ATTR(del_var, 0200, dummy, efivar_delete);
+static struct bin_attribute var_subsys_attr_new_var = {
+	.attr = {.name = "new_var", .mode = 0200},
+	.write = efivar_create,
+};
 
-static struct subsys_attribute *var_subsys_attrs[] = {
-	&var_subsys_attr_new_var,
-	&var_subsys_attr_del_var,
-	NULL,
+static struct bin_attribute var_subsys_attr_del_var = {
+	.attr = {.name = "del_var", .mode = 0200},
+	.write = efivar_delete,
 };
 
 /*
  * Let's not leave out systab information that snuck into
  * the efivars driver
  */
-static ssize_t
-systab_read(struct subsystem *entry, char *buf)
+static ssize_t systab_show(struct kobject *kobj,
+			   struct kobj_attribute *attr, char *buf)
 {
 	char *str = buf;
 
-	if (!entry || !buf)
+	if (!kobj || !buf)
 		return -EINVAL;
 
 	if (efi.mps != EFI_INVALID_TABLE_ADDR)
@@ -585,15 +559,21 @@ systab_read(struct subsystem *entry, char *buf)
 	return str - buf;
 }
 
-static EFI_ATTR(systab, 0400, systab_read, NULL);
+static struct kobj_attribute efi_attr_systab =
+			__ATTR(systab, 0400, systab_show, NULL);
 
-static struct subsys_attribute *efi_subsys_attrs[] = {
-	&efi_attr_systab,
+static struct attribute *efi_subsys_attrs[] = {
+	&efi_attr_systab.attr,
 	NULL,	/* maybe more in the future? */
 };
 
-static decl_subsys(vars, &ktype_efivar, NULL);
-static decl_subsys(efi, NULL, NULL);
+static struct attribute_group efi_subsys_attr_group = {
+	.attrs = efi_subsys_attrs,
+};
+
+
+static struct kset *vars_kset;
+static struct kobject *efi_kobj;
 
 /*
  * efivar_create_sysfs_entry()
@@ -637,10 +617,16 @@ efivar_create_sysfs_entry(unsigned long variable_name_size,
 	*(short_name + strlen(short_name)) = '-';
 	efi_guid_unparse(vendor_guid, short_name + strlen(short_name));
 
-	kobject_set_name(&new_efivar->kobj, "%s", short_name);
-	kobj_set_kset_s(new_efivar, vars_subsys);
-	kobject_register(&new_efivar->kobj);
+	new_efivar->kobj.kset = vars_kset;
+	i = kobject_init_and_add(&new_efivar->kobj, &efivar_ktype, NULL,
+				 "%s", short_name);
+	if (i) {
+		kfree(short_name);
+		kfree(new_efivar);
+		return 1;
+	}
 
+	kobject_uevent(&new_efivar->kobj, KOBJ_ADD);
 	kfree(short_name);
 	short_name = NULL;
 
@@ -664,9 +650,8 @@ efivars_init(void)
 	efi_status_t status = EFI_NOT_FOUND;
 	efi_guid_t vendor_guid;
 	efi_char16_t *variable_name;
-	struct subsys_attribute *attr;
 	unsigned long variable_name_size = 1024;
-	int i, error = 0;
+	int error = 0;
 
 	if (!efi_enabled)
 		return -ENODEV;
@@ -680,23 +665,18 @@ efivars_init(void)
 	printk(KERN_INFO "EFI Variables Facility v%s %s\n", EFIVARS_VERSION,
 	       EFIVARS_DATE);
 
-	/*
-	 * For now we'll register the efi subsys within this driver
-	 */
-
-	error = firmware_register(&efi_subsys);
-
-	if (error) {
-		printk(KERN_ERR "efivars: Firmware registration failed with error %d.\n", error);
+	/* For now we'll register the efi directory at /sys/firmware/efi */
+	efi_kobj = kobject_create_and_add("efi", firmware_kobj);
+	if (!efi_kobj) {
+		printk(KERN_ERR "efivars: Firmware registration failed.\n");
+		error = -ENOMEM;
 		goto out_free;
 	}
 
-	kset_set_kset_s(&vars_subsys, efi_subsys);
-
-	error = subsystem_register(&vars_subsys);
-
-	if (error) {
-		printk(KERN_ERR "efivars: Subsystem registration failed with error %d.\n", error);
+	vars_kset = kset_create_and_add("vars", NULL, efi_kobj);
+	if (!vars_kset) {
+		printk(KERN_ERR "efivars: Subsystem registration failed.\n");
+		error = -ENOMEM;
 		goto out_firmware_unregister;
 	}
 
@@ -731,28 +711,28 @@ efivars_init(void)
 	 * Now add attributes to allow creation of new vars
 	 * and deletion of existing ones...
 	 */
-
-	for (i = 0; (attr = var_subsys_attrs[i]) && !error; i++) {
-		if (attr->show && attr->store)
-			error = subsys_create_file(&vars_subsys, attr);
-	}
+	error = sysfs_create_bin_file(&vars_kset->kobj,
+				      &var_subsys_attr_new_var);
+	if (error)
+		printk(KERN_ERR "efivars: unable to create new_var sysfs file"
+			" due to error %d\n", error);
+	error = sysfs_create_bin_file(&vars_kset->kobj,
+				      &var_subsys_attr_del_var);
+	if (error)
+		printk(KERN_ERR "efivars: unable to create del_var sysfs file"
+			" due to error %d\n", error);
 
 	/* Don't forget the systab entry */
-
-	for (i = 0; (attr = efi_subsys_attrs[i]) && !error; i++) {
-		if (attr->show)
-			error = subsys_create_file(&efi_subsys, attr);
-	}
-
+	error = sysfs_create_group(efi_kobj, &efi_subsys_attr_group);
 	if (error)
 		printk(KERN_ERR "efivars: Sysfs attribute export failed with error %d.\n", error);
 	else
 		goto out_free;
 
-	subsystem_unregister(&vars_subsys);
+	kset_unregister(vars_kset);
 
 out_firmware_unregister:
-	firmware_unregister(&efi_subsys);
+	kobject_put(efi_kobj);
 
 out_free:
 	kfree(variable_name);
@@ -763,13 +743,17 @@ out_free:
 static void __exit
 efivars_exit(void)
 {
-	struct list_head *pos, *n;
+	struct efivar_entry *entry, *n;
 
-	list_for_each_safe(pos, n, &efivar_list)
-		efivar_unregister(get_efivar_entry(pos));
+	list_for_each_entry_safe(entry, n, &efivar_list, list) {
+		spin_lock(&efivars_lock);
+		list_del(&entry->list);
+		spin_unlock(&efivars_lock);
+		efivar_unregister(entry);
+	}
 
-	subsystem_unregister(&vars_subsys);
-	firmware_unregister(&efi_subsys);
+	kset_unregister(vars_kset);
+	kobject_put(efi_kobj);
 }
 
 module_init(efivars_init);

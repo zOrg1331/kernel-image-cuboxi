@@ -15,176 +15,113 @@ MODULE_DESCRIPTION("arptables filter table");
 #define FILTER_VALID_HOOKS ((1 << NF_ARP_IN) | (1 << NF_ARP_OUT) | \
 			   (1 << NF_ARP_FORWARD))
 
-/* Standard entry. */
-struct arpt_standard
-{
-	struct arpt_entry entry;
-	struct arpt_standard_target target;
-};
-
-struct arpt_error_target
-{
-	struct arpt_entry_target target;
-	char errorname[ARPT_FUNCTION_MAXNAMELEN];
-};
-
-struct arpt_error
-{
-	struct arpt_entry entry;
-	struct arpt_error_target target;
-};
-
-static struct
+static const struct
 {
 	struct arpt_replace repl;
 	struct arpt_standard entries[3];
 	struct arpt_error term;
-} initial_table __initdata
-= { { "filter", FILTER_VALID_HOOKS, 4,
-      sizeof(struct arpt_standard) * 3 + sizeof(struct arpt_error),
-      { [NF_ARP_IN] = 0,
-	[NF_ARP_OUT] = sizeof(struct arpt_standard),
-	[NF_ARP_FORWARD] = 2 * sizeof(struct arpt_standard), },
-      { [NF_ARP_IN] = 0,
-	[NF_ARP_OUT] = sizeof(struct arpt_standard),
-	[NF_ARP_FORWARD] = 2 * sizeof(struct arpt_standard), },
-      0, NULL, { } },
-    {
-	    /* ARP_IN */
-	    {
-		    {
-			    {
-				    { 0 }, { 0 }, { 0 }, { 0 },
-				    0, 0,
-				    { { 0, }, { 0, } },
-				    { { 0, }, { 0, } },
-				    0, 0,
-				    0, 0,
-				    0, 0,
-				    "", "", { 0 }, { 0 },
-				    0, 0
-			    },
-			    sizeof(struct arpt_entry),
-			    sizeof(struct arpt_standard),
-			    0,
-			    { 0, 0 }, { } },
-		    { { { { ARPT_ALIGN(sizeof(struct arpt_standard_target)), "" } }, { } },
-		      -NF_ACCEPT - 1 }
-	    },
-	    /* ARP_OUT */
-	    {
-		    {
-			    {
-				    { 0 }, { 0 }, { 0 }, { 0 },
-				    0, 0,
-				    { { 0, }, { 0, } },
-				    { { 0, }, { 0, } },
-				    0, 0,
-				    0, 0,
-				    0, 0,
-				    "", "", { 0 }, { 0 },
-				    0, 0
-			    },
-			    sizeof(struct arpt_entry),
-			    sizeof(struct arpt_standard),
-			    0,
-			    { 0, 0 }, { } },
-		    { { { { ARPT_ALIGN(sizeof(struct arpt_standard_target)), "" } }, { } },
-		      -NF_ACCEPT - 1 }
-	    },
-	    /* ARP_FORWARD */
-	    {
-		    {
-			    {
-				    { 0 }, { 0 }, { 0 }, { 0 },
-				    0, 0,
-				    { { 0, }, { 0, } },
-				    { { 0, }, { 0, } },
-				    0, 0,
-				    0, 0,
-				    0, 0,
-				    "", "", { 0 }, { 0 },
-				    0, 0
-			    },
-			    sizeof(struct arpt_entry),
-			    sizeof(struct arpt_standard),
-			    0,
-			    { 0, 0 }, { } },
-		    { { { { ARPT_ALIGN(sizeof(struct arpt_standard_target)), "" } }, { } },
-		      -NF_ACCEPT - 1 }
-	    }
-    },
-    /* ERROR */
-    {
-	    {
-		    {
-			    { 0 }, { 0 }, { 0 }, { 0 },
-			    0, 0,
-			    { { 0, }, { 0, } },
-			    { { 0, }, { 0, } },
-			    0, 0,
-			    0, 0,
-			    0, 0,
-			    "", "", { 0 }, { 0 },
-			    0, 0
-		    },
-		    sizeof(struct arpt_entry),
-		    sizeof(struct arpt_error),
-		    0,
-		    { 0, 0 }, { } },
-	    { { { { ARPT_ALIGN(sizeof(struct arpt_error_target)), ARPT_ERROR_TARGET } },
-		{ } },
-	      "ERROR"
-	    }
-    }
+} initial_table __net_initdata = {
+	.repl = {
+		.name = "filter",
+		.valid_hooks = FILTER_VALID_HOOKS,
+		.num_entries = 4,
+		.size = sizeof(struct arpt_standard) * 3 + sizeof(struct arpt_error),
+		.hook_entry = {
+			[NF_ARP_IN] = 0,
+			[NF_ARP_OUT] = sizeof(struct arpt_standard),
+			[NF_ARP_FORWARD] = 2 * sizeof(struct arpt_standard),
+		},
+		.underflow = {
+			[NF_ARP_IN] = 0,
+			[NF_ARP_OUT] = sizeof(struct arpt_standard),
+			[NF_ARP_FORWARD] = 2 * sizeof(struct arpt_standard),
+		},
+	},
+	.entries = {
+		ARPT_STANDARD_INIT(NF_ACCEPT),	/* ARP_IN */
+		ARPT_STANDARD_INIT(NF_ACCEPT),	/* ARP_OUT */
+		ARPT_STANDARD_INIT(NF_ACCEPT),	/* ARP_FORWARD */
+	},
+	.term = ARPT_ERROR_INIT,
 };
 
-static struct arpt_table packet_filter = {
+static const struct xt_table packet_filter = {
 	.name		= "filter",
 	.valid_hooks	= FILTER_VALID_HOOKS,
-	.lock		= RW_LOCK_UNLOCKED,
-	.private	= NULL,
 	.me		= THIS_MODULE,
-	.af		= NF_ARP,
+	.af		= NFPROTO_ARP,
 };
 
 /* The work comes in here from netfilter.c */
-static unsigned int arpt_hook(unsigned int hook,
-			      struct sk_buff **pskb,
-			      const struct net_device *in,
-			      const struct net_device *out,
-			      int (*okfn)(struct sk_buff *))
+static unsigned int arpt_in_hook(unsigned int hook,
+				 struct sk_buff *skb,
+				 const struct net_device *in,
+				 const struct net_device *out,
+				 int (*okfn)(struct sk_buff *))
 {
-	return arpt_do_table(pskb, hook, in, out, &packet_filter, NULL);
+	return arpt_do_table(skb, hook, in, out,
+			     dev_net(in)->ipv4.arptable_filter);
 }
 
-static struct nf_hook_ops arpt_ops[] = {
+static unsigned int arpt_out_hook(unsigned int hook,
+				  struct sk_buff *skb,
+				  const struct net_device *in,
+				  const struct net_device *out,
+				  int (*okfn)(struct sk_buff *))
+{
+	return arpt_do_table(skb, hook, in, out,
+			     dev_net(out)->ipv4.arptable_filter);
+}
+
+static struct nf_hook_ops arpt_ops[] __read_mostly = {
 	{
-		.hook		= arpt_hook,
+		.hook		= arpt_in_hook,
 		.owner		= THIS_MODULE,
-		.pf		= NF_ARP,
+		.pf		= NFPROTO_ARP,
 		.hooknum	= NF_ARP_IN,
+		.priority	= NF_IP_PRI_FILTER,
 	},
 	{
-		.hook		= arpt_hook,
+		.hook		= arpt_out_hook,
 		.owner		= THIS_MODULE,
-		.pf		= NF_ARP,
+		.pf		= NFPROTO_ARP,
 		.hooknum	= NF_ARP_OUT,
+		.priority	= NF_IP_PRI_FILTER,
 	},
 	{
-		.hook		= arpt_hook,
+		.hook		= arpt_in_hook,
 		.owner		= THIS_MODULE,
-		.pf		= NF_ARP,
+		.pf		= NFPROTO_ARP,
 		.hooknum	= NF_ARP_FORWARD,
+		.priority	= NF_IP_PRI_FILTER,
 	},
+};
+
+static int __net_init arptable_filter_net_init(struct net *net)
+{
+	/* Register table */
+	net->ipv4.arptable_filter =
+		arpt_register_table(net, &packet_filter, &initial_table.repl);
+	if (IS_ERR(net->ipv4.arptable_filter))
+		return PTR_ERR(net->ipv4.arptable_filter);
+	return 0;
+}
+
+static void __net_exit arptable_filter_net_exit(struct net *net)
+{
+	arpt_unregister_table(net->ipv4.arptable_filter);
+}
+
+static struct pernet_operations arptable_filter_net_ops = {
+	.init = arptable_filter_net_init,
+	.exit = arptable_filter_net_exit,
 };
 
 static int __init arptable_filter_init(void)
 {
 	int ret;
 
-	/* Register table */
-	ret = arpt_register_table(&packet_filter, &initial_table.repl);
+	ret = register_pernet_subsys(&arptable_filter_net_ops);
 	if (ret < 0)
 		return ret;
 
@@ -194,14 +131,14 @@ static int __init arptable_filter_init(void)
 	return ret;
 
 cleanup_table:
-	arpt_unregister_table(&packet_filter);
+	unregister_pernet_subsys(&arptable_filter_net_ops);
 	return ret;
 }
 
 static void __exit arptable_filter_fini(void)
 {
 	nf_unregister_hooks(arpt_ops, ARRAY_SIZE(arpt_ops));
-	arpt_unregister_table(&packet_filter);
+	unregister_pernet_subsys(&arptable_filter_net_ops);
 }
 
 module_init(arptable_filter_init);

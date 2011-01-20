@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
  *  Universal interface for Audio Codec '97
  *
  *  For more details look to AC '97 component specification revision 2.2
@@ -23,7 +23,6 @@
  *
  */
 
-#include <sound/driver.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -34,7 +33,6 @@
 #include <sound/control.h>
 #include <sound/ac97_codec.h>
 #include <sound/asoundef.h>
-#include "ac97_patch.h"
 #include "ac97_id.h"
 #include "ac97_local.h"
 
@@ -269,6 +267,7 @@ int snd_ac97_set_rate(struct snd_ac97 *ac97, int reg, unsigned int rate)
 			return -EINVAL;
 	}
 
+	snd_ac97_update_power(ac97, reg, 1);
 	switch (reg) {
 	case AC97_PCM_MIC_ADC_RATE:
 		if ((ac97->regs[AC97_EXTENDED_STATUS] & AC97_EA_VRM) == 0)	/* MIC VRA */
@@ -575,7 +574,6 @@ int snd_ac97_pcm_open(struct ac97_pcm *pcm, unsigned int rate,
 	r = rate > 48000;
 	bus = pcm->bus;
 	if (cfg == AC97_PCM_CFG_SPDIF) {
-		int err;
 		for (cidx = 0; cidx < 4; cidx++)
 			if (bus->codec[cidx] && (bus->codec[cidx]->ext_id & AC97_EI_SPDIF)) {
 				err = set_spdif_rate(bus->codec[cidx], rate);
@@ -606,6 +604,7 @@ int snd_ac97_pcm_open(struct ac97_pcm *pcm, unsigned int rate,
 			goto error;
 		}
 	}
+	pcm->cur_dbl = r;
 	spin_unlock_irq(&pcm->bus->bus_lock);
 	for (i = 3; i < 12; i++) {
 		if (!(slots & (1 << i)))
@@ -651,6 +650,21 @@ int snd_ac97_pcm_close(struct ac97_pcm *pcm)
 	unsigned short slots = pcm->aslots;
 	int i, cidx;
 
+#ifdef CONFIG_SND_AC97_POWER_SAVE
+	int r = pcm->cur_dbl;
+	for (i = 3; i < 12; i++) {
+		if (!(slots & (1 << i)))
+			continue;
+		for (cidx = 0; cidx < 4; cidx++) {
+			if (pcm->r[r].rslots[cidx] & (1 << i)) {
+				int reg = get_slot_reg(pcm, cidx, i, r);
+				snd_ac97_update_power(pcm->r[r].codec[cidx],
+						      reg, 0);
+			}
+		}
+	}
+#endif
+
 	bus = pcm->bus;
 	spin_lock_irq(&pcm->bus->bus_lock);
 	for (i = 3; i < 12; i++) {
@@ -660,6 +674,7 @@ int snd_ac97_pcm_close(struct ac97_pcm *pcm)
 			bus->used_slots[pcm->stream][cidx] &= ~(1 << i);
 	}
 	pcm->aslots = 0;
+	pcm->cur_dbl = 0;
 	spin_unlock_irq(&pcm->bus->bus_lock);
 	return 0;
 }

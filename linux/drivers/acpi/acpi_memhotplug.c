@@ -20,7 +20,7 @@
  *
  *
  * ACPI based HotPlug driver that supports Memory Hotplug
- * This driver fields notifications from firmare for memory add
+ * This driver fields notifications from firmware for memory add
  * and remove operations and alerts the VM of the affected memory
  * ranges.
  */
@@ -30,25 +30,29 @@
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/memory_hotplug.h>
+#ifdef CONFIG_ACPI_HOTPLUG_MEMORY_AUTO_ONLINE
+#include <linux/memory.h>
+#endif
 #include <acpi/acpi_drivers.h>
 
-#define ACPI_MEMORY_DEVICE_COMPONENT		0x08000000UL
 #define ACPI_MEMORY_DEVICE_CLASS		"memory"
 #define ACPI_MEMORY_DEVICE_HID			"PNP0C80"
-#define ACPI_MEMORY_DEVICE_DRIVER_NAME		"Hotplug Mem Driver"
 #define ACPI_MEMORY_DEVICE_NAME			"Hotplug Mem Device"
 
 #define _COMPONENT		ACPI_MEMORY_DEVICE_COMPONENT
 
-ACPI_MODULE_NAME("acpi_memory")
-    MODULE_AUTHOR("Naveen B S <naveen.b.s@intel.com>");
-MODULE_DESCRIPTION(ACPI_MEMORY_DEVICE_DRIVER_NAME);
-MODULE_LICENSE("GPL");
+#undef PREFIX
+#define 	PREFIX		"ACPI:memory_hp:"
 
-/* ACPI _STA method values */
-#define ACPI_MEMORY_STA_PRESENT		(0x00000001UL)
-#define ACPI_MEMORY_STA_ENABLED		(0x00000002UL)
-#define ACPI_MEMORY_STA_FUNCTIONAL	(0x00000008UL)
+ACPI_MODULE_NAME("acpi_memhotplug");
+MODULE_AUTHOR("Naveen B S <naveen.b.s@intel.com>");
+MODULE_DESCRIPTION("Hotplug Mem Driver");
+MODULE_LICENSE("GPL");
+#ifdef CONFIG_ACPI_HOTPLUG_MEMORY_AUTO_ONLINE
+static int mem_hotadd_auto = 1;
+module_param(mem_hotadd_auto, bool, 0444);
+MODULE_PARM_DESC(mem_hotadd_auto, "Disable automatic onlining of memory");
+#endif
 
 /* Memory Device States */
 #define MEMORY_INVALID_STATE	0
@@ -57,16 +61,20 @@ MODULE_LICENSE("GPL");
 
 static int acpi_memory_device_add(struct acpi_device *device);
 static int acpi_memory_device_remove(struct acpi_device *device, int type);
-static int acpi_memory_device_start(struct acpi_device *device);
+
+static const struct acpi_device_id memory_device_ids[] = {
+	{ACPI_MEMORY_DEVICE_HID, 0},
+	{"", 0},
+};
+MODULE_DEVICE_TABLE(acpi, memory_device_ids);
 
 static struct acpi_driver acpi_memory_device_driver = {
-	.name = ACPI_MEMORY_DEVICE_DRIVER_NAME,
+	.name = "acpi_memhotplug",
 	.class = ACPI_MEMORY_DEVICE_CLASS,
-	.ids = ACPI_MEMORY_DEVICE_HID,
+	.ids = memory_device_ids,
 	.ops = {
 		.add = acpi_memory_device_add,
 		.remove = acpi_memory_device_remove,
-		.start = acpi_memory_device_start,
 		},
 };
 
@@ -84,6 +92,8 @@ struct acpi_memory_device {
 	unsigned int state;	/* State of the memory device */
 	struct list_head res_list;
 };
+
+static int acpi_hotmem_initialized;
 
 static acpi_status
 acpi_memory_get_resource(struct acpi_resource *resource, void *context)
@@ -152,6 +162,7 @@ acpi_memory_get_device(acpi_handle handle,
 	acpi_handle phandle;
 	struct acpi_device *device = NULL;
 	struct acpi_device *pdevice = NULL;
+	int result;
 
 
 	if (!acpi_bus_get_device(handle, &device) && device)
@@ -164,9 +175,9 @@ acpi_memory_get_device(acpi_handle handle,
 	}
 
 	/* Get the parent device */
-	status = acpi_bus_get_device(phandle, &pdevice);
-	if (ACPI_FAILURE(status)) {
-		ACPI_EXCEPTION((AE_INFO, status, "Cannot get acpi bus device"));
+	result = acpi_bus_get_device(phandle, &pdevice);
+	if (result) {
+		printk(KERN_WARNING PREFIX "Cannot get acpi bus device");
 		return -EINVAL;
 	}
 
@@ -174,9 +185,9 @@ acpi_memory_get_device(acpi_handle handle,
 	 * Now add the notified device.  This creates the acpi_device
 	 * and invokes .add function
 	 */
-	status = acpi_bus_add(&device, pdevice, handle, ACPI_BUS_TYPE_DEVICE);
-	if (ACPI_FAILURE(status)) {
-		ACPI_EXCEPTION((AE_INFO, status, "Cannot add acpi bus"));
+	result = acpi_bus_add(&device, pdevice, handle, ACPI_BUS_TYPE_DEVICE);
+	if (result) {
+		printk(KERN_WARNING PREFIX "Cannot add acpi bus");
 		return -EINVAL;
 	}
 
@@ -192,8 +203,7 @@ acpi_memory_get_device(acpi_handle handle,
 
 static int acpi_memory_check_device(struct acpi_memory_device *mem_device)
 {
-	unsigned long current_status;
-
+	unsigned long long current_status;
 
 	/* Get device present/absent information from the _STA */
 	if (ACPI_FAILURE(acpi_evaluate_integer(mem_device->device->handle, "_STA",
@@ -203,9 +213,9 @@ static int acpi_memory_check_device(struct acpi_memory_device *mem_device)
 	 * Check for device status. Device should be
 	 * present/enabled/functioning.
 	 */
-	if (!((current_status & ACPI_MEMORY_STA_PRESENT)
-	      && (current_status & ACPI_MEMORY_STA_ENABLED)
-	      && (current_status & ACPI_MEMORY_STA_FUNCTIONAL)))
+	if (!((current_status & ACPI_STA_DEVICE_PRESENT)
+	      && (current_status & ACPI_STA_DEVICE_ENABLED)
+	      && (current_status & ACPI_STA_DEVICE_FUNCTIONING)))
 		return -ENODEV;
 
 	return 0;
@@ -216,7 +226,22 @@ static int acpi_memory_enable_device(struct acpi_memory_device *mem_device)
 	int result, num_enabled = 0;
 	struct acpi_memory_info *info;
 	int node;
+#ifdef CONFIG_ACPI_HOTPLUG_MEMORY_AUTO_ONLINE
+	u64 err_addr;
+#endif
 
+#ifdef __i386__
+	/*
+	 * BZ 600435 -- disable physical Memory Hotplug (hot add) for
+	 * 32-bit kernel.  This code block must be removed if hot add is
+	 * re-enabled for 32-bit
+	 */
+
+	printk(KERN_WARNING PREFIX
+	       "Memory Hot Add is currently disabled for x86 32-bit.\n");
+	mem_device->state = MEMORY_INVALID_STATE;
+	return -EINVAL;
+#endif
 
 	/* Get the range from the _CRS */
 	result = acpi_memory_get_device_resources(mem_device);
@@ -238,9 +263,31 @@ static int acpi_memory_enable_device(struct acpi_memory_device *mem_device)
 			num_enabled++;
 			continue;
 		}
+		/*
+		 * If the memory block size is zero, please ignore it.
+		 * Don't try to do the following memory hotplug flowchart.
+		 */
+		if (!info->length)
+			continue;
+		if (node < 0)
+			node = memory_add_physaddr_to_nid(info->start_addr);
+
 		result = add_memory(node, info->start_addr, info->length);
 		if (result)
 			continue;
+#ifdef CONFIG_ACPI_HOTPLUG_MEMORY_AUTO_ONLINE
+		if (mem_hotadd_auto) {
+			err_addr = set_memory_state(info->start_addr >>
+						    PAGE_SHIFT,
+						    info->length >> PAGE_SHIFT,
+						    MEM_ONLINE, MEM_OFFLINE);
+			if (err_addr)
+				printk(KERN_ERR PREFIX "Memory online failed "
+				       "for 0x%llx - 0x%llx\n",
+				       err_addr << PAGE_SHIFT,
+				       info->start_addr + info->length);
+		}
+#endif
 		info->enabled = 1;
 		num_enabled++;
 	}
@@ -249,8 +296,15 @@ static int acpi_memory_enable_device(struct acpi_memory_device *mem_device)
 		mem_device->state = MEMORY_INVALID_STATE;
 		return -EINVAL;
 	}
-
-	return result;
+	/*
+	 * Sometimes the memory device will contain several memory blocks.
+	 * When one memory block is hot-added to the system memory, it will
+	 * be regarded as a success.
+	 * Otherwise if the last memory block can't be hot-added to the system
+	 * memory, it will be failure and the memory device can't be bound with
+	 * driver.
+	 */
+	return 0;
 }
 
 static int acpi_memory_powerdown_device(struct acpi_memory_device *mem_device)
@@ -258,7 +312,7 @@ static int acpi_memory_powerdown_device(struct acpi_memory_device *mem_device)
 	acpi_status status;
 	struct acpi_object_list arg_list;
 	union acpi_object arg;
-	unsigned long current_status;
+	unsigned long long current_status;
 
 
 	/* Issue the _EJ0 command */
@@ -281,7 +335,7 @@ static int acpi_memory_powerdown_device(struct acpi_memory_device *mem_device)
 		return -ENODEV;
 
 	/* Check for device status.  Device should be disabled */
-	if (current_status & ACPI_MEMORY_STA_ENABLED)
+	if (current_status & ACPI_STA_DEVICE_ENABLED)
 		return -EINVAL;
 
 	return 0;
@@ -389,16 +443,15 @@ static int acpi_memory_device_add(struct acpi_device *device)
 	if (!device)
 		return -EINVAL;
 
-	mem_device = kmalloc(sizeof(struct acpi_memory_device), GFP_KERNEL);
+	mem_device = kzalloc(sizeof(struct acpi_memory_device), GFP_KERNEL);
 	if (!mem_device)
 		return -ENOMEM;
-	memset(mem_device, 0, sizeof(struct acpi_memory_device));
 
 	INIT_LIST_HEAD(&mem_device->res_list);
 	mem_device->device = device;
 	sprintf(acpi_device_name(device), "%s", ACPI_MEMORY_DEVICE_NAME);
 	sprintf(acpi_device_class(device), "%s", ACPI_MEMORY_DEVICE_CLASS);
-	acpi_driver_data(device) = mem_device;
+	device->driver_data = mem_device;
 
 	/* Get the range from the _CRS */
 	result = acpi_memory_get_device_resources(mem_device);
@@ -410,8 +463,24 @@ static int acpi_memory_device_add(struct acpi_device *device)
 	/* Set the device state */
 	mem_device->state = MEMORY_POWER_ON_STATE;
 
-	printk(KERN_INFO "%s \n", acpi_device_name(device));
+	printk(KERN_DEBUG "%s \n", acpi_device_name(device));
 
+	/*
+	 * Early boot code has recognized memory area by EFI/E820.
+	 * If DSDT shows these memory devices on boot, hotplug is not necessary
+	 * for them. So, it just returns until completion of this driver's
+	 * start up.
+	 */
+	if (!acpi_hotmem_initialized)
+		return 0;
+
+	if (!acpi_memory_check_device(mem_device)) {
+		/* call add_memory func */
+		result = acpi_memory_enable_device(mem_device);
+		if (result)
+			printk(KERN_ERR PREFIX
+				"Error in acpi_memory_enable_device\n");
+	}
 	return result;
 }
 
@@ -423,27 +492,10 @@ static int acpi_memory_device_remove(struct acpi_device *device, int type)
 	if (!device || !acpi_driver_data(device))
 		return -EINVAL;
 
-	mem_device = (struct acpi_memory_device *)acpi_driver_data(device);
+	mem_device = acpi_driver_data(device);
 	kfree(mem_device);
 
 	return 0;
-}
-
-static int acpi_memory_device_start (struct acpi_device *device)
-{
-	struct acpi_memory_device *mem_device;
-	int result = 0;
-
-	mem_device = acpi_driver_data(device);
-
-	if (!acpi_memory_check_device(mem_device)) {
-		/* call add_memory func */
-		result = acpi_memory_enable_device(mem_device);
-		if (result)
-			ACPI_DEBUG_PRINT((ACPI_DB_ERROR,
-				"Error in acpi_memory_enable_device\n"));
-	}
-	return result;
 }
 
 /*
@@ -453,26 +505,23 @@ static acpi_status is_memory_device(acpi_handle handle)
 {
 	char *hardware_id;
 	acpi_status status;
-	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 	struct acpi_device_info *info;
 
-
-	status = acpi_get_object_info(handle, &buffer);
+	status = acpi_get_object_info(handle, &info);
 	if (ACPI_FAILURE(status))
 		return status;
 
-	info = buffer.pointer;
 	if (!(info->valid & ACPI_VALID_HID)) {
-		kfree(buffer.pointer);
+		kfree(info);
 		return AE_ERROR;
 	}
 
-	hardware_id = info->hardware_id.value;
+	hardware_id = info->hardware_id.string;
 	if ((hardware_id == NULL) ||
 	    (strcmp(hardware_id, ACPI_MEMORY_DEVICE_HID)))
 		status = AE_ERROR;
 
-	kfree(buffer.pointer);
+	kfree(info);
 	return status;
 }
 
@@ -533,6 +582,7 @@ static int __init acpi_memory_device_init(void)
 		return -ENODEV;
 	}
 
+	acpi_hotmem_initialized = 1;
 	return 0;
 }
 

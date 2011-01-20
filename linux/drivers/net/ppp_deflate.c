@@ -121,12 +121,11 @@ static void *z_comp_alloc(unsigned char *options, int opt_len)
 	if (w_size < DEFLATE_MIN_SIZE || w_size > DEFLATE_MAX_SIZE)
 		return NULL;
 
-	state = (struct ppp_deflate_state *) kmalloc(sizeof(*state),
+	state = kzalloc(sizeof(*state),
 						     GFP_KERNEL);
 	if (state == NULL)
 		return NULL;
 
-	memset (state, 0, sizeof (struct ppp_deflate_state));
 	state->strm.next_in   = NULL;
 	state->w_size         = w_size;
 	state->strm.workspace = vmalloc(zlib_deflate_workspacesize());
@@ -207,7 +206,7 @@ static void z_comp_reset(void *arg)
  *	Returns the length of the compressed packet, or 0 if the
  *	packet is incompressible.
  */
-int z_compress(void *arg, unsigned char *rptr, unsigned char *obuf,
+static int z_compress(void *arg, unsigned char *rptr, unsigned char *obuf,
 	       int isize, int osize)
 {
 	struct ppp_deflate_state *state = (struct ppp_deflate_state *) arg;
@@ -341,11 +340,10 @@ static void *z_decomp_alloc(unsigned char *options, int opt_len)
 	if (w_size < DEFLATE_MIN_SIZE || w_size > DEFLATE_MAX_SIZE)
 		return NULL;
 
-	state = (struct ppp_deflate_state *) kmalloc(sizeof(*state), GFP_KERNEL);
+	state = kzalloc(sizeof(*state), GFP_KERNEL);
 	if (state == NULL)
 		return NULL;
 
-	memset (state, 0, sizeof (struct ppp_deflate_state));
 	state->w_size         = w_size;
 	state->strm.next_out  = NULL;
 	state->strm.workspace = kmalloc(zlib_inflate_workspacesize(),
@@ -437,7 +435,7 @@ static void z_decomp_reset(void *arg)
  * bug, so we return DECOMP_FATALERROR for them in order to turn off
  * compression, even though they are detected by inspecting the input.
  */
-int z_decompress(void *arg, unsigned char *ibuf, int isize,
+static int z_decompress(void *arg, unsigned char *ibuf, int isize,
 		 unsigned char *obuf, int osize)
 {
 	struct ppp_deflate_state *state = (struct ppp_deflate_state *) arg;
@@ -635,7 +633,7 @@ static struct compressor ppp_deflate_draft = {
 };
 
 static int __init deflate_init(void)
-{  
+{
         int answer = ppp_register_compressor(&ppp_deflate);
         if (answer == 0)
                 printk(KERN_INFO
@@ -643,7 +641,7 @@ static int __init deflate_init(void)
 	ppp_register_compressor(&ppp_deflate_draft);
         return answer;
 }
-     
+
 static void __exit deflate_cleanup(void)
 {
 	ppp_unregister_compressor(&ppp_deflate);

@@ -31,7 +31,6 @@
 #include <linux/timex.h>
 #include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/irq.h>
 #include <linux/random.h>
@@ -51,12 +50,12 @@
 #include <asm/udbg.h>
 #include <asm/firmware.h>
 
-#include "ras.h"
+#include "pseries.h"
 
 static unsigned char ras_log_buf[RTAS_ERROR_LOG_MAX];
 static DEFINE_SPINLOCK(ras_log_buf_lock);
 
-char mce_data_buf[RTAS_ERROR_LOG_MAX];
+static char mce_data_buf[RTAS_ERROR_LOG_MAX];
 
 static int ras_get_sensor_state_token;
 static int ras_check_exception_token;
@@ -65,21 +64,17 @@ static int ras_check_exception_token;
 #define EPOW_SENSOR_INDEX	0
 #define RAS_VECTOR_OFFSET	0x500
 
-static irqreturn_t ras_epow_interrupt(int irq, void *dev_id,
-					struct pt_regs * regs);
-static irqreturn_t ras_error_interrupt(int irq, void *dev_id,
-					struct pt_regs * regs);
-
-/* #define DEBUG */
+static irqreturn_t ras_epow_interrupt(int irq, void *dev_id);
+static irqreturn_t ras_error_interrupt(int irq, void *dev_id);
 
 
 static void request_ras_irqs(struct device_node *np,
-			irqreturn_t (*handler)(int, void *, struct pt_regs *),
+			irq_handler_t handler,
 			const char *name)
 {
 	int i, index, count = 0;
 	struct of_irq oirq;
-	u32 *opicprop;
+	const u32 *opicprop;
 	unsigned int opicplen;
 	unsigned int virqs[16];
 
@@ -87,7 +82,7 @@ static void request_ras_irqs(struct device_node *np,
 	 * map those interrupts using the default interrupt host and default
 	 * trigger
 	 */
-	opicprop = (u32 *)get_property(np, "open-pic-interrupt", &opicplen);
+	opicprop = of_get_property(np, "open-pic-interrupt", &opicplen);
 	if (opicprop) {
 		opicplen /= sizeof(u32);
 		for (i = 0; i < opicplen; i++) {
@@ -166,8 +161,7 @@ __initcall(init_ras_IRQ);
  * to examine the type of power failure and take appropriate action where
  * the time horizon permits something useful to be done.
  */
-static irqreturn_t
-ras_epow_interrupt(int irq, void *dev_id, struct pt_regs * regs)
+static irqreturn_t ras_epow_interrupt(int irq, void *dev_id)
 {
 	int status = 0xdeadbeef;
 	int state = 0;
@@ -210,8 +204,7 @@ ras_epow_interrupt(int irq, void *dev_id, struct pt_regs * regs)
  * For nonrecoverable errors, an error is logged and we stop all processing
  * as quickly as possible in order to prevent propagation of the failure.
  */
-static irqreturn_t
-ras_error_interrupt(int irq, void *dev_id, struct pt_regs * regs)
+static irqreturn_t ras_error_interrupt(int irq, void *dev_id)
 {
 	struct rtas_error_log *rtas_elog;
 	int status = 0xdeadbeef;
@@ -242,7 +235,7 @@ ras_error_interrupt(int irq, void *dev_id, struct pt_regs * regs)
 		printk(KERN_EMERG "Error: Fatal hardware error <0x%lx 0x%x>\n",
 		       *((unsigned long *)&ras_log_buf), status);
 
-#ifndef DEBUG
+#ifndef DEBUG_RTAS_POWER_OFF
 		/* Don't actually power off when debugging so we can test
 		 * without actually failing while injecting errors.
 		 * Error data will not be logged to syslog.
@@ -337,7 +330,7 @@ static int recover_mce(struct pt_regs *regs, struct rtas_error_log * err)
 		   err->disposition == RTAS_DISP_NOT_RECOVERED &&
 		   err->target == RTAS_TARGET_MEMORY &&
 		   err->type == RTAS_TYPE_ECC_UNCORR &&
-		   !(current->pid == 0 || current->pid == 1)) {
+		   !(current->pid == 0 || is_global_init(current))) {
 		/* Kill off a user process with an ECC error */
 		printk(KERN_ERR "MCE: uncorrectable ecc error for pid %d\n",
 		       current->pid);

@@ -77,7 +77,7 @@ struct rsvp_head
 struct rsvp_session
 {
 	struct rsvp_session	*next;
-	u32			dst[RSVP_DST_LEN];
+	__be32			dst[RSVP_DST_LEN];
 	struct tc_rsvp_gpi 	dpi;
 	u8			protocol;
 	u8			tunnelid;
@@ -89,7 +89,7 @@ struct rsvp_session
 struct rsvp_filter
 {
 	struct rsvp_filter	*next;
-	u32			src[RSVP_DST_LEN];
+	__be32			src[RSVP_DST_LEN];
 	struct tc_rsvp_gpi	spi;
 	u8			tunnelhdr;
 
@@ -100,17 +100,17 @@ struct rsvp_filter
 	struct rsvp_session	*sess;
 };
 
-static __inline__ unsigned hash_dst(u32 *dst, u8 protocol, u8 tunnelid)
+static __inline__ unsigned hash_dst(__be32 *dst, u8 protocol, u8 tunnelid)
 {
-	unsigned h = dst[RSVP_DST_LEN-1];
+	unsigned h = (__force __u32)dst[RSVP_DST_LEN-1];
 	h ^= h>>16;
 	h ^= h>>8;
 	return (h ^ protocol ^ tunnelid) & 0xFF;
 }
 
-static __inline__ unsigned hash_src(u32 *src)
+static __inline__ unsigned hash_src(__be32 *src)
 {
-	unsigned h = src[RSVP_DST_LEN-1];
+	unsigned h = (__force __u32)src[RSVP_DST_LEN-1];
 	h ^= h>>16;
 	h ^= h>>8;
 	h ^= h>>4;
@@ -130,7 +130,7 @@ static struct tcf_ext_map rsvp_ext_map = {
 	else if (r > 0)					\
 		return r;				\
 }
-	
+
 static int rsvp_classify(struct sk_buff *skb, struct tcf_proto *tp,
 			 struct tcf_result *res)
 {
@@ -138,14 +138,14 @@ static int rsvp_classify(struct sk_buff *skb, struct tcf_proto *tp,
 	struct rsvp_session *s;
 	struct rsvp_filter *f;
 	unsigned h1, h2;
-	u32 *dst, *src;
+	__be32 *dst, *src;
 	u8 protocol;
 	u8 tunnelid = 0;
 	u8 *xprt;
 #if RSVP_DST_LEN == 4
-	struct ipv6hdr *nhptr = skb->nh.ipv6h;
+	struct ipv6hdr *nhptr = ipv6_hdr(skb);
 #else
-	struct iphdr *nhptr = skb->nh.iph;
+	struct iphdr *nhptr = ip_hdr(skb);
 #endif
 
 restart:
@@ -160,7 +160,7 @@ restart:
 	dst = &nhptr->daddr;
 	protocol = nhptr->protocol;
 	xprt = ((u8*)nhptr) + (nhptr->ihl<<2);
-	if (nhptr->frag_off&__constant_htons(IP_MF|IP_OFFSET))
+	if (nhptr->frag_off & htons(IP_MF|IP_OFFSET))
 		return -1;
 #endif
 
@@ -347,7 +347,7 @@ static int tunnel_bts(struct rsvp_head *data)
 {
 	int n = data->tgenerator>>5;
 	u32 b = 1<<(data->tgenerator&0x1F);
-	
+
 	if (data->tmap[n]&b)
 		return 0;
 	data->tmap[n] |= b;
@@ -397,27 +397,37 @@ static u32 gen_tunnel(struct rsvp_head *data)
 	return 0;
 }
 
+static const struct nla_policy rsvp_policy[TCA_RSVP_MAX + 1] = {
+	[TCA_RSVP_CLASSID]	= { .type = NLA_U32 },
+	[TCA_RSVP_DST]		= { .type = NLA_BINARY,
+				    .len = RSVP_DST_LEN * sizeof(u32) },
+	[TCA_RSVP_SRC]		= { .type = NLA_BINARY,
+				    .len = RSVP_DST_LEN * sizeof(u32) },
+	[TCA_RSVP_PINFO]	= { .len = sizeof(struct tc_rsvp_pinfo) },
+};
+
 static int rsvp_change(struct tcf_proto *tp, unsigned long base,
 		       u32 handle,
-		       struct rtattr **tca,
+		       struct nlattr **tca,
 		       unsigned long *arg)
 {
 	struct rsvp_head *data = tp->root;
 	struct rsvp_filter *f, **fp;
 	struct rsvp_session *s, **sp;
 	struct tc_rsvp_pinfo *pinfo = NULL;
-	struct rtattr *opt = tca[TCA_OPTIONS-1];
-	struct rtattr *tb[TCA_RSVP_MAX];
+	struct nlattr *opt = tca[TCA_OPTIONS-1];
+	struct nlattr *tb[TCA_RSVP_MAX + 1];
 	struct tcf_exts e;
 	unsigned h1, h2;
-	u32 *dst;
+	__be32 *dst;
 	int err;
 
 	if (opt == NULL)
 		return handle ? -EINVAL : 0;
 
-	if (rtattr_parse_nested(tb, TCA_RSVP_MAX, opt) < 0)
-		return -EINVAL;
+	err = nla_parse_nested(tb, TCA_RSVP_MAX, opt, rsvp_policy);
+	if (err < 0)
+		return err;
 
 	err = tcf_exts_validate(tp, tb, tca[TCA_RATE-1], &e, &rsvp_ext_map);
 	if (err < 0)
@@ -429,7 +439,7 @@ static int rsvp_change(struct tcf_proto *tp, unsigned long base,
 		if (f->handle != handle && handle)
 			goto errout2;
 		if (tb[TCA_RSVP_CLASSID-1]) {
-			f->res.classid = *(u32*)RTA_DATA(tb[TCA_RSVP_CLASSID-1]);
+			f->res.classid = nla_get_u32(tb[TCA_RSVP_CLASSID-1]);
 			tcf_bind_filter(tp, &f->res, base);
 		}
 
@@ -451,31 +461,18 @@ static int rsvp_change(struct tcf_proto *tp, unsigned long base,
 
 	h2 = 16;
 	if (tb[TCA_RSVP_SRC-1]) {
-		err = -EINVAL;
-		if (RTA_PAYLOAD(tb[TCA_RSVP_SRC-1]) != sizeof(f->src))
-			goto errout;
-		memcpy(f->src, RTA_DATA(tb[TCA_RSVP_SRC-1]), sizeof(f->src));
+		memcpy(f->src, nla_data(tb[TCA_RSVP_SRC-1]), sizeof(f->src));
 		h2 = hash_src(f->src);
 	}
 	if (tb[TCA_RSVP_PINFO-1]) {
-		err = -EINVAL;
-		if (RTA_PAYLOAD(tb[TCA_RSVP_PINFO-1]) < sizeof(struct tc_rsvp_pinfo))
-			goto errout;
-		pinfo = RTA_DATA(tb[TCA_RSVP_PINFO-1]);
+		pinfo = nla_data(tb[TCA_RSVP_PINFO-1]);
 		f->spi = pinfo->spi;
 		f->tunnelhdr = pinfo->tunnelhdr;
 	}
-	if (tb[TCA_RSVP_CLASSID-1]) {
-		err = -EINVAL;
-		if (RTA_PAYLOAD(tb[TCA_RSVP_CLASSID-1]) != 4)
-			goto errout;
-		f->res.classid = *(u32*)RTA_DATA(tb[TCA_RSVP_CLASSID-1]);
-	}
+	if (tb[TCA_RSVP_CLASSID-1])
+		f->res.classid = nla_get_u32(tb[TCA_RSVP_CLASSID-1]);
 
-	err = -EINVAL;
-	if (RTA_PAYLOAD(tb[TCA_RSVP_DST-1]) != sizeof(f->src))
-		goto errout;
-	dst = RTA_DATA(tb[TCA_RSVP_DST-1]);
+	dst = nla_data(tb[TCA_RSVP_DST-1]);
 	h1 = hash_dst(dst, pinfo ? pinfo->protocol : 0, pinfo ? pinfo->tunnelid : 0);
 
 	err = -ENOMEM;
@@ -547,7 +544,7 @@ insert:
 	s->next = *sp;
 	wmb();
 	*sp = s;
-	
+
 	goto insert;
 
 errout:
@@ -593,8 +590,8 @@ static int rsvp_dump(struct tcf_proto *tp, unsigned long fh,
 {
 	struct rsvp_filter *f = (struct rsvp_filter*)fh;
 	struct rsvp_session *s;
-	unsigned char	 *b = skb->tail;
-	struct rtattr *rta;
+	unsigned char *b = skb_tail_pointer(skb);
+	struct nlattr *nest;
 	struct tc_rsvp_pinfo pinfo;
 
 	if (f == NULL)
@@ -603,34 +600,34 @@ static int rsvp_dump(struct tcf_proto *tp, unsigned long fh,
 
 	t->tcm_handle = f->handle;
 
+	nest = nla_nest_start(skb, TCA_OPTIONS);
+	if (nest == NULL)
+		goto nla_put_failure;
 
-	rta = (struct rtattr*)b;
-	RTA_PUT(skb, TCA_OPTIONS, 0, NULL);
-
-	RTA_PUT(skb, TCA_RSVP_DST, sizeof(s->dst), &s->dst);
+	NLA_PUT(skb, TCA_RSVP_DST, sizeof(s->dst), &s->dst);
 	pinfo.dpi = s->dpi;
 	pinfo.spi = f->spi;
 	pinfo.protocol = s->protocol;
 	pinfo.tunnelid = s->tunnelid;
 	pinfo.tunnelhdr = f->tunnelhdr;
 	pinfo.pad = 0;
-	RTA_PUT(skb, TCA_RSVP_PINFO, sizeof(pinfo), &pinfo);
+	NLA_PUT(skb, TCA_RSVP_PINFO, sizeof(pinfo), &pinfo);
 	if (f->res.classid)
-		RTA_PUT(skb, TCA_RSVP_CLASSID, 4, &f->res.classid);
+		NLA_PUT_U32(skb, TCA_RSVP_CLASSID, f->res.classid);
 	if (((f->handle>>8)&0xFF) != 16)
-		RTA_PUT(skb, TCA_RSVP_SRC, sizeof(f->src), f->src);
+		NLA_PUT(skb, TCA_RSVP_SRC, sizeof(f->src), f->src);
 
 	if (tcf_exts_dump(skb, &f->exts, &rsvp_ext_map) < 0)
-		goto rtattr_failure;
+		goto nla_put_failure;
 
-	rta->rta_len = skb->tail - b;
+	nla_nest_end(skb, nest);
 
 	if (tcf_exts_dump_stats(skb, &f->exts, &rsvp_ext_map) < 0)
-		goto rtattr_failure;
+		goto nla_put_failure;
 	return skb->len;
 
-rtattr_failure:
-	skb_trim(skb, b - skb->data);
+nla_put_failure:
+	nlmsg_trim(skb, b);
 	return -1;
 }
 
@@ -654,7 +651,7 @@ static int __init init_rsvp(void)
 	return register_tcf_proto_ops(&RSVP_OPS);
 }
 
-static void __exit exit_rsvp(void) 
+static void __exit exit_rsvp(void)
 {
 	unregister_tcf_proto_ops(&RSVP_OPS);
 }

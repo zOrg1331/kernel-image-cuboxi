@@ -3,10 +3,10 @@
  *      High performance SCSI / Fibre Channel SCSI Host device driver.
  *      For use with PCI chip/adapter(s):
  *          LSIFC9xx/LSI409xx Fibre Channel
- *      running LSI Logic Fusion MPT (Message Passing Technology) firmware.
+ *      running LSI Fusion MPT (Message Passing Technology) firmware.
  *
- *  Copyright (c) 1999-2005 LSI Logic Corporation
- *  (mailto:mpt_linux_developer@lsil.com)
+ *  Copyright (c) 1999-2008 LSI Corporation
+ *  (mailto:DL-MPTFusionLinux@lsi.com)
  *
  */
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
@@ -53,6 +53,25 @@
  *	SCSI Public stuff...
  */
 
+#define MPT_SCANDV_GOOD			(0x00000000) /* must be 0 */
+#define MPT_SCANDV_DID_RESET		(0x00000001)
+#define MPT_SCANDV_SENSE		(0x00000002)
+#define MPT_SCANDV_SOME_ERROR		(0x00000004)
+#define MPT_SCANDV_SELECTION_TIMEOUT	(0x00000008)
+#define MPT_SCANDV_ISSUE_SENSE		(0x00000010)
+#define MPT_SCANDV_FALLBACK		(0x00000020)
+#define MPT_SCANDV_BUSY			(0x00000040)
+
+#define MPT_SCANDV_MAX_RETRIES		(10)
+
+#define MPT_ICFLAG_BUF_CAP	0x01	/* ReadBuffer Read Capacity format */
+#define MPT_ICFLAG_ECHO		0x02	/* ReadBuffer Echo buffer format */
+#define MPT_ICFLAG_EBOS		0x04	/* ReadBuffer Echo buffer has EBOS */
+#define MPT_ICFLAG_PHYS_DISK	0x08	/* Any SCSI IO but do Phys Disk Format */
+#define MPT_ICFLAG_TAGGED_CMD	0x10	/* Do tagged IO */
+#define MPT_ICFLAG_DID_RESET	0x20	/* Bus Reset occurred with this command */
+#define MPT_ICFLAG_RESERVED	0x40	/* Reserved has been issued */
+
 #define MPT_SCSI_CMD_PER_DEV_HIGH	64
 #define MPT_SCSI_CMD_PER_DEV_LOW	32
 
@@ -69,8 +88,22 @@
 #define MPTSCSIH_SAF_TE                 0
 #define MPTSCSIH_PT_CLEAR               0
 
-
 #endif
+
+
+typedef struct _internal_cmd {
+	char		*data;		/* data pointer */
+	dma_addr_t	data_dma;	/* data dma address */
+	int		size;		/* transfer size */
+	u8		cmd;		/* SCSI Op Code */
+	u8		channel;	/* bus number */
+	u8		id;		/* SCSI ID (virtual) */
+	int		lun;
+	u8		flags;		/* Bit Field - See above */
+	u8		physDiskNum;	/* Phys disk number, -1 else */
+	u8		rsvd2;
+	u8		rsvd;
+} INTERNAL_CMD;
 
 extern void mptscsih_remove(struct pci_dev *);
 extern void mptscsih_shutdown(struct pci_dev *);
@@ -81,9 +114,8 @@ extern int mptscsih_resume(struct pci_dev *pdev);
 extern int mptscsih_proc_info(struct Scsi_Host *host, char *buffer, char **start, off_t offset, int length, int func);
 extern const char * mptscsih_info(struct Scsi_Host *SChost);
 extern int mptscsih_qcmd(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *));
-extern int mptscsih_target_alloc(struct scsi_target *starget);
-extern int mptscsih_slave_alloc(struct scsi_device *device);
-extern void mptscsih_target_destroy(struct scsi_target *starget);
+extern int mptscsih_IssueTaskMgmt(MPT_SCSI_HOST *hd, u8 type, u8 channel,
+	u8 id, int lun, int ctx2abort, ulong timeout);
 extern void mptscsih_slave_destroy(struct scsi_device *device);
 extern int mptscsih_slave_configure(struct scsi_device *device);
 extern int mptscsih_abort(struct scsi_cmnd * SCpnt);
@@ -96,8 +128,10 @@ extern int mptscsih_taskmgmt_complete(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_F
 extern int mptscsih_scandv_complete(MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf, MPT_FRAME_HDR *r);
 extern int mptscsih_event_process(MPT_ADAPTER *ioc, EventNotificationReply_t *pEvReply);
 extern int mptscsih_ioc_reset(MPT_ADAPTER *ioc, int post_reset);
-extern int mptscsih_change_queue_depth(struct scsi_device *sdev, int qdepth);
-extern void mptscsih_timer_expired(unsigned long data);
-extern int mptscsih_TMHandler(MPT_SCSI_HOST *hd, u8 type, u8 channel, u8 target, u8 lun, int ctx2abort, ulong timeout);
-extern int mptscsih_raid_id_to_num(MPT_SCSI_HOST *hd, uint physdiskid);
-extern int mptscsih_is_phys_disk(MPT_ADAPTER *ioc, int id);
+extern int mptscsih_change_queue_depth(struct scsi_device *sdev, int qdepth,
+				       int reason);
+extern u8 mptscsih_raid_id_to_num(MPT_ADAPTER *ioc, u8 channel, u8 id);
+extern int mptscsih_is_phys_disk(MPT_ADAPTER *ioc, u8 channel, u8 id);
+extern struct device_attribute *mptscsih_host_attrs[];
+extern struct scsi_cmnd	*mptscsih_get_scsi_lookup(MPT_ADAPTER *ioc, int i);
+extern void mptscsih_taskmgmt_response_code(MPT_ADAPTER *ioc, u8 response_code);

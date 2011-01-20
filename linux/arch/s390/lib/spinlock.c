@@ -24,57 +24,95 @@ static int __init spin_retry_setup(char *str)
 }
 __setup("spin_retry=", spin_retry_setup);
 
-static inline void
-_diag44(void)
+static inline void _raw_yield(void)
 {
-#ifdef CONFIG_64BIT
 	if (MACHINE_HAS_DIAG44)
-#endif
 		asm volatile("diag 0,0,0x44");
 }
 
-void
-_raw_spin_lock_wait(raw_spinlock_t *lp, unsigned int pc)
+static inline void _raw_yield_cpu(int cpu)
+{
+	if (MACHINE_HAS_DIAG9C)
+		asm volatile("diag %0,0,0x9c"
+			     : : "d" (__cpu_logical_map[cpu]));
+	else
+		_raw_yield();
+}
+
+void _raw_spin_lock_wait(raw_spinlock_t *lp)
 {
 	int count = spin_retry;
+	unsigned int cpu = ~smp_processor_id();
 
 	while (1) {
 		if (count-- <= 0) {
-			_diag44();
+			unsigned int owner = lp->owner_cpu;
+			if (owner != 0)
+				_raw_yield_cpu(~owner);
 			count = spin_retry;
 		}
 		if (__raw_spin_is_locked(lp))
 			continue;
-		if (_raw_compare_and_swap(&lp->lock, 0, pc) == 0)
+		if (_raw_compare_and_swap(&lp->owner_cpu, 0, cpu) == 0)
 			return;
 	}
 }
 EXPORT_SYMBOL(_raw_spin_lock_wait);
 
-int
-_raw_spin_trylock_retry(raw_spinlock_t *lp, unsigned int pc)
+void _raw_spin_lock_wait_flags(raw_spinlock_t *lp, unsigned long flags)
 {
 	int count = spin_retry;
+	unsigned int cpu = ~smp_processor_id();
 
-	while (count-- > 0) {
+	local_irq_restore(flags);
+	while (1) {
+		if (count-- <= 0) {
+			unsigned int owner = lp->owner_cpu;
+			if (owner != 0)
+				_raw_yield_cpu(~owner);
+			count = spin_retry;
+		}
 		if (__raw_spin_is_locked(lp))
 			continue;
-		if (_raw_compare_and_swap(&lp->lock, 0, pc) == 0)
+		local_irq_disable();
+		if (_raw_compare_and_swap(&lp->owner_cpu, 0, cpu) == 0)
+			return;
+		local_irq_restore(flags);
+	}
+}
+EXPORT_SYMBOL(_raw_spin_lock_wait_flags);
+
+int _raw_spin_trylock_retry(raw_spinlock_t *lp)
+{
+	unsigned int cpu = ~smp_processor_id();
+	int count;
+
+	for (count = spin_retry; count > 0; count--) {
+		if (__raw_spin_is_locked(lp))
+			continue;
+		if (_raw_compare_and_swap(&lp->owner_cpu, 0, cpu) == 0)
 			return 1;
 	}
 	return 0;
 }
 EXPORT_SYMBOL(_raw_spin_trylock_retry);
 
-void
-_raw_read_lock_wait(raw_rwlock_t *rw)
+void _raw_spin_relax(raw_spinlock_t *lock)
+{
+	unsigned int cpu = lock->owner_cpu;
+	if (cpu != 0)
+		_raw_yield_cpu(~cpu);
+}
+EXPORT_SYMBOL(_raw_spin_relax);
+
+void _raw_read_lock_wait(raw_rwlock_t *rw)
 {
 	unsigned int old;
 	int count = spin_retry;
 
 	while (1) {
 		if (count-- <= 0) {
-			_diag44();
+			_raw_yield();
 			count = spin_retry;
 		}
 		if (!__raw_read_can_lock(rw))
@@ -86,8 +124,28 @@ _raw_read_lock_wait(raw_rwlock_t *rw)
 }
 EXPORT_SYMBOL(_raw_read_lock_wait);
 
-int
-_raw_read_trylock_retry(raw_rwlock_t *rw)
+void _raw_read_lock_wait_flags(raw_rwlock_t *rw, unsigned long flags)
+{
+	unsigned int old;
+	int count = spin_retry;
+
+	local_irq_restore(flags);
+	while (1) {
+		if (count-- <= 0) {
+			_raw_yield();
+			count = spin_retry;
+		}
+		if (!__raw_read_can_lock(rw))
+			continue;
+		old = rw->lock & 0x7fffffffU;
+		local_irq_disable();
+		if (_raw_compare_and_swap(&rw->lock, old, old + 1) == old)
+			return;
+	}
+}
+EXPORT_SYMBOL(_raw_read_lock_wait_flags);
+
+int _raw_read_trylock_retry(raw_rwlock_t *rw)
 {
 	unsigned int old;
 	int count = spin_retry;
@@ -103,14 +161,13 @@ _raw_read_trylock_retry(raw_rwlock_t *rw)
 }
 EXPORT_SYMBOL(_raw_read_trylock_retry);
 
-void
-_raw_write_lock_wait(raw_rwlock_t *rw)
+void _raw_write_lock_wait(raw_rwlock_t *rw)
 {
 	int count = spin_retry;
 
 	while (1) {
 		if (count-- <= 0) {
-			_diag44();
+			_raw_yield();
 			count = spin_retry;
 		}
 		if (!__raw_write_can_lock(rw))
@@ -121,8 +178,26 @@ _raw_write_lock_wait(raw_rwlock_t *rw)
 }
 EXPORT_SYMBOL(_raw_write_lock_wait);
 
-int
-_raw_write_trylock_retry(raw_rwlock_t *rw)
+void _raw_write_lock_wait_flags(raw_rwlock_t *rw, unsigned long flags)
+{
+	int count = spin_retry;
+
+	local_irq_restore(flags);
+	while (1) {
+		if (count-- <= 0) {
+			_raw_yield();
+			count = spin_retry;
+		}
+		if (!__raw_write_can_lock(rw))
+			continue;
+		local_irq_disable();
+		if (_raw_compare_and_swap(&rw->lock, 0, 0x80000000) == 0)
+			return;
+	}
+}
+EXPORT_SYMBOL(_raw_write_lock_wait_flags);
+
+int _raw_write_trylock_retry(raw_rwlock_t *rw)
 {
 	int count = spin_retry;
 

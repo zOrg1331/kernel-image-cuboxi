@@ -22,8 +22,9 @@
 
 #define CYCLE_LSN(lsn) ((uint)((lsn)>>32))
 #define BLOCK_LSN(lsn) ((uint)(lsn))
+
 /* this is used in a spot where we might otherwise double-endian-flip */
-#define CYCLE_LSN_DISK(lsn) (((uint *)&(lsn))[0])
+#define CYCLE_LSN_DISK(lsn) (((__be32 *)&(lsn))[0])
 
 #ifdef __KERNEL__
 /*
@@ -48,15 +49,9 @@ static inline xfs_lsn_t	_lsn_cmp(xfs_lsn_t lsn1, xfs_lsn_t lsn2)
  */
 
 /*
- * Flags to xfs_log_mount
- */
-#define XFS_LOG_RECOVER		0x1
-
-/*
  * Flags to xfs_log_done()
  */
 #define XFS_LOG_REL_PERM_RESERV	0x1
-
 
 /*
  * Flags to xfs_log_reserve()
@@ -70,21 +65,13 @@ static inline xfs_lsn_t	_lsn_cmp(xfs_lsn_t lsn1, xfs_lsn_t lsn2)
 #define XFS_LOG_SLEEP		0x0
 #define XFS_LOG_NOSLEEP		0x1
 #define XFS_LOG_PERM_RESERV	0x2
-#define XFS_LOG_RESV_ALL	(XFS_LOG_NOSLEEP|XFS_LOG_PERM_RESERV)
-
 
 /*
  * Flags to xfs_log_force()
  *
  *	XFS_LOG_SYNC:	Synchronous force in-core log to disk
- *	XFS_LOG_FORCE:	Start in-core log write now.
- *	XFS_LOG_URGE:	Start write within some window of time.
- *
- * Note: Either XFS_LOG_FORCE or XFS_LOG_URGE must be set.
  */
 #define XFS_LOG_SYNC		0x1
-#define XFS_LOG_FORCE		0x2
-#define XFS_LOG_URGE		0x4
 
 #endif	/* __KERNEL__ */
 
@@ -117,10 +104,8 @@ static inline xfs_lsn_t	_lsn_cmp(xfs_lsn_t lsn1, xfs_lsn_t lsn2)
 #define XLOG_REG_TYPE_TRANSHDR		19
 #define XLOG_REG_TYPE_MAX		19
 
-#define XLOG_VEC_SET_TYPE(vecp, t) ((vecp)->i_type = (t))
-
 typedef struct xfs_log_iovec {
-	xfs_caddr_t		i_addr;		/* beginning address of region */
+	xfs_caddr_t	i_addr;		/* beginning address of region */
 	int		i_len;		/* length in bytes of region */
 	uint		i_type;		/* type of region */
 } xfs_log_iovec_t;
@@ -141,21 +126,28 @@ typedef struct xfs_log_callback {
 #ifdef __KERNEL__
 /* Log manager interfaces */
 struct xfs_mount;
+struct xlog_ticket;
 xfs_lsn_t xfs_log_done(struct xfs_mount *mp,
 		       xfs_log_ticket_t ticket,
 		       void		**iclog,
 		       uint		flags);
 int	  _xfs_log_force(struct xfs_mount *mp,
-			 xfs_lsn_t	lsn,
 			 uint		flags,
 			 int		*log_forced);
-#define xfs_log_force(mp, lsn, flags) \
-	_xfs_log_force(mp, lsn, flags, NULL);
+void	  xfs_log_force(struct xfs_mount	*mp,
+			uint			flags);
+int	  _xfs_log_force_lsn(struct xfs_mount *mp,
+			     xfs_lsn_t		lsn,
+			     uint		flags,
+			     int		*log_forced);
+void	  xfs_log_force_lsn(struct xfs_mount	*mp,
+			    xfs_lsn_t		lsn,
+			    uint		flags);
 int	  xfs_log_mount(struct xfs_mount	*mp,
 			struct xfs_buftarg	*log_target,
 			xfs_daddr_t		start_block,
 			int		 	num_bblocks);
-int	  xfs_log_mount_finish(struct xfs_mount *mp, int);
+int	  xfs_log_mount_finish(struct xfs_mount *mp);
 void	  xfs_log_move_tail(struct xfs_mount	*mp,
 			    xfs_lsn_t		tail_lsn);
 int	  xfs_log_notify(struct xfs_mount	*mp,
@@ -175,13 +167,15 @@ int	  xfs_log_write(struct xfs_mount *mp,
 			int		 nentries,
 			xfs_log_ticket_t ticket,
 			xfs_lsn_t	 *start_lsn);
-int	  xfs_log_unmount(struct xfs_mount *mp);
 int	  xfs_log_unmount_write(struct xfs_mount *mp);
-void      xfs_log_unmount_dealloc(struct xfs_mount *mp);
+void      xfs_log_unmount(struct xfs_mount *mp);
 int	  xfs_log_force_umount(struct xfs_mount *mp, int logerror);
 int	  xfs_log_need_covered(struct xfs_mount *mp);
 
 void	  xlog_iodone(struct xfs_buf *);
+
+struct xlog_ticket * xfs_log_ticket_get(struct xlog_ticket *ticket);
+void	  xfs_log_ticket_put(struct xlog_ticket *ticket);
 
 #endif
 

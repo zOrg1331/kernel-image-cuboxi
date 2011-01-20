@@ -33,7 +33,6 @@
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <asm/byteorder.h>
-#include <asm/scatterlist.h>
 #include <linux/crypto.h>
 #include <linux/types.h>
 
@@ -461,10 +460,11 @@ static const u32 rc[] = {
 };
 
 static int anubis_setkey(struct crypto_tfm *tfm, const u8 *in_key,
-			 unsigned int key_len, u32 *flags)
+			 unsigned int key_len)
 {
 	struct anubis_ctx *ctx = crypto_tfm_ctx(tfm);
 	const __be32 *key = (const __be32 *)in_key;
+	u32 *flags = &tfm->crt_flags;
 	int N, R, i, r;
 	u32 kappa[ANUBIS_MAX_N];
 	u32 inter[ANUBIS_MAX_N];
@@ -687,7 +687,7 @@ static struct crypto_alg anubis_alg = {
 	.cia_decrypt		=	anubis_decrypt } }
 };
 
-static int __init init(void)
+static int __init anubis_mod_init(void)
 {
 	int ret = 0;
 	
@@ -695,13 +695,13 @@ static int __init init(void)
 	return ret;
 }
 
-static void __exit fini(void)
+static void __exit anubis_mod_fini(void)
 {
 	crypto_unregister_alg(&anubis_alg);
 }
 
-module_init(init);
-module_exit(fini);
+module_init(anubis_mod_init);
+module_exit(anubis_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Anubis Cryptographic Algorithm");

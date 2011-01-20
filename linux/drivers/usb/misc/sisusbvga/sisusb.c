@@ -32,16 +32,14 @@
  * * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
- * Author: 	Thomas Winischhofer <thomas@winischhofer.net>
+ * Author:	Thomas Winischhofer <thomas@winischhofer.net>
  *
  */
 
-#include <linux/config.h>
 #include <linux/mutex.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/signal.h>
-#include <linux/sched.h>
 #include <linux/errno.h>
 #include <linux/poll.h>
 #include <linux/init.h>
@@ -74,8 +72,6 @@ MODULE_PARM_DESC(last, "Number of last console to take over (1 - MAX_NR_CONSOLES
 
 static struct usb_driver sisusb_driver;
 
-DEFINE_MUTEX(disconnect_mutex);
-
 static void
 sisusb_free_buffers(struct sisusb_usb_data *sisusb)
 {
@@ -83,14 +79,12 @@ sisusb_free_buffers(struct sisusb_usb_data *sisusb)
 
 	for (i = 0; i < NUMOBUFS; i++) {
 		if (sisusb->obuf[i]) {
-			usb_buffer_free(sisusb->sisusb_dev, sisusb->obufsize,
-				sisusb->obuf[i], sisusb->transfer_dma_out[i]);
+			kfree(sisusb->obuf[i]);
 			sisusb->obuf[i] = NULL;
 		}
 	}
 	if (sisusb->ibuf) {
-		usb_buffer_free(sisusb->sisusb_dev, sisusb->ibufsize,
-			sisusb->ibuf, sisusb->transfer_dma_in);
+		kfree(sisusb->ibuf);
 		sisusb->ibuf = NULL;
 	}
 }
@@ -210,7 +204,7 @@ sisusb_free_outbuf(struct sisusb_usb_data *sisusb, int index)
 /* completion callback */
 
 static void
-sisusb_bulk_completeout(struct urb *urb, struct pt_regs *regs)
+sisusb_bulk_completeout(struct urb *urb)
 {
 	struct sisusb_urb_context *context = urb->context;
 	struct sisusb_usb_data *sisusb;
@@ -234,8 +228,7 @@ sisusb_bulk_completeout(struct urb *urb, struct pt_regs *regs)
 
 static int
 sisusb_bulkout_msg(struct sisusb_usb_data *sisusb, int index, unsigned int pipe, void *data,
-		int len, int *actual_length, int timeout, unsigned int tflags,
-		dma_addr_t transfer_dma)
+		int len, int *actual_length, int timeout, unsigned int tflags)
 {
 	struct urb *urb = sisusb->sisurbout[index];
 	int retval, byteswritten = 0;
@@ -248,9 +241,6 @@ sisusb_bulkout_msg(struct sisusb_usb_data *sisusb, int index, unsigned int pipe,
 
 	urb->transfer_flags |= tflags;
 	urb->actual_length = 0;
-
-	if ((urb->transfer_dma = transfer_dma))
-		urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
 	/* Set up context */
 	sisusb->urbout_context[index].actual_length = (timeout) ?
@@ -289,7 +279,7 @@ sisusb_bulkout_msg(struct sisusb_usb_data *sisusb, int index, unsigned int pipe,
 /* completion callback */
 
 static void
-sisusb_bulk_completein(struct urb *urb, struct pt_regs *regs)
+sisusb_bulk_completein(struct urb *urb)
 {
 	struct sisusb_usb_data *sisusb = urb->context;
 
@@ -301,8 +291,8 @@ sisusb_bulk_completein(struct urb *urb, struct pt_regs *regs)
 }
 
 static int
-sisusb_bulkin_msg(struct sisusb_usb_data *sisusb, unsigned int pipe, void *data, int len,
-		int *actual_length, int timeout, unsigned int tflags, dma_addr_t transfer_dma)
+sisusb_bulkin_msg(struct sisusb_usb_data *sisusb, unsigned int pipe, void *data,
+	int len, int *actual_length, int timeout, unsigned int tflags)
 {
 	struct urb *urb = sisusb->sisurbin;
 	int retval, readbytes = 0;
@@ -315,9 +305,6 @@ sisusb_bulkin_msg(struct sisusb_usb_data *sisusb, unsigned int pipe, void *data,
 	urb->transfer_flags |= tflags;
 	urb->actual_length = 0;
 
-	if ((urb->transfer_dma = transfer_dma))
-		urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
-
 	sisusb->completein = 0;
 	retval = usb_submit_urb(urb, GFP_ATOMIC);
 	if (retval == 0) {
@@ -327,7 +314,7 @@ sisusb_bulkin_msg(struct sisusb_usb_data *sisusb, unsigned int pipe, void *data,
 			usb_kill_urb(urb);
 			retval = -ETIMEDOUT;
 		} else {
-			/* URB completed within timout */
+			/* URB completed within timeout */
 			retval = urb->status;
 			readbytes = urb->actual_length;
 		}
@@ -426,8 +413,7 @@ static int sisusb_send_bulk_msg(struct sisusb_usb_data *sisusb, int ep, int len,
 						thispass,
 						&transferred_len,
 						async ? 0 : 5 * HZ,
-						tflags,
-						sisusb->transfer_dma_out[index]);
+						tflags);
 
 			if (result == -ETIMEDOUT) {
 
@@ -436,29 +422,16 @@ static int sisusb_send_bulk_msg(struct sisusb_usb_data *sisusb, int ep, int len,
 					return -ETIME;
 
 				continue;
+			}
 
-			} else if ((result == 0) && !async && transferred_len) {
+			if ((result == 0) && !async && transferred_len) {
 
 				thispass -= transferred_len;
-				if (thispass) {
-					if (sisusb->transfer_dma_out) {
-						/* If DMA, copy remaining
-						 * to beginning of buffer
-						 */
-						memcpy(buffer,
-						       buffer + transferred_len,
-						       thispass);
-					} else {
-						/* If not DMA, simply increase
-						 * the pointer
-						 */
-						buffer += transferred_len;
-					}
-				}
+				buffer += transferred_len;
 
 			} else
 				break;
-		};
+		}
 
 		if (result)
 			return result;
@@ -534,8 +507,7 @@ static int sisusb_recv_bulk_msg(struct sisusb_usb_data *sisusb, int ep, int len,
 					   thispass,
 					   &transferred_len,
 					   5 * HZ,
-					   tflags,
-					   sisusb->transfer_dma_in);
+					   tflags);
 
 		if (transferred_len)
 			thispass = transferred_len;
@@ -966,12 +938,12 @@ static int sisusb_write_mem_bulk(struct sisusb_usb_data *sisusb, u32 addr,
 			   packet.address = 0x00000194;
 			   packet.data    = addr;
 			   ret = sisusb_send_bridge_packet(sisusb, 10,
-			   					&packet, 0);
+								&packet, 0);
 			   packet.header  = 0x001f;
 			   packet.address = 0x00000190;
 			   packet.data    = (length & ~3);
 			   ret |= sisusb_send_bridge_packet(sisusb, 10,
-			   					&packet, 0);
+								&packet, 0);
 			   if (sisusb->flagb0 != 0x16) {
 				packet.header  = 0x001f;
 				packet.address = 0x00000180;
@@ -1007,23 +979,17 @@ static int sisusb_write_mem_bulk(struct sisusb_usb_data *sisusb, u32 addr,
 			if (ret) {
 				msgcount++;
 				if (msgcount < 500)
-					printk(KERN_ERR
-						"sisusbvga[%d]: Wrote %zd of "
-						"%d bytes, error %d\n",
-						sisusb->minor, *bytes_written,
-						length, ret);
+					dev_err(&sisusb->sisusb_dev->dev, "Wrote %zd of %d bytes, error %d\n",
+						*bytes_written, length, ret);
 				else if (msgcount == 500)
-					printk(KERN_ERR
-						"sisusbvga[%d]: Too many errors"
-						", logging stopped\n",
-						sisusb->minor);
+					dev_err(&sisusb->sisusb_dev->dev, "Too many errors, logging stopped\n");
 			}
 			addr += (*bytes_written);
 			length -= (*bytes_written);
 	    }
 
 	    if (ret)
-	    	break;
+		break;
 
 	}
 
@@ -1265,51 +1231,10 @@ static int sisusb_read_mem_bulk(struct sisusb_usb_data *sisusb, u32 addr,
 				addr += 4;
 				length -= 4;
 			}
-#if 0		/* That does not work, as EP 2 is an OUT EP! */
-		default:
-			CLEARPACKET(&packet);
-			packet.header  = 0x001f;
-			packet.address = 0x000001a0;
-			packet.data    = 0x00000006;
-			ret |= sisusb_send_bridge_packet(sisusb, 10,
-								&packet, 0);
-			packet.header  = 0x001f;
-			packet.address = 0x000001b0;
-			packet.data    = (length & ~3) | 0x40000000;
-			ret |= sisusb_send_bridge_packet(sisusb, 10,
-								&packet, 0);
-			packet.header  = 0x001f;
-			packet.address = 0x000001b4;
-			packet.data    = addr;
-			ret |= sisusb_send_bridge_packet(sisusb, 10,
-								&packet, 0);
-			packet.header  = 0x001f;
-			packet.address = 0x000001a4;
-			packet.data    = 0x00000001;
-			ret |= sisusb_send_bridge_packet(sisusb, 10,
-								&packet, 0);
-			if (userbuffer) {
-				ret |= sisusb_recv_bulk_msg(sisusb,
-							SISUSB_EP_GFX_BULK_IN,
-							(length & ~3),
-							NULL, userbuffer,
-							bytes_read, 0);
-				if (!ret) userbuffer += (*bytes_read);
-			} else {
-				ret |= sisusb_recv_bulk_msg(sisusb,
-							SISUSB_EP_GFX_BULK_IN,
-							(length & ~3),
-							kernbuffer, NULL,
-							bytes_read, 0);
-				if (!ret) kernbuffer += (*bytes_read);
-			}
-			addr += (*bytes_read);
-			length -= (*bytes_read);
-#endif
 	    }
 
 	    if (ret)
-	    	break;
+		break;
 	}
 
 	return ret;
@@ -1405,22 +1330,6 @@ sisusb_readb(struct sisusb_usb_data *sisusb, u32 adr, u8 *data)
 	return(sisusb_read_memio_byte(sisusb, SISUSB_TYPE_MEM, adr, data));
 }
 
-#if 0
-
-int
-sisusb_writew(struct sisusb_usb_data *sisusb, u32 adr, u16 data)
-{
-	return(sisusb_write_memio_word(sisusb, SISUSB_TYPE_MEM, adr, data));
-}
-
-int
-sisusb_readw(struct sisusb_usb_data *sisusb, u32 adr, u16 *data)
-{
-	return(sisusb_read_memio_word(sisusb, SISUSB_TYPE_MEM, adr, data));
-}
-
-#endif  /*  0  */
-
 int
 sisusb_copy_memory(struct sisusb_usb_data *sisusb, char *src,
 			u32 dest, int length, size_t *bytes_written)
@@ -1450,10 +1359,10 @@ sisusb_testreadwrite(struct sisusb_usb_data *sisusb)
     sisusb_copy_memory(sisusb, srcbuffer, sisusb->vrambase, 7, &dummy);
 
     for(i = 1; i <= 7; i++) {
-        printk(KERN_DEBUG "sisusb: rwtest %d bytes\n", i);
+        dev_dbg(&sisusb->sisusb_dev->dev, "sisusb: rwtest %d bytes\n", i);
 	sisusb_read_memory(sisusb, destbuffer, sisusb->vrambase, i, &dummy);
 	for(j = 0; j < i; j++) {
-	     printk(KERN_DEBUG "sisusb: rwtest read[%d] = %x\n", j, destbuffer[j]);
+	     dev_dbg(&sisusb->sisusb_dev->dev, "rwtest read[%d] = %x\n", j, destbuffer[j]);
 	}
     }
 }
@@ -1537,9 +1446,9 @@ sisusb_clear_vram(struct sisusb_usb_data *sisusb, u32 address, int length)
 #define SETIREGAND(r,i,a)	sisusb_setidxregand(sisusb, r, i, a)
 #define SETIREGANDOR(r,i,a,o)	sisusb_setidxregandor(sisusb, r, i, a, o)
 #define READL(a,d)	sisusb_read_memio_long(sisusb, SISUSB_TYPE_MEM, a, d)
-#define WRITEL(a,d) 	sisusb_write_memio_long(sisusb, SISUSB_TYPE_MEM, a, d)
+#define WRITEL(a,d)	sisusb_write_memio_long(sisusb, SISUSB_TYPE_MEM, a, d)
 #define READB(a,d)	sisusb_read_memio_byte(sisusb, SISUSB_TYPE_MEM, a, d)
-#define WRITEB(a,d) 	sisusb_write_memio_byte(sisusb, SISUSB_TYPE_MEM, a, d)
+#define WRITEB(a,d)	sisusb_write_memio_byte(sisusb, SISUSB_TYPE_MEM, a, d)
 
 static int
 sisusb_triggersr16(struct sisusb_usb_data *sisusb, u8 ramtype)
@@ -2012,7 +1921,7 @@ sisusb_set_default_mode(struct sisusb_usb_data *sisusb, int touchengines)
 		SETIREG(SISSR, 0x26, 0x00);
 	}
 
-	SETIREG(SISCR, 0x34, 0x44);  	/* we just set std mode #44 */
+	SETIREG(SISCR, 0x34, 0x44);	/* we just set std mode #44 */
 
 	return ret;
 }
@@ -2172,17 +2081,12 @@ sisusb_init_gfxcore(struct sisusb_usb_data *sisusb)
 		if (ramtype <= 1) {
 			ret |= sisusb_get_sdram_size(sisusb, &iret, bw, chab);
 			if (iret) {
-				printk(KERN_ERR "sisusbvga[%d]: RAM size "
-					"detection failed, "
-					"assuming 8MB video RAM\n",
-					sisusb->minor);
+				dev_err(&sisusb->sisusb_dev->dev,"RAM size detection failed, assuming 8MB video RAM\n");
 				ret |= SETIREG(SISSR,0x14,0x31);
 				/* TODO */
 			}
 		} else {
-			printk(KERN_ERR "sisusbvga[%d]: DDR RAM device found, "
-					"assuming 8MB video RAM\n",
-					sisusb->minor);
+			dev_err(&sisusb->sisusb_dev->dev, "DDR RAM device found, assuming 8MB video RAM\n");
 			ret |= SETIREG(SISSR,0x14,0x31);
 			/* *** TODO *** */
 		}
@@ -2253,8 +2157,7 @@ sisusb_get_ramconfig(struct sisusb_usb_data *sisusb)
 		break;
 	}
 
-	printk(KERN_INFO "sisusbvga[%d]: %dMB %s %s, bus width %d\n",
-			sisusb->minor, (sisusb->vramsize >> 20), ramtypetext1,
+	dev_info(&sisusb->sisusb_dev->dev, "%dMB %s %s, bus width %d\n", (sisusb->vramsize >> 20), ramtypetext1,
 			ramtypetext2[ramtype], bw);
 }
 
@@ -2513,31 +2416,21 @@ sisusb_open(struct inode *inode, struct file *file)
 	struct usb_interface *interface;
 	int subminor = iminor(inode);
 
-	mutex_lock(&disconnect_mutex);
-
-	if (!(interface = usb_find_interface(&sisusb_driver, subminor))) {
-		printk(KERN_ERR "sisusb[%d]: Failed to find interface\n",
-				subminor);
-		mutex_unlock(&disconnect_mutex);
+	if (!(interface = usb_find_interface(&sisusb_driver, subminor)))
 		return -ENODEV;
-	}
 
-	if (!(sisusb = usb_get_intfdata(interface))) {
-		mutex_unlock(&disconnect_mutex);
+	if (!(sisusb = usb_get_intfdata(interface)))
 		return -ENODEV;
-	}
 
 	mutex_lock(&sisusb->lock);
 
 	if (!sisusb->present || !sisusb->ready) {
 		mutex_unlock(&sisusb->lock);
-		mutex_unlock(&disconnect_mutex);
 		return -ENODEV;
 	}
 
 	if (sisusb->isopen) {
 		mutex_unlock(&sisusb->lock);
-		mutex_unlock(&disconnect_mutex);
 		return -EBUSY;
 	}
 
@@ -2545,20 +2438,12 @@ sisusb_open(struct inode *inode, struct file *file)
 		if (sisusb->sisusb_dev->speed == USB_SPEED_HIGH) {
 			if (sisusb_init_gfxdevice(sisusb, 0)) {
 				mutex_unlock(&sisusb->lock);
-				mutex_unlock(&disconnect_mutex);
-				printk(KERN_ERR
-					"sisusbvga[%d]: Failed to initialize "
-					"device\n",
-					sisusb->minor);
+				dev_err(&sisusb->sisusb_dev->dev, "Failed to initialize device\n");
 				return -EIO;
 			}
 		} else {
 			mutex_unlock(&sisusb->lock);
-			mutex_unlock(&disconnect_mutex);
-			printk(KERN_ERR
-				"sisusbvga[%d]: Device not attached to "
-				"USB 2.0 hub\n",
-				sisusb->minor);
+			dev_err(&sisusb->sisusb_dev->dev, "Device not attached to USB 2.0 hub\n");
 			return -EIO;
 		}
 	}
@@ -2571,8 +2456,6 @@ sisusb_open(struct inode *inode, struct file *file)
 	file->private_data = sisusb;
 
 	mutex_unlock(&sisusb->lock);
-
-	mutex_unlock(&disconnect_mutex);
 
 	return 0;
 }
@@ -2601,14 +2484,9 @@ static int
 sisusb_release(struct inode *inode, struct file *file)
 {
 	struct sisusb_usb_data *sisusb;
-	int myminor;
 
-	mutex_lock(&disconnect_mutex);
-
-	if (!(sisusb = (struct sisusb_usb_data *)file->private_data)) {
-		mutex_unlock(&disconnect_mutex);
+	if (!(sisusb = (struct sisusb_usb_data *)file->private_data))
 		return -ENODEV;
-	}
 
 	mutex_lock(&sisusb->lock);
 
@@ -2618,8 +2496,6 @@ sisusb_release(struct inode *inode, struct file *file)
 			sisusb_kill_all_busy(sisusb);
 	}
 
-	myminor = sisusb->minor;
-
 	sisusb->isopen = 0;
 	file->private_data = NULL;
 
@@ -2627,8 +2503,6 @@ sisusb_release(struct inode *inode, struct file *file)
 
 	/* decrement the usage count on our device */
 	kref_put(&sisusb->kref, sisusb_delete);
-
-	mutex_unlock(&disconnect_mutex);
 
 	return 0;
 }
@@ -2963,7 +2837,7 @@ static int
 sisusb_handle_command(struct sisusb_usb_data *sisusb, struct sisusb_command *y,
 							unsigned long arg)
 {
-	int 	retval, port, length;
+	int	retval, port, length;
 	u32	address;
 
 	/* All our commands require the device
@@ -3084,19 +2958,19 @@ sisusb_handle_command(struct sisusb_usb_data *sisusb, struct sisusb_command *y,
 	return retval;
 }
 
-static int
-sisusb_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
-	     						unsigned long arg)
+static long
+sisusb_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct sisusb_usb_data *sisusb;
 	struct sisusb_info x;
 	struct sisusb_command y;
-	int 	retval = 0;
+	int	retval = 0;
 	u32 __user *argp = (u32 __user *)arg;
 
 	if (!(sisusb = (struct sisusb_usb_data *)file->private_data))
 		return -ENODEV;
 
+	lock_kernel();
 	mutex_lock(&sisusb->lock);
 
 	/* Sanity check */
@@ -3116,7 +2990,7 @@ sisusb_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 
 		case SISUSB_GET_CONFIG:
 
-			x.sisusb_id   	    = SISUSB_ID;
+			x.sisusb_id	    = SISUSB_ID;
 			x.sisusb_version    = SISUSB_VERSION;
 			x.sisusb_revision   = SISUSB_REVISION;
 			x.sisusb_patchlevel = SISUSB_PATCHLEVEL;
@@ -3155,6 +3029,7 @@ sisusb_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 
 err_out:
 	mutex_unlock(&sisusb->lock);
+	unlock_kernel();
 	return retval;
 }
 
@@ -3168,9 +3043,7 @@ sisusb_compat_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 		case SISUSB_GET_CONFIG_SIZE:
 		case SISUSB_GET_CONFIG:
 		case SISUSB_COMMAND:
-			lock_kernel();
-			retval = sisusb_ioctl(f->f_dentry->d_inode, f, cmd, arg);
-			unlock_kernel();
+			retval = sisusb_ioctl(f, cmd, arg);
 			return retval;
 
 		default:
@@ -3179,17 +3052,17 @@ sisusb_compat_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 }
 #endif
 
-static struct file_operations usb_sisusb_fops = {
+static const struct file_operations usb_sisusb_fops = {
 	.owner =	THIS_MODULE,
 	.open =		sisusb_open,
 	.release =	sisusb_release,
 	.read =		sisusb_read,
 	.write =	sisusb_write,
-	.llseek = 	sisusb_lseek,
+	.llseek =	sisusb_lseek,
 #ifdef SISUSB_NEW_CONFIG_COMPAT
 	.compat_ioctl = sisusb_compat_ioctl,
 #endif
-	.ioctl =	sisusb_ioctl
+	.unlocked_ioctl = sisusb_ioctl
 };
 
 static struct usb_class_driver usb_sisusb_class = {
@@ -3204,17 +3077,13 @@ static int sisusb_probe(struct usb_interface *intf,
 	struct usb_device *dev = interface_to_usbdev(intf);
 	struct sisusb_usb_data *sisusb;
 	int retval = 0, i;
-	const char *memfail =
-		KERN_ERR
-		"sisusbvga[%d]: Failed to allocate memory for %s buffer\n";
 
-	printk(KERN_INFO "sisusb: USB2VGA dongle found at address %d\n",
+	dev_info(&dev->dev, "USB2VGA dongle found at address %d\n",
 		dev->devnum);
 
 	/* Allocate memory for our private */
 	if (!(sisusb = kzalloc(sizeof(*sisusb), GFP_KERNEL))) {
-		printk(KERN_ERR
-			"sisusb: Failed to allocate memory for private data\n");
+		dev_err(&sisusb->sisusb_dev->dev, "Failed to allocate memory for private data\n");
 		return -ENOMEM;
 	}
 	kref_init(&sisusb->kref);
@@ -3223,8 +3092,7 @@ static int sisusb_probe(struct usb_interface *intf,
 
 	/* Register device */
 	if ((retval = usb_register_dev(intf, &usb_sisusb_class))) {
-		printk(KERN_ERR
-			"sisusb: Failed to get a minor for device %d\n",
+		dev_err(&sisusb->sisusb_dev->dev, "Failed to get a minor for device %d\n",
 			dev->devnum);
 		retval = -ENODEV;
 		goto error_1;
@@ -3240,9 +3108,8 @@ static int sisusb_probe(struct usb_interface *intf,
 
 	/* Allocate buffers */
 	sisusb->ibufsize = SISUSB_IBUF_SIZE;
-	if (!(sisusb->ibuf = usb_buffer_alloc(dev, SISUSB_IBUF_SIZE,
-					GFP_KERNEL, &sisusb->transfer_dma_in))) {
-		printk(memfail, "input", sisusb->minor);
+	if (!(sisusb->ibuf = kmalloc(SISUSB_IBUF_SIZE, GFP_KERNEL))) {
+		dev_err(&sisusb->sisusb_dev->dev, "Failed to allocate memory for input buffer");
 		retval = -ENOMEM;
 		goto error_2;
 	}
@@ -3250,11 +3117,9 @@ static int sisusb_probe(struct usb_interface *intf,
 	sisusb->numobufs = 0;
 	sisusb->obufsize = SISUSB_OBUF_SIZE;
 	for (i = 0; i < NUMOBUFS; i++) {
-		if (!(sisusb->obuf[i] = usb_buffer_alloc(dev, SISUSB_OBUF_SIZE,
-					GFP_KERNEL,
-					&sisusb->transfer_dma_out[i]))) {
+		if (!(sisusb->obuf[i] = kmalloc(SISUSB_OBUF_SIZE, GFP_KERNEL))) {
 			if (i == 0) {
-				printk(memfail, "output", sisusb->minor);
+				dev_err(&sisusb->sisusb_dev->dev, "Failed to allocate memory for output buffer\n");
 				retval = -ENOMEM;
 				goto error_3;
 			}
@@ -3266,9 +3131,7 @@ static int sisusb_probe(struct usb_interface *intf,
 
 	/* Allocate URBs */
 	if (!(sisusb->sisurbin = usb_alloc_urb(0, GFP_KERNEL))) {
-		printk(KERN_ERR
-			"sisusbvga[%d]: Failed to allocate URBs\n",
-			sisusb->minor);
+		dev_err(&sisusb->sisusb_dev->dev, "Failed to allocate URBs\n");
 		retval = -ENOMEM;
 		goto error_3;
 	}
@@ -3276,9 +3139,7 @@ static int sisusb_probe(struct usb_interface *intf,
 
 	for (i = 0; i < sisusb->numobufs; i++) {
 		if (!(sisusb->sisurbout[i] = usb_alloc_urb(0, GFP_KERNEL))) {
-			printk(KERN_ERR
-				"sisusbvga[%d]: Failed to allocate URBs\n",
-				sisusb->minor);
+			dev_err(&sisusb->sisusb_dev->dev, "Failed to allocate URBs\n");
 			retval = -ENOMEM;
 			goto error_4;
 		}
@@ -3287,15 +3148,12 @@ static int sisusb_probe(struct usb_interface *intf,
 		sisusb->urbstatus[i] = 0;
 	}
 
-	printk(KERN_INFO "sisusbvga[%d]: Allocated %d output buffers\n",
-					sisusb->minor, sisusb->numobufs);
+	dev_info(&sisusb->sisusb_dev->dev, "Allocated %d output buffers\n", sisusb->numobufs);
 
 #ifdef INCL_SISUSB_CON
 	/* Allocate our SiS_Pr */
 	if (!(sisusb->SiS_Pr = kmalloc(sizeof(struct SiS_Private), GFP_KERNEL))) {
-		printk(KERN_ERR
-			"sisusbvga[%d]: Failed to allocate SiS_Pr\n",
-			sisusb->minor);
+		dev_err(&sisusb->sisusb_dev->dev, "Failed to allocate SiS_Pr\n");
 	}
 #endif
 
@@ -3309,23 +3167,6 @@ static int sisusb_probe(struct usb_interface *intf,
 
 	sisusb->present = 1;
 
-#ifdef SISUSB_OLD_CONFIG_COMPAT
-	{
-	int ret;
-	/* Our ioctls are all "32/64bit compatible" */
-	ret =  register_ioctl32_conversion(SISUSB_GET_CONFIG_SIZE, NULL);
-	ret |= register_ioctl32_conversion(SISUSB_GET_CONFIG,      NULL);
-	ret |= register_ioctl32_conversion(SISUSB_COMMAND,         NULL);
-	if (ret)
-		printk(KERN_ERR
-			"sisusbvga[%d]: Error registering ioctl32 "
-			"translations\n",
-			sisusb->minor);
-	else
-		sisusb->ioctl32registered = 1;
-	}
-#endif
-
 	if (dev->speed == USB_SPEED_HIGH) {
 		int initscreen = 1;
 #ifdef INCL_SISUSB_CON
@@ -3336,23 +3177,17 @@ static int sisusb_probe(struct usb_interface *intf,
 			initscreen = 0;
 #endif
 		if (sisusb_init_gfxdevice(sisusb, initscreen))
-			printk(KERN_ERR
-				"sisusbvga[%d]: Failed to early "
-				"initialize device\n",
-				sisusb->minor);
+			dev_err(&sisusb->sisusb_dev->dev, "Failed to early initialize device\n");
 
 	} else
-		printk(KERN_INFO
-			"sisusbvga[%d]: Not attached to USB 2.0 hub, "
-			"deferring init\n",
-			sisusb->minor);
+		dev_info(&sisusb->sisusb_dev->dev, "Not attached to USB 2.0 hub, deferring init\n");
 
 	sisusb->ready = 1;
 
 #ifdef SISUSBENDIANTEST
-	printk(KERN_DEBUG "sisusb: *** RWTEST ***\n");
+	dev_dbg(&sisusb->sisusb_dev->dev, "*** RWTEST ***\n");
 	sisusb_testreadwrite(sisusb);
-	printk(KERN_DEBUG "sisusb: *** RWTEST END ***\n");
+	dev_dbg(&sisusb->sisusb_dev->dev, "*** RWTEST END ***\n");
 #endif
 
 #ifdef INCL_SISUSB_CON
@@ -3375,7 +3210,6 @@ error_1:
 static void sisusb_disconnect(struct usb_interface *intf)
 {
 	struct sisusb_usb_data *sisusb;
-	int minor;
 
 	/* This should *not* happen */
 	if (!(sisusb = usb_get_intfdata(intf)))
@@ -3385,12 +3219,7 @@ static void sisusb_disconnect(struct usb_interface *intf)
 	sisusb_console_exit(sisusb);
 #endif
 
-	/* The above code doesn't need the disconnect
-	 * semaphore to be down; its meaning is to
-	 * protect all other routines from the disconnect
-	 * case, not the other way round.
-	 */
-	mutex_lock(&disconnect_mutex);
+	usb_deregister_dev(intf, &usb_sisusb_class);
 
 	mutex_lock(&sisusb->lock);
 
@@ -3398,27 +3227,7 @@ static void sisusb_disconnect(struct usb_interface *intf)
 	if (!sisusb_wait_all_out_complete(sisusb))
 		sisusb_kill_all_busy(sisusb);
 
-	minor = sisusb->minor;
-
 	usb_set_intfdata(intf, NULL);
-
-	usb_deregister_dev(intf, &usb_sisusb_class);
-
-#ifdef SISUSB_OLD_CONFIG_COMPAT
-	if (sisusb->ioctl32registered) {
-		int ret;
-		sisusb->ioctl32registered = 0;
-		ret =  unregister_ioctl32_conversion(SISUSB_GET_CONFIG_SIZE);
-		ret |= unregister_ioctl32_conversion(SISUSB_GET_CONFIG);
-		ret |= unregister_ioctl32_conversion(SISUSB_COMMAND);
-		if (ret) {
-			printk(KERN_ERR
-				"sisusbvga[%d]: Error unregistering "
-				"ioctl32 translations\n",
-				minor);
-		}
-	}
-#endif
 
 	sisusb->present = 0;
 	sisusb->ready = 0;
@@ -3427,16 +3236,16 @@ static void sisusb_disconnect(struct usb_interface *intf)
 
 	/* decrement our usage count */
 	kref_put(&sisusb->kref, sisusb_delete);
-
-	mutex_unlock(&disconnect_mutex);
-
-	printk(KERN_INFO "sisusbvga[%d]: Disconnected\n", minor);
 }
 
 static struct usb_device_id sisusb_table [] = {
+	{ USB_DEVICE(0x0711, 0x0550) },
 	{ USB_DEVICE(0x0711, 0x0900) },
 	{ USB_DEVICE(0x0711, 0x0901) },
 	{ USB_DEVICE(0x0711, 0x0902) },
+	{ USB_DEVICE(0x0711, 0x0903) },
+	{ USB_DEVICE(0x0711, 0x0918) },
+	{ USB_DEVICE(0x0711, 0x0920) },
 	{ USB_DEVICE(0x182d, 0x021c) },
 	{ USB_DEVICE(0x182d, 0x0269) },
 	{ }
@@ -3453,22 +3262,12 @@ static struct usb_driver sisusb_driver = {
 
 static int __init usb_sisusb_init(void)
 {
-	int retval;
 
 #ifdef INCL_SISUSB_CON
 	sisusb_init_concode();
 #endif
 
-	if (!(retval = usb_register(&sisusb_driver))) {
-
-		printk(KERN_INFO "sisusb: Driver version %d.%d.%d\n",
-			SISUSB_VERSION, SISUSB_REVISION, SISUSB_PATCHLEVEL);
-		printk(KERN_INFO
-			"sisusb: Copyright (C) 2005 Thomas Winischhofer\n");
-
-	}
-
-	return retval;
+	return usb_register(&sisusb_driver);
 }
 
 static void __exit usb_sisusb_exit(void)

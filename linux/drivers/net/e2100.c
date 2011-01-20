@@ -107,10 +107,10 @@ static void e21_block_output(struct net_device *dev, int count,
 							 const unsigned char *buf, int start_page);
 static void e21_get_8390_hdr(struct net_device *dev, struct e8390_pkt_hdr *hdr,
 							int ring_page);
-
+static int e21_open(struct net_device *dev);
 static int e21_close(struct net_device *dev);
 
-
+
 /*  Probe for the E2100 series ethercards.  These cards have an 8390 at the
 	base address and the station address at both offset 0x10 and 0x18.  I read
 	the station address from offset 0x18 to avoid the dataport of NE2000
@@ -123,8 +123,6 @@ static int  __init do_e2100_probe(struct net_device *dev)
 	int *port;
 	int base_addr = dev->base_addr;
 	int irq = dev->irq;
-
-	SET_MODULE_OWNER(dev);
 
 	if (base_addr > 0x1ff)		/* Check a single specified location. */
 		return e21_probe1(dev, base_addr);
@@ -161,6 +159,22 @@ out:
 	return ERR_PTR(err);
 }
 #endif
+
+static const struct net_device_ops e21_netdev_ops = {
+	.ndo_open		= e21_open,
+	.ndo_stop		= e21_close,
+
+	.ndo_start_xmit		= ei_start_xmit,
+	.ndo_tx_timeout		= ei_tx_timeout,
+	.ndo_get_stats		= ei_get_stats,
+	.ndo_set_multicast_list = ei_set_multicast_list,
+	.ndo_validate_addr	= eth_validate_addr,
+	.ndo_set_mac_address 	= eth_mac_addr,
+	.ndo_change_mtu		= eth_change_mtu,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller 	= ei_poll,
+#endif
+};
 
 static int __init e21_probe1(struct net_device *dev, int ioaddr)
 {
@@ -202,13 +216,13 @@ static int __init e21_probe1(struct net_device *dev, int ioaddr)
 		printk(" %02X", station_addr[i]);
 
 	if (dev->irq < 2) {
-		int irqlist[] = {15,11,10,12,5,9,3,4}, i;
-		for (i = 0; i < 8; i++)
+		int irqlist[] = {15, 11, 10, 12, 5, 9, 3, 4};
+		for (i = 0; i < ARRAY_SIZE(irqlist); i++)
 			if (request_irq (irqlist[i], NULL, 0, "bogus", NULL) != -EBUSY) {
 				dev->irq = irqlist[i];
 				break;
 			}
-		if (i >= 8) {
+		if (i >= ARRAY_SIZE(irqlist)) {
 			printk(" unable to get IRQ %d.\n", dev->irq);
 			retval = -EAGAIN;
 			goto out;
@@ -267,11 +281,8 @@ static int __init e21_probe1(struct net_device *dev, int ioaddr)
 	ei_status.block_input = &e21_block_input;
 	ei_status.block_output = &e21_block_output;
 	ei_status.get_8390_hdr = &e21_get_8390_hdr;
-	dev->open = &e21_open;
-	dev->stop = &e21_close;
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	dev->poll_controller = ei_poll;
-#endif
+
+	dev->netdev_ops = &e21_netdev_ops;
 	NS8390_init(dev, 0);
 
 	retval = register_netdev(dev);
@@ -355,8 +366,7 @@ e21_block_input(struct net_device *dev, int count, struct sk_buff *skb, int ring
 
 	mem_on(ioaddr, shared_mem, (ring_offset>>8));
 
-	/* Packet is always in one chunk -- we can copy + cksum. */
-	eth_io_copy_and_sum(skb, ei_status.mem + (ring_offset & 0xff), count, 0);
+	memcpy_fromio(skb->data, ei_status.mem + (ring_offset & 0xff), count);
 
 	mem_off(ioaddr);
 }
@@ -403,7 +413,7 @@ e21_close(struct net_device *dev)
 	return 0;
 }
 
-
+
 #ifdef MODULE
 #define MAX_E21_CARDS	4	/* Max number of E21 cards per module */
 static struct net_device *dev_e21[MAX_E21_CARDS];
@@ -463,7 +473,7 @@ static void cleanup_card(struct net_device *dev)
 	release_region(dev->base_addr, E21_IO_EXTENT);
 }
 
-void
+void __exit
 cleanup_module(void)
 {
 	int this_dev;

@@ -65,18 +65,19 @@ static int fwh_xxlock_oneblock(struct map_info *map, struct flchip *chip,
 		return ret;
 	}
 
+	chip->oldstate = chip->state;
 	chip->state = xxlt->state;
 	map_write(map, CMD(xxlt->val), adr);
 
 	/* Done and happy. */
-	chip->state = FL_READY;
+	chip->state = chip->oldstate;
 	put_chip(map, chip, adr);
 	spin_unlock(chip->mutex);
 	return 0;
 }
 
 
-static int fwh_lock_varsize(struct mtd_info *mtd, loff_t ofs, size_t len)
+static int fwh_lock_varsize(struct mtd_info *mtd, loff_t ofs, uint64_t len)
 {
 	int ret;
 
@@ -87,7 +88,7 @@ static int fwh_lock_varsize(struct mtd_info *mtd, loff_t ofs, size_t len)
 }
 
 
-static int fwh_unlock_varsize(struct mtd_info *mtd, loff_t ofs, size_t len)
+static int fwh_unlock_varsize(struct mtd_info *mtd, loff_t ofs, uint64_t len)
 {
 	int ret;
 

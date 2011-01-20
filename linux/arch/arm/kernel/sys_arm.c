@@ -25,62 +25,8 @@
 #include <linux/mman.h>
 #include <linux/fs.h>
 #include <linux/file.h>
-#include <linux/utsname.h>
-
-#include <asm/uaccess.h>
-#include <asm/ipc.h>
-
-extern unsigned long do_mremap(unsigned long addr, unsigned long old_len,
-			       unsigned long new_len, unsigned long flags,
-			       unsigned long new_addr);
-
-/*
- * sys_pipe() is the normal C calling standard for creating
- * a pipe. It's not the way unix traditionally does this, though.
- */
-asmlinkage int sys_pipe(unsigned long __user *fildes)
-{
-	int fd[2];
-	int error;
-
-	error = do_pipe(fd);
-	if (!error) {
-		if (copy_to_user(fildes, fd, 2*sizeof(int)))
-			error = -EFAULT;
-	}
-	return error;
-}
-
-/* common code for old and new mmaps */
-inline long do_mmap2(
-	unsigned long addr, unsigned long len,
-	unsigned long prot, unsigned long flags,
-	unsigned long fd, unsigned long pgoff)
-{
-	int error = -EINVAL;
-	struct file * file = NULL;
-
-	flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
-
-	if (flags & MAP_FIXED && addr < FIRST_USER_ADDRESS)
-		goto out;
-
-	error = -EBADF;
-	if (!(flags & MAP_ANONYMOUS)) {
-		file = fget(fd);
-		if (!file)
-			goto out;
-	}
-
-	down_write(&current->mm->mmap_sem);
-	error = do_mmap_pgoff(file, addr, len, prot, flags, pgoff);
-	up_write(&current->mm->mmap_sem);
-
-	if (file)
-		fput(file);
-out:
-	return error;
-}
+#include <linux/ipc.h>
+#include <linux/uaccess.h>
 
 struct mmap_arg_struct {
 	unsigned long addr;
@@ -103,27 +49,9 @@ asmlinkage int old_mmap(struct mmap_arg_struct __user *arg)
 	if (a.offset & ~PAGE_MASK)
 		goto out;
 
-	error = do_mmap2(a.addr, a.len, a.prot, a.flags, a.fd, a.offset >> PAGE_SHIFT);
+	error = sys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd, a.offset >> PAGE_SHIFT);
 out:
 	return error;
-}
-
-asmlinkage unsigned long
-sys_arm_mremap(unsigned long addr, unsigned long old_len,
-	       unsigned long new_len, unsigned long flags,
-	       unsigned long new_addr)
-{
-	unsigned long ret = -EINVAL;
-
-	if (flags & MREMAP_FIXED && new_addr < FIRST_USER_ADDRESS)
-		goto out;
-
-	down_write(&current->mm->mmap_sem);
-	ret = do_mremap(addr, old_len, new_len, flags, new_addr);
-	up_write(&current->mm->mmap_sem);
-
-out:
-	return ret;
 }
 
 /*
@@ -279,7 +207,7 @@ out:
 	return error;
 }
 
-long execve(const char *filename, char **argv, char **envp)
+int kernel_execve(const char *filename, char *const argv[], char *const envp[])
 {
 	struct pt_regs regs;
 	int ret;
@@ -317,10 +245,10 @@ long execve(const char *filename, char **argv, char **envp)
  out:
 	return ret;
 }
-EXPORT_SYMBOL(execve);
+EXPORT_SYMBOL(kernel_execve);
 
 /*
- * Since loff_t is a 64 bit type we avoid a lot of ABI hastle
+ * Since loff_t is a 64 bit type we avoid a lot of ABI hassle
  * with a different argument ordering.
  */
 asmlinkage long sys_arm_fadvise64_64(int fd, int advice,

@@ -9,13 +9,13 @@
 #include <linux/dma-mapping.h>
 #include <linux/device.h>
 #include <linux/kernel.h>
+#include <linux/scatterlist.h>
 #include <linux/vmalloc.h>
 
 #include <asm/pgalloc.h>
-#include <asm/scatterlist.h>
 
 void *dma_alloc_coherent(struct device *dev, size_t size,
-			 dma_addr_t *handle, int flag)
+			 dma_addr_t *handle, gfp_t flag)
 {
 	struct page *page, **map;
 	pgprot_t pgprot;
@@ -51,7 +51,7 @@ void *dma_alloc_coherent(struct device *dev, size_t size,
 		pgprot_val(pgprot) |= _PAGE_GLOBAL040 | _PAGE_NOCACHE_S;
 	else
 		pgprot_val(pgprot) |= _PAGE_NOCACHE030;
-	addr = vmap(map, size, flag, pgprot);
+	addr = vmap(map, size, VM_MAP, pgprot);
 	kfree(map);
 
 	return addr;
@@ -66,8 +66,8 @@ void dma_free_coherent(struct device *dev, size_t size,
 }
 EXPORT_SYMBOL(dma_free_coherent);
 
-inline void dma_sync_single_for_device(struct device *dev, dma_addr_t handle, size_t size,
-				       enum dma_data_direction dir)
+void dma_sync_single_for_device(struct device *dev, dma_addr_t handle,
+				size_t size, enum dma_data_direction dir)
 {
 	switch (dir) {
 	case DMA_TO_DEVICE:
@@ -121,7 +121,7 @@ int dma_map_sg(struct device *dev, struct scatterlist *sg, int nents,
 	int i;
 
 	for (i = 0; i < nents; sg++, i++) {
-		sg->dma_address = page_to_phys(sg->page) + sg->offset;
+		sg->dma_address = sg_phys(sg);
 		dma_sync_single_for_device(dev, sg->dma_address, sg->length, dir);
 	}
 	return nents;

@@ -12,8 +12,6 @@
  *
  */
 
-extern const char *CardType[];
-
 #define byteout(addr,val) outb(val,addr)
 #define bytein(addr) inb(addr)
 
@@ -66,7 +64,7 @@ void read_tiger(struct IsdnCardState *cs);
 void write_tiger(struct IsdnCardState *cs);
 
 void netjet_fill_dma(struct BCState *bcs);
-void netjet_interrupt(int intno, void *dev_id, struct pt_regs *regs);
+void netjet_interrupt(int intno, void *dev_id);
 void inittiger(struct IsdnCardState *cs);
 void release_io_netjet(struct IsdnCardState *cs);
 

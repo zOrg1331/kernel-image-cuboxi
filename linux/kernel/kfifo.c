@@ -24,6 +24,7 @@
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/kfifo.h>
+#include <linux/log2.h>
 
 /**
  * kfifo_init - allocates a new FIFO using a preallocated buffer
@@ -32,8 +33,8 @@
  * @gfp_mask: get_free_pages mask, passed to kmalloc()
  * @lock: the lock to be used to protect the fifo buffer
  *
- * Do NOT pass the kfifo to kfifo_free() after use ! Simply free the
- * struct kfifo with kfree().
+ * Do NOT pass the kfifo to kfifo_free() after use! Simply free the
+ * &struct kfifo with kfree().
  */
 struct kfifo *kfifo_init(unsigned char *buffer, unsigned int size,
 			 gfp_t gfp_mask, spinlock_t *lock)
@@ -41,7 +42,7 @@ struct kfifo *kfifo_init(unsigned char *buffer, unsigned int size,
 	struct kfifo *fifo;
 
 	/* size must be a power of 2 */
-	BUG_ON(size & (size - 1));
+	BUG_ON(!is_power_of_2(size));
 
 	fifo = kmalloc(sizeof(struct kfifo), gfp_mask);
 	if (!fifo)
@@ -71,9 +72,9 @@ struct kfifo *kfifo_alloc(unsigned int size, gfp_t gfp_mask, spinlock_t *lock)
 
 	/*
 	 * round up to the next power of 2, since our 'let the indices
-	 * wrap' tachnique works only in this case.
+	 * wrap' technique works only in this case.
 	 */
-	if (size & (size - 1)) {
+	if (!is_power_of_2(size)) {
 		BUG_ON(size > 0x80000000);
 		size = roundup_pow_of_two(size);
 	}
@@ -108,7 +109,7 @@ EXPORT_SYMBOL(kfifo_free);
  * @buffer: the data to be added.
  * @len: the length of the data to be added.
  *
- * This function copies at most 'len' bytes from the 'buffer' into
+ * This function copies at most @len bytes from the @buffer into
  * the FIFO depending on the free space, and returns the number of
  * bytes copied.
  *
@@ -116,11 +117,18 @@ EXPORT_SYMBOL(kfifo_free);
  * writer, you don't need extra locking to use these functions.
  */
 unsigned int __kfifo_put(struct kfifo *fifo,
-			 unsigned char *buffer, unsigned int len)
+			const unsigned char *buffer, unsigned int len)
 {
 	unsigned int l;
 
 	len = min(len, fifo->size - fifo->in + fifo->out);
+
+	/*
+	 * Ensure that we sample the fifo->out index -before- we
+	 * start putting bytes into the kfifo.
+	 */
+
+	smp_mb();
 
 	/* first put the data starting from fifo->in to buffer end */
 	l = min(len, fifo->size - (fifo->in & (fifo->size - 1)));
@@ -128,6 +136,13 @@ unsigned int __kfifo_put(struct kfifo *fifo,
 
 	/* then put the rest (if any) at the beginning of the buffer */
 	memcpy(fifo->buffer, buffer + l, len - l);
+
+	/*
+	 * Ensure that we add the bytes to the kfifo -before-
+	 * we update the fifo->in index.
+	 */
+
+	smp_wmb();
 
 	fifo->in += len;
 
@@ -141,8 +156,8 @@ EXPORT_SYMBOL(__kfifo_put);
  * @buffer: where the data must be copied.
  * @len: the size of the destination buffer.
  *
- * This function copies at most 'len' bytes from the FIFO into the
- * 'buffer' and returns the number of copied bytes.
+ * This function copies at most @len bytes from the FIFO into the
+ * @buffer and returns the number of copied bytes.
  *
  * Note that with only one concurrent reader and one concurrent
  * writer, you don't need extra locking to use these functions.
@@ -154,12 +169,26 @@ unsigned int __kfifo_get(struct kfifo *fifo,
 
 	len = min(len, fifo->in - fifo->out);
 
+	/*
+	 * Ensure that we sample the fifo->in index -before- we
+	 * start removing bytes from the kfifo.
+	 */
+
+	smp_rmb();
+
 	/* first get the data from fifo->out until the end of the buffer */
 	l = min(len, fifo->size - (fifo->out & (fifo->size - 1)));
 	memcpy(buffer, fifo->buffer + (fifo->out & (fifo->size - 1)), l);
 
 	/* then get the rest (if any) from the beginning of the buffer */
 	memcpy(buffer + l, fifo->buffer, len - l);
+
+	/*
+	 * Ensure that we remove the bytes from the kfifo -before-
+	 * we update the fifo->out index.
+	 */
+
+	smp_mb();
 
 	fifo->out += len;
 

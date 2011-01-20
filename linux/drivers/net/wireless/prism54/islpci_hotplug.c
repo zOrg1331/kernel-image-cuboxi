@@ -1,5 +1,4 @@
 /*
- *  
  *  Copyright (C) 2002 Intersil Americas Inc.
  *  Copyright (C) 2003 Herbert Valerio Riedel <hvr@gnu.org>
  *
@@ -29,9 +28,6 @@
 #include "islpci_mgt.h"		/* for pc_debug */
 #include "isl_oid.h"
 
-#define DRV_NAME	"prism54"
-#define DRV_VERSION	"1.2"
-
 MODULE_AUTHOR("[Intersil] R.Bastings and W.Termorshuizen, The prism54.org Development Team <prism54-devel@prism54.org>");
 MODULE_DESCRIPTION("The Prism54 802.11 Wireless LAN adapter");
 MODULE_LICENSE("GPL");
@@ -40,8 +36,8 @@ static int	init_pcitm = 0;
 module_param(init_pcitm, int, 0);
 
 /* In this order: vendor, device, subvendor, subdevice, class, class_mask,
- * driver_data 
- * If you have an update for this please contact prism54-devel@prism54.org 
+ * driver_data
+ * If you have an update for this please contact prism54-devel@prism54.org
  * The latest list can be found at http://prism54.org/supported_cards.php */
 static const struct pci_device_id prism54_id_tbl[] = {
 	/* Intersil PRISM Duette/Prism GT Wireless LAN adapter */
@@ -53,9 +49,7 @@ static const struct pci_device_id prism54_id_tbl[] = {
 
 	/* 3COM 3CRWE154G72 Wireless LAN adapter */
 	{
-	 0x10b7, 0x6001,
-	 PCI_ANY_ID, PCI_ANY_ID,
-	 0, 0, 0
+	 PCI_VDEVICE(3COM, 0x6001), 0
 	},
 
 	/* Intersil PRISM Indigo Wireless LAN adapter */
@@ -91,14 +85,13 @@ static struct pci_driver prism54_driver = {
 	.remove = prism54_remove,
 	.suspend = prism54_suspend,
 	.resume = prism54_resume,
-	/* .enable_wake ; we don't support this yet */
 };
 
 /******************************************************************************
     Module initialization functions
 ******************************************************************************/
 
-int
+static int
 prism54_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct net_device *ndev;
@@ -125,22 +118,22 @@ prism54_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	/* enable PCI DMA */
-	if (pci_set_dma_mask(pdev, DMA_32BIT_MASK)) {
+	if (pci_set_dma_mask(pdev, DMA_BIT_MASK(32))) {
 		printk(KERN_ERR "%s: 32-bit PCI DMA not supported", DRV_NAME);
 		goto do_pci_disable_device;
         }
 
 	/* 0x40 is the programmable timer to configure the response timeout (TRDY_TIMEOUT)
 	 * 0x41 is the programmable timer to configure the retry timeout (RETRY_TIMEOUT)
-	 * 	The RETRY_TIMEOUT is used to set the number of retries that the core, as a
-	 * 	Master, will perform before abandoning a cycle. The default value for
-	 * 	RETRY_TIMEOUT is 0x80, which far exceeds the PCI 2.1 requirement for new
-	 * 	devices. A write of zero to the RETRY_TIMEOUT register disables this
-	 * 	function to allow use with any non-compliant legacy devices that may
-	 * 	execute more retries.
+	 *	The RETRY_TIMEOUT is used to set the number of retries that the core, as a
+	 *	Master, will perform before abandoning a cycle. The default value for
+	 *	RETRY_TIMEOUT is 0x80, which far exceeds the PCI 2.1 requirement for new
+	 *	devices. A write of zero to the RETRY_TIMEOUT register disables this
+	 *	function to allow use with any non-compliant legacy devices that may
+	 *	execute more retries.
 	 *
-	 * 	Writing zero to both these two registers will disable both timeouts and
-	 * 	*can* solve problems caused by devices that are slow to respond.
+	 *	Writing zero to both these two registers will disable both timeouts and
+	 *	*can* solve problems caused by devices that are slow to respond.
 	 *	Make this configurable - MSW
 	 */
 	if ( init_pcitm >= 0 ) {
@@ -171,14 +164,14 @@ prism54_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	pci_set_master(pdev);
 
 	/* enable MWI */
-	pci_set_mwi(pdev);
+	pci_try_set_mwi(pdev);
 
 	/* setup the network device interface and its structure */
 	if (!(ndev = islpci_setup(pdev))) {
 		/* error configuring the driver as a network device */
 		printk(KERN_ERR "%s: could not configure network device\n",
 		       DRV_NAME);
-		goto do_pci_release_regions;
+		goto do_pci_clear_mwi;
 	}
 
 	priv = netdev_priv(ndev);
@@ -208,6 +201,8 @@ prism54_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	pci_set_drvdata(pdev, NULL);
 	free_netdev(ndev);
 	priv = NULL;
+      do_pci_clear_mwi:
+	pci_clear_mwi(pdev);
       do_pci_release_regions:
 	pci_release_regions(pdev);
       do_pci_disable_device:
@@ -219,7 +214,7 @@ prism54_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 static volatile int __in_cleanup_module = 0;
 
 /* this one removes one(!!) instance only */
-void
+static void
 prism54_remove(struct pci_dev *pdev)
 {
 	struct net_device *ndev = pci_get_drvdata(pdev);
@@ -241,7 +236,7 @@ prism54_remove(struct pci_dev *pdev)
 		isl38xx_disable_interrupts(priv->device_base);
 		islpci_set_state(priv, PRV_STATE_OFF);
 		/* This bellow causes a lockup at rmmod time. It might be
-		 * because some interrupts still linger after rmmod time, 
+		 * because some interrupts still linger after rmmod time,
 		 * see bug #17 */
 		/* pci_set_power_state(pdev, 3);*/	/* try to power-off */
 	}
@@ -255,12 +250,14 @@ prism54_remove(struct pci_dev *pdev)
 	free_netdev(ndev);
 	priv = NULL;
 
+	pci_clear_mwi(pdev);
+
 	pci_release_regions(pdev);
 
 	pci_disable_device(pdev);
 }
 
-int
+static int
 prism54_suspend(struct pci_dev *pdev, pm_message_t state)
 {
 	struct net_device *ndev = pci_get_drvdata(pdev);
@@ -283,16 +280,23 @@ prism54_suspend(struct pci_dev *pdev, pm_message_t state)
 	return 0;
 }
 
-int
+static int
 prism54_resume(struct pci_dev *pdev)
 {
 	struct net_device *ndev = pci_get_drvdata(pdev);
 	islpci_private *priv = ndev ? netdev_priv(ndev) : NULL;
+	int err;
+
 	BUG_ON(!priv);
 
-	pci_enable_device(pdev);
-
 	printk(KERN_NOTICE "%s: got resume request\n", ndev->name);
+
+	err = pci_enable_device(pdev);
+	if (err) {
+		printk(KERN_ERR "%s: pci_enable_device failed on resume\n",
+		       ndev->name);
+		return err;
+	}
 
 	pci_restore_state(pdev);
 
@@ -313,7 +317,7 @@ prism54_module_init(void)
 
 	__bug_on_wrong_struct_sizes ();
 
-	return pci_module_init(&prism54_driver);
+	return pci_register_driver(&prism54_driver);
 }
 
 /* by the time prism54_module_exit() terminates, as a postcondition

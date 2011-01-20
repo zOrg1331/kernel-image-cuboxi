@@ -71,12 +71,12 @@ static int hvc_rtas_read_console(uint32_t vtermno, char *buf, int count)
 	return i;
 }
 
-static struct hv_ops hvc_rtas_get_put_ops = {
+static const struct hv_ops hvc_rtas_get_put_ops = {
 	.get_chars = hvc_rtas_read_console,
 	.put_chars = hvc_rtas_write_console,
 };
 
-static int hvc_rtas_init(void)
+static int __init hvc_rtas_init(void)
 {
 	struct hvc_struct *hp;
 
@@ -94,7 +94,7 @@ static int hvc_rtas_init(void)
 
 	/* Allocate an hvc_struct for the console device we instantiated
 	 * earlier.  Save off hp so that we can return it on exit */
-	hp = hvc_alloc(hvc_rtas_cookie, NO_IRQ, &hvc_rtas_get_put_ops);
+	hp = hvc_alloc(hvc_rtas_cookie, NO_IRQ, &hvc_rtas_get_put_ops, 16);
 	if (IS_ERR(hp))
 		return PTR_ERR(hp);
 
@@ -115,7 +115,7 @@ static void __exit hvc_rtas_exit(void)
 module_exit(hvc_rtas_exit);
 
 /* This will happen prior to module init.  There is no tty at this time? */
-static int hvc_rtas_console_init(void)
+static int __init hvc_rtas_console_init(void)
 {
 	rtascons_put_char_token = rtas_token("put-term-char");
 	if (rtascons_put_char_token == RTAS_UNKNOWN_SERVICE)

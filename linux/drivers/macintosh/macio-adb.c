@@ -6,7 +6,6 @@
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
-#include <linux/sched.h>
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
 #include <asm/prom.h>
@@ -64,7 +63,7 @@ static DEFINE_SPINLOCK(macio_lock);
 
 static int macio_probe(void);
 static int macio_init(void);
-static irqreturn_t macio_adb_interrupt(int irq, void *arg, struct pt_regs *regs);
+static irqreturn_t macio_adb_interrupt(int irq, void *arg);
 static int macio_send_request(struct adb_request *req, int sync);
 static int macio_adb_autopoll(int devs);
 static void macio_adb_poll(void);
@@ -83,7 +82,14 @@ struct adb_driver macio_adb_driver = {
 
 int macio_probe(void)
 {
-	return find_compatible_devices("adb", "chrp,adb0")? 0: -ENODEV;
+	struct device_node *np;
+
+	np = of_find_compatible_node(NULL, "adb", "chrp,adb0");
+	if (np) {
+		of_node_put(np);
+		return 0;
+	}
+	return -ENODEV;
 }
 
 int macio_init(void)
@@ -92,12 +98,14 @@ int macio_init(void)
 	struct resource r;
 	unsigned int irq;
 
-	adbs = find_compatible_devices("adb", "chrp,adb0");
+	adbs = of_find_compatible_node(NULL, "adb", "chrp,adb0");
 	if (adbs == 0)
 		return -ENXIO;
 
-	if (of_address_to_resource(adbs, 0, &r))
+	if (of_address_to_resource(adbs, 0, &r)) {
+		of_node_put(adbs);
 		return -ENXIO;
+	}
 	adb = ioremap(r.start, sizeof(struct adb_regs));
 
 	out_8(&adb->ctrl.r, 0);
@@ -108,6 +116,7 @@ int macio_init(void)
 	out_8(&adb->autopoll.r, APE);
 
 	irq = irq_of_parse_and_map(adbs, 0);
+	of_node_put(adbs);
 	if (request_irq(irq, macio_adb_interrupt, 0, "ADB", (void *)0)) {
 		printk(KERN_ERR "ADB: can't get irq %d\n", irq);
 		return -EAGAIN;
@@ -189,8 +198,7 @@ static int macio_send_request(struct adb_request *req, int sync)
 	return 0;
 }
 
-static irqreturn_t macio_adb_interrupt(int irq, void *arg,
-				       struct pt_regs *regs)
+static irqreturn_t macio_adb_interrupt(int irq, void *arg)
 {
 	int i, n, err;
 	struct adb_request *req = NULL;
@@ -260,7 +268,7 @@ static irqreturn_t macio_adb_interrupt(int irq, void *arg,
 		(*done)(req);
 	}
 	if (ibuf_len)
-		adb_input(ibuf, ibuf_len, regs, autopoll);
+		adb_input(ibuf, ibuf_len, autopoll);
 
 	return IRQ_RETVAL(handled);
 }
@@ -271,6 +279,6 @@ static void macio_adb_poll(void)
 
 	local_irq_save(flags);
 	if (in_8(&adb->intr.r) != 0)
-		macio_adb_interrupt(0, NULL, NULL);
+		macio_adb_interrupt(0, NULL);
 	local_irq_restore(flags);
 }

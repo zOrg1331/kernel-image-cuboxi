@@ -19,7 +19,6 @@
  *
  */
 
-#include <sound/driver.h>
 #include <asm/io.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -263,8 +262,8 @@ struct atiixp_modem {
 /*
  */
 static struct pci_device_id snd_atiixp_ids[] = {
-	{ 0x1002, 0x434d, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0 }, /* SB200 */
-	{ 0x1002, 0x4378, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0 }, /* SB400 */
+	{ PCI_VDEVICE(ATI, 0x434d), 0 }, /* SB200 */
+	{ PCI_VDEVICE(ATI, 0x4378), 0 }, /* SB400 */
 	{ 0, }
 };
 
@@ -675,7 +674,9 @@ static int snd_atiixp_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 	struct atiixp_dma *dma = substream->runtime->private_data;
 	int err = 0;
 
-	snd_assert(dma->ops->enable_transfer && dma->ops->flush_dma, return -EINVAL);
+	if (snd_BUG_ON(!dma->ops->enable_transfer ||
+		       !dma->ops->flush_dma))
+		return -EINVAL;
 
 	spin_lock(&chip->reg_lock);
 	switch(cmd) {
@@ -866,7 +867,8 @@ static int snd_atiixp_pcm_open(struct snd_pcm_substream *substream,
 		.mask = 0,
 	};
 
-	snd_assert(dma->ops && dma->ops->enable_dma, return -EINVAL);
+	if (snd_BUG_ON(!dma->ops || !dma->ops->enable_dma))
+		return -EINVAL;
 
 	if (dma->opened)
 		return -EBUSY;
@@ -896,7 +898,8 @@ static int snd_atiixp_pcm_close(struct snd_pcm_substream *substream,
 {
 	struct atiixp_modem *chip = snd_pcm_substream_chip(substream);
 	/* disable DMA bits */
-	snd_assert(dma->ops && dma->ops->enable_dma, return -EINVAL);
+	if (snd_BUG_ON(!dma->ops || !dma->ops->enable_dma))
+		return -EINVAL;
 	spin_lock_irq(&chip->reg_lock);
 	dma->ops->enable_dma(chip, 0);
 	spin_unlock_irq(&chip->reg_lock);
@@ -1017,7 +1020,7 @@ static int __devinit snd_atiixp_pcm_new(struct atiixp_modem *chip)
 /*
  * interrupt handler
  */
-static irqreturn_t snd_atiixp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t snd_atiixp_interrupt(int irq, void *dev_id)
 {
 	struct atiixp_modem *chip = dev_id;
 	unsigned int status;
@@ -1090,7 +1093,7 @@ static int __devinit snd_atiixp_mixer_new(struct atiixp_modem *chip, int clock)
 		ac97.private_data = chip;
 		ac97.pci = chip->pci;
 		ac97.num = i;
-		ac97.scaps = AC97_SCAP_SKIP_AUDIO;
+		ac97.scaps = AC97_SCAP_SKIP_AUDIO | AC97_SCAP_POWER_SAVE;
 		if ((err = snd_ac97_mixer(pbus, &ac97, &chip->ac97[i])) < 0) {
 			chip->ac97[i] = NULL; /* to be sure */
 			snd_printdd("atiixp-modem: codec %d not available for modem\n", i);
@@ -1128,9 +1131,9 @@ static int snd_atiixp_suspend(struct pci_dev *pci, pm_message_t state)
 	snd_atiixp_aclink_down(chip);
 	snd_atiixp_chip_stop(chip);
 
-	pci_set_power_state(pci, PCI_D3hot);
 	pci_disable_device(pci);
 	pci_save_state(pci);
+	pci_set_power_state(pci, pci_choose_state(pci, state));
 	return 0;
 }
 
@@ -1140,9 +1143,14 @@ static int snd_atiixp_resume(struct pci_dev *pci)
 	struct atiixp_modem *chip = card->private_data;
 	int i;
 
-	pci_restore_state(pci);
-	pci_enable_device(pci);
 	pci_set_power_state(pci, PCI_D0);
+	pci_restore_state(pci);
+	if (pci_enable_device(pci) < 0) {
+		printk(KERN_ERR "atiixp-modem: pci_enable_device failed, "
+		       "disabling device\n");
+		snd_card_disconnect(card);
+		return -EIO;
+	}
 	pci_set_master(pci);
 
 	snd_atiixp_aclink_reset(chip);
@@ -1193,7 +1201,7 @@ static int snd_atiixp_free(struct atiixp_modem *chip)
 	if (chip->irq < 0)
 		goto __hw_end;
 	snd_atiixp_chip_stop(chip);
-	synchronize_irq(chip->irq);
+
       __hw_end:
 	if (chip->irq >= 0)
 		free_irq(chip->irq, chip);
@@ -1244,14 +1252,14 @@ static int __devinit snd_atiixp_create(struct snd_card *card,
 		return err;
 	}
 	chip->addr = pci_resource_start(pci, 0);
-	chip->remap_addr = ioremap_nocache(chip->addr, pci_resource_len(pci, 0));
+	chip->remap_addr = pci_ioremap_bar(pci, 0);
 	if (chip->remap_addr == NULL) {
 		snd_printk(KERN_ERR "AC'97 space ioremap problem\n");
 		snd_atiixp_free(chip);
 		return -EIO;
 	}
 
-	if (request_irq(pci->irq, snd_atiixp_interrupt, IRQF_DISABLED|IRQF_SHARED,
+	if (request_irq(pci->irq, snd_atiixp_interrupt, IRQF_SHARED,
 			card->shortname, chip)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_atiixp_free(chip);
@@ -1278,14 +1286,11 @@ static int __devinit snd_atiixp_probe(struct pci_dev *pci,
 {
 	struct snd_card *card;
 	struct atiixp_modem *chip;
-	unsigned char revision;
 	int err;
 
-	card = snd_card_new(index, id, THIS_MODULE, 0);
-	if (card == NULL)
-		return -ENOMEM;
-
-	pci_read_config_byte(pci, PCI_REVISION_ID, &revision);
+	err = snd_card_create(index, id, THIS_MODULE, 0, &card);
+	if (err < 0)
+		return err;
 
 	strcpy(card->driver, "ATIIXP-MODEM");
 	strcpy(card->shortname, "ATI IXP Modem");
@@ -1307,7 +1312,7 @@ static int __devinit snd_atiixp_probe(struct pci_dev *pci,
 	snd_atiixp_chip_start(chip);
 
 	sprintf(card->longname, "%s rev %x at 0x%lx, irq %i",
-		card->shortname, revision, chip->addr, chip->irq);
+		card->shortname, pci->revision, chip->addr, chip->irq);
 
 	if ((err = snd_card_register(card)) < 0)
 		goto __error;

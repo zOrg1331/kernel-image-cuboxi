@@ -9,7 +9,6 @@
  * 2 of the License, or (at your option) any later version.
  */
 
-#include <linux/sched.h>
 #include <linux/syscalls.h>
 #include <linux/keyctl.h>
 #include <linux/compat.h>
@@ -79,6 +78,12 @@ asmlinkage long compat_sys_keyctl(u32 option,
 
 	case KEYCTL_ASSUME_AUTHORITY:
 		return keyctl_assume_authority(arg2);
+
+	case KEYCTL_GET_SECURITY:
+		return keyctl_get_security(arg2, compat_ptr(arg3), arg4);
+
+	case KEYCTL_SESSION_TO_PARENT:
+		return keyctl_session_to_parent();
 
 	default:
 		return -EOPNOTSUPP;

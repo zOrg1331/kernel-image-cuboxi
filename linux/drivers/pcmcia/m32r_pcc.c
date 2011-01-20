@@ -16,16 +16,15 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/timer.h>
-#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/ioport.h>
 #include <linux/delay.h>
 #include <linux/workqueue.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
+#include <linux/bitops.h>
 #include <asm/irq.h>
 #include <asm/io.h>
-#include <asm/bitops.h>
 #include <asm/system.h>
 #include <asm/addrspace.h>
 
@@ -46,7 +45,7 @@
 
 #define PCC_DEBUG_DBEX
 
-#ifdef DEBUG
+#ifdef CONFIG_PCMCIA_DEBUG
 static int m32r_pcc_debug;
 module_param(m32r_pcc_debug, int, 0644);
 #define debug(lvl, fmt, arg...) do {				\
@@ -66,7 +65,7 @@ typedef struct pcc_socket {
 	u_short			type, flags;
 	struct pcmcia_socket	socket;
 	unsigned int		number;
- 	kio_addr_t		ioaddr;
+	unsigned int		ioaddr;
 	u_long			mapaddr;
 	u_long			base;	/* PCC register base */
 	u_char			cs_irq, intr;
@@ -267,7 +266,7 @@ static pcc_t pcc[] = {
 	{ "xnux2", 0 }, { "xnux2", 0 },
 };
 
-static irqreturn_t pcc_interrupt(int, void *, struct pt_regs *);
+static irqreturn_t pcc_interrupt(int, void *);
 
 /*====================================================================*/
 
@@ -311,7 +310,8 @@ static int __init is_alive(u_short sock)
 	return 0;
 }
 
-static void add_pcc_socket(ulong base, int irq, ulong mapaddr, kio_addr_t ioaddr)
+static void add_pcc_socket(ulong base, int irq, ulong mapaddr,
+			   unsigned int ioaddr)
 {
   	pcc_socket_t *t = &socket[pcc_sockets];
 
@@ -352,7 +352,7 @@ static void add_pcc_socket(ulong base, int irq, ulong mapaddr, kio_addr_t ioaddr
 
 /*====================================================================*/
 
-static irqreturn_t pcc_interrupt(int irq, void *dev, struct pt_regs *regs)
+static irqreturn_t pcc_interrupt(int irq, void *dev)
 {
 	int i, j, irc;
 	u_int events, active;
@@ -369,7 +369,7 @@ static irqreturn_t pcc_interrupt(int irq, void *dev, struct pt_regs *regs)
 			handled = 1;
 			irc = pcc_get(i, PCIRC);
 			irc >>=16;
-			debug(2, "m32r-pcc:interrput: socket %d pcirc 0x%02x ", i, irc);
+			debug(2, "m32r-pcc:interrupt: socket %d pcirc 0x%02x ", i, irc);
 			if (!irc)
 				continue;
 
@@ -395,7 +395,7 @@ static irqreturn_t pcc_interrupt(int irq, void *dev, struct pt_regs *regs)
 
 static void pcc_interrupt_wrapper(u_long data)
 {
-	pcc_interrupt(0, NULL, NULL);
+	pcc_interrupt(0, NULL);
 	init_timer(&poll_timer);
 	poll_timer.expires = jiffies + poll_interval;
 	add_timer(&poll_timer);
@@ -460,7 +460,7 @@ static int _pcc_set_socket(u_short sock, socket_state_t *state)
 
 	pcc_set(sock,PCCSIGCR,reg);
 
-#ifdef DEBUG
+#ifdef CONFIG_PCMCIA_DEBUG
 	if(state->flags & SS_IOCARD){
 		debug(3, ":IOCARD");
 	}
@@ -492,8 +492,9 @@ static int _pcc_set_io_map(u_short sock, struct pccard_io_map *io)
 	u_char map;
 
 	debug(3, "m32r-pcc: SetIOMap(%d, %d, %#2.2x, %d ns, "
-		  "%#lx-%#lx)\n", sock, io->map, io->flags,
-		  io->speed, io->start, io->stop);
+		  "%#llx-%#llx)\n", sock, io->map, io->flags,
+		  io->speed, (unsigned long long)io->start,
+		  (unsigned long long)io->stop);
 	map = io->map;
 
 	return 0;
@@ -515,8 +516,9 @@ static int _pcc_set_mem_map(u_short sock, struct pccard_mem_map *mem)
 #endif
 
 	debug(3, "m32r-pcc: SetMemMap(%d, %d, %#2.2x, %d ns, "
-		 "%#lx,  %#x)\n", sock, map, mem->flags,
-		 mem->speed, mem->static_start, mem->card_start);
+		 "%#llx,  %#x)\n", sock, map, mem->flags,
+		 mem->speed, (unsigned long long)mem->static_start,
+		 mem->card_start);
 
 	/*
 	 * sanity check
@@ -672,13 +674,25 @@ static struct pccard_operations pcc_operations = {
 	.set_mem_map		= pcc_set_mem_map,
 };
 
+static int pcc_drv_pcmcia_suspend(struct platform_device *dev,
+				     pm_message_t state)
+{
+	return pcmcia_socket_dev_suspend(&dev->dev);
+}
+
+static int pcc_drv_pcmcia_resume(struct platform_device *dev)
+{
+	return pcmcia_socket_dev_resume(&dev->dev);
+}
 /*====================================================================*/
 
-static struct device_driver pcc_driver = {
-	.name = "pcc",
-	.bus = &platform_bus_type,
-	.suspend = pcmcia_socket_dev_suspend,
-	.resume = pcmcia_socket_dev_resume,
+static struct platform_driver pcc_driver = {
+	.driver = {
+		.name		= "pcc",
+		.owner		= THIS_MODULE,
+	},
+	.suspend 	= pcc_drv_pcmcia_suspend,
+	.resume 	= pcc_drv_pcmcia_resume,
 };
 
 static struct platform_device pcc_device = {
@@ -692,13 +706,13 @@ static int __init init_m32r_pcc(void)
 {
 	int i, ret;
 
-	ret = driver_register(&pcc_driver);
+	ret = platform_driver_register(&pcc_driver);
 	if (ret)
 		return ret;
 
 	ret = platform_device_register(&pcc_device);
 	if (ret){
-		driver_unregister(&pcc_driver);
+		platform_driver_unregister(&pcc_driver);
 		return ret;
 	}
 
@@ -715,14 +729,14 @@ static int __init init_m32r_pcc(void)
 	if (pcc_sockets == 0) {
 		printk("socket is not found.\n");
 		platform_device_unregister(&pcc_device);
-		driver_unregister(&pcc_driver);
+		platform_driver_unregister(&pcc_driver);
 		return -ENODEV;
 	}
 
 	/* Set up interrupt handler(s) */
 
 	for (i = 0 ; i < pcc_sockets ; i++) {
-		socket[i].socket.dev.dev = &pcc_device.dev;
+		socket[i].socket.dev.parent = &pcc_device.dev;
 		socket[i].socket.ops = &pcc_operations;
 		socket[i].socket.resource_ops = &pccard_static_ops;
 		socket[i].socket.owner = THIS_MODULE;
@@ -763,7 +777,7 @@ static void __exit exit_m32r_pcc(void)
 	if (poll_interval != 0)
 		del_timer_sync(&poll_timer);
 
-	driver_unregister(&pcc_driver);
+	platform_driver_unregister(&pcc_driver);
 } /* exit_m32r_pcc */
 
 module_init(init_m32r_pcc);

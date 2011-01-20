@@ -33,7 +33,7 @@
 
 #undef DEBUG
 
-#define MAX_NODE_NAME_SIZE (BUS_ID_SIZE - 12)
+#define MAX_NODE_NAME_SIZE (20 - 12)
 
 static struct macio_chip      *macio_on_hold;
 
@@ -134,106 +134,12 @@ static int macio_device_resume(struct device * dev)
 	return 0;
 }
 
-static int macio_uevent(struct device *dev, char **envp, int num_envp,
-                          char *buffer, int buffer_size)
-{
-	struct macio_dev * macio_dev;
-	struct of_device * of;
-	char *scratch, *compat, *compat2;
-	int i = 0;
-	int length, cplen, cplen2, seen = 0;
-
-	if (!dev)
-		return -ENODEV;
-
-	macio_dev = to_macio_device(dev);
-	if (!macio_dev)
-		return -ENODEV;
-
-	of = &macio_dev->ofdev;
-
-	/* stuff we want to pass to /sbin/hotplug */
-	envp[i++] = scratch = buffer;
-	length = scnprintf (scratch, buffer_size, "OF_NAME=%s", of->node->name);
-	++length;
-	buffer_size -= length;
-	if ((buffer_size <= 0) || (i >= num_envp))
-		return -ENOMEM;
-	scratch += length;
-
-	envp[i++] = scratch;
-	length = scnprintf (scratch, buffer_size, "OF_TYPE=%s", of->node->type);
-	++length;
-	buffer_size -= length;
-	if ((buffer_size <= 0) || (i >= num_envp))
-		return -ENOMEM;
-	scratch += length;
-
-        /* Since the compatible field can contain pretty much anything
-         * it's not really legal to split it out with commas. We split it
-         * up using a number of environment variables instead. */
-
-	compat = (char *) get_property(of->node, "compatible", &cplen);
-	compat2 = compat;
-	cplen2= cplen;
-	while (compat && cplen > 0) {
-                envp[i++] = scratch;
-		length = scnprintf (scratch, buffer_size,
-		                     "OF_COMPATIBLE_%d=%s", seen, compat);
-		++length;
-		buffer_size -= length;
-		if ((buffer_size <= 0) || (i >= num_envp))
-			return -ENOMEM;
-		scratch += length;
-		length = strlen (compat) + 1;
-		compat += length;
-		cplen -= length;
-		seen++;
-	}
-
-	envp[i++] = scratch;
-	length = scnprintf (scratch, buffer_size, "OF_COMPATIBLE_N=%d", seen);
-	++length;
-	buffer_size -= length;
-	if ((buffer_size <= 0) || (i >= num_envp))
-		return -ENOMEM;
-	scratch += length;
-
-	envp[i++] = scratch;
-	length = scnprintf (scratch, buffer_size, "MODALIAS=of:N%sT%s",
-			of->node->name, of->node->type);
-	/* overwrite '\0' */
-	buffer_size -= length;
-	if ((buffer_size <= 0) || (i >= num_envp))
-		return -ENOMEM;
-	scratch += length;
-
-	if (!compat2) {
-		compat2 = "";
-		cplen2 = 1;
-	}
-	while (cplen2 > 0) {
-		length = snprintf (scratch, buffer_size, "C%s", compat2);
-		buffer_size -= length;
-		if (buffer_size <= 0)
-			return -ENOMEM;
-		scratch += length;
-		length = strlen (compat2) + 1;
-		compat2 += length;
-		cplen2 -= length;
-	}
-
-	envp[i] = NULL;
-
-	return 0;
-}
-
 extern struct device_attribute macio_dev_attrs[];
 
 struct bus_type macio_bus_type = {
        .name	= "macio",
        .match	= macio_bus_match,
-       .uevent = macio_uevent,
+       .uevent = of_device_uevent,
        .probe	= macio_device_probe,
        .remove	= macio_device_remove,
        .shutdown = macio_device_shutdown,
@@ -334,7 +240,7 @@ static void macio_create_fixup_irq(struct macio_dev *dev, int index,
 	if (irq != NO_IRQ) {
 		dev->interrupt[index].start = irq;
 		dev->interrupt[index].flags = IORESOURCE_IRQ;
-		dev->interrupt[index].name = dev->ofdev.dev.bus_id;
+		dev->interrupt[index].name = dev_name(&dev->ofdev.dev);
 	}
 	if (dev->n_interrupts <= index)
 		dev->n_interrupts = index + 1;
@@ -388,16 +294,17 @@ static void macio_setup_interrupts(struct macio_dev *dev)
 	int i = 0, j = 0;
 
 	for (;;) {
-		struct resource *res = &dev->interrupt[j];
+		struct resource *res;
 
 		if (j >= MACIO_DEV_COUNT_IRQS)
 			break;
+		res = &dev->interrupt[j];
 		irq = irq_of_parse_and_map(np, i++);
 		if (irq == NO_IRQ)
 			break;
 		res->start = irq;
 		res->flags = IORESOURCE_IRQ;
-		res->name = dev->ofdev.dev.bus_id;
+		res->name = dev_name(&dev->ofdev.dev);
 		if (macio_resource_quirks(np, res, i - 1)) {
 			memset(res, 0, sizeof(struct resource));
 			continue;
@@ -415,11 +322,12 @@ static void macio_setup_resources(struct macio_dev *dev,
 	int index;
 
 	for (index = 0; of_address_to_resource(np, index, &r) == 0; index++) {
-		struct resource *res = &dev->resource[index];
+		struct resource *res;
 		if (index >= MACIO_DEV_COUNT_RESOURCES)
 			break;
+		res = &dev->resource[index];
 		*res = r;
-		res->name = dev->ofdev.dev.bus_id;
+		res->name = dev_name(&dev->ofdev.dev);
 
 		if (macio_resource_quirks(np, res, index)) {
 			memset(res, 0, sizeof(struct resource));
@@ -432,7 +340,7 @@ static void macio_setup_resources(struct macio_dev *dev,
 		if (insert_resource(parent_res, res)) {
 			printk(KERN_WARNING "Can't request resource "
 			       "%d for MacIO device %s\n",
-			       index, dev->ofdev.dev.bus_id);
+			       index, dev_name(&dev->ofdev.dev));
 		}
 	}
 	dev->n_resources = index;
@@ -454,15 +362,14 @@ static struct macio_dev * macio_add_one_device(struct macio_chip *chip,
 					       struct resource *parent_res)
 {
 	struct macio_dev *dev;
-	u32 *reg;
+	const u32 *reg;
 	
 	if (np == NULL)
 		return NULL;
 
-	dev = kmalloc(sizeof(*dev), GFP_KERNEL);
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
 	if (!dev)
 		return NULL;
-	memset(dev, 0, sizeof(*dev));
 
 	dev->bus = &chip->lbus;
 	dev->media_bay = in_bay;
@@ -473,6 +380,17 @@ static struct macio_dev * macio_add_one_device(struct macio_chip *chip,
 	dev->ofdev.dev.bus = &macio_bus_type;
 	dev->ofdev.dev.release = macio_release_dev;
 
+#ifdef CONFIG_PCI
+	/* Set the DMA ops to the ones from the PCI device, this could be
+	 * fishy if we didn't know that on PowerMac it's always direct ops
+	 * or iommu ops that will work fine
+	 */
+	dev->ofdev.dev.archdata.dma_ops =
+		chip->lbus.pdev->dev.archdata.dma_ops;
+	dev->ofdev.dev.archdata.dma_data =
+		chip->lbus.pdev->dev.archdata.dma_data;
+#endif /* CONFIG_PCI */
+
 #ifdef DEBUG
 	printk("preparing mdev @%p, ofdev @%p, dev @%p, kobj @%p\n",
 	       dev, &dev->ofdev, &dev->ofdev.dev, &dev->ofdev.dev.kobj);
@@ -480,8 +398,8 @@ static struct macio_dev * macio_add_one_device(struct macio_chip *chip,
 
 	/* MacIO itself has a different reg, we use it's PCI base */
 	if (np == chip->of_node) {
-		sprintf(dev->ofdev.dev.bus_id, "%1d.%08x:%.*s",
-			chip->lbus.index,
+		dev_set_name(&dev->ofdev.dev, "%1d.%08x:%.*s",
+			     chip->lbus.index,
 #ifdef CONFIG_PCI
 			(unsigned int)pci_resource_start(chip->lbus.pdev, 0),
 #else
@@ -489,10 +407,10 @@ static struct macio_dev * macio_add_one_device(struct macio_chip *chip,
 #endif
 			MAX_NODE_NAME_SIZE, np->name);
 	} else {
-		reg = (u32 *)get_property(np, "reg", NULL);
-		sprintf(dev->ofdev.dev.bus_id, "%1d.%08x:%.*s",
-			chip->lbus.index,
-			reg ? *reg : 0, MAX_NODE_NAME_SIZE, np->name);
+		reg = of_get_property(np, "reg", NULL);
+		dev_set_name(&dev->ofdev.dev, "%1d.%08x:%.*s",
+			     chip->lbus.index,
+			     reg ? *reg : 0, MAX_NODE_NAME_SIZE, np->name);
 	}
 
 	/* Setup interrupts & resources */
@@ -503,7 +421,7 @@ static struct macio_dev * macio_add_one_device(struct macio_chip *chip,
 	/* Register with core */
 	if (of_device_register(&dev->ofdev) != 0) {
 		printk(KERN_DEBUG"macio: device registration error for %s!\n",
-		       dev->ofdev.dev.bus_id);
+		       dev_name(&dev->ofdev.dev));
 		kfree(dev);
 		return NULL;
 	}
@@ -653,7 +571,7 @@ err_out:
 		resource_no,
 		macio_resource_len(dev, resource_no),
 		macio_resource_start(dev, resource_no),
-		dev->ofdev.dev.bus_id);
+		dev_name(&dev->ofdev.dev));
 	return -EBUSY;
 }
 

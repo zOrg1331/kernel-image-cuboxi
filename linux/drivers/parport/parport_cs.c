@@ -37,13 +37,13 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/sched.h>
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/timer.h>
 #include <linux/ioport.h>
 #include <linux/major.h>
+#include <linux/interrupt.h>
 
 #include <linux/parport.h>
 #include <linux/parport_pc.h>
@@ -106,15 +106,14 @@ static int parport_probe(struct pcmcia_device *link)
     DEBUG(0, "parport_attach()\n");
 
     /* Create new parport device */
-    info = kmalloc(sizeof(*info), GFP_KERNEL);
+    info = kzalloc(sizeof(*info), GFP_KERNEL);
     if (!info) return -ENOMEM;
-    memset(info, 0, sizeof(*info));
     link->priv = info;
     info->p_dev = link;
 
     link->io.Attributes1 = IO_DATA_PATH_WIDTH_8;
     link->io.Attributes2 = IO_DATA_PATH_WIDTH_8;
-    link->irq.Attributes = IRQ_TYPE_EXCLUSIVE;
+    link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
     link->irq.IRQInfo1 = IRQ_LEVEL_ID;
     link->conf.Attributes = CONF_ENABLE_IRQ;
     link->conf.IntType = INT_MEMORY_AND_IO;
@@ -151,66 +150,50 @@ static void parport_detach(struct pcmcia_device *link)
 #define CS_CHECK(fn, ret) \
 do { last_fn = (fn); if ((last_ret = (ret)) != 0) goto cs_failed; } while (0)
 
+static int parport_config_check(struct pcmcia_device *p_dev,
+				cistpl_cftable_entry_t *cfg,
+				cistpl_cftable_entry_t *dflt,
+				unsigned int vcc,
+				void *priv_data)
+{
+	if ((cfg->io.nwin > 0) || (dflt->io.nwin > 0)) {
+		cistpl_io_t *io = (cfg->io.nwin) ? &cfg->io : &dflt->io;
+		if (epp_mode)
+			p_dev->conf.ConfigIndex |= FORCE_EPP_MODE;
+		p_dev->io.BasePort1 = io->win[0].base;
+		p_dev->io.NumPorts1 = io->win[0].len;
+		p_dev->io.IOAddrLines = io->flags & CISTPL_IO_LINES_MASK;
+		if (io->nwin == 2) {
+			p_dev->io.BasePort2 = io->win[1].base;
+			p_dev->io.NumPorts2 = io->win[1].len;
+		}
+		if (pcmcia_request_io(p_dev, &p_dev->io) != 0)
+			return -ENODEV;
+		return 0;
+	}
+	return -ENODEV;
+}
+
 static int parport_config(struct pcmcia_device *link)
 {
     parport_info_t *info = link->priv;
-    tuple_t tuple;
-    u_short buf[128];
-    cisparse_t parse;
-    cistpl_cftable_entry_t *cfg = &parse.cftable_entry;
-    cistpl_cftable_entry_t dflt = { 0 };
     struct parport *p;
     int last_ret, last_fn;
-    
+
     DEBUG(0, "parport_config(0x%p)\n", link);
-    
-    tuple.TupleData = (cisdata_t *)buf;
-    tuple.TupleOffset = 0; tuple.TupleDataMax = 255;
-    tuple.Attributes = 0;
-    tuple.DesiredTuple = CISTPL_CONFIG;
-    CS_CHECK(GetFirstTuple, pcmcia_get_first_tuple(link, &tuple));
-    CS_CHECK(GetTupleData, pcmcia_get_tuple_data(link, &tuple));
-    CS_CHECK(ParseTuple, pcmcia_parse_tuple(link, &tuple, &parse));
-    link->conf.ConfigBase = parse.config.base;
-    link->conf.Present = parse.config.rmask[0];
 
-    tuple.DesiredTuple = CISTPL_CFTABLE_ENTRY;
-    tuple.Attributes = 0;
-    CS_CHECK(GetFirstTuple, pcmcia_get_first_tuple(link, &tuple));
-    while (1) {
-	if (pcmcia_get_tuple_data(link, &tuple) != 0 ||
-		pcmcia_parse_tuple(link, &tuple, &parse) != 0)
-	    goto next_entry;
-
-	if ((cfg->io.nwin > 0) || (dflt.io.nwin > 0)) {
-	    cistpl_io_t *io = (cfg->io.nwin) ? &cfg->io : &dflt.io;
-	    link->conf.ConfigIndex = cfg->index;
-	    if (epp_mode)
-		link->conf.ConfigIndex |= FORCE_EPP_MODE;
-	    link->io.BasePort1 = io->win[0].base;
-	    link->io.NumPorts1 = io->win[0].len;
-	    link->io.IOAddrLines = io->flags & CISTPL_IO_LINES_MASK;
-	    if (io->nwin == 2) {
-		link->io.BasePort2 = io->win[1].base;
-		link->io.NumPorts2 = io->win[1].len;
-	    }
-	    if (pcmcia_request_io(link, &link->io) != 0)
-		goto next_entry;
-	    /* If we've got this far, we're done */
-	    break;
-	}
-	
-    next_entry:
-	if (cfg->flags & CISTPL_CFTABLE_DEFAULT) dflt = *cfg;
-	CS_CHECK(GetNextTuple, pcmcia_get_next_tuple(link, &tuple));
+    last_ret = pcmcia_loop_config(link, parport_config_check, NULL);
+    if (last_ret) {
+	    cs_error(link, RequestIO, last_ret);
+	    goto failed;
     }
-    
+
     CS_CHECK(RequestIRQ, pcmcia_request_irq(link, &link->irq));
     CS_CHECK(RequestConfiguration, pcmcia_request_configuration(link, &link->conf));
 
     p = parport_pc_probe_port(link->io.BasePort1, link->io.BasePort2,
 			      link->irq.AssignedIRQ, PARPORT_DMA_NONE,
-			      NULL);
+			      &link->dev, IRQF_SHARED);
     if (p == NULL) {
 	printk(KERN_NOTICE "parport_cs: parport_pc_probe_port() at "
 	       "0x%3x, irq %u failed\n", link->io.BasePort1,
@@ -245,7 +228,7 @@ failed:
     
 ======================================================================*/
 
-void parport_cs_release(struct pcmcia_device *link)
+static void parport_cs_release(struct pcmcia_device *link)
 {
 	parport_info_t *info = link->priv;
 
@@ -263,6 +246,7 @@ void parport_cs_release(struct pcmcia_device *link)
 
 static struct pcmcia_device_id parport_ids[] = {
 	PCMCIA_DEVICE_FUNC_ID(3),
+	PCMCIA_MFC_DEVICE_PROD_ID12(1,"Elan","Serial+Parallel Port: SP230",0x3beb8cf2,0xdb9e58bc),
 	PCMCIA_DEVICE_MANF_CARD(0x0137, 0x0003),
 	PCMCIA_DEVICE_NULL
 };

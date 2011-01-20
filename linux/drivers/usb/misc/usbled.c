@@ -108,22 +108,34 @@ static int led_probe(struct usb_interface *interface, const struct usb_device_id
 	dev = kzalloc(sizeof(struct usb_led), GFP_KERNEL);
 	if (dev == NULL) {
 		dev_err(&interface->dev, "Out of memory\n");
-		goto error;
+		goto error_mem;
 	}
 
 	dev->udev = usb_get_dev(udev);
 
 	usb_set_intfdata (interface, dev);
 
-	device_create_file(&interface->dev, &dev_attr_blue);
-	device_create_file(&interface->dev, &dev_attr_red);
-	device_create_file(&interface->dev, &dev_attr_green);
+	retval = device_create_file(&interface->dev, &dev_attr_blue);
+	if (retval)
+		goto error;
+	retval = device_create_file(&interface->dev, &dev_attr_red);
+	if (retval)
+		goto error;
+	retval = device_create_file(&interface->dev, &dev_attr_green);
+	if (retval)
+		goto error;
 
 	dev_info(&interface->dev, "USB LED device now attached\n");
 	return 0;
 
 error:
+	device_remove_file(&interface->dev, &dev_attr_blue);
+	device_remove_file(&interface->dev, &dev_attr_red);
+	device_remove_file(&interface->dev, &dev_attr_green);
+	usb_set_intfdata (interface, NULL);
+	usb_put_dev(dev->udev);
 	kfree(dev);
+error_mem:
 	return retval;
 }
 
@@ -132,11 +144,13 @@ static void led_disconnect(struct usb_interface *interface)
 	struct usb_led *dev;
 
 	dev = usb_get_intfdata (interface);
-	usb_set_intfdata (interface, NULL);
 
 	device_remove_file(&interface->dev, &dev_attr_blue);
 	device_remove_file(&interface->dev, &dev_attr_red);
 	device_remove_file(&interface->dev, &dev_attr_green);
+
+	/* first remove the files, then set the pointer to NULL */
+	usb_set_intfdata (interface, NULL);
 
 	usb_put_dev(dev->udev);
 

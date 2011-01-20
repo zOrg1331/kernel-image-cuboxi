@@ -391,11 +391,10 @@ $work_resched:
 	bne	$2, $work_resched
 
 $work_notifysig:
-	mov	$sp, $17
+	mov	$sp, $16
 	br	$1, do_switch_stack
-	mov	$5, $21
-	mov	$sp, $18
-	mov	$31, $16
+	mov	$sp, $17
+	mov	$5, $18
 	jsr	$26, do_notify_resume
 	bsr	$1, undo_switch_stack
 	br	restore_all
@@ -655,12 +654,12 @@ kernel_thread:
 .end kernel_thread
 
 /*
- * execve(path, argv, envp)
+ * kernel_execve(path, argv, envp)
  */
 	.align	4
-	.globl	execve
-	.ent	execve
-execve:
+	.globl	kernel_execve
+	.ent	kernel_execve
+kernel_execve:
 	/* We can be called from a module.  */
 	ldgp	$gp, 0($27)
 	lda	$sp, -(32+SIZEOF_PT_REGS+8)($sp)
@@ -704,7 +703,7 @@ execve:
 
 1:	lda	$sp, 32+SIZEOF_PT_REGS+8($sp)
 	ret
-.end execve
+.end kernel_execve
 
 
 /*
@@ -851,8 +850,9 @@ osf_getpriority:
 sys_getxuid:
 	.prologue 0
 	ldq	$2, TI_TASK($8)
-	ldl	$0, TASK_UID($2)
-	ldl	$1, TASK_EUID($2)
+	ldq	$3, TASK_CRED($2)
+	ldl	$0, CRED_UID($3)
+	ldl	$1, CRED_EUID($3)
 	stq	$1, 80($sp)
 	ret
 .end sys_getxuid
@@ -863,8 +863,9 @@ sys_getxuid:
 sys_getxgid:
 	.prologue 0
 	ldq	$2, TI_TASK($8)
-	ldl	$0, TASK_GID($2)
-	ldl	$1, TASK_EGID($2)
+	ldq	$3, TASK_CRED($2)
+	ldl	$0, CRED_GID($3)
+	ldl	$1, CRED_EGID($3)
 	stq	$1, 80($sp)
 	ret
 .end sys_getxgid
@@ -895,15 +896,16 @@ sys_getxpid:
 .end sys_getxpid
 
 	.align	4
-	.globl	sys_pipe
-	.ent	sys_pipe
-sys_pipe:
+	.globl	sys_alpha_pipe
+	.ent	sys_alpha_pipe
+sys_alpha_pipe:
 	lda	$sp, -16($sp)
 	stq	$26, 0($sp)
 	.prologue 0
 
+	mov	$31, $17
 	lda	$16, 8($sp)
-	jsr	$26, do_pipe
+	jsr	$26, do_pipe_flags
 
 	ldq	$26, 0($sp)
 	bne	$0, 1f
@@ -915,16 +917,7 @@ sys_pipe:
 	stq	$1, 80+16($sp)
 1:	lda	$sp, 16($sp)
 	ret
-.end sys_pipe
-
-	.align	4
-	.globl	sys_ptrace
-	.ent	sys_ptrace
-sys_ptrace:
-	.prologue 0
-	mov	$sp, $20
-	jmp	$31, do_sys_ptrace
-.end sys_ptrace
+.end sys_alpha_pipe
 
 	.align	4
 	.globl	sys_execve
@@ -941,7 +934,7 @@ sys_execve:
 osf_sigprocmask:
 	.prologue 0
 	mov	$sp, $18
-	jmp	$31, do_osf_sigprocmask
+	jmp	$31, sys_osf_sigprocmask
 .end osf_sigprocmask
 
 	.align	4

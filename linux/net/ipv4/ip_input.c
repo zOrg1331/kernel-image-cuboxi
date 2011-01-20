@@ -5,17 +5,15 @@
  *
  *		The Internet Protocol (IP) module.
  *
- * Version:	$Id: ip_input.c,v 1.55 2002/01/12 07:39:45 davem Exp $
- *
  * Authors:	Ross Biro
  *		Fred N. van Kempen, <waltje@uWalt.NL.Mugnet.ORG>
  *		Donald Becker, <becker@super.org>
- *		Alan Cox, <Alan.Cox@linux.org>
+ *		Alan Cox, <alan@lxorguk.ukuu.org.uk>
  *		Richard Underwood
  *		Stefan Becker, <stefanb@yello.ping.de>
  *		Jorge Cwik, <jorge@laser.satlink.net>
  *		Arnt Gulbrandsen, <agulbra@nvg.unit.no>
- *		
+ *
  *
  * Fixes:
  *		Alan Cox	:	Commented a couple of minor bits of surplus code
@@ -98,13 +96,13 @@
  *		Jos Vos		:	Do accounting *before* call_in_firewall
  *	Willy Konynenberg	:	Transparent proxying support
  *
- *  
+ *
  *
  * To Fix:
  *		IP fragmentation wants rewriting cleanly. The RFC815 algorithm is much more efficient
  *		and could be made very efficient with the addition of some virtual memory hacks to permit
  *		the allocation of a buffer that can then be 'grown' by twiddling page tables.
- *		Output fragmentation wants updating along with the buffer management to use a single 
+ *		Output fragmentation wants updating along with the buffer management to use a single
  *		interleaved copy algorithm so that fragmenting has a one copy overhead. Actual packet
  *		output should probably do its own fragmentation at the UDP/RAW layer. TCP shouldn't cause
  *		fragmentation anyway.
@@ -147,19 +145,14 @@
 #include <linux/netlink.h>
 
 /*
- *	SNMP management statistics
- */
-
-DEFINE_SNMP_STAT(struct ipstats_mib, ip_statistics) __read_mostly;
-
-/*
  *	Process Router Attention IP option
- */ 
+ */
 int ip_call_ra_chain(struct sk_buff *skb)
 {
 	struct ip_ra_chain *ra;
-	u8 protocol = skb->nh.iph->protocol;
+	u8 protocol = ip_hdr(skb)->protocol;
 	struct sock *last = NULL;
+	struct net_device *dev = skb->dev;
 
 	read_lock(&ip_ra_lock);
 	for (ra = ip_ra_chain; ra; ra = ra->next) {
@@ -170,10 +163,10 @@ int ip_call_ra_chain(struct sk_buff *skb)
 		 */
 		if (sk && inet_sk(sk)->num == protocol &&
 		    (!sk->sk_bound_dev_if ||
-		     sk->sk_bound_dev_if == skb->dev->ifindex)) {
-			if (skb->nh.iph->frag_off & htons(IP_MF|IP_OFFSET)) {
-				skb = ip_defrag(skb, IP_DEFRAG_CALL_RA_CHAIN);
-				if (skb == NULL) {
+		     sk->sk_bound_dev_if == dev->ifindex) &&
+		    sock_net(sk) == dev_net(dev)) {
+			if (ip_hdr(skb)->frag_off & htons(IP_MF | IP_OFFSET)) {
+				if (ip_defrag(skb, IP_DEFRAG_CALL_RA_CHAIN)) {
 					read_unlock(&ip_ra_lock);
 					return 1;
 				}
@@ -196,35 +189,36 @@ int ip_call_ra_chain(struct sk_buff *skb)
 	return 0;
 }
 
-static inline int ip_local_deliver_finish(struct sk_buff *skb)
+static int ip_local_deliver_finish(struct sk_buff *skb)
 {
-	int ihl = skb->nh.iph->ihl*4;
+	struct net *net = dev_net(skb->dev);
 
-	__skb_pull(skb, ihl);
+	__skb_pull(skb, ip_hdrlen(skb));
 
-        /* Point into the IP datagram, just past the header. */
-        skb->h.raw = skb->data;
+	/* Point into the IP datagram, just past the header. */
+	skb_reset_transport_header(skb);
 
 	rcu_read_lock();
 	{
-		/* Note: See raw.c and net/raw.h, RAWV4_HTABLE_SIZE==MAX_INET_PROTOS */
-		int protocol = skb->nh.iph->protocol;
-		int hash;
-		struct sock *raw_sk;
-		struct net_protocol *ipprot;
+		int protocol = ip_hdr(skb)->protocol;
+		int hash, raw;
+		const struct net_protocol *ipprot;
 
 	resubmit:
+		raw = raw_local_deliver(skb, protocol);
+
 		hash = protocol & (MAX_INET_PROTOS - 1);
-		raw_sk = sk_head(&raw_v4_htable[hash]);
-
-		/* If there maybe a raw socket we must check - if not we
-		 * don't care less
-		 */
-		if (raw_sk && !raw_v4_input(skb, skb->nh.iph, hash))
-			raw_sk = NULL;
-
-		if ((ipprot = rcu_dereference(inet_protos[hash])) != NULL) {
+		ipprot = rcu_dereference(inet_protos[hash]);
+		if (ipprot != NULL) {
 			int ret;
+
+			if (!net_eq(net, &init_net) && !ipprot->netns_ok) {
+				if (net_ratelimit())
+					printk("%s: proto %d isn't netns-ready\n",
+						__func__, protocol);
+				kfree_skb(skb);
+				goto out;
+			}
 
 			if (!ipprot->no_policy) {
 				if (!xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb)) {
@@ -238,16 +232,16 @@ static inline int ip_local_deliver_finish(struct sk_buff *skb)
 				protocol = -ret;
 				goto resubmit;
 			}
-			IP_INC_STATS_BH(IPSTATS_MIB_INDELIVERS);
+			IP_INC_STATS_BH(net, IPSTATS_MIB_INDELIVERS);
 		} else {
-			if (!raw_sk) {
+			if (!raw) {
 				if (xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb)) {
-					IP_INC_STATS_BH(IPSTATS_MIB_INUNKNOWNPROTOS);
+					IP_INC_STATS_BH(net, IPSTATS_MIB_INUNKNOWNPROTOS);
 					icmp_send(skb, ICMP_DEST_UNREACH,
 						  ICMP_PROT_UNREACH, 0);
 				}
 			} else
-				IP_INC_STATS_BH(IPSTATS_MIB_INDELIVERS);
+				IP_INC_STATS_BH(net, IPSTATS_MIB_INDELIVERS);
 			kfree_skb(skb);
 		}
 	}
@@ -259,20 +253,19 @@ static inline int ip_local_deliver_finish(struct sk_buff *skb)
 
 /*
  * 	Deliver IP Packets to the higher protocol layers.
- */ 
+ */
 int ip_local_deliver(struct sk_buff *skb)
 {
 	/*
 	 *	Reassemble IP fragments.
 	 */
 
-	if (skb->nh.iph->frag_off & htons(IP_MF|IP_OFFSET)) {
-		skb = ip_defrag(skb, IP_DEFRAG_LOCAL_DELIVER);
-		if (!skb)
+	if (ip_hdr(skb)->frag_off & htons(IP_MF | IP_OFFSET)) {
+		if (ip_defrag(skb, IP_DEFRAG_LOCAL_DELIVER))
 			return 0;
 	}
 
-	return NF_HOOK(PF_INET, NF_IP_LOCAL_IN, skb, skb->dev, NULL,
+	return NF_HOOK(PF_INET, NF_INET_LOCAL_IN, skb, skb->dev, NULL,
 		       ip_local_deliver_finish);
 }
 
@@ -290,28 +283,27 @@ static inline int ip_rcv_options(struct sk_buff *skb)
 					      --ANK (980813)
 	*/
 	if (skb_cow(skb, skb_headroom(skb))) {
-		IP_INC_STATS_BH(IPSTATS_MIB_INDISCARDS);
+		IP_INC_STATS_BH(dev_net(dev), IPSTATS_MIB_INDISCARDS);
 		goto drop;
 	}
 
-	iph = skb->nh.iph;
-
-	if (ip_options_compile(NULL, skb)) {
-		IP_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
-		goto drop;
-	}
-
+	iph = ip_hdr(skb);
 	opt = &(IPCB(skb)->opt);
+	opt->optlen = iph->ihl*4 - sizeof(struct iphdr);
+
+	if (ip_options_compile(dev_net(dev), opt, skb)) {
+		IP_INC_STATS_BH(dev_net(dev), IPSTATS_MIB_INHDRERRORS);
+		goto drop;
+	}
+
 	if (unlikely(opt->srr)) {
 		struct in_device *in_dev = in_dev_get(dev);
 		if (in_dev) {
 			if (!IN_DEV_SOURCE_ROUTE(in_dev)) {
 				if (IN_DEV_LOG_MARTIANS(in_dev) &&
 				    net_ratelimit())
-					printk(KERN_INFO "source route option "
-					       "%u.%u.%u.%u -> %u.%u.%u.%u\n",
-					       NIPQUAD(iph->saddr),
-					       NIPQUAD(iph->daddr));
+					printk(KERN_INFO "source route option %pI4 -> %pI4\n",
+					       &iph->saddr, &iph->daddr);
 				in_dev_put(in_dev);
 				goto drop;
 			}
@@ -328,48 +320,61 @@ drop:
 	return -1;
 }
 
-static inline int ip_rcv_finish(struct sk_buff *skb)
+static int ip_rcv_finish(struct sk_buff *skb)
 {
-	struct iphdr *iph = skb->nh.iph;
+	const struct iphdr *iph = ip_hdr(skb);
+	struct rtable *rt;
 
 	/*
 	 *	Initialise the virtual path cache for the packet. It describes
 	 *	how the packet travels inside Linux networking.
-	 */ 
-	if (skb->dst == NULL) {
+	 */
+	if (skb_dst(skb) == NULL) {
 		int err = ip_route_input(skb, iph->daddr, iph->saddr, iph->tos,
 					 skb->dev);
 		if (unlikely(err)) {
 			if (err == -EHOSTUNREACH)
-				IP_INC_STATS_BH(IPSTATS_MIB_INADDRERRORS);
-			goto drop; 
+				IP_INC_STATS_BH(dev_net(skb->dev),
+						IPSTATS_MIB_INADDRERRORS);
+			else if (err == -ENETUNREACH)
+				IP_INC_STATS_BH(dev_net(skb->dev),
+						IPSTATS_MIB_INNOROUTES);
+			goto drop;
 		}
 	}
 
 #ifdef CONFIG_NET_CLS_ROUTE
-	if (unlikely(skb->dst->tclassid)) {
-		struct ip_rt_acct *st = ip_rt_acct + 256*smp_processor_id();
-		u32 idx = skb->dst->tclassid;
+	if (unlikely(skb_dst(skb)->tclassid)) {
+		struct ip_rt_acct *st = per_cpu_ptr(ip_rt_acct, smp_processor_id());
+		u32 idx = skb_dst(skb)->tclassid;
 		st[idx&0xFF].o_packets++;
-		st[idx&0xFF].o_bytes+=skb->len;
+		st[idx&0xFF].o_bytes += skb->len;
 		st[(idx>>16)&0xFF].i_packets++;
-		st[(idx>>16)&0xFF].i_bytes+=skb->len;
+		st[(idx>>16)&0xFF].i_bytes += skb->len;
 	}
 #endif
 
 	if (iph->ihl > 5 && ip_rcv_options(skb))
 		goto drop;
 
+	rt = skb_rtable(skb);
+	if (rt->rt_type == RTN_MULTICAST) {
+		IP_UPD_PO_STATS_BH(dev_net(rt->u.dst.dev), IPSTATS_MIB_INMCAST,
+				skb->len);
+	} else if (rt->rt_type == RTN_BROADCAST)
+		IP_UPD_PO_STATS_BH(dev_net(rt->u.dst.dev), IPSTATS_MIB_INBCAST,
+				skb->len);
+
 	return dst_input(skb);
 
 drop:
-        kfree_skb(skb);
-        return NET_RX_DROP;
+	kfree_skb(skb);
+	return NET_RX_DROP;
 }
 
 /*
  * 	Main IP Receive routine.
- */ 
+ */
 int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, struct net_device *orig_dev)
 {
 	struct iphdr *iph;
@@ -381,20 +386,21 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 	if (skb->pkt_type == PACKET_OTHERHOST)
 		goto drop;
 
-	IP_INC_STATS_BH(IPSTATS_MIB_INRECEIVES);
+
+	IP_UPD_PO_STATS_BH(dev_net(dev), IPSTATS_MIB_IN, skb->len);
 
 	if ((skb = skb_share_check(skb, GFP_ATOMIC)) == NULL) {
-		IP_INC_STATS_BH(IPSTATS_MIB_INDISCARDS);
+		IP_INC_STATS_BH(dev_net(dev), IPSTATS_MIB_INDISCARDS);
 		goto out;
 	}
 
 	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
 		goto inhdr_error;
 
-	iph = skb->nh.iph;
+	iph = ip_hdr(skb);
 
 	/*
-	 *	RFC1122: 3.1.2.2 MUST silently discard any IP frame that fails the checksum.
+	 *	RFC1122: 3.2.1.2 MUST silently discard any IP frame that fails the checksum.
 	 *
 	 *	Is the datagram acceptable?
 	 *
@@ -410,13 +416,16 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 	if (!pskb_may_pull(skb, iph->ihl*4))
 		goto inhdr_error;
 
-	iph = skb->nh.iph;
+	iph = ip_hdr(skb);
 
 	if (unlikely(ip_fast_csum((u8 *)iph, iph->ihl)))
 		goto inhdr_error;
 
 	len = ntohs(iph->tot_len);
-	if (skb->len < len || len < (iph->ihl*4))
+	if (skb->len < len) {
+		IP_INC_STATS_BH(dev_net(dev), IPSTATS_MIB_INTRUNCATEDPKTS);
+		goto drop;
+	} else if (len < (iph->ihl*4))
 		goto inhdr_error;
 
 	/* Our transport medium may have padded the buffer out. Now we know it
@@ -424,22 +433,23 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 	 * Note this now means skb->len holds ntohs(iph->tot_len).
 	 */
 	if (pskb_trim_rcsum(skb, len)) {
-		IP_INC_STATS_BH(IPSTATS_MIB_INDISCARDS);
+		IP_INC_STATS_BH(dev_net(dev), IPSTATS_MIB_INDISCARDS);
 		goto drop;
 	}
 
 	/* Remove any debris in the socket control block */
 	memset(IPCB(skb), 0, sizeof(struct inet_skb_parm));
 
-	return NF_HOOK(PF_INET, NF_IP_PRE_ROUTING, skb, dev, NULL,
+	/* Must drop socket now because of tproxy. */
+	skb_orphan(skb);
+
+	return NF_HOOK(PF_INET, NF_INET_PRE_ROUTING, skb, dev, NULL,
 		       ip_rcv_finish);
 
 inhdr_error:
-	IP_INC_STATS_BH(IPSTATS_MIB_INHDRERRORS);
+	IP_INC_STATS_BH(dev_net(dev), IPSTATS_MIB_INHDRERRORS);
 drop:
-        kfree_skb(skb);
+	kfree_skb(skb);
 out:
-        return NET_RX_DROP;
+	return NET_RX_DROP;
 }
-
-EXPORT_SYMBOL(ip_statistics);

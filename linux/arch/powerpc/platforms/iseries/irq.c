@@ -30,7 +30,6 @@
 #include <linux/param.h>
 #include <linux/string.h>
 #include <linux/bootmem.h>
-#include <linux/ide.h>
 #include <linux/irq.h>
 #include <linux/spinlock.h>
 
@@ -43,10 +42,7 @@
 #include "irq.h"
 #include "pci.h"
 #include "call_pci.h"
-
-#if defined(CONFIG_SMP)
-extern void iSeries_smp_message_recv(struct pt_regs *);
-#endif
+#include "smp.h"
 
 #ifdef CONFIG_PCI
 
@@ -88,7 +84,7 @@ static DEFINE_SPINLOCK(pending_irqs_lock);
 static int num_pending_irqs;
 static int pending_irqs[NR_IRQS];
 
-static void int_received(struct pci_event *event, struct pt_regs *regs)
+static void int_received(struct pci_event *event)
 {
 	int irq;
 
@@ -146,11 +142,11 @@ static void int_received(struct pci_event *event, struct pt_regs *regs)
 	}
 }
 
-static void pci_event_handler(struct HvLpEvent *event, struct pt_regs *regs)
+static void pci_event_handler(struct HvLpEvent *event)
 {
 	if (event && (event->xType == HvLpEvent_Type_PciIo)) {
 		if (hvlpevent_is_int(event))
-			int_received((struct pci_event *)event, regs);
+			int_received((struct pci_event *)event);
 		else
 			printk(KERN_ERR
 				"pci_event_handler: unexpected ack received\n");
@@ -218,7 +214,7 @@ void __init iSeries_activate_IRQs()
 	unsigned long flags;
 
 	for_each_irq (irq) {
-		irq_desc_t *desc = get_irq_desc(irq);
+		struct irq_desc *desc = get_irq_desc(irq);
 
 		if (desc && desc->chip && desc->chip->startup) {
 			spin_lock_irqsave(&desc->lock, flags);
@@ -308,18 +304,18 @@ int __init iSeries_allocate_IRQ(HvBusNumber bus,
 /*
  * Get the next pending IRQ.
  */
-unsigned int iSeries_get_irq(struct pt_regs *regs)
+unsigned int iSeries_get_irq(void)
 {
 	int irq = NO_IRQ_IGNORE;
 
 #ifdef CONFIG_SMP
 	if (get_lppaca()->int_dword.fields.ipi_cnt) {
 		get_lppaca()->int_dword.fields.ipi_cnt = 0;
-		iSeries_smp_message_recv(regs);
+		iSeries_smp_message_recv();
 	}
 #endif /* CONFIG_SMP */
 	if (hvlpevent_is_pending())
-		process_hvlpevents(regs);
+		process_hvlpevents();
 
 #ifdef CONFIG_PCI
 	if (num_pending_irqs) {
@@ -340,6 +336,8 @@ unsigned int iSeries_get_irq(struct pt_regs *regs)
 	return irq;
 }
 
+#ifdef CONFIG_PCI
+
 static int iseries_irq_host_map(struct irq_host *h, unsigned int virq,
 				irq_hw_number_t hw)
 {
@@ -348,8 +346,15 @@ static int iseries_irq_host_map(struct irq_host *h, unsigned int virq,
 	return 0;
 }
 
+static int iseries_irq_host_match(struct irq_host *h, struct device_node *np)
+{
+	/* Match all */
+	return 1;
+}
+
 static struct irq_host_ops iseries_irq_host_ops = {
 	.map = iseries_irq_host_map,
+	.match = iseries_irq_host_match,
 };
 
 /*
@@ -371,7 +376,8 @@ void __init iSeries_init_IRQ(void)
 	/* Create irq host. No need for a revmap since HV will give us
 	 * back our virtual irq number
 	 */
-	host = irq_alloc_host(IRQ_HOST_MAP_NOMAP, 0, &iseries_irq_host_ops, 0);
+	host = irq_alloc_host(NULL, IRQ_HOST_MAP_NOMAP, 0,
+			      &iseries_irq_host_ops, 0);
 	BUG_ON(host == NULL);
 	irq_set_default_host(host);
 
@@ -387,3 +393,4 @@ void __init iSeries_init_IRQ(void)
 				"failed with rc 0x%x\n", ret);
 }
 
+#endif	/* CONFIG_PCI */

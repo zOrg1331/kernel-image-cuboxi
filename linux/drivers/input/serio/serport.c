@@ -15,6 +15,7 @@
 
 #include <asm/uaccess.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -46,7 +47,7 @@ struct serport {
 static int serport_serio_write(struct serio *serio, unsigned char data)
 {
 	struct serport *serport = serio->port_data;
-	return -(serport->tty->driver->write(serport->tty, &data, 1) != 1);
+	return -(serport->tty->ops->write(serport->tty, &data, 1) != 1);
 }
 
 static int serport_serio_open(struct serio *serio)
@@ -117,9 +118,6 @@ static void serport_ldisc_close(struct tty_struct *tty)
  * serport_ldisc_receive() is called by the low level tty driver when characters
  * are ready for us. We forward the characters, one by one to the 'interrupt'
  * routine.
- *
- * FIXME: We should get pt_regs from the tty layer and forward them to
- *	  serio_interrupt here.
  */
 
 static void serport_ldisc_receive(struct tty_struct *tty, const unsigned char *cp, char *fp, int count)
@@ -134,7 +132,7 @@ static void serport_ldisc_receive(struct tty_struct *tty, const unsigned char *c
 		goto out;
 
 	for (i = 0; i < count; i++)
-		serio_interrupt(serport->serio, cp[i], 0, NULL);
+		serio_interrupt(serport->serio, cp[i], 0);
 
 out:
 	spin_unlock_irqrestore(&serport->lock, flags);
@@ -219,7 +217,7 @@ static void serport_ldisc_write_wakeup(struct tty_struct * tty)
  * The line discipline structure.
  */
 
-static struct tty_ldisc serport_ldisc = {
+static struct tty_ldisc_ops serport_ldisc = {
 	.owner =	THIS_MODULE,
 	.name =		"input",
 	.open =		serport_ldisc_open,

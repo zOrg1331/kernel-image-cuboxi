@@ -40,7 +40,6 @@
 #define BX_NUM		10
 
 
-#include <sound/driver.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -51,6 +50,7 @@
 #include <sound/core.h>
 #include <sound/info.h>
 #include <sound/control.h>
+#include <sound/tlv.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/asoundef.h>
@@ -58,6 +58,8 @@
 #include <asm/io.h>
 #include <asm/atomic.h>
 #include "echoaudio.h"
+
+MODULE_FIRMWARE("ea/darla24_dsp.fw");
 
 #define FW_DARLA24_DSP	0
 

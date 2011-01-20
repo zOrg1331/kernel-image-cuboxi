@@ -35,6 +35,7 @@
 #include <asm/hvconsole.h>
 #include <asm/vio.h>
 #include <asm/prom.h>
+#include <asm/firmware.h>
 
 #include "hvc_console.h"
 
@@ -76,9 +77,12 @@ static int filtered_get_chars(uint32_t vtermno, char *buf, int count)
 	return got;
 }
 
-static struct hv_ops hvc_get_put_ops = {
+static const struct hv_ops hvc_get_put_ops = {
 	.get_chars = filtered_get_chars,
 	.put_chars = hvc_put_chars,
+	.notifier_add = notifier_add_irq,
+	.notifier_del = notifier_del_irq,
+	.notifier_hangup = notifier_hangup_irq,
 };
 
 static int __devinit hvc_vio_probe(struct vio_dev *vdev,
@@ -90,7 +94,8 @@ static int __devinit hvc_vio_probe(struct vio_dev *vdev,
 	if (!vdev || !id)
 		return -EPERM;
 
-	hp = hvc_alloc(vdev->unit_address, vdev->irq, &hvc_get_put_ops);
+	hp = hvc_alloc(vdev->unit_address, vdev->irq, &hvc_get_put_ops,
+			MAX_VIO_PUT_CHARS);
 	if (IS_ERR(hp))
 		return PTR_ERR(hp);
 	dev_set_drvdata(&vdev->dev, hp);
@@ -108,16 +113,19 @@ static int __devexit hvc_vio_remove(struct vio_dev *vdev)
 static struct vio_driver hvc_vio_driver = {
 	.id_table	= hvc_driver_table,
 	.probe		= hvc_vio_probe,
-	.remove		= hvc_vio_remove,
+	.remove		= __devexit_p(hvc_vio_remove),
 	.driver		= {
 		.name	= hvc_driver_name,
 		.owner	= THIS_MODULE,
 	}
 };
 
-static int hvc_vio_init(void)
+static int __init hvc_vio_init(void)
 {
 	int rc;
+
+	if (firmware_has_feature(FW_FEATURE_ISERIES))
+		return -EIO;
 
 	/* Register as a vio device to receive callbacks */
 	rc = vio_register_driver(&hvc_vio_driver);
@@ -126,7 +134,7 @@ static int hvc_vio_init(void)
 }
 module_init(hvc_vio_init); /* after drivers/char/hvc_console.c */
 
-static void hvc_vio_exit(void)
+static void __exit hvc_vio_exit(void)
 {
 	vio_unregister_driver(&hvc_vio_driver);
 }
@@ -140,19 +148,21 @@ static int hvc_find_vtys(void)
 
 	for (vty = of_find_node_by_name(NULL, "vty"); vty != NULL;
 			vty = of_find_node_by_name(vty, "vty")) {
-		uint32_t *vtermno;
+		const uint32_t *vtermno;
 
 		/* We have statically defined space for only a certain number
 		 * of console adapters.
 		 */
-		if (num_found >= MAX_NR_HVC_CONSOLES)
+		if (num_found >= MAX_NR_HVC_CONSOLES) {
+			of_node_put(vty);
 			break;
+		}
 
-		vtermno = (uint32_t *)get_property(vty, "reg", NULL);
+		vtermno = of_get_property(vty, "reg", NULL);
 		if (!vtermno)
 			continue;
 
-		if (device_is_compatible(vty, "hvterm1")) {
+		if (of_device_is_compatible(vty, "hvterm1")) {
 			hvc_instantiate(*vtermno, num_found, &hvc_get_put_ops);
 			++num_found;
 		}

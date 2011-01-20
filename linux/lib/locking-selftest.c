@@ -157,11 +157,11 @@ static void init_shared_classes(void)
 #define SOFTIRQ_ENTER()				\
 		local_bh_disable();		\
 		local_irq_disable();		\
-		trace_softirq_enter();		\
+		lockdep_softirq_enter();	\
 		WARN_ON(!in_softirq());
 
 #define SOFTIRQ_EXIT()				\
-		trace_softirq_exit();		\
+		lockdep_softirq_exit();		\
 		local_irq_enable();		\
 		local_bh_enable();
 
@@ -963,7 +963,9 @@ static void dotest(void (*testcase_fn)(void), int expected, int lockclass_mask)
 			printk("failed|");
 		} else {
 			unexpected_testcase_failures++;
+
 			printk("FAILED|");
+			dump_stack();
 		}
 	} else {
 		testcase_successes++;

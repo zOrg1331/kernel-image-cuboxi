@@ -20,7 +20,6 @@
  *  - DMA works with ep1 (OUT transfers) and ep2 (IN transfers).
  */
 
-#undef DEBUG
 // #define	VERBOSE		/* extra debug messages (success too) */
 // #define	USB_TRACE	/* packet-level success messages */
 
@@ -29,9 +28,7 @@
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/ioport.h>
-#include <linux/sched.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/timer.h>
@@ -39,8 +36,8 @@
 #include <linux/interrupt.h>
 #include <linux/proc_fs.h>
 #include <linux/device.h>
-#include <linux/usb_ch9.h>
-#include <linux/usb_gadget.h>
+#include <linux/usb/ch9.h>
+#include <linux/usb/gadget.h>
 
 #include <asm/byteorder.h>
 #include <asm/io.h>
@@ -113,10 +110,10 @@ goku_ep_enable(struct usb_ep *_ep, const struct usb_endpoint_descriptor *desc)
 		return -EINVAL;
 	if (!dev->driver || dev->gadget.speed == USB_SPEED_UNKNOWN)
 		return -ESHUTDOWN;
-	if (ep->num != (desc->bEndpointAddress & 0x0f))
+	if (ep->num != usb_endpoint_num(desc))
 		return -EINVAL;
 
-	switch (desc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) {
+	switch (usb_endpoint_type(desc)) {
 	case USB_ENDPOINT_XFER_BULK:
 	case USB_ENDPOINT_XFER_INT:
 		break;
@@ -130,7 +127,7 @@ goku_ep_enable(struct usb_ep *_ep, const struct usb_endpoint_descriptor *desc)
 
 	/* enabling the no-toggle interrupt mode would need an api hook */
 	mode = 0;
-	max = le16_to_cpu(get_unaligned(&desc->wMaxPacketSize));
+	max = get_unaligned_le16(&desc->wMaxPacketSize);
 	switch (max) {
 	case 64:	mode++;
 	case 32:	mode++;
@@ -145,7 +142,7 @@ goku_ep_enable(struct usb_ep *_ep, const struct usb_endpoint_descriptor *desc)
 	/* ep1/ep2 dma direction is chosen early; it works in the other
 	 * direction, with pio.  be cautious with out-dma.
 	 */
-	ep->is_in = (USB_DIR_IN & desc->bEndpointAddress) != 0;
+	ep->is_in = usb_endpoint_dir_in(desc);
 	if (ep->is_in) {
 		mode |= 1;
 		ep->dma = (use_dma != 0) && (ep->num == UDC_MSTRD_ENDPOINT);
@@ -298,80 +295,6 @@ goku_free_request(struct usb_ep *_ep, struct usb_request *_req)
 
 /*-------------------------------------------------------------------------*/
 
-#undef USE_KMALLOC
-
-/* many common platforms have dma-coherent caches, which means that it's
- * safe to use kmalloc() memory for all i/o buffers without using any
- * cache flushing calls.  (unless you're trying to share cache lines
- * between dma and non-dma activities, which is a slow idea in any case.)
- *
- * other platforms need more care, with 2.6 having a moderately general
- * solution except for the common "buffer is smaller than a page" case.
- */
-#if	defined(CONFIG_X86)
-#define USE_KMALLOC
-
-#elif	defined(CONFIG_MIPS) && !defined(CONFIG_DMA_NONCOHERENT)
-#define USE_KMALLOC
-
-#elif	defined(CONFIG_PPC) && !defined(CONFIG_NOT_COHERENT_CACHE)
-#define USE_KMALLOC
-
-#endif
-
-/* allocating buffers this way eliminates dma mapping overhead, which
- * on some platforms will mean eliminating a per-io buffer copy.  with
- * some kinds of system caches, further tweaks may still be needed.
- */
-static void *
-goku_alloc_buffer(struct usb_ep *_ep, unsigned bytes,
-			dma_addr_t *dma, gfp_t gfp_flags)
-{
-	void		*retval;
-	struct goku_ep	*ep;
-
-	ep = container_of(_ep, struct goku_ep, ep);
-	if (!_ep)
-		return NULL;
-	*dma = DMA_ADDR_INVALID;
-
-#if	defined(USE_KMALLOC)
-	retval = kmalloc(bytes, gfp_flags);
-	if (retval)
-		*dma = virt_to_phys(retval);
-#else
-	if (ep->dma) {
-		/* the main problem with this call is that it wastes memory
-		 * on typical 1/N page allocations: it allocates 1-N pages.
-		 */
-#warning Using dma_alloc_coherent even with buffers smaller than a page.
-		retval = dma_alloc_coherent(&ep->dev->pdev->dev,
-				bytes, dma, gfp_flags);
-	} else
-		retval = kmalloc(bytes, gfp_flags);
-#endif
-	return retval;
-}
-
-static void
-goku_free_buffer(struct usb_ep *_ep, void *buf, dma_addr_t dma, unsigned bytes)
-{
-	/* free memory into the right allocator */
-#ifndef	USE_KMALLOC
-	if (dma != DMA_ADDR_INVALID) {
-		struct goku_ep	*ep;
-
-		ep = container_of(_ep, struct goku_ep, ep);
-		if (!_ep)
-			return;
-		dma_free_coherent(&ep->dev->pdev->dev, bytes, buf, dma);
-	} else
-#endif
-		kfree (buf);
-}
-
-/*-------------------------------------------------------------------------*/
-
 static void
 done(struct goku_ep *ep, struct goku_request *req, int status)
 {
@@ -516,7 +439,7 @@ top:
 			/* use ep1/ep2 double-buffering for OUT */
 			if (!(size & PACKET_ACTIVE))
 				size = readl(&regs->EPxSizeLB[ep->num]);
-			if (!(size & PACKET_ACTIVE)) 	// "can't happen"
+			if (!(size & PACKET_ACTIVE))	/* "can't happen" */
 				break;
 			size &= DATASIZE;	/* EPxSizeH == 0 */
 
@@ -769,7 +692,7 @@ static void abort_dma(struct goku_ep *ep, int status)
 	req->req.actual = (curr - req->req.dma) + 1;
 	req->req.status = status;
 
-	VDBG(ep->dev, "%s %s %s %d/%d\n", __FUNCTION__, ep->ep.name,
+	VDBG(ep->dev, "%s %s %s %d/%d\n", __func__, ep->ep.name,
 		ep->is_in ? "IN" : "OUT",
 		req->req.actual, req->req.length);
 
@@ -903,7 +826,7 @@ static int goku_dequeue(struct usb_ep *_ep, struct usb_request *_req)
 	if (dev->ep0state == EP0_SUSPEND)
 		return -EBUSY;
 
-	VDBG(dev, "%s %s %s %s %p\n", __FUNCTION__, _ep->name,
+	VDBG(dev, "%s %s %s %s %p\n", __func__, _ep->name,
 		ep->is_in ? "IN" : "OUT",
 		ep->dma ? "dma" : "pio",
 		_req);
@@ -975,7 +898,7 @@ static int goku_set_halt(struct usb_ep *_ep, int value)
 
 	/* don't change EPxSTATUS_EP_INVALID to READY */
 	} else if (!ep->desc) {
-		DBG(ep->dev, "%s %s inactive?\n", __FUNCTION__, ep->ep.name);
+		DBG(ep->dev, "%s %s inactive?\n", __func__, ep->ep.name);
 		return -EINVAL;
 	}
 
@@ -1017,7 +940,7 @@ static int goku_fifo_status(struct usb_ep *_ep)
 	regs = ep->dev->regs;
 	size = readl(&regs->EPxSizeLA[ep->num]) & DATASIZE;
 	size += readl(&regs->EPxSizeLB[ep->num]) & DATASIZE;
-	VDBG(ep->dev, "%s %s %u\n", __FUNCTION__, ep->ep.name, size);
+	VDBG(ep->dev, "%s %s %u\n", __func__, ep->ep.name, size);
 	return size;
 }
 
@@ -1030,11 +953,11 @@ static void goku_fifo_flush(struct usb_ep *_ep)
 	if (!_ep)
 		return;
 	ep = container_of(_ep, struct goku_ep, ep);
-	VDBG(ep->dev, "%s %s\n", __FUNCTION__, ep->ep.name);
+	VDBG(ep->dev, "%s %s\n", __func__, ep->ep.name);
 
 	/* don't change EPxSTATUS_EP_INVALID to READY */
 	if (!ep->desc && ep->num != 0) {
-		DBG(ep->dev, "%s %s inactive?\n", __FUNCTION__, ep->ep.name);
+		DBG(ep->dev, "%s %s inactive?\n", __func__, ep->ep.name);
 		return;
 	}
 
@@ -1056,9 +979,6 @@ static struct usb_ep_ops goku_ep_ops = {
 
 	.alloc_request	= goku_alloc_request,
 	.free_request	= goku_free_request,
-
-	.alloc_buffer	= goku_alloc_buffer,
-	.free_buffer	= goku_free_buffer,
 
 	.queue		= goku_queue,
 	.dequeue	= goku_dequeue,
@@ -1171,17 +1091,17 @@ udc_proc_read(char *buffer, char **start, off_t off, int count,
 		is_usb_connected
 			? ((tmp & PW_PULLUP) ? "full speed" : "powered")
 			: "disconnected",
-		({char *tmp;
+		({char *state;
 		switch(dev->ep0state){
-		case EP0_DISCONNECT:	tmp = "ep0_disconnect"; break;
-		case EP0_IDLE:		tmp = "ep0_idle"; break;
-		case EP0_IN:		tmp = "ep0_in"; break;
-		case EP0_OUT:		tmp = "ep0_out"; break;
-		case EP0_STATUS:	tmp = "ep0_status"; break;
-		case EP0_STALL:		tmp = "ep0_stall"; break;
-		case EP0_SUSPEND:	tmp = "ep0_suspend"; break;
-		default:		tmp = "ep0_?"; break;
-		} tmp; })
+		case EP0_DISCONNECT:	state = "ep0_disconnect"; break;
+		case EP0_IDLE:		state = "ep0_idle"; break;
+		case EP0_IN:		state = "ep0_in"; break;
+		case EP0_OUT:		state = "ep0_out"; break;
+		case EP0_STATUS:	state = "ep0_status"; break;
+		case EP0_STALL:		state = "ep0_stall"; break;
+		case EP0_SUSPEND:	state = "ep0_suspend"; break;
+		default:		state = "ep0_?"; break;
+		} state; })
 		);
 	size -= t;
 	next += t;
@@ -1226,7 +1146,6 @@ udc_proc_read(char *buffer, char **start, off_t off, int count,
 	for (i = 0; i < 4; i++) {
 		struct goku_ep		*ep = &dev->ep [i];
 		struct goku_request	*req;
-		int			t;
 
 		if (i && !ep->desc)
 			continue;
@@ -1314,7 +1233,7 @@ done:
 static void udc_reinit (struct goku_udc *dev)
 {
 	static char *names [] = { "ep0", "ep1-bulk", "ep2-bulk", "ep3-bulk" };
-	
+
 	unsigned i;
 
 	INIT_LIST_HEAD (&dev->gadget.ep_list);
@@ -1367,7 +1286,7 @@ static void ep0_start(struct goku_udc *dev)
 	struct goku_udc_regs __iomem	*regs = dev->regs;
 	unsigned			i;
 
-	VDBG(dev, "%s\n", __FUNCTION__);
+	VDBG(dev, "%s\n", __func__);
 
 	udc_reset(dev);
 	udc_reinit (dev);
@@ -1403,7 +1322,7 @@ static void udc_enable(struct goku_udc *dev)
 	if (readl(&dev->regs->power_detect) & PW_DETECT)
 		ep0_start(dev);
 	else {
-		DBG(dev, "%s\n", __FUNCTION__);
+		DBG(dev, "%s\n", __func__);
 		dev->int_enable = INT_PWRDETECT;
 		writel(dev->int_enable, &dev->regs->int_enable);
 	}
@@ -1430,9 +1349,8 @@ int usb_gadget_register_driver(struct usb_gadget_driver *driver)
 	int			retval;
 
 	if (!driver
-			|| driver->speed != USB_SPEED_FULL
+			|| driver->speed < USB_SPEED_FULL
 			|| !driver->bind
-			|| !driver->unbind
 			|| !driver->disconnect
 			|| !driver->setup)
 		return -EINVAL;
@@ -1469,7 +1387,7 @@ stop_activity(struct goku_udc *dev, struct usb_gadget_driver *driver)
 {
 	unsigned	i;
 
-	DBG (dev, "%s\n", __FUNCTION__);
+	DBG (dev, "%s\n", __func__);
 
 	if (dev->gadget.speed == USB_SPEED_UNKNOWN)
 		driver = NULL;
@@ -1495,7 +1413,7 @@ int usb_gadget_unregister_driver(struct usb_gadget_driver *driver)
 
 	if (!dev)
 		return -ENODEV;
-	if (!driver || driver != dev->driver)
+	if (!driver || driver != dev->driver || !driver->unbind)
 		return -EINVAL;
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -1504,6 +1422,7 @@ int usb_gadget_unregister_driver(struct usb_gadget_driver *driver)
 	spin_unlock_irqrestore(&dev->lock, flags);
 
 	driver->unbind(&dev->gadget);
+	dev->gadget.dev.driver = NULL;
 
 	DBG(dev, "unregistered driver '%s'\n", driver->driver.name);
 	return 0;
@@ -1553,7 +1472,7 @@ static void ep0_setup(struct goku_udc *dev)
 				/* active endpoint */
 				if (tmp > 3 || (!dev->ep[tmp].desc && tmp != 0))
 					goto stall;
-				if (ctrl.wIndex & __constant_cpu_to_le16(
+				if (ctrl.wIndex & cpu_to_le16(
 						USB_DIR_IN)) {
 					if (!dev->ep[tmp].is_in)
 						goto stall;
@@ -1561,7 +1480,7 @@ static void ep0_setup(struct goku_udc *dev)
 					if (dev->ep[tmp].is_in)
 						goto stall;
 				}
-				if (ctrl.wValue != __constant_cpu_to_le16(
+				if (ctrl.wValue != cpu_to_le16(
 						USB_ENDPOINT_HALT))
 					goto stall;
 				if (tmp)
@@ -1574,7 +1493,7 @@ succeed:
 				return;
 			case USB_RECIP_DEVICE:
 				/* device remote wakeup: always clear */
-				if (ctrl.wValue != __constant_cpu_to_le16(1))
+				if (ctrl.wValue != cpu_to_le16(1))
 					goto stall;
 				VDBG(dev, "clear dev remote wakeup\n");
 				goto succeed;
@@ -1600,7 +1519,7 @@ succeed:
 	dev->req_config = (ctrl.bRequest == USB_REQ_SET_CONFIGURATION
 				&& ctrl.bRequestType == USB_RECIP_DEVICE);
 	if (unlikely(dev->req_config))
-		dev->configured = (ctrl.wValue != __constant_cpu_to_le16(0));
+		dev->configured = (ctrl.wValue != cpu_to_le16(0));
 
 	/* delegate everything to the gadget driver.
 	 * it may respond after this irq handler returns.
@@ -1628,7 +1547,7 @@ stall:
 		handled = 1; \
 		}
 
-static irqreturn_t goku_irq(int irq, void *_dev, struct pt_regs *r)
+static irqreturn_t goku_irq(int irq, void *_dev)
 {
 	struct goku_udc			*dev = _dev;
 	struct goku_udc_regs __iomem	*regs = dev->regs;
@@ -1807,14 +1726,9 @@ static void goku_remove(struct pci_dev *pdev)
 {
 	struct goku_udc		*dev = pci_get_drvdata(pdev);
 
-	DBG(dev, "%s\n", __FUNCTION__);
-	/* start with the driver above us */
-	if (dev->driver) {
-		/* should have been done already by driver model core */
-		WARN(dev, "pci remove, driver '%s' is still registered\n",
-				dev->driver->driver.name);
-		usb_gadget_unregister_driver(dev->driver);
-	}
+	DBG(dev, "%s\n", __func__);
+
+	BUG_ON(dev->driver);
 
 #ifdef CONFIG_USB_GADGET_DEBUG_FILES
 	remove_proc_entry(proc_node_name, NULL);
@@ -1854,7 +1768,7 @@ static int goku_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	 * usb_gadget_driver_{register,unregister}() must change.
 	 */
 	if (the_controller) {
-		WARN(dev, "ignoring %s\n", pci_name(pdev));
+		WARNING(dev, "ignoring %s\n", pci_name(pdev));
 		return -EBUSY;
 	}
 	if (!pdev->irq) {
@@ -1864,20 +1778,19 @@ static int goku_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	/* alloc, and start init */
-	dev = kmalloc (sizeof *dev, SLAB_KERNEL);
+	dev = kzalloc (sizeof *dev, GFP_KERNEL);
 	if (dev == NULL){
 		pr_debug("enomem %s\n", pci_name(pdev));
 		retval = -ENOMEM;
 		goto done;
 	}
 
-	memset(dev, 0, sizeof *dev);
 	spin_lock_init(&dev->lock);
 	dev->pdev = pdev;
 	dev->gadget.ops = &goku_ops;
 
 	/* the "gadget" abstracts/virtualizes the controller */
-	strcpy(dev->gadget.dev.bus_id, "gadget");
+	dev_set_name(&dev->gadget.dev, "gadget");
 	dev->gadget.dev.parent = &pdev->dev;
 	dev->gadget.dev.dma_mask = pdev->dev.dma_mask;
 	dev->gadget.dev.release = gadget_release;
@@ -1933,9 +1846,9 @@ static int goku_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	/* done */
 	the_controller = dev;
-	device_register(&dev->gadget.dev);
-
-	return 0;
+	retval = device_register(&dev->gadget.dev);
+	if (retval == 0)
+		return 0;
 
 done:
 	if (dev)
@@ -1947,8 +1860,8 @@ done:
 /*-------------------------------------------------------------------------*/
 
 static struct pci_device_id pci_ids [] = { {
-	.class = 	((PCI_CLASS_SERIAL_USB << 8) | 0xfe),
-	.class_mask = 	~0,
+	.class =	((PCI_CLASS_SERIAL_USB << 8) | 0xfe),
+	.class_mask =	~0,
 	.vendor =	0x102f,		/* Toshiba */
 	.device =	0x0107,		/* this UDC */
 	.subvendor =	PCI_ANY_ID,

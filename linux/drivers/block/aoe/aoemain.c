@@ -1,4 +1,4 @@
-/* Copyright (c) 2004 Coraid, Inc.  See COPYING for GPL terms. */
+/* Copyright (c) 2007 Coraid, Inc.  See COPYING for GPL terms. */
 /*
  * aoemain.c
  * Module initialization routines, discover timer
@@ -7,6 +7,7 @@
 #include <linux/hdreg.h>
 #include <linux/blkdev.h>
 #include <linux/module.h>
+#include <linux/skbuff.h>
 #include "aoe.h"
 
 MODULE_LICENSE("GPL");
@@ -84,13 +85,11 @@ aoe_init(void)
 		goto net_fail;
 	ret = register_blkdev(AOE_MAJOR, DEVICE_NAME);
 	if (ret < 0) {
-		printk(KERN_ERR "aoe: aoeblk_init: can't register major\n");
+		printk(KERN_ERR "aoe: can't register major\n");
 		goto blkreg_fail;
 	}
 
-	printk(KERN_INFO
-	       "aoe: aoe_init: AoE v%s initialised.\n",
-	       VERSION);
+	printk(KERN_INFO "aoe: AoE v%s initialised.\n", VERSION);
 	discover_timer(TINIT);
 	return 0;
 
@@ -103,7 +102,7 @@ aoe_init(void)
  chr_fail:
 	aoedev_exit();
 	
-	printk(KERN_INFO "aoe: aoe_init: initialisation failure.\n");
+	printk(KERN_INFO "aoe: initialisation failure.\n");
 	return ret;
 }
 

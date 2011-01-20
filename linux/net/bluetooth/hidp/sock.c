@@ -1,4 +1,4 @@
-/* 
+/*
    HIDP implementation for Linux Bluetooth stack (BlueZ).
    Copyright (C) 2003-2004 Marcel Holtmann <marcel@holtmann.org>
 
@@ -10,13 +10,13 @@
    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS.
    IN NO EVENT SHALL THE COPYRIGHT HOLDER(S) AND AUTHOR(S) BE LIABLE FOR ANY
-   CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES 
-   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN 
-   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF 
+   CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES
+   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-   ALL LIABILITY, INCLUDING LIABILITY FOR INFRINGEMENT OF ANY PATENTS, 
-   COPYRIGHTS, TRADEMARKS OR OTHER RIGHTS, RELATING TO USE OF THIS 
+   ALL LIABILITY, INCLUDING LIABILITY FOR INFRINGEMENT OF ANY PATENTS,
+   COPYRIGHTS, TRADEMARKS OR OTHER RIGHTS, RELATING TO USE OF THIS
    SOFTWARE IS DISCLAIMED.
 */
 
@@ -26,7 +26,6 @@
 #include <linux/capability.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/fcntl.h>
@@ -35,14 +34,10 @@
 #include <linux/ioctl.h>
 #include <linux/file.h>
 #include <linux/init.h>
+#include <linux/compat.h>
 #include <net/sock.h>
 
 #include "hidp.h"
-
-#ifndef CONFIG_BT_HIDP_DEBUG
-#undef  BT_DBG
-#define BT_DBG(D...)
-#endif
 
 static int hidp_sock_release(struct socket *sock)
 {
@@ -86,13 +81,13 @@ static int hidp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 
 		isock = sockfd_lookup(ca.intr_sock, &err);
 		if (!isock) {
-			fput(csock->file);
+			sockfd_put(csock);
 			return err;
 		}
 
 		if (csock->sk->sk_state != BT_CONNECTED || isock->sk->sk_state != BT_CONNECTED) {
-			fput(csock->file);
-			fput(isock->file);
+			sockfd_put(csock);
+			sockfd_put(isock);
 			return -EBADFD;
 		}
 
@@ -101,8 +96,8 @@ static int hidp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 			if (copy_to_user(argp, &ca, sizeof(ca)))
 				err = -EFAULT;
 		} else {
-			fput(csock->file);
-			fput(isock->file);
+			sockfd_put(csock);
+			sockfd_put(isock);
 		}
 
 		return err;
@@ -143,11 +138,88 @@ static int hidp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 	return -EINVAL;
 }
 
+#ifdef CONFIG_COMPAT
+struct compat_hidp_connadd_req {
+	int   ctrl_sock;	// Connected control socket
+	int   intr_sock;	// Connteted interrupt socket
+	__u16 parser;
+	__u16 rd_size;
+	compat_uptr_t rd_data;
+	__u8  country;
+	__u8  subclass;
+	__u16 vendor;
+	__u16 product;
+	__u16 version;
+	__u32 flags;
+	__u32 idle_to;
+	char  name[128];
+};
+
+static int hidp_sock_compat_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
+{
+	if (cmd == HIDPGETCONNLIST) {
+		struct hidp_connlist_req cl;
+		uint32_t uci;
+		int err;
+
+		if (get_user(cl.cnum, (uint32_t __user *) arg) ||
+				get_user(uci, (u32 __user *) (arg + 4)))
+			return -EFAULT;
+
+		cl.ci = compat_ptr(uci);
+
+		if (cl.cnum <= 0)
+			return -EINVAL;
+
+		err = hidp_get_connlist(&cl);
+
+		if (!err && put_user(cl.cnum, (uint32_t __user *) arg))
+			err = -EFAULT;
+
+		return err;
+	} else if (cmd == HIDPCONNADD) {
+		struct compat_hidp_connadd_req ca;
+		struct hidp_connadd_req __user *uca;
+
+		uca = compat_alloc_user_space(sizeof(*uca));
+
+		if (copy_from_user(&ca, (void __user *) arg, sizeof(ca)))
+			return -EFAULT;
+
+		if (put_user(ca.ctrl_sock, &uca->ctrl_sock) ||
+				put_user(ca.intr_sock, &uca->intr_sock) ||
+				put_user(ca.parser, &uca->parser) ||
+				put_user(ca.rd_size, &uca->rd_size) ||
+				put_user(compat_ptr(ca.rd_data), &uca->rd_data) ||
+				put_user(ca.country, &uca->country) ||
+				put_user(ca.subclass, &uca->subclass) ||
+				put_user(ca.vendor, &uca->vendor) ||
+				put_user(ca.product, &uca->product) ||
+				put_user(ca.version, &uca->version) ||
+				put_user(ca.flags, &uca->flags) ||
+				put_user(ca.idle_to, &uca->idle_to) ||
+				copy_to_user(&uca->name[0], &ca.name[0], 128))
+			return -EFAULT;
+
+		arg = (unsigned long) uca;
+
+		/* Fall through. We don't actually write back any _changes_
+		   to the structure anyway, so there's no need to copy back
+		   into the original compat version */
+	}
+
+	return hidp_sock_ioctl(sock, cmd, arg);
+}
+#endif
+
 static const struct proto_ops hidp_sock_ops = {
 	.family		= PF_BLUETOOTH,
 	.owner		= THIS_MODULE,
 	.release	= hidp_sock_release,
 	.ioctl		= hidp_sock_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl	= hidp_sock_compat_ioctl,
+#endif
 	.bind		= sock_no_bind,
 	.getname	= sock_no_getname,
 	.sendmsg	= sock_no_sendmsg,
@@ -169,7 +241,8 @@ static struct proto hidp_proto = {
 	.obj_size	= sizeof(struct bt_sock)
 };
 
-static int hidp_sock_create(struct socket *sock, int protocol)
+static int hidp_sock_create(struct net *net, struct socket *sock, int protocol,
+			    int kern)
 {
 	struct sock *sk;
 
@@ -178,7 +251,7 @@ static int hidp_sock_create(struct socket *sock, int protocol)
 	if (sock->type != SOCK_RAW)
 		return -ESOCKTNOSUPPORT;
 
-	sk = sk_alloc(PF_BLUETOOTH, GFP_KERNEL, &hidp_proto, 1);
+	sk = sk_alloc(net, PF_BLUETOOTH, GFP_ATOMIC, &hidp_proto);
 	if (!sk)
 		return -ENOMEM;
 

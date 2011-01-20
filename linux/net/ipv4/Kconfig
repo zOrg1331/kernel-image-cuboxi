@@ -9,7 +9,7 @@ config IP_MULTICAST
 	  intend to participate in the MBONE, a high bandwidth network on top
 	  of the Internet which carries audio and video broadcasts. More
 	  information about the MBONE is on the WWW at
-	  <http://www-itg.lbl.gov/mbone/>. Information about the multicast
+	  <http://www.savetz.com/mbone/>. Information about the multicast
 	  capabilities of the various network cards is contained in
 	  <file:Documentation/networking/multicast.txt>. For most people, it's
 	  safe to say N.
@@ -35,7 +35,7 @@ config IP_ADVANCED_ROUTER
 
 	  at boot time after the /proc file system has been mounted.
 
-	  If you turn on IP forwarding, you will also get the rp_filter, which
+	  If you turn on IP forwarding, you should consider the rp_filter, which
 	  automatically rejects incoming packets if the routing table entry
 	  for their source address doesn't match the network interface they're
 	  arriving on. This has security advantages because it prevents the
@@ -43,15 +43,19 @@ config IP_ADVANCED_ROUTER
 	  asymmetric routing (packets from you to a host take a different path
 	  than packets from that host to you) or if you operate a non-routing
 	  host which has several IP addresses on different interfaces. To turn
-	  rp_filter off use:
+	  rp_filter on use:
 
-	  echo 0 > /proc/sys/net/ipv4/conf/<device>/rp_filter
-	  or
-	  echo 0 > /proc/sys/net/ipv4/conf/all/rp_filter
+	  echo 1 > /proc/sys/net/ipv4/conf/<device>/rp_filter
+	   and
+	  echo 1 > /proc/sys/net/ipv4/conf/all/rp_filter
+
+	  Note that some distributions enable it in startup scripts.
+	  For details about rp_filter strict and loose mode read
+	  <file:Documentation/networking/ip-sysctl.txt>.
 
 	  If unsure, say N here.
 
-choice 
+choice
 	prompt "Choose IP: FIB lookup algorithm (choose FIB_HASH if unsure)"
 	depends on IP_ADVANCED_ROUTER
 	default ASK_IP_FIB_HASH
@@ -59,35 +63,45 @@ choice
 config ASK_IP_FIB_HASH
 	bool "FIB_HASH"
 	---help---
-	Current FIB is very proven and good enough for most users.
+	  Current FIB is very proven and good enough for most users.
 
 config IP_FIB_TRIE
 	bool "FIB_TRIE"
 	---help---
-	Use new experimental LC-trie as FIB lookup algoritm. 
-        This improves lookup performance if you have a large
-	number of routes.
+	  Use new experimental LC-trie as FIB lookup algorithm.
+	  This improves lookup performance if you have a large
+	  number of routes.
 
-	LC-trie is a longest matching prefix lookup algorithm which
-	performs better than FIB_HASH for large routing tables.
-	But, it consumes more memory and is more complex.
-	
-	LC-trie is described in:
-	
- 	IP-address lookup using LC-tries. Stefan Nilsson and Gunnar Karlsson
- 	IEEE Journal on Selected Areas in Communications, 17(6):1083-1092, June 1999
-	An experimental study of compression methods for dynamic tries
- 	Stefan Nilsson and Matti Tikkanen. Algorithmica, 33(1):19-33, 2002.
- 	http://www.nada.kth.se/~snilsson/public/papers/dyntrie2/
-       
+	  LC-trie is a longest matching prefix lookup algorithm which
+	  performs better than FIB_HASH for large routing tables.
+	  But, it consumes more memory and is more complex.
+
+	  LC-trie is described in:
+
+	  IP-address lookup using LC-tries. Stefan Nilsson and Gunnar Karlsson
+	  IEEE Journal on Selected Areas in Communications, 17(6):1083-1092,
+	  June 1999
+
+	  An experimental study of compression methods for dynamic tries
+	  Stefan Nilsson and Matti Tikkanen. Algorithmica, 33(1):19-33, 2002.
+	  http://www.nada.kth.se/~snilsson/public/papers/dyntrie2/
+
 endchoice
 
 config IP_FIB_HASH
 	def_bool ASK_IP_FIB_HASH || !IP_ADVANCED_ROUTER
 
+config IP_FIB_TRIE_STATS
+	bool "FIB TRIE statistics"
+	depends on IP_FIB_TRIE
+	---help---
+	  Keep track of statistics on structure of FIB TRIE table.
+	  Useful for testing and measuring TRIE performance.
+
 config IP_MULTIPLE_TABLES
 	bool "IP: policy routing"
 	depends on IP_ADVANCED_ROUTER
+	select FIB_RULES
 	---help---
 	  Normally, a router decides what to do with a received packet based
 	  solely on the packet's final destination address. If you say Y here,
@@ -103,13 +117,6 @@ config IP_MULTIPLE_TABLES
 
 	  If unsure, say N.
 
-config IP_ROUTE_FWMARK
-	bool "IP: use netfilter MARK value as routing key"
-	depends on IP_MULTIPLE_TABLES && NETFILTER
-	help
-	  If you say Y here, you will be able to specify different routes for
-	  packets with different mark values (see iptables(8), MARK target).
-
 config IP_ROUTE_MULTIPATH
 	bool "IP: equal cost multipath"
 	depends on IP_ADVANCED_ROUTER
@@ -121,48 +128,6 @@ config IP_ROUTE_MULTIPATH
 	  for those packets. The router considers all these paths to be of
 	  equal "cost" and chooses one of them in a non-deterministic fashion
 	  if a matching packet arrives.
-
-config IP_ROUTE_MULTIPATH_CACHED
-	bool "IP: equal cost multipath with caching support (EXPERIMENTAL)"
-	depends on IP_ROUTE_MULTIPATH
-	help
-	  Normally, equal cost multipath routing is not supported by the
-	  routing cache. If you say Y here, alternative routes are cached
-	  and on cache lookup a route is chosen in a configurable fashion.
-
-	  If unsure, say N.
-
-config IP_ROUTE_MULTIPATH_RR
-	tristate "MULTIPATH: round robin algorithm"
-	depends on IP_ROUTE_MULTIPATH_CACHED
-	help
-	  Mulitpath routes are chosen according to Round Robin
-
-config IP_ROUTE_MULTIPATH_RANDOM
-	tristate "MULTIPATH: random algorithm"
-	depends on IP_ROUTE_MULTIPATH_CACHED
-	help
-	  Multipath routes are chosen in a random fashion. Actually,
-	  there is no weight for a route. The advantage of this policy
-	  is that it is implemented stateless and therefore introduces only
-	  a very small delay.
-
-config IP_ROUTE_MULTIPATH_WRANDOM
-	tristate "MULTIPATH: weighted random algorithm"
-	depends on IP_ROUTE_MULTIPATH_CACHED
-	help
-	  Multipath routes are chosen in a weighted random fashion. 
-	  The per route weights are the weights visible via ip route 2. As the
-	  corresponding state management introduces some overhead routing delay
-	  is increased.
-
-config IP_ROUTE_MULTIPATH_DRR
-	tristate "MULTIPATH: interface round robin algorithm"
-	depends on IP_ROUTE_MULTIPATH_CACHED
-	help
-	  Connections are distributed in a round robin fashion over the
-	  available interfaces. This policy makes sense if the connections 
-	  should be primarily distributed on interfaces and not on routes. 
 
 config IP_ROUTE_VERBOSE
 	bool "IP: verbose route monitoring"
@@ -201,7 +166,7 @@ config IP_PNP_DHCP
 
 	  If unsure, say Y. Note that if you want to use DHCP, a DHCP server
 	  must be operating on your network.  Read
-	  <file:Documentation/nfsroot.txt> for details.
+	  <file:Documentation/filesystems/nfs/nfsroot.txt> for details.
 
 config IP_PNP_BOOTP
 	bool "IP: BOOTP support"
@@ -216,7 +181,7 @@ config IP_PNP_BOOTP
 	  does BOOTP itself, providing all necessary information on the kernel
 	  command line, you can say N here. If unsure, say Y. Note that if you
 	  want to use BOOTP, a BOOTP server must be operating on your network.
-	  Read <file:Documentation/nfsroot.txt> for details.
+	  Read <file:Documentation/filesystems/nfs/nfsroot.txt> for details.
 
 config IP_PNP_RARP
 	bool "IP: RARP support"
@@ -228,11 +193,11 @@ config IP_PNP_RARP
 	  discovered automatically at boot time using the RARP protocol (an
 	  older protocol which is being obsoleted by BOOTP and DHCP), say Y
 	  here. Note that if you want to use RARP, a RARP server must be
-	  operating on your network. Read <file:Documentation/nfsroot.txt> for
-	  details.
+	  operating on your network. Read
+	  <file:Documentation/filesystems/nfs/nfsroot.txt> for details.
 
 # not yet ready..
-#   bool '    IP: ARP support' CONFIG_IP_PNP_ARP		
+#   bool '    IP: ARP support' CONFIG_IP_PNP_ARP
 config NET_IPIP
 	tristate "IP: tunneling"
 	select INET_TUNNEL
@@ -308,29 +273,20 @@ config IP_PIMSM_V2
 	  you want to play with it.
 
 config ARPD
-	bool "IP: ARP daemon support (EXPERIMENTAL)"
-	depends on EXPERIMENTAL
+	bool "IP: ARP daemon support"
 	---help---
-	  Normally, the kernel maintains an internal cache which maps IP
-	  addresses to hardware addresses on the local network, so that
-	  Ethernet/Token Ring/ etc. frames are sent to the proper address on
-	  the physical networking layer. For small networks having a few
-	  hundred directly connected hosts or less, keeping this address
-	  resolution (ARP) cache inside the kernel works well. However,
-	  maintaining an internal ARP cache does not work well for very large
-	  switched networks, and will use a lot of kernel memory if TCP/IP
-	  connections are made to many machines on the network.
+	  The kernel maintains an internal cache which maps IP addresses to
+	  hardware addresses on the local network, so that Ethernet/Token Ring/
+	  etc. frames are sent to the proper address on the physical networking
+	  layer. Normally, kernel uses the ARP protocol to resolve these
+	  mappings.
 
-	  If you say Y here, the kernel's internal ARP cache will never grow
-	  to more than 256 entries (the oldest entries are expired in a LIFO
-	  manner) and communication will be attempted with the user space ARP
-	  daemon arpd. Arpd then answers the address resolution request either
-	  from its own cache or by asking the net.
+	  Saying Y here adds support to have an user space daemon to do this
+	  resolution instead. This is useful for implementing an alternate
+	  address resolution protocol (e.g. NHRP on mGRE tunnels) and also for
+	  testing purposes.
 
-	  This code is experimental and also obsolete. If you want to use it,
-	  you need to find a version of the daemon arpd on the net somewhere,
-	  and you should also say Y to "Kernel/User network link driver",
-	  below. If unsure, say N.
+	  If unsure, say N.
 
 config SYN_COOKIES
 	bool "IP: TCP syncookie support (disabled per default)"
@@ -384,8 +340,10 @@ config INET_ESP
 	tristate "IP: ESP transformation"
 	select XFRM
 	select CRYPTO
+	select CRYPTO_AUTHENC
 	select CRYPTO_HMAC
 	select CRYPTO_MD5
+	select CRYPTO_CBC
 	select CRYPTO_SHA1
 	select CRYPTO_DES
 	---help---
@@ -395,14 +353,12 @@ config INET_ESP
 
 config INET_IPCOMP
 	tristate "IP: IPComp transformation"
-	select XFRM
 	select INET_XFRM_TUNNEL
-	select CRYPTO
-	select CRYPTO_DEFLATE
+	select XFRM_IPCOMP
 	---help---
 	  Support for IP Payload Compression Protocol (IPComp) (RFC3173),
 	  typically needed for IPsec.
-	  
+
 	  If unsure, say Y.
 
 config INET_XFRM_TUNNEL
@@ -432,38 +388,53 @@ config INET_XFRM_MODE_TUNNEL
 
 	  If unsure, say Y.
 
+config INET_XFRM_MODE_BEET
+	tristate "IP: IPsec BEET mode"
+	default y
+	select XFRM
+	---help---
+	  Support for IPsec BEET mode.
+
+	  If unsure, say Y.
+
+config INET_LRO
+	bool "Large Receive Offload (ipv4/tcp)"
+	default y
+	---help---
+	  Support for Large Receive Offload (ipv4/tcp).
+
+	  If unsure, say Y.
+
 config INET_DIAG
 	tristate "INET: socket monitoring interface"
 	default y
 	---help---
 	  Support for INET (TCP, DCCP, etc) socket monitoring interface used by
 	  native Linux tools such as ss. ss is included in iproute2, currently
-	  downloadable at <http://developer.osdl.org/dev/iproute2>. 
-	  
+	  downloadable at <http://linux-net.osdl.org/index.php/Iproute2>.
+
 	  If unsure, say Y.
 
 config INET_TCP_DIAG
 	depends on INET_DIAG
 	def_tristate INET_DIAG
 
-config TCP_CONG_ADVANCED
+menuconfig TCP_CONG_ADVANCED
 	bool "TCP: advanced congestion control"
 	---help---
 	  Support for selection of various TCP congestion control
 	  modules.
 
 	  Nearly all users can safely say no here, and a safe default
-	  selection will be made (BIC-TCP with new Reno as a fallback).
+	  selection will be made (CUBIC with new Reno as a fallback).
 
 	  If unsure, say N.
 
-# TCP Reno is builtin (required as fallback)
-menu "TCP congestion control"
-	depends on TCP_CONG_ADVANCED
+if TCP_CONG_ADVANCED
 
 config TCP_CONG_BIC
 	tristate "Binary Increase Congestion (BIC) control"
-	default y
+	default m
 	---help---
 	BIC-TCP is a sender-side only change that ensures a linear RTT
 	fairness under large windows while offering both scalability and
@@ -477,7 +448,7 @@ config TCP_CONG_BIC
 
 config TCP_CONG_CUBIC
 	tristate "CUBIC TCP"
-	default m
+	default y
 	---help---
 	This is version 2.0 of BIC-TCP which uses a cubic growth function
 	among other techniques.
@@ -526,7 +497,7 @@ config TCP_CONG_HYBLA
 	---help---
 	TCP-Hybla is a sender-side only change that eliminates penalization of
 	long-RTT, large-bandwidth connections, like when satellite legs are
-	involved, expecially when sharing a common bottleneck with normal
+	involved, especially when sharing a common bottleneck with normal
 	terrestrial connections.
 
 config TCP_CONG_VEGAS
@@ -548,7 +519,7 @@ config TCP_CONG_SCALABLE
 	Scalable TCP is a sender-side only change to TCP which uses a
 	MIMD congestion control algorithm which has some nice scaling
 	properties, though is known to have fairness issues.
-	See http://www-lce.eng.cam.ac.uk/~ctk21/scalable/
+	See http://www.deneholme.net/tom/scalable/
 
 config TCP_CONG_LP
 	tristate "TCP Low Priority"
@@ -556,7 +527,7 @@ config TCP_CONG_LP
 	default n
 	---help---
 	TCP Low Priority (TCP-LP), a distributed algorithm whose goal is
-	to utiliza only the excess network bandwidth as compared to the
+	to utilize only the excess network bandwidth as compared to the
 	``fair share`` of bandwidth as targeted by TCP.
 	See http://www-ece.rice.edu/networks/TCP-LP/
 
@@ -572,12 +543,87 @@ config TCP_CONG_VENO
 	loss packets.
 	See http://www.ntu.edu.sg/home5/ZHOU0022/papers/CPFu03a.pdf
 
-endmenu
+config TCP_CONG_YEAH
+	tristate "YeAH TCP"
+	depends on EXPERIMENTAL
+	select TCP_CONG_VEGAS
+	default n
+	---help---
+	YeAH-TCP is a sender-side high-speed enabled TCP congestion control
+	algorithm, which uses a mixed loss/delay approach to compute the
+	congestion window. It's design goals target high efficiency,
+	internal, RTT and Reno fairness, resilience to link loss while
+	keeping network elements load as low as possible.
 
-config TCP_CONG_BIC
+	For further details look here:
+	  http://wil.cs.caltech.edu/pfldnet2007/paper/YeAH_TCP.pdf
+
+config TCP_CONG_ILLINOIS
+	tristate "TCP Illinois"
+	depends on EXPERIMENTAL
+	default n
+	---help---
+	TCP-Illinois is a sender-side modification of TCP Reno for
+	high speed long delay links. It uses round-trip-time to
+	adjust the alpha and beta parameters to achieve a higher average
+	throughput and maintain fairness.
+
+	For further details see:
+	  http://www.ews.uiuc.edu/~shaoliu/tcpillinois/index.html
+
+choice
+	prompt "Default TCP congestion control"
+	default DEFAULT_CUBIC
+	help
+	  Select the TCP congestion control that will be used by default
+	  for all connections.
+
+	config DEFAULT_BIC
+		bool "Bic" if TCP_CONG_BIC=y
+
+	config DEFAULT_CUBIC
+		bool "Cubic" if TCP_CONG_CUBIC=y
+
+	config DEFAULT_HTCP
+		bool "Htcp" if TCP_CONG_HTCP=y
+
+	config DEFAULT_VEGAS
+		bool "Vegas" if TCP_CONG_VEGAS=y
+
+	config DEFAULT_WESTWOOD
+		bool "Westwood" if TCP_CONG_WESTWOOD=y
+
+	config DEFAULT_RENO
+		bool "Reno"
+
+endchoice
+
+endif
+
+config TCP_CONG_CUBIC
 	tristate
 	depends on !TCP_CONG_ADVANCED
 	default y
 
-source "net/ipv4/ipvs/Kconfig"
+config DEFAULT_TCP_CONG
+	string
+	default "bic" if DEFAULT_BIC
+	default "cubic" if DEFAULT_CUBIC
+	default "htcp" if DEFAULT_HTCP
+	default "vegas" if DEFAULT_VEGAS
+	default "westwood" if DEFAULT_WESTWOOD
+	default "reno" if DEFAULT_RENO
+	default "cubic"
+
+config TCP_MD5SIG
+	bool "TCP: MD5 Signature Option support (RFC2385) (EXPERIMENTAL)"
+	depends on EXPERIMENTAL
+	select CRYPTO
+	select CRYPTO_MD5
+	---help---
+	  RFC2385 specifies a method of giving MD5 protection to TCP sessions.
+	  Its main (only?) use is to protect BGP sessions between core routers
+	  on the Internet.
+
+	  If unsure, say N.
 

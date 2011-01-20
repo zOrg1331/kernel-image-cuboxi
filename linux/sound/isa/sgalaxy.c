@@ -21,10 +21,9 @@
  *
  */
 
-#include <sound/driver.h>
 #include <linux/init.h>
 #include <linux/err.h>
-#include <linux/platform_device.h>
+#include <linux/isa.h>
 #include <linux/delay.h>
 #include <linux/time.h>
 #include <linux/interrupt.h>
@@ -32,7 +31,7 @@
 #include <asm/dma.h>
 #include <sound/core.h>
 #include <sound/sb.h>
-#include <sound/ad1848.h>
+#include <sound/wss.h>
 #include <sound/control.h>
 #define SNDRV_LEGACY_FIND_FREE_IRQ
 #define SNDRV_LEGACY_FIND_FREE_DMA
@@ -64,8 +63,6 @@ MODULE_PARM_DESC(irq, "IRQ # for Sound Galaxy driver.");
 module_param_array(dma1, int, NULL, 0444);
 MODULE_PARM_DESC(dma1, "DMA1 # for Sound Galaxy driver.");
 
-static struct platform_device *devices[SNDRV_CARDS];
-
 #define SGALAXY_AUXC_LEFT 18
 #define SGALAXY_AUXC_RIGHT 19
 
@@ -96,7 +93,8 @@ static int snd_sgalaxy_sbdsp_reset(unsigned long port)
 	return 0;
 }
 
-static int __init snd_sgalaxy_sbdsp_command(unsigned long port, unsigned char val)
+static int __devinit snd_sgalaxy_sbdsp_command(unsigned long port,
+					       unsigned char val)
 {
 	int i;
        	
@@ -109,12 +107,12 @@ static int __init snd_sgalaxy_sbdsp_command(unsigned long port, unsigned char va
 	return 0;
 }
 
-static irqreturn_t snd_sgalaxy_dummy_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t snd_sgalaxy_dummy_interrupt(int irq, void *dev_id)
 {
 	return IRQ_NONE;
 }
 
-static int __init snd_sgalaxy_setup_wss(unsigned long port, int irq, int dma)
+static int __devinit snd_sgalaxy_setup_wss(unsigned long port, int irq, int dma)
 {
 	static int interrupt_bits[] = {-1, -1, -1, -1, -1, -1, -1, 0x08, -1, 
 				       0x10, 0x18, 0x20, -1, -1, -1, -1};
@@ -161,7 +159,7 @@ static int __init snd_sgalaxy_setup_wss(unsigned long port, int irq, int dma)
 	return 0;
 }
 
-static int __init snd_sgalaxy_detect(int dev, int irq, int dma)
+static int __devinit snd_sgalaxy_detect(int dev, int irq, int dma)
 {
 #if 0
 	snd_printdd(PFX "switching to WSS mode\n");
@@ -177,12 +175,14 @@ static int __init snd_sgalaxy_detect(int dev, int irq, int dma)
 	return snd_sgalaxy_setup_wss(wssport[dev], irq, dma);
 }
 
-static struct ad1848_mix_elem snd_sgalaxy_controls[] = {
-AD1848_DOUBLE("Aux Playback Switch", 0, SGALAXY_AUXC_LEFT, SGALAXY_AUXC_RIGHT, 7, 7, 1, 1),
-AD1848_DOUBLE("Aux Playback Volume", 0, SGALAXY_AUXC_LEFT, SGALAXY_AUXC_RIGHT, 0, 0, 31, 0)
+static struct snd_kcontrol_new snd_sgalaxy_controls[] = {
+WSS_DOUBLE("Aux Playback Switch", 0,
+		SGALAXY_AUXC_LEFT, SGALAXY_AUXC_RIGHT, 7, 7, 1, 1),
+WSS_DOUBLE("Aux Playback Volume", 0,
+		SGALAXY_AUXC_LEFT, SGALAXY_AUXC_RIGHT, 0, 0, 31, 0)
 };
 
-static int __init snd_sgalaxy_mixer(struct snd_ad1848 *chip)
+static int __devinit snd_sgalaxy_mixer(struct snd_wss *chip)
 {
 	struct snd_card *card = chip->card;
 	struct snd_ctl_elem_id id1, id2;
@@ -212,32 +212,40 @@ static int __init snd_sgalaxy_mixer(struct snd_ad1848 *chip)
 		return err;
 	/* build AUX2 input */
 	for (idx = 0; idx < ARRAY_SIZE(snd_sgalaxy_controls); idx++) {
-		if ((err = snd_ad1848_add_ctl_elem(chip, &snd_sgalaxy_controls[idx])) < 0)
+		err = snd_ctl_add(card,
+				snd_ctl_new1(&snd_sgalaxy_controls[idx], chip));
+		if (err < 0)
 			return err;
 	}
 	return 0;
 }
 
-static int __init snd_sgalaxy_probe(struct platform_device *devptr)
+static int __devinit snd_sgalaxy_match(struct device *devptr, unsigned int dev)
 {
-	int dev = devptr->id;
+	if (!enable[dev])
+		return 0;
+	if (sbport[dev] == SNDRV_AUTO_PORT) {
+		snd_printk(KERN_ERR PFX "specify SB port\n");
+		return 0;
+	}
+	if (wssport[dev] == SNDRV_AUTO_PORT) {
+		snd_printk(KERN_ERR PFX "specify WSS port\n");
+		return 0;
+	}
+	return 1;
+}
+
+static int __devinit snd_sgalaxy_probe(struct device *devptr, unsigned int dev)
+{
 	static int possible_irqs[] = {7, 9, 10, 11, -1};
 	static int possible_dmas[] = {1, 3, 0, -1};
 	int err, xirq, xdma1;
 	struct snd_card *card;
-	struct snd_ad1848 *chip;
+	struct snd_wss *chip;
 
-	if (sbport[dev] == SNDRV_AUTO_PORT) {
-		snd_printk(KERN_ERR PFX "specify SB port\n");
-		return -EINVAL;
-	}
-	if (wssport[dev] == SNDRV_AUTO_PORT) {
-		snd_printk(KERN_ERR PFX "specify WSS port\n");
-		return -EINVAL;
-	}
-	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
-	if (card == NULL)
-		return -ENOMEM;
+	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
+	if (err < 0)
+		return err;
 
 	xirq = irq[dev];
 	if (xirq == SNDRV_AUTO_IRQ) {
@@ -259,18 +267,21 @@ static int __init snd_sgalaxy_probe(struct platform_device *devptr)
 	if ((err = snd_sgalaxy_detect(dev, xirq, xdma1)) < 0)
 		goto _err;
 
-	if ((err = snd_ad1848_create(card, wssport[dev] + 4,
-				     xirq, xdma1,
-				     AD1848_HW_DETECT, &chip)) < 0)
+	err = snd_wss_create(card, wssport[dev] + 4, -1,
+			     xirq, xdma1, -1,
+			     WSS_HW_DETECT, 0, &chip);
+	if (err < 0)
 		goto _err;
 	card->private_data = chip;
 
-	if ((err = snd_ad1848_pcm(chip, 0, NULL)) < 0) {
-		snd_printdd(PFX "error creating new ad1848 PCM device\n");
+	err = snd_wss_pcm(chip, 0, NULL);
+	if (err < 0) {
+		snd_printdd(PFX "error creating new WSS PCM device\n");
 		goto _err;
 	}
-	if ((err = snd_ad1848_mixer(chip)) < 0) {
-		snd_printdd(PFX "error creating new ad1848 mixer\n");
+	err = snd_wss_mixer(chip);
+	if (err < 0) {
+		snd_printdd(PFX "error creating new WSS mixer\n");
 		goto _err;
 	}
 	if ((err = snd_sgalaxy_mixer(chip)) < 0) {
@@ -283,12 +294,12 @@ static int __init snd_sgalaxy_probe(struct platform_device *devptr)
 	sprintf(card->longname, "Sound Galaxy at 0x%lx, irq %d, dma %d",
 		wssport[dev], xirq, xdma1);
 
-	snd_card_set_dev(card, &devptr->dev);
+	snd_card_set_dev(card, devptr);
 
 	if ((err = snd_card_register(card)) < 0)
 		goto _err;
 
-	platform_set_drvdata(devptr, card);
+	dev_set_drvdata(devptr, card);
 	return 0;
 
  _err:
@@ -296,41 +307,43 @@ static int __init snd_sgalaxy_probe(struct platform_device *devptr)
 	return err;
 }
 
-static int __devexit snd_sgalaxy_remove(struct platform_device *devptr)
+static int __devexit snd_sgalaxy_remove(struct device *devptr, unsigned int dev)
 {
-	snd_card_free(platform_get_drvdata(devptr));
-	platform_set_drvdata(devptr, NULL);
+	snd_card_free(dev_get_drvdata(devptr));
+	dev_set_drvdata(devptr, NULL);
 	return 0;
 }
 
 #ifdef CONFIG_PM
-static int snd_sgalaxy_suspend(struct platform_device *pdev, pm_message_t state)
+static int snd_sgalaxy_suspend(struct device *pdev, unsigned int n,
+			       pm_message_t state)
 {
-	struct snd_card *card = platform_get_drvdata(pdev);
-	struct snd_ad1848 *chip = card->private_data;
+	struct snd_card *card = dev_get_drvdata(pdev);
+	struct snd_wss *chip = card->private_data;
 
 	snd_power_change_state(card, SNDRV_CTL_POWER_D3hot);
 	chip->suspend(chip);
 	return 0;
 }
 
-static int snd_sgalaxy_resume(struct platform_device *pdev)
+static int snd_sgalaxy_resume(struct device *pdev, unsigned int n)
 {
-	struct snd_card *card = platform_get_drvdata(pdev);
-	struct snd_ad1848 *chip = card->private_data;
+	struct snd_card *card = dev_get_drvdata(pdev);
+	struct snd_wss *chip = card->private_data;
 
 	chip->resume(chip);
-	snd_ad1848_out(chip, SGALAXY_AUXC_LEFT, chip->image[SGALAXY_AUXC_LEFT]);
-	snd_ad1848_out(chip, SGALAXY_AUXC_RIGHT, chip->image[SGALAXY_AUXC_RIGHT]);
+	snd_wss_out(chip, SGALAXY_AUXC_LEFT, chip->image[SGALAXY_AUXC_LEFT]);
+	snd_wss_out(chip, SGALAXY_AUXC_RIGHT, chip->image[SGALAXY_AUXC_RIGHT]);
 
 	snd_power_change_state(card, SNDRV_CTL_POWER_D0);
 	return 0;
 }
 #endif
 
-#define SND_SGALAXY_DRIVER	"snd_sgalaxy"
+#define DEV_NAME "sgalaxy"
 
-static struct platform_driver snd_sgalaxy_driver = {
+static struct isa_driver snd_sgalaxy_driver = {
+	.match		= snd_sgalaxy_match,
 	.probe		= snd_sgalaxy_probe,
 	.remove		= __devexit_p(snd_sgalaxy_remove),
 #ifdef CONFIG_PM
@@ -338,56 +351,18 @@ static struct platform_driver snd_sgalaxy_driver = {
 	.resume		= snd_sgalaxy_resume,
 #endif
 	.driver		= {
-		.name	= SND_SGALAXY_DRIVER
+		.name	= DEV_NAME
 	},
 };
 
-static void __init_or_module snd_sgalaxy_unregister_all(void)
-{
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(devices); ++i)
-		platform_device_unregister(devices[i]);
-	platform_driver_unregister(&snd_sgalaxy_driver);
-}
-
 static int __init alsa_card_sgalaxy_init(void)
 {
-	int i, cards, err;
-
-	err = platform_driver_register(&snd_sgalaxy_driver);
-	if (err < 0)
-		return err;
-
-	cards = 0;
-	for (i = 0; i < SNDRV_CARDS; i++) {
-		struct platform_device *device;
-		if (! enable[i])
-			continue;
-		device = platform_device_register_simple(SND_SGALAXY_DRIVER,
-							 i, NULL, 0);
-		if (IS_ERR(device))
-			continue;
-		if (!platform_get_drvdata(device)) {
-			platform_device_unregister(device);
-			continue;
-		}
-		devices[i] = device;
-		cards++;
-	}
-	if (!cards) {
-#ifdef MODULE
-		snd_printk(KERN_ERR "Sound Galaxy soundcard not found or device busy\n");
-#endif
-		snd_sgalaxy_unregister_all();
-		return -ENODEV;
-	}
-	return 0;
+	return isa_register_driver(&snd_sgalaxy_driver, SNDRV_CARDS);
 }
 
 static void __exit alsa_card_sgalaxy_exit(void)
 {
-	snd_sgalaxy_unregister_all();
+	isa_unregister_driver(&snd_sgalaxy_driver);
 }
 
 module_init(alsa_card_sgalaxy_init)

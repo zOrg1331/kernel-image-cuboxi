@@ -1,6 +1,4 @@
 /*
- *  $Id: nfsroot.c,v 1.45 1998/03/07 10:44:46 mj Exp $
- *
  *  Copyright (C) 1995, 1996  Gero Kuhlmann <gero@gkminix.han.de>
  *
  *  Allow an NFS filesystem to be mounted as root. The way this works is:
@@ -43,7 +41,7 @@
  *				from being used (thanks to Leo Spiekman)
  *	Andy Walker	:	Allow to specify the NFS server in nfs_root
  *				without giving a path name
- *	Swen Thümmler	:	Allow to specify the NFS options in nfs_root
+ *	Swen ThÃ¼mmler	:	Allow to specify the NFS options in nfs_root
  *				without giving a path name. Fix BOOTP request
  *				for domainname (domainname is NIS domain, not
  *				DNS domain!). Skip dummy devices for BOOTP.
@@ -69,7 +67,6 @@
  *	Fabian Frederick:	Option parser rebuilt (using parser lib)
 */
 
-#include <linux/config.h>
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/kernel.h>
@@ -77,6 +74,7 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/sunrpc/clnt.h>
+#include <linux/sunrpc/xprtsock.h>
 #include <linux/nfs.h>
 #include <linux/nfs_fs.h>
 #include <linux/nfs_mount.h>
@@ -88,9 +86,14 @@
 #include <net/ipconfig.h>
 #include <linux/parser.h>
 
+#include "internal.h"
+
 /* Define this to allow debugging output */
 #undef NFSROOT_DEBUG
 #define NFSDBG_FACILITY NFSDBG_ROOT
+
+/* Default port to use if server is not running a portmapper */
+#define NFS_MNT_PORT	627
 
 /* Default path we try to mount. "%s" gets replaced by our IP address */
 #define NFS_ROOT		"/tftpboot/%s"
@@ -99,10 +102,10 @@
 static char nfs_root_name[256] __initdata = "";
 
 /* Address of NFS server */
-static __u32 servaddr __initdata = 0;
+static __be32 servaddr __initdata = 0;
 
 /* Name of directory to mount */
-static char nfs_path[NFS_MAXPATHLEN] __initdata = { 0, };
+static char nfs_export_path[NFS_MAXPATHLEN] __initdata = { 0, };
 
 /* NFS-related data */
 static struct nfs_mount_data nfs_data __initdata = { 0, };/* NFS mount info */
@@ -129,7 +132,7 @@ enum {
 	Opt_err
 };
 
-static match_table_t __initdata tokens = {
+static const match_table_t tokens __initconst = {
 	{Opt_port, "port=%u"},
 	{Opt_rsize, "rsize=%u"},
 	{Opt_wsize, "wsize=%u"},
@@ -228,10 +231,7 @@ static int __init root_nfs_parse(char *name, char *buf)
 				nfs_data.flags &= ~NFS_MOUNT_SOFT;
 				break;
 			case Opt_intr:
-				nfs_data.flags |= NFS_MOUNT_INTR;
-				break;
 			case Opt_nointr:
-				nfs_data.flags &= ~NFS_MOUNT_INTR;
 				break;
 			case Opt_posix:
 				nfs_data.flags |= NFS_MOUNT_POSIX;
@@ -300,10 +300,10 @@ static int __init root_nfs_name(char *name)
 	nfs_data.flags    = NFS_MOUNT_NONLM;	/* No lockd in nfs root yet */
 	nfs_data.rsize    = NFS_DEF_FILE_IO_SIZE;
 	nfs_data.wsize    = NFS_DEF_FILE_IO_SIZE;
-	nfs_data.acregmin = 3;
-	nfs_data.acregmax = 60;
-	nfs_data.acdirmin = 30;
-	nfs_data.acdirmax = 60;
+	nfs_data.acregmin = NFS_DEF_ACREGMIN;
+	nfs_data.acregmax = NFS_DEF_ACREGMAX;
+	nfs_data.acdirmin = NFS_DEF_ACDIRMIN;
+	nfs_data.acdirmax = NFS_DEF_ACDIRMAX;
 	strcpy(buf, NFS_ROOT);
 
 	/* Process options received from the remote server */
@@ -312,12 +312,12 @@ static int __init root_nfs_name(char *name)
 	/* Override them by options set on kernel command-line */
 	root_nfs_parse(name, buf);
 
-	cp = system_utsname.nodename;
+	cp = utsname()->nodename;
 	if (strlen(buf) + strlen(cp) > NFS_MAXPATHLEN) {
 		printk(KERN_ERR "Root-NFS: Pathname for remote directory too long.\n");
 		return -1;
 	}
-	sprintf(nfs_path, buf, cp);
+	sprintf(nfs_export_path, buf, cp);
 
 	return 1;
 }
@@ -328,13 +328,13 @@ static int __init root_nfs_name(char *name)
  */
 static int __init root_nfs_addr(void)
 {
-	if ((servaddr = root_server_addr) == INADDR_NONE) {
+	if ((servaddr = root_server_addr) == htonl(INADDR_NONE)) {
 		printk(KERN_ERR "Root-NFS: No NFS server available, giving up.\n");
 		return -1;
 	}
 
 	snprintf(nfs_data.hostname, sizeof(nfs_data.hostname),
-		 "%u.%u.%u.%u", NIPQUAD(servaddr));
+		 "%pI4", &servaddr);
 	return 0;
 }
 
@@ -345,7 +345,7 @@ static int __init root_nfs_addr(void)
 static void __init root_nfs_print(void)
 {
 	printk(KERN_NOTICE "Root-NFS: Mounting %s on server %s as root\n",
-		nfs_path, nfs_data.hostname);
+		nfs_export_path, nfs_data.hostname);
 	printk(KERN_NOTICE "Root-NFS:     rsize = %d, wsize = %d, timeo = %d, retrans = %d\n",
 		nfs_data.rsize, nfs_data.wsize, nfs_data.timeo, nfs_data.retrans);
 	printk(KERN_NOTICE "Root-NFS:     acreg (min,max) = (%d,%d), acdir (min,max) = (%d,%d)\n",
@@ -412,7 +412,7 @@ __setup("nfsroot=", nfs_root_setup);
  *  Construct sockaddr_in from address and port number.
  */
 static inline void
-set_sockaddr(struct sockaddr_in *sin, __u32 addr, __u16 port)
+set_sockaddr(struct sockaddr_in *sin, __be32 addr, __be16 port)
 {
 	sin->sin_family = AF_INET;
 	sin->sin_addr.s_addr = addr;
@@ -426,10 +426,10 @@ static int __init root_nfs_getport(int program, int version, int proto)
 {
 	struct sockaddr_in sin;
 
-	printk(KERN_NOTICE "Looking up port of RPC %d/%d on %u.%u.%u.%u\n",
-		program, version, NIPQUAD(servaddr));
+	printk(KERN_NOTICE "Looking up port of RPC %d/%d on %pI4\n",
+		program, version, &servaddr);
 	set_sockaddr(&sin, servaddr, 0);
-	return rpc_getport_external(&sin, program, version, proto);
+	return rpcb_getport_sync(&sin, program, version, proto);
 }
 
 
@@ -469,14 +469,13 @@ static int __init root_nfs_ports(void)
 		dprintk("Root-NFS: Portmapper on server returned %d "
 			"as nfsd port\n", port);
 	}
-	nfs_port = htons(nfs_port);
 
 	if ((port = root_nfs_getport(NFS_MNT_PROGRAM, mountd_ver, proto)) < 0) {
 		printk(KERN_ERR "Root-NFS: Unable to get mountd port "
 				"number from server, using default\n");
 		port = mountd_port;
 	}
-	mount_port = htons(port);
+	mount_port = port;
 	dprintk("Root-NFS: mountd port is %d\n", port);
 
 	return 0;
@@ -489,24 +488,34 @@ static int __init root_nfs_ports(void)
  */
 static int __init root_nfs_get_handle(void)
 {
-	struct nfs_fh fh;
 	struct sockaddr_in sin;
-	int status;
-	int protocol = (nfs_data.flags & NFS_MOUNT_TCP) ?
-					IPPROTO_TCP : IPPROTO_UDP;
-	int version = (nfs_data.flags & NFS_MOUNT_VER3) ?
-					NFS_MNT3_VERSION : NFS_MNT_VERSION;
+	unsigned int auth_flav_len = 0;
+	struct nfs_mount_request request = {
+		.sap		= (struct sockaddr *)&sin,
+		.salen		= sizeof(sin),
+		.dirpath	= nfs_export_path,
+		.version	= (nfs_data.flags & NFS_MOUNT_VER3) ?
+					NFS_MNT3_VERSION : NFS_MNT_VERSION,
+		.protocol	= (nfs_data.flags & NFS_MOUNT_TCP) ?
+					XPRT_TRANSPORT_TCP : XPRT_TRANSPORT_UDP,
+		.auth_flav_len	= &auth_flav_len,
+	};
+	int status = -ENOMEM;
 
-	set_sockaddr(&sin, servaddr, mount_port);
-	status = nfsroot_mount(&sin, nfs_path, &fh, version, protocol);
+	request.fh = nfs_alloc_fhandle();
+	if (!request.fh)
+		goto out;
+	set_sockaddr(&sin, servaddr, htons(mount_port));
+	status = nfs_mount(&request);
 	if (status < 0)
 		printk(KERN_ERR "Root-NFS: Server returned error %d "
-				"while mounting %s\n", status, nfs_path);
+				"while mounting %s\n", status, nfs_export_path);
 	else {
-		nfs_data.root.size = fh.size;
-		memcpy(nfs_data.root.data, fh.data, fh.size);
+		nfs_data.root.size = request.fh->size;
+		memcpy(&nfs_data.root.data, request.fh->data, request.fh->size);
 	}
-
+	nfs_free_fhandle(request.fh);
+out:
 	return status;
 }
 
@@ -520,6 +529,6 @@ void * __init nfs_root_data(void)
 	 || root_nfs_ports() < 0
 	 || root_nfs_get_handle() < 0)
 		return NULL;
-	set_sockaddr((struct sockaddr_in *) &nfs_data.addr, servaddr, nfs_port);
+	set_sockaddr((struct sockaddr_in *) &nfs_data.addr, servaddr, htons(nfs_port));
 	return (void*)&nfs_data;
 }

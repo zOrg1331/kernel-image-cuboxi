@@ -15,11 +15,11 @@
  *
  *	Fixes/additions:
  *		Philipp Rumpf
- *		Juha Siev‰nen <Juha.Sievanen@cs.Helsinki.FI>
- *		Auvo H‰kkinen <Auvo.Hakkinen@cs.Helsinki.FI>
+ *		Juha Siev√§nen <Juha.Sievanen@cs.Helsinki.FI>
+ *		Auvo H√§kkinen <Auvo.Hakkinen@cs.Helsinki.FI>
  *		Deepak Saxena <deepak@plexity.net>
  *		Boji T Kannanthanam <boji.t.kannanthanam@intel.com>
- *		Alan Cox <alan@redhat.com>:
+ *		Alan Cox <alan@lxorguk.ukuu.org.uk>:
  *			Ported to Linux 2.5.
  *		Markus Lidel <Markus.Lidel@shadowconnect.com>:
  *			Minor fixes for 2.6.
@@ -186,31 +186,29 @@ static int __devinit i2o_pci_alloc(struct i2o_controller *c)
 		}
 	}
 
-	if (i2o_dma_alloc(dev, &c->status, 8, GFP_KERNEL)) {
+	if (i2o_dma_alloc(dev, &c->status, 8)) {
 		i2o_pci_free(c);
 		return -ENOMEM;
 	}
 
-	if (i2o_dma_alloc(dev, &c->hrt, sizeof(i2o_hrt), GFP_KERNEL)) {
+	if (i2o_dma_alloc(dev, &c->hrt, sizeof(i2o_hrt))) {
 		i2o_pci_free(c);
 		return -ENOMEM;
 	}
 
-	if (i2o_dma_alloc(dev, &c->dlct, 8192, GFP_KERNEL)) {
+	if (i2o_dma_alloc(dev, &c->dlct, 8192)) {
 		i2o_pci_free(c);
 		return -ENOMEM;
 	}
 
-	if (i2o_dma_alloc(dev, &c->status_block, sizeof(i2o_status_block),
-			  GFP_KERNEL)) {
+	if (i2o_dma_alloc(dev, &c->status_block, sizeof(i2o_status_block))) {
 		i2o_pci_free(c);
 		return -ENOMEM;
 	}
 
-	if (i2o_dma_alloc
-	    (dev, &c->out_queue,
-	     I2O_MAX_OUTBOUND_MSG_FRAMES * I2O_OUTBOUND_MSG_FRAME_SIZE *
-	     sizeof(u32), GFP_KERNEL)) {
+	if (i2o_dma_alloc(dev, &c->out_queue,
+		I2O_MAX_OUTBOUND_MSG_FRAMES * I2O_OUTBOUND_MSG_FRAME_SIZE *
+				sizeof(u32))) {
 		i2o_pci_free(c);
 		return -ENOMEM;
 	}
@@ -224,12 +222,11 @@ static int __devinit i2o_pci_alloc(struct i2o_controller *c)
  *	i2o_pci_interrupt - Interrupt handler for I2O controller
  *	@irq: interrupt line
  *	@dev_id: pointer to the I2O controller
- *	@r: pointer to registers
  *
  *	Handle an interrupt from a PCI based I2O controller. This turns out
  *	to be rather simple. We keep the controller pointer in the cookie.
  */
-static irqreturn_t i2o_pci_interrupt(int irq, void *dev_id, struct pt_regs *r)
+static irqreturn_t i2o_pci_interrupt(int irq, void *dev_id)
 {
 	struct i2o_controller *c = dev_id;
 	u32 m;
@@ -260,6 +257,7 @@ static irqreturn_t i2o_pci_interrupt(int irq, void *dev_id, struct pt_regs *r)
 
 /**
  *	i2o_pci_irq_enable - Allocate interrupt for I2O controller
+ *	@c: i2o_controller that the request is for
  *
  *	Allocate an interrupt for the I2O controller, and activate interrupts
  *	on the I2O controller.
@@ -306,7 +304,7 @@ static void i2o_pci_irq_disable(struct i2o_controller *c)
 
 /**
  *	i2o_pci_probe - Probe the PCI device for an I2O controller
- *	@dev: PCI device to test
+ *	@pdev: PCI device to test
  *	@id: id which matched with the PCI device id table
  *
  *	Probe the PCI device for any device which is a memory of the
@@ -321,7 +319,6 @@ static int __devinit i2o_pci_probe(struct pci_dev *pdev,
 	struct i2o_controller *c;
 	int rc;
 	struct pci_dev *i960 = NULL;
-	int enabled = pdev->is_enabled;
 
 	printk(KERN_INFO "i2o: Checking for PCI I2O controllers...\n");
 
@@ -331,14 +328,13 @@ static int __devinit i2o_pci_probe(struct pci_dev *pdev,
 		return -ENODEV;
 	}
 
-	if (!enabled)
-		if ((rc = pci_enable_device(pdev))) {
-			printk(KERN_WARNING "i2o: couldn't enable device %s\n",
-			       pci_name(pdev));
-			return rc;
-		}
+	if ((rc = pci_enable_device(pdev))) {
+		printk(KERN_WARNING "i2o: couldn't enable device %s\n",
+		       pci_name(pdev));
+		return rc;
+	}
 
-	if (pci_set_dma_mask(pdev, DMA_32BIT_MASK)) {
+	if (pci_set_dma_mask(pdev, DMA_BIT_MASK(32))) {
 		printk(KERN_WARNING "i2o: no suitable DMA found for %s\n",
 		       pci_name(pdev));
 		rc = -ENODEV;
@@ -372,12 +368,13 @@ static int __devinit i2o_pci_probe(struct pci_dev *pdev,
 		 * Expose the ship behind i960 for initialization, or it will
 		 * failed
 		 */
-		i960 =
-		    pci_find_slot(c->pdev->bus->number,
+		i960 = pci_get_slot(c->pdev->bus,
 				  PCI_DEVFN(PCI_SLOT(c->pdev->devfn), 0));
 
-		if (i960)
+		if (i960) {
 			pci_write_config_word(i960, 0x42, 0);
+			pci_dev_put(i960);
+		}
 
 		c->promise = 1;
 		c->limit_sectors = 1;
@@ -400,7 +397,7 @@ static int __devinit i2o_pci_probe(struct pci_dev *pdev,
 		}
 #ifdef CONFIG_I2O_EXT_ADAPTEC_DMA64
 		if (sizeof(dma_addr_t) > 4) {
-			if (pci_set_dma_mask(pdev, DMA_64BIT_MASK))
+			if (pci_set_dma_mask(pdev, DMA_BIT_MASK(64)))
 				printk(KERN_INFO "%s: 64-bit DMA unavailable\n",
 				       c->name);
 			else {
@@ -442,15 +439,14 @@ static int __devinit i2o_pci_probe(struct pci_dev *pdev,
 	i2o_iop_free(c);
 
       disable:
-	if (!enabled)
-		pci_disable_device(pdev);
+	pci_disable_device(pdev);
 
 	return rc;
 }
 
 /**
  *	i2o_pci_remove - Removes a I2O controller from the system
- *	pdev: I2O controller which should be removed
+ *	@pdev: I2O controller which should be removed
  *
  *	Reset the I2O controller, disable interrupts and remove all allocated
  *	resources.

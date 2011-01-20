@@ -55,7 +55,7 @@
 #include <pcmcia/ss.h>
 #include "tcic.h"
 
-#ifdef DEBUG
+#ifdef CONFIG_PCMCIA_DEBUG
 static int pc_debug;
 
 module_param(pc_debug, int, 0644);
@@ -90,7 +90,7 @@ static int do_scan = 1;
 /* Bit map of interrupts to choose from */
 static u_int irq_mask = 0xffff;
 static int irq_list[16];
-static int irq_list_count;
+static unsigned int irq_list_count;
 
 /* The card status change interrupt -- 0 means autoselect */
 static int cs_irq;
@@ -116,7 +116,7 @@ module_param(cycle_time, int, 0444);
 
 /*====================================================================*/
 
-static irqreturn_t tcic_interrupt(int irq, void *dev, struct pt_regs *regs);
+static irqreturn_t tcic_interrupt(int irq, void *dev);
 static void tcic_timer(u_long data);
 static struct pccard_operations tcic_operations;
 
@@ -218,7 +218,7 @@ static int to_cycles(int ns)
 
 static volatile u_int irq_hits;
 
-static irqreturn_t __init tcic_irq_count(int irq, void *dev, struct pt_regs *regs)
+static irqreturn_t __init tcic_irq_count(int irq, void *dev)
 {
     irq_hits++;
     return IRQ_HANDLED;
@@ -363,13 +363,25 @@ static int __init get_tcic_id(void)
     return id;
 }
 
+static int tcic_drv_pcmcia_suspend(struct platform_device *dev,
+				     pm_message_t state)
+{
+	return pcmcia_socket_dev_suspend(&dev->dev);
+}
+
+static int tcic_drv_pcmcia_resume(struct platform_device *dev)
+{
+	return pcmcia_socket_dev_resume(&dev->dev);
+}
 /*====================================================================*/
 
-static struct device_driver tcic_driver = {
-	.name = "tcic-pcmcia",
-	.bus = &platform_bus_type,
-	.suspend = pcmcia_socket_dev_suspend,
-	.resume = pcmcia_socket_dev_resume,
+static struct platform_driver tcic_driver = {
+	.driver = {
+		.name = "tcic-pcmcia",
+		.owner		= THIS_MODULE,
+	},
+	.suspend 	= tcic_drv_pcmcia_suspend,
+	.resume 	= tcic_drv_pcmcia_resume,
 };
 
 static struct platform_device tcic_device = {
@@ -383,7 +395,7 @@ static int __init init_tcic(void)
     int i, sock, ret = 0;
     u_int mask, scan;
 
-    if (driver_register(&tcic_driver))
+    if (platform_driver_register(&tcic_driver))
 	return -1;
     
     printk(KERN_INFO "Databook TCIC-2 PCMCIA probe: ");
@@ -391,7 +403,7 @@ static int __init init_tcic(void)
 
     if (!request_region(tcic_base, 16, "tcic-2")) {
 	printk("could not allocate ports,\n ");
-	driver_unregister(&tcic_driver);
+	platform_driver_unregister(&tcic_driver);
 	return -ENODEV;
     }
     else {
@@ -414,7 +426,7 @@ static int __init init_tcic(void)
     if (sock == 0) {
 	printk("not found.\n");
 	release_region(tcic_base, 16);
-	driver_unregister(&tcic_driver);
+	platform_driver_unregister(&tcic_driver);
 	return -ENODEV;
     }
 
@@ -460,7 +472,8 @@ static int __init init_tcic(void)
     init_timer(&poll_timer);
 
     /* Build interrupt mask */
-    printk(", %d sockets\n" KERN_INFO "  irq list (", sockets);
+    printk(KERN_CONT ", %d sockets\n", sockets);
+    printk(KERN_INFO "  irq list (");
     if (irq_list_count == 0)
 	mask = irq_mask;
     else
@@ -505,14 +518,14 @@ static int __init init_tcic(void)
     }
     
     /* jump start interrupt handler, if needed */
-    tcic_interrupt(0, NULL, NULL);
+    tcic_interrupt(0, NULL);
 
     platform_device_register(&tcic_device);
 
     for (i = 0; i < sockets; i++) {
 	    socket_table[i].socket.ops = &tcic_operations;
 	    socket_table[i].socket.resource_ops = &pccard_nonstatic_ops;
-	    socket_table[i].socket.dev.dev = &tcic_device.dev;
+	    socket_table[i].socket.dev.parent = &tcic_device.dev;
 	    ret = pcmcia_register_socket(&socket_table[i].socket);
 	    if (ret && i)
 		    pcmcia_unregister_socket(&socket_table[0].socket);
@@ -542,12 +555,12 @@ static void __exit exit_tcic(void)
     }
 
     platform_device_unregister(&tcic_device);
-    driver_unregister(&tcic_driver);
+    platform_driver_unregister(&tcic_driver);
 } /* exit_tcic */
 
 /*====================================================================*/
 
-static irqreturn_t tcic_interrupt(int irq, void *dev, struct pt_regs *regs)
+static irqreturn_t tcic_interrupt(int irq, void *dev)
 {
     int i, quick = 0;
     u_char latch, sstat;
@@ -606,7 +619,7 @@ static void tcic_timer(u_long data)
 {
     debug(2, "tcic_timer()\n");
     tcic_timer_pending = 0;
-    tcic_interrupt(0, NULL, NULL);
+    tcic_interrupt(0, NULL);
 } /* tcic_timer */
 
 /*====================================================================*/
@@ -719,8 +732,8 @@ static int tcic_set_io_map(struct pcmcia_socket *sock, struct pccard_io_map *io)
     u_short base, len, ioctl;
     
     debug(1, "SetIOMap(%d, %d, %#2.2x, %d ns, "
-	  "%#lx-%#lx)\n", psock, io->map, io->flags,
-	  io->speed, io->start, io->stop);
+	  "%#llx-%#llx)\n", psock, io->map, io->flags, io->speed,
+	  (unsigned long long)io->start, (unsigned long long)io->stop);
     if ((io->map > 1) || (io->start > 0xffff) || (io->stop > 0xffff) ||
 	(io->stop < io->start)) return -EINVAL;
     tcic_setw(TCIC_ADDR+2, TCIC_ADR2_INDREG | (psock << TCIC_SS_SHFT));

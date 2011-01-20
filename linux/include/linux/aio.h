@@ -4,6 +4,8 @@
 #include <linux/list.h>
 #include <linux/workqueue.h>
 #include <linux/aio_abi.h>
+#include <linux/uio.h>
+#include <linux/rcupdate.h>
 
 #include <asm/atomic.h>
 
@@ -84,7 +86,7 @@ struct kioctx;
  */
 struct kiocb {
 	struct list_head	ki_run_list;
-	long			ki_flags;
+	unsigned long		ki_flags;
 	int			ki_users;
 	unsigned		ki_key;		/* id of this request */
 
@@ -109,12 +111,19 @@ struct kiocb {
 	size_t			ki_nbytes; 	/* copy of iocb->aio_nbytes */
 	char 			__user *ki_buf;	/* remaining iocb->aio_buf */
 	size_t			ki_left; 	/* remaining bytes */
-	long			ki_retried; 	/* just for testing */
-	long			ki_kicked; 	/* just for testing */
-	long			ki_queued; 	/* just for testing */
+	struct iovec		ki_inline_vec;	/* inline vector */
+ 	struct iovec		*ki_iovec;
+ 	unsigned long		ki_nr_segs;
+ 	unsigned long		ki_cur_seg;
 
 	struct list_head	ki_list;	/* the aio core uses this
 						 * for cancellation */
+
+	/*
+	 * If the aio_resfd field of the userspace iocb is not zero,
+	 * this is the underlying eventfd context to deliver events to.
+	 */
+	struct eventfd_ctx	*ki_eventfd;
 };
 
 #define is_sync_kiocb(iocb)	((iocb)->ki_key == KIOCB_SYNC_KEY)
@@ -175,7 +184,7 @@ struct kioctx {
 
 	/* This needs improving */
 	unsigned long		user_id;
-	struct kioctx		*next;
+	struct hlist_node	list;
 
 	wait_queue_head_t	wait;
 
@@ -190,53 +199,31 @@ struct kioctx {
 
 	struct aio_ring_info	ring_info;
 
-	struct work_struct	wq;
+	struct delayed_work	wq;
+
+	struct rcu_head		rcu_head;
 };
 
 /* prototypes */
 extern unsigned aio_max_size;
 
-extern ssize_t FASTCALL(wait_on_sync_kiocb(struct kiocb *iocb));
-extern int FASTCALL(aio_put_req(struct kiocb *iocb));
-extern void FASTCALL(kick_iocb(struct kiocb *iocb));
-extern int FASTCALL(aio_complete(struct kiocb *iocb, long res, long res2));
-extern void FASTCALL(__put_ioctx(struct kioctx *ctx));
+#ifdef CONFIG_AIO
+extern ssize_t wait_on_sync_kiocb(struct kiocb *iocb);
+extern int aio_put_req(struct kiocb *iocb);
+extern void kick_iocb(struct kiocb *iocb);
+extern int aio_complete(struct kiocb *iocb, long res, long res2);
 struct mm_struct;
-extern void FASTCALL(exit_aio(struct mm_struct *mm));
-extern struct kioctx *lookup_ioctx(unsigned long ctx_id);
-extern int FASTCALL(io_submit_one(struct kioctx *ctx,
-			struct iocb __user *user_iocb, struct iocb *iocb));
-
-/* semi private, but used by the 32bit emulations: */
-struct kioctx *lookup_ioctx(unsigned long ctx_id);
-int FASTCALL(io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
-				  struct iocb *iocb));
-
-#define get_ioctx(kioctx) do {						\
-	BUG_ON(unlikely(atomic_read(&(kioctx)->users) <= 0));		\
-	atomic_inc(&(kioctx)->users);					\
-} while (0)
-#define put_ioctx(kioctx) do {						\
-	BUG_ON(unlikely(atomic_read(&(kioctx)->users) <= 0));		\
-	if (unlikely(atomic_dec_and_test(&(kioctx)->users))) 		\
-		__put_ioctx(kioctx);					\
-} while (0)
-
-#define in_aio() !is_sync_wait(current->io_wait)
-/* may be used for debugging */
-#define warn_if_async()							\
-do {									\
-	if (in_aio()) {							\
-		printk(KERN_ERR "%s(%s:%d) called in async context!\n",	\
-			__FUNCTION__, __FILE__, __LINE__);		\
-		dump_stack();						\
-	}								\
-} while (0)
+extern void exit_aio(struct mm_struct *mm);
+#else
+static inline ssize_t wait_on_sync_kiocb(struct kiocb *iocb) { return 0; }
+static inline int aio_put_req(struct kiocb *iocb) { return 0; }
+static inline void kick_iocb(struct kiocb *iocb) { }
+static inline int aio_complete(struct kiocb *iocb, long res, long res2) { return 0; }
+struct mm_struct;
+static inline void exit_aio(struct mm_struct *mm) { }
+#endif /* CONFIG_AIO */
 
 #define io_wait_to_kiocb(wait) container_of(wait, struct kiocb, ki_wait)
-#define is_retried_kiocb(iocb) ((iocb)->ki_retried > 1)
-
-#include <linux/aio_abi.h>
 
 static inline struct kiocb *list_kiocb(struct list_head *h)
 {

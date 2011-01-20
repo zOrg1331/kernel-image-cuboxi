@@ -3,6 +3,7 @@
  */
 
 #include <linux/types.h>
+#include <linux/smp_lock.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/miscdevice.h>
@@ -14,8 +15,9 @@
 #include <asm/uaccess.h>
 #include <asm/sections.h>
 #include <asm/prom.h>
-#include <asm/ans-lcd.h>
 #include <asm/io.h>
+
+#include "ans-lcd.h"
 
 #define ANSLCD_ADDR		0xf301c000
 #define ANSLCD_CTRL_IX 0x00
@@ -118,10 +120,11 @@ anslcd_ioctl( struct inode * inode, struct file * file,
 static int
 anslcd_open( struct inode * inode, struct file * file )
 {
+	cycle_kernel_lock();
 	return 0;
 }
 
-struct file_operations anslcd_fops = {
+const struct file_operations anslcd_fops = {
 	.write	= anslcd_write,
 	.ioctl	= anslcd_ioctl,
 	.open	= anslcd_open,
@@ -145,11 +148,12 @@ anslcd_init(void)
 	int retval;
 	struct device_node* node;
 
-	node = find_devices("lcd");
-	if (!node || !node->parent)
+	node = of_find_node_by_name(NULL, "lcd");
+	if (!node || !node->parent || strcmp(node->parent->name, "gc")) {
+		of_node_put(node);
 		return -ENODEV;
-	if (strcmp(node->parent->name, "gc"))
-		return -ENODEV;
+	}
+	of_node_put(node);
 
 	anslcd_ptr = ioremap(ANSLCD_ADDR, 0x20);
 	

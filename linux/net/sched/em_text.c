@@ -12,7 +12,6 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
 #include <linux/string.h>
 #include <linux/skbuff.h>
 #include <linux/textsearch.h>
@@ -119,13 +118,16 @@ static int em_text_dump(struct sk_buff *skb, struct tcf_ematch *m)
 	conf.pattern_len = textsearch_get_pattern_len(tm->config);
 	conf.pad = 0;
 
-	RTA_PUT_NOHDR(skb, sizeof(conf), &conf);
-	RTA_APPEND(skb, conf.pattern_len, textsearch_get_pattern(tm->config));
+	if (nla_put_nohdr(skb, sizeof(conf), &conf) < 0)
+		goto nla_put_failure;
+	if (nla_append(skb, conf.pattern_len,
+		       textsearch_get_pattern(tm->config)) < 0)
+		goto nla_put_failure;
 	return 0;
 
-rtattr_failure:
+nla_put_failure:
 	return -1;
-}		
+}
 
 static struct tcf_ematch_ops em_text_ops = {
 	.kind	  = TCF_EM_TEXT,
@@ -142,7 +144,7 @@ static int __init init_em_text(void)
 	return tcf_em_register(&em_text_ops);
 }
 
-static void __exit exit_em_text(void) 
+static void __exit exit_em_text(void)
 {
 	tcf_em_unregister(&em_text_ops);
 }
@@ -151,3 +153,5 @@ MODULE_LICENSE("GPL");
 
 module_init(init_em_text);
 module_exit(exit_em_text);
+
+MODULE_ALIAS_TCF_EMATCH(TCF_EM_TEXT);

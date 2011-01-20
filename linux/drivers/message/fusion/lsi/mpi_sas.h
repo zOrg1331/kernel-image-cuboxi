@@ -1,12 +1,12 @@
 /*
- *  Copyright (c) 2004 LSI Logic Corporation.
+ *  Copyright (c) 2004-2008 LSI Corporation.
  *
  *
  *           Name:  mpi_sas.h
  *          Title:  MPI Serial Attached SCSI structures and definitions
  *  Creation Date:  August 19, 2004
  *
- *    mpi_sas.h Version:  01.05.03
+ *    mpi_sas.h Version:  01.05.05
  *
  *  Version History
  *  ---------------
@@ -21,6 +21,12 @@
  *                      and Remove Device operations to SAS IO Unit Control.
  *                      Added DevHandle field to SAS IO Unit Control request and
  *                      reply.
+ *  10-11-06  01.05.04  Fixed the name of a define for Operation field of SAS IO
+ *                      Unit Control request.
+ *  01-15-08  01.05.05  Added support for MPI_SAS_OP_SET_IOC_PARAMETER,
+ *                      including adding IOCParameter and IOCParameter value
+ *                      fields to SAS IO Unit Control Request.
+ *                      Added MPI_SAS_DEVICE_INFO_PRODUCT_SPECIFIC define.
  *  --------------------------------------------------------------------------
  */
 
@@ -58,6 +64,8 @@
  * Values for the SAS DeviceInfo field used in SAS Device Status Change Event
  * data and SAS IO Unit Configuration pages.
  */
+#define MPI_SAS_DEVICE_INFO_PRODUCT_SPECIFIC    (0xF0000000)
+
 #define MPI_SAS_DEVICE_INFO_SEP                 (0x00004000)
 #define MPI_SAS_DEVICE_INFO_ATAPI_DEVICE        (0x00002000)
 #define MPI_SAS_DEVICE_INFO_LSI_DEVICE          (0x00001000)
@@ -214,7 +222,7 @@ typedef struct _MSG_SAS_IOUNIT_CONTROL_REQUEST
     U8                      ChainOffset;        /* 02h */
     U8                      Function;           /* 03h */
     U16                     DevHandle;          /* 04h */
-    U8                      Reserved3;          /* 06h */
+    U8                      IOCParameter;       /* 06h */
     U8                      MsgFlags;           /* 07h */
     U32                     MsgContext;         /* 08h */
     U8                      TargetID;           /* 0Ch */
@@ -223,7 +231,7 @@ typedef struct _MSG_SAS_IOUNIT_CONTROL_REQUEST
     U8                      PrimFlags;          /* 0Fh */
     U32                     Primitive;          /* 10h */
     U64                     SASAddress;         /* 14h */
-    U32                     Reserved4;          /* 1Ch */
+    U32                     IOCParameterValue;  /* 1Ch */
 } MSG_SAS_IOUNIT_CONTROL_REQUEST, MPI_POINTER PTR_MSG_SAS_IOUNIT_CONTROL_REQUEST,
   SasIoUnitControlRequest_t, MPI_POINTER pSasIoUnitControlRequest_t;
 
@@ -237,7 +245,10 @@ typedef struct _MSG_SAS_IOUNIT_CONTROL_REQUEST
 #define MPI_SAS_OP_SEND_PRIMITIVE               (0x0A)
 #define MPI_SAS_OP_FORCE_FULL_DISCOVERY         (0x0B)
 #define MPI_SAS_OP_TRANSMIT_PORT_SELECT_SIGNAL  (0x0C)
-#define MPI_SAS_OP_TRANSMIT_REMOVE_DEVICE       (0x0D)
+#define MPI_SAS_OP_TRANSMIT_REMOVE_DEVICE       (0x0D)  /* obsolete name */
+#define MPI_SAS_OP_REMOVE_DEVICE                (0x0D)
+#define MPI_SAS_OP_SET_IOC_PARAMETER            (0x0E)
+#define MPI_SAS_OP_PRODUCT_SPECIFIC_MIN         (0x80)
 
 /* values for the PrimFlags field */
 #define MPI_SAS_PRIMFLAGS_SINGLE                (0x08)
@@ -253,7 +264,7 @@ typedef struct _MSG_SAS_IOUNIT_CONTROL_REPLY
     U8                      MsgLength;          /* 02h */
     U8                      Function;           /* 03h */
     U16                     DevHandle;          /* 04h */
-    U8                      Reserved3;          /* 06h */
+    U8                      IOCParameter;       /* 06h */
     U8                      MsgFlags;           /* 07h */
     U32                     MsgContext;         /* 08h */
     U16                     Reserved4;          /* 0Ch */
