@@ -1721,7 +1721,9 @@ static void alc_apply_fixup(struct hda_codec *codec, int action)
 {
 	struct alc_spec *spec = codec->spec;
 	int id = spec->fixup_id;
+#ifdef CONFIG_SND_DEBUG_VERBOSE
 	const char *modelname = spec->fixup_name;
+#endif
 	int depth = 0;
 
 	if (!spec->fixup_list)
@@ -10930,9 +10932,6 @@ static int alc_auto_add_mic_boost(struct hda_codec *codec)
 	return 0;
 }
 
-static int alc861vd_auto_create_multi_out_ctls(struct alc_spec *spec,
-					     const struct auto_pin_cfg *cfg);
-
 /* almost identical with ALC880 parser... */
 static int alc882_parse_auto_config(struct hda_codec *codec)
 {
@@ -10950,10 +10949,7 @@ static int alc882_parse_auto_config(struct hda_codec *codec)
 	err = alc880_auto_fill_dac_nids(spec, &spec->autocfg);
 	if (err < 0)
 		return err;
-	if (codec->vendor_id == 0x10ec0887)
-		err = alc861vd_auto_create_multi_out_ctls(spec, &spec->autocfg);
-	else
-		err = alc880_auto_create_multi_out_ctls(spec, &spec->autocfg);
+	err = alc880_auto_create_multi_out_ctls(spec, &spec->autocfg);
 	if (err < 0)
 		return err;
 	err = alc880_auto_create_extra_out(spec, spec->autocfg.hp_pins[0],
@@ -12634,6 +12630,8 @@ static struct snd_pci_quirk alc262_cfg_tbl[] = {
 	SND_PCI_QUIRK_MASK(0x103c, 0xff00, 0x1200, "HP xw series",
 			   ALC262_HP_BPC),
 	SND_PCI_QUIRK_MASK(0x103c, 0xff00, 0x1300, "HP xw series",
+			   ALC262_HP_BPC),
+	SND_PCI_QUIRK_MASK(0x103c, 0xff00, 0x1500, "HP z series",
 			   ALC262_HP_BPC),
 	SND_PCI_QUIRK_MASK(0x103c, 0xff00, 0x1700, "HP xw series",
 			   ALC262_HP_BPC),
@@ -17134,7 +17132,7 @@ static void alc861vd_auto_init_analog_input(struct hda_codec *codec)
 #define alc861vd_idx_to_mixer_switch(nid)	((nid) + 0x0c)
 
 /* add playback controls from the parsed DAC table */
-/* Based on ALC880 version. But ALC861VD and ALC887 have separate,
+/* Based on ALC880 version. But ALC861VD has separate,
  * different NIDs for mute/unmute switch and volume control */
 static int alc861vd_auto_create_multi_out_ctls(struct alc_spec *spec,
 					     const struct auto_pin_cfg *cfg)
