@@ -61,11 +61,8 @@ AllocMidQEntry(const struct smb_hdr *smb_buffer, struct TCP_Server_Info *server)
 		temp->tsk = current;
 	}
 
-	spin_lock(&GlobalMid_Lock);
-	list_add_tail(&temp->qhead, &server->pending_mid_q);
 	atomic_inc(&midCount);
 	temp->midState = MID_REQUEST_ALLOCATED;
-	spin_unlock(&GlobalMid_Lock);
 	return temp;
 }
 
@@ -75,11 +72,8 @@ DeleteMidQEntry(struct mid_q_entry *midEntry)
 #ifdef CONFIG_CIFS_STATS2
 	unsigned long now;
 #endif
-	spin_lock(&GlobalMid_Lock);
 	midEntry->midState = MID_FREE;
-	list_del(&midEntry->qhead);
 	atomic_dec(&midCount);
-	spin_unlock(&GlobalMid_Lock);
 	if (midEntry->largeBuf)
 		cifs_buf_release(midEntry->resp_buf);
 	else
@@ -101,6 +95,16 @@ DeleteMidQEntry(struct mid_q_entry *midEntry)
 	}
 #endif
 	mempool_free(midEntry, cifs_mid_poolp);
+}
+
+static void
+delete_mid(struct mid_q_entry *mid)
+{
+	spin_lock(&GlobalMid_Lock);
+	list_del(&mid->qhead);
+	spin_unlock(&GlobalMid_Lock);
+
+	DeleteMidQEntry(mid);
 }
 
 static int
@@ -244,31 +248,31 @@ smb_send(struct TCP_Server_Info *server, struct smb_hdr *smb_buffer,
 	return smb_sendv(server, &iov, 1);
 }
 
-static int wait_for_free_request(struct cifsSesInfo *ses, const int long_op)
+static int wait_for_free_request(struct TCP_Server_Info *server,
+				 const int long_op)
 {
 	if (long_op == CIFS_ASYNC_OP) {
 		/* oplock breaks must not be held up */
-		atomic_inc(&ses->server->inFlight);
+		atomic_inc(&server->inFlight);
 		return 0;
 	}
 
 	spin_lock(&GlobalMid_Lock);
 	while (1) {
-		if (atomic_read(&ses->server->inFlight) >=
-				cifs_max_pending){
+		if (atomic_read(&server->inFlight) >= cifs_max_pending) {
 			spin_unlock(&GlobalMid_Lock);
 #ifdef CONFIG_CIFS_STATS2
-			atomic_inc(&ses->server->num_waiters);
+			atomic_inc(&server->num_waiters);
 #endif
-			wait_event(ses->server->request_q,
-				   atomic_read(&ses->server->inFlight)
+			wait_event(server->request_q,
+				   atomic_read(&server->inFlight)
 				     < cifs_max_pending);
 #ifdef CONFIG_CIFS_STATS2
-			atomic_dec(&ses->server->num_waiters);
+			atomic_dec(&server->num_waiters);
 #endif
 			spin_lock(&GlobalMid_Lock);
 		} else {
-			if (ses->server->tcpStatus == CifsExiting) {
+			if (server->tcpStatus == CifsExiting) {
 				spin_unlock(&GlobalMid_Lock);
 				return -ENOENT;
 			}
@@ -278,7 +282,7 @@ static int wait_for_free_request(struct cifsSesInfo *ses, const int long_op)
 
 			/* update # of requests on the wire to server */
 			if (long_op != CIFS_BLOCKING_OP)
-				atomic_inc(&ses->server->inFlight);
+				atomic_inc(&server->inFlight);
 			spin_unlock(&GlobalMid_Lock);
 			break;
 		}
@@ -308,6 +312,9 @@ static int allocate_mid(struct cifsSesInfo *ses, struct smb_hdr *in_buf,
 	*ppmidQ = AllocMidQEntry(in_buf, ses->server);
 	if (*ppmidQ == NULL)
 		return -ENOMEM;
+	spin_lock(&GlobalMid_Lock);
+	list_add_tail(&(*ppmidQ)->qhead, &ses->server->pending_mid_q);
+	spin_unlock(&GlobalMid_Lock);
 	return 0;
 }
 
@@ -382,6 +389,42 @@ SendReceiveNoRsp(const unsigned int xid, struct cifsSesInfo *ses,
 	return rc;
 }
 
+static int
+sync_mid_result(struct mid_q_entry *mid, struct TCP_Server_Info *server)
+{
+	int rc = 0;
+
+	spin_lock(&GlobalMid_Lock);
+
+	if (mid->resp_buf) {
+		spin_unlock(&GlobalMid_Lock);
+		return rc;
+	}
+
+	cERROR(1, "No response to cmd %d mid %d", mid->command, mid->mid);
+	if (mid->midState == MID_REQUEST_SUBMITTED) {
+		if (server->tcpStatus == CifsExiting)
+			rc = -EHOSTDOWN;
+		else {
+			server->tcpStatus = CifsNeedReconnect;
+			mid->midState = MID_RETRY_NEEDED;
+		}
+	}
+
+	if (rc != -EHOSTDOWN) {
+		if (mid->midState == MID_RETRY_NEEDED) {
+			rc = -EAGAIN;
+			cFYI(1, "marking request for retry");
+		} else {
+			rc = -EIO;
+		}
+	}
+	spin_unlock(&GlobalMid_Lock);
+
+	delete_mid(mid);
+	return rc;
+}
+
 int
 SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
 	     struct kvec *iov, int n_vec, int *pRespBufType /* ret */,
@@ -413,7 +456,7 @@ SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
 	   to the same server. We may make this configurable later or
 	   use ses->maxReq */
 
-	rc = wait_for_free_request(ses, long_op);
+	rc = wait_for_free_request(ses->server, long_op);
 	if (rc) {
 		cifs_small_buf_release(in_buf);
 		return rc;
@@ -485,37 +528,13 @@ SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
 	/* No user interrupts in wait - wreaks havoc with performance */
 	wait_for_response(ses, midQ, timeout, 10 * HZ);
 
-	spin_lock(&GlobalMid_Lock);
-
-	if (midQ->resp_buf == NULL) {
-		cERROR(1, "No response to cmd %d mid %d",
-			midQ->command, midQ->mid);
-		if (midQ->midState == MID_REQUEST_SUBMITTED) {
-			if (ses->server->tcpStatus == CifsExiting)
-				rc = -EHOSTDOWN;
-			else {
-				ses->server->tcpStatus = CifsNeedReconnect;
-				midQ->midState = MID_RETRY_NEEDED;
-			}
-		}
-
-		if (rc != -EHOSTDOWN) {
-			if (midQ->midState == MID_RETRY_NEEDED) {
-				rc = -EAGAIN;
-				cFYI(1, "marking request for retry");
-			} else {
-				rc = -EIO;
-			}
-		}
-		spin_unlock(&GlobalMid_Lock);
-		DeleteMidQEntry(midQ);
-		/* Update # of requests on wire to server */
+	rc = sync_mid_result(midQ, ses->server);
+	if (rc != 0) {
 		atomic_dec(&ses->server->inFlight);
 		wake_up(&ses->server->request_q);
 		return rc;
 	}
 
-	spin_unlock(&GlobalMid_Lock);
 	receive_len = midQ->resp_buf->smb_buf_length;
 
 	if (receive_len > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE) {
@@ -564,14 +583,14 @@ SendReceive2(const unsigned int xid, struct cifsSesInfo *ses,
 		if ((flags & CIFS_NO_RESP) == 0)
 			midQ->resp_buf = NULL;  /* mark it so buf will
 						   not be freed by
-						   DeleteMidQEntry */
+						   delete_mid */
 	} else {
 		rc = -EIO;
 		cFYI(1, "Bad MID state?");
 	}
 
 out:
-	DeleteMidQEntry(midQ);
+	delete_mid(midQ);
 	atomic_dec(&ses->server->inFlight);
 	wake_up(&ses->server->request_q);
 
@@ -610,7 +629,7 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
 		return -EIO;
 	}
 
-	rc = wait_for_free_request(ses, long_op);
+	rc = wait_for_free_request(ses->server, long_op);
 	if (rc)
 		return rc;
 
@@ -677,36 +696,13 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
 	/* No user interrupts in wait - wreaks havoc with performance */
 	wait_for_response(ses, midQ, timeout, 10 * HZ);
 
-	spin_lock(&GlobalMid_Lock);
-	if (midQ->resp_buf == NULL) {
-		cERROR(1, "No response for cmd %d mid %d",
-			  midQ->command, midQ->mid);
-		if (midQ->midState == MID_REQUEST_SUBMITTED) {
-			if (ses->server->tcpStatus == CifsExiting)
-				rc = -EHOSTDOWN;
-			else {
-				ses->server->tcpStatus = CifsNeedReconnect;
-				midQ->midState = MID_RETRY_NEEDED;
-			}
-		}
-
-		if (rc != -EHOSTDOWN) {
-			if (midQ->midState == MID_RETRY_NEEDED) {
-				rc = -EAGAIN;
-				cFYI(1, "marking request for retry");
-			} else {
-				rc = -EIO;
-			}
-		}
-		spin_unlock(&GlobalMid_Lock);
-		DeleteMidQEntry(midQ);
-		/* Update # of requests on wire to server */
+	rc = sync_mid_result(midQ, ses->server);
+	if (rc != 0) {
 		atomic_dec(&ses->server->inFlight);
 		wake_up(&ses->server->request_q);
 		return rc;
 	}
 
-	spin_unlock(&GlobalMid_Lock);
 	receive_len = midQ->resp_buf->smb_buf_length;
 
 	if (receive_len > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE) {
@@ -755,7 +751,7 @@ SendReceive(const unsigned int xid, struct cifsSesInfo *ses,
 	}
 
 out:
-	DeleteMidQEntry(midQ);
+	delete_mid(midQ);
 	atomic_dec(&ses->server->inFlight);
 	wake_up(&ses->server->request_q);
 
@@ -845,7 +841,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 		return -EIO;
 	}
 
-	rc = wait_for_free_request(ses, CIFS_BLOCKING_OP);
+	rc = wait_for_free_request(ses->server, CIFS_BLOCKING_OP);
 	if (rc)
 		return rc;
 
@@ -863,7 +859,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 
 	rc = cifs_sign_smb(in_buf, ses->server, &midQ->sequence_number);
 	if (rc) {
-		DeleteMidQEntry(midQ);
+		delete_mid(midQ);
 		mutex_unlock(&ses->server->srv_mutex);
 		return rc;
 	}
@@ -880,7 +876,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 	mutex_unlock(&ses->server->srv_mutex);
 
 	if (rc < 0) {
-		DeleteMidQEntry(midQ);
+		delete_mid(midQ);
 		return rc;
 	}
 
@@ -902,7 +898,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 
 			rc = send_nt_cancel(tcon, in_buf, midQ);
 			if (rc) {
-				DeleteMidQEntry(midQ);
+				delete_mid(midQ);
 				return rc;
 			}
 		} else {
@@ -914,7 +910,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 			/* If we get -ENOLCK back the lock may have
 			   already been removed. Don't exit in this case. */
 			if (rc && rc != -ENOLCK) {
-				DeleteMidQEntry(midQ);
+				delete_mid(midQ);
 				return rc;
 			}
 		}
@@ -926,35 +922,11 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 		}
 	}
 
-	spin_lock(&GlobalMid_Lock);
-	if (midQ->resp_buf) {
-		spin_unlock(&GlobalMid_Lock);
-		receive_len = midQ->resp_buf->smb_buf_length;
-	} else {
-		cERROR(1, "No response for cmd %d mid %d",
-			  midQ->command, midQ->mid);
-		if (midQ->midState == MID_REQUEST_SUBMITTED) {
-			if (ses->server->tcpStatus == CifsExiting)
-				rc = -EHOSTDOWN;
-			else {
-				ses->server->tcpStatus = CifsNeedReconnect;
-				midQ->midState = MID_RETRY_NEEDED;
-			}
-		}
-
-		if (rc != -EHOSTDOWN) {
-			if (midQ->midState == MID_RETRY_NEEDED) {
-				rc = -EAGAIN;
-				cFYI(1, "marking request for retry");
-			} else {
-				rc = -EIO;
-			}
-		}
-		spin_unlock(&GlobalMid_Lock);
-		DeleteMidQEntry(midQ);
+	rc = sync_mid_result(midQ, ses->server);
+	if (rc != 0)
 		return rc;
-	}
 
+	receive_len = midQ->resp_buf->smb_buf_length;
 	if (receive_len > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE) {
 		cERROR(1, "Frame too large received.  Length: %d  Xid: %d",
 			receive_len, xid);
@@ -1001,7 +973,7 @@ SendReceiveBlockingLock(const unsigned int xid, struct cifsTconInfo *tcon,
 		BCC(out_buf) = le16_to_cpu(BCC_LE(out_buf));
 
 out:
-	DeleteMidQEntry(midQ);
+	delete_mid(midQ);
 	if (rstart && rc == -EACCES)
 		return -ERESTARTSYS;
 	return rc;
