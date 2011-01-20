@@ -1,0 +1,33 @@
+Importing i2c based on 2.6.38-rc1
+	quilt series is empty
+$ git update-ref refs/heads/quilt/i2c c56eb8fb6dccb83d9fe62fd4dc00c834de9bc470
+Importing jdelvare-hwmon based on 2.6.38-rc1
+	quilt series is empty
+$ git update-ref refs/heads/quilt/jdelvare-hwmon c56eb8fb6dccb83d9fe62fd4dc00c834de9bc470
+Importing kernel-doc based on 2.6.37-rc4
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.37-7787-g8a335bc
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 8a335bc631ac9c43675821580c26ebf95a3044ba
+HEAD is now at 8a335bc Merge branch 'for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/nab/scsi-post-merge-2.6
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+lguest:username-and-chroot.patch
+lguest:guard-pages.patch
+lguest:document-rng.patch
+Context reduced to (1/1) to apply fragment at 119
+lguest:use_this_cpu_ops.patch
+lguest-use_this_cpu_ops-fixes.patch
+lguest:guest_fix_unmet_direct_dependencies_virtualization_virtio.patch
+virtio:remove_pci_root_device.patch
+module:show_version_information_for_built_in_s_in_sysfs.patch
+module:param_add_null_statement_to_compiled_in_params.patch
+module-fixup-missing-semicolons.patch
+misc:enhance-BUILD_BUG_ON.patch
+misc:remove-MAYBE_BUILD_BUG_ON.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 7e26391...1b399e7 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.37-7185-g52cfd50
+Unchanged quilt series device-mapper
