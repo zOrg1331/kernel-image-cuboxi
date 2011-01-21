@@ -68,7 +68,5 @@ void sysfs_remove_dirlink(struct sysfs_dirent *sd)
 	sysfs_addrm_start(&acxt, sd->s_parent);
 	sysfs_remove_one(&acxt, sd);
 	sysfs_addrm_finish(&acxt);
-
-	sysfs_put(sd);
 }
 EXPORT_SYMBOL(sysfs_remove_dirlink);

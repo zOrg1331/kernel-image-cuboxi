@@ -80,6 +80,12 @@ static void print_cfs_group_stats(struct seq_file *m, int cpu,
 	PN(se->wait_max);
 	PN(se->wait_sum);
 	P(se->wait_count);
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+	PN(se->throttle_start);
+	PN(se->throttle_max);
+	PN(se->throttle_sum);
+	P(se->throttle_count);
+#endif
 #endif
 	P(se->load.weight);
 #undef PN

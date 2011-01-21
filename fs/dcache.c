@@ -2198,6 +2198,14 @@ SYSCALL_DEFINE2(getcwd, char __user *, buf, unsigned long, size)
 
 	get_fs_root_and_pwd(current->fs, &root, &pwd);
 
+	if (pwd.dentry->d_inode->i_op &&
+			pwd.dentry->d_inode->i_op->permission) {
+		error = pwd.dentry->d_inode->i_op->permission(
+				pwd.dentry->d_inode, 0);
+		if (error == -ERESTARTSYS)
+			goto out;
+	}
+
 	error = -ENOENT;
 	spin_lock(&dcache_lock);
 	if (!d_unlinked(pwd.dentry)) {

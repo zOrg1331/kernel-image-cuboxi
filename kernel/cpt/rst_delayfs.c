@@ -1150,7 +1150,7 @@ static int delayfs_preopen(struct file *fake, struct delay_sb_info *si)
 
 		off = vfs_llseek(real, fake->f_pos, 0);
 		if (off < 0) {
-			eprintk("%s llseek:%d", __func__, (int)off);
+			eprintk("%s llseek:%d\n", __func__, (int)off);
 			real->f_pos = fake->f_pos;
 		}
 	}
@@ -1310,7 +1310,7 @@ static void delayfs_resume(struct cpt_delayed_context *ctx,
 
 		ret = delayfs_preopen(file, si);
 		if (ret) {
-			printk("%s: preopen %s err %d", __func__,
+			printk("%s: preopen %s err %d\n", __func__,
 					FNAME(file), ret);
 			delayfs_break(file);
 		} else {

@@ -6,9 +6,6 @@
 
 #include "base.h"
 
-extern struct sysfs_dirent *sysfs_find_dirent(struct sysfs_dirent *parent_sd,
-				       const unsigned char *name);
-
 struct ve_device_link {
 	char *name;
 	struct kobject *kobj;
@@ -26,11 +23,13 @@ struct ve_device {
 
 static DECLARE_MUTEX(vedev_lock);
 
-static struct kobject *ve_kobj_path_create(struct ve_struct *ve, char *path)
+extern struct sysfs_dirent *sysfs_get_active(struct sysfs_dirent *sd);
+extern void sysfs_put_active(struct sysfs_dirent *sd);
+static struct kobject *ve_kobj_path_create(char *path)
 {
 	char *e, *p;
-	struct sysfs_dirent *sd, *parent_sd = ve->_sysfs_root;
-	struct kobject *k = ERR_PTR(-EINVAL), *pk = NULL;
+	struct sysfs_dirent *sd, *parent_sd = get_exec_env()->_sysfs_root;
+	struct kobject *k, *pk = NULL;
 	
 	p = path;
 	if (*p == '/')
@@ -40,27 +39,35 @@ static struct kobject *ve_kobj_path_create(struct ve_struct *ve, char *path)
 		e = strchr(p, '/');
 		if (e)
 			*e = '\0';
-		sd = sysfs_find_dirent(parent_sd, p);
+		sd = sysfs_get_dirent(parent_sd, p);
 		if (sd == NULL) {
-			k = kobject_create_and_add(p, k);
+new:			k = kobject_create_and_add(p, pk);
 			kobject_put(pk);
 			if (!k) {
 				k = ERR_PTR(-ENOMEM);
 				goto out;
 			}
 		} else {
-			if (sd->s_flags & SYSFS_DIR_LINK) {
+			if (sd->s_flags & SYSFS_DIR) {
+				k = sd->s_dir.kobj;
+				/*a directory may be deleted*/
+				if (!sysfs_get_active(sd)) {
+					sysfs_put(sd);
+					goto new;
+				}
+			} else if (sd->s_flags & SYSFS_DIR_LINK)
 				k = ERR_PTR(-EEXIST);
+			else
+				k = ERR_PTR(-EINVAL);
+
+			if (IS_ERR(k)) {
+				sysfs_put(sd);
 				goto out;
 			}
-			if (sd->s_flags & SYSFS_DIR)
-				k = sd->s_dir.kobj;
 			kobject_get(k);
 			kobject_put(pk);
-		}
-		if (!k) {
-			k = ERR_PTR(-EINVAL);
-			goto out;
+			sysfs_put_active(sd);
+			sysfs_put(sd);
 		}
 		pk = k;
 		parent_sd = k->sd; 
@@ -78,14 +85,17 @@ static int ve_device_add_symlink(struct kobject *kobj, const char *name, \
 {
 	char *path;
 	int ret = -ENOMEM;
-	struct kobject *ve_kobj = NULL;
+	struct kobject *dev_kobj, *ve_kobj = NULL;
 	struct ve_device_link *ve_link;
+	struct ve_struct *old_ve;
 
 	path = kobject_get_path(kobj, GFP_KERNEL);
 	if (!path)
 		goto out;
 
-	ve_kobj = ve_kobj_path_create(ve_dev->ve, path);
+	old_ve = set_exec_env(ve_dev->ve);
+	ve_kobj = ve_kobj_path_create(path);
+	set_exec_env(old_ve);
 	kfree(path);
 	if (IS_ERR(ve_kobj)) {
 		ret = PTR_ERR(ve_kobj);
@@ -101,7 +111,12 @@ static int ve_device_add_symlink(struct kobject *kobj, const char *name, \
 	if (!ve_link->name)
 		goto out_free;
 
-	ret = sysfs_create_link(ve_kobj, ve_dev->kobj, name);
+	if (ve_dev->kobj)
+		dev_kobj = ve_dev->kobj;
+	else
+		dev_kobj = &ve_dev->dev->kobj;
+
+	ret = sysfs_create_link(ve_kobj, dev_kobj, name);
 	if (ret)
 		goto out_free_name;
 
@@ -163,6 +178,7 @@ static void kobject_link_del(struct kobject *kobj, struct ve_struct *ve)
 		set_exec_env(old_ve);
 	}
 	kobj->sd = NULL;
+	kobject_put(kobj->parent);
 	kobject_put(kobj);
 }
 
@@ -172,6 +188,7 @@ static int ve_device_link_kobj(struct ve_device *ve_dev)
 	int ret = 0;
 	struct sysfs_dirent *sd;
 	struct kobject *k = NULL, *pk = NULL;
+	struct ve_struct *old_ve;
 	
 	path = kobject_get_path(&ve_dev->dev->kobj, GFP_KERNEL);
 	if (!path) {
@@ -181,7 +198,9 @@ static int ve_device_link_kobj(struct ve_device *ve_dev)
 	if (p && p != path) {
 		*p = '\0';
 		p++;
-		pk = ve_kobj_path_create(ve_dev->ve, path);
+		old_ve = set_exec_env(ve_dev->ve);
+		pk = ve_kobj_path_create(path);
+		set_exec_env(old_ve);
 		if (IS_ERR(pk)) {
 			ret = PTR_ERR(pk);
 			pk = NULL;
@@ -192,8 +211,9 @@ static int ve_device_link_kobj(struct ve_device *ve_dev)
 		goto out;
 	}
 
-	sd = sysfs_find_dirent(pk->sd, p);
+	sd = sysfs_get_dirent(pk->sd, p);
 	if (sd != NULL) {
+		sysfs_put(pk->sd);
 		ret = -EEXIST;
 		goto out;
 	}
@@ -224,12 +244,32 @@ static int ve_device_link_bus(struct ve_device *ve_dev)
 	return ret;
 }
 
+static int ve_device_link_class(struct ve_device *ve_dev)
+{
+	struct kobject *devs_kobj = NULL;
+	struct device *dev = ve_dev->dev;
+	int ret = 0;
+
+	if (!dev->class)
+		return 0;
+
+	if ((dev->kobj.parent != &dev->class->p->class_subsys.kobj) &&
+	    device_is_not_partition(dev)) {
+		devs_kobj = &dev->class->p->class_subsys.kobj;
+		ret = ve_device_add_symlink(devs_kobj, dev_name(dev), ve_dev);
+	}
+
+	return ret;
+}
+
 static void ve_device_del_link(struct ve_device *ve_dev)
 {
 	struct ve_device_link *l, *t;
 	list_for_each_entry_safe(l, t, &ve_dev->links, list) {
 		sysfs_remove_link(l->kobj, l->name);
 		kobject_put(l->kobj);
+		kfree(l->name);
+		kfree(l);
 	}
 	kobject_link_del(ve_dev->kobj, ve_dev->ve);
 }
@@ -329,6 +369,10 @@ static int ve_device_add(struct device *dev, struct ve_struct *ve)
 
 	ret = ve_device_create_link(ve_dev);
 	if (ret < 0)
+		goto err;
+
+	ret = ve_device_link_class(ve_dev);
+	if (ret)
 		goto err;
 
 	if (MAJOR(dev->devt)) {

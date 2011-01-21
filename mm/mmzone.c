@@ -143,6 +143,10 @@ int alloc_mem_gangs(struct gang_set *gs)
 
 	memset(gs, 0, sizeof(struct gang_set));
 
+	gs->gangs = kzalloc(nr_node_ids * sizeof(struct gang *), GFP_KERNEL);
+	if (!gs->gangs)
+		goto noarr;
+
 	for_each_online_node(node) {
 		gs->gangs[node] = kzalloc_node(sizeof(struct gang)*MAX_NR_ZONES,
 						GFP_KERNEL, node);
@@ -159,6 +163,7 @@ int alloc_mem_gangs(struct gang_set *gs)
 
 nomem:
 	free_mem_gangs(gs);
+noarr:
 	return -ENOMEM;
 }
 
@@ -168,6 +173,7 @@ void free_mem_gangs(struct gang_set *gs)
 
 	for_each_node(node)
 		kfree(gs->gangs[node]);
+	kfree(gs->gangs);
 }
 
 void add_mem_gangs(struct gang_set *gs)
@@ -276,6 +282,10 @@ void gang_page_stat(struct gang_set *gs, unsigned long *stat)
 
 #endif /* CONFIG_MEMORY_GANGS */
 
+struct gang *init_gang_array[MAX_NUMNODES];
+
 #ifndef CONFIG_BC_RSS_ACCOUNTING
-struct gang_set init_gang_set;
+struct gang_set init_gang_set = {
+	.gangs = init_gang_array,
+}
 #endif

@@ -134,7 +134,7 @@ struct dentry *sysfs_get_dentry(struct sysfs_dirent *sd)
  *	RETURNS:
  *	Pointer to @sd on success, NULL on failure.
  */
-static struct sysfs_dirent *sysfs_get_active(struct sysfs_dirent *sd)
+struct sysfs_dirent *sysfs_get_active(struct sysfs_dirent *sd)
 {
 	if (unlikely(!sd))
 		return NULL;
@@ -163,7 +163,7 @@ static struct sysfs_dirent *sysfs_get_active(struct sysfs_dirent *sd)
  *	Put an active reference to @sd.  This function is noop if @sd
  *	is NULL.
  */
-static void sysfs_put_active(struct sysfs_dirent *sd)
+void sysfs_put_active(struct sysfs_dirent *sd)
 {
 	struct completion *cmpl;
 	int v;
@@ -1060,3 +1060,14 @@ const struct file_operations sysfs_dir_operations = {
 	.readdir	= sysfs_readdir,
 	.llseek		= generic_file_llseek,
 };
+
+int init_ve_sysfs_root(struct ve_struct *ve)
+{
+	ve->_sysfs_root = sysfs_new_dirent("",
+			S_IFDIR | S_IRWXU | S_IRUGO | S_IXUGO, SYSFS_DIR);
+	if (ve->_sysfs_root == NULL)
+		return -ENOMEM;
+
+	return 0;
+}
+EXPORT_SYMBOL(init_ve_sysfs_root);

@@ -346,7 +346,7 @@ ENTRY(sys_call_table)
 	.long sys_fairsched_mvpr
 	.long sys_fairsched_rate
 	.long sys_fairsched_vcpus	/* 505 */
-	.long sys_ni_syscall
+	.long sys_fairsched_cpumask
 	.long sys_ni_syscall
 	.long sys_ni_syscall
 	.long sys_ni_syscall

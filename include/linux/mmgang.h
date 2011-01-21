@@ -190,6 +190,8 @@ static inline struct gang *try_lock_page_lru(struct page *page)
 	return gang;
 }
 
+extern struct gang *init_gang_array[];
+
 #else /* CONFIG_MEMORY_GANGS */
 
 static inline struct gang *page_gang(struct page *page)

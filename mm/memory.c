@@ -1558,6 +1558,8 @@ int get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 		flags |= FOLL_WRITE;
 	if (force)
 		flags |= FOLL_FORCE;
+	if (write < 0)
+		flags &= ~FOLL_TOUCH;
 
 	return __get_user_pages(tsk, mm, start, nr_pages, flags, pages, vmas);
 }

@@ -13,9 +13,12 @@
 #include <linux/err.h>
 #include <linux/mount.h>
 #include <linux/cgroup.h>
+#include <linux/cpumask.h>
+#include <linux/cpuset.h>
 #include <linux/pid_namespace.h>
 #include <linux/syscalls.h>
 #include <linux/fairsched.h>
+#include <linux/uaccess.h>
 
 static struct cgroup *fairsched_root;
 
@@ -109,6 +112,13 @@ SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 	struct cgroup *cgrp;
 	char name[16];
 	long ret;
+	int err;
+
+	/*
+	 * TODO: vcpus must be the *real* number of virtual cpus
+	 * available to the group.
+	 */
+	unsigned int vcpus = num_online_cpus();
 
 	if (!capable_setveid())
 		return -EPERM;
@@ -128,13 +138,25 @@ SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 
 	switch (op) {
 		case FAIRSCHED_SET_RATE:
+			/*
+			 * We "spread" the rate among all availabe vcpus.
+			 */
+			rate /= vcpus;
+			err = sched_cgroup_set_rate(cgrp, rate);
+			WARN_ON(err);
+			rate = sched_cgroup_get_rate(cgrp);
+			rate *= vcpus;
 			ret = rate;
 			break;
 		case FAIRSCHED_DROP_RATE:
+			err = sched_cgroup_drop_rate(cgrp);
+			WARN_ON(err);
 			ret = 0;
 			break;
 		case FAIRSCHED_GET_RATE:
-			ret = -ENODATA;
+			rate = sched_cgroup_get_rate(cgrp);
+			rate *= vcpus;
+			ret = rate;
 			break;
 		default:
 			ret = -EINVAL;
@@ -181,6 +203,64 @@ SYSCALL_DEFINE2(fairsched_mvpr, pid_t, pid, unsigned int, id)
 	return 0;
 }
 
+static int get_user_cpu_mask(unsigned long __user *user_mask_ptr, unsigned len,
+			     struct cpumask *new_mask)
+{
+	if (len < cpumask_size())
+		cpumask_clear(new_mask);
+	else if (len > cpumask_size())
+		len = cpumask_size();
+
+	return copy_from_user(new_mask, user_mask_ptr, len) ? -EFAULT : 0;
+}
+
+SYSCALL_DEFINE3(fairsched_cpumask, unsigned int, id, unsigned int, len,
+		unsigned long __user *, user_mask_ptr)
+{
+	struct cgroup *cgrp;
+	char name[16];
+	int retval;
+	cpumask_var_t new_mask, in_mask;
+
+	if (!capable_setveid())
+		return -EPERM;
+
+	if (id == 0)
+		return -EINVAL;
+
+	snprintf(name, sizeof(name), "%d", id);
+	cgrp = cgroup_kernel_open(fairsched_root, 0, name);
+	if (IS_ERR(cgrp))
+		return PTR_ERR(cgrp);
+	if (cgrp == NULL)
+		return -ENOENT;
+
+	if (!alloc_cpumask_var(&in_mask, GFP_KERNEL)) {
+		retval = -ENOMEM;
+		goto out;
+	}
+	if (!alloc_cpumask_var(&new_mask, GFP_KERNEL)) {
+		retval = -ENOMEM;
+		goto out_free_in_mask;
+	}
+
+	retval = get_user_cpu_mask(user_mask_ptr, len, in_mask);
+	if (retval == 0) {
+		cpumask_and(new_mask, in_mask, cpu_active_mask);
+		cgroup_lock();
+		retval = cgroup_set_cpumask(cgrp, new_mask);
+		cgroup_unlock();
+	}
+
+	free_cpumask_var(new_mask);
+
+out_free_in_mask:
+	free_cpumask_var(in_mask);
+out:
+	cgroup_kernel_close(cgrp);
+	return retval;
+}
+
 int fairsched_new_node(int id, unsigned int vcpus)
 {
 	struct cgroup *cgrp;
@@ -204,17 +284,33 @@ int fairsched_new_node(int id, unsigned int vcpus)
 #endif
 
 	cgroup_lock();
-	err = cgroup_attach_task(cgrp, current);
-	cgroup_unlock();
-	cgroup_kernel_close(cgrp);
+
+	err = cgroup_set_cpumask(cgrp, cpu_active_mask);
 	if (err) {
-		printk(KERN_WARNING "Can't switch to fairsched node %d\n", id);
-		goto cleanup;
+		printk(KERN_WARNING "Can't set sched cpumask on node %d\n", id);
+		goto cleanup_locked;
 	}
 
+	err = cgroup_set_nodemask(cgrp, &node_states[N_HIGH_MEMORY]);
+	if (err) {
+		printk(KERN_WARNING "Can't set sched nodemask on node %d\n", id);
+		goto cleanup_locked;
+	}
+
+	err = cgroup_attach_task(cgrp, current);
+	if (err) {
+		printk(KERN_WARNING "Can't switch to fairsched node %d\n", id);
+		goto cleanup_locked;
+	}
+
+	cgroup_unlock();
+	cgroup_kernel_close(cgrp);
 	return 0;
 
+cleanup_locked:
+	cgroup_unlock();
 cleanup:
+	cgroup_kernel_close(cgrp);
 	if (cgroup_kernel_remove(fairsched_root, name))
 		printk(KERN_ERR "Can't clean fairsched node %d\n", id);
 out:
@@ -571,7 +667,9 @@ int __init fairsched_init(void)
 	struct cgroup *cgrp;
 	int ret;
 	struct cgroup_sb_opts opts = {
-		.subsys_bits	= 1ul << cpu_cgroup_subsys_id,
+		.subsys_bits	=
+			(1ul << cpu_cgroup_subsys_id) |
+			(1ul << cpuset_subsys_id),
 	};
 
 	mnt = cgroup_kernel_mount(&opts);

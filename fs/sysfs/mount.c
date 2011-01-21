@@ -31,6 +31,7 @@ struct kmem_cache *sysfs_dir_cachep;
 
 #ifdef CONFIG_SYSFS_DEPRECATED_DYN
 unsigned sysfs_deprecated __read_mostly;
+EXPORT_SYMBOL(sysfs_deprecated);
 
 static int __init sysfs_init_deprecated(char *str)
 {

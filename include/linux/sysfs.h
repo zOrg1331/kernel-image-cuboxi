@@ -221,6 +221,8 @@ void sysfs_put(struct sysfs_dirent *sd);
 void sysfs_printk_last_file(void);
 int __must_check sysfs_init(void);
 
+extern int init_ve_sysfs_root(struct ve_struct *ve);
+
 extern struct file_system_type sysfs_fs_type;
 
 #else /* CONFIG_SYSFS */

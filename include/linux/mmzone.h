@@ -288,7 +288,7 @@ struct gang;
 
 struct gang_set {
 #ifdef CONFIG_MEMORY_GANGS
-	struct gang		*gangs[MAX_NUMNODES];
+	struct gang		**gangs;
 #endif
 	struct zone_reclaim_stat reclaim_stat;
 };

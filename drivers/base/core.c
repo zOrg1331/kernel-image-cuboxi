@@ -40,18 +40,6 @@ struct kobject *sysfs_dev_block_kobj;
 #define ve_dev_kobj	(get_exec_env()->dev_kobj)
 #endif
 
-#ifdef CONFIG_BLOCK
-static inline int device_is_not_partition(struct device *dev)
-{
-	return !(dev->type == &part_type);
-}
-#else
-static inline int device_is_not_partition(struct device *dev)
-{
-	return 1;
-}
-#endif
-
 /**
  * dev_driver_string - Return a device's driver name, if at all possible
  * @dev: struct device to get the name of
@@ -316,13 +304,13 @@ static ssize_t store_uevent(struct device *dev, struct device_attribute *attr,
 	enum kobject_action action;
 
 	if (kobject_action_type(buf, count, &action) == 0) {
-		kobject_uevent(&dev->kobj, action);
+		kobject_uevent_env_one(&dev->kobj, action, NULL);
 		goto out;
 	}
 
 	dev_err(dev, "uevent: unsupported action-string; this will "
 		     "be ignored in a future kernel version\n");
-	kobject_uevent(&dev->kobj, KOBJ_ADD);
+	kobject_uevent_env_one(&dev->kobj, KOBJ_ADD, NULL);
 out:
 	return count;
 }
