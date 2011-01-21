@@ -510,29 +510,6 @@ void ub_swap_fini(struct swap_info_struct *si)
 }
 #endif
 
-static int vmguar_enough_memory(int old_ret)
-{
-	struct user_beancounter *ub;
-	unsigned long flags;
-
-	/*
-	 * If it's a kernel thread, don't care about it.
-	 * Added in order aufsd to run smoothly over ramfs.
-	 */
-	if (!current->mm)
-		return NOTIFY_DONE;
-
-	ub = current->mm->mm_ub;
-	spin_lock_irqsave(&ub->ub_lock, flags);
-	__ub_update_privvm(ub);
-	if (ub->ub_parms[UB_PRIVVMPAGES].held <=
-			ub->ub_parms[UB_VMGUARPAGES].barrier)
-		old_ret = NOTIFY_OK;
-	spin_unlock_irqrestore(&ub->ub_lock, flags);
-
-	return old_ret;
-}
-
 static int bc_fill_sysinfo(struct user_beancounter *ub, struct sysinfo *si, int old_ret)
 {
 	unsigned long used, total;
@@ -605,8 +582,6 @@ static int bc_mem_notify(struct vnotifier_block *self,
 		unsigned long event, void *arg, int old_ret)
 {
 	switch (event) {
-	case VIRTINFO_ENOUGHMEM:
-		return vmguar_enough_memory(old_ret);
 	case VIRTINFO_MEMINFO: {
 		struct meminfo *mi = arg;
 		return bc_fill_meminfo(mi->ub, mi, old_ret);

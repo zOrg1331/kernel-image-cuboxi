@@ -995,7 +995,7 @@ cfq_find_alloc_cfqg(struct cfq_data *cfqd, struct cgroup *cgroup, int create)
 done:
 	if (!cfqg->blkg.dev_name && cfqd->queue->kobj.parent)
 		cfqg->blkg.dev_name = kstrdup(kobject_name(
-					cfqd->queue->kobj.parent), GFP_KERNEL);
+					cfqd->queue->kobj.parent), GFP_ATOMIC);
 	blkiocg_css_put(blkcg);
 	return cfqg;
 }

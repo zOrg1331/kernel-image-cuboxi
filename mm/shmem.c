@@ -617,10 +617,10 @@ static void shmem_truncate_range(struct inode *inode, loff_t start, loff_t end)
 		return;
 
 	spin_lock(&info->lock);
-	ub_shmpages_uncharge(info, info->next_index - idx);
 	info->flags |= SHMEM_TRUNCATE;
 	if (likely(end == (loff_t) -1)) {
 		limit = info->next_index;
+		ub_shmpages_uncharge(info, limit - idx);
 		upper_limit = SHMEM_MAX_INDEX;
 		info->next_index = idx;
 		needs_lock = NULL;

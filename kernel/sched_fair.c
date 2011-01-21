@@ -267,6 +267,59 @@ find_matching_se(struct sched_entity **se, struct sched_entity **pse)
 
 #endif	/* CONFIG_FAIR_GROUP_SCHED */
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+
+static inline int cfs_rq_rate_limited(struct cfs_rq *cfs_rq)
+{
+	return cfs_rq->rate < MAX_RATE;
+}
+
+static inline int cfs_rq_no_credit(struct cfs_rq *cfs_rq)
+{
+	return cfs_rq_rate_limited(cfs_rq) && cfs_rq->credit <= 0;
+}
+
+static inline int cfs_rq_throttled(struct cfs_rq *cfs_rq)
+{
+	return cfs_rq->throttled;
+}
+
+static inline int task_throttled(struct task_struct *p)
+{
+	struct sched_entity *se = &p->se;
+	for_each_sched_entity(se) {
+		if (cfs_rq_throttled(cfs_rq_of(se)))
+			return 1;
+	}
+	return 0;
+}
+
+static inline unsigned long entity_lb_weight(struct sched_entity *se)
+{
+	unsigned long weight = se->load.weight;
+	if (!entity_is_task(se))
+		weight = weight * group_cfs_rq(se)->rate / MAX_RATE;
+	return weight;
+}
+
+#else /* !CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
+
+static inline int cfs_rq_throttled(struct cfs_rq *cfs_rq)
+{
+	return 0;
+}
+
+static inline int task_throttled(struct task_struct *p)
+{
+	return 0;
+}
+
+static inline unsigned long entity_lb_weight(struct sched_entity *se)
+{
+	return se->load.weight;
+}
+
+#endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
 
 /**************************************************************
  * Scheduling class tree data structure manipulation methods:
@@ -397,6 +450,74 @@ static struct sched_entity *__pick_last_entity(struct cfs_rq *cfs_rq)
 /**************************************************************
  * Scheduling class statistics methods:
  */
+
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+
+static inline u64 calc_throttle_period(struct cfs_rq *cfs_rq)
+{
+	unsigned long rate = cfs_rq->rate;
+	s64 delta = sched_cpulimit_credit_charge() - cfs_rq->credit;
+	if (delta <= 0)
+		return 0;
+	return div_u64(delta * (MAX_RATE - rate), rate);
+}
+
+static inline void cfs_rq_charge_credit(struct cfs_rq *cfs_rq, u64 delta_wait)
+{
+	unsigned long rate = cfs_rq->rate;
+	s64 credit_max = sched_cpulimit_credit_max();
+	if (!cfs_rq_rate_limited(cfs_rq))
+		return;
+	cfs_rq->credit += div_u64(delta_wait * rate, MAX_RATE - rate);
+	cfs_rq->credit = min(cfs_rq->credit, credit_max);
+}
+
+static inline void cfs_rq_discharge_credit(struct cfs_rq *cfs_rq,
+					   unsigned long delta_exec)
+{
+	if (!cfs_rq_rate_limited(cfs_rq))
+		return;
+	cfs_rq->credit -= delta_exec;
+}
+
+static inline void cfs_rq_update_credit_charge_start(struct cfs_rq *cfs_rq)
+{
+	cfs_rq->credit_charge_start = rq_of(cfs_rq)->clock;
+}
+
+static inline void cfs_rq_update_credit_charge_end(struct cfs_rq *cfs_rq)
+{
+	u64 delta_wait = rq_of(cfs_rq)->clock - cfs_rq->credit_charge_start;
+	cfs_rq_charge_credit(cfs_rq, delta_wait);
+}
+
+static inline void update_credit(struct sched_entity *se,
+				 unsigned long delta_exec)
+{
+	if (!entity_is_task(se))
+		cfs_rq_discharge_credit(group_cfs_rq(se), delta_exec);
+}
+
+static inline void update_credit_charge_end(struct sched_entity *se)
+{
+	if (!entity_is_task(se))
+		cfs_rq_update_credit_charge_end(group_cfs_rq(se));
+}
+
+#else /* !CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
+
+static inline void update_credit(struct sched_entity *se,
+				 unsigned long delta_exec)
+{
+	return;
+}
+
+static inline void update_credit_charge_end(struct sched_entity *se)
+{
+	return;
+}
+
+#endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
 
 #ifdef CONFIG_SCHED_DEBUG
 int sched_proc_update_handler(struct ctl_table *table, int write,
@@ -542,6 +663,8 @@ static void update_curr(struct cfs_rq *cfs_rq)
 		cpuacct_charge(curtask, delta_exec);
 		account_group_exec_runtime(curtask, delta_exec);
 	}
+
+	update_credit(curr, delta_exec);
 }
 
 static inline void
@@ -603,6 +726,27 @@ update_stats_curr_start(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	se->exec_start = rq_of(cfs_rq)->clock;
 }
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+
+static inline void
+update_stats_throttle_start(struct cfs_rq *cfs_rq, struct sched_entity *se)
+{
+	schedstat_set(se->throttle_start, rq_of(cfs_rq)->clock);
+}
+
+static void
+update_stats_throttle_end(struct cfs_rq *cfs_rq, struct sched_entity *se)
+{
+	schedstat_set(se->throttle_max, max(se->throttle_max,
+			rq_of(cfs_rq)->clock - se->throttle_start));
+	schedstat_set(se->throttle_count, se->throttle_count + 1);
+	schedstat_set(se->throttle_sum, se->throttle_sum +
+			rq_of(cfs_rq)->clock - se->throttle_start);
+	schedstat_set(se->throttle_start, 0);
+}
+
+#endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
+
 /**************************************************
  * Scheduling class queueing methods:
  */
@@ -623,11 +767,13 @@ add_cfs_task_weight(struct cfs_rq *cfs_rq, unsigned long weight)
 static void
 account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	update_load_add(&cfs_rq->load, se->load.weight);
+	unsigned long weight = entity_lb_weight(se);
+
+	update_load_add(&cfs_rq->load, weight);
 	if (!parent_entity(se))
-		inc_cpu_load(rq_of(cfs_rq), se->load.weight);
+		inc_cpu_load(rq_of(cfs_rq), weight);
 	if (entity_is_task(se)) {
-		add_cfs_task_weight(cfs_rq, se->load.weight);
+		add_cfs_task_weight(cfs_rq, weight);
 		list_add(&se->group_node, &cfs_rq->tasks);
 	}
 	cfs_rq->nr_running++;
@@ -637,11 +783,13 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 static void
 account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
-	update_load_sub(&cfs_rq->load, se->load.weight);
+	unsigned long weight = entity_lb_weight(se);
+
+	update_load_sub(&cfs_rq->load, weight);
 	if (!parent_entity(se))
-		dec_cpu_load(rq_of(cfs_rq), se->load.weight);
+		dec_cpu_load(rq_of(cfs_rq), weight);
 	if (entity_is_task(se)) {
-		add_cfs_task_weight(cfs_rq, -se->load.weight);
+		add_cfs_task_weight(cfs_rq, -weight);
 		list_del_init(&se->group_node);
 	}
 	cfs_rq->nr_running--;
@@ -830,6 +978,116 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int sleep)
 	update_min_vruntime(cfs_rq);
 }
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+
+static void throttle_cfs_rq(struct cfs_rq *cfs_rq, u64 delay)
+{
+	struct sched_entity *se = cfs_rq->tg->se[cpu_of(rq_of(cfs_rq))];
+
+	cfs_rq->throttled = 1;
+	update_stats_throttle_start(cfs_rq_of(se), se);
+
+	/* Schedule the cfs_rq to be unthrottled in delay msecs */
+	sched_cpulimit_delay_cfs_rq(cfs_rq, delay);
+
+	if (!se->on_rq)
+		return;
+
+	for_each_sched_entity(se) {
+		cfs_rq = cfs_rq_of(se);
+		dequeue_entity(cfs_rq, se, 1);
+		/* Don't dequeue parent if it has other entities besides us,
+		   or if it is throttled (and so already dequeued) */
+		if (cfs_rq->load.weight || cfs_rq_throttled(cfs_rq))
+			break;
+	}
+}
+
+static void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
+{
+	struct sched_entity *se = cfs_rq->tg->se[cpu_of(rq_of(cfs_rq))];
+
+	cfs_rq->throttled = 0;
+	update_stats_throttle_end(cfs_rq_of(se), se);
+
+	/* Don't enqueue unthrottled cfs_rq if it has no entities to schedule */
+	if (!cfs_rq->load.weight)
+		return;
+
+	for_each_sched_entity(se) {
+		if (se->on_rq)
+			break;
+		cfs_rq = cfs_rq_of(se);
+		enqueue_entity(cfs_rq, se, 1);
+		if (cfs_rq_throttled(cfs_rq))
+			break;
+	}
+}
+
+static void check_throttle_cfs_rq(struct cfs_rq *cfs_rq)
+{
+	u64 delay;
+
+	if (cfs_rq_no_credit(cfs_rq)) {
+		delay = calc_throttle_period(cfs_rq);
+		if (delay > 0)
+			throttle_cfs_rq(cfs_rq, delay);
+	}
+}
+
+static inline void check_throttle_prev_entity(struct sched_entity *prev)
+{
+	struct cfs_rq *cfs_rq;
+
+	if (entity_is_task(prev))
+		return;
+	cfs_rq = group_cfs_rq(prev);
+
+	check_throttle_cfs_rq(cfs_rq);
+	cfs_rq_update_credit_charge_start(cfs_rq);
+}
+
+static inline void check_force_throttling(struct sched_entity *curr)
+{
+	struct cfs_rq *cfs_rq;
+
+	if (entity_is_task(curr))
+	       return;
+	cfs_rq = group_cfs_rq(curr);
+
+	if (cfs_rq_no_credit(cfs_rq))
+		resched_task(rq_of(cfs_rq)->curr);
+}
+
+static void do_sched_cpulimit_delay_timer(struct cfs_rq *cfs_rq)
+{
+	struct rq *rq = rq_of(cfs_rq);
+	unsigned long flags;
+
+	spin_lock_irqsave(&rq->lock, flags);
+#ifdef CONFIG_SCHEDSTATS
+	update_rq_clock(rq);
+#endif
+	unthrottle_cfs_rq(cfs_rq);
+	if (rq->curr == rq->idle)
+		resched_task(rq->curr);
+	spin_unlock_irqrestore(&rq->lock, flags);
+}
+
+#else /* !CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
+
+static inline void check_throttle_prev_entity(struct sched_entity *se)
+{
+	return;
+}
+
+static inline void check_force_throttling(struct sched_entity *curr)
+{
+	return;
+}
+
+#endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
+
 /*
  * Preempt the current task with a newly woken task if needed:
  */
@@ -898,6 +1156,8 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	}
 #endif
 	se->prev_sum_exec_runtime = se->sum_exec_runtime;
+
+	update_credit_charge_end(se);
 }
 
 static int
@@ -930,6 +1190,8 @@ static void put_prev_entity(struct cfs_rq *cfs_rq, struct sched_entity *prev)
 	 */
 	if (prev->on_rq)
 		update_curr(cfs_rq);
+
+	check_throttle_prev_entity(prev);
 
 	check_spread(cfs_rq, prev);
 	if (prev->on_rq) {
@@ -964,6 +1226,8 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 			hrtimer_active(&rq_of(cfs_rq)->hrtick_timer))
 		return;
 #endif
+
+	check_force_throttling(curr);
 
 	if (cfs_rq->nr_running > 1 || !sched_feat(WAKEUP_PREEMPT))
 		check_preempt_tick(cfs_rq, curr);
@@ -1044,6 +1308,8 @@ static void enqueue_task_fair(struct rq *rq, struct task_struct *p, int wakeup)
 			break;
 		cfs_rq = cfs_rq_of(se);
 		enqueue_entity(cfs_rq, se, wakeup);
+		if (cfs_rq_throttled(cfs_rq))
+			break;
 		wakeup = 1;
 	}
 
@@ -1063,8 +1329,9 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int sleep)
 	for_each_sched_entity(se) {
 		cfs_rq = cfs_rq_of(se);
 		dequeue_entity(cfs_rq, se, sleep);
-		/* Don't dequeue parent if it has other entities besides us */
-		if (cfs_rq->load.weight)
+		/* Don't dequeue parent if it has other entities besides us,
+		   or if it is throttled (and so already dequeued) */
+		if (cfs_rq->load.weight || cfs_rq_throttled(cfs_rq))
 			break;
 		sleep = 1;
 	}
@@ -1691,6 +1958,10 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 		return;
 
 	if (unlikely(se == pse))
+		return;
+
+	/* A task which is in a throttled group cannot preempt other tasks. */
+	if (task_throttled(p))
 		return;
 
 	if (sched_feat(NEXT_BUDDY) && scale && !(wake_flags & WF_FORK))

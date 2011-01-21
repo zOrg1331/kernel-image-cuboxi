@@ -20,14 +20,13 @@ struct ve_task_info {
 	struct ve_struct *exec_env;
 	struct ve_struct *saved_env;
 	struct list_head vetask_list;
-	struct dentry *glob_proc_dentry;
+	struct list_head aux_list;
 /* statistics: scheduling latency */
 	cycles_t sleep_time;
 	cycles_t sched_time;
 	cycles_t sleep_stamp;
 	cycles_t wakeup_stamp;
 	seqcount_t wakeup_lock;
-	struct list_head aux_list;
 };
 
 #define VE_TASK_INFO(task)	(&(task)->ve_task_info)

@@ -631,12 +631,11 @@ out:
 	return err;
 }
 
-static int fixup_file_flags(struct file *file, struct cpt_file_image *fi,
+static int fixup_file_flags(struct file *file, const struct cred *cred,
+			    struct cpt_file_image *fi,
 			    int was_dentry_open, loff_t pos,
 			    cpt_context_t *ctx)
 {
-	const struct cred *cred = current_cred() /* should be valid already */;
-
 	if (fi->cpt_pos != file->f_pos) {
 		int err = -ESPIPE;
 		if (file->f_op->llseek)
@@ -839,6 +838,34 @@ static struct file *open_signalfd(struct cpt_file_image *fi, int flags, struct c
 }
 #endif
 
+/*
+ * It may happen that a process which created a file
+ * had changed its UID after that (keeping file opened/referenced
+ * with write permissions for 'own' only) as a result we might
+ * be unable to read it at restore time due to credentials
+ * mismatch, to break this tie we temporary take 'init_task' credentials
+ * and as only the file gets read into the memory we restore original
+ * credentials back
+ *
+ * Same time if between credentials rise/restore you need
+ * the former credentials (for fixups or whatever) --
+ * use rst_cred_origin for that
+ */
+static const struct cred *rst_cred_origin;
+
+void rst_creds_rise_current(void)
+{
+	struct task_struct *tsk = &init_task;
+	BUG_ON(rst_cred_origin);
+	rst_cred_origin = override_creds(tsk->cred);
+}
+
+void rst_creds_restore_current(void)
+{
+	revert_creds(rst_cred_origin);
+	rst_cred_origin = NULL;
+}
+
 struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 {
 	int err;
@@ -854,6 +881,8 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 	cpt_object_t *mntobj = NULL;
 	struct nameidata nd;
 
+	rst_creds_rise_current();
+
 	obj = lookup_cpt_obj_bypos(CPT_OBJ_FILE, pos, ctx);
 	if (obj) {
 		file = obj->o_obj;
@@ -862,9 +891,10 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 			err = rst_get_object(CPT_OBJ_FILE, pos, &fi, ctx);
 			if (err < 0)
 				goto err_out;
-			fixup_file_flags(file, &fi, 0, pos, ctx);
+			fixup_file_flags(file, rst_cred_origin, &fi, 0, pos, ctx);
 		}
 		get_file(file);
+		rst_creds_restore_current();
 		return file;
 	}
 
@@ -1066,7 +1096,7 @@ open_file:
 	}
 map_file:
 	if (!IS_ERR(file)) {
-		fixup_file_flags(file, &fi, was_dentry_open, pos, ctx);
+		fixup_file_flags(file, rst_cred_origin, &fi, was_dentry_open, pos, ctx);
 
 		if (S_ISFIFO(fi.cpt_i_mode) && !was_dentry_open) {
 			err = fixup_pipe_data(file, &fi, ctx);
@@ -1125,6 +1155,7 @@ map_file:
 out:
 	if (name)
 		rst_put_name(name, ctx);
+	rst_creds_restore_current();
 	return file;
 
 err_put:
@@ -1133,6 +1164,7 @@ err_put:
 err_out:
 	if (name)
 		rst_put_name(name, ctx);
+	rst_creds_restore_current();
 	return ERR_PTR(err);
 }
 
@@ -1721,8 +1753,10 @@ static int rst_restore_vfsmount(struct vfsmount *mnt, char *path,
 		return PTR_ERR(mntobj);
 
 	ret = path_lookup(path, LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &nd);
-	if (ret)
+	if (ret) {
+		eprintk_ctx("Failed ot lookup path '%s'\n", path);
 		return ret;
+	}
 	ret = do_add_mount(mntget(mnt), &nd.path, mnt_flags | MNT_CPT, NULL);
 	path_put(&nd.path);
 	return ret;
@@ -1813,6 +1847,7 @@ int restore_one_vfsmount(struct cpt_vfsmount_image *mi, loff_t pos, struct cpt_c
 					goto out_err;
 
 				mnt = vfs_bind_mount(nd.path.mnt, nd.path.dentry);
+				path_put(&nd.path);
 				err = PTR_ERR(mnt);
 				if (IS_ERR(mnt))
 					goto out_err;
@@ -1846,8 +1881,12 @@ out_err:
 			rst_put_name(mntbind, ctx);
 		if (mntdata)
 			rst_put_name(mntdata, ctx);
-		if (err)
+		if (err) {
+			eprintk_ctx("Failed to restore mount point: dev '%s', "
+					"type '%s', path '%s'\n",
+					mntdev, mnttype, mntpnt);
 			return err;
+		}
 	}
 	return 0;
 }

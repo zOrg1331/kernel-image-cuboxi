@@ -794,6 +794,18 @@ static int cpt_dump_utsname(cpt_context_t *ctx)
 	ctx->align(ctx);
 	cpt_close_object(ctx);
 
+ 	cpt_open_object(NULL, ctx);
+	len = strlen(ns->name.release);
+ 	o.cpt_next = CPT_NULL;
+	o.cpt_object = CPT_OBJ_NAME;
+	o.cpt_hdrlen = sizeof(o);
+	o.cpt_content = CPT_CONTENT_NAME;
+
+	ctx->write(&o, sizeof(o), ctx);
+	ctx->write(ns->name.release, len+1, ctx);
+	ctx->align(ctx);
+ 	cpt_close_object(ctx);
+
 	cpt_close_section(ctx);
 	return 0;
 }

@@ -52,6 +52,10 @@
 #include "cpt_ubc.h"
 #include "cpt_kernel.h"
 
+#ifdef CONFIG_IA32_EMULATION
+extern struct linux_binfmt compat_elf_format;
+#endif
+
 static int rst_utsname(cpt_context_t *ctx);
 
 
@@ -357,9 +361,14 @@ static int hook(void *arg)
 		__set_personality(ti->cpt_personality);
 
 #ifdef CONFIG_X86_64
-	/* 32bit app from 32bit OS, won't have PER_LINUX32 set... :/ */
-	if (!ti->cpt_64bit)
+	if (!ti->cpt_64bit) {
+		/* 32bit app from 32bit OS, won't have PER_LINUX32 set... :/ */
 		__set_personality(PER_LINUX32);
+		/*
+		 * Task forked from 64bit app and thus has wrong binfmt pointer
+		 */
+		set_binfmt(&compat_elf_format);
+	}
 #endif
 
 	current->set_child_tid = NULL;
@@ -1047,6 +1056,8 @@ static int rst_utsname(cpt_context_t *ctx)
 			ptr = ns->name.nodename; break;
 		case 1:
 			ptr = ns->name.domainname; break;
+		case 2:
+			ptr = ns->name.release; break;
 		default:
 			return -EINVAL;
 		}

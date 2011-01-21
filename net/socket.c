@@ -1183,6 +1183,7 @@ int vz_security_family_check(int family)
 	case PF_INET:
 	case PF_INET6:
 	case PF_PPPOX:
+	case PF_KEY:
 		break;
 	default:
 		return -EAFNOSUPPORT;
@@ -1204,6 +1205,9 @@ int vz_security_protocol_check(int protocol)
 	case  IPPROTO_UDP:
 	case  IPPROTO_RAW:
 	case  IPPROTO_DCCP:
+	case  IPPROTO_GRE:
+	case  IPPROTO_ESP:
+	case  IPPROTO_AH:
 		break;
 	default:
 		return -EAFNOSUPPORT;

@@ -42,7 +42,9 @@
 
 static struct kmem_cache *ub_cachep;
 static struct user_beancounter default_beancounter;
-struct user_beancounter ub0;
+struct user_beancounter ub0 = {
+	.gang_set.gangs = init_gang_array,
+};
 EXPORT_SYMBOL(ub0);
 
 static struct workqueue_struct *ub_clean_wq;
@@ -234,7 +236,6 @@ static inline void __free_ub(struct user_beancounter *ub)
 	free_percpu(ub->ub_percpu);
 	kfree(ub->ub_store);
 	free_mem_gangs(&ub->gang_set);
-	cgroup_kernel_close(ub->ub_cgroup);
 	kfree(ub->private_data2);
 	kmem_cache_free(ub_cachep, ub);
 }
@@ -242,6 +243,7 @@ static inline void __free_ub(struct user_beancounter *ub)
 static inline void free_ub(struct user_beancounter *ub)
 {
 	percpu_counter_destroy(&ub->ub_orphan_count);
+	cgroup_kernel_close(ub->ub_cgroup);
 	__free_ub(ub);
 }
 
@@ -393,6 +395,7 @@ static void delayed_release_beancounter(struct work_struct *w)
 	bc_verify_held(ub);
 	ub_free_counters(ub);
 	percpu_counter_destroy(&ub->ub_orphan_count);
+	cgroup_kernel_close(ub->ub_cgroup);
 
 	call_rcu(&ub->rcu, bc_free_rcu);
 	return;

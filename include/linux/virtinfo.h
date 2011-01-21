@@ -58,7 +58,6 @@ struct meminfo {
 int meminfo_proc_show_ub(struct seq_file *m, void *v, struct user_beancounter *ub);
 
 #define VIRTINFO_MEMINFO	0
-#define VIRTINFO_ENOUGHMEM	1
 #define VIRTINFO_SYSINFO	2
 #define VIRTINFO_VMSTAT		3
 

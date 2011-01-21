@@ -152,7 +152,7 @@ static int bc_proc_meminfo_show(struct seq_file *f, void *v)
 	ub = seq_beancounter(f);
 	ve = get_ve_by_id(ub->ub_uid);
 	if (ve == NULL)
-		return -ESRCH;
+		return 0;
 
 	old = set_exec_env(ve);
 	meminfo_proc_show_ub(f, NULL, ub);

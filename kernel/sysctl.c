@@ -459,6 +459,24 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &zero,
 		.extra2		= &one,
 	},
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "sched_cpulimit_credit_charge_us",
+		.data		= &sysctl_sched_cpulimit_credit_charge,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &sched_cpulimit_credit_handler,
+	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "sched_cpulimit_credit_max_us",
+		.data		= &sysctl_sched_cpulimit_credit_max,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &sched_cpulimit_credit_handler,
+	},
+#endif
 #endif
 	{
 		.ctl_name	= CTL_UNNUMBERED,

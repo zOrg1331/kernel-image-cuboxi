@@ -453,6 +453,8 @@ static int pppoe_rcv(struct sk_buff *skb, struct net_device *dev,
 		goto drop;
 
 	pn = pppoe_pernet(dev_net(dev));
+	if (!pn) /* no VE_FEATURE_PPP */
+		goto drop;
 
 	/* Note that get_item does a sock_hold(), so sk_pppox(po)
 	 * is known to be safe.
@@ -495,6 +497,9 @@ static int pppoe_disc_rcv(struct sk_buff *skb, struct net_device *dev,
 		goto abort;
 
 	pn = pppoe_pernet(dev_net(dev));
+	if (!pn) /* no VE_FEATURE_PPP */
+		goto abort;
+
 	po = get_item(pn, ph->sid, eth_hdr(skb)->h_source, dev->ifindex);
 	if (po) {
 		struct sock *sk = sk_pppox(po);

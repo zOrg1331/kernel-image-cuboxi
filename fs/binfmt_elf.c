@@ -65,7 +65,7 @@ static int elf_core_dump(struct coredump_params *cprm);
 #define ELF_PAGEOFFSET(_v) ((_v) & (ELF_MIN_ALIGN-1))
 #define ELF_PAGEALIGN(_v) (((_v) + ELF_MIN_ALIGN - 1) & ~(ELF_MIN_ALIGN - 1))
 
-static struct linux_binfmt elf_format = {
+struct linux_binfmt elf_format = {
 		.module		= THIS_MODULE,
 		.load_binary	= load_elf_binary,
 		.load_shlib	= load_elf_library,

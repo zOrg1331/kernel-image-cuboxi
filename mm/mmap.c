@@ -128,15 +128,9 @@ int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
 	vm_acct_memory(pages);
 
 #ifdef CONFIG_BEANCOUNTERS
-	switch (virtinfo_notifier_call(VITYPE_GENERAL, VIRTINFO_ENOUGHMEM,
-				(void *)pages)
-			& (NOTIFY_OK | NOTIFY_FAIL)) {
-		case NOTIFY_OK:
-			return 0;
-		case NOTIFY_FAIL:
-			vm_unacct_memory(pages);
-			return -ENOMEM;
-	}
+	if (mm->mm_ub->ub_parms[UB_PRIVVMPAGES].held <=
+			mm->mm_ub->ub_parms[UB_VMGUARPAGES].barrier)
+		return 0;
 #endif
 
 	/*

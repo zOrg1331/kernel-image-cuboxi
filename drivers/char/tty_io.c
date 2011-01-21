@@ -3178,27 +3178,37 @@ module_init(tty_init);
 int init_ve_tty_class(void)
 {
 	struct class * ve_tty_class;
-	struct device * ve_ptmx_dev_class;
+	struct device * res;
 
 	ve_tty_class = class_create(THIS_MODULE, "tty");
 	if (IS_ERR(ve_tty_class))
 		return -ENOMEM;
 
-	ve_ptmx_dev_class = device_create(ve_tty_class, NULL,
+	res = device_create(ve_tty_class, NULL,
+				MKDEV(TTYAUX_MAJOR, 1), NULL, "console");
+	if (IS_ERR(res))
+		goto err_class;
+
+	res = device_create(ve_tty_class, NULL,
 				MKDEV(TTYAUX_MAJOR, 2), NULL, "ptmx");
-	if (IS_ERR(ve_ptmx_dev_class)) {
-		class_destroy(ve_tty_class);
-		return PTR_ERR(ve_ptmx_dev_class);
-	}
+	if (IS_ERR(res))
+		goto err_console;
 
 	get_exec_env()->tty_class = ve_tty_class;
 	return 0;
+
+err_console:
+	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 1));
+err_class:
+	class_destroy(ve_tty_class);
+	return PTR_ERR(res);
 }
 
 void fini_ve_tty_class(void)
 {
 	struct class *ve_tty_class = get_exec_env()->tty_class;
 
+	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 1));
 	device_destroy(ve_tty_class, MKDEV(TTYAUX_MAJOR, 2));
 	class_destroy(ve_tty_class);
 }

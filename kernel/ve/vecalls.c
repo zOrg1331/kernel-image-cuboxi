@@ -358,25 +358,6 @@ static void fini_ve_shmem(struct ve_struct *ve)
 	ve->shmem_mnt = NULL;
 }
 
-#ifdef CONFIG_SYSFS
-static int init_ve_sysfs_root(struct ve_struct *ve)
-{
-	struct sysfs_dirent *sysfs_root;
-
-	sysfs_root = kzalloc(sizeof(struct sysfs_dirent), GFP_KERNEL);
-	if (sysfs_root == NULL)
-		return -ENOMEM;
-	sysfs_root->s_name = "";
-	atomic_set(&sysfs_root->s_count, 1);
-	sysfs_root->s_flags = SYSFS_DIR;
-	sysfs_root->s_mode = S_IFDIR | S_IRWXU | S_IRUGO | S_IXUGO;
-	sysfs_root->s_ino = 1;
-
-	ve->_sysfs_root = sysfs_root;
-	return 0;
-}
-#endif
-
 #if defined(CONFIG_NET) && defined(CONFIG_SYSFS)
 extern struct device_attribute ve_net_class_attributes[];
 static inline int init_ve_netclass(void)
@@ -511,7 +492,7 @@ err_classes:
 	unregister_ve_fs_type(ve->sysfs_fstype, ve->sysfs_mnt);
 	/* sysfs_fstype is freed in real_put_ve -> free_ve_filesystems */
 out_fs_type:
-	kfree(ve->_sysfs_root);
+	sysfs_put(ve->_sysfs_root);
 	ve->_sysfs_root = NULL;
 out:
 #endif
@@ -528,7 +509,7 @@ static void fini_ve_sysfs(struct ve_struct *ve)
 #ifdef CONFIG_SYSFS
 	unregister_ve_fs_type(ve->sysfs_fstype, ve->sysfs_mnt);
 	ve->sysfs_mnt = NULL;
-	kfree(ve->_sysfs_root);
+	sysfs_put(ve->_sysfs_root);
 	ve->_sysfs_root = NULL;
 	/* sysfs_fstype is freed in real_put_ve -> free_ve_filesystems */
 #endif
@@ -2594,6 +2575,20 @@ static int init_vecalls_sysctl(void) { return 0; }
 static void fini_vecalls_sysctl(void) { ; }
 #endif
 
+static int devtmpfs_get_sb(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
+{
+	/* This fs is only required to be visible in there */
+	return -EOPNOTSUPP;
+}
+
+static struct file_system_type devtmpfs_fs_type = {
+	.owner = THIS_MODULE,
+	.name = "devtmpfs",
+	.get_sb = devtmpfs_get_sb,
+	.fs_flags = FS_VIRTUALIZED,
+};
+
 static int __init vecalls_init(void)
 {
 	int err;
@@ -2618,6 +2613,10 @@ static int __init vecalls_init(void)
 	if (err < 0)
 		goto out_ioctls;
 
+	err = register_filesystem(&devtmpfs_fs_type);
+	if (err < 0)
+		goto out_devtmpfs;
+
 	/* We can easy dereference this hook if VE is running
 	 * because in this case vzmon refcount > 0
 	 */
@@ -2630,6 +2629,8 @@ static int __init vecalls_init(void)
 
 	return 0;
 
+out_devtmpfs:
+	fini_vecalls_ioctls();
 out_ioctls:
 	fini_vecalls_proc();
 out_proc:
@@ -2646,6 +2647,7 @@ static void vecalls_exit(void)
 {
 	do_env_free_hook = NULL;
 	do_ve_enter_hook = NULL;
+	unregister_filesystem(&devtmpfs_fs_type);
 	fini_vecalls_ioctls();
 	fini_vecalls_proc();
 	fini_vzmond();

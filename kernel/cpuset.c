@@ -847,11 +847,11 @@ static void update_tasks_cpumask(struct cpuset *cs, struct ptr_heap *heap)
 /**
  * update_cpumask - update the cpus_allowed mask of a cpuset and all tasks in it
  * @cs: the cpuset to consider
- * @buf: buffer of cpu numbers written to this cpuset
+ * @cpus_allowed: new cpu mask
  */
-static int update_cpumask(struct cpuset *cs, struct cpuset *trialcs,
-			  const char *buf)
+static int update_cpumask(struct cpuset *cs, const struct cpumask *cpus_allowed)
 {
+	struct cpuset *trialcs;
 	struct ptr_heap heap;
 	int retval;
 	int is_load_balanced;
@@ -860,33 +860,26 @@ static int update_cpumask(struct cpuset *cs, struct cpuset *trialcs,
 	if (cs == &top_cpuset)
 		return -EACCES;
 
-	/*
-	 * An empty cpus_allowed is ok only if the cpuset has no tasks.
-	 * Since cpulist_parse() fails on an empty mask, we special case
-	 * that parsing.  The validate_change() call ensures that cpusets
-	 * with tasks have cpus.
-	 */
-	if (!*buf) {
-		cpumask_clear(trialcs->cpus_allowed);
-	} else {
-		retval = cpulist_parse(buf, trialcs->cpus_allowed);
-		if (retval < 0)
-			return retval;
+	if (!cpumask_subset(cpus_allowed, cpu_active_mask))
+		return -EINVAL;
 
-		if (!cpumask_subset(trialcs->cpus_allowed, cpu_active_mask))
-			return -EINVAL;
-	}
+	trialcs = alloc_trial_cpuset(cs);
+	if (!trialcs)
+		return -ENOMEM;
+
+	cpumask_copy(trialcs->cpus_allowed, cpus_allowed);
+
 	retval = validate_change(cs, trialcs);
 	if (retval < 0)
-		return retval;
+		goto done;
 
 	/* Nothing to do if the cpus didn't change */
 	if (cpumask_equal(cs->cpus_allowed, trialcs->cpus_allowed))
-		return 0;
+		goto done;
 
 	retval = heap_init(&heap, PAGE_SIZE, GFP_KERNEL, NULL);
 	if (retval)
-		return retval;
+		goto done;
 
 	is_load_balanced = is_sched_load_balance(trialcs);
 
@@ -904,7 +897,10 @@ static int update_cpumask(struct cpuset *cs, struct cpuset *trialcs,
 
 	if (is_load_balanced)
 		async_rebuild_sched_domains();
-	return 0;
+
+done:
+	free_trial_cpuset(trialcs);
+	return retval;
 }
 
 /*
@@ -1046,9 +1042,9 @@ static void update_tasks_nodemask(struct cpuset *cs, const nodemask_t *oldmem,
  * lock each such tasks mm->mmap_sem, scan its vma's and rebind
  * their mempolicies to the cpusets new mems_allowed.
  */
-static int update_nodemask(struct cpuset *cs, struct cpuset *trialcs,
-			   const char *buf)
+static int update_nodemask(struct cpuset *cs, const nodemask_t *mems_allowed)
 {
+	struct cpuset *trialcs;
 	nodemask_t oldmem;
 	int retval;
 	struct ptr_heap heap;
@@ -1060,23 +1056,15 @@ static int update_nodemask(struct cpuset *cs, struct cpuset *trialcs,
 	if (cs == &top_cpuset)
 		return -EACCES;
 
-	/*
-	 * An empty mems_allowed is ok iff there are no tasks in the cpuset.
-	 * Since nodelist_parse() fails on an empty mask, we special case
-	 * that parsing.  The validate_change() call ensures that cpusets
-	 * with tasks have memory.
-	 */
-	if (!*buf) {
-		nodes_clear(trialcs->mems_allowed);
-	} else {
-		retval = nodelist_parse(buf, trialcs->mems_allowed);
-		if (retval < 0)
-			goto done;
+	if (!nodes_subset(*mems_allowed, node_states[N_HIGH_MEMORY]))
+		return -EINVAL;
 
-		if (!nodes_subset(trialcs->mems_allowed,
-				node_states[N_HIGH_MEMORY]))
-			return -EINVAL;
-	}
+	trialcs = alloc_trial_cpuset(cs);
+	if (!trialcs)
+		return -ENOMEM;
+
+	trialcs->mems_allowed = *mems_allowed;
+
 	oldmem = cs->mems_allowed;
 	if (nodes_equal(oldmem, trialcs->mems_allowed)) {
 		retval = 0;		/* Too easy - nothing to do */
@@ -1098,6 +1086,7 @@ static int update_nodemask(struct cpuset *cs, struct cpuset *trialcs,
 
 	heap_free(&heap);
 done:
+	free_trial_cpuset(trialcs);
 	return retval;
 }
 
@@ -1417,6 +1406,22 @@ static void cpuset_attach(struct cgroup_subsys *ss, struct cgroup *cont,
 	}
 }
 
+/*
+ * cgroup_set_[cpumask|nodemask] - set a cgroup's cpu/mem affinity mask.
+ *
+ * Call holding cgroup mutex.
+ */
+
+int cgroup_set_cpumask(struct cgroup *cgrp, const struct cpumask *cpus_allowed)
+{
+	return update_cpumask(cgroup_cs(cgrp), cpus_allowed);
+}
+
+int cgroup_set_nodemask(struct cgroup *cgrp, const nodemask_t *nodes_allowed)
+{
+	return update_nodemask(cgroup_cs(cgrp), nodes_allowed);
+}
+
 /* The various types of files and directories in a cpuset file system */
 
 typedef enum {
@@ -1500,37 +1505,69 @@ static int cpuset_write_s64(struct cgroup *cgrp, struct cftype *cft, s64 val)
 	return retval;
 }
 
-/*
- * Common handling for a write to a "cpus" or "mems" file.
- */
-static int cpuset_write_resmask(struct cgroup *cgrp, struct cftype *cft,
+static int cpuset_write_cpumask(struct cgroup *cgrp, struct cftype *cft,
 				const char *buf)
 {
-	int retval = 0;
-	struct cpuset *cs = cgroup_cs(cgrp);
-	struct cpuset *trialcs;
+	int retval;
+	cpumask_var_t cpus_allowed;
 
-	if (!cgroup_lock_live_group(cgrp))
-		return -ENODEV;
-
-	trialcs = alloc_trial_cpuset(cs);
-	if (!trialcs)
+	if (!alloc_cpumask_var(&cpus_allowed, GFP_KERNEL))
 		return -ENOMEM;
 
-	switch (cft->private) {
-	case FILE_CPULIST:
-		retval = update_cpumask(cs, trialcs, buf);
-		break;
-	case FILE_MEMLIST:
-		retval = update_nodemask(cs, trialcs, buf);
-		break;
-	default:
-		retval = -EINVAL;
-		break;
+	/*
+	 * An empty cpus_allowed is ok only if the cpuset has no tasks.
+	 * Since cpulist_parse() fails on an empty mask, we special case
+	 * that parsing.  The validate_change() call ensures that cpusets
+	 * with tasks have cpus.
+	 */
+	if (!*buf) {
+		cpumask_clear(cpus_allowed);
+	} else {
+		retval = cpulist_parse(buf, cpus_allowed);
+		if (retval < 0)
+			goto done;
 	}
 
-	free_trial_cpuset(trialcs);
-	cgroup_unlock();
+	if (cgroup_lock_live_group(cgrp)) {
+		retval = update_cpumask(cgroup_cs(cgrp), cpus_allowed);
+		cgroup_unlock();
+	} else {
+		retval = -ENODEV;
+	}
+
+done:
+	free_cpumask_var(cpus_allowed);
+	return retval;
+}
+
+static int cpuset_write_nodemask(struct cgroup *cgrp, struct cftype *cft,
+				 const char *buf)
+{
+	int retval;
+	nodemask_t mems_allowed;
+
+	/*
+	 * An empty mems_allowed is ok iff there are no tasks in the cpuset.
+	 * Since nodelist_parse() fails on an empty mask, we special case
+	 * that parsing.  The validate_change() call ensures that cpusets
+	 * with tasks have memory.
+	 */
+	if (!*buf) {
+		nodes_clear(mems_allowed);
+	} else {
+		retval = nodelist_parse(buf, mems_allowed);
+		if (retval < 0)
+			goto done;
+	}
+
+	if (cgroup_lock_live_group(cgrp)) {
+		retval = update_nodemask(cgroup_cs(cgrp), &mems_allowed);
+		cgroup_unlock();
+	} else {
+		retval = -ENODEV;
+	}
+
+done:
 	return retval;
 }
 
@@ -1659,7 +1696,7 @@ static struct cftype files[] = {
 	{
 		.name = "cpus",
 		.read = cpuset_common_file_read,
-		.write_string = cpuset_write_resmask,
+		.write_string = cpuset_write_cpumask,
 		.max_write_len = (100U + 6 * NR_CPUS),
 		.private = FILE_CPULIST,
 	},
@@ -1667,7 +1704,7 @@ static struct cftype files[] = {
 	{
 		.name = "mems",
 		.read = cpuset_common_file_read,
-		.write_string = cpuset_write_resmask,
+		.write_string = cpuset_write_nodemask,
 		.max_write_len = (100U + 6 * MAX_NUMNODES),
 		.private = FILE_MEMLIST,
 	},

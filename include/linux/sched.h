@@ -1211,6 +1211,13 @@ struct sched_entity {
 	u64			exec_max;
 	u64			slice_max;
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+	u64			throttle_start;
+	u64			throttle_max;
+	u64			throttle_count;
+	u64			throttle_sum;
+#endif
+
 	u64			nr_migrations_cold;
 	u64			nr_failed_migrations_affine;
 	u64			nr_failed_migrations_running;
@@ -2017,6 +2024,13 @@ extern unsigned int sysctl_sched_migration_cost;
 extern unsigned int sysctl_sched_nr_migrate;
 extern unsigned int sysctl_sched_time_avg;
 extern unsigned int sysctl_timer_migration;
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+extern int sysctl_sched_cpulimit_credit_charge;
+extern int sysctl_sched_cpulimit_credit_max;
+
+int sched_cpulimit_credit_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos);
+#endif
 
 int sched_proc_update_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *length,
@@ -2726,6 +2740,13 @@ extern unsigned long sched_group_shares(struct task_group *tg);
 extern int sched_cgroup_set_shares(struct cgroup *cgrp, unsigned long shares);
 unsigned long sched_cgroup_get_shares(struct cgroup *cgrp);
 extern unsigned long sched_cgroup_get_nr_running(struct cgroup *cgrp);
+#endif
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+extern int sched_group_set_rate(struct task_group *tg, unsigned long rate);
+extern unsigned long sched_group_rate(struct task_group *tg);
+extern int sched_cgroup_set_rate(struct cgroup *cgrp, unsigned long rate);
+extern int sched_cgroup_drop_rate(struct cgroup *cgrp);
+extern unsigned long sched_cgroup_get_rate(struct cgroup *cgrp);
 #endif
 #ifdef CONFIG_RT_GROUP_SCHED
 extern int sched_group_set_rt_runtime(struct task_group *tg,

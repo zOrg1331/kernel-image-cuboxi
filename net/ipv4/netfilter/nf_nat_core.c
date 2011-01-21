@@ -682,6 +682,9 @@ nfnetlink_parse_nat_setup(struct nf_conn *ct,
 
 static int __net_init nf_nat_net_init(struct net *net)
 {
+	if (net_ipt_permitted(net, VE_IP_NAT))
+		net_ipt_module_set(net, VE_IP_NAT);
+
 	/* Leave them the same for the moment. */
 	net->ipv4.nat_htable_size = net->ct.htable_size;
 	net->ipv4.nat_bysource = nf_ct_alloc_hashtable(&net->ipv4.nat_htable_size,

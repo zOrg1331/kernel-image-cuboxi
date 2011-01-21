@@ -260,6 +260,16 @@ struct task_group {
 	unsigned long shares;
 #endif
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+	/*
+	 * The limit of the rate with which each cpu can execute
+	 * tasks of this group.
+	 * MIN_RATE <= rate <= MAX_RATE
+	 * MAX_RATE means no limit (this is the default value).
+	 */
+	unsigned long rate;
+#endif
+
 #ifdef CONFIG_RT_GROUP_SCHED
 	struct sched_rt_entity **rt_se;
 	struct rt_rq **rt_rq;
@@ -335,6 +345,11 @@ static int root_task_group_empty(void)
  */
 #define MIN_SHARES	2
 #define MAX_SHARES	(1UL << 18)
+
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+# define MIN_RATE	1UL
+# define MAX_RATE	1024UL
+#endif
 
 static int init_task_group_load = INIT_TASK_GROUP_LOAD;
 #endif
@@ -446,6 +461,28 @@ struct cfs_rq {
 	 */
 	unsigned long rq_weight;
 #endif
+#endif
+
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+	/*
+	 * rate = tg->rate
+	 */
+	unsigned long rate;
+
+	int throttled;
+
+	/*
+	 * time this runqueue can be executed before it is throttled
+	 */
+	s64 credit;
+
+	u64 credit_charge_start;
+
+	/*
+	 * When this runqueue becomes throttled, this timer is started with
+	 * its callback function being set to unthrottle the runqueue.
+	 */
+	struct hrtimer delay_timer;
 #endif
 };
 
@@ -891,6 +928,33 @@ static inline u64 global_rt_runtime(void)
 
 	return (u64)sysctl_sched_rt_runtime * NSEC_PER_USEC;
 }
+
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+
+/*
+ * Once throttled, a cfs_rq will remain throttled until
+ * its credit > credit_charge.
+ * (default: 10 msec, units: microseconds)
+ */
+int sysctl_sched_cpulimit_credit_charge = 10000;
+
+/*
+ * The credit of a cfs_rq cannot be greater than credit_max.
+ * (default: 20 msec, units: microseconds)
+ */
+int sysctl_sched_cpulimit_credit_max = 20000;
+
+static inline s64 sched_cpulimit_credit_charge(void)
+{
+	return (s64)sysctl_sched_cpulimit_credit_charge * NSEC_PER_USEC;
+}
+
+static inline s64 sched_cpulimit_credit_max(void)
+{
+	return (s64)sysctl_sched_cpulimit_credit_max * NSEC_PER_USEC;
+}
+
+#endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
 
 #ifndef prepare_arch_switch
 # define prepare_arch_switch(next)	do { } while (0)
@@ -1856,6 +1920,8 @@ static void update_group_shares_cpu(struct task_group *tg, int cpu,
 	}
 }
 
+static inline int cfs_rq_throttled(struct cfs_rq *cfs_rq);
+
 /*
  * Re-compute the task group their per cpu shares over the given domain.
  * This needs to be done in a bottom-up fashion because the rq weight of a
@@ -1876,7 +1942,13 @@ static int tg_shares_up(struct task_group *tg, void *data)
 	usd_rq_weight = per_cpu_ptr(update_shares_data, smp_processor_id());
 
 	for_each_cpu(i, sched_domain_span(sd)) {
-		weight = tg->cfs_rq[i]->load.weight;
+		/*
+		 * Throttled cfs_rq cannot contribute to cpu load.
+		 */
+		if (cfs_rq_throttled(tg->cfs_rq[i]))
+			weight = 0;
+		else
+			weight = tg->cfs_rq[i]->load.weight;
 		usd_rq_weight[i] = weight;
 
 		rq_weight += weight;
@@ -2065,6 +2137,32 @@ static void cfs_rq_set_shares(struct cfs_rq *cfs_rq, unsigned long shares)
 static void calc_load_account_active(struct rq *this_rq);
 static void update_sysctl(void);
 static int get_update_sysctl_factor(void);
+
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+
+static void do_sched_cpulimit_delay_timer(struct cfs_rq *cfs_rq);
+
+static enum hrtimer_restart sched_cpulimit_delay_timer(struct hrtimer *timer)
+{
+	struct cfs_rq *cfs_rq =
+		container_of(timer, struct cfs_rq, delay_timer);
+	do_sched_cpulimit_delay_timer(cfs_rq);
+	return HRTIMER_NORESTART;
+}
+
+static inline void sched_cpulimit_delay_cfs_rq(struct cfs_rq *cfs_rq, u64 delay)
+{
+	__hrtimer_start_range_ns(&cfs_rq->delay_timer,
+				 ns_to_ktime(delay), 0,
+				 HRTIMER_MODE_REL_PINNED, 0);
+}
+
+static inline int sched_cpulimit_delay_cfs_rq_done(struct cfs_rq *cfs_rq)
+{
+	return hrtimer_try_to_cancel(&cfs_rq->delay_timer);
+}
+
+#endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
 
 #include "sched_stats.h"
 #include "sched_idletask.c"
@@ -9872,6 +9970,48 @@ int in_sched_functions(unsigned long addr)
 		&& addr < (unsigned long)__sched_text_end);
 }
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+
+static void init_cfs_rq_cpulimit(struct cfs_rq *cfs_rq)
+{
+	cfs_rq->rate = MAX_RATE;
+	cfs_rq->throttled = 0;
+	cfs_rq->credit = sched_cpulimit_credit_charge();
+	cfs_rq->credit_charge_start = rq_of(cfs_rq)->clock;
+	hrtimer_init(&cfs_rq->delay_timer,
+		     CLOCK_MONOTONIC, HRTIMER_MODE_REL_PINNED);
+	cfs_rq->delay_timer.function = &sched_cpulimit_delay_timer;
+}
+
+static inline void destroy_cfs_rq_cpulimit(struct cfs_rq *cfs_rq)
+{
+	hrtimer_cancel(&cfs_rq->delay_timer);
+}
+
+static inline void init_tg_cpulimit(struct task_group *tg)
+{
+	tg->rate = MAX_RATE;
+}
+
+#else /* !CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
+
+static inline void init_cfs_rq_cpulimit(struct cfs_rq *cfs_rq)
+{
+	return;
+}
+
+static inline void destroy_cfs_rq_cpulimit(struct cfs_rq *cfs_rq)
+{
+	return;
+}
+
+static inline void init_tg_cpulimit(struct task_group *tg)
+{
+	return;
+}
+
+#endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
+
 static void init_cfs_rq(struct cfs_rq *cfs_rq, struct rq *rq)
 {
 	cfs_rq->tasks_timeline = RB_ROOT;
@@ -9880,6 +10020,7 @@ static void init_cfs_rq(struct cfs_rq *cfs_rq, struct rq *rq)
 	cfs_rq->rq = rq;
 #endif
 	cfs_rq->min_vruntime = (u64)(-(1LL << 20));
+	init_cfs_rq_cpulimit(cfs_rq);
 }
 
 static void init_rt_rq(struct rt_rq *rt_rq, struct rq *rq)
@@ -10070,6 +10211,9 @@ void __init sched_init(void)
 	update_shares_data = __alloc_percpu(nr_cpu_ids * sizeof(unsigned long),
 					    __alignof__(unsigned long));
 #endif
+
+	init_tg_cpulimit(&init_task_group);
+
 	for_each_possible_cpu(i) {
 		struct rq *rq;
 
@@ -10361,8 +10505,10 @@ static void free_fair_sched_group(struct task_group *tg)
 	int i;
 
 	for_each_possible_cpu(i) {
-		if (tg->cfs_rq)
+		if (tg->cfs_rq) {
+			destroy_cfs_rq_cpulimit(tg->cfs_rq[i]);
 			kfree(tg->cfs_rq[i]);
+		}
 		if (tg->se)
 			kfree(tg->se[i]);
 	}
@@ -10387,6 +10533,8 @@ int alloc_fair_sched_group(struct task_group *tg, struct task_group *parent)
 		goto err;
 
 	tg->shares = NICE_0_LOAD;
+
+	init_tg_cpulimit(tg);
 
 	for_each_possible_cpu(i) {
 		rq = cpu_rq(i);
@@ -10730,6 +10878,112 @@ unsigned long sched_group_shares(struct task_group *tg)
 	return tg->shares;
 }
 #endif
+
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+
+int sched_group_set_rate(struct task_group *tg, unsigned long rate)
+{
+	int i;
+	s64 credit_charge = sched_cpulimit_credit_charge();
+	static DEFINE_MUTEX(mutex);
+
+	/*
+	 * We can't limit the rate of the root cgroup.
+	 */
+	if (!tg->se[0])
+		return -EINVAL;
+
+	if (rate < MIN_RATE)
+		rate = MIN_RATE;
+	else if (rate > MAX_RATE)
+		rate = MAX_RATE;
+
+	mutex_lock(&mutex);
+	if (tg->rate == rate)
+		goto done;
+
+	tg->rate = rate;
+
+	for_each_possible_cpu(i) {
+		int on_rq;
+		struct sched_entity *se = tg->se[i];
+		struct cfs_rq *cfs_rq = tg->cfs_rq[i];
+		struct rq *rq = rq_of(cfs_rq);
+
+		spin_lock_irq(&rq->lock);
+		update_rq_clock(rq);
+
+		if (sched_cpulimit_delay_cfs_rq_done(cfs_rq) > 0) {
+			unthrottle_cfs_rq(cfs_rq);
+			if (rq->curr == rq->idle)
+				resched_task(rq->curr);
+		}
+
+		on_rq = se->on_rq;
+		if (on_rq)
+			account_entity_dequeue(cfs_rq_of(se), se);
+
+		cfs_rq->rate = rate;
+		cfs_rq->credit = credit_charge;
+		cfs_rq->credit_charge_start = rq->clock;
+
+		if (on_rq)
+			account_entity_enqueue(cfs_rq_of(se), se);
+
+		spin_unlock_irq(&rq->lock);
+	}
+
+done:
+	mutex_unlock(&mutex);
+	return 0;
+}
+
+unsigned long sched_group_rate(struct task_group *tg)
+{
+	return tg->rate;
+}
+
+#ifdef CONFIG_SCHED_DEBUG
+static int sched_cpulimit_credit_constraints(void)
+{
+	s64 credit_charge, credit_max;
+
+	credit_charge = sched_cpulimit_credit_charge();
+	credit_max = sched_cpulimit_credit_max();
+
+	if (credit_charge < 0 || credit_charge > credit_max)
+		return -EINVAL;
+
+	return 0;
+}
+
+int sched_cpulimit_credit_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int ret;
+	int old_credit_charge, old_credit_max;
+	static DEFINE_MUTEX(mutex);
+
+	mutex_lock(&mutex);
+	old_credit_charge = sysctl_sched_cpulimit_credit_charge;
+	old_credit_max = sysctl_sched_cpulimit_credit_max;
+
+	ret = proc_dointvec(table, write, buffer, lenp, ppos);
+
+	if (!ret && write) {
+		ret = sched_cpulimit_credit_constraints();
+		if (ret) {
+			sysctl_sched_cpulimit_credit_charge = old_credit_charge;
+			sysctl_sched_cpulimit_credit_max = old_credit_max;
+		}
+	}
+	mutex_unlock(&mutex);
+
+	return ret;
+}
+#endif
+
+#endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
 
 #ifdef CONFIG_RT_GROUP_SCHED
 /*
@@ -11133,6 +11387,34 @@ unsigned long sched_cgroup_get_nr_running(struct cgroup *cgrp)
 }
 #endif /* CONFIG_FAIR_GROUP_SCHED */
 
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+static int cpu_rate_write_u64(struct cgroup *cgrp, struct cftype *cftype,
+			      u64 rateval)
+{
+	return sched_group_set_rate(cgroup_tg(cgrp), (unsigned long)rateval);
+}
+
+static u64 cpu_rate_read_u64(struct cgroup *cgrp, struct cftype *cft)
+{
+	return (u64)sched_group_rate(cgroup_tg(cgrp));
+}
+
+int sched_cgroup_set_rate(struct cgroup *cgrp, unsigned long rate)
+{
+	return sched_group_set_rate(cgroup_tg(cgrp), rate);
+}
+
+int sched_cgroup_drop_rate(struct cgroup *cgrp)
+{
+	return sched_group_set_rate(cgroup_tg(cgrp), MAX_RATE);
+}
+
+unsigned long sched_cgroup_get_rate(struct cgroup *cgrp)
+{
+	return sched_group_rate(cgroup_tg(cgrp));
+}
+#endif /* CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS */
+
 #ifdef CONFIG_RT_GROUP_SCHED
 static int cpu_rt_runtime_write(struct cgroup *cgrp, struct cftype *cft,
 				s64 val)
@@ -11163,6 +11445,13 @@ static struct cftype cpu_files[] = {
 		.name = "shares",
 		.read_u64 = cpu_shares_read_u64,
 		.write_u64 = cpu_shares_write_u64,
+	},
+#endif
+#ifdef CONFIG_FAIR_GROUP_SCHED_CPU_LIMITS
+	{
+		.name = "rate",
+		.read_u64 = cpu_rate_read_u64,
+		.write_u64 = cpu_rate_write_u64,
 	},
 #endif
 #ifdef CONFIG_RT_GROUP_SCHED
