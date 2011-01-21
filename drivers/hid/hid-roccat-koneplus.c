@@ -220,6 +220,8 @@ static int koneplus_get_startup_profile(struct usb_device *usb_dev)
 	int retval;
 
 	buf = kmalloc(sizeof(struct koneplus_startup_profile), GFP_KERNEL);
+	if (buf == NULL)
+		return -ENOMEM;
 
 	retval = koneplus_receive(usb_dev, KONEPLUS_USB_COMMAND_STARTUP_PROFILE,
 			buf, sizeof(struct koneplus_startup_profile));
@@ -255,6 +257,9 @@ static ssize_t koneplus_sysfs_read(struct file *fp, struct kobject *kobj,
 	struct koneplus_device *koneplus = hid_get_drvdata(dev_get_drvdata(dev));
 	struct usb_device *usb_dev = interface_to_usbdev(to_usb_interface(dev));
 	int retval;
+
+	if (off >= real_size)
+		return 0;
 
 	if (off != 0 || count != real_size)
 		return -EINVAL;
@@ -614,6 +619,8 @@ static int koneplus_init_koneplus_device_struct(struct usb_device *usb_dev,
 	mutex_init(&koneplus->koneplus_lock);
 
 	koneplus->startup_profile = koneplus_get_startup_profile(usb_dev);
+	if (koneplus->startup_profile < 0)
+		return koneplus->startup_profile;
 
 	msleep(wait);
 	retval = koneplus_get_info(usb_dev, &koneplus->info);
