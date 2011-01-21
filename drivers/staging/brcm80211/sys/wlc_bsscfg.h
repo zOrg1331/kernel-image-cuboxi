@@ -63,7 +63,7 @@ struct wlc_bsscfg {
 	bool sup_auth_pending;	/* flag for auth timeout */
 #endif
 	u8 SSID_len;		/* the length of SSID */
-	u8 SSID[DOT11_MAX_SSID_LEN];	/* SSID string */
+	u8 SSID[IEEE80211_MAX_SSID_LEN]; /* SSID string */
 	struct scb *bcmc_scb[MAXBANDS];	/* one bcmc_scb per band */
 	s8 _idx;		/* the index of this bsscfg,
 				 * assigned at wlc_bsscfg_alloc()
@@ -93,8 +93,8 @@ struct wlc_bsscfg {
 	u32 tk_cm_bt_tmstmp;	/* Timestamp when TKIP BT is activated */
 	bool tk_cm_activate;	/* activate countermeasures after EAPOL-Key sent */
 
-	struct ether_addr BSSID;	/* BSSID (associated) */
-	struct ether_addr cur_etheraddr;	/* h/w address */
+	u8 BSSID[ETH_ALEN];	/* BSSID (associated) */
+	u8 cur_etheraddr[ETH_ALEN];	/* h/w address */
 	u16 bcmc_fid;	/* the last BCMC FID queued to TX_BCMC_FIFO */
 	u16 bcmc_fid_shm;	/* the last BCMC FID written to shared mem */
 

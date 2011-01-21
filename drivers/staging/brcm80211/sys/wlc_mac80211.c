@@ -24,7 +24,6 @@
 #include <bcmwifi.h>
 #include <siutils.h>
 #include <bcmendian.h>
-#include <proto/wpa.h>
 #include <pcicfg.h>
 #include <bcmsrom.h>
 #include <wlioctl.h>
@@ -56,10 +55,19 @@
 
 
 /*
+ * WPA(2) definitions
+ */
+#define RSN_CAP_4_REPLAY_CNTRS		2
+#define RSN_CAP_16_REPLAY_CNTRS		3
+
+#define WPA_CAP_4_REPLAY_CNTRS		RSN_CAP_4_REPLAY_CNTRS
+#define WPA_CAP_16_REPLAY_CNTRS		RSN_CAP_16_REPLAY_CNTRS
+
+/*
  * buffer length needed for wlc_format_ssid
  * 32 SSID chars, max of 4 chars for each SSID char "\xFF", plus NULL.
  */
-#define SSID_FMT_BUF_LEN	((4 * DOT11_MAX_SSID_LEN) + 1)
+#define SSID_FMT_BUF_LEN	((4 * IEEE80211_MAX_SSID_LEN) + 1)
 
 #define	TIMER_INTERVAL_WATCHDOG	1000	/* watchdog timer, in unit of ms */
 #define	TIMER_INTERVAL_RADIOCHK	800	/* radio monitor timer, in unit of ms */
@@ -300,7 +308,7 @@ static int _wlc_ioctl(struct wlc_info *wlc, int cmd, void *arg, int len,
 		      struct wlc_if *wlcif);
 
 #if defined(BCMDBG)
-void wlc_get_rcmta(struct wlc_info *wlc, int idx, struct ether_addr *addr)
+void wlc_get_rcmta(struct wlc_info *wlc, int idx, u8 *addr)
 {
 	d11regs_t *regs = wlc->regs;
 	u32 v32;
@@ -315,15 +323,15 @@ void wlc_get_rcmta(struct wlc_info *wlc, int idx, struct ether_addr *addr)
 	W_REG(osh, &regs->objaddr, (OBJADDR_RCMTA_SEL | (idx * 2)));
 	(void)R_REG(osh, &regs->objaddr);
 	v32 = R_REG(osh, &regs->objdata);
-	addr->octet[0] = (u8) v32;
-	addr->octet[1] = (u8) (v32 >> 8);
-	addr->octet[2] = (u8) (v32 >> 16);
-	addr->octet[3] = (u8) (v32 >> 24);
+	addr[0] = (u8) v32;
+	addr[1] = (u8) (v32 >> 8);
+	addr[2] = (u8) (v32 >> 16);
+	addr[3] = (u8) (v32 >> 24);
 	W_REG(osh, &regs->objaddr, (OBJADDR_RCMTA_SEL | ((idx * 2) + 1)));
 	(void)R_REG(osh, &regs->objaddr);
 	v32 = R_REG(osh, (volatile u16 *)&regs->objdata);
-	addr->octet[4] = (u8) v32;
-	addr->octet[5] = (u8) (v32 >> 8);
+	addr[4] = (u8) v32;
+	addr[5] = (u8) (v32 >> 8);
 }
 #endif				/* defined(BCMDBG) */
 
@@ -679,7 +687,7 @@ int wlc_set_mac(wlc_bsscfg_t *cfg)
 
 	if (cfg == wlc->cfg) {
 		/* enter the MAC addr into the RXE match registers */
-		wlc_set_addrmatch(wlc, RCM_MAC_OFFSET, &cfg->cur_etheraddr);
+		wlc_set_addrmatch(wlc, RCM_MAC_OFFSET, cfg->cur_etheraddr);
 	}
 
 	wlc_ampdu_macaddr_upd(wlc);
@@ -696,7 +704,7 @@ void wlc_set_bssid(wlc_bsscfg_t *cfg)
 
 	/* if primary config, we need to update BSSID in RXE match registers */
 	if (cfg == wlc->cfg) {
-		wlc_set_addrmatch(wlc, RCM_BSSID_OFFSET, &cfg->BSSID);
+		wlc_set_addrmatch(wlc, RCM_BSSID_OFFSET, cfg->BSSID);
 	}
 #ifdef SUPPORT_HWKEYS
 	else if (BSSCFG_STA(cfg) && cfg->BSS) {
@@ -729,9 +737,11 @@ void wlc_switch_shortslot(struct wlc_info *wlc, bool shortslot)
 	FOREACH_BSS(wlc, idx, cfg) {
 		if (!cfg->associated)
 			continue;
-		cfg->current_bss->capability &= ~DOT11_CAP_SHORTSLOT;
+		cfg->current_bss->capability &=
+					~WLAN_CAPABILITY_SHORT_SLOT_TIME;
 		if (wlc->shortslot)
-			cfg->current_bss->capability |= DOT11_CAP_SHORTSLOT;
+			cfg->current_bss->capability |=
+					WLAN_CAPABILITY_SHORT_SLOT_TIME;
 	}
 
 	wlc_bmac_set_shortslot(wlc->hw, shortslot);
@@ -1170,9 +1180,12 @@ void wlc_protection_upd(struct wlc_info *wlc, uint idx, int val)
 
 static void wlc_ht_update_sgi_rx(struct wlc_info *wlc, int val)
 {
-	wlc->ht_cap.cap &= ~(HT_CAP_SHORT_GI_20 | HT_CAP_SHORT_GI_40);
-	wlc->ht_cap.cap |= (val & WLC_N_SGI_20) ? HT_CAP_SHORT_GI_20 : 0;
-	wlc->ht_cap.cap |= (val & WLC_N_SGI_40) ? HT_CAP_SHORT_GI_40 : 0;
+	wlc->ht_cap.cap_info &= ~(IEEE80211_HT_CAP_SGI_20 |
+					IEEE80211_HT_CAP_SGI_40);
+	wlc->ht_cap.cap_info |= (val & WLC_N_SGI_20) ?
+					IEEE80211_HT_CAP_SGI_20 : 0;
+	wlc->ht_cap.cap_info |= (val & WLC_N_SGI_40) ?
+					IEEE80211_HT_CAP_SGI_40 : 0;
 
 	if (wlc->pub->up) {
 		wlc_update_beacon(wlc);
@@ -1184,9 +1197,9 @@ static void wlc_ht_update_ldpc(struct wlc_info *wlc, s8 val)
 {
 	wlc->stf->ldpc = val;
 
-	wlc->ht_cap.cap &= ~HT_CAP_LDPC_CODING;
+	wlc->ht_cap.cap_info &= ~IEEE80211_HT_CAP_LDPC_CODING;
 	if (wlc->stf->ldpc != OFF)
-		wlc->ht_cap.cap |= HT_CAP_LDPC_CODING;
+		wlc->ht_cap.cap_info |= IEEE80211_HT_CAP_LDPC_CODING;
 
 	if (wlc->pub->up) {
 		wlc_update_beacon(wlc);
@@ -1728,19 +1741,16 @@ void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
 	ASSERT(WSEC_MAX_DEFAULT_KEYS == WLC_DEFAULT_KEYS);
 
 	/* some code depends on packed structures */
-	ASSERT(sizeof(struct ether_addr) == ETH_ALEN);
-	ASSERT(sizeof(struct ether_header) == ETH_HLEN);
+	ASSERT(sizeof(struct ethhdr) == ETH_HLEN);
 	ASSERT(sizeof(d11regs_t) == SI_CORE_SIZE);
 	ASSERT(sizeof(ofdm_phy_hdr_t) == D11_PHY_HDR_LEN);
 	ASSERT(sizeof(cck_phy_hdr_t) == D11_PHY_HDR_LEN);
 	ASSERT(sizeof(d11txh_t) == D11_TXH_LEN);
 	ASSERT(sizeof(d11rxhdr_t) == RXHDR_LEN);
-	ASSERT(sizeof(struct dot11_header) == DOT11_A4_HDR_LEN);
-	ASSERT(sizeof(struct dot11_rts_frame) == DOT11_RTS_LEN);
-	ASSERT(sizeof(struct dot11_management_header) == DOT11_MGMT_HDR_LEN);
-	ASSERT(sizeof(struct dot11_bcn_prb) == DOT11_BCN_PRB_LEN);
+	ASSERT(sizeof(struct ieee80211_hdr) == DOT11_A4_HDR_LEN);
+	ASSERT(sizeof(struct ieee80211_rts) == DOT11_RTS_LEN);
 	ASSERT(sizeof(tx_status_t) == TXSTATUS_LEN);
-	ASSERT(sizeof(ht_cap_ie_t) == HT_CAP_IE_LEN);
+	ASSERT(sizeof(struct ieee80211_ht_cap) == HT_CAP_IE_LEN);
 #ifdef BRCM_FULLMAC
 	ASSERT(offsetof(wl_scan_params_t, channel_list) ==
 	       WL_SCAN_PARAMS_FIXED_SIZE);
@@ -1838,7 +1848,7 @@ void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
 			wlc->core->txavail[i] = wlc->hw->txavail[i];
 	}
 
-	wlc_bmac_hw_etheraddr(wlc->hw, &wlc->perm_etheraddr);
+	wlc_bmac_hw_etheraddr(wlc->hw, wlc->perm_etheraddr);
 
 	bcopy((char *)&wlc->perm_etheraddr, (char *)&pub->cur_etheraddr,
 	      ETH_ALEN);
@@ -1944,7 +1954,7 @@ void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
 	wlc_wme_initparams_sta(wlc, &wlc->wme_param_ie);
 
 	wlc->mimoft = FT_HT;
-	wlc->ht_cap.cap = HT_CAP;
+	wlc->ht_cap.cap_info = HT_CAP;
 	if (HT_ENAB(wlc->pub))
 		wlc->stf->ldpc = AUTO;
 
@@ -1981,14 +1991,14 @@ void *wlc_attach(void *wl, u16 vendor, u16 device, uint unit, bool piomode,
 	if (n_disabled & WLFEATURE_DISABLE_11N_STBC_TX) {
 		wlc->bandstate[BAND_2G_INDEX]->band_stf_stbc_tx = OFF;
 		wlc->bandstate[BAND_5G_INDEX]->band_stf_stbc_tx = OFF;
-		wlc->ht_cap.cap &= ~HT_CAP_TX_STBC;
+		wlc->ht_cap.cap_info &= ~IEEE80211_HT_CAP_TX_STBC;
 	}
 	if (n_disabled & WLFEATURE_DISABLE_11N_STBC_RX)
 		wlc_stf_stbc_rx_set(wlc, HT_CAP_RX_STBC_NO);
 
 	/* apply the GF override from nvram conf */
 	if (n_disabled & WLFEATURE_DISABLE_11N_GF)
-		wlc->ht_cap.cap &= ~HT_CAP_GF;
+		wlc->ht_cap.cap_info &= ~IEEE80211_HT_CAP_GRN_FLD;
 
 	/* initialize radio_mpc_disable according to wlc->mpc */
 	wlc_radio_mpc_upd(wlc);
@@ -2866,16 +2876,17 @@ int wlc_set_gmode(struct wlc_info *wlc, u8 gmode, bool config)
 
 	if ((AP_ENAB(wlc->pub) && preamble != WLC_PLCP_LONG)
 	    || preamble == WLC_PLCP_SHORT)
-		wlc->default_bss->capability |= DOT11_CAP_SHORT;
+		wlc->default_bss->capability |= WLAN_CAPABILITY_SHORT_PREAMBLE;
 	else
-		wlc->default_bss->capability &= ~DOT11_CAP_SHORT;
+		wlc->default_bss->capability &= ~WLAN_CAPABILITY_SHORT_PREAMBLE;
 
 	/* Update shortslot capability bit for AP and IBSS */
 	if ((AP_ENAB(wlc->pub) && shortslot == WLC_SHORTSLOT_AUTO) ||
 	    shortslot == WLC_SHORTSLOT_ON)
-		wlc->default_bss->capability |= DOT11_CAP_SHORTSLOT;
+		wlc->default_bss->capability |= WLAN_CAPABILITY_SHORT_SLOT_TIME;
 	else
-		wlc->default_bss->capability &= ~DOT11_CAP_SHORTSLOT;
+		wlc->default_bss->capability &=
+					~WLAN_CAPABILITY_SHORT_SLOT_TIME;
 
 	/* Use the default 11g rateset */
 	if (!rs.count)
@@ -3602,7 +3613,7 @@ _wlc_ioctl(struct wlc_info *wlc, int cmd, void *arg, int len,
 				if (src_key->flags & WSEC_PRIMARY_KEY)
 					key.flags |= WL_PRIMARY_KEY;
 
-				bcopy(src_key->ea.octet, key.ea.octet,
+				bcopy(src_key->ea, key.ea,
 				      ETH_ALEN);
 			}
 
@@ -3639,7 +3650,7 @@ _wlc_ioctl(struct wlc_info *wlc, int cmd, void *arg, int len,
 				u32 hi;
 				/* group keys in WPA-NONE (IBSS only, AES and TKIP) use a global TXIV */
 				if ((bsscfg->WPA_auth & WPA_AUTH_NONE) &&
-				    is_zero_ether_addr(key->ea.octet)) {
+				    is_zero_ether_addr(key->ea)) {
 					lo = bsscfg->wpa_none_txiv.lo;
 					hi = bsscfg->wpa_none_txiv.hi;
 				} else {
@@ -4858,7 +4869,7 @@ void wlc_print_txdesc(d11txh_t *txh)
 	u16 mmbyte = ltoh16(txh->MinMBytes);
 
 	u8 *rtsph = txh->RTSPhyHeader;
-	struct dot11_rts_frame rts = txh->rts_frame;
+	struct ieee80211_rts rts = txh->rts_frame;
 	char hexbuf[256];
 
 	/* add plcp header along with txh descriptor */
@@ -4957,8 +4968,8 @@ int wlc_format_ssid(char *buf, const unsigned char ssid[], uint ssid_len)
 	char *p = buf;
 	char *endp = buf + SSID_FMT_BUF_LEN;
 
-	if (ssid_len > DOT11_MAX_SSID_LEN)
-		ssid_len = DOT11_MAX_SSID_LEN;
+	if (ssid_len > IEEE80211_MAX_SSID_LEN)
+		ssid_len = IEEE80211_MAX_SSID_LEN;
 
 	for (i = 0; i < ssid_len; i++) {
 		c = (uint) ssid[i];
@@ -5113,16 +5124,16 @@ wlc_sendpkt_mac80211(struct wlc_info *wlc, struct sk_buff *sdu,
 	uint fifo;
 	void *pkt;
 	struct scb *scb = &global_scb;
-	struct dot11_header *d11_header = (struct dot11_header *)(sdu->data);
+	struct ieee80211_hdr *d11_header = (struct ieee80211_hdr *)(sdu->data);
 	u16 type, fc;
 
 	ASSERT(sdu);
 
-	fc = ltoh16(d11_header->fc);
-	type = FC_TYPE(fc);
+	fc = ltoh16(d11_header->frame_control);
+	type = (fc & IEEE80211_FCTL_FTYPE);
 
 	/* 802.11 standard requires management traffic to go at highest priority */
-	prio = (type == FC_TYPE_DATA ? sdu->priority : MAXPRIO);
+	prio = (type == IEEE80211_FTYPE_DATA ? sdu->priority : MAXPRIO);
 	fifo = prio2fifo[prio];
 
 	ASSERT((uint) skb_headroom(sdu) >= TXOFF);
@@ -5651,7 +5662,7 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 		     uint nfrags, uint queue, uint next_frag_len,
 		     wsec_key_t *key, ratespec_t rspec_override)
 {
-	struct dot11_header *h;
+	struct ieee80211_hdr *h;
 	d11txh_t *txh;
 	u8 *plcp, plcp_fallback[D11_PHY_HDR_LEN];
 	struct osl_info *osh;
@@ -5667,7 +5678,7 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 	u8 preamble_type[2] = { WLC_LONG_PREAMBLE, WLC_LONG_PREAMBLE };
 	u8 rts_preamble_type[2] = { WLC_LONG_PREAMBLE, WLC_LONG_PREAMBLE };
 	u8 *rts_plcp, rts_plcp_fallback[D11_PHY_HDR_LEN];
-	struct dot11_rts_frame *rts = NULL;
+	struct ieee80211_rts *rts = NULL;
 	bool qos;
 	uint ac;
 	u32 rate_val[2];
@@ -5694,15 +5705,16 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 	osh = wlc->osh;
 
 	/* locate 802.11 MAC header */
-	h = (struct dot11_header *)(p->data);
-	fc = ltoh16(h->fc);
-	type = FC_TYPE(fc);
+	h = (struct ieee80211_hdr *)(p->data);
+	fc = ltoh16(h->frame_control);
+	type = (fc & IEEE80211_FCTL_FTYPE);
 
-	qos = (type == FC_TYPE_DATA && FC_SUBTYPE_ANY_QOS(FC_SUBTYPE(fc)));
+	qos = (type == IEEE80211_FTYPE_DATA &&
+	       FC_SUBTYPE_ANY_QOS(fc));
 
 	/* compute length of frame in bytes for use in PLCP computations */
 	len = pkttotlen(osh, p);
-	phylen = len + DOT11_FCS_LEN;
+	phylen = len + FCS_LEN;
 
 	/* If WEP enabled, add room in phylen for the additional bytes of
 	 * ICV which MAC generates.  We do NOT add the additional bytes to
@@ -5741,7 +5753,7 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 			/* extract fragment number from frame first */
 			seq = ltoh16(seq) & FRAGNUM_MASK;
 			seq |= (SCB_SEQNUM(scb, p->priority) << SEQNUM_SHIFT);
-			h->seq = htol16(seq);
+			h->seq_ctrl = htol16(seq);
 
 			frameid = ((seq << TXFID_SEQ_SHIFT) & TXFID_SEQ_MASK) |
 			    (queue & TXFID_QUEUE_MASK);
@@ -5811,7 +5823,7 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 			rspec[k] = WLC_RATE_1M;
 		} else {
 			if (WLANTSEL_ENAB(wlc) &&
-			    !is_multicast_ether_addr(h->a1.octet)) {
+			    !is_multicast_ether_addr(h->addr1)) {
 				/* set tx antenna config */
 				wlc_antsel_antcfg_get(wlc->asi, false, false, 0,
 						      0, &antcfg, &fbantcfg);
@@ -5974,11 +5986,11 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 
 	/* DUR field for main rate */
 	if ((fc != FC_PS_POLL) &&
-	    !is_multicast_ether_addr(h->a1.octet) && !use_rifs) {
+	    !is_multicast_ether_addr(h->addr1) && !use_rifs) {
 		durid =
 		    wlc_compute_frame_dur(wlc, rspec[0], preamble_type[0],
 					  next_frag_len);
-		h->durid = htol16(durid);
+		h->duration_id = htol16(durid);
 	} else if (use_rifs) {
 		/* NAV protect to end of next max packet size */
 		durid =
@@ -5986,13 +5998,13 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 						 preamble_type[0],
 						 DOT11_MAX_FRAG_LEN);
 		durid += RIFS_11N_TIME;
-		h->durid = htol16(durid);
+		h->duration_id = htol16(durid);
 	}
 
 	/* DUR field for fallback rate */
 	if (fc == FC_PS_POLL)
-		txh->FragDurFallback = h->durid;
-	else if (is_multicast_ether_addr(h->a1.octet) || use_rifs)
+		txh->FragDurFallback = h->duration_id;
+	else if (is_multicast_ether_addr(h->addr1) || use_rifs)
 		txh->FragDurFallback = 0;
 	else {
 		durid = wlc_compute_frame_dur(wlc, rspec[1],
@@ -6004,7 +6016,7 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 	if (frag == 0)
 		mcl |= TXC_STARTMSDU;
 
-	if (!is_multicast_ether_addr(h->a1.octet))
+	if (!is_multicast_ether_addr(h->addr1))
 		mcl |= TXC_IMMEDACK;
 
 	if (BAND_5G(wlc->band->bandtype))
@@ -6032,14 +6044,14 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 	}
 
 	/* MacFrameControl */
-	bcopy((char *)&h->fc, (char *)&txh->MacFrameControl, sizeof(u16));
-
+	bcopy((char *)&h->frame_control, (char *)&txh->MacFrameControl,
+	    sizeof(u16));
 	txh->TxFesTimeNormal = htol16(0);
 
 	txh->TxFesTimeFallback = htol16(0);
 
 	/* TxFrameRA */
-	bcopy((char *)&h->a1, (char *)&txh->TxFrameRA, ETH_ALEN);
+	bcopy((char *)&h->addr1, (char *)&txh->TxFrameRA, ETH_ALEN);
 
 	/* TxFrameID */
 	txh->TxFrameID = htol16(frameid);
@@ -6098,9 +6110,9 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 		ASSERT(IS_ALIGNED((unsigned long)txh->RTSPhyHeader, sizeof(u16)));
 		rts_plcp = txh->RTSPhyHeader;
 		if (use_cts)
-			rts_phylen = DOT11_CTS_LEN + DOT11_FCS_LEN;
+			rts_phylen = DOT11_CTS_LEN + FCS_LEN;
 		else
-			rts_phylen = DOT11_RTS_LEN + DOT11_FCS_LEN;
+			rts_phylen = DOT11_RTS_LEN + FCS_LEN;
 
 		wlc_compute_plcp(wlc, rts_rspec[0], rts_phylen, rts_plcp);
 
@@ -6111,12 +6123,12 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 		      sizeof(txh->RTSPLCPFallback));
 
 		/* RTS frame fields... */
-		rts = (struct dot11_rts_frame *)&txh->rts_frame;
+		rts = (struct ieee80211_rts *)&txh->rts_frame;
 
 		durid = wlc_compute_rtscts_dur(wlc, use_cts, rts_rspec[0],
 					       rspec[0], rts_preamble_type[0],
 					       preamble_type[0], phylen, false);
-		rts->durid = htol16(durid);
+		rts->duration = htol16(durid);
 		/* fallback rate version of RTS DUR field */
 		durid = wlc_compute_rtscts_dur(wlc, use_cts,
 					       rts_rspec[1], rspec[1],
@@ -6125,11 +6137,11 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 		txh->RTSDurFallback = htol16(durid);
 
 		if (use_cts) {
-			rts->fc = htol16(FC_CTS);
-			bcopy((char *)&h->a2, (char *)&rts->ra, ETH_ALEN);
+			rts->frame_control = htol16(FC_CTS);
+			bcopy((char *)&h->addr2, (char *)&rts->ra, ETH_ALEN);
 		} else {
-			rts->fc = htol16((u16) FC_RTS);
-			bcopy((char *)&h->a1, (char *)&rts->ra,
+			rts->frame_control = htol16((u16) FC_RTS);
+			bcopy((char *)&h->addr1, (char *)&rts->ra,
 			      2 * ETH_ALEN);
 		}
 
@@ -6143,7 +6155,7 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 	} else {
 		memset((char *)txh->RTSPhyHeader, 0, D11_PHY_HDR_LEN);
 		memset((char *)&txh->rts_frame, 0,
-			sizeof(struct dot11_rts_frame));
+			sizeof(struct ieee80211_rts));
 		memset((char *)txh->RTSPLCPFallback, 0,
 		      sizeof(txh->RTSPLCPFallback));
 		txh->RTSDurFallback = 0;
@@ -6233,7 +6245,7 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 	if (SCB_WME(scb) && qos && wlc->edcf_txop[ac]) {
 		uint frag_dur, dur, dur_fallback;
 
-		ASSERT(!is_multicast_ether_addr(h->a1.octet));
+		ASSERT(!is_multicast_ether_addr(h->addr1));
 
 		/* WME: Update TXOP threshold */
 		if ((!(tx_info->flags & IEEE80211_TX_CTL_AMPDU)) && (frag == 0)) {
@@ -6250,7 +6262,7 @@ wlc_d11hdrs_mac80211(struct wlc_info *wlc, struct ieee80211_hw *hw,
 				    wlc_calc_cts_time(wlc, rts_rspec[1],
 						      rts_preamble_type[1]);
 				/* (SIFS + CTS) + SIFS + frame + SIFS + ACK */
-				dur += ltoh16(rts->durid);
+				dur += ltoh16(rts->duration);
 				dur_fallback += ltoh16(txh->RTSDurFallback);
 			} else if (use_rifs) {
 				dur = frag_dur;
@@ -6535,7 +6547,7 @@ wlc_dotxstatus(struct wlc_info *wlc, tx_status_t *txs, u32 frm_tx2)
 	int tx_rts, tx_frame_count, tx_rts_count;
 	uint totlen, supr_status;
 	bool lastframe;
-	struct dot11_header *h;
+	struct ieee80211_hdr *h;
 	u16 fc;
 	u16 mcl;
 	struct ieee80211_tx_info *tx_info;
@@ -6591,8 +6603,8 @@ wlc_dotxstatus(struct wlc_info *wlc, tx_status_t *txs, u32 frm_tx2)
 		goto fatal;
 
 	tx_info = IEEE80211_SKB_CB(p);
-	h = (struct dot11_header *)((u8 *) (txh + 1) + D11_PHY_HDR_LEN);
-	fc = ltoh16(h->fc);
+	h = (struct ieee80211_hdr *)((u8 *) (txh + 1) + D11_PHY_HDR_LEN);
+	fc = ltoh16(h->frame_control);
 
 	scb = (struct scb *)tx_info->control.sta->drv_priv;
 
@@ -6621,7 +6633,7 @@ wlc_dotxstatus(struct wlc_info *wlc, tx_status_t *txs, u32 frm_tx2)
 	tx_rts_count =
 	    (txs->status & TX_STATUS_RTS_RTX_MASK) >> TX_STATUS_RTS_RTX_SHIFT;
 
-	lastframe = (fc & FC_MOREFRAG) == 0;
+	lastframe = (fc & IEEE80211_FCTL_MOREFRAGS) == 0;
 
 	if (!lastframe) {
 		WL_ERROR("Not last frame!\n");
@@ -6830,10 +6842,12 @@ prep_mac80211_status(struct wlc_info *wlc, d11rxhdr_t *rxh, struct sk_buff *p,
 	/* XXX  Channel/badn needs to be filtered against whether we are single/dual band card */
 	if (channel > 14) {
 		rx_status->band = IEEE80211_BAND_5GHZ;
-		rx_status->freq = wf_channel2mhz(channel, WF_CHAN_FACTOR_5_G);
+		rx_status->freq = ieee80211_ofdm_chan_to_freq(
+					WF_CHAN_FACTOR_5_G/2, channel);
+
 	} else {
 		rx_status->band = IEEE80211_BAND_2GHZ;
-		rx_status->freq = wf_channel2mhz(channel, WF_CHAN_FACTOR_2_4_G);
+		rx_status->freq = ieee80211_dsss_chan_to_freq(channel);
 	}
 
 	rx_status->signal = wlc_rxh->rssi;	/* signal */
@@ -6937,7 +6951,7 @@ wlc_recvctl(struct wlc_info *wlc, struct osl_info *osh, d11rxhdr_t *rxh,
 	prep_mac80211_status(wlc, rxh, p, &rx_status);
 
 	/* mac header+body length, exclude CRC and plcp header */
-	len_mpdu = p->len - D11_PHY_HDR_LEN - DOT11_FCS_LEN;
+	len_mpdu = p->len - D11_PHY_HDR_LEN - FCS_LEN;
 	skb_pull(p, D11_PHY_HDR_LEN);
 	__skb_trim(p, len_mpdu);
 
@@ -6967,9 +6981,6 @@ void wlc_bss_list_free(struct wlc_info *wlc, wlc_bss_list_t *bss_list)
 	for (index = 0; index < bss_list->count; index++) {
 		bi = bss_list->ptrs[index];
 		if (bi) {
-			if (bi->bcn_prb) {
-				kfree(bi->bcn_prb);
-			}
 			kfree(bi);
 			bss_list->ptrs[index] = NULL;
 		}
@@ -6986,7 +6997,7 @@ void wlc_bss_list_free(struct wlc_info *wlc, wlc_bss_list_t *bss_list)
 void BCMFASTPATH wlc_recv(struct wlc_info *wlc, struct sk_buff *p)
 {
 	d11rxhdr_t *rxh;
-	struct dot11_header *h;
+	struct ieee80211_hdr *h;
 	struct osl_info *osh;
 	u16 fc;
 	uint len;
@@ -7016,7 +7027,7 @@ void BCMFASTPATH wlc_recv(struct wlc_info *wlc, struct sk_buff *p)
 		skb_pull(p, 2);
 	}
 
-	h = (struct dot11_header *)(p->data + D11_PHY_HDR_LEN);
+	h = (struct ieee80211_hdr *)(p->data + D11_PHY_HDR_LEN);
 	len = p->len;
 
 	if (rxh->RxStatus1 & RXS_FCSERR) {
@@ -7030,8 +7041,8 @@ void BCMFASTPATH wlc_recv(struct wlc_info *wlc, struct sk_buff *p)
 	}
 
 	/* check received pkt has at least frame control field */
-	if (len >= D11_PHY_HDR_LEN + sizeof(h->fc)) {
-		fc = ltoh16(h->fc);
+	if (len >= D11_PHY_HDR_LEN + sizeof(h->frame_control)) {
+		fc = ltoh16(h->frame_control);
 	} else {
 		WLCNTINCR(wlc->pub->_cnt->rxrunt);
 		goto toss;
@@ -7042,11 +7053,13 @@ void BCMFASTPATH wlc_recv(struct wlc_info *wlc, struct sk_buff *p)
 	/* explicitly test bad src address to avoid sending bad deauth */
 	if (!is_amsdu) {
 		/* CTS and ACK CTL frames are w/o a2 */
-		if (FC_TYPE(fc) == FC_TYPE_DATA || FC_TYPE(fc) == FC_TYPE_MNG) {
-			if ((is_zero_ether_addr(h->a2.octet) ||
-			     is_multicast_ether_addr(h->a2.octet))) {
-				WL_ERROR("wl%d: %s: dropping a frame with invalid src mac address, a2: %pM\n",
-					 wlc->pub->unit, __func__, &h->a2);
+		if ((fc & IEEE80211_FCTL_FTYPE) == IEEE80211_FTYPE_DATA ||
+		    (fc & IEEE80211_FCTL_FTYPE) == IEEE80211_FTYPE_MGMT) {
+			if ((is_zero_ether_addr(h->addr2) ||
+			     is_multicast_ether_addr(h->addr2))) {
+				WL_ERROR("wl%d: %s: dropping a frame with "
+					 "invalid src mac address, a2: %pM\n",
+					 wlc->pub->unit, __func__, h->addr2);
 				WLCNTINCR(wlc->pub->_cnt->rxbadsrcmac);
 				goto toss;
 			}
@@ -7055,7 +7068,7 @@ void BCMFASTPATH wlc_recv(struct wlc_info *wlc, struct sk_buff *p)
 	}
 
 	/* due to sheer numbers, toss out probe reqs for now */
-	if (FC_TYPE(fc) == FC_TYPE_MNG) {
+	if ((fc & IEEE80211_FCTL_FTYPE) == IEEE80211_FTYPE_MGMT) {
 		if ((fc & FC_KIND_MASK) == FC_PROBE_REQ)
 			goto toss;
 	}
@@ -7251,7 +7264,7 @@ wlc_calc_ba_time(struct wlc_info *wlc, ratespec_t rspec, u8 preamble_type)
 	/* BA len == 32 == 16(ctl hdr) + 4(ba len) + 8(bitmap) + 4(fcs) */
 	return wlc_calc_frame_time(wlc, rspec, preamble_type,
 				   (DOT11_BA_LEN + DOT11_BA_BITMAP_LEN +
-				    DOT11_FCS_LEN));
+				    FCS_LEN));
 }
 
 static uint BCMFASTPATH
@@ -7270,7 +7283,7 @@ wlc_calc_ack_time(struct wlc_info *wlc, ratespec_t rspec, u8 preamble_type)
 	/* ACK frame len == 14 == 2(fc) + 2(dur) + 6(ra) + 4(fcs) */
 	dur =
 	    wlc_calc_frame_time(wlc, rspec, preamble_type,
-				(DOT11_ACK_LEN + DOT11_FCS_LEN));
+				(DOT11_ACK_LEN + FCS_LEN));
 	return dur;
 }
 
@@ -7614,8 +7627,9 @@ static void
 wlc_bcn_prb_template(struct wlc_info *wlc, uint type, ratespec_t bcn_rspec,
 		     wlc_bsscfg_t *cfg, u16 *buf, int *len)
 {
+	static const u8 ether_bcast[ETH_ALEN] = {255, 255, 255, 255, 255, 255};
 	cck_phy_hdr_t *plcp;
-	struct dot11_management_header *h;
+	struct ieee80211_mgmt *h;
 	int hdr_len, body_len;
 
 	ASSERT(*len >= 142);
@@ -7638,7 +7652,7 @@ wlc_bcn_prb_template(struct wlc_info *wlc, uint type, ratespec_t bcn_rspec,
 	if (type == FC_BEACON && !MBSS_BCN_ENAB(cfg)) {
 		/* fill in PLCP */
 		wlc_compute_plcp(wlc, bcn_rspec,
-				 (DOT11_MAC_HDR_LEN + body_len + DOT11_FCS_LEN),
+				 (DOT11_MAC_HDR_LEN + body_len + FCS_LEN),
 				 (u8 *) plcp);
 
 	}
@@ -7648,12 +7662,12 @@ wlc_bcn_prb_template(struct wlc_info *wlc, uint type, ratespec_t bcn_rspec,
 		wlc_beacon_phytxctl_txant_upd(wlc, bcn_rspec);
 
 	if (MBSS_BCN_ENAB(cfg) && type == FC_BEACON)
-		h = (struct dot11_management_header *)&plcp[0];
+		h = (struct ieee80211_mgmt *)&plcp[0];
 	else
-		h = (struct dot11_management_header *)&plcp[1];
+		h = (struct ieee80211_mgmt *)&plcp[1];
 
 	/* fill in 802.11 header */
-	h->fc = htol16((u16) type);
+	h->frame_control = htol16((u16) type);
 
 	/* DUR is 0 for multicast bcn, or filled in by MAC for prb resp */
 	/* A1 filled in by MAC for prb resp, broadcast for bcn */
@@ -7748,13 +7762,13 @@ void wlc_shm_ssid_upd(struct wlc_info *wlc, wlc_bsscfg_t *cfg)
 {
 	u8 *ssidptr = cfg->SSID;
 	u16 base = M_SSID;
-	u8 ssidbuf[DOT11_MAX_SSID_LEN];
+	u8 ssidbuf[IEEE80211_MAX_SSID_LEN];
 
 	/* padding the ssid with zero and copy it into shm */
-	memset(ssidbuf, 0, DOT11_MAX_SSID_LEN);
+	memset(ssidbuf, 0, IEEE80211_MAX_SSID_LEN);
 	bcopy(ssidptr, ssidbuf, cfg->SSID_len);
 
-	wlc_copyto_shm(wlc, base, ssidbuf, DOT11_MAX_SSID_LEN);
+	wlc_copyto_shm(wlc, base, ssidbuf, IEEE80211_MAX_SSID_LEN);
 
 	if (!MBSS_BCN_ENAB(cfg))
 		wlc_write_shm(wlc, M_SSIDLEN, (u16) cfg->SSID_len);
@@ -7803,7 +7817,7 @@ wlc_bss_update_probe_resp(struct wlc_info *wlc, wlc_bsscfg_t *cfg, bool suspend)
 		 * Use the actual frame length covered by the PLCP header for the call to
 		 * wlc_mod_prb_rsp_rate_table() by subtracting the PLCP len and adding the FCS.
 		 */
-		len += (-D11_PHY_HDR_LEN + DOT11_FCS_LEN);
+		len += (-D11_PHY_HDR_LEN + FCS_LEN);
 		wlc_mod_prb_rsp_rate_table(wlc, (u16) len);
 
 		if (suspend)
@@ -7819,7 +7833,7 @@ int wlc_prep_pdu(struct wlc_info *wlc, struct sk_buff *pdu, uint *fifop)
 	struct osl_info *osh;
 	uint fifo;
 	d11txh_t *txh;
-	struct dot11_header *h;
+	struct ieee80211_hdr *h;
 	struct scb *scb;
 	u16 fc;
 
@@ -7828,9 +7842,9 @@ int wlc_prep_pdu(struct wlc_info *wlc, struct sk_buff *pdu, uint *fifop)
 	ASSERT(pdu);
 	txh = (d11txh_t *) (pdu->data);
 	ASSERT(txh);
-	h = (struct dot11_header *)((u8 *) (txh + 1) + D11_PHY_HDR_LEN);
+	h = (struct ieee80211_hdr *)((u8 *) (txh + 1) + D11_PHY_HDR_LEN);
 	ASSERT(h);
-	fc = ltoh16(h->fc);
+	fc = ltoh16(h->frame_control);
 
 	/* get the pkt queue info. This was put at wlc_sendctl or wlc_send for PDU */
 	fifo = ltoh16(txh->TxFrameID) & TXFID_QUEUE_MASK;
@@ -7846,7 +7860,8 @@ int wlc_prep_pdu(struct wlc_info *wlc, struct sk_buff *pdu, uint *fifop)
 		return BCME_BUSY;
 	}
 
-	if (FC_TYPE(ltoh16(txh->MacFrameControl)) != FC_TYPE_DATA)
+	if ((ltoh16(txh->MacFrameControl) & IEEE80211_FCTL_FTYPE) !=
+	    IEEE80211_FTYPE_DATA)
 		WLCNTINCR(wlc->pub->_cnt->txctl);
 
 	return 0;
@@ -8224,12 +8239,12 @@ void wlc_write_hw_bcntemplates(struct wlc_info *wlc, void *bcn, int len,
 
 void
 wlc_set_addrmatch(struct wlc_info *wlc, int match_reg_offset,
-		  const struct ether_addr *addr)
+		  const u8 *addr)
 {
 	wlc_bmac_set_addrmatch(wlc->hw, match_reg_offset, addr);
 }
 
-void wlc_set_rcmta(struct wlc_info *wlc, int idx, const struct ether_addr *addr)
+void wlc_set_rcmta(struct wlc_info *wlc, int idx, const u8 *addr)
 {
 	wlc_bmac_set_rcmta(wlc->hw, idx, addr);
 }
@@ -8270,8 +8285,8 @@ void wlc_reset_bmac_done(struct wlc_info *wlc)
 
 void wlc_ht_mimops_cap_update(struct wlc_info *wlc, u8 mimops_mode)
 {
-	wlc->ht_cap.cap &= ~HT_CAP_MIMO_PS_MASK;
-	wlc->ht_cap.cap |= (mimops_mode << HT_CAP_MIMO_PS_SHIFT);
+	wlc->ht_cap.cap_info &= ~HT_CAP_MIMO_PS_MASK;
+	wlc->ht_cap.cap_info |= (mimops_mode << IEEE80211_HT_CAP_SM_PS_SHIFT);
 
 	if (AP_ENAB(wlc->pub) && wlc->clk) {
 		wlc_update_beacon(wlc);

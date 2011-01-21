@@ -134,7 +134,7 @@ struct rsn_parms {
  * buffer length needed for wlc_format_ssid
  * 32 SSID chars, max of 4 chars for each SSID char "\xFF", plus NULL.
  */
-#define SSID_FMT_BUF_LEN	((4 * DOT11_MAX_SSID_LEN) + 1)
+#define SSID_FMT_BUF_LEN	((4 * IEEE80211_MAX_SSID_LEN) + 1)
 
 #define RSN_FLAGS_SUPPORTED		0x1	/* Flag for rsn_params */
 #define RSN_FLAGS_PREAUTH		0x2	/* Flag for WPA2 rsn_params */
@@ -145,8 +145,9 @@ struct rsn_parms {
 #define AMPDU_DEF_MPDU_DENSITY	6	/* default mpdu density (110 ==> 4us) */
 
 /* defaults for the HT (MIMO) bss */
-#define HT_CAP	((HT_CAP_MIMO_PS_OFF << HT_CAP_MIMO_PS_SHIFT) | HT_CAP_40MHZ | \
-	HT_CAP_GF | HT_CAP_MAX_AMSDU | HT_CAP_DSSS_CCK)
+#define HT_CAP	((HT_CAP_MIMO_PS_OFF << IEEE80211_HT_CAP_SM_PS_SHIFT) |\
+	IEEE80211_HT_CAP_SUP_WIDTH_20_40 | IEEE80211_HT_CAP_GRN_FLD |\
+	HT_CAP_MAX_AMSDU | IEEE80211_HT_CAP_DSSSCCK40)
 
 /* WLC packet type is a void * */
 typedef void *wlc_pkt_t;
@@ -165,7 +166,7 @@ typedef struct wlc_event {
 
 /* wlc internal bss_info, wl external one is in wlioctl.h */
 typedef struct wlc_bss_info {
-	struct ether_addr BSSID;	/* network BSSID */
+	u8 BSSID[ETH_ALEN];	/* network BSSID */
 	u16 flags;		/* flags for internal attributes */
 	u8 SSID_len;		/* the length of SSID */
 	u8 SSID[32];		/* SSID string */
@@ -179,8 +180,6 @@ typedef struct wlc_bss_info {
 	u8 dtim_period;	/* DTIM period */
 	s8 phy_noise;		/* noise right after tx (in dBm) */
 	u16 capability;	/* Capability information */
-	struct dot11_bcn_prb *bcn_prb;	/* beacon/probe response frame (ioctl na) */
-	u16 bcn_prb_len;	/* beacon/probe response frame length (ioctl na) */
 	u8 wme_qosinfo;	/* QoS Info from WME IE; valid if WLC_BSS_WME flag set */
 	struct rsn_parms wpa;
 	struct rsn_parms wpa2;
@@ -291,9 +290,9 @@ struct wlc_pub {
 	s8 _coex;		/* 20/40 MHz BSS Management AUTO, ENAB, DISABLE */
 	bool _priofc;		/* Priority-based flowcontrol */
 
-	struct ether_addr cur_etheraddr;	/* our local ethernet address */
+	u8 cur_etheraddr[ETH_ALEN];	/* our local ethernet address */
 
-	struct ether_addr *multicast;	/* ptr to list of multicast addresses */
+	u8 *multicast;	/* ptr to list of multicast addresses */
 	uint nmulticast;	/* # enabled multicast addresses */
 
 	u32 wlfeatureflag;	/* Flags to control sw features from registry */
@@ -524,7 +523,7 @@ extern void wlc_statsupd(struct wlc_info *wlc);
 extern int wlc_get_header_len(void);
 extern void wlc_mac_bcn_promisc_change(struct wlc_info *wlc, bool promisc);
 extern void wlc_set_addrmatch(struct wlc_info *wlc, int match_reg_offset,
-			      const struct ether_addr *addr);
+			      const u8 *addr);
 extern void wlc_wme_setparams(struct wlc_info *wlc, u16 aci, void *arg,
 			      bool suspend);
 

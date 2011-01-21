@@ -67,7 +67,8 @@
 #define TX_SEQ_TO_INDEX(seq) ((seq) % AMPDU_TX_BA_MAX_WSIZE)
 
 /* max possible overhead per mpdu in the ampdu; 3 is for roundup if needed */
-#define AMPDU_MAX_MPDU_OVERHEAD (DOT11_FCS_LEN + DOT11_ICV_AES_LEN + AMPDU_DELIMITER_LEN + 3 \
+#define AMPDU_MAX_MPDU_OVERHEAD (FCS_LEN + DOT11_ICV_AES_LEN +\
+	AMPDU_DELIMITER_LEN + 3\
 	+ DOT11_A4_HDR_LEN + DOT11_QOS_LEN + DOT11_IV_MAX_LEN)
 
 #ifdef BCMDBG
@@ -154,10 +155,10 @@ static void wlc_ampdu_dotxstatus_complete(struct ampdu_info *ampdu,
 static inline u16 pkt_txh_seqnum(struct wlc_info *wlc, struct sk_buff *p)
 {
 	d11txh_t *txh;
-	struct dot11_header *h;
+	struct ieee80211_hdr *h;
 	txh = (d11txh_t *) p->data;
-	h = (struct dot11_header *)((u8 *) (txh + 1) + D11_PHY_HDR_LEN);
-	return ltoh16(h->seq) >> SEQNUM_SHIFT;
+	h = (struct ieee80211_hdr *)((u8 *) (txh + 1) + D11_PHY_HDR_LEN);
+	return ltoh16(h->seq_ctrl) >> SEQNUM_SHIFT;
 }
 
 struct ampdu_info *wlc_ampdu_attach(struct wlc_info *wlc)
@@ -510,7 +511,7 @@ wlc_sendampdu(struct ampdu_info *ampdu, wlc_txq_info_t *qi,
 	u32 ampdu_len, maxlen = 0;
 	d11txh_t *txh = NULL;
 	u8 *plcp;
-	struct dot11_header *h;
+	struct ieee80211_hdr *h;
 	struct scb *scb;
 	scb_ampdu_t *scb_ampdu;
 	scb_ampdu_tid_ini_t *ini;
@@ -519,7 +520,7 @@ wlc_sendampdu(struct ampdu_info *ampdu, wlc_txq_info_t *qi,
 	ratespec_t rspec = 0, rspec_fallback = 0;
 	ratespec_t rts_rspec = 0, rts_rspec_fallback = 0;
 	u16 mimo_ctlchbw = PHY_TXC1_BW_20MHZ;
-	struct dot11_rts_frame *rts;
+	struct ieee80211_rts *rts;
 	u8 rr_retry_limit;
 	wlc_fifo_info_t *f;
 	bool fbr_iscck;
@@ -596,8 +597,8 @@ wlc_sendampdu(struct ampdu_info *ampdu, wlc_txq_info_t *qi,
 		ASSERT(tx_info->flags & IEEE80211_TX_CTL_AMPDU);
 		txh = (d11txh_t *) p->data;
 		plcp = (u8 *) (txh + 1);
-		h = (struct dot11_header *)(plcp + D11_PHY_HDR_LEN);
-		seq = ltoh16(h->seq) >> SEQNUM_SHIFT;
+		h = (struct ieee80211_hdr *)(plcp + D11_PHY_HDR_LEN);
+		seq = ltoh16(h->seq_ctrl) >> SEQNUM_SHIFT;
 		index = TX_SEQ_TO_INDEX(seq);
 
 		/* check mcl fields and test whether it can be agg'd */
@@ -639,8 +640,8 @@ wlc_sendampdu(struct ampdu_info *ampdu, wlc_txq_info_t *qi,
 			mcl |= (TXC_AMPDU_FIRST << TXC_AMPDU_SHIFT);
 			/* refill the bits since might be a retx mpdu */
 			mcl |= TXC_STARTMSDU;
-			rts = (struct dot11_rts_frame *)&txh->rts_frame;
-			fc = ltoh16(rts->fc);
+			rts = (struct ieee80211_rts *)&txh->rts_frame;
+			fc = ltoh16(rts->frame_control);
 			if ((fc & FC_KIND_MASK) == FC_RTS) {
 				mcl |= TXC_SENDRTS;
 				use_rts = true;
@@ -837,7 +838,7 @@ wlc_sendampdu(struct ampdu_info *ampdu, wlc_txq_info_t *qi,
 		/* update RTS dur fields */
 		if (use_rts || use_cts) {
 			u16 durid;
-			rts = (struct dot11_rts_frame *)&txh->rts_frame;
+			rts = (struct ieee80211_rts *)&txh->rts_frame;
 			if ((mch & TXC_PREAMBLE_RTS_MAIN_SHORT) ==
 			    TXC_PREAMBLE_RTS_MAIN_SHORT)
 				rts_preamble_type = WLC_SHORT_PREAMBLE;
@@ -851,7 +852,7 @@ wlc_sendampdu(struct ampdu_info *ampdu, wlc_txq_info_t *qi,
 						   rspec, rts_preamble_type,
 						   preamble_type, ampdu_len,
 						   true);
-			rts->durid = htol16(durid);
+			rts->duration = htol16(durid);
 			durid = wlc_compute_rtscts_dur(wlc, use_cts,
 						       rts_rspec_fallback,
 						       rspec_fallback,
@@ -860,7 +861,7 @@ wlc_sendampdu(struct ampdu_info *ampdu, wlc_txq_info_t *qi,
 						       ampdu_len, true);
 			txh->RTSDurFallback = htol16(durid);
 			/* set TxFesTimeNormal */
-			txh->TxFesTimeNormal = rts->durid;
+			txh->TxFesTimeNormal = rts->duration;
 			/* set fallback rate version of TxFesTimeNormal */
 			txh->TxFesTimeFallback = txh->RTSDurFallback;
 		}
@@ -968,7 +969,7 @@ wlc_ampdu_dotxstatus_complete(struct ampdu_info *ampdu, struct scb *scb,
 	u8 bitmap[8], queue, tid;
 	d11txh_t *txh;
 	u8 *plcp;
-	struct dot11_header *h;
+	struct ieee80211_hdr *h;
 	u16 seq, start_seq = 0, bindex, index, mcl;
 	u8 mcs = 0;
 	bool ba_recd = false, ack_recd = false;
@@ -1089,8 +1090,8 @@ wlc_ampdu_dotxstatus_complete(struct ampdu_info *ampdu, struct scb *scb,
 		txh = (d11txh_t *) p->data;
 		mcl = ltoh16(txh->MacTxControlLow);
 		plcp = (u8 *) (txh + 1);
-		h = (struct dot11_header *)(plcp + D11_PHY_HDR_LEN);
-		seq = ltoh16(h->seq) >> SEQNUM_SHIFT;
+		h = (struct ieee80211_hdr *)(plcp + D11_PHY_HDR_LEN);
+		seq = ltoh16(h->seq_ctrl) >> SEQNUM_SHIFT;
 
 		if (tot_mpdu == 0) {
 			mcs = plcp[0] & MIMO_PLCP_MCS_MASK;
@@ -1329,7 +1330,7 @@ void wlc_ampdu_macaddr_upd(struct wlc_info *wlc)
 
 	/* driver needs to write the ta in the template; ta is at offset 16 */
 	memset(template, 0, sizeof(template));
-	bcopy((char *)wlc->pub->cur_etheraddr.octet, template, ETH_ALEN);
+	bcopy((char *)wlc->pub->cur_etheraddr, template, ETH_ALEN);
 	wlc_write_template_ram(wlc, (T_BA_TPL_BASE + 16), (T_RAM_ACCESS_SZ * 2),
 			       template);
 }

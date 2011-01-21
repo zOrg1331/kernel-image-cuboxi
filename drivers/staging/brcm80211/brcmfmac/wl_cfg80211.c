@@ -20,7 +20,6 @@
 
 #include <bcmutils.h>
 #include <bcmendian.h>
-#include <proto/ethernet.h>
 
 #include <asm/uaccess.h>
 
@@ -44,6 +43,7 @@
 
 static struct sdio_func *cfg80211_sdio_func;
 static struct wl_dev *wl_cfg80211_dev;
+static const u8 ether_bcast[ETH_ALEN] = {255, 255, 255, 255, 255, 255};
 
 u32 wl_dbg_level = WL_DBG_ERR | WL_DBG_INFO;
 
@@ -648,7 +648,7 @@ wl_cfg80211_change_iface(struct wiphy *wiphy, struct net_device *ndev,
 
 static void wl_iscan_prep(struct wl_scan_params *params, struct wlc_ssid *ssid)
 {
-	memcpy(&params->bssid, &ether_bcast, ETH_ALEN);
+	memcpy(params->bssid, ether_bcast, ETH_ALEN);
 	params->bss_type = DOT11_BSSTYPE_ANY;
 	params->scan_type = 0;
 	params->nprobes = -1;
@@ -1373,7 +1373,7 @@ wl_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
 	memcpy(&join_params.ssid.SSID, sme->ssid, join_params.ssid.SSID_len);
 	join_params.ssid.SSID_len = htod32(join_params.ssid.SSID_len);
 	wl_update_prof(wl, NULL, &join_params.ssid, WL_PROF_SSID);
-	memcpy(&join_params.params.bssid, &ether_bcast, ETH_ALEN);
+	memcpy(join_params.params.bssid, ether_bcast, ETH_ALEN);
 
 	wl_ch_to_chanspec(wl->channel, &join_params, &join_params_size);
 	WL_DBG("join_param_size %d\n", join_params_size);
@@ -2005,8 +2005,8 @@ wl_update_pmklist(struct net_device *dev, struct wl_pmk_list *pmk_list,
 	WL_DBG("No of elements %d\n", pmk_list->pmkids.npmkid);
 	for (i = 0; i < pmk_list->pmkids.npmkid; i++) {
 		WL_DBG("PMKID[%d]: %pM =\n", i,
-		       &pmk_list->pmkids.pmkid[i].BSSID);
-		for (j = 0; j < WPA2_PMKID_LEN; j++) {
+			&pmk_list->pmkids.pmkid[i].BSSID);
+		for (j = 0; j < WLAN_PMKID_LEN; j++) {
 			WL_DBG("%02x\n", pmk_list->pmkids.pmkid[i].PMKID[j]);
 		}
 	}
@@ -2035,7 +2035,7 @@ wl_cfg80211_set_pmksa(struct wiphy *wiphy, struct net_device *dev,
 		memcpy(&wl->pmk_list->pmkids.pmkid[i].BSSID, pmksa->bssid,
 		       ETH_ALEN);
 		memcpy(&wl->pmk_list->pmkids.pmkid[i].PMKID, pmksa->pmkid,
-		       WPA2_PMKID_LEN);
+		       WLAN_PMKID_LEN);
 		if (i == wl->pmk_list->pmkids.npmkid)
 			wl->pmk_list->pmkids.npmkid++;
 	} else {
@@ -2043,7 +2043,7 @@ wl_cfg80211_set_pmksa(struct wiphy *wiphy, struct net_device *dev,
 	}
 	WL_DBG("set_pmksa,IW_PMKSA_ADD - PMKID: %pM =\n",
 	       &wl->pmk_list->pmkids.pmkid[wl->pmk_list->pmkids.npmkid].BSSID);
-	for (i = 0; i < WPA2_PMKID_LEN; i++) {
+	for (i = 0; i < WLAN_PMKID_LEN; i++) {
 		WL_DBG("%02x\n",
 		       wl->pmk_list->pmkids.pmkid[wl->pmk_list->pmkids.npmkid].
 		       PMKID[i]);
@@ -2065,11 +2065,11 @@ wl_cfg80211_del_pmksa(struct wiphy *wiphy, struct net_device *dev,
 
 	CHECK_SYS_UP();
 	memcpy(&pmkid.pmkid[0].BSSID, pmksa->bssid, ETH_ALEN);
-	memcpy(&pmkid.pmkid[0].PMKID, pmksa->pmkid, WPA2_PMKID_LEN);
+	memcpy(&pmkid.pmkid[0].PMKID, pmksa->pmkid, WLAN_PMKID_LEN);
 
 	WL_DBG("del_pmksa,IW_PMKSA_REMOVE - PMKID: %pM =\n",
 	       &pmkid.pmkid[0].BSSID);
-	for (i = 0; i < WPA2_PMKID_LEN; i++) {
+	for (i = 0; i < WLAN_PMKID_LEN; i++) {
 		WL_DBG("%02x\n", pmkid.pmkid[0].PMKID[i]);
 	}
 
@@ -2088,7 +2088,7 @@ wl_cfg80211_del_pmksa(struct wiphy *wiphy, struct net_device *dev,
 			       ETH_ALEN);
 			memcpy(&wl->pmk_list->pmkids.pmkid[i].PMKID,
 			       &wl->pmk_list->pmkids.pmkid[i + 1].PMKID,
-			       WPA2_PMKID_LEN);
+			       WLAN_PMKID_LEN);
 		}
 		wl->pmk_list->pmkids.npmkid--;
 	} else {

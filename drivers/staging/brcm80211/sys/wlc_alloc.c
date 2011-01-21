@@ -86,8 +86,8 @@ static struct wlc_pub *wlc_pub_malloc(struct osl_info *osh, uint unit,
 	/* need to init the tunables now */
 	wlc_tunables_init(pub->tunables, devid);
 
-	pub->multicast = (struct ether_addr *)wlc_calloc(osh, unit,
-		(sizeof(struct ether_addr) * MAXMULTILIST));
+	pub->multicast = (u8 *)wlc_calloc(osh, unit,
+		(ETH_ALEN * MAXMULTILIST));
 	if (pub->multicast == NULL) {
 		*err = 1003;
 		goto fail;
@@ -147,8 +147,6 @@ void wlc_bsscfg_mfree(struct osl_info *osh, wlc_bsscfg_t *cfg)
 
 	if (cfg->current_bss != NULL) {
 		wlc_bss_info_t *current_bss = cfg->current_bss;
-		if (current_bss->bcn_prb != NULL)
-			kfree(current_bss->bcn_prb);
 		kfree(current_bss);
 		cfg->current_bss = NULL;
 	}

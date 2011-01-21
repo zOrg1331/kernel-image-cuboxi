@@ -13,7 +13,7 @@
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-#include <proto/ethernet.h>
+#include <linux/if_ether.h>
 
 typedef struct cdc_ioctl {
 	u32 cmd;		/* ioctl command value */
@@ -24,7 +24,7 @@ typedef struct cdc_ioctl {
 } cdc_ioctl_t;
 
 /* Max valid buffer size that can be sent to the dongle */
-#define CDC_MAX_MSG_SIZE   ETHER_MAX_LEN
+#define CDC_MAX_MSG_SIZE	(ETH_FRAME_LEN+ETH_FCS_LEN)
 
 /* len field is divided into input and output buffer lengths */
 #define CDCL_IOC_OUTLEN_MASK   0x0000FFFF	/* maximum or expected
