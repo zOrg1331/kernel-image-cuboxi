@@ -24,7 +24,7 @@ Release: alt8
 %def_disable docs
 %def_disable oss
 %def_enable kvm
-%def_disable v4l
+%def_enable v4l
 %def_disable staging
 
 ## Don't edit below this line ##################################
