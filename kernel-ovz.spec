@@ -4,8 +4,8 @@
 %define with_doc       0
 %define with_headers   1
 %define with_openafs   0
-%define ovzver 028stab079
-%define ovzrel 2
+%define ovzver 028stab082
+%define ovzrel 1
 
 # Whether to apply the Xen patches -- leave this enabled.
 %define includexen 1
@@ -4902,6 +4902,53 @@ Patch25214: linux-2.6-net-rds-fix-local-privilege-escalation.patch
 Patch25215: linux-2.6-net-bonding-correctly-process-non-linear-skbs.patch
 Patch25216: linux-2.6-fs-nfs-fix-regression-in-nfs-direct-i-o-path.patch
 Patch25217: linux-2.6-net-mlx4-bump-max-log_mtts_per_seg-memory-reservation.patch
+Patch25218: linux-2.6-net-netxen-fix-set-mac-addr.patch
+Patch25219: linux-2.6-net-tun-orphan-an-skb-on-tx.patch
+Patch25220: linux-2.6-virt-xen-fix-connected-state-after-netback-dev-closed.patch
+Patch25221: linux-2.6-net-gro-fix-bogus-gso_size-on-the-first-fraglist-entry.patch
+Patch25222: linux-2.6-fs-gfs2-fix-stuck-in-inode-wait-no-glocks-stuck.patch
+Patch25223: linux-2.6-usb-fix-test-of-wrong-variable-in-create_by_name.patch
+Patch25224: linux-2.6-fs-execve-fix-interactivity-and-response-to-sigkill.patch
+Patch25225: linux-2.6-net-ixgbe-add-option-to-control-interrupt-mode.patch
+Patch25226: linux-2.6-sound-core-prevent-heap-corruption-in-snd_ctl_new.patch
+Patch25227: linux-2.6-pci-include-dl580-g7-in-bfsort-whitelist.patch
+Patch25228: linux-2.6-net-bnx2-fixup-broken-napi-accounting.patch
+Patch25229: linux-2.6-net-bnx2-increase-max-rx-ring-size-from-1k-to-2k.patch
+Patch25230: linux-2.6-kernel-add-stop_machine-barrier-to-fix-lock-contention.patch
+Patch25231: linux-2.6-scsi-gdth-prevent-integer-overflow-in-ioc_general.patch
+Patch25232: linux-2.6-net-bonding-no-lock-on-copy-clear-vlan-list-on-slave.patch
+Patch25233: linux-2.6-net-sctp-do-not-reset-packet-during-sctp_packet_config.patch
+Patch25234: linux-2.6-fs-dlm-use-tcp_nodelay.patch
+Patch25235: linux-2.6-fs-dlm-reduce-cond_resched-during-send.patch
+Patch25236: linux-2.6-misc-kernel-remove-yield-from-stop_machine-paths.patch
+Patch25237: linux-2.6-ipc-sys_semctl-fix-kernel-stack-leakage.patch
+Patch25238: linux-2.6-net-packet-fix-information-leak-to-userland.patch
+Patch25239: linux-2.6-net-fix-deadlock-in-sock_queue_rcv_skb.patch
+Patch25240: linux-2.6-net-rds-fix-rds_iovec-page-count-overflow.patch
+Patch25241: linux-2.6-scsi-lpfc-fix-panic-in-lpfc_scsi_cmd_iocb_cmpl.patch
+Patch25242: linux-2.6-usb-uhci-fix-oops-in-uhci_scan_schedule.patch
+Patch25243: linux-2.6-fs-fix-dcache-accounting-bug.patch
+Patch25244: linux-2.6-misc-add-round_jiffies_up-and-related-routines.patch
+Patch25245: linux-2.6-scsi-scsi_dh_alua-handle-transitioning-state-correctly.patch
+Patch25246: linux-2.6-scsi-re-enable-transistions-from-offline-to-running.patch
+Patch25247: linux-2.6-scsi-lpfc-fix-a-bug_on-in-lpfc_abort_handler.patch
+Patch25248: linux-2.6-fs-gfs2-fix-race-in-unlinked-inode-deallocation.patch
+Patch25249: linux-2.6-scsi-qla2xxx-check-null-fcport-in-_queuecommands.patch
+Patch25250: linux-2.6-scsi-lpfc-fix-crashes-on-null-pnode-dereference.patch
+Patch25251: linux-2.6-virt-xen-don-t-leak-dev-refs-on-bad-xenbus-transitions.patch
+Patch25252: linux-2.6-virt-xen-add-bounds-req-process-loop-in-blkback-blktap.patch
+Patch25253: linux-2.6-bluetooth-hci_ldisc-fix-missing-null-check.patch
+Patch25254: linux-2.6-net-limit-sendto-recvfrom-iovec-total-length-to-int_max.patch
+Patch25255: linux-2.6-net-inet_diag-make-sure-we-run-audited-bytecode.patch
+Patch25256: linux-2.6-fs-setup_arg_pages-diagnose-excessive-argument-size.patch
+Patch25257: linux-2.6-misc-posix-cpu-timers-workaround-for-mt-exec-problems.patch
+Patch25258: linux-2.6-scsi-lpfc-set-heartbeat-timer-off-by-default.patch
+Patch25259: linux-2.6-fs-nfs-set-lock_context-field-in-nfs_writepage_sync.patch
+Patch25260: linux-2.6-fs-nfs-remove-problematic-calls-to-nfs_clear_request.patch
+Patch25261: linux-2.6-fs-nfs-handle-alloc-failures-in-nfs_create_request.patch
+Patch25262: linux-2.6-fs-nfs-clean-up-nfs_create_request.patch
+Patch25263: linux-2.6-virt-xen-fix-netback-hotplug-regression-in-xenbus-fix.patch
+Patch25264: linux-2.6-fs-nfs-set-lock_context-field-in-nfs_readpage_sync.patch
 
 Patch30000: diff-xen-smpboot-ifdef-hotplug-20090306
 Patch30001: diff-ocfs2-drop-duplicate-functions-20090306
@@ -9776,6 +9823,53 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch25215 -p1
 %patch25216 -p1
 %patch25217 -p1
+%patch25218 -p1
+%patch25219 -p1
+%patch25220 -p1
+%patch25221 -p1
+%patch25222 -p1
+%patch25223 -p1
+%patch25224 -p1
+%patch25225 -p1
+%patch25226 -p1
+%patch25227 -p1
+%patch25228 -p1
+%patch25229 -p1
+%patch25230 -p1
+%patch25231 -p1
+%patch25232 -p1
+%patch25233 -p1
+%patch25234 -p1
+%patch25235 -p1
+%patch25236 -p1
+%patch25237 -p1
+%patch25238 -p1
+%patch25239 -p1
+%patch25240 -p1
+%patch25241 -p1
+%patch25242 -p1
+%patch25243 -p1
+%patch25244 -p1
+%patch25245 -p1
+%patch25246 -p1
+%patch25247 -p1
+%patch25248 -p1
+%patch25249 -p1
+%patch25250 -p1
+%patch25251 -p1
+%patch25252 -p1
+%patch25253 -p1
+%patch25254 -p1
+%patch25255 -p1
+%patch25256 -p1
+%patch25257 -p1
+%patch25258 -p1
+%patch25259 -p1
+%patch25260 -p1
+%patch25261 -p1
+%patch25262 -p1
+%patch25263 -p1
+%patch25264 -p1
 
 %patch30000 -p1
 %patch30001 -p1
