@@ -54,10 +54,13 @@ struct file *au_h_open(struct dentry *dentry, aufs_bindex_t bindex, int flags,
 	h_inode = h_dentry->d_inode;
 	if (au_test_nfsd() && !h_inode)
 		goto out;
-	if (unlikely((!d_unhashed(dentry) && d_unlinked(h_dentry))
-		     || !h_inode
-		     /* || !dentry->d_inode->i_nlink */
-		    ))
+	spin_lock(&h_dentry->d_lock);
+	err = (!d_unhashed(dentry) && d_unlinked(h_dentry))
+		|| !h_inode
+		/* || !dentry->d_inode->i_nlink */
+		;
+	spin_unlock(&h_dentry->d_lock);
+	if (unlikely(err))
 		goto out;
 
 	sb = dentry->d_sb;
