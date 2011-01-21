@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt8
+Release: alt9
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -583,6 +583,10 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Fri Jan 21 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt9
+- Apply 042test006.1 patches
+- Build kernel-modules-v4l-ovz-el as a separate package
+
 * Mon Jan 17 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt8
 - Changes to configs
 - ptrace: return virtual pid in events by Andrey Vagin (ALT 24829)
