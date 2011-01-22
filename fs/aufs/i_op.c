@@ -658,10 +658,10 @@ static int aufs_setattr(struct dentry *dentry, struct iattr *ia)
 	} else {
 		/* fchmod() doesn't pass ia_file */
 		a->udba = au_opt_udba(sb);
+		di_write_lock_child(dentry);
 		/* no d_unlinked(), to set UDBA_NONE for root */
 		if (d_unhashed(dentry))
 			a->udba = AuOpt_UDBA_NONE;
-		di_write_lock_child(dentry);
 		if (a->udba != AuOpt_UDBA_NONE) {
 			AuDebugOn(IS_ROOT(dentry));
 			err = au_reval_for_attr(dentry, au_sigen(sb));
