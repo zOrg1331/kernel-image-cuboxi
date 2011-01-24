@@ -404,6 +404,7 @@ static struct regulator_consumer_supply sdp3430_vdda_dac_supplies[] = {
 /* VPLL2 for digital video outputs */
 static struct regulator_consumer_supply sdp3430_vpll2_supplies[] = {
 	REGULATOR_SUPPLY("vdds_dsi", "omap_display"),
+	REGULATOR_SUPPLY("vdds_dsi", "omap_dsi1"),
 };
 
 static struct regulator_consumer_supply sdp3430_vmmc1_supplies[] = {
