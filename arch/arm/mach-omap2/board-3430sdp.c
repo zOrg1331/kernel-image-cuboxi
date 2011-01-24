@@ -308,7 +308,7 @@ static struct omap_dss_board_info sdp3430_dss_data = {
 };
 
 static struct regulator_consumer_supply sdp3430_vdda_dac_supply =
-	REGULATOR_SUPPLY("vdda_dac", "omapdss");
+	REGULATOR_SUPPLY("vdda_dac", "omap_display");
 
 static struct omap_board_config_kernel sdp3430_config[] __initdata = {
 };
@@ -531,7 +531,7 @@ static struct regulator_init_data sdp3430_vdac = {
 
 /* VPLL2 for digital video outputs */
 static struct regulator_consumer_supply sdp3430_vpll2_supplies[] = {
-	REGULATOR_SUPPLY("vdds_dsi", "omapdss"),
+	REGULATOR_SUPPLY("vdds_dsi", "omap_display"),
 };
 
 static struct regulator_init_data sdp3430_vpll2 = {
