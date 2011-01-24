@@ -544,7 +544,7 @@ static struct twl4030_codec_data omap3evm_codec_data = {
 };
 
 static struct regulator_consumer_supply omap3_evm_vdda_dac_supply =
-	REGULATOR_SUPPLY("vdda_dac", "omapdss");
+	REGULATOR_SUPPLY("vdda_dac", "omap_display");
 
 /* VDAC for DSS driving S-Video */
 static struct regulator_init_data omap3_evm_vdac = {
@@ -563,7 +563,7 @@ static struct regulator_init_data omap3_evm_vdac = {
 
 /* VPLL2 for digital video outputs */
 static struct regulator_consumer_supply omap3_evm_vpll2_supply =
-	REGULATOR_SUPPLY("vdds_dsi", "omapdss");
+	REGULATOR_SUPPLY("vdds_dsi", "omap_display");
 
 static struct regulator_init_data omap3_evm_vpll2 = {
 	.constraints = {

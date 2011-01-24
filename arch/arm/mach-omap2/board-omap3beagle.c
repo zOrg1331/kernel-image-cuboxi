@@ -229,10 +229,10 @@ static struct omap_dss_board_info beagle_dss_data = {
 };
 
 static struct regulator_consumer_supply beagle_vdac_supply =
-	REGULATOR_SUPPLY("vdda_dac", "omapdss");
+	REGULATOR_SUPPLY("vdda_dac", "omap_display");
 
 static struct regulator_consumer_supply beagle_vdvi_supply =
-	REGULATOR_SUPPLY("vdds_dsi", "omapdss");
+	REGULATOR_SUPPLY("vdds_dsi", "omap_display");
 
 static void __init beagle_display_init(void)
 {

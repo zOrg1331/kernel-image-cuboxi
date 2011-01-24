@@ -25,7 +25,7 @@
 #include <plat/display.h>
 
 static struct platform_device omap_display_device = {
-	.name          = "omapdss",
+	.name          = "omap_display",
 	.id            = -1,
 	.dev            = {
 		.platform_data = NULL,

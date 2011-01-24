@@ -486,7 +486,7 @@ static struct omap_dss_board_info igep2_dss_data = {
 };
 
 static struct regulator_consumer_supply igep2_vpll2_supply =
-	REGULATOR_SUPPLY("vdds_dsi", "omapdss");
+	REGULATOR_SUPPLY("vdds_dsi", "omap_display");
 
 static struct regulator_init_data igep2_vpll2 = {
 	.constraints = {
