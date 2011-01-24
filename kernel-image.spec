@@ -1,6 +1,6 @@
 Name: kernel-image-el-smp
 Version: 2.6.32
-Release: alt12
+Release: alt13
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
 # Numeric extra version scheme developed by Alexander Bokovoy:
@@ -546,6 +546,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/ -name "*.o*" -delete
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Mon Jan 24 2011 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt13
+- fix timer breakup made by new linker
+
 * Sun Jan 16 2011 Vitaly Kuznetsov <vitty@altlinux.ru> 2.6.32-alt12
 - 2.6.32-71.14.1.el6
 
